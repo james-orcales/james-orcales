@@ -1,6 +1,6 @@
 # James Orcales
 
-My journey in tech began with Python Codewars, followed by a deep dive into the fundamentals of Computer Science, encompassing machine learning, web development, operating systems, and compiler design. Today, I utilize my critical thinking acumen to navigate the intricacies of YAML linting and wrestle misaligned colons into submission professionally.
+My journey in software development began with Python Codewars, followed by a deep dive into the fundamentals of Computer Science, encompassing machine learning, web development, operating systems, and compiler design. Today, I utilize my critical thinking acumen to navigate the intricacies of YAML linting and wrestle misaligned colons into submission professionally.
 
 anyway, my tech stack for the interested:
 
