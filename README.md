@@ -16,5 +16,8 @@ My journey in software development began with Python Codewars. It blossomed into
 
 <img src="https://raw.githubusercontent.com/github/explore/26674e638508ac4a4e113ee32d6755ebfa000569/topics/neovim/neovim.png" height="30" alt="Neovim Logo"> <img src="https://www.zsa.io/cdn-cgi/image/width=180,quality=80,format=auto/@voyager/images/navbar/voyager-logo.webp" height="30" alt="ZSA Voyager Logo"> <img src="https://upload.wikimedia.org/wikipedia/commons/thumb/6/66/Openlogo-debianV2.svg/230px-Openlogo-debianV2.svg.png" height="30" alt="Debian Logo"> <img src="https://upload.wikimedia.org/wikipedia/commons/thumb/e/e4/Tmux_logo.svg/608px-Tmux_logo.svg.png" height="30" alt="Tmux Logo"> <img src="https://upload.wikimedia.org/wikipedia/commons/thumb/9/90/Alacritty_logo.svg/270px-Alacritty_logo.svg.png" height="30" alt="Alacritty Logo"> <img src="https://avatars.githubusercontent.com/u/32400794?s=200&v=4" height="30" alt="SwayWM">
 
+
+See all of my tech essentials over at [NERD_CORNER.md](https://github.com/james-orcales/james-orcales/blob/main/NERD_CORNER.md)
+
 [sige]: https://github.com/james-orcales/sige
 [colejak]: https://github.com/james-orcales/colejak
