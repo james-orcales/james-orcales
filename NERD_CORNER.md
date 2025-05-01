@@ -4,30 +4,6 @@
 
 *Wallpaper Artist: FAR on Behance*
 
-| **Category**                | **Details**                                                                 |
-|-----------------------------|-----------------------------------------------------------------------------|
-| **Editor**                  | nvim 0.11.0                                                                |
-| **Shell**                   | fish 4.0.2                                                                 |
- | **Terminal**                | tmux 3.3a                                                                  |
- | **Window Manager**          | Sway 1.7 (Wayland)                                                         |
- | **Login Manager**           | login (TTY)                                                                |
- | **Packages**                | 2750 (dpkg), 17 (flatpak)                                                  |
- | **Init System**             | systemd 252.36-1~deb12u1                                                   |
- | **Operating System**        | Debian GNU/Linux 12 (bookworm) x86_64                                      |
- | **Kernel**                  | Linux 6.1.0-33-amd64                                                       |
- | **BIOS (UEFI)**             | X540UP.314 (5.12)                                                          |
- | **Memory**                  | 3.05 GiB / 7.64 GiB (40%)                                                  |
- | **Physical Disk**           | ATA KINGSTON SA400S3: 223.57 GiB [SSD, Fixed]                              |
- | **CPU**                     | Intel(R) Core(TM) i3-7100U (4) @ 2.40 GHz                                  |
- | **GPU 1**                   | AMD Radeon HD 8500M [Discrete]                                             |
- | **GPU 2**                   | Intel HD Graphics 620 @ 1.00 GHz [Integrated]                              |
- | **Keyboard**                | AT Translated Set 2 keyboard                                               |
- | **Display**                 | BOE069C: 1920x1080 @ 60 Hz in 15" [Built-in]                               |
- | **Locale**                  | en_PH.UTF-8                                                                |
- | **Version**                 | fastfetch 2.41.0 (x86_64)                                                  |
-
-
-
 ### tech stack
 
 <img src="https://github.com/odin-lang/Odin/blob/master/misc/logo-slim.png" height="30" alt="Odin Logo"> <img src="https://upload.wikimedia.org/wikipedia/commons/thumb/0/05/Go_Logo_Blue.svg/330px-Go_Logo_Blue.svg.png" height="30" alt="Go Logo"> <img src="https://upload.wikimedia.org/wikipedia/commons/thumb/c/c3/Python-logo-notext.svg/115px-Python-logo-notext.svg.png" height="30" alt="Python Logo"> <img src="https://upload.wikimedia.org/wikipedia/commons/thumb/4/4b/Bash_Logo_Colored.svg/512px-Bash_Logo_Colored.svg.png" height="30" alt="Bash Logo"> <img src="https://upload.wikimedia.org/wikipedia/commons/thumb/c/cf/Lua-Logo.svg/250px-Lua-Logo.svg.png" height="30" alt="Lua Logo">
@@ -49,6 +25,30 @@ i watch everything at 2.5x speed
 
 ### security
 <img src="https://play-lh.googleusercontent.com/-jz18EgBYlmeHlnsq_iltq6uLnYFtXAVR_gi_d0qEj0pANQ1MtrJIstJoCQtImlWKwc=s96" alt="Bitwarden Logo" height="30"> <img src="https://play-lh.googleusercontent.com/jl_cSsom5TPkeF2bvupXW1Tgq-Vj9v8GzSixzVNzT4BG1CraSndlP_VANi5E5Ns2fw=s96" alt="Ente Auth Logo" height="30"> <img src="https://avatars.githubusercontent.com/u/7925881?s=200&v=4" alt="Veracrypt Logo" height="30"> <img src="https://upload.wikimedia.org/wikipedia/commons/thumb/8/8d/Signal-Logo.svg/250px-Signal-Logo.svg.png" alt="Signal Logo" height="30"> <img src="https://play-lh.googleusercontent.com/hferjPeJ9_aWi_r5t8L0qOAwU4ZWAyduYmRkYodJOylRKwOxPI_117GzVSkAnhaNOw=w480-h960" alt="Proton VPN Logo" height="30">
+
+### fastfetch
+
+| **Category**                | **Details**                                                                 |
+|-----------------------------|-----------------------------------------------------------------------------|
+| **Editor**                  | nvim 0.11.0                                                                |
+| **Shell**                   | fish 4.0.2                                                                 |
+ | **Terminal**                | tmux 3.3a                                                                  |
+ | **Window Manager**          | Sway 1.7 (Wayland)                                                         |
+ | **Login Manager**           | login (TTY)                                                                |
+ | **Packages**                | 2750 (dpkg), 17 (flatpak)                                                  |
+ | **Init System**             | systemd 252.36-1~deb12u1                                                   |
+ | **Operating System**        | Debian GNU/Linux 12 (bookworm) x86_64                                      |
+ | **Kernel**                  | Linux 6.1.0-33-amd64                                                       |
+ | **BIOS (UEFI)**             | X540UP.314 (5.12)                                                          |
+ | **Memory**                  | 3.05 GiB / 7.64 GiB (40%)                                                  |
+ | **Physical Disk**           | ATA KINGSTON SA400S3: 223.57 GiB [SSD, Fixed]                              |
+ | **CPU**                     | Intel(R) Core(TM) i3-7100U (4) @ 2.40 GHz                                  |
+ | **GPU 1**                   | AMD Radeon HD 8500M [Discrete]                                             |
+ | **GPU 2**                   | Intel HD Graphics 620 @ 1.00 GHz [Integrated]                              |
+ | **Keyboard**                | AT Translated Set 2 keyboard                                               |
+ | **Display**                 | BOE069C: 1920x1080 @ 60 Hz in 15" [Built-in]                               |
+ | **Locale**                  | en_PH.UTF-8                                                                |
+ | **Version**                 | fastfetch 2.41.0 (x86_64)                                                  |
 
 <!--
 <img src="" alt=" Logo" height="30">
