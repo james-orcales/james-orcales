@@ -1,5 +1,10 @@
 # NERD CORNER
 
+![A screenshot of a linux desktop rice](https://github.com/user-attachments/assets/13b5b805-04bc-43b7-8006-84fa74d2c1f1)
+
+*Wallpaper Artist: FAR on Behance*
+
+
 ### tech stack
 
 <img src="https://github.com/odin-lang/Odin/blob/master/misc/logo-slim.png" height="30" alt="Odin Logo"> <img src="https://upload.wikimedia.org/wikipedia/commons/thumb/0/05/Go_Logo_Blue.svg/330px-Go_Logo_Blue.svg.png" height="30" alt="Go Logo"> <img src="https://upload.wikimedia.org/wikipedia/commons/thumb/c/c3/Python-logo-notext.svg/115px-Python-logo-notext.svg.png" height="30" alt="Python Logo"> <img src="https://upload.wikimedia.org/wikipedia/commons/thumb/4/4b/Bash_Logo_Colored.svg/512px-Bash_Logo_Colored.svg.png" height="30" alt="Bash Logo"> <img src="https://upload.wikimedia.org/wikipedia/commons/thumb/c/cf/Lua-Logo.svg/250px-Lua-Logo.svg.png" height="30" alt="Lua Logo">
@@ -8,11 +13,7 @@
 
 ### dev setup
 
-<img src="https://raw.githubusercontent.com/github/explore/26674e638508ac4a4e113ee32d6755ebfa000569/topics/neovim/neovim.png" height="30" alt="Neovim Logo"> <img src="https://www.zsa.io/cdn-cgi/image/width=180,quality=80,format=auto/@voyager/images/navbar/voyager-logo.webp" height="30" alt="ZSA Voyager Logo"> <img src="https://upload.wikimedia.org/wikipedia/commons/thumb/6/66/Openlogo-debianV2.svg/230px-Openlogo-debianV2.svg.png" height="30" alt="Debian Logo"> <img src="https://raw.githubusercontent.com/junegunn/i/master/fzf.png" alt="FZF Logo" height="30"> <img src="https://user-images.githubusercontent.com/25829/59462189-2cd06380-8df1-11e9-9ec8-d091584230d5.png" alt="Fish Shell Logo" height="30"> <img src="https://github.com/user-attachments/assets/78cf2ac4-ea76-4865-8d0d-05ae7f75bf8f" alt="LazyGit Logo" height="30"> <img src="https://upload.wikimedia.org/wikipedia/commons/thumb/e/e4/Tmux_logo.svg/608px-Tmux_logo.svg.png" height="30" alt="Tmux Logo"> <img src="https://upload.wikimedia.org/wikipedia/commons/thumb/9/90/Alacritty_logo.svg/270px-Alacritty_logo.svg.png" height="30" alt="Alacritty Logo">
-
-
-
-
+<img src="https://raw.githubusercontent.com/github/explore/26674e638508ac4a4e113ee32d6755ebfa000569/topics/neovim/neovim.png" height="30" alt="Neovim Logo"> <img src="https://www.zsa.io/cdn-cgi/image/width=180,quality=80,format=auto/@voyager/images/navbar/voyager-logo.webp" height="30" alt="ZSA Voyager Logo"> <img src="https://upload.wikimedia.org/wikipedia/commons/thumb/6/66/Openlogo-debianV2.svg/230px-Openlogo-debianV2.svg.png" height="30" alt="Debian Logo"> <img src="https://raw.githubusercontent.com/junegunn/i/master/fzf.png" alt="FZF Logo" height="30"> <img src="https://user-images.githubusercontent.com/25829/59462189-2cd06380-8df1-11e9-9ec8-d091584230d5.png" alt="Fish Shell Logo" height="30"> <img src="https://github.com/user-attachments/assets/78cf2ac4-ea76-4865-8d0d-05ae7f75bf8f" alt="LazyGit Logo" height="30"> <img src="https://upload.wikimedia.org/wikipedia/commons/thumb/e/e4/Tmux_logo.svg/608px-Tmux_logo.svg.png" height="30" alt="Tmux Logo"> <img src="https://github.com/user-attachments/assets/32b94af1-6adb-4cb1-a2ba-3089f89af3b2" alt="SwayWM Logo" height="30"> <img src="https://upload.wikimedia.org/wikipedia/commons/thumb/9/90/Alacritty_logo.svg/270px-Alacritty_logo.svg.png" height="30" alt="Alacritty Logo">
 
 - **Keyboard Layout** - [Colejak](https://github.com/james-orcales/colejak)
 - **Font** - [Hermit by pcaro90](https://github.com/pcaro90/hermit)
