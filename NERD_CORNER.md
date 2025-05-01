@@ -4,6 +4,29 @@
 
 *Wallpaper Artist: FAR on Behance*
 
+| **Category**                | **Details**                                                                 |
+|-----------------------------|-----------------------------------------------------------------------------|
+| **Editor**                  | nvim 0.11.0                                                                |
+| **Shell**                   | fish 4.0.2                                                                 |
+ | **Terminal**                | tmux 3.3a                                                                  |
+ | **Window Manager**          | Sway 1.7 (Wayland)                                                         |
+ | **Login Manager**           | login (TTY)                                                                |
+ | **Packages**                | 2750 (dpkg), 17 (flatpak)                                                  |
+ | **Init System**             | systemd 252.36-1~deb12u1                                                   |
+ | **Operating System**        | Debian GNU/Linux 12 (bookworm) x86_64                                      |
+ | **Kernel**                  | Linux 6.1.0-33-amd64                                                       |
+ | **BIOS (UEFI)**             | X540UP.314 (5.12)                                                          |
+ | **Memory**                  | 3.05 GiB / 7.64 GiB (40%)                                                  |
+ | **Physical Disk**           | ATA KINGSTON SA400S3: 223.57 GiB [SSD, Fixed]                              |
+ | **CPU**                     | Intel(R) Core(TM) i3-7100U (4) @ 2.40 GHz                                  |
+ | **GPU 1**                   | AMD Radeon HD 8500M [Discrete]                                             |
+ | **GPU 2**                   | Intel HD Graphics 620 @ 1.00 GHz [Integrated]                              |
+ | **Keyboard**                | AT Translated Set 2 keyboard                                               |
+ | **Display**                 | BOE069C: 1920x1080 @ 60 Hz in 15" [Built-in]                               |
+ | **Locale**                  | en_PH.UTF-8                                                                |
+ | **Version**                 | fastfetch 2.41.0 (x86_64)                                                  |
+
+
 
 ### tech stack
 
