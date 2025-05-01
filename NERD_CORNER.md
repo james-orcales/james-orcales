@@ -8,7 +8,10 @@
 
 ### dev setup
 
-<img src="https://raw.githubusercontent.com/github/explore/26674e638508ac4a4e113ee32d6755ebfa000569/topics/neovim/neovim.png" height="30" alt="Neovim Logo"> <img src="https://www.zsa.io/cdn-cgi/image/width=180,quality=80,format=auto/@voyager/images/navbar/voyager-logo.webp" height="30" alt="ZSA Voyager Logo"> <img src="https://upload.wikimedia.org/wikipedia/commons/thumb/6/66/Openlogo-debianV2.svg/230px-Openlogo-debianV2.svg.png" height="30" alt="Debian Logo"> <img src="https://raw.githubusercontent.com/junegunn/i/master/fzf.png" alt="FZF Logo" height="30"> <img src="https://user-images.githubusercontent.com/25829/59462189-2cd06380-8df1-11e9-9ec8-d091584230d5.png" alt="Fish Shell Logo" height="30"> <img src="https://upload.wikimedia.org/wikipedia/commons/thumb/e/e4/Tmux_logo.svg/608px-Tmux_logo.svg.png" height="30" alt="Tmux Logo"> <img src="https://upload.wikimedia.org/wikipedia/commons/thumb/9/90/Alacritty_logo.svg/270px-Alacritty_logo.svg.png" height="30" alt="Alacritty Logo"> 
+<img src="https://raw.githubusercontent.com/github/explore/26674e638508ac4a4e113ee32d6755ebfa000569/topics/neovim/neovim.png" height="30" alt="Neovim Logo"> <img src="https://www.zsa.io/cdn-cgi/image/width=180,quality=80,format=auto/@voyager/images/navbar/voyager-logo.webp" height="30" alt="ZSA Voyager Logo"> <img src="https://upload.wikimedia.org/wikipedia/commons/thumb/6/66/Openlogo-debianV2.svg/230px-Openlogo-debianV2.svg.png" height="30" alt="Debian Logo"> <img src="https://raw.githubusercontent.com/junegunn/i/master/fzf.png" alt="FZF Logo" height="30"> <img src="https://user-images.githubusercontent.com/25829/59462189-2cd06380-8df1-11e9-9ec8-d091584230d5.png" alt="Fish Shell Logo" height="30"> <img src="https://github.com/user-attachments/assets/78cf2ac4-ea76-4865-8d0d-05ae7f75bf8f" alt="LazyGit Logo" height="30"> <img src="https://upload.wikimedia.org/wikipedia/commons/thumb/e/e4/Tmux_logo.svg/608px-Tmux_logo.svg.png" height="30" alt="Tmux Logo"> <img src="https://upload.wikimedia.org/wikipedia/commons/thumb/9/90/Alacritty_logo.svg/270px-Alacritty_logo.svg.png" height="30" alt="Alacritty Logo">
+
+
+
 
 
 - **Keyboard Layout** - [Colejak](https://github.com/james-orcales/colejak)
