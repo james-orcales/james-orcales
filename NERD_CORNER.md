@@ -1,6 +1,6 @@
 # NERD CORNER
 
-![A screenshot of a linux desktop rice](https://github.com/user-attachments/assets/13b5b805-04bc-43b7-8006-84fa74d2c1f1)
+![image](https://github.com/user-attachments/assets/5ee0e83f-ceb5-4cfc-b59a-901ba23fe937)
 
 *Wallpaper Artist: FAR on Behance*
 
