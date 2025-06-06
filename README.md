@@ -14,6 +14,3 @@ i like going down rabbit holes so here i am
 
 
 See all of my tech essentials over at [NERD_CORNER.md](https://github.com/james-orcales/james-orcales/blob/main/NERD_CORNER.md)
-
-[sige]: https://github.com/james-orcales/sige
-[colejak]: https://github.com/james-orcales/colejak
