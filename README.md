@@ -1,10 +1,6 @@
 # James Orcales
 
-My journey in software development began with Python Codewars. It blossomed into a deep, self-driven, borderline-sensual dive into the fundamentals of CS—encompassing ML, web dev, operating systems, and compiler design. Today, I leverage my analytical prowess to navigate the intricacies of YAML linting and wrestle misaligned colons into submission professionally.
-
-### projects
-- [Sige (Programming Language)][sige] - A reimagining of Go's simplicity model, offering enhanced control over memory and performance, with first-class language constructs for enforcing semantic correctness.
-- [Colejak][colejak] - An ANSI Colemak-DH derivative optimized for the ZSA Voyager & Lily58.
+i like going down rabbit holes so here i am
 
 ### tech stack
 
