@@ -1,4 +1,4 @@
-# James Orcales
+# Danzig James A. Orcales
 
 i like going down rabbit holes so here i am
 
