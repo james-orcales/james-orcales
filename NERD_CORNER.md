@@ -1,16 +1,10 @@
 # NERD CORNER
 
-![image](https://github.com/user-attachments/assets/5ee0e83f-ceb5-4cfc-b59a-901ba23fe937)
-
-*Wallpaper Artist: FAR on Behance*
-
 ### tech stack
 
 <img src="https://github.com/odin-lang/Odin/blob/master/misc/logo-slim.png" height="30" alt="Odin Logo"> <img src="https://upload.wikimedia.org/wikipedia/commons/thumb/0/05/Go_Logo_Blue.svg/330px-Go_Logo_Blue.svg.png" height="30" alt="Go Logo"> <img src="https://upload.wikimedia.org/wikipedia/commons/thumb/c/c3/Python-logo-notext.svg/115px-Python-logo-notext.svg.png" height="30" alt="Python Logo"> <img src="https://upload.wikimedia.org/wikipedia/commons/thumb/4/4b/Bash_Logo_Colored.svg/512px-Bash_Logo_Colored.svg.png" height="30" alt="Bash Logo"> <img src="https://upload.wikimedia.org/wikipedia/commons/thumb/c/cf/Lua-Logo.svg/250px-Lua-Logo.svg.png" height="30" alt="Lua Logo">
 
 <img src="https://upload.wikimedia.org/wikipedia/commons/7/70/Docker_logo.png" height="30" alt="Docker Logo"> <img src="https://upload.wikimedia.org/wikipedia/commons/thumb/9/93/Amazon_Web_Services_Logo.svg/512px-Amazon_Web_Services_Logo.svg.png" height="30" alt="AWS Logo"> <img src="https://upload.wikimedia.org/wikipedia/commons/thumb/2/29/Postgresql_elephant.svg/540px-Postgresql_elephant.svg.png" height="30" alt="PostgreSQL Logo"> <img src="https://upload.wikimedia.org/wikipedia/commons/thumb/3/38/SQLite370.svg/382px-SQLite370.svg.png" height="30" alt="SQLite Logo"> 
-
-![languages](https://github-readme-stats.vercel.app/api/top-langs/?username=james-orcales&layout=compact&theme=dark)
 
 ### dev setup
 
