@@ -4,7 +4,8 @@ i like going down rabbit holes so here i am
 
 ### Programming Languages
 
-<img src="https://github.com/odin-lang/Odin/blob/master/misc/logo-slim.png" height="30" alt="Odin Logo"> <img src="https://upload.wikimedia.org/wikipedia/commons/thumb/0/05/Go_Logo_Blue.svg/330px-Go_Logo_Blue.svg.png" height="30" alt="Go Logo"> <img src="https://upload.wikimedia.org/wikipedia/commons/thumb/c/cf/Lua-Logo.svg/250px-Lua-Logo.svg.png" height="30" alt="Lua Logo"> <img src="https://upload.wikimedia.org/wikipedia/commons/thumb/4/4b/Bash_Logo_Colored.svg/512px-Bash_Logo_Colored.svg.png" height="30" alt="Bash Logo"> <img src="https://upload.wikimedia.org/wikipedia/commons/thumb/c/c3/Python-logo-notext.svg/115px-Python-logo-notext.svg.png" height="30" alt="Python Logo"> 
+<img src="https://github.com/odin-lang/Odin/blob/master/misc/logo-slim.png" height="30" alt="Odin Logo"> <img height="30" alt="Rust (Programming Language) Logo" src="https://github.com/user-attachments/assets/56d5eba0-0c60-40d2-9000-842cc7330d19" /> <img src="https://upload.wikimedia.org/wikipedia/commons/thumb/0/05/Go_Logo_Blue.svg/330px-Go_Logo_Blue.svg.png" height="30" alt="Go Logo"> <img src="https://upload.wikimedia.org/wikipedia/commons/thumb/c/cf/Lua-Logo.svg/250px-Lua-Logo.svg.png" height="30" alt="Lua Logo"> <img src="https://upload.wikimedia.org/wikipedia/commons/thumb/4/4b/Bash_Logo_Colored.svg/512px-Bash_Logo_Colored.svg.png" height="30" alt="Bash Logo"> <img src="https://upload.wikimedia.org/wikipedia/commons/thumb/c/c3/Python-logo-notext.svg/115px-Python-logo-notext.svg.png" height="30" alt="Python Logo"> 
+
 
 ### Developer Setup
 <img src="https://raw.githubusercontent.com/github/explore/26674e638508ac4a4e113ee32d6755ebfa000569/topics/neovim/neovim.png" height="30" alt="Neovim Logo"> <img height="30" alt="VS Code (Debugger)" src="https://github.com/user-attachments/assets/940cf646-7707-4c17-83fb-6592fcf84c01" />
