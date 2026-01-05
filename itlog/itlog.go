@@ -2,6 +2,7 @@ package itlog
 
 import (
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"reflect"
