@@ -4,7 +4,12 @@ package invariant
 
 import (
 	"iter"
+	"testing"
 )
+
+func RunTestMain(m *testing.M, dirs ...string) {
+	m.Run()
+}
 
 func registerAssertion() {
 }
@@ -20,7 +25,7 @@ type _Number interface {
 		~uint | ~uint8 | ~uint16 | ~uint32 | ~uint64
 }
 
-func Until[T _Number](_ T) iter.Seq[T] {
+func Until[T _Number](_ T) iter.Seq[int] {
 	return func(yield func(int) bool) {
 		iteration := 0
 		for {
@@ -42,9 +47,6 @@ func Sometimes(ok bool, msg string) {
 }
 
 func Always(cond bool, msg string) {
-}
-
-func AlwaysNil(x any, msg string) {
 }
 
 func AlwaysErrIs(actual error, targets []error, msg string) {

@@ -61,34 +61,14 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"testing"
 )
 
-const (
-	// This library minimizes heap allocations by preferring fixed-size backing arrays for
-	// slices. These values determine the size of those arrays and should accommodate typical
-	// codebases without frequent resizing.
-	leastExercisedInvariantCount = 10
-	// maxAssertionsPerPackage is the maximum number of Sometimes, XSometimes, Always*,
-	// XAlways*, and Ensure calls in a single package.
-	maxAssertionsPerPackage = 2048
-	maxGoFilesPerPackage    = 1024
-	maxFilePath             = 260
-	maxFileLines            = 5 // In digits (99,999 lines)
-	assertionIDLength       = maxFilePath + 1 + maxFileLines
-)
-
-var (
-	// packagesToAnalyze defaults to the current testing package.
-	packagesToAnalyze = []string{"."}
-	// assertionTracker globally tracks true assertions inside packagesToAnalyze.
-	assertionTracker        = make(map[string]*metadata, maxAssertionsPerPackage*len(packagesToAnalyze))
-	assertionFrequencyMutex = sync.Mutex{}
-)
-
-type metadata struct {
-	Frequency int
-	Message   string
-	Kind      string
+func RunTestMain(m *testing.M, dirs ...string) {
+	RegisterPackagesForAnalysis(dirs...)
+	code := m.Run()
+	AnalyzeAssertionFrequency()
+	os.Exit(code)
 }
 
 // registerAssertion records in the package-global assertion tracker that an
@@ -124,21 +104,20 @@ func registerAssertion() {
 	assertionFrequencyMutex.Unlock()
 }
 
-// RegisterPackagesForAnalysis ensures that only assertions from the tested
-// directories are tracked for frequency analysis. Dirs is relative to the
-// directory of the caller.
+// RegisterPackagesForAnalysis ensures that only assertions from the tested directories are tracked
+// for frequency analysis. Dirs is relative to the directory of the caller.
 //
 // NOTE: All assertions must have their last parameter be the message parameter
 //
-// NOTE: During fuzzing or benchmarking, assertion tracking is disabled because
-// worker processes handle assertions in separate memory spaces. Any registrations
-// done there are not synchronized back to the parent test runner
+// NOTE: During fuzzing or benchmarking, assertion tracking is disabled because worker processes
+// handle assertions in separate memory spaces. Any registrations done there are not synchronized
+// back to the parent test runner
 //
-// NOTE: Tracking assertions during fuzzing can help gauge how thoroughly your fuzzer exercises the code.
-// However, since this implementation tracks assertions at the package level—and most fuzz tests
-// focus on specific functions—this is generally sufficient. Full assertion tracking is mainly
-// useful when simulating the entire program; in that case, using a dedicated script, unit test,
-// or custom fuzz harness is more appropriate.
+// NOTE: Tracking assertions during fuzzing can help gauge how thoroughly your fuzzer exercises the
+// code. However, since this implementation tracks assertions at the package level—and most fuzz
+// tests focus on specific functions—this is generally sufficient. Full assertion tracking is mainly
+// useful when simulating the entire program; in that case, using a dedicated script, unit test, or
+// custom fuzz harness is more appropriate.
 //
 // PERF: Create an instrumentation tool that hardcodes assertion source location, drastically
 // improving registration performance at runtime. This enables assertion tracking in fuzz testing.
@@ -166,15 +145,15 @@ func RegisterPackagesForAnalysis(dirs ...string) {
 	for _, dir := range packagesToAnalyze {
 		before := len(files)
 		err := filepath.WalkDir(dir, func(path string, d os.DirEntry, err error) error {
-			if err != nil || d.IsDir() || filepath.Ext(path) != ".go" {
+			if d.IsDir() && path != dir {
+				return filepath.SkipDir
+			}
+			if err != nil || filepath.Ext(path) != ".go" {
 				return err
 			}
 			path, err = filepath.Abs(path)
 			if err != nil {
 				return err
-			}
-			if d.IsDir() && path != dir {
-				return filepath.SkipDir
 			}
 			if len(path) > len("_test.go") && strings.HasSuffix(path, "_test.go") {
 				return nil
@@ -222,15 +201,15 @@ func RegisterPackagesForAnalysis(dirs ...string) {
 				}
 				msg := ""
 				switch sel.Sel.Name {
-				case "Sometimes", "XSometimes", "Ensure", "Always", "AlwaysNil", "AlwaysErrIs", "AlwaysErrIsNot",
-					"XAlways", "XAlwaysNil", "XAlwaysErrIs", "XAlwaysErrIsNot":
+				case "Sometimes", "XSometimes", "Ensure", "Always", "AlwaysErrIs", "AlwaysErrIsNot",
+					"XAlways", "XAlwaysErrIs", "XAlwaysErrIsNot":
 					pos := fset.Position(call.Lparen)
 					key := path + ":" + strconv.Itoa(pos.Line)
 					Always(len(call.Args) >= 2, "All assertions have at least two parameters")
 					literal, ok := call.Args[len(call.Args)-1].(*ast.BasicLit)
 					// TODO: include location
-					Always(ok, "The last parameter is the assertion message")
-					Always(literal.Kind == token.STRING, "The assertion message is a string literal")
+					Always(ok, "The assertion message is a pure string literal")
+					Always(literal.Kind == token.STRING, "The assertion message is a pure string literal")
 					msg = literal.Value[1 : len(literal.Value)-1] // remove quotes
 
 					assertionTracker[key] = &metadata{
@@ -246,10 +225,9 @@ func RegisterPackagesForAnalysis(dirs ...string) {
 	wg.Wait()
 }
 
-// AnalyzeAssertionFrequency scans the given directories for Sometimes, Always*,
-// XAlways* calls that have never evaluated to true and returns their source
-// locations and respective messages. To see the stats, enable verbosity with
-// `go test ./foo -v`
+// AnalyzeAssertionFrequency scans the given directories for Sometimes, Always*, XAlways* calls that
+// have never evaluated to true and returns their source locations and respective messages. To see
+// the stats, enable verbosity with `go test ./foo -v`
 //
 // Usage:
 //
@@ -257,8 +235,8 @@ func RegisterPackagesForAnalysis(dirs ...string) {
 //		invariant.RunTestMain(m)
 //	}
 //
-// It is critical that you import this package under the name "invariant" as it
-// is hardcoded in the analyzer to look for this identifier.
+// It is critical that you import this package under the name "invariant" as it is hardcoded in the
+// analyzer to look for this identifier.
 func AnalyzeAssertionFrequency() {
 	Always(IsRunningUnderGoTest, "AnalyzeAssertionFrequency is only used for testing")
 	Always(len(packagesToAnalyze) > 0, "At least one package was registered for analysis")
@@ -278,13 +256,21 @@ func AnalyzeAssertionFrequency() {
 		}
 	}
 	if len(missed) > 0 {
+		prefix := ""
+		if !INVARIANT_FULL_LOCATION {
+			wd, err := os.Getwd()
+			if err != nil {
+				panic(err)
+			}
+			prefix = filepath.Dir(wd)
+		}
 		fmt.Printf("🚨 %d assertions were never true. 🚨\n", len(missed))
 		for _, id := range missed {
 			fmt.Printf(
 				"\t%*s | %-*s | %s\n",
 				longestKindWord, assertionTracker[id].Kind,
 				longestMessageLength, assertionTracker[id].Message,
-				id,
+				strings.TrimPrefix(id, prefix),
 			)
 		}
 		os.Exit(1)
@@ -292,10 +278,9 @@ func AnalyzeAssertionFrequency() {
 
 	// === Analysis ===
 	//
-	// This is a very simple and “dumb” analysis based solely on absolute
-	// assertion frequency. It does not attempt to correlate assertions with
-	// specific unit tests or cluster them with each other; any attempt to
-	// do so is futile. For that kind of analysis, you’d need
+	// This is a very simple and “dumb” analysis based solely on absolute assertion frequency.
+	// It does not attempt to correlate assertions with specific unit tests or cluster them with
+	// each other; any attempt to do so is futile. For that kind of analysis, you’d need
 	// instrumentation/static analysis combined with machine learning.
 	{
 		type scored struct {
@@ -364,8 +349,9 @@ func AnalyzeAssertionFrequency() {
 //
 // Note 1: If you need Always(item == nil), use AlwaysNil(item) instead.
 //
-// Note 2: When deferring assertions, enclose them in a closure. Otherwise, cond
-// is evaluated immediately.
+// Note 2: When deferring assertions, wrap them in a closure. Otherwise, cond is evaluated
+// immediately. Also, deferring the assertion call without a wrapper closure changes the source
+// location for runtime.Callers
 //
 //	// Correct: deferred assertion evaluates cond later
 //	defer func() { invariant.Always(x > 0, "x must be positive") }()
@@ -373,11 +359,10 @@ func AnalyzeAssertionFrequency() {
 //	// Incorrect: cond evaluated immediately
 //	defer invariant.Always(x > 0, "x must be positive")
 //
-// Note 3: The analyzer tracks assertions by source line, so multiple assertions
-// on the same line via loops are treated as a single assertion. However, its
-// frequency counter increments on every evaluation. To avoid inflating
-// frequency statistics, wrap the loop in a closure that returns a single bool,
-// so the assertion is evaluated once for the aggregate condition.
+// Note 3: The analyzer tracks assertions by source line, so multiple assertions on the same line
+// via loops are treated as a single assertion. However, its frequency counter increments on every
+// evaluation. To avoid inflating frequency statistics, wrap the loop in a closure that returns a
+// single bool, so the assertion is evaluated once for the aggregate condition.
 //
 //	// Aggregate check over a loop
 //	invariant.Always(func() bool {
@@ -394,18 +379,16 @@ func Always(cond bool, msg string) {
 	if cond {
 		registerAssertion()
 	} else {
-		assertionFailureCallback(fmt.Sprintf("%s: %s\n", AssertionFailureMsgPrefix, msg))
+		assertionFailureCallback(fmt.Sprintf("%s: %s", AssertionFailureMsgPrefix, msg))
 	}
 }
 
-// Sometimes records that a condition was true at least once throughout the test
-// run. It only has an effect in test environments; outside of tests it is a
-// no-op.
+// Sometimes records that a condition was true at least once throughout the test run. It only has an
+// effect in test environments; outside of tests it is a no-op.
 //
-// Technically, the term "invariant.Sometimes" is a misnomer. It's more accurately
-// described as a property check. But I wanted to name this library "invariant"
-// instead of "assert" or "property" for better grep-ability... maybe also
-// because it sounds cool.
+// Technically, the term "invariant.Sometimes" is a misnomer. It's more accurately described as a
+// property check. But I wanted to name this library "invariant" instead of "assert" or "property"
+// for better grep-ability... maybe also because it sounds cool.
 //
 //go:noinline
 func Sometimes(ok bool, msg string) {
@@ -415,22 +398,8 @@ func Sometimes(ok bool, msg string) {
 	registerAssertion()
 }
 
-// AlwaysNil calls assertionFailureCallback if x is NOT nil and prints the
-// non-null object. Prefer this over Always(x == nil) so that the value of x can
-// be logged.
-//
-//go:noinline
-func AlwaysNil(x interface{}, msg string) {
-	if x == nil {
-		registerAssertion()
-	} else {
-		assertionFailureCallback(fmt.Sprintf("%s: expected nil. got %v. %s\n", AssertionFailureMsgPrefix, x, msg))
-	}
-}
-
-// AlwaysErrIs calls assertionFailureCallback if actual is NOT one of the
-// specified targets. Must provide at least one target. All targets must not be
-// nil.
+// AlwaysErrIs calls assertionFailureCallback if actual is NOT one of the specified targets. Must
+// provide at least one target. All targets must not be nil.
 //
 //go:noinline
 func AlwaysErrIs(actual error, targets []error, msg string) {
@@ -442,7 +411,7 @@ func AlwaysErrIs(actual error, targets []error, msg string) {
 			return
 		}
 	}
-	assertionFailureCallback(fmt.Sprintf("%s: error did not match any targets. got %q. %s\n", AssertionFailureMsgPrefix, actual, msg))
+	assertionFailureCallback(fmt.Sprintf("%s: error did not match any targets. got %q. %s", AssertionFailureMsgPrefix, actual, msg))
 }
 
 // AlwaysErrIsNot calls assertionFailureCallback if actual is one of the
@@ -455,7 +424,7 @@ func AlwaysErrIsNot(actual error, targets []error, msg string) {
 	for _, t := range targets {
 		Always(t != nil, "invariant.AlwaysErrIsNot() targets must not be nil")
 		if errors.Is(actual, t) {
-			assertionFailureCallback(fmt.Sprintf("%s: error unexpectedly matched a target. got %q. %s\n", AssertionFailureMsgPrefix, actual, msg))
+			assertionFailureCallback(fmt.Sprintf("%s: error unexpectedly matched a target. got %q. %s", AssertionFailureMsgPrefix, actual, msg))
 			return
 		}
 	}
@@ -508,10 +477,10 @@ func Until[T _Number](limit T) iter.Seq[int] {
 
 //go:noinline
 func Unimplemented(msg string) {
-	assertionFailureCallback(fmt.Sprintf("%s: %s\n", AssertionFailureMsgPrefix, msg))
+	assertionFailureCallback(fmt.Sprintf("%s: %s", AssertionFailureMsgPrefix, msg))
 }
 
 //go:noinline
 func Unreachable(msg string) {
-	assertionFailureCallback(fmt.Sprintf("%s: %s\n", AssertionFailureMsgPrefix, msg))
+	assertionFailureCallback(fmt.Sprintf("%s: %s", AssertionFailureMsgPrefix, msg))
 }

@@ -23,6 +23,8 @@ build tag.
 
 Be wary of this if you rely on side effects produced by fn. Rule of thumb would
 be to ensure that fn is pure or idempotent.
+
+Lastly, remember to wrap these functions in a closure when deferring them. Refer to invariant.Always
 */
 //go:noinline
 func XAlways(fn func() bool, msg string) {
@@ -39,18 +41,6 @@ func XSometimes(fn func() bool, msg string) {
 		return
 	}
 	registerAssertion()
-}
-
-// XAlwaysNil evaluates fn and calls assertionFailureCallback if the result is not nil.
-//
-//go:noinline
-func XAlwaysNil(fn func() interface{}, msg string) {
-	x := fn()
-	if x == nil {
-		registerAssertion()
-	} else {
-		assertionFailureCallback(fmt.Sprintf("%s: expected nil. got %v. %s\n", AssertionFailureMsgPrefix, x, msg))
-	}
 }
 
 // XAlwaysErrIs evaluates fn and calls assertionFailureCallback if the returned error is not in targets.
