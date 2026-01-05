@@ -1,5 +1,6 @@
-//go:build darwin
+//go:build darwin && !sim.virtual_time
 
+// WARN: This package is pre-alpha.
 package sim
 
 /*
@@ -8,20 +9,31 @@ package sim
 import "C"
 import (
 	"sync"
-	"time"
+	"sync/atomic"
 	stdtime "time"
 
-	"github.com/james-orcales/golang_snacks/invariant"
+	"github.com/james-orcales/golang_snacks/spawn"
 )
 
+var timebase C.mach_timebase_info_data_t
+
 func init() {
-	code := C.mach_timebase_info(&timebase)
-	if code != 0 {
-		panic("mach_timebase_info failed")
-	}
+	initTimebase()
 }
 
-type SystemTime struct {
+func initTimebase() {
+	sync.OnceFunc(func() {
+		code := C.mach_timebase_info(&timebase)
+		if code != 0 {
+			panic("mach_timebase_info failed")
+		}
+		if timebase.denom == 0 {
+			panic("mach_timebase_info initialized a zero denominator")
+		}
+	})()
+}
+
+type Time struct {
 	/*
 		Reference: https://github.com/tigerbeetle/tigerbeetle/blob/fff8abc12593e72629c95f3dfd3809ba18f4667f/src/time.zig
 
@@ -33,13 +45,56 @@ type SystemTime struct {
 			    monotonic_guard: u64 = 0,
 			    ...
 	*/
-	MonotonicGuard Moment
+	NowMonotonicGuard atomic.Int64
+
+	// === Unused ===
+
+	Mutex         sync.Mutex
+	GoroutinePool *spawn.Pool
+
+	NowAbsolute Moment
+
+	Yields      []Yield
+	YieldsCount int
+
+	FrozenThreshold     int
+	FrozenCheckInterval stdtime.Duration
+
+	Battery func()
+
+	EpochNowAbsolute  Moment
+	EpochNowMonotonic Moment
+
+	MonotonicClockResolution Duration
+	SystemClockResolution    Duration
+
+	Jump       Duration
+	JumpMin    Duration
+	JumpMax    Duration
+	JumpChance float32
+
+	NTPInterval Duration
+	NTPNext     Moment
+
+	SleepLatencyMin Duration
+	SleepLatencyMax Duration
 }
 
-var (
-	timebase C.mach_timebase_info_data_t
-	once     sync.Once
-)
+type Yield struct {
+	Resume     Moment
+	Goroutines []chan<- struct{}
+}
+
+func NewTime(_ *Time) *Time {
+	initTimebase()
+	res := &Time{}
+	res.NowMonotonic()
+	return res
+}
+
+func (t *Time) Main(main func()) {
+	main()
+}
 
 /*
 Reference: https://github.com/tigerbeetle/tigerbeetle/blob/fff8abc12593e72629c95f3dfd3809ba18f4667f/src/time.zig
@@ -66,25 +121,19 @@ Reference: https://github.com/tigerbeetle/tigerbeetle/blob/fff8abc12593e72629c95
 	    return (now * info.numer) / info.denom;
 	}
 */
-func (stime *SystemTime) Monotonic() Moment {
+func (t *Time) NowMonotonic() Moment {
 	ticks := C.mach_continuous_time()
-	ns := Moment((uint64(ticks) * uint64(timebase.numer)) / uint64(timebase.denom))
-	if ns < stime.MonotonicGuard {
-		panic("a hardware/kernel bug regressed the hardware t")
+	now := int64((uint64(ticks) * uint64(timebase.numer)) / uint64(timebase.denom))
+	before := t.NowMonotonicGuard.Swap(now)
+	if now < before {
+		panic("a hardware/kernel bug regressed the hardware time")
 	}
-	stime.MonotonicGuard = ns
-	return ns
+	return Moment(now)
 }
 
-func (stime *SystemTime) Realtime() Moment {
+func (t *Time) NowSystem() Moment {
 	return Moment(stdtime.Now().UnixNano())
 }
 
-func (stime *SystemTime) Sleep(duration Duration) {
-	invariant.Always(duration >= 0, "sleep duration must be a non-negative integer")
-	stdtime.Sleep(time.Duration(duration))
-}
-
-func (stime *SystemTime) Advance(lo Duration, hi Duration) {
-	// noop
-}
+func (t *Time) Propel(_ Duration) {}
+func (t *Time) Coast(_ Duration)  {}

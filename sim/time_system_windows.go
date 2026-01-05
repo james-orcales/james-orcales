@@ -1,8 +1,11 @@
-//go:build windows
+//go:build windows && !sim.virtual_time
 
+// WARN: This package is pre-alpha.
 package sim
 
-type SystemTime struct {
+import "sync/atomic"
+
+type Time struct {
 	/*
 		Reference: https://github.com/tigerbeetle/tigerbeetle/blob/fff8abc12593e72629c95f3dfd3809ba18f4667f/src/time.zig
 
@@ -14,7 +17,7 @@ type SystemTime struct {
 			    monotonic_guard: u64 = 0,
 			    ...
 	*/
-	MonotonicGuard Moment
+	MonotonicGuard atomic.Int64
 }
 
 /*

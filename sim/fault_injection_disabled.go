@@ -1,8 +1,6 @@
-//go:build !fault_injection
+//go:build !(sim || sim.fault_injection)
 
 package sim
-
-// TODO: Optionally make the fault injection return a real error message from the standard library.
 
 const (
 	FaultErrorPrefix = "Fault Injected: "
@@ -53,9 +51,11 @@ func AssertionFailureN(chance float32) {
 }
 
 func Bool() bool {
+	return false
 }
 
 func BoolN(chance float32) bool {
+	return false
 }
 
 func Err(err *error) error {

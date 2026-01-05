@@ -1,16 +1,17 @@
-//go:build linux
+//go:build linux && !sim.virtual_time
 
+// WARN: This package is pre-alpha.
 // WARN: I have not tested this yet!
 package sim
 
 import (
+	"sync"
+	"sync/atomic"
 	"syscall"
 	stdtime "time"
-
-	"github.com/james-orcales/golang_snacks/invariant"
 )
 
-type SystemTime struct {
+type Time struct {
 	/*
 		Reference: https://github.com/tigerbeetle/tigerbeetle/blob/fff8abc12593e72629c95f3dfd3809ba18f4667f/src/time.zig
 
@@ -22,7 +23,54 @@ type SystemTime struct {
 			    monotonic_guard: u64 = 0,
 			    ...
 	*/
-	MonotonicGuard Moment
+	MonotonicGuard atomic.Int64
+
+	// === Unused ===
+
+	Mutex         sync.Mutex
+	GoroutinePool *spawn.Pool
+
+	NowAbsolute Moment
+
+	Yields      []Yield
+	YieldsCount int
+
+	FrozenThreshold     int
+	FrozenCheckInterval stdtime.Duration
+
+	Battery func()
+
+	EpochNowAbsolute  Moment
+	EpochNowMonotonic Moment
+
+	MonotonicClockResolution Duration
+	SystemClockResolution    Duration
+
+	Jump       Duration
+	JumpMin    Duration
+	JumpMax    Duration
+	JumpChance float32
+
+	NTPInterval Duration
+	NTPNext     Moment
+
+	SleepLatencyMin Duration
+	SleepLatencyMax Duration
+}
+
+type Yield struct {
+	Resume     Moment
+	Goroutines []chan<- struct{}
+}
+
+func NewTime(_ *Time) *Time {
+	result := &Time{}
+	result.NowMonotonic()
+	return result
+}
+
+func (t *Time) Main(main func()) {
+	main()
 }
 
 /*
@@ -44,25 +92,20 @@ Reference: https://github.com/tigerbeetle/tigerbeetle/blob/fff8abc12593e72629c95
 	    return @as(u64, @intCast(ts.sec)) * std.time.ns_per_s + @as(u64, @intCast(ts.nsec));
 	}
 */
-func (stime *SystemTime) Monotonic() Moment {
+func (t *Time) NowMonotonic() Moment {
 	var ts syscall.Timespec
 	syscall.ClockGettime(0x7, &ts) // CLOCK_BOOTTIME = 0x7
-	ns := Moment(ts.Sec*Second + ts.Nsec)
-	if ns < t.MonotonicGuard {
-		panic("a hardware/kernel bug regressed the hardware t")
+	now := int64(ts.Sec*Second + ts.Nsec)
+	before := t.MonotonicGuard.Swap(now)
+	if now < before {
+		panic("a hardware/kernel bug regressed the hardware time")
 	}
-	stime.MonotonicGuard = ns
-	return ns
+	return Moment(now)
 }
 
-func (stime *SystemTime) Realtime() Moment {
+func (t *Time) NowSystem() Moment {
 	return Moment(stdtime.Now().UnixNano())
 }
 
-func (stime *SystemTime) Sleep(duration Duration) {
-	invariant.Always(duration >= 0, "sleep duration must be a non-negative integer")
-	stdtime.Sleep(stdtime.Duration(duration))
-}
-
-func (stime *SystemTime) Advance(lo Duration, hi Duration) {
-}
+func (t *Time) Propel(_ Duration) {}
+func (t *Time) Coast(_ Duration)  {}
