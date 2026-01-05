@@ -8,9 +8,10 @@ import (
 	"runtime"
 	"strings"
 	"sync"
+	"testing"
 
+	"github.com/james-orcales/golang_snacks/invariant"
 	"github.com/james-orcales/golang_snacks/myers"
-	"github.com/james-orcales/golang_snacks/xdebug"
 )
 
 const (
@@ -19,10 +20,10 @@ const (
 )
 
 type Snapshot struct {
-	Expect     string
-	FilePath   string
-	Line       int
-	ShouldEdit bool
+	ExpectedOutput string
+	FilePath       string
+	Line           int
+	ShouldEdit     bool
 }
 
 // WARN: Brittle under go:generate
@@ -32,9 +33,9 @@ func Init(data string) Snapshot {
 	frame, _ := runtime.CallersFrames(callers[:count]).Next()
 
 	return Snapshot{
-		Expect:   data,
-		FilePath: frame.File,
-		Line:     frame.Line,
+		ExpectedOutput: data,
+		FilePath:       frame.File,
+		Line:           frame.Line,
 	}
 }
 
@@ -44,10 +45,10 @@ func Edit(data string) Snapshot {
 	frame, _ := runtime.CallersFrames(callers[:count]).Next()
 
 	return Snapshot{
-		Expect:     data,
-		FilePath:   frame.File,
-		Line:       frame.Line,
-		ShouldEdit: true,
+		ExpectedOutput: data,
+		FilePath:       frame.File,
+		Line:           frame.Line,
+		ShouldEdit:     true,
 	}
 }
 
@@ -58,14 +59,31 @@ type FileEdit struct {
 var filesEdited = make(map[string][]FileEdit)
 var filesEditedMu = sync.Mutex{}
 
+func (snapshot Snapshot) Expect(t *testing.T, actual any) {
+	t.Helper()
+	if !snapshot.IsEqual(fmt.Sprint(actual)) {
+		t.FailNow()
+	}
+}
+
+func (snapshot Snapshot) ExpectPanic(t *testing.T, callback func()) {
+	t.Helper()
+	defer func() {
+		if r := recover(); r != nil && !snapshot.IsEqual(fmt.Sprint(r)) {
+			t.FailNow()
+		}
+	}()
+	callback()
+}
+
 func (snapshot Snapshot) IsEqual(actual string) (isEqual bool) {
-	assert(strings.Count(snapshot.Expect, "`") == 0, "Snapshot expected value does not contain backticks")
-	assert(strings.Count(actual, "`") == 0, "Snapshot actual value does not contain backticks")
-	assert(snapshot.Line > 1, "Go source have package declaration or comments in the first line")
-	assert(filepath.IsAbs(snapshot.FilePath), "Snapshot location is an absolute path")
+	invariant.Always(strings.Count(snapshot.ExpectedOutput, "`") == 0, "Snapshot expected value does not contain backticks")
+	invariant.Always(strings.Count(actual, "`") == 0, "Snapshot actual value does not contain backticks")
+	invariant.Always(snapshot.Line > 1, "Go source have package declaration or comments in the first line")
+	invariant.Always(filepath.IsAbs(snapshot.FilePath), "Snapshot location is an absolute path")
 
 	compileTimeLine := snapshot.Line
-	isEqual = actual == snapshot.Expect
+	isEqual = actual == snapshot.ExpectedOutput
 	if snapshot.ShouldEdit || os.Getenv(GLOBAL_EDIT_ENV) == GLOBAL_EDIT_ENV_ENABLE {
 		filesEditedMu.Lock()
 		defer filesEditedMu.Unlock()
@@ -98,14 +116,14 @@ func (snapshot Snapshot) IsEqual(actual string) (isEqual bool) {
 					end = i
 					break
 				} else {
-					assert(true, "Stopped parsing at the next line after snap.Init")
+					invariant.Always(true, "Stopped parsing at the next line after snap.Init")
 				}
 			}
 		}
-		assert(start >= 0 && end >= 0, "Snapshot is found")
-		assert(start > 1, "Go source have package declaration or comments in the first line")
-		assert(content[start-1] == '\n', "Line starts after newline")
-		assert(content[end] == '\n', "Line ends with newline")
+		invariant.Always(start >= 0 && end >= 0, "Snapshot is found")
+		invariant.Always(start > 1, "Go source have package declaration or comments in the first line")
+		invariant.Always(content[start-1] == '\n', "Line starts after newline")
+		invariant.Always(content[end] == '\n', "Line ends with newline")
 
 		line := string(content[start:end])
 		replace := "snap.Init(`"
@@ -113,12 +131,12 @@ func (snapshot Snapshot) IsEqual(actual string) (isEqual bool) {
 		if snapshot.ShouldEdit {
 			search = "snap.Edit(`"
 		}
-		assert(len(search) == len(replace), "Find and replace strings are of equal length")
-		assert(strings.Count(line, search) > 0, "Found snapshot in expected line")
-		assert(strings.Count(line, search) == 1, "Only one snap call per line")
+		invariant.Always(len(search) == len(replace), "Find and replace strings are of equal length")
+		invariant.Always(strings.Count(line, search) > 0, "Found snapshot in expected line")
+		invariant.Always(strings.Count(line, search) == 1, "Only one snap call per line")
 
 		snap_call_idx := strings.Index(line, search)
-		assert(snap_call_idx >= 0, "Found snapshot call")
+		invariant.Always(snap_call_idx >= 0, "Found snapshot call")
 		snap_call_idx += start
 
 		open, close := snap_call_idx+len(search)-1, -1
@@ -128,9 +146,9 @@ func (snapshot Snapshot) IsEqual(actual string) (isEqual bool) {
 				break
 			}
 		}
-		assert(open >= 0, "Found open backtick")
-		assert(close >= 0, "Found closed backtick")
-		assert(open < close, "Open backtick comes before closed backtick")
+		invariant.Always(open >= 0, "Found open backtick")
+		invariant.Always(close >= 0, "Found closed backtick")
+		invariant.Always(open < close, "Open backtick comes before closed backtick")
 
 		new_content := &bytes.Buffer{}
 		new_content.Grow(len(content))
@@ -144,7 +162,7 @@ func (snapshot Snapshot) IsEqual(actual string) (isEqual bool) {
 		}
 
 		if !isEqual {
-			delta := strings.Count(actual, "\n") - strings.Count(snapshot.Expect, "\n")
+			delta := strings.Count(actual, "\n") - strings.Count(snapshot.ExpectedOutput, "\n")
 			if _, ok := filesEdited[snapshot.FilePath]; !ok {
 				filesEdited[snapshot.FilePath] = make([]FileEdit, 0)
 			}
@@ -155,7 +173,7 @@ func (snapshot Snapshot) IsEqual(actual string) (isEqual bool) {
 		return true
 	} else {
 		if !isEqual {
-			d := myers.New(snapshot.Expect, actual)
+			d := myers.New(snapshot.ExpectedOutput, actual)
 			fmt.Fprintf(os.Stderr, "Snapshot mismatch %s:%d\n", snapshot.FilePath, snapshot.Line)
 			for line := range strings.SplitSeq(d.LineDiff(), "\n") {
 				if len(line) == 0 {
@@ -173,13 +191,5 @@ func (snapshot Snapshot) IsEqual(actual string) (isEqual bool) {
 			}
 		}
 		return isEqual
-	}
-}
-
-func assert(cond bool, msg string) {
-	if !cond {
-		xdebug.FprintStackTrace(os.Stderr, 2)
-		fmt.Fprintln(os.Stderr, msg)
-		os.Exit(1)
 	}
 }
