@@ -6,6 +6,7 @@ import (
 	"io"
 	"path"
 	"runtime"
+	"strings"
 )
 
 const StackTraceDepth = 10
@@ -74,4 +75,28 @@ func FprintStackTrace(w io.Writer, callerLocation int) {
 func PrintJSON(obj interface{}) {
 	text, _ := json.MarshalIndent(obj, "", "\t")
 	fmt.Println(string(text))
+}
+
+func IntComma(number int) {
+	s := fmt.Sprintf("%d", number)
+	n := len(s)
+	if n <= 3 {
+		fmt.Println(number)
+		return
+	}
+	var b strings.Builder
+	pre := n % 3
+	if pre > 0 {
+		b.WriteString(s[:pre])
+		if n > 3 {
+			b.WriteString(",")
+		}
+	}
+	for i := pre; i < n; i += 3 {
+		b.WriteString(s[i : i+3])
+		if i+3 < n {
+			b.WriteString(",")
+		}
+	}
+	fmt.Println(b.String())
 }
