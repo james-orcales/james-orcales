@@ -6,3 +6,5 @@ share/**
 tmp/**
 # **/.profile
 # **/.bashrc
+
+./big_bang

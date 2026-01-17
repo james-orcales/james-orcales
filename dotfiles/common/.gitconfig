@@ -6,5 +6,8 @@
 [includeIf "gitdir:~/work/"]
     path = ~/work/git/.gitconfig
 
+[url "ssh://git@github.com/"]
+        insteadOf = https://github.com/
+
 [init]
 	defaultBranch = main

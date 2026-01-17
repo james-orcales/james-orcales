@@ -1,6 +1,7 @@
 background          = 000
 theme               = Rose Pine
-font-size           = 18
+font-size           = 16
+font-family         = Iosevka
 font-feature        = -calt,-liga,dlig
 window-height       = 9999
 window-width        = 9999
@@ -8,6 +9,6 @@ macos-option-as-alt = true
 
 keybind = ctrl+left=esc:b
 keybind = ctrl+right=esc:f
-keybind = super+ctrl+alt+shift+n=next_tab
-keybind = super+ctrl+alt+shift+p=previous_tab
 keybind = ctrl+tab=ignore
+keybind = ctrl+equal=increase_font_size:4
+keybind = ctrl+-=decrease_font_size:4

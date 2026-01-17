@@ -1,25 +1,57 @@
 -- === Colorscheme ===
 local palette = {
-        ["yellow"] = "#F6C177",
-        ["red"] = "#EB6F92",
-        ["blue"] = "#9CCFD8",
-        ["text_dark"] = "#777777",
+        main = {
+                ["primary"] = "#DFE0DC",
+                ["primary_dark"] = "#888888",
+                ["accent"] = "#F6C177",
+                ["red"] = "#EB6F92",
+                ["blue"] = "#9CCFD8",
+        },
+        hacker = {
+                ["primary"] = "#03d100",
+                ["primary_dark"] = "#038700",
+                ["accent"] = "#DFE0DC",
+                ["red"] = "#EE4266",
+                ["blue"] = "#E0E2DB",
+        },
 }
 
+palette = palette.main
+
+vim.cmd.colorscheme("quiet")
 
 -- stylua: ignore start
-vim.cmd.colorscheme("quiet")
-vim.api.nvim_set_hl(0, "Comment",     { fg = palette["text_dark"] })
-vim.api.nvim_set_hl(0, "String",      { fg = palette["yellow"]    })
-vim.api.nvim_set_hl(0, "Directory",   { fg = palette["blue"]      })
-vim.api.nvim_set_hl(0, "Visual",      { bg = "#333333",           })
-vim.api.nvim_set_hl(0, "NormalFloat", { bg = "#0A0A0A"            })
-vim.api.nvim_set_hl(0, "StatusLine",  { bg = "#111111"            })
-vim.api.nvim_set_hl(0, "StatusLine",  { bg = "#111111"            })
-vim.api.nvim_set_hl(0, "TODO",        { fg = palette["red"]       })
-vim.api.nvim_set_hl(0, "YankSystemClipboard", { bg = "#0000FF", fg = "#000000" })
+-- local all_highlight_groups = vim.fn.getcompletion("", "highlight")
+-- for _, highlight_group_name in ipairs(all_highlight_groups) do
+--     vim.api.nvim_set_hl(0, highlight_group_name, { fg = palette["primary"] })
+-- end
 
-vim.api.nvim_set_hl(0, "rustCommentLineDoc",          { link = "Comment" })
+vim.api.nvim_set_hl(0, "Normal",      { fg = palette.primary      })
+
+vim.api.nvim_set_hl(0, "Comment",            { fg = palette.primary_dark })
+vim.api.nvim_set_hl(0, "@comment",           { link = "Comment"          })
+vim.api.nvim_set_hl(0, "rustCommentLineDoc", { link = "Comment"          })
+vim.api.nvim_set_hl(0, "LineNr",             { link = "Comment"          })
+vim.api.nvim_set_hl(0, "LineNrAbove",        { link = "Comment"          })
+vim.api.nvim_set_hl(0, "LineNrBelow",        { link = "Comment"          })
+
+vim.api.nvim_set_hl(0, "Directory",   { fg = palette.accent       })
+vim.api.nvim_set_hl(0, "String",      { fg = palette.accent       })
+vim.api.nvim_set_hl(0, "@string",     { link = "String"           })
+vim.api.nvim_set_hl(0, "TODO",        { fg = palette.red          })
+vim.api.nvim_set_hl(0, "MatchParen",  { fg = palette.red          })
+
+vim.api.nvim_set_hl(0, "YankSystemClipboard", { bg = palette.red, fg = "#000000" })
+
+vim.api.nvim_set_hl(0, "Visual",       { bg   = "#333333" })
+vim.api.nvim_set_hl(0, "QuickFixLine", { link = "Visual"  })
+vim.api.nvim_set_hl(0, "NormalFloat",  { bg   = "#0A0A0A" })
+vim.api.nvim_set_hl(0, "StatusLine",   { bg   = "#111111" })
+vim.api.nvim_set_hl(0, "ColorColumn",  { bg   = "#222222" })
+
+vim.api.nvim_set_hl(0, "IncSearch",  { bg = palette.primary, fg = "#000000" })
+vim.api.nvim_set_hl(0, "Substitute", { bg = palette.primary, fg = "#000000" })
+
 -- stylua: ignore end
 
 -- === Options ===
@@ -200,7 +232,22 @@ vim.keymap.set("n", "<C-Y><C-Y>", [["+yy]], { desc = "Yank line to system clipbo
 xplat_set("n", ",", "mzA,<ESC>`z")
 xplat_set("n", ";", "mzA;<ESC>`z")
 
-vim.keymap.set({ "v", "x" }, "gW", function()
+xplat_set("n", ";", "mzA;<ESC>`z")
+
+-- Insert a comment header in this format: // === MY HEADER ========================================================================================
+vim.keymap.set("n", "==", function()
+        local ok, header = pcall(vim.fn.input, "Header: ")
+        if not ok or header == "" then
+                return
+        end
+        header = string.upper(header)
+        local comment = "// === " .. header .. " "
+        comment = comment .. string.rep("=", 200)
+        vim.api.nvim_put({ comment }, "l", true, true)
+        vim.cmd("normal! kV=0161|D_")
+end)
+
+vim.keymap.set({ "v", "x" }, "gw", function()
         local original_tw = vim.opt_local.textwidth:get()
         vim.opt_local.textwidth = 100
         vim.cmd("normal! gw")
@@ -214,6 +261,7 @@ xplat_set("n", "so", function()
                 vim.cmd("syntax on")
         end
 end)
+
 -- === Autocmd ===
 
 --  Workflow is `:set mp=go\ test\ ./foo` -> `:mak`. This populates quickfix with errors.
@@ -224,7 +272,7 @@ vim.api.nvim_create_autocmd({ "FileType" }, {
                 if ev.match == "odin" then
                         vim.opt_local.errorformat = "%f(%l:%v) %m,%-G%.%#"
                 elseif ev.match == "go" then
-                        vim.opt_local.errorformat = "%f:%l:%v: %m"
+                        vim.opt_local.errorformat = "%f:%l:%c: %m"
                 elseif ev.match == "rust" then
                         vim.opt_local.makeprg = "cargo check"
                         vim.opt_local.errorformat = "%-Gerror: could not compile %.%#," --ignore
@@ -248,9 +296,10 @@ vim.api.nvim_create_autocmd("QuickFixCmdPost", {
 })
 
 vim.api.nvim_create_autocmd("FileType", {
+        desc = "Quickfix list previews a fixed number of entries",
         pattern = "qf",
         callback = function()
-                vim.cmd("resize 5")
+                vim.cmd("resize 3")
         end,
 })
 
@@ -259,6 +308,31 @@ vim.api.nvim_create_autocmd({ "FileType" }, {
         group = vim.api.nvim_create_augroup("language_specific_macros", { clear = true }),
         callback = function(ev)
                 if ev.match == "go" then
+                        -- stylua: ignore start
+                        vim.keymap.set(
+                                "n", " a",
+                                [[oinvariant.Always(, "")<ESC><LEFT><LEFT><LEFT><LEFT>i]],
+                                { noremap = true, silent = true, buffer = ev.buf }
+                        )
+                        vim.keymap.set(
+                                "n", " s",
+                                [[oinvariant.Sometimes(, "")<ESC><LEFT><LEFT><LEFT><LEFT>i]],
+                                { noremap = true, silent = true, buffer = ev.buf }
+                        )
+                        vim.keymap.set(
+                                "n", " A",
+                                [[oinvariant.XAlways(func() bool {
+        return true
+}, "")<ESC><CMD>write<CR><UP>O]],
+                                { noremap = true, silent = true, buffer = ev.buf }
+                        )
+                        vim.keymap.set(
+                                "n", " S",
+                                [[oinvariant.XSometimes(func() bool {
+        return true
+}, "")<ESC><CMD>write<CR><UP>O]],
+                                { noremap = true, silent = true, buffer = ev.buf }
+                        )
                         vim.keymap.set("n", "en", "oif err != nil {<CR>}<ESC>O", { noremap = true, silent = true, buffer = ev.buf })
                         vim.keymap.set("n", "EN", "Iif <ESC>mzaerr := <ESC>A; err != nil {<CR>}<ESC>`z", { noremap = true, silent = true, buffer = ev.buf })
                 end

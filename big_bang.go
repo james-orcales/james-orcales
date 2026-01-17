@@ -1,24 +1,22 @@
-// MIT License
+// zlib License
 //
-// Copyright (c) 2025 Danzig James Orcales
+// Copyright (c) 2025 Danzig James Orcales. All rights reserved.
 //
-// Permission is hereby granted, free of charge, to any person obtaining a copy
-// of this software and associated documentation files (the "Software"), to deal
-// in the Software without restriction, including without limitation the rights
-// to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-// copies of the Software, and to permit persons to whom the Software is
-// furnished to do so, subject to the following conditions:
+// This software is provided 'as-is', without any express or implied
+// warranty. In no event will the authors be held liable for any damages
+// arising from the use of this software.
 //
-// The above copyright notice and this permission notice shall be included in all
-// copies or substantial portions of the Software.
+// Permission is granted to anyone to use this software for any purpose,
+// including commercial applications, and to alter it and redistribute it
+// freely, subject to the following restrictions:
 //
-// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-// IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-// FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-// AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-// LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-// OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-// SOFTWARE.
+// 1. The origin of this software must not be misrepresented; you must not
+//    claim that you wrote the original software. If you use this software
+//    in a product, an acknowledgment in the product documentation would be
+//    appreciated but is not required.
+// 2. Altered source versions must be plainly marked as such, and must not be
+//    misrepresented as being the original software.
+// 3. This notice may not be removed or altered from any source distribution.
 
 // This script is idempotent.
 package main
@@ -96,9 +94,8 @@ var (
 	HOMEBREW_BUNDLE_FILE = filepath.Clean(os.Getenv("HOMEBREW_BUNDLE_FILE"))
 )
 
-// TODO: Have checksums for artifacts list and homebrew list where you're forced to update these manually just like with nix. This would need type
-//
-//	Artifact to implement Stringer
+// TODO: Have checksums for artifacts list and homebrew list where you're forced to update these
+// manually just like with nix. This would need type Artifact to implement Stringer
 func main() {
 	invariant.Always(runtime.Version() == "go1.25.3", "Only one go version is supported")
 	switch runtime.GOOS {
@@ -187,7 +184,9 @@ func main() {
 				invariant.Always(filepath.IsAbs(HOMEBREW_BUNDLE_FILE), "HOMEBREW_BUNDLE_FILE is an absolute path")
 				os.WriteFile(
 					HOMEBREW_BUNDLE_FILE,
-					[]byte(`cask "ghostty"
+					[]byte(`brew "jujutsu"
+						brew "font-iosevka"
+						cask "ghostty"
 						cask "visual-studio-code"
 						cask "firefox"
 						cask "microsoft-edge"
@@ -344,12 +343,6 @@ simd(runtime):+NEON
 PCRE2 10.43 is available (JIT is available)`,
 			Download_Link: "https://github.com/BurntSushi/ripgrep/releases/download/14.1.1/ripgrep-14.1.1-aarch64-apple-darwin.tar.gz",
 			Checksum:      "24ad76777745fbff131c8fbc466742b011f925bfa4fffa2ded6def23b5b937be",
-		},
-		"lazygit": {
-			Name:          "lazygit",
-			Version:       `commit=c08903e3adabcf00d910e0107c1f675af958a70e, build date=2025-08-06T11:35:17Z, build source=binaryRelease, version=0.54.1, os=darwin, arch=arm64, git version=2.39.5 (Apple Git-154)`,
-			Download_Link: "https://github.com/jesseduffield/lazygit/releases/download/v0.54.1/lazygit_0.54.1_darwin_arm64.tar.gz",
-			Checksum:      "25710495177762f9df2dccaf5e7deed8e5ec70871b7ad385cffa8f7de0646d1d",
 		},
 		"lazydocker": {
 			Name: "lazydocker",
