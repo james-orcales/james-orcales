@@ -4,7 +4,7 @@ i like going down rabbit holes so here i am
 
 ### Programming Languages
 
-<img src="https://github.com/odin-lang/Odin/blob/master/misc/logo-slim.png" height="30" alt="Odin Logo"> <img height="30" alt="Rust (Programming Language) Logo" src="https://github.com/user-attachments/assets/56d5eba0-0c60-40d2-9000-842cc7330d19" /> <img src="https://upload.wikimedia.org/wikipedia/commons/thumb/0/05/Go_Logo_Blue.svg/330px-Go_Logo_Blue.svg.png" height="30" alt="Golang"> <img src="https://upload.wikimedia.org/wikipedia/commons/thumb/c/cf/Lua-Logo.svg/250px-Lua-Logo.svg.png" height="30" alt="Lua Logo"> <img width="30" height="30" alt="Bash" src="https://github.com/user-attachments/assets/8d029e09-c974-486c-86fe-7e8c6899d18b" />
+<img src="https://github.com/odin-lang/Odin/blob/master/misc/logo-slim.png" height="30" alt="Odin Logo"> <img src="https://upload.wikimedia.org/wikipedia/commons/thumb/0/05/Go_Logo_Blue.svg/330px-Go_Logo_Blue.svg.png" height="30" alt="Golang"> <img src="https://upload.wikimedia.org/wikipedia/commons/thumb/c/cf/Lua-Logo.svg/250px-Lua-Logo.svg.png" height="30" alt="Lua Logo"> <img width="30" height="30" alt="Bash" src="https://github.com/user-attachments/assets/8d029e09-c974-486c-86fe-7e8c6899d18b" />
 
 
 
