@@ -98,8 +98,8 @@ vim.opt.isfname:append("@-@")
 
 vim.opt.updatetime = 750
 
-vim.opt.colorcolumn = "160"
-vim.opt.textwidth = 160
+vim.opt.colorcolumn = "140"
+vim.opt.textwidth = 140
 vim.opt.wrapmargin = 1
 vim.opt.formatoptions:append("t")
 
@@ -156,7 +156,12 @@ xplat_set("n", "mp", function()
         local makeprg = vim.fn.input("Global makeprg: ")
         vim.api.nvim_set_option_value("makeprg", makeprg, { scope = "global" })
 end)
-vim.keymap.set({ "v", "n", "i" }, "<C-E>", function()
+
+vim.keymap.set("n", "<C-E>", "<CMD>write<CR>")
+-- We explicitly exit insert mode before writing the buffer. This avoids bugs where a popup window shows up to confirm the write such as
+-- when moving a directory using oil.nvim
+vim.keymap.set("i", "<C-E>", "<ESC><CMD>write<CR>a")
+vim.keymap.set({ "v", "n", "i" }, "<C-S-E>", function()
         vim.cmd("w")
         local path = vim.api.nvim_buf_get_name(0)
         if path:match("%.go$") or path:match("%.rs") or path:match("%.odin") then
@@ -309,30 +314,41 @@ vim.api.nvim_create_autocmd({ "FileType" }, {
         callback = function(ev)
                 if ev.match == "go" then
                         -- stylua: ignore start
+                        vim.keymap.set( "n", " a",  [[oinvariant.Always(, "")<ESC><LEFT><LEFT><LEFT><LEFT>i]],              { noremap = true, silent = true, buffer = ev.buf })
+                        vim.keymap.set( "n", " s",  [[oinvariant.Sometimes(, "")<ESC><LEFT><LEFT><LEFT><LEFT>i]],           { noremap = true, silent = true, buffer = ev.buf })
+                        vim.keymap.set( "n", " es", [[oinvariant.Ensure(, "")<ESC><LEFT><LEFT><LEFT><LEFT>i]],              { noremap = true, silent = true, buffer = ev.buf })
+                        vim.keymap.set( "n", " ew", [[oinvariant.EnsureWhenReachable(, "")<ESC><LEFT><LEFT><LEFT><LEFT>i]], { noremap = true, silent = true, buffer = ev.buf })
+                        vim.keymap.set( "n", " en", [[oinvariant.EnsureErrIsNil(err, "")<ESC><LEFT>i]],                     { noremap = true, silent = true, buffer = ev.buf })
                         vim.keymap.set(
-                                "n", " a",
-                                [[oinvariant.Always(, "")<ESC><LEFT><LEFT><LEFT><LEFT>i]],
-                                { noremap = true, silent = true, buffer = ev.buf }
-                        )
-                        vim.keymap.set(
-                                "n", " s",
-                                [[oinvariant.Sometimes(, "")<ESC><LEFT><LEFT><LEFT><LEFT>i]],
-                                { noremap = true, silent = true, buffer = ev.buf }
-                        )
-                        vim.keymap.set(
-                                "n", " A",
+                                "n", " xa",
                                 [[oinvariant.XAlways(func() bool {
         return true
 }, "")<ESC><CMD>write<CR><UP>O]],
                                 { noremap = true, silent = true, buffer = ev.buf }
                         )
                         vim.keymap.set(
-                                "n", " S",
+                                "n", " xs",
                                 [[oinvariant.XSometimes(func() bool {
         return true
 }, "")<ESC><CMD>write<CR><UP>O]],
                                 { noremap = true, silent = true, buffer = ev.buf }
                         )
+                        vim.keymap.set(
+                                "n", " xes",
+                                [[oinvariant.Ensure(func() bool {
+        return true
+}, "")<ESC><CMD>write<CR><UP>O]],
+                                { noremap = true, silent = true, buffer = ev.buf }
+                        )
+                        vim.keymap.set(
+                                "n", " xen",
+                                [[oinvariant.EnsureErrIsNil(func() error {
+        return nil
+}, "")<ESC><CMD>write<CR><UP>O]],
+                                { noremap = true, silent = true, buffer = ev.buf }
+                        )
+                        vim.keymap.set("v", "se", ":s/snap\\.Init(/snap.Edit(/g<CR>", { desc = "Replace snap.Init( with snap.Edit(" })
+                        vim.keymap.set("n", "df", "odefer func() {<CR>}()<ESC><UP>^f)", { noremap = true, silent = true, buffer = ev.buf })
                         vim.keymap.set("n", "en", "oif err != nil {<CR>}<ESC>O", { noremap = true, silent = true, buffer = ev.buf })
                         vim.keymap.set("n", "EN", "Iif <ESC>mzaerr := <ESC>A; err != nil {<CR>}<ESC>`z", { noremap = true, silent = true, buffer = ev.buf })
                 end
@@ -436,8 +452,8 @@ vim.api.nvim_create_autocmd("FileType", {
         callback = function()
                 local ft = vim.bo.filetype
                 local name = vim.fn.expand("%:t")
-                vim.wo.colorcolumn = (ft == "markdown" or name:match("^LICENSE.*")) and "100" or "160"
-                vim.bo.textwidth = (ft == "markdown" or name:match("^LICENSE.*")) and 100 or 160
+                vim.wo.colorcolumn = (ft == "markdown" or name:match("^LICENSE.*")) and "100" or "140"
+                vim.bo.textwidth = (ft == "markdown" or name:match("^LICENSE.*")) and 100 or 140
         end,
 })
 
@@ -574,7 +590,7 @@ do
         })
         local rules = {
                 Golang = {
-                        Function = [[^func +(?:\([a-zA-Z0-9_]+ +\*?[a-zA-Z0-9_]+(?:\[.+\])?\))? *[A-Z][a-zA-Z0-9_]* -- !*test* ]],
+                        Function = [[^func +(?:\([a-zA-Z0-9_]+ +\*?[a-zA-Z0-9_]+(?:\[.+\])?\))? *[A-Z][a-zA-Z0-9_]* -- !*test* !*vendor*]],
                         Type = [[^type +[A-Z][a-zA-Z0-9_]+ -- !*test* ]],
                 },
                 Odin = {
@@ -640,7 +656,7 @@ do
                                 table.insert(items, item)
                         end
                         table.sort(items)
-                        table.insert(items, "Any")
+                        table.insert(items, 1, "Any")
                         fzf.fzf_exec(items, {
                                 prompt = string.format("Search Package (%s) > ", programming_language),
                                 actions = {
