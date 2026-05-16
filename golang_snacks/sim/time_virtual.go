@@ -11,7 +11,7 @@ import (
 	"sync/atomic"
 	stdtime "time"
 
-	"github.com/james-orcales/golang_snacks/invariant"
+	"github.com/james-orcales/james-orcales/golang_snacks/invariant"
 )
 
 type Time[T any] struct {

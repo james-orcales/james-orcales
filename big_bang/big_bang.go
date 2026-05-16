@@ -42,8 +42,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/james-orcales/golang_snacks/invariant"
-	"github.com/james-orcales/golang_snacks/itlog"
+	"github.com/james-orcales/james-orcales/golang_snacks/invariant"
+	"github.com/james-orcales/james-orcales/golang_snacks/itlog"
 )
 
 var (
@@ -97,7 +97,7 @@ var (
 // TODO: Have checksums for artifacts list and homebrew list where you're forced to update these
 // manually just like with nix. This would need type Artifact to implement Stringer
 func main() {
-	invariant.Always(runtime.Version() == "go1.25.3", "Only one go version is supported")
+	invariant.Always(runtime.Version() == "go1.25.7", "Only one go version is supported")
 	switch runtime.GOOS {
 	case "windows":
 		fmt.Println("it's a cold day in hell eh?")

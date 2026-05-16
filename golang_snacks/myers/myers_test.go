@@ -5,8 +5,8 @@ import (
 	"slices"
 	"testing"
 
-	"github.com/james-orcales/golang_snacks/invariant"
-	"github.com/james-orcales/golang_snacks/myers/snap"
+	"github.com/james-orcales/james-orcales/golang_snacks/invariant"
+	"github.com/james-orcales/james-orcales/golang_snacks/myers/snap"
 )
 
 func TestMain(m *testing.M) {

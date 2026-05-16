@@ -3,8 +3,8 @@ package math_test
 import (
 	"testing"
 
-	"github.com/james-orcales/golang_snacks/invariant"
-	math "github.com/james-orcales/golang_snacks/invariant/examples/02_math"
+	"github.com/james-orcales/james-orcales/golang_snacks/invariant"
+	math "github.com/james-orcales/james-orcales/golang_snacks/invariant/examples/01_math"
 )
 
 func TestMain(m *testing.M) {

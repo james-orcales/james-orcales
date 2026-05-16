@@ -9,7 +9,7 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/james-orcales/golang_snacks/xdebug"
+	"github.com/james-orcales/james-orcales/golang_snacks/xdebug"
 )
 
 const (

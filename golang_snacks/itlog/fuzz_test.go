@@ -5,8 +5,8 @@ import (
 	"io"
 	"testing"
 
-	"github.com/james-orcales/golang_snacks/invariant"
-	"github.com/james-orcales/golang_snacks/itlog"
+	"github.com/james-orcales/james-orcales/golang_snacks/invariant"
+	"github.com/james-orcales/james-orcales/golang_snacks/itlog"
 )
 
 func FuzzMessage(f *testing.F) {

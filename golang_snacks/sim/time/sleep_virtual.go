@@ -5,7 +5,7 @@ package time
 import (
 	"math/rand/v2"
 
-	"github.com/james-orcales/golang_snacks/sim"
+	"github.com/james-orcales/james-orcales/golang_snacks/sim"
 )
 
 var t = sim.UniversalTime

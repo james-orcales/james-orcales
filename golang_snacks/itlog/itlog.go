@@ -11,7 +11,7 @@ import (
 	"time"
 	"unsafe"
 
-	"github.com/james-orcales/golang_snacks/invariant"
+	"github.com/james-orcales/james-orcales/golang_snacks/invariant"
 )
 
 const (

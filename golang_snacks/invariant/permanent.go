@@ -202,7 +202,7 @@ func GameLoop() iter.Seq[int] {
 //	testing.tRunner           | /Users/my_username/.local/share/big_bang/share/go/src/testing/testing.go:1934
 //	🚨 Assertion Failure 🚨: Fault Injected
 //
-//	FAIL    github.com/james-orcales/golang_snacks/invariant/examples/02_math        0.330s
+//	FAIL    github.com/james-orcales/james-orcales/golang_snacks/invariant/examples/02_math        0.330s
 //	FAIL
 func FprintStackTrace(w io.Writer, callerLocation int) {
 	pcs := make([]uintptr, INVARIANT_STACKTRACE_DEPTH)

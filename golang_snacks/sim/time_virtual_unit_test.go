@@ -6,8 +6,8 @@ import (
 	"context"
 	"testing"
 
-	"github.com/james-orcales/golang_snacks/sim"
-	"github.com/james-orcales/golang_snacks/snap"
+	"github.com/james-orcales/james-orcales/golang_snacks/sim"
+	"github.com/james-orcales/james-orcales/golang_snacks/snap"
 )
 
 func init() {

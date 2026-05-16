@@ -1,6 +1,6 @@
 package main
 
-import "github.com/james-orcales/golang_snacks/sh"
+import "github.com/james-orcales/james-orcales/golang_snacks/sh"
 
 func main() {
 	sh.Spawn(

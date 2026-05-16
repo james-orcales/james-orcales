@@ -11,8 +11,6 @@ import (
 	"sync"
 	"sync/atomic"
 	stdtime "time"
-
-	"github.com/james-orcales/golang_snacks/spawn"
 )
 
 var timebase C.mach_timebase_info_data_t
@@ -49,8 +47,7 @@ type Time struct {
 
 	// === Unused ===
 
-	Mutex         sync.Mutex
-	GoroutinePool *spawn.Pool
+	Mutex sync.Mutex
 
 	NowAbsolute Moment
 
