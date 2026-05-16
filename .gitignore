@@ -1,0 +1,4 @@
+bin/**
+!bin/darwin/lua
+.go-path
+
