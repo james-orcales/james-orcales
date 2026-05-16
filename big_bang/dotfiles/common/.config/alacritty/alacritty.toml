@@ -1,0 +1,155 @@
+live_config_reload = true
+
+[env]
+TERM = "alacritty"
+
+[font]
+builtin_box_drawing = true
+size = 12
+
+[font.normal]
+# family = "Hurmit Nerd Font Mono"
+# family = "JetBrainsMono Nerd Font"
+family = "Iosevka"
+style = "Regular"
+
+[font.bold]
+style = "Regular"
+
+[keyboard]
+bindings = [
+    { key = "Enter",    mods = "Shift",           chars = "\u001B[13;2u"      },
+    { key = "Enter",    mods = "Control",         chars = "\u001B[13;5u"      },
+    { key = "Delete",                             chars = "\u001B[3~"         },
+    { key = "Delete",   mods = "Shift",           chars = "\u001B[3;2u"       },
+
+    { key = "Home",     mode = "AppCursor",       chars = "\u001BOH"          },
+    { key = "Home",     mode = "~AppCursor",      chars = "\u001B[H"          },
+    { key = "End",      mode = "AppCursor",       chars = "\u001BOF"          },
+    { key = "End",      mode = "~AppCursor",      chars = "\u001B[F"          },
+
+    { key = "Left",     mods = "Shift",           chars = "\u001B[1;2D"       },
+    { key = "Left",     mods = "Control",         chars = "\u001B[1;5D"       },
+    { key = "Left",     mods = "Alt",             chars = "\u001B[1;3D"       },
+    { key = "Left",     mode = "~AppCursor",      chars = "\u001B[D"          },
+    { key = "Left",     mode = "AppCursor",       chars = "\u001BOD"          },
+
+    { key = "Right",    mods = "Shift",           chars = "\u001B[1;2C"       },
+    { key = "Right",    mods = "Control",         chars = "\u001B[1;5C"       },
+    { key = "Right",    mods = "Alt",             chars = "\u001B[1;3C"       },
+    { key = "Right",    mode = "~AppCursor",      chars = "\u001B[C"          },
+    { key = "Right",    mode = "AppCursor",       chars = "\u001BOC"          },
+
+    { key = "Up",       mods = "Shift",           chars = "\u001B[1;2A"       },
+    { key = "Up",       mods = "Control",         chars = "\u001B[1;5A"       },
+    { key = "Up",       mods = "Alt",             chars = "\u001B[1;3A"       },
+    { key = "Up",       mode = "~AppCursor",      chars = "\u001B[A"          },
+    { key = "Up",       mode = "AppCursor",       chars = "\u001BOA"          },
+
+    { key = "Down",     mods = "Shift",           chars = "\u001B[1;2B"       },
+    { key = "Down",     mods = "Control",         chars = "\u001B[1;5B"       },
+    { key = "Down",     mods = "Alt",             chars = "\u001B[1;3B"       },
+    { key = "Down",     mode = "~AppCursor",      chars = "\u001B[B"          },
+    { key = "Down",     mode = "AppCursor",       chars = "\u001BOB"          },
+
+    { key = "Tab",      mods = "Shift",           chars = "\u001B[Z"          },
+    { key = "Back",     mods = "Alt",             chars = "\u001B\u007F"      },
+
+    { key = "RBracket", mods = "Shift",           chars = "\u0002n"           },
+    { key = "LBracket", mods = "Shift",           chars = "\u0002p"           },
+
+    { key = "V",        mods = "Control | Shift", action = "Paste"            },
+    { key = "C",        mods = "Control | Shift", action = "Copy"             },
+
+    { key = "Equals",   mods = "Control",         action = "IncreaseFontSize" },
+    { key = "Minus",    mods = "Control",         action = "DecreaseFontSize" },
+    { key = "Minus",    mods = "Control|Shift",   action = "ResetFontSize"    },
+]
+
+[mouse]
+hide_when_typing = true
+
+[scrolling]
+history = 1000
+multiplier = 3
+
+[selection]
+save_to_clipboard = false
+
+[shell]
+program = "/bin/bash"
+
+[window]
+opacity = 0.95
+resize_increments = true
+
+[colors]
+draw_bold_text_with_bright_colors = false
+
+[colors.primary]
+foreground = "#e0def4"
+background = "#000000"
+dim_foreground = "#908caa"
+bright_foreground = "#e0def4"
+
+[colors.vi_mode_cursor]
+text = "#e0def4"
+cursor = "#524f67"
+
+[colors.search.matches]
+foreground = "#908caa"
+background = "#26233a"
+
+[colors.search.focused_match]
+foreground = "#191724"
+background = "#ebbcba"
+
+[colors.hints.start]
+foreground = "#908caa"
+background = "#1f1d2e"
+
+[colors.hints.end]
+foreground = "#6e6a86"
+background = "#1f1d2e"
+
+[colors.line_indicator]
+foreground = "None"
+background = "None"
+
+[colors.footer_bar]
+foreground = "#e0def4"
+background = "#1f1d2e"
+
+[colors.selection]
+text = "#e0def4"
+background = "#403d52"
+
+[colors.normal]
+black = "#26233a"
+red = "#eb6f92"
+green = "#31748f"
+yellow = "#f6c177"
+blue = "#9ccfd8"
+magenta = "#c4a7e7"
+cyan = "#ebbcba"
+white = "#e0def4"
+
+[colors.bright]
+black = "#6e6a86"
+red = "#eb6f92"
+green = "#31748f"
+yellow = "#f6c177"
+blue = "#9ccfd8"
+magenta = "#c4a7e7"
+cyan = "#ebbcba"
+white = "#e0def4"
+
+[colors.dim]
+black = "#6e6a86"
+red = "#eb6f92"
+green = "#31748f"
+yellow = "#f6c177"
+blue = "#9ccfd8"
+magenta = "#c4a7e7"
+cyan = "#ebbcba"
+white = "#e0def4"
