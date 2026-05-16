@@ -1,0 +1,8 @@
+#!/bin/sh
+
+swaymsg -t get_tree | jq -r 'recurse(.nodes[]) | select(has("app_id"))
+| select(.focused != true) | "\(.app_id // .window_properties.class // .name) \(.id) "' |
+    tofi | 
+    awk '{print $2}' |
+    xargs -I {} swaymsg [con_id={}] focus
+

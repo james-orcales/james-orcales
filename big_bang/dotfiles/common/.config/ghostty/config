@@ -1,0 +1,14 @@
+background          = 000
+theme               = Rose Pine
+font-size           = 16
+font-family         = Iosevka Nerd Font
+window-height       = 9999
+window-width        = 9999
+macos-option-as-alt = true
+split-divider-color = #F0f0f0
+
+keybind = ctrl+left=esc:b
+keybind = ctrl+right=esc:f
+keybind = ctrl+tab=ignore
+keybind = ctrl+equal=increase_font_size:4
+keybind = ctrl+-=decrease_font_size:4
