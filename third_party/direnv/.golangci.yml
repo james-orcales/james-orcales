@@ -1,0 +1,19 @@
+version: "2"
+
+run:
+  timeout: 5m
+
+linters:
+  presets:
+    - bugs
+    - unused
+  enable:
+    - misspell
+    - revive
+  disable:
+    # direnv is not a web server, context is not strictly necessary.
+    - noctx
+
+formatters:
+  gofumpt:
+    extra-rules: true
