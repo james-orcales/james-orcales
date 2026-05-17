@@ -222,7 +222,6 @@ func Parse(program *Program, os_args []string) (active_command Command, err erro
 	commandIndex := 0
 	active_command = program.Commands[0]
 	if len(os_args) == 1 {
-		invariant.Reachable("Defaulted to first declared command")
 		// Deep copy for early return
 		active_command.Arguments = make([]Option, len(program.Commands[0].Arguments))
 		copy(active_command.Arguments, program.Commands[0].Arguments)
@@ -240,7 +239,6 @@ func Parse(program *Program, os_args []string) (active_command Command, err erro
 			}
 		}
 		if !found {
-			invariant.Reachable("User specified an unknown command")
 			return active_command, fmt.Errorf("%q is an unknown command", os_args[1])
 		}
 	}
@@ -268,7 +266,6 @@ func Parse(program *Program, os_args []string) (active_command Command, err erro
 				if strings.HasPrefix(flag, "-") {
 					flags = append(flags, flag)
 				} else {
-					invariant.Reachable("User provides flags before positional arguments")
 					return active_command, fmt.Errorf("Positional arguments cannot appear after flags. Got %q", flag)
 				}
 			}
@@ -279,7 +276,6 @@ func Parse(program *Program, os_args []string) (active_command Command, err erro
 	invariant.Sometimes(len(flags) == len(active_command.Flags), "All flags were set")
 
 	if len(positional_arguments) != len(active_command.Arguments) {
-		invariant.Reachable("User provided inexact number of arguments")
 		return active_command, fmt.Errorf(
 			"%q expects %d arguments. Got %d",
 			active_command.Label,
@@ -288,7 +284,6 @@ func Parse(program *Program, os_args []string) (active_command Command, err erro
 		)
 	}
 	if len(flags) > len(active_command.Flags)+len(program.GlobalFlags) {
-		invariant.Reachable("User provided too many flags")
 		return active_command, fmt.Errorf(
 			"%q supports %d command flags and %d global flags. Got %d",
 			active_command.Label,
@@ -304,10 +299,8 @@ func Parse(program *Program, os_args []string) (active_command Command, err erro
 		default:
 			panic_when(true, "unreachable")
 		case string:
-			invariant.Reachable("User provided a string positional argument")
 			active_command.Arguments[i].Value = positional_argument
 		case int:
-			invariant.Reachable("User provided an int positional argument")
 			num, parseErr := strconv.Atoi(positional_argument)
 			if parseErr != nil {
 				return active_command, fmt.Errorf("%s is an invalid number", positional_argument)
@@ -354,10 +347,8 @@ func Parse(program *Program, os_args []string) (active_command Command, err erro
 			return option.Label == flagName
 		})
 		if i < 0 {
-			invariant.Reachable("User provided unknown flag")
 			return active_command, fmt.Errorf("%q is an unknown flag", flagName)
 		} else if _, is_bool := active_command.Flags[i].Value.(bool); !is_bool && (!value_was_set || value == "") {
-			invariant.Reachable("User did not set a value to a non-bool flag")
 			return active_command, fmt.Errorf(
 				"%q expects a value. You must set flag values with this syntax: -foo-bar=baz.",
 				flagName,
@@ -365,13 +356,10 @@ func Parse(program *Program, os_args []string) (active_command Command, err erro
 		}
 		switch active_command.Flags[i].Value.(type) {
 		case bool:
-			invariant.Reachable("User set a boolean flag")
 			active_command.Flags[i].Value = true
 		case string:
-			invariant.Reachable("User set a string flag")
 			active_command.Flags[i].Value = trimQuotes(value)
 		case int:
-			invariant.Reachable("User set an int flag")
 			num, parseErr := strconv.Atoi(value)
 			if parseErr != nil {
 				return active_command, fmt.Errorf("%s is an invalid number", value)

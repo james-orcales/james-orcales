@@ -285,14 +285,12 @@ func (d *Differ) MergeShiftDiffCleanup() {
 			if prev.Kind == EditRetain && next.Kind == EditRetain {
 				invariant.Always(edit.Kind != EditRetain, "Edit kinds are alternated")
 				if RunesHaveSuffix(RunesHaveSuffixInput{Str: edit.Data, Expect: prev.Data}) {
-					invariant.Reachable("Edit is shifted: +A =BA +C -> +AB =AC")
 					isShifted = true
 					next.Data = slices.Concat(prev.Data, next.Data)
 					prev.Data = slices.Concat(prev.Data, edit.Data[:len(edit.Data)-len(prev.Data)])
 					prev.Kind = edit.Kind
 					continue
 				} else if RunesHavePrefix(RunesHavePrefixInput{Str: edit.Data, Expect: next.Data}) {
-					invariant.Reachable("Edit is shifted: +A =BC +B -> =AB +CB")
 					isShifted = true
 					prev.Data = slices.Concat(prev.Data, next.Data)
 					next.Data = slices.Concat(edit.Data[len(next.Data):], next.Data)
@@ -456,7 +454,6 @@ func (d *Differ) AlgorithmDiff() {
 		return
 	}
 	if d.OldStr == d.NewStr && d.OldStr != "" {
-		invariant.Reachable("Simple retain")
 		d.Edits = append(d.Edits, Edit{Kind: EditRetain, Data: d.Old})
 		return
 	}
