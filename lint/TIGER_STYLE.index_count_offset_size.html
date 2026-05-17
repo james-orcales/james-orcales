@@ -1,0 +1,395 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no">
+    <meta http-equiv="x-ua-compatible" content="ie=edge">
+    <title id="title">Index, Count, Offset, Size</title>
+    <meta name="description" content="Wherein we make progress towards solving one of the most vexing problems of Computer Science — naming things.">
+    <meta name="author" content="matklad">
+    <meta property="og:type" content="website">
+    <meta property="og:title" content="Index, Count, Offset, Size">
+    <meta property="og:description" content="Wherein we make progress towards solving one of the most vexing problems of Computer Science — naming things.">
+    <meta property="og:image" content="https://tigerbeetle.com/blog/2026-02-16-index-count-offset-size/banner-afcdf490.webp">
+    <meta name="twitter:card" content="summary_large_image">
+    <meta name="twitter:site" content="@TigerBeetleDB">
+    <meta name="twitter:creator" content="@TigerBeetleDB">
+    <meta name="twitter:title" content="Index, Count, Offset, Size">
+    <meta name="twitter:description" content="Wherein we make progress towards solving one of the most vexing problems of Computer Science — naming things.">
+    <meta name="twitter:image" content="https://tigerbeetle.com/blog/2026-02-16-index-count-offset-size/banner-afcdf490.webp">
+    <link rel="icon" href="/blog/img/icon-cf201f01.png">
+    <link rel="alternate" type="application/atom+xml" href="/blog/atom.xml">
+    <link rel="stylesheet" type="text/css" href="/blog/style/style-7f999cd2.css">
+    <link rel="stylesheet" type="text/css" href="/blog/style/highlight-77f6a8a4.css">
+    <!-- Privacy-friendly analytics by Plausible -->
+    <script async src="https://plausible.io/js/pa-CKwuRtbZ3REuuEVFYO_uC.js"></script>
+    <script>
+      window.plausible=window.plausible||function(){(plausible.q=plausible.q||[]).push(arguments)},plausible.init=plausible.init||function(i){plausible.o=i||{}};
+      plausible.init()
+    </script>
+    <style>
+      @font-face {
+        font-family: 'Big Shoulders Display';
+        src: url('/blog/fonts/BigShouldersDisplay.woff2') format('woff2');
+        font-display: block;
+      }
+      @font-face {
+        font-family: 'Work Sans';
+        font-style: normal;
+        font-weight: 100 900;
+        src: url('/blog/fonts/WorkSans.woff2') format('woff2');
+        font-display: block;
+      }
+      @font-face {
+        font-family: 'Inter';
+        font-style: normal;
+        font-weight: 100 900;
+        src: url('/blog/fonts/Inter-Regular.woff2') format('woff2');
+        font-display: block;
+      }
+      @font-face {
+        font-family: 'Recursive';
+        font-style: normal;
+        font-weight: 300 1000;
+        src: url('/blog/fonts/RecursiveMono.woff2') format('woff2');
+        font-display: block;
+      }
+    </style>
+    <style>
+      a#banner-link {
+        font-family: "Work Sans", sans-serif;
+        font-size: 14px;
+        line-height: 2em;
+        font-weight: 500;
+        text-decoration: none;
+        text-wrap: nowrap;
+        color: black;
+        background-color: #93FDB5;
+        display: flex;
+        justify-content: center;
+        gap: 16px;
+        padding: 4px;
+        div {
+          transition: transform ease 0.3s;
+        }
+        &:hover {
+          .element-left {
+            transform: translate(-10px);
+          }
+          .element-right {
+            transform: translate(10px);
+          }
+        }
+      }
+      @media (max-width: 809px) {
+        a#banner-link {
+          gap: 8px;
+        }
+        #banner-location {
+          display: none;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <a id="banner-link" href="https://systemsdistributed.com">
+      <div class="element-left">Systems Distributed '26<span id="banner-location"> in Boston</span></div>
+      <div>|</div>
+      <div class="element-right" style="display:flex;gap:6px;font-weight:600;">Get Tickets <span style="transform:rotate(-90deg);transform-origin: 50% 50%;">↓</span></div>
+    </a>
+    <nav id="menu">
+      <div class="logo">
+        <a href="/" style="height: 24px;">
+          <img src="/blog/img/tigerbeetle-logo-8343df89.svg" alt="TigerBeetle logo" width="127" height="24">
+        </a>
+        <a id="toggle-button" onclick="toggleMenu();">
+          <img id="hamburger-menu-icon" src="/blog/img/hambuger-menu-3f063ff5.svg" alt="Expand menu" width="24" height="24">
+          <img id="close-icon" style="display: none;" src="/blog/img/close-9dc51203.svg" alt="Close menu" width="24" height="24">
+        </a>
+      </div>
+      <div class="links hidden" id="toggle-menu">
+        <div class="spacer"></div>
+        <a href="https://docs.tigerbeetle.com">Docs</a>
+        <a href="/blog">Blog</a>
+        <a href="/company">Company</a>
+        <a href="/stories">Stories</a>
+        <a href="https://www.youtube.com/@tigerbeetledb" target="_blank">
+          <img src="/blog/img/icon-youtube-5f31a4af.svg" alt="YouTube icon" width="24">
+          13.3K
+        </a>
+        <a href="https://github.com/tigerbeetle/tigerbeetle" target="_blank">
+          <img src="/blog/img/icon-github-7c79fb5d.svg" alt="GitHub icon" width="24">
+          15.9K
+        </a>
+        <div class="spacer"></div>
+        <a href="/enterprise" class="button primary">
+          Solutions
+        </a>
+      </div>
+    </nav>
+    <main>
+      <article id="blogpost">
+  <header>
+    <h1>Index, Count, Offset, Size</h1>
+    <time datetime="2026-02-16">Feb 16, 2026</time>
+    <ul class="authors"><li>
+  <a class="author" href="https://matklad.github.io">
+    <img class="photo" src="/blog/img/authors/matklad-cbfe6791.webp">
+    <p>matklad</p>
+  </a>
+</li></ul>
+  </header>
+  <img class="banner" src="banner-afcdf490.webp" width="1440" height="960">
+  <div class="content"><p>Wherein we make progress towards solving one of the most vexing
+problems of Computer Science — naming things.</p>
+<p>I am at a point in my career where the bulk of my bugs are stupid — I
+simply fail to type in the code I have in my mind correctly. In
+languages with shadowing (like Rust), I will fail to use a shadowed
+variable from the outer scope. In languages without shadowing (like
+Zig), I will use the wrong version of a variable.</p>
+<p>Pests like these are annoying, so I am always on the lookout for
+tricks to minimize the probability of bugs. One of the best possible
+tricks is of course strong static typing. Types are good at preventing
+me from doing stupid things by accident. But types have limitations. The
+text of a well-typed program is a two-in-one artifact — a specification
+of behavior of a machine (the algorithm), and a proof that the behavior
+is not unacceptable. Zero cost abstractions are code without behavior,
+just proofs!</p>
+<p>The art of skillful typing lies in minimizing verbosity of the proof,
+while maximizing the amount of unwanted behaviors ruled out, weighted by
+the probability and the cost of misbehavior. But this ratio is not
+always favorable — the code can be so proof-heavy that it becomes
+impossible to understand what it actually <em>does</em>!</p>
+<p>There’s one particular cranny where types don’t seem to usefully
+penetrate yet: indexing and associated off-by-one errors.</p>
+<p>If you don’t need indexing <em>arithmetic</em>, you can use <a
+href="https://matklad.github.io/2025/12/23/zig-newtype-index-pattern.html">newtype
+pattern</a> to prevent accessing oranges with apple-derived indexes. You
+can even go further and bind indexes to <em>specific</em> arrays, using,
+e.g., <a
+href="https://faultlore.com/blah/papers/thesis.pdf#page=56">Gankra
+trick</a>, but I haven’t seen that to be useful in practice.</p>
+<p>If, however, you <em>compute</em> indexes, you need to be extra
+careful to stay in bounds of an array, and need to be mindful that the
+maximum valid index is one less than the length of the array. While we
+don’t solve this problem perfectly at TigerBeetle, I think we have a
+naming convention that helps:</p>
+<figure>
+    <object data="index-count-offset-size-d5dc80da.svg" type="image/svg+xml">
+    </object>
+</figure>
+
+<p>Thanks <a
+href="https://ziggit.dev/t/a-rare-bug-in-audio-code-by-zig-s-creator-can-you-find-it/11366/6">@marler8997</a>
+for the illustration idea!</p>
+<p>We consistently use <code>count</code> whenever we talk about the
+number of items, and <code>index</code> to point to a particular item.
+The <a
+href="https://github.com/tigerbeetle/tigerbeetle/blob/0.16.73/docs/TIGER_STYLE.md#:~:text=State%20invariants%20positively">positive
+invariant</a> is <code>index &lt; count</code>. Consistency is the trick
+— there are certain valid and invalid ways to combine indexes and counts
+in an expression, and, if there’s always an <code>_index</code> or a
+<code>_count</code> suffix in the name, wrong combinations immediately
+jump out at you, dear reader, even if you don’t understand the specifics
+of the code.</p>
+<p>In low-level code you often need to switch between a well-typed
+representation <code>[]T</code>and raw bytes <code>[]u8</code>. To not
+confuse the two index spaces, the “count of bytes” is always called a
+<code>size</code>. By definition,</p>
+<div class="sourceCode" id="cb1"><pre
+class="sourceCode zig"><code class="sourceCode zigsyntax"><span id="cb1-1"><a href="#cb1-1" aria-hidden="true" tabindex="-1"></a>size <span class="op">=</span> <span class="bu">@sizeOf</span>(T) <span class="op">*</span> count;</span></code></pre></div>
+<p>And <code>offset</code> is the bytewise counterpart of
+<code>index</code>.</p>
+<p>We don’t use <code>length</code> in our code, as its meaning is
+ambiguous. Rust <code>str::len</code> is the byte-<code>size</code> of
+the string, but Python’s <code>len(str)</code> is the <code>count</code>
+of Unicode code-points!</p>
+<p>Here’s an example of the naming convention in action from <a
+href="https://github.com/tigerbeetle/tigerbeetle/blob/0cd32077bff00b15b83b3417bf700ecb0c888f78/src/lsm/node_pool.zig#L70-L82">NodePool</a>:</p>
+<div class="sourceCode" id="cb2"><pre
+class="sourceCode zig"><code class="sourceCode zigsyntax"><span id="cb2-1"><a href="#cb2-1" aria-hidden="true" tabindex="-1"></a><span class="kw">pub</span> <span class="kw">fn</span> release(pool<span class="op">:</span> <span class="op">*</span>NodePool<span class="op">,</span> node<span class="op">:</span> Node) <span class="dt">void</span> <span class="op">{</span></span>
+<span id="cb2-2"><a href="#cb2-2" aria-hidden="true" tabindex="-1"></a>    <span class="at">comptime</span> <span class="bu">assert</span>(meta<span class="op">.</span>Elem(Node) <span class="op">==</span> <span class="dt">u8</span>);</span>
+<span id="cb2-3"><a href="#cb2-3" aria-hidden="true" tabindex="-1"></a>    <span class="at">comptime</span> <span class="bu">assert</span>(meta<span class="op">.</span>Elem(<span class="bu">@TypeOf</span>(pool<span class="op">.</span>buffer)) <span class="op">==</span> <span class="dt">u8</span>);</span>
+<span id="cb2-4"><a href="#cb2-4" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-5"><a href="#cb2-5" aria-hidden="true" tabindex="-1"></a>    <span class="bu">assert</span>(@intFromPtr(node) <span class="op">&gt;=</span> @intFromPtr(pool<span class="op">.</span>buffer<span class="op">.</span>ptr));</span>
+<span id="cb2-6"><a href="#cb2-6" aria-hidden="true" tabindex="-1"></a>    <span class="bu">assert</span>(</span>
+<span id="cb2-7"><a href="#cb2-7" aria-hidden="true" tabindex="-1"></a>        @intFromPtr(node) <span class="op">+</span> node_size <span class="op">&lt;=</span></span>
+<span id="cb2-8"><a href="#cb2-8" aria-hidden="true" tabindex="-1"></a>            @intFromPtr(pool<span class="op">.</span>buffer<span class="op">.</span>ptr) <span class="op">+</span> pool<span class="op">.</span>buffer<span class="op">.</span>len</span>
+<span id="cb2-9"><a href="#cb2-9" aria-hidden="true" tabindex="-1"></a>    );</span>
+<span id="cb2-10"><a href="#cb2-10" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-11"><a href="#cb2-11" aria-hidden="true" tabindex="-1"></a>    <span class="at">const</span> node_offset <span class="op">=</span></span>
+<span id="cb2-12"><a href="#cb2-12" aria-hidden="true" tabindex="-1"></a>        @intFromPtr(node) <span class="op">-</span> @intFromPtr(pool<span class="op">.</span>buffer<span class="op">.</span>ptr);</span>
+<span id="cb2-13"><a href="#cb2-13" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-14"><a href="#cb2-14" aria-hidden="true" tabindex="-1"></a>    <span class="at">const</span> node_index <span class="op">=</span></span>
+<span id="cb2-15"><a href="#cb2-15" aria-hidden="true" tabindex="-1"></a>        <span class="bu">@divExact</span>(node_offset<span class="op">,</span> node_size);</span>
+<span id="cb2-16"><a href="#cb2-16" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-17"><a href="#cb2-17" aria-hidden="true" tabindex="-1"></a>    <span class="bu">assert</span>(<span class="op">!</span>pool<span class="op">.</span>free<span class="op">.</span>isSet(node_index));</span>
+<span id="cb2-18"><a href="#cb2-18" aria-hidden="true" tabindex="-1"></a>    pool<span class="op">.</span>free<span class="op">.</span>set(node_index);</span>
+<span id="cb2-19"><a href="#cb2-19" aria-hidden="true" tabindex="-1"></a><span class="op">}</span></span></code></pre></div>
+<p>You can see that the <code>node_index</code> calculation is correct
+mechanically, just from the names of the variables.</p>
+<p>And here’s an <code>index/count</code> example from our <a
+href="https://github.com/tigerbeetle/tigerbeetle/blob/81f78fe21a939ed1bffc43a10a484779e3866cf9/src/ewah.zig#L68-L95"><code>ewah</code></a>
+implementation:</p>
+<div class="sourceCode" id="cb3"><pre
+class="sourceCode zig"><code class="sourceCode zigsyntax"><span id="cb3-1"><a href="#cb3-1" aria-hidden="true" tabindex="-1"></a><span class="kw">pub</span> <span class="kw">fn</span> decode(</span>
+<span id="cb3-2"><a href="#cb3-2" aria-hidden="true" tabindex="-1"></a>    source<span class="op">:</span> []<span class="kw">align</span>(<span class="bu">@alignOf</span>(Word)) <span class="at">const</span> <span class="dt">u8</span><span class="op">,</span></span>
+<span id="cb3-3"><a href="#cb3-3" aria-hidden="true" tabindex="-1"></a>    target_words<span class="op">:</span> []Word<span class="op">,</span></span>
+<span id="cb3-4"><a href="#cb3-4" aria-hidden="true" tabindex="-1"></a>) <span class="dt">usize</span> <span class="op">{</span></span>
+<span id="cb3-5"><a href="#cb3-5" aria-hidden="true" tabindex="-1"></a>    <span class="bu">assert</span>(source<span class="op">.</span>len <span class="op">%</span> <span class="bu">@sizeOf</span>(Word) <span class="op">==</span> <span class="dv">0</span>);</span>
+<span id="cb3-6"><a href="#cb3-6" aria-hidden="true" tabindex="-1"></a>    <span class="bu">assert</span>(disjoint_slices(<span class="dt">u8</span><span class="op">,</span> Word<span class="op">,</span> source<span class="op">,</span> target_words));</span>
+<span id="cb3-7"><a href="#cb3-7" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb3-8"><a href="#cb3-8" aria-hidden="true" tabindex="-1"></a>    <span class="at">const</span> source_words <span class="op">=</span> mem<span class="op">.</span>bytesAsSlice(Word<span class="op">,</span> source);</span>
+<span id="cb3-9"><a href="#cb3-9" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb3-10"><a href="#cb3-10" aria-hidden="true" tabindex="-1"></a>    <span class="at">var</span> source_index<span class="op">:</span> <span class="dt">usize</span> <span class="op">=</span> <span class="dv">0</span>;</span>
+<span id="cb3-11"><a href="#cb3-11" aria-hidden="true" tabindex="-1"></a>    <span class="at">var</span> target_index<span class="op">:</span> <span class="dt">usize</span> <span class="op">=</span> <span class="dv">0</span>;</span>
+<span id="cb3-12"><a href="#cb3-12" aria-hidden="true" tabindex="-1"></a>    <span class="cf">while</span> (source_index <span class="op">&lt;</span> source_words<span class="op">.</span>len) <span class="op">{</span></span>
+<span id="cb3-13"><a href="#cb3-13" aria-hidden="true" tabindex="-1"></a>        <span class="at">const</span> marker<span class="op">:</span> <span class="op">*</span><span class="at">const</span> Marker <span class="op">=</span></span>
+<span id="cb3-14"><a href="#cb3-14" aria-hidden="true" tabindex="-1"></a>            <span class="bu">@ptrCast</span>(<span class="op">&amp;</span>source_words[source_index]);</span>
+<span id="cb3-15"><a href="#cb3-15" aria-hidden="true" tabindex="-1"></a>        source_index <span class="op">+=</span> <span class="dv">1</span>;</span>
+<span id="cb3-16"><a href="#cb3-16" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb3-17"><a href="#cb3-17" aria-hidden="true" tabindex="-1"></a>        <span class="bu">@memset</span>(</span>
+<span id="cb3-18"><a href="#cb3-18" aria-hidden="true" tabindex="-1"></a>            target_words[target_index<span class="op">..</span>][<span class="dv">0</span><span class="op">..</span>marker<span class="op">.</span>uniform_word_count]<span class="op">,</span></span>
+<span id="cb3-19"><a href="#cb3-19" aria-hidden="true" tabindex="-1"></a>            <span class="cf">if</span> (marker<span class="op">.</span>uniform_bit <span class="op">==</span> <span class="dv">1</span>) <span class="op">~</span><span class="bu">@as</span>(Word<span class="op">,</span> <span class="dv">0</span>) <span class="cf">else</span> <span class="dv">0</span><span class="op">,</span></span>
+<span id="cb3-20"><a href="#cb3-20" aria-hidden="true" tabindex="-1"></a>        );</span>
+<span id="cb3-21"><a href="#cb3-21" aria-hidden="true" tabindex="-1"></a>        target_index <span class="op">+=</span> marker<span class="op">.</span>uniform_word_count;</span>
+<span id="cb3-22"><a href="#cb3-22" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb3-23"><a href="#cb3-23" aria-hidden="true" tabindex="-1"></a>        stdx<span class="op">.</span>copy_disjoint(</span>
+<span id="cb3-24"><a href="#cb3-24" aria-hidden="true" tabindex="-1"></a>            <span class="op">.</span>exact<span class="op">,</span></span>
+<span id="cb3-25"><a href="#cb3-25" aria-hidden="true" tabindex="-1"></a>            Word<span class="op">,</span></span>
+<span id="cb3-26"><a href="#cb3-26" aria-hidden="true" tabindex="-1"></a>            target_words[target_index<span class="op">..</span>][<span class="dv">0</span><span class="op">..</span>marker<span class="op">.</span>literal_word_count]<span class="op">,</span></span>
+<span id="cb3-27"><a href="#cb3-27" aria-hidden="true" tabindex="-1"></a>            source_words[source_index<span class="op">..</span>][<span class="dv">0</span><span class="op">..</span>marker<span class="op">.</span>literal_word_count]<span class="op">,</span></span>
+<span id="cb3-28"><a href="#cb3-28" aria-hidden="true" tabindex="-1"></a>        );</span>
+<span id="cb3-29"><a href="#cb3-29" aria-hidden="true" tabindex="-1"></a>        source_index <span class="op">+=</span> marker<span class="op">.</span>literal_word_count;</span>
+<span id="cb3-30"><a href="#cb3-30" aria-hidden="true" tabindex="-1"></a>        target_index <span class="op">+=</span> marker<span class="op">.</span>literal_word_count;</span>
+<span id="cb3-31"><a href="#cb3-31" aria-hidden="true" tabindex="-1"></a>    <span class="op">}</span></span>
+<span id="cb3-32"><a href="#cb3-32" aria-hidden="true" tabindex="-1"></a>    <span class="bu">assert</span>(source_index <span class="op">==</span> source_words<span class="op">.</span>len);</span>
+<span id="cb3-33"><a href="#cb3-33" aria-hidden="true" tabindex="-1"></a>    <span class="bu">assert</span>(target_index <span class="op">&lt;=</span> target_words<span class="op">.</span>len);</span>
+<span id="cb3-34"><a href="#cb3-34" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb3-35"><a href="#cb3-35" aria-hidden="true" tabindex="-1"></a>    <span class="cf">return</span> target_index;</span>
+<span id="cb3-36"><a href="#cb3-36" aria-hidden="true" tabindex="-1"></a><span class="op">}</span></span></code></pre></div>
+<p>Note well that the <code>index/count</code> convention synergizes
+with two other TigerStyle shticks. We use “big endian naming”, where
+qualifiers are appended as suffixes:</p>
+<pre><code>source
+source_words
+source_index</code></pre>
+<p>And we try to make sure that dual names have the same length:</p>
+<pre><code>source
+target</code></pre>
+<p>The code aligns itself, and makes the bugs pop out:</p>
+<div class="sourceCode" id="cb6"><pre
+class="sourceCode zig"><code class="sourceCode zigsyntax"><span id="cb6-1"><a href="#cb6-1" aria-hidden="true" tabindex="-1"></a>source_index <span class="op">+=</span> marker<span class="op">.</span>literal_word_count;</span>
+<span id="cb6-2"><a href="#cb6-2" aria-hidden="true" tabindex="-1"></a>target_index <span class="op">+=</span> marker<span class="op">.</span>literal_word_count;</span></code></pre></div>
+<p>Of course, a simple naming convention by itself won’t make software
+significantly better. But grains of sand add up to Dune: there’s no one
+trick to get rid of the bugs, but you can layer your defenses to
+exponentially decrease the probability of a failure.</p>
+  </div>
+</article>
+<section id="more-posts">
+  <p class="section-label">MORE POSTS</p>
+  <a class="post-next" href="/blog/2026-01-14-bitemporality">
+  <img class="banner" src="/blog/2026-01-14-bitemporality/banner-750eb3b9.webp" alt="Banner">
+  <div class="description">
+    <h2>One for the Treble, Two for the Time</h2>
+    <p class="meta">
+      <span class="author">Lewis Daly</span> ·
+      <time datetime="2026-01-14">Jan 14, 2026</time>
+    </p>
+  </div>
+</a>
+  <menu class="actions">
+    <li><a class="button" href="/blog">View All Posts</a></li>
+    <li><a class="button rss" href="/blog/atom.xml" type="application/atom+xml">
+      <img src="/blog/img/rss2-1df13568.svg" alt="RSS icon" width="16" height="16"><b>RSS</b>
+    </a></li>
+  </menu>
+</section>
+    </main>
+    <div id="beetle-greetings">
+      <img id="beetle-idle" src="/blog/img/beetle-idle-ba0930e9.gif" alt="An idling tiger beetle" onclick="greet();">
+      <img id="beetle-hi" src="/blog/img/beetle-hi-bbc14d68.png" alt="Speech bubble says hi">
+    </div>
+    <footer id="sitemap">
+      <div class="wrapper">
+        <div class="logo column">
+          <a href="/" class="logo">
+            <img src="/blog/img/tigerbeetle-logo-8343df89.svg" alt="TigerBeetle logo" width="111" height="24">
+          </a>
+          <p id="copyright">
+            Copyright &copy; 2026 TigerBeetle,&nbsp;Inc.
+            <br>
+            All Rights Reserved.
+          </p>
+        </div>
+        <div class="column">
+          <h3>Product</h3>
+          <a href="/company"><p>Company</p></a>
+          <a href="/startup"><p>Startup Program</p></a>
+          <a href="/enterprise"><p>Enterprise Solutions</p></a>
+          <a href="https://jepsen.io/analyses/tigerbeetle-0.16.11" target="_blank"><p>Jepsen Report</p></a>
+          <a href="/stories"><p>Stories</p></a>
+        </div>
+        <div class="column">
+          <h3>Developers</h3>
+          <a href="https://docs.tigerbeetle.com/"><p>Docs</p></a>
+          <a href="/blog"><p>Blog</p></a>
+          <a href="https://github.com/tigerbeetle/tigerbeetle/releases" target="_blank"><p>Releases</p></a>
+          <a href="https://github.com/tigerbeetle/tigerlings"><p>Tutorial</p></a>
+          <a href="https://github.com/tigerbeetle/tigerbeetle"><p>GitHub</p></a>
+        </div>
+        <div class="column">
+          <h3>Connect</h3>
+          <a href="https://x.com/TigerBeetleDB" target="_blank"><p>X</p></a>
+          <a href="https://www.linkedin.com/company/tigerbeetle/" target="_blank"><p>LinkedIn</p></a>
+          <a href="https://www.youtube.com/@tigerbeetledb" target="_blank"><p>YouTube</p></a>
+          <a href="mailto:hello@tigerbeetle.com"><p>Email</p></a>
+          <a href="/privacy"><p>Privacy</p></a>
+        </div>
+        <div id="newsletter" class="column">
+          <h3>Newsletter</h3>
+          <p>Get monthly highlights and carefully crafted updates.</p>
+          <div>
+            <a class="button" href="/newsletter">Subscribe</a>
+            <a href="/newsletters"><p>Past Newsletters →</p></a>
+          </div>
+          <div id="correct-and-fast">
+            <svg viewport="0 0 15 15" width="15" height="17" fill="none">
+              <g fill="none" stroke="currentColor">
+                <circle cx="7.5" cy="8.5" r="5.5" />
+                <path d="M7.5 3 v-2 M6 1 h3 M11.5 4.5 l1 -1"/>
+                <g class="hands">
+                  <path class="line" d="M5 8.5 l2 1.5 l3-2.5" stroke-linecap="round" stroke-linejoin="round"/>
+                </g>
+              </g>
+            </svg>
+            <span>Correct and Fast</span>
+        </div>
+        </div>
+      </div>
+    </footer>
+    <script>
+      function toggleMenu() {
+        const menu = document.getElementById('toggle-menu');
+        const hamburgerMenuIcon = document.getElementById('hamburger-menu-icon');
+        const closeIcon = document.getElementById('close-icon');
+        if (menu.classList.contains('hidden')) {
+          menu.classList.remove('hidden');
+          hamburgerMenuIcon.style.display = 'none';
+          closeIcon.style.display = 'block';
+        } else {
+          menu.classList.add('hidden');
+          hamburgerMenuIcon.style.display = 'block';
+          closeIcon.style.display = 'none';
+        }
+      }
+
+      function greet() {
+        const beetleHi = document.getElementById('beetle-hi');
+        beetleHi.classList.add('visible');
+        setTimeout(() => beetleHi.classList.remove('visible'), 3000);
+      }
+    </script>
+  </body>
+</html>

@@ -1,0 +1,40 @@
+name: Lint
+
+permissions:
+  contents: read
+
+concurrency:
+  group: lint-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+on:
+  workflow_dispatch:
+  merge_group:
+  pull_request:
+  push:
+    branches: ["main"]
+
+jobs:
+  lint:
+    runs-on: ubuntu-slim
+    steps:
+      - name: Checkout
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          git clone --filter=blob:none --depth=200 "https://x-access-token:${GH_TOKEN}@github.com/${{ github.repository }}" .
+          git checkout "${{ github.sha }}"
+
+      - name: Set up Go
+        run: |
+          make -C third_party/lua-5.1.5 linux
+          eval "$(third_party/lua-5.1.5/src/lua install_golang.lua)"
+
+      - name: Test
+        run: go test ./lint/... -count=1 -race
+
+      - name: Build
+        run: go build -o lint-bin ./lint
+
+      - name: Lint
+        run: ./lint-bin ./lint
