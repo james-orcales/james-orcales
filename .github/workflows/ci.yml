@@ -31,10 +31,13 @@ jobs:
           eval "$(third_party/lua-5.1.5/src/lua install_golang.lua)"
 
       - name: Test
-        run: go test ./lint/... -count=1 -race
+        run: |
+          go test ./lint/... ./golang_snacks/snap/v2/... -count=1 -race
 
       - name: Build
         run: go build -o lint-bin ./lint
 
       - name: Lint
-        run: ./lint-bin ./lint
+        run: |
+          ./lint-bin ./lint
+          ./lint-bin ./golang_snacks/snap/v2
