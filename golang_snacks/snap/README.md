@@ -1,6 +1,7 @@
 # snap
 
-Inline snapshot testing for Go inspired by [TigerBeetle: Snapshot Testing For The Masses](https://tigerbeetle.com/blog/2024-05-14-snapshot-testing-for-the-masses/)
+Inline snapshot testing for Go inspired by
+[TigerBeetle: Snapshot Testing For The Masses][tigerbeetle-snap]
 
 ## Idea
 
@@ -68,3 +69,5 @@ SNAPSHOT_EDIT_ALL=1 go test ./...
 ## Example
 
 Refer to `golang_snacks/tree/main/itlog/unit_test.go`.
+
+[tigerbeetle-snap]: https://tigerbeetle.com/blog/2024-05-14-snapshot-testing-for-the-masses/
