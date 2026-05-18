@@ -1,5 +1,3 @@
-//go:build sim.virtual_time
-
 // WARN: This package is pre-alpha.
 // TODO: Wrap the standard library to integrate with virtual time.
 package sim
