@@ -3,3 +3,4 @@ bin/**
 .go-path
 .envrc.local
 .claude/
+./tmp
