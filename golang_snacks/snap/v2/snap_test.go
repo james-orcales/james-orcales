@@ -69,6 +69,27 @@ func Test_Is_Equal_Mismatch(t *testing.T) {
 	}
 }
 
+// Test_Is_Equal_Mismatch_Legend verifies the mismatch header carries a colored
+// 'expected vs actual' legend so readers can map - / + to red / green.
+func Test_Is_Equal_Mismatch_Legend(t *testing.T) {
+	s, output_buffer, _ := test_snapper(nil)
+	snapshot := snap.New_Snapshot(&snap.New_Snapshot_Input{
+		Snapper:   s,
+		File_Path: "/fake/test.go",
+		Line:      5,
+		Expected:  "expected",
+	})
+	snap.Snapshot_Is_Equal(snapshot, "actual")
+
+	out := output_buffer.String()
+	if !strings.Contains(out, "\033[31mexpected\033[0m") {
+		t.Fatalf("expected red 'expected' in legend, got:\n%s", out)
+	}
+	if !strings.Contains(out, "\033[32mactual\033[0m") {
+		t.Fatalf("expected green 'actual' in legend, got:\n%s", out)
+	}
+}
+
 // Test_Is_Equal_Edit verifies that Is_Equal with Should_Edit=true writes the updated
 // source content to W and prints an UPDATED SNAPSHOT notice to Output.
 func Test_Is_Equal_Edit(t *testing.T) {

@@ -23,6 +23,10 @@ import (
 	"github.com/james-orcales/james-orcales/golang_snacks/snap/myers"
 )
 
+// mismatch_legend keys the diff colors so readers can map - / + to red / green
+// without consulting docs. Embedded in every Snapshot mismatch header.
+const mismatch_legend = "\033[31mexpected\033[0m vs \033[32mactual\033[0m"
+
 // Snapshot represents an expected output value captured at a specific source location.
 // Snapshots are compared against actual test output to verify correctness.
 type Snapshot struct {
@@ -296,7 +300,6 @@ func snapper_is_equal_edit(s *Snapper, snapshot Snapshot, actual string, is_equa
 // If snapshot editing is enabled (via Edit), it updates the source file to replace
 // the old snapshot with the actual output and returns true.
 // On mismatch without editing, it prints a Myers diff to s.Out and returns false.
-// Red lines (-) show expected; green lines (+) show actual.
 func Snapshot_Is_Equal(snapshot Snapshot, actual string) (equal bool) {
 	invariant.Ensure(snapshot.Snapper != nil, "Snapshot is bound to a Snapper")
 	s := snapshot.Snapper
@@ -312,7 +315,7 @@ func Snapshot_Is_Equal(snapshot Snapshot, actual string) (equal bool) {
 		return snapper_is_equal_edit(s, snapshot, actual, is_equal)
 	} else if !is_equal {
 		d := myers.New(myers.NewInput{Old: snapshot.Expected_Output, New: actual})
-		fmt.Fprintf(s.Output, "Snapshot mismatch %s:%d\n", snapshot.File_Path, snapshot.Line)
+		fmt.Fprintf(s.Output, "Snapshot mismatch %s:%d  (%s)\n", snapshot.File_Path, snapshot.Line, mismatch_legend)
 		for line := range strings.SplitSeq(d.LineDiff(), "\n") {
 			if len(line) == 0 {
 				continue
