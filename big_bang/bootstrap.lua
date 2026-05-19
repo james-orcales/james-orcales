@@ -179,9 +179,15 @@ end
 
 operating_system = sh("uname", "|")
 cpu_architecture = sh("uname -m", "|")
+-- Anchor every cwd-dependent operation to the directory of this script so it
+-- can be invoked from anywhere (e.g. `./bin/darwin/lua big_bang/bootstrap.lua`
+-- from the repo root). Lua 5.1 has no chdir, so we resolve once and pass it
+-- explicitly to the few callers that need it.
+SCRIPT_DIR = sh(string.format("cd %q && pwd", arg[0]:match("(.*)/") or "."), "|")
 assert(
-	sh("basename $(pwd)", "|") == "big_bang" and sh("git rev-parse --is-inside-work-tree 2>/dev/null", "|") == "true",
-	"Working directory is the cloned repository"
+	sh("basename " .. SCRIPT_DIR, "|") == "big_bang"
+		and sh("git -C " .. SCRIPT_DIR .. " rev-parse --is-inside-work-tree 2>/dev/null", "|") == "true",
+	"Script lives inside the cloned repository"
 )
 assert(
 	(operating_system == "Darwin" and cpu_architecture == "arm64")
@@ -211,7 +217,7 @@ SHELL_CONFIG = {
 	{
 		path(HOME, ".zshenv"),
 		[[
-                export BIG_BANG_GIT_DIR="$HOME/code/big_bang"
+                export BIG_BANG_GIT_DIR="$HOME/code/james-orcales/big_bang"
                 # A good reason not to use .local/share is to keep the PATH variable short. I want to avoid symlinks and hardcode all variables. A possible
                 # alternative is $HOME/big_bang, but that's a decision for later.
                 export BIG_BANG_DATA_DIR="$HOME/.local/share/big_bang"
@@ -219,10 +225,6 @@ SHELL_CONFIG = {
                 export BIG_BANG_BIN="$BIG_BANG_DATA_DIR/bin"
                 export BIG_BANG_MAN="$BIG_BANG_DATA_DIR/man"
                 export BIG_BANG_TMP="$BIG_BANG_DATA_DIR/tmp"
-
-
-                export GOPATH="$BIG_BANG_SHARE/go-path/"
-                export PATH="/$GOPATH/bin:$PATH"
 
 
                 export CARGO_HOME="$BIG_BANG_SHARE/rust/.cargo"
@@ -259,7 +261,6 @@ SHELL_CONFIG = {
 
                 # Place path exports in .zprofile - https://stackoverflow.com/a/34244862
                 # Zsh on Arch [and OSX] sources /etc/profile – which overwrites and exports PATH – after having sourced $HOME/.zshenv
-                export PATH="$BIG_BANG_SHARE/go/bin:$PATH"
                 export PATH="$BIG_BANG_SHARE/nvim/nvim-macos-arm64/bin:$PATH"
                 export PATH="$CARGO_HOME/bin:$PATH"
                 # Put BIG_BANG_BIN last for it to take priority.
@@ -267,6 +268,13 @@ SHELL_CONFIG = {
 
 
                 export MANPATH="$BIG_BANG_MAN:$MANPATH"
+
+                if command -v direnv >/dev/null 2>&1; then
+                        if [ -n "$CLAUDECODE" ]; then
+                                eval "$(direnv hook zsh)"
+                                eval "$(DIRENV_LOG_FORMAT= direnv export zsh)"
+                        fi
+                fi
                 ]],
 	},
 	{
@@ -301,65 +309,6 @@ function env_setup()
 	assert(sh([[ mkdir -p "$BIG_BANG_BIN"      ]]), "Essential directories are created")
 	assert(sh([[ mkdir -p "$BIG_BANG_TMP"      ]]), "Essential directories are created")
 	assert(sh([[ mkdir -p "$BIG_BANG_MAN"      ]]), "Essential directories are created")
-	return true
-end
-
-function install_golang()
-	assert(type(operating_system) == "string" and operating_system ~= "")
-	assert(type(cpu_architecture) == "string" and cpu_architecture ~= "")
-	assert(type(BIG_BANG_DATA_DIR) == "string" and BIG_BANG_DATA_DIR ~= "")
-	assert(type(BIG_BANG_SHARE) == "string" and BIG_BANG_SHARE ~= "")
-	assert(type(BIG_BANG_TMP) == "string" and BIG_BANG_TMP ~= "")
-
-	local version = "1.25.7"
-	if sh("command -v go", "|"):has_prefix(BIG_BANG_DATA_DIR) then
-		if sh("go version 2>/dev/null", "|"):match(version) then
-			INFO(string.format("golang v%s is already installed", version))
-			return true
-		else
-			INFO("golang installation is the wrong version")
-		end
-	end
-
-	local release, checksum
-	if operating_system == "Darwin" then
-		release = string.format([[go%s.darwin-arm64.tar.gz]], version)
-		checksum = "7c083e3d2c00debfeb2f77d9a4c00a1aac97113b89b9ccc42a90487af3437382"
-	elseif operating_system == "Linux" then
-		release = string.format([[go%s.linux-amd64.tar.gz]], version)
-		checksum = "0335f314b6e7bfe08c3d0cfaa7c19db961b7b99fb20be62b0a826c992ad14e0f"
-	else
-		unreachable()
-	end
-	INFO("downloading go")
-	local download_location = path(BIG_BANG_TMP, release)
-	local download_url = "https://go.dev/dl/" .. release
-	if
-		not sh(
-			string.format(
-				"curl --proto '=https' --fail --show-error --location --output %s --connect-timeout 5 -- %s",
-				download_location,
-				download_url
-			)
-		)
-	then
-		ERROR("failed to download go binary")
-		return false
-	end
-	-- never ever use the flags of this god forsaken command.
-	if not sh("sha256", download_location, "|"):find(checksum) then
-		ERROR("mismatched golang installation checksum")
-		return false
-	end
-	if not sh(string.format([[tar --extract --gzip --file=%s --directory=%s]], download_location, BIG_BANG_SHARE)) then
-		ERROR("extracting " .. release)
-		return false
-	end
-	assert(sh("go version", "|"):match(version))
-	if not sh(string.format([[go env -w GOPATH=%s]], path(BIG_BANG_SHARE, "/go-path"))) then
-		ERROR("updating GOPATH")
-		return false
-	end
 	return true
 end
 
@@ -413,11 +362,26 @@ end
 function main()
 	setup_ssh()
 	assert(env_setup(), "Environment setup is essential")
-	if not install_golang() then
+
+	-- Delegate Go installation to the workspace-root per-repo installer
+	-- (~/code/james-orcales/install_golang.lua). It downloads Go into
+	-- <workspace>/bin/go and emits `export` lines on stdout describing
+	-- PATH/GOROOT/GOPATH; we merge those into CURRENT_PROCESS_ENVIRONMENT
+	-- so the subsequent `go run` resolves correctly via sh()'s env diff.
+	local workspace_root = sh(string.format("cd %q/.. && pwd", SCRIPT_DIR), "|")
+	local lua_bin = path(workspace_root, "/bin/darwin/lua")
+	local installer = path(workspace_root, "/install_golang.lua")
+	local exports = sh(string.format("%q %q", lua_bin, installer), "|")
+	if exports == nil or exports == "" then
+		ERROR("install_golang.lua produced no exports")
 		os.exit(1)
 	end
+	for k, v in exports:gmatch('export%s+([%w_]+)="?([^"\n]+)"?') do
+		CURRENT_PROCESS_ENVIRONMENT[k] = v
+	end
+
 	print([[=== go run big_bang.go ===]])
-	sh("go run big_bang.go")
+	sh("cd " .. SCRIPT_DIR .. " && go run big_bang.go")
 	print("=== Bootstrap Finished ===")
 end
 

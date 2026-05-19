@@ -133,7 +133,7 @@ func main() {
 			}(),
 			"Essential directories are created and exported during bootstrap.lua",
 		)
-		invariant.Always(strings.Contains(BIG_BANG_GIT_DIR, "james-orcales/code/big_bang"), "Repo is cloned into ~/code/big_bang")
+		invariant.Always(strings.Contains(BIG_BANG_GIT_DIR, "james-orcales/code/james-orcales/big_bang"), "Repo is cloned into ~/code/james-orcales/big_bang")
 
 		if err := os.RemoveAll(BIG_BANG_TMP); err != nil {
 			return err
