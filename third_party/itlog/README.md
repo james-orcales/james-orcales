@@ -1,5 +1,8 @@
 # itlog
 
+> I moved this into third_party so it's not flagged by the linter. It's one of the few libs I
+> handwrote that I didn't want touch with AI.
+
 A zero-allocation logger for Go that keeps the Zerolog feel and speed in a tiny codebase, with
 human-readable logfmt-style output.
 
