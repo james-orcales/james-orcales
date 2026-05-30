@@ -1863,8 +1863,8 @@ func Test_Path_Casing_Respects_Tracked(t *testing.T) {
 // Test_Ignore_Trims_Scan_Set verifies a lint.json `ignore` glob removes a path
 // from the scan set for every tier at once: a banned script and a bad-cased
 // directory under the ignored prefix both go silent, where without `ignore` each
-// fires. This is what makes `ignore` stronger than path_casing_allowlist, which
-// suppresses only the casing diagnostic.
+// fires. Trimming the scan set, not exempting one rule, is what makes the path
+// invisible to all checks.
 func Test_Ignore_Trims_Scan_Set(t *testing.T) {
 	t.Parallel()
 	fsys := fstest.MapFS{
@@ -1898,132 +1898,138 @@ func Test_Ignore_Trims_Scan_Set(t *testing.T) {
 	}
 }
 
-// Builds a lint.json carrying the given path_casing_allowlist beside the
-// required shared_module and word_replacements. Marshaled from a map rather
-// than lint.Configuration so the test compiles before the struct field exists,
-// keeping the red-green order honest.
-func lint_json_path_casing(t *testing.T, allowlist []string) (data string) {
+// Builds a lint.json carrying the given ignore globs beside the required
+// shared_module and word_replacements. Marshaled from a map rather than
+// lint.Configuration so a renamed or dropped key surfaces as a decode failure
+// instead of compiling silently.
+func lint_json_ignore(t *testing.T, ignore []string) (data string) {
 	t.Helper()
 	raw, err := json.Marshal(map[string]any{
-		"shared_module":         "lint_test_no_shared_module",
-		"word_replacements":     test_word_replacements(),
-		"path_casing_allowlist": allowlist,
+		"shared_module":     "lint_test_no_shared_module",
+		"word_replacements": test_word_replacements(),
+		"ignore":            ignore,
 	})
 	if err != nil {
-		t.Fatalf("lint_json_path_casing: %v", err)
+		t.Fatalf("lint_json_ignore: %v", err)
 	}
 	return string(raw)
 }
 
-// Lints in-memory files (the caller supplies lint.json) and returns the exit
-// code with stdout and stderr. Unlike run_stream it keeps all three, so a test
-// can tell a clean run (code 0, success line) from a hard config failure
-// (code 2, stderr) rather than conflating the two.
-func run_lint(t *testing.T, files map[string]string) (code int, stdout, stderr string) {
+// Lints in-memory files end-to-end (the caller supplies lint.json), marking
+// every file but lint.json tracked, and returns the exit code with stdout and
+// stderr. The tracked set is what `ignore` trims, so without it the filter is
+// inert; keeping all three streams lets a test tell a clean run (code 0, success
+// line) from a hard config failure (code 2, stderr).
+func run_lint_tracked(t *testing.T, files map[string]string) (code int, stdout, stderr string) {
 	t.Helper()
 	fsys := make(fstest.MapFS)
+	tracked := make(map[string]bool)
 	for name, content := range files {
 		fsys[name] = &fstest.MapFile{Data: []byte(content)}
+		if name != "lint.json" {
+			tracked[name] = true
+		}
 	}
 	stdout_buffer := &bytes.Buffer{}
 	stderr_buffer := &bytes.Buffer{}
 	code = lint_main(t, &lint.Main_Input{
-		Fsys:   fsys,
-		Stdout: stdout_buffer,
-		Stderr: stderr_buffer,
+		Fsys:    fsys,
+		Stdout:  stdout_buffer,
+		Stderr:  stderr_buffer,
+		Tracked: tracked,
 	})
 	return code, stdout_buffer.String(), stderr_buffer.String()
 }
 
-// A recursive dir/** entry exempts the directory and its whole subtree from the
-// path-casing rule; the identical fixture without the entry still flags the
-// directory, proving the exemption is load-bearing.
-func Test_Path_Casing_Allowlist_Recursive(t *testing.T) {
+// A recursive dir/** entry drops the directory and its whole subtree from the
+// scan set; the identical fixture without the entry still flags the directory,
+// proving the ignore is load-bearing.
+func Test_Ignore_Recursive(t *testing.T) {
 	t.Parallel()
-	fixture := func(allowlist []string) (files map[string]string) {
+	fixture := func(ignore []string) (files map[string]string) {
 		return map[string]string{
 			"bad-Dir/x.txt": "x\n",
-			"lint.json":     lint_json_path_casing(t, allowlist),
+			"lint.json":     lint_json_ignore(t, ignore),
 		}
 	}
-	code, stdout, _ := run_lint(t, fixture(nil))
+	code, stdout, _ := run_lint_tracked(t, fixture(nil))
 	if code != 1 {
 		t.Fatalf("control: want exit 1, got %d: %s", code, stdout)
 	}
 	if !strings.Contains(stdout, "bad-Dir") {
 		t.Fatalf("control: want bad-Dir flagged, got: %s", stdout)
 	}
-	code, stdout, stderr := run_lint(t, fixture([]string{"bad-Dir/**"}))
+	code, stdout, stderr := run_lint_tracked(t, fixture([]string{"bad-Dir/**"}))
 	if code != 0 {
-		t.Fatalf("exempt: want clean run, got %d; stderr %q", code, stderr)
+		t.Fatalf("ignored: want clean run, got %d; stderr %q", code, stderr)
 	}
 	if strings.Contains(stdout, "bad-Dir") {
-		t.Fatalf("exempt: bad-Dir/** must suppress the diag: %s", stdout)
+		t.Fatalf("ignored: bad-Dir/** must drop the subtree: %s", stdout)
 	}
 }
 
 // A trailing-slash dir/ entry follows gitignore: it matches the directory and
-// thus exempts everything beneath it, including a badly-cased file inside.
-func Test_Path_Casing_Allowlist_Directory(t *testing.T) {
+// thus drops everything beneath it, including a badly-cased file inside.
+func Test_Ignore_Directory(t *testing.T) {
 	t.Parallel()
 	files := map[string]string{
 		"bad-Dir/Also-Bad.txt": "x\n",
-		"lint.json":            lint_json_path_casing(t, []string{"bad-Dir/"}),
+		"lint.json":            lint_json_ignore(t, []string{"bad-Dir/"}),
 	}
-	code, stdout, stderr := run_lint(t, files)
+	code, stdout, stderr := run_lint_tracked(t, files)
 	if code != 0 {
 		t.Fatalf("bad-Dir/ must yield a clean run, got %d; stderr %q", code, stderr)
 	}
 	if strings.Contains(stdout, "bad-Dir") {
-		t.Fatalf("bad-Dir/ must exempt the directory name: %s", stdout)
+		t.Fatalf("bad-Dir/ must drop the directory name: %s", stdout)
 	}
 	if strings.Contains(stdout, "Also-Bad") {
-		t.Fatalf("bad-Dir/ must exempt the subtree file: %s", stdout)
+		t.Fatalf("bad-Dir/ must drop the subtree file: %s", stdout)
 	}
 }
 
 // A slash-less entry is unanchored: it matches the basename at any depth, the
 // way gitignore floats a pattern that carries no slash.
-func Test_Path_Casing_Allowlist_Unanchored(t *testing.T) {
+func Test_Ignore_Unanchored(t *testing.T) {
 	t.Parallel()
-	fixture := func(allowlist []string) (files map[string]string) {
+	fixture := func(ignore []string) (files map[string]string) {
 		return map[string]string{
 			"weird-File.txt":   "x\n",
 			"a/weird-File.txt": "x\n",
-			"lint.json":        lint_json_path_casing(t, allowlist),
+			"lint.json":        lint_json_ignore(t, ignore),
 		}
 	}
-	code, stdout, _ := run_lint(t, fixture(nil))
+	code, stdout, _ := run_lint_tracked(t, fixture(nil))
 	if code != 1 {
 		t.Fatalf("control: want exit 1, got %d: %s", code, stdout)
 	}
 	if !strings.Contains(stdout, "weird-File.txt") {
 		t.Fatalf("control: want weird-File.txt flagged: %s", stdout)
 	}
-	code, stdout, stderr := run_lint(t, fixture([]string{"weird-File.txt"}))
+	code, stdout, stderr := run_lint_tracked(t, fixture([]string{"weird-File.txt"}))
 	if code != 0 {
 		t.Fatalf("unanchored: want clean run, got %d; stderr %q", code, stderr)
 	}
 	if strings.Contains(stdout, "weird-File") {
-		t.Fatalf("a slash-less entry must exempt every depth: %s", stdout)
+		t.Fatalf("a slash-less entry must drop every depth: %s", stdout)
 	}
 }
 
-// An entry containing a slash is anchored to the repo root: it exempts the
-// exact path and never the same basename under a different parent.
-func Test_Path_Casing_Allowlist_Anchored(t *testing.T) {
+// An entry containing a slash is anchored to the repo root: it drops the exact
+// path and never the same basename under a different parent.
+func Test_Ignore_Anchored(t *testing.T) {
 	t.Parallel()
 	files := map[string]string{
 		"top/weird-File.txt":   "x\n",
 		"other/weird-File.txt": "x\n",
-		"lint.json":            lint_json_path_casing(t, []string{"top/weird-File.txt"}),
+		"lint.json":            lint_json_ignore(t, []string{"top/weird-File.txt"}),
 	}
-	code, stdout, stderr := run_lint(t, files)
+	code, stdout, stderr := run_lint_tracked(t, files)
 	if code != 1 {
 		t.Fatalf("want other/ still flagged, got %d; stderr %q", code, stderr)
 	}
 	if strings.Contains(stdout, "top/weird-File.txt") {
-		t.Fatalf("anchored entry must exempt top/: %s", stdout)
+		t.Fatalf("anchored entry must drop top/: %s", stdout)
 	}
 	if !strings.Contains(stdout, "other/weird-File.txt") {
 		t.Fatalf("anchored entry must not leak to other/: %s", stdout)
@@ -2031,42 +2037,42 @@ func Test_Path_Casing_Allowlist_Anchored(t *testing.T) {
 }
 
 // A single-segment glob (*.weird) matches that pattern at any depth.
-func Test_Path_Casing_Allowlist_Segment_Glob(t *testing.T) {
+func Test_Ignore_Segment_Glob(t *testing.T) {
 	t.Parallel()
-	fixture := func(allowlist []string) (files map[string]string) {
+	fixture := func(ignore []string) (files map[string]string) {
 		return map[string]string{
 			"bad-Name.weird":  "x\n",
 			"a/Bad-Two.weird": "x\n",
-			"lint.json":       lint_json_path_casing(t, allowlist),
+			"lint.json":       lint_json_ignore(t, ignore),
 		}
 	}
-	code, stdout, _ := run_lint(t, fixture(nil))
+	code, stdout, _ := run_lint_tracked(t, fixture(nil))
 	if code != 1 {
 		t.Fatalf("control: want exit 1, got %d: %s", code, stdout)
 	}
 	if !strings.Contains(stdout, ".weird") {
 		t.Fatalf("control: want *.weird names flagged: %s", stdout)
 	}
-	code, stdout, stderr := run_lint(t, fixture([]string{"*.weird"}))
+	code, stdout, stderr := run_lint_tracked(t, fixture([]string{"*.weird"}))
 	if code != 0 {
 		t.Fatalf("*.weird: want clean run, got %d; stderr %q", code, stderr)
 	}
 	if strings.Contains(stdout, ".weird") {
-		t.Fatalf("*.weird must exempt matching names at any depth: %s", stdout)
+		t.Fatalf("*.weird must drop matching names at any depth: %s", stdout)
 	}
 }
 
-// A malformed, negated, or empty allowlist entry is rejected at config-parse
-// time, aborting the run with exit 2 — the same loud failure every other bad
-// lint.json earns.
-func Test_Path_Casing_Allowlist_Parse_Rejects(t *testing.T) {
+// A malformed, negated, or empty ignore entry is rejected at config-parse time,
+// aborting the run with exit 2 — the same loud failure every other bad lint.json
+// earns.
+func Test_Ignore_Parse_Rejects(t *testing.T) {
 	t.Parallel()
 	for _, bad := range [][]string{{"!neg"}, {""}, {"bad["}} {
 		files := map[string]string{
 			"good.txt":  "x\n",
-			"lint.json": lint_json_path_casing(t, bad),
+			"lint.json": lint_json_ignore(t, bad),
 		}
-		code, stdout, stderr := run_lint(t, files)
+		code, stdout, stderr := run_lint_tracked(t, files)
 		if code != 2 {
 			t.Fatalf("entry %q must exit 2, got %d: %s", bad, code, stdout)
 		}
@@ -5783,10 +5789,16 @@ type parse_configuration_case struct {
 	Want_List   []string
 }
 
-// Returns the lint.json decode cases: valid documents plus every hard-error form
-// (missing/empty shared_module, missing/empty word_replacements, unknown key,
-// wrong value type, malformed JSON).
+// Returns the lint.json decode cases: the documents that decode cleanly plus
+// every hard-error form. Split by outcome so each list stays within the function
+// length cap.
 func parse_configuration_cases() (cases []parse_configuration_case) {
+	return append(parse_configuration_valid_cases(), parse_configuration_error_cases()...)
+}
+
+// The lint.json documents that decode cleanly: a full document, the minimal
+// required pair, and an accepted ignore list.
+func parse_configuration_valid_cases() (cases []parse_configuration_case) {
 	return []parse_configuration_case{
 		{
 			Name: "valid full document",
@@ -5803,6 +5815,20 @@ func parse_configuration_cases() (cases []parse_configuration_case) {
 			Want_Shared: "example.com/lib",
 		},
 		{
+			Name: "ignore accepted",
+			Input: `{"shared_module":"x","word_replacements":{"id":["identifier"]},` +
+				`"ignore":["big_bang/dotfiles","weird.md"]}`,
+			Want_Shared: "x",
+		},
+	}
+}
+
+// Every hard-error lint.json form: missing/empty shared_module, a removed or
+// unknown key, a rejected glob, missing/empty word_replacements, a wrong value
+// type, and malformed JSON.
+func parse_configuration_error_cases() (cases []parse_configuration_case) {
+	return []parse_configuration_case{
+		{
 			Name:     "missing shared_module rejected",
 			Input:    `{"global_api_allowlist":[]}`,
 			Want_Err: true,
@@ -5818,10 +5844,10 @@ func parse_configuration_cases() (cases []parse_configuration_case) {
 			Want_Err: true,
 		},
 		{
-			Name: "ignore accepted",
+			Name: "removed path_casing_allowlist rejected",
 			Input: `{"shared_module":"x","word_replacements":{"id":["identifier"]},` +
-				`"ignore":["big_bang/dotfiles","weird.md"]}`,
-			Want_Shared: "x",
+				`"path_casing_allowlist":["foo"]}`,
+			Want_Err: true,
 		},
 		{
 			Name: "ignore negation rejected",
