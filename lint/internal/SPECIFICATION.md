@@ -191,7 +191,7 @@ All modules are located at the repo root.
 
 ### Shared Module
 
-The shared module, `golang_snacks`, has no `internal` directory at any depth and declares no
+The shared module, `shared`, has no `internal` directory at any depth and declares no
 `package main`. It is fully importable, never executed. Its workspace-root-relative directory
 is lint.json's `shared_module`.
 

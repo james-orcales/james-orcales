@@ -4,7 +4,7 @@ Static checker for this monorepo. Run from the workspace root or any module root
 
 ```
 go run ./lint .
-go run ./lint ./golang_snacks
+go run ./lint ./shared
 ```
 
 Most rules are local style (snake_case, line length, no interfaces, no package vars, …)
@@ -87,15 +87,15 @@ may live within each, so the end-to-end injection chain has a known shape.
 
 ```
 james-orcales/
-├── golang_snacks/      ← shared library (the only one)
-│   └── go.mod          ← module github.com/james-orcales/james-orcales/golang_snacks
+├── shared/      ← shared library (the only one)
+│   └── go.mod          ← module github.com/james-orcales/james-orcales/shared
 ├── lint/               ← binary
 │   └── go.mod
 └── big_bang/           ← binary
     └── go.mod
 ```
 
-- **Shared library.** Exactly one module: `golang_snacks`. It exists to be imported
+- **Shared library.** Exactly one module: `shared`. It exists to be imported
   by every binary. Its directory, relative to go.work, is the `shared_module` in lint.json.
 - **Binary modules.** Every other module at the workspace root produces one
   deployable executable and is not imported by anything else.
@@ -103,7 +103,7 @@ james-orcales/
 ### Where code lives — shared library
 
 ```
-golang_snacks/
+shared/
 ├── go.mod
 ├── snap/                    ← library at depth 1
 │   └── snap.go
@@ -147,17 +147,17 @@ binary, never shared library → binary.
 Within a module, non-main packages may nest **at most one level deep**:
 
 ```
-golang_snacks/snap/snap.go           ← library tier
-golang_snacks/snap/default/x.go      ← composition tier (one deeper, OK)
-golang_snacks/snap/default/y/y.go    ← too deep, flagged
+shared/snap/snap.go           ← library tier
+shared/snap/default/x.go      ← composition tier (one deeper, OK)
+shared/snap/default/y/y.go    ← too deep, flagged
 ```
 
 Major-version directories (`v2`, `v3`, …) are invisible to this count — they're a
 Go module-versioning convention, not a real package layer:
 
 ```
-golang_snacks/snap/v2/snap.go           ← still library tier (v2 doesn't count)
-golang_snacks/snap/v2/default/x.go      ← still composition tier
+shared/snap/v2/snap.go           ← still library tier (v2 doesn't count)
+shared/snap/v2/default/x.go      ← still composition tier
 ```
 
 The two positions differ in what they're allowed to touch:
@@ -174,7 +174,7 @@ The two positions differ in what they're allowed to touch:
 Library tier — pure, every dependency is a field:
 
 ```go
-// golang_snacks/snap/snap.go
+// shared/snap/snap.go
 package snap
 
 type Snapper struct {
@@ -188,14 +188,14 @@ func (s *Snapper) Run() { fmt.Fprintln(s.Output, s.Get_Caller()) }
 Composition tier — the one place where the binding to the real world lives:
 
 ```go
-// golang_snacks/snap/default/wire.go
+// shared/snap/default/wire.go
 package snap
 
 import (
     "os"
     "runtime"
 
-    "…/golang_snacks/snap"
+    "…/shared/snap"
 )
 
 var Default = &snap.Snapper{
@@ -221,7 +221,7 @@ a `<lib>_default` directory instead of a bare `default/`.
 The file is in a library-tier package and touches impure stdlib state. Example:
 
 ```go
-// golang_snacks/snap/snap.go
+// shared/snap/snap.go
 package snap
 
 import "os"  // ← flagged: library tier may not bind impure state
@@ -243,7 +243,7 @@ Three fixes:
 3. **Move the binding to a composition-tier sub-package:**
 
    ```
-   golang_snacks/snap/
+   shared/snap/
    ├── snap.go              ← pure types
    └── default/
        └── wire.go          ← package snap; imports "os", wires Default
@@ -261,10 +261,10 @@ package clause. The composition-tier package re-exports its library and must
 shadow the library's name so the API reads as if no split had happened.
 
 ```go
-// flagged: golang_snacks/snap/default/wire.go
+// flagged: shared/snap/default/wire.go
 package wire
 
-// clean: golang_snacks/snap/default/wire.go
+// clean: shared/snap/default/wire.go
 package snap
 ```
 
@@ -295,7 +295,7 @@ mybinary/
 ```
 
 If `helpers` is meant to be imported by *other* modules, it doesn't belong in a
-binary at all — promote it to `golang_snacks/helpers/`.
+binary at all — promote it to `shared/helpers/`.
 
 ### `binary module … declares no func Main in internal/` / `… declares multiple func Main`
 
@@ -326,7 +326,7 @@ embeddable entry point a host can call; the rule never flags it either way.
 ### `shared library forbids internal/ directories` / `shared library forbids package main`
 
 ```
-golang_snacks/
+shared/
 ├── snap/
 │   └── internal/        ← flagged: shared library is fully exposed
 │       └── helper.go
@@ -349,9 +349,9 @@ library). `v{N}` version dirs are not counted either.
 Shared library — count from the module root:
 
 ```
-golang_snacks/foo/foo.go              ← library tier
-golang_snacks/foo/bar/bar.go          ← composition tier (OK)
-golang_snacks/foo/bar/baz/baz.go      ← flagged: too deep
+shared/foo/foo.go              ← library tier
+shared/foo/bar/bar.go          ← composition tier (OK)
+shared/foo/bar/baz/baz.go      ← flagged: too deep
 ```
 
 Binary — count from `internal/`, which does not itself count:
