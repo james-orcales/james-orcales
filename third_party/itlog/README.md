@@ -18,7 +18,7 @@ package main
 
 import (
     "os"
-    "github.com/james-orcales/james-orcales/golang_snacks/itlog"
+    "github.com/james-orcales/james-orcales/shared/itlog"
 )
 
 func main() {
@@ -48,7 +48,7 @@ $ go test ./zerolog -bench=. -count=20 -benchtime=0.01s -benchmem > benchzerolog
 $ benchstat itlog_bench zerolog_bench
 goos: darwin
 goarch: arm64
-pkg: golang_snacks/itlog
+pkg: shared/itlog
 cpu: Apple M4
                                        │ benchzerolog  │                benchitlog                 │
                                        │    sec/op     │    sec/op      vs base                    │

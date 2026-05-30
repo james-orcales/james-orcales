@@ -529,21 +529,21 @@ func Test_Module_Layout_Module_Location(t *testing.T) {
 // point a fully-importable library has no business owning.
 func Test_Module_Layout_Shared_Module(t *testing.T) {
 	t.Parallel()
-	// The shared library lives in golang_snacks/ so its Root matches the
+	// The shared library lives in shared/ so its Root matches the
 	// shared-module directory the spec helper injects; binary fixtures in this
 	// file keep their go.mod at the root and so stay binaries.
 	files := map[string][]byte{
-		"golang_snacks/go.mod": []byte("module github.com/james-orcales/" +
-			"james-orcales/golang_snacks\n\ngo 1.25\n"),
-		"golang_snacks/internal/x/x.go": []byte("// Package x is a fixture.\npackage x\n"),
+		"shared/go.mod": []byte("module github.com/james-orcales/" +
+			"james-orcales/shared\n\ngo 1.25\n"),
+		"shared/internal/x/x.go": []byte("// Package x is a fixture.\npackage x\n"),
 	}
 	if !specification_flags(t, files, "forbids internal/ directories") {
 		t.Fatal("a shared-library internal/ tree must be flagged")
 	}
 	main_files := map[string][]byte{
-		"golang_snacks/go.mod": []byte("module github.com/james-orcales/" +
-			"james-orcales/golang_snacks\n\ngo 1.25\n"),
-		"golang_snacks/main.go": []byte("package main\n\nfunc main() {\n\tprintln(0)\n}\n"),
+		"shared/go.mod": []byte("module github.com/james-orcales/" +
+			"james-orcales/shared\n\ngo 1.25\n"),
+		"shared/main.go": []byte("package main\n\nfunc main() {\n\tprintln(0)\n}\n"),
 	}
 	if !specification_flags(t, main_files, "forbids package main") {
 		t.Fatal("a shared-library package main must be flagged")
@@ -595,7 +595,7 @@ func Test_Module_Layout_Tier_Depth(t *testing.T) {
 	t.Parallel()
 	files := map[string][]byte{
 		"go.mod": []byte("module github.com/james-orcales/" +
-			"james-orcales/golang_snacks\n\ngo 1.25\n"),
+			"james-orcales/shared\n\ngo 1.25\n"),
 		"a/a.go":     []byte("// Package a is a fixture.\npackage a\n"),
 		"a/b/b.go":   []byte("// Package b is a fixture.\npackage b\n"),
 		"a/b/c/c.go": []byte("// Package c is a fixture.\npackage c\n"),
@@ -611,7 +611,7 @@ func Test_Module_Layout_Impure_Imports(t *testing.T) {
 	t.Parallel()
 	files := map[string][]byte{
 		"go.mod": []byte("module github.com/james-orcales/" +
-			"james-orcales/golang_snacks\n\ngo 1.25\n"),
+			"james-orcales/shared\n\ngo 1.25\n"),
 		"lib/library.go": []byte("// Package library is a fixture.\npackage library\n\n" +
 			"import \"os\"\n\n// F reads.\nfunc F() (s string) {\n" +
 			"\treturn os.Getenv(\"X\")\n}\n"),
@@ -627,7 +627,7 @@ func Test_Module_Layout_Impure_Calls(t *testing.T) {
 	t.Parallel()
 	files := map[string][]byte{
 		"go.mod": []byte("module github.com/james-orcales/" +
-			"james-orcales/golang_snacks\n\ngo 1.25\n"),
+			"james-orcales/shared\n\ngo 1.25\n"),
 		"lib/library.go": []byte("// Package library is a fixture.\npackage library\n\n" +
 			"import \"fmt\"\n\n// F prints.\nfunc F() {\n" +
 			"\tfmt.Println(\"x\")\n}\n"),
@@ -641,7 +641,7 @@ func Test_Module_Layout_Impure_Calls(t *testing.T) {
 // impure `default` package is flagged.
 func Test_Module_Layout_Transitive_Purity(t *testing.T) {
 	t.Parallel()
-	const module = "github.com/james-orcales/james-orcales/golang_snacks"
+	const module = "github.com/james-orcales/james-orcales/shared"
 	files := map[string][]byte{
 		"go.mod": []byte("module " + module + "\n\ngo 1.25\n"),
 		"lib/library.go": []byte("// Package library is a fixture.\npackage library\n\n" +
@@ -663,7 +663,7 @@ func Test_Module_Layout_Transitive_Purity(t *testing.T) {
 // log.Print stay allowed, and even in _test.go.
 func Test_Module_Layout_Transitive_Stdlib(t *testing.T) {
 	t.Parallel()
-	const module = "github.com/james-orcales/james-orcales/golang_snacks"
+	const module = "github.com/james-orcales/james-orcales/shared"
 	test_files := map[string][]byte{
 		"go.mod":         []byte("module " + module + "\n\ngo 1.25\n"),
 		"lib/library.go": []byte("// Package library is a fixture.\npackage library\n"),
@@ -693,7 +693,7 @@ func Test_Module_Layout_Binary_Purity(t *testing.T) {
 // using impure stdlib is flagged.
 func Test_Module_Layout_Library_Purity(t *testing.T) {
 	t.Parallel()
-	const shared = "github.com/james-orcales/james-orcales/golang_snacks"
+	const shared = "github.com/james-orcales/james-orcales/shared"
 	pure_impure := map[string][]byte{
 		"go.mod": []byte("module " + shared + "\n\ngo 1.25\n"),
 		"lib/library.go": []byte("// Package library is a fixture.\npackage library\n\n" +
@@ -709,7 +709,7 @@ func Test_Module_Layout_Library_Purity(t *testing.T) {
 // optional `default` package may be impure: it is not flagged.
 func Test_Module_Layout_Default_Package_Impurity(t *testing.T) {
 	t.Parallel()
-	const shared = "github.com/james-orcales/james-orcales/golang_snacks"
+	const shared = "github.com/james-orcales/james-orcales/shared"
 	default_impure := map[string][]byte{
 		"go.mod":     []byte("module " + shared + "\n\ngo 1.25\n"),
 		"foo/foo.go": []byte("// Package foo is a fixture.\npackage foo\n"),

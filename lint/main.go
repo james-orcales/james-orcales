@@ -65,7 +65,7 @@ func main() {
 	}
 	// Re-root Fsys at the workspace/module anchor so module discovery
 	// always has a go.work or go.mod above every file. Without this,
-	// running on a subpackage (e.g. ./golang_snacks/snap/v2) would walk
+	// running on a subpackage (e.g. ./shared/snap/v2) would walk
 	// a Fsys with no go.mod in reach, and the doctrine checks would
 	// degrade to per-file mode — flagging composition-tier packages that
 	// should be exempt. Scope_Prefix narrows output back to what the user asked for.
