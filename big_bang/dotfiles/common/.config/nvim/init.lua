@@ -1,19 +1,19 @@
 -- === Colorscheme ===
 local palette = {
-        main = {
-                ["primary"] = "#DFE0DC",
-                ["primary_dark"] = "#888888",
-                ["accent"] = "#F6C177",
-                ["red"] = "#EB6F92",
-                ["blue"] = "#9CCFD8",
-        },
-        hacker = {
-                ["primary"] = "#03d100",
-                ["primary_dark"] = "#038700",
-                ["accent"] = "#DFE0DC",
-                ["red"] = "#EE4266",
-                ["blue"] = "#E0E2DB",
-        },
+	main = {
+		["primary"] = "#DFE0DC",
+		["primary_dark"] = "#888888",
+		["accent"] = "#F6C177",
+		["red"] = "#EB6F92",
+		["blue"] = "#9CCFD8",
+	},
+	hacker = {
+		["primary"] = "#03d100",
+		["primary_dark"] = "#038700",
+		["accent"] = "#DFE0DC",
+		["red"] = "#EE4266",
+		["blue"] = "#E0E2DB",
+	},
 }
 
 palette = palette.main
@@ -58,12 +58,12 @@ vim.api.nvim_set_hl(0, "Substitute", { bg = palette.primary, fg = "#000000" })
 vim.diagnostic.config({ virtual_lines = { current_line = true } })
 vim.opt.laststatus = 3
 vim.opt.statusline = "%<%{expand('%:~')}(%(%l:%v%))"
-        .. " %{exists('b:git_branch') ? b:git_branch : ''}"
-        .. " %h%w%{&modified ?  '[MODIFIED]' : ''}%r"
-        .. " %=Rune=%B"
-        .. " Byte_Index=%o"
-        .. " %q"
-        .. " %P"
+	.. " %{exists('b:git_branch') ? b:git_branch : ''}"
+	.. " %h%w%{&modified ?  '[MODIFIED]' : ''}%r"
+	.. " %=Rune=%B"
+	.. " Byte_Index=%o"
+	.. " %q"
+	.. " %P"
 
 vim.opt.smartcase = true
 vim.opt.ignorecase = true
@@ -98,8 +98,8 @@ vim.opt.isfname:append("@-@")
 
 vim.opt.updatetime = 750
 
-vim.opt.colorcolumn = "140"
-vim.opt.textwidth = 140
+vim.opt.colorcolumn = "100"
+vim.opt.textwidth = 100
 vim.opt.wrapmargin = 1
 vim.opt.formatoptions:append("t")
 
@@ -114,10 +114,10 @@ vim.g.mapleader = " "
 local os = vim.uv.os_uname().sysname
 local xplat_set = vim.keymap.set
 if os == "Darwin" then
-        xplat_set = function(modes, lhs, rhs, opts)
-                lhs = lhs:gsub("[cC]%-", "M-") -- replace control with Option
-                vim.keymap.set(modes, lhs, rhs, opts)
-        end
+	xplat_set = function(modes, lhs, rhs, opts)
+		lhs = lhs:gsub("[cC]%-", "M-") -- replace control with Option
+		vim.keymap.set(modes, lhs, rhs, opts)
+	end
 end
 
 
@@ -153,8 +153,8 @@ xplat_set("n", "n", "nzzzv")
 xplat_set("n", "N", "Nzzzv")
 
 xplat_set("n", "mp", function()
-        local makeprg = vim.fn.input("Global makeprg: ")
-        vim.api.nvim_set_option_value("makeprg", makeprg, { scope = "global" })
+	local makeprg = vim.fn.input("Global makeprg: ")
+	vim.api.nvim_set_option_value("makeprg", makeprg, { scope = "global" })
 end)
 
 vim.keymap.set("n", "<C-E>", "<CMD>write<CR>")
@@ -162,46 +162,46 @@ vim.keymap.set("n", "<C-E>", "<CMD>write<CR>")
 -- when moving a directory using oil.nvim
 vim.keymap.set("i", "<C-E>", "<ESC><CMD>write<CR>a")
 vim.keymap.set({ "v", "n", "i" }, "<C-S-E>", function()
-        vim.cmd("w")
-        local path = vim.api.nvim_buf_get_name(0)
-        if path:match("%.go$") or path:match("%.rs") or path:match("%.odin") then
-                local global_mp = vim.opt.makeprg:get() or ""
-                local local_mp = vim.api.nvim_get_option_value("makeprg", { scope = "local" }) or ""
-                if global_mp == "" and local_mp == "" then
-                        local new_makeprg = vim.fn.input("makeprg is unset. Enter command: ")
-                        if new_makeprg ~= "" then
-                                vim.api.nvim_set_option_value("makeprg", new_makeprg, { scope = "global" })
-                        end
-                end
-                vim.cmd("silent mak!")
-                if #vim.fn.getqflist() > 0 then
-                        vim.cmd("cope")
-                        vim.cmd("wincmd w")
-                else
-                        vim.cmd("cclo")
-                end
-        end
-        vim.api.nvim_feedkeys(vim.api.nvim_replace_termcodes("<ESC>", true, false, true), "n", true)
+	vim.cmd("w")
+	local path = vim.api.nvim_buf_get_name(0)
+	if path:match("%.go$") or path:match("%.rs") or path:match("%.odin") then
+		local global_mp = vim.opt.makeprg:get() or ""
+		local local_mp = vim.api.nvim_get_option_value("makeprg", { scope = "local" }) or ""
+		if global_mp == "" and local_mp == "" then
+			local new_makeprg = vim.fn.input("makeprg is unset. Enter command: ")
+			if new_makeprg ~= "" then
+				vim.api.nvim_set_option_value("makeprg", new_makeprg, { scope = "global" })
+			end
+		end
+		vim.cmd("silent mak!")
+		if #vim.fn.getqflist() > 0 then
+			vim.cmd("cope")
+			vim.cmd("wincmd w")
+		else
+			vim.cmd("cclo")
+		end
+	end
+	vim.api.nvim_feedkeys(vim.api.nvim_replace_termcodes("<ESC>", true, false, true), "n", true)
 end, { desc = "Save file then check" })
 
 -- Quickfix
 xplat_set("n", "{", function()
-        local l = vim.fn.getqflist({ idx = 0 })
-        if l.idx == 1 then
-                vim.cmd("silent! clast")
-        else
-                vim.cmd("silent! cprev")
-        end
+	local l = vim.fn.getqflist({ idx = 0 })
+	if l.idx == 1 then
+		vim.cmd("silent! clast")
+	else
+		vim.cmd("silent! cprev")
+	end
 end)
 
 xplat_set("n", "}", function()
-        local idx = vim.fn.getqflist({ idx = 0 }).idx
-        local len = #vim.fn.getqflist()
-        if idx == len then
-                vim.cmd("silent! cfirst")
-        else
-                vim.cmd("silent! cnext")
-        end
+	local idx = vim.fn.getqflist({ idx = 0 }).idx
+	local len = #vim.fn.getqflist()
+	if idx == len then
+		vim.cmd("silent! cfirst")
+	else
+		vim.cmd("silent! cnext")
+	end
 end)
 
 xplat_set("n", "H", "<nop>")
@@ -241,78 +241,78 @@ xplat_set("n", ";", "mzA;<ESC>`z")
 
 -- Insert a comment header in this format: // === MY HEADER ========================================================================================
 vim.keymap.set("n", "==", function()
-        local ok, header = pcall(vim.fn.input, "Header: ")
-        if not ok or header == "" then
-                return
-        end
-        header = string.upper(header)
-        local comment = "// === " .. header .. " "
-        comment = comment .. string.rep("=", 200)
-        vim.api.nvim_put({ comment }, "l", true, true)
-        vim.cmd("normal! kV=0161|D_")
+	local ok, header = pcall(vim.fn.input, "Header: ")
+	if not ok or header == "" then
+		return
+	end
+	header = string.upper(header)
+	local comment = "// === " .. header .. " "
+	comment = comment .. string.rep("=", 200)
+	vim.api.nvim_put({ comment }, "l", true, true)
+	vim.cmd("normal! kV=0161|D_")
 end)
 
 vim.keymap.set({ "v", "x" }, "gw", function()
-        local original_tw = vim.opt_local.textwidth:get()
-        vim.opt_local.textwidth = 100
-        vim.cmd("normal! gw")
-        vim.opt_local.textwidth = original_tw
+	local original_tw = vim.opt_local.textwidth:get()
+	vim.opt_local.textwidth = 100
+	vim.cmd("normal! gw")
+	vim.opt_local.textwidth = original_tw
 end, { desc = "Temporarily wrap selection to 100 columns" })
 
 xplat_set("n", "so", function()
-        if vim.g.syntax_on then
-                vim.cmd("syntax off")
-        else
-                vim.cmd("syntax on")
-        end
+	if vim.g.syntax_on then
+		vim.cmd("syntax off")
+	else
+		vim.cmd("syntax on")
+	end
 end)
 
 -- === Autocmd ===
 
 --  Workflow is `:set mp=go\ test\ ./foo` -> `:mak`. This populates quickfix with errors.
 vim.api.nvim_create_autocmd({ "FileType" }, {
-        desc = "Set errorformat",
-        group = vim.api.nvim_create_augroup("set_errorformat", { clear = true }),
-        callback = function(ev)
-                if ev.match == "odin" then
-                        vim.opt_local.errorformat = "%f(%l:%v) %m,%-G%.%#"
-                elseif ev.match == "go" then
-                        vim.opt_local.errorformat = "%f:%l:%c: %m"
-                elseif ev.match == "rust" then
-                        vim.opt_local.makeprg = "cargo check"
-                        vim.opt_local.errorformat = "%-Gerror: could not compile %.%#," --ignore
-                                .. "%-Gwarning: %.%# generated %.%#," --ignore
-                                .. "%Eerror[E%n]: %m,%Eerror: %m,%Wwarning: %m,%Inote: %m,"
-                                .. "%C %#--> %f:%l:%c,%-G%.%#"
-                end
-        end,
+	desc = "Set errorformat",
+	group = vim.api.nvim_create_augroup("set_errorformat", { clear = true }),
+	callback = function(ev)
+		if ev.match == "odin" then
+			vim.opt_local.errorformat = "%f(%l:%v) %m,%-G%.%#"
+		elseif ev.match == "go" then
+			vim.opt_local.errorformat = "%f:%l:%c: %m"
+		elseif ev.match == "rust" then
+			vim.opt_local.makeprg = "cargo check"
+			vim.opt_local.errorformat = "%-Gerror: could not compile %.%#," --ignore
+				.. "%-Gwarning: %.%# generated %.%#," --ignore
+				.. "%Eerror[E%n]: %m,%Eerror: %m,%Wwarning: %m,%Inote: %m,"
+				.. "%C %#--> %f:%l:%c,%-G%.%#"
+		end
+	end,
 })
 
 vim.api.nvim_create_autocmd("QuickFixCmdPost", {
-        desc = "Sort quickfix list by line number",
-        group = vim.api.nvim_create_augroup("quickfix-sort", { clear = true }),
-        callback = function()
-                local q = vim.fn.getqflist()
-                table.sort(q, function(a, b)
-                        return a.bufnr == b.bufnr and a.lnum < b.lnum or a.bufnr < b.bufnr
-                end)
-                vim.fn.setqflist(q, "r")
-        end,
+	desc = "Sort quickfix list by line number",
+	group = vim.api.nvim_create_augroup("quickfix-sort", { clear = true }),
+	callback = function()
+		local q = vim.fn.getqflist()
+		table.sort(q, function(a, b)
+			return a.bufnr == b.bufnr and a.lnum < b.lnum or a.bufnr < b.bufnr
+		end)
+		vim.fn.setqflist(q, "r")
+	end,
 })
 
 vim.api.nvim_create_autocmd("FileType", {
-        desc = "Quickfix list previews a fixed number of entries",
-        pattern = "qf",
-        callback = function()
-                vim.cmd("resize 3")
-        end,
+	desc = "Quickfix list previews a fixed number of entries",
+	pattern = "qf",
+	callback = function()
+		vim.cmd("resize 3")
+	end,
 })
 
 vim.api.nvim_create_autocmd({ "FileType" }, {
-        desc = "Language-specific macros",
-        group = vim.api.nvim_create_augroup("language_specific_macros", { clear = true }),
-        callback = function(ev)
-                if ev.match == "go" then
+	desc = "Language-specific macros",
+	group = vim.api.nvim_create_augroup("language_specific_macros", { clear = true }),
+	callback = function(ev)
+		if ev.match == "go" then
                         -- stylua: ignore start
                         vim.keymap.set( "n", " a",  [[oinvariant.Always(, "")<ESC><LEFT><LEFT><LEFT><LEFT>i]],              { noremap = true, silent = true, buffer = ev.buf })
                         vim.keymap.set( "n", " s",  [[oinvariant.Sometimes(, "")<ESC><LEFT><LEFT><LEFT><LEFT>i]],           { noremap = true, silent = true, buffer = ev.buf })
@@ -351,67 +351,67 @@ vim.api.nvim_create_autocmd({ "FileType" }, {
                         vim.keymap.set("n", "df", "odefer func() {<CR>}()<ESC><UP>^f)", { noremap = true, silent = true, buffer = ev.buf })
                         vim.keymap.set("n", "en", "oif err != nil {<CR>}<ESC>O", { noremap = true, silent = true, buffer = ev.buf })
                         vim.keymap.set("n", "EN", "Iif <ESC>mzaerr := <ESC>A; err != nil {<CR>}<ESC>`z", { noremap = true, silent = true, buffer = ev.buf })
-                end
-        end,
+		end
+	end,
 })
 
 vim.api.nvim_create_autocmd({ "BufWinEnter" }, {
-        desc = "Get git branch of opened buffer for statusline",
-        group = vim.api.nvim_create_augroup("statusline_git_branch", { clear = true }),
-        callback = function()
-                local file_path = vim.fn.expand("%:p:h")
-                local prefix = "oil://"
-                if string.sub(file_path, 1, #prefix) == prefix then
-                        file_path = string.sub(file_path, #prefix + 1)
-                end
-                local branch = vim.trim(vim.fn.system("git -C " .. file_path .. " branch --show-current 2>/dev/null"))
-                vim.b.git_branch = #branch > 0 and string.format("git:(%s)", branch) or ""
-        end,
+	desc = "Get git branch of opened buffer for statusline",
+	group = vim.api.nvim_create_augroup("statusline_git_branch", { clear = true }),
+	callback = function()
+		local file_path = vim.fn.expand("%:p:h")
+		local prefix = "oil://"
+		if string.sub(file_path, 1, #prefix) == prefix then
+			file_path = string.sub(file_path, #prefix + 1)
+		end
+		local branch = vim.trim(vim.fn.system("git -C " .. file_path .. " branch --show-current 2>/dev/null"))
+		vim.b.git_branch = #branch > 0 and string.format("git:(%s)", branch) or ""
+	end,
 })
 
 vim.api.nvim_create_autocmd("TextYankPost", {
-        desc = "Highlight when yanking text",
-        group = vim.api.nvim_create_augroup("highlight_yank", { clear = true }),
-        callback = function()
-                local event = vim.v.event
-                local yank_to_clipboard = event.regname == "+"
-                if yank_to_clipboard then
-                        vim.highlight.on_yank({ higroup = "YankSystemClipboard" })
-                else
-                        vim.highlight.on_yank()
-                end
-        end,
+	desc = "Highlight when yanking text",
+	group = vim.api.nvim_create_augroup("highlight_yank", { clear = true }),
+	callback = function()
+		local event = vim.v.event
+		local yank_to_clipboard = event.regname == "+"
+		if yank_to_clipboard then
+			vim.highlight.on_yank({ higroup = "YankSystemClipboard" })
+		else
+			vim.highlight.on_yank()
+		end
+	end,
 })
 
 vim.api.nvim_create_autocmd({ "BufWritePre" }, {
-        desc = "Format on save",
-        group = vim.api.nvim_create_augroup("format_on_save", { clear = true }),
-        pattern = { "*.go", "*.lua", "*.py", "*.rs" },
-        callback = function(ev)
-                local lines = vim.api.nvim_buf_get_lines(ev.buf, 0, -1, false)
-                local ft = vim.bo[ev.buf].filetype
-                local cmd
-                if ft == "lua" then
-                        cmd = { "stylua", "-" }
-                elseif ft == "go" then
-                        cmd = { "goimports" }
-                        -- WHY THE FUCK WOULD NEOVIM IMPLICITLY rs -> rust
-                elseif ft == "rust" then
-                        cmd = { "rustfmt" }
-                end
-                if cmd then
-                        local input = table.concat(lines, "\n")
-                        local result = vim.system(cmd, { stdin = input, text = true }):wait()
-                        if result.code == 0 then
-                                lines = vim.split(result.stdout, "\n", { plain = true })
-                                if lines[#lines] == "" then
-                                        table.remove(lines, #lines)
-                                end
-                        end
-                end
-                assert(#lines > 0)
-                vim.api.nvim_buf_set_lines(ev.buf, 0, -1, false, lines)
-        end,
+	desc = "Format on save",
+	group = vim.api.nvim_create_augroup("format_on_save", { clear = true }),
+	pattern = { "*.go", "*.lua", "*.py", "*.rs" },
+	callback = function(ev)
+		local lines = vim.api.nvim_buf_get_lines(ev.buf, 0, -1, false)
+		local ft = vim.bo[ev.buf].filetype
+		local cmd
+		if ft == "lua" then
+			cmd = { "stylua", "-" }
+		elseif ft == "go" then
+			cmd = { "goimports" }
+			-- WHY THE FUCK WOULD NEOVIM IMPLICITLY rs -> rust
+		elseif ft == "rust" then
+			cmd = { "rustfmt" }
+		end
+		if cmd then
+			local input = table.concat(lines, "\n")
+			local result = vim.system(cmd, { stdin = input, text = true }):wait()
+			if result.code == 0 then
+				lines = vim.split(result.stdout, "\n", { plain = true })
+				if lines[#lines] == "" then
+					table.remove(lines, #lines)
+				end
+			end
+		end
+		assert(#lines > 0)
+		vim.api.nvim_buf_set_lines(ev.buf, 0, -1, false, lines)
+	end,
 })
 -- Automatically formats files on save by normalizing blank lines:
 --     any run of one or more blank lines becomes exactly two blank lines.
@@ -446,17 +446,6 @@ vim.api.nvim_create_autocmd({ "BufWritePre" }, {
 --         end,
 -- })
 
-vim.api.nvim_create_autocmd("FileType", {
-        pattern = { "*" },
-        group = vim.api.nvim_create_augroup("shrink_text_width", { clear = true }),
-        callback = function()
-                local ft = vim.bo.filetype
-                local name = vim.fn.expand("%:t")
-                vim.wo.colorcolumn = (ft == "markdown" or name:match("^LICENSE.*")) and "100" or "140"
-                vim.bo.textwidth = (ft == "markdown" or name:match("^LICENSE.*")) and 100 or 140
-        end,
-})
-
 -- === Dependencies ===
 require("mini/splitjoin").setup()
 
@@ -471,229 +460,229 @@ vim.g.undotree_SetFocusWhenToggle = 1
 vim.keymap.set("n", "<leader>ut", vim.cmd.UndotreeToggle)
 
 do
-        local oil = require("oil")
-        oil.setup({
-                -- default_file_explorer = true,
-                buf_options = { buflisted = false, bufhidden = "hide" },
-                win_options = {
-                        wrap = false,
-                        spell = false,
-                        list = false,
-                        foldcolumn = "0",
-                },
-                delete_to_trash = false,
-                prompt_save_on_select_new_entry = true,
-                constrain_cursor = "name",
-                keymaps = {
-                        ["?"] = "actions.show_help",
-                        ["<CR>"] = "actions.select",
-                        ["<C-C>"] = oil.discard_all_changes,
-                        ["-"] = "actions.parent", -- dash
-                        ["_"] = "actions.open_cwd", -- underscore
-                        ["cd"] = "actions.cd",
-                        ["<C-Home>"] = "gg",
-                        ["<C-End>"] = "G",
-                        ["="] = function()
-                                if vim.g.oil_size_column == 1 then
-                                        oil.set_columns({})
-                                        vim.g.oil_size_column = 0
-                                else
-                                        oil.set_columns({ "size" })
-                                        vim.g.oil_size_column = 1
-                                end
-                        end,
-                        ["Y"] = "actions.yank_entry",
-                },
-                natural_order = false,
-                use_default_keymaps = false,
-                view_options = { show_hidden = true },
-        })
-        vim.keymap.set({ "n" }, "-", oil.open)
+	local oil = require("oil")
+	oil.setup({
+		-- default_file_explorer = true,
+		buf_options = { buflisted = false, bufhidden = "hide" },
+		win_options = {
+			wrap = false,
+			spell = false,
+			list = false,
+			foldcolumn = "0",
+		},
+		delete_to_trash = false,
+		prompt_save_on_select_new_entry = true,
+		constrain_cursor = "name",
+		keymaps = {
+			["?"] = "actions.show_help",
+			["<CR>"] = "actions.select",
+			["<C-C>"] = oil.discard_all_changes,
+			["-"] = "actions.parent", -- dash
+			["_"] = "actions.open_cwd", -- underscore
+			["cd"] = "actions.cd",
+			["<C-Home>"] = "gg",
+			["<C-End>"] = "G",
+			["="] = function()
+				if vim.g.oil_size_column == 1 then
+					oil.set_columns({})
+					vim.g.oil_size_column = 0
+				else
+					oil.set_columns({ "size" })
+					vim.g.oil_size_column = 1
+				end
+			end,
+			["Y"] = "actions.yank_entry",
+		},
+		natural_order = false,
+		use_default_keymaps = false,
+		view_options = { show_hidden = true },
+	})
+	vim.keymap.set({ "n" }, "-", oil.open)
 end
 
 require("nvim-surround").setup({
-        surrounds = {
-                ["("] = false,
-                ["["] = false,
-                ["<"] = false,
-        },
-        aliases = {
-                ["("] = ")",
-                ["["] = "]",
-                ["<"] = ">",
-        },
-        keymaps = {
-                normal = "s",
-                normal_cur = "ss",
-                normal_cur_line = "S",
-                visual = "s",
-                visual_line = "S",
-                delete = "ds",
-                change = "cs",
-                insert = false,
-                insert_line = false,
-                normal_line = false,
-                change_line = false,
-        },
+	surrounds = {
+		["("] = false,
+		["["] = false,
+		["<"] = false,
+	},
+	aliases = {
+		["("] = ")",
+		["["] = "]",
+		["<"] = ">",
+	},
+	keymaps = {
+		normal = "s",
+		normal_cur = "ss",
+		normal_cur_line = "S",
+		visual = "s",
+		visual_line = "S",
+		delete = "ds",
+		change = "cs",
+		insert = false,
+		insert_line = false,
+		normal_line = false,
+		change_line = false,
+	},
 })
 
 do
-        local leap = require("leap")
-        leap.opts.safe_labels = {}
-        leap.opts.labels = "setnriaofuplwyqjbmghdzxc"
-        leap.opts.max_phase_one_targets = 0
-        leap.opts.special_keys.next_group = "<space>"
-        vim.keymap.set({ "n", "x", "o" }, "t", "<Plug>(leap)")
-        vim.api.nvim_set_hl(0, "LeapBackdrop", { link = "Comment" })
+	local leap = require("leap")
+	leap.opts.safe_labels = {}
+	leap.opts.labels = "setnriaofuplwyqjbmghdzxc"
+	leap.opts.max_phase_one_targets = 0
+	leap.opts.special_keys.next_group = "<space>"
+	vim.keymap.set({ "n", "x", "o" }, "t", "<Plug>(leap)")
+	vim.api.nvim_set_hl(0, "LeapBackdrop", { link = "Comment" })
 end
 
 do
-        local fzf = require("fzf-lua")
-        fzf.setup({
-                defaults = {
-                        header = false,
-                },
-                winopts = {
-                        backdrop = 100,
-                        fullscreen = true,
-                        preview = { layout = "vertical", vertical = "down:50%" },
-                },
-                hls = { normal = "NormalFloat", border = "FloatBorder" },
-                keymap = {
-                        builtin = {
-                                ["<S-Up>"] = "",
-                                ["<S-down>"] = "",
-                        },
-                        fzf = {
-                                ["ctrl-h"] = "backward-kill-word",
-                                ["shift-down"] = "half-page-down",
-                                ["shift-up"] = "half-page-up",
-                                ["home"] = "first",
-                                ["end"] = "last",
-                                ["ctrl-q"] = "select-all+accept",
-                        },
-                },
-                actions = {
-                        files = {
-                                true,
-                                ["alt-i"] = fzf.actions.toggle_ignore,
-                                ["enter"] = nil,
-                                ["ctrl-s"] = nil,
-                                ["ctrl-v"] = nil,
-                                ["ctrl-t"] = nil,
-                                ["alt-q"] = nil,
-                                ["alt-Q"] = nil,
-                                ["alt-h"] = nil,
-                                ["alt-f"] = nil,
-                        },
-                },
-        })
-        local rules = {
-                Golang = {
-                        Function = [[^func +(?:\([a-zA-Z0-9_]+ +\*?[a-zA-Z0-9_]+(?:\[.+\])?\))? *[A-Z][a-zA-Z0-9_]* -- !*test* !*vendor*]],
-                        Type = [[^type +[A-Z][a-zA-Z0-9_]+ -- !*test* ]],
-                },
-                Odin = {
-                        Function = [[^[a-zA-Z0-9_]+ +:: +proc -- !*test* ]],
-                        Type = [[^\w+ +:: +(?:struct|union|enum|distinct) -- !*test* ]],
-                },
-                Lua = {
-                        Function = [[(?:function [a-zA-Z0-9_]+\(|[a-zA-Z0-9_]+ = function\(|= def\()]],
-                },
-                Rust = {
-                        -- We don't filter by file extension because Rust API searches often target
-                        -- individual files, unlike Go or Odin, where the package system makes it
-                        -- more common to search the entire directory.
-                        Function_and_Macro = [[(^\s*pub (const )?(unsafe )?fn +[a-zA-Z0-9_#]+|^\s*macro_rules! [a-zA-Z0-9_#]+|^impl )]],
-                        Type = [[^\s*pub (?:struct|union|enum|trait|type) [a-zA-Z0-9_#]+]],
-                },
-        }
-        local parse_programming_language = function(path)
-                if path:match("%.go$") or path == "go.mod" then
-                        return "Golang"
-                elseif path:match("%.odin$") then
-                        return "Odin"
-                elseif path:match("%.lua$") then
-                        return "Lua"
-                elseif path:match("%.rs$") or path:lower() == "cargo.toml" then
-                        return "Rust"
-                end
-                return nil
-        end
-        local module_api_search = function()
-                local path = vim.api.nvim_buf_get_name(0)
-                local operation = fzf.grep
+	local fzf = require("fzf-lua")
+	fzf.setup({
+		defaults = {
+			header = false,
+		},
+		winopts = {
+			backdrop = 100,
+			fullscreen = true,
+			preview = { layout = "vertical", vertical = "down:50%" },
+		},
+		hls = { normal = "NormalFloat", border = "FloatBorder" },
+		keymap = {
+			builtin = {
+				["<S-Up>"] = "",
+				["<S-down>"] = "",
+			},
+			fzf = {
+				["ctrl-h"] = "backward-kill-word",
+				["shift-down"] = "half-page-down",
+				["shift-up"] = "half-page-up",
+				["home"] = "first",
+				["end"] = "last",
+				["ctrl-q"] = "select-all+accept",
+			},
+		},
+		actions = {
+			files = {
+				true,
+				["alt-i"] = fzf.actions.toggle_ignore,
+				["enter"] = nil,
+				["ctrl-s"] = nil,
+				["ctrl-v"] = nil,
+				["ctrl-t"] = nil,
+				["alt-q"] = nil,
+				["alt-Q"] = nil,
+				["alt-h"] = nil,
+				["alt-f"] = nil,
+			},
+		},
+	})
+	local rules = {
+		Golang = {
+			Function = [[^func +(?:\([a-zA-Z0-9_]+ +\*?[a-zA-Z0-9_]+(?:\[.+\])?\))? *[A-Z][a-zA-Z0-9_]* -- !*test* !*vendor*]],
+			Type = [[^type +[A-Z][a-zA-Z0-9_]+ -- !*test* ]],
+		},
+		Odin = {
+			Function = [[^[a-zA-Z0-9_]+ +:: +proc -- !*test* ]],
+			Type = [[^\w+ +:: +(?:struct|union|enum|distinct) -- !*test* ]],
+		},
+		Lua = {
+			Function = [[(?:function [a-zA-Z0-9_]+\(|[a-zA-Z0-9_]+ = function\(|= def\()]],
+		},
+		Rust = {
+			-- We don't filter by file extension because Rust API searches often target
+			-- individual files, unlike Go or Odin, where the package system makes it
+			-- more common to search the entire directory.
+			Function_and_Macro = [[(^\s*pub (const )?(unsafe )?fn +[a-zA-Z0-9_#]+|^\s*macro_rules! [a-zA-Z0-9_#]+|^impl )]],
+			Type = [[^\s*pub (?:struct|union|enum|trait|type) [a-zA-Z0-9_#]+]],
+		},
+	}
+	local parse_programming_language = function(path)
+		if path:match("%.go$") or path == "go.mod" then
+			return "Golang"
+		elseif path:match("%.odin$") then
+			return "Odin"
+		elseif path:match("%.lua$") then
+			return "Lua"
+		elseif path:match("%.rs$") or path:lower() == "cargo.toml" then
+			return "Rust"
+		end
+		return nil
+	end
+	local module_api_search = function()
+		local path = vim.api.nvim_buf_get_name(0)
+		local operation = fzf.grep
 
-                local programming_language = nil
-                if not path:match("^oil://.*") then
-                        programming_language = parse_programming_language(path)
-                else
-                        local handle = vim.uv.fs_scandir(vim.uv.cwd())
-                        if handle then
-                                while true do
-                                        local name, t = vim.uv.fs_scandir_next(handle)
-                                        if not name then
-                                                break
-                                        end
-                                        if t == "file" then
-                                                programming_language = parse_programming_language(name)
-                                                if programming_language then
-                                                        break
-                                                end
-                                        end
-                                end
-                        end
-                end
-                if programming_language == nil then
-                        fzf.live_grep()
-                        return
-                else
-                        if not path:match("^oil://.*") and (programming_language == "Rust" or programming_language == "Lua") then
-                                operation = fzf.grep_curbuf
-                        end
-                        local items = {}
-                        for item in pairs(rules[programming_language]) do
-                                table.insert(items, item)
-                        end
-                        table.sort(items)
-                        table.insert(items, 1, "Any")
-                        fzf.fzf_exec(items, {
-                                prompt = string.format("Search Package (%s) > ", programming_language),
-                                actions = {
-                                        ["default"] = function(selected, opts)
-                                                if selected == nil then
-                                                        return
-                                                end
-                                                selected = selected[1]
-                                                if selected == "Any" then
-                                                        fzf.live_grep()
-                                                else
-                                                        operation({
-                                                                search = rules[programming_language][selected],
-                                                                no_esc = true,
-                                                                -- Error: unable to init vim.regex
-                                                                -- https://github.com/ibhagwan/fzf-lua/issues/1858#issuecomment-2689899556
-                                                                -- The message is mostly informational, this happens due to the
-                                                                -- previewer trying to convert the regex to vim magic pattern (in
-                                                                -- order to highlight it), but not all cases can be covered so the
-                                                                -- previewer will highlight the cursor column only (instead of the
-                                                                -- entire pattern).
-                                                                silent = true,
-                                                        })
-                                                end
-                                        end,
-                                },
-                        })
-                end
-        end
+		local programming_language = nil
+		if not path:match("^oil://.*") then
+			programming_language = parse_programming_language(path)
+		else
+			local handle = vim.uv.fs_scandir(vim.uv.cwd())
+			if handle then
+				while true do
+					local name, t = vim.uv.fs_scandir_next(handle)
+					if not name then
+						break
+					end
+					if t == "file" then
+						programming_language = parse_programming_language(name)
+						if programming_language then
+							break
+						end
+					end
+				end
+			end
+		end
+		if programming_language == nil then
+			fzf.live_grep()
+			return
+		else
+			if not path:match("^oil://.*") and (programming_language == "Rust" or programming_language == "Lua") then
+				operation = fzf.grep_curbuf
+			end
+			local items = {}
+			for item in pairs(rules[programming_language]) do
+				table.insert(items, item)
+			end
+			table.sort(items)
+			table.insert(items, 1, "Any")
+			fzf.fzf_exec(items, {
+				prompt = string.format("Search Package (%s) > ", programming_language),
+				actions = {
+					["default"] = function(selected, opts)
+						if selected == nil then
+							return
+						end
+						selected = selected[1]
+						if selected == "Any" then
+							fzf.live_grep()
+						else
+							operation({
+								search = rules[programming_language][selected],
+								no_esc = true,
+								-- Error: unable to init vim.regex
+								-- https://github.com/ibhagwan/fzf-lua/issues/1858#issuecomment-2689899556
+								-- The message is mostly informational, this happens due to the
+								-- previewer trying to convert the regex to vim magic pattern (in
+								-- order to highlight it), but not all cases can be covered so the
+								-- previewer will highlight the cursor column only (instead of the
+								-- entire pattern).
+								silent = true,
+							})
+						end
+					end,
+				},
+			})
+		end
+	end
 
-        vim.keymap.set("n", "<C-Space>", fzf.builtin)
-        vim.keymap.set("n", "f<Space>", fzf.files)
-        vim.keymap.set("n", "s<Space>", module_api_search)
-        vim.keymap.set("n", "h<Space>", function()
-                fzf.help_tags({ previewer = false })
-        end)
-        vim.keymap.set("n", "m<Space>", function()
-                fzf.manpages({ previewer = false })
-        end)
+	vim.keymap.set("n", "<C-Space>", fzf.builtin)
+	vim.keymap.set("n", "f<Space>", fzf.files)
+	vim.keymap.set("n", "s<Space>", module_api_search)
+	vim.keymap.set("n", "h<Space>", function()
+		fzf.help_tags({ previewer = false })
+	end)
+	vim.keymap.set("n", "m<Space>", function()
+		fzf.manpages({ previewer = false })
+	end)
 end
