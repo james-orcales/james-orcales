@@ -11,9 +11,6 @@
     "shared/time",
     "shared/io"
   ],
-  "path_casing_allowlist": [
-          "big_bang/dotfiles"
-  ],
   "ignore": [
           "big_bang/dotfiles"
   ],
