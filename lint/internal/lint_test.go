@@ -2,14 +2,8 @@ package lint_test
 
 import (
 	"bytes"
-	"errors"
 	"fmt"
 	"go/format"
-	"go/parser"
-	"go/token"
-	"io/fs"
-	"os"
-	"strconv"
 	"strings"
 	"testing"
 	"testing/fstest"
@@ -25,9 +19,35 @@ const doctrine_shared_library_go_module = "module github.com/james-orcales/" +
 	"james-orcales/golang_snacks\n"
 const doctrine_binary_go_module = "module example.com/mybinary\n"
 
+// Satisfies the rule that every binary module declares exactly one free func
+// Main in its top-level internal/ package. Injected into binary-module fixtures
+// that exist to exercise other rules so the entry-point check doesn't bleed an
+// extra diagnostic into them.
+const doctrine_binary_internal_main = "// Package entry is a fixture.\n" +
+	"package entry\n\n// Main is a fixture entry point.\nfunc Main() { return }\n"
+
 const fixture_invariant_import_path = "github.com/james-orcales/james-orcales/" +
 	"golang_snacks/invariant/v2/invariant_default"
 const fixture_invariant_import = "import invariant \"" + fixture_invariant_import_path + "\"\n"
+
+// A package whose SPECIFICATION.md, source, and specification_test.go all
+// satisfy the doctrine. Variant tests swap one artifact for a violating one so
+// each assertion isolates a single rule.
+const specification_clean_source = "// Package greet is a fixture.\n" +
+	"package greet\n\n" +
+	"// Greet greets.\nfunc Greet() { return }\n"
+const specification_clean_test = "package greet_test\n\n" +
+	"import \"testing\"\n\n" +
+	"// Test_Greeting is a fixture.\n" +
+	"func Test_Greeting(t *testing.T) { _ = t }\n"
+const specification_clean_md = "\n# Greeting\n\nIt greets the caller.\n"
+
+// The baseline SPECIFICATION.md + test pair a spec snapshot mutates: one clean
+// leaf and its matching test, so a single mutation isolates one spec diagnostic.
+const snapshot_specification_markdown = "\n# Sole Rule\n\nThe sole rule.\n"
+const snapshot_specification_test = "package fixture_test\n\nimport \"testing\"\n\n" +
+	"// Test_Sole_Rule checks the sole rule.\n" +
+	"func Test_Sole_Rule(t *testing.T) {\n\tt.Parallel()\n}\n"
 
 // Fixture_const_hi declares a file-scope upper bound used by Distinct_Boundary
 // Hi positions in test fixtures so the new assertion-bound-named-constant
@@ -90,10 +110,6 @@ const prelude_with_h = prelude_single +
 	"invariant.Always(p != nil, \"p is non-nil\"))\n" +
 	"\treturn 0\n" +
 	"}\n\n"
-
-func TestMain(m *testing.M) {
-	os.Exit(m.Run())
-}
 
 // Doctrine fixtures must satisfy check_package_documentation_comment
 // and check_exported_documentation_comment. A single minimal-content
@@ -474,6 +490,7 @@ type Foo struct {
 				"test.go": `package main
 
 type Foo struct {
+	// Bar is a fixture.
 	Bar int
 }
 `,
@@ -504,6 +521,19 @@ type Foo struct {
 			},
 			Want_Diag: "",
 		},
+	}
+	run_diag_table(t, tests)
+}
+
+// Test_Public_Struct_Fields_Part2 covers the embedded-pointer case, split off
+// to keep each function within the length limit.
+func Test_Public_Struct_Fields_Part2(t *testing.T) {
+	t.Parallel()
+	run_diag_table(t, []struct {
+		Name      string
+		Files     map[string]string
+		Want_Diag string
+	}{
 		{
 			Name: "embedded pointer to uppercase type allowed",
 			Files: map[string]string{
@@ -516,8 +546,7 @@ type Foo struct {
 			},
 			Want_Diag: "",
 		},
-	}
-	run_diag_table(t, tests)
+	})
 }
 
 // Test_Exported_Type_Exposes_Private verifies that exported struct field
@@ -534,46 +563,45 @@ func Test_Exported_Type_Exposes_Private(t *testing.T) {
 			Files: map[string]string{"test.go": `package main
 type Foo struct { F bar }
 type bar int
-`}, Want_Diag: "exposes unexported type bar"},
+`}, Want_Diag: "public type Foo contains private type bar"},
 		{Name: "pointer to lowercase flagged",
 			Files: map[string]string{"test.go": `package main
 type Foo struct { F *bar }
 type bar int
-`}, Want_Diag: "exposes unexported type bar"},
+`}, Want_Diag: "public type Foo contains private type bar"},
 		{Name: "double pointer flagged",
 			Files: map[string]string{"test.go": `package main
 type Foo struct { F **bar }
 type bar int
-`}, Want_Diag: "exposes unexported type bar"},
+`}, Want_Diag: "public type Foo contains private type bar"},
 		{Name: "embedded lowercase flagged",
 			Files: map[string]string{"test.go": `package main
 type Foo struct { bar }
 type bar struct{}
-`}, Want_Diag: "exposes unexported type bar"},
+`}, Want_Diag: "public type Foo contains private type bar"},
 		{Name: "transitive via same-file exported flagged",
 			Files: map[string]string{"test.go": `package main
 type Foo struct { M Middle }
 type Middle struct { F bar }
 type bar int
-`}, Want_Diag: "exported type Foo exposes unexported type bar"},
+`}, Want_Diag: "public type Foo contains private type bar"},
 		{Name: "alias to unexported flagged",
 			Files: map[string]string{"test.go": `package main
 type Foo = bar
 type bar int
-`}, Want_Diag: "exposes unexported type bar"},
+`}, Want_Diag: "public type Foo contains private type bar"},
 		{Name: "pointer alias to unexported flagged",
 			Files: map[string]string{"test.go": `package main
 type Foo = *bar
 type bar int
-`}, Want_Diag: "exposes unexported type bar"},
+`}, Want_Diag: "public type Foo contains private type bar"},
 	}
 	run_diag_table(t, tests)
 }
 
-// Test_Exported_Type_Exposes_Private_Allows covers the negative cases:
-// builtins, in-scope generic type parameters, qualified selectors, cycles,
-// unexported parents, slice/container element positions (out of scope),
-// and _test.go file exemption.
+// Test_Exported_Type_Exposes_Private_Allows covers the field-position
+// negative cases: builtins, in-scope generic type parameters, qualified
+// selectors, and a self-referential cycle.
 func Test_Exported_Type_Exposes_Private_Allows(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
@@ -584,35 +612,78 @@ func Test_Exported_Type_Exposes_Private_Allows(t *testing.T) {
 		{Name: "builtins allowed",
 			Files: map[string]string{"test.go": `package main
 type Foo struct {
+	// I is a fixture.
 	I int
+	// S is a fixture.
 	S string
+	// E is a fixture.
 	E error
+	// A is a fixture.
 	A any
+	// B is a fixture.
 	B bool
+	// R is a fixture.
 	R rune
+	// Y is a fixture.
 	Y byte
 }
 `}, Want_Diag: ""},
 		{Name: "type parameter allowed",
 			Files: map[string]string{"test.go": `package main
-type Foo[T any] struct { X T }
+type Foo[T any] struct {
+	// X is a fixture.
+	X T
+}
 `}, Want_Diag: ""},
 		{Name: "qualified type allowed",
 			Files: map[string]string{"test.go": `package main
 import "time"
-type Foo struct { T time.Time }
+type Foo struct {
+	// T is a fixture.
+	T time.Time
+}
 `}, Want_Diag: ""},
 		{Name: "self-cycle allowed",
 			Files: map[string]string{"test.go": `package main
 type Node struct {
+	// Next is a fixture.
 	Next *Node
+	// V is a fixture.
 	V    int
 }
 `}, Want_Diag: ""},
+	}
+	run_diag_table(t, tests)
+}
+
+// Test_Exported_Type_Exposes_Private_Allows_Part2 covers the remaining
+// negative cases: mutual recursion, slice element positions (out of scope),
+// unexported parents, aliases to exported types, and _test.go exemption.
+func Test_Exported_Type_Exposes_Private_Allows_Part2(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		Name      string
+		Files     map[string]string
+		Want_Diag string
+	}{
 		{Name: "mutual recursion allowed",
 			Files: map[string]string{"test.go": `package main
-type A struct { B *B }
-type B struct { A *A }
+type A struct {
+	// B is a fixture.
+	B *B
+}
+type B struct {
+	// A is a fixture.
+	A *A
+}
+`}, Want_Diag: ""},
+		{Name: "slice of unexported allowed",
+			Files: map[string]string{"test.go": `package main
+type Foo struct {
+	// Xs is a fixture.
+	Xs []bar
+}
+type bar int
 `}, Want_Diag: ""},
 		{Name: "unexported parent allowed",
 			Files: map[string]string{"test.go": `package main
@@ -628,11 +699,6 @@ type Bar int
 			Files: map[string]string{"test.go": `package main
 type Foo = *Bar
 type Bar int
-`}, Want_Diag: ""},
-		{Name: "slice of unexported allowed",
-			Files: map[string]string{"test.go": `package main
-type Foo struct { Xs []bar }
-type bar int
 `}, Want_Diag: ""},
 		{Name: "_test.go file skipped",
 			Files: map[string]string{"foo_test.go": `package foo_test
@@ -657,13 +723,13 @@ func Test_No_Naked_Return(t *testing.T) {
 		{Name: "func with named return and bare return flagged",
 			Files: map[string]string{"test.go": `package main
 func f() (x int) { return }
-`}, Want_Diag: "bare return is banned"},
+`}, Want_Diag: "naked return is banned"},
 
 		{Name: "method with named return and bare return flagged",
 			Files: map[string]string{"test.go": `package main
 type S struct{}
 func (s *S) f() (x int) { return }
-`}, Want_Diag: "bare return is banned"},
+`}, Want_Diag: "naked return is banned"},
 
 		{Name: "closure with named return and bare return flagged",
 			Files: map[string]string{"test.go": `package main
@@ -672,12 +738,12 @@ func g() (out int) {
 	out = cb()
 	return out
 }
-`}, Want_Diag: "bare return is banned"},
+`}, Want_Diag: "naked return is banned"},
 
 		{Name: "blank-named return with bare return flagged",
 			Files: map[string]string{"test.go": `package main
 func f() (_ int) { return }
-`}, Want_Diag: "bare return is banned"},
+`}, Want_Diag: "naked return is banned"},
 
 		{Name: "multiple bare returns each flagged",
 			Files: map[string]string{"test.go": `package main
@@ -687,7 +753,7 @@ func f(c bool) (x int) {
 	}
 	return
 }
-`}, Want_Diag: "bare return is banned"},
+`}, Want_Diag: "naked return is banned"},
 
 		{Name: "void early-exit allowed",
 			Files: map[string]string{"test.go": `package main
@@ -768,6 +834,88 @@ const X = iota
 				"test.go": `package main
 
 const X = 0
+`,
+			},
+			Want_Diag: "",
+		},
+	}
+	run_diag_table(t, tests)
+}
+
+// Test_No_Fallthrough verifies a switch-case fallthrough is flagged.
+func Test_No_Fallthrough(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		Name      string
+		Files     map[string]string
+		Want_Diag string
+	}{
+		{
+			Name: "fallthrough flagged",
+			Files: map[string]string{
+				"test.go": `package main
+
+func f() (n int) {
+	switch n {
+	case 1:
+		fallthrough
+	case 2:
+		n = 3
+	}
+	return n
+}
+`,
+			},
+			Want_Diag: "fallthrough is banned",
+		},
+		{
+			Name: "switch without fallthrough allowed",
+			Files: map[string]string{
+				"test.go": `package main
+
+func f() (n int) {
+	switch n {
+	case 1:
+		n = 2
+	case 2:
+		n = 3
+	}
+	return n
+}
+`,
+			},
+			Want_Diag: "",
+		},
+	}
+	run_diag_table(t, tests)
+}
+
+// Test_No_Blank_Import verifies a blank import is flagged.
+func Test_No_Blank_Import(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		Name      string
+		Files     map[string]string
+		Want_Diag string
+	}{
+		{
+			Name: "blank import flagged",
+			Files: map[string]string{
+				"test.go": `package main
+
+import _ "strings"
+`,
+			},
+			Want_Diag: "blank import is banned",
+		},
+		{
+			Name: "named import allowed",
+			Files: map[string]string{
+				"test.go": `package main
+
+import "strings"
+
+func f() (s string) { return strings.TrimSpace("x") }
 `,
 			},
 			Want_Diag: "",
@@ -905,107 +1053,6 @@ func main() {
 	run_diag_table(t, tests)
 }
 
-// Test_Constant_First_Flagged verifies that any file-scope const that appears
-// after a var, type, or func declaration is flagged.
-func Test_Constant_First_Flagged(t *testing.T) {
-	t.Parallel()
-	tests := []struct {
-		Name      string
-		Files     map[string]string
-		Want_Diag string
-	}{
-		{
-			Name: "const after var flagged",
-			Files: map[string]string{
-				"test.go": `package main
-
-var x = 0
-const c = 1
-func main() { print(x, c) }
-`,
-			},
-			Want_Diag: "const declaration must precede",
-		},
-		{
-			Name: "const after type flagged",
-			Files: map[string]string{
-				"test.go": `package main
-
-type T int
-const c T = 1
-`,
-			},
-			Want_Diag: "const declaration must precede",
-		},
-		{
-			Name: "const after func flagged",
-			Files: map[string]string{
-				"test.go": `package main
-
-func main() { print(c) }
-const c = 1
-`,
-			},
-			Want_Diag: "const declaration must precede",
-		},
-	}
-	run_diag_table(t, tests)
-}
-
-// Test_Constant_First_Allowed verifies the negative side: consts that sit
-// before all non-const file-scope decls are clean, and function-local
-// consts are exempt from the ordering rule.
-func Test_Constant_First_Allowed(t *testing.T) {
-	t.Parallel()
-	tests := []struct {
-		Name      string
-		Files     map[string]string
-		Want_Diag string
-	}{
-		{
-			Name: "multiple consts at top allowed",
-			Files: map[string]string{
-				"test.go": `package main
-
-const a = 1
-const b = 2
-func main() { print(a, b) }
-`,
-			},
-			Want_Diag: "",
-		},
-		{
-			Name: "const after import allowed",
-			Files: map[string]string{
-				"test.go": `package main
-
-import "fmt"
-
-const c = 1
-func main() { fmt.Println(c) }
-`,
-			},
-			Want_Diag: "",
-		},
-		{
-			Name: "function-local const allowed under file-scope decls",
-			Files: map[string]string{
-				"test.go": `package main
-
-type T int
-func main() {
-	const inside = 1
-	var t T
-	print(t, inside)
-}
-`,
-			},
-			Want_Diag: "",
-		},
-	}
-	run_diag_table(t, tests)
-}
-
 // Test_No_Third_Party_Struct_Tag_Flagged verifies that any struct field
 // carrying a tag whose key is not in the stdlib set {json, xml, asn1} is
 // flagged. Mixed tags emit one diagnostic per disallowed key.
@@ -1028,6 +1075,7 @@ func main() {
 }
 
 type Foo struct {
+	// Name is a fixture.
 	Name string ` + "`yaml:\"name\"`" + `
 }
 `,
@@ -1046,6 +1094,7 @@ func main() {
 }
 
 type Foo struct {
+	// Value is a fixture.
 	Value int ` + "`validate:\"required\"`" + `
 }
 `,
@@ -1064,6 +1113,7 @@ func main() {
 }
 
 type Foo struct {
+	// Name is a fixture.
 	Name string ` + "`json:\"name\" yaml:\"name\"`" + `
 }
 `,
@@ -1093,6 +1143,7 @@ func main() {
 }
 
 type Outer struct {
+	// Inner is a fixture.
 	Inner struct {
 		Name string ` + "`yaml:\"name\"`" + `
 	}
@@ -1126,6 +1177,7 @@ func main() {
 }
 
 type Foo struct {
+	// Name is a fixture.
 	Name string ` + "`json:\"name\"`" + `
 }
 `,
@@ -1144,6 +1196,7 @@ func main() {
 }
 
 type Foo struct {
+	// Name is a fixture.
 	Name string ` + "`xml:\"name,attr\"`" + `
 }
 `,
@@ -1162,6 +1215,7 @@ func main() {
 }
 
 type Foo struct {
+	// Name is a fixture.
 	Name string ` + "`asn1:\"utf8\"`" + `
 }
 `,
@@ -1191,6 +1245,7 @@ func main() {
 }
 
 type Foo struct {
+	// Name is a fixture.
 	Name string ` + "`json:\"name\" xml:\"name\"`" + `
 }
 `,
@@ -1209,6 +1264,7 @@ func main() {
 }
 
 type Foo struct {
+	// Name is a fixture.
 	Name string
 }
 `,
@@ -1231,6 +1287,7 @@ func main() {
 }
 
 type Foo struct {
+	// Name is a fixture.
 	Name string ` + "`malformed`" + `
 }
 `
@@ -1310,13 +1367,13 @@ func Test_Assertion_Named_Constant_Flagged_Distinct_Boundary_Part2(t *testing.T)
 ` + fixture_invariant_import + `
 const fixture_hi = 100
 
-const max_x = 100
+const x_max = 100
 
 func f() {
 	var x int
 	invariant.Cross_Product(
 		invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
-				X: x, Lo: 0, Hi: max_x + 1,
+				X: x, Lo: 0, Hi: x_max + 1,
 			}),
 	)
 }
@@ -1333,13 +1390,13 @@ func f() {
 ` + fixture_invariant_import + `
 const fixture_hi = 100
 
-const max_x = 100
+const x_max = 100
 
 func f() {
 	var x int
 	invariant.Cross_Product(
 		invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
-				X: x, Lo: 0, Hi: int(max_x),
+				X: x, Lo: 0, Hi: int(x_max),
 			}),
 	)
 }
@@ -1430,7 +1487,7 @@ func Test_Assertion_Named_Constant_Allowed_Bounds(t *testing.T) {
 ` + fixture_invariant_import + `
 const fixture_hi = 100
 
-const max_x = 100
+const x_max = 100
 
 func f() {
 	var x int
@@ -1519,7 +1576,7 @@ func Test_Assertion_Named_Constant_Allowed_Predicate(t *testing.T) {
 ` + fixture_invariant_import + `
 const fixture_hi = 100
 
-const max_x = 100
+const x_max = 100
 
 func f() {
 	var x int
@@ -1596,7 +1653,9 @@ func Test_Keyed_Struct_Init_Allowed(t *testing.T) {
 const fixture_hi = 100
 
 type Foo struct {
+	// A is a fixture.
 	A int
+	// B is a fixture.
 	B int
 }
 
@@ -1647,9 +1706,7 @@ func Test_Keyed_Struct_Init_Allowed_Part2(t *testing.T) {
 ` + fixture_invariant_import + `
 const fixture_hi = 100
 
-type Foo struct {
-	A int
-}
+type Foo struct{}
 
 func make_v() (result Foo) {
 	defer func() {
@@ -1887,12 +1944,7 @@ func run_doctrine_diag_table(t *testing.T, tests []struct {
 				fsys_map[k] = &fstest.MapFile{
 					Data: []byte(v)}
 			}
-			stdout := &bytes.Buffer{}
-			stderr := &bytes.Buffer{}
-			code := lint.Main(&lint.Main_Input{
-				Fsys: fsys_map, Stdout: stdout, Stderr: stderr,
-			})
-			output := stdout.String()
+			code, output := lint_output_minus(t, fsys_map, "specification")
 			if tt.Want_Diags == nil {
 				if code != 0 {
 					t.Errorf("expected exit 0, got %d; output:\n%s",
@@ -1904,19 +1956,62 @@ func run_doctrine_diag_table(t *testing.T, tests []struct {
 				t.Errorf("expected nonzero exit; output:\n%s", output)
 			}
 			for _, w := range tt.Want_Diags {
-				if !bytes.Contains(stdout.Bytes(), []byte(w)) {
+				if !strings.Contains(output, w) {
 					t.Errorf("expected output containing %q; got:\n%s",
 						w, output)
 				}
 			}
 			for _, f := range tt.Forbid {
-				if bytes.Contains(stdout.Bytes(), []byte(f)) {
+				if strings.Contains(output, f) {
 					t.Errorf("expected output NOT to contain %q; got:\n%s",
 						f, output)
 				}
 			}
 		})
 	}
+}
+
+// Mirrors lint.Main's stdout emission — tier-2 gating and the same
+// "position: message" line format — but drops diagnostics from the named rule.
+// A doctrine table can then assert on its own rule's output without the coverage
+// mandate (which now fires for any module fixture lacking a SPECIFICATION.md)
+// bleeding into the exit code.
+func lint_output_minus(
+	t *testing.T, fsys fstest.MapFS, exclude string,
+) (code int, output string) {
+	t.Helper()
+	all, err := lint.Check_File_System(&lint.Check_File_System_Input{Fsys: fsys})
+	if err != nil {
+		t.Fatalf("Check_File_System: %v", err)
+	}
+	var kept []lint.Diagnostic
+	for _, d := range all {
+		if d.Name != exclude {
+			kept = append(kept, d)
+		}
+	}
+	has_tier1 := false
+	for _, d := range kept {
+		if d.Tier == 1 {
+			has_tier1 = true
+			break
+		}
+	}
+	builder := &strings.Builder{}
+	emitted := 0
+	for _, d := range kept {
+		if has_tier1 {
+			if d.Tier == 2 {
+				continue
+			}
+		}
+		emitted++
+		fmt.Fprintf(builder, "%s: %s\n", d.Position, d.Message)
+	}
+	if emitted > 0 {
+		return 1, builder.String()
+	}
+	return 0, builder.String()
 }
 
 // Test_Banned_Identifiers verifies that function names containing banned
@@ -1938,7 +2033,7 @@ func Test_Banned_Identifiers(t *testing.T) {
 func helper() { return }
 `,
 			},
-			Want_Diag: "banned word 'helper'",
+			Want_Diag: `banned substring "helper"`,
 		},
 
 		{
@@ -1949,7 +2044,7 @@ func helper() { return }
 func read_helper() { return }
 `,
 			},
-			Want_Diag: "banned word 'helper'",
+			Want_Diag: `banned substring "helper"`,
 		},
 
 		{
@@ -1960,7 +2055,7 @@ func read_helper() { return }
 func Helper_Func() { return }
 `,
 			},
-			Want_Diag: "banned word 'helper'",
+			Want_Diag: `banned substring "helper"`,
 		},
 
 		{
@@ -1971,7 +2066,7 @@ func Helper_Func() { return }
 func read_helper_thing() { return }
 `,
 			},
-			Want_Diag: "banned word 'helper'",
+			Want_Diag: `banned substring "helper"`,
 		},
 
 		{
@@ -2015,7 +2110,7 @@ func helpme() { return }
 func parse_util() { return }
 `,
 			},
-			Want_Diag: "banned word 'util'",
+			Want_Diag: `banned substring "util"`,
 		},
 
 		{
@@ -2026,7 +2121,7 @@ func parse_util() { return }
 func Make_Utilities() { return }
 `,
 			},
-			Want_Diag: "banned word 'utilities'",
+			Want_Diag: `banned substring "utilities"`,
 		},
 	})
 }
@@ -2053,17 +2148,17 @@ func F() (result int) {
 }
 `,
 			},
-			Want_Diag: "banned word 'length'",
+			Want_Diag: `banned substring "length"`,
 		},
 		{
 			Name: "const name length flagged",
 			Files: map[string]string{
 				"test.go": `package main
 
-const max_length = 10
+const length_max = 10
 `,
 			},
-			Want_Diag: "banned word 'length'",
+			Want_Diag: `banned substring "length"`,
 		},
 		{
 			Name: "range key length flagged",
@@ -2078,7 +2173,7 @@ func F(xs []int) (result int) {
 }
 `,
 			},
-			Want_Diag: "banned word 'length'",
+			Want_Diag: `banned substring "length"`,
 		},
 		{
 			Name: "var with utils segment flagged",
@@ -2091,7 +2186,7 @@ func F() (result int) {
 }
 `,
 			},
-			Want_Diag: "banned word 'utils'",
+			Want_Diag: `banned substring "utils"`,
 		},
 	}
 	run_diag_table(t, tests)
@@ -2207,7 +2302,7 @@ func Test_Banned_Declaration_Sites_Signatures(t *testing.T) {
 func F(buf_len int) (result int) { return buf_len }
 `,
 			},
-			Want_Diag: "banned word 'len'",
+			Want_Diag: `banned substring "len"`,
 		},
 
 		{
@@ -2218,7 +2313,7 @@ func F(buf_len int) (result int) { return buf_len }
 func F() (length int) { return 0 }
 `,
 			},
-			Want_Diag: "banned word 'length'",
+			Want_Diag: `banned substring "length"`,
 		},
 
 		{
@@ -2229,7 +2324,7 @@ func F() (length int) { return 0 }
 type S struct{ Buf_Length int }
 `,
 			},
-			Want_Diag: "banned word 'length'",
+			Want_Diag: `banned substring "length"`,
 		},
 	})
 }
@@ -2251,7 +2346,7 @@ func Test_Banned_Declaration_Sites_Signatures_Part2(t *testing.T) {
 ` + fixture_invariant_import + `
 const fixture_hi = 100
 
-type S struct{ Count int }
+type S struct{}
 
 func F(buffer []byte) (result int) {
 	defer func() {
@@ -2828,7 +2923,7 @@ func F() (x int) {
 `,
 			},
 			Want_Diag: `rename user_res -> ` +
-				`user_response,user_result,user_resource,user_reserve`,
+				`[user_response, user_result, user_resource, user_reserve]`,
 		},
 
 		{
@@ -2997,6 +3092,103 @@ func Compute(value int) (result int) {
 	})
 }
 
+// Test_Names_Vocabulary pins the merged vocabulary check: one table drives both
+// the abbreviation expansions and the no-candidate bans, with one uniform
+// diagnostic shape. A single candidate renders `rename x -> y`; multiple render
+// `rename x -> [a, b, c]`; a banned word with no candidate renders
+// `identifier "x" contains banned substring "y"`.
+func Test_Names_Vocabulary(t *testing.T) {
+	t.Parallel()
+	run_diag_table(t, []struct {
+		Name      string
+		Files     map[string]string
+		Want_Diag string
+	}{
+
+		{
+			Name: "single candidate has no brackets",
+			Files: map[string]string{
+				"test.go": `package main
+
+func F() (x int) {
+	cfg_path := 0
+	return cfg_path
+}
+`,
+			},
+			Want_Diag: `rename cfg_path -> config_path`,
+		},
+
+		{
+			Name: "multiple candidates use brackets",
+			Files: map[string]string{
+				"test.go": `package main
+
+func F() (x int) {
+	user_res := 0
+	return user_res
+}
+`,
+			},
+			Want_Diag: `rename user_res -> ` +
+				`[user_response, user_result, user_resource, user_reserve]`,
+		},
+
+		{
+			Name: "banned word with no candidate",
+			Files: map[string]string{
+				"test.go": `package main
+
+func F() (x int) {
+	length := 0
+	return length
+}
+`,
+			},
+			Want_Diag: `identifier "length" contains banned substring "length"`,
+		},
+
+		{
+			Name: "util is banned, not expanded to utility",
+			Files: map[string]string{
+				"test.go": `package main
+
+func parse_util() { return }
+`,
+			},
+			Want_Diag: `identifier "parse_util" contains banned substring "util"`,
+		},
+	})
+}
+
+// Additional cases, split to keep each function within the length limit. These
+// pin the broadened coverage: the table applies to package and file names too.
+func Test_Names_Vocabulary_Part2(t *testing.T) {
+	t.Parallel()
+	run_diag_table(t, []struct {
+		Name      string
+		Files     map[string]string
+		Want_Diag string
+	}{
+
+		{
+			Name: "abbreviation in package name flagged",
+			Files: map[string]string{
+				"test.go": "package cfg\n",
+			},
+			Want_Diag: `rename cfg -> config`,
+		},
+
+		{
+			Name: "abbreviation in file name flagged",
+			Files: map[string]string{
+				"cfg.go": "package main\n",
+			},
+			Want_Diag: `rename cfg -> config`,
+		},
+	})
+}
+
 // Test_Naming_Participles verifies that declared identifiers whose final
 // tokenized word ends in "ing" and isn't in nouns_suffixed_by_ing are
 // flagged. Gerund-nouns (String, Mapping, Encoding, etc.) and the
@@ -3043,12 +3235,26 @@ func F() (x int) {
 			},
 			Want_Diag: `present participle "rendering"`,
 		},
+	}
+	run_diag_table(t, tests)
+}
+
+// Test_Naming_Participles_Part2 covers the gerund-noun allowlist cases, split
+// off to keep each function within the length limit.
+func Test_Naming_Participles_Part2(t *testing.T) {
+	t.Parallel()
+	run_diag_table(t, []struct {
+		Name      string
+		Files     map[string]string
+		Want_Diag string
+	}{
 		{
 			Name: "Mapping allowed gerund-noun",
 			Files: map[string]string{
 				"test.go": `package main
 
 type Key_Mapping struct {
+	// Entries is a fixture.
 	Entries int
 }
 `,
@@ -3061,14 +3267,14 @@ type Key_Mapping struct {
 				"test.go": `package main
 
 type Wire_Encoding struct {
+	// Bytes is a fixture.
 	Bytes int
 }
 `,
 			},
 			Want_Diag: "",
 		},
-	}
-	run_diag_table(t, tests)
+	})
 }
 
 // Test_Naming_Participles_Exempt covers shapes that look like present
@@ -3191,9 +3397,10 @@ func Test_Like_Name() { return }
 	run_diag_table(t, tests)
 }
 
-// Test_Package_Split_Threshold verifies that packages with multiple files
-// under the 10K-line threshold are flagged, with source / test / build-tag
-// groups counted separately, build-tag detection done via go/build/constraint.
+// Test_Package_Split_Threshold verifies that packages whose file count does
+// not equal ceil(total_sloc/10000) are flagged: too many files (fragmentation)
+// and too few files (oversized). Source / test / build-tag groups are counted
+// separately; build-tag detection is done via go/build/constraint.
 func Test_Package_Split_Threshold(t *testing.T) {
 	t.Parallel()
 	source_a := "// Package foo is a fixture.\npackage foo\n\n" +
@@ -3204,6 +3411,8 @@ func Test_Package_Split_Threshold(t *testing.T) {
 		"// Test_A verifies A.\nfunc Test_A(t *testing.T) { t.Helper() }\n"
 	test_b := "package foo_test\n\nimport \"testing\"\n\n" +
 		"// Test_B verifies B.\nfunc Test_B(t *testing.T) { t.Helper() }\n"
+	specification_exempt_test := "package foo_test\n\nimport \"testing\"\n\n" +
+		"// Test_C verifies C.\nfunc Test_C(t *testing.T) { t.Helper() }\n"
 	linux_a := "//go:build linux\n\n// Package foo is a fixture.\npackage foo\n\n" +
 		"// A is a fixture.\nfunc A() { return }\n"
 	linux_b := "//go:build linux\n\npackage foo\n\n// B is a fixture.\nfunc B() { return }\n"
@@ -3235,6 +3444,14 @@ func Test_Package_Split_Threshold(t *testing.T) {
 			Want_Diag: "has 2 test files",
 		},
 		{
+			Name: "specification_test.go is exempt from the test-file count",
+			Files: map[string]string{
+				"a.go": source_a, "a_test.go": test_a,
+				"specification_test.go": specification_exempt_test,
+			},
+			Want_Diag: "",
+		},
+		{
 			Name:      "build tag splits source group",
 			Files:     map[string]string{"a.go": source_a, "a_linux.go": linux_b},
 			Want_Diag: "",
@@ -3248,6 +3465,24 @@ func Test_Package_Split_Threshold(t *testing.T) {
 		},
 	}
 	run_diag_table(t, tests)
+}
+
+// Test_Package_Split_Threshold_Part2 covers the undersized direction: a
+// single file whose line count exceeds lines_per_file_max must be split.
+// gofmt_must strips trailing blank lines, so this test bypasses run_diag_table
+// and feeds raw bytes to lint.Main directly.
+func Test_Package_Split_Threshold_Part2(t *testing.T) {
+	t.Parallel()
+	content := []byte("// Package foo is a fixture.\npackage foo\n" +
+		strings.Repeat("\n", 10001))
+	fsys := fstest.MapFS{"a.go": {Data: content}}
+	stdout := &bytes.Buffer{}
+	stderr := &bytes.Buffer{}
+	lint.Main(&lint.Main_Input{Fsys: fsys, Stdout: stdout, Stderr: stderr})
+	if !bytes.Contains(stdout.Bytes(), []byte("has 1 source files")) {
+		t.Errorf("single file over 10k lines must be flagged; got: %s",
+			stdout.String())
+	}
 }
 
 // Test_Snap_Backtick verifies that the first argument to snap.Init / snap.Edit
@@ -3338,7 +3573,7 @@ func Test_Banned_Package_And_File_Names(t *testing.T) {
 func f() (result int) { return 1 }
 `,
 			},
-			Want_Diag: "banned word 'utils'",
+			Want_Diag: `banned substring "utils"`,
 		},
 		{
 			Name: "package name with util segment flagged",
@@ -3348,7 +3583,7 @@ func f() (result int) { return 1 }
 func f() (result int) { return 1 }
 `,
 			},
-			Want_Diag: "banned word 'util'",
+			Want_Diag: `banned substring "util"`,
 		},
 		{
 			Name: "file name utils.go flagged",
@@ -3358,7 +3593,7 @@ func f() (result int) { return 1 }
 func f() (result int) { return 1 }
 `,
 			},
-			Want_Diag: "banned word 'utils'",
+			Want_Diag: `banned substring "utils"`,
 		},
 		{
 			Name: "file name with utility segment flagged",
@@ -3368,7 +3603,7 @@ func f() (result int) { return 1 }
 func f() (result int) { return 1 }
 `,
 			},
-			Want_Diag: "banned word 'utility'",
+			Want_Diag: `banned substring "utility"`,
 		},
 		{
 			Name: "clean file and package allowed",
@@ -3416,7 +3651,9 @@ func F(a, b int) (result int) { return a + b }
 const fixture_hi = 100
 
 type F_Input struct {
+	// A is a fixture.
 	A int
+	// B is a fixture.
 	B int
 }
 
@@ -3614,7 +3851,10 @@ func F() {}
 			Files: map[string]string{
 				"test.go": `package main
 
-type T struct{ X int }
+type T struct {
+	// X is a fixture.
+	X int
+}
 
 func (T) M() {}
 `,
@@ -3667,7 +3907,7 @@ type Iface interface {
 }
 `,
 			},
-			Want_Diag: "interface method sets are banned",
+			Want_Diag: "interface declarations are banned (except for generics)",
 		},
 
 		{
@@ -3687,7 +3927,7 @@ func main() (result int) {
 func F(x interface{ M() }) (result int) { return 0 }
 `,
 			},
-			Want_Diag: "interface method sets are banned",
+			Want_Diag: "interface declarations are banned (except for generics)",
 		},
 	})
 }
@@ -3713,7 +3953,7 @@ func main() (result int) {
 }
 `,
 			},
-			Want_Diag: "interface method sets are banned",
+			Want_Diag: "interface declarations are banned (except for generics)",
 		},
 	})
 }
@@ -3823,7 +4063,10 @@ func main() (result int) {
 	return 0
 }
 
-type T struct{ X int }
+type T struct {
+	// X is a fixture.
+	X int
+}
 
 func (t T) String() (result string) {
 	defer func() {
@@ -3860,7 +4103,10 @@ func main() (result int) {
 	return 0
 }
 
-type T struct{ X int }
+type T struct {
+	// X is a fixture.
+	X int
+}
 
 func (t T) Error() (result string) {
 	defer func() {
@@ -3897,7 +4143,10 @@ func main() (result int) {
 	return 0
 }
 
-type T struct{ X int }
+type T struct {
+	// X is a fixture.
+	X int
+}
 
 func (t T) Read(p []byte) (n int, err error) {
 	defer func() {
@@ -3937,7 +4186,10 @@ func main() (result int) {
 	return 0
 }
 
-type T struct{ X int }
+type T struct {
+	// X is a fixture.
+	X int
+}
 
 func (t T) Scan(x any) (err error) {
 	return nil
@@ -4009,7 +4261,10 @@ func main() (result int) {
 	return 0
 }
 
-type T struct{ X int }
+type T struct {
+	// X is a fixture.
+	X int
+}
 
 func (t T) Write(p []byte) (err error) {
 	return nil
@@ -4044,7 +4299,10 @@ func main() (result int) {
 	return 0
 }
 
-type T struct{ X int }
+type T struct {
+	// X is a fixture.
+	X int
+}
 
 func (t T) Foo() (result int) {
 	defer func() {
@@ -4265,72 +4523,6 @@ func inner() { return }`}, Want_Diag: "cycle"},
 				}
 			}
 		})
-	}
-}
-
-// Test_Tiered_Checks verifies that when any tier-1 diagnostic fires, tier-2
-// checks (currently recursion) are suppressed so they can safely rely on
-// tier-1 contracts.
-func Test_Tiered_Checks(t *testing.T) {
-	t.Parallel()
-	// When any tier-1 diagnostic fires, tier-2 checks (currently just recursion)
-	// must be skipped so they can rely on tier-1 contracts (e.g. check_shadowing).
-	fsys_map := fstest.MapFS{
-		"test.go": &fstest.MapFile{
-			Data: []byte(
-				"// missing period at end of this comment\n" +
-					"package main\n" +
-					"func main() { return }\n" +
-					"func f() { f() }\n",
-			)},
-	}
-	stdout := &bytes.Buffer{}
-	code := lint.Main(&lint.Main_Input{Fsys: fsys_map, Stdout: stdout, Stderr: &bytes.Buffer{}})
-	if code == 0 {
-		t.Fatalf("expected non-zero exit due to tier-1 diagnostic, got 0; output: %s",
-			stdout.String())
-	}
-	if !bytes.Contains(stdout.Bytes(), []byte("should end with")) {
-		t.Errorf("expected tier-1 (comment) diagnostic, got: %s", stdout.String())
-	}
-	if bytes.Contains(stdout.Bytes(), []byte("recursion")) {
-		t.Errorf("tier-2 (recursion) diagnostic should be suppressed when "+
-			"tier-1 fails, got: %s", stdout.String())
-	}
-}
-
-// Test_Tiered_Checks_Cross_File guards the print-level gate: tier-2
-// diagnostics in one file must be suppressed when ANY tier-1 diagnostic
-// fires elsewhere in the run. The per-file gate already covers same-file
-// suppression (Test_Tiered_Checks); without the print-level gate, tier-2
-// from a clean-tier-1 file would still surface alongside another file's
-// tier-1, breaking the contract that tier-2 only reports against globally
-// tier-1-clean input.
-func Test_Tiered_Checks_Cross_File(t *testing.T) {
-	t.Parallel()
-	fsys_map := fstest.MapFS{
-		"a.go": &fstest.MapFile{
-			Data: []byte(
-				"// missing period at end of this comment\n" +
-					"package main\n" +
-					"func main() { return }\n",
-			)},
-		"b.go": &fstest.MapFile{Data: gofmt_must(t, `package main
-func f() { f() }
-`)},
-	}
-	stdout := &bytes.Buffer{}
-	code := lint.Main(&lint.Main_Input{Fsys: fsys_map, Stdout: stdout, Stderr: &bytes.Buffer{}})
-	if code == 0 {
-		t.Fatalf("expected non-zero exit due to tier-1 diagnostic, got 0; output: %s",
-			stdout.String())
-	}
-	if !bytes.Contains(stdout.Bytes(), []byte("should end with")) {
-		t.Errorf("expected tier-1 (comment) diagnostic from a.go, got: %s", stdout.String())
-	}
-	if bytes.Contains(stdout.Bytes(), []byte("recursion")) {
-		t.Errorf("tier-2 (recursion) in b.go should be suppressed when tier-1 "+
-			"fires in a.go, got: %s", stdout.String())
 	}
 }
 
@@ -4872,7 +5064,7 @@ func other() { return }
 func main() { return }`}, Want_Diag: "should be declared first"},
 
 		{Name: "Main not first",
-			Files: map[string]string{"test.go": `package impl
+			Files: map[string]string{"test.go": `package implementation
 func helper() { return }
 func Main() { return }`}, Want_Diag: "should be declared first"},
 
@@ -4883,7 +5075,7 @@ func other() { return }`}, Want_Diag: ""},
 
 		{Name: "Main is first",
 			Files: map[string]string{"test.go": `// Package impl is a fixture.
-package impl
+package implementation
 // Main is the entry point.
 func Main() { return }
 func inner() { return }`}, Want_Diag: ""},
@@ -4925,3746 +5117,4 @@ func main() { return }`}, Want_Diag: ""},
 			}
 		})
 	}
-}
-
-// Additional cases, split to keep each function within the length limit.
-func Test_Main_First_Part2(t *testing.T) {
-	t.Parallel()
-	for _, tt := range []struct {
-		Name      string
-		Files     map[string]string
-		Want_Diag string
-	}{
-
-		{Name: "TestMain not first",
-			Files: map[string]string{"foo_test.go": `package foo_test
-
-import "testing"
-
-// Test_Foo is a fixture.
-func Test_Foo(t *testing.T) { return }
-func TestMain(m *testing.M) { return }
-`}, Want_Diag: "func TestMain should be declared first"},
-
-		{Name: "TestMain is first",
-			Files: map[string]string{"foo_test.go": `package foo_test
-
-import "testing"
-
-func TestMain(m *testing.M) { return }
-// Test_Foo is a fixture.
-func Test_Foo(t *testing.T) { return }
-`}, Want_Diag: ""},
-
-		{Name: "TestMain exempt from casing",
-			Files: map[string]string{"foo_test.go": `package foo_test
-
-import "testing"
-
-func TestMain(m *testing.M) { return }
-`}, Want_Diag: ""},
-	} {
-		t.Run(tt.Name, func(t *testing.T) {
-			fsys_map := make(fstest.MapFS)
-			for k, v := range tt.Files {
-				fsys_map[k] = &fstest.MapFile{Data: gofmt_must(t, v)}
-			}
-			stdout := &bytes.Buffer{}
-			stderr := &bytes.Buffer{}
-			code := lint.Main(&lint.Main_Input{
-				Fsys: fsys_map, Stdout: stdout, Stderr: stderr,
-			})
-
-			output := stdout.String()
-			if tt.Want_Diag == "" {
-				if code != 0 {
-					t.Errorf("expected exit 0, got %d; output: %s",
-						code, output)
-				}
-			} else {
-				if !bytes.Contains(stdout.Bytes(), []byte(tt.Want_Diag)) {
-					t.Errorf("expected output containing %q, got: %s",
-						tt.Want_Diag, output)
-				}
-			}
-		})
-	}
-}
-
-// Test_Line_Character_Count_Tabs verifies that tabs count as tab_width chars (not 1)
-// when measuring line length against the max_line_chars limit.
-func Test_Line_Character_Count_Tabs(t *testing.T) {
-	t.Parallel()
-	// 18 tabs * 8 = 144 column width; far under the 140 limit if tabs count
-	// as 1, well over if tabs count as 8. Inline comments are exempt from
-	// comment-sentence rules, so this stays a pure line-length test.
-	tabs := ""
-	for range 18 {
-		tabs += "\t"
-	}
-	source := "package main\nfunc f() (result int) { return 1 } //" + tabs + "tail\n"
-	fsys_map := fstest.MapFS{"test.go": &fstest.MapFile{
-		Data: []byte(source)}}
-	stdout := &bytes.Buffer{}
-	code := lint.Main(&lint.Main_Input{Fsys: fsys_map, Stdout: stdout, Stderr: &bytes.Buffer{}})
-	if code == 0 {
-		t.Fatalf("expected line-length diagnostic, got exit 0; output: %s", stdout.String())
-	}
-	if !bytes.Contains(stdout.Bytes(), []byte("line is")) {
-		t.Errorf("expected line-length diagnostic, got: %s", stdout.String())
-	}
-}
-
-// Test_Line_Character_Count_Import_Exempt verifies that an import line wider than
-// max_line_chars is not flagged: import paths are unbreakable, so a long module
-// path must never force a lint failure.
-func Test_Line_Character_Count_Import_Exempt(t *testing.T) {
-	t.Parallel()
-	long_path := "github.com/example/" + strings.Repeat("a", 90) + "/pkg"
-	source := "package main\n\nimport " + strconv.Quote(long_path) + "\n"
-	fsys_map := fstest.MapFS{"test.go": &fstest.MapFile{
-		Data: []byte(source)}}
-	stdout := &bytes.Buffer{}
-	code := lint.Main(&lint.Main_Input{Fsys: fsys_map, Stdout: stdout, Stderr: &bytes.Buffer{}})
-	if code != 0 {
-		t.Fatalf("import line should be exempt from the length limit; got exit %d: %s",
-			code, stdout.String())
-	}
-}
-
-// Test_Comments verifies the comment-style rules: capital start, trailing
-// `.`/`:`/`?`/`!`, space after `//`, pragma exemption, and inline-comment
-// exemption from the sentence rules.
-func Test_Comments(t *testing.T) {
-	t.Parallel()
-	// TestComments fixtures include `//foo` (no space after slashes), which
-	// gofmt normalizes before our check sees it. Bypass gofmt_must so the
-	// formatting-style violations under test survive intact.
-	for _, tt := range []struct {
-		Name      string
-		Files     map[string]string
-		Want_Diag string
-	}{
-
-		{
-			Name: "missing trailing period",
-			Files: map[string]string{
-				"test.go": "// Usage info (no period)\npackage main\n",
-			},
-			Want_Diag: "should end with",
-		},
-
-		{
-			Name: "lowercase start",
-			Files: map[string]string{
-				"test.go": "// lowercase start.\npackage main\n",
-			},
-			Want_Diag: "should start with capital",
-		},
-
-		{
-			Name: "missing space after slashes",
-			Files: map[string]string{
-				"test.go": "//No space.\npackage main\n",
-			},
-			Want_Diag: "missing space after",
-		},
-	} {
-		t.Run(tt.Name, func(t *testing.T) {
-			fsys_map := make(fstest.MapFS)
-			for k, v := range tt.Files {
-				fsys_map[k] = &fstest.MapFile{
-					Data: []byte(v)}
-			}
-			stdout := &bytes.Buffer{}
-			stderr := &bytes.Buffer{}
-			code := lint.Main(&lint.Main_Input{
-				Fsys: fsys_map, Stdout: stdout, Stderr: stderr,
-			})
-
-			output := stdout.String()
-			if tt.Want_Diag == "" {
-				if code != 0 {
-					t.Errorf("expected exit 0, got %d; output: %s",
-						code, output)
-				}
-			} else {
-				if !bytes.Contains(stdout.Bytes(), []byte(tt.Want_Diag)) {
-					t.Errorf("expected output containing %q, got: %s",
-						tt.Want_Diag, output)
-				}
-			}
-		})
-	}
-}
-
-// Additional cases, split to keep each function within the length limit.
-func Test_Comments_Part2(t *testing.T) {
-	t.Parallel()
-	// TestComments fixtures include `//foo` (no space after slashes), which
-	// gofmt normalizes before our check sees it. Bypass gofmt_must so the
-	// formatting-style violations under test survive intact.
-	for _, tt := range []struct {
-		Name      string
-		Files     map[string]string
-		Want_Diag string
-	}{
-
-		{
-			Name: "well-formed comment",
-			Files: map[string]string{
-				"test.go": "// Well-formed sentence.\npackage main\n",
-			},
-			Want_Diag: "",
-		},
-
-		{
-			Name: "trailing colon allowed",
-			Files: map[string]string{
-				"test.go": "// Followed by something:\npackage main\n",
-			},
-			Want_Diag: "",
-		},
-
-		{
-			Name: "pragma exempt",
-			Files: map[string]string{
-				"test.go": "//go:build linux\n\npackage main\n",
-			},
-			Want_Diag: "",
-		},
-	} {
-		t.Run(tt.Name, func(t *testing.T) {
-			fsys_map := make(fstest.MapFS)
-			for k, v := range tt.Files {
-				fsys_map[k] = &fstest.MapFile{
-					Data: []byte(v)}
-			}
-			stdout := &bytes.Buffer{}
-			stderr := &bytes.Buffer{}
-			code := lint.Main(&lint.Main_Input{
-				Fsys: fsys_map, Stdout: stdout, Stderr: stderr,
-			})
-
-			output := stdout.String()
-			if tt.Want_Diag == "" {
-				if code != 0 {
-					t.Errorf("expected exit 0, got %d; output: %s",
-						code, output)
-				}
-			} else {
-				if !bytes.Contains(stdout.Bytes(), []byte(tt.Want_Diag)) {
-					t.Errorf("expected output containing %q, got: %s",
-						tt.Want_Diag, output)
-				}
-			}
-		})
-	}
-}
-
-// Additional cases, split to keep each function within the length limit.
-func Test_Comments_Part3(t *testing.T) {
-	t.Parallel()
-	// TestComments fixtures include `//foo` (no space after slashes), which
-	// gofmt normalizes before our check sees it. Bypass gofmt_must so the
-	// formatting-style violations under test survive intact.
-	for _, tt := range []struct {
-		Name      string
-		Files     map[string]string
-		Want_Diag string
-	}{
-
-		{
-			Name: "multi-line group: trailing period on last line",
-			Files: map[string]string{
-				"test.go": "// First line\n// second line.\npackage main\n",
-			},
-			Want_Diag: "",
-		},
-	} {
-		t.Run(tt.Name, func(t *testing.T) {
-			fsys_map := make(fstest.MapFS)
-			for k, v := range tt.Files {
-				fsys_map[k] = &fstest.MapFile{
-					Data: []byte(v)}
-			}
-			stdout := &bytes.Buffer{}
-			stderr := &bytes.Buffer{}
-			code := lint.Main(&lint.Main_Input{
-				Fsys: fsys_map, Stdout: stdout, Stderr: stderr,
-			})
-
-			output := stdout.String()
-			if tt.Want_Diag == "" {
-				if code != 0 {
-					t.Errorf("expected exit 0, got %d; output: %s",
-						code, output)
-				}
-			} else {
-				if !bytes.Contains(stdout.Bytes(), []byte(tt.Want_Diag)) {
-					t.Errorf("expected output containing %q, got: %s",
-						tt.Want_Diag, output)
-				}
-			}
-		})
-	}
-}
-
-// Test_Comments_Inline_Exempt verifies that comments on the same line as a
-// declaration (after the opening brace, for example) are exempt from the
-// sentence rules that apply to leading doc comments.
-func Test_Comments_Inline_Exempt(t *testing.T) {
-	t.Parallel()
-	source := "package main\n\n" +
-		"import invariant \"github.com/james-orcales/james-orcales/" +
-		"golang_snacks/invariant/v2\"\n\n" +
-		"const fixture_hi = 100\n\n" +
-		"func f() (result int) { // some inline note\n" +
-		"\tdefer func() {\n" +
-		"\t\tinvariant.Cross_Product(\n" +
-		"\t\t\tinvariant.Distinct_Boundary(" +
-		"&invariant.Boundary_Input[int]{\n" +
-		"\t\t\t\tX: result, Lo: 0, Hi: fixture_hi,\n" +
-		"\t\t\t}),\n" +
-		"\t\t\tinvariant.Always(" +
-		"result == 0, \"result is zero\"),\n" +
-		"\t\t)\n" +
-		"\t}()\n" +
-		"\treturn 1\n" +
-		"}\n"
-	fsys_map := fstest.MapFS{"test.go": &fstest.MapFile{
-		Data: []byte(source)}}
-	stdout := &bytes.Buffer{}
-	stderr := &bytes.Buffer{}
-	code := lint.Main(&lint.Main_Input{Fsys: fsys_map, Stdout: stdout, Stderr: stderr})
-	if code != 0 {
-		t.Errorf("expected exit 0, got %d; output: %s", code, stdout.String())
-	}
-}
-
-// Test_No_Package_Vars verifies the package-level var ban: only
-// regexp.MustCompile and errors.New initializers are allowed (plus the
-// compile-time interface-satisfaction shape `var _ Iface = (*Impl)(nil)`).
-// Local-scope var declarations inside funcs are untouched.
-func Test_No_Package_Vars(t *testing.T) {
-	t.Parallel()
-	tests := []struct {
-		Name      string
-		Files     map[string]string
-		Want_Diag string
-	}{
-		{
-			Name: "regexp.MustCompile allowed",
-			Files: map[string]string{
-				"test.go": `package main
-import "regexp"
-var re = regexp.MustCompile("x")
-func main() { return }
-`,
-			},
-			Want_Diag: "",
-		},
-		{
-			Name: "errors.New allowed",
-			Files: map[string]string{
-				"test.go": `package main
-import "errors"
-var Err_Foo = errors.New("foo")
-func main() { return }
-`,
-			},
-			Want_Diag: "",
-		},
-		{
-			Name: "multiple allowed initializers",
-			Files: map[string]string{
-				"test.go": `package main
-import "regexp"
-var re1 = regexp.MustCompile("a")
-var re2 = regexp.MustCompile("b")
-func main() { return }
-`,
-			},
-			Want_Diag: "",
-		},
-		{
-			Name: "snap.Default singleton allowed",
-			Files: map[string]string{
-				"snap.go": `// Package snap is a fixture.
-package snap
-// Snapper is a fixture.
-type Snapper struct{ A int }
-// Default is the OS-bound Snapper.
-var Default = &Snapper{A: 1}
-`,
-			},
-			Want_Diag: "",
-		},
-		{
-			Name: "Default in non-snap package still banned",
-			Files: map[string]string{
-				"test.go": `package main
-type S struct{ A int }
-var Default = &S{A: 1}
-func main() { return }
-`,
-			},
-			Want_Diag: "package-level var is banned",
-		},
-	}
-	run_diag_table(t, tests)
-}
-
-// Test_No_Package_Vars_Banned covers the rejection side: zero-value vars,
-// non-allowlisted initializers, mixed groups, and a negative case for
-// local-scope vars which must not be flagged.
-func Test_No_Package_Vars_Banned(t *testing.T) {
-	t.Parallel()
-	run_diag_table(t, []struct {
-		Name      string
-		Files     map[string]string
-		Want_Diag string
-	}{
-
-		{
-			Name: "zero-value var banned",
-			Files: map[string]string{
-				"test.go": `package main
-var x_count int
-func main() { return }
-`,
-			},
-			Want_Diag: "package-level var is banned",
-		},
-
-		{
-			Name: "literal initializer banned",
-			Files: map[string]string{
-				"test.go": `package main
-var x_count = 5
-func main() { return }
-`,
-			},
-			Want_Diag: "package-level var is banned",
-		},
-
-		{
-			Name: "composite literal initializer banned",
-			Files: map[string]string{
-				"test.go": `package main
-type S struct{ A int }
-var x_thing = S{}
-func main() { return }
-`,
-			},
-			Want_Diag: "package-level var is banned",
-		},
-
-		{
-			Name: "disallowed call initializer banned",
-			Files: map[string]string{
-				"test.go": `package main
-import "time"
-var t_start = time.Now()
-func main() { return }
-`,
-			},
-			Want_Diag: "package-level var is banned",
-		},
-
-		{
-			Name: "multi-name single-line banned",
-			Files: map[string]string{
-				"test.go": `package main
-var a_count, b_count = 1, 2
-func main() { return }
-`,
-			},
-			Want_Diag: "package-level var is banned",
-		},
-	})
-}
-
-// Additional cases, split to keep each function within the length limit.
-func Test_No_Package_Vars_Banned_Part2(t *testing.T) {
-	t.Parallel()
-	run_diag_table(t, []struct {
-		Name      string
-		Files     map[string]string
-		Want_Diag string
-	}{
-
-		{
-			Name: "mixed: only disallowed flagged",
-			Files: map[string]string{
-				"test.go": `package main
-import "regexp"
-var re1 = regexp.MustCompile("a")
-var bad_v = 5
-func main() { return }
-`,
-			},
-			Want_Diag: "package-level var is banned",
-		},
-
-		{
-			Name: "local-scope var untouched",
-			Files: map[string]string{
-				"test.go": `package main
-func main() {
-	var x_count int
-	x_count++
-}
-`,
-			},
-			Want_Diag: "",
-		},
-
-		{
-			Name: "slice literal banned with switch hint",
-			Files: map[string]string{
-				"test.go": `package main
-var x_list = []int{1, 2, 3}
-func main() { return }
-`,
-			},
-			Want_Diag: "package-level var is banned",
-		},
-	})
-}
-
-// Test_Banned_Scripting_Files verifies that scripting-language files
-// (.py, .sh, Makefile, ...) anywhere outside the top-level third_party/
-// and vendor/ directories are flagged. Bypasses run_diag_table because
-// gofmt_must would choke on non-Go content.
-func Test_Banned_Scripting_Files(t *testing.T) {
-	t.Parallel()
-	clean_go := []byte(fixture_clean_go)
-	test_banned_scripting_files_run(t, []struct {
-		Name      string
-		Files     map[string][]byte
-		Want_Diag string
-	}{
-
-		{
-			Name: "top-level .py flagged",
-			Files: map[string][]byte{
-				"test.go":   clean_go,
-				"script.py": []byte("print(1)\n"),
-			},
-			Want_Diag: "banned scripting file",
-		},
-
-		{
-			Name: "nested .sh flagged",
-			Files: map[string][]byte{
-				"test.go":    clean_go,
-				"cmd/run.sh": []byte("#!/bin/sh\necho hi\n"),
-			},
-			Want_Diag: "banned scripting file",
-		},
-
-		{
-			Name: "Makefile flagged",
-			Files: map[string][]byte{
-				"test.go":  clean_go,
-				"Makefile": []byte("all:\n\techo hi\n"),
-			},
-			Want_Diag: "banned scripting file",
-		},
-
-		{
-			Name: "lowercase makefile flagged",
-			Files: map[string][]byte{
-				"test.go":  clean_go,
-				"makefile": []byte("all:\n\techo hi\n"),
-			},
-			Want_Diag: "banned scripting file",
-		},
-
-		{
-			Name: "Rakefile flagged",
-			Files: map[string][]byte{
-				"test.go":  clean_go,
-				"Rakefile": []byte("task :default\n"),
-			},
-			Want_Diag: "banned scripting file",
-		},
-
-		{
-			Name: "lua flagged",
-			Files: map[string][]byte{
-				"test.go":    clean_go,
-				"script.lua": []byte("print(1)\n"),
-			},
-			Want_Diag: "banned scripting file",
-		},
-	})
-}
-
-// Additional cases, split to keep each function within the length limit.
-func Test_Banned_Scripting_Files_Part2(t *testing.T) {
-	t.Parallel()
-	clean_go := []byte(fixture_clean_go)
-	test_banned_scripting_files_run(t, []struct {
-		Name      string
-		Files     map[string][]byte
-		Want_Diag string
-	}{
-
-		{
-			Name: "third_party top-level allowed",
-			Files: map[string][]byte{
-				"test.go":              clean_go,
-				"third_party/foo.py":   []byte("print(1)\n"),
-				"third_party/Makefile": []byte("all:\n"),
-			},
-			Want_Diag: "",
-		},
-
-		{
-			Name: "vendor top-level allowed",
-			Files: map[string][]byte{
-				"test.go":       clean_go,
-				"vendor/foo.sh": []byte("#!/bin/sh\n"),
-			},
-			Want_Diag: "",
-		},
-
-		{
-			Name: "nested third_party NOT exempt",
-			Files: map[string][]byte{
-				"test.go":              clean_go,
-				"pkg/third_party/x.py": []byte("print(1)\n"),
-			},
-			Want_Diag: "banned scripting file",
-		},
-
-		{
-			Name: "go file alone clean",
-			Files: map[string][]byte{
-				"test.go": clean_go,
-			},
-			Want_Diag: "",
-		},
-	})
-}
-
-// Mirrors run_diag_table but feeds raw bytes — non-Go content would not
-// survive the gofmt preprocessing in the table runner used by Go-only tests.
-func test_banned_scripting_files_run(t *testing.T, tests []struct {
-	Name      string
-	Files     map[string][]byte
-	Want_Diag string
-}) {
-	t.Helper()
-	for _, tt := range tests {
-		t.Run(tt.Name, func(t *testing.T) {
-			fsys_map := make(fstest.MapFS)
-			for k, v := range tt.Files {
-				fsys_map[k] = &fstest.MapFile{Data: v}
-			}
-			stdout := &bytes.Buffer{}
-			code := lint.Main(&lint.Main_Input{
-				Fsys: fsys_map, Stdout: stdout, Stderr: &bytes.Buffer{},
-			})
-			output := stdout.String()
-			if tt.Want_Diag == "" {
-				if code != 0 {
-					t.Errorf("expected exit 0, got %d; output: %s",
-						code, output)
-				}
-				return
-			}
-			if !bytes.Contains(stdout.Bytes(), []byte(tt.Want_Diag)) {
-				t.Errorf("expected output containing %q, got: %s",
-					tt.Want_Diag, output)
-			}
-		})
-	}
-}
-
-// Run_stream returns Main's stdout for a tree of files. Stream-tier checks
-// run against raw bytes, so test inputs go through MapFS verbatim — no
-// gofmt_must wrapping like the AST-tier tests use.
-func run_stream(t *testing.T, files map[string]string) (output string) {
-	t.Helper()
-	fsys_map := make(fstest.MapFS)
-	for k, v := range files {
-		fsys_map[k] = &fstest.MapFile{
-			Data: []byte(v)}
-	}
-	stdout := &bytes.Buffer{}
-	lint.Main(&lint.Main_Input{Fsys: fsys_map, Stdout: stdout, Stderr: &bytes.Buffer{}})
-	return stdout.String()
-}
-
-// Conflict markers in any file must be flagged with the conflict-markers check
-// and the correct line number.
-func Test_Stream_Conflict_Markers(t *testing.T) {
-	t.Parallel()
-	output := run_stream(t, map[string]string{
-		"notes.txt": "ok line\n<<<<<<< HEAD\nmine\n=======\ntheirs\n>>>>>>> branch\n",
-	})
-	if !strings.Contains(output, "conflict-markers") {
-		t.Errorf("expected conflict-markers diag, got: %s", output)
-	}
-	if !strings.Contains(output, "notes.txt:2") {
-		t.Errorf("expected diag at notes.txt:2, got: %s", output)
-	}
-}
-
-// Any `uses:` line under .github/workflows/ must be flagged. Other YAML
-// (including .github/ files outside workflows/) and other content inside a
-// workflow file (run:, name:, etc.) must pass clean.
-func Test_Stream_Github_Actions_Uses(t *testing.T) {
-	t.Parallel()
-	cases := []struct {
-		Name   string
-		Path   string
-		Body   string
-		Should string
-	}{
-		{
-			Name:   "third-party uses flagged",
-			Path:   ".github/workflows/ci.yml",
-			Body:   "jobs:\n  build:\n    steps:\n      - uses: actions/checkout@v4\n",
-			Should: "github-actions-uses",
-		},
-		{
-			Name: "local uses flagged",
-			Path: ".github/workflows/ci.yml",
-			Body: "jobs:\n  build:\n    steps:\n" +
-				"      - uses: ./.github/actions/foo\n",
-			Should: "github-actions-uses",
-		},
-		{
-			Name:   "yaml extension flagged",
-			Path:   ".github/workflows/ci.yaml",
-			Body:   "steps:\n  - uses: actions/setup-go@v5\n",
-			Should: "github-actions-uses",
-		},
-		{
-			Name: "run-only workflow clean",
-			Path: ".github/workflows/ci.yml",
-			Body: "jobs:\n  build:\n    steps:\n      - name: build\n" +
-				"        run: go build ./...\n",
-			Should: "",
-		},
-		{
-			Name:   "uses in non-workflow yaml ignored",
-			Path:   ".github/dependabot.yml",
-			Body:   "uses: whatever\n",
-			Should: "",
-		},
-		{
-			Name:   "uses in top-level yaml ignored",
-			Path:   "config.yml",
-			Body:   "uses: whatever\n",
-			Should: "",
-		},
-	}
-	for _, tc := range cases {
-		t.Run(tc.Name, func(t *testing.T) {
-			output := run_stream(t, map[string]string{tc.Path: tc.Body})
-			has := strings.Contains(output, "github-actions-uses")
-			want := tc.Should != ""
-			if has != want {
-				t.Errorf("path %q: want github-actions-uses=%v, got: %s",
-					tc.Path, want, output)
-			}
-		})
-	}
-}
-
-// GPL license text must trigger the copyleft check with the correct family name.
-func Test_Stream_Copyleft_GPL(t *testing.T) {
-	t.Parallel()
-	gpl := "GNU GENERAL PUBLIC LICENSE\nVersion 3\n\nThis program is free software\n"
-	output := run_stream(t, map[string]string{"LICENSE": gpl})
-	if !strings.Contains(output, "copyleft") {
-		t.Errorf("expected copyleft diag, got: %s", output)
-	}
-	if !strings.Contains(output, "GNU GPL") {
-		t.Errorf("expected GNU GPL in copyleft diag, got: %s", output)
-	}
-}
-
-// MPL text that references GPL for comparison must not trigger the copyleft check.
-func Test_Stream_Copyleft_MPL_Not_Flagged(t *testing.T) {
-	t.Parallel()
-	mpl := "Mozilla Public License 2.0\nGNU General Public License (for comparison)\n"
-	output := run_stream(t, map[string]string{"LICENSE": mpl})
-	if strings.Contains(output, "copyleft") {
-		t.Errorf("MPL should not trip copyleft check; got: %s", output)
-	}
-}
-
-// Files exceeding 1 MiB must be flagged by the max-file-size check.
-func Test_Stream_Max_File_Size(t *testing.T) {
-	t.Parallel()
-	big := strings.Repeat("a", (1<<20)+1)
-	output := run_stream(t, map[string]string{"blob.bin": big})
-	if !strings.Contains(output, "max-file-size") {
-		t.Errorf("expected max-file-size diag on blob.bin, got: %s", output)
-	}
-	if !strings.Contains(output, "blob.bin") {
-		t.Errorf("expected blob.bin in diag, got: %s", output)
-	}
-}
-
-// Agent docs under dot-dirs must be skipped; agent docs under normal paths
-// must be flagged when they exceed 100 lines.
-func Test_Stream_Agent_Documentation_Max_Lines(t *testing.T) {
-	t.Parallel()
-	body := strings.Repeat("line\n", 101)
-	// Dot-dirs are skipped by the walker, so the doc must live under a
-	// non-dot path to be reached.
-	output := run_stream(t, map[string]string{".claude/skills/foo/SKILL.md": body})
-	if strings.Contains(output, "agent-doc-max-lines") {
-		t.Errorf("dot-dir SKILL.md should be skipped, got: %s", output)
-	}
-	for _, name := range []string{"SKILL.md", "CLAUDE.md", "AGENTS.md"} {
-		loop_output := run_stream(t, map[string]string{"skills/foo/" + name: body})
-		if !strings.Contains(loop_output, "agent-doc-max-lines") {
-			t.Errorf("expected agent-doc-max-lines diag for %s, got: %s",
-				name, loop_output)
-		}
-	}
-}
-
-// Snake_case, Ada_Case, and SCREAMING_SNAKE_CASE paths must pass; kebab-case
-// and camelCase paths must be flagged; third_party/ is fully exempt.
-func Test_Stream_Path_Casing(t *testing.T) {
-	t.Parallel()
-	cases := []struct {
-		Name   string
-		Path   string
-		Should string
-	}{
-		{"snake_case file", "lint_stream.go", ""},
-		{"Ada_Case file", "Foo_Bar.txt", ""},
-		{"SCREAMING file", "LICENSE", ""},
-		{"hidden file exempt", ".gitignore", ""},
-		{"snake_case dir", "big_bang/foo.go", ""},
-		{"third_party exempt", "third_party/badName-file.go", ""},
-		{"kebab-case file flagged", "bad-file.txt", "path-casing"},
-		{"camelCase file flagged", "badFile.txt", "path-casing"},
-		{"kebab-case dir flagged", "bad-dir/foo.txt", "path-casing"},
-	}
-	for _, tc := range cases {
-		t.Run(tc.Name, func(t *testing.T) {
-			output := run_stream(t, map[string]string{tc.Path: "x\n"})
-			has := strings.Contains(output, "path-casing")
-			want := tc.Should != ""
-			if has != want {
-				t.Errorf("path %q: want path-casing=%v, got: %s",
-					tc.Path, want, output)
-			}
-		})
-	}
-}
-
-// Markdown lines exceeding 100 runes must be flagged by the markdown-line-length check.
-func Test_Stream_Markdown_Line_Max(t *testing.T) {
-	t.Parallel()
-	long := strings.Repeat("x", 120) + "\n"
-	output := run_stream(t, map[string]string{"docs.md": long})
-	if !strings.Contains(output, "markdown-line-length") {
-		t.Errorf("expected markdown-line-length diag, got: %s", output)
-	}
-}
-
-// Lines inside fenced code blocks must be exempt from the markdown line cap.
-func Test_Stream_Markdown_Code_Fence_Exempt(t *testing.T) {
-	t.Parallel()
-	long := "```\n" + strings.Repeat("x", 200) + "\n```\n"
-	output := run_stream(t, map[string]string{"docs.md": long})
-	if strings.Contains(output, "markdown-line-length") {
-		t.Errorf("fenced code should be exempt; got: %s", output)
-	}
-}
-
-// A directory with CLAUDE.md but no AGENTS.md must be flagged for the missing sibling.
-func Test_Stream_Agents_Claude_Pair_Absence(t *testing.T) {
-	t.Parallel()
-	output := run_stream(t, map[string]string{"CLAUDE.md": "instructions\n"})
-	if !strings.Contains(output, "agents-claude-pair") {
-		t.Errorf("expected agents-claude-pair diag, got: %s", output)
-	}
-	if !strings.Contains(output, "AGENTS.md is missing") {
-		t.Errorf("expected AGENTS.md missing message, got: %s", output)
-	}
-}
-
-// AGENTS.md and CLAUDE.md with different content must be flagged as drifted.
-func Test_Stream_Agents_Claude_Pair_Drift(t *testing.T) {
-	t.Parallel()
-	output := run_stream(t, map[string]string{
-		"AGENTS.md": "version one\n",
-		"CLAUDE.md": "version two\n",
-	})
-	if !strings.Contains(output, "agents-claude-pair") {
-		t.Errorf("expected agents-claude-pair diag, got: %s", output)
-	}
-	if !strings.Contains(output, "differ") {
-		t.Errorf("expected differ message, got: %s", output)
-	}
-}
-
-// Byte-identical AGENTS.md and CLAUDE.md must pass without any diag.
-func Test_Stream_Agents_Claude_Pair_Identical_OK(t *testing.T) {
-	t.Parallel()
-	output := run_stream(t, map[string]string{
-		"AGENTS.md": "shared\n",
-		"CLAUDE.md": "shared\n",
-	})
-	if strings.Contains(output, "agents-claude-pair") {
-		t.Errorf("byte-identical pair should pass; got: %s", output)
-	}
-}
-
-// A conflict marker inside a .go file must surface as a stream-tier
-// conflict-markers diag, and the AST tier's parse failure on the same
-// file must degrade to a per-file diagnostic rather than aborting the
-// entire run. Both tiers run; both diags surface.
-func Test_Stream_Conflict_Marker_Input_Go_File(t *testing.T) {
-	t.Parallel()
-	bad_go := "package p\n<<<<<<< HEAD\nfunc f() {}\n=======\nfunc g() {}\n>>>>>>> branch\n"
-	output := run_stream(t, map[string]string{"a.go": bad_go})
-	if !strings.Contains(output, "conflict-markers") {
-		t.Errorf("expected conflict-markers diag, got: %s", output)
-	}
-	if !strings.Contains(output, "parse error") {
-		t.Errorf("expected parse error diag, got: %s", output)
-	}
-}
-
-// Runs Main with the given Git_Input over an empty FS and returns
-// (stdout, exit_code). Empty FS isolates the git tier from file-tier output.
-func run_git(t *testing.T, input lint.Git_Input) (output string, code int) {
-	t.Helper()
-	stdout := &bytes.Buffer{}
-	code = lint.Main(&lint.Main_Input{
-		Fsys:   fstest.MapFS{},
-		Stdout: stdout,
-		Stderr: &bytes.Buffer{},
-		Git:    input,
-	})
-	return stdout.String(), code
-}
-
-// Git_Input zero value must skip the git tier and surface no <git> diagnostics.
-func Test_Git_Disabled(t *testing.T) {
-	t.Parallel()
-	output, code := run_git(t, lint.Git_Input{})
-	if strings.Contains(output, "<git") {
-		t.Errorf("disabled git tier must emit no <git> diags; got: %s", output)
-	}
-	if code != 0 {
-		t.Errorf("expected exit 0, got %d; output: %s", code, output)
-	}
-}
-
-// Missing main ref (shallow CI checkout, fresh repo) must surface a single
-// actionable diagnostic naming fetch-depth, not silently pass.
-func Test_Git_Main_Reference_Absence(t *testing.T) {
-	t.Parallel()
-	output, code := run_git(t, lint.Git_Input{Enabled: true, Main_Reference_Absent: true})
-	if !strings.Contains(output, "<git>") {
-		t.Errorf("expected <git> diag for missing main ref; got: %s", output)
-	}
-	if !strings.Contains(output, "fetch-depth") {
-		t.Errorf("expected fetch-depth instruction; got: %s", output)
-	}
-	if code == 0 {
-		t.Errorf("expected non-zero exit; got 0; output: %s", output)
-	}
-}
-
-// Every merge commit in the PR range must be flagged with its short hash and
-// subject; the no-merge-commits rule name must appear so users can map output
-// to the rebase instruction.
-func Test_Git_No_Merge_Commits(t *testing.T) {
-	t.Parallel()
-	tests := []struct {
-		Name          string
-		Merge_Commits []lint.Git_Commit
-		Want_Hits     []string
-		Want_Code     int
-	}{
-		{
-			Name:      "no merges",
-			Want_Code: 0,
-		},
-		{
-			Name: "one merge commit",
-			Merge_Commits: []lint.Git_Commit{
-				{
-					Hash:    "abcdef0123456789abcdef0123456789abcdef01",
-					Subject: "Merge branch foo",
-				},
-			},
-			Want_Hits: []string{"merge commit", "abcdef0123", "Merge branch foo"},
-			Want_Code: 1,
-		},
-		{
-			Name: "subtree add exempt",
-			Merge_Commits: []lint.Git_Commit{
-				{Hash: "ccccccccccdddd", Subject: "Add 'foo/' from commit " +
-					"'2d43774e164be386023c13e2b12c2403a57b4a2a'"},
-			},
-			Want_Code: 0,
-		},
-		{
-			Name: "subtree pull exempt",
-			Merge_Commits: []lint.Git_Commit{
-				{Hash: "eeeeeeeeeeffff", Subject: "Merge commit " +
-					"'2d43774e164be386023c13e2b12c2403a57b4a2a' as 'foo'"},
-			},
-			Want_Code: 0,
-		},
-		{
-			Name: "two merge commits",
-			Merge_Commits: []lint.Git_Commit{
-				{Hash: "1111111111aaaa", Subject: "Merge one"},
-				{Hash: "2222222222bbbb", Subject: "Merge two"},
-			},
-			Want_Hits: []string{"1111111111", "2222222222", "Merge one", "Merge two"},
-			Want_Code: 1,
-		},
-	}
-	for _, tt := range tests {
-		t.Run(tt.Name, func(t *testing.T) {
-			output, code := run_git(t, lint.Git_Input{
-				Enabled:       true,
-				Merge_Commits: tt.Merge_Commits,
-			})
-			for _, want := range tt.Want_Hits {
-				if !strings.Contains(output, want) {
-					t.Errorf("expected output to contain %q; got: %s",
-						want, output)
-				}
-			}
-			if code != tt.Want_Code {
-				t.Errorf("expected exit %d, got %d; output: %s",
-					tt.Want_Code, code, output)
-			}
-		})
-	}
-}
-
-// Conventional-commits enforcement: subjects must match
-//
-//	type(scope)?!?: description
-//
-// with a lowercase type and a non-empty description. Fixup-shaped subjects
-// are exempt because the no-fixup-commits rule already covers them and they
-// disappear on autosquash.
-func Test_Git_Conventional_Commits(t *testing.T) {
-	t.Parallel()
-	tests := []struct {
-		Name      string
-		Subject   string
-		Want_Flag bool
-	}{
-		{"plain feat", "feat: add widget", false},
-		{"feat with scope", "feat(lint): add git check", false},
-		{"fix with slashed scope", "fix(lint/impl): handle nil", false},
-		{"breaking change marker", "feat!: drop legacy field", false},
-		{"breaking change with scope", "refactor(api)!: rename field", false},
-		{"no type prefix", "add widget", true},
-		{"missing colon", "feat add widget", true},
-		{"missing space after colon", "feat:add widget", true},
-		{"empty description", "feat: ", true},
-		{"capitalized type", "Feat: add widget", true},
-		{"fixup exempt from conventional", "fixup! feat: foo", false},
-		{"squash exempt from conventional", "squash! feat: foo", false},
-		// Empty subjects (e.g. WIP commits authored with --allow-empty-message)
-		// are skipped entirely; the cost of rewriting history to fix them
-		// outweighs the value of flagging them on every lint run.
-		{"empty subject skipped", "", false},
-	}
-	for _, tt := range tests {
-		t.Run(tt.Name, func(t *testing.T) {
-			output, _ := run_git(t, lint.Git_Input{
-				Enabled: true,
-				Non_Merge_Commits: []lint.Git_Commit{
-					{Hash: "abc1234567def", Subject: tt.Subject},
-				},
-			})
-			flagged := strings.Contains(output, "conventional-commits") ||
-				strings.Contains(output, "non-conventional commit")
-			if flagged != tt.Want_Flag {
-				t.Errorf("subject %q: want flagged=%v, got flagged=%v; output: %s",
-					tt.Subject, tt.Want_Flag, flagged, output)
-			}
-		})
-	}
-}
-
-// Commit subjects longer than 100 chars must be flagged. Matches the
-// max_line_chars cap the file-tier check enforces on source lines — same
-// reasoning (visual scan limit in code-review UIs and terminals).
-func Test_Git_Commit_Subject_Chars(t *testing.T) {
-	t.Parallel()
-	// 100 chars: a conventional prefix plus 94 'x' chars (6 = len("feat: ")).
-	at_limit := "feat: " + strings.Repeat("x", 94)
-	over_limit := "feat: " + strings.Repeat("x", 95)
-	tests := []struct {
-		Name      string
-		Subject   string
-		Want_Flag bool
-	}{
-		{"at limit (100)", at_limit, false},
-		{"over limit (101)", over_limit, true},
-	}
-	for _, tt := range tests {
-		t.Run(tt.Name, func(t *testing.T) {
-			output, _ := run_git(t, lint.Git_Input{
-				Enabled: true,
-				Non_Merge_Commits: []lint.Git_Commit{
-					{Hash: "abc1234567def", Subject: tt.Subject},
-				},
-			})
-			flagged := strings.Contains(output, "commit subject is")
-			if flagged != tt.Want_Flag {
-				t.Errorf("len=%d: want flagged=%v, got flagged=%v; output: %s",
-					len(tt.Subject), tt.Want_Flag, flagged, output)
-			}
-		})
-	}
-}
-
-// Subjects matching IsFixupSubject must be flagged; ordinary subjects must
-// pass. Covers both the literal fixup!/squash! prefixes and the review-comment
-// phrasings so a regression in either branch shows up.
-func Test_Git_No_Fixup_Commits(t *testing.T) {
-	t.Parallel()
-	tests := []struct {
-		Name      string
-		Subject   string
-		Want_Flag bool
-	}{
-		{"literal fixup", "fixup! refactor: extract foo", true},
-		{"literal squash", "squash! feat: add bar", true},
-		{"address review comments", "address review comments", true},
-		{"apply review feedback", "apply review feedback", true},
-		{"cr comment", "cr comment", true},
-		{"review nit", "review nit", true},
-		{"ordinary feat", "feat: add X", false},
-		{"ordinary fix", "fix: handle nil pointer in foo", false},
-		{"review without action verb", "chore: reviewed the code", false},
-	}
-	for _, tt := range tests {
-		t.Run(tt.Name, func(t *testing.T) {
-			output, code := run_git(t, lint.Git_Input{
-				Enabled: true,
-				Non_Merge_Commits: []lint.Git_Commit{
-					{Hash: "deadbeef00cafe", Subject: tt.Subject},
-				},
-			})
-			flagged := strings.Contains(output, "fixup commit on branch")
-			if flagged != tt.Want_Flag {
-				t.Errorf("subject %q: want flagged=%v, got flagged=%v; output: %s",
-					tt.Subject, tt.Want_Flag, flagged, output)
-			}
-			want_code := 0
-			if tt.Want_Flag {
-				want_code = 1
-			}
-			if code != want_code {
-				t.Errorf("expected exit %d, got %d", want_code, code)
-			}
-		})
-	}
-}
-
-// Test_Method_Prefix_Flagged verifies that free functions whose first
-// parameter is a same-package declared named type are flagged when the
-// function name lacks the type-name prefix. This is the naming half of
-// the banned-methods rule (check_unnecessary_method): when a method gets
-// rewritten as a free function with the receiver promoted to the first
-// param, the type-prefix preserves the grouping affordance methods had.
-func Test_Method_Prefix_Flagged(t *testing.T) {
-	t.Parallel()
-	tests := []struct {
-		Name      string
-		Files     map[string]string
-		Want_Diag string
-	}{
-
-		{
-			Name: "bare same-file type flagged",
-			Files: map[string]string{
-				"a.go": `package foo
-
-type Entity struct{}
-
-func update(e Entity) { return }
-`,
-			},
-			Want_Diag: "rename to entity_<verb>",
-		},
-
-		{
-			Name: "same-package sibling file flagged",
-			Files: map[string]string{
-				"a.go": `package foo
-
-type Entity struct{}
-`,
-				"b.go": `package foo
-
-func update(e Entity) { return }
-`,
-			},
-			Want_Diag: "rename to entity_<verb>",
-		},
-
-		{
-			Name: "generic instance flagged",
-			Files: map[string]string{
-				"a.go": `package foo
-
-type Entity[T any] struct{}
-
-func update(e Entity[int]) { return }
-`,
-			},
-			Want_Diag: "rename to entity_<verb>",
-		},
-
-		{
-			Name: "exported function requires Ada_Case prefix",
-			Files: map[string]string{
-				"a.go": `package foo
-
-type Main_Input struct{}
-
-func Run(input Main_Input) { return }
-`,
-			},
-			Want_Diag: "rename to Main_Input_<verb>",
-		},
-	}
-	run_diag_table(t, tests)
-}
-
-// Additional cases, split to keep each function within the length limit.
-func Test_Method_Prefix_Flagged_Part2(t *testing.T) {
-	t.Parallel()
-	tests := []struct {
-		Name      string
-		Files     map[string]string
-		Want_Diag string
-	}{
-
-		{
-			Name: "pointer to same-pkg type flagged (receiver shape)",
-			Files: map[string]string{
-				"a.go": `package foo
-
-type Snapper struct{}
-
-func edit(s *Snapper) { return }
-`,
-			},
-			Want_Diag: "rename to snapper_<verb>",
-		},
-
-		{
-			Name: "Ada_Case fn with miscased multi-word prefix flagged",
-			Files: map[string]string{
-				"a.go": `package foo
-
-type Main_Input struct{}
-
-func Main_input_Run(input Main_Input) { return }
-`,
-			},
-			Want_Diag: "rename to Main_Input_<verb>",
-		},
-	}
-	run_diag_table(t, tests)
-}
-
-// Test_Method_Prefix_Skipped verifies that the check does not fire on
-// first-param shapes that fall outside the rule's scope: stdlib selector
-// types, builtins, wrappers (pointer/slice/etc.) around named types — none
-// of which match the "receiver promoted to first param" shape — and the
-// constructor-input exception where the type is named <FuncName>_Input.
-func Test_Method_Prefix_Skipped(t *testing.T) {
-	t.Parallel()
-	tests := []struct {
-		Name      string
-		Files     map[string]string
-		Want_Diag string
-	}{
-
-		{
-			Name: "selector type (stdlib) clean",
-			Files: map[string]string{
-				"a.go": `// Package foo is a fixture.
-package foo
-
-import "io"
-
-func read(r io.Reader) (err error) { return nil }
-`,
-			},
-			Want_Diag: "",
-		},
-
-		{
-			Name: "builtin first param clean",
-			Files: map[string]string{
-				"a.go": `// Package foo is a fixture.
-package foo
-
-
-const fixture_hi = 100
-
-func parse(s string) {
-	return
-}
-`,
-			},
-			Want_Diag: "",
-		},
-	}
-	run_diag_table(t, tests)
-}
-
-// Additional cases, split to keep each function within the length limit.
-func Test_Method_Prefix_Skipped_Part2(t *testing.T) {
-	t.Parallel()
-	tests := []struct {
-		Name      string
-		Files     map[string]string
-		Want_Diag string
-	}{
-
-		{
-			Name: "slice of same-pkg type clean",
-			Files: map[string]string{
-				"a.go": `// Package foo is a fixture.
-package foo
-
-
-const fixture_hi = 100
-
-// Entity is a fixture.
-type Entity struct{}
-
-func update(es []Entity) {
-	defer func() {
-	}()
-	return
-}
-`,
-			},
-			Want_Diag: "",
-		},
-
-		{
-			Name: "constructor-input pattern clean (FuncName + _Input)",
-			Files: map[string]string{
-				"a.go": `// Package foo is a fixture.
-package foo
-
-// New_Input is a fixture.
-type New_Input struct{}
-
-// New constructs a fixture.
-func New(input New_Input) { return }
-`,
-			},
-			Want_Diag: "",
-		},
-	}
-	run_diag_table(t, tests)
-}
-
-// Test_Method_Prefix_Matched verifies that correctly-prefixed functions
-// pass: the case of the prefix matches the function's own style (Ada_Case
-// for exported, snake_case for unexported), multi-word type names are
-// rebuilt in that style, and a function named exactly as the type counts.
-func Test_Method_Prefix_Matched(t *testing.T) {
-	t.Parallel()
-	tests := []struct {
-		Name      string
-		Files     map[string]string
-		Want_Diag string
-	}{
-
-		{
-			Name: "correctly-prefixed unexported clean",
-			Files: map[string]string{
-				"a.go": `// Package foo is a fixture.
-package foo
-
-// Entity is a fixture.
-type Entity struct{}
-
-func entity_update(e Entity) { return }
-`,
-			},
-			Want_Diag: "",
-		},
-
-		{
-			Name: "correctly-prefixed pointer receiver shape clean",
-			Files: map[string]string{
-				"a.go": `// Package foo is a fixture.
-package foo
-
-
-const fixture_hi = 100
-
-// Snapper is a fixture.
-type Snapper struct{}
-
-func snapper_edit(s *Snapper) {
-	return
-}
-`,
-			},
-			Want_Diag: "",
-		},
-
-		{
-			Name: "exported function with Ada_Case prefix clean",
-			Files: map[string]string{
-				"a.go": `// Package foo is a fixture.
-package foo
-
-// Main_Input is a fixture.
-type Main_Input struct{}
-
-// Main_Input_Run is a fixture.
-func Main_Input_Run(input Main_Input) { return }
-`,
-			},
-			Want_Diag: "",
-		},
-	}
-	run_diag_table(t, tests)
-}
-
-// Additional cases, split to keep each function within the length limit.
-func Test_Method_Prefix_Matched_Part2(t *testing.T) {
-	t.Parallel()
-	tests := []struct {
-		Name      string
-		Files     map[string]string
-		Want_Diag string
-	}{
-
-		{
-			Name: "unexported function with multi-word type clean",
-			Files: map[string]string{
-				"a.go": `// Package foo is a fixture.
-package foo
-
-// Main_Input is a fixture.
-type Main_Input struct{}
-
-func main_input_run(input Main_Input) { return }
-`,
-			},
-			Want_Diag: "",
-		},
-
-		{
-			Name: "function named exactly as type clean",
-			Files: map[string]string{
-				"a.go": `// Package foo is a fixture.
-package foo
-
-// Entity is a fixture.
-type Entity struct{}
-
-func entity(e Entity) { return }
-`,
-			},
-			Want_Diag: "",
-		},
-	}
-	run_diag_table(t, tests)
-}
-
-// Test_No_Ambient_Stdlib_Hard_Imports verifies that hard-banned imports
-// (os, crypto/rand, math/rand v1, flag) fire in library packages, while
-// math/rand/v2 is allowed.
-func Test_No_Ambient_Stdlib_Hard_Imports(t *testing.T) {
-	t.Parallel()
-	tests := []struct {
-		Name      string
-		Files     map[string]string
-		Want_Diag string
-	}{
-
-		{
-			Name: "library imports os",
-			Files: map[string]string{
-				"a.go": `package lib
-
-import "os"
-
-func F() (val string) { return os.Getenv("X") }
-`,
-			},
-			Want_Diag: "ambient stdlib import",
-		},
-
-		{
-			Name: "library imports crypto/rand",
-			Files: map[string]string{
-				"a.go": `package lib
-
-import "crypto/rand"
-
-func F() (n int, err error) { return rand.Reader.Read(nil) }
-`,
-			},
-			Want_Diag: "ambient stdlib import",
-		},
-
-		{
-			Name: "library imports math/rand v1",
-			Files: map[string]string{
-				"a.go": `package lib
-
-import "math/rand"
-
-func F() (n int) { return rand.Int() }
-`,
-			},
-			Want_Diag: "ambient stdlib import",
-		},
-	}
-	run_diag_table(t, tests)
-}
-
-// Additional cases, split to keep each function within the length limit.
-func Test_No_Ambient_Stdlib_Hard_Imports_Part2(t *testing.T) {
-	t.Parallel()
-	tests := []struct {
-		Name      string
-		Files     map[string]string
-		Want_Diag string
-	}{
-
-		{
-			Name: "library imports math/rand/v2 clean",
-			Files: map[string]string{
-				"a.go": `// Package lib is a fixture.
-package lib
-
-import (
-	"math/rand/v2"
-
-)
-
-const fixture_hi = 100
-
-// F is a fixture.
-func F(r *rand.Rand) (n int) {
-	defer func() {
-	}()
-	return r.Int()
-}
-`,
-			},
-			Want_Diag: "",
-		},
-
-		{
-			Name: "library imports flag",
-			Files: map[string]string{
-				"a.go": `package lib
-
-import "flag"
-
-func F() (s string) { return flag.Arg(0) }
-`,
-			},
-			Want_Diag: "ambient stdlib import",
-		},
-	}
-	run_diag_table(t, tests)
-}
-
-// Test_No_Ambient_Stdlib_Soft_Calls verifies that ambient identifiers on
-// otherwise-pure packages (time.Now, fmt.Println, http.DefaultClient,
-// net.Dial) fire while the pure surface (time.Duration, fmt.Sprintf,
-// http.Header, log.Printf) is allowed.
-func Test_No_Ambient_Stdlib_Soft_Calls(t *testing.T) {
-	t.Parallel()
-	tests := []struct {
-		Name      string
-		Files     map[string]string
-		Want_Diag string
-	}{
-
-		{
-			Name: "library calls time.Now",
-			Files: map[string]string{
-				"a.go": `package lib
-
-import "time"
-
-func F() (t time.Time) { return time.Now() }
-`,
-			},
-			Want_Diag: "ambient stdlib call",
-		},
-
-		{
-			Name: "library uses time.Duration clean",
-			Files: map[string]string{
-				"a.go": `// Package lib is a fixture.
-package lib
-
-import "time"
-
-// F is a fixture.
-func F(d time.Duration) (result time.Duration) { return d * 2 }
-`,
-			},
-			Want_Diag: "",
-		},
-
-		{
-			Name: "library calls fmt.Println",
-			Files: map[string]string{
-				"a.go": `package lib
-
-import "fmt"
-
-func F() { fmt.Println("hi") }
-`,
-			},
-			Want_Diag: "ambient stdlib call",
-		},
-
-		{
-			Name: "library uses fmt.Sprintf and fmt.Errorf clean",
-			Files: map[string]string{
-				"a.go": `// Package lib is a fixture.
-package lib
-
-import "fmt"
-
-// F is a fixture.
-func F() (err error) { return fmt.Errorf("x: %s", fmt.Sprintf("y")) }
-`,
-			},
-			Want_Diag: "",
-		},
-	}
-	run_diag_table(t, tests)
-}
-
-// Additional cases, split to keep each function within the length limit.
-func Test_No_Ambient_Stdlib_Soft_Calls_Part2(t *testing.T) {
-	t.Parallel()
-	tests := []struct {
-		Name      string
-		Files     map[string]string
-		Want_Diag string
-	}{
-
-		{
-			Name: "library calls log.Printf clean (observability exempt)",
-			Files: map[string]string{
-				"a.go": `// Package lib is a fixture.
-package lib
-
-import "log"
-
-// F is a fixture.
-func F() { log.Printf("hi") }
-`,
-			},
-			Want_Diag: "",
-		},
-
-		{
-			Name: "aliased time import still flagged",
-			Files: map[string]string{
-				"a.go": `package lib
-
-import t "time"
-
-func F() (result t.Time) { return t.Now() }
-`,
-			},
-			Want_Diag: "ambient stdlib call",
-		},
-	}
-	run_diag_table(t, tests)
-}
-
-// Test_Coverage_Backfill_Ambient_Soft_One_Character drives is_ambient_soft_ident's
-// Package and Name Lo (=1) buckets with a one-char import path and a one-char
-// selected symbol. "a" is not an ambient stdlib package, so nothing fires.
-func Test_Coverage_Backfill_Ambient_Soft_One_Character(t *testing.T) {
-	t.Parallel()
-	run_diag_table(t, []struct {
-		Name      string
-		Files     map[string]string
-		Want_Diag string
-	}{{
-		Name: "non-stdlib one-char import path and symbol clean",
-		Files: map[string]string{
-			"a.go": `// Package lib is a fixture.
-package lib
-
-import "a"
-
-// F is a fixture.
-func F() { a.X() }
-`,
-		},
-		Want_Diag: "",
-	}})
-}
-
-// Test_No_Ambient_Stdlib_Soft_Network_Http verifies the http and net soft bans.
-func Test_No_Ambient_Stdlib_Soft_Network_Http(t *testing.T) {
-	t.Parallel()
-	tests := []struct {
-		Name      string
-		Files     map[string]string
-		Want_Diag string
-	}{
-		{
-			Name: "library references http.DefaultClient",
-			Files: map[string]string{
-				"a.go": `package lib
-
-import "net/http"
-
-func F() (c *http.Client) { return http.DefaultClient }
-`,
-			},
-			Want_Diag: "ambient stdlib call",
-		},
-		{
-			Name: "library uses http.Request type clean",
-			Files: map[string]string{
-				"a.go": `// Package lib is a fixture.
-package lib
-
-import (
-	"net/http"
-
-)
-
-// F is a fixture.
-func F(r *http.Request) (h http.Header) {
-	return r.Header
-}
-`,
-			},
-			Want_Diag: "",
-		},
-		{
-			Name: "library calls net.Dial",
-			Files: map[string]string{
-				"a.go": `package lib
-
-import "net"
-
-func F() (c net.Conn, err error) { return net.Dial("tcp", "x:1") }
-`,
-			},
-			Want_Diag: "ambient stdlib call",
-		},
-	}
-	run_diag_table(t, tests)
-}
-
-// Test_No_Ambient_Stdlib_Exemptions verifies that package main and _test.go
-// files may freely use ambient stdlib calls.
-func Test_No_Ambient_Stdlib_Exemptions(t *testing.T) {
-	t.Parallel()
-	tests := []struct {
-		Name      string
-		Files     map[string]string
-		Want_Diag string
-	}{
-
-		{
-			Name: "package main may use os",
-			Files: map[string]string{
-				"main.go": `package main
-
-import "os"
-
-func main() { print(os.Getenv("X")) }
-`,
-			},
-			Want_Diag: "",
-		},
-
-		{
-			Name: "package main may call time.Now",
-			Files: map[string]string{
-				"main.go": `package main
-
-import (
-	"fmt"
-	"time"
-)
-
-func main() { fmt.Println(time.Now()) }
-`,
-			},
-			Want_Diag: "",
-		},
-	}
-	run_diag_table(t, tests)
-}
-
-// Additional cases, split to keep each function within the length limit.
-func Test_No_Ambient_Stdlib_Exemptions_Part2(t *testing.T) {
-	t.Parallel()
-	tests := []struct {
-		Name      string
-		Files     map[string]string
-		Want_Diag string
-	}{
-
-		{
-			Name: "test.go in library may call time.Now",
-			Files: map[string]string{
-				"a.go": `// Package lib is a fixture.
-package lib
-
-
-const fixture_hi = 100
-
-// F is a fixture.
-func F() (n int) {
-	defer func() {
-	}()
-	return 1
-}
-`,
-				"a_test.go": `package lib_test
-
-import (
-	"testing"
-	"time"
-)
-
-// Test_F exercises time.Now usage in a test file.
-func Test_F(t *testing.T) {
-	if time.Now().IsZero() {
-		t.Fatal("zero")
-	}
-}
-`,
-			},
-			Want_Diag: "",
-		},
-	}
-	run_diag_table(t, tests)
-}
-
-// Test_No_Ambient_Stdlib_Composition_Tier verifies that packages
-// sitting exactly one depth below the library tier in their module
-// — the composition tier — may bind to ambient stdlib state. This is
-// the doctrine's designated home for library defaults, CLIs, servers,
-// and anything else that wires the library to a real environment.
-func Test_No_Ambient_Stdlib_Composition_Tier(t *testing.T) {
-	t.Parallel()
-	tests := []struct {
-		Name       string
-		Files      map[string]string
-		Want_Diags []string
-		Forbid     []string
-	}{
-
-		{
-			Name: "library tier ambient import still flagged",
-			Files: map[string]string{
-				"golang_snacks/go.mod": doctrine_shared_library_go_module,
-				"golang_snacks/foo/foo.go": `package foo
-
-import "os"
-
-func Read() (name string) { return os.Getenv("X") }
-`,
-			},
-			Want_Diags: []string{"ambient stdlib import \"os\""},
-		},
-
-		{
-			Name: "composition tier ambient import allowed",
-			Files: map[string]string{
-				"golang_snacks/go.mod":     doctrine_shared_library_go_module,
-				"golang_snacks/foo/foo.go": fixture_package("foo"),
-				"golang_snacks/foo/foo_default/" +
-					"foo_default.go": `// Package foo_default is a fixture.
-package foo_default
-
-import (
-	"os"
-
-)
-
-const fixture_hi = 100
-
-// Read is a fixture.
-func Read() (name string) {
-	defer func() {
-	}()
-	return os.Getenv("X")
-}
-`,
-			},
-			Forbid: []string{"ambient stdlib import"},
-		},
-	}
-	run_doctrine_diag_table(t, tests)
-}
-
-// Additional cases, split to keep each function within the length limit.
-func Test_No_Ambient_Stdlib_Composition_Tier_Part2(t *testing.T) {
-	t.Parallel()
-	tests := []struct {
-		Name       string
-		Files      map[string]string
-		Want_Diags []string
-		Forbid     []string
-	}{
-
-		{
-			Name: "composition tier under versioned library allowed",
-			Files: map[string]string{
-				"golang_snacks/go.mod":          doctrine_shared_library_go_module,
-				"golang_snacks/snap/v2/snap.go": fixture_package("snap"),
-				"golang_snacks/snap/v2/snap_default/" +
-					"snap_default.go": `// Package snap_default is a fixture.
-package snap_default
-
-import (
-	"os"
-
-)
-
-const fixture_hi = 100
-
-// Read is a fixture.
-func Read() (name string) {
-	defer func() {
-	}()
-	return os.Getenv("X")
-}
-`,
-			},
-			Forbid: []string{"ambient stdlib import"},
-		},
-	}
-	run_doctrine_diag_table(t, tests)
-}
-
-// Test_No_Ambient_Stdlib_Composition_Tier_Extra continues the composition-tier
-// allow-list: an ambient stdlib CALL (`time.Now()`) at the composition tier
-// is allowed, and the binary-module composition tier (one level under the
-// library tier) inherits the same exemption.
-func Test_No_Ambient_Stdlib_Composition_Tier_Extra(t *testing.T) {
-	t.Parallel()
-	tests := []struct {
-		Name       string
-		Files      map[string]string
-		Want_Diags []string
-		Forbid     []string
-	}{
-		{
-			Name: "ambient call (time.Now) at composition tier allowed",
-			Files: map[string]string{
-				"golang_snacks/go.mod":     doctrine_shared_library_go_module,
-				"golang_snacks/foo/foo.go": fixture_package("foo"),
-				"golang_snacks/foo/foo_default/" +
-					"foo_default.go": `// Package foo_default is a fixture.
-package foo_default
-
-import "time"
-
-// Stamp is a fixture.
-func Stamp() (t time.Time) { return time.Now() }
-`,
-			},
-			Forbid: []string{"ambient stdlib call"},
-		},
-		{
-			Name: "binary module composition tier " +
-				"(one level under library tier) allowed",
-			Files: map[string]string{
-				"mybinary/go.mod": doctrine_binary_go_module,
-				"mybinary/main.go": "package main\n\n" +
-					"func main() { return }\n",
-				"mybinary/internal/lib/lib.go": fixture_package("lib"),
-				"mybinary/internal/lib/lib_default/" +
-					"lib_default.go": `// Package lib_default is a fixture.
-package lib_default
-
-import (
-	"os"
-
-)
-
-const fixture_hi = 100
-
-// Read is a fixture.
-func Read() (name string) {
-	defer func() {
-	}()
-	return os.Getenv("X")
-}
-`,
-			},
-			Forbid: []string{"ambient stdlib import"},
-		},
-	}
-	run_doctrine_diag_table(t, tests)
-}
-
-// Test_No_Bare_For_Flagged verifies that for-loops without a header — bare
-// `for {}`, `for ;; {}`, or `for true {}` — are flagged.
-func Test_No_Bare_For_Flagged(t *testing.T) {
-	t.Parallel()
-	tests := []struct {
-		Name      string
-		Files     map[string]string
-		Want_Diag string
-	}{
-		{
-			Name: "bare for braces flagged",
-			Files: map[string]string{
-				"a.go": `package main
-
-func main() {
-	for {
-		break
-	}
-}
-`,
-			},
-			Want_Diag: "bare `for",
-		},
-		{
-			Name: "for double-semicolon flagged",
-			Files: map[string]string{
-				"a.go": `package main
-
-func main() {
-	for ;; {
-		break
-	}
-}
-`,
-			},
-			Want_Diag: "bare `for",
-		},
-		{
-			Name: "for true flagged",
-			Files: map[string]string{
-				"a.go": `package main
-
-func main() {
-	for true {
-		break
-	}
-}
-`,
-			},
-			Want_Diag: "bare `for",
-		},
-	}
-	run_diag_table(t, tests)
-}
-
-// Test_No_Bare_For_Clean verifies that for-loops with a real condition,
-// C-style headers, range loops, and the documented escape hatch
-// `for range invariant.GameLoop()` are not flagged.
-func Test_No_Bare_For_Clean(t *testing.T) {
-	tests := []struct {
-		Name      string
-		Files     map[string]string
-		Want_Diag string
-	}{
-		{
-			Name: "c-style for clean",
-			Files: map[string]string{
-				"a.go": `package main
-
-func main() {
-	total := 0
-	for i_index := 0; i_index < 10; i_index++ {
-		total += i_index
-	}
-	print(total)
-}
-`,
-			},
-			Want_Diag: "",
-		},
-		{
-			Name: "for cond clean (Tier B not implemented)",
-			Files: map[string]string{
-				"a.go": `package main
-
-func main() {
-	done := false
-	for !done {
-		done = true
-	}
-}
-`,
-			},
-			Want_Diag: "",
-		},
-		{
-			Name: "for range slice clean",
-			Files: map[string]string{
-				"a.go": `package main
-
-func main() {
-	for range []int{1, 2, 3} {
-	}
-}
-`,
-			},
-			Want_Diag: "",
-		},
-		{
-			Name: "for range Game_Loop escape hatch clean",
-			Files: map[string]string{
-				"a.go": `package main
-
-` + fixture_invariant_import + `
-const fixture_hi = 100
-
-func main() {
-	for range invariant.Game_Loop() {
-		break
-	}
-}
-`,
-			},
-			Want_Diag: "",
-		},
-	}
-	run_diag_table(t, tests)
-}
-
-// Test_Default_Package_Alias verifies that *_default packages must be imported
-// with their prefix as the alias (snap_default → snap). This is what lets
-// callers keep writing snap.Init/snap.Edit, and is required by snap.Edit's
-// source-line rewriter which searches for the literal "snap.Edit(".
-func Test_Default_Package_Alias(t *testing.T) {
-	t.Parallel()
-	tests := []struct {
-		Name      string
-		Files     map[string]string
-		Want_Diag string
-	}{
-
-		{
-			Name: "snap_default without alias flagged",
-			Files: map[string]string{
-				"a.go": `package main
-
-import (
-	"fmt"
-
-	"example.com/snap/v2/snap_default"
-)
-
-func main() { fmt.Println(snap_default.Default) }
-`,
-			},
-			Want_Diag: `must be imported with alias "snap"`,
-		},
-
-		{
-			Name: "snap_default with wrong alias flagged",
-			Files: map[string]string{
-				"a.go": `package main
-
-import (
-	"fmt"
-
-	wrong "example.com/snap/v2/snap_default"
-)
-
-func main() { fmt.Println(wrong.Default) }
-`,
-			},
-			Want_Diag: `must be imported with alias "snap"`,
-		},
-
-		{
-			Name: "snap_default with snap alias clean",
-			Files: map[string]string{
-				"a.go": `package main
-
-import (
-	"fmt"
-
-	snap "example.com/snap/v2/snap_default"
-)
-
-func main() { fmt.Println(snap.Default) }
-`,
-			},
-			Want_Diag: "",
-		},
-	}
-	run_diag_table(t, tests)
-}
-
-// Additional cases, split to keep each function within the length limit.
-func Test_Default_Package_Alias_Part2(t *testing.T) {
-	t.Parallel()
-	tests := []struct {
-		Name      string
-		Files     map[string]string
-		Want_Diag string
-	}{
-
-		{
-			Name: "non-default import unaffected",
-			Files: map[string]string{
-				"a.go": `package main
-
-import (
-	"fmt"
-
-	"example.com/snap/v2"
-)
-
-func main() { fmt.Println(snap.Snapper{}) }
-`,
-			},
-			Want_Diag: "",
-		},
-
-		{
-			Name: "foo_default expects foo alias",
-			Files: map[string]string{
-				"a.go": `package main
-
-import (
-	"fmt"
-
-	foo "example.com/foo/foo_default"
-)
-
-func main() { fmt.Println(foo.Default) }
-`,
-			},
-			Want_Diag: "",
-		},
-	}
-	run_diag_table(t, tests)
-}
-
-// Test_Binary_Module_Layout verifies that binary modules — every module
-// at the workspace root except the hardcoded shared library — must
-// keep all non-main, non-test packages under internal/. Files in
-// package main are exempt at any depth (Go itself bars importing
-// them), and the shared library is exempt because its purpose is to
-// expose packages to other modules.
-func Test_Binary_Module_Layout(t *testing.T) {
-	tests := []struct {
-		Name       string
-		Files      map[string]string
-		Want_Diags []string
-		Forbid     []string
-	}{
-		{
-			Name: "binary with package main at root is clean",
-			Files: map[string]string{
-				"mybinary/go.mod": doctrine_binary_go_module,
-				"mybinary/main.go": "package main\n\n" +
-					"func main() { return }\n",
-			},
-		},
-		{
-			Name: "binary with non-main package outside internal flagged",
-			Files: map[string]string{
-				"mybinary/go.mod": doctrine_binary_go_module,
-				"mybinary/main.go": "package main\n\n" +
-					"func main() { return }\n",
-				"mybinary/helpers/h.go": fixture_package("helpers"),
-			},
-			Want_Diags: []string{"forbids package \"helpers\"", "mybinary/internal/"},
-		},
-		{
-			Name: "binary with package under internal is clean",
-			Files: map[string]string{
-				"mybinary/go.mod": doctrine_binary_go_module,
-				"mybinary/main.go": "package main\n\n" +
-					"func main() { return }\n",
-				"mybinary/internal/lib/library.go": fixture_package("lib"),
-			},
-		},
-		{
-			Name: "binary with non-main package at module root flagged",
-			Files: map[string]string{
-				"mybinary/go.mod":     doctrine_binary_go_module,
-				"mybinary/library.go": fixture_package("mybinary"),
-			},
-			Want_Diags: []string{"forbids package \"mybinary\""},
-		},
-		{
-			Name: "shared library with non-main package at depth 1 is exempt",
-			Files: map[string]string{
-				"golang_snacks/go.mod":     doctrine_shared_library_go_module,
-				"golang_snacks/foo/foo.go": fixture_package("foo"),
-			},
-		},
-		{
-			Name: "package main at any depth in binary is exempt",
-			Files: map[string]string{
-				"mybinary/go.mod": doctrine_binary_go_module,
-				"mybinary/main.go": "package main\n\n" +
-					"func main() { return }\n",
-				"mybinary/cmd/extra/extra.go": "package main\n\n" +
-					"func main() { return }\n",
-			},
-		},
-	}
-	run_doctrine_diag_table(t, tests)
-}
-
-// Test_Shared_Library_No_Internal verifies that the shared library
-// module may not contain internal/ directories. Other modules are
-// unaffected by this rule — they're expected to use internal/.
-func Test_Shared_Library_No_Internal(t *testing.T) {
-	tests := []struct {
-		Name       string
-		Files      map[string]string
-		Want_Diags []string
-		Forbid     []string
-	}{
-		{
-			Name: "shared library with internal directory flagged",
-			Files: map[string]string{
-				"golang_snacks/go.mod":     doctrine_shared_library_go_module,
-				"golang_snacks/foo/foo.go": fixture_package("foo"),
-				"golang_snacks/foo/internal/helper/" +
-					"help.go": fixture_package("helper"),
-			},
-			Want_Diags: []string{
-				"shared library forbids internal/", "golang_snacks/foo/internal",
-			},
-		},
-		{
-			Name: "shared library without internal is clean",
-			Files: map[string]string{
-				"golang_snacks/go.mod":     doctrine_shared_library_go_module,
-				"golang_snacks/foo/foo.go": fixture_package("foo"),
-			},
-		},
-		{
-			Name: "binary with internal directory is unaffected by this rule",
-			Files: map[string]string{
-				"mybinary/go.mod": doctrine_binary_go_module,
-				"mybinary/main.go": "package main\n\n" +
-					"func main() { return }\n",
-				"mybinary/internal/lib/library.go": fixture_package("lib"),
-			},
-			Forbid: []string{"shared library forbids"},
-		},
-	}
-	run_doctrine_diag_table(t, tests)
-}
-
-// Test_Library_Tier_Depth verifies the at-most-one-non-main-Go-ancestor
-// rule. Major-version segments (v2, v3, …) are dropped before counting
-// ancestors, so a versioned subdirectory of a library still counts as
-// library tier rather than composition tier. Composition tier sits
-// exactly one depth below the library tier; anything deeper is flagged.
-func Test_Library_Tier_Depth(t *testing.T) {
-	tests := []struct {
-		Name       string
-		Files      map[string]string
-		Want_Diags []string
-		Forbid     []string
-	}{
-		{
-			Name: "two-deep nesting flagged",
-			Files: map[string]string{
-				"golang_snacks/" +
-					"go.mod": doctrine_shared_library_go_module,
-				"golang_snacks/foo/foo.go":         fixture_package("foo"),
-				"golang_snacks/foo/bar/bar.go":     fixture_package("bar"),
-				"golang_snacks/foo/bar/baz/baz.go": fixture_package("baz"),
-			},
-			Want_Diags: []string{"exceeds library tier", "baz"},
-		},
-		{
-			Name: "library plus composition tier is clean",
-			Files: map[string]string{
-				"golang_snacks/go.mod":         doctrine_shared_library_go_module,
-				"golang_snacks/foo/foo.go":     fixture_package("foo"),
-				"golang_snacks/foo/bar/bar.go": fixture_package("bar"),
-			},
-			Forbid: []string{"exceeds library tier"},
-		},
-		{
-			Name: "v2 version directory does not count as ancestor",
-			Files: map[string]string{
-				"golang_snacks/" +
-					"go.mod": doctrine_shared_library_go_module,
-				"golang_snacks/snap/snap.go":       fixture_package("snap"),
-				"golang_snacks/snap/v2/snap.go":    fixture_package("snap"),
-				"golang_snacks/snap/v2/sub/sub.go": fixture_package("sub"),
-			},
-			Forbid: []string{"exceeds library tier"},
-		},
-		{
-			Name: "non-Go intermediate directory does not count as ancestor",
-			Files: map[string]string{
-				"golang_snacks/go.mod":     doctrine_shared_library_go_module,
-				"golang_snacks/foo/foo.go": fixture_package("foo"),
-				"golang_snacks/foo/examples/sample/" +
-					"example.go": fixture_package("example"),
-			},
-			Forbid: []string{"exceeds library tier"},
-		},
-		{
-			Name: "main package at depth does not count as ancestor",
-			Files: map[string]string{
-				"mybinary/go.mod": doctrine_binary_go_module,
-				"mybinary/main.go": "package main\n\n" +
-					"func main() { return }\n",
-				"mybinary/internal/foo/foo.go":     fixture_package("foo"),
-				"mybinary/internal/foo/bar/bar.go": fixture_package("bar"),
-			},
-			Forbid: []string{"exceeds library tier"},
-		},
-	}
-	run_doctrine_diag_table(t, tests)
-}
-
-// Test_Exported_Documentation_Comment verifies that every exported top-level
-// identifier (func, method, type, var, const) carries a doc comment.
-// For grouped declarations, a comment on the containing GenDecl is
-// inherited by each spec; single-spec GenDecls behave the same way
-// since the parser hangs the leading comment on the GenDecl rather
-// than the spec. package main is exempt — it exports nothing
-// reachable from outside.
-func Test_Exported_Documentation_Comment(t *testing.T) {
-	t.Parallel()
-	tests := []struct {
-		Name      string
-		Files     map[string]string
-		Want_Diag string
-	}{
-
-		{
-			Name: "exported func without doc flagged",
-			Files: map[string]string{
-				"foo.go": "// Package foo provides things.\npackage foo\n\n" +
-					"func Do() { return }\n",
-			},
-			Want_Diag: "exported func Do is missing a doc comment",
-		},
-
-		{
-			Name: "exported func with doc allowed",
-			Files: map[string]string{
-				"foo.go": "// Package foo provides things.\n" +
-					"package foo\n\n" +
-					"// Do performs the operation.\n" +
-					"func Do() { return }\n",
-			},
-			Want_Diag: "",
-		},
-
-		{
-			Name: "unexported func without doc allowed",
-			Files: map[string]string{
-				"foo.go": "// Package foo provides things.\npackage foo\n\n" +
-					"func do() { return }\n",
-			},
-			Want_Diag: "",
-		},
-
-		{
-			Name: "exported type without doc flagged",
-			Files: map[string]string{
-				"foo.go": "// Package foo provides things.\npackage foo\n\n" +
-					"type Thing struct{ X int }\n",
-			},
-			Want_Diag: "exported type Thing is missing a doc comment",
-		},
-
-		{
-			Name: "exported var without doc flagged",
-			Files: map[string]string{
-				"foo.go": "// Package foo provides things.\n" +
-					"package foo\n\n" +
-					"import \"regexp\"\n\n" +
-					"var Default_Pattern = regexp.MustCompile(\"abc\")\n",
-			},
-			Want_Diag: "exported var Default_Pattern is missing a doc comment",
-		},
-
-		{
-			Name: "exported const without doc flagged",
-			Files: map[string]string{
-				"foo.go": "// Package foo provides things.\npackage foo\n\n" +
-					"const Max_Count = 100\n",
-			},
-			Want_Diag: "exported const Max_Count is missing a doc comment",
-		},
-	}
-	run_diag_table(t, tests)
-}
-
-// Additional cases, split to keep each function within the length limit.
-func Test_Exported_Documentation_Comment_Part2(t *testing.T) {
-	t.Parallel()
-	tests := []struct {
-		Name      string
-		Files     map[string]string
-		Want_Diag string
-	}{
-
-		{
-			Name: "exported var with GenDecl doc inherited",
-			Files: map[string]string{
-				"foo.go": "// Package foo provides things.\n" +
-					"package foo\n\n" +
-					"import \"regexp\"\n\n" +
-					"// Default_Pattern matches things.\n" +
-					"var Default_Pattern = regexp.MustCompile(\"abc\")\n",
-			},
-			Want_Diag: "",
-		},
-
-		{
-			Name: "grouped consts: each spec needs its own doc when group has no doc",
-			Files: map[string]string{
-				"foo.go": "// Package foo provides things.\n" +
-					"package foo\n\n" +
-					"const (\n" +
-					"\tA_Count = 1\n" +
-					"\tB_Count = 2\n" +
-					")\n",
-			},
-			Want_Diag: "exported const A_Count is missing a doc comment",
-		},
-
-		{
-			Name: "exported method without doc flagged",
-			Files: map[string]string{
-				"foo.go": "// Package foo provides things.\n" +
-					"package foo\n\n" +
-					"// Thing is a thing.\n" +
-					"type Thing struct{ X int }\n\n" +
-					"func (t *Thing) String() (output string) " +
-					"{ return \"\" }\n",
-			},
-			Want_Diag: "exported method String is missing a doc comment",
-		},
-
-		{
-			Name: "package main exempt: exported func without doc allowed",
-			Files: map[string]string{
-				"main.go": "package main\n\nfunc main() { return }\n\n" +
-					"func Run() { return }\n",
-			},
-			Want_Diag: "",
-		},
-	}
-	run_diag_table(t, tests)
-}
-
-// Test_Package_Documentation_Comment verifies that every non-main, non-_test
-// package has a package doc comment in at least one of its files.
-// The doc comment is the comment group immediately preceding the
-// `package` clause and lands on ast.File.Doc.
-func Test_Package_Documentation_Comment(t *testing.T) {
-	tests := []struct {
-		Name      string
-		Files     map[string]string
-		Want_Diag string
-	}{
-		{
-			Name: "package without doc flagged",
-			Files: map[string]string{
-				"foo.go": "package foo\n\n" +
-					"// Do performs the operation.\nfunc Do() { return }\n",
-			},
-			Want_Diag: "package \"foo\" is missing a doc comment",
-		},
-		{
-			Name: "package with doc allowed",
-			Files: map[string]string{
-				"foo.go": "// Package foo provides things.\n" +
-					"package foo\n\n" +
-					"// Do performs the operation.\n" +
-					"func Do() { return }\n",
-			},
-			Want_Diag: "",
-		},
-		{
-			Name: "package doc on one of multiple files satisfies the rule",
-			Files: map[string]string{
-				"doc.go": "//go:build doc_only\n\n" +
-					"// Package foo provides things.\npackage foo\n",
-				"foo.go": "package foo\n\n" +
-					"// Do performs the operation.\n" +
-					"func Do() { return }\n",
-			},
-			Want_Diag: "",
-		},
-		{
-			Name: "package main exempt",
-			Files: map[string]string{
-				"main.go": "package main\n\n" +
-					"func main() { return }\n",
-			},
-			Want_Diag: "",
-		},
-		{
-			Name: "test package exempt",
-			Files: map[string]string{
-				"foo.go": "// Package foo provides things.\n" +
-					"package foo\n\n" +
-					"// Do performs the operation.\n" +
-					"func Do() { return }\n",
-				"foo_test.go": "package foo_test\n\n" +
-					"import \"testing\"\n\n" +
-					"// Test_Do verifies Do.\n" +
-					"func Test_Do(t *testing.T) { t.Helper() }\n",
-			},
-			Want_Diag: "",
-		},
-	}
-	run_diag_table(t, tests)
-}
-
-// Test_Coverage_Backfill_Read_Error drives Check_File_System against an
-// fs.FS whose Open returns an error for selected paths, so the stream
-// tier's `load()` callback returns err != nil and the source-nil /
-// err-non-nil tuple fires on every check_stream_* assertion. Fixture
-// names are chosen so each check_stream_* filter (markdown, copyleft,
-// github actions, agent docs, agents-claude pair) sees at least one
-// failing load.
-func Test_Coverage_Backfill_Read_Error(t *testing.T) {
-	t.Parallel()
-	base := fstest.MapFS{
-		"go.mod": &fstest.MapFile{
-			Data: []byte("module example.com/rd\n")},
-		"good.go": &fstest.MapFile{
-			Data: []byte("// Package rd is a fixture.\npackage rd\n")},
-		"fail.go": &fstest.MapFile{
-			Data: []byte("// Package rd is a fixture.\npackage rd\n")},
-		"fail.md": &fstest.MapFile{
-			Data: []byte("# fixture\n")},
-		"fail.yml": &fstest.MapFile{
-			Data: []byte("name: fixture\n")},
-		"fail.txt": &fstest.MapFile{
-			Data: []byte("fixture\n")},
-		"LICENSE": &fstest.MapFile{
-			Data: []byte("fixture\n")},
-		".github/workflows/fail.yml": &fstest.MapFile{
-			Data: []byte("name: fixture\n")},
-		"CLAUDE.md": &fstest.MapFile{
-			Data: []byte("# fixture\n")},
-		"AGENTS.md": &fstest.MapFile{
-			Data: []byte("# fixture\n")},
-	}
-	// Fail.go is intentionally excluded: the AST tier reads .go files in
-	// bulk via check_file_system_read_files, which asserts sources != nil.
-	// Stream-tier coverage for read errors is exercised on non-.go paths.
-	fail_paths := map[string]bool{
-		"fail.md":                    true,
-		"fail.yml":                   true,
-		"fail.txt":                   true,
-		"LICENSE":                    true,
-		".github/workflows/fail.yml": true,
-		"CLAUDE.md":                  true,
-		"AGENTS.md":                  true,
-	}
-	fsys := read_error_file_system{MapFS: base, Fail_Paths: fail_paths}
-	var stdout, stderr bytes.Buffer
-	lint.Main(&lint.Main_Input{
-		Fsys:      fsys,
-		Stdout:    &stdout,
-		Stderr:    &stderr,
-		CPU_Count: 1,
-	})
-}
-
-// Test_Coverage_Backfill_Main_With_Git fires Main's prologue Cross_Product
-// with Git.Enabled=true (and both branches of Main_Reference_Absent) so the
-// (Hi, Enabled=true, …) tuples on the Main prologue's tracker are observed.
-// Without this, those tuples sit unfired and the suite-end coverage report
-// flags Main.
-func Test_Coverage_Backfill_Main_With_Git(t *testing.T) {
-	t.Parallel()
-	base := fstest.MapFS{
-		"go.mod": &fstest.MapFile{
-			Data: []byte("module example.com/git\n")},
-		"good.go": &fstest.MapFile{
-			Data: []byte(
-				"// Package git is a fixture.\npackage git\n")},
-	}
-	for _, absent := range []bool{false, true} {
-		var stdout, stderr bytes.Buffer
-		lint.Main(&lint.Main_Input{
-			Fsys:      base,
-			Stdout:    &stdout,
-			Stderr:    &stderr,
-			CPU_Count: 1,
-			Git: lint.Git_Input{
-				Enabled:               true,
-				Main_Reference_Absent: absent,
-			},
-		})
-	}
-}
-
-type read_error_file_system struct {
-	fstest.MapFS
-	Fail_Paths map[string]bool
-}
-
-func (e read_error_file_system) Open(name string) (file fs.File, err error) {
-	if e.Fail_Paths[name] {
-		return nil, err_simulated_read
-	}
-	return e.MapFS.Open(name)
-}
-
-// ReadFile overrides the fstest.MapFS.ReadFile promoted method. fs.ReadFile
-// preferentially dispatches to ReadFileFS — without this, the embedded
-// MapFS.ReadFile is used directly and the Fail_Paths simulation is bypassed
-// for every caller that goes through fs.ReadFile.
-func (e read_error_file_system) ReadFile(name string) (data []byte, err error) {
-	if e.Fail_Paths[name] {
-		return nil, err_simulated_read
-	}
-	return e.MapFS.ReadFile(name)
-}
-
-var err_simulated_read = errors.New("simulated read error")
-
-// Test_Coverage_Backfill_Empty_Comment_Body exercises comment_body
-// returning "" for a whitespace-only comment.
-func Test_Coverage_Backfill_Empty_Comment_Body(t *testing.T) {
-	t.Parallel()
-	source := "package fixture\n\n" +
-		"//\n" +
-		"const X = 1\n"
-	_, err := lint.Check_Source("fixture.go", source)
-	if err != nil {
-		t.Fatalf("parse error: %v", err)
-	}
-}
-
-// Test_Coverage_Backfill_S_Abbreviation exercises
-// banned_abbreviation_candidates_s by passing a word starting with 's'.
-func Test_Coverage_Backfill_S_Abbreviation(t *testing.T) {
-	t.Parallel()
-	source := "package fixture\n\nvar sz = 1\n"
-	_, err := lint.Check_Source("fixture.go", source)
-	if err != nil {
-		t.Fatalf("parse error: %v", err)
-	}
-}
-
-// Test_Coverage_Backfill_Parse_Error exercises Check_File_System
-// against a tree containing a syntactically-invalid Go file so the
-// parse_diags axis at lint.go:1134 fires its non-nil bucket.
-func Test_Coverage_Backfill_Parse_Error(t *testing.T) {
-	t.Parallel()
-	fsys := fstest.MapFS{
-		"go.mod": &fstest.MapFile{
-			Data: []byte("module example.com/broken\n")},
-		"bad.go": &fstest.MapFile{
-			Data: []byte("package broken\n\nfunc f( {\n}\n")},
-		"good.go": &fstest.MapFile{
-			Data: []byte(
-				"// Package broken is a fixture.\n" +
-					"package broken\n\n" +
-					"// G is documented.\n" +
-					"func G() { return }\n")},
-	}
-	var stdout, stderr bytes.Buffer
-	code := lint.Main(&lint.Main_Input{
-		Fsys:      fsys,
-		Stdout:    &stdout,
-		Stderr:    &stderr,
-		CPU_Count: 1,
-	})
-	if code == 0 {
-		t.Logf("expected non-zero exit for a tree with parse errors; got %d", code)
-	}
-}
-
-// Test_Coverage_Backfill_Documented_Value_Specification exercises the
-// per-spec doc comment branch of check_exported_documentation_comment,
-// firing specification_has_documentation = true for a value spec that
-// has its own doc comment instead of relying on the parent var-block.
-func Test_Coverage_Backfill_Documented_Value_Specification(t *testing.T) {
-	t.Parallel()
-	source := "// Package fixture is documented.\n" +
-		"package fixture\n\n" +
-		"var (\n" +
-		"\t// Documented_Value is documented.\n" +
-		"\tDocumented_Value = 1\n" +
-		")\n"
-	diags, err := lint.Check_Source("fixture.go", source)
-	if err != nil {
-		t.Fatalf("parse error: %v", err)
-	}
-	for _, d := range diags {
-		t.Logf("diag: %s", d.Message)
-	}
-}
-
-// Main and Check_File_System fire their Hi bucket only when CPU_Count > 0;
-// production tests use the degraded CPU_Count=0 path throughout.
-func Test_Coverage_Backfill(t *testing.T) {
-	t.Parallel()
-	var stdout, stderr bytes.Buffer
-	code := lint.Main(&lint.Main_Input{
-		Fsys:      fstest.MapFS{},
-		Stdout:    &stdout,
-		Stderr:    &stderr,
-		CPU_Count: 4,
-	})
-	if code != 0 {
-		t.Logf("Main exit code with empty FS: %d", code)
-	}
-}
-
-// Drives Check_File_System against a synthesised package whose total line
-// count exceeds the per-file cap AND whose file count exceeds the resulting
-// max_files quota, forcing package_group_key_diag's max_files Boundary axis
-// to fire its Hi bucket. Production tests never hit this saturation point.
-func Test_Coverage_Backfill_Large_Package(t *testing.T) {
-	t.Parallel()
-	const file_count = 50
-	fsys := fstest.MapFS{
-		"go.mod": &fstest.MapFile{
-			Data: []byte("module example.com/big\n")},
-	}
-	for i_index := 0; i_index < file_count; i_index++ {
-		name := "f" + strings.Repeat("x", i_index+1) + ".go"
-		// Each file declares a unique constant to avoid redeclaration errors,
-		// then pads with blank lines to push total lines past
-		// max_lines_per_file, so max_files climbs past 1 and the Boundary's
-		// Hi bucket fires (X == Hi == max_files > Lo == 1).
-		var body strings.Builder
-		body.WriteString("// Package big is a fixture.\n")
-		body.WriteString("package big\n\n")
-		body.WriteString("// K" + strings.Repeat("a", i_index+1) + " is a fixture.\n")
-		body.WriteString("const K" + strings.Repeat("a", i_index+1) + " = 1\n")
-		for j_index := 0; j_index < 250; j_index++ {
-			body.WriteString("\n")
-		}
-		fsys[name] = &fstest.MapFile{
-			Data: []byte(body.String())}
-	}
-	var stdout, stderr bytes.Buffer
-	code := lint.Main(&lint.Main_Input{
-		Fsys:      fsys,
-		Stdout:    &stdout,
-		Stderr:    &stderr,
-		CPU_Count: 1,
-	})
-	if code != 1 {
-		t.Logf("stdout: %s", stdout.String())
-		t.Logf("stderr: %s", stderr.String())
-		t.Fatalf("expected exit 1 (diagnostics emitted); got %d", code)
-	}
-	if !strings.Contains(stdout.String(), "files totaling") {
-		t.Fatalf("fixture did not trigger package_split diagnostic; stdout:\n%s",
-			stdout.String())
-	}
-}
-
-// Test_Coverage_Backfill_Main_Cpu_Count_Hi drives Main with CPU_Count at
-// the Boundary Hi endpoint (=1024). Covers cpu_boundary's Hi bucket in
-// Main, Check_File_System, and the parallel-check helpers.
-func Test_Coverage_Backfill_Main_Cpu_Count_Hi(t *testing.T) {
-	t.Parallel()
-	fsys := fstest.MapFS{
-		"go.mod": &fstest.MapFile{
-			Data: []byte("module example.com/hi\n")},
-		"internal/a.go": &fstest.MapFile{
-			Data: []byte("// Package hi is a fixture.\npackage hi\n")},
-		"cmd/x/main.go": &fstest.MapFile{
-			Data: []byte("// Package main is a fixture.\n" +
-				"package main\n\nfunc main() {}\n")},
-	}
-	// Exit code isn't the assertion target — we only need CPU_Count=1024 to
-	// flow through every prologue so the cpu_boundary Hi bucket fires.
-	var stdout, stderr bytes.Buffer
-	code := lint.Main(&lint.Main_Input{
-		Fsys: fsys, Stdout: &stdout, Stderr: &stderr, CPU_Count: 1024,
-	})
-	if code < 0 {
-		t.Fatalf("unexpected negative exit code %d", code)
-	}
-}
-
-// Test_Coverage_Backfill_Module_Index_Hi_Index constructs a workspace with
-// 1025 modules so module_index_resolve returns index=Hi (=1024) for the
-// file matched to the shortest-path module (slice is sorted by Root length
-// descending, so the shortest sits last).
-func Test_Coverage_Backfill_Module_Index_Hi_Index(t *testing.T) {
-	t.Parallel()
-	fsys := fstest.MapFS{}
-	const module_count = 1025
-	for i_index := 0; i_index < module_count; i_index++ {
-		// Module / package names stay short (numbered suffix) so the
-		// generated identifiers fit within max_identifier_chars; the
-		// COUNT of modules is what drives module_index_resolve to its
-		// Hi=1024 index bucket.
-		name := fmt.Sprintf("m%04d", i_index)
-		directory := name + "/"
-		fsys[directory+"go.mod"] = &fstest.MapFile{
-			Data: []byte("module example.com/" + name + "\n"),
-		}
-		fsys[directory+"a.go"] = &fstest.MapFile{
-			Data: []byte("// Package " + name +
-				" is a fixture.\npackage " + name + "\n"),
-		}
-	}
-	var stdout, stderr bytes.Buffer
-	code := lint.Main(&lint.Main_Input{
-		Fsys: fsys, Stdout: &stdout, Stderr: &stderr, CPU_Count: 1,
-	})
-	if code < 0 {
-		t.Fatalf("unexpected negative exit code %d", code)
-	}
-}
-
-// Test_Coverage_Backfill_Package_Group_Endpoints exercises the Lo endpoints
-// of package_group_key_diag's two Boundary axes (st.Lines=2, max_files=1)
-// plus the Sometimes(key.Is_Test) true branch via a two-file test package.
-// Together with Test_Coverage_Backfill_Large_Package (which hits Hi-lines)
-// this rounds out the per-tuple Cross_Product coverage for the diag call.
-func Test_Coverage_Backfill_Package_Group_Endpoints(t *testing.T) {
-	t.Parallel()
-	source_fragment := func(suffix string) (fsys fstest.MapFS) {
-		return fstest.MapFS{
-			"go.mod": &fstest.MapFile{
-				Data: []byte("module example.com/min" + suffix + "\n")},
-			"a" + suffix + ".go": &fstest.MapFile{
-				Data: []byte("package min" + suffix + "\n")},
-			"b" + suffix + ".go": &fstest.MapFile{
-				Data: []byte("package min" + suffix + "\n")},
-		}
-	}
-	for _, suffix := range []string{"", "_test"} {
-		fsys := source_fragment(suffix)
-		var stdout, stderr bytes.Buffer
-		code := lint.Main(&lint.Main_Input{
-			Fsys: fsys, Stdout: &stdout, Stderr: &stderr, CPU_Count: 1,
-		})
-		if code != 1 {
-			t.Errorf("suffix %q: expected exit 1; got %d; output: %s",
-				suffix, code, stdout.String())
-		}
-	}
-	// Test-package variant of Large_Package — drives the (Hi-lines, Lo-files)
-	// tuple with key.Is_Test=true.
-	const file_count = 50
-	fsys := fstest.MapFS{
-		"go.mod": &fstest.MapFile{
-			Data: []byte("module example.com/bigt\n")},
-	}
-	for i_index := 0; i_index < file_count; i_index++ {
-		name := "f" + strings.Repeat("x", i_index+1) + "_test.go"
-		var body strings.Builder
-		body.WriteString("// Package bigt_test is a fixture.\n")
-		body.WriteString("package bigt_test\n\n")
-		body.WriteString("// K" + strings.Repeat("a", i_index+1) + " is a fixture.\n")
-		body.WriteString("const K" + strings.Repeat("a", i_index+1) + " = 1\n")
-		for j_index := 0; j_index < 250; j_index++ {
-			body.WriteString("\n")
-		}
-		fsys[name] = &fstest.MapFile{
-			Data: []byte(body.String())}
-	}
-	var stdout, stderr bytes.Buffer
-	code := lint.Main(&lint.Main_Input{
-		Fsys: fsys, Stdout: &stdout, Stderr: &stderr, CPU_Count: 1,
-	})
-	if code != 1 {
-		t.Errorf("test-pkg Large_Package mirror: expected exit 1; got %d; output: %s",
-			code, stdout.String())
-	}
-}
-
-// Drives Check_Source against a tier-1-clean method that has no results
-// fields. check_unnecessary_method's call to field_list_types receives
-// nil Type.Results, firing the "fl may be nil" Sometimes axis's true bucket
-// — production tests don't otherwise exercise it.
-func Test_Coverage_Backfill_Nil_Field_List(t *testing.T) {
-	t.Parallel()
-	source := "// Package p is a fixture.\n" +
-		"package p\n\n" +
-		"// R is a fixture.\n" +
-		"type R struct{}\n\n" +
-		"// Method is a fixture.\n" +
-		"func (r R) Method() { return }\n"
-	diags, err := lint.Check_Source("p.go", source)
-	if err != nil {
-		t.Fatalf("Check_Source: %v", err)
-	}
-	for _, d := range diags {
-		if d.Tier == 1 {
-			t.Fatalf("expected tier-1-clean fixture; got %s", d.Message)
-		}
-	}
-}
-
-// Test_Coverage_Backfill_String_Bounded_Mixed_Invariant_Calls drives
-// extract_call_name's Lo=0 (non-invariant call name) and Hi=26 ("Recorder_
-// Distinct_Boundary") buckets via crafted source.
-func Test_Coverage_Backfill_String_Bounded_Mixed_Invariant_Calls(t *testing.T) {
-	t.Parallel()
-	mixed_calls_source := "package fixture\n\n" +
-		"\tfoo.Bar()\n" +
-		"X: x, Lo: 0, Hi: fixture_hi})\n" +
-		"}\n"
-	diags, err := lint.Check_Source("test.go", mixed_calls_source)
-	t.Logf("mixed diags=%d err=%v", len(diags), err)
-	rich_source := "package fixture\n\n" +
-		"const Foo = 1\n" +
-		"type Bar struct {\n\tA int\n\tB bool\n\tC string\n}\n\n" +
-		"func Quux(input *Bar, s string, n int, b bool, p *int) (result int) {\n" +
-		"\tdefer func() {\n" +
-		"\t\t\t\tX: result, Lo: 0, Hi: fixture_hi,\n" +
-		"\t\t\t}),\n" +
-		"\t\t)\n" +
-		"\t}()\n" +
-		"input != nil, \"input is non-nil\"),\n" +
-		"p != nil, \"p is non-nil\"),\n" +
-		"b, \"b is sometimes true\"),\n" +
-		"\t\t\tX: n, Lo: 0, Hi: fixture_hi,\n" +
-		"\t\t}),\n" +
-		"\t\t\tX: len(s), Lo: 0, Hi: fixture_hi,\n" +
-		"\t\t}),\n" +
-		"s == \"\", \"s is empty\"),\n" +
-		"\t)\n" +
-		"\treturn 0\n" +
-		"}\n"
-	rich_diags, rich_err := lint.Check_Source("test.go", rich_source)
-	t.Logf("rich diags=%d err=%v", len(rich_diags), rich_err)
-}
-
-// Test_Coverage_Backfill_String_Bounded_Helpers_Git_Input drives the git-
-// tier helpers (git_input_check_short_hash, _is_subtree_merge_subject,
-// _is_fixup_subject) with empty and max-length subject / hash strings.
-// Test_Coverage_Backfill_Main_Input_Combinations exercises every tuple of
-// Main's input-shape Cross_Product so each (Lo, Hi) bucket combination
-// across Root_Directory / Scope_Prefix / Tracked / Merge_Commits /
-// Non_Merge_Commits / Git.Enabled / Git.Main_Reference_Absent /
-// CPU_Count gets observed at least once. The cross-product has 2^8 cells
-// in observable space; the loop visits each by toggling the eight axes
-// independently.
-func Test_Coverage_Backfill_Main_Input_Combinations(t *testing.T) {
-	t.Parallel()
-	long_path := strings.Repeat("a", 4096)
-	full_tracked := make(map[string]bool, 30000)
-	full_tracked["go.mod"] = true
-	full_tracked["main.go"] = true
-	for i_index := 0; i_index < 29998; i_index++ {
-		full_tracked["k"+strconv.Itoa(i_index)] = true
-	}
-	// Empty-Subject commits short-circuit at the Subject=="" gate in
-	// git_input_check, so the 30000 elements drive only the Hi=30000
-	// len-boundary observation without paying per-commit regex/format costs.
-	full_commits := make([]lint.Git_Commit, 30000)
-	for bits_index := 0; bits_index < 256; bits_index++ {
-		root_directory := ""
-		if bits_index&(1<<0) != 0 {
-			root_directory = long_path
-		}
-		scope_prefix := ""
-		if bits_index&(1<<1) != 0 {
-			scope_prefix = long_path
-		}
-		tracked := map[string]bool(nil)
-		if bits_index&(1<<2) != 0 {
-			tracked = full_tracked
-		}
-		merge_commits := []lint.Git_Commit(nil)
-		if bits_index&(1<<3) != 0 {
-			merge_commits = full_commits
-		}
-		non_merge_commits := []lint.Git_Commit(nil)
-		if bits_index&(1<<4) != 0 {
-			non_merge_commits = full_commits
-		}
-		git_enabled := bits_index&(1<<5) != 0
-		main_absent := bits_index&(1<<6) != 0
-		if main_absent {
-			if !git_enabled {
-				continue
-			}
-		}
-		cpu_count := 0
-		if bits_index&(1<<7) != 0 {
-			cpu_count = 1024
-		}
-		var stdout, stderr bytes.Buffer
-		lint.Main(&lint.Main_Input{
-			Fsys: fstest.MapFS{
-				"go.mod":  {Data: []byte("module test\ngo 1.25\n")},
-				"main.go": {Data: []byte("package main\n\nfunc main() {}\n")},
-			},
-			Stdout:         &stdout,
-			Stderr:         &stderr,
-			Root_Directory: root_directory,
-			Scope_Prefix:   scope_prefix,
-			Tracked:        tracked,
-			CPU_Count:      cpu_count,
-			Git: lint.Git_Input{
-				Enabled:               git_enabled,
-				Main_Reference_Absent: main_absent,
-				Merge_Commits:         merge_commits,
-				Non_Merge_Commits:     non_merge_commits,
-			},
-		})
-	}
-}
-
-// Test_Coverage_Backfill_String_Bounded_Helpers_Git_Input drives the
-// git-history tier helpers with empty + max-length subject and hash
-// strings so the per-axis Lo/Hi bucket pairs are observed end-to-end.
-func Test_Coverage_Backfill_String_Bounded_Helpers_Git_Input(t *testing.T) {
-	t.Parallel()
-	long_subject := strings.Repeat("s", 100)
-	long_hash := strings.Repeat("a", 64)
-	git_input := lint.Git_Input{
-		Enabled: true,
-		Merge_Commits: []lint.Git_Commit{
-			{Hash: "", Subject: ""}, // filtered out by upstream empty-subject check
-			// Exercises empty-hash Lo bucket in git_input_check_short_hash.
-			{Hash: "", Subject: "x"},
-			{Hash: "a", Subject: "x"},
-			{Hash: long_hash, Subject: long_subject},
-		},
-		Non_Merge_Commits: []lint.Git_Commit{
-			{Hash: "", Subject: ""},
-			{Hash: "a", Subject: "x"},
-			{Hash: long_hash, Subject: long_subject},
-		},
-	}
-	var stdout, stderr bytes.Buffer
-	lint.Main(&lint.Main_Input{
-		Fsys: fstest.MapFS{
-			"go.mod":  {Data: []byte("module test\ngo 1.25\n")},
-			"main.go": {Data: []byte("package main\n\nfunc main() {}\n")},
-		},
-		Stdout:         &stdout,
-		Stderr:         &stderr,
-		CPU_Count:      1,
-		Root_Directory: ".",
-		Git:            git_input,
-	})
-}
-
-// Test_Coverage_Backfill_Input_Struct_Sig_Hi drives the input-struct
-// signature suggester with a 128-char function name so its `sig` Hi
-// bucket fires.
-func Test_Coverage_Backfill_Input_Struct_Sig_Hi(t *testing.T) {
-	t.Parallel()
-	// Sig = funcname + "(*" + want_name + ")" + " (result int)"
-	// For a 117-char funcname, want_name = funcname + "_Input" = 123 chars.
-	// Total sig = 117 + 2 + 123 + 1 + 13 = 256 chars... close to Hi=257.
-	long := strings.Repeat("F", 128)
-	source := "package main\n\n" +
-		"func " + long + "(a, b int) (result int) { return a + b }\n" +
-		// 6-char funcname with no result clause gives sig = "Foo123(*Foo123_Input)"
-		// = 21 chars, hitting the Lo=21 bucket of suggest_sig.
-		"func Foo123(a, b int) {}\n"
-	diags, err := lint.Check_Source("test.go", source)
-	t.Logf("input_struct_sig diags=%d err=%v", len(diags), err)
-}
-
-// Test_Coverage_Backfill_Build_Key_Hi drives build_key with a long-form
-// //go:build constraint whose normalized AST is exactly 128 chars so its
-// Hi bucket fires; combined with non-build-tagged files in other tests it
-// also covers Lo=0.
-func Test_Coverage_Backfill_Build_Key_Hi(t *testing.T) {
-	t.Parallel()
-	// Normalized form: each `||` becomes ` || `, and groups wrap in parens.
-	// Length: each `(OS || OS || ...) && (ARCH || ARCH || ...) && cgo` —
-	// tuned by trial to 128 chars exactly.
-	long_build := "//go:build (linux || darwin || windows || freebsd || netbsd || plan9) && " +
-		"(amd64 || arm64 || ppc64 || ppc64le || riscv64 || s390x) && cgo\n\n" +
-		"package main\n\nfunc main() {}\n"
-	var stdout, stderr bytes.Buffer
-	lint.Main(&lint.Main_Input{
-		Fsys: fstest.MapFS{
-			"go.mod":  {Data: []byte("module test\ngo 1.25\n")},
-			"main.go": {Data: []byte(long_build)},
-		},
-		Stdout:    &stdout,
-		Stderr:    &stderr,
-		CPU_Count: 1,
-	})
-}
-
-// Test_Coverage_Backfill_Method_Prefix_Long_Type drives
-// check_file_system_method_prefix_group_first_parameter_type with a
-// function whose first param is a 128-char declared type so its Hi=128
-// bucket fires.
-func Test_Coverage_Backfill_Method_Prefix_Long_Type(t *testing.T) {
-	t.Parallel()
-	long := strings.Repeat("X", 128)
-	source := "package lib\n\n" +
-		"type " + long + " struct{}\n\n" +
-		"func F(x " + long + ") {}\n"
-	var stdout, stderr bytes.Buffer
-	lint.Main(&lint.Main_Input{
-		Fsys: fstest.MapFS{
-			"go.mod":   {Data: []byte("module test\ngo 1.25\n")},
-			"lib/a.go": {Data: []byte(source)},
-		},
-		Stdout:    &stdout,
-		Stderr:    &stderr,
-		CPU_Count: 1,
-	})
-}
-
-// Test_Coverage_Backfill_Library_Tier_Depth drives
-// check_library_tier_depth_ancestors with a multi-level non-main subtree
-// so the ancestor walker observes its directory-input boundary. Includes
-// a 4096-char file path so module_index_resolve, module_index_canonicalize,
-// and check_library_tier_depth_ancestors observe their Hi buckets.
-func Test_Coverage_Backfill_Library_Tier_Depth(t *testing.T) {
-	t.Parallel()
-	// Build a 4092-char `aa/aa/.../` directory chain plus `a.go` = 4096.
-	var sb strings.Builder
-	for sb.Len() < 4092 {
-		sb.WriteString("aa/")
-	}
-	long_path := sb.String()[:4092] + "a.go"
-	var stdout, stderr bytes.Buffer
-	lint.Main(&lint.Main_Input{
-		Fsys: fstest.MapFS{
-			"go.mod":     {Data: []byte("module test\ngo 1.25\n")},
-			"a/b/c/a.go": {Data: []byte("package c\n")},
-			"a/b/d.go":   {Data: []byte("package b\n")},
-			"a/e.go":     {Data: []byte("package a\n")},
-			long_path:    {Data: []byte("package a\n")},
-		},
-		Stdout:    &stdout,
-		Stderr:    &stderr,
-		CPU_Count: 1,
-	})
-}
-
-// Test_Coverage_Backfill_Terminology drives check_names_terminology so it
-// emits a rename violation; that triggers emit_rename and exercises
-// stdlib_required's qualified-selector input ("strings.Index").
-func Test_Coverage_Backfill_Terminology(t *testing.T) {
-	t.Parallel()
-	long_package := strings.Repeat("x", 60)
-	long_function := strings.Repeat("y", 67)
-	source := "// Package fixture is a fixture.\n" +
-		"package fixture\n\n" +
-		"import (\n" +
-		"\t\"strings\"\n" +
-		"\ta \"x\"\n" +
-		"\t" + long_package + " \"longpkg\"\n" +
-		")\n\n" +
-		"// F invokes strings.Index whose result is a byte offset; the local\n" +
-		"// `pos` lacks the `_offset` suffix so check_names_terminology fires.\n" +
-		"// The 3-char `a.B` call exercises stdlib_required's Lo=3 bucket;\n" +
-		"// the 128-char qualifier exercises its Hi=128 bucket.\n" +
-		"func F(s string) (result int) {\n" +
-		"\tpos := strings.Index(s, \"a\")\n" +
-		"\t" + strings.Repeat("p", 121) + " := strings.Index(s, \"b\")\n" +
-		// `length := strings.Count(s, "a")` requires `_count` suffix; emit_rename
-		// replaces the `length` segment producing 5-char `count` output (Lo=5).
-		"\tlength := strings.Count(s, \"a\")\n" +
-		"\t_ = length\n" +
-		"\tshort := a.B()\n" +
-		"\tlongq := " + long_package + "." + long_function + "()\n" +
-		"\tresult = pos + short + longq\n" +
-		"\treturn result\n" +
-		"}\n"
-	diags, err := lint.Check_Source("test.go", source)
-	t.Logf("terminology diags=%d err=%v", len(diags), err)
-}
-
-// Test_Coverage_Backfill_Check_File_System_Empty_Input drives
-// Check_File_System with an empty fs.FS and no Root / Root_Directory /
-// Tracked, exercising the (Lo root, Lo root_directory, Lo tracked) defer
-// and prologue cells at CPU_Count=0 (Lo) and CPU_Count=1024 (Hi).
-func Test_Coverage_Backfill_Check_File_System_Empty_Input(t *testing.T) {
-	t.Parallel()
-	for _, cpu_count := range []int{0, 1024} {
-		_, err := lint.Check_File_System(&lint.Check_File_System_Input{
-			Fsys:      fstest.MapFS{},
-			CPU_Count: cpu_count,
-		})
-		t.Logf("cfs_empty cpu=%d err=%v", cpu_count, err)
-	}
-}
-
-// Test_Coverage_Backfill_Exposes_Private_Alias_Edges exercises
-// check_exported_type_exposes_private_check with alias-type fixtures that
-// hit (Lo name / Hi name, Lo params, Lo/True generic) boundary buckets at
-// defer time. The function returns early without appending diags when the
-// alias target is a builtin or exported type, so these fixtures stay clean.
-func Test_Coverage_Backfill_Exposes_Private_Alias_Edges(t *testing.T) {
-	t.Parallel()
-	long_name := strings.Repeat("F", 128)
-	cases := []string{
-		// 1-char name, alias to builtin, non-pointer: (Lo name, Lo params, false generic).
-		"package fixture\n\ntype F = int\n",
-		// 1-char name, alias to *builtin: (Lo name, Lo params, true generic).
-		"package fixture\n\ntype F = *int\n",
-		// 128-char name, alias to builtin: (Hi name, Lo params, false generic).
-		"// Package fixture is for the alias edges.\npackage fixture\n\n// " +
-			long_name + "\n// is an alias.\ntype " + long_name + " = int\n",
-		// 128-char name, pointer alias: (Hi name, Lo params, true generic).
-		"// Package fixture is for the alias edges.\npackage fixture\n\n// " +
-			long_name + "\n// is an alias.\ntype " + long_name + " = *int\n",
-	}
-	for _, source := range cases {
-		diags, err := lint.Check_Source("test.go", source)
-		t.Logf("alias_edges diags=%d err=%v", len(diags), err)
-	}
-}
-
-// Test_Coverage_Backfill_Recursion_Visitor_Single_Function_File drives
-// build_file_call_graph with files that have exactly one function declaration
-// so the recursion visitor's Targets map has exactly one entry (Lo bucket of
-// V.Targets boundary, Lo=min_non_empty). Two shapes exercise both Lo (1-char)
-// and Hi (128-char) Caller buckets at Visit entry, where Scopes/Edges/
-// Push_History are all empty (Lo for each).
-func Test_Coverage_Backfill_Recursion_Visitor_Single_Function_File(t *testing.T) {
-	t.Parallel()
-	long_funcname := strings.Repeat("F", 128)
-	cases := []string{
-		// Documented package, lowercase 1-char function with a non-discard
-		// statement so tier-1 stays clean and tier-2 (check_no_recursion)
-		// runs, exercising the recursion visitor.
-		"// Package fixture is for the recursion visitor.\npackage fixture\n\n" +
-			"func f() {\n\tif true {\n\t}\n}\n",
-		"// Package fixture is for the recursion visitor.\npackage fixture\n\n" +
-			"// " +
-			long_funcname +
-			"\n// is for the recursion visitor.\nfunc " +
-			long_funcname + "() {\n\tif true {\n\t}\n}\n",
-		// Range with explicit blank key drives recursion_visitor_define_ident
-		// with a nil expr branch (e_nil=true case).
-		"// Package fixture is for the recursion visitor.\npackage fixture\n\n" +
-			"func f() {\n\tfor range 1 {\n\t}\n}\n",
-		// Single-function file with a 128-char self-recursing function name
-		// drives recursion_visitor_enter_record_call_edge with Lo targets
-		// (single-target) AND Hi caller (128-char) simultaneously.
-		"// Package fixture is for the recursion visitor.\npackage fixture\n\n" +
-			"// " +
-			long_funcname +
-			"\n// recurses into itself.\nfunc " +
-			long_funcname + "() {\n\t" + long_funcname + "()\n}\n",
-		// 128-char function calling a builtin (`println`) — call.Fun is a bare
-		// identifier (True ident) but the name is not in v.Targets, so
-		// record_call_edge returns without appending to v.Edges. Defer time
-		// observes (Lo edges, Hi caller, True ident, Lo targets, Lo scopes,
-		// Lo history).
-		"// Package fixture is for the recursion visitor.\npackage fixture\n\n" +
-			"// " +
-			long_funcname +
-			"\n// invokes a builtin.\nfunc " +
-			long_funcname + "() {\n\tprintln(\"x\")\n}\n",
-		// 128-char function calling a selector — call.Fun is *ast.SelectorExpr
-		// (False ident). The package-level `p` var isn't added to v.Targets
-		// (only FuncDecls are), so targets stays at 1 (single-target file).
-		"// Package fixture is for the recursion visitor.\npackage fixture\n\n" +
-			"var p = struct{ F func() }{F: func() {}}\n\n// " +
-			long_funcname +
-			"\n// invokes a method.\nfunc " +
-			long_funcname + "() {\n\tp.F()\n}\n",
-		// 128-char function with an if-init clause drives
-		// recursion_visitor_enter_define_statement with Hi caller AND False
-		// s_nil (init present) in a single-target file.
-		"// Package fixture is for the recursion visitor.\npackage fixture\n\n" +
-			"// " +
-			long_funcname +
-			"\n// has an if-init.\nfunc " +
-			long_funcname + "() {\n\tif y := 1; y > 0 {\n\t}\n}\n",
-		// 128-char function with a top-level := drives
-		// recursion_visitor_define_ident with Hi caller, Lo scopes (=1, only
-		// the BlockStmt scope is pushed at this point), Lo history (=1).
-		"// Package fixture is for the recursion visitor.\npackage fixture\n\n" +
-			"// " +
-			long_funcname +
-			"\n// has a top-level define.\nfunc " +
-			long_funcname + "() {\n\ty := 1\n\tif y > 0 {\n\t}\n}\n",
-	}
-	for _, source := range cases {
-		diags, err := lint.Check_Source("test.go", source)
-		t.Logf("single_func diags=%d err=%v", len(diags), err)
-		for _, d := range diags {
-			t.Logf("  diag: %s", d.Message)
-		}
-	}
-}
-
-// Test_Coverage_Backfill_Shadow_Long_Name drives check_shadow with a
-// 128-char identifier name so the name-length boundary observes Hi.
-func Test_Coverage_Backfill_Shadow_Long_Name(t *testing.T) {
-	t.Parallel()
-	long := strings.Repeat("x", 128)
-	source := "package main\n\n" +
-		"var " + long + " = 1\n\n" +
-		"func F() {\n" +
-		"\t" + long + " := 2\n" +
-		"\t_ = " + long + "\n" +
-		"}\n"
-	diags, err := lint.Check_Source("test.go", source)
-	t.Logf("shadow_long diags=%d err=%v", len(diags), err)
-}
-
-// Test_Coverage_Backfill_Empty_Nested_If exercises check_shadows' walker on
-// an `if` inside a parameterless function's block-scope. Both the current
-// scope (inner block) and its parent (function-scope of `g`) have zero
-// names — the (Lo, Lo) tuple of scope_value.Names paired with
-// scope_value.Parent.Names that push_if_chain et al need to observe.
-func Test_Coverage_Backfill_Empty_Nested_If(t *testing.T) {
-	t.Parallel()
-	source := "package fixture\n\n" +
-		"var glob int\n\n" +
-		"var glob_slice = []int{1, 2}\n\n" +
-		"func g_helper() (out int) { return 0 }\n\n" +
-		"func g() {\n" +
-		"\t{\n" +
-		"\t\tif z := g_helper(); z != 0 {\n" +
-		"\t\t\t_ = z\n" +
-		"\t\t}\n" +
-		"\t\t{\n" +
-		"\t\t\tglob = 1\n" +
-		"\t\t\ttype Local int\n" +
-		"\t\t\t_ = Local(0)\n" +
-		"\t\t\tfor _, v := range glob_slice {\n" +
-		"\t\t\t\t_ = v\n" +
-		"\t\t\t}\n" +
-		"\t\t}\n" +
-		"\t}\n" +
-		"}\n"
-	diags, err := lint.Check_Source("nested.go", source)
-	t.Logf("nested_if diags=%d err=%v", len(diags), err)
-}
-
-// Test_Coverage_Backfill_Suffix_Of_Hi drives check_names_suffix_of with a
-// 128-char identifier used in arithmetic so its name Hi=128 fires.
-func Test_Coverage_Backfill_Suffix_Of_Hi(t *testing.T) {
-	t.Parallel()
-	long := strings.Repeat("x", 128)
-	source := "// Package fixture is a fixture.\n" +
-		"package fixture\n\n" +
-		"// F adds a 128-char operand to trigger check_names_arithmetic.\n" +
-		"func F() (result int) {\n" +
-		"\t" + long + " := 1\n" +
-		"\tb := 2\n" +
-		"\tresult = " + long + " + b\n" +
-		"\treturn result\n" +
-		"}\n"
-	diags, err := lint.Check_Source("test.go", source)
-	t.Logf("suffix_of_hi diags=%d err=%v", len(diags), err)
-}
-
-// Test_Coverage_Backfill_Recursion drives check_no_recursion to emit a
-// self-recursion diagnostic with a single 1-char function name so the
-// diag-message helper observes its Lo bucket.
-func Test_Coverage_Backfill_Recursion(t *testing.T) {
-	t.Parallel()
-	// 128-char name (xxxxxxxxxxxx...x, snake_case-valid up to the cap).
-	long_name := strings.Repeat("x", 128)
-	source := "// Package fixture is a fixture.\n" +
-		"package fixture\n\n" +
-		"// F recurses into itself to trigger check_no_recursion.\n" +
-		"func F() { F() }\n\n" +
-		"// Long recurses into itself; diag_message gets Hi message.\n" +
-		"func " + long_name + "() {\n" +
-		"\t" + long_name + "()\n" +
-		"}\n"
-	diags, err := lint.Check_Source("test.go", source)
-	t.Logf("recursion diags=%d err=%v", len(diags), err)
-	for _, d := range diags {
-		t.Logf("  diag: %s", d.Message)
-	}
-}
-
-// Test_Coverage_Backfill_Keyed_Struct_Long_Type drives
-// check_keyed_struct_init_type_ident with a 128-char struct type literal so
-// its `name` Hi bucket fires.
-func Test_Coverage_Backfill_Keyed_Struct_Long_Type(t *testing.T) {
-	t.Parallel()
-	long := strings.Repeat("x", 128)
-	source := "package main\n\n" +
-		"type " + long + " struct{ A int }\n\n" +
-		"func f() {\n" +
-		"\t_ = " + long + "{A: 1}\n" +
-		"}\n"
-	diags, err := lint.Check_Source("test.go", source)
-	t.Logf("keyed_struct_long diags=%d err=%v", len(diags), err)
-}
-
-// Test_Coverage_Backfill_Scope_Prefix_Hi drives diagnostic_within_scope with
-// a 4096-char Scope_Prefix so its Hi bucket fires. The source has a tier-1
-// violation (wrongCase func) so diagnostics flow through the scope filter.
-// Also imports "C" (1 char) to exercise is_ambient_hard_import Lo bucket.
-func Test_Coverage_Backfill_Scope_Prefix_Hi(t *testing.T) {
-	t.Parallel()
-	long := strings.Repeat("a", 4096)
-	var stdout, stderr bytes.Buffer
-	lint.Main(&lint.Main_Input{
-		Fsys: fstest.MapFS{
-			"go.mod": {Data: []byte("module test\ngo 1.25\n")},
-			"lib/a.go": {Data: []byte(
-				"package lib\n\nimport _ \"C\"\nimport _ \"" +
-					strings.Repeat("a", 128) +
-					"\"\n\nfunc wrongName() {}\n")},
-			"main.go": {Data: []byte("package main\n\nfunc main() {}\n")},
-		},
-		Stdout:       &stdout,
-		Stderr:       &stderr,
-		CPU_Count:    1,
-		Scope_Prefix: long,
-	})
-}
-
-// Test_Coverage_Backfill_Struct_Field_Capitalize drives
-// check_public_struct_fields_named_capitalize with min (1-char) and max
-// (128-char) field names so its name + output_string boundaries see Lo and Hi.
-func Test_Coverage_Backfill_Struct_Field_Capitalize(t *testing.T) {
-	t.Parallel()
-	long := strings.Repeat("a", 128)
-	source := "package main\n\n" +
-		"type Foo struct {\n" +
-		"\tb int\n" +
-		"\t" + long + " int\n" +
-		"}\n"
-	diags, err := lint.Check_Source("test.go", source)
-	t.Logf("capitalize diags=%d err=%v", len(diags), err)
-}
-
-// Test_Coverage_Backfill_Method_Render_Type drives check_unnecessary_method
-// and its render_type helper with a tier-1-clean source that declares a
-// method (receiver-bearing function) so render_type observes field-list type
-// rendering.
-func Test_Coverage_Backfill_Method_Render_Type(t *testing.T) {
-	t.Parallel()
-	long := strings.Repeat("x", 128)
-	source := "// Package fixture is a fixture.\n" +
-		"package fixture\n\n" +
-		"// Foo is a fixture struct.\n" +
-		"type Foo struct{}\n\n" +
-		"// A is a 1-char type so render_type's output hits Lo=1.\n" +
-		"type A int\n\n" +
-		"// " + long + " is a 128-char type so render_type's output hits Hi=128.\n" +
-		"type " + long + " int\n\n" +
-		"// Bar exercises method shape with 1-char and 128-char-typed params.\n" +
-		"func (f Foo) Bar(p A, q " + long +
-		") (result string) { result = \"x\"; return result }\n\n" +
-		// 1-char and 128-char method names span matches_stdlib's input.Name
-		// Lo=1 and Hi=128 buckets via Check_Source -> check_unnecessary_method.
-		"func (f Foo) X() (result int) { return 0 }\n\n" +
-		"func (f Foo) Q" + strings.Repeat("z", 127) +
-		"(p int) (result int) { return 0 }\n\n" +
-		// V has Results="" (0 chars = Lo); U has Results="xxx128" (128 chars = Hi).
-		"func (f Foo) V() {}\n\n" +
-		"func (f Foo) U(p " + long + ") (r " + long + ") { return r }\n"
-	diags, err := lint.Check_Source("foo.go", source)
-	t.Logf("method_render diags=%d err=%v", len(diags), err)
-}
-
-// Test_Coverage_Backfill_Check_Source_Filename drives Check_Source's
-// filename arg with max-length filename so its Hi bucket fires. The
-// filename is a deeply nested path (4093 chars of /-separated segments
-// plus `.go`) so check_banned_identifiers_file_name stems to a short
-// basename without exceeding suggest_split_words's 128-char cap.
-func Test_Coverage_Backfill_Check_Source_Filename(t *testing.T) {
-	t.Parallel()
-	// 1023 4-char segments `aa/` plus `a.go` = 1023*3 + 4 = 3073. Add
-	// more to reach exactly 4096.
-	var sb strings.Builder
-	for sb.Len() < 4092 {
-		sb.WriteString("aa/")
-	}
-	long_name := sb.String()[:4092] + "a.go"
-	diags, err := lint.Check_Source(long_name, "package x\n")
-	t.Logf("check_source_long_fn diags=%d err=%v len=%d", len(diags), err, len(long_name))
-}
-
-// Test_Coverage_Backfill_Naming_Suggestion drives the suggest helper and
-// its inner helpers (suggest_is_all_upper, suggest_split_words, etc.) by
-// feeding identifiers that violate snake_case / Ada_Case so the linter
-// reaches its naming-suggestion code path.
-func Test_Coverage_Backfill_Naming_Suggestion(t *testing.T) {
-	t.Parallel()
-	long_word_ident := "wrongName" + strings.Repeat("X", 112) + "case"
-	source := "package fixture\n\n" +
-		"func wrongName() {}\n" +
-		"func ALL_CAPS_THING() {}\n" +
-		"func mixed_BadCase() {}\n" +
-		// `xY` is a 2-char camelCase ident — splits to `x` `Y` → suggest output
-		// `x_Y` (3 chars) exercising the Lo=3 bucket of suggest's output.
-		"func xY() {}\n" +
-		"func " + long_word_ident + "() {}\n" +
-		"type wrongType struct{}\n" +
-		"type BAD_type_name struct{}\n" +
-		// `string_ring` ends in `ring` (allowed); `processing` ends in `ing`
-		// and is not in the allowlist — exercises both branches of
-		// is_allowed_ing_noun.
-		"func string_ring() {}\n" +
-		"func processing() {}\n" +
-		// 3-char `ing` for Lo=3; 128-char `xxx...ing` for Hi=128.
-		"func ing() {}\n" +
-		"func " + strings.Repeat("x", 125) + "ing() {}\n"
-	diags, err := lint.Check_Source("test.go", source)
-	t.Logf("naming diags=%d err=%v", len(diags), err)
-	for _, d := range diags {
-		t.Logf("  naming diag: %s", d.Message)
-	}
-}
-
-// Test_Coverage_Backfill_Switch_Without_Init exercises
-// check_invariant_assertions_descend_switch with a switch statement that has
-// no init clause, hitting the Sometimes(s.Init != nil) false branch the
-// rest of the corpus does not exercise on its own.
-func Test_Coverage_Backfill_Switch_Without_Init(t *testing.T) {
-	t.Parallel()
-	source := `package fixture
-
-func f(value int) {
-	switch value {
-	case 0:
-	default:
-	}
-}
-`
-	diags, err := lint.Check_Source("test.go", source)
-	t.Logf("switch diags=%d err=%v", len(diags), err)
-	for _, diag := range diags {
-		t.Logf("  switch diag: %s", diag.Message)
-	}
-}
-
-// Test_Coverage_Backfill_String_Bounded_Helpers_Long_Path drives stream-
-// tier helpers (check_stream_conflict_markers etc.) with a 4096-char file
-// path so their len(p) Hi=4096 buckets fire.
-func Test_Coverage_Backfill_String_Bounded_Helpers_Long_Path(t *testing.T) {
-	t.Parallel()
-	// 4092 + ".txt" = 4096 chars exactly so the stream-tier path boundary
-	// fires Hi instead of fatalling.
-	long_filename := strings.Repeat("a", 4092)
-	long_directory := strings.Repeat("d", 128)
-	fsys := fstest.MapFS{
-		"go.mod":                 {Data: []byte("module test\ngo 1.25\n")},
-		"main.go":                {Data: []byte("package main\n\nfunc main() {}\n")},
-		long_filename + ".txt":   {Data: []byte("x\n")},
-		"empty.go":               {Data: []byte("")},
-		"x/x.go":                 {Data: []byte("package x\n")},
-		long_directory + "/x.go": {Data: []byte("package x\n")},
-	}
-	var stdout, stderr bytes.Buffer
-	lint.Main(&lint.Main_Input{
-		Fsys:           fsys,
-		Stdout:         &stdout,
-		Stderr:         &stderr,
-		CPU_Count:      1,
-		Root_Directory: ".",
-	})
-}
-
-// Test_Coverage_Backfill_Banned_Abbreviation_D feeds Check_Source a fixture
-// with a `dir` identifier so banned_abbreviation_candidates_d_f's d-helper
-// dispatch path observes the non-nil branch.
-func Test_Coverage_Backfill_Banned_Abbreviation_D(t *testing.T) {
-	t.Parallel()
-	_, err := lint.Check_Source("test.go",
-		"package x\n\nfunc f(dir string) string { return dir }\n")
-	if err != nil {
-		t.Fatalf("parse: %v", err)
-	}
-}
-
-// Test_Coverage_Backfill_Check_Comments_Group_Min_Source feeds Check_Source
-// the minimum-byte file containing a comment (`package x\n\n// c\n`, 16 bytes)
-// so check_comments_group's source-length Lo bucket fires.
-func Test_Coverage_Backfill_Check_Comments_Group_Min_Source(t *testing.T) {
-	t.Parallel()
-	diags, err := lint.Check_Source("test.go", "package x\n\n// c\n")
-	t.Logf("diags=%d err=%v", len(diags), err)
-}
-
-// Test_Coverage_Backfill_Shadow_Walker_Top_Level_If_Range feeds Check_File
-// fixtures whose first statement is an if-statement or a range-statement so
-// the shadow walker's push_if_chain / push_range_statement helpers fire with
-// stack length 1 (the walker's initial seed frame).
-func Test_Coverage_Backfill_Shadow_Walker_Top_Level_If_Range(t *testing.T) {
-	t.Parallel()
-	cases := []string{
-		"package fixture\n\nfunc g() {\n\tif true {\n\t}\n}\n",
-		"package fixture\n\nfunc g() {\n\tfor i := range 1 {\n\t\t_ = i\n\t}\n}\n",
-		// If-init that is ASSIGN (not DEFINE) on a function with zero params/results:
-		// drives check_assign_define with Lo parent_names AND Lo names AND Lo diags
-		// at defer time (no name was added because the statement is not DEFINE).
-		"package fixture\n\nvar x = 0\n\nfunc g() {\n\tif x = 5; x > 0 {\n\t}\n}\n",
-		// Range nested inside an if-block within a function with zero params drives
-		// push_range_statement_add_variable with Lo parent_names (if-scope empty)
-		// AND Lo grandparent_names (function-scope empty, no params) for both the
-		// True key call (i) and the False value call (nil) of the range key/value.
-		"package fixture\n\n" +
-			"func h() {\n" +
-			"\tif true {\n\t\tfor i := range 1 {\n\t\t\t_ = i\n\t\t}\n\t}\n}\n",
-		// Range with no key/value (both nil) nested in if-block exercises False
-		// e_present in both x.Key and x.Value add_variable calls.
-		"package fixture\n\nfunc k() {\n\tif true {\n\t\tfor range 1 {\n\t\t}\n\t}\n}\n",
-		// Blank key `for _ = range` drives add_variable with e_present=True
-		// (Key is non-nil Ident) but Name="_" short-circuits before adding to
-		// scope_value.Names, so names_axis stays Lo at defer time. Nested in
-		// if-block keeps parent_names and grandparent_names at Lo.
-		"package fixture\n\n" +
-			"func m() {\n\tif true {\n\t\tfor _ = range 1 {\n\t\t}\n\t}\n}\n",
-	}
-	for _, source := range cases {
-		diags, err := lint.Check_Source("test.go", source)
-		t.Logf("diags=%d err=%v", len(diags), err)
-	}
-}
-
-// Test_Coverage_Backfill_Check_File_Empty_Source feeds Check_File a parsed
-// ast.File alongside an empty source []byte. Check_Source can't trigger this
-// path (parser rejects empty input), so the Lo=0 bucket of Check_File's
-// source-length boundary needs this synthetic invocation.
-func Test_Coverage_Backfill_Check_File_Empty_Source(t *testing.T) {
-	t.Parallel()
-	file_set := token.NewFileSet()
-	file, err := parser.ParseFile(
-		file_set, "empty.go", "package empty\n", parser.SkipObjectResolution)
-	if err != nil {
-		t.Fatalf("parse: %v", err)
-	}
-	diags := lint.Check_File(file_set, file, nil)
-	t.Logf("empty_source diags=%d", len(diags))
 }

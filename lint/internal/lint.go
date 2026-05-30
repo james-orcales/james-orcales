@@ -28,7 +28,7 @@ import (
 	"unicode/utf8"
 )
 
-const max_line_chars = 100
+const line_chars_max = 100
 const tab_width = 8
 
 // Hi bounds for Distinct_Boundary axes on string lengths. Each constant
@@ -38,128 +38,128 @@ const tab_width = 8
 // a test can satisfy the Hi-equals-X tuple. Constants are named for the
 // domain so reading the assertion at a call site makes the bound obvious.
 
-// Max_Identifier_Chars caps Go identifier lengths the linter processes.
-// 128 chars is wider than any identifier representable on a max_line_chars
+// Identifier_Chars_Max caps Go identifier lengths the linter processes.
+// 128 chars is wider than any identifier representable on a line_chars_max
 // (140) source line after the surrounding syntax; the repo's longest
 // production identifier is 83 chars.
-const Max_Identifier_Chars = 128
+const Identifier_Chars_Max = 128
 
-// Max_invariant_helper_name_chars caps the longest invariant.X helper name
+// Invariant_helper_name_chars_max caps the longest invariant.X helper name
 // the linter recognises; "Recorder_Is_Distinct_Boundary" is the longest
 // (29 chars). The constant ALSO serves as a sanity bound on helper_name
 // strings passed between extractor helpers, all of which receive non-
 // empty names (callers gate on `helper_name == "" return` so the boundary
 // is paired with `Always(helper_name != "", ...)`).
-const max_invariant_helper_name_chars = 29
+const invariant_helper_name_chars_max = 29
 
-// Min_invariant_helper_name_chars is the shortest recognised invariant.X
+// Invariant_helper_name_chars_min is the shortest recognised invariant.X
 // helper name: "Always" (6 chars). Paired with the max as the Lo/Hi of
 // helper_name Distinct_Boundary axes in extract_nil_comparison_path /
 // extract_eq_nil_path / nil_predicate_index / nil_allows_neq.
-const min_invariant_helper_name_chars = 6
+const invariant_helper_name_chars_min = 6
 
-// Min_credit_kind_chars / max_credit_kind_chars cap the bare_composable_
+// Credit_kind_chars_min / credit_kind_chars_max cap the bare_composable_
 // table values: "bool" (4) and "boundary_float" (14). Tightening to the
 // exact table range makes both endpoints reachable by tests that exercise
 // any Distinct_Boundary or Always/Sometimes credit shape.
-const min_credit_kind_chars = 4
-const max_credit_kind_chars = 14
+const credit_kind_chars_min = 4
+const credit_kind_chars_max = 14
 
-// Min_diagnostic_source_chars / max_diagnostic_source_chars cap the
+// Diagnostic_source_chars_min / diagnostic_source_chars_max cap the
 // `source` string in the diagnostic-builder helpers: "param" (5),
 // "param_defer" (11), or "named_return" (12). The literal values come from
 // the requirement emit branches in collect_requirements and the validate
 // loop.
-const min_diagnostic_source_chars = 5
-const max_diagnostic_source_chars = 12
+const diagnostic_source_chars_min = 5
+const diagnostic_source_chars_max = 12
 
-// Min_function_label_chars caps the shortest function_label string: a
-// single-character function name like `f`. Paired with max_identifier_
-// chars as Hi.
-const min_function_label_chars = 1
+// Function_label_chars_min caps the shortest function_label string: a
+// single-character function name like `f`. Paired with
+// Identifier_Chars_Max as Hi.
+const function_label_chars_min = 1
 
-// Min_non_empty is the universal Lo for length axes on inputs the caller
+// Non_empty_min is the universal Lo for length axes on inputs the caller
 // guarantees non-empty (validated by a callsite check or an Always(s != "")
 // invariant). Distinct_Boundary requires Lo < Hi, so empty inputs need their
 // own pre-gate; this constant anchors the "≥1 character" bucket for
 // non-empty-string and non-empty-slice axes.
-const min_non_empty = 1
+const non_empty_min = 1
 
-// Min_split_suggestion_chars caps the shortest non-trivial split suggestion
+// Split_suggestion_chars_min caps the shortest non-trivial split suggestion
 // returned by suggest. The shortest case is a 2-char Ada_Case input ("aB")
 // split into "a_B" — three characters including the inserted underscore.
-const min_split_suggestion_chars = 3
+const split_suggestion_chars_min = 3
 
-// Min_naming_style_chars / max_naming_style_chars bound the length of the
+// Naming_style_chars_min / naming_style_chars_max bound the length of the
 // `Want` field on suggest_input. Callers pass exactly one of "Ada_Case" (8)
 // or "snake_case" (10) — the only two style words the casing checks know.
-const min_naming_style_chars = 8
-const max_naming_style_chars = 10
+const naming_style_chars_min = 8
+const naming_style_chars_max = 10
 
-// Min_stream_check_name_chars / max_stream_check_name_chars bound the
+// Stream_check_name_chars_min / stream_check_name_chars_max bound the
 // `Name` field on check_function_stream constructors. Shortest is "symlink"
 // (7); longest is "markdown-line-length" (20).
-const min_stream_check_name_chars = 7
-const max_stream_check_name_chars = 20
+const stream_check_name_chars_min = 7
+const stream_check_name_chars_max = 20
 
-// Min_stack_with_body_frame is the Lo for walker stacks that the function
+// Stack_with_body_frame_min is the Lo for walker stacks that the function
 // guarantees have appended at least one body frame on top of the input
 // stack (so the post-condition stack length is the input stack length
 // plus one, minimum two when the input was non-empty).
-const min_stack_with_body_frame = 2
+const stack_with_body_frame_min = 2
 
-// Min_pair caps Lo for numeric axes whose minimum is two — used by callers
+// Pair_min caps Lo for numeric axes whose minimum is two — used by callers
 // where the value is "≥2 of something" without a more specific domain
 // constant fitting. Where a domain-specific name is clearer, prefer that.
-const min_pair = 2
+const pair_min = 2
 
-// Max_package_lines_test is the Hi bound on the per-package source-line
+// Package_lines_test_max is the Hi bound on the per-package source-line
 // accumulator in the package-fragmentation check. The endpoint is anchored
 // by the fragmentation test fixtures (each package ≤ ~12k lines).
-const max_package_lines_test = 12750
+const package_lines_test_max = 12750
 
-// Max_test_package_files is the Hi bound on the caller-supplied package
+// Test_package_files_max is the Hi bound on the caller-supplied package
 // file-count cap. The fragmentation tests exercise both endpoints (1 file
 // allowed; 2 files as the caller-imposed ceiling).
-const max_test_package_files = 2
+const test_package_files_max = 2
 
-// Max_build_constraint_key_chars caps the normalized build-constraint AST
+// Build_constraint_key_chars_max caps the normalized build-constraint AST
 // string used as a fragmentation grouping key. Sized for the typical
 // multi-OS multi-arch expression length seen in practice.
-const max_build_constraint_key_chars = 125
+const build_constraint_key_chars_max = 125
 
 // Count_one anchors "exactly one of something" sentinel checks (e.g. a
 // Sometimes(len(xs) == 1) on a single-element group). Value-identical to
-// min_non_empty but read at the call site with different intent.
+// non_empty_min but read at the call site with different intent.
 const count_one = 1
 
-// Max_obligation_identifiers caps the number of identifiers in a single
+// Obligation_identifiers_max caps the number of identifiers in a single
 // declaration-from-call obligation. Go allows arbitrary multi-LHS, but
 // 3-LHS is the widest shape observed in lint.go's own source; setting the
 // Hi bucket here gates the Distinct_Boundary axis on obligation.Identifiers
 // to a reachable endpoint.
-const max_obligation_identifiers = 3
+const obligation_identifiers_max = 3
 
-// Max_successor_statements caps obligation.Successor_Statements via the
+// Successor_statements_max caps obligation.Successor_Statements via the
 // generated many-successor fixture; lint.go's own scan stays under because
 // every := decl is followed by ≤30 statements in the same block.
-const max_successor_statements = 30
+const successor_statements_max = 30
 
-// Max_leaf_requirements_per_dispatch caps the number of requirement records
+// Leaf_requirements_per_dispatch_max caps the number of requirement records
 // leaf_dispatch returns: channel leaves emit 3 (pointer + boundary_int +
 // zero_int), slice/map leaves emit 2 (boundary_int + zero_slice/zero_map),
 // non-container/non-channel types emit 0.
-const max_leaf_requirements_per_dispatch = 3
+const leaf_requirements_per_dispatch_max = 3
 
 // Module_index_not_found anchors the -1 sentinel returned when no module
-// matches a path lookup. Paired with max_modules_per_workspace as the Hi
+// matches a path lookup. Paired with modules_per_workspace_max as the Hi
 // bound on the index domain.
 const module_index_not_found = -1
 
-// Max_modules_per_workspace caps the per-workspace module count. The
+// Modules_per_workspace_max caps the per-workspace module count. The
 // monorepo's go.work currently lists ~10 modules; 1024 leaves headroom
 // for several orders of magnitude of growth without admitting absurd values.
-const max_modules_per_workspace = 1024
+const modules_per_workspace_max = 1024
 
 // Path_root is the path.Dir result for top-level entries: a single dot
 // meaning "current directory". Used as the sentinel comparison value when
@@ -202,122 +202,120 @@ const stream_checker_count = 10
 
 // Fixed Name strings for the stream-check closures, each paired with its
 // length so the checker's defer bounds c.Name (a value invariant per closure).
-const path_casing_check_name = "path-casing"
-const path_casing_check_name_chars = 11
 const agents_pair_check_name = "agents-claude-pair"
 const agents_pair_check_name_chars = 18
 
-// Min_recursion_message_chars / max_recursion_message_chars cap the
+// Recursion_message_chars_min / recursion_message_chars_max cap the
 // "recursion: <node> calls itself" diagnostic message. Lo = 25 chars for
 // the 1-char node case; Hi = 152 chars for a max-length 128-char node.
-const min_recursion_message_chars = 25
-const max_recursion_message_chars = 152
+const recursion_message_chars_min = 25
+const recursion_message_chars_max = 152
 
-// Min_defer_position_name_chars / max_defer_position_name_chars bound the
+// Defer_position_name_chars_min / defer_position_name_chars_max bound the
 // `Name` field on diagnostics built by
 // check_invariant_assertions_validate_defer_position. Names are one of two
 // fixed labels: `assertion_defer_missing` (23) or
 // `assertion_defer_not_at_body_zero` (32).
-const min_defer_position_name_chars = 23
-const max_defer_position_name_chars = 32
+const defer_position_name_chars_min = 23
+const defer_position_name_chars_max = 32
 
-// Min_defer_position_message_chars is the provable floor on the Sprintf'd
+// Defer_position_message_chars_min is the provable floor on the Sprintf'd
 // defer-position diagnostic message: the shortest function label (1 char) plus
 // the shortest of the three message bodies (102 chars). No label is shorter
 // than one character and no body is shorter than 102, so a message can never
 // fall below this — making it a panic-safe Lo for the message boundary.
-const min_defer_position_message_chars = 103
+const defer_position_message_chars_min = 103
 
-// Min_defer_position_want_chars / max_defer_position_want_chars bound the
+// Defer_position_want_chars_min / defer_position_want_chars_max bound the
 // `Want` field on diagnostics built by validate_defer_position. Want strings
 // are three fixed remediation hints: `add an assertion defer ...` (71),
 // `move the assertion defer ...` (76), and `place the assertion defer ...`
 // (103). Test corpus exercises the shortest (`add`) and longest (`place`).
-const min_defer_position_want_chars = 71
-const max_defer_position_want_chars = 103
+const defer_position_want_chars_min = 71
+const defer_position_want_chars_max = 103
 
-// Min_declaration_diagnostic_want_chars / max_declaration_diagnostic_want_chars
+// Declaration_diagnostic_want_chars_min / declaration_diagnostic_want_chars_max
 // bound the `Want` field on diagnostics built by
 // check_invariant_assertions_build_declaration_diagnostic. Want strings come
 // in two shapes: a short single-LHS suggestion (`add an invariant assertion
 // ... covering: <list>`) and a long multi-LHS suggestion (`use
 // invariant.Cross_Product ... covering: <list>`).
-const min_declaration_diagnostic_want_chars = 65
-const max_declaration_diagnostic_want_chars = 133
+const declaration_diagnostic_want_chars_min = 65
+const declaration_diagnostic_want_chars_max = 133
 
-// Min_declaration_diagnostic_message_chars is the shortest declaration-obligation
+// Declaration_diagnostic_message_chars_min is the shortest declaration-obligation
 // message: a single-LHS `<f>: declaration via function call must be followed by
 // an invariant assertion covering: <x>` with a 1-char function label and a
-// 1-char identifier. The Hi end is the budget ceiling (max_diagnostic_message_chars,
+// 1-char identifier. The Hi end is the budget ceiling (diagnostic_message_chars_max,
 // which no message — bounded by label + identifier-list + the fixed clause —
 // reaches), so the boundary masks Hi and observes only the single-LHS Lo.
-const min_declaration_diagnostic_message_chars = 87
+const declaration_diagnostic_message_chars_min = 87
 
-// Max_diagnostic_message_chars caps the upper bound for a diagnostic
+// Diagnostic_message_chars_max caps the upper bound for a diagnostic
 // Message string. Longest observed messages embed a 128-char function label
 // plus 257-char field_description plus suggestion text; round to 1024.
-const max_diagnostic_message_chars = 1024
+const diagnostic_message_chars_max = 1024
 
-// Max_banned_lists_per_check caps the static list-of-lists count for the
+// Banned_lists_per_check_max caps the static list-of-lists count for the
 // banned-segment check (universal, function-only, file-only, package-only).
-const max_banned_lists_per_check = 4
+const banned_lists_per_check_max = 4
 
-// Min_suggested_sig_chars caps the shortest suggested function signature.
+// Suggested_sig_chars_min caps the shortest suggested function signature.
 // In practice the shortest fixture-observed signature is the 21-char
 // `f(*f_Input) (result T)` template with a single-letter funcname and a
 // minimal result type.
-const min_suggested_sig_chars = 21
+const suggested_sig_chars_min = 21
 
-// Min_convert_to_message_chars / max_convert_to_message_chars bound the
+// Convert_to_message_chars_min / convert_to_message_chars_max bound the
 // `convert to <sig>` diagnostic message constructed by
 // check_input_struct_validate. The 11-character "convert to " prefix is
 // added to the suggested signature's length bounds.
-const min_convert_to_message_chars = min_suggested_sig_chars + 11
-const max_convert_to_message_chars = max_suggested_sig_chars + 11
+const convert_to_message_chars_min = suggested_sig_chars_min + 11
+const convert_to_message_chars_max = suggested_sig_chars_max + 11
 
-// Max_stdlib_term_chars caps the stdlib-allowlist terminology suffix
+// Stdlib_term_chars_max caps the stdlib-allowlist terminology suffix
 // string. Longest entry is `offset` (6 chars).
-const max_stdlib_term_chars = 6
+const stdlib_term_chars_max = 6
 
-// Min_stdlib_term_chars is the shortest term in the arithmetic-result
-// vocabulary: `size` (4 chars). Paired with max_stdlib_term_chars as Hi
+// Stdlib_term_chars_min is the shortest term in the arithmetic-result
+// vocabulary: `size` (4 chars). Paired with stdlib_term_chars_max as Hi
 // for axes over Left/Right operand-term strings.
-const min_stdlib_term_chars = 4
+const stdlib_term_chars_min = 4
 
-// Max_method_params_test_corpus matches the Params string the
+// Method_params_test_corpus_max matches the Params string the
 // Test_Coverage_Backfill_Method_Render_Type fixture produces for its Bar
 // method: a 1-char type `A` joined to a 128-char type via `,` totals 130.
 // Bounded axes over input.Params in check_unnecessary_method_matches_stdlib
 // use this as Hi so Bar's call observes the Hi bucket.
-const max_method_params_test_corpus = Max_Identifier_Chars + 2
+const method_params_test_corpus_max = Identifier_Chars_Max + 2
 
-// Min_qualified_ident_chars caps `pkg.Func` shapes at their minimum: a
+// Qualified_ident_chars_min caps `pkg.Func` shapes at their minimum: a
 // single-letter package, dot, single-letter func — three characters.
-const min_qualified_ident_chars = 3
+const qualified_ident_chars_min = 3
 
-// Min_rename_suggestion_chars caps the shortest `<name>_<term>` rename
+// Rename_suggestion_chars_min caps the shortest `<name>_<term>` rename
 // suggestion; the smallest single-word replacement ("count") is 5 chars.
-const min_rename_suggestion_chars = 5
+const rename_suggestion_chars_min = 5
 
-// Min_ing_word_chars is the smallest word that can carry the `-ing` participle
+// Ing_word_chars_min is the smallest word that can carry the `-ing` participle
 // suffix: three characters (the suffix itself plus a one-letter prefix would
 // not actually be a valid English word, but the linter only inspects shape).
-const min_ing_word_chars = 3
+const ing_word_chars_min = 3
 
-// Min_source_with_comment_bytes is the smallest source file that carries a
+// Source_with_comment_bytes_min is the smallest source file that carries a
 // comment after the package clause: "package x\n\n// c\n" is 16 bytes.
-const min_source_with_comment_bytes = 16
+const source_with_comment_bytes_min = 16
 
-// Min_field_description_chars caps the shortest `<name> <type>` description:
+// Field_description_chars_min caps the shortest `<name> <type>` description:
 // one-char name + space + one-char type = 3 chars.
-const min_field_description_chars = 3
+const field_description_chars_min = 3
 
-// Min_requirement_field_description_chars is the smallest field_description
+// Requirement_field_description_chars_min is the smallest field_description
 // length that survives the keyword_kinds filter and reaches a requirement.
 // "a *T" (4 chars: 1-char name + " " + "*T" pointer) is the shortest such
 // shape — bare `a T` for a user-defined Ident gets dropped because kinds
 // is nil at the leaf path.
-const min_requirement_field_description_chars = 4
+const requirement_field_description_chars_min = 4
 
 // Cross_product_helper_chars / recorder_cross_product_helper_chars are the
 // string lengths of the two Cross_Product helper-name shapes. Paired as
@@ -325,10 +323,10 @@ const min_requirement_field_description_chars = 4
 const cross_product_helper_chars = 13
 const recorder_cross_product_helper_chars = 22
 
-// Max_bare_credit_kind_chars caps the bare-composable kind strings used in
-// the bare_table: `bool` (4) is the Lo via min_credit_kind_chars, and
+// Bare_credit_kind_chars_max caps the bare-composable kind strings used in
+// the bare_table: `bool` (4) is the Lo via credit_kind_chars_min, and
 // `boundary_int` (12) is the Hi for the bare-credit family.
-const max_bare_credit_kind_chars = 12
+const bare_credit_kind_chars_max = 12
 
 // Helper_family_index_unknown / helper_family_index_recorder anchor the
 // three-valued helper-family discriminator: -1 = unknown / not an invariant
@@ -337,9 +335,9 @@ const max_bare_credit_kind_chars = 12
 const helper_family_index_unknown = -1
 const helper_family_index_recorder = 1
 
-// Max_always_family_chars caps the longest helper name in the
+// Always_family_chars_max caps the longest helper name in the
 // Always/Sometimes nil-eq family: `Recorder_Always` (15).
-const max_always_family_chars = 15
+const always_family_chars_max = 15
 
 // Sign_negative / sign_positive anchor the three-valued sign domain
 // returned by expression_sign: -1 for negative, 0 for zero (interior), +1
@@ -347,65 +345,65 @@ const max_always_family_chars = 15
 const sign_negative = -1
 const sign_positive = 1
 
-// Min_invariant_suggestion_chars / max_invariant_suggestion_chars cap the
+// Invariant_suggestion_chars_min / invariant_suggestion_chars_max cap the
 // `use invariant.X(...)` remediation string rendered into assertion-coverage
 // diagnostics. Sized empirically from the shortest (`pointer` shape) and
 // longest (`boundary_float` shape) wrappers around the axis call.
-const min_invariant_suggestion_chars = 167
-const max_invariant_suggestion_chars = 373
+const invariant_suggestion_chars_min = 167
+const invariant_suggestion_chars_max = 373
 
-// Min_composable_helper_chars / max_composable_helper_chars cap the
+// Composable_helper_chars_min / composable_helper_chars_max cap the
 // helper-name string for composable axis builders: `Always` (6) is the
 // shortest, `Distinct_Boundary` (17) the longest.
-const min_composable_helper_chars = 6
-const max_composable_helper_chars = 17
+const composable_helper_chars_min = 6
+const composable_helper_chars_max = 17
 
-// Min_suggested_axis_call_chars / max_suggested_axis_call_chars cap the
+// Suggested_axis_call_chars_min / suggested_axis_call_chars_max cap the
 // rendered axis-builder template string for one assertion requirement.
 // Sized empirically from the shortest pointer-shape and longest
 // Distinct_Boundary-shape templates.
-const min_suggested_axis_call_chars = 22
-const max_suggested_axis_call_chars = 228
+const suggested_axis_call_chars_min = 22
+const suggested_axis_call_chars_max = 228
 
-// Max_invariant_selector_chars caps the longest selector_name string in the
+// Invariant_selector_chars_max caps the longest selector_name string in the
 // full invariant-call family: `Recorder_Distinct_Boundary` (26).
-const max_invariant_selector_chars = 26
+const invariant_selector_chars_max = 26
 
-// Max_if_init_identifier_chars caps identifier strings appearing in
-// if/for/switch init lines: a tighter bound than Max_Identifier_Chars to
+// If_init_identifier_chars_max caps identifier strings appearing in
+// if/for/switch init lines: a tighter bound than Identifier_Chars_Max to
 // reflect what fits in a single statement line within the line-length budget.
-const max_if_init_identifier_chars = 55
+const if_init_identifier_chars_max = 55
 
 // Tier_2_checks_count / tier_1_checks_count anchor the static tier-list
 // length axis. Updated whenever a check is added or removed from the
 // dispatcher in Check_File.
-const tier_2_checks_count = 7
-const tier_1_checks_count = 30
+const tier_2_checks_count = 6
+const tier_1_checks_count = 31
 
-// Min_go_filename_chars is the shortest Go filename: a single-letter package
+// Go_filename_chars_min is the shortest Go filename: a single-letter package
 // name followed by the .go extension, e.g. `a.go`. Used as the Lo bound on
 // filename axes in Check_Source / Check_File_System.
-const min_go_filename_chars = 4
+const go_filename_chars_min = 4
 
 // The requirement-position label passed to the validate helper is always one of
 // "param" (5), "param_defer" (11), or "named_return" (12). Both endpoints are
 // always observed (every analyzed function runs the param and named_return
 // passes), so the boundary needs no masking.
-const min_validate_position_chars = 5
-const max_validate_position_chars = 12
+const validate_position_chars_min = 5
+const validate_position_chars_max = 12
 
 // Inside-if-only diagnostics carry a requirement.Kind assertion-kind label.
 // The non-nillable leaves that reach this path are integer leaves, whose kinds
 // are "zero_int" (8) and "boundary_int" (12) — both observed from a single
 // `(result int)` named return, so the boundary needs no masking.
-const min_inside_if_kind_chars = 8
-const max_inside_if_kind_chars = 12
+const inside_if_kind_chars_min = 8
+const inside_if_kind_chars_max = 12
 
 // The smallest source a parsed file can carry is the shortest valid Go file,
 // "package a\n" (10 bytes) — the package keyword, a one-char name, and the
 // gofmt-mandated trailing newline. Nothing is shorter, so this is the panic-safe
 // Lo for pf.Source byte-length boundaries; a pinned fixture observes it.
-const min_go_source_bytes = 10
+const go_source_bytes_min = 10
 
 // Package-group diagnostics carry empty Name and Want (the group-level message
 // lives in Message). len == 0 is the constant width; Always(len == this) credits
@@ -415,60 +413,60 @@ const package_group_diag_chars = 0
 // Field_Description for an inside-if leaf is "<name> <type>". The shortest
 // reachable is a one-char-named integer leaf, "x int" (5) — names are never
 // empty and "int" is the shortest non-nillable type, so 5 is the floor. The
-// budget cap (max_field_description_chars) is never reached, so Hi is masked.
-const min_inside_if_field_chars = 5
+// budget cap (field_description_chars_max) is never reached, so Hi is masked.
+const inside_if_field_chars_min = 5
 
-// Min_inside_if_message_chars is the shortest inside-if-only diagnostic message:
+// Inside_if_message_chars_min is the shortest inside-if-only diagnostic message:
 // a 1-char function label, the shortest `param` prefix, and a min-length field
 // description, plus the fixed `... must be asserted outside any if ... != nil
-// ...` clause. Hi is the budget ceiling (max_diagnostic_message_chars), never
+// ...` clause. Hi is the budget ceiling (diagnostic_message_chars_max), never
 // reached, so the boundary masks Hi and observes only this Lo.
-const min_inside_if_message_chars = 113
+const inside_if_message_chars_min = 113
 
-// Min_want_name_chars / max_want_name_chars cap the input-struct
+// Want_name_chars_min / want_name_chars_max cap the input-struct
 // expected name (e.g. "f_Input" for function `f`). The "_Input" suffix
 // is 6 chars; combined with the shortest (1-char) function name the
-// minimum is 7. Max is Max_Identifier_Chars + 6 = 134.
-const min_want_name_chars = 7
-const max_want_name_chars = Max_Identifier_Chars + 6
+// minimum is 7. Max is Identifier_Chars_Max + 6 = 134.
+const want_name_chars_min = 7
+const want_name_chars_max = Identifier_Chars_Max + 6
 
-// Max_filesystem_path_chars caps filesystem path strings the linter
+// Filesystem_path_chars_max caps filesystem path strings the linter
 // processes. POSIX PATH_MAX is 4096 on Linux; the linter inherits this
 // as the hard bound for file paths and is exercised by the long-path
 // backfill test which constructs a 4096-char filename.
-const max_filesystem_path_chars = 4096
+const filesystem_path_chars_max = 4096
 
-// Max_filesystem_directory_chars caps directory strings (path.Dir of a
-// file path). The directory consumes at most max_filesystem_path_chars
+// Filesystem_directory_chars_max caps directory strings (path.Dir of a
+// file path). The directory consumes at most filesystem_path_chars_max
 // minus the shortest basename `/a.go` (5 chars).
-const max_filesystem_directory_chars = max_filesystem_path_chars - 5
+const filesystem_directory_chars_max = filesystem_path_chars_max - 5
 
-// Max_inferred_field_kind_chars caps the strings returned by
+// Inferred_field_kind_chars_max caps the strings returned by
 // check_invariant_assertions_infer_field_kind: "int" (3), "bool" (4),
 // "pointer" (7), or "" (0). Longest entry is "pointer" at 7 chars.
-const max_inferred_field_kind_chars = 7
+const inferred_field_kind_chars_max = 7
 
-// Max_field_description_chars caps `<name> <type_str>` descriptions:
+// Field_description_chars_max caps `<name> <type_str>` descriptions:
 // at most one identifier plus a space plus a type expression that itself
 // is bounded by identifier length, yielding 2*identifier + 1.
-const max_field_description_chars = 2*Max_Identifier_Chars + 1
+const field_description_chars_max = 2*Identifier_Chars_Max + 1
 
-// Max_suggested_sig_chars caps suggested function-signature strings of the
+// Suggested_sig_chars_max caps suggested function-signature strings of the
 // form `<funcname>(*<funcname>_Input) (result <type>)`. The funcname
 // appears twice (raw plus inside `_Input`), plus the wrapping syntax and
 // a result clause; budget is 2*identifier + 6 (`_Input`) + ~16 (result).
-const max_suggested_sig_chars = 2*Max_Identifier_Chars + 22
+const suggested_sig_chars_max = 2*Identifier_Chars_Max + 22
 
-// Max_comment_text_chars caps raw comment text. comment_body strips the
+// Comment_text_chars_max caps raw comment text. comment_body strips the
 // leading `//` and any whitespace, so the text bound is the body budget
 // (4096 chars) plus the 2-char `//` prefix the scanner preserves.
-const max_comment_text_chars = max_filesystem_path_chars + 2
+const comment_text_chars_max = filesystem_path_chars_max + 2
 
-// Max_banned_segment_chars caps the longest banned-segment word in the
+// Banned_segment_chars_max caps the longest banned-segment word in the
 // banned_segments_universal list: "utilities" at 9 chars.
-const max_banned_segment_chars = 9
+const banned_segment_chars_max = 9
 
-const max_function_lines = 70
+const function_lines_max = 70
 
 // Git's default short-hash width.
 const git_short_hash_chars = 10
@@ -482,55 +480,51 @@ const git_full_hash_chars = 40
 // must accept either format.
 const git_full_hash_chars_sha_256 = 64
 
-const max_lines_per_file = 30000
+const lines_per_file_max = 10000
 
-// Mirrors max_line_chars used by the source-line check: code-review UIs
+// Mirrors line_chars_max used by the source-line check: code-review UIs
 // truncate around 72–100 chars and longer subjects force horizontal scroll.
-const max_commit_subject_chars = 100
+const commit_subject_chars_max = 100
 
 // The shared library is hardcoded rather than discovered. Every other
 // module at the workspace root is a binary; nothing in the doctrine
 // requires runtime negotiation, and a constant keeps the rule grep-able.
 const shared_library_module_path = "github.com/james-orcales/james-orcales/golang_snacks"
 
-// Caps every file at 1 MiB. Binaries and large assets should not end up
-// tracked in the source tree — push them through git LFS or an external store.
-const max_file_size_bytes = 1 << 20
-
-// Max_diagnostics_per_call caps the slice length of `diags []Diagnostic`
+// Diagnostics_per_call_max caps the slice length of `diags []Diagnostic`
 // returns. A single check may emit one diagnostic per source line at worst,
-// so the budget tracks max_lines_per_file with headroom for declarations
+// so the budget tracks lines_per_file_max with headroom for declarations
 // that emit multiple diagnostics each.
-const max_diagnostics_per_call = max_lines_per_file * 4
+const diagnostics_per_call_max = lines_per_file_max * 4
 
-// Max_parsed_files_per_call caps the slice length of `parsed_files
+// Parsed_files_per_call_max caps the slice length of `parsed_files
 // []parsed_file` and similar package-level slices. A package typically holds
 // dozens of files; the cap leaves ample headroom for the worst-case monorepo
 // flat-directory layout without admitting absurd values.
-const max_parsed_files_per_call = 32768
+const parsed_files_per_call_max = 32768
 
-// Max_ast_nodes_per_call caps generic []ast.Expr / []ast.Stmt / []*ast.Ident
+// Ast_nodes_per_call_max caps generic []ast.Expr / []ast.Stmt / []*ast.Ident
 // slices passed between helpers. Each AST list is bounded by the source file
-// it derives from; max_lines_per_file is a generous upper bound.
-const max_ast_nodes_per_call = max_lines_per_file
+// it derives from; lines_per_file_max is a generous upper bound.
+const ast_nodes_per_call_max = lines_per_file_max
 
-// Max_string_slice_per_call caps generic []string slices used for path
+// String_slice_per_call_max caps generic []string slices used for path
 // lists, candidate sets, identifier chains, and similar identifier-bag
 // collections.
-const max_string_slice_per_call = max_lines_per_file
+const string_slice_per_call_max = lines_per_file_max
 
-// Max_coverage_pairs_per_call caps invariant-assertion coverage-pair slices.
+// Coverage_pairs_per_call_max caps invariant-assertion coverage-pair slices.
 // One call may produce one pair per (path, kind) tuple — bounded by the
 // number of tracked identifiers in any one function, which is well below
-// Max_Identifier_Chars × max_credit_kind_chars in practice.
-const max_coverage_pairs_per_call = max_lines_per_file
+// Identifier_Chars_Max × credit_kind_chars_max in practice.
+const coverage_pairs_per_call_max = lines_per_file_max
 
 // Caps the three agent-facing docs at 100 lines. These files are loaded into
 // every agent invocation, so each extra line is a per-call tax on context and
 // attention. Skills that outgrow the budget should be split; CLAUDE.md/AGENTS.md
 // that outgrow it usually mean a repo-level instruction belongs in a
 // sub-package's pair instead.
-const agent_documentation_max_lines = 100
+const agent_documentation_lines_max = 100
 
 // Visual width cap for markdown lines. The 100-rune limit makes prose readable
 // in narrow editor splits and side-by-side diffs.
@@ -554,11 +548,16 @@ const tier_max = 2
 
 // Main_Input bundles every external dependency the linter needs.
 // Construction lives in main.go (production) or fstest.MapFS-backed
-// tests (unit tests) — the library tier never reaches out to ambient
+// tests (unit tests) — the library tier never reaches out to impure
 // state itself.
 type Main_Input struct {
-	Fsys   fs.FS
+	// Fsys is the workspace tree the linter reads; every scanned path is
+	// resolved against it.
+	Fsys fs.FS
+	// Stdout receives the success line and the per-diagnostic report.
 	Stdout io.Writer
+	// Stderr receives hard-error messages that abort the run before any
+	// diagnostic is printed.
 	Stderr io.Writer
 	// Root_Directory is the OS path that matches Fsys. The stream-tier symlink
 	// check needs real-OS access through Readlink and Stat below because
@@ -572,16 +571,19 @@ type Main_Input struct {
 	// such path. nil disables the filter entirely (fstest.MapFS tests
 	// stay green without having to enumerate every entry).
 	Tracked map[string]bool
-	Git     Git_Input
+	// Git carries the commit-history tier's input; the zero value
+	// (Enabled false) skips that tier entirely.
+	Git Git_Input
 	// CPU_Count caps parallelism for the parse and check phases. Injected
 	// by main.go (binds to runtime.NumCPU); tests may leave it 0, which
 	// degrades to single-threaded execution.
 	CPU_Count int
-	// Readlink and Stat are injected real-OS primitives for the symlink
-	// check. Both nil disables the check. main.go binds them to
-	// os.Readlink and os.Stat.
+	// Readlink reads a symlink's target for the stream-tier symlink check;
+	// nil disables that check. main.go binds it to os.Readlink.
 	Readlink func(name string) (target string, err error)
-	Stat     func(name string) (info fs.FileInfo, err error)
+	// Stat resolves a path's metadata for the same symlink check; nil
+	// disables that check. main.go binds it to os.Stat.
+	Stat func(name string) (info fs.FileInfo, err error)
 	// Scope_Prefix narrows the set of files diagnostics are emitted for.
 	// Files outside this slash-separated prefix (relative to Fsys root)
 	// are still walked and parsed — the doctrine checks need the broader
@@ -594,7 +596,11 @@ type Main_Input struct {
 // Git_Commit is one commit's identity for the git-history tier:
 // the full hash and the subject line of the commit message.
 type Git_Commit struct {
-	Hash    string
+	// Hash is the commit's full object name, used to attribute a diagnostic
+	// to the offending commit.
+	Hash string
+	// Subject is the first line of the commit message — the only part the
+	// commit-history rules inspect.
 	Subject string
 }
 
@@ -605,10 +611,18 @@ type Git_Commit struct {
 // brand-new repo) from "main ref present, no offending commits" so CI
 // misconfiguration surfaces as a specific failure instead of silent pass.
 type Git_Input struct {
-	Enabled               bool
+	// Enabled gates the whole tier; the zero value skips git checks so
+	// non-git callers and FS-only tests stay clean.
+	Enabled bool
+	// Main_Reference_Absent flags that no main ref was reachable, turning a
+	// silent pass on a shallow checkout into an explicit diagnostic.
 	Main_Reference_Absent bool
-	Merge_Commits         []Git_Commit
-	Non_Merge_Commits     []Git_Commit
+	// Merge_Commits holds the branch's merge commits, screened for the
+	// no-merge-commits rule (subtree merges excepted).
+	Merge_Commits []Git_Commit
+	// Non_Merge_Commits holds the branch's ordinary commits, screened for
+	// the subject-size, conventional-subject, and fixup rules.
+	Non_Merge_Commits []Git_Commit
 }
 
 // Main is the linter's entry point. Returns the process exit code:
@@ -619,7 +633,7 @@ func Main(input *Main_Input) (code int) {
 
 	// Git tier runs first: repo-metadata-only, doesn't touch the FS, and
 	// surfaces the fastest signal.
-	git_diags := git_input_check(input.Git)
+	git_diags := Git_Input_Check(input.Git)
 	filesystem_diags, err := Check_File_System(&Check_File_System_Input{
 		Fsys:           input.Fsys,
 		Root:           ".",
@@ -628,6 +642,7 @@ func Main(input *Main_Input) (code int) {
 		CPU_Count:      input.CPU_Count,
 		Readlink:       input.Readlink,
 		Stat:           input.Stat,
+		Scope:          input.Scope_Prefix,
 	})
 	if err != nil {
 		fmt.Fprintln(input.Stderr, err)
@@ -699,11 +714,20 @@ func diagnostic_within_scope(d Diagnostic, scope_prefix string) (within bool) {
 // from non-file tiers (git, stream, cross-file) leave Tier zero — they
 // always print and never gate tier-2.
 type Diagnostic struct {
+	// Position is the offending source location, printed as the clickable
+	// file:line:col prefix.
 	Position token.Position
-	Name     string
-	Want     string
-	Message  string
-	Tier     int
+	// Name is the machine-readable rule identity, stable for tooling that
+	// groups or suppresses by rule.
+	Name string
+	// Want is the suggested fix, phrased as the desired post-state.
+	Want string
+	// Message is the human-readable line printed to stdout.
+	Message string
+	// Tier carries the file-check tier for print-time gating: 1 always
+	// prints and suppresses tier-2 globally when present; 2 prints only
+	// when no tier-1 fired; non-file tiers leave it 0.
+	Tier int
 }
 
 type parsed_file struct {
@@ -714,8 +738,13 @@ type parsed_file struct {
 }
 
 var snake_case_re = regexp.MustCompile(`^[a-z][a-z0-9]*(_[a-z0-9]+)*$`)
+
+// The `[A-Z][A-Z0-9]*s?` arm admits the conventional Go pluralized-acronym
+// word (APIs, IDs, URLs): an all-caps run with a single trailing lowercase
+// `s`. Without it, `APIs` would be rejected and the spec heading "Unbounded
+// APIs" could not have a conformant Test_<...>_Unbounded_APIs name.
 var ada_case_re = regexp.MustCompile(
-	`^([A-Z][a-z0-9]*|[A-Z][A-Z0-9]*)(_([A-Z][a-z0-9]*|[A-Z][A-Z0-9]*))*$`)
+	`^([A-Z][a-z0-9]*|[A-Z][A-Z0-9]*s?)(_([A-Z][a-z0-9]*|[A-Z][A-Z0-9]*s?))*$`)
 
 // Conventional Commits subject: lowercase type, optional (scope), optional
 // `!` breaking-change marker, `: `, non-empty description. Scope contents
@@ -724,17 +753,6 @@ var ada_case_re = regexp.MustCompile(
 var conventional_commit_re = regexp.MustCompile(`^[a-z]+(\([^)]+\))?!?: \S`)
 
 func suggest_split_words(name string) (words []string) {
-	defer func() {
-		// Hi(words)=Max_Identifier_Chars is unreachable from any input — the
-		// split flushes only on '_' or an uppercase rune transition, so each
-		// word costs at least one char and the underscore/transition costs
-		// another. Densest packing ("aB_aB_…") emits ~2N/3 words per N chars,
-		// so 128 words would need >128 chars regardless of pattern. Hi(words)
-		// with Lo(name)=1 is the obvious case (one char can't be split into
-		// 128 words); Hi(words) with Hi(name)=128 is the same arithmetic with
-		// the maximum possible input length.
-	}()
-
 	var current []rune
 	runes := []rune(name)
 	flush := func() {
@@ -851,13 +869,6 @@ type scope struct {
 }
 
 func check_shadows(file_set *token.FileSet, file *ast.File, _ []byte) (diags []Diagnostic) {
-	defer func() {
-		// Hi endpoints on both axes are the per-file safety caps for AST size
-		// and diagnostic output; reaching either signals pathological input.
-		// (Lo decls, Hi diags) is logically impossible: zero declarations yield
-		// zero shadow diagnostics.
-	}()
-
 	global_names := make(map[string]bool)
 	for _, declaration := range file.Decls {
 		switch x := declaration.(type) {
@@ -927,9 +938,6 @@ func check_shadows_function_body(
 func check_shadows_function_body_walk_body(
 	file_set *token.FileSet, root_scope *scope, root_statements []ast.Stmt, diags *[]Diagnostic,
 ) {
-	defer func() {
-	}()
-
 	stack := []walk_frame{{Scope: root_scope, Statements: root_statements}}
 	for len(stack) > 0 {
 		top := &stack[len(stack)-1]
@@ -958,9 +966,6 @@ func check_shadows_function_body_walk_body_walk_statement(
 	stack []walk_frame,
 	diags *[]Diagnostic,
 ) (output []walk_frame) {
-	defer func() {
-	}()
-
 	switch x := statement.(type) {
 	case *ast.BlockStmt:
 		if x != nil {
@@ -1025,9 +1030,6 @@ func check_shadows_function_body_walk_body_walk_statement_push_if_chain(
 	stack []walk_frame,
 	diags *[]Diagnostic,
 ) (output []walk_frame) {
-	defer func() {
-	}()
-
 	current := root
 	for current != nil {
 		if_scope := scope_new_block(scope_value)
@@ -1070,9 +1072,6 @@ func check_shadows_function_body_walk_body_walk_statement_push_range_statement(
 	stack []walk_frame,
 	diags *[]Diagnostic,
 ) (output []walk_frame) {
-	defer func() {
-	}()
-
 	range_scope := scope_new_block(scope_value)
 	check_shadows_function_body_walk_body_walk_statement_push_range_statement_add_variable(
 		file_set, range_scope, x.Key, diags)
@@ -1224,7 +1223,7 @@ func check_shadow(
 func Check_File(file_set *token.FileSet, file *ast.File, source []byte) (diags []Diagnostic) {
 	diags = check_file_run_tier([]check_function{
 		check_casing,
-		check_namesd_returns,
+		check_named_returns,
 		check_no_naked_return,
 		check_shadows,
 		check_line_character_count,
@@ -1232,26 +1231,30 @@ func Check_File(file_set *token.FileSet, file *ast.File, source []byte) (diags [
 		check_compound_if,
 		check_comments,
 		check_main_first,
-		check_constant_first, check_assertion_named_constant,
+		check_assertion_named_constant,
 		check_no_discard,
 		check_public_struct_fields,
+		check_struct_field_documentation_comment,
 		check_exported_type_exposes_private,
 		check_no_iota,
+		check_no_fallthrough,
+		check_no_blank_import,
 		check_no_grouped_declaration,
 		check_keyed_struct_init,
 		check_gofmt,
 		check_no_dot_import,
-		check_default_package_alias,
+		check_default_package_name,
 		check_test_package,
 		check_no_empty_function_body,
 		check_no_interfaces,
 		check_input_struct,
-		check_banned_identifiers,
+		check_names_vocabulary,
 		check_test_documentation_comment,
 		check_snap_backtick,
 		check_names,
 		check_no_bare_for,
 		check_exported_documentation_comment,
+		check_blank_synchronization_mutex,
 	}, file_set, file, source)
 	if len(diags) > 0 {
 		for i := range diags {
@@ -1264,7 +1267,6 @@ func Check_File(file_set *token.FileSet, file *ast.File, source []byte) (diags [
 		check_no_function_init, check_no_package_vars,
 		check_unnecessary_method,
 		check_no_third_party_struct_tag,
-		check_blank_synchronization_mutex,
 	}, file_set, file, source)
 	for i := range diags {
 		diags[i].Tier = 2
@@ -1275,16 +1277,6 @@ func Check_File(file_set *token.FileSet, file *ast.File, source []byte) (diags [
 func check_file_run_tier(
 	checks []check_function, file_set *token.FileSet, file *ast.File, source []byte,
 ) (diags []Diagnostic) {
-	defer func() {
-		// Checks is the static tier list (tier-2 has 7, tier-1 has 30);
-		// production callers always pass one of those two slices.
-		// (Lo diags, Hi source) is logically impossible: a Go file at the
-		// byte cap would contain enough declarations to fire at least one
-		// per-tier check, so 0 diags from a max-size file cannot happen.
-		// (Hi diags, *) tuples mark the per-file diag budget cap — the
-		// endpoint guards runaway output, not a working diagnostic count.
-	}()
-
 	per_check := make([][]Diagnostic, len(checks))
 	var wg sync.WaitGroup
 	for i, c := range checks {
@@ -1402,7 +1394,7 @@ func check_casing_method_satisfies_stdlib(function_declaration *ast.FuncDecl) (y
 		})
 }
 
-func check_namesd_returns(file_set *token.FileSet, file *ast.File, _ []byte) (diags []Diagnostic) {
+func check_named_returns(file_set *token.FileSet, file *ast.File, _ []byte) (diags []Diagnostic) {
 
 	ast.Inspect(file, func(n ast.Node) (descend bool) {
 		ft, ok := n.(*ast.FuncType)
@@ -1482,7 +1474,7 @@ func check_no_naked_return(file_set *token.FileSet, file *ast.File, _ []byte) (d
 			}
 			diags = append(diags, Diagnostic{
 				Position: file_set.Position(x.Return),
-				Message:  "bare return is banned; return all values explicitly",
+				Message:  "naked return is banned",
 			})
 		}
 		push_history = append(push_history, pushed)
@@ -1506,26 +1498,33 @@ func check_line_character_count(
 	for _, import_specification := range file.Imports {
 		import_lines[file_set.Position(import_specification.Pos()).Line] = true
 	}
+	// Lines spanned by a backtick raw string literal are exempt: the bytes are
+	// data the author cannot rewrap (a multi-line snapshot, an embedded
+	// template), so the column cap is meaningless there.
+	raw_string_lines := raw_string_literal_lines(file_set, file)
 	line_number := 1
 	column := 0
 	emit := func(n int) {
 		if import_lines[line_number] {
 			return
 		}
+		if raw_string_lines[line_number] {
+			return
+		}
 		diags = append(diags, Diagnostic{
 			Position: token.Position{
 				Filename: filename,
 				Line:     line_number,
-				Column:   max_line_chars + 1,
+				Column:   line_chars_max + 1,
 			},
-			Message: fmt.Sprintf("line is %d chars (max %d)", n, max_line_chars),
+			Message: fmt.Sprintf("line is %d chars (max %d)", n, line_chars_max),
 		})
 	}
 	for len(source) > 0 {
 		r, size := utf8.DecodeRune(source)
 		source = source[size:]
 		if r == '\n' {
-			if column > max_line_chars {
+			if column > line_chars_max {
 				emit(column)
 			}
 			line_number++
@@ -1538,10 +1537,40 @@ func check_line_character_count(
 		}
 		column++
 	}
-	if column > max_line_chars {
+	if column > line_chars_max {
 		emit(column)
 	}
 	return diags
+}
+
+// Returns the set of source lines wholly or partly covered by a backtick raw
+// string literal. The column cap exempts these: their content is verbatim data
+// the author cannot wrap. A long non-string tail sharing such a line slips by —
+// the rare cost of a whole-line exemption.
+func raw_string_literal_lines(
+	file_set *token.FileSet, file *ast.File,
+) (lines map[int]bool) {
+
+	lines = map[int]bool{}
+	ast.Inspect(file, func(n ast.Node) (descend bool) {
+		basic_literal, is_basic_literal := n.(*ast.BasicLit)
+		if !is_basic_literal {
+			return true
+		}
+		if basic_literal.Kind != token.STRING {
+			return true
+		}
+		if !strings.HasPrefix(basic_literal.Value, "`") {
+			return true
+		}
+		first := file_set.Position(basic_literal.Pos()).Line
+		last := file_set.Position(basic_literal.End()).Line
+		for line := first; line <= last; line++ {
+			lines[line] = true
+		}
+		return true
+	})
+	return lines
 }
 
 // TigerStyle: compound conditions hide cases. Split into nested if/else trees so each branch
@@ -1557,7 +1586,6 @@ func check_compound_if(file_set *token.FileSet, file *ast.File, _ []byte) (diags
 			}
 			e = pe.X
 		}
-		return e
 	}
 	ast.Inspect(file, func(n ast.Node) (descend bool) {
 		if_statement, ok := n.(*ast.IfStmt)
@@ -1605,12 +1633,12 @@ func check_function_line_count(
 		start := lbrace_position.Line
 		end := rbrace_position.Line
 		line_count := end - start + 1
-		if line_count > max_function_lines {
+		if line_count > function_lines_max {
 			diags = append(diags, Diagnostic{
 				Position: position,
 				Message: fmt.Sprintf(
 					"%s is %d lines (max %d)",
-					label, line_count, max_function_lines),
+					label, line_count, function_lines_max),
 			})
 		}
 	}
@@ -1635,12 +1663,6 @@ func check_function_line_count(
 // tiers are not exercised — callers that need those use
 // Check_File_System or Main.
 func Check_Source(filename string, source any) (diags []Diagnostic, err error) {
-	defer func() {
-		// Diags at the diag-budget safety cap requires pathological input; a
-		// zero-diag parse failure on a 4-char or 4096-char filename never fires
-		// because parse failures attach at least one diagnostic.
-	}()
-
 	file_set := token.NewFileSet()
 	file, err := parser.ParseFile(
 		file_set, filename, source, parser.SkipObjectResolution|parser.ParseComments)
@@ -1662,13 +1684,28 @@ func Check_Source(filename string, source any) (diags []Diagnostic, err error) {
 // primitives the stream-tier symlink check needs, the tracked-paths
 // filter, and the parallelism cap.
 type Check_File_System_Input struct {
-	Fsys           fs.FS
-	Root           string
+	// Fsys is the workspace tree to scan; all paths resolve against it.
+	Fsys fs.FS
+	// Root is the directory within Fsys to walk from, "." for the whole tree.
+	Root string
+	// Root_Directory is the matching OS path, needed because fs.FS has no
+	// symlink primitive; empty self-disables the symlink check.
 	Root_Directory string
-	Tracked        map[string]bool
-	CPU_Count      int
-	Readlink       func(name string) (target string, err error)
-	Stat           func(name string) (info fs.FileInfo, err error)
+	// Tracked restricts the walk to this path set when non-nil; nil scans
+	// everything (see Main_Input.Tracked).
+	Tracked map[string]bool
+	// CPU_Count caps parse and check parallelism; 0 degrades to serial.
+	CPU_Count int
+	// Readlink reads a symlink's target for the symlink check; nil disables it.
+	Readlink func(name string) (target string, err error)
+	// Stat resolves a path's metadata for the symlink check; nil disables it.
+	Stat func(name string) (info fs.FileInfo, err error)
+	// Scope is the package argument the linter was pointed at (relative to
+	// Fsys root, empty for a whole-workspace run). The SPECIFICATION.md
+	// coverage rule is enforced only for packages under this scope so that
+	// `lint ./some/pkg` demands the file there, while a scopeless run does
+	// not blanket-require it of every package in the tree.
+	Scope string
 }
 
 // Check_File_System runs the stream tier, parses all Go files, and
@@ -1709,14 +1746,24 @@ func Check_File_System(input *Check_File_System_Input) (diags []Diagnostic, err 
 	}
 	output := append([]Diagnostic{}, stream_diags...)
 	output = append(output, parse_diags...)
+	output = append(output, check_path_casing(input.Fsys, input.Tracked)...)
 	output = append(output, check_file_system_run_checks(parsed_files, cpu_count)...)
 	output = append(output, check_file_system_package_split(parsed_files)...)
 	output = append(output, check_file_system_method_prefix(parsed_files)...)
 	output = append(output, check_binary_module_layout(parsed_files, modules)...)
+	output = append(output, check_binary_module_main_package(parsed_files, modules)...)
+	output = append(output,
+		check_binary_module_internal_main(parsed_files, modules, input.Tracked)...)
 	output = append(output, check_shared_library_no_internal(parsed_files, modules)...)
+	output = append(output, check_shared_library_no_main_package(parsed_files, modules)...)
 	output = append(output, check_library_tier_depth(parsed_files, modules)...)
-	output = append(output, check_no_ambient_stdlib(parsed_files, modules)...)
-	return append(output, check_package_documentation_comment(parsed_files)...), nil
+	output = append(output,
+		check_module_definition_and_location(input.Fsys, modules, input.Tracked)...)
+	output = append(output, check_no_impure_stdlib(parsed_files, modules)...)
+	output = append(output, check_transitive_purity(parsed_files, modules)...)
+	output = append(output, check_package_documentation_comment(parsed_files)...)
+	return append(output,
+		check_specification(input.Fsys, parsed_files, modules, input.Scope)...), nil
 }
 
 // Returns the set of directories that contain at least one tracked path,
@@ -1724,13 +1771,6 @@ func Check_File_System(input *Check_File_System_Input) (diags []Diagnostic, err 
 // and rejecting every file one-by-one. Returns nil when tracked is nil so
 // callers can compare against nil to disable filtering.
 func check_file_system_directory_index(tracked map[string]bool) (output map[string]bool) {
-	defer func() {
-		// (Lo tracked, Hi output) is logically impossible: output ⊆
-		// ancestor-set(tracked), so output > tracked is unreachable for
-		// any input. (Hi tracked, *) tuples require a workspace at the
-		// max_parsed_files_per_call safety cap — that endpoint bounds
-		// runaway scans rather than marking a normal workspace size.
-	}()
 	if tracked == nil {
 		return nil
 	}
@@ -1758,8 +1798,9 @@ func check_file_system_directory_index(tracked map[string]bool) (output map[stri
 // would silently pass on shallow CI checkouts. Subtree merges are exempted
 // from the no-merge-commits rule because `git subtree add/pull` legitimately
 // produces a merge commit as its primary mode of operation; there's no
-// rebase equivalent.
-func git_input_check(input Git_Input) (diags []Diagnostic) {
+// rebase equivalent. Exported as the git-history seam: the external lint_test
+// package drives it directly, since Check_File_System never touches commits.
+func Git_Input_Check(input Git_Input) (diags []Diagnostic) {
 	// Main_Reference_Absent only set when Enabled is true (see main_load_git);
 	// (Enabled=false, Main_Reference_Absent=true) is unreachable by construction.
 	if !input.Enabled {
@@ -1780,7 +1821,7 @@ func git_input_check(input Git_Input) (diags []Diagnostic) {
 }
 
 // Flags each merge commit on the branch (rebase-instead violation) plus any
-// over-length subject. Subtree merges are exempt. Split out of git_input_check
+// over-length subject. Subtree merges are exempt. Split out of Git_Input_Check
 // so each commit-slice carries its boundary coverage in a function that fits
 // the length cap.
 func git_input_check_merge_diagnostics(commits []Git_Commit) (diags []Diagnostic) {
@@ -1789,17 +1830,17 @@ func git_input_check_merge_diagnostics(commits []Git_Commit) (diags []Diagnostic
 			continue
 		}
 		filename := "<git:" + git_input_check_short_hash(c.Hash) + ">"
-		if len(c.Subject) > max_commit_subject_chars {
+		if len(c.Subject) > commit_subject_chars_max {
 			diags = append(diags, Diagnostic{
 				Position: token.Position{Filename: filename},
 				Name:     "commit-subject-length",
 				Want: fmt.Sprintf(
-					"subject ≤ %d chars", max_commit_subject_chars),
+					"subject ≤ %d chars", commit_subject_chars_max),
 				Message: fmt.Sprintf(
 					"commit subject is %d chars (max %d)",
-					len(c.Subject), max_commit_subject_chars),
+					len(c.Subject), commit_subject_chars_max),
 			})
-			// Helpers below assert subject ≤ max_commit_subject_chars as
+			// Helpers below assert subject ≤ commit_subject_chars_max as
 			// a precondition; over-limit subjects are fully diagnosed by
 			// the length entry above, so short-circuit before calling them.
 			continue
@@ -1819,23 +1860,23 @@ func git_input_check_merge_diagnostics(commits []Git_Commit) (diags []Diagnostic
 }
 
 // Flags fixup commits (autosquash-instead) and non-conventional subjects on
-// the branch, plus any over-length subject. Split out of git_input_check for
+// the branch, plus any over-length subject. Split out of Git_Input_Check for
 // the same length-cap reason as the merge variant.
 func git_input_check_non_merge_diagnostics(commits []Git_Commit) (diags []Diagnostic) {
 	for _, c := range commits {
 		if c.Subject == "" {
 			continue
 		}
-		if len(c.Subject) > max_commit_subject_chars {
+		if len(c.Subject) > commit_subject_chars_max {
 			filename := "<git:" + git_input_check_short_hash(c.Hash) + ">"
 			diags = append(diags, Diagnostic{
 				Position: token.Position{Filename: filename},
 				Name:     "commit-subject-length",
 				Want: fmt.Sprintf(
-					"subject ≤ %d chars", max_commit_subject_chars),
+					"subject ≤ %d chars", commit_subject_chars_max),
 				Message: fmt.Sprintf(
 					"commit subject is %d chars (max %d)",
-					len(c.Subject), max_commit_subject_chars),
+					len(c.Subject), commit_subject_chars_max),
 			})
 			continue
 		}
@@ -1944,14 +1985,16 @@ func git_input_check_short_hash(h string) (s string) {
 // File-fragmentation check. Splitting code across many tiny files makes a
 // package harder to read top-to-bottom and forces readers to chase symbols
 // across the filesystem. The rule: per package, expected_max files =
-// ceil(total_lines / max_lines_per_file). Source files, test files, and
-// each distinct build-tag constraint form independent groups (a Linux-only
-// file and a generic file genuinely have to live separately). SLOC is total
-// lines per the user's directive — comments and blanks count.
+// ceil(total_lines / lines_per_file_max). Source files, test files,
+// specification_test.go, and each distinct build-tag constraint form
+// independent groups (a Linux-only file and a generic file genuinely have
+// to live separately). SLOC is total lines per the user's directive —
+// comments and blanks count.
 type package_group_key struct {
-	Directory string
-	Is_Test   bool
-	Build     string
+	Directory             string
+	Is_Test               bool
+	Is_Specification_Test bool
+	Build                 string
 }
 
 type package_group_state struct {
@@ -1963,9 +2006,10 @@ func check_file_system_package_split(parsed_files []parsed_file) (diags []Diagno
 	groups := map[package_group_key]*package_group_state{}
 	for _, pf := range parsed_files {
 		key := package_group_key{
-			Directory: path.Dir(pf.Path),
-			Is_Test:   strings.HasSuffix(pf.Path, "_test.go"),
-			Build:     check_file_system_package_split_build_key(pf.File),
+			Directory:             path.Dir(pf.Path),
+			Is_Test:               strings.HasSuffix(pf.Path, "_test.go"),
+			Is_Specification_Test: path.Base(pf.Path) == "specification_test.go",
+			Build:                 check_file_system_package_split_build_key(pf.File),
 		}
 		st := groups[key]
 		if st == nil {
@@ -1993,14 +2037,14 @@ func check_file_system_package_split(parsed_files []parsed_file) (diags []Diagno
 	})
 	for _, key := range keys {
 		st := groups[key]
-		max_files := (st.Lines + max_lines_per_file - 1) / max_lines_per_file
-		if max_files < 1 {
-			max_files = 1
+		files_max := (st.Lines + lines_per_file_max - 1) / lines_per_file_max
+		if files_max < 1 {
+			files_max = 1
 		}
-		if len(st.Files) <= max_files {
+		if len(st.Files) == files_max {
 			continue
 		}
-		diags = append(diags, package_group_key_diag(key, st, max_files))
+		diags = append(diags, package_group_key_diag(key, st, files_max))
 	}
 	return diags
 }
@@ -2008,11 +2052,13 @@ func check_file_system_package_split(parsed_files []parsed_file) (diags []Diagno
 func package_group_key_diag(
 	key package_group_key,
 	st *package_group_state,
-	max_files int,
+	files_max int,
 ) (diag Diagnostic) {
 
 	label := "source"
-	if key.Is_Test {
+	if key.Is_Specification_Test {
+		label = "specification_test"
+	} else if key.Is_Test {
 		label = "test"
 	}
 	build_suffix := ""
@@ -2024,9 +2070,9 @@ func package_group_key_diag(
 		Position: token.Position{Filename: first.Path, Line: 1, Column: 1},
 		Message: fmt.Sprintf(
 			"package %s in %s has %d %s files%s totaling %d lines; "+
-				"max %d (one file per %d lines)",
+				"want %d (one file per %d lines)",
 			first.File.Name.Name, key.Directory, len(st.Files), label, build_suffix,
-			st.Lines, max_files, max_lines_per_file,
+			st.Lines, files_max, lines_per_file_max,
 		),
 	}
 }
@@ -2209,11 +2255,8 @@ func check_file_system_method_prefix_group_for_file(
 			Name:     function_declaration.Name.Name,
 			Want:     prefix + "_<verb>",
 			Message: fmt.Sprintf(
-				"function %s has first parameter of type %s; "+
-					"rename to %s_<verb> (banned-methods convention: "+
-					"free functions over a custom type carry the type "+
-					"name as prefix, in the function's own casing style)",
-				function_declaration.Name.Name, type_name, prefix),
+				"rename %s -> %s_<verb>",
+				function_declaration.Name.Name, prefix),
 		})
 	}
 	return diags
@@ -2524,14 +2567,26 @@ func check_binary_module_layout(
 			Position: token.Position{Filename: pf.Path, Line: 1, Column: 1},
 			Name:     "binary-module-layout",
 			Want:     fmt.Sprintf("non-main packages live under %s/internal/", m.Root),
-			Message: fmt.Sprintf(
-				"binary module %q forbids package %q outside of "+
-					"internal/; move %q under %s/internal/",
-				m.Module_Path, pf.File.Name.Name, directory, m.Root,
-			),
+			Message: binary_module_layout_message(&binary_module_layout_message_input{
+				Root:      m.Root,
+				Directory: directory,
+			}),
 		})
 	}
 	return diags
+}
+
+type binary_module_layout_message_input struct {
+	Root      string
+	Directory string
+}
+
+func binary_module_layout_message(input *binary_module_layout_message_input) (message string) {
+	destination := path.Join(input.Root+"/internal", input.Directory)
+	if input.Root == "." {
+		destination = "./" + destination
+	}
+	return fmt.Sprintf("move %s -> %s", input.Directory, destination)
 }
 
 // True for directories whose first segment is `internal` — the only
@@ -2545,6 +2600,158 @@ func check_binary_module_layout_is_legal(directory string) (legal bool) {
 	}
 	segments := strings.Split(directory, "/")
 	return segments[0] == "internal"
+}
+
+// A binary module exposes exactly one entry point, so its single main
+// package lives at the module root. Scattering binaries under cmd/ — the
+// GOPATH-era convention — multiplies entry points and invites the
+// importable-package leak the layout exists to prevent. A main package
+// anywhere but the root is reported; since a directory holds one package,
+// pinning every main to the root also caps the module at one.
+func check_binary_module_main_package(
+	parsed_files []parsed_file, modules *module_index,
+) (diags []Diagnostic) {
+
+	seen := make(map[string]bool)
+	for _, pf := range parsed_files {
+		if pf.File.Name.Name != "main" {
+			continue
+		}
+		module_index_number := modules.File_To_Module[pf.Path]
+		if module_index_number < 0 {
+			continue
+		}
+		m := modules.Modules[module_index_number]
+		if m.Is_Shared_Library {
+			continue
+		}
+		relative := pf.Path
+		if m.Root != "." {
+			relative = strings.TrimPrefix(pf.Path, m.Root+"/")
+		}
+		directory := path.Dir(relative)
+		if directory == "." {
+			continue
+		}
+		key := m.Root + "\x00" + directory
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
+		diags = append(diags, Diagnostic{
+			Position: token.Position{Filename: pf.Path, Line: 1, Column: 1},
+			Name:     "binary-module-main-package",
+			Want:     "the single main package sits at the module root, no cmd/",
+			Message: fmt.Sprintf(
+				"binary module %q places its main package at %q; the main "+
+					"package must sit at the module root, no cmd/ directory",
+				m.Module_Path, directory,
+			),
+		})
+	}
+	return diags
+}
+
+// A binary module exposes its entry point as a single free func Main in its
+// top-level internal/ package — the composition tier that package main's
+// thin main() delegates to. Pinning it there keeps the real logic out of
+// package main (which Go bars from being imported, hence from being tested)
+// and gives every binary one auditable seam. Zero such functions means the
+// logic has nowhere conformant to live; more than one means the single
+// entry point has fractured. The shared library is exempt: it is imported,
+// never executed, so it owns no entry point. Modules with no visible go.mod
+// resolve to -1 and are skipped, matching the other module-level checks.
+// third_party holds vendored history the workspace does not own, and the
+// Tracked filter drops modules whose go.mod is not first-party — both
+// exemptions mirror check_module_definition_and_location so a whole-repo run
+// never demands an entry point from a toolchain or vendored module.
+func check_binary_module_internal_main(
+	parsed_files []parsed_file, modules *module_index, tracked map[string]bool,
+) (diags []Diagnostic) {
+
+	counts := make([]int, len(modules.Modules))
+	for _, pf := range parsed_files {
+		if strings.HasSuffix(pf.Path, "_test.go") {
+			continue
+		}
+		module_index_number := modules.File_To_Module[pf.Path]
+		if module_index_number < 0 {
+			continue
+		}
+		m := modules.Modules[module_index_number]
+		relative := pf.Path
+		if m.Root != "." {
+			relative = strings.TrimPrefix(pf.Path, m.Root+"/")
+		}
+		if path.Dir(relative) != "internal" {
+			continue
+		}
+		counts[module_index_number] += check_binary_module_internal_main_count(pf.File)
+	}
+	want := "exactly one func Main in internal/ per binary module"
+	for i, m := range modules.Modules {
+		if m.Is_Shared_Library {
+			continue
+		}
+		if m.Root == "third_party" {
+			continue
+		}
+		if strings.HasPrefix(m.Root, "third_party/") {
+			continue
+		}
+		module_file_path := "go.mod"
+		if m.Root != "." {
+			module_file_path = m.Root + "/go.mod"
+		}
+		if tracked != nil {
+			if !tracked[module_file_path] {
+				continue
+			}
+		}
+		position := token.Position{Filename: module_file_path, Line: 1, Column: 1}
+		if counts[i] == 0 {
+			diags = append(diags, Diagnostic{
+				Position: position,
+				Name:     "binary-module-internal-main",
+				Want:     want,
+				Message: fmt.Sprintf(
+					"binary module %q declares no func Main in internal/",
+					m.Module_Path),
+			})
+			continue
+		}
+		if counts[i] > 1 {
+			diags = append(diags, Diagnostic{
+				Position: position,
+				Name:     "binary-module-internal-main",
+				Want:     want,
+				Message: fmt.Sprintf(
+					"binary module %q declares multiple func Main in internal/",
+					m.Module_Path),
+			})
+		}
+	}
+	return diags
+}
+
+// Counts free, top-level functions named Main in one parsed file. A method
+// named Main does not count: the entry point is a package-level function the
+// thin main() can call directly, not a behavior bound to some type.
+func check_binary_module_internal_main_count(file *ast.File) (count int) {
+	for _, declaration := range file.Decls {
+		function, ok := declaration.(*ast.FuncDecl)
+		if !ok {
+			continue
+		}
+		if function.Recv != nil {
+			continue
+		}
+		if function.Name.Name != "Main" {
+			continue
+		}
+		count++
+	}
+	return count
 }
 
 // The shared library exists to be imported by binaries; any internal/
@@ -2590,12 +2797,51 @@ func check_shared_library_no_internal(
 	return diags
 }
 
+// The shared library is imported, never executed, so it declares no
+// package main: an entry point belongs in a binary module, and a main
+// package here is unreachable anyway — Go bars importing it — so it is
+// dead weight the layout forbids outright. Reported once per offending
+// directory.
+func check_shared_library_no_main_package(
+	parsed_files []parsed_file, modules *module_index,
+) (diags []Diagnostic) {
+
+	seen := make(map[string]bool)
+	for _, pf := range parsed_files {
+		if pf.File.Name.Name != "main" {
+			continue
+		}
+		module_index_number := modules.File_To_Module[pf.Path]
+		if module_index_number < 0 {
+			continue
+		}
+		m := modules.Modules[module_index_number]
+		if !m.Is_Shared_Library {
+			continue
+		}
+		key := m.Root + "\x00" + path.Dir(pf.Path)
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
+		diags = append(diags, Diagnostic{
+			Position: token.Position{Filename: pf.Path, Line: 1, Column: 1},
+			Name:     "shared-library-no-main",
+			Want:     "shared library declares no package main",
+			Message: fmt.Sprintf(
+				"shared library %q forbids package main; move the entry "+
+					"point to a binary module", m.Module_Path),
+		})
+	}
+	return diags
+}
+
 // Caps how deep non-main packages may nest before they stop being a
 // recognizable library tier. The rule: at most one non-main Go
 // ancestor in the same module, after canonicalizing major-version
 // segments (v2, v3, …) which are module-versioning convention rather
 // than real package layers. The deepest legal position is the
-// composition tier — the only place where ambient-stdlib binding is
+// composition tier — the only place where impure-stdlib binding is
 // permitted.
 func check_library_tier_depth(
 	parsed_files []parsed_file, modules *module_index,
@@ -2622,17 +2868,8 @@ func check_library_tier_depth(
 		if canonical == "." {
 			continue
 		}
-		ancestors := check_library_tier_depth_ancestors(canonical)
-		count := 0
-		var ancestor_names []string
-		for _, a := range ancestors {
-			if _, has := m.Directory_Package[a]; !has {
-				continue
-			}
-			count++
-			ancestor_names = append(ancestor_names, a)
-		}
-		if count <= 1 {
+		ancestor_names := module_information_library_ancestors(m, canonical)
+		if len(ancestor_names) <= 1 {
 			continue
 		}
 		key := m.Root + "\x00" + canonical
@@ -2646,7 +2883,7 @@ func check_library_tier_depth(
 			Want:     "at most one non-main Go ancestor in module (v[0-9]+ skipped)",
 			Message: fmt.Sprintf(
 				"package %q at %q exceeds library tier; %d non-main ancestors: %v",
-				pf.File.Name.Name, canonical, count, ancestor_names,
+				pf.File.Name.Name, canonical, len(ancestor_names), ancestor_names,
 			),
 		})
 	}
@@ -2672,6 +2909,146 @@ func check_library_tier_depth_ancestors(directory string) (ancestors []string) {
 		current = parent
 	}
 	return ancestors
+}
+
+// Returns the non-main Go ancestor packages of canonical that count toward
+// tier depth. A binary module's top-level internal directory is excluded: all
+// its code sits under internal and func Main lives there, so internal is the
+// directory the count starts from — the same role a shared module's root
+// plays — not a package nested above another. Without the exclusion
+// internal/foo/default would count internal as a second ancestor and read as
+// nested too deep. Shared modules have no internal directory, so the exclusion
+// never affects them.
+func module_information_library_ancestors(
+	m module_information, canonical string,
+) (ancestors []string) {
+	for _, a := range check_library_tier_depth_ancestors(canonical) {
+		if a == "internal" {
+			continue
+		}
+		if _, has := m.Directory_Package[a]; !has {
+			continue
+		}
+		ancestors = append(ancestors, a)
+	}
+	return ancestors
+}
+
+// A module must sit directly at the workspace root and be registered in
+// go.work. Both facts keep module discovery a flat, predictable scan: a
+// go.mod nested below a top-level directory would pull files into a module
+// the workspace never declared, and an unregistered module would never be
+// built or tested even though it carries importable code. Module Location is
+// judged from the go.mod's own depth and so always applies; Module Definition
+// is judged against go.work and so applies only when that file is present —
+// its absence means the linter is scanning a detached subtree where
+// registration cannot be decided. third_party holds vendored history the
+// workspace does not own and is exempt from both. The Tracked filter, when
+// set, drops modules whose go.mod is not part of the repository (an untracked
+// toolchain or cache copy) so a whole-repo run stays focused on first-party
+// code.
+func check_module_definition_and_location(
+	fsys fs.FS, modules *module_index, tracked map[string]bool,
+) (diags []Diagnostic) {
+
+	registered, has_workspace := module_workspace_use_set(fsys)
+	for _, m := range modules.Modules {
+		module_file_path := "go.mod"
+		if m.Root != "." {
+			module_file_path = m.Root + "/go.mod"
+		}
+		if m.Root == "third_party" {
+			continue
+		}
+		if strings.HasPrefix(m.Root, "third_party/") {
+			continue
+		}
+		if tracked != nil {
+			if !tracked[module_file_path] {
+				continue
+			}
+		}
+		position := token.Position{Filename: module_file_path, Line: 1, Column: 1}
+		if strings.Contains(m.Root, "/") {
+			diags = append(diags, Diagnostic{
+				Position: position,
+				Name:     "module-location",
+				Want:     "every module located directly at the workspace root",
+				Message: fmt.Sprintf(
+					"module %q at %q must be located at the repository root",
+					m.Module_Path, m.Root),
+			})
+		}
+		if !has_workspace {
+			continue
+		}
+		if registered[m.Root] {
+			continue
+		}
+		diags = append(diags, Diagnostic{
+			Position: position,
+			Name:     "module-definition",
+			Want:     "every go.mod registered via a go.work use directive",
+			Message: fmt.Sprintf(
+				"module %q at %q is not registered in go.work",
+				m.Module_Path, m.Root),
+		})
+	}
+	return diags
+}
+
+// Reads the workspace file at the Fsys root and returns the set of module
+// roots its use directives name, normalized to the same form as
+// module_information.Root. The second result reports whether go.work was
+// present at all, letting the caller distinguish an empty workspace from a
+// detached scan with no workspace in view.
+func module_workspace_use_set(
+	fsys fs.FS,
+) (registered map[string]bool, present bool) {
+
+	content, err := fs.ReadFile(fsys, "go.work")
+	if err != nil {
+		return nil, false
+	}
+	registered = map[string]bool{}
+	inside_block := false
+	for _, raw_line := range strings.Split(string(content), "\n") {
+		line := strings.TrimSpace(raw_line)
+		if inside_block {
+			if line == ")" {
+				inside_block = false
+				continue
+			}
+			if line == "" {
+				continue
+			}
+			registered[module_workspace_normalize(line)] = true
+			continue
+		}
+		if line == "use (" {
+			inside_block = true
+			continue
+		}
+		if strings.HasPrefix(line, "use ") {
+			directive := strings.TrimSpace(strings.TrimPrefix(line, "use "))
+			registered[module_workspace_normalize(directive)] = true
+		}
+	}
+	return registered, true
+}
+
+// Folds a go.work use path into the directory form module discovery uses for
+// a module root: quotes and a leading ./ stripped, a trailing slash removed,
+// and the workspace root itself spelled ".".
+func module_workspace_normalize(use_path string) (root string) {
+
+	root = strings.Trim(use_path, `"`)
+	root = strings.TrimPrefix(root, "./")
+	root = strings.TrimSuffix(root, "/")
+	if root == "" {
+		return "."
+	}
+	return root
 }
 
 // Every non-main, non-_test package must carry a package doc comment in
@@ -2713,10 +3090,8 @@ func check_package_documentation_comment(
 			groups[k] = st
 		}
 		st.Files = append(st.Files, pf)
-		if pf.File.Doc != nil {
-			if len(pf.File.Doc.List) > 0 {
-				st.Has_Documentation = true
-			}
+		if comment_group_documents(pf.File.Doc) {
+			st.Has_Documentation = true
 		}
 	}
 	keys := make([]key, 0, len(groups))
@@ -2746,6 +3121,626 @@ func check_package_documentation_comment(
 		})
 	}
 	return diags
+}
+
+// SPECIFICATION.md doctrine: every pure Go package carries a SPECIFICATION.md whose
+// `##` headings each map, in order, to a leading Test_<Heading> function in
+// specification_test.go. Enforced here rather than per-file because the
+// contract spans three artifacts — the package directory, the markdown, and
+// the test file — that no single-file checker sees together. Diagnostics
+// attach to paths under the package directory so Main's scope filter limits
+// the coverage requirement to whatever package argument the linter was given.
+func check_specification(
+	fsys fs.FS, parsed_files []parsed_file, index *module_index, scope string,
+) (diags []Diagnostic) {
+	directories := map[string]bool{}
+	has_module := map[string]bool{}
+	impure := map[string]bool{}
+	for _, pf := range parsed_files {
+		directory := path.Dir(pf.Path)
+		directories[directory] = true
+		if index.File_To_Module[pf.Path] >= 0 {
+			has_module[directory] = true
+		}
+		if parsed_file_is_impure_package(pf, index) {
+			impure[directory] = true
+		}
+	}
+	sorted := make([]string, 0, len(directories))
+	for directory := range directories {
+		sorted = append(sorted, directory)
+	}
+	sort.Strings(sorted)
+	for _, directory := range sorted {
+		input := &check_specification_directory_input{
+			Fsys: fsys, Directory: directory, Scope: scope,
+			Has_Module: has_module[directory], Impure: impure[directory],
+		}
+		diags = append(diags, check_specification_directory(input)...)
+	}
+	return diags
+}
+
+type check_specification_directory_input struct {
+	Fsys      fs.FS
+	Directory string
+	Scope     string
+	// Has_Module is true when at least one file in the directory resolves to a
+	// discovered module. The coverage mandate no-ops on module-less directories
+	// — the same rule every other doctrine check follows for File_To_Module == -1
+	// (see build_module_index) — so transient fixtures and subtrees scanned
+	// without their go.mod in view are never required to carry a spec.
+	Has_Module bool
+	// Impure is true when the directory holds an impure package — `package main`
+	// or a `default` package. The contract a SPECIFICATION.md documents is a
+	// pure package's; the impure tier is the composition root, exempt from the
+	// coverage mandate (an existing file is still format-validated).
+	Impure bool
+}
+
+func check_specification_directory(
+	input *check_specification_directory_input,
+) (diags []Diagnostic) {
+	specification_path := path.Join(input.Directory, "SPECIFICATION.md")
+	// Presence is decided by the real directory listing, not fs.ReadFile: a
+	// case-insensitive filesystem resolves SPECIFICATION.md to a differently-cased
+	// file, so only an exact, byte-for-byte entry name counts as the spec.
+	if !specification_directory_has_exact(input.Fsys, specification_path) {
+		// Coverage follows the package argument: an explicit scope demands the
+		// file within that subtree, and an empty scope — a whole-workspace run —
+		// demands it everywhere. Vendored, example, and impure (package main or
+		// `default`) trees are never required to carry one; they host
+		// third-party, illustrative, or composition-root code, not the pure
+		// package contract a SPECIFICATION.md documents.
+		if !input.Has_Module {
+			return nil
+		}
+		if specification_directory_exempt(input.Directory) {
+			return nil
+		}
+		if input.Impure {
+			return nil
+		}
+		covered := input.Scope == ""
+		if !covered {
+			covered = input.Directory == input.Scope
+		}
+		if !covered {
+			covered = strings.HasPrefix(input.Directory, input.Scope+"/")
+		}
+		if !covered {
+			return nil
+		}
+		return []Diagnostic{specification_coverage_diag(input.Directory)}
+	}
+	content, err := fs.ReadFile(input.Fsys, specification_path)
+	if err != nil {
+		return []Diagnostic{specification_coverage_diag(input.Directory)}
+	}
+	lines := strings.Split(string(content), "\n")
+	leaves, format_diags := check_specification_format(specification_path, lines)
+	diags = append(diags, format_diags...)
+	return append(diags, check_specification_tests(input.Fsys, input.Directory, leaves)...)
+}
+
+// Validates the structural rules a SPECIFICATION.md must obey — no preamble
+// before the first heading, a single `##` heading level, unique headings of
+// letters-and-digits words, a blank line either side of every heading, a
+// contiguous body of one to three lines per section. Line width is not checked
+// here: check_stream_markdown_line_max enforces it for every .md file. Returns
+// the headings in source order so the test-correspondence rules can use them.
+func check_specification_format(
+	specification_path string, lines []string,
+) (leaves []string, diags []Diagnostic) {
+	headings, scan_diags := specification_scan_headings(specification_path, lines)
+	diags = append(diags, scan_diags...)
+	leaf_lines, names, leaf_diags := specification_leaves(specification_path, headings)
+	diags = append(diags, leaf_diags...)
+	body_diags := specification_scan_bodies(specification_path, lines, headings, leaf_lines)
+	return names, append(diags, body_diags...)
+}
+
+// One heading found in a SPECIFICATION.md: its level (2 or 3), 1-based source
+// line, the raw text after the marker, and its Ada_Case form.
+type specification_heading struct {
+	Level int
+	Line  int
+	Raw   string
+	Ada   string
+}
+
+func specification_position(path string, line int) (position token.Position) {
+	return token.Position{Filename: path, Line: line}
+}
+
+// Reports a line's heading level: 3 for "### ", 1 for "# ", 0 otherwise.
+func specification_heading_parse(line string) (level int, raw string) {
+	if strings.HasPrefix(line, "### ") {
+		return 3, strings.TrimPrefix(line, "### ")
+	}
+	if strings.HasPrefix(line, "# ") {
+		return 1, strings.TrimPrefix(line, "# ")
+	}
+	return 0, ""
+}
+
+// Pass one: collect every ## / ### heading and emit the diagnostics that need
+// only line context — bad heading levels, content before the first heading,
+// blank-line fencing, and non-letter/digit heading words.
+func specification_scan_headings(
+	specification_path string, lines []string,
+) (headings []specification_heading, diags []Diagnostic) {
+	seen_heading := false
+	for i, line := range lines {
+		position := specification_position(specification_path, i+1)
+		level, raw := specification_heading_parse(line)
+		if level == 0 {
+			if strings.HasPrefix(line, "#") {
+				diags = append(diags, specification_heading_level_diag(position))
+				continue
+			}
+			if strings.TrimSpace(line) == "" {
+				continue
+			}
+			if !seen_heading {
+				diags = append(diags, specification_preamble_diag(position))
+			}
+			continue
+		}
+		headings = append(headings, specification_heading{
+			Level: level, Line: i + 1, Raw: raw, Ada: specification_ada_case(raw)})
+		diags = append(diags, specification_heading_line_diags(position, lines, i, raw)...)
+		seen_heading = true
+	}
+	return headings, diags
+}
+
+// The per-heading diagnostics for one heading line: non-letter/digit words and
+// blank-line fencing.
+func specification_heading_line_diags(
+	position token.Position, lines []string, i int, raw string,
+) (diags []Diagnostic) {
+	if specification_heading_words_invalid(raw) {
+		diags = append(diags, specification_heading_words_diag(position, raw))
+	}
+	return append(diags, check_specification_blank_lines(position, lines, i, raw)...)
+}
+
+// State for the tree walk that determines leaves: a ## with no ### child is a
+// leaf named Ada(##); each ### is a leaf named Ada(##)_Ada(###). ## names are
+// unique file-wide; ### names are unique within their parent ##.
+type specification_tree struct {
+	Path       string
+	Seen_H2    map[string]bool
+	Seen_H3    map[string]bool
+	Parent     specification_heading
+	Has_Child  bool
+	Leaf_Lines map[int]bool
+	Names      []string
+}
+
+// Pass two: walk the headings into the tree, returning the lines that open a
+// leaf section, the ordered leaf test-name bases, and the uniqueness diagnostics.
+func specification_leaves(
+	specification_path string, headings []specification_heading,
+) (leaf_lines map[int]bool, names []string, diags []Diagnostic) {
+	tree := &specification_tree{
+		Path: specification_path, Seen_H2: map[string]bool{},
+		Seen_H3: map[string]bool{}, Leaf_Lines: map[int]bool{},
+	}
+	for _, heading := range headings {
+		diags = append(diags, specification_tree_add(tree, heading)...)
+	}
+	specification_tree_close(tree)
+	return tree.Leaf_Lines, tree.Names, diags
+}
+
+func specification_tree_add(
+	tree *specification_tree, heading specification_heading,
+) (diags []Diagnostic) {
+	if heading.Level == 3 {
+		return specification_tree_child(tree, heading)
+	}
+	specification_tree_close(tree)
+	if tree.Seen_H2[heading.Raw] {
+		diags = append(diags, specification_tree_duplicate(tree, heading))
+	}
+	tree.Seen_H2[heading.Raw] = true
+	tree.Parent = heading
+	tree.Has_Child = false
+	tree.Seen_H3 = map[string]bool{}
+	return diags
+}
+
+func specification_tree_child(
+	tree *specification_tree, heading specification_heading,
+) (diags []Diagnostic) {
+	position := specification_position(tree.Path, heading.Line)
+	if tree.Parent.Line == 0 {
+		return []Diagnostic{specification_orphan_diag(position, heading.Raw)}
+	}
+	tree.Has_Child = true
+	if tree.Seen_H3[heading.Raw] {
+		diags = append(diags, specification_tree_duplicate(tree, heading))
+	}
+	tree.Seen_H3[heading.Raw] = true
+	tree.Leaf_Lines[heading.Line] = true
+	tree.Names = append(tree.Names, tree.Parent.Ada+"_"+heading.Ada)
+	return diags
+}
+
+// Records the just-finished ## as a leaf when it gained no ### child.
+func specification_tree_close(tree *specification_tree) {
+	if tree.Parent.Line == 0 {
+		return
+	}
+	if tree.Has_Child {
+		return
+	}
+	tree.Leaf_Lines[tree.Parent.Line] = true
+	tree.Names = append(tree.Names, tree.Parent.Ada)
+}
+
+func specification_tree_duplicate(
+	tree *specification_tree, heading specification_heading,
+) (diag Diagnostic) {
+	position := specification_position(tree.Path, heading.Line)
+	return specification_heading_duplicate_diag(position, heading.Raw)
+}
+
+// State for the body pass: the currently open section, its accumulated body line
+// count, and whether a blank line has already interrupted that body.
+type specification_body struct {
+	Path       string
+	Leaf_Lines map[int]bool
+	Open       specification_heading
+	Body       int
+	Blank      bool
+}
+
+// Pass three: attribute body lines to their opening heading, flagging oversized
+// sections, gaps in a section body, and leaf sections with no body. A branch ##
+// intro is size- and gap-checked but, not being a leaf, may be empty.
+func specification_scan_bodies(
+	specification_path string, lines []string,
+	headings []specification_heading, leaf_lines map[int]bool,
+) (diags []Diagnostic) {
+	at := map[int]specification_heading{}
+	for _, heading := range headings {
+		at[heading.Line] = heading
+	}
+	state := &specification_body{Path: specification_path, Leaf_Lines: leaf_lines}
+	for i, line := range lines {
+		heading, is_heading := at[i+1]
+		if is_heading {
+			diags = append(diags, specification_body_close(state)...)
+			state.Open = heading
+			state.Body = 0
+			state.Blank = false
+			continue
+		}
+		if strings.HasPrefix(line, "#") {
+			diags = append(diags, specification_body_close(state)...)
+			state.Open = specification_heading{}
+			state.Body = 0
+			state.Blank = false
+			continue
+		}
+		if strings.TrimSpace(line) == "" {
+			if state.Body > 0 {
+				state.Blank = true
+			}
+			continue
+		}
+		if state.Open.Line == 0 {
+			continue
+		}
+		diags = append(diags, specification_body_line(state, i+1)...)
+	}
+	return append(diags, specification_body_close(state)...)
+}
+
+func specification_body_line(
+	state *specification_body, line int,
+) (diags []Diagnostic) {
+	position := specification_position(state.Path, line)
+	raw := state.Open.Raw
+	if state.Blank {
+		diags = append(diags, specification_section_contiguity_diag(position, raw))
+		state.Blank = false
+	}
+	state.Body++
+	if state.Body == 4 {
+		diags = append(diags, specification_section_diag(position, raw))
+	}
+	return diags
+}
+
+// Emits the body-required diagnostic when a leaf section closed with no body.
+func specification_body_close(state *specification_body) (diags []Diagnostic) {
+	if state.Open.Line == 0 {
+		return nil
+	}
+	if !state.Leaf_Lines[state.Open.Line] {
+		return nil
+	}
+	if state.Body != 0 {
+		return nil
+	}
+	position := specification_position(state.Path, state.Open.Line)
+	return []Diagnostic{specification_section_body_diag(position, state.Open.Raw)}
+}
+
+// True when a heading carries a word with a rune that is neither a letter nor a
+// digit. Such a rune survives into the normalized Test_<Heading> name and makes
+// it an illegal Go identifier, so the test-correspondence rule could never be
+// satisfied for that heading.
+func specification_heading_words_invalid(heading string) (invalid bool) {
+	for _, word := range strings.Fields(heading) {
+		for _, letter := range word {
+			if unicode.IsLetter(letter) {
+				continue
+			}
+			if unicode.IsDigit(letter) {
+				continue
+			}
+			return true
+		}
+	}
+	return false
+}
+
+func specification_preamble_diag(position token.Position) (diag Diagnostic) {
+	return Diagnostic{
+		Position: position, Name: "specification",
+		Want: "open with a heading",
+		Message: fmt.Sprintf("%s:%d content precedes the first heading",
+			position.Filename, position.Line),
+	}
+}
+
+func specification_section_body_diag(
+	position token.Position, heading string,
+) (diag Diagnostic) {
+	return Diagnostic{
+		Position: position, Name: "specification",
+		Want: "give the section a body line",
+		Message: fmt.Sprintf("%s:%d section %q has no body line",
+			position.Filename, position.Line, heading),
+	}
+}
+
+func specification_section_contiguity_diag(
+	position token.Position, heading string,
+) (diag Diagnostic) {
+	return Diagnostic{
+		Position: position, Name: "specification",
+		Want: "keep the section body contiguous",
+		Message: fmt.Sprintf("%s:%d section %q has a blank line between body lines",
+			position.Filename, position.Line, heading),
+	}
+}
+
+func specification_heading_duplicate_diag(
+	position token.Position, heading string,
+) (diag Diagnostic) {
+	return Diagnostic{
+		Position: position, Name: "specification",
+		Want: "make every heading unique",
+		Message: fmt.Sprintf("%s:%d heading %q is duplicated",
+			position.Filename, position.Line, heading),
+	}
+}
+
+func specification_heading_words_diag(
+	position token.Position, heading string,
+) (diag Diagnostic) {
+	return Diagnostic{
+		Position: position, Name: "specification",
+		Want: "use only letters and digits in headings",
+		Message: fmt.Sprintf("%s:%d heading %q must use only letters and digits",
+			position.Filename, position.Line, heading),
+	}
+}
+
+func specification_heading_level_diag(position token.Position) (diag Diagnostic) {
+	return Diagnostic{
+		Position: position, Name: "specification", Want: "use a # or ### heading",
+		Message: fmt.Sprintf("%s:%d uses a heading that is not level # or ###",
+			position.Filename, position.Line),
+	}
+}
+
+func specification_orphan_diag(
+	position token.Position, heading string,
+) (diag Diagnostic) {
+	return Diagnostic{
+		Position: position, Name: "specification",
+		Want: "nest the subheading under a #",
+		Message: fmt.Sprintf("%s:%d ### %q has no parent #",
+			position.Filename, position.Line, heading),
+	}
+}
+
+func specification_section_diag(
+	position token.Position, heading string,
+) (diag Diagnostic) {
+	return Diagnostic{
+		Position: position, Name: "specification",
+		Want: "limit sections to three lines",
+		Message: fmt.Sprintf("%s:%d section %q exceeds three lines",
+			position.Filename, position.Line, heading),
+	}
+}
+
+// Reports whether the directory holds an entry whose name is exactly `name`,
+// byte for byte. fs.ReadFile is insufficient on a case-insensitive filesystem
+// (it resolves a differently-cased file), so the doctrine's exact-name rule must
+// consult the real directory listing.
+func specification_directory_has_exact(
+	fsys fs.FS, file_path string,
+) (present bool) {
+	entries, err := fs.ReadDir(fsys, path.Dir(file_path))
+	if err != nil {
+		return false
+	}
+	name := path.Base(file_path)
+	for _, entry := range entries {
+		if entry.Name() == name {
+			return true
+		}
+	}
+	return false
+}
+
+// A directory is exempt from the coverage mandate when any path segment is
+// `third_party` (vendored code in a separate module) or `examples`
+// (illustrative, not a real package contract). An existing SPECIFICATION.md in
+// such a tree is still format-validated; it just is never required to exist.
+func specification_directory_exempt(directory string) (exempt bool) {
+	for _, segment := range strings.Split(directory, "/") {
+		if segment == "third_party" {
+			return true
+		}
+		if segment == "examples" {
+			return true
+		}
+	}
+	return false
+}
+
+func specification_coverage_diag(directory string) (diag Diagnostic) {
+	return Diagnostic{
+		Position: token.Position{Filename: path.Join(directory, "SPECIFICATION.md")},
+		Name:     "specification",
+		Want:     "add SPECIFICATION.md",
+		Message:  fmt.Sprintf("package %q is missing SPECIFICATION.md", directory),
+	}
+}
+
+func specification_test_file_diag(directory string) (diag Diagnostic) {
+	return Diagnostic{
+		Position: token.Position{Filename: path.Join(directory, "specification_test.go")},
+		Name:     "specification",
+		Want:     "add specification_test.go",
+		Message:  fmt.Sprintf("package %q is missing specification_test.go", directory),
+	}
+}
+
+func check_specification_blank_lines(
+	position token.Position, lines []string, i int, heading string,
+) (diags []Diagnostic) {
+	preceded := i > 0
+	if preceded {
+		preceded = lines[i-1] == ""
+	}
+	if !preceded {
+		diags = append(diags, Diagnostic{
+			Position: position, Name: "specification",
+			Want: "precede heading with a blank line",
+			Message: fmt.Sprintf("%s:%d heading %q is not preceded by a blank line",
+				position.Filename, i+1, heading),
+		})
+	}
+	followed := i+1 < len(lines)
+	if followed {
+		followed = lines[i+1] == ""
+	}
+	if !followed {
+		diags = append(diags, Diagnostic{
+			Position: position, Name: "specification",
+			Want: "follow heading with a blank line",
+			Message: fmt.Sprintf("%s:%d heading %q is not followed by a blank line",
+				position.Filename, i+1, heading),
+		})
+	}
+	return diags
+}
+
+// Verifies specification_test.go exists and that its leading function
+// declarations are exactly Test_<Heading> for each heading, in heading order.
+// Comparing by index enforces both the per-heading correspondence and the
+// "tests at the very top, in order" rule in one pass: a helper or a misordered
+// test shifts the sequence and surfaces as a mismatch at that position.
+func check_specification_tests(
+	fsys fs.FS, directory string, leaves []string,
+) (diags []Diagnostic) {
+	test_path := path.Join(directory, "specification_test.go")
+	// Exact name first, for the same reason as SPECIFICATION.md: a
+	// case-insensitive filesystem would otherwise let a differently-cased file
+	// stand in for specification_test.go.
+	if !specification_directory_has_exact(fsys, test_path) {
+		return []Diagnostic{specification_test_file_diag(directory)}
+	}
+	functions, ok := check_specification_test_function_names(fsys, test_path)
+	if !ok {
+		return []Diagnostic{specification_test_file_diag(directory)}
+	}
+	for i, leaf := range leaves {
+		want := "Test_" + leaf
+		matched := i < len(functions)
+		if matched {
+			matched = functions[i] == want
+		}
+		if matched {
+			continue
+		}
+		diags = append(diags, Diagnostic{
+			Position: token.Position{Filename: test_path},
+			Name:     "specification",
+			Want:     want,
+			Message: fmt.Sprintf(
+				"%s:%d needs %s for leaf %q (in order, at top)",
+				test_path, i+1, want, leaf),
+		})
+	}
+	return diags
+}
+
+func check_specification_test_function_names(
+	fsys fs.FS, test_path string,
+) (functions []string, ok bool) {
+	content, err := fs.ReadFile(fsys, test_path)
+	if err != nil {
+		return nil, false
+	}
+	file_set := token.NewFileSet()
+	file, parse_err := parser.ParseFile(
+		file_set, test_path, content, parser.SkipObjectResolution)
+	if parse_err != nil {
+		return nil, true
+	}
+	for _, declaration := range file.Decls {
+		if generic, is_generic := declaration.(*ast.GenDecl); is_generic {
+			if generic.Tok == token.IMPORT {
+				continue
+			}
+			// A var/const/type before the heading tests breaks the "tests at the
+			// very top" rule. Surface it as a slot that can never match a
+			// Test_<Heading> name, so the ordering check flags it at its position.
+			functions = append(functions, generic.Tok.String())
+			continue
+		}
+		function, is_function := declaration.(*ast.FuncDecl)
+		if !is_function {
+			continue
+		}
+		functions = append(functions, function.Name.Name)
+	}
+	return functions, true
+}
+
+// Normalizes a heading to the Ada_Case form used for its test name: each
+// space-separated word's first rune is upper-cased and the words are joined
+// with underscores ("Test File Name" -> "Test_File_Name").
+func specification_ada_case(heading string) (name string) {
+	words := strings.Fields(heading)
+	for i, word := range words {
+		runes := []rune(word)
+		runes[0] = unicode.ToUpper(runes[0])
+		words[i] = string(runes)
+	}
+	return strings.Join(words, "_")
 }
 
 // Runs checks per file in parallel — CPU bound, capped at the injected
@@ -2897,7 +3892,7 @@ func check_no_recursion(file_set *token.FileSet, file *ast.File, _ []byte) (diag
 	for _, e := range graph.Edges {
 		adj[e.Caller] = append(adj[e.Caller], e)
 	}
-	return check_no_recursion_find_cycles(file_set, graph.Caller_Order, adj)
+	return check_no_recursion_find_cycles(graph.Caller_Order, adj)
 }
 
 type file_call_graph struct {
@@ -3090,17 +4085,9 @@ func recursion_visitor_enter_record_call_edge(v *recursion_visitor, call *ast.Ca
 // edge (so a strongly-connected component with multiple back edges yields
 // multiple diagnostics, one per cycle).
 func check_no_recursion_find_cycles(
-	file_set *token.FileSet,
 	callers []string,
 	adj map[string][]call_edge,
 ) (diags []Diagnostic) {
-	defer func() {
-		// Diags, callers, adj all bounded by per-file safety caps; (Hi, *) and
-		// (*, Hi) endpoint pairings are pathological input. (Lo callers, Hi
-		// adj) is logically impossible: max edges require at least one caller
-		// at the endpoint.
-	}()
-
 	const (
 		white = 0
 		gray  = 1
@@ -3112,13 +4099,12 @@ func check_no_recursion_find_cycles(
 			continue
 		}
 		diags = append(diags,
-			check_no_recursion_find_cycles_dfs(file_set, start, color, adj)...)
+			check_no_recursion_find_cycles_dfs(start, color, adj)...)
 	}
 	return diags
 }
 
 func check_no_recursion_find_cycles_dfs(
-	file_set *token.FileSet,
 	start string,
 	color map[string]int,
 	adj map[string][]call_edge,
@@ -3159,33 +4145,16 @@ func check_no_recursion_find_cycles_dfs(
 			cycle_start := on_path[e.Callee]
 			cycle_nodes := append([]string{}, path[cycle_start:]...)
 			diags = append(diags,
-				check_no_recursion_find_cycles_dfs_diag(
-					file_set, cycle_nodes, e, adj))
+				check_no_recursion_find_cycles_dfs_diag(cycle_nodes, e))
 		}
 	}
 	return diags
 }
 
 func check_no_recursion_find_cycles_dfs_diag(
-	file_set *token.FileSet,
 	cycle_nodes []string,
 	back_edge call_edge,
-	adj map[string][]call_edge,
 ) (diag Diagnostic) {
-	// Shadowed back edges fail-fatal via the per-edge Is_Always below — a
-	// Sometimes axis on back_edge.Shadowed has no reachable true bucket,
-	// so coverage isn't tracked here.
-	// Collect all edges traversed in the cycle, so we can assert the
-	// no-shadow invariant over every one — not just the back edge.
-	for i_index := 0; i_index < len(cycle_nodes)-1; i_index++ {
-		from := cycle_nodes[i_index]
-		to := cycle_nodes[i_index+1]
-		for _, ce := range adj[from] {
-			if ce.Callee == to {
-				break
-			}
-		}
-	}
 	return Diagnostic{
 		Position: back_edge.Position,
 		Message:  check_no_recursion_find_cycles_dfs_diag_message(cycle_nodes),
@@ -3405,6 +4374,97 @@ func check_public_struct_fields_named_capitalize(name string) (output_string str
 	return string(rs)
 }
 
+// Every field of an exported package-level struct must carry its own doc
+// comment. The struct-level comment documents the type as a whole; a reader
+// scanning a single field otherwise sees its name and type but no statement
+// of what it holds or why it exists. The check covers every file-scope
+// exported struct, package main included — an exported field is a reader's
+// surface whether or not the package is importable. Only _test.go fixtures
+// are exempt, since they deliberately model violations. Embedded fields are
+// skipped because their meaning is their type, and blank-named fields because
+// they exist only for padding or a compile-time assertion. A trailing line
+// comment binds to ast.Field.Comment rather than Doc, so it does not satisfy
+// the rule: the doc must lead the field.
+func check_struct_field_documentation_comment(
+	file_set *token.FileSet, file *ast.File, _ []byte,
+) (diags []Diagnostic) {
+
+	tok_file := file_set.File(file.Pos())
+	if tok_file == nil {
+		return nil
+	}
+	if strings.HasSuffix(tok_file.Name(), "_test.go") {
+		return nil
+	}
+	for _, declaration := range file.Decls {
+		generic_declaration, ok := declaration.(*ast.GenDecl)
+		if !ok {
+			continue
+		}
+		if generic_declaration.Tok != token.TYPE {
+			continue
+		}
+		for _, specification := range generic_declaration.Specs {
+			type_specification, is_type := specification.(*ast.TypeSpec)
+			if !is_type {
+				continue
+			}
+			if !ast.IsExported(type_specification.Name.Name) {
+				continue
+			}
+			struct_type, is_struct := type_specification.Type.(*ast.StructType)
+			if !is_struct {
+				continue
+			}
+			check_struct_field_documentation_comment_fields(
+				&check_struct_field_documentation_comment_fields_input{
+					File_Set:    file_set,
+					Struct_Name: type_specification.Name.Name,
+					Struct_Type: struct_type,
+					Diags:       &diags,
+				})
+		}
+	}
+	return diags
+}
+
+type check_struct_field_documentation_comment_fields_input struct {
+	File_Set    *token.FileSet
+	Struct_Name string
+	Struct_Type *ast.StructType
+	Diags       *[]Diagnostic
+}
+
+func check_struct_field_documentation_comment_fields(
+	input *check_struct_field_documentation_comment_fields_input,
+) {
+
+	if input.Struct_Type.Fields == nil {
+		return
+	}
+	for _, field := range input.Struct_Type.Fields.List {
+		if len(field.Names) == 0 {
+			continue
+		}
+		if field.Doc != nil {
+			continue
+		}
+		for _, name := range field.Names {
+			if name.Name == "_" {
+				continue
+			}
+			*input.Diags = append(*input.Diags, Diagnostic{
+				Position: input.File_Set.Position(name.Pos()),
+				Name:     "struct-field-doc",
+				Want:     "doc comment leading every exported-struct field",
+				Message: fmt.Sprintf(
+					"field %s.%s lacks a doc comment",
+					input.Struct_Name, name.Name),
+			})
+		}
+	}
+}
+
 // An exported struct field or alias whose type resolves to an unexported
 // named identifier produces an opaque slot in the exported surface:
 // cross-package consumers receive the value but cannot construct, name,
@@ -3544,8 +4604,8 @@ func check_exported_type_exposes_private_walk(
 				}
 				*input.Diags = append(*input.Diags, Diagnostic{
 					Position: input.File_Set.Position(identifier.Pos()),
-					Message: fmt.Sprintf("exported type %s exposes unexported "+
-						"type %s",
+					Message: fmt.Sprintf(
+						"public type %s contains private type %s",
 						input.Entry_Name, identifier.Name),
 				})
 				continue
@@ -3614,7 +4674,7 @@ func check_exported_type_exposes_private_check(
 	*input.Diags = append(*input.Diags, Diagnostic{
 		Position: input.File_Set.Position(identifier.Pos()),
 		Message: fmt.Sprintf(
-			"exported type %s exposes unexported type %s",
+			"public type %s contains private type %s",
 			input.Entry_Name,
 			identifier.Name),
 	})
@@ -3665,43 +4725,51 @@ func check_no_iota(file_set *token.FileSet, file *ast.File, _ []byte) (diags []D
 		}
 		diags = append(diags, Diagnostic{
 			Position: file_set.Position(identifier.Pos()),
-			Message:  "iota is banned; spell out each constant value",
+			Message:  "iota is banned",
 		})
 		return true
 	})
 	return diags
 }
 
-// Constants are the file's compile-time facts — magic numbers, error
-// strings, table sizes, version tags. A reader scanning a new file should
-// see them up front, before runtime state (vars), types, and the functions
-// that consume them. Letting consts drift below other declarations forces
-// the reader to scroll past behavior to learn the inputs that behavior is
-// keyed on. Function-local consts are exempt: their scope is the function,
-// not the file, so their proximity to the code that uses them is the point.
-func check_constant_first(file_set *token.FileSet, file *ast.File, _ []byte) (diags []Diagnostic) {
+// Fallthrough makes a case silently run the next one — a control jump that is
+// easy to miss and easy to leave dangling after an edit. Spell out the shared
+// logic in each case instead.
+func check_no_fallthrough(file_set *token.FileSet, file *ast.File, _ []byte) (diags []Diagnostic) {
 
-	seen_non_constant := false
-	for _, declaration := range file.Decls {
-		switch d := declaration.(type) {
-		case *ast.FuncDecl:
-			seen_non_constant = true
-		case *ast.GenDecl:
-			if d.Tok == token.IMPORT {
-				continue
-			}
-			if d.Tok == token.CONST {
-				if seen_non_constant {
-					diags = append(diags, Diagnostic{
-						Position: file_set.Position(d.Pos()),
-						Message: "const declaration must precede all " +
-							"var/type/func declarations in the file",
-					})
-				}
-				continue
-			}
-			seen_non_constant = true
+	ast.Inspect(file, func(n ast.Node) (descend bool) {
+		branch, ok := n.(*ast.BranchStmt)
+		if !ok {
+			return true
 		}
+		if branch.Tok != token.FALLTHROUGH {
+			return true
+		}
+		diags = append(diags, Diagnostic{
+			Position: file_set.Position(branch.Pos()),
+			Message:  "fallthrough is banned",
+		})
+		return true
+	})
+	return diags
+}
+
+// A blank import runs a package's init for its side effects alone, smuggling
+// behavior in past the import list where no caller names it. Depend on the
+// package explicitly instead.
+func check_no_blank_import(file_set *token.FileSet, file *ast.File, _ []byte) (diags []Diagnostic) {
+
+	for _, import_specification := range file.Imports {
+		if import_specification.Name == nil {
+			continue
+		}
+		if import_specification.Name.Name != "_" {
+			continue
+		}
+		diags = append(diags, Diagnostic{
+			Position: file_set.Position(import_specification.Pos()),
+			Message:  "blank import is banned",
+		})
 	}
 	return diags
 }
@@ -4208,49 +5276,47 @@ func check_no_dot_import(file_set *token.FileSet, file *ast.File, _ []byte) (dia
 	return diags
 }
 
-// Composition-tier packages named `<X>_default` re-export the library `<X>`
-// and must shadow its name at the import site. This is what lets callers
-// keep writing `snap.Init(...)` / `snap.Edit(...)` against the OS-bound
-// default — and, critically, what lets snap.Edit's source-line rewriter
-// find the literal `snap.Edit(` it searches for. An import without the
-// alias would surface the path's basename (`snap_default`), and the
-// rewriter's search would never match.
-func check_default_package_alias(
+// A composition-tier package lives in a directory named `default` nested under
+// its library and re-exports it. It must declare the package clause of its
+// parent directory — `foo/default` declares `package foo` — so that importing
+// `foo/default` binds to `foo` and shadows the library, letting callers read as
+// if no split had happened (and letting snap.Edit's source-line rewriter find
+// the literal `snap.Edit(` it searches for). The directory name `default` is a
+// Go keyword and so cannot itself be a package name; the parent name is the
+// natural and required choice.
+func check_default_package_name(
 	file_set *token.FileSet, file *ast.File, _ []byte,
 ) (diags []Diagnostic) {
 
-	for _, import_specification := range file.Imports {
-		path := strings.Trim(import_specification.Path.Value, `"`)
-		slash_offset := strings.LastIndex(path, "/")
-		last_segment := path
-		if slash_offset >= 0 {
-			last_segment = path[slash_offset+1:]
-		}
-		if !strings.HasSuffix(last_segment, "_default") {
-			continue
-		}
-		want := strings.TrimSuffix(last_segment, "_default")
-		if want == "" {
-			continue
-		}
-		got := ""
-		if import_specification.Name != nil {
-			got = import_specification.Name.Name
-		}
-		if got == want {
-			continue
-		}
-		diags = append(diags, Diagnostic{
-			Position: file_set.Position(import_specification.Pos()),
-			Name:     "default-package-alias",
-			Want:     fmt.Sprintf("import %s %q", want, path),
-			Message: fmt.Sprintf(
-				"%q must be imported with alias %q; *_default packages re-export "+
-					"their library and must shadow its name",
-				path, want,
-			),
-		})
+	tok_file := file_set.File(file.Pos())
+	if tok_file == nil {
+		return nil
 	}
+	directory := path.Dir(tok_file.Name())
+	if path.Base(directory) != "default" {
+		return nil
+	}
+	parent := path.Base(path.Dir(directory))
+	if parent == "." {
+		return nil
+	}
+	if parent == "/" {
+		return nil
+	}
+	// Strip _test so an external test package (`package foo_test`) in the
+	// default directory is judged by its base name, not rejected outright.
+	if strings.TrimSuffix(file.Name.Name, "_test") == parent {
+		return nil
+	}
+	diags = append(diags, Diagnostic{
+		Position: file_set.Position(file.Name.Pos()),
+		Name:     "default-package-name",
+		Want:     fmt.Sprintf("package %s", parent),
+		Message: fmt.Sprintf(
+			"default package must declare 'package %s', not 'package %s'; it "+
+				"shadows the library it re-exports",
+			parent, file.Name.Name),
+	})
 	return diags
 }
 
@@ -4288,46 +5354,70 @@ func check_test_package(file_set *token.FileSet, file *ast.File, _ []byte) (diag
 	}}
 }
 
-// Banned segments applied to every declared identifier: function names,
-// package names, file names, vars, consts, params, named returns, struct
-// fields, type names, labels. "util"/"utils"/"utility"/"utilities" are
-// dumping-ground signals — code that lands in a util drawer is code whose
-// real home nobody bothered to find. "length"/"len" are ambiguous across
-// languages (Rust = bytes, Python = code points) and so are banned in favor
-// of `_count` (element quantity) and `_size` (byte count); see
-// https://tigerbeetle.com/blog/2026-02-16-index-count-offset-size/. The
-// `len(...)` and `cap(...)` builtin call sites are exempt because they
-// appear only in callee position of a CallExpr, never as a declared name.
-
-// Banned-word check applied to every declared identifier site: function
-// names, package name, file name, vars, consts, params, named returns,
-// struct fields, type names, labels. Detection splits the identifier into
-// segments (snake_case underscores and Ada_Case boundaries) and flags any
-// segment that case-insensitively matches a banned entry. Substrings (e.g.
-// "helpme") are not flagged. Walks declaration sub-nodes only; use sites
-// (CallExpr.Fun, SelectorExpr, bare Ident references) are not visited, so
-// `len(xs)` and `cap(xs)` builtin calls are naturally exempt.
-func check_banned_identifiers(
+// Flags any tokenized word in a declared name that appears in the
+// discouraged_word_candidates table. This is the single home for two related
+// naming rules sharing one table: abbreviations get a `rename x -> ...`
+// suggestion built from their candidate expansions, and banned words (no
+// candidate) get an `identifier "x" contains banned substring "y"` diagnostic.
+// One table means the discouraged-word list lives in exactly one place.
+//
+// The package name and file name are checked directly; declared identifiers are
+// walked by check_names_walk_decls (function names, receivers, params, named
+// returns, type names, struct fields, and body var/const/`:=`/range defines).
+// Use sites are not visited, so the `len(xs)` and `cap(xs)` builtins are exempt.
+// Func-type signature names and closure parameters are deliberately not walked:
+// those names are documentation-only and idiomatic abbreviations there (e.g.
+// `info fs.FileInfo`) are not the target. "helper" is banned only in function
+// names — see check_names_vocabulary_function_ban.
+func check_names_vocabulary(
 	file_set *token.FileSet, file *ast.File, _ []byte,
 ) (diags []Diagnostic) {
 
-	package_hit := check_banned_identifiers_find_hit(
-		file.Name.Name, []string{"util", "utils", "utility", "utilities", "length", "len"})
-	if package_hit != "" {
-		diags = append(diags, Diagnostic{
-			Position: file_set.Position(file.Name.Pos()),
-			Message: fmt.Sprintf(
-				"package name %s contains banned word '%s'",
-				file.Name.Name,
-				package_hit),
-		})
-	}
-	diags = append(diags, check_banned_identifiers_file_name(file_set, file)...)
-	diags = append(diags, check_banned_identifiers_walk(file_set, file)...)
+	diags = append(diags,
+		check_names_vocabulary_at(file_set.Position(file.Name.Pos()), file.Name.Name)...)
+	diags = append(diags, check_names_vocabulary_file_name(file_set, file)...)
+	diags = append(diags, check_names_vocabulary_function_ban(file_set, file)...)
+	check_names_walk_decls(file, func(identifier *ast.Ident) {
+		position := file_set.Position(identifier.Pos())
+		diags = append(diags, check_names_vocabulary_at(position, identifier.Name)...)
+	})
 	return diags
 }
 
-func check_banned_identifiers_file_name(
+// Flags "helper" in a function name. The ban is function-name-only — a file or
+// package named helper is a weaker smell than a function whose name hides what
+// it does — so it rides outside the universal discouraged_word_candidates table,
+// which applies at every declaration site.
+func check_names_vocabulary_function_ban(
+	file_set *token.FileSet, file *ast.File,
+) (diags []Diagnostic) {
+
+	ast.Inspect(file, func(n ast.Node) (descend bool) {
+		function, ok := n.(*ast.FuncDecl)
+		if !ok {
+			return true
+		}
+		for _, word := range suggest_split_words(function.Name.Name) {
+			if strings.EqualFold(word, "helper") {
+				diags = append(diags, Diagnostic{
+					Position: file_set.Position(function.Name.Pos()),
+					Message: fmt.Sprintf(
+						`identifier %q contains banned substring "helper"`,
+						function.Name.Name),
+				})
+				return true
+			}
+		}
+		return true
+	})
+	return diags
+}
+
+// Resolves the file's basename to the stem used for word-splitting: the .go
+// suffix (and a _test suffix) are stripped first so the "test" segment in
+// foo_test.go is not itself treated as a discouraged word. The position is
+// synthetic (line 1, column 1) because a file name has no token in the source.
+func check_names_vocabulary_file_name(
 	file_set *token.FileSet, file *ast.File,
 ) (diags []Diagnostic) {
 
@@ -4336,149 +5426,71 @@ func check_banned_identifiers_file_name(
 		return nil
 	}
 	filename := tok_file.Name()
-	base := path.Base(filename)
-	// Strip .go (and _test) before splitting so the "test" segment in
-	// foo_test.go doesn't become a banned-word candidate itself.
-	stem := strings.TrimSuffix(base, ".go")
+	stem := strings.TrimSuffix(path.Base(filename), ".go")
 	stem = strings.TrimSuffix(stem, "_test")
-	hit := check_banned_identifiers_find_hit(
-		stem, []string{"util", "utils", "utility", "utilities", "length", "len"})
-	if hit == "" {
-		return nil
-	}
-	return []Diagnostic{{
-		Position: token.Position{Filename: filename, Line: 1, Column: 1},
-		Message:  fmt.Sprintf("file name %s contains banned word '%s'", base, hit),
-	}}
+	return check_names_vocabulary_at(
+		token.Position{Filename: filename, Line: 1, Column: 1}, stem)
 }
 
-// Walks every declaration site (vars, consts, params, named returns,
-// struct fields, type names, labels, range and `:=` defines) and flags any
-// name segment matching banned_segments_universal. Function-name-only
-// segments (banned_function_name_segments) are checked at FuncDecl sites
-// only. Use sites (CallExpr.Fun, SelectorExpr, bare Ident refs) are not
-// visited, so `len(xs)` and `cap(xs)` builtin calls are naturally exempt.
-func check_banned_identifiers_walk(file_set *token.FileSet, file *ast.File) (diags []Diagnostic) {
+// Emits one diagnostic per discouraged word found in name. A word with
+// candidate expansions yields a rename suggestion; a banned word (empty
+// candidate list) yields the banned-substring diagnostic. Blank "_" is skipped.
+func check_names_vocabulary_at(position token.Position, name string) (diags []Diagnostic) {
 
-	validate_banned_name := func(pos token.Pos, scope, name string, extra []string) {
-		hit := check_banned_identifiers_find_hit(
-			name,
-			extra,
-			[]string{"util", "utils", "utility", "utilities", "length", "len"})
-		if hit == "" {
-			return
+	if name == "_" {
+		return nil
+	}
+	words := suggest_split_words(name)
+	style := "snake_case"
+	if ada_case_re.MatchString(name) {
+		style = "Ada_Case"
+	}
+	for word_index, w := range words {
+		lower := strings.ToLower(w)
+		candidates := discouraged_word_candidates(lower)
+		if candidates == nil {
+			continue
 		}
-		diags = append(diags, Diagnostic{
-			Position: file_set.Position(pos),
-			Message: fmt.Sprintf(
-				"%s name %s contains banned word '%s'", scope, name, hit),
+		message := check_names_vocabulary_message(&check_names_vocabulary_message_input{
+			Name: name, Word: lower, Words: words,
+			Word_Index: word_index, Candidates: candidates, Style: style,
 		})
+		diags = append(diags, Diagnostic{Position: position, Message: message})
 	}
-	validate_banned_names := func(scope string, names []*ast.Ident) {
-		for _, identifier := range names {
-			if identifier == nil {
-				continue
-			}
-			if identifier.Name == "_" {
-				continue
-			}
-			validate_banned_name(identifier.Pos(), scope, identifier.Name, nil)
-		}
-	}
-	ast.Inspect(file, func(n ast.Node) (descend bool) {
-		check_banned_identifiers_walk_visit(n, validate_banned_name, validate_banned_names)
-		return true
-	})
 	return diags
 }
 
-// Visitor body extracted to keep the surrounding walk function under the
-// 100-line per-function limit. Receives the per-position and per-list
-// closures bound to the parent's file_set and diag accumulator.
-func check_banned_identifiers_walk_visit(
-	n ast.Node,
-	validate_banned_name func(pos token.Pos, scope, name string, extra []string),
-	validate_banned_names func(scope string, names []*ast.Ident),
-) {
-	switch x := n.(type) {
-	case *ast.FuncDecl:
-		// "helper" is function-only; not in banned_segments_universal because a
-		// file or package named helper is a weaker smell than the function case.
-		validate_banned_name(x.Name.Pos(), "function", x.Name.Name, []string{"helper"})
-	case *ast.FuncType:
-		if x.Params != nil {
-			for _, f := range x.Params.List {
-				validate_banned_names("parameter", f.Names)
-			}
-		}
-		if x.Results != nil {
-			for _, f := range x.Results.List {
-				validate_banned_names("named return", f.Names)
-			}
-		}
-	case *ast.ValueSpec:
-		validate_banned_names("variable or const", x.Names)
-	case *ast.TypeSpec:
-		validate_banned_name(x.Name.Pos(), "type", x.Name.Name, nil)
-	case *ast.StructType:
-		if x.Fields != nil {
-			for _, f := range x.Fields.List {
-				validate_banned_names("struct field", f.Names)
-			}
-		}
-	case *ast.InterfaceType:
-		if x.Methods != nil {
-			for _, f := range x.Methods.List {
-				validate_banned_names("interface method", f.Names)
-			}
-		}
-	case *ast.AssignStmt:
-		if x.Tok != token.DEFINE {
-			return
-		}
-		for _, lhs := range x.Lhs {
-			identifier, ok := lhs.(*ast.Ident)
-			if !ok {
-				continue
-			}
-			if identifier.Name == "_" {
-				continue
-			}
-			validate_banned_name(identifier.Pos(), "variable", identifier.Name, nil)
-		}
-	case *ast.RangeStmt:
-		if x.Tok != token.DEFINE {
-			return
-		}
-		for _, e := range []ast.Expr{x.Key, x.Value} {
-			identifier, ok := e.(*ast.Ident)
-			if !ok {
-				continue
-			}
-			if identifier.Name == "_" {
-				continue
-			}
-			validate_banned_name(
-				identifier.Pos(), "range variable", identifier.Name, nil)
-		}
-	case *ast.LabeledStmt:
-		validate_banned_name(x.Label.Pos(), "label", x.Label.Name, nil)
-	}
+type check_names_vocabulary_message_input struct {
+	Name       string
+	Word       string
+	Words      []string
+	Word_Index int
+	Candidates []string
+	Style      string
 }
 
-func check_banned_identifiers_find_hit(name string, banned_lists ...[]string) (hit string) {
+// Renders the diagnostic text. No candidates means the word is banned outright.
+// One candidate renders a bare `rename x -> y`; several render
+// `rename x -> [a, b, c]`. Each candidate is substituted into the offending
+// word slot so the author sees a drop-in replacement, not just the bare word —
+// e.g. `foo_id` produces `foo_identifier`, not `id -> identifier`.
+func check_names_vocabulary_message(input *check_names_vocabulary_message_input) (message string) {
 
-	words := suggest_split_words(name)
-	for _, w := range words {
-		for _, list := range banned_lists {
-			for _, banned := range list {
-				if strings.EqualFold(w, banned) {
-					return banned
-				}
-			}
-		}
+	if len(input.Candidates) == 0 {
+		return fmt.Sprintf(
+			"identifier %q contains banned substring %q", input.Name, input.Word)
 	}
-	return ""
+	renames := make([]string, len(input.Candidates))
+	for candidate_index, candidate := range input.Candidates {
+		substituted := append([]string{}, input.Words...)
+		substituted[input.Word_Index] = candidate
+		renames[candidate_index] = suggest(&suggest_input{
+			Name: strings.Join(substituted, "_"), Want: input.Style})
+	}
+	if len(renames) == 1 {
+		return fmt.Sprintf("rename %s -> %s", input.Name, renames[0])
+	}
+	return fmt.Sprintf("rename %s -> [%s]", input.Name, strings.Join(renames, ", "))
 }
 
 // Functions with two or more parameters of the same type are call-site
@@ -4545,12 +5557,6 @@ func check_input_struct_validate(
 	function *ast.FuncDecl,
 	want_name string,
 ) (diag *Diagnostic) {
-	defer func() {
-		// See sibling diag-builders: Always(diag.Tier == 0) credits both
-		// boundary_int and zero_int from a single call; Distinct_Boundary
-		// would fatal because Tier is invariantly 0 at construction.
-	}()
-
 	non_variadic := check_input_struct_validate_non_variadic_params(function)
 	if len(non_variadic) == 1 {
 		if len(non_variadic[0].Names) == 1 {
@@ -4689,7 +5695,7 @@ func check_no_function_init(
 		}
 		diags = append(diags, Diagnostic{
 			Position: file_set.Position(function_declaration.Pos()),
-			Message:  "func init is banned; call an explicit setup function from main",
+			Message:  "func init is banned; expose a func Init() instead",
 		})
 	}
 	return diags
@@ -4724,8 +5730,7 @@ func check_no_interfaces(file_set *token.FileSet, file *ast.File, _ []byte) (dia
 			}
 			diags = append(diags, Diagnostic{
 				Position: file_set.Position(interface_type.Pos()),
-				Message: "interface method sets are banned; use a concrete type " +
-					"or free function",
+				Message:  "interface declarations are banned (except for generics)",
 			})
 			return true
 		}
@@ -4742,7 +5747,8 @@ func check_no_interfaces(file_set *token.FileSet, file *ast.File, _ []byte) (dia
 // to verify Impl satisfies Iface.
 func check_no_package_vars(file_set *token.FileSet, file *ast.File, _ []byte) (diags []Diagnostic) {
 
-	const base_message = "package-level var is banned; move to function scope"
+	const base_message = "package-level var is banned" +
+		" (except for regexp.MustCompile and errors.New)"
 	const switch_hint = ", or use a switch for lookup tables"
 	for _, declaration := range file.Decls {
 		generic_declaration, is_generic_declaration := declaration.(*ast.GenDecl)
@@ -4752,12 +5758,17 @@ func check_no_package_vars(file_set *token.FileSet, file *ast.File, _ []byte) (d
 		if generic_declaration.Tok != token.VAR {
 			continue
 		}
+		// A //go:embed directive can only attach to a package-level var, so such
+		// a var has no function-scope alternative and is exempt.
+		if check_no_package_vars_is_embed(generic_declaration) {
+			continue
+		}
 		for _, specification := range generic_declaration.Specs {
 			vs, is_vs := specification.(*ast.ValueSpec)
 			if !is_vs {
 				continue
 			}
-			if check_no_package_vars_is_snap_default(file, vs) {
+			if check_no_package_vars_is_default(file_set, file, vs) {
 				continue
 			}
 			if check_no_package_vars_all_allowed(vs) {
@@ -4801,16 +5812,20 @@ func check_no_package_vars_is_map_or_slice_literal(vs *ast.ValueSpec) (yes bool)
 	return true
 }
 
-// Composition-tier packages (named `*_default` by convention, see lint/README.md)
-// are allowed to expose a single `var Default = …` binding — that's literally the
-// shape they exist for. Allowed only for the literal name "Default" and only as a
-// single-name single-initializer spec.
-func check_no_package_vars_is_snap_default(file *ast.File, vs *ast.ValueSpec) (yes bool) {
+// Composition-tier packages (in a `default/` directory by convention, see
+// lint/README.md) are allowed to expose a single `var Default = …` binding —
+// that's literally the shape they exist for. Allowed only for the literal name
+// "Default" and only as a single-name single-initializer spec.
+func check_no_package_vars_is_default(
+	file_set *token.FileSet, file *ast.File, vs *ast.ValueSpec,
+) (yes bool) {
 
-	if !strings.HasSuffix(file.Name.Name, "_default") {
-		if file.Name.Name != "snap" {
-			return false
-		}
+	tok_file := file_set.File(file.Pos())
+	if tok_file == nil {
+		return false
+	}
+	if path.Base(path.Dir(tok_file.Name())) != "default" {
+		return false
 	}
 	if len(vs.Names) != 1 {
 		return false
@@ -4818,16 +5833,28 @@ func check_no_package_vars_is_snap_default(file *ast.File, vs *ast.ValueSpec) (y
 	if vs.Names[0].Name != "Default" {
 		return false
 	}
-	if len(vs.Values) != 1 {
-		return false
-	}
-	return true
+	return len(vs.Values) == 1
 }
 
 // Allowed only when every declared name has a paired initializer that is
 // a call to regexp.MustCompile or errors.New. A zero-value declaration
 // (no Values) fails this check by construction (len mismatch), which is
 // the intended behavior — no package-level zero-value state.
+// Reports whether the var declaration carries a //go:embed directive in its doc
+// comment. Such a var must live at package scope (the directive is rejected
+// elsewhere), so the package-var ban does not apply.
+func check_no_package_vars_is_embed(declaration *ast.GenDecl) (embedded bool) {
+	if declaration.Doc == nil {
+		return false
+	}
+	for _, comment := range declaration.Doc.List {
+		if strings.HasPrefix(comment.Text, "//go:embed ") {
+			return true
+		}
+	}
+	return false
+}
+
 func check_no_package_vars_all_allowed(vs *ast.ValueSpec) (yes bool) {
 
 	if len(vs.Values) == 0 {
@@ -5306,10 +6333,18 @@ func check_exported_documentation_comment_generic_specs(
 
 func check_exported_documentation_comment_has_documentation(group *ast.CommentGroup) (yes bool) {
 
+	return comment_group_documents(group)
+}
+
+// True iff the comment group supplies prose documentation. CommentGroup.Text
+// strips Go directives (//go:embed, //go:noinline, //line, …), so a group of
+// directives alone yields the empty string and does not document a declaration.
+func comment_group_documents(group *ast.CommentGroup) (yes bool) {
+
 	if group == nil {
 		return false
 	}
-	return len(group.List) > 0
+	return strings.TrimSpace(group.Text()) != ""
 }
 
 // Enforces the index/count/offset/size naming convention from
@@ -5323,8 +6358,8 @@ func check_names(file_set *token.FileSet, file *ast.File, _ []byte) (diags []Dia
 	var violations []name_violation
 	violations = append(violations, check_names_terminology(file)...)
 	violations = append(violations, check_names_arithmetic(file)...)
-	violations = append(violations, check_names_abbreviations(file)...)
 	violations = append(violations, check_names_participles(file)...)
+	violations = append(violations, check_names_extremum(file)...)
 	for _, v := range violations {
 		diags = append(diags,
 			Diagnostic{Position: file_set.Position(v.Position), Message: v.Message})
@@ -5994,46 +7029,58 @@ func check_names_arithmetic_check_binary_result(
 	return ""
 }
 
-// Per-word abbreviation denylist. Sourced from
-// https://github.com/abbrcode/abbreviations-in-code (🟢+🔴 entries),
-// hand-curated to attach candidate expansions for genuinely ambiguous
-// abbreviations and dropped entries that Go language/stdlib forces on
-// every codebase: err, ctx, fmt, len, cap, min, max. Single-letter
-// identifiers (loop counters i/j/k/n/m per Tiger Style) are exempted by
-// the check itself, not by absence from this map.
+// Per-word denylist mapping a discouraged word to its preferred replacements.
+// Two kinds of entry live here under one lookup:
 //
-// Lookups are by tokenized word from suggest_split_words, lowercased.
-// Because the codebase enforces snake_case + PascalCase via check_casing,
-// every abbreviation lands as its own token — no substring scan needed.
+//   - Abbreviations carry one or more expansion candidates (id -> identifier).
+//     Sourced from https://github.com/abbrcode/abbreviations-in-code (🟢+🔴
+//     entries), hand-curated for genuinely ambiguous abbreviations. Entries Go
+//     language/stdlib forces on every codebase are dropped: err, ctx, fmt, cap.
+//   - Bans carry an empty (non-nil) candidate list because no mechanical rename
+//     exists — the fix is to name the thing for what it is: util/utils/utility/
+//     utilities (dumping-ground signals) and len/length (ambiguous across
+//     languages — Rust = bytes, Python = code points; see
+//     https://tigerbeetle.com/blog/2026-02-16-index-count-offset-size/). "helper"
+//     is a third ban but only in function names, so it lives outside this
+//     universal table — see check_names_vocabulary_function_ban.
 //
-// Init is exempt — Go's package-initialization function is mandatorily named `init`.
-func banned_abbreviation_candidates(word string) (candidates []string) {
+// A nil return means "not discouraged" and is skipped; a non-nil empty slice
+// means "banned, no candidate" and yields the banned-substring diagnostic. The
+// distinction is load-bearing — callers branch on len(candidates) vs nil.
+//
+// Lookups are by tokenized word from suggest_split_words, lowercased. Because
+// the codebase enforces snake_case + PascalCase via check_casing, every word
+// lands as its own token — no substring scan needed. Use sites are never
+// visited, so the len and cap builtins stay legal. Single-letter loop counters
+// (i/j/k/n/m per Tiger Style) are exempted by the check itself. Init is exempt —
+// Go's package-initialization function is mandatorily named `init`.
+func discouraged_word_candidates(word string) (candidates []string) {
 
-	if candidates = banned_abbreviation_candidates_a_b(word); candidates != nil {
+	if candidates = discouraged_word_candidates_a_b(word); candidates != nil {
 		return candidates
 	}
-	if candidates = banned_abbreviation_candidates_c(word); candidates != nil {
+	if candidates = discouraged_word_candidates_c(word); candidates != nil {
 		return candidates
 	}
-	if candidates = banned_abbreviation_candidates_d_f(word); candidates != nil {
+	if candidates = discouraged_word_candidates_d_f(word); candidates != nil {
 		return candidates
 	}
-	if candidates = banned_abbreviation_candidates_g_l(word); candidates != nil {
+	if candidates = discouraged_word_candidates_g_l(word); candidates != nil {
 		return candidates
 	}
-	if candidates = banned_abbreviation_candidates_m_o(word); candidates != nil {
+	if candidates = discouraged_word_candidates_m_o(word); candidates != nil {
 		return candidates
 	}
-	if candidates = banned_abbreviation_candidates_p_r(word); candidates != nil {
+	if candidates = discouraged_word_candidates_p_r(word); candidates != nil {
 		return candidates
 	}
-	if candidates = banned_abbreviation_candidates_s(word); candidates != nil {
+	if candidates = discouraged_word_candidates_s(word); candidates != nil {
 		return candidates
 	}
-	return banned_abbreviation_candidates_t_z(word)
+	return discouraged_word_candidates_t_z(word)
 }
 
-func banned_abbreviation_candidates_a_b(word string) (candidates []string) {
+func discouraged_word_candidates_a_b(word string) (candidates []string) {
 
 	switch word {
 	case "abbr":
@@ -6100,7 +7147,7 @@ func banned_abbreviation_candidates_a_b(word string) (candidates []string) {
 	return nil
 }
 
-func banned_abbreviation_candidates_c(word string) (candidates []string) {
+func discouraged_word_candidates_c(word string) (candidates []string) {
 
 	switch word {
 	case "calc":
@@ -6138,11 +7185,11 @@ func banned_abbreviation_candidates_c(word string) (candidates []string) {
 	case "con":
 		return []string{"connection", "console", "container", "constant"}
 	default:
-		return banned_abbreviation_candidates_c_more(word)
+		return discouraged_word_candidates_c_more(word)
 	}
 }
 
-func banned_abbreviation_candidates_c_more(word string) (candidates []string) {
+func discouraged_word_candidates_c_more(word string) (candidates []string) {
 	switch word {
 	case "concat":
 		return []string{"concatenation"}
@@ -6182,7 +7229,7 @@ func banned_abbreviation_candidates_c_more(word string) (candidates []string) {
 	return nil
 }
 
-func banned_abbreviation_candidates_d(word string) (candidates []string) {
+func discouraged_word_candidates_d(word string) (candidates []string) {
 	switch word {
 	case "db":
 		return []string{"database"}
@@ -6228,8 +7275,8 @@ func banned_abbreviation_candidates_d(word string) (candidates []string) {
 	return nil
 }
 
-func banned_abbreviation_candidates_d_f(word string) (candidates []string) {
-	d_candidates := banned_abbreviation_candidates_d(word)
+func discouraged_word_candidates_d_f(word string) (candidates []string) {
+	d_candidates := discouraged_word_candidates_d(word)
 	if d_candidates != nil {
 		return d_candidates
 	}
@@ -6286,7 +7333,7 @@ func banned_abbreviation_candidates_d_f(word string) (candidates []string) {
 	return nil
 }
 
-func banned_abbreviation_candidates_g_l(word string) (candidates []string) {
+func discouraged_word_candidates_g_l(word string) (candidates []string) {
 
 	switch word {
 	case "gen":
@@ -6341,11 +7388,16 @@ func banned_abbreviation_candidates_g_l(word string) (candidates []string) {
 		return []string{"location", "local"}
 	case "lvl":
 		return []string{"level"}
+	case "len", "length":
+		// Banned, not abbreviated: empty (non-nil) slice signals "no candidate".
+		// "helper" is also banned but only in function names — see
+		// check_names_vocabulary_function_ban — so it is not in this universal table.
+		return []string{}
 	}
 	return nil
 }
 
-func banned_abbreviation_candidates_m_o(word string) (candidates []string) {
+func discouraged_word_candidates_m_o(word string) (candidates []string) {
 
 	switch word {
 	case "mcu":
@@ -6392,7 +7444,7 @@ func banned_abbreviation_candidates_m_o(word string) (candidates []string) {
 	return nil
 }
 
-func banned_abbreviation_candidates_p_r(word string) (candidates []string) {
+func discouraged_word_candidates_p_r(word string) (candidates []string) {
 
 	switch word {
 	case "param":
@@ -6430,11 +7482,11 @@ func banned_abbreviation_candidates_p_r(word string) (candidates []string) {
 	case "qry":
 		return []string{"query"}
 	default:
-		return banned_abbreviation_candidates_p_r_more(word)
+		return discouraged_word_candidates_p_r_more(word)
 	}
 }
 
-func banned_abbreviation_candidates_p_r_more(word string) (candidates []string) {
+func discouraged_word_candidates_p_r_more(word string) (candidates []string) {
 	switch word {
 	case "rad":
 		return []string{"radians", "radius", "radial"}
@@ -6474,7 +7526,7 @@ func banned_abbreviation_candidates_p_r_more(word string) (candidates []string) 
 	return nil
 }
 
-func banned_abbreviation_candidates_s(word string) (candidates []string) {
+func discouraged_word_candidates_s(word string) (candidates []string) {
 
 	switch word {
 	case "sc":
@@ -6521,7 +7573,7 @@ func banned_abbreviation_candidates_s(word string) (candidates []string) {
 	return nil
 }
 
-func banned_abbreviation_candidates_t_z(word string) (candidates []string) {
+func discouraged_word_candidates_t_z(word string) (candidates []string) {
 
 	switch word {
 	case "tan":
@@ -6552,8 +7604,9 @@ func banned_abbreviation_candidates_t_z(word string) (candidates []string) {
 		return []string{"text"}
 	case "usr":
 		return []string{"user"}
-	case "util":
-		return []string{"utility"}
+	case "util", "utils", "utility", "utilities":
+		// Banned, not abbreviated: empty (non-nil) slice signals "no candidate".
+		return []string{}
 	case "val":
 		return []string{"value", "valid", "validation"}
 	case "var":
@@ -6731,47 +7784,6 @@ func check_names_walk_declarations_generic(gd *ast.GenDecl, emit func(identifier
 	}
 }
 
-// Walks every declared identifier and emits a violation for any
-// tokenized word that matches banned_abbreviation_candidates. The suggested
-// rename substitutes each candidate into the full identifier so the
-// author sees a drop-in replacement, not just the bare word — e.g.,
-// `foo_id` produces `foo_id -> foo_identifier`, not `id -> identifier`.
-// Multi-banned identifiers (e.g., a name containing two banned words)
-// emit one violation per hit.
-func check_names_abbreviations(file *ast.File) (violations []name_violation) {
-
-	check_names_walk_decls(file, func(identifier *ast.Ident) {
-		words := suggest_split_words(identifier.Name)
-		style := "snake_case"
-		if ada_case_re.MatchString(identifier.Name) {
-			style = "Ada_Case"
-		}
-		for word_index, w := range words {
-			lower := strings.ToLower(w)
-			cands := banned_abbreviation_candidates(lower)
-			if cands == nil {
-				continue
-			}
-			renames := make([]string, len(cands))
-			for cand_index, c := range cands {
-				substituted := append([]string{}, words...)
-				substituted[word_index] = c
-				renames[cand_index] = suggest(&suggest_input{
-					Name: strings.Join(substituted, "_"),
-					Want: style,
-				})
-			}
-			violations = append(violations, name_violation{
-				Position: identifier.Pos(),
-				Message: fmt.Sprintf(
-					"rename %s -> %s", identifier.Name, strings.Join(
-						renames, ",")),
-			})
-		}
-	})
-	return violations
-}
-
 // Walks every declared identifier and flags any whose final tokenized
 // word (lowercased) ends in "ing" and is not in is_allowed_ing_noun.
 // The Stringer interface's String() method is implicitly allowed
@@ -6795,6 +7807,42 @@ func check_names_participles(file *ast.File) (violations []name_violation) {
 			Message: fmt.Sprintf(
 				"present participle %q → rename to a noun form", last),
 		})
+	})
+	return violations
+}
+
+// Flags any declared identifier whose tokenized words include "max" or "min"
+// anywhere but the final position. Extrema read as suffixes (line_max,
+// retry_min); a leading or interior max/min is banned. Rides inside check_names
+// beside the abbreviation and participle passes.
+func check_names_extremum(file *ast.File) (violations []name_violation) {
+
+	check_names_walk_decls(file, func(identifier *ast.Ident) {
+		words := suggest_split_words(identifier.Name)
+		style := "snake_case"
+		if ada_case_re.MatchString(identifier.Name) {
+			style = "Ada_Case"
+		}
+		for word_index, w := range words {
+			lower := strings.ToLower(w)
+			if lower != "max" {
+				if lower != "min" {
+					continue
+				}
+			}
+			if word_index == len(words)-1 {
+				continue
+			}
+			reordered := append([]string{}, words[:word_index]...)
+			reordered = append(reordered, words[word_index+1:]...)
+			reordered = append(reordered, w)
+			violations = append(violations, name_violation{
+				Position: identifier.Pos(),
+				Message: fmt.Sprintf("rename %s -> %s", identifier.Name,
+					suggest(&suggest_input{
+						Name: strings.Join(reordered, "_"), Want: style})),
+			})
+		}
 	})
 	return violations
 }
@@ -6864,8 +7912,8 @@ func check_file_system_stream_checkers(
 		{Name: "copyleft", Visit: check_stream_copyleft},
 		{Name: "github-actions-uses", Visit: check_stream_github_actions_uses},
 		{Name: "banned-scripts", Visit: check_stream_banned_scripts},
-		{Name: "max-file-size", Visit: check_stream_max_file_size},
-		{Name: "agent-doc-max-lines", Visit: check_stream_agent_documentation_max_lines},
+		{Name: "banned-archives", Visit: check_stream_banned_archives},
+		{Name: "agent-doc-max-lines", Visit: check_stream_agent_documentation_lines_max},
 		check_file_system_stream_checks_stream_symlinks_checker(
 			&check_file_system_stream_checks_stream_symlinks_checker_input{
 				Root_Directory: root_directory,
@@ -6873,8 +7921,8 @@ func check_file_system_stream_checkers(
 				Stat:           stat,
 			}),
 		{Name: "markdown-line-length", Visit: check_stream_markdown_line_max},
+		{Name: "trailing-whitespace", Visit: check_stream_markdown_trailing_whitespace},
 		check_file_system_stream_checks_stream_agents_claude_pair_checker(),
-		check_file_system_stream_checks_stream_path_casing_checker(),
 	}
 }
 
@@ -7057,10 +8105,9 @@ func check_stream_banned_scripts(
 	extension := strings.ToLower(path.Ext(base))
 	banned := false
 	switch extension {
-	case ".py", ".sh", ".bash", ".zsh", ".fish", ".ksh", ".csh",
-		".pl", ".pm", ".rb", ".lua", ".js", ".mjs", ".cjs", ".ts",
-		".php", ".tcl", ".awk", ".ps1", ".psm1", ".bat", ".cmd",
-		".vbs", ".groovy", ".r", ".jl":
+	case ".py", ".sh", ".bash", ".zsh", ".fish", ".ksh", ".csh", ".pl", ".pm", ".rb", ".lua",
+		".tcl", ".awk", ".ps1", ".psm1", ".bat", ".cmd", ".vbs", ".groovy", ".r",
+		".jl":
 		banned = true
 	}
 	switch base {
@@ -7073,8 +8120,33 @@ func check_stream_banned_scripts(
 	}
 	*output = append(*output, Diagnostic{
 		Position: token.Position{Filename: p, Line: 1, Column: 1},
-		Message: fmt.Sprintf("banned scripting file %q; move under top-level "+
-			"third_party/ or vendor/, or remove", p),
+		Message:  fmt.Sprintf("rewrite %q as a go script", p),
+	})
+}
+
+// An .xz file forces decompression the Go stdlib cannot do: there is no
+// compress/xz, so reading one shells out to external tar, whose GNU and BSD
+// builds diverge in flags and behavior. gzip is read directly by compress/gzip
+// and archive/tar, so it is the portable choice. Banned everywhere except the
+// top-level third_party/ drop-zone, mirroring the banned-scripts carve-out.
+func check_stream_banned_archives(
+	p string,
+	information fs.FileInfo,
+	_ func() (data []byte, err error),
+	output *[]Diagnostic) {
+
+	if strings.HasPrefix(p, "third_party/") {
+		return
+	}
+	if p == "third_party" {
+		return
+	}
+	if strings.ToLower(path.Ext(information.Name())) != ".xz" {
+		return
+	}
+	*output = append(*output, Diagnostic{
+		Position: token.Position{Filename: p, Line: 1, Column: 1},
+		Message:  ".xz files are banned; use .gz or .zip instead",
 	})
 }
 
@@ -7188,23 +8260,7 @@ func check_stream_copyleft(
 	})
 }
 
-func check_stream_max_file_size(
-	p string,
-	information fs.FileInfo,
-	_ func() (data []byte, err error),
-	output *[]Diagnostic) {
-
-	if information.Size() <= max_file_size_bytes {
-		return
-	}
-	*output = append(*output, Diagnostic{
-		Position: token.Position{Filename: p},
-		Message: fmt.Sprintf("file exceeds 1 MiB (%d bytes); move it out of the tree "+
-			"(LFS or external store)", information.Size()),
-	})
-}
-
-func check_stream_agent_documentation_max_lines(
+func check_stream_agent_documentation_lines_max(
 	p string,
 	information fs.FileInfo,
 	load func() (data []byte, err error),
@@ -7227,11 +8283,21 @@ func check_stream_agent_documentation_max_lines(
 			lines_count++
 		}
 	}
-	if lines_count > agent_documentation_max_lines {
+	if lines_count > agent_documentation_lines_max {
 		message := fmt.Sprintf(
 			"%s has %d lines; split or trim it under %d",
-			information.Name(), lines_count, agent_documentation_max_lines,
+			information.Name(), lines_count, agent_documentation_lines_max,
 		)
+		// A skill that outgrows the budget should shed prose, not just shrink:
+		// the cure is to move steps into a script the agent runs, so SKILL.md
+		// earns its own directive rather than the generic split-or-trim line.
+		if information.Name() == "SKILL.md" {
+			message = fmt.Sprintf(
+				"SKILL.md is capped at %d lines. "+
+					"Prefer procedural scripting over prose.",
+				agent_documentation_lines_max,
+			)
+		}
 		*output = append(*output, Diagnostic{
 			Position: token.Position{Filename: p, Line: 1, Column: 1},
 			Message:  message,
@@ -7252,64 +8318,135 @@ func check_stream_agent_documentation_max_lines(
 // Each segment is reported at most once across the run; the file walk
 // visits a dir's name once on entry, then re-visits it as a prefix of
 // every contained file, which would otherwise produce N duplicate diags.
-func check_file_system_stream_checks_stream_path_casing_checker() (c check_function_stream) {
+// Enforces the path-casing rule absolutely: every path segment, split on its
+// dots, is snake_case, Ada_Case, or SCREAMING_SNAKE_CASE. The only exemptions
+// are the .git directory and gitignored paths — both already encoded in tracked
+// (git ls-files --exclude-standard). When tracked is nil (git unavailable) it
+// walks the whole tree, the .git directory aside, so the rule still binds.
+func check_path_casing(fsys fs.FS, tracked map[string]bool) (diags []Diagnostic) {
 
 	seen := map[string]bool{}
-	return check_function_stream{
-		Name: path_casing_check_name,
-		Visit: func(
-			p string,
-			info fs.FileInfo,
-			_ func() (data []byte, err error),
-			output *[]Diagnostic) {
-			if strings.HasPrefix(p, "third_party/") {
-				return
+	for _, p := range check_path_casing_paths(fsys, tracked) {
+		if p == ".git" {
+			continue
+		}
+		if strings.HasPrefix(p, ".git/") {
+			continue
+		}
+		segments := strings.Split(p, "/")
+		if path_casing_vendored(segments) {
+			continue
+		}
+		for i, seg := range segments {
+			key := strings.Join(segments[:i+1], "/")
+			if seen[key] {
+				continue
 			}
-			if p == "third_party" {
-				return
+			seen[key] = true
+			if path_casing_segment_ok(seg) {
+				continue
 			}
-			segments := strings.Split(p, "/")
-			for i, seg := range segments {
-				is_file := i == len(segments)-1
-				key := strings.Join(segments[:i+1], "/")
-				if seen[key] {
-					continue
-				}
-				seen[key] = true
-				if strings.HasPrefix(seg, ".") {
-					continue
-				}
-				name := seg
-				if is_file {
-					dot_offset := strings.IndexByte(seg, '.')
-					if dot_offset >= 0 {
-						name = seg[:dot_offset]
-					}
-				}
-				if name == "" {
-					continue
-				}
-				if snake_case_re.MatchString(name) {
-					continue
-				}
-				if ada_case_re.MatchString(name) {
-					continue
-				}
-				kind := "directory"
-				if is_file {
-					kind = "file"
-				}
-				*output = append(*output, Diagnostic{
-					Position: token.Position{Filename: key},
-					Message: fmt.Sprintf(
-						"%s name %q must be snake_case, Ada_Case, or "+
-							"SCREAMING_SNAKE_CASE",
-						kind, name,
-					),
-				})
-			}
-		},
+			suggestion := path_casing_suggest(seg)
+			diags = append(diags, Diagnostic{
+				Position: token.Position{Filename: key},
+				Message:  fmt.Sprintf("rename %s -> %s", seg, suggestion),
+			})
+		}
 	}
+	return diags
+}
+
+// Reports whether the path lies in a vendored tree — any third_party or vendor
+// directory — whose file names upstream chose and the workspace does not own.
+func path_casing_vendored(segments []string) (yes bool) {
+
+	for _, seg := range segments {
+		switch seg {
+		case "third_party", "vendor":
+			return true
+		}
+	}
+	return false
+}
+
+// Judges a path segment by its dot-separated components independently: the FQDN
+// naming scheme dots apart cased components (TIGER_STYLE.Index_Count.md), and
+// every one must hold — the extension included, which is lowercase and so
+// trivially snake_case.
+func path_casing_segment_ok(seg string) (ok bool) {
+
+	for _, component := range strings.Split(seg, ".") {
+		if component == "" {
+			// A leading, trailing, or doubled dot — a dotfile's leading dot,
+			// say — yields an empty component with nothing to case.
+			continue
+		}
+		if snake_case_re.MatchString(component) {
+			continue
+		}
+		if ada_case_re.MatchString(component) {
+			continue
+		}
+		return false
+	}
+	return true
+}
+
+// Produces the corrected form of a path segment by splitting on dots, applying
+// the appropriate casing style to each component (Ada_Case when the component
+// starts with an uppercase letter, snake_case otherwise), and rejoining.
+// Hyphens are converted to underscores before the style pass so that kebab
+// components are handled correctly by suggest's word splitter.
+func path_casing_suggest(seg string) (output string) {
+	components := strings.Split(seg, ".")
+	for i, c := range components {
+		if c == "" {
+			continue
+		}
+		style := "snake_case"
+		if unicode.IsUpper(rune(c[0])) {
+			style = "Ada_Case"
+		}
+		components[i] = suggest(&suggest_input{
+			Name: strings.ReplaceAll(c, "-", "_"),
+			Want: style,
+		})
+	}
+	return strings.Join(components, ".")
+}
+
+// Returns the sorted paths the rule must check. With a tracked set it is exactly
+// that set (gitignore already applied); with none it walks the tree, pruning
+// .git so git's internals never enter the check.
+func check_path_casing_paths(fsys fs.FS, tracked map[string]bool) (paths []string) {
+
+	if tracked != nil {
+		paths = make([]string, 0, len(tracked))
+		for p := range tracked {
+			paths = append(paths, p)
+		}
+		sort.Strings(paths)
+		return paths
+	}
+	walk_err := fs.WalkDir(fsys, ".",
+		func(p string, d fs.DirEntry, entry_err error) (output error) {
+			if entry_err != nil {
+				return nil
+			}
+			if d.IsDir() {
+				if d.Name() == ".git" {
+					return fs.SkipDir
+				}
+				return nil
+			}
+			paths = append(paths, p)
+			return nil
+		})
+	if walk_err != nil {
+		return nil
+	}
+	sort.Strings(paths)
+	return paths
 }
 
 type check_file_system_stream_checks_stream_symlinks_checker_input struct {
@@ -7326,9 +8463,6 @@ type check_file_system_stream_checks_stream_symlinks_checker_input struct {
 func check_file_system_stream_checks_stream_symlinks_checker(
 	input *check_file_system_stream_checks_stream_symlinks_checker_input,
 ) (c check_function_stream) {
-	defer func() {
-	}()
-
 	root_directory := input.Root_Directory
 	readlink := input.Readlink
 	stat := input.Stat
@@ -7380,10 +8514,61 @@ func check_file_system_stream_checks_stream_symlinks_checker(
 	}
 }
 
-// Enforces a 100-rune visual cap on every .md line. Exemptions: fenced code
-// blocks (would force awkward wraps), table rows (pipes can't break across
-// lines), and lines containing a URL (`://`) where the URL itself is the
-// dominant token.
+// Enforces a 100-rune visual cap on every .md line. Outside fenced code, two
+// rendering exemptions apply: table rows (pipes can't break across lines) and
+// lines whose width is dominated by a URL (`://`). Inside a fenced block both
+// rationales evaporate — the line is literal code — so no exemption applies and
+// every line is held to the cap.
+// Display width approximates what a fixed-width terminal renders, the property
+// "visual limit" always meant but rune count only approximated: a tab advances
+// to the next eight-column stop, an East Asian wide or fullwidth rune occupies
+// two columns, a nonspacing or enclosing mark occupies none, every other rune
+// one. The wide ranges are a stdlib-only stand-in for the exhaustive East Asian
+// Width property (golang.org/x/text/width), which this package forgoes to stay
+// dependency-free.
+func display_width(text string) (width int) {
+	for _, glyph := range text {
+		switch {
+		case glyph == '\t':
+			width += 8 - width%8
+		case unicode.Is(unicode.Mn, glyph), unicode.Is(unicode.Me, glyph):
+		case display_glyph_wide(glyph):
+			width += 2
+		default:
+			width++
+		}
+	}
+	return width
+}
+
+func display_glyph_wide(glyph rune) (wide bool) {
+	spans := [...][2]rune{
+		{0x1100, 0x115F},   // Hangul Jamo
+		{0x2E80, 0x303E},   // CJK radicals, Kangxi, CJK symbols
+		{0x3041, 0x33FF},   // Hiragana through CJK compatibility
+		{0x3400, 0x4DBF},   // CJK extension A
+		{0x4E00, 0x9FFF},   // CJK unified ideographs
+		{0xA000, 0xA4CF},   // Yi
+		{0xAC00, 0xD7A3},   // Hangul syllables
+		{0xF900, 0xFAFF},   // CJK compatibility ideographs
+		{0xFE30, 0xFE4F},   // CJK compatibility forms
+		{0xFF00, 0xFF60},   // Fullwidth forms
+		{0xFFE0, 0xFFE6},   // Fullwidth signs
+		{0x1F300, 0x1FAFF}, // Emoji and pictographs
+		{0x20000, 0x3FFFD}, // CJK extension B and beyond
+	}
+	for _, span := range spans {
+		if glyph < span[0] {
+			continue
+		}
+		if glyph > span[1] {
+			continue
+		}
+		return true
+	}
+	return false
+}
+
 func check_stream_markdown_line_max(
 	p string,
 	information fs.FileInfo,
@@ -7414,26 +8599,74 @@ func check_stream_markdown_line_max(
 			input_code = !input_code
 			continue
 		}
-		if input_code {
-			continue
-		}
 		trimmed := bytes.TrimSpace(line)
 		is_table_row := bytes.HasPrefix(
 			trimmed, []byte("|")) && bytes.HasSuffix(trimmed, []byte("|"))
-		if is_table_row {
-			continue
+		// The table-row and URL exemptions are markdown-rendering allowances: a
+		// real table row cannot wrap and a prose URL has no fold point. Inside a
+		// fenced block the line is literal code, where neither rationale holds, so
+		// the exemptions are gated off and every code line is held to the cap.
+		if !input_code {
+			if is_table_row {
+				continue
+			}
+			if bytes.Contains(line, []byte("://")) {
+				continue
+			}
 		}
-		if bytes.Contains(line, []byte("://")) {
-			continue
-		}
-		runes_count := utf8.RuneCount(line)
-		if runes_count > markdown_line_max {
+		columns := display_width(string(line))
+		if columns > markdown_line_max {
 			*output = append(*output, Diagnostic{
 				Position: token.Position{Filename: p, Line: line_number, Column: 1},
-				Message: fmt.Sprintf("markdown line is %d chars; visual limit is "+
-					"%d", runes_count, markdown_line_max),
+				Message: fmt.Sprintf(
+					"markdown line is %d columns; visual limit is %d",
+					columns, markdown_line_max),
 			})
 		}
+	}
+}
+
+func check_stream_markdown_trailing_whitespace(
+	p string,
+	information fs.FileInfo,
+	load func() (data []byte, err error),
+	output *[]Diagnostic) {
+
+	if !strings.HasSuffix(information.Name(), ".md") {
+		return
+	}
+	source, err := load()
+	if err != nil {
+		return
+	}
+	input_code := false
+	line_number := 0
+	for i := 0; i < len(source); {
+		line_number++
+		newline_offset := bytes.IndexByte(source[i:], '\n')
+		var line []byte
+		if newline_offset < 0 {
+			line = source[i:]
+			i = len(source)
+		} else {
+			line = source[i : i+newline_offset]
+			i += newline_offset + 1
+		}
+		if bytes.HasPrefix(line, []byte("```")) {
+			input_code = !input_code
+			continue
+		}
+		// Code may rely on trailing whitespace; only prose is held to the rule.
+		if input_code {
+			continue
+		}
+		if len(line) == len(bytes.TrimRight(line, " \t")) {
+			continue
+		}
+		*output = append(*output, Diagnostic{
+			Position: token.Position{Filename: p, Line: line_number, Column: 1},
+			Message:  "markdown line has trailing whitespace",
+		})
 	}
 }
 
@@ -7536,7 +8769,7 @@ func agents_claude_pair_finalize(
 	}
 }
 
-// Library packages that touch ambient process state (env vars, the wall
+// Library packages that touch impure process state (env vars, the wall
 // clock, the default HTTP transport, /dev/urandom, …) cannot be substituted
 // for in tests or rewired by callers. Force every such read to happen in
 // package main, where the program is allowed to bind to the real world,
@@ -7549,7 +8782,7 @@ func agents_claude_pair_finalize(
 // wire its default to the real world — that binding has to live
 // somewhere, and the doctrine reserves exactly this position for it.
 
-func check_no_ambient_stdlib(
+func check_no_impure_stdlib(
 	parsed_files []parsed_file, modules *module_index,
 ) (diags []Diagnostic) {
 
@@ -7563,7 +8796,7 @@ func check_no_ambient_stdlib(
 		if parsed_file_is_composition_tier(pf, modules) {
 			continue
 		}
-		diags = append(diags, check_no_ambient_stdlib_per_file(pf.File_Set, pf.File)...)
+		diags = append(diags, check_no_impure_stdlib_per_file(pf.File_Set, pf.File)...)
 	}
 	return diags
 }
@@ -7586,25 +8819,18 @@ func parsed_file_is_composition_tier(pf parsed_file, modules *module_index) (yes
 	if canonical == "." {
 		return false
 	}
-	ancestors := check_library_tier_depth_ancestors(canonical)
-	count := 0
-	for _, a := range ancestors {
-		if _, has := m.Directory_Package[a]; has {
-			count++
-		}
-	}
-	return count == 1
+	return len(module_information_library_ancestors(m, canonical)) == 1
 }
 
-func check_no_ambient_stdlib_per_file(
+func check_no_impure_stdlib_per_file(
 	file_set *token.FileSet, file *ast.File,
 ) (diags []Diagnostic) {
 
-	const import_message = "ambient stdlib import %q: see lint/README.md for resolutions"
-	const call_message = "ambient stdlib call %s.%s: see lint/README.md for resolutions"
+	const import_message = "impure stdlib import %q: see lint/README.md for resolutions"
+	const call_message = "impure stdlib call %s.%s: see lint/README.md for resolutions"
 	for _, implementation := range file.Imports {
 		path := strings.Trim(implementation.Path.Value, `"`)
-		if !is_ambient_hard_import(path) {
+		if !is_impure_hard_import(path) {
 			continue
 		}
 		diags = append(diags, Diagnostic{
@@ -7644,8 +8870,8 @@ func check_no_ambient_stdlib_per_file(
 		if !has {
 			return true
 		}
-		soft_input := &is_ambient_soft_ident_input{Package: path, Name: selection.Sel.Name}
-		if !is_ambient_soft_ident(soft_input) {
+		soft_input := &is_impure_soft_ident_input{Package: path, Name: selection.Sel.Name}
+		if !is_impure_soft_ident(soft_input) {
 			return true
 		}
 		diags = append(diags, Diagnostic{
@@ -7657,7 +8883,7 @@ func check_no_ambient_stdlib_per_file(
 	return diags
 }
 
-func is_ambient_hard_import(path string) (yes bool) {
+func is_impure_hard_import(path string) (yes bool) {
 
 	switch path {
 	case "os", "os/exec", "os/user", "os/signal",
@@ -7667,12 +8893,12 @@ func is_ambient_hard_import(path string) (yes bool) {
 	return false
 }
 
-type is_ambient_soft_ident_input struct {
+type is_impure_soft_ident_input struct {
 	Package string
 	Name    string
 }
 
-func is_ambient_soft_ident(input *is_ambient_soft_ident_input) (yes bool) {
+func is_impure_soft_ident(input *is_impure_soft_ident_input) (yes bool) {
 
 	switch input.Package {
 	case "time":
@@ -7699,6 +8925,274 @@ func is_ambient_soft_ident(input *is_ambient_soft_ident_input) (yes bool) {
 			"LookupHost", "LookupIP", "LookupAddr", "LookupCNAME",
 			"LookupMX", "LookupNS", "LookupTXT", "LookupSRV", "LookupPort",
 			"DefaultResolver":
+			return true
+		}
+	}
+	return false
+}
+
+// A pure package's purity must hold across its whole dependency closure, not
+// just its own file. The Impure Stdlib rule already runs on every library-tier
+// package, so a pure package importing only pure first-party packages stays
+// pure by induction — no call graph is needed. This rule supplies the missing
+// edge: a pure package may not import a first-party package that is itself
+// impure (a `default` package, or one nested a Go ancestor below the library
+// tier), nor call a curated stdlib API that reaches the impure set only
+// transitively. Unlike
+// Impure Stdlib, the ban binds the pure package's _test.go files too; direct
+// leaf use (os.Getenv, time.Now) in tests remains a matter for Impure Stdlib.
+func check_transitive_purity(
+	parsed_files []parsed_file, modules *module_index,
+) (diags []Diagnostic) {
+
+	for _, pf := range parsed_files {
+		if parsed_file_is_impure_package(pf, modules) {
+			continue
+		}
+		diags = append(diags,
+			check_transitive_purity_per_file(pf.File_Set, pf.File, modules)...)
+	}
+	return diags
+}
+
+// True iff the file belongs to an impure package: package main, or a `default`
+// package or one a Go ancestor below the library tier. Those are the very
+// packages a pure package may not depend on, so they are exempt as callers too
+// — including their _test.go files, classified by directory since tests carry
+// no entry in Directory_Package. A file owned by no module (index -1) is left
+// to the downstream no-op convention every other doctrine check follows.
+func parsed_file_is_impure_package(pf parsed_file, modules *module_index) (yes bool) {
+
+	base := strings.TrimSuffix(pf.File.Name.Name, "_test")
+	if base == "main" {
+		return true
+	}
+	module_index_number := modules.File_To_Module[pf.Path]
+	if module_index_number < 0 {
+		return false
+	}
+	m := modules.Modules[module_index_number]
+	relative := pf.Path
+	if m.Root != "." {
+		relative = strings.TrimPrefix(pf.Path, m.Root+"/")
+	}
+	canonical := module_index_canonicalize(path.Dir(relative))
+	return directory_is_impure(canonical, m)
+}
+
+// True iff the module-relative directory holds an impure package: a `default`
+// directory (the naming convention for an impure global binding, see
+// check_default_package_name) or a package sitting exactly one non-main Go
+// ancestor below the library tier.
+func directory_is_impure(canonical string, m module_information) (yes bool) {
+
+	if canonical == "." {
+		return false
+	}
+	last := canonical
+	slash_offset := strings.LastIndex(canonical, "/")
+	if slash_offset >= 0 {
+		last = canonical[slash_offset+1:]
+	}
+	if last == "default" {
+		return true
+	}
+	return len(module_information_library_ancestors(m, canonical)) == 1
+}
+
+// True iff a test file imports the snapshot library. snap binds the OS to
+// rewrite inline snapshots in place, so it is impure first-party — but it is
+// test infrastructure, an extension of the suite, so an external *_test package
+// may import it without breaching transitive purity.
+func purity_snap_test_exemption(file *ast.File, import_path string) (exempt bool) {
+
+	if !strings.HasSuffix(file.Name.Name, "_test") {
+		return false
+	}
+	snap_root := shared_library_module_path + "/snap"
+	if import_path == snap_root {
+		return true
+	}
+	return strings.HasPrefix(import_path, snap_root+"/")
+}
+
+// Flags the two routes impurity launders into a pure file: an import of an
+// impure first-party package, and a call to a curated stdlib API that reaches
+// the impure set only transitively.
+func check_transitive_purity_per_file(
+	file_set *token.FileSet, file *ast.File, modules *module_index,
+) (diags []Diagnostic) {
+
+	const import_message = "impure dependency %q: a pure package imports only pure packages"
+	const call_message = "impure transitive call %s.%s: a pure package calls only pure APIs"
+	local_to_path := make(map[string]string, len(file.Imports))
+	for _, implementation := range file.Imports {
+		import_path := strings.Trim(implementation.Path.Value, `"`)
+		if import_path_is_impure_first_party(import_path, modules) {
+			if !purity_snap_test_exemption(file, import_path) {
+				diags = append(diags, Diagnostic{
+					Position: file_set.Position(implementation.Pos()),
+					Name:     "transitive-purity",
+					Want:     "import only pure first-party packages",
+					Message:  fmt.Sprintf(import_message, import_path),
+				})
+			}
+		}
+		name := import_local_name(implementation, import_path)
+		if name == "_" {
+			continue
+		}
+		if name == "." {
+			continue
+		}
+		local_to_path[name] = import_path
+	}
+	ast.Inspect(file, func(n ast.Node) (descend bool) {
+		selection, is_selection := n.(*ast.SelectorExpr)
+		if !is_selection {
+			return true
+		}
+		ident, is_ident := selection.X.(*ast.Ident)
+		if !is_ident {
+			return true
+		}
+		import_path, has := local_to_path[ident.Name]
+		if !has {
+			return true
+		}
+		curated := &is_transitive_stdlib_ident_input{
+			Package: import_path, Name: selection.Sel.Name}
+		if !is_transitive_stdlib_ident(curated) {
+			return true
+		}
+		diags = append(diags, Diagnostic{
+			Position: file_set.Position(selection.Pos()),
+			Name:     "transitive-purity",
+			Want:     "call only pure stdlib APIs",
+			Message:  fmt.Sprintf(call_message, import_path, selection.Sel.Name),
+		})
+		return true
+	})
+	return diags
+}
+
+// Resolves the in-file identifier an import binds: its explicit alias, or the
+// final path segment when none is given.
+func import_local_name(implementation *ast.ImportSpec, import_path string) (name string) {
+
+	if implementation.Name != nil {
+		return implementation.Name.Name
+	}
+	slash_offset := strings.LastIndex(import_path, "/")
+	return import_path[slash_offset+1:]
+}
+
+// True iff the import path resolves to a first-party package that is itself
+// impure (a `default` package, or one a Go ancestor below the library tier). A stdlib
+// or third-party path is owned by no module and so is never first-party here.
+func import_path_is_impure_first_party(import_path string, modules *module_index) (yes bool) {
+
+	module_index_number := module_index_for_import_path(import_path, modules)
+	if module_index_number < 0 {
+		return false
+	}
+	m := modules.Modules[module_index_number]
+	relative := strings.TrimPrefix(import_path, m.Module_Path)
+	relative = strings.TrimPrefix(relative, "/")
+	if relative == "" {
+		relative = "."
+	}
+	canonical := module_index_canonicalize(relative)
+	return directory_is_impure(canonical, m)
+}
+
+// Returns the index of the module whose path is the longest prefix of the
+// import path, or -1 for a stdlib/third-party path owned by no module.
+func module_index_for_import_path(import_path string, modules *module_index) (index int) {
+
+	index = -1
+	for i := range modules.Modules {
+		m := modules.Modules[i]
+		if m.Module_Path == "" {
+			continue
+		}
+		under := &import_path_under_module_input{
+			Import_Path: import_path, Module_Path: m.Module_Path}
+		if !import_path_under_module(under) {
+			continue
+		}
+		if index < 0 {
+			index = i
+			continue
+		}
+		if len(m.Module_Path) > len(modules.Modules[index].Module_Path) {
+			index = i
+		}
+	}
+	return index
+}
+
+type import_path_under_module_input struct {
+	// Import_Path is the candidate package path under test.
+	Import_Path string
+	// Module_Path is the module's declared import prefix.
+	Module_Path string
+}
+
+// True iff the import path names the module itself or a package within it.
+func import_path_under_module(input *import_path_under_module_input) (yes bool) {
+
+	if input.Import_Path == input.Module_Path {
+		return true
+	}
+	return strings.HasPrefix(input.Import_Path, input.Module_Path+"/")
+}
+
+type is_transitive_stdlib_ident_input struct {
+	// Package is the imported stdlib path the selector reads from.
+	Package string
+	// Name is the selected identifier called on that package.
+	Name string
+}
+
+// True iff the stdlib selector reaches the impure set only transitively. The
+// set is curated and grown by hand rather than computed, so the rule never
+// descends into stdlib sources. Each entry names an API whose package is not
+// itself a hard-banned import yet whose body touches an impure effect — the
+// process, the wall clock, the filesystem, the OS trust store, or the network.
+// Pure siblings (filepath.Join, context.WithCancel) are deliberately absent, as
+// are the observability writes (log.Print) the doctrine exempts.
+func is_transitive_stdlib_ident(input *is_transitive_stdlib_ident_input) (yes bool) {
+
+	switch input.Package {
+	case "log":
+		switch input.Name {
+		// The log.Fatal family calls os.Exit, terminating the process.
+		case "Fatal", "Fatalf", "Fatalln":
+			return true
+		}
+	case "context":
+		switch input.Name {
+		// WithTimeout and WithDeadline read the wall clock to set the deadline.
+		case "WithTimeout", "WithDeadline":
+			return true
+		}
+	case "path/filepath":
+		switch input.Name {
+		// These resolve against the real filesystem or working directory.
+		case "Abs", "Walk", "WalkDir", "Glob", "EvalSymlinks":
+			return true
+		}
+	case "crypto/x509":
+		switch input.Name {
+		// SystemCertPool reads the host's trust store off disk.
+		case "SystemCertPool":
+			return true
+		}
+	case "net/smtp":
+		switch input.Name {
+		// SendMail dials a remote server, like the net/http senders.
+		case "SendMail":
 			return true
 		}
 	}
@@ -8004,7 +9498,7 @@ var generated_re = regexp.MustCompile(`^// Code generated .* DO NOT EDIT\.?$`)
 // banned_unbounded_apis. The walk inspects bare *ast.SelectorExpr nodes —
 // call sites (`io.ReadAll(r)`) and value references (`http.DefaultClient`)
 // are both caught. Canonical package idents are guaranteed by tier-1's
-// check_no_dot_import and check_default_package_alias, so the X ident
+// check_no_dot_import and check_default_package_name, so the X ident
 // always resolves to the package's true name.
 //
 // Generated files (header `// Code generated ... DO NOT EDIT`) are exempt —
