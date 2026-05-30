@@ -12,7 +12,7 @@
     "shared/io"
   ],
   "ignore": [
-          "big_bang/dotfiles"
+          "dotfiles"
   ],
   "word_replacements": {
     "len":       [],
