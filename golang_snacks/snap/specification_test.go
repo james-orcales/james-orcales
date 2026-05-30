@@ -8,7 +8,7 @@ import (
 	"testing"
 	"testing/fstest"
 
-	snap "github.com/james-orcales/james-orcales/golang_snacks/snap"
+	"github.com/james-orcales/james-orcales/golang_snacks/snap"
 )
 
 // Test_Equal_Match verifies a matching value returns true and emits no output.
