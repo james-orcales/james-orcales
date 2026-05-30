@@ -12,7 +12,7 @@ import (
 	"testing"
 	"testing/fstest"
 
-	snap "github.com/james-orcales/james-orcales/golang_snacks/snap/v2/snap_default"
+	"github.com/james-orcales/james-orcales/golang_snacks/snap/default"
 	"github.com/james-orcales/james-orcales/lint/internal"
 )
 
