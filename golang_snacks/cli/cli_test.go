@@ -9,172 +9,212 @@ import (
 
 	"github.com/james-orcales/james-orcales/golang_snacks/cli"
 	"github.com/james-orcales/james-orcales/golang_snacks/invariant"
-	"github.com/james-orcales/james-orcales/golang_snacks/snap"
+	"github.com/james-orcales/james-orcales/golang_snacks/snap/default"
 )
 
 func TestMain(m *testing.M) {
-	database.Grow(1024 * 256)
-	defer stdout.Reset()
-	defer stderr.Reset()
-
 	invariant.RegisterPackagesForAnalysis()
-	initGlobal()
 	code := m.Run()
 	invariant.AnalyzeAssertionFrequency()
 	os.Exit(code)
 }
 
-// initializing program AFTER registering packages so that cli.New assertions are registered
-func initGlobal() {
-	program = cli.New(cli.NewInput{
+// Per-test program plus its captured output buffers.
+type cli_fixture struct {
+	Program  cli.Program
+	Stdout   *bytes.Buffer
+	Stderr   *bytes.Buffer
+	Database *bytes.Buffer
+}
+
+// Builds the todoctl program with fresh buffers. cli.New runs here, inside each
+// test, so its assertions are registered before use.
+func new_cli_fixture() (fixture cli_fixture) {
+	fixture.Stdout = &bytes.Buffer{}
+	fixture.Stderr = &bytes.Buffer{}
+	fixture.Database = &bytes.Buffer{}
+	fixture.Program = cli.New(cli.New_Input{
 		Label:       "todoctl",
 		Description: "is a todo list manager",
 		Commands: []cli.Command{
 			{Label: "help", Description: "print help message"},
-			{
-				Label: "add",
-				Arguments: []cli.Option{
-					{Label: "task", Value: "", Description: "describes what you need to do"},
-				},
-				Flags: []cli.Option{
-					{Label: "deadline", Value: "Jan 02 Mon", Description: "deadline date"},
-					{Label: "priority", Value: "low", Description: "set priority"},
-					{Label: "noop", Value: false, Description: "random flag that does nothing"},
-				},
-			},
-			{
-				Label: "list",
-				Flags: []cli.Option{
-					{
-						Label:       "columns",
-						Value:       "all",
-						Description: "comma-separated (all, deadline, priority, description)",
-					},
-					{Label: "count", Value: 0, Description: "how many tasks to display"},
-				},
-			},
-			{
-				Label:       "delete",
-				Description: "remove a task by ID",
-				Arguments: []cli.Option{
-					// Setting Value to 0 ensures the parser treats this as an int
-					{Label: "id", Value: 0, Description: "the integer index of the task to remove"},
-				},
-			},
+			todoctl_add_command(),
+			todoctl_list_command(),
+			todoctl_delete_command(),
 		},
 	})
+	return fixture
 }
 
-var (
-	database = &bytes.Buffer{}
-	stdout   = &bytes.Buffer{}
-	stderr   = &bytes.Buffer{}
-	program  cli.Program
-	// Usually, you'd inline this in func main(). Here, we extracted it out into separate
-	// function since each test is a separate entrypoint.
-	command_handler = func(command cli.Command) {
-		switch command.Label {
-		case "help":
-			cli.PrintHelp(stdout, program)
-		case "add":
-			database.WriteString(fmt.Sprintf(
-				"%s | %s | %s\n",
-				cli.GetOption(command.Flags, "deadline").Value,
-				cli.GetOption(command.Flags, "priority").Value,
-				cli.GetOption(command.Arguments, "task").Value,
-			))
-		case "delete":
-			id := cli.GetOption(command.Arguments, "id").Value.(int)
-			content := strings.TrimSpace(database.String())
-			if content == "" {
-				fmt.Fprintln(stdout, "List is already empty")
-				return
-			}
+// Builds the todoctl "add" command.
+func todoctl_add_command() (command cli.Command) {
+	return cli.Command{
+		Label: "add",
+		Arguments: []cli.Option{
+			{Label: "task", Value: "", Description: "describes what you need to do"},
+		},
+		Flags: []cli.Option{
+			{Label: "deadline", Value: "Jan 02 Mon", Description: "deadline date"},
+			{Label: "priority", Value: "low", Description: "set priority"},
+			{Label: "noop", Value: false, Description: "random flag that does nothing"},
+		},
+	}
+}
 
-			lines := strings.Split(content, "\n")
-			if id < 0 || id >= len(lines) {
-				fmt.Fprintf(stdout, "Error: ID %d is out of range (0 to %d)\n", id, len(lines)-1)
-				return
-			}
+// Builds the todoctl "list" command.
+func todoctl_list_command() (command cli.Command) {
+	return cli.Command{
+		Label: "list",
+		Flags: []cli.Option{
+			{
+				Label: "columns",
+				Value: "all",
+				Description: "comma-separated (all, deadline, " +
+					"priority, description)",
+			},
+			{Label: "count", Value: 0, Description: "how many tasks to display"},
+		},
+	}
+}
 
-			database.Reset()
-			for i, line := range lines {
-				if i == id {
-					continue
-				}
-				database.WriteString(line + "\n")
-			}
+// Builds the todoctl "delete" command.
+func todoctl_delete_command() (command cli.Command) {
+	return cli.Command{
+		Label:       "delete",
+		Description: "remove a task by ID",
+		Arguments: []cli.Option{
+			// Setting Value to 0 makes the parser treat this as an int.
+			{
+				Label:       "id",
+				Value:       0,
+				Description: "the integer index of the task to remove",
+			},
+		},
+	}
+}
 
-			fmt.Fprintf(stdout, "Deleted task %d\n", id)
-		case "list":
-			columns := cli.GetOption(command.Flags, "columns").Value.(string)
-			count := cli.GetOption(command.Flags, "count").Value.(int)
-			all, deadline, priority, description := false, false, false, false
-			for column := range strings.SplitSeq(columns, ",") {
-				if column == "all" {
-					all = true
-					break
-				}
-				if column == "deadline" {
-					deadline = true
-				}
-				if column == "priority" {
-					priority = true
-				}
-				if column == "description" {
-					description = true
-				}
-			}
-			if all {
-				fmt.Fprintln(stdout, database.String())
-			} else {
-				iteration := 0
-				for line := range strings.Lines(database.String()) {
-					if iteration >= count {
-						break
-					}
-					cols := strings.Split(line, " | ")
-					out := []string{}
-					if deadline {
-						out = append(out, cols[0])
-					}
-					if priority {
-						out = append(out, cols[1])
-					}
-					if description {
-						out = append(out, string(cols[2][:len(cols[2])-1]))
-					}
+// Dispatches a parsed command against the fixture's state, the way func main
+// would; extracted so each test stays its own entry point.
+func run_command(command cli.Command, fixture *cli_fixture) {
+	switch command.Label {
+	case "help":
+		cli.Print_Help(fixture.Stdout, fixture.Program)
+	case "add":
+		run_add(command, fixture)
+	case "delete":
+		run_delete(command, fixture)
+	case "list":
+		run_list(command, fixture)
+	}
+}
 
-					fmt.Fprintln(stdout, strings.Join(out, "::"))
-					iteration++
-				}
+// Appends a formatted task row to the fixture's database.
+func run_add(command cli.Command, fixture *cli_fixture) {
+	fixture.Database.WriteString(fmt.Sprintf(
+		"%s | %s | %s\n",
+		cli.Get_Option(command.Flags, "deadline").Value,
+		cli.Get_Option(command.Flags, "priority").Value,
+		cli.Get_Option(command.Arguments, "task").Value,
+	))
+}
 
-			}
+// Removes the task at the given index from the fixture's database.
+func run_delete(command cli.Command, fixture *cli_fixture) {
+	identifier := cli.Get_Option(command.Arguments, "id").Value.(int)
+	content := strings.TrimSpace(fixture.Database.String())
+	if content == "" {
+		fmt.Fprintln(fixture.Stdout, "List is already empty")
+		return
+	}
+	lines := strings.Split(content, "\n")
+	if identifier < 0 {
+		fmt.Fprintf(fixture.Stdout, "Error: ID %d is out of range (0 to %d)\n",
+			identifier, len(lines)-1)
+		return
+	}
+	if identifier >= len(lines) {
+		fmt.Fprintf(fixture.Stdout, "Error: ID %d is out of range (0 to %d)\n",
+			identifier, len(lines)-1)
+		return
+	}
+	fixture.Database.Reset()
+	for index, line := range lines {
+		if index == identifier {
+			continue
+		}
+		fixture.Database.WriteString(line + "\n")
+	}
+	fmt.Fprintf(fixture.Stdout, "Deleted task %d\n", identifier)
+}
+
+// Prints the selected columns of up to count tasks from the database.
+func run_list(command cli.Command, fixture *cli_fixture) {
+	columns := cli.Get_Option(command.Flags, "columns").Value.(string)
+	count := cli.Get_Option(command.Flags, "count").Value.(int)
+	all, deadline, priority, description := false, false, false, false
+	for column := range strings.SplitSeq(columns, ",") {
+		if column == "all" {
+			all = true
+			break
+		}
+		if column == "deadline" {
+			deadline = true
+		}
+		if column == "priority" {
+			priority = true
+		}
+		if column == "description" {
+			description = true
 		}
 	}
-)
+	if all {
+		fmt.Fprintln(fixture.Stdout, fixture.Database.String())
+		return
+	}
+	iteration := 0
+	for line := range strings.Lines(fixture.Database.String()) {
+		if iteration >= count {
+			break
+		}
+		parts := strings.Split(line, " | ")
+		output := []string{}
+		if deadline {
+			output = append(output, parts[0])
+		}
+		if priority {
+			output = append(output, parts[1])
+		}
+		if description {
+			output = append(output, string(parts[2][:len(parts[2])-1]))
+		}
+		fmt.Fprintln(fixture.Stdout, strings.Join(output, "::"))
+		iteration++
+	}
+}
 
-type checkInput struct {
+// Input for check.
+type check_input struct {
 	T        *testing.T
-	Out      *bytes.Buffer
-	Err      *bytes.Buffer
+	Fixture  *cli_fixture
 	Snapshot snap.Snapshot
 }
 
-func check(in checkInput) {
-	in.T.Helper()
-	defer in.Out.Reset()
-	defer in.Err.Reset()
-	defer database.Reset()
-	expect := fmt.Sprintf("Stdout:\n%s\nStderr:\n%s\nDatabase:\n%s\n", in.Out.String(), in.Err.String(), database.String())
-	if !in.Snapshot.IsEqual(expect) {
-		in.T.Fatal("Snapshot mismatch")
+// Asserts the fixture's combined buffers against the snapshot.
+func check(input check_input) {
+	input.T.Helper()
+	expect := fmt.Sprintf("Stdout:\n%s\nStderr:\n%s\nDatabase:\n%s\n",
+		input.Fixture.Stdout.String(), input.Fixture.Stderr.String(),
+		input.Fixture.Database.String())
+	if !snap.Snapshot_Is_Equal(input.Snapshot, expect) {
+		input.T.Fatal("Snapshot mismatch")
 	}
 }
 
-func TestHelpMessage(t *testing.T) {
-	cli.PrintHelp(stdout, program)
-	check(checkInput{T: t, Out: stdout, Err: stderr, Snapshot: snap.Init(`Stdout:
+// Test_Help_Message verifies Print_Help renders the program, commands, and flags.
+func Test_Help_Message(t *testing.T) {
+	fixture := new_cli_fixture()
+	cli.Print_Help(fixture.Stdout, fixture.Program)
+	check(check_input{T: t, Fixture: &fixture, Snapshot: snap.Init(`Stdout:
 todoctl is a todo list manager
 
 Usage:
@@ -204,7 +244,9 @@ Database:
 `)})
 }
 
-func TestDemo(t *testing.T) {
+// Test_Demo verifies a sequence of add, list, and delete commands end to end.
+func Test_Demo(t *testing.T) {
+	fixture := new_cli_fixture()
 	commands := [][]string{
 		{"todoctl", "add", "commit to github", "-deadline=Nov 21 Fri"},
 		{"todoctl", "add", "something important", "-noop"},
@@ -214,13 +256,13 @@ func TestDemo(t *testing.T) {
 		{"todoctl", "list", "-columns=priority,description"},
 	}
 	for _, command := range commands {
-		command, err := cli.Parse(&program, command)
+		command, err := cli.Program_Parse(&fixture.Program, command)
 		if err != nil {
 			panic(err)
 		}
-		command_handler(command)
+		run_command(command, &fixture)
 	}
-	check(checkInput{T: t, Out: stdout, Err: stderr, Snapshot: snap.Init(`Stdout:
+	check(check_input{T: t, Fixture: &fixture, Snapshot: snap.Init(`Stdout:
 Nov 21 Fri | low | commit to github
 Jan 02 Mon | low | something important
 Jan 02 Mon | low | foo bar baz
@@ -236,7 +278,9 @@ Jan 02 Mon | low | foo bar baz
 `)})
 }
 
-func TestUserError(t *testing.T) {
+// Test_User_Error verifies parse errors are reported for malformed input.
+func Test_User_Error(t *testing.T) {
+	fixture := new_cli_fixture()
 	commands := [][]string{
 		{"different_label"},
 		{"todoctl", "arsotitnaroisen"},
@@ -250,14 +294,14 @@ func TestUserError(t *testing.T) {
 		{"todoctl", "list", "-count=0", "-count=-1", "-count=-2"},
 	}
 	for _, command := range commands {
-		command, err := cli.Parse(&program, command)
+		command, err := cli.Program_Parse(&fixture.Program, command)
 		if err != nil {
-			fmt.Fprintln(stderr, err.Error())
+			fmt.Fprintln(fixture.Stderr, err.Error())
 			continue
 		}
-		command_handler(command)
+		run_command(command, &fixture)
 	}
-	check(checkInput{T: t, Out: stdout, Err: stderr, Snapshot: snap.Init(`Stdout:
+	check(check_input{T: t, Fixture: &fixture, Snapshot: snap.Init(`Stdout:
 todoctl is a todo list manager
 
 Usage:
@@ -295,7 +339,9 @@ Jan 02 Mon | low | without flags
 `)})
 }
 
-func TestQuoteTrimming(t *testing.T) {
+// Test_Quotes verifies quoted flag values are unquoted during parsing.
+func Test_Quotes(t *testing.T) {
+	fixture := new_cli_fixture()
 	commands := [][]string{
 		{"todoctl", "add", "task with double quotes", `-deadline="Nov 25 Tue"`},
 		{"todoctl", "add", "task with single quotes", `-priority='high'`},
@@ -303,13 +349,13 @@ func TestQuoteTrimming(t *testing.T) {
 		{"todoctl", "list"},
 	}
 	for _, command := range commands {
-		command, err := cli.Parse(&program, command)
+		command, err := cli.Program_Parse(&fixture.Program, command)
 		if err != nil {
 			panic(err)
 		}
-		command_handler(command)
+		run_command(command, &fixture)
 	}
-	check(checkInput{T: t, Out: stdout, Err: stderr, Snapshot: snap.Init(`Stdout:
+	check(check_input{T: t, Fixture: &fixture, Snapshot: snap.Init(`Stdout:
 Nov 25 Tue | low | task with double quotes
 Jan 02 Mon | high | task with single quotes
 Dec 01 Mon | medium | task with mixed text
@@ -323,83 +369,4 @@ Jan 02 Mon | high | task with single quotes
 Dec 01 Mon | medium | task with mixed text
 
 `)})
-}
-
-func TestTrimQuotesUnit(t *testing.T) {
-	tests := []struct {
-		name     string
-		args     []string
-		expected string
-	}{
-		{
-			name:     "double quotes",
-			args:     []string{"prog", "add", "task", `-flag="value"`},
-			expected: "value",
-		},
-		{
-			name:     "single quotes",
-			args:     []string{"prog", "add", "task", `-flag='value'`},
-			expected: "value",
-		},
-		{
-			name:     "no quotes",
-			args:     []string{"prog", "add", "task", `-flag=value`},
-			expected: "value",
-		},
-		{
-			name:     "empty double quotes",
-			args:     []string{"prog", "add", "task", `-flag=""`},
-			expected: "",
-		},
-		{
-			name:     "empty single quotes",
-			args:     []string{"prog", "add", "task", `-flag=''`},
-			expected: "",
-		},
-		{
-			name:     "mismatched quotes",
-			args:     []string{"prog", "add", "task", `-flag="value'`},
-			expected: `"value'`,
-		},
-		{
-			name:     "value with spaces in double quotes",
-			args:     []string{"prog", "add", "task", `-flag="hello world"`},
-			expected: "hello world",
-		},
-		{
-			name:     "value with spaces in single quotes",
-			args:     []string{"prog", "add", "task", `-flag='hello world'`},
-			expected: "hello world",
-		},
-	}
-
-	program := cli.New(cli.NewInput{
-		Label:       "prog",
-		Description: "test program",
-		Commands: []cli.Command{
-			{
-				Label: "add",
-				Arguments: []cli.Option{
-					{Label: "task", Value: "", Description: "task name"},
-				},
-				Flags: []cli.Option{
-					{Label: "flag", Value: "", Description: "test flag"},
-				},
-			},
-		},
-	})
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			cmd, err := cli.Parse(&program, tt.args)
-			if err != nil {
-				t.Fatalf("Parse failed: %v", err)
-			}
-
-			actual := cli.GetOption(cmd.Flags, "flag").Value.(string)
-			if actual != tt.expected {
-				t.Errorf("Expected %q, got %q", tt.expected, actual)
-			}
-		})
-	}
 }

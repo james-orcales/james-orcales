@@ -6,22 +6,22 @@
 //
 // Example:
 //
-//	program := cli.New("myapp", "does something useful",
-//		cli.Command{
-//			Label: "add",
-//			Arguments: []cli.Option{
-//				{Label: "name", Value: "", Description: "item name"},
-//			},
-//			Flags: []cli.Option{
-//				{Label: "priority", Value: "low", Description: "urgency level"},
-//			},
-//		},
-//	)
-//	command, err := program.Parse(os.Args)
+//	program := cli.New(cli.New_Input{
+//		Label:       "myapp",
+//		Description: "does something useful",
+//		Commands: []cli.Command{{
+//			Label:     "add",
+//			Arguments: []cli.Option{{Label: "name", Description: "item name"}},
+//			Flags:     []cli.Option{{Label: "priority", Value: "low"}},
+//		}},
+//	})
+//	command, err := cli.Program_Parse(&program, os.Args)
 //	if err != nil {
-//		program.PrintHelp()
+//		cli.Print_Help(os.Stderr, program)
 //		os.Exit(1)
 //	}
+//
+// Parse with Program_Parse and render help with Print_Help.
 package cli
 
 import (
@@ -37,17 +37,23 @@ import (
 
 // Program represents a command-line application with one or more commands.
 type Program struct {
-	Label       string
+	// Label is the program name shown in help output.
+	Label string
+	// Description is the one-line program summary shown in help output.
 	Description string
-	Commands    []Command
-	GlobalFlags []Option
+	// Commands are the program's commands.
+	Commands []Command
+	// Global_Flags are flags accepted by every command.
+	Global_Flags []Option
 }
 
 // Command represents a single command within a program.
 // Commands have a label, optional arguments (required, ordered),
 // and optional flags (optional, unordered).
 type Command struct {
-	Label       string
+	// Label is the command name typed on the command line.
+	Label string
+	// Description is the one-line command summary shown in help output.
 	Description string
 	// Arguments are required and ordered. They must ALL appear before flags.
 	Arguments []Option
@@ -59,221 +65,173 @@ type Command struct {
 // The Value field determines the type (string, int, or bool for flags).
 // After parsing, Value contains the user-provided value.
 type Option struct {
-	Label       string
+	// Label is the argument or flag name.
+	Label string
+	// Description is the one-line summary shown in help output.
 	Description string
-	Value       any
-	IsFlag      bool
+	// Value holds the default before parsing and the user value after.
+	Value any
+	// Is_Flag distinguishes a flag from a positional argument.
+	Is_Flag bool
 }
 
-type NewArgInput struct {
-	Label       string
+// New_Argument_Input is the input for New_Argument.
+type New_Argument_Input struct {
+	// Label is the argument name.
+	Label string
+	// Description is the one-line summary shown in help output.
 	Description string
 }
 
-// NewArg creates a required positional argument with the specified type.
+// New_Argument creates a required positional argument with the specified type.
 // Arguments always have zero values; custom defaults are not allowed.
 // Type parameter T must be string, int, or bool.
-func NewArg[T string | int | bool](input NewArgInput) (opt Option) {
-	var zeroValue T
+func New_Argument[T string | int | bool](input New_Argument_Input) (option Option) {
+	var zero_value T
 	return Option{
 		Label:       input.Label,
 		Description: input.Description,
-		Value:       zeroValue,
-		IsFlag:      false,
+		Value:       zero_value,
+		Is_Flag:     false,
 	}
 }
 
-type NewFlagInput[T string | int | bool] struct {
-	Label       string
-	Value       T
+// New_Flag_Input is the input for New_Flag.
+type New_Flag_Input[T string | int | bool] struct {
+	// Label is the flag name.
+	Label string
+	// Value is the flag's default value.
+	Value T
+	// Description is the one-line summary shown in help output.
 	Description string
 }
 
-// NewFlag creates an optional flag with a default value.
+// New_Flag creates an optional flag with a default value.
 // Type parameter T must be string, int, or bool.
-func NewFlag[T string | int | bool](input NewFlagInput[T]) (opt Option) {
+func New_Flag[T string | int | bool](input New_Flag_Input[T]) (option Option) {
 	return Option{
 		Label:       input.Label,
 		Description: input.Description,
 		Value:       input.Value,
-		IsFlag:      true,
+		Is_Flag:     true,
 	}
 }
 
-type NewInput struct {
-	Label       string
+// New_Input is the input for New.
+type New_Input struct {
+	// Label is the program name.
+	Label string
+	// Description is the one-line program summary.
 	Description string
-	GlobalFlags []Option
-	Commands    []Command
+	// Global_Flags are flags accepted by every command.
+	Global_Flags []Option
+	// Commands are the program's commands.
+	Commands []Command
 }
 
-// New creates a new Program with the given label, description, global flags, and commands.
-// It validates that all commands have labels and that arguments/flags are properly configured.
-// Panics if validation fails (e.g., empty labels, unsupported types, invalid flag names).
-//
-// Supported argument types: string, int
-// Supported flag types: string, int, bool
-// Flag labels cannot contain dashes or spaces (use underscores instead).
-func New(input NewInput) (prog Program) {
-	panic_when(len(input.Commands) == 0, "Program has zero commands specified")
+// New creates a new Program from the given label, description, global flags, and
+// commands. It validates that all commands have labels and that arguments and
+// flags are properly configured, panicking when validation fails.
+func New(input New_Input) (program Program) {
+	panic_when(len(input.Commands) == 0, "Program has zero commands specified.")
 
-	// Validate global flags
-	for i, flag := range input.GlobalFlags {
-		panic_when(flag.Label == "", "Global flag #%d has no label", i)
-		panic_when(!flag.IsFlag, "Global flags must be created with NewFlag")
-		panic_when(
-			strings.Contains(flag.Label, "_"),
-			"Flags cannot contain underscores. Instead of %q, use %q",
-			flag.Label,
-			strings.ReplaceAll(flag.Label, "_", "-"),
-		)
-		panic_when(
-			strings.Contains(flag.Label, " "),
-			"Flags cannot contain spaces: %q",
-			flag.Label,
-		)
-		switch flag.Value.(type) {
-		default:
-			panic_when(true, "Global flag %q has unsupported type: %T", flag.Label, flag.Value)
-		case string, bool, int:
-		}
+	for index, flag := range input.Global_Flags {
+		panic_when(!flag.Is_Flag, "Global flags must be created with New_Flag.")
+		validate_flag_label(fmt.Sprintf("Global flag #%d", index), flag)
 	}
 
-	program := Program{
-		Label:       input.Label,
-		Description: input.Description,
-		Commands:    input.Commands,
-		GlobalFlags: input.GlobalFlags,
+	program = Program{
+		Label:        input.Label,
+		Description:  input.Description,
+		Commands:     input.Commands,
+		Global_Flags: input.Global_Flags,
 	}
 
-	for i, command := range program.Commands {
-		panic_when(command.Label == "", "Program.Commands[%d].Label is unset", i)
-		for argIdx, arg := range command.Arguments {
-			panic_when(arg.Label == "", "Argument #%d for command %q has no label", argIdx, command.Label)
-			switch arg.Value.(type) {
+	for index, command := range program.Commands {
+		panic_when(command.Label == "", "Program.Commands[%d].Label is unset.", index)
+		for argument_index, argument := range command.Arguments {
+			panic_when(argument.Label == "",
+				"Argument #%d for command %q has no label.",
+				argument_index, command.Label)
+			switch argument.Value.(type) {
 			default:
-				panic_when(true, "Argument %q has unsupported type: %T", arg.Label, arg.Value)
+				panic_when(true,
+					"Argument %q has unsupported type: %T",
+					argument.Label, argument.Value)
 			case string, int:
 			}
 		}
-		for flagIdx, flag := range command.Flags {
-			panic_when(flag.Label == "", "Flag #%d for command %q has no label", flagIdx, command.Label)
-			panic_when(
-				strings.Contains(flag.Label, "_"),
-				"Flags cannot contain underscores. Instead of %q, use %q",
-				flag.Label,
-				strings.ReplaceAll(flag.Label, "_", "-"),
-			)
-			panic_when(
-				strings.Contains(flag.Label, " "),
-				"Flags cannot contain spaces: %q",
-				flag.Label,
-			)
-			// Check for conflicts with global flags
-			for _, globalFlag := range input.GlobalFlags {
-				panic_when(
-					flag.Label == globalFlag.Label,
-					"Command %q has flag %q that conflicts with global flag",
-					command.Label,
-					flag.Label,
-				)
-			}
-			switch flag.Value.(type) {
-			default:
-				panic_when(true, "Flag %q has unsupported type: %T", flag.Label, flag.Value)
-			case string, bool, int:
+		for _, flag := range command.Flags {
+			validate_flag_label(fmt.Sprintf("Flag for command %q", command.Label), flag)
+			for _, global_flag := range input.Global_Flags {
+				panic_when(flag.Label == global_flag.Label,
+					"Command %q has flag %q that conflicts with a global flag.",
+					command.Label, flag.Label)
 			}
 		}
 	}
 	return program
 }
 
-// Parse parses command-line arguments and returns the active command with populated values.
-// The os_args slice should be os.Args from the main function.
-// If no command is specified, the first declared command is used.
-// Global flags are parsed and stored in program.GlobalFlags.
-//
-// Returns an error if:
-//   - The command name is unrecognized
-//   - Wrong number of arguments provided
-//   - Positional arguments appear after flags
-//   - Unknown flags are used
-//   - Flag values are invalid or missing
-//   - Type conversion fails (e.g., non-numeric value for int flag)
-//
-// After successful parsing, the returned Command has all Option.Value fields
-// populated with user input, and program.GlobalFlags contains parsed global flag values.
-func Parse(program *Program, os_args []string) (active_command Command, err error) {
-	panic_when(len(os_args) == 0, "program.Parse needs at least one os_arg")
+// Panics when the flag's label is empty, contains an underscore or space, or
+// carries an unsupported value type.
+func validate_flag_label(context string, flag Option) {
+	panic_when(flag.Label == "", "%s has no label.", context)
+	panic_when(
+		strings.Contains(flag.Label, "_"),
+		"Flags cannot contain underscores. Instead of %q, use %q",
+		flag.Label,
+		strings.ReplaceAll(flag.Label, "_", "-"),
+	)
+	panic_when(strings.Contains(flag.Label, " "), "Flags cannot contain spaces: %q", flag.Label)
+	switch flag.Value.(type) {
+	default:
+		panic_when(true, "Flag %q has unsupported type: %T", flag.Label, flag.Value)
+	case string, bool, int:
+	}
+}
 
-	// Deep copy global flags to avoid modifying the program's global flag definitions
-	originalGlobalFlags := program.GlobalFlags
-	program.GlobalFlags = make([]Option, len(originalGlobalFlags))
-	copy(program.GlobalFlags, originalGlobalFlags)
+// Program_Parse parses command-line arguments and returns the active command
+// with populated values. The operating_system_args slice should be os.Args from main.
+// If no command is specified, the first declared command is used. Global flags
+// are parsed and stored in program.Global_Flags. It returns an error for an
+// unknown command, the wrong argument count, a positional after a flag, an
+// unknown flag, or an invalid or absent flag value.
+func Program_Parse(
+	program *Program, operating_system_args []string,
+) (active_command Command, err error) {
+	panic_when(len(operating_system_args) == 0, "Program_Parse needs at least one os_arg.")
+
+	// Deep copy global flags to avoid modifying the program's definitions.
+	original_global_flags := program.Global_Flags
+	program.Global_Flags = make([]Option, len(original_global_flags))
+	copy(program.Global_Flags, original_global_flags)
 
 	defer func() {
-		invariant.Sometimes(len(active_command.Arguments) == 0, "Command does not take arguments")
-		invariant.Sometimes(len(active_command.Arguments) > 0, "Command takes arguments")
-		invariant.Sometimes(len(active_command.Flags) == 0, "Command does not support flags")
-		invariant.Sometimes(len(active_command.Flags) > 0, "Command supports flags")
+		argument_count := len(active_command.Arguments)
+		flag_count := len(active_command.Flags)
+		invariant.Sometimes(argument_count == 0, "Command does not take arguments.")
+		invariant.Sometimes(argument_count > 0, "Command takes arguments.")
+		invariant.Sometimes(flag_count == 0, "Command does not support flags.")
+		invariant.Sometimes(flag_count > 0, "Command supports flags.")
 	}()
 
-	// === Finding active_command command ===
-	commandIndex := 0
-	active_command = program.Commands[0]
-	if len(os_args) == 1 {
-		// Deep copy for early return
-		active_command.Arguments = make([]Option, len(program.Commands[0].Arguments))
-		copy(active_command.Arguments, program.Commands[0].Arguments)
-		active_command.Flags = make([]Option, len(program.Commands[0].Flags))
-		copy(active_command.Flags, program.Commands[0].Flags)
+	active_command, err = program_resolve_command(program, operating_system_args)
+	if err != nil {
 		return active_command, err
-	} else {
-		found := false
-		for i, command := range program.Commands {
-			if command.Label == os_args[1] {
-				active_command = command
-				commandIndex = i
-				found = true
-				break
-			}
-		}
-		if !found {
-			return active_command, fmt.Errorf("%q is an unknown command", os_args[1])
-		}
+	}
+	if len(operating_system_args) == 1 {
+		return active_command, nil
 	}
 
-	// Deep copy Arguments and Flags to avoid modifying the program's command definitions
-	active_command.Arguments = make([]Option, len(program.Commands[commandIndex].Arguments))
-	copy(active_command.Arguments, program.Commands[commandIndex].Arguments)
-	active_command.Flags = make([]Option, len(program.Commands[commandIndex].Flags))
-	copy(active_command.Flags, program.Commands[commandIndex].Flags)
-
-	// === Collecting ===
-	positional_arguments := make([]string, 0, len(active_command.Arguments))
-	flags := make([]string, 0, len(active_command.Flags))
-	if len(os_args) > 2 {
-		start_of_flags := -1
-		for i, argument := range os_args[2:] {
-			if strings.HasPrefix(argument, "-") && argument != "-" {
-				start_of_flags = i + 2
-				break
-			}
-			positional_arguments = append(positional_arguments, argument)
-		}
-		if start_of_flags >= 0 && start_of_flags < len(os_args) {
-			for _, flag := range os_args[start_of_flags:] {
-				if strings.HasPrefix(flag, "-") {
-					flags = append(flags, flag)
-				} else {
-					return active_command, fmt.Errorf("Positional arguments cannot appear after flags. Got %q", flag)
-				}
-			}
-		}
+	positional_arguments, flags, err := command_collect_args(
+		active_command, operating_system_args)
+	if err != nil {
+		return active_command, err
 	}
-	invariant.Sometimes(len(flags) == 0, "No flags were set")
-	invariant.Sometimes(len(flags) < len(active_command.Flags), "Some flags were set")
-	invariant.Sometimes(len(flags) == len(active_command.Flags), "All flags were set")
+	invariant.Sometimes(len(flags) == 0, "No flags were set.")
+	invariant.Sometimes(len(flags) < len(active_command.Flags), "Some flags were set.")
+	invariant.Sometimes(len(flags) == len(active_command.Flags), "All flags were set.")
 
 	if len(positional_arguments) != len(active_command.Arguments) {
 		return active_command, fmt.Errorf(
@@ -283,216 +241,302 @@ func Parse(program *Program, os_args []string) (active_command Command, err erro
 			len(positional_arguments),
 		)
 	}
-	if len(flags) > len(active_command.Flags)+len(program.GlobalFlags) {
+	if len(flags) > len(active_command.Flags)+len(program.Global_Flags) {
 		return active_command, fmt.Errorf(
 			"%q supports %d command flags and %d global flags. Got %d",
 			active_command.Label,
 			len(active_command.Flags),
-			len(program.GlobalFlags),
+			len(program.Global_Flags),
 			len(flags),
 		)
 	}
 
-	// === Parsing ===
-	for i, positional_argument := range positional_arguments {
-		switch active_command.Arguments[i].Value.(type) {
+	err = parse_arguments(active_command.Arguments, positional_arguments)
+	if err != nil {
+		return active_command, err
+	}
+	err = program_parse_flags(program, active_command, flags)
+	if err != nil {
+		return active_command, err
+	}
+	return active_command, nil
+}
+
+// Finds the active command named by the args (defaulting to the first command)
+// and deep-copies its Arguments and Flags so parsing never mutates the program.
+func program_resolve_command(
+	program *Program, operating_system_args []string,
+) (active_command Command, err error) {
+	active_command = program.Commands[0]
+	command_index := 0
+	if len(operating_system_args) > 1 {
+		found := false
+		for index, command := range program.Commands {
+			if command.Label == operating_system_args[1] {
+				active_command = command
+				command_index = index
+				found = true
+				break
+			}
+		}
+		if !found {
+			return active_command, fmt.Errorf(
+				"%q is an unknown command", operating_system_args[1])
+		}
+	}
+
+	source := program.Commands[command_index]
+	active_command.Arguments = make([]Option, len(source.Arguments))
+	copy(active_command.Arguments, source.Arguments)
+	active_command.Flags = make([]Option, len(source.Flags))
+	copy(active_command.Flags, source.Flags)
+	return active_command, nil
+}
+
+// Splits the args after the command into positional arguments (before the first
+// flag) and flags, erroring on a positional that appears after a flag.
+func command_collect_args(active_command Command, operating_system_args []string) (
+	positional_arguments []string, flags []string, err error,
+) {
+	positional_arguments = make([]string, 0, len(active_command.Arguments))
+	flags = make([]string, 0, len(active_command.Flags))
+	if len(operating_system_args) <= 2 {
+		return positional_arguments, flags, nil
+	}
+
+	start_of_flags := -1
+	for index, argument := range operating_system_args[2:] {
+		if strings.HasPrefix(argument, "-") {
+			if argument != "-" {
+				start_of_flags = index + 2
+				break
+			}
+		}
+		positional_arguments = append(positional_arguments, argument)
+	}
+	if start_of_flags < 0 {
+		return positional_arguments, flags, nil
+	}
+	for _, flag := range operating_system_args[start_of_flags:] {
+		if !strings.HasPrefix(flag, "-") {
+			return positional_arguments, flags, fmt.Errorf(
+				"Positional arguments cannot appear after flags. Got %q", flag)
+		}
+		flags = append(flags, flag)
+	}
+	return positional_arguments, flags, nil
+}
+
+// Converts each positional argument to its option's declared type, writing the
+// result back into the options.
+func parse_arguments(arguments []Option, positional_arguments []string) (err error) {
+	for index, positional_argument := range positional_arguments {
+		switch arguments[index].Value.(type) {
 		default:
 			panic_when(true, "unreachable")
 		case string:
-			active_command.Arguments[i].Value = positional_argument
+			arguments[index].Value = positional_argument
 		case int:
-			num, parseErr := strconv.Atoi(positional_argument)
-			if parseErr != nil {
-				return active_command, fmt.Errorf("%s is an invalid number", positional_argument)
+			number, parse_err := strconv.Atoi(positional_argument)
+			if parse_err != nil {
+				return fmt.Errorf("%s is an invalid number", positional_argument)
 			}
-			active_command.Arguments[i].Value = num
+			arguments[index].Value = number
 		}
 	}
-	for _, flag := range flags {
-		if strings.HasPrefix(flag, "--") && len(flag) > len("--") {
-			return active_command, fmt.Errorf("Flags are denoted by a single dash, not double. use '-%s'", flag[2:])
-		}
-		invariant.Always(flag != "-", "Lone dashes are treated as postional arguments")
-		flag = flag[1:]
-		flagName, value, value_was_set := strings.Cut(flag, "=")
+	return nil
+}
 
-		// Try global flags first
-		globalIndex := slices.IndexFunc(program.GlobalFlags, func(option Option) bool {
-			return option.Label == flagName
-		})
-		if globalIndex >= 0 {
-			if _, is_bool := program.GlobalFlags[globalIndex].Value.(bool); !is_bool && (!value_was_set || value == "") {
-				return active_command, fmt.Errorf(
-					"%q expects a value. You must set flag values with this syntax: -foo-bar=baz.",
-					flagName,
-				)
+// Resolves each raw flag against the program's global flags and the active
+// command's flags, writing the converted values back.
+func program_parse_flags(program *Program, active_command Command, flags []string) (err error) {
+	for _, flag := range flags {
+		if strings.HasPrefix(flag, "--") {
+			if len(flag) > len("--") {
+				return fmt.Errorf(
+					"Flags are denoted by a single dash, not double. use '-%s'",
+					flag[2:])
 			}
-			switch program.GlobalFlags[globalIndex].Value.(type) {
-			case bool:
-				program.GlobalFlags[globalIndex].Value = true
-			case string:
-				program.GlobalFlags[globalIndex].Value = trimQuotes(value)
-			case int:
-				num, parseErr := strconv.Atoi(value)
-				if parseErr != nil {
-					return active_command, fmt.Errorf("%s is an invalid number", value)
-				}
-				program.GlobalFlags[globalIndex].Value = num
+		}
+		invariant.Always(flag != "-", "Lone dashes are treated as positional arguments.")
+		flag = flag[1:]
+		flag_name, value, value_was_set := strings.Cut(flag, "=")
+
+		global_index := slices.IndexFunc(program.Global_Flags,
+			func(option Option) (match bool) {
+				return option.Label == flag_name
+			})
+		if global_index >= 0 {
+			err = option_set_value(option_set_value_input{
+				Option:        &program.Global_Flags[global_index],
+				Value:         value,
+				Value_Was_Set: value_was_set,
+				Name:          flag_name,
+			})
+			if err != nil {
+				return err
 			}
 			continue
 		}
 
-		// Try command-specific flags
-		i := slices.IndexFunc(active_command.Flags, func(option Option) bool {
-			return option.Label == flagName
+		command_index := slices.IndexFunc(active_command.Flags,
+			func(option Option) (match bool) {
+				return option.Label == flag_name
+			})
+		if command_index < 0 {
+			return fmt.Errorf("%q is an unknown flag", flag_name)
+		}
+		err = option_set_value(option_set_value_input{
+			Option:        &active_command.Flags[command_index],
+			Value:         value,
+			Value_Was_Set: value_was_set,
+			Name:          flag_name,
 		})
-		if i < 0 {
-			return active_command, fmt.Errorf("%q is an unknown flag", flagName)
-		} else if _, is_bool := active_command.Flags[i].Value.(bool); !is_bool && (!value_was_set || value == "") {
-			return active_command, fmt.Errorf(
-				"%q expects a value. You must set flag values with this syntax: -foo-bar=baz.",
-				flagName,
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// Input for option_set_value.
+type option_set_value_input struct {
+	// Option is the flag whose Value is assigned in place.
+	Option *Option
+	// Value is the raw value text following '='.
+	Value string
+	// Value_Was_Set reports whether '=' appeared in the flag.
+	Value_Was_Set bool
+	// Name is the flag name, for error messages.
+	Name string
+}
+
+// Validates and assigns a parsed flag value by the option's declared type.
+// Non-boolean flags require a non-empty value.
+func option_set_value(input option_set_value_input) (err error) {
+	_, is_boolean := input.Option.Value.(bool)
+	if !is_boolean {
+		absent := !input.Value_Was_Set
+		if input.Value == "" {
+			absent = true
+		}
+		if absent {
+			return fmt.Errorf(
+				"%q expects a value. You must set flag values "+
+					"with this syntax: -foo-bar=baz.",
+				input.Name,
 			)
 		}
-		switch active_command.Flags[i].Value.(type) {
-		case bool:
-			active_command.Flags[i].Value = true
-		case string:
-			active_command.Flags[i].Value = trimQuotes(value)
-		case int:
-			num, parseErr := strconv.Atoi(value)
-			if parseErr != nil {
-				return active_command, fmt.Errorf("%s is an invalid number", value)
-			}
-			active_command.Flags[i].Value = num
-		}
 	}
-
-	return active_command, nil
+	switch input.Option.Value.(type) {
+	case bool:
+		input.Option.Value = true
+	case string:
+		input.Option.Value = trim_quotes(input.Value)
+	case int:
+		number, parse_err := strconv.Atoi(input.Value)
+		if parse_err != nil {
+			return fmt.Errorf("%s is an invalid number", input.Value)
+		}
+		input.Option.Value = number
+	}
+	return nil
 }
 
-// trimQuotes removes surrounding quotes from a string value.
-// Handles both double quotes (") and single quotes (').
-// Only trims if the string starts and ends with matching quotes.
-func trimQuotes(s string) (out string) {
-	if len(s) >= 2 {
-		if (s[0] == '"' && s[len(s)-1] == '"') || (s[0] == '\'' && s[len(s)-1] == '\'') {
-			return s[1 : len(s)-1]
+// Removes a matching pair of surrounding double or single quotes from a string
+// value, leaving other strings untouched.
+func trim_quotes(text string) (output string) {
+	if len(text) < 2 {
+		return text
+	}
+	first := text[0]
+	last := text[len(text)-1]
+	if first == '"' {
+		if last == '"' {
+			return text[1 : len(text)-1]
 		}
 	}
-	return s
+	if first == '\'' {
+		if last == '\'' {
+			return text[1 : len(text)-1]
+		}
+	}
+	return text
 }
 
-// PrintHelp writes a formatted help message to out.
-// The output includes the program description, optional preamble text, usage syntax,
-// global flags, and details for each command with its arguments and flags.
-func PrintHelp(out io.Writer, program Program) {
-	// Header
-	fmt.Fprintf(out, "%s %s\n\n", program.Label, program.Description)
+// Print_Help writes a formatted help message to output: the program header,
+// usage syntax, global flags, and each command with its arguments and flags.
+func Print_Help(output io.Writer, program Program) {
+	fmt.Fprintf(output, "%s %s\n\n", program.Label, program.Description)
+	fmt.Fprintf(output,
+		"Usage:\n    %s <command> <arguments> [-flags[=value]]\n\n", program.Label)
 
-	fmt.Fprintf(out, "Usage:\n    %s <command> <arguments> [-flags[=value]]\n\n", program.Label)
-
-	// Global flags
-	if len(program.GlobalFlags) > 0 {
-		blue := func(s string) string { return "\033[34m" + s + "\033[0m" }
-		fmt.Fprintln(out, "Global Flags:")
-		w := tabwriter.NewWriter(out, 0, 8, 0, ' ', 0)
-		for _, flag := range program.GlobalFlags {
-			valType := ""
-			defaultVal := fmt.Sprintf("%v", flag.Value)
-
-			isBool := false
-			if _, is := flag.Value.(bool); is {
-				isBool = true
-			} else {
-				valType = fmt.Sprintf("=%T", flag.Value)
-			}
-
-			// Format empty strings as ""
-			if str, isString := flag.Value.(string); isString && str == "" {
-				defaultVal = `""`
-			}
-
-			if isBool {
-				fmt.Fprintf(w, "    -%s\t  %s\n", blue(flag.Label), flag.Description)
-			} else {
-				fmt.Fprintf(
-					w,
-					"    -%s%s\t  (default: %s)\t  %s\n",
-					blue(flag.Label),
-					valType,
-					defaultVal,
-					flag.Description,
-				)
-			}
-			fmt.Fprintf(w, "\n")
+	if len(program.Global_Flags) > 0 {
+		fmt.Fprintln(output, "Global Flags:")
+		writer := tabwriter.NewWriter(output, 0, 8, 0, ' ', 0)
+		for _, flag := range program.Global_Flags {
+			print_help_flag(writer, flag, "    ", true)
+			fmt.Fprintf(writer, "\n")
 		}
-		w.Flush()
-		fmt.Fprintln(out, "")
+		writer.Flush()
+		fmt.Fprintln(output, "")
 	}
 
-	fmt.Fprintln(out, "Available Commands:")
-
-	for _, cmd := range program.Commands {
-		// Use tabwriter per command to avoid tab alignment across commands
-		w := tabwriter.NewWriter(out, 0, 8, 0, ' ', 0)
-
-		blue := func(s string) string { return "\033[34m" + s + "\033[0m" }
-		signature := blue(cmd.Label) + " "
-		for _, arg := range cmd.Arguments {
-			signature += fmt.Sprintf("<%s:%T> ", arg.Label, arg.Value)
+	fmt.Fprintln(output, "Available Commands:")
+	for _, command := range program.Commands {
+		// A tabwriter per command avoids tab alignment bleeding across commands.
+		writer := tabwriter.NewWriter(output, 0, 8, 0, ' ', 0)
+		signature := "\033[34m" + command.Label + "\033[0m" + " "
+		for _, argument := range command.Arguments {
+			signature += fmt.Sprintf("<%s:%T> ", argument.Label, argument.Value)
 		}
-		fmt.Fprintf(w, "    %s\t%s\n", signature, cmd.Description)
-
-		if len(cmd.Flags) > 0 {
-			fmt.Fprintln(w, "")
-
-			for _, flag := range cmd.Flags {
-				valType := ""
-				defaultVal := fmt.Sprintf("%v", flag.Value)
-
-				isBool := false
-				if _, is := flag.Value.(bool); is {
-					isBool = true
-				} else {
-					valType = fmt.Sprintf("=%T", flag.Value)
-				}
-
-				// Format empty strings as ""
-				if str, isString := flag.Value.(string); isString && str == "" {
-					defaultVal = `""`
-				}
-
-				if isBool {
-					fmt.Fprintf(w, "        -%s\t  %s\n", flag.Label, flag.Description)
-				} else {
-					fmt.Fprintf(
-						w,
-						"        -%s%s\t  (default: %s)\t  %s\n",
-						flag.Label,
-						valType,
-						defaultVal,
-						flag.Description,
-					)
-				}
+		fmt.Fprintf(writer, "    %s\t%s\n", signature, command.Description)
+		if len(command.Flags) > 0 {
+			fmt.Fprintln(writer, "")
+			for _, flag := range command.Flags {
+				print_help_flag(writer, flag, "        ", false)
 			}
 		}
-
-		// Flush per command and add blank line between commands
-		w.Flush()
-		fmt.Fprintln(out, "")
+		writer.Flush()
+		fmt.Fprintln(output, "")
 	}
 }
 
-// GetOption retrieves an option by label from a slice of options.
-// This is typically used to extract argument or flag values from a parsed command.
-// Panics if the label is not found.
-//
-// Example:
-//
-//	task := cli.GetOption(command.Arguments, "task").Value.(string)
-//	priority := cli.GetOption(command.Flags, "priority").Value.(string)
-func GetOption(flags []Option, label string) (opt Option) {
+// Renders one flag row: the type-annotated label, its default, and its
+// description. The label is blue when color is set.
+func print_help_flag(writer io.Writer, flag Option, indent string, color bool) {
+	label := flag.Label
+	if color {
+		label = "\033[34m" + flag.Label + "\033[0m"
+	}
+
+	value_type := ""
+	default_value := fmt.Sprintf("%v", flag.Value)
+	is_boolean := false
+	if _, is := flag.Value.(bool); is {
+		is_boolean = true
+	} else {
+		value_type = fmt.Sprintf("=%T", flag.Value)
+	}
+	// An empty string default renders as the literal "".
+	if text, is_string := flag.Value.(string); is_string {
+		if text == "" {
+			default_value = `""`
+		}
+	}
+
+	if is_boolean {
+		fmt.Fprintf(writer, "%s-%s\t  %s\n", indent, label, flag.Description)
+		return
+	}
+	fmt.Fprintf(writer, "%s-%s%s\t  (default: %s)\t  %s\n",
+		indent, label, value_type, default_value, flag.Description)
+}
+
+// Get_Option retrieves an option by label from a slice of options, panicking
+// when the label is not found. It extracts argument or flag values from a
+// parsed command, as in Get_Option(command.Arguments, "task").Value.(string).
+func Get_Option(flags []Option, label string) (option Option) {
 	for _, flag := range flags {
 		if flag.Label == label {
 			return flag
@@ -502,8 +546,9 @@ func GetOption(flags []Option, label string) (opt Option) {
 	return Option{}
 }
 
-func panic_when(cond bool, message string, data ...any) {
-	if cond {
+// Panics with the formatted message when condition holds.
+func panic_when(condition bool, message string, data ...any) {
+	if condition {
 		panic(fmt.Sprintf(message, data...))
 	}
 }
