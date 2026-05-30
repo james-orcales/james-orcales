@@ -1,3 +1,6 @@
+if test "$(. /etc/os-release 2>/dev/null && echo "$ID")" = debian ; then
+        exit 1
+fi
 # if running bash
 if [ -n "$BASH_VERSION" ]; then
     # include .bashrc if it exists

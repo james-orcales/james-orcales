@@ -269,6 +269,10 @@ end)
 
 -- === Autocmd ===
 
+vim.api.nvim_create_user_command("BufPath", function()
+	vim.fn.setreg("+", vim.api.nvim_buf_get_name(0))
+end, {})
+
 --  Workflow is `:set mp=go\ test\ ./foo` -> `:mak`. This populates quickfix with errors.
 vim.api.nvim_create_autocmd({ "FileType" }, {
 	desc = "Set errorformat",
