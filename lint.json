@@ -1,5 +1,5 @@
 {
-  "shared_module": "golang_snacks",
+  "shared_module": "shared",
   "global_api_allowlist": [
     "golang_snacks/snap/default",
     "golang_snacks/invariant/v2/invariant_default",
