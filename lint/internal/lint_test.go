@@ -2,6 +2,7 @@ package lint_test
 
 import (
 	"bytes"
+	"encoding/json"
 	"fmt"
 	"go/format"
 	"strings"
@@ -15,9 +16,22 @@ import (
 // gofmt-clean. Required because check_gofmt runs as part of the tier-1
 // pipeline against every test source. TestGofmt builds MapFS inline so it
 // can submit deliberately un-formatted sources.
-const doctrine_shared_library_go_module = "module github.com/james-orcales/" +
-	"james-orcales/golang_snacks\n"
+const doctrine_shared_library_module_path = "github.com/james-orcales/" +
+	"james-orcales/golang_snacks"
+const doctrine_shared_library_go_module = "module " +
+	doctrine_shared_library_module_path + "\n"
 const doctrine_binary_go_module = "module example.com/mybinary\n"
+
+// The shared module is identified by its workspace-root-relative directory, not
+// its import path. Doctrine-table fixtures put the shared library's go.mod at
+// golang_snacks/go.mod, so its Root — and the value Shared_Module must carry —
+// is "golang_snacks".
+const doctrine_shared_module_directory = "golang_snacks"
+
+// Snapshot fixtures instead put the shared library's go.mod at the MapFS root,
+// so there its Root is ".". Binary modules in those fixtures live in named
+// subdirectories, so "." selects only the shared library.
+const doctrine_shared_module_at_root = "."
 
 // Satisfies the rule that every binary module declares exactly one free func
 // Main in its top-level internal/ package. Injected into binary-module fixtures
@@ -176,7 +190,7 @@ func f() {
 			}
 			stdout := &bytes.Buffer{}
 			stderr := &bytes.Buffer{}
-			code := lint.Main(&lint.Main_Input{
+			code := lint_main(t, &lint.Main_Input{
 				Fsys: fsys_map, Stdout: stdout, Stderr: stderr,
 			})
 
@@ -237,7 +251,7 @@ func f() {
 			}
 			stdout := &bytes.Buffer{}
 			stderr := &bytes.Buffer{}
-			code := lint.Main(&lint.Main_Input{
+			code := lint_main(t, &lint.Main_Input{
 				Fsys: fsys_map, Stdout: stdout, Stderr: stderr,
 			})
 
@@ -289,7 +303,7 @@ func f() {
 			}
 			stdout := &bytes.Buffer{}
 			stderr := &bytes.Buffer{}
-			code := lint.Main(&lint.Main_Input{
+			code := lint_main(t, &lint.Main_Input{
 				Fsys: fsys_map, Stdout: stdout, Stderr: stderr,
 			})
 
@@ -344,7 +358,7 @@ func f() {
 	fsys_map := fstest.MapFS{"test.go": &fstest.MapFile{Data: gofmt_must(t, source)}}
 	stdout := &bytes.Buffer{}
 	stderr := &bytes.Buffer{}
-	code := lint.Main(&lint.Main_Input{Fsys: fsys_map, Stdout: stdout, Stderr: stderr})
+	code := lint_main(t, &lint.Main_Input{Fsys: fsys_map, Stdout: stdout, Stderr: stderr})
 	if code != 0 {
 		t.Errorf("expected exit 0, got %d; output: %s", code, stdout.String())
 	}
@@ -396,7 +410,7 @@ func f() {
 			}
 			stdout := &bytes.Buffer{}
 			stderr := &bytes.Buffer{}
-			code := lint.Main(&lint.Main_Input{
+			code := lint_main(t, &lint.Main_Input{
 				Fsys: fsys_map, Stdout: stdout, Stderr: stderr,
 			})
 			output := stdout.String()
@@ -444,7 +458,7 @@ func f() (result int) {
 			}
 			stdout := &bytes.Buffer{}
 			stderr := &bytes.Buffer{}
-			code := lint.Main(&lint.Main_Input{
+			code := lint_main(t, &lint.Main_Input{
 				Fsys: fsys_map, Stdout: stdout, Stderr: stderr,
 			})
 			output := stdout.String()
@@ -1294,7 +1308,7 @@ type Foo struct {
 	fsys_map := fstest.MapFS{"test.go": &fstest.MapFile{Data: gofmt_must(t, source)}}
 	stdout := &bytes.Buffer{}
 	stderr := &bytes.Buffer{}
-	code := lint.Main(&lint.Main_Input{Fsys: fsys_map, Stdout: stdout, Stderr: stderr})
+	code := lint_main(t, &lint.Main_Input{Fsys: fsys_map, Stdout: stdout, Stderr: stderr})
 	if code != 0 {
 		t.Errorf("expected exit 0, got %d; output: %s", code, stdout.String())
 	}
@@ -1771,7 +1785,7 @@ func Test_Gofmt(t *testing.T) {
 					Data: []byte(v)}
 			}
 			stdout := &bytes.Buffer{}
-			code := lint.Main(&lint.Main_Input{
+			code := lint_main(t, &lint.Main_Input{
 				Fsys: fsys_map, Stdout: stdout, Stderr: &bytes.Buffer{},
 			})
 			output := stdout.String()
@@ -1856,6 +1870,63 @@ func Init() { return }
 	run_diag_table(t, tests)
 }
 
+// Returns the minimal vocabulary table the tests assert on —
+// only the abbreviations and bans pinned by Test_Names_Vocabulary,
+// Test_Naming_Abbreviations_*, Test_Banned_*, and the snapshot bans. It is not
+// the full lint.json table; single-file fixtures only pin the words they name,
+// so the fixture stays small and lives beside the assertions it feeds.
+func test_word_replacements() (table map[string][]string) {
+	return map[string][]string{
+		"cfg":       {"config"},
+		"src":       {"source"},
+		"mgr":       {"manager"},
+		"cb":        {"callback"},
+		"btn":       {"button"},
+		"id":        {"identifier"},
+		"res":       {"response", "result", "resource", "reserve"},
+		"len":       {},
+		"length":    {},
+		"util":      {},
+		"utils":     {},
+		"utility":   {},
+		"utilities": {},
+	}
+}
+
+// Renders a lint.json for a fixture: lint.Main now reads the
+// config from its Fsys, so every fixture needs one. An empty shared_module is
+// replaced with a sentinel matching no fixture module, preserving the historical
+// "no module is shared" behavior of the field-free runs the tests used to make.
+func test_lint_json(t *testing.T, shared_module string, allowlist []string) (data []byte) {
+	t.Helper()
+	if shared_module == "" {
+		shared_module = "lint_test_no_shared_module"
+	}
+	data, err := json.Marshal(lint.Configuration{
+		Shared_Module:        shared_module,
+		Global_API_Allowlist: allowlist,
+		Word_Replacements:    test_word_replacements(),
+	})
+	if err != nil {
+		t.Fatalf("test_lint_json: %v", err)
+	}
+	return data
+}
+
+// Wraps lint.Main, seeding the fixture's MapFS with a default lint.json
+// unless one is already present. Tests that need a specific shared_module or
+// allowlist pre-seed their own (run_shared_module_output, run_global_api_case,
+// run_snapshot_verbatim) and this leaves that untouched.
+func lint_main(t *testing.T, input *lint.Main_Input) (code int) {
+	t.Helper()
+	if fsys, ok := input.Fsys.(fstest.MapFS); ok {
+		if _, present := fsys["lint.json"]; !present {
+			fsys["lint.json"] = &fstest.MapFile{Data: test_lint_json(t, "", nil)}
+		}
+	}
+	return lint.Main(input)
+}
+
 func run_diag_table(t *testing.T, tests []struct {
 	Name      string
 	Files     map[string]string
@@ -1870,7 +1941,7 @@ func run_diag_table(t *testing.T, tests []struct {
 			}
 			stdout := &bytes.Buffer{}
 			stderr := &bytes.Buffer{}
-			code := lint.Main(&lint.Main_Input{
+			code := lint_main(t, &lint.Main_Input{
 				Fsys: fsys_map, Stdout: stdout, Stderr: stderr,
 			})
 			output := stdout.String()
@@ -1907,7 +1978,7 @@ func Test_Scope_Prefix_Filters_Diagnostics(t *testing.T) {
 	}
 	stdout := &bytes.Buffer{}
 	stderr := &bytes.Buffer{}
-	lint.Main(&lint.Main_Input{
+	lint_main(t, &lint.Main_Input{
 		Fsys:         fsys_map,
 		Stdout:       stdout,
 		Stderr:       stderr,
@@ -1980,7 +2051,9 @@ func lint_output_minus(
 	t *testing.T, fsys fstest.MapFS, exclude string,
 ) (code int, output string) {
 	t.Helper()
-	all, err := lint.Check_File_System(&lint.Check_File_System_Input{Fsys: fsys})
+	all, err := lint.Check_File_System(&lint.Check_File_System_Input{
+		Fsys: fsys, Shared_Module: doctrine_shared_module_directory,
+	})
 	if err != nil {
 		t.Fatalf("Check_File_System: %v", err)
 	}
@@ -3189,6 +3262,37 @@ func Test_Names_Vocabulary_Part2(t *testing.T) {
 	})
 }
 
+// Test_Vocabulary_Sourced_From_Lint_Json proves the denylist is read from
+// lint.json rather than hardcoded: a word present only in a custom table is
+// flagged with its configured expansion, while cfg — a staple of the old built-in
+// table but absent from this config — is not flagged. This is the regression
+// guard that the move from switch statements to configuration actually took.
+func Test_Vocabulary_Sourced_From_Lint_Json(t *testing.T) {
+	t.Parallel()
+	fsys := fstest.MapFS{
+		"lint.json": &fstest.MapFile{Data: []byte(
+			`{"shared_module":"x","word_replacements":{"wibble":["wobble"]}}`)},
+		"test.go": &fstest.MapFile{Data: gofmt_must(t, `package main
+
+func F() (x int) {
+	wibble_path := 0
+	cfg_path := 0
+	return wibble_path + cfg_path
+}
+`)},
+	}
+	stdout := &bytes.Buffer{}
+	lint.Main(&lint.Main_Input{Fsys: fsys, Stdout: stdout, Stderr: &bytes.Buffer{}})
+	output := stdout.String()
+	if !strings.Contains(output, "rename wibble_path -> wobble_path") {
+		t.Fatalf("the word configured in lint.json must be flagged; got: %s", output)
+	}
+	if strings.Contains(output, "config") {
+		t.Fatalf("cfg must not be flagged — it is absent from this lint.json, proving "+
+			"the table is sourced from config, not hardcoded; got: %s", output)
+	}
+}
+
 // Test_Naming_Participles verifies that declared identifiers whose final
 // tokenized word ends in "ing" and isn't in nouns_suffixed_by_ing are
 // flagged. Gerund-nouns (String, Mapping, Encoding, etc.) and the
@@ -3478,7 +3582,7 @@ func Test_Package_Split_Threshold_Part2(t *testing.T) {
 	fsys := fstest.MapFS{"a.go": {Data: content}}
 	stdout := &bytes.Buffer{}
 	stderr := &bytes.Buffer{}
-	lint.Main(&lint.Main_Input{Fsys: fsys, Stdout: stdout, Stderr: stderr})
+	lint_main(t, &lint.Main_Input{Fsys: fsys, Stdout: stdout, Stderr: stderr})
 	if !bytes.Contains(stdout.Bytes(), []byte("has 1 source files")) {
 		t.Errorf("single file over 10k lines must be flagged; got: %s",
 			stdout.String())
@@ -4450,7 +4554,7 @@ func b() { a() }`}, Want_Diag: "cycle"},
 			}
 			stdout := &bytes.Buffer{}
 			stderr := &bytes.Buffer{}
-			code := lint.Main(&lint.Main_Input{
+			code := lint_main(t, &lint.Main_Input{
 				Fsys: fsys_map, Stdout: stdout, Stderr: stderr,
 			})
 
@@ -4506,7 +4610,7 @@ func inner() { return }`}, Want_Diag: "cycle"},
 			}
 			stdout := &bytes.Buffer{}
 			stderr := &bytes.Buffer{}
-			code := lint.Main(&lint.Main_Input{
+			code := lint_main(t, &lint.Main_Input{
 				Fsys: fsys_map, Stdout: stdout, Stderr: stderr,
 			})
 
@@ -5099,7 +5203,7 @@ func main() { return }`}, Want_Diag: ""},
 			}
 			stdout := &bytes.Buffer{}
 			stderr := &bytes.Buffer{}
-			code := lint.Main(&lint.Main_Input{
+			code := lint_main(t, &lint.Main_Input{
 				Fsys: fsys_map, Stdout: stdout, Stderr: stderr,
 			})
 

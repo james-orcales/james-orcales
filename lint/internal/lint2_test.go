@@ -60,7 +60,7 @@ func TestMain(m *testing.M) { return }
 			}
 			stdout := &bytes.Buffer{}
 			stderr := &bytes.Buffer{}
-			code := lint.Main(&lint.Main_Input{
+			code := lint_main(t, &lint.Main_Input{
 				Fsys: fsys_map, Stdout: stdout, Stderr: stderr,
 			})
 
@@ -95,7 +95,8 @@ func Test_Line_Character_Count_Tabs(t *testing.T) {
 	fsys_map := fstest.MapFS{"test.go": &fstest.MapFile{
 		Data: []byte(source)}}
 	stdout := &bytes.Buffer{}
-	code := lint.Main(&lint.Main_Input{Fsys: fsys_map, Stdout: stdout, Stderr: &bytes.Buffer{}})
+	code := lint_main(t, &lint.Main_Input{
+		Fsys: fsys_map, Stdout: stdout, Stderr: &bytes.Buffer{}})
 	if code == 0 {
 		t.Fatalf("expected line-length diagnostic, got exit 0; output: %s", stdout.String())
 	}
@@ -114,7 +115,8 @@ func Test_Line_Character_Count_Import_Exempt(t *testing.T) {
 	fsys_map := fstest.MapFS{"test.go": &fstest.MapFile{
 		Data: []byte(source)}}
 	stdout := &bytes.Buffer{}
-	code := lint.Main(&lint.Main_Input{Fsys: fsys_map, Stdout: stdout, Stderr: &bytes.Buffer{}})
+	code := lint_main(t, &lint.Main_Input{
+		Fsys: fsys_map, Stdout: stdout, Stderr: &bytes.Buffer{}})
 	if code != 0 {
 		t.Fatalf("import line should be exempt from the length limit; got exit %d: %s",
 			code, stdout.String())
@@ -167,7 +169,7 @@ func Test_Comments(t *testing.T) {
 			}
 			stdout := &bytes.Buffer{}
 			stderr := &bytes.Buffer{}
-			code := lint.Main(&lint.Main_Input{
+			code := lint_main(t, &lint.Main_Input{
 				Fsys: fsys_map, Stdout: stdout, Stderr: stderr,
 			})
 
@@ -231,7 +233,7 @@ func Test_Comments_Part2(t *testing.T) {
 			}
 			stdout := &bytes.Buffer{}
 			stderr := &bytes.Buffer{}
-			code := lint.Main(&lint.Main_Input{
+			code := lint_main(t, &lint.Main_Input{
 				Fsys: fsys_map, Stdout: stdout, Stderr: stderr,
 			})
 
@@ -279,7 +281,7 @@ func Test_Comments_Part3(t *testing.T) {
 			}
 			stdout := &bytes.Buffer{}
 			stderr := &bytes.Buffer{}
-			code := lint.Main(&lint.Main_Input{
+			code := lint_main(t, &lint.Main_Input{
 				Fsys: fsys_map, Stdout: stdout, Stderr: stderr,
 			})
 
@@ -325,7 +327,7 @@ func Test_Comments_Inline_Exempt(t *testing.T) {
 		Data: []byte(source)}}
 	stdout := &bytes.Buffer{}
 	stderr := &bytes.Buffer{}
-	code := lint.Main(&lint.Main_Input{Fsys: fsys_map, Stdout: stdout, Stderr: stderr})
+	code := lint_main(t, &lint.Main_Input{Fsys: fsys_map, Stdout: stdout, Stderr: stderr})
 	if code != 0 {
 		t.Errorf("expected exit 0, got %d; output: %s", code, stdout.String())
 	}
@@ -404,19 +406,6 @@ func main() { return }
 			Want_Diag: "",
 		},
 		{
-			Name: "default package Default singleton allowed",
-			Files: map[string]string{
-				"snap/default/wire.go": `// Package snap is a fixture.
-package snap
-// Snapper is a fixture.
-type Snapper struct{}
-// Default is the OS-bound Snapper.
-var Default = &Snapper{}
-`,
-			},
-			Want_Diag: "",
-		},
-		{
 			Name: "Default in non-snap package still banned",
 			Files: map[string]string{
 				"test.go": `package main
@@ -429,6 +418,139 @@ func main() { return }
 		},
 	}
 	run_diag_table(t, tests)
+}
+
+// Test_Global_API_Allowlist verifies the var-Default exemption is governed by
+// lint.json's global_api_allowlist, not by the literal default/ directory
+// name: an allowlisted package earns the exemption whether its directory is
+// named default/ or carries the _default suffix, while a default/ package
+// absent from the allowlist is banned (the heuristic is gone).
+func Test_Global_API_Allowlist(t *testing.T) {
+	t.Parallel()
+	for _, tt := range []struct {
+		Name      string
+		Path      string
+		Source    string
+		Allowlist []string
+		Want_Diag string
+	}{
+		{
+			Name: "allowlisted default dir allowed",
+			Path: "snap/default/wire.go",
+			Source: `// Package snap is a fixture.
+package snap
+// Snapper is a fixture.
+type Snapper struct{}
+// Default is the OS-bound Snapper.
+var Default = &Snapper{}
+`,
+			Allowlist: []string{"snap/default"},
+		},
+		{
+			Name: "allowlisted _default suffix allowed",
+			Path: "mylib/mylib_default/wire.go",
+			Source: `// Package mylib_default is a fixture.
+package mylib_default
+// Thing is a fixture.
+type Thing struct{}
+// Default is the OS-bound Thing.
+var Default = &Thing{}
+`,
+			Allowlist: []string{"mylib/mylib_default"},
+		},
+		{
+			Name: "default dir absent from allowlist banned",
+			Path: "snap/default/wire.go",
+			Source: `// Package snap is a fixture.
+package snap
+// Snapper is a fixture.
+type Snapper struct{}
+// Default is the OS-bound Snapper.
+var Default = &Snapper{}
+`,
+			Allowlist: nil,
+			Want_Diag: "package-level var is banned",
+		},
+	} {
+		t.Run(tt.Name, func(t *testing.T) {
+			files := map[string]string{tt.Path: tt.Source}
+			run_global_api_case(t, files, tt.Allowlist, tt.Want_Diag)
+		})
+	}
+}
+
+// Runs a one-package fixture through Main with the given allowlist and asserts
+// either a clean pass (empty want) or that want appears in the output. Distinct
+// param types keep the signature out of the Input-struct rule.
+func run_global_api_case(
+	t *testing.T, files map[string]string, allowlist []string, want string,
+) {
+	t.Helper()
+	fsys_map := make(fstest.MapFS)
+	for k, v := range files {
+		fsys_map[k] = &fstest.MapFile{Data: gofmt_must(t, v)}
+	}
+	fsys_map["lint.json"] = &fstest.MapFile{Data: test_lint_json(t, "", allowlist)}
+	stdout := &bytes.Buffer{}
+	code := lint_main(t, &lint.Main_Input{
+		Fsys: fsys_map, Stdout: stdout, Stderr: &bytes.Buffer{},
+	})
+	if want == "" {
+		if code != 0 {
+			t.Fatalf("expected exit 0, got %d; output: %s", code, stdout.String())
+		}
+		return
+	}
+	if !bytes.Contains(stdout.Bytes(), []byte(want)) {
+		t.Fatalf("expected %q in output, got: %s", want, stdout.String())
+	}
+}
+
+// Test_Shared_Module_Configurable proves shared-vs-binary classification
+// follows Main_Input.Shared_Module, matched against the module's workspace-root-
+// relative directory (here "lib"), not its import path: the same module is the
+// shared library (internal/ forbidden) when that directory is the configured
+// shared module, and a binary (the rule does not fire) when it is not.
+func Test_Shared_Module_Configurable(t *testing.T) {
+	t.Parallel()
+	files := map[string]string{
+		"lib/go.mod":                      "module example.com/lib\n",
+		"lib/foo/foo.go":                  fixture_package("foo"),
+		"lib/foo/internal/helper/help.go": fixture_package("helper"),
+	}
+	const forbid = "shared library forbids internal/"
+	as_shared := run_shared_module_output(t, files, "lib")
+	if !strings.Contains(as_shared, forbid) {
+		t.Fatalf("with lib/ as the shared module, internal/ must be "+
+			"flagged; got: %s", as_shared)
+	}
+	as_binary := run_shared_module_output(t, files, "other")
+	if strings.Contains(as_binary, forbid) {
+		t.Fatalf("with a different shared module, the shared-library internal/ rule "+
+			"must not fire; got: %s", as_binary)
+	}
+}
+
+// Lints the fixture with the given shared module and returns stdout. .go
+// entries are gofmt-normalized; other files (go.mod) reach the linter verbatim.
+func run_shared_module_output(
+	t *testing.T, files map[string]string, shared_module string,
+) (output string) {
+	t.Helper()
+	fsys_map := make(fstest.MapFS)
+	for name, content := range files {
+		data := []byte(content)
+		if strings.HasSuffix(name, ".go") {
+			data = gofmt_must(t, content)
+		}
+		fsys_map[name] = &fstest.MapFile{Data: data}
+	}
+	fsys_map["lint.json"] = &fstest.MapFile{Data: test_lint_json(t, shared_module, nil)}
+	stdout := &bytes.Buffer{}
+	lint_main(t, &lint.Main_Input{
+		Fsys: fsys_map, Stdout: stdout, Stderr: &bytes.Buffer{},
+	})
+	return stdout.String()
 }
 
 // Test_No_Package_Vars_Banned covers the rejection side: zero-value vars,
@@ -681,7 +803,7 @@ func test_banned_scripting_files_run(t *testing.T, tests []struct {
 				fsys_map[k] = &fstest.MapFile{Data: v}
 			}
 			stdout := &bytes.Buffer{}
-			code := lint.Main(&lint.Main_Input{
+			code := lint_main(t, &lint.Main_Input{
 				Fsys: fsys_map, Stdout: stdout, Stderr: &bytes.Buffer{},
 			})
 			output := stdout.String()
@@ -711,7 +833,7 @@ func run_stream(t *testing.T, files map[string]string) (output string) {
 			Data: []byte(v)}
 	}
 	stdout := &bytes.Buffer{}
-	lint.Main(&lint.Main_Input{Fsys: fsys_map, Stdout: stdout, Stderr: &bytes.Buffer{}})
+	lint_main(t, &lint.Main_Input{Fsys: fsys_map, Stdout: stdout, Stderr: &bytes.Buffer{}})
 	return stdout.String()
 }
 
@@ -720,7 +842,7 @@ func run_stream(t *testing.T, files map[string]string) (output string) {
 // line. .go entries are gofmt-normalized to match the AST tier's real inputs;
 // fixtures that must stay byte-exact (the gofmt diagnostic, any non-Go file)
 // go through run_snapshot_verbatim instead.
-func run_snapshot(t *testing.T, files map[string]string) (output string) {
+func run_snapshot(t *testing.T, files map[string]string, shared_module string) (output string) {
 	t.Helper()
 	normalized := make(map[string]string, len(files))
 	for name, content := range files {
@@ -730,19 +852,24 @@ func run_snapshot(t *testing.T, files map[string]string) (output string) {
 		}
 		normalized[name] = content
 	}
-	return run_snapshot_verbatim(t, normalized)
+	return run_snapshot_verbatim(t, normalized, shared_module)
 }
 
 // Like run_snapshot but without gofmt normalization: the bytes reach the
 // linter exactly as written.
-func run_snapshot_verbatim(t *testing.T, files map[string]string) (output string) {
+func run_snapshot_verbatim(
+	t *testing.T, files map[string]string, shared_module string,
+) (output string) {
 	t.Helper()
 	fsys_map := make(fstest.MapFS)
 	for name, content := range files {
 		fsys_map[name] = &fstest.MapFile{Data: []byte(content)}
 	}
+	fsys_map["lint.json"] = &fstest.MapFile{Data: test_lint_json(t, shared_module, nil)}
 	stdout := &bytes.Buffer{}
-	lint.Main(&lint.Main_Input{Fsys: fsys_map, Stdout: stdout, Stderr: &bytes.Buffer{}})
+	lint_main(t, &lint.Main_Input{
+		Fsys: fsys_map, Stdout: stdout, Stderr: &bytes.Buffer{},
+	})
 	return strings.TrimRight(stdout.String(), "\n")
 }
 
@@ -766,6 +893,12 @@ type snapshot_case struct {
 	Files    map[string]string
 	Verbatim bool
 	Drop     string
+	// Root_Module_Binary marks a fixture whose root go.mod is a binary module
+	// rather than the shared library. By default a fixture's root module is the
+	// shared library (Shared_Module "."), which most layout fixtures model; set
+	// this for the few cases that exercise binary-module rules at the root, so no
+	// module is classified shared and the root module stays a binary.
+	Root_Module_Binary bool
 }
 
 // Drives each snapshot case: lints the fixture and compares stdout to the
@@ -774,9 +907,16 @@ type snapshot_case struct {
 func run_snapshot_cases(t *testing.T, cases []snapshot_case) {
 	t.Helper()
 	for _, entry := range cases {
-		output := run_snapshot(t, entry.Files)
+		// Default: the fixture's root module is the shared library. A
+		// Root_Module_Binary case leaves no module shared, so its root module is
+		// classified as a binary instead.
+		shared_module := doctrine_shared_module_at_root
+		if entry.Root_Module_Binary {
+			shared_module = ""
+		}
+		output := run_snapshot(t, entry.Files, shared_module)
 		if entry.Verbatim {
-			output = run_snapshot_verbatim(t, entry.Files)
+			output = run_snapshot_verbatim(t, entry.Files, shared_module)
 		}
 		if entry.Drop != "" {
 			var builder strings.Builder
@@ -1172,12 +1312,12 @@ func Test_Snapshot_Stream_Markdown(t *testing.T) {
 // drops the unavoidable missing-SPECIFICATION.md coverage noise its go.mod adds.
 func Test_Snapshot_Module_Layout(t *testing.T) {
 	run_snapshot_cases(t, []snapshot_case{
-		{Snapshot: snap.Init(`feature/feature.go:1:1: move feature -> ./internal/feature`), Drop: "SPECIFICATION.md", Files: map[string]string{
+		{Snapshot: snap.Init(`feature/feature.go:1:1: move feature -> ./internal/feature`), Drop: "SPECIFICATION.md", Root_Module_Binary: true, Files: map[string]string{
 			"go.mod":            doctrine_binary_go_module,
 			"internal/entry.go": doctrine_binary_internal_main,
 			"feature/feature.go": "// Package feature is a fixture.\n" +
 				"package feature\n"}},
-		{Snapshot: snap.Init(`cmd/app/main.go:1:1: binary module "example.com/mybinary" places its main package at "cmd/app"; the main package must sit at the module root, no cmd/ directory`), Drop: "SPECIFICATION.md", Files: map[string]string{
+		{Snapshot: snap.Init(`cmd/app/main.go:1:1: binary module "example.com/mybinary" places its main package at "cmd/app"; the main package must sit at the module root, no cmd/ directory`), Drop: "SPECIFICATION.md", Root_Module_Binary: true, Files: map[string]string{
 			"go.mod":            doctrine_binary_go_module,
 			"internal/entry.go": doctrine_binary_internal_main,
 			"cmd/app/main.go":   "package main\n\nfunc main() {\n\tprintln(0)\n}\n"}},
@@ -1476,9 +1616,9 @@ func F() {
 					"  - uses: actions/checkout@v4\n"}},
 	}
 	for _, entry := range cases {
-		got := run_snapshot(t, entry.Files)
+		got := run_snapshot(t, entry.Files, doctrine_shared_module_at_root)
 		if entry.Verbatim {
-			got = run_snapshot_verbatim(t, entry.Files)
+			got = run_snapshot_verbatim(t, entry.Files, doctrine_shared_module_at_root)
 		}
 		if entry.Drop != "" {
 			var builder strings.Builder
@@ -1517,7 +1657,7 @@ import (
 // Test_Snap is a fixture.
 func Test_Snap(t *testing.T) { _ = snap.Default }
 `,
-	})
+	}, doctrine_shared_module_at_root)
 	if strings.Contains(output, "impure dependency") {
 		t.Fatalf("snap import in a test file must be exempt; got: %s", output)
 	}
@@ -1826,7 +1966,7 @@ func Test_Stream_Conflict_Marker_Input_Go_File(t *testing.T) {
 func run_git(t *testing.T, input lint.Git_Input) (output string, code int) {
 	t.Helper()
 	stdout := &bytes.Buffer{}
-	code = lint.Main(&lint.Main_Input{
+	code = lint_main(t, &lint.Main_Input{
 		Fsys:   fstest.MapFS{},
 		Stdout: stdout,
 		Stderr: &bytes.Buffer{},
@@ -2958,9 +3098,10 @@ func Read() (name string) {
 }
 
 // Test_No_Impure_Stdlib_Composition_Tier_Extra continues the composition-tier
-// allow-list: an impure stdlib CALL (`time.Now()`) at the composition tier
+// allow-list: an impure stdlib CALL (`fmt.Println`) at the composition tier
 // is allowed, and the binary-module composition tier (one level under the
-// library tier) inherits the same exemption.
+// library tier) inherits the same exemption. time is gatewayed separately, so
+// fmt is the example here; see the Stdlib Time rule.
 func Test_No_Impure_Stdlib_Composition_Tier_Extra(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
@@ -2970,7 +3111,7 @@ func Test_No_Impure_Stdlib_Composition_Tier_Extra(t *testing.T) {
 		Forbid     []string
 	}{
 		{
-			Name: "impure call (time.Now) at composition tier allowed",
+			Name: "impure call (fmt.Println) at composition tier allowed",
 			Files: map[string]string{
 				"golang_snacks/go.mod":     doctrine_shared_library_go_module,
 				"golang_snacks/foo/foo.go": fixture_package("foo"),
@@ -2978,10 +3119,10 @@ func Test_No_Impure_Stdlib_Composition_Tier_Extra(t *testing.T) {
 					"foo_default.go": `// Package foo_default is a fixture.
 package foo_default
 
-import "time"
+import "fmt"
 
 // Stamp is a fixture.
-func Stamp() (t time.Time) { return time.Now() }
+func Stamp() { fmt.Println("stamped") }
 `,
 			},
 			Forbid: []string{"impure stdlib call"},
@@ -3785,7 +3926,7 @@ func Test_Coverage_Backfill_Read_Error(t *testing.T) {
 	}
 	fsys := read_error_file_system{MapFS: base, Fail_Paths: fail_paths}
 	var stdout, stderr bytes.Buffer
-	lint.Main(&lint.Main_Input{
+	lint_main(t, &lint.Main_Input{
 		Fsys:      fsys,
 		Stdout:    &stdout,
 		Stderr:    &stderr,
@@ -3809,7 +3950,7 @@ func Test_Coverage_Backfill_Main_With_Git(t *testing.T) {
 	}
 	for _, absent := range []bool{false, true} {
 		var stdout, stderr bytes.Buffer
-		lint.Main(&lint.Main_Input{
+		lint_main(t, &lint.Main_Input{
 			Fsys:      base,
 			Stdout:    &stdout,
 			Stderr:    &stderr,
@@ -3889,7 +4030,7 @@ func Test_Coverage_Backfill_Parse_Error(t *testing.T) {
 					"func G() { return }\n")},
 	}
 	var stdout, stderr bytes.Buffer
-	code := lint.Main(&lint.Main_Input{
+	code := lint_main(t, &lint.Main_Input{
 		Fsys:      fsys,
 		Stdout:    &stdout,
 		Stderr:    &stderr,
@@ -3926,7 +4067,7 @@ func Test_Coverage_Backfill_Documented_Value_Specification(t *testing.T) {
 func Test_Coverage_Backfill(t *testing.T) {
 	t.Parallel()
 	var stdout, stderr bytes.Buffer
-	code := lint.Main(&lint.Main_Input{
+	code := lint_main(t, &lint.Main_Input{
 		Fsys:      fstest.MapFS{},
 		Stdout:    &stdout,
 		Stderr:    &stderr,
@@ -3966,7 +4107,7 @@ func Test_Coverage_Backfill_Large_Package(t *testing.T) {
 			Data: []byte(body.String())}
 	}
 	var stdout, stderr bytes.Buffer
-	code := lint.Main(&lint.Main_Input{
+	code := lint_main(t, &lint.Main_Input{
 		Fsys:      fsys,
 		Stdout:    &stdout,
 		Stderr:    &stderr,
@@ -4000,7 +4141,7 @@ func Test_Coverage_Backfill_Main_Cpu_Count_Hi(t *testing.T) {
 	// Exit code isn't the assertion target — we only need CPU_Count=1024 to
 	// flow through every prologue so the cpu_boundary Hi bucket fires.
 	var stdout, stderr bytes.Buffer
-	code := lint.Main(&lint.Main_Input{
+	code := lint_main(t, &lint.Main_Input{
 		Fsys: fsys, Stdout: &stdout, Stderr: &stderr, CPU_Count: 1024,
 	})
 	if code < 0 {
@@ -4032,7 +4173,7 @@ func Test_Coverage_Backfill_Module_Index_Hi_Index(t *testing.T) {
 		}
 	}
 	var stdout, stderr bytes.Buffer
-	code := lint.Main(&lint.Main_Input{
+	code := lint_main(t, &lint.Main_Input{
 		Fsys: fsys, Stdout: &stdout, Stderr: &stderr, CPU_Count: 1,
 	})
 	if code < 0 {
@@ -4060,7 +4201,7 @@ func Test_Coverage_Backfill_Package_Group_Endpoints(t *testing.T) {
 	for _, suffix := range []string{"", "_test"} {
 		fsys := source_fragment(suffix)
 		var stdout, stderr bytes.Buffer
-		code := lint.Main(&lint.Main_Input{
+		code := lint_main(t, &lint.Main_Input{
 			Fsys: fsys, Stdout: &stdout, Stderr: &stderr, CPU_Count: 1,
 		})
 		if code != 1 {
@@ -4089,7 +4230,7 @@ func Test_Coverage_Backfill_Package_Group_Endpoints(t *testing.T) {
 			Data: []byte(body.String())}
 	}
 	var stdout, stderr bytes.Buffer
-	code := lint.Main(&lint.Main_Input{
+	code := lint_main(t, &lint.Main_Input{
 		Fsys: fsys, Stdout: &stdout, Stderr: &stderr, CPU_Count: 1,
 	})
 	if code != 1 {
@@ -4212,7 +4353,7 @@ func Test_Coverage_Backfill_Main_Input_Combinations(t *testing.T) {
 			cpu_count = 1024
 		}
 		var stdout, stderr bytes.Buffer
-		lint.Main(&lint.Main_Input{
+		lint_main(t, &lint.Main_Input{
 			Fsys: fstest.MapFS{
 				"go.mod":  {Data: []byte("module test\ngo 1.25\n")},
 				"main.go": {Data: []byte("package main\n\nfunc main() {}\n")},
@@ -4256,7 +4397,7 @@ func Test_Coverage_Backfill_String_Bounded_Helpers_Git_Input(t *testing.T) {
 		},
 	}
 	var stdout, stderr bytes.Buffer
-	lint.Main(&lint.Main_Input{
+	lint_main(t, &lint.Main_Input{
 		Fsys: fstest.MapFS{
 			"go.mod":  {Data: []byte("module test\ngo 1.25\n")},
 			"main.go": {Data: []byte("package main\n\nfunc main() {}\n")},
@@ -4300,7 +4441,7 @@ func Test_Coverage_Backfill_Build_Key_Hi(t *testing.T) {
 		"(amd64 || arm64 || ppc64 || ppc64le || riscv64 || s390x) && cgo\n\n" +
 		"package main\n\nfunc main() {}\n"
 	var stdout, stderr bytes.Buffer
-	lint.Main(&lint.Main_Input{
+	lint_main(t, &lint.Main_Input{
 		Fsys: fstest.MapFS{
 			"go.mod":  {Data: []byte("module test\ngo 1.25\n")},
 			"main.go": {Data: []byte(long_build)},
@@ -4322,7 +4463,7 @@ func Test_Coverage_Backfill_Method_Prefix_Long_Type(t *testing.T) {
 		"type " + long + " struct{}\n\n" +
 		"func F(x " + long + ") {}\n"
 	var stdout, stderr bytes.Buffer
-	lint.Main(&lint.Main_Input{
+	lint_main(t, &lint.Main_Input{
 		Fsys: fstest.MapFS{
 			"go.mod":   {Data: []byte("module test\ngo 1.25\n")},
 			"lib/a.go": {Data: []byte(source)},
@@ -4347,7 +4488,7 @@ func Test_Coverage_Backfill_Library_Tier_Depth(t *testing.T) {
 	}
 	long_path := sb.String()[:4092] + "a.go"
 	var stdout, stderr bytes.Buffer
-	lint.Main(&lint.Main_Input{
+	lint_main(t, &lint.Main_Input{
 		Fsys: fstest.MapFS{
 			"go.mod":     {Data: []byte("module test\ngo 1.25\n")},
 			"a/b/c/a.go": {Data: []byte("package c\n")},
@@ -4620,7 +4761,7 @@ func Test_Coverage_Backfill_Scope_Prefix_Hi(t *testing.T) {
 	t.Parallel()
 	long := strings.Repeat("a", 4096)
 	var stdout, stderr bytes.Buffer
-	lint.Main(&lint.Main_Input{
+	lint_main(t, &lint.Main_Input{
 		Fsys: fstest.MapFS{
 			"go.mod": {Data: []byte("module test\ngo 1.25\n")},
 			"lib/a.go": {Data: []byte(
@@ -4771,7 +4912,7 @@ func Test_Coverage_Backfill_String_Bounded_Helpers_Long_Path(t *testing.T) {
 		long_directory + "/x.go": {Data: []byte("package x\n")},
 	}
 	var stdout, stderr bytes.Buffer
-	lint.Main(&lint.Main_Input{
+	lint_main(t, &lint.Main_Input{
 		Fsys:           fsys,
 		Stdout:         &stdout,
 		Stderr:         &stderr,
@@ -4849,7 +4990,7 @@ func Test_Coverage_Backfill_Check_File_Empty_Source(t *testing.T) {
 	if err != nil {
 		t.Fatalf("parse: %v", err)
 	}
-	diags := lint.Check_File(file_set, file, nil)
+	diags := lint.Check_File(file_set, file, nil, nil, nil)
 	t.Logf("empty_source diags=%d", len(diags))
 }
 
@@ -5023,7 +5164,7 @@ func Test_Specification_Coverage_Respects_Package_Argument(t *testing.T) {
 		"other/other.go": &fstest.MapFile{Data: gofmt_must(t, other)},
 	}
 	input_greet := &bytes.Buffer{}
-	lint.Main(&lint.Main_Input{
+	lint_main(t, &lint.Main_Input{
 		Fsys: files, Stdout: input_greet, Stderr: &bytes.Buffer{},
 		Scope_Prefix: "greet"})
 	if strings.Contains(input_greet.String(), "SPECIFICATION.md") {
@@ -5031,7 +5172,7 @@ func Test_Specification_Coverage_Respects_Package_Argument(t *testing.T) {
 			input_greet.String())
 	}
 	input_other := &bytes.Buffer{}
-	lint.Main(&lint.Main_Input{
+	lint_main(t, &lint.Main_Input{
 		Fsys: files, Stdout: input_other, Stderr: &bytes.Buffer{},
 		Scope_Prefix: "other"})
 	if !strings.Contains(input_other.String(), "missing SPECIFICATION.md") {
@@ -5389,5 +5530,133 @@ func Test_Specification_Subheading_Empty(t *testing.T) {
 	diags := specification_diagnostics(t, files)
 	if !specification_message_contains(diags, "has no body line") {
 		t.Fatalf("a bodyless ### leaf must be flagged, got %v", diags)
+	}
+}
+
+// Test_Parse_Configuration covers lint.json decoding: a valid document yields
+// the shared module and the allowlist in declaration order; a missing or empty
+// shared_module, an unknown top-level key, and malformed JSON are hard errors;
+// the allowlist is optional and defaults to empty.
+func Test_Parse_Configuration(t *testing.T) {
+	t.Parallel()
+	for _, tt := range parse_configuration_cases() {
+		t.Run(tt.Name, func(t *testing.T) {
+			configuration, err := lint.Parse_Configuration([]byte(tt.Input))
+			if tt.Want_Err {
+				if err == nil {
+					t.Fatalf("expected error, got nil")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			assert_configuration(t, configuration, tt.Want_Shared, tt.Want_List)
+			assert_word_replacements_round_trip(t, configuration)
+		})
+	}
+}
+
+type parse_configuration_case struct {
+	Name        string
+	Input       string
+	Want_Err    bool
+	Want_Shared string
+	Want_List   []string
+}
+
+// Returns the lint.json decode cases: valid documents plus every hard-error form
+// (missing/empty shared_module, missing/empty word_replacements, unknown key,
+// wrong value type, malformed JSON).
+func parse_configuration_cases() (cases []parse_configuration_case) {
+	return []parse_configuration_case{
+		{
+			Name: "valid full document",
+			Input: `{"shared_module":"example.com/lib",` +
+				`"global_api_allowlist":["a/b","c/d"],` +
+				`"word_replacements":{"id":["identifier"]}}`,
+			Want_Shared: "example.com/lib",
+			Want_List:   []string{"a/b", "c/d"},
+		},
+		{
+			Name: "shared_module and table only, empty allowlist",
+			Input: `{"shared_module":"example.com/lib",` +
+				`"word_replacements":{"id":["identifier"]}}`,
+			Want_Shared: "example.com/lib",
+		},
+		{
+			Name:     "missing shared_module rejected",
+			Input:    `{"global_api_allowlist":[]}`,
+			Want_Err: true,
+		},
+		{
+			Name:     "empty shared_module rejected",
+			Input:    `{"shared_module":""}`,
+			Want_Err: true,
+		},
+		{
+			Name:     "unknown key rejected",
+			Input:    `{"shared_module":"x","global_api_allowlst":[]}`,
+			Want_Err: true,
+		},
+		{
+			Name:     "wrong value type rejected",
+			Input:    `{"shared_module":"x","global_api_allowlist":"no"}`,
+			Want_Err: true,
+		},
+		{
+			Name:     "malformed json rejected",
+			Input:    `{`,
+			Want_Err: true,
+		},
+		{
+			Name:     "missing word_replacements rejected",
+			Input:    `{"shared_module":"x"}`,
+			Want_Err: true,
+		},
+		{
+			Name:     "empty word_replacements rejected",
+			Input:    `{"shared_module":"x","word_replacements":{}}`,
+			Want_Err: true,
+		},
+		{
+			Name:     "unknown key word_replacement typo rejected",
+			Input:    `{"shared_module":"x","word_replacement":{"id":["identifier"]}}`,
+			Want_Err: true,
+		},
+	}
+}
+
+// Proves the word_replacements table survives the decode: every valid fixture
+// carries id -> identifier, so a dropped or mis-decoded table fails loudly here.
+func assert_word_replacements_round_trip(t *testing.T, configuration *lint.Configuration) {
+	t.Helper()
+	expansions := configuration.Word_Replacements["id"]
+	if len(expansions) != 1 {
+		t.Fatalf("word_replacements[id] length: got %v", expansions)
+	}
+	if expansions[0] != "identifier" {
+		t.Fatalf("word_replacements[id]: got %q", expansions[0])
+	}
+}
+
+// Asserts the decoded configuration matches the wanted shared module and
+// allowlist (order-sensitive).
+func assert_configuration(
+	t *testing.T, configuration *lint.Configuration, want_shared string, want_list []string,
+) {
+	t.Helper()
+	if configuration.Shared_Module != want_shared {
+		t.Fatalf("shared_module: got %q want %q", configuration.Shared_Module, want_shared)
+	}
+	if len(configuration.Global_API_Allowlist) != len(want_list) {
+		t.Fatalf("allowlist len: got %d want %d",
+			len(configuration.Global_API_Allowlist), len(want_list))
+	}
+	for i, want := range want_list {
+		if configuration.Global_API_Allowlist[i] != want {
+			t.Errorf("allowlist[%d]: got %q want %q",
+				i, configuration.Global_API_Allowlist[i], want)
+		}
 	}
 }

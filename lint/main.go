@@ -71,6 +71,8 @@ func main() {
 	// should be exempt. Scope_Prefix narrows output back to what the user asked for.
 	root, scope_prefix := main_resolve_workspace(request)
 	start := time.Now()
+	// The lint.json config (policy plus the word-replacements table) is read by
+	// lint.Main from this Fsys, not here: one config path shared with the tests.
 	code := lint.Main(&lint.Main_Input{
 		Fsys:           os.DirFS(root),
 		Stdout:         os.Stdout,
