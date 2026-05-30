@@ -14,6 +14,9 @@
   "path_casing_allowlist": [
           "big_bang/dotfiles"
   ],
+  "ignore": [
+          "big_bang/dotfiles"
+  ],
   "word_replacements": {
     "len":       [],
     "length":    [],
