@@ -4607,6 +4607,22 @@ func Test_Line_Character_Count_Tabs(t *testing.T) {
 	}
 }
 
+// Test_Line_Character_Count_Import_Exempt verifies that an import line wider than
+// max_line_chars is not flagged: import paths are unbreakable, so a long module
+// path must never force a lint failure.
+func Test_Line_Character_Count_Import_Exempt(t *testing.T) {
+	t.Parallel()
+	long_path := "github.com/example/" + strings.Repeat("a", 90) + "/pkg"
+	source := "package main\n\nimport " + strconv.Quote(long_path) + "\n"
+	fsys_map := fstest.MapFS{"test.go": &fstest.MapFile{Data: []byte(source)}}
+	stdout := &bytes.Buffer{}
+	code := lint.Main(&lint.Main_Input{Fsys: fsys_map, Stdout: stdout, Stderr: &bytes.Buffer{}})
+	if code != 0 {
+		t.Fatalf("import line should be exempt from the length limit; got exit %d: %s",
+			code, stdout.String())
+	}
+}
+
 // Test_Comments verifies the comment-style rules: capital start, trailing
 // `.`/`:`/`?`/`!`, space after `//`, pragma exemption, and inline-comment
 // exemption from the sentence rules.

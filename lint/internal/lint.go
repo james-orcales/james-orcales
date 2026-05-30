@@ -639,37 +639,82 @@ type Git_Input struct {
 // (filesystem walk failure, etc.).
 func Main(input *Main_Input) (code int) {
 	defer func() {
-		code_boundary := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: code, Lo: 0,
-			Hi: exit_code_max, Message: "Code is 0 (clean) or 1 (diagnostics); code=2 is unreachable per upstream Excluding"})
-		code_zero := invariant.Sometimes(code == 0, "Code is the clean-exit value on the success path")
+		code_boundary := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
+			X:       code,
+			Lo:      0,
+			Hi:      exit_code_max,
+			Message: "Code is 0 or 1; code=2 unreachable per upstream Excluding",
+		})
+		code_zero := invariant.Sometimes(
+			code == 0, "Code is the clean-exit value on the success path")
 		invariant.Cross_Product(code_boundary, code_zero,
-			invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: len(input.Tracked),
-				Lo: 0, Hi: max_ast_nodes_per_call, Message: "Tracked is bounded by AST budget"}),
-			invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: len(input.Git.Merge_Commits),
-				Lo: 0, Hi: max_ast_nodes_per_call, Message: "Merge_commits is bounded by AST budget"}),
-			invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: len(input.Git.Non_Merge_Commits),
-				Lo: 0, Hi: max_ast_nodes_per_call, Message: "Non_merge_commits is bounded by AST budget"}),
+			invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
+				X:       len(input.Tracked),
+				Lo:      0,
+				Hi:      max_ast_nodes_per_call,
+				Message: "Tracked is bounded by AST budget",
+			}),
+			invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
+				X:       len(input.Git.Merge_Commits),
+				Lo:      0,
+				Hi:      max_ast_nodes_per_call,
+				Message: "Merge_commits is bounded by AST budget",
+			}),
+			invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
+				X:       len(input.Git.Non_Merge_Commits),
+				Lo:      0,
+				Hi:      max_ast_nodes_per_call,
+				Message: "Non_merge_commits is bounded by AST budget",
+			}),
 			invariant.Excluding("Code Lo implies code_zero true",
-				invariant.Bucket_Lo(code_boundary), invariant.Bucket_False(code_zero)),
+				invariant.Bucket_Lo(code_boundary),
+				invariant.Bucket_False(code_zero)),
 			invariant.Excluding("Code Hi implies code_zero false",
-				invariant.Bucket_Hi(code_boundary), invariant.Bucket_True(code_zero)))
+				invariant.Bucket_Hi(code_boundary),
+				invariant.Bucket_True(code_zero)))
 	}()
-	cpu_boundary := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: input.CPU_Count, Lo: 0,
-		Hi: cpu_count_max, Message: "CPU_Count is in the per-process worker budget"})
-	cpu_zero := invariant.Sometimes(input.CPU_Count == 0, "CPU_Count is zero in fstest.MapFS-backed callers")
+	cpu_boundary := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
+		X:       input.CPU_Count,
+		Lo:      0,
+		Hi:      cpu_count_max,
+		Message: "CPU_Count is in the per-process worker budget",
+	})
+	cpu_zero := invariant.Sometimes(
+		input.CPU_Count == 0, "CPU_Count is zero in fstest.MapFS-backed callers")
 	git_enabled := invariant.Sometimes(input.Git.Enabled, "Git tier is enabled sometimes")
-	main_absent := invariant.Sometimes(input.Git.Main_Reference_Absent, "Main reference is absent sometimes")
+	main_absent := invariant.Sometimes(
+		input.Git.Main_Reference_Absent, "Main reference is absent sometimes")
 	invariant.Cross_Product(invariant.Always(input != nil, "Input is non-nil"),
-		invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: len(input.Root_Directory),
-			Lo: 0, Hi: max_filesystem_path_chars, Message: "Root_directory is bounded by filesystem path budget"}),
-		invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: len(input.Scope_Prefix),
-			Lo: 0, Hi: max_filesystem_path_chars, Message: "Scope_prefix is bounded by filesystem path budget"}),
-		invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: len(input.Tracked),
-			Lo: 0, Hi: max_ast_nodes_per_call, Message: "Tracked is bounded by AST budget"}),
-		invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: len(input.Git.Merge_Commits),
-			Lo: 0, Hi: max_ast_nodes_per_call, Message: "Merge_commits is bounded by AST budget"}),
-		invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: len(input.Git.Non_Merge_Commits),
-			Lo: 0, Hi: max_ast_nodes_per_call, Message: "Non_merge_commits is bounded by AST budget"}),
+		invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
+			X:       len(input.Root_Directory),
+			Lo:      0,
+			Hi:      max_filesystem_path_chars,
+			Message: "Root_directory is bounded by filesystem path budget",
+		}),
+		invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
+			X:       len(input.Scope_Prefix),
+			Lo:      0,
+			Hi:      max_filesystem_path_chars,
+			Message: "Scope_prefix is bounded by filesystem path budget",
+		}),
+		invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
+			X:       len(input.Tracked),
+			Lo:      0,
+			Hi:      max_ast_nodes_per_call,
+			Message: "Tracked is bounded by AST budget",
+		}),
+		invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
+			X:       len(input.Git.Merge_Commits),
+			Lo:      0,
+			Hi:      max_ast_nodes_per_call,
+			Message: "Merge_commits is bounded by AST budget",
+		}),
+		invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
+			X:       len(input.Git.Non_Merge_Commits),
+			Lo:      0,
+			Hi:      max_ast_nodes_per_call,
+			Message: "Non_merge_commits is bounded by AST budget",
+		}),
 		git_enabled, main_absent,
 		cpu_boundary, cpu_zero,
 		invariant.Excluding("CPU_Count Lo implies cpu_zero true",
@@ -679,9 +724,11 @@ func Main(input *Main_Input) (code int) {
 		invariant.Excluding("Main reference absent only matters when Git tier is enabled",
 			invariant.Bucket_False(git_enabled), invariant.Bucket_True(main_absent)))
 
-	// Git tier runs first (repo-metadata-only, doesn't touch the FS, surfaces the fastest signal).
+	// Git tier runs first: repo-metadata-only, doesn't touch the FS, and
+	// surfaces the fastest signal.
 	git_diags := git_input_check(input.Git)
-	invariant.Cross_Product(invariant.Sometimes(git_diags == nil, "Git_diags is empty for a clean git state"))
+	invariant.Cross_Product(
+		invariant.Sometimes(git_diags == nil, "Git_diags is empty for a clean git state"))
 	filesystem_diags, err := Check_File_System(&Check_File_System_Input{
 		Fsys:           input.Fsys,
 		Root:           ".",
@@ -692,7 +739,8 @@ func Main(input *Main_Input) (code int) {
 		Stat:           input.Stat,
 	})
 	invariant.Cross_Product(
-		invariant.Always(filesystem_diags != nil, "Filesystem_diags is non-nil at this point"),
+		invariant.Always(
+			filesystem_diags != nil, "Filesystem_diags is non-nil at this point"),
 		invariant.Always(err == nil, "Err is nil for a successful filesystem walk"),
 	)
 	if err != nil {
@@ -765,24 +813,38 @@ func diagnostic_within_scope(d Diagnostic, scope_prefix string) (within bool) {
 			invariant.Bucket_Lo(tier_boundary), invariant.Bucket_False(tier_zero)),
 		invariant.Excluding("Tier two (Hi) implies tier_zero false",
 			invariant.Bucket_Hi(tier_boundary), invariant.Bucket_True(tier_zero)),
-		invariant.Excluding("Tier two (Hi) per-file diag with max-budget scope_prefix is bad",
+		invariant.Excluding("Tier Hi per-file diag with max-budget scope_prefix is bad",
 			invariant.Bucket_Hi(tier_boundary), invariant.Bucket_Hi(scope_axis)),
 	)
-	name_axis := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: len(d.Name),
-		Lo: 0, Hi: max_diagnostic_message_chars, Message: "D.Name spans empty (package-group) to bounded names"})
+	name_axis := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
+		X:       len(d.Name),
+		Lo:      0,
+		Hi:      max_diagnostic_message_chars,
+		Message: "D.Name spans empty (package-group) to bounded names",
+	})
 	name_empty := invariant.Sometimes(len(d.Name) == 0, "D.Name is empty sometimes")
 	invariant.Cross_Product(name_axis, name_empty,
-		invariant.Excluding("Hi name empty unreachable", invariant.Bucket_Hi(name_axis), invariant.Bucket_True(name_empty)),
-		invariant.Excluding("Hi name non-empty unreachable", invariant.Bucket_Hi(name_axis), invariant.Bucket_False(name_empty)),
-		invariant.Excluding("Lo name implies empty true", invariant.Bucket_Lo(name_axis), invariant.Bucket_False(name_empty)),
+		invariant.Excluding("Hi name empty unreachable",
+			invariant.Bucket_Hi(name_axis), invariant.Bucket_True(name_empty)),
+		invariant.Excluding("Hi name non-empty unreachable",
+			invariant.Bucket_Hi(name_axis), invariant.Bucket_False(name_empty)),
+		invariant.Excluding("Lo name implies empty true",
+			invariant.Bucket_Lo(name_axis), invariant.Bucket_False(name_empty)),
 	)
-	want_axis := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: len(d.Want),
-		Lo: 0, Hi: max_diagnostic_message_chars, Message: "D.Want spans empty to bounded suggestion text"})
+	want_axis := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
+		X:       len(d.Want),
+		Lo:      0,
+		Hi:      max_diagnostic_message_chars,
+		Message: "D.Want spans empty to bounded suggestion text",
+	})
 	want_empty := invariant.Sometimes(len(d.Want) == 0, "D.Want is empty sometimes")
 	invariant.Cross_Product(want_axis, want_empty,
-		invariant.Excluding("Hi want empty unreachable", invariant.Bucket_Hi(want_axis), invariant.Bucket_True(want_empty)),
-		invariant.Excluding("Hi want non-empty unreachable", invariant.Bucket_Hi(want_axis), invariant.Bucket_False(want_empty)),
-		invariant.Excluding("Lo want implies empty true", invariant.Bucket_Lo(want_axis), invariant.Bucket_False(want_empty)),
+		invariant.Excluding("Hi want empty unreachable",
+			invariant.Bucket_Hi(want_axis), invariant.Bucket_True(want_empty)),
+		invariant.Excluding("Hi want non-empty unreachable",
+			invariant.Bucket_Hi(want_axis), invariant.Bucket_False(want_empty)),
+		invariant.Excluding("Lo want implies empty true",
+			invariant.Bucket_Lo(want_axis), invariant.Bucket_False(want_empty)),
 	)
 
 	if scope_prefix == "" {
@@ -821,7 +883,8 @@ type parsed_file struct {
 }
 
 var snake_case_re = regexp.MustCompile(`^[a-z][a-z0-9]*(_[a-z0-9]+)*$`)
-var ada_case_re = regexp.MustCompile(`^([A-Z][a-z0-9]*|[A-Z][A-Z0-9]*)(_([A-Z][a-z0-9]*|[A-Z][A-Z0-9]*))*$`)
+var ada_case_re = regexp.MustCompile(
+	`^([A-Z][a-z0-9]*|[A-Z][A-Z0-9]*)(_([A-Z][a-z0-9]*|[A-Z][A-Z0-9]*))*$`)
 
 // Conventional Commits subject: lowercase type, optional (scope), optional
 // `!` breaking-change marker, `: `, non-empty description. Scope contents
@@ -833,7 +896,7 @@ func suggest_split_words(name string) (words []string) {
 	defer func() {
 		words_axis := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
 			X: len(words), Lo: min_non_empty, Hi: Max_Identifier_Chars,
-			Message: "Words is the identifier split into segments (name is non-empty so always ≥1 word)",
+			Message: "Words is identifier segments; name non-empty so ≥1 word",
 		})
 		name_axis := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
 			X: len(name), Lo: min_non_empty, Hi: Max_Identifier_Chars,
@@ -848,9 +911,9 @@ func suggest_split_words(name string) (words []string) {
 		// 128 words); Hi(words) with Hi(name)=128 is the same arithmetic with
 		// the maximum possible input length.
 		invariant.Cross_Product(words_axis, name_axis,
-			invariant.Excluding("Splitting requires at least one char per word; Hi words with Lo name violates that",
+			invariant.Excluding("Hi words with Lo name impossible: ≥1 char per word",
 				invariant.Bucket_Hi(words_axis), invariant.Bucket_Lo(name_axis)),
-			invariant.Excluding("Densest split packs ~2N/3 words per N chars; Hi name reaches 86",
+			invariant.Excluding("Hi words with Hi name: ~2N/3 words per N chars",
 				invariant.Bucket_Hi(words_axis), invariant.Bucket_Hi(name_axis)),
 		)
 	}()
@@ -907,56 +970,60 @@ func suggest(input *suggest_input) (output string) {
 			X:       len(output),
 			Lo:      min_split_suggestion_chars,
 			Hi:      Max_Identifier_Chars,
-			Message: "Output is a non-trivial suggestion (≥3 chars: 2-char input split into `a_B`)",
+			Message: "Output is ≥3 chars: 2-char input splits into `a_B`",
 		})
 		name_axis := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
 			X: len(input.Name), Lo: min_non_empty, Hi: Max_Identifier_Chars,
-			Message: "Input.Name is a non-empty Go identifier bounded by identifier budget",
+			Message: "Input.Name is a non-empty identifier within identifier budget",
 		})
 		want_axis := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
 			X: len(input.Want), Lo: min_naming_style_chars, Hi: max_naming_style_chars,
-			Message: "Input.Want is `Ada_Case` (8) or `snake_case` (10) — the only two style words callers pass",
+			Message: "Input.Want is `Ada_Case` (8) or `snake_case` (10)",
 		})
 		// Output Hi (=128 chars) reaches the cap only for ~86-char inputs (densest
 		// split is ~2N/3 words; rejoin with separator adds chars).
 		invariant.Cross_Product(output_axis, name_axis, want_axis,
-			invariant.Excluding("Splitting requires at least one char per output word; Hi output with Lo name violates that",
+			invariant.Excluding("Hi output with Lo name impossible: ≥1 char per word",
 				invariant.Bucket_Hi(output_axis), invariant.Bucket_Lo(name_axis)),
 			// Lo name (=1 char) cannot reach suggest: 1-char identifiers match both
 			// snake_case (`[a-z]`) and Ada_Case (`[A-Z]`) regexes, so the casing
 			// check that gates `suggest()` never fires. Exclude across remaining
 			// axes' bucket pairings.
-			invariant.Excluding("Lo name unreachable — 1-char identifiers always match their style regex (Lo want)",
+			invariant.Excluding("Lo name unreachable (Lo want): 1-char matches regex",
 				invariant.Bucket_Lo(name_axis), invariant.Bucket_Lo(want_axis)),
-			invariant.Excluding("Lo name unreachable — 1-char identifiers always match their style regex (Hi want)",
+			invariant.Excluding("Lo name unreachable (Hi want): 1-char matches regex",
 				invariant.Bucket_Lo(name_axis), invariant.Bucket_Hi(want_axis)),
-			invariant.Excluding("Lo name unreachable — 1-char identifiers always match their style regex (Lo output)",
+			invariant.Excluding("Lo name unreachable (Lo output): 1-char matches regex",
 				invariant.Bucket_Lo(name_axis), invariant.Bucket_Lo(output_axis)),
 			// Lo output (=3 chars) implies short name input: suggest preserves
 			// word content, so a 3-char output requires a ≤3-char input.
 			// Pairing Lo output with Hi name (=128 chars) is impossible.
-			invariant.Excluding("Lo output implies short name input — Hi name produces a long output (Lo want)",
-				invariant.Bucket_Lo(output_axis), invariant.Bucket_Hi(name_axis), invariant.Bucket_Lo(want_axis)),
-			invariant.Excluding("Lo output implies short name input — Hi name produces a long output (Hi want)",
-				invariant.Bucket_Lo(output_axis), invariant.Bucket_Hi(name_axis), invariant.Bucket_Hi(want_axis)),
+			invariant.Excluding("Lo output (Lo want) implies a short name input",
+				invariant.Bucket_Lo(output_axis),
+				invariant.Bucket_Hi(name_axis),
+				invariant.Bucket_Lo(want_axis)),
+			invariant.Excluding("Lo output (Hi want) implies a short name input",
+				invariant.Bucket_Lo(output_axis),
+				invariant.Bucket_Hi(name_axis),
+				invariant.Bucket_Hi(want_axis)),
 		)
 	}()
 	name_axis := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
 		X: len(input.Name), Lo: min_non_empty, Hi: Max_Identifier_Chars,
-		Message: "Input.Name is a non-empty Go identifier bounded by identifier budget",
+		Message: "Input.Name is a non-empty identifier within identifier budget",
 	})
 	want_axis := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
 		X: len(input.Want), Lo: min_naming_style_chars, Hi: max_naming_style_chars,
-		Message: "Input.Want is `Ada_Case` (8) or `snake_case` (10) — the only two style words callers pass",
+		Message: "Input.Want is `Ada_Case` (8) or `snake_case` (10)",
 	})
 	invariant.Cross_Product(invariant.Always(input != nil, "Input is non-nil"),
 		name_axis, want_axis,
 		// Lo name (=1 char) cannot reach suggest: 1-char identifiers always
 		// match their style regex, so suggest is never called with a 1-char
 		// Name in the test corpus.
-		invariant.Excluding("Lo name unreachable — 1-char identifiers always match their style regex (Lo want)",
+		invariant.Excluding("Lo name unreachable (Lo want): 1-char matches regex",
 			invariant.Bucket_Lo(name_axis), invariant.Bucket_Lo(want_axis)),
-		invariant.Excluding("Lo name unreachable — 1-char identifiers always match their style regex (Hi want)",
+		invariant.Excluding("Lo name unreachable (Hi want): 1-char matches regex",
 			invariant.Bucket_Lo(name_axis), invariant.Bucket_Hi(want_axis)),
 	)
 
@@ -993,7 +1060,7 @@ func suggest_is_all_upper(s string) (ok bool) {
 			X:       len(s),
 			Lo:      min_non_empty,
 			Hi:      Max_Identifier_Chars,
-			Message: "S is a word from suggest_split_words; non-empty and bounded by identifier budget",
+			Message: "S is a non-empty word from suggest_split_words",
 		}),
 	)
 
@@ -1009,7 +1076,9 @@ func suggest_is_all_upper(s string) (ok bool) {
 	return has_letter
 }
 
-type check_function = func(file_set *token.FileSet, file *ast.File, source []byte) (diags []Diagnostic)
+type check_function = func(
+	file_set *token.FileSet, file *ast.File, source []byte,
+) (diags []Diagnostic)
 
 // LINT POLICY: do not add checks that force capacity-bounded wrappers over
 // raw collections. We explored porting Odin's fixed-slice concept (every
@@ -1057,9 +1126,9 @@ func check_shadows(file_set *token.FileSet, file *ast.File, _ []byte) (diags []D
 		// (Lo decls, Hi diags) is logically impossible: zero declarations yield
 		// zero shadow diagnostics.
 		invariant.Cross_Product(decls_axis, diags_axis,
-			invariant.Excluding("Decls at AST safety cap with diags at diag-budget at safety cap is bad",
+			invariant.Excluding("Decls and diags both at safety cap is bad",
 				invariant.Bucket_Hi(decls_axis), invariant.Bucket_Hi(diags_axis)),
-			invariant.Excluding("Decls at AST at safety cap is bad",
+			invariant.Excluding("Decls at AST safety cap is bad",
 				invariant.Bucket_Hi(decls_axis), invariant.Bucket_Lo(diags_axis)),
 			invariant.Excluding("Zero decls yield zero shadow diagnostics",
 				invariant.Bucket_Lo(decls_axis), invariant.Bucket_Hi(diags_axis)),
@@ -1100,35 +1169,54 @@ func check_shadows(file_set *token.FileSet, file *ast.File, _ []byte) (diags []D
 	return diags
 }
 
-func check_shadows_function_body(file_set *token.FileSet, global_scope *scope, function *ast.FuncDecl, diags *[]Diagnostic) {
+func check_shadows_function_body(
+	file_set *token.FileSet, global_scope *scope, function *ast.FuncDecl, diags *[]Diagnostic,
+) {
 	defer func() {
-		d := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: len(*diags),
-			Lo: 0, Hi: max_diagnostics_per_call, Message: "Diags is bounded by per-file diag budget"})
+		d := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
+			X:       len(*diags),
+			Lo:      0,
+			Hi:      max_diagnostics_per_call,
+			Message: "Diags is bounded by per-file diag budget",
+		})
 		receiver_top_level := invariant.Sometimes(function.Recv == nil,
 			"Function is a top-level (non-method) function sometimes")
-		global_names := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: len(global_scope.Names),
-			Lo: min_non_empty, Hi: max_ast_nodes_per_call,
-			Message: "Global_scope.Names is non-empty (file has at least the walking function declared)"})
+		global_names := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
+			X:       len(global_scope.Names),
+			Lo:      min_non_empty,
+			Hi:      max_ast_nodes_per_call,
+			Message: "Global_scope.Names is non-empty (file declares ≥1 function)",
+		})
 		invariant.Cross_Product(d, receiver_top_level, global_names,
-			invariant.Excluding("Diag-budget cap with top-level function unreachable in test corpus",
+			invariant.Excluding("Diag cap with top-level fn unreachable in tests",
 				invariant.Bucket_Hi(d), invariant.Bucket_True(receiver_top_level)),
-			invariant.Excluding("Diag-budget cap with method function unreachable in test corpus",
+			invariant.Excluding("Diag cap with method fn unreachable in tests",
 				invariant.Bucket_Hi(d), invariant.Bucket_False(receiver_top_level)),
-			invariant.Excluding("Hi global_names unreachable in test corpus (top-level)",
-				invariant.Bucket_Hi(global_names), invariant.Bucket_True(receiver_top_level)),
-			invariant.Excluding("Hi global_names unreachable in test corpus (method)",
-				invariant.Bucket_Hi(global_names), invariant.Bucket_False(receiver_top_level)),
-			invariant.Excluding("Method implies struct type also declared (Lo global_names=1 impossible)",
-				invariant.Bucket_Lo(global_names), invariant.Bucket_False(receiver_top_level)),
+			invariant.Excluding("Hi global_names unreachable in tests (top-level)",
+				invariant.Bucket_Hi(global_names),
+				invariant.Bucket_True(receiver_top_level)),
+			invariant.Excluding("Hi global_names unreachable in tests (method)",
+				invariant.Bucket_Hi(global_names),
+				invariant.Bucket_False(receiver_top_level)),
+			invariant.Excluding("Method implies its struct type also declared",
+				invariant.Bucket_Lo(global_names),
+				invariant.Bucket_False(receiver_top_level)),
 		)
 	}()
-	d := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: len(*diags),
-		Lo: 0, Hi: max_diagnostics_per_call, Message: "Diags is bounded by per-file diag budget"})
+	d := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
+		X:       len(*diags),
+		Lo:      0,
+		Hi:      max_diagnostics_per_call,
+		Message: "Diags is bounded by per-file diag budget",
+	})
 	receiver_top_level := invariant.Sometimes(function.Recv == nil,
 		"Function is a top-level (non-method) function sometimes")
-	global_names := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: len(global_scope.Names),
-		Lo: min_non_empty, Hi: max_ast_nodes_per_call,
-		Message: "Global_scope.Names is non-empty (file has at least the walking function declared)"})
+	global_names := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
+		X:       len(global_scope.Names),
+		Lo:      min_non_empty,
+		Hi:      max_ast_nodes_per_call,
+		Message: "Global_scope.Names is non-empty (file declares ≥1 function)",
+	})
 	invariant.Cross_Product(
 		invariant.Always(file_set != nil, "File_set is non-nil"),
 		invariant.Always(global_scope != nil, "Global_scope is non-nil"),
@@ -1136,16 +1224,19 @@ func check_shadows_function_body(file_set *token.FileSet, global_scope *scope, f
 		invariant.Always(function != nil, "Function is non-nil"),
 		invariant.Always(diags != nil, "Diags is non-nil"),
 		d, receiver_top_level, global_names,
-		invariant.Excluding("Diag-budget cap with top-level function unreachable in test corpus",
+		invariant.Excluding("Diag cap with top-level fn unreachable in tests",
 			invariant.Bucket_Hi(d), invariant.Bucket_True(receiver_top_level)),
-		invariant.Excluding("Diag-budget cap with method function unreachable in test corpus",
+		invariant.Excluding("Diag cap with method fn unreachable in tests",
 			invariant.Bucket_Hi(d), invariant.Bucket_False(receiver_top_level)),
-		invariant.Excluding("Hi global_names unreachable in test corpus (top-level)",
-			invariant.Bucket_Hi(global_names), invariant.Bucket_True(receiver_top_level)),
-		invariant.Excluding("Hi global_names unreachable in test corpus (method)",
-			invariant.Bucket_Hi(global_names), invariant.Bucket_False(receiver_top_level)),
-		invariant.Excluding("Method implies struct type also declared (Lo global_names=1 impossible)",
-			invariant.Bucket_Lo(global_names), invariant.Bucket_False(receiver_top_level)),
+		invariant.Excluding("Hi global_names unreachable in tests (top-level)",
+			invariant.Bucket_Hi(global_names),
+			invariant.Bucket_True(receiver_top_level)),
+		invariant.Excluding("Hi global_names unreachable in tests (method)",
+			invariant.Bucket_Hi(global_names),
+			invariant.Bucket_False(receiver_top_level)),
+		invariant.Excluding("Method implies its struct type also declared",
+			invariant.Bucket_Lo(global_names),
+			invariant.Bucket_False(receiver_top_level)),
 	)
 
 	function_scope := &scope{Parent: global_scope, Names: make(map[string]bool)}
@@ -1179,17 +1270,34 @@ func check_shadows_function_body(file_set *token.FileSet, global_scope *scope, f
 // by check_no_recursion. The stack holds one frame per nested scope; sibling
 // scopes (if/else-if/else) are pushed together and processed LIFO, which is
 // fine because they don't share state.
-func check_shadows_function_body_walk_body(file_set *token.FileSet, root_scope *scope, root_statements []ast.Stmt, diags *[]Diagnostic) {
+func check_shadows_function_body_walk_body(
+	file_set *token.FileSet, root_scope *scope, root_statements []ast.Stmt, diags *[]Diagnostic,
+) {
 	defer func() {
-		s := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: len(root_statements),
-			Lo: 0, Hi: max_ast_nodes_per_call, Message: "Root_statements is bounded by budget"})
-		d := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: len(*diags),
-			Lo: 0, Hi: max_diagnostics_per_call, Message: "Diags is bounded by per-file diag budget"})
-		names_axis := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: len(root_scope.Names),
-			Lo: 0, Hi: max_ast_nodes_per_call, Message: "Root_scope.Names is bounded by AST budget"})
-		parent_names_axis := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: len(root_scope.Parent.Names),
-			Lo: min_non_empty, Hi: max_ast_nodes_per_call,
-			Message: "Root_scope.Parent.Names is non-empty (global has the walking function)"})
+		s := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
+			X:       len(root_statements),
+			Lo:      0,
+			Hi:      max_ast_nodes_per_call,
+			Message: "Root_statements is bounded by budget",
+		})
+		d := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
+			X:       len(*diags),
+			Lo:      0,
+			Hi:      max_diagnostics_per_call,
+			Message: "Diags is bounded by per-file diag budget",
+		})
+		names_axis := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
+			X:       len(root_scope.Names),
+			Lo:      0,
+			Hi:      max_ast_nodes_per_call,
+			Message: "Root_scope.Names is bounded by AST budget",
+		})
+		parent_names_axis := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
+			X:       len(root_scope.Parent.Names),
+			Lo:      min_non_empty,
+			Hi:      max_ast_nodes_per_call,
+			Message: "Root_scope.Parent.Names is non-empty: global has the fn",
+		})
 		invariant.Cross_Product(s, d, names_axis, parent_names_axis,
 			invariant.Excluding("Statements Hi with diags Hi unreachable",
 				invariant.Bucket_Hi(s), invariant.Bucket_Hi(d)),
@@ -1207,20 +1315,37 @@ func check_shadows_function_body_walk_body(file_set *token.FileSet, root_scope *
 				invariant.Bucket_Hi(parent_names_axis), invariant.Bucket_Hi(s)),
 		)
 	}()
-	s := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: len(root_statements),
-		Lo: 0, Hi: max_ast_nodes_per_call, Message: "Root_statements is bounded by budget"})
-	d := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: len(*diags),
-		Lo: 0, Hi: max_diagnostics_per_call, Message: "Diags is bounded by per-file diag budget"})
-	names_axis := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: len(root_scope.Names),
-		Lo: 0, Hi: max_ast_nodes_per_call, Message: "Root_scope.Names is bounded by AST budget"})
-	parent_names_axis := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: len(root_scope.Parent.Names),
-		Lo: min_non_empty, Hi: max_ast_nodes_per_call,
-		Message: "Root_scope.Parent.Names is non-empty (global has the walking function)"})
+	s := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
+		X:       len(root_statements),
+		Lo:      0,
+		Hi:      max_ast_nodes_per_call,
+		Message: "Root_statements is bounded by budget",
+	})
+	d := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
+		X:       len(*diags),
+		Lo:      0,
+		Hi:      max_diagnostics_per_call,
+		Message: "Diags is bounded by per-file diag budget",
+	})
+	names_axis := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
+		X:       len(root_scope.Names),
+		Lo:      0,
+		Hi:      max_ast_nodes_per_call,
+		Message: "Root_scope.Names is bounded by AST budget",
+	})
+	parent_names_axis := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
+		X:       len(root_scope.Parent.Names),
+		Lo:      min_non_empty,
+		Hi:      max_ast_nodes_per_call,
+		Message: "Root_scope.Parent.Names is non-empty: global has the fn",
+	})
 	invariant.Cross_Product(
 		invariant.Always(file_set != nil, "File_set is non-nil"),
 		invariant.Always(root_scope != nil, "Root_scope is non-nil"),
-		invariant.Always(root_scope.Parent != nil, "Root_scope has a parent (function scope)"),
-		invariant.Always(root_scope.Parent.Parent == nil, "Root_scope.Parent is the global scope, whose Parent is the chain root"),
+		invariant.Always(root_scope.Parent != nil,
+			"Root_scope has a parent (function scope)"),
+		invariant.Always(root_scope.Parent.Parent == nil,
+			"Root_scope.Parent is the global scope, whose Parent is the chain root"),
 		invariant.Always(diags != nil, "Diags is non-nil"),
 		s, d, names_axis, parent_names_axis,
 		invariant.Excluding("Statements Hi with diags Hi unreachable",
@@ -1249,8 +1374,10 @@ func check_shadows_function_body_walk_body(file_set *token.FileSet, root_scope *
 		statement := top.Statements[top.I]
 		top.I++
 		current_scope := top.Scope
-		stack = check_shadows_function_body_walk_body_walk_statement(file_set, current_scope, statement, stack, diags)
-		invariant.Cross_Product(invariant.Always(stack != nil, "Stack is non-nil at this point"))
+		stack = check_shadows_function_body_walk_body_walk_statement(
+			file_set, current_scope, statement, stack, diags)
+		invariant.Cross_Product(
+			invariant.Always(stack != nil, "Stack is non-nil at this point"))
 	}
 }
 
@@ -1268,44 +1395,75 @@ func check_shadows_function_body_walk_body_walk_statement(
 	diags *[]Diagnostic,
 ) (output []walk_frame) {
 	defer func() {
-		s := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: len(stack),
-			Lo: min_non_empty, Hi: max_ast_nodes_per_call, Message: "Stack at exit is ≥1 (walker gates len>0 before call)"})
-		o := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: len(output),
-			Lo: min_non_empty, Hi: max_ast_nodes_per_call, Message: "Output is ≥1 (function returns ≥input-stack)"})
-		d := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: len(*diags),
-			Lo: 0, Hi: max_diagnostics_per_call, Message: "Diags is bounded by per-file diag budget"})
+		s := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
+			X:       len(stack),
+			Lo:      min_non_empty,
+			Hi:      max_ast_nodes_per_call,
+			Message: "Stack at exit is ≥1 (walker gates len>0 before call)",
+		})
+		o := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
+			X:       len(output),
+			Lo:      min_non_empty,
+			Hi:      max_ast_nodes_per_call,
+			Message: "Output is ≥1 (function returns ≥input-stack)",
+		})
+		d := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
+			X:       len(*diags),
+			Lo:      0,
+			Hi:      max_diagnostics_per_call,
+			Message: "Diags is bounded by per-file diag budget",
+		})
 		// |output-stack| ≤ 1 per call (single push or pop); (Hi,Hi) is the
 		// AST safety cap, not a coverage gap.
 		invariant.Cross_Product(s, o, d,
 			invariant.Excluding("Stack at AST at safety cap is bad",
 				invariant.Bucket_Hi(s), invariant.Bucket_Hi(o)),
-			invariant.Excluding("Single-call pop or push keeps output within one of stack",
+			invariant.Excluding("Single-call pop or push keeps output near stack",
 				invariant.Bucket_Hi(s), invariant.Bucket_Lo(o)),
-			invariant.Excluding("Single-call pop or push keeps output within one of stack",
+			invariant.Excluding("Single-call pop or push keeps output near stack",
 				invariant.Bucket_Lo(s), invariant.Bucket_Hi(o)),
 			invariant.Excluding("Stack at AST safety cap with diag-budget cap is bad",
 				invariant.Bucket_Hi(s), invariant.Bucket_Hi(d)),
-			invariant.Excluding("Diag-budget cap with stack at lower endpoint unreachable in test corpus",
+			invariant.Excluding("Diag cap with Lo stack unreachable in tests",
 				invariant.Bucket_Lo(s), invariant.Bucket_Hi(d)),
-			invariant.Excluding("Output at lower endpoint with diag-budget cap unreachable in test corpus",
+			invariant.Excluding("Lo output with diag cap unreachable in tests",
 				invariant.Bucket_Lo(o), invariant.Bucket_Hi(d)),
 			invariant.Excluding("Output at safety cap with diag-budget cap is bad",
 				invariant.Bucket_Hi(o), invariant.Bucket_Hi(d)),
 		)
-		na := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: len(scope_value.Names),
-			Lo: 0, Hi: max_ast_nodes_per_call, Message: "Scope_value.Names is bounded by AST budget"})
-		pn := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: len(scope_value.Parent.Names),
-			Lo: 0, Hi: max_ast_nodes_per_call, Message: "Scope_value.Parent.Names is bounded by AST budget"})
+		na := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
+			X:       len(scope_value.Names),
+			Lo:      0,
+			Hi:      max_ast_nodes_per_call,
+			Message: "Scope_value.Names is bounded by AST budget",
+		})
+		pn := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
+			X:       len(scope_value.Parent.Names),
+			Lo:      0,
+			Hi:      max_ast_nodes_per_call,
+			Message: "Scope_value.Parent.Names is bounded by AST budget",
+		})
 		invariant.Cross_Product(na, pn,
-			invariant.Excluding("Hi names unreachable (Lo parent)", invariant.Bucket_Hi(na), invariant.Bucket_Lo(pn)),
-			invariant.Excluding("Hi names unreachable (Hi parent)", invariant.Bucket_Hi(na), invariant.Bucket_Hi(pn)),
-			invariant.Excluding("Hi parent unreachable (Lo names)", invariant.Bucket_Lo(na), invariant.Bucket_Hi(pn)),
+			invariant.Excluding("Hi names unreachable (Lo parent)",
+				invariant.Bucket_Hi(na), invariant.Bucket_Lo(pn)),
+			invariant.Excluding("Hi names unreachable (Hi parent)",
+				invariant.Bucket_Hi(na), invariant.Bucket_Hi(pn)),
+			invariant.Excluding("Hi parent unreachable (Lo names)",
+				invariant.Bucket_Lo(na), invariant.Bucket_Hi(pn)),
 		)
 	}()
-	s := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: len(stack),
-		Lo: min_non_empty, Hi: max_ast_nodes_per_call, Message: "Stack is ≥1 (walker gates len>0 before call)"})
-	d := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: len(*diags),
-		Lo: 0, Hi: max_diagnostics_per_call, Message: "Diags is bounded by per-file diag budget"})
+	s := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
+		X:       len(stack),
+		Lo:      min_non_empty,
+		Hi:      max_ast_nodes_per_call,
+		Message: "Stack is ≥1 (walker gates len>0 before call)",
+	})
+	d := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
+		X:       len(*diags),
+		Lo:      0,
+		Hi:      max_diagnostics_per_call,
+		Message: "Diags is bounded by per-file diag budget",
+	})
 	parent_parent_nil := invariant.Sometimes(scope_value.Parent.Parent == nil,
 		"Scope_value.Parent.Parent is nil at the function-scope root sometimes")
 	invariant.Cross_Product(
@@ -1325,27 +1483,44 @@ func check_shadows_function_body_walk_body_walk_statement(
 		invariant.Excluding("Nested scope_value implies stack ≥ 2 frames",
 			invariant.Bucket_False(parent_parent_nil), invariant.Bucket_Lo(s)),
 	)
-	na := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: len(scope_value.Names),
-		Lo: 0, Hi: max_ast_nodes_per_call, Message: "Scope_value.Names is bounded by AST budget"})
-	pn := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: len(scope_value.Parent.Names),
-		Lo: 0, Hi: max_ast_nodes_per_call, Message: "Scope_value.Parent.Names is bounded by AST budget"})
+	na := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
+		X:       len(scope_value.Names),
+		Lo:      0,
+		Hi:      max_ast_nodes_per_call,
+		Message: "Scope_value.Names is bounded by AST budget",
+	})
+	pn := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
+		X:       len(scope_value.Parent.Names),
+		Lo:      0,
+		Hi:      max_ast_nodes_per_call,
+		Message: "Scope_value.Parent.Names is bounded by AST budget",
+	})
 	invariant.Cross_Product(na, pn,
-		invariant.Excluding("Hi names unreachable (Lo parent)", invariant.Bucket_Hi(na), invariant.Bucket_Lo(pn)),
-		invariant.Excluding("Hi names unreachable (Hi parent)", invariant.Bucket_Hi(na), invariant.Bucket_Hi(pn)),
-		invariant.Excluding("Hi parent unreachable (Lo names)", invariant.Bucket_Lo(na), invariant.Bucket_Hi(pn)),
+		invariant.Excluding("Hi names unreachable (Lo parent)",
+			invariant.Bucket_Hi(na), invariant.Bucket_Lo(pn)),
+		invariant.Excluding("Hi names unreachable (Hi parent)",
+			invariant.Bucket_Hi(na), invariant.Bucket_Hi(pn)),
+		invariant.Excluding("Hi parent unreachable (Lo names)",
+			invariant.Bucket_Lo(na), invariant.Bucket_Hi(pn)),
 	)
 
 	switch x := statement.(type) {
 	case *ast.BlockStmt:
 		if x != nil {
-			stack = append(stack, walk_frame{Scope: scope_new_block(scope_value), Statements: x.List})
+			stack = append(stack, walk_frame{
+				Scope:      scope_new_block(scope_value),
+				Statements: x.List,
+			})
 		}
 	case *ast.IfStmt:
-		stack = check_shadows_function_body_walk_body_walk_statement_push_if_chain(file_set, scope_value, x, stack, diags)
-		invariant.Cross_Product(invariant.Always(stack != nil, "Stack is non-nil after a leaf if chain"))
+		stack = check_shadows_function_body_walk_body_walk_statement_push_if_chain(
+			file_set, scope_value, x, stack, diags)
+		invariant.Cross_Product(
+			invariant.Always(stack != nil, "Stack is non-nil after a leaf if chain"))
 	case *ast.ForStmt:
 		for_scope := scope_new_block(scope_value)
-		invariant.Cross_Product(invariant.Always(for_scope != nil, "For_scope is non-nil at this point"))
+		invariant.Cross_Product(
+			invariant.Always(for_scope != nil, "For_scope is non-nil at this point"))
 		if x.Init != nil {
 			check_assign_define(file_set, for_scope, x.Init, diags)
 		}
@@ -1353,12 +1528,17 @@ func check_shadows_function_body_walk_body_walk_statement(
 			stack = append(stack, walk_frame{Scope: for_scope, Statements: x.Body.List})
 		}
 	case *ast.RangeStmt:
-		stack = check_shadows_function_body_walk_body_walk_statement_push_range_statement(file_set, scope_value, x, stack, diags)
-		invariant.Cross_Product(invariant.Always(stack != nil, "Stack is non-nil after a body-less range statement"))
+		stack = check_shadows_function_body_walk_body_walk_statement_push_range_statement(
+			file_set, scope_value, x, stack, diags)
+		invariant.Cross_Product(
+			invariant.Always(
+				stack != nil, "Stack is non-nil after a body-less range statement"))
 	case *ast.AssignStmt:
-		check_shadows_function_body_walk_body_walk_statement_assign_statement(file_set, scope_value, x, diags)
+		check_shadows_function_body_walk_body_walk_statement_assign_statement(
+			file_set, scope_value, x, diags)
 	case *ast.DeclStmt:
-		check_shadows_function_body_walk_body_walk_statement_declaration_statement(file_set, scope_value, x, diags)
+		check_shadows_function_body_walk_body_walk_statement_declaration_statement(
+			file_set, scope_value, x, diags)
 	}
 	return stack
 }
@@ -1374,51 +1554,84 @@ func scope_new_block(parent *scope) (new_scope *scope) {
 		names_axis := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
 			X: len(new_scope.Names), Lo: 0, Hi: max_ast_nodes_per_call,
 			Message: "Names is bounded by AST budget"})
-		parent_parent_parent_nil := invariant.Sometimes(new_scope.Parent.Parent.Parent == nil,
-			"New_scope.Parent.Parent.Parent is nil at the function-scope root sometimes")
-		parent_names := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: len(parent.Names),
-			Lo: 0, Hi: max_ast_nodes_per_call, Message: "Parent.Names is bounded by AST budget"})
-		parent_parent_names := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: len(parent.Parent.Names),
-			Lo: 0, Hi: max_ast_nodes_per_call, Message: "Parent.Parent.Names is bounded by AST budget"})
+		parent_parent_parent_nil := invariant.Sometimes(
+			new_scope.Parent.Parent.Parent == nil,
+			"New_scope grandparent is nil at function-scope root sometimes")
+		parent_names := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
+			X:       len(parent.Names),
+			Lo:      0,
+			Hi:      max_ast_nodes_per_call,
+			Message: "Parent.Names is bounded by AST budget",
+		})
+		parent_parent_names := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
+			X:       len(parent.Parent.Names),
+			Lo:      0,
+			Hi:      max_ast_nodes_per_call,
+			Message: "Parent.Parent.Names is bounded by AST budget",
+		})
 		invariant.Cross_Product(
 			invariant.Always(new_scope != nil, "New_scope is non-nil"),
 			invariant.Always(new_scope.Parent != nil, "New_scope has a parent"),
-			invariant.Always(new_scope.Parent.Parent != nil, "New_scope.Parent.Parent is non-nil"),
+			invariant.Always(new_scope.Parent.Parent != nil,
+				"New_scope.Parent.Parent is non-nil"),
 			names_axis, parent_parent_parent_nil, parent_names, parent_parent_names,
-			invariant.Excluding("Names at safety cap with root-scope grandparent unreachable in constructor",
-				invariant.Bucket_Hi(names_axis), invariant.Bucket_True(parent_parent_parent_nil)),
-			invariant.Excluding("Names at safety cap with nested grandparent unreachable in constructor",
-				invariant.Bucket_Hi(names_axis), invariant.Bucket_False(parent_parent_parent_nil)),
+			invariant.Excluding("Hi names with root grandparent unreachable",
+				invariant.Bucket_Hi(names_axis),
+				invariant.Bucket_True(parent_parent_parent_nil)),
+			invariant.Excluding("Hi names with nested grandparent unreachable",
+				invariant.Bucket_Hi(names_axis),
+				invariant.Bucket_False(parent_parent_parent_nil)),
 			invariant.Excluding("Hi parent_names unreachable (root)",
-				invariant.Bucket_Hi(parent_names), invariant.Bucket_True(parent_parent_parent_nil)),
+				invariant.Bucket_Hi(parent_names),
+				invariant.Bucket_True(parent_parent_parent_nil)),
 			invariant.Excluding("Hi parent_names unreachable (nested)",
-				invariant.Bucket_Hi(parent_names), invariant.Bucket_False(parent_parent_parent_nil)),
+				invariant.Bucket_Hi(parent_names),
+				invariant.Bucket_False(parent_parent_parent_nil)),
 			invariant.Excluding("Hi parent_parent_names unreachable (root)",
-				invariant.Bucket_Hi(parent_parent_names), invariant.Bucket_True(parent_parent_parent_nil)),
+				invariant.Bucket_Hi(parent_parent_names),
+				invariant.Bucket_True(parent_parent_parent_nil)),
 			invariant.Excluding("Hi parent_parent_names unreachable (nested)",
-				invariant.Bucket_Hi(parent_parent_names), invariant.Bucket_False(parent_parent_parent_nil)),
-			invariant.Excluding("Lo parent_parent_names at root impossible — global has the walking function",
-				invariant.Bucket_Lo(parent_parent_names), invariant.Bucket_True(parent_parent_parent_nil)),
+				invariant.Bucket_Hi(parent_parent_names),
+				invariant.Bucket_False(parent_parent_parent_nil)),
+			invariant.Excluding("Lo parent_parent_names at root impossible",
+				invariant.Bucket_Lo(parent_parent_names),
+				invariant.Bucket_True(parent_parent_parent_nil)),
 		)
-		ns_parent_names := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: len(new_scope.Parent.Names),
-			Lo: 0, Hi: max_ast_nodes_per_call, Message: "New_scope.Parent.Names is bounded by AST budget"})
+		ns_parent_names := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
+			X:       len(new_scope.Parent.Names),
+			Lo:      0,
+			Hi:      max_ast_nodes_per_call,
+			Message: "New_scope.Parent.Names is bounded by AST budget",
+		})
 		ns_grandparent_nil := invariant.Sometimes(new_scope.Parent.Parent.Parent == nil,
 			"New_scope.Parent.Parent.Parent is nil at function-scope root sometimes")
 		invariant.Cross_Product(ns_parent_names, ns_grandparent_nil,
 			invariant.Excluding("Hi parent_names unreachable (root)",
-				invariant.Bucket_Hi(ns_parent_names), invariant.Bucket_True(ns_grandparent_nil)),
+				invariant.Bucket_Hi(ns_parent_names),
+				invariant.Bucket_True(ns_grandparent_nil)),
 			invariant.Excluding("Hi parent_names unreachable (nested)",
-				invariant.Bucket_Hi(ns_parent_names), invariant.Bucket_False(ns_grandparent_nil)),
+				invariant.Bucket_Hi(ns_parent_names),
+				invariant.Bucket_False(ns_grandparent_nil)),
 		)
 	}()
-	parent_names := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: len(parent.Names),
-		Lo: 0, Hi: max_ast_nodes_per_call, Message: "Parent.Names is bounded by AST budget"})
-	parent_parent_names := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: len(parent.Parent.Names),
-		Lo: 0, Hi: max_ast_nodes_per_call, Message: "Parent.Parent.Names is bounded by AST budget"})
-	ppp_nil := invariant.Sometimes(parent.Parent.Parent == nil, "Parent.Parent.Parent is nil at the function-scope root sometimes")
+	parent_names := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
+		X:       len(parent.Names),
+		Lo:      0,
+		Hi:      max_ast_nodes_per_call,
+		Message: "Parent.Names is bounded by AST budget",
+	})
+	parent_parent_names := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
+		X:       len(parent.Parent.Names),
+		Lo:      0,
+		Hi:      max_ast_nodes_per_call,
+		Message: "Parent.Parent.Names is bounded by AST budget",
+	})
+	ppp_nil := invariant.Sometimes(parent.Parent.Parent == nil,
+		"Parent.Parent.Parent is nil at the function-scope root sometimes")
 	invariant.Cross_Product(
 		invariant.Always(parent != nil, "Parent is non-nil"),
-		invariant.Always(parent.Parent != nil, "Parent is a nested scope inside a function body"),
+		invariant.Always(parent.Parent != nil,
+			"Parent is a nested scope inside a function body"),
 		ppp_nil, parent_names, parent_parent_names,
 		invariant.Excluding("Hi parent_names unreachable (root)",
 			invariant.Bucket_Hi(parent_names), invariant.Bucket_True(ppp_nil)),
@@ -1428,7 +1641,7 @@ func scope_new_block(parent *scope) (new_scope *scope) {
 			invariant.Bucket_Hi(parent_parent_names), invariant.Bucket_True(ppp_nil)),
 		invariant.Excluding("Hi parent_parent_names unreachable (nested)",
 			invariant.Bucket_Hi(parent_parent_names), invariant.Bucket_False(ppp_nil)),
-		invariant.Excluding("Lo parent_parent_names at root impossible — global has the walking function",
+		invariant.Excluding("Lo parent_parent_names at root impossible",
 			invariant.Bucket_Lo(parent_parent_names), invariant.Bucket_True(ppp_nil)),
 	)
 
@@ -1443,46 +1656,75 @@ func check_shadows_function_body_walk_body_walk_statement_push_if_chain(
 	diags *[]Diagnostic,
 ) (output []walk_frame) {
 	defer func() {
-		s := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: len(stack),
-			Lo: min_stack_with_body_frame, Hi: max_ast_nodes_per_call,
-			Message: "Stack at exit is ≥2 (function appended ≥1 body frame)"})
-		o := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: len(output),
-			Lo: min_stack_with_body_frame, Hi: max_ast_nodes_per_call,
-			Message: "Output is ≥2 (function appended ≥1 body frame)"})
-		d := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: len(*diags),
-			Lo: 0, Hi: max_diagnostics_per_call, Message: "Diags is bounded by per-file diag budget"})
+		s := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
+			X:       len(stack),
+			Lo:      min_stack_with_body_frame,
+			Hi:      max_ast_nodes_per_call,
+			Message: "Stack at exit is ≥2 (function appended ≥1 body frame)",
+		})
+		o := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
+			X:       len(output),
+			Lo:      min_stack_with_body_frame,
+			Hi:      max_ast_nodes_per_call,
+			Message: "Output is ≥2 (function appended ≥1 body frame)",
+		})
+		d := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
+			X:       len(*diags),
+			Lo:      0,
+			Hi:      max_diagnostics_per_call,
+			Message: "Diags is bounded by per-file diag budget",
+		})
 		// Function only appends frames (output ≥ stack); (Hi,Hi) is the
 		// AST safety cap, not a working shape.
 		invariant.Cross_Product(s, o, d,
 			invariant.Excluding("Stack at AST at safety cap is bad",
 				invariant.Bucket_Hi(s), invariant.Bucket_Hi(o)),
-			invariant.Excluding("Single-call pop or push keeps output within one of stack",
+			invariant.Excluding("Single-call pop or push keeps output near stack",
 				invariant.Bucket_Hi(s), invariant.Bucket_Lo(o)),
-			invariant.Excluding("Single-call pop or push keeps output within one of stack",
+			invariant.Excluding("Single-call pop or push keeps output near stack",
 				invariant.Bucket_Lo(s), invariant.Bucket_Hi(o)),
 			invariant.Excluding("Stack at AST safety cap with diag-budget cap is bad",
 				invariant.Bucket_Hi(s), invariant.Bucket_Hi(d)),
-			invariant.Excluding("Stack at lower endpoint with diag-budget cap unreachable in test corpus",
+			invariant.Excluding("Lo stack with diag cap unreachable in tests",
 				invariant.Bucket_Lo(s), invariant.Bucket_Hi(d)),
-			invariant.Excluding("Output at lower endpoint with diag-budget cap unreachable in test corpus",
+			invariant.Excluding("Lo output with diag cap unreachable in tests",
 				invariant.Bucket_Lo(o), invariant.Bucket_Hi(d)),
 			invariant.Excluding("Output at safety cap with diag-budget cap is bad",
 				invariant.Bucket_Hi(o), invariant.Bucket_Hi(d)),
 		)
-		na := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: len(scope_value.Names),
-			Lo: 0, Hi: max_ast_nodes_per_call, Message: "Scope_value.Names is bounded by AST budget"})
-		pn := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: len(scope_value.Parent.Names),
-			Lo: 0, Hi: max_ast_nodes_per_call, Message: "Scope_value.Parent.Names is bounded by AST budget"})
+		na := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
+			X:       len(scope_value.Names),
+			Lo:      0,
+			Hi:      max_ast_nodes_per_call,
+			Message: "Scope_value.Names is bounded by AST budget",
+		})
+		pn := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
+			X:       len(scope_value.Parent.Names),
+			Lo:      0,
+			Hi:      max_ast_nodes_per_call,
+			Message: "Scope_value.Parent.Names is bounded by AST budget",
+		})
 		invariant.Cross_Product(na, pn,
-			invariant.Excluding("Hi names unreachable (Lo parent)", invariant.Bucket_Hi(na), invariant.Bucket_Lo(pn)),
-			invariant.Excluding("Hi names unreachable (Hi parent)", invariant.Bucket_Hi(na), invariant.Bucket_Hi(pn)),
-			invariant.Excluding("Hi parent unreachable (Lo names)", invariant.Bucket_Lo(na), invariant.Bucket_Hi(pn)),
+			invariant.Excluding("Hi names unreachable (Lo parent)",
+				invariant.Bucket_Hi(na), invariant.Bucket_Lo(pn)),
+			invariant.Excluding("Hi names unreachable (Hi parent)",
+				invariant.Bucket_Hi(na), invariant.Bucket_Hi(pn)),
+			invariant.Excluding("Hi parent unreachable (Lo names)",
+				invariant.Bucket_Lo(na), invariant.Bucket_Hi(pn)),
 		)
 	}()
-	s := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: len(stack),
-		Lo: min_non_empty, Hi: max_ast_nodes_per_call, Message: "Stack is ≥1 (walker gates len>0 before call)"})
-	d := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: len(*diags),
-		Lo: 0, Hi: max_diagnostics_per_call, Message: "Diags is bounded by per-file diag budget"})
+	s := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
+		X:       len(stack),
+		Lo:      min_non_empty,
+		Hi:      max_ast_nodes_per_call,
+		Message: "Stack is ≥1 (walker gates len>0 before call)",
+	})
+	d := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
+		X:       len(*diags),
+		Lo:      0,
+		Hi:      max_diagnostics_per_call,
+		Message: "Diags is bounded by per-file diag budget",
+	})
 	parent_parent_nil := invariant.Sometimes(scope_value.Parent.Parent == nil,
 		"Scope_value.Parent.Parent is nil at the function-scope root sometimes")
 	invariant.Cross_Product(
@@ -1493,7 +1735,7 @@ func check_shadows_function_body_walk_body_walk_statement_push_if_chain(
 		invariant.Always(root != nil, "Root is non-nil"),
 		invariant.Always(diags != nil, "Diags is non-nil"),
 		s, d,
-		invariant.Excluding("Stack at AST safety cap with diags at diag-budget at safety cap is bad",
+		invariant.Excluding("Stack and diags both at safety cap is bad",
 			invariant.Bucket_Hi(s), invariant.Bucket_Hi(d)),
 		invariant.Excluding("Stack at AST safety cap with zero diags is bad",
 			invariant.Bucket_Hi(s), invariant.Bucket_Lo(d)),
@@ -1502,25 +1744,40 @@ func check_shadows_function_body_walk_body_walk_statement_push_if_chain(
 		invariant.Excluding("Nested scope_value implies stack ≥ 2 frames",
 			invariant.Bucket_False(parent_parent_nil), invariant.Bucket_Lo(s)),
 	)
-	na := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: len(scope_value.Names),
-		Lo: 0, Hi: max_ast_nodes_per_call, Message: "Scope_value.Names is bounded by AST budget"})
-	pn := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: len(scope_value.Parent.Names),
-		Lo: 0, Hi: max_ast_nodes_per_call, Message: "Scope_value.Parent.Names is bounded by AST budget"})
+	na := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
+		X:       len(scope_value.Names),
+		Lo:      0,
+		Hi:      max_ast_nodes_per_call,
+		Message: "Scope_value.Names is bounded by AST budget",
+	})
+	pn := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
+		X:       len(scope_value.Parent.Names),
+		Lo:      0,
+		Hi:      max_ast_nodes_per_call,
+		Message: "Scope_value.Parent.Names is bounded by AST budget",
+	})
 	invariant.Cross_Product(na, pn,
-		invariant.Excluding("Hi names unreachable (Lo parent)", invariant.Bucket_Hi(na), invariant.Bucket_Lo(pn)),
-		invariant.Excluding("Hi names unreachable (Hi parent)", invariant.Bucket_Hi(na), invariant.Bucket_Hi(pn)),
-		invariant.Excluding("Hi parent unreachable (Lo names)", invariant.Bucket_Lo(na), invariant.Bucket_Hi(pn)),
+		invariant.Excluding("Hi names unreachable (Lo parent)",
+			invariant.Bucket_Hi(na), invariant.Bucket_Lo(pn)),
+		invariant.Excluding("Hi names unreachable (Hi parent)",
+			invariant.Bucket_Hi(na), invariant.Bucket_Hi(pn)),
+		invariant.Excluding("Hi parent unreachable (Lo names)",
+			invariant.Bucket_Lo(na), invariant.Bucket_Hi(pn)),
 	)
 
 	current := root
 	for current != nil {
 		if_scope := scope_new_block(scope_value)
-		invariant.Cross_Product(invariant.Always(if_scope != nil, "If_scope is non-nil at this point"))
+		invariant.Cross_Product(
+			invariant.Always(if_scope != nil, "If_scope is non-nil at this point"))
 		if current.Init != nil {
 			check_assign_define(file_set, if_scope, current.Init, diags)
 		}
 		if current.Body != nil {
-			stack = append(stack, walk_frame{Scope: if_scope, Statements: current.Body.List})
+			stack = append(stack, walk_frame{
+				Scope:      if_scope,
+				Statements: current.Body.List,
+			})
 		}
 		if current.Else == nil {
 			return stack
@@ -1530,7 +1787,10 @@ func check_shadows_function_body_walk_body_walk_statement_push_if_chain(
 			continue
 		}
 		if bs, is_block := current.Else.(*ast.BlockStmt); is_block {
-			stack = append(stack, walk_frame{Scope: scope_new_block(scope_value), Statements: bs.List})
+			stack = append(stack, walk_frame{
+				Scope:      scope_new_block(scope_value),
+				Statements: bs.List,
+			})
 		}
 		return stack
 	}
@@ -1545,46 +1805,75 @@ func check_shadows_function_body_walk_body_walk_statement_push_range_statement(
 	diags *[]Diagnostic,
 ) (output []walk_frame) {
 	defer func() {
-		s := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: len(stack),
-			Lo: min_stack_with_body_frame, Hi: max_ast_nodes_per_call,
-			Message: "Stack at exit is ≥2 (range body always appends a frame)"})
-		o := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: len(output),
-			Lo: min_stack_with_body_frame, Hi: max_ast_nodes_per_call,
-			Message: "Output is ≥2 (range body always appends a frame)"})
-		d := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: len(*diags),
-			Lo: 0, Hi: max_diagnostics_per_call, Message: "Diags is bounded by per-file diag budget"})
+		s := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
+			X:       len(stack),
+			Lo:      min_stack_with_body_frame,
+			Hi:      max_ast_nodes_per_call,
+			Message: "Stack at exit is ≥2 (range body always appends a frame)",
+		})
+		o := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
+			X:       len(output),
+			Lo:      min_stack_with_body_frame,
+			Hi:      max_ast_nodes_per_call,
+			Message: "Output is ≥2 (range body always appends a frame)",
+		})
+		d := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
+			X:       len(*diags),
+			Lo:      0,
+			Hi:      max_diagnostics_per_call,
+			Message: "Diags is bounded by per-file diag budget",
+		})
 		// Range body always appends one frame so output == stack+1 modulo
 		// the one-frame delta; cross-extreme tuples are unreachable.
 		invariant.Cross_Product(s, o, d,
 			invariant.Excluding("Stack at AST at safety cap is bad",
 				invariant.Bucket_Hi(s), invariant.Bucket_Hi(o)),
-			invariant.Excluding("Single-call pop or push keeps output within one of stack",
+			invariant.Excluding("Single-call pop or push keeps output near stack",
 				invariant.Bucket_Hi(s), invariant.Bucket_Lo(o)),
-			invariant.Excluding("Single-call pop or push keeps output within one of stack",
+			invariant.Excluding("Single-call pop or push keeps output near stack",
 				invariant.Bucket_Lo(s), invariant.Bucket_Hi(o)),
 			invariant.Excluding("Stack at AST safety cap with diag-budget cap is bad",
 				invariant.Bucket_Hi(s), invariant.Bucket_Hi(d)),
-			invariant.Excluding("Stack at lower endpoint with diag-budget cap unreachable in test corpus",
+			invariant.Excluding("Lo stack with diag cap unreachable in tests",
 				invariant.Bucket_Lo(s), invariant.Bucket_Hi(d)),
-			invariant.Excluding("Output at lower endpoint with diag-budget cap unreachable in test corpus",
+			invariant.Excluding("Lo output with diag cap unreachable in tests",
 				invariant.Bucket_Lo(o), invariant.Bucket_Hi(d)),
 			invariant.Excluding("Output at safety cap with diag-budget cap is bad",
 				invariant.Bucket_Hi(o), invariant.Bucket_Hi(d)),
 		)
-		na := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: len(scope_value.Names),
-			Lo: 0, Hi: max_ast_nodes_per_call, Message: "Scope_value.Names is bounded by AST budget"})
-		pn := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: len(scope_value.Parent.Names),
-			Lo: 0, Hi: max_ast_nodes_per_call, Message: "Scope_value.Parent.Names is bounded by AST budget"})
+		na := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
+			X:       len(scope_value.Names),
+			Lo:      0,
+			Hi:      max_ast_nodes_per_call,
+			Message: "Scope_value.Names is bounded by AST budget",
+		})
+		pn := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
+			X:       len(scope_value.Parent.Names),
+			Lo:      0,
+			Hi:      max_ast_nodes_per_call,
+			Message: "Scope_value.Parent.Names is bounded by AST budget",
+		})
 		invariant.Cross_Product(na, pn,
-			invariant.Excluding("Hi names unreachable (Lo parent)", invariant.Bucket_Hi(na), invariant.Bucket_Lo(pn)),
-			invariant.Excluding("Hi names unreachable (Hi parent)", invariant.Bucket_Hi(na), invariant.Bucket_Hi(pn)),
-			invariant.Excluding("Hi parent unreachable (Lo names)", invariant.Bucket_Lo(na), invariant.Bucket_Hi(pn)),
+			invariant.Excluding("Hi names unreachable (Lo parent)",
+				invariant.Bucket_Hi(na), invariant.Bucket_Lo(pn)),
+			invariant.Excluding("Hi names unreachable (Hi parent)",
+				invariant.Bucket_Hi(na), invariant.Bucket_Hi(pn)),
+			invariant.Excluding("Hi parent unreachable (Lo names)",
+				invariant.Bucket_Lo(na), invariant.Bucket_Hi(pn)),
 		)
 	}()
-	s := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: len(stack),
-		Lo: min_non_empty, Hi: max_ast_nodes_per_call, Message: "Stack is ≥1 (walker gates len>0 before call)"})
-	d := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: len(*diags),
-		Lo: 0, Hi: max_diagnostics_per_call, Message: "Diags is bounded by per-file diag budget"})
+	s := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
+		X:       len(stack),
+		Lo:      min_non_empty,
+		Hi:      max_ast_nodes_per_call,
+		Message: "Stack is ≥1 (walker gates len>0 before call)",
+	})
+	d := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
+		X:       len(*diags),
+		Lo:      0,
+		Hi:      max_diagnostics_per_call,
+		Message: "Diags is bounded by per-file diag budget",
+	})
 	parent_parent_nil := invariant.Sometimes(scope_value.Parent.Parent == nil,
 		"Scope_value.Parent.Parent is nil at the function-scope root sometimes")
 	invariant.Cross_Product(
@@ -1595,7 +1884,7 @@ func check_shadows_function_body_walk_body_walk_statement_push_range_statement(
 		invariant.Always(x != nil, "X is non-nil"),
 		invariant.Always(diags != nil, "Diags is non-nil"),
 		s, d,
-		invariant.Excluding("Stack at AST safety cap with diags at diag-budget at safety cap is bad",
+		invariant.Excluding("Stack and diags both at safety cap is bad",
 			invariant.Bucket_Hi(s), invariant.Bucket_Hi(d)),
 		invariant.Excluding("Stack at AST safety cap with zero diags is bad",
 			invariant.Bucket_Hi(s), invariant.Bucket_Lo(d)),
@@ -1605,20 +1894,34 @@ func check_shadows_function_body_walk_body_walk_statement_push_range_statement(
 		invariant.Excluding("Nested scope_value implies stack ≥ 2 frames",
 			invariant.Bucket_False(parent_parent_nil), invariant.Bucket_Lo(s)),
 	)
-	na := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: len(scope_value.Names),
-		Lo: 0, Hi: max_ast_nodes_per_call, Message: "Scope_value.Names is bounded by AST budget"})
-	pn := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: len(scope_value.Parent.Names),
-		Lo: 0, Hi: max_ast_nodes_per_call, Message: "Scope_value.Parent.Names is bounded by AST budget"})
+	na := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
+		X:       len(scope_value.Names),
+		Lo:      0,
+		Hi:      max_ast_nodes_per_call,
+		Message: "Scope_value.Names is bounded by AST budget",
+	})
+	pn := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
+		X:       len(scope_value.Parent.Names),
+		Lo:      0,
+		Hi:      max_ast_nodes_per_call,
+		Message: "Scope_value.Parent.Names is bounded by AST budget",
+	})
 	invariant.Cross_Product(na, pn,
-		invariant.Excluding("Hi names unreachable (Lo parent)", invariant.Bucket_Hi(na), invariant.Bucket_Lo(pn)),
-		invariant.Excluding("Hi names unreachable (Hi parent)", invariant.Bucket_Hi(na), invariant.Bucket_Hi(pn)),
-		invariant.Excluding("Hi parent unreachable (Lo names)", invariant.Bucket_Lo(na), invariant.Bucket_Hi(pn)),
+		invariant.Excluding("Hi names unreachable (Lo parent)",
+			invariant.Bucket_Hi(na), invariant.Bucket_Lo(pn)),
+		invariant.Excluding("Hi names unreachable (Hi parent)",
+			invariant.Bucket_Hi(na), invariant.Bucket_Hi(pn)),
+		invariant.Excluding("Hi parent unreachable (Lo names)",
+			invariant.Bucket_Lo(na), invariant.Bucket_Hi(pn)),
 	)
 
 	range_scope := scope_new_block(scope_value)
-	invariant.Cross_Product(invariant.Always(range_scope != nil, "Range_scope is non-nil at this point"))
-	check_shadows_function_body_walk_body_walk_statement_push_range_statement_add_variable(file_set, range_scope, x.Key, diags)
-	check_shadows_function_body_walk_body_walk_statement_push_range_statement_add_variable(file_set, range_scope, x.Value, diags)
+	invariant.Cross_Product(
+		invariant.Always(range_scope != nil, "Range_scope is non-nil at this point"))
+	check_shadows_function_body_walk_body_walk_statement_push_range_statement_add_variable(
+		file_set, range_scope, x.Key, diags)
+	check_shadows_function_body_walk_body_walk_statement_push_range_statement_add_variable(
+		file_set, range_scope, x.Value, diags)
 	if x.Body != nil {
 		stack = append(stack, walk_frame{Scope: range_scope, Statements: x.Body.List})
 	}
@@ -1632,18 +1935,35 @@ func check_shadows_function_body_walk_body_walk_statement_push_range_statement_a
 	diags *[]Diagnostic,
 ) {
 	defer func() {
-		d := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: len(*diags),
-			Lo: 0, Hi: max_diagnostics_per_call, Message: "Diags is bounded by per-file diag budget"})
-		e_present := invariant.Sometimes(e != nil, "Range key or value is present sometimes")
-		names_axis := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: len(scope_value.Names),
-			Lo: 0, Hi: max_ast_nodes_per_call, Message: "Scope_value.Names is bounded by AST budget"})
-		parent_names_axis := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: len(scope_value.Parent.Names),
-			Lo: 0, Hi: max_ast_nodes_per_call, Message: "Scope_value.Parent.Names is bounded by AST budget"})
-		grandparent_names_axis := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
-			X:  len(scope_value.Parent.Parent.Names),
-			Lo: 0, Hi: max_ast_nodes_per_call,
-			Message: "Scope_value.Parent.Parent.Names is bounded by AST budget"})
-		invariant.Cross_Product(d, e_present, names_axis, parent_names_axis, grandparent_names_axis,
+		d := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
+			X:       len(*diags),
+			Lo:      0,
+			Hi:      max_diagnostics_per_call,
+			Message: "Diags is bounded by per-file diag budget",
+		})
+		e_present := invariant.Sometimes(
+			e != nil, "Range key or value is present sometimes")
+		names_axis := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
+			X:       len(scope_value.Names),
+			Lo:      0,
+			Hi:      max_ast_nodes_per_call,
+			Message: "Scope_value.Names is bounded by AST budget",
+		})
+		parent_names_axis := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
+			X:       len(scope_value.Parent.Names),
+			Lo:      0,
+			Hi:      max_ast_nodes_per_call,
+			Message: "Scope_value.Parent.Names is bounded by AST budget",
+		})
+		grandparent_names_axis := invariant.Distinct_Boundary(
+			&invariant.Boundary_Input[int]{
+				X:       len(scope_value.Parent.Parent.Names),
+				Lo:      0,
+				Hi:      max_ast_nodes_per_call,
+				Message: "Scope_value.Parent.Parent.Names is bounded by AST budget",
+			})
+		invariant.Cross_Product(
+			d, e_present, names_axis, parent_names_axis, grandparent_names_axis,
 			invariant.Excluding("Diag-budget cap with present range var unreachable",
 				invariant.Bucket_Hi(d), invariant.Bucket_True(e_present)),
 			invariant.Excluding("Diag-budget cap with absent range var unreachable",
@@ -1653,24 +1973,44 @@ func check_shadows_function_body_walk_body_walk_statement_push_range_statement_a
 			invariant.Excluding("Hi names unreachable (absent range var)",
 				invariant.Bucket_Hi(names_axis), invariant.Bucket_False(e_present)),
 			invariant.Excluding("Hi parent_names unreachable (present range var)",
-				invariant.Bucket_Hi(parent_names_axis), invariant.Bucket_True(e_present)),
+				invariant.Bucket_Hi(parent_names_axis),
+				invariant.Bucket_True(e_present)),
 			invariant.Excluding("Hi parent_names unreachable (absent range var)",
-				invariant.Bucket_Hi(parent_names_axis), invariant.Bucket_False(e_present)),
+				invariant.Bucket_Hi(parent_names_axis),
+				invariant.Bucket_False(e_present)),
 			invariant.Excluding("Hi grandparent_names unreachable (present range var)",
-				invariant.Bucket_Hi(grandparent_names_axis), invariant.Bucket_True(e_present)),
+				invariant.Bucket_Hi(grandparent_names_axis),
+				invariant.Bucket_True(e_present)),
 			invariant.Excluding("Hi grandparent_names unreachable (absent range var)",
-				invariant.Bucket_Hi(grandparent_names_axis), invariant.Bucket_False(e_present)),
+				invariant.Bucket_Hi(grandparent_names_axis),
+				invariant.Bucket_False(e_present)),
 		)
 	}()
-	d := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: len(*diags),
-		Lo: 0, Hi: max_diagnostics_per_call, Message: "Diags is bounded by per-file diag budget"})
+	d := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
+		X:       len(*diags),
+		Lo:      0,
+		Hi:      max_diagnostics_per_call,
+		Message: "Diags is bounded by per-file diag budget",
+	})
 	e_present := invariant.Sometimes(e != nil, "Range key or value is present sometimes")
-	names_axis := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: len(scope_value.Names),
-		Lo: 0, Hi: max_ast_nodes_per_call, Message: "Scope_value.Names is bounded by AST budget"})
-	parent_names_axis := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: len(scope_value.Parent.Names),
-		Lo: 0, Hi: max_ast_nodes_per_call, Message: "Scope_value.Parent.Names is bounded by AST budget"})
-	grandparent_names_axis := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: len(scope_value.Parent.Parent.Names),
-		Lo: 0, Hi: max_ast_nodes_per_call, Message: "Scope_value.Parent.Parent.Names is bounded by AST budget"})
+	names_axis := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
+		X:       len(scope_value.Names),
+		Lo:      0,
+		Hi:      max_ast_nodes_per_call,
+		Message: "Scope_value.Names is bounded by AST budget",
+	})
+	parent_names_axis := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
+		X:       len(scope_value.Parent.Names),
+		Lo:      0,
+		Hi:      max_ast_nodes_per_call,
+		Message: "Scope_value.Parent.Names is bounded by AST budget",
+	})
+	grandparent_names_axis := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
+		X:       len(scope_value.Parent.Parent.Names),
+		Lo:      0,
+		Hi:      max_ast_nodes_per_call,
+		Message: "Scope_value.Parent.Parent.Names is bounded by AST budget",
+	})
 	// Scope_value here is always a range_scope freshly created by
 	// scope_new_block, whose parent is the caller's scope_value (function
 	// or deeper). scope_new_block's entry asserts parent.Parent != nil, so
@@ -1679,7 +2019,8 @@ func check_shadows_function_body_walk_body_walk_statement_push_range_statement_a
 		invariant.Always(file_set != nil, "File_set is non-nil"),
 		invariant.Always(scope_value != nil, "Scope_value is non-nil"),
 		invariant.Always(scope_value.Parent != nil, "Scope_value has a parent"),
-		invariant.Always(scope_value.Parent.Parent != nil, "Scope_value.Parent.Parent is non-nil"),
+		invariant.Always(scope_value.Parent.Parent != nil,
+			"Scope_value.Parent.Parent is non-nil"),
 		invariant.Always(diags != nil, "Diags is non-nil"),
 		d, e_present, names_axis, parent_names_axis, grandparent_names_axis,
 		invariant.Excluding("Diag-budget cap with present range var unreachable",
@@ -1691,13 +2032,17 @@ func check_shadows_function_body_walk_body_walk_statement_push_range_statement_a
 		invariant.Excluding("Hi names unreachable (absent range var)",
 			invariant.Bucket_Hi(names_axis), invariant.Bucket_False(e_present)),
 		invariant.Excluding("Hi parent_names unreachable (present range var)",
-			invariant.Bucket_Hi(parent_names_axis), invariant.Bucket_True(e_present)),
+			invariant.Bucket_Hi(parent_names_axis),
+			invariant.Bucket_True(e_present)),
 		invariant.Excluding("Hi parent_names unreachable (absent range var)",
-			invariant.Bucket_Hi(parent_names_axis), invariant.Bucket_False(e_present)),
+			invariant.Bucket_Hi(parent_names_axis),
+			invariant.Bucket_False(e_present)),
 		invariant.Excluding("Hi grandparent_names unreachable (present range var)",
-			invariant.Bucket_Hi(grandparent_names_axis), invariant.Bucket_True(e_present)),
+			invariant.Bucket_Hi(grandparent_names_axis),
+			invariant.Bucket_True(e_present)),
 		invariant.Excluding("Hi grandparent_names unreachable (absent range var)",
-			invariant.Bucket_Hi(grandparent_names_axis), invariant.Bucket_False(e_present)),
+			invariant.Bucket_Hi(grandparent_names_axis),
+			invariant.Bucket_False(e_present)),
 	)
 
 	if e == nil {
@@ -1721,28 +2066,47 @@ func check_shadows_function_body_walk_body_walk_statement_assign_statement(
 	diags *[]Diagnostic,
 ) {
 	defer func() {
-		d := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: len(*diags),
-			Lo: 0, Hi: max_diagnostics_per_call, Message: "Diags is bounded by per-file diag budget"})
+		d := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
+			X:       len(*diags),
+			Lo:      0,
+			Hi:      max_diagnostics_per_call,
+			Message: "Diags is bounded by per-file diag budget",
+		})
 		parent_parent_nil := invariant.Sometimes(scope_value.Parent.Parent == nil,
 			"Scope_value.Parent.Parent is nil at the function-scope root sometimes")
 		invariant.Cross_Product(d, parent_parent_nil,
-			invariant.Excluding("Diag-budget cap at function-scope root unreachable in test corpus",
+			invariant.Excluding("Diag cap at function-scope root unreachable in tests",
 				invariant.Bucket_Hi(d), invariant.Bucket_True(parent_parent_nil)),
-			invariant.Excluding("Diag-budget cap at nested scope unreachable in test corpus",
+			invariant.Excluding("Diag cap at nested scope unreachable in tests",
 				invariant.Bucket_Hi(d), invariant.Bucket_False(parent_parent_nil)),
 		)
-		na := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: len(scope_value.Names),
-			Lo: 0, Hi: max_ast_nodes_per_call, Message: "Scope_value.Names is bounded by AST budget"})
-		pn := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: len(scope_value.Parent.Names),
-			Lo: 0, Hi: max_ast_nodes_per_call, Message: "Scope_value.Parent.Names is bounded by AST budget"})
+		na := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
+			X:       len(scope_value.Names),
+			Lo:      0,
+			Hi:      max_ast_nodes_per_call,
+			Message: "Scope_value.Names is bounded by AST budget",
+		})
+		pn := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
+			X:       len(scope_value.Parent.Names),
+			Lo:      0,
+			Hi:      max_ast_nodes_per_call,
+			Message: "Scope_value.Parent.Names is bounded by AST budget",
+		})
 		invariant.Cross_Product(na, pn,
-			invariant.Excluding("Hi names unreachable (Lo parent)", invariant.Bucket_Hi(na), invariant.Bucket_Lo(pn)),
-			invariant.Excluding("Hi names unreachable (Hi parent)", invariant.Bucket_Hi(na), invariant.Bucket_Hi(pn)),
-			invariant.Excluding("Hi parent unreachable (Lo names)", invariant.Bucket_Lo(na), invariant.Bucket_Hi(pn)),
+			invariant.Excluding("Hi names unreachable (Lo parent)",
+				invariant.Bucket_Hi(na), invariant.Bucket_Lo(pn)),
+			invariant.Excluding("Hi names unreachable (Hi parent)",
+				invariant.Bucket_Hi(na), invariant.Bucket_Hi(pn)),
+			invariant.Excluding("Hi parent unreachable (Lo names)",
+				invariant.Bucket_Lo(na), invariant.Bucket_Hi(pn)),
 		)
 	}()
-	d := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: len(*diags),
-		Lo: 0, Hi: max_diagnostics_per_call, Message: "Diags is bounded by per-file diag budget"})
+	d := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
+		X:       len(*diags),
+		Lo:      0,
+		Hi:      max_diagnostics_per_call,
+		Message: "Diags is bounded by per-file diag budget",
+	})
 	parent_parent_nil := invariant.Sometimes(scope_value.Parent.Parent == nil,
 		"Scope_value.Parent.Parent is nil at the function-scope root sometimes")
 	invariant.Cross_Product(
@@ -1753,19 +2117,30 @@ func check_shadows_function_body_walk_body_walk_statement_assign_statement(
 		invariant.Always(x != nil, "X is non-nil"),
 		invariant.Always(diags != nil, "Diags is non-nil"),
 		d,
-		invariant.Excluding("Diag-budget cap at function-scope root unreachable in test corpus",
+		invariant.Excluding("Diag cap at function-scope root unreachable in tests",
 			invariant.Bucket_Hi(d), invariant.Bucket_True(parent_parent_nil)),
-		invariant.Excluding("Diag-budget cap at nested scope unreachable in test corpus",
+		invariant.Excluding("Diag cap at nested scope unreachable in tests",
 			invariant.Bucket_Hi(d), invariant.Bucket_False(parent_parent_nil)),
 	)
-	na := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: len(scope_value.Names),
-		Lo: 0, Hi: max_ast_nodes_per_call, Message: "Scope_value.Names is bounded by AST budget"})
-	pn := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: len(scope_value.Parent.Names),
-		Lo: 0, Hi: max_ast_nodes_per_call, Message: "Scope_value.Parent.Names is bounded by AST budget"})
+	na := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
+		X:       len(scope_value.Names),
+		Lo:      0,
+		Hi:      max_ast_nodes_per_call,
+		Message: "Scope_value.Names is bounded by AST budget",
+	})
+	pn := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
+		X:       len(scope_value.Parent.Names),
+		Lo:      0,
+		Hi:      max_ast_nodes_per_call,
+		Message: "Scope_value.Parent.Names is bounded by AST budget",
+	})
 	invariant.Cross_Product(na, pn,
-		invariant.Excluding("Hi names unreachable (Lo parent)", invariant.Bucket_Hi(na), invariant.Bucket_Lo(pn)),
-		invariant.Excluding("Hi names unreachable (Hi parent)", invariant.Bucket_Hi(na), invariant.Bucket_Hi(pn)),
-		invariant.Excluding("Hi parent unreachable (Lo names)", invariant.Bucket_Lo(na), invariant.Bucket_Hi(pn)),
+		invariant.Excluding("Hi names unreachable (Lo parent)",
+			invariant.Bucket_Hi(na), invariant.Bucket_Lo(pn)),
+		invariant.Excluding("Hi names unreachable (Hi parent)",
+			invariant.Bucket_Hi(na), invariant.Bucket_Hi(pn)),
+		invariant.Excluding("Hi parent unreachable (Lo names)",
+			invariant.Bucket_Lo(na), invariant.Bucket_Hi(pn)),
 	)
 
 	if x.Tok != token.DEFINE {
@@ -1774,7 +2149,8 @@ func check_shadows_function_body_walk_body_walk_statement_assign_statement(
 	for _, lhs := range x.Lhs {
 		if identifier, ok := lhs.(*ast.Ident); ok {
 			if identifier.Name != "_" {
-				check_shadow(file_set, scope_value, identifier.Name, identifier, diags)
+				check_shadow(
+					file_set, scope_value, identifier.Name, identifier, diags)
 				scope_value.Names[identifier.Name] = true
 			}
 		}
@@ -1788,28 +2164,47 @@ func check_shadows_function_body_walk_body_walk_statement_declaration_statement(
 	diags *[]Diagnostic,
 ) {
 	defer func() {
-		d := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: len(*diags),
-			Lo: 0, Hi: max_diagnostics_per_call, Message: "Diags is bounded by per-file diag budget"})
+		d := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
+			X:       len(*diags),
+			Lo:      0,
+			Hi:      max_diagnostics_per_call,
+			Message: "Diags is bounded by per-file diag budget",
+		})
 		parent_parent_nil := invariant.Sometimes(scope_value.Parent.Parent == nil,
 			"Scope_value.Parent.Parent is nil at the function-scope root sometimes")
 		invariant.Cross_Product(d, parent_parent_nil,
-			invariant.Excluding("Diag-budget cap at function-scope root unreachable in test corpus",
+			invariant.Excluding("Diag cap at function-scope root unreachable in tests",
 				invariant.Bucket_Hi(d), invariant.Bucket_True(parent_parent_nil)),
-			invariant.Excluding("Diag-budget cap at nested scope unreachable in test corpus",
+			invariant.Excluding("Diag cap at nested scope unreachable in tests",
 				invariant.Bucket_Hi(d), invariant.Bucket_False(parent_parent_nil)),
 		)
-		na := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: len(scope_value.Names),
-			Lo: 0, Hi: max_ast_nodes_per_call, Message: "Scope_value.Names is bounded by AST budget"})
-		pn := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: len(scope_value.Parent.Names),
-			Lo: 0, Hi: max_ast_nodes_per_call, Message: "Scope_value.Parent.Names is bounded by AST budget"})
+		na := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
+			X:       len(scope_value.Names),
+			Lo:      0,
+			Hi:      max_ast_nodes_per_call,
+			Message: "Scope_value.Names is bounded by AST budget",
+		})
+		pn := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
+			X:       len(scope_value.Parent.Names),
+			Lo:      0,
+			Hi:      max_ast_nodes_per_call,
+			Message: "Scope_value.Parent.Names is bounded by AST budget",
+		})
 		invariant.Cross_Product(na, pn,
-			invariant.Excluding("Hi names unreachable (Lo parent)", invariant.Bucket_Hi(na), invariant.Bucket_Lo(pn)),
-			invariant.Excluding("Hi names unreachable (Hi parent)", invariant.Bucket_Hi(na), invariant.Bucket_Hi(pn)),
-			invariant.Excluding("Hi parent unreachable (Lo names)", invariant.Bucket_Lo(na), invariant.Bucket_Hi(pn)),
+			invariant.Excluding("Hi names unreachable (Lo parent)",
+				invariant.Bucket_Hi(na), invariant.Bucket_Lo(pn)),
+			invariant.Excluding("Hi names unreachable (Hi parent)",
+				invariant.Bucket_Hi(na), invariant.Bucket_Hi(pn)),
+			invariant.Excluding("Hi parent unreachable (Lo names)",
+				invariant.Bucket_Lo(na), invariant.Bucket_Hi(pn)),
 		)
 	}()
-	d := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: len(*diags),
-		Lo: 0, Hi: max_diagnostics_per_call, Message: "Diags is bounded by per-file diag budget"})
+	d := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
+		X:       len(*diags),
+		Lo:      0,
+		Hi:      max_diagnostics_per_call,
+		Message: "Diags is bounded by per-file diag budget",
+	})
 	parent_parent_nil := invariant.Sometimes(scope_value.Parent.Parent == nil,
 		"Scope_value.Parent.Parent is nil at the function-scope root sometimes")
 	invariant.Cross_Product(
@@ -1820,19 +2215,30 @@ func check_shadows_function_body_walk_body_walk_statement_declaration_statement(
 		invariant.Always(x != nil, "X is non-nil"),
 		invariant.Always(diags != nil, "Diags is non-nil"),
 		d,
-		invariant.Excluding("Diag-budget cap at function-scope root unreachable in test corpus",
+		invariant.Excluding("Diag cap at function-scope root unreachable in tests",
 			invariant.Bucket_Hi(d), invariant.Bucket_True(parent_parent_nil)),
-		invariant.Excluding("Diag-budget cap at nested scope unreachable in test corpus",
+		invariant.Excluding("Diag cap at nested scope unreachable in tests",
 			invariant.Bucket_Hi(d), invariant.Bucket_False(parent_parent_nil)),
 	)
-	na := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: len(scope_value.Names),
-		Lo: 0, Hi: max_ast_nodes_per_call, Message: "Scope_value.Names is bounded by AST budget"})
-	pn := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: len(scope_value.Parent.Names),
-		Lo: 0, Hi: max_ast_nodes_per_call, Message: "Scope_value.Parent.Names is bounded by AST budget"})
+	na := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
+		X:       len(scope_value.Names),
+		Lo:      0,
+		Hi:      max_ast_nodes_per_call,
+		Message: "Scope_value.Names is bounded by AST budget",
+	})
+	pn := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
+		X:       len(scope_value.Parent.Names),
+		Lo:      0,
+		Hi:      max_ast_nodes_per_call,
+		Message: "Scope_value.Parent.Names is bounded by AST budget",
+	})
 	invariant.Cross_Product(na, pn,
-		invariant.Excluding("Hi names unreachable (Lo parent)", invariant.Bucket_Hi(na), invariant.Bucket_Lo(pn)),
-		invariant.Excluding("Hi names unreachable (Hi parent)", invariant.Bucket_Hi(na), invariant.Bucket_Hi(pn)),
-		invariant.Excluding("Hi parent unreachable (Lo names)", invariant.Bucket_Lo(na), invariant.Bucket_Hi(pn)),
+		invariant.Excluding("Hi names unreachable (Lo parent)",
+			invariant.Bucket_Hi(na), invariant.Bucket_Lo(pn)),
+		invariant.Excluding("Hi names unreachable (Hi parent)",
+			invariant.Bucket_Hi(na), invariant.Bucket_Hi(pn)),
+		invariant.Excluding("Hi parent unreachable (Lo names)",
+			invariant.Bucket_Lo(na), invariant.Bucket_Hi(pn)),
 	)
 
 	if x.Decl == nil {
@@ -1856,21 +2262,36 @@ func check_shadows_function_body_walk_body_walk_statement_declaration_statement(
 	}
 }
 
-func check_assign_define(file_set *token.FileSet, scope_value *scope, statement ast.Stmt, diags *[]Diagnostic) {
+func check_assign_define(
+	file_set *token.FileSet, scope_value *scope, statement ast.Stmt, diags *[]Diagnostic,
+) {
 	defer func() {
-		parent_names := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: len(scope_value.Parent.Names),
-			Lo: 0, Hi: max_ast_nodes_per_call, Message: "Scope_value.Parent.Names is bounded by AST budget"})
-		names := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: len(scope_value.Names),
-			Lo: 0, Hi: max_ast_nodes_per_call, Message: "Scope_value.Names is bounded by AST budget"})
-		names_zero := invariant.Sometimes(len(scope_value.Names) == 0, "Scope_value.Names is empty sometimes")
-		d := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: len(*diags),
-			Lo: 0, Hi: max_diagnostics_per_call, Message: "Diags is bounded by per-file diag budget"})
+		parent_names := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
+			X:       len(scope_value.Parent.Names),
+			Lo:      0,
+			Hi:      max_ast_nodes_per_call,
+			Message: "Scope_value.Parent.Names is bounded by AST budget",
+		})
+		names := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
+			X:       len(scope_value.Names),
+			Lo:      0,
+			Hi:      max_ast_nodes_per_call,
+			Message: "Scope_value.Names is bounded by AST budget",
+		})
+		names_zero := invariant.Sometimes(
+			len(scope_value.Names) == 0, "Scope_value.Names is empty sometimes")
+		d := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
+			X:       len(*diags),
+			Lo:      0,
+			Hi:      max_diagnostics_per_call,
+			Message: "Diags is bounded by per-file diag budget",
+		})
 		invariant.Cross_Product(parent_names, names, names_zero, d,
-			invariant.Excluding("Parent_names at safety cap with diag-budget cap is bad",
+			invariant.Excluding("Parent_names and diags both at safety cap is bad",
 				invariant.Bucket_Hi(parent_names), invariant.Bucket_Hi(d)),
 			invariant.Excluding("Parent_names at safety cap with zero diags is bad",
 				invariant.Bucket_Hi(parent_names), invariant.Bucket_Lo(d)),
-			invariant.Excluding("Zero parent_names with diag-budget cap unreachable in test corpus",
+			invariant.Excluding("Zero parent_names with diag cap unreachable in tests",
 				invariant.Bucket_Lo(parent_names), invariant.Bucket_Hi(d)),
 			invariant.Excluding("Names Lo (=0) implies names_zero true",
 				invariant.Bucket_Lo(names), invariant.Bucket_False(names_zero)),
@@ -1878,21 +2299,34 @@ func check_assign_define(file_set *token.FileSet, scope_value *scope, statement 
 				invariant.Bucket_Hi(names), invariant.Bucket_True(names_zero)),
 			invariant.Excluding("Names at safety cap unreachable in test corpus",
 				invariant.Bucket_Hi(names), invariant.Bucket_Hi(parent_names)),
-			invariant.Excluding("Names at safety cap with Lo parent unreachable in test corpus",
+			invariant.Excluding("Names at cap with Lo parent unreachable in tests",
 				invariant.Bucket_Hi(names), invariant.Bucket_Lo(parent_names)),
-			invariant.Excluding("Names at safety cap with Hi diags unreachable in test corpus",
+			invariant.Excluding("Names at cap with Hi diags unreachable in tests",
 				invariant.Bucket_Hi(names), invariant.Bucket_Hi(d)),
-			invariant.Excluding("Names at safety cap with Lo diags unreachable in test corpus",
+			invariant.Excluding("Names at cap with Lo diags unreachable in tests",
 				invariant.Bucket_Hi(names), invariant.Bucket_Lo(d)),
 		)
 	}()
-	parent_names := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: len(scope_value.Parent.Names),
-		Lo: 0, Hi: max_ast_nodes_per_call, Message: "Scope_value.Parent.Names is bounded by AST budget"})
-	names := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: len(scope_value.Names),
-		Lo: 0, Hi: max_ast_nodes_per_call, Message: "Scope_value.Names is bounded by AST budget"})
-	names_zero := invariant.Sometimes(len(scope_value.Names) == 0, "Scope_value.Names is empty sometimes")
-	d := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: len(*diags),
-		Lo: 0, Hi: max_diagnostics_per_call, Message: "Diags is bounded by per-file diag budget"})
+	parent_names := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
+		X:       len(scope_value.Parent.Names),
+		Lo:      0,
+		Hi:      max_ast_nodes_per_call,
+		Message: "Scope_value.Parent.Names is bounded by AST budget",
+	})
+	names := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
+		X:       len(scope_value.Names),
+		Lo:      0,
+		Hi:      max_ast_nodes_per_call,
+		Message: "Scope_value.Names is bounded by AST budget",
+	})
+	names_zero := invariant.Sometimes(
+		len(scope_value.Names) == 0, "Scope_value.Names is empty sometimes")
+	d := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
+		X:       len(*diags),
+		Lo:      0,
+		Hi:      max_diagnostics_per_call,
+		Message: "Diags is bounded by per-file diag budget",
+	})
 	// Scope_value here is an if/for/range init scope produced by
 	// scope_new_block, whose entry assertion guarantees parent.Parent !=
 	// nil. So scope_value.Parent.Parent is non-nil by construction.
@@ -1900,14 +2334,15 @@ func check_assign_define(file_set *token.FileSet, scope_value *scope, statement 
 		invariant.Always(file_set != nil, "File_set is non-nil"),
 		invariant.Always(scope_value != nil, "Scope_value is non-nil"),
 		invariant.Always(scope_value.Parent != nil, "Scope_value has a parent"),
-		invariant.Always(scope_value.Parent.Parent != nil, "Scope_value.Parent.Parent is non-nil"),
+		invariant.Always(scope_value.Parent.Parent != nil,
+			"Scope_value.Parent.Parent is non-nil"),
 		invariant.Always(diags != nil, "Diags is non-nil"),
 		parent_names, names, names_zero, d,
 		invariant.Excluding("Parent_names at safety cap with diag-budget cap is bad",
 			invariant.Bucket_Hi(parent_names), invariant.Bucket_Hi(d)),
 		invariant.Excluding("Parent_names at safety cap with zero diags is bad",
 			invariant.Bucket_Hi(parent_names), invariant.Bucket_Lo(d)),
-		invariant.Excluding("Zero parent_names with diag-budget cap unreachable in test corpus",
+		invariant.Excluding("Zero parent_names with diag cap unreachable in tests",
 			invariant.Bucket_Lo(parent_names), invariant.Bucket_Hi(d)),
 		invariant.Excluding("Names Lo (=0) implies names_zero true",
 			invariant.Bucket_Lo(names), invariant.Bucket_False(names_zero)),
@@ -1915,11 +2350,11 @@ func check_assign_define(file_set *token.FileSet, scope_value *scope, statement 
 			invariant.Bucket_Hi(names), invariant.Bucket_True(names_zero)),
 		invariant.Excluding("Names at safety cap unreachable in test corpus",
 			invariant.Bucket_Hi(names), invariant.Bucket_Hi(parent_names)),
-		invariant.Excluding("Names at safety cap with Lo parent unreachable in test corpus",
+		invariant.Excluding("Names at cap with Lo parent unreachable in tests",
 			invariant.Bucket_Hi(names), invariant.Bucket_Lo(parent_names)),
-		invariant.Excluding("Names at safety cap with Hi diags unreachable in test corpus",
+		invariant.Excluding("Names at cap with Hi diags unreachable in tests",
 			invariant.Bucket_Hi(names), invariant.Bucket_Hi(d)),
-		invariant.Excluding("Names at safety cap with Lo diags unreachable in test corpus",
+		invariant.Excluding("Names at cap with Lo diags unreachable in tests",
 			invariant.Bucket_Hi(names), invariant.Bucket_Lo(d)),
 	)
 
@@ -1928,7 +2363,8 @@ func check_assign_define(file_set *token.FileSet, scope_value *scope, statement 
 			for _, lhs := range as.Lhs {
 				if identifier, is_ident := lhs.(*ast.Ident); is_ident {
 					if identifier.Name != "_" {
-						check_shadow(file_set, scope_value, identifier.Name, identifier, diags)
+						check_shadow(
+							file_set, scope_value, identifier.Name, identifier, diags)
 						scope_value.Names[identifier.Name] = true
 					}
 				}
@@ -1937,31 +2373,54 @@ func check_assign_define(file_set *token.FileSet, scope_value *scope, statement 
 	}
 }
 
-func check_shadow(file_set *token.FileSet, scope_value *scope, name string, identifier *ast.Ident, diags *[]Diagnostic) {
+func check_shadow(
+	file_set *token.FileSet,
+	scope_value *scope,
+	name string,
+	identifier *ast.Ident,
+	diags *[]Diagnostic,
+) {
 	defer func() {
-		d := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: len(*diags),
-			Lo: 0, Hi: max_diagnostics_per_call, Message: "Diags is bounded by per-file diag budget"})
+		d := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
+			X:       len(*diags),
+			Lo:      0,
+			Hi:      max_diagnostics_per_call,
+			Message: "Diags is bounded by per-file diag budget",
+		})
 		parent_parent_nil := invariant.Sometimes(scope_value.Parent.Parent == nil,
 			"Scope_value.Parent.Parent is nil at the function-scope root sometimes")
-		names_axis := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: len(scope_value.Names),
-			Lo: 0, Hi: max_ast_nodes_per_call, Message: "Scope_value.Names is bounded by AST budget"})
-		parent_names_axis := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: len(scope_value.Parent.Names),
-			Lo: 0, Hi: max_ast_nodes_per_call, Message: "Scope_value.Parent.Names is bounded by AST budget"})
+		names_axis := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
+			X:       len(scope_value.Names),
+			Lo:      0,
+			Hi:      max_ast_nodes_per_call,
+			Message: "Scope_value.Names is bounded by AST budget",
+		})
+		parent_names_axis := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
+			X:       len(scope_value.Parent.Names),
+			Lo:      0,
+			Hi:      max_ast_nodes_per_call,
+			Message: "Scope_value.Parent.Names is bounded by AST budget",
+		})
 		invariant.Cross_Product(d, parent_parent_nil, names_axis, parent_names_axis,
-			invariant.Excluding("Diag-budget cap at function-scope root unreachable in test corpus",
+			invariant.Excluding("Diag cap at function-scope root unreachable in tests",
 				invariant.Bucket_Hi(d), invariant.Bucket_True(parent_parent_nil)),
-			invariant.Excluding("Diag-budget cap at nested scope unreachable in test corpus",
+			invariant.Excluding("Diag cap at nested scope unreachable in tests",
 				invariant.Bucket_Hi(d), invariant.Bucket_False(parent_parent_nil)),
 			invariant.Excluding("Hi names unreachable (root scope)",
-				invariant.Bucket_Hi(names_axis), invariant.Bucket_True(parent_parent_nil)),
+				invariant.Bucket_Hi(names_axis),
+				invariant.Bucket_True(parent_parent_nil)),
 			invariant.Excluding("Hi names unreachable (nested scope)",
-				invariant.Bucket_Hi(names_axis), invariant.Bucket_False(parent_parent_nil)),
+				invariant.Bucket_Hi(names_axis),
+				invariant.Bucket_False(parent_parent_nil)),
 			invariant.Excluding("Hi parent_names unreachable (root scope)",
-				invariant.Bucket_Hi(parent_names_axis), invariant.Bucket_True(parent_parent_nil)),
+				invariant.Bucket_Hi(parent_names_axis),
+				invariant.Bucket_True(parent_parent_nil)),
 			invariant.Excluding("Hi parent_names unreachable (nested scope)",
-				invariant.Bucket_Hi(parent_names_axis), invariant.Bucket_False(parent_parent_nil)),
-			invariant.Excluding("Lo parent_names at root impossible — global has the walking function",
-				invariant.Bucket_Lo(parent_names_axis), invariant.Bucket_True(parent_parent_nil)),
+				invariant.Bucket_Hi(parent_names_axis),
+				invariant.Bucket_False(parent_parent_nil)),
+			invariant.Excluding("Lo parent_names at root impossible",
+				invariant.Bucket_Lo(parent_names_axis),
+				invariant.Bucket_True(parent_parent_nil)),
 		)
 	}()
 	parent_parent_nil := invariant.Sometimes(scope_value.Parent.Parent == nil,
@@ -1970,12 +2429,24 @@ func check_shadow(file_set *token.FileSet, scope_value *scope, name string, iden
 		X: len(name), Lo: min_non_empty, Hi: Max_Identifier_Chars,
 		Message: "Name is a non-empty Go identifier bounded by identifier budget",
 	})
-	d := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: len(*diags),
-		Lo: 0, Hi: max_diagnostics_per_call, Message: "Diags is bounded by per-file diag budget"})
-	names_axis := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: len(scope_value.Names),
-		Lo: 0, Hi: max_ast_nodes_per_call, Message: "Scope_value.Names is bounded by AST budget"})
-	parent_names_axis := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: len(scope_value.Parent.Names),
-		Lo: 0, Hi: max_ast_nodes_per_call, Message: "Scope_value.Parent.Names is bounded by AST budget"})
+	d := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
+		X:       len(*diags),
+		Lo:      0,
+		Hi:      max_diagnostics_per_call,
+		Message: "Diags is bounded by per-file diag budget",
+	})
+	names_axis := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
+		X:       len(scope_value.Names),
+		Lo:      0,
+		Hi:      max_ast_nodes_per_call,
+		Message: "Scope_value.Names is bounded by AST budget",
+	})
+	parent_names_axis := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
+		X:       len(scope_value.Parent.Names),
+		Lo:      0,
+		Hi:      max_ast_nodes_per_call,
+		Message: "Scope_value.Parent.Names is bounded by AST budget",
+	})
 	invariant.Cross_Product(
 		invariant.Always(file_set != nil, "File_set is non-nil"),
 		invariant.Always(scope_value != nil, "Scope_value is non-nil"),
@@ -1988,22 +2459,25 @@ func check_shadow(file_set *token.FileSet, scope_value *scope, name string, iden
 		// scope root (e.g. test fixtures with a single long-name decl) in the
 		// observed corpus; nested-scope shadowing fixtures stay well below the
 		// safety cap.
-		invariant.Excluding("Identifier at safety cap appears only at function-scope root in test corpus",
+		invariant.Excluding("Identifier at cap appears only at function-scope root",
 			invariant.Bucket_False(parent_parent_nil), invariant.Bucket_Hi(name_axis)),
-		invariant.Excluding("Diag-budget cap at function-scope root unreachable in test corpus",
+		invariant.Excluding("Diag cap at function-scope root unreachable in tests",
 			invariant.Bucket_Hi(d), invariant.Bucket_True(parent_parent_nil)),
-		invariant.Excluding("Diag-budget cap at nested scope unreachable in test corpus",
+		invariant.Excluding("Diag cap at nested scope unreachable in tests",
 			invariant.Bucket_Hi(d), invariant.Bucket_False(parent_parent_nil)),
 		invariant.Excluding("Hi names unreachable (root)",
 			invariant.Bucket_Hi(names_axis), invariant.Bucket_True(parent_parent_nil)),
 		invariant.Excluding("Hi names unreachable (nested)",
 			invariant.Bucket_Hi(names_axis), invariant.Bucket_False(parent_parent_nil)),
 		invariant.Excluding("Hi parent_names unreachable (root)",
-			invariant.Bucket_Hi(parent_names_axis), invariant.Bucket_True(parent_parent_nil)),
+			invariant.Bucket_Hi(parent_names_axis),
+			invariant.Bucket_True(parent_parent_nil)),
 		invariant.Excluding("Hi parent_names unreachable (nested)",
-			invariant.Bucket_Hi(parent_names_axis), invariant.Bucket_False(parent_parent_nil)),
-		invariant.Excluding("Lo parent_names at root impossible — global has the walking function",
-			invariant.Bucket_Lo(parent_names_axis), invariant.Bucket_True(parent_parent_nil)),
+			invariant.Bucket_Hi(parent_names_axis),
+			invariant.Bucket_False(parent_parent_nil)),
+		invariant.Excluding("Lo parent_names at root impossible",
+			invariant.Bucket_Lo(parent_names_axis),
+			invariant.Bucket_True(parent_parent_nil)),
 	)
 
 	p := scope_value.Parent
@@ -2011,7 +2485,8 @@ func check_shadow(file_set *token.FileSet, scope_value *scope, name string, iden
 		if p.Names[name] {
 			*diags = append(*diags, Diagnostic{
 				Position: file_set.Position(identifier.Pos()),
-				Message:  fmt.Sprintf("variable %q shadows outer scope variable", name),
+				Message: fmt.Sprintf(
+					"variable %q shadows outer scope variable", name),
 			})
 			return
 		}
@@ -2046,18 +2521,22 @@ func Check_File(file_set *token.FileSet, file *ast.File, source []byte) (diags [
 		invariant.Cross_Product(
 			diags_boundary, source_boundary,
 			invariant.Excluding("Both diags and source at safety caps is bad",
-				invariant.Bucket_Hi(diags_boundary), invariant.Bucket_Hi(source_boundary)),
+				invariant.Bucket_Hi(diags_boundary),
+				invariant.Bucket_Hi(source_boundary)),
 			invariant.Excluding("Diags at safety cap with zero source bytes is bad",
-				invariant.Bucket_Hi(diags_boundary), invariant.Bucket_Lo(source_boundary)),
+				invariant.Bucket_Hi(diags_boundary),
+				invariant.Bucket_Lo(source_boundary)),
 			invariant.Excluding("Source at safety cap with zero diags is bad",
-				invariant.Bucket_Lo(diags_boundary), invariant.Bucket_Hi(source_boundary)),
+				invariant.Bucket_Lo(diags_boundary),
+				invariant.Bucket_Hi(source_boundary)),
 		)
 	}()
 	source_axis := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
 		X: len(source), Lo: 0, Hi: max_file_size_bytes,
 		Message: "Source is the file bytes bounded by per-file size budget",
 	})
-	documentation_axis := invariant.Sometimes(file.Doc != nil, "File has a package doc sometimes")
+	documentation_axis := invariant.Sometimes(
+		file.Doc != nil, "File has a package doc sometimes")
 	invariant.Cross_Product(
 		invariant.Always(file_set != nil, "File_set is non-nil"),
 		invariant.Always(file != nil, "File is non-nil"),
@@ -2067,11 +2546,14 @@ func Check_File(file_set *token.FileSet, file *ast.File, source []byte) (diags [
 		// working file sizes. (Lo source, True doc) is logically
 		// impossible: a 0-byte file cannot carry a package doc comment.
 		invariant.Excluding("Source at file-size at safety cap is bad",
-			invariant.Bucket_Hi(source_axis), invariant.Bucket_True(documentation_axis)),
+			invariant.Bucket_Hi(source_axis),
+			invariant.Bucket_True(documentation_axis)),
 		invariant.Excluding("Source at file-size at safety cap is bad",
-			invariant.Bucket_Hi(source_axis), invariant.Bucket_False(documentation_axis)),
+			invariant.Bucket_Hi(source_axis),
+			invariant.Bucket_False(documentation_axis)),
 		invariant.Excluding("Zero-byte source implies package doc comment is absent",
-			invariant.Bucket_Lo(source_axis), invariant.Bucket_True(documentation_axis)),
+			invariant.Bucket_Lo(source_axis),
+			invariant.Bucket_True(documentation_axis)),
 	)
 	diags = check_file_run_tier([]check_function{
 		check_casing,
@@ -2104,7 +2586,8 @@ func Check_File(file_set *token.FileSet, file *ast.File, source []byte) (diags [
 		check_no_bare_for,
 		check_exported_documentation_comment,
 	}, file_set, file, source)
-	invariant.Cross_Product(invariant.Sometimes(diags == nil, "Diags can be empty or zero on this branch"))
+	invariant.Cross_Product(
+		invariant.Sometimes(diags == nil, "Diags can be empty or zero on this branch"))
 	if len(diags) > 0 {
 		for i := range diags {
 			diags[i].Tier = 1
@@ -2118,14 +2601,17 @@ func Check_File(file_set *token.FileSet, file *ast.File, source []byte) (diags [
 		check_no_third_party_struct_tag,
 		check_blank_synchronization_mutex,
 	}, file_set, file, source)
-	invariant.Cross_Product(invariant.Sometimes(diags == nil, "Diags can be empty or zero on this branch"))
+	invariant.Cross_Product(
+		invariant.Sometimes(diags == nil, "Diags can be empty or zero on this branch"))
 	for i := range diags {
 		diags[i].Tier = 2
 	}
 	return diags
 }
 
-func check_file_run_tier(checks []check_function, file_set *token.FileSet, file *ast.File, source []byte) (diags []Diagnostic) {
+func check_file_run_tier(
+	checks []check_function, file_set *token.FileSet, file *ast.File, source []byte,
+) (diags []Diagnostic) {
 	defer func() {
 		diags_boundary := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
 			X: len(diags), Lo: 0, Hi: max_diagnostics_per_call,
@@ -2149,11 +2635,14 @@ func check_file_run_tier(checks []check_function, file_set *token.FileSet, file 
 		invariant.Cross_Product(
 			diags_boundary, checks_boundary, source_boundary,
 			invariant.Excluding("Both diags and source at safety caps is bad",
-				invariant.Bucket_Hi(diags_boundary), invariant.Bucket_Hi(source_boundary)),
+				invariant.Bucket_Hi(diags_boundary),
+				invariant.Bucket_Hi(source_boundary)),
 			invariant.Excluding("Diags at safety cap with zero source bytes is bad",
-				invariant.Bucket_Hi(diags_boundary), invariant.Bucket_Lo(source_boundary)),
+				invariant.Bucket_Hi(diags_boundary),
+				invariant.Bucket_Lo(source_boundary)),
 			invariant.Excluding("Source at safety cap with zero diags is bad",
-				invariant.Bucket_Lo(diags_boundary), invariant.Bucket_Hi(source_boundary)),
+				invariant.Bucket_Lo(diags_boundary),
+				invariant.Bucket_Hi(source_boundary)),
 		)
 	}()
 	checks_axis := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
@@ -2198,20 +2687,28 @@ func check_casing_ident(file_set *token.FileSet, identifier *ast.Ident, diags *[
 		name_axis := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
 			X: len(identifier.Name), Lo: min_non_empty, Hi: Max_Identifier_Chars,
 			Message: "Identifier name length is bounded by identifier budget"})
-		d := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: len(*diags),
-			Lo: 0, Hi: max_diagnostics_per_call, Message: "Diags is bounded by per-file diag budget"})
+		d := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
+			X:       len(*diags),
+			Lo:      0,
+			Hi:      max_diagnostics_per_call,
+			Message: "Diags is bounded by per-file diag budget",
+		})
 		invariant.Cross_Product(name_axis, d,
 			invariant.Excluding("Identifier at safety cap with diag-budget cap is bad",
 				invariant.Bucket_Hi(name_axis), invariant.Bucket_Hi(d)),
-			invariant.Excluding("Minimal identifier with diag-budget cap unreachable in test corpus",
+			invariant.Excluding("Lo identifier with diag cap unreachable in tests",
 				invariant.Bucket_Lo(name_axis), invariant.Bucket_Hi(d)),
 		)
 	}()
 	name_axis := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
 		X: len(identifier.Name), Lo: min_non_empty, Hi: Max_Identifier_Chars,
 		Message: "Identifier name length is bounded by identifier budget"})
-	d := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: len(*diags),
-		Lo: 0, Hi: max_diagnostics_per_call, Message: "Diags is bounded by per-file diag budget"})
+	d := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
+		X:       len(*diags),
+		Lo:      0,
+		Hi:      max_diagnostics_per_call,
+		Message: "Diags is bounded by per-file diag budget",
+	})
 	invariant.Cross_Product(
 		invariant.Always(file_set != nil, "File_set is non-nil"),
 		invariant.Always(identifier != nil, "Identifier is non-nil"),
@@ -2219,7 +2716,7 @@ func check_casing_ident(file_set *token.FileSet, identifier *ast.Ident, diags *[
 		name_axis, d,
 		invariant.Excluding("Identifier at safety cap with diag-budget cap is bad",
 			invariant.Bucket_Hi(name_axis), invariant.Bucket_Hi(d)),
-		invariant.Excluding("Minimal identifier with diag-budget cap unreachable in test corpus",
+		invariant.Excluding("Lo identifier with diag cap unreachable in tests",
 			invariant.Bucket_Lo(name_axis), invariant.Bucket_Hi(d)),
 	)
 
@@ -2240,7 +2737,8 @@ func check_casing_ident(file_set *token.FileSet, identifier *ast.Ident, diags *[
 	}
 	if !ok {
 		suggestion := suggest(&suggest_input{Name: identifier.Name, Want: want})
-		invariant.Cross_Product(invariant.Always(suggestion != "", "Suggestion is non-empty at this point"))
+		invariant.Cross_Product(
+			invariant.Always(suggestion != "", "Suggestion is non-empty at this point"))
 		*diags = append(*diags, Diagnostic{
 			Position: file_set.Position(identifier.Pos()),
 			Name:     identifier.Name,
@@ -2264,11 +2762,14 @@ func check_casing(file_set *token.FileSet, file *ast.File, _ []byte) (diags []Di
 		// and (*, Hi) tuples are unreachable.
 		invariant.Cross_Product(diags_boundary, decls_axis,
 			invariant.Excluding("Both diags and decls at safety caps is bad",
-				invariant.Bucket_Hi(diags_boundary), invariant.Bucket_Hi(decls_axis)),
+				invariant.Bucket_Hi(diags_boundary),
+				invariant.Bucket_Hi(decls_axis)),
 			invariant.Excluding("Diags at safety cap with zero decls is bad",
-				invariant.Bucket_Hi(diags_boundary), invariant.Bucket_Lo(decls_axis)),
+				invariant.Bucket_Hi(diags_boundary),
+				invariant.Bucket_Lo(decls_axis)),
 			invariant.Excluding("Decls at safety cap with zero diags is bad",
-				invariant.Bucket_Lo(diags_boundary), invariant.Bucket_Hi(decls_axis)),
+				invariant.Bucket_Lo(diags_boundary),
+				invariant.Bucket_Hi(decls_axis)),
 		)
 	}()
 	invariant.Cross_Product(
@@ -2347,14 +2848,17 @@ func check_casing_method_satisfies_stdlib(function_declaration *ast.FuncDecl) (y
 		return false
 	}
 	params := check_unnecessary_method_field_list_types(function_declaration.Type.Params)
-	invariant.Cross_Product(invariant.Sometimes(params == nil, "Params can be empty or zero on this branch"))
+	invariant.Cross_Product(
+		invariant.Sometimes(params == nil, "Params can be empty or zero on this branch"))
 	results := check_unnecessary_method_field_list_types(function_declaration.Type.Results)
-	invariant.Cross_Product(invariant.Sometimes(results == nil, "Results can be empty or zero on this branch"))
-	return check_unnecessary_method_matches_stdlib(&check_unnecessary_method_matches_stdlib_input{
-		Name:    function_declaration.Name.Name,
-		Params:  strings.Join(params, ","),
-		Results: strings.Join(results, ","),
-	})
+	invariant.Cross_Product(
+		invariant.Sometimes(results == nil, "Results can be empty or zero on this branch"))
+	return check_unnecessary_method_matches_stdlib(
+		&check_unnecessary_method_matches_stdlib_input{
+			Name:    function_declaration.Name.Name,
+			Params:  strings.Join(params, ","),
+			Results: strings.Join(results, ","),
+		})
 }
 
 func check_namesd_returns(file_set *token.FileSet, file *ast.File, _ []byte) (diags []Diagnostic) {
@@ -2371,11 +2875,14 @@ func check_namesd_returns(file_set *token.FileSet, file *ast.File, _ []byte) (di
 		// and (*, Hi) tuples are unreachable.
 		invariant.Cross_Product(diags_boundary, decls_axis,
 			invariant.Excluding("Both diags and decls at safety caps is bad",
-				invariant.Bucket_Hi(diags_boundary), invariant.Bucket_Hi(decls_axis)),
+				invariant.Bucket_Hi(diags_boundary),
+				invariant.Bucket_Hi(decls_axis)),
 			invariant.Excluding("Diags at safety cap with zero decls is bad",
-				invariant.Bucket_Hi(diags_boundary), invariant.Bucket_Lo(decls_axis)),
+				invariant.Bucket_Hi(diags_boundary),
+				invariant.Bucket_Lo(decls_axis)),
 			invariant.Excluding("Decls at safety cap with zero diags is bad",
-				invariant.Bucket_Lo(diags_boundary), invariant.Bucket_Hi(decls_axis)),
+				invariant.Bucket_Lo(diags_boundary),
+				invariant.Bucket_Hi(decls_axis)),
 		)
 	}()
 	invariant.Cross_Product(
@@ -2395,7 +2902,8 @@ func check_namesd_returns(file_set *token.FileSet, file *ast.File, _ []byte) (di
 			if len(f.Names) == 0 {
 				diags = append(diags, Diagnostic{
 					Position: file_set.Position(f.Pos()),
-					Message:  fmt.Sprintf("unnamed return type: %s", types.ExprString(f.Type)),
+					Message: fmt.Sprintf(
+						"unnamed return type: %s", types.ExprString(f.Type)),
 				})
 			}
 		}
@@ -2419,12 +2927,20 @@ func check_namesd_returns(file_set *token.FileSet, file *ast.File, _ []byte) (di
 // against their own signature, not the outer function's, per Go semantics.
 func check_no_naked_return(file_set *token.FileSet, file *ast.File, _ []byte) (diags []Diagnostic) {
 	defer func() {
-		d := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: len(diags), Lo: 0,
-			Hi: max_diagnostics_per_call, Message: "Diags is bounded by budget"})
-		decls_axis := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: len(file.Decls),
-			Lo: 0, Hi: max_ast_nodes_per_call, Message: "File.Decls is bounded by AST budget"})
+		d := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
+			X:       len(diags),
+			Lo:      0,
+			Hi:      max_diagnostics_per_call,
+			Message: "Diags is bounded by budget",
+		})
+		decls_axis := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
+			X:       len(file.Decls),
+			Lo:      0,
+			Hi:      max_ast_nodes_per_call,
+			Message: "File.Decls is bounded by AST budget",
+		})
 		invariant.Cross_Product(d, decls_axis,
-			invariant.Excluding("Diags at diag-budget cap with decls at AST at safety cap is bad",
+			invariant.Excluding("Diags and decls both at safety cap is bad",
 				invariant.Bucket_Hi(d), invariant.Bucket_Hi(decls_axis)),
 			invariant.Excluding("Zero decls produce zero diags",
 				invariant.Bucket_Hi(d), invariant.Bucket_Lo(decls_axis)),
@@ -2482,7 +2998,9 @@ func check_no_naked_return(file_set *token.FileSet, file *ast.File, _ []byte) (d
 	return diags
 }
 
-func check_line_character_count(file_set *token.FileSet, file *ast.File, source []byte) (diags []Diagnostic) {
+func check_line_character_count(
+	file_set *token.FileSet, file *ast.File, source []byte,
+) (diags []Diagnostic) {
 	defer func() {
 		diags_boundary := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
 			X: len(diags), Lo: 0, Hi: max_diagnostics_per_call,
@@ -2495,43 +3013,65 @@ func check_line_character_count(file_set *token.FileSet, file *ast.File, source 
 		invariant.Cross_Product(
 			diags_boundary, source_boundary,
 			invariant.Excluding("Both diags and source at safety caps is bad",
-				invariant.Bucket_Hi(diags_boundary), invariant.Bucket_Hi(source_boundary)),
+				invariant.Bucket_Hi(diags_boundary),
+				invariant.Bucket_Hi(source_boundary)),
 			invariant.Excluding("Diags at safety cap with zero source bytes is bad",
-				invariant.Bucket_Hi(diags_boundary), invariant.Bucket_Lo(source_boundary)),
+				invariant.Bucket_Hi(diags_boundary),
+				invariant.Bucket_Lo(source_boundary)),
 			invariant.Excluding("Source at safety cap with zero diags is bad",
-				invariant.Bucket_Lo(diags_boundary), invariant.Bucket_Hi(source_boundary)),
+				invariant.Bucket_Lo(diags_boundary),
+				invariant.Bucket_Hi(source_boundary)),
 		)
 	}()
 	source_axis := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
 		X: len(source), Lo: 0, Hi: max_file_size_bytes,
 		Message: "Source is the file bytes bounded by per-file size budget",
 	})
-	documentation_axis := invariant.Sometimes(file.Doc != nil, "File has a package doc sometimes")
+	documentation_axis := invariant.Sometimes(
+		file.Doc != nil, "File has a package doc sometimes")
 	invariant.Cross_Product(
 		invariant.Always(file_set != nil, "File_set is non-nil"),
 		invariant.Always(file != nil, "File is non-nil"),
 		source_axis, documentation_axis,
 		invariant.Excluding("Source at file-size at safety cap is bad",
-			invariant.Bucket_Hi(source_axis), invariant.Bucket_True(documentation_axis)),
+			invariant.Bucket_Hi(source_axis),
+			invariant.Bucket_True(documentation_axis)),
 		invariant.Excluding("Source at file-size at safety cap is bad",
-			invariant.Bucket_Hi(source_axis), invariant.Bucket_False(documentation_axis)),
+			invariant.Bucket_Hi(source_axis),
+			invariant.Bucket_False(documentation_axis)),
 		invariant.Excluding("Zero-byte source implies package doc comment is absent",
-			invariant.Bucket_Lo(source_axis), invariant.Bucket_True(documentation_axis)),
+			invariant.Bucket_Lo(source_axis),
+			invariant.Bucket_True(documentation_axis)),
 	)
 
 	tok_file := file_set.File(file.Pos())
-	invariant.Cross_Product(invariant.Always(tok_file != nil, "Tok_file is non-nil at this point"))
+	invariant.Cross_Product(
+		invariant.Always(tok_file != nil, "Tok_file is non-nil at this point"))
 	filename := ""
 	if tok_file != nil {
 		filename = tok_file.Name()
-		invariant.Cross_Product(invariant.Always(filename != "", "Filename is non-empty at this point"))
+		invariant.Cross_Product(
+			invariant.Always(filename != "", "Filename is non-empty at this point"))
+	}
+	// Import lines are exempt: a module path is a single unbreakable token, so a
+	// long one cannot be wrapped to satisfy the column limit.
+	import_lines := map[int]bool{}
+	for _, import_specification := range file.Imports {
+		import_lines[file_set.Position(import_specification.Pos()).Line] = true
 	}
 	line_number := 1
 	column := 0
 	emit := func(n int) {
+		if import_lines[line_number] {
+			return
+		}
 		diags = append(diags, Diagnostic{
-			Position: token.Position{Filename: filename, Line: line_number, Column: max_line_chars + 1},
-			Message:  fmt.Sprintf("line is %d chars (max %d)", n, max_line_chars),
+			Position: token.Position{
+				Filename: filename,
+				Line:     line_number,
+				Column:   max_line_chars + 1,
+			},
+			Message: fmt.Sprintf("line is %d chars (max %d)", n, max_line_chars),
 		})
 	}
 	for len(source) > 0 {
@@ -2572,11 +3112,14 @@ func check_compound_if(file_set *token.FileSet, file *ast.File, _ []byte) (diags
 		})
 		invariant.Cross_Product(diags_boundary, decls_axis,
 			invariant.Excluding("Both diags and decls at safety caps is bad",
-				invariant.Bucket_Hi(diags_boundary), invariant.Bucket_Hi(decls_axis)),
+				invariant.Bucket_Hi(diags_boundary),
+				invariant.Bucket_Hi(decls_axis)),
 			invariant.Excluding("Diags at safety cap with zero decls is bad",
-				invariant.Bucket_Hi(diags_boundary), invariant.Bucket_Lo(decls_axis)),
+				invariant.Bucket_Hi(diags_boundary),
+				invariant.Bucket_Lo(decls_axis)),
 			invariant.Excluding("Decls at safety cap with zero diags is bad",
-				invariant.Bucket_Lo(diags_boundary), invariant.Bucket_Hi(decls_axis)),
+				invariant.Bucket_Lo(diags_boundary),
+				invariant.Bucket_Hi(decls_axis)),
 		)
 	}()
 	invariant.Cross_Product(
@@ -2613,7 +3156,8 @@ func check_compound_if(file_set *token.FileSet, file *ast.File, _ []byte) (diags
 		if is_logical {
 			diags = append(diags, Diagnostic{
 				Position: file_set.Position(if_statement.Cond.Pos()),
-				Message:  fmt.Sprintf("compound if condition (%s) — split into nested ifs", be.Op),
+				Message: fmt.Sprintf(
+					"compound if condition (%s) — split into nested ifs", be.Op),
 			})
 		}
 		return true
@@ -2633,11 +3177,14 @@ func check_function_line_count(file_set *token.FileSet, file *ast.File, _ []byte
 		})
 		invariant.Cross_Product(diags_boundary, decls_axis,
 			invariant.Excluding("Both diags and decls at safety caps is bad",
-				invariant.Bucket_Hi(diags_boundary), invariant.Bucket_Hi(decls_axis)),
+				invariant.Bucket_Hi(diags_boundary),
+				invariant.Bucket_Hi(decls_axis)),
 			invariant.Excluding("Diags at safety cap with zero decls is bad",
-				invariant.Bucket_Hi(diags_boundary), invariant.Bucket_Lo(decls_axis)),
+				invariant.Bucket_Hi(diags_boundary),
+				invariant.Bucket_Lo(decls_axis)),
 			invariant.Excluding("Decls at safety cap with zero diags is bad",
-				invariant.Bucket_Lo(diags_boundary), invariant.Bucket_Hi(decls_axis)),
+				invariant.Bucket_Lo(diags_boundary),
+				invariant.Bucket_Hi(decls_axis)),
 		)
 	}()
 	invariant.Cross_Product(
@@ -2647,11 +3194,14 @@ func check_function_line_count(file_set *token.FileSet, file *ast.File, _ []byte
 
 	check := func(pos, lbrace, rbrace token.Pos, label string) {
 		position := file_set.Position(pos)
-		invariant.Cross_Product(invariant.Always(position.Line != 0, "Position.Line is non-zero at this point"))
+		invariant.Cross_Product(invariant.Always(position.Line != 0,
+			"Position.Line is non-zero at this point"))
 		lbrace_position := file_set.Position(lbrace)
-		invariant.Cross_Product(invariant.Always(lbrace_position.Line != 0, "Lbrace_position.Line is non-zero at this point"))
+		invariant.Cross_Product(invariant.Always(lbrace_position.Line != 0,
+			"Lbrace_position.Line is non-zero at this point"))
 		rbrace_position := file_set.Position(rbrace)
-		invariant.Cross_Product(invariant.Always(rbrace_position.Line != 0, "Rbrace_position.Line is non-zero at this point"))
+		invariant.Cross_Product(invariant.Always(rbrace_position.Line != 0,
+			"Rbrace_position.Line is non-zero at this point"))
 		if !lbrace_position.IsValid() {
 			return
 		}
@@ -2664,7 +3214,9 @@ func check_function_line_count(file_set *token.FileSet, file *ast.File, _ []byte
 		if line_count > max_function_lines {
 			diags = append(diags, Diagnostic{
 				Position: position,
-				Message:  fmt.Sprintf("%s is %d lines (max %d)", label, line_count, max_function_lines),
+				Message: fmt.Sprintf(
+					"%s is %d lines (max %d)",
+					label, line_count, max_function_lines),
 			})
 		}
 	}
@@ -2696,23 +3248,28 @@ func Check_Source(filename string, source any) (diags []Diagnostic, err error) {
 		})
 		filename_axis := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
 			X: len(filename), Lo: min_go_filename_chars, Hi: max_filesystem_path_chars,
-			Message: "Filename is bounded by filesystem path budget; shortest is a 4-char `a.go`",
+			Message: "Filename is bounded by filesystem path budget",
 		})
-		err_axis := invariant.Sometimes(err != nil, "Err is non-nil sometimes (parse failure)")
+		err_axis := invariant.Sometimes(
+			err != nil, "Err is non-nil sometimes (parse failure)")
 		// Diags at the diag-budget safety cap requires pathological input; a
 		// zero-diag parse failure on a 4-char or 4096-char filename never fires
 		// because parse failures attach at least one diagnostic.
 		invariant.Cross_Product(diags_boundary, filename_axis, err_axis,
 			invariant.Excluding("Diags at diag-budget at safety cap is bad",
-				invariant.Bucket_Hi(diags_boundary), invariant.Bucket_True(err_axis)),
+				invariant.Bucket_Hi(diags_boundary),
+				invariant.Bucket_True(err_axis)),
 			invariant.Excluding("Diags at diag-budget at safety cap is bad",
-				invariant.Bucket_Hi(diags_boundary), invariant.Bucket_False(err_axis)),
+				invariant.Bucket_Hi(diags_boundary),
+				invariant.Bucket_False(err_axis)),
 			invariant.Excluding("Parse error always attaches at least one diagnostic",
 				invariant.Bucket_Lo(diags_boundary),
-				invariant.Bucket_Lo(filename_axis), invariant.Bucket_True(err_axis)),
+				invariant.Bucket_Lo(filename_axis),
+				invariant.Bucket_True(err_axis)),
 			invariant.Excluding("Parse error always attaches at least one diagnostic",
 				invariant.Bucket_Lo(diags_boundary),
-				invariant.Bucket_Hi(filename_axis), invariant.Bucket_True(err_axis)),
+				invariant.Bucket_Hi(filename_axis),
+				invariant.Bucket_True(err_axis)),
 		)
 	}()
 	invariant.Cross_Product(
@@ -2720,12 +3277,13 @@ func Check_Source(filename string, source any) (diags []Diagnostic, err error) {
 			X:       len(filename),
 			Lo:      min_go_filename_chars,
 			Hi:      max_filesystem_path_chars,
-			Message: "Filename is bounded by filesystem path budget; shortest is a 4-char `a.go`",
+			Message: "Filename is bounded by filesystem path budget",
 		}),
 	)
 
 	file_set := token.NewFileSet()
-	file, err := parser.ParseFile(file_set, filename, source, parser.SkipObjectResolution|parser.ParseComments)
+	file, err := parser.ParseFile(
+		file_set, filename, source, parser.SkipObjectResolution|parser.ParseComments)
 	if err != nil {
 		return nil, err
 	}
@@ -2759,47 +3317,92 @@ type Check_File_System_Input struct {
 func Check_File_System(input *Check_File_System_Input) (diags []Diagnostic, err error) {
 	defer func() {
 		d := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
-			X: len(diags), Lo: 0, Hi: max_diagnostics_per_call, Message: "Diags is bounded by per-file diag budget"})
+			X:       len(diags),
+			Lo:      0,
+			Hi:      max_diagnostics_per_call,
+			Message: "Diags is bounded by per-file diag budget",
+		})
 		e := invariant.Sometimes(err != nil, "Err is non-nil sometimes")
-		root_axis := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: len(input.Root),
-			Lo: 0, Hi: max_filesystem_path_chars, Message: "Root is bounded by filesystem path budget"})
-		root_directory_axis := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: len(input.Root_Directory),
-			Lo: 0, Hi: max_filesystem_path_chars, Message: "Root_Directory is bounded by filesystem path budget"})
-		tracked_axis := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: len(input.Tracked),
-			Lo: 0, Hi: max_ast_nodes_per_call, Message: "Tracked is bounded by AST budget"})
+		root_axis := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
+			X:       len(input.Root),
+			Lo:      0,
+			Hi:      max_filesystem_path_chars,
+			Message: "Root is bounded by filesystem path budget",
+		})
+		root_directory_axis := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
+			X:       len(input.Root_Directory),
+			Lo:      0,
+			Hi:      max_filesystem_path_chars,
+			Message: "Root_Directory is bounded by filesystem path budget",
+		})
+		tracked_axis := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
+			X:       len(input.Tracked),
+			Lo:      0,
+			Hi:      max_ast_nodes_per_call,
+			Message: "Tracked is bounded by AST budget",
+		})
 		invariant.Cross_Product(d, e, root_axis, root_directory_axis, tracked_axis,
-			invariant.Excluding("Diags Hi (err true)", invariant.Bucket_Hi(d), invariant.Bucket_True(e)),
-			invariant.Excluding("Diags Hi (err false)", invariant.Bucket_Hi(d), invariant.Bucket_False(e)),
-			invariant.Excluding("FS error attaches diag", invariant.Bucket_Lo(d), invariant.Bucket_True(e)),
+			invariant.Excluding("Diags Hi (err true)",
+				invariant.Bucket_Hi(d), invariant.Bucket_True(e)),
+			invariant.Excluding("Diags Hi (err false)",
+				invariant.Bucket_Hi(d), invariant.Bucket_False(e)),
+			invariant.Excluding("FS error attaches diag",
+				invariant.Bucket_Lo(d), invariant.Bucket_True(e)),
 			invariant.Excluding("Hi Root unreachable",
-				invariant.Bucket_Hi(root_axis), invariant.Bucket_Hi(root_directory_axis)),
+				invariant.Bucket_Hi(root_axis),
+				invariant.Bucket_Hi(root_directory_axis)),
 			invariant.Excluding("Hi Root unreachable",
-				invariant.Bucket_Hi(root_axis), invariant.Bucket_Lo(root_directory_axis)),
+				invariant.Bucket_Hi(root_axis),
+				invariant.Bucket_Lo(root_directory_axis)),
 			invariant.Excluding("Hi RD unreachable",
-				invariant.Bucket_Hi(root_directory_axis), invariant.Bucket_Lo(root_axis)),
+				invariant.Bucket_Hi(root_directory_axis),
+				invariant.Bucket_Lo(root_axis)),
 			invariant.Excluding("Hi Tracked unreachable",
-				invariant.Bucket_Hi(tracked_axis), invariant.Bucket_Lo(root_axis)))
+				invariant.Bucket_Hi(tracked_axis),
+				invariant.Bucket_Lo(root_axis)))
 	}()
-	cpu_boundary := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: input.CPU_Count,
-		Lo: 0, Hi: cpu_count_max, Message: "CPU_Count is in the per-process worker budget"})
-	cpu_zero := invariant.Sometimes(input.CPU_Count == 0, "CPU_Count is zero in fstest.MapFS-backed callers")
-	root_axis := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: len(input.Root),
-		Lo: 0, Hi: max_filesystem_path_chars, Message: "Root is bounded by filesystem path budget"})
-	root_directory_axis := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: len(input.Root_Directory),
-		Lo: 0, Hi: max_filesystem_path_chars, Message: "Root_Directory is bounded by filesystem path budget"})
-	tracked_axis := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: len(input.Tracked),
-		Lo: 0, Hi: max_ast_nodes_per_call, Message: "Tracked is bounded by AST budget"})
+	cpu_boundary := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
+		X:       input.CPU_Count,
+		Lo:      0,
+		Hi:      cpu_count_max,
+		Message: "CPU_Count is in the per-process worker budget",
+	})
+	cpu_zero := invariant.Sometimes(
+		input.CPU_Count == 0, "CPU_Count is zero in fstest.MapFS-backed callers")
+	root_axis := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
+		X:       len(input.Root),
+		Lo:      0,
+		Hi:      max_filesystem_path_chars,
+		Message: "Root is bounded by filesystem path budget",
+	})
+	root_directory_axis := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
+		X:       len(input.Root_Directory),
+		Lo:      0,
+		Hi:      max_filesystem_path_chars,
+		Message: "Root_Directory is bounded by filesystem path budget",
+	})
+	tracked_axis := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
+		X:       len(input.Tracked),
+		Lo:      0,
+		Hi:      max_ast_nodes_per_call,
+		Message: "Tracked is bounded by AST budget",
+	})
 	invariant.Cross_Product(invariant.Always(input != nil, "Input is non-nil"),
 		cpu_boundary, cpu_zero, root_axis, root_directory_axis, tracked_axis,
 		invariant.Excluding("CPU zero implies cpu_zero true",
 			invariant.Bucket_Lo(cpu_boundary), invariant.Bucket_False(cpu_zero)),
 		invariant.Excluding("CPU max implies cpu_zero false",
 			invariant.Bucket_Hi(cpu_boundary), invariant.Bucket_True(cpu_zero)),
-		invariant.Excluding("Hi Root unreachable", invariant.Bucket_Hi(root_axis), invariant.Bucket_Hi(root_directory_axis)),
-		invariant.Excluding("Hi Root unreachable", invariant.Bucket_Hi(root_axis), invariant.Bucket_Lo(root_directory_axis)),
-		invariant.Excluding("Hi RD unreachable", invariant.Bucket_Hi(root_directory_axis), invariant.Bucket_Lo(root_axis)),
-		invariant.Excluding("Hi Tracked unreachable", invariant.Bucket_Hi(tracked_axis), invariant.Bucket_Lo(root_axis)),
-		invariant.Excluding("Hi Tracked unreachable", invariant.Bucket_Hi(tracked_axis), invariant.Bucket_Hi(root_axis)),
+		invariant.Excluding("Hi Root unreachable",
+			invariant.Bucket_Hi(root_axis), invariant.Bucket_Hi(root_directory_axis)),
+		invariant.Excluding("Hi Root unreachable",
+			invariant.Bucket_Hi(root_axis), invariant.Bucket_Lo(root_directory_axis)),
+		invariant.Excluding("Hi RD unreachable",
+			invariant.Bucket_Hi(root_directory_axis), invariant.Bucket_Lo(root_axis)),
+		invariant.Excluding("Hi Tracked unreachable",
+			invariant.Bucket_Hi(tracked_axis), invariant.Bucket_Lo(root_axis)),
+		invariant.Excluding("Hi Tracked unreachable",
+			invariant.Bucket_Hi(tracked_axis), invariant.Bucket_Hi(root_axis)),
 	)
 	root := input.Root
 	if root == "" {
@@ -2836,7 +3439,8 @@ func Check_File_System(input *Check_File_System_Input) (diags []Diagnostic, err 
 		return nil, err
 	}
 	parsed_files, parse_diags := check_file_system_parse_files(paths, sources, cpu_count)
-	invariant.Cross_Product(invariant.Sometimes(parsed_files == nil, "Parsed_files empty when zero files"),
+	invariant.Cross_Product(
+		invariant.Sometimes(parsed_files == nil, "Parsed_files empty when zero files"),
 		invariant.Sometimes(parse_diags == nil, "Parse_diags empty for clean parse"))
 	modules, err := build_module_index(input.Fsys, parsed_files)
 	invariant.Cross_Product(invariant.Always(modules != nil, "Modules is non-nil"),
@@ -2862,10 +3466,18 @@ func Check_File_System(input *Check_File_System_Input) (diags []Diagnostic, err 
 // callers can compare against nil to disable filtering.
 func check_file_system_directory_index(tracked map[string]bool) (output map[string]bool) {
 	defer func() {
-		t := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: len(tracked),
-			Lo: 0, Hi: max_parsed_files_per_call, Message: "Tracked is bounded by budget"})
-		o := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: len(output),
-			Lo: 0, Hi: max_parsed_files_per_call, Message: "Output is bounded by budget"})
+		t := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
+			X:       len(tracked),
+			Lo:      0,
+			Hi:      max_parsed_files_per_call,
+			Message: "Tracked is bounded by budget",
+		})
+		o := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
+			X:       len(output),
+			Lo:      0,
+			Hi:      max_parsed_files_per_call,
+			Message: "Output is bounded by budget",
+		})
 		// (Lo tracked, Hi output) is logically impossible: output ⊆
 		// ancestor-set(tracked), so output > tracked is unreachable for
 		// any input. (Hi tracked, *) tuples require a workspace at the
@@ -2880,9 +3492,14 @@ func check_file_system_directory_index(tracked map[string]bool) (output map[stri
 				invariant.Bucket_Lo(t), invariant.Bucket_Hi(o)),
 		)
 	}()
-	t := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: len(tracked),
-		Lo: 0, Hi: max_parsed_files_per_call, Message: "Tracked is bounded by budget"})
-	t_nil := invariant.Sometimes(tracked == nil, "Tracked is nil sometimes (callers can pass nil to disable filtering)")
+	t := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
+		X:       len(tracked),
+		Lo:      0,
+		Hi:      max_parsed_files_per_call,
+		Message: "Tracked is bounded by budget",
+	})
+	t_nil := invariant.Sometimes(
+		tracked == nil, "Tracked is nil sometimes (nil disables filtering)")
 	invariant.Cross_Product(t, t_nil,
 		invariant.Excluding("Tracked at parsed-files at safety cap is bad",
 			invariant.Bucket_Hi(t), invariant.Bucket_True(t_nil)),
@@ -2922,38 +3539,67 @@ func check_file_system_directory_index(tracked map[string]bool) (output map[stri
 func git_input_check(input Git_Input) (diags []Diagnostic) {
 	defer func() {
 		diags_boundary := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
-			X: len(diags), Lo: 0, Hi: max_diagnostics_per_call, Message: "Diags is bounded",
+			X:       len(diags),
+			Lo:      0,
+			Hi:      max_diagnostics_per_call,
+			Message: "Diags is bounded",
 		})
-		enabled_axis := invariant.Sometimes(input.Enabled, "Git history tier is enabled sometimes")
-		merge_axis := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: len(input.Merge_Commits),
-			Lo: 0, Hi: max_ast_nodes_per_call, Message: "Merge_commits is bounded by AST budget"})
-		non_merge_axis := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: len(input.Non_Merge_Commits),
-			Lo: 0, Hi: max_ast_nodes_per_call, Message: "Non_merge_commits is bounded by AST budget"})
+		enabled_axis := invariant.Sometimes(
+			input.Enabled, "Git history tier is enabled sometimes")
+		merge_axis := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
+			X:       len(input.Merge_Commits),
+			Lo:      0,
+			Hi:      max_ast_nodes_per_call,
+			Message: "Merge_commits is bounded by AST budget",
+		})
+		non_merge_axis := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
+			X:       len(input.Non_Merge_Commits),
+			Lo:      0,
+			Hi:      max_ast_nodes_per_call,
+			Message: "Non_merge_commits is bounded by AST budget",
+		})
 		invariant.Cross_Product(diags_boundary, enabled_axis, merge_axis, non_merge_axis,
 			invariant.Excluding("Hi diags with git enabled is bad",
-				invariant.Bucket_Hi(diags_boundary), invariant.Bucket_True(enabled_axis)),
+				invariant.Bucket_Hi(diags_boundary),
+				invariant.Bucket_True(enabled_axis)),
 			invariant.Excluding("Hi diags with git disabled is bad",
-				invariant.Bucket_Hi(diags_boundary), invariant.Bucket_False(enabled_axis)),
+				invariant.Bucket_Hi(diags_boundary),
+				invariant.Bucket_False(enabled_axis)),
 		)
 	}()
 	// Main_Reference_Absent only set when Enabled is true (see main_load_git);
 	// (Enabled=false, Main_Reference_Absent=true) is unreachable by construction.
 	enabled := invariant.Sometimes(input.Enabled, "Git history tier is enabled")
-	absent := invariant.Sometimes(input.Main_Reference_Absent, "Main reference is absent on shallow checkouts")
-	mc := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: len(input.Merge_Commits),
-		Lo: 0, Hi: max_ast_nodes_per_call, Message: "Merge_commits is bounded by AST budget"})
-	mc_empty := invariant.Sometimes(len(input.Merge_Commits) == 0, "Merge_commits is empty sometimes")
-	nmc := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: len(input.Non_Merge_Commits),
-		Lo: 0, Hi: max_ast_nodes_per_call, Message: "Non_merge_commits is bounded by AST budget"})
-	nmc_empty := invariant.Sometimes(len(input.Non_Merge_Commits) == 0, "Non_merge_commits is empty sometimes")
+	absent := invariant.Sometimes(
+		input.Main_Reference_Absent, "Main reference is absent on shallow checkouts")
+	mc := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
+		X:       len(input.Merge_Commits),
+		Lo:      0,
+		Hi:      max_ast_nodes_per_call,
+		Message: "Merge_commits is bounded by AST budget",
+	})
+	mc_empty := invariant.Sometimes(
+		len(input.Merge_Commits) == 0, "Merge_commits is empty sometimes")
+	nmc := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
+		X:       len(input.Non_Merge_Commits),
+		Lo:      0,
+		Hi:      max_ast_nodes_per_call,
+		Message: "Non_merge_commits is bounded by AST budget",
+	})
+	nmc_empty := invariant.Sometimes(
+		len(input.Non_Merge_Commits) == 0, "Non_merge_commits is empty sometimes")
 	invariant.Cross_Product(
 		enabled, absent, mc, mc_empty, nmc, nmc_empty,
 		invariant.Excluding("Main_Reference_Absent only set when Enabled true",
 			invariant.Bucket_False(enabled), invariant.Bucket_True(absent)),
-		invariant.Excluding("Hi mc implies non-empty", invariant.Bucket_Hi(mc), invariant.Bucket_True(mc_empty)),
-		invariant.Excluding("Lo mc implies empty true", invariant.Bucket_Lo(mc), invariant.Bucket_False(mc_empty)),
-		invariant.Excluding("Hi nmc implies non-empty", invariant.Bucket_Hi(nmc), invariant.Bucket_True(nmc_empty)),
-		invariant.Excluding("Lo nmc implies empty true", invariant.Bucket_Lo(nmc), invariant.Bucket_False(nmc_empty)),
+		invariant.Excluding("Hi mc implies non-empty",
+			invariant.Bucket_Hi(mc), invariant.Bucket_True(mc_empty)),
+		invariant.Excluding("Lo mc implies empty true",
+			invariant.Bucket_Lo(mc), invariant.Bucket_False(mc_empty)),
+		invariant.Excluding("Hi nmc implies non-empty",
+			invariant.Bucket_Hi(nmc), invariant.Bucket_True(nmc_empty)),
+		invariant.Excluding("Lo nmc implies empty true",
+			invariant.Bucket_Lo(nmc), invariant.Bucket_False(nmc_empty)),
 	)
 	if !input.Enabled {
 		return nil
@@ -2963,7 +3609,8 @@ func git_input_check(input Git_Input) (diags []Diagnostic) {
 			Position: token.Position{Filename: "<git>"},
 			Name:     "git-main-ref",
 			Want:     "main ref reachable from HEAD",
-			Message:  "main ref not found; fetch main or set actions/checkout fetch-depth: 0",
+			Message: "main ref not found; fetch main or " +
+				"set actions/checkout fetch-depth: 0",
 		}}
 	}
 	diags = append(diags, git_input_check_merge_diagnostics(input.Merge_Commits)...)
@@ -2977,35 +3624,56 @@ func git_input_check(input Git_Input) (diags []Diagnostic) {
 // the length cap.
 func git_input_check_merge_diagnostics(commits []Git_Commit) (diags []Diagnostic) {
 	defer func() {
-		d := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: len(diags),
-			Lo: 0, Hi: max_diagnostics_per_call, Message: "Diags is bounded by budget"})
-		c := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: len(commits),
-			Lo: 0, Hi: max_ast_nodes_per_call, Message: "Commits is bounded by AST budget"})
+		d := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
+			X:       len(diags),
+			Lo:      0,
+			Hi:      max_diagnostics_per_call,
+			Message: "Diags is bounded by budget",
+		})
+		c := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
+			X:       len(commits),
+			Lo:      0,
+			Hi:      max_ast_nodes_per_call,
+			Message: "Commits is bounded by AST budget",
+		})
 		c_empty := invariant.Sometimes(len(commits) == 0, "Commits is empty sometimes")
 		invariant.Cross_Product(d, c, c_empty,
-			invariant.Excluding("Hi c implies non-empty", invariant.Bucket_Hi(c), invariant.Bucket_True(c_empty)),
-			invariant.Excluding("Lo c implies empty true", invariant.Bucket_Lo(c), invariant.Bucket_False(c_empty)),
-			invariant.Excluding("Hi d with empty commits unreachable", invariant.Bucket_Hi(d), invariant.Bucket_True(c_empty)),
-			invariant.Excluding("Hi d with commits unreachable", invariant.Bucket_Hi(d), invariant.Bucket_False(c_empty)),
+			invariant.Excluding("Hi c implies non-empty",
+				invariant.Bucket_Hi(c), invariant.Bucket_True(c_empty)),
+			invariant.Excluding("Lo c implies empty true",
+				invariant.Bucket_Lo(c), invariant.Bucket_False(c_empty)),
+			invariant.Excluding("Hi d with empty commits unreachable",
+				invariant.Bucket_Hi(d), invariant.Bucket_True(c_empty)),
+			invariant.Excluding("Hi d with commits unreachable",
+				invariant.Bucket_Hi(d), invariant.Bucket_False(c_empty)),
 		)
 	}()
-	cc := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: len(commits),
-		Lo: 0, Hi: max_ast_nodes_per_call, Message: "Commits is bounded by AST budget"})
+	cc := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
+		X:       len(commits),
+		Lo:      0,
+		Hi:      max_ast_nodes_per_call,
+		Message: "Commits is bounded by AST budget",
+	})
 	cc_empty := invariant.Sometimes(len(commits) == 0, "Commits is empty sometimes")
 	invariant.Cross_Product(cc, cc_empty,
-		invariant.Excluding("Hi cc implies non-empty", invariant.Bucket_Hi(cc), invariant.Bucket_True(cc_empty)),
-		invariant.Excluding("Lo cc implies empty true", invariant.Bucket_Lo(cc), invariant.Bucket_False(cc_empty)),
+		invariant.Excluding("Hi cc implies non-empty",
+			invariant.Bucket_Hi(cc), invariant.Bucket_True(cc_empty)),
+		invariant.Excluding("Lo cc implies empty true",
+			invariant.Bucket_Lo(cc), invariant.Bucket_False(cc_empty)),
 	)
 	for _, c := range commits {
 		if c.Subject == "" {
 			continue
 		}
+		filename := "<git:" + git_input_check_short_hash(c.Hash) + ">"
 		if len(c.Subject) > max_commit_subject_chars {
 			diags = append(diags, Diagnostic{
-				Position: token.Position{Filename: "<git:" + git_input_check_short_hash(c.Hash) + ">"},
+				Position: token.Position{Filename: filename},
 				Name:     "commit-subject-length",
 				Want:     fmt.Sprintf("subject ≤ %d chars", max_commit_subject_chars),
-				Message:  fmt.Sprintf("commit subject is %d chars (max %d)", len(c.Subject), max_commit_subject_chars),
+				Message: fmt.Sprintf(
+					"commit subject is %d chars (max %d)",
+					len(c.Subject), max_commit_subject_chars),
 			})
 			// Helpers below assert subject ≤ max_commit_subject_chars as
 			// a precondition; over-limit subjects are fully diagnosed by
@@ -3016,10 +3684,11 @@ func git_input_check_merge_diagnostics(commits []Git_Commit) (diags []Diagnostic
 			continue
 		}
 		diags = append(diags, Diagnostic{
-			Position: token.Position{Filename: "<git:" + git_input_check_short_hash(c.Hash) + ">"},
+			Position: token.Position{Filename: filename},
 			Name:     "no-merge-commits",
-			Want:     "rebase onto main: git fetch origin main && git rebase origin/main",
-			Message:  "merge commit on branch: " + c.Subject,
+			Want: "rebase onto main: git fetch origin main && " +
+				"git rebase origin/main",
+			Message: "merge commit on branch: " + c.Subject,
 		})
 	}
 	return diags
@@ -3030,41 +3699,64 @@ func git_input_check_merge_diagnostics(commits []Git_Commit) (diags []Diagnostic
 // the same length-cap reason as the merge variant.
 func git_input_check_non_merge_diagnostics(commits []Git_Commit) (diags []Diagnostic) {
 	defer func() {
-		d := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: len(diags),
-			Lo: 0, Hi: max_diagnostics_per_call, Message: "Diags is bounded by budget"})
-		c := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: len(commits),
-			Lo: 0, Hi: max_ast_nodes_per_call, Message: "Commits is bounded by AST budget"})
+		d := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
+			X:       len(diags),
+			Lo:      0,
+			Hi:      max_diagnostics_per_call,
+			Message: "Diags is bounded by budget",
+		})
+		c := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
+			X:       len(commits),
+			Lo:      0,
+			Hi:      max_ast_nodes_per_call,
+			Message: "Commits is bounded by AST budget",
+		})
 		c_empty := invariant.Sometimes(len(commits) == 0, "Commits is empty sometimes")
 		invariant.Cross_Product(d, c, c_empty,
-			invariant.Excluding("Hi c implies non-empty", invariant.Bucket_Hi(c), invariant.Bucket_True(c_empty)),
-			invariant.Excluding("Lo c implies empty true", invariant.Bucket_Lo(c), invariant.Bucket_False(c_empty)),
-			invariant.Excluding("Hi d with empty commits unreachable", invariant.Bucket_Hi(d), invariant.Bucket_True(c_empty)),
-			invariant.Excluding("Hi d with commits unreachable", invariant.Bucket_Hi(d), invariant.Bucket_False(c_empty)),
+			invariant.Excluding("Hi c implies non-empty",
+				invariant.Bucket_Hi(c), invariant.Bucket_True(c_empty)),
+			invariant.Excluding("Lo c implies empty true",
+				invariant.Bucket_Lo(c), invariant.Bucket_False(c_empty)),
+			invariant.Excluding("Hi d with empty commits unreachable",
+				invariant.Bucket_Hi(d), invariant.Bucket_True(c_empty)),
+			invariant.Excluding("Hi d with commits unreachable",
+				invariant.Bucket_Hi(d), invariant.Bucket_False(c_empty)),
 		)
 	}()
-	cc := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: len(commits),
-		Lo: 0, Hi: max_ast_nodes_per_call, Message: "Commits is bounded by AST budget"})
+	cc := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
+		X:       len(commits),
+		Lo:      0,
+		Hi:      max_ast_nodes_per_call,
+		Message: "Commits is bounded by AST budget",
+	})
 	cc_empty := invariant.Sometimes(len(commits) == 0, "Commits is empty sometimes")
 	invariant.Cross_Product(cc, cc_empty,
-		invariant.Excluding("Hi cc implies non-empty", invariant.Bucket_Hi(cc), invariant.Bucket_True(cc_empty)),
-		invariant.Excluding("Lo cc implies empty true", invariant.Bucket_Lo(cc), invariant.Bucket_False(cc_empty)),
+		invariant.Excluding("Hi cc implies non-empty",
+			invariant.Bucket_Hi(cc), invariant.Bucket_True(cc_empty)),
+		invariant.Excluding("Lo cc implies empty true",
+			invariant.Bucket_Lo(cc), invariant.Bucket_False(cc_empty)),
 	)
 	for _, c := range commits {
 		if c.Subject == "" {
 			continue
 		}
 		if len(c.Subject) > max_commit_subject_chars {
+			filename := "<git:" + git_input_check_short_hash(c.Hash) + ">"
 			diags = append(diags, Diagnostic{
-				Position: token.Position{Filename: "<git:" + git_input_check_short_hash(c.Hash) + ">"},
+				Position: token.Position{Filename: filename},
 				Name:     "commit-subject-length",
-				Want:     fmt.Sprintf("subject ≤ %d chars", max_commit_subject_chars),
-				Message:  fmt.Sprintf("commit subject is %d chars (max %d)", len(c.Subject), max_commit_subject_chars),
+				Want: fmt.Sprintf(
+					"subject ≤ %d chars", max_commit_subject_chars),
+				Message: fmt.Sprintf(
+					"commit subject is %d chars (max %d)",
+					len(c.Subject), max_commit_subject_chars),
 			})
 			continue
 		}
 		if git_input_check_is_fixup_subject(c.Subject) {
+			filename := "<git:" + git_input_check_short_hash(c.Hash) + ">"
 			diags = append(diags, Diagnostic{
-				Position: token.Position{Filename: "<git:" + git_input_check_short_hash(c.Hash) + ">"},
+				Position: token.Position{Filename: filename},
 				Name:     "no-fixup-commits",
 				Want:     "autosquash: git rebase -i --autosquash origin/main",
 				Message:  "fixup commit on branch: " + c.Subject,
@@ -3076,11 +3768,13 @@ func git_input_check_non_merge_diagnostics(commits []Git_Commit) (diags []Diagno
 			continue
 		}
 		if !conventional_commit_re.MatchString(c.Subject) {
+			filename := "<git:" + git_input_check_short_hash(c.Hash) + ">"
 			diags = append(diags, Diagnostic{
-				Position: token.Position{Filename: "<git:" + git_input_check_short_hash(c.Hash) + ">"},
+				Position: token.Position{Filename: filename},
 				Name:     "conventional-commits",
-				Want:     "subject like: type(scope)?!?: description (https://www.conventionalcommits.org/)",
-				Message:  "non-conventional commit subject: " + c.Subject,
+				Want: "subject like: type(scope)?!?: description " +
+					"(https://www.conventionalcommits.org/)",
+				Message: "non-conventional commit subject: " + c.Subject,
 			})
 		}
 	}
@@ -3187,7 +3881,7 @@ func git_input_check_short_hash(h string) (s string) {
 				X:       len(s),
 				Lo:      0,
 				Hi:      git_short_hash_chars,
-				Message: "S is the short-hash output; capped at git_short_hash_chars",
+				Message: "S is the short-hash, capped at git_short_hash_chars",
 			}),
 		)
 	}()
@@ -3235,19 +3929,23 @@ func check_file_system_package_split(parsed_files []parsed_file) (diags []Diagno
 		})
 		invariant.Cross_Product(
 			diags_boundary, parsed_files_boundary,
-			invariant.Excluding("Diags at diag-budget cap with parsed_files at file-budget cap is bad",
-				invariant.Bucket_Hi(diags_boundary), invariant.Bucket_Hi(parsed_files_boundary)),
+			invariant.Excluding("Diags and parsed_files both at safety cap is bad",
+				invariant.Bucket_Hi(diags_boundary),
+				invariant.Bucket_Hi(parsed_files_boundary)),
 			invariant.Excluding("Diags at safety cap with zero parsed_files is bad",
-				invariant.Bucket_Hi(diags_boundary), invariant.Bucket_Lo(parsed_files_boundary)),
+				invariant.Bucket_Hi(diags_boundary),
+				invariant.Bucket_Lo(parsed_files_boundary)),
 			invariant.Excluding("Parsed_files at safety cap with zero diags is bad",
-				invariant.Bucket_Lo(diags_boundary), invariant.Bucket_Hi(parsed_files_boundary)),
+				invariant.Bucket_Lo(diags_boundary),
+				invariant.Bucket_Hi(parsed_files_boundary)),
 		)
 	}()
 	parsed_files_axis := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
 		X: len(parsed_files), Lo: 0, Hi: max_parsed_files_per_call,
 		Message: "Parsed_files is bounded by per-package file budget",
 	})
-	files_empty_axis := invariant.Sometimes(len(parsed_files) == 0, "Parsed_files is empty sometimes")
+	files_empty_axis := invariant.Sometimes(
+		len(parsed_files) == 0, "Parsed_files is empty sometimes")
 	invariant.Cross_Product(parsed_files_axis, files_empty_axis,
 		// Empty parsed_files ↔ Lo bucket, so (Hi, True) and (Lo, False)
 		// are logically impossible (the empty flag is fully determined
@@ -3255,11 +3953,14 @@ func check_file_system_package_split(parsed_files []parsed_file) (diags []Diagno
 		// workspace at the max_parsed_files_per_call safety cap — that
 		// endpoint bounds runaway scans, not normal workspace sizes.
 		invariant.Excluding("Parsed_files at safety cap contradicts empty true",
-			invariant.Bucket_Hi(parsed_files_axis), invariant.Bucket_True(files_empty_axis)),
+			invariant.Bucket_Hi(parsed_files_axis),
+			invariant.Bucket_True(files_empty_axis)),
 		invariant.Excluding("Parsed_files at safety cap is bad",
-			invariant.Bucket_Hi(parsed_files_axis), invariant.Bucket_False(files_empty_axis)),
+			invariant.Bucket_Hi(parsed_files_axis),
+			invariant.Bucket_False(files_empty_axis)),
 		invariant.Excluding("Zero parsed_files implies empty true",
-			invariant.Bucket_Lo(parsed_files_axis), invariant.Bucket_False(files_empty_axis)),
+			invariant.Bucket_Lo(parsed_files_axis),
+			invariant.Bucket_False(files_empty_axis)),
 	)
 	groups := map[package_group_key]*package_group_state{}
 	for _, pf := range parsed_files {
@@ -3275,7 +3976,8 @@ func check_file_system_package_split(parsed_files []parsed_file) (diags []Diagno
 		}
 		st.Files = append(st.Files, pf)
 		tok := pf.File_Set.File(pf.File.Pos())
-		invariant.Cross_Product(invariant.Always(tok != nil, "Tok is non-nil at this point"))
+		invariant.Cross_Product(
+			invariant.Always(tok != nil, "Tok is non-nil at this point"))
 		if tok != nil {
 			st.Lines += tok.LineCount()
 		}
@@ -3318,18 +4020,30 @@ func package_group_key_diag(
 		// Cross_Products in the same defer frame.
 		invariant.Cross_Product(
 			invariant.Always(diag.Tier == 0, "Tier is 0 at construction"),
-			invariant.Always(diag.Name == "", "Diag.Name is empty for package-group diagnostics"),
-			invariant.Always(len(diag.Name) == package_group_diag_chars, "Diag.Name is the fixed empty width"),
-			invariant.Always(diag.Want == "", "Diag.Want is empty for package-group diagnostics"),
-			invariant.Always(len(diag.Want) == package_group_diag_chars, "Diag.Want is the fixed empty width"),
-			invariant.Always(diag.Message != "", "Diag.Message is non-empty for package-group diagnostics"),
+			invariant.Always(diag.Name == "",
+				"Diag.Name is empty for package-group diagnostics"),
+			invariant.Always(len(diag.Name) == package_group_diag_chars,
+				"Diag.Name is the fixed empty width"),
+			invariant.Always(diag.Want == "",
+				"Diag.Want is empty for package-group diagnostics"),
+			invariant.Always(len(diag.Want) == package_group_diag_chars,
+				"Diag.Want is the fixed empty width"),
+			invariant.Always(diag.Message != "",
+				"Diag.Message is non-empty for package-group diagnostics"),
 		)
-		files_d := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: len(st.Files),
-			Lo: min_pair, Hi: max_parsed_files_per_call, Message: "St.Files is ≥2 when the over-quota diag fires"})
-		files_d_test := invariant.Sometimes(key.Is_Test, "Group is a test package sometimes")
+		files_d := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
+			X:       len(st.Files),
+			Lo:      min_pair,
+			Hi:      max_parsed_files_per_call,
+			Message: "St.Files is ≥2 when the over-quota diag fires",
+		})
+		files_d_test := invariant.Sometimes(
+			key.Is_Test, "Group is a test package sometimes")
 		invariant.Cross_Product(files_d, files_d_test,
-			invariant.Excluding("Hi fd source", invariant.Bucket_Hi(files_d), invariant.Bucket_False(files_d_test)),
-			invariant.Excluding("Hi fd in test", invariant.Bucket_Hi(files_d), invariant.Bucket_True(files_d_test)),
+			invariant.Excluding("Hi fd source",
+				invariant.Bucket_Hi(files_d), invariant.Bucket_False(files_d_test)),
+			invariant.Excluding("Hi fd in test",
+				invariant.Bucket_Hi(files_d), invariant.Bucket_True(files_d_test)),
 		)
 	}()
 	lines_boundary := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
@@ -3350,30 +4064,51 @@ func package_group_key_diag(
 		// Lines <= 10 (Hi) keeps max_files = ceil(Lines/30000) at Lo=1; the
 		// two max_files=Hi tuples are therefore impossible.
 		invariant.Excluding("Hi lines keeps max_files at Lo bucket",
-			invariant.Bucket_Lo(lines_boundary), invariant.Bucket_Hi(max_files_boundary)),
+			invariant.Bucket_Lo(lines_boundary),
+			invariant.Bucket_Hi(max_files_boundary)),
 		invariant.Excluding("Hi lines keeps max_files at Lo bucket",
-			invariant.Bucket_Hi(lines_boundary), invariant.Bucket_Hi(max_files_boundary)),
+			invariant.Bucket_Hi(lines_boundary),
+			invariant.Bucket_Hi(max_files_boundary)),
 	)
-	files := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: len(st.Files),
-		Lo: min_pair, Hi: max_parsed_files_per_call, Message: "St.Files is ≥2 when the over-quota diag fires"})
+	files := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
+		X:       len(st.Files),
+		Lo:      min_pair,
+		Hi:      max_parsed_files_per_call,
+		Message: "St.Files is ≥2 when the over-quota diag fires",
+	})
 	files_is_test := invariant.Sometimes(key.Is_Test, "Group is a test package sometimes")
 	invariant.Cross_Product(files, files_is_test,
-		invariant.Excluding("Hi files unreachable (source)", invariant.Bucket_Hi(files), invariant.Bucket_False(files_is_test)),
-		invariant.Excluding("Hi files unreachable (test)", invariant.Bucket_Hi(files), invariant.Bucket_True(files_is_test)),
+		invariant.Excluding("Hi files unreachable (source)",
+			invariant.Bucket_Hi(files), invariant.Bucket_False(files_is_test)),
+		invariant.Excluding("Hi files unreachable (test)",
+			invariant.Bucket_Hi(files), invariant.Bucket_True(files_is_test)),
 	)
-	build := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: len(key.Build),
-		Lo: 0, Hi: max_build_constraint_key_chars, Message: "Key.Build is empty or a normalized build constraint"})
+	build := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
+		X:       len(key.Build),
+		Lo:      0,
+		Hi:      max_build_constraint_key_chars,
+		Message: "Key.Build is empty or a normalized build constraint",
+	})
 	build_is_test := invariant.Sometimes(key.Is_Test, "Group is a test package sometimes")
 	invariant.Cross_Product(build, build_is_test,
-		invariant.Excluding("Hi build unreachable (source)", invariant.Bucket_Hi(build), invariant.Bucket_False(build_is_test)),
-		invariant.Excluding("Hi build unreachable (test)", invariant.Bucket_Hi(build), invariant.Bucket_True(build_is_test)),
+		invariant.Excluding("Hi build unreachable (source)",
+			invariant.Bucket_Hi(build), invariant.Bucket_False(build_is_test)),
+		invariant.Excluding("Hi build unreachable (test)",
+			invariant.Bucket_Hi(build), invariant.Bucket_True(build_is_test)),
 	)
-	directory_axis := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: len(key.Directory),
-		Lo: min_non_empty, Hi: max_filesystem_path_chars, Message: "Key.Directory is a non-empty package path"})
+	directory_axis := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
+		X:       len(key.Directory),
+		Lo:      min_non_empty,
+		Hi:      max_filesystem_path_chars,
+		Message: "Key.Directory is a non-empty package path",
+	})
 	directory_test := invariant.Sometimes(key.Is_Test, "Group is a test package sometimes")
 	invariant.Cross_Product(directory_axis, directory_test,
-		invariant.Excluding("Hi directory src", invariant.Bucket_Hi(directory_axis), invariant.Bucket_False(directory_test)),
-		invariant.Excluding("Hi directory test", invariant.Bucket_Hi(directory_axis), invariant.Bucket_True(directory_test)),
+		invariant.Excluding("Hi directory src",
+			invariant.Bucket_Hi(directory_axis),
+			invariant.Bucket_False(directory_test)),
+		invariant.Excluding("Hi directory test",
+			invariant.Bucket_Hi(directory_axis), invariant.Bucket_True(directory_test)),
 	)
 
 	label := "source"
@@ -3388,7 +4123,8 @@ func package_group_key_diag(
 	return Diagnostic{
 		Position: token.Position{Filename: first.Path, Line: 1, Column: 1},
 		Message: fmt.Sprintf(
-			"package %s in %s has %d %s files%s totaling %d lines; max %d (one file per %d lines)",
+			"package %s in %s has %d %s files%s totaling %d lines; "+
+				"max %d (one file per %d lines)",
 			first.File.Name.Name, key.Directory, len(st.Files), label, build_suffix,
 			st.Lines, max_files, max_lines_per_file,
 		),
@@ -3404,8 +4140,10 @@ func check_file_system_package_split_build_key(file *ast.File) (key string) {
 	defer func() {
 		invariant.Cross_Product(
 			invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
-				X: len(key), Lo: 0, Hi: max_build_constraint_key_chars,
-				Message: "Key is the normalized build constraint AST; sized for typical multi-OS multi-arch expressions",
+				X:       len(key),
+				Lo:      0,
+				Hi:      max_build_constraint_key_chars,
+				Message: "Key is the normalized build constraint AST",
 			}),
 		)
 	}()
@@ -3450,32 +4188,48 @@ func check_file_system_package_split_build_key(file *ast.File) (key string) {
 func check_file_system_method_prefix(parsed_files []parsed_file) (diags []Diagnostic) {
 	defer func() {
 		diags_boundary := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
-			X: len(diags), Lo: 0, Hi: max_diagnostics_per_call, Message: "Diags is bounded",
+			X:       len(diags),
+			Lo:      0,
+			Hi:      max_diagnostics_per_call,
+			Message: "Diags is bounded",
 		})
 		parsed_files_boundary := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
-			X: len(parsed_files), Lo: 0, Hi: max_parsed_files_per_call, Message: "Parsed_files is bounded",
+			X:       len(parsed_files),
+			Lo:      0,
+			Hi:      max_parsed_files_per_call,
+			Message: "Parsed_files is bounded",
 		})
 		invariant.Cross_Product(
 			diags_boundary, parsed_files_boundary,
-			invariant.Excluding("Diags at diag-budget cap with parsed_files at file-budget cap is bad",
-				invariant.Bucket_Hi(diags_boundary), invariant.Bucket_Hi(parsed_files_boundary)),
+			invariant.Excluding("Diags and parsed_files both at safety cap is bad",
+				invariant.Bucket_Hi(diags_boundary),
+				invariant.Bucket_Hi(parsed_files_boundary)),
 			invariant.Excluding("Diags at safety cap with zero parsed_files is bad",
-				invariant.Bucket_Hi(diags_boundary), invariant.Bucket_Lo(parsed_files_boundary)),
+				invariant.Bucket_Hi(diags_boundary),
+				invariant.Bucket_Lo(parsed_files_boundary)),
 			invariant.Excluding("Parsed_files at safety cap with zero diags is bad",
-				invariant.Bucket_Lo(diags_boundary), invariant.Bucket_Hi(parsed_files_boundary)),
+				invariant.Bucket_Lo(diags_boundary),
+				invariant.Bucket_Hi(parsed_files_boundary)),
 		)
 	}()
 	parsed_files_axis := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
-		X: len(parsed_files), Lo: 0, Hi: max_parsed_files_per_call, Message: "Parsed_files is bounded",
+		X:       len(parsed_files),
+		Lo:      0,
+		Hi:      max_parsed_files_per_call,
+		Message: "Parsed_files is bounded",
 	})
-	files_empty_axis := invariant.Sometimes(len(parsed_files) == 0, "Parsed_files is empty sometimes")
+	files_empty_axis := invariant.Sometimes(
+		len(parsed_files) == 0, "Parsed_files is empty sometimes")
 	invariant.Cross_Product(parsed_files_axis, files_empty_axis,
 		invariant.Excluding("Parsed_files at safety cap contradicts empty true",
-			invariant.Bucket_Hi(parsed_files_axis), invariant.Bucket_True(files_empty_axis)),
+			invariant.Bucket_Hi(parsed_files_axis),
+			invariant.Bucket_True(files_empty_axis)),
 		invariant.Excluding("Parsed_files at safety cap is bad",
-			invariant.Bucket_Hi(parsed_files_axis), invariant.Bucket_False(files_empty_axis)),
+			invariant.Bucket_Hi(parsed_files_axis),
+			invariant.Bucket_False(files_empty_axis)),
 		invariant.Excluding("Zero parsed_files implies empty true",
-			invariant.Bucket_Lo(parsed_files_axis), invariant.Bucket_False(files_empty_axis)),
+			invariant.Bucket_Lo(parsed_files_axis),
+			invariant.Bucket_False(files_empty_axis)),
 	)
 	type key struct {
 		Dir     string
@@ -3512,10 +4266,18 @@ func check_file_system_method_prefix(parsed_files []parsed_file) (diags []Diagno
 
 func check_file_system_method_prefix_group(files []parsed_file) (diags []Diagnostic) {
 	defer func() {
-		d := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: len(diags), Lo: 0,
-			Hi: max_diagnostics_per_call, Message: "Diags is bounded by budget"})
-		f := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: len(files), Lo: min_non_empty,
-			Hi: max_parsed_files_per_call, Message: "Files is ≥1 per group"})
+		d := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
+			X:       len(diags),
+			Lo:      0,
+			Hi:      max_diagnostics_per_call,
+			Message: "Diags is bounded by budget",
+		})
+		f := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
+			X:       len(files),
+			Lo:      min_non_empty,
+			Hi:      max_parsed_files_per_call,
+			Message: "Files is ≥1 per group",
+		})
 		invariant.Cross_Product(d, f,
 			invariant.Excluding("Diags at safety cap with files at safety cap is bad",
 				invariant.Bucket_Hi(d), invariant.Bucket_Hi(f)),
@@ -3525,9 +4287,14 @@ func check_file_system_method_prefix_group(files []parsed_file) (diags []Diagnos
 				invariant.Bucket_Lo(d), invariant.Bucket_Hi(f)),
 		)
 	}()
-	f := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: len(files), Lo: min_non_empty,
-		Hi: max_parsed_files_per_call, Message: "Files is ≥1 per group"})
-	single_axis := invariant.Sometimes(len(files) == count_one, "Files has exactly one file sometimes (single-file group)")
+	f := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
+		X:       len(files),
+		Lo:      min_non_empty,
+		Hi:      max_parsed_files_per_call,
+		Message: "Files is ≥1 per group",
+	})
+	single_axis := invariant.Sometimes(
+		len(files) == count_one, "Files has exactly one file sometimes (single-file group)")
 	invariant.Cross_Product(f, single_axis,
 		invariant.Excluding("Files at safety cap contradicts single true",
 			invariant.Bucket_Hi(f), invariant.Bucket_True(single_axis)),
@@ -3542,7 +4309,8 @@ func check_file_system_method_prefix_group(files []parsed_file) (diags []Diagnos
 		return nil
 	}
 	for _, pf := range files {
-		diags = append(diags, check_file_system_method_prefix_group_for_file(declared, pf)...)
+		diags = append(diags,
+			check_file_system_method_prefix_group_for_file(declared, pf)...)
 	}
 	sort.Slice(diags, func(i, j int) (less bool) {
 		if diags[i].Position.Filename != diags[j].Position.Filename {
@@ -3555,14 +4323,24 @@ func check_file_system_method_prefix_group(files []parsed_file) (diags []Diagnos
 
 // Returns the set of type names declared across files; used by the prefix
 // check to scope its "free function over a custom type" search.
-func check_file_system_method_prefix_group_declared(files []parsed_file) (declared map[string]bool) {
+func check_file_system_method_prefix_group_declared(
+	files []parsed_file,
+) (declared map[string]bool) {
 	defer func() {
-		f := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: len(files),
-			Lo: min_non_empty, Hi: max_parsed_files_per_call, Message: "Files is ≥1 per group"})
-		d := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: len(declared),
-			Lo: 0, Hi: max_ast_nodes_per_call, Message: "Declared is bounded by budget"})
+		f := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
+			X:       len(files),
+			Lo:      min_non_empty,
+			Hi:      max_parsed_files_per_call,
+			Message: "Files is ≥1 per group",
+		})
+		d := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
+			X:       len(declared),
+			Lo:      0,
+			Hi:      max_ast_nodes_per_call,
+			Message: "Declared is bounded by budget",
+		})
 		invariant.Cross_Product(f, d,
-			invariant.Excluding("Files at file-budget cap with declared at AST cap is bad",
+			invariant.Excluding("Files and declared both at safety cap is bad",
 				invariant.Bucket_Hi(f), invariant.Bucket_Hi(d)),
 			invariant.Excluding("Files at safety cap with zero declared types is bad",
 				invariant.Bucket_Hi(f), invariant.Bucket_Lo(d)),
@@ -3570,9 +4348,14 @@ func check_file_system_method_prefix_group_declared(files []parsed_file) (declar
 				invariant.Bucket_Lo(f), invariant.Bucket_Hi(d)),
 		)
 	}()
-	f := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: len(files),
-		Lo: min_non_empty, Hi: max_parsed_files_per_call, Message: "Files is ≥1 per group"})
-	single_axis := invariant.Sometimes(len(files) == count_one, "Files has exactly one file sometimes (single-file group)")
+	f := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
+		X:       len(files),
+		Lo:      min_non_empty,
+		Hi:      max_parsed_files_per_call,
+		Message: "Files is ≥1 per group",
+	})
+	single_axis := invariant.Sometimes(
+		len(files) == count_one, "Files has exactly one file sometimes (single-file group)")
 	invariant.Cross_Product(f, single_axis,
 		invariant.Excluding("Files at safety cap contradicts single true",
 			invariant.Bucket_Hi(f), invariant.Bucket_True(single_axis)),
@@ -3592,11 +4375,11 @@ func check_file_system_method_prefix_group_declared(files []parsed_file) (declar
 				continue
 			}
 			for _, specification := range gd.Specs {
-				type_specificationification, is_type_specificationification := specification.(*ast.TypeSpec)
-				if !is_type_specificationification {
+				type_spec, is_type_spec := specification.(*ast.TypeSpec)
+				if !is_type_spec {
 					continue
 				}
-				declared[type_specificationification.Name.Name] = true
+				declared[type_spec.Name.Name] = true
 			}
 		}
 	}
@@ -3605,14 +4388,24 @@ func check_file_system_method_prefix_group_declared(files []parsed_file) (declar
 
 // Emits per-file prefix-violation diagnostics for the free functions whose
 // first parameter type is in `declared`.
-func check_file_system_method_prefix_group_for_file(declared map[string]bool, pf parsed_file) (diags []Diagnostic) {
+func check_file_system_method_prefix_group_for_file(
+	declared map[string]bool, pf parsed_file,
+) (diags []Diagnostic) {
 	defer func() {
-		d := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: len(diags), Lo: 0,
-			Hi: max_diagnostics_per_call, Message: "Diags is bounded by budget"})
-		dc := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: len(declared),
-			Lo: min_non_empty, Hi: max_ast_nodes_per_call, Message: "Declared is ≥1 (caller gates empty)"})
+		d := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
+			X:       len(diags),
+			Lo:      0,
+			Hi:      max_diagnostics_per_call,
+			Message: "Diags is bounded by budget",
+		})
+		dc := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
+			X:       len(declared),
+			Lo:      min_non_empty,
+			Hi:      max_ast_nodes_per_call,
+			Message: "Declared is ≥1 (caller gates empty)",
+		})
 		invariant.Cross_Product(d, dc,
-			invariant.Excluding("Diags at diag-budget cap with declared at AST cap is bad",
+			invariant.Excluding("Diags and declared both at safety cap is bad",
 				invariant.Bucket_Hi(d), invariant.Bucket_Hi(dc)),
 			invariant.Excluding("Diags at safety cap with single declared type is bad",
 				invariant.Bucket_Hi(d), invariant.Bucket_Lo(dc)),
@@ -3620,9 +4413,14 @@ func check_file_system_method_prefix_group_for_file(declared map[string]bool, pf
 				invariant.Bucket_Lo(d), invariant.Bucket_Hi(dc)),
 		)
 	}()
-	dc := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: len(declared),
-		Lo: min_non_empty, Hi: max_ast_nodes_per_call, Message: "Declared is ≥1 (caller gates empty)"})
-	single_declaration_axis := invariant.Sometimes(len(declared) == count_one, "Declared has exactly one type sometimes")
+	dc := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
+		X:       len(declared),
+		Lo:      min_non_empty,
+		Hi:      max_ast_nodes_per_call,
+		Message: "Declared is ≥1 (caller gates empty)",
+	})
+	single_declaration_axis := invariant.Sometimes(
+		len(declared) == count_one, "Declared has exactly one type sometimes")
 	invariant.Cross_Product(
 		invariant.Always(pf.File_Set != nil, "Pf.file_set is non-nil"),
 		invariant.Always(pf.File != nil, "Pf.file is non-nil"),
@@ -3634,13 +4432,21 @@ func check_file_system_method_prefix_group_for_file(declared map[string]bool, pf
 		invariant.Excluding("Single declared type (Lo) implies single true",
 			invariant.Bucket_Lo(dc), invariant.Bucket_False(single_declaration_axis)),
 	)
-	path_axis := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: len(pf.Path),
-		Lo: min_go_filename_chars, Hi: max_filesystem_path_chars, Message: "Pf.Path spans 4-char (a.go) to deep paths"})
-	path_single := invariant.Sometimes(len(declared) == count_one, "Declared has exactly one type sometimes")
+	path_axis := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
+		X:       len(pf.Path),
+		Lo:      min_go_filename_chars,
+		Hi:      max_filesystem_path_chars,
+		Message: "Pf.Path spans 4-char (a.go) to deep paths",
+	})
+	path_single := invariant.Sometimes(
+		len(declared) == count_one, "Declared has exactly one type sometimes")
 	invariant.Cross_Product(path_axis, path_single,
-		invariant.Excluding("Hi path single T", invariant.Bucket_Hi(path_axis), invariant.Bucket_True(path_single)),
-		invariant.Excluding("Hi path single F", invariant.Bucket_Hi(path_axis), invariant.Bucket_False(path_single)),
-		invariant.Excluding("Lo path single F", invariant.Bucket_Lo(path_axis), invariant.Bucket_False(path_single)),
+		invariant.Excluding("Hi path single T",
+			invariant.Bucket_Hi(path_axis), invariant.Bucket_True(path_single)),
+		invariant.Excluding("Hi path single F",
+			invariant.Bucket_Hi(path_axis), invariant.Bucket_False(path_single)),
+		invariant.Excluding("Lo path single F",
+			invariant.Bucket_Lo(path_axis), invariant.Bucket_False(path_single)),
 	)
 	for _, declaration := range pf.File.Decls {
 		function_declaration, ok := declaration.(*ast.FuncDecl)
@@ -3657,8 +4463,10 @@ func check_file_system_method_prefix_group_for_file(declared map[string]bool, pf
 			continue
 		}
 		first_parameter := function_declaration.Type.Params.List[0]
-		type_name := check_file_system_method_prefix_group_first_parameter_type(first_parameter.Type)
-		invariant.Cross_Product(invariant.Sometimes(type_name == "", "Type_name is empty for unnamed parameter types"))
+		type_name := check_file_system_method_prefix_group_first_parameter_type(
+			first_parameter.Type)
+		invariant.Cross_Product(invariant.Sometimes(
+			type_name == "", "Type_name is empty for unnamed parameter types"))
 		if type_name == "" {
 			continue
 		}
@@ -3678,7 +4486,8 @@ func check_file_system_method_prefix_group_for_file(declared map[string]bool, pf
 			style = "Ada_Case"
 		}
 		prefix := suggest(&suggest_input{Name: type_name, Want: style})
-		invariant.Cross_Product(invariant.Always(prefix != "", "Prefix is non-empty at this point"))
+		invariant.Cross_Product(
+			invariant.Always(prefix != "", "Prefix is non-empty at this point"))
 		if function_declaration.Name.Name == prefix {
 			continue
 		}
@@ -3691,9 +4500,9 @@ func check_file_system_method_prefix_group_for_file(declared map[string]bool, pf
 			Want:     prefix + "_<verb>",
 			Message: fmt.Sprintf(
 				"function %s has first parameter of type %s; "+
-					"rename to %s_<verb> (banned-methods convention: free functions "+
-					"over a custom type carry the type name as prefix, in the "+
-					"function's own casing style)",
+					"rename to %s_<verb> (banned-methods convention: "+
+					"free functions over a custom type carry the type "+
+					"name as prefix, in the function's own casing style)",
 				function_declaration.Name.Name, type_name, prefix),
 		})
 	}
@@ -3709,15 +4518,16 @@ func check_file_system_method_prefix_group_for_file(declared map[string]bool, pf
 // collection or external-package shapes, not method-receiver shapes.
 func check_file_system_method_prefix_group_first_parameter_type(expression ast.Expr) (name string) {
 	defer func() {
-		empty_axis := invariant.Sometimes(name == "", "Name is empty for unnamed parameter types")
+		empty_axis := invariant.Sometimes(
+			name == "", "Name is empty for unnamed parameter types")
 		size_axis := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
 			X: len(name), Lo: 0, Hi: Max_Identifier_Chars,
-			Message: "Name is empty or the parameter type identifier; bounded by identifier budget",
+			Message: "Name is empty or the parameter type identifier",
 		})
 		invariant.Cross_Product(
 			empty_axis, size_axis,
 			// Name=="" iff len(name)==0 — (false, Lo) and (true, Hi) are impossible.
-			invariant.Excluding("Non-empty input with zero size contradicts size definition",
+			invariant.Excluding("Non-empty name with zero size contradicts size",
 				invariant.Bucket_False(empty_axis), invariant.Bucket_Lo(size_axis)),
 			invariant.Excluding("Empty input contradicts size at safety cap",
 				invariant.Bucket_True(empty_axis), invariant.Bucket_Hi(size_axis)),
@@ -3745,10 +4555,18 @@ func check_file_system_method_prefix_group_first_parameter_type(expression ast.E
 // Reads every file concurrently — I/O bound, no goroutine cap.
 func check_file_system_read_files(fsys fs.FS, paths []string) (sources [][]byte, err error) {
 	defer func() {
-		sources_axis := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: len(sources), Lo: 0,
-			Hi: max_parsed_files_per_call, Message: "Sources is bounded by budget"})
-		paths_axis := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: len(paths), Lo: 0,
-			Hi: max_parsed_files_per_call, Message: "Paths is bounded by budget"})
+		sources_axis := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
+			X:       len(sources),
+			Lo:      0,
+			Hi:      max_parsed_files_per_call,
+			Message: "Sources is bounded by budget",
+		})
+		paths_axis := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
+			X:       len(paths),
+			Lo:      0,
+			Hi:      max_parsed_files_per_call,
+			Message: "Paths is bounded by budget",
+		})
 		invariant.Cross_Product(sources_axis, paths_axis,
 			invariant.Excluding("Sources and paths are 1:1 at file-budget cap is bad",
 				invariant.Bucket_Hi(sources_axis), invariant.Bucket_Hi(paths_axis)),
@@ -3758,8 +4576,12 @@ func check_file_system_read_files(fsys fs.FS, paths []string) (sources [][]byte,
 				invariant.Bucket_Lo(sources_axis), invariant.Bucket_Hi(paths_axis)),
 		)
 	}()
-	paths_axis := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: len(paths), Lo: 0,
-		Hi: max_parsed_files_per_call, Message: "Paths is bounded by budget"})
+	paths_axis := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
+		X:       len(paths),
+		Lo:      0,
+		Hi:      max_parsed_files_per_call,
+		Message: "Paths is bounded by budget",
+	})
 	empty_axis := invariant.Sometimes(len(paths) == 0, "Paths is empty sometimes")
 	invariant.Cross_Product(paths_axis, empty_axis,
 		invariant.Excluding("Paths at safety cap contradicts empty true",
@@ -3794,16 +4616,34 @@ func check_file_system_read_files(fsys fs.FS, paths []string) (sources [][]byte,
 // but the stream tier has already flagged the marker — we want both
 // diagnostics visible and the rest of the AST tier to keep running on the
 // files that did parse.
-func check_file_system_parse_files(paths []string, sources [][]byte, cpu_count int) (parsed_files []parsed_file, parse_diags []Diagnostic) {
+func check_file_system_parse_files(
+	paths []string, sources [][]byte, cpu_count int,
+) (parsed_files []parsed_file, parse_diags []Diagnostic) {
 	defer func() {
-		parsed_files_axis := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: len(parsed_files), Lo: 0,
-			Hi: max_parsed_files_per_call, Message: "Parsed_files is bounded by budget"})
-		parse_diags_axis := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: len(parse_diags), Lo: 0,
-			Hi: max_diagnostics_per_call, Message: "Parse_diags is bounded by budget"})
-		paths_axis := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: len(paths), Lo: 0,
-			Hi: max_parsed_files_per_call, Message: "Paths is bounded by budget"})
-		sources_axis := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: len(sources), Lo: 0,
-			Hi: max_parsed_files_per_call, Message: "Sources is bounded by budget"})
+		parsed_files_axis := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
+			X:       len(parsed_files),
+			Lo:      0,
+			Hi:      max_parsed_files_per_call,
+			Message: "Parsed_files is bounded by budget",
+		})
+		parse_diags_axis := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
+			X:       len(parse_diags),
+			Lo:      0,
+			Hi:      max_diagnostics_per_call,
+			Message: "Parse_diags is bounded by budget",
+		})
+		paths_axis := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
+			X:       len(paths),
+			Lo:      0,
+			Hi:      max_parsed_files_per_call,
+			Message: "Paths is bounded by budget",
+		})
+		sources_axis := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
+			X:       len(sources),
+			Lo:      0,
+			Hi:      max_parsed_files_per_call,
+			Message: "Sources is bounded by budget",
+		})
 		// Paths and sources have a 1:1 relationship by contract (caller
 		// passes matched slices), so (Hi paths, Lo sources) and (Lo
 		// paths, Hi sources) are logically impossible. Likewise (Hi
@@ -3812,29 +4652,49 @@ func check_file_system_parse_files(paths []string, sources [][]byte, cpu_count i
 		// / Hi(paths) / Hi(sources) endpoints are the per-call budget
 		// safety caps — they bound runaway scans rather than working
 		// workspace sizes.
-		invariant.Cross_Product(parsed_files_axis, parse_diags_axis, paths_axis, sources_axis,
-			invariant.Excluding("Parsed_files at safety cap with parse_diags at safety cap is bad",
-				invariant.Bucket_Hi(parsed_files_axis), invariant.Bucket_Hi(parse_diags_axis)),
+		invariant.Cross_Product(
+			parsed_files_axis, parse_diags_axis, paths_axis, sources_axis,
+			invariant.Excluding("Parsed_files and parse_diags both at cap is bad",
+				invariant.Bucket_Hi(parsed_files_axis),
+				invariant.Bucket_Hi(parse_diags_axis)),
 			invariant.Excluding("Parsed_files at safety cap is bad",
-				invariant.Bucket_Hi(parsed_files_axis), invariant.Bucket_Lo(parse_diags_axis)),
-			invariant.Excluding("Parse_diags at safety cap with paths at safety cap is bad",
-				invariant.Bucket_Hi(parse_diags_axis), invariant.Bucket_Hi(paths_axis)),
+				invariant.Bucket_Hi(parsed_files_axis),
+				invariant.Bucket_Lo(parse_diags_axis)),
+			invariant.Excluding("Parse_diags and paths both at cap is bad",
+				invariant.Bucket_Hi(parse_diags_axis),
+				invariant.Bucket_Hi(paths_axis)),
 			invariant.Excluding("Zero paths produce zero parse diagnostics",
-				invariant.Bucket_Hi(parse_diags_axis), invariant.Bucket_Lo(paths_axis)),
+				invariant.Bucket_Hi(parse_diags_axis),
+				invariant.Bucket_Lo(paths_axis)),
 			invariant.Excluding("Paths and sources at file-budget cap is bad",
-				invariant.Bucket_Hi(paths_axis), invariant.Bucket_Hi(sources_axis)),
+				invariant.Bucket_Hi(paths_axis),
+				invariant.Bucket_Hi(sources_axis)),
 			invariant.Excluding("Paths and sources are 1:1 by caller contract",
-				invariant.Bucket_Hi(paths_axis), invariant.Bucket_Lo(sources_axis)),
+				invariant.Bucket_Hi(paths_axis),
+				invariant.Bucket_Lo(sources_axis)),
 			invariant.Excluding("Paths and sources are 1:1 by caller contract",
-				invariant.Bucket_Lo(paths_axis), invariant.Bucket_Hi(sources_axis)),
+				invariant.Bucket_Lo(paths_axis),
+				invariant.Bucket_Hi(sources_axis)),
 		)
 	}()
-	paths_axis := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: len(paths), Lo: 0,
-		Hi: max_parsed_files_per_call, Message: "Paths is bounded by budget"})
-	sources_axis := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: len(sources), Lo: 0,
-		Hi: max_parsed_files_per_call, Message: "Sources is bounded by budget"})
+	paths_axis := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
+		X:       len(paths),
+		Lo:      0,
+		Hi:      max_parsed_files_per_call,
+		Message: "Paths is bounded by budget",
+	})
+	sources_axis := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
+		X:       len(sources),
+		Lo:      0,
+		Hi:      max_parsed_files_per_call,
+		Message: "Sources is bounded by budget",
+	})
 	cpu_axis := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
-		X: cpu_count, Lo: min_non_empty, Hi: cpu_count_max, Message: "Cpu_count is in the per-process worker budget"})
+		X:       cpu_count,
+		Lo:      min_non_empty,
+		Hi:      cpu_count_max,
+		Message: "Cpu_count is in the per-process worker budget",
+	})
 	// Paths and sources are 1:1 by contract (each path has a matched
 	// source slot), so (Hi paths, Lo sources) and (Lo paths, Hi sources)
 	// are logically impossible. (Hi paths, Hi sources) sits at the
@@ -3863,7 +4723,8 @@ func check_file_system_parse_files(paths []string, sources [][]byte, cpu_count i
 			defer wg.Done()
 			defer func() { <-sem }()
 			file_set := token.NewFileSet()
-			file, parse_err := parser.ParseFile(file_set, p, source, parser.SkipObjectResolution|parser.ParseComments)
+			file, parse_err := parser.ParseFile(
+				file_set, p, source, parser.SkipObjectResolution|parser.ParseComments)
 			if parse_err != nil {
 				diags[i] = Diagnostic{
 					Position: token.Position{Filename: p},
@@ -3872,7 +4733,9 @@ func check_file_system_parse_files(paths []string, sources [][]byte, cpu_count i
 				had_err[i] = true
 				return
 			}
-			results[i] = parsed_file{Path: p, File_Set: file_set, File: file, Source: source}
+			results[i] = parsed_file{
+				Path: p, File_Set: file_set, File: file, Source: source,
+			}
 		}(i, p, sources[i])
 	}
 	wg.Wait()
@@ -3920,12 +4783,25 @@ var module_index_module_re = regexp.MustCompile(`(?m)^module\s+(\S+)`)
 func build_module_index(fsys fs.FS, parsed_files []parsed_file) (index *module_index, err error) {
 	defer func() {
 		p := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
-			X: len(parsed_files), Lo: 0, Hi: max_parsed_files_per_call, Message: "Parsed_files is bounded by budget"})
-		err_axis := invariant.Sometimes(err != nil, "Err is non-nil sometimes (fs.WalkDir failure)")
-		modules_axis := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: len(index.Modules),
-			Lo: 0, Hi: max_parsed_files_per_call, Message: "Index.Modules is bounded by parsed-files budget"})
-		f2m_axis := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: len(index.File_To_Module),
-			Lo: 0, Hi: max_parsed_files_per_call, Message: "Index.File_To_Module is bounded by parsed-files budget"})
+			X:       len(parsed_files),
+			Lo:      0,
+			Hi:      max_parsed_files_per_call,
+			Message: "Parsed_files is bounded by budget",
+		})
+		err_axis := invariant.Sometimes(
+			err != nil, "Err is non-nil sometimes (fs.WalkDir failure)")
+		modules_axis := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
+			X:       len(index.Modules),
+			Lo:      0,
+			Hi:      max_parsed_files_per_call,
+			Message: "Index.Modules is bounded by parsed-files budget",
+		})
+		f2m_axis := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
+			X:       len(index.File_To_Module),
+			Lo:      0,
+			Hi:      max_parsed_files_per_call,
+			Message: "Index.File_To_Module is bounded by parsed-files budget",
+		})
 		invariant.Cross_Product(p, err_axis, modules_axis, f2m_axis,
 			invariant.Always(index != nil, "Index is non-nil"),
 			invariant.Excluding("Parsed_files Hi is bad (err true)",
@@ -3935,20 +4811,29 @@ func build_module_index(fsys fs.FS, parsed_files []parsed_file) (index *module_i
 			invariant.Excluding("Zero parsed implies err nil",
 				invariant.Bucket_Lo(p), invariant.Bucket_True(err_axis)),
 			invariant.Excluding("Hi modules unreachable",
-				invariant.Bucket_Hi(modules_axis), invariant.Bucket_True(err_axis)),
+				invariant.Bucket_Hi(modules_axis),
+				invariant.Bucket_True(err_axis)),
 			invariant.Excluding("Hi modules unreachable",
-				invariant.Bucket_Hi(modules_axis), invariant.Bucket_False(err_axis)),
+				invariant.Bucket_Hi(modules_axis),
+				invariant.Bucket_False(err_axis)),
 			invariant.Excluding("Hi F2M tracks Hi modules",
 				invariant.Bucket_Hi(f2m_axis), invariant.Bucket_Lo(modules_axis)),
 		)
 	}()
 	p := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
-		X: len(parsed_files), Lo: 0, Hi: max_parsed_files_per_call, Message: "Parsed_files is bounded by budget"})
+		X:       len(parsed_files),
+		Lo:      0,
+		Hi:      max_parsed_files_per_call,
+		Message: "Parsed_files is bounded by budget",
+	})
 	empty_axis := invariant.Sometimes(len(parsed_files) == 0, "Parsed_files is empty sometimes")
 	invariant.Cross_Product(invariant.Always(fsys != nil, "Fsys is non-nil"), p, empty_axis,
-		invariant.Excluding("Hi p contradicts empty", invariant.Bucket_Hi(p), invariant.Bucket_True(empty_axis)),
-		invariant.Excluding("Hi p unreachable", invariant.Bucket_Hi(p), invariant.Bucket_False(empty_axis)),
-		invariant.Excluding("Lo p implies empty", invariant.Bucket_Lo(p), invariant.Bucket_False(empty_axis)))
+		invariant.Excluding("Hi p contradicts empty",
+			invariant.Bucket_Hi(p), invariant.Bucket_True(empty_axis)),
+		invariant.Excluding("Hi p unreachable",
+			invariant.Bucket_Hi(p), invariant.Bucket_False(empty_axis)),
+		invariant.Excluding("Lo p implies empty",
+			invariant.Bucket_Lo(p), invariant.Bucket_False(empty_axis)))
 
 	index = &module_index{File_To_Module: make(map[string]int, len(parsed_files))}
 	err = fs.WalkDir(fsys, ".", func(p string, d fs.DirEntry, walk_err error) (out error) {
@@ -4010,9 +4895,11 @@ func build_module_index(fsys fs.FS, parsed_files []parsed_file) (index *module_i
 			relative = strings.TrimPrefix(pf.Path, root+"/")
 		}
 		canonical_directory := module_index_canonicalize(path.Dir(relative))
-		invariant.Cross_Product(invariant.Always(canonical_directory != "", "Canonical_directory is non-empty"))
-		if _, has := index.Modules[module_index_number].Directory_Package[canonical_directory]; !has {
-			index.Modules[module_index_number].Directory_Package[canonical_directory] = pf.File.Name.Name
+		invariant.Cross_Product(invariant.Always(
+			canonical_directory != "", "Canonical_directory is non-empty"))
+		dir_pkg := index.Modules[module_index_number].Directory_Package
+		if _, has := dir_pkg[canonical_directory]; !has {
+			dir_pkg[canonical_directory] = pf.File.Name.Name
 		}
 	}
 	return index, nil
@@ -4029,7 +4916,7 @@ func module_index_canonicalize(directory string) (canonical string) {
 				X:       len(canonical),
 				Lo:      min_non_empty,
 				Hi:      max_filesystem_directory_chars,
-				Message: "Canonical is a directory path; minimum `.` (1 char), capped at path budget minus basename",
+				Message: "Canonical is a directory path; min `.`, capped",
 			}),
 		)
 	}()
@@ -4038,7 +4925,7 @@ func module_index_canonicalize(directory string) (canonical string) {
 			X:       len(directory),
 			Lo:      min_non_empty,
 			Hi:      max_filesystem_directory_chars,
-			Message: "Directory is a path.Dir result; minimum `.` (1 char), capped at path budget minus `/a.go` basename",
+			Message: "Directory is a path.Dir result; min `.`, capped",
 		}),
 	)
 
@@ -4063,8 +4950,12 @@ var module_index_version_re = regexp.MustCompile(`^v[0-9]+$`)
 
 func module_index_resolve(file_path string, modules []module_information) (index int) {
 	defer func() {
-		m := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: len(modules),
-			Lo: 0, Hi: max_parsed_files_per_call, Message: "Modules is bounded by budget"})
+		m := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
+			X:       len(modules),
+			Lo:      0,
+			Hi:      max_parsed_files_per_call,
+			Message: "Modules is bounded by budget",
+		})
 		empty_axis := invariant.Sometimes(len(modules) == 0, "Modules is empty sometimes")
 		invariant.Cross_Product(m, empty_axis,
 			invariant.Excluding("Max modules contradicts empty true",
@@ -4078,7 +4969,7 @@ func module_index_resolve(file_path string, modules []module_information) (index
 			X:       index,
 			Lo:      module_index_not_found,
 			Hi:      max_modules_per_workspace,
-			Message: "Index is -1 when zero modules match, else the matched module's slice index",
+			Message: "Index is -1 when zero modules match, else matched index",
 		})
 		index_zero := invariant.Sometimes(index == 0,
 			"Index is the first module on the most common workspace shape")
@@ -4086,18 +4977,24 @@ func module_index_resolve(file_path string, modules []module_information) (index
 			index_boundary, index_zero,
 			// Lo=-1 ⇒ index==0 is false; Hi=8 ⇒ index==0 is false.
 			invariant.Excluding("Negative index sentinel contradicts index_zero true",
-				invariant.Bucket_Lo(index_boundary), invariant.Bucket_True(index_zero)),
+				invariant.Bucket_Lo(index_boundary),
+				invariant.Bucket_True(index_zero)),
 			invariant.Excluding("Max index contradicts index_zero true",
-				invariant.Bucket_Hi(index_boundary), invariant.Bucket_True(index_zero)),
+				invariant.Bucket_Hi(index_boundary),
+				invariant.Bucket_True(index_zero)),
 		)
 	}()
-	m := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: len(modules),
-		Lo: 0, Hi: max_parsed_files_per_call, Message: "Modules is bounded by budget"})
+	m := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
+		X:       len(modules),
+		Lo:      0,
+		Hi:      max_parsed_files_per_call,
+		Message: "Modules is bounded by budget",
+	})
 	path_axis := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
 		X:       len(file_path),
 		Lo:      min_go_filename_chars,
 		Hi:      max_filesystem_path_chars,
-		Message: "File_path is a path; minimum 4-char `a.go`, capped by filesystem path budget",
+		Message: "File_path is a path; min 4-char `a.go`, capped",
 	})
 	invariant.Cross_Product(
 		path_axis, m,
@@ -4129,34 +5026,72 @@ func module_index_resolve(file_path string, modules []module_information) (index
 // the doctrine forbids. The check exempts the shared library (which is
 // importable by design) and `package main` files (which can sit at any
 // depth because Go itself bars importing them).
-func check_binary_module_layout(parsed_files []parsed_file, modules *module_index) (diags []Diagnostic) {
+func check_binary_module_layout(
+	parsed_files []parsed_file, modules *module_index,
+) (diags []Diagnostic) {
 	defer func() {
-		d := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: len(diags), Lo: 0,
-			Hi: max_diagnostics_per_call, Message: "Diags is bounded by budget"})
-		p := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: len(parsed_files), Lo: 0,
-			Hi: max_parsed_files_per_call, Message: "Parsed_files is bounded by budget"})
-		m_axis := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: len(modules.Modules), Lo: 0,
-			Hi: max_parsed_files_per_call, Message: "Modules.Modules is bounded by parsed-file budget"})
-		f_axis := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: len(modules.File_To_Module),
-			Lo: 0, Hi: max_parsed_files_per_call, Message: "Modules.File_To_Module is bounded by parsed-file budget"})
+		d := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
+			X:       len(diags),
+			Lo:      0,
+			Hi:      max_diagnostics_per_call,
+			Message: "Diags is bounded by budget",
+		})
+		p := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
+			X:       len(parsed_files),
+			Lo:      0,
+			Hi:      max_parsed_files_per_call,
+			Message: "Parsed_files is bounded by budget",
+		})
+		m_axis := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
+			X:       len(modules.Modules),
+			Lo:      0,
+			Hi:      max_parsed_files_per_call,
+			Message: "Modules.Modules is bounded by parsed-file budget",
+		})
+		f_axis := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
+			X:       len(modules.File_To_Module),
+			Lo:      0,
+			Hi:      max_parsed_files_per_call,
+			Message: "Modules.File_To_Module is bounded by parsed-file budget",
+		})
 		invariant.Cross_Product(d, p, m_axis, f_axis,
-			invariant.Excluding("Both diags and pairs at safety caps is bad", invariant.Bucket_Hi(d), invariant.Bucket_Hi(p)),
-			invariant.Excluding("Diags Hi with zero pairs is bad", invariant.Bucket_Hi(d), invariant.Bucket_Lo(p)),
-			invariant.Excluding("Pairs Hi with zero diags is bad", invariant.Bucket_Lo(d), invariant.Bucket_Hi(p)),
-			invariant.Excluding("Modules Hi unreachable", invariant.Bucket_Hi(m_axis), invariant.Bucket_Hi(d)),
-			invariant.Excluding("F2M Hi unreachable", invariant.Bucket_Hi(f_axis), invariant.Bucket_Hi(d)),
-			invariant.Excluding("Both modules Hi unreachable", invariant.Bucket_Hi(m_axis), invariant.Bucket_Hi(f_axis)),
-			invariant.Excluding("Modules Hi with zero diags unreachable", invariant.Bucket_Hi(m_axis), invariant.Bucket_Lo(d)),
-			invariant.Excluding("F2M Hi with zero diags unreachable", invariant.Bucket_Hi(f_axis), invariant.Bucket_Lo(d)),
+			invariant.Excluding("Both diags and pairs at safety caps is bad",
+				invariant.Bucket_Hi(d), invariant.Bucket_Hi(p)),
+			invariant.Excluding("Diags Hi with zero pairs is bad",
+				invariant.Bucket_Hi(d), invariant.Bucket_Lo(p)),
+			invariant.Excluding("Pairs Hi with zero diags is bad",
+				invariant.Bucket_Lo(d), invariant.Bucket_Hi(p)),
+			invariant.Excluding("Modules Hi unreachable",
+				invariant.Bucket_Hi(m_axis), invariant.Bucket_Hi(d)),
+			invariant.Excluding("F2M Hi unreachable",
+				invariant.Bucket_Hi(f_axis), invariant.Bucket_Hi(d)),
+			invariant.Excluding("Both modules Hi unreachable",
+				invariant.Bucket_Hi(m_axis), invariant.Bucket_Hi(f_axis)),
+			invariant.Excluding("Modules Hi with zero diags unreachable",
+				invariant.Bucket_Hi(m_axis), invariant.Bucket_Lo(d)),
+			invariant.Excluding("F2M Hi with zero diags unreachable",
+				invariant.Bucket_Hi(f_axis), invariant.Bucket_Lo(d)),
 		)
 	}()
-	p := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: len(parsed_files), Lo: 0,
-		Hi: max_parsed_files_per_call, Message: "Parsed_files is bounded by budget"})
+	p := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
+		X:       len(parsed_files),
+		Lo:      0,
+		Hi:      max_parsed_files_per_call,
+		Message: "Parsed_files is bounded by budget",
+	})
 	empty_axis := invariant.Sometimes(len(parsed_files) == 0, "Parsed_files is empty sometimes")
-	m_axis := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: len(modules.Modules), Lo: 0,
-		Hi: max_parsed_files_per_call, Message: "Modules.Modules is bounded by parsed-file budget"})
-	f_axis := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: len(modules.File_To_Module),
-		Lo: 0, Hi: max_parsed_files_per_call, Message: "Modules.File_To_Module is bounded by parsed-file budget"})
+	m_axis := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
+		X:       len(modules.Modules),
+		Lo:      0,
+		Hi:      max_parsed_files_per_call,
+		Message: "Modules.Modules is bounded by parsed-file budget",
+	})
+	f_axis := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
+		X:       len(modules.File_To_Module),
+		Lo:      0,
+		Hi:      max_parsed_files_per_call,
+		Message: "Modules.File_To_Module is bounded by parsed-file budget",
+	})
 	invariant.Cross_Product(invariant.Always(modules != nil, "Modules is non-nil"),
 		p, empty_axis, m_axis, f_axis,
 		invariant.Excluding("Max len contradicts empty=true",
@@ -4208,7 +5143,8 @@ func check_binary_module_layout(parsed_files []parsed_file, modules *module_inde
 			Name:     "binary-module-layout",
 			Want:     fmt.Sprintf("non-main packages live under %s/internal/", m.Root),
 			Message: fmt.Sprintf(
-				"binary module %q forbids package %q outside of internal/; move %q under %s/internal/",
+				"binary module %q forbids package %q outside of "+
+					"internal/; move %q under %s/internal/",
 				m.Module_Path, pf.File.Name.Name, directory, m.Root,
 			),
 		})
@@ -4231,7 +5167,7 @@ func check_binary_module_layout_is_legal(directory string) (legal bool) {
 			X:       len(directory),
 			Lo:      min_non_empty,
 			Hi:      max_filesystem_directory_chars,
-			Message: "Directory is a path.Dir result; minimum `.` (1 char), capped at path budget minus `/a.go` basename",
+			Message: "Directory is a path.Dir result; min `.`, capped",
 		}),
 	)
 
@@ -4247,46 +5183,94 @@ func check_binary_module_layout_is_legal(directory string) (legal bool) {
 // Reported once per offending directory (the first `internal` segment
 // found in any file's path), attributed to the earliest-seen file
 // inside that directory so the diagnostic has a real location.
-func check_shared_library_no_internal(parsed_files []parsed_file, modules *module_index) (diags []Diagnostic) {
+func check_shared_library_no_internal(
+	parsed_files []parsed_file, modules *module_index,
+) (diags []Diagnostic) {
 	defer func() {
-		d := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: len(diags), Lo: 0,
-			Hi: max_diagnostics_per_call, Message: "Diags is bounded by budget"})
-		p := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: len(parsed_files), Lo: 0,
-			Hi: max_parsed_files_per_call, Message: "Parsed_files is bounded by budget"})
-		m_axis := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: len(modules.Modules), Lo: 0,
-			Hi: max_parsed_files_per_call, Message: "Modules.Modules is bounded by parsed-file budget"})
-		f_axis := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: len(modules.File_To_Module),
-			Lo: 0, Hi: max_parsed_files_per_call, Message: "Modules.File_To_Module is bounded by parsed-file budget"})
+		d := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
+			X:       len(diags),
+			Lo:      0,
+			Hi:      max_diagnostics_per_call,
+			Message: "Diags is bounded by budget",
+		})
+		p := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
+			X:       len(parsed_files),
+			Lo:      0,
+			Hi:      max_parsed_files_per_call,
+			Message: "Parsed_files is bounded by budget",
+		})
+		m_axis := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
+			X:       len(modules.Modules),
+			Lo:      0,
+			Hi:      max_parsed_files_per_call,
+			Message: "Modules.Modules is bounded by parsed-file budget",
+		})
+		f_axis := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
+			X:       len(modules.File_To_Module),
+			Lo:      0,
+			Hi:      max_parsed_files_per_call,
+			Message: "Modules.File_To_Module is bounded by parsed-file budget",
+		})
 		invariant.Cross_Product(d, p, m_axis, f_axis,
-			invariant.Excluding("Both diags and pairs at safety caps is bad", invariant.Bucket_Hi(d), invariant.Bucket_Hi(p)),
-			invariant.Excluding("Diags Hi with zero pairs is bad", invariant.Bucket_Hi(d), invariant.Bucket_Lo(p)),
-			invariant.Excluding("Pairs Hi with zero diags is bad", invariant.Bucket_Lo(d), invariant.Bucket_Hi(p)),
-			invariant.Excluding("Modules Hi unreachable", invariant.Bucket_Hi(m_axis), invariant.Bucket_Hi(d)),
-			invariant.Excluding("F2M Hi unreachable", invariant.Bucket_Hi(f_axis), invariant.Bucket_Hi(d)),
-			invariant.Excluding("Both modules Hi unreachable", invariant.Bucket_Hi(m_axis), invariant.Bucket_Hi(f_axis)),
-			invariant.Excluding("Modules Hi with zero diags unreachable", invariant.Bucket_Hi(m_axis), invariant.Bucket_Lo(d)),
-			invariant.Excluding("F2M Hi with zero diags unreachable", invariant.Bucket_Hi(f_axis), invariant.Bucket_Lo(d)),
+			invariant.Excluding("Both diags and pairs at safety caps is bad",
+				invariant.Bucket_Hi(d), invariant.Bucket_Hi(p)),
+			invariant.Excluding("Diags Hi with zero pairs is bad",
+				invariant.Bucket_Hi(d), invariant.Bucket_Lo(p)),
+			invariant.Excluding("Pairs Hi with zero diags is bad",
+				invariant.Bucket_Lo(d), invariant.Bucket_Hi(p)),
+			invariant.Excluding("Modules Hi unreachable",
+				invariant.Bucket_Hi(m_axis), invariant.Bucket_Hi(d)),
+			invariant.Excluding("F2M Hi unreachable",
+				invariant.Bucket_Hi(f_axis), invariant.Bucket_Hi(d)),
+			invariant.Excluding("Both modules Hi unreachable",
+				invariant.Bucket_Hi(m_axis), invariant.Bucket_Hi(f_axis)),
+			invariant.Excluding("Modules Hi with zero diags unreachable",
+				invariant.Bucket_Hi(m_axis), invariant.Bucket_Lo(d)),
+			invariant.Excluding("F2M Hi with zero diags unreachable",
+				invariant.Bucket_Hi(f_axis), invariant.Bucket_Lo(d)),
 		)
 	}()
-	p := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: len(parsed_files), Lo: 0,
-		Hi: max_parsed_files_per_call, Message: "Parsed_files is bounded by budget"})
+	p := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
+		X:       len(parsed_files),
+		Lo:      0,
+		Hi:      max_parsed_files_per_call,
+		Message: "Parsed_files is bounded by budget",
+	})
 	empty_axis := invariant.Sometimes(len(parsed_files) == 0, "Parsed_files is empty sometimes")
-	m_axis := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: len(modules.Modules), Lo: 0,
-		Hi: max_parsed_files_per_call, Message: "Modules.Modules is bounded by parsed-file budget"})
-	f_axis := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: len(modules.File_To_Module),
-		Lo: 0, Hi: max_parsed_files_per_call, Message: "Modules.File_To_Module is bounded by parsed-file budget"})
+	m_axis := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
+		X:       len(modules.Modules),
+		Lo:      0,
+		Hi:      max_parsed_files_per_call,
+		Message: "Modules.Modules is bounded by parsed-file budget",
+	})
+	f_axis := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
+		X:       len(modules.File_To_Module),
+		Lo:      0,
+		Hi:      max_parsed_files_per_call,
+		Message: "Modules.File_To_Module is bounded by parsed-file budget",
+	})
 	invariant.Cross_Product(invariant.Always(modules != nil, "Modules is non-nil"),
 		p, empty_axis, m_axis, f_axis,
-		invariant.Excluding("Max len contradicts empty=true", invariant.Bucket_Hi(p), invariant.Bucket_True(empty_axis)),
-		invariant.Excluding("Axis p at safety cap is bad", invariant.Bucket_Hi(p), invariant.Bucket_False(empty_axis)),
-		invariant.Excluding("Zero len implies empty true", invariant.Bucket_Lo(p), invariant.Bucket_False(empty_axis)),
-		invariant.Excluding("Modules Hi unreachable", invariant.Bucket_Hi(m_axis), invariant.Bucket_False(empty_axis)),
-		invariant.Excluding("Modules Hi with p Hi is bad", invariant.Bucket_Hi(m_axis), invariant.Bucket_Hi(p)),
-		invariant.Excluding("F2M Hi unreachable", invariant.Bucket_Hi(f_axis), invariant.Bucket_False(empty_axis)),
-		invariant.Excluding("F2M Hi with p Hi is bad", invariant.Bucket_Hi(f_axis), invariant.Bucket_Hi(p)),
-		invariant.Excluding("Both modules Hi unreachable", invariant.Bucket_Hi(m_axis), invariant.Bucket_Hi(f_axis)),
-		invariant.Excluding("Modules Hi with empty impossible", invariant.Bucket_Hi(m_axis), invariant.Bucket_True(empty_axis)),
-		invariant.Excluding("F2M Hi with empty impossible", invariant.Bucket_Hi(f_axis), invariant.Bucket_True(empty_axis)),
+		invariant.Excluding("Max len contradicts empty=true",
+			invariant.Bucket_Hi(p), invariant.Bucket_True(empty_axis)),
+		invariant.Excluding("Axis p at safety cap is bad",
+			invariant.Bucket_Hi(p), invariant.Bucket_False(empty_axis)),
+		invariant.Excluding("Zero len implies empty true",
+			invariant.Bucket_Lo(p), invariant.Bucket_False(empty_axis)),
+		invariant.Excluding("Modules Hi unreachable",
+			invariant.Bucket_Hi(m_axis), invariant.Bucket_False(empty_axis)),
+		invariant.Excluding("Modules Hi with p Hi is bad",
+			invariant.Bucket_Hi(m_axis), invariant.Bucket_Hi(p)),
+		invariant.Excluding("F2M Hi unreachable",
+			invariant.Bucket_Hi(f_axis), invariant.Bucket_False(empty_axis)),
+		invariant.Excluding("F2M Hi with p Hi is bad",
+			invariant.Bucket_Hi(f_axis), invariant.Bucket_Hi(p)),
+		invariant.Excluding("Both modules Hi unreachable",
+			invariant.Bucket_Hi(m_axis), invariant.Bucket_Hi(f_axis)),
+		invariant.Excluding("Modules Hi with empty impossible",
+			invariant.Bucket_Hi(m_axis), invariant.Bucket_True(empty_axis)),
+		invariant.Excluding("F2M Hi with empty impossible",
+			invariant.Bucket_Hi(f_axis), invariant.Bucket_True(empty_axis)),
 	)
 
 	seen := make(map[string]bool)
@@ -4313,7 +5297,9 @@ func check_shared_library_no_internal(parsed_files []parsed_file, modules *modul
 				Position: token.Position{Filename: pf.Path, Line: 1, Column: 1},
 				Name:     "shared-imports-no-internal",
 				Want:     "shared library is fully exposed; no internal/ subtree",
-				Message:  fmt.Sprintf("shared library forbids internal/ directories; remove %q", internal_directory),
+				Message: fmt.Sprintf(
+					"shared library forbids internal/ directories; remove %q",
+					internal_directory),
 			})
 			break
 		}
@@ -4328,46 +5314,94 @@ func check_shared_library_no_internal(parsed_files []parsed_file, modules *modul
 // than real package layers. The deepest legal position is the
 // composition tier — the only place where ambient-stdlib binding is
 // permitted.
-func check_library_tier_depth(parsed_files []parsed_file, modules *module_index) (diags []Diagnostic) {
+func check_library_tier_depth(
+	parsed_files []parsed_file, modules *module_index,
+) (diags []Diagnostic) {
 	defer func() {
-		d := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: len(diags), Lo: 0,
-			Hi: max_diagnostics_per_call, Message: "Diags is bounded by budget"})
-		p := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: len(parsed_files), Lo: 0,
-			Hi: max_parsed_files_per_call, Message: "Parsed_files is bounded by budget"})
-		m_axis := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: len(modules.Modules),
-			Lo: 0, Hi: max_parsed_files_per_call, Message: "Modules.Modules is bounded by parsed-file budget"})
-		f_axis := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: len(modules.File_To_Module),
-			Lo: 0, Hi: max_parsed_files_per_call, Message: "Modules.File_To_Module is bounded by parsed-file budget"})
+		d := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
+			X:       len(diags),
+			Lo:      0,
+			Hi:      max_diagnostics_per_call,
+			Message: "Diags is bounded by budget",
+		})
+		p := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
+			X:       len(parsed_files),
+			Lo:      0,
+			Hi:      max_parsed_files_per_call,
+			Message: "Parsed_files is bounded by budget",
+		})
+		m_axis := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
+			X:       len(modules.Modules),
+			Lo:      0,
+			Hi:      max_parsed_files_per_call,
+			Message: "Modules.Modules is bounded by parsed-file budget",
+		})
+		f_axis := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
+			X:       len(modules.File_To_Module),
+			Lo:      0,
+			Hi:      max_parsed_files_per_call,
+			Message: "Modules.File_To_Module is bounded by parsed-file budget",
+		})
 		invariant.Cross_Product(d, p, m_axis, f_axis,
-			invariant.Excluding("Both diags and pairs at safety caps is bad", invariant.Bucket_Hi(d), invariant.Bucket_Hi(p)),
-			invariant.Excluding("Diags Hi with zero pairs is bad", invariant.Bucket_Hi(d), invariant.Bucket_Lo(p)),
-			invariant.Excluding("Pairs Hi with zero diags is bad", invariant.Bucket_Lo(d), invariant.Bucket_Hi(p)),
-			invariant.Excluding("Modules Hi unreachable", invariant.Bucket_Hi(m_axis), invariant.Bucket_Hi(d)),
-			invariant.Excluding("F2M Hi unreachable", invariant.Bucket_Hi(f_axis), invariant.Bucket_Hi(d)),
-			invariant.Excluding("Both modules Hi unreachable", invariant.Bucket_Hi(m_axis), invariant.Bucket_Hi(f_axis)),
-			invariant.Excluding("Modules Hi with zero diags unreachable", invariant.Bucket_Hi(m_axis), invariant.Bucket_Lo(d)),
-			invariant.Excluding("F2M Hi with zero diags unreachable", invariant.Bucket_Hi(f_axis), invariant.Bucket_Lo(d)),
+			invariant.Excluding("Both diags and pairs at safety caps is bad",
+				invariant.Bucket_Hi(d), invariant.Bucket_Hi(p)),
+			invariant.Excluding("Diags Hi with zero pairs is bad",
+				invariant.Bucket_Hi(d), invariant.Bucket_Lo(p)),
+			invariant.Excluding("Pairs Hi with zero diags is bad",
+				invariant.Bucket_Lo(d), invariant.Bucket_Hi(p)),
+			invariant.Excluding("Modules Hi unreachable",
+				invariant.Bucket_Hi(m_axis), invariant.Bucket_Hi(d)),
+			invariant.Excluding("F2M Hi unreachable",
+				invariant.Bucket_Hi(f_axis), invariant.Bucket_Hi(d)),
+			invariant.Excluding("Both modules Hi unreachable",
+				invariant.Bucket_Hi(m_axis), invariant.Bucket_Hi(f_axis)),
+			invariant.Excluding("Modules Hi with zero diags unreachable",
+				invariant.Bucket_Hi(m_axis), invariant.Bucket_Lo(d)),
+			invariant.Excluding("F2M Hi with zero diags unreachable",
+				invariant.Bucket_Hi(f_axis), invariant.Bucket_Lo(d)),
 		)
 	}()
-	p := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: len(parsed_files), Lo: 0,
-		Hi: max_parsed_files_per_call, Message: "Parsed_files is bounded by budget"})
+	p := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
+		X:       len(parsed_files),
+		Lo:      0,
+		Hi:      max_parsed_files_per_call,
+		Message: "Parsed_files is bounded by budget",
+	})
 	empty_axis := invariant.Sometimes(len(parsed_files) == 0, "Parsed_files is empty sometimes")
-	m_axis := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: len(modules.Modules), Lo: 0,
-		Hi: max_parsed_files_per_call, Message: "Modules.Modules is bounded by parsed-file budget"})
-	f_axis := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: len(modules.File_To_Module),
-		Lo: 0, Hi: max_parsed_files_per_call, Message: "Modules.File_To_Module is bounded by parsed-file budget"})
+	m_axis := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
+		X:       len(modules.Modules),
+		Lo:      0,
+		Hi:      max_parsed_files_per_call,
+		Message: "Modules.Modules is bounded by parsed-file budget",
+	})
+	f_axis := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
+		X:       len(modules.File_To_Module),
+		Lo:      0,
+		Hi:      max_parsed_files_per_call,
+		Message: "Modules.File_To_Module is bounded by parsed-file budget",
+	})
 	invariant.Cross_Product(invariant.Always(modules != nil, "Modules is non-nil"),
 		p, empty_axis, m_axis, f_axis,
-		invariant.Excluding("Max len contradicts empty=true", invariant.Bucket_Hi(p), invariant.Bucket_True(empty_axis)),
-		invariant.Excluding("Axis p at safety cap is bad", invariant.Bucket_Hi(p), invariant.Bucket_False(empty_axis)),
-		invariant.Excluding("Zero len implies empty true", invariant.Bucket_Lo(p), invariant.Bucket_False(empty_axis)),
-		invariant.Excluding("Modules Hi unreachable", invariant.Bucket_Hi(m_axis), invariant.Bucket_False(empty_axis)),
-		invariant.Excluding("Modules Hi with p Hi is bad", invariant.Bucket_Hi(m_axis), invariant.Bucket_Hi(p)),
-		invariant.Excluding("F2M Hi unreachable", invariant.Bucket_Hi(f_axis), invariant.Bucket_False(empty_axis)),
-		invariant.Excluding("F2M Hi with p Hi is bad", invariant.Bucket_Hi(f_axis), invariant.Bucket_Hi(p)),
-		invariant.Excluding("Both modules Hi unreachable", invariant.Bucket_Hi(m_axis), invariant.Bucket_Hi(f_axis)),
-		invariant.Excluding("Modules Hi with empty impossible", invariant.Bucket_Hi(m_axis), invariant.Bucket_True(empty_axis)),
-		invariant.Excluding("F2M Hi with empty impossible", invariant.Bucket_Hi(f_axis), invariant.Bucket_True(empty_axis)),
+		invariant.Excluding("Max len contradicts empty=true",
+			invariant.Bucket_Hi(p), invariant.Bucket_True(empty_axis)),
+		invariant.Excluding("Axis p at safety cap is bad",
+			invariant.Bucket_Hi(p), invariant.Bucket_False(empty_axis)),
+		invariant.Excluding("Zero len implies empty true",
+			invariant.Bucket_Lo(p), invariant.Bucket_False(empty_axis)),
+		invariant.Excluding("Modules Hi unreachable",
+			invariant.Bucket_Hi(m_axis), invariant.Bucket_False(empty_axis)),
+		invariant.Excluding("Modules Hi with p Hi is bad",
+			invariant.Bucket_Hi(m_axis), invariant.Bucket_Hi(p)),
+		invariant.Excluding("F2M Hi unreachable",
+			invariant.Bucket_Hi(f_axis), invariant.Bucket_False(empty_axis)),
+		invariant.Excluding("F2M Hi with p Hi is bad",
+			invariant.Bucket_Hi(f_axis), invariant.Bucket_Hi(p)),
+		invariant.Excluding("Both modules Hi unreachable",
+			invariant.Bucket_Hi(m_axis), invariant.Bucket_Hi(f_axis)),
+		invariant.Excluding("Modules Hi with empty impossible",
+			invariant.Bucket_Hi(m_axis), invariant.Bucket_True(empty_axis)),
+		invariant.Excluding("F2M Hi with empty impossible",
+			invariant.Bucket_Hi(f_axis), invariant.Bucket_True(empty_axis)),
 	)
 
 	seen := make(map[string]bool)
@@ -4388,12 +5422,14 @@ func check_library_tier_depth(parsed_files []parsed_file, modules *module_index)
 			relative = strings.TrimPrefix(pf.Path, m.Root+"/")
 		}
 		canonical := module_index_canonicalize(path.Dir(relative))
-		invariant.Cross_Product(invariant.Always(canonical != "", "Canonical is non-empty at this point"))
+		invariant.Cross_Product(
+			invariant.Always(canonical != "", "Canonical is non-empty at this point"))
 		if canonical == "." {
 			continue
 		}
 		ancestors := check_library_tier_depth_ancestors(canonical)
-		invariant.Cross_Product(invariant.Sometimes(ancestors == nil, "Ancestors can be empty or zero on this branch"))
+		invariant.Cross_Product(invariant.Sometimes(
+			ancestors == nil, "Ancestors can be empty or zero on this branch"))
 		count := 0
 		var ancestor_names []string
 		for _, a := range ancestors {
@@ -4430,9 +5466,14 @@ func check_library_tier_depth(parsed_files []parsed_file, modules *module_index)
 // the real termination.
 func check_library_tier_depth_ancestors(directory string) (ancestors []string) {
 	defer func() {
-		a := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: len(ancestors), Lo: 0,
-			Hi: max_string_slice_per_call, Message: "Ancestors is bounded by budget"})
-		empty_axis := invariant.Sometimes(len(ancestors) == 0, "Ancestors is empty sometimes (directory at root)")
+		a := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
+			X:       len(ancestors),
+			Lo:      0,
+			Hi:      max_string_slice_per_call,
+			Message: "Ancestors is bounded by budget",
+		})
+		empty_axis := invariant.Sometimes(
+			len(ancestors) == 0, "Ancestors is empty sometimes (directory at root)")
 		invariant.Cross_Product(a, empty_axis,
 			invariant.Excluding("Max a contradicts empty true",
 				invariant.Bucket_Hi(a), invariant.Bucket_True(empty_axis)),
@@ -4446,7 +5487,7 @@ func check_library_tier_depth_ancestors(directory string) (ancestors []string) {
 		X:       len(directory),
 		Lo:      min_non_empty,
 		Hi:      max_filesystem_directory_chars,
-		Message: "Directory is a path.Dir result; minimum `.` (1 char), capped at path budget minus `/a.go` basename",
+		Message: "Directory is a path.Dir result; min `.`, capped",
 	})
 	root_axis := invariant.Sometimes(directory == path_root, "Directory is root `.` sometimes")
 	invariant.Cross_Product(directory_axis, root_axis,
@@ -4484,12 +5525,22 @@ func check_library_tier_depth_ancestors(directory string) (ancestors []string) {
 // in the group (sorted by path) so the location is deterministic.
 // package main is exempt — it has no doc surface — as are `<X>_test`
 // packages, which exist only to host the external test binary.
-func check_package_documentation_comment(parsed_files []parsed_file) (diags []Diagnostic) {
+func check_package_documentation_comment(
+	parsed_files []parsed_file,
+) (diags []Diagnostic) {
 	defer func() {
-		d := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: len(diags), Lo: 0,
-			Hi: max_diagnostics_per_call, Message: "Diags is bounded by budget"})
-		p := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: len(parsed_files), Lo: 0,
-			Hi: max_parsed_files_per_call, Message: "Parsed_files is bounded by budget"})
+		d := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
+			X:       len(diags),
+			Lo:      0,
+			Hi:      max_diagnostics_per_call,
+			Message: "Diags is bounded by budget",
+		})
+		p := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
+			X:       len(parsed_files),
+			Lo:      0,
+			Hi:      max_parsed_files_per_call,
+			Message: "Parsed_files is bounded by budget",
+		})
 		invariant.Cross_Product(d, p,
 			invariant.Excluding("Both diags and pairs at safety caps is bad",
 				invariant.Bucket_Hi(d), invariant.Bucket_Hi(p)),
@@ -4499,8 +5550,12 @@ func check_package_documentation_comment(parsed_files []parsed_file) (diags []Di
 				invariant.Bucket_Lo(d), invariant.Bucket_Hi(p)),
 		)
 	}()
-	p := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: len(parsed_files), Lo: 0,
-		Hi: max_parsed_files_per_call, Message: "Parsed_files is bounded by budget"})
+	p := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
+		X:       len(parsed_files),
+		Lo:      0,
+		Hi:      max_parsed_files_per_call,
+		Message: "Parsed_files is bounded by budget",
+	})
 	empty_axis := invariant.Sometimes(len(parsed_files) == 0, "Parsed_files is empty sometimes")
 	invariant.Cross_Product(p, empty_axis,
 		invariant.Excluding("Max len contradicts empty=true",
@@ -4572,10 +5627,18 @@ func check_package_documentation_comment(parsed_files []parsed_file) (diags []Di
 // CPU_Count (typically runtime.NumCPU from main.go).
 func check_file_system_run_checks(parsed_files []parsed_file, cpu_count int) (diags []Diagnostic) {
 	defer func() {
-		d := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: len(diags), Lo: 0,
-			Hi: max_diagnostics_per_call, Message: "Diags is bounded by budget"})
-		p := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: len(parsed_files), Lo: 0,
-			Hi: max_parsed_files_per_call, Message: "Parsed_files is bounded by budget"})
+		d := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
+			X:       len(diags),
+			Lo:      0,
+			Hi:      max_diagnostics_per_call,
+			Message: "Diags is bounded by budget",
+		})
+		p := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
+			X:       len(parsed_files),
+			Lo:      0,
+			Hi:      max_parsed_files_per_call,
+			Message: "Parsed_files is bounded by budget",
+		})
 		invariant.Cross_Product(d, p,
 			invariant.Excluding("Both diags and pairs at safety caps is bad",
 				invariant.Bucket_Hi(d), invariant.Bucket_Hi(p)),
@@ -4585,8 +5648,12 @@ func check_file_system_run_checks(parsed_files []parsed_file, cpu_count int) (di
 				invariant.Bucket_Lo(d), invariant.Bucket_Hi(p)),
 		)
 	}()
-	p := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: len(parsed_files), Lo: 0,
-		Hi: max_parsed_files_per_call, Message: "Parsed_files is bounded by budget"})
+	p := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
+		X:       len(parsed_files),
+		Lo:      0,
+		Hi:      max_parsed_files_per_call,
+		Message: "Parsed_files is bounded by budget",
+	})
 	cpu_axis := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
 		X:       cpu_count,
 		Lo:      min_non_empty,
@@ -4626,10 +5693,18 @@ var pragma_re = regexp.MustCompile(`^//[a-z][a-z0-9_-]*:`)
 
 func check_comments(file_set *token.FileSet, file *ast.File, source []byte) (diags []Diagnostic) {
 	defer func() {
-		d := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: len(diags), Lo: 0,
-			Hi: max_diagnostics_per_call, Message: "Diags is bounded by budget"})
-		s := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: len(source), Lo: 0,
-			Hi: max_file_size_bytes, Message: "Source is bounded by budget"})
+		d := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
+			X:       len(diags),
+			Lo:      0,
+			Hi:      max_diagnostics_per_call,
+			Message: "Diags is bounded by budget",
+		})
+		s := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
+			X:       len(source),
+			Lo:      0,
+			Hi:      max_file_size_bytes,
+			Message: "Source is bounded by budget",
+		})
 		invariant.Cross_Product(d, s,
 			invariant.Excluding("Both d and s at safety caps is bad",
 				invariant.Bucket_Hi(d), invariant.Bucket_Hi(s)),
@@ -4641,7 +5716,8 @@ func check_comments(file_set *token.FileSet, file *ast.File, source []byte) (dia
 	}()
 	s := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: len(source), Lo: 0,
 		Hi: max_file_size_bytes, Message: "Source is bounded by budget"})
-	documentation_axis := invariant.Sometimes(file.Doc != nil, "File has a package doc sometimes")
+	documentation_axis := invariant.Sometimes(
+		file.Doc != nil, "File has a package doc sometimes")
 	invariant.Cross_Product(
 		invariant.Always(file_set != nil, "File_set is non-nil"),
 		invariant.Always(file != nil, "File is non-nil"),
@@ -4684,18 +5760,26 @@ func check_comments(file_set *token.FileSet, file *ast.File, source []byte) (dia
 			continue
 		}
 		diags = append(diags, check_comments_group_capital(file_set, filtered[0])...)
-		diags = append(diags, check_comments_group_terminator(file_set, filtered[len(filtered)-1])...)
+		diags = append(diags,
+			check_comments_group_terminator(file_set, filtered[len(filtered)-1])...)
 	}
 	return diags
 }
 
 func check_comments_group_capital(file_set *token.FileSet, c *ast.Comment) (diags []Diagnostic) {
 	defer func() {
-		d := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: len(diags), Lo: 0,
-			Hi: max_diagnostics_per_call, Message: "Diags is bounded by budget"})
-		text_axis := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: len(c.Text),
-			Lo: min_pair, Hi: max_file_size_bytes,
-			Message: "C.Text is ≥2 chars (`//` minimum) and bounded by per-file size budget"})
+		d := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
+			X:       len(diags),
+			Lo:      0,
+			Hi:      max_diagnostics_per_call,
+			Message: "Diags is bounded by budget",
+		})
+		text_axis := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
+			X:       len(c.Text),
+			Lo:      min_pair,
+			Hi:      max_file_size_bytes,
+			Message: "C.Text is ≥2 chars (`//`) and bounded by size budget",
+		})
 		invariant.Cross_Product(d, text_axis,
 			invariant.Excluding("Both diags and text at safety caps is bad",
 				invariant.Bucket_Hi(d), invariant.Bucket_Hi(text_axis)),
@@ -4730,11 +5814,18 @@ func check_comments_group_capital(file_set *token.FileSet, c *ast.Comment) (diag
 
 func check_comments_group_terminator(file_set *token.FileSet, c *ast.Comment) (diags []Diagnostic) {
 	defer func() {
-		d := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: len(diags), Lo: 0,
-			Hi: max_diagnostics_per_call, Message: "Diags is bounded by budget"})
-		text_axis := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: len(c.Text),
-			Lo: min_pair, Hi: max_file_size_bytes,
-			Message: "C.Text is ≥2 chars (`//` minimum) and bounded by per-file size budget"})
+		d := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
+			X:       len(diags),
+			Lo:      0,
+			Hi:      max_diagnostics_per_call,
+			Message: "Diags is bounded by budget",
+		})
+		text_axis := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
+			X:       len(c.Text),
+			Lo:      min_pair,
+			Hi:      max_file_size_bytes,
+			Message: "C.Text is ≥2 chars (`//`) and bounded by size budget",
+		})
 		invariant.Cross_Product(d, text_axis,
 			invariant.Excluding("Both diags and text at safety caps is bad",
 				invariant.Bucket_Hi(d), invariant.Bucket_Hi(text_axis)),
@@ -4769,14 +5860,14 @@ func comment_body(text string) (body string) {
 		invariant.Cross_Product(
 			invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
 				X: len(body), Lo: 0, Hi: max_filesystem_path_chars,
-				Message: "Body is the trimmed comment payload bounded by file budget",
+				Message: "Body is the trimmed comment payload",
 			}),
 		)
 	}()
 	invariant.Cross_Product(
 		invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
 			X: len(text), Lo: min_pair, Hi: max_comment_text_chars,
-			Message: "Text is a comment line starting with `//`; minimum 2 chars, bounded by comment text budget",
+			Message: "Text is a comment line (`//`), bounded by budget",
 		}),
 	)
 
@@ -4795,7 +5886,7 @@ func check_comments_group_has_space_after_slashes(text string) (ok bool) {
 	invariant.Cross_Product(
 		invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
 			X: len(text), Lo: min_pair, Hi: max_comment_text_chars,
-			Message: "Text is a comment line starting with `//`; bounded by comment text budget",
+			Message: "Text is a comment line (`//`), bounded by budget",
 		}),
 	)
 
@@ -4831,12 +5922,20 @@ func check_comments_group_has_space_after_slashes(text string) (ok bool) {
 // bug, not a property of the input.
 func check_no_recursion(file_set *token.FileSet, file *ast.File, _ []byte) (diags []Diagnostic) {
 	defer func() {
-		d := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: len(diags), Lo: 0,
-			Hi: max_diagnostics_per_call, Message: "Diags is bounded by budget"})
-		decls_axis := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: len(file.Decls),
-			Lo: 0, Hi: max_ast_nodes_per_call, Message: "File.Decls is bounded by AST budget"})
+		d := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
+			X:       len(diags),
+			Lo:      0,
+			Hi:      max_diagnostics_per_call,
+			Message: "Diags is bounded by budget",
+		})
+		decls_axis := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
+			X:       len(file.Decls),
+			Lo:      0,
+			Hi:      max_ast_nodes_per_call,
+			Message: "File.Decls is bounded by AST budget",
+		})
 		invariant.Cross_Product(d, decls_axis,
-			invariant.Excluding("Diags at diag-budget cap with decls at AST at safety cap is bad",
+			invariant.Excluding("Diags and decls both at safety cap is bad",
 				invariant.Bucket_Hi(d), invariant.Bucket_Hi(decls_axis)),
 			invariant.Excluding("Zero decls produce zero diags",
 				invariant.Bucket_Hi(d), invariant.Bucket_Lo(decls_axis)),
@@ -5413,8 +6512,12 @@ func check_no_recursion_find_cycles(
 	adj map[string][]call_edge,
 ) (diags []Diagnostic) {
 	defer func() {
-		d := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: len(diags), Lo: 0,
-			Hi: max_diagnostics_per_call, Message: "Diags is bounded by budget"})
+		d := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
+			X:       len(diags),
+			Lo:      0,
+			Hi:      max_diagnostics_per_call,
+			Message: "Diags is bounded by budget",
+		})
 		c := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: len(callers), Lo: 0,
 			Hi: max_string_slice_per_call, Message: "Callers is bounded by budget"})
 		a := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: len(adj), Lo: 0,
@@ -5479,8 +6582,12 @@ func check_no_recursion_find_cycles_dfs(
 			Hi: max_ast_nodes_per_call, Message: "Color is ≥1 at exit (start was set to gray)"})
 		a := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: len(adj), Lo: 0,
 			Hi: max_ast_nodes_per_call, Message: "Adj is bounded by budget"})
-		d := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: len(diags), Lo: 0,
-			Hi: max_diagnostics_per_call, Message: "Diags is bounded by budget"})
+		d := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
+			X:       len(diags),
+			Lo:      0,
+			Hi:      max_diagnostics_per_call,
+			Message: "Diags is bounded by budget",
+		})
 		invariant.Cross_Product(co, a, d,
 			invariant.Excluding("Both co and adj at safety caps is bad",
 				invariant.Bucket_Hi(co), invariant.Bucket_Hi(a)),
@@ -5682,12 +6789,20 @@ func check_no_recursion_find_cycles_dfs_diag_message(cycle_nodes []string) (mess
 // forces a scan of the whole file to find where execution starts.
 func check_main_first(file_set *token.FileSet, file *ast.File, _ []byte) (diags []Diagnostic) {
 	defer func() {
-		d := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: len(diags), Lo: 0,
-			Hi: max_diagnostics_per_call, Message: "Diags is bounded by budget"})
-		decls_axis := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: len(file.Decls),
-			Lo: 0, Hi: max_ast_nodes_per_call, Message: "File.Decls is bounded by AST budget"})
+		d := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
+			X:       len(diags),
+			Lo:      0,
+			Hi:      max_diagnostics_per_call,
+			Message: "Diags is bounded by budget",
+		})
+		decls_axis := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
+			X:       len(file.Decls),
+			Lo:      0,
+			Hi:      max_ast_nodes_per_call,
+			Message: "File.Decls is bounded by AST budget",
+		})
 		invariant.Cross_Product(d, decls_axis,
-			invariant.Excluding("Diags at diag-budget cap with decls at AST at safety cap is bad",
+			invariant.Excluding("Diags and decls both at safety cap is bad",
 				invariant.Bucket_Hi(d), invariant.Bucket_Hi(decls_axis)),
 			invariant.Excluding("Zero decls produce zero diags",
 				invariant.Bucket_Hi(d), invariant.Bucket_Lo(decls_axis)),
@@ -5739,12 +6854,20 @@ func check_main_first(file_set *token.FileSet, file *ast.File, _ []byte) (diags 
 // compile-time interface-satisfaction assertion, not a value discard.
 func check_no_discard(file_set *token.FileSet, file *ast.File, _ []byte) (diags []Diagnostic) {
 	defer func() {
-		d := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: len(diags), Lo: 0,
-			Hi: max_diagnostics_per_call, Message: "Diags is bounded by budget"})
-		decls_axis := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: len(file.Decls),
-			Lo: 0, Hi: max_ast_nodes_per_call, Message: "File.Decls is bounded by AST budget"})
+		d := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
+			X:       len(diags),
+			Lo:      0,
+			Hi:      max_diagnostics_per_call,
+			Message: "Diags is bounded by budget",
+		})
+		decls_axis := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
+			X:       len(file.Decls),
+			Lo:      0,
+			Hi:      max_ast_nodes_per_call,
+			Message: "File.Decls is bounded by AST budget",
+		})
 		invariant.Cross_Product(d, decls_axis,
-			invariant.Excluding("Diags at diag-budget cap with decls at AST at safety cap is bad",
+			invariant.Excluding("Diags and decls both at safety cap is bad",
 				invariant.Bucket_Hi(d), invariant.Bucket_Hi(decls_axis)),
 			invariant.Excluding("Zero decls produce zero diags",
 				invariant.Bucket_Hi(d), invariant.Bucket_Lo(decls_axis)),
@@ -5875,12 +6998,20 @@ func check_no_discard_all_blank_idents(names []*ast.Ident) (all bool) {
 // rightmost ident of the type expression (stripping `*` and package qualifier).
 func check_public_struct_fields(file_set *token.FileSet, file *ast.File, _ []byte) (diags []Diagnostic) {
 	defer func() {
-		d := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: len(diags), Lo: 0,
-			Hi: max_diagnostics_per_call, Message: "Diags is bounded by budget"})
-		decls_axis := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: len(file.Decls),
-			Lo: 0, Hi: max_ast_nodes_per_call, Message: "File.Decls is bounded by AST budget"})
+		d := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
+			X:       len(diags),
+			Lo:      0,
+			Hi:      max_diagnostics_per_call,
+			Message: "Diags is bounded by budget",
+		})
+		decls_axis := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
+			X:       len(file.Decls),
+			Lo:      0,
+			Hi:      max_ast_nodes_per_call,
+			Message: "File.Decls is bounded by AST budget",
+		})
 		invariant.Cross_Product(d, decls_axis,
-			invariant.Excluding("Diags at diag-budget cap with decls at AST at safety cap is bad",
+			invariant.Excluding("Diags and decls both at safety cap is bad",
 				invariant.Bucket_Hi(d), invariant.Bucket_Hi(decls_axis)),
 			invariant.Excluding("Zero decls produce zero diags",
 				invariant.Bucket_Hi(d), invariant.Bucket_Lo(decls_axis)),
@@ -5920,22 +7051,30 @@ func check_public_struct_fields_named(file_set *token.FileSet, identifier *ast.I
 		name_axis := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
 			X: len(identifier.Name), Lo: min_non_empty, Hi: Max_Identifier_Chars,
 			Message: "Identifier name length is bounded by identifier budget"})
-		d := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: len(*diags),
-			Lo: 0, Hi: max_diagnostics_per_call, Message: "Diags is bounded by per-file diag budget"})
+		d := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
+			X:       len(*diags),
+			Lo:      0,
+			Hi:      max_diagnostics_per_call,
+			Message: "Diags is bounded by per-file diag budget",
+		})
 		invariant.Cross_Product(name_axis, d,
 			invariant.Excluding("Identifier at safety cap with diag-budget cap is bad",
 				invariant.Bucket_Hi(name_axis), invariant.Bucket_Hi(d)),
 			invariant.Excluding("Identifier at safety cap with zero diags unreachable in test corpus",
 				invariant.Bucket_Hi(name_axis), invariant.Bucket_Lo(d)),
-			invariant.Excluding("Minimal identifier with diag-budget cap unreachable in test corpus",
+			invariant.Excluding("Lo identifier with diag cap unreachable in tests",
 				invariant.Bucket_Lo(name_axis), invariant.Bucket_Hi(d)),
 		)
 	}()
 	name_axis := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
 		X: len(identifier.Name), Lo: min_non_empty, Hi: Max_Identifier_Chars,
 		Message: "Identifier name length is bounded by identifier budget"})
-	d := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: len(*diags),
-		Lo: 0, Hi: max_diagnostics_per_call, Message: "Diags is bounded by per-file diag budget"})
+	d := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
+		X:       len(*diags),
+		Lo:      0,
+		Hi:      max_diagnostics_per_call,
+		Message: "Diags is bounded by per-file diag budget",
+	})
 	invariant.Cross_Product(
 		invariant.Always(file_set != nil, "File_set is non-nil"),
 		invariant.Always(identifier != nil, "Identifier is non-nil"),
@@ -5945,7 +7084,7 @@ func check_public_struct_fields_named(file_set *token.FileSet, identifier *ast.I
 			invariant.Bucket_Hi(name_axis), invariant.Bucket_Hi(d)),
 		invariant.Excluding("Identifier at safety cap with zero diags unreachable in test corpus",
 			invariant.Bucket_Hi(name_axis), invariant.Bucket_Lo(d)),
-		invariant.Excluding("Minimal identifier with diag-budget cap unreachable in test corpus",
+		invariant.Excluding("Lo identifier with diag cap unreachable in tests",
 			invariant.Bucket_Lo(name_axis), invariant.Bucket_Hi(d)),
 	)
 
@@ -5981,8 +7120,12 @@ func expression_is_pointer_wrapped(expression ast.Expr) (yes bool) {
 
 func check_public_struct_fields_embedded(file_set *token.FileSet, expression ast.Expr, diags *[]Diagnostic) {
 	defer func() {
-		d := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: len(*diags),
-			Lo: 0, Hi: max_diagnostics_per_call, Message: "Diags is bounded by per-file diag budget"})
+		d := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
+			X:       len(*diags),
+			Lo:      0,
+			Hi:      max_diagnostics_per_call,
+			Message: "Diags is bounded by per-file diag budget",
+		})
 		is_pointer := invariant.Sometimes(expression_is_pointer_wrapped(expression),
 			"Embedded type is pointer-wrapped sometimes")
 		invariant.Cross_Product(d, is_pointer,
@@ -5992,8 +7135,12 @@ func check_public_struct_fields_embedded(file_set *token.FileSet, expression ast
 				invariant.Bucket_Hi(d), invariant.Bucket_False(is_pointer)),
 		)
 	}()
-	d := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: len(*diags),
-		Lo: 0, Hi: max_diagnostics_per_call, Message: "Diags is bounded by per-file diag budget"})
+	d := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
+		X:       len(*diags),
+		Lo:      0,
+		Hi:      max_diagnostics_per_call,
+		Message: "Diags is bounded by per-file diag budget",
+	})
 	is_pointer := invariant.Sometimes(expression_is_pointer_wrapped(expression),
 		"Embedded type is pointer-wrapped sometimes")
 	invariant.Cross_Product(
@@ -6063,12 +7210,20 @@ func check_public_struct_fields_named_capitalize(name string) (output_string str
 // internals.
 func check_exported_type_exposes_private(file_set *token.FileSet, file *ast.File, _ []byte) (diags []Diagnostic) {
 	defer func() {
-		d := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: len(diags), Lo: 0,
-			Hi: max_diagnostics_per_call, Message: "Diags is bounded by budget"})
-		decls_axis := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: len(file.Decls),
-			Lo: 0, Hi: max_ast_nodes_per_call, Message: "File.Decls is bounded by AST budget"})
+		d := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
+			X:       len(diags),
+			Lo:      0,
+			Hi:      max_diagnostics_per_call,
+			Message: "Diags is bounded by budget",
+		})
+		decls_axis := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
+			X:       len(file.Decls),
+			Lo:      0,
+			Hi:      max_ast_nodes_per_call,
+			Message: "File.Decls is bounded by AST budget",
+		})
 		invariant.Cross_Product(d, decls_axis,
-			invariant.Excluding("Diags at diag-budget cap with decls at AST at safety cap is bad",
+			invariant.Excluding("Diags and decls both at safety cap is bad",
 				invariant.Bucket_Hi(d), invariant.Bucket_Hi(decls_axis)),
 			invariant.Excluding("Zero decls produce zero diags",
 				invariant.Bucket_Hi(d), invariant.Bucket_Lo(decls_axis)),
@@ -6403,12 +7558,20 @@ func check_exported_type_exposes_private_type_params(field_list *ast.FieldList) 
 // of a semantic one.
 func check_no_iota(file_set *token.FileSet, file *ast.File, _ []byte) (diags []Diagnostic) {
 	defer func() {
-		d := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: len(diags), Lo: 0,
-			Hi: max_diagnostics_per_call, Message: "Diags is bounded by budget"})
-		decls_axis := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: len(file.Decls),
-			Lo: 0, Hi: max_ast_nodes_per_call, Message: "File.Decls is bounded by AST budget"})
+		d := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
+			X:       len(diags),
+			Lo:      0,
+			Hi:      max_diagnostics_per_call,
+			Message: "Diags is bounded by budget",
+		})
+		decls_axis := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
+			X:       len(file.Decls),
+			Lo:      0,
+			Hi:      max_ast_nodes_per_call,
+			Message: "File.Decls is bounded by AST budget",
+		})
 		invariant.Cross_Product(d, decls_axis,
-			invariant.Excluding("Diags at diag-budget cap with decls at AST at safety cap is bad",
+			invariant.Excluding("Diags and decls both at safety cap is bad",
 				invariant.Bucket_Hi(d), invariant.Bucket_Hi(decls_axis)),
 			invariant.Excluding("Zero decls produce zero diags",
 				invariant.Bucket_Hi(d), invariant.Bucket_Lo(decls_axis)),
@@ -6447,12 +7610,20 @@ func check_no_iota(file_set *token.FileSet, file *ast.File, _ []byte) (diags []D
 // not the file, so their proximity to the code that uses them is the point.
 func check_constant_first(file_set *token.FileSet, file *ast.File, _ []byte) (diags []Diagnostic) {
 	defer func() {
-		d := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: len(diags), Lo: 0,
-			Hi: max_diagnostics_per_call, Message: "Diags is bounded by budget"})
-		decls_axis := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: len(file.Decls),
-			Lo: 0, Hi: max_ast_nodes_per_call, Message: "File.Decls is bounded by AST budget"})
+		d := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
+			X:       len(diags),
+			Lo:      0,
+			Hi:      max_diagnostics_per_call,
+			Message: "Diags is bounded by budget",
+		})
+		decls_axis := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
+			X:       len(file.Decls),
+			Lo:      0,
+			Hi:      max_ast_nodes_per_call,
+			Message: "File.Decls is bounded by AST budget",
+		})
 		invariant.Cross_Product(d, decls_axis,
-			invariant.Excluding("Diags at diag-budget cap with decls at AST at safety cap is bad",
+			invariant.Excluding("Diags and decls both at safety cap is bad",
 				invariant.Bucket_Hi(d), invariant.Bucket_Hi(decls_axis)),
 			invariant.Excluding("Zero decls produce zero diags",
 				invariant.Bucket_Hi(d), invariant.Bucket_Lo(decls_axis)),
@@ -6498,12 +7669,20 @@ func check_constant_first(file_set *token.FileSet, file *ast.File, _ []byte) (di
 // every import to its own line fights the formatter.
 func check_no_grouped_declaration(file_set *token.FileSet, file *ast.File, _ []byte) (diags []Diagnostic) {
 	defer func() {
-		d := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: len(diags), Lo: 0,
-			Hi: max_diagnostics_per_call, Message: "Diags is bounded by budget"})
-		decls_axis := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: len(file.Decls),
-			Lo: 0, Hi: max_ast_nodes_per_call, Message: "File.Decls is bounded by AST budget"})
+		d := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
+			X:       len(diags),
+			Lo:      0,
+			Hi:      max_diagnostics_per_call,
+			Message: "Diags is bounded by budget",
+		})
+		decls_axis := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
+			X:       len(file.Decls),
+			Lo:      0,
+			Hi:      max_ast_nodes_per_call,
+			Message: "File.Decls is bounded by AST budget",
+		})
 		invariant.Cross_Product(d, decls_axis,
-			invariant.Excluding("Diags at diag-budget cap with decls at AST at safety cap is bad",
+			invariant.Excluding("Diags and decls both at safety cap is bad",
 				invariant.Bucket_Hi(d), invariant.Bucket_Hi(decls_axis)),
 			invariant.Excluding("Zero decls produce zero diags",
 				invariant.Bucket_Hi(d), invariant.Bucket_Lo(decls_axis)),
@@ -6544,12 +7723,20 @@ func check_no_grouped_declaration(file_set *token.FileSet, file *ast.File, _ []b
 // into nested struct types and anonymous composites.
 func check_no_third_party_struct_tag(file_set *token.FileSet, file *ast.File, _ []byte) (diags []Diagnostic) {
 	defer func() {
-		d := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: len(diags), Lo: 0,
-			Hi: max_diagnostics_per_call, Message: "Diags is bounded by budget"})
-		decls_axis := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: len(file.Decls),
-			Lo: 0, Hi: max_ast_nodes_per_call, Message: "File.Decls is bounded by AST budget"})
+		d := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
+			X:       len(diags),
+			Lo:      0,
+			Hi:      max_diagnostics_per_call,
+			Message: "Diags is bounded by budget",
+		})
+		decls_axis := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
+			X:       len(file.Decls),
+			Lo:      0,
+			Hi:      max_ast_nodes_per_call,
+			Message: "File.Decls is bounded by AST budget",
+		})
 		invariant.Cross_Product(d, decls_axis,
-			invariant.Excluding("Diags at diag-budget cap with decls at AST at safety cap is bad",
+			invariant.Excluding("Diags and decls both at safety cap is bad",
 				invariant.Bucket_Hi(d), invariant.Bucket_Hi(decls_axis)),
 			invariant.Excluding("Zero decls produce zero diags",
 				invariant.Bucket_Hi(d), invariant.Bucket_Lo(decls_axis)),
@@ -6666,12 +7853,20 @@ func check_no_third_party_struct_tag_parse_keys(tag *ast.BasicLit) (keys []strin
 // field.
 func check_blank_synchronization_mutex(file_set *token.FileSet, file *ast.File, _ []byte) (diags []Diagnostic) {
 	defer func() {
-		d := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: len(diags), Lo: 0,
-			Hi: max_diagnostics_per_call, Message: "Diags is bounded by budget"})
-		decls_axis := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: len(file.Decls),
-			Lo: 0, Hi: max_ast_nodes_per_call, Message: "File.Decls is bounded by AST budget"})
+		d := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
+			X:       len(diags),
+			Lo:      0,
+			Hi:      max_diagnostics_per_call,
+			Message: "Diags is bounded by budget",
+		})
+		decls_axis := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
+			X:       len(file.Decls),
+			Lo:      0,
+			Hi:      max_ast_nodes_per_call,
+			Message: "File.Decls is bounded by AST budget",
+		})
 		invariant.Cross_Product(d, decls_axis,
-			invariant.Excluding("Diags at diag-budget cap with decls at AST at safety cap is bad",
+			invariant.Excluding("Diags and decls both at safety cap is bad",
 				invariant.Bucket_Hi(d), invariant.Bucket_Hi(decls_axis)),
 			invariant.Excluding("Zero decls produce zero diags",
 				invariant.Bucket_Hi(d), invariant.Bucket_Lo(decls_axis)),
@@ -6725,12 +7920,20 @@ func check_blank_synchronization_mutex(file_set *token.FileSet, file *ast.File, 
 // literal, signed literal, arithmetic expression, or typed conversion.
 func check_assertion_named_constant(file_set *token.FileSet, file *ast.File, _ []byte) (diags []Diagnostic) {
 	defer func() {
-		d := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: len(diags), Lo: 0,
-			Hi: max_diagnostics_per_call, Message: "Diags is bounded by budget"})
-		decls_axis := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: len(file.Decls),
-			Lo: 0, Hi: max_ast_nodes_per_call, Message: "File.Decls is bounded by AST budget"})
+		d := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
+			X:       len(diags),
+			Lo:      0,
+			Hi:      max_diagnostics_per_call,
+			Message: "Diags is bounded by budget",
+		})
+		decls_axis := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
+			X:       len(file.Decls),
+			Lo:      0,
+			Hi:      max_ast_nodes_per_call,
+			Message: "File.Decls is bounded by AST budget",
+		})
 		invariant.Cross_Product(d, decls_axis,
-			invariant.Excluding("Diags at diag-budget cap with decls at AST at safety cap is bad",
+			invariant.Excluding("Diags and decls both at safety cap is bad",
 				invariant.Bucket_Hi(d), invariant.Bucket_Hi(decls_axis)),
 			invariant.Excluding("Zero decls produce zero diags",
 				invariant.Bucket_Hi(d), invariant.Bucket_Lo(decls_axis)),
@@ -6994,12 +8197,20 @@ func basic_lit_is_zero_or_empty(basic *ast.BasicLit) (yes bool) {
 // zero. The full check would require type information.
 func check_keyed_struct_init(file_set *token.FileSet, file *ast.File, _ []byte) (diags []Diagnostic) {
 	defer func() {
-		d := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: len(diags), Lo: 0,
-			Hi: max_diagnostics_per_call, Message: "Diags is bounded by budget"})
-		decls_axis := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: len(file.Decls),
-			Lo: 0, Hi: max_ast_nodes_per_call, Message: "File.Decls is bounded by AST budget"})
+		d := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
+			X:       len(diags),
+			Lo:      0,
+			Hi:      max_diagnostics_per_call,
+			Message: "Diags is bounded by budget",
+		})
+		decls_axis := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
+			X:       len(file.Decls),
+			Lo:      0,
+			Hi:      max_ast_nodes_per_call,
+			Message: "File.Decls is bounded by AST budget",
+		})
 		invariant.Cross_Product(d, decls_axis,
-			invariant.Excluding("Diags at diag-budget cap with decls at AST at safety cap is bad",
+			invariant.Excluding("Diags and decls both at safety cap is bad",
 				invariant.Bucket_Hi(d), invariant.Bucket_Hi(decls_axis)),
 			invariant.Excluding("Zero decls produce zero diags",
 				invariant.Bucket_Hi(d), invariant.Bucket_Lo(decls_axis)),
@@ -7095,10 +8306,18 @@ func check_keyed_struct_init_type_ident(expression ast.Expr) (name string) {
 // gain over `gofmt -w`.
 func check_gofmt(file_set *token.FileSet, file *ast.File, source []byte) (diags []Diagnostic) {
 	defer func() {
-		d := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: len(diags), Lo: 0,
-			Hi: max_diagnostics_per_call, Message: "Diags is bounded by budget"})
-		s := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: len(source), Lo: 0,
-			Hi: max_file_size_bytes, Message: "Source is bounded by budget"})
+		d := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
+			X:       len(diags),
+			Lo:      0,
+			Hi:      max_diagnostics_per_call,
+			Message: "Diags is bounded by budget",
+		})
+		s := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
+			X:       len(source),
+			Lo:      0,
+			Hi:      max_file_size_bytes,
+			Message: "Source is bounded by budget",
+		})
 		invariant.Cross_Product(d, s,
 			invariant.Excluding("Both d and s at safety caps is bad",
 				invariant.Bucket_Hi(d), invariant.Bucket_Hi(s)),
@@ -7110,7 +8329,8 @@ func check_gofmt(file_set *token.FileSet, file *ast.File, source []byte) (diags 
 	}()
 	s := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: len(source), Lo: 0,
 		Hi: max_file_size_bytes, Message: "Source is bounded by budget"})
-	documentation_axis := invariant.Sometimes(file.Doc != nil, "File has a package doc sometimes")
+	documentation_axis := invariant.Sometimes(
+		file.Doc != nil, "File has a package doc sometimes")
 	invariant.Cross_Product(
 		invariant.Always(file_set != nil, "File_set is non-nil"),
 		invariant.Always(file != nil, "File is non-nil"),
@@ -7150,8 +8370,12 @@ func check_gofmt(file_set *token.FileSet, file *ast.File, source []byte) (diags 
 // inviting collisions. Always import with an explicit name (or package name).
 func check_no_dot_import(file_set *token.FileSet, file *ast.File, _ []byte) (diags []Diagnostic) {
 	defer func() {
-		d := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: len(diags), Lo: 0,
-			Hi: max_diagnostics_per_call, Message: "Diags is bounded by budget"})
+		d := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
+			X:       len(diags),
+			Lo:      0,
+			Hi:      max_diagnostics_per_call,
+			Message: "Diags is bounded by budget",
+		})
 		imports_axis := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: len(file.Imports),
 			Lo: 0, Hi: max_ast_nodes_per_call, Message: "File.Imports is bounded by AST budget"})
 		invariant.Cross_Product(d, imports_axis,
@@ -7192,8 +8416,12 @@ func check_no_dot_import(file_set *token.FileSet, file *ast.File, _ []byte) (dia
 // rewriter's search would never match.
 func check_default_package_alias(file_set *token.FileSet, file *ast.File, _ []byte) (diags []Diagnostic) {
 	defer func() {
-		d := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: len(diags), Lo: 0,
-			Hi: max_diagnostics_per_call, Message: "Diags is bounded by budget"})
+		d := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
+			X:       len(diags),
+			Lo:      0,
+			Hi:      max_diagnostics_per_call,
+			Message: "Diags is bounded by budget",
+		})
 		imports_axis := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: len(file.Imports),
 			Lo: 0, Hi: max_ast_nodes_per_call, Message: "File.Imports is bounded by AST budget"})
 		invariant.Cross_Product(d, imports_axis,
@@ -7250,12 +8478,20 @@ func check_default_package_alias(file_set *token.FileSet, file *ast.File, _ []by
 // callers see and prevents tests from being written against `package main`.
 func check_test_package(file_set *token.FileSet, file *ast.File, _ []byte) (diags []Diagnostic) {
 	defer func() {
-		d := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: len(diags), Lo: 0,
-			Hi: max_diagnostics_per_call, Message: "Diags is bounded by budget"})
-		decls_axis := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: len(file.Decls),
-			Lo: 0, Hi: max_ast_nodes_per_call, Message: "File.Decls is bounded by AST budget"})
+		d := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
+			X:       len(diags),
+			Lo:      0,
+			Hi:      max_diagnostics_per_call,
+			Message: "Diags is bounded by budget",
+		})
+		decls_axis := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
+			X:       len(file.Decls),
+			Lo:      0,
+			Hi:      max_ast_nodes_per_call,
+			Message: "File.Decls is bounded by AST budget",
+		})
 		invariant.Cross_Product(d, decls_axis,
-			invariant.Excluding("Diags at diag-budget cap with decls at AST at safety cap is bad",
+			invariant.Excluding("Diags and decls both at safety cap is bad",
 				invariant.Bucket_Hi(d), invariant.Bucket_Hi(decls_axis)),
 			invariant.Excluding("Zero decls produce zero diags",
 				invariant.Bucket_Hi(d), invariant.Bucket_Lo(decls_axis)),
@@ -7317,12 +8553,20 @@ func check_test_package(file_set *token.FileSet, file *ast.File, _ []byte) (diag
 // `len(xs)` and `cap(xs)` builtin calls are naturally exempt.
 func check_banned_identifiers(file_set *token.FileSet, file *ast.File, _ []byte) (diags []Diagnostic) {
 	defer func() {
-		d := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: len(diags), Lo: 0,
-			Hi: max_diagnostics_per_call, Message: "Diags is bounded by budget"})
-		decls_axis := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: len(file.Decls),
-			Lo: 0, Hi: max_ast_nodes_per_call, Message: "File.Decls is bounded by AST budget"})
+		d := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
+			X:       len(diags),
+			Lo:      0,
+			Hi:      max_diagnostics_per_call,
+			Message: "Diags is bounded by budget",
+		})
+		decls_axis := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
+			X:       len(file.Decls),
+			Lo:      0,
+			Hi:      max_ast_nodes_per_call,
+			Message: "File.Decls is bounded by AST budget",
+		})
 		invariant.Cross_Product(d, decls_axis,
-			invariant.Excluding("Diags at diag-budget cap with decls at AST at safety cap is bad",
+			invariant.Excluding("Diags and decls both at safety cap is bad",
 				invariant.Bucket_Hi(d), invariant.Bucket_Hi(decls_axis)),
 			invariant.Excluding("Zero decls produce zero diags",
 				invariant.Bucket_Hi(d), invariant.Bucket_Lo(decls_axis)),
@@ -7350,12 +8594,20 @@ func check_banned_identifiers(file_set *token.FileSet, file *ast.File, _ []byte)
 
 func check_banned_identifiers_file_name(file_set *token.FileSet, file *ast.File) (diags []Diagnostic) {
 	defer func() {
-		d := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: len(diags), Lo: 0,
-			Hi: max_diagnostics_per_call, Message: "Diags is bounded by budget"})
-		decls_axis := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: len(file.Decls),
-			Lo: 0, Hi: max_ast_nodes_per_call, Message: "File.Decls is bounded by AST budget"})
+		d := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
+			X:       len(diags),
+			Lo:      0,
+			Hi:      max_diagnostics_per_call,
+			Message: "Diags is bounded by budget",
+		})
+		decls_axis := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
+			X:       len(file.Decls),
+			Lo:      0,
+			Hi:      max_ast_nodes_per_call,
+			Message: "File.Decls is bounded by AST budget",
+		})
 		invariant.Cross_Product(d, decls_axis,
-			invariant.Excluding("Diags at diag-budget cap with decls at AST at safety cap is bad",
+			invariant.Excluding("Diags and decls both at safety cap is bad",
 				invariant.Bucket_Hi(d), invariant.Bucket_Hi(decls_axis)),
 			invariant.Excluding("Zero decls produce zero diags",
 				invariant.Bucket_Hi(d), invariant.Bucket_Lo(decls_axis)),
@@ -7399,12 +8651,20 @@ func check_banned_identifiers_file_name(file_set *token.FileSet, file *ast.File)
 // visited, so `len(xs)` and `cap(xs)` builtin calls are naturally exempt.
 func check_banned_identifiers_walk(file_set *token.FileSet, file *ast.File) (diags []Diagnostic) {
 	defer func() {
-		d := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: len(diags), Lo: 0,
-			Hi: max_diagnostics_per_call, Message: "Diags is bounded by budget"})
-		decls_axis := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: len(file.Decls),
-			Lo: 0, Hi: max_ast_nodes_per_call, Message: "File.Decls is bounded by AST budget"})
+		d := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
+			X:       len(diags),
+			Lo:      0,
+			Hi:      max_diagnostics_per_call,
+			Message: "Diags is bounded by budget",
+		})
+		decls_axis := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
+			X:       len(file.Decls),
+			Lo:      0,
+			Hi:      max_ast_nodes_per_call,
+			Message: "File.Decls is bounded by AST budget",
+		})
 		invariant.Cross_Product(d, decls_axis,
-			invariant.Excluding("Diags at diag-budget cap with decls at AST at safety cap is bad",
+			invariant.Excluding("Diags and decls both at safety cap is bad",
 				invariant.Bucket_Hi(d), invariant.Bucket_Hi(decls_axis)),
 			invariant.Excluding("Zero decls produce zero diags",
 				invariant.Bucket_Hi(d), invariant.Bucket_Lo(decls_axis)),
@@ -7574,12 +8834,20 @@ func check_banned_identifiers_find_hit(name string, banned_lists ...[]string) (h
 // become compile errors.
 func check_input_struct(file_set *token.FileSet, file *ast.File, _ []byte) (diags []Diagnostic) {
 	defer func() {
-		d := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: len(diags), Lo: 0,
-			Hi: max_diagnostics_per_call, Message: "Diags is bounded by budget"})
-		decls_axis := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: len(file.Decls),
-			Lo: 0, Hi: max_ast_nodes_per_call, Message: "File.Decls is bounded by AST budget"})
+		d := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
+			X:       len(diags),
+			Lo:      0,
+			Hi:      max_diagnostics_per_call,
+			Message: "Diags is bounded by budget",
+		})
+		decls_axis := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
+			X:       len(file.Decls),
+			Lo:      0,
+			Hi:      max_ast_nodes_per_call,
+			Message: "File.Decls is bounded by AST budget",
+		})
 		invariant.Cross_Product(d, decls_axis,
-			invariant.Excluding("Diags at diag-budget cap with decls at AST at safety cap is bad",
+			invariant.Excluding("Diags and decls both at safety cap is bad",
 				invariant.Bucket_Hi(d), invariant.Bucket_Hi(decls_axis)),
 			invariant.Excluding("Zero decls produce zero diags",
 				invariant.Bucket_Hi(d), invariant.Bucket_Lo(decls_axis)),
@@ -7839,12 +9107,20 @@ func check_input_struct_validate_non_variadic_params(function *ast.FuncDecl) (ou
 // Interface method signatures have Body == nil and are unaffected.
 func check_no_empty_function_body(file_set *token.FileSet, file *ast.File, _ []byte) (diags []Diagnostic) {
 	defer func() {
-		d := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: len(diags), Lo: 0,
-			Hi: max_diagnostics_per_call, Message: "Diags is bounded by budget"})
-		decls_axis := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: len(file.Decls),
-			Lo: 0, Hi: max_ast_nodes_per_call, Message: "File.Decls is bounded by AST budget"})
+		d := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
+			X:       len(diags),
+			Lo:      0,
+			Hi:      max_diagnostics_per_call,
+			Message: "Diags is bounded by budget",
+		})
+		decls_axis := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
+			X:       len(file.Decls),
+			Lo:      0,
+			Hi:      max_ast_nodes_per_call,
+			Message: "File.Decls is bounded by AST budget",
+		})
 		invariant.Cross_Product(d, decls_axis,
-			invariant.Excluding("Diags at diag-budget cap with decls at AST at safety cap is bad",
+			invariant.Excluding("Diags and decls both at safety cap is bad",
 				invariant.Bucket_Hi(d), invariant.Bucket_Hi(decls_axis)),
 			invariant.Excluding("Zero decls produce zero diags",
 				invariant.Bucket_Hi(d), invariant.Bucket_Lo(decls_axis)),
@@ -7881,12 +9157,20 @@ func check_no_empty_function_body(file_set *token.FileSet, file *ast.File, _ []b
 // initialization function called from `main` keeps control flow visible.
 func check_no_function_init(file_set *token.FileSet, file *ast.File, _ []byte) (diags []Diagnostic) {
 	defer func() {
-		d := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: len(diags), Lo: 0,
-			Hi: max_diagnostics_per_call, Message: "Diags is bounded by budget"})
-		decls_axis := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: len(file.Decls),
-			Lo: 0, Hi: max_ast_nodes_per_call, Message: "File.Decls is bounded by AST budget"})
+		d := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
+			X:       len(diags),
+			Lo:      0,
+			Hi:      max_diagnostics_per_call,
+			Message: "Diags is bounded by budget",
+		})
+		decls_axis := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
+			X:       len(file.Decls),
+			Lo:      0,
+			Hi:      max_ast_nodes_per_call,
+			Message: "File.Decls is bounded by AST budget",
+		})
 		invariant.Cross_Product(d, decls_axis,
-			invariant.Excluding("Diags at diag-budget cap with decls at AST at safety cap is bad",
+			invariant.Excluding("Diags and decls both at safety cap is bad",
 				invariant.Bucket_Hi(d), invariant.Bucket_Hi(decls_axis)),
 			invariant.Excluding("Zero decls produce zero diags",
 				invariant.Bucket_Hi(d), invariant.Bucket_Lo(decls_axis)),
@@ -7933,12 +9217,20 @@ func check_no_function_init(file_set *token.FileSet, file *ast.File, _ []byte) (
 // method-set interfaces are removed.
 func check_no_interfaces(file_set *token.FileSet, file *ast.File, _ []byte) (diags []Diagnostic) {
 	defer func() {
-		d := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: len(diags), Lo: 0,
-			Hi: max_diagnostics_per_call, Message: "Diags is bounded by budget"})
-		decls_axis := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: len(file.Decls),
-			Lo: 0, Hi: max_ast_nodes_per_call, Message: "File.Decls is bounded by AST budget"})
+		d := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
+			X:       len(diags),
+			Lo:      0,
+			Hi:      max_diagnostics_per_call,
+			Message: "Diags is bounded by budget",
+		})
+		decls_axis := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
+			X:       len(file.Decls),
+			Lo:      0,
+			Hi:      max_ast_nodes_per_call,
+			Message: "File.Decls is bounded by AST budget",
+		})
 		invariant.Cross_Product(d, decls_axis,
-			invariant.Excluding("Diags at diag-budget cap with decls at AST at safety cap is bad",
+			invariant.Excluding("Diags and decls both at safety cap is bad",
 				invariant.Bucket_Hi(d), invariant.Bucket_Hi(decls_axis)),
 			invariant.Excluding("Zero decls produce zero diags",
 				invariant.Bucket_Hi(d), invariant.Bucket_Lo(decls_axis)),
@@ -7982,12 +9274,20 @@ func check_no_interfaces(file_set *token.FileSet, file *ast.File, _ []byte) (dia
 // to verify Impl satisfies Iface.
 func check_no_package_vars(file_set *token.FileSet, file *ast.File, _ []byte) (diags []Diagnostic) {
 	defer func() {
-		d := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: len(diags), Lo: 0,
-			Hi: max_diagnostics_per_call, Message: "Diags is bounded by budget"})
-		decls_axis := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: len(file.Decls),
-			Lo: 0, Hi: max_ast_nodes_per_call, Message: "File.Decls is bounded by AST budget"})
+		d := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
+			X:       len(diags),
+			Lo:      0,
+			Hi:      max_diagnostics_per_call,
+			Message: "Diags is bounded by budget",
+		})
+		decls_axis := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
+			X:       len(file.Decls),
+			Lo:      0,
+			Hi:      max_ast_nodes_per_call,
+			Message: "File.Decls is bounded by AST budget",
+		})
 		invariant.Cross_Product(d, decls_axis,
-			invariant.Excluding("Diags at diag-budget cap with decls at AST at safety cap is bad",
+			invariant.Excluding("Diags and decls both at safety cap is bad",
 				invariant.Bucket_Hi(d), invariant.Bucket_Hi(decls_axis)),
 			invariant.Excluding("Zero decls produce zero diags",
 				invariant.Bucket_Hi(d), invariant.Bucket_Lo(decls_axis)),
@@ -8155,12 +9455,20 @@ func check_no_package_vars_all_allowed(vs *ast.ValueSpec) (yes bool) {
 // types render directly from the AST.
 func check_unnecessary_method(file_set *token.FileSet, file *ast.File, _ []byte) (diags []Diagnostic) {
 	defer func() {
-		d := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: len(diags), Lo: 0,
-			Hi: max_diagnostics_per_call, Message: "Diags is bounded by budget"})
-		decls_axis := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: len(file.Decls),
-			Lo: 0, Hi: max_ast_nodes_per_call, Message: "File.Decls is bounded by AST budget"})
+		d := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
+			X:       len(diags),
+			Lo:      0,
+			Hi:      max_diagnostics_per_call,
+			Message: "Diags is bounded by budget",
+		})
+		decls_axis := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
+			X:       len(file.Decls),
+			Lo:      0,
+			Hi:      max_ast_nodes_per_call,
+			Message: "File.Decls is bounded by AST budget",
+		})
 		invariant.Cross_Product(d, decls_axis,
-			invariant.Excluding("Diags at diag-budget cap with decls at AST at safety cap is bad",
+			invariant.Excluding("Diags and decls both at safety cap is bad",
 				invariant.Bucket_Hi(d), invariant.Bucket_Hi(decls_axis)),
 			invariant.Excluding("Zero decls produce zero diags",
 				invariant.Bucket_Hi(d), invariant.Bucket_Lo(decls_axis)),
@@ -8408,12 +9716,20 @@ func check_unnecessary_method_field_list_types_render_type(expression ast.Expr) 
 // variables and other expressions are unaffected (no type info here to track).
 func check_snap_backtick(file_set *token.FileSet, file *ast.File, _ []byte) (diags []Diagnostic) {
 	defer func() {
-		d := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: len(diags), Lo: 0,
-			Hi: max_diagnostics_per_call, Message: "Diags is bounded by budget"})
-		decls_axis := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: len(file.Decls),
-			Lo: 0, Hi: max_ast_nodes_per_call, Message: "File.Decls is bounded by AST budget"})
+		d := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
+			X:       len(diags),
+			Lo:      0,
+			Hi:      max_diagnostics_per_call,
+			Message: "Diags is bounded by budget",
+		})
+		decls_axis := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
+			X:       len(file.Decls),
+			Lo:      0,
+			Hi:      max_ast_nodes_per_call,
+			Message: "File.Decls is bounded by AST budget",
+		})
 		invariant.Cross_Product(d, decls_axis,
-			invariant.Excluding("Diags at diag-budget cap with decls at AST at safety cap is bad",
+			invariant.Excluding("Diags and decls both at safety cap is bad",
 				invariant.Bucket_Hi(d), invariant.Bucket_Hi(decls_axis)),
 			invariant.Excluding("Zero decls produce zero diags",
 				invariant.Bucket_Hi(d), invariant.Bucket_Lo(decls_axis)),
@@ -8477,12 +9793,20 @@ func check_snap_backtick(file_set *token.FileSet, file *ast.File, _ []byte) (dia
 // behavioral test.
 func check_test_documentation_comment(file_set *token.FileSet, file *ast.File, _ []byte) (diags []Diagnostic) {
 	defer func() {
-		d := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: len(diags), Lo: 0,
-			Hi: max_diagnostics_per_call, Message: "Diags is bounded by budget"})
-		decls_axis := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: len(file.Decls),
-			Lo: 0, Hi: max_ast_nodes_per_call, Message: "File.Decls is bounded by AST budget"})
+		d := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
+			X:       len(diags),
+			Lo:      0,
+			Hi:      max_diagnostics_per_call,
+			Message: "Diags is bounded by budget",
+		})
+		decls_axis := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
+			X:       len(file.Decls),
+			Lo:      0,
+			Hi:      max_ast_nodes_per_call,
+			Message: "File.Decls is bounded by AST budget",
+		})
 		invariant.Cross_Product(d, decls_axis,
-			invariant.Excluding("Diags at diag-budget cap with decls at AST at safety cap is bad",
+			invariant.Excluding("Diags and decls both at safety cap is bad",
 				invariant.Bucket_Hi(d), invariant.Bucket_Hi(decls_axis)),
 			invariant.Excluding("Zero decls produce zero diags",
 				invariant.Bucket_Hi(d), invariant.Bucket_Lo(decls_axis)),
@@ -8549,12 +9873,20 @@ func check_test_documentation_comment(file_set *token.FileSet, file *ast.File, _
 // names in test packages are internal to the test binary).
 func check_exported_documentation_comment(file_set *token.FileSet, file *ast.File, _ []byte) (diags []Diagnostic) {
 	defer func() {
-		d := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: len(diags), Lo: 0,
-			Hi: max_diagnostics_per_call, Message: "Diags is bounded by budget"})
-		decls_axis := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: len(file.Decls),
-			Lo: 0, Hi: max_ast_nodes_per_call, Message: "File.Decls is bounded by AST budget"})
+		d := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
+			X:       len(diags),
+			Lo:      0,
+			Hi:      max_diagnostics_per_call,
+			Message: "Diags is bounded by budget",
+		})
+		decls_axis := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
+			X:       len(file.Decls),
+			Lo:      0,
+			Hi:      max_ast_nodes_per_call,
+			Message: "File.Decls is bounded by AST budget",
+		})
 		invariant.Cross_Product(d, decls_axis,
-			invariant.Excluding("Diags at diag-budget cap with decls at AST at safety cap is bad",
+			invariant.Excluding("Diags and decls both at safety cap is bad",
 				invariant.Bucket_Hi(d), invariant.Bucket_Hi(decls_axis)),
 			invariant.Excluding("Zero decls produce zero diags",
 				invariant.Bucket_Hi(d), invariant.Bucket_Lo(decls_axis)),
@@ -8586,8 +9918,12 @@ func check_exported_documentation_comment(file_set *token.FileSet, file *ast.Fil
 
 func check_exported_documentation_comment_function(file_set *token.FileSet, function_declaration *ast.FuncDecl) (diags []Diagnostic) {
 	defer func() {
-		d := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: len(diags), Lo: 0,
-			Hi: max_diagnostics_per_call, Message: "Diags is bounded by budget"})
+		d := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
+			X:       len(diags),
+			Lo:      0,
+			Hi:      max_diagnostics_per_call,
+			Message: "Diags is bounded by budget",
+		})
 		documentation_axis := invariant.Sometimes(function_declaration.Doc != nil, "Function_declaration has a doc sometimes")
 		invariant.Cross_Product(d, documentation_axis,
 			invariant.Excluding("Axis d at safety cap is bad",
@@ -8721,12 +10057,20 @@ func check_exported_documentation_comment_has_documentation(group *ast.CommentGr
 // file:line:column: message lines.
 func check_names(file_set *token.FileSet, file *ast.File, _ []byte) (diags []Diagnostic) {
 	defer func() {
-		d := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: len(diags), Lo: 0,
-			Hi: max_diagnostics_per_call, Message: "Diags is bounded by budget"})
-		decls_axis := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: len(file.Decls),
-			Lo: 0, Hi: max_ast_nodes_per_call, Message: "File.Decls is bounded by AST budget"})
+		d := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
+			X:       len(diags),
+			Lo:      0,
+			Hi:      max_diagnostics_per_call,
+			Message: "Diags is bounded by budget",
+		})
+		decls_axis := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
+			X:       len(file.Decls),
+			Lo:      0,
+			Hi:      max_ast_nodes_per_call,
+			Message: "File.Decls is bounded by AST budget",
+		})
 		invariant.Cross_Product(d, decls_axis,
-			invariant.Excluding("Diags at diag-budget cap with decls at AST at safety cap is bad",
+			invariant.Excluding("Diags and decls both at safety cap is bad",
 				invariant.Bucket_Hi(d), invariant.Bucket_Hi(decls_axis)),
 			invariant.Excluding("Zero decls produce zero diags",
 				invariant.Bucket_Hi(d), invariant.Bucket_Lo(decls_axis)),
@@ -10811,8 +12155,12 @@ func check_file_system_stream_checkers(
 
 func check_file_system_stream(input *check_file_system_stream_input) (diags []Diagnostic, go_paths []string, err error) {
 	defer func() {
-		d := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: len(diags), Lo: 0,
-			Hi: max_diagnostics_per_call, Message: "Diags is bounded by budget"})
+		d := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
+			X:       len(diags),
+			Lo:      0,
+			Hi:      max_diagnostics_per_call,
+			Message: "Diags is bounded by budget",
+		})
 		g := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: len(go_paths), Lo: 0,
 			Hi: max_parsed_files_per_call, Message: "Go_paths is bounded by budget"})
 		invariant.Cross_Product(d, g,
@@ -11708,44 +13056,90 @@ func check_file_system_stream_checks_stream_agents_claude_pair_checker() (c chec
 // somewhere, and the doctrine reserves exactly this position for it.
 func check_no_ambient_stdlib(parsed_files []parsed_file, modules *module_index) (diags []Diagnostic) {
 	defer func() {
-		d := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: len(diags), Lo: 0,
-			Hi: max_diagnostics_per_call, Message: "Diags is bounded by budget"})
-		p := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: len(parsed_files), Lo: 0,
-			Hi: max_parsed_files_per_call, Message: "Parsed_files is bounded by budget"})
-		m_axis := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: len(modules.Modules), Lo: 0,
-			Hi: max_parsed_files_per_call, Message: "Modules.Modules is bounded by parsed-file budget"})
-		f_axis := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: len(modules.File_To_Module),
-			Lo: 0, Hi: max_parsed_files_per_call, Message: "Modules.File_To_Module is bounded by parsed-file budget"})
+		d := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
+			X:       len(diags),
+			Lo:      0,
+			Hi:      max_diagnostics_per_call,
+			Message: "Diags is bounded by budget",
+		})
+		p := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
+			X:       len(parsed_files),
+			Lo:      0,
+			Hi:      max_parsed_files_per_call,
+			Message: "Parsed_files is bounded by budget",
+		})
+		m_axis := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
+			X:       len(modules.Modules),
+			Lo:      0,
+			Hi:      max_parsed_files_per_call,
+			Message: "Modules.Modules is bounded by parsed-file budget",
+		})
+		f_axis := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
+			X:       len(modules.File_To_Module),
+			Lo:      0,
+			Hi:      max_parsed_files_per_call,
+			Message: "Modules.File_To_Module is bounded by parsed-file budget",
+		})
 		invariant.Cross_Product(d, p, m_axis, f_axis,
-			invariant.Excluding("Both diags and pairs at safety caps is bad", invariant.Bucket_Hi(d), invariant.Bucket_Hi(p)),
-			invariant.Excluding("Diags Hi with zero pairs is bad", invariant.Bucket_Hi(d), invariant.Bucket_Lo(p)),
-			invariant.Excluding("Pairs Hi with zero diags is bad", invariant.Bucket_Lo(d), invariant.Bucket_Hi(p)),
-			invariant.Excluding("Modules Hi unreachable", invariant.Bucket_Hi(m_axis), invariant.Bucket_Hi(d)),
-			invariant.Excluding("F2M Hi unreachable", invariant.Bucket_Hi(f_axis), invariant.Bucket_Hi(d)),
-			invariant.Excluding("Both modules Hi unreachable", invariant.Bucket_Hi(m_axis), invariant.Bucket_Hi(f_axis)),
-			invariant.Excluding("Modules Hi with zero diags unreachable", invariant.Bucket_Hi(m_axis), invariant.Bucket_Lo(d)),
-			invariant.Excluding("F2M Hi with zero diags unreachable", invariant.Bucket_Hi(f_axis), invariant.Bucket_Lo(d)),
+			invariant.Excluding("Both diags and pairs at safety caps is bad",
+				invariant.Bucket_Hi(d), invariant.Bucket_Hi(p)),
+			invariant.Excluding("Diags Hi with zero pairs is bad",
+				invariant.Bucket_Hi(d), invariant.Bucket_Lo(p)),
+			invariant.Excluding("Pairs Hi with zero diags is bad",
+				invariant.Bucket_Lo(d), invariant.Bucket_Hi(p)),
+			invariant.Excluding("Modules Hi unreachable",
+				invariant.Bucket_Hi(m_axis), invariant.Bucket_Hi(d)),
+			invariant.Excluding("F2M Hi unreachable",
+				invariant.Bucket_Hi(f_axis), invariant.Bucket_Hi(d)),
+			invariant.Excluding("Both modules Hi unreachable",
+				invariant.Bucket_Hi(m_axis), invariant.Bucket_Hi(f_axis)),
+			invariant.Excluding("Modules Hi with zero diags unreachable",
+				invariant.Bucket_Hi(m_axis), invariant.Bucket_Lo(d)),
+			invariant.Excluding("F2M Hi with zero diags unreachable",
+				invariant.Bucket_Hi(f_axis), invariant.Bucket_Lo(d)),
 		)
 	}()
-	p := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: len(parsed_files), Lo: 0,
-		Hi: max_parsed_files_per_call, Message: "Parsed_files is bounded by budget"})
+	p := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
+		X:       len(parsed_files),
+		Lo:      0,
+		Hi:      max_parsed_files_per_call,
+		Message: "Parsed_files is bounded by budget",
+	})
 	empty_axis := invariant.Sometimes(len(parsed_files) == 0, "Parsed_files is empty sometimes")
-	m_axis := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: len(modules.Modules), Lo: 0,
-		Hi: max_parsed_files_per_call, Message: "Modules.Modules is bounded by parsed-file budget"})
-	f_axis := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: len(modules.File_To_Module),
-		Lo: 0, Hi: max_parsed_files_per_call, Message: "Modules.File_To_Module is bounded by parsed-file budget"})
+	m_axis := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
+		X:       len(modules.Modules),
+		Lo:      0,
+		Hi:      max_parsed_files_per_call,
+		Message: "Modules.Modules is bounded by parsed-file budget",
+	})
+	f_axis := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
+		X:       len(modules.File_To_Module),
+		Lo:      0,
+		Hi:      max_parsed_files_per_call,
+		Message: "Modules.File_To_Module is bounded by parsed-file budget",
+	})
 	invariant.Cross_Product(invariant.Always(modules != nil, "Modules is non-nil"),
 		p, empty_axis, m_axis, f_axis,
-		invariant.Excluding("Max len contradicts empty=true", invariant.Bucket_Hi(p), invariant.Bucket_True(empty_axis)),
-		invariant.Excluding("Axis p at safety cap is bad", invariant.Bucket_Hi(p), invariant.Bucket_False(empty_axis)),
-		invariant.Excluding("Zero len implies empty true", invariant.Bucket_Lo(p), invariant.Bucket_False(empty_axis)),
-		invariant.Excluding("Modules Hi unreachable", invariant.Bucket_Hi(m_axis), invariant.Bucket_False(empty_axis)),
-		invariant.Excluding("Modules Hi with p Hi is bad", invariant.Bucket_Hi(m_axis), invariant.Bucket_Hi(p)),
-		invariant.Excluding("F2M Hi unreachable", invariant.Bucket_Hi(f_axis), invariant.Bucket_False(empty_axis)),
-		invariant.Excluding("F2M Hi with p Hi is bad", invariant.Bucket_Hi(f_axis), invariant.Bucket_Hi(p)),
-		invariant.Excluding("Both modules Hi unreachable", invariant.Bucket_Hi(m_axis), invariant.Bucket_Hi(f_axis)),
-		invariant.Excluding("Modules Hi with empty impossible", invariant.Bucket_Hi(m_axis), invariant.Bucket_True(empty_axis)),
-		invariant.Excluding("F2M Hi with empty impossible", invariant.Bucket_Hi(f_axis), invariant.Bucket_True(empty_axis)),
+		invariant.Excluding("Max len contradicts empty=true",
+			invariant.Bucket_Hi(p), invariant.Bucket_True(empty_axis)),
+		invariant.Excluding("Axis p at safety cap is bad",
+			invariant.Bucket_Hi(p), invariant.Bucket_False(empty_axis)),
+		invariant.Excluding("Zero len implies empty true",
+			invariant.Bucket_Lo(p), invariant.Bucket_False(empty_axis)),
+		invariant.Excluding("Modules Hi unreachable",
+			invariant.Bucket_Hi(m_axis), invariant.Bucket_False(empty_axis)),
+		invariant.Excluding("Modules Hi with p Hi is bad",
+			invariant.Bucket_Hi(m_axis), invariant.Bucket_Hi(p)),
+		invariant.Excluding("F2M Hi unreachable",
+			invariant.Bucket_Hi(f_axis), invariant.Bucket_False(empty_axis)),
+		invariant.Excluding("F2M Hi with p Hi is bad",
+			invariant.Bucket_Hi(f_axis), invariant.Bucket_Hi(p)),
+		invariant.Excluding("Both modules Hi unreachable",
+			invariant.Bucket_Hi(m_axis), invariant.Bucket_Hi(f_axis)),
+		invariant.Excluding("Modules Hi with empty impossible",
+			invariant.Bucket_Hi(m_axis), invariant.Bucket_True(empty_axis)),
+		invariant.Excluding("F2M Hi with empty impossible",
+			invariant.Bucket_Hi(f_axis), invariant.Bucket_True(empty_axis)),
 	)
 
 	for _, pf := range parsed_files {
@@ -11858,8 +13252,12 @@ func parsed_file_is_composition_tier(pf parsed_file, modules *module_index) (yes
 
 func check_no_ambient_stdlib_per_file(file_set *token.FileSet, file *ast.File) (diags []Diagnostic) {
 	defer func() {
-		d := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: len(diags), Lo: 0,
-			Hi: max_diagnostics_per_call, Message: "Diags is bounded by budget"})
+		d := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
+			X:       len(diags),
+			Lo:      0,
+			Hi:      max_diagnostics_per_call,
+			Message: "Diags is bounded by budget",
+		})
 		imports_axis := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: len(file.Imports),
 			Lo: 0, Hi: max_ast_nodes_per_call, Message: "File.Imports is bounded by AST budget"})
 		invariant.Cross_Product(d, imports_axis,
@@ -12025,12 +13423,20 @@ func is_ambient_soft_ident(input *is_ambient_soft_ident_input) (yes bool) {
 // that the loop is unbounded on purpose.
 func check_no_bare_for(file_set *token.FileSet, file *ast.File, _ []byte) (diags []Diagnostic) {
 	defer func() {
-		d := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: len(diags), Lo: 0,
-			Hi: max_diagnostics_per_call, Message: "Diags is bounded by budget"})
-		decls_axis := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: len(file.Decls),
-			Lo: 0, Hi: max_ast_nodes_per_call, Message: "File.Decls is bounded by AST budget"})
+		d := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
+			X:       len(diags),
+			Lo:      0,
+			Hi:      max_diagnostics_per_call,
+			Message: "Diags is bounded by budget",
+		})
+		decls_axis := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
+			X:       len(file.Decls),
+			Lo:      0,
+			Hi:      max_ast_nodes_per_call,
+			Message: "File.Decls is bounded by AST budget",
+		})
 		invariant.Cross_Product(d, decls_axis,
-			invariant.Excluding("Diags at diag-budget cap with decls at AST at safety cap is bad",
+			invariant.Excluding("Diags and decls both at safety cap is bad",
 				invariant.Bucket_Hi(d), invariant.Bucket_Hi(decls_axis)),
 			invariant.Excluding("Zero decls produce zero diags",
 				invariant.Bucket_Hi(d), invariant.Bucket_Lo(decls_axis)),
@@ -12108,12 +13514,20 @@ func is_bare_for_condition(condition ast.Expr) (yes bool) {
 //   - byte / rune / uintptr deliberately excluded from int kinds.
 func check_invariant_assertions(file_set *token.FileSet, file *ast.File, _ []byte) (diags []Diagnostic) {
 	defer func() {
-		d := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: len(diags), Lo: 0,
-			Hi: max_diagnostics_per_call, Message: "Diags is bounded by budget"})
-		decls_axis := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: len(file.Decls),
-			Lo: 0, Hi: max_ast_nodes_per_call, Message: "File.Decls is bounded by AST budget"})
+		d := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
+			X:       len(diags),
+			Lo:      0,
+			Hi:      max_diagnostics_per_call,
+			Message: "Diags is bounded by budget",
+		})
+		decls_axis := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
+			X:       len(file.Decls),
+			Lo:      0,
+			Hi:      max_ast_nodes_per_call,
+			Message: "File.Decls is bounded by AST budget",
+		})
 		invariant.Cross_Product(d, decls_axis,
-			invariant.Excluding("Diags at diag-budget cap with decls at AST at safety cap is bad",
+			invariant.Excluding("Diags and decls both at safety cap is bad",
 				invariant.Bucket_Hi(d), invariant.Bucket_Hi(decls_axis)),
 			invariant.Excluding("Zero decls produce zero diags",
 				invariant.Bucket_Hi(d), invariant.Bucket_Lo(decls_axis)),
@@ -12457,9 +13871,14 @@ func check_invariant_assertions_validate_one_function(
 // production interface.
 func Check_Invariant_Assertions(filename string, source any) (diags []Diagnostic, err error) {
 	defer func() {
-		d := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: len(diags), Lo: 0,
-			Hi: max_diagnostics_per_call, Message: "Diags is bounded by budget"})
-		err_axis := invariant.Sometimes(err != nil, "Err is non-nil sometimes (parse failure)")
+		d := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
+			X:       len(diags),
+			Lo:      0,
+			Hi:      max_diagnostics_per_call,
+			Message: "Diags is bounded by budget",
+		})
+		err_axis := invariant.Sometimes(
+			err != nil, "Err is non-nil sometimes (parse failure)")
 		invariant.Cross_Product(d, err_axis,
 			invariant.Excluding("Axis d at safety cap is bad",
 				invariant.Bucket_Hi(d), invariant.Bucket_True(err_axis)),
@@ -12477,7 +13896,8 @@ func Check_Invariant_Assertions(filename string, source any) (diags []Diagnostic
 	)
 
 	file_set := token.NewFileSet()
-	file, err := parser.ParseFile(file_set, filename, source, parser.SkipObjectResolution|parser.ParseComments)
+	file, err := parser.ParseFile(
+		file_set, filename, source, parser.SkipObjectResolution|parser.ParseComments)
 	if err != nil {
 		return nil, err
 	}
@@ -16154,9 +17574,11 @@ func check_invariant_assertions_nil_predicate_index(helper_name string) (index i
 			// The Lo (=-1) and Hi (=1) endpoints both mean index!=0; the
 			// matching index==0=true tuples are impossible by definition.
 			invariant.Excluding("Negative index sentinel contradicts index_zero true",
-				invariant.Bucket_Lo(index_boundary), invariant.Bucket_True(index_zero)),
+				invariant.Bucket_Lo(index_boundary),
+				invariant.Bucket_True(index_zero)),
 			invariant.Excluding("Max index contradicts index_zero true",
-				invariant.Bucket_Hi(index_boundary), invariant.Bucket_True(index_zero)),
+				invariant.Bucket_Hi(index_boundary),
+				invariant.Bucket_True(index_zero)),
 		)
 	}()
 	invariant.Cross_Product(
@@ -19881,12 +21303,20 @@ var generated_re = regexp.MustCompile(`^// Code generated .* DO NOT EDIT\.?$`)
 // the user owns the generator, not the generated output.
 func check_no_unbounded_apis(file_set *token.FileSet, file *ast.File, _ []byte) (diags []Diagnostic) {
 	defer func() {
-		d := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: len(diags), Lo: 0,
-			Hi: max_diagnostics_per_call, Message: "Diags is bounded by budget"})
-		decls_axis := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: len(file.Decls),
-			Lo: 0, Hi: max_ast_nodes_per_call, Message: "File.Decls is bounded by AST budget"})
+		d := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
+			X:       len(diags),
+			Lo:      0,
+			Hi:      max_diagnostics_per_call,
+			Message: "Diags is bounded by budget",
+		})
+		decls_axis := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
+			X:       len(file.Decls),
+			Lo:      0,
+			Hi:      max_ast_nodes_per_call,
+			Message: "File.Decls is bounded by AST budget",
+		})
 		invariant.Cross_Product(d, decls_axis,
-			invariant.Excluding("Diags at diag-budget cap with decls at AST at safety cap is bad",
+			invariant.Excluding("Diags and decls both at safety cap is bad",
 				invariant.Bucket_Hi(d), invariant.Bucket_Hi(decls_axis)),
 			invariant.Excluding("Zero decls produce zero diags",
 				invariant.Bucket_Hi(d), invariant.Bucket_Lo(decls_axis)),
