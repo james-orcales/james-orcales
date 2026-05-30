@@ -30,7 +30,7 @@ import (
 	invariant "github.com/james-orcales/james-orcales/golang_snacks/invariant/v2/invariant_default"
 )
 
-const max_line_chars = 140
+const max_line_chars = 100
 const tab_width = 8
 
 // Hi bounds for Distinct_Boundary axes on string lengths. Each constant
@@ -482,7 +482,7 @@ const max_comment_text_chars = max_filesystem_path_chars + 2
 // banned_segments_universal list: "utilities" at 9 chars.
 const max_banned_segment_chars = 9
 
-const max_function_lines = 100
+const max_function_lines = 70
 
 // Git's default short-hash width.
 const git_short_hash_chars = 10
