@@ -8,12 +8,12 @@ import (
 	"go/parser"
 	"go/token"
 	"io/fs"
+	"os"
 	"strconv"
 	"strings"
 	"testing"
 	"testing/fstest"
 
-	invariant "github.com/james-orcales/james-orcales/golang_snacks/invariant/v2/invariant_default"
 	"github.com/james-orcales/james-orcales/lint/internal"
 )
 
@@ -38,8 +38,6 @@ const fixture_constant_hi = "\nconst fixture_hi = 100\n"
 // pointer, used by declaration-coverage fixtures so the test cases focus on
 // the call-site shape rather than re-deriving a valid callee each time.
 const fixture_declaration_callee = "func g() (out *int) {\n" +
-	"\tdefer func() { invariant.Cross_Product(" +
-	"invariant.Always(out != nil, \"out is non-nil\")) }()\n" +
 	"\treturn nil\n" +
 	"}\n\n"
 
@@ -47,10 +45,7 @@ const fixture_declaration_callee = "func g() (out *int) {\n" +
 // fixtures exercising multi-LHS declarations.
 const fixture_declaration_callee_pair = "func g() (a *int, b *int) {\n" +
 	"\tdefer func() {\n" +
-	"\t\tinvariant.Cross_Product(\n" +
-	"\t\t\tinvariant.Always(" +
 	"a != nil, \"a is non-nil\"),\n" +
-	"\t\t\tinvariant.Always(" +
 	"b != nil, \"b is non-nil\"),\n" +
 	"\t\t)\n" +
 	"\t}()\n" +
@@ -67,8 +62,8 @@ const fixture_clean_go = "package main\n\n" +
 	"\tdefer func() {\n" +
 	"\t\tinvariant.Cross_Product(\n" +
 	"\t\t\tinvariant.Distinct_Boundary(" +
-	"&invariant.Boundary_Input[int]{" +
-	"X: result, Lo: 0, Hi: fixture_hi}),\n" +
+	"&invariant.Boundary_Input[int]{\n" +
+	"\t\t\t\tX: result, Lo: 0, Hi: fixture_hi}),\n" +
 	"\t\t\tinvariant.Always(" +
 	"result == 0, \"result is zero\"),\n" +
 	"\t\t)\n" +
@@ -97,7 +92,7 @@ const prelude_with_h = prelude_single +
 	"}\n\n"
 
 func TestMain(m *testing.M) {
-	invariant.Run_Test_Main(m)
+	os.Exit(m.Run())
 }
 
 // Doctrine fixtures must satisfy check_package_documentation_comment
@@ -421,20 +416,8 @@ const fixture_hi = 100
 
 func f() (result int) {
 	defer func() {
-		invariant.Cross_Product(
-			invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
-				X: result, Lo: 0, Hi: fixture_hi,
-			}),
-			invariant.Always(result == 0, "result is zero"),
-		)
 	}()
 	_, x := g()
-	invariant.Cross_Product(
-		invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
-			X: x, Lo: 0, Hi: fixture_hi,
-		}),
-		invariant.Always(x == 0, "x is zero"),
-	)
 	return x
 }`}, Want_Diag: ""},
 	} {
@@ -739,11 +722,6 @@ const fixture_hi = 100
 
 func f() (x int) {
 	defer func() {
-		invariant.Cross_Product(
-			invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
-				X: x, Lo: 0, Hi: fixture_hi, Message: "x budget",
-			}),
-		)
 	}()
 	return 0
 }
@@ -757,11 +735,6 @@ const fixture_hi = 100
 
 func f() (output int) {
 	defer func() {
-		invariant.Cross_Product(
-			invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
-				X: output, Lo: 0, Hi: fixture_hi, Message: "output budget",
-			}),
-		)
 	}()
 	callback := func() { return }
 	callback()
@@ -1461,9 +1434,6 @@ const max_x = 100
 
 func f() {
 	var x int
-	invariant.Cross_Product(
-		invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: x, Lo: 0, Hi: max_x}),
-	)
 }
 `,
 			},
@@ -1480,7 +1450,6 @@ const fixture_hi = 100
 
 func f() {
 	var x int
-	invariant.Cross_Product(invariant.Always(x == 0, "x is zero"))
 }
 `,
 			},
@@ -1497,7 +1466,6 @@ const fixture_hi = 100
 
 func f() {
 	var s string
-	invariant.Cross_Product(invariant.Sometimes(s == "", "s is empty"))
 }
 `,
 			},
@@ -1525,7 +1493,6 @@ const fixture_hi = 100
 
 func f() {
 	var p *int
-	invariant.Cross_Product(invariant.Always(p == nil, "p is nil"))
 }
 `,
 			},
@@ -1556,7 +1523,6 @@ const max_x = 100
 
 func f() {
 	var x int
-	invariant.Cross_Product(invariant.Always(x == max_x, "x is max"))
 }
 `,
 			},
@@ -1570,12 +1536,10 @@ func f() {
 import (
 	"math"
 
-	invariant "` + fixture_invariant_import_path + `"
 )
 
 func f() {
 	var x int
-	invariant.Cross_Product(invariant.Always(x < math.MaxInt, "x is under MaxInt"))
 }
 `,
 			},
@@ -1638,16 +1602,6 @@ type Foo struct {
 
 func make_v() (result Foo) {
 	defer func() {
-		invariant.Cross_Product(
-			invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
-				X: result.A, Lo: 0, Hi: fixture_hi,
-			}),
-			invariant.Always(result.A == 0, "result.A is zero"),
-			invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
-				X: result.B, Lo: 0, Hi: fixture_hi,
-			}),
-			invariant.Always(result.B == 0, "result.B is zero"),
-		)
 	}()
 	return Foo{A: 1, B: 2}
 }
@@ -1666,11 +1620,6 @@ const fixture_hi = 100
 
 func make_v() (result []int) {
 	defer func() {
-		invariant.Cross_Product(
-			invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
-				X: len(result), Lo: 0, Hi: fixture_hi, Message: "len",
-			}),
-		)
 	}()
 	return []int{1, 2, 3}
 }
@@ -1704,12 +1653,6 @@ type Foo struct {
 
 func make_v() (result Foo) {
 	defer func() {
-		invariant.Cross_Product(
-			invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
-				X: result.A, Lo: 0, Hi: fixture_hi,
-			}),
-			invariant.Always(result.A == 0, "result.A is zero"),
-		)
 	}()
 	return Foo{}
 }
@@ -2175,21 +2118,7 @@ const fixture_hi = 100
 
 func F(xs []int) (result int) {
 	defer func() {
-		invariant.Cross_Product(
-			invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
-				X: result, Lo: 0, Hi: fixture_hi,
-			}),
-			invariant.Always(result == 0, "result is zero"),
-			invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
-			X: len(xs), Lo: 0, Hi: fixture_hi, Message: "len",
-		}),
-		)
 	}()
-	invariant.Cross_Product(
-		invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
-			X: len(xs), Lo: 0, Hi: fixture_hi, Message: "len",
-		}),
-	)
 	return len(xs)
 }
 `,
@@ -2218,21 +2147,7 @@ const fixture_hi = 100
 
 func F(xs []int) (result int) {
 	defer func() {
-		invariant.Cross_Product(
-			invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
-				X: result, Lo: 0, Hi: fixture_hi,
-			}),
-			invariant.Always(result == 0, "result is zero"),
-			invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
-			X: len(xs), Lo: 0, Hi: fixture_hi, Message: "len",
-		}),
-		)
 	}()
-	invariant.Cross_Product(
-		invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
-			X: len(xs), Lo: 0, Hi: fixture_hi, Message: "len",
-		}),
-	)
 	return cap(xs)
 }
 `,
@@ -2262,21 +2177,7 @@ const fixture_hi = 100
 
 func F(buffer []byte) (result int) {
 	defer func() {
-		invariant.Cross_Product(
-			invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
-				X: result, Lo: 0, Hi: fixture_hi,
-			}),
-			invariant.Always(result == 0, "result is zero"),
-			invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
-			X: len(buffer), Lo: 0, Hi: fixture_hi, Message: "len",
-		}),
-		)
 	}()
-	invariant.Cross_Product(
-		invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
-			X: len(buffer), Lo: 0, Hi: fixture_hi, Message: "len",
-		}),
-	)
 	n := 0
 	return n
 }
@@ -2354,21 +2255,7 @@ type S struct{ Count int }
 
 func F(buffer []byte) (result int) {
 	defer func() {
-		invariant.Cross_Product(
-			invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
-				X: result, Lo: 0, Hi: fixture_hi,
-			}),
-			invariant.Always(result == 0, "result is zero"),
-			invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
-			X: len(buffer), Lo: 0, Hi: fixture_hi, Message: "len",
-		}),
-		)
 	}()
-	invariant.Cross_Product(
-		invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
-			X: len(buffer), Lo: 0, Hi: fixture_hi, Message: "len",
-		}),
-	)
 	return 0
 }
 `,
@@ -2414,19 +2301,7 @@ const fixture_hi = 100
 
 func F(n int) (result int) {
 	defer func() {
-		invariant.Cross_Product(
-			invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
-				X: result, Lo: 0, Hi: fixture_hi,
-			}),
-			invariant.Always(result == 0, "result is zero"),
-		)
 	}()
-	invariant.Cross_Product(
-		invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
-			X: n, Lo: 0, Hi: fixture_hi,
-		}),
-		invariant.Always(n == 0, "n is zero"),
-	)
 	for i_index := 0; i_index < n; i_index++ {
 		result = result + i_index
 	}
@@ -2458,12 +2333,6 @@ const fixture_hi = 100
 
 func F() (result int) {
 	defer func() {
-		invariant.Cross_Product(
-			invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
-				X: result, Lo: 0, Hi: fixture_hi,
-			}),
-			invariant.Always(result == 0, "result is zero"),
-		)
 	}()
 	for condition := true; condition; condition = false {
 		result = result + 1
@@ -2551,20 +2420,8 @@ const fixture_hi = 100
 
 func F(n_count int) (result []int) {
 	defer func() {
-		invariant.Cross_Product(
-			invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
-				X: len(result), Lo: 0, Hi: fixture_hi, Message: "len",
-			}),
-		)
 	}()
-	invariant.Cross_Product(
-		invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
-			X: n_count, Lo: 0, Hi: fixture_hi,
-		}),
-		invariant.Always(n_count == 0, "n_count is zero"),
-	)
 	result =make([]int, n_count)
-	invariant.Cross_Product(invariant.Always(result != nil, "result is non-nil"))
 	return result
 }
 `,
@@ -2693,28 +2550,8 @@ const fixture_hi = 100
 
 func F(xs []int) (result int) {
 	defer func() {
-		invariant.Cross_Product(
-			invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
-				X: result, Lo: 0, Hi: fixture_hi,
-			}),
-			invariant.Always(result == 0, "result is zero"),
-			invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
-			X: len(xs), Lo: 0, Hi: fixture_hi, Message: "len",
-		}),
-		)
 	}()
-	invariant.Cross_Product(
-		invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
-			X: len(xs), Lo: 0, Hi: fixture_hi, Message: "len",
-		}),
-	)
 	n_count := len(xs)
-	invariant.Cross_Product(
-		invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
-			X: n_count, Lo: 0, Hi: fixture_hi,
-		}),
-		invariant.Always(n_count == 0, "n_count is zero"),
-	)
 	return n_count
 }
 `,
@@ -2743,28 +2580,8 @@ const fixture_hi = 100
 
 func F(buffer []byte) (result int) {
 	defer func() {
-		invariant.Cross_Product(
-			invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
-				X: result, Lo: 0, Hi: fixture_hi,
-			}),
-			invariant.Always(result == 0, "result is zero"),
-			invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
-			X: len(buffer), Lo: 0, Hi: fixture_hi, Message: "len",
-		}),
-		)
 	}()
-	invariant.Cross_Product(
-		invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
-			X: len(buffer), Lo: 0, Hi: fixture_hi, Message: "len",
-		}),
-	)
 	n_size := len(buffer)
-	invariant.Cross_Product(
-		invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
-				X: n_size, Lo: 0, Hi: fixture_hi,
-			}),
-		invariant.Always(n_size == 0, "n_size is zero"),
-	)
 	return n_size
 }
 `,
@@ -2885,12 +2702,6 @@ const fixture_hi = 100
 
 func F() (result int) {
 	defer func() {
-		invariant.Cross_Product(
-			invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
-				X: result, Lo: 0, Hi: fixture_hi,
-			}),
-			invariant.Always(result == 0, "result is zero"),
-		)
 	}()
 	a_index := 0
 	b_index := 0
@@ -2912,12 +2723,6 @@ const fixture_hi = 100
 
 func F() (result int) {
 	defer func() {
-		invariant.Cross_Product(
-			invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
-				X: result, Lo: 0, Hi: fixture_hi,
-			}),
-			invariant.Always(result == 0, "result is zero"),
-		)
 	}()
 	a_offset := 0
 	b_size := 0
@@ -2950,12 +2755,6 @@ const fixture_hi = 100
 
 func F() (result int) {
 	defer func() {
-		invariant.Cross_Product(
-			invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
-				X: result, Lo: 0, Hi: fixture_hi,
-			}),
-			invariant.Always(result == 0, "result is zero"),
-		)
 	}()
 	a := 0
 	b := 0
@@ -2981,12 +2780,6 @@ const fixture_hi = 100
 
 func F() (result int) {
 	defer func() {
-		invariant.Cross_Product(
-			invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
-				X: result, Lo: 0, Hi: fixture_hi,
-			}),
-			invariant.Always(result == 0, "result is zero"),
-		)
 	}()
 	a_size := 0
 	b_offset := 0
@@ -3122,22 +2915,14 @@ func Test_Naming_Abbreviations_Exempt(t *testing.T) {
 import (
 	"errors"
 
-	invariant "` + fixture_invariant_import_path + `"
 )
 
 const fixture_hi = 100
 
 func F() (x int) {
 	defer func() {
-		invariant.Cross_Product(
-			invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
-			X: x, Lo: 0, Hi: fixture_hi,
-		}),
-			invariant.Always(x == 0, "x is zero"),
-		)
 	}()
 	err := errors.New("e")
-	invariant.Cross_Product(invariant.Sometimes(err == nil, "err is nil sometimes"))
 	if err != nil {
 		return 1
 	}
@@ -3169,19 +2954,7 @@ const fixture_hi = 100
 
 func F(n int) (x int) {
 	defer func() {
-		invariant.Cross_Product(
-			invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
-			X: x, Lo: 0, Hi: fixture_hi,
-		}),
-			invariant.Always(x == 0, "x is zero"),
-		)
 	}()
-	invariant.Cross_Product(
-		invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
-			X: n, Lo: 0, Hi: fixture_hi,
-		}),
-		invariant.Always(n == 0, "n is zero"),
-	)
 	for i_index := 0; i_index < n; i_index++ {
 		x = x + i_index
 	}
@@ -3213,19 +2986,7 @@ const fixture_hi = 100
 
 func Compute(value int) (result int) {
 	defer func() {
-		invariant.Cross_Product(
-			invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
-				X: result, Lo: 0, Hi: fixture_hi,
-			}),
-			invariant.Always(result == 0, "result is zero"),
-		)
 	}()
-	invariant.Cross_Product(
-		invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
-			X: value, Lo: 0, Hi: fixture_hi,
-		}),
-		invariant.Always(value == 0, "value is zero"),
-	)
 	total := value + 1
 	return total
 }
@@ -3332,12 +3093,6 @@ type Color int
 
 func (c Color) String() (result string) {
 	defer func() {
-		invariant.Cross_Product(
-			invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
-				X: len(result), Lo: 0, Hi: fixture_hi, Message: "len in range",
-			}),
-			invariant.Always(result == "", "result is empty"),
-		)
 	}()
 	return ""
 }
@@ -3355,19 +3110,7 @@ const fixture_hi = 100
 
 func Compute(value int) (result int) {
 	defer func() {
-		invariant.Cross_Product(
-			invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
-				X: result, Lo: 0, Hi: fixture_hi,
-			}),
-			invariant.Always(result == 0, "result is zero"),
-		)
 	}()
-	invariant.Cross_Product(
-		invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
-			X: value, Lo: 0, Hi: fixture_hi,
-		}),
-		invariant.Always(value == 0, "value is zero"),
-	)
 	return value
 }
 `,
@@ -3679,24 +3422,7 @@ type F_Input struct {
 
 func F(input *F_Input) (result int) {
 	defer func() {
-		invariant.Cross_Product(
-			invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
-				X: result, Lo: 0, Hi: fixture_hi,
-			}),
-			invariant.Always(result == 0, "result is zero"),
-		)
 	}()
-	invariant.Cross_Product(
-		invariant.Always(input != nil, "input is non-nil"),
-		invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
-			X: input.A, Lo: 0, Hi: fixture_hi,
-		}),
-		invariant.Always(input.A == 0, "input.A is zero"),
-		invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
-			X: input.B, Lo: 0, Hi: fixture_hi,
-		}),
-		invariant.Always(input.B == 0, "input.B is zero"),
-	)
 	return input.A + input.B
 }
 `,
@@ -3764,24 +3490,7 @@ type f_input struct {
 
 func f(input *f_input) (result int) {
 	defer func() {
-		invariant.Cross_Product(
-			invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
-				X: result, Lo: 0, Hi: fixture_hi,
-			}),
-			invariant.Always(result == 0, "result is zero"),
-		)
 	}()
-	invariant.Cross_Product(
-		invariant.Always(input != nil, "input is non-nil"),
-		invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
-			X: input.A, Lo: 0, Hi: fixture_hi,
-		}),
-		invariant.Always(input.A == 0, "input.A is zero"),
-		invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
-			X: input.B, Lo: 0, Hi: fixture_hi,
-		}),
-		invariant.Always(input.B == 0, "input.B is zero"),
-	)
 	return input.A + input.B
 }
 `,
@@ -3813,21 +3522,7 @@ const fixture_hi = 100
 
 func F(args ...int) (result int) {
 	defer func() {
-		invariant.Cross_Product(
-			invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
-				X: result, Lo: 0, Hi: fixture_hi,
-			}),
-			invariant.Always(result == 0, "result is zero"),
-			invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
-			X: len(args), Lo: 0, Hi: fixture_hi, Message: "len",
-		}),
-		)
 	}()
-	invariant.Cross_Product(
-		invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
-			X: len(args), Lo: 0, Hi: fixture_hi, Message: "len",
-		}),
-	)
 	return len(args)
 }
 `,
@@ -3856,23 +3551,7 @@ const fixture_hi = 100
 
 func F(a int, b string) (result int) {
 	defer func() {
-		invariant.Cross_Product(
-			invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
-				X: result, Lo: 0, Hi: fixture_hi,
-			}),
-			invariant.Always(result == 0, "result is zero"),
-		)
 	}()
-	invariant.Cross_Product(
-		invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
-			X: a, Lo: 0, Hi: fixture_hi,
-		}),
-		invariant.Always(a == 0, "a is zero"),
-		invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
-				X: len(b), Lo: 0, Hi: fixture_hi,
-			}),
-		invariant.Always(b == "", "b is empty"),
-	)
 	return a + len(b)
 }
 `,
@@ -3901,19 +3580,7 @@ const fixture_hi = 100
 
 func F(a int) (result int) {
 	defer func() {
-		invariant.Cross_Product(
-			invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
-				X: result, Lo: 0, Hi: fixture_hi,
-			}),
-			invariant.Always(result == 0, "result is zero"),
-		)
 	}()
-	invariant.Cross_Product(
-		invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
-			X: a, Lo: 0, Hi: fixture_hi,
-		}),
-		invariant.Always(a == 0, "a is zero"),
-	)
 	return a
 }
 `,
@@ -3991,12 +3658,6 @@ const fixture_hi = 100
 
 func main() (result int) {
 	defer func() {
-		invariant.Cross_Product(
-			invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
-				X: result, Lo: 0, Hi: fixture_hi,
-			}),
-			invariant.Always(result == 0, "result is zero"),
-		)
 	}()
 	return 0
 }
@@ -4019,12 +3680,6 @@ const fixture_hi = 100
 
 func main() (result int) {
 	defer func() {
-		invariant.Cross_Product(
-			invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
-				X: result, Lo: 0, Hi: fixture_hi,
-			}),
-			invariant.Always(result == 0, "result is zero"),
-		)
 	}()
 	return 0
 }
@@ -4084,24 +3739,12 @@ const fixture_hi = 100
 
 func main() (result int) {
 	defer func() {
-		invariant.Cross_Product(
-			invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
-				X: result, Lo: 0, Hi: fixture_hi,
-			}),
-			invariant.Always(result == 0, "result is zero"),
-		)
 	}()
 	return F(0)
 }
 
 func F(x any) (result int) {
 	defer func() {
-		invariant.Cross_Product(
-			invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
-				X: result, Lo: 0, Hi: fixture_hi,
-			}),
-			invariant.Always(result == 0, "result is zero"),
-		)
 	}()
 	return 0
 }
@@ -4131,12 +3774,6 @@ const fixture_hi = 100
 
 func main() (result int) {
 	defer func() {
-		invariant.Cross_Product(
-			invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
-				X: result, Lo: 0, Hi: fixture_hi,
-			}),
-			invariant.Always(result == 0, "result is zero"),
-		)
 	}()
 	return F(0)
 }
@@ -4147,12 +3784,6 @@ type _Number interface {
 
 func F[T _Number](x T) (result int) {
 	defer func() {
-		invariant.Cross_Product(
-			invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
-				X: result, Lo: 0, Hi: fixture_hi,
-			}),
-			invariant.Always(result == 0, "result is zero"),
-		)
 	}()
 	return 0
 }
@@ -4188,12 +3819,6 @@ const fixture_hi = 100
 
 func main() (result int) {
 	defer func() {
-		invariant.Cross_Product(
-			invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
-				X: result, Lo: 0, Hi: fixture_hi,
-			}),
-			invariant.Always(result == 0, "result is zero"),
-		)
 	}()
 	return 0
 }
@@ -4202,19 +3827,7 @@ type T struct{ X int }
 
 func (t T) String() (result string) {
 	defer func() {
-		invariant.Cross_Product(
-			invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
-				X: len(result), Lo: 0, Hi: fixture_hi, Message: "len in range",
-			}),
-			invariant.Always(result == "", "result is empty"),
-		)
 	}()
-	invariant.Cross_Product(
-		invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
-			X: t.X, Lo: 0, Hi: fixture_hi,
-		}),
-		invariant.Always(t.X == 0, "t.X is zero"),
-	)
 	return ""
 }
 `,
@@ -4243,12 +3856,6 @@ const fixture_hi = 100
 
 func main() (result int) {
 	defer func() {
-		invariant.Cross_Product(
-			invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
-				X: result, Lo: 0, Hi: fixture_hi,
-			}),
-			invariant.Always(result == 0, "result is zero"),
-		)
 	}()
 	return 0
 }
@@ -4257,19 +3864,7 @@ type T struct{ X int }
 
 func (t T) Error() (result string) {
 	defer func() {
-		invariant.Cross_Product(
-			invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
-				X: len(result), Lo: 0, Hi: fixture_hi, Message: "len in range",
-			}),
-			invariant.Always(result == "", "result is empty"),
-		)
 	}()
-	invariant.Cross_Product(
-		invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
-			X: t.X, Lo: 0, Hi: fixture_hi,
-		}),
-		invariant.Always(t.X == 0, "t.X is zero"),
-	)
 	return ""
 }
 `,
@@ -4298,12 +3893,6 @@ const fixture_hi = 100
 
 func main() (result int) {
 	defer func() {
-		invariant.Cross_Product(
-			invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
-				X: result, Lo: 0, Hi: fixture_hi,
-			}),
-			invariant.Always(result == 0, "result is zero"),
-		)
 	}()
 	return 0
 }
@@ -4312,25 +3901,7 @@ type T struct{ X int }
 
 func (t T) Read(p []byte) (n int, err error) {
 	defer func() {
-		invariant.Cross_Product(
-			invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
-			X: n, Lo: 0, Hi: fixture_hi,
-		}),
-			invariant.Always(n == 0, "n is zero"),
-			invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
-			X: len(p), Lo: 0, Hi: fixture_hi, Message: "len",
-		}),
-		)
 	}()
-	invariant.Cross_Product(
-		invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
-			X: t.X, Lo: 0, Hi: fixture_hi,
-		}),
-		invariant.Always(t.X == 0, "t.X is zero"),
-		invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
-			X: len(p), Lo: 0, Hi: fixture_hi, Message: "len",
-		}),
-	)
 	return 0, nil
 }
 `,
@@ -4362,12 +3933,6 @@ const fixture_hi = 100
 
 func main() (result int) {
 	defer func() {
-		invariant.Cross_Product(
-			invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
-				X: result, Lo: 0, Hi: fixture_hi,
-			}),
-			invariant.Always(result == 0, "result is zero"),
-		)
 	}()
 	return 0
 }
@@ -4375,12 +3940,6 @@ func main() (result int) {
 type T struct{ X int }
 
 func (t T) Scan(x any) (err error) {
-	invariant.Cross_Product(
-		invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
-			X: t.X, Lo: 0, Hi: fixture_hi,
-		}),
-		invariant.Always(t.X == 0, "t.X is zero"),
-	)
 	return nil
 }
 `,
@@ -4409,24 +3968,12 @@ const fixture_hi = 100
 
 func main() (result int) {
 	defer func() {
-		invariant.Cross_Product(
-			invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
-				X: result, Lo: 0, Hi: fixture_hi,
-			}),
-			invariant.Always(result == 0, "result is zero"),
-		)
 	}()
 	return F()
 }
 
 func F() (result int) {
 	defer func() {
-		invariant.Cross_Product(
-			invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
-				X: result, Lo: 0, Hi: fixture_hi,
-			}),
-			invariant.Always(result == 0, "result is zero"),
-		)
 	}()
 	return 0
 }
@@ -4458,12 +4005,6 @@ const fixture_hi = 100
 
 func main() (result int) {
 	defer func() {
-		invariant.Cross_Product(
-			invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
-				X: result, Lo: 0, Hi: fixture_hi,
-			}),
-			invariant.Always(result == 0, "result is zero"),
-		)
 	}()
 	return 0
 }
@@ -4471,12 +4012,6 @@ func main() (result int) {
 type T struct{ X int }
 
 func (t T) Write(p []byte) (err error) {
-	invariant.Cross_Product(
-		invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
-			X: t.X, Lo: 0, Hi: fixture_hi,
-		}),
-		invariant.Always(t.X == 0, "t.X is zero"),
-	)
 	return nil
 }
 `,
@@ -4505,12 +4040,6 @@ const fixture_hi = 100
 
 func main() (result int) {
 	defer func() {
-		invariant.Cross_Product(
-			invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
-				X: result, Lo: 0, Hi: fixture_hi,
-			}),
-			invariant.Always(result == 0, "result is zero"),
-		)
 	}()
 	return 0
 }
@@ -4518,19 +4047,7 @@ func main() (result int) {
 type T struct{ X int }
 
 func (t T) Foo() (result int) {
-	invariant.Cross_Product(
-		invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
-			X: t.X, Lo: 0, Hi: fixture_hi,
-		}),
-		invariant.Always(t.X == 0, "t.X is zero"),
-	)
 	defer func() {
-		invariant.Cross_Product(
-			invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
-				X: result, Lo: 0, Hi: fixture_hi,
-			}),
-			invariant.Always(result == 0, "result is zero"),
-		)
 	}()
 	return 0
 }
@@ -4616,12 +4133,6 @@ const fixture_hi = 100
 
 func f() (result int) {
 	defer func() {
-		invariant.Cross_Product(
-			invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
-				X: result, Lo: 0, Hi: fixture_hi,
-			}),
-			invariant.Always(result == 0, "result is zero"),
-		)
 	}()
 	return 1
 }
@@ -6711,17 +6222,10 @@ func read(r io.Reader) (err error) { return nil }
 				"a.go": `// Package foo is a fixture.
 package foo
 
-import invariant "` + fixture_invariant_import_path + `"
 
 const fixture_hi = 100
 
 func parse(s string) {
-	invariant.Cross_Product(
-		invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
-				X: len(s), Lo: 0, Hi: fixture_hi, Message: "len",
-			}),
-		invariant.Always(s == "", "s is empty"),
-	)
 	return
 }
 `,
@@ -6747,7 +6251,6 @@ func Test_Method_Prefix_Skipped_Part2(t *testing.T) {
 				"a.go": `// Package foo is a fixture.
 package foo
 
-import invariant "` + fixture_invariant_import_path + `"
 
 const fixture_hi = 100
 
@@ -6756,17 +6259,7 @@ type Entity struct{}
 
 func update(es []Entity) {
 	defer func() {
-		invariant.Cross_Product(
-			invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
-			X: len(es), Lo: 0, Hi: fixture_hi, Message: "len",
-		}),
-		)
 	}()
-	invariant.Cross_Product(
-		invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
-			X: len(es), Lo: 0, Hi: fixture_hi, Message: "len",
-		}),
-	)
 	return
 }
 `,
@@ -6826,7 +6319,6 @@ func entity_update(e Entity) { return }
 				"a.go": `// Package foo is a fixture.
 package foo
 
-import invariant "` + fixture_invariant_import_path + `"
 
 const fixture_hi = 100
 
@@ -6834,7 +6326,6 @@ const fixture_hi = 100
 type Snapper struct{}
 
 func snapper_edit(s *Snapper) {
-	invariant.Cross_Product(invariant.Always(s != nil, "s is non-nil"))
 	return
 }
 `,
@@ -6974,7 +6465,6 @@ package lib
 import (
 	"math/rand/v2"
 
-	invariant "` + fixture_invariant_import_path + `"
 )
 
 const fixture_hi = 100
@@ -6982,14 +6472,7 @@ const fixture_hi = 100
 // F is a fixture.
 func F(r *rand.Rand) (n int) {
 	defer func() {
-		invariant.Cross_Product(
-			invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
-			X: n, Lo: 0, Hi: fixture_hi,
-		}),
-			invariant.Always(n == 0, "n is zero"),
-		)
 	}()
-	invariant.Cross_Product(invariant.Always(r != nil, "r is non-nil"))
 	return r.Int()
 }
 `,
@@ -7178,12 +6661,10 @@ package lib
 import (
 	"net/http"
 
-	invariant "` + fixture_invariant_import_path + `"
 )
 
 // F is a fixture.
 func F(r *http.Request) (h http.Header) {
-	invariant.Cross_Product(invariant.Always(r != nil, "r is non-nil"))
 	return r.Header
 }
 `,
@@ -7263,19 +6744,12 @@ func Test_No_Ambient_Stdlib_Exemptions_Part2(t *testing.T) {
 				"a.go": `// Package lib is a fixture.
 package lib
 
-import invariant "` + fixture_invariant_import_path + `"
 
 const fixture_hi = 100
 
 // F is a fixture.
 func F() (n int) {
 	defer func() {
-		invariant.Cross_Product(
-			invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
-			X: n, Lo: 0, Hi: fixture_hi,
-		}),
-			invariant.Always(n == 0, "n is zero"),
-		)
 	}()
 	return 1
 }
@@ -7341,7 +6815,6 @@ package foo_default
 import (
 	"os"
 
-	invariant "` + fixture_invariant_import_path + `"
 )
 
 const fixture_hi = 100
@@ -7349,12 +6822,6 @@ const fixture_hi = 100
 // Read is a fixture.
 func Read() (name string) {
 	defer func() {
-		invariant.Cross_Product(
-			invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
-				X: len(name), Lo: 0, Hi: fixture_hi, Message: "len in range",
-			}),
-			invariant.Always(name == "", "name is empty"),
-		)
 	}()
 	return os.Getenv("X")
 }
@@ -7388,7 +6855,6 @@ package snap_default
 import (
 	"os"
 
-	invariant "` + fixture_invariant_import_path + `"
 )
 
 const fixture_hi = 100
@@ -7396,12 +6862,6 @@ const fixture_hi = 100
 // Read is a fixture.
 func Read() (name string) {
 	defer func() {
-		invariant.Cross_Product(
-			invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
-				X: len(name), Lo: 0, Hi: fixture_hi, Message: "len in range",
-			}),
-			invariant.Always(name == "", "name is empty"),
-		)
 	}()
 	return os.Getenv("X")
 }
@@ -7457,7 +6917,6 @@ package lib_default
 import (
 	"os"
 
-	invariant "` + fixture_invariant_import_path + `"
 )
 
 const fixture_hi = 100
@@ -7465,12 +6924,6 @@ const fixture_hi = 100
 // Read is a fixture.
 func Read() (name string) {
 	defer func() {
-		invariant.Cross_Product(
-			invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
-				X: len(name), Lo: 0, Hi: fixture_hi, Message: "len in range",
-			}),
-			invariant.Always(name == "", "name is empty"),
-		)
 	}()
 	return os.Getenv("X")
 }
@@ -8490,46 +7943,27 @@ func Test_Coverage_Backfill_Nil_Field_List(t *testing.T) {
 func Test_Coverage_Backfill_String_Bounded_Mixed_Invariant_Calls(t *testing.T) {
 	t.Parallel()
 	mixed_calls_source := "package fixture\n\n" +
-		"import invariant " +
-		"\"" + fixture_invariant_import_path + "\"\n\n" +
-		"func f(r *invariant.Recorder, x int) {\n" +
 		"\tfoo.Bar()\n" +
-		"\tinvariant.Recorder_Distinct_Boundary(r, " +
-		"&invariant.Boundary_Input[int]{" +
 		"X: x, Lo: 0, Hi: fixture_hi})\n" +
 		"}\n"
 	diags, err := lint.Check_Source("test.go", mixed_calls_source)
 	t.Logf("mixed diags=%d err=%v", len(diags), err)
 	rich_source := "package fixture\n\n" +
-		"import invariant " +
-		"\"" + fixture_invariant_import_path + "\"\n\n" +
 		"const Foo = 1\n" +
 		"type Bar struct {\n\tA int\n\tB bool\n\tC string\n}\n\n" +
 		"func Quux(input *Bar, s string, n int, b bool, p *int) (result int) {\n" +
 		"\tdefer func() {\n" +
-		"\t\tinvariant.Cross_Product(\n" +
-		"\t\t\tinvariant.Distinct_Boundary(" +
-		"&invariant.Boundary_Input[int]{\n" +
 		"\t\t\t\tX: result, Lo: 0, Hi: fixture_hi,\n" +
 		"\t\t\t}),\n" +
 		"\t\t)\n" +
 		"\t}()\n" +
-		"\tinvariant.Cross_Product(\n" +
-		"\t\tinvariant.Always(" +
 		"input != nil, \"input is non-nil\"),\n" +
-		"\t\tinvariant.Always(" +
 		"p != nil, \"p is non-nil\"),\n" +
-		"\t\tinvariant.Sometimes(" +
 		"b, \"b is sometimes true\"),\n" +
-		"\t\tinvariant.Distinct_Boundary(" +
-		"&invariant.Boundary_Input[int]{\n" +
 		"\t\t\tX: n, Lo: 0, Hi: fixture_hi,\n" +
 		"\t\t}),\n" +
-		"\t\tinvariant.Distinct_Boundary(" +
-		"&invariant.Boundary_Input[int]{\n" +
 		"\t\t\tX: len(s), Lo: 0, Hi: fixture_hi,\n" +
 		"\t\t}),\n" +
-		"\t\tinvariant.Always(" +
 		"s == \"\", \"s is empty\"),\n" +
 		"\t)\n" +
 		"\treturn 0\n" +
