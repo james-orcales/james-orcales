@@ -13,7 +13,7 @@ import (
 	"runtime"
 	"testing"
 
-	"github.com/james-orcales/james-orcales/golang_snacks/snap/v2"
+	"github.com/james-orcales/james-orcales/golang_snacks/snap"
 )
 
 // Type aliases re-export the library's types so callers that import only this

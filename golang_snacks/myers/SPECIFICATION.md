@@ -29,27 +29,27 @@ array capacity of the rune slices.
 Diff returns the character-level script: the runs that retain, delete, and
 insert runes to turn Old into New.
 
-### Single
+### Basics
 
 Single-rune and empty inputs produce the minimal script: identity retains,
 pure insertion, pure deletion, and one-rune substitutions.
 
 ### Examples
 
-Real sentences and adversarial mixed edits diff to a compact, cleaned-up script
-of merged and boundary-shifted runs.
+Real sentences and adversarial mixed edits, including invalid UTF-8, diff to a
+compact cleaned-up script of merged and boundary-shifted runs.
 
 # Line Diff
 
 Line Diff renders a diff at line granularity: each output line is an original
 line prefixed by a space, a plus, or a minus.
 
-### Single Line
+### Basics
 
 Identity, insertion, deletion, and substitution of single lines render with the
 correct space, plus, and minus prefixes.
 
-### Multiline
+### Blocks
 
 Inserting, deleting, or replacing a line inside a block leaves the surrounding
 lines retained and marks only the changed line.
@@ -59,15 +59,30 @@ lines retained and marks only the changed line.
 Edits to source lines render line-for-line, each changed line shown as a paired
 deletion and insertion.
 
-### Structured Data
+### Records
 
-JSON, YAML, and similar records diff line-by-line, retaining unchanged keys and
-marking only the altered lines.
+JSON and YAML records diff line-by-line, retaining unchanged keys and blank
+separators while marking only the altered lines.
 
 ### Markup
 
 Nested HTML edits retain the unchanged tags and mark only the lines whose text
 or attributes changed.
+
+### Document
+
+A multi-record YAML document with reorderings retains the stable keys and pairs
+each changed line with its replacement.
+
+### Source
+
+Multi-line function bodies and try blocks diff line-for-line, retaining the
+structural lines and pairing each changed statement.
+
+### Query
+
+A multi-clause SQL statement diffs line-by-line, retaining the stable clauses
+and pairing each changed clause with its replacement.
 
 ### License
 
@@ -79,15 +94,20 @@ produce, retaining only the blank separators.
 Algorithm Diff is Myers' O(ND) core: a forward furthest-reaching trace and a
 backtrack that emit a minimal rune-level script.
 
-### Single
+### Basics
 
 Empty and single-rune inputs short-circuit to identity, pure insert, pure
 delete, or a one-rune substitution.
 
-### Examples
+### Blog
 
-Sentences and mixed edits produce a minimal script of single-rune deletes and
+The blog-post sentences diff to a minimal script of single-rune deletes and
 inserts around the retained runs.
+
+### Custom
+
+Adversarial mixed edits diff to a minimal single-rune script, the raw form the
+cleanup pass later merges and shifts.
 
 # Find Common Prefix
 
