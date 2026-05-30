@@ -338,8 +338,8 @@ func main_git_ignored(root string) (ignored map[string]bool, ok bool) {
 }
 
 // Walks the real working tree under root, calling visit with each file's
-// slash-separated path, pruning .git and every gitignored entry. Returns false
-// only when the walk itself fails.
+// slash-separated path, pruning the globally-ignored directories and every
+// gitignored entry. Returns false only when the walk itself fails.
 func main_walk_worktree(
 	root string, ignored map[string]bool, visit func(rel string),
 ) (ok bool) {
@@ -354,7 +354,10 @@ func main_walk_worktree(
 			}
 			slash := filepath.ToSlash(relative)
 			if d.IsDir() {
-				if d.Name() == ".git" {
+				// One ignore list, shared with the library tier, so third_party
+				// and vendor never enter the Tracked set the path-casing check
+				// iterates directly.
+				if lint.Ignored_Directory(slash) {
 					return filepath.SkipDir
 				}
 				if ignored[slash+"/"] {

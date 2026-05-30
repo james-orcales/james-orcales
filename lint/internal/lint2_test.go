@@ -1287,9 +1287,6 @@ func Test_Snapshot_Stream_Files(t *testing.T) {
 			"Makefile": "all:\n\techo hi\n"}},
 		{Snapshot: snap.Init(`backup.tar.xz:1:1: banned-archives: .xz files are banned; use .gz or .zip instead`), Verbatim: true, Files: map[string]string{
 			"backup.tar.xz": "\xfd7zXZ\x00"}},
-		{Snapshot: snap.Init(`LICENSE: copyleft: GNU GPL: replace with a permissive license (MIT/Apache/BSD)`), Verbatim: true, Files: map[string]string{
-			"LICENSE": "GNU GENERAL PUBLIC LICENSE\n\n" +
-				"This program is free software.\n"}},
 	})
 }
 
@@ -1742,39 +1739,46 @@ func Test_Stream_Github_Actions_Uses(t *testing.T) {
 	}
 }
 
-// GPL license text must trigger the copyleft check with the correct family name.
-func Test_Stream_Copyleft_GPL(t *testing.T) {
+// The linter ignores a fixed set of directories outright: top-level
+// third_party/, vendor/ at any depth, .jj, and .git. A banned-scripts-tripping
+// file under each must yield no diagnostic. testdata and a nested third_party/
+// are NOT ignored — the carve-out is the top-level drop-zone only — so the same
+// file there must still be flagged.
+func Test_Stream_Ignored_Directories(t *testing.T) {
 	t.Parallel()
-	gpl := "GNU GENERAL PUBLIC LICENSE\nVersion 3\n\nThis program is free software\n"
-	output := run_stream(t, map[string]string{"LICENSE": gpl})
-	if !strings.Contains(output, "copyleft") {
-		t.Errorf("expected copyleft diag, got: %s", output)
+	for _, p := range []string{
+		"third_party/build.sh",
+		"vendor/build.sh",
+		"deep/nest/vendor/build.sh",
+		".jj/build.sh",
+		".git/build.sh",
+	} {
+		output := run_stream(t, map[string]string{p: "echo hi\n"})
+		if strings.Contains(output, "banned-scripts") {
+			t.Errorf("%s is ignored; want no diagnostic, got: %s", p, output)
+		}
 	}
-	if !strings.Contains(output, "GNU GPL") {
-		t.Errorf("expected GNU GPL in copyleft diag, got: %s", output)
+	for _, p := range []string{
+		"testdata/build.sh",
+		"pkg/third_party/build.sh",
+	} {
+		output := run_stream(t, map[string]string{p: "echo hi\n"})
+		if !strings.Contains(output, "banned-scripts") {
+			t.Errorf("%s is not ignored; want a diagnostic, got: %s", p, output)
+		}
 	}
 }
 
-// MPL text that references GPL for comparison must not trigger the copyleft check.
-func Test_Stream_Copyleft_MPL_Not_Flagged(t *testing.T) {
-	t.Parallel()
-	mpl := "Mozilla Public License 2.0\nGNU General Public License (for comparison)\n"
-	output := run_stream(t, map[string]string{"LICENSE": mpl})
-	if strings.Contains(output, "copyleft") {
-		t.Errorf("MPL should not trip copyleft check; got: %s", output)
-	}
-}
-
-// Agent docs under dot-dirs must be skipped; agent docs under normal paths
-// must be flagged when they exceed 100 lines.
+// Agent docs under an ignored directory must be skipped; agent docs under
+// normal paths must be flagged when they exceed 100 lines.
 func Test_Stream_Agent_Documentation_Lines_Max(t *testing.T) {
 	t.Parallel()
 	body := strings.Repeat("line\n", 101)
-	// Dot-dirs are skipped by the walker, so the doc must live under a
-	// non-dot path to be reached.
-	output := run_stream(t, map[string]string{".claude/skills/foo/SKILL.md": body})
+	// The vendor/ tree is on the global ignore list, so the doc must live under
+	// a non-ignored path to be reached.
+	output := run_stream(t, map[string]string{"vendor/skills/foo/SKILL.md": body})
 	if strings.Contains(output, "agent-doc-max-lines") {
-		t.Errorf("dot-dir SKILL.md should be skipped, got: %s", output)
+		t.Errorf("ignored-dir SKILL.md should be skipped, got: %s", output)
 	}
 	for _, name := range []string{"SKILL.md", "CLAUDE.md", "AGENTS.md"} {
 		loop_output := run_stream(t, map[string]string{"skills/foo/" + name: body})
@@ -1802,6 +1806,7 @@ func Test_Stream_Path_Casing(t *testing.T) {
 		{"FQDN multi-component", "TIGER_STYLE.Index_Count.md", ""},
 		{".git subtree exempt", ".git/bad-ref", ""},
 		{"third_party exempt", "third_party/badName-file.go", ""},
+		{"nested third_party path-casing exempt", "pkg/third_party/badName-file.go", ""},
 		{"vendor exempt at any depth", "deep/nest/vendor/badName-file.go", ""},
 		{"FQDN bad component flagged", "Foo.bad-component.md", "path-casing"},
 		{"hidden bad name flagged", ".Bad-Hidden.md", "path-casing"},
@@ -1852,6 +1857,44 @@ func Test_Path_Casing_Respects_Tracked(t *testing.T) {
 	}
 	if saw_ignored {
 		t.Error("a gitignored path (absent from Tracked) must not be checked")
+	}
+}
+
+// Test_Ignore_Trims_Scan_Set verifies a lint.json `ignore` glob removes a path
+// from the scan set for every tier at once: a banned script and a bad-cased
+// directory under the ignored prefix both go silent, where without `ignore` each
+// fires. This is what makes `ignore` stronger than path_casing_allowlist, which
+// suppresses only the casing diagnostic.
+func Test_Ignore_Trims_Scan_Set(t *testing.T) {
+	t.Parallel()
+	fsys := fstest.MapFS{
+		"foo/build.sh":     {Data: []byte("echo hi\n")},
+		"foo/bad-Dir/x.go": {Data: []byte("package x\n")},
+	}
+	tracked := map[string]bool{"foo/build.sh": true, "foo/bad-Dir/x.go": true}
+	control, err := lint.Check_File_System(&lint.Check_File_System_Input{
+		Fsys: fsys, Tracked: tracked,
+	})
+	if err != nil {
+		t.Fatalf("control Check_File_System: %v", err)
+	}
+	if !specification_diagnosed(control, "as a go script") {
+		t.Fatalf("control must flag the banned script: %v", control)
+	}
+	if !specification_diagnosed(control, "bad-Dir") {
+		t.Fatalf("control must flag the bad-cased directory: %v", control)
+	}
+	ignored, err := lint.Check_File_System(&lint.Check_File_System_Input{
+		Fsys: fsys, Tracked: tracked, Ignore: []string{"foo"},
+	})
+	if err != nil {
+		t.Fatalf("ignored Check_File_System: %v", err)
+	}
+	if specification_diagnosed(ignored, "as a go script") {
+		t.Error("ignore must silence the banned-scripts diagnostic")
+	}
+	if specification_diagnosed(ignored, "bad-Dir") {
+		t.Error("ignore must silence the path-casing diagnostic")
 	}
 }
 
@@ -4064,9 +4107,8 @@ func Test_Package_Documentation_Comment(t *testing.T) {
 // fs.FS whose Open returns an error for selected paths, so the stream
 // tier's `load()` callback returns err != nil and the source-nil /
 // err-non-nil tuple fires on every check_stream_* assertion. Fixture
-// names are chosen so each check_stream_* filter (markdown, copyleft,
-// github actions, agent docs, agents-claude pair) sees at least one
-// failing load.
+// names are chosen so each check_stream_* filter (markdown, github actions,
+// agent docs, agents-claude pair) sees at least one failing load.
 func Test_Coverage_Backfill_Read_Error(t *testing.T) {
 	t.Parallel()
 	base := fstest.MapFS{
@@ -4082,8 +4124,6 @@ func Test_Coverage_Backfill_Read_Error(t *testing.T) {
 			Data: []byte("name: fixture\n")},
 		"fail.txt": &fstest.MapFile{
 			Data: []byte("fixture\n")},
-		"LICENSE": &fstest.MapFile{
-			Data: []byte("fixture\n")},
 		".github/workflows/fail.yml": &fstest.MapFile{
 			Data: []byte("name: fixture\n")},
 		"CLAUDE.md": &fstest.MapFile{
@@ -4098,7 +4138,6 @@ func Test_Coverage_Backfill_Read_Error(t *testing.T) {
 		"fail.md":                    true,
 		"fail.yml":                   true,
 		"fail.txt":                   true,
-		"LICENSE":                    true,
 		".github/workflows/fail.yml": true,
 		"CLAUDE.md":                  true,
 		"AGENTS.md":                  true,
@@ -5776,6 +5815,18 @@ func parse_configuration_cases() (cases []parse_configuration_case) {
 		{
 			Name:     "unknown key rejected",
 			Input:    `{"shared_module":"x","global_api_allowlst":[]}`,
+			Want_Err: true,
+		},
+		{
+			Name: "ignore accepted",
+			Input: `{"shared_module":"x","word_replacements":{"id":["identifier"]},` +
+				`"ignore":["big_bang/dotfiles","weird.md"]}`,
+			Want_Shared: "x",
+		},
+		{
+			Name: "ignore negation rejected",
+			Input: `{"shared_module":"x","word_replacements":{"id":["identifier"]},` +
+				`"ignore":["!keep"]}`,
 			Want_Err: true,
 		},
 		{

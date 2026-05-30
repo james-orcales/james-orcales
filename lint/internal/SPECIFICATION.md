@@ -89,11 +89,17 @@ Struct Tags.
 
 These rules govern every tracked file, whatever its language.
 
+### Ignored Directories
+
+The linter never scans the top-level `third_party/` drop-zone, any `vendor/`, `.jj`, `.git`, or a
+gitignored path; lint.json's `ignore` extends this with gitignore-style globs. A nested
+`third_party/` below the repository root is first-party code, scanned like anything else.
+
 ### Path Casing
 
 Every tracked path segment, split on its dots, is snake_case, Ada_Case, or SCREAMING_SNAKE_CASE;
-underscores join words, never hyphens. Only .git, gitignored paths, and vendored third_party and
-vendor trees are exempt.
+underscores join words, never hyphens. A vendored tree — any path with a `third_party` or `vendor`
+segment — is exempt.
 
 ### Symlinks
 
@@ -102,17 +108,17 @@ A symlink resolves to an existing target; a dangling symlink is banned.
 ### Banned Script Extensions
 
 A file is banned by a scripting extension: .py .sh .bash .zsh .fish .ksh .csh .pl .pm .rb .lua .tcl
-.awk .ps1 .psm1 .bat .cmd .vbs .groovy .r .jl; `third_party` and `vendor` are exempt.
+.awk .ps1 .psm1 .bat .cmd .vbs .groovy .r .jl.
 
 ### Banned Build Files
 
 A file is banned by base name: makefile, gnumakefile, rakefile, gemfile, pipfile, justfile, or
-taskfile; `third_party` and `vendor` are exempt.
+taskfile.
 
 ### Banned Archives
 
 An `.xz` file is banned: the stdlib cannot decompress it, forcing external tar, whose GNU and BSD
-builds diverge. Use gzip, read directly by compress/gzip and archive/tar; `third_party` is exempt.
+builds diverge. Use gzip, read directly by compress/gzip and archive/tar.
 
 ### Conflict Markers
 
@@ -123,10 +129,6 @@ sentinels a git/jujutsu writes into a file when it cannot auto-merge.
 
 In a .github/workflows YAML file, a `uses:` line is banned; rewrite the step as an inline run.
 Third-party actions are considered a dependency.
-
-### Copyleft Licenses
-
-A license file carries permissive terms; a GPL, AGPL, LGPL, or SSPL text is banned.
 
 # Markdown
 
