@@ -573,6 +573,14 @@ type Configuration struct {
 	// alone. Required: a config without it is rejected so the check can never
 	// silently go dark.
 	Word_Replacements map[string][]string `json:"word_replacements"`
+	// Path_Casing_Allowlist names the paths exempt from the path-casing rule,
+	// as gitignore-style globs: a slash-less entry floats and matches that
+	// basename at any depth, an entry with a slash is anchored to the workspace
+	// root, a trailing slash binds to directories (and thus their whole subtree),
+	// and ** spans path segments while * stays within one. The list is purely
+	// additive — an entry can only suppress a casing diagnostic, never re-enable
+	// one on .git or a vendored tree. Opt-in; empty exempts nothing.
+	Path_Casing_Allowlist []string `json:"path_casing_allowlist"`
 }
 
 // Main_Input bundles every external dependency the linter needs.
@@ -685,6 +693,7 @@ func Main(input *Main_Input) (code int) {
 		Shared_Module:          configuration.Shared_Module,
 		Deterministic_Packages: configuration.Deterministic_Packages,
 		Word_Replacements:      configuration.Word_Replacements,
+		Path_Casing_Allowlist:  configuration.Path_Casing_Allowlist,
 	})
 	if err != nil {
 		fmt.Fprintln(input.Stderr, err)
@@ -784,6 +793,7 @@ func Parse_Configuration(data []byte) (configuration *Configuration, err error) 
 		"global_api_allowlist":   true,
 		"deterministic_packages": true,
 		"word_replacements":      true,
+		"path_casing_allowlist":  true,
 	}
 	for key := range keys {
 		if known_keys[key] {
@@ -804,7 +814,39 @@ func Parse_Configuration(data []byte) (configuration *Configuration, err error) 
 	if len(configuration.Word_Replacements) == 0 {
 		return nil, fmt.Errorf("lint.json: word_replacements is required")
 	}
+	if validate_err := validate_path_casing_allowlist(
+		configuration.Path_Casing_Allowlist); validate_err != nil {
+		return nil, validate_err
+	}
 	return configuration, nil
+}
+
+// Rejects path_casing_allowlist entries the gitignore-style matcher cannot
+// honor, so a broken allowlist fails loudly at config load rather than silently
+// exempting nothing. An empty entry has no path to match; a leading "!" is
+// gitignore negation, which an additive allowlist gives no meaning; and a segment
+// that path.Match deems malformed (an unterminated "[") would error on every
+// comparison.
+func validate_path_casing_allowlist(patterns []string) (err error) {
+	for _, raw := range patterns {
+		where := fmt.Sprintf("lint.json: path_casing_allowlist entry %q", raw)
+		if strings.TrimSpace(raw) == "" {
+			return fmt.Errorf("lint.json: path_casing_allowlist entry is empty")
+		}
+		if strings.HasPrefix(raw, "!") {
+			return fmt.Errorf("%s: negation is unsupported", where)
+		}
+		for _, segment := range strings.Split(parse_glob_pattern(raw).Core, "/") {
+			// ** is the matcher's own segment wildcard, not a path.Match token.
+			if segment == "**" {
+				continue
+			}
+			if _, match_err := path.Match(segment, ""); match_err != nil {
+				return fmt.Errorf("%s: %w", where, match_err)
+			}
+		}
+	}
+	return nil
 }
 
 // True iff the diagnostic is inside the user's scope. Empty scope means
@@ -1855,6 +1897,10 @@ type Check_File_System_Input struct {
 	// make_check_names_vocabulary. nil disables the check (no config to read),
 	// which is what the Check_Source single-file path passes.
 	Word_Replacements map[string][]string
+	// Path_Casing_Allowlist is the lint.json gitignore-style allowlist forwarded
+	// from Main_Input: paths whose segments are exempt from the path-casing rule.
+	// Threaded to check_path_casing, which parses each entry once per run.
+	Path_Casing_Allowlist []string
 }
 
 // Check_File_System runs the stream tier, parses all Go files, and
@@ -1895,7 +1941,8 @@ func Check_File_System(input *Check_File_System_Input) (diags []Diagnostic, err 
 	}
 	output := append([]Diagnostic{}, stream_diags...)
 	output = append(output, parse_diags...)
-	output = append(output, check_path_casing(input.Fsys, input.Tracked)...)
+	output = append(output,
+		check_path_casing(input.Fsys, input.Tracked, input.Path_Casing_Allowlist)...)
 	allowlist := build_global_api_allowlist_set(input.Global_API_Allowlist)
 	output = append(output,
 		check_file_system_run_checks(
@@ -7985,8 +8032,14 @@ func check_stream_agent_documentation_lines_max(
 // are the .git directory and gitignored paths — both already encoded in tracked
 // (git ls-files --exclude-standard). When tracked is nil (git unavailable) it
 // walks the whole tree, the .git directory aside, so the rule still binds.
-func check_path_casing(fsys fs.FS, tracked map[string]bool) (diags []Diagnostic) {
+func check_path_casing(
+	fsys fs.FS, tracked map[string]bool, allowlist []string,
+) (diags []Diagnostic) {
 
+	patterns := make([]glob_pattern, 0, len(allowlist))
+	for _, raw := range allowlist {
+		patterns = append(patterns, parse_glob_pattern(raw))
+	}
 	seen := map[string]bool{}
 	for _, p := range check_path_casing_paths(fsys, tracked) {
 		if p == ".git" {
@@ -8006,6 +8059,15 @@ func check_path_casing(fsys fs.FS, tracked map[string]bool) (diags []Diagnostic)
 			}
 			seen[key] = true
 			if path_casing_segment_ok(seg) {
+				continue
+			}
+			// The lint.json allowlist is consulted last and is purely additive:
+			// .git and vendored trees above are already exempt, so an entry can
+			// only suppress a casing diagnostic, never re-enable one. The leaf
+			// segment is a file; every earlier prefix is a directory, which a
+			// trailing-slash directory pattern needs to know to bind correctly.
+			key_is_directory := i < len(segments)-1
+			if path_casing_allowlisted(key, key_is_directory, patterns) {
 				continue
 			}
 			suggestion := path_casing_suggest(seg)
@@ -8109,6 +8171,149 @@ func check_path_casing_paths(fsys fs.FS, tracked map[string]bool) (paths []strin
 	}
 	sort.Strings(paths)
 	return paths
+}
+
+// A glob_pattern is a lint.json path_casing_allowlist entry parsed into the
+// three facts the matcher needs: Core is the gitignore pattern reduced to a form
+// glob_match can run against a full prefix (an unanchored, slash-less entry is
+// rewritten with a leading **/ so "weird.md" matches at any depth); Anchored
+// records whether the original entry was tied to the workspace root (it held a
+// slash) rather than floating; Directory_Only records a trailing slash, which in
+// gitignore binds the entry to directories.
+type glob_pattern struct {
+	Core           string
+	Anchored       bool
+	Directory_Only bool
+}
+
+// Reduces a raw lint.json entry to a glob_pattern. A trailing slash is
+// gitignore's directory marker; a leading or interior slash anchors the entry to
+// the root; a slash-less entry floats, which we model as **/ + entry so the same
+// prefix matcher serves both. Assumes the entry already passed
+// validate_path_casing_allowlist, so it cannot be empty or negated.
+func parse_glob_pattern(raw string) (parsed glob_pattern) {
+	parsed.Directory_Only = strings.HasSuffix(raw, "/")
+	trimmed := strings.TrimSuffix(raw, "/")
+	had_leading_slash := strings.HasPrefix(trimmed, "/")
+	trimmed = strings.TrimPrefix(trimmed, "/")
+	parsed.Anchored = had_leading_slash || strings.Contains(trimmed, "/")
+	parsed.Core = trimmed
+	if !parsed.Anchored {
+		parsed.Core = "**/" + trimmed
+	}
+	return parsed
+}
+
+// Reports whether the path-casing diagnostic for key is suppressed by the
+// allowlist. gitignore excludes a path when the path or any ancestor directory
+// matches, so we test every prefix of key — each ancestor is a directory, and
+// the leaf's directory status is key_is_directory. A Directory_Only entry is
+// skipped at prefixes that are files, which is what makes a trailing-slash entry
+// bind to directories and their subtree but not to a same-named file.
+func path_casing_allowlisted(
+	key string, key_is_directory bool, patterns []glob_pattern,
+) (suppressed bool) {
+
+	if len(patterns) == 0 {
+		return false
+	}
+	segments := strings.Split(key, "/")
+	for i := range segments {
+		prefix := strings.Join(segments[:i+1], "/")
+		prefix_is_directory := i < len(segments)-1 || key_is_directory
+		for _, p := range patterns {
+			// A trailing-slash entry binds to directories, so it must skip a
+			// prefix that is a file (gitignore's directory-only semantics).
+			if p.Directory_Only {
+				if !prefix_is_directory {
+					continue
+				}
+			}
+			// The entry passed parse-time validation, so glob_match cannot return
+			// ErrBadPattern here; a non-match is the only other outcome.
+			matched, _ := glob_match(&glob_match_input{Pattern: p.Core, Path: prefix})
+			if matched {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+type glob_match_input struct {
+	Pattern string
+	Path    string
+}
+
+// Reports whether Path matches the doublestar Pattern. A ** segment matches zero
+// or more whole path segments; every other segment is matched against the
+// corresponding path segment by path.Match, so *, ?, and [...] keep their
+// single-segment meaning (none crosses a slash) and a malformed segment surfaces
+// as path.Match's ErrBadPattern.
+func glob_match(input *glob_match_input) (matched bool, err error) {
+	return glob_match_segments(&glob_match_segments_input{
+		Pattern: strings.Split(input.Pattern, "/"),
+		Name:    strings.Split(input.Path, "/"),
+	})
+}
+
+type glob_match_segments_input struct {
+	Pattern []string
+	Name    []string
+}
+
+// Matches the Pattern segments against the Name segments with a two-pointer scan
+// that backtracks across **, the segment-level analogue of wildcard matching. A
+// ** is remembered as a resume point and first tried as matching zero segments;
+// on a later mismatch the scan returns to it and lets the ** swallow one more
+// name segment, which is how a single ** spans an unknown depth. Trailing **s
+// match the empty remainder, which is why dir/** also matches dir itself.
+func glob_match_segments(input *glob_match_segments_input) (matched bool, err error) {
+	pattern := input.Pattern
+	name := input.Name
+	pattern_index := 0
+	name_index := 0
+	// The resume index sits just after the most recent **; -1 means no ** is
+	// available to backtrack to. star_name_index records how much of name that **
+	// has been charged with so far.
+	star_pattern_index := -1
+	star_name_index := 0
+	for name_index < len(name) {
+		if pattern_index < len(pattern) {
+			if pattern[pattern_index] == "**" {
+				star_pattern_index = pattern_index + 1
+				star_name_index = name_index
+				pattern_index++
+				continue
+			}
+			ok, match_err := path.Match(pattern[pattern_index], name[name_index])
+			if match_err != nil {
+				return false, match_err
+			}
+			if ok {
+				pattern_index++
+				name_index++
+				continue
+			}
+		}
+		// No literal segment matched here, so the only way forward is to charge
+		// the last ** with one more name segment; absent a **, the match fails.
+		if star_pattern_index < 0 {
+			return false, nil
+		}
+		pattern_index = star_pattern_index
+		star_name_index++
+		name_index = star_name_index
+	}
+	// Name is exhausted; the match holds only if every leftover pattern segment
+	// is a ** standing for the empty remainder.
+	for pattern_index < len(pattern) {
+		if pattern[pattern_index] != "**" {
+			return false, nil
+		}
+		pattern_index++
+	}
+	return true, nil
 }
 
 type check_file_system_stream_checks_stream_symlinks_checker_input struct {
