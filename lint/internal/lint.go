@@ -199,7 +199,7 @@ const pointer_requirement_kind_chars = 7
 
 // Stream_checker_count is the fixed number of stream-tier checks; the builder
 // asserts len(checks) == it (a Distinct_Boundary can't bound a constant count).
-const stream_checker_count = 10
+const stream_checker_count = 9
 
 // Fixed Name strings for the stream-check closures, each paired with its
 // length so the checker's defer bounds c.Name (a value invariant per closure).
@@ -581,6 +581,12 @@ type Configuration struct {
 	// additive — an entry can only suppress a casing diagnostic, never re-enable
 	// one on .git or a vendored tree. Opt-in; empty exempts nothing.
 	Path_Casing_Allowlist []string `json:"path_casing_allowlist"`
+	// Ignore extends the hardcoded global ignore list (Ignored_Directory) with
+	// per-workspace entries, in the same gitignore-style glob syntax as
+	// Path_Casing_Allowlist. A matching path is dropped from the scan set
+	// entirely, so no tier fires on it — stronger than Path_Casing_Allowlist,
+	// which only suppresses the casing diagnostic. Opt-in; empty ignores nothing.
+	Ignore []string `json:"ignore"`
 }
 
 // Main_Input bundles every external dependency the linter needs.
@@ -677,8 +683,7 @@ func Main(input *Main_Input) (code int) {
 		fmt.Fprintln(input.Stderr, configuration_err)
 		return 2
 	}
-	// Git tier runs first: repo-metadata-only, doesn't touch the FS, and
-	// surfaces the fastest signal.
+	// Git tier runs first: it reads only repo metadata, not the FS, for the fastest signal.
 	git_diags := Git_Input_Check(input.Git)
 	filesystem_diags, err := Check_File_System(&Check_File_System_Input{
 		Fsys:                   input.Fsys,
@@ -694,6 +699,7 @@ func Main(input *Main_Input) (code int) {
 		Deterministic_Packages: configuration.Deterministic_Packages,
 		Word_Replacements:      configuration.Word_Replacements,
 		Path_Casing_Allowlist:  configuration.Path_Casing_Allowlist,
+		Ignore:                 configuration.Ignore,
 	})
 	if err != nil {
 		fmt.Fprintln(input.Stderr, err)
@@ -794,6 +800,7 @@ func Parse_Configuration(data []byte) (configuration *Configuration, err error) 
 		"deterministic_packages": true,
 		"word_replacements":      true,
 		"path_casing_allowlist":  true,
+		"ignore":                 true,
 	}
 	for key := range keys {
 		if known_keys[key] {
@@ -814,24 +821,28 @@ func Parse_Configuration(data []byte) (configuration *Configuration, err error) 
 	if len(configuration.Word_Replacements) == 0 {
 		return nil, fmt.Errorf("lint.json: word_replacements is required")
 	}
-	if validate_err := validate_path_casing_allowlist(
-		configuration.Path_Casing_Allowlist); validate_err != nil {
+	if validate_err := validate_glob_patterns(
+		"path_casing_allowlist", configuration.Path_Casing_Allowlist); validate_err != nil {
+		return nil, validate_err
+	}
+	if validate_err := validate_glob_patterns(
+		"ignore", configuration.Ignore); validate_err != nil {
 		return nil, validate_err
 	}
 	return configuration, nil
 }
 
-// Rejects path_casing_allowlist entries the gitignore-style matcher cannot
-// honor, so a broken allowlist fails loudly at config load rather than silently
-// exempting nothing. An empty entry has no path to match; a leading "!" is
-// gitignore negation, which an additive allowlist gives no meaning; and a segment
-// that path.Match deems malformed (an unterminated "[") would error on every
-// comparison.
-func validate_path_casing_allowlist(patterns []string) (err error) {
+// Rejects gitignore-style glob entries the matcher cannot honor, so a broken
+// list fails loudly at config load rather than silently matching nothing. field
+// names the lint.json key for the error. An empty entry has no path to match; a
+// leading "!" is gitignore negation, which our additive lists give no meaning;
+// and a segment that path.Match deems malformed (an unterminated "[") would error
+// on every comparison.
+func validate_glob_patterns(field string, patterns []string) (err error) {
 	for _, raw := range patterns {
-		where := fmt.Sprintf("lint.json: path_casing_allowlist entry %q", raw)
+		where := fmt.Sprintf("lint.json: %s entry %q", field, raw)
 		if strings.TrimSpace(raw) == "" {
-			return fmt.Errorf("lint.json: path_casing_allowlist entry is empty")
+			return fmt.Errorf("lint.json: %s entry is empty", field)
 		}
 		if strings.HasPrefix(raw, "!") {
 			return fmt.Errorf("%s: negation is unsupported", where)
@@ -1901,6 +1912,11 @@ type Check_File_System_Input struct {
 	// from Main_Input: paths whose segments are exempt from the path-casing rule.
 	// Threaded to check_path_casing, which parses each entry once per run.
 	Path_Casing_Allowlist []string
+	// Ignore is the lint.json ignore list forwarded from Main_Input: gitignore-
+	// style globs that trim the tracked scan set, so a matching path is invisible
+	// to every tier. Applied once here against Tracked; with no Tracked set (the
+	// non-git fallback) it is inert, like every other tracked-set filter.
+	Ignore []string
 }
 
 // Check_File_System runs the stream tier, parses all Go files, and
@@ -1915,14 +1931,18 @@ func Check_File_System(input *Check_File_System_Input) (diags []Diagnostic, err 
 	if cpu_count < 1 {
 		cpu_count = 1
 	}
-	directory_has_tracked := check_file_system_directory_index(input.Tracked)
+	// The lint.json ignore list trims the tracked scan set up front, so every
+	// tier below (which keys off Tracked) skips the ignored paths with no
+	// per-tier plumbing. This is how `ignore` extends the hardcoded global list.
+	tracked := filter_ignored(input.Tracked, input.Ignore)
+	directory_has_tracked := check_file_system_directory_index(tracked)
 
 	// Stream and AST tiers run in series; parse failures degrade to per-file diagnostics.
 	stream_diags, paths, err := check_file_system_stream(&check_file_system_stream_input{
 		Fsys:                  input.Fsys,
 		Root:                  root,
 		Root_Directory:        input.Root_Directory,
-		Tracked:               input.Tracked,
+		Tracked:               tracked,
 		Directory_Has_Tracked: directory_has_tracked,
 		Readlink:              input.Readlink,
 		Stat:                  input.Stat,
@@ -1942,7 +1962,7 @@ func Check_File_System(input *Check_File_System_Input) (diags []Diagnostic, err 
 	output := append([]Diagnostic{}, stream_diags...)
 	output = append(output, parse_diags...)
 	output = append(output,
-		check_path_casing(input.Fsys, input.Tracked, input.Path_Casing_Allowlist)...)
+		check_path_casing(input.Fsys, tracked, input.Path_Casing_Allowlist)...)
 	allowlist := build_global_api_allowlist_set(input.Global_API_Allowlist)
 	output = append(output,
 		check_file_system_run_checks(
@@ -1952,12 +1972,12 @@ func Check_File_System(input *Check_File_System_Input) (diags []Diagnostic, err 
 	output = append(output, check_binary_module_layout(parsed_files, modules)...)
 	output = append(output, check_binary_module_main_package(parsed_files, modules)...)
 	output = append(output,
-		check_binary_module_internal_main(parsed_files, modules, input.Tracked)...)
+		check_binary_module_internal_main(parsed_files, modules, tracked)...)
 	output = append(output, check_shared_library_no_internal(parsed_files, modules)...)
 	output = append(output, check_shared_library_no_main_package(parsed_files, modules)...)
 	output = append(output, check_library_tier_depth(parsed_files, modules)...)
 	output = append(output,
-		check_module_definition_and_location(input.Fsys, modules, input.Tracked)...)
+		check_module_definition_and_location(input.Fsys, modules, tracked)...)
 	output = append(output, check_no_impure_stdlib(parsed_files, modules)...)
 	output = append(output, check_transitive_purity(parsed_files, modules)...)
 	output = append(output, check_deterministic(parsed_files, modules,
@@ -1966,6 +1986,36 @@ func Check_File_System(input *Check_File_System_Input) (diags []Diagnostic, err 
 	output = append(output, check_package_documentation_comment(parsed_files)...)
 	return append(output,
 		check_specification(input.Fsys, parsed_files, modules, input.Scope)...), nil
+}
+
+// Returns tracked with every path the lint.json ignore globs match dropped, so
+// the trimmed set carries the ignore decision to every tier that keys off it.
+// Returns tracked unchanged when it is nil (the non-git fallback has nothing to
+// trim) or when there are no patterns, so the common no-ignore run allocates
+// nothing. A tracked entry is a file, so the matcher tests it with
+// key_is_directory false; it still tests every ancestor prefix, which is what
+// lets a directory entry match everything beneath it.
+func filter_ignored(tracked map[string]bool, ignore []string) (kept map[string]bool) {
+	// The non-git fallback has no tracked set to trim, and the common run lists
+	// no ignore globs; either way the input passes through unallocated.
+	if tracked == nil {
+		return tracked
+	}
+	if len(ignore) == 0 {
+		return tracked
+	}
+	patterns := make([]glob_pattern, 0, len(ignore))
+	for _, raw := range ignore {
+		patterns = append(patterns, parse_glob_pattern(raw))
+	}
+	kept = make(map[string]bool, len(tracked))
+	for p := range tracked {
+		if glob_patterns_match(p, false, patterns) {
+			continue
+		}
+		kept[p] = true
+	}
+	return kept
 }
 
 // Returns the set of directories that contain at least one tracked path,
@@ -2676,7 +2726,7 @@ func build_module_index_walk(
 	}
 	if d.IsDir() {
 		if p != "." {
-			if check_file_system_stream_skip_directory(d.Name()) {
+			if Ignored_Directory(p) {
 				return fs.SkipDir
 			}
 		}
@@ -2879,10 +2929,10 @@ func check_binary_module_main_package(
 // entry point has fractured. The shared library is exempt: it is imported,
 // never executed, so it owns no entry point. Modules with no visible go.mod
 // resolve to -1 and are skipped, matching the other module-level checks.
-// third_party holds vendored history the workspace does not own, and the
-// Tracked filter drops modules whose go.mod is not first-party — both
-// exemptions mirror check_module_definition_and_location so a whole-repo run
-// never demands an entry point from a toolchain or vendored module.
+// The Tracked filter drops modules whose go.mod is not first-party, mirroring
+// check_module_definition_and_location, so a whole-repo run never demands an
+// entry point from a toolchain copy; top-level third_party/ is pruned before
+// module discovery, so vendored modules never enter the index at all.
 func check_binary_module_internal_main(
 	parsed_files []parsed_file, modules *module_index, tracked map[string]bool,
 ) (diags []Diagnostic) {
@@ -2909,12 +2959,6 @@ func check_binary_module_internal_main(
 	want := "exactly one func Main in internal/ per binary module"
 	for i, m := range modules.Modules {
 		if m.Is_Shared_Library {
-			continue
-		}
-		if m.Root == "third_party" {
-			continue
-		}
-		if strings.HasPrefix(m.Root, "third_party/") {
 			continue
 		}
 		module_file_path := "go.mod"
@@ -3160,11 +3204,11 @@ func module_information_library_ancestors(
 // judged from the go.mod's own depth and so always applies; Module Definition
 // is judged against go.work and so applies only when that file is present —
 // its absence means the linter is scanning a detached subtree where
-// registration cannot be decided. third_party holds vendored history the
-// workspace does not own and is exempt from both. The Tracked filter, when
-// set, drops modules whose go.mod is not part of the repository (an untracked
-// toolchain or cache copy) so a whole-repo run stays focused on first-party
-// code.
+// registration cannot be decided. The Tracked filter, when set, drops modules
+// whose go.mod is not part of the repository (an untracked toolchain or cache
+// copy) so a whole-repo run stays focused on first-party code; top-level
+// third_party/ is pruned before discovery, so vendored modules never reach
+// here.
 func check_module_definition_and_location(
 	fsys fs.FS, modules *module_index, tracked map[string]bool,
 ) (diags []Diagnostic) {
@@ -3174,12 +3218,6 @@ func check_module_definition_and_location(
 		module_file_path := "go.mod"
 		if m.Root != "." {
 			module_file_path = m.Root + "/go.mod"
-		}
-		if m.Root == "third_party" {
-			continue
-		}
-		if strings.HasPrefix(m.Root, "third_party/") {
-			continue
 		}
 		if tracked != nil {
 			if !tracked[module_file_path] {
@@ -7618,7 +7656,6 @@ func check_file_system_stream_checkers(
 ) (checks [stream_checker_count]check_function_stream) {
 	return [stream_checker_count]check_function_stream{
 		{Name: "conflict-markers", Visit: check_stream_conflict_markers},
-		{Name: "copyleft", Visit: check_stream_copyleft},
 		{Name: "github-actions-uses", Visit: check_stream_github_actions_uses},
 		{Name: "banned-scripts", Visit: check_stream_banned_scripts},
 		{Name: "banned-archives", Visit: check_stream_banned_archives},
@@ -7677,7 +7714,7 @@ func check_file_system_stream_walk(
 	}
 	if d.IsDir() {
 		if p != input.Root {
-			if check_file_system_stream_skip_directory(d.Name()) {
+			if Ignored_Directory(p) {
 				return fs.SkipDir
 			}
 		}
@@ -7696,9 +7733,7 @@ func check_file_system_stream_walk(
 		}
 	}
 	if path.Ext(p) == ".go" {
-		if !strings.HasPrefix(p, "third_party/") {
-			*go_paths = append(*go_paths, p)
-		}
+		*go_paths = append(*go_paths, p)
 	}
 	information, information_error := d.Info()
 	if information_error != nil {
@@ -7722,27 +7757,21 @@ func check_file_system_stream_walk(
 	return nil
 }
 
-// Mirrors check_file_system_collect_paths' dir-skip rules (testdata, vendor, dot-dirs).
-// Stream tier additionally walks third_party — vendored licenses are exactly
-// the kind of thing the copyleft check is meant to catch.
-func check_file_system_stream_skip_directory(name string) (skip bool) {
+// Ignored_Directory reports whether a directory a walker reaches should be
+// pruned outright — the one global ignore list, shared by every tier and by
+// main's tracked-file walk so the rule cannot drift between them. The argument
+// is the slash path from the scan root, so the top-level third_party/ drop-zone
+// is matched exactly (a nested pkg/third_party/ is first-party code and stays
+// linted) while vendor, .git, and .jj match at any depth: Go's vendor/ nests by
+// convention, and tool-state dirs surface inside worktrees and submodules.
+// Gitignored paths are not handled here; main prunes them via the Tracked set.
+func Ignored_Directory(relative string) (ignored bool) {
 
-	if name == "testdata" {
+	if relative == "third_party" {
 		return true
 	}
-	if name == "vendor" {
-		return true
-	}
-	// .github holds CI config that the github-actions-uses check needs to
-	// see. Other dotdirs (.git, .jj, .claude, .go-path, ...) are tool state
-	// the linter does not own and should not scan.
-	if name == ".github" {
-		return false
-	}
-	if strings.HasPrefix(name, ".") {
-		return true
-	}
-	return false
+	base := relative[strings.LastIndexByte(relative, '/')+1:]
+	return base == "vendor" || base == ".git" || base == ".jj"
 }
 
 func check_stream_conflict_markers(
@@ -7793,23 +7822,16 @@ func check_stream_conflict_markers(
 }
 
 // Scripting-language files dilute the Go-first stance of this repo and add
-// hidden, untyped build/runtime surface. Banned everywhere except the
-// top-level third_party/ subtree (vendor/ is already pruned by the stream
-// walker's skip rules). Nested third_party/ paths (e.g. pkg/third_party/x.py)
-// are intentionally NOT exempt — the carve-out applies only to the canonical
-// drop-zone at root.
+// hidden, untyped build/runtime surface. The top-level third_party/ drop-zone
+// and every vendor/ tree are pruned upstream by Ignored_Directory, so they
+// never reach here; a nested third_party/ (e.g. pkg/third_party/x.py) is
+// first-party code and IS flagged.
 func check_stream_banned_scripts(
 	p string,
 	information fs.FileInfo,
 	_ func() (data []byte, err error),
 	output *[]Diagnostic) {
 
-	if strings.HasPrefix(p, "third_party/") {
-		return
-	}
-	if p == "third_party" {
-		return
-	}
 	base := strings.ToLower(information.Name())
 	extension := strings.ToLower(path.Ext(base))
 	banned := false
@@ -7836,20 +7858,14 @@ func check_stream_banned_scripts(
 // An .xz file forces decompression the Go stdlib cannot do: there is no
 // compress/xz, so reading one shells out to external tar, whose GNU and BSD
 // builds diverge in flags and behavior. gzip is read directly by compress/gzip
-// and archive/tar, so it is the portable choice. Banned everywhere except the
-// top-level third_party/ drop-zone, mirroring the banned-scripts carve-out.
+// and archive/tar, so it is the portable choice. The top-level third_party/
+// drop-zone and every vendor/ tree are pruned upstream by Ignored_Directory.
 func check_stream_banned_archives(
 	p string,
 	information fs.FileInfo,
 	_ func() (data []byte, err error),
 	output *[]Diagnostic) {
 
-	if strings.HasPrefix(p, "third_party/") {
-		return
-	}
-	if p == "third_party" {
-		return
-	}
 	if strings.ToLower(path.Ext(information.Name())) != ".xz" {
 		return
 	}
@@ -7908,65 +7924,6 @@ func check_stream_github_actions_uses(
 		line_number++
 		line_start = i + 1
 	}
-}
-
-// Flags license-shaped files containing GPL/AGPL/LGPL/SSPL preambles. The
-// MPL guard exists because Mozilla Public License preambles often reference
-// the GNU title for comparison; without it, MPL would false-positive as GPL/LGPL.
-func check_stream_copyleft(
-	p string,
-	information fs.FileInfo,
-	load func() (data []byte, err error),
-	output *[]Diagnostic) {
-
-	copyleft_filename_needles := []string{
-		"license", "licence", "notice", "readme", "copying", "copyright", "unlicense",
-	}
-	name := strings.ToLower(information.Name())
-	matched := false
-	for _, needle := range copyleft_filename_needles {
-		if strings.Contains(name, needle) {
-			matched = true
-			break
-		}
-	}
-	if !matched {
-		return
-	}
-	source, err := load()
-	if err != nil {
-		return
-	}
-	n := strings.ToUpper(strings.Join(strings.Fields(string(source)), " "))
-	mpl := strings.Contains(n, "MOZILLA PUBLIC LICENSE")
-	gpl_title := strings.Contains(n, "GNU GENERAL PUBLIC LICENSE")
-	gpl_clause := strings.Contains(n, "THIS PROGRAM IS FREE SOFTWARE") ||
-		strings.Contains(n, "COPYLEFT") ||
-		strings.Contains(n, "TERMS AND CONDITIONS FOR COPYING")
-	agpl_title := strings.Contains(n, "GNU AFFERO GENERAL PUBLIC LICENSE")
-	agpl_clause := strings.Contains(n, "REMOTE NETWORK INTERACTION") ||
-		strings.Contains(n, "NETWORK USE")
-	lgpl_title := strings.Contains(n, "GNU LESSER GENERAL PUBLIC LICENSE")
-	lgpl_clause := strings.Contains(n, "LIBRARY") || strings.Contains(n, "LINKING")
-	sspl := strings.Contains(n, "SERVER SIDE PUBLIC LICENSE")
-	var family string
-	switch {
-	case gpl_title && gpl_clause && !mpl:
-		family = "GNU GPL"
-	case agpl_title && agpl_clause:
-		family = "GNU AGPL"
-	case lgpl_title && lgpl_clause && !mpl:
-		family = "GNU LGPL"
-	case sspl:
-		family = "Server Side Public License"
-	default:
-		return
-	}
-	*output = append(*output, Diagnostic{
-		Position: token.Position{Filename: p},
-		Message: fmt.Sprintf(
-			"%s: replace with a permissive license (MIT/Apache/BSD)", family),
-	})
 }
 
 func check_stream_agent_documentation_lines_max(
@@ -8067,7 +8024,7 @@ func check_path_casing(
 			// segment is a file; every earlier prefix is a directory, which a
 			// trailing-slash directory pattern needs to know to bind correctly.
 			key_is_directory := i < len(segments)-1
-			if path_casing_allowlisted(key, key_is_directory, patterns) {
+			if glob_patterns_match(key, key_is_directory, patterns) {
 				continue
 			}
 			suggestion := path_casing_suggest(seg)
@@ -8158,7 +8115,7 @@ func check_path_casing_paths(fsys fs.FS, tracked map[string]bool) (paths []strin
 				return nil
 			}
 			if d.IsDir() {
-				if d.Name() == ".git" {
+				if Ignored_Directory(p) {
 					return fs.SkipDir
 				}
 				return nil
@@ -8204,15 +8161,16 @@ func parse_glob_pattern(raw string) (parsed glob_pattern) {
 	return parsed
 }
 
-// Reports whether the path-casing diagnostic for key is suppressed by the
-// allowlist. gitignore excludes a path when the path or any ancestor directory
-// matches, so we test every prefix of key — each ancestor is a directory, and
-// the leaf's directory status is key_is_directory. A Directory_Only entry is
-// skipped at prefixes that are files, which is what makes a trailing-slash entry
-// bind to directories and their subtree but not to a same-named file.
-func path_casing_allowlisted(
+// Reports whether key — or any of its ancestor directories — matches one of the
+// gitignore-style patterns. gitignore excludes a path when the path or any
+// ancestor directory matches, so we test every prefix of key; each ancestor is a
+// directory, and the leaf's directory status is key_is_directory. A
+// Directory_Only entry is skipped at prefixes that are files, which is what makes
+// a trailing-slash entry bind to directories and their subtree but not to a
+// same-named file.
+func glob_patterns_match(
 	key string, key_is_directory bool, patterns []glob_pattern,
-) (suppressed bool) {
+) (found bool) {
 
 	if len(patterns) == 0 {
 		return false

@@ -236,6 +236,18 @@ func Test_Diagnostics_Tier_Two(t *testing.T) {
 	}
 }
 
+// Test_Repository_Ignored_Directories verifies a banned script that would be
+// flagged anywhere else is silent under an ignored directory.
+func Test_Repository_Ignored_Directories(t *testing.T) {
+	t.Parallel()
+	files := map[string][]byte{
+		"vendor/build.sh": []byte("echo hi\n"),
+	}
+	if specification_flags(t, files, "as a go script") {
+		t.Fatal("a script under an ignored directory must not be flagged")
+	}
+}
+
 // Test_Repository_Path_Casing verifies a hyphenated directory name is flagged.
 func Test_Repository_Path_Casing(t *testing.T) {
 	t.Parallel()
@@ -325,18 +337,6 @@ func Test_Repository_Github_Actions(t *testing.T) {
 	}
 	if !specification_flags(t, files, "third-party github action banned") {
 		t.Fatal("a uses: line must be flagged")
-	}
-}
-
-// Test_Repository_Copyleft_Licenses verifies a GPL license text is flagged.
-func Test_Repository_Copyleft_Licenses(t *testing.T) {
-	t.Parallel()
-	files := map[string][]byte{
-		"LICENSE": []byte("GNU GENERAL PUBLIC LICENSE\n\n" +
-			"This program is free software.\n"),
-	}
-	if !specification_flags(t, files, "permissive license") {
-		t.Fatal("a copyleft license must be flagged")
 	}
 }
 
