@@ -13,7 +13,9 @@ package sh
 import (
 	"os"
 	"os/exec"
+	"path/filepath"
 	"runtime"
+	"strings"
 	"syscall"
 
 	"github.com/james-orcales/james-orcales/shared/sh"
@@ -64,9 +66,9 @@ func Shell_With_Working_Directory(s *sh.Shell, directory string) (derived *sh.Sh
 }
 
 // Init_Default_Shell builds a Shell wired to the host OS: os.Stdout, os.Stderr,
-// os.Environ, and a Run backed by exec.Command and an operating-system clock. No
-// package-level Default — sh is runtime behavior, so a Shell is constructed here
-// and threaded down, never grabbed ambiently.
+// os.Environ, and a Run backed by exec.Command and an operating-system clock.
+// Thread it through a tool that wants tests, or call the package-level Spawn and
+// Pipe directly in a script.
 func Init_Default_Shell() (shell *sh.Shell) {
 	clock := time_default.New_Operating_System_Clock()
 	return &sh.Shell{
@@ -77,6 +79,76 @@ func Init_Default_Shell() (shell *sh.Shell) {
 			return default_run(clock, command)
 		},
 	}
+}
+
+// Spawn runs a command on a host-OS Shell with inherited streams and reports
+// whether it exited cleanly — the package-level convenience for scripts, which
+// are composition roots and so may reach for an ambient host shell. Library-tier
+// code cannot import this package to misuse it.
+func Spawn(arguments ...string) (ok bool) {
+	return sh.Shell_Spawn(Init_Default_Shell(), arguments...)
+}
+
+// Pipe runs a command on a host-OS Shell and returns its stdout, trimmed.
+func Pipe(arguments ...string) (stdout string) {
+	return sh.Shell_Pipe(Init_Default_Shell(), arguments...)
+}
+
+// Which returns the cleaned path of the named executable as found on PATH, or an
+// empty string when it is not found.
+func Which(name string) (path string) {
+	resolved, err := exec.LookPath(name)
+	if err != nil {
+		return ""
+	}
+	return filepath.Clean(resolved)
+}
+
+// File_Exists reports whether a file or directory exists at path.
+func File_Exists(path string) (exists bool) {
+	_, err := os.Stat(path)
+	return err == nil
+}
+
+// Make_Directory_All creates path and any missing parents, like `mkdir -p`.
+func Make_Directory_All(path string) (err error) {
+	return os.MkdirAll(path, 0o755)
+}
+
+// Push_Directory changes the process working directory to directory and returns
+// a function that restores the previous one. Process-global mutation suits a
+// sequential script; it would not suit a threaded Shell, which is why this is a
+// script convenience and not a Shell op. It panics if either chdir fails.
+func Push_Directory(directory string) (pop func()) {
+	previous, err := os.Getwd()
+	if err != nil {
+		panic(err)
+	}
+	if chdir_err := os.Chdir(directory); chdir_err != nil {
+		panic(chdir_err)
+	}
+	return func() {
+		if restore_err := os.Chdir(previous); restore_err != nil {
+			panic(restore_err)
+		}
+	}
+}
+
+// Lines splits s on newlines. A positive n keeps the first n fields, the last
+// holding the remainder; a negative n keeps the final |n| lines; zero returns nil.
+func Lines(s string, n int) (lines []string) {
+	if n == 0 {
+		return nil
+	}
+	if n > 0 {
+		return strings.SplitN(s, "\n", n)
+	}
+	all := strings.Split(s, "\n")
+	tail := -n
+	if len(all) <= tail {
+		return all
+	}
+	return all[len(all)-tail:]
 }
 
 // Spawns command as a real process and reports its Outcome. The Command arrives
