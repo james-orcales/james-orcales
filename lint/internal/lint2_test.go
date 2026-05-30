@@ -1875,17 +1875,21 @@ func lint_json_path_casing(t *testing.T, allowlist []string) (data string) {
 // Lints in-memory files (the caller supplies lint.json) and returns the exit
 // code with stdout and stderr. Unlike run_stream it keeps all three, so a test
 // can tell a clean run (code 0, success line) from a hard config failure
-// (code 2, stderr) instead of conflating them as "no diagnostic."
+// (code 2, stderr) rather than conflating the two.
 func run_lint(t *testing.T, files map[string]string) (code int, stdout, stderr string) {
 	t.Helper()
 	fsys := make(fstest.MapFS)
 	for name, content := range files {
 		fsys[name] = &fstest.MapFile{Data: []byte(content)}
 	}
-	out := &bytes.Buffer{}
-	errs := &bytes.Buffer{}
-	code = lint_main(t, &lint.Main_Input{Fsys: fsys, Stdout: out, Stderr: errs})
-	return code, out.String(), errs.String()
+	stdout_buffer := &bytes.Buffer{}
+	stderr_buffer := &bytes.Buffer{}
+	code = lint_main(t, &lint.Main_Input{
+		Fsys:   fsys,
+		Stdout: stdout_buffer,
+		Stderr: stderr_buffer,
+	})
+	return code, stdout_buffer.String(), stderr_buffer.String()
 }
 
 // A recursive dir/** entry exempts the directory and its whole subtree from the
@@ -1893,20 +1897,25 @@ func run_lint(t *testing.T, files map[string]string) (code int, stdout, stderr s
 // directory, proving the exemption is load-bearing.
 func Test_Path_Casing_Allowlist_Recursive(t *testing.T) {
 	t.Parallel()
-	files := func(allowlist []string) map[string]string {
+	fixture := func(allowlist []string) (files map[string]string) {
 		return map[string]string{
 			"bad-Dir/x.txt": "x\n",
 			"lint.json":     lint_json_path_casing(t, allowlist),
 		}
 	}
-	code, stdout, _ := run_lint(t, files(nil))
-	if code != 1 || !strings.Contains(stdout, "bad-Dir") {
-		t.Fatalf("control: want bad-Dir flagged (code 1), got code %d: %s", code, stdout)
+	code, stdout, _ := run_lint(t, fixture(nil))
+	if code != 1 {
+		t.Fatalf("control: want exit 1, got %d: %s", code, stdout)
 	}
-	code, stdout, stderr := run_lint(t, files([]string{"bad-Dir/**"}))
-	if code != 0 || strings.Contains(stdout, "bad-Dir") {
-		t.Fatalf("exempt: bad-Dir/** must suppress the diag; code %d stdout %q stderr %q",
-			code, stdout, stderr)
+	if !strings.Contains(stdout, "bad-Dir") {
+		t.Fatalf("control: want bad-Dir flagged, got: %s", stdout)
+	}
+	code, stdout, stderr := run_lint(t, fixture([]string{"bad-Dir/**"}))
+	if code != 0 {
+		t.Fatalf("exempt: want clean run, got %d; stderr %q", code, stderr)
+	}
+	if strings.Contains(stdout, "bad-Dir") {
+		t.Fatalf("exempt: bad-Dir/** must suppress the diag: %s", stdout)
 	}
 }
 
@@ -1919,30 +1928,41 @@ func Test_Path_Casing_Allowlist_Directory(t *testing.T) {
 		"lint.json":            lint_json_path_casing(t, []string{"bad-Dir/"}),
 	}
 	code, stdout, stderr := run_lint(t, files)
-	if code != 0 || strings.Contains(stdout, "Also-Bad") || strings.Contains(stdout, "bad-Dir") {
-		t.Fatalf("bad-Dir/ must exempt the subtree; code %d stdout %q stderr %q",
-			code, stdout, stderr)
+	if code != 0 {
+		t.Fatalf("bad-Dir/ must yield a clean run, got %d; stderr %q", code, stderr)
+	}
+	if strings.Contains(stdout, "bad-Dir") {
+		t.Fatalf("bad-Dir/ must exempt the directory name: %s", stdout)
+	}
+	if strings.Contains(stdout, "Also-Bad") {
+		t.Fatalf("bad-Dir/ must exempt the subtree file: %s", stdout)
 	}
 }
 
-// A slash-less entry floats: it matches the basename at any depth (gitignore).
-func Test_Path_Casing_Allowlist_Floating(t *testing.T) {
+// A slash-less entry is unanchored: it matches the basename at any depth, the
+// way gitignore floats a pattern that carries no slash.
+func Test_Path_Casing_Allowlist_Unanchored(t *testing.T) {
 	t.Parallel()
-	files := func(allowlist []string) map[string]string {
+	fixture := func(allowlist []string) (files map[string]string) {
 		return map[string]string{
 			"weird-File.txt":   "x\n",
 			"a/weird-File.txt": "x\n",
 			"lint.json":        lint_json_path_casing(t, allowlist),
 		}
 	}
-	code, stdout, _ := run_lint(t, files(nil))
-	if code != 1 || !strings.Contains(stdout, "weird-File.txt") {
-		t.Fatalf("control: want weird-File.txt flagged; code %d: %s", code, stdout)
+	code, stdout, _ := run_lint(t, fixture(nil))
+	if code != 1 {
+		t.Fatalf("control: want exit 1, got %d: %s", code, stdout)
 	}
-	code, stdout, stderr := run_lint(t, files([]string{"weird-File.txt"}))
-	if code != 0 || strings.Contains(stdout, "weird-File") {
-		t.Fatalf("floating entry must exempt every depth; code %d stdout %q stderr %q",
-			code, stdout, stderr)
+	if !strings.Contains(stdout, "weird-File.txt") {
+		t.Fatalf("control: want weird-File.txt flagged: %s", stdout)
+	}
+	code, stdout, stderr := run_lint(t, fixture([]string{"weird-File.txt"}))
+	if code != 0 {
+		t.Fatalf("unanchored: want clean run, got %d; stderr %q", code, stderr)
+	}
+	if strings.Contains(stdout, "weird-File") {
+		t.Fatalf("a slash-less entry must exempt every depth: %s", stdout)
 	}
 }
 
@@ -1957,34 +1977,39 @@ func Test_Path_Casing_Allowlist_Anchored(t *testing.T) {
 	}
 	code, stdout, stderr := run_lint(t, files)
 	if code != 1 {
-		t.Fatalf("want the unanchored sibling still flagged; code %d stderr %q", code, stderr)
+		t.Fatalf("want other/ still flagged, got %d; stderr %q", code, stderr)
 	}
 	if strings.Contains(stdout, "top/weird-File.txt") {
-		t.Fatalf("anchored entry must exempt top/...: %s", stdout)
+		t.Fatalf("anchored entry must exempt top/: %s", stdout)
 	}
 	if !strings.Contains(stdout, "other/weird-File.txt") {
-		t.Fatalf("anchored entry must NOT leak to other/...: %s", stdout)
+		t.Fatalf("anchored entry must not leak to other/: %s", stdout)
 	}
 }
 
 // A single-segment glob (*.weird) matches that pattern at any depth.
 func Test_Path_Casing_Allowlist_Segment_Glob(t *testing.T) {
 	t.Parallel()
-	files := func(allowlist []string) map[string]string {
+	fixture := func(allowlist []string) (files map[string]string) {
 		return map[string]string{
 			"bad-Name.weird":  "x\n",
 			"a/Bad-Two.weird": "x\n",
 			"lint.json":       lint_json_path_casing(t, allowlist),
 		}
 	}
-	code, stdout, _ := run_lint(t, files(nil))
-	if code != 1 || !strings.Contains(stdout, ".weird") {
-		t.Fatalf("control: want *.weird names flagged; code %d: %s", code, stdout)
+	code, stdout, _ := run_lint(t, fixture(nil))
+	if code != 1 {
+		t.Fatalf("control: want exit 1, got %d: %s", code, stdout)
 	}
-	code, stdout, stderr := run_lint(t, files([]string{"*.weird"}))
-	if code != 0 || strings.Contains(stdout, ".weird") {
-		t.Fatalf("*.weird must exempt matching names at any depth; code %d stdout %q stderr %q",
-			code, stdout, stderr)
+	if !strings.Contains(stdout, ".weird") {
+		t.Fatalf("control: want *.weird names flagged: %s", stdout)
+	}
+	code, stdout, stderr := run_lint(t, fixture([]string{"*.weird"}))
+	if code != 0 {
+		t.Fatalf("*.weird: want clean run, got %d; stderr %q", code, stderr)
+	}
+	if strings.Contains(stdout, ".weird") {
+		t.Fatalf("*.weird must exempt matching names at any depth: %s", stdout)
 	}
 }
 
@@ -1999,9 +2024,11 @@ func Test_Path_Casing_Allowlist_Parse_Rejects(t *testing.T) {
 			"lint.json": lint_json_path_casing(t, bad),
 		}
 		code, stdout, stderr := run_lint(t, files)
-		if code != 2 || stderr == "" {
-			t.Fatalf("entry %q must abort with exit 2; code %d stdout %q stderr %q",
-				bad, code, stdout, stderr)
+		if code != 2 {
+			t.Fatalf("entry %q must exit 2, got %d: %s", bad, code, stdout)
+		}
+		if stderr == "" {
+			t.Fatalf("entry %q must explain the rejection on stderr", bad)
 		}
 	}
 }

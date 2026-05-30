@@ -10,6 +10,7 @@
     "shared/time",
     "shared/io"
   ],
+  "path_casing_allowlist": [],
   "word_replacements": {
     "len":       [],
     "length":    [],
