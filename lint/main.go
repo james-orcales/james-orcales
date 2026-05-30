@@ -86,10 +86,15 @@ func main() {
 		Git:            main_load_git(root),
 		CPU_Count:      runtime.NumCPU(),
 		Readlink:       os.Readlink,
-		Stat:           func(name string) (info fs.FileInfo, err error) { return os.Stat(name) },
-		Scope_Prefix:   scope_prefix,
+		Stat: func(
+			name string) (info fs.FileInfo, err error) {
+			return os.Stat(name)
+		},
+		Scope_Prefix: scope_prefix,
 	})
-	invariant.Is_Distinct_Boundary(&invariant.Boundary_Input[int]{X: code, Lo: 0, Hi: 2, Message: "Code is one of {0, 1, 2}"})
+	invariant.Is_Distinct_Boundary(
+		&invariant.Boundary_Input[int]{
+			X: code, Lo: 0, Hi: 2, Message: "Code is one of {0, 1, 2}"})
 	main_print_rss_and_elapsed(start)
 	os.Exit(code)
 }
@@ -107,16 +112,25 @@ func main_resolve_workspace(request string) (root string, scope_prefix string) {
 	defer func() {
 		invariant.Cross_Product(
 			invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
-				X: len(root), Lo: 0, Hi: max_filesystem_path_chars, Message: "Root length is bounded",
+				X:       len(root),
+				Lo:      0,
+				Hi:      max_filesystem_path_chars,
+				Message: "Root length is bounded",
 			}),
 			invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
-				X: len(scope_prefix), Lo: 0, Hi: max_filesystem_path_chars, Message: "Scope_prefix length is bounded",
+				X:       len(scope_prefix),
+				Lo:      0,
+				Hi:      max_filesystem_path_chars,
+				Message: "Scope_prefix length is bounded",
 			}),
 		)
 	}()
 	invariant.Cross_Product(
 		invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
-			X: len(request), Lo: 0, Hi: max_filesystem_path_chars, Message: "Request length is bounded",
+			X:       len(request),
+			Lo:      0,
+			Hi:      max_filesystem_path_chars,
+			Message: "Request length is bounded",
 		}),
 	)
 
@@ -145,7 +159,8 @@ func main_resolve_workspace(request string) (root string, scope_prefix string) {
 	}
 	if anchor == "" {
 		fmt.Fprintf(os.Stderr,
-			"lint: no go.work found above %q; this linter expects a monorepo with a workspace file\n",
+			"lint: no go.work found above %q; this linter expects "+
+				"a monorepo with a workspace file\n",
 			request,
 		)
 		os.Exit(2)
@@ -175,9 +190,11 @@ func main_print_rss_and_elapsed(start time.Time) {
 		}
 	}
 	peak_rss_mb := main_format_thousands(peak_rss_bytes / (1024 * 1024))
-	invariant.Cross_Product(invariant.Sometimes(peak_rss_mb == "", "Peak_rss_mb can be empty on this branch"))
+	invariant.Cross_Product(
+		invariant.Sometimes(peak_rss_mb == "", "Peak_rss_mb can be empty on this branch"))
 	elapsed_seconds := time.Since(start).Seconds()
-	invariant.Cross_Product(invariant.Sometimes(elapsed_seconds == 0, "Elapsed_seconds is zero on fast runs"))
+	invariant.Cross_Product(
+		invariant.Sometimes(elapsed_seconds == 0, "Elapsed_seconds is zero on fast runs"))
 	fmt.Fprintf(os.Stderr, "peak_rss=%s MiB elapsed_sec=%.3f\n", peak_rss_mb, elapsed_seconds)
 }
 
@@ -187,7 +204,10 @@ func main_format_thousands(n int64) (output string) {
 	defer func() {
 		invariant.Cross_Product(
 			invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
-				X: len(output), Lo: 0, Hi: max_filesystem_path_chars, Message: "Output length is bounded",
+				X:       len(output),
+				Lo:      0,
+				Hi:      max_filesystem_path_chars,
+				Message: "Output length is bounded",
 			}),
 		)
 	}()
@@ -227,20 +247,30 @@ func main_git(root string, args ...string) (output string, ok bool) {
 		invariant.Cross_Product(
 			invariant.Sometimes(ok, "git command succeeded"),
 			invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
-				X: len(output), Lo: 0, Hi: max_git_output_chars, Message: "Output length is bounded (git output budget)",
+				X:       len(output),
+				Lo:      0,
+				Hi:      max_git_output_chars,
+				Message: "Output length is bounded (git output budget)",
 			}),
 			invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
 				X: len(args), Lo: 0, Hi: max_git_args,
-				Message: "Args is a git subcommand line bounded by reasonable budget",
+				Message: "Args is a git subcommand line " +
+					"bounded by reasonable budget",
 			}),
 		)
 	}()
 	invariant.Cross_Product(
 		invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
-			X: len(root), Lo: 0, Hi: max_filesystem_path_chars, Message: "Root length is bounded",
+			X:       len(root),
+			Lo:      0,
+			Hi:      max_filesystem_path_chars,
+			Message: "Root length is bounded",
 		}),
 		invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
-			X: len(args), Lo: 0, Hi: max_git_args, Message: "Args is a git subcommand line bounded by reasonable budget",
+			X:       len(args),
+			Lo:      0,
+			Hi:      max_git_args,
+			Message: "Args is a git subcommand line bounded by reasonable budget",
 		}),
 	)
 	command := exec.Command("git", args...)
@@ -265,12 +295,17 @@ func main_load_git(root string) (input lint.Git_Input) {
 	defer func() {
 		invariant.Cross_Product(
 			invariant.Sometimes(input.Enabled, "git history tier is enabled"),
-			invariant.Sometimes(input.Main_Reference_Absent, "main reference is absent on shallow checkouts"),
+			invariant.Sometimes(
+				input.Main_Reference_Absent,
+				"main reference is absent on shallow checkouts"),
 		)
 	}()
 	invariant.Cross_Product(
 		invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
-			X: len(root), Lo: 0, Hi: max_filesystem_path_chars, Message: "Root length is bounded",
+			X:       len(root),
+			Lo:      0,
+			Hi:      max_filesystem_path_chars,
+			Message: "Root length is bounded",
 		}),
 	)
 	head, ok := main_git(root, "rev-parse", "--abbrev-ref", "HEAD")
@@ -294,7 +329,8 @@ func main_load_git(root string) (input lint.Git_Input) {
 		)
 		if main_sha, main_ok := main_git(root, "rev-parse", "main"); main_ok {
 			invariant.Cross_Product(
-				invariant.Sometimes(main_sha == "", "Main_sha can be empty on this branch"),
+				invariant.Sometimes(
+					main_sha == "", "Main_sha can be empty on this branch"),
 				invariant.Sometimes(main_ok, "Main_ok can be false on this branch"),
 			)
 			if head_sha == main_sha {
@@ -303,7 +339,9 @@ func main_load_git(root string) (input lint.Git_Input) {
 		}
 	}
 	main_reference := main_load_git_find_main_reference(root)
-	invariant.Cross_Product(invariant.Sometimes(main_reference == "", "Main_reference can be empty on this branch"))
+	invariant.Cross_Product(
+		invariant.Sometimes(
+			main_reference == "", "Main_reference can be empty on this branch"))
 	if main_reference == "" {
 		return lint.Git_Input{Enabled: true, Main_Reference_Absent: true}
 	}
@@ -324,19 +362,26 @@ func main_load_git_find_main_reference(root string) (reference string) {
 	defer func() {
 		invariant.Cross_Product(
 			invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
-				X: len(reference), Lo: 0, Hi: max_filesystem_path_chars, Message: "Reference length is bounded",
+				X:       len(reference),
+				Lo:      0,
+				Hi:      max_filesystem_path_chars,
+				Message: "Reference length is bounded",
 			}),
 		)
 	}()
 	invariant.Cross_Product(
 		invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
-			X: len(root), Lo: 0, Hi: max_filesystem_path_chars, Message: "Root length is bounded",
+			X:       len(root),
+			Lo:      0,
+			Hi:      max_filesystem_path_chars,
+			Message: "Root length is bounded",
 		}),
 	)
 
 	for _, r := range []string{"origin/main", "main"} {
 		if _, ok := main_git(root, "rev-parse", "--verify", "--quiet", r); ok {
-			invariant.Cross_Product(invariant.Sometimes(ok, "Ok can be false on this branch"))
+			invariant.Cross_Product(
+				invariant.Sometimes(ok, "Ok can be false on this branch"))
 			return r
 		}
 	}
@@ -350,13 +395,19 @@ func main_load_git_resolve_pr_tip(root string) (tip string) {
 	defer func() {
 		invariant.Cross_Product(
 			invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
-				X: len(tip), Lo: 0, Hi: max_filesystem_path_chars, Message: "Tip length is bounded",
+				X:       len(tip),
+				Lo:      0,
+				Hi:      max_filesystem_path_chars,
+				Message: "Tip length is bounded",
 			}),
 		)
 	}()
 	invariant.Cross_Product(
 		invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
-			X: len(root), Lo: 0, Hi: max_filesystem_path_chars, Message: "Root length is bounded",
+			X:       len(root),
+			Lo:      0,
+			Hi:      max_filesystem_path_chars,
+			Message: "Root length is bounded",
 		}),
 	)
 
@@ -385,30 +436,50 @@ type main_load_git_read_commits_input struct {
 // (PR branches, subtree imports) aren't enumerated — only the branch's own
 // new commits. Without this, `git subtree add` floods the range with the
 // imported repo's entire history.
-func main_load_git_read_commits(input *main_load_git_read_commits_input) (output []lint.Git_Commit) {
+func main_load_git_read_commits(
+	input *main_load_git_read_commits_input) (output []lint.Git_Commit) {
 	defer func() {
 		invariant.Cross_Product(
 			invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
-				X: len(output), Lo: 0, Hi: max_commit_list, Message: "Output is a commit list bounded by git-log budget",
+				X:       len(output),
+				Lo:      0,
+				Hi:      max_commit_list,
+				Message: "Output is a commit list bounded by git-log budget",
 			}),
-			invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: len(input.Root),
-				Lo: min_non_empty, Hi: max_filesystem_path_chars,
-				Message: "Input.Root is a non-empty working directory bounded by filesystem path budget"}),
-			invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: len(input.Flag),
-				Lo: 0, Hi: max_filesystem_path_chars, Message: "Input.Flag is bounded by filesystem path budget"}),
-			invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: len(input.Range),
-				Lo: 0, Hi: max_filesystem_path_chars, Message: "Input.Range is bounded by filesystem path budget"}),
+			invariant.Distinct_Boundary(
+				&invariant.Boundary_Input[int]{X: len(input.Root),
+					Lo: min_non_empty, Hi: max_filesystem_path_chars,
+					Message: "Input.Root is a non-empty working directory " +
+						"bounded by filesystem path budget"}),
+			invariant.Distinct_Boundary(
+				&invariant.Boundary_Input[int]{X: len(input.Flag),
+					Lo: 0,
+					Hi: max_filesystem_path_chars,
+					Message: "Input.Flag is bounded by " +
+						"filesystem path budget"}),
+			invariant.Distinct_Boundary(
+				&invariant.Boundary_Input[int]{X: len(input.Range),
+					Lo: 0,
+					Hi: max_filesystem_path_chars,
+					Message: "Input.Range is bounded by " +
+						"filesystem path budget"}),
 		)
 	}()
 	invariant.Cross_Product(invariant.Always(input != nil, "input is non-nil"),
 		invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: len(input.Root),
 			Lo: min_non_empty, Hi: max_filesystem_path_chars,
-			Message: "Input.Root is a non-empty working directory bounded by filesystem path budget"}),
+			Message: "Input.Root is a non-empty working directory " +
+				"bounded by filesystem path budget"}),
 		invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: len(input.Flag),
-			Lo: 0, Hi: max_filesystem_path_chars, Message: "Input.Flag is bounded by filesystem path budget"}),
+			Lo:      0,
+			Hi:      max_filesystem_path_chars,
+			Message: "Input.Flag is bounded by filesystem path budget"}),
 		invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: len(input.Range),
-			Lo: 0, Hi: max_filesystem_path_chars, Message: "Input.Range is bounded by filesystem path budget"}))
-	stdout, ok := main_git(input.Root, "log", "--first-parent", input.Flag, "--format=%H|%s", input.Range)
+			Lo:      0,
+			Hi:      max_filesystem_path_chars,
+			Message: "Input.Range is bounded by filesystem path budget"}))
+	stdout, ok := main_git(
+		input.Root, "log", "--first-parent", input.Flag, "--format=%H|%s", input.Range)
 	invariant.Cross_Product(
 		invariant.Sometimes(stdout == "", "Stdout can be empty on this branch"),
 		invariant.Sometimes(ok, "Ok can be false on this branch"),
@@ -424,7 +495,9 @@ func main_load_git_read_commits(input *main_load_git_read_commits_input) (output
 		if pipe_offset < 0 {
 			continue
 		}
-		output = append(output, lint.Git_Commit{Hash: line[:pipe_offset], Subject: line[pipe_offset+1:]})
+		output = append(
+			output,
+			lint.Git_Commit{Hash: line[:pipe_offset], Subject: line[pipe_offset+1:]})
 	}
 	return output
 }
@@ -438,15 +511,25 @@ func main_load_git_read_commits(input *main_load_git_read_commits_input) (output
 func main_load_tracked(root string) (output map[string]bool) {
 	defer func() {
 		o := invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: len(output),
-			Lo: 0, Hi: max_tracked_paths, Message: "Output is the tracked-paths set bounded by repo budget"})
-		invariant.Cross_Product(o, invariant.Excluding("Tracked-paths at safety cap is pathological input", invariant.Bucket_Hi(o)))
+			Lo:      0,
+			Hi:      max_tracked_paths,
+			Message: "Output is the tracked-paths set bounded by repo budget"})
+		invariant.Cross_Product(
+			o,
+			invariant.Excluding(
+				"Tracked-paths at safety cap is pathological input",
+				invariant.Bucket_Hi(o)))
 	}()
 	invariant.Cross_Product(
 		invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
-			X: len(root), Lo: 0, Hi: max_filesystem_path_chars, Message: "Root length is bounded",
+			X:       len(root),
+			Lo:      0,
+			Hi:      max_filesystem_path_chars,
+			Message: "Root length is bounded",
 		}),
 	)
-	command := exec.Command("git", "ls-files", "--cached", "--others", "--exclude-standard", "-z")
+	command := exec.Command(
+		"git", "ls-files", "--cached", "--others", "--exclude-standard", "-z")
 	command.Dir = root
 	stdout, err := command.Output()
 	invariant.Cross_Product(
@@ -454,7 +537,10 @@ func main_load_tracked(root string) (output map[string]bool) {
 		invariant.Sometimes(err == nil, "Err can be empty or zero on this branch"),
 	)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "lint: git ls-files failed: %v; falling back to full-tree walk\n", err)
+		fmt.Fprintf(
+			os.Stderr,
+			"lint: git ls-files failed: %v; falling back to full-tree walk\n",
+			err)
 		return nil
 	}
 	output = make(map[string]bool)
