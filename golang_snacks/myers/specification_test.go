@@ -7,7 +7,7 @@ import (
 	"testing"
 
 	"github.com/james-orcales/james-orcales/golang_snacks/myers"
-	snap "github.com/james-orcales/james-orcales/golang_snacks/snap/snap_default"
+	snap "github.com/james-orcales/james-orcales/golang_snacks/snap/default"
 )
 
 // Test_Edit_Stringer verifies String renders kind prefixes and escapes quotes.
