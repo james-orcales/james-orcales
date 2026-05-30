@@ -56,14 +56,17 @@ func Init_Default_Snapper() (snapper *snap.Snapper) {
 // captured via runtime.Callers. WARN: brittle under go:generate — the
 // source location is captured at runtime.
 func Init(data string) (snapshot snap.Snapshot) {
-	return snap.Snapper_Init_At(Default, 2, data, false)
+	// runtime.Callers frames from inside Get_Caller: 0 Callers, 1 Get_Caller,
+	// 2 Snapper_Init_At, 3 this wrapper, 4 the test call site.
+	return snap.Snapper_Init_At(Default, 4, data, false)
 }
 
 // Edit creates a snapshot bound to Default that will rewrite the source line
 // with the actual output on the next test run. Use this temporarily to
 // update a specific snapshot, then change it back to Init.
 func Edit(data string) (snapshot snap.Snapshot) {
-	return snap.Snapper_Init_At(Default, 2, data, true)
+	// Same frame depth as Init: the test call site is 4 frames above Callers.
+	return snap.Snapper_Init_At(Default, 4, data, true)
 }
 
 // New_Snapshot forwards to snap.New_Snapshot.

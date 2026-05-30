@@ -17,11 +17,11 @@ The doctrine exists to enforce a single rule: **a function never reaches out to 
 it didn't receive**. Every dependency travels through parameters or struct fields,
 all the way down from the program's entry point (`main`) to the leaf call site.
 
-The opposite of injection is **ambient state** — state read implicitly from the
+The opposite of injection is **impure state** — state read implicitly from the
 process, OS, or some global:
 
 ```go
-// Ambient. Reaches out to the OS clock without asking the caller.
+// Impure. Reaches out to the OS clock without asking the caller.
 func Stamp() string {
     return time.Now().Format(time.RFC3339)
 }
@@ -36,7 +36,7 @@ func (s *Stamper) Stamp() string {
 }
 ```
 
-Ambient state is fine in `main()` — the program is allowed to bind to the real
+Impure state is fine in `main()` — the program is allowed to bind to the real
 world there. It's poison everywhere else because:
 
 - **Testability dies at the offending line.** You can't substitute the clock
@@ -61,8 +61,8 @@ isolation. The whole point of injection is to keep that chain intact through
 every layer.
 
 The workspace doctrine carves the codebase so the chain is *enforceable*: the
-library tier must be ambient-free, and the composition tier (or `package main`)
-is the only place where ambient bindings are allowed to enter the chain.
+library tier must be free of impure state, and the composition tier (or `package main`)
+is the only place where impure bindings are allowed to enter the chain.
 
 ### Exemption: telemetry
 
@@ -105,7 +105,6 @@ james-orcales/
 ```
 golang_snacks/
 ├── go.mod
-├── test_all.go              ← package main, allowed anywhere
 ├── snap/                    ← library at depth 1
 │   └── snap.go
 ├── invariant/               ← library at depth 1
@@ -116,7 +115,8 @@ golang_snacks/
         └── time.go
 ```
 
-- `package main` is allowed anywhere (e.g. `test_all.go` runs cross-package tests).
+- **No `package main` anywhere** — the shared library is imported, never run, so
+  an entry point has no place in it.
 - Non-main packages live at depth 1.
 - **No `internal/` anywhere** — the shared library exists to be imported, so
   visibility-restricting it is forbidden.
@@ -132,7 +132,8 @@ lint/
     └── lint_test.go
 ```
 
-- `package main` allowed anywhere.
+- The single `package main` sits at the module root — no `cmd/` directory, no
+  second binary.
 - Non-main packages must live under `<module>/internal/`. They cannot sit at the
   module root or in any non-`internal/` subtree.
 - Consequence: a binary module exposes nothing importable. Go's own `internal/`
@@ -146,22 +147,22 @@ binary, never shared library → binary.
 Within a module, non-main packages may nest **at most one level deep**:
 
 ```
-golang_snacks/snap/snap.go              ← library tier
-golang_snacks/snap/snap_default/x.go    ← composition tier (one deeper, OK)
-golang_snacks/snap/snap_default/y/y.go  ← too deep, flagged
+golang_snacks/snap/snap.go           ← library tier
+golang_snacks/snap/default/x.go      ← composition tier (one deeper, OK)
+golang_snacks/snap/default/y/y.go    ← too deep, flagged
 ```
 
 Major-version directories (`v2`, `v3`, …) are invisible to this count — they're a
 Go module-versioning convention, not a real package layer:
 
 ```
-golang_snacks/snap/v2/snap.go              ← still library tier (v2 doesn't count)
-golang_snacks/snap/v2/snap_default/x.go    ← still composition tier
+golang_snacks/snap/v2/snap.go           ← still library tier (v2 doesn't count)
+golang_snacks/snap/v2/default/x.go      ← still composition tier
 ```
 
 The two positions differ in what they're allowed to touch:
 
-- **Library tier.** The spec. Must be free of ambient state: no `import "os"`, no
+- **Library tier.** The spec. Must be free of impure state: no `import "os"`, no
   `time.Now()`, no `fmt.Println`, no `http.DefaultClient`. All outside-world
   dependencies arrive as parameters or struct fields.
 - **Composition tier.** The one designated place where a library is permitted to
@@ -187,8 +188,8 @@ func (s *Snapper) Run() { fmt.Fprintln(s.Output, s.Get_Caller()) }
 Composition tier — the one place where the binding to the real world lives:
 
 ```go
-// golang_snacks/snap/snap_default/snap_default.go
-package snap_default
+// golang_snacks/snap/default/wire.go
+package snap
 
 import (
     "os"
@@ -205,19 +206,19 @@ var Default = &snap.Snapper{
 
 The library stays substitutable (tests pass a `bytes.Buffer` for `Output` and a
 stub for `Get_Caller`), and the binding stays auditable (`grep` for `"os."` in
-`snap_default/` enumerates every reach into ambient state).
+`snap/default/` enumerates every reach into impure state).
 
 ## Resolving diagnostics
 
-### `ambient stdlib import` / `ambient stdlib call`
+### `impure stdlib import` / `impure stdlib call`
 
-The file is in a library-tier package and touches ambient stdlib state. Example:
+The file is in a library-tier package and touches impure stdlib state. Example:
 
 ```go
 // golang_snacks/snap/snap.go
 package snap
 
-import "os"  // ← flagged: library tier may not bind ambient state
+import "os"  // ← flagged: library tier may not bind impure state
 
 var Default_Output = os.Stderr
 ```
@@ -237,35 +238,34 @@ Three fixes:
 
    ```
    golang_snacks/snap/
-   ├── snap.go                       ← pure types
-   └── snap_default/
-       └── snap_default.go           ← imports "os", wires Default
+   ├── snap.go              ← pure types
+   └── default/
+       └── wire.go          ← package snap; imports "os", wires Default
    ```
 
-   Re-export types from the sub-package so callers can `import snap "…/snap_default"`
-   and read identically to before.
+   The sub-package declares `package snap` (its parent's name) and re-exports the
+   types, so callers `import "…/snap/default"` and read identically to before.
 
-### `must be imported with alias "<X>"`
+### `default package must declare 'package <X>'`
 
-A `<X>_default` package was imported without aliasing it as `<X>`. The
-composition-tier package re-exports its library, and callers are expected to
+A package in a directory named `default` did not declare its parent library's
+package clause. The composition-tier package re-exports its library and must
 shadow the library's name so the API reads as if no split had happened.
 
 ```go
-// flagged
-import "example.com/foo/foo_default"
+// flagged: golang_snacks/snap/default/wire.go
+package wire
 
-// flagged (wrong alias)
-import bar "example.com/foo/foo_default"
-
-// clean
-import foo "example.com/foo/foo_default"
+// clean: golang_snacks/snap/default/wire.go
+package snap
 ```
 
-There's a load-bearing reason beyond ergonomics: `snap.Edit`'s source-line
-rewriter searches for the literal `snap.Edit(` in the file. If the import
-surfaces as `snap_default`, the rewriter never matches and the snapshot
-update silently fails. The alias makes the search string correct.
+The directory is named `default` — a Go keyword that cannot be a package name —
+precisely so the parent's name is the natural declaration. Importing
+`…/snap/default` then binds to `snap` with no alias. There's a load-bearing
+reason beyond ergonomics: `snap.Edit`'s source-line rewriter searches for the
+literal `snap.Edit(` in the file; declaring `package snap` keeps that string
+correct so the snapshot update doesn't silently fail.
 
 ### `binary module forbids package … outside of internal/`
 
@@ -289,19 +289,56 @@ mybinary/
 If `helpers` is meant to be imported by *other* modules, it doesn't belong in a
 binary at all — promote it to `golang_snacks/helpers/`.
 
-### `shared library forbids internal/ directories`
+### `binary module … declares no func Main in internal/` / `… declares multiple func Main`
+
+Every binary module exposes its entry point as a single free `func Main` living
+directly in its top-level `internal/` package. `package main`'s `main()` is a
+thin shell that delegates to it:
+
+```
+mybinary/
+├── main.go          ← package main: func main() { os.Exit(internal.Main()) }
+└── internal/
+    └── lint.go      ← package …: func Main(…) int { … the real logic … }
+```
+
+Go bars `package main` from being imported, hence from being unit-tested, so any
+logic left there is untestable. Pinning the entry point to `internal/` keeps
+`main()` trivial and gives every binary one auditable seam. The signature is
+free — `Main` may take and return whatever the binary needs.
+
+Fix for *no* `func Main`: move the body of `main()` into a `func Main` in
+`internal/` and have `main()` call it. A `func Main` deeper than the top level
+(e.g. `internal/cmd/`) does not count — hoist it to `internal/` itself. Fix for
+*multiple*: a binary has exactly one entry point; collapse the duplicates into
+one. The shared library is exempt from the *requirement* — it is imported, not
+run — but it *may* still expose a `func Main` of its own to represent an
+embeddable entry point a host can call; the rule never flags it either way.
+
+### `shared library forbids internal/ directories` / `shared library forbids package main`
 
 ```
 golang_snacks/
-└── snap/
-    └── internal/        ← flagged: shared library is fully exposed
-        └── helper.go
+├── snap/
+│   └── internal/        ← flagged: shared library is fully exposed
+│       └── helper.go
+└── run/
+    └── main.go          ← flagged: a fully-importable library owns no entry point
 ```
 
-Fix: rename `internal/` (e.g. to `snap_internal/` if it's a composition-tier
-helper), or promote the contents to a normal package.
+Fix for `internal/`: rename it (e.g. to `snap_internal/` if it's a
+composition-tier helper), or promote the contents to a normal package. Fix for
+`package main`: move the entry point to its own binary module.
 
 ### `package … exceeds library tier`
+
+A package may have at most one non-main package above it. The count starts at the
+module root for a shared library, and at the top-level `internal/` for a binary —
+`internal/` is where all of a binary's non-main code lives, so it is the starting
+point, not a counted level (the same role the module root plays for a shared
+library). `v{N}` version dirs are not counted either.
+
+Shared library — count from the module root:
 
 ```
 golang_snacks/foo/foo.go              ← library tier
@@ -309,9 +346,23 @@ golang_snacks/foo/bar/bar.go          ← composition tier (OK)
 golang_snacks/foo/bar/baz/baz.go      ← flagged: too deep
 ```
 
-Fix: either hoist `baz` up (make it a sibling of `bar`) or fold its contents into
-`bar`. If `bar` has genuinely grown enough subdivision to need three layers, it
-should fission into separate sibling packages instead.
+Binary — count from `internal/`, which does not itself count:
+
+```
+mybinary/internal/lint.go             ← library tier (holds func Main)
+mybinary/internal/foo/foo.go          ← library tier
+mybinary/internal/foo/default/x.go    ← composition tier (OK)
+mybinary/internal/foo/bar/baz/x.go    ← flagged: too deep
+```
+
+So the deepest legal package is `shared/foo/[v{N}]/default` or
+`binary/internal/foo/[v{N}]/default`: a pure library package, then its impure
+`default` composition tier.
+
+Fix: either hoist the too-deep package up (make it a sibling one level higher) or
+fold its contents into its parent. If a package has genuinely grown enough
+subdivision to need three layers, it should fission into separate sibling
+packages instead.
 
 ## Hardcoded knowledge
 
