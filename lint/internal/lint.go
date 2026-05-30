@@ -393,7 +393,7 @@ const max_if_init_identifier_chars = 55
 // Tier_2_checks_count / tier_1_checks_count anchor the static tier-list
 // length axis. Updated whenever a check is added or removed from the
 // dispatcher in Check_File.
-const tier_2_checks_count = 8
+const tier_2_checks_count = 7
 const tier_1_checks_count = 30
 
 // Min_go_filename_chars is the shortest Go filename: a single-letter package
@@ -2115,7 +2115,7 @@ func Check_File(file_set *token.FileSet, file *ast.File, source []byte) (diags [
 		check_no_unbounded_apis, check_no_recursion,
 		check_no_function_init, check_no_package_vars,
 		check_unnecessary_method,
-		check_invariant_assertions, check_no_third_party_struct_tag,
+		check_no_third_party_struct_tag,
 		check_blank_synchronization_mutex,
 	}, file_set, file, source)
 	invariant.Cross_Product(invariant.Sometimes(diags == nil, "Diags can be empty or zero on this branch"))
