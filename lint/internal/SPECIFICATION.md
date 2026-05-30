@@ -192,7 +192,8 @@ All modules are located at the repo root.
 ### Shared Module
 
 The shared module, `golang_snacks`, has no `internal` directory at any depth and declares no
-`package main`. It is fully importable, never executed.
+`package main`. It is fully importable, never executed. Its workspace-root-relative directory
+is lint.json's `shared_module`.
 
 ### Binary Module
 
@@ -287,7 +288,8 @@ A name declared in an inner scope must not shadow one from an outer scope.
 ### Mutable Globals
 
 A global mutable var is permitted only via `regexp.MustCompile` or `errors.New`, as a
-`var _ Interface = (*Type)(nil) assertion`, or as a single `Default` var in a `default` package.
+`var _ Interface = (*Type)(nil) assertion`, or as a single `Default` var in a package whose
+directory is listed in lint.json's `global_api_allowlist`.
 
 ### Discards
 
@@ -375,9 +377,9 @@ kin; use the os or io replacement instead. Generated files are exempt.
 
 ### Banned Words
 
-A package, file, or declared identifier splits into words; no word equals, ignoring case, util,
-utils, utility, utilities, len, or length. Use sites go unchecked, so the len and cap builtins
-stay legal.
+A package, file, or declared identifier splits into words; no word, ignoring case, equals a word
+listed in lint.json's `word_replacements` with an empty candidate list (util, utils, utility,
+utilities, len, length). Use sites go unchecked, so the len and cap builtins stay legal.
 
 ### Banned Function Words
 
@@ -466,9 +468,9 @@ A free function over a locally (same package) declared type carries that type as
 
 ### Full Words
 
-A declared name splits into words; each word, lowercased, is matched against an abbreviation
-denylist sourced from the abbreviations-in-code project (id expands to identifier), and a hit is
-reported with its full-word expansion.
+A declared name splits into words; each word, lowercased, is looked up in lint.json's required
+`word_replacements` table (from the abbreviations-in-code project): a non-empty candidate list is an
+abbreviation reported with its full-word expansion (id -> identifier), an empty list is a ban.
 
 ### Noun Names
 
@@ -514,3 +516,48 @@ specification_test.go carries its own independent total_sloc count from other te
 ### File Count Build Tags
 
 Files sharing a build-tag constraint form an independent group with its own total_sloc count.
+
+# Deterministic
+
+A package listed in lint.json's deterministic_packages is held, atop purity, to
+bans making it reproducible; opt-in, and the bans bind its _test.go files too.
+
+### Goroutines
+
+A deterministic package starts no goroutine; the kernel decides goroutine
+interleaving, the root of nondeterminism.
+
+### Channels
+
+A deterministic package uses no channel — no channel type, send, or receive —
+since cross-goroutine handoff order is not the program's to decide.
+
+### Select
+
+A deterministic package uses no select; the runtime randomizes the choice among
+the ready cases.
+
+### Banned Imports
+
+A deterministic package imports none of time, context, sync, or sync/atomic; it
+injects the clock and holds no concurrency to guard.
+
+### Import Induction
+
+A deterministic package's first-party imports are themselves deterministic, so
+determinism holds across the import closure by induction.
+
+### Impurity
+
+A package listed as deterministic must be pure; determinism is stricter than
+purity, so an impure listed package is reported.
+
+### Coverage
+
+A deterministic_packages entry that matches no package is reported; a typo or
+stale path must not silently check nothing.
+
+# Stdlib Time
+
+Stdlib time may be imported only by the shared module's time/default gateway;
+every other shared-module package injects the Clock instead.

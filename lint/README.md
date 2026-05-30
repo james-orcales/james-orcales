@@ -96,7 +96,7 @@ james-orcales/
 ```
 
 - **Shared library.** Exactly one module: `golang_snacks`. It exists to be imported
-  by every binary. The module path is hardcoded in the linter.
+  by every binary. Its directory, relative to go.work, is the `shared_module` in lint.json.
 - **Binary modules.** Every other module at the workspace root produces one
   deployable executable and is not imported by anything else.
 
@@ -208,6 +208,12 @@ The library stays substitutable (tests pass a `bytes.Buffer` for `Output` and a
 stub for `Get_Caller`), and the binding stays auditable (`grep` for `"os."` in
 `snap/default/` enumerates every reach into impure state).
 
+The linter does not infer the `var Default` exemption from the `default/` directory name: a
+package may declare `var Default` only if its directory (workspace-root-relative) is listed in
+lint.json's `global_api_allowlist`, beside go.work. Everywhere else — and in any package absent
+from the allowlist — package-level vars stay banned. This also frees composition packages to use
+a `<lib>_default` directory instead of a bare `default/`.
+
 ## Resolving diagnostics
 
 ### `impure stdlib import` / `impure stdlib call`
@@ -244,7 +250,9 @@ Three fixes:
    ```
 
    The sub-package declares `package snap` (its parent's name) and re-exports the
-   types, so callers `import "…/snap/default"` and read identically to before.
+   types, so callers `import "…/snap/default"` and read identically to before. For
+   the linter to permit the `var Default` binding, add the sub-package's directory
+   to lint.json's `global_api_allowlist`.
 
 ### `default package must declare 'package <X>'`
 
@@ -366,6 +374,7 @@ packages instead.
 
 ## Hardcoded knowledge
 
-- The shared library module path is `shared_library_module_path` in
-  `lint/internal/lint.go`. Change it there if the shared library ever gets renamed.
+- The shared library is no longer hardcoded: set its workspace-root-relative directory
+  as `shared_module` in lint.json (beside go.work). Required; the linter exits non-zero
+  if absent.
 - Major-version segment detection uses `^v[0-9]+$` (`module_index_version_re`).

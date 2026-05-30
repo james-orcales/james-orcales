@@ -8,6 +8,7 @@ package lint
 
 import (
 	"bytes"
+	"encoding/json"
 	"fmt"
 	"go/ast"
 	"go/build/constraint"
@@ -486,11 +487,6 @@ const lines_per_file_max = 10000
 // truncate around 72–100 chars and longer subjects force horizontal scroll.
 const commit_subject_chars_max = 100
 
-// The shared library is hardcoded rather than discovered. Every other
-// module at the workspace root is a binary; nothing in the doctrine
-// requires runtime negotiation, and a constant keeps the rule grep-able.
-const shared_library_module_path = "github.com/james-orcales/james-orcales/golang_snacks"
-
 // Diagnostics_per_call_max caps the slice length of `diags []Diagnostic`
 // returns. A single check may emit one diagnostic per source line at worst,
 // so the budget tracks lines_per_file_max with headroom for declarations
@@ -540,11 +536,44 @@ const exit_code_max = 1
 // linter's fork-join pools would not benefit from going wider.
 const cpu_count_max = 1024
 
-// Tier_max is the Hi bound on Diagnostic.Tier. 0 = cross-file / git / stream
-// (printed unconditionally), 1 = file tier-1 (always printed; presence
-// suppresses tier-2 globally), 2 = file tier-2 (printed only when no tier-1
-// fires anywhere in scope).
+// NEVER ADD A THIRD TIER. NEVER ADD A ZERO TIER. tier_max is the Hi bound on
+// Diagnostic.Tier and stays 2: there are exactly two tiers. Tier 1 always prints
+// and its presence suppresses tier 2 everywhere in scope; tier 2 prints only
+// when no tier 1 fired anywhere in scope. That two-state gate is the whole output
+// path — a third gating state would rot it. The Tier field's zero value is not a
+// tier: never lean on it, never label it "tier 0," and give every new diagnostic
+// an explicit tier 1 or tier 2.
 const tier_max = 2
+
+// Configuration is the decoded form of the workspace's lint.json, which sits
+// beside go.work. It carries the per-workspace policy that would otherwise be
+// hard-coded into the checks: the shared module's identity and the global-API
+// allowlist.
+type Configuration struct {
+	// Shared_Module is the workspace-root-relative directory of the workspace's
+	// shared library module (e.g. "golang_snacks") — the one module every other
+	// may import. It drives the shared-vs-binary classification; every other
+	// module at the workspace root is treated as a binary. Slash-relative, like
+	// the allowlist. Required: a config without it is rejected.
+	Shared_Module string `json:"shared_module"`
+	// Global_API_Allowlist names the workspace-root-relative package
+	// directories permitted to expose impure global API. Today that is a
+	// single `var Default = …`; the literal `default/` directory name no
+	// longer earns the exemption — membership here is the only way.
+	Global_API_Allowlist []string `json:"global_api_allowlist"`
+	// Deterministic_Packages names the workspace-root-relative package
+	// directories held to the deterministic tier on top of purity: no
+	// goroutine, channel, select, nor time/context/sync import, and every
+	// first-party import must itself be deterministic. Opt-in; empty lists
+	// none. A listed package that is impure is reported.
+	Deterministic_Packages []string `json:"deterministic_packages"`
+	// Word_Replacements drives the vocabulary check: each tokenized, lowercased
+	// word maps to its preferred replacements (id -> identifier). An empty list
+	// bans the word with no rename suggestion (util, len); an absent key is left
+	// alone. Required: a config without it is rejected so the check can never
+	// silently go dark.
+	Word_Replacements map[string][]string `json:"word_replacements"`
+}
 
 // Main_Input bundles every external dependency the linter needs.
 // Construction lives in main.go (production) or fstest.MapFS-backed
@@ -631,18 +660,31 @@ type Git_Input struct {
 // (filesystem walk failure, etc.).
 func Main(input *Main_Input) (code int) {
 
+	// Main is the single reader of lint.json: the config lives at the Fsys root
+	// (beside go.work in production; injected into the MapFS in tests). Reading it
+	// here rather than in main.go keeps one config path for both, so tests
+	// exercise the real decode instead of bypassing it.
+	configuration, configuration_err := read_configuration(input.Fsys)
+	if configuration_err != nil {
+		fmt.Fprintln(input.Stderr, configuration_err)
+		return 2
+	}
 	// Git tier runs first: repo-metadata-only, doesn't touch the FS, and
 	// surfaces the fastest signal.
 	git_diags := Git_Input_Check(input.Git)
 	filesystem_diags, err := Check_File_System(&Check_File_System_Input{
-		Fsys:           input.Fsys,
-		Root:           ".",
-		Root_Directory: input.Root_Directory,
-		Tracked:        input.Tracked,
-		CPU_Count:      input.CPU_Count,
-		Readlink:       input.Readlink,
-		Stat:           input.Stat,
-		Scope:          input.Scope_Prefix,
+		Fsys:                   input.Fsys,
+		Root:                   ".",
+		Root_Directory:         input.Root_Directory,
+		Tracked:                input.Tracked,
+		CPU_Count:              input.CPU_Count,
+		Readlink:               input.Readlink,
+		Stat:                   input.Stat,
+		Scope:                  input.Scope_Prefix,
+		Global_API_Allowlist:   configuration.Global_API_Allowlist,
+		Shared_Module:          configuration.Shared_Module,
+		Deterministic_Packages: configuration.Deterministic_Packages,
+		Word_Replacements:      configuration.Word_Replacements,
 	})
 	if err != nil {
 		fmt.Fprintln(input.Stderr, err)
@@ -684,6 +726,85 @@ func Main(input *Main_Input) (code int) {
 	// AI agents keep checking exit code if there's no explicit success message in output.
 	fmt.Fprintln(input.Stdout, "✓ all checks passed")
 	return 0
+}
+
+// Lint_json_bytes_max caps the bounded read of lint.json. A workspace config is
+// a handful of lines plus the word-replacements table; the cap only bounds a
+// pathological or accidental huge file so the read never allocates without limit.
+const lint_json_bytes_max = 1 << 20
+
+// Reads and decodes lint.json from the root of fsys. The read
+// is bounded — fs.ReadFile is unbounded and banned for the same reason os.ReadFile
+// is — so a pathological config can't exhaust memory. An absent, unreadable, or
+// malformed lint.json is an error: the linter cannot derive shared_module or the
+// word-replacements table on its own, so a missing or broken config must fail
+// loudly rather than silently degrade the checks.
+func read_configuration(fsys fs.FS) (configuration *Configuration, err error) {
+	file, open_err := fsys.Open("lint.json")
+	if open_err != nil {
+		return nil, fmt.Errorf("lint.json is required and must set shared_module "+
+			"and word_replacements: %w", open_err)
+	}
+	defer file.Close()
+	buffer := make([]byte, lint_json_bytes_max)
+	n, read_err := io.ReadFull(io.LimitReader(file, lint_json_bytes_max), buffer)
+	// ReadFull returns ErrUnexpectedEOF for a file shorter than the buffer (the
+	// normal case for a small config) and EOF for an empty file; neither is a read
+	// failure. Any other error is a real I/O fault and is fatal.
+	read_failed := read_err != nil
+	if read_err == io.ErrUnexpectedEOF {
+		read_failed = false
+	}
+	if read_err == io.EOF {
+		read_failed = false
+	}
+	if read_failed {
+		return nil, fmt.Errorf("cannot read lint.json: %w", read_err)
+	}
+	return Parse_Configuration(buffer[:n])
+}
+
+// Parse_Configuration decodes lint.json. shared_module and word_replacements are
+// required — a config without either is rejected so the shared-vs-binary
+// classification and the vocabulary check never silently degrade. An unknown
+// top-level key is rejected so a typo fails loudly, and malformed or wrong-typed
+// JSON is an error; callers treat any of these as a hard failure. The allowlist
+// and deterministic-packages lists are optional and default to empty.
+func Parse_Configuration(data []byte) (configuration *Configuration, err error) {
+	// Decode twice over the same bounded buffer: once as a raw key map to
+	// police unknown keys — json.Decoder.DisallowUnknownFields is the usual
+	// guard, but json.NewDecoder streams an unbounded reader and is banned
+	// here — and once into the typed struct for the values.
+	keys := map[string]json.RawMessage{}
+	if decode_err := json.Unmarshal(data, &keys); decode_err != nil {
+		return nil, decode_err
+	}
+	known_keys := map[string]bool{
+		"shared_module":          true,
+		"global_api_allowlist":   true,
+		"deterministic_packages": true,
+		"word_replacements":      true,
+	}
+	for key := range keys {
+		if known_keys[key] {
+			continue
+		}
+		return nil, fmt.Errorf("lint.json: unknown key %q", key)
+	}
+	configuration = &Configuration{}
+	if decode_err := json.Unmarshal(data, configuration); decode_err != nil {
+		return nil, decode_err
+	}
+	if configuration.Shared_Module == "" {
+		return nil, fmt.Errorf("lint.json: shared_module is required")
+	}
+	// Empty (or absent) word_replacements is rejected, not defaulted: the
+	// vocabulary check has no built-in table any more, so a missing one would
+	// silently disable it rather than fail loudly.
+	if len(configuration.Word_Replacements) == 0 {
+		return nil, fmt.Errorf("lint.json: word_replacements is required")
+	}
+	return configuration, nil
 }
 
 // True iff the diagnostic is inside the user's scope. Empty scope means
@@ -1220,7 +1341,10 @@ func check_shadow(
 // file-system tier's per-file pass. Stamps each diagnostic with its
 // origin tier so the printer can gate tier-2 output globally on the
 // presence of any tier-1 diagnostic.
-func Check_File(file_set *token.FileSet, file *ast.File, source []byte) (diags []Diagnostic) {
+func Check_File(
+	file_set *token.FileSet, file *ast.File, source []byte, allowlist map[string]bool,
+	word_replacements map[string][]string,
+) (diags []Diagnostic) {
 	diags = check_file_run_tier([]check_function{
 		check_casing,
 		check_named_returns,
@@ -1248,7 +1372,7 @@ func Check_File(file_set *token.FileSet, file *ast.File, source []byte) (diags [
 		check_no_empty_function_body,
 		check_no_interfaces,
 		check_input_struct,
-		check_names_vocabulary,
+		make_check_names_vocabulary(word_replacements),
 		check_test_documentation_comment,
 		check_snap_backtick,
 		check_names,
@@ -1264,7 +1388,7 @@ func Check_File(file_set *token.FileSet, file *ast.File, source []byte) (diags [
 	}
 	diags = check_file_run_tier([]check_function{
 		check_no_unbounded_apis, check_no_recursion,
-		check_no_function_init, check_no_package_vars,
+		check_no_function_init, make_check_no_package_vars(allowlist),
 		check_unnecessary_method,
 		check_no_third_party_struct_tag,
 	}, file_set, file, source)
@@ -1676,7 +1800,12 @@ func Check_Source(filename string, source any) (diags []Diagnostic, err error) {
 	case string:
 		source_bytes = []byte(s)
 	}
-	return Check_File(file_set, file, source_bytes), nil
+	// Check_Source is the single-file API used by tests that don't exercise
+	// the var-Default exemption nor the vocabulary table: a nil allowlist allows
+	// no package to declare a var Default, and a nil word-replacements table
+	// disables the vocabulary check (it has no config to read from). Both are the
+	// strict, dependency-free defaults for single-file checks.
+	return Check_File(file_set, file, source_bytes, nil, nil), nil
 }
 
 // Check_File_System_Input bundles the per-run dependencies for the
@@ -1706,6 +1835,26 @@ type Check_File_System_Input struct {
 	// `lint ./some/pkg` demands the file there, while a scopeless run does
 	// not blanket-require it of every package in the tree.
 	Scope string
+	// Global_API_Allowlist is the lint.json allowlist forwarded from
+	// Main_Input: workspace-root-relative package directories permitted a
+	// `var Default = …`. Built into a set once per run and threaded to the
+	// per-file package-var check.
+	Global_API_Allowlist []string
+	// Shared_Module is the shared library module's workspace-root-relative
+	// directory, forwarded from Main_Input. It drives shared-vs-binary
+	// classification in the module index.
+	Shared_Module string
+	// Deterministic_Packages is the lint.json deterministic tier list forwarded
+	// from Main_Input: workspace-root-relative package directories whose pure
+	// packages are held to the deterministic bans. Built into a set once per run
+	// and threaded to check_deterministic.
+	Deterministic_Packages []string
+	// Word_Replacements is the lint.json word_replacements table: each tokenized,
+	// lowercased word maps to its preferred expansions (an empty list bans the
+	// word outright). Threaded to the vocabulary check via
+	// make_check_names_vocabulary. nil disables the check (no config to read),
+	// which is what the Check_Source single-file path passes.
+	Word_Replacements map[string][]string
 }
 
 // Check_File_System runs the stream tier, parses all Go files, and
@@ -1740,14 +1889,17 @@ func Check_File_System(input *Check_File_System_Input) (diags []Diagnostic, err 
 		return nil, err
 	}
 	parsed_files, parse_diags := check_file_system_parse_files(paths, sources, cpu_count)
-	modules, err := build_module_index(input.Fsys, parsed_files)
+	modules, err := build_module_index(input.Fsys, parsed_files, input.Shared_Module)
 	if err != nil {
 		return nil, err
 	}
 	output := append([]Diagnostic{}, stream_diags...)
 	output = append(output, parse_diags...)
 	output = append(output, check_path_casing(input.Fsys, input.Tracked)...)
-	output = append(output, check_file_system_run_checks(parsed_files, cpu_count)...)
+	allowlist := build_global_api_allowlist_set(input.Global_API_Allowlist)
+	output = append(output,
+		check_file_system_run_checks(
+			parsed_files, cpu_count, allowlist, input.Word_Replacements)...)
 	output = append(output, check_file_system_package_split(parsed_files)...)
 	output = append(output, check_file_system_method_prefix(parsed_files)...)
 	output = append(output, check_binary_module_layout(parsed_files, modules)...)
@@ -1761,6 +1913,9 @@ func Check_File_System(input *Check_File_System_Input) (diags []Diagnostic, err 
 		check_module_definition_and_location(input.Fsys, modules, input.Tracked)...)
 	output = append(output, check_no_impure_stdlib(parsed_files, modules)...)
 	output = append(output, check_transitive_purity(parsed_files, modules)...)
+	output = append(output, check_deterministic(parsed_files, modules,
+		input.Deterministic_Packages)...)
+	output = append(output, check_time_import_gateway(parsed_files, modules)...)
 	output = append(output, check_package_documentation_comment(parsed_files)...)
 	return append(output,
 		check_specification(input.Fsys, parsed_files, modules, input.Scope)...), nil
@@ -2408,7 +2563,9 @@ var module_index_module_re = regexp.MustCompile(`(?m)^module\s+(\S+)`)
 // subdirectory), no modules are discovered and every file maps to -1;
 // downstream doctrine checks then no-op on those files rather than
 // reporting bogus violations against a partial view of the workspace.
-func build_module_index(fsys fs.FS, parsed_files []parsed_file) (index *module_index, err error) {
+func build_module_index(
+	fsys fs.FS, parsed_files []parsed_file, shared_module string,
+) (index *module_index, err error) {
 
 	index = &module_index{File_To_Module: make(map[string]int, len(parsed_files))}
 	err = fs.WalkDir(fsys, ".", func(p string, d fs.DirEntry, walk_err error) (output error) {
@@ -2416,6 +2573,19 @@ func build_module_index(fsys fs.FS, parsed_files []parsed_file) (index *module_i
 	})
 	if err != nil {
 		return nil, err
+	}
+	// Classify the shared library by its workspace-root-relative directory (the
+	// module Root, e.g. "golang_snacks"), matching the slash-relative form used
+	// by the rest of lint.json; every other module is a binary. An empty
+	// shared_module (e.g. a test that doesn't set one) leaves every module a binary.
+	// path.Clean so "./golang_snacks/" matches the cleaned module Root; guard the
+	// empty case, since path.Clean("") is "." and would wrongly match a root module.
+	shared_root := shared_module
+	if shared_root != "" {
+		shared_root = path.Clean(shared_root)
+	}
+	for i := range index.Modules {
+		index.Modules[i].Is_Shared_Library = index.Modules[i].Root == shared_root
 	}
 	sort.Slice(index.Modules, func(i, j int) (less bool) {
 		return len(index.Modules[i].Root) > len(index.Modules[j].Root)
@@ -2477,10 +2647,11 @@ func build_module_index_walk(
 		return nil
 	}
 	module_path := string(match[1])
+	// Is_Shared_Library is left at its zero value here and set in a post-walk
+	// pass in build_module_index, where the configured shared module is in scope.
 	index.Modules = append(index.Modules, module_information{
 		Root:              path.Dir(p),
 		Module_Path:       module_path,
-		Is_Shared_Library: module_path == shared_library_module_path,
 		Directory_Package: make(map[string]string),
 	})
 	return nil
@@ -3745,7 +3916,10 @@ func specification_ada_case(heading string) (name string) {
 
 // Runs checks per file in parallel — CPU bound, capped at the injected
 // CPU_Count (typically runtime.NumCPU from main.go).
-func check_file_system_run_checks(parsed_files []parsed_file, cpu_count int) (diags []Diagnostic) {
+func check_file_system_run_checks(
+	parsed_files []parsed_file, cpu_count int, allowlist map[string]bool,
+	word_replacements map[string][]string,
+) (diags []Diagnostic) {
 
 	per_file_diags := make([][]Diagnostic, len(parsed_files))
 	sem := make(chan struct{}, cpu_count)
@@ -3756,7 +3930,8 @@ func check_file_system_run_checks(parsed_files []parsed_file, cpu_count int) (di
 		go func(i int, pf parsed_file) {
 			defer wg.Done()
 			defer func() { <-sem }()
-			per_file_diags[i] = Check_File(pf.File_Set, pf.File, pf.Source)
+			per_file_diags[i] = Check_File(
+				pf.File_Set, pf.File, pf.Source, allowlist, word_replacements)
 		}(i, pf)
 	}
 	wg.Wait()
@@ -5355,11 +5530,11 @@ func check_test_package(file_set *token.FileSet, file *ast.File, _ []byte) (diag
 }
 
 // Flags any tokenized word in a declared name that appears in the
-// discouraged_word_candidates table. This is the single home for two related
+// word_replacements table. This is the single home for two related
 // naming rules sharing one table: abbreviations get a `rename x -> ...`
 // suggestion built from their candidate expansions, and banned words (no
 // candidate) get an `identifier "x" contains banned substring "y"` diagnostic.
-// One table means the discouraged-word list lives in exactly one place.
+// One table means the flagged-word list lives in exactly one place.
 //
 // The package name and file name are checked directly; declared identifiers are
 // walked by check_names_walk_decls (function names, receivers, params, named
@@ -5370,23 +5545,35 @@ func check_test_package(file_set *token.FileSet, file *ast.File, _ []byte) (diag
 // `info fs.FileInfo`) are not the target. "helper" is banned only in function
 // names — see check_names_vocabulary_function_ban.
 func check_names_vocabulary(
-	file_set *token.FileSet, file *ast.File, _ []byte,
+	file_set *token.FileSet, file *ast.File, table map[string][]string,
 ) (diags []Diagnostic) {
 
 	diags = append(diags,
-		check_names_vocabulary_at(file_set.Position(file.Name.Pos()), file.Name.Name)...)
-	diags = append(diags, check_names_vocabulary_file_name(file_set, file)...)
+		check_names_vocabulary_at(
+			file_set.Position(file.Name.Pos()), file.Name.Name, table)...)
+	diags = append(diags, check_names_vocabulary_file_name(file_set, file, table)...)
 	diags = append(diags, check_names_vocabulary_function_ban(file_set, file)...)
 	check_names_walk_decls(file, func(identifier *ast.Ident) {
 		position := file_set.Position(identifier.Pos())
-		diags = append(diags, check_names_vocabulary_at(position, identifier.Name)...)
+		diags = append(diags,
+			check_names_vocabulary_at(position, identifier.Name, table)...)
 	})
 	return diags
 }
 
+// Binds the word-replacements table (decoded from lint.json's word_replacements)
+// into a check_function, mirroring
+// make_check_no_package_vars. Threading the table rather than reaching for a
+// package global keeps the check pure and lets tests drive it from a fixture.
+func make_check_names_vocabulary(table map[string][]string) (checker check_function) {
+	return func(file_set *token.FileSet, file *ast.File, _ []byte) (diags []Diagnostic) {
+		return check_names_vocabulary(file_set, file, table)
+	}
+}
+
 // Flags "helper" in a function name. The ban is function-name-only — a file or
 // package named helper is a weaker smell than a function whose name hides what
-// it does — so it rides outside the universal discouraged_word_candidates table,
+// it does — so it rides outside the universal word_replacements table,
 // which applies at every declaration site.
 func check_names_vocabulary_function_ban(
 	file_set *token.FileSet, file *ast.File,
@@ -5415,10 +5602,10 @@ func check_names_vocabulary_function_ban(
 
 // Resolves the file's basename to the stem used for word-splitting: the .go
 // suffix (and a _test suffix) are stripped first so the "test" segment in
-// foo_test.go is not itself treated as a discouraged word. The position is
+// foo_test.go is not itself treated as a flagged word. The position is
 // synthetic (line 1, column 1) because a file name has no token in the source.
 func check_names_vocabulary_file_name(
-	file_set *token.FileSet, file *ast.File,
+	file_set *token.FileSet, file *ast.File, table map[string][]string,
 ) (diags []Diagnostic) {
 
 	tok_file := file_set.File(file.Pos())
@@ -5429,13 +5616,15 @@ func check_names_vocabulary_file_name(
 	stem := strings.TrimSuffix(path.Base(filename), ".go")
 	stem = strings.TrimSuffix(stem, "_test")
 	return check_names_vocabulary_at(
-		token.Position{Filename: filename, Line: 1, Column: 1}, stem)
+		token.Position{Filename: filename, Line: 1, Column: 1}, stem, table)
 }
 
-// Emits one diagnostic per discouraged word found in name. A word with
+// Emits one diagnostic per flagged word found in name. A word with
 // candidate expansions yields a rename suggestion; a banned word (empty
 // candidate list) yields the banned-substring diagnostic. Blank "_" is skipped.
-func check_names_vocabulary_at(position token.Position, name string) (diags []Diagnostic) {
+func check_names_vocabulary_at(
+	position token.Position, name string, table map[string][]string,
+) (diags []Diagnostic) {
 
 	if name == "_" {
 		return nil
@@ -5447,7 +5636,7 @@ func check_names_vocabulary_at(position token.Position, name string) (diags []Di
 	}
 	for word_index, w := range words {
 		lower := strings.ToLower(w)
-		candidates := discouraged_word_candidates(lower)
+		candidates := word_replacements_for(table, lower)
 		if candidates == nil {
 			continue
 		}
@@ -5739,13 +5928,37 @@ func check_no_interfaces(file_set *token.FileSet, file *ast.File, _ []byte) (dia
 	return diags
 }
 
+// Turns the lint.json allowlist slice into a set for O(1) directory-membership
+// tests during the per-file checks. Entries are path-cleaned so "./pkg/" and
+// "pkg" name the same directory the files are keyed by (path.Dir). A nil or empty
+// slice yields an empty set, under which no package earns the var-Default
+// exemption — the strict default.
+func build_global_api_allowlist_set(entries []string) (set map[string]bool) {
+	set = map[string]bool{}
+	for _, entry := range entries {
+		set[path.Clean(entry)] = true
+	}
+	return set
+}
+
+// Binds the global-API allowlist into the package-var check. The
+// check_function signature carries no config of its own, so the allowlist
+// (needed by the var-Default exemption) is captured in a closure built per run.
+func make_check_no_package_vars(allowlist map[string]bool) (checker check_function) {
+	return func(file_set *token.FileSet, file *ast.File, _ []byte) (diags []Diagnostic) {
+		return check_no_package_vars(file_set, file, allowlist)
+	}
+}
+
 // Package-level `var` creates implicit mutable state at package load with
 // no obvious initialization order, complicating tests and reasoning. Only
 // two initializers are exempted: regexp.MustCompile (no const regex type)
 // and errors.New (no const error type). The `var _ Iface = (*Impl)(nil)`
 // shape is also exempted — it declares no value, just asks the compiler
 // to verify Impl satisfies Iface.
-func check_no_package_vars(file_set *token.FileSet, file *ast.File, _ []byte) (diags []Diagnostic) {
+func check_no_package_vars(
+	file_set *token.FileSet, file *ast.File, allowlist map[string]bool,
+) (diags []Diagnostic) {
 
 	const base_message = "package-level var is banned" +
 		" (except for regexp.MustCompile and errors.New)"
@@ -5768,7 +5981,7 @@ func check_no_package_vars(file_set *token.FileSet, file *ast.File, _ []byte) (d
 			if !is_vs {
 				continue
 			}
-			if check_no_package_vars_is_default(file_set, file, vs) {
+			if check_no_package_vars_is_default(file_set, file, vs, allowlist) {
 				continue
 			}
 			if check_no_package_vars_all_allowed(vs) {
@@ -5812,19 +6025,21 @@ func check_no_package_vars_is_map_or_slice_literal(vs *ast.ValueSpec) (yes bool)
 	return true
 }
 
-// Composition-tier packages (in a `default/` directory by convention, see
-// lint/README.md) are allowed to expose a single `var Default = …` binding —
-// that's literally the shape they exist for. Allowed only for the literal name
-// "Default" and only as a single-name single-initializer spec.
+// Composition-tier packages are allowed to expose a single `var Default = …`
+// binding — that's literally the shape they exist for. The package's directory
+// (workspace-root-relative) must be listed in lint.json's global_api_allowlist;
+// the literal `default/` directory name confers nothing on its own. Allowed
+// only for the literal name "Default" and only as a single-name
+// single-initializer spec.
 func check_no_package_vars_is_default(
-	file_set *token.FileSet, file *ast.File, vs *ast.ValueSpec,
+	file_set *token.FileSet, file *ast.File, vs *ast.ValueSpec, allowlist map[string]bool,
 ) (yes bool) {
 
 	tok_file := file_set.File(file.Pos())
 	if tok_file == nil {
 		return false
 	}
-	if path.Base(path.Dir(tok_file.Name())) != "default" {
+	if !allowlist[path.Dir(tok_file.Name())] {
 		return false
 	}
 	if len(vs.Names) != 1 {
@@ -7029,8 +7244,9 @@ func check_names_arithmetic_check_binary_result(
 	return ""
 }
 
-// Per-word denylist mapping a discouraged word to its preferred replacements.
-// Two kinds of entry live here under one lookup:
+// Looks word up in the per-word denylist decoded
+// from lint.json's word_replacements (Configuration.Word_Replacements). Two
+// kinds of entry share one lookup:
 //
 //   - Abbreviations carry one or more expansion candidates (id -> identifier).
 //     Sourced from https://github.com/abbrcode/abbreviations-in-code (🟢+🔴
@@ -7044,9 +7260,10 @@ func check_names_arithmetic_check_binary_result(
 //     is a third ban but only in function names, so it lives outside this
 //     universal table — see check_names_vocabulary_function_ban.
 //
-// A nil return means "not discouraged" and is skipped; a non-nil empty slice
-// means "banned, no candidate" and yields the banned-substring diagnostic. The
-// distinction is load-bearing — callers branch on len(candidates) vs nil.
+// The nil-vs-empty distinction is load-bearing and survives the JSON round-trip:
+// an absent key returns nil ("not in the table", skipped); a present key with an
+// empty array returns a non-nil empty slice ("banned, no candidate") and yields
+// the banned-substring diagnostic. Callers branch on len(candidates) vs nil.
 //
 // Lookups are by tokenized word from suggest_split_words, lowercased. Because
 // the codebase enforces snake_case + PascalCase via check_casing, every word
@@ -7054,573 +7271,18 @@ func check_names_arithmetic_check_binary_result(
 // visited, so the len and cap builtins stay legal. Single-letter loop counters
 // (i/j/k/n/m per Tiger Style) are exempted by the check itself. Init is exempt —
 // Go's package-initialization function is mandatorily named `init`.
-func discouraged_word_candidates(word string) (candidates []string) {
-
-	if candidates = discouraged_word_candidates_a_b(word); candidates != nil {
-		return candidates
+func word_replacements_for(table map[string][]string, word string) (candidates []string) {
+	candidates, present := table[word]
+	if !present {
+		return nil
 	}
-	if candidates = discouraged_word_candidates_c(word); candidates != nil {
-		return candidates
-	}
-	if candidates = discouraged_word_candidates_d_f(word); candidates != nil {
-		return candidates
-	}
-	if candidates = discouraged_word_candidates_g_l(word); candidates != nil {
-		return candidates
-	}
-	if candidates = discouraged_word_candidates_m_o(word); candidates != nil {
-		return candidates
-	}
-	if candidates = discouraged_word_candidates_p_r(word); candidates != nil {
-		return candidates
-	}
-	if candidates = discouraged_word_candidates_s(word); candidates != nil {
-		return candidates
-	}
-	return discouraged_word_candidates_t_z(word)
-}
-
-func discouraged_word_candidates_a_b(word string) (candidates []string) {
-
-	switch word {
-	case "abbr":
-		return []string{"abbreviation"}
-	case "abs":
-		return []string{"absolute"}
-	case "acos":
-		return []string{"arccosine"}
-	case "acosec":
-		return []string{"arccosecant"}
-	case "acot":
-		return []string{"arccotangent"}
-	case "acro":
-		return []string{"acronym"}
-	case "act":
-		return []string{"action", "active", "actual"}
-	case "actg":
-		return []string{"arccotangent"}
-	case "addr":
-		return []string{"address"}
-	case "algo":
-		return []string{"algorithm"}
-	case "alt":
-		return []string{"alternative", "altitude"}
-	case "anno":
-		return []string{"annotation"}
-	case "app":
-		return []string{"application"}
-	case "arg":
-		return []string{"argument"}
-	case "arr":
-		return []string{"array", "arrival"}
-	case "asec":
-		return []string{"arcsecant"}
-	case "asin":
-		return []string{"arcsine"}
-	case "async":
-		return []string{"asynchronous"}
-	case "atan":
-		return []string{"arctangent"}
-	case "attr":
-		return []string{"attribute"}
-	case "auth":
-		return []string{"authentication", "authorization"}
-	case "aux":
-		return []string{"auxiliary"}
-	case "avg":
-		return []string{"average"}
-	case "bg":
-		return []string{"background"}
-	case "bin":
-		return []string{"binary", "bin"}
-	case "bool":
-		return []string{"boolean"}
-	case "brk":
-		return []string{"break"}
-	case "btn":
-		return []string{"button"}
-	case "buf":
-		return []string{"buffer"}
-	case "buff":
-		return []string{"buffer"}
-	}
-	return nil
-}
-
-func discouraged_word_candidates_c(word string) (candidates []string) {
-
-	switch word {
-	case "calc":
-		return []string{"calculator", "calculation", "calculate"}
-	case "cb":
-		return []string{"callback"}
-	case "cert":
-		return []string{"certificate"}
-	case "cfg":
-		return []string{"config"}
-	case "char":
-		return []string{"character"}
-	case "chk":
-		return []string{"check", "checksum", "checkpoint", "chunk"}
-	case "clr":
-		return []string{"clear", "color", "caller"}
-	case "cls":
-		return []string{"class", "close", "clear", "clusters"}
-	case "cmd":
-		return []string{"command"}
-	case "cnt":
-		return []string{"count", "counter", "content"}
-	case "cntr":
-		return []string{"container", "counter", "center"}
-	case "col":
-		return []string{"column", "color", "collection", "collision"}
-	case "coll":
-		return []string{"collection", "collision"}
-	case "com":
-		return []string{"common", "communication"}
-	case "comm":
-		return []string{"common", "communication", "comment", "commit"}
-	case "comp":
-		return []string{"component", "compare", "computation", "composition"}
-	case "con":
-		return []string{"connection", "console", "container", "constant"}
-	default:
-		return discouraged_word_candidates_c_more(word)
-	}
-}
-
-func discouraged_word_candidates_c_more(word string) (candidates []string) {
-	switch word {
-	case "concat":
-		return []string{"concatenation"}
-	case "cond":
-		return []string{"condition"}
-	case "conf":
-		return []string{"configuration", "conference"}
-	case "config":
-		return []string{"configuration"}
-	case "conn":
-		return []string{"connection"}
-	case "const":
-		return []string{"constant"}
-	case "cont":
-		return []string{"continue", "container", "content", "continuous"}
-	case "conv":
-		return []string{"conversion", "conversation", "convert", "convolution"}
-	case "coord":
-		return []string{"coordinate", "coordinator"}
-	case "cos":
-		return []string{"cosine"}
-	case "cosec":
-		return []string{"cosecant"}
-	case "cot":
-		return []string{"cotangent"}
-	case "cpy":
-		return []string{"copy"}
-	case "ctg":
-		return []string{"cotangent"}
-	case "ctrl":
-		return []string{"control", "controller"}
-	case "cur":
-		return []string{"current", "cursor", "currency"}
-	case "curr":
-		return []string{"current", "currency"}
-	}
-	return nil
-}
-
-func discouraged_word_candidates_d(word string) (candidates []string) {
-	switch word {
-	case "db":
-		return []string{"database"}
-	case "dbg":
-		return []string{"debug", "debugger"}
-	case "dec":
-		return []string{"decimal", "decode", "decrement", "declaration", "december"}
-	case "decl":
-		return []string{"declaration"}
-	case "def":
-		return []string{"default", "definition", "define"}
-	case "deg":
-		return []string{"degrees"}
-	case "del":
-		return []string{"delete", "deletion", "delimiter"}
-	case "dep":
-		return []string{"dependency", "deploy", "deprecated", "department"}
-	case "desc":
-		return []string{"description", "descending", "descriptor"}
-	case "dest":
-		return []string{"destination", "destructor"}
-	case "dev":
-		return []string{"developer", "development", "device"}
-	case "dim":
-		return []string{"dimension", "dimmer"}
-	case "dir":
-		return []string{"direction", "directory"}
-	case "dis":
-		return []string{"disable", "dispatch", "discard", "disconnect"}
-	case "disp":
-		return []string{"display", "dispatch", "disposition"}
-	case "div":
-		return []string{"division", "divider", "dividend"}
-	case "doc":
-		return []string{"document", "documentation"}
-	case "docs":
-		return []string{"documentation", "documents"}
-	case "drv":
-		return []string{"driver", "derivative"}
-	case "dyn":
-		return []string{"dynamic", "dynamics"}
-	}
-	return nil
-}
-
-func discouraged_word_candidates_d_f(word string) (candidates []string) {
-	d_candidates := discouraged_word_candidates_d(word)
-	if d_candidates != nil {
-		return d_candidates
-	}
-	switch word {
-	case "elm":
-		return []string{"element"}
-	case "en":
-		return []string{"enable", "english"}
-	case "env":
-		return []string{"environment"}
-	case "evt":
-		return []string{"event"}
-	case "exe":
-		return []string{"execution", "executable"}
-	case "exp":
-		return []string{"exponential", "expression", "expected", "expansion", "experiment"}
-	case "expr":
-		return []string{"expression"}
-	case "ext":
-		return []string{"extension", "external", "extract", "extend"}
-	case "fac":
-		return []string{"factory", "faction", "face"}
-	case "fc":
-		return []string{"file_chooser", "function_call"}
-	case "fct":
-		return []string{"facet", "factor"}
-	case "fd":
-		return []string{"file_descriptor"}
-	case "fig":
-		return []string{"figure"}
-	case "fn":
-		return []string{"function"}
-	case "fp":
-		return []string{
-			"file_processor", "function_pointer", "floating_point", "false_positive",
-		}
-	case "fr":
-		return []string{"file_reader", "frame", "from"}
-	case "frac":
-		return []string{"fraction"}
-	case "freq":
-		return []string{"frequency"}
-	case "fs":
-		return []string{"file_system", "full_screen"}
-	case "file_set":
-		return []string{"file_set"}
-	case "fun":
-		return []string{"function"}
-	case "func":
-		return []string{"function"}
-	case "fw":
-		return []string{"file_writer", "firewall", "framework"}
-	}
-	return nil
-}
-
-func discouraged_word_candidates_g_l(word string) (candidates []string) {
-
-	switch word {
-	case "gen":
-		return []string{"generation", "generator", "general", "generic", "generate"}
-	case "geom":
-		return []string{"geometry", "geometric"}
-	case "hdr":
-		return []string{"header"}
-	case "hex":
-		return []string{"hexadecimal"}
-	case "id":
-		return []string{"identifier"}
-	case "idx":
-		return []string{"index"}
-	case "iface":
-		return []string{"interface"}
-	case "img":
-		return []string{"image"}
-	case "imp":
-		return []string{"import", "implementation"}
-	case "impl":
-		return []string{"implementation"}
-	case "in":
-		return []string{"input"}
-	case "inc":
-		return []string{"include", "increment", "increase", "inclusion"}
-	case "info":
-		return []string{"information"}
-	case "ins":
-		return []string{"insertion", "instance", "insert"}
-	case "inst":
-		return []string{"instance", "instruction", "installation"}
-	case "int":
-		return []string{"integer", "internal", "intersection"}
-	case "intf":
-		return []string{"interface"}
-	case "inv":
-		return []string{"inverse", "invocation", "inventory", "invalid"}
-	case "km":
-		return []string{"keymap", "kilometer"}
-	case "kwd":
-		return []string{"keyword"}
-	case "lang":
-		return []string{"language"}
-	case "lib":
-		return []string{"library"}
-	case "ll":
-		return []string{"linked_list", "log_level", "low_level"}
-	case "lnk":
-		return []string{"link"}
-	case "loc":
-		return []string{"location", "local"}
-	case "lvl":
-		return []string{"level"}
-	case "len", "length":
-		// Banned, not abbreviated: empty (non-nil) slice signals "no candidate".
-		// "helper" is also banned but only in function names — see
-		// check_names_vocabulary_function_ban — so it is not in this universal table.
+	// A present key whose JSON value is null decodes to a nil slice; normalize it
+	// to the non-nil empty slice so the "present → banned" branch stays distinct
+	// from "absent → not in the table".
+	if candidates == nil {
 		return []string{}
 	}
-	return nil
-}
-
-func discouraged_word_candidates_m_o(word string) (candidates []string) {
-
-	switch word {
-	case "mcu":
-		return []string{"microcontroller"}
-	case "mem":
-		return []string{"memory", "member"}
-	case "mid":
-		return []string{"middle", "midpoint"}
-	case "misc":
-		return []string{"miscellaneous"}
-	case "mng":
-		return []string{"manager"}
-	case "mgr":
-		return []string{"manager"}
-	case "mod":
-		return []string{"module", "modulo", "modification", "modify", "modifier"}
-	case "msg":
-		return []string{"message"}
-	case "mul":
-		return []string{"multiplication", "multiplier", "multiple"}
-	case "nav":
-		return []string{"navigation", "navigator"}
-	case "net":
-		return []string{"network", "internet"}
-	case "num":
-		return []string{"number", "numerator", "numerical"}
-	case "obj":
-		return []string{"object", "objective"}
-	case "oct":
-		return []string{"octal", "october", "octet"}
-	case "opt":
-		return []string{"option", "optimization", "optional", "optimizer"}
-	case "org":
-		return []string{"organization", "organic"}
-	case "orig":
-		return []string{"origin", "original"}
-	case "os":
-		return []string{"operating_system"}
-	case "oss":
-		return []string{"open_source_software"}
-	case "out":
-		return []string{"output"}
-	}
-	return nil
-}
-
-func discouraged_word_candidates_p_r(word string) (candidates []string) {
-
-	switch word {
-	case "param":
-		return []string{"parameter"}
-	case "perf":
-		return []string{"performance"}
-	case "pic":
-		return []string{"picture"}
-	case "pkg":
-		return []string{"package"}
-	case "pol":
-		return []string{"polygon", "policy", "polynomial", "polar"}
-	case "pos":
-		return []string{"position", "positive"}
-	case "pred":
-		return []string{"predicate", "prediction", "predecessor"}
-	case "pref":
-		return []string{"preference", "prefix"}
-	case "prev":
-		return []string{"previous"}
-	case "priv":
-		return []string{"private", "privacy", "privilege"}
-	case "prod":
-		return []string{"production", "product", "producer"}
-	case "prof":
-		return []string{"profiler", "profile", "professor"}
-	case "prop":
-		return []string{"property", "propagation", "proposition"}
-	case "ptr":
-		return []string{"pointer"}
-	case "pub":
-		return []string{"public", "publisher", "publication"}
-	case "px":
-		return []string{"pixel"}
-	case "qry":
-		return []string{"query"}
-	default:
-		return discouraged_word_candidates_p_r_more(word)
-	}
-}
-
-func discouraged_word_candidates_p_r_more(word string) (candidates []string) {
-	switch word {
-	case "rad":
-		return []string{"radians", "radius", "radial"}
-	case "rand":
-		return []string{"random"}
-	case "rec":
-		return []string{"record", "recursive", "receive", "rectangle"}
-	case "recv":
-		return []string{"receive", "receiver"}
-	case "ref":
-		return []string{"reference", "refresh", "referral"}
-	case "rel":
-		return []string{"relation", "relative", "release"}
-	case "rem":
-		return []string{"remote", "remove", "remainder"}
-	case "repo":
-		return []string{"repository", "report"}
-	case "req":
-		return []string{"request", "required", "requirement"}
-	case "res":
-		return []string{"response", "result", "resource", "reserve"}
-	case "ret":
-		return []string{"return", "retry", "retrieve"}
-	case "rev":
-		return []string{"revision", "reverse", "review", "revenue"}
-	case "rgx":
-		return []string{"regular_expression"}
-	case "rm":
-		return []string{"remove"}
-	case "rmv":
-		return []string{"remove"}
-	case "rnd":
-		return []string{"random", "round", "render"}
-	case "rng":
-		return []string{"range", "random_number_generator"}
-	}
-	return nil
-}
-
-func discouraged_word_candidates_s(word string) (candidates []string) {
-
-	switch word {
-	case "sc":
-		return []string{"script", "scope", "source_code"}
-	case "sec":
-		return []string{"secant", "second", "section", "security"}
-	case "sel":
-		return []string{"selection", "selector", "select"}
-	case "sep":
-		return []string{"separator", "separate", "september"}
-	case "seq":
-		return []string{"sequence", "sequential", "sequencer"}
-	case "sess":
-		return []string{"session"}
-	case "sin":
-		return []string{"sine"}
-	case "sln":
-		return []string{"solution"}
-	case "sol":
-		return []string{"solution", "solver", "solid"}
-	case "spec":
-		return []string{"specification", "special", "species", "spectrum"}
-	case "sqrt":
-		return []string{"square_root"}
-	case "src":
-		return []string{"source"}
-	case "std":
-		return []string{"standard"}
-	case "stdio":
-		return []string{"standard_input_output"}
-	case "stmt":
-		return []string{"statement"}
-	case "str":
-		return []string{"string", "structure", "stream", "struct", "strategy"}
-	case "sub":
-		return []string{"substring", "subtraction", "subscriber", "subject", "submodule"}
-	case "sum":
-		return []string{"summation", "summary"}
-	case "svc":
-		return []string{"service"}
-	case "sync":
-		return []string{"synchronization", "synchronous"}
-	}
-	return nil
-}
-
-func discouraged_word_candidates_t_z(word string) (candidates []string) {
-
-	switch word {
-	case "tan":
-		return []string{"tangent"}
-	case "td":
-		return []string{"table_data"}
-	case "temp":
-		return []string{"temporary", "temperature", "template"}
-	case "tgl":
-		return []string{"toggle"}
-	case "tgt":
-		return []string{"target"}
-	case "th":
-		return []string{"table_header", "theorem"}
-	case "tmp":
-		return []string{"temporary", "template", "temperature"}
-	case "tmr":
-		return []string{"timer"}
-	case "tpe":
-		return []string{"type"}
-	case "tr":
-		return []string{"table_row", "trace", "translate", "transaction"}
-	case "ts":
-		return []string{"timestamp", "time_series", "test_suite"}
-	case "tx":
-		return []string{"transaction", "transmit", "texture"}
-	case "txt":
-		return []string{"text"}
-	case "usr":
-		return []string{"user"}
-	case "util", "utils", "utility", "utilities":
-		// Banned, not abbreviated: empty (non-nil) slice signals "no candidate".
-		return []string{}
-	case "val":
-		return []string{"value", "valid", "validation"}
-	case "var":
-		return []string{"variable", "variant"}
-	case "vec":
-		return []string{"vector"}
-	case "ver":
-		return []string{"version", "vertical", "verify"}
-	case "win":
-		return []string{"window"}
-	case "wiz":
-		return []string{"wizard"}
-	}
-	return nil
+	return candidates
 }
 
 // Words ending in "ing" that are unambiguously nouns. Any declared
@@ -9003,17 +8665,38 @@ func directory_is_impure(canonical string, m module_information) (yes bool) {
 // True iff a test file imports the snapshot library. snap binds the OS to
 // rewrite inline snapshots in place, so it is impure first-party — but it is
 // test infrastructure, an extension of the suite, so an external *_test package
-// may import it without breaching transitive purity.
-func purity_snap_test_exemption(file *ast.File, import_path string) (exempt bool) {
+// may import it without breaching transitive purity. snap lives at the shared
+// module's `/snap` path; with no shared module configured there is no snap to
+// exempt.
+func purity_snap_test_exemption(
+	file *ast.File, import_path string, modules *module_index,
+) (exempt bool) {
 
 	if !strings.HasSuffix(file.Name.Name, "_test") {
 		return false
 	}
-	snap_root := shared_library_module_path + "/snap"
+	shared_path := module_index_shared_library_path(modules)
+	if shared_path == "" {
+		return false
+	}
+	snap_root := shared_path + "/snap"
 	if import_path == snap_root {
 		return true
 	}
 	return strings.HasPrefix(import_path, snap_root+"/")
+}
+
+// Returns the shared library module's import path, or "" when no module is the
+// shared library (no shared module configured, or it matches no module's
+// go.mod). Used where a check needs the shared path itself rather than a
+// module's precomputed Is_Shared_Library flag.
+func module_index_shared_library_path(modules *module_index) (shared_path string) {
+	for _, m := range modules.Modules {
+		if m.Is_Shared_Library {
+			return m.Module_Path
+		}
+	}
+	return ""
 }
 
 // Flags the two routes impurity launders into a pure file: an import of an
@@ -9029,7 +8712,7 @@ func check_transitive_purity_per_file(
 	for _, implementation := range file.Imports {
 		import_path := strings.Trim(implementation.Path.Value, `"`)
 		if import_path_is_impure_first_party(import_path, modules) {
-			if !purity_snap_test_exemption(file, import_path) {
+			if !purity_snap_test_exemption(file, import_path, modules) {
 				diags = append(diags, Diagnostic{
 					Position: file_set.Position(implementation.Pos()),
 					Name:     "transitive-purity",
@@ -9540,4 +9223,251 @@ func check_no_unbounded_apis_is_generated(file *ast.File) (yes bool) {
 		}
 	}
 	return false
+}
+
+// Enforces the opt-in deterministic tier: a package whose workspace-relative
+// directory is listed in lint.json's deterministic_packages is held, atop
+// purity, to bans on every construct whose result is decided outside the
+// program — a goroutine, a channel, a select, or a time/context/sync import —
+// and may import only other deterministic first-party packages. Determinism is
+// stricter than purity, so a listed package must be pure; an impure one is
+// reported. The bans bind the package's _test.go files too.
+func check_deterministic(
+	parsed_files []parsed_file, modules *module_index, packages []string,
+) (diags []Diagnostic) {
+
+	// Entries are path-cleaned so "./pkg/" and "pkg" both name the directory the
+	// parsed files are keyed by; a raw string compare would silently miss either.
+	set := map[string]bool{}
+	for _, entry := range packages {
+		set[path.Clean(entry)] = true
+	}
+	matched := map[string]bool{}
+	for _, pf := range parsed_files {
+		directory := path.Dir(pf.Path)
+		if !set[directory] {
+			continue
+		}
+		matched[directory] = true
+		if parsed_file_is_impure_package(pf, modules) {
+			diags = append(diags, Diagnostic{
+				Position: pf.File_Set.Position(pf.File.Package),
+				Name:     "deterministic",
+				Want:     "list only pure packages as deterministic",
+				Message:  "deterministic package must be pure",
+				Tier:     1,
+			})
+			continue
+		}
+		diags = append(diags, check_deterministic_constructs(pf.File_Set, pf.File)...)
+		diags = append(diags,
+			check_deterministic_imports(pf.File_Set, pf.File, modules, set)...)
+	}
+	return append(diags, check_deterministic_coverage(packages, matched)...)
+}
+
+// Reports any deterministic_packages entry that matched no package in the
+// workspace. A typo or stale path would otherwise opt nothing into the tier and
+// pass silently — the exact coverage gap the tier exists to close.
+func check_deterministic_coverage(
+	packages []string, matched map[string]bool,
+) (diags []Diagnostic) {
+
+	for _, entry := range packages {
+		if matched[path.Clean(entry)] {
+			continue
+		}
+		diags = append(diags, Diagnostic{
+			Position: token.Position{Filename: "<lint.json>"},
+			Name:     "deterministic",
+			Want:     "every deterministic_packages entry names a real package",
+			Message: fmt.Sprintf(
+				"deterministic_packages: no package found at %q", entry),
+			Tier: 1,
+		})
+	}
+	return diags
+}
+
+// Flags the nondeterministic control constructs a deterministic package may not
+// contain: a goroutine (the kernel decides its interleaving), any channel use —
+// type, send, or receive — and a select, whose ready-case choice the runtime
+// randomizes.
+func check_deterministic_constructs(
+	file_set *token.FileSet, file *ast.File,
+) (diags []Diagnostic) {
+
+	report := func(position token.Position, tail string) {
+		diags = append(diags, Diagnostic{
+			Position: position,
+			Name:     "deterministic",
+			Message:  "deterministic package " + tail,
+			Tier:     1,
+		})
+	}
+	ast.Inspect(file, func(n ast.Node) (descend bool) {
+		switch node := n.(type) {
+		case *ast.GoStmt:
+			report(file_set.Position(node.Pos()), "must not start a goroutine")
+		case *ast.SelectStmt:
+			report(file_set.Position(node.Pos()), "must not use select")
+		case *ast.ChanType:
+			report(file_set.Position(node.Pos()), "must not use a channel")
+		case *ast.SendStmt:
+			report(file_set.Position(node.Pos()), "must not use a channel")
+		case *ast.UnaryExpr:
+			if node.Op == token.ARROW {
+				report(file_set.Position(node.Pos()), "must not use a channel")
+			}
+		}
+		return true
+	})
+	return diags
+}
+
+// Flags the imports a deterministic package may not make: time and context
+// launder ambient wall-clock time and cancellation past the injected clock, sync
+// and sync/atomic guard a concurrency it does not have, and any first-party
+// package that is not itself deterministic breaks the induction. snap in a
+// _test.go is exempt, as it is for transitive purity.
+func check_deterministic_imports(
+	file_set *token.FileSet, file *ast.File, modules *module_index, set map[string]bool,
+) (diags []Diagnostic) {
+
+	for _, implementation := range file.Imports {
+		import_path := strings.Trim(implementation.Path.Value, `"`)
+		if is_nondeterministic_import(import_path) {
+			diags = append(diags, Diagnostic{
+				Position: file_set.Position(implementation.Pos()),
+				Name:     "deterministic",
+				Message: fmt.Sprintf(
+					"deterministic package must not import %q", import_path),
+				Tier: 1,
+			})
+			continue
+		}
+		if !import_path_is_nondeterministic_first_party(import_path, modules, set) {
+			continue
+		}
+		if purity_snap_test_exemption(file, import_path, modules) {
+			continue
+		}
+		diags = append(diags, Diagnostic{
+			Position: file_set.Position(implementation.Pos()),
+			Name:     "deterministic",
+			Message: fmt.Sprintf(
+				"deterministic package must import only deterministic packages: %q",
+				import_path),
+			Tier: 1,
+		})
+	}
+	return diags
+}
+
+// True iff the import path is a stdlib package a deterministic package may not
+// use: time and context launder the wall clock and cancellation, sync and
+// sync/atomic exist only to coordinate a concurrency it does not have.
+func is_nondeterministic_import(path string) (yes bool) {
+
+	switch path {
+	case "time", "context", "sync", "sync/atomic":
+		return true
+	}
+	return false
+}
+
+// True iff the import path resolves to a first-party package that is not itself
+// in the deterministic set. A stdlib or third-party path is owned by no module,
+// so it is never flagged here — stdlib is policed by is_nondeterministic_import,
+// third-party is out of scope, the same blind spot transitive purity carries.
+func import_path_is_nondeterministic_first_party(
+	import_path string, modules *module_index, set map[string]bool,
+) (yes bool) {
+
+	module_index_number := module_index_for_import_path(import_path, modules)
+	if module_index_number < 0 {
+		return false
+	}
+	m := modules.Modules[module_index_number]
+	return !set[import_path_workspace_directory(import_path, m)]
+}
+
+// Maps a first-party import path to the workspace-root-relative package directory
+// the deterministic set is keyed by: strip the module path to the in-module
+// subpath, then re-root it under the module's workspace directory, mirroring the
+// form path.Dir gives a parsed file so set membership matches.
+func import_path_workspace_directory(
+	import_path string, m module_information,
+) (directory string) {
+
+	relative := strings.TrimPrefix(import_path, m.Module_Path)
+	relative = strings.TrimPrefix(relative, "/")
+	if m.Root == "." {
+		if relative == "" {
+			return "."
+		}
+		return relative
+	}
+	if relative == "" {
+		return m.Root
+	}
+	return m.Root + "/" + relative
+}
+
+// Stdlib time is the one ambient source of real wall-clock time. Funneling every
+// read through a single gateway keeps the injected Clock the only way the rest of
+// the shared module sees the clock, so within the shared library importing stdlib
+// "time" is allowed only in the time/default gateway; every other package injects
+// a Clock. Binary modules are out of scope — separate tools with their own needs.
+func check_time_import_gateway(
+	parsed_files []parsed_file, modules *module_index,
+) (diags []Diagnostic) {
+
+	gateway := module_index_time_gateway(modules)
+	if gateway == "" {
+		return nil
+	}
+	for _, pf := range parsed_files {
+		module_index_number := modules.File_To_Module[pf.Path]
+		if module_index_number < 0 {
+			continue
+		}
+		if !modules.Modules[module_index_number].Is_Shared_Library {
+			continue
+		}
+		if path.Dir(pf.Path) == gateway {
+			continue
+		}
+		for _, implementation := range pf.File.Imports {
+			if strings.Trim(implementation.Path.Value, `"`) != "time" {
+				continue
+			}
+			diags = append(diags, Diagnostic{
+				Position: pf.File_Set.Position(implementation.Pos()),
+				Name:     "stdlib-time",
+				Want:     "import the time/default gateway and inject a Clock",
+				Message: fmt.Sprintf(
+					"stdlib time may be imported only by %q; inject the Clock",
+					gateway),
+				Tier: 1,
+			})
+		}
+	}
+	return diags
+}
+
+// Returns the workspace-relative directory of the shared module's stdlib-time
+// gateway (its time/default), or "" when no module is the shared library.
+func module_index_time_gateway(modules *module_index) (gateway string) {
+
+	for _, m := range modules.Modules {
+		if !m.Is_Shared_Library {
+			continue
+		}
+		if m.Root == "." {
+			return "time/default"
+		}
+		return m.Root + "/time/default"
+	}
+	return ""
 }

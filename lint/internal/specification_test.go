@@ -200,7 +200,7 @@ func Test_Specification_Test_Order(t *testing.T) {
 func Test_Diagnostics_Tier_One(t *testing.T) {
 	t.Parallel()
 	var stdout strings.Builder
-	lint.Main(&lint.Main_Input{
+	lint_main(t, &lint.Main_Input{
 		Fsys: fstest.MapFS{
 			"a.go": &fstest.MapFile{Data: []byte(
 				"// missing period at end of this comment\npackage p\n")},
@@ -224,7 +224,7 @@ func Test_Diagnostics_Tier_One(t *testing.T) {
 func Test_Diagnostics_Tier_Two(t *testing.T) {
 	t.Parallel()
 	var stdout strings.Builder
-	lint.Main(&lint.Main_Input{
+	lint_main(t, &lint.Main_Input{
 		Fsys: fstest.MapFS{"a.go": &fstest.MapFile{Data: gofmt_must(t,
 			"// Package p is a fixture.\npackage p\n\nfunc f() { f() }\n")}},
 		Stdout: &stdout,
@@ -529,18 +529,21 @@ func Test_Module_Layout_Module_Location(t *testing.T) {
 // point a fully-importable library has no business owning.
 func Test_Module_Layout_Shared_Module(t *testing.T) {
 	t.Parallel()
+	// The shared library lives in golang_snacks/ so its Root matches the
+	// shared-module directory the spec helper injects; binary fixtures in this
+	// file keep their go.mod at the root and so stay binaries.
 	files := map[string][]byte{
-		"go.mod": []byte("module github.com/james-orcales/" +
+		"golang_snacks/go.mod": []byte("module github.com/james-orcales/" +
 			"james-orcales/golang_snacks\n\ngo 1.25\n"),
-		"internal/x/x.go": []byte("// Package x is a fixture.\npackage x\n"),
+		"golang_snacks/internal/x/x.go": []byte("// Package x is a fixture.\npackage x\n"),
 	}
 	if !specification_flags(t, files, "forbids internal/ directories") {
 		t.Fatal("a shared-library internal/ tree must be flagged")
 	}
 	main_files := map[string][]byte{
-		"go.mod": []byte("module github.com/james-orcales/" +
+		"golang_snacks/go.mod": []byte("module github.com/james-orcales/" +
 			"james-orcales/golang_snacks\n\ngo 1.25\n"),
-		"main.go": []byte("package main\n\nfunc main() {\n\tprintln(0)\n}\n"),
+		"golang_snacks/main.go": []byte("package main\n\nfunc main() {\n\tprintln(0)\n}\n"),
 	}
 	if !specification_flags(t, main_files, "forbids package main") {
 		t.Fatal("a shared-library package main must be flagged")
@@ -1347,6 +1350,149 @@ func Test_Source_And_Test_Requirements_File_Count_Build_Tags(t *testing.T) {
 	}
 }
 
+// Test_Deterministic_Goroutines verifies a go statement in a listed package is flagged.
+func Test_Deterministic_Goroutines(t *testing.T) {
+	t.Parallel()
+	files := map[string][]byte{
+		"go.mod": []byte("module fixture\n\ngo 1.25\n"),
+		"pkg/p.go": []byte("// Package p is a fixture.\n" +
+			"package p\n\n" +
+			"// F is a fixture.\n" +
+			"func F() {\n\tgo done()\n}\n\n" +
+			"func done() {\n\treturn\n}\n"),
+	}
+	if !specification_diagnosed(deterministic_self_diagnostics(t, files, []string{"pkg"}),
+		"must not start a goroutine") {
+		t.Fatal("a go statement in a deterministic package must be flagged")
+	}
+}
+
+// Test_Deterministic_Channels verifies a channel in a listed package is flagged.
+func Test_Deterministic_Channels(t *testing.T) {
+	t.Parallel()
+	files := map[string][]byte{
+		"go.mod": []byte("module fixture\n\ngo 1.25\n"),
+		"pkg/p.go": []byte("// Package p is a fixture.\n" +
+			"package p\n\n" +
+			"// F is a fixture.\n" +
+			"func F() {\n\tc := make(chan int)\n\tclose(c)\n}\n"),
+	}
+	if !specification_diagnosed(deterministic_self_diagnostics(t, files, []string{"pkg"}),
+		"must not use a channel") {
+		t.Fatal("a channel in a deterministic package must be flagged")
+	}
+}
+
+// Test_Deterministic_Select verifies a select in a listed package is flagged.
+func Test_Deterministic_Select(t *testing.T) {
+	t.Parallel()
+	files := map[string][]byte{
+		"go.mod": []byte("module fixture\n\ngo 1.25\n"),
+		"pkg/p.go": []byte("// Package p is a fixture.\n" +
+			"package p\n\n" +
+			"// F is a fixture.\n" +
+			"func F() {\n\tselect {}\n}\n"),
+	}
+	if !specification_diagnosed(deterministic_self_diagnostics(t, files, []string{"pkg"}),
+		"must not use select") {
+		t.Fatal("a select in a deterministic package must be flagged")
+	}
+}
+
+// Test_Deterministic_Banned_Imports verifies a time import in a listed package is flagged.
+func Test_Deterministic_Banned_Imports(t *testing.T) {
+	t.Parallel()
+	files := map[string][]byte{
+		"go.mod": []byte("module fixture\n\ngo 1.25\n"),
+		"pkg/p.go": []byte("// Package p is a fixture.\n" +
+			"package p\n\n" +
+			"import \"time\"\n\n" +
+			"// F is a fixture.\n" +
+			"func F() (d time.Duration) {\n\treturn 0\n}\n"),
+	}
+	if !specification_diagnosed(deterministic_self_diagnostics(t, files, []string{"pkg"}),
+		"must not import") {
+		t.Fatal("a time import in a deterministic package must be flagged")
+	}
+}
+
+// Test_Deterministic_Import_Induction verifies importing a non-deterministic
+// first-party package is flagged.
+func Test_Deterministic_Import_Induction(t *testing.T) {
+	t.Parallel()
+	files := map[string][]byte{
+		"go.mod": []byte("module fixture\n\ngo 1.25\n"),
+		"pkg/p.go": []byte("// Package p is a fixture.\n" +
+			"package p\n\n" +
+			"import \"fixture/other\"\n\n" +
+			"// F is a fixture.\n" +
+			"func F() {\n\tother.G()\n}\n"),
+		"other/o.go": []byte("// Package other is a fixture.\n" +
+			"package other\n\n" +
+			"// G is a fixture.\n" +
+			"func G() {\n\treturn\n}\n"),
+	}
+	if !specification_diagnosed(deterministic_self_diagnostics(t, files, []string{"pkg"}),
+		"import only deterministic packages") {
+		t.Fatal("importing a non-deterministic first-party package must be flagged")
+	}
+}
+
+// Test_Deterministic_Impurity verifies an impure package listed as deterministic
+// is reported.
+func Test_Deterministic_Impurity(t *testing.T) {
+	t.Parallel()
+	files := map[string][]byte{
+		"go.mod": []byte("module fixture\n\ngo 1.25\n"),
+		"pkg/default/d.go": []byte("// Package pkg is a fixture.\n" +
+			"package pkg\n"),
+	}
+	if !specification_diagnosed(
+		deterministic_self_diagnostics(t, files, []string{"./pkg/default/"}),
+		"must be pure") {
+		t.Fatal("an impure package listed as deterministic must be reported")
+	}
+}
+
+// Test_Deterministic_Coverage verifies a deterministic_packages entry matching no
+// package is reported.
+func Test_Deterministic_Coverage(t *testing.T) {
+	t.Parallel()
+	files := map[string][]byte{
+		"go.mod": []byte("module fixture\n\ngo 1.25\n"),
+		"pkg/p.go": []byte("// Package p is a fixture.\n" +
+			"package p\n"),
+	}
+	if !specification_diagnosed(
+		deterministic_self_diagnostics(t, files, []string{"nope/missing"}),
+		"no package found") {
+		t.Fatal("an entry matching no package must be reported")
+	}
+}
+
+// Test_Stdlib_Time verifies a shared-module package importing stdlib time outside
+// the time/default gateway is reported.
+func Test_Stdlib_Time(t *testing.T) {
+	t.Parallel()
+	fsys := fstest.MapFS{
+		"go.mod": &fstest.MapFile{Data: []byte("module fixture\n\ngo 1.25\n")},
+		"pkg/p.go": &fstest.MapFile{Data: []byte("// Package p is a fixture.\n" +
+			"package p\n\n" +
+			"import \"time\"\n\n" +
+			"// F is a fixture.\n" +
+			"func F() (d time.Duration) {\n\treturn 0\n}\n")},
+	}
+	diags, err := lint.Check_File_System(&lint.Check_File_System_Input{
+		Fsys: fsys, Scope: "pkg", Shared_Module: ".",
+	})
+	if err != nil {
+		t.Fatalf("Check_File_System: %v", err)
+	}
+	if !specification_diagnosed(diags, "may be imported only by") {
+		t.Fatal("a non-gateway stdlib time import must be reported")
+	}
+}
+
 // Test_Specification_Baseline pins that the unmutated package is clean, so every
 // other test isolates the single rule it violates.
 func Test_Specification_Baseline(t *testing.T) {
@@ -1393,7 +1539,8 @@ func specification_self_diagnostics(
 		fsys[name] = &fstest.MapFile{Data: content}
 	}
 	diags, err := lint.Check_File_System(&lint.Check_File_System_Input{
-		Fsys: fsys, Scope: "pkg"})
+		Fsys: fsys, Scope: "pkg", Shared_Module: doctrine_shared_module_directory,
+		Word_Replacements: test_word_replacements()})
 	if err != nil {
 		t.Fatalf("Check_File_System: %v", err)
 	}
@@ -1432,4 +1579,28 @@ func specification_markdown_append(files map[string][]byte, text string) {
 
 func specification_markdown_prepend(files map[string][]byte, text string) {
 	files["pkg/SPECIFICATION.md"] = append([]byte(text), files["pkg/SPECIFICATION.md"]...)
+}
+
+// Runs the linter over the fixture with the given package directories opted into
+// the deterministic tier, returning its diagnostics. Mirrors
+// specification_self_diagnostics but threads Deterministic_Packages, which
+// specification_flags does not carry.
+func deterministic_self_diagnostics(
+	t *testing.T, files map[string][]byte, listed []string,
+) (diags []lint.Diagnostic) {
+	t.Helper()
+	fsys := fstest.MapFS{}
+	for name, content := range files {
+		fsys[name] = &fstest.MapFile{Data: content}
+	}
+	diags, err := lint.Check_File_System(&lint.Check_File_System_Input{
+		Fsys:                   fsys,
+		Scope:                  "pkg",
+		Shared_Module:          doctrine_shared_module_directory,
+		Deterministic_Packages: listed,
+	})
+	if err != nil {
+		t.Fatalf("Check_File_System: %v", err)
+	}
+	return diags
 }
