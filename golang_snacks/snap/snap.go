@@ -20,7 +20,7 @@ import (
 	"testing"
 
 	"github.com/james-orcales/james-orcales/golang_snacks/invariant"
-	"github.com/james-orcales/james-orcales/golang_snacks/snap/myers"
+	"github.com/james-orcales/james-orcales/golang_snacks/myers"
 )
 
 // mismatch_legend keys the diff colors so readers can map - / + to red / green
@@ -314,9 +314,9 @@ func Snapshot_Is_Equal(snapshot Snapshot, actual string) (equal bool) {
 		defer s.Edits_Mu.Unlock()
 		return snapper_is_equal_edit(s, snapshot, actual, is_equal)
 	} else if !is_equal {
-		d := myers.New(myers.NewInput{Old: snapshot.Expected_Output, New: actual})
+		d := myers.New(myers.New_Input{Old: snapshot.Expected_Output, New: actual})
 		fmt.Fprintf(s.Output, "Snapshot mismatch %s:%d  (%s)\n", snapshot.File_Path, snapshot.Line, mismatch_legend)
-		for line := range strings.SplitSeq(d.LineDiff(), "\n") {
+		for line := range strings.SplitSeq(myers.Differ_Line_Diff(d), "\n") {
 			if len(line) == 0 {
 				continue
 			}
