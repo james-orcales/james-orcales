@@ -16543,7 +16543,7 @@ func check_invariant_assertions_axis_builder_covered_pairs(
 	helper_name := check_invariant_assertions_extract_call_name(call, invariant_idents)
 	invariant.Cross_Product(
 		invariant.Always(helper_name != "", "Helper_name is non-empty for invariant calls"))
-	bare_kind, is_bare := invariant_axis_builder_kinds[helper_name]
+	bare_kind, is_bare := invariant_axis_builder_kind(helper_name)
 	if !is_bare {
 		return nil
 	}
@@ -16578,13 +16578,14 @@ func check_invariant_assertions_axis_builder_covered_pairs(
 
 // Bare (non-`Is_`) axis builders and the credit kind each contributes; a
 // lookup miss means the call isn't a bare axis builder.
-var invariant_axis_builder_kinds = map[string]string{
-	"Distinct_Boundary":          "boundary_int",
-	"Recorder_Distinct_Boundary": "boundary_int",
-	"Always":                     "bool",
-	"Recorder_Always":            "bool",
-	"Sometimes":                  "bool",
-	"Recorder_Sometimes":         "bool",
+func invariant_axis_builder_kind(name string) (kind string, ok bool) {
+	switch name {
+	case "Distinct_Boundary", "Recorder_Distinct_Boundary":
+		return "boundary_int", true
+	case "Always", "Recorder_Always", "Sometimes", "Recorder_Sometimes":
+		return "bool", true
+	}
+	return "", false
 }
 
 func check_invariant_assertions_axis_builder_covered_pairs_assert_exit(
@@ -17737,7 +17738,7 @@ func check_invariant_assertions_call_covered_pairs(
 	if helper_name == "" {
 		return nil
 	}
-	if helper_kind, has := invariant_of_helper_kinds[helper_name]; has {
+	if helper_kind, has := invariant_single_axis_kind(helper_name); has {
 		pairs = []check_invariant_assertions_coverage_pair{}
 		paths := check_invariant_assertions_extract_identifier_paths(call.Args)
 		invariant.Is_Sometimes(paths == nil, "Paths can be empty or zero on this branch")
@@ -17786,13 +17787,14 @@ func check_invariant_assertions_call_covered_pairs(
 
 // Single-axis `Is_*` / `Recorder_Is_*` helpers and the credit kind each
 // contributes; lookup miss means the call isn't a single-axis builder.
-var invariant_of_helper_kinds = map[string]string{
-	"Is_Distinct_Boundary":          "boundary_int",
-	"Recorder_Is_Distinct_Boundary": "boundary_int",
-	"Is_Always":                     "bool",
-	"Recorder_Is_Always":            "bool",
-	"Is_Sometimes":                  "bool",
-	"Recorder_Is_Sometimes":         "bool",
+func invariant_single_axis_kind(name string) (kind string, ok bool) {
+	switch name {
+	case "Is_Distinct_Boundary", "Recorder_Is_Distinct_Boundary":
+		return "boundary_int", true
+	case "Is_Always", "Recorder_Is_Always", "Is_Sometimes", "Recorder_Is_Sometimes":
+		return "bool", true
+	}
+	return "", false
 }
 
 func check_invariant_assertions_call_covered_pairs_assert_exit(
@@ -17917,7 +17919,7 @@ func check_invariant_assertions_call_covered_pairs_cross_product(
 		if inner_name == "" {
 			continue
 		}
-		bare_kind, is_bare := invariant_axis_builder_kinds[inner_name]
+		bare_kind, is_bare := invariant_axis_builder_kind(inner_name)
 		if is_bare {
 			pairs = append(pairs,
 				check_invariant_assertions_bare_axis_pairs(
@@ -23232,7 +23234,7 @@ func check_invariant_assertions_statement_covered_paths_assign(
 	if call_name == "" {
 		return nil, false
 	}
-	if _, is_bare := invariant_axis_builder_kinds[call_name]; !is_bare {
+	if _, is_bare := invariant_axis_builder_kind(call_name); !is_bare {
 		return nil, false
 	}
 	paths = map[string]bool{}

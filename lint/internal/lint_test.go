@@ -21,10 +21,12 @@ import (
 // gofmt-clean. Required because check_gofmt runs as part of the tier-1
 // pipeline against every test source. TestGofmt builds MapFS inline so it
 // can submit deliberately un-formatted sources.
-const doctrine_shared_library_go_module = "module github.com/james-orcales/james-orcales/golang_snacks\n"
+const doctrine_shared_library_go_module = "module github.com/james-orcales/" +
+	"james-orcales/golang_snacks\n"
 const doctrine_binary_go_module = "module example.com/mybinary\n"
 
-const fixture_invariant_import_path = "github.com/james-orcales/james-orcales/golang_snacks/invariant/v2/invariant_default"
+const fixture_invariant_import_path = "github.com/james-orcales/james-orcales/" +
+	"golang_snacks/invariant/v2/invariant_default"
 const fixture_invariant_import = "import invariant \"" + fixture_invariant_import_path + "\"\n"
 
 // Fixture_const_hi declares a file-scope upper bound used by Distinct_Boundary
@@ -36,7 +38,8 @@ const fixture_constant_hi = "\nconst fixture_hi = 100\n"
 // pointer, used by declaration-coverage fixtures so the test cases focus on
 // the call-site shape rather than re-deriving a valid callee each time.
 const fixture_declaration_callee = "func g() (out *int) {\n" +
-	"\tdefer func() { invariant.Cross_Product(invariant.Always(out != nil, \"out is non-nil\")) }()\n" +
+	"\tdefer func() { invariant.Cross_Product(" +
+	"invariant.Always(out != nil, \"out is non-nil\")) }()\n" +
 	"\treturn nil\n" +
 	"}\n\n"
 
@@ -45,8 +48,10 @@ const fixture_declaration_callee = "func g() (out *int) {\n" +
 const fixture_declaration_callee_pair = "func g() (a *int, b *int) {\n" +
 	"\tdefer func() {\n" +
 	"\t\tinvariant.Cross_Product(\n" +
-	"\t\t\tinvariant.Always(a != nil, \"a is non-nil\"),\n" +
-	"\t\t\tinvariant.Always(b != nil, \"b is non-nil\"),\n" +
+	"\t\t\tinvariant.Always(" +
+	"a != nil, \"a is non-nil\"),\n" +
+	"\t\t\tinvariant.Always(" +
+	"b != nil, \"b is non-nil\"),\n" +
 	"\t\t)\n" +
 	"\t}()\n" +
 	"\treturn nil, nil\n" +
@@ -55,13 +60,17 @@ const fixture_declaration_callee_pair = "func g() (a *int, b *int) {\n" +
 // Fixture_clean_go is the canonical valid-Go fixture used by tests that
 // need an accompanying .go file but don't care about its specific shape.
 const fixture_clean_go = "package main\n\n" +
-	"import invariant \"github.com/james-orcales/james-orcales/golang_snacks/invariant/v2\"\n\n" +
+	"import invariant \"github.com/james-orcales/james-orcales/" +
+	"golang_snacks/invariant/v2\"\n\n" +
 	"const fixture_hi = 100\n\n" +
 	"func f() (result int) {\n" +
 	"\tdefer func() {\n" +
 	"\t\tinvariant.Cross_Product(\n" +
-	"\t\t\tinvariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: result, Lo: 0, Hi: fixture_hi}),\n" +
-	"\t\t\tinvariant.Always(result == 0, \"result is zero\"),\n" +
+	"\t\t\tinvariant.Distinct_Boundary(" +
+	"&invariant.Boundary_Input[int]{" +
+	"X: result, Lo: 0, Hi: fixture_hi}),\n" +
+	"\t\t\tinvariant.Always(" +
+	"result == 0, \"result is zero\"),\n" +
 	"\t\t)\n" +
 	"\t}()\n" +
 	"\treturn 1\n" +
@@ -69,6 +78,24 @@ const fixture_clean_go = "package main\n\n" +
 
 // TestMain wires Recorder_Run_Test_Main: registers source files for coverage,
 // runs the test suite, then reports any never-fired assertion sites.
+const prelude_single = "package fixture\n\n" +
+	fixture_invariant_import + fixture_declaration_callee
+const prelude_pair = "package fixture\n\n" +
+	fixture_invariant_import + fixture_declaration_callee_pair
+const prelude_with_h = prelude_single +
+	"func h(p *int) (out int) {\n" +
+	"\tdefer func() {\n" +
+	"\t\tinvariant.Cross_Product(\n" +
+	"\t\t\tinvariant.Distinct_Boundary(" +
+	"&invariant.Boundary_Input[int]{" +
+	"X: out, Lo: 0, Hi: 1}),\n" +
+	"\t\t)\n" +
+	"\t}()\n" +
+	"\tinvariant.Cross_Product(" +
+	"invariant.Always(p != nil, \"p is non-nil\"))\n" +
+	"\treturn 0\n" +
+	"}\n\n"
+
 func TestMain(m *testing.M) {
 	invariant.Run_Test_Main(m)
 }
@@ -97,11 +124,12 @@ func gofmt_must(t *testing.T, source string) (result []byte) {
 // outer-scope names are flagged.
 func Test_Variable_Shadow(t *testing.T) {
 	t.Parallel()
-	tests := []struct {
+	for _, tt := range []struct {
 		Name      string
 		Files     map[string]string
 		Want_Diag string
 	}{
+
 		{
 			Name: "shadowing in block",
 			Files: map[string]string{
@@ -115,6 +143,7 @@ func f() {
 			},
 			Want_Diag: "shadows outer scope variable",
 		},
+
 		{
 			Name: "shadowing in for loop",
 			Files: map[string]string{
@@ -128,6 +157,43 @@ func f() {
 			},
 			Want_Diag: "shadows outer scope variable",
 		},
+	} {
+		t.Run(tt.Name, func(t *testing.T) {
+			fsys_map := make(fstest.MapFS)
+			for k, v := range tt.Files {
+				fsys_map[k] = &fstest.MapFile{Data: gofmt_must(t, v)}
+			}
+			stdout := &bytes.Buffer{}
+			stderr := &bytes.Buffer{}
+			code := lint.Main(&lint.Main_Input{
+				Fsys: fsys_map, Stdout: stdout, Stderr: stderr,
+			})
+
+			output := stdout.String()
+			if tt.Want_Diag == "" {
+				if code != 0 {
+					t.Errorf("expected exit 0, got %d; output: %s",
+						code, output)
+				}
+			} else {
+				if !bytes.Contains(stdout.Bytes(), []byte(tt.Want_Diag)) {
+					t.Errorf("expected output containing %q, got: %s",
+						tt.Want_Diag, output)
+				}
+			}
+		})
+	}
+}
+
+// Additional cases, split to keep each function within the length limit.
+func Test_Variable_Shadow_Part2(t *testing.T) {
+	t.Parallel()
+	for _, tt := range []struct {
+		Name      string
+		Files     map[string]string
+		Want_Diag string
+	}{
+
 		{
 			Name: "shadowing in range",
 			Files: map[string]string{
@@ -140,6 +206,7 @@ func f() {
 			},
 			Want_Diag: "shadows outer scope variable",
 		},
+
 		{
 			Name: "no shadowing",
 			Files: map[string]string{
@@ -151,6 +218,43 @@ func f() {
 			},
 			Want_Diag: "",
 		},
+	} {
+		t.Run(tt.Name, func(t *testing.T) {
+			fsys_map := make(fstest.MapFS)
+			for k, v := range tt.Files {
+				fsys_map[k] = &fstest.MapFile{Data: gofmt_must(t, v)}
+			}
+			stdout := &bytes.Buffer{}
+			stderr := &bytes.Buffer{}
+			code := lint.Main(&lint.Main_Input{
+				Fsys: fsys_map, Stdout: stdout, Stderr: stderr,
+			})
+
+			output := stdout.String()
+			if tt.Want_Diag == "" {
+				if code != 0 {
+					t.Errorf("expected exit 0, got %d; output: %s",
+						code, output)
+				}
+			} else {
+				if !bytes.Contains(stdout.Bytes(), []byte(tt.Want_Diag)) {
+					t.Errorf("expected output containing %q, got: %s",
+						tt.Want_Diag, output)
+				}
+			}
+		})
+	}
+}
+
+// Additional cases, split to keep each function within the length limit.
+func Test_Variable_Shadow_Part3(t *testing.T) {
+	t.Parallel()
+	for _, tt := range []struct {
+		Name      string
+		Files     map[string]string
+		Want_Diag string
+	}{
+
 		{
 			Name: "nested blocks exercise scope.Parent.Parent != nil branch",
 			Files: map[string]string{
@@ -166,9 +270,7 @@ func f() {
 			},
 			Want_Diag: "shadows outer scope variable",
 		},
-	}
-
-	for _, tt := range tests {
+	} {
 		t.Run(tt.Name, func(t *testing.T) {
 			fsys_map := make(fstest.MapFS)
 			for k, v := range tt.Files {
@@ -176,16 +278,20 @@ func f() {
 			}
 			stdout := &bytes.Buffer{}
 			stderr := &bytes.Buffer{}
-			code := lint.Main(&lint.Main_Input{Fsys: fsys_map, Stdout: stdout, Stderr: stderr})
+			code := lint.Main(&lint.Main_Input{
+				Fsys: fsys_map, Stdout: stdout, Stderr: stderr,
+			})
 
 			output := stdout.String()
 			if tt.Want_Diag == "" {
 				if code != 0 {
-					t.Errorf("expected exit 0, got %d; output: %s", code, output)
+					t.Errorf("expected exit 0, got %d; output: %s",
+						code, output)
 				}
 			} else {
 				if !bytes.Contains(stdout.Bytes(), []byte(tt.Want_Diag)) {
-					t.Errorf("expected output containing %q, got: %s", tt.Want_Diag, output)
+					t.Errorf("expected output containing %q, got: %s",
+						tt.Want_Diag, output)
 				}
 			}
 		})
@@ -237,53 +343,41 @@ func f() {
 // assignments, with the mixed-blank and interface-satisfaction exceptions.
 func Test_No_Discard(t *testing.T) {
 	t.Parallel()
-	tests := []struct {
+	for _, tt := range []struct {
 		Name      string
 		Files     map[string]string
 		Want_Diag string
 	}{
-		{Name: "single discard assign", Files: map[string]string{"test.go": `package main
+
+		{Name: "single discard assign",
+			Files: map[string]string{"test.go": `package main
 func f() {
 	_ = g()
 }`}, Want_Diag: "discard"},
-		{Name: "two discards short decl", Files: map[string]string{"test.go": `package main
+
+		{Name: "two discards short decl",
+			Files: map[string]string{"test.go": `package main
 func f() {
 	_, _ := g()
 }`}, Want_Diag: "discard"},
-		{Name: "three discards assign", Files: map[string]string{"test.go": `package main
+
+		{Name: "three discards assign",
+			Files: map[string]string{"test.go": `package main
 func f() {
 	_, _, _ = g()
 }`}, Want_Diag: "discard"},
-		{Name: "var blank no type", Files: map[string]string{"test.go": `package main
+
+		{Name: "var blank no type",
+			Files: map[string]string{"test.go": `package main
 var _ = g()`}, Want_Diag: "discard"},
-		{Name: "mixed lhs short decl allowed", Files: map[string]string{"test.go": `package main
+
+		{Name: "mixed lhs short decl allowed",
+			Files: map[string]string{"test.go": `package main
 func f() {
 	_, x := g()
 	_ = x
 }`}, Want_Diag: "discard"},
-		{Name: "mixed lhs short decl only", Files: map[string]string{"test.go": `package main
-
-import invariant "github.com/james-orcales/james-orcales/golang_snacks/invariant/v2/invariant_default"
-
-const fixture_hi = 100
-
-func f() (result int) {
-	defer func() {
-		invariant.Cross_Product(
-			invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: result, Lo: 0, Hi: fixture_hi}),
-			invariant.Always(result == 0, "result is zero"),
-		)
-	}()
-	_, x := g()
-	invariant.Cross_Product(
-		invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: x, Lo: 0, Hi: fixture_hi}),
-		invariant.Always(x == 0, "x is zero"),
-	)
-	return x
-}`}, Want_Diag: ""},
-	}
-
-	for _, tt := range tests {
+	} {
 		t.Run(tt.Name, func(t *testing.T) {
 			fsys_map := make(fstest.MapFS)
 			for k, v := range tt.Files {
@@ -291,16 +385,80 @@ func f() (result int) {
 			}
 			stdout := &bytes.Buffer{}
 			stderr := &bytes.Buffer{}
-			code := lint.Main(&lint.Main_Input{Fsys: fsys_map, Stdout: stdout, Stderr: stderr})
+			code := lint.Main(&lint.Main_Input{
+				Fsys: fsys_map, Stdout: stdout, Stderr: stderr,
+			})
 			output := stdout.String()
 			if tt.Want_Diag == "" {
 				if code != 0 {
-					t.Errorf("expected exit 0, got %d; output: %s", code, output)
+					t.Errorf("expected exit 0, got %d; output: %s",
+						code, output)
 				}
 				return
 			}
 			if !bytes.Contains(stdout.Bytes(), []byte(tt.Want_Diag)) {
-				t.Errorf("expected output containing %q, got: %s", tt.Want_Diag, output)
+				t.Errorf("expected output containing %q, got: %s",
+					tt.Want_Diag, output)
+			}
+		})
+	}
+}
+
+// Additional cases, split to keep each function within the length limit.
+func Test_No_Discard_Part2(t *testing.T) {
+	t.Parallel()
+	for _, tt := range []struct {
+		Name      string
+		Files     map[string]string
+		Want_Diag string
+	}{
+
+		{Name: "mixed lhs short decl only",
+			Files: map[string]string{"test.go": `package main
+
+` + fixture_invariant_import + `
+const fixture_hi = 100
+
+func f() (result int) {
+	defer func() {
+		invariant.Cross_Product(
+			invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
+				X: result, Lo: 0, Hi: fixture_hi,
+			}),
+			invariant.Always(result == 0, "result is zero"),
+		)
+	}()
+	_, x := g()
+	invariant.Cross_Product(
+		invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
+			X: x, Lo: 0, Hi: fixture_hi,
+		}),
+		invariant.Always(x == 0, "x is zero"),
+	)
+	return x
+}`}, Want_Diag: ""},
+	} {
+		t.Run(tt.Name, func(t *testing.T) {
+			fsys_map := make(fstest.MapFS)
+			for k, v := range tt.Files {
+				fsys_map[k] = &fstest.MapFile{Data: gofmt_must(t, v)}
+			}
+			stdout := &bytes.Buffer{}
+			stderr := &bytes.Buffer{}
+			code := lint.Main(&lint.Main_Input{
+				Fsys: fsys_map, Stdout: stdout, Stderr: stderr,
+			})
+			output := stdout.String()
+			if tt.Want_Diag == "" {
+				if code != 0 {
+					t.Errorf("expected exit 0, got %d; output: %s",
+						code, output)
+				}
+				return
+			}
+			if !bytes.Contains(stdout.Bytes(), []byte(tt.Want_Diag)) {
+				t.Errorf("expected output containing %q, got: %s",
+					tt.Want_Diag, output)
 			}
 		})
 	}
@@ -389,32 +547,39 @@ func Test_Exported_Type_Exposes_Private(t *testing.T) {
 		Files     map[string]string
 		Want_Diag string
 	}{
-		{Name: "direct lowercase field flagged", Files: map[string]string{"test.go": `package main
+		{Name: "direct lowercase field flagged",
+			Files: map[string]string{"test.go": `package main
 type Foo struct { F bar }
 type bar int
 `}, Want_Diag: "exposes unexported type bar"},
-		{Name: "pointer to lowercase flagged", Files: map[string]string{"test.go": `package main
+		{Name: "pointer to lowercase flagged",
+			Files: map[string]string{"test.go": `package main
 type Foo struct { F *bar }
 type bar int
 `}, Want_Diag: "exposes unexported type bar"},
-		{Name: "double pointer flagged", Files: map[string]string{"test.go": `package main
+		{Name: "double pointer flagged",
+			Files: map[string]string{"test.go": `package main
 type Foo struct { F **bar }
 type bar int
 `}, Want_Diag: "exposes unexported type bar"},
-		{Name: "embedded lowercase flagged", Files: map[string]string{"test.go": `package main
+		{Name: "embedded lowercase flagged",
+			Files: map[string]string{"test.go": `package main
 type Foo struct { bar }
 type bar struct{}
 `}, Want_Diag: "exposes unexported type bar"},
-		{Name: "transitive via same-file exported flagged", Files: map[string]string{"test.go": `package main
+		{Name: "transitive via same-file exported flagged",
+			Files: map[string]string{"test.go": `package main
 type Foo struct { M Middle }
 type Middle struct { F bar }
 type bar int
 `}, Want_Diag: "exported type Foo exposes unexported type bar"},
-		{Name: "alias to unexported flagged", Files: map[string]string{"test.go": `package main
+		{Name: "alias to unexported flagged",
+			Files: map[string]string{"test.go": `package main
 type Foo = bar
 type bar int
 `}, Want_Diag: "exposes unexported type bar"},
-		{Name: "pointer alias to unexported flagged", Files: map[string]string{"test.go": `package main
+		{Name: "pointer alias to unexported flagged",
+			Files: map[string]string{"test.go": `package main
 type Foo = *bar
 type bar int
 `}, Want_Diag: "exposes unexported type bar"},
@@ -433,7 +598,8 @@ func Test_Exported_Type_Exposes_Private_Allows(t *testing.T) {
 		Files     map[string]string
 		Want_Diag string
 	}{
-		{Name: "builtins allowed", Files: map[string]string{"test.go": `package main
+		{Name: "builtins allowed",
+			Files: map[string]string{"test.go": `package main
 type Foo struct {
 	I int
 	S string
@@ -444,40 +610,49 @@ type Foo struct {
 	Y byte
 }
 `}, Want_Diag: ""},
-		{Name: "type parameter allowed", Files: map[string]string{"test.go": `package main
+		{Name: "type parameter allowed",
+			Files: map[string]string{"test.go": `package main
 type Foo[T any] struct { X T }
 `}, Want_Diag: ""},
-		{Name: "qualified type allowed", Files: map[string]string{"test.go": `package main
+		{Name: "qualified type allowed",
+			Files: map[string]string{"test.go": `package main
 import "time"
 type Foo struct { T time.Time }
 `}, Want_Diag: ""},
-		{Name: "self-cycle allowed", Files: map[string]string{"test.go": `package main
+		{Name: "self-cycle allowed",
+			Files: map[string]string{"test.go": `package main
 type Node struct {
 	Next *Node
 	V    int
 }
 `}, Want_Diag: ""},
-		{Name: "mutual recursion allowed", Files: map[string]string{"test.go": `package main
+		{Name: "mutual recursion allowed",
+			Files: map[string]string{"test.go": `package main
 type A struct { B *B }
 type B struct { A *A }
 `}, Want_Diag: ""},
-		{Name: "unexported parent allowed", Files: map[string]string{"test.go": `package main
+		{Name: "unexported parent allowed",
+			Files: map[string]string{"test.go": `package main
 type foo struct { X bar }
 type bar int
 `}, Want_Diag: ""},
-		{Name: "alias to exported allowed", Files: map[string]string{"test.go": `package main
+		{Name: "alias to exported allowed",
+			Files: map[string]string{"test.go": `package main
 type Foo = Bar
 type Bar int
 `}, Want_Diag: ""},
-		{Name: "pointer alias to exported allowed", Files: map[string]string{"test.go": `package main
+		{Name: "pointer alias to exported allowed",
+			Files: map[string]string{"test.go": `package main
 type Foo = *Bar
 type Bar int
 `}, Want_Diag: ""},
-		{Name: "slice of unexported allowed", Files: map[string]string{"test.go": `package main
+		{Name: "slice of unexported allowed",
+			Files: map[string]string{"test.go": `package main
 type Foo struct { Xs []bar }
 type bar int
 `}, Want_Diag: ""},
-		{Name: "_test.go file skipped", Files: map[string]string{"foo_test.go": `package foo_test
+		{Name: "_test.go file skipped",
+			Files: map[string]string{"foo_test.go": `package foo_test
 type Foo struct { F bar }
 type bar int
 `}, Want_Diag: ""},
@@ -490,29 +665,39 @@ type bar int
 // explicit `return X` statements pass clean.
 func Test_No_Naked_Return(t *testing.T) {
 	t.Parallel()
-	tests := []struct {
+	run_diag_table(t, []struct {
 		Name      string
 		Files     map[string]string
 		Want_Diag string
 	}{
-		{Name: "func with named return and bare return flagged", Files: map[string]string{"test.go": `package main
+
+		{Name: "func with named return and bare return flagged",
+			Files: map[string]string{"test.go": `package main
 func f() (x int) { return }
 `}, Want_Diag: "bare return is banned"},
-		{Name: "method with named return and bare return flagged", Files: map[string]string{"test.go": `package main
+
+		{Name: "method with named return and bare return flagged",
+			Files: map[string]string{"test.go": `package main
 type S struct{}
 func (s *S) f() (x int) { return }
 `}, Want_Diag: "bare return is banned"},
-		{Name: "closure with named return and bare return flagged", Files: map[string]string{"test.go": `package main
+
+		{Name: "closure with named return and bare return flagged",
+			Files: map[string]string{"test.go": `package main
 func g() (out int) {
 	cb := func() (x int) { return }
 	out = cb()
 	return out
 }
 `}, Want_Diag: "bare return is banned"},
-		{Name: "blank-named return with bare return flagged", Files: map[string]string{"test.go": `package main
+
+		{Name: "blank-named return with bare return flagged",
+			Files: map[string]string{"test.go": `package main
 func f() (_ int) { return }
 `}, Want_Diag: "bare return is banned"},
-		{Name: "multiple bare returns each flagged", Files: map[string]string{"test.go": `package main
+
+		{Name: "multiple bare returns each flagged",
+			Files: map[string]string{"test.go": `package main
 func f(c bool) (x int) {
 	if c {
 		return
@@ -520,35 +705,54 @@ func f(c bool) (x int) {
 	return
 }
 `}, Want_Diag: "bare return is banned"},
-		{Name: "void early-exit allowed", Files: map[string]string{"test.go": `package main
+
+		{Name: "void early-exit allowed",
+			Files: map[string]string{"test.go": `package main
 func f() {
 	if true {
 		return
 	}
 }
 `}, Want_Diag: ""},
-		{Name: "void trailing return allowed", Files: map[string]string{"test.go": `package main
+
+		{Name: "void trailing return allowed",
+			Files: map[string]string{"test.go": `package main
 func f() { return }
 `}, Want_Diag: ""},
-		{Name: "explicit return allowed", Files: map[string]string{"test.go": `package main
+	})
+}
 
-import invariant "github.com/james-orcales/james-orcales/golang_snacks/invariant/v2/invariant_default"
+// Additional cases, split to keep each function within the length limit.
+func Test_No_Naked_Return_Part2(t *testing.T) {
+	t.Parallel()
+	run_diag_table(t, []struct {
+		Name      string
+		Files     map[string]string
+		Want_Diag string
+	}{
 
+		{Name: "explicit return allowed",
+			Files: map[string]string{"test.go": `package main
+
+` + fixture_invariant_import + `
 const fixture_hi = 100
 
 func f() (x int) {
 	defer func() {
 		invariant.Cross_Product(
-			invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: x, Lo: 0, Hi: fixture_hi, Message: "x budget"}),
+			invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
+				X: x, Lo: 0, Hi: fixture_hi, Message: "x budget",
+			}),
 		)
 	}()
 	return 0
 }
 `}, Want_Diag: ""},
-		{Name: "void closure inside value-returning func allowed", Files: map[string]string{"test.go": `package main
 
-import invariant "github.com/james-orcales/james-orcales/golang_snacks/invariant/v2/invariant_default"
+		{Name: "void closure inside value-returning func allowed",
+			Files: map[string]string{"test.go": `package main
 
+` + fixture_invariant_import + `
 const fixture_hi = 100
 
 func f() (output int) {
@@ -564,8 +768,7 @@ func f() (output int) {
 	return 0
 }
 `}, Want_Diag: ""},
-	}
-	run_diag_table(t, tests)
+	})
 }
 
 // Test_No_Iota verifies that any use of the iota identifier is flagged.
@@ -835,11 +1038,12 @@ func main() {
 // flagged. Mixed tags emit one diagnostic per disallowed key.
 func Test_No_Third_Party_Struct_Tag_Flagged(t *testing.T) {
 	t.Parallel()
-	tests := []struct {
+	run_diag_table(t, []struct {
 		Name      string
 		Files     map[string]string
 		Want_Diag string
 	}{
+
 		{
 			Name: "yaml tag flagged",
 			Files: map[string]string{
@@ -857,6 +1061,7 @@ type Foo struct {
 			},
 			Want_Diag: "yaml",
 		},
+
 		{
 			Name: "validate tag flagged",
 			Files: map[string]string{
@@ -874,6 +1079,7 @@ type Foo struct {
 			},
 			Want_Diag: "validate",
 		},
+
 		{
 			Name: "mixed json+yaml flags only yaml",
 			Files: map[string]string{
@@ -891,6 +1097,18 @@ type Foo struct {
 			},
 			Want_Diag: "yaml",
 		},
+	})
+}
+
+// Additional cases, split to keep each function within the length limit.
+func Test_No_Third_Party_Struct_Tag_Flagged_Part2(t *testing.T) {
+	t.Parallel()
+	run_diag_table(t, []struct {
+		Name      string
+		Files     map[string]string
+		Want_Diag string
+	}{
+
 		{
 			Name: "nested anonymous struct field tag flagged",
 			Files: map[string]string{
@@ -910,8 +1128,7 @@ type Outer struct {
 			},
 			Want_Diag: "yaml",
 		},
-	}
-	run_diag_table(t, tests)
+	})
 }
 
 // Test_No_Third_Party_Struct_Tag_Allowed verifies the negative side: pure
@@ -919,11 +1136,12 @@ type Outer struct {
 // untagged fields are unaffected.
 func Test_No_Third_Party_Struct_Tag_Allowed(t *testing.T) {
 	t.Parallel()
-	tests := []struct {
+	run_diag_table(t, []struct {
 		Name      string
 		Files     map[string]string
 		Want_Diag string
 	}{
+
 		{
 			Name: "json tag allowed",
 			Files: map[string]string{
@@ -941,6 +1159,7 @@ type Foo struct {
 			},
 			Want_Diag: "",
 		},
+
 		{
 			Name: "xml tag allowed",
 			Files: map[string]string{
@@ -958,6 +1177,7 @@ type Foo struct {
 			},
 			Want_Diag: "",
 		},
+
 		{
 			Name: "asn1 tag allowed",
 			Files: map[string]string{
@@ -975,6 +1195,18 @@ type Foo struct {
 			},
 			Want_Diag: "",
 		},
+	})
+}
+
+// Additional cases, split to keep each function within the length limit.
+func Test_No_Third_Party_Struct_Tag_Allowed_Part2(t *testing.T) {
+	t.Parallel()
+	run_diag_table(t, []struct {
+		Name      string
+		Files     map[string]string
+		Want_Diag string
+	}{
+
 		{
 			Name: "json+xml combo allowed",
 			Files: map[string]string{
@@ -992,6 +1224,7 @@ type Foo struct {
 			},
 			Want_Diag: "",
 		},
+
 		{
 			Name: "untagged struct field allowed",
 			Files: map[string]string{
@@ -1009,8 +1242,7 @@ type Foo struct {
 			},
 			Want_Diag: "",
 		},
-	}
-	run_diag_table(t, tests)
+	})
 }
 
 // Test_No_Third_Party_Struct_Tag_Malformed_Ignored verifies that a tag
@@ -1042,18 +1274,18 @@ type Foo struct {
 // numeric literals at the Lo/Hi positions of Distinct_Boundary are flagged.
 func Test_Assertion_Named_Constant_Flagged_Distinct_Boundary(t *testing.T) {
 	t.Parallel()
-	tests := []struct {
+	run_diag_table(t, []struct {
 		Name      string
 		Files     map[string]string
 		Want_Diag string
 	}{
+
 		{
 			Name: "distinct_boundary Lo non-zero literal flagged",
 			Files: map[string]string{
 				"test.go": `package main
 
-import invariant "github.com/james-orcales/james-orcales/golang_snacks/invariant/v2/invariant_default"
-
+` + fixture_invariant_import + `
 const fixture_hi = 100
 
 func f() {
@@ -1066,13 +1298,13 @@ func f() {
 			},
 			Want_Diag: "assertion bound must be a file-level named constant",
 		},
+
 		{
 			Name: "distinct_boundary Hi inline literal flagged",
 			Files: map[string]string{
 				"test.go": `package main
 
-import invariant "github.com/james-orcales/james-orcales/golang_snacks/invariant/v2/invariant_default"
-
+` + fixture_invariant_import + `
 const fixture_hi = 100
 
 func f() {
@@ -1085,13 +1317,24 @@ func f() {
 			},
 			Want_Diag: "assertion bound must be a file-level named constant",
 		},
+	})
+}
+
+// Additional cases, split to keep each function within the length limit.
+func Test_Assertion_Named_Constant_Flagged_Distinct_Boundary_Part2(t *testing.T) {
+	t.Parallel()
+	run_diag_table(t, []struct {
+		Name      string
+		Files     map[string]string
+		Want_Diag string
+	}{
+
 		{
 			Name: "distinct_boundary Hi arithmetic flagged",
 			Files: map[string]string{
 				"test.go": `package main
 
-import invariant "github.com/james-orcales/james-orcales/golang_snacks/invariant/v2/invariant_default"
-
+` + fixture_invariant_import + `
 const fixture_hi = 100
 
 const max_x = 100
@@ -1099,20 +1342,22 @@ const max_x = 100
 func f() {
 	var x int
 	invariant.Cross_Product(
-		invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: x, Lo: 0, Hi: max_x + 1}),
+		invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
+				X: x, Lo: 0, Hi: max_x + 1,
+			}),
 	)
 }
 `,
 			},
 			Want_Diag: "assertion bound must be a file-level named constant",
 		},
+
 		{
 			Name: "distinct_boundary Hi typed cast flagged",
 			Files: map[string]string{
 				"test.go": `package main
 
-import invariant "github.com/james-orcales/james-orcales/golang_snacks/invariant/v2/invariant_default"
-
+` + fixture_invariant_import + `
 const fixture_hi = 100
 
 const max_x = 100
@@ -1120,15 +1365,16 @@ const max_x = 100
 func f() {
 	var x int
 	invariant.Cross_Product(
-		invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: x, Lo: 0, Hi: int(max_x)}),
+		invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
+				X: x, Lo: 0, Hi: int(max_x),
+			}),
 	)
 }
 `,
 			},
 			Want_Diag: "assertion bound must be a file-level named constant",
 		},
-	}
-	run_diag_table(t, tests)
+	})
 }
 
 // Test_Assertion_Named_Constant_Flagged_Predicate verifies that numeric
@@ -1145,8 +1391,7 @@ func Test_Assertion_Named_Constant_Flagged_Predicate(t *testing.T) {
 			Files: map[string]string{
 				"test.go": `package main
 
-import invariant "github.com/james-orcales/james-orcales/golang_snacks/invariant/v2/invariant_default"
-
+` + fixture_invariant_import + `
 const fixture_hi = 100
 
 func f() {
@@ -1162,8 +1407,7 @@ func f() {
 			Files: map[string]string{
 				"test.go": `package main
 
-import invariant "github.com/james-orcales/james-orcales/golang_snacks/invariant/v2/invariant_default"
-
+` + fixture_invariant_import + `
 const fixture_hi = 100
 
 func f() {
@@ -1179,8 +1423,7 @@ func f() {
 			Files: map[string]string{
 				"test.go": `package main
 
-import invariant "github.com/james-orcales/james-orcales/golang_snacks/invariant/v2/invariant_default"
-
+` + fixture_invariant_import + `
 const fixture_hi = 100
 
 func f() {
@@ -1200,18 +1443,18 @@ func f() {
 // explicitly allows.
 func Test_Assertion_Named_Constant_Allowed_Bounds(t *testing.T) {
 	t.Parallel()
-	tests := []struct {
+	run_diag_table(t, []struct {
 		Name      string
 		Files     map[string]string
 		Want_Diag string
 	}{
+
 		{
 			Name: "distinct_boundary named const bounds allowed",
 			Files: map[string]string{
 				"test.go": `package main
 
-import invariant "github.com/james-orcales/james-orcales/golang_snacks/invariant/v2/invariant_default"
-
+` + fixture_invariant_import + `
 const fixture_hi = 100
 
 const max_x = 100
@@ -1226,13 +1469,13 @@ func f() {
 			},
 			Want_Diag: "",
 		},
+
 		{
 			Name: "always eq zero allowed",
 			Files: map[string]string{
 				"test.go": `package main
 
-import invariant "github.com/james-orcales/james-orcales/golang_snacks/invariant/v2/invariant_default"
-
+` + fixture_invariant_import + `
 const fixture_hi = 100
 
 func f() {
@@ -1243,13 +1486,13 @@ func f() {
 			},
 			Want_Diag: "",
 		},
+
 		{
 			Name: "sometimes eq empty string allowed",
 			Files: map[string]string{
 				"test.go": `package main
 
-import invariant "github.com/james-orcales/james-orcales/golang_snacks/invariant/v2/invariant_default"
-
+` + fixture_invariant_import + `
 const fixture_hi = 100
 
 func f() {
@@ -1260,13 +1503,24 @@ func f() {
 			},
 			Want_Diag: "",
 		},
+	})
+}
+
+// Additional cases, split to keep each function within the length limit.
+func Test_Assertion_Named_Constant_Allowed_Bounds_Part2(t *testing.T) {
+	t.Parallel()
+	run_diag_table(t, []struct {
+		Name      string
+		Files     map[string]string
+		Want_Diag string
+	}{
+
 		{
 			Name: "always eq nil allowed",
 			Files: map[string]string{
 				"test.go": `package main
 
-import invariant "github.com/james-orcales/james-orcales/golang_snacks/invariant/v2/invariant_default"
-
+` + fixture_invariant_import + `
 const fixture_hi = 100
 
 func f() {
@@ -1277,8 +1531,7 @@ func f() {
 			},
 			Want_Diag: "",
 		},
-	}
-	run_diag_table(t, tests)
+	})
 }
 
 // Test_Assertion_Named_Constant_Allowed_Predicate verifies the named-const
@@ -1296,8 +1549,7 @@ func Test_Assertion_Named_Constant_Allowed_Predicate(t *testing.T) {
 			Files: map[string]string{
 				"test.go": `package main
 
-import invariant "github.com/james-orcales/james-orcales/golang_snacks/invariant/v2/invariant_default"
-
+` + fixture_invariant_import + `
 const fixture_hi = 100
 
 const max_x = 100
@@ -1318,7 +1570,7 @@ func f() {
 import (
 	"math"
 
-	invariant "github.com/james-orcales/james-orcales/golang_snacks/invariant/v2/invariant_default"
+	invariant "` + fixture_invariant_import_path + `"
 )
 
 func f() {
@@ -1365,18 +1617,18 @@ func make_v() (result Foo) { return Foo{1, 2} }
 // literals, slice literals, and empty struct literals are not flagged.
 func Test_Keyed_Struct_Init_Allowed(t *testing.T) {
 	t.Parallel()
-	tests := []struct {
+	run_diag_table(t, []struct {
 		Name      string
 		Files     map[string]string
 		Want_Diag string
 	}{
+
 		{
 			Name: "same-file keyed allowed",
 			Files: map[string]string{
 				"test.go": `package main
 
-import invariant "github.com/james-orcales/james-orcales/golang_snacks/invariant/v2/invariant_default"
-
+` + fixture_invariant_import + `
 const fixture_hi = 100
 
 type Foo struct {
@@ -1387,9 +1639,13 @@ type Foo struct {
 func make_v() (result Foo) {
 	defer func() {
 		invariant.Cross_Product(
-			invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: result.A, Lo: 0, Hi: fixture_hi}),
+			invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
+				X: result.A, Lo: 0, Hi: fixture_hi,
+			}),
 			invariant.Always(result.A == 0, "result.A is zero"),
-			invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: result.B, Lo: 0, Hi: fixture_hi}),
+			invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
+				X: result.B, Lo: 0, Hi: fixture_hi,
+			}),
 			invariant.Always(result.B == 0, "result.B is zero"),
 		)
 	}()
@@ -1399,19 +1655,21 @@ func make_v() (result Foo) {
 			},
 			Want_Diag: "",
 		},
+
 		{
 			Name: "slice literal allowed",
 			Files: map[string]string{
 				"test.go": `package main
 
-import invariant "github.com/james-orcales/james-orcales/golang_snacks/invariant/v2/invariant_default"
-
+` + fixture_invariant_import + `
 const fixture_hi = 100
 
 func make_v() (result []int) {
 	defer func() {
 		invariant.Cross_Product(
-			invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: len(result), Lo: 0, Hi: fixture_hi, Message: "len"}),
+			invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
+				X: len(result), Lo: 0, Hi: fixture_hi, Message: "len",
+			}),
 		)
 	}()
 	return []int{1, 2, 3}
@@ -1420,13 +1678,24 @@ func make_v() (result []int) {
 			},
 			Want_Diag: "",
 		},
+	})
+}
+
+// Additional cases, split to keep each function within the length limit.
+func Test_Keyed_Struct_Init_Allowed_Part2(t *testing.T) {
+	t.Parallel()
+	run_diag_table(t, []struct {
+		Name      string
+		Files     map[string]string
+		Want_Diag string
+	}{
+
 		{
 			Name: "empty struct literal allowed",
 			Files: map[string]string{
 				"test.go": `package main
 
-import invariant "github.com/james-orcales/james-orcales/golang_snacks/invariant/v2/invariant_default"
-
+` + fixture_invariant_import + `
 const fixture_hi = 100
 
 type Foo struct {
@@ -1436,7 +1705,9 @@ type Foo struct {
 func make_v() (result Foo) {
 	defer func() {
 		invariant.Cross_Product(
-			invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: result.A, Lo: 0, Hi: fixture_hi}),
+			invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
+				X: result.A, Lo: 0, Hi: fixture_hi,
+			}),
 			invariant.Always(result.A == 0, "result.A is zero"),
 		)
 	}()
@@ -1446,8 +1717,7 @@ func make_v() (result Foo) {
 			},
 			Want_Diag: "",
 		},
-	}
-	run_diag_table(t, tests)
+	})
 }
 
 // Test_Gofmt verifies that gofmt-dirty sources are flagged. Bypasses
@@ -1470,15 +1740,19 @@ func Test_Gofmt(t *testing.T) {
 			Name: "clean source allowed",
 			Files: map[string]string{
 				"test.go": "package main\n\n" +
-					"import invariant \"github.com/james-orcales/james-orcales/golang_snacks/invariant/v2\"\n\n" +
+					"import invariant \"" +
+					"github.com/james-orcales/james-orcales/" +
+					"golang_snacks/invariant/v2\"\n\n" +
 					"const fixture_hi = 100\n\n" +
 					"func f() (result int) {\n" +
 					"\tdefer func() {\n" +
 					"\t\tinvariant.Cross_Product(\n" +
-					"\t\t\tinvariant.Distinct_Boundary(&invariant.Boundary_Input[int]{\n" +
+					"\t\t\tinvariant.Distinct_Boundary(" +
+					"&invariant.Boundary_Input[int]{\n" +
 					"\t\t\t\tX: result, Lo: 0, Hi: fixture_hi,\n" +
 					"\t\t\t}),\n" +
-					"\t\t\tinvariant.Always(result == 0, \"result is zero\"),\n" +
+					"\t\t\tinvariant.Always(" +
+					"result == 0, \"result is zero\"),\n" +
 					"\t\t)\n" +
 					"\t}()\n" +
 					"\treturn 1\n" +
@@ -1493,19 +1767,24 @@ func Test_Gofmt(t *testing.T) {
 		t.Run(tt.Name, func(t *testing.T) {
 			fsys_map := make(fstest.MapFS)
 			for k, v := range tt.Files {
-				fsys_map[k] = &fstest.MapFile{Data: []byte(v)}
+				fsys_map[k] = &fstest.MapFile{
+					Data: []byte(v)}
 			}
 			stdout := &bytes.Buffer{}
-			code := lint.Main(&lint.Main_Input{Fsys: fsys_map, Stdout: stdout, Stderr: &bytes.Buffer{}})
+			code := lint.Main(&lint.Main_Input{
+				Fsys: fsys_map, Stdout: stdout, Stderr: &bytes.Buffer{},
+			})
 			output := stdout.String()
 			if tt.Want_Diag == "" {
 				if code != 0 {
-					t.Errorf("expected exit 0, got %d; output: %s", code, output)
+					t.Errorf("expected exit 0, got %d; output: %s",
+						code, output)
 				}
 				return
 			}
 			if !bytes.Contains(stdout.Bytes(), []byte(tt.Want_Diag)) {
-				t.Errorf("expected output containing %q, got: %s", tt.Want_Diag, output)
+				t.Errorf("expected output containing %q, got: %s",
+					tt.Want_Diag, output)
 			}
 		})
 	}
@@ -1591,16 +1870,20 @@ func run_diag_table(t *testing.T, tests []struct {
 			}
 			stdout := &bytes.Buffer{}
 			stderr := &bytes.Buffer{}
-			code := lint.Main(&lint.Main_Input{Fsys: fsys_map, Stdout: stdout, Stderr: stderr})
+			code := lint.Main(&lint.Main_Input{
+				Fsys: fsys_map, Stdout: stdout, Stderr: stderr,
+			})
 			output := stdout.String()
 			if tt.Want_Diag == "" {
 				if code != 0 {
-					t.Errorf("expected exit 0, got %d; output: %s", code, output)
+					t.Errorf("expected exit 0, got %d; output: %s",
+						code, output)
 				}
 				return
 			}
 			if !bytes.Contains(stdout.Bytes(), []byte(tt.Want_Diag)) {
-				t.Errorf("expected output containing %q, got: %s", tt.Want_Diag, output)
+				t.Errorf("expected output containing %q, got: %s",
+					tt.Want_Diag, output)
 			}
 		})
 	}
@@ -1658,15 +1941,19 @@ func run_doctrine_diag_table(t *testing.T, tests []struct {
 					fsys_map[k] = &fstest.MapFile{Data: gofmt_must(t, v)}
 					continue
 				}
-				fsys_map[k] = &fstest.MapFile{Data: []byte(v)}
+				fsys_map[k] = &fstest.MapFile{
+					Data: []byte(v)}
 			}
 			stdout := &bytes.Buffer{}
 			stderr := &bytes.Buffer{}
-			code := lint.Main(&lint.Main_Input{Fsys: fsys_map, Stdout: stdout, Stderr: stderr})
+			code := lint.Main(&lint.Main_Input{
+				Fsys: fsys_map, Stdout: stdout, Stderr: stderr,
+			})
 			output := stdout.String()
 			if tt.Want_Diags == nil {
 				if code != 0 {
-					t.Errorf("expected exit 0, got %d; output:\n%s", code, output)
+					t.Errorf("expected exit 0, got %d; output:\n%s",
+						code, output)
 				}
 				return
 			}
@@ -1675,12 +1962,14 @@ func run_doctrine_diag_table(t *testing.T, tests []struct {
 			}
 			for _, w := range tt.Want_Diags {
 				if !bytes.Contains(stdout.Bytes(), []byte(w)) {
-					t.Errorf("expected output containing %q; got:\n%s", w, output)
+					t.Errorf("expected output containing %q; got:\n%s",
+						w, output)
 				}
 			}
 			for _, f := range tt.Forbid {
 				if bytes.Contains(stdout.Bytes(), []byte(f)) {
-					t.Errorf("expected output NOT to contain %q; got:\n%s", f, output)
+					t.Errorf("expected output NOT to contain %q; got:\n%s",
+						f, output)
 				}
 			}
 		})
@@ -1692,11 +1981,12 @@ func run_doctrine_diag_table(t *testing.T, tests []struct {
 // and no false positives on substrings like "helpme".
 func Test_Banned_Identifiers(t *testing.T) {
 	t.Parallel()
-	tests := []struct {
+	run_diag_table(t, []struct {
 		Name      string
 		Files     map[string]string
 		Want_Diag string
 	}{
+
 		{
 			Name: "bare helper flagged",
 			Files: map[string]string{
@@ -1707,6 +1997,7 @@ func helper() { return }
 			},
 			Want_Diag: "banned word 'helper'",
 		},
+
 		{
 			Name: "suffix helper flagged",
 			Files: map[string]string{
@@ -1717,6 +2008,7 @@ func read_helper() { return }
 			},
 			Want_Diag: "banned word 'helper'",
 		},
+
 		{
 			Name: "capitalized Helper flagged",
 			Files: map[string]string{
@@ -1727,6 +2019,7 @@ func Helper_Func() { return }
 			},
 			Want_Diag: "banned word 'helper'",
 		},
+
 		{
 			Name: "helper as middle segment flagged",
 			Files: map[string]string{
@@ -1737,6 +2030,7 @@ func read_helper_thing() { return }
 			},
 			Want_Diag: "banned word 'helper'",
 		},
+
 		{
 			Name: "no helper segment allowed",
 			Files: map[string]string{
@@ -1747,6 +2041,18 @@ func read_sector() { return }
 			},
 			Want_Diag: "",
 		},
+	})
+}
+
+// Additional cases, split to keep each function within the length limit.
+func Test_Banned_Identifiers_Part2(t *testing.T) {
+	t.Parallel()
+	run_diag_table(t, []struct {
+		Name      string
+		Files     map[string]string
+		Want_Diag string
+	}{
+
 		{
 			Name: "helpme not flagged",
 			Files: map[string]string{
@@ -1757,6 +2063,7 @@ func helpme() { return }
 			},
 			Want_Diag: "",
 		},
+
 		{
 			Name: "function name util flagged",
 			Files: map[string]string{
@@ -1767,6 +2074,7 @@ func parse_util() { return }
 			},
 			Want_Diag: "banned word 'util'",
 		},
+
 		{
 			Name: "function name Utilities flagged",
 			Files: map[string]string{
@@ -1777,8 +2085,7 @@ func Make_Utilities() { return }
 			},
 			Want_Diag: "banned word 'utilities'",
 		},
-	}
-	run_diag_table(t, tests)
+	})
 }
 
 // Test_Banned_Decl_Sites_Local_Vars verifies that the universal banned-segment
@@ -1852,30 +2159,36 @@ func F() (result int) {
 // never as a declared name, so the banned-segment check doesn't fire.
 func Test_Banned_Declaration_Sites_Builtin_Exempt(t *testing.T) {
 	t.Parallel()
-	tests := []struct {
+	run_diag_table(t, []struct {
 		Name      string
 		Files     map[string]string
 		Want_Diag string
 	}{
+
 		{
 			Name: "len builtin call site exempt",
 			Files: map[string]string{
 				"test.go": `package main
 
-import invariant "github.com/james-orcales/james-orcales/golang_snacks/invariant/v2/invariant_default"
-
+` + fixture_invariant_import + `
 const fixture_hi = 100
 
 func F(xs []int) (result int) {
 	defer func() {
 		invariant.Cross_Product(
-			invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: result, Lo: 0, Hi: fixture_hi}),
+			invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
+				X: result, Lo: 0, Hi: fixture_hi,
+			}),
 			invariant.Always(result == 0, "result is zero"),
-			invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: len(xs), Lo: 0, Hi: fixture_hi, Message: "len"}),
+			invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
+			X: len(xs), Lo: 0, Hi: fixture_hi, Message: "len",
+		}),
 		)
 	}()
 	invariant.Cross_Product(
-		invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: len(xs), Lo: 0, Hi: fixture_hi, Message: "len"}),
+		invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
+			X: len(xs), Lo: 0, Hi: fixture_hi, Message: "len",
+		}),
 	)
 	return len(xs)
 }
@@ -1883,25 +2196,42 @@ func F(xs []int) (result int) {
 			},
 			Want_Diag: "",
 		},
+	})
+}
+
+// Additional cases, split to keep each function within the length limit.
+func Test_Banned_Declaration_Sites_Builtin_Exempt_Part2(t *testing.T) {
+	t.Parallel()
+	run_diag_table(t, []struct {
+		Name      string
+		Files     map[string]string
+		Want_Diag string
+	}{
+
 		{
 			Name: "cap builtin call site exempt",
 			Files: map[string]string{
 				"test.go": `package main
 
-import invariant "github.com/james-orcales/james-orcales/golang_snacks/invariant/v2/invariant_default"
-
+` + fixture_invariant_import + `
 const fixture_hi = 100
 
 func F(xs []int) (result int) {
 	defer func() {
 		invariant.Cross_Product(
-			invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: result, Lo: 0, Hi: fixture_hi}),
+			invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
+				X: result, Lo: 0, Hi: fixture_hi,
+			}),
 			invariant.Always(result == 0, "result is zero"),
-			invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: len(xs), Lo: 0, Hi: fixture_hi, Message: "len"}),
+			invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
+			X: len(xs), Lo: 0, Hi: fixture_hi, Message: "len",
+		}),
 		)
 	}()
 	invariant.Cross_Product(
-		invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: len(xs), Lo: 0, Hi: fixture_hi, Message: "len"}),
+		invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
+			X: len(xs), Lo: 0, Hi: fixture_hi, Message: "len",
+		}),
 	)
 	return cap(xs)
 }
@@ -1909,8 +2239,7 @@ func F(xs []int) (result int) {
 			},
 			Want_Diag: "",
 		},
-	}
-	run_diag_table(t, tests)
+	})
 }
 
 // Test_Banned_Declaration_Sites_Local_Vars_Clean covers the local-var path
@@ -1928,20 +2257,25 @@ func Test_Banned_Declaration_Sites_Local_Vars_Clean(t *testing.T) {
 			Files: map[string]string{
 				"test.go": `package main
 
-import invariant "github.com/james-orcales/james-orcales/golang_snacks/invariant/v2/invariant_default"
-
+` + fixture_invariant_import + `
 const fixture_hi = 100
 
 func F(buffer []byte) (result int) {
 	defer func() {
 		invariant.Cross_Product(
-			invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: result, Lo: 0, Hi: fixture_hi}),
+			invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
+				X: result, Lo: 0, Hi: fixture_hi,
+			}),
 			invariant.Always(result == 0, "result is zero"),
-			invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: len(buffer), Lo: 0, Hi: fixture_hi, Message: "len"}),
+			invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
+			X: len(buffer), Lo: 0, Hi: fixture_hi, Message: "len",
+		}),
 		)
 	}()
 	invariant.Cross_Product(
-		invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: len(buffer), Lo: 0, Hi: fixture_hi, Message: "len"}),
+		invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
+			X: len(buffer), Lo: 0, Hi: fixture_hi, Message: "len",
+		}),
 	)
 	n := 0
 	return n
@@ -1958,11 +2292,12 @@ func F(buffer []byte) (result int) {
 // check reaches parameter, named-return, and struct-field declarations.
 func Test_Banned_Declaration_Sites_Signatures(t *testing.T) {
 	t.Parallel()
-	tests := []struct {
+	run_diag_table(t, []struct {
 		Name      string
 		Files     map[string]string
 		Want_Diag string
 	}{
+
 		{
 			Name: "param name with len segment flagged",
 			Files: map[string]string{
@@ -1973,6 +2308,7 @@ func F(buf_len int) (result int) { return buf_len }
 			},
 			Want_Diag: "banned word 'len'",
 		},
+
 		{
 			Name: "named return with length segment flagged",
 			Files: map[string]string{
@@ -1983,6 +2319,7 @@ func F() (length int) { return 0 }
 			},
 			Want_Diag: "banned word 'length'",
 		},
+
 		{
 			Name: "struct field with Length segment flagged",
 			Files: map[string]string{
@@ -1993,13 +2330,24 @@ type S struct{ Buf_Length int }
 			},
 			Want_Diag: "banned word 'length'",
 		},
+	})
+}
+
+// Additional cases, split to keep each function within the length limit.
+func Test_Banned_Declaration_Sites_Signatures_Part2(t *testing.T) {
+	t.Parallel()
+	run_diag_table(t, []struct {
+		Name      string
+		Files     map[string]string
+		Want_Diag string
+	}{
+
 		{
 			Name: "clean signature allowed",
 			Files: map[string]string{
 				"test.go": `package main
 
-import invariant "github.com/james-orcales/james-orcales/golang_snacks/invariant/v2/invariant_default"
-
+` + fixture_invariant_import + `
 const fixture_hi = 100
 
 type S struct{ Count int }
@@ -2007,13 +2355,19 @@ type S struct{ Count int }
 func F(buffer []byte) (result int) {
 	defer func() {
 		invariant.Cross_Product(
-			invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: result, Lo: 0, Hi: fixture_hi}),
+			invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
+				X: result, Lo: 0, Hi: fixture_hi,
+			}),
 			invariant.Always(result == 0, "result is zero"),
-			invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: len(buffer), Lo: 0, Hi: fixture_hi, Message: "len"}),
+			invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
+			X: len(buffer), Lo: 0, Hi: fixture_hi, Message: "len",
+		}),
 		)
 	}()
 	invariant.Cross_Product(
-		invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: len(buffer), Lo: 0, Hi: fixture_hi, Message: "len"}),
+		invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
+			X: len(buffer), Lo: 0, Hi: fixture_hi, Message: "len",
+		}),
 	)
 	return 0
 }
@@ -2021,19 +2375,19 @@ func F(buffer []byte) (result int) {
 			},
 			Want_Diag: "",
 		},
-	}
-	run_diag_table(t, tests)
+	})
 }
 
 // Test_Naming_For_Loop verifies that a C-style for-loop induction variable
 // (`for i := 0; i < N; i++`) must be named with an _index suffix.
 func Test_Naming_For_Loop(t *testing.T) {
 	t.Parallel()
-	tests := []struct {
+	run_diag_table(t, []struct {
 		Name      string
 		Files     map[string]string
 		Want_Diag string
 	}{
+
 		{
 			Name: "bare i induction flagged",
 			Files: map[string]string{
@@ -2049,24 +2403,28 @@ func F(n int) (result int) {
 			},
 			Want_Diag: "i (used as index) → rename to i_index",
 		},
+
 		{
 			Name: "i_index induction allowed",
 			Files: map[string]string{
 				"test.go": `package main
 
-import invariant "github.com/james-orcales/james-orcales/golang_snacks/invariant/v2/invariant_default"
-
+` + fixture_invariant_import + `
 const fixture_hi = 100
 
 func F(n int) (result int) {
 	defer func() {
 		invariant.Cross_Product(
-			invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: result, Lo: 0, Hi: fixture_hi}),
+			invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
+				X: result, Lo: 0, Hi: fixture_hi,
+			}),
 			invariant.Always(result == 0, "result is zero"),
 		)
 	}()
 	invariant.Cross_Product(
-		invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: n, Lo: 0, Hi: fixture_hi}),
+		invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
+			X: n, Lo: 0, Hi: fixture_hi,
+		}),
 		invariant.Always(n == 0, "n is zero"),
 	)
 	for i_index := 0; i_index < n; i_index++ {
@@ -2078,19 +2436,32 @@ func F(n int) (result int) {
 			},
 			Want_Diag: "",
 		},
+	})
+}
+
+// Additional cases, split to keep each function within the length limit.
+func Test_Naming_For_Loop_Part2(t *testing.T) {
+	t.Parallel()
+	run_diag_table(t, []struct {
+		Name      string
+		Files     map[string]string
+		Want_Diag string
+	}{
+
 		{
 			Name: "non-induction for-loop not triggered",
 			Files: map[string]string{
 				"test.go": `package main
 
-import invariant "github.com/james-orcales/james-orcales/golang_snacks/invariant/v2/invariant_default"
-
+` + fixture_invariant_import + `
 const fixture_hi = 100
 
 func F() (result int) {
 	defer func() {
 		invariant.Cross_Product(
-			invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: result, Lo: 0, Hi: fixture_hi}),
+			invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
+				X: result, Lo: 0, Hi: fixture_hi,
+			}),
 			invariant.Always(result == 0, "result is zero"),
 		)
 	}()
@@ -2103,8 +2474,7 @@ func F() (result int) {
 			},
 			Want_Diag: "",
 		},
-	}
-	run_diag_table(t, tests)
+	})
 }
 
 // Test_Naming_Make verifies that make's count/size argument, when a bare
@@ -2112,11 +2482,12 @@ func F() (result int) {
 // is byte).
 func Test_Naming_Make(t *testing.T) {
 	t.Parallel()
-	tests := []struct {
+	run_diag_table(t, []struct {
 		Name      string
 		Files     map[string]string
 		Want_Diag string
 	}{
+
 		{
 			Name: "make slice of T with bare n flagged",
 			Files: map[string]string{
@@ -2130,6 +2501,7 @@ func F(n int) (result []int) {
 			},
 			Want_Diag: "n (used as count) → rename to n_count",
 		},
+
 		{
 			Name: "make slice of byte with bare n flagged as size",
 			Files: map[string]string{
@@ -2143,6 +2515,7 @@ func F(n int) (result []byte) {
 			},
 			Want_Diag: "n (used as size) → rename to n_size",
 		},
+
 		{
 			Name: "make map with bare n flagged as count",
 			Files: map[string]string{
@@ -2156,23 +2529,38 @@ func F(n int) (result map[string]int) {
 			},
 			Want_Diag: "n (used as count) → rename to n_count",
 		},
+	})
+}
+
+// Additional cases, split to keep each function within the length limit.
+func Test_Naming_Make_Part2(t *testing.T) {
+	t.Parallel()
+	run_diag_table(t, []struct {
+		Name      string
+		Files     map[string]string
+		Want_Diag string
+	}{
+
 		{
 			Name: "make with suffixed arg allowed",
 			Files: map[string]string{
 				"test.go": `package main
 
-import invariant "github.com/james-orcales/james-orcales/golang_snacks/invariant/v2/invariant_default"
-
+` + fixture_invariant_import + `
 const fixture_hi = 100
 
 func F(n_count int) (result []int) {
 	defer func() {
 		invariant.Cross_Product(
-			invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: len(result), Lo: 0, Hi: fixture_hi, Message: "len"}),
+			invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
+				X: len(result), Lo: 0, Hi: fixture_hi, Message: "len",
+			}),
 		)
 	}()
 	invariant.Cross_Product(
-		invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: n_count, Lo: 0, Hi: fixture_hi}),
+		invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
+			X: n_count, Lo: 0, Hi: fixture_hi,
+		}),
 		invariant.Always(n_count == 0, "n_count is zero"),
 	)
 	result =make([]int, n_count)
@@ -2183,8 +2571,7 @@ func F(n_count int) (result []int) {
 			},
 			Want_Diag: "",
 		},
-	}
-	run_diag_table(t, tests)
+	})
 }
 
 // Test_Naming_Stdlib_Allowlist verifies that the result of allowlisted
@@ -2251,11 +2638,12 @@ func F(b *bytes.Buffer) (result int) {
 // stylistic override when the count is in bytes).
 func Test_Naming_Element_Count_Result(t *testing.T) {
 	t.Parallel()
-	tests := []struct {
+	run_diag_table(t, []struct {
 		Name      string
 		Files     map[string]string
 		Want_Diag string
 	}{
+
 		{
 			Name: "bare n from len flagged",
 			Files: map[string]string{
@@ -2269,6 +2657,7 @@ func F(xs []int) (result int) {
 			},
 			Want_Diag: "n (used as count or size) → rename to n_count",
 		},
+
 		{
 			Name: "bare n from cap flagged",
 			Files: map[string]string{
@@ -2282,29 +2671,48 @@ func F(xs []int) (result int) {
 			},
 			Want_Diag: "n (used as count or size) → rename to n_count",
 		},
+	})
+}
+
+// Additional cases, split to keep each function within the length limit.
+func Test_Naming_Element_Count_Result_Part2(t *testing.T) {
+	t.Parallel()
+	run_diag_table(t, []struct {
+		Name      string
+		Files     map[string]string
+		Want_Diag string
+	}{
+
 		{
 			Name: "n_count from len allowed",
 			Files: map[string]string{
 				"test.go": `package main
 
-import invariant "github.com/james-orcales/james-orcales/golang_snacks/invariant/v2/invariant_default"
-
+` + fixture_invariant_import + `
 const fixture_hi = 100
 
 func F(xs []int) (result int) {
 	defer func() {
 		invariant.Cross_Product(
-			invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: result, Lo: 0, Hi: fixture_hi}),
+			invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
+				X: result, Lo: 0, Hi: fixture_hi,
+			}),
 			invariant.Always(result == 0, "result is zero"),
-			invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: len(xs), Lo: 0, Hi: fixture_hi, Message: "len"}),
+			invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
+			X: len(xs), Lo: 0, Hi: fixture_hi, Message: "len",
+		}),
 		)
 	}()
 	invariant.Cross_Product(
-		invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: len(xs), Lo: 0, Hi: fixture_hi, Message: "len"}),
+		invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
+			X: len(xs), Lo: 0, Hi: fixture_hi, Message: "len",
+		}),
 	)
 	n_count := len(xs)
 	invariant.Cross_Product(
-		invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: n_count, Lo: 0, Hi: fixture_hi}),
+		invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
+			X: n_count, Lo: 0, Hi: fixture_hi,
+		}),
 		invariant.Always(n_count == 0, "n_count is zero"),
 	)
 	return n_count
@@ -2313,29 +2721,48 @@ func F(xs []int) (result int) {
 			},
 			Want_Diag: "",
 		},
+	})
+}
+
+// Additional cases, split to keep each function within the length limit.
+func Test_Naming_Element_Count_Result_Part3(t *testing.T) {
+	t.Parallel()
+	run_diag_table(t, []struct {
+		Name      string
+		Files     map[string]string
+		Want_Diag string
+	}{
+
 		{
 			Name: "n_size from len allowed",
 			Files: map[string]string{
 				"test.go": `package main
 
-import invariant "github.com/james-orcales/james-orcales/golang_snacks/invariant/v2/invariant_default"
-
+` + fixture_invariant_import + `
 const fixture_hi = 100
 
 func F(buffer []byte) (result int) {
 	defer func() {
 		invariant.Cross_Product(
-			invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: result, Lo: 0, Hi: fixture_hi}),
+			invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
+				X: result, Lo: 0, Hi: fixture_hi,
+			}),
 			invariant.Always(result == 0, "result is zero"),
-			invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: len(buffer), Lo: 0, Hi: fixture_hi, Message: "len"}),
+			invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
+			X: len(buffer), Lo: 0, Hi: fixture_hi, Message: "len",
+		}),
 		)
 	}()
 	invariant.Cross_Product(
-		invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: len(buffer), Lo: 0, Hi: fixture_hi, Message: "len"}),
+		invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
+			X: len(buffer), Lo: 0, Hi: fixture_hi, Message: "len",
+		}),
 	)
 	n_size := len(buffer)
 	invariant.Cross_Product(
-		invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: n_size, Lo: 0, Hi: fixture_hi}),
+		invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
+				X: n_size, Lo: 0, Hi: fixture_hi,
+			}),
 		invariant.Always(n_size == 0, "n_size is zero"),
 	)
 	return n_size
@@ -2344,8 +2771,7 @@ func F(buffer []byte) (result int) {
 			},
 			Want_Diag: "",
 		},
-	}
-	run_diag_table(t, tests)
+	})
 }
 
 // Test_Naming_Rename_Suggestion verifies the replace-or-append fix logic:
@@ -2443,24 +2869,26 @@ func F() (result int) {
 // each function fits the 100-line cap.
 func Test_Naming_Arithmetic_Clean(t *testing.T) {
 	t.Parallel()
-	tests := []struct {
+	run_diag_table(t, []struct {
 		Name      string
 		Files     map[string]string
 		Want_Diag string
 	}{
+
 		{
 			Name: "valid index minus index assigned to count allowed",
 			Files: map[string]string{
 				"test.go": `package main
 
-import invariant "github.com/james-orcales/james-orcales/golang_snacks/invariant/v2/invariant_default"
-
+` + fixture_invariant_import + `
 const fixture_hi = 100
 
 func F() (result int) {
 	defer func() {
 		invariant.Cross_Product(
-			invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: result, Lo: 0, Hi: fixture_hi}),
+			invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
+				X: result, Lo: 0, Hi: fixture_hi,
+			}),
 			invariant.Always(result == 0, "result is zero"),
 		)
 	}()
@@ -2473,19 +2901,21 @@ func F() (result int) {
 			},
 			Want_Diag: "",
 		},
+
 		{
 			Name: "valid offset plus size assigned to offset allowed",
 			Files: map[string]string{
 				"test.go": `package main
 
-import invariant "github.com/james-orcales/james-orcales/golang_snacks/invariant/v2/invariant_default"
-
+` + fixture_invariant_import + `
 const fixture_hi = 100
 
 func F() (result int) {
 	defer func() {
 		invariant.Cross_Product(
-			invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: result, Lo: 0, Hi: fixture_hi}),
+			invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
+				X: result, Lo: 0, Hi: fixture_hi,
+			}),
 			invariant.Always(result == 0, "result is zero"),
 		)
 	}()
@@ -2498,19 +2928,32 @@ func F() (result int) {
 			},
 			Want_Diag: "",
 		},
+	})
+}
+
+// Additional cases, split to keep each function within the length limit.
+func Test_Naming_Arithmetic_Clean_Part2(t *testing.T) {
+	t.Parallel()
+	run_diag_table(t, []struct {
+		Name      string
+		Files     map[string]string
+		Want_Diag string
+	}{
+
 		{
 			Name: "unsuffixed operands skipped",
 			Files: map[string]string{
 				"test.go": `package main
 
-import invariant "github.com/james-orcales/james-orcales/golang_snacks/invariant/v2/invariant_default"
-
+` + fixture_invariant_import + `
 const fixture_hi = 100
 
 func F() (result int) {
 	defer func() {
 		invariant.Cross_Product(
-			invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: result, Lo: 0, Hi: fixture_hi}),
+			invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
+				X: result, Lo: 0, Hi: fixture_hi,
+			}),
 			invariant.Always(result == 0, "result is zero"),
 		)
 	}()
@@ -2522,8 +2965,7 @@ func F() (result int) {
 			},
 			Want_Diag: "",
 		},
-	}
-	run_diag_table(t, tests)
+	})
 }
 
 // Test_Naming_Arithmetic_Size_Plus_Offset drives check_binary_result with
@@ -2534,14 +2976,15 @@ func Test_Naming_Arithmetic_Size_Plus_Offset(t *testing.T) {
 	t.Parallel()
 	source := `package main
 
-import invariant "github.com/james-orcales/james-orcales/golang_snacks/invariant/v2/invariant_default"
-
+` + fixture_invariant_import + `
 const fixture_hi = 100
 
 func F() (result int) {
 	defer func() {
 		invariant.Cross_Product(
-			invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: result, Lo: 0, Hi: fixture_hi}),
+			invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
+				X: result, Lo: 0, Hi: fixture_hi,
+			}),
 			invariant.Always(result == 0, "result is zero"),
 		)
 	}()
@@ -2560,11 +3003,12 @@ func F() (result int) {
 // multi-candidate (`res`), and various declaration sites (type, field, func).
 func Test_Naming_Abbreviations_Flagged(t *testing.T) {
 	t.Parallel()
-	tests := []struct {
+	run_diag_table(t, []struct {
 		Name      string
 		Files     map[string]string
 		Want_Diag string
 	}{
+
 		{
 			Name: "var with cfg word flagged single candidate",
 			Files: map[string]string{
@@ -2578,6 +3022,7 @@ func F() (x int) {
 			},
 			Want_Diag: `rename cfg_path -> config_path`,
 		},
+
 		{
 			Name: "var with ambiguous res flagged with candidates",
 			Files: map[string]string{
@@ -2589,8 +3034,10 @@ func F() (x int) {
 }
 `,
 			},
-			Want_Diag: `rename user_res -> user_response,user_result,user_resource,user_reserve`,
+			Want_Diag: `rename user_res -> ` +
+				`user_response,user_result,user_resource,user_reserve`,
 		},
+
 		{
 			Name: "type name with mgr flagged",
 			Files: map[string]string{
@@ -2603,6 +3050,7 @@ type Pool_Mgr struct {
 			},
 			Want_Diag: `rename Pool_Mgr -> Pool_Manager`,
 		},
+
 		{
 			Name: "struct field with btn flagged",
 			Files: map[string]string{
@@ -2615,6 +3063,18 @@ type Form struct {
 			},
 			Want_Diag: `rename Submit_Btn -> Submit_Button`,
 		},
+	})
+}
+
+// Additional cases, split to keep each function within the length limit.
+func Test_Naming_Abbreviations_Flagged_Part2(t *testing.T) {
+	t.Parallel()
+	run_diag_table(t, []struct {
+		Name      string
+		Files     map[string]string
+		Want_Diag string
+	}{
+
 		{
 			Name: "func name with cb flagged",
 			Files: map[string]string{
@@ -2625,6 +3085,7 @@ func Run_Cb() (x int) { return 0 }
 			},
 			Want_Diag: `rename Run_Cb -> Run_Callback`,
 		},
+
 		{
 			Name: "var with src flagged (s-range candidates)",
 			Files: map[string]string{
@@ -2638,8 +3099,7 @@ func F() (x int) {
 			},
 			Want_Diag: `rename file_src -> file_source`,
 		},
-	}
-	run_diag_table(t, tests)
+	})
 }
 
 // Test_Naming_Abbreviations_Exempt covers identifiers that look like
@@ -2648,11 +3108,12 @@ func F() (x int) {
 // and clean code with no abbreviation hits.
 func Test_Naming_Abbreviations_Exempt(t *testing.T) {
 	t.Parallel()
-	tests := []struct {
+	run_diag_table(t, []struct {
 		Name      string
 		Files     map[string]string
 		Want_Diag string
 	}{
+
 		{
 			Name: "err exempt",
 			Files: map[string]string{
@@ -2661,7 +3122,7 @@ func Test_Naming_Abbreviations_Exempt(t *testing.T) {
 import (
 	"errors"
 
-	invariant "github.com/james-orcales/james-orcales/golang_snacks/invariant/v2/invariant_default"
+	invariant "` + fixture_invariant_import_path + `"
 )
 
 const fixture_hi = 100
@@ -2669,7 +3130,9 @@ const fixture_hi = 100
 func F() (x int) {
 	defer func() {
 		invariant.Cross_Product(
-			invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: x, Lo: 0, Hi: fixture_hi}),
+			invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
+			X: x, Lo: 0, Hi: fixture_hi,
+		}),
 			invariant.Always(x == 0, "x is zero"),
 		)
 	}()
@@ -2684,24 +3147,39 @@ func F() (x int) {
 			},
 			Want_Diag: "",
 		},
+	})
+}
+
+// Additional cases, split to keep each function within the length limit.
+func Test_Naming_Abbreviations_Exempt_Part2(t *testing.T) {
+	t.Parallel()
+	run_diag_table(t, []struct {
+		Name      string
+		Files     map[string]string
+		Want_Diag string
+	}{
+
 		{
 			Name: "single-letter loop counter exempt",
 			Files: map[string]string{
 				"test.go": `package main
 
-import invariant "github.com/james-orcales/james-orcales/golang_snacks/invariant/v2/invariant_default"
-
+` + fixture_invariant_import + `
 const fixture_hi = 100
 
 func F(n int) (x int) {
 	defer func() {
 		invariant.Cross_Product(
-			invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: x, Lo: 0, Hi: fixture_hi}),
+			invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
+			X: x, Lo: 0, Hi: fixture_hi,
+		}),
 			invariant.Always(x == 0, "x is zero"),
 		)
 	}()
 	invariant.Cross_Product(
-		invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: n, Lo: 0, Hi: fixture_hi}),
+		invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
+			X: n, Lo: 0, Hi: fixture_hi,
+		}),
 		invariant.Always(n == 0, "n is zero"),
 	)
 	for i_index := 0; i_index < n; i_index++ {
@@ -2713,24 +3191,39 @@ func F(n int) (x int) {
 			},
 			Want_Diag: "",
 		},
+	})
+}
+
+// Additional cases, split to keep each function within the length limit.
+func Test_Naming_Abbreviations_Exempt_Part3(t *testing.T) {
+	t.Parallel()
+	run_diag_table(t, []struct {
+		Name      string
+		Files     map[string]string
+		Want_Diag string
+	}{
+
 		{
 			Name: "clean code no abbreviation hit",
 			Files: map[string]string{
 				"test.go": `package main
 
-import invariant "github.com/james-orcales/james-orcales/golang_snacks/invariant/v2/invariant_default"
-
+` + fixture_invariant_import + `
 const fixture_hi = 100
 
 func Compute(value int) (result int) {
 	defer func() {
 		invariant.Cross_Product(
-			invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: result, Lo: 0, Hi: fixture_hi}),
+			invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
+				X: result, Lo: 0, Hi: fixture_hi,
+			}),
 			invariant.Always(result == 0, "result is zero"),
 		)
 	}()
 	invariant.Cross_Product(
-		invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: value, Lo: 0, Hi: fixture_hi}),
+		invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
+			X: value, Lo: 0, Hi: fixture_hi,
+		}),
 		invariant.Always(value == 0, "value is zero"),
 	)
 	total := value + 1
@@ -2740,8 +3233,7 @@ func Compute(value int) (result int) {
 			},
 			Want_Diag: "",
 		},
-	}
-	run_diag_table(t, tests)
+	})
 }
 
 // Test_Naming_Participles verifies that declared identifiers whose final
@@ -2833,8 +3325,7 @@ func Test_Naming_Participles_Exempt(t *testing.T) {
 			Files: map[string]string{
 				"test.go": `package main
 
-import invariant "github.com/james-orcales/james-orcales/golang_snacks/invariant/v2/invariant_default"
-
+` + fixture_invariant_import + `
 const fixture_hi = 100
 
 type Color int
@@ -2859,19 +3350,22 @@ func (c Color) String() (result string) {
 			Files: map[string]string{
 				"test.go": `package main
 
-import invariant "github.com/james-orcales/james-orcales/golang_snacks/invariant/v2/invariant_default"
-
+` + fixture_invariant_import + `
 const fixture_hi = 100
 
 func Compute(value int) (result int) {
 	defer func() {
 		invariant.Cross_Product(
-			invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: result, Lo: 0, Hi: fixture_hi}),
+			invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
+				X: result, Lo: 0, Hi: fixture_hi,
+			}),
 			invariant.Always(result == 0, "result is zero"),
 		)
 	}()
 	invariant.Cross_Product(
-		invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: value, Lo: 0, Hi: fixture_hi}),
+		invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
+			X: value, Lo: 0, Hi: fixture_hi,
+		}),
 		invariant.Always(value == 0, "value is zero"),
 	)
 	return value
@@ -2959,14 +3453,16 @@ func Test_Like_Name() { return }
 // groups counted separately, build-tag detection done via go/build/constraint.
 func Test_Package_Split_Threshold(t *testing.T) {
 	t.Parallel()
-	source_a := "// Package foo is a fixture.\npackage foo\n\n// A is a fixture.\nfunc A() { return }\n"
+	source_a := "// Package foo is a fixture.\npackage foo\n\n" +
+		"// A is a fixture.\nfunc A() { return }\n"
 	source_b := "package foo\n\n// B is a fixture.\nfunc B() { return }\n"
 	source_c := "package foo\n\n// C is a fixture.\nfunc C() { return }\n"
 	test_a := "package foo_test\n\nimport \"testing\"\n\n" +
 		"// Test_A verifies A.\nfunc Test_A(t *testing.T) { t.Helper() }\n"
 	test_b := "package foo_test\n\nimport \"testing\"\n\n" +
 		"// Test_B verifies B.\nfunc Test_B(t *testing.T) { t.Helper() }\n"
-	linux_a := "//go:build linux\n\n// Package foo is a fixture.\npackage foo\n\n// A is a fixture.\nfunc A() { return }\n"
+	linux_a := "//go:build linux\n\n// Package foo is a fixture.\npackage foo\n\n" +
+		"// A is a fixture.\nfunc A() { return }\n"
 	linux_b := "//go:build linux\n\npackage foo\n\n// B is a fixture.\nfunc B() { return }\n"
 	tests := []struct {
 		Name      string
@@ -2989,8 +3485,10 @@ func Test_Package_Split_Threshold(t *testing.T) {
 			Want_Diag: "",
 		},
 		{
-			Name:      "two test files in same pkg flagged",
-			Files:     map[string]string{"a.go": source_a, "a_test.go": test_a, "b_test.go": test_b},
+			Name: "two test files in same pkg flagged",
+			Files: map[string]string{
+				"a.go": source_a, "a_test.go": test_a, "b_test.go": test_b,
+			},
 			Want_Diag: "has 2 test files",
 		},
 		{
@@ -2999,8 +3497,10 @@ func Test_Package_Split_Threshold(t *testing.T) {
 			Want_Diag: "",
 		},
 		{
-			Name:      "two files sharing a build tag flagged",
-			Files:     map[string]string{"a.go": linux_a, "a_extra.go": linux_b, "plain.go": source_c},
+			Name: "two files sharing a build tag flagged",
+			Files: map[string]string{
+				"a.go": linux_a, "a_extra.go": linux_b, "plain.go": source_c,
+			},
 			Want_Diag: "has 2 source files",
 		},
 	}
@@ -3020,28 +3520,32 @@ func Test_Snap_Backtick(t *testing.T) {
 		{
 			Name: "snap.Init with double-quoted string flagged",
 			Files: map[string]string{
-				"test.go": "package main\n\nimport \"x/snap\"\n\nfunc f() { snap.Init(\"foo\") }\n",
+				"test.go": "package main\n\nimport \"x/snap\"\n\n" +
+					"func f() { snap.Init(\"foo\") }\n",
 			},
 			Want_Diag: "snap.Init must use a backticked",
 		},
 		{
 			Name: "snap.Edit with double-quoted string flagged",
 			Files: map[string]string{
-				"test.go": "package main\n\nimport \"x/snap\"\n\nfunc f() { snap.Edit(\"foo\") }\n",
+				"test.go": "package main\n\nimport \"x/snap\"\n\n" +
+					"func f() { snap.Edit(\"foo\") }\n",
 			},
 			Want_Diag: "snap.Edit must use a backticked",
 		},
 		{
 			Name: "snap.Init with backticked string allowed",
 			Files: map[string]string{
-				"test.go": "package main\n\nimport \"x/snap\"\n\nfunc f() { snap.Init(`foo`) }\n",
+				"test.go": "package main\n\nimport \"x/snap\"\n\n" +
+					"func f() { snap.Init(`foo`) }\n",
 			},
 			Want_Diag: "",
 		},
 		{
 			Name: "snap.Other not in scope",
 			Files: map[string]string{
-				"test.go": "package main\n\nimport \"x/snap\"\n\nfunc f() { snap.Other(\"foo\") }\n",
+				"test.go": "package main\n\nimport \"x/snap\"\n\n" +
+					"func f() { snap.Other(\"foo\") }\n",
 			},
 			Want_Diag: "",
 		},
@@ -3051,15 +3555,19 @@ func Test_Snap_Backtick(t *testing.T) {
 				"test.go": "package main\n\n" +
 					"import (\n" +
 					"\t\"x/snap\"\n\n" +
-					"\tinvariant \"github.com/james-orcales/james-orcales/golang_snacks/invariant/v2\"\n" +
+					"\tinvariant \"github.com/james-orcales/james-orcales/" +
+					"golang_snacks/invariant/v2\"\n" +
 					")\n\n" +
 					"const fixture_hi = 100\n\n" +
 					"func f(s string) {\n" +
 					"\tinvariant.Cross_Product(\n" +
-					"\t\tinvariant.Distinct_Boundary(&invariant.Boundary_Input[int]{\n" +
-					"\t\t\tX: len(s), Lo: 0, Hi: fixture_hi, Message: \"len in range\",\n" +
+					"\t\tinvariant.Distinct_Boundary(" +
+					"&invariant.Boundary_Input[int]{\n" +
+					"\t\t\tX: len(s), Lo: 0, Hi: fixture_hi, " +
+					"Message: \"len in range\",\n" +
 					"\t\t}),\n" +
-					"\t\tinvariant.Always(s == \"\", \"s is empty\"),\n" +
+					"\t\tinvariant.Always(" +
+					"s == \"\", \"s is empty\"),\n" +
 					"\t)\n" +
 					"\tsnap.Init(s)\n" +
 					"}\n",
@@ -3139,11 +3647,12 @@ func read() { return }
 // variadics preserved in the suggested signature.
 func Test_Input_Struct(t *testing.T) {
 	t.Parallel()
-	tests := []struct {
+	run_diag_table(t, []struct {
 		Name      string
 		Files     map[string]string
 		Want_Diag string
 	}{
+
 		{
 			Name: "two ints without input struct flagged",
 			Files: map[string]string{
@@ -3154,13 +3663,13 @@ func F(a, b int) (result int) { return a + b }
 			},
 			Want_Diag: "convert to F(*F_Input) (result int)",
 		},
+
 		{
 			Name: "input struct directly above allowed",
 			Files: map[string]string{
 				"test.go": `package main
 
-import invariant "github.com/james-orcales/james-orcales/golang_snacks/invariant/v2/invariant_default"
-
+` + fixture_invariant_import + `
 const fixture_hi = 100
 
 type F_Input struct {
@@ -3171,15 +3680,21 @@ type F_Input struct {
 func F(input *F_Input) (result int) {
 	defer func() {
 		invariant.Cross_Product(
-			invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: result, Lo: 0, Hi: fixture_hi}),
+			invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
+				X: result, Lo: 0, Hi: fixture_hi,
+			}),
 			invariant.Always(result == 0, "result is zero"),
 		)
 	}()
 	invariant.Cross_Product(
 		invariant.Always(input != nil, "input is non-nil"),
-		invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: input.A, Lo: 0, Hi: fixture_hi}),
+		invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
+			X: input.A, Lo: 0, Hi: fixture_hi,
+		}),
 		invariant.Always(input.A == 0, "input.A is zero"),
-		invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: input.B, Lo: 0, Hi: fixture_hi}),
+		invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
+			X: input.B, Lo: 0, Hi: fixture_hi,
+		}),
 		invariant.Always(input.B == 0, "input.B is zero"),
 	)
 	return input.A + input.B
@@ -3188,6 +3703,18 @@ func F(input *F_Input) (result int) {
 			},
 			Want_Diag: "",
 		},
+	})
+}
+
+// Additional cases, split to keep each function within the length limit.
+func Test_Input_Struct_Part2(t *testing.T) {
+	t.Parallel()
+	run_diag_table(t, []struct {
+		Name      string
+		Files     map[string]string
+		Want_Diag string
+	}{
+
 		{
 			Name: "two separate int fields flagged",
 			Files: map[string]string{
@@ -3198,6 +3725,7 @@ func F(a int, b int) (result int) { return a + b }
 			},
 			Want_Diag: "convert to F(*F_Input) (result int)",
 		},
+
 		{
 			Name: "variadic preserved in suggestion",
 			Files: map[string]string{
@@ -3208,8 +3736,7 @@ func F(a, b int, extra ...string) (result int) { return a + b + len(extra) }
 			},
 			Want_Diag: "convert to F(*F_Input, extra ...string) (result int)",
 		},
-	}
-	run_diag_table(t, tests)
+	})
 }
 
 // Test_Input_Struct_Snake_Case is split off Test_Input_Struct so each
@@ -3227,8 +3754,7 @@ func Test_Input_Struct_Snake_Case(t *testing.T) {
 			Files: map[string]string{
 				"test.go": `package main
 
-import invariant "github.com/james-orcales/james-orcales/golang_snacks/invariant/v2/invariant_default"
-
+` + fixture_invariant_import + `
 const fixture_hi = 100
 
 type f_input struct {
@@ -3239,15 +3765,21 @@ type f_input struct {
 func f(input *f_input) (result int) {
 	defer func() {
 		invariant.Cross_Product(
-			invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: result, Lo: 0, Hi: fixture_hi}),
+			invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
+				X: result, Lo: 0, Hi: fixture_hi,
+			}),
 			invariant.Always(result == 0, "result is zero"),
 		)
 	}()
 	invariant.Cross_Product(
 		invariant.Always(input != nil, "input is non-nil"),
-		invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: input.A, Lo: 0, Hi: fixture_hi}),
+		invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
+			X: input.A, Lo: 0, Hi: fixture_hi,
+		}),
 		invariant.Always(input.A == 0, "input.A is zero"),
-		invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: input.B, Lo: 0, Hi: fixture_hi}),
+		invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
+			X: input.B, Lo: 0, Hi: fixture_hi,
+		}),
 		invariant.Always(input.B == 0, "input.B is zero"),
 	)
 	return input.A + input.B
@@ -3265,30 +3797,36 @@ func f(input *f_input) (result int) {
 // only, mixed-type params (no duplicates), and single-param signatures.
 func Test_Input_Struct_Skip_Shapes(t *testing.T) {
 	t.Parallel()
-	tests := []struct {
+	run_diag_table(t, []struct {
 		Name      string
 		Files     map[string]string
 		Want_Diag string
 	}{
+
 		{
 			Name: "variadic only does not trigger",
 			Files: map[string]string{
 				"test.go": `package main
 
-import invariant "github.com/james-orcales/james-orcales/golang_snacks/invariant/v2/invariant_default"
-
+` + fixture_invariant_import + `
 const fixture_hi = 100
 
 func F(args ...int) (result int) {
 	defer func() {
 		invariant.Cross_Product(
-			invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: result, Lo: 0, Hi: fixture_hi}),
+			invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
+				X: result, Lo: 0, Hi: fixture_hi,
+			}),
 			invariant.Always(result == 0, "result is zero"),
-			invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: len(args), Lo: 0, Hi: fixture_hi, Message: "len"}),
+			invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
+			X: len(args), Lo: 0, Hi: fixture_hi, Message: "len",
+		}),
 		)
 	}()
 	invariant.Cross_Product(
-		invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: len(args), Lo: 0, Hi: fixture_hi, Message: "len"}),
+		invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
+			X: len(args), Lo: 0, Hi: fixture_hi, Message: "len",
+		}),
 	)
 	return len(args)
 }
@@ -3296,26 +3834,43 @@ func F(args ...int) (result int) {
 			},
 			Want_Diag: "",
 		},
+	})
+}
+
+// Additional cases, split to keep each function within the length limit.
+func Test_Input_Struct_Skip_Shapes_Part2(t *testing.T) {
+	t.Parallel()
+	run_diag_table(t, []struct {
+		Name      string
+		Files     map[string]string
+		Want_Diag string
+	}{
+
 		{
 			Name: "mixed types do not trigger",
 			Files: map[string]string{
 				"test.go": `package main
 
-import invariant "github.com/james-orcales/james-orcales/golang_snacks/invariant/v2/invariant_default"
-
+` + fixture_invariant_import + `
 const fixture_hi = 100
 
 func F(a int, b string) (result int) {
 	defer func() {
 		invariant.Cross_Product(
-			invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: result, Lo: 0, Hi: fixture_hi}),
+			invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
+				X: result, Lo: 0, Hi: fixture_hi,
+			}),
 			invariant.Always(result == 0, "result is zero"),
 		)
 	}()
 	invariant.Cross_Product(
-		invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: a, Lo: 0, Hi: fixture_hi}),
+		invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
+			X: a, Lo: 0, Hi: fixture_hi,
+		}),
 		invariant.Always(a == 0, "a is zero"),
-		invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: len(b), Lo: 0, Hi: fixture_hi}),
+		invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
+				X: len(b), Lo: 0, Hi: fixture_hi,
+			}),
 		invariant.Always(b == "", "b is empty"),
 	)
 	return a + len(b)
@@ -3324,24 +3879,39 @@ func F(a int, b string) (result int) {
 			},
 			Want_Diag: "",
 		},
+	})
+}
+
+// Additional cases, split to keep each function within the length limit.
+func Test_Input_Struct_Skip_Shapes_Part3(t *testing.T) {
+	t.Parallel()
+	run_diag_table(t, []struct {
+		Name      string
+		Files     map[string]string
+		Want_Diag string
+	}{
+
 		{
 			Name: "single param does not trigger",
 			Files: map[string]string{
 				"test.go": `package main
 
-import invariant "github.com/james-orcales/james-orcales/golang_snacks/invariant/v2/invariant_default"
-
+` + fixture_invariant_import + `
 const fixture_hi = 100
 
 func F(a int) (result int) {
 	defer func() {
 		invariant.Cross_Product(
-			invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: result, Lo: 0, Hi: fixture_hi}),
+			invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
+				X: result, Lo: 0, Hi: fixture_hi,
+			}),
 			invariant.Always(result == 0, "result is zero"),
 		)
 	}()
 	invariant.Cross_Product(
-		invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: a, Lo: 0, Hi: fixture_hi}),
+		invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
+			X: a, Lo: 0, Hi: fixture_hi,
+		}),
 		invariant.Always(a == 0, "a is zero"),
 	)
 	return a
@@ -3350,8 +3920,7 @@ func F(a int) (result int) {
 			},
 			Want_Diag: "",
 		},
-	}
-	run_diag_table(t, tests)
+	})
 }
 
 // Test_No_Empty_Function_Body verifies that empty-body functions and methods are
@@ -3406,24 +3975,26 @@ func F() { return }
 // `any` and bare `interface{}` are allowed as the empty interface.
 func Test_No_Interfaces(t *testing.T) {
 	t.Parallel()
-	tests := []struct {
+	run_diag_table(t, []struct {
 		Name      string
 		Files     map[string]string
 		Want_Diag string
 	}{
+
 		{
 			Name: "named method-set interface flagged",
 			Files: map[string]string{
 				"test.go": `package main
 
-import invariant "github.com/james-orcales/james-orcales/golang_snacks/invariant/v2/invariant_default"
-
+` + fixture_invariant_import + `
 const fixture_hi = 100
 
 func main() (result int) {
 	defer func() {
 		invariant.Cross_Product(
-			invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: result, Lo: 0, Hi: fixture_hi}),
+			invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
+				X: result, Lo: 0, Hi: fixture_hi,
+			}),
 			invariant.Always(result == 0, "result is zero"),
 		)
 	}()
@@ -3437,19 +4008,21 @@ type Iface interface {
 			},
 			Want_Diag: "interface method sets are banned",
 		},
+
 		{
 			Name: "inline interface in parameter flagged",
 			Files: map[string]string{
 				"test.go": `package main
 
-import invariant "github.com/james-orcales/james-orcales/golang_snacks/invariant/v2/invariant_default"
-
+` + fixture_invariant_import + `
 const fixture_hi = 100
 
 func main() (result int) {
 	defer func() {
 		invariant.Cross_Product(
-			invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: result, Lo: 0, Hi: fixture_hi}),
+			invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
+				X: result, Lo: 0, Hi: fixture_hi,
+			}),
 			invariant.Always(result == 0, "result is zero"),
 		)
 	}()
@@ -3461,6 +4034,18 @@ func F(x interface{ M() }) (result int) { return 0 }
 			},
 			Want_Diag: "interface method sets are banned",
 		},
+	})
+}
+
+// Additional cases, split to keep each function within the length limit.
+func Test_No_Interfaces_Part2(t *testing.T) {
+	t.Parallel()
+	run_diag_table(t, []struct {
+		Name      string
+		Files     map[string]string
+		Want_Diag string
+	}{
+
 		{
 			Name: "type assertion with method-set interface flagged",
 			Files: map[string]string{
@@ -3475,8 +4060,7 @@ func main() (result int) {
 			},
 			Want_Diag: "interface method sets are banned",
 		},
-	}
-	run_diag_table(t, tests)
+	})
 }
 
 // Test_No_Interfaces_Allowed covers shapes the rule must accept: bare `any`,
@@ -3484,24 +4068,26 @@ func main() (result int) {
 // from type elements (no method set).
 func Test_No_Interfaces_Allowed(t *testing.T) {
 	t.Parallel()
-	tests := []struct {
+	run_diag_table(t, []struct {
 		Name      string
 		Files     map[string]string
 		Want_Diag string
 	}{
+
 		{
 			Name: "any parameter allowed",
 			Files: map[string]string{
 				"test.go": `package main
 
-import invariant "github.com/james-orcales/james-orcales/golang_snacks/invariant/v2/invariant_default"
-
+` + fixture_invariant_import + `
 const fixture_hi = 100
 
 func main() (result int) {
 	defer func() {
 		invariant.Cross_Product(
-			invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: result, Lo: 0, Hi: fixture_hi}),
+			invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
+				X: result, Lo: 0, Hi: fixture_hi,
+			}),
 			invariant.Always(result == 0, "result is zero"),
 		)
 	}()
@@ -3511,7 +4097,9 @@ func main() (result int) {
 func F(x any) (result int) {
 	defer func() {
 		invariant.Cross_Product(
-			invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: result, Lo: 0, Hi: fixture_hi}),
+			invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
+				X: result, Lo: 0, Hi: fixture_hi,
+			}),
 			invariant.Always(result == 0, "result is zero"),
 		)
 	}()
@@ -3521,19 +4109,32 @@ func F(x any) (result int) {
 			},
 			Want_Diag: "",
 		},
+	})
+}
+
+// Additional cases, split to keep each function within the length limit.
+func Test_No_Interfaces_Allowed_Part2(t *testing.T) {
+	t.Parallel()
+	run_diag_table(t, []struct {
+		Name      string
+		Files     map[string]string
+		Want_Diag string
+	}{
+
 		{
 			Name: "generic type-constraint interface allowed",
 			Files: map[string]string{
 				"test.go": `package main
 
-import invariant "github.com/james-orcales/james-orcales/golang_snacks/invariant/v2/invariant_default"
-
+` + fixture_invariant_import + `
 const fixture_hi = 100
 
 func main() (result int) {
 	defer func() {
 		invariant.Cross_Product(
-			invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: result, Lo: 0, Hi: fixture_hi}),
+			invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
+				X: result, Lo: 0, Hi: fixture_hi,
+			}),
 			invariant.Always(result == 0, "result is zero"),
 		)
 	}()
@@ -3547,7 +4148,9 @@ type _Number interface {
 func F[T _Number](x T) (result int) {
 	defer func() {
 		invariant.Cross_Product(
-			invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: result, Lo: 0, Hi: fixture_hi}),
+			invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
+				X: result, Lo: 0, Hi: fixture_hi,
+			}),
 			invariant.Always(result == 0, "result is zero"),
 		)
 	}()
@@ -3557,8 +4160,7 @@ func F[T _Number](x T) (result int) {
 			},
 			Want_Diag: "",
 		},
-	}
-	run_diag_table(t, tests)
+	})
 }
 
 // Test_Unnecessary_Method verifies that receiver methods whose name+signature
@@ -3570,24 +4172,26 @@ func F[T _Number](x T) (result int) {
 // without diagnostic. Free functions are also covered as a control.
 func Test_Unnecessary_Method_Allowed(t *testing.T) {
 	t.Parallel()
-	tests := []struct {
+	run_diag_table(t, []struct {
 		Name      string
 		Files     map[string]string
 		Want_Diag string
 	}{
+
 		{
 			Name: "stdlib Stringer match allowed",
 			Files: map[string]string{
 				"test.go": `package main
 
-import invariant "github.com/james-orcales/james-orcales/golang_snacks/invariant/v2/invariant_default"
-
+` + fixture_invariant_import + `
 const fixture_hi = 100
 
 func main() (result int) {
 	defer func() {
 		invariant.Cross_Product(
-			invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: result, Lo: 0, Hi: fixture_hi}),
+			invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
+				X: result, Lo: 0, Hi: fixture_hi,
+			}),
 			invariant.Always(result == 0, "result is zero"),
 		)
 	}()
@@ -3606,7 +4210,9 @@ func (t T) String() (result string) {
 		)
 	}()
 	invariant.Cross_Product(
-		invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: t.X, Lo: 0, Hi: fixture_hi}),
+		invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
+			X: t.X, Lo: 0, Hi: fixture_hi,
+		}),
 		invariant.Always(t.X == 0, "t.X is zero"),
 	)
 	return ""
@@ -3615,19 +4221,32 @@ func (t T) String() (result string) {
 			},
 			Want_Diag: "",
 		},
+	})
+}
+
+// Additional cases, split to keep each function within the length limit.
+func Test_Unnecessary_Method_Allowed_Part2(t *testing.T) {
+	t.Parallel()
+	run_diag_table(t, []struct {
+		Name      string
+		Files     map[string]string
+		Want_Diag string
+	}{
+
 		{
 			Name: "stdlib error match allowed",
 			Files: map[string]string{
 				"test.go": `package main
 
-import invariant "github.com/james-orcales/james-orcales/golang_snacks/invariant/v2/invariant_default"
-
+` + fixture_invariant_import + `
 const fixture_hi = 100
 
 func main() (result int) {
 	defer func() {
 		invariant.Cross_Product(
-			invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: result, Lo: 0, Hi: fixture_hi}),
+			invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
+				X: result, Lo: 0, Hi: fixture_hi,
+			}),
 			invariant.Always(result == 0, "result is zero"),
 		)
 	}()
@@ -3646,7 +4265,9 @@ func (t T) Error() (result string) {
 		)
 	}()
 	invariant.Cross_Product(
-		invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: t.X, Lo: 0, Hi: fixture_hi}),
+		invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
+			X: t.X, Lo: 0, Hi: fixture_hi,
+		}),
 		invariant.Always(t.X == 0, "t.X is zero"),
 	)
 	return ""
@@ -3655,8 +4276,7 @@ func (t T) Error() (result string) {
 			},
 			Want_Diag: "",
 		},
-	}
-	run_diag_table(t, tests)
+	})
 }
 
 // Test_Unnecessary_Method_Allowed_Read covers the io.Reader.Read shape;
@@ -3673,14 +4293,15 @@ func Test_Unnecessary_Method_Allowed_Read(t *testing.T) {
 			Files: map[string]string{
 				"test.go": `package main
 
-import invariant "github.com/james-orcales/james-orcales/golang_snacks/invariant/v2/invariant_default"
-
+` + fixture_invariant_import + `
 const fixture_hi = 100
 
 func main() (result int) {
 	defer func() {
 		invariant.Cross_Product(
-			invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: result, Lo: 0, Hi: fixture_hi}),
+			invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
+				X: result, Lo: 0, Hi: fixture_hi,
+			}),
 			invariant.Always(result == 0, "result is zero"),
 		)
 	}()
@@ -3692,15 +4313,23 @@ type T struct{ X int }
 func (t T) Read(p []byte) (n int, err error) {
 	defer func() {
 		invariant.Cross_Product(
-			invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: n, Lo: 0, Hi: fixture_hi}),
+			invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
+			X: n, Lo: 0, Hi: fixture_hi,
+		}),
 			invariant.Always(n == 0, "n is zero"),
-			invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: len(p), Lo: 0, Hi: fixture_hi, Message: "len"}),
+			invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
+			X: len(p), Lo: 0, Hi: fixture_hi, Message: "len",
+		}),
 		)
 	}()
 	invariant.Cross_Product(
-		invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: t.X, Lo: 0, Hi: fixture_hi}),
+		invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
+			X: t.X, Lo: 0, Hi: fixture_hi,
+		}),
 		invariant.Always(t.X == 0, "t.X is zero"),
-		invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: len(p), Lo: 0, Hi: fixture_hi, Message: "len"}),
+		invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
+			X: len(p), Lo: 0, Hi: fixture_hi, Message: "len",
+		}),
 	)
 	return 0, nil
 }
@@ -3717,24 +4346,26 @@ func (t T) Read(p []byte) (n int, err error) {
 // (no receiver) as a control.
 func Test_Unnecessary_Method_Allowed_Extra(t *testing.T) {
 	t.Parallel()
-	tests := []struct {
+	run_diag_table(t, []struct {
 		Name      string
 		Files     map[string]string
 		Want_Diag string
 	}{
+
 		{
 			Name: "stdlib Scan with any allowed",
 			Files: map[string]string{
 				"test.go": `package main
 
-import invariant "github.com/james-orcales/james-orcales/golang_snacks/invariant/v2/invariant_default"
-
+` + fixture_invariant_import + `
 const fixture_hi = 100
 
 func main() (result int) {
 	defer func() {
 		invariant.Cross_Product(
-			invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: result, Lo: 0, Hi: fixture_hi}),
+			invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
+				X: result, Lo: 0, Hi: fixture_hi,
+			}),
 			invariant.Always(result == 0, "result is zero"),
 		)
 	}()
@@ -3745,7 +4376,9 @@ type T struct{ X int }
 
 func (t T) Scan(x any) (err error) {
 	invariant.Cross_Product(
-		invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: t.X, Lo: 0, Hi: fixture_hi}),
+		invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
+			X: t.X, Lo: 0, Hi: fixture_hi,
+		}),
 		invariant.Always(t.X == 0, "t.X is zero"),
 	)
 	return nil
@@ -3754,19 +4387,32 @@ func (t T) Scan(x any) (err error) {
 			},
 			Want_Diag: "",
 		},
+	})
+}
+
+// Additional cases, split to keep each function within the length limit.
+func Test_Unnecessary_Method_Allowed_Extra_Part2(t *testing.T) {
+	t.Parallel()
+	run_diag_table(t, []struct {
+		Name      string
+		Files     map[string]string
+		Want_Diag string
+	}{
+
 		{
 			Name: "free function ignored",
 			Files: map[string]string{
 				"test.go": `package main
 
-import invariant "github.com/james-orcales/james-orcales/golang_snacks/invariant/v2/invariant_default"
-
+` + fixture_invariant_import + `
 const fixture_hi = 100
 
 func main() (result int) {
 	defer func() {
 		invariant.Cross_Product(
-			invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: result, Lo: 0, Hi: fixture_hi}),
+			invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
+				X: result, Lo: 0, Hi: fixture_hi,
+			}),
 			invariant.Always(result == 0, "result is zero"),
 		)
 	}()
@@ -3776,7 +4422,9 @@ func main() (result int) {
 func F() (result int) {
 	defer func() {
 		invariant.Cross_Product(
-			invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: result, Lo: 0, Hi: fixture_hi}),
+			invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
+				X: result, Lo: 0, Hi: fixture_hi,
+			}),
 			invariant.Always(result == 0, "result is zero"),
 		)
 	}()
@@ -3786,8 +4434,7 @@ func F() (result int) {
 			},
 			Want_Diag: "",
 		},
-	}
-	run_diag_table(t, tests)
+	})
 }
 
 // Test_Unnecessary_Method_Flagged covers receiver methods that the stdlib
@@ -3795,24 +4442,26 @@ func F() (result int) {
 // must be flagged with the "convert to free function" instruction.
 func Test_Unnecessary_Method_Flagged(t *testing.T) {
 	t.Parallel()
-	tests := []struct {
+	run_diag_table(t, []struct {
 		Name      string
 		Files     map[string]string
 		Want_Diag string
 	}{
+
 		{
 			Name: "Write with wrong result list flagged",
 			Files: map[string]string{
 				"test.go": `package main
 
-import invariant "github.com/james-orcales/james-orcales/golang_snacks/invariant/v2/invariant_default"
-
+` + fixture_invariant_import + `
 const fixture_hi = 100
 
 func main() (result int) {
 	defer func() {
 		invariant.Cross_Product(
-			invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: result, Lo: 0, Hi: fixture_hi}),
+			invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
+				X: result, Lo: 0, Hi: fixture_hi,
+			}),
 			invariant.Always(result == 0, "result is zero"),
 		)
 	}()
@@ -3823,7 +4472,9 @@ type T struct{ X int }
 
 func (t T) Write(p []byte) (err error) {
 	invariant.Cross_Product(
-		invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: t.X, Lo: 0, Hi: fixture_hi}),
+		invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
+			X: t.X, Lo: 0, Hi: fixture_hi,
+		}),
 		invariant.Always(t.X == 0, "t.X is zero"),
 	)
 	return nil
@@ -3832,19 +4483,32 @@ func (t T) Write(p []byte) (err error) {
 			},
 			Want_Diag: "does not satisfy any stdlib interface",
 		},
+	})
+}
+
+// Additional cases, split to keep each function within the length limit.
+func Test_Unnecessary_Method_Flagged_Part2(t *testing.T) {
+	t.Parallel()
+	run_diag_table(t, []struct {
+		Name      string
+		Files     map[string]string
+		Want_Diag string
+	}{
+
 		{
 			Name: "unknown method name flagged",
 			Files: map[string]string{
 				"test.go": `package main
 
-import invariant "github.com/james-orcales/james-orcales/golang_snacks/invariant/v2/invariant_default"
-
+` + fixture_invariant_import + `
 const fixture_hi = 100
 
 func main() (result int) {
 	defer func() {
 		invariant.Cross_Product(
-			invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: result, Lo: 0, Hi: fixture_hi}),
+			invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
+				X: result, Lo: 0, Hi: fixture_hi,
+			}),
 			invariant.Always(result == 0, "result is zero"),
 		)
 	}()
@@ -3855,12 +4519,16 @@ type T struct{ X int }
 
 func (t T) Foo() (result int) {
 	invariant.Cross_Product(
-		invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: t.X, Lo: 0, Hi: fixture_hi}),
+		invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
+			X: t.X, Lo: 0, Hi: fixture_hi,
+		}),
 		invariant.Always(t.X == 0, "t.X is zero"),
 	)
 	defer func() {
 		invariant.Cross_Product(
-			invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: result, Lo: 0, Hi: fixture_hi}),
+			invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
+				X: result, Lo: 0, Hi: fixture_hi,
+			}),
 			invariant.Always(result == 0, "result is zero"),
 		)
 	}()
@@ -3870,19 +4538,19 @@ func (t T) Foo() (result int) {
 			},
 			Want_Diag: "does not satisfy any stdlib interface",
 		},
-	}
-	run_diag_table(t, tests)
+	})
 }
 
 // Test_Test_Package verifies that _test.go files must declare
 // `package <X>_test`; main, main_test, and whitebox packages are flagged.
 func Test_Test_Package(t *testing.T) {
 	t.Parallel()
-	tests := []struct {
+	run_diag_table(t, []struct {
 		Name      string
 		Files     map[string]string
 		Want_Diag string
 	}{
+
 		{
 			Name: "whitebox package flagged",
 			Files: map[string]string{
@@ -3893,6 +4561,7 @@ func f() (result int) { return 1 }
 			},
 			Want_Diag: "test file must declare",
 		},
+
 		{
 			Name: "package main flagged",
 			Files: map[string]string{
@@ -3903,6 +4572,7 @@ func f() (result int) { return 1 }
 			},
 			Want_Diag: "test file must declare",
 		},
+
 		{
 			Name: "package main_test flagged",
 			Files: map[string]string{
@@ -3913,6 +4583,7 @@ func f() (result int) { return 1 }
 			},
 			Want_Diag: "test file must declare",
 		},
+
 		{
 			Name: "blackbox _test package allowed",
 			Files: map[string]string{
@@ -3923,19 +4594,32 @@ func f() (result int) { return 1 }
 			},
 			Want_Diag: "",
 		},
+	})
+}
+
+// Additional cases, split to keep each function within the length limit.
+func Test_Test_Package_Part2(t *testing.T) {
+	t.Parallel()
+	run_diag_table(t, []struct {
+		Name      string
+		Files     map[string]string
+		Want_Diag string
+	}{
+
 		{
 			Name: "non-test file unaffected",
 			Files: map[string]string{
 				"foo.go": `package main
 
-import invariant "github.com/james-orcales/james-orcales/golang_snacks/invariant/v2/invariant_default"
-
+` + fixture_invariant_import + `
 const fixture_hi = 100
 
 func f() (result int) {
 	defer func() {
 		invariant.Cross_Product(
-			invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: result, Lo: 0, Hi: fixture_hi}),
+			invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
+				X: result, Lo: 0, Hi: fixture_hi,
+			}),
 			invariant.Always(result == 0, "result is zero"),
 		)
 	}()
@@ -3945,58 +4629,51 @@ func f() (result int) {
 			},
 			Want_Diag: "",
 		},
-	}
-	run_diag_table(t, tests)
+	})
 }
 
 // Test_No_Recursion verifies that direct and mutual recursion cycles are
 // detected via the per-file Ident-based call graph.
 func Test_No_Recursion(t *testing.T) {
 	t.Parallel()
-	tests := []struct {
+	for _, tt := range []struct {
 		Name      string
 		Files     map[string]string
 		Want_Diag string
 	}{
-		{Name: "direct recursion", Files: map[string]string{"test.go": `package main
+
+		{Name: "direct recursion",
+			Files: map[string]string{"test.go": `package main
 func f() {
 	f()
 }`}, Want_Diag: "recursion"},
-		{Name: "recursion inside nested block", Files: map[string]string{"test.go": `package main
+
+		{Name: "recursion inside nested block",
+			Files: map[string]string{"test.go": `package main
 func f(x int) (result int) {
 	if x > 0 {
 		return f(x - 1)
 	}
 	return 0
 }`}, Want_Diag: "recursion"},
-		{Name: "no recursion: calls other function", Files: map[string]string{"test.go": `package main
+
+		{Name: "no recursion: calls other function",
+			Files: map[string]string{"test.go": `package main
 func f_inner() { return }
 func f() {
 	f_inner()
 }`}, Want_Diag: ""},
-		{Name: "no recursion: no calls", Files: map[string]string{"test.go": `package main
+
+		{Name: "no recursion: no calls",
+			Files: map[string]string{"test.go": `package main
 func f() { return }`}, Want_Diag: ""},
-		{Name: "mutual 2-cycle", Files: map[string]string{"test.go": `package main
+
+		{Name: "mutual 2-cycle",
+			Files: map[string]string{"test.go": `package main
 func entry() { a(); b() }
 func a() { b() }
 func b() { a() }`}, Want_Diag: "cycle"},
-		{Name: "3-cycle", Files: map[string]string{"test.go": `package main
-func entry() { a(); b(); c() }
-func a() { b() }
-func b() { c() }
-func c() { a() }`}, Want_Diag: "cycle"},
-		{Name: "non-cycle chain", Files: map[string]string{"test.go": `package main
-func a() { a_b() }
-func a_b() { a_b_c() }
-func a_b_c() { return }`}, Want_Diag: ""},
-		{Name: "cycle plus non-cycle helper", Files: map[string]string{"test.go": `package main
-func entry() { a(); b(); inner() }
-func a() { b(); inner() }
-func b() { a() }
-func inner() { return }`}, Want_Diag: "cycle"},
-	}
-
-	for _, tt := range tests {
+	} {
 		t.Run(tt.Name, func(t *testing.T) {
 			fsys_map := make(fstest.MapFS)
 			for k, v := range tt.Files {
@@ -4004,16 +4681,76 @@ func inner() { return }`}, Want_Diag: "cycle"},
 			}
 			stdout := &bytes.Buffer{}
 			stderr := &bytes.Buffer{}
-			code := lint.Main(&lint.Main_Input{Fsys: fsys_map, Stdout: stdout, Stderr: stderr})
+			code := lint.Main(&lint.Main_Input{
+				Fsys: fsys_map, Stdout: stdout, Stderr: stderr,
+			})
 
 			output := stdout.String()
 			if tt.Want_Diag == "" {
 				if code != 0 {
-					t.Errorf("expected exit 0, got %d; output: %s", code, output)
+					t.Errorf("expected exit 0, got %d; output: %s",
+						code, output)
 				}
 			} else {
 				if !bytes.Contains(stdout.Bytes(), []byte(tt.Want_Diag)) {
-					t.Errorf("expected output containing %q, got: %s", tt.Want_Diag, output)
+					t.Errorf("expected output containing %q, got: %s",
+						tt.Want_Diag, output)
+				}
+			}
+		})
+	}
+}
+
+// Additional cases, split to keep each function within the length limit.
+func Test_No_Recursion_Part2(t *testing.T) {
+	t.Parallel()
+	for _, tt := range []struct {
+		Name      string
+		Files     map[string]string
+		Want_Diag string
+	}{
+
+		{Name: "3-cycle",
+			Files: map[string]string{"test.go": `package main
+func entry() { a(); b(); c() }
+func a() { b() }
+func b() { c() }
+func c() { a() }`}, Want_Diag: "cycle"},
+
+		{Name: "non-cycle chain",
+			Files: map[string]string{"test.go": `package main
+func a() { a_b() }
+func a_b() { a_b_c() }
+func a_b_c() { return }`}, Want_Diag: ""},
+
+		{Name: "cycle plus non-cycle helper",
+			Files: map[string]string{"test.go": `package main
+func entry() { a(); b(); inner() }
+func a() { b(); inner() }
+func b() { a() }
+func inner() { return }`}, Want_Diag: "cycle"},
+	} {
+		t.Run(tt.Name, func(t *testing.T) {
+			fsys_map := make(fstest.MapFS)
+			for k, v := range tt.Files {
+				fsys_map[k] = &fstest.MapFile{Data: gofmt_must(t, v)}
+			}
+			stdout := &bytes.Buffer{}
+			stderr := &bytes.Buffer{}
+			code := lint.Main(&lint.Main_Input{
+				Fsys: fsys_map, Stdout: stdout, Stderr: stderr,
+			})
+
+			output := stdout.String()
+			if tt.Want_Diag == "" {
+				if code != 0 {
+					t.Errorf("expected exit 0, got %d; output: %s",
+						code, output)
+				}
+			} else {
+				if !bytes.Contains(stdout.Bytes(), []byte(tt.Want_Diag)) {
+					t.Errorf("expected output containing %q, got: %s",
+						tt.Want_Diag, output)
 				}
 			}
 		})
@@ -4028,23 +4765,26 @@ func Test_Tiered_Checks(t *testing.T) {
 	// When any tier-1 diagnostic fires, tier-2 checks (currently just recursion)
 	// must be skipped so they can rely on tier-1 contracts (e.g. check_shadowing).
 	fsys_map := fstest.MapFS{
-		"test.go": &fstest.MapFile{Data: []byte(
-			"// missing period at end of this comment\n" +
-				"package main\n" +
-				"func main() { return }\n" +
-				"func f() { f() }\n",
-		)},
+		"test.go": &fstest.MapFile{
+			Data: []byte(
+				"// missing period at end of this comment\n" +
+					"package main\n" +
+					"func main() { return }\n" +
+					"func f() { f() }\n",
+			)},
 	}
 	stdout := &bytes.Buffer{}
 	code := lint.Main(&lint.Main_Input{Fsys: fsys_map, Stdout: stdout, Stderr: &bytes.Buffer{}})
 	if code == 0 {
-		t.Fatalf("expected non-zero exit due to tier-1 diagnostic, got 0; output: %s", stdout.String())
+		t.Fatalf("expected non-zero exit due to tier-1 diagnostic, got 0; output: %s",
+			stdout.String())
 	}
 	if !bytes.Contains(stdout.Bytes(), []byte("should end with")) {
 		t.Errorf("expected tier-1 (comment) diagnostic, got: %s", stdout.String())
 	}
 	if bytes.Contains(stdout.Bytes(), []byte("recursion")) {
-		t.Errorf("tier-2 (recursion) diagnostic should be suppressed when tier-1 fails, got: %s", stdout.String())
+		t.Errorf("tier-2 (recursion) diagnostic should be suppressed when "+
+			"tier-1 fails, got: %s", stdout.String())
 	}
 }
 
@@ -4058,11 +4798,12 @@ func Test_Tiered_Checks(t *testing.T) {
 func Test_Tiered_Checks_Cross_File(t *testing.T) {
 	t.Parallel()
 	fsys_map := fstest.MapFS{
-		"a.go": &fstest.MapFile{Data: []byte(
-			"// missing period at end of this comment\n" +
-				"package main\n" +
-				"func main() { return }\n",
-		)},
+		"a.go": &fstest.MapFile{
+			Data: []byte(
+				"// missing period at end of this comment\n" +
+					"package main\n" +
+					"func main() { return }\n",
+			)},
 		"b.go": &fstest.MapFile{Data: gofmt_must(t, `package main
 func f() { f() }
 `)},
@@ -4070,13 +4811,15 @@ func f() { f() }
 	stdout := &bytes.Buffer{}
 	code := lint.Main(&lint.Main_Input{Fsys: fsys_map, Stdout: stdout, Stderr: &bytes.Buffer{}})
 	if code == 0 {
-		t.Fatalf("expected non-zero exit due to tier-1 diagnostic, got 0; output: %s", stdout.String())
+		t.Fatalf("expected non-zero exit due to tier-1 diagnostic, got 0; output: %s",
+			stdout.String())
 	}
 	if !bytes.Contains(stdout.Bytes(), []byte("should end with")) {
 		t.Errorf("expected tier-1 (comment) diagnostic from a.go, got: %s", stdout.String())
 	}
 	if bytes.Contains(stdout.Bytes(), []byte("recursion")) {
-		t.Errorf("tier-2 (recursion) in b.go should be suppressed when tier-1 fires in a.go, got: %s", stdout.String())
+		t.Errorf("tier-2 (recursion) in b.go should be suppressed when tier-1 "+
+			"fires in a.go, got: %s", stdout.String())
 	}
 }
 
@@ -4099,49 +4842,56 @@ func Test_Unbounded_Read(t *testing.T) {
 		{
 			Name: "io.ReadAll flagged",
 			Files: map[string]string{
-				"test.go": "package main\nimport \"io\"\nfunc f() { io.ReadAll(nil) }\n",
+				"test.go": "package main\nimport \"io\"\n" +
+					"func f() { io.ReadAll(nil) }\n",
 			},
 			Want_Diag: "unbounded API 'io.ReadAll'",
 		},
 		{
 			Name: "io.Copy flagged",
 			Files: map[string]string{
-				"test.go": "package main\nimport \"io\"\nfunc f() { io.Copy(nil, nil) }\n",
+				"test.go": "package main\nimport \"io\"\n" +
+					"func f() { io.Copy(nil, nil) }\n",
 			},
 			Want_Diag: "unbounded API 'io.Copy'",
 		},
 		{
 			Name: "io.CopyBuffer flagged",
 			Files: map[string]string{
-				"test.go": "package main\nimport \"io\"\nfunc f() { io.CopyBuffer(nil, nil, nil) }\n",
+				"test.go": "package main\nimport \"io\"\n" +
+					"func f() { io.CopyBuffer(nil, nil, nil) }\n",
 			},
 			Want_Diag: "unbounded API 'io.CopyBuffer'",
 		},
 		{
 			Name: "os.ReadFile flagged",
 			Files: map[string]string{
-				"test.go": "package main\nimport \"os\"\nfunc f() { os.ReadFile(\"path\") }\n",
+				"test.go": "package main\nimport \"os\"\n" +
+					"func f() { os.ReadFile(\"path\") }\n",
 			},
 			Want_Diag: "unbounded API 'os.ReadFile'",
 		},
 		{
 			Name: "os.ReadDir flagged",
 			Files: map[string]string{
-				"test.go": "package main\nimport \"os\"\nfunc f() { os.ReadDir(\"path\") }\n",
+				"test.go": "package main\nimport \"os\"\n" +
+					"func f() { os.ReadDir(\"path\") }\n",
 			},
 			Want_Diag: "unbounded API 'os.ReadDir'",
 		},
 		{
 			Name: "bufio.NewScanner flagged",
 			Files: map[string]string{
-				"test.go": "package main\nimport \"bufio\"\nfunc f() { bufio.NewScanner(nil) }\n",
+				"test.go": "package main\nimport \"bufio\"\n" +
+					"func f() { bufio.NewScanner(nil) }\n",
 			},
 			Want_Diag: "unbounded API 'bufio.NewScanner'",
 		},
 		{
 			Name: "bufio.NewReader flagged",
 			Files: map[string]string{
-				"test.go": "package main\nimport \"bufio\"\nfunc f() { bufio.NewReader(nil) }\n",
+				"test.go": "package main\nimport \"bufio\"\n" +
+					"func f() { bufio.NewReader(nil) }\n",
 			},
 			Want_Diag: "unbounded API 'bufio.NewReader'",
 		},
@@ -4171,7 +4921,8 @@ func Test_Unbounded_Read_Exemptions(t *testing.T) {
 			Name: "generated file exempt",
 			Files: map[string]string{
 				"test.go": "// Code generated by stubgen. DO NOT EDIT.\n" +
-					"package main\nimport \"io\"\nfunc f() { io.ReadAll(nil) }\n",
+					"package main\nimport \"io\"\n" +
+					"func f() { io.ReadAll(nil) }\n",
 			},
 			Want_Diag: "",
 		},
@@ -4193,28 +4944,32 @@ func Test_Unbounded_Decode(t *testing.T) {
 		{
 			Name: "json.NewDecoder flagged",
 			Files: map[string]string{
-				"test.go": "package main\nimport \"encoding/json\"\nfunc f() { json.NewDecoder(nil) }\n",
+				"test.go": "package main\nimport \"encoding/json\"\n" +
+					"func f() { json.NewDecoder(nil) }\n",
 			},
 			Want_Diag: "unbounded API 'json.NewDecoder'",
 		},
 		{
 			Name: "xml.NewDecoder flagged",
 			Files: map[string]string{
-				"test.go": "package main\nimport \"encoding/xml\"\nfunc f() { xml.NewDecoder(nil) }\n",
+				"test.go": "package main\nimport \"encoding/xml\"\n" +
+					"func f() { xml.NewDecoder(nil) }\n",
 			},
 			Want_Diag: "unbounded API 'xml.NewDecoder'",
 		},
 		{
 			Name: "gob.NewDecoder flagged",
 			Files: map[string]string{
-				"test.go": "package main\nimport \"encoding/gob\"\nfunc f() { gob.NewDecoder(nil) }\n",
+				"test.go": "package main\nimport \"encoding/gob\"\n" +
+					"func f() { gob.NewDecoder(nil) }\n",
 			},
 			Want_Diag: "unbounded API 'gob.NewDecoder'",
 		},
 		{
 			Name: "csv.NewReader flagged",
 			Files: map[string]string{
-				"test.go": "package main\nimport \"encoding/csv\"\nfunc f() { csv.NewReader(nil) }\n",
+				"test.go": "package main\nimport \"encoding/csv\"\n" +
+					"func f() { csv.NewReader(nil) }\n",
 			},
 			Want_Diag: "unbounded API 'csv.NewReader'",
 		},
@@ -4234,67 +4989,95 @@ func Test_Unbounded_Decode(t *testing.T) {
 // size — the source is the classic zip-bomb shape.
 func Test_Unbounded_Decompression(t *testing.T) {
 	t.Parallel()
-	tests := []struct {
+	run_diag_table(t, []struct {
 		Name      string
 		Files     map[string]string
 		Want_Diag string
 	}{
+
 		{
 			Name: "gzip.NewReader flagged",
 			Files: map[string]string{
-				"test.go": "package main\nimport \"compress/gzip\"\nfunc f() { gzip.NewReader(nil) }\n",
+				"test.go": "package main\nimport \"compress/gzip\"\n" +
+					"func f() { gzip.NewReader(nil) }\n",
 			},
 			Want_Diag: "unbounded API 'gzip.NewReader'",
 		},
+
 		{
 			Name: "flate.NewReader flagged",
 			Files: map[string]string{
-				"test.go": "package main\nimport \"compress/flate\"\nfunc f() { flate.NewReader(nil) }\n",
+				"test.go": "package main\nimport \"compress/flate\"\n" +
+					"func f() { flate.NewReader(nil) }\n",
 			},
 			Want_Diag: "unbounded API 'flate.NewReader'",
 		},
+
 		{
 			Name: "zlib.NewReader flagged",
 			Files: map[string]string{
-				"test.go": "package main\nimport \"compress/zlib\"\nfunc f() { zlib.NewReader(nil) }\n",
+				"test.go": "package main\nimport \"compress/zlib\"\n" +
+					"func f() { zlib.NewReader(nil) }\n",
 			},
 			Want_Diag: "unbounded API 'zlib.NewReader'",
 		},
+
 		{
 			Name: "bzip2.NewReader flagged",
 			Files: map[string]string{
-				"test.go": "package main\nimport \"compress/bzip2\"\nfunc f() { bzip2.NewReader(nil) }\n",
+				"test.go": "package main\nimport \"compress/bzip2\"\n" +
+					"func f() { bzip2.NewReader(nil) }\n",
 			},
 			Want_Diag: "unbounded API 'bzip2.NewReader'",
 		},
+
 		{
 			Name: "lzw.NewReader flagged",
 			Files: map[string]string{
-				"test.go": "package main\nimport \"compress/lzw\"\nfunc f() { lzw.NewReader(nil, 0, 0) }\n",
+				"test.go": "package main\nimport \"compress/lzw\"\n" +
+					"func f() { lzw.NewReader(nil, 0, 0) }\n",
 			},
 			Want_Diag: "unbounded API 'lzw.NewReader'",
 		},
+
 		{
 			Name: "zip.NewReader flagged",
 			Files: map[string]string{
-				"test.go": "package main\nimport \"archive/zip\"\nfunc f() { zip.NewReader(nil, 0) }\n",
+				"test.go": "package main\nimport \"archive/zip\"\n" +
+					"func f() { zip.NewReader(nil, 0) }\n",
 			},
 			Want_Diag: "unbounded API 'zip.NewReader'",
 		},
+	})
+}
+
+// Additional cases, split to keep each function within the length limit.
+func Test_Unbounded_Decompression_Part2(t *testing.T) {
+	t.Parallel()
+	run_diag_table(t, []struct {
+		Name      string
+		Files     map[string]string
+		Want_Diag string
+	}{
+
 		{
 			Name: "zip.OpenReader flagged",
 			Files: map[string]string{
-				"test.go": "package main\nimport \"archive/zip\"\nfunc f() { zip.OpenReader(\"path\") }\n",
+				"test.go": "package main\nimport \"archive/zip\"\n" +
+					"func f() { zip.OpenReader(\"path\") }\n",
 			},
 			Want_Diag: "unbounded API 'zip.OpenReader'",
 		},
+
 		{
 			Name: "tar.NewReader flagged",
 			Files: map[string]string{
-				"test.go": "package main\nimport \"archive/tar\"\nfunc f() { tar.NewReader(nil) }\n",
+				"test.go": "package main\nimport \"archive/tar\"\n" +
+					"func f() { tar.NewReader(nil) }\n",
 			},
 			Want_Diag: "unbounded API 'tar.NewReader'",
 		},
+
 		{
 			Name: "no banned API allowed",
 			Files: map[string]string{
@@ -4302,8 +5085,7 @@ func Test_Unbounded_Decompression(t *testing.T) {
 			},
 			Want_Diag: "",
 		},
-	}
-	run_diag_table(t, tests)
+	})
 }
 
 // Test_Unbounded_Allocation verifies the tier-2 ban on constructors that
@@ -4320,14 +5102,16 @@ func Test_Unbounded_Allocation(t *testing.T) {
 		{
 			Name: "bytes.NewBuffer flagged",
 			Files: map[string]string{
-				"test.go": "package main\nimport \"bytes\"\nfunc f() { bytes.NewBuffer(nil) }\n",
+				"test.go": "package main\nimport \"bytes\"\n" +
+					"func f() { bytes.NewBuffer(nil) }\n",
 			},
 			Want_Diag: "unbounded API 'bytes.NewBuffer'",
 		},
 		{
 			Name: "bytes.NewBufferString flagged",
 			Files: map[string]string{
-				"test.go": "package main\nimport \"bytes\"\nfunc f() { bytes.NewBufferString(\"\") }\n",
+				"test.go": "package main\nimport \"bytes\"\n" +
+					"func f() { bytes.NewBufferString(\"\") }\n",
 			},
 			Want_Diag: "unbounded API 'bytes.NewBufferString'",
 		},
@@ -4348,75 +5132,105 @@ func Test_Unbounded_Allocation(t *testing.T) {
 // package-level Default* variables.
 func Test_Unbounded_Http(t *testing.T) {
 	t.Parallel()
-	tests := []struct {
+	run_diag_table(t, []struct {
 		Name      string
 		Files     map[string]string
 		Want_Diag string
 	}{
+
 		{
 			Name: "http.Get flagged",
 			Files: map[string]string{
-				"test.go": "package main\nimport \"net/http\"\nfunc f() { http.Get(\"\") }\n",
+				"test.go": "package main\nimport \"net/http\"\n" +
+					"func f() { http.Get(\"\") }\n",
 			},
 			Want_Diag: "unbounded API 'http.Get'",
 		},
+
 		{
 			Name: "http.Post flagged",
 			Files: map[string]string{
-				"test.go": "package main\nimport \"net/http\"\nfunc f() { http.Post(\"\", \"\", nil) }\n",
+				"test.go": "package main\nimport \"net/http\"\n" +
+					"func f() { http.Post(\"\", \"\", nil) }\n",
 			},
 			Want_Diag: "unbounded API 'http.Post'",
 		},
+
 		{
 			Name: "http.PostForm flagged",
 			Files: map[string]string{
-				"test.go": "package main\nimport \"net/http\"\nfunc f() { http.PostForm(\"\", nil) }\n",
+				"test.go": "package main\nimport \"net/http\"\n" +
+					"func f() { http.PostForm(\"\", nil) }\n",
 			},
 			Want_Diag: "unbounded API 'http.PostForm'",
 		},
+
 		{
 			Name: "http.Head flagged",
 			Files: map[string]string{
-				"test.go": "package main\nimport \"net/http\"\nfunc f() { http.Head(\"\") }\n",
+				"test.go": "package main\nimport \"net/http\"\n" +
+					"func f() { http.Head(\"\") }\n",
 			},
 			Want_Diag: "unbounded API 'http.Head'",
 		},
+
 		{
 			Name: "http.ListenAndServe flagged",
 			Files: map[string]string{
-				"test.go": "package main\nimport \"net/http\"\nfunc f() { http.ListenAndServe(\"\", nil) }\n",
+				"test.go": "package main\nimport \"net/http\"\n" +
+					"func f() { http.ListenAndServe(\"\", nil) }\n",
 			},
 			Want_Diag: "unbounded API 'http.ListenAndServe'",
 		},
+
 		{
 			Name: "http.ListenAndServeTLS flagged",
 			Files: map[string]string{
 				"test.go": "package main\nimport \"net/http\"\n" +
-					"func f() { http.ListenAndServeTLS(\"\", \"\", \"\", nil) }\n",
+					"func f() { " +
+					"http.ListenAndServeTLS(\"\", \"\", \"\", nil) }\n",
 			},
 			Want_Diag: "unbounded API 'http.ListenAndServeTLS'",
 		},
+	})
+}
+
+// Additional cases, split to keep each function within the length limit.
+func Test_Unbounded_Http_Part2(t *testing.T) {
+	t.Parallel()
+	run_diag_table(t, []struct {
+		Name      string
+		Files     map[string]string
+		Want_Diag string
+	}{
+
 		{
 			Name: "http.DefaultClient variable reference flagged",
 			Files: map[string]string{
-				"test.go": "package main\nimport \"net/http\"\nfunc f() { if http.DefaultClient != nil { return } }\n",
+				"test.go": "package main\nimport \"net/http\"\n" +
+					"func f() { if http.DefaultClient != nil { return } }\n",
 			},
 			Want_Diag: "unbounded API 'http.DefaultClient'",
 		},
+
 		{
 			Name: "http.DefaultServeMux variable reference flagged",
 			Files: map[string]string{
-				"test.go": "package main\nimport \"net/http\"\nfunc f() { if http.DefaultServeMux != nil { return } }\n",
+				"test.go": "package main\nimport \"net/http\"\n" +
+					"func f() { if http.DefaultServeMux != nil { return } }\n",
 			},
 			Want_Diag: "unbounded API 'http.DefaultServeMux'",
 		},
+
 		{
 			Name: "http.DefaultTransport variable reference flagged",
 			Files: map[string]string{
-				"test.go": "package main\nimport \"net/http\"\nfunc f() { if http.DefaultTransport != nil { return } }\n",
+				"test.go": "package main\nimport \"net/http\"\n" +
+					"func f() { if http.DefaultTransport != nil { return } }\n",
 			},
 			Want_Diag: "unbounded API 'http.DefaultTransport'",
 		},
+
 		{
 			Name: "no banned API allowed",
 			Files: map[string]string{
@@ -4424,8 +5238,7 @@ func Test_Unbounded_Http(t *testing.T) {
 			},
 			Want_Diag: "",
 		},
-	}
-	run_diag_table(t, tests)
+	})
 }
 
 // Test_Deprecated_Ioutil verifies the tier-2 ban on the entire io/ioutil
@@ -4433,67 +5246,95 @@ func Test_Unbounded_Http(t *testing.T) {
 // alongside its modern replacement.
 func Test_Deprecated_Ioutil(t *testing.T) {
 	t.Parallel()
-	tests := []struct {
+	run_diag_table(t, []struct {
 		Name      string
 		Files     map[string]string
 		Want_Diag string
 	}{
+
 		{
 			Name: "ioutil.ReadAll flagged",
 			Files: map[string]string{
-				"test.go": "package main\nimport \"io/ioutil\"\nfunc f() { ioutil.ReadAll(nil) }\n",
+				"test.go": "package main\nimport \"io/ioutil\"\n" +
+					"func f() { ioutil.ReadAll(nil) }\n",
 			},
 			Want_Diag: "unbounded API 'ioutil.ReadAll'",
 		},
+
 		{
 			Name: "ioutil.ReadFile flagged",
 			Files: map[string]string{
-				"test.go": "package main\nimport \"io/ioutil\"\nfunc f() { ioutil.ReadFile(\"\") }\n",
+				"test.go": "package main\nimport \"io/ioutil\"\n" +
+					"func f() { ioutil.ReadFile(\"\") }\n",
 			},
 			Want_Diag: "unbounded API 'ioutil.ReadFile'",
 		},
+
 		{
 			Name: "ioutil.ReadDir flagged",
 			Files: map[string]string{
-				"test.go": "package main\nimport \"io/ioutil\"\nfunc f() { ioutil.ReadDir(\"\") }\n",
+				"test.go": "package main\nimport \"io/ioutil\"\n" +
+					"func f() { ioutil.ReadDir(\"\") }\n",
 			},
 			Want_Diag: "unbounded API 'ioutil.ReadDir'",
 		},
+
 		{
 			Name: "ioutil.WriteFile flagged",
 			Files: map[string]string{
-				"test.go": "package main\nimport \"io/ioutil\"\nfunc f() { ioutil.WriteFile(\"\", nil, 0) }\n",
+				"test.go": "package main\nimport \"io/ioutil\"\n" +
+					"func f() { ioutil.WriteFile(\"\", nil, 0) }\n",
 			},
 			Want_Diag: "unbounded API 'ioutil.WriteFile'",
 		},
+
 		{
 			Name: "ioutil.TempFile flagged",
 			Files: map[string]string{
-				"test.go": "package main\nimport \"io/ioutil\"\nfunc f() { ioutil.TempFile(\"\", \"\") }\n",
+				"test.go": "package main\nimport \"io/ioutil\"\n" +
+					"func f() { ioutil.TempFile(\"\", \"\") }\n",
 			},
 			Want_Diag: "unbounded API 'ioutil.TempFile'",
 		},
+
 		{
 			Name: "ioutil.TempDir flagged",
 			Files: map[string]string{
-				"test.go": "package main\nimport \"io/ioutil\"\nfunc f() { ioutil.TempDir(\"\", \"\") }\n",
+				"test.go": "package main\nimport \"io/ioutil\"\n" +
+					"func f() { ioutil.TempDir(\"\", \"\") }\n",
 			},
 			Want_Diag: "unbounded API 'ioutil.TempDir'",
 		},
+	})
+}
+
+// Additional cases, split to keep each function within the length limit.
+func Test_Deprecated_Ioutil_Part2(t *testing.T) {
+	t.Parallel()
+	run_diag_table(t, []struct {
+		Name      string
+		Files     map[string]string
+		Want_Diag string
+	}{
+
 		{
 			Name: "ioutil.NopCloser flagged",
 			Files: map[string]string{
-				"test.go": "package main\nimport \"io/ioutil\"\nfunc f() { ioutil.NopCloser(nil) }\n",
+				"test.go": "package main\nimport \"io/ioutil\"\n" +
+					"func f() { ioutil.NopCloser(nil) }\n",
 			},
 			Want_Diag: "unbounded API 'ioutil.NopCloser'",
 		},
+
 		{
 			Name: "ioutil.Discard variable reference flagged",
 			Files: map[string]string{
-				"test.go": "package main\nimport \"io/ioutil\"\nfunc f() { if ioutil.Discard != nil { return } }\n",
+				"test.go": "package main\nimport \"io/ioutil\"\n" +
+					"func f() { if ioutil.Discard != nil { return } }\n",
 			},
 			Want_Diag: "unbounded API 'ioutil.Discard'",
 		},
+
 		{
 			Name: "no banned API allowed",
 			Files: map[string]string{
@@ -4501,66 +5342,53 @@ func Test_Deprecated_Ioutil(t *testing.T) {
 			},
 			Want_Diag: "",
 		},
-	}
-	run_diag_table(t, tests)
+	})
 }
 
 // Test_Main_First verifies that main, Main, and TestMain must be the first
 // function declaration in the file, with TestMain exempt from snake/Ada casing.
 func Test_Main_First(t *testing.T) {
 	t.Parallel()
-	tests := []struct {
+	for _, tt := range []struct {
 		Name      string
 		Files     map[string]string
 		Want_Diag string
 	}{
-		{Name: "main not first", Files: map[string]string{"test.go": `package main
+
+		{Name: "main not first",
+			Files: map[string]string{"test.go": `package main
 func other() { return }
 func main() { return }`}, Want_Diag: "should be declared first"},
-		{Name: "Main not first", Files: map[string]string{"test.go": `package impl
+
+		{Name: "Main not first",
+			Files: map[string]string{"test.go": `package impl
 func helper() { return }
 func Main() { return }`}, Want_Diag: "should be declared first"},
-		{Name: "main is first", Files: map[string]string{"test.go": `package main
+
+		{Name: "main is first",
+			Files: map[string]string{"test.go": `package main
 func main() { return }
 func other() { return }`}, Want_Diag: ""},
-		{Name: "Main is first", Files: map[string]string{"test.go": `// Package impl is a fixture.
+
+		{Name: "Main is first",
+			Files: map[string]string{"test.go": `// Package impl is a fixture.
 package impl
 // Main is the entry point.
 func Main() { return }
 func inner() { return }`}, Want_Diag: ""},
-		{Name: "no main: no diag", Files: map[string]string{"test.go": `// Package x is a fixture.
+
+		{Name: "no main: no diag",
+			Files: map[string]string{"test.go": `// Package x is a fixture.
 package x
 func a() { return }
 func b() { return }`}, Want_Diag: ""},
-		{Name: "decls before main: still OK", Files: map[string]string{"test.go": `package main
+
+		{Name: "decls before main: still OK",
+			Files: map[string]string{"test.go": `package main
 const x = 1
 type T int
 func main() { return }`}, Want_Diag: ""},
-		{Name: "TestMain not first", Files: map[string]string{"foo_test.go": `package foo_test
-
-import "testing"
-
-// Test_Foo is a fixture.
-func Test_Foo(t *testing.T) { return }
-func TestMain(m *testing.M) { return }
-`}, Want_Diag: "func TestMain should be declared first"},
-		{Name: "TestMain is first", Files: map[string]string{"foo_test.go": `package foo_test
-
-import "testing"
-
-func TestMain(m *testing.M) { return }
-// Test_Foo is a fixture.
-func Test_Foo(t *testing.T) { return }
-`}, Want_Diag: ""},
-		{Name: "TestMain exempt from casing", Files: map[string]string{"foo_test.go": `package foo_test
-
-import "testing"
-
-func TestMain(m *testing.M) { return }
-`}, Want_Diag: ""},
-	}
-
-	for _, tt := range tests {
+	} {
 		t.Run(tt.Name, func(t *testing.T) {
 			fsys_map := make(fstest.MapFS)
 			for k, v := range tt.Files {
@@ -4568,16 +5396,84 @@ func TestMain(m *testing.M) { return }
 			}
 			stdout := &bytes.Buffer{}
 			stderr := &bytes.Buffer{}
-			code := lint.Main(&lint.Main_Input{Fsys: fsys_map, Stdout: stdout, Stderr: stderr})
+			code := lint.Main(&lint.Main_Input{
+				Fsys: fsys_map, Stdout: stdout, Stderr: stderr,
+			})
 
 			output := stdout.String()
 			if tt.Want_Diag == "" {
 				if code != 0 {
-					t.Errorf("expected exit 0, got %d; output: %s", code, output)
+					t.Errorf("expected exit 0, got %d; output: %s",
+						code, output)
 				}
 			} else {
 				if !bytes.Contains(stdout.Bytes(), []byte(tt.Want_Diag)) {
-					t.Errorf("expected output containing %q, got: %s", tt.Want_Diag, output)
+					t.Errorf("expected output containing %q, got: %s",
+						tt.Want_Diag, output)
+				}
+			}
+		})
+	}
+}
+
+// Additional cases, split to keep each function within the length limit.
+func Test_Main_First_Part2(t *testing.T) {
+	t.Parallel()
+	for _, tt := range []struct {
+		Name      string
+		Files     map[string]string
+		Want_Diag string
+	}{
+
+		{Name: "TestMain not first",
+			Files: map[string]string{"foo_test.go": `package foo_test
+
+import "testing"
+
+// Test_Foo is a fixture.
+func Test_Foo(t *testing.T) { return }
+func TestMain(m *testing.M) { return }
+`}, Want_Diag: "func TestMain should be declared first"},
+
+		{Name: "TestMain is first",
+			Files: map[string]string{"foo_test.go": `package foo_test
+
+import "testing"
+
+func TestMain(m *testing.M) { return }
+// Test_Foo is a fixture.
+func Test_Foo(t *testing.T) { return }
+`}, Want_Diag: ""},
+
+		{Name: "TestMain exempt from casing",
+			Files: map[string]string{"foo_test.go": `package foo_test
+
+import "testing"
+
+func TestMain(m *testing.M) { return }
+`}, Want_Diag: ""},
+	} {
+		t.Run(tt.Name, func(t *testing.T) {
+			fsys_map := make(fstest.MapFS)
+			for k, v := range tt.Files {
+				fsys_map[k] = &fstest.MapFile{Data: gofmt_must(t, v)}
+			}
+			stdout := &bytes.Buffer{}
+			stderr := &bytes.Buffer{}
+			code := lint.Main(&lint.Main_Input{
+				Fsys: fsys_map, Stdout: stdout, Stderr: stderr,
+			})
+
+			output := stdout.String()
+			if tt.Want_Diag == "" {
+				if code != 0 {
+					t.Errorf("expected exit 0, got %d; output: %s",
+						code, output)
+				}
+			} else {
+				if !bytes.Contains(stdout.Bytes(), []byte(tt.Want_Diag)) {
+					t.Errorf("expected output containing %q, got: %s",
+						tt.Want_Diag, output)
 				}
 			}
 		})
@@ -4596,7 +5492,8 @@ func Test_Line_Character_Count_Tabs(t *testing.T) {
 		tabs += "\t"
 	}
 	source := "package main\nfunc f() (result int) { return 1 } //" + tabs + "tail\n"
-	fsys_map := fstest.MapFS{"test.go": &fstest.MapFile{Data: []byte(source)}}
+	fsys_map := fstest.MapFS{"test.go": &fstest.MapFile{
+		Data: []byte(source)}}
 	stdout := &bytes.Buffer{}
 	code := lint.Main(&lint.Main_Input{Fsys: fsys_map, Stdout: stdout, Stderr: &bytes.Buffer{}})
 	if code == 0 {
@@ -4614,7 +5511,8 @@ func Test_Line_Character_Count_Import_Exempt(t *testing.T) {
 	t.Parallel()
 	long_path := "github.com/example/" + strings.Repeat("a", 90) + "/pkg"
 	source := "package main\n\nimport " + strconv.Quote(long_path) + "\n"
-	fsys_map := fstest.MapFS{"test.go": &fstest.MapFile{Data: []byte(source)}}
+	fsys_map := fstest.MapFS{"test.go": &fstest.MapFile{
+		Data: []byte(source)}}
 	stdout := &bytes.Buffer{}
 	code := lint.Main(&lint.Main_Input{Fsys: fsys_map, Stdout: stdout, Stderr: &bytes.Buffer{}})
 	if code != 0 {
@@ -4628,11 +5526,15 @@ func Test_Line_Character_Count_Import_Exempt(t *testing.T) {
 // exemption from the sentence rules.
 func Test_Comments(t *testing.T) {
 	t.Parallel()
-	tests := []struct {
+	// TestComments fixtures include `//foo` (no space after slashes), which
+	// gofmt normalizes before our check sees it. Bypass gofmt_must so the
+	// formatting-style violations under test survive intact.
+	for _, tt := range []struct {
 		Name      string
 		Files     map[string]string
 		Want_Diag string
 	}{
+
 		{
 			Name: "missing trailing period",
 			Files: map[string]string{
@@ -4640,6 +5542,7 @@ func Test_Comments(t *testing.T) {
 			},
 			Want_Diag: "should end with",
 		},
+
 		{
 			Name: "lowercase start",
 			Files: map[string]string{
@@ -4647,6 +5550,7 @@ func Test_Comments(t *testing.T) {
 			},
 			Want_Diag: "should start with capital",
 		},
+
 		{
 			Name: "missing space after slashes",
 			Files: map[string]string{
@@ -4654,6 +5558,47 @@ func Test_Comments(t *testing.T) {
 			},
 			Want_Diag: "missing space after",
 		},
+	} {
+		t.Run(tt.Name, func(t *testing.T) {
+			fsys_map := make(fstest.MapFS)
+			for k, v := range tt.Files {
+				fsys_map[k] = &fstest.MapFile{
+					Data: []byte(v)}
+			}
+			stdout := &bytes.Buffer{}
+			stderr := &bytes.Buffer{}
+			code := lint.Main(&lint.Main_Input{
+				Fsys: fsys_map, Stdout: stdout, Stderr: stderr,
+			})
+
+			output := stdout.String()
+			if tt.Want_Diag == "" {
+				if code != 0 {
+					t.Errorf("expected exit 0, got %d; output: %s",
+						code, output)
+				}
+			} else {
+				if !bytes.Contains(stdout.Bytes(), []byte(tt.Want_Diag)) {
+					t.Errorf("expected output containing %q, got: %s",
+						tt.Want_Diag, output)
+				}
+			}
+		})
+	}
+}
+
+// Additional cases, split to keep each function within the length limit.
+func Test_Comments_Part2(t *testing.T) {
+	t.Parallel()
+	// TestComments fixtures include `//foo` (no space after slashes), which
+	// gofmt normalizes before our check sees it. Bypass gofmt_must so the
+	// formatting-style violations under test survive intact.
+	for _, tt := range []struct {
+		Name      string
+		Files     map[string]string
+		Want_Diag string
+	}{
+
 		{
 			Name: "well-formed comment",
 			Files: map[string]string{
@@ -4661,6 +5606,7 @@ func Test_Comments(t *testing.T) {
 			},
 			Want_Diag: "",
 		},
+
 		{
 			Name: "trailing colon allowed",
 			Files: map[string]string{
@@ -4668,6 +5614,7 @@ func Test_Comments(t *testing.T) {
 			},
 			Want_Diag: "",
 		},
+
 		{
 			Name: "pragma exempt",
 			Files: map[string]string{
@@ -4675,6 +5622,47 @@ func Test_Comments(t *testing.T) {
 			},
 			Want_Diag: "",
 		},
+	} {
+		t.Run(tt.Name, func(t *testing.T) {
+			fsys_map := make(fstest.MapFS)
+			for k, v := range tt.Files {
+				fsys_map[k] = &fstest.MapFile{
+					Data: []byte(v)}
+			}
+			stdout := &bytes.Buffer{}
+			stderr := &bytes.Buffer{}
+			code := lint.Main(&lint.Main_Input{
+				Fsys: fsys_map, Stdout: stdout, Stderr: stderr,
+			})
+
+			output := stdout.String()
+			if tt.Want_Diag == "" {
+				if code != 0 {
+					t.Errorf("expected exit 0, got %d; output: %s",
+						code, output)
+				}
+			} else {
+				if !bytes.Contains(stdout.Bytes(), []byte(tt.Want_Diag)) {
+					t.Errorf("expected output containing %q, got: %s",
+						tt.Want_Diag, output)
+				}
+			}
+		})
+	}
+}
+
+// Additional cases, split to keep each function within the length limit.
+func Test_Comments_Part3(t *testing.T) {
+	t.Parallel()
+	// TestComments fixtures include `//foo` (no space after slashes), which
+	// gofmt normalizes before our check sees it. Bypass gofmt_must so the
+	// formatting-style violations under test survive intact.
+	for _, tt := range []struct {
+		Name      string
+		Files     map[string]string
+		Want_Diag string
+	}{
+
 		{
 			Name: "multi-line group: trailing period on last line",
 			Files: map[string]string{
@@ -4682,29 +5670,29 @@ func Test_Comments(t *testing.T) {
 			},
 			Want_Diag: "",
 		},
-	}
-
-	// TestComments fixtures include `//foo` (no space after slashes), which
-	// gofmt normalizes before our check sees it. Bypass gofmt_must so the
-	// formatting-style violations under test survive intact.
-	for _, tt := range tests {
+	} {
 		t.Run(tt.Name, func(t *testing.T) {
 			fsys_map := make(fstest.MapFS)
 			for k, v := range tt.Files {
-				fsys_map[k] = &fstest.MapFile{Data: []byte(v)}
+				fsys_map[k] = &fstest.MapFile{
+					Data: []byte(v)}
 			}
 			stdout := &bytes.Buffer{}
 			stderr := &bytes.Buffer{}
-			code := lint.Main(&lint.Main_Input{Fsys: fsys_map, Stdout: stdout, Stderr: stderr})
+			code := lint.Main(&lint.Main_Input{
+				Fsys: fsys_map, Stdout: stdout, Stderr: stderr,
+			})
 
 			output := stdout.String()
 			if tt.Want_Diag == "" {
 				if code != 0 {
-					t.Errorf("expected exit 0, got %d; output: %s", code, output)
+					t.Errorf("expected exit 0, got %d; output: %s",
+						code, output)
 				}
 			} else {
 				if !bytes.Contains(stdout.Bytes(), []byte(tt.Want_Diag)) {
-					t.Errorf("expected output containing %q, got: %s", tt.Want_Diag, output)
+					t.Errorf("expected output containing %q, got: %s",
+						tt.Want_Diag, output)
 				}
 			}
 		})
@@ -4717,20 +5705,24 @@ func Test_Comments(t *testing.T) {
 func Test_Comments_Inline_Exempt(t *testing.T) {
 	t.Parallel()
 	source := "package main\n\n" +
-		"import invariant \"github.com/james-orcales/james-orcales/golang_snacks/invariant/v2\"\n\n" +
+		"import invariant \"github.com/james-orcales/james-orcales/" +
+		"golang_snacks/invariant/v2\"\n\n" +
 		"const fixture_hi = 100\n\n" +
 		"func f() (result int) { // some inline note\n" +
 		"\tdefer func() {\n" +
 		"\t\tinvariant.Cross_Product(\n" +
-		"\t\t\tinvariant.Distinct_Boundary(&invariant.Boundary_Input[int]{\n" +
+		"\t\t\tinvariant.Distinct_Boundary(" +
+		"&invariant.Boundary_Input[int]{\n" +
 		"\t\t\t\tX: result, Lo: 0, Hi: fixture_hi,\n" +
 		"\t\t\t}),\n" +
-		"\t\t\tinvariant.Always(result == 0, \"result is zero\"),\n" +
+		"\t\t\tinvariant.Always(" +
+		"result == 0, \"result is zero\"),\n" +
 		"\t\t)\n" +
 		"\t}()\n" +
 		"\treturn 1\n" +
 		"}\n"
-	fsys_map := fstest.MapFS{"test.go": &fstest.MapFile{Data: []byte(source)}}
+	fsys_map := fstest.MapFS{"test.go": &fstest.MapFile{
+		Data: []byte(source)}}
 	stdout := &bytes.Buffer{}
 	stderr := &bytes.Buffer{}
 	code := lint.Main(&lint.Main_Input{Fsys: fsys_map, Stdout: stdout, Stderr: stderr})
@@ -4817,11 +5809,12 @@ func main() { return }
 // local-scope vars which must not be flagged.
 func Test_No_Package_Vars_Banned(t *testing.T) {
 	t.Parallel()
-	tests := []struct {
+	run_diag_table(t, []struct {
 		Name      string
 		Files     map[string]string
 		Want_Diag string
 	}{
+
 		{
 			Name: "zero-value var banned",
 			Files: map[string]string{
@@ -4832,6 +5825,7 @@ func main() { return }
 			},
 			Want_Diag: "package-level var is banned",
 		},
+
 		{
 			Name: "literal initializer banned",
 			Files: map[string]string{
@@ -4842,6 +5836,7 @@ func main() { return }
 			},
 			Want_Diag: "package-level var is banned",
 		},
+
 		{
 			Name: "composite literal initializer banned",
 			Files: map[string]string{
@@ -4853,6 +5848,7 @@ func main() { return }
 			},
 			Want_Diag: "package-level var is banned",
 		},
+
 		{
 			Name: "disallowed call initializer banned",
 			Files: map[string]string{
@@ -4864,6 +5860,7 @@ func main() { return }
 			},
 			Want_Diag: "package-level var is banned",
 		},
+
 		{
 			Name: "multi-name single-line banned",
 			Files: map[string]string{
@@ -4874,6 +5871,18 @@ func main() { return }
 			},
 			Want_Diag: "package-level var is banned",
 		},
+	})
+}
+
+// Additional cases, split to keep each function within the length limit.
+func Test_No_Package_Vars_Banned_Part2(t *testing.T) {
+	t.Parallel()
+	run_diag_table(t, []struct {
+		Name      string
+		Files     map[string]string
+		Want_Diag string
+	}{
+
 		{
 			Name: "mixed: only disallowed flagged",
 			Files: map[string]string{
@@ -4886,6 +5895,7 @@ func main() { return }
 			},
 			Want_Diag: "package-level var is banned",
 		},
+
 		{
 			Name: "local-scope var untouched",
 			Files: map[string]string{
@@ -4898,6 +5908,7 @@ func main() {
 			},
 			Want_Diag: "",
 		},
+
 		{
 			Name: "slice literal banned with switch hint",
 			Files: map[string]string{
@@ -4908,8 +5919,7 @@ func main() { return }
 			},
 			Want_Diag: "package-level var is banned",
 		},
-	}
-	run_diag_table(t, tests)
+	})
 }
 
 // Test_Banned_Scripting_Files verifies that scripting-language files
@@ -4919,11 +5929,12 @@ func main() { return }
 func Test_Banned_Scripting_Files(t *testing.T) {
 	t.Parallel()
 	clean_go := []byte(fixture_clean_go)
-	tests := []struct {
+	test_banned_scripting_files_run(t, []struct {
 		Name      string
 		Files     map[string][]byte
 		Want_Diag string
 	}{
+
 		{
 			Name: "top-level .py flagged",
 			Files: map[string][]byte{
@@ -4932,6 +5943,7 @@ func Test_Banned_Scripting_Files(t *testing.T) {
 			},
 			Want_Diag: "banned scripting file",
 		},
+
 		{
 			Name: "nested .sh flagged",
 			Files: map[string][]byte{
@@ -4940,6 +5952,7 @@ func Test_Banned_Scripting_Files(t *testing.T) {
 			},
 			Want_Diag: "banned scripting file",
 		},
+
 		{
 			Name: "Makefile flagged",
 			Files: map[string][]byte{
@@ -4948,6 +5961,7 @@ func Test_Banned_Scripting_Files(t *testing.T) {
 			},
 			Want_Diag: "banned scripting file",
 		},
+
 		{
 			Name: "lowercase makefile flagged",
 			Files: map[string][]byte{
@@ -4956,6 +5970,7 @@ func Test_Banned_Scripting_Files(t *testing.T) {
 			},
 			Want_Diag: "banned scripting file",
 		},
+
 		{
 			Name: "Rakefile flagged",
 			Files: map[string][]byte{
@@ -4964,6 +5979,7 @@ func Test_Banned_Scripting_Files(t *testing.T) {
 			},
 			Want_Diag: "banned scripting file",
 		},
+
 		{
 			Name: "lua flagged",
 			Files: map[string][]byte{
@@ -4972,6 +5988,19 @@ func Test_Banned_Scripting_Files(t *testing.T) {
 			},
 			Want_Diag: "banned scripting file",
 		},
+	})
+}
+
+// Additional cases, split to keep each function within the length limit.
+func Test_Banned_Scripting_Files_Part2(t *testing.T) {
+	t.Parallel()
+	clean_go := []byte(fixture_clean_go)
+	test_banned_scripting_files_run(t, []struct {
+		Name      string
+		Files     map[string][]byte
+		Want_Diag string
+	}{
+
 		{
 			Name: "third_party top-level allowed",
 			Files: map[string][]byte{
@@ -4981,6 +6010,7 @@ func Test_Banned_Scripting_Files(t *testing.T) {
 			},
 			Want_Diag: "",
 		},
+
 		{
 			Name: "vendor top-level allowed",
 			Files: map[string][]byte{
@@ -4989,6 +6019,7 @@ func Test_Banned_Scripting_Files(t *testing.T) {
 			},
 			Want_Diag: "",
 		},
+
 		{
 			Name: "nested third_party NOT exempt",
 			Files: map[string][]byte{
@@ -4997,6 +6028,7 @@ func Test_Banned_Scripting_Files(t *testing.T) {
 			},
 			Want_Diag: "banned scripting file",
 		},
+
 		{
 			Name: "go file alone clean",
 			Files: map[string][]byte{
@@ -5004,8 +6036,7 @@ func Test_Banned_Scripting_Files(t *testing.T) {
 			},
 			Want_Diag: "",
 		},
-	}
-	test_banned_scripting_files_run(t, tests)
+	})
 }
 
 // Mirrors run_diag_table but feeds raw bytes — non-Go content would not
@@ -5023,16 +6054,20 @@ func test_banned_scripting_files_run(t *testing.T, tests []struct {
 				fsys_map[k] = &fstest.MapFile{Data: v}
 			}
 			stdout := &bytes.Buffer{}
-			code := lint.Main(&lint.Main_Input{Fsys: fsys_map, Stdout: stdout, Stderr: &bytes.Buffer{}})
+			code := lint.Main(&lint.Main_Input{
+				Fsys: fsys_map, Stdout: stdout, Stderr: &bytes.Buffer{},
+			})
 			output := stdout.String()
 			if tt.Want_Diag == "" {
 				if code != 0 {
-					t.Errorf("expected exit 0, got %d; output: %s", code, output)
+					t.Errorf("expected exit 0, got %d; output: %s",
+						code, output)
 				}
 				return
 			}
 			if !bytes.Contains(stdout.Bytes(), []byte(tt.Want_Diag)) {
-				t.Errorf("expected output containing %q, got: %s", tt.Want_Diag, output)
+				t.Errorf("expected output containing %q, got: %s",
+					tt.Want_Diag, output)
 			}
 		})
 	}
@@ -5045,7 +6080,8 @@ func run_stream(t *testing.T, files map[string]string) (output string) {
 	t.Helper()
 	fsys_map := make(fstest.MapFS)
 	for k, v := range files {
-		fsys_map[k] = &fstest.MapFile{Data: []byte(v)}
+		fsys_map[k] = &fstest.MapFile{
+			Data: []byte(v)}
 	}
 	stdout := &bytes.Buffer{}
 	lint.Main(&lint.Main_Input{Fsys: fsys_map, Stdout: stdout, Stderr: &bytes.Buffer{}})
@@ -5085,9 +6121,10 @@ func Test_Stream_Github_Actions_Uses(t *testing.T) {
 			Should: "github-actions-uses",
 		},
 		{
-			Name:   "local uses flagged",
-			Path:   ".github/workflows/ci.yml",
-			Body:   "jobs:\n  build:\n    steps:\n      - uses: ./.github/actions/foo\n",
+			Name: "local uses flagged",
+			Path: ".github/workflows/ci.yml",
+			Body: "jobs:\n  build:\n    steps:\n" +
+				"      - uses: ./.github/actions/foo\n",
 			Should: "github-actions-uses",
 		},
 		{
@@ -5097,9 +6134,10 @@ func Test_Stream_Github_Actions_Uses(t *testing.T) {
 			Should: "github-actions-uses",
 		},
 		{
-			Name:   "run-only workflow clean",
-			Path:   ".github/workflows/ci.yml",
-			Body:   "jobs:\n  build:\n    steps:\n      - name: build\n        run: go build ./...\n",
+			Name: "run-only workflow clean",
+			Path: ".github/workflows/ci.yml",
+			Body: "jobs:\n  build:\n    steps:\n      - name: build\n" +
+				"        run: go build ./...\n",
 			Should: "",
 		},
 		{
@@ -5121,7 +6159,8 @@ func Test_Stream_Github_Actions_Uses(t *testing.T) {
 			has := strings.Contains(output, "github-actions-uses")
 			want := tc.Should != ""
 			if has != want {
-				t.Errorf("path %q: want github-actions-uses=%v, got: %s", tc.Path, want, output)
+				t.Errorf("path %q: want github-actions-uses=%v, got: %s",
+					tc.Path, want, output)
 			}
 		})
 	}
@@ -5177,7 +6216,8 @@ func Test_Stream_Agent_Documentation_Max_Lines(t *testing.T) {
 	for _, name := range []string{"SKILL.md", "CLAUDE.md", "AGENTS.md"} {
 		loop_output := run_stream(t, map[string]string{"skills/foo/" + name: body})
 		if !strings.Contains(loop_output, "agent-doc-max-lines") {
-			t.Errorf("expected agent-doc-max-lines diag for %s, got: %s", name, loop_output)
+			t.Errorf("expected agent-doc-max-lines diag for %s, got: %s",
+				name, loop_output)
 		}
 	}
 }
@@ -5207,7 +6247,8 @@ func Test_Stream_Path_Casing(t *testing.T) {
 			has := strings.Contains(output, "path-casing")
 			want := tc.Should != ""
 			if has != want {
-				t.Errorf("path %q: want path-casing=%v, got: %s", tc.Path, want, output)
+				t.Errorf("path %q: want path-casing=%v, got: %s",
+					tc.Path, want, output)
 			}
 		})
 	}
@@ -5348,7 +6389,10 @@ func Test_Git_No_Merge_Commits(t *testing.T) {
 		{
 			Name: "one merge commit",
 			Merge_Commits: []lint.Git_Commit{
-				{Hash: "abcdef0123456789abcdef0123456789abcdef01", Subject: "Merge branch foo"},
+				{
+					Hash:    "abcdef0123456789abcdef0123456789abcdef01",
+					Subject: "Merge branch foo",
+				},
 			},
 			Want_Hits: []string{"merge commit", "abcdef0123", "Merge branch foo"},
 			Want_Code: 1,
@@ -5356,14 +6400,16 @@ func Test_Git_No_Merge_Commits(t *testing.T) {
 		{
 			Name: "subtree add exempt",
 			Merge_Commits: []lint.Git_Commit{
-				{Hash: "ccccccccccdddd", Subject: "Add 'foo/' from commit '2d43774e164be386023c13e2b12c2403a57b4a2a'"},
+				{Hash: "ccccccccccdddd", Subject: "Add 'foo/' from commit " +
+					"'2d43774e164be386023c13e2b12c2403a57b4a2a'"},
 			},
 			Want_Code: 0,
 		},
 		{
 			Name: "subtree pull exempt",
 			Merge_Commits: []lint.Git_Commit{
-				{Hash: "eeeeeeeeeeffff", Subject: "Merge commit '2d43774e164be386023c13e2b12c2403a57b4a2a' as 'foo'"},
+				{Hash: "eeeeeeeeeeffff", Subject: "Merge commit " +
+					"'2d43774e164be386023c13e2b12c2403a57b4a2a' as 'foo'"},
 			},
 			Want_Code: 0,
 		},
@@ -5385,11 +6431,13 @@ func Test_Git_No_Merge_Commits(t *testing.T) {
 			})
 			for _, want := range tt.Want_Hits {
 				if !strings.Contains(output, want) {
-					t.Errorf("expected output to contain %q; got: %s", want, output)
+					t.Errorf("expected output to contain %q; got: %s",
+						want, output)
 				}
 			}
 			if code != tt.Want_Code {
-				t.Errorf("expected exit %d, got %d; output: %s", tt.Want_Code, code, output)
+				t.Errorf("expected exit %d, got %d; output: %s",
+					tt.Want_Code, code, output)
 			}
 		})
 	}
@@ -5434,7 +6482,8 @@ func Test_Git_Conventional_Commits(t *testing.T) {
 					{Hash: "abc1234567def", Subject: tt.Subject},
 				},
 			})
-			flagged := strings.Contains(output, "conventional-commits") || strings.Contains(output, "non-conventional commit")
+			flagged := strings.Contains(output, "conventional-commits") ||
+				strings.Contains(output, "non-conventional commit")
 			if flagged != tt.Want_Flag {
 				t.Errorf("subject %q: want flagged=%v, got flagged=%v; output: %s",
 					tt.Subject, tt.Want_Flag, flagged, output)
@@ -5533,6 +6582,7 @@ func Test_Method_Prefix_Flagged(t *testing.T) {
 		Files     map[string]string
 		Want_Diag string
 	}{
+
 		{
 			Name: "bare same-file type flagged",
 			Files: map[string]string{
@@ -5545,6 +6595,7 @@ func update(e Entity) { return }
 			},
 			Want_Diag: "rename to entity_<verb>",
 		},
+
 		{
 			Name: "same-package sibling file flagged",
 			Files: map[string]string{
@@ -5559,6 +6610,7 @@ func update(e Entity) { return }
 			},
 			Want_Diag: "rename to entity_<verb>",
 		},
+
 		{
 			Name: "generic instance flagged",
 			Files: map[string]string{
@@ -5571,6 +6623,7 @@ func update(e Entity[int]) { return }
 			},
 			Want_Diag: "rename to entity_<verb>",
 		},
+
 		{
 			Name: "exported function requires Ada_Case prefix",
 			Files: map[string]string{
@@ -5583,6 +6636,19 @@ func Run(input Main_Input) { return }
 			},
 			Want_Diag: "rename to Main_Input_<verb>",
 		},
+	}
+	run_diag_table(t, tests)
+}
+
+// Additional cases, split to keep each function within the length limit.
+func Test_Method_Prefix_Flagged_Part2(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		Name      string
+		Files     map[string]string
+		Want_Diag string
+	}{
+
 		{
 			Name: "pointer to same-pkg type flagged (receiver shape)",
 			Files: map[string]string{
@@ -5595,6 +6661,7 @@ func edit(s *Snapper) { return }
 			},
 			Want_Diag: "rename to snapper_<verb>",
 		},
+
 		{
 			Name: "Ada_Case fn with miscased multi-word prefix flagged",
 			Files: map[string]string{
@@ -5623,6 +6690,7 @@ func Test_Method_Prefix_Skipped(t *testing.T) {
 		Files     map[string]string
 		Want_Diag string
 	}{
+
 		{
 			Name: "selector type (stdlib) clean",
 			Files: map[string]string{
@@ -5636,19 +6704,22 @@ func read(r io.Reader) (err error) { return nil }
 			},
 			Want_Diag: "",
 		},
+
 		{
 			Name: "builtin first param clean",
 			Files: map[string]string{
 				"a.go": `// Package foo is a fixture.
 package foo
 
-import invariant "github.com/james-orcales/james-orcales/golang_snacks/invariant/v2/invariant_default"
+import invariant "` + fixture_invariant_import_path + `"
 
 const fixture_hi = 100
 
 func parse(s string) {
 	invariant.Cross_Product(
-		invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: len(s), Lo: 0, Hi: fixture_hi, Message: "len"}),
+		invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
+				X: len(s), Lo: 0, Hi: fixture_hi, Message: "len",
+			}),
 		invariant.Always(s == "", "s is empty"),
 	)
 	return
@@ -5657,13 +6728,26 @@ func parse(s string) {
 			},
 			Want_Diag: "",
 		},
+	}
+	run_diag_table(t, tests)
+}
+
+// Additional cases, split to keep each function within the length limit.
+func Test_Method_Prefix_Skipped_Part2(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		Name      string
+		Files     map[string]string
+		Want_Diag string
+	}{
+
 		{
 			Name: "slice of same-pkg type clean",
 			Files: map[string]string{
 				"a.go": `// Package foo is a fixture.
 package foo
 
-import invariant "github.com/james-orcales/james-orcales/golang_snacks/invariant/v2/invariant_default"
+import invariant "` + fixture_invariant_import_path + `"
 
 const fixture_hi = 100
 
@@ -5673,11 +6757,15 @@ type Entity struct{}
 func update(es []Entity) {
 	defer func() {
 		invariant.Cross_Product(
-			invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: len(es), Lo: 0, Hi: fixture_hi, Message: "len"}),
+			invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
+			X: len(es), Lo: 0, Hi: fixture_hi, Message: "len",
+		}),
 		)
 	}()
 	invariant.Cross_Product(
-		invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: len(es), Lo: 0, Hi: fixture_hi, Message: "len"}),
+		invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
+			X: len(es), Lo: 0, Hi: fixture_hi, Message: "len",
+		}),
 	)
 	return
 }
@@ -5685,6 +6773,7 @@ func update(es []Entity) {
 			},
 			Want_Diag: "",
 		},
+
 		{
 			Name: "constructor-input pattern clean (FuncName + _Input)",
 			Files: map[string]string{
@@ -5715,6 +6804,7 @@ func Test_Method_Prefix_Matched(t *testing.T) {
 		Files     map[string]string
 		Want_Diag string
 	}{
+
 		{
 			Name: "correctly-prefixed unexported clean",
 			Files: map[string]string{
@@ -5729,13 +6819,14 @@ func entity_update(e Entity) { return }
 			},
 			Want_Diag: "",
 		},
+
 		{
 			Name: "correctly-prefixed pointer receiver shape clean",
 			Files: map[string]string{
 				"a.go": `// Package foo is a fixture.
 package foo
 
-import invariant "github.com/james-orcales/james-orcales/golang_snacks/invariant/v2/invariant_default"
+import invariant "` + fixture_invariant_import_path + `"
 
 const fixture_hi = 100
 
@@ -5750,6 +6841,7 @@ func snapper_edit(s *Snapper) {
 			},
 			Want_Diag: "",
 		},
+
 		{
 			Name: "exported function with Ada_Case prefix clean",
 			Files: map[string]string{
@@ -5765,6 +6857,19 @@ func Main_Input_Run(input Main_Input) { return }
 			},
 			Want_Diag: "",
 		},
+	}
+	run_diag_table(t, tests)
+}
+
+// Additional cases, split to keep each function within the length limit.
+func Test_Method_Prefix_Matched_Part2(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		Name      string
+		Files     map[string]string
+		Want_Diag string
+	}{
+
 		{
 			Name: "unexported function with multi-word type clean",
 			Files: map[string]string{
@@ -5779,6 +6884,7 @@ func main_input_run(input Main_Input) { return }
 			},
 			Want_Diag: "",
 		},
+
 		{
 			Name: "function named exactly as type clean",
 			Files: map[string]string{
@@ -5807,6 +6913,7 @@ func Test_No_Ambient_Stdlib_Hard_Imports(t *testing.T) {
 		Files     map[string]string
 		Want_Diag string
 	}{
+
 		{
 			Name: "library imports os",
 			Files: map[string]string{
@@ -5819,6 +6926,7 @@ func F() (val string) { return os.Getenv("X") }
 			},
 			Want_Diag: "ambient stdlib import",
 		},
+
 		{
 			Name: "library imports crypto/rand",
 			Files: map[string]string{
@@ -5831,6 +6939,7 @@ func F() (n int, err error) { return rand.Reader.Read(nil) }
 			},
 			Want_Diag: "ambient stdlib import",
 		},
+
 		{
 			Name: "library imports math/rand v1",
 			Files: map[string]string{
@@ -5843,6 +6952,19 @@ func F() (n int) { return rand.Int() }
 			},
 			Want_Diag: "ambient stdlib import",
 		},
+	}
+	run_diag_table(t, tests)
+}
+
+// Additional cases, split to keep each function within the length limit.
+func Test_No_Ambient_Stdlib_Hard_Imports_Part2(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		Name      string
+		Files     map[string]string
+		Want_Diag string
+	}{
+
 		{
 			Name: "library imports math/rand/v2 clean",
 			Files: map[string]string{
@@ -5852,7 +6974,7 @@ package lib
 import (
 	"math/rand/v2"
 
-	invariant "github.com/james-orcales/james-orcales/golang_snacks/invariant/v2/invariant_default"
+	invariant "` + fixture_invariant_import_path + `"
 )
 
 const fixture_hi = 100
@@ -5861,7 +6983,9 @@ const fixture_hi = 100
 func F(r *rand.Rand) (n int) {
 	defer func() {
 		invariant.Cross_Product(
-			invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: n, Lo: 0, Hi: fixture_hi}),
+			invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
+			X: n, Lo: 0, Hi: fixture_hi,
+		}),
 			invariant.Always(n == 0, "n is zero"),
 		)
 	}()
@@ -5872,6 +6996,7 @@ func F(r *rand.Rand) (n int) {
 			},
 			Want_Diag: "",
 		},
+
 		{
 			Name: "library imports flag",
 			Files: map[string]string{
@@ -5899,6 +7024,7 @@ func Test_No_Ambient_Stdlib_Soft_Calls(t *testing.T) {
 		Files     map[string]string
 		Want_Diag string
 	}{
+
 		{
 			Name: "library calls time.Now",
 			Files: map[string]string{
@@ -5911,6 +7037,7 @@ func F() (t time.Time) { return time.Now() }
 			},
 			Want_Diag: "ambient stdlib call",
 		},
+
 		{
 			Name: "library uses time.Duration clean",
 			Files: map[string]string{
@@ -5925,6 +7052,7 @@ func F(d time.Duration) (result time.Duration) { return d * 2 }
 			},
 			Want_Diag: "",
 		},
+
 		{
 			Name: "library calls fmt.Println",
 			Files: map[string]string{
@@ -5937,6 +7065,7 @@ func F() { fmt.Println("hi") }
 			},
 			Want_Diag: "ambient stdlib call",
 		},
+
 		{
 			Name: "library uses fmt.Sprintf and fmt.Errorf clean",
 			Files: map[string]string{
@@ -5951,6 +7080,19 @@ func F() (err error) { return fmt.Errorf("x: %s", fmt.Sprintf("y")) }
 			},
 			Want_Diag: "",
 		},
+	}
+	run_diag_table(t, tests)
+}
+
+// Additional cases, split to keep each function within the length limit.
+func Test_No_Ambient_Stdlib_Soft_Calls_Part2(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		Name      string
+		Files     map[string]string
+		Want_Diag string
+	}{
+
 		{
 			Name: "library calls log.Printf clean (observability exempt)",
 			Files: map[string]string{
@@ -5965,6 +7107,7 @@ func F() { log.Printf("hi") }
 			},
 			Want_Diag: "",
 		},
+
 		{
 			Name: "aliased time import still flagged",
 			Files: map[string]string{
@@ -6035,7 +7178,7 @@ package lib
 import (
 	"net/http"
 
-	invariant "github.com/james-orcales/james-orcales/golang_snacks/invariant/v2/invariant_default"
+	invariant "` + fixture_invariant_import_path + `"
 )
 
 // F is a fixture.
@@ -6072,6 +7215,7 @@ func Test_No_Ambient_Stdlib_Exemptions(t *testing.T) {
 		Files     map[string]string
 		Want_Diag string
 	}{
+
 		{
 			Name: "package main may use os",
 			Files: map[string]string{
@@ -6084,6 +7228,7 @@ func main() { print(os.Getenv("X")) }
 			},
 			Want_Diag: "",
 		},
+
 		{
 			Name: "package main may call time.Now",
 			Files: map[string]string{
@@ -6099,13 +7244,26 @@ func main() { fmt.Println(time.Now()) }
 			},
 			Want_Diag: "",
 		},
+	}
+	run_diag_table(t, tests)
+}
+
+// Additional cases, split to keep each function within the length limit.
+func Test_No_Ambient_Stdlib_Exemptions_Part2(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		Name      string
+		Files     map[string]string
+		Want_Diag string
+	}{
+
 		{
 			Name: "test.go in library may call time.Now",
 			Files: map[string]string{
 				"a.go": `// Package lib is a fixture.
 package lib
 
-import invariant "github.com/james-orcales/james-orcales/golang_snacks/invariant/v2/invariant_default"
+import invariant "` + fixture_invariant_import_path + `"
 
 const fixture_hi = 100
 
@@ -6113,7 +7271,9 @@ const fixture_hi = 100
 func F() (n int) {
 	defer func() {
 		invariant.Cross_Product(
-			invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: n, Lo: 0, Hi: fixture_hi}),
+			invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{
+			X: n, Lo: 0, Hi: fixture_hi,
+		}),
 			invariant.Always(n == 0, "n is zero"),
 		)
 	}()
@@ -6154,6 +7314,7 @@ func Test_No_Ambient_Stdlib_Composition_Tier(t *testing.T) {
 		Want_Diags []string
 		Forbid     []string
 	}{
+
 		{
 			Name: "library tier ambient import still flagged",
 			Files: map[string]string{
@@ -6167,18 +7328,20 @@ func Read() (name string) { return os.Getenv("X") }
 			},
 			Want_Diags: []string{"ambient stdlib import \"os\""},
 		},
+
 		{
 			Name: "composition tier ambient import allowed",
 			Files: map[string]string{
 				"golang_snacks/go.mod":     doctrine_shared_library_go_module,
 				"golang_snacks/foo/foo.go": fixture_package("foo"),
-				"golang_snacks/foo/foo_default/foo_default.go": `// Package foo_default is a fixture.
+				"golang_snacks/foo/foo_default/" +
+					"foo_default.go": `// Package foo_default is a fixture.
 package foo_default
 
 import (
 	"os"
 
-	invariant "github.com/james-orcales/james-orcales/golang_snacks/invariant/v2/invariant_default"
+	invariant "` + fixture_invariant_import_path + `"
 )
 
 const fixture_hi = 100
@@ -6199,18 +7362,33 @@ func Read() (name string) {
 			},
 			Forbid: []string{"ambient stdlib import"},
 		},
+	}
+	run_doctrine_diag_table(t, tests)
+}
+
+// Additional cases, split to keep each function within the length limit.
+func Test_No_Ambient_Stdlib_Composition_Tier_Part2(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		Name       string
+		Files      map[string]string
+		Want_Diags []string
+		Forbid     []string
+	}{
+
 		{
 			Name: "composition tier under versioned library allowed",
 			Files: map[string]string{
 				"golang_snacks/go.mod":          doctrine_shared_library_go_module,
 				"golang_snacks/snap/v2/snap.go": fixture_package("snap"),
-				"golang_snacks/snap/v2/snap_default/snap_default.go": `// Package snap_default is a fixture.
+				"golang_snacks/snap/v2/snap_default/" +
+					"snap_default.go": `// Package snap_default is a fixture.
 package snap_default
 
 import (
 	"os"
 
-	invariant "github.com/james-orcales/james-orcales/golang_snacks/invariant/v2/invariant_default"
+	invariant "` + fixture_invariant_import_path + `"
 )
 
 const fixture_hi = 100
@@ -6252,7 +7430,8 @@ func Test_No_Ambient_Stdlib_Composition_Tier_Extra(t *testing.T) {
 			Files: map[string]string{
 				"golang_snacks/go.mod":     doctrine_shared_library_go_module,
 				"golang_snacks/foo/foo.go": fixture_package("foo"),
-				"golang_snacks/foo/foo_default/foo_default.go": `// Package foo_default is a fixture.
+				"golang_snacks/foo/foo_default/" +
+					"foo_default.go": `// Package foo_default is a fixture.
 package foo_default
 
 import "time"
@@ -6264,18 +7443,21 @@ func Stamp() (t time.Time) { return time.Now() }
 			Forbid: []string{"ambient stdlib call"},
 		},
 		{
-			Name: "binary module composition tier (one level under library tier) allowed",
+			Name: "binary module composition tier " +
+				"(one level under library tier) allowed",
 			Files: map[string]string{
-				"mybinary/go.mod":              doctrine_binary_go_module,
-				"mybinary/main.go":             "package main\n\nfunc main() { return }\n",
+				"mybinary/go.mod": doctrine_binary_go_module,
+				"mybinary/main.go": "package main\n\n" +
+					"func main() { return }\n",
 				"mybinary/internal/lib/lib.go": fixture_package("lib"),
-				"mybinary/internal/lib/lib_default/lib_default.go": `// Package lib_default is a fixture.
+				"mybinary/internal/lib/lib_default/" +
+					"lib_default.go": `// Package lib_default is a fixture.
 package lib_default
 
 import (
 	"os"
 
-	invariant "github.com/james-orcales/james-orcales/golang_snacks/invariant/v2/invariant_default"
+	invariant "` + fixture_invariant_import_path + `"
 )
 
 const fixture_hi = 100
@@ -6413,8 +7595,7 @@ func main() {
 			Files: map[string]string{
 				"a.go": `package main
 
-import invariant "github.com/james-orcales/james-orcales/golang_snacks/invariant/v2/invariant_default"
-
+` + fixture_invariant_import + `
 const fixture_hi = 100
 
 func main() {
@@ -6435,11 +7616,13 @@ func main() {
 // callers keep writing snap.Init/snap.Edit, and is required by snap.Edit's
 // source-line rewriter which searches for the literal "snap.Edit(".
 func Test_Default_Package_Alias(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		Name      string
 		Files     map[string]string
 		Want_Diag string
 	}{
+
 		{
 			Name: "snap_default without alias flagged",
 			Files: map[string]string{
@@ -6456,6 +7639,7 @@ func main() { fmt.Println(snap_default.Default) }
 			},
 			Want_Diag: `must be imported with alias "snap"`,
 		},
+
 		{
 			Name: "snap_default with wrong alias flagged",
 			Files: map[string]string{
@@ -6472,6 +7656,7 @@ func main() { fmt.Println(wrong.Default) }
 			},
 			Want_Diag: `must be imported with alias "snap"`,
 		},
+
 		{
 			Name: "snap_default with snap alias clean",
 			Files: map[string]string{
@@ -6488,6 +7673,19 @@ func main() { fmt.Println(snap.Default) }
 			},
 			Want_Diag: "",
 		},
+	}
+	run_diag_table(t, tests)
+}
+
+// Additional cases, split to keep each function within the length limit.
+func Test_Default_Package_Alias_Part2(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		Name      string
+		Files     map[string]string
+		Want_Diag string
+	}{
+
 		{
 			Name: "non-default import unaffected",
 			Files: map[string]string{
@@ -6504,6 +7702,7 @@ func main() { fmt.Println(snap.Snapper{}) }
 			},
 			Want_Diag: "",
 		},
+
 		{
 			Name: "foo_default expects foo alias",
 			Files: map[string]string{
@@ -6540,15 +7739,17 @@ func Test_Binary_Module_Layout(t *testing.T) {
 		{
 			Name: "binary with package main at root is clean",
 			Files: map[string]string{
-				"mybinary/go.mod":  doctrine_binary_go_module,
-				"mybinary/main.go": "package main\n\nfunc main() { return }\n",
+				"mybinary/go.mod": doctrine_binary_go_module,
+				"mybinary/main.go": "package main\n\n" +
+					"func main() { return }\n",
 			},
 		},
 		{
 			Name: "binary with non-main package outside internal flagged",
 			Files: map[string]string{
-				"mybinary/go.mod":       doctrine_binary_go_module,
-				"mybinary/main.go":      "package main\n\nfunc main() { return }\n",
+				"mybinary/go.mod": doctrine_binary_go_module,
+				"mybinary/main.go": "package main\n\n" +
+					"func main() { return }\n",
 				"mybinary/helpers/h.go": fixture_package("helpers"),
 			},
 			Want_Diags: []string{"forbids package \"helpers\"", "mybinary/internal/"},
@@ -6556,8 +7757,9 @@ func Test_Binary_Module_Layout(t *testing.T) {
 		{
 			Name: "binary with package under internal is clean",
 			Files: map[string]string{
-				"mybinary/go.mod":                  doctrine_binary_go_module,
-				"mybinary/main.go":                 "package main\n\nfunc main() { return }\n",
+				"mybinary/go.mod": doctrine_binary_go_module,
+				"mybinary/main.go": "package main\n\n" +
+					"func main() { return }\n",
 				"mybinary/internal/lib/library.go": fixture_package("lib"),
 			},
 		},
@@ -6579,9 +7781,11 @@ func Test_Binary_Module_Layout(t *testing.T) {
 		{
 			Name: "package main at any depth in binary is exempt",
 			Files: map[string]string{
-				"mybinary/go.mod":             doctrine_binary_go_module,
-				"mybinary/main.go":            "package main\n\nfunc main() { return }\n",
-				"mybinary/cmd/extra/extra.go": "package main\n\nfunc main() { return }\n",
+				"mybinary/go.mod": doctrine_binary_go_module,
+				"mybinary/main.go": "package main\n\n" +
+					"func main() { return }\n",
+				"mybinary/cmd/extra/extra.go": "package main\n\n" +
+					"func main() { return }\n",
 			},
 		},
 	}
@@ -6601,11 +7805,14 @@ func Test_Shared_Library_No_Internal(t *testing.T) {
 		{
 			Name: "shared library with internal directory flagged",
 			Files: map[string]string{
-				"golang_snacks/go.mod":                      doctrine_shared_library_go_module,
-				"golang_snacks/foo/foo.go":                  fixture_package("foo"),
-				"golang_snacks/foo/internal/helper/help.go": fixture_package("helper"),
+				"golang_snacks/go.mod":     doctrine_shared_library_go_module,
+				"golang_snacks/foo/foo.go": fixture_package("foo"),
+				"golang_snacks/foo/internal/helper/" +
+					"help.go": fixture_package("helper"),
 			},
-			Want_Diags: []string{"shared library forbids internal/", "golang_snacks/foo/internal"},
+			Want_Diags: []string{
+				"shared library forbids internal/", "golang_snacks/foo/internal",
+			},
 		},
 		{
 			Name: "shared library without internal is clean",
@@ -6617,8 +7824,9 @@ func Test_Shared_Library_No_Internal(t *testing.T) {
 		{
 			Name: "binary with internal directory is unaffected by this rule",
 			Files: map[string]string{
-				"mybinary/go.mod":                  doctrine_binary_go_module,
-				"mybinary/main.go":                 "package main\n\nfunc main() { return }\n",
+				"mybinary/go.mod": doctrine_binary_go_module,
+				"mybinary/main.go": "package main\n\n" +
+					"func main() { return }\n",
 				"mybinary/internal/lib/library.go": fixture_package("lib"),
 			},
 			Forbid: []string{"shared library forbids"},
@@ -6642,7 +7850,8 @@ func Test_Library_Tier_Depth(t *testing.T) {
 		{
 			Name: "two-deep nesting flagged",
 			Files: map[string]string{
-				"golang_snacks/go.mod":             doctrine_shared_library_go_module,
+				"golang_snacks/" +
+					"go.mod": doctrine_shared_library_go_module,
 				"golang_snacks/foo/foo.go":         fixture_package("foo"),
 				"golang_snacks/foo/bar/bar.go":     fixture_package("bar"),
 				"golang_snacks/foo/bar/baz/baz.go": fixture_package("baz"),
@@ -6661,7 +7870,8 @@ func Test_Library_Tier_Depth(t *testing.T) {
 		{
 			Name: "v2 version directory does not count as ancestor",
 			Files: map[string]string{
-				"golang_snacks/go.mod":             doctrine_shared_library_go_module,
+				"golang_snacks/" +
+					"go.mod": doctrine_shared_library_go_module,
 				"golang_snacks/snap/snap.go":       fixture_package("snap"),
 				"golang_snacks/snap/v2/snap.go":    fixture_package("snap"),
 				"golang_snacks/snap/v2/sub/sub.go": fixture_package("sub"),
@@ -6671,17 +7881,19 @@ func Test_Library_Tier_Depth(t *testing.T) {
 		{
 			Name: "non-Go intermediate directory does not count as ancestor",
 			Files: map[string]string{
-				"golang_snacks/go.mod":                         doctrine_shared_library_go_module,
-				"golang_snacks/foo/foo.go":                     fixture_package("foo"),
-				"golang_snacks/foo/examples/sample/example.go": fixture_package("example"),
+				"golang_snacks/go.mod":     doctrine_shared_library_go_module,
+				"golang_snacks/foo/foo.go": fixture_package("foo"),
+				"golang_snacks/foo/examples/sample/" +
+					"example.go": fixture_package("example"),
 			},
 			Forbid: []string{"exceeds library tier"},
 		},
 		{
 			Name: "main package at depth does not count as ancestor",
 			Files: map[string]string{
-				"mybinary/go.mod":                  doctrine_binary_go_module,
-				"mybinary/main.go":                 "package main\n\nfunc main() { return }\n",
+				"mybinary/go.mod": doctrine_binary_go_module,
+				"mybinary/main.go": "package main\n\n" +
+					"func main() { return }\n",
 				"mybinary/internal/foo/foo.go":     fixture_package("foo"),
 				"mybinary/internal/foo/bar/bar.go": fixture_package("bar"),
 			},
@@ -6699,18 +7911,22 @@ func Test_Library_Tier_Depth(t *testing.T) {
 // than the spec. package main is exempt — it exports nothing
 // reachable from outside.
 func Test_Exported_Documentation_Comment(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		Name      string
 		Files     map[string]string
 		Want_Diag string
 	}{
+
 		{
 			Name: "exported func without doc flagged",
 			Files: map[string]string{
-				"foo.go": "// Package foo provides things.\npackage foo\n\nfunc Do() { return }\n",
+				"foo.go": "// Package foo provides things.\npackage foo\n\n" +
+					"func Do() { return }\n",
 			},
 			Want_Diag: "exported func Do is missing a doc comment",
 		},
+
 		{
 			Name: "exported func with doc allowed",
 			Files: map[string]string{
@@ -6721,20 +7937,25 @@ func Test_Exported_Documentation_Comment(t *testing.T) {
 			},
 			Want_Diag: "",
 		},
+
 		{
 			Name: "unexported func without doc allowed",
 			Files: map[string]string{
-				"foo.go": "// Package foo provides things.\npackage foo\n\nfunc do() { return }\n",
+				"foo.go": "// Package foo provides things.\npackage foo\n\n" +
+					"func do() { return }\n",
 			},
 			Want_Diag: "",
 		},
+
 		{
 			Name: "exported type without doc flagged",
 			Files: map[string]string{
-				"foo.go": "// Package foo provides things.\npackage foo\n\ntype Thing struct{ X int }\n",
+				"foo.go": "// Package foo provides things.\npackage foo\n\n" +
+					"type Thing struct{ X int }\n",
 			},
 			Want_Diag: "exported type Thing is missing a doc comment",
 		},
+
 		{
 			Name: "exported var without doc flagged",
 			Files: map[string]string{
@@ -6745,13 +7966,28 @@ func Test_Exported_Documentation_Comment(t *testing.T) {
 			},
 			Want_Diag: "exported var Default_Pattern is missing a doc comment",
 		},
+
 		{
 			Name: "exported const without doc flagged",
 			Files: map[string]string{
-				"foo.go": "// Package foo provides things.\npackage foo\n\nconst Max_Count = 100\n",
+				"foo.go": "// Package foo provides things.\npackage foo\n\n" +
+					"const Max_Count = 100\n",
 			},
 			Want_Diag: "exported const Max_Count is missing a doc comment",
 		},
+	}
+	run_diag_table(t, tests)
+}
+
+// Additional cases, split to keep each function within the length limit.
+func Test_Exported_Documentation_Comment_Part2(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		Name      string
+		Files     map[string]string
+		Want_Diag string
+	}{
+
 		{
 			Name: "exported var with GenDecl doc inherited",
 			Files: map[string]string{
@@ -6763,6 +7999,7 @@ func Test_Exported_Documentation_Comment(t *testing.T) {
 			},
 			Want_Diag: "",
 		},
+
 		{
 			Name: "grouped consts: each spec needs its own doc when group has no doc",
 			Files: map[string]string{
@@ -6775,6 +8012,7 @@ func Test_Exported_Documentation_Comment(t *testing.T) {
 			},
 			Want_Diag: "exported const A_Count is missing a doc comment",
 		},
+
 		{
 			Name: "exported method without doc flagged",
 			Files: map[string]string{
@@ -6782,14 +8020,17 @@ func Test_Exported_Documentation_Comment(t *testing.T) {
 					"package foo\n\n" +
 					"// Thing is a thing.\n" +
 					"type Thing struct{ X int }\n\n" +
-					"func (t *Thing) String() (output string) { return \"\" }\n",
+					"func (t *Thing) String() (output string) " +
+					"{ return \"\" }\n",
 			},
 			Want_Diag: "exported method String is missing a doc comment",
 		},
+
 		{
 			Name: "package main exempt: exported func without doc allowed",
 			Files: map[string]string{
-				"main.go": "package main\n\nfunc main() { return }\n\nfunc Run() { return }\n",
+				"main.go": "package main\n\nfunc main() { return }\n\n" +
+					"func Run() { return }\n",
 			},
 			Want_Diag: "",
 		},
@@ -6810,7 +8051,8 @@ func Test_Package_Documentation_Comment(t *testing.T) {
 		{
 			Name: "package without doc flagged",
 			Files: map[string]string{
-				"foo.go": "package foo\n\n// Do performs the operation.\nfunc Do() { return }\n",
+				"foo.go": "package foo\n\n" +
+					"// Do performs the operation.\nfunc Do() { return }\n",
 			},
 			Want_Diag: "package \"foo\" is missing a doc comment",
 		},
@@ -6838,7 +8080,8 @@ func Test_Package_Documentation_Comment(t *testing.T) {
 		{
 			Name: "package main exempt",
 			Files: map[string]string{
-				"main.go": "package main\n\nfunc main() { return }\n",
+				"main.go": "package main\n\n" +
+					"func main() { return }\n",
 			},
 			Want_Diag: "",
 		},
@@ -6894,7 +8137,8 @@ func run_invariant_assertions_table(t *testing.T, tests []struct {
 				return
 			}
 			if !strings.Contains(output, tt.Want_Diag) {
-				t.Errorf("expected diagnostic containing %q; got:\n%s", tt.Want_Diag, output)
+				t.Errorf("expected diagnostic containing %q; got:\n%s",
+					tt.Want_Diag, output)
 			}
 		})
 	}
@@ -6921,8 +8165,11 @@ func Test_Invariant_Assertions_Named_Return_Constant_Width_Boundary(t *testing.T
 				"func f() (name string) {\n" +
 				"\tdefer func() {\n" +
 				"\t\tinvariant.Cross_Product(\n" +
-				"\t\t\tinvariant.Always(len(name) == fixture_label_chars, \"name length is the fixed label\"),\n" +
-				"\t\t\tinvariant.Always(name != \"\", \"name is non-empty\"),\n" +
+				"\t\t\tinvariant.Always(" +
+				"len(name) == fixture_label_chars, " +
+				"\"name length is the fixed label\"),\n" +
+				"\t\t\tinvariant.Always(" +
+				"name != \"\", \"name is non-empty\"),\n" +
 				"\t\t)\n" +
 				"\t}()\n" +
 				"\tname = \"hello\"\n" +
@@ -6939,7 +8186,8 @@ func Test_Invariant_Assertions_Named_Return_Constant_Width_Boundary(t *testing.T
 			Name: "const-less rejecting numeric comparison still flags param",
 			Source: "package fixture\n\n" + fixture_invariant_import +
 				"\nfunc f(x int, y int) {\n" +
-				"\tinvariant.Cross_Product(invariant.Always(x == y, \"x equals y\"))\n" +
+				"\tinvariant.Cross_Product(" +
+				"invariant.Always(x == y, \"x equals y\"))\n" +
 				"\t_ = y\n" +
 				"}\n",
 			Want_Diag: "boundary_int",
@@ -6951,71 +8199,104 @@ func Test_Invariant_Assertions_Named_Return_Constant_Width_Boundary(t *testing.T
 // every in-scope boundary identifier has a recognised prologue assertion
 // of the matching kind. No diagnostics expected for any case here.
 func Test_Invariant_Assertions_Clean(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		Name      string
 		Filename  string
 		Source    string
 		Want_Diag string
 	}{
+
 		{
 			Name: "int param with Range_Of",
 			Source: "package fixture\n\n" + fixture_invariant_import +
 				"\nconst fixture_hi = 100\n" +
 				"func f(x int) {\n" +
 				"\tinvariant.Cross_Product(\n" +
-				"\t\tinvariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: x, Lo: 0, Hi: fixture_hi}),\n" +
-				"\t\tinvariant.Always(x == 0, \"x is zero\"),\n" +
+				"\t\tinvariant.Distinct_Boundary(" +
+				"&invariant.Boundary_Input[int]{" +
+				"X: x, Lo: 0, Hi: fixture_hi}),\n" +
+				"\t\tinvariant.Always(" +
+				"x == 0, \"x is zero\"),\n" +
 				"\t)\n" +
 				"}\n",
 			Want_Diag: "",
 		},
+
 		{
 			Name: "int param with Is_Boundary input-struct",
 			Source: "package fixture\n\n" + fixture_invariant_import +
 				"\nconst fixture_hi = 100\n" +
 				"func f(count int) {\n" +
 				"\tinvariant.Cross_Product(\n" +
-				"\t\tinvariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: count, Lo: 0, Hi: fixture_hi}),\n" +
-				"\t\tinvariant.Always(count == 0, \"count is zero\"),\n" +
+				"\t\tinvariant.Distinct_Boundary(" +
+				"&invariant.Boundary_Input[int]{" +
+				"X:count, Lo: 0, Hi: fixture_hi}),\n" +
+				"\t\tinvariant.Always(" +
+				"count == 0, \"count is zero\"),\n" +
 				"\t)\n" +
 				"}\n",
 			Want_Diag: "",
 		},
+
 		{
 			Name: "pointer param with Is_Always p != nil",
 			Source: "package fixture\n\n" + fixture_invariant_import +
 				"\nconst fixture_hi = 100\n" +
 				"func f(p *int) {\n" +
-				"\tinvariant.Cross_Product(invariant.Always(p != nil, \"p is non-nil\"))\n" +
+				"\tinvariant.Cross_Product(" +
+				"invariant.Always(p != nil, \"p is non-nil\"))\n" +
 				"}\n",
 			Want_Diag: "",
 		},
+
 		{
 			Name: "pointer param with Is_Always p == nil",
 			Source: "package fixture\n\n" + fixture_invariant_import +
 				"\nconst fixture_hi = 100\n" +
 				"func f(p *int) {\n" +
-				"\tinvariant.Cross_Product(invariant.Always(p == nil, \"p is nil here\"))\n" +
+				"\tinvariant.Cross_Product(" +
+				"invariant.Always(p == nil, \"p is nil here\"))\n" +
 				"}\n",
 			Want_Diag: "",
 		},
+	}
+	run_invariant_assertions_table(t, tests)
+}
+
+// Additional cases, split to keep each function within the length limit.
+func Test_Invariant_Assertions_Clean_Part2(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		Name      string
+		Filename  string
+		Source    string
+		Want_Diag string
+	}{
+
 		{
 			Name: "pointer param with Is_Sometimes p == nil",
 			Source: "package fixture\n\n" + fixture_invariant_import +
 				"\nconst fixture_hi = 100\n" +
 				"func f(p *int) {\n" +
-				"\tinvariant.Cross_Product(invariant.Sometimes(p == nil, \"p sometimes nil\"))\n" +
+				"\tinvariant.Cross_Product(" +
+				"invariant.Sometimes(p == nil, \"p sometimes nil\"))\n" +
 				"}\n",
 			Want_Diag: "",
 		},
+
 		{
-			Name: "string param with Distinct_Boundary on len and empty-comparison is clean",
+			Name: "string param with Distinct_Boundary on len " +
+				"and empty-comparison is clean",
 			Source: "package fixture\n\n" + fixture_invariant_import +
 				"\nconst fixture_hi = 100\n" +
 				"func f(s string) {\n" +
 				"\tinvariant.Cross_Product(\n" +
-				"\t\tinvariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: len(s), Lo: 0, Hi: fixture_hi}),\n" +
-				"\t\tinvariant.Always(s == \"\", \"s is empty\"),\n" +
+				"\t\tinvariant.Distinct_Boundary(" +
+				"&invariant.Boundary_Input[int]{" +
+				"X: len(s), Lo: 0, Hi: fixture_hi}),\n" +
+				"\t\tinvariant.Always(" +
+				"s == \"\", \"s is empty\"),\n" +
 				"\t)\n" +
 				"}\n",
 			Want_Diag: "",
@@ -7044,11 +8325,18 @@ func Test_Invariant_Assertions_Clean_Receiver_And_Cross_Product(t *testing.T) {
 				"}\n\n" +
 				"func (r *Foo) Bar() {\n" +
 				"\tinvariant.Cross_Product(\n" +
-				"\t\tinvariant.Always(r != nil, \"r is non-nil\"),\n" +
-				"\t\tinvariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: r.A, Lo: 0, Hi: fixture_hi}),\n" +
-				"\t\tinvariant.Always(r.A == 0, \"r.A is zero\"),\n" +
-				"\t\tinvariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: r.B, Lo: 0, Hi: fixture_hi}),\n" +
-				"\t\tinvariant.Always(r.B == 0, \"r.B is zero\"),\n" +
+				"\t\tinvariant.Always(" +
+				"r != nil, \"r is non-nil\"),\n" +
+				"\t\tinvariant.Distinct_Boundary(" +
+				"&invariant.Boundary_Input[int]{" +
+				"X:r.A, Lo: 0, Hi: fixture_hi}),\n" +
+				"\t\tinvariant.Always(" +
+				"r.A == 0, \"r.A is zero\"),\n" +
+				"\t\tinvariant.Distinct_Boundary(" +
+				"&invariant.Boundary_Input[int]{" +
+				"X:r.B, Lo: 0, Hi: fixture_hi}),\n" +
+				"\t\tinvariant.Always(" +
+				"r.B == 0, \"r.B is zero\"),\n" +
 				"\t)\n" +
 				"}\n",
 			Want_Diag: "",
@@ -7059,9 +8347,13 @@ func Test_Invariant_Assertions_Clean_Receiver_And_Cross_Product(t *testing.T) {
 				"\nconst fixture_hi = 100\n" +
 				"func f(x int, p *int) {\n" +
 				"\tinvariant.Cross_Product(\n" +
-				"\t\tinvariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: x, Lo: 0, Hi: fixture_hi}),\n" +
-				"\t\tinvariant.Always(x == 0, \"x is zero\"),\n" +
-				"\t\tinvariant.Always(p != nil, \"p is non-nil\"),\n" +
+				"\t\tinvariant.Distinct_Boundary(" +
+				"&invariant.Boundary_Input[int]{" +
+				"X: x, Lo: 0, Hi: fixture_hi}),\n" +
+				"\t\tinvariant.Always(" +
+				"x == 0, \"x is zero\"),\n" +
+				"\t\tinvariant.Always(" +
+				"p != nil, \"p is non-nil\"),\n" +
 				"\t)\n" +
 				"}\n",
 			Want_Diag: "",
@@ -7087,8 +8379,11 @@ func Test_Invariant_Assertions_Clean_Named_Return(t *testing.T) {
 				"func f() (result int) {\n" +
 				"\tdefer func() {\n" +
 				"\t\tinvariant.Cross_Product(\n" +
-				"\t\t\tinvariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: result, Lo: 0, Hi: fixture_hi}),\n" +
-				"\t\t\tinvariant.Always(result == 0, \"result is zero\"),\n" +
+				"\t\t\tinvariant.Distinct_Boundary(" +
+				"&invariant.Boundary_Input[int]{" +
+				"X: result, Lo: 0, Hi: fixture_hi}),\n" +
+				"\t\t\tinvariant.Always(" +
+				"result == 0, \"result is zero\"),\n" +
 				"\t\t)\n" +
 				"\t}()\n" +
 				"\treturn 0\n" +
@@ -7104,12 +8399,14 @@ func Test_Invariant_Assertions_Clean_Named_Return(t *testing.T) {
 // non-default integer widths, anonymous-struct recursion, and signatures
 // whose params produce no requirements.
 func Test_Invariant_Assertions_Clean_Variants(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		Name      string
 		Filename  string
 		Source    string
 		Want_Diag string
 	}{
+
 		{
 			Name: "Recorder_Cross_Product form accepted",
 			Source: "package fixture\n\n" + fixture_invariant_import +
@@ -7117,7 +8414,8 @@ func Test_Invariant_Assertions_Clean_Variants(t *testing.T) {
 				"func f(r *invariant.Recorder, x int) {\n" +
 				"\tinvariant.Recorder_Cross_Product(r,\n" +
 				"\t\tinvariant.Recorder_Always(r, r != nil, \"r is non-nil\"),\n" +
-				"\t\tinvariant.Recorder_Distinct_Boundary(r, &invariant.Boundary_Input[int]{\n" +
+				"\t\tinvariant.Recorder_Distinct_Boundary(r, " +
+				"&invariant.Boundary_Input[int]{\n" +
 				"\t\t\tX: x, Lo: 0, Hi: fixture_hi,\n" +
 				"\t\t}),\n" +
 				"\t\tinvariant.Recorder_Always(r, x == 0, \"x is zero\"),\n" +
@@ -7125,44 +8423,69 @@ func Test_Invariant_Assertions_Clean_Variants(t *testing.T) {
 				"}\n",
 			Want_Diag: "",
 		},
+
 		{
 			Name: "pointer to anonymous struct recursion",
 			Source: "package fixture\n\n" + fixture_invariant_import +
 				"\nconst fixture_hi = 100\n" +
 				"func f(p *struct{ A int }) {\n" +
 				"\tinvariant.Cross_Product(\n" +
-				"\t\tinvariant.Always(p != nil, \"p is non-nil\"),\n" +
-				"\t\tinvariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: p.A, Lo: 0, Hi: fixture_hi}),\n" +
-				"\t\tinvariant.Always(p.A == 0, \"p.A is zero\"),\n" +
+				"\t\tinvariant.Always(" +
+				"p != nil, \"p is non-nil\"),\n" +
+				"\t\tinvariant.Distinct_Boundary(" +
+				"&invariant.Boundary_Input[int]{" +
+				"X:p.A, Lo: 0, Hi: fixture_hi}),\n" +
+				"\t\tinvariant.Always(" +
+				"p.A == 0, \"p.A is zero\"),\n" +
 				"\t)\n" +
 				"}\n",
 			Want_Diag: "",
 		},
+
 		{
 			Name: "alias import recognised",
 			Source: "package fixture\n\n" +
-				"import inv \"github.com/james-orcales/james-orcales/golang_snacks/invariant/v2\"\n\n" +
+				"import inv \"github.com/james-orcales/james-orcales/" +
+				"golang_snacks/invariant/v2\"\n\n" +
 				"const fixture_hi = 100\n\n" +
 				"func f(x int) {\n" +
 				"\tinv.Cross_Product(\n" +
-				"\t\tinv.Distinct_Boundary(&inv.Boundary_Input[int]{X: x, Lo: 0, Hi: fixture_hi}),\n" +
+				"\t\tinv.Distinct_Boundary(&inv.Boundary_Input[int]{" +
+				"X: x, Lo: 0, Hi: fixture_hi}),\n" +
 				"\t\tinv.Always(x == 0, \"x is zero\"),\n" +
 				"\t)\n" +
 				"}\n",
 			Want_Diag: "",
 		},
+	}
+	run_invariant_assertions_table(t, tests)
+}
+
+// Additional cases, split to keep each function within the length limit.
+func Test_Invariant_Assertions_Clean_Variants_Part2(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		Name      string
+		Filename  string
+		Source    string
+		Want_Diag string
+	}{
+
 		{
 			Name: "uint16 accepted as int kind",
 			Source: "package fixture\n\n" + fixture_invariant_import +
 				"\nconst fixture_hi = 100\n" +
 				"func f(port uint16) {\n" +
 				"\tinvariant.Cross_Product(\n" +
-				"\t\tinvariant.Distinct_Boundary(&invariant.Boundary_Input[uint16]{X: port, Lo: 0, Hi: 65535}),\n" +
-				"\t\tinvariant.Always(port == 0, \"port is zero\"),\n" +
+				"\t\tinvariant.Distinct_Boundary(" +
+				"&invariant.Boundary_Input[uint16]{X: port, Lo: 0, Hi: 65535}),\n" +
+				"\t\tinvariant.Always(" +
+				"port == 0, \"port is zero\"),\n" +
 				"\t)\n" +
 				"}\n",
 			Want_Diag: "",
 		},
+
 		{
 			Name: "no in-scope identifiers means no requirement",
 			Source: "package fixture\n\n" + fixture_invariant_import +
@@ -7231,19 +8554,24 @@ func Test_Invariant_Assertions_Flagged(t *testing.T) {
 			Source: "package fixture\n\n" + fixture_invariant_import +
 				"\nconst fixture_hi = 100\n" +
 				"func f(x int) {\n" +
-				"\tinvariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: x, Lo: 0, Hi: fixture_hi})\n" +
+				"\tinvariant.Distinct_Boundary(&invariant.Boundary_Input[int]{" +
+				"X: x, Lo: 0, Hi: fixture_hi})\n" +
 				"}\n",
 			Want_Diag: "param `x int` missing invariant boundary_int assertion",
 		},
 		{
-			Name: "Cross_Product with bound axis covering an unrelated path is not credited",
+			Name: "Cross_Product with bound axis covering " +
+				"an unrelated path is not credited",
 			Source: "package fixture\n\n" + fixture_invariant_import +
 				"\nconst fixture_hi = 100\n" +
 				"func g() (out int) {\n" +
 				"\tdefer func() {\n" +
 				"\t\tinvariant.Cross_Product(\n" +
-				"\t\t\tinvariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: out, Lo: 0, Hi: fixture_hi}),\n" +
-				"\t\t\tinvariant.Always(out == 0, \"out is zero\"),\n" +
+				"\t\t\tinvariant.Distinct_Boundary(" +
+				"&invariant.Boundary_Input[int]{" +
+				"X: out, Lo: 0, Hi: fixture_hi}),\n" +
+				"\t\t\tinvariant.Always(" +
+				"out == 0, \"out is zero\"),\n" +
 				"\t\t)\n" +
 				"\t}()\n" +
 				"\treturn 1\n" +
@@ -7251,8 +8579,11 @@ func Test_Invariant_Assertions_Flagged(t *testing.T) {
 				"func f(x int) {\n" +
 				"\ty := g()\n" +
 				"\tinvariant.Cross_Product(\n" +
-				"\t\tinvariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: y, Lo: 0, Hi: fixture_hi}),\n" +
-				"\t\tinvariant.Always(y == 0, \"y is zero\"),\n" +
+				"\t\tinvariant.Distinct_Boundary(" +
+				"&invariant.Boundary_Input[int]{" +
+				"X: y, Lo: 0, Hi: fixture_hi}),\n" +
+				"\t\tinvariant.Always(" +
+				"y == 0, \"y is zero\"),\n" +
 				"\t)\n" +
 				"\t_ = x\n" +
 				"}\n",
@@ -7280,8 +8611,10 @@ func Test_Invariant_Assertions_Prologue_Axis_Builder_Bindings(t *testing.T) {
 			Source: "package fixture\n\n" + fixture_invariant_import +
 				"\nconst fixture_hi = 100\n" +
 				"func f(enabled bool, absent bool) {\n" +
-				"\tenabled_axis := invariant.Sometimes(enabled, \"Enabled is set\")\n" +
-				"\tabsent_axis := invariant.Sometimes(absent, \"Absent is set\")\n" +
+				"\tenabled_axis := invariant.Sometimes(enabled, " +
+				"\"Enabled is set\")\n" +
+				"\tabsent_axis := invariant.Sometimes(absent, " +
+				"\"Absent is set\")\n" +
 				"\tinvariant.Cross_Product(\n" +
 				"\t\tenabled_axis, absent_axis,\n" +
 				"\t\tinvariant.Excluding(invariant.Bucket_False(enabled_axis),\n" +
@@ -7295,7 +8628,8 @@ func Test_Invariant_Assertions_Prologue_Axis_Builder_Bindings(t *testing.T) {
 			Source: "package fixture\n\n" + fixture_invariant_import +
 				"\nconst fixture_hi = 100\n" +
 				"func f(p *int) {\n" +
-				"\tp_axis := invariant.Sometimes(p == nil, \"P is nil sometimes\")\n" +
+				"\tp_axis := invariant.Sometimes(" +
+				"p == nil, \"P is nil sometimes\")\n" +
 				"\tinvariant.Cross_Product(p_axis)\n" +
 				"}\n",
 			Want_Diag: "",
@@ -7306,7 +8640,8 @@ func Test_Invariant_Assertions_Prologue_Axis_Builder_Bindings(t *testing.T) {
 				"\nconst fixture_hi = 100\n" +
 				"func f() (out *int) {\n" +
 				"\tdefer func() {\n" +
-				"\t\tout_axis := invariant.Sometimes(out == nil, \"Out is nil sometimes\")\n" +
+				"\t\tout_axis := invariant.Sometimes(out == nil, " +
+				"\"Out is nil sometimes\")\n" +
 				"\t\tinvariant.Cross_Product(out_axis)\n" +
 				"\t}()\n" +
 				"\treturn nil\n" +
@@ -7324,56 +8659,80 @@ func Test_Invariant_Assertions_Prologue_Axis_Builder_Bindings(t *testing.T) {
 // original declaration's identifiers are covered even though no immediately-
 // following Is_* assertion exists.
 func Test_Invariant_Assertions_Axis_Builder_Chain(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		Name      string
 		Filename  string
 		Source    string
 		Want_Diag string
 	}{
+
 		{
 			Name: "single axis with nil-compare covers pointer declaration",
 			Source: "package fixture\n\n" + fixture_invariant_import +
 				fixture_declaration_callee +
 				"func f() {\n" +
 				"\tp := g()\n" +
-				"\tp_axis := invariant.Sometimes(p == nil, \"P is nil sometimes\")\n" +
+				"\tp_axis := invariant.Sometimes(" +
+				"p == nil, \"P is nil sometimes\")\n" +
 				"\tinvariant.Cross_Product(p_axis)\n" +
 				"}\n",
 			Want_Diag: "",
 		},
+
 		{
 			Name: "multiple axes cover multi-LHS declaration",
 			Source: "package fixture\n\n" + fixture_invariant_import +
 				fixture_declaration_callee_pair +
 				"func f() {\n" +
 				"\ta, b := g()\n" +
-				"\ta_axis := invariant.Sometimes(a == nil, \"A is nil sometimes\")\n" +
-				"\tb_axis := invariant.Sometimes(b == nil, \"B is nil sometimes\")\n" +
+				"\ta_axis := invariant.Sometimes(" +
+				"a == nil, \"A is nil sometimes\")\n" +
+				"\tb_axis := invariant.Sometimes(" +
+				"b == nil, \"B is nil sometimes\")\n" +
 				"\tinvariant.Cross_Product(a_axis, b_axis)\n" +
 				"}\n",
 			Want_Diag: "",
 		},
+
 		{
 			Name: "axis with bare bool predicate covers declaration",
 			Source: "package fixture\n\n" + fixture_invariant_import +
 				"\nconst fixture_hi = 100\n" +
 				"func boolean() (flag bool) {\n" +
-				"\tdefer func() { invariant.Cross_Product(invariant.Sometimes(flag, \"Flag is set sometimes\")) }()\n" +
+				"\tdefer func() { invariant.Cross_Product(" +
+				"invariant.Sometimes(flag, \"Flag is set sometimes\")) }()\n" +
 				"\treturn false\n" +
 				"}\n\n" +
 				"func f() {\n" +
 				"\tflag := boolean()\n" +
-				"\tflag_axis := invariant.Sometimes(flag, \"Flag fires sometimes\")\n" +
+				"\tflag_axis := invariant.Sometimes(flag, " +
+				"\"Flag fires sometimes\")\n" +
 				"\tinvariant.Cross_Product(flag_axis)\n" +
 				"}\n",
 			Want_Diag: "",
 		},
+	}
+	run_invariant_assertions_table(t, tests)
+}
+
+// Additional cases, split to keep each function within the length limit.
+func Test_Invariant_Assertions_Axis_Builder_Chain_Part2(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		Name      string
+		Filename  string
+		Source    string
+		Want_Diag string
+	}{
+
 		{
 			Name: "non-invariant call in declaration chain is flagged",
 			Source: "package fixture\n\n" + fixture_invariant_import +
 				fixture_declaration_callee +
 				"func h() (out *int) {\n" +
-				"\tdefer func() { invariant.Cross_Product(invariant.Always(out != nil, \"Out is non-nil\")) }()\n" +
+				"\tdefer func() { invariant.Cross_Product(" +
+				"invariant.Always(out != nil, \"Out is non-nil\")) }()\n" +
 				"\treturn nil\n" +
 				"}\n\n" +
 				"func f() {\n" +
@@ -7384,6 +8743,7 @@ func Test_Invariant_Assertions_Axis_Builder_Chain(t *testing.T) {
 				"}\n",
 			Want_Diag: "declaration via function call",
 		},
+
 		{
 			Name: "non-axis-builder invariant call in declaration is not exempt",
 			Source: "package fixture\n\n" + fixture_invariant_import +
@@ -7432,12 +8792,14 @@ func Test_Invariant_Assertions_Axis_Builder_Chain_Coverage(t *testing.T) {
 			// inner axis's predicate is a literal binary expression — no
 			// identifier paths extracted, so covered ends up as map[string]bool{}.
 			// Exercises path_covered with len(covered)==0.
-			Name: "declaration followed by Cross_Product with literal-only predicate is flagged",
+			Name: "declaration followed by Cross_Product with " +
+				"literal-only predicate is flagged",
 			Source: "package fixture\n\n" + fixture_invariant_import +
 				fixture_declaration_callee +
 				"func f() {\n" +
 				"\tx := g()\n" +
-				"\tinvariant.Cross_Product(invariant.Always(1+1 == 2, \"trivially true\"))\n" +
+				"\tinvariant.Cross_Product(" +
+				"invariant.Always(1+1 == 2, \"trivially true\"))\n" +
 				"\t_ = x\n" +
 				"}\n",
 			Want_Diag: "declaration via function call",
@@ -7445,12 +8807,15 @@ func Test_Invariant_Assertions_Axis_Builder_Chain_Coverage(t *testing.T) {
 		{
 			// Same shape as above but with a 55-char identifier — exercises
 			// path_covered with (len(identifier)==Hi, len(covered)==Lo) tuple.
-			Name: "declaration of 55-char identifier followed by literal-only Cross_Product is flagged",
+			Name: "declaration of 55-char identifier followed by " +
+				"literal-only Cross_Product is flagged",
 			Source: "package fixture\n\n" + fixture_invariant_import +
 				fixture_declaration_callee +
 				"func f() {\n" +
-				"\txxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx := g()\n" +
-				"\tinvariant.Cross_Product(invariant.Always(1+1 == 2, \"trivially true\"))\n" +
+				"\t" +
+				"xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx := g()\n" +
+				"\tinvariant.Cross_Product(" +
+				"invariant.Always(1+1 == 2, \"trivially true\"))\n" +
 				"\t_ = xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\n" +
 				"}\n",
 			Want_Diag: "declaration via function call",
@@ -7468,12 +8833,14 @@ func Test_Invariant_Assertions_Axis_Builder_Chain_Coverage(t *testing.T) {
 // is NOT acceptable for multi-decl: each is single-axis sugar; only
 // Cross_Product enumerates the cross-product across axes.
 func Test_Invariant_Assertions_Multi_Declaration_Requires_Cross_Product(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		Name      string
 		Filename  string
 		Source    string
 		Want_Diag string
 	}{
+
 		{
 			Name: "multi-decl covered by top-level Cross_Product is clean",
 			Source: "package fixture\n\n" + fixture_invariant_import +
@@ -7481,52 +8848,80 @@ func Test_Invariant_Assertions_Multi_Declaration_Requires_Cross_Product(t *testi
 				"func f() {\n" +
 				"\ta, b := g()\n" +
 				"\tinvariant.Cross_Product(\n" +
-				"\t\tinvariant.Always(a != nil, \"A is non-nil\"),\n" +
-				"\t\tinvariant.Always(b != nil, \"B is non-nil\"),\n" +
+				"\t\tinvariant.Always(" +
+				"a != nil, \"A is non-nil\"),\n" +
+				"\t\tinvariant.Always(" +
+				"b != nil, \"B is non-nil\"),\n" +
 				"\t)\n" +
 				"}\n",
 			Want_Diag: "",
 		},
+
 		{
-			Name: "multi-decl covered by axis-builder chain terminated by Cross_Product is clean",
+			Name: "multi-decl covered by axis-builder chain " +
+				"terminated by Cross_Product is clean",
 			Source: "package fixture\n\n" + fixture_invariant_import +
 				fixture_declaration_callee_pair +
 				"func f() {\n" +
 				"\ta, b := g()\n" +
-				"\ta_axis := invariant.Sometimes(a == nil, \"A is nil sometimes\")\n" +
-				"\tb_axis := invariant.Sometimes(b == nil, \"B is nil sometimes\")\n" +
+				"\ta_axis := invariant.Sometimes(" +
+				"a == nil, \"A is nil sometimes\")\n" +
+				"\tb_axis := invariant.Sometimes(" +
+				"b == nil, \"B is nil sometimes\")\n" +
 				"\tinvariant.Cross_Product(a_axis, b_axis)\n" +
 				"}\n",
 			Want_Diag: "",
 		},
+
 		{
-			Name: "multi-decl covered by separate Cross_Products per identifier is clean under always-Cross_Product",
+			Name: "multi-decl covered by separate Cross_Products " +
+				"per identifier is clean under always-Cross_Product",
 			Source: "package fixture\n\n" + fixture_invariant_import +
 				fixture_declaration_callee_pair +
 				"func f() {\n" +
 				"\ta, b := g()\n" +
-				"\tinvariant.Cross_Product(invariant.Always(a != nil, \"A is non-nil\"))\n" +
-				"\tinvariant.Cross_Product(invariant.Always(b != nil, \"B is non-nil\"))\n" +
+				"\tinvariant.Cross_Product(" +
+				"invariant.Always(a != nil, \"A is non-nil\"))\n" +
+				"\tinvariant.Cross_Product(" +
+				"invariant.Always(b != nil, \"B is non-nil\"))\n" +
 				"}\n",
 			Want_Diag: "",
 		},
+	}
+	run_invariant_assertions_table(t, tests)
+}
+
+// Additional cases, split to keep each function within the length limit.
+func Test_Invariant_Assertions_Multi_Declaration_Requires_Cross_Product_Part2(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		Name      string
+		Filename  string
+		Source    string
+		Want_Diag string
+	}{
+
 		{
 			Name: "single-decl covered by single Is_X is unaffected",
 			Source: "package fixture\n\n" + fixture_invariant_import +
 				fixture_declaration_callee +
 				"func f() {\n" +
 				"\tp := g()\n" +
-				"\tinvariant.Cross_Product(invariant.Always(p != nil, \"P is non-nil\"))\n" +
+				"\tinvariant.Cross_Product(" +
+				"invariant.Always(p != nil, \"P is non-nil\"))\n" +
 				"}\n",
 			Want_Diag: "",
 		},
+
 		{
-			Name: "multi-decl with only one identifier covered names the missing identifier",
+			Name: "multi-decl with only one identifier covered " +
+				"names the missing identifier",
 			Source: "package fixture\n\n" + fixture_invariant_import +
 				fixture_declaration_callee_pair +
 				"func f() {\n" +
 				"\ta, b := g()\n" +
-				"\tinvariant.Cross_Product(invariant.Always(a != nil, \"A is non-nil\"))\n" +
+				"\tinvariant.Cross_Product(" +
+				"invariant.Always(a != nil, \"A is non-nil\"))\n" +
 				"\t_ = b\n" +
 				"}\n",
 			Want_Diag: "b",
@@ -7554,8 +8949,10 @@ func Test_Invariant_Assertions_Defer_At_Body_Zero(t *testing.T) {
 			Source: "package fixture\n\n" + fixture_invariant_import +
 				"\nconst fixture_hi = 100\n" +
 				"func f(p *int) (out *int) {\n" +
-				"\tdefer func() { invariant.Cross_Product(invariant.Always(out != nil, \"Out is non-nil\")) }()\n" +
-				"\tinvariant.Cross_Product(invariant.Always(p != nil, \"P is non-nil\"))\n" +
+				"\tdefer func() { invariant.Cross_Product(" +
+				"invariant.Always(out != nil, \"Out is non-nil\")) }()\n" +
+				"\tinvariant.Cross_Product(" +
+				"invariant.Always(p != nil, \"P is non-nil\"))\n" +
 				"\treturn p\n" +
 				"}\n",
 			Want_Diag: "",
@@ -7565,8 +8962,10 @@ func Test_Invariant_Assertions_Defer_At_Body_Zero(t *testing.T) {
 			Source: "package fixture\n\n" + fixture_invariant_import +
 				"\nconst fixture_hi = 100\n" +
 				"func f(p *int) (out *int) {\n" +
-				"\tinvariant.Cross_Product(invariant.Always(p != nil, \"P is non-nil\"))\n" +
-				"\tdefer func() { invariant.Cross_Product(invariant.Always(out != nil, \"Out is non-nil\")) }()\n" +
+				"\tinvariant.Cross_Product(" +
+				"invariant.Always(p != nil, \"P is non-nil\"))\n" +
+				"\tdefer func() { invariant.Cross_Product(" +
+				"invariant.Always(out != nil, \"Out is non-nil\")) }()\n" +
 				"\treturn p\n" +
 				"}\n",
 			Want_Diag: "must be the very first statement",
@@ -7576,7 +8975,8 @@ func Test_Invariant_Assertions_Defer_At_Body_Zero(t *testing.T) {
 			Source: "package fixture\n\n" + fixture_invariant_import +
 				"\nconst fixture_hi = 100\n" +
 				"func f(p *int) {\n" +
-				"\tinvariant.Cross_Product(invariant.Always(p != nil, \"P is non-nil\"))\n" +
+				"\tinvariant.Cross_Product(" +
+				"invariant.Always(p != nil, \"P is non-nil\"))\n" +
 				"\t_ = p\n" +
 				"}\n",
 			Want_Diag: "",
@@ -7587,7 +8987,8 @@ func Test_Invariant_Assertions_Defer_At_Body_Zero(t *testing.T) {
 				"import \"io\"\n\n" +
 				"func f(closer io.Closer) (out *int) {\n" +
 				"\tdefer closer.Close()\n" +
-				"\tdefer func() { invariant.Cross_Product(invariant.Always(out != nil, \"Out is non-nil\")) }()\n" +
+				"\tdefer func() { invariant.Cross_Product(" +
+				"invariant.Always(out != nil, \"Out is non-nil\")) }()\n" +
 				"\treturn nil\n" +
 				"}\n",
 			Want_Diag: "must be the very first statement",
@@ -7597,7 +8998,8 @@ func Test_Invariant_Assertions_Defer_At_Body_Zero(t *testing.T) {
 			Source: "package fixture\n\n" + fixture_invariant_import +
 				"\nconst fixture_hi = 100\n" +
 				"func f() (out *int) {\n" +
-				"\tinvariant.Cross_Product(invariant.Always(out == nil, \"Out is nil at start\"))\n" +
+				"\tinvariant.Cross_Product(" +
+				"invariant.Always(out == nil, \"Out is nil at start\"))\n" +
 				"\treturn nil\n" +
 				"}\n",
 			Want_Diag: "must be the very first statement",
@@ -7633,8 +9035,10 @@ func Test_Invariant_Assertions_Single_Cross_Product_Per_Chain(t *testing.T) {
 				"\nconst fixture_hi = 100\n" +
 				"func f() (out_a *int, out_b *int) {\n" +
 				"\tdefer func() {\n" +
-				"\t\tinvariant.Cross_Product(invariant.Always(out_a != nil, \"Out_a is non-nil\"))\n" +
-				"\t\tinvariant.Cross_Product(invariant.Always(out_b != nil, \"Out_b is non-nil\"))\n" +
+				"\t\tinvariant.Cross_Product(" +
+				"invariant.Always(out_a != nil, \"Out_a is non-nil\"))\n" +
+				"\t\tinvariant.Cross_Product(" +
+				"invariant.Always(out_b != nil, \"Out_b is non-nil\"))\n" +
 				"\t}()\n" +
 				"\treturn nil, nil\n" +
 				"}\n",
@@ -7645,8 +9049,10 @@ func Test_Invariant_Assertions_Single_Cross_Product_Per_Chain(t *testing.T) {
 			Source: "package fixture\n\n" + fixture_invariant_import +
 				"\nconst fixture_hi = 100\n" +
 				"func f(a *int, b *int) {\n" +
-				"\tinvariant.Cross_Product(invariant.Always(a != nil, \"A is non-nil\"))\n" +
-				"\tinvariant.Cross_Product(invariant.Always(b != nil, \"B is non-nil\"))\n" +
+				"\tinvariant.Cross_Product(" +
+				"invariant.Always(a != nil, \"A is non-nil\"))\n" +
+				"\tinvariant.Cross_Product(" +
+				"invariant.Always(b != nil, \"B is non-nil\"))\n" +
 				"\t_ = a\n" +
 				"\t_ = b\n" +
 				"}\n",
@@ -7658,9 +9064,11 @@ func Test_Invariant_Assertions_Single_Cross_Product_Per_Chain(t *testing.T) {
 				"\nconst fixture_hi = 100\n" +
 				"type Inner struct{ V *int }\n\n" +
 				"func f(p *Inner) {\n" +
-				"\tinvariant.Cross_Product(invariant.Sometimes(p == nil, \"P is nil sometimes\"))\n" +
+				"\tinvariant.Cross_Product(" +
+				"invariant.Sometimes(p == nil, \"P is nil sometimes\"))\n" +
 				"\tif p != nil {\n" +
-				"\t\tinvariant.Cross_Product(invariant.Always(p.V != nil, \"P.V is non-nil\"))\n" +
+				"\t\tinvariant.Cross_Product(" +
+				"invariant.Always(p.V != nil, \"P.V is non-nil\"))\n" +
 				"\t}\n" +
 				"\t_ = p\n" +
 				"}\n",
@@ -7676,79 +9084,109 @@ func Test_Invariant_Assertions_Single_Cross_Product_Per_Chain(t *testing.T) {
 // allowed; compound nested inside a CallExpr argument is not flagged because
 // only the top of the predicate is inspected.
 func Test_Invariant_Assertions_Compound_Predicate_Banned(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		Name      string
 		Filename  string
 		Source    string
 		Want_Diag string
 	}{
+
 		{
 			Name: "Always with top-level && is flagged",
 			Source: "package fixture\n\n" + fixture_invariant_import +
 				"\nconst fixture_hi = 100\n" +
 				"func f(p *int, q *int) {\n" +
 				"\tinvariant.Cross_Product(\n" +
-				"\t\tinvariant.Always(p != nil && q != nil, \"both non-nil\"),\n" +
+				"\t\tinvariant.Always(" +
+				"p != nil && q != nil, \"both non-nil\"),\n" +
 				"\t)\n" +
 				"}\n",
 			Want_Diag: "compound boolean predicate",
 		},
+
 		{
 			Name: "Always with top-level || is flagged",
 			Source: "package fixture\n\n" + fixture_invariant_import +
 				"\nconst fixture_hi = 100\n" +
 				"func f(p *int, q *int) {\n" +
 				"\tinvariant.Cross_Product(\n" +
-				"\t\tinvariant.Always(p == nil || q == nil, \"either nil\"),\n" +
+				"\t\tinvariant.Always(" +
+				"p == nil || q == nil, \"either nil\"),\n" +
 				"\t)\n" +
 				"}\n",
 			Want_Diag: "compound boolean predicate",
 		},
+
 		{
 			Name: "Is_Always with || is flagged",
 			Source: "package fixture\n\n" + fixture_invariant_import +
 				"\nconst fixture_hi = 100\n" +
 				"func f(p *int) {\n" +
-				"\tinvariant.Cross_Product(invariant.Always(p == nil || p != nil, \"tautology\"))\n" +
+				"\tinvariant.Cross_Product(" +
+				"invariant.Always(p == nil || p != nil, \"tautology\"))\n" +
 				"}\n",
 			Want_Diag: "compound boolean predicate",
 		},
+
 		{
 			Name: "Sometimes with && is flagged",
 			Source: "package fixture\n\n" + fixture_invariant_import +
 				"\nconst fixture_hi = 100\n" +
 				"func f(a bool, b bool) {\n" +
 				"\tinvariant.Cross_Product(\n" +
-				"\t\tinvariant.Sometimes(a && b, \"both set sometimes\"),\n" +
+				"\t\tinvariant.Sometimes(" +
+				"a && b, \"both set sometimes\"),\n" +
 				"\t)\n" +
 				"}\n",
 			Want_Diag: "compound boolean predicate",
 		},
+	}
+	run_invariant_assertions_table(t, tests)
+}
+
+// Additional cases, split to keep each function within the length limit.
+func Test_Invariant_Assertions_Compound_Predicate_Banned_Part2(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		Name      string
+		Filename  string
+		Source    string
+		Want_Diag string
+	}{
+
 		{
 			Name: "Unary ! is not compound",
 			Source: "package fixture\n\n" + fixture_invariant_import +
 				"\nconst fixture_hi = 100\n" +
 				"func f(flag bool) {\n" +
 				"\tinvariant.Cross_Product(\n" +
-				"\t\tinvariant.Always(!flag, \"flag is false\"),\n" +
+				"\t\tinvariant.Always(" +
+				"!flag, \"flag is false\"),\n" +
 				"\t)\n" +
 				"}\n",
 			Want_Diag: "",
 		},
+
 		{
 			Name: "Compound nested in CallExpr is not flagged by compound check",
 			Source: "package fixture\n\n" + fixture_invariant_import +
 				"\nconst fixture_hi = 100\n" +
 				"func helper(x bool) (out bool) {\n" +
-				"\tdefer func() { invariant.Cross_Product(invariant.Sometimes(out, \"Out is set sometimes\")) }()\n" +
-				"\tinvariant.Cross_Product(invariant.Sometimes(x, \"X is set sometimes\"))\n" +
+				"\tdefer func() { invariant.Cross_Product(" +
+				"invariant.Sometimes(out, \"Out is set sometimes\")) }()\n" +
+				"\tinvariant.Cross_Product(" +
+				"invariant.Sometimes(x, \"X is set sometimes\"))\n" +
 				"\treturn x\n" +
 				"}\n\n" +
 				"func f(a bool, b bool) {\n" +
 				"\tinvariant.Cross_Product(\n" +
-				"\t\tinvariant.Sometimes(a, \"A is set sometimes\"),\n" +
-				"\t\tinvariant.Sometimes(b, \"B is set sometimes\"),\n" +
-				"\t\tinvariant.Always(helper(a && b), \"helper accepts the compound\"),\n" +
+				"\t\tinvariant.Sometimes(" +
+				"a, \"A is set sometimes\"),\n" +
+				"\t\tinvariant.Sometimes(" +
+				"b, \"B is set sometimes\"),\n" +
+				"\t\tinvariant.Always(" +
+				"helper(a && b), \"helper accepts the compound\"),\n" +
 				"\t)\n" +
 				"}\n",
 			Want_Diag: "",
@@ -7762,12 +9200,14 @@ func Test_Invariant_Assertions_Compound_Predicate_Banned(t *testing.T) {
 // coverage. Other conditions (bool flags, arbitrary expressions) and the
 // `else` arm are not descended.
 func Test_Invariant_Assertions_If_Nil_Guard_Descent(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		Name      string
 		Filename  string
 		Source    string
 		Want_Diag string
 	}{
+
 		{
 			Name: "Defer body credits assertion inside `if X != nil` guard",
 			Source: "package fixture\n\n" + fixture_invariant_import +
@@ -7777,10 +9217,13 @@ func Test_Invariant_Assertions_If_Nil_Guard_Descent(t *testing.T) {
 				"}\n\n" +
 				"func f() (out *Foo) {\n" +
 				"\tdefer func() {\n" +
-				"\t\tinvariant.Cross_Product(invariant.Sometimes(out == nil, \"Out is nil sometimes\"))\n" +
+				"\t\tinvariant.Cross_Product(" +
+				"invariant.Sometimes(out == nil, \"Out is nil sometimes\"))\n" +
 				"\t\tif out != nil {\n" +
 				"\t\t\tinvariant.Cross_Product(\n" +
-				"\t\t\t\tinvariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: out.N, Lo: 0, Hi: fixture_hi}),\n" +
+				"\t\t\t\tinvariant.Distinct_Boundary(" +
+				"&invariant.Boundary_Input[int]{" +
+				"X: out.N, Lo: 0, Hi: fixture_hi}),\n" +
 				"\t\t\t\tinvariant.Always(out.N == 0, \"N is zero\"),\n" +
 				"\t\t\t)\n" +
 				"\t\t}\n" +
@@ -7789,6 +9232,7 @@ func Test_Invariant_Assertions_If_Nil_Guard_Descent(t *testing.T) {
 				"}\n",
 			Want_Diag: "",
 		},
+
 		{
 			Name: "Prologue credits assertion inside `if p != nil` guard",
 			Source: "package fixture\n\n" + fixture_invariant_import +
@@ -7797,16 +9241,34 @@ func Test_Invariant_Assertions_If_Nil_Guard_Descent(t *testing.T) {
 				"\tN int\n" +
 				"}\n\n" +
 				"func f(input *Foo_Input) {\n" +
-				"\tinvariant.Cross_Product(invariant.Sometimes(input == nil, \"Input is nil sometimes\"))\n" +
+				"\tinvariant.Cross_Product(" +
+				"invariant.Sometimes(input == nil, \"Input is nil sometimes\"))\n" +
 				"\tif input != nil {\n" +
 				"\t\tinvariant.Cross_Product(\n" +
-				"\t\t\tinvariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: input.N, Lo: 0, Hi: fixture_hi}),\n" +
-				"\t\t\tinvariant.Always(input.N == 0, \"N is zero\"),\n" +
+				"\t\t\tinvariant.Distinct_Boundary(" +
+				"&invariant.Boundary_Input[int]{" +
+				"X: input.N, Lo: 0, Hi: fixture_hi}),\n" +
+				"\t\t\tinvariant.Always(" +
+				"input.N == 0, \"N is zero\"),\n" +
 				"\t\t)\n" +
 				"\t}\n" +
 				"}\n",
 			Want_Diag: "",
 		},
+	}
+	run_invariant_assertions_table(t, tests)
+}
+
+// Additional cases, split to keep each function within the length limit.
+func Test_Invariant_Assertions_If_Nil_Guard_Descent_Part2(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		Name      string
+		Filename  string
+		Source    string
+		Want_Diag string
+	}{
+
 		{
 			Name: "Else branch does not credit",
 			Source: "package fixture\n\n" + fixture_invariant_import +
@@ -7816,16 +9278,20 @@ func Test_Invariant_Assertions_If_Nil_Guard_Descent(t *testing.T) {
 				"}\n\n" +
 				"func f() (out *Foo) {\n" +
 				"\tdefer func() {\n" +
-				"\t\tinvariant.Cross_Product(invariant.Sometimes(out == nil, \"Out is nil sometimes\"))\n" +
+				"\t\tinvariant.Cross_Product(" +
+				"invariant.Sometimes(out == nil, \"Out is nil sometimes\"))\n" +
 				"\t\tif out == nil {\n" +
 				"\t\t} else {\n" +
-				"\t\t\tinvariant.Cross_Product(invariant.Always(out.N == 0, \"N is zero\"))\n" +
+				"\t\t\tinvariant.Cross_Product(" +
+				"invariant.Always(out.N == 0, \"N is zero\"))\n" +
 				"\t\t}\n" +
 				"\t}()\n" +
 				"\treturn nil\n" +
 				"}\n",
-			Want_Diag: "named return `out.N int` missing invariant boundary_int assertion",
+			Want_Diag: "named return `out.N int` missing invariant " +
+				"boundary_int assertion",
 		},
+
 		{
 			Name: "Non-nil-guard if does not descend",
 			Source: "package fixture\n\n" + fixture_invariant_import +
@@ -7835,15 +9301,19 @@ func Test_Invariant_Assertions_If_Nil_Guard_Descent(t *testing.T) {
 				"}\n\n" +
 				"func f(flag bool) (out *Foo) {\n" +
 				"\tdefer func() {\n" +
-				"\t\tinvariant.Cross_Product(invariant.Sometimes(out == nil, \"Out is nil sometimes\"))\n" +
+				"\t\tinvariant.Cross_Product(" +
+				"invariant.Sometimes(out == nil, \"Out is nil sometimes\"))\n" +
 				"\t\tif flag {\n" +
-				"\t\t\tinvariant.Cross_Product(invariant.Always(out.N == 0, \"N is zero\"))\n" +
+				"\t\t\tinvariant.Cross_Product(" +
+				"invariant.Always(out.N == 0, \"N is zero\"))\n" +
 				"\t\t}\n" +
 				"\t}()\n" +
-				"\tinvariant.Cross_Product(invariant.Sometimes(flag, \"Flag is set sometimes\"))\n" +
+				"\tinvariant.Cross_Product(" +
+				"invariant.Sometimes(flag, \"Flag is set sometimes\"))\n" +
 				"\treturn nil\n" +
 				"}\n",
-			Want_Diag: "named return `out.N int` missing invariant boundary_int assertion",
+			Want_Diag: "named return `out.N int` missing invariant " +
+				"boundary_int assertion",
 		},
 	}
 	run_invariant_assertions_table(t, tests)
@@ -7871,11 +9341,14 @@ func Test_Invariant_Assertions_If_Nil_Guard_Nested(t *testing.T) {
 				"}\n\n" +
 				"func f() (out *Outer) {\n" +
 				"\tdefer func() {\n" +
-				"\t\tinvariant.Cross_Product(invariant.Sometimes(out == nil, \"Out is nil sometimes\"))\n" +
+				"\t\tinvariant.Cross_Product(" +
+				"invariant.Sometimes(out == nil, \"Out is nil sometimes\"))\n" +
 				"\t\tif out != nil {\n" +
-				"\t\t\tinvariant.Cross_Product(invariant.Sometimes(out.I == nil, \"I is nil sometimes\"))\n" +
+				"\t\t\tinvariant.Cross_Product(" +
+				"invariant.Sometimes(out.I == nil, \"I is nil sometimes\"))\n" +
 				"\t\t\tif out.I != nil {\n" +
-				"\t\t\t\tinvariant.Cross_Product(invariant.Always(out.I.N == 0, \"N is zero\"))\n" +
+				"\t\t\t\tinvariant.Cross_Product(" +
+				"invariant.Always(out.I.N == 0, \"N is zero\"))\n" +
 				"\t\t\t}\n" +
 				"\t\t}\n" +
 				"\t}()\n" +
@@ -7893,12 +9366,14 @@ func Test_Invariant_Assertions_If_Nil_Guard_Nested(t *testing.T) {
 // ancestor, the inside-if assertion satisfies the rule (the if-guard is the
 // only safe place to deref).
 func Test_Invariant_Assertions_Non_Nillable_Outside_If(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		Name      string
 		Filename  string
 		Source    string
 		Want_Diag string
 	}{
+
 		{
 			Name: "Pointer ancestor: int inside if-nil-guard is clean",
 			Source: "package fixture\n\n" + fixture_invariant_import +
@@ -7908,10 +9383,13 @@ func Test_Invariant_Assertions_Non_Nillable_Outside_If(t *testing.T) {
 				"}\n\n" +
 				"func f() (out *Foo) {\n" +
 				"\tdefer func() {\n" +
-				"\t\tinvariant.Cross_Product(invariant.Sometimes(out == nil, \"Out is nil sometimes\"))\n" +
+				"\t\tinvariant.Cross_Product(" +
+				"invariant.Sometimes(out == nil, \"Out is nil sometimes\"))\n" +
 				"\t\tif out != nil {\n" +
 				"\t\t\tinvariant.Cross_Product(\n" +
-				"\t\t\t\tinvariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: out.N, Lo: 0, Hi: fixture_hi}),\n" +
+				"\t\t\t\tinvariant.Distinct_Boundary(" +
+				"&invariant.Boundary_Input[int]{" +
+				"X: out.N, Lo: 0, Hi: fixture_hi}),\n" +
 				"\t\t\t\tinvariant.Always(out.N == 0, \"N is zero\"),\n" +
 				"\t\t\t)\n" +
 				"\t\t}\n" +
@@ -7920,6 +9398,7 @@ func Test_Invariant_Assertions_Non_Nillable_Outside_If(t *testing.T) {
 				"}\n",
 			Want_Diag: "",
 		},
+
 		{
 			Name: "No nillable ancestor: value-struct int inside if-block is flagged",
 			Source: "package fixture\n\n" + fixture_invariant_import +
@@ -7928,37 +9407,63 @@ func Test_Invariant_Assertions_Non_Nillable_Outside_If(t *testing.T) {
 				"\tN int\n" +
 				"}\n\n" +
 				"func f(input Foo_Input, sentinel *int) {\n" +
-				"\tinvariant.Cross_Product(invariant.Sometimes(sentinel == nil, \"Sentinel is nil sometimes\"))\n" +
+				"\tinvariant.Cross_Product(" +
+				"invariant.Sometimes(sentinel == nil, " +
+				"\"Sentinel is nil sometimes\"))\n" +
 				"\tif sentinel != nil {\n" +
-				"\t\tinvariant.Cross_Product(invariant.Always(input.N == 0, \"N is zero\"))\n" +
+				"\t\tinvariant.Cross_Product(" +
+				"invariant.Always(input.N == 0, \"N is zero\"))\n" +
 				"\t}\n" +
 				"}\n",
 			Want_Diag: "param `input.N int` must be asserted outside",
 		},
+	}
+	run_invariant_assertions_table(t, tests)
+}
+
+// Additional cases, split to keep each function within the length limit.
+func Test_Invariant_Assertions_Non_Nillable_Outside_If_Part2(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		Name      string
+		Filename  string
+		Source    string
+		Want_Diag string
+	}{
+
 		{
 			Name: "No nillable ancestor: plain int param inside if-block is flagged",
 			Source: "package fixture\n\n" + fixture_invariant_import +
 				"\nconst fixture_hi = 100\n" +
 				"func f(n int, sentinel *int) {\n" +
-				"\tinvariant.Cross_Product(invariant.Sometimes(sentinel == nil, \"Sentinel is nil sometimes\"))\n" +
+				"\tinvariant.Cross_Product(" +
+				"invariant.Sometimes(sentinel == nil, " +
+				"\"Sentinel is nil sometimes\"))\n" +
 				"\tif sentinel != nil {\n" +
-				"\t\tinvariant.Cross_Product(invariant.Always(n == 0, \"N is zero\"))\n" +
+				"\t\tinvariant.Cross_Product(" +
+				"invariant.Always(n == 0, \"N is zero\"))\n" +
 				"\t}\n" +
 				"}\n",
 			Want_Diag: "param `n int` must be asserted outside",
 		},
+
 		{
 			Name: "Non-nillable also asserted at top-level is clean",
 			Source: "package fixture\n\n" + fixture_invariant_import +
 				"\nconst fixture_hi = 100\n" +
 				"func f(n int, sentinel *int) {\n" +
 				"\tinvariant.Cross_Product(\n" +
-				"\t\tinvariant.Sometimes(sentinel == nil, \"Sentinel is nil sometimes\"),\n" +
-				"\t\tinvariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: n, Lo: 0, Hi: fixture_hi}),\n" +
-				"\t\tinvariant.Always(n == 0, \"N is zero\"),\n" +
+				"\t\tinvariant.Sometimes(" +
+				"sentinel == nil, \"Sentinel is nil sometimes\"),\n" +
+				"\t\tinvariant.Distinct_Boundary(" +
+				"&invariant.Boundary_Input[int]{" +
+				"X:n, Lo: 0, Hi: fixture_hi}),\n" +
+				"\t\tinvariant.Always(" +
+				"n == 0, \"N is zero\"),\n" +
 				"\t)\n" +
 				"\tif sentinel != nil {\n" +
-				"\t\tinvariant.Cross_Product(invariant.Always(n == 0, \"N is zero inside guard\"))\n" +
+				"\t\tinvariant.Cross_Product(" +
+				"invariant.Always(n == 0, \"N is zero inside guard\"))\n" +
 				"\t}\n" +
 				"}\n",
 			Want_Diag: "",
@@ -7972,12 +9477,14 @@ func Test_Invariant_Assertions_Non_Nillable_Outside_If(t *testing.T) {
 // prologue or is not the right shape: assertions buried inside conditionals,
 // after real work, on the wrong identifier, or in a non-first defer.
 func Test_Invariant_Assertions_Flagged_Prologue(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		Name      string
 		Filename  string
 		Source    string
 		Want_Diag string
 	}{
+
 		{
 			Name: "assertion inside if after real work does not satisfy",
 			Source: "package fixture\n\n" + fixture_invariant_import +
@@ -7986,14 +9493,18 @@ func Test_Invariant_Assertions_Flagged_Prologue(t *testing.T) {
 				"\ty := x + 1\n" +
 				"\tif y > 0 {\n" +
 				"\t\tinvariant.Cross_Product(\n" +
-				"\t\t\tinvariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: x, Lo: 0, Hi: fixture_hi}),\n" +
-				"\t\t\tinvariant.Always(x == 0, \"x is zero\"),\n" +
+				"\t\t\tinvariant.Distinct_Boundary(" +
+				"&invariant.Boundary_Input[int]{" +
+				"X: x, Lo: 0, Hi: fixture_hi}),\n" +
+				"\t\t\tinvariant.Always(" +
+				"x == 0, \"x is zero\"),\n" +
 				"\t\t)\n" +
 				"\t}\n" +
 				"\t_ = y\n" +
 				"}\n",
 			Want_Diag: "param `x int` missing invariant boundary_int assertion",
 		},
+
 		{
 			Name: "assertion after non-assertion statement does not satisfy",
 			Source: "package fixture\n\n" + fixture_invariant_import +
@@ -8001,13 +9512,17 @@ func Test_Invariant_Assertions_Flagged_Prologue(t *testing.T) {
 				"func f(x int) {\n" +
 				"\ty := 0\n" +
 				"\tinvariant.Cross_Product(\n" +
-				"\t\tinvariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: x, Lo: 0, Hi: fixture_hi}),\n" +
-				"\t\tinvariant.Always(x == 0, \"x is zero\"),\n" +
+				"\t\tinvariant.Distinct_Boundary(" +
+				"&invariant.Boundary_Input[int]{" +
+				"X: x, Lo: 0, Hi: fixture_hi}),\n" +
+				"\t\tinvariant.Always(" +
+				"x == 0, \"x is zero\"),\n" +
 				"\t)\n" +
 				"\t_ = y\n" +
 				"}\n",
 			Want_Diag: "param `x int` missing invariant boundary_int assertion",
 		},
+
 		{
 			Name: "non-invariant call in prologue breaks scan",
 			Source: "package fixture\n\n" + fixture_invariant_import +
@@ -8015,25 +9530,47 @@ func Test_Invariant_Assertions_Flagged_Prologue(t *testing.T) {
 				"func f(x int) {\n" +
 				"\tprintln(x)\n" +
 				"\tinvariant.Cross_Product(\n" +
-				"\t\tinvariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: x, Lo: 0, Hi: fixture_hi}),\n" +
-				"\t\tinvariant.Always(x == 0, \"x is zero\"),\n" +
+				"\t\tinvariant.Distinct_Boundary(" +
+				"&invariant.Boundary_Input[int]{" +
+				"X: x, Lo: 0, Hi: fixture_hi}),\n" +
+				"\t\tinvariant.Always(" +
+				"x == 0, \"x is zero\"),\n" +
 				"\t)\n" +
 				"}\n",
 			Want_Diag: "param `x int` missing invariant boundary_int assertion",
 		},
+	}
+	run_invariant_assertions_table(t, tests)
+}
+
+// Additional cases, split to keep each function within the length limit.
+func Test_Invariant_Assertions_Flagged_Prologue_Part2(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		Name      string
+		Filename  string
+		Source    string
+		Want_Diag string
+	}{
+
 		{
 			Name: "named return covered by non-deferred assertion only",
 			Source: "package fixture\n\n" + fixture_invariant_import +
 				"\nconst fixture_hi = 100\n" +
 				"func f() (result int) {\n" +
 				"\tinvariant.Cross_Product(\n" +
-				"\t\tinvariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: result, Lo: 0, Hi: fixture_hi}),\n" +
-				"\t\tinvariant.Always(result == 0, \"result is zero\"),\n" +
+				"\t\tinvariant.Distinct_Boundary(" +
+				"&invariant.Boundary_Input[int]{" +
+				"X:result, Lo: 0, Hi: fixture_hi}),\n" +
+				"\t\tinvariant.Always(" +
+				"result == 0, \"result is zero\"),\n" +
 				"\t)\n" +
 				"\treturn 0\n" +
 				"}\n",
-			Want_Diag: "named return `result int` missing invariant boundary_int assertion",
+			Want_Diag: "named return `result int` missing invariant " +
+				"boundary_int assertion",
 		},
+
 		{
 			Name: "named return needs first defer not second",
 			Source: "package fixture\n\n" + fixture_invariant_import +
@@ -8042,26 +9579,50 @@ func Test_Invariant_Assertions_Flagged_Prologue(t *testing.T) {
 				"\tdefer cleanup()\n" +
 				"\tdefer func() {\n" +
 				"\t\tinvariant.Cross_Product(\n" +
-				"\t\t\tinvariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: result, Lo: 0, Hi: fixture_hi}),\n" +
-				"\t\t\tinvariant.Always(result == 0, \"result is zero\"),\n" +
+				"\t\t\tinvariant.Distinct_Boundary(" +
+				"&invariant.Boundary_Input[int]{" +
+				"X: result, Lo: 0, Hi: fixture_hi}),\n" +
+				"\t\t\tinvariant.Always(" +
+				"result == 0, \"result is zero\"),\n" +
 				"\t\t)\n" +
 				"\t}()\n" +
 				"\treturn 0\n" +
 				"}\n\nfunc cleanup() {}\n",
-			Want_Diag: "named return `result int` missing invariant boundary_int assertion",
+			Want_Diag: "named return `result int` missing invariant " +
+				"boundary_int assertion",
 		},
+	}
+	run_invariant_assertions_table(t, tests)
+}
+
+// Additional cases, split to keep each function within the length limit.
+func Test_Invariant_Assertions_Flagged_Prologue_Part3(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		Name      string
+		Filename  string
+		Source    string
+		Want_Diag string
+	}{
+
 		{
 			Name: "assertion on wrong identifier does not satisfy",
 			Source: "package fixture\n\n" + fixture_invariant_import +
 				"\nconst fixture_hi = 100\n" +
 				"func f(x int, y int) {\n" +
 				"\tinvariant.Cross_Product(\n" +
-				"\t\tinvariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: y, Lo: 0, Hi: fixture_hi}),\n" +
-				"\t\tinvariant.Always(y == 0, \"y is zero\"),\n" +
+				"\t\tinvariant.Distinct_Boundary(" +
+				"&invariant.Boundary_Input[int]{" +
+				"X: y, Lo: 0, Hi: fixture_hi}),\n" +
+				"\t\tinvariant.Always(" +
+				"y == 0, \"y is zero\"),\n" +
 				"\t)\n" +
 				"\tinvariant.Cross_Product(\n" +
-				"\t\tinvariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: y, Lo: 0, Hi: fixture_hi}),\n" +
-				"\t\tinvariant.Always(y == 0, \"y is zero\"),\n" +
+				"\t\tinvariant.Distinct_Boundary(" +
+				"&invariant.Boundary_Input[int]{" +
+				"X: y, Lo: 0, Hi: fixture_hi}),\n" +
+				"\t\tinvariant.Always(" +
+				"y == 0, \"y is zero\"),\n" +
 				"\t)\n" +
 				"}\n",
 			Want_Diag: "param `x int` missing invariant boundary_int assertion",
@@ -8093,8 +9654,10 @@ func Test_Invariant_Assertions_Flagged_Prologue_Extra(t *testing.T) {
 			Source: "package fixture\n\n" + fixture_invariant_import +
 				"\nconst fixture_hi = 100\n" +
 				"func f(a int, b int) {\n" +
-				"\tinvariant.Is_Distinct_Boundary(&invariant.Boundary_Input[int]{X: a, Lo: 0, Hi: fixture_hi})\n" +
-				"\tinvariant.Is_Distinct_Boundary(&invariant.Boundary_Input[int]{X: b, Lo: 0, Hi: fixture_hi})\n" +
+				"\tinvariant.Is_Distinct_Boundary(&invariant.Boundary_Input[int]{" +
+				"X: a, Lo: 0, Hi: fixture_hi})\n" +
+				"\tinvariant.Is_Distinct_Boundary(&invariant.Boundary_Input[int]{" +
+				"X: b, Lo: 0, Hi: fixture_hi})\n" +
 				"}\n",
 			Want_Diag: "use `invariant.Cross_Product(...)`",
 		},
@@ -8152,7 +9715,8 @@ func Test_Invariant_Assertions_Clean_Property(t *testing.T) {
 			Source: "package fixture\n\n" + fixture_invariant_import +
 				"\nconst fixture_hi = 100\n" +
 				"func f(enabled bool) {\n" +
-				"\tinvariant.Cross_Product(invariant.Sometimes(enabled))\n" +
+				"\tinvariant.Cross_Product(" +
+				"invariant.Sometimes(enabled))\n" +
 				"}\n",
 			Want_Diag: "",
 		},
@@ -8181,10 +9745,16 @@ func Test_Invariant_Assertions_Clean_Value_Struct(t *testing.T) {
 				"}\n\n" +
 				"func f(input Foo_Input) {\n" +
 				"\tinvariant.Cross_Product(\n" +
-				"\t\tinvariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: input.A, Lo: 0, Hi: fixture_hi}),\n" +
-				"\t\tinvariant.Always(input.A == 0, \"input.A is zero\"),\n" +
-				"\t\tinvariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: input.B, Lo: 0, Hi: fixture_hi}),\n" +
-				"\t\tinvariant.Always(input.B == 0, \"input.B is zero\"),\n" +
+				"\t\tinvariant.Distinct_Boundary(" +
+				"&invariant.Boundary_Input[int]{" +
+				"X: input.A, Lo: 0, Hi: fixture_hi}),\n" +
+				"\t\tinvariant.Always(" +
+				"input.A == 0, \"input.A is zero\"),\n" +
+				"\t\tinvariant.Distinct_Boundary(" +
+				"&invariant.Boundary_Input[int]{" +
+				"X: input.B, Lo: 0, Hi: fixture_hi}),\n" +
+				"\t\tinvariant.Always(" +
+				"input.B == 0, \"input.B is zero\"),\n" +
 				"\t)\n" +
 				"}\n",
 			Want_Diag: "",
@@ -8201,12 +9771,14 @@ func Test_Invariant_Assertions_Clean_Value_Struct(t *testing.T) {
 // in the prologue (opt-out). Embedded fields are skipped. Untracked fields
 // (e.g. float32) contribute 0 to the count. Self-referential structs terminate.
 func Test_Invariant_Assertions_Struct_Field_Recursion(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		Name      string
 		Filename  string
 		Source    string
 		Want_Diag string
 	}{
+
 		{
 			Name: "two-field value struct requires Cross_Product",
 			Source: "package fixture\n\n" + fixture_invariant_import +
@@ -8217,12 +9789,16 @@ func Test_Invariant_Assertions_Struct_Field_Recursion(t *testing.T) {
 				"}\n\n" +
 				"func f(input Foo_Input) {\n" +
 				"\tinvariant.Cross_Product(\n" +
-				"\t\tinvariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: input.A, Lo: 0, Hi: fixture_hi}),\n" +
-				"\t\tinvariant.Always(input.A == 0, \"input.A is zero\"),\n" +
+				"\t\tinvariant.Distinct_Boundary(" +
+				"&invariant.Boundary_Input[int]{" +
+				"X: input.A, Lo: 0, Hi: fixture_hi}),\n" +
+				"\t\tinvariant.Always(" +
+				"input.A == 0, \"input.A is zero\"),\n" +
 				"\t)\n" +
 				"}\n",
 			Want_Diag: "input.B",
 		},
+
 		{
 			Name: "two-field value struct covered by Cross_Product is clean",
 			Source: "package fixture\n\n" + fixture_invariant_import +
@@ -8233,14 +9809,34 @@ func Test_Invariant_Assertions_Struct_Field_Recursion(t *testing.T) {
 				"}\n\n" +
 				"func f(input Foo_Input) {\n" +
 				"\tinvariant.Cross_Product(\n" +
-				"\t\tinvariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: input.A, Lo: 0, Hi: fixture_hi}),\n" +
-				"\t\tinvariant.Always(input.A == 0, \"input.A is zero\"),\n" +
-				"\t\tinvariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: input.B, Lo: 0, Hi: fixture_hi}),\n" +
-				"\t\tinvariant.Always(input.B == 0, \"input.B is zero\"),\n" +
+				"\t\tinvariant.Distinct_Boundary(" +
+				"&invariant.Boundary_Input[int]{" +
+				"X: input.A, Lo: 0, Hi: fixture_hi}),\n" +
+				"\t\tinvariant.Always(" +
+				"input.A == 0, \"input.A is zero\"),\n" +
+				"\t\tinvariant.Distinct_Boundary(" +
+				"&invariant.Boundary_Input[int]{" +
+				"X: input.B, Lo: 0, Hi: fixture_hi}),\n" +
+				"\t\tinvariant.Always(" +
+				"input.B == 0, \"input.B is zero\"),\n" +
 				"\t)\n" +
 				"}\n",
 			Want_Diag: "",
 		},
+	}
+	run_invariant_assertions_table(t, tests)
+}
+
+// Additional cases, split to keep each function within the length limit.
+func Test_Invariant_Assertions_Struct_Field_Recursion_Part2(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		Name      string
+		Filename  string
+		Source    string
+		Want_Diag string
+	}{
+
 		{
 			Name: "single-field value struct covered by Cross_Product is clean",
 			Source: "package fixture\n\n" + fixture_invariant_import +
@@ -8250,12 +9846,16 @@ func Test_Invariant_Assertions_Struct_Field_Recursion(t *testing.T) {
 				"}\n\n" +
 				"func f(input Solo) {\n" +
 				"\tinvariant.Cross_Product(\n" +
-				"\t\tinvariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: input.A, Lo: 0, Hi: fixture_hi}),\n" +
-				"\t\tinvariant.Always(input.A == 0, \"input.A is zero\"),\n" +
+				"\t\tinvariant.Distinct_Boundary(" +
+				"&invariant.Boundary_Input[int]{" +
+				"X: input.A, Lo: 0, Hi: fixture_hi}),\n" +
+				"\t\tinvariant.Always(" +
+				"input.A == 0, \"input.A is zero\"),\n" +
 				"\t)\n" +
 				"}\n",
 			Want_Diag: "",
 		},
+
 		{
 			Name: "pointer to multi-field struct recurses through pointer",
 			Source: "package fixture\n\n" + fixture_invariant_import +
@@ -8266,11 +9866,18 @@ func Test_Invariant_Assertions_Struct_Field_Recursion(t *testing.T) {
 				"}\n\n" +
 				"func f(input *Foo_Input) {\n" +
 				"\tinvariant.Cross_Product(\n" +
-				"\t\tinvariant.Always(input != nil, \"Input is non-nil\"),\n" +
-				"\t\tinvariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: input.A, Lo: 0, Hi: fixture_hi}),\n" +
-				"\t\tinvariant.Always(input.A == 0, \"input.A is zero\"),\n" +
-				"\t\tinvariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: input.B, Lo: 0, Hi: fixture_hi}),\n" +
-				"\t\tinvariant.Always(input.B == 0, \"input.B is zero\"),\n" +
+				"\t\tinvariant.Always(" +
+				"input != nil, \"Input is non-nil\"),\n" +
+				"\t\tinvariant.Distinct_Boundary(" +
+				"&invariant.Boundary_Input[int]{" +
+				"X: input.A, Lo: 0, Hi: fixture_hi}),\n" +
+				"\t\tinvariant.Always(" +
+				"input.A == 0, \"input.A is zero\"),\n" +
+				"\t\tinvariant.Distinct_Boundary(" +
+				"&invariant.Boundary_Input[int]{" +
+				"X: input.B, Lo: 0, Hi: fixture_hi}),\n" +
+				"\t\tinvariant.Always(" +
+				"input.B == 0, \"input.B is zero\"),\n" +
 				"\t)\n" +
 				"}\n",
 			Want_Diag: "",
@@ -8298,12 +9905,14 @@ func Test_Invariant_Assertions_Struct_Field_Recursion_Pointer(t *testing.T) {
 				"\tB int\n" +
 				"}\n\n" +
 				"func f(input *Foo_Input) {\n" +
-				"\tinvariant.Cross_Product(invariant.Always(input != nil, \"Input is non-nil\"))\n" +
+				"\tinvariant.Cross_Product(" +
+				"invariant.Always(input != nil, \"Input is non-nil\"))\n" +
 				"}\n",
 			Want_Diag: "input.A",
 		},
 		{
-			Name: "pointer to multi-field struct opts out of recursion when Always(p == nil)",
+			Name: "pointer to multi-field struct opts out " +
+				"of recursion when Always(p == nil)",
 			Source: "package fixture\n\n" + fixture_invariant_import +
 				"\nconst fixture_hi = 100\n" +
 				"type Foo_Input struct {\n" +
@@ -8311,7 +9920,8 @@ func Test_Invariant_Assertions_Struct_Field_Recursion_Pointer(t *testing.T) {
 				"\tB int\n" +
 				"}\n\n" +
 				"func f(input *Foo_Input) {\n" +
-				"\tinvariant.Cross_Product(invariant.Always(input == nil, \"Input is always nil here\"))\n" +
+				"\tinvariant.Cross_Product(" +
+				"invariant.Always(input == nil, \"Input is always nil here\"))\n" +
 				"}\n",
 			Want_Diag: "",
 		},
@@ -8319,11 +9929,14 @@ func Test_Invariant_Assertions_Struct_Field_Recursion_Pointer(t *testing.T) {
 			// A 128-char function name (the identifier-budget ceiling) carrying a
 			// pointer param drives pointer_requirement's Function_Label boundary to
 			// its Hi bucket — the only context where a long label reaches a pointer.
-			Name: "maximal-length function label with a pointer param hits the Function_Label Hi bucket",
+			Name: "maximal-length function label with a pointer param " +
+				"hits the Function_Label Hi bucket",
 			Source: "package fixture\n\n" + fixture_invariant_import +
 				"\nconst fixture_hi = 100\n" +
-				"func " + strings.Repeat("f", lint.Max_Identifier_Chars) + "(input *int) {\n" +
-				"\tinvariant.Cross_Product(invariant.Always(input != nil, \"Input is non-nil\"))\n" +
+				"func " + strings.Repeat("f", lint.Max_Identifier_Chars) +
+				"(input *int) {\n" +
+				"\tinvariant.Cross_Product(" +
+				"invariant.Always(input != nil, \"Input is non-nil\"))\n" +
 				"}\n",
 			Want_Diag: "",
 		},
@@ -8335,12 +9948,14 @@ func Test_Invariant_Assertions_Struct_Field_Recursion_Pointer(t *testing.T) {
 // emission paths: inner pointer fields, inline structs, and pointer-to-inline-
 // structs all exercised at the recursion's inner level.
 func Test_Invariant_Assertions_Struct_Field_Recursion_Depth(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		Name      string
 		Filename  string
 		Source    string
 		Want_Diag string
 	}{
+
 		{
 			Name: "inner pointer field at depth-1 emits pointer requirement",
 			Source: "package fixture\n\n" + fixture_invariant_import +
@@ -8351,13 +9966,18 @@ func Test_Invariant_Assertions_Struct_Field_Recursion_Depth(t *testing.T) {
 				"}\n\n" +
 				"func f(input Foo_Input) {\n" +
 				"\tinvariant.Cross_Product(\n" +
-				"\t\tinvariant.Always(input.P != nil, \"P is non-nil\"),\n" +
-				"\t\tinvariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: input.A, Lo: 0, Hi: fixture_hi}),\n" +
-				"\t\tinvariant.Always(input.A == 0, \"input.A is zero\"),\n" +
+				"\t\tinvariant.Always(" +
+				"input.P != nil, \"P is non-nil\"),\n" +
+				"\t\tinvariant.Distinct_Boundary(" +
+				"&invariant.Boundary_Input[int]{" +
+				"X: input.A, Lo: 0, Hi: fixture_hi}),\n" +
+				"\t\tinvariant.Always(" +
+				"input.A == 0, \"input.A is zero\"),\n" +
 				"\t)\n" +
 				"}\n",
 			Want_Diag: "",
 		},
+
 		{
 			Name: "inline struct field at depth-1 recurses into its leaves",
 			Source: "package fixture\n\n" + fixture_invariant_import +
@@ -8368,18 +9988,38 @@ func Test_Invariant_Assertions_Struct_Field_Recursion_Depth(t *testing.T) {
 				"}\n\n" +
 				"func f(input Foo_Input) {\n" +
 				"\tinvariant.Cross_Product(\n" +
-				"\t\tinvariant.Distinct_Boundary(&invariant.Boundary_Input[int]{\n" +
+				"\t\tinvariant.Distinct_Boundary(" +
+				"&invariant.Boundary_Input[int]{\n" +
 				"\t\t\tX: input.Inner.X, Lo: 0, Hi: fixture_hi,\n" +
 				"\t\t}),\n" +
-				"\t\tinvariant.Always(input.Inner.X == 0, \"input.Inner.X is zero\"),\n" +
-				"\t\tinvariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: input.A, Lo: 0, Hi: fixture_hi}),\n" +
-				"\t\tinvariant.Always(input.A == 0, \"input.A is zero\"),\n" +
+				"\t\tinvariant.Always(" +
+				"input.Inner.X == 0, \"input.Inner.X is zero\"),\n" +
+				"\t\tinvariant.Distinct_Boundary(" +
+				"&invariant.Boundary_Input[int]{" +
+				"X: input.A, Lo: 0, Hi: fixture_hi}),\n" +
+				"\t\tinvariant.Always(" +
+				"input.A == 0, \"input.A is zero\"),\n" +
 				"\t)\n" +
 				"}\n",
 			Want_Diag: "",
 		},
+	}
+	run_invariant_assertions_table(t, tests)
+}
+
+// Additional cases, split to keep each function within the length limit.
+func Test_Invariant_Assertions_Struct_Field_Recursion_Depth_Part2(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		Name      string
+		Filename  string
+		Source    string
+		Want_Diag string
+	}{
+
 		{
-			Name: "pointer-to-inline-struct at depth-1 falls into push_inline at depth-1",
+			Name: "pointer-to-inline-struct at depth-1 falls " +
+				"into push_inline at depth-1",
 			Source: "package fixture\n\n" + fixture_invariant_import +
 				"\nconst fixture_hi = 100\n" +
 				"type Foo_Input struct {\n" +
@@ -8388,17 +10028,26 @@ func Test_Invariant_Assertions_Struct_Field_Recursion_Depth(t *testing.T) {
 				"}\n\n" +
 				"func f(input Foo_Input) {\n" +
 				"\tinvariant.Cross_Product(\n" +
-				"\t\tinvariant.Always(input.P != nil, \"P is non-nil\"),\n" +
-				"\t\tinvariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: input.P.X, Lo: 0, Hi: fixture_hi}),\n" +
-				"\t\tinvariant.Always(input.P.X == 0, \"input.P.X is zero\"),\n" +
-				"\t\tinvariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: input.A, Lo: 0, Hi: fixture_hi}),\n" +
-				"\t\tinvariant.Always(input.A == 0, \"input.A is zero\"),\n" +
+				"\t\tinvariant.Always(" +
+				"input.P != nil, \"P is non-nil\"),\n" +
+				"\t\tinvariant.Distinct_Boundary(" +
+				"&invariant.Boundary_Input[int]{" +
+				"X:input.P.X, Lo: 0, Hi: fixture_hi}),\n" +
+				"\t\tinvariant.Always(" +
+				"input.P.X == 0, \"input.P.X is zero\"),\n" +
+				"\t\tinvariant.Distinct_Boundary(" +
+				"&invariant.Boundary_Input[int]{" +
+				"X: input.A, Lo: 0, Hi: fixture_hi}),\n" +
+				"\t\tinvariant.Always(" +
+				"input.A == 0, \"input.A is zero\"),\n" +
 				"\t)\n" +
 				"}\n",
 			Want_Diag: "",
 		},
+
 		{
-			Name: "pointer-to-inline-struct under a pointer ancestor fires push_inline at (top=true, child=true)",
+			Name: "pointer-to-inline-struct under a pointer ancestor fires " +
+				"push_inline at (top=true, child=true)",
 			Source: "package fixture\n\n" + fixture_invariant_import +
 				"\nconst fixture_hi = 100\n" +
 				"type Outer_Input struct {\n" +
@@ -8406,10 +10055,15 @@ func Test_Invariant_Assertions_Struct_Field_Recursion_Depth(t *testing.T) {
 				"}\n\n" +
 				"func f(input *Outer_Input) {\n" +
 				"\tinvariant.Cross_Product(\n" +
-				"\t\tinvariant.Always(input != nil, \"Input is non-nil\"),\n" +
-				"\t\tinvariant.Always(input.X != nil, \"X is non-nil\"),\n" +
-				"\t\tinvariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: input.X.Y, Lo: 0, Hi: fixture_hi}),\n" +
-				"\t\tinvariant.Always(input.X.Y == 0, \"input.X.Y is zero\"),\n" +
+				"\t\tinvariant.Always(" +
+				"input != nil, \"Input is non-nil\"),\n" +
+				"\t\tinvariant.Always(" +
+				"input.X != nil, \"X is non-nil\"),\n" +
+				"\t\tinvariant.Distinct_Boundary(" +
+				"&invariant.Boundary_Input[int]{" +
+				"X:input.X.Y, Lo: 0, Hi: fixture_hi}),\n" +
+				"\t\tinvariant.Always(" +
+				"input.X.Y == 0, \"input.X.Y is zero\"),\n" +
 				"\t)\n" +
 				"}\n",
 			Want_Diag: "",
@@ -8431,13 +10085,16 @@ func Test_Invariant_Assertions_Struct_Field_Recursion_Inline_Pointer_Leaf(t *tes
 		Want_Diag string
 	}{
 		{
-			Name: "pointer leaf inside pointer-to-inline-struct is under a nillable ancestor with empty visited",
+			Name: "pointer leaf inside pointer-to-inline-struct is " +
+				"under a nillable ancestor with empty visited",
 			Source: "package fixture\n\n" + fixture_invariant_import +
 				"\nconst fixture_hi = 100\n" +
 				"func f(input *struct{ P *int }) {\n" +
 				"\tinvariant.Cross_Product(\n" +
-				"\t\tinvariant.Always(input != nil, \"Input is non-nil\"),\n" +
-				"\t\tinvariant.Always(input.P != nil, \"P is non-nil\"),\n" +
+				"\t\tinvariant.Always(" +
+				"input != nil, \"Input is non-nil\"),\n" +
+				"\t\tinvariant.Always(" +
+				"input.P != nil, \"P is non-nil\"),\n" +
 				"\t)\n" +
 				"}\n",
 			Want_Diag: "",
@@ -8448,11 +10105,13 @@ func Test_Invariant_Assertions_Struct_Field_Recursion_Inline_Pointer_Leaf(t *tes
 			// ancestor, an empty stack (sole field), and an empty struct index
 			// (the fixture declares no named structs) — the (is_pointer=false)
 			// corner of the idle-expansion cell.
-			Name: "interface leaf alone in pointer-to-inline-struct hits push_struct_fields at empty idle",
+			Name: "interface leaf alone in pointer-to-inline-struct hits " +
+				"push_struct_fields at empty idle",
 			Source: "package fixture\n\n" + fixture_invariant_import +
 				"\nconst fixture_hi = 100\n" +
 				"func f(input *struct{ Q error }) {\n" +
-				"\tinvariant.Cross_Product(invariant.Always(input != nil, \"Input is non-nil\"))\n" +
+				"\tinvariant.Cross_Product(" +
+				"invariant.Always(input != nil, \"Input is non-nil\"))\n" +
 				"}\n",
 			Want_Diag: "",
 		},
@@ -8485,12 +10144,18 @@ func Test_Invariant_Assertions_Struct_Field_Recursion_Cycle_Unroll(t *testing.T)
 				"}\n\n" +
 				"func f(input *Node_Input) {\n" +
 				"\tinvariant.Cross_Product(\n" +
-				"\t\tinvariant.Always(input != nil, \"Input is non-nil\"),\n" +
-				"\t\tinvariant.Distinct_Boundary(&invariant.Boundary_Input[int]{\n" +
+				"\t\tinvariant.Always(" +
+				"input != nil, \"Input is non-nil\"),\n" +
+				"\t\tinvariant.Distinct_Boundary(" +
+				"&invariant.Boundary_Input[int]{\n" +
 				"\t\t\tX: input.Value, Lo: 0, Hi: fixture_hi,\n" +
 				"\t\t}),\n" +
-				"\t\tinvariant.Always(input.Value == 0, \"input.Value is zero\"),\n" +
-				"\t\tinvariant.Sometimes(input.Next == nil, \"Next is sometimes nil\"),\n" +
+				"\t\tinvariant.Always(" +
+				"" +
+				"input.Value == 0, \"input.Value is zero\"),\n" +
+				"\t\tinvariant.Sometimes(" +
+				"" +
+				"input.Next == nil, \"Next is sometimes nil\"),\n" +
 				"\t)\n" +
 				"}\n",
 			Want_Diag: "input.Next.Value",
@@ -8505,17 +10170,26 @@ func Test_Invariant_Assertions_Struct_Field_Recursion_Cycle_Unroll(t *testing.T)
 				"}\n\n" +
 				"func f(input *Node_Input) {\n" +
 				"\tinvariant.Cross_Product(\n" +
-				"\t\tinvariant.Always(input != nil, \"Input is non-nil\"),\n" +
-				"\t\tinvariant.Distinct_Boundary(&invariant.Boundary_Input[int]{\n" +
+				"\t\tinvariant.Always(" +
+				"input != nil, \"Input is non-nil\"),\n" +
+				"\t\tinvariant.Distinct_Boundary(" +
+				"&invariant.Boundary_Input[int]{\n" +
 				"\t\t\tX: input.Value, Lo: 0, Hi: fixture_hi,\n" +
 				"\t\t}),\n" +
-				"\t\tinvariant.Always(input.Value == 0, \"input.Value is zero\"),\n" +
-				"\t\tinvariant.Sometimes(input.Next == nil, \"Next is sometimes nil\"),\n" +
-				"\t\tinvariant.Distinct_Boundary(&invariant.Boundary_Input[int]{\n" +
+				"\t\tinvariant.Always(" +
+				"" +
+				"input.Value == 0, \"input.Value is zero\"),\n" +
+				"\t\tinvariant.Sometimes(" +
+				"" +
+				"input.Next == nil, \"Next is sometimes nil\"),\n" +
+				"\t\tinvariant.Distinct_Boundary(" +
+				"&invariant.Boundary_Input[int]{\n" +
 				"\t\t\tX: input.Next.Value, Lo: 0, Hi: fixture_hi,\n" +
 				"\t\t}),\n" +
-				"\t\tinvariant.Always(input.Next.Value == 0, \"Next.Value is zero\"),\n" +
-				"\t\tinvariant.Sometimes(input.Next.Next == nil, \"Next.Next is sometimes nil\"),\n" +
+				"\t\tinvariant.Always(" +
+				"input.Next.Value == 0, \"Next.Value is zero\"),\n" +
+				"\t\tinvariant.Sometimes(" +
+				"input.Next.Next == nil, \"Next.Next is sometimes nil\"),\n" +
 				"\t)\n" +
 				"}\n",
 			Want_Diag: "",
@@ -8537,8 +10211,10 @@ func Test_Invariant_Assertions_Struct_Field_Recursion_Deep(t *testing.T) {
 		Source    string
 		Want_Diag string
 	}{
+
 		{
-			Name: "depth-2 leaf flagged when boundary missing (sanity check before depth-3)",
+			Name: "depth-2 leaf flagged when boundary missing " +
+				"(sanity check before depth-3)",
 			Source: "package fixture\n\n" + fixture_invariant_import +
 				"\nconst fixture_hi = 100\n" +
 				"type Inner_Input struct {\n" +
@@ -8549,12 +10225,14 @@ func Test_Invariant_Assertions_Struct_Field_Recursion_Deep(t *testing.T) {
 				"}\n" +
 				"func f(input f_Input) {\n" +
 				"\tinvariant.Cross_Product(\n" +
-				"\t\tinvariant.Sometimes(input.Inner.Leaf == 0, \"Leaf is sometimes zero\"),\n" +
+				"\t\tinvariant.Sometimes(" +
+				"input.Inner.Leaf == 0, \"Leaf is sometimes zero\"),\n" +
 				"\t)\n" +
 				"\t_ = input\n" +
 				"}\n",
 			Want_Diag: "input.Inner.Leaf",
 		},
+
 		{
 			Name: "depth-3 leaf flagged when boundary missing",
 			Source: "package fixture\n\n" + fixture_invariant_import +
@@ -8570,12 +10248,27 @@ func Test_Invariant_Assertions_Struct_Field_Recursion_Deep(t *testing.T) {
 				"}\n" +
 				"func f(input f_Input) {\n" +
 				"\tinvariant.Cross_Product(\n" +
-				"\t\tinvariant.Sometimes(input.Middle.Inner.Leaf == 0, \"Leaf is sometimes zero\"),\n" +
+				"\t\tinvariant.Sometimes(" +
+				"input.Middle.Inner.Leaf == 0, \"Leaf is sometimes zero\"),\n" +
 				"\t)\n" +
 				"\t_ = input\n" +
 				"}\n",
 			Want_Diag: "input.Middle.Inner.Leaf",
 		},
+	}
+	run_invariant_assertions_table(t, tests)
+}
+
+// Additional cases, split to keep each function within the length limit.
+func Test_Invariant_Assertions_Struct_Field_Recursion_Deep_Part2(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		Name      string
+		Filename  string
+		Source    string
+		Want_Diag string
+	}{
+
 		{
 			Name: "depth-3 leaf with both boundary_int and zero_int satisfies clean",
 			Source: "package fixture\n\n" + fixture_invariant_import +
@@ -8591,9 +10284,11 @@ func Test_Invariant_Assertions_Struct_Field_Recursion_Deep(t *testing.T) {
 				"}\n" +
 				"func f(input f_Input) {\n" +
 				"\tinvariant.Cross_Product(\n" +
-				"\t\tinvariant.Distinct_Boundary(&invariant.Boundary_Input[int]{\n" +
+				"\t\tinvariant.Distinct_Boundary(" +
+				"&invariant.Boundary_Input[int]{\n" +
 				"\t\t\tX: input.Middle.Inner.Leaf, Lo: 0, Hi: fixture_hi}),\n" +
-				"\t\tinvariant.Always(input.Middle.Inner.Leaf == 0, \"Leaf is zero\"),\n" +
+				"\t\tinvariant.Always(" +
+				"input.Middle.Inner.Leaf == 0, \"Leaf is zero\"),\n" +
 				"\t)\n" +
 				"\t_ = input\n" +
 				"}\n",
@@ -8609,14 +10304,17 @@ func Test_Invariant_Assertions_Struct_Field_Recursion_Deep(t *testing.T) {
 // Test_Invariant_Assertions_Struct_Field_Recursion which covers the basic
 // flow.
 func Test_Invariant_Assertions_Struct_Field_Recursion_Edges(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		Name      string
 		Filename  string
 		Source    string
 		Want_Diag string
 	}{
+
 		{
-			Name: "mixed int + float field count expands with §4.5 (both fields tracked)",
+			Name: "mixed int + float field count expands " +
+				"with §4.5 (both fields tracked)",
 			Source: "package fixture\n\nimport \"math\"\n" + fixture_invariant_import +
 				"\nconst fixture_hi = 100\n" +
 				"type Mixed_Input struct {\n" +
@@ -8625,16 +10323,25 @@ func Test_Invariant_Assertions_Struct_Field_Recursion_Edges(t *testing.T) {
 				"}\n\n" +
 				"func f(input Mixed_Input) {\n" +
 				"\tinvariant.Cross_Product(\n" +
-				"\t\tinvariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: input.A, Lo: 0, Hi: fixture_hi}),\n" +
-				"\t\tinvariant.Always(input.A == 0, \"input.A is zero\"),\n" +
-				"\t\tinvariant.Distinct_Boundary(&invariant.Boundary_Input[float64]{X: input.B, Lo: 0, Hi: 100}),\n" +
-				"\t\tinvariant.Always(input.B == 0, \"input.B is zero\"),\n" +
-				"\t\tinvariant.Sometimes(math.IsNaN(input.B), \"input.B is NaN sometimes\"),\n" +
-				"\t\tinvariant.Sometimes(math.IsInf(input.B, 0), \"input.B is Inf sometimes\"),\n" +
+				"\t\tinvariant.Distinct_Boundary(" +
+				"&invariant.Boundary_Input[int]{" +
+				"X: input.A, Lo: 0, Hi: fixture_hi}),\n" +
+				"\t\tinvariant.Always(" +
+				"input.A == 0, \"input.A is zero\"),\n" +
+				"\t\tinvariant.Distinct_Boundary(" +
+				"&invariant.Boundary_Input[float64]{" +
+				"X: input.B, Lo: 0, Hi: 100}),\n" +
+				"\t\tinvariant.Always(" +
+				"input.B == 0, \"input.B is zero\"),\n" +
+				"\t\tinvariant.Sometimes(" +
+				"math.IsNaN(input.B), \"input.B is NaN sometimes\"),\n" +
+				"\t\tinvariant.Sometimes(" +
+				"math.IsInf(input.B, 0), \"input.B is Inf sometimes\"),\n" +
 				"\t)\n" +
 				"}\n",
 			Want_Diag: "",
 		},
+
 		{
 			Name: "embedded field is skipped",
 			Source: "package fixture\n\n" + fixture_invariant_import +
@@ -8648,12 +10355,29 @@ func Test_Invariant_Assertions_Struct_Field_Recursion_Edges(t *testing.T) {
 				"}\n\n" +
 				"func f(input Outer_Input) {\n" +
 				"\tinvariant.Cross_Product(\n" +
-				"\t\tinvariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: input.X, Lo: 0, Hi: fixture_hi}),\n" +
-				"\t\tinvariant.Always(input.X == 0, \"input.X is zero\"),\n" +
+				"\t\tinvariant.Distinct_Boundary(" +
+				"&invariant.Boundary_Input[int]{" +
+				"X:input.X, Lo: 0, Hi: fixture_hi}),\n" +
+				"\t\tinvariant.Always(" +
+				"input.X == 0, \"input.X is zero\"),\n" +
 				"\t)\n" +
 				"}\n",
 			Want_Diag: "",
 		},
+	}
+	run_invariant_assertions_table(t, tests)
+}
+
+// Additional cases, split to keep each function within the length limit.
+func Test_Invariant_Assertions_Struct_Field_Recursion_Edges_Part2(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		Name      string
+		Filename  string
+		Source    string
+		Want_Diag string
+	}{
+
 		{
 			Name: "self-referential struct terminates with cycle count = 1",
 			Source: "package fixture\n\n" + fixture_invariant_import +
@@ -8664,16 +10388,22 @@ func Test_Invariant_Assertions_Struct_Field_Recursion_Edges(t *testing.T) {
 				"}\n\n" +
 				"func f(input *Node_Input) {\n" +
 				"\tinvariant.Cross_Product(\n" +
-				"\t\tinvariant.Always(input != nil, \"Input is non-nil\"),\n" +
-				"\t\tinvariant.Distinct_Boundary(&invariant.Boundary_Input[int]{\n" +
+				"\t\tinvariant.Always(" +
+				"input != nil, \"Input is non-nil\"),\n" +
+				"\t\tinvariant.Distinct_Boundary(" +
+				"&invariant.Boundary_Input[int]{\n" +
 				"\t\t\tX: input.Value, Lo: 0, Hi: fixture_hi,\n" +
 				"\t\t}),\n" +
-				"\t\tinvariant.Always(input.Value == 0, \"input.Value is zero\"),\n" +
-				"\t\tinvariant.Always(input.Next == nil, \"Next is nil at depth 0\"),\n" +
+				"\t\tinvariant.Always(" +
+				"" +
+				"input.Value == 0, \"input.Value is zero\"),\n" +
+				"\t\tinvariant.Always(" +
+				"input.Next == nil, \"Next is nil at depth 0\"),\n" +
 				"\t)\n" +
 				"}\n",
 			Want_Diag: "",
 		},
+
 		{
 			Name: "named-return multi-field struct requires Cross_Product in defer",
 			Source: "package fixture\n\n" + fixture_invariant_import +
@@ -8685,8 +10415,11 @@ func Test_Invariant_Assertions_Struct_Field_Recursion_Edges(t *testing.T) {
 				"func f() (result Pair_Input) {\n" +
 				"\tdefer func() {\n" +
 				"\t\tinvariant.Cross_Product(\n" +
-				"\t\t\tinvariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: result.A, Lo: 0, Hi: fixture_hi}),\n" +
-				"\t\t\tinvariant.Always(result.A == 0, \"result.A is zero\"),\n" +
+				"\t\t\tinvariant.Distinct_Boundary(" +
+				"&invariant.Boundary_Input[int]{" +
+				"X: result.A, Lo: 0, Hi: fixture_hi}),\n" +
+				"\t\t\tinvariant.Always(" +
+				"result.A == 0, \"result.A is zero\"),\n" +
 				"\t\t)\n" +
 				"\t}()\n" +
 				"\treturn Pair_Input{A: 0, B: 0}\n" +
@@ -8761,12 +10494,14 @@ func Test_Invariant_Assertions_Skipped(t *testing.T) {
 // params, *_test.go files, and cross-package pointer types whose target
 // the file-local struct index cannot see.
 func Test_Invariant_Assertions_Skipped_Positions(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		Name      string
 		Filename  string
 		Source    string
 		Want_Diag string
 	}{
+
 		{
 			Name: "anonymous receiver counts toward signature parameter total",
 			Source: "package fixture\n\n" + fixture_invariant_import +
@@ -8774,24 +10509,32 @@ func Test_Invariant_Assertions_Skipped_Positions(t *testing.T) {
 				"type Foo struct{}\n\n" +
 				"func (Foo) Bar(x int) {\n" +
 				"\tinvariant.Cross_Product(\n" +
-				"\t\tinvariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: x, Lo: 0, Hi: fixture_hi}),\n" +
-				"\t\tinvariant.Always(x == 0, \"x is zero\"),\n" +
+				"\t\tinvariant.Distinct_Boundary(" +
+				"&invariant.Boundary_Input[int]{" +
+				"X: x, Lo: 0, Hi: fixture_hi}),\n" +
+				"\t\tinvariant.Always(" +
+				"x == 0, \"x is zero\"),\n" +
 				"\t)\n" +
 				"}\n",
 			Want_Diag: "",
 		},
+
 		{
 			Name: "blank-name param skipped",
 			Source: "package fixture\n\n" + fixture_invariant_import +
 				"\nconst fixture_hi = 100\n" +
 				"func f(_ int, b int) {\n" +
 				"\tinvariant.Cross_Product(\n" +
-				"\t\tinvariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: b, Lo: 0, Hi: fixture_hi}),\n" +
-				"\t\tinvariant.Always(b == 0, \"b is zero\"),\n" +
+				"\t\tinvariant.Distinct_Boundary(" +
+				"&invariant.Boundary_Input[int]{" +
+				"X:b, Lo: 0, Hi: fixture_hi}),\n" +
+				"\t\tinvariant.Always(" +
+				"b == 0, \"b is zero\"),\n" +
 				"\t)\n" +
 				"}\n",
 			Want_Diag: "",
 		},
+
 		{
 			Name:     "test file skipped entirely",
 			Filename: "foo_test.go",
@@ -8802,6 +10545,7 @@ func Test_Invariant_Assertions_Skipped_Positions(t *testing.T) {
 				"}\n",
 			Want_Diag: "",
 		},
+
 		{
 			Name:     "invariant package itself exempt",
 			Filename: "golang_snacks/invariant/v2/some.go",
@@ -8811,13 +10555,28 @@ func Test_Invariant_Assertions_Skipped_Positions(t *testing.T) {
 				"}\n",
 			Want_Diag: "",
 		},
+	}
+	run_invariant_assertions_table(t, tests)
+}
+
+// Additional cases, split to keep each function within the length limit.
+func Test_Invariant_Assertions_Skipped_Positions_Part2(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		Name      string
+		Filename  string
+		Source    string
+		Want_Diag string
+	}{
+
 		{
 			Name: "cross-package selector type no recursion",
 			Source: "package fixture\n\n" +
 				fixture_invariant_import +
 				"import \"time\"\n\n" +
 				"func f(t *time.Time) {\n" +
-				"\tinvariant.Cross_Product(invariant.Always(t != nil, \"t is non-nil\"))\n" +
+				"\tinvariant.Cross_Product(" +
+				"invariant.Always(t != nil, \"t is non-nil\"))\n" +
 				"}\n",
 			Want_Diag: "",
 		},
@@ -8830,81 +10589,109 @@ func Test_Invariant_Assertions_Skipped_Positions(t *testing.T) {
 // very-next statement is a recognised invariant assertion covering all
 // non-discard LHS identifiers. No diagnostics expected.
 func Test_Invariant_Assertions_Declaration_Clean_Block(t *testing.T) {
-	const prelude_single = "package fixture\n\n" + fixture_invariant_import + fixture_declaration_callee
-	const prelude_pair = "package fixture\n\n" + fixture_invariant_import + fixture_declaration_callee_pair
+	t.Parallel()
 	tests := []struct {
 		Name      string
 		Filename  string
 		Source    string
 		Want_Diag string
 	}{
+
 		{
 			Name: "short decl single LHS followed by Is_Always",
 			Source: prelude_single +
 				"func f() {\n" +
 				"\tx := g()\n" +
-				"\tinvariant.Cross_Product(invariant.Always(x != nil, \"x is non-nil\"))\n" +
+				"\tinvariant.Cross_Product(" +
+				"invariant.Always(x != nil, \"x is non-nil\"))\n" +
 				"\t_ = x\n" +
 				"}\n",
 			Want_Diag: "",
 		},
+
 		{
 			Name: "var decl single LHS followed by Is_Always",
 			Source: prelude_single +
 				"func f() {\n" +
 				"\tvar x = g()\n" +
-				"\tinvariant.Cross_Product(invariant.Always(x != nil, \"x is non-nil\"))\n" +
+				"\tinvariant.Cross_Product(" +
+				"invariant.Always(x != nil, \"x is non-nil\"))\n" +
 				"\t_ = x\n" +
 				"}\n",
 			Want_Diag: "",
 		},
+
 		{
 			Name: "reassignment from call followed by Is_Always",
 			Source: prelude_single +
 				"func f(x *int) {\n" +
-				"\tinvariant.Cross_Product(invariant.Always(x != nil, \"x is non-nil\"))\n" +
+				"\tinvariant.Cross_Product(" +
+				"invariant.Always(x != nil, \"x is non-nil\"))\n" +
 				"\tx = g()\n" +
-				"\tinvariant.Cross_Product(invariant.Always(x != nil, \"x is non-nil\"))\n" +
+				"\tinvariant.Cross_Product(" +
+				"invariant.Always(x != nil, \"x is non-nil\"))\n" +
 				"\t_ = x\n" +
 				"}\n",
 			Want_Diag: "",
 		},
+
 		{
 			Name: "mixed discard short decl one ident",
 			Source: prelude_pair +
 				"func f() {\n" +
 				"\t_, x := g()\n" +
-				"\tinvariant.Cross_Product(invariant.Always(x != nil, \"x is non-nil\"))\n" +
+				"\tinvariant.Cross_Product(" +
+				"invariant.Always(x != nil, \"x is non-nil\"))\n" +
 				"\t_ = x\n" +
 				"}\n",
 			Want_Diag: "",
 		},
+	}
+	run_invariant_assertions_table(t, tests)
+}
+
+// Additional cases, split to keep each function within the length limit.
+func Test_Invariant_Assertions_Declaration_Clean_Block_Part2(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		Name      string
+		Filename  string
+		Source    string
+		Want_Diag string
+	}{
+
 		{
 			Name: "two LHS require Cross_Product",
 			Source: prelude_pair +
 				"func f() {\n" +
 				"\ta, b := g()\n" +
 				"\tinvariant.Cross_Product(\n" +
-				"\t\tinvariant.Always(a != nil, \"a is non-nil\"),\n" +
-				"\t\tinvariant.Always(b != nil, \"b is non-nil\"),\n" +
+				"\t\tinvariant.Always(" +
+				"a != nil, \"a is non-nil\"),\n" +
+				"\t\tinvariant.Always(" +
+				"b != nil, \"b is non-nil\"),\n" +
 				"\t)\n" +
 				"\t_, _ = a, b\n" +
 				"}\n",
 			Want_Diag: "",
 		},
+
 		{
 			Name: "nested block declaration asserted",
 			Source: prelude_single +
 				"func f(cond bool) {\n" +
-				"\tinvariant.Cross_Product(invariant.Sometimes(cond, \"cond sometimes true\"))\n" +
+				"\tinvariant.Cross_Product(" +
+				"invariant.Sometimes(cond, \"cond sometimes true\"))\n" +
 				"\tif cond {\n" +
 				"\t\tx := g()\n" +
-				"\t\tinvariant.Cross_Product(invariant.Always(x != nil, \"x is non-nil\"))\n" +
+				"\t\tinvariant.Cross_Product(" +
+				"invariant.Always(x != nil, \"x is non-nil\"))\n" +
 				"\t\t_ = x\n" +
 				"\t}\n" +
 				"}\n",
 			Want_Diag: "",
 		},
+
 		{
 			Name: "RHS not a call is skipped",
 			Source: "package fixture\n\n" + fixture_invariant_import +
@@ -8915,6 +10702,7 @@ func Test_Invariant_Assertions_Declaration_Clean_Block(t *testing.T) {
 				"}\n",
 			Want_Diag: "",
 		},
+
 		{
 			Name: "all discards skipped",
 			Source: prelude_single +
@@ -8931,7 +10719,6 @@ func Test_Invariant_Assertions_Declaration_Clean_Block(t *testing.T) {
 // a single-LHS declaration may be covered by an Is_* sugar chain directly
 // (no Cross_Product wrapping required). Multi-LHS still requires Cross_Product.
 func Test_Invariant_Assertions_Declaration_Single_LHS_Sugar(t *testing.T) {
-	const prelude_single = "package fixture\n\n" + fixture_invariant_import + fixture_declaration_callee
 	tests := []struct {
 		Name      string
 		Filename  string
@@ -8981,12 +10768,14 @@ func Test_Invariant_Assertions_Declaration_Clean_Builtins(t *testing.T) {
 				"\tdefer func() {\n" +
 				"\t\tinvariant.Cross_Product(\n" +
 				"\t\t\tinvariant.Distinct_Boundary(\n" +
-				"\t\t\t\t&invariant.Boundary_Input[int]{X: len(xs), Lo: 0, Hi: fixture_hi}),\n" +
+				"\t\t\t\t&invariant.Boundary_Input[int]{" +
+				"X: len(xs), Lo: 0, Hi: fixture_hi}),\n" +
 				"\t\t)\n" +
 				"\t}()\n" +
 				"\tinvariant.Cross_Product(\n" +
 				"\t\tinvariant.Distinct_Boundary(\n" +
-				"\t\t\t&invariant.Boundary_Input[int]{X: len(xs), Lo: 0, Hi: fixture_hi}),\n" +
+				"\t\t\t&invariant.Boundary_Input[int]{" +
+				"X: len(xs), Lo: 0, Hi: fixture_hi}),\n" +
 				"\t)\n" +
 				"\tn := len(xs)\n" +
 				"\t_ = n\n" +
@@ -9012,12 +10801,14 @@ func Test_Invariant_Assertions_Declaration_Clean_Builtins(t *testing.T) {
 // type conversions (predeclared, composite, pointer). All exempt; no
 // diagnostics expected.
 func Test_Invariant_Assertions_Declaration_Clean_Stdlib(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		Name      string
 		Filename  string
 		Source    string
 		Want_Diag string
 	}{
+
 		{
 			Name: "stdlib errors.New skipped",
 			Source: "package fixture\n\n" + fixture_invariant_import +
@@ -9028,6 +10819,7 @@ func Test_Invariant_Assertions_Declaration_Clean_Stdlib(t *testing.T) {
 				"}\n",
 			Want_Diag: "",
 		},
+
 		{
 			Name: "stdlib fmt.Sprintf skipped",
 			Source: "package fixture\n\n" + fixture_invariant_import +
@@ -9038,6 +10830,7 @@ func Test_Invariant_Assertions_Declaration_Clean_Stdlib(t *testing.T) {
 				"}\n",
 			Want_Diag: "",
 		},
+
 		{
 			Name: "stdlib subpath crypto/sha256.Sum256 skipped",
 			Source: "package fixture\n\n" + fixture_invariant_import +
@@ -9048,6 +10841,7 @@ func Test_Invariant_Assertions_Declaration_Clean_Stdlib(t *testing.T) {
 				"}\n",
 			Want_Diag: "",
 		},
+
 		{
 			Name: "aliased stdlib skipped",
 			Source: "package fixture\n\n" + fixture_invariant_import +
@@ -9058,34 +10852,56 @@ func Test_Invariant_Assertions_Declaration_Clean_Stdlib(t *testing.T) {
 				"}\n",
 			Want_Diag: "",
 		},
+	}
+	run_invariant_assertions_table(t, tests)
+}
+
+// Additional cases, split to keep each function within the length limit.
+func Test_Invariant_Assertions_Declaration_Clean_Stdlib_Part2(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		Name      string
+		Filename  string
+		Source    string
+		Want_Diag string
+	}{
+
 		{
 			Name: "predeclared type conversion skipped",
 			Source: "package fixture\n\n" + fixture_invariant_import +
 				"\nconst fixture_hi = 100\n" +
 				"func f(x int32) {\n" +
 				"\tinvariant.Cross_Product(\n" +
-				"\t\tinvariant.Distinct_Boundary(&invariant.Boundary_Input[int32]{X: x, Lo: 0, Hi: fixture_hi}),\n" +
-				"\t\tinvariant.Always(x == 0, \"x is zero\"),\n" +
+				"\t\tinvariant.Distinct_Boundary(" +
+				"&invariant.Boundary_Input[int32]{" +
+				"X: x, Lo: 0, Hi: fixture_hi}),\n" +
+				"\t\tinvariant.Always(" +
+				"x == 0, \"x is zero\"),\n" +
 				"\t)\n" +
 				"\ty := int(x)\n" +
 				"\t_ = y\n" +
 				"}\n",
 			Want_Diag: "",
 		},
+
 		{
 			Name: "slice type conversion skipped",
 			Source: "package fixture\n\n" + fixture_invariant_import +
 				"\nconst fixture_hi = 100\n" +
 				"func f(s string) {\n" +
 				"\tinvariant.Cross_Product(\n" +
-				"\t\tinvariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: len(s), Lo: 0, Hi: fixture_hi}),\n" +
-				"\t\tinvariant.Always(s == \"\", \"s is empty\"),\n" +
+				"\t\tinvariant.Distinct_Boundary(" +
+				"&invariant.Boundary_Input[int]{" +
+				"X: len(s), Lo: 0, Hi: fixture_hi}),\n" +
+				"\t\tinvariant.Always(" +
+				"s == \"\", \"s is empty\"),\n" +
 				"\t)\n" +
 				"\trs := []rune(s)\n" +
 				"\t_ = rs\n" +
 				"}\n",
 			Want_Diag: "",
 		},
+
 		{
 			Name: "pointer type conversion skipped",
 			Source: "package fixture\n\n" + fixture_invariant_import +
@@ -9104,7 +10920,8 @@ func Test_Invariant_Assertions_Declaration_Clean_Stdlib(t *testing.T) {
 // declarations on if/for/switch: the assertion must lead each reachable
 // branch body. No diagnostics expected.
 func Test_Invariant_Assertions_Declaration_Clean_Init(t *testing.T) {
-	const prelude = "package fixture\n\n" + fixture_invariant_import + fixture_declaration_callee
+	const prelude = "package fixture\n\n" +
+		fixture_invariant_import + fixture_declaration_callee
 	tests := []struct {
 		Name      string
 		Filename  string
@@ -9116,10 +10933,12 @@ func Test_Invariant_Assertions_Declaration_Clean_Init(t *testing.T) {
 			Source: prelude +
 				"func f() {\n" +
 				"\tif x := g(); x != nil {\n" +
-				"\t\tinvariant.Cross_Product(invariant.Always(x != nil, \"x is non-nil\"))\n" +
+				"\t\tinvariant.Cross_Product(" +
+				"invariant.Always(x != nil, \"x is non-nil\"))\n" +
 				"\t\t_ = x\n" +
 				"\t} else {\n" +
-				"\t\tinvariant.Cross_Product(invariant.Always(x != nil, \"x is non-nil\"))\n" +
+				"\t\tinvariant.Cross_Product(" +
+				"invariant.Always(x != nil, \"x is non-nil\"))\n" +
 				"\t\t_ = x\n" +
 				"\t}\n" +
 				"}\n",
@@ -9130,7 +10949,8 @@ func Test_Invariant_Assertions_Declaration_Clean_Init(t *testing.T) {
 			Source: prelude +
 				"func f() {\n" +
 				"\tfor x := g(); x != nil; x = g() {\n" +
-				"\t\tinvariant.Cross_Product(invariant.Always(x != nil, \"x is non-nil\"))\n" +
+				"\t\tinvariant.Cross_Product(" +
+				"invariant.Always(x != nil, \"x is non-nil\"))\n" +
 				"\t\t_ = x\n" +
 				"\t}\n" +
 				"}\n",
@@ -9142,10 +10962,12 @@ func Test_Invariant_Assertions_Declaration_Clean_Init(t *testing.T) {
 				"func f() {\n" +
 				"\tswitch x := g(); x {\n" +
 				"\tcase nil:\n" +
-				"\t\tinvariant.Cross_Product(invariant.Always(x == nil, \"x is nil\"))\n" +
+				"\t\tinvariant.Cross_Product(" +
+				"invariant.Always(x == nil, \"x is nil\"))\n" +
 				"\t\t_ = x\n" +
 				"\tdefault:\n" +
-				"\t\tinvariant.Cross_Product(invariant.Always(x != nil, \"x is non-nil\"))\n" +
+				"\t\tinvariant.Cross_Product(" +
+				"invariant.Always(x != nil, \"x is non-nil\"))\n" +
 				"\t\t_ = x\n" +
 				"\t}\n" +
 				"}\n",
@@ -9160,24 +10982,14 @@ func Test_Invariant_Assertions_Declaration_Clean_Init(t *testing.T) {
 // than the required assertion (or nothing), partial coverage when the LHS
 // introduces multiple identifiers.
 func Test_Invariant_Assertions_Declaration_Flagged_Block(t *testing.T) {
-	const prelude_single = "package fixture\n\n" + fixture_invariant_import + fixture_declaration_callee
-	const prelude_pair = "package fixture\n\n" + fixture_invariant_import + fixture_declaration_callee_pair
-	const prelude_with_h = prelude_single +
-		"func h(p *int) (out int) {\n" +
-		"\tdefer func() {\n" +
-		"\t\tinvariant.Cross_Product(\n" +
-		"\t\t\tinvariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: out, Lo: 0, Hi: 1}),\n" +
-		"\t\t)\n" +
-		"\t}()\n" +
-		"\tinvariant.Cross_Product(invariant.Always(p != nil, \"p is non-nil\"))\n" +
-		"\treturn 0\n" +
-		"}\n\n"
+	t.Parallel()
 	tests := []struct {
 		Name      string
 		Filename  string
 		Source    string
 		Want_Diag string
 	}{
+
 		{
 			Name: "short decl with no following assertion",
 			Source: prelude_single +
@@ -9187,6 +10999,7 @@ func Test_Invariant_Assertions_Declaration_Flagged_Block(t *testing.T) {
 				"}\n",
 			Want_Diag: "declaration via function call",
 		},
+
 		{
 			Name: "short decl is last statement of block",
 			Source: prelude_single +
@@ -9196,6 +11009,7 @@ func Test_Invariant_Assertions_Declaration_Flagged_Block(t *testing.T) {
 				"}\n",
 			Want_Diag: "declaration via function call",
 		},
+
 		{
 			Name: "short decl followed by non-invariant call",
 			Source: prelude_with_h +
@@ -9205,6 +11019,7 @@ func Test_Invariant_Assertions_Declaration_Flagged_Block(t *testing.T) {
 				"}\n",
 			Want_Diag: "declaration via function call",
 		},
+
 		{
 			Name: "var decl with no following assertion",
 			Source: prelude_single +
@@ -9214,22 +11029,39 @@ func Test_Invariant_Assertions_Declaration_Flagged_Block(t *testing.T) {
 				"}\n",
 			Want_Diag: "declaration via function call",
 		},
+
 		{
 			Name: "reassignment with no following assertion",
 			Source: prelude_single +
 				"func f(x *int) {\n" +
-				"\tinvariant.Cross_Product(invariant.Always(x != nil, \"x is non-nil\"))\n" +
+				"\tinvariant.Cross_Product(" +
+				"invariant.Always(x != nil, \"x is non-nil\"))\n" +
 				"\tx = g()\n" +
 				"\t_ = x\n" +
 				"}\n",
 			Want_Diag: "declaration via function call",
 		},
+	}
+	run_invariant_assertions_table(t, tests)
+}
+
+// Additional cases, split to keep each function within the length limit.
+func Test_Invariant_Assertions_Declaration_Flagged_Block_Part2(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		Name      string
+		Filename  string
+		Source    string
+		Want_Diag string
+	}{
+
 		{
 			Name: "two LHS partial coverage",
 			Source: prelude_pair +
 				"func f() {\n" +
 				"\ta, b := g()\n" +
-				"\tinvariant.Cross_Product(invariant.Always(a != nil, \"a is non-nil\"))\n" +
+				"\tinvariant.Cross_Product(" +
+				"invariant.Always(a != nil, \"a is non-nil\"))\n" +
 				"\t_, _ = a, b\n" +
 				"}\n",
 			Want_Diag: "covering: a, b",
@@ -9242,7 +11074,8 @@ func Test_Invariant_Assertions_Declaration_Flagged_Block(t *testing.T) {
 // failures: the assertion is missing from a branch body or case clause
 // where the introduced identifier is in scope.
 func Test_Invariant_Assertions_Declaration_Flagged_Init(t *testing.T) {
-	const prelude = "package fixture\n\n" + fixture_invariant_import + fixture_declaration_callee
+	const prelude = "package fixture\n\n" +
+		fixture_invariant_import + fixture_declaration_callee
 	tests := []struct {
 		Name      string
 		Filename  string
@@ -9265,7 +11098,8 @@ func Test_Invariant_Assertions_Declaration_Flagged_Init(t *testing.T) {
 				"func f() {\n" +
 				"\tswitch x := g(); x {\n" +
 				"\tcase nil:\n" +
-				"\t\tinvariant.Cross_Product(invariant.Always(x == nil, \"x is nil\"))\n" +
+				"\t\tinvariant.Cross_Product(" +
+				"invariant.Always(x == nil, \"x is nil\"))\n" +
 				"\t\t_ = x\n" +
 				"\tdefault:\n" +
 				"\t\t_ = x\n" +
@@ -9284,65 +11118,98 @@ func Test_Invariant_Assertions_Declaration_Flagged_Init(t *testing.T) {
 // leaves the other diagnosed. Two requirements also tip the per-function
 // count past the >=2 threshold so Cross_Product wiring becomes mandatory.
 func Test_Invariant_Assertions_Integer_Requires_Boundary_And_Zero(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		Name      string
 		Filename  string
 		Source    string
 		Want_Diag string
 	}{
+
 		{
 			Name: "int param with only Is_Boundary misses zero_int",
 			Source: "package fixture\n\n" + fixture_invariant_import +
 				"\nconst fixture_hi = 100\n" +
 				"func f(x int) {\n" +
-				"\tinvariant.Is_Distinct_Boundary(&invariant.Boundary_Input[int]{X: x, Lo: 0, Hi: fixture_hi})\n" +
+				"\tinvariant.Is_Distinct_Boundary(" +
+				"&invariant.Boundary_Input[int]{" +
+				"X: x, Lo: 0, Hi: fixture_hi})\n" +
 				"}\n",
 			Want_Diag: "missing invariant zero_int assertion",
 		},
+
 		{
-			Name: "int param with only Always(x == 0) double-credits boundary_int and zero_int",
+			Name: "int param with only Always(x == 0) " +
+				"double-credits boundary_int and zero_int",
 			Source: "package fixture\n\n" + fixture_invariant_import +
 				"\nconst fixture_hi = 100\n" +
 				"func f(x int) {\n" +
-				"\tinvariant.Cross_Product(invariant.Always(x == 0, \"x is zero\"))\n" +
+				"\tinvariant.Cross_Product(" +
+				"invariant.Always(x == 0, \"x is zero\"))\n" +
 				"}\n",
 			Want_Diag: "",
 		},
+
 		{
 			Name: "int param with both inside Cross_Product is clean",
 			Source: "package fixture\n\n" + fixture_invariant_import +
 				"\nconst fixture_hi = 100\n" +
 				"func f(x int) {\n" +
 				"\tinvariant.Cross_Product(\n" +
-				"\t\tinvariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: x, Lo: 0, Hi: fixture_hi}),\n" +
-				"\t\tinvariant.Always(x == 0, \"x is zero\"),\n" +
+				"\t\tinvariant.Distinct_Boundary(" +
+				"&invariant.Boundary_Input[int]{" +
+				"X: x, Lo: 0, Hi: fixture_hi}),\n" +
+				"\t\tinvariant.Always(" +
+				"x == 0, \"x is zero\"),\n" +
 				"\t)\n" +
 				"}\n",
 			Want_Diag: "",
 		},
+
 		{
-			Name: "Is_Distinct_Boundary sugar alone (no Cross_Product) flagged under always-Cross_Product rule",
+			Name: "Is_Distinct_Boundary sugar alone (no Cross_Product) " +
+				"flagged under always-Cross_Product rule",
 			Source: "package fixture\n\n" + fixture_invariant_import +
 				"\nconst fixture_hi = 100\n" +
 				"func f(x int) {\n" +
-				"\tinvariant.Is_Distinct_Boundary(&invariant.Boundary_Input[int]{X: x, Lo: 0, Hi: fixture_hi})\n" +
+				"\tinvariant.Is_Distinct_Boundary(" +
+				"&invariant.Boundary_Input[int]{" +
+				"X: x, Lo: 0, Hi: fixture_hi})\n" +
 				"}\n",
 			Want_Diag: "use `invariant.Cross_Product(",
 		},
+	}
+	run_invariant_assertions_table(t, tests)
+}
+
+// Additional cases, split to keep each function within the length limit.
+func Test_Invariant_Assertions_Integer_Requires_Boundary_And_Zero_Part2(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		Name      string
+		Filename  string
+		Source    string
+		Want_Diag string
+	}{
+
 		{
 			Name: "named return with only Is_Boundary in defer misses zero_int",
 			Source: "package fixture\n\n" + fixture_invariant_import +
 				"\nconst fixture_hi = 100\n" +
 				"func f() (result int) {\n" +
 				"\tdefer func() {\n" +
-				"\t\tinvariant.Is_Distinct_Boundary(&invariant.Boundary_Input[int]{X: result, Lo: 0, Hi: fixture_hi})\n" +
+				"\t\tinvariant.Is_Distinct_Boundary(" +
+				"&invariant.Boundary_Input[int]{" +
+				"X: result, Lo: 0, Hi: fixture_hi})\n" +
 				"\t}()\n" +
 				"\treturn 0\n" +
 				"}\n",
 			Want_Diag: "named return `result int` missing invariant zero_int assertion",
 		},
+
 		{
-			Name: "recursed struct field int leaf with Lo=0 boundary auto-credits zero_int",
+			Name: "recursed struct field int leaf with Lo=0 " +
+				"boundary auto-credits zero_int",
 			Source: "package fixture\n\n" + fixture_invariant_import +
 				"\nconst fixture_hi = 100\n" +
 				"type Foo struct {\n" +
@@ -9350,14 +11217,19 @@ func Test_Invariant_Assertions_Integer_Requires_Boundary_And_Zero(t *testing.T) 
 				"}\n\n" +
 				"func f(r *Foo) {\n" +
 				"\tinvariant.Cross_Product(\n" +
-				"\t\tinvariant.Always(r != nil, \"r is non-nil\"),\n" +
-				"\t\tinvariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: r.N, Lo: 0, Hi: fixture_hi}),\n" +
+				"\t\tinvariant.Always(" +
+				"r != nil, \"r is non-nil\"),\n" +
+				"\t\tinvariant.Distinct_Boundary(" +
+				"&invariant.Boundary_Input[int]{" +
+				"X:r.N, Lo: 0, Hi: fixture_hi}),\n" +
 				"\t)\n" +
 				"}\n",
 			Want_Diag: "",
 		},
+
 		{
-			Name: "recursed struct field int leaf with positive Lo auto-credits zero_int via Excludes_Zero rule",
+			Name: "recursed struct field int leaf with positive Lo " +
+				"auto-credits zero_int via Excludes_Zero rule",
 			Source: "package fixture\n\n" + fixture_invariant_import +
 				"\nconst fixture_hi = 100\n" +
 				"type Foo struct {\n" +
@@ -9365,18 +11237,36 @@ func Test_Invariant_Assertions_Integer_Requires_Boundary_And_Zero(t *testing.T) 
 				"}\n\n" +
 				"func f(r *Foo) {\n" +
 				"\tinvariant.Cross_Product(\n" +
-				"\t\tinvariant.Always(r != nil, \"r is non-nil\"),\n" +
-				"\t\tinvariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: r.N, Lo: 1, Hi: fixture_hi}),\n" +
+				"\t\tinvariant.Always(" +
+				"r != nil, \"r is non-nil\"),\n" +
+				"\t\tinvariant.Distinct_Boundary(" +
+				"&invariant.Boundary_Input[int]{" +
+				"X:r.N, Lo: 1, Hi: fixture_hi}),\n" +
 				"\t)\n" +
 				"}\n",
 			Want_Diag: "",
 		},
+	}
+	run_invariant_assertions_table(t, tests)
+}
+
+// Additional cases, split to keep each function within the length limit.
+func Test_Invariant_Assertions_Integer_Requires_Boundary_And_Zero_Part3(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		Name      string
+		Filename  string
+		Source    string
+		Want_Diag string
+	}{
+
 		{
 			Name: "bool param unaffected by the int split rule",
 			Source: "package fixture\n\n" + fixture_invariant_import +
 				"\nconst fixture_hi = 100\n" +
 				"func f(enabled bool) {\n" +
-				"\tinvariant.Cross_Product(invariant.Always(enabled, \"enabled is set\"))\n" +
+				"\tinvariant.Cross_Product(" +
+				"invariant.Always(enabled, \"enabled is set\"))\n" +
 				"}\n",
 			Want_Diag: "",
 		},
@@ -9399,11 +11289,13 @@ func Test_Invariant_Assertions_Integer_Always_Equality_Credits(t *testing.T) {
 		Want_Diag string
 	}{
 		{
-			Name: "int param with only Always(x == 5) credits boundary_int alone, misses zero_int",
+			Name: "int param with only Always(x == 5) credits " +
+				"boundary_int alone, misses zero_int",
 			Source: "package fixture\n\n" + fixture_invariant_import +
 				"\nconst fixture_hi = 100\n" +
 				"func f(x int) {\n" +
-				"\tinvariant.Cross_Product(invariant.Always(x == 5, \"x is five\"))\n" +
+				"\tinvariant.Cross_Product(" +
+				"invariant.Always(x == 5, \"x is five\"))\n" +
 				"}\n",
 			Want_Diag: "missing invariant zero_int assertion",
 		},
@@ -9412,7 +11304,8 @@ func Test_Invariant_Assertions_Integer_Always_Equality_Credits(t *testing.T) {
 			Source: "package fixture\n\n" + fixture_invariant_import +
 				"\nconst fixture_hi = 100\n" +
 				"func f(x int, y int) {\n" +
-				"\tinvariant.Cross_Product(invariant.Always(x == y, \"x equals y\"))\n" +
+				"\tinvariant.Cross_Product(" +
+				"invariant.Always(x == y, \"x equals y\"))\n" +
 				"}\n",
 			Want_Diag: "missing invariant boundary_int assertion",
 		},
@@ -9421,17 +11314,20 @@ func Test_Invariant_Assertions_Integer_Always_Equality_Credits(t *testing.T) {
 			Source: "package fixture\n\n" + fixture_invariant_import +
 				"\nconst fixture_hi = 100\n" +
 				"func f(x int) {\n" +
-				"\tinvariant.Cross_Product(invariant.Sometimes(x == 5, \"x is five\"))\n" +
+				"\tinvariant.Cross_Product(" +
+				"invariant.Sometimes(x == 5, \"x is five\"))\n" +
 				"}\n",
 			Want_Diag: "missing invariant boundary_int assertion",
 		},
 		{
-			Name: "int param with Always(g() == 0) has non-ident-chain non-len LHS and credits nothing",
+			Name: "int param with Always(g() == 0) has " +
+				"non-ident-chain non-len LHS and credits nothing",
 			Source: "package fixture\n\n" + fixture_invariant_import +
 				"\nconst fixture_hi = 100\n" +
 				"func g() (result int) { return 0 }\n" +
 				"func f(x int) {\n" +
-				"\tinvariant.Cross_Product(invariant.Always(g() == 0, \"g returns zero\"))\n" +
+				"\tinvariant.Cross_Product(" +
+				"invariant.Always(g() == 0, \"g returns zero\"))\n" +
 				"\t_ = x\n" +
 				"}\n",
 			Want_Diag: "missing invariant boundary_int assertion",
@@ -9485,54 +11381,84 @@ func Test_Invariant_Assertions_String_Boundary_Credits(t *testing.T) {
 		Source    string
 		Want_Diag string
 	}{
+
 		{
 			Name: "string param with Distinct_Boundary on len(s) credits boundary_int",
 			Source: "package fixture\n\n" + fixture_invariant_import +
 				"\nconst fixture_hi = 100\n" +
 				"func f(s string) {\n" +
 				"\tinvariant.Cross_Product(\n" +
-				"\t\tinvariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: len(s), Lo: 0, Hi: fixture_hi}),\n" +
-				"\t\tinvariant.Always(s == \"\", \"s is empty\"),\n" +
+				"\t\tinvariant.Distinct_Boundary(" +
+				"&invariant.Boundary_Input[int]{" +
+				"X: len(s), Lo: 0, Hi: fixture_hi}),\n" +
+				"\t\tinvariant.Always(" +
+				"s == \"\", \"s is empty\"),\n" +
 				"\t)\n" +
 				"}\n",
 			Want_Diag: "",
 		},
+
 		{
-			Name: "string param with Always(len(s) == 0) credits boundary_int (zero_string still missing)",
+			Name: "string param with Always(len(s) == 0) credits " +
+				"boundary_int (zero_string still missing)",
 			Source: "package fixture\n\n" + fixture_invariant_import +
 				"\nconst fixture_hi = 100\n" +
 				"func f(s string) {\n" +
-				"\tinvariant.Cross_Product(invariant.Always(len(s) == 0, \"s is empty\"))\n" +
+				"\tinvariant.Cross_Product(" +
+				"invariant.Always(len(s) == 0, \"s is empty\"))\n" +
 				"}\n",
 			Want_Diag: "missing invariant zero_string assertion",
 		},
+
 		{
 			Name: "string param with Always(len(s) == 5) credits boundary_int",
 			Source: "package fixture\n\n" + fixture_invariant_import +
 				"\nconst fixture_hi = 100\n" +
 				"func f(s string) {\n" +
 				"\tinvariant.Cross_Product(\n" +
-				"\t\tinvariant.Always(len(s) == 5, \"s is five chars\"),\n" +
-				"\t\tinvariant.Always(s == \"\", \"s is empty\"),\n" +
+				"\t\tinvariant.Always(" +
+				"len(s) == 5, \"s is five chars\"),\n" +
+				"\t\tinvariant.Always(" +
+				"s == \"\", \"s is empty\"),\n" +
 				"\t)\n" +
 				"}\n",
 			Want_Diag: "",
 		},
+	}
+	run_invariant_assertions_table(t, tests)
+}
+
+// Additional cases, split to keep each function within the length limit.
+func Test_Invariant_Assertions_String_Boundary_Credits_Part2(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		Name      string
+		Filename  string
+		Source    string
+		Want_Diag string
+	}{
+
 		{
-			Name: "string param with Distinct_Boundary on non-len call expr does not credit",
+			Name: "string param with Distinct_Boundary on non-len " +
+				"call expr does not credit",
 			Source: "package fixture\n\n" + fixture_invariant_import +
 				"\nconst fixture_hi = 100\n" +
 				"func g() (result int) { return 0 }\n" +
 				"func f(s string) {\n" +
 				"\tinvariant.Cross_Product(\n" +
-				"\t\tinvariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: g(), Lo: 0, Hi: fixture_hi}),\n" +
-				"\t\tinvariant.Always(s == \"\", \"s is empty\"),\n" +
+				"\t\tinvariant.Distinct_Boundary(" +
+				"&invariant.Boundary_Input[int]{" +
+				"X:g(), Lo: 0, Hi: fixture_hi}),\n" +
+				"\t\tinvariant.Always(" +
+				"s == \"\", \"s is empty\"),\n" +
 				"\t)\n" +
 				"}\n",
 			Want_Diag: "missing invariant boundary_int assertion",
 		},
+
 		{
-			Name: "string field at nested path credits boundary_int via len(input.Name)",
+			Name: "string field at nested path credits " +
+				"boundary_int via len(input.Name)",
 			Source: "package fixture\n\n" + fixture_invariant_import +
 				"\nconst fixture_hi = 100\n" +
 				"type Input struct {\n" +
@@ -9540,9 +11466,12 @@ func Test_Invariant_Assertions_String_Boundary_Credits(t *testing.T) {
 				"}\n\n" +
 				"func f(input *Input) {\n" +
 				"\tinvariant.Cross_Product(\n" +
-				"\t\tinvariant.Always(input != nil, \"input is non-nil\"),\n" +
-				"\t\tinvariant.Always(len(input.Name) == 0, \"name is empty\"),\n" +
-				"\t\tinvariant.Always(input.Name == \"\", \"name is empty\"),\n" +
+				"\t\tinvariant.Always(" +
+				"input != nil, \"input is non-nil\"),\n" +
+				"\t\tinvariant.Always(" +
+				"len(input.Name) == 0, \"name is empty\"),\n" +
+				"\t\tinvariant.Always(" +
+				"input.Name == \"\", \"name is empty\"),\n" +
 				"\t)\n" +
 				"}\n",
 			Want_Diag: "",
@@ -9568,8 +11497,11 @@ func Test_Invariant_Assertions_String_Empty_Comparison_Credits(t *testing.T) {
 				"\nconst fixture_hi = 100\n" +
 				"func f(s string) {\n" +
 				"\tinvariant.Cross_Product(\n" +
-				"\t\tinvariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: len(s), Lo: 0, Hi: fixture_hi}),\n" +
-				"\t\tinvariant.Always(s == \"\", \"s is empty\"),\n" +
+				"\t\tinvariant.Distinct_Boundary(" +
+				"&invariant.Boundary_Input[int]{" +
+				"X: len(s), Lo: 0, Hi: fixture_hi}),\n" +
+				"\t\tinvariant.Always(" +
+				"s == \"\", \"s is empty\"),\n" +
 				"\t)\n" +
 				"}\n",
 			Want_Diag: "",
@@ -9580,8 +11512,11 @@ func Test_Invariant_Assertions_String_Empty_Comparison_Credits(t *testing.T) {
 				"\nconst fixture_hi = 100\n" +
 				"func f(s string) {\n" +
 				"\tinvariant.Cross_Product(\n" +
-				"\t\tinvariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: len(s), Lo: 0, Hi: fixture_hi}),\n" +
-				"\t\tinvariant.Always(s != \"\", \"s is non-empty\"),\n" +
+				"\t\tinvariant.Distinct_Boundary(" +
+				"&invariant.Boundary_Input[int]{" +
+				"X: len(s), Lo: 0, Hi: fixture_hi}),\n" +
+				"\t\tinvariant.Always(" +
+				"s != \"\", \"s is non-empty\"),\n" +
 				"\t)\n" +
 				"}\n",
 			Want_Diag: "",
@@ -9592,8 +11527,11 @@ func Test_Invariant_Assertions_String_Empty_Comparison_Credits(t *testing.T) {
 				"\nconst fixture_hi = 100\n" +
 				"func f(s string) {\n" +
 				"\tinvariant.Cross_Product(\n" +
-				"\t\tinvariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: len(s), Lo: 0, Hi: fixture_hi}),\n" +
-				"\t\tinvariant.Sometimes(s == \"\", \"s sometimes empty\"),\n" +
+				"\t\tinvariant.Distinct_Boundary(" +
+				"&invariant.Boundary_Input[int]{" +
+				"X: len(s), Lo: 0, Hi: fixture_hi}),\n" +
+				"\t\tinvariant.Sometimes(" +
+				"s == \"\", \"s sometimes empty\"),\n" +
 				"\t)\n" +
 				"}\n",
 			Want_Diag: "",
@@ -9603,7 +11541,8 @@ func Test_Invariant_Assertions_String_Empty_Comparison_Credits(t *testing.T) {
 			Source: "package fixture\n\n" + fixture_invariant_import +
 				"\nconst fixture_hi = 100\n" +
 				"func f(s string) {\n" +
-				"\tinvariant.Cross_Product(invariant.Always(len(s) == 0, \"len is zero\"))\n" +
+				"\tinvariant.Cross_Product(" +
+				"invariant.Always(len(s) == 0, \"len is zero\"))\n" +
 				"}\n",
 			Want_Diag: "missing invariant zero_string assertion",
 		},
@@ -9659,11 +11598,13 @@ func Test_Invariant_Assertions_Float_Equality_Credits(t *testing.T) {
 		Want_Diag string
 	}{
 		{
-			Name: "float64 param with Always(x == 0.0) double-credits boundary_float and zero_float",
+			Name: "float64 param with Always(x == 0.0) " +
+				"double-credits boundary_float and zero_float",
 			Source: "package fixture\n\n" + fixture_invariant_import +
 				"\nconst fixture_hi = 100\n" +
 				"func f(x float64) {\n" +
-				"\tinvariant.Cross_Product(invariant.Always(x == 0.0, \"x is zero\"))\n" +
+				"\tinvariant.Cross_Product(" +
+				"invariant.Always(x == 0.0, \"x is zero\"))\n" +
 				"}\n",
 			Want_Diag: "missing invariant nan_float assertion",
 		},
@@ -9672,16 +11613,19 @@ func Test_Invariant_Assertions_Float_Equality_Credits(t *testing.T) {
 			Source: "package fixture\n\n" + fixture_invariant_import +
 				"\nconst fixture_hi = 100\n" +
 				"func f(x float64) {\n" +
-				"\tinvariant.Cross_Product(invariant.Always(x == 5.5, \"x is 5.5\"))\n" +
+				"\tinvariant.Cross_Product(" +
+				"invariant.Always(x == 5.5, \"x is 5.5\"))\n" +
 				"}\n",
 			Want_Diag: "missing invariant zero_float assertion",
 		},
 		{
-			Name: "float64 param with Always(x == 0) (untyped int literal) double-credits boundary_float and zero_float",
+			Name: "float64 param with Always(x == 0) (untyped int literal) " +
+				"double-credits boundary_float and zero_float",
 			Source: "package fixture\n\n" + fixture_invariant_import +
 				"\nconst fixture_hi = 100\n" +
 				"func f(x float64) {\n" +
-				"\tinvariant.Cross_Product(invariant.Always(x == 0, \"x is zero\"))\n" +
+				"\tinvariant.Cross_Product(" +
+				"invariant.Always(x == 0, \"x is zero\"))\n" +
 				"}\n",
 			Want_Diag: "missing invariant nan_float assertion",
 		},
@@ -9690,7 +11634,8 @@ func Test_Invariant_Assertions_Float_Equality_Credits(t *testing.T) {
 			Source: "package fixture\n\n" + fixture_invariant_import +
 				"\nconst fixture_hi = 100\n" +
 				"func f(x float64) {\n" +
-				"\tinvariant.Cross_Product(invariant.Sometimes(x == 0.0, \"x sometimes zero\"))\n" +
+				"\tinvariant.Cross_Product(" +
+				"invariant.Sometimes(x == 0.0, \"x sometimes zero\"))\n" +
 				"}\n",
 			Want_Diag: "missing invariant boundary_float assertion",
 		},
@@ -9711,6 +11656,7 @@ func Test_Invariant_Assertions_Float_Finite_Credits(t *testing.T) {
 		Source    string
 		Want_Diag string
 	}{
+
 		{
 			Name: "float64 param with all four float credit shapes is clean",
 			Source: "package fixture\n\n" +
@@ -9719,42 +11665,71 @@ func Test_Invariant_Assertions_Float_Finite_Credits(t *testing.T) {
 				"\nconst fixture_hi = 100\n" +
 				"func f(x float64) {\n" +
 				"\tinvariant.Cross_Product(\n" +
-				"\t\tinvariant.Distinct_Boundary(&invariant.Boundary_Input[float64]{X: x, Lo: 0.0, Hi: 1.0}),\n" +
-				"\t\tinvariant.Always(x == 0.0, \"x is zero\"),\n" +
-				"\t\tinvariant.Sometimes(math.IsNaN(x), \"x sometimes NaN\"),\n" +
-				"\t\tinvariant.Sometimes(math.IsInf(x, 0), \"x sometimes Inf\"),\n" +
+				"\t\tinvariant.Distinct_Boundary(" +
+				"&invariant.Boundary_Input[float64]{" +
+				"X: x, Lo: 0.0, Hi: 1.0}),\n" +
+				"\t\tinvariant.Always(" +
+				"x == 0.0, \"x is zero\"),\n" +
+				"\t\tinvariant.Sometimes(" +
+				"math.IsNaN(x), \"x sometimes NaN\"),\n" +
+				"\t\tinvariant.Sometimes(" +
+				"" +
+				"math.IsInf(x, 0), \"x sometimes Inf\"),\n" +
 				"\t)\n" +
 				"}\n",
 			Want_Diag: "",
 		},
+
 		{
-			Name: "float64 param with Always(math.IsNaN(x)) credits boundary_float + zero_float + nan_float",
+			Name: "float64 param with Always(math.IsNaN(x)) credits " +
+				"boundary_float + zero_float + nan_float",
 			Source: "package fixture\n\n" +
 				"import \"math\"\n" +
 				fixture_invariant_import +
 				"\nconst fixture_hi = 100\n" +
 				"func f(x float64) {\n" +
 				"\tinvariant.Cross_Product(\n" +
-				"\t\tinvariant.Always(math.IsNaN(x), \"x is NaN\"),\n" +
-				"\t\tinvariant.Sometimes(math.IsInf(x, 0), \"x sometimes Inf\"),\n" +
+				"\t\tinvariant.Always(" +
+				"math.IsNaN(x), \"x is NaN\"),\n" +
+				"\t\tinvariant.Sometimes(" +
+				"" +
+				"math.IsInf(x, 0), \"x sometimes Inf\"),\n" +
 				"\t)\n" +
 				"}\n",
 			Want_Diag: "",
 		},
+	}
+	run_invariant_assertions_table(t, tests)
+}
+
+// Additional cases, split to keep each function within the length limit.
+func Test_Invariant_Assertions_Float_Finite_Credits_Part2(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		Name      string
+		Filename  string
+		Source    string
+		Want_Diag string
+	}{
+
 		{
-			Name: "float64 param with Always(math.IsInf(x, 0)) credits boundary_float + zero_float + inf_float",
+			Name: "float64 param with Always(math.IsInf(x, 0)) credits " +
+				"boundary_float + zero_float + inf_float",
 			Source: "package fixture\n\n" +
 				"import \"math\"\n" +
 				fixture_invariant_import +
 				"\nconst fixture_hi = 100\n" +
 				"func f(x float64) {\n" +
 				"\tinvariant.Cross_Product(\n" +
-				"\t\tinvariant.Always(math.IsInf(x, 0), \"x is Inf\"),\n" +
-				"\t\tinvariant.Sometimes(math.IsNaN(x), \"x sometimes NaN\"),\n" +
+				"\t\tinvariant.Always(" +
+				"math.IsInf(x, 0), \"x is Inf\"),\n" +
+				"\t\tinvariant.Sometimes(" +
+				"math.IsNaN(x), \"x sometimes NaN\"),\n" +
 				"\t)\n" +
 				"}\n",
 			Want_Diag: "",
 		},
+
 		{
 			Name: "float64 param with Always(!math.IsNaN(x)) credits nan_float only",
 			Source: "package fixture\n\n" +
@@ -9762,22 +11737,30 @@ func Test_Invariant_Assertions_Float_Finite_Credits(t *testing.T) {
 				fixture_invariant_import +
 				"\nconst fixture_hi = 100\n" +
 				"func f(x float64) {\n" +
-				"\tinvariant.Cross_Product(invariant.Always(!math.IsNaN(x), \"x is never NaN\"))\n" +
+				"\tinvariant.Cross_Product(" +
+				"invariant.Always(!math.IsNaN(x), \"x is never NaN\"))\n" +
 				"}\n",
 			Want_Diag: "missing invariant boundary_float assertion",
 		},
+
 		{
-			Name: "float64 param with Always(math.IsInf(x, 1)) (non-canonical sign) does not credit inf_float",
+			Name: "float64 param with Always(math.IsInf(x, 1)) " +
+				"(non-canonical sign) does not credit inf_float",
 			Source: "package fixture\n\n" +
 				"import \"math\"\n" +
 				fixture_invariant_import +
 				"\nconst fixture_hi = 100\n" +
 				"func f(x float64) {\n" +
 				"\tinvariant.Cross_Product(\n" +
-				"\t\tinvariant.Distinct_Boundary(&invariant.Boundary_Input[float64]{X: x, Lo: 0.0, Hi: 1.0}),\n" +
-				"\t\tinvariant.Always(x == 0.0, \"x is zero\"),\n" +
-				"\t\tinvariant.Sometimes(math.IsNaN(x), \"x sometimes NaN\"),\n" +
-				"\t\tinvariant.Always(math.IsInf(x, 1), \"x is +Inf\"),\n" +
+				"\t\tinvariant.Distinct_Boundary(" +
+				"&invariant.Boundary_Input[float64]{" +
+				"X: x, Lo: 0.0, Hi: 1.0}),\n" +
+				"\t\tinvariant.Always(" +
+				"x == 0.0, \"x is zero\"),\n" +
+				"\t\tinvariant.Sometimes(" +
+				"math.IsNaN(x), \"x sometimes NaN\"),\n" +
+				"\t\tinvariant.Always(" +
+				"math.IsInf(x, 1), \"x is +Inf\"),\n" +
 				"\t)\n" +
 				"}\n",
 			Want_Diag: "missing invariant inf_float assertion",
@@ -9807,10 +11790,16 @@ func Test_Invariant_Assertions_Float_Finite_Non_Ident_Argument(t *testing.T) {
 				"func g() (result float64) { return 0 }\n" +
 				"func f(x float64) {\n" +
 				"\tinvariant.Cross_Product(\n" +
-				"\t\tinvariant.Distinct_Boundary(&invariant.Boundary_Input[float64]{X: x, Lo: 0.0, Hi: 1.0}),\n" +
-				"\t\tinvariant.Always(x == 0.0, \"x is zero\"),\n" +
-				"\t\tinvariant.Sometimes(math.IsNaN(g()), \"non-ident\"),\n" +
-				"\t\tinvariant.Sometimes(math.IsInf(x, 0), \"x sometimes Inf\"),\n" +
+				"\t\tinvariant.Distinct_Boundary(" +
+				"&invariant.Boundary_Input[float64]{" +
+				"X: x, Lo: 0.0, Hi: 1.0}),\n" +
+				"\t\tinvariant.Always(" +
+				"x == 0.0, \"x is zero\"),\n" +
+				"\t\tinvariant.Sometimes(" +
+				"math.IsNaN(g()), \"non-ident\"),\n" +
+				"\t\tinvariant.Sometimes(" +
+				"" +
+				"math.IsInf(x, 0), \"x sometimes Inf\"),\n" +
 				"\t)\n" +
 				"}\n",
 			Want_Diag: "missing invariant nan_float assertion",
@@ -9824,10 +11813,15 @@ func Test_Invariant_Assertions_Float_Finite_Non_Ident_Argument(t *testing.T) {
 				"func g() (result float64) { return 0 }\n" +
 				"func f(x float64) {\n" +
 				"\tinvariant.Cross_Product(\n" +
-				"\t\tinvariant.Distinct_Boundary(&invariant.Boundary_Input[float64]{X: x, Lo: 0.0, Hi: 1.0}),\n" +
-				"\t\tinvariant.Always(x == 0.0, \"x is zero\"),\n" +
-				"\t\tinvariant.Sometimes(math.IsNaN(x), \"x sometimes NaN\"),\n" +
-				"\t\tinvariant.Sometimes(math.IsInf(g(), 0), \"non-ident\"),\n" +
+				"\t\tinvariant.Distinct_Boundary(" +
+				"&invariant.Boundary_Input[float64]{" +
+				"X: x, Lo: 0.0, Hi: 1.0}),\n" +
+				"\t\tinvariant.Always(" +
+				"x == 0.0, \"x is zero\"),\n" +
+				"\t\tinvariant.Sometimes(" +
+				"math.IsNaN(x), \"x sometimes NaN\"),\n" +
+				"\t\tinvariant.Sometimes(" +
+				"math.IsInf(g(), 0), \"non-ident\"),\n" +
 				"\t)\n" +
 				"}\n",
 			Want_Diag: "missing invariant inf_float assertion",
@@ -9850,81 +11844,133 @@ func Test_Invariant_Assertions_Boundary_Lo_Zero_Auto_Credits_Zero(t *testing.T) 
 		Source    string
 		Want_Diag string
 	}{
+
 		{
 			Name: "int param with Distinct_Boundary Lo=0 alone satisfies both halves",
 			Source: "package fixture\n\n" + fixture_invariant_import +
 				"\nconst fixture_hi = 100\n" +
 				"func f(x int) {\n" +
 				"\tinvariant.Cross_Product(\n" +
-				"\t\tinvariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: x, Lo: 0, Hi: fixture_hi}),\n" +
+				"\t\tinvariant.Distinct_Boundary(" +
+				"&invariant.Boundary_Input[int]{" +
+				"X: x, Lo: 0, Hi: fixture_hi}),\n" +
 				"\t)\n" +
 				"}\n",
 			Want_Diag: "",
 		},
+
 		{
-			Name: "float param with Distinct_Boundary Lo=0.0 alone satisfies boundary+zero (nan/inf still required)",
+			Name: "float param with Distinct_Boundary Lo=0.0 alone " +
+				"satisfies boundary+zero (nan/inf still required)",
 			Source: "package fixture\n\n" + fixture_invariant_import +
 				"\nconst fixture_hi = 100\n" +
 				"func f(x float64) {\n" +
 				"\tinvariant.Cross_Product(\n" +
-				"\t\tinvariant.Distinct_Boundary(&invariant.Boundary_Input[float64]{X: x, Lo: 0.0, Hi: 1.0}),\n" +
+				"\t\tinvariant.Distinct_Boundary(" +
+				"&invariant.Boundary_Input[float64]{" +
+				"X: x, Lo: 0.0, Hi: 1.0}),\n" +
 				"\t)\n" +
 				"}\n",
 			Want_Diag: "missing invariant nan_float assertion",
 		},
+
 		{
-			Name: "string param with Distinct_Boundary on len(s) Lo=0 alone satisfies both halves",
+			Name: "string param with Distinct_Boundary on len(s) Lo=0 " +
+				"alone satisfies both halves",
 			Source: "package fixture\n\n" + fixture_invariant_import +
 				"\nconst fixture_hi = 100\n" +
 				"func f(s string) {\n" +
 				"\tinvariant.Cross_Product(\n" +
-				"\t\tinvariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: len(s), Lo: 0, Hi: fixture_hi}),\n" +
+				"\t\tinvariant.Distinct_Boundary(" +
+				"&invariant.Boundary_Input[int]{" +
+				"X: len(s), Lo: 0, Hi: fixture_hi}),\n" +
 				"\t)\n" +
 				"}\n",
 			Want_Diag: "",
 		},
+	}
+	run_invariant_assertions_table(t, tests)
+}
+
+// Additional cases, split to keep each function within the length limit.
+func Test_Invariant_Assertions_Boundary_Lo_Zero_Auto_Credits_Zero_Part2(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		Name      string
+		Filename  string
+		Source    string
+		Want_Diag string
+	}{
+
 		{
-			Name: "int param with Distinct_Boundary Hi=0 (negative range) alone satisfies both halves",
+			Name: "int param with Distinct_Boundary Hi=0 (negative range) " +
+				"alone satisfies both halves",
 			Source: "package fixture\n\n" + fixture_invariant_import +
 				"\nconst fixture_hi = 100\n" +
 				"func f(x int) {\n" +
 				"\tinvariant.Cross_Product(\n" +
-				"\t\tinvariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: x, Lo: -100, Hi: 0}),\n" +
+				"\t\tinvariant.Distinct_Boundary(" +
+				"&invariant.Boundary_Input[int]{" +
+				"X:x, Lo: -100, Hi: 0}),\n" +
 				"\t)\n" +
 				"}\n",
 			Want_Diag: "",
 		},
+
 		{
-			Name: "int param with Distinct_Boundary Lo=1 (positive Lo) auto-credits via Excludes_Zero rule",
+			Name: "int param with Distinct_Boundary Lo=1 (positive Lo) " +
+				"auto-credits via Excludes_Zero rule",
 			Source: "package fixture\n\n" + fixture_invariant_import +
 				"\nconst fixture_hi = 100\n" +
 				"func f(x int) {\n" +
 				"\tinvariant.Cross_Product(\n" +
-				"\t\tinvariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: x, Lo: 1, Hi: fixture_hi}),\n" +
+				"\t\tinvariant.Distinct_Boundary(" +
+				"&invariant.Boundary_Input[int]{" +
+				"X:x, Lo: 1, Hi: fixture_hi}),\n" +
 				"\t)\n" +
 				"}\n",
 			Want_Diag: "",
 		},
+
 		{
-			Name: "int param with Distinct_Boundary Lo=-1, Hi=1 (no zero endpoint) misses zero_int",
+			Name: "int param with Distinct_Boundary Lo=-1, Hi=1 " +
+				"(no zero endpoint) misses zero_int",
 			Source: "package fixture\n\n" + fixture_invariant_import +
 				"\nconst fixture_hi = 100\n" +
 				"func f(x int) {\n" +
 				"\tinvariant.Cross_Product(\n" +
-				"\t\tinvariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: x, Lo: -1, Hi: 1}),\n" +
+				"\t\tinvariant.Distinct_Boundary(" +
+				"&invariant.Boundary_Input[int]{" +
+				"X: x, Lo: -1, Hi: 1}),\n" +
 				"\t)\n" +
 				"}\n",
 			Want_Diag: "missing invariant zero_int assertion",
 		},
+	}
+	run_invariant_assertions_table(t, tests)
+}
+
+// Additional cases, split to keep each function within the length limit.
+func Test_Invariant_Assertions_Boundary_Lo_Zero_Auto_Credits_Zero_Part3(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		Name      string
+		Filename  string
+		Source    string
+		Want_Diag string
+	}{
+
 		{
-			Name: "int param with Distinct_Boundary Lo=math.MinInt (selector) misses zero_int",
+			Name: "int param with Distinct_Boundary Lo=math.MinInt " +
+				"(selector) misses zero_int",
 			Source: "package fixture\n\n" +
 				"import \"math\"\n" +
 				fixture_invariant_import +
 				"\nconst fixture_hi = 100\n" +
 				"func f(x int) {\n" +
 				"\tinvariant.Cross_Product(\n" +
-				"\t\tinvariant.Distinct_Boundary(&invariant.Boundary_Input[int]{\n" +
+				"\t\tinvariant.Distinct_Boundary(" +
+				"&invariant.Boundary_Input[int]{\n" +
 				"\t\t\tX: x, Lo: math.MinInt, Hi: math.MaxInt}),\n" +
 				"\t)\n" +
 				"}\n",
@@ -9948,72 +11994,105 @@ func Test_Invariant_Assertions_Boundary_Excludes_Zero_Auto_Credits_Zero(t *testi
 		Source    string
 		Want_Diag string
 	}{
+
 		{
 			Name: "int param with positive Lo alone satisfies both halves",
 			Source: "package fixture\n\n" + fixture_invariant_import +
 				"\nconst fixture_hi = 100\n" +
 				"func f(x int) {\n" +
 				"\tinvariant.Cross_Product(\n" +
-				"\t\tinvariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: x, Lo: 5, Hi: fixture_hi}),\n" +
+				"\t\tinvariant.Distinct_Boundary(" +
+				"&invariant.Boundary_Input[int]{" +
+				"X:x, Lo: 5, Hi: fixture_hi}),\n" +
 				"\t)\n" +
 				"}\n",
 			Want_Diag: "",
 		},
+
 		{
-			Name: "float param with positive Lo alone satisfies boundary+zero (nan/inf still required)",
+			Name: "float param with positive Lo alone satisfies " +
+				"boundary+zero (nan/inf still required)",
 			Source: "package fixture\n\n" + fixture_invariant_import +
 				"\nconst fixture_hi_float = 100.0\n" +
 				"func f(x float64) {\n" +
 				"\tinvariant.Cross_Product(\n" +
-				"\t\tinvariant.Distinct_Boundary(&invariant.Boundary_Input[float64]{\n" +
+				"\t\tinvariant.Distinct_Boundary(" +
+				"&invariant.Boundary_Input[float64]{\n" +
 				"\t\t\tX: x, Lo: 1.0, Hi: fixture_hi_float,\n" +
 				"\t\t}),\n" +
 				"\t)\n" +
 				"}\n",
 			Want_Diag: "missing invariant nan_float assertion",
 		},
+
 		{
-			Name: "string param with Distinct_Boundary on len(s) Lo=1 alone satisfies both halves",
+			Name: "string param with Distinct_Boundary on len(s) Lo=1 " +
+				"alone satisfies both halves",
 			Source: "package fixture\n\n" + fixture_invariant_import +
 				"\nconst fixture_hi = 100\n" +
 				"func f(s string) {\n" +
 				"\tinvariant.Cross_Product(\n" +
-				"\t\tinvariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: len(s), Lo: 1, Hi: fixture_hi}),\n" +
+				"\t\tinvariant.Distinct_Boundary(" +
+				"&invariant.Boundary_Input[int]{" +
+				"X:len(s), Lo: 1, Hi: fixture_hi}),\n" +
 				"\t)\n" +
 				"}\n",
 			Want_Diag: "",
 		},
+	}
+	run_invariant_assertions_table(t, tests)
+}
+
+// Additional cases, split to keep each function within the length limit.
+func Test_Invariant_Assertions_Boundary_Excludes_Zero_Auto_Credits_Zero_Part2(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		Name      string
+		Filename  string
+		Source    string
+		Want_Diag string
+	}{
+
 		{
-			Name: "int param with negative-only range (Lo=-100, Hi=-1) alone satisfies both halves",
+			Name: "int param with negative-only range (Lo=-100, Hi=-1) " +
+				"alone satisfies both halves",
 			Source: "package fixture\n\n" + fixture_invariant_import +
 				"\nconst fixture_hi = 100\n" +
 				"func f(x int) {\n" +
 				"\tinvariant.Cross_Product(\n" +
-				"\t\tinvariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: x, Lo: -100, Hi: -1}),\n" +
+				"\t\tinvariant.Distinct_Boundary(" +
+				"&invariant.Boundary_Input[int]{" +
+				"X:x, Lo: -100, Hi: -1}),\n" +
 				"\t)\n" +
 				"}\n",
 			Want_Diag: "",
 		},
+
 		{
 			Name: "int param with Lo=-1 Hi=1 (range straddles zero) misses zero_int",
 			Source: "package fixture\n\n" + fixture_invariant_import +
 				"\nconst fixture_hi = 100\n" +
 				"func f(x int) {\n" +
 				"\tinvariant.Cross_Product(\n" +
-				"\t\tinvariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: x, Lo: -1, Hi: 1}),\n" +
+				"\t\tinvariant.Distinct_Boundary(" +
+				"&invariant.Boundary_Input[int]{" +
+				"X: x, Lo: -1, Hi: 1}),\n" +
 				"\t)\n" +
 				"}\n",
 			Want_Diag: "missing invariant zero_int assertion",
 		},
+
 		{
-			Name: "int param with package-qualified selector Lo misses zero_int (opaque)",
+			Name: "int param with package-qualified selector Lo " +
+				"misses zero_int (opaque)",
 			Source: "package fixture\n\n" +
 				"import \"math\"\n" +
 				fixture_invariant_import +
 				"\nconst fixture_hi = 100\n" +
 				"func f(x int) {\n" +
 				"\tinvariant.Cross_Product(\n" +
-				"\t\tinvariant.Distinct_Boundary(&invariant.Boundary_Input[int]{\n" +
+				"\t\tinvariant.Distinct_Boundary(" +
+				"&invariant.Boundary_Input[int]{\n" +
 				"\t\t\tX: x, Lo: math.MinInt, Hi: math.MaxInt}),\n" +
 				"\t)\n" +
 				"}\n",
@@ -10035,6 +12114,7 @@ func Test_Invariant_Assertions_Boundary_Excludes_Zero_Constant_Idents(t *testing
 		Source    string
 		Want_Diag string
 	}{
+
 		{
 			Name: "int param with positive const Lo alone satisfies both halves",
 			Source: "package fixture\n\n" + fixture_invariant_import +
@@ -10045,11 +12125,14 @@ func Test_Invariant_Assertions_Boundary_Excludes_Zero_Constant_Idents(t *testing
 				"const fixture_hi = 100\n\n" +
 				"func f(x int) {\n" +
 				"\tinvariant.Cross_Product(\n" +
-				"\t\tinvariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: x, Lo: lo, Hi: fixture_hi}),\n" +
+				"\t\tinvariant.Distinct_Boundary(" +
+				"&invariant.Boundary_Input[int]{" +
+				"X: x, Lo: lo, Hi: fixture_hi}),\n" +
 				"\t)\n" +
 				"}\n",
 			Want_Diag: "",
 		},
+
 		{
 			Name: "int param with negative const Hi alone satisfies both halves",
 			Source: "package fixture\n\n" + fixture_invariant_import +
@@ -10057,31 +12140,54 @@ func Test_Invariant_Assertions_Boundary_Excludes_Zero_Constant_Idents(t *testing
 				"const fixture_lo_neg = -100\n\n" +
 				"func f(x int) {\n" +
 				"\tinvariant.Cross_Product(\n" +
-				"\t\tinvariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: x, Lo: fixture_lo_neg, Hi: hi}),\n" +
+				"\t\tinvariant.Distinct_Boundary(" +
+				"&invariant.Boundary_Input[int]{" +
+				"X:x, Lo: fixture_lo_neg, Hi: hi}),\n" +
 				"\t)\n" +
 				"}\n",
 			Want_Diag: "",
 		},
+
 		{
-			Name: "int param with zero const Lo (sanity) still credits via existing zero rule",
+			Name: "int param with zero const Lo (sanity) " +
+				"still credits via existing zero rule",
 			Source: "package fixture\n\n" + fixture_invariant_import +
 				"const lo = 0\n" +
 				"const fixture_hi = 100\n\n" +
 				"func f(x int) {\n" +
 				"\tinvariant.Cross_Product(\n" +
-				"\t\tinvariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: x, Lo: lo, Hi: fixture_hi}),\n" +
+				"\t\tinvariant.Distinct_Boundary(" +
+				"&invariant.Boundary_Input[int]{" +
+				"X: x, Lo: lo, Hi: fixture_hi}),\n" +
 				"\t)\n" +
 				"}\n",
 			Want_Diag: "",
 		},
+	}
+	run_invariant_assertions_table(t, tests)
+}
+
+// Additional cases, split to keep each function within the length limit.
+func Test_Invariant_Assertions_Boundary_Excludes_Zero_Constant_Idents_Part2(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		Name      string
+		Filename  string
+		Source    string
+		Want_Diag string
+	}{
+
 		{
-			Name: "int param with signed-zero (`-0`) const Lo credits via existing zero rule",
+			Name: "int param with signed-zero (`-0`) const Lo " +
+				"credits via existing zero rule",
 			Source: "package fixture\n\n" + fixture_invariant_import +
 				"const lo = -0\n" +
 				"const fixture_hi = 100\n\n" +
 				"func f(x int) {\n" +
 				"\tinvariant.Cross_Product(\n" +
-				"\t\tinvariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: x, Lo: lo, Hi: fixture_hi}),\n" +
+				"\t\tinvariant.Distinct_Boundary(" +
+				"&invariant.Boundary_Input[int]{" +
+				"X: x, Lo: lo, Hi: fixture_hi}),\n" +
 				"\t)\n" +
 				"}\n",
 			Want_Diag: "",
@@ -10139,45 +12245,70 @@ func Test_Invariant_Assertions_Boundary_Non_Literal_Lo_Hi(t *testing.T) {
 		Source    string
 		Want_Diag string
 	}{
+
 		{
 			Name: "Is_Boundary with builtin-call Lo flagged",
 			Source: "package fixture\n\n" + fixture_invariant_import +
 				"\nconst fixture_hi = 100\n" +
 				"func f(x int) {\n" +
-				"\tinvariant.Is_Distinct_Boundary(&invariant.Boundary_Input[int]{X: x, Lo: len(\"\"), Hi: fixture_hi})\n" +
+				"\tinvariant.Is_Distinct_Boundary(&invariant.Boundary_Input[int]{" +
+				"X: x, Lo: len(\"\"), Hi: fixture_hi})\n" +
 				"}\n",
 			Want_Diag: "Boundary Lo must be an inline literal",
 		},
+
 		{
 			Name: "Is_Boundary with builtin-call Hi flagged",
 			Source: "package fixture\n\n" + fixture_invariant_import +
 				"\nconst fixture_hi = 100\n" +
 				"func f(x int) {\n" +
-				"\tinvariant.Is_Distinct_Boundary(&invariant.Boundary_Input[int]{X: x, Lo: 0, Hi: len(\"foo\")})\n" +
+				"\tinvariant.Is_Distinct_Boundary(&invariant.Boundary_Input[int]{" +
+				"X: x, Lo: 0, Hi: len(\"foo\")})\n" +
 				"}\n",
 			Want_Diag: "Boundary Hi must be an inline literal",
 		},
+
 		{
 			Name: "typed conversion int64(0) rejected",
 			Source: "package fixture\n\n" + fixture_invariant_import +
 				"\nconst fixture_hi = 100\n" +
 				"func f(x int64) {\n" +
-				"\tinvariant.Is_Distinct_Boundary(&invariant.Boundary_Input[int64]{X: x, Lo: int64(0), Hi: fixture_hi})\n" +
+				"\tinvariant.Is_Distinct_Boundary(" +
+				"&invariant.Boundary_Input[int64]{" +
+				"X: x, Lo: int64(0), Hi: fixture_hi})\n" +
 				"}\n",
 			Want_Diag: "Boundary Lo must be an inline literal",
 		},
+
 		{
 			Name: "literal Lo/Hi accepted",
 			Source: "package fixture\n\n" + fixture_invariant_import +
 				"\nconst fixture_hi = 100\n" +
 				"func f(x int) {\n" +
 				"\tinvariant.Cross_Product(\n" +
-				"\t\tinvariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: x, Lo: 0, Hi: fixture_hi}),\n" +
-				"\t\tinvariant.Always(x == 0, \"x is zero\"),\n" +
+				"\t\tinvariant.Distinct_Boundary(" +
+				"&invariant.Boundary_Input[int]{" +
+				"X: x, Lo: 0, Hi: fixture_hi}),\n" +
+				"\t\tinvariant.Always(" +
+				"x == 0, \"x is zero\"),\n" +
 				"\t)\n" +
 				"}\n",
 			Want_Diag: "",
 		},
+	}
+	run_invariant_assertions_table(t, tests)
+}
+
+// Additional cases, split to keep each function within the length limit.
+func Test_Invariant_Assertions_Boundary_Non_Literal_Lo_Hi_Part2(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		Name      string
+		Filename  string
+		Source    string
+		Want_Diag string
+	}{
+
 		{
 			Name: "signed literal Lo and selector-chain Hi accepted",
 			Source: "package fixture\n\n" +
@@ -10186,12 +12317,16 @@ func Test_Invariant_Assertions_Boundary_Non_Literal_Lo_Hi(t *testing.T) {
 				"\nconst fixture_hi = 100\n" +
 				"func f(x int) {\n" +
 				"\tinvariant.Cross_Product(\n" +
-				"\t\tinvariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: x, Lo: -1, Hi: math.MaxInt}),\n" +
-				"\t\tinvariant.Always(x == 0, \"x is zero\"),\n" +
+				"\t\tinvariant.Distinct_Boundary(" +
+				"&invariant.Boundary_Input[int]{" +
+				"X:x, Lo: -1, Hi: math.MaxInt}),\n" +
+				"\t\tinvariant.Always(" +
+				"x == 0, \"x is zero\"),\n" +
 				"\t)\n" +
 				"}\n",
 			Want_Diag: "",
 		},
+
 		{
 			Name: "same-package const idents accepted",
 			Source: "package fixture\n\n" + fixture_invariant_import +
@@ -10199,22 +12334,30 @@ func Test_Invariant_Assertions_Boundary_Non_Literal_Lo_Hi(t *testing.T) {
 				"const SOME_HI = 100\n\n" +
 				"func f(x int) {\n" +
 				"\tinvariant.Cross_Product(\n" +
-				"\t\tinvariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: x, Lo: SOME_LO, Hi: SOME_HI}),\n" +
-				"\t\tinvariant.Always(x == 0, \"x is zero\"),\n" +
+				"\t\tinvariant.Distinct_Boundary(" +
+				"&invariant.Boundary_Input[int]{" +
+				"X:x, Lo: SOME_LO, Hi: SOME_HI}),\n" +
+				"\t\tinvariant.Always(" +
+				"x == 0, \"x is zero\"),\n" +
 				"\t)\n" +
 				"}\n",
 			Want_Diag: "",
 		},
+
 		{
-			Name: "standalone Boundary inside branch helper not crediting any requirement is exempt",
+			Name: "standalone Boundary inside branch helper " +
+				"not crediting any requirement is exempt",
 			Source: "package fixture\n\n" + fixture_invariant_import +
 				"\nconst fixture_hi = 100\n" +
 				"func f(enabled bool) {\n" +
-				"\tinvariant.Cross_Product(invariant.Always(enabled, \"enabled is set\"))\n" +
+				"\tinvariant.Cross_Product(" +
+				"invariant.Always(enabled, \"enabled is set\"))\n" +
 				"\tlo := 0\n" +
 				"\tlocal := 1\n" +
 				"\tif enabled {\n" +
-				"\t\tinvariant.Is_Distinct_Boundary(&invariant.Boundary_Input[int]{X: local, Lo: lo, Hi: fixture_hi})\n" +
+				"\t\tinvariant.Is_Distinct_Boundary(" +
+				"&invariant.Boundary_Input[int]{" +
+				"X: local, Lo: lo, Hi: fixture_hi})\n" +
 				"\t}\n" +
 				"\t_ = local\n" +
 				"}\n",
@@ -10240,7 +12383,8 @@ func Test_Invariant_Assertions_Boundary_Non_Literal_Lo_Hi_Recorder(t *testing.T)
 			Source: "package fixture\n\n" + fixture_invariant_import +
 				"\nconst fixture_hi = 100\n" +
 				"func f(r *invariant.Recorder, x int) {\n" +
-				"\tinvariant.Recorder_Is_Distinct_Boundary(r, &invariant.Boundary_Input[int]{\n" +
+				"\tinvariant.Recorder_Is_Distinct_Boundary(r, " +
+				"&invariant.Boundary_Input[int]{\n" +
 				"\t\tX: x, Lo: len(\"\"), Hi: fixture_hi})\n" +
 				"}\n",
 			Want_Diag: "Boundary Lo must be an inline literal",
@@ -10259,16 +12403,26 @@ func Test_Invariant_Assertions_Boundary_Non_Literal_Lo_Hi_Recorder(t *testing.T)
 func Test_Coverage_Backfill_Read_Error(t *testing.T) {
 	t.Parallel()
 	base := fstest.MapFS{
-		"go.mod":                     &fstest.MapFile{Data: []byte("module example.com/rd\n")},
-		"good.go":                    &fstest.MapFile{Data: []byte("// Package rd is a fixture.\npackage rd\n")},
-		"fail.go":                    &fstest.MapFile{Data: []byte("// Package rd is a fixture.\npackage rd\n")},
-		"fail.md":                    &fstest.MapFile{Data: []byte("# fixture\n")},
-		"fail.yml":                   &fstest.MapFile{Data: []byte("name: fixture\n")},
-		"fail.txt":                   &fstest.MapFile{Data: []byte("fixture\n")},
-		"LICENSE":                    &fstest.MapFile{Data: []byte("fixture\n")},
-		".github/workflows/fail.yml": &fstest.MapFile{Data: []byte("name: fixture\n")},
-		"CLAUDE.md":                  &fstest.MapFile{Data: []byte("# fixture\n")},
-		"AGENTS.md":                  &fstest.MapFile{Data: []byte("# fixture\n")},
+		"go.mod": &fstest.MapFile{
+			Data: []byte("module example.com/rd\n")},
+		"good.go": &fstest.MapFile{
+			Data: []byte("// Package rd is a fixture.\npackage rd\n")},
+		"fail.go": &fstest.MapFile{
+			Data: []byte("// Package rd is a fixture.\npackage rd\n")},
+		"fail.md": &fstest.MapFile{
+			Data: []byte("# fixture\n")},
+		"fail.yml": &fstest.MapFile{
+			Data: []byte("name: fixture\n")},
+		"fail.txt": &fstest.MapFile{
+			Data: []byte("fixture\n")},
+		"LICENSE": &fstest.MapFile{
+			Data: []byte("fixture\n")},
+		".github/workflows/fail.yml": &fstest.MapFile{
+			Data: []byte("name: fixture\n")},
+		"CLAUDE.md": &fstest.MapFile{
+			Data: []byte("# fixture\n")},
+		"AGENTS.md": &fstest.MapFile{
+			Data: []byte("# fixture\n")},
 	}
 	// Fail.go is intentionally excluded: the AST tier reads .go files in
 	// bulk via check_file_system_read_files, which asserts sources != nil.
@@ -10300,9 +12454,11 @@ func Test_Coverage_Backfill_Read_Error(t *testing.T) {
 func Test_Coverage_Backfill_Main_With_Git(t *testing.T) {
 	t.Parallel()
 	base := fstest.MapFS{
-		"go.mod": &fstest.MapFile{Data: []byte("module example.com/git\n")},
-		"good.go": &fstest.MapFile{Data: []byte(
-			"// Package git is a fixture.\npackage git\n")},
+		"go.mod": &fstest.MapFile{
+			Data: []byte("module example.com/git\n")},
+		"good.go": &fstest.MapFile{
+			Data: []byte(
+				"// Package git is a fixture.\npackage git\n")},
 	}
 	for _, absent := range []bool{false, true} {
 		var stdout, stderr bytes.Buffer
@@ -10357,7 +12513,8 @@ func Test_Coverage_Backfill_Untracked_Field_Kind(t *testing.T) {
 		"\tLookup map[string]int\n" +
 		"}\n\n" +
 		"func f(u *Untracked) {\n" +
-		"\tinvariant.Cross_Product(invariant.Always(u != nil, \"U is non-nil\"))\n" +
+		"\tinvariant.Cross_Product(" +
+		"invariant.Always(u != nil, \"U is non-nil\"))\n" +
 		"\t_ = u\n" +
 		"}\n"
 	diags, err := lint.Check_Invariant_Assertions("test.go", source)
@@ -10406,7 +12563,9 @@ func Test_Coverage_Backfill_Inner_Cross_Product(t *testing.T) {
 		"func f(x int) {\n" +
 		"\tinvariant.Cross_Product(\n" +
 		"\t\thelper(),\n" +
-		"\t\tinvariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: x, Lo: 0, Hi: 1, Message: \"X is in range\"}),\n" +
+		"\t\tinvariant.Distinct_Boundary(" +
+		"&invariant.Boundary_Input[int]{" +
+		"X:x, Lo: 0, Hi: 1, Message: \"X is in range\"}),\n" +
 		"\t)\n" +
 		"\t_ = x\n" +
 		"}\n"
@@ -10429,8 +12588,10 @@ func Test_Coverage_Backfill_Non_Ident_X(t *testing.T) {
 		"\nconst fixture_hi = 100\n" +
 		"func f(p *int, s string) {\n" +
 		"\tinvariant.Cross_Product(\n" +
-		"\t\tinvariant.Always(p != nil, \"P is non-nil\"),\n" +
-		"\t\tinvariant.Distinct_Boundary(&invariant.Boundary_Input[int]{\n" +
+		"\t\tinvariant.Always(" +
+		"p != nil, \"P is non-nil\"),\n" +
+		"\t\tinvariant.Distinct_Boundary(" +
+		"&invariant.Boundary_Input[int]{\n" +
 		"\t\t\tX: len(s), Lo: 0, Hi: fixture_hi, Message: \"Len is in range\"}),\n" +
 		"\t)\n" +
 		"\t_ = p\n" +
@@ -10453,7 +12614,8 @@ func Test_Coverage_Backfill_If_Init_Non_Declaration(t *testing.T) {
 	source := "package fixture\n\n" + fixture_invariant_import +
 		"\nconst fixture_hi = 100\n" +
 		"func f(p *int) {\n" +
-		"\tinvariant.Cross_Product(invariant.Always(p != nil, \"P is non-nil\"))\n" +
+		"\tinvariant.Cross_Product(" +
+		"invariant.Always(p != nil, \"P is non-nil\"))\n" +
 		"\tif x := 5; x > 0 {\n" +
 		"\t\t_ = x\n" +
 		"\t}\n" +
@@ -10480,13 +12642,16 @@ func Test_Coverage_Backfill_If_Init_Non_Declaration(t *testing.T) {
 func Test_Coverage_Backfill_Parse_Error(t *testing.T) {
 	t.Parallel()
 	fsys := fstest.MapFS{
-		"go.mod": &fstest.MapFile{Data: []byte("module example.com/broken\n")},
-		"bad.go": &fstest.MapFile{Data: []byte("package broken\n\nfunc f( {\n}\n")},
-		"good.go": &fstest.MapFile{Data: []byte(
-			"// Package broken is a fixture.\n" +
-				"package broken\n\n" +
-				"// G is documented.\n" +
-				"func G() { return }\n")},
+		"go.mod": &fstest.MapFile{
+			Data: []byte("module example.com/broken\n")},
+		"bad.go": &fstest.MapFile{
+			Data: []byte("package broken\n\nfunc f( {\n}\n")},
+		"good.go": &fstest.MapFile{
+			Data: []byte(
+				"// Package broken is a fixture.\n" +
+					"package broken\n\n" +
+					"// G is documented.\n" +
+					"func G() { return }\n")},
 	}
 	var stdout, stderr bytes.Buffer
 	code := lint.Main(&lint.Main_Input{
@@ -10534,21 +12699,28 @@ func Test_Coverage_Backfill_Non_Invariant_Prologue(t *testing.T) {
 		"func f(x int) {\n" +
 		"\tfmt.Println(x)\n" +
 		"\tinvariant.Cross_Product(\n" +
-		"\t\tinvariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: x, Lo: 0, Hi: fixture_hi}),\n" +
-		"\t\tinvariant.Always(x == 0, \"x is zero\"),\n" +
+		"\t\tinvariant.Distinct_Boundary(" +
+		"&invariant.Boundary_Input[int]{" +
+		"X: x, Lo: 0, Hi: fixture_hi}),\n" +
+		"\t\tinvariant.Always(" +
+		"x == 0, \"x is zero\"),\n" +
 		"\t)\n" +
 		"\t_ = x\n" +
 		"}\n\n" +
 		"func g(x int) (r int) {\n" +
 		"\tinvariant.Cross_Product(\n" +
-		"\t\tinvariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: x, Lo: 0, Hi: fixture_hi}),\n" +
-		"\t\tinvariant.Always(x == 0, \"x is zero\"),\n" +
+		"\t\tinvariant.Distinct_Boundary(" +
+		"&invariant.Boundary_Input[int]{" +
+		"X: x, Lo: 0, Hi: fixture_hi}),\n" +
+		"\t\tinvariant.Always(" +
+		"x == 0, \"x is zero\"),\n" +
 		"\t)\n" +
 		"\tdefer func() { fmt.Println(r) }()\n" +
 		"\treturn 0\n" +
 		"}\n\n" +
 		"func h() (out *int) {\n" +
-		"\tdefer func() { invariant.Cross_Product(invariant.Always(out != nil, \"out non-nil\")) }()\n" +
+		"\tdefer func() { invariant.Cross_Product(" +
+		"invariant.Always(out != nil, \"out non-nil\")) }()\n" +
 		"\treturn nil\n" +
 		"}\n\n" +
 		"func k() {\n" +
@@ -10587,10 +12759,18 @@ func Test_Coverage_Backfill_Empty_Constant_Signs(t *testing.T) {
 	bounds := "package fixture\n\n" + fixture_invariant_import +
 		"func f(x int, lo int, hi int) {\n" +
 		"\tinvariant.Cross_Product(\n" +
-		"\t\tinvariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: x, Lo: 0, Hi: 5}),\n" +
-		"\t\tinvariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: x, Lo: 5, Hi: 10}),\n" +
-		"\t\tinvariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: x, Lo: -10, Hi: -1}),\n" +
-		"\t\tinvariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: x, Lo: lo, Hi: hi}),\n" +
+		"\t\tinvariant.Distinct_Boundary(" +
+		"&invariant.Boundary_Input[int]{" +
+		"X:x, Lo: 0, Hi: 5}),\n" +
+		"\t\tinvariant.Distinct_Boundary(" +
+		"&invariant.Boundary_Input[int]{" +
+		"X:x, Lo: 5, Hi: 10}),\n" +
+		"\t\tinvariant.Distinct_Boundary(" +
+		"&invariant.Boundary_Input[int]{" +
+		"X:x, Lo: -10, Hi: -1}),\n" +
+		"\t\tinvariant.Distinct_Boundary(" +
+		"&invariant.Boundary_Input[int]{" +
+		"X:x, Lo: lo, Hi: hi}),\n" +
 		"\t)\n" +
 		"}\n"
 	recorder := "package fixture\n\n" + fixture_invariant_import +
@@ -10622,17 +12802,22 @@ func Test_Coverage_Backfill_Empty_String_Literal(t *testing.T) {
 		fixture_declaration_callee +
 		"func f(s string, n int) {\n" +
 		"\tinvariant.Cross_Product(\n" +
-		"\t\tinvariant.Sometimes(s == \"\", \"S is empty on this branch\"),\n" +
-		"\t\tinvariant.Distinct_Boundary(&invariant.Boundary_Input[int]{\n" +
+		"\t\tinvariant.Sometimes(" +
+		"s == \"\", \"S is empty on this branch\"),\n" +
+		"\t\tinvariant.Distinct_Boundary(" +
+		"&invariant.Boundary_Input[int]{\n" +
 		"\t\t\tX: len(s), Lo: 0, Hi: fixture_hi, Message: \"Len in range\",\n" +
 		"\t\t}),\n" +
-		"\t\tinvariant.Distinct_Boundary(&invariant.Boundary_Input[int]{\n" +
+		"\t\tinvariant.Distinct_Boundary(" +
+		"&invariant.Boundary_Input[int]{\n" +
 		"\t\t\tX: n, Lo: 0, Hi: fixture_hi, Message: \"N is in range\",\n" +
 		"\t\t}),\n" +
-		"\t\tinvariant.Always(n == 0, \"n is zero\"),\n" +
+		"\t\tinvariant.Always(" +
+		"n == 0, \"n is zero\"),\n" +
 		"\t)\n" +
 		"\tx := g()\n" +
-		"\tinvariant.Cross_Product(invariant.Sometimes(x == nil, \"X is nil here\"))\n" +
+		"\tinvariant.Cross_Product(" +
+		"invariant.Sometimes(x == nil, \"X is nil here\"))\n" +
 		"\t_ = x\n" +
 		"\t_ = s\n" +
 		"\t_ = n\n" +
@@ -10674,7 +12859,8 @@ func Test_Coverage_Backfill_Large_Package(t *testing.T) {
 	t.Parallel()
 	const file_count = 50
 	fsys := fstest.MapFS{
-		"go.mod": &fstest.MapFile{Data: []byte("module example.com/big\n")},
+		"go.mod": &fstest.MapFile{
+			Data: []byte("module example.com/big\n")},
 	}
 	for i_index := 0; i_index < file_count; i_index++ {
 		name := "f" + strings.Repeat("x", i_index+1) + ".go"
@@ -10690,7 +12876,8 @@ func Test_Coverage_Backfill_Large_Package(t *testing.T) {
 		for j_index := 0; j_index < 250; j_index++ {
 			body.WriteString("\n")
 		}
-		fsys[name] = &fstest.MapFile{Data: []byte(body.String())}
+		fsys[name] = &fstest.MapFile{
+			Data: []byte(body.String())}
 	}
 	var stdout, stderr bytes.Buffer
 	code := lint.Main(&lint.Main_Input{
@@ -10705,7 +12892,8 @@ func Test_Coverage_Backfill_Large_Package(t *testing.T) {
 		t.Fatalf("expected exit 1 (diagnostics emitted); got %d", code)
 	}
 	if !strings.Contains(stdout.String(), "files totaling") {
-		t.Fatalf("fixture did not trigger package_split diagnostic; stdout:\n%s", stdout.String())
+		t.Fatalf("fixture did not trigger package_split diagnostic; stdout:\n%s",
+			stdout.String())
 	}
 }
 
@@ -10715,14 +12903,20 @@ func Test_Coverage_Backfill_Large_Package(t *testing.T) {
 func Test_Coverage_Backfill_Main_Cpu_Count_Hi(t *testing.T) {
 	t.Parallel()
 	fsys := fstest.MapFS{
-		"go.mod":        &fstest.MapFile{Data: []byte("module example.com/hi\n")},
-		"internal/a.go": &fstest.MapFile{Data: []byte("// Package hi is a fixture.\npackage hi\n")},
-		"cmd/x/main.go": &fstest.MapFile{Data: []byte("// Package main is a fixture.\npackage main\n\nfunc main() {}\n")},
+		"go.mod": &fstest.MapFile{
+			Data: []byte("module example.com/hi\n")},
+		"internal/a.go": &fstest.MapFile{
+			Data: []byte("// Package hi is a fixture.\npackage hi\n")},
+		"cmd/x/main.go": &fstest.MapFile{
+			Data: []byte("// Package main is a fixture.\n" +
+				"package main\n\nfunc main() {}\n")},
 	}
 	// Exit code isn't the assertion target — we only need CPU_Count=1024 to
 	// flow through every prologue so the cpu_boundary Hi bucket fires.
 	var stdout, stderr bytes.Buffer
-	code := lint.Main(&lint.Main_Input{Fsys: fsys, Stdout: &stdout, Stderr: &stderr, CPU_Count: 1024})
+	code := lint.Main(&lint.Main_Input{
+		Fsys: fsys, Stdout: &stdout, Stderr: &stderr, CPU_Count: 1024,
+	})
 	if code < 0 {
 		t.Fatalf("unexpected negative exit code %d", code)
 	}
@@ -10747,11 +12941,14 @@ func Test_Coverage_Backfill_Module_Index_Hi_Index(t *testing.T) {
 			Data: []byte("module example.com/" + name + "\n"),
 		}
 		fsys[directory+"a.go"] = &fstest.MapFile{
-			Data: []byte("// Package " + name + " is a fixture.\npackage " + name + "\n"),
+			Data: []byte("// Package " + name +
+				" is a fixture.\npackage " + name + "\n"),
 		}
 	}
 	var stdout, stderr bytes.Buffer
-	code := lint.Main(&lint.Main_Input{Fsys: fsys, Stdout: &stdout, Stderr: &stderr, CPU_Count: 1})
+	code := lint.Main(&lint.Main_Input{
+		Fsys: fsys, Stdout: &stdout, Stderr: &stderr, CPU_Count: 1,
+	})
 	if code < 0 {
 		t.Fatalf("unexpected negative exit code %d", code)
 	}
@@ -10766,24 +12963,31 @@ func Test_Coverage_Backfill_Package_Group_Endpoints(t *testing.T) {
 	t.Parallel()
 	source_fragment := func(suffix string) (fsys fstest.MapFS) {
 		return fstest.MapFS{
-			"go.mod":             &fstest.MapFile{Data: []byte("module example.com/min" + suffix + "\n")},
-			"a" + suffix + ".go": &fstest.MapFile{Data: []byte("package min" + suffix + "\n")},
-			"b" + suffix + ".go": &fstest.MapFile{Data: []byte("package min" + suffix + "\n")},
+			"go.mod": &fstest.MapFile{
+				Data: []byte("module example.com/min" + suffix + "\n")},
+			"a" + suffix + ".go": &fstest.MapFile{
+				Data: []byte("package min" + suffix + "\n")},
+			"b" + suffix + ".go": &fstest.MapFile{
+				Data: []byte("package min" + suffix + "\n")},
 		}
 	}
 	for _, suffix := range []string{"", "_test"} {
 		fsys := source_fragment(suffix)
 		var stdout, stderr bytes.Buffer
-		code := lint.Main(&lint.Main_Input{Fsys: fsys, Stdout: &stdout, Stderr: &stderr, CPU_Count: 1})
+		code := lint.Main(&lint.Main_Input{
+			Fsys: fsys, Stdout: &stdout, Stderr: &stderr, CPU_Count: 1,
+		})
 		if code != 1 {
-			t.Errorf("suffix %q: expected exit 1; got %d; output: %s", suffix, code, stdout.String())
+			t.Errorf("suffix %q: expected exit 1; got %d; output: %s",
+				suffix, code, stdout.String())
 		}
 	}
 	// Test-package variant of Large_Package — drives the (Hi-lines, Lo-files)
 	// tuple with key.Is_Test=true.
 	const file_count = 50
 	fsys := fstest.MapFS{
-		"go.mod": &fstest.MapFile{Data: []byte("module example.com/bigt\n")},
+		"go.mod": &fstest.MapFile{
+			Data: []byte("module example.com/bigt\n")},
 	}
 	for i_index := 0; i_index < file_count; i_index++ {
 		name := "f" + strings.Repeat("x", i_index+1) + "_test.go"
@@ -10795,12 +12999,16 @@ func Test_Coverage_Backfill_Package_Group_Endpoints(t *testing.T) {
 		for j_index := 0; j_index < 250; j_index++ {
 			body.WriteString("\n")
 		}
-		fsys[name] = &fstest.MapFile{Data: []byte(body.String())}
+		fsys[name] = &fstest.MapFile{
+			Data: []byte(body.String())}
 	}
 	var stdout, stderr bytes.Buffer
-	code := lint.Main(&lint.Main_Input{Fsys: fsys, Stdout: &stdout, Stderr: &stderr, CPU_Count: 1})
+	code := lint.Main(&lint.Main_Input{
+		Fsys: fsys, Stdout: &stdout, Stderr: &stderr, CPU_Count: 1,
+	})
 	if code != 1 {
-		t.Errorf("test-pkg Large_Package mirror: expected exit 1; got %d; output: %s", code, stdout.String())
+		t.Errorf("test-pkg Large_Package mirror: expected exit 1; got %d; output: %s",
+			code, stdout.String())
 	}
 }
 
@@ -10861,38 +13069,46 @@ func Test_Coverage_Backfill_String_Bounded_Mixed_Invariant_Calls(t *testing.T) {
 	t.Parallel()
 	mixed_calls_source := "package fixture\n\n" +
 		"import invariant " +
-		"\"github.com/james-orcales/james-orcales/golang_snacks/invariant/v2/invariant_default\"\n\n" +
+		"\"" + fixture_invariant_import_path + "\"\n\n" +
 		"func f(r *invariant.Recorder, x int) {\n" +
 		"\tfoo.Bar()\n" +
 		"\tinvariant.Recorder_Distinct_Boundary(r, " +
-		"&invariant.Boundary_Input[int]{X: x, Lo: 0, Hi: fixture_hi})\n" +
+		"&invariant.Boundary_Input[int]{" +
+		"X: x, Lo: 0, Hi: fixture_hi})\n" +
 		"}\n"
 	diags, err := lint.Check_Source("test.go", mixed_calls_source)
 	t.Logf("mixed diags=%d err=%v", len(diags), err)
 	rich_source := "package fixture\n\n" +
 		"import invariant " +
-		"\"github.com/james-orcales/james-orcales/golang_snacks/invariant/v2/invariant_default\"\n\n" +
+		"\"" + fixture_invariant_import_path + "\"\n\n" +
 		"const Foo = 1\n" +
 		"type Bar struct {\n\tA int\n\tB bool\n\tC string\n}\n\n" +
 		"func Quux(input *Bar, s string, n int, b bool, p *int) (result int) {\n" +
 		"\tdefer func() {\n" +
 		"\t\tinvariant.Cross_Product(\n" +
-		"\t\t\tinvariant.Distinct_Boundary(&invariant.Boundary_Input[int]{\n" +
+		"\t\t\tinvariant.Distinct_Boundary(" +
+		"&invariant.Boundary_Input[int]{\n" +
 		"\t\t\t\tX: result, Lo: 0, Hi: fixture_hi,\n" +
 		"\t\t\t}),\n" +
 		"\t\t)\n" +
 		"\t}()\n" +
 		"\tinvariant.Cross_Product(\n" +
-		"\t\tinvariant.Always(input != nil, \"input is non-nil\"),\n" +
-		"\t\tinvariant.Always(p != nil, \"p is non-nil\"),\n" +
-		"\t\tinvariant.Sometimes(b, \"b is sometimes true\"),\n" +
-		"\t\tinvariant.Distinct_Boundary(&invariant.Boundary_Input[int]{\n" +
+		"\t\tinvariant.Always(" +
+		"input != nil, \"input is non-nil\"),\n" +
+		"\t\tinvariant.Always(" +
+		"p != nil, \"p is non-nil\"),\n" +
+		"\t\tinvariant.Sometimes(" +
+		"b, \"b is sometimes true\"),\n" +
+		"\t\tinvariant.Distinct_Boundary(" +
+		"&invariant.Boundary_Input[int]{\n" +
 		"\t\t\tX: n, Lo: 0, Hi: fixture_hi,\n" +
 		"\t\t}),\n" +
-		"\t\tinvariant.Distinct_Boundary(&invariant.Boundary_Input[int]{\n" +
+		"\t\tinvariant.Distinct_Boundary(" +
+		"&invariant.Boundary_Input[int]{\n" +
 		"\t\t\tX: len(s), Lo: 0, Hi: fixture_hi,\n" +
 		"\t\t}),\n" +
-		"\t\tinvariant.Always(s == \"\", \"s is empty\"),\n" +
+		"\t\tinvariant.Always(" +
+		"s == \"\", \"s is empty\"),\n" +
 		"\t)\n" +
 		"\treturn 0\n" +
 		"}\n"
@@ -10987,8 +13203,9 @@ func Test_Coverage_Backfill_String_Bounded_Helpers_Git_Input(t *testing.T) {
 	git_input := lint.Git_Input{
 		Enabled: true,
 		Merge_Commits: []lint.Git_Commit{
-			{Hash: "", Subject: ""},  // filtered out by upstream empty-subject check
-			{Hash: "", Subject: "x"}, // exercises empty-hash Lo bucket in git_input_check_short_hash
+			{Hash: "", Subject: ""}, // filtered out by upstream empty-subject check
+			// Exercises empty-hash Lo bucket in git_input_check_short_hash.
+			{Hash: "", Subject: "x"},
 			{Hash: "a", Subject: "x"},
 			{Hash: long_hash, Subject: long_subject},
 		},
@@ -11192,18 +13409,22 @@ func Test_Coverage_Backfill_Recursion_Visitor_Single_Function_File(t *testing.T)
 		// Documented package, lowercase 1-char function with a non-discard
 		// statement so tier-1 stays clean and tier-2 (check_no_recursion)
 		// runs, exercising the recursion visitor.
-		"// Package fixture is for the recursion visitor.\npackage fixture\n\nfunc f() {\n\tif true {\n\t}\n}\n",
-		"// Package fixture is for the recursion visitor.\npackage fixture\n\n// " +
+		"// Package fixture is for the recursion visitor.\npackage fixture\n\n" +
+			"func f() {\n\tif true {\n\t}\n}\n",
+		"// Package fixture is for the recursion visitor.\npackage fixture\n\n" +
+			"// " +
 			long_funcname +
 			"\n// is for the recursion visitor.\nfunc " +
 			long_funcname + "() {\n\tif true {\n\t}\n}\n",
 		// Range with explicit blank key drives recursion_visitor_define_ident
 		// with a nil expr branch (e_nil=true case).
-		"// Package fixture is for the recursion visitor.\npackage fixture\n\nfunc f() {\n\tfor range 1 {\n\t}\n}\n",
+		"// Package fixture is for the recursion visitor.\npackage fixture\n\n" +
+			"func f() {\n\tfor range 1 {\n\t}\n}\n",
 		// Single-function file with a 128-char self-recursing function name
 		// drives recursion_visitor_enter_record_call_edge with Lo targets
 		// (single-target) AND Hi caller (128-char) simultaneously.
-		"// Package fixture is for the recursion visitor.\npackage fixture\n\n// " +
+		"// Package fixture is for the recursion visitor.\npackage fixture\n\n" +
+			"// " +
 			long_funcname +
 			"\n// recurses into itself.\nfunc " +
 			long_funcname + "() {\n\t" + long_funcname + "()\n}\n",
@@ -11212,28 +13433,32 @@ func Test_Coverage_Backfill_Recursion_Visitor_Single_Function_File(t *testing.T)
 		// record_call_edge returns without appending to v.Edges. Defer time
 		// observes (Lo edges, Hi caller, True ident, Lo targets, Lo scopes,
 		// Lo history).
-		"// Package fixture is for the recursion visitor.\npackage fixture\n\n// " +
+		"// Package fixture is for the recursion visitor.\npackage fixture\n\n" +
+			"// " +
 			long_funcname +
 			"\n// invokes a builtin.\nfunc " +
 			long_funcname + "() {\n\tprintln(\"x\")\n}\n",
 		// 128-char function calling a selector — call.Fun is *ast.SelectorExpr
 		// (False ident). The package-level `p` var isn't added to v.Targets
 		// (only FuncDecls are), so targets stays at 1 (single-target file).
-		"// Package fixture is for the recursion visitor.\npackage fixture\n\nvar p = struct{ F func() }{F: func() {}}\n\n// " +
+		"// Package fixture is for the recursion visitor.\npackage fixture\n\n" +
+			"var p = struct{ F func() }{F: func() {}}\n\n// " +
 			long_funcname +
 			"\n// invokes a method.\nfunc " +
 			long_funcname + "() {\n\tp.F()\n}\n",
 		// 128-char function with an if-init clause drives
 		// recursion_visitor_enter_define_statement with Hi caller AND False
 		// s_nil (init present) in a single-target file.
-		"// Package fixture is for the recursion visitor.\npackage fixture\n\n// " +
+		"// Package fixture is for the recursion visitor.\npackage fixture\n\n" +
+			"// " +
 			long_funcname +
 			"\n// has an if-init.\nfunc " +
 			long_funcname + "() {\n\tif y := 1; y > 0 {\n\t}\n}\n",
 		// 128-char function with a top-level := drives
 		// recursion_visitor_define_ident with Hi caller, Lo scopes (=1, only
 		// the BlockStmt scope is pushed at this point), Lo history (=1).
-		"// Package fixture is for the recursion visitor.\npackage fixture\n\n// " +
+		"// Package fixture is for the recursion visitor.\npackage fixture\n\n" +
+			"// " +
 			long_funcname +
 			"\n// has a top-level define.\nfunc " +
 			long_funcname + "() {\n\ty := 1\n\tif y > 0 {\n\t}\n}\n",
@@ -11393,14 +13618,17 @@ func Test_Coverage_Backfill_Struct_Field_Capitalize(t *testing.T) {
 func Test_Coverage_Backfill_Inside_If_Only(t *testing.T) {
 	t.Parallel()
 	source := "package fixture\n\n" +
-		"import invariant \"github.com/james-orcales/james-orcales/golang_snacks/invariant/v2\"\n\n" +
+		"import invariant \"github.com/james-orcales/james-orcales/" +
+		"golang_snacks/invariant/v2\"\n\n" +
 		"func F(p *int) (result int) {\n" +
 		"\tdefer func() {\n" +
 		"\t\tif p != nil {\n" +
-		"\t\t\tinvariant.Cross_Product(invariant.Always(result == 0, \"result\"))\n" +
+		"\t\t\tinvariant.Cross_Product(" +
+		"invariant.Always(result == 0, \"result\"))\n" +
 		"\t\t}\n" +
 		"\t}()\n" +
-		"\tinvariant.Cross_Product(invariant.Always(p != nil, \"p\"))\n" +
+		"\tinvariant.Cross_Product(" +
+		"invariant.Always(p != nil, \"p\"))\n" +
 		"\treturn result\n" +
 		"}\n"
 	diags, err := lint.Check_Invariant_Assertions("test.go", source)
@@ -11412,15 +13640,16 @@ func Test_Coverage_Backfill_Inside_If_Only(t *testing.T) {
 // boundary Hi fires. Note check_invariant_assertions is the consumer.
 func Test_Coverage_Backfill_Function_Label_Hi(t *testing.T) {
 	t.Parallel()
-	// `Foo.` is 4 chars; need 124-char method name to total 128.
-	method_name := strings.Repeat("X", 124)
 	source := "package fixture\n\n" +
-		"import invariant \"github.com/james-orcales/james-orcales/golang_snacks/invariant/v2\"\n\n" +
+		"import invariant \"github.com/james-orcales/james-orcales/" +
+		"golang_snacks/invariant/v2\"\n\n" +
 		"type Foo struct{}\n\n" +
 		// Body has if-init + switch so obligation_from_body and from_case_clause
 		// observe function_label Hi=128 via Foo.<124-char-method>.
-		"func (f Foo) " + method_name + "(x int) {\n" +
-		"\tinvariant.Cross_Product(invariant.Always(true, \"trivial\"))\n" +
+		// `Foo.` is 4 chars; the 124-char method name totals 128.
+		"func (f Foo) " + strings.Repeat("X", 124) + "(x int) {\n" +
+		"\tinvariant.Cross_Product(" +
+		"invariant.Always(true, \"trivial\"))\n" +
 		// `if y := someCall(); ...` triggers obligation_from_body via init.
 		"\tif y := some_helper(); y != 0 {\n" +
 		"\t\t_ = y\n" +
@@ -11430,7 +13659,8 @@ func Test_Coverage_Backfill_Function_Label_Hi(t *testing.T) {
 		// actually fires.
 		"\tif " + strings.Repeat("z", 55) + " := some_helper(); " +
 		strings.Repeat("z", 55) + " != 0 {\n" +
-		"\t\tinvariant.Cross_Product(invariant.Always(" +
+		"\t\tinvariant.Cross_Product(" +
+		"invariant.Always(" +
 		strings.Repeat("z", 55) + " != 0, \"long z\"))\n" +
 		"\t}\n" +
 		// `switch y := someCall(); y` triggers obligation_from_case_clause.
@@ -11452,9 +13682,12 @@ func Test_Coverage_Backfill_Function_Label_Hi(t *testing.T) {
 		// Top-level 3-LHS `e, g, h := triple_helper()` (covered) exercises
 		// validate_declaration_obligation with Identifiers length 3 (Hi bucket).
 		"\te, g, h := triple_helper()\n" +
-		"\tinvariant.Cross_Product(invariant.Always(e == 1, \"trivial e\"),\n" +
-		"\t\tinvariant.Always(g == 2, \"trivial g\"),\n" +
-		"\t\tinvariant.Always(h == 3, \"trivial h\"))\n" +
+		"\tinvariant.Cross_Product(" +
+		"invariant.Always(e == 1, \"trivial e\"),\n" +
+		"\t\tinvariant.Always(" +
+		"g == 2, \"trivial g\"),\n" +
+		"\t\tinvariant.Always(" +
+		"h == 3, \"trivial h\"))\n" +
 		// Uncovered 3-LHS exercises build_declaration_diagnostic{,_pointer}
 		// with Identifiers length 3 (Hi bucket).
 		"\tk, m, n := triple_helper()\n" +
@@ -11468,7 +13701,18 @@ func Test_Coverage_Backfill_Function_Label_Hi(t *testing.T) {
 		"\tswitch v := some_helper(); v {\n" +
 		"\tcase 1:\n" +
 		"\t}\n" +
-		"}\n\n" +
+		"}\n\n"
+	diags, err := lint.Check_Invariant_Assertions("test.go", source)
+	t.Logf("function_label_hi diags=%d err=%v", len(diags), err)
+}
+
+// Holder-function fixtures for function_label/field_description Hi buckets,
+// split from the method fixture to keep each function within the length limit.
+func Test_Coverage_Backfill_Function_Label_Hi_Part2(t *testing.T) {
+	t.Parallel()
+	source := "package fixture\n\n" +
+		"import invariant \"github.com/james-orcales/james-orcales/" +
+		"golang_snacks/invariant/v2\"\n\n" +
 		// Function with a 128-char parameter name exercises requirement.
 		// Identifier_Path at Hi=128 for the missing-axis diagnostic path
 		// (build_diagnostic / suggested_call / requirement_suggestion).
@@ -11488,12 +13732,14 @@ func Test_Coverage_Backfill_Function_Label_Hi(t *testing.T) {
 		"func short_field_holder(a *T) { _ = a }\n\n" +
 		// 128-name + []<126-Q> produces field_description=257 (Hi via container_leaf).
 		"type " + strings.Repeat("Q", 126) + " int\n\n" +
-		"func long_field_holder(" + strings.Repeat("r", 128) + " []" + strings.Repeat("Q", 126) + ") {\n" +
+		"func long_field_holder(" + strings.Repeat("r", 128) +
+		" []" + strings.Repeat("Q", 126) + ") {\n" +
 		"\t_ = " + strings.Repeat("r", 128) + "\n" +
 		"}\n\n" +
 		// 128-name + *<127-Z> produces field_description=257 (Hi via pointer_requirement).
 		"type " + strings.Repeat("Z", 127) + " int\n\n" +
-		"func long_ptr_holder(" + strings.Repeat("s", 128) + " *" + strings.Repeat("Z", 127) + ") {\n" +
+		"func long_ptr_holder(" + strings.Repeat("s", 128) +
+		" *" + strings.Repeat("Z", 127) + ") {\n" +
 		"\t_ = " + strings.Repeat("s", 128) + "\n" +
 		"}\n\n" +
 		// Inline-struct param fixtures: short 1-char names (Lo) plus
@@ -11504,7 +13750,7 @@ func Test_Coverage_Backfill_Function_Label_Hi(t *testing.T) {
 		"\t_ = u\n" +
 		"}\n"
 	diags, err := lint.Check_Invariant_Assertions("test.go", source)
-	t.Logf("function_label_hi diags=%d err=%v", len(diags), err)
+	t.Logf("function_label_hi_holders diags=%d err=%v", len(diags), err)
 }
 
 // Test_Coverage_Backfill_Method_Render_Type drives check_unnecessary_method
@@ -11523,11 +13769,13 @@ func Test_Coverage_Backfill_Method_Render_Type(t *testing.T) {
 		"// " + long + " is a 128-char type so render_type's output hits Hi=128.\n" +
 		"type " + long + " int\n\n" +
 		"// Bar exercises method shape with 1-char and 128-char-typed params.\n" +
-		"func (f Foo) Bar(p A, q " + long + ") (result string) { result = \"x\"; return result }\n\n" +
+		"func (f Foo) Bar(p A, q " + long +
+		") (result string) { result = \"x\"; return result }\n\n" +
 		// 1-char and 128-char method names span matches_stdlib's input.Name
 		// Lo=1 and Hi=128 buckets via Check_Source -> check_unnecessary_method.
 		"func (f Foo) X() (result int) { return 0 }\n\n" +
-		"func (f Foo) Q" + strings.Repeat("z", 127) + "(p int) (result int) { return 0 }\n\n" +
+		"func (f Foo) Q" + strings.Repeat("z", 127) +
+		"(p int) (result int) { return 0 }\n\n" +
 		// V has Results="" (0 chars = Lo); U has Results="xxx128" (128 chars = Hi).
 		"func (f Foo) V() {}\n\n" +
 		"func (f Foo) U(p " + long + ") (r " + long + ") { return r }\n"
@@ -11584,61 +13832,88 @@ func Test_Coverage_Backfill_Invariant_Assertions_Import_Paths(t *testing.T) {
 // Hi bucket on `name` arguments.
 func Test_Coverage_Backfill_Invariant_Assertions_Long_Names(t *testing.T) {
 	t.Parallel()
-	long := strings.Repeat("x", 128)
+	long_name_128 := strings.Repeat("x", 128)
 	source := "package fixture\n\n" +
-		"import invariant \"github.com/james-orcales/james-orcales/golang_snacks/invariant/v2\"\n\n" +
-		"type " + long + " = int\n\n" +
-		"type F_input struct{ Field " + long + " }\n\n" +
+		"import invariant \"github.com/james-orcales/james-orcales/" +
+		"golang_snacks/invariant/v2\"\n\n" +
+		"type " + long_name_128 + " = int\n\n" +
+		"type F_input struct{ Field " + long_name_128 + " }\n\n" +
 		// Long_field_name plus long type = 257 chars description, hitting
 		// the Hi=max_field_description_chars bucket in field_description.
-		"type M_input struct{ " + long + "_x " + long + " }\n\n" +
+		"type M_input struct{ " + long_name_128 + "_x " + long_name_128 + " }\n\n" +
 		"func F(input *F_input, q float64) {\n" +
 		"\taxis := invariant.Sometimes(input != nil, \"input is non-nil sometimes\")\n" +
 		"\tinvariant.Cross_Product(axis)\n" +
 		"}\n\n" +
 		"func M(m *M_input) {\n" +
-		"\tinvariant.Cross_Product(invariant.Always(m != nil, \"m is non-nil\"))\n" +
+		"\tinvariant.Cross_Product(" +
+		"invariant.Always(m != nil, \"m is non-nil\"))\n" +
 		"}\n\n" +
-		"func G(" + long + " *int) {\n" +
-		"\tinvariant.Cross_Product(invariant.Always(" + long + " != nil, \"long is non-nil\"))\n" +
+		"func G(" + long_name_128 + " *int) {\n" +
+		"\tinvariant.Cross_Product(" +
+		"invariant.Always(" + long_name_128 + " != nil, \"long is non-nil\"))\n" +
 		"}\n\n" +
 		// G_eq: Always(X == nil) variant so extract_eq_nil_path observes 128-char path.
-		"func G_eq(" + long + " *int) {\n" +
-		"\tinvariant.Cross_Product(invariant.Always(" + long + " == nil, \"long is nil\"))\n" +
+		"func G_eq(" + long_name_128 + " *int) {\n" +
+		"\tinvariant.Cross_Product(" +
+		"invariant.Always(" + long_name_128 + " == nil, \"long is nil\"))\n" +
 		"}\n\n" +
-		"func H(" + long + " int) {\n" +
-		"\tinvariant.Cross_Product(invariant.Always(" + long + " == 0, \"long zero\"))\n" +
+		"func H(" + long_name_128 + " int) {\n" +
+		"\tinvariant.Cross_Product(" +
+		"invariant.Always(" + long_name_128 + " == 0, \"long zero\"))\n" +
 		"}\n\n" +
 		// H_sometimes: numeric_credit with allow_neq=false path.
-		"func H_sometimes(" + long + " int) {\n" +
-		"\tinvariant.Cross_Product(invariant.Sometimes(" + long + " == 0, \"long maybe zero\"))\n" +
+		"func H_sometimes(" + long_name_128 + " int) {\n" +
+		"\tinvariant.Cross_Product(" +
+		"invariant.Sometimes(" + long_name_128 + " == 0, \"long maybe zero\"))\n" +
 		"}\n\n" +
 		// Short int param exercises numeric_credit Lo bucket for lhs_path.
 		"func H_short(a int) {\n" +
-		"\tinvariant.Cross_Product(invariant.Sometimes(a == 0, \"a maybe zero\"))\n" +
+		"\tinvariant.Cross_Product(" +
+		"invariant.Sometimes(a == 0, \"a maybe zero\"))\n" +
 		"}\n\n" +
 		// H_len: len(<128xs>) inside comparison exercises
 		// expression_to_size_argument_path's Hi=128 path bucket.
-		"func H_len(" + long + " string) {\n" +
-		"\tinvariant.Cross_Product(invariant.Always(len(" + long + ") == 0, \"long len zero\"))\n" +
+		"func H_len(" + long_name_128 + " string) {\n" +
+		"\tinvariant.Cross_Product(" +
+		"invariant.Always(len(" + long_name_128 + ") == 0, \"long len zero\"))\n" +
 		"}\n\n" +
-		"func L(" + long + " float64) {\n" +
-		"\tinvariant.Cross_Product(invariant.Always(!math.IsNaN(" + long + "), \"long not NaN\"),\n" +
-		"\t\tinvariant.Distinct_Boundary(&invariant.Boundary_Input[float64]{X: " + long + ", Lo: 0, Hi: 1}),\n" +
+		"func L(" + long_name_128 + " float64) {\n" +
+		"\tinvariant.Cross_Product(" +
+		"invariant.Always(!math.IsNaN(" + long_name_128 + "), \"long not NaN\"),\n" +
+		"\t\tinvariant.Distinct_Boundary(" +
+		"&invariant.Boundary_Input[float64]{X: " + long_name_128 + ", Lo: 0, Hi: 1}),\n" +
 		"\t)\n" +
-		"}\n\n" +
+		"}\n\n"
+	diags, err := lint.Check_Invariant_Assertions("test.go", source)
+	t.Logf("long_names diags=%d err=%v", len(diags), err)
+	for _, d := range diags {
+		t.Logf("  long_names diag: %s", d.Message)
+	}
+}
+
+// Additional long-name fixtures (direct param and axis-builder funcs),
+// split to keep each function within the length limit.
+func Test_Coverage_Backfill_Invariant_Assertions_Long_Names_Part2(t *testing.T) {
+	t.Parallel()
+	long_name_128 := strings.Repeat("x", 128)
+	source := "package fixture\n\n" +
+		"import invariant \"github.com/james-orcales/james-orcales/" +
+		"golang_snacks/invariant/v2\"\n\n" +
 		// Direct non-pointer param with 128-char name + 128-char type →
 		// keyword_kinds called with 128-char type name (Hi=128 bucket) and
 		// field_description hits Hi=257 with the long name plus type.
-		"func N(" + long + " " + long + ") {\n" +
-		"\tinvariant.Cross_Product(invariant.Always(" + long + " == 0, \"long p zero\"))\n" +
+		"func N(" + long_name_128 + " " + long_name_128 + ") {\n" +
+		"\tinvariant.Cross_Product(" +
+		"invariant.Always(" + long_name_128 + " == 0, \"long p zero\"))\n" +
 		"}\n\n" +
 		"func K() {\n" +
 		// `_ = invariant.Always(...)` exercises is_axis_builder("Always") Lo=6.
 		"\t_ = invariant.Always(true, \"k always\")\n" +
 		// Axis-builder binding for Recorder_Distinct_Boundary exercises
 		// nil_allows_neq Hi=26 via extract_nil_comparison_path.
-		"\taxis2 := invariant.Recorder_Distinct_Boundary(&invariant.Boundary_Input[int]{X: 0, Lo: 0, Hi: 1})\n" +
+		"\taxis2 := invariant.Recorder_Distinct_Boundary(" +
+		"&invariant.Boundary_Input[int]{X: 0, Lo: 0, Hi: 1})\n" +
 		"\tinvariant.Cross_Product(axis2)\n" +
 		// Bare-identifier calls exercise is_go_builtin (`len`) and
 		// is_predeclared_type (`int`) via call_is_exempt.
@@ -11646,10 +13921,10 @@ func Test_Coverage_Backfill_Invariant_Assertions_Long_Names(t *testing.T) {
 		"\t_ = int(1)\n" +
 		// Long bare identifier (128-char) exercises Hi=128 buckets in
 		// is_go_builtin and is_predeclared_type.
-		"\t_ = " + long + "()\n" +
+		"\t_ = " + long_name_128 + "()\n" +
 		"}\n"
 	diags, err := lint.Check_Invariant_Assertions("test.go", source)
-	t.Logf("long_names diags=%d err=%v", len(diags), err)
+	t.Logf("long_names_2 diags=%d err=%v", len(diags), err)
 	for _, d := range diags {
 		t.Logf("  long_names diag: %s", d.Message)
 	}
@@ -11750,7 +14025,8 @@ func Test_Invariant_Assertions_Named_Return_Pointer_To_Slice_Field(t *testing.T)
 		Want_Diag string
 	}{
 		{
-			Name: "named return of pointer-to-struct with slice field is flagged at named_return position",
+			Name: "named return of pointer-to-struct with slice field " +
+				"is flagged at named_return position",
 			Source: "package fixture\n\n" + fixture_invariant_import +
 				"\nconst fixture_hi = 100\n" +
 				"type Wrapper_Input struct {\n" +
@@ -11759,7 +14035,8 @@ func Test_Invariant_Assertions_Named_Return_Pointer_To_Slice_Field(t *testing.T)
 				"func f() (out *Wrapper_Input) {\n" +
 				"\tdefer func() {\n" +
 				"\t\tinvariant.Cross_Product(\n" +
-				"\t\t\tinvariant.Always(out != nil, \"out is non-nil\"),\n" +
+				"\t\t\tinvariant.Always(" +
+				"out != nil, \"out is non-nil\"),\n" +
 				"\t\t)\n" +
 				"\t}()\n" +
 				"\tout = &Wrapper_Input{}\n" +
@@ -11787,30 +14064,37 @@ func Test_Invariant_Assertions_Pointer_To_Slice_Emits_Inner_Requirements(t *test
 		Source    string
 		Want_Diag string
 	}{
+
 		{
-			Name: "pointer-to-slice param with only pointer assertion is flagged for len boundary",
+			Name: "pointer-to-slice param with only pointer assertion " +
+				"is flagged for len boundary",
 			Source: "package fixture\n\n" + fixture_invariant_import +
 				"\nconst fixture_hi = 100\n" +
 				"func f(rows *[]int) {\n" +
 				"\tinvariant.Cross_Product(\n" +
-				"\t\tinvariant.Always(rows != nil, \"rows is non-nil\"),\n" +
+				"\t\tinvariant.Always(" +
+				"rows != nil, \"rows is non-nil\"),\n" +
 				"\t)\n" +
 				"\t_ = rows\n" +
 				"}\n",
 			Want_Diag: "*rows",
 		},
+
 		{
-			Name: "pointer-to-map param with only pointer assertion is flagged for len boundary",
+			Name: "pointer-to-map param with only pointer assertion " +
+				"is flagged for len boundary",
 			Source: "package fixture\n\n" + fixture_invariant_import +
 				"\nconst fixture_hi = 100\n" +
 				"func f(m *map[int]int) {\n" +
 				"\tinvariant.Cross_Product(\n" +
-				"\t\tinvariant.Always(m != nil, \"m is non-nil\"),\n" +
+				"\t\tinvariant.Always(" +
+				"m != nil, \"m is non-nil\"),\n" +
 				"\t)\n" +
 				"\t_ = m\n" +
 				"}\n",
 			Want_Diag: "*m",
 		},
+
 		{
 			Name: "struct field of pointer-to-slice type emits inner len requirement",
 			Source: "package fixture\n\n" + fixture_invariant_import +
@@ -11820,13 +14104,29 @@ func Test_Invariant_Assertions_Pointer_To_Slice_Emits_Inner_Requirements(t *test
 				"}\n" +
 				"func f(w *Wrapper) {\n" +
 				"\tinvariant.Cross_Product(\n" +
-				"\t\tinvariant.Always(w != nil, \"w is non-nil\"),\n" +
-				"\t\tinvariant.Always(w.Rows != nil, \"w.Rows is non-nil\"),\n" +
+				"\t\tinvariant.Always(" +
+				"w != nil, \"w is non-nil\"),\n" +
+				"\t\tinvariant.Always(" +
+				"w.Rows != nil, \"w.Rows is non-nil\"),\n" +
 				"\t)\n" +
 				"\t_ = w\n" +
 				"}\n",
 			Want_Diag: "*w.Rows",
 		},
+	}
+	run_invariant_assertions_table(t, tests)
+}
+
+// Additional cases, split to keep each function within the length limit.
+func Test_Invariant_Assertions_Pointer_To_Slice_Emits_Inner_Requirements_Part2(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		Name      string
+		Filename  string
+		Source    string
+		Want_Diag string
+	}{
+
 		{
 			Name: "struct field of pointer-to-map type emits inner len requirement",
 			Source: "package fixture\n\n" + fixture_invariant_import +
@@ -11836,8 +14136,10 @@ func Test_Invariant_Assertions_Pointer_To_Slice_Emits_Inner_Requirements(t *test
 				"}\n" +
 				"func f(w *Wrapper) {\n" +
 				"\tinvariant.Cross_Product(\n" +
-				"\t\tinvariant.Always(w != nil, \"w is non-nil\"),\n" +
-				"\t\tinvariant.Always(w.Index != nil, \"w.Index is non-nil\"),\n" +
+				"\t\tinvariant.Always(" +
+				"w != nil, \"w is non-nil\"),\n" +
+				"\t\tinvariant.Always(" +
+				"w.Index != nil, \"w.Index is non-nil\"),\n" +
 				"\t)\n" +
 				"\t_ = w\n" +
 				"}\n",
@@ -11860,68 +14162,96 @@ func Test_Invariant_Assertions_Channel_Emits_Cap_Triple(t *testing.T) {
 		Source    string
 		Want_Diag string
 	}{
+
 		{
 			Name: "channel param with only pointer assertion flagged for cap boundary",
 			Source: "package fixture\n\n" + fixture_invariant_import +
 				"\nconst fixture_hi = 100\n" +
 				"func f(ch chan int) {\n" +
 				"\tinvariant.Cross_Product(\n" +
-				"\t\tinvariant.Always(ch != nil, \"ch is non-nil\"),\n" +
+				"\t\tinvariant.Always(" +
+				"ch != nil, \"ch is non-nil\"),\n" +
 				"\t)\n" +
 				"\t_ = ch\n" +
 				"}\n",
 			Want_Diag: "cap(ch)",
 		},
+
 		{
 			Name: "pointer-to-channel param flagged for cap on the deref'd path",
 			Source: "package fixture\n\n" + fixture_invariant_import +
 				"\nconst fixture_hi = 100\n" +
 				"func f(ch *chan int) {\n" +
 				"\tinvariant.Cross_Product(\n" +
-				"\t\tinvariant.Always(ch != nil, \"ch is non-nil\"),\n" +
+				"\t\tinvariant.Always(" +
+				"ch != nil, \"ch is non-nil\"),\n" +
 				"\t)\n" +
 				"\t_ = ch\n" +
 				"}\n",
 			Want_Diag: "cap(*ch)",
 		},
+
 		{
 			Name: "channel param missing nil-check is flagged for pointer requirement",
 			Source: "package fixture\n\n" + fixture_invariant_import +
 				"\nconst fixture_hi = 100\n" +
 				"func f(ch chan int) {\n" +
 				"\tinvariant.Cross_Product(\n" +
-				"\t\tinvariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: cap(ch), Lo: 0, Hi: fixture_hi}),\n" +
+				"\t\tinvariant.Distinct_Boundary(" +
+				"&invariant.Boundary_Input[int]{" +
+				"X: cap(ch), Lo: 0, Hi: fixture_hi}),\n" +
 				"\t)\n" +
 				"\t_ = ch\n" +
 				"}\n",
 			Want_Diag: "ch chan int",
 		},
+	}
+	run_invariant_assertions_table(t, tests)
+}
+
+// Additional cases, split to keep each function within the length limit.
+func Test_Invariant_Assertions_Channel_Emits_Cap_Triple_Part2(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		Name      string
+		Filename  string
+		Source    string
+		Want_Diag string
+	}{
+
 		{
 			Name: "channel param missing cap zero-check is flagged",
 			Source: "package fixture\n\n" + fixture_invariant_import +
 				"\nconst fixture_hi = 100\n" +
 				"func f(ch chan int) {\n" +
 				"\tinvariant.Cross_Product(\n" +
-				"\t\tinvariant.Always(ch != nil, \"ch is non-nil\"),\n" +
-				"\t\tinvariant.Always(cap(ch) == 5, \"cap is exactly 5\"),\n" +
+				"\t\tinvariant.Always(" +
+				"ch != nil, \"ch is non-nil\"),\n" +
+				"\t\tinvariant.Always(" +
+				"cap(ch) == 5, \"cap is exactly 5\"),\n" +
 				"\t)\n" +
 				"\t_ = ch\n" +
 				"}\n",
 			Want_Diag: "zero_int",
 		},
+
 		{
 			Name: "channel param with full triple is clean",
 			Source: "package fixture\n\n" + fixture_invariant_import +
 				"\nconst fixture_hi = 100\n" +
 				"func f(ch chan int) {\n" +
 				"\tinvariant.Cross_Product(\n" +
-				"\t\tinvariant.Always(ch != nil, \"ch is non-nil\"),\n" +
-				"\t\tinvariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: cap(ch), Lo: 0, Hi: fixture_hi}),\n" +
+				"\t\tinvariant.Always(" +
+				"ch != nil, \"ch is non-nil\"),\n" +
+				"\t\tinvariant.Distinct_Boundary(" +
+				"&invariant.Boundary_Input[int]{" +
+				"X: cap(ch), Lo: 0, Hi: fixture_hi}),\n" +
 				"\t)\n" +
 				"\t_ = ch\n" +
 				"}\n",
 			Want_Diag: "",
 		},
+
 		{
 			Name: "channel struct field flagged for missing cap at depth 1",
 			Source: "package fixture\n\n" + fixture_invariant_import +
@@ -11931,7 +14261,8 @@ func Test_Invariant_Assertions_Channel_Emits_Cap_Triple(t *testing.T) {
 				"}\n" +
 				"func f(input f_Input) {\n" +
 				"\tinvariant.Cross_Product(\n" +
-				"\t\tinvariant.Always(input.Ch != nil, \"input.Ch is non-nil\"),\n" +
+				"\t\tinvariant.Always(" +
+				"input.Ch != nil, \"input.Ch is non-nil\"),\n" +
 				"\t)\n" +
 				"\t_ = input\n" +
 				"}\n",
@@ -12016,9 +14347,13 @@ func Test_Invariant_Assertions_Foreign_Type_Field_Opaque(t *testing.T) {
 				"}\n" +
 				"func f(w *Wrapper) {\n" +
 				"\tinvariant.Cross_Product(\n" +
-				"\t\tinvariant.Always(w != nil, \"w is non-nil\"),\n" +
-				"\t\tinvariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: w.Count, Lo: 0, Hi: fixture_hi}),\n" +
-				"\t\tinvariant.Always(w.Count == 0, \"w.Count is zero\"),\n" +
+				"\t\tinvariant.Always(" +
+				"w != nil, \"w is non-nil\"),\n" +
+				"\t\tinvariant.Distinct_Boundary(" +
+				"&invariant.Boundary_Input[int]{" +
+				"X:w.Count, Lo: 0, Hi: fixture_hi}),\n" +
+				"\t\tinvariant.Always(" +
+				"w.Count == 0, \"w.Count is zero\"),\n" +
 				"\t)\n" +
 				"\t_ = w\n" +
 				"}\n",
@@ -12052,7 +14387,8 @@ func Test_Invariant_Assertions_Struct_Opaque_On_Mutex(t *testing.T) {
 				"}\n" +
 				"func f(w *Wrapper) {\n" +
 				"\tinvariant.Cross_Product(\n" +
-				"\t\tinvariant.Always(w != nil, \"w is non-nil\"),\n" +
+				"\t\tinvariant.Always(" +
+				"w != nil, \"w is non-nil\"),\n" +
 				"\t)\n" +
 				"\t_ = w\n" +
 				"}\n",
@@ -12068,14 +14404,16 @@ func Test_Invariant_Assertions_Struct_Opaque_On_Mutex(t *testing.T) {
 				"}\n" +
 				"func f(w *Wrapper) {\n" +
 				"\tinvariant.Cross_Product(\n" +
-				"\t\tinvariant.Always(w != nil, \"w is non-nil\"),\n" +
+				"\t\tinvariant.Always(" +
+				"w != nil, \"w is non-nil\"),\n" +
 				"\t)\n" +
 				"\t_ = w\n" +
 				"}\n",
 			Want_Diag: "",
 		},
 		{
-			Name: "struct with embedded sync.Mutex (no field name) still triggers opaque-on-mutex",
+			Name: "struct with embedded sync.Mutex (no field name) " +
+				"still triggers opaque-on-mutex",
 			Source: "package fixture\n\nimport \"sync\"\n" + fixture_invariant_import +
 				"\nconst fixture_hi = 100\n" +
 				"type Wrapper struct {\n" +
@@ -12084,7 +14422,8 @@ func Test_Invariant_Assertions_Struct_Opaque_On_Mutex(t *testing.T) {
 				"}\n" +
 				"func f(w *Wrapper) {\n" +
 				"\tinvariant.Cross_Product(\n" +
-				"\t\tinvariant.Always(w != nil, \"w is non-nil\"),\n" +
+				"\t\tinvariant.Always(" +
+				"w != nil, \"w is non-nil\"),\n" +
 				"\t)\n" +
 				"\t_ = w\n" +
 				"}\n",
@@ -12117,7 +14456,8 @@ func Test_Invariant_Assertions_Struct_Field_Type_Expansion(t *testing.T) {
 				"}\n" +
 				"func f(w *Wrapper) {\n" +
 				"\tinvariant.Cross_Product(\n" +
-				"\t\tinvariant.Always(w != nil, \"w is non-nil\"),\n" +
+				"\t\tinvariant.Always(" +
+				"w != nil, \"w is non-nil\"),\n" +
 				"\t)\n" +
 				"\t_ = w\n" +
 				"}\n",
@@ -12197,7 +14537,9 @@ func Test_Invariant_Assertions_Slice_Dual_Position_Coverage(t *testing.T) {
 				"\nconst fixture_hi = 100\n" +
 				"func f(rows []int) {\n" +
 				"\tinvariant.Cross_Product(\n" +
-				"\t\tinvariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: len(rows), Lo: 0, Hi: fixture_hi}),\n" +
+				"\t\tinvariant.Distinct_Boundary(" +
+				"&invariant.Boundary_Input[int]{" +
+				"X:len(rows), Lo: 0, Hi: fixture_hi}),\n" +
 				"\t)\n" +
 				"}\n",
 			Want_Diag: "param defer `rows []int` missing invariant boundary_int",
@@ -12209,7 +14551,8 @@ func Test_Invariant_Assertions_Slice_Dual_Position_Coverage(t *testing.T) {
 				"func f(rows []int) {\n" +
 				"\tdefer func() {\n" +
 				"\t\tinvariant.Cross_Product(\n" +
-				"\t\t\tinvariant.Distinct_Boundary(&invariant.Boundary_Input[int]{\n" +
+				"\t\t\tinvariant.Distinct_Boundary(" +
+				"&invariant.Boundary_Input[int]{\n" +
 				"\t\t\t\tX: len(rows), Lo: 0, Hi: fixture_hi,\n" +
 				"\t\t\t}),\n" +
 				"\t\t)\n" +
@@ -12219,19 +14562,22 @@ func Test_Invariant_Assertions_Slice_Dual_Position_Coverage(t *testing.T) {
 			Want_Diag: "param `rows []int` missing invariant boundary_int",
 		},
 		{
-			Name: "slice param with both prologue and defer Distinct_Boundary on len() satisfies all",
+			Name: "slice param with both prologue and defer " +
+				"Distinct_Boundary on len() satisfies all",
 			Source: "package fixture\n\n" + fixture_invariant_import +
 				"\nconst fixture_hi = 100\n" +
 				"func f(rows []int) {\n" +
 				"\tdefer func() {\n" +
 				"\t\tinvariant.Cross_Product(\n" +
-				"\t\t\tinvariant.Distinct_Boundary(&invariant.Boundary_Input[int]{\n" +
+				"\t\t\tinvariant.Distinct_Boundary(" +
+				"&invariant.Boundary_Input[int]{\n" +
 				"\t\t\t\tX: len(rows), Lo: 0, Hi: fixture_hi,\n" +
 				"\t\t\t}),\n" +
 				"\t\t)\n" +
 				"\t}()\n" +
 				"\tinvariant.Cross_Product(\n" +
-				"\t\tinvariant.Distinct_Boundary(&invariant.Boundary_Input[int]{\n" +
+				"\t\tinvariant.Distinct_Boundary(" +
+				"&invariant.Boundary_Input[int]{\n" +
 				"\t\t\tX: len(rows), Lo: 0, Hi: fixture_hi,\n" +
 				"\t\t}),\n" +
 				"\t)\n" +
@@ -12255,21 +14601,27 @@ func Test_Invariant_Assertions_Slice_Empty_Comparison_Credits(t *testing.T) {
 		Want_Diag string
 	}{
 		{
-			Name: "slice param with len(rows)==0 + boundary in both positions satisfies all",
+			Name: "slice param with len(rows)==0 + boundary " +
+				"in both positions satisfies all",
 			Source: "package fixture\n\n" + fixture_invariant_import +
 				"\nconst fixture_hi = 100\n" +
 				"func f(rows []int) {\n" +
 				"\tdefer func() {\n" +
 				"\t\tinvariant.Cross_Product(\n" +
-				"\t\t\tinvariant.Distinct_Boundary(&invariant.Boundary_Input[int]{\n" +
+				"\t\t\tinvariant.Distinct_Boundary(" +
+				"&invariant.Boundary_Input[int]{\n" +
 				"\t\t\t\tX: len(rows), Lo: 1, Hi: fixture_hi,\n" +
 				"\t\t\t}),\n" +
-				"\t\t\tinvariant.Always(len(rows) == 0, \"rows is empty\"),\n" +
+				"\t\t\tinvariant.Always(" +
+				"len(rows) == 0, \"rows is empty\"),\n" +
 				"\t\t)\n" +
 				"\t}()\n" +
 				"\tinvariant.Cross_Product(\n" +
-				"\t\tinvariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: len(rows), Lo: 1, Hi: fixture_hi}),\n" +
-				"\t\tinvariant.Always(len(rows) == 0, \"rows is empty\"),\n" +
+				"\t\tinvariant.Distinct_Boundary(" +
+				"&invariant.Boundary_Input[int]{" +
+				"X: len(rows), Lo: 1, Hi: fixture_hi}),\n" +
+				"\t\tinvariant.Always(" +
+				"len(rows) == 0, \"rows is empty\"),\n" +
 				"\t)\n" +
 				"\t_ = rows\n" +
 				"}\n",
@@ -12292,19 +14644,23 @@ func Test_Invariant_Assertions_Slice_Excludes_Zero_Auto_Credits(t *testing.T) {
 		Want_Diag string
 	}{
 		{
-			Name: "slice param with Lo=1 boundary in both positions auto-credits zero_slice",
+			Name: "slice param with Lo=1 boundary in both positions " +
+				"auto-credits zero_slice",
 			Source: "package fixture\n\n" + fixture_invariant_import +
 				"\nconst fixture_hi = 100\n" +
 				"func f(rows []int) {\n" +
 				"\tdefer func() {\n" +
 				"\t\tinvariant.Cross_Product(\n" +
-				"\t\t\tinvariant.Distinct_Boundary(&invariant.Boundary_Input[int]{\n" +
+				"\t\t\tinvariant.Distinct_Boundary(" +
+				"&invariant.Boundary_Input[int]{\n" +
 				"\t\t\t\tX: len(rows), Lo: 1, Hi: fixture_hi,\n" +
 				"\t\t\t}),\n" +
 				"\t\t)\n" +
 				"\t}()\n" +
 				"\tinvariant.Cross_Product(\n" +
-				"\t\tinvariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: len(rows), Lo: 1, Hi: fixture_hi}),\n" +
+				"\t\tinvariant.Distinct_Boundary(" +
+				"&invariant.Boundary_Input[int]{" +
+				"X: len(rows), Lo: 1, Hi: fixture_hi}),\n" +
 				"\t)\n" +
 				"\t_ = rows\n" +
 				"}\n",
@@ -12326,13 +14682,15 @@ func Test_Invariant_Assertions_Slice_Named_Return_Defer_Only(t *testing.T) {
 		Want_Diag string
 	}{
 		{
-			Name: "slice named return with defer Distinct_Boundary on len() satisfies all",
+			Name: "slice named return with defer Distinct_Boundary " +
+				"on len() satisfies all",
 			Source: "package fixture\n\n" + fixture_invariant_import +
 				"\nconst fixture_hi = 100\n" +
 				"func f() (rows []int) {\n" +
 				"\tdefer func() {\n" +
 				"\t\tinvariant.Cross_Product(\n" +
-				"\t\t\tinvariant.Distinct_Boundary(&invariant.Boundary_Input[int]{\n" +
+				"\t\t\tinvariant.Distinct_Boundary(" +
+				"&invariant.Boundary_Input[int]{\n" +
 				"\t\t\t\tX: len(rows), Lo: 0, Hi: fixture_hi,\n" +
 				"\t\t\t}),\n" +
 				"\t\t)\n" +
@@ -12365,19 +14723,22 @@ func Test_Invariant_Assertions_Variadic_Treated_As_Slice(t *testing.T) {
 			Want_Diag: "param `vals ...int` missing invariant zero_slice",
 		},
 		{
-			Name: "variadic param with both prologue and defer Distinct_Boundary on len() satisfies all",
+			Name: "variadic param with both prologue and defer " +
+				"Distinct_Boundary on len() satisfies all",
 			Source: "package fixture\n\n" + fixture_invariant_import +
 				"\nconst fixture_hi = 100\n" +
 				"func f(vals ...int) {\n" +
 				"\tdefer func() {\n" +
 				"\t\tinvariant.Cross_Product(\n" +
-				"\t\t\tinvariant.Distinct_Boundary(&invariant.Boundary_Input[int]{\n" +
+				"\t\t\tinvariant.Distinct_Boundary(" +
+				"&invariant.Boundary_Input[int]{\n" +
 				"\t\t\t\tX: len(vals), Lo: 0, Hi: fixture_hi,\n" +
 				"\t\t\t}),\n" +
 				"\t\t)\n" +
 				"\t}()\n" +
 				"\tinvariant.Cross_Product(\n" +
-				"\t\tinvariant.Distinct_Boundary(&invariant.Boundary_Input[int]{\n" +
+				"\t\tinvariant.Distinct_Boundary(" +
+				"&invariant.Boundary_Input[int]{\n" +
 				"\t\t\tX: len(vals), Lo: 0, Hi: fixture_hi,\n" +
 				"\t\t}),\n" +
 				"\t)\n" +
@@ -12406,7 +14767,8 @@ func Test_Invariant_Assertions_Slice_Named_Return_Missing_Coverage(t *testing.T)
 				"\nconst fixture_hi = 100\n" +
 				"func f() (rows []int) {\n" +
 				"\tdefer func() {\n" +
-				"\t\tinvariant.Cross_Product(invariant.Sometimes(rows == nil, \"rows can be nil\"))\n" +
+				"\t\tinvariant.Cross_Product(" +
+				"invariant.Sometimes(rows == nil, \"rows can be nil\"))\n" +
 				"\t}()\n" +
 				"\treturn nil\n" +
 				"}\n",
@@ -12438,13 +14800,15 @@ func Test_Invariant_Assertions_Slice_Of_Struct_No_Element_Recursion(t *testing.T
 				"func f(rows []Row) {\n" +
 				"\tdefer func() {\n" +
 				"\t\tinvariant.Cross_Product(\n" +
-				"\t\t\tinvariant.Distinct_Boundary(&invariant.Boundary_Input[int]{\n" +
+				"\t\t\tinvariant.Distinct_Boundary(" +
+				"&invariant.Boundary_Input[int]{\n" +
 				"\t\t\t\tX: len(rows), Lo: 0, Hi: fixture_hi,\n" +
 				"\t\t\t}),\n" +
 				"\t\t)\n" +
 				"\t}()\n" +
 				"\tinvariant.Cross_Product(\n" +
-				"\t\tinvariant.Distinct_Boundary(&invariant.Boundary_Input[int]{\n" +
+				"\t\tinvariant.Distinct_Boundary(" +
+				"&invariant.Boundary_Input[int]{\n" +
 				"\t\t\tX: len(rows), Lo: 0, Hi: fixture_hi,\n" +
 				"\t\t}),\n" +
 				"\t)\n" +
@@ -12461,7 +14825,8 @@ func Test_Invariant_Assertions_Slice_Of_Struct_No_Element_Recursion(t *testing.T
 // dispatch path observes the non-nil branch.
 func Test_Coverage_Backfill_Banned_Abbreviation_D(t *testing.T) {
 	t.Parallel()
-	_, err := lint.Check_Source("test.go", "package x\n\nfunc f(dir string) string { return dir }\n")
+	_, err := lint.Check_Source("test.go",
+		"package x\n\nfunc f(dir string) string { return dir }\n")
 	if err != nil {
 		t.Fatalf("parse: %v", err)
 	}
@@ -12493,7 +14858,9 @@ func Test_Coverage_Backfill_Shadow_Walker_Top_Level_If_Range(t *testing.T) {
 		// push_range_statement_add_variable with Lo parent_names (if-scope empty)
 		// AND Lo grandparent_names (function-scope empty, no params) for both the
 		// True key call (i) and the False value call (nil) of the range key/value.
-		"package fixture\n\nfunc h() {\n\tif true {\n\t\tfor i := range 1 {\n\t\t\t_ = i\n\t\t}\n\t}\n}\n",
+		"package fixture\n\n" +
+			"func h() {\n" +
+			"\tif true {\n\t\tfor i := range 1 {\n\t\t\t_ = i\n\t\t}\n\t}\n}\n",
 		// Range with no key/value (both nil) nested in if-block exercises False
 		// e_present in both x.Key and x.Value add_variable calls.
 		"package fixture\n\nfunc k() {\n\tif true {\n\t\tfor range 1 {\n\t\t}\n\t}\n}\n",
@@ -12501,7 +14868,8 @@ func Test_Coverage_Backfill_Shadow_Walker_Top_Level_If_Range(t *testing.T) {
 		// (Key is non-nil Ident) but Name="_" short-circuits before adding to
 		// scope_value.Names, so names_axis stays Lo at defer time. Nested in
 		// if-block keeps parent_names and grandparent_names at Lo.
-		"package fixture\n\nfunc m() {\n\tif true {\n\t\tfor _ = range 1 {\n\t\t}\n\t}\n}\n",
+		"package fixture\n\n" +
+			"func m() {\n\tif true {\n\t\tfor _ = range 1 {\n\t\t}\n\t}\n}\n",
 	}
 	for _, source := range cases {
 		diags, err := lint.Check_Source("test.go", source)
@@ -12579,7 +14947,9 @@ func Test_Invariant_Assertions_Map_Dual_Position_Coverage(t *testing.T) {
 				"\nconst fixture_hi = 100\n" +
 				"func f(m map[string]int) {\n" +
 				"\tinvariant.Cross_Product(\n" +
-				"\t\tinvariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: len(m), Lo: 0, Hi: fixture_hi}),\n" +
+				"\t\tinvariant.Distinct_Boundary(" +
+				"&invariant.Boundary_Input[int]{" +
+				"X: len(m), Lo: 0, Hi: fixture_hi}),\n" +
 				"\t)\n" +
 				"}\n",
 			Want_Diag: "param defer `m map[string]int` missing invariant boundary_int",
@@ -12591,7 +14961,9 @@ func Test_Invariant_Assertions_Map_Dual_Position_Coverage(t *testing.T) {
 				"func f(m map[string]int) {\n" +
 				"\tdefer func() {\n" +
 				"\t\tinvariant.Cross_Product(\n" +
-				"\t\t\tinvariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: len(m), Lo: 0, Hi: fixture_hi}),\n" +
+				"\t\t\tinvariant.Distinct_Boundary(" +
+				"&invariant.Boundary_Input[int]{" +
+				"X: len(m), Lo: 0, Hi: fixture_hi}),\n" +
 				"\t\t)\n" +
 				"\t}()\n" +
 				"\t_ = m\n" +
@@ -12599,17 +14971,22 @@ func Test_Invariant_Assertions_Map_Dual_Position_Coverage(t *testing.T) {
 			Want_Diag: "param `m map[string]int` missing invariant boundary_int",
 		},
 		{
-			Name: "map param with both prologue and defer Distinct_Boundary on len() satisfies all",
+			Name: "map param with both prologue and defer " +
+				"Distinct_Boundary on len() satisfies all",
 			Source: "package fixture\n\n" + fixture_invariant_import +
 				"\nconst fixture_hi = 100\n" +
 				"func f(m map[string]int) {\n" +
 				"\tdefer func() {\n" +
 				"\t\tinvariant.Cross_Product(\n" +
-				"\t\t\tinvariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: len(m), Lo: 0, Hi: fixture_hi}),\n" +
+				"\t\t\tinvariant.Distinct_Boundary(" +
+				"&invariant.Boundary_Input[int]{" +
+				"X: len(m), Lo: 0, Hi: fixture_hi}),\n" +
 				"\t\t)\n" +
 				"\t}()\n" +
 				"\tinvariant.Cross_Product(\n" +
-				"\t\tinvariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: len(m), Lo: 0, Hi: fixture_hi}),\n" +
+				"\t\tinvariant.Distinct_Boundary(" +
+				"&invariant.Boundary_Input[int]{" +
+				"X: len(m), Lo: 0, Hi: fixture_hi}),\n" +
 				"\t)\n" +
 				"\t_ = m\n" +
 				"}\n",
@@ -12637,13 +15014,19 @@ func Test_Invariant_Assertions_Map_Empty_Comparison_Credits(t *testing.T) {
 				"func f(m map[string]int) {\n" +
 				"\tdefer func() {\n" +
 				"\t\tinvariant.Cross_Product(\n" +
-				"\t\t\tinvariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: len(m), Lo: 1, Hi: fixture_hi}),\n" +
-				"\t\t\tinvariant.Always(len(m) == 0, \"m is empty\"),\n" +
+				"\t\t\tinvariant.Distinct_Boundary(" +
+				"&invariant.Boundary_Input[int]{" +
+				"X: len(m), Lo: 1, Hi: fixture_hi}),\n" +
+				"\t\t\tinvariant.Always(" +
+				"len(m) == 0, \"m is empty\"),\n" +
 				"\t\t)\n" +
 				"\t}()\n" +
 				"\tinvariant.Cross_Product(\n" +
-				"\t\tinvariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: len(m), Lo: 1, Hi: fixture_hi}),\n" +
-				"\t\tinvariant.Always(len(m) == 0, \"m is empty\"),\n" +
+				"\t\tinvariant.Distinct_Boundary(" +
+				"&invariant.Boundary_Input[int]{" +
+				"X: len(m), Lo: 1, Hi: fixture_hi}),\n" +
+				"\t\tinvariant.Always(" +
+				"len(m) == 0, \"m is empty\"),\n" +
 				"\t)\n" +
 				"\t_ = m\n" +
 				"}\n",
@@ -12665,17 +15048,22 @@ func Test_Invariant_Assertions_Map_Excludes_Zero_Auto_Credits(t *testing.T) {
 		Want_Diag string
 	}{
 		{
-			Name: "map param with Lo=1 boundary in both positions auto-credits zero_map",
+			Name: "map param with Lo=1 boundary in both positions " +
+				"auto-credits zero_map",
 			Source: "package fixture\n\n" + fixture_invariant_import +
 				"\nconst fixture_hi = 100\n" +
 				"func f(m map[string]int) {\n" +
 				"\tdefer func() {\n" +
 				"\t\tinvariant.Cross_Product(\n" +
-				"\t\t\tinvariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: len(m), Lo: 1, Hi: fixture_hi}),\n" +
+				"\t\t\tinvariant.Distinct_Boundary(" +
+				"&invariant.Boundary_Input[int]{" +
+				"X: len(m), Lo: 1, Hi: fixture_hi}),\n" +
 				"\t\t)\n" +
 				"\t}()\n" +
 				"\tinvariant.Cross_Product(\n" +
-				"\t\tinvariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: len(m), Lo: 1, Hi: fixture_hi}),\n" +
+				"\t\tinvariant.Distinct_Boundary(" +
+				"&invariant.Boundary_Input[int]{" +
+				"X: len(m), Lo: 1, Hi: fixture_hi}),\n" +
 				"\t)\n" +
 				"\t_ = m\n" +
 				"}\n",
@@ -12697,13 +15085,16 @@ func Test_Invariant_Assertions_Map_Named_Return_Defer_Only(t *testing.T) {
 		Want_Diag string
 	}{
 		{
-			Name: "map named return with defer Distinct_Boundary on len() satisfies all",
+			Name: "map named return with defer Distinct_Boundary " +
+				"on len() satisfies all",
 			Source: "package fixture\n\n" + fixture_invariant_import +
 				"\nconst fixture_hi = 100\n" +
 				"func f() (m map[string]int) {\n" +
 				"\tdefer func() {\n" +
 				"\t\tinvariant.Cross_Product(\n" +
-				"\t\t\tinvariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: len(m), Lo: 0, Hi: fixture_hi}),\n" +
+				"\t\t\tinvariant.Distinct_Boundary(" +
+				"&invariant.Boundary_Input[int]{" +
+				"X: len(m), Lo: 0, Hi: fixture_hi}),\n" +
 				"\t\t)\n" +
 				"\t}()\n" +
 				"\treturn nil\n" +
@@ -12735,13 +15126,15 @@ func Test_Invariant_Assertions_Map_Of_Struct_No_Element_Recursion(t *testing.T) 
 				"func f(rows map[string]Row) {\n" +
 				"\tdefer func() {\n" +
 				"\t\tinvariant.Cross_Product(\n" +
-				"\t\t\tinvariant.Distinct_Boundary(&invariant.Boundary_Input[int]{\n" +
+				"\t\t\tinvariant.Distinct_Boundary(" +
+				"&invariant.Boundary_Input[int]{\n" +
 				"\t\t\t\tX: len(rows), Lo: 0, Hi: fixture_hi,\n" +
 				"\t\t\t}),\n" +
 				"\t\t)\n" +
 				"\t}()\n" +
 				"\tinvariant.Cross_Product(\n" +
-				"\t\tinvariant.Distinct_Boundary(&invariant.Boundary_Input[int]{\n" +
+				"\t\tinvariant.Distinct_Boundary(" +
+				"&invariant.Boundary_Input[int]{\n" +
 				"\t\t\tX: len(rows), Lo: 0, Hi: fixture_hi,\n" +
 				"\t\t}),\n" +
 				"\t)\n" +
@@ -12760,7 +15153,8 @@ func Test_Invariant_Assertions_Map_Of_Struct_No_Element_Recursion(t *testing.T) 
 func Test_Coverage_Backfill_Check_File_Empty_Source(t *testing.T) {
 	t.Parallel()
 	file_set := token.NewFileSet()
-	file, err := parser.ParseFile(file_set, "empty.go", "package empty\n", parser.SkipObjectResolution)
+	file, err := parser.ParseFile(
+		file_set, "empty.go", "package empty\n", parser.SkipObjectResolution)
 	if err != nil {
 		t.Fatalf("parse: %v", err)
 	}
