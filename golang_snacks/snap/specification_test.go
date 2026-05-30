@@ -8,35 +8,11 @@ import (
 	"testing"
 	"testing/fstest"
 
-	snap "github.com/james-orcales/james-orcales/golang_snacks/snap/v2"
+	snap "github.com/james-orcales/james-orcales/golang_snacks/snap"
 )
 
-func test_snapper(source map[string]string) (s *snap.Snapper, output_buffer *bytes.Buffer, w_buffer *bytes.Buffer) {
-	memory_file_system := fstest.MapFS{}
-	for path, content := range source {
-		memory_file_system[path] = &fstest.MapFile{Data: []byte(content)}
-	}
-	output_buffer = &bytes.Buffer{}
-	w_buffer = &bytes.Buffer{}
-	s = &snap.Snapper{
-		File_System: memory_file_system,
-		W:           w_buffer,
-		Output:      output_buffer,
-		Write_File: func(path string, data []byte, perm fs.FileMode) (err error) {
-			return nil
-		},
-		Get_Caller: func(skip int) (frame_information snap.Frame_Information, err error) {
-			return snap.Frame_Information{}, nil
-		},
-		Stdout: &bytes.Buffer{},
-		Stderr: &bytes.Buffer{},
-		Edits:  make(map[string][]snap.File_Edit),
-	}
-	return s, output_buffer, w_buffer
-}
-
-// Test_Is_Equal_Match verifies that Is_Equal returns true and emits no output when strings match.
-func Test_Is_Equal_Match(t *testing.T) {
+// Test_Equal_Match verifies a matching value returns true and emits no output.
+func Test_Equal_Match(t *testing.T) {
 	s, output_buffer, _ := test_snapper(nil)
 	snapshot := snap.New_Snapshot(&snap.New_Snapshot_Input{
 		Snapper:   s,
@@ -45,15 +21,15 @@ func Test_Is_Equal_Match(t *testing.T) {
 		Expected:  "hello",
 	})
 	if !snap.Snapshot_Is_Equal(snapshot, "hello") {
-		t.Fatal("expected Is_Equal to return true for matching strings")
+		t.Fatal("expected Snapshot_Is_Equal to return true for matching strings")
 	}
 	if output_buffer.Len() != 0 {
 		t.Fatalf("expected no diagnostic output, got: %s", output_buffer.String())
 	}
 }
 
-// Test_Is_Equal_Mismatch verifies that Is_Equal returns false and prints a diff on mismatch.
-func Test_Is_Equal_Mismatch(t *testing.T) {
+// Test_Equal_Mismatch verifies a differing value returns false and prints a diff.
+func Test_Equal_Mismatch(t *testing.T) {
 	s, output_buffer, _ := test_snapper(nil)
 	snapshot := snap.New_Snapshot(&snap.New_Snapshot_Input{
 		Snapper:   s,
@@ -62,16 +38,16 @@ func Test_Is_Equal_Mismatch(t *testing.T) {
 		Expected:  "expected",
 	})
 	if snap.Snapshot_Is_Equal(snapshot, "actual") {
-		t.Fatal("expected Is_Equal to return false for mismatching strings")
+		t.Fatal("expected Snapshot_Is_Equal to return false for mismatching strings")
 	}
 	if !strings.Contains(output_buffer.String(), "Snapshot mismatch") {
 		t.Fatalf("expected mismatch header in output, got: %s", output_buffer.String())
 	}
 }
 
-// Test_Is_Equal_Mismatch_Legend verifies the mismatch header carries a colored
-// 'expected vs actual' legend so readers can map - / + to red / green.
-func Test_Is_Equal_Mismatch_Legend(t *testing.T) {
+// Test_Equal_Legend verifies the mismatch header carries a colored
+// expected-vs-actual legend so readers can map - / + to red / green.
+func Test_Equal_Legend(t *testing.T) {
 	s, output_buffer, _ := test_snapper(nil)
 	snapshot := snap.New_Snapshot(&snap.New_Snapshot_Input{
 		Snapper:   s,
@@ -81,18 +57,18 @@ func Test_Is_Equal_Mismatch_Legend(t *testing.T) {
 	})
 	snap.Snapshot_Is_Equal(snapshot, "actual")
 
-	out := output_buffer.String()
-	if !strings.Contains(out, "\033[31mexpected\033[0m") {
-		t.Fatalf("expected red 'expected' in legend, got:\n%s", out)
+	output := output_buffer.String()
+	if !strings.Contains(output, "\033[31mexpected\033[0m") {
+		t.Fatalf("expected red 'expected' in legend, got:\n%s", output)
 	}
-	if !strings.Contains(out, "\033[32mactual\033[0m") {
-		t.Fatalf("expected green 'actual' in legend, got:\n%s", out)
+	if !strings.Contains(output, "\033[32mactual\033[0m") {
+		t.Fatalf("expected green 'actual' in legend, got:\n%s", output)
 	}
 }
 
-// Test_Is_Equal_Edit verifies that Is_Equal with Should_Edit=true writes the updated
-// source content to W and prints an UPDATED SNAPSHOT notice to Output.
-func Test_Is_Equal_Edit(t *testing.T) {
+// Test_Edit_Rewrite verifies Should_Edit writes the updated source content to W
+// and prints an UPDATED SNAPSHOT notice to Output.
+func Test_Edit_Rewrite(t *testing.T) {
 	// Line 5 contains a snap.Edit call — the line-finder scans newlines to locate it.
 	source := "package foo\n\nfunc F() {}\n\nvar _ = snap.Edit(`old`)\n"
 	s, output_buffer, w_buffer := test_snapper(map[string]string{
@@ -106,7 +82,7 @@ func Test_Is_Equal_Edit(t *testing.T) {
 		Should_Edit: true,
 	})
 	if !snap.Snapshot_Is_Equal(snapshot, "new") {
-		t.Fatal("expected Is_Equal with Should_Edit=true to return true")
+		t.Fatal("expected Snapshot_Is_Equal with Should_Edit=true to return true")
 	}
 	if !strings.Contains(output_buffer.String(), "UPDATED SNAPSHOT") {
 		t.Fatalf("expected UPDATED SNAPSHOT notice, got: %s", output_buffer.String())
@@ -116,9 +92,9 @@ func Test_Is_Equal_Edit(t *testing.T) {
 	}
 }
 
-// Test_Is_Equal_Edit_Line_Delta verifies that a multi-line replacement records the
-// correct line delta in Snapper.Edits for use by subsequent edits in the same file.
-func Test_Is_Equal_Edit_Line_Delta(t *testing.T) {
+// Test_Edit_Line_Delta verifies a multi-line replacement records the correct
+// line delta in Snapper.Edits for use by subsequent edits in the same file.
+func Test_Edit_Line_Delta(t *testing.T) {
 	source := "package foo\n\n\nvar a = snap.Edit(`x`)\nvar b = snap.Edit(`y`)\n"
 	s, _, _ := test_snapper(map[string]string{
 		"fake/test.go": source,
@@ -141,8 +117,8 @@ func Test_Is_Equal_Edit_Line_Delta(t *testing.T) {
 	}
 }
 
-// Test_Expect_Panic_Match verifies that Expect_Panic passes when the panic message matches.
-func Test_Expect_Panic_Match(t *testing.T) {
+// Test_Panic_Match verifies Expect_Panic passes when the panic message matches.
+func Test_Panic_Match(t *testing.T) {
 	s, _, _ := test_snapper(nil)
 	snapshot := snap.New_Snapshot(&snap.New_Snapshot_Input{
 		Snapper:   s,
@@ -153,9 +129,9 @@ func Test_Expect_Panic_Match(t *testing.T) {
 	snap.Expect_Panic(t, snapshot, func() { panic("boom") })
 }
 
-// Test_Expect_Panic_No_Panic verifies that Is_Equal correctly identifies a mismatch
-// when the actual panic message differs from the expected snapshot.
-func Test_Expect_Panic_No_Panic(t *testing.T) {
+// Test_Panic_Mismatch verifies a panic message differing from the snapshot is
+// reported as a failed comparison.
+func Test_Panic_Mismatch(t *testing.T) {
 	s, _, _ := test_snapper(nil)
 	snapshot := snap.New_Snapshot(&snap.New_Snapshot_Input{
 		Snapper:   s,
@@ -164,11 +140,11 @@ func Test_Expect_Panic_No_Panic(t *testing.T) {
 		Expected:  "boom",
 	})
 	if snap.Snapshot_Is_Equal(snapshot, "not boom") {
-		t.Fatal("expected Is_Equal to return false for mismatching panic messages")
+		t.Fatal("expected Snapshot_Is_Equal to return false for mismatching panic messages")
 	}
 }
 
-// Test_Batch_Expect verifies that Batch_Expect runs all entries as subtests.
+// Test_Batch_Expect verifies Batch_Expect runs every entry as its own subtest.
 func Test_Batch_Expect(t *testing.T) {
 	s, _, _ := test_snapper(nil)
 	entries := []snap.Entry[string]{
@@ -188,8 +164,9 @@ func Test_Batch_Expect(t *testing.T) {
 	}, entries)
 }
 
-// Test_Run verifies that Run captures fn's output and asserts it against the snapshot.
-func Test_Run(t *testing.T) {
+// Test_Run_Capture verifies Run captures the callback's output and asserts it
+// against the snapshot.
+func Test_Run_Capture(t *testing.T) {
 	s, _, _ := test_snapper(nil)
 	// Fprintln writes "hello\n"; Run wraps it as "\nSTDOUT:\nhello\n\n".
 	snapshot := snap.New_Snapshot(&snap.New_Snapshot_Input{
@@ -201,4 +178,31 @@ func Test_Run(t *testing.T) {
 	snap.Run(t, func() {
 		fmt.Fprintln(s.Stdout, "hello")
 	}, snapshot)
+}
+
+// Builds a Snapper backed by an in-memory file system and capture buffers.
+func test_snapper(source map[string]string) (
+	s *snap.Snapper, output_buffer *bytes.Buffer, w_buffer *bytes.Buffer,
+) {
+	memory_file_system := fstest.MapFS{}
+	for path, content := range source {
+		memory_file_system[path] = &fstest.MapFile{Data: []byte(content)}
+	}
+	output_buffer = &bytes.Buffer{}
+	w_buffer = &bytes.Buffer{}
+	s = &snap.Snapper{
+		File_System: memory_file_system,
+		W:           w_buffer,
+		Output:      output_buffer,
+		Write_File: func(path string, data []byte, perm fs.FileMode) (err error) {
+			return nil
+		},
+		Get_Caller: func(skip int) (frame_information snap.Frame_Information, err error) {
+			return snap.Frame_Information{}, nil
+		},
+		Stdout: &bytes.Buffer{},
+		Stderr: &bytes.Buffer{},
+		Edits:  make(map[string][]snap.File_Edit),
+	}
+	return s, output_buffer, w_buffer
 }

@@ -1,11 +1,11 @@
-// Package snap_default is the composition-tier sibling of snap. It wires
+// Package snap is the composition-tier sibling of the snap library. It wires
 // the snap library to the real OS (filesystem, stderr, runtime.Callers) and
 // re-exports the surface so callers can write:
 //
-//	import snap "github.com/james-orcales/james-orcales/golang_snacks/snap/v2/snap_default"
+//	import snap "github.com/james-orcales/james-orcales/golang_snacks/snap/default"
 //
 // and use snap.Init / snap.Edit / snap.Expect / … as if no split had happened.
-package snap_default
+package snap
 
 import (
 	"bytes"
@@ -16,16 +16,23 @@ import (
 	"github.com/james-orcales/james-orcales/golang_snacks/snap"
 )
 
-// Type aliases re-export the library's types so callers that import only this
-// package don't need a second import to refer to Snapper, Snapshot, etc.
-type (
-	Snapper            = snap.Snapper
-	Snapshot           = snap.Snapshot
-	File_Edit          = snap.File_Edit
-	Frame_Information  = snap.Frame_Information
-	New_Snapshot_Input = snap.New_Snapshot_Input
-	Entry[T any]       = snap.Entry[T]
-)
+// Snapper re-exports the library's Snapper so callers need only this import.
+type Snapper = snap.Snapper
+
+// Snapshot re-exports the library's Snapshot.
+type Snapshot = snap.Snapshot
+
+// File_Edit re-exports the library's File_Edit.
+type File_Edit = snap.File_Edit
+
+// Frame_Information re-exports the library's Frame_Information.
+type Frame_Information = snap.Frame_Information
+
+// New_Snapshot_Input re-exports the library's New_Snapshot_Input.
+type New_Snapshot_Input = snap.New_Snapshot_Input
+
+// Entry re-exports the library's Entry.
+type Entry[T any] = snap.Entry[T]
 
 // Default is the OS-bound Snapper used by the package-level Init / Edit / …
 // convenience functions. Tests that need to redirect I/O construct their own
@@ -56,7 +63,7 @@ func Init_Default_Snapper() (snapper *snap.Snapper) {
 // captured via runtime.Callers. WARN: brittle under go:generate — the
 // source location is captured at runtime.
 func Init(data string) (snapshot snap.Snapshot) {
-	// runtime.Callers frames from inside Get_Caller: 0 Callers, 1 Get_Caller,
+	// Runtime.Callers frames from inside Get_Caller: 0 Callers, 1 Get_Caller,
 	// 2 Snapper_Init_At, 3 this wrapper, 4 the test call site.
 	return snap.Snapper_Init_At(Default, 4, data, false)
 }

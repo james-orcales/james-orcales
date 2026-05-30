@@ -6,7 +6,7 @@
 //
 // This package is the pure library tier. All dependencies arrive as fields of
 // Snapper. For an OS-bound default ready to drop into tests, import the sibling
-// composition-tier package github.com/james-orcales/james-orcales/golang_snacks/snap/v2/snap_default.
+// composition-tier package snap/default.
 package snap
 
 import (
@@ -23,23 +23,31 @@ import (
 	"github.com/james-orcales/james-orcales/golang_snacks/myers"
 )
 
-// mismatch_legend keys the diff colors so readers can map - / + to red / green
-// without consulting docs. Embedded in every Snapshot mismatch header.
+// Keys the diff colors so readers can map - / + to red / green without
+// consulting docs. Embedded in every Snapshot mismatch header.
 const mismatch_legend = "\033[31mexpected\033[0m vs \033[32mactual\033[0m"
 
 // Snapshot represents an expected output value captured at a specific source location.
 // Snapshots are compared against actual test output to verify correctness.
 type Snapshot struct {
+	// Expected_Output is the captured expected value.
 	Expected_Output string
-	File_Path       string
-	Line            int
-	Should_Edit     bool
-	Snapper         *Snapper
+	// File_Path is the absolute path of the source file holding the literal.
+	File_Path string
+	// Line is the 1-based source line of the snapshot literal.
+	Line int
+	// Should_Edit requests rewriting the source literal with the actual output.
+	Should_Edit bool
+	// Snapper is the bound Snapper providing I/O and edit state.
+	Snapper *Snapper
 }
 
 // File_Edit tracks a snapshot edit operation for adjusting line numbers in subsequent edits.
 type File_Edit struct {
-	Line, Delta int
+	// Line is the source line the edit occurred on.
+	Line int
+	// Delta is the change in line count the edit introduced.
+	Delta int
 }
 
 // Snapper holds injectable dependencies and per-instance edit state.
@@ -58,18 +66,22 @@ type Snapper struct {
 	Write_File func(path string, data []byte, perm fs.FileMode) (err error)
 	// Get_Caller returns the frame information for the caller at the given skip depth.
 	Get_Caller func(skip int) (frame_information Frame_Information, err error)
-	// Stdout and Stderr are reset by Run before calling function, then read after.
-	// function is expected to close over the Snapper and write to Snapper.Stdout/Stderr.
+	// Stdout is reset by Run before calling function, then read after.
 	Stdout *bytes.Buffer
+	// Stderr is reset by Run before calling function, then read after. function is
+	// expected to close over the Snapper and write to Snapper.Stdout/Stderr.
 	Stderr *bytes.Buffer
-
-	Edits    map[string][]File_Edit
+	// Edits records per-file line deltas accumulated by edit-mode snapshots.
+	Edits map[string][]File_Edit
+	// Edits_Mu guards Edits.
 	Edits_Mu sync.Mutex
 }
 
 // Frame_Information contains caller frame information.
 type Frame_Information struct {
+	// File is the caller's source file path.
 	File string
+	// Line is the caller's 1-based source line.
 	Line int
 }
 
@@ -100,10 +112,15 @@ func Snapper_Edit(s *Snapper, data string) (snapshot Snapshot) {
 
 // New_Snapshot_Input is the input for New_Snapshot.
 type New_Snapshot_Input struct {
-	Snapper     *Snapper
-	File_Path   string
-	Line        int
-	Expected    string
+	// Snapper is the Snapper the snapshot binds to.
+	Snapper *Snapper
+	// File_Path is the absolute path of the source file.
+	File_Path string
+	// Line is the 1-based source line of the snapshot literal.
+	Line int
+	// Expected is the expected output value.
+	Expected string
+	// Should_Edit requests rewriting the source literal with the actual output.
 	Should_Edit bool
 }
 
@@ -130,6 +147,15 @@ func expect_panic_fail_no_panic(t *testing.T, expected string) {
 	t.Fatalf("Expected panic but none occurred. Expected: %s", expected)
 }
 
+// Panics anew when the recovered value does not match the snapshot.
+func expect_panic_mismatch(recovered any, snapshot Snapshot) {
+	actual_string := fmt.Sprint(recovered)
+	if Snapshot_Is_Equal(snapshot, actual_string) {
+		return
+	}
+	panic(fmt.Sprintf("Expected a different panic. Got: %s", actual_string))
+}
+
 // Expect compares the actual output against the snapshot's expected output.
 // If they don't match, the test fails and displays a Myers diff of the changes.
 func Expect(t *testing.T, snapshot Snapshot, actual any) (got string) {
@@ -149,10 +175,7 @@ func Expect_Panic(t *testing.T, snapshot Snapshot, callback func()) {
 	defer func() {
 		if r := recover(); r != nil {
 			did_panic = true
-			actual_string := fmt.Sprint(r)
-			if !Snapshot_Is_Equal(snapshot, actual_string) {
-				panic(fmt.Sprintf("Expected panic but a different one occurred. Expected: %s", actual_string))
-			}
+			expect_panic_mismatch(r, snapshot)
 		}
 	}()
 	callback()
@@ -164,8 +187,11 @@ func Expect_Panic(t *testing.T, snapshot Snapshot, callback func()) {
 // Entry represents a test case with input and expected output snapshot.
 // T is the input type for the test case.
 type Entry[T any] struct {
-	Name     string
-	Input    T
+	// Name is the subtest name.
+	Name string
+	// Input is the test-case input passed to the batch function.
+	Input T
+	// Snapshot is the expected-output snapshot for this case.
 	Snapshot Snapshot
 }
 
@@ -198,7 +224,9 @@ func Batch_Expect_Panic[T any](t *testing.T, function func(T), entries []Entry[T
 
 // Should_Edit branch of Snapshot_Is_Equal. Called with s.Edits_Mu held.
 // Updates the source file, records the delta, and returns true.
-func snapper_is_equal_edit(s *Snapper, snapshot Snapshot, actual string, is_equal bool) (updated bool) {
+func snapper_is_equal_edit(
+	s *Snapper, snapshot Snapshot, actual string, is_equal bool,
+) (updated bool) {
 	compile_time_line := snapshot.Line
 	if edits, ok := s.Edits[snapshot.File_Path]; ok {
 		offset := 0
@@ -215,68 +243,28 @@ func snapper_is_equal_edit(s *Snapper, snapshot Snapshot, actual string, is_equa
 		panic(fmt.Sprintf("Update snapshot | can't read file: %s\n", err))
 	}
 
-	line_count := 1
-	start, end := -1, -1
-	for i, b := range content {
-		if b == '\n' {
-			line_count++
-			if line_count < snapshot.Line {
-				continue
-			} else if line_count == snapshot.Line {
-				start = i + 1
-			} else if line_count == snapshot.Line+1 {
-				end = i
-				break
-			}
-		}
-	}
-	invariant.Ensure(start >= 0 && end >= 0, "Snapshot is found")
-	invariant.Ensure(start > 1, "Go source have package declaration or comments in the first line")
-	invariant.Ensure(content[start-1] == '\n', "Line starts after newline")
-	invariant.Ensure(content[end] == '\n', "Line ends with newline")
-
-	line := string(content[start:end])
-	replace := "snap.Init(`"
-	search := "snap.Edit(`"
-	invariant.Ensure(len(search) == len(replace), "Find and replace strings are of equal length")
-	if strings.Count(line, search) == 0 {
-		fmt.Fprintf(s.Output,
-			"snap.Edit at %s:%d must use a backticked raw string literal (e.g. snap.Edit(`...`))\n",
-			snapshot.File_Path, snapshot.Line,
-		)
+	span := snapper_locate_edit(s, snapshot, content)
+	if !span.Found {
 		return false
 	}
-	invariant.Ensure(strings.Count(line, search) == 1, "Only one snap call per line")
 
-	snap_call_index_offset := strings.Index(line, search)
-	invariant.Ensure(snap_call_index_offset >= 0, "Found snapshot call")
-	snap_call_index_offset += start
-
-	open := snap_call_index_offset + len(search) - 1
-	close_position := -1
-	for i, b := range content[open+1:] {
-		if b == '`' {
-			close_position = i + open + 1
-			break
-		}
-	}
-	invariant.Ensure(open >= 0, "Found open backtick")
-	invariant.Ensure(close_position >= 0, "Found closed backtick")
-	invariant.Ensure(open < close_position, "Open backtick comes before closed backtick")
-
+	search := "snap.Edit(`"
+	replace := "snap.Init(`"
+	invariant.Ensure(len(search) == len(replace), "Find and replace strings are equal length")
 	new_content := &bytes.Buffer{}
 	new_content.Grow(len(content))
-	new_content.Write(content[:open+1-len(search)])
+	new_content.Write(content[:span.Open+1-len(search)])
 	new_content.WriteString(replace)
 	new_content.WriteString(actual)
-	new_content.Write(content[close_position:])
+	new_content.Write(content[span.Close:])
 
 	if s.W != nil {
 		if _, write_err := s.W.Write(new_content.Bytes()); write_err != nil {
 			panic(write_err)
 		}
 	} else {
-		if write_err := s.Write_File(snapshot.File_Path, new_content.Bytes(), 0o664); write_err != nil {
+		write_err := s.Write_File(snapshot.File_Path, new_content.Bytes(), 0o664)
+		if write_err != nil {
 			panic(write_err)
 		}
 	}
@@ -296,6 +284,80 @@ func snapper_is_equal_edit(s *Snapper, snapshot Snapshot, actual string, is_equa
 	return true
 }
 
+// Byte range of one source line, half-open as [Start, End).
+type snapper_line_bounds struct {
+	// Start is the byte offset of the first character on the line.
+	Start int
+	// End is the byte offset of the line's terminating newline.
+	End int
+}
+
+// Locates the byte range of the 1-based line in content.
+func snapper_find_line(content []byte, line int) (bounds snapper_line_bounds) {
+	line_count := 1
+	bounds.Start, bounds.End = -1, -1
+	for i, b := range content {
+		if b == '\n' {
+			line_count++
+			if line_count < line {
+				continue
+			} else if line_count == line {
+				bounds.Start = i + 1
+			} else if line_count == line+1 {
+				bounds.End = i
+				break
+			}
+		}
+	}
+	return bounds
+}
+
+// Byte offsets of the backticks delimiting an edit-mode snapshot's raw string.
+type snapper_edit_span struct {
+	// Open is the offset of the opening backtick.
+	Open int
+	// Close is the offset of the closing backtick.
+	Close int
+	// Found reports whether a well-formed snap.Edit call was located.
+	Found bool
+}
+
+// Finds the backtick span of the snap.Edit literal on the snapshot's line,
+// printing a diagnostic and reporting Found=false when the call is malformed.
+func snapper_locate_edit(s *Snapper, snapshot Snapshot, content []byte) (span snapper_edit_span) {
+	bounds := snapper_find_line(content, snapshot.Line)
+	invariant.Ensure(bounds.Start >= 0 && bounds.End >= 0, "Snapshot is found")
+	invariant.Ensure(bounds.Start > 1, "Source has a package clause or comment on line one")
+	invariant.Ensure(content[bounds.Start-1] == '\n', "Line starts after newline")
+	invariant.Ensure(content[bounds.End] == '\n', "Line ends with newline")
+
+	line := string(content[bounds.Start:bounds.End])
+	search := "snap.Edit(`"
+	if strings.Count(line, search) == 0 {
+		fmt.Fprintf(s.Output,
+			"snap.Edit at %s:%d must use a backticked raw string (snap.Edit(`...`))\n",
+			snapshot.File_Path, snapshot.Line,
+		)
+		return span
+	}
+	invariant.Ensure(strings.Count(line, search) == 1, "Only one snap call per line")
+
+	call_offset := strings.Index(line, search) + bounds.Start
+	span.Open = call_offset + len(search) - 1
+	span.Close = -1
+	for i, b := range content[span.Open+1:] {
+		if b == '`' {
+			span.Close = i + span.Open + 1
+			break
+		}
+	}
+	invariant.Ensure(span.Open >= 0, "Found open backtick")
+	invariant.Ensure(span.Close >= 0, "Found closed backtick")
+	invariant.Ensure(span.Open < span.Close, "Open backtick precedes the close")
+	span.Found = true
+	return span
+}
+
 // Snapshot_Is_Equal compares actual output against the expected snapshot value.
 // If snapshot editing is enabled (via Edit), it updates the source file to replace
 // the old snapshot with the actual output and returns true.
@@ -304,9 +366,12 @@ func Snapshot_Is_Equal(snapshot Snapshot, actual string) (equal bool) {
 	invariant.Ensure(snapshot.Snapper != nil, "Snapshot is bound to a Snapper")
 	s := snapshot.Snapper
 	invariant.Ensure(snapshot.Line > 0, "Snapshot location is set")
-	invariant.Ensure(strings.Count(snapshot.Expected_Output, "`") == 0, "Snapshot expected value does not contain backticks")
-	invariant.Ensure(strings.Count(actual, "`") == 0, "Snapshot actual value does not contain backticks")
-	invariant.Ensure(filepath.IsAbs(snapshot.File_Path), "Snapshot location is an absolute path")
+	invariant.Ensure(
+		strings.Count(snapshot.Expected_Output, "`") == 0,
+		"Snapshot expected value does not contain backticks",
+	)
+	invariant.Ensure(strings.Count(actual, "`") == 0, "Snapshot actual value has no backticks")
+	invariant.Ensure(filepath.IsAbs(snapshot.File_Path), "Snapshot path is absolute")
 
 	is_equal := actual == snapshot.Expected_Output
 	if snapshot.Should_Edit {
@@ -315,7 +380,8 @@ func Snapshot_Is_Equal(snapshot Snapshot, actual string) (equal bool) {
 		return snapper_is_equal_edit(s, snapshot, actual, is_equal)
 	} else if !is_equal {
 		d := myers.New(myers.New_Input{Old: snapshot.Expected_Output, New: actual})
-		fmt.Fprintf(s.Output, "Snapshot mismatch %s:%d  (%s)\n", snapshot.File_Path, snapshot.Line, mismatch_legend)
+		fmt.Fprintf(s.Output, "Snapshot mismatch %s:%d  (%s)\n",
+			snapshot.File_Path, snapshot.Line, mismatch_legend)
 		for line := range strings.SplitSeq(myers.Differ_Line_Diff(d), "\n") {
 			if len(line) == 0 {
 				continue
