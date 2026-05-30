@@ -551,7 +551,7 @@ const tier_max = 2
 // allowlist.
 type Configuration struct {
 	// Shared_Module is the workspace-root-relative directory of the workspace's
-	// shared library module (e.g. "golang_snacks") — the one module every other
+	// shared library module (e.g. "shared") — the one module every other
 	// may import. It drives the shared-vs-binary classification; every other
 	// module at the workspace root is treated as a binary. Slash-relative, like
 	// the allowlist. Required: a config without it is rejected.
@@ -2575,10 +2575,10 @@ func build_module_index(
 		return nil, err
 	}
 	// Classify the shared library by its workspace-root-relative directory (the
-	// module Root, e.g. "golang_snacks"), matching the slash-relative form used
+	// module Root, e.g. "shared"), matching the slash-relative form used
 	// by the rest of lint.json; every other module is a binary. An empty
 	// shared_module (e.g. a test that doesn't set one) leaves every module a binary.
-	// path.Clean so "./golang_snacks/" matches the cleaned module Root; guard the
+	// path.Clean so "./shared/" matches the cleaned module Root; guard the
 	// empty case, since path.Clean("") is "." and would wrongly match a root module.
 	shared_root := shared_module
 	if shared_root != "" {
@@ -8937,8 +8937,8 @@ func is_bare_for_condition(condition ast.Expr) (yes bool) {
 // is supplied. Files that don't import either path return an empty set.
 func collect_invariant_idents(file *ast.File) (idents map[string]bool) {
 	idents = map[string]bool{}
-	const pure_path = "github.com/james-orcales/james-orcales/golang_snacks/invariant/v2"
-	const default_path = "github.com/james-orcales/james-orcales/golang_snacks/" +
+	const pure_path = "github.com/james-orcales/james-orcales/shared/invariant/v2"
+	const default_path = "github.com/james-orcales/james-orcales/shared/" +
 		"invariant/v2/invariant_default"
 	for _, import_specification := range file.Imports {
 		path := strings.Trim(import_specification.Path.Value, `"`)

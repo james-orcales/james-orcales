@@ -11,7 +11,7 @@ import (
 	"time"
 	"unsafe"
 
-	"github.com/james-orcales/james-orcales/golang_snacks/invariant"
+	"github.com/james-orcales/james-orcales/shared/invariant"
 )
 
 const (
@@ -29,7 +29,7 @@ const (
 	// pool but are instead left for the garbage collector.
 	ContextCapacity = 300
 
-	LogWriteErrorMessage = "golang_snacks/itlog: Could not write log"
+	LogWriteErrorMessage = "shared/itlog: Could not write log"
 
 	LevelMaxWordLength = 3
 	LevelDebug         = -100

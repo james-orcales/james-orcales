@@ -2,6 +2,7 @@ package lint_test
 
 import (
 	"bytes"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"go/parser"
@@ -12,8 +13,8 @@ import (
 	"testing"
 	"testing/fstest"
 
-	"github.com/james-orcales/james-orcales/golang_snacks/snap/default"
 	"github.com/james-orcales/james-orcales/lint/internal"
+	"github.com/james-orcales/james-orcales/shared/snap/default"
 )
 
 // Additional cases, split to keep each function within the length limit.
@@ -308,7 +309,7 @@ func Test_Comments_Inline_Exempt(t *testing.T) {
 	t.Parallel()
 	source := "package main\n\n" +
 		"import invariant \"github.com/james-orcales/james-orcales/" +
-		"golang_snacks/invariant/v2\"\n\n" +
+		"shared/invariant/v2\"\n\n" +
 		"const fixture_hi = 100\n\n" +
 		"func f() (result int) { // some inline note\n" +
 		"\tdefer func() {\n" +
@@ -1324,7 +1325,7 @@ func Test_Snapshot_Module_Layout(t *testing.T) {
 		{Snapshot: snap.Init(`internal/x/x.go:1:1: shared library forbids internal/ directories; remove "internal"`), Drop: "SPECIFICATION.md", Files: map[string]string{
 			"go.mod":          doctrine_shared_library_go_module,
 			"internal/x/x.go": "// Package x is a fixture.\npackage x\n"}},
-		{Snapshot: snap.Init(`main.go:1:1: shared library "github.com/james-orcales/james-orcales/golang_snacks" forbids package main; move the entry point to a binary module`), Drop: "SPECIFICATION.md", Files: map[string]string{
+		{Snapshot: snap.Init(`main.go:1:1: shared library "github.com/james-orcales/james-orcales/shared" forbids package main; move the entry point to a binary module`), Drop: "SPECIFICATION.md", Files: map[string]string{
 			"go.mod":  doctrine_shared_library_go_module,
 			"main.go": "package main\n\nfunc main() {\n\tprintln(0)\n}\n"}},
 	})
@@ -1390,12 +1391,12 @@ func Test_F() {
 	log.Fatal("x")
 }
 `}},
-		{Snapshot: snap.Init(`lib/library.go:4:8: impure dependency "github.com/james-orcales/james-orcales/golang_snacks/widget/default": a pure package imports only pure packages`), Drop: "SPECIFICATION.md", Files: map[string]string{
+		{Snapshot: snap.Init(`lib/library.go:4:8: impure dependency "github.com/james-orcales/james-orcales/shared/widget/default": a pure package imports only pure packages`), Drop: "SPECIFICATION.md", Files: map[string]string{
 			"go.mod": doctrine_shared_library_go_module,
 			"lib/library.go": `// Package library is a fixture.
 package library
 
-import "github.com/james-orcales/james-orcales/golang_snacks/widget/default"
+import "github.com/james-orcales/james-orcales/shared/widget/default"
 
 // F uses the default.
 func F() (s string) {
@@ -1642,7 +1643,7 @@ func F() {
 // suite, so its impurity is exempt from the transitive-purity import ban.
 func Test_Transitive_Purity_Snap_Exemption(t *testing.T) {
 	t.Parallel()
-	const shared = "github.com/james-orcales/james-orcales/golang_snacks"
+	const shared = "github.com/james-orcales/james-orcales/shared"
 	output := run_snapshot(t, map[string]string{
 		"go.mod":         "module " + shared + "\n\ngo 1.25\n",
 		"lib/library.go": "// Package library is a fixture.\npackage library\n",
@@ -1851,6 +1852,157 @@ func Test_Path_Casing_Respects_Tracked(t *testing.T) {
 	}
 	if saw_ignored {
 		t.Error("a gitignored path (absent from Tracked) must not be checked")
+	}
+}
+
+// Builds a lint.json carrying the given path_casing_allowlist beside the
+// required shared_module and word_replacements. Marshaled from a map rather
+// than lint.Configuration so the test compiles before the struct field exists,
+// keeping the red-green order honest.
+func lint_json_path_casing(t *testing.T, allowlist []string) (data string) {
+	t.Helper()
+	raw, err := json.Marshal(map[string]any{
+		"shared_module":         "lint_test_no_shared_module",
+		"word_replacements":     test_word_replacements(),
+		"path_casing_allowlist": allowlist,
+	})
+	if err != nil {
+		t.Fatalf("lint_json_path_casing: %v", err)
+	}
+	return string(raw)
+}
+
+// Lints in-memory files (the caller supplies lint.json) and returns the exit
+// code with stdout and stderr. Unlike run_stream it keeps all three, so a test
+// can tell a clean run (code 0, success line) from a hard config failure
+// (code 2, stderr) instead of conflating them as "no diagnostic."
+func run_lint(t *testing.T, files map[string]string) (code int, stdout, stderr string) {
+	t.Helper()
+	fsys := make(fstest.MapFS)
+	for name, content := range files {
+		fsys[name] = &fstest.MapFile{Data: []byte(content)}
+	}
+	out := &bytes.Buffer{}
+	errs := &bytes.Buffer{}
+	code = lint_main(t, &lint.Main_Input{Fsys: fsys, Stdout: out, Stderr: errs})
+	return code, out.String(), errs.String()
+}
+
+// A recursive dir/** entry exempts the directory and its whole subtree from the
+// path-casing rule; the identical fixture without the entry still flags the
+// directory, proving the exemption is load-bearing.
+func Test_Path_Casing_Allowlist_Recursive(t *testing.T) {
+	t.Parallel()
+	files := func(allowlist []string) map[string]string {
+		return map[string]string{
+			"bad-Dir/x.txt": "x\n",
+			"lint.json":     lint_json_path_casing(t, allowlist),
+		}
+	}
+	code, stdout, _ := run_lint(t, files(nil))
+	if code != 1 || !strings.Contains(stdout, "bad-Dir") {
+		t.Fatalf("control: want bad-Dir flagged (code 1), got code %d: %s", code, stdout)
+	}
+	code, stdout, stderr := run_lint(t, files([]string{"bad-Dir/**"}))
+	if code != 0 || strings.Contains(stdout, "bad-Dir") {
+		t.Fatalf("exempt: bad-Dir/** must suppress the diag; code %d stdout %q stderr %q",
+			code, stdout, stderr)
+	}
+}
+
+// A trailing-slash dir/ entry follows gitignore: it matches the directory and
+// thus exempts everything beneath it, including a badly-cased file inside.
+func Test_Path_Casing_Allowlist_Directory(t *testing.T) {
+	t.Parallel()
+	files := map[string]string{
+		"bad-Dir/Also-Bad.txt": "x\n",
+		"lint.json":            lint_json_path_casing(t, []string{"bad-Dir/"}),
+	}
+	code, stdout, stderr := run_lint(t, files)
+	if code != 0 || strings.Contains(stdout, "Also-Bad") || strings.Contains(stdout, "bad-Dir") {
+		t.Fatalf("bad-Dir/ must exempt the subtree; code %d stdout %q stderr %q",
+			code, stdout, stderr)
+	}
+}
+
+// A slash-less entry floats: it matches the basename at any depth (gitignore).
+func Test_Path_Casing_Allowlist_Floating(t *testing.T) {
+	t.Parallel()
+	files := func(allowlist []string) map[string]string {
+		return map[string]string{
+			"weird-File.txt":   "x\n",
+			"a/weird-File.txt": "x\n",
+			"lint.json":        lint_json_path_casing(t, allowlist),
+		}
+	}
+	code, stdout, _ := run_lint(t, files(nil))
+	if code != 1 || !strings.Contains(stdout, "weird-File.txt") {
+		t.Fatalf("control: want weird-File.txt flagged; code %d: %s", code, stdout)
+	}
+	code, stdout, stderr := run_lint(t, files([]string{"weird-File.txt"}))
+	if code != 0 || strings.Contains(stdout, "weird-File") {
+		t.Fatalf("floating entry must exempt every depth; code %d stdout %q stderr %q",
+			code, stdout, stderr)
+	}
+}
+
+// An entry containing a slash is anchored to the repo root: it exempts the
+// exact path and never the same basename under a different parent.
+func Test_Path_Casing_Allowlist_Anchored(t *testing.T) {
+	t.Parallel()
+	files := map[string]string{
+		"top/weird-File.txt":   "x\n",
+		"other/weird-File.txt": "x\n",
+		"lint.json":            lint_json_path_casing(t, []string{"top/weird-File.txt"}),
+	}
+	code, stdout, stderr := run_lint(t, files)
+	if code != 1 {
+		t.Fatalf("want the unanchored sibling still flagged; code %d stderr %q", code, stderr)
+	}
+	if strings.Contains(stdout, "top/weird-File.txt") {
+		t.Fatalf("anchored entry must exempt top/...: %s", stdout)
+	}
+	if !strings.Contains(stdout, "other/weird-File.txt") {
+		t.Fatalf("anchored entry must NOT leak to other/...: %s", stdout)
+	}
+}
+
+// A single-segment glob (*.weird) matches that pattern at any depth.
+func Test_Path_Casing_Allowlist_Segment_Glob(t *testing.T) {
+	t.Parallel()
+	files := func(allowlist []string) map[string]string {
+		return map[string]string{
+			"bad-Name.weird":  "x\n",
+			"a/Bad-Two.weird": "x\n",
+			"lint.json":       lint_json_path_casing(t, allowlist),
+		}
+	}
+	code, stdout, _ := run_lint(t, files(nil))
+	if code != 1 || !strings.Contains(stdout, ".weird") {
+		t.Fatalf("control: want *.weird names flagged; code %d: %s", code, stdout)
+	}
+	code, stdout, stderr := run_lint(t, files([]string{"*.weird"}))
+	if code != 0 || strings.Contains(stdout, ".weird") {
+		t.Fatalf("*.weird must exempt matching names at any depth; code %d stdout %q stderr %q",
+			code, stdout, stderr)
+	}
+}
+
+// A malformed, negated, or empty allowlist entry is rejected at config-parse
+// time, aborting the run with exit 2 — the same loud failure every other bad
+// lint.json earns.
+func Test_Path_Casing_Allowlist_Parse_Rejects(t *testing.T) {
+	t.Parallel()
+	for _, bad := range [][]string{{"!neg"}, {""}, {"bad["}} {
+		files := map[string]string{
+			"good.txt":  "x\n",
+			"lint.json": lint_json_path_casing(t, bad),
+		}
+		code, stdout, stderr := run_lint(t, files)
+		if code != 2 || stderr == "" {
+			t.Fatalf("entry %q must abort with exit 2; code %d stdout %q stderr %q",
+				bad, code, stdout, stderr)
+		}
 	}
 }
 
@@ -3016,8 +3168,8 @@ func Test_No_Impure_Stdlib_Composition_Tier(t *testing.T) {
 		{
 			Name: "library tier impure import still flagged",
 			Files: map[string]string{
-				"golang_snacks/go.mod": doctrine_shared_library_go_module,
-				"golang_snacks/foo/foo.go": `package foo
+				"shared/go.mod": doctrine_shared_library_go_module,
+				"shared/foo/foo.go": `package foo
 
 import "os"
 
@@ -3030,9 +3182,9 @@ func Read() (name string) { return os.Getenv("X") }
 		{
 			Name: "composition tier impure import allowed",
 			Files: map[string]string{
-				"golang_snacks/go.mod":     doctrine_shared_library_go_module,
-				"golang_snacks/foo/foo.go": fixture_package("foo"),
-				"golang_snacks/foo/foo_default/" +
+				"shared/go.mod":     doctrine_shared_library_go_module,
+				"shared/foo/foo.go": fixture_package("foo"),
+				"shared/foo/foo_default/" +
 					"foo_default.go": `// Package foo_default is a fixture.
 package foo_default
 
@@ -3070,9 +3222,9 @@ func Test_No_Impure_Stdlib_Composition_Tier_Part2(t *testing.T) {
 		{
 			Name: "composition tier under versioned library allowed",
 			Files: map[string]string{
-				"golang_snacks/go.mod":          doctrine_shared_library_go_module,
-				"golang_snacks/snap/v2/snap.go": fixture_package("snap"),
-				"golang_snacks/snap/v2/snap_default/" +
+				"shared/go.mod":          doctrine_shared_library_go_module,
+				"shared/snap/v2/snap.go": fixture_package("snap"),
+				"shared/snap/v2/snap_default/" +
 					"snap_default.go": `// Package snap_default is a fixture.
 package snap_default
 
@@ -3113,9 +3265,9 @@ func Test_No_Impure_Stdlib_Composition_Tier_Extra(t *testing.T) {
 		{
 			Name: "impure call (fmt.Println) at composition tier allowed",
 			Files: map[string]string{
-				"golang_snacks/go.mod":     doctrine_shared_library_go_module,
-				"golang_snacks/foo/foo.go": fixture_package("foo"),
-				"golang_snacks/foo/foo_default/" +
+				"shared/go.mod":     doctrine_shared_library_go_module,
+				"shared/foo/foo.go": fixture_package("foo"),
+				"shared/foo/foo_default/" +
 					"foo_default.go": `// Package foo_default is a fixture.
 package foo_default
 
@@ -3370,8 +3522,8 @@ func Test_Binary_Module_Layout(t *testing.T) {
 		{
 			Name: "shared library with non-main package at depth 1 is exempt",
 			Files: map[string]string{
-				"golang_snacks/go.mod":     doctrine_shared_library_go_module,
-				"golang_snacks/foo/foo.go": fixture_package("foo"),
+				"shared/go.mod":     doctrine_shared_library_go_module,
+				"shared/foo/foo.go": fixture_package("foo"),
 			},
 		},
 		{
@@ -3500,15 +3652,15 @@ func Test_Binary_Module_Internal_Main_Part2(t *testing.T) {
 		{
 			Name: "shared library without internal func Main is exempt",
 			Files: map[string]string{
-				"golang_snacks/go.mod":     doctrine_shared_library_go_module,
-				"golang_snacks/foo/foo.go": fixture_package("foo"),
+				"shared/go.mod":     doctrine_shared_library_go_module,
+				"shared/foo/foo.go": fixture_package("foo"),
 			},
 		},
 		{
 			Name: "shared library may expose func Main as an embeddable",
 			Files: map[string]string{
-				"golang_snacks/go.mod": doctrine_shared_library_go_module,
-				"golang_snacks/foo/foo.go": "// Package foo is a fixture.\n" +
+				"shared/go.mod": doctrine_shared_library_go_module,
+				"shared/foo/foo.go": "// Package foo is a fixture.\n" +
 					"package foo\n\n// Main is an embeddable entry point.\n" +
 					"func Main() { return }\n",
 			},
@@ -3530,21 +3682,21 @@ func Test_Shared_Library_No_Internal(t *testing.T) {
 		{
 			Name: "shared library with internal directory flagged",
 			Files: map[string]string{
-				"golang_snacks/go.mod":     doctrine_shared_library_go_module,
-				"golang_snacks/foo/foo.go": fixture_package("foo"),
-				"golang_snacks/foo/internal/helper/" +
+				"shared/go.mod":     doctrine_shared_library_go_module,
+				"shared/foo/foo.go": fixture_package("foo"),
+				"shared/foo/internal/helper/" +
 					"help.go": fixture_package("helper"),
 			},
 			Want_Diags: []string{
-				"shared library forbids internal/", "golang_snacks/foo/internal",
+				"shared library forbids internal/", "shared/foo/internal",
 			},
 		},
 		{
 			Name: "shared library with package main flagged",
 			Files: map[string]string{
-				"golang_snacks/go.mod":     doctrine_shared_library_go_module,
-				"golang_snacks/foo/foo.go": fixture_package("foo"),
-				"golang_snacks/run/main.go": "package main\n\n" +
+				"shared/go.mod":     doctrine_shared_library_go_module,
+				"shared/foo/foo.go": fixture_package("foo"),
+				"shared/run/main.go": "package main\n\n" +
 					"func main() { return }\n",
 			},
 			Want_Diags: []string{"forbids package main"},
@@ -3552,8 +3704,8 @@ func Test_Shared_Library_No_Internal(t *testing.T) {
 		{
 			Name: "shared library without internal is clean",
 			Files: map[string]string{
-				"golang_snacks/go.mod":     doctrine_shared_library_go_module,
-				"golang_snacks/foo/foo.go": fixture_package("foo"),
+				"shared/go.mod":     doctrine_shared_library_go_module,
+				"shared/foo/foo.go": fixture_package("foo"),
 			},
 		},
 		{
@@ -3586,40 +3738,40 @@ func Test_Library_Tier_Depth(t *testing.T) {
 		{
 			Name: "two-deep nesting flagged",
 			Files: map[string]string{
-				"golang_snacks/" +
+				"shared/" +
 					"go.mod": doctrine_shared_library_go_module,
-				"golang_snacks/foo/foo.go":         fixture_package("foo"),
-				"golang_snacks/foo/bar/bar.go":     fixture_package("bar"),
-				"golang_snacks/foo/bar/baz/baz.go": fixture_package("baz"),
+				"shared/foo/foo.go":         fixture_package("foo"),
+				"shared/foo/bar/bar.go":     fixture_package("bar"),
+				"shared/foo/bar/baz/baz.go": fixture_package("baz"),
 			},
 			Want_Diags: []string{"exceeds library tier", "baz"},
 		},
 		{
 			Name: "library plus composition tier is clean",
 			Files: map[string]string{
-				"golang_snacks/go.mod":         doctrine_shared_library_go_module,
-				"golang_snacks/foo/foo.go":     fixture_package("foo"),
-				"golang_snacks/foo/bar/bar.go": fixture_package("bar"),
+				"shared/go.mod":         doctrine_shared_library_go_module,
+				"shared/foo/foo.go":     fixture_package("foo"),
+				"shared/foo/bar/bar.go": fixture_package("bar"),
 			},
 			Forbid: []string{"exceeds library tier"},
 		},
 		{
 			Name: "v2 version directory does not count as ancestor",
 			Files: map[string]string{
-				"golang_snacks/" +
+				"shared/" +
 					"go.mod": doctrine_shared_library_go_module,
-				"golang_snacks/snap/snap.go":         fixture_package("snap"),
-				"golang_snacks/snap/v2/snap.go":      fixture_package("snap"),
-				"golang_snacks/snap/v2/sub/child.go": fixture_package("child"),
+				"shared/snap/snap.go":         fixture_package("snap"),
+				"shared/snap/v2/snap.go":      fixture_package("snap"),
+				"shared/snap/v2/sub/child.go": fixture_package("child"),
 			},
 			Forbid: []string{"exceeds library tier"},
 		},
 		{
 			Name: "non-Go intermediate directory does not count as ancestor",
 			Files: map[string]string{
-				"golang_snacks/go.mod":     doctrine_shared_library_go_module,
-				"golang_snacks/foo/foo.go": fixture_package("foo"),
-				"golang_snacks/foo/examples/sample/" +
+				"shared/go.mod":     doctrine_shared_library_go_module,
+				"shared/foo/foo.go": fixture_package("foo"),
+				"shared/foo/examples/sample/" +
 					"example.go": fixture_package("example"),
 			},
 			Forbid: []string{"exceeds library tier"},

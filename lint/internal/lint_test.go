@@ -17,16 +17,16 @@ import (
 // pipeline against every test source. TestGofmt builds MapFS inline so it
 // can submit deliberately un-formatted sources.
 const doctrine_shared_library_module_path = "github.com/james-orcales/" +
-	"james-orcales/golang_snacks"
+	"james-orcales/shared"
 const doctrine_shared_library_go_module = "module " +
 	doctrine_shared_library_module_path + "\n"
 const doctrine_binary_go_module = "module example.com/mybinary\n"
 
 // The shared module is identified by its workspace-root-relative directory, not
 // its import path. Doctrine-table fixtures put the shared library's go.mod at
-// golang_snacks/go.mod, so its Root — and the value Shared_Module must carry —
-// is "golang_snacks".
-const doctrine_shared_module_directory = "golang_snacks"
+// shared/go.mod, so its Root — and the value Shared_Module must carry —
+// is "shared".
+const doctrine_shared_module_directory = "shared"
 
 // Snapshot fixtures instead put the shared library's go.mod at the MapFS root,
 // so there its Root is ".". Binary modules in those fixtures live in named
@@ -41,7 +41,7 @@ const doctrine_binary_internal_main = "// Package entry is a fixture.\n" +
 	"package entry\n\n// Main is a fixture entry point.\nfunc Main() { return }\n"
 
 const fixture_invariant_import_path = "github.com/james-orcales/james-orcales/" +
-	"golang_snacks/invariant/v2/invariant_default"
+	"shared/invariant/v2/invariant_default"
 const fixture_invariant_import = "import invariant \"" + fixture_invariant_import_path + "\"\n"
 
 // A package whose SPECIFICATION.md, source, and specification_test.go all
@@ -90,7 +90,7 @@ const fixture_declaration_callee_pair = "func g() (a *int, b *int) {\n" +
 // need an accompanying .go file but don't care about its specific shape.
 const fixture_clean_go = "package main\n\n" +
 	"import invariant \"github.com/james-orcales/james-orcales/" +
-	"golang_snacks/invariant/v2\"\n\n" +
+	"shared/invariant/v2\"\n\n" +
 	"const fixture_hi = 100\n\n" +
 	"func f() (result int) {\n" +
 	"\tdefer func() {\n" +
@@ -1756,7 +1756,7 @@ func Test_Gofmt(t *testing.T) {
 				"test.go": "package main\n\n" +
 					"import invariant \"" +
 					"github.com/james-orcales/james-orcales/" +
-					"golang_snacks/invariant/v2\"\n\n" +
+					"shared/invariant/v2\"\n\n" +
 					"const fixture_hi = 100\n\n" +
 					"func f() (result int) {\n" +
 					"\tdefer func() {\n" +
@@ -3638,7 +3638,7 @@ func Test_Snap_Backtick(t *testing.T) {
 					"import (\n" +
 					"\t\"x/snap\"\n\n" +
 					"\tinvariant \"github.com/james-orcales/james-orcales/" +
-					"golang_snacks/invariant/v2\"\n" +
+					"shared/invariant/v2\"\n" +
 					")\n\n" +
 					"const fixture_hi = 100\n\n" +
 					"func f(s string) {\n" +

@@ -8,9 +8,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/james-orcales/james-orcales/golang_snacks/invariant"
-	"github.com/james-orcales/james-orcales/golang_snacks/itlog"
-	"github.com/james-orcales/james-orcales/golang_snacks/snap"
+	"github.com/james-orcales/james-orcales/shared/invariant"
+	"github.com/james-orcales/james-orcales/shared/itlog"
+	"github.com/james-orcales/james-orcales/shared/snap"
 )
 
 var (
