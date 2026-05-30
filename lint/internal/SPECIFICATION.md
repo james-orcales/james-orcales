@@ -92,8 +92,8 @@ These rules govern every tracked file, whatever its language.
 ### Ignored Directories
 
 The linter never scans the top-level `third_party/` drop-zone, any `vendor/`, `.jj`, `.git`, or a
-gitignored path; lint.json's `ignore` extends this with gitignore-style globs. A nested
-`third_party/` below the repository root is first-party code, scanned like anything else.
+gitignored path. A nested `third_party/` below the repository root is first-party code, scanned
+like anything else.
 
 ### Path Casing
 

@@ -573,19 +573,13 @@ type Configuration struct {
 	// alone. Required: a config without it is rejected so the check can never
 	// silently go dark.
 	Word_Replacements map[string][]string `json:"word_replacements"`
-	// Path_Casing_Allowlist names the paths exempt from the path-casing rule,
-	// as gitignore-style globs: a slash-less entry floats and matches that
-	// basename at any depth, an entry with a slash is anchored to the workspace
-	// root, a trailing slash binds to directories (and thus their whole subtree),
-	// and ** spans path segments while * stays within one. The list is purely
-	// additive — an entry can only suppress a casing diagnostic, never re-enable
-	// one on .git or a vendored tree. Opt-in; empty exempts nothing.
-	Path_Casing_Allowlist []string `json:"path_casing_allowlist"`
 	// Ignore extends the hardcoded global ignore list (Ignored_Directory) with
-	// per-workspace entries, in the same gitignore-style glob syntax as
-	// Path_Casing_Allowlist. A matching path is dropped from the scan set
-	// entirely, so no tier fires on it — stronger than Path_Casing_Allowlist,
-	// which only suppresses the casing diagnostic. Opt-in; empty ignores nothing.
+	// per-workspace entries, as gitignore-style globs: a slash-less entry floats
+	// and matches that basename at any depth, an entry with a slash is anchored to
+	// the workspace root, a trailing slash binds to directories (and thus their
+	// whole subtree), and ** spans path segments while * stays within one. A
+	// matching path is dropped from the scan set entirely, so no tier fires on it.
+	// Opt-in; empty ignores nothing.
 	Ignore []string `json:"ignore"`
 }
 
@@ -698,7 +692,6 @@ func Main(input *Main_Input) (code int) {
 		Shared_Module:          configuration.Shared_Module,
 		Deterministic_Packages: configuration.Deterministic_Packages,
 		Word_Replacements:      configuration.Word_Replacements,
-		Path_Casing_Allowlist:  configuration.Path_Casing_Allowlist,
 		Ignore:                 configuration.Ignore,
 	})
 	if err != nil {
@@ -799,7 +792,6 @@ func Parse_Configuration(data []byte) (configuration *Configuration, err error) 
 		"global_api_allowlist":   true,
 		"deterministic_packages": true,
 		"word_replacements":      true,
-		"path_casing_allowlist":  true,
 		"ignore":                 true,
 	}
 	for key := range keys {
@@ -820,10 +812,6 @@ func Parse_Configuration(data []byte) (configuration *Configuration, err error) 
 	// silently disable it rather than fail loudly.
 	if len(configuration.Word_Replacements) == 0 {
 		return nil, fmt.Errorf("lint.json: word_replacements is required")
-	}
-	if validate_err := validate_glob_patterns(
-		"path_casing_allowlist", configuration.Path_Casing_Allowlist); validate_err != nil {
-		return nil, validate_err
 	}
 	if validate_err := validate_glob_patterns(
 		"ignore", configuration.Ignore); validate_err != nil {
@@ -1908,10 +1896,6 @@ type Check_File_System_Input struct {
 	// make_check_names_vocabulary. nil disables the check (no config to read),
 	// which is what the Check_Source single-file path passes.
 	Word_Replacements map[string][]string
-	// Path_Casing_Allowlist is the lint.json gitignore-style allowlist forwarded
-	// from Main_Input: paths whose segments are exempt from the path-casing rule.
-	// Threaded to check_path_casing, which parses each entry once per run.
-	Path_Casing_Allowlist []string
 	// Ignore is the lint.json ignore list forwarded from Main_Input: gitignore-
 	// style globs that trim the tracked scan set, so a matching path is invisible
 	// to every tier. Applied once here against Tracked; with no Tracked set (the
@@ -1962,7 +1946,7 @@ func Check_File_System(input *Check_File_System_Input) (diags []Diagnostic, err 
 	output := append([]Diagnostic{}, stream_diags...)
 	output = append(output, parse_diags...)
 	output = append(output,
-		check_path_casing(input.Fsys, tracked, input.Path_Casing_Allowlist)...)
+		check_path_casing(input.Fsys, tracked)...)
 	allowlist := build_global_api_allowlist_set(input.Global_API_Allowlist)
 	output = append(output,
 		check_file_system_run_checks(
@@ -7990,13 +7974,9 @@ func check_stream_agent_documentation_lines_max(
 // (git ls-files --exclude-standard). When tracked is nil (git unavailable) it
 // walks the whole tree, the .git directory aside, so the rule still binds.
 func check_path_casing(
-	fsys fs.FS, tracked map[string]bool, allowlist []string,
+	fsys fs.FS, tracked map[string]bool,
 ) (diags []Diagnostic) {
 
-	patterns := make([]glob_pattern, 0, len(allowlist))
-	for _, raw := range allowlist {
-		patterns = append(patterns, parse_glob_pattern(raw))
-	}
 	seen := map[string]bool{}
 	for _, p := range check_path_casing_paths(fsys, tracked) {
 		if p == ".git" {
@@ -8016,15 +7996,6 @@ func check_path_casing(
 			}
 			seen[key] = true
 			if path_casing_segment_ok(seg) {
-				continue
-			}
-			// The lint.json allowlist is consulted last and is purely additive:
-			// .git and vendored trees above are already exempt, so an entry can
-			// only suppress a casing diagnostic, never re-enable one. The leaf
-			// segment is a file; every earlier prefix is a directory, which a
-			// trailing-slash directory pattern needs to know to bind correctly.
-			key_is_directory := i < len(segments)-1
-			if glob_patterns_match(key, key_is_directory, patterns) {
 				continue
 			}
 			suggestion := path_casing_suggest(seg)
@@ -8130,8 +8101,8 @@ func check_path_casing_paths(fsys fs.FS, tracked map[string]bool) (paths []strin
 	return paths
 }
 
-// A glob_pattern is a lint.json path_casing_allowlist entry parsed into the
-// three facts the matcher needs: Core is the gitignore pattern reduced to a form
+// A glob_pattern is a lint.json ignore entry parsed into the three facts the
+// matcher needs: Core is the gitignore pattern reduced to a form
 // glob_match can run against a full prefix (an unanchored, slash-less entry is
 // rewritten with a leading **/ so "weird.md" matches at any depth); Anchored
 // records whether the original entry was tied to the workspace root (it held a
@@ -8147,7 +8118,7 @@ type glob_pattern struct {
 // gitignore's directory marker; a leading or interior slash anchors the entry to
 // the root; a slash-less entry floats, which we model as **/ + entry so the same
 // prefix matcher serves both. Assumes the entry already passed
-// validate_path_casing_allowlist, so it cannot be empty or negated.
+// validate_glob_patterns, so it cannot be empty or negated.
 func parse_glob_pattern(raw string) (parsed glob_pattern) {
 	parsed.Directory_Only = strings.HasSuffix(raw, "/")
 	trimmed := strings.TrimSuffix(raw, "/")
