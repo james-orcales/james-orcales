@@ -7,10 +7,13 @@
   ],
   "deterministic_packages": [
     "./markdown_to_pdf/internal",
+    "shared/cli",
     "shared/time",
     "shared/io"
   ],
-  "path_casing_allowlist": [],
+  "path_casing_allowlist": [
+          "big_bang/dotfiles"
+  ],
   "word_replacements": {
     "len":       [],
     "length":    [],
