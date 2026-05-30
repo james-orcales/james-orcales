@@ -4,3 +4,4 @@ bin/**
 .envrc.local
 .claude/
 ./tmp
+**/.DS_Store

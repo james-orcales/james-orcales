@@ -1,14 +1,14 @@
 {
   "shared_module": "shared",
   "global_api_allowlist": [
-    "golang_snacks/snap/default",
-    "golang_snacks/invariant/v2/invariant_default",
-    "golang_snacks/invariant/v3/invariant_default"
+    "shared/snap/default",
+    "shared/invariant/v2/invariant_default",
+    "shared/invariant/v3/invariant_default"
   ],
   "deterministic_packages": [
     "./markdown_to_pdf/internal",
-    "golang_snacks/time",
-    "golang_snacks/io"
+    "shared/time",
+    "shared/io"
   ],
   "word_replacements": {
     "len":       [],
