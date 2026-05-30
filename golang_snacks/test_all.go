@@ -1,9 +1,11 @@
 package main
 
-import "github.com/james-orcales/james-orcales/golang_snacks/sh"
+import sh "github.com/james-orcales/james-orcales/golang_snacks/sh/default"
 
 func main() {
-	sh.Spawn(
+	shell := sh.Init_Default_Shell()
+	sh.Shell_Spawn(
+		shell,
 		"go",
 		"test",
 		"./cli",
