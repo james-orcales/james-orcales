@@ -6,7 +6,7 @@ import (
 	"testing"
 	"testing/fstest"
 
-	"github.com/james-orcales/james-orcales/shared/invariant/v3"
+	"github.com/james-orcales/james-orcales/shared/invariant"
 )
 
 // A Dot_Product containing an Always(false) element must fail: the asserted

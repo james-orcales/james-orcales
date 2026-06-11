@@ -4,8 +4,8 @@ import (
 	"math"
 	"testing"
 
+	core "github.com/james-orcales/james-orcales/shared/invariant"
 	"github.com/james-orcales/james-orcales/shared/invariant/default"
-	core "github.com/james-orcales/james-orcales/shared/invariant/v3"
 )
 
 // Renders the True/False outcome of a preset's leading count Sometimes elements
