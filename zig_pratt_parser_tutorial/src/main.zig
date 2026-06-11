@@ -27,10 +27,10 @@ const std = @import("std");
 const Allocator = std.mem.Allocator;
 const DynamicArray = std.ArrayListUnmanaged;
 
-// const Ast = @import("1_parser.zig").Ast;
-// const Ast = @import("2_parser_slice.zig").Ast;
-// const Ast = @import("3_parser_dod.zig").Ast;
-const Ast = @import("4_parser_final.zig").Ast;
+// const Ast = @import("parse_1_parser.zig").Ast;
+// const Ast = @import("parse_2_parser_slice.zig").Ast;
+// const Ast = @import("parse_3_parser_dod.zig").Ast;
+const Ast = @import("parse_4_parser_final.zig").Ast;
 
 const string = []const u8;
 const char = u8;
