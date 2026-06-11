@@ -1,6 +1,11 @@
 # odin_http_server_from_scratch
 
-Implement an http server from scratch using syscalls. Written in Odin and the implementation is specific to MacOS. Avoid using the Odin stdlib syscall wrappers.
+Implement an http server from scratch using syscalls. Written in Odin and the implementation is
+specific to MacOS. Avoid using the Odin stdlib syscall wrappers.
+
+## Odin Version
+
+`git clone --depth=1 --branch=dev-2025-10 https://github.com/odin-lang/Odin.git/`
 
 ## Quickstart
 
