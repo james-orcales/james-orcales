@@ -552,7 +552,7 @@ func string_has_line_break(s string) (has bool) {
 // covers 16 bytes. This framework enforces hundreds of thousands of assertions,
 // so the predicate is hot enough to justify the unsafe load. Benchmarked on a
 // 1 MiB all-ASCII string (worst case — no match, every byte visited), 100 runs,
-// startup subtracted, Apple M4, go1.25.7:
+// startup subtracted, Apple M4, go1.26.3:
 //
 //	range over runes         730 ms    2.7 GiB/s    1.0x
 //	byte loop, high-bit      484 ms    4.1 GiB/s    1.5x
