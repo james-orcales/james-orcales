@@ -17,7 +17,7 @@ import (
 	"unicode/utf8"
 	"unsafe"
 
-	invariant "github.com/james-orcales/james-orcales/shared/invariant/v3"
+	invariant "github.com/james-orcales/james-orcales/shared/invariant"
 )
 
 // Recorder re-exports the library type so callers importing only this package

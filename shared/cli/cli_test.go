@@ -3,20 +3,16 @@ package cli_test
 import (
 	"bytes"
 	"fmt"
-	"os"
 	"strings"
 	"testing"
 
 	"github.com/james-orcales/james-orcales/shared/cli"
-	"github.com/james-orcales/james-orcales/shared/invariant"
+	invariant "github.com/james-orcales/james-orcales/shared/invariant/default"
 	"github.com/james-orcales/james-orcales/shared/snap/default"
 )
 
 func TestMain(m *testing.M) {
-	invariant.RegisterPackagesForAnalysis()
-	code := m.Run()
-	invariant.AnalyzeAssertionFrequency()
-	os.Exit(code)
+	invariant.Run_Test_Main(m)
 }
 
 // Per-test program plus its captured output buffers.

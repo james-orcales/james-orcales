@@ -32,7 +32,7 @@ import (
 	"strings"
 	"text/tabwriter"
 
-	"github.com/james-orcales/james-orcales/shared/invariant"
+	invariant "github.com/james-orcales/james-orcales/shared/invariant/default"
 )
 
 // Program represents a command-line application with one or more commands.
@@ -210,10 +210,10 @@ func Program_Parse(
 	defer func() {
 		argument_count := len(active_command.Arguments)
 		flag_count := len(active_command.Flags)
-		invariant.Sometimes(argument_count == 0, "Command does not take arguments.")
-		invariant.Sometimes(argument_count > 0, "Command takes arguments.")
-		invariant.Sometimes(flag_count == 0, "Command does not support flags.")
-		invariant.Sometimes(flag_count > 0, "Command supports flags.")
+		invariant.Dot_Product(
+			invariant.Sometimes(argument_count > 0),
+			invariant.Sometimes(flag_count > 0),
+		)
 	}()
 
 	active_command, err = program_resolve_command(program, operating_system_args)
@@ -229,9 +229,9 @@ func Program_Parse(
 	if err != nil {
 		return active_command, err
 	}
-	invariant.Sometimes(len(flags) == 0, "No flags were set.")
-	invariant.Sometimes(len(flags) < len(active_command.Flags), "Some flags were set.")
-	invariant.Sometimes(len(flags) == len(active_command.Flags), "All flags were set.")
+	invariant.Dot_Product(invariant.Sometimes(len(flags) == 0))
+	invariant.Dot_Product(invariant.Sometimes(len(flags) < len(active_command.Flags)))
+	invariant.Dot_Product(invariant.Sometimes(len(flags) == len(active_command.Flags)))
 
 	if len(positional_arguments) != len(active_command.Arguments) {
 		return active_command, fmt.Errorf(
@@ -358,7 +358,8 @@ func program_parse_flags(program *Program, active_command Command, flags []strin
 					flag[2:])
 			}
 		}
-		invariant.Always(flag != "-", "Lone dashes are treated as positional arguments.")
+		// command_collect_args routes a lone "-" to positional args, so a flag token is never "-".
+		invariant.Dot_Product(invariant.Always(flag != "-"))
 		flag = flag[1:]
 		flag_name, value, value_was_set := strings.Cut(flag, "=")
 
