@@ -45,11 +45,11 @@ const recorder_dot_product_skip = 5
 // bundle graph finishes far below this. The cap only stops a pathological (e.g.
 // self-referential) *_Invariants graph from making the work depend unboundedly
 // on input — TigerStyle forbids that.
-const max_bundle_expansion_steps = 4096
+const bundle_expansion_steps_max = 4096
 
 // Bounds the walk up the directory tree searching for a go.mod, so module
 // discovery can't loop unboundedly on a pathological path.
-const max_module_search_depth = 256
+const module_search_depth_max = 256
 
 // Dot_Element_Kind_Always tags an element whose condition must hold on every call.
 const Dot_Element_Kind_Always Dot_Element_Kind = 0
@@ -110,17 +110,32 @@ type Recorder struct {
 	// hardcoded frame.
 	Get_Caller func(skip int) (file string, line int)
 
+	// Assertions is the coverage tracker: one entry per registered element bucket and
+	// per Dot_Product tuple, keyed by Site and credited as observations arrive.
 	Assertions sync.Map
 
+	// Output receives the coverage-gap report and the orphan/bundle diagnostics.
 	Output io.Writer
-	Exit   func(code int)
-	Tty    io.Writer
+	// Exit ends the process with a status code; the composition tier wires it to os.Exit.
+	Exit func(code int)
+	// Tty receives the clean-run success summary so it shows even without `go test -v`.
+	Tty io.Writer
 
-	Is_Test      bool
-	Is_Fuzz      bool
+	// Is_Test reports a plain `go test` run — the only mode that seeds and checks coverage.
+	Is_Test bool
+	// Is_Fuzz reports a fuzzing run, where coverage is not seeded.
+	Is_Fuzz bool
+	// Is_Benchmark reports a benchmark run, where coverage is not seeded.
 	Is_Benchmark bool
 
+	// Packages_To_Analyze are the directories whose source is parsed to seed the
+	// expected-coverage space.
 	Packages_To_Analyze []string
+
+	// Working_Directory resolves the relative entries of Packages_To_Analyze to
+	// absolute paths. The composition tier sets it to the process working directory;
+	// empty leaves a relative entry relative.
+	Working_Directory string
 
 	// Site_Root is the absolute workspace root (the directory of go.work, else the
 	// git root) that Sites are reported relative to. Discovered during
@@ -144,21 +159,34 @@ type Assertion_Kind uint8
 // (or a registered tuple) was observed across the run. Seeded at registration,
 // incremented at runtime, scanned by the never-fired report.
 type Assertion_Metadata struct {
-	Frequency       atomic.Int64
+	// Frequency counts true-event observations: an Always/Sometimes true, a Boundary
+	// Hi endpoint, or a tuple.
+	Frequency atomic.Int64
+	// False_Frequency counts false-event observations: a Sometimes false or a Boundary
+	// Lo endpoint.
 	False_Frequency atomic.Int64
-	Kind            Assertion_Kind
-	Site            string
-	Condition       string
-	Tuple_Indices   []int
+	// Kind discriminates the entry: Always, Sometimes, Boundary, or Tuple.
+	Kind Assertion_Kind
+	// Site is the file:line the entry is keyed by.
+	Site string
+	// Condition is the source text of the asserted expression, for the gap report.
+	Condition string
+	// Tuple_Indices is the bucket combination a Tuple entry tracks; nil for elements.
+	Tuple_Indices []int
 }
 
 // Dot_Element is a discriminated union: an Always/Sometimes observation, or an
 // Impossible declaration. Kind selects which fields carry meaning.
 type Dot_Element struct {
-	Kind  Dot_Element_Kind
+	// Kind selects which fields carry meaning: an Always/Sometimes/Boundary
+	// observation, or an Impossible declaration.
+	Kind Dot_Element_Kind
+	// Event is the observed outcome of an observation element.
 	Event Event_Kind
-	Site  string
+	// Site is the file:line of the element's constructor call.
+	Site string
 
+	// Impossibles are the forbidden event coordinates an Impossible declares.
 	Impossibles []Dot_Element_Reference
 }
 
@@ -178,7 +206,9 @@ type Event_Kind uint8
 // Dot_Element_Reference names one element's event by its Site — a coordinate an
 // Impossible declares forbidden.
 type Dot_Element_Reference struct {
-	Site       string
+	// Site is the file:line of the referenced element.
+	Site string
+	// Event_Kind is the outcome of that element this reference names.
 	Event_Kind Event_Kind
 }
 
@@ -246,8 +276,11 @@ type Numeric interface {
 // Boundary_Input is the value X and its inclusive endpoints Lo, Hi for a
 // Distinct_Boundary. Message-less by design, like the other element producers.
 type Boundary_Input[I Numeric] struct {
-	X  I
+	// X is the value the boundary tracks.
+	X I
+	// Lo is the inclusive lower endpoint.
 	Lo I
+	// Hi is the inclusive upper endpoint.
 	Hi I
 }
 
@@ -551,10 +584,13 @@ func Recorder_Register_Packages_For_Analysis(recorder *Recorder, directories ...
 	module_root := ""
 	primary_directory := ""
 	for _, directory := range recorder.Packages_To_Analyze {
-		absolute, absolute_error := filepath.Abs(directory)
-		if absolute_error != nil {
-			continue
+		// A filepath.Abs here would reach the OS for the working directory, which a pure
+		// package must not do; Working_Directory is injected so this stays pure.
+		absolute := directory
+		if !filepath.IsAbs(absolute) {
+			absolute = filepath.Join(recorder.Working_Directory, absolute)
 		}
+		absolute = filepath.Clean(absolute)
 		if primary_directory == "" {
 			primary_directory = absolute
 		}
@@ -593,11 +629,11 @@ func Recorder_Register_Packages_For_Analysis(recorder *Recorder, directories ...
 // Walks up from start_directory for the workspace root: the nearest ancestor
 // containing a go.work, else (no go.work anywhere up) the nearest containing a
 // .git. Returns "" when neither is found — Sites then stay absolute. Bounded by
-// max_module_search_depth; go.work is preferred over .git at every level.
+// module_search_depth_max; go.work is preferred over .git at every level.
 func recorder_site_root(recorder *Recorder, start_directory string) (root string) {
 	directory := start_directory
 	git_root := ""
-	for range max_module_search_depth {
+	for range module_search_depth_max {
 		base := strings.TrimPrefix(directory, "/")
 		if recorder_has_entry(recorder, path.Join(base, "go.work")) {
 			return directory
@@ -624,13 +660,13 @@ func recorder_has_entry(recorder *Recorder, name string) (exists bool) {
 
 // Walks up from start_directory for a go.mod, returning the module path it
 // declares and the absolute directory containing it. Both are "" when none is
-// found within max_module_search_depth — cross-package resolution then degrades
+// found within module_search_depth_max — cross-package resolution then degrades
 // to same-package bundles only.
 func recorder_module(
 	recorder *Recorder, start_directory string,
 ) (module_path string, module_root string) {
 	directory := start_directory
-	for range max_module_search_depth {
+	for range module_search_depth_max {
 		relative := path.Join(strings.TrimPrefix(directory, "/"), "go.mod")
 		source, read_error := fs.ReadFile(recorder.File_System, relative)
 		if read_error == nil {
@@ -662,11 +698,11 @@ func parse_module_path(source []byte) (module_path string) {
 }
 
 // Walks up from start_directory for a go.work, returning its absolute path, or ""
-// when none is found within max_module_search_depth. Mirrors recorder_site_root's
+// when none is found within module_search_depth_max. Mirrors recorder_site_root's
 // walk so the workspace it finds is the same one Sites are reported relative to.
 func recorder_workspace_file(recorder *Recorder, start_directory string) (workspace_file string) {
 	directory := start_directory
-	for range max_module_search_depth {
+	for range module_search_depth_max {
 		base := strings.TrimPrefix(directory, "/")
 		if recorder_has_entry(recorder, path.Join(base, "go.work")) {
 			return path.Join(directory, "go.work")
@@ -1233,7 +1269,7 @@ func recorder_collect_elements(
 		Axis_Local: map[*ast.CallExpr]int{},
 	}}
 	for step := 0; len(stack) > 0; step++ {
-		if step >= max_bundle_expansion_steps {
+		if step >= bundle_expansion_steps_max {
 			break
 		}
 		frame := stack[len(stack)-1]
