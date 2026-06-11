@@ -1,11 +1,11 @@
-package invariant_default_test
+package invariant_test
 
 import (
 	"math"
 	"testing"
 
+	"github.com/james-orcales/james-orcales/shared/invariant/default"
 	core "github.com/james-orcales/james-orcales/shared/invariant/v3"
-	invariant "github.com/james-orcales/james-orcales/shared/invariant/v3/invariant_default"
 )
 
 // Renders the True/False outcome of a preset's leading count Sometimes elements
