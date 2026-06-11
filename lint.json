@@ -12,7 +12,8 @@
     "shared/io"
   ],
   "ignore": [
-          "dotfiles"
+          "dotfiles",
+          "documentation/youtube"
   ],
   "word_replacements": {
     "len":       [],
