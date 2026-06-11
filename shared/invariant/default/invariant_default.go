@@ -3,7 +3,7 @@
 // sniffing, runtime.Callers, os.Exit — and re-exports the surface. Import it
 // aliased as invariant and use invariant.Always / invariant.Sometimes /
 // invariant.Dot_Product as if no split between pure and OS-bound tiers existed.
-package invariant_default
+package invariant
 
 import (
 	"io"
