@@ -421,12 +421,12 @@ func main() { return }
 	run_diag_table(t, tests)
 }
 
-// Test_Global_API_Allowlist verifies the var-Default exemption is governed by
-// lint.json's global_api_allowlist, not by the literal default/ directory
-// name: an allowlisted package earns the exemption whether its directory is
-// named default/ or carries the _default suffix, while a default/ package
-// absent from the allowlist is banned (the heuristic is gone).
-func Test_Global_API_Allowlist(t *testing.T) {
+// Test_Instrumentation_Packages verifies the var-Default exemption is governed by
+// lint.json's instrumentation_packages, not by the literal default/ directory
+// name: a listed package earns the exemption whether its directory is named
+// default/ or carries the _default suffix, while a default/ package absent from
+// the list is banned (the heuristic is gone).
+func Test_Instrumentation_Packages(t *testing.T) {
 	t.Parallel()
 	for _, tt := range []struct {
 		Name      string
@@ -1635,29 +1635,34 @@ func F() {
 	}
 }
 
-// Test_Transitive_Purity_Snap_Exemption verifies a pure library's test file may
-// import the snapshot library: snap is test infrastructure, an extension of the
-// suite, so its impurity is exempt from the transitive-purity import ban.
-func Test_Transitive_Purity_Snap_Exemption(t *testing.T) {
+// Test_Transitive_Purity_Instrumentation_Exemption verifies a pure package may
+// import an impure package listed in instrumentation_packages without breaching
+// the transitive-purity ban: instrumentation is a write-only side channel, so the
+// exemption holds for ordinary code, not only _test.go files.
+func Test_Transitive_Purity_Instrumentation_Exemption(t *testing.T) {
 	t.Parallel()
-	const shared = "github.com/james-orcales/james-orcales/shared"
-	output := run_snapshot(t, map[string]string{
-		"go.mod":         "module " + shared + "\n\ngo 1.25\n",
-		"lib/library.go": "// Package library is a fixture.\npackage library\n",
-		"lib/library_test.go": `package library_test
-
-import (
-	"testing"
-
-	snap "` + shared + `/snap/v2/snap_default"
-)
-
-// Test_Snap is a fixture.
-func Test_Snap(t *testing.T) { _ = snap.Default }
-`,
-	}, doctrine_shared_module_at_root)
-	if strings.Contains(output, "impure dependency") {
-		t.Fatalf("snap import in a test file must be exempt; got: %s", output)
+	files := map[string]string{
+		"go.mod": "module fixture\n\ngo 1.25\n",
+		"instr/default/instr.go": "// Package instr is a fixture.\n" +
+			"package instr\n\n// Sink is a fixture.\nfunc Sink() {\n\treturn\n}\n",
+		"lib/library.go": "// Package library is a fixture.\npackage library\n\n" +
+			"import \"fixture/instr/default\"\n\n" +
+			"// Use is a fixture.\nfunc Use() {\n\tinstr.Sink()\n}\n",
+	}
+	fsys := fstest.MapFS{}
+	for name, content := range files {
+		data := []byte(content)
+		if strings.HasSuffix(name, ".go") {
+			data = gofmt_must(t, content)
+		}
+		fsys[name] = &fstest.MapFile{Data: data}
+	}
+	fsys["lint.json"] = &fstest.MapFile{Data: test_lint_json(t, "fixture", []string{"instr"})}
+	stdout := &bytes.Buffer{}
+	code := lint_main(t, &lint.Main_Input{Fsys: fsys, Stdout: stdout, Stderr: &bytes.Buffer{}})
+	if bytes.Contains(stdout.Bytes(), []byte("impure dependency")) {
+		t.Fatalf("instrumentation import must be exempt (exit %d): %s",
+			code, stdout.String())
 	}
 }
 
@@ -5803,7 +5808,7 @@ func parse_configuration_valid_cases() (cases []parse_configuration_case) {
 		{
 			Name: "valid full document",
 			Input: `{"shared_module":"example.com/lib",` +
-				`"global_api_allowlist":["a/b","c/d"],` +
+				`"instrumentation_packages":["a/b","c/d"],` +
 				`"word_replacements":{"id":["identifier"]}}`,
 			Want_Shared: "example.com/lib",
 			Want_List:   []string{"a/b", "c/d"},
@@ -5830,7 +5835,7 @@ func parse_configuration_error_cases() (cases []parse_configuration_case) {
 	return []parse_configuration_case{
 		{
 			Name:     "missing shared_module rejected",
-			Input:    `{"global_api_allowlist":[]}`,
+			Input:    `{"instrumentation_packages":[]}`,
 			Want_Err: true,
 		},
 		{
@@ -5857,7 +5862,7 @@ func parse_configuration_error_cases() (cases []parse_configuration_case) {
 		},
 		{
 			Name:     "wrong value type rejected",
-			Input:    `{"shared_module":"x","global_api_allowlist":"no"}`,
+			Input:    `{"shared_module":"x","instrumentation_packages":"no"}`,
 			Want_Err: true,
 		},
 		{
@@ -5905,14 +5910,14 @@ func assert_configuration(
 	if configuration.Shared_Module != want_shared {
 		t.Fatalf("shared_module: got %q want %q", configuration.Shared_Module, want_shared)
 	}
-	if len(configuration.Global_API_Allowlist) != len(want_list) {
+	if len(configuration.Instrumentation_Packages) != len(want_list) {
 		t.Fatalf("allowlist len: got %d want %d",
-			len(configuration.Global_API_Allowlist), len(want_list))
+			len(configuration.Instrumentation_Packages), len(want_list))
 	}
 	for i, want := range want_list {
-		if configuration.Global_API_Allowlist[i] != want {
+		if configuration.Instrumentation_Packages[i] != want {
 			t.Errorf("allowlist[%d]: got %q want %q",
-				i, configuration.Global_API_Allowlist[i], want)
+				i, configuration.Instrumentation_Packages[i], want)
 		}
 	}
 }

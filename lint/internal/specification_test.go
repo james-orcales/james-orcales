@@ -1417,7 +1417,8 @@ func Test_Deterministic_Banned_Imports(t *testing.T) {
 }
 
 // Test_Deterministic_Import_Induction verifies importing a non-deterministic
-// first-party package is flagged.
+// first-party package is flagged, while a package listed in instrumentation_packages
+// is exempt: instrumentation is a write-only side channel the induction does not reach.
 func Test_Deterministic_Import_Induction(t *testing.T) {
 	t.Parallel()
 	files := map[string][]byte{
@@ -1435,6 +1436,23 @@ func Test_Deterministic_Import_Induction(t *testing.T) {
 	if !specification_diagnosed(deterministic_self_diagnostics(t, files, []string{"pkg"}),
 		"import only deterministic packages") {
 		t.Fatal("importing a non-deterministic first-party package must be flagged")
+	}
+	fsys := fstest.MapFS{}
+	for name, content := range files {
+		fsys[name] = &fstest.MapFile{Data: content}
+	}
+	exempt, err := lint.Check_File_System(&lint.Check_File_System_Input{
+		Fsys:                     fsys,
+		Scope:                    "pkg",
+		Shared_Module:            doctrine_shared_module_directory,
+		Deterministic_Packages:   []string{"pkg"},
+		Instrumentation_Packages: []string{"other"},
+	})
+	if err != nil {
+		t.Fatalf("Check_File_System: %v", err)
+	}
+	if specification_diagnosed(exempt, "import only deterministic packages") {
+		t.Fatalf("a listed instrumentation import must be exempt; got: %v", exempt)
 	}
 }
 

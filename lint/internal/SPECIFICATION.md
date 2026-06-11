@@ -232,8 +232,8 @@ A pure package may not call the clock, stdout, or network via time, fmt, net, or
 ### Transitive Purity
 
 A pure package imports only pure packages, never an impure one; purity then holds across the whole
-import closure by induction, with no graph walk. A test file may import snap, the snapshot library,
-an extension of the suite the ban exempts.
+import closure by induction, with no graph walk. It may import a package listed in lint.json's
+`instrumentation_packages` — a write-only side channel the ban exempts.
 
 ### Transitive Stdlib
 
@@ -290,8 +290,8 @@ A name declared in an inner scope must not shadow one from an outer scope.
 ### Mutable Globals
 
 A global mutable var is permitted only via `regexp.MustCompile` or `errors.New`, as a
-`var _ Interface = (*Type)(nil) assertion`, or as a single `Default` var in a package whose
-directory is listed in lint.json's `global_api_allowlist`.
+`var _ Interface = (*Type)(nil) assertion`, or as a single `Default` var in a package at or under
+a directory listed in lint.json's `instrumentation_packages`.
 
 ### Discards
 
@@ -546,8 +546,9 @@ injects the clock and holds no concurrency to guard.
 
 ### Import Induction
 
-A deterministic package's first-party imports are themselves deterministic, so
-determinism holds across the import closure by induction.
+A deterministic package's first-party imports are themselves deterministic, save
+those listed in lint.json's `instrumentation_packages` — write-only side channels
+the induction exempts.
 
 ### Impurity
 

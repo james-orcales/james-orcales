@@ -1,9 +1,8 @@
 {
   "shared_module": "shared",
-  "global_api_allowlist": [
-    "shared/snap/default",
-    "shared/invariant/v2/invariant_default",
-    "shared/invariant/v3/invariant_default"
+  "instrumentation_packages": [
+          "shared/invariant",
+          "shared/snap"
   ],
   "deterministic_packages": [
     "./markdown_to_pdf/internal",
