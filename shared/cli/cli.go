@@ -358,7 +358,8 @@ func program_parse_flags(program *Program, active_command Command, flags []strin
 					flag[2:])
 			}
 		}
-		// command_collect_args routes a lone "-" to positional args, so a flag token is never "-".
+		// A lone "-" is routed to positional args by command_collect_args, so a flag
+		// token is never "-".
 		invariant.Dot_Product(invariant.Always(flag != "-"))
 		flag = flag[1:]
 		flag_name, value, value_was_set := strings.Cut(flag, "=")

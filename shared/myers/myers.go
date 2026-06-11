@@ -285,7 +285,7 @@ func Differ_Merge_Shift_Diff_Cleanup(d *Differ) {
 
 		differ_merge(d)
 
-		// differ_merge padded both ends with empty retains, so at least 3 edits exist.
+		// Both ends now carry empty retains (differ_merge padded them), so 3+ edits exist.
 		invariant.Dot_Product(invariant.Always(len(d.Edits) >= 3))
 		if len(d.Edits[0].Data) == 0 {
 			d.Edits = d.Edits[1:]
@@ -593,14 +593,16 @@ func Differ_Algorithm_Diff(d *Differ) {
 			// With the runes equal to the text, the script must replay back to it.
 			rebuilt := differ_rebuild_string_from_edits(d)
 			invariant.Dot_Product(invariant.Always(
-				(before.Old_String == rebuilt.Old) == (before.New_String == rebuilt.New)))
+				(before.Old_String == rebuilt.Old) ==
+					(before.New_String == rebuilt.New)))
 		}
 	}()
 
 	if len(d.Old) == 0 {
 		if len(d.New) == 0 {
-			// Empty rune slices reach the algorithm only on a direct call with empty texts.
-			invariant.Dot_Product(invariant.Always(d.Old_String == "" && d.New_String == ""))
+			// Empty rune slices reach here only on a direct call with empty texts.
+			invariant.Dot_Product(invariant.Always(
+				d.Old_String == "" && d.New_String == ""))
 			return
 		}
 	}
@@ -702,7 +704,7 @@ func differ_forward_step(input differ_forward_step_input) (more bool) {
 		}
 		y = x - k
 
-		// x never falls below its diagonal k; x > k means a snake (matching run)
+		// Reaching x never falls below its diagonal k; x > k means a snake (matching run)
 		// extended this node, x == k means the diagonal was first reached here.
 		invariant.Dot_Product(
 			invariant.Always(x >= k),

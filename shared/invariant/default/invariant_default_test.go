@@ -22,7 +22,7 @@ func event_signature(elements []core.Dot_Element, count int) (signature string) 
 	return signature
 }
 
-// asserts the trailing boundary of a Whole_Number_Invariants bundle (index 3, after
+// Asserts the trailing boundary of a Whole_Number_Invariants bundle (index 3, after
 // the three Sometimes axes) is a Distinct_Boundary firing the expected endpoint event.
 func assert_whole_number_boundary(
 	t *testing.T, name string, elements []core.Dot_Element, want core.Event_Kind,
@@ -57,7 +57,8 @@ func Test_Whole_Number_Invariants_Bounds(t *testing.T) {
 		{"zero is interior for a signed type", 0, core.Event_Kind_Interior},
 	}
 	for _, c := range signed {
-		assert_whole_number_boundary(t, c.Name, invariant.Whole_Number_Invariants(c.N), c.Want)
+		assert_whole_number_boundary(
+			t, c.Name, invariant.Whole_Number_Invariants(c.N), c.Want)
 	}
 	unsigned := []struct {
 		Name string
@@ -69,7 +70,8 @@ func Test_Whole_Number_Invariants_Bounds(t *testing.T) {
 		{"a positive unsigned value is interior", 5, core.Event_Kind_Interior},
 	}
 	for _, c := range unsigned {
-		assert_whole_number_boundary(t, c.Name, invariant.Whole_Number_Invariants(c.N), c.Want)
+		assert_whole_number_boundary(
+			t, c.Name, invariant.Whole_Number_Invariants(c.N), c.Want)
 	}
 }
 

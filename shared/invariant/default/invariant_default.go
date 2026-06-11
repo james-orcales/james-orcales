@@ -69,6 +69,7 @@ func Init_Default_Recorder() (recorder *invariant.Recorder) {
 	if open_error == nil {
 		tty = opened
 	}
+	working_directory, _ := os.Getwd()
 	return &invariant.Recorder{
 		Output:      os.Stderr,
 		Tty:         tty,
@@ -87,6 +88,7 @@ func Init_Default_Recorder() (recorder *invariant.Recorder) {
 		Is_Fuzz:             is_fuzz,
 		Is_Benchmark:        is_benchmark,
 		Packages_To_Analyze: []string{"."},
+		Working_Directory:   working_directory,
 		Sugar_Package:       reflect.TypeOf(sugar_package_marker{}).PkgPath(),
 	}
 }
@@ -192,7 +194,7 @@ func whole_number_is_signed[I Whole_Number]() (signed bool) {
 	return I(0)-I(1) < 0
 }
 
-// whole_number_max returns the largest value of the integer type I. A width-B unsigned
+// Returns the largest value of the integer type I. A width-B unsigned
 // integer maxes at 2^(8B) - 1 (all bits set); a signed one at 2^(8B-1) - 1, one bit
 // narrower for the sign. The shift derives B from the type's byte size, so the bound is
 // exact for every kind in Whole_Number and any ~-defined type over them.
@@ -204,7 +206,7 @@ func whole_number_max[I Whole_Number]() (hi I) {
 	return I(^uint64(0) >> (64 - bits))
 }
 
-// whole_number_min returns the smallest value of the integer type I: 0 for an unsigned
+// Returns the smallest value of the integer type I: 0 for an unsigned
 // type, and for a signed one the two's-complement floor -2^(8B-1), one below the negated
 // max. The negation is dead for unsigned I (it returns 0 first) but still must compile,
 // which it does — unary minus on an unsigned value is legal and wraps.
