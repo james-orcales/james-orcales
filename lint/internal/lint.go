@@ -556,11 +556,13 @@ type Configuration struct {
 	// module at the workspace root is treated as a binary. Slash-relative, like
 	// the allowlist. Required: a config without it is rejected.
 	Shared_Module string `json:"shared_module"`
-	// Global_API_Allowlist names the workspace-root-relative package
-	// directories permitted to expose impure global API. Today that is a
-	// single `var Default = …`; the literal `default/` directory name no
-	// longer earns the exemption — membership here is the only way.
-	Global_API_Allowlist []string `json:"global_api_allowlist"`
+	// Instrumentation_Packages names the workspace-root-relative directories of
+	// write-only instrumentation — assertions, snapshot tooling, telemetry. They
+	// may expose a `var Default`, and a pure or deterministic package may import
+	// them despite the import bans, since emitting to a write-only side channel
+	// cannot feed impurity or nondeterminism back into the importer. Segment-
+	// prefix: an entry covers itself and its whole subtree.
+	Instrumentation_Packages []string `json:"instrumentation_packages"`
 	// Deterministic_Packages names the workspace-root-relative package
 	// directories held to the deterministic tier on top of purity: no
 	// goroutine, channel, select, nor time/context/sync import, and every
@@ -680,19 +682,19 @@ func Main(input *Main_Input) (code int) {
 	// Git tier runs first: it reads only repo metadata, not the FS, for the fastest signal.
 	git_diags := Git_Input_Check(input.Git)
 	filesystem_diags, err := Check_File_System(&Check_File_System_Input{
-		Fsys:                   input.Fsys,
-		Root:                   ".",
-		Root_Directory:         input.Root_Directory,
-		Tracked:                input.Tracked,
-		CPU_Count:              input.CPU_Count,
-		Readlink:               input.Readlink,
-		Stat:                   input.Stat,
-		Scope:                  input.Scope_Prefix,
-		Global_API_Allowlist:   configuration.Global_API_Allowlist,
-		Shared_Module:          configuration.Shared_Module,
-		Deterministic_Packages: configuration.Deterministic_Packages,
-		Word_Replacements:      configuration.Word_Replacements,
-		Ignore:                 configuration.Ignore,
+		Fsys:                     input.Fsys,
+		Root:                     ".",
+		Root_Directory:           input.Root_Directory,
+		Tracked:                  input.Tracked,
+		CPU_Count:                input.CPU_Count,
+		Readlink:                 input.Readlink,
+		Stat:                     input.Stat,
+		Scope:                    input.Scope_Prefix,
+		Instrumentation_Packages: configuration.Instrumentation_Packages,
+		Shared_Module:            configuration.Shared_Module,
+		Deterministic_Packages:   configuration.Deterministic_Packages,
+		Word_Replacements:        configuration.Word_Replacements,
+		Ignore:                   configuration.Ignore,
 	})
 	if err != nil {
 		fmt.Fprintln(input.Stderr, err)
@@ -788,11 +790,11 @@ func Parse_Configuration(data []byte) (configuration *Configuration, err error) 
 		return nil, decode_err
 	}
 	known_keys := map[string]bool{
-		"shared_module":          true,
-		"global_api_allowlist":   true,
-		"deterministic_packages": true,
-		"word_replacements":      true,
-		"ignore":                 true,
+		"shared_module":            true,
+		"instrumentation_packages": true,
+		"deterministic_packages":   true,
+		"word_replacements":        true,
+		"ignore":                   true,
 	}
 	for key := range keys {
 		if known_keys[key] {
@@ -1383,7 +1385,7 @@ func check_shadow(
 // origin tier so the printer can gate tier-2 output globally on the
 // presence of any tier-1 diagnostic.
 func Check_File(
-	file_set *token.FileSet, file *ast.File, source []byte, allowlist map[string]bool,
+	file_set *token.FileSet, file *ast.File, source []byte, instrumentation []string,
 	word_replacements map[string][]string,
 ) (diags []Diagnostic) {
 	diags = check_file_run_tier([]check_function{
@@ -1429,7 +1431,7 @@ func Check_File(
 	}
 	diags = check_file_run_tier([]check_function{
 		check_no_unbounded_apis, check_no_recursion,
-		check_no_function_init, make_check_no_package_vars(allowlist),
+		check_no_function_init, make_check_no_package_vars(instrumentation),
 		check_unnecessary_method,
 		check_no_third_party_struct_tag,
 	}, file_set, file, source)
@@ -1876,11 +1878,11 @@ type Check_File_System_Input struct {
 	// `lint ./some/pkg` demands the file there, while a scopeless run does
 	// not blanket-require it of every package in the tree.
 	Scope string
-	// Global_API_Allowlist is the lint.json allowlist forwarded from
-	// Main_Input: workspace-root-relative package directories permitted a
-	// `var Default = …`. Built into a set once per run and threaded to the
-	// per-file package-var check.
-	Global_API_Allowlist []string
+	// Instrumentation_Packages is the lint.json instrumentation list forwarded
+	// from Main_Input: write-only packages exempt from the var-Default ban and
+	// the purity/determinism import bans. Threaded to the package-var,
+	// transitive-purity, and deterministic checks.
+	Instrumentation_Packages []string
 	// Shared_Module is the shared library module's workspace-root-relative
 	// directory, forwarded from Main_Input. It drives shared-vs-binary
 	// classification in the module index.
@@ -1947,10 +1949,9 @@ func Check_File_System(input *Check_File_System_Input) (diags []Diagnostic, err 
 	output = append(output, parse_diags...)
 	output = append(output,
 		check_path_casing(input.Fsys, tracked)...)
-	allowlist := build_global_api_allowlist_set(input.Global_API_Allowlist)
 	output = append(output,
-		check_file_system_run_checks(
-			parsed_files, cpu_count, allowlist, input.Word_Replacements)...)
+		check_file_system_run_checks(parsed_files, cpu_count,
+			input.Instrumentation_Packages, input.Word_Replacements)...)
 	output = append(output, check_file_system_package_split(parsed_files)...)
 	output = append(output, check_file_system_method_prefix(parsed_files)...)
 	output = append(output, check_binary_module_layout(parsed_files, modules)...)
@@ -1963,9 +1964,14 @@ func Check_File_System(input *Check_File_System_Input) (diags []Diagnostic, err 
 	output = append(output,
 		check_module_definition_and_location(input.Fsys, modules, tracked)...)
 	output = append(output, check_no_impure_stdlib(parsed_files, modules)...)
-	output = append(output, check_transitive_purity(parsed_files, modules)...)
-	output = append(output, check_deterministic(parsed_files, modules,
-		input.Deterministic_Packages)...)
+	output = append(output,
+		check_transitive_purity(parsed_files, modules, input.Instrumentation_Packages)...)
+	output = append(output, check_deterministic(&check_deterministic_input{
+		Parsed_Files:    parsed_files,
+		Modules:         modules,
+		Packages:        input.Deterministic_Packages,
+		Instrumentation: input.Instrumentation_Packages,
+	})...)
 	output = append(output, check_time_import_gateway(parsed_files, modules)...)
 	output = append(output, check_package_documentation_comment(parsed_files)...)
 	return append(output,
@@ -3986,7 +3992,7 @@ func specification_ada_case(heading string) (name string) {
 // Runs checks per file in parallel — CPU bound, capped at the injected
 // CPU_Count (typically runtime.NumCPU from main.go).
 func check_file_system_run_checks(
-	parsed_files []parsed_file, cpu_count int, allowlist map[string]bool,
+	parsed_files []parsed_file, cpu_count int, instrumentation []string,
 	word_replacements map[string][]string,
 ) (diags []Diagnostic) {
 
@@ -4000,7 +4006,7 @@ func check_file_system_run_checks(
 			defer wg.Done()
 			defer func() { <-sem }()
 			per_file_diags[i] = Check_File(
-				pf.File_Set, pf.File, pf.Source, allowlist, word_replacements)
+				pf.File_Set, pf.File, pf.Source, instrumentation, word_replacements)
 		}(i, pf)
 	}
 	wg.Wait()
@@ -5997,25 +6003,44 @@ func check_no_interfaces(file_set *token.FileSet, file *ast.File, _ []byte) (dia
 	return diags
 }
 
-// Turns the lint.json allowlist slice into a set for O(1) directory-membership
-// tests during the per-file checks. Entries are path-cleaned so "./pkg/" and
-// "pkg" name the same directory the files are keyed by (path.Dir). A nil or empty
-// slice yields an empty set, under which no package earns the var-Default
-// exemption — the strict default.
-func build_global_api_allowlist_set(entries []string) (set map[string]bool) {
-	set = map[string]bool{}
-	for _, entry := range entries {
-		set[path.Clean(entry)] = true
+// Reports whether the workspace-root-relative directory is a listed instrumentation
+// package or sits in one's subtree. Segment-prefix so a family entry
+// (shared/invariant) covers its versions and default tier; entries are path-cleaned
+// so "./pkg/" and "pkg" name the same directory.
+func instrumentation_match(directory string, packages []string) (yes bool) {
+	for _, entry := range packages {
+		clean := path.Clean(entry)
+		if directory == clean {
+			return true
+		}
+		if strings.HasPrefix(directory, clean+"/") {
+			return true
+		}
 	}
-	return set
+	return false
 }
 
-// Binds the global-API allowlist into the package-var check. The
-// check_function signature carries no config of its own, so the allowlist
-// (needed by the var-Default exemption) is captured in a closure built per run.
-func make_check_no_package_vars(allowlist map[string]bool) (checker check_function) {
+// Reports whether the import resolves to a first-party package at or under a listed
+// instrumentation package. Instrumentation is write-only — emitting to it cannot
+// feed impurity or nondeterminism back into the importer — so pure and
+// deterministic packages may import it despite the import bans.
+func import_path_is_instrumentation(
+	import_path string, modules *module_index, packages []string,
+) (yes bool) {
+	module_index_number := module_index_for_import_path(import_path, modules)
+	if module_index_number < 0 {
+		return false
+	}
+	m := modules.Modules[module_index_number]
+	return instrumentation_match(import_path_workspace_directory(import_path, m), packages)
+}
+
+// Binds the instrumentation list into the package-var check. The check_function
+// signature carries no config of its own, so the list (needed by the var-Default
+// exemption) is captured in a closure built per run.
+func make_check_no_package_vars(instrumentation []string) (checker check_function) {
 	return func(file_set *token.FileSet, file *ast.File, _ []byte) (diags []Diagnostic) {
-		return check_no_package_vars(file_set, file, allowlist)
+		return check_no_package_vars(file_set, file, instrumentation)
 	}
 }
 
@@ -6026,7 +6051,7 @@ func make_check_no_package_vars(allowlist map[string]bool) (checker check_functi
 // shape is also exempted — it declares no value, just asks the compiler
 // to verify Impl satisfies Iface.
 func check_no_package_vars(
-	file_set *token.FileSet, file *ast.File, allowlist map[string]bool,
+	file_set *token.FileSet, file *ast.File, instrumentation []string,
 ) (diags []Diagnostic) {
 
 	const base_message = "package-level var is banned" +
@@ -6050,7 +6075,7 @@ func check_no_package_vars(
 			if !is_vs {
 				continue
 			}
-			if check_no_package_vars_is_default(file_set, file, vs, allowlist) {
+			if check_no_package_vars_is_default(file_set, file, vs, instrumentation) {
 				continue
 			}
 			if check_no_package_vars_all_allowed(vs) {
@@ -6096,19 +6121,19 @@ func check_no_package_vars_is_map_or_slice_literal(vs *ast.ValueSpec) (yes bool)
 
 // Composition-tier packages are allowed to expose a single `var Default = …`
 // binding — that's literally the shape they exist for. The package's directory
-// (workspace-root-relative) must be listed in lint.json's global_api_allowlist;
-// the literal `default/` directory name confers nothing on its own. Allowed
+// (workspace-root-relative) must be at or under a listed instrumentation_packages
+// entry; the literal `default/` directory name confers nothing on its own. Allowed
 // only for the literal name "Default" and only as a single-name
 // single-initializer spec.
 func check_no_package_vars_is_default(
-	file_set *token.FileSet, file *ast.File, vs *ast.ValueSpec, allowlist map[string]bool,
+	file_set *token.FileSet, file *ast.File, vs *ast.ValueSpec, instrumentation []string,
 ) (yes bool) {
 
 	tok_file := file_set.File(file.Pos())
 	if tok_file == nil {
 		return false
 	}
-	if !allowlist[path.Dir(tok_file.Name())] {
+	if !instrumentation_match(path.Dir(tok_file.Name()), instrumentation) {
 		return false
 	}
 	if len(vs.Names) != 1 {
@@ -8738,15 +8763,15 @@ func is_impure_soft_ident(input *is_impure_soft_ident_input) (yes bool) {
 // Impure Stdlib, the ban binds the pure package's _test.go files too; direct
 // leaf use (os.Getenv, time.Now) in tests remains a matter for Impure Stdlib.
 func check_transitive_purity(
-	parsed_files []parsed_file, modules *module_index,
+	parsed_files []parsed_file, modules *module_index, instrumentation []string,
 ) (diags []Diagnostic) {
 
 	for _, pf := range parsed_files {
 		if parsed_file_is_impure_package(pf, modules) {
 			continue
 		}
-		diags = append(diags,
-			check_transitive_purity_per_file(pf.File_Set, pf.File, modules)...)
+		diags = append(diags, check_transitive_purity_per_file(
+			pf.File_Set, pf.File, modules, instrumentation)...)
 	}
 	return diags
 }
@@ -8796,48 +8821,11 @@ func directory_is_impure(canonical string, m module_information) (yes bool) {
 	return len(module_information_library_ancestors(m, canonical)) == 1
 }
 
-// True iff a test file imports the snapshot library. snap binds the OS to
-// rewrite inline snapshots in place, so it is impure first-party — but it is
-// test infrastructure, an extension of the suite, so an external *_test package
-// may import it without breaching transitive purity. snap lives at the shared
-// module's `/snap` path; with no shared module configured there is no snap to
-// exempt.
-func purity_snap_test_exemption(
-	file *ast.File, import_path string, modules *module_index,
-) (exempt bool) {
-
-	if !strings.HasSuffix(file.Name.Name, "_test") {
-		return false
-	}
-	shared_path := module_index_shared_library_path(modules)
-	if shared_path == "" {
-		return false
-	}
-	snap_root := shared_path + "/snap"
-	if import_path == snap_root {
-		return true
-	}
-	return strings.HasPrefix(import_path, snap_root+"/")
-}
-
-// Returns the shared library module's import path, or "" when no module is the
-// shared library (no shared module configured, or it matches no module's
-// go.mod). Used where a check needs the shared path itself rather than a
-// module's precomputed Is_Shared_Library flag.
-func module_index_shared_library_path(modules *module_index) (shared_path string) {
-	for _, m := range modules.Modules {
-		if m.Is_Shared_Library {
-			return m.Module_Path
-		}
-	}
-	return ""
-}
-
 // Flags the two routes impurity launders into a pure file: an import of an
 // impure first-party package, and a call to a curated stdlib API that reaches
 // the impure set only transitively.
 func check_transitive_purity_per_file(
-	file_set *token.FileSet, file *ast.File, modules *module_index,
+	file_set *token.FileSet, file *ast.File, modules *module_index, instrumentation []string,
 ) (diags []Diagnostic) {
 
 	const import_message = "impure dependency %q: a pure package imports only pure packages"
@@ -8846,7 +8834,7 @@ func check_transitive_purity_per_file(
 	for _, implementation := range file.Imports {
 		import_path := strings.Trim(implementation.Path.Value, `"`)
 		if import_path_is_impure_first_party(import_path, modules) {
-			if !purity_snap_test_exemption(file, import_path, modules) {
+			if !import_path_is_instrumentation(import_path, modules, instrumentation) {
 				diags = append(diags, Diagnostic{
 					Position: file_set.Position(implementation.Pos()),
 					Name:     "transitive-purity",
@@ -9359,6 +9347,21 @@ func check_no_unbounded_apis_is_generated(file *ast.File) (yes bool) {
 	return false
 }
 
+// Bundles check_deterministic's two string-slice lists — the deterministic packages
+// and the instrumentation exemptions — which would otherwise repeat a parameter
+// type.
+type check_deterministic_input struct {
+	// Parsed_Files is every parsed file in the workspace.
+	Parsed_Files []parsed_file
+	// Modules is the resolved module index.
+	Modules *module_index
+	// Packages is lint.json's deterministic_packages.
+	Packages []string
+	// Instrumentation is lint.json's instrumentation_packages: write-only imports a
+	// deterministic package may make despite the induction.
+	Instrumentation []string
+}
+
 // Enforces the opt-in deterministic tier: a package whose workspace-relative
 // directory is listed in lint.json's deterministic_packages is held, atop
 // purity, to bans on every construct whose result is decided outside the
@@ -9366,24 +9369,22 @@ func check_no_unbounded_apis_is_generated(file *ast.File) (yes bool) {
 // and may import only other deterministic first-party packages. Determinism is
 // stricter than purity, so a listed package must be pure; an impure one is
 // reported. The bans bind the package's _test.go files too.
-func check_deterministic(
-	parsed_files []parsed_file, modules *module_index, packages []string,
-) (diags []Diagnostic) {
+func check_deterministic(input *check_deterministic_input) (diags []Diagnostic) {
 
 	// Entries are path-cleaned so "./pkg/" and "pkg" both name the directory the
 	// parsed files are keyed by; a raw string compare would silently miss either.
 	set := map[string]bool{}
-	for _, entry := range packages {
+	for _, entry := range input.Packages {
 		set[path.Clean(entry)] = true
 	}
 	matched := map[string]bool{}
-	for _, pf := range parsed_files {
+	for _, pf := range input.Parsed_Files {
 		directory := path.Dir(pf.Path)
 		if !set[directory] {
 			continue
 		}
 		matched[directory] = true
-		if parsed_file_is_impure_package(pf, modules) {
+		if parsed_file_is_impure_package(pf, input.Modules) {
 			diags = append(diags, Diagnostic{
 				Position: pf.File_Set.Position(pf.File.Package),
 				Name:     "deterministic",
@@ -9394,10 +9395,10 @@ func check_deterministic(
 			continue
 		}
 		diags = append(diags, check_deterministic_constructs(pf.File_Set, pf.File)...)
-		diags = append(diags,
-			check_deterministic_imports(pf.File_Set, pf.File, modules, set)...)
+		diags = append(diags, check_deterministic_imports(
+			pf.File_Set, pf.File, input.Modules, set, input.Instrumentation)...)
 	}
-	return append(diags, check_deterministic_coverage(packages, matched)...)
+	return append(diags, check_deterministic_coverage(input.Packages, matched)...)
 }
 
 // Reports any deterministic_packages entry that matched no package in the
@@ -9462,10 +9463,12 @@ func check_deterministic_constructs(
 // Flags the imports a deterministic package may not make: time and context
 // launder ambient wall-clock time and cancellation past the injected clock, sync
 // and sync/atomic guard a concurrency it does not have, and any first-party
-// package that is not itself deterministic breaks the induction. snap in a
-// _test.go is exempt, as it is for transitive purity.
+// package that is not itself deterministic breaks the induction. An
+// instrumentation package is exempt, as it is for transitive purity — a
+// write-only side channel feeds no nondeterminism back into the importer.
 func check_deterministic_imports(
 	file_set *token.FileSet, file *ast.File, modules *module_index, set map[string]bool,
+	instrumentation []string,
 ) (diags []Diagnostic) {
 
 	for _, implementation := range file.Imports {
@@ -9483,7 +9486,7 @@ func check_deterministic_imports(
 		if !import_path_is_nondeterministic_first_party(import_path, modules, set) {
 			continue
 		}
-		if purity_snap_test_exemption(file, import_path, modules) {
+		if import_path_is_instrumentation(import_path, modules, instrumentation) {
 			continue
 		}
 		diags = append(diags, Diagnostic{

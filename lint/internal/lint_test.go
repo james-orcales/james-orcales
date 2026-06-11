@@ -1903,9 +1903,9 @@ func test_lint_json(t *testing.T, shared_module string, allowlist []string) (dat
 		shared_module = "lint_test_no_shared_module"
 	}
 	data, err := json.Marshal(lint.Configuration{
-		Shared_Module:        shared_module,
-		Global_API_Allowlist: allowlist,
-		Word_Replacements:    test_word_replacements(),
+		Shared_Module:            shared_module,
+		Instrumentation_Packages: allowlist,
+		Word_Replacements:        test_word_replacements(),
 	})
 	if err != nil {
 		t.Fatalf("test_lint_json: %v", err)
