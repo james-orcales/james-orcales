@@ -1,4 +1,7 @@
 bin/**
 !bin/darwin/lua
-.go-path
+.go_path/
 .envrc.local
+.claude/
+./tmp
+**/.DS_Store
