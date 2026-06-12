@@ -5921,3 +5921,77 @@ func assert_configuration(
 		}
 	}
 }
+
+// Test_Ignored_Directory_Third_Party_Hyphen pins that the top-level third-party/
+// drop-zone — the vendored Go-compiler test corpus, 70k files — is pruned by
+// Ignored_Directory, the single predicate both the worktree walk and the
+// module-discovery walk consult. The rule previously matched only the underscore
+// spelling, so the hyphen tree was walked on every run and trimmed only later by
+// the ignore list, after the directory syscalls were already spent.
+func Test_Ignored_Directory_Third_Party_Hyphen(t *testing.T) {
+	t.Parallel()
+	if !lint.Ignored_Directory("third-party") {
+		t.Errorf("Ignored_Directory(%q) = false, want true", "third-party")
+	}
+	// The drop-zone is top-level only, mirroring the underscore form: a nested
+	// pkg/third-party is first-party code and must stay in view.
+	if lint.Ignored_Directory("pkg/third-party") {
+		t.Errorf("Ignored_Directory(%q) = true, want false (top-level only)",
+			"pkg/third-party")
+	}
+}
+
+// Returns the diagnostics positioned at filename — the seam the scope test uses
+// to prove a file was parsed, since an AST-tier diagnostic exists only for a file
+// the parser saw.
+func diags_at(diags []lint.Diagnostic, filename string) (output []lint.Diagnostic) {
+	for _, diagnostic := range diags {
+		if diagnostic.Position.Filename == filename {
+			output = append(output, diagnostic)
+		}
+	}
+	return output
+}
+
+// Test_Scope_Parses_Target_And_Shared_Modules pins the scope-to-parse contract
+// via the AST tier: a dot-import is flagged only in a file the parser saw, so the
+// per-file diagnostics map exactly the parse set. A scoped run parses the scope's
+// own module and the shared library — the one module a first-party file may
+// import, so its packages must be in view for the transitive-purity rule, else it
+// fails open — and nothing else. An unrelated out-of-scope module is never
+// parsed; that is the work scope skips and the reason it is cheap.
+func Test_Scope_Parses_Target_And_Shared_Modules(t *testing.T) {
+	t.Parallel()
+	dot_import_file := "// Package fixture is a fixture.\n" +
+		"package fixture\n\nimport . \"fmt\"\n"
+	fsys := fstest.MapFS{
+		"shared/go.mod": &fstest.MapFile{
+			Data: []byte("module example.com/shared\n")},
+		"shared/lib/library.go": &fstest.MapFile{Data: []byte(dot_import_file)},
+		"mybinary/go.mod": &fstest.MapFile{
+			Data: []byte("module example.com/mybinary\n")},
+		"mybinary/internal/entry.go": &fstest.MapFile{Data: []byte(dot_import_file)},
+		"other/go.mod": &fstest.MapFile{
+			Data: []byte("module example.com/other\n")},
+		"other/lib/library.go": &fstest.MapFile{Data: []byte(dot_import_file)},
+	}
+	diags, err := lint.Check_File_System(&lint.Check_File_System_Input{
+		Fsys:          fsys,
+		Shared_Module: "shared",
+		Scope:         "mybinary",
+	})
+	if err != nil {
+		t.Fatalf("Check_File_System: %v", err)
+	}
+	if !specification_diagnosed(diags_at(diags, "mybinary/internal/entry.go"), "dot import") {
+		t.Errorf("in-scope file mybinary/internal/entry.go was not parsed")
+	}
+	if !specification_diagnosed(diags_at(diags, "shared/lib/library.go"), "dot import") {
+		t.Errorf("shared-library file shared/lib/library.go was not parsed; " +
+			"transitive-purity resolution of imports into shared would fail open")
+	}
+	if specification_diagnosed(diags_at(diags, "other/lib/library.go"), "dot import") {
+		t.Errorf("out-of-scope file other/lib/library.go was parsed; " +
+			"scope must prune unrelated modules from the parse set")
+	}
+}

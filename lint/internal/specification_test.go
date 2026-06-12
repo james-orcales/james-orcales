@@ -335,7 +335,7 @@ func Test_Repository_Github_Actions(t *testing.T) {
 	files := map[string][]byte{
 		".github/workflows/ci.yml": []byte("steps:\n  - uses: actions/checkout@v4\n"),
 	}
-	if !specification_flags(t, files, "third-party github action banned") {
+	if !repository_flags(t, files, "third-party github action banned") {
 		t.Fatal("a uses: line must be flagged")
 	}
 }
@@ -437,7 +437,7 @@ func Test_Markdown_Agent_Documentation_Pairing(t *testing.T) {
 	files := map[string][]byte{
 		"top/CLAUDE.md": []byte("Shared instructions.\n"),
 	}
-	if !specification_flags(t, files, "AGENTS.md is missing") {
+	if !repository_flags(t, files, "AGENTS.md is missing") {
 		t.Fatal("an unpaired CLAUDE.md must be flagged")
 	}
 }
@@ -1582,6 +1582,28 @@ func specification_flags(
 ) (found bool) {
 	t.Helper()
 	return specification_diagnosed(specification_self_diagnostics(t, files), fragment)
+}
+
+// Lints the fixture at whole-workspace scope and reports whether some diagnostic
+// message contains the fragment. The repository-wide stream checks (banned files,
+// conflict markers, workflow pins, agent-doc pairing) are exercised whole-tree —
+// the way a whole-repo run reaches them — since a scoped run, by design, examines
+// only its own subtree and so would never visit a fixture placed elsewhere.
+func repository_flags(
+	t *testing.T, files map[string][]byte, fragment string,
+) (found bool) {
+	t.Helper()
+	fsys := fstest.MapFS{}
+	for name, content := range files {
+		fsys[name] = &fstest.MapFile{Data: content}
+	}
+	diags, err := lint.Check_File_System(&lint.Check_File_System_Input{
+		Fsys: fsys, Shared_Module: doctrine_shared_module_directory,
+		Word_Replacements: test_word_replacements()})
+	if err != nil {
+		t.Fatalf("Check_File_System: %v", err)
+	}
+	return specification_diagnosed(diags, fragment)
 }
 
 // Wraps one Go source string as the sole file of a fixture package. Kept
