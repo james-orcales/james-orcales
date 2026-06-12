@@ -5,7 +5,6 @@ target
 pkg
 .DS_Store
 doc/tags
-vendor
 gopath
 *.zwc
 fzf
