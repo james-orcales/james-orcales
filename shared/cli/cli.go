@@ -22,6 +22,10 @@
 //	}
 //
 // Parse with Program_Parse and render help with Print_Help.
+//
+// For a binary that does one thing, build the program with New_Single instead of
+// New: it has no command selector, so the first token after the program name is the
+// first positional argument (as in `sloc ./src`) rather than a command name.
 package cli
 
 import (
@@ -45,6 +49,11 @@ type Program struct {
 	Commands []Command
 	// Global_Flags are flags accepted by every command.
 	Global_Flags []Option
+	// single marks a program with no command selector: the first token after the
+	// program name is the first positional argument, not a command name. Set by
+	// New_Single and never by New. It is unexported so the two grammars cannot be
+	// mixed after construction.
+	single bool
 }
 
 // Command represents a single command within a program.
@@ -149,28 +158,74 @@ func New(input New_Input) (program Program) {
 
 	for index, command := range program.Commands {
 		panic_when(command.Label == "", "Program.Commands[%d].Label is unset.", index)
-		for argument_index, argument := range command.Arguments {
-			panic_when(argument.Label == "",
-				"Argument #%d for command %q has no label.",
-				argument_index, command.Label)
-			switch argument.Value.(type) {
-			default:
-				panic_when(true,
-					"Argument %q has unsupported type: %T",
-					argument.Label, argument.Value)
-			case string, int:
-			}
-		}
-		for _, flag := range command.Flags {
-			validate_flag_label(fmt.Sprintf("Flag for command %q", command.Label), flag)
-			for _, global_flag := range input.Global_Flags {
-				panic_when(flag.Label == global_flag.Label,
-					"Command %q has flag %q that conflicts with a global flag.",
-					command.Label, flag.Label)
-			}
-		}
+		validate_command_options(command, input.Global_Flags)
 	}
 	return program
+}
+
+// New_Single_Input is the input for New_Single.
+type New_Single_Input struct {
+	// Label is the program name.
+	Label string
+	// Description is the one-line program summary.
+	Description string
+	// Arguments are the program's required, ordered positional arguments. They must
+	// ALL appear before flags.
+	Arguments []Option
+	// Flags are the program's optional, unordered flags.
+	Flags []Option
+}
+
+// New_Single creates a program with no command selector: the first token after the
+// program name is the first positional argument, not a command name. Use it for a
+// binary that does one thing, like `sloc ./src`. It validates arguments and flags
+// the same way New does, panicking when validation fails.
+//
+// A single-command program has no command namespace, so its first positional can
+// take any value. This is the only configuration where a defaulted command and its
+// positional arguments do not collide on the first token: with sibling commands,
+// that token must select a command, and a positional sharing a command's name would
+// be unreachable. A program that needs sibling commands must use New.
+func New_Single(input New_Single_Input) (program Program) {
+	command := Command{
+		Label:       input.Label,
+		Description: input.Description,
+		Arguments:   input.Arguments,
+		Flags:       input.Flags,
+	}
+	validate_command_options(command, nil)
+	return Program{
+		Label:       input.Label,
+		Description: input.Description,
+		Commands:    []Command{command},
+		single:      true,
+	}
+}
+
+// Panics when any of a command's arguments or flags is malformed: an argument with
+// no label or an unsupported type, a flag with an invalid label or type, or a flag
+// whose label collides with a global flag.
+func validate_command_options(command Command, global_flags []Option) {
+	for argument_index, argument := range command.Arguments {
+		panic_when(argument.Label == "",
+			"Argument #%d for command %q has no label.",
+			argument_index, command.Label)
+		switch argument.Value.(type) {
+		default:
+			panic_when(true,
+				"Argument %q has unsupported type: %T",
+				argument.Label, argument.Value)
+		case string, int:
+		}
+	}
+	for _, flag := range command.Flags {
+		validate_flag_label(fmt.Sprintf("Flag for command %q", command.Label), flag)
+		for _, global_flag := range global_flags {
+			panic_when(flag.Label == global_flag.Label,
+				"Command %q has flag %q that conflicts with a global flag.",
+				command.Label, flag.Label)
+		}
+	}
 }
 
 // Panics when the flag's label is empty, contains an underscore or space, or
@@ -216,16 +271,18 @@ func Program_Parse(
 		)
 	}()
 
-	active_command, err = program_resolve_command(program, operating_system_args)
+	active_command, arguments_start, err := program_resolve_command(program, operating_system_args)
 	if err != nil {
 		return active_command, err
 	}
-	if len(operating_system_args) == 1 {
+	// Nothing follows the consumed prefix (the program name, plus the command name
+	// in multi-command mode), so the default command stands as-is.
+	if len(operating_system_args) < arguments_start {
 		return active_command, nil
 	}
 
 	positional_arguments, flags, err := command_collect_args(
-		active_command, operating_system_args)
+		active_command, operating_system_args, arguments_start)
 	if err != nil {
 		return active_command, err
 	}
@@ -262,53 +319,62 @@ func Program_Parse(
 	return active_command, nil
 }
 
-// Finds the active command named by the args (defaulting to the first command)
-// and deep-copies its Arguments and Flags so parsing never mutates the program.
+// Finds the active command named by the args (defaulting to the first command) and
+// deep-copies its Arguments and Flags so parsing never mutates the program.
+// arguments_start is the index at which positionals and flags begin: after the
+// program name and the command name in multi-command mode, after only the program
+// name in single-command mode, where the first token is already a positional.
 func program_resolve_command(
 	program *Program, operating_system_args []string,
-) (active_command Command, err error) {
-	active_command = program.Commands[0]
+) (active_command Command, arguments_start int, err error) {
 	command_index := 0
-	if len(operating_system_args) > 1 {
+	arguments_start = 2
+	if program.single {
+		arguments_start = 1
+	} else if len(operating_system_args) > 1 {
 		found := false
 		for index, command := range program.Commands {
 			if command.Label == operating_system_args[1] {
-				active_command = command
 				command_index = index
 				found = true
 				break
 			}
 		}
 		if !found {
-			return active_command, fmt.Errorf(
+			return program.Commands[0], arguments_start, fmt.Errorf(
 				"%q is an unknown command", operating_system_args[1])
 		}
 	}
 
 	source := program.Commands[command_index]
+	active_command = source
 	active_command.Arguments = make([]Option, len(source.Arguments))
 	copy(active_command.Arguments, source.Arguments)
 	active_command.Flags = make([]Option, len(source.Flags))
 	copy(active_command.Flags, source.Flags)
-	return active_command, nil
+	return active_command, arguments_start, nil
 }
 
-// Splits the args after the command into positional arguments (before the first
-// flag) and flags, erroring on a positional that appears after a flag.
-func command_collect_args(active_command Command, operating_system_args []string) (
+// Splits the args after the consumed prefix into positional arguments (before the
+// first flag) and flags, erroring on a positional that appears after a flag.
+// arguments_start is where the split begins: past the program-and-command prefix in
+// multi-command mode, past only the program name in single-command mode.
+func command_collect_args(
+	active_command Command, operating_system_args []string, arguments_start int,
+) (
 	positional_arguments []string, flags []string, err error,
 ) {
 	positional_arguments = make([]string, 0, len(active_command.Arguments))
 	flags = make([]string, 0, len(active_command.Flags))
-	if len(operating_system_args) <= 2 {
+	if len(operating_system_args) <= arguments_start {
 		return positional_arguments, flags, nil
 	}
 
 	start_of_flags := -1
-	for index, argument := range operating_system_args[2:] {
+	for index, argument := range operating_system_args[arguments_start:] {
 		if strings.HasPrefix(argument, "-") {
 			if argument != "-" {
-				start_of_flags = index + 2
+				start_of_flags = index + arguments_start
 				break
 			}
 		}
@@ -470,6 +536,10 @@ func trim_quotes(text string) (output string) {
 // usage syntax, global flags, and each command with its arguments and flags.
 func Print_Help(output io.Writer, program Program) {
 	fmt.Fprintf(output, "%s %s\n\n", program.Label, program.Description)
+	if program.single {
+		print_help_single(output, program)
+		return
+	}
 	fmt.Fprintf(output,
 		"Usage:\n    %s <command> <arguments> [-flags[=value]]\n\n", program.Label)
 
@@ -501,6 +571,27 @@ func Print_Help(output io.Writer, program Program) {
 		}
 		writer.Flush()
 		fmt.Fprintln(output, "")
+	}
+}
+
+// Renders help for a single-command program: a usage line carrying the program's
+// own positional arguments — there is no command selector to choose — followed by
+// its flags.
+func print_help_single(output io.Writer, program Program) {
+	command := program.Commands[0]
+	signature := ""
+	for _, argument := range command.Arguments {
+		signature += fmt.Sprintf("<%s:%T> ", argument.Label, argument.Value)
+	}
+	fmt.Fprintf(output, "Usage:\n    %s %s[-flags[=value]]\n", program.Label, signature)
+	if len(command.Flags) > 0 {
+		fmt.Fprintln(output, "")
+		fmt.Fprintln(output, "Flags:")
+		writer := tabwriter.NewWriter(output, 0, 8, 0, ' ', 0)
+		for _, flag := range command.Flags {
+			print_help_flag(writer, flag, "    ", true)
+		}
+		writer.Flush()
 	}
 }
 

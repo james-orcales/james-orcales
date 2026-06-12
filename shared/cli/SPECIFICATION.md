@@ -9,6 +9,15 @@ options, or returns an error describing the malformed input.
 A named command resolves to itself, no command defaults to the first declared
 command, and an unrecognized name returns an error.
 
+### Single Command
+
+A program built with New_Single has no command selector: the first token after the
+program name is the first positional argument, so a token that would name a sibling
+command in a multi-command program is read as a positional here. The existing
+exact argument-count rule still applies; single-command mode changes only where
+positionals start. Help omits the command selector and renders the program's own
+positionals in the usage line.
+
 ### Arguments
 
 The positional count must match the command's arguments, and an integer argument
