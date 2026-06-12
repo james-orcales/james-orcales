@@ -52,14 +52,14 @@ GIT_ROOT="$(cd "$(dirname "$0")" && pwd)"
 GO_SRC_DIR="${GIT_ROOT}/third_party/go"
 GO_BIN="${GO_SRC_DIR}/bin/go"
 GOROOT="${GO_SRC_DIR}"
-GOPATH="${GIT_ROOT}/.go_path"
-GOBIN="${GIT_ROOT}/bin"
+GOPATH="${GIT_ROOT}/.local/share/go"
+GOBIN="${GIT_ROOT}/.local/bin"
 
 TARGET_VERSION=$(sed -n '1s/^go//p' "${GO_SRC_DIR}/VERSION") || FATAL "failed to read ${GO_SRC_DIR}/VERSION"
 
 BOOTSTRAP_VERSION="1.26.3"
 BOOTSTRAP_TARBALL="${GIT_ROOT}/third_party/go${BOOTSTRAP_VERSION}.${GO_OS}-${GO_ARCH}.tar.gz"
-BOOTSTRAP_CACHE="${GIT_ROOT}/bin/go_bootstrap"
+BOOTSTRAP_CACHE="${GIT_ROOT}/.local/share/go_bootstrap"
 BOOTSTRAP_ROOT="${BOOTSTRAP_CACHE}/go"
 
 GOPLS_VERSION="v0.21.1"
@@ -86,10 +86,19 @@ if test "$(go_version "${GO_BIN}")" != "${TARGET_VERSION}"; then
 fi
 INFO "go ready: $("${GO_BIN}" version)"
 
+# go builds into GOROOT/bin, which is not on PATH; expose it (and gofmt) from the
+# one directory that is — GOBIN — so `which go` resolves there.
+if test "$(which go 2>/dev/null)" != "${GOBIN}/go"; then
+        INFO "linking go into ${GOBIN}..."
+        mkdir -p "${GOBIN}"
+        ln -sf "${GO_BIN}" "${GOBIN}/go"
+        ln -sf "${GOROOT}/bin/gofmt" "${GOBIN}/gofmt"
+fi
+
 if test -z "${CI:-}"; then
         GOPLS_BIN="${GOBIN}/gopls"
         INSTALLED=$("${GOPLS_BIN}" version 2>/dev/null | awk '/gopls/ {print $NF}')
-        if test "${INSTALLED}" != "${GOPLS_VERSION}"; then
+        if test "${INSTALLED}" != "${GOPLS_VERSION}" || test "$(which gopls 2>/dev/null)" != "${GOPLS_BIN}"; then
                 INFO "installing gopls ${GOPLS_VERSION}..."
                 GOROOT="${GOROOT}" GOPATH="${GOPATH}" GOBIN="${GOBIN}" GOFLAGS="" GOTOOLCHAIN=local \
                         "${GO_BIN}" install "golang.org/x/tools/gopls@${GOPLS_VERSION}" \
@@ -98,7 +107,6 @@ if test -z "${CI:-}"; then
         INFO "gopls ready: $("${GOPLS_BIN}" version | head -n1)"
 fi
 
-emit_path "${GOROOT}/bin"
 emit_path "${GOBIN}"
 emit_var  GOROOT      "${GOROOT}"
 emit_var  GOPATH      "${GOPATH}"
