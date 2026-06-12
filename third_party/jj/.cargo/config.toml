@@ -10,3 +10,9 @@ rustflags = [
     # with enough async futures that the default 1MiB stack will overflow.
     "-Clink-arg=/STACK:8388608" # 8MiB
 ]
+
+[source.crates-io]
+replace-with = "vendored-sources"
+
+[source.vendored-sources]
+directory = "vendor"
