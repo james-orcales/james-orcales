@@ -215,11 +215,12 @@ todoctl is a todo list manager
 
 Usage:
     todoctl <command> <arguments> [-flags[=value]]
+    Positional arguments may also be supplied via -key=val syntax.
 
 Available Commands:
     [34mhelp[0m print help message
 
-    [34madd[0m <task:string> 
+    [34madd[0m <task: string> 
 
         -deadline=string  (default: Jan 02 Mon)  deadline date
         -priority=string  (default: low)         set priority
@@ -230,7 +231,7 @@ Available Commands:
         -columns=string  (default: all)  comma-separated (all, deadline, priority, description)
         -count=int       (default: 0)    how many tasks to display
 
-    [34mdelete[0m <id:int> remove a task by ID
+    [34mdelete[0m <id: int> remove a task by ID
 
 
 Stderr:
@@ -302,11 +303,12 @@ todoctl is a todo list manager
 
 Usage:
     todoctl <command> <arguments> [-flags[=value]]
+    Positional arguments may also be supplied via -key=val syntax.
 
 Available Commands:
     [34mhelp[0m print help message
 
-    [34madd[0m <task:string> 
+    [34madd[0m <task: string> 
 
         -deadline=string  (default: Jan 02 Mon)  deadline date
         -priority=string  (default: low)         set priority
@@ -317,17 +319,17 @@ Available Commands:
         -columns=string  (default: all)  comma-separated (all, deadline, priority, description)
         -count=int       (default: 0)    how many tasks to display
 
-    [34mdelete[0m <id:int> remove a task by ID
+    [34mdelete[0m <id: int> remove a task by ID
 
 
 Stderr:
-"arsotitnaroisen" is an unknown command
-"add" is missing required argument "task"
-"deadline" expects a value. You must set flag values with this syntax: -foo-bar=baz.
-"deadline" expects a value. You must set flag values with this syntax: -foo-bar=baz.
-"unknown" is an unknown option
-"out_of_place" is an unknown option
-"count" set more than once
+unknown command "arsotitnaroisen"
+missing required argument "task"; pass it by position or as -task=value
+-deadline needs a value, e.g. -deadline=value
+-deadline needs a value, e.g. -deadline=value
+unknown option -unknown
+unknown option -out_of_place
+-count may only be given once
 
 Database:
 Jan 02 Mon | low | without flags
@@ -377,7 +379,7 @@ func Test_Single_Help(t *testing.T) {
 	if strings.Contains(help, "<command>") {
 		t.Errorf("single-command help must not mention <command>:\n%s", help)
 	}
-	if !strings.Contains(help, "sloc <path:string>") {
+	if !strings.Contains(help, "sloc <path: string>") {
 		t.Errorf("expected usage with the positional, got:\n%s", help)
 	}
 }
@@ -394,8 +396,8 @@ func Test_Variadic_Help(t *testing.T) {
 	output := bytes.Buffer{}
 	cli.Print_Help(&output, program)
 	help := output.String()
-	if !strings.Contains(help, "<path:string...>") {
-		t.Errorf("expected <path:string...>, got:\n%s", help)
+	if !strings.Contains(help, "<path: string...>") {
+		t.Errorf("expected <path: string...>, got:\n%s", help)
 	}
 	if strings.Contains(help, "[]string") {
 		t.Errorf("help must not show the raw slice type:\n%s", help)

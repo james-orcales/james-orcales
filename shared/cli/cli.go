@@ -40,6 +40,7 @@ import (
 	"text/tabwriter"
 
 	invariant "github.com/james-orcales/james-orcales/shared/invariant/default"
+	"github.com/james-orcales/james-orcales/shared/levenshtein"
 )
 
 // Program represents a command-line application with one or more commands.
@@ -382,7 +383,7 @@ func parse_named_token(token string) (
 	if strings.HasPrefix(token, "--") {
 		if len(token) > len("--") {
 			return "", "", false, fmt.Errorf(
-				"Flags use a single dash, not double; use '-%s'", token[2:])
+				"use a single dash: -%s, not --%s", token[2:], token[2:])
 		}
 	}
 	// A lone "-" was already excluded by is_named_token.
@@ -419,7 +420,7 @@ func program_assign_named(program *Program, command Command, tokens []string) (
 		}
 		if filled[label] {
 			return filled, positionals, slice_named,
-				fmt.Errorf("%q set more than once", label)
+				fmt.Errorf("-%s may only be given once", label)
 		}
 		set_err := option_set_value(option_set_value_input{
 			Option: option, Value: value, Value_Was_Set: value_was_set, Name: label,
@@ -455,7 +456,40 @@ func program_find_option(program *Program, command Command, label string) (
 			return &program.Global_Flags[index], false, nil
 		}
 	}
-	return nil, false, fmt.Errorf("%q is an unknown option", label)
+	match, ok := levenshtein.Closest(levenshtein.Closest_Input{
+		Target: label, Candidates: program_option_labels(program, command),
+	})
+	if ok {
+		return nil, false,
+			fmt.Errorf("unknown option -%s, did you mean -%s?", label, match)
+	}
+	return nil, false, fmt.Errorf("unknown option -%s", label)
+}
+
+// Returns the program's command labels, the candidate set for a did-you-mean
+// suggestion when a command name is not recognized.
+func program_command_labels(program *Program) (labels []string) {
+	labels = make([]string, len(program.Commands))
+	for index, command := range program.Commands {
+		labels[index] = command.Label
+	}
+	return labels
+}
+
+// Returns every option label reachable by name — the command's arguments and flags
+// plus the global flags — the candidate set for a did-you-mean suggestion when an
+// option name is not recognized.
+func program_option_labels(program *Program, command Command) (labels []string) {
+	for index := range command.Arguments {
+		labels = append(labels, command.Arguments[index].Label)
+	}
+	for index := range command.Flags {
+		labels = append(labels, command.Flags[index].Label)
+	}
+	for index := range program.Global_Flags {
+		labels = append(labels, program.Global_Flags[index].Label)
+	}
+	return labels
 }
 
 // Finds the active command named by the args (defaulting to the first command) and
@@ -480,8 +514,16 @@ func program_resolve_command(
 			}
 		}
 		if !found {
-			return program.Commands[0], arguments_start, fmt.Errorf(
-				"%q is an unknown command", operating_system_args[1])
+			name := operating_system_args[1]
+			match, ok := levenshtein.Closest(levenshtein.Closest_Input{
+				Target: name, Candidates: program_command_labels(program),
+			})
+			if ok {
+				return program.Commands[0], arguments_start, fmt.Errorf(
+					"unknown command %q, did you mean %q?", name, match)
+			}
+			return program.Commands[0], arguments_start,
+				fmt.Errorf("unknown command %q", name)
 		}
 	}
 
@@ -541,7 +583,8 @@ func command_assign_positionals(input *command_assign_positionals_input) (err er
 			continue
 		}
 		if slice_index < 0 {
-			return fmt.Errorf("unexpected argument %q", positional.Value)
+			return fmt.Errorf(
+				"too many arguments: %q was not expected", positional.Value)
 		}
 		slice_contributions = append(slice_contributions, positional)
 	}
@@ -578,8 +621,9 @@ func command_validate_required(command Command, filled map[string]bool) (err err
 		if filled[argument.Label] {
 			continue
 		}
-		return fmt.Errorf("%q is missing required argument %q",
-			command.Label, argument.Label)
+		return fmt.Errorf(
+			"missing required argument %q; pass it by position or as -%s=value",
+			argument.Label, argument.Label)
 	}
 	return nil
 }
@@ -595,7 +639,8 @@ func option_set_positional(argument *Option, value string) (err error) {
 	case int:
 		number, parse_err := strconv.Atoi(value)
 		if parse_err != nil {
-			return fmt.Errorf("%s is an invalid number", value)
+			return fmt.Errorf("%s expects a whole number, but got %q",
+				argument.Label, value)
 		}
 		argument.Value = number
 	}
@@ -619,7 +664,8 @@ func option_set_slice(option *Option, contributions []indexed_token) (err error)
 		for _, contribution := range contributions {
 			number, parse_err := strconv.Atoi(contribution.Value)
 			if parse_err != nil {
-				return fmt.Errorf("%s is an invalid number", contribution.Value)
+				return fmt.Errorf("%s expects a whole number, but got %q",
+					option.Label, contribution.Value)
 			}
 			values = append(values, number)
 		}
@@ -651,10 +697,7 @@ func option_set_value(input option_set_value_input) (err error) {
 		}
 		if absent {
 			return fmt.Errorf(
-				"%q expects a value. You must set flag values "+
-					"with this syntax: -foo-bar=baz.",
-				input.Name,
-			)
+				"-%s needs a value, e.g. -%s=value", input.Name, input.Name)
 		}
 	}
 	switch input.Option.Value.(type) {
@@ -665,7 +708,8 @@ func option_set_value(input option_set_value_input) (err error) {
 	case int:
 		number, parse_err := strconv.Atoi(input.Value)
 		if parse_err != nil {
-			return fmt.Errorf("%s is an invalid number", input.Value)
+			return fmt.Errorf("%s expects a whole number, but got %q",
+				input.Name, input.Value)
 		}
 		input.Option.Value = number
 	}
@@ -702,7 +746,11 @@ func Print_Help(output io.Writer, program Program) {
 		return
 	}
 	fmt.Fprintf(output,
-		"Usage:\n    %s <command> <arguments> [-flags[=value]]\n\n", program.Label)
+		"Usage:\n    %s <command> <arguments> [-flags[=value]]\n", program.Label)
+	if program_has_arguments(program) {
+		fmt.Fprintln(output, named_argument_legend)
+	}
+	fmt.Fprintln(output, "")
 
 	if len(program.Global_Flags) > 0 {
 		fmt.Fprintln(output, "Global Flags:")
@@ -745,6 +793,9 @@ func print_help_single(output io.Writer, program Program) {
 		signature += option_format_signature(argument) + " "
 	}
 	fmt.Fprintf(output, "Usage:\n    %s %s[-flags[=value]]\n", program.Label, signature)
+	if len(command.Arguments) > 0 {
+		fmt.Fprintln(output, named_argument_legend)
+	}
 	if len(command.Flags) > 0 {
 		fmt.Fprintln(output, "")
 		fmt.Fprintln(output, "Flags:")
@@ -756,18 +807,34 @@ func print_help_single(output io.Writer, program Program) {
 	}
 }
 
-// Formats a positional argument for a usage line: <label:type>, with a trailing
-// ellipsis for a variadic. A variadic shows its element type, not its slice type, so
-// a []string reads as <paths:string...> rather than the noisier <paths:[]string>.
+// Formats a positional argument for a usage line: <label: type>, with a trailing
+// ellipsis for a variadic. The space after the colon keeps it from reading like a
+// key:value the user must type. A variadic shows its element type, not its slice type,
+// so a []string reads as <paths: string...> rather than the noisier <paths: []string>.
 func option_format_signature(argument Option) (signature string) {
 	if option_is_slice(argument) {
 		element := "string"
 		if _, is_integer := argument.Value.([]int); is_integer {
 			element = "int"
 		}
-		return fmt.Sprintf("<%s:%s...>", argument.Label, element)
+		return fmt.Sprintf("<%s: %s...>", argument.Label, element)
 	}
-	return fmt.Sprintf("<%s:%T>", argument.Label, argument.Value)
+	return fmt.Sprintf("<%s: %T>", argument.Label, argument.Value)
+}
+
+// The note printed under the usage line when a program has at least one positional
+// argument: each may also be supplied by name, not only by position.
+const named_argument_legend = "    Positional arguments may also be supplied via -key=val syntax."
+
+// Reports whether any of the program's commands declares a positional argument, the
+// condition under which the named-argument legend is worth printing.
+func program_has_arguments(program Program) (has bool) {
+	for _, command := range program.Commands {
+		if len(command.Arguments) > 0 {
+			return true
+		}
+	}
+	return false
 }
 
 // Renders one flag row: the type-annotated label, its default, and its
