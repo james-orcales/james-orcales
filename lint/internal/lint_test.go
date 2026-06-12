@@ -1990,6 +1990,31 @@ func Test_Scope_Prefix_Filters_Diagnostics(t *testing.T) {
 	}
 }
 
+// Test_Scope_Prefix_Must_Exist verifies that a Scope_Prefix naming a path
+// absent from Fsys is a hard error (exit 2), not a silent clean pass. Without
+// the existence check, `lint doesnt_exist` filters every file out of an
+// unsatisfiable scope and reports "all checks passed" — a typo'd path then
+// reads as a green run, the worst failure mode for a checker.
+func Test_Scope_Prefix_Must_Exist(t *testing.T) {
+	t.Parallel()
+	source := "package main\n\nfunc main() { return }\n"
+	fsys_map := fstest.MapFS{
+		"real/test.go": &fstest.MapFile{Data: gofmt_must(t, source)},
+	}
+	stdout := &bytes.Buffer{}
+	stderr := &bytes.Buffer{}
+	code := lint_main(t, &lint.Main_Input{
+		Fsys:         fsys_map,
+		Stdout:       stdout,
+		Stderr:       stderr,
+		Scope_Prefix: "doesnt_exist",
+	})
+	if code != 2 {
+		t.Errorf("absent scope must hard-error (exit 2); got %d, stdout: %s",
+			code, stdout.String())
+	}
+}
+
 // Doctrine fixtures include non-Go files (go.mod) and benefit from
 // expressing per-file expectations (a fixture often must lint clean
 // against everything *except* the doctrine rule under test, since the
