@@ -204,46 +204,42 @@ M.recursive_delete = function(entry_type, path, cb)
   if entry_type ~= "directory" then
     return uv.fs_unlink(path, cb)
   end
-  ---@diagnostic disable-next-line: param-type-mismatch, discard-returns
-  uv.fs_opendir(path, function(open_err, fd)
-    if open_err then
-      return cb(open_err)
+  -- We list with fs_scandir instead of fs_opendir/fs_readdir/fs_closedir. Closing a uv_dir_t handle
+  -- from inside a readdir callback is a libuv use-after-free (libuv#2496): the handle is freed twice
+  -- and macOS aborts nvim with "pointer being freed was not allocated". It is reliably hit when a
+  -- large tree opens many dir handles at once (e.g. deleting a ~1400-directory plugin dir). fs_scandir
+  -- exposes no closeable handle, so that defect is unreachable.
+  uv.fs_scandir(path, function(scan_err, handle)
+    if scan_err then
+      return cb(scan_err)
     end
-    local poll
-    poll = function(inner_cb)
-      uv.fs_readdir(fd, function(err, entries)
-        if err then
-          return inner_cb(err)
-        elseif entries then
-          local waiting = #entries
-          local complete
-          complete = function(err2)
-            if err2 then
-              complete = function() end
-              return inner_cb(err2)
-            end
-            waiting = waiting - 1
-            if waiting == 0 then
-              poll(inner_cb)
-            end
-          end
-          for _, entry in ipairs(entries) do
-            M.recursive_delete(entry.type, path .. M.sep .. entry.name, complete)
-          end
-        else
-          inner_cb()
-        end
-      end)
+    local entries = {}
+    while handle do
+      local name, entry_type2 = uv.fs_scandir_next(handle)
+      if not name then
+        break
+      end
+      entries[#entries + 1] = { name = name, type = entry_type2 }
     end
-    poll(function(err)
-      uv.fs_closedir(fd)
+    if #entries == 0 then
+      return uv.fs_rmdir(path, cb)
+    end
+    local waiting = #entries
+    local complete
+    complete = function(err)
       if err then
+        complete = function() end
         return cb(err)
       end
-      uv.fs_rmdir(path, cb)
-    end)
-    ---@diagnostic disable-next-line: param-type-mismatch
-  end, 10000)
+      waiting = waiting - 1
+      if waiting == 0 then
+        uv.fs_rmdir(path, cb)
+      end
+    end
+    for _, entry in ipairs(entries) do
+      M.recursive_delete(entry.type, path .. M.sep .. entry.name, complete)
+    end
+  end)
 end
 
 ---Move the undofile for the file at src_path to dest_path
