@@ -604,9 +604,9 @@ type Main_Input struct {
 	// diagnostic is printed.
 	Stderr io.Writer
 	// Root_Directory is the OS path that matches Fsys. The stream-tier symlink
-	// check needs real-OS access through Readlink and Stat below because
-	// fs.FS has no symlink primitive. An empty Root_Directory self-disables that
-	// one check so fstest.MapFS-backed tests don't need to special-case it.
+	// check needs real-OS access through Readlink below because fs.FS has no
+	// symlink primitive. An empty Root_Directory self-disables that one check so
+	// fstest.MapFS-backed tests don't need to special-case it.
 	Root_Directory string
 	// Tracked is the set of paths (relative to Fsys root) the linter is
 	// allowed to look at — typically the union of git-tracked and
@@ -625,9 +625,6 @@ type Main_Input struct {
 	// Readlink reads a symlink's target for the stream-tier symlink check;
 	// nil disables that check. main.go binds it to os.Readlink.
 	Readlink func(name string) (target string, err error)
-	// Stat resolves a path's metadata for the same symlink check; nil
-	// disables that check. main.go binds it to os.Stat.
-	Stat func(name string) (info fs.FileInfo, err error)
 	// Scope_Prefix narrows the set of files diagnostics are emitted for.
 	// Files outside this slash-separated prefix (relative to Fsys root)
 	// are still walked and parsed — the doctrine checks need the broader
@@ -693,7 +690,6 @@ func Main(input *Main_Input) (code int) {
 		Tracked:                  input.Tracked,
 		CPU_Count:                input.CPU_Count,
 		Readlink:                 input.Readlink,
-		Stat:                     input.Stat,
 		Scope:                    input.Scope_Prefix,
 		Instrumentation_Packages: configuration.Instrumentation_Packages,
 		Shared_Module:            configuration.Shared_Module,
@@ -1858,7 +1854,7 @@ func Check_Source(filename string, source any) (diags []Diagnostic, err error) {
 
 // Check_File_System_Input bundles the per-run dependencies for the
 // filesystem tier: the fs.FS view of the workspace, the OS-side
-// primitives the stream-tier symlink check needs, the tracked-paths
+// Readlink the stream-tier symlink check needs, the tracked-paths
 // filter, and the parallelism cap.
 type Check_File_System_Input struct {
 	// Fsys is the workspace tree to scan; all paths resolve against it.
@@ -1875,8 +1871,6 @@ type Check_File_System_Input struct {
 	CPU_Count int
 	// Readlink reads a symlink's target for the symlink check; nil disables it.
 	Readlink func(name string) (target string, err error)
-	// Stat resolves a path's metadata for the symlink check; nil disables it.
-	Stat func(name string) (info fs.FileInfo, err error)
 	// Scope is the package argument the linter was pointed at (relative to
 	// Fsys root, empty for a whole-workspace run). The SPECIFICATION.md
 	// coverage rule is enforced only for packages under this scope so that
@@ -1932,7 +1926,7 @@ func Check_File_System(input *Check_File_System_Input) (diags []Diagnostic, err 
 	// scoped run reads (parsing the rest is the work scope skips), and the
 	// cross-file checks still resolve imports against the full set. The roots are
 	// reused to build the index, so go.mod discovery walks the tree exactly once.
-	module_roots, err := discover_module_roots(input.Fsys)
+	module_roots, err := discover_module_roots(input.Fsys, directory_has_tracked)
 	if err != nil {
 		return nil, err
 	}
@@ -1951,7 +1945,6 @@ func Check_File_System(input *Check_File_System_Input) (diags []Diagnostic, err 
 		Directory_Has_Tracked: directory_has_tracked,
 		Scan_Prefixes:         scan_prefixes,
 		Readlink:              input.Readlink,
-		Stat:                  input.Stat,
 	})
 	if err != nil {
 		return nil, err
@@ -2716,11 +2709,19 @@ var module_index_module_re = regexp.MustCompile(`(?m)^module\s+(\S+)`)
 // visible — typical when pointed at a subdirectory), no modules are discovered
 // and every file later maps to -1, so the doctrine checks no-op on those files
 // rather than reporting against a partial view of the workspace.
-func discover_module_roots(fsys fs.FS) (modules []module_information, err error) {
+// directory_has_tracked prunes any directory holding no tracked file, so a
+// gitignored stray go.mod — a gopls temp module under tmp/ mirrors a real
+// module's path — is never discovered; undiscovered, it cannot shadow the real
+// module's root in the longest-prefix import lookup and so break the
+// instrumentation directory match. A nil index (the non-git fallback) prunes
+// nothing, matching every other tracked-set filter.
+func discover_module_roots(
+	fsys fs.FS, directory_has_tracked map[string]bool,
+) (modules []module_information, err error) {
 
 	scratch := &module_index{}
 	err = fs.WalkDir(fsys, ".", func(p string, d fs.DirEntry, walk_err error) (output error) {
-		return build_module_index_walk(fsys, scratch, p, d, walk_err)
+		return build_module_index_walk(fsys, scratch, directory_has_tracked, p, d, walk_err)
 	})
 	if err != nil {
 		return nil, err
@@ -2893,7 +2894,8 @@ func scan_prefixes_reach(prefixes []string, directory string) (reachable bool) {
 // Handles one fs.WalkDir visit for build_module_index: skips vendored/hidden
 // directories, and on each go.mod records the module root and import path.
 func build_module_index_walk(
-	fsys fs.FS, index *module_index, p string, d fs.DirEntry, walk_err error,
+	fsys fs.FS, index *module_index, directory_has_tracked map[string]bool,
+	p string, d fs.DirEntry, walk_err error,
 ) (output error) {
 	if walk_err != nil {
 		return walk_err
@@ -2902,6 +2904,13 @@ func build_module_index_walk(
 		if p != "." {
 			if Ignored_Directory(p) {
 				return fs.SkipDir
+			}
+			// Prune the same gitignored subtrees every other tier skips, so a stray
+			// go.mod outside the tracked set is never discovered as a module.
+			if directory_has_tracked != nil {
+				if !directory_has_tracked[p] {
+					return fs.SkipDir
+				}
 			}
 		}
 		return nil
@@ -7841,18 +7850,14 @@ type check_file_system_stream_input struct {
 	// print time regardless — pruning the directory just skips the wasted reads.
 	Scan_Prefixes []string
 	Readlink      func(name string) (target string, err error)
-	Stat          func(name string) (info fs.FileInfo, err error)
 }
 
-// Builds the stream-tier check set. Split out of check_file_system_stream so
-// that function fits the length cap while still asserting its full input. Only
-// the symlinks checker needs filesystem hooks; the rest are stateless visitors.
-func check_file_system_stream_checkers(
-	root_directory string,
-	readlink func(name string) (target string, err error),
-	stat func(name string) (info fs.FileInfo, err error),
-) (checks [stream_checker_count]check_function_stream) {
-	return [stream_checker_count]check_function_stream{
+func check_file_system_stream(
+	input *check_file_system_stream_input,
+) (diags []Diagnostic, go_paths []string, err error) {
+	// Only the symlinks checker needs configuration — the tracked sets and the OS
+	// Readlink seam; the rest are stateless visitors.
+	checks := [stream_checker_count]check_function_stream{
 		{Name: "conflict-markers", Visit: check_stream_conflict_markers},
 		{Name: "github-actions-uses", Visit: check_stream_github_actions_uses},
 		{Name: "banned-scripts", Visit: check_stream_banned_scripts},
@@ -7860,21 +7865,15 @@ func check_file_system_stream_checkers(
 		{Name: "agent-doc-max-lines", Visit: check_stream_agent_documentation_lines_max},
 		check_file_system_stream_checks_stream_symlinks_checker(
 			&check_file_system_stream_checks_stream_symlinks_checker_input{
-				Root_Directory: root_directory,
-				Readlink:       readlink,
-				Stat:           stat,
+				Root_Directory:        input.Root_Directory,
+				Tracked:               input.Tracked,
+				Directory_Has_Tracked: input.Directory_Has_Tracked,
+				Readlink:              input.Readlink,
 			}),
 		{Name: "markdown-line-length", Visit: check_stream_markdown_line_max},
 		{Name: "trailing-whitespace", Visit: check_stream_markdown_trailing_whitespace},
 		check_file_system_stream_checks_stream_agents_claude_pair_checker(),
 	}
-}
-
-func check_file_system_stream(
-	input *check_file_system_stream_input,
-) (diags []Diagnostic, go_paths []string, err error) {
-	checks := check_file_system_stream_checkers(
-		input.Root_Directory, input.Readlink, input.Stat)
 	per_check := make([][]Diagnostic, len(checks))
 	err = fs.WalkDir(input.Fsys, input.Root,
 		func(p string, d fs.DirEntry, walk_err error) (output error) {
@@ -8470,22 +8469,28 @@ func glob_match_segments(input *glob_match_segments_input) (matched bool, err er
 }
 
 type check_file_system_stream_checks_stream_symlinks_checker_input struct {
-	Root_Directory string
-	Readlink       func(name string) (target string, err error)
-	Stat           func(name string) (info fs.FileInfo, err error)
+	Root_Directory        string
+	Tracked               map[string]bool
+	Directory_Has_Tracked map[string]bool
+	Readlink              func(name string) (target string, err error)
 }
 
-// Reports orphaned symlinks. Readlink and Stat are injected (main.go binds
-// them to the real os.Readlink/os.Stat) because fs.FS has no symlink
-// primitive — the rule hard-requires real-OS access. An empty Root_Directory or
-// nil Readlink/Stat self-disables the check so fstest.MapFS-backed tests
-// can opt out without special-casing.
+// Reports a tracked symlink that does not resolve to a tracked target. The walk
+// only visits tracked files, so every symlink reaching here is already tracked —
+// the rule applies to vcs-tracked symlinks alone. Membership, not on-disk
+// existence, is the test: a target outside the tracked set — missing, gitignored,
+// vendored, or escaping the repo — is banned even when it exists, because no
+// fresh checkout would carry it; a directory target is allowed when it holds
+// tracked files. Readlink is injected (main.go binds os.Readlink) because fs.FS
+// has no symlink primitive. A nil Tracked set (the non-git fallback), an empty
+// Root_Directory, or a nil Readlink self-disables the check.
 func check_file_system_stream_checks_stream_symlinks_checker(
 	input *check_file_system_stream_checks_stream_symlinks_checker_input,
 ) (c check_function_stream) {
 	root_directory := input.Root_Directory
+	tracked := input.Tracked
+	directory_has_tracked := input.Directory_Has_Tracked
 	readlink := input.Readlink
-	stat := input.Stat
 	return check_function_stream{
 		Name: "symlink",
 		Visit: func(
@@ -8499,23 +8504,18 @@ func check_file_system_stream_checks_stream_symlinks_checker(
 			if readlink == nil {
 				return
 			}
-			if stat == nil {
+			if tracked == nil {
 				return
 			}
 			if info.Mode()&fs.ModeSymlink == 0 {
 				return
 			}
 			operating_system_path := filepath.Join(root_directory, p)
-			// Symlink-resolution coverage is intentionally not tracked here:
-			// the in-memory fs.FS test fixtures used across this package
-			// can't represent symlinks, so any Sometimes axis on
-			// (target == "") / (read_err == nil) would have no admitting
-			// observation under tests. Production behavior is unaffected.
 			target, read_err := readlink(operating_system_path)
 			if read_err != nil {
 				*output = append(*output, Diagnostic{
 					Position: token.Position{Filename: p},
-					Message:  "dangling symlink (unreadable target)",
+					Message:  "unreadable symlink target",
 				})
 				return
 			}
@@ -8524,12 +8524,32 @@ func check_file_system_stream_checks_stream_symlinks_checker(
 				resolved = filepath.Join(
 					filepath.Dir(operating_system_path), target)
 			}
-			if _, stat_error := stat(resolved); stat_error != nil {
-				*output = append(*output, Diagnostic{
-					Position: token.Position{Filename: p},
-					Message:  fmt.Sprintf("dangling symlink -> %s", target),
-				})
+			relative, relative_err := filepath.Rel(root_directory, resolved)
+			target_path := filepath.ToSlash(relative)
+			// A relative_err means resolved can't be expressed under the root (a
+			// different volume) — outside the tracked tree, so it falls through to
+			// the untracked diagnostic. Self-reference is ruled out first: the
+			// symlink's own path is tracked, so a link to itself would otherwise
+			// pass the membership test below.
+			if relative_err == nil {
+				if target_path == p {
+					*output = append(*output, Diagnostic{
+						Position: token.Position{Filename: p},
+						Message:  "symlink targets itself",
+					})
+					return
+				}
+				if tracked[target_path] {
+					return
+				}
+				if directory_has_tracked[target_path] {
+					return
+				}
 			}
+			*output = append(*output, Diagnostic{
+				Position: token.Position{Filename: p},
+				Message:  fmt.Sprintf("untracked symlink target -> %s", target),
+			})
 		},
 	}
 }

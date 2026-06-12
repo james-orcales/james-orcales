@@ -1666,6 +1666,48 @@ func Test_Transitive_Purity_Instrumentation_Exemption(t *testing.T) {
 	}
 }
 
+// Test_Module_Discovery_Ignores_Untracked verifies a go.mod outside the tracked
+// set is not discovered as a module. A gitignored gopls temp module mirrors the
+// real module's path; discovered, its root (tmp/m) wins the longest-prefix import
+// lookup and the instrumentation directory becomes tmp/m/instr/default, which no
+// instrumentation entry matches — so the exempt import is wrongly flagged.
+func Test_Module_Discovery_Ignores_Untracked(t *testing.T) {
+	t.Parallel()
+	gomod := "module fixture\n\ngo 1.25\n"
+	files := map[string]string{
+		"go.mod": gomod,
+		"instr/default/instr.go": "// Package instr is a fixture.\npackage instr\n\n" +
+			"// Sink is a fixture.\nfunc Sink() {\n\treturn\n}\n",
+		"lib/library.go": "// Package library is a fixture.\npackage library\n\n" +
+			"import \"fixture/instr/default\"\n\n" +
+			"// Use is a fixture.\nfunc Use() {\n\tinstr.Sink()\n}\n",
+	}
+	fsys := fstest.MapFS{}
+	for name, content := range files {
+		data := []byte(content)
+		if strings.HasSuffix(name, ".go") {
+			data = gofmt_must(t, content)
+		}
+		fsys[name] = &fstest.MapFile{Data: data}
+	}
+	fsys["lint.json"] = &fstest.MapFile{Data: test_lint_json(t, "fixture", []string{"instr"})}
+	// A gitignored gopls temp module, absent from Tracked, declaring the same path.
+	fsys["tmp/m/go.mod"] = &fstest.MapFile{Data: []byte(gomod)}
+	stdout := &bytes.Buffer{}
+	lint_main(t, &lint.Main_Input{
+		Fsys: fsys, Stdout: stdout, Stderr: &bytes.Buffer{},
+		Tracked: map[string]bool{
+			"go.mod":                 true,
+			"instr/default/instr.go": true,
+			"lib/library.go":         true,
+			"lint.json":              true,
+		},
+	})
+	if bytes.Contains(stdout.Bytes(), []byte("impure dependency")) {
+		t.Fatalf("an untracked module must not shadow the real one: %s", stdout.String())
+	}
+}
+
 // Conflict markers in any file must be flagged with the conflict-markers check
 // and the correct line number.
 func Test_Stream_Conflict_Markers(t *testing.T) {

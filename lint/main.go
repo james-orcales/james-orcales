@@ -82,11 +82,7 @@ func main() {
 		Git:            main_load_git(root),
 		CPU_Count:      runtime.NumCPU(),
 		Readlink:       os.Readlink,
-		Stat: func(
-			name string) (info fs.FileInfo, err error) {
-			return os.Stat(name)
-		},
-		Scope_Prefix: scope_prefix,
+		Scope_Prefix:   scope_prefix,
 	})
 	main_print_rss_and_elapsed(start)
 	os.Exit(code)

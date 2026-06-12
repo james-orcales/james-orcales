@@ -103,7 +103,9 @@ segment — is exempt.
 
 ### Symlinks
 
-A symlink resolves to an existing target; a dangling symlink is banned.
+A tracked symlink resolves to a tracked target: a tracked file, or a directory that holds
+tracked files. A target outside the tracked set, or the symlink's own path, is banned. An
+untracked symlink is not checked.
 
 ### Banned Script Extensions
 
