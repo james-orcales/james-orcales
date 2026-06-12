@@ -11,17 +11,20 @@ command, and an unrecognized name returns an error.
 
 ### Single Command
 
-A program built with New_Single has no command selector: the first token after the
-program name is the first positional argument, so a token that would name a sibling
-command in a multi-command program is read as a positional here. The existing
-exact argument-count rule still applies; single-command mode changes only where
-positionals start. Help omits the command selector and renders the program's own
-positionals in the usage line.
+A program built with New_Single has no command selector: the first token is the
+first positional argument, so a name that would select a sibling command is read as
+a positional. Help drops the selector and shows the program's own positionals.
 
 ### Arguments
 
 The positional count must match the command's arguments, and an integer argument
 must convert or the parse returns an error.
+
+### Variadic
+
+A command's last argument may be variadic, collecting zero or more trailing
+positionals into a slice; one declared elsewhere is rejected at construction. The
+fixed arguments before it set the minimum, and each element converts by its type.
 
 ### Flags
 

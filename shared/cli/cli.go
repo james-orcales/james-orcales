@@ -26,6 +26,9 @@
 // For a binary that does one thing, build the program with New_Single instead of
 // New: it has no command selector, so the first token after the program name is the
 // first positional argument (as in `sloc ./src`) rather than a command name.
+//
+// A command's last argument may be variadic (New_Variadic), collecting zero or more
+// trailing positionals into a slice, as in `sloc ./a ./b ./c`.
 package cli
 
 import (
@@ -49,11 +52,10 @@ type Program struct {
 	Commands []Command
 	// Global_Flags are flags accepted by every command.
 	Global_Flags []Option
-	// single marks a program with no command selector: the first token after the
-	// program name is the first positional argument, not a command name. Set by
-	// New_Single and never by New. It is unexported so the two grammars cannot be
-	// mixed after construction.
-	single bool
+	// Single marks a program with no command selector: the first token after the
+	// program name is the first positional argument, not a command name. New_Single
+	// sets it; New leaves it false.
+	Single bool
 }
 
 // Command represents a single command within a program.
@@ -64,14 +66,16 @@ type Command struct {
 	Label string
 	// Description is the one-line command summary shown in help output.
 	Description string
-	// Arguments are required and ordered. They must ALL appear before flags.
+	// Arguments are ordered and must ALL appear before flags. Each is required,
+	// except a variadic last argument, which collects zero or more positionals.
 	Arguments []Option
 	// Flags are optional and unordered.
 	Flags []Option
 }
 
 // Option represents either an argument or a flag for a command.
-// The Value field determines the type (string, int, or bool for flags).
+// The Value field determines the type: string or int for an argument, string, int,
+// or bool for a flag, or a []string/[]int slice for a variadic argument.
 // After parsing, Value contains the user-provided value.
 type Option struct {
 	// Label is the argument or flag name.
@@ -82,6 +86,9 @@ type Option struct {
 	Value any
 	// Is_Flag distinguishes a flag from a positional argument.
 	Is_Flag bool
+	// Is_Variadic marks a positional argument that collects zero or more trailing
+	// positionals into a slice. Only the last argument may be variadic.
+	Is_Variadic bool
 }
 
 // New_Argument_Input is the input for New_Argument.
@@ -102,6 +109,29 @@ func New_Argument[T string | int | bool](input New_Argument_Input) (option Optio
 		Description: input.Description,
 		Value:       zero_value,
 		Is_Flag:     false,
+	}
+}
+
+// New_Variadic_Input is the input for New_Variadic.
+type New_Variadic_Input struct {
+	// Label is the argument name.
+	Label string
+	// Description is the one-line summary shown in help output.
+	Description string
+}
+
+// New_Variadic creates a positional argument that collects zero or more trailing
+// positionals into a slice. It must be the last argument; fixed arguments may
+// precede it. A variadic is always optional — an empty list is valid, not an error —
+// so a command that needs at least one element checks the slice's length itself.
+// Type parameter T must be string or int; the parsed Value is a []T.
+func New_Variadic[T string | int](input New_Variadic_Input) (option Option) {
+	return Option{
+		Label:       input.Label,
+		Description: input.Description,
+		Value:       []T{},
+		Is_Flag:     false,
+		Is_Variadic: true,
 	}
 }
 
@@ -158,7 +188,7 @@ func New(input New_Input) (program Program) {
 
 	for index, command := range program.Commands {
 		panic_when(command.Label == "", "Program.Commands[%d].Label is unset.", index)
-		validate_command_options(command, input.Global_Flags)
+		command_validate_options(command, input.Global_Flags)
 	}
 	return program
 }
@@ -193,23 +223,38 @@ func New_Single(input New_Single_Input) (program Program) {
 		Arguments:   input.Arguments,
 		Flags:       input.Flags,
 	}
-	validate_command_options(command, nil)
+	command_validate_options(command, nil)
 	return Program{
 		Label:       input.Label,
 		Description: input.Description,
 		Commands:    []Command{command},
-		single:      true,
+		Single:      true,
 	}
 }
 
 // Panics when any of a command's arguments or flags is malformed: an argument with
 // no label or an unsupported type, a flag with an invalid label or type, or a flag
 // whose label collides with a global flag.
-func validate_command_options(command Command, global_flags []Option) {
+func command_validate_options(command Command, global_flags []Option) {
 	for argument_index, argument := range command.Arguments {
 		panic_when(argument.Label == "",
 			"Argument #%d for command %q has no label.",
 			argument_index, command.Label)
+		// A variadic absorbs every remaining positional, so anything declared after
+		// it is unreachable. Requiring it to be last also forbids a second variadic.
+		is_last := argument_index == len(command.Arguments)-1
+		panic_when(argument.Is_Variadic && !is_last,
+			"Variadic argument %q must be the last argument.", argument.Label)
+		if argument.Is_Variadic {
+			switch argument.Value.(type) {
+			default:
+				panic_when(true,
+					"Variadic argument %q has unsupported type: %T",
+					argument.Label, argument.Value)
+			case []string, []int:
+			}
+			continue
+		}
 		switch argument.Value.(type) {
 		default:
 			panic_when(true,
@@ -271,7 +316,8 @@ func Program_Parse(
 		)
 	}()
 
-	active_command, arguments_start, err := program_resolve_command(program, operating_system_args)
+	active_command, arguments_start, err := program_resolve_command(
+		program, operating_system_args)
 	if err != nil {
 		return active_command, err
 	}
@@ -290,13 +336,9 @@ func Program_Parse(
 	invariant.Dot_Product(invariant.Sometimes(len(flags) < len(active_command.Flags)))
 	invariant.Dot_Product(invariant.Sometimes(len(flags) == len(active_command.Flags)))
 
-	if len(positional_arguments) != len(active_command.Arguments) {
-		return active_command, fmt.Errorf(
-			"%q expects %d arguments. Got %d",
-			active_command.Label,
-			len(active_command.Arguments),
-			len(positional_arguments),
-		)
+	err = command_validate_count(active_command, len(positional_arguments))
+	if err != nil {
+		return active_command, err
 	}
 	if len(flags) > len(active_command.Flags)+len(program.Global_Flags) {
 		return active_command, fmt.Errorf(
@@ -319,6 +361,28 @@ func Program_Parse(
 	return active_command, nil
 }
 
+// Reports the argument-count error for a command given its parsed positional count,
+// or nil when the count is acceptable. A variadic last argument turns the fixed
+// arguments before it into a minimum rather than an exact count.
+func command_validate_count(command Command, positional_count int) (err error) {
+	declared_count := len(command.Arguments)
+	last_is_variadic := declared_count > 0 &&
+		command.Arguments[declared_count-1].Is_Variadic
+	if last_is_variadic {
+		minimum := declared_count - 1
+		if positional_count < minimum {
+			return fmt.Errorf("%q expects at least %d arguments. Got %d",
+				command.Label, minimum, positional_count)
+		}
+		return nil
+	}
+	if positional_count != declared_count {
+		return fmt.Errorf("%q expects %d arguments. Got %d",
+			command.Label, declared_count, positional_count)
+	}
+	return nil
+}
+
 // Finds the active command named by the args (defaulting to the first command) and
 // deep-copies its Arguments and Flags so parsing never mutates the program.
 // arguments_start is the index at which positionals and flags begin: after the
@@ -329,7 +393,7 @@ func program_resolve_command(
 ) (active_command Command, arguments_start int, err error) {
 	command_index := 0
 	arguments_start = 2
-	if program.single {
+	if program.Single {
 		arguments_start = 1
 	} else if len(operating_system_args) > 1 {
 		found := false
@@ -394,10 +458,18 @@ func command_collect_args(
 }
 
 // Converts each positional argument to its option's declared type, writing the
-// result back into the options.
+// result back into the options. A variadic last argument absorbs every remaining
+// positional into its slice.
 func parse_arguments(arguments []Option, positional_arguments []string) (err error) {
-	for index, positional_argument := range positional_arguments {
-		switch arguments[index].Value.(type) {
+	for index, argument := range arguments {
+		if argument.Is_Variadic {
+			// The variadic is the last argument; everything from here on is its slice,
+			// so this returns and no later argument is visited.
+			return option_parse_variadic(
+				&arguments[index], positional_arguments[index:])
+		}
+		positional_argument := positional_arguments[index]
+		switch argument.Value.(type) {
 		default:
 			panic_when(true, "unreachable")
 		case string:
@@ -409,6 +481,31 @@ func parse_arguments(arguments []Option, positional_arguments []string) (err err
 			}
 			arguments[index].Value = number
 		}
+	}
+	return nil
+}
+
+// Collects the remaining positionals into the variadic argument's slice, converting
+// each element to the slice's declared element type. The collected slice is fresh so
+// it does not alias the parser's scratch buffer.
+func option_parse_variadic(argument *Option, positional_arguments []string) (err error) {
+	switch argument.Value.(type) {
+	default:
+		panic_when(true, "unreachable")
+	case []string:
+		values := make([]string, len(positional_arguments))
+		copy(values, positional_arguments)
+		argument.Value = values
+	case []int:
+		values := make([]int, 0, len(positional_arguments))
+		for _, positional_argument := range positional_arguments {
+			number, parse_err := strconv.Atoi(positional_argument)
+			if parse_err != nil {
+				return fmt.Errorf("%s is an invalid number", positional_argument)
+			}
+			values = append(values, number)
+		}
+		argument.Value = values
 	}
 	return nil
 }
@@ -536,7 +633,7 @@ func trim_quotes(text string) (output string) {
 // usage syntax, global flags, and each command with its arguments and flags.
 func Print_Help(output io.Writer, program Program) {
 	fmt.Fprintf(output, "%s %s\n\n", program.Label, program.Description)
-	if program.single {
+	if program.Single {
 		print_help_single(output, program)
 		return
 	}
@@ -560,7 +657,7 @@ func Print_Help(output io.Writer, program Program) {
 		writer := tabwriter.NewWriter(output, 0, 8, 0, ' ', 0)
 		signature := "\033[34m" + command.Label + "\033[0m" + " "
 		for _, argument := range command.Arguments {
-			signature += fmt.Sprintf("<%s:%T> ", argument.Label, argument.Value)
+			signature += option_format_signature(argument) + " "
 		}
 		fmt.Fprintf(writer, "    %s\t%s\n", signature, command.Description)
 		if len(command.Flags) > 0 {
@@ -581,7 +678,7 @@ func print_help_single(output io.Writer, program Program) {
 	command := program.Commands[0]
 	signature := ""
 	for _, argument := range command.Arguments {
-		signature += fmt.Sprintf("<%s:%T> ", argument.Label, argument.Value)
+		signature += option_format_signature(argument) + " "
 	}
 	fmt.Fprintf(output, "Usage:\n    %s %s[-flags[=value]]\n", program.Label, signature)
 	if len(command.Flags) > 0 {
@@ -593,6 +690,20 @@ func print_help_single(output io.Writer, program Program) {
 		}
 		writer.Flush()
 	}
+}
+
+// Formats a positional argument for a usage line: <label:type>, with a trailing
+// ellipsis for a variadic. A variadic shows its element type, not its slice type, so
+// a []string reads as <paths:string...> rather than the noisier <paths:[]string>.
+func option_format_signature(argument Option) (signature string) {
+	if argument.Is_Variadic {
+		element := "string"
+		if _, is_integer := argument.Value.([]int); is_integer {
+			element = "int"
+		}
+		return fmt.Sprintf("<%s:%s...>", argument.Label, element)
+	}
+	return fmt.Sprintf("<%s:%T>", argument.Label, argument.Value)
 }
 
 // Renders one flag row: the type-annotated label, its default, and its
