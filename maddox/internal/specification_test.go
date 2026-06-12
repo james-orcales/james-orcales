@@ -385,6 +385,94 @@ func Test_Table_Sparse(t *testing.T) {
 	}
 }
 
+// Test_Machine_Document verifies the JSON document carries the injected machine
+// specs as a top-level "machine" field alongside "benchmarks", with every provided
+// field round-tripping through the marshaled output.
+func Test_Machine_Document(t *testing.T) {
+	clock := time.Virtual_Clock_To_Clock(time.Virtual_Clock{Resolution: time.Millisecond})
+	sampler := maddox.Sampler{
+		Measure: func(_ sh.Command) (result maddox.Run_Result) {
+			clock.Sleep(time.Millisecond)
+			return result
+		},
+	}
+	output := &bytes.Buffer{}
+	specs := maddox.Machine_Specs{
+		CPU_Model:                "TestCPU X1",
+		CPU_Arch:                 "arm64",
+		Physical_Cores:           8,
+		Logical_Cores:            8,
+		CPU_Frequency_Hz_Max:     3_600_000_000,
+		RAM_Total_Bytes:          16 * 1024 * 1024 * 1024,
+		Storage_Total_Bytes:      512_000_000_000,
+		Operating_System_Name:    "TestOS",
+		Operating_System_Version: "1.0",
+		Kernel_Version:           "1.0.0",
+	}
+	maddox.Main(&maddox.Main_Input{
+		Commands:     []sh.Command{{Path: "noop"}},
+		Clock:        clock,
+		Sampler:      sampler,
+		Duration_Max: time.Nanosecond,
+		Machine:      specs,
+		Format:       maddox.Output_Format_Json,
+		Output:       output,
+		Stderr:       &bytes.Buffer{},
+	})
+	document := decode(t, output)
+	if document.Machine.CPU_Model != "TestCPU X1" {
+		t.Fatalf("machine cpu model = %q, want TestCPU X1", document.Machine.CPU_Model)
+	}
+	if document.Machine.Physical_Cores != 8 {
+		t.Fatalf("machine physical cores = %d, want 8", document.Machine.Physical_Cores)
+	}
+	if document.Machine.RAM_Total_Bytes != 16*1024*1024*1024 {
+		t.Fatalf("machine ram bytes = %d, want 16GiB", document.Machine.RAM_Total_Bytes)
+	}
+	if document.Machine.Storage_Total_Bytes != 512_000_000_000 {
+		t.Fatalf("machine storage bytes = %d, want 512GB",
+			document.Machine.Storage_Total_Bytes)
+	}
+}
+
+// Test_Machine_Table verifies the table output carries a machine header block before
+// the first benchmark, naming the CPU model and key specs.
+func Test_Machine_Table(t *testing.T) {
+	specs := maddox.Machine_Specs{
+		CPU_Model:                "TestCPU X1",
+		CPU_Arch:                 "arm64",
+		Physical_Cores:           8,
+		Logical_Cores:            8,
+		Performance_Cores:        4,
+		Efficiency_Cores:         4,
+		CPU_Frequency_Hz_Max:     3_600_000_000,
+		Cache_L1_Bytes:           64 * 1024,
+		Cache_L2_Bytes:           4 * 1024 * 1024,
+		RAM_Total_Bytes:          16 * 1024 * 1024 * 1024,
+		Storage_Total_Bytes:      512 * 1024 * 1024 * 1024,
+		Operating_System_Name:    "TestOS",
+		Operating_System_Version: "1.0",
+		Kernel_Version:           "1.0.0",
+	}
+	document := maddox.Document{
+		Machine:    specs,
+		Benchmarks: []maddox.Benchmark{{Command: []string{"echo"}, Runs: 3}},
+	}
+	output := string(maddox.Render_Table(&maddox.Render_Table_Input{Document: document}))
+	if !strings.Contains(output, "TestCPU X1") {
+		t.Fatalf("machine header missing CPU model, got: %s", output)
+	}
+	if !strings.Contains(output, "512GiB") {
+		t.Fatalf("machine header missing storage capacity, got: %s", output)
+	}
+	// The machine header must appear before the first benchmark.
+	machine_offset := strings.Index(output, "TestCPU X1")
+	benchmark_offset := strings.Index(output, "Benchmark 1")
+	if machine_offset > benchmark_offset {
+		t.Fatalf("machine header must precede Benchmark 1, got: %s", output)
+	}
+}
+
 // Test_Progress verifies that, with progress enabled, Main writes the run counter to
 // the diagnostic sink while sampling, and writes nothing there when it is disabled.
 func Test_Progress(t *testing.T) {

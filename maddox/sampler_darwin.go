@@ -12,6 +12,18 @@ package main
 #include <fcntl.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/sysctl.h>
+#include <stdint.h>
+
+// maddox_sysctl_uint64 reads a uint64 sysctl by name via sysctlbyname, the only
+// way to read the 64-bit hw.* keys (frequency, cache, memory) the Go stdlib's
+// SysctlUint32 cannot reach. Returns 0 on any error, so an absent key reads zero.
+static uint64_t maddox_sysctl_uint64(const char *name) {
+	uint64_t value = 0;
+	size_t size = sizeof(value);
+	sysctlbyname(name, &value, &size, NULL, 0);
+	return value;
+}
 
 // maddox_measurement is what one spawned-and-measured run reports back: whether
 // the spawn itself failed, the child's exit code, and the proc_pid_rusage counters
@@ -77,6 +89,8 @@ import "C"
 
 import (
 	"os"
+	"runtime"
+	"syscall"
 	"unsafe"
 
 	"github.com/james-orcales/james-orcales/maddox/internal"
@@ -152,4 +166,63 @@ func free_c_array(array **C.char, word_count int) {
 		C.free(unsafe.Pointer(view[index]))
 	}
 	C.free(unsafe.Pointer(array))
+}
+
+// Acquire_machine_specs reads the host CPU, memory, and OS details via Darwin
+// sysctls. Fields the kernel does not expose — like L3 cache on Apple Silicon —
+// are left zero and omitted from the report via omitempty.
+func acquire_machine_specs() (specs maddox.Machine_Specs) {
+	specs.CPU_Model, _ = syscall.Sysctl("machdep.cpu.brand_string")
+	specs.CPU_Arch = runtime.GOARCH
+
+	physical, _ := syscall.SysctlUint32("hw.physicalcpu")
+	specs.Physical_Cores = int(physical)
+	logical, _ := syscall.SysctlUint32("hw.logicalcpu")
+	specs.Logical_Cores = int(logical)
+
+	// Apple Silicon exposes P-cores at perflevel0 and E-cores at perflevel1.
+	p_cores, p_err := syscall.SysctlUint32("hw.perflevel0.physicalcpu")
+	e_cores, e_err := syscall.SysctlUint32("hw.perflevel1.physicalcpu")
+	if p_err == nil {
+		if e_err == nil {
+			specs.Performance_Cores = int(p_cores)
+			specs.Efficiency_Cores = int(e_cores)
+		}
+	}
+
+	// Frequency and caches are 64-bit sysctls, read through cgo since SysctlUint32
+	// truncates and the stdlib offers no raw form.
+	specs.CPU_Frequency_Hz_Max = sysctl_uint64("hw.perflevel0.cpufrequency_max")
+	specs.Cache_L1_Bytes = sysctl_uint64("hw.perflevel0.l1dcachesize")
+	specs.Cache_L2_Bytes = sysctl_uint64("hw.perflevel0.l2cachesize")
+	// L3 is absent on Apple Silicon; an absent key reads zero and is omitted.
+	specs.Cache_L3_Bytes = sysctl_uint64("hw.l3cachesize")
+	specs.RAM_Total_Bytes = sysctl_uint64("hw.memsize")
+	specs.Storage_Total_Bytes = boot_volume_bytes()
+
+	specs.Operating_System_Name = "macOS"
+	specs.Operating_System_Version, _ = syscall.Sysctl("kern.osproductversion")
+	kernel, _ := syscall.Sysctl("kern.osrelease")
+	specs.Kernel_Version = "Darwin " + kernel
+	return specs
+}
+
+// Sysctl_uint64 reads a 64-bit sysctl by name, marshaling the Go string across the
+// cgo boundary and freeing the C copy after the call.
+func sysctl_uint64(name string) (value uint64) {
+	cname := C.CString(name)
+	defer C.free(unsafe.Pointer(cname))
+	return uint64(C.maddox_sysctl_uint64(cname))
+}
+
+// Boot_volume_bytes is the boot filesystem's total capacity, taken from statfs on
+// the root. On APFS this reports the shared container size, a close proxy for the
+// physical SSD capacity — enough to tell a 256GB drive from a 512GB one. A failed
+// statfs reads zero.
+func boot_volume_bytes() (total uint64) {
+	var stat syscall.Statfs_t
+	if syscall.Statfs("/", &stat) != nil {
+		return 0
+	}
+	return uint64(stat.Bsize) * stat.Blocks
 }

@@ -140,6 +140,10 @@ import "C"
 import (
 	"os"
 	"os/exec"
+	"runtime"
+	"strconv"
+	"strings"
+	"syscall"
 	"unsafe"
 
 	"github.com/james-orcales/james-orcales/maddox/internal"
@@ -228,4 +232,191 @@ func free_c_array(array **C.char, word_count int) {
 		C.free(unsafe.Pointer(view[index]))
 	}
 	C.free(unsafe.Pointer(array))
+}
+
+// Acquire_machine_specs reads the host CPU, memory, and OS details from /proc and
+// /sys on Linux. Fields that are absent or unreadable are left zero.
+func acquire_machine_specs() (specs maddox.Machine_Specs) {
+	specs.CPU_Arch = runtime.GOARCH
+
+	specs.CPU_Model, specs.Physical_Cores, specs.Logical_Cores = read_cpuinfo()
+	specs.CPU_Frequency_Hz_Max = read_cpu_frequency_max()
+	specs.Cache_L1_Bytes = read_cache_size(1)
+	specs.Cache_L2_Bytes = read_cache_size(2)
+	specs.Cache_L3_Bytes = read_cache_size(3)
+	specs.RAM_Total_Bytes = read_memory_total()
+	specs.Storage_Total_Bytes = boot_volume_bytes()
+	specs.Operating_System_Name, specs.Operating_System_Version =
+		read_operating_system_release()
+
+	var uname syscall.Utsname
+	if syscall.Uname(&uname) == nil {
+		specs.Kernel_Version = utsname_string(uname.Release[:]) +
+			" " + utsname_string(uname.Version[:])
+	}
+	return specs
+}
+
+// Proc_file_bytes_max bounds how much of a /proc or /sys file is read into the
+// fixed buffer, since the unbounded-read ban forbids os.ReadFile and these
+// pseudo-files are small (a busy /proc/cpuinfo on a 256-thread box stays well under).
+const proc_file_bytes_max = 1 << 20
+
+// Read_proc_file reads up to proc_file_bytes_max bytes of a pseudo-file into a fixed
+// buffer, the bounded-read pattern read_captured uses. A missing or unreadable file
+// reads empty, so every caller treats absence as "field unknown".
+func read_proc_file(path string) (content string) {
+	file, open_err := os.Open(path)
+	if open_err != nil {
+		return ""
+	}
+	defer file.Close()
+	buffer := make([]byte, proc_file_bytes_max)
+	total := 0
+	for total < len(buffer) {
+		n, read_err := file.Read(buffer[total:])
+		total += n
+		if read_err != nil {
+			break
+		}
+	}
+	return string(buffer[:total])
+}
+
+// Boot_volume_bytes is the root filesystem's total capacity, taken from statfs. It
+// is a close proxy for the physical drive capacity — enough to tell a 256GB drive
+// from a 512GB one. A failed statfs reads zero.
+func boot_volume_bytes() (total uint64) {
+	var stat syscall.Statfs_t
+	if syscall.Statfs("/", &stat) != nil {
+		return 0
+	}
+	return uint64(stat.Bsize) * stat.Blocks
+}
+
+// Read_cpuinfo parses /proc/cpuinfo for the CPU model string, the physical-core
+// count (unique "core id" values), and the logical-core count (total "processor"
+// entries).
+func read_cpuinfo() (model string, physical int, logical int) {
+	core_ids := map[string]struct{}{}
+	for _, line := range strings.Split(read_proc_file("/proc/cpuinfo"), "\n") {
+		key, value, found := strings.Cut(line, ":")
+		if !found {
+			continue
+		}
+		key = strings.TrimSpace(key)
+		value = strings.TrimSpace(value)
+		switch key {
+		case "model name":
+			if model == "" {
+				model = value
+			}
+		case "processor":
+			logical++
+		case "core id":
+			core_ids[value] = struct{}{}
+		}
+	}
+	// Some ARM kernels omit "core id"; fall back to the logical count there.
+	if len(core_ids) > 0 {
+		physical = len(core_ids)
+	} else {
+		physical = logical
+	}
+	return model, physical, logical
+}
+
+// Read_cpu_frequency_max reads the maximum CPU frequency from the cpufreq driver
+// for CPU 0; most Linux CPUs expose this even without the governor active.
+func read_cpu_frequency_max() (hz uint64) {
+	text := strings.TrimSpace(
+		read_proc_file("/sys/devices/system/cpu/cpu0/cpufreq/cpuinfo_max_freq"))
+	// The cpufreq driver reports the frequency in kHz.
+	khz, parse_err := strconv.ParseUint(text, 10, 64)
+	if parse_err != nil {
+		return 0
+	}
+	return khz * 1000
+}
+
+// Read_cache_size reads the size of CPU 0's cache at the given level from the sysfs
+// cache directory. The size string carries a unit suffix (K, M).
+func read_cache_size(level int) (size uint64) {
+	path := "/sys/devices/system/cpu/cpu0/cache/index" +
+		strconv.Itoa(level-1) + "/size"
+	text := strings.TrimSpace(read_proc_file(path))
+	if len(text) == 0 {
+		return 0
+	}
+	suffix := text[len(text)-1]
+	digits := text[:len(text)-1]
+	value, parse_err := strconv.ParseUint(digits, 10, 64)
+	if parse_err != nil {
+		return 0
+	}
+	switch suffix {
+	case 'K':
+		return value * 1024
+	case 'M':
+		return value * 1024 * 1024
+	}
+	return value
+}
+
+// Read_memory_total parses MemTotal from /proc/meminfo, returning bytes.
+func read_memory_total() (total uint64) {
+	for _, line := range strings.Split(read_proc_file("/proc/meminfo"), "\n") {
+		if !strings.HasPrefix(line, "MemTotal:") {
+			continue
+		}
+		// A MemTotal line reads "MemTotal:    16384000 kB", in kibibytes.
+		fields := strings.Fields(line)
+		if len(fields) < 2 {
+			return 0
+		}
+		kb, parse_err := strconv.ParseUint(fields[1], 10, 64)
+		if parse_err != nil {
+			return 0
+		}
+		return kb * 1024
+	}
+	return 0
+}
+
+// Read_operating_system_release parses /etc/os-release for the OS name and version.
+func read_operating_system_release() (name string, version string) {
+	content := read_proc_file("/etc/os-release")
+	if content == "" {
+		return "Linux", ""
+	}
+	for _, line := range strings.Split(content, "\n") {
+		key, value, found := strings.Cut(line, "=")
+		if !found {
+			continue
+		}
+		value = strings.Trim(value, `"`)
+		switch key {
+		case "NAME":
+			name = value
+		case "VERSION_ID":
+			version = value
+		}
+	}
+	if name == "" {
+		name = "Linux"
+	}
+	return name, version
+}
+
+// Utsname_string converts a fixed-size Utsname field to a Go string, stopping at
+// the first zero byte. The element type differs by platform (int8 vs uint8).
+func utsname_string[T int8 | uint8](field []T) (text string) {
+	builder := strings.Builder{}
+	for _, b := range field {
+		if b == 0 {
+			break
+		}
+		builder.WriteByte(byte(b))
+	}
+	return builder.String()
 }

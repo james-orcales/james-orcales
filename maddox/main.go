@@ -79,6 +79,7 @@ func main() {
 		Progress:       resolve_stream(progress_mode, os.Stderr),
 		Output:         os.Stdout,
 		Stderr:         os.Stderr,
+		Machine:        acquire_machine_specs(),
 	}
 	os.Exit(maddox.Main(input))
 }

@@ -114,6 +114,50 @@ type Main_Input struct {
 	Output io.Writer
 	// Stderr is where a failing command's diagnostics are written.
 	Stderr io.Writer
+	// Machine is the host hardware and OS snapshot; injected so the library makes no
+	// ambient OS reads. Production wires acquire_machine_specs(); tests inject a stub.
+	Machine Machine_Specs
+}
+
+// Machine_Specs is a snapshot of the host hardware and OS taken once at startup,
+// carried in the report so benchmark results are reproducible across machines.
+type Machine_Specs struct {
+	// CPU_Model is the CPU's brand string, e.g. "Apple M4 Max".
+	CPU_Model string `json:"cpu_model"`
+	// CPU_Arch is the instruction-set architecture, e.g. "arm64".
+	CPU_Arch string `json:"cpu_arch"`
+	// Physical_Cores is the total physical core count across all performance levels.
+	Physical_Cores int `json:"physical_cores"`
+	// Logical_Cores is the OS-visible thread count, which may exceed Physical_Cores
+	// when hyperthreading or SMT is active.
+	Logical_Cores int `json:"logical_cores"`
+	// Performance_Cores is the P-core count on hybrid CPUs (Apple Silicon, Alder Lake+).
+	// Zero when the CPU does not expose a performance/efficiency split.
+	Performance_Cores int `json:"performance_cores,omitempty"`
+	// Efficiency_Cores is the E-core count on hybrid CPUs.
+	Efficiency_Cores int `json:"efficiency_cores,omitempty"`
+	// CPU_Frequency_Hz_Max is the maximum rated CPU frequency in Hz; zero when the
+	// kernel does not expose it (e.g. Apple Silicon with no cpufrequency_max sysctl).
+	CPU_Frequency_Hz_Max uint64 `json:"cpu_frequency_hz_max,omitempty"`
+	// Cache_L1_Bytes is the per-core L1 data cache size in bytes.
+	Cache_L1_Bytes uint64 `json:"cache_l1_bytes,omitempty"`
+	// Cache_L2_Bytes is the per-core L2 cache size in bytes.
+	Cache_L2_Bytes uint64 `json:"cache_l2_bytes,omitempty"`
+	// Cache_L3_Bytes is the shared L3 cache size in bytes.
+	Cache_L3_Bytes uint64 `json:"cache_l3_bytes,omitempty"`
+	// RAM_Total_Bytes is the total installed physical memory in bytes.
+	RAM_Total_Bytes uint64 `json:"ram_total_bytes"`
+	// Storage_Total_Bytes is the total capacity of the boot filesystem in bytes. It
+	// is a benchmark-relevant proxy for SSD throughput: on Apple Silicon a larger
+	// drive spreads I/O across more NAND dies, so the 512GB model reads and writes
+	// faster than the 256GB even on identical silicon.
+	Storage_Total_Bytes uint64 `json:"storage_total_bytes"`
+	// Operating_System_Name is the operating-system name, e.g. "macOS".
+	Operating_System_Name string `json:"operating_system_name"`
+	// Operating_System_Version is the OS release, e.g. "15.2".
+	Operating_System_Version string `json:"operating_system_version"`
+	// Kernel_Version is the kernel release string, e.g. "Darwin 25.2.0".
+	Kernel_Version string `json:"kernel_version"`
 }
 
 // Measurement is the distribution of one metric across a command's runs — poop's
@@ -215,8 +259,11 @@ type Benchmark struct {
 	Deltas *Deltas `json:"deltas,omitempty"`
 }
 
-// Document is the whole report: one Benchmark per command, in the order given.
+// Document is the whole report: one Benchmark per command, in the order given,
+// preceded by the host machine specs.
 type Document struct {
+	// Machine is the host hardware and OS snapshot, taken once at startup.
+	Machine Machine_Specs `json:"machine"`
 	// Benchmarks is one entry per command, in invocation order.
 	Benchmarks []Benchmark `json:"benchmarks"`
 }
@@ -264,7 +311,7 @@ func Main(input *Main_Input) (exit_code int) {
 		}
 		benchmarks = append(benchmarks, benchmark)
 	}
-	document := Document{Benchmarks: benchmarks}
+	document := Document{Machine: input.Machine, Benchmarks: benchmarks}
 	if input.Format == Output_Format_Json {
 		return write_report(input.Output, document)
 	}
@@ -703,13 +750,77 @@ type Render_Table_Input struct {
 }
 
 // Render_Table renders the report as poop's aligned, optionally colored comparison
-// table — the default human-readable output.
+// table — the default human-readable output. The machine specs block is written
+// first, before Benchmark 1.
 func Render_Table(input *Render_Table_Input) (output []byte) {
 	builder := strings.Builder{}
+	render_machine_header(&builder, input.Document.Machine)
 	for index, benchmark := range input.Document.Benchmarks {
 		render_benchmark(&builder, index, benchmark, input.Color)
 	}
 	return []byte(builder.String())
+}
+
+// Render_machine_header writes the host hardware block before the first benchmark.
+// Sparse fields (zero values) are omitted, matching the sparse-metric convention
+// for table rows.
+func render_machine_header(builder *strings.Builder, m Machine_Specs) {
+	// An empty CPU model with no architecture means specs were never acquired (e.g.
+	// the stub platform); the header is skipped so output stays clean.
+	if m.CPU_Model == "" {
+		if m.CPU_Arch == "" {
+			return
+		}
+	}
+	builder.WriteString("Machine: " + m.CPU_Model + " (" + m.CPU_Arch + ")\n")
+	builder.WriteString("  cores: " + machine_specs_cores(m) + "   " +
+		"freq: " + format_hz(m.CPU_Frequency_Hz_Max) + "   " +
+		"ram: " + format_quantity(float64(m.RAM_Total_Bytes), "bytes") + "   " +
+		"storage: " + format_quantity(float64(m.Storage_Total_Bytes), "bytes") + "\n")
+	cache_line := ""
+	if m.Cache_L1_Bytes > 0 {
+		cache_line += "L1: " + format_quantity(float64(m.Cache_L1_Bytes), "bytes") + "   "
+	}
+	if m.Cache_L2_Bytes > 0 {
+		cache_line += "L2: " + format_quantity(float64(m.Cache_L2_Bytes), "bytes") + "   "
+	}
+	if m.Cache_L3_Bytes > 0 {
+		cache_line += "L3: " + format_quantity(float64(m.Cache_L3_Bytes), "bytes") + "   "
+	}
+	operating_system_part := "OS: " + m.Operating_System_Name + " " +
+		m.Operating_System_Version + "   kernel: " + m.Kernel_Version
+	if cache_line != "" {
+		builder.WriteString("  " + cache_line + operating_system_part + "\n")
+	} else {
+		builder.WriteString("  " + operating_system_part + "\n")
+	}
+	builder.WriteString("\n")
+}
+
+// Machine_specs_cores renders the core topology line, distinguishing P/E cores on
+// hybrid CPUs and collapsing to a single count when physical equals logical.
+func machine_specs_cores(m Machine_Specs) (text string) {
+	if m.Performance_Cores > 0 {
+		if m.Efficiency_Cores > 0 {
+			return fmt.Sprintf("%d P + %d E = %d logical",
+				m.Performance_Cores, m.Efficiency_Cores, m.Logical_Cores)
+		}
+	}
+	if m.Physical_Cores == m.Logical_Cores {
+		return fmt.Sprintf("%d", m.Physical_Cores)
+	}
+	return fmt.Sprintf("%d physical, %d logical", m.Physical_Cores, m.Logical_Cores)
+}
+
+// Format_hz renders a frequency in Hz to a human-readable GHz or MHz string.
+func format_hz(hz uint64) (text string) {
+	if hz == 0 {
+		return "?"
+	}
+	if hz >= 1_000_000_000 {
+		return fmt.Sprintf("%.2f GHz", float64(hz)/1e9)
+	}
+	return fmt.Sprintf("%.0f MHz", float64(hz)/1e6)
 }
 
 // Write_table renders the table and writes it to output, returning exit_failure if
