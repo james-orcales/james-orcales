@@ -2,7 +2,7 @@
   "mcpServers": {
     "gopls": {
       "command": "sh",
-      "args": ["-c", "ulimit -n 10240;./bin/gopls mcp"]
+      "args": ["-c", "ulimit -n 10240;./.local/bin/gopls mcp"]
     }
   }
 }
