@@ -598,12 +598,9 @@ func Install_Direnv(input *Install_Direnv_Input) (status_code int) {
 		return 0
 	}
 	fmt.Fprintln(input.Shell.Stdout, "setup: direnv: building...")
-	// Build from inside the module so its vendor tree resolves; GOWORK=off because
-	// direnv is a foreign module outside the repo's go.work; CGO_ENABLED=0 for a
-	// static binary (no cc); direnv embeds version.txt, so no ldflags are needed.
 	destination := filepath.Join(input.Binary_Directory, "direnv")
 	build := "cd " + input.Direnv_Directory +
-		" && GOWORK=off CGO_ENABLED=0 go build -mod=vendor" +
+		" && CGO_ENABLED=0 go build -mod=vendor" +
 		" -o " + destination + " ."
 	if !sh.Shell_Spawn(input.Shell, "sh", "-c", build) {
 		fmt.Fprintln(input.Shell.Stderr, "setup: direnv build failed")
@@ -840,12 +837,9 @@ func Install_Fzf(input *Install_Fzf_Input) (status_code int) {
 		return 0
 	}
 	fmt.Fprintln(input.Shell.Stdout, "setup: fzf: building...")
-	// Build from inside the module so its vendor tree resolves; GOWORK=off because
-	// fzf is a foreign module outside the repo's go.work; ldflags inject the version
-	// so the binary self-reports it; output lands straight in the bin directory.
 	destination := filepath.Join(input.Binary_Directory, "fzf")
 	build := "cd " + input.Fzf_Directory +
-		" && GOWORK=off go build -mod=vendor" +
+		" && go build -mod=vendor" +
 		" -ldflags '-s -w -X main.version=" + fzf_version + " -X main.revision='" +
 		" -o " + destination + " ."
 	if !sh.Shell_Spawn(input.Shell, "sh", "-c", build) {

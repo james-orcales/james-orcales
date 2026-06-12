@@ -1,5 +1,5 @@
 {
-  "shared_module": "shared",
+  "shared_component": "shared",
   "instrumentation_packages": [
           "shared/invariant",
           "shared/snap"
@@ -17,6 +17,7 @@
   ],
   "ignore": [
           "install_golang.sh",
+          "build.go",
           "home",
           "documentation/youtube"
   ],

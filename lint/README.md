@@ -1,6 +1,6 @@
 # lint
 
-Static checker for this monorepo. Run from the workspace root or any module root:
+Static checker for this monorepo. Run from the repo root or any subdirectory:
 
 ```
 go run ./lint .
@@ -95,9 +95,9 @@ james-orcales/
     └── go.mod
 ```
 
-- **Shared library.** Exactly one module: `shared`. It exists to be imported
-  by every binary. Its directory, relative to go.work, is the `shared_module` in lint.json.
-- **Binary modules.** Every other module at the workspace root produces one
+- **Shared library.** Exactly one component: `shared`. It exists to be imported
+  by every binary. Its directory, relative to the repo root, is the `shared_component` in lint.json.
+- **Binary components.** Every other top-level directory of Go code produces one
   deployable executable and is not imported by anything else.
 
 ### Where code lives — shared library
@@ -210,7 +210,7 @@ stub for `Get_Caller`), and the binding stays auditable (`grep` for `"os."` in
 
 The linter does not infer the `var Default` exemption from the `default/` directory name: a
 package may declare `var Default` only if its directory (workspace-root-relative) is at or under an
-entry in lint.json's `instrumentation_packages`, beside go.work. Everywhere else — and in any
+entry in lint.json's `instrumentation_packages`, at the repo root. Everywhere else — and in any
 package absent from the list — package-level vars stay banned. This also frees composition packages
 to use a `<lib>_default` directory instead of a bare `default/`.
 
@@ -375,6 +375,6 @@ packages instead.
 ## Hardcoded knowledge
 
 - The shared library is no longer hardcoded: set its workspace-root-relative directory
-  as `shared_module` in lint.json (beside go.work). Required; the linter exits non-zero
+  as `shared_component` in lint.json (beside the root go.mod). Required; the linter exits non-zero
   if absent.
-- Major-version segment detection uses `^v[0-9]+$` (`module_index_version_re`).
+- Major-version segment detection uses `^v[0-9]+$` (`component_index_version_re`).
