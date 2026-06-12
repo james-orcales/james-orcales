@@ -1429,21 +1429,40 @@ type Classify_File_Input struct {
 // Classify_File partitions every physical line of the source into code, comment, and
 // blank counts. Each line is counted once, so the three sum to the line count.
 func Classify_File(input Classify_File_Input) (counts Counts) {
+	prepared := language_scanner(&input.Language)
 	carry := scan_carry{}
-	for _, line := range source_lines(input.Source) {
-		kind := line_kind_blank
-		kind, carry = classify_line(line, carry, input.Language)
-		if kind == line_kind_code {
-			counts.Code++
+	source := input.Source
+	// Lines are walked in place rather than materialized into a slice: one classifier
+	// pass over millions of lines should not also allocate a slice header per line.
+	start := 0
+	var kind line_kind
+	for index := 0; index < len(source); index++ {
+		if source[index] != '\n' {
+			continue
 		}
-		if kind == line_kind_comment {
-			counts.Comment++
-		}
-		if kind == line_kind_blank {
-			counts.Blank++
-		}
+		kind, carry = classify_line(source[start:index], carry, &prepared)
+		counts_tally(&counts, kind)
+		start = index + 1
+	}
+	// Bytes after the last newline are a final line only when non-empty, so a trailing
+	// newline adds no phantom line and the empty file is zero lines.
+	if start < len(source) {
+		kind, _ = classify_line(source[start:], carry, &prepared)
+		counts_tally(&counts, kind)
 	}
 	return counts
+}
+
+// Adds one line's verdict to the running partition.
+func counts_tally(counts *Counts, kind line_kind) {
+	switch kind {
+	case line_kind_code:
+		counts.Code++
+	case line_kind_comment:
+		counts.Comment++
+	case line_kind_blank:
+		counts.Blank++
+	}
 }
 
 // The partition a single physical line falls into.
@@ -1479,26 +1498,47 @@ type line_scan struct {
 	Has_Comment bool
 }
 
-// Splits the source into physical lines on newline. A trailing newline yields no
-// extra empty line, so the line count tracks the newline count.
-func source_lines(source []byte) (lines [][]byte) {
-	start := 0
-	for index, character := range source {
-		if character == '\n' {
-			lines = append(lines, source[start:index])
-			start = index + 1
-		}
+// A scanner is one language prepared for scanning: its configuration plus a table of
+// the bytes that can begin something the scan must inspect, so a run of ordinary code
+// bytes is skipped in bulk instead of re-dispatched through every opener check.
+type scanner struct {
+	// Language is the configuration the scan reads against.
+	Language *Language
+	// Trigger[b] is true when byte b can begin a comment or string opener, a heredoc, or
+	// a long bracket — the only bytes a fresh-state scan must stop on. Every other
+	// non-space byte is plain code.
+	Trigger [256]bool
+}
+
+// Prepares a scanner for a language. The trigger table is the union of the first byte
+// of every opener the language defines, taken from its fields alone so no language is
+// special-cased: miss a field and a real opener would be skipped as if it were code.
+func language_scanner(language *Language) (prepared scanner) {
+	prepared.Language = language
+	for _, token := range language.Line_Comment {
+		prepared.Trigger[token[0]] = true
 	}
-	// Bytes after the last newline are a final line only when non-empty.
-	if start < len(source) {
-		lines = append(lines, source[start:])
+	if language.Block_Comment_Open != "" {
+		prepared.Trigger[language.Block_Comment_Open[0]] = true
 	}
-	return lines
+	for _, delimiter := range language.Verbatim_Strings {
+		prepared.Trigger[delimiter.Open[0]] = true
+	}
+	for _, delimiter := range language.Quote_Strings {
+		prepared.Trigger[delimiter.Open[0]] = true
+	}
+	if language.Heredoc {
+		prepared.Trigger['<'] = true
+	}
+	if language.Long_Bracket {
+		prepared.Trigger['['] = true
+	}
+	return prepared
 }
 
 // Returns the partition of one line and the carry for the next.
 func classify_line(
-	line []byte, carry scan_carry, language Language,
+	line []byte, carry scan_carry, scan_with *scanner,
 ) (kind line_kind, carry_after scan_carry) {
 	// A whitespace-only line is blank regardless of carried state, and neither opens
 	// nor closes anything, so the carry passes through unchanged.
@@ -1511,7 +1551,7 @@ func classify_line(
 	scan := line_scan{State: carry}
 	cursor := 0
 	for cursor < len(line) {
-		cursor = line_scan_step(&scan, line, cursor, language)
+		cursor = line_scan_step(&scan, line, cursor, scan_with)
 	}
 	return line_scan_verdict(&scan), scan.State
 }
@@ -1527,8 +1567,10 @@ func classify_heredoc_line(
 	return line_kind_code, carry
 }
 
-// Consumes the token at the cursor, updating the scan, and returns the next cursor.
-func line_scan_step(scan *line_scan, line []byte, cursor int, language Language) (next int) {
+// Consumes the token at the cursor, updating the scan, and returns the next cursor. The
+// carried-state branches are checked before the fresh dispatch, so the fresh path's
+// bulk skip can never run inside a comment, raw string, or long bracket.
+func line_scan_step(scan *line_scan, line []byte, cursor int, scan_with *scanner) (next int) {
 	if scan.State.Comment_Close != "" {
 		return line_scan_long_comment_body(scan, line, cursor)
 	}
@@ -1536,9 +1578,9 @@ func line_scan_step(scan *line_scan, line []byte, cursor int, language Language)
 		return line_scan_raw(scan, line, cursor)
 	}
 	if scan.State.Block_Comment_Depth > 0 {
-		return line_scan_block(scan, line, cursor, language)
+		return line_scan_block(scan, line, cursor, scan_with.Language)
 	}
-	return line_scan_fresh(scan, line, cursor, language)
+	return line_scan_fresh(scan, line, cursor, scan_with)
 }
 
 // Advances inside a verbatim string, where every byte is code and only the matching
@@ -1555,7 +1597,7 @@ func line_scan_raw(scan *line_scan, line []byte, cursor int) (next int) {
 
 // Advances inside a block comment, where every byte is comment and only an open (when
 // nesting) or a close moves the depth.
-func line_scan_block(scan *line_scan, line []byte, cursor int, language Language) (next int) {
+func line_scan_block(scan *line_scan, line []byte, cursor int, language *Language) (next int) {
 	scan.Has_Comment = true
 	if language.Block_Comment_Nests {
 		if has_prefix_at(line, cursor, language.Block_Comment_Open) {
@@ -1585,7 +1627,7 @@ func line_scan_long_comment_body(scan *line_scan, line []byte, cursor int) (next
 // Reports whether a long-bracket comment — a line-comment token then a long bracket,
 // like --[[ or --[=[ — opens at the cursor, recording the comment and its closer.
 func line_scan_long_comment(
-	scan *line_scan, line []byte, cursor int, language Language,
+	scan *line_scan, line []byte, cursor int, language *Language,
 ) (next int, opened bool) {
 	if !language.Long_Bracket {
 		return 0, false
@@ -1608,7 +1650,7 @@ func line_scan_long_comment(
 // Reports whether a long-bracket string — like [[ or [=[ — opens at the cursor,
 // recording its leveled closer.
 func line_scan_long_string(
-	scan *line_scan, line []byte, cursor int, language Language,
+	scan *line_scan, line []byte, cursor int, language *Language,
 ) (next int, opened bool) {
 	if !language.Long_Bracket {
 		return 0, false
@@ -1649,10 +1691,24 @@ func long_bracket_open(line []byte, cursor int) (closer string, opener_size int,
 
 // Dispatches the token at the cursor when not inside a comment or string: whitespace,
 // a line comment, a block-comment open, a string, or code.
-func line_scan_fresh(scan *line_scan, line []byte, cursor int, language Language) (next int) {
-	if byte_is_space(line[cursor]) {
-		return cursor + 1
+func line_scan_fresh(scan *line_scan, line []byte, cursor int, scan_with *scanner) (next int) {
+	// A non-trigger byte cannot begin any opener, so it is either insignificant
+	// whitespace or plain code — never something to dispatch on. The first such code
+	// byte makes the line code, after which the run of ordinary bytes and the spaces
+	// between them is skipped to the next trigger in one tight loop, rather than
+	// re-running every opener check on each byte as the dispatch below would.
+	if !scan_with.Trigger[line[cursor]] {
+		if byte_is_space(line[cursor]) {
+			return cursor + 1
+		}
+		scan.Has_Code = true
+		cursor++
+		for cursor < len(line) && !scan_with.Trigger[line[cursor]] {
+			cursor++
+		}
+		return cursor
 	}
+	language := scan_with.Language
 	if line_scan_block_open(scan, line, cursor, language) {
 		return cursor + len(language.Block_Comment_Open)
 	}
@@ -1683,6 +1739,8 @@ func line_scan_fresh(scan *line_scan, line []byte, cursor int, language Language
 		scan.Has_Code = true
 		return cursor + consumed
 	}
+	// A trigger byte that opened nothing — a lone '/', a shift '<<', a division — is just
+	// code; advance one byte so the next byte re-enters the dispatch.
 	scan.Has_Code = true
 	return cursor + 1
 }
@@ -1690,7 +1748,7 @@ func line_scan_fresh(scan *line_scan, line []byte, cursor int, language Language
 // Reports whether a heredoc opens at the cursor, and if so records its terminator so
 // the following lines are read as code until the terminator line.
 func line_scan_heredoc(
-	scan *line_scan, line []byte, cursor int, language Language,
+	scan *line_scan, line []byte, cursor int, language *Language,
 ) (next int, opened bool) {
 	if !language.Heredoc {
 		return 0, false
@@ -1790,7 +1848,7 @@ func heredoc_word_start(character byte) (start bool) {
 // Reports whether a block comment opens at the cursor and, when it does, records the
 // comment and the new depth.
 func line_scan_block_open(
-	scan *line_scan, line []byte, cursor int, language Language,
+	scan *line_scan, line []byte, cursor int, language *Language,
 ) (opened bool) {
 	if language.Block_Comment_Open == "" {
 		return false
@@ -1818,7 +1876,7 @@ func line_scan_verdict(scan *line_scan) (kind line_kind) {
 // Reports whether a verbatim string begins at the cursor and, if so, its terminator
 // and the opener's byte length.
 func verbatim_open(
-	line []byte, cursor int, language Language,
+	line []byte, cursor int, language *Language,
 ) (close_delimiter string, opener_size int, opened bool) {
 	for _, delimiter := range language.Verbatim_Strings {
 		if !has_prefix_at(line, cursor, delimiter.Open) {
@@ -1875,7 +1933,7 @@ func verbatim_hashable(
 
 // Reports whether a single-line string or character literal begins at the cursor and,
 // if so, the byte length it consumes.
-func quote_open(line []byte, cursor int, language Language) (consumed int, opened bool) {
+func quote_open(line []byte, cursor int, language *Language) (consumed int, opened bool) {
 	for _, delimiter := range language.Quote_Strings {
 		if !has_prefix_at(line, cursor, delimiter.Open) {
 			continue
