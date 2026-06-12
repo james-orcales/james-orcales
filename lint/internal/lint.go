@@ -152,15 +152,15 @@ const successor_statements_max = 30
 // non-container/non-channel types emit 0.
 const leaf_requirements_per_dispatch_max = 3
 
-// Module_index_not_found anchors the -1 sentinel returned when no module
-// matches a path lookup. Paired with modules_per_workspace_max as the Hi
+// Component_index_not_found anchors the -1 sentinel returned when no component
+// matches a path lookup. Paired with components_max as the Hi
 // bound on the index domain.
-const module_index_not_found = -1
+const component_index_not_found = -1
 
-// Modules_per_workspace_max caps the per-workspace module count. The
-// monorepo's go.work currently lists ~10 modules; 1024 leaves headroom
-// for several orders of magnitude of growth without admitting absurd values.
-const modules_per_workspace_max = 1024
+// Components_max caps the discovered component count. The monorepo has a
+// handful of top-level components; 1024 leaves headroom for several orders of
+// magnitude of growth without admitting absurd values.
+const components_max = 1024
 
 // Path_root is the path.Dir result for top-level entries: a single dot
 // meaning "current directory". Used as the sentinel comparison value when
@@ -528,7 +528,7 @@ const markdown_line_max = 100
 
 // Exit_code_max is the Hi bound on Main's return code: 0 = clean, 1 =
 // diagnostics. Code 2 (hard error) is unreachable per upstream Excluding on
-// the stream/read/modules error branches.
+// the stream/read/components error branches.
 const exit_code_max = 1
 
 // Cpu_count_max caps input.CPU_Count to a sane per-process worker budget.
@@ -546,16 +546,16 @@ const cpu_count_max = 1024
 const tier_max = 2
 
 // Configuration is the decoded form of the workspace's lint.json, which sits
-// beside go.work. It carries the per-workspace policy that would otherwise be
-// hard-coded into the checks: the shared module's identity and the global-API
-// allowlist.
+// beside the root go.mod. It carries the per-workspace policy that would
+// otherwise be hard-coded into the checks: the shared component's identity and
+// the global-API allowlist.
 type Configuration struct {
-	// Shared_Module is the workspace-root-relative directory of the workspace's
+	// Shared_Component is the workspace-root-relative directory of the workspace's
 	// shared library module (e.g. "shared") — the one module every other
 	// may import. It drives the shared-vs-binary classification; every other
 	// module at the workspace root is treated as a binary. Slash-relative, like
 	// the allowlist. Required: a config without it is rejected.
-	Shared_Module string `json:"shared_module"`
+	Shared_Component string `json:"shared_component"`
 	// Instrumentation_Packages names the workspace-root-relative directories of
 	// write-only instrumentation — assertions, snapshot tooling, telemetry. They
 	// may expose a `var Default`, and a pure or deterministic package may import
@@ -673,7 +673,7 @@ type Git_Input struct {
 func Main(input *Main_Input) (code int) {
 
 	// Main is the single reader of lint.json: the config lives at the Fsys root
-	// (beside go.work in production; injected into the MapFS in tests). Reading it
+	// (beside the root go.mod in production; injected into the MapFS in tests). Reading it
 	// here rather than in main.go keeps one config path for both, so tests
 	// exercise the real decode instead of bypassing it.
 	configuration, configuration_err := read_configuration(input.Fsys)
@@ -704,7 +704,7 @@ func Main(input *Main_Input) (code int) {
 		Readlink:                 input.Readlink,
 		Scope:                    input.Scope_Prefix,
 		Instrumentation_Packages: configuration.Instrumentation_Packages,
-		Shared_Module:            configuration.Shared_Module,
+		Shared_Component:         configuration.Shared_Component,
 		Deterministic_Packages:   configuration.Deterministic_Packages,
 		Word_Replacements:        configuration.Word_Replacements,
 		Ignore:                   configuration.Ignore,
@@ -765,13 +765,13 @@ const lint_json_bytes_max = 1 << 20
 // Reads and decodes lint.json from the root of fsys. The read
 // is bounded — fs.ReadFile is unbounded and banned for the same reason os.ReadFile
 // is — so a pathological config can't exhaust memory. An absent, unreadable, or
-// malformed lint.json is an error: the linter cannot derive shared_module or the
+// malformed lint.json is an error: the linter cannot derive shared_component or the
 // word-replacements table on its own, so a missing or broken config must fail
 // loudly rather than silently degrade the checks.
 func read_configuration(fsys fs.FS) (configuration *Configuration, err error) {
 	file, open_err := fsys.Open("lint.json")
 	if open_err != nil {
-		return nil, fmt.Errorf("lint.json is required and must set shared_module "+
+		return nil, fmt.Errorf("lint.json is required and must set shared_component "+
 			"and word_replacements: %w", open_err)
 	}
 	defer file.Close()
@@ -793,7 +793,7 @@ func read_configuration(fsys fs.FS) (configuration *Configuration, err error) {
 	return Parse_Configuration(buffer[:n])
 }
 
-// Parse_Configuration decodes lint.json. shared_module and word_replacements are
+// Parse_Configuration decodes lint.json. shared_component and word_replacements are
 // required — a config without either is rejected so the shared-vs-binary
 // classification and the vocabulary check never silently degrade. An unknown
 // top-level key is rejected so a typo fails loudly, and malformed or wrong-typed
@@ -809,7 +809,7 @@ func Parse_Configuration(data []byte) (configuration *Configuration, err error) 
 		return nil, decode_err
 	}
 	known_keys := map[string]bool{
-		"shared_module":            true,
+		"shared_component":         true,
 		"instrumentation_packages": true,
 		"deterministic_packages":   true,
 		"word_replacements":        true,
@@ -825,8 +825,8 @@ func Parse_Configuration(data []byte) (configuration *Configuration, err error) 
 	if decode_err := json.Unmarshal(data, configuration); decode_err != nil {
 		return nil, decode_err
 	}
-	if configuration.Shared_Module == "" {
-		return nil, fmt.Errorf("lint.json: shared_module is required")
+	if configuration.Shared_Component == "" {
+		return nil, fmt.Errorf("lint.json: shared_component is required")
 	}
 	// Empty (or absent) word_replacements is rejected, not defaulted: the
 	// vocabulary check has no built-in table any more, so a missing one would
@@ -1900,10 +1900,10 @@ type Check_File_System_Input struct {
 	// the purity/determinism import bans. Threaded to the package-var,
 	// transitive-purity, and deterministic checks.
 	Instrumentation_Packages []string
-	// Shared_Module is the shared library module's workspace-root-relative
+	// Shared_Component is the shared library module's workspace-root-relative
 	// directory, forwarded from Main_Input. It drives shared-vs-binary
 	// classification in the module index.
-	Shared_Module string
+	Shared_Component string
 	// Deterministic_Packages is the lint.json deterministic tier list forwarded
 	// from Main_Input: workspace-root-relative package directories whose pure
 	// packages are held to the deterministic bans. Built into a set once per run
@@ -1940,16 +1940,19 @@ func Check_File_System(input *Check_File_System_Input) (diags []Diagnostic, err 
 	tracked := filter_ignored(input.Tracked, input.Ignore)
 	directory_has_tracked := check_file_system_directory_index(tracked)
 
-	// Discover every module before parsing: the roots decide which subtrees a
+	// Discover every component before parsing: the roots decide which subtrees a
 	// scoped run reads (parsing the rest is the work scope skips), and the
 	// cross-file checks still resolve imports against the full set. The roots are
-	// reused to build the index, so go.mod discovery walks the tree exactly once.
-	module_roots, err := discover_module_roots(input.Fsys, directory_has_tracked)
+	// reused to build the index, so component discovery walks the tree exactly once.
+	component_roots, err := discover_components(input.Fsys, directory_has_tracked)
 	if err != nil {
 		return nil, err
 	}
 	scan_prefixes := resolve_parse_prefixes(&resolve_parse_prefixes_input{
-		Modules: module_roots, Scope: input.Scope, Shared_Module: input.Shared_Module})
+		Components:       component_roots,
+		Scope:            input.Scope,
+		Shared_Component: input.Shared_Component,
+	})
 
 	// Stream and AST tiers run in series; parse failures degrade to per-file
 	// diagnostics. Scan_Prefixes bounds both: the stream walk skips out-of-scope
@@ -1972,12 +1975,13 @@ func Check_File_System(input *Check_File_System_Input) (diags []Diagnostic, err 
 		return nil, err
 	}
 	parsed_files, parse_diags := check_file_system_parse_files(paths, sources, cpu_count)
-	modules := build_module_index(module_roots, parsed_files, input.Shared_Module)
+	components := build_component_index(component_roots, parsed_files, input.Shared_Component)
 	return check_file_system_doctrine(&check_file_system_doctrine_input{
 		Fsys:                     input.Fsys,
 		Tracked:                  tracked,
+		Directory_Has_Tracked:    directory_has_tracked,
 		Parsed_Files:             parsed_files,
-		Modules:                  modules,
+		Components:               components,
 		CPU_Count:                cpu_count,
 		Stream_Diags:             stream_diags,
 		Parse_Diags:              parse_diags,
@@ -1992,8 +1996,9 @@ func Check_File_System(input *Check_File_System_Input) (diags []Diagnostic, err 
 type check_file_system_doctrine_input struct {
 	Fsys                     fs.FS
 	Tracked                  map[string]bool
+	Directory_Has_Tracked    map[string]bool
 	Parsed_Files             []parsed_file
-	Modules                  *module_index
+	Components               *component_index
 	CPU_Count                int
 	Stream_Diags             []Diagnostic
 	Parse_Diags              []Diagnostic
@@ -2011,14 +2016,14 @@ type check_file_system_doctrine_input struct {
 // Runs the AST and cross-file doctrine tiers over the parsed set and unions their
 // diagnostics with the stream and parse diagnostics already collected. Split from
 // Check_File_System so each half fits the length cap; the parsed set it receives
-// is already scope-narrowed, while Tracked and Modules still span the workspace
+// is already scope-narrowed, while Tracked and Components still span the workspace
 // for the path-casing and import-resolution checks that need the full view.
 func check_file_system_doctrine(
 	input *check_file_system_doctrine_input,
 ) (output []Diagnostic) {
 
 	parsed_files := input.Parsed_Files
-	modules := input.Modules
+	components := input.Components
 	output = append([]Diagnostic{}, input.Stream_Diags...)
 	output = append(output, input.Parse_Diags...)
 	output = append(output, check_path_casing(input.Fsys, input.Tracked)...)
@@ -2027,29 +2032,34 @@ func check_file_system_doctrine(
 			input.Instrumentation_Packages, input.Word_Replacements)...)
 	output = append(output, check_file_system_package_split(parsed_files)...)
 	output = append(output, check_file_system_method_prefix(parsed_files)...)
-	output = append(output, check_binary_module_layout(parsed_files, modules)...)
-	output = append(output, check_binary_module_main_package(parsed_files, modules)...)
+	output = append(output, check_binary_component_layout(parsed_files, components)...)
+	output = append(output, check_binary_component_main_package(parsed_files, components)...)
 	output = append(output,
-		check_binary_module_internal_main(parsed_files, modules, input.Tracked)...)
-	output = append(output, check_shared_library_no_internal(parsed_files, modules)...)
-	output = append(output, check_shared_library_no_main_package(parsed_files, modules)...)
-	output = append(output, check_library_tier_depth(parsed_files, modules)...)
+		check_binary_component_internal_main(parsed_files, components)...)
+	output = append(output, check_shared_component_no_internal(parsed_files, components)...)
+	output = append(output, check_shared_component_no_main_package(parsed_files, components)...)
+	output = append(output, check_component_tier_depth(parsed_files, components)...)
 	output = append(output,
-		check_module_definition_and_location(input.Fsys, modules, input.Tracked)...)
-	output = append(output, check_no_impure_stdlib(parsed_files, modules)...)
+		check_single_module(&check_single_module_input{
+			Fsys:                  input.Fsys,
+			Tracked:               input.Tracked,
+			Directory_Has_Tracked: input.Directory_Has_Tracked,
+		})...)
+	output = append(output, check_no_impure_stdlib(parsed_files, components)...)
 	output = append(output,
-		check_transitive_purity(parsed_files, modules, input.Instrumentation_Packages)...)
+		check_transitive_purity(
+			parsed_files, components, input.Instrumentation_Packages)...)
 	output = append(output, check_deterministic(&check_deterministic_input{
 		Parsed_Files:    parsed_files,
-		Modules:         modules,
+		Components:      components,
 		Packages:        input.Deterministic_Packages,
 		Instrumentation: input.Instrumentation_Packages,
 		Scan_Prefixes:   input.Scan_Prefixes,
 	})...)
-	output = append(output, check_time_import_gateway(parsed_files, modules)...)
+	output = append(output, check_time_import_gateway(parsed_files, components)...)
 	output = append(output, check_package_documentation_comment(parsed_files)...)
 	return append(output,
-		check_specification(input.Fsys, parsed_files, modules, input.Scope)...)
+		check_specification(input.Fsys, parsed_files, components, input.Scope)...)
 }
 
 // Returns tracked with every path the lint.json ignore globs match dropped, so
@@ -2697,88 +2707,151 @@ func check_file_system_parse_files(
 // doctrine's layout rules need three things per file: which module owns
 // it, whether that module is the shared imports, and which directories
 // contain non-main Go packages (the "Go ancestor" set used by the
-// library-tier-depth rule).
-type module_information struct {
+// component-tier-depth rule).
+type component_information struct {
 	Root              string
-	Module_Path       string
+	Import_Path       string
 	Is_Shared_Library bool
 	Directory_Package map[string]string
 }
 
 // All-doctrine-checks input. Built once after parsing and threaded
 // through the directory-level checks so module discovery is paid for
-// at most once per Main invocation. Modules is sorted longest-Root
-// first so File_To_Module resolution is a linear scan with the
+// at most once per Main invocation. Components is sorted longest-Root
+// first so File_To_Component resolution is a linear scan with the
 // longest-prefix wins guarantee.
-type module_index struct {
-	Modules        []module_information
-	File_To_Module map[string]int
+type component_index struct {
+	Components        []component_information
+	File_To_Component map[string]int
 }
 
-var module_index_module_re = regexp.MustCompile(`(?m)^module\s+(\S+)`)
+var component_index_module_re = regexp.MustCompile(`(?m)^module\s+(\S+)`)
 
-// Walks Fsys for go.mod files, parsing only the `module` line via regex (avoids
-// pulling in golang.org/x/mod for one field), and returns one module_information
-// per module discovered — Directory_Package allocated but empty, classification
-// and ordering deferred to build_module_index. Split from build_module_index so
-// the roots are known before any file is parsed: the scope-to-parse resolver
-// needs them to decide which module subtrees to read, and reading the rest is
-// the work a scoped run skips. When Fsys is rooted inside a module (no go.mod
-// visible — typical when pointed at a subdirectory), no modules are discovered
-// and every file later maps to -1, so the doctrine checks no-op on those files
-// rather than reporting against a partial view of the workspace.
-// directory_has_tracked prunes any directory holding no tracked file, so a
-// gitignored stray go.mod — a gopls temp module under tmp/ mirrors a real
-// module's path — is never discovered; undiscovered, it cannot shadow the real
-// module's root in the longest-prefix import lookup and so break the
-// instrumentation directory match. A nil index (the non-git fallback) prunes
-// nothing, matching every other tracked-set filter.
-func discover_module_roots(
+// Discovers the workspace's components: every top-level directory that holds Go
+// source. One root go.mod anchors the import path, so a module's import path is
+// the root module path joined with its top-level directory — exactly what the
+// per-directory go.mod files declared before the workspace collapsed into a
+// single module, which is why every downstream import-resolution check is
+// unchanged. The walk prunes the same vendored and gitignored subtrees every
+// other tier skips, so third_party/ and untracked trees never become components.
+// Root-level Go files (the build tool) belong to no module and fall through to
+// the per-file tiers. Directory_Package is allocated but empty; classification
+// and ordering are deferred to build_component_index, split out so the roots are
+// known before any file is parsed — the scope-to-parse resolver needs them.
+// directory_has_tracked prunes any directory holding no tracked file; a nil
+// index (the non-git fallback) prunes nothing, matching every other filter.
+func discover_components(
 	fsys fs.FS, directory_has_tracked map[string]bool,
-) (modules []module_information, err error) {
+) (components []component_information, err error) {
 
-	scratch := &module_index{}
-	err = fs.WalkDir(fsys, ".", func(p string, d fs.DirEntry, walk_err error) (output error) {
-		return build_module_index_walk(fsys, scratch, directory_has_tracked, p, d, walk_err)
-	})
-	if err != nil {
-		return nil, err
+	root_module_path := discover_root_module_path(fsys)
+	seen := map[string]bool{}
+	walk_err := fs.WalkDir(fsys, ".",
+		func(p string, d fs.DirEntry, entry_err error) (output error) {
+			if entry_err != nil {
+				return entry_err
+			}
+			if d.IsDir() {
+				if p == "." {
+					return nil
+				}
+				if Ignored_Directory(p) {
+					return fs.SkipDir
+				}
+				// Prune the gitignored subtrees every other tier skips so an
+				// untracked stray tree never contributes a phantom module.
+				if directory_has_tracked != nil {
+					if !directory_has_tracked[p] {
+						return fs.SkipDir
+					}
+				}
+				return nil
+			}
+			if path.Ext(p) != ".go" {
+				return nil
+			}
+			offset := strings.IndexByte(p, '/')
+			// A Go file directly at the repo root (the build tool) sits in no
+			// top-level directory, so it anchors no module.
+			if offset < 0 {
+				return nil
+			}
+			top := p[:offset]
+			if seen[top] {
+				return nil
+			}
+			seen[top] = true
+			// A component's import path is the root module path joined with its
+			// directory — what the deleted per-directory go.mod files declared.
+			import_path := ""
+			if root_module_path != "" {
+				import_path = root_module_path + "/" + top
+			}
+			components = append(components, component_information{
+				Root:              top,
+				Import_Path:       import_path,
+				Directory_Package: make(map[string]string),
+			})
+			if len(components) > components_max {
+				return fmt.Errorf("more than %d components", components_max)
+			}
+			return nil
+		})
+	if walk_err != nil {
+		return nil, walk_err
 	}
-	return scratch.Modules, nil
+	return components, nil
 }
 
-// Classifies, orders, and binds parsed files to the modules discovered by
-// discover_module_roots. Modules is sorted longest-Root first so File_To_Module
+// Reads the single root go.mod's module path. Empty when the file is absent or
+// carries no module line — the single-module check reports that, and a module
+// then carries an empty import path so the import-resolution checks find no
+// owner rather than mis-resolving against a guessed path.
+func discover_root_module_path(fsys fs.FS) (module_path string) {
+	content, err := fs.ReadFile(fsys, "go.mod")
+	if err != nil {
+		return ""
+	}
+	match := component_index_module_re.FindSubmatch(content)
+	if match == nil {
+		return ""
+	}
+	return string(match[1])
+}
+
+// Classifies, orders, and binds parsed files to the components discovered by
+// discover_components. Components is sorted longest-Root first so File_To_Component
 // resolution is a linear longest-prefix scan. A scoped run passes only the
 // parsed subset; the resulting index still covers every module's Root (for
-// import resolution) but its File_To_Module and Directory_Package describe only
+// import resolution) but its File_To_Component and Directory_Package describe only
 // the files actually parsed — which is all the in-scope checks consult.
-func build_module_index(
-	modules []module_information, parsed_files []parsed_file, shared_module string,
-) (index *module_index) {
+func build_component_index(
+	components []component_information, parsed_files []parsed_file, shared_component string,
+) (index *component_index) {
 
-	index = &module_index{
-		Modules: modules, File_To_Module: make(map[string]int, len(parsed_files))}
+	index = &component_index{
+		Components: components, File_To_Component: make(map[string]int, len(parsed_files))}
 	// Classify the shared library by its workspace-root-relative directory (the
 	// module Root, e.g. "shared"), matching the slash-relative form used
 	// by the rest of lint.json; every other module is a binary. An empty
-	// shared_module (e.g. a test that doesn't set one) leaves every module a binary.
+	// shared_component (e.g. a test that doesn't set one) leaves every module a binary.
 	// path.Clean so "./shared/" matches the cleaned module Root; guard the
 	// empty case, since path.Clean("") is "." and would wrongly match a root module.
-	shared_root := shared_module
+	shared_root := shared_component
 	if shared_root != "" {
 		shared_root = path.Clean(shared_root)
 	}
-	for i := range index.Modules {
-		index.Modules[i].Is_Shared_Library = index.Modules[i].Root == shared_root
+	for i := range index.Components {
+		index.Components[i].Is_Shared_Library = index.Components[i].Root == shared_root
 	}
-	sort.Slice(index.Modules, func(i, j int) (less bool) {
-		return len(index.Modules[i].Root) > len(index.Modules[j].Root)
+	sort.Slice(index.Components, func(i, j int) (less bool) {
+		return len(index.Components[i].Root) > len(index.Components[j].Root)
 	})
 	for _, pf := range parsed_files {
-		index.File_To_Module[pf.Path] = module_index_resolve(pf.Path, index.Modules)
+		index.File_To_Component[pf.Path] =
+			component_index_resolve(pf.Path, index.Components)
 	}
-	// Directory_Package excludes test/main files (library-tier-depth rule).
+	// Directory_Package excludes test/main files (component-tier-depth rule).
 	for _, pf := range parsed_files {
 		if strings.HasSuffix(pf.Path, "_test.go") {
 			continue
@@ -2786,17 +2859,17 @@ func build_module_index(
 		if pf.File.Name.Name == "main" {
 			continue
 		}
-		module_index_number := index.File_To_Module[pf.Path]
-		if module_index_number < 0 {
+		component_index_number := index.File_To_Component[pf.Path]
+		if component_index_number < 0 {
 			continue
 		}
-		root := index.Modules[module_index_number].Root
+		root := index.Components[component_index_number].Root
 		relative := pf.Path
 		if root != "." {
 			relative = strings.TrimPrefix(pf.Path, root+"/")
 		}
-		canonical_directory := module_index_canonicalize(path.Dir(relative))
-		directory_package := index.Modules[module_index_number].Directory_Package
+		canonical_directory := component_index_canonicalize(path.Dir(relative))
+		directory_package := index.Components[component_index_number].Directory_Package
 		if _, has := directory_package[canonical_directory]; !has {
 			directory_package[canonical_directory] = pf.File.Name.Name
 		}
@@ -2812,15 +2885,15 @@ func build_module_index(
 // module when one exists (it owns everything), else to the scope subtree itself —
 // files owned by no module resolve to -1 and the module-level checks no-op on
 // them. An empty scope (the whole-workspace run) parses the root.
-func resolve_scan_root(modules []module_information, scope string) (root string) {
+func resolve_scan_root(components []component_information, scope string) (root string) {
 
 	if scope == "" {
 		return "."
 	}
 	best := ""
 	root_module := false
-	for i := range modules {
-		module_root := modules[i].Root
+	for i := range components {
+		module_root := components[i].Root
 		if module_root == "." {
 			root_module = true
 			continue
@@ -2845,9 +2918,9 @@ func resolve_scan_root(modules []module_information, scope string) (root string)
 }
 
 type resolve_parse_prefixes_input struct {
-	Modules       []module_information
-	Scope         string
-	Shared_Module string
+	Components       []component_information
+	Scope            string
+	Shared_Component string
 }
 
 // Returns the directory subtrees a scoped run must parse: the scope's own module
@@ -2862,12 +2935,12 @@ func resolve_parse_prefixes(input *resolve_parse_prefixes_input) (prefixes []str
 	if input.Scope == "" {
 		return nil
 	}
-	set := map[string]bool{resolve_scan_root(input.Modules, input.Scope): true}
-	shared_root := input.Shared_Module
+	set := map[string]bool{resolve_scan_root(input.Components, input.Scope): true}
+	shared_root := input.Shared_Component
 	if shared_root != "" {
 		shared_root = path.Clean(shared_root)
-		for i := range input.Modules {
-			if input.Modules[i].Root == shared_root {
+		for i := range input.Components {
+			if input.Components[i].Root == shared_root {
 				set[shared_root] = true
 				break
 			}
@@ -2909,57 +2982,11 @@ func scan_prefixes_reach(prefixes []string, directory string) (reachable bool) {
 	return false
 }
 
-// Handles one fs.WalkDir visit for build_module_index: skips vendored/hidden
-// directories, and on each go.mod records the module root and import path.
-func build_module_index_walk(
-	fsys fs.FS, index *module_index, directory_has_tracked map[string]bool,
-	p string, d fs.DirEntry, walk_err error,
-) (output error) {
-	if walk_err != nil {
-		return walk_err
-	}
-	if d.IsDir() {
-		if p != "." {
-			if Ignored_Directory(p) {
-				return fs.SkipDir
-			}
-			// Prune the same gitignored subtrees every other tier skips, so a stray
-			// go.mod outside the tracked set is never discovered as a module.
-			if directory_has_tracked != nil {
-				if !directory_has_tracked[p] {
-					return fs.SkipDir
-				}
-			}
-		}
-		return nil
-	}
-	if d.Name() != "go.mod" {
-		return nil
-	}
-	content, read_err := fs.ReadFile(fsys, p)
-	if read_err != nil {
-		return read_err
-	}
-	match := module_index_module_re.FindSubmatch(content)
-	if match == nil {
-		return nil
-	}
-	module_path := string(match[1])
-	// Is_Shared_Library is left at its zero value here and set in a post-walk
-	// pass in build_module_index, where the configured shared module is in scope.
-	index.Modules = append(index.Modules, module_information{
-		Root:              path.Dir(p),
-		Module_Path:       module_path,
-		Directory_Package: make(map[string]string),
-	})
-	return nil
-}
-
 // Strips ^v[0-9]+$ segments from a slash-separated directory path so
 // snap/v2/X is treated identically to snap/X. Major-version segments
 // are Go module-versioning convention rather than real package tiers,
 // and the doctrine's depth rules must see through them.
-func module_index_canonicalize(directory string) (canonical string) {
+func component_index_canonicalize(directory string) (canonical string) {
 
 	if directory == "." {
 		return "."
@@ -2967,7 +2994,7 @@ func module_index_canonicalize(directory string) (canonical string) {
 	segments := strings.Split(directory, "/")
 	filtered := make([]string, 0, len(segments))
 	for _, s := range segments {
-		if module_index_version_re.MatchString(s) {
+		if component_index_version_re.MatchString(s) {
 			continue
 		}
 		filtered = append(filtered, s)
@@ -2978,11 +3005,11 @@ func module_index_canonicalize(directory string) (canonical string) {
 	return strings.Join(filtered, "/")
 }
 
-var module_index_version_re = regexp.MustCompile(`^v[0-9]+$`)
+var component_index_version_re = regexp.MustCompile(`^v[0-9]+$`)
 
-func module_index_resolve(file_path string, modules []module_information) (index int) {
+func component_index_resolve(file_path string, components []component_information) (index int) {
 
-	for i, module := range modules {
+	for i, module := range components {
 		if module.Root == "." {
 			return i
 		}
@@ -2996,23 +3023,23 @@ func module_index_resolve(file_path string, modules []module_information) (index
 	return -1
 }
 
-// Binary modules confine all non-main source to internal/ so the module
+// Binary components confine all non-main source to internal/ so the module
 // has no exported surface. Without the rule, an importable package
 // could leak out of any binary and become a cross-module dependency
 // the doctrine forbids. The check exempts the shared library (which is
 // importable by design) and `package main` files (which can sit at any
 // depth because Go itself bars importing them).
-func check_binary_module_layout(
-	parsed_files []parsed_file, modules *module_index,
+func check_binary_component_layout(
+	parsed_files []parsed_file, components *component_index,
 ) (diags []Diagnostic) {
 
 	seen := make(map[string]bool)
 	for _, pf := range parsed_files {
-		module_index_number := modules.File_To_Module[pf.Path]
-		if module_index_number < 0 {
+		component_index_number := components.File_To_Component[pf.Path]
+		if component_index_number < 0 {
 			continue
 		}
-		m := modules.Modules[module_index_number]
+		m := components.Components[component_index_number]
 		if m.Is_Shared_Library {
 			continue
 		}
@@ -3024,7 +3051,7 @@ func check_binary_module_layout(
 			relative = strings.TrimPrefix(pf.Path, m.Root+"/")
 		}
 		directory := path.Dir(relative)
-		if check_binary_module_layout_is_legal(directory) {
+		if check_binary_component_layout_is_legal(directory) {
 			continue
 		}
 		key := m.Root + "\x00" + directory
@@ -3032,25 +3059,28 @@ func check_binary_module_layout(
 			continue
 		}
 		seen[key] = true
+		message := binary_component_layout_message(&binary_component_layout_message_input{
+			Root:      m.Root,
+			Directory: directory,
+		})
 		diags = append(diags, Diagnostic{
 			Position: token.Position{Filename: pf.Path, Line: 1, Column: 1},
-			Name:     "binary-module-layout",
+			Name:     "binary-component-layout",
 			Want:     fmt.Sprintf("non-main packages live under %s/internal/", m.Root),
-			Message: binary_module_layout_message(&binary_module_layout_message_input{
-				Root:      m.Root,
-				Directory: directory,
-			}),
+			Message:  message,
 		})
 	}
 	return diags
 }
 
-type binary_module_layout_message_input struct {
+type binary_component_layout_message_input struct {
 	Root      string
 	Directory string
 }
 
-func binary_module_layout_message(input *binary_module_layout_message_input) (message string) {
+func binary_component_layout_message(
+	input *binary_component_layout_message_input,
+) (message string) {
 	destination := path.Join(input.Root+"/internal", input.Directory)
 	if input.Root == "." {
 		destination = "./" + destination
@@ -3062,7 +3092,7 @@ func binary_module_layout_message(input *binary_module_layout_message_input) (me
 // legal home for non-main packages in a binary module under the
 // doctrine. "." (the module root) is illegal for non-main code:
 // `package main` is handled by the caller's earlier short-circuit.
-func check_binary_module_layout_is_legal(directory string) (legal bool) {
+func check_binary_component_layout_is_legal(directory string) (legal bool) {
 
 	if directory == "." {
 		return false
@@ -3077,8 +3107,8 @@ func check_binary_module_layout_is_legal(directory string) (legal bool) {
 // importable-package leak the layout exists to prevent. A main package
 // anywhere but the root is reported; since a directory holds one package,
 // pinning every main to the root also caps the module at one.
-func check_binary_module_main_package(
-	parsed_files []parsed_file, modules *module_index,
+func check_binary_component_main_package(
+	parsed_files []parsed_file, components *component_index,
 ) (diags []Diagnostic) {
 
 	seen := make(map[string]bool)
@@ -3086,11 +3116,11 @@ func check_binary_module_main_package(
 		if pf.File.Name.Name != "main" {
 			continue
 		}
-		module_index_number := modules.File_To_Module[pf.Path]
-		if module_index_number < 0 {
+		component_index_number := components.File_To_Component[pf.Path]
+		if component_index_number < 0 {
 			continue
 		}
-		m := modules.Modules[module_index_number]
+		m := components.Components[component_index_number]
 		if m.Is_Shared_Library {
 			continue
 		}
@@ -3109,12 +3139,12 @@ func check_binary_module_main_package(
 		seen[key] = true
 		diags = append(diags, Diagnostic{
 			Position: token.Position{Filename: pf.Path, Line: 1, Column: 1},
-			Name:     "binary-module-main-package",
+			Name:     "binary-component-main-package",
 			Want:     "the single main package sits at the module root, no cmd/",
 			Message: fmt.Sprintf(
 				"binary module %q places its main package at %q; the main "+
 					"package must sit at the module root, no cmd/ directory",
-				m.Module_Path, directory,
+				m.Import_Path, directory,
 			),
 		})
 	}
@@ -3128,26 +3158,23 @@ func check_binary_module_main_package(
 // and gives every binary one auditable seam. Zero such functions means the
 // logic has nowhere conformant to live; more than one means the single
 // entry point has fractured. The shared library is exempt: it is imported,
-// never executed, so it owns no entry point. Modules with no visible go.mod
-// resolve to -1 and are skipped, matching the other module-level checks.
-// The Tracked filter drops modules whose go.mod is not first-party, mirroring
-// check_module_definition_and_location, so a whole-repo run never demands an
-// entry point from a toolchain copy; top-level third_party/ is pruned before
-// module discovery, so vendored modules never enter the index at all.
-func check_binary_module_internal_main(
-	parsed_files []parsed_file, modules *module_index, tracked map[string]bool,
+// never executed, so it owns no entry point. Files owned by no module resolve
+// to -1 and are skipped, matching the other module-level checks; third_party/
+// is pruned before discovery, so vendored trees never enter the index at all.
+func check_binary_component_internal_main(
+	parsed_files []parsed_file, components *component_index,
 ) (diags []Diagnostic) {
 
-	counts := make([]int, len(modules.Modules))
+	counts := make([]int, len(components.Components))
 	for _, pf := range parsed_files {
 		if strings.HasSuffix(pf.Path, "_test.go") {
 			continue
 		}
-		module_index_number := modules.File_To_Module[pf.Path]
-		if module_index_number < 0 {
+		component_index_number := components.File_To_Component[pf.Path]
+		if component_index_number < 0 {
 			continue
 		}
-		m := modules.Modules[module_index_number]
+		m := components.Components[component_index_number]
 		relative := pf.Path
 		if m.Root != "." {
 			relative = strings.TrimPrefix(pf.Path, m.Root+"/")
@@ -3155,42 +3182,36 @@ func check_binary_module_internal_main(
 		if path.Dir(relative) != "internal" {
 			continue
 		}
-		counts[module_index_number] += check_binary_module_internal_main_count(pf.File)
+		counts[component_index_number] +=
+			check_binary_component_internal_main_count(pf.File)
 	}
 	want := "exactly one func Main in internal/ per binary module"
-	for i, m := range modules.Modules {
+	for i, m := range components.Components {
 		if m.Is_Shared_Library {
 			continue
 		}
-		module_file_path := "go.mod"
-		if m.Root != "." {
-			module_file_path = m.Root + "/go.mod"
-		}
-		if tracked != nil {
-			if !tracked[module_file_path] {
-				continue
-			}
-		}
-		position := token.Position{Filename: module_file_path, Line: 1, Column: 1}
+		// The component owns no go.mod of its own now; anchor the diagnostic at
+		// the component's top-level directory.
+		position := token.Position{Filename: m.Root, Line: 1, Column: 1}
 		if counts[i] == 0 {
 			diags = append(diags, Diagnostic{
 				Position: position,
-				Name:     "binary-module-internal-main",
+				Name:     "binary-component-internal-main",
 				Want:     want,
 				Message: fmt.Sprintf(
 					"binary module %q declares no func Main in internal/",
-					m.Module_Path),
+					m.Import_Path),
 			})
 			continue
 		}
 		if counts[i] > 1 {
 			diags = append(diags, Diagnostic{
 				Position: position,
-				Name:     "binary-module-internal-main",
+				Name:     "binary-component-internal-main",
 				Want:     want,
 				Message: fmt.Sprintf(
 					"binary module %q declares multiple func Main in internal/",
-					m.Module_Path),
+					m.Import_Path),
 			})
 		}
 	}
@@ -3200,7 +3221,7 @@ func check_binary_module_internal_main(
 // Counts free, top-level functions named Main in one parsed file. A method
 // named Main does not count: the entry point is a package-level function the
 // thin main() can call directly, not a behavior bound to some type.
-func check_binary_module_internal_main_count(file *ast.File) (count int) {
+func check_binary_component_internal_main_count(file *ast.File) (count int) {
 	for _, declaration := range file.Decls {
 		function, ok := declaration.(*ast.FuncDecl)
 		if !ok {
@@ -3222,17 +3243,17 @@ func check_binary_module_internal_main_count(file *ast.File) (count int) {
 // Reported once per offending directory (the first `internal` segment
 // found in any file's path), attributed to the earliest-seen file
 // inside that directory so the diagnostic has a real location.
-func check_shared_library_no_internal(
-	parsed_files []parsed_file, modules *module_index,
+func check_shared_component_no_internal(
+	parsed_files []parsed_file, components *component_index,
 ) (diags []Diagnostic) {
 
 	seen := make(map[string]bool)
 	for _, pf := range parsed_files {
-		module_index_number := modules.File_To_Module[pf.Path]
-		if module_index_number < 0 {
+		component_index_number := components.File_To_Component[pf.Path]
+		if component_index_number < 0 {
 			continue
 		}
-		m := modules.Modules[module_index_number]
+		m := components.Components[component_index_number]
 		if !m.Is_Shared_Library {
 			continue
 		}
@@ -3248,7 +3269,7 @@ func check_shared_library_no_internal(
 			seen[internal_directory] = true
 			diags = append(diags, Diagnostic{
 				Position: token.Position{Filename: pf.Path, Line: 1, Column: 1},
-				Name:     "shared-imports-no-internal",
+				Name:     "shared-component-no-internal",
 				Want:     "shared library is fully exposed; no internal/ subtree",
 				Message: fmt.Sprintf(
 					"shared library forbids internal/ directories; remove %q",
@@ -3265,8 +3286,8 @@ func check_shared_library_no_internal(
 // package here is unreachable anyway — Go bars importing it — so it is
 // dead weight the layout forbids outright. Reported once per offending
 // directory.
-func check_shared_library_no_main_package(
-	parsed_files []parsed_file, modules *module_index,
+func check_shared_component_no_main_package(
+	parsed_files []parsed_file, components *component_index,
 ) (diags []Diagnostic) {
 
 	seen := make(map[string]bool)
@@ -3274,11 +3295,11 @@ func check_shared_library_no_main_package(
 		if pf.File.Name.Name != "main" {
 			continue
 		}
-		module_index_number := modules.File_To_Module[pf.Path]
-		if module_index_number < 0 {
+		component_index_number := components.File_To_Component[pf.Path]
+		if component_index_number < 0 {
 			continue
 		}
-		m := modules.Modules[module_index_number]
+		m := components.Components[component_index_number]
 		if !m.Is_Shared_Library {
 			continue
 		}
@@ -3289,11 +3310,11 @@ func check_shared_library_no_main_package(
 		seen[key] = true
 		diags = append(diags, Diagnostic{
 			Position: token.Position{Filename: pf.Path, Line: 1, Column: 1},
-			Name:     "shared-library-no-main",
+			Name:     "shared-component-no-main",
 			Want:     "shared library declares no package main",
 			Message: fmt.Sprintf(
 				"shared library %q forbids package main; move the entry "+
-					"point to a binary module", m.Module_Path),
+					"point to a binary module", m.Import_Path),
 		})
 	}
 	return diags
@@ -3306,8 +3327,8 @@ func check_shared_library_no_main_package(
 // than real package layers. The deepest legal position is the
 // composition tier — the only place where impure-stdlib binding is
 // permitted.
-func check_library_tier_depth(
-	parsed_files []parsed_file, modules *module_index,
+func check_component_tier_depth(
+	parsed_files []parsed_file, components *component_index,
 ) (diags []Diagnostic) {
 
 	seen := make(map[string]bool)
@@ -3318,20 +3339,20 @@ func check_library_tier_depth(
 		if pf.File.Name.Name == "main" {
 			continue
 		}
-		module_index_number := modules.File_To_Module[pf.Path]
-		if module_index_number < 0 {
+		component_index_number := components.File_To_Component[pf.Path]
+		if component_index_number < 0 {
 			continue
 		}
-		m := modules.Modules[module_index_number]
+		m := components.Components[component_index_number]
 		relative := pf.Path
 		if m.Root != "." {
 			relative = strings.TrimPrefix(pf.Path, m.Root+"/")
 		}
-		canonical := module_index_canonicalize(path.Dir(relative))
+		canonical := component_index_canonicalize(path.Dir(relative))
 		if canonical == "." {
 			continue
 		}
-		ancestor_names := module_information_library_ancestors(m, canonical)
+		ancestor_names := component_information_library_ancestors(m, canonical)
 		if len(ancestor_names) <= 1 {
 			continue
 		}
@@ -3342,7 +3363,7 @@ func check_library_tier_depth(
 		seen[key] = true
 		diags = append(diags, Diagnostic{
 			Position: token.Position{Filename: pf.Path, Line: 1, Column: 1},
-			Name:     "library-tier-depth",
+			Name:     "component-tier-depth",
 			Want:     "at most one non-main Go ancestor in module (v[0-9]+ skipped)",
 			Message: fmt.Sprintf(
 				"package %q at %q exceeds library tier; %d non-main ancestors: %v",
@@ -3357,7 +3378,7 @@ func check_library_tier_depth(
 // root, exclusive of "." itself. invariant.GameLoop annotates the loop
 // as intentionally unbounded — path.Dir's fixed point on "." provides
 // the real termination.
-func check_library_tier_depth_ancestors(directory string) (ancestors []string) {
+func check_component_tier_depth_ancestors(directory string) (ancestors []string) {
 
 	current := directory
 	for step := 0; ; step++ {
@@ -3380,12 +3401,12 @@ func check_library_tier_depth_ancestors(directory string) (ancestors []string) {
 // directory the count starts from — the same role a shared module's root
 // plays — not a package nested above another. Without the exclusion
 // internal/foo/default would count internal as a second ancestor and read as
-// nested too deep. Shared modules have no internal directory, so the exclusion
+// nested too deep. Shared components have no internal directory, so the exclusion
 // never affects them.
-func module_information_library_ancestors(
-	m module_information, canonical string,
+func component_information_library_ancestors(
+	m component_information, canonical string,
 ) (ancestors []string) {
-	for _, a := range check_library_tier_depth_ancestors(canonical) {
+	for _, a := range check_component_tier_depth_ancestors(canonical) {
 		if a == "internal" {
 			continue
 		}
@@ -3397,115 +3418,125 @@ func module_information_library_ancestors(
 	return ancestors
 }
 
-// A module must sit directly at the workspace root and be registered in
-// go.work. Both facts keep module discovery a flat, predictable scan: a
-// go.mod nested below a top-level directory would pull files into a module
-// the workspace never declared, and an unregistered module would never be
-// built or tested even though it carries importable code. Module Location is
-// judged from the go.mod's own depth and so always applies; Module Definition
-// is judged against go.work and so applies only when that file is present —
-// its absence means the linter is scanning a detached subtree where
-// registration cannot be decided. The Tracked filter, when set, drops modules
-// whose go.mod is not part of the repository (an untracked toolchain or cache
-// copy) so a whole-repo run stays focused on first-party code; top-level
-// third_party/ is pruned before discovery, so vendored modules never reach
-// here.
-func check_module_definition_and_location(
-	fsys fs.FS, modules *module_index, tracked map[string]bool,
-) (diags []Diagnostic) {
+type check_single_module_input struct {
+	// Fsys is the workspace tree to walk for module and workspace files.
+	Fsys fs.FS
+	// Tracked, when non-nil, limits the check to first-party files.
+	Tracked map[string]bool
+	// Directory_Has_Tracked prunes directories holding no tracked file.
+	Directory_Has_Tracked map[string]bool
+}
 
-	registered, has_workspace := module_workspace_use_set(fsys)
-	for _, m := range modules.Modules {
-		module_file_path := "go.mod"
-		if m.Root != "." {
-			module_file_path = m.Root + "/go.mod"
-		}
-		if tracked != nil {
-			if !tracked[module_file_path] {
-				continue
+// The repo is one Go module rooted at the workspace root: exactly one go.mod, at
+// the root, and no go.work. A nested go.mod would split files into a module the
+// root never sees; a go.work would reintroduce the multi-module workspace this
+// layout replaced; a missing root go.mod leaves the linter without its import
+// anchor. third_party/ and untracked trees (vendored modules, the tmp build
+// sandboxes) are pruned before the walk, so only first-party module files reach
+// here. Each violation anchors at the offending file.
+func check_single_module(input *check_single_module_input) (diags []Diagnostic) {
+
+	root_module_present := false
+	walk_err := fs.WalkDir(input.Fsys, ".",
+		func(p string, d fs.DirEntry, entry_err error) (output error) {
+			if entry_err != nil {
+				return entry_err
 			}
-		}
-		position := token.Position{Filename: module_file_path, Line: 1, Column: 1}
-		if strings.Contains(m.Root, "/") {
-			diags = append(diags, Diagnostic{
-				Position: position,
-				Name:     "module-location",
-				Want:     "every module located directly at the workspace root",
-				Message: fmt.Sprintf(
-					"module %q at %q must be located at the repository root",
-					m.Module_Path, m.Root),
-			})
-		}
-		if !has_workspace {
-			continue
-		}
-		if registered[m.Root] {
-			continue
-		}
-		diags = append(diags, Diagnostic{
-			Position: position,
-			Name:     "module-definition",
-			Want:     "every go.mod registered via a go.work use directive",
-			Message: fmt.Sprintf(
-				"module %q at %q is not registered in go.work",
-				m.Module_Path, m.Root),
+			if d.IsDir() {
+				if p == "." {
+					return nil
+				}
+				if Ignored_Directory(p) {
+					return fs.SkipDir
+				}
+				if input.Directory_Has_Tracked != nil {
+					if !input.Directory_Has_Tracked[p] {
+						return fs.SkipDir
+					}
+				}
+				return nil
+			}
+			file_diags, root := single_module_file(p, input.Tracked)
+			if root {
+				root_module_present = true
+			}
+			diags = append(diags, file_diags...)
+			return nil
 		})
+	if walk_err != nil {
+		// A walk failure surfaces through the stream tier already; nothing to add.
+		return diags
+	}
+	if !root_module_present {
+		diags = append(diags, single_module_diagnostic(&single_module_diagnostic_input{
+			Path: "go.mod",
+			Want: "one module: a single root go.mod at the repository root",
+			Message: "no go.mod at the repository root; the linter needs " +
+				"the module anchor",
+		}))
 	}
 	return diags
 }
 
-// Reads the workspace file at the Fsys root and returns the set of module
-// roots its use directives name, normalized to the same form as
-// module_information.Root. The second result reports whether go.work was
-// present at all, letting the caller distinguish an empty workspace from a
-// detached scan with no workspace in view.
-func module_workspace_use_set(
-	fsys fs.FS,
-) (registered map[string]bool, present bool) {
+// Classifies one non-directory walk entry: any single-module diagnostic for a
+// stray go.work or nested go.mod, plus whether the entry is the root go.mod.
+// Untracked files (vendored modules, tmp sandboxes) yield neither.
+func single_module_file(
+	p string, tracked map[string]bool,
+) (diags []Diagnostic, root bool) {
 
-	content, err := fs.ReadFile(fsys, "go.work")
-	if err != nil {
-		return nil, false
-	}
-	registered = map[string]bool{}
-	inside_block := false
-	for _, raw_line := range strings.Split(string(content), "\n") {
-		line := strings.TrimSpace(raw_line)
-		if inside_block {
-			if line == ")" {
-				inside_block = false
-				continue
-			}
-			if line == "" {
-				continue
-			}
-			registered[module_workspace_normalize(line)] = true
-			continue
-		}
-		if line == "use (" {
-			inside_block = true
-			continue
-		}
-		if strings.HasPrefix(line, "use ") {
-			directive := strings.TrimSpace(strings.TrimPrefix(line, "use "))
-			registered[module_workspace_normalize(directive)] = true
+	base := path.Base(p)
+	module_file := base == "go.mod"
+	workspace_file := base == "go.work"
+	if !module_file {
+		if !workspace_file {
+			return nil, false
 		}
 	}
-	return registered, true
+	if tracked != nil {
+		if !tracked[p] {
+			return nil, false
+		}
+	}
+	if workspace_file {
+		return []Diagnostic{single_module_diagnostic(&single_module_diagnostic_input{
+			Path: p,
+			Want: "one module: a single root go.mod, no go.work",
+			Message: fmt.Sprintf(
+				"go.work reintroduces a multi-module workspace; remove %q", p),
+		})}, false
+	}
+	if p == "go.mod" {
+		return nil, true
+	}
+	return []Diagnostic{single_module_diagnostic(&single_module_diagnostic_input{
+		Path: p,
+		Want: "one module: a single root go.mod, no nested go.mod",
+		Message: fmt.Sprintf(
+			"nested go.mod splits the repo into multiple modules; remove %q", p),
+	})}, false
 }
 
-// Folds a go.work use path into the directory form module discovery uses for
-// a module root: quotes and a leading ./ stripped, a trailing slash removed,
-// and the workspace root itself spelled ".".
-func module_workspace_normalize(use_path string) (root string) {
+type single_module_diagnostic_input struct {
+	// Path is the offending file the diagnostic anchors at.
+	Path string
+	// Want is the rule's one-line expectation.
+	Want string
+	// Message is the human-readable violation text.
+	Message string
+}
 
-	root = strings.Trim(use_path, `"`)
-	root = strings.TrimPrefix(root, "./")
-	root = strings.TrimSuffix(root, "/")
-	if root == "" {
-		return "."
+// Builds a single-module diagnostic anchored at the offending file.
+func single_module_diagnostic(
+	input *single_module_diagnostic_input,
+) (diagnostic Diagnostic) {
+
+	return Diagnostic{
+		Position: token.Position{Filename: input.Path, Line: 1, Column: 1},
+		Name:     "single-module",
+		Want:     input.Want,
+		Message:  input.Message,
 	}
-	return root
 }
 
 // Every non-main, non-_test package must carry a package doc comment in
@@ -3588,7 +3619,7 @@ func check_package_documentation_comment(
 // attach to paths under the package directory so Main's scope filter limits
 // the coverage requirement to whatever package argument the linter was given.
 func check_specification(
-	fsys fs.FS, parsed_files []parsed_file, index *module_index, scope string,
+	fsys fs.FS, parsed_files []parsed_file, index *component_index, scope string,
 ) (diags []Diagnostic) {
 	directories := map[string]bool{}
 	has_module := map[string]bool{}
@@ -3596,7 +3627,7 @@ func check_specification(
 	for _, pf := range parsed_files {
 		directory := path.Dir(pf.Path)
 		directories[directory] = true
-		if index.File_To_Module[pf.Path] >= 0 {
+		if index.File_To_Component[pf.Path] >= 0 {
 			has_module[directory] = true
 		}
 		if parsed_file_is_impure_package(pf, index) {
@@ -3624,8 +3655,8 @@ type check_specification_directory_input struct {
 	Scope     string
 	// Has_Module is true when at least one file in the directory resolves to a
 	// discovered module. The coverage mandate no-ops on module-less directories
-	// — the same rule every other doctrine check follows for File_To_Module == -1
-	// (see build_module_index) — so transient fixtures and subtrees scanned
+	// — the same rule every other doctrine check follows for File_To_Component == -1
+	// (see build_component_index) — so transient fixtures and subtrees scanned
 	// without their go.mod in view are never required to carry a spec.
 	Has_Module bool
 	// Impure is true when the directory holds an impure package — `package main`
@@ -6236,13 +6267,13 @@ func instrumentation_match(directory string, packages []string) (yes bool) {
 // feed impurity or nondeterminism back into the importer — so pure and
 // deterministic packages may import it despite the import bans.
 func import_path_is_instrumentation(
-	import_path string, modules *module_index, packages []string,
+	import_path string, components *component_index, packages []string,
 ) (yes bool) {
-	module_index_number := module_index_for_import_path(import_path, modules)
-	if module_index_number < 0 {
+	component_index_number := component_index_for_import_path(import_path, components)
+	if component_index_number < 0 {
 		return false
 	}
-	m := modules.Modules[module_index_number]
+	m := components.Components[component_index_number]
 	return instrumentation_match(import_path_workspace_directory(import_path, m), packages)
 }
 
@@ -6714,7 +6745,7 @@ func check_test_documentation_comment(
 // Every exported top-level identifier must carry a doc comment, the way
 // Go's own conventions teach `go doc` to surface a meaningful summary for
 // every importable name. Without the rule, an exported symbol is a
-// promise to other modules with no human-readable contract attached.
+// promise to other components with no human-readable contract attached.
 //
 // Scope: top-level FuncDecls, TypeSpecs, and ValueSpecs whose declared
 // name is exported per ast.IsExported. Methods (FuncDecl with Recv) are
@@ -7981,7 +8012,7 @@ func check_file_system_stream_walk(
 // is the slash path from the scan root, so the top-level third_party/ drop-zone
 // is matched exactly (a nested pkg/third_party/ is first-party code and stays
 // linted) while vendor, .git, and .jj match at any depth: Go's vendor/ nests by
-// convention, and tool-state dirs surface inside worktrees and submodules.
+// convention, and tool-state dirs surface inside worktrees and subcomponents.
 // Both spellings of the drop-zone are pruned: the directory on disk is named
 // third-party/ (hyphen), so matching only the underscore left its 70k-file
 // vendored corpus to be walked on every run and trimmed only later, by the
@@ -8841,7 +8872,7 @@ func agents_claude_pair_finalize(
 // somewhere, and the doctrine reserves exactly this position for it.
 
 func check_no_impure_stdlib(
-	parsed_files []parsed_file, modules *module_index,
+	parsed_files []parsed_file, components *component_index,
 ) (diags []Diagnostic) {
 
 	for _, pf := range parsed_files {
@@ -8851,7 +8882,7 @@ func check_no_impure_stdlib(
 		if strings.HasSuffix(pf.Path, "_test.go") {
 			continue
 		}
-		if parsed_file_is_composition_tier(pf, modules) {
+		if parsed_file_is_composition_tier(pf, components) {
 			continue
 		}
 		diags = append(diags, check_no_impure_stdlib_per_file(pf.File_Set, pf.File)...)
@@ -8860,24 +8891,24 @@ func check_no_impure_stdlib(
 }
 
 // True iff the file sits exactly one non-main Go ancestor below the
-// library tier in its module. Mirrors check_library_tier_depth's
+// library tier in its module. Mirrors check_component_tier_depth's
 // counting logic but inverts the threshold: tier-depth fires when
 // count > 1, the composition-tier exemption fires when count == 1.
-func parsed_file_is_composition_tier(pf parsed_file, modules *module_index) (yes bool) {
-	module_index_number := modules.File_To_Module[pf.Path]
-	if module_index_number < 0 {
+func parsed_file_is_composition_tier(pf parsed_file, components *component_index) (yes bool) {
+	component_index_number := components.File_To_Component[pf.Path]
+	if component_index_number < 0 {
 		return false
 	}
-	m := modules.Modules[module_index_number]
+	m := components.Components[component_index_number]
 	relative := pf.Path
 	if m.Root != "." {
 		relative = strings.TrimPrefix(pf.Path, m.Root+"/")
 	}
-	canonical := module_index_canonicalize(path.Dir(relative))
+	canonical := component_index_canonicalize(path.Dir(relative))
 	if canonical == "." {
 		return false
 	}
-	return len(module_information_library_ancestors(m, canonical)) == 1
+	return len(component_information_library_ancestors(m, canonical)) == 1
 }
 
 func check_no_impure_stdlib_per_file(
@@ -9000,15 +9031,15 @@ func is_impure_soft_ident(input *is_impure_soft_ident_input) (yes bool) {
 // Impure Stdlib, the ban binds the pure package's _test.go files too; direct
 // leaf use (os.Getenv, time.Now) in tests remains a matter for Impure Stdlib.
 func check_transitive_purity(
-	parsed_files []parsed_file, modules *module_index, instrumentation []string,
+	parsed_files []parsed_file, components *component_index, instrumentation []string,
 ) (diags []Diagnostic) {
 
 	for _, pf := range parsed_files {
-		if parsed_file_is_impure_package(pf, modules) {
+		if parsed_file_is_impure_package(pf, components) {
 			continue
 		}
 		diags = append(diags, check_transitive_purity_per_file(
-			pf.File_Set, pf.File, modules, instrumentation)...)
+			pf.File_Set, pf.File, components, instrumentation)...)
 	}
 	return diags
 }
@@ -9019,22 +9050,22 @@ func check_transitive_purity(
 // — including their _test.go files, classified by directory since tests carry
 // no entry in Directory_Package. A file owned by no module (index -1) is left
 // to the downstream no-op convention every other doctrine check follows.
-func parsed_file_is_impure_package(pf parsed_file, modules *module_index) (yes bool) {
+func parsed_file_is_impure_package(pf parsed_file, components *component_index) (yes bool) {
 
 	base := strings.TrimSuffix(pf.File.Name.Name, "_test")
 	if base == "main" {
 		return true
 	}
-	module_index_number := modules.File_To_Module[pf.Path]
-	if module_index_number < 0 {
+	component_index_number := components.File_To_Component[pf.Path]
+	if component_index_number < 0 {
 		return false
 	}
-	m := modules.Modules[module_index_number]
+	m := components.Components[component_index_number]
 	relative := pf.Path
 	if m.Root != "." {
 		relative = strings.TrimPrefix(pf.Path, m.Root+"/")
 	}
-	canonical := module_index_canonicalize(path.Dir(relative))
+	canonical := component_index_canonicalize(path.Dir(relative))
 	return directory_is_impure(canonical, m)
 }
 
@@ -9042,7 +9073,7 @@ func parsed_file_is_impure_package(pf parsed_file, modules *module_index) (yes b
 // directory (the naming convention for an impure global binding, see
 // check_default_package_name) or a package sitting exactly one non-main Go
 // ancestor below the library tier.
-func directory_is_impure(canonical string, m module_information) (yes bool) {
+func directory_is_impure(canonical string, m component_information) (yes bool) {
 
 	if canonical == "." {
 		return false
@@ -9055,14 +9086,17 @@ func directory_is_impure(canonical string, m module_information) (yes bool) {
 	if last == "default" {
 		return true
 	}
-	return len(module_information_library_ancestors(m, canonical)) == 1
+	return len(component_information_library_ancestors(m, canonical)) == 1
 }
 
 // Flags the two routes impurity launders into a pure file: an import of an
 // impure first-party package, and a call to a curated stdlib API that reaches
 // the impure set only transitively.
 func check_transitive_purity_per_file(
-	file_set *token.FileSet, file *ast.File, modules *module_index, instrumentation []string,
+	file_set *token.FileSet,
+	file *ast.File,
+	components *component_index,
+	instrumentation []string,
 ) (diags []Diagnostic) {
 
 	const import_message = "impure dependency %q: a pure package imports only pure packages"
@@ -9070,8 +9104,9 @@ func check_transitive_purity_per_file(
 	local_to_path := make(map[string]string, len(file.Imports))
 	for _, implementation := range file.Imports {
 		import_path := strings.Trim(implementation.Path.Value, `"`)
-		if import_path_is_impure_first_party(import_path, modules) {
-			if !import_path_is_instrumentation(import_path, modules, instrumentation) {
+		if import_path_is_impure_first_party(import_path, components) {
+			if !import_path_is_instrumentation(
+				import_path, components, instrumentation) {
 				diags = append(diags, Diagnostic{
 					Position: file_set.Position(implementation.Pos()),
 					Name:     "transitive-purity",
@@ -9132,62 +9167,62 @@ func import_local_name(implementation *ast.ImportSpec, import_path string) (name
 // True iff the import path resolves to a first-party package that is itself
 // impure (a `default` package, or one a Go ancestor below the library tier). A stdlib
 // or third-party path is owned by no module and so is never first-party here.
-func import_path_is_impure_first_party(import_path string, modules *module_index) (yes bool) {
+func import_path_is_impure_first_party(import_path string, components *component_index) (yes bool) {
 
-	module_index_number := module_index_for_import_path(import_path, modules)
-	if module_index_number < 0 {
+	component_index_number := component_index_for_import_path(import_path, components)
+	if component_index_number < 0 {
 		return false
 	}
-	m := modules.Modules[module_index_number]
-	relative := strings.TrimPrefix(import_path, m.Module_Path)
+	m := components.Components[component_index_number]
+	relative := strings.TrimPrefix(import_path, m.Import_Path)
 	relative = strings.TrimPrefix(relative, "/")
 	if relative == "" {
 		relative = "."
 	}
-	canonical := module_index_canonicalize(relative)
+	canonical := component_index_canonicalize(relative)
 	return directory_is_impure(canonical, m)
 }
 
 // Returns the index of the module whose path is the longest prefix of the
 // import path, or -1 for a stdlib/third-party path owned by no module.
-func module_index_for_import_path(import_path string, modules *module_index) (index int) {
+func component_index_for_import_path(import_path string, components *component_index) (index int) {
 
 	index = -1
-	for i := range modules.Modules {
-		m := modules.Modules[i]
-		if m.Module_Path == "" {
+	for i := range components.Components {
+		m := components.Components[i]
+		if m.Import_Path == "" {
 			continue
 		}
-		under := &import_path_under_module_input{
-			Import_Path: import_path, Module_Path: m.Module_Path}
-		if !import_path_under_module(under) {
+		under := &import_path_under_component_input{
+			Import_Path: import_path, Component_Path: m.Import_Path}
+		if !import_path_under_component(under) {
 			continue
 		}
 		if index < 0 {
 			index = i
 			continue
 		}
-		if len(m.Module_Path) > len(modules.Modules[index].Module_Path) {
+		if len(m.Import_Path) > len(components.Components[index].Import_Path) {
 			index = i
 		}
 	}
 	return index
 }
 
-type import_path_under_module_input struct {
+type import_path_under_component_input struct {
 	// Import_Path is the candidate package path under test.
 	Import_Path string
-	// Module_Path is the module's declared import prefix.
-	Module_Path string
+	// Component_Path is the component's declared import prefix.
+	Component_Path string
 }
 
-// True iff the import path names the module itself or a package within it.
-func import_path_under_module(input *import_path_under_module_input) (yes bool) {
+// True iff the import path names the component itself or a package within it.
+func import_path_under_component(input *import_path_under_component_input) (yes bool) {
 
-	if input.Import_Path == input.Module_Path {
+	if input.Import_Path == input.Component_Path {
 		return true
 	}
-	return strings.HasPrefix(input.Import_Path, input.Module_Path+"/")
+	return strings.HasPrefix(input.Import_Path, input.Component_Path+"/")
 }
 
 type is_transitive_stdlib_ident_input struct {
@@ -9590,8 +9625,8 @@ func check_no_unbounded_apis_is_generated(file *ast.File) (yes bool) {
 type check_deterministic_input struct {
 	// Parsed_Files is every parsed file in the workspace.
 	Parsed_Files []parsed_file
-	// Modules is the resolved module index.
-	Modules *module_index
+	// Components is the resolved module index.
+	Components *component_index
 	// Packages is lint.json's deterministic_packages.
 	Packages []string
 	// Instrumentation is lint.json's instrumentation_packages: write-only imports a
@@ -9614,7 +9649,7 @@ type check_deterministic_input struct {
 // than reporting them. The bans bind a covered package's _test.go files too.
 func check_deterministic(input *check_deterministic_input) (diags []Diagnostic) {
 
-	pure := deterministic_pure_directories(input.Parsed_Files, input.Modules)
+	pure := deterministic_pure_directories(input.Parsed_Files, input.Components)
 
 	// Expand each entry to the pure package directories at or under it, so a
 	// module's top-level directory covers its packages without listing each. The
@@ -9645,7 +9680,7 @@ func check_deterministic(input *check_deterministic_input) (diags []Diagnostic) 
 		}
 		diags = append(diags, check_deterministic_constructs(pf.File_Set, pf.File)...)
 		diags = append(diags, check_deterministic_imports(
-			pf.File_Set, pf.File, input.Modules, covered, input.Instrumentation)...)
+			pf.File_Set, pf.File, input.Components, covered, input.Instrumentation)...)
 	}
 	return append(diags, check_deterministic_coverage(&check_deterministic_coverage_input{
 		Packages:      input.Packages,
@@ -9660,14 +9695,14 @@ func check_deterministic(input *check_deterministic_input) (diags []Diagnostic) 
 // (main, a default tier, or a package below the library tier), so the pure set is
 // every package directory minus those.
 func deterministic_pure_directories(
-	parsed_files []parsed_file, modules *module_index,
+	parsed_files []parsed_file, components *component_index,
 ) (pure map[string]bool) {
 
 	impure := map[string]bool{}
 	pure = map[string]bool{}
 	for _, pf := range parsed_files {
 		directory := path.Dir(pf.Path)
-		if parsed_file_is_impure_package(pf, modules) {
+		if parsed_file_is_impure_package(pf, components) {
 			impure[directory] = true
 			continue
 		}
@@ -9767,7 +9802,7 @@ func check_deterministic_constructs(
 // instrumentation package is exempt, as it is for transitive purity — a
 // write-only side channel feeds no nondeterminism back into the importer.
 func check_deterministic_imports(
-	file_set *token.FileSet, file *ast.File, modules *module_index, set map[string]bool,
+	file_set *token.FileSet, file *ast.File, components *component_index, set map[string]bool,
 	instrumentation []string,
 ) (diags []Diagnostic) {
 
@@ -9783,10 +9818,10 @@ func check_deterministic_imports(
 			})
 			continue
 		}
-		if !import_path_is_nondeterministic_first_party(import_path, modules, set) {
+		if !import_path_is_nondeterministic_first_party(import_path, components, set) {
 			continue
 		}
-		if import_path_is_instrumentation(import_path, modules, instrumentation) {
+		if import_path_is_instrumentation(import_path, components, instrumentation) {
 			continue
 		}
 		diags = append(diags, Diagnostic{
@@ -9818,14 +9853,14 @@ func is_nondeterministic_import(path string) (yes bool) {
 // so it is never flagged here — stdlib is policed by is_nondeterministic_import,
 // third-party is out of scope, the same blind spot transitive purity carries.
 func import_path_is_nondeterministic_first_party(
-	import_path string, modules *module_index, set map[string]bool,
+	import_path string, components *component_index, set map[string]bool,
 ) (yes bool) {
 
-	module_index_number := module_index_for_import_path(import_path, modules)
-	if module_index_number < 0 {
+	component_index_number := component_index_for_import_path(import_path, components)
+	if component_index_number < 0 {
 		return false
 	}
-	m := modules.Modules[module_index_number]
+	m := components.Components[component_index_number]
 	return !set[import_path_workspace_directory(import_path, m)]
 }
 
@@ -9834,10 +9869,10 @@ func import_path_is_nondeterministic_first_party(
 // subpath, then re-root it under the module's workspace directory, mirroring the
 // form path.Dir gives a parsed file so set membership matches.
 func import_path_workspace_directory(
-	import_path string, m module_information,
+	import_path string, m component_information,
 ) (directory string) {
 
-	relative := strings.TrimPrefix(import_path, m.Module_Path)
+	relative := strings.TrimPrefix(import_path, m.Import_Path)
 	relative = strings.TrimPrefix(relative, "/")
 	if m.Root == "." {
 		if relative == "" {
@@ -9855,21 +9890,21 @@ func import_path_workspace_directory(
 // read through a single gateway keeps the injected Clock the only way the rest of
 // the shared module sees the clock, so within the shared library importing stdlib
 // "time" is allowed only in the time/default gateway; every other package injects
-// a Clock. Binary modules are out of scope — separate tools with their own needs.
+// a Clock. Binary components are out of scope — separate tools with their own needs.
 func check_time_import_gateway(
-	parsed_files []parsed_file, modules *module_index,
+	parsed_files []parsed_file, components *component_index,
 ) (diags []Diagnostic) {
 
-	gateway := module_index_time_gateway(modules)
+	gateway := component_index_time_gateway(components)
 	if gateway == "" {
 		return nil
 	}
 	for _, pf := range parsed_files {
-		module_index_number := modules.File_To_Module[pf.Path]
-		if module_index_number < 0 {
+		component_index_number := components.File_To_Component[pf.Path]
+		if component_index_number < 0 {
 			continue
 		}
-		if !modules.Modules[module_index_number].Is_Shared_Library {
+		if !components.Components[component_index_number].Is_Shared_Library {
 			continue
 		}
 		if path.Dir(pf.Path) == gateway {
@@ -9895,9 +9930,9 @@ func check_time_import_gateway(
 
 // Returns the workspace-relative directory of the shared module's stdlib-time
 // gateway (its time/default), or "" when no module is the shared library.
-func module_index_time_gateway(modules *module_index) (gateway string) {
+func component_index_time_gateway(components *component_index) (gateway string) {
 
-	for _, m := range modules.Modules {
+	for _, m := range components.Components {
 		if !m.Is_Shared_Library {
 			continue
 		}

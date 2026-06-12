@@ -22,16 +22,22 @@ const doctrine_shared_library_go_module = "module " +
 	doctrine_shared_library_module_path + "\n"
 const doctrine_binary_go_module = "module example.com/mybinary\n"
 
+// The repo is one module now, so every fixture needs a single root go.mod or the
+// single-module check fires. lint_main injects this when a fixture omits one. Its
+// path is the repo's, so a top-level component dir resolves to this path joined
+// with the dir — e.g. a "shared" dir is github.com/james-orcales/james-orcales/shared.
+const doctrine_root_go_module = "module github.com/james-orcales/james-orcales\n"
+
 // The shared module is identified by its workspace-root-relative directory, not
 // its import path. Doctrine-table fixtures put the shared library's go.mod at
-// shared/go.mod, so its Root — and the value Shared_Module must carry —
+// shared/go.mod, so its Root — and the value Shared_Component must carry —
 // is "shared".
-const doctrine_shared_module_directory = "shared"
+const doctrine_shared_component_directory = "shared"
 
 // Snapshot fixtures instead put the shared library's go.mod at the MapFS root,
 // so there its Root is ".". Binary modules in those fixtures live in named
 // subdirectories, so "." selects only the shared library.
-const doctrine_shared_module_at_root = "."
+const doctrine_shared_component_at_root = "."
 
 // Satisfies the rule that every binary module declares exactly one free func
 // Main in its top-level internal/ package. Injected into binary-module fixtures
@@ -1894,16 +1900,16 @@ func test_word_replacements() (table map[string][]string) {
 }
 
 // Renders a lint.json for a fixture: lint.Main now reads the
-// config from its Fsys, so every fixture needs one. An empty shared_module is
+// config from its Fsys, so every fixture needs one. An empty shared_component is
 // replaced with a sentinel matching no fixture module, preserving the historical
 // "no module is shared" behavior of the field-free runs the tests used to make.
-func test_lint_json(t *testing.T, shared_module string, allowlist []string) (data []byte) {
+func test_lint_json(t *testing.T, shared_component string, allowlist []string) (data []byte) {
 	t.Helper()
-	if shared_module == "" {
-		shared_module = "lint_test_no_shared_module"
+	if shared_component == "" {
+		shared_component = "lint_test_no_shared_component"
 	}
 	data, err := json.Marshal(lint.Configuration{
-		Shared_Module:            shared_module,
+		Shared_Component:         shared_component,
 		Instrumentation_Packages: allowlist,
 		Word_Replacements:        test_word_replacements(),
 	})
@@ -1914,14 +1920,17 @@ func test_lint_json(t *testing.T, shared_module string, allowlist []string) (dat
 }
 
 // Wraps lint.Main, seeding the fixture's MapFS with a default lint.json
-// unless one is already present. Tests that need a specific shared_module or
-// allowlist pre-seed their own (run_shared_module_output, run_global_api_case,
+// unless one is already present. Tests that need a specific shared_component or
+// allowlist pre-seed their own (run_shared_component_output, run_global_api_case,
 // run_snapshot_verbatim) and this leaves that untouched.
 func lint_main(t *testing.T, input *lint.Main_Input) (code int) {
 	t.Helper()
 	if fsys, ok := input.Fsys.(fstest.MapFS); ok {
 		if _, present := fsys["lint.json"]; !present {
 			fsys["lint.json"] = &fstest.MapFile{Data: test_lint_json(t, "", nil)}
+		}
+		if _, present := fsys["go.mod"]; !present {
+			fsys["go.mod"] = &fstest.MapFile{Data: []byte(doctrine_root_go_module)}
 		}
 	}
 	return lint.Main(input)
@@ -2076,14 +2085,23 @@ func lint_output_minus(
 	t *testing.T, fsys fstest.MapFS, exclude string,
 ) (code int, output string) {
 	t.Helper()
+	if _, present := fsys["go.mod"]; !present {
+		fsys["go.mod"] = &fstest.MapFile{Data: []byte(doctrine_root_go_module)}
+	}
 	all, err := lint.Check_File_System(&lint.Check_File_System_Input{
-		Fsys: fsys, Shared_Module: doctrine_shared_module_directory,
+		Fsys: fsys, Shared_Component: doctrine_shared_component_directory,
 	})
 	if err != nil {
 		t.Fatalf("Check_File_System: %v", err)
 	}
 	var kept []lint.Diagnostic
 	for _, d := range all {
+		// Doctrine-table fixtures predate the single-module collapse and still
+		// carry per-directory go.mod files; the single-module rule has its own
+		// tests, so drop its diagnostics here along with the named exclude.
+		if d.Name == "single-module" {
+			continue
+		}
 		if d.Name != exclude {
 			kept = append(kept, d)
 		}
@@ -3296,7 +3314,7 @@ func Test_Vocabulary_Sourced_From_Lint_Json(t *testing.T) {
 	t.Parallel()
 	fsys := fstest.MapFS{
 		"lint.json": &fstest.MapFile{Data: []byte(
-			`{"shared_module":"x","word_replacements":{"wibble":["wobble"]}}`)},
+			`{"shared_component":"x","word_replacements":{"wibble":["wobble"]}}`)},
 		"test.go": &fstest.MapFile{Data: gofmt_must(t, `package main
 
 func F() (x int) {

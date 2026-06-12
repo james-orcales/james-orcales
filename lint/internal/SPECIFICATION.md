@@ -179,41 +179,38 @@ autosquash such commits into their target.
 A branch other than `main/master` carries no merge commit; a git-subtree merge is the sole
 exception; required when vendoring another repo's history.
 
-# Module Layout
+# Component Layout
 
-The following layout centralizes cross-module imports and splits pure and impure implementations.
-Shared module:  `shared/foo (pure) -> shared/foo/default (impure)`
-Binary modules: `main (impure) -> internal (pure)`
+The repo is one Go module; each top-level directory of Go code is a component. The layout splits
+pure from impure. Shared component: `shared/foo (pure) -> shared/foo/default (impure)`. Binary
+component: `main (impure) -> internal (pure)`.
 
-### Module Definition
+### Single Module
 
-A module is a directory containing `go.mod` and is registered in `go.work`.
+The repo is one Go module: exactly one `go.mod`, at the root, with no `go.work` and no nested
+`go.mod`. A component is a top-level directory of Go source, not a module of its own.
 
-### Module Location
+### Shared Component
 
-All modules are located at the repo root.
+The shared component, `shared`, has no `internal` directory at any depth and declares no
+`package main`. It is fully importable, never executed. Its root-relative directory is
+lint.json's `shared_component`.
 
-### Shared Module
+### Binary Component
 
-The shared module, `shared`, has no `internal` directory at any depth and declares no
-`package main`. It is fully importable, never executed. Its workspace-root-relative directory
-is lint.json's `shared_module`.
-
-### Binary Module
-
-In a binary module, every non-main package lives under a top-level internal directory; code at the
-module root or any non-internal directory is banned.
+In a binary component, every non-main package lives under a top-level internal directory; code at
+the component root or any non-internal directory is banned.
 
 ### Main Package
 
-A binary module holds exactly one main package, and it sits at the module root; a `cmd` directory is
-banned.
+A binary component holds exactly one main package, and it sits at the component root; a `cmd`
+directory is banned.
 
 ### Internal Entry Point
 
-A binary module declares exactly one free func Main in its top-level internal directory; it is
+A binary component declares exactly one free func Main in its top-level internal directory; it is
 the entry point its thin package main calls, and zero or several Main functions are banned. A shared
-module may also expose a func Main, representing an embeddable entry point.
+component may also expose a func Main, representing an embeddable entry point.
 
 ### Tier Depth
 
