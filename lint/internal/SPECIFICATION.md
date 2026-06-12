@@ -521,8 +521,14 @@ Files sharing a build-tag constraint form an independent group with its own tota
 
 # Deterministic
 
-A package listed in lint.json's deterministic_packages is held, atop purity, to
+A package covered by lint.json's deterministic_packages is held, atop purity, to
 bans making it reproducible; opt-in, and the bans bind its _test.go files too.
+
+### Entry Format
+
+A deterministic_packages entry names a module's top-level directory and the tier
+auto-applies to the pure packages at or under it; the shared module's libraries
+are named `shared/*` for every library or `shared/<lib>` for one.
 
 ### Goroutines
 
@@ -552,13 +558,14 @@ the induction exempts.
 
 ### Impurity
 
-A package listed as deterministic must be pure; determinism is stricter than
-purity, so an impure listed package is reported.
+Determinism is stricter than purity, so only pure packages join the tier; an
+impure package in a covered subtree (the main package, a default tier) is dropped
+from the expansion, not held to the bans.
 
 ### Coverage
 
-A deterministic_packages entry that matches no package is reported; a typo or
-stale path must not silently check nothing.
+A deterministic_packages entry that covers no pure package is reported; a typo, a
+stale path, or a directory holding nothing pure must not silently check nothing.
 
 # Stdlib Time
 

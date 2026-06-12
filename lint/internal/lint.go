@@ -563,11 +563,16 @@ type Configuration struct {
 	// cannot feed impurity or nondeterminism back into the importer. Segment-
 	// prefix: an entry covers itself and its whole subtree.
 	Instrumentation_Packages []string `json:"instrumentation_packages"`
-	// Deterministic_Packages names the workspace-root-relative package
-	// directories held to the deterministic tier on top of purity: no
-	// goroutine, channel, select, nor time/context/sync import, and every
-	// first-party import must itself be deterministic. Opt-in; empty lists
-	// none. A listed package that is impure is reported.
+	// Deterministic_Packages names the module top-level directories whose pure
+	// packages are held to the deterministic tier on top of purity: no goroutine,
+	// channel, select, nor time/context/sync import, and every first-party import
+	// must itself be deterministic. An entry covers the pure packages at or under
+	// it, so a binary module is named by its bare top-level directory and the
+	// shared module's libraries by `shared/*` (all) or `shared/<lib>` (one); the
+	// fixed module shape lets the tier auto-apply without listing each package.
+	// Impure packages in the subtree (the main package, a default tier) are
+	// dropped, not reported. Opt-in; empty lists none. An entry covering no pure
+	// package is reported as a coverage gap.
 	Deterministic_Packages []string `json:"deterministic_packages"`
 	// Word_Replacements drives the vocabulary check: each tokenized, lowercased
 	// word maps to its preferred replacements (id -> identifier). An empty list
@@ -9549,48 +9554,85 @@ type check_deterministic_input struct {
 	Instrumentation []string
 }
 
-// Enforces the opt-in deterministic tier: a package whose workspace-relative
-// directory is listed in lint.json's deterministic_packages is held, atop
-// purity, to bans on every construct whose result is decided outside the
-// program — a goroutine, a channel, a select, or a time/context/sync import —
-// and may import only other deterministic first-party packages. Determinism is
-// stricter than purity, so a listed package must be pure; an impure one is
-// reported. The bans bind the package's _test.go files too.
+// Enforces the opt-in deterministic tier: a deterministic_packages entry names a
+// module's top-level directory and the tier auto-applies to that module's pure
+// packages, since the fixed module shape lets purity stand in for an explicit
+// listing. A covered package is held, atop purity, to bans on every construct
+// whose result is decided outside the program — a goroutine, a channel, a
+// select, or a time/context/sync import — and may import only other
+// deterministic first-party packages. Impure packages in the subtree (the main
+// package, a default tier) are not deterministic, so expansion drops them rather
+// than reporting them. The bans bind a covered package's _test.go files too.
 func check_deterministic(input *check_deterministic_input) (diags []Diagnostic) {
 
-	// Entries are path-cleaned so "./pkg/" and "pkg" both name the directory the
-	// parsed files are keyed by; a raw string compare would silently miss either.
-	set := map[string]bool{}
-	for _, entry := range input.Packages {
-		set[path.Clean(entry)] = true
-	}
+	pure := deterministic_pure_directories(input.Parsed_Files, input.Modules)
+
+	// Expand each entry to the pure package directories at or under it, so a
+	// module's top-level directory covers its packages without listing each. The
+	// trailing /* of the shared/* form is stripped to the parent directory it
+	// names; an entry is otherwise path-cleaned so "./pkg/" and "pkg" name the one
+	// directory the parsed files are keyed by. The expansion runs before the
+	// checks so the import induction tests against the concrete covered
+	// directories, not the coarse entry, which would falsely flag a covered import.
+	covered := map[string]bool{}
 	matched := map[string]bool{}
-	for _, pf := range input.Parsed_Files {
-		directory := path.Dir(pf.Path)
-		if !set[directory] {
-			continue
+	for _, entry := range input.Packages {
+		base := strings.TrimSuffix(path.Clean(entry), "/*")
+		for directory := range pure {
+			under := directory == base
+			if !under {
+				under = strings.HasPrefix(directory, base+"/")
+			}
+			if !under {
+				continue
+			}
+			covered[directory] = true
+			matched[path.Clean(entry)] = true
 		}
-		matched[directory] = true
-		if parsed_file_is_impure_package(pf, input.Modules) {
-			diags = append(diags, Diagnostic{
-				Position: pf.File_Set.Position(pf.File.Package),
-				Name:     "deterministic",
-				Want:     "list only pure packages as deterministic",
-				Message:  "deterministic package must be pure",
-				Tier:     1,
-			})
+	}
+	for _, pf := range input.Parsed_Files {
+		if !covered[path.Dir(pf.Path)] {
 			continue
 		}
 		diags = append(diags, check_deterministic_constructs(pf.File_Set, pf.File)...)
 		diags = append(diags, check_deterministic_imports(
-			pf.File_Set, pf.File, input.Modules, set, input.Instrumentation)...)
+			pf.File_Set, pf.File, input.Modules, covered, input.Instrumentation)...)
 	}
 	return append(diags, check_deterministic_coverage(input.Packages, matched)...)
 }
 
-// Reports any deterministic_packages entry that matched no package in the
-// workspace. A typo or stale path would otherwise opt nothing into the tier and
-// pass silently — the exact coverage gap the tier exists to close.
+// Returns the set of package directories — keyed as path.Dir gives a parsed
+// file's path — whose package is pure, the only candidates the deterministic
+// tier may cover. A directory is impure if any of its files is an impure package
+// (main, a default tier, or a package below the library tier), so the pure set is
+// every package directory minus those.
+func deterministic_pure_directories(
+	parsed_files []parsed_file, modules *module_index,
+) (pure map[string]bool) {
+
+	impure := map[string]bool{}
+	pure = map[string]bool{}
+	for _, pf := range parsed_files {
+		directory := path.Dir(pf.Path)
+		if parsed_file_is_impure_package(pf, modules) {
+			impure[directory] = true
+			continue
+		}
+		pure[directory] = true
+	}
+	// Files in one directory share a package, so a directory is wholly pure or
+	// wholly impure; the subtraction only guards the rare read where an external
+	// _test package's pure clause lands beside its impure source.
+	for directory := range impure {
+		delete(pure, directory)
+	}
+	return pure
+}
+
+// Reports any deterministic_packages entry that covered no pure package. A typo,
+// a stale path, or a directory holding nothing pure would otherwise opt nothing
+// into the tier and pass silently — the exact coverage gap the tier exists to
+// close.
 func check_deterministic_coverage(
 	packages []string, matched map[string]bool,
 ) (diags []Diagnostic) {
@@ -9602,9 +9644,9 @@ func check_deterministic_coverage(
 		diags = append(diags, Diagnostic{
 			Position: token.Position{Filename: "<lint.json>"},
 			Name:     "deterministic",
-			Want:     "every deterministic_packages entry names a real package",
+			Want:     "every deterministic_packages entry covers a pure package",
 			Message: fmt.Sprintf(
-				"deterministic_packages: no package found at %q", entry),
+				"deterministic_packages: no pure package found at %q", entry),
 			Tier: 1,
 		})
 	}

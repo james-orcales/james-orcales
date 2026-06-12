@@ -5995,3 +5995,54 @@ func Test_Scope_Parses_Target_And_Shared_Modules(t *testing.T) {
 			"scope must prune unrelated modules from the parse set")
 	}
 }
+
+// Test_Deterministic_Library_Glob verifies the shared/* form — which names every
+// library in a single module — expands to each child package. The trailing /* is
+// stripped to the parent, so it covers the same subtree as the bare directory.
+func Test_Deterministic_Library_Glob(t *testing.T) {
+	t.Parallel()
+	files := map[string][]byte{
+		"go.mod": []byte("module fixture\n\ngo 1.25\n"),
+		"pkg/a/a.go": []byte("// Package a is a fixture.\n" +
+			"package a\n\n" +
+			"// F is a fixture.\n" +
+			"func F() {\n\tgo done()\n}\n\n" +
+			"func done() {\n\treturn\n}\n"),
+		"pkg/b/b.go": []byte("// Package b is a fixture.\n" +
+			"package b\n"),
+	}
+	if !specification_diagnosed(deterministic_self_diagnostics(t, files, []string{"pkg/*"}),
+		"must not start a goroutine") {
+		t.Fatal("the shared/* form must expand to each library in the module")
+	}
+}
+
+// Test_Deterministic_Induction_Over_Expansion verifies the import-induction
+// membership is the expanded set of concrete pure packages, not the raw entry: a
+// package covered by a directory entry is itself held to the tier (its goroutine
+// flagged) and may import a sibling the same entry covers (no induction
+// violation). An exact-match set keyed by the raw "pkg/grp" entry would match
+// neither package, so the goroutine would go unflagged.
+func Test_Deterministic_Induction_Over_Expansion(t *testing.T) {
+	t.Parallel()
+	files := map[string][]byte{
+		"go.mod": []byte("module fixture\n\ngo 1.25\n"),
+		"pkg/grp/a/a.go": []byte("// Package a is a fixture.\n" +
+			"package a\n\n" +
+			"import \"fixture/pkg/grp/b\"\n\n" +
+			"// F is a fixture.\n" +
+			"func F() {\n\tb.G()\n\tgo done()\n}\n\n" +
+			"func done() {\n\treturn\n}\n"),
+		"pkg/grp/b/b.go": []byte("// Package b is a fixture.\n" +
+			"package b\n\n" +
+			"// G is a fixture.\n" +
+			"func G() {\n\treturn\n}\n"),
+	}
+	diags := deterministic_self_diagnostics(t, files, []string{"pkg/grp"})
+	if !specification_diagnosed(diags, "must not start a goroutine") {
+		t.Fatal("a package covered by a directory entry must be held to the tier")
+	}
+	if specification_diagnosed(diags, "import only deterministic packages") {
+		t.Fatal("a sibling covered by the same entry must satisfy the induction")
+	}
+}
