@@ -567,6 +567,12 @@ from the expansion, not held to the bans.
 A deterministic_packages entry that covers no pure package is reported; a typo, a
 stale path, or a directory holding nothing pure must not silently check nothing.
 
+### Coverage Scope
+
+A scoped run judges coverage only for entries within the scope it parsed; an entry
+for a module outside the scope is left to the whole-workspace run, which alone
+parses every module.
+
 # Stdlib Time
 
 Stdlib time may be imported only by the shared module's time/default gateway;

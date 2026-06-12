@@ -1518,6 +1518,43 @@ func Test_Deterministic_Coverage(t *testing.T) {
 	}
 }
 
+// Test_Deterministic_Coverage_Scope verifies the coverage check is bounded by the
+// parse scope: an entry for a module outside the scope — whose files a scoped run
+// never parses — is not reported as a gap, while an entry inside the scope that
+// covers no pure package still is. So a scoped run flags its own typos and leaves
+// other modules' entries to the whole-workspace run, which alone parses them all.
+func Test_Deterministic_Coverage_Scope(t *testing.T) {
+	t.Parallel()
+	pure_file := "// Package fixture is a fixture.\npackage fixture\n"
+	fsys := fstest.MapFS{
+		"shared/go.mod": &fstest.MapFile{
+			Data: []byte("module example.com/shared\n")},
+		"mybinary/go.mod": &fstest.MapFile{
+			Data: []byte("module example.com/mybinary\n")},
+		"mybinary/internal/entry.go": &fstest.MapFile{Data: []byte(pure_file)},
+		"other/go.mod": &fstest.MapFile{
+			Data: []byte("module example.com/other\n")},
+		"other/internal/x.go": &fstest.MapFile{Data: []byte(pure_file)},
+	}
+	diags, err := lint.Check_File_System(&lint.Check_File_System_Input{
+		Fsys:          fsys,
+		Shared_Module: "shared",
+		Scope:         "mybinary",
+		Deterministic_Packages: []string{
+			"mybinary", "other", "mybinary/internal/nonexistent"},
+	})
+	if err != nil {
+		t.Fatalf("Check_File_System: %v", err)
+	}
+	if specification_diagnosed(diags, "no pure package found at \"other\"") {
+		t.Fatal("an out-of-scope module entry must not be reported as a coverage gap")
+	}
+	if !specification_diagnosed(diags,
+		"no pure package found at \"mybinary/internal/nonexistent\"") {
+		t.Fatal("an in-scope entry covering no pure package must still be reported")
+	}
+}
+
 // Test_Stdlib_Time verifies a shared-module package importing stdlib time outside
 // the time/default gateway is reported.
 func Test_Stdlib_Time(t *testing.T) {

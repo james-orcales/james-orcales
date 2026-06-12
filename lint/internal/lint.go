@@ -1974,6 +1974,7 @@ func Check_File_System(input *Check_File_System_Input) (diags []Diagnostic, err 
 		Word_Replacements:        input.Word_Replacements,
 		Deterministic_Packages:   input.Deterministic_Packages,
 		Scope:                    input.Scope,
+		Scan_Prefixes:            scan_prefixes,
 	}), nil
 }
 
@@ -1989,6 +1990,11 @@ type check_file_system_doctrine_input struct {
 	Word_Replacements        map[string][]string
 	Deterministic_Packages   []string
 	Scope                    string
+	// Scan_Prefixes is the scope-narrowed parse set (resolve_parse_prefixes): the
+	// directory subtrees this run actually parsed, or nil for a whole-workspace
+	// run. The deterministic coverage check needs it to tell an out-of-scope entry
+	// (a real package this run never parsed) from a genuine stale one.
+	Scan_Prefixes []string
 }
 
 // Runs the AST and cross-file doctrine tiers over the parsed set and unions their
@@ -2027,6 +2033,7 @@ func check_file_system_doctrine(
 		Modules:         modules,
 		Packages:        input.Deterministic_Packages,
 		Instrumentation: input.Instrumentation_Packages,
+		Scan_Prefixes:   input.Scan_Prefixes,
 	})...)
 	output = append(output, check_time_import_gateway(parsed_files, modules)...)
 	output = append(output, check_package_documentation_comment(parsed_files)...)
@@ -9552,6 +9559,10 @@ type check_deterministic_input struct {
 	// Instrumentation is lint.json's instrumentation_packages: write-only imports a
 	// deterministic package may make despite the induction.
 	Instrumentation []string
+	// Scan_Prefixes is the scope-narrowed parse set, or nil for a whole-workspace
+	// run. The coverage check is bounded by it so a scoped run does not flag an
+	// entry for a module it never parsed.
+	Scan_Prefixes []string
 }
 
 // Enforces the opt-in deterministic tier: a deterministic_packages entry names a
@@ -9598,7 +9609,11 @@ func check_deterministic(input *check_deterministic_input) (diags []Diagnostic) 
 		diags = append(diags, check_deterministic_imports(
 			pf.File_Set, pf.File, input.Modules, covered, input.Instrumentation)...)
 	}
-	return append(diags, check_deterministic_coverage(input.Packages, matched)...)
+	return append(diags, check_deterministic_coverage(&check_deterministic_coverage_input{
+		Packages:      input.Packages,
+		Matched:       matched,
+		Scan_Prefixes: input.Scan_Prefixes,
+	})...)
 }
 
 // Returns the set of package directories — keyed as path.Dir gives a parsed
@@ -9629,16 +9644,34 @@ func deterministic_pure_directories(
 	return pure
 }
 
+// Bundles check_deterministic_coverage's inputs: the entry list and the scan
+// prefixes both being string slices repeat a type, which the input-struct rule folds.
+type check_deterministic_coverage_input struct {
+	// Packages is lint.json's deterministic_packages, reported verbatim on a gap.
+	Packages []string
+	// Matched marks, by cleaned entry, which entries covered a pure package.
+	Matched map[string]bool
+	// Scan_Prefixes is the scope-narrowed parse set, nil for a whole-workspace run;
+	// an entry outside it was never parsed and so is not judged.
+	Scan_Prefixes []string
+}
+
 // Reports any deterministic_packages entry that covered no pure package. A typo,
 // a stale path, or a directory holding nothing pure would otherwise opt nothing
 // into the tier and pass silently — the exact coverage gap the tier exists to
-// close.
+// close. An entry outside the scan prefixes is skipped: a scoped run never parsed
+// its module, so its emptiness is an artifact of scope, not a real gap, and a
+// full run (nil prefixes, which scan_prefixes_reach admits everywhere) judges it.
 func check_deterministic_coverage(
-	packages []string, matched map[string]bool,
+	input *check_deterministic_coverage_input,
 ) (diags []Diagnostic) {
 
-	for _, entry := range packages {
-		if matched[path.Clean(entry)] {
+	for _, entry := range input.Packages {
+		if input.Matched[path.Clean(entry)] {
+			continue
+		}
+		base := strings.TrimSuffix(path.Clean(entry), "/*")
+		if !scan_prefixes_reach(input.Scan_Prefixes, base) {
 			continue
 		}
 		diags = append(diags, Diagnostic{
