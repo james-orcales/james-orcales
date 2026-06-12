@@ -1923,13 +1923,28 @@ func Check_File_System(input *Check_File_System_Input) (diags []Diagnostic, err 
 	tracked := filter_ignored(input.Tracked, input.Ignore)
 	directory_has_tracked := check_file_system_directory_index(tracked)
 
-	// Stream and AST tiers run in series; parse failures degrade to per-file diagnostics.
+	// Discover every module before parsing: the roots decide which subtrees a
+	// scoped run reads (parsing the rest is the work scope skips), and the
+	// cross-file checks still resolve imports against the full set. The roots are
+	// reused to build the index, so go.mod discovery walks the tree exactly once.
+	module_roots, err := discover_module_roots(input.Fsys)
+	if err != nil {
+		return nil, err
+	}
+	scan_prefixes := resolve_parse_prefixes(&resolve_parse_prefixes_input{
+		Modules: module_roots, Scope: input.Scope, Shared_Module: input.Shared_Module})
+
+	// Stream and AST tiers run in series; parse failures degrade to per-file
+	// diagnostics. Scan_Prefixes bounds both: the stream walk skips out-of-scope
+	// directories, so the go-path list it returns — and the parse and AST tiers
+	// fed from it, where the run spends its time and memory — covers only scope.
 	stream_diags, paths, err := check_file_system_stream(&check_file_system_stream_input{
 		Fsys:                  input.Fsys,
 		Root:                  root,
 		Root_Directory:        input.Root_Directory,
 		Tracked:               tracked,
 		Directory_Has_Tracked: directory_has_tracked,
+		Scan_Prefixes:         scan_prefixes,
 		Readlink:              input.Readlink,
 		Stat:                  input.Stat,
 	})
@@ -1941,28 +1956,64 @@ func Check_File_System(input *Check_File_System_Input) (diags []Diagnostic, err 
 		return nil, err
 	}
 	parsed_files, parse_diags := check_file_system_parse_files(paths, sources, cpu_count)
-	modules, err := build_module_index(input.Fsys, parsed_files, input.Shared_Module)
-	if err != nil {
-		return nil, err
-	}
-	output := append([]Diagnostic{}, stream_diags...)
-	output = append(output, parse_diags...)
+	modules := build_module_index(module_roots, parsed_files, input.Shared_Module)
+	return check_file_system_doctrine(&check_file_system_doctrine_input{
+		Fsys:                     input.Fsys,
+		Tracked:                  tracked,
+		Parsed_Files:             parsed_files,
+		Modules:                  modules,
+		CPU_Count:                cpu_count,
+		Stream_Diags:             stream_diags,
+		Parse_Diags:              parse_diags,
+		Instrumentation_Packages: input.Instrumentation_Packages,
+		Word_Replacements:        input.Word_Replacements,
+		Deterministic_Packages:   input.Deterministic_Packages,
+		Scope:                    input.Scope,
+	}), nil
+}
+
+type check_file_system_doctrine_input struct {
+	Fsys                     fs.FS
+	Tracked                  map[string]bool
+	Parsed_Files             []parsed_file
+	Modules                  *module_index
+	CPU_Count                int
+	Stream_Diags             []Diagnostic
+	Parse_Diags              []Diagnostic
+	Instrumentation_Packages []string
+	Word_Replacements        map[string][]string
+	Deterministic_Packages   []string
+	Scope                    string
+}
+
+// Runs the AST and cross-file doctrine tiers over the parsed set and unions their
+// diagnostics with the stream and parse diagnostics already collected. Split from
+// Check_File_System so each half fits the length cap; the parsed set it receives
+// is already scope-narrowed, while Tracked and Modules still span the workspace
+// for the path-casing and import-resolution checks that need the full view.
+func check_file_system_doctrine(
+	input *check_file_system_doctrine_input,
+) (output []Diagnostic) {
+
+	parsed_files := input.Parsed_Files
+	modules := input.Modules
+	output = append([]Diagnostic{}, input.Stream_Diags...)
+	output = append(output, input.Parse_Diags...)
+	output = append(output, check_path_casing(input.Fsys, input.Tracked)...)
 	output = append(output,
-		check_path_casing(input.Fsys, tracked)...)
-	output = append(output,
-		check_file_system_run_checks(parsed_files, cpu_count,
+		check_file_system_run_checks(parsed_files, input.CPU_Count,
 			input.Instrumentation_Packages, input.Word_Replacements)...)
 	output = append(output, check_file_system_package_split(parsed_files)...)
 	output = append(output, check_file_system_method_prefix(parsed_files)...)
 	output = append(output, check_binary_module_layout(parsed_files, modules)...)
 	output = append(output, check_binary_module_main_package(parsed_files, modules)...)
 	output = append(output,
-		check_binary_module_internal_main(parsed_files, modules, tracked)...)
+		check_binary_module_internal_main(parsed_files, modules, input.Tracked)...)
 	output = append(output, check_shared_library_no_internal(parsed_files, modules)...)
 	output = append(output, check_shared_library_no_main_package(parsed_files, modules)...)
 	output = append(output, check_library_tier_depth(parsed_files, modules)...)
 	output = append(output,
-		check_module_definition_and_location(input.Fsys, modules, tracked)...)
+		check_module_definition_and_location(input.Fsys, modules, input.Tracked)...)
 	output = append(output, check_no_impure_stdlib(parsed_files, modules)...)
 	output = append(output,
 		check_transitive_purity(parsed_files, modules, input.Instrumentation_Packages)...)
@@ -1975,7 +2026,7 @@ func Check_File_System(input *Check_File_System_Input) (diags []Diagnostic, err 
 	output = append(output, check_time_import_gateway(parsed_files, modules)...)
 	output = append(output, check_package_documentation_comment(parsed_files)...)
 	return append(output,
-		check_specification(input.Fsys, parsed_files, modules, input.Scope)...), nil
+		check_specification(input.Fsys, parsed_files, modules, input.Scope)...)
 }
 
 // Returns tracked with every path the lint.json ignore globs match dropped, so
@@ -2643,24 +2694,40 @@ type module_index struct {
 
 var module_index_module_re = regexp.MustCompile(`(?m)^module\s+(\S+)`)
 
-// Walks Fsys for go.mod files, parses only the `module` line via regex
-// (avoids pulling in golang.org/x/mod for one field), and maps each
-// parsed file to its owning module. When Fsys is rooted inside a
-// module (no go.mod visible — typical when the linter is run on a
-// subdirectory), no modules are discovered and every file maps to -1;
-// downstream doctrine checks then no-op on those files rather than
-// reporting bogus violations against a partial view of the workspace.
-func build_module_index(
-	fsys fs.FS, parsed_files []parsed_file, shared_module string,
-) (index *module_index, err error) {
+// Walks Fsys for go.mod files, parsing only the `module` line via regex (avoids
+// pulling in golang.org/x/mod for one field), and returns one module_information
+// per module discovered — Directory_Package allocated but empty, classification
+// and ordering deferred to build_module_index. Split from build_module_index so
+// the roots are known before any file is parsed: the scope-to-parse resolver
+// needs them to decide which module subtrees to read, and reading the rest is
+// the work a scoped run skips. When Fsys is rooted inside a module (no go.mod
+// visible — typical when pointed at a subdirectory), no modules are discovered
+// and every file later maps to -1, so the doctrine checks no-op on those files
+// rather than reporting against a partial view of the workspace.
+func discover_module_roots(fsys fs.FS) (modules []module_information, err error) {
 
-	index = &module_index{File_To_Module: make(map[string]int, len(parsed_files))}
+	scratch := &module_index{}
 	err = fs.WalkDir(fsys, ".", func(p string, d fs.DirEntry, walk_err error) (output error) {
-		return build_module_index_walk(fsys, index, p, d, walk_err)
+		return build_module_index_walk(fsys, scratch, p, d, walk_err)
 	})
 	if err != nil {
 		return nil, err
 	}
+	return scratch.Modules, nil
+}
+
+// Classifies, orders, and binds parsed files to the modules discovered by
+// discover_module_roots. Modules is sorted longest-Root first so File_To_Module
+// resolution is a linear longest-prefix scan. A scoped run passes only the
+// parsed subset; the resulting index still covers every module's Root (for
+// import resolution) but its File_To_Module and Directory_Package describe only
+// the files actually parsed — which is all the in-scope checks consult.
+func build_module_index(
+	modules []module_information, parsed_files []parsed_file, shared_module string,
+) (index *module_index) {
+
+	index = &module_index{
+		Modules: modules, File_To_Module: make(map[string]int, len(parsed_files))}
 	// Classify the shared library by its workspace-root-relative directory (the
 	// module Root, e.g. "shared"), matching the slash-relative form used
 	// by the rest of lint.json; every other module is a binary. An empty
@@ -2703,7 +2770,112 @@ func build_module_index(
 			directory_package[canonical_directory] = pf.File.Name.Name
 		}
 	}
-	return index, nil
+	return index
+}
+
+// Widens a scope argument to the module that must be parsed whole for it. The
+// module-level doctrine checks (entry-point, layout, tier depth) reach the same
+// verdict only when every file of a module is in view, so a scope pointing inside
+// a module parses that whole module; the output filter then narrows diagnostics
+// back to the scope. A scope matching no named module falls back to the root
+// module when one exists (it owns everything), else to the scope subtree itself —
+// files owned by no module resolve to -1 and the module-level checks no-op on
+// them. An empty scope (the whole-workspace run) parses the root.
+func resolve_scan_root(modules []module_information, scope string) (root string) {
+
+	if scope == "" {
+		return "."
+	}
+	best := ""
+	root_module := false
+	for i := range modules {
+		module_root := modules[i].Root
+		if module_root == "." {
+			root_module = true
+			continue
+		}
+		owns := scope == module_root
+		if !owns {
+			owns = strings.HasPrefix(scope, module_root+"/")
+		}
+		if owns {
+			if len(module_root) > len(best) {
+				best = module_root
+			}
+		}
+	}
+	if best != "" {
+		return best
+	}
+	if root_module {
+		return "."
+	}
+	return scope
+}
+
+type resolve_parse_prefixes_input struct {
+	Modules       []module_information
+	Scope         string
+	Shared_Module string
+}
+
+// Returns the directory subtrees a scoped run must parse: the scope's own module
+// (resolve_scan_root) plus the shared library module. The shared library is the
+// one module a first-party file may import, so its packages must be parsed for
+// the transitive-purity rule to classify a binary's imports of them — skipping it
+// would fail open, the one regression this list exists to bar. A nil result means
+// "parse everything" (the whole-workspace run). Prefixes are sorted so the walk
+// order is deterministic.
+func resolve_parse_prefixes(input *resolve_parse_prefixes_input) (prefixes []string) {
+
+	if input.Scope == "" {
+		return nil
+	}
+	set := map[string]bool{resolve_scan_root(input.Modules, input.Scope): true}
+	shared_root := input.Shared_Module
+	if shared_root != "" {
+		shared_root = path.Clean(shared_root)
+		for i := range input.Modules {
+			if input.Modules[i].Root == shared_root {
+				set[shared_root] = true
+				break
+			}
+		}
+	}
+	prefixes = make([]string, 0, len(set))
+	for prefix := range set {
+		prefixes = append(prefixes, prefix)
+	}
+	sort.Strings(prefixes)
+	return prefixes
+}
+
+// Reports whether the walk should enter directory dir under a scoped run: it is
+// one of the parse prefixes, sits beneath one, or is an ancestor of one (an
+// ancestor must be descended through to reach the prefix below it). A nil prefix
+// set — the whole-workspace run — admits every directory, as does a "." prefix.
+// This narrows the stream walk, and through the go-path list it returns, the AST
+// tier with it; the run's time and memory both follow the parse set.
+func scan_prefixes_reach(prefixes []string, directory string) (reachable bool) {
+
+	if prefixes == nil {
+		return true
+	}
+	for _, prefix := range prefixes {
+		if prefix == "." {
+			return true
+		}
+		if directory == prefix {
+			return true
+		}
+		if strings.HasPrefix(directory, prefix+"/") {
+			return true
+		}
+		if strings.HasPrefix(prefix, directory+"/") {
+			return true
+		}
+	}
+	return false
 }
 
 // Handles one fs.WalkDir visit for build_module_index: skips vendored/hidden
@@ -7651,8 +7823,13 @@ type check_file_system_stream_input struct {
 	Root_Directory        string
 	Tracked               map[string]bool
 	Directory_Has_Tracked map[string]bool
-	Readlink              func(name string) (target string, err error)
-	Stat                  func(name string) (info fs.FileInfo, err error)
+	// Scan_Prefixes bounds the walk to the module subtrees a scoped run examines;
+	// nil walks the whole tree. Every stream check positions its diagnostic at the
+	// visited path, so an out-of-scope finding is dropped by the scope filter at
+	// print time regardless — pruning the directory just skips the wasted reads.
+	Scan_Prefixes []string
+	Readlink      func(name string) (target string, err error)
+	Stat          func(name string) (info fs.FileInfo, err error)
 }
 
 // Builds the stream-tier check set. Split out of check_file_system_stream so
@@ -7726,6 +7903,9 @@ func check_file_system_stream_walk(
 			if Ignored_Directory(p) {
 				return fs.SkipDir
 			}
+			if !scan_prefixes_reach(input.Scan_Prefixes, p) {
+				return fs.SkipDir
+			}
 		}
 		if input.Directory_Has_Tracked != nil {
 			if p != input.Root {
@@ -7773,10 +7953,17 @@ func check_file_system_stream_walk(
 // is matched exactly (a nested pkg/third_party/ is first-party code and stays
 // linted) while vendor, .git, and .jj match at any depth: Go's vendor/ nests by
 // convention, and tool-state dirs surface inside worktrees and submodules.
+// Both spellings of the drop-zone are pruned: the directory on disk is named
+// third-party/ (hyphen), so matching only the underscore left its 70k-file
+// vendored corpus to be walked on every run and trimmed only later, by the
+// ignore list, after the directory syscalls were already spent.
 // Gitignored paths are not handled here; main prunes them via the Tracked set.
 func Ignored_Directory(relative string) (ignored bool) {
 
 	if relative == "third_party" {
+		return true
+	}
+	if relative == "third-party" {
 		return true
 	}
 	base := relative[strings.LastIndexByte(relative, '/')+1:]
