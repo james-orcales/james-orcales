@@ -1,2 +1,16 @@
 [alias]
 xtask = "run --package xtask --"
+
+# Source replacement emitted by `cargo vendor`, so an offline `cargo install`
+# builds fish against the committed vendor/ tree instead of the network. Covers
+# crates.io and the fish-shell rust-pcre2 git dependency.
+[source.crates-io]
+replace-with = "vendored-sources"
+
+[source."git+https://github.com/fish-shell/rust-pcre2?tag=0.2.9-utf32"]
+git = "https://github.com/fish-shell/rust-pcre2"
+tag = "0.2.9-utf32"
+replace-with = "vendored-sources"
+
+[source.vendored-sources]
+directory = "vendor"
