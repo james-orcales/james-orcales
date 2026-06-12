@@ -259,27 +259,48 @@ func Test_Repository_Path_Casing(t *testing.T) {
 	}
 }
 
-// Test_Repository_Symlinks verifies a symlink whose target does not resolve is flagged.
+// Test_Repository_Symlinks pins the tracked-symlink rule: a tracked symlink must
+// resolve to a tracked target. An untracked symlink, and every symlink when there
+// is no tracked set, are exempt.
 func Test_Repository_Symlinks(t *testing.T) {
 	t.Parallel()
-	fsys := fstest.MapFS{
-		"link": &fstest.MapFile{Mode: fs.ModeSymlink, Data: []byte("missing")},
+	// A target outside the tracked set is flagged whether it is missing on disk,
+	// escapes the repo, or merely sits outside the set.
+	if !specification_diagnosed(
+		symlink_lint(t, "missing", nil, map[string]bool{"link": true}),
+		"untracked symlink target") {
+		t.Fatal("an untracked symlink target must be flagged")
 	}
-	diags, err := lint.Check_File_System(&lint.Check_File_System_Input{
-		Fsys:           fsys,
-		Root_Directory: "/root",
-		Readlink: func(name string) (target string, err error) {
-			return "missing", nil
-		},
-		Stat: func(name string) (info fs.FileInfo, err error) {
-			return nil, fs.ErrNotExist
-		},
-	})
-	if err != nil {
-		t.Fatalf("Check_File_System: %v", err)
+	// A target that is a tracked file is clean.
+	if specification_diagnosed(symlink_lint(t, "real.txt", nil,
+		map[string]bool{"link": true, "real.txt": true}), "symlink") {
+		t.Fatal("a tracked file target must not be flagged")
 	}
-	if !specification_diagnosed(diags, "dangling symlink") {
-		t.Fatal("a dangling symlink must be flagged")
+	// A target directory that holds tracked files is clean.
+	if specification_diagnosed(symlink_lint(t, "dir", nil,
+		map[string]bool{"link": true, "dir/x": true}), "symlink") {
+		t.Fatal("a tracked directory target must not be flagged")
+	}
+	// Only tracked symlinks are checked, so one absent from the set is skipped.
+	if specification_diagnosed(symlink_lint(t, "missing", nil,
+		map[string]bool{"other": true}), "symlink") {
+		t.Fatal("an untracked symlink must not be checked")
+	}
+	// With no tracked set (a non-git tree) the rule self-disables.
+	if specification_diagnosed(symlink_lint(t, "missing", nil, nil), "symlink") {
+		t.Fatal("a nil tracked set must disable the check")
+	}
+	// A symlink to its own path is flagged though its own path is tracked.
+	if !specification_diagnosed(
+		symlink_lint(t, "link", nil, map[string]bool{"link": true}),
+		"symlink targets itself") {
+		t.Fatal("a self-referential symlink must be flagged")
+	}
+	// An unreadable target cannot be verified, so it is flagged.
+	if !specification_diagnosed(
+		symlink_lint(t, "x", fs.ErrInvalid, map[string]bool{"link": true}),
+		"unreadable symlink target") {
+		t.Fatal("an unreadable symlink target must be flagged")
 	}
 }
 
@@ -1590,6 +1611,34 @@ func Test_Specification_Baseline(t *testing.T) {
 			t.Errorf("baseline flags the spec file: %s", diagnostic.Message)
 		}
 	}
+}
+
+// Runs the linter over a lone in-memory symlink and returns its diagnostics.
+// Readlink is injected because fstest.MapFS cannot represent a symlink's target,
+// and Tracked drives the tracked-membership the rule checks — the target need
+// not exist in the fixture, only in Tracked.
+func symlink_lint(
+	t *testing.T, target string, read_err error, tracked map[string]bool,
+) (diags []lint.Diagnostic) {
+	t.Helper()
+	diags, err := lint.Check_File_System(&lint.Check_File_System_Input{
+		Fsys: fstest.MapFS{
+			// Data is a fixed placeholder, not the target under test: fstest.MapFS
+			// resolves a self-referential or cyclic symlink into an infinite loop,
+			// and the rule reads the target through the injected Readlink below, not
+			// from the fixture's bytes.
+			"link": &fstest.MapFile{Mode: fs.ModeSymlink, Data: []byte("placeholder")},
+		},
+		Root_Directory: "/root",
+		Tracked:        tracked,
+		Readlink: func(_ string) (link_target string, link_err error) {
+			return target, read_err
+		},
+	})
+	if err != nil {
+		t.Fatalf("Check_File_System: %v", err)
+	}
+	return diags
 }
 
 func specification_baseline(t *testing.T) (files map[string][]byte) {
