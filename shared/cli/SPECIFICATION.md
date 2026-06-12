@@ -7,8 +7,9 @@ none and may also be given by position, without its label.
 
 ### Commands
 
-A named command resolves to itself, no command defaults to the first declared
-command, and an unrecognized name returns an error.
+A named command resolves to itself and an absent command defaults to the first
+declared; an unknown name returns an error that suggests the closest command when one
+is a likely typo.
 
 ### Single Command
 
@@ -23,9 +24,9 @@ set by name; an integer argument must convert or the parse returns an error.
 
 ### Named
 
-Every argument and flag is also settable by -label=value, and named and positional
-tokens may appear in any order. Setting a scalar option twice, or naming an option
-the command does not declare, returns an error.
+Every argument and flag is also settable by -label=value, in any order with the
+positionals. A scalar set twice errors; an unknown option errors and suggests the
+closest known one when it looks like a typo.
 
 ### Variadic
 

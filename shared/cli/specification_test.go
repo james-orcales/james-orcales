@@ -2,6 +2,7 @@ package cli_test
 
 import (
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/james-orcales/james-orcales/shared/cli"
@@ -29,6 +30,22 @@ func Test_Parse_Commands(t *testing.T) {
 	_, err = cli.Program_Parse(&fixture.Program, []string{"todoctl", "bogus"})
 	if err == nil {
 		t.Error("expected error for unknown command")
+	}
+
+	// A near-miss command yields a suggestion; a wild miss does not.
+	_, err = cli.Program_Parse(&fixture.Program, []string{"todoctl", "lst"})
+	if err == nil {
+		t.Fatal("expected an error for unknown command lst")
+	}
+	if !strings.Contains(err.Error(), `did you mean "list"`) {
+		t.Errorf("expected a suggestion of list, got %v", err)
+	}
+	_, err = cli.Program_Parse(&fixture.Program, []string{"todoctl", "zzzzzzzz"})
+	if err == nil {
+		t.Fatal("expected an error for unknown command zzzzzzzz")
+	}
+	if strings.Contains(err.Error(), "did you mean") {
+		t.Errorf("expected no suggestion for a wild miss, got %v", err)
 	}
 }
 
@@ -152,6 +169,16 @@ func Test_Parse_Named(t *testing.T) {
 	_, err = cli.Program_Parse(&fixture.Program, []string{"todoctl", "add", "task", "-zzz=1"})
 	if err == nil {
 		t.Error("expected error for an unknown option")
+	}
+
+	// A near-miss option name yields a suggestion.
+	_, err = cli.Program_Parse(&fixture.Program,
+		[]string{"todoctl", "add", "task", "-priorty=high"})
+	if err == nil {
+		t.Fatal("expected an error for unknown option -priorty")
+	}
+	if !strings.Contains(err.Error(), "did you mean -priority") {
+		t.Errorf("expected a suggestion of -priority, got %v", err)
 	}
 }
 
