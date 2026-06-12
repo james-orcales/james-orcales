@@ -366,3 +366,52 @@ Dec 01 Mon | medium | task with mixed text
 
 `)})
 }
+
+// Test_Single_Help verifies single-command help drops the <command> selector and
+// renders the program's own positionals in the usage line.
+func Test_Single_Help(t *testing.T) {
+	program := new_single_fixture()
+	output := bytes.Buffer{}
+	cli.Print_Help(&output, program)
+	help := output.String()
+	if strings.Contains(help, "<command>") {
+		t.Errorf("single-command help must not mention <command>:\n%s", help)
+	}
+	if !strings.Contains(help, "sloc <path:string>") {
+		t.Errorf("expected usage with the positional, got:\n%s", help)
+	}
+}
+
+// Test_Variadic_Help verifies a variadic renders with an ellipsis and its element
+// type, not the raw slice type.
+func Test_Variadic_Help(t *testing.T) {
+	program := cli.New_Single(cli.New_Single_Input{
+		Label: "sloc", Description: "count lines of code",
+		Arguments: []cli.Option{
+			cli.New_Variadic[string](cli.New_Variadic_Input{Label: "path"}),
+		},
+	})
+	output := bytes.Buffer{}
+	cli.Print_Help(&output, program)
+	help := output.String()
+	if !strings.Contains(help, "<path:string...>") {
+		t.Errorf("expected <path:string...>, got:\n%s", help)
+	}
+	if strings.Contains(help, "[]string") {
+		t.Errorf("help must not show the raw slice type:\n%s", help)
+	}
+}
+
+// Builds a single-command program: one positional path and one flag, no selector.
+func new_single_fixture() (program cli.Program) {
+	return cli.New_Single(cli.New_Single_Input{
+		Label:       "sloc",
+		Description: "count lines of code",
+		Arguments: []cli.Option{
+			{Label: "path", Value: "", Description: "directory to scan"},
+		},
+		Flags: []cli.Option{
+			{Label: "hidden", Value: false, Description: "include hidden dot-files"},
+		},
+	})
+}
