@@ -322,12 +322,12 @@ Available Commands:
 
 Stderr:
 "arsotitnaroisen" is an unknown command
-"add" expects 1 arguments. Got 0
+"add" is missing required argument "task"
 "deadline" expects a value. You must set flag values with this syntax: -foo-bar=baz.
 "deadline" expects a value. You must set flag values with this syntax: -foo-bar=baz.
-"unknown" is an unknown flag
-Positional arguments cannot appear after flags. Got "commit to github"
-"list" supports 2 command flags and 0 global flags. Got 3
+"unknown" is an unknown option
+"out_of_place" is an unknown option
+"count" set more than once
 
 Database:
 Jan 02 Mon | low | without flags
