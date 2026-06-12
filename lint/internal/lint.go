@@ -681,6 +681,18 @@ func Main(input *Main_Input) (code int) {
 		fmt.Fprintln(input.Stderr, configuration_err)
 		return 2
 	}
+	// A non-empty scope naming no path in Fsys is a user error — a typo'd or
+	// stale CLI argument. Without this guard the scope filter silently drops
+	// every diagnostic and the run reports "all checks passed", turning a bad
+	// path into a false green: the worst failure mode for a checker. Fail loud.
+	if input.Scope_Prefix != "" {
+		_, scope_stat_err := fs.Stat(input.Fsys, input.Scope_Prefix)
+		if scope_stat_err != nil {
+			fmt.Fprintf(input.Stderr, "lint: scope %q does not exist: %v\n",
+				input.Scope_Prefix, scope_stat_err)
+			return 2
+		}
+	}
 	// Git tier runs first: it reads only repo metadata, not the FS, for the fastest signal.
 	git_diags := Git_Input_Check(input.Git)
 	filesystem_diags, err := Check_File_System(&Check_File_System_Input{
@@ -702,15 +714,21 @@ func Main(input *Main_Input) (code int) {
 		return 2
 	}
 	all_diags := append(git_diags, filesystem_diags...)
-	// Tier-2 checks rely on tier-1 contracts (see check_file_checks_tier2);
-	// hold their output until tier-1 is globally clean within the user's
-	// scope. The per-file gate inside Check_File already drops tier-2 in
-	// any file that has tier-1 issues — this is the cross-file extension
-	// of the same rule, applied at print time so detection logic stays
-	// unchanged.
+	return report_diagnostics(all_diags, input.Scope_Prefix, input.Stdout)
+}
+
+// Prints the in-scope diagnostics and returns the process exit code: 1 if any
+// printed, 0 otherwise (with the success line). Tier-2 diagnostics are withheld
+// whenever any tier-1 fired in scope, since tier-2 rules may rely on tier-1
+// contracts (see check_file_checks_tier2). The per-file gate inside Check_File
+// already drops tier-2 in any file with tier-1 issues; this is the cross-file
+// extension of the same rule, applied at print time so detection logic stays
+// unchanged.
+func report_diagnostics(
+	diagnostics []Diagnostic, scope_prefix string, stdout io.Writer) (code int) {
 	has_tier1 := false
-	for _, d := range all_diags {
-		if !diagnostic_within_scope(d, input.Scope_Prefix) {
+	for _, d := range diagnostics {
+		if !diagnostic_within_scope(d, scope_prefix) {
 			continue
 		}
 		if d.Tier == 1 {
@@ -719,8 +737,8 @@ func Main(input *Main_Input) (code int) {
 		}
 	}
 	emitted_count := 0
-	for _, d := range all_diags {
-		if !diagnostic_within_scope(d, input.Scope_Prefix) {
+	for _, d := range diagnostics {
+		if !diagnostic_within_scope(d, scope_prefix) {
 			continue
 		}
 		if has_tier1 {
@@ -729,13 +747,13 @@ func Main(input *Main_Input) (code int) {
 			}
 		}
 		emitted_count++
-		fmt.Fprintf(input.Stdout, "%s: %s\n", d.Position, d.Message)
+		fmt.Fprintf(stdout, "%s: %s\n", d.Position, d.Message)
 	}
 	if emitted_count > 0 {
 		return 1
 	}
 	// AI agents keep checking exit code if there's no explicit success message in output.
-	fmt.Fprintln(input.Stdout, "✓ all checks passed")
+	fmt.Fprintln(stdout, "✓ all checks passed")
 	return 0
 }
 
