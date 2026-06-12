@@ -1350,6 +1350,34 @@ func Test_Source_And_Test_Requirements_File_Count_Build_Tags(t *testing.T) {
 	}
 }
 
+// Test_Deterministic_Entry_Format verifies an entry names a module's top-level
+// directory and the tier auto-applies to the pure packages under it: a pure
+// package nested below the entry is held to the tier (its goroutine flagged),
+// while an impure default tier in the same subtree is excluded (its select not
+// flagged) — so a directory covers its pure packages without listing each.
+func Test_Deterministic_Entry_Format(t *testing.T) {
+	t.Parallel()
+	files := map[string][]byte{
+		"go.mod": []byte("module fixture\n\ngo 1.25\n"),
+		"pkg/sub/p.go": []byte("// Package sub is a fixture.\n" +
+			"package sub\n\n" +
+			"// F is a fixture.\n" +
+			"func F() {\n\tgo done()\n}\n\n" +
+			"func done() {\n\treturn\n}\n"),
+		"pkg/sub/default/d.go": []byte("// Package sub is a fixture.\n" +
+			"package sub\n\n" +
+			"// G is a fixture.\n" +
+			"func G() {\n\tselect {}\n}\n"),
+	}
+	diags := deterministic_self_diagnostics(t, files, []string{"pkg"})
+	if !specification_diagnosed(diags, "must not start a goroutine") {
+		t.Fatal("a directory entry must cover a pure package nested below it")
+	}
+	if specification_diagnosed(diags, "must not use select") {
+		t.Fatal("an impure default tier under the entry must be excluded")
+	}
+}
+
 // Test_Deterministic_Goroutines verifies a go statement in a listed package is flagged.
 func Test_Deterministic_Goroutines(t *testing.T) {
 	t.Parallel()
@@ -1456,8 +1484,10 @@ func Test_Deterministic_Import_Induction(t *testing.T) {
 	}
 }
 
-// Test_Deterministic_Impurity verifies an impure package listed as deterministic
-// is reported.
+// Test_Deterministic_Impurity verifies an entry that resolves to no pure package
+// — here an all-impure default tier — is reported as a coverage gap. Expansion
+// keeps pure packages only, so a directory holding nothing pure opts nothing into
+// the tier and must fail loudly rather than silently check nothing.
 func Test_Deterministic_Impurity(t *testing.T) {
 	t.Parallel()
 	files := map[string][]byte{
@@ -1467,13 +1497,13 @@ func Test_Deterministic_Impurity(t *testing.T) {
 	}
 	if !specification_diagnosed(
 		deterministic_self_diagnostics(t, files, []string{"./pkg/default/"}),
-		"must be pure") {
-		t.Fatal("an impure package listed as deterministic must be reported")
+		"no pure package found") {
+		t.Fatal("an entry covering no pure package must be reported")
 	}
 }
 
-// Test_Deterministic_Coverage verifies a deterministic_packages entry matching no
-// package is reported.
+// Test_Deterministic_Coverage verifies a deterministic_packages entry covering no
+// pure package is reported.
 func Test_Deterministic_Coverage(t *testing.T) {
 	t.Parallel()
 	files := map[string][]byte{
@@ -1483,8 +1513,8 @@ func Test_Deterministic_Coverage(t *testing.T) {
 	}
 	if !specification_diagnosed(
 		deterministic_self_diagnostics(t, files, []string{"nope/missing"}),
-		"no package found") {
-		t.Fatal("an entry matching no package must be reported")
+		"no pure package found") {
+		t.Fatal("an entry covering no pure package must be reported")
 	}
 }
 

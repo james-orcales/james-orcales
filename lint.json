@@ -5,7 +5,7 @@
           "shared/snap"
   ],
   "deterministic_packages": [
-    "./markdown_to_pdf/internal",
+    "markdown_to_pdf",
     "shared/cli",
     "shared/time",
     "shared/io"
