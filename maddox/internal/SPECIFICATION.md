@@ -98,6 +98,23 @@ piped output.
 A metric with no data — every value zero, like the Linux-only counters on macOS — is
 left out of the table.
 
+# Machine
+
+Machine_Specs carries the host hardware and OS taken once at startup, so benchmark
+results are reproducible across machines. The specs are injected through Main_Input,
+keeping the library free of ambient OS reads.
+
+### Document
+
+The JSON document carries Machine_Specs as a top-level "machine" field alongside
+"benchmarks". Every field round-trips through JSON; optional fields (P/E cores,
+cache sizes) are omitted when zero.
+
+### Table
+
+Render_Table writes the machine header block before Benchmark 1. Sparse fields
+(zero values) are omitted from the header, matching the sparse-metric convention.
+
 # Progress
 
 Throughout warmup and sampling, Main writes an in-place counter and elapsed time to
