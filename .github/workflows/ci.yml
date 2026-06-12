@@ -32,4 +32,4 @@ jobs:
       - name: Test
         run: |
           go run ./lint
-          go test ./shared/... ./lint/... -count=1 -race
+          go run build.go test

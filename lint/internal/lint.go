@@ -567,7 +567,7 @@ type Configuration struct {
 	// packages are held to the deterministic tier on top of purity: no goroutine,
 	// channel, select, nor time/context/sync import, and every first-party import
 	// must itself be deterministic. An entry covers the pure packages at or under
-	// it, so a binary module is named by its bare top-level directory and the
+	// it, so a binary component is named by its bare top-level directory and the
 	// shared module's libraries by `shared/*` (all) or `shared/<lib>` (one); the
 	// fixed module shape lets the tier auto-apply without listing each package.
 	// Impure packages in the subtree (the main package, a default tier) are
@@ -3089,7 +3089,7 @@ func binary_component_layout_message(
 }
 
 // True for directories whose first segment is `internal` — the only
-// legal home for non-main packages in a binary module under the
+// legal home for non-main packages in a binary component under the
 // doctrine. "." (the module root) is illegal for non-main code:
 // `package main` is handled by the caller's earlier short-circuit.
 func check_binary_component_layout_is_legal(directory string) (legal bool) {
@@ -3101,7 +3101,7 @@ func check_binary_component_layout_is_legal(directory string) (legal bool) {
 	return segments[0] == "internal"
 }
 
-// A binary module exposes exactly one entry point, so its single main
+// A binary component exposes exactly one entry point, so its single main
 // package lives at the module root. Scattering binaries under cmd/ — the
 // GOPATH-era convention — multiplies entry points and invites the
 // importable-package leak the layout exists to prevent. A main package
@@ -3140,10 +3140,10 @@ func check_binary_component_main_package(
 		diags = append(diags, Diagnostic{
 			Position: token.Position{Filename: pf.Path, Line: 1, Column: 1},
 			Name:     "binary-component-main-package",
-			Want:     "the single main package sits at the module root, no cmd/",
+			Want:     "the single main package sits at the component root, no cmd/",
 			Message: fmt.Sprintf(
-				"binary module %q places its main package at %q; the main "+
-					"package must sit at the module root, no cmd/ directory",
+				"binary component %q places its main package at %q; the main "+
+					"package must sit at the component root, no cmd/ directory",
 				m.Import_Path, directory,
 			),
 		})
@@ -3151,7 +3151,7 @@ func check_binary_component_main_package(
 	return diags
 }
 
-// A binary module exposes its entry point as a single free func Main in its
+// A binary component exposes its entry point as a single free func Main in its
 // top-level internal/ package — the composition tier that package main's
 // thin main() delegates to. Pinning it there keeps the real logic out of
 // package main (which Go bars from being imported, hence from being tested)
@@ -3185,7 +3185,7 @@ func check_binary_component_internal_main(
 		counts[component_index_number] +=
 			check_binary_component_internal_main_count(pf.File)
 	}
-	want := "exactly one func Main in internal/ per binary module"
+	want := "exactly one func Main in internal/ per binary component"
 	for i, m := range components.Components {
 		if m.Is_Shared_Library {
 			continue
@@ -3199,7 +3199,7 @@ func check_binary_component_internal_main(
 				Name:     "binary-component-internal-main",
 				Want:     want,
 				Message: fmt.Sprintf(
-					"binary module %q declares no func Main in internal/",
+					"binary component %q declares no func Main in internal/",
 					m.Import_Path),
 			})
 			continue
@@ -3210,7 +3210,8 @@ func check_binary_component_internal_main(
 				Name:     "binary-component-internal-main",
 				Want:     want,
 				Message: fmt.Sprintf(
-					"binary module %q declares multiple func Main in internal/",
+					"binary component %q declares multiple "+
+						"func Main in internal/",
 					m.Import_Path),
 			})
 		}
@@ -3282,7 +3283,7 @@ func check_shared_component_no_internal(
 }
 
 // The shared library is imported, never executed, so it declares no
-// package main: an entry point belongs in a binary module, and a main
+// package main: an entry point belongs in a binary component, and a main
 // package here is unreachable anyway — Go bars importing it — so it is
 // dead weight the layout forbids outright. Reported once per offending
 // directory.
@@ -3314,7 +3315,7 @@ func check_shared_component_no_main_package(
 			Want:     "shared library declares no package main",
 			Message: fmt.Sprintf(
 				"shared library %q forbids package main; move the entry "+
-					"point to a binary module", m.Import_Path),
+					"point to a binary component", m.Import_Path),
 		})
 	}
 	return diags
@@ -3396,7 +3397,7 @@ func check_component_tier_depth_ancestors(directory string) (ancestors []string)
 }
 
 // Returns the non-main Go ancestor packages of canonical that count toward
-// tier depth. A binary module's top-level internal directory is excluded: all
+// tier depth. A binary component's top-level internal directory is excluded: all
 // its code sits under internal and func Main lives there, so internal is the
 // directory the count starts from — the same role a shared module's root
 // plays — not a package nested above another. Without the exclusion

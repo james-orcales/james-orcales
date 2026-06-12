@@ -574,7 +574,7 @@ func Test_Component_Layout_Main_Package(t *testing.T) {
 	files := map[string][]byte{
 		"pkg/cmd/app/main.go": []byte("package main\n\nfunc main() {\n\tprintln(0)\n}\n"),
 	}
-	if !specification_flags(t, files, "main package must sit at the module root") {
+	if !specification_flags(t, files, "main package must sit at the component root") {
 		t.Fatal("a main package outside the module root must be flagged")
 	}
 }

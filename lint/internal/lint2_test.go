@@ -1328,13 +1328,13 @@ func Test_Snapshot_Module_Layout(t *testing.T) {
 			"app/internal/entry.go": doctrine_binary_internal_main,
 			"app/feature/feature.go": "// Package feature is a fixture.\n" +
 				"package feature\n"}},
-		{Snapshot: snap.Init(`app/cmd/app/main.go:1:1: binary module "github.com/james-orcales/james-orcales/app" places its main package at "cmd/app"; the main package must sit at the module root, no cmd/ directory`), Drop: "SPECIFICATION.md", Files: map[string]string{
+		{Snapshot: snap.Init(`app/cmd/app/main.go:1:1: binary component "github.com/james-orcales/james-orcales/app" places its main package at "cmd/app"; the main package must sit at the component root, no cmd/ directory`), Drop: "SPECIFICATION.md", Files: map[string]string{
 			"app/internal/entry.go": doctrine_binary_internal_main,
 			"app/cmd/app/main.go": "package main\n\n" +
 				"func main() {\n\tprintln(0)\n}\n"}},
 		{Snapshot: snap.Init(`shared/internal/x/x.go:1:1: shared library forbids internal/ directories; remove "shared/internal"`), Drop: "SPECIFICATION.md", Files: map[string]string{
 			"shared/internal/x/x.go": "// Package x is a fixture.\npackage x\n"}},
-		{Snapshot: snap.Init(`shared/main.go:1:1: shared library "github.com/james-orcales/james-orcales/shared" forbids package main; move the entry point to a binary module`), Drop: "SPECIFICATION.md", Files: map[string]string{
+		{Snapshot: snap.Init(`shared/main.go:1:1: shared library "github.com/james-orcales/james-orcales/shared" forbids package main; move the entry point to a binary component`), Drop: "SPECIFICATION.md", Files: map[string]string{
 			"shared/main.go": "package main\n\nfunc main() {\n\tprintln(0)\n}\n"}},
 	})
 }
