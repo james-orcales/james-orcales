@@ -20,6 +20,13 @@ import (
 // file.
 const main_file_bytes_max = 64 << 20
 
+// The counting workers spend most of their time blocked reading files rather than on
+// the CPU, so the pool is oversubscribed past the core count: while some workers wait
+// on a read, the rest keep the cores busy classifying. Four per core is past the knee —
+// on a large tree it matches the wall time of GOMAXPROCS=4×cores without disturbing the
+// scheduler, and more workers do not help.
+const main_workers_per_core = 4
+
 func main() {
 	os.Exit(sloc.Main(&sloc.Main_Input{
 		Arguments:         os.Args,
@@ -29,7 +36,7 @@ func main() {
 		Path_Is_Directory: main_is_directory,
 		Read_File:         main_read_file,
 		Ignore_For:        main_git_ignore,
-		Concurrency:       runtime.GOMAXPROCS(0),
+		Concurrency:       runtime.GOMAXPROCS(0) * main_workers_per_core,
 	}))
 }
 
