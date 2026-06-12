@@ -19,3 +19,9 @@ rustflags = [
   "-C", "target-feature=+crt-static",
   "-C", "link-self-contained=yes",
 ]
+
+[source.crates-io]
+replace-with = "vendored-sources"
+
+[source.vendored-sources]
+directory = "vendor"
