@@ -398,7 +398,13 @@ vim.api.nvim_create_autocmd({ "BufWritePre" }, {
 		if ft == "lua" then
 			cmd = { "stylua", "-" }
 		elseif ft == "go" then
-			cmd = { "goimports" }
+			-- goimports is an optional install; gofmt ships with the toolchain and is
+			-- always present, so fall back to it when goimports is not on PATH.
+			if vim.fn.executable("goimports") == 1 then
+				cmd = { "goimports" }
+			else
+				cmd = { "gofmt" }
+			end
 			-- WHY THE FUCK WOULD NEOVIM IMPLICITLY rs -> rust
 		elseif ft == "rust" then
 			cmd = { "rustfmt" }
@@ -504,6 +510,7 @@ do
 	vim.keymap.set({ "n" }, "-", oil.open)
 end
 
+vim.g.nvim_surround_no_mappings = true
 require("nvim-surround").setup({
 	surrounds = {
 		["("] = false,
@@ -515,20 +522,14 @@ require("nvim-surround").setup({
 		["["] = "]",
 		["<"] = ">",
 	},
-	keymaps = {
-		normal = "s",
-		normal_cur = "ss",
-		normal_cur_line = "S",
-		visual = "s",
-		visual_line = "S",
-		delete = "ds",
-		change = "cs",
-		insert = false,
-		insert_line = false,
-		normal_line = false,
-		change_line = false,
-	},
 })
+vim.keymap.set("n", "s",  "<Plug>(nvim-surround-normal)")
+vim.keymap.set("n", "ss", "<Plug>(nvim-surround-normal-cur)")
+vim.keymap.set("n", "S",  "<Plug>(nvim-surround-normal-cur-line)")
+vim.keymap.set("x", "s",  "<Plug>(nvim-surround-visual)")
+vim.keymap.set("x", "S",  "<Plug>(nvim-surround-visual-line)")
+vim.keymap.set("n", "ds", "<Plug>(nvim-surround-delete)")
+vim.keymap.set("n", "cs", "<Plug>(nvim-surround-change)")
 
 do
 	local leap = require("leap")
