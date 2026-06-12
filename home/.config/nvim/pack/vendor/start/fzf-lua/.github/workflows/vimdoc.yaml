@@ -1,0 +1,53 @@
+name: vimdoc
+
+on:
+  push:
+    branches: [main, vimdoc]
+
+jobs:
+  generate-docs:
+    runs-on: ubuntu-slim
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: rhysd/action-setup-vim@v1
+        with:
+          neovim: true
+          version: nightly
+      - name: Install emmylua_doc_cli
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -e
+          cd
+          gh release download -R EmmyLuaLs/emmylua-analyzer-rust -p emmylua_doc_cli-linux-x64.tar.gz -D emmylua_doc_cli
+          tar xzf emmylua_doc_cli/* -C emmylua_doc_cli
+          echo "${PWD}/emmylua_doc_cli/" >> $GITHUB_PATH
+          export PATH="${PWD}/emmylua_doc_cli/:${PATH}"
+          emmylua_doc_cli --version
+      - name: Generate OPTIONS.md and types
+        run: |
+          nvim --headless -l scripts/gen_options.lua
+          make gen
+      - name: Generating vimdoc
+        run: |
+          mkdir -p ~/.local/share/nvim/site/pack/vendor/start
+          git clone --depth 1 https://github.com/ibhagwan/ts-vimdoc.nvim ~/.local/share/nvim/site/pack/vendor/start/ts-vimdoc.nvim
+          export PATH="${PWD}/build/:${PATH}"
+          export PACKPATH=$HOME/.local/share/nvim/site
+          nvim --headless -u ~/.local/share/nvim/site/pack/vendor/start/ts-vimdoc.nvim/scripts/init.lua  -c "lua require('ts-vimdoc').docgen({input_file='README.md', output_file='doc/fzf-lua.txt', project_name='fzf-lua', version='For Neovim >= 0.9.0'})" -c "qa"
+          nvim --headless -u ~/.local/share/nvim/site/pack/vendor/start/ts-vimdoc.nvim/scripts/init.lua  -c "lua require('ts-vimdoc').docgen({input_file='OPTIONS.md', output_file='doc/fzf-lua-opts.txt', project_name='fzf-lua-opts', table_of_contents_lvl_min = 2, table_of_contents_lvl_max = 3, version='For Neovim >= 0.9.0'})" -c "qa"
+      - name: Commit changes
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          COMMIT_MSG: |
+            [docgen] CI: autogenerate vimdoc
+            skip-checks: true
+        run: |
+          git config user.email "actions@github"
+          git config user.name "Github Actions"
+          git remote set-url origin https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}.git
+          git add doc OPTIONS.md lua/fzf-lua/types.lua
+          # Only commit and push if we have changes
+          git diff --quiet && git diff --staged --quiet || (git commit -m "${COMMIT_MSG}"; git push origin HEAD:${GITHUB_REF})
