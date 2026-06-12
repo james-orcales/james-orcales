@@ -86,9 +86,6 @@ type Option struct {
 	Value any
 	// Is_Flag distinguishes a flag from a positional argument.
 	Is_Flag bool
-	// Is_Variadic marks a positional argument that collects zero or more trailing
-	// positionals into a slice. Only the last argument may be variadic.
-	Is_Variadic bool
 }
 
 // New_Argument_Input is the input for New_Argument.
@@ -120,18 +117,18 @@ type New_Variadic_Input struct {
 	Description string
 }
 
-// New_Variadic creates a positional argument that collects zero or more trailing
-// positionals into a slice. It must be the last argument; fixed arguments may
-// precede it. A variadic is always optional — an empty list is valid, not an error —
-// so a command that needs at least one element checks the slice's length itself.
-// Type parameter T must be string or int; the parsed Value is a []T.
+// New_Variadic creates a slice-valued argument: it collects the trailing positionals
+// and appends each repeated -label=value. It must be the last argument; scalar
+// arguments may precede it. A slice argument is always optional — an empty list is
+// valid, not an error — so a command that needs at least one element checks the
+// slice's length itself. Type parameter T must be string or int; the Value is a []T,
+// and that slice type is what marks the option variadic.
 func New_Variadic[T string | int](input New_Variadic_Input) (option Option) {
 	return Option{
 		Label:       input.Label,
 		Description: input.Description,
 		Value:       []T{},
 		Is_Flag:     false,
-		Is_Variadic: true,
 	}
 }
 
@@ -232,58 +229,71 @@ func New_Single(input New_Single_Input) (program Program) {
 	}
 }
 
-// Panics when any of a command's arguments or flags is malformed: an argument with
-// no label or an unsupported type, a flag with an invalid label or type, or a flag
-// whose label collides with a global flag.
+// Panics when any of a command's options is malformed: a label that is empty, not
+// flag-safe, or shared with another option (arguments and flags occupy one
+// -label=value namespace), an unsupported value type, or a slice argument that is not
+// last. The global flags are pre-seeded so an argument or flag colliding with one is
+// caught here too.
 func command_validate_options(command Command, global_flags []Option) {
+	seen := map[string]bool{}
+	for _, global_flag := range global_flags {
+		seen[global_flag.Label] = true
+	}
 	for argument_index, argument := range command.Arguments {
-		panic_when(argument.Label == "",
-			"Argument #%d for command %q has no label.",
-			argument_index, command.Label)
-		// A variadic absorbs every remaining positional, so anything declared after
-		// it is unreachable. Requiring it to be last also forbids a second variadic.
+		option_validate_label(
+			fmt.Sprintf("Argument #%d for command %q", argument_index, command.Label),
+			argument)
+		// A slice argument absorbs every remaining positional, so anything declared
+		// after it is unreachable; requiring it last also forbids a second slice.
 		is_last := argument_index == len(command.Arguments)-1
-		panic_when(argument.Is_Variadic && !is_last,
-			"Variadic argument %q must be the last argument.", argument.Label)
-		if argument.Is_Variadic {
-			switch argument.Value.(type) {
-			default:
-				panic_when(true,
-					"Variadic argument %q has unsupported type: %T",
-					argument.Label, argument.Value)
-			case []string, []int:
-			}
-			continue
-		}
+		panic_when(option_is_slice(argument) && !is_last,
+			"Slice argument %q must be the last argument.", argument.Label)
 		switch argument.Value.(type) {
 		default:
-			panic_when(true,
-				"Argument %q has unsupported type: %T",
+			panic_when(true, "Argument %q has unsupported type: %T",
 				argument.Label, argument.Value)
-		case string, int:
+		case string, int, []string, []int:
 		}
+		panic_when(seen[argument.Label],
+			"Command %q has argument %q that collides with another option.",
+			command.Label, argument.Label)
+		seen[argument.Label] = true
 	}
 	for _, flag := range command.Flags {
 		validate_flag_label(fmt.Sprintf("Flag for command %q", command.Label), flag)
-		for _, global_flag := range global_flags {
-			panic_when(flag.Label == global_flag.Label,
-				"Command %q has flag %q that conflicts with a global flag.",
-				command.Label, flag.Label)
-		}
+		panic_when(seen[flag.Label],
+			"Command %q has flag %q that collides with another option.",
+			command.Label, flag.Label)
+		seen[flag.Label] = true
 	}
 }
 
-// Panics when the flag's label is empty, contains an underscore or space, or
-// carries an unsupported value type.
+// Reports whether an option holds a slice value. The slice type is what makes an
+// option variadic: an argument that collects positionals, and any option that appends
+// on each repeated -label=value.
+func option_is_slice(option Option) (is_slice bool) {
+	switch option.Value.(type) {
+	case []string, []int:
+		return true
+	}
+	return false
+}
+
+// Panics when an option's label is empty or carries a character that cannot appear in
+// a -label token. Arguments and flags share this rule because both are settable by
+// name.
+func option_validate_label(context string, option Option) {
+	panic_when(option.Label == "", "%s has no label.", context)
+	panic_when(strings.Contains(option.Label, "_"),
+		"Option labels cannot contain underscores. Instead of %q, use %q",
+		option.Label, strings.ReplaceAll(option.Label, "_", "-"))
+	panic_when(strings.Contains(option.Label, " "),
+		"Option labels cannot contain spaces: %q", option.Label)
+}
+
+// Panics when a flag's label is invalid or its value is not a supported scalar type.
 func validate_flag_label(context string, flag Option) {
-	panic_when(flag.Label == "", "%s has no label.", context)
-	panic_when(
-		strings.Contains(flag.Label, "_"),
-		"Flags cannot contain underscores. Instead of %q, use %q",
-		flag.Label,
-		strings.ReplaceAll(flag.Label, "_", "-"),
-	)
-	panic_when(strings.Contains(flag.Label, " "), "Flags cannot contain spaces: %q", flag.Label)
+	option_validate_label(context, flag)
 	switch flag.Value.(type) {
 	default:
 		panic_when(true, "Flag %q has unsupported type: %T", flag.Label, flag.Value)
@@ -291,12 +301,13 @@ func validate_flag_label(context string, flag Option) {
 	}
 }
 
-// Program_Parse parses command-line arguments and returns the active command
-// with populated values. The operating_system_args slice should be os.Args from main.
-// If no command is specified, the first declared command is used. Global flags
-// are parsed and stored in program.Global_Flags. It returns an error for an
-// unknown command, the wrong argument count, a positional after a flag, an
-// unknown flag, or an invalid or absent flag value.
+// Program_Parse parses command-line arguments and returns the active command with
+// populated values. The operating_system_args slice should be os.Args from main. If
+// no command is specified, the first declared command is used. Every option is
+// settable by -label=value and arguments may also be given positionally; the two
+// kinds of token may interleave freely. It returns an error for an unknown command,
+// an unknown option, a scalar set more than once, a positional with no argument to
+// fill, a missing required argument, or an invalid or absent value.
 func Program_Parse(
 	program *Program, operating_system_args []string,
 ) (active_command Command, err error) {
@@ -321,66 +332,130 @@ func Program_Parse(
 	if err != nil {
 		return active_command, err
 	}
-	// Nothing follows the consumed prefix (the program name, plus the command name
-	// in multi-command mode), so the default command stands as-is.
+	// Nothing follows the consumed prefix (the program name, plus the command name in
+	// multi-command mode), so the default command stands as-is.
 	if len(operating_system_args) < arguments_start {
 		return active_command, nil
 	}
 
-	positional_arguments, flags, err := command_collect_args(
-		active_command, operating_system_args, arguments_start)
+	tokens := operating_system_args[arguments_start:]
+	filled, positionals, slice_named, err := program_assign_named(
+		program, active_command, tokens)
 	if err != nil {
 		return active_command, err
 	}
-	invariant.Dot_Product(invariant.Sometimes(len(flags) == 0))
-	invariant.Dot_Product(invariant.Sometimes(len(flags) < len(active_command.Flags)))
-	invariant.Dot_Product(invariant.Sometimes(len(flags) == len(active_command.Flags)))
-
-	err = command_validate_count(active_command, len(positional_arguments))
+	err = command_assign_positionals(&command_assign_positionals_input{
+		Command:     active_command,
+		Positionals: positionals,
+		Slice_Named: slice_named,
+		Filled:      filled,
+	})
 	if err != nil {
 		return active_command, err
 	}
-	if len(flags) > len(active_command.Flags)+len(program.Global_Flags) {
-		return active_command, fmt.Errorf(
-			"%q supports %d command flags and %d global flags. Got %d",
-			active_command.Label,
-			len(active_command.Flags),
-			len(program.Global_Flags),
-			len(flags),
-		)
-	}
-
-	err = parse_arguments(active_command.Arguments, positional_arguments)
-	if err != nil {
-		return active_command, err
-	}
-	err = program_parse_flags(program, active_command, flags)
+	err = command_validate_required(active_command, filled)
 	if err != nil {
 		return active_command, err
 	}
 	return active_command, nil
 }
 
-// Reports the argument-count error for a command given its parsed positional count,
-// or nil when the count is acceptable. A variadic last argument turns the fixed
-// arguments before it into a minimum rather than an exact count.
-func command_validate_count(command Command, positional_count int) (err error) {
-	declared_count := len(command.Arguments)
-	last_is_variadic := declared_count > 0 &&
-		command.Arguments[declared_count-1].Is_Variadic
-	if last_is_variadic {
-		minimum := declared_count - 1
-		if positional_count < minimum {
-			return fmt.Errorf("%q expects at least %d arguments. Got %d",
-				command.Label, minimum, positional_count)
+// One command-line token paired with its position, so a slice argument can reassemble
+// its positional and -label=value contributions in the order they were written.
+type indexed_token struct {
+	Index int
+	Value string
+}
+
+// Reports whether a token sets an option by name. A lone "-" is a positional value.
+func is_named_token(token string) (named bool) {
+	if !strings.HasPrefix(token, "-") {
+		return false
+	}
+	return token != "-"
+}
+
+// Splits a -label=value token into its parts, rejecting the double-dash form.
+func parse_named_token(token string) (
+	label string, value string, value_was_set bool, err error,
+) {
+	if strings.HasPrefix(token, "--") {
+		if len(token) > len("--") {
+			return "", "", false, fmt.Errorf(
+				"Flags use a single dash, not double; use '-%s'", token[2:])
 		}
-		return nil
 	}
-	if positional_count != declared_count {
-		return fmt.Errorf("%q expects %d arguments. Got %d",
-			command.Label, declared_count, positional_count)
+	// A lone "-" was already excluded by is_named_token.
+	invariant.Dot_Product(invariant.Always(token != "-"))
+	label, value, value_was_set = strings.Cut(token[1:], "=")
+	return label, value, value_was_set, nil
+}
+
+// Applies every -label=value token to its option and returns the bare positionals
+// plus, for the slice argument, the values given by name — both tagged with their
+// position so the slice preserves command-line order. filled records the scalar
+// options set by name: a scalar named twice is an error, and a named scalar argument
+// is skipped by the positional pass.
+func program_assign_named(program *Program, command Command, tokens []string) (
+	filled map[string]bool, positionals []indexed_token, slice_named []indexed_token, err error,
+) {
+	filled = map[string]bool{}
+	for index, token := range tokens {
+		if !is_named_token(token) {
+			positionals = append(positionals, indexed_token{Index: index, Value: token})
+			continue
+		}
+		label, value, value_was_set, format_err := parse_named_token(token)
+		if format_err != nil {
+			return filled, positionals, slice_named, format_err
+		}
+		option, is_slice_argument, find_err := program_find_option(program, command, label)
+		if find_err != nil {
+			return filled, positionals, slice_named, find_err
+		}
+		if is_slice_argument {
+			slice_named = append(slice_named, indexed_token{Index: index, Value: value})
+			continue
+		}
+		if filled[label] {
+			return filled, positionals, slice_named,
+				fmt.Errorf("%q set more than once", label)
+		}
+		set_err := option_set_value(option_set_value_input{
+			Option: option, Value: value, Value_Was_Set: value_was_set, Name: label,
+		})
+		if set_err != nil {
+			return filled, positionals, slice_named, set_err
+		}
+		filled[label] = true
 	}
-	return nil
+	return filled, positionals, slice_named, nil
+}
+
+// Finds the option named by a -label token across the command's arguments, then its
+// flags, then the program's global flags, returning a pointer into the parse-time copy
+// so assignment lands in the right slot. is_slice_argument is true when the match is a
+// slice-valued argument, which appends rather than sets. Errors on an unknown label.
+func program_find_option(program *Program, command Command, label string) (
+	option *Option, is_slice_argument bool, err error,
+) {
+	for index := range command.Arguments {
+		argument := &command.Arguments[index]
+		if argument.Label == label {
+			return argument, option_is_slice(*argument), nil
+		}
+	}
+	for index := range command.Flags {
+		if command.Flags[index].Label == label {
+			return &command.Flags[index], false, nil
+		}
+	}
+	for index := range program.Global_Flags {
+		if program.Global_Flags[index].Label == label {
+			return &program.Global_Flags[index], false, nil
+		}
+	}
+	return nil, false, fmt.Errorf("%q is an unknown option", label)
 }
 
 // Finds the active command named by the args (defaulting to the first command) and
@@ -419,147 +494,136 @@ func program_resolve_command(
 	return active_command, arguments_start, nil
 }
 
-// Splits the args after the consumed prefix into positional arguments (before the
-// first flag) and flags, erroring on a positional that appears after a flag.
-// arguments_start is where the split begins: past the program-and-command prefix in
-// multi-command mode, past only the program name in single-command mode.
-func command_collect_args(
-	active_command Command, operating_system_args []string, arguments_start int,
-) (
-	positional_arguments []string, flags []string, err error,
-) {
-	positional_arguments = make([]string, 0, len(active_command.Arguments))
-	flags = make([]string, 0, len(active_command.Flags))
-	if len(operating_system_args) <= arguments_start {
-		return positional_arguments, flags, nil
-	}
-
-	start_of_flags := -1
-	for index, argument := range operating_system_args[arguments_start:] {
-		if strings.HasPrefix(argument, "-") {
-			if argument != "-" {
-				start_of_flags = index + arguments_start
-				break
-			}
-		}
-		positional_arguments = append(positional_arguments, argument)
-	}
-	if start_of_flags < 0 {
-		return positional_arguments, flags, nil
-	}
-	for _, flag := range operating_system_args[start_of_flags:] {
-		if !strings.HasPrefix(flag, "-") {
-			return positional_arguments, flags, fmt.Errorf(
-				"Positional arguments cannot appear after flags. Got %q", flag)
-		}
-		flags = append(flags, flag)
-	}
-	return positional_arguments, flags, nil
+// Input for command_assign_positionals.
+type command_assign_positionals_input struct {
+	// Command is the active command whose arguments are filled in place.
+	Command Command
+	// Positionals are the bare tokens, each tagged with its command-line position.
+	Positionals []indexed_token
+	// Slice_Named are the trailing slice argument's -label=value contributions, tagged
+	// with position so they merge with the positionals in order.
+	Slice_Named []indexed_token
+	// Filled records the scalar arguments already set by name; it gains those set here.
+	Filled map[string]bool
 }
 
-// Converts each positional argument to its option's declared type, writing the
-// result back into the options. A variadic last argument absorbs every remaining
-// positional into its slice.
-func parse_arguments(arguments []Option, positional_arguments []string) (err error) {
-	for index, argument := range arguments {
-		if argument.Is_Variadic {
-			// The variadic is the last argument; everything from here on is its slice,
-			// so this returns and no later argument is visited.
-			return option_parse_variadic(
-				&arguments[index], positional_arguments[index:])
+// Fills the command's scalar arguments from the positional tokens in declaration
+// order, skipping any already set by name, then routes the rest into the trailing
+// slice argument together with its named contributions, in command-line order. Errors
+// when a positional has no argument to fill. Filled gains every scalar argument set
+// here so the required check can see it.
+func command_assign_positionals(input *command_assign_positionals_input) (err error) {
+	command := input.Command
+	fill_targets := []int{}
+	for index := range command.Arguments {
+		argument := command.Arguments[index]
+		if option_is_slice(argument) {
+			continue
 		}
-		positional_argument := positional_arguments[index]
-		switch argument.Value.(type) {
-		default:
-			panic_when(true, "unreachable")
-		case string:
-			arguments[index].Value = positional_argument
-		case int:
-			number, parse_err := strconv.Atoi(positional_argument)
-			if parse_err != nil {
-				return fmt.Errorf("%s is an invalid number", positional_argument)
+		if input.Filled[argument.Label] {
+			continue
+		}
+		fill_targets = append(fill_targets, index)
+	}
+
+	slice_index := command_slice_argument_index(command)
+	slice_contributions := append([]indexed_token{}, input.Slice_Named...)
+	cursor := 0
+	for _, positional := range input.Positionals {
+		if cursor < len(fill_targets) {
+			argument := &command.Arguments[fill_targets[cursor]]
+			set_err := option_set_positional(argument, positional.Value)
+			if set_err != nil {
+				return set_err
 			}
-			arguments[index].Value = number
+			input.Filled[argument.Label] = true
+			cursor++
+			continue
 		}
+		if slice_index < 0 {
+			return fmt.Errorf("unexpected argument %q", positional.Value)
+		}
+		slice_contributions = append(slice_contributions, positional)
+	}
+	if slice_index < 0 {
+		return nil
+	}
+	slices.SortFunc(slice_contributions, func(left, right indexed_token) (order int) {
+		return left.Index - right.Index
+	})
+	return option_set_slice(&command.Arguments[slice_index], slice_contributions)
+}
+
+// Returns the index of the command's trailing slice argument, or -1 when the last
+// argument is not a slice.
+func command_slice_argument_index(command Command) (index int) {
+	count := len(command.Arguments)
+	if count == 0 {
+		return -1
+	}
+	if option_is_slice(command.Arguments[count-1]) {
+		return count - 1
+	}
+	return -1
+}
+
+// Returns an error naming the first scalar argument left unset by both name and
+// position. The slice argument is optional, so it is never required.
+func command_validate_required(command Command, filled map[string]bool) (err error) {
+	for index := range command.Arguments {
+		argument := command.Arguments[index]
+		if option_is_slice(argument) {
+			continue
+		}
+		if filled[argument.Label] {
+			continue
+		}
+		return fmt.Errorf("%q is missing required argument %q",
+			command.Label, argument.Label)
 	}
 	return nil
 }
 
-// Collects the remaining positionals into the variadic argument's slice, converting
-// each element to the slice's declared element type. The collected slice is fresh so
-// it does not alias the parser's scratch buffer.
-func option_parse_variadic(argument *Option, positional_arguments []string) (err error) {
+// Converts a positional token to the scalar argument's type and assigns it. Unlike a
+// named value, a positional is taken verbatim: no quote trimming, and empty is allowed.
+func option_set_positional(argument *Option, value string) (err error) {
 	switch argument.Value.(type) {
 	default:
 		panic_when(true, "unreachable")
-	case []string:
-		values := make([]string, len(positional_arguments))
-		copy(values, positional_arguments)
-		argument.Value = values
-	case []int:
-		values := make([]int, 0, len(positional_arguments))
-		for _, positional_argument := range positional_arguments {
-			number, parse_err := strconv.Atoi(positional_argument)
-			if parse_err != nil {
-				return fmt.Errorf("%s is an invalid number", positional_argument)
-			}
-			values = append(values, number)
+	case string:
+		argument.Value = value
+	case int:
+		number, parse_err := strconv.Atoi(value)
+		if parse_err != nil {
+			return fmt.Errorf("%s is an invalid number", value)
 		}
-		argument.Value = values
+		argument.Value = number
 	}
 	return nil
 }
 
-// Resolves each raw flag against the program's global flags and the active
-// command's flags, writing the converted values back.
-func program_parse_flags(program *Program, active_command Command, flags []string) (err error) {
-	for _, flag := range flags {
-		if strings.HasPrefix(flag, "--") {
-			if len(flag) > len("--") {
-				return fmt.Errorf(
-					"Flags are denoted by a single dash, not double. use '-%s'",
-					flag[2:])
+// Builds the slice option's value from its contributions, already sorted into
+// command-line order, converting each element to the slice's element type.
+func option_set_slice(option *Option, contributions []indexed_token) (err error) {
+	switch option.Value.(type) {
+	default:
+		panic_when(true, "unreachable")
+	case []string:
+		values := make([]string, 0, len(contributions))
+		for _, contribution := range contributions {
+			values = append(values, contribution.Value)
+		}
+		option.Value = values
+	case []int:
+		values := make([]int, 0, len(contributions))
+		for _, contribution := range contributions {
+			number, parse_err := strconv.Atoi(contribution.Value)
+			if parse_err != nil {
+				return fmt.Errorf("%s is an invalid number", contribution.Value)
 			}
+			values = append(values, number)
 		}
-		// A lone "-" is routed to positional args by command_collect_args, so a flag
-		// token is never "-".
-		invariant.Dot_Product(invariant.Always(flag != "-"))
-		flag = flag[1:]
-		flag_name, value, value_was_set := strings.Cut(flag, "=")
-
-		global_index := slices.IndexFunc(program.Global_Flags,
-			func(option Option) (match bool) {
-				return option.Label == flag_name
-			})
-		if global_index >= 0 {
-			err = option_set_value(option_set_value_input{
-				Option:        &program.Global_Flags[global_index],
-				Value:         value,
-				Value_Was_Set: value_was_set,
-				Name:          flag_name,
-			})
-			if err != nil {
-				return err
-			}
-			continue
-		}
-
-		command_index := slices.IndexFunc(active_command.Flags,
-			func(option Option) (match bool) {
-				return option.Label == flag_name
-			})
-		if command_index < 0 {
-			return fmt.Errorf("%q is an unknown flag", flag_name)
-		}
-		err = option_set_value(option_set_value_input{
-			Option:        &active_command.Flags[command_index],
-			Value:         value,
-			Value_Was_Set: value_was_set,
-			Name:          flag_name,
-		})
-		if err != nil {
-			return err
-		}
+		option.Value = values
 	}
 	return nil
 }
@@ -696,7 +760,7 @@ func print_help_single(output io.Writer, program Program) {
 // ellipsis for a variadic. A variadic shows its element type, not its slice type, so
 // a []string reads as <paths:string...> rather than the noisier <paths:[]string>.
 func option_format_signature(argument Option) (signature string) {
-	if argument.Is_Variadic {
+	if option_is_slice(argument) {
 		element := "string"
 		if _, is_integer := argument.Value.([]int); is_integer {
 			element = "int"

@@ -95,8 +95,68 @@ func Test_Parse_Arguments(t *testing.T) {
 	}
 }
 
-// Test_Parse_Variadic verifies a variadic last argument collects zero or more
-// trailing positionals into a slice, after any fixed positionals.
+// Test_Parse_Named verifies every option is settable by -label=value, that named and
+// positional tokens interleave freely, and that a repeated or unknown option errors.
+func Test_Parse_Named(t *testing.T) {
+	fixture := new_cli_fixture()
+
+	// An argument can be set by name instead of by position.
+	command, err := cli.Program_Parse(&fixture.Program,
+		[]string{"todoctl", "add", "-task=hello"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if cli.Get_Option(command.Arguments, "task").Value.(string) != "hello" {
+		t.Errorf("expected task hello, got %v",
+			cli.Get_Option(command.Arguments, "task").Value)
+	}
+
+	// Named and positional tokens may appear in any order.
+	command, err = cli.Program_Parse(&fixture.Program,
+		[]string{"todoctl", "add", "-priority=high", "world"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if cli.Get_Option(command.Arguments, "task").Value.(string) != "world" {
+		t.Error("expected task world from a positional after a flag")
+	}
+	if cli.Get_Option(command.Flags, "priority").Value.(string) != "high" {
+		t.Error("expected priority high")
+	}
+
+	// A positional skips an argument already set by name and fills the next free one.
+	pair := cli.New_Single(cli.New_Single_Input{
+		Label: "pair", Description: "two values",
+		Arguments: []cli.Option{
+			cli.New_Argument[string](cli.New_Argument_Input{Label: "first"}),
+			cli.New_Argument[string](cli.New_Argument_Input{Label: "second"}),
+		},
+	})
+	command, err = cli.Program_Parse(&pair, []string{"pair", "-first=x", "y"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if cli.Get_Option(command.Arguments, "first").Value.(string) != "x" {
+		t.Error("expected first x")
+	}
+	if cli.Get_Option(command.Arguments, "second").Value.(string) != "y" {
+		t.Error("expected second y")
+	}
+
+	// Setting a scalar option twice, or naming an unknown option, is an error.
+	_, err = cli.Program_Parse(&fixture.Program,
+		[]string{"todoctl", "add", "task", "-priority=high", "-priority=low"})
+	if err == nil {
+		t.Error("expected error for a scalar set more than once")
+	}
+	_, err = cli.Program_Parse(&fixture.Program, []string{"todoctl", "add", "task", "-zzz=1"})
+	if err == nil {
+		t.Error("expected error for an unknown option")
+	}
+}
+
+// Test_Parse_Variadic verifies a slice argument collects trailing positionals, accepts
+// repeated -label=value that append, and merges both kinds in token order.
 func Test_Parse_Variadic(t *testing.T) {
 	single := cli.New_Single(cli.New_Single_Input{
 		Label: "sloc", Description: "count lines of code",
@@ -106,12 +166,16 @@ func Test_Parse_Variadic(t *testing.T) {
 		Flags: []cli.Option{{Label: "hidden", Value: false}},
 	})
 	assert_variadic(t, single, []string{"sloc", "a", "b", "c"}, "path", "a", "b", "c")
-	// Zero trailing positionals yields an empty slice, not an error.
+	// Zero positionals yields an empty slice, not an error.
 	assert_variadic(t, single, []string{"sloc"}, "path")
-	// The variadic stops at the first flag.
+	// The slice stops at a flag it does not own.
 	assert_variadic(t, single, []string{"sloc", "a", "b", "-hidden"}, "path", "a", "b")
+	// Repeated -label=value append to the slice.
+	assert_variadic(t, single, []string{"sloc", "-path=a", "-path=b"}, "path", "a", "b")
+	// Positional and named contributions merge in token order.
+	assert_variadic(t, single, []string{"sloc", "x", "-path=a"}, "path", "x", "a")
 
-	// Fixed positionals may precede the variadic: cp <dest> <source...>.
+	// Scalar positionals may precede the slice: cp <dest> <source...>.
 	multi := cli.New(cli.New_Input{
 		Label: "fileutil", Description: "file utilities",
 		Commands: []cli.Command{{
@@ -124,14 +188,16 @@ func Test_Parse_Variadic(t *testing.T) {
 	})
 	assert_variadic(t, multi,
 		[]string{"fileutil", "cp", "d", "s1", "s2"}, "source", "s1", "s2")
-
-	// The fixed argument before the variadic is still required.
+	// Naming the scalar frees its slot; the positionals overflow into the slice.
+	assert_variadic(t, multi,
+		[]string{"fileutil", "cp", "a", "b", "-dest=/tmp"}, "source", "a", "b")
+	// The scalar before the slice is still required.
 	_, err := cli.Program_Parse(&multi, []string{"fileutil", "cp"})
 	if err == nil {
-		t.Error("expected error for the missing fixed argument")
+		t.Error("expected error for the missing scalar argument")
 	}
 
-	// A variadic int converts each element and reports a bad one.
+	// A slice int converts each element and reports a bad one.
 	numbers := cli.New_Single(cli.New_Single_Input{
 		Label: "sum", Description: "add numbers",
 		Arguments: []cli.Option{cli.New_Variadic[int](cli.New_Variadic_Input{Label: "n"})},
@@ -145,7 +211,7 @@ func Test_Parse_Variadic(t *testing.T) {
 	}
 	_, err = cli.Program_Parse(&numbers, []string{"sum", "1", "x"})
 	if err == nil {
-		t.Error("expected error for a non-numeric variadic element")
+		t.Error("expected error for a non-numeric slice element")
 	}
 }
 
@@ -238,15 +304,30 @@ func Test_New_Validation(t *testing.T) {
 			Commands: []cli.Command{{Label: ""}},
 		})
 	})
-	// New_Single rejects a malformed flag the same way New does.
+	// New_Single rejects a malformed flag label the same way New does.
 	assert_panics(t, "flag with an underscore", func() {
 		cli.New_Single(cli.New_Single_Input{
 			Label: "sloc",
 			Flags: []cli.Option{{Label: "no_ignore", Value: false}},
 		})
 	})
-	// A variadic must be the last argument, which also forbids a second variadic.
-	assert_panics(t, "non-terminal variadic", func() {
+	// An argument label must be flag-safe now that arguments are settable by name.
+	assert_panics(t, "argument with an underscore", func() {
+		cli.New_Single(cli.New_Single_Input{
+			Label:     "sloc",
+			Arguments: []cli.Option{{Label: "bad_label", Value: ""}},
+		})
+	})
+	// An argument label may not collide with a flag in the -key=value namespace.
+	assert_panics(t, "argument colliding with a flag", func() {
+		cli.New_Single(cli.New_Single_Input{
+			Label:     "sloc",
+			Arguments: []cli.Option{{Label: "dup", Value: ""}},
+			Flags:     []cli.Option{{Label: "dup", Value: false}},
+		})
+	})
+	// A slice argument must be the last argument.
+	assert_panics(t, "non-terminal slice argument", func() {
 		cli.New_Single(cli.New_Single_Input{
 			Label: "x",
 			Arguments: []cli.Option{
