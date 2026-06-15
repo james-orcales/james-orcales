@@ -14,3 +14,32 @@ Ready_At queue the IO completions use, so every wait rides one timeline.
 
 A read completes after the modeled latency and reports the buffer length, with no
 real syscall and no waiting.
+
+### Listen
+
+Listen returns a fresh synthetic descriptor synchronously; the simulated backend
+binds nothing, so the call never fails.
+
+### Accept
+
+An accept completes after the modeled latency and yields a new descriptor distinct
+from its listener, modeling one inbound connection.
+
+### Connect
+
+A connect completes after the modeled latency and yields a fresh connected
+descriptor, with no real handshake.
+
+### Receive
+
+A receive completes after the modeled latency and reports the buffer length, with
+no real syscall and no waiting.
+
+### Send
+
+A send completes after the modeled latency and reports the buffer length, with no
+real syscall and no waiting.
+
+### Close
+
+A close completes after the modeled latency and reports no error.

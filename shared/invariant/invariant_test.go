@@ -817,9 +817,11 @@ func check(n int) {
 }
 
 // A bundle whose package is in neither the analyzed module nor a go.work sibling
-// (here there is no go.work at all) cannot be resolved, so registration skips it
-// gracefully — nothing is seeded and no panic occurs.
-func Test_Register_Skips_Cross_Module_Bundle(t *testing.T) {
+// (here there is no go.work at all) cannot be resolved. Its elements would be
+// enforced at runtime yet seed no coverage, so registration must fail rather than
+// drop them silently: it reports the bundle by site and exits non-zero, and nothing
+// is seeded.
+func Test_Register_Fatal_On_Unresolvable_Cross_Module_Bundle(t *testing.T) {
 	const package_b = `package b
 
 import (
@@ -831,22 +833,31 @@ func check(n int) {
 	invariant.Dot_Product(x.Pair_Invariants(n)...)
 }
 `
+	var output bytes.Buffer
+	exit_code := -1
 	recorder := &invariant.Recorder{
 		File_System: fstest.MapFS{
 			"m/go.mod": &fstest.MapFile{Data: []byte("module example.com/m\n")},
 			"m/b/b.go": &fstest.MapFile{Data: []byte(package_b)},
 		},
+		Output: &output,
+		Exit:   func(code int) { exit_code = code },
 	}
 	invariant.Recorder_Register_Packages_For_Analysis(recorder, "/m/b")
 
+	if exit_code != 1 {
+		t.Fatalf("an unresolvable cross-module bundle must exit 1, got %d", exit_code)
+	}
+	if !strings.Contains(output.String(), "Pair_Invariants") {
+		t.Errorf("the report must name the unresolved bundle, got: %s", output.String())
+	}
 	seeded := 0
 	recorder.Assertions.Range(func(key, value any) (more bool) {
 		seeded++
 		return true
 	})
 	if seeded != 0 {
-		t.Errorf("expected nothing seeded for an unresolvable cross-module bundle, got %d",
-			seeded)
+		t.Errorf("an unresolvable bundle must seed nothing, got %d entries", seeded)
 	}
 }
 

@@ -14,6 +14,11 @@ a value is what it is, why something that looks removable is load-bearing.
 
 Before finalizing a plan in plan mode, ask the user at least 20 questions.
 
+## Code Exploration
+
+Golang packages have a `SPECIFICATION.md`. Read that first then evaluate if you still need to read
+code.
+
 ## Naming
 
 Name a thing for what it is. Not a use case it serves, not a behavior it performs — what it *is*.
@@ -25,4 +30,3 @@ Use snake_case and Ada_Case.
 ## Linting
 
 Do not side step the linter. Make the fundamental code change it's asking from you.
-

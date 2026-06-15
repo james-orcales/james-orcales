@@ -52,17 +52,27 @@ GIT_ROOT="$(cd "$(dirname "$0")" && pwd)"
 GO_SRC_DIR="${GIT_ROOT}/third_party/go"
 GO_BIN="${GO_SRC_DIR}/bin/go"
 GOROOT="${GO_SRC_DIR}"
-GOPATH="${GIT_ROOT}/.go_path"
-GOBIN="${GIT_ROOT}/bin"
+GOPATH="${GIT_ROOT}/.local/share/go"
+GOBIN="${GIT_ROOT}/.local/bin"
+
+# Put GOBIN on PATH up front so the which-based install checks below resolve the
+# tools installed there. INHERITED_PATH keeps the original so emit_path still
+# dedups against what the user/direnv already has, not this in-script addition.
+INHERITED_PATH="${PATH}"
+export PATH="${GOBIN}:${PATH}"
 
 TARGET_VERSION=$(sed -n '1s/^go//p' "${GO_SRC_DIR}/VERSION") || FATAL "failed to read ${GO_SRC_DIR}/VERSION"
 
 BOOTSTRAP_VERSION="1.26.3"
 BOOTSTRAP_TARBALL="${GIT_ROOT}/third_party/go${BOOTSTRAP_VERSION}.${GO_OS}-${GO_ARCH}.tar.gz"
-BOOTSTRAP_CACHE="${GIT_ROOT}/bin/go_bootstrap"
+BOOTSTRAP_CACHE="${GIT_ROOT}/.local/share/go_bootstrap"
 BOOTSTRAP_ROOT="${BOOTSTRAP_CACHE}/go"
 
 GOPLS_VERSION="v0.21.1"
+
+# goimports is the editor's format-on-save for Go (home/.config/nvim runs it on
+# BufWritePre). It is versioned with golang.org/x/tools; bump alongside it.
+GOIMPORTS_VERSION="v0.39.0"
 
 INFO "platform=${GO_OS}/${GO_ARCH} target=go${TARGET_VERSION} bootstrap=go${BOOTSTRAP_VERSION}"
 
@@ -86,19 +96,40 @@ if test "$(go_version "${GO_BIN}")" != "${TARGET_VERSION}"; then
 fi
 INFO "go ready: $("${GO_BIN}" version)"
 
+# go builds into GOROOT/bin, which is not on PATH; expose it (and gofmt) from the
+# one directory that is — GOBIN — so `which go` resolves there.
+if test "$(which go 2>/dev/null)" != "${GOBIN}/go"; then
+        INFO "linking go into ${GOBIN}..."
+        mkdir -p "${GOBIN}"
+        ln -sf "${GO_BIN}" "${GOBIN}/go"
+        ln -sf "${GOROOT}/bin/gofmt" "${GOBIN}/gofmt"
+fi
+
 if test -z "${CI:-}"; then
         GOPLS_BIN="${GOBIN}/gopls"
         INSTALLED=$("${GOPLS_BIN}" version 2>/dev/null | awk '/gopls/ {print $NF}')
-        if test "${INSTALLED}" != "${GOPLS_VERSION}"; then
+        if test "${INSTALLED}" != "${GOPLS_VERSION}" || test "$(which gopls 2>/dev/null)" != "${GOPLS_BIN}"; then
                 INFO "installing gopls ${GOPLS_VERSION}..."
                 GOROOT="${GOROOT}" GOPATH="${GOPATH}" GOBIN="${GOBIN}" GOFLAGS="" GOTOOLCHAIN=local \
                         "${GO_BIN}" install "golang.org/x/tools/gopls@${GOPLS_VERSION}" \
                         || FATAL "gopls install failed"
         fi
         INFO "gopls ready: $("${GOPLS_BIN}" version | head -n1)"
+
+        # goimports has no `version` subcommand, so read the module version baked
+        # into the binary by `go install` and compare against the pin.
+        GOIMPORTS_BIN="${GOBIN}/goimports"
+        INSTALLED=$("${GO_BIN}" version -m "${GOIMPORTS_BIN}" 2>/dev/null | awk '$1=="mod"{print $3}')
+        if test "${INSTALLED}" != "${GOIMPORTS_VERSION}" || test "$(which goimports 2>/dev/null)" != "${GOIMPORTS_BIN}"; then
+                INFO "installing goimports ${GOIMPORTS_VERSION}..."
+                GOROOT="${GOROOT}" GOPATH="${GOPATH}" GOBIN="${GOBIN}" GOFLAGS="" GOTOOLCHAIN=local \
+                        "${GO_BIN}" install "golang.org/x/tools/cmd/goimports@${GOIMPORTS_VERSION}" \
+                        || FATAL "goimports install failed"
+        fi
+        INFO "goimports ready: ${GOIMPORTS_BIN}"
 fi
 
-emit_path "${GOROOT}/bin"
+PATH="${INHERITED_PATH}"
 emit_path "${GOBIN}"
 emit_var  GOROOT      "${GOROOT}"
 emit_var  GOPATH      "${GOPATH}"

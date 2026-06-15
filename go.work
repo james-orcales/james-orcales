@@ -1,8 +1,0 @@
-go 1.26.3
-
-use (
-	./shared
-	./lint
-	./markdown_to_pdf
-	./setup
-)
