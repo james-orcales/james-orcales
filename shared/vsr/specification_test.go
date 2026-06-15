@@ -2908,3 +2908,40 @@ func Test_Witness_Promotion(t *testing.T) {
 			executed)
 	}
 }
+
+// Test_Read_Through_Consensus: a read-only request is an ordinary command — the primary appends it,
+// commits it on a quorum, the state machine executes it, and the primary replies, exactly as for a
+// write. The protocol does not distinguish a read; reads run through consensus, TigerBeetle's
+// design (it has no lease-based fast-read path).
+func Test_Read_Through_Consensus(t *testing.T) {
+	primary := vsr.Replica{
+		Identifier: 0, Configuration: vsr.Configuration{0, 1, 2},
+		State_Machine: vsr.State_Machine{
+			Execute: func(command, prediction []byte) (result []byte) {
+				return []byte("answered-" + string(command))
+			},
+		},
+	}
+	// A read-only command arrives like any request and is appended to the log.
+	receive(&primary, vsr.Message{
+		Kind: vsr.Message_Kind_Request, To: 0, Client: 7, Request_Number: 1,
+		Command: []byte("read-x"),
+	})
+	if primary.Op != 1 {
+		t.Fatalf("expected the read appended through the log, op %d", primary.Op)
+	}
+	// A quorum ack commits it; the state machine executes it and the primary replies.
+	output := receive(&primary, vsr.Message{
+		Kind: vsr.Message_Kind_Prepare_Ok, From: 1, To: 0, View: 0, Op: 1,
+	})
+	if primary.Commit != 1 {
+		t.Fatalf("expected the read committed on a quorum, commit %d", primary.Commit)
+	}
+	reply, ok := first_message(output.Replies, vsr.Message_Kind_Reply)
+	if !ok {
+		t.Fatalf("expected a Reply for the committed read, got %+v", output.Replies)
+	}
+	if string(reply.Result) != "answered-read-x" {
+		t.Errorf("expected the state machine's read result, got %q", reply.Result)
+	}
+}

@@ -197,6 +197,10 @@ type simulation_result struct {
 	// primary actually batched several requests into one round (§6.2) rather than every Prepare
 	// being a batch of one.
 	Batches_Flushed int
+	// Reads_Committed counts the read-only commands that committed, witnessing that reads
+	// actually ran through consensus (§6.3, TigerBeetle's reads-through-consensus) rather than
+	// the workload being writes only.
+	Reads_Committed int
 }
 
 // Scheduled_message is a message scheduled for delivery at a virtual moment.
@@ -453,6 +457,17 @@ func simulator_state_machine(state *simulator, index int) (machine vsr.State_Mac
 	machine = vsr.State_Machine{
 		Execute: func(command []byte, prediction []byte) (result []byte) {
 			simulator_observe_execution(state, index, command)
+			if command_is_read(command) {
+				// A read returns the current application state without mutating it.
+				// It still ran through the log and committed like any op (§6.3
+				// reads-through-consensus, TigerBeetle's design); the result
+				// reflects the accumulator at this op, which is identical on every
+				// replica that executed the same committed prefix.
+				result = uint64_to_bytes(state.Accumulator[index])
+				state.Executed[index][string(command)] = true
+				state.Executed_Result[index][string(command)] = result
+				return result
+			}
 			state.Accumulator[index] = accumulator_fold(&accumulator_fold_input{
 				Previous:   state.Accumulator[index],
 				Command:    command,
@@ -801,8 +816,7 @@ func simulator_tick_clients(state *simulator, now time.Moment) {
 		this.Request_Number++
 		this.Unanswered = true
 		this.Request_Moment = now
-		this.Request_Command = []byte(fmt.Sprintf(
-			"client-%d-req-%d", this.Identifier, this.Request_Number))
+		this.Request_Command = client_command(this.Identifier, this.Request_Number)
 		// The request carries the simulator's current epoch — a client that has learned the
 		// latest configuration out of band (§7.4) — so the primary accepts it rather than
 		// redirecting it as stale.
@@ -818,10 +832,29 @@ func simulator_tick_clients(state *simulator, now time.Moment) {
 	}
 }
 
-// The command a recovering client re-sends: it remembers its last command text deterministically
-// from its identifier and request-number, the only state a §4.5-recovering client keeps.
+// The command for a client's request-number, a deterministic function of (identifier, number) so a
+// §4.5-recovering client that kept only its number rebuilds the identical command — read or write
+// alike. Every third request is a read ("read-" prefix), so the cluster runs a read/write mix; a
+// read is an ordinary command the state machine answers through consensus, TigerBeetle's design (it
+// has no lease fast-read path), so the core treats it no differently from a write.
+func client_command(identifier vsr.Client_Identifier, number vsr.Request_Number) (command []byte) {
+	if number%3 == 0 {
+		return []byte(fmt.Sprintf("read-client-%d-req-%d", identifier, number))
+	}
+	return []byte(fmt.Sprintf("client-%d-req-%d", identifier, number))
+}
+
+// The command a recovering client re-sends: it rebuilds the command deterministically from its
+// identifier and request-number, the only state a §4.5-recovering client keeps.
 func client_last_command(this *client) (command []byte) {
-	return []byte(fmt.Sprintf("client-%d-req-%d", this.Identifier, this.Request_Number))
+	return client_command(this.Identifier, this.Request_Number)
+}
+
+// Reports whether a command is a read (§6.3): the state machine answers it from current state
+// without mutating it. Reads run through consensus as ordinary ops, so this is only the
+// application's own interpretation, never a protocol distinction.
+func command_is_read(command []byte) (yes bool) {
+	return len(command) >= 5 && string(command[:5]) == "read-"
 }
 
 // Re-sends a client's outstanding request to every active replica, so a retry after a view change
@@ -1014,6 +1047,20 @@ func simulator_advance_reference(state *simulator) {
 		// so a replica that commits up to a reconfiguration still matches the reference.
 		if len(entry.New_Configuration) > 0 {
 			state.Reference.Accumulator_Of_Commit[op] = state.Reference.Accumulator
+			continue
+		}
+		// A read (§6.3, reads-through-consensus) returns the current state without folding
+		// it, so the accumulator is unchanged at this op and the canonical result is the
+		// state the executing replicas saw. Counted so a Sometimes-style cleanup confirms
+		// reads actually ran.
+		if command_is_read(entry.Command) {
+			result := uint64_to_bytes(state.Reference.Accumulator)
+			state.Reference.Result_Of_Op[op] = result
+			state.Reference.Accumulator_Of_Commit[op] = state.Reference.Accumulator
+			key := outcome_key{Client: entry.Client, Request: entry.Request_Number}
+			state.Reference.Request_Of_Op[op] = key
+			simulator_record_outcome(state, key, result)
+			state.Result.Reads_Committed++
 			continue
 		}
 		// The committed entry's prediction is identical on every replica (log agreement

@@ -404,3 +404,15 @@ new primary broadcasts, or by state transfer.
 A standby a reconfiguration moves into the voting set materializes the application state it never
 built: it restores its carried checkpoint and replays the un-checkpointed committed suffix
 (TigerBeetle's state sync) rather than re-executing the whole log, then serves as an active replica.
+
+# Read
+
+A read-only request is an ordinary command: logged, committed, and executed like any op. The paper's
+§6.3 lease-based fast reads are deliberately not built — TigerBeetle runs every read through
+consensus rather than make safety depend on clocks — so the core has no read-specific path.
+
+### Through Consensus
+
+The primary appends a read-only request, commits it on a quorum, and the state machine executes it
+to produce the reply, exactly as for a write; whether a command reads or writes is the application's
+own concern, invisible to the protocol.
