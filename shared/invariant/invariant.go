@@ -1197,24 +1197,21 @@ func ast_flatten_consumers(expressions []ast.Expr) (flattened []ast.Expr) {
 }
 
 // Reports whether selector names an axis constructor (Always / Sometimes /
-// Distinct_Boundary) — the kinds that must be consumed by a Dot_Product.
+// Distinct_Boundary, in either the bare or explicit-recorder form) — the kinds that must
+// be consumed by a Dot_Product.
 func ast_is_axis_selector(selector string) (is_axis bool) {
-	if selector == "Always" {
-		return true
-	}
-	if selector == "Sometimes" {
-		return true
-	}
-	return selector == "Distinct_Boundary"
+	_, _, is_axis = ast_axis_signature(selector)
+	return is_axis
 }
 
 // Renders one orphan as "<site>  orphan: invariant.<Kind>(<condition>) is never
 // passed to a Dot_Product".
 func recorder_orphan_line(file_set *token.FileSet, call *ast.CallExpr) (line string) {
 	selector := ast_invariant_selector(call)
-	condition := ast_condition_text(file_set, call)
-	if selector == "Distinct_Boundary" {
-		condition = ast_boundary_condition_text(file_set, call)
+	kind, condition_index, _ := ast_axis_signature(selector)
+	condition := ast_condition_text(file_set, call, condition_index)
+	if kind == Assertion_Kind_Boundary {
+		condition = ast_boundary_condition_text(file_set, call, condition_index)
 	}
 	return recorder_position(file_set, call) + "  orphan: invariant." + selector +
 		"(" + condition + ") is never passed to a Dot_Product"
@@ -1675,35 +1672,54 @@ func ast_file_imports(file *ast.File) (imports map[string]string) {
 	return imports
 }
 
-// Returns the axis for an Always/Sometimes/Distinct_Boundary constructor call;
-// is_axis is false for any other call (Impossible, a bundle, a non-invariant
-// call). A Boundary is a two-bucket axis (Lo=0, Hi=1) named by its X expression.
+// Maps an axis constructor selector to its assertion kind and the index of its
+// condition-bearing argument. The bare sugar forms (Always / Sometimes /
+// Distinct_Boundary) carry the condition first; the explicit Recorder_* forms lead with
+// the recorder, so the condition rides the second argument. is_axis is false for any
+// other selector. The Sometimes_Has_ / Always_Has_ / Never_Has_ helpers are absent here:
+// they take no recorder and report the whole call as their condition.
+func ast_axis_signature(selector string) (kind Assertion_Kind, condition_index int, is_axis bool) {
+	switch selector {
+	case "Always":
+		return Assertion_Kind_Always, 0, true
+	case "Sometimes":
+		return Assertion_Kind_Sometimes, 0, true
+	case "Distinct_Boundary":
+		return Assertion_Kind_Boundary, 0, true
+	case "Recorder_Always":
+		return Assertion_Kind_Always, 1, true
+	case "Recorder_Sometimes":
+		return Assertion_Kind_Sometimes, 1, true
+	case "Recorder_Distinct_Boundary":
+		return Assertion_Kind_Boundary, 1, true
+	}
+	return 0, 0, false
+}
+
+// Returns the axis for an Always/Sometimes/Distinct_Boundary constructor call, in either
+// the bare sugar form or the explicit Recorder_* form; is_axis is false for any other
+// call (Impossible, a bundle, a non-invariant call). A Boundary is a two-bucket axis
+// (Lo=0, Hi=1) named by its X expression.
 func recorder_axis_of(
 	file_set *token.FileSet, call *ast.CallExpr, allow_unqualified bool,
 ) (axis registration_axis, is_axis bool) {
 	selector := ast_selector(call, allow_unqualified)
-	if selector == "Always" {
+	if kind, condition_index, ok := ast_axis_signature(selector); ok {
+		condition := ast_condition_text(file_set, call, condition_index)
+		bucket_count := 2
+		if kind == Assertion_Kind_Always {
+			bucket_count = 1
+		}
+		// A Boundary names itself by the X it bounds, dug out of the Boundary_Input
+		// composite literal rather than read as a plain condition expression.
+		if kind == Assertion_Kind_Boundary {
+			condition = ast_boundary_condition_text(file_set, call, condition_index)
+		}
 		return registration_axis{
 			Site:         recorder_position(file_set, call),
-			Condition:    ast_condition_text(file_set, call),
-			Kind:         Assertion_Kind_Always,
-			Bucket_Count: 1,
-		}, true
-	}
-	if selector == "Sometimes" {
-		return registration_axis{
-			Site:         recorder_position(file_set, call),
-			Condition:    ast_condition_text(file_set, call),
-			Kind:         Assertion_Kind_Sometimes,
-			Bucket_Count: 2,
-		}, true
-	}
-	if selector == "Distinct_Boundary" {
-		return registration_axis{
-			Site:         recorder_position(file_set, call),
-			Condition:    ast_boundary_condition_text(file_set, call),
-			Kind:         Assertion_Kind_Boundary,
-			Bucket_Count: 2,
+			Condition:    condition,
+			Kind:         kind,
+			Bucket_Count: bucket_count,
 		}, true
 	}
 	// Dedicated string-axis helpers (Sometimes_Has_X / Always_Has_X / Never_Has_X)
@@ -1817,6 +1833,7 @@ func ast_is_invariant_primitive(name string) (is_primitive bool) {
 	}
 	switch name {
 	case "Always", "Sometimes", "Distinct_Boundary",
+		"Recorder_Always", "Recorder_Sometimes", "Recorder_Distinct_Boundary",
 		"Impossible", "Event_True", "Event_False":
 		return true
 	}
@@ -1913,13 +1930,15 @@ func recorder_position(file_set *token.FileSet, node ast.Node) (site string) {
 	return position.Filename + ":" + strconv.Itoa(position.Line)
 }
 
-// Returns the source text of the constructor's first (condition) argument, for
-// the never-fired report; "" when the call has no argument.
-func ast_condition_text(file_set *token.FileSet, call *ast.CallExpr) (text string) {
-	if len(call.Args) == 0 {
+// Returns the source text of the constructor's condition argument — at condition_index,
+// past any leading recorder — for the never-fired report; "" when the call lacks it.
+func ast_condition_text(
+	file_set *token.FileSet, call *ast.CallExpr, condition_index int,
+) (text string) {
+	if len(call.Args) <= condition_index {
 		return ""
 	}
-	return ast_expression_text(file_set, call.Args[0])
+	return ast_expression_text(file_set, call.Args[condition_index])
 }
 
 // Returns the source text of expression, or "" when it can't be printed.
@@ -1934,13 +1953,15 @@ func ast_expression_text(file_set *token.FileSet, expression ast.Expr) (text str
 // Returns the source text of a Distinct_Boundary's X expression — the value the
 // boundary tracks — so the report names the boundary by what it bounds. Falls
 // back to the whole argument when the Boundary_Input literal can't be read.
-func ast_boundary_condition_text(file_set *token.FileSet, call *ast.CallExpr) (text string) {
-	if len(call.Args) == 0 {
+func ast_boundary_condition_text(
+	file_set *token.FileSet, call *ast.CallExpr, condition_index int,
+) (text string) {
+	if len(call.Args) <= condition_index {
 		return ""
 	}
-	composite := ast_boundary_composite(call.Args[0])
+	composite := ast_boundary_composite(call.Args[condition_index])
 	if composite == nil {
-		return ast_expression_text(file_set, call.Args[0])
+		return ast_expression_text(file_set, call.Args[condition_index])
 	}
 	for _, element := range composite.Elts {
 		keyed, is_keyed := element.(*ast.KeyValueExpr)
