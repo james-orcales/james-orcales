@@ -59,7 +59,8 @@ Once the files are in place, opening a shell pulls the environment up by its boo
 ```
 go run ./setup
   └─ bootstrap (in order):
-       direnv → dotfiles → fonts → neovim → fzf → rust → fish → jj → ripgrep → fd → ghostty
+       direnv → dotfiles → fonts → neovim → fzf → maddox → m2p → sloc →
+       rust → fish → jj → ripgrep → fd → ghostty
        └─ direnv + dotfiles first: the shell config is the bootstrap
 
 new login shell
@@ -83,6 +84,9 @@ all.
 | `fonts` | Iosevka Nerd Font faces | vendored TTFs |
 | `neovim` | editor | vendored, built with `make` |
 | `fzf` | fuzzy finder | vendored, built with Go |
+| `maddox` | command benchmarking tool | this repository, built with Go |
+| `m2p` | Markdown-to-PDF converter (`markdown_to_pdf`) | this repository, built with Go |
+| `sloc` | source line counter | this repository, built with Go |
 | `rust` | `cargo` / `rustc` / `rustup` toolchain | installed via `rustup` |
 | `fish` | interactive shell | vendored, built with `cargo` |
 | `jj` | version control (Jujutsu) | vendored, built with `cargo` |
