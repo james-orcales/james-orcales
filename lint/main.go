@@ -63,13 +63,13 @@ func main() {
 	if len(os.Args) > 1 {
 		request = os.Args[1]
 	}
-	// Re-root Fsys at the workspace/module anchor so module discovery
-	// always has a go.work or go.mod above every file. Without this,
+	// Re-root Fsys at the repo's single root go.mod so component discovery
+	// always has the module anchor above every file. Without this,
 	// running on a subpackage (e.g. ./shared/snap/v2) would walk
 	// a Fsys with no go.mod in reach, and the doctrine checks would
 	// degrade to per-file mode — flagging composition-tier packages that
 	// should be exempt. Scope_Prefix narrows output back to what the user asked for.
-	root, scope_prefix := main_resolve_workspace(request)
+	root, scope_prefix := main_resolve_root(request)
 	start := time.Now()
 	// The lint.json config (policy plus the word-replacements table) is read by
 	// lint.Main from this Fsys, not here: one config path shared with the tests.
@@ -82,26 +82,22 @@ func main() {
 		Git:            main_load_git(root),
 		CPU_Count:      runtime.NumCPU(),
 		Readlink:       os.Readlink,
-		Stat: func(
-			name string) (info fs.FileInfo, err error) {
-			return os.Stat(name)
-		},
-		Scope_Prefix: scope_prefix,
+		Scope_Prefix:   scope_prefix,
 	})
 	main_print_rss_and_elapsed(start)
 	os.Exit(code)
 }
 
-// Walks up from request to find the monorepo's go.work file. The
+// Walks up from request to find the monorepo's single root go.mod. The
 // directory containing it becomes the lint root; the relative path
 // from there to the request is the scope filter passed to the linter
 // so that output stays focused on what the user actually asked for.
-// go.work is required — this linter is built for the monorepo's
-// workspace shape, and operating without that anchor would silently
-// degrade the doctrine checks (module discovery, composition-tier
-// exemption, cross-module boundary). Aborts with a clear error rather
+// The root go.mod is required — this linter is built for the monorepo's
+// single-module shape, and operating without that anchor would silently
+// degrade the doctrine checks (component discovery, composition-tier
+// exemption, cross-component boundary). Aborts with a clear error rather
 // than running in a partially-blind mode.
-func main_resolve_workspace(request string) (root string, scope_prefix string) {
+func main_resolve_root(request string) (root string, scope_prefix string) {
 	absolute_request, err := filepath.Abs(request)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "lint: cannot resolve %q: %v\n", request, err)
@@ -115,7 +111,7 @@ func main_resolve_workspace(request string) (root string, scope_prefix string) {
 	}
 	anchor := ""
 	for step := 0; ; step++ {
-		if _, status_err := os.Stat(filepath.Join(current, "go.work")); status_err == nil {
+		if _, status_err := os.Stat(filepath.Join(current, "go.mod")); status_err == nil {
 			anchor = current
 			break
 		}
@@ -127,8 +123,8 @@ func main_resolve_workspace(request string) (root string, scope_prefix string) {
 	}
 	if anchor == "" {
 		fmt.Fprintf(os.Stderr,
-			"lint: no go.work found above %q; this linter expects "+
-				"a monorepo with a workspace file\n",
+			"lint: no go.mod found above %q; this linter expects "+
+				"the monorepo's single root module\n",
 			request,
 		)
 		os.Exit(2)

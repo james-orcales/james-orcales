@@ -1,0 +1,14 @@
+#:schema https://jj-vcs.github.io/jj/latest/config-schema.json
+
+[user]
+email = "149360196+james-orcales@users.noreply.github.com"
+name = "James Orcales"
+
+[ui]
+default-command = "log"
+diff-editor = ":builtin"
+
+[template-aliases]
+'format_short_commit_id(id)' = 'id.shortest(40)'
+'format_short_change_id(id)' = 'id.shortest(32)'
+

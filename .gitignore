@@ -1,7 +1,18 @@
-bin/**
-!bin/darwin/lua
-.go_path/
-.envrc.local
+home/.local/*
+home/.config/hcloud/*
+home/cache/*
+
+.local/*
+
+.envrc.prehook
+.envrc.posthook
+
+# Explicitly list out vendored files we didn't commit to the repo.
+third_party/*/vendor/winapi-*-pc-windows-*/
+third_party/*/vendor/windows_*/
+third_party/fzf/vendor/github.com/lucasb-eyer/go-colorful/hsluv-snapshot-rev4.json
+
 .claude/
-./tmp
+tmp
+
 **/.DS_Store

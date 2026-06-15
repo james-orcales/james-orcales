@@ -1,0 +1,2677 @@
+// Package vsr is a Viewstamped Replication (Liskov & Cowling, 2012) protocol core: the agreement
+// engine a replicated system embeds to keep a cluster's command log consistent through crashes and
+// leader change. It is the VSR counterpart to a Raft library, chosen because its view change is
+// deterministic — the primary of a view is fixed by View mod Cluster_Size — which is what a
+// simulation-tested system wants. The core is a pure step function: it spawns nothing, performs no
+// input or output, and reads no clock of its own. Replica_Receive folds one incoming Message into a
+// replica, Replica_Tick folds the passage of time in, and each returns the Step_Output the caller
+// must act on — messages to send, entries that became committed, the timer to re-arm. Time
+// arrives as an injected Moment; delivery, randomness, and persistence live in the caller (in v1,
+// the deterministic simulator in the test suite). The core guarantees agreement on a single ordered
+// log of opaque commands; applying those commands to a state machine is the caller's concern.
+package vsr
+
+import (
+	invariant "github.com/james-orcales/james-orcales/shared/invariant/default"
+	"github.com/james-orcales/james-orcales/shared/time"
+)
+
+// View is a monotonically increasing epoch with one primary; the primary of a view is the replica
+// whose Identifier is View mod Cluster_Size (VSR's deterministic leader rotation).
+type View uint64
+
+// Op is the 1-based index of a log entry — VSR's op-number. Zero means "no op".
+type Op uint64
+
+// Commit is the highest op a replica knows to be committed — VSR's commit-number.
+type Commit uint64
+
+// Replica_Identifier is a replica's fixed index in the cluster, 0..Cluster_Size-1.
+type Replica_Identifier uint8
+
+// Nonce is a recovery liveness token: a recovering replica stamps its Recovery with one and ignores
+// any Recovery_Response that does not echo it, so a delayed response from an earlier attempt cannot
+// complete the current one.
+type Nonce uint64
+
+// Epoch is a monotonically increasing reconfiguration epoch; it is 0 until the first
+// reconfiguration.
+type Epoch uint64
+
+// View_Change_Suffix is how many trailing log entries a Do_View_Change carries (§5.3). The new
+// primary ranks reporters by (last-normal-view, op) — numbers, not the log — and reconstructs the
+// winner's log from its own committed prefix plus this suffix, fetching anything still missing. Two
+// is the paper's default: enough that the common case (the new primary already holds the committed
+// prefix the suffix attaches onto) needs no fetch, while the message stays bounded regardless of
+// log length.
+const View_Change_Suffix Op = 2
+
+// Client_Identifier names a client of the cluster. It is not a Replica_Identifier: clients are not
+// in the Configuration, so a reply is addressed by Client, never by To.
+type Client_Identifier uint64
+
+// Request_Number is a client's own monotonically increasing sequence number for its requests; it is
+// what the client-table dedups on to give exactly-once semantics across retries.
+type Request_Number uint64
+
+// State_Machine is the application the committed log drives — the deterministic up-call VSR makes
+// as the commit number advances. It is injected so the core stays a pure agreement engine that
+// knows nothing of the application's meaning. It is OPTIONAL: a zero State_Machine (a nil Execute)
+// runs the core in log-only mode, committing without executing or replying, which is exactly the
+// behavior before execution existed.
+type State_Machine struct {
+	// Execute applies one committed command, against the prediction the primary predetermined
+	// for it, and returns its client-visible result. The core calls it exactly once per op, in
+	// op order, as the commit number crosses the op; a nil Execute means log-only mode. It must
+	// be deterministic given (command, prediction) — every replica executes the same
+	// committed log with the same stored prediction and must reach the same result — so it
+	// may not read a clock or randomness; any non-determinism the op needs arrives through
+	// prediction (§4.4).
+	Execute func(command []byte, prediction []byte) (result []byte)
+	// Predict computes the predetermined value for a non-deterministic op, called only on the
+	// primary as it accepts a new request, never on a backup (which copies the stored value).
+	// It is where a clock or randomness legitimately enters: the primary fixes the value once
+	// and propagates it in the log entry. Nil means ordinary deterministic ops — no
+	// prediction is made and the stored value stays empty.
+	Predict func(command []byte) (prediction []byte)
+	// Combine folds f backups' predictions and the primary's own into the value the op executes
+	// against, for the pre-step variant where the value must reflect the cluster rather than
+	// the primary alone (§4.4). It must be deterministic in its inputs. Nil selects
+	// local-predict: the primary uses Predict alone with no pre-step round. Non-nil selects the
+	// pre-step protocol: the primary gathers a Predict_Response from each of f backups first.
+	Combine func(command []byte, responses [][]byte, own []byte) (prediction []byte)
+	// Snapshot captures the application state at the current commit as an opaque blob, for
+	// checkpointing and log compaction (§5.1). The core calls it when a checkpoint is taken,
+	// after executing the committed prefix, so the returned bytes describe the state as of the
+	// checkpoint's op. It must be a pure function of the executed prefix — every replica that
+	// checkpoints the same op must produce byte-identical bytes — so it may read no clock or
+	// randomness. Nil disables checkpointing: the log is never compacted, which is the behavior
+	// before checkpoints existed, and is the correct fallback for a stateless log-only core.
+	Snapshot func() (state []byte)
+	// Restore re-installs the application state from a Snapshot blob, the inverse of Snapshot.
+	// The core calls it when it adopts a checkpoint — through state transfer, recovery, or a
+	// New_State gap response — before replaying the committed ops after the checkpoint, so
+	// the state machine ends reflecting exactly the committed prefix. It must be deterministic
+	// in its input. Nil is paired with a nil Snapshot, since a core that never checkpoints
+	// never restores.
+	Restore func(state []byte)
+}
+
+// Client_Record is the client-table entry for one client: the highest request the cluster has
+// accepted from it, and — once that request has executed — its cached result. It is what makes
+// a retried request idempotent: a duplicate is answered from here rather than re-executed.
+type Client_Record struct {
+	// Request_Number is the highest request-number this replica has accepted from the client.
+	Request_Number Request_Number
+	// Result is the cached Execute result for Request_Number, valid only once Executed is true.
+	Result []byte
+	// Executed reports whether Request_Number's op has committed and executed, so its Result is
+	// the authoritative reply; false means the request is still in flight.
+	Executed bool
+}
+
+// Configuration is the ordered group membership; the primary of a view is Configuration[View mod
+// len(Configuration)].
+type Configuration []Replica_Identifier
+
+// Prediction_Round_Key identifies a request the primary is running the pre-step prediction round
+// for, before it has assigned the request an op (§4.4). The op is not yet known, so the round is
+// keyed by the client and its request-number — the same pair the eventual Predict_Response
+// echoes.
+type Prediction_Round_Key struct {
+	// Client is the client whose request this round serves.
+	Client Client_Identifier
+	// Request_Number is that client's request-number for the buffered request.
+	Request_Number Request_Number
+}
+
+// Prediction_Round is one buffered request's in-progress pre-step round: the command to append once
+// the round completes, and each distinct backup's prediction collected so far (filed by sender so a
+// duplicated or late Predict_Response cannot be counted twice).
+type Prediction_Round struct {
+	// Command is the buffered request's payload, appended once f responses arrive.
+	Command []byte
+	// Responses holds each distinct backup's prediction, keyed by sender for dedup.
+	Responses map[Replica_Identifier][]byte
+}
+
+// Status_Normal is the steady state: the replica serves Prepare and Commit and, if primary, drives
+// replication.
+const Status_Normal Status = 0
+
+// Status_View_Change means the replica has stopped normal work and is collecting the votes that
+// install a new view.
+const Status_View_Change Status = 1
+
+// Status_Recovery means the replica lost its volatile state and is awaiting a quorum of
+// Recovery_Response before it may participate again.
+const Status_Recovery Status = 2
+
+// Status_Transition means the replica is moving between epochs (§7): a new-group member catching up
+// to the start of the epoch, or a replaced replica serving state transfer until the new group is
+// up. It is the status a replica holds from the moment it learns the new epoch until it is either
+// caught up (back to Status_Normal) or done serving the new group (Status_Shutdown).
+const Status_Transition Status = 3
+
+// Status_Shutdown means a replaced replica has handed its state to the new group — it has seen
+// f'+1 Epoch_Started — and is done (§7.1.2). It no longer participates in any protocol.
+const Status_Shutdown Status = 4
+
+// Status selects which phase of the protocol a replica is in.
+type Status uint8
+
+// Log_Entry is one opaque client command together with the view it was first prepared in.
+type Log_Entry struct {
+	// View is the view this op was first prepared in. VSR tags each entry with its birth view.
+	// This is metadata only: the merge ranks replicas by last-normal-view, never by per-entry
+	// views, which crash-recovery can leave non-monotonic.
+	View View
+	// Command is the opaque client payload; the core never interprets it.
+	Command []byte
+	// Client is the client whose request this op serves; it travels with the entry so every
+	// replica, executing the entry on commit, knows which client-table record to update.
+	Client Client_Identifier
+	// Request_Number is the client's request-number for this op, carried for the same reason as
+	// Client: a committed entry must be self-describing so any replica can update its table.
+	Request_Number Request_Number
+	// Prediction is the value the primary predetermined for a non-deterministic op (§4.4),
+	// stored in the entry so every replica executes the op against the identical value rather
+	// than each recomputing it. It is empty for an ordinary deterministic op. Backups copy it
+	// verbatim from the Prepare and never recompute it, keeping replicas' executions agreed.
+	Prediction []byte
+	// New_Configuration is non-empty only for a Reconfiguration entry (§7): it is the
+	// membership the group becomes when this op commits. It rides in the log entry so a new
+	// primary selected by a view change, reading its topmost entry, can see the reconfiguration
+	// and re-drive the epoch handoff. An entry executes as a Reconfiguration — affecting only
+	// VR state, never the State_Machine — exactly when this is non-empty.
+	New_Configuration Configuration
+}
+
+// Replica is one node's complete protocol state. Identity and the two timeout durations are set by
+// the caller and never mutated by the core; everything else is protocol state the step functions
+// evolve. The tally maps are keyed by Replica_Identifier so a duplicated message — which the
+// network will produce — cannot be counted toward a quorum twice.
+type Replica struct {
+	// Identifier is this replica's fixed cluster index; it is the primary of View when
+	// Identifier equals View mod Cluster_Size.
+	Identifier Replica_Identifier
+	// Configuration is the ordered group membership this replica belongs to; the primary of a
+	// view is Configuration[View mod len(Configuration)].
+	Configuration Configuration
+	// Old_Configuration is the prior epoch's membership during a handoff (§7); empty unless
+	// this replica is Status_Transition or Status_Shutdown. A replaced replica serves state
+	// transfer to the new group out of it, and a quorum over the OLD group (the
+	// decision-relevant configuration while the old group still owns the reconfiguration op) is
+	// computed from it.
+	Old_Configuration Configuration
+	// Epoch is the reconfiguration epoch this replica is in; 0 until the first reconfiguration.
+	Epoch Epoch
+	// Heartbeat is how often a primary with no client work broadcasts its commit number.
+	Heartbeat time.Duration
+	// Timeout is how long a backup waits without contact before starting a view change, and how
+	// long a recovering replica waits before re-broadcasting Recovery.
+	Timeout time.Duration
+	// State_Machine is the application the committed log drives; a zero value runs the core in
+	// log-only mode. It is set by the caller and never mutated by the core.
+	State_Machine State_Machine
+	// Checkpoint_Interval is how many committed ops pass between checkpoints; 0 disables
+	// checkpointing entirely (the log is never compacted). Set by the caller, never mutated.
+	Checkpoint_Interval uint64
+	// Log_Retain is how many ops of suffix to keep in Log after the checkpoint op when
+	// compacting, so an in-flight recovery or transfer that needs a recently-GC'd op is not
+	// stranded. Set by the caller, never mutated.
+	Log_Retain uint64
+
+	// Status is the protocol phase this replica is in.
+	Status Status
+	// View is the epoch this replica currently believes is active.
+	View View
+	// Op is the highest op in Log; it always equals Log_Start plus the log length.
+	Op Op
+	// Commit is the highest op this replica knows to be committed.
+	Commit Commit
+	// Executed is the highest op the state machine has executed; it tracks Commit in steady
+	// state but is recorded separately so a path that adopts a committed prefix wholesale
+	// (view-change install, Start_View, recovery rejoin, state-transfer apply) knows which ops
+	// it must still execute or restore-then-execute, keeping the application state reflecting
+	// exactly Commit. With no state machine injected it stays a bookkeeping counter the
+	// log-only core ignores.
+	Executed Op
+	// Log is the replica's ordered command log, holding only the suffix after Log_Start once a
+	// prefix has been compacted; op's entry is Log[op - Log_Start - 1].
+	Log []Log_Entry
+	// Log_Start is the op-number just before the first entry still in Log; it is 0 until the
+	// first compaction, then advances as the prefix is garbage-collected. An op at or below it
+	// lives only in the checkpoint, not in Log.
+	Log_Start Op
+	// Checkpoint_Op is the op-number the last checkpoint covers — the highest op whose
+	// execution Checkpoint_State reflects; 0 means no checkpoint has been taken.
+	Checkpoint_Op Op
+	// Checkpoint_State is the application state Snapshot captured at Checkpoint_Op; nil until
+	// the first checkpoint. It is shipped to a replica that has GC'd past a peer's needs, and
+	// restored on warm recovery.
+	Checkpoint_State []byte
+
+	// Last_Normal_View is the highest view in which this replica was Status_Normal; the
+	// view-change merge ranks Do_View_Change logs by it.
+	Last_Normal_View View
+	// Timer_Deadline is when the replica's active timer next fires, in the injected clock's
+	// frame; Replica_Tick does nothing until Now reaches it.
+	Timer_Deadline time.Moment
+
+	// Start_View_Change_From tallies the distinct senders of a Start_View_Change for the view
+	// this replica is changing to.
+	Start_View_Change_From map[Replica_Identifier]bool
+	// Do_View_Change_From holds, at the new primary, the Do_View_Change report from each
+	// distinct replica that has reported.
+	Do_View_Change_From map[Replica_Identifier]Message
+	// View_Change_Deferred reports that the new primary selected a winning report it cannot
+	// reconstruct from its own log plus the received suffix and is awaiting a New_State before
+	// it installs (§5.3 deferred install). While it is set the primary stays in
+	// Status_View_Change and emits no Start_View; only a New_State from View_Change_Fetch_From
+	// at op at least View_Change_Fetch_Op completes the install, so a stray New_State cannot
+	// install early and the Start_View is emitted exactly once.
+	View_Change_Deferred bool
+	// View_Change_Fetch_From is the selected reporter the deferred install fetches the complete
+	// log from; meaningful only while View_Change_Deferred.
+	View_Change_Fetch_From Replica_Identifier
+	// View_Change_Fetch_Op is the selected reporter's op, the floor the awaited New_State must
+	// reach so the installed log holds every op the winner reported; meaningful only while
+	// View_Change_Deferred.
+	View_Change_Fetch_Op Op
+	// Prepare_Ok_From tallies, per op, the distinct backups that have acknowledged it.
+	Prepare_Ok_From map[Op]map[Replica_Identifier]bool
+	// Recovery_Nonce is the nonce of the in-flight recovery attempt.
+	Recovery_Nonce Nonce
+	// Recovery_From holds the Recovery_Response from each distinct replica matching the nonce.
+	Recovery_From map[Replica_Identifier]Message
+	// Client_Table is the per-client dedup state, updated on every replica as ops execute, so a
+	// replica can answer a retried request and a new primary inherits the exactly-once history.
+	Client_Table map[Client_Identifier]Client_Record
+	// Predict_From holds, on the primary running the pre-step variant, the in-progress
+	// prediction round for each buffered request, keyed by client and request-number since the
+	// op is not yet assigned. A round completes — its request appended — once it holds f
+	// distinct backups' predictions, then its entry is removed.
+	Predict_From map[Prediction_Round_Key]Prediction_Round
+	// Epoch_Start_Op is the op-number at which the current epoch begins (§7.1): the op-number
+	// of the reconfiguration that opened it. A transitioning new-group member must learn the
+	// log up to here before it may serve; 0 when no epoch handoff is in progress.
+	Epoch_Start_Op Op
+	// Epoch_Handoff_Due reports that the reconfiguration op has just executed on this replica
+	// and the role-specific epoch transition (config swap, status, Commit/Start_Epoch emission)
+	// has not yet run. The execution spine sets it; the top-level step drains it once execution
+	// settles, so the transition's outgoing messages flow out of the step that committed the
+	// op.
+	Epoch_Handoff_Due bool
+	// Epoch_New_Configuration is the membership the pending handoff installs, captured from the
+	// reconfiguration entry as it executed. The drain reads it here rather than re-reading the
+	// entry, because compaction can garbage-collect the reconfiguration op (a checkpoint
+	// landing on it) in the same step before the drain runs, leaving the entry unreadable.
+	// Meaningful only while Epoch_Handoff_Due.
+	Epoch_New_Configuration Configuration
+	// Epoch_Started_From tallies, at a replaced replica, the distinct new-group members that
+	// have reported their epoch started (§7.1.2). Once it holds f'+1 — the new group's quorum
+	// — the replaced replica's state is safely transferred and it shuts down.
+	Epoch_Started_From map[Replica_Identifier]bool
+}
+
+// Message_Kind_Request is a client command arriving at the primary; it carries Command.
+const Message_Kind_Request Message_Kind = 0
+
+// Message_Kind_Prepare is the primary asking backups to replicate one op; it carries Op, Entry, and
+// the primary's Commit.
+const Message_Kind_Prepare Message_Kind = 1
+
+// Message_Kind_Prepare_Ok is a backup acknowledging a prepared op; it carries Op.
+const Message_Kind_Prepare_Ok Message_Kind = 2
+
+// Message_Kind_Commit is the primary's heartbeat advertising its commit number.
+const Message_Kind_Commit Message_Kind = 3
+
+// Message_Kind_Start_View_Change proposes moving to View.
+const Message_Kind_Start_View_Change Message_Kind = 4
+
+// Message_Kind_Do_View_Change reports a replica's state to the new primary; it carries Op,
+// Last_Normal_View, Commit, and a bounded Log_Suffix (§5.3), not the full log.
+const Message_Kind_Do_View_Change Message_Kind = 5
+
+// Message_Kind_Start_View installs a new view's log on the backups; it carries Log and Commit.
+const Message_Kind_Start_View Message_Kind = 6
+
+// Message_Kind_Recovery asks the cluster for current state; it carries Nonce.
+const Message_Kind_Recovery Message_Kind = 7
+
+// Message_Kind_Recovery_Response answers a Recovery; it echoes Nonce and reports View, and from the
+// primary also Log, Op, and Commit.
+const Message_Kind_Recovery_Response Message_Kind = 8
+
+// Message_Kind_Get_State asks a more current replica for its state; it carries the requester's View
+// and Op so a behind replica can catch up without a full view change.
+const Message_Kind_Get_State Message_Kind = 9
+
+// Message_Kind_New_State answers a Get_State with the responder's View, Log, Op, and Commit, and
+// — when the requested prefix has been garbage-collected — the responder's Checkpoint_Op and
+// Checkpoint_State, with Log carrying only the suffix after the checkpoint.
+const Message_Kind_New_State Message_Kind = 10
+
+// Message_Kind_Reply is the primary's answer to a client, addressed by Client rather than To; it
+// carries the Request_Number it answers and the Execute Result.
+const Message_Kind_Reply Message_Kind = 11
+
+// Message_Kind_Predict_Request is the primary asking backups for their prediction of a pending
+// non-deterministic op (§4.4 pre-step); it carries the Command and the Client/Request_Number that
+// matches the response back to the pending request.
+const Message_Kind_Predict_Request Message_Kind = 12
+
+// Message_Kind_Predict_Response is a backup's prediction answering a Predict_Request; it echoes the
+// Client/Request_Number and carries the backup's predicted value in Result.
+const Message_Kind_Predict_Response Message_Kind = 13
+
+// Message_Kind_Reconfiguration is the administrator client's request to change the group (§7); it
+// carries the client's Epoch and Request_Number for the freshness check and the New_Configuration
+// the group is to become.
+const Message_Kind_Reconfiguration Message_Kind = 14
+
+// Message_Kind_Start_Epoch tells a member of the new group the epoch has begun (§7.1): it carries
+// the new Epoch, the epoch-start Op, the old configuration (in Log, repurposed), and the
+// New_Configuration, so a new node knows where to fetch state and how far to catch up.
+const Message_Kind_Start_Epoch Message_Kind = 15
+
+// Message_Kind_Epoch_Started is a caught-up new replica's acknowledgement to the replaced replicas
+// (§7.1.1): it carries the new Epoch and the sender's identifier (From), counting toward the f'+1 a
+// replaced replica needs before it may shut down.
+const Message_Kind_Epoch_Started Message_Kind = 16
+
+// Message_Kind_New_Epoch is an old replica's redirect to a stale-epoch client (§7.4): it carries
+// the current View and the New_Configuration so the client can find the group that moved on.
+const Message_Kind_New_Epoch Message_Kind = 17
+
+// Message_Kind_Check_Epoch is the administrator's completion probe (§7.3): a normal-case request in
+// the new epoch whose reply tells the administrator the reconfiguration has finished. It carries
+// the client's Epoch and Request_Number like any client request.
+const Message_Kind_Check_Epoch Message_Kind = 18
+
+// Message_Kind selects which fields of a Message carry meaning.
+type Message_Kind uint8
+
+// Message is the single discriminated record exchanged in the protocol, and the carrier of a client
+// Request. Kind selects which fields are meaningful — the same tagged-struct shape the invariant
+// package uses for Dot_Element — so a Message stays a plain copyable value the simulator can
+// freely reorder, duplicate, and store.
+type Message struct {
+	// Kind selects which other fields carry meaning.
+	Kind Message_Kind
+	// From is the sender's identifier.
+	From Replica_Identifier
+	// To is the delivery target's identifier.
+	To Replica_Identifier
+	// View is the sender's view; every protocol message carries it.
+	View View
+	// Epoch is the sender's epoch; every message carries it.
+	Epoch Epoch
+
+	// Op is the op-number this message concerns.
+	Op Op
+	// Commit is the sender's commit number.
+	Commit Commit
+	// Entry is the log entry a Prepare replicates.
+	Entry Log_Entry
+
+	// Command carries a client Request's payload before it becomes a log entry.
+	Command []byte
+
+	// Client is the client a Request comes from and a Reply is addressed to; replies leave To
+	// zero, since a client is not a member of the Configuration.
+	Client Client_Identifier
+	// Request_Number is the client's request-number, carried by a Request and echoed by a Reply
+	// so the client can match a reply to the request it sent.
+	Request_Number Request_Number
+	// Result is the Execute result a Reply carries back to the client.
+	Result []byte
+
+	// Log is the sender's full log, carried by Start_View, a primary's Recovery_Response, and a
+	// New_State. When a New_State, Start_View, or Recovery_Response carries a checkpoint, Log
+	// holds only the suffix after Checkpoint_Op. Do_View_Change does not use it — it carries a
+	// bounded Log_Suffix instead (§5.3).
+	Log []Log_Entry
+	// Log_Suffix is the bounded trailing slice a Do_View_Change carries instead of the full log
+	// (§5.3): the last View_Change_Suffix entries, ending at Op. The receiver derives its first
+	// op as Op minus the suffix length, and ranks reporters by (Last_Normal_View, Op) without
+	// needing the rest of the log.
+	Log_Suffix []Log_Entry
+	// Last_Normal_View is the sender's last view in Status_Normal, the merge key.
+	Last_Normal_View View
+
+	// Nonce ties a Recovery to its Recovery_Response.
+	Nonce Nonce
+
+	// Checkpoint_Op is the op a shipped checkpoint covers: a recovering replica advertises its
+	// own in a Recovery, and a New_State or Recovery_Response carrying a checkpoint reports the
+	// op its accompanying Checkpoint_State reflects. Zero means no checkpoint travels with the
+	// message.
+	Checkpoint_Op Op
+	// Checkpoint_State is the application-state blob a New_State or Recovery_Response ships
+	// when the requester needs a prefix the responder has already garbage-collected; nil means
+	// none.
+	Checkpoint_State []byte
+
+	// New_Configuration is the membership a Reconfiguration requests, a Start_Epoch installs,
+	// and a New_Epoch redirect advertises (§7); empty in every other message.
+	New_Configuration Configuration
+	// Old_Configuration is the prior epoch's membership a Start_Epoch carries (§7.1) so a brand
+	// new node knows which replicas to fetch state from; empty in every other message.
+	Old_Configuration Configuration
+}
+
+// Timer_Kind_None means the step armed no timer.
+const Timer_Kind_None Timer_Kind = 0
+
+// Timer_Kind_Commit is the primary's heartbeat timer.
+const Timer_Kind_Commit Timer_Kind = 1
+
+// Timer_Kind_View_Change is a backup's failure-detector and view-change-retry timer.
+const Timer_Kind_View_Change Timer_Kind = 2
+
+// Timer_Kind_Recovery is a recovering replica's Recovery-retry timer.
+const Timer_Kind_Recovery Timer_Kind = 3
+
+// Timer_Kind selects which timer a Timer_Reset re-arms.
+type Timer_Kind uint8
+
+// Timer_Reset tells the caller which timer to re-arm and when it should fire. The replica also
+// stores this, so a caller that prefers to tick every replica every grain may ignore it; a real
+// transport would use it to schedule the next wake-up.
+type Timer_Reset struct {
+	// Kind is which timer was armed.
+	Kind Timer_Kind
+	// Deadline is when the armed timer should fire, in the injected clock's frame.
+	Deadline time.Moment
+}
+
+// Step_Output is everything one step produces.
+type Step_Output struct {
+	// Messages are the messages to deliver, each addressed via its To field.
+	Messages []Message
+	// Committed are the entries that became committed this step, in op order.
+	Committed []Log_Entry
+	// Replies are the client-addressed Replies this step produced, each routed by its Client
+	// field; only the primary produces them, and only with a State_Machine injected.
+	Replies []Message
+	// Timer is the timer to re-arm, if any.
+	Timer Timer_Reset
+}
+
+// New_Replica_Input configures a fresh replica.
+type New_Replica_Input struct {
+	// Identifier is the replica's fixed cluster index.
+	Identifier Replica_Identifier
+	// Configuration is the ordered group membership the replica belongs to.
+	Configuration Configuration
+	// Epoch is the reconfiguration epoch the replica starts in.
+	Epoch Epoch
+	// Heartbeat is the primary's commit-broadcast interval.
+	Heartbeat time.Duration
+	// Timeout is the view-change and recovery timeout.
+	Timeout time.Duration
+	// State_Machine is the application the committed log drives; a zero value runs log-only.
+	State_Machine State_Machine
+	// Checkpoint_Interval is how many committed ops pass between checkpoints; 0 never
+	// checkpoints.
+	Checkpoint_Interval uint64
+	// Log_Retain is the suffix kept after the checkpoint op when compacting; when it is zero
+	// but checkpointing is enabled it defaults to Checkpoint_Interval, so the log always keeps
+	// at least an interval's worth of suffix past each checkpoint.
+	Log_Retain uint64
+	// Now is the current clock reading, used to arm the first timer.
+	Now time.Moment
+}
+
+// New_Replica builds a normal replica in view zero with its tallies initialized and its first timer
+// armed relative to Now. A bare struct literal also works for tests that never tick; the
+// constructor exists so the failure detector has a real initial deadline rather than zero.
+func New_Replica(input *New_Replica_Input) (replica Replica) {
+	// Default the retained suffix to one checkpoint interval when checkpointing is on but the
+	// caller left it zero: a checkpoint must keep enough suffix that an in-flight transfer
+	// needing a recently-committed op is not stranded, and an interval's worth is the natural
+	// minimum.
+	retain := input.Log_Retain
+	if input.Checkpoint_Interval > 0 {
+		if retain == 0 {
+			retain = input.Checkpoint_Interval
+		}
+	}
+	replica = Replica{
+		Identifier:          input.Identifier,
+		Configuration:       input.Configuration,
+		Epoch:               input.Epoch,
+		Heartbeat:           input.Heartbeat,
+		Timeout:             input.Timeout,
+		State_Machine:       input.State_Machine,
+		Checkpoint_Interval: input.Checkpoint_Interval,
+		Log_Retain:          retain,
+		Status:              Status_Normal,
+	}
+	replica_ensure_scratch(&replica)
+	replica_arm_timer(&replica, input.Now)
+	return replica
+}
+
+// Replica_Tick_Input folds the passage of time up to Now into Replica.
+type Replica_Tick_Input struct {
+	// Replica is the replica to advance.
+	Replica *Replica
+	// Now is the current clock reading.
+	Now time.Moment
+}
+
+// Replica_Tick fires the replica's timer if Now has reached its deadline: a recovering replica
+// retries Recovery, a primary heartbeats, and a backup or stalled view-change advances the view.
+// Before the deadline it does nothing.
+func Replica_Tick(input *Replica_Tick_Input) (output Step_Output) {
+	replica := input.Replica
+	replica_ensure_scratch(replica)
+	output = replica_tick_fire(replica, input.Now)
+	step_output_fold(&output, replica_drain_epoch_handoff(replica, input.Now))
+	replica_assert_safety(replica)
+	return output
+}
+
+// Fires the due timer, if any, and returns what it emits; Replica_Tick wraps it with the post-step
+// invariant check.
+func replica_tick_fire(replica *Replica, now time.Moment) (output Step_Output) {
+	if now < replica.Timer_Deadline {
+		return output
+	}
+	if replica.Status == Status_Recovery {
+		// Retry recovery with the same nonce in case the first Recovery, or the responses,
+		// were lost; the nonce stays fixed so earlier responses still count.
+		output.Messages = replica_broadcast(replica, Message{
+			Kind:  Message_Kind_Recovery,
+			Nonce: replica.Recovery_Nonce,
+		})
+		output.Timer = replica_arm_timer(replica, now)
+		return output
+	}
+	if replica.Status == Status_Shutdown {
+		return output // Out of the protocol; a shutdown replica does nothing.
+	}
+	if replica.Status == Status_Transition {
+		return replica_tick_transition(replica, now)
+	}
+	if replica.Status == Status_Normal {
+		if replica.Identifier == replica_primary_identifier(replica) {
+			output.Messages = replica_primary_heartbeat(replica)
+			output.Timer = replica_arm_timer(replica, now)
+			return output
+		}
+	}
+	// A backup that has lost the primary, or a replica whose in-progress view change has itself
+	// stalled, advances to the next view — rotating the primary off a dead node.
+	return replica_start_view_change(replica, replica.View+1, now)
+}
+
+// Fires a transitioning replica's timer (§7.1). A replica being replaced that has not yet heard
+// f'+1 Epoch_Started resends Start_Epoch to the new replicas, prodding them to come up so it can
+// shut down (§7.1.2 step 3). A new-group member still catching up re-issues its state-transfer
+// request, in case the first Get_State or its answer was lost.
+func replica_tick_transition(replica *Replica, now time.Moment) (output Step_Output) {
+	being_replaced := !configuration_contains(replica.Configuration, replica.Identifier)
+	if being_replaced {
+		output.Messages = replica_resend_start_epoch(replica)
+		output.Timer = replica_arm_timer(replica, now)
+		return output
+	}
+	output.Messages = replica_epoch_state_transfer(replica)
+	output.Timer = replica_arm_timer(replica, now)
+	return output
+}
+
+// A replaced replica's Start_Epoch resend to the new replicas it has not yet heard an Epoch_Started
+// from (§7.1.2 step 3): it carries the new epoch, the epoch-start op, and both configurations, the
+// same as the original, so a new node that missed the first can still learn the epoch. A new node
+// already active answers with Epoch_Started, advancing this replica toward shutdown.
+func replica_resend_start_epoch(replica *Replica) (messages []Message) {
+	for _, identifier := range replica.Configuration {
+		if replica.Epoch_Started_From[identifier] {
+			continue // Already heard from this new replica; no need to prod it.
+		}
+		messages = append(messages, Message{
+			Kind:              Message_Kind_Start_Epoch,
+			From:              replica.Identifier,
+			To:                identifier,
+			View:              0,
+			Epoch:             replica.Epoch,
+			Op:                replica.Epoch_Start_Op,
+			Old_Configuration: replica.Old_Configuration,
+			New_Configuration: replica.Configuration,
+		})
+	}
+	return messages
+}
+
+// Emits what an idle primary sends each Heartbeat: it re-drives every op not yet known committed as
+// a Prepare so a dropped Prepare still reaches a lagging backup (v1 has no separate state
+// transfer), then advertises the commit number.
+func replica_primary_heartbeat(replica *Replica) (messages []Message) {
+	for op := replica.Commit + 1; op <= Commit(replica.Op); op++ {
+		messages = append(messages, replica_broadcast(replica, Message{
+			Kind:   Message_Kind_Prepare,
+			Op:     Op(op),
+			Entry:  replica_log_entry(replica, Op(op)),
+			Commit: replica.Commit,
+		})...)
+	}
+	return append(messages, replica_broadcast(replica, Message{
+		Kind:   Message_Kind_Commit,
+		Commit: replica.Commit,
+	})...)
+}
+
+// Replica_Recover_Input restarts Replica into recovery with a fresh Nonce at time Now.
+type Replica_Recover_Input struct {
+	// Replica is the replica that has restarted.
+	Replica *Replica
+	// Nonce is the fresh, caller-supplied recovery token.
+	Nonce Nonce
+	// Keep_Checkpoint models a checkpoint that survived the crash on disk: when true the
+	// replica keeps Checkpoint_Op, Checkpoint_State, and Log_Start and rejoins by restoring
+	// from the checkpoint and replaying only the un-checkpointed suffix (warm recovery, §5.1);
+	// when false it wipes everything and re-learns the whole log from the cluster (cold
+	// recovery).
+	Keep_Checkpoint bool
+	// Now is the current clock reading.
+	Now time.Moment
+}
+
+// Replica_Recover models a replica restarting with its volatile state lost: it keeps only its
+// identity and configuration, discards view, op, commit, and log, enters Status_Recovery, and
+// broadcasts a Recovery stamped with the caller-supplied nonce. The nonce is injected rather than
+// drawn internally so the core stays pure and deterministic; the caller owns randomness. A warm
+// recovery (Keep_Checkpoint) preserves the on-disk checkpoint and advertises it, so the primary
+// need ship only the suffix the checkpoint does not already cover.
+func Replica_Recover(input *Replica_Recover_Input) (output Step_Output) {
+	replica := input.Replica
+	replica_ensure_scratch(replica)
+	// A replica being replaced (already holding the new configuration it is not a member of,
+	// §7.1.2) that crashes has been superseded: it shuts down rather than recovering, the §7.2
+	// rule that an old replica not in the new group does not rejoin. Its state was already
+	// handed to the new group, or will be served by the other old replicas.
+	if !configuration_contains(replica.Configuration, replica.Identifier) {
+		replica.Status = Status_Shutdown
+		replica.Old_Configuration = nil
+		replica_assert_safety(replica)
+		return output
+	}
+	replica.Status = Status_Recovery
+	replica.View = 0
+	replica.Op = 0
+	replica.Commit = 0
+	replica.Log = nil
+	replica.Last_Normal_View = 0
+	// Cold recovery wipes the checkpoint too — nothing survived the crash. Warm recovery
+	// keeps it, so the replica still holds the committed prefix the checkpoint covers and only
+	// the suffix must come from the cluster; Op begins at the checkpoint op so the suffix
+	// appends contiguously without a gap below Log_Start that the offset index could not
+	// address.
+	if !input.Keep_Checkpoint {
+		replica.Log_Start = 0
+		replica.Checkpoint_Op = 0
+		replica.Checkpoint_State = nil
+		replica.Executed = 0
+	} else {
+		// The checkpoint survived on disk while the volatile state machine did not: restore
+		// it now so the in-memory application state reflects the checkpoint op, and begin
+		// Op, Commit, and Executed there. On rejoin replica_adopt_log sees Executed already
+		// at the checkpoint and replays only the un-checkpointed suffix the primary ships,
+		// never the whole log.
+		replica.Log_Start = replica.Checkpoint_Op
+		replica.Op = replica.Checkpoint_Op
+		replica.Commit = Commit(replica.Checkpoint_Op)
+		replica.Executed = replica.Checkpoint_Op
+		if replica.State_Machine.Restore != nil {
+			replica.State_Machine.Restore(replica.Checkpoint_State)
+		}
+	}
+	// Discard the volatile epoch-handoff bookkeeping: a crashed replica re-learns the current
+	// epoch from the cluster (a Recovery_Response, or a higher-epoch Start_Epoch per §7.2), so
+	// a half-finished handoff does not survive the restart. Leaving Old_Configuration set would
+	// put the recovering replica in the contradictory state of holding handoff scratch while
+	// not transitioning — the simulator surfaced exactly this (a transitioning replica that
+	// crashed), see simulator_bugs.md. Epoch itself is kept: it is the replica's last known
+	// epoch, the floor the epoch gate compares against, and recovery only ever moves it
+	// forward.
+	replica.Old_Configuration = nil
+	replica.Epoch_Start_Op = 0
+	replica.Epoch_Handoff_Due = false
+	replica.Epoch_Started_From = map[Replica_Identifier]bool{}
+	replica.Recovery_Nonce = input.Nonce
+	replica.Recovery_From = map[Replica_Identifier]Message{}
+	output.Messages = replica_broadcast(replica, Message{
+		Kind:          Message_Kind_Recovery,
+		Nonce:         input.Nonce,
+		Checkpoint_Op: replica.Checkpoint_Op,
+	})
+	output.Timer = replica_arm_timer(replica, input.Now)
+	replica_assert_safety(replica)
+	return output
+}
+
+// Replica_Receive_Input folds one incoming Message into Replica at time Now.
+type Replica_Receive_Input struct {
+	// Replica is the replica receiving the message.
+	Replica *Replica
+	// Message is the incoming message.
+	Message Message
+	// Now is the current clock reading.
+	Now time.Moment
+}
+
+// Replica_Receive applies one incoming message to the replica, mutating it in place and returning
+// the messages to send, entries newly committed, and the timer to re-arm.
+func Replica_Receive(input *Replica_Receive_Input) (output Step_Output) {
+	replica := input.Replica
+	replica_ensure_scratch(replica)
+	output = replica_dispatch(replica, input.Message, input.Now)
+	step_output_fold(&output, replica_drain_epoch_handoff(replica, input.Now))
+	replica_assert_safety(replica)
+	return output
+}
+
+// Routes a message to the handler for its kind, after the epoch-precedence gate (§7.2): epoch
+// dominates view, so the gate runs first on every message and only an epoch-matching message
+// reaches a handler. A stale-epoch message is turned away with a New_Epoch redirect, a future-epoch
+// one is adopted, and the gate owns those two cases entirely; a matching one falls through to its
+// handler, where the existing view comparison applies.
+func replica_dispatch(replica *Replica, message Message, now time.Moment) (output Step_Output) {
+	gate, proceed := replica_message_epoch_check(replica, message, now)
+	if !proceed {
+		return gate
+	}
+	switch message.Kind {
+	case Message_Kind_Request:
+		return replica_receive_request(replica, message)
+	case Message_Kind_Reconfiguration:
+		return replica_receive_reconfiguration(replica, message)
+	case Message_Kind_Check_Epoch:
+		// A Check_Epoch (§7.3) is an ordinary client request in the new epoch whose reply
+		// signals completion; the request path handles it like any client command.
+		return replica_receive_request(replica, message)
+	case Message_Kind_Prepare:
+		return replica_receive_prepare(replica, message, now)
+	case Message_Kind_Prepare_Ok:
+		return replica_receive_prepare_ok(replica, message)
+	case Message_Kind_Commit:
+		return replica_receive_commit(replica, message, now)
+	case Message_Kind_Start_View_Change:
+		return replica_receive_start_view_change(replica, message, now)
+	case Message_Kind_Do_View_Change:
+		return replica_receive_do_view_change(replica, message, now)
+	case Message_Kind_Start_View:
+		return replica_receive_start_view(replica, message, now)
+	case Message_Kind_Recovery:
+		return replica_receive_recovery(replica, message)
+	case Message_Kind_Recovery_Response:
+		return replica_receive_recovery_response(replica, message, now)
+	case Message_Kind_Get_State:
+		return replica_receive_get_state(replica, message)
+	case Message_Kind_New_State:
+		return replica_receive_new_state(replica, message, now)
+	case Message_Kind_Predict_Request:
+		return replica_receive_predict_request(replica, message)
+	case Message_Kind_Predict_Response:
+		return replica_receive_predict_response(replica, message)
+	case Message_Kind_Start_Epoch:
+		return replica_receive_start_epoch(replica, message, now)
+	case Message_Kind_Epoch_Started:
+		return replica_receive_epoch_started(replica, message)
+	}
+	return output
+}
+
+// Folds one Step_Output into another, concatenating messages, committed entries, and replies and
+// keeping the later timer when it armed one. It lets a step run a follow-on action (the epoch
+// handoff) after its primary handler and merge what the follow-on emits into the same output.
+func step_output_fold(into *Step_Output, more Step_Output) {
+	into.Messages = append(into.Messages, more.Messages...)
+	into.Committed = append(into.Committed, more.Committed...)
+	into.Replies = append(into.Replies, more.Replies...)
+	if more.Timer.Kind != Timer_Kind_None {
+		into.Timer = more.Timer
+	}
+}
+
+// Performs the epoch handoff once the reconfiguration op has executed on this replica (§7.1),
+// draining the pending flag the execution spine set. Every replica advances to the new epoch; its
+// role decides the rest. The OLD primary first tells the other old replicas the reconfiguration
+// committed (a Commit at the old epoch, so they too execute it and self-advance) and sends
+// Start_Epoch to the added nodes. Then this replica applies its role: a member of the new group
+// resets to view 0 in the new configuration and, being already caught up, returns to normal and
+// announces Epoch_Started to the replaced replicas; a replica being replaced moves its
+// configuration into Old_Configuration, adopts the new one, and stays transitioning to serve state
+// transfer until the new group is up. Returns the messages and timer the transition produced.
+func replica_drain_epoch_handoff(replica *Replica, now time.Moment) (output Step_Output) {
+	if !replica.Epoch_Handoff_Due {
+		return output
+	}
+	replica.Epoch_Handoff_Due = false
+	new_configuration := replica.Epoch_New_Configuration
+	is_old_primary := replica.Identifier == replica_primary_identifier(replica)
+	if is_old_primary {
+		// Tell the other OLD replicas the reconfiguration committed, at the old epoch and
+		// view (still held here, before the swap below) so they process it normally, commit
+		// the op, and self-advance; and announce the new epoch to the nodes being added,
+		// which learn it only through Start_Epoch. Both read the old configuration from
+		// replica.Configuration.
+		output.Messages = append(output.Messages, replica_old_group_commit(replica)...)
+		output.Messages = append(output.Messages,
+			replica_start_epoch_messages(replica, new_configuration)...)
+	}
+	step_output_fold(&output, replica_enter_new_epoch(replica, new_configuration, now))
+	return output
+}
+
+// The OLD primary's Commit to the other old replicas at handoff (§7.1 step 3): a heartbeat-shaped
+// Commit stamped with the still-held old epoch and view (not the new ones the swap below adopts),
+// carrying the commit number that now includes the reconfiguration op, so each old replica commits
+// and executes it and self-advances into the new epoch. The old group is replica.Configuration,
+// which has not yet been swapped for the new one.
+func replica_old_group_commit(replica *Replica) (messages []Message) {
+	for _, identifier := range replica.Configuration {
+		if identifier == replica.Identifier {
+			continue
+		}
+		messages = append(messages, Message{
+			Kind:   Message_Kind_Commit,
+			From:   replica.Identifier,
+			To:     identifier,
+			View:   replica.View,
+			Epoch:  replica.Epoch,
+			Commit: replica.Commit,
+		})
+	}
+	return messages
+}
+
+// The OLD primary's Start_Epoch to the ADDED nodes (§7.1 step 3): those in the new configuration
+// but not the old one (replica.Configuration, not yet swapped). Each carries the new epoch, the
+// epoch-start op-number, and both configurations, so a brand-new node knows where to fetch state
+// (the old group) and how far to catch up.
+func replica_start_epoch_messages(
+	replica *Replica, new_configuration Configuration,
+) (messages []Message) {
+	for _, identifier := range new_configuration {
+		if configuration_contains(replica.Configuration, identifier) {
+			continue // Already a member; it learns the new epoch by executing the op.
+		}
+		messages = append(messages, Message{
+			Kind:              Message_Kind_Start_Epoch,
+			From:              replica.Identifier,
+			To:                identifier,
+			View:              0,
+			Epoch:             replica.Epoch + 1,
+			Op:                replica.Epoch_Start_Op,
+			Old_Configuration: replica.Configuration,
+			New_Configuration: new_configuration,
+		})
+	}
+	return messages
+}
+
+// Applies a replica's role in the new epoch after the reconfiguration executed (§7.1.1, §7.1.2). It
+// advances the epoch and resets to view 0 (the new epoch must start in view 0, §8.3, so Start_Epoch
+// messages from old replicas at differing views cannot install two primaries). A member of the new
+// group adopts the new configuration and, being already caught up to the epoch start, returns to
+// normal and announces Epoch_Started to the replaced replicas. A replica being replaced keeps the
+// old configuration (its current Configuration) in Old_Configuration, adopts the new one, and stays
+// transitioning to serve the new group its state until f'+1 Epoch_Started arrive.
+func replica_enter_new_epoch(
+	replica *Replica, new_configuration Configuration, now time.Moment,
+) (output Step_Output) {
+	old_configuration := replica.Configuration
+	replica.Epoch++
+	replica.View = 0
+	replica.Last_Normal_View = 0
+	replica.Start_View_Change_From = map[Replica_Identifier]bool{}
+	replica.Do_View_Change_From = map[Replica_Identifier]Message{}
+	replica.View_Change_Deferred = false
+	replica.Epoch_Started_From = map[Replica_Identifier]bool{}
+	replica.Configuration = new_configuration
+	if configuration_contains(new_configuration, replica.Identifier) {
+		// A member of the new group, already holding the log to the epoch start: return to
+		// normal in view 0 and tell the replaced replicas the epoch has started so they may
+		// eventually shut down.
+		replica.Old_Configuration = nil
+		replica.Status = Status_Normal
+		output.Messages = replica_epoch_started_messages(replica, old_configuration)
+		output.Timer = replica_arm_timer(replica, now)
+		return output
+	}
+	// A replica being replaced: keep the old configuration to serve state transfer and stay
+	// transitioning until f'+1 Epoch_Started.
+	replica.Old_Configuration = old_configuration
+	replica.Status = Status_Transition
+	output.Timer = replica_arm_timer(replica, now)
+	return output
+}
+
+// A caught-up new-group member's Epoch_Started to every replica being replaced (§7.1.1): those in
+// the old configuration but not the new one. Each carries the new epoch and this replica's
+// identifier, a vote toward the f'+1 a replaced replica needs before it shuts down.
+func replica_epoch_started_messages(
+	replica *Replica, old_configuration Configuration,
+) (messages []Message) {
+	for _, identifier := range old_configuration {
+		if configuration_contains(replica.Configuration, identifier) {
+			continue // Still a member of the new group; not being replaced.
+		}
+		messages = append(messages, Message{
+			Kind:  Message_Kind_Epoch_Started,
+			From:  replica.Identifier,
+			To:    identifier,
+			View:  replica.View,
+			Epoch: replica.Epoch,
+		})
+	}
+	return messages
+}
+
+// The epoch-precedence gate (§7.2): epoch dominates view. It runs first on every message and
+// returns whether the caller should proceed to the kind handler, plus any output the gate itself
+// produced. A message at the replica's own epoch proceeds. A message at a LOWER epoch is discarded
+// and the sender informed with a New_Epoch redirect (a client request's redirect addresses the
+// client, §7.4; a replica message's addresses the sender). A message at a HIGHER epoch is adopted
+// when it carries what adoption needs (a Start_Epoch, which carries the configurations), and
+// otherwise dropped — a replica cannot move to an epoch whose membership it has not learned. A
+// shutdown replica processes nothing. An Epoch_Started rides at the replica's own (new) epoch, so
+// it passes the equal-epoch gate like any other message.
+func replica_message_epoch_check(
+	replica *Replica, message Message, now time.Moment,
+) (output Step_Output, proceed bool) {
+	// A replaced replica that has shut down is done: it participates in nothing further.
+	if replica.Status == Status_Shutdown {
+		return output, false
+	}
+	// Encode epoch precedence at the gate: a message below the replica's epoch must never be
+	// processed normally. The Sometimes axes witness the {stale, processed-normally} outcomes
+	// and the Impossible forbids their co-occurrence — a stale message slipping past the gate
+	// would trip it.
+	stale := invariant.Sometimes(message.Epoch < replica.Epoch)
+	processed_normally := invariant.Sometimes(message.Epoch == replica.Epoch)
+	invariant.Dot_Product(
+		stale, processed_normally,
+		invariant.Impossible(
+			invariant.Event_True(stale), invariant.Event_True(processed_normally)),
+	)
+	if message.Epoch == replica.Epoch {
+		return output, true
+	}
+	if message.Epoch < replica.Epoch {
+		return replica_redirect_stale_epoch(replica, message), false
+	}
+	// A higher epoch: adopt it from a Start_Epoch (carries both configurations) or a New_Epoch
+	// redirect (carries the new configuration, §7.2/§7.4). A New_Epoch is how an advanced
+	// replica tells a stranded one — notably one recovering at a stale epoch — that the group
+	// has moved, so it can stop being stuck behind and recover against the new group rather
+	// than rejoining an emptied old-epoch remnant and breaking quorum intersection. Any OTHER
+	// higher-epoch message leaves this replica behind until a Start_Epoch or New_Epoch reaches
+	// it; dropping it is safe, since it is not stale — there is no sender to redirect.
+	if message.Kind == Message_Kind_Start_Epoch {
+		return replica_receive_start_epoch(replica, message, now), false
+	}
+	if message.Kind == Message_Kind_New_Epoch {
+		return replica_receive_new_epoch(replica, message, now), false
+	}
+	return output, false
+}
+
+// Receives a New_Epoch redirect (§7.2, §7.4): an advanced replica's notice that the group has
+// moved to a later epoch. A replica not in the new configuration has been replaced and shuts down.
+// One that is a member adopts the new epoch and configuration; if it was recovering, it
+// re-broadcasts its Recovery at the new epoch so the new group — which alone holds the epoch's
+// committed state — answers it, rather than the replica staying stuck at the old epoch and
+// rejoining an emptied remnant (the split the simulator surfaced, see simulator_bugs.md). A
+// non-recovering member adopts the new epoch and fetches the epoch's state by transfer.
+func replica_receive_new_epoch(
+	replica *Replica, message Message, now time.Moment,
+) (output Step_Output) {
+	if !configuration_contains(message.New_Configuration, replica.Identifier) {
+		replica.Status = Status_Shutdown
+		replica.Old_Configuration = nil
+		return output
+	}
+	replica.Epoch = message.Epoch
+	replica.Configuration = message.New_Configuration
+	replica.Old_Configuration = nil
+	// The replica re-learns the new epoch's state through the RECOVERY protocol, whose quorum
+	// guarantees the authority holds every committed op; a single peer might be behind this
+	// replica's own commit and shorten the log below the commit number. It does NOT wipe op,
+	// commit, log, checkpoint, or the Executed marker: it has not lost state, committed ops
+	// survive a reconfiguration, so its prefix is valid and recovery executes only beyond
+	// Executed. Re-executing the prefix would double-apply to a stateful app (Bug 9). An
+	// already-recovering replica keeps its nonce so earlier responses still count.
+	replica.Status = Status_Recovery
+	replica.Recovery_From = map[Replica_Identifier]Message{}
+	output.Messages = replica_broadcast(replica, Message{
+		Kind:          Message_Kind_Recovery,
+		Nonce:         replica.Recovery_Nonce,
+		Checkpoint_Op: replica.Checkpoint_Op,
+	})
+	output.Timer = replica_arm_timer(replica, now)
+	return output
+}
+
+// Redirects a sender at a stale epoch to the current one (§7.2, §7.4). A client request is answered
+// to the client with the new configuration so the client can find the group that moved (§7.4); any
+// other sender is a replica, informed with a New_Epoch addressed to it. The redirect carries the
+// replica's current view and the new (now-current) configuration.
+func replica_redirect_stale_epoch(replica *Replica, message Message) (output Step_Output) {
+	redirect := Message{
+		Kind:              Message_Kind_New_Epoch,
+		From:              replica.Identifier,
+		View:              replica.View,
+		Epoch:             replica.Epoch,
+		New_Configuration: replica.Configuration,
+	}
+	is_client := message.Kind == Message_Kind_Request ||
+		message.Kind == Message_Kind_Reconfiguration ||
+		message.Kind == Message_Kind_Check_Epoch
+	if is_client {
+		redirect.Client = message.Client
+		output.Replies = []Message{redirect}
+		return output
+	}
+	redirect.To = message.From
+	output.Messages = []Message{redirect}
+	return output
+}
+
+// Turns an administrator's Reconfiguration into the epoch's final log entry (§7.1). The primary
+// accepts it only at its own epoch (the gate already ensured that), when the request-number is
+// fresh per the client-table, and when the new configuration has at least three members — VR's
+// minimum.
+// It appends the entry carrying the new configuration, broadcasts the Prepare, and thereafter
+// refuses client requests: replica_open_to_requests reads the topmost entry and sees the
+// reconfiguration, so the request path turns new commands away without any extra flag.
+func replica_receive_reconfiguration(replica *Replica, message Message) (output Step_Output) {
+	if replica.Status != Status_Normal {
+		return output
+	}
+	if replica.Identifier != replica_primary_identifier(replica) {
+		return output
+	}
+	if len(message.New_Configuration) < 3 {
+		return output // Below VR's minimum group size; the reconfiguration is rejected.
+	}
+	record, ok := replica.Client_Table[message.Client]
+	if ok {
+		if message.Request_Number <= record.Request_Number {
+			return output // Stale or in-flight per the client-table; not re-appended.
+		}
+	}
+	return replica_append_request(replica, Log_Entry{
+		View:              replica.View,
+		Command:           message.Command,
+		Client:            message.Client,
+		Request_Number:    message.Request_Number,
+		New_Configuration: message.New_Configuration,
+	})
+}
+
+// Receives a Start_Epoch (§7.1.1): the new group's notice that an epoch has begun. A replica
+// already active in this epoch answers a (duplicate) Start_Epoch with Epoch_Started, so the sender
+// — a replaced replica resending because it has not yet shut down (§7.1.2) — counts it. Otherwise
+// the replica records the old and new configurations, the new epoch and start op, resets to view 0,
+// and enters Transitioning, then either catches up by state transfer (its log is short of the epoch
+// start) or, already holding the log, completes the epoch immediately.
+func replica_receive_start_epoch(
+	replica *Replica, message Message, now time.Moment,
+) (output Step_Output) {
+	if replica.Epoch == message.Epoch {
+		if replica.Status == Status_Normal {
+			// Already caught up and serving in this epoch: re-acknowledge so the
+			// resending replaced replica can reach its f'+1 and shut down.
+			output.Messages = []Message{{
+				Kind:  Message_Kind_Epoch_Started,
+				From:  replica.Identifier,
+				To:    message.From,
+				View:  replica.View,
+				Epoch: replica.Epoch,
+			}}
+			return output
+		}
+		// Still transitioning in this epoch; the in-flight catch-up will finish.
+		return output
+	}
+	if message.Epoch < replica.Epoch {
+		return output // The gate already filters these; defensive.
+	}
+	// A recovering old replica informed of the next epoch (§7.2): if it is not a member of the
+	// new group it shuts down — it is being replaced and its volatile state is gone anyway;
+	// otherwise it adopts the new epoch's configuration and continues recovery against the new
+	// group, the nonce-protected rejoin staying the single way its wiped log is restored
+	// (recovery quiescence, Bug 1).
+	if replica.Status == Status_Recovery {
+		if !configuration_contains(message.New_Configuration, replica.Identifier) {
+			replica.Status = Status_Shutdown
+			return output
+		}
+		replica.Epoch = message.Epoch
+		replica.Configuration = message.New_Configuration
+		return output
+	}
+	replica.Epoch = message.Epoch
+	replica.Epoch_Start_Op = message.Op
+	replica.Configuration = message.New_Configuration
+	replica.Old_Configuration = message.Old_Configuration
+	replica.View = 0
+	replica.Last_Normal_View = 0
+	replica.Status = Status_Transition
+	replica.Start_View_Change_From = map[Replica_Identifier]bool{}
+	replica.Do_View_Change_From = map[Replica_Identifier]Message{}
+	replica.View_Change_Deferred = false
+	replica.Epoch_Started_From = map[Replica_Identifier]bool{}
+	return replica_catch_up_to_epoch(replica, now)
+}
+
+// Brings a transitioning new-group member up to the start of the epoch (§7.1.1 step 2-3). When its
+// log already reaches the epoch-start op it completes the epoch now; otherwise it fetches the
+// missing log — checkpoint path included for a brand-new node with an empty log — from the old
+// replicas (which serve the new group during the handoff) and the other new replicas, staying
+// transitioning until a New_State carries it to the epoch start.
+func replica_catch_up_to_epoch(replica *Replica, now time.Moment) (output Step_Output) {
+	if replica.Op >= replica.Epoch_Start_Op {
+		return replica_complete_epoch(replica, now)
+	}
+	output.Messages = replica_epoch_state_transfer(replica)
+	output.Timer = replica_arm_timer(replica, now)
+	return output
+}
+
+// Sends a Get_State to every replica that can supply the epoch's log — the old replicas (named by
+// Old_Configuration, which serve the new group during the handoff) and the other new replicas —
+// asking from this replica's own op so the responder ships only what it lacks. A brand-new node
+// asks from op 0, so the responder falls back to its checkpoint when the prefix was
+// garbage-collected.
+func replica_epoch_state_transfer(replica *Replica) (messages []Message) {
+	sources := map[Replica_Identifier]bool{}
+	for _, identifier := range replica.Old_Configuration {
+		sources[identifier] = true
+	}
+	for _, identifier := range replica.Configuration {
+		sources[identifier] = true
+	}
+	delete(sources, replica.Identifier)
+	// Iterate the configurations in order, not the map, so the messages are emitted
+	// deterministically; the set above only deduplicates an identifier in both groups.
+	emitted := map[Replica_Identifier]bool{}
+	for _, identifier := range append(
+		append(Configuration{}, replica.Old_Configuration...), replica.Configuration...) {
+		if identifier == replica.Identifier {
+			continue
+		}
+		if emitted[identifier] {
+			continue
+		}
+		emitted[identifier] = true
+		messages = append(messages, Message{
+			Kind:  Message_Kind_Get_State,
+			From:  replica.Identifier,
+			To:    identifier,
+			View:  replica.View,
+			Epoch: replica.Epoch,
+			Op:    replica.Op,
+		})
+	}
+	return messages
+}
+
+// Completes the epoch on a caught-up new-group member (§7.1.1 step 3): it returns to normal in view
+// 0, executes any committed-but-unexecuted ops, and announces Epoch_Started to the replaced
+// replicas. Whether it is the new epoch's primary follows from the new configuration and view 0, so
+// no extra flag gates request acceptance — replica_receive_request already routes only to the
+// current primary.
+func replica_complete_epoch(replica *Replica, now time.Moment) (output Step_Output) {
+	old_configuration := replica.Old_Configuration
+	replica.Status = Status_Normal
+	replica.Old_Configuration = nil
+	output.Committed, output.Replies = replica_execute_to_commit(replica)
+	output.Messages = replica_epoch_started_messages(replica, old_configuration)
+	output.Timer = replica_arm_timer(replica, now)
+	return output
+}
+
+// Receives an Epoch_Started from a caught-up new-group member (§7.1.2). A replica being replaced
+// tallies these by sender and, once it holds f'+1 — the new group's quorum, so the group can
+// process requests without it — shuts down: its state is safely transferred and it is no longer
+// needed. A replica that is not being replaced (a retained member, or one not transitioning) has
+// nothing to do with it.
+func replica_receive_epoch_started(replica *Replica, message Message) (output Step_Output) {
+	if replica.Status != Status_Transition {
+		return output
+	}
+	// Only a replica being replaced — handing off, so not a member of the new group — counts
+	// Epoch_Started toward shutdown. A transitioning new-group member is itself catching up.
+	if configuration_contains(replica.Configuration, replica.Identifier) {
+		return output
+	}
+	replica.Epoch_Started_From[message.From] = true
+	if len(replica.Epoch_Started_From) < replica_new_group_quorum(replica) {
+		return output
+	}
+	// The new group's quorum is up: it can serve without this one, so the handoff is complete
+	// and the replaced replica shuts down.
+	replica.Status = Status_Shutdown
+	return output
+}
+
+// Checks the per-replica safety invariants that must hold after every step. These are local — a
+// replica verifies them from its own state — unlike agreement and single-primary, which span the
+// cluster and so live in the simulator. A violation is a Dot_Product panic, failing fast in any
+// embedding, not only under test.
+func replica_assert_safety(replica *Replica) {
+	// A replica being replaced adopts the new configuration it is handing off to (§7.1.2), so
+	// it is legitimately NOT a member of its own Configuration while it serves the new group.
+	// The membership invariant therefore holds only for a replica still serving its own group
+	// — one that is not in a replaced-and-handing-off state. A shutdown replica is out of the
+	// protocol entirely.
+	serves_own_group := configuration_contains(replica.Configuration, replica.Identifier)
+	// Old_Configuration is populated only across an epoch handoff, where the status is
+	// Transitioning or Shutdown; a non-empty Old_Configuration outside those is a leak.
+	handoff := replica.Status == Status_Transition || replica.Status == Status_Shutdown
+	old_configuration_within_handoff := len(replica.Old_Configuration) == 0 || handoff
+	// Log_Start must never sit above the checkpoint op: the ops between would be in neither the
+	// log nor the checkpoint, a gap that walks execution into an absent op. A 0 Log_Start means
+	// no compaction yet (no checkpoint either).
+	log_start_below_checkpoint := replica.Log_Start == 0 ||
+		replica.Log_Start <= replica.Checkpoint_Op
+	// One Dot_Product over all axes: it runs on every step, and a single consume pays one
+	// caller-frame lookup instead of one per axis in the hottest path.
+	invariant.Dot_Product(
+		invariant.Always(int(replica.Op) == int(replica.Log_Start)+len(replica.Log)),
+		invariant.Always(replica.Commit <= Commit(replica.Op)),
+		invariant.Always(replica.Last_Normal_View <= replica.View),
+		// A 2f+1 group needs at least three members to tolerate one fault.
+		invariant.Always(len(replica.Configuration) >= 3),
+		// A replica must be a member of the configuration it serves, or it could never be a
+		// primary — unless it is a replaced replica handing off, exempted above.
+		invariant.Always(serves_own_group || handoff),
+		invariant.Always(old_configuration_within_handoff),
+		invariant.Always(log_start_below_checkpoint),
+	)
+}
+
+// Reports whether identifier is a member of configuration.
+func configuration_contains(
+	configuration Configuration, identifier Replica_Identifier,
+) (yes bool) {
+	for _, member := range configuration {
+		if member == identifier {
+			return true
+		}
+	}
+	return false
+}
+
+// Turns a client command into a new log entry on the primary, deduplicated by the client-table for
+// exactly-once semantics. Only the primary of the current view, and only while normal, may append.
+// A request the client-table has already seen is never re-appended: a stale one is dropped, an
+// in-flight one is dropped (its op will reply when it commits), and a duplicate of an
+// already-executed request is answered from the cache (§4.5, a client that lost its reply).
+func replica_receive_request(replica *Replica, message Message) (output Step_Output) {
+	if replica.Status != Status_Normal {
+		return output
+	}
+	if replica.Identifier != replica_primary_identifier(replica) {
+		return output
+	}
+	if !replica_open_to_requests(replica) {
+		return output // The epoch's reconfiguration is its last op; no new client requests.
+	}
+	record, ok := replica.Client_Table[message.Client]
+	if ok {
+		if message.Request_Number < record.Request_Number {
+			return output // Stale: a newer request already superseded it.
+		}
+		if message.Request_Number == record.Request_Number {
+			if record.Executed {
+				reply := replica_build_reply(replica, message.Client, record)
+				output.Replies = []Message{reply}
+			}
+			return output // Re-sent the cached reply, or the op is still in flight.
+		}
+	}
+	// We are about to accept the request, so it strictly advances the client's number: the
+	// client numbers its requests monotonically, and the two early returns above already turned
+	// away anything not greater than the record. Pinning it here makes the exactly-once
+	// precondition hold at the mutation point in any embedding, not only under the simulator.
+	is_new_request := !ok || message.Request_Number > record.Request_Number
+	invariant.Dot_Product(invariant.Always(is_new_request))
+	// The pre-step variant cannot append yet: the executed value must combine the cluster's
+	// predictions, so it first gathers f backups' predictions (§4.4). The request is buffered
+	// and a Predict_Request broadcast; the append happens when f responses arrive.
+	if replica.State_Machine.Combine != nil {
+		return replica_begin_pre_step(replica, message)
+	}
+	// Local-predict (the default): the primary computes the value itself, stamps it on the
+	// entry, and appends now. With no Predict the prediction stays empty — a deterministic
+	// op.
+	return replica_append_request(replica, Log_Entry{
+		View:           replica.View,
+		Command:        message.Command,
+		Client:         message.Client,
+		Request_Number: message.Request_Number,
+		Prediction:     replica_local_prediction(replica, message.Command),
+	})
+}
+
+// Computes the primary's local prediction for a command, or empty when no Predict is injected (an
+// ordinary deterministic op needs none).
+func replica_local_prediction(replica *Replica, command []byte) (prediction []byte) {
+	if replica.State_Machine.Predict == nil {
+		return nil
+	}
+	return replica.State_Machine.Predict(command)
+}
+
+// Appends one accepted request's entry — already carrying its predetermined prediction — to the
+// primary's log, records the client-table in-flight entry, and broadcasts the Prepare. Shared by
+// the local-predict path and the pre-step path, which differ only in how the entry's prediction was
+// computed; both arrive here with the entry fully built.
+func replica_append_request(replica *Replica, entry Log_Entry) (output Step_Output) {
+	replica.Log = append(replica.Log, entry)
+	replica.Op = replica.Log_Start + Op(len(replica.Log))
+	replica.Client_Table[entry.Client] = Client_Record{
+		Request_Number: entry.Request_Number,
+		Executed:       false,
+	}
+	output.Messages = replica_broadcast(replica, Message{
+		Kind:   Message_Kind_Prepare,
+		Op:     replica.Op,
+		Entry:  entry,
+		Commit: replica.Commit,
+	})
+	return output
+}
+
+// Opens the pre-step prediction round for a buffered request: it broadcasts a Predict_Request to
+// the backups and records an empty tally keyed by client and request-number. A re-sent request for
+// a round already open just re-broadcasts, leaving the tally intact, so a lost Predict_Request can
+// be retried without losing collected responses.
+func replica_begin_pre_step(replica *Replica, message Message) (output Step_Output) {
+	key := Prediction_Round_Key{
+		Client:         message.Client,
+		Request_Number: message.Request_Number,
+	}
+	_, ok := replica.Predict_From[key]
+	if !ok {
+		replica.Predict_From[key] = Prediction_Round{
+			Command:   message.Command,
+			Responses: map[Replica_Identifier][]byte{},
+		}
+	}
+	output.Messages = replica_broadcast(replica, Message{
+		Kind:           Message_Kind_Predict_Request,
+		Command:        message.Command,
+		Client:         message.Client,
+		Request_Number: message.Request_Number,
+	})
+	return output
+}
+
+// Answers a primary's Predict_Request with this backup's prediction for the command (§4.4
+// pre-step). Only a normal replica in the primary's view answers; a non-normal or behind replica
+// stays silent, and the pre-step round waits for f replies from the backups that are current. With
+// no Predict injected the response is empty, which Combine must tolerate.
+func replica_receive_predict_request(replica *Replica, message Message) (output Step_Output) {
+	if replica.Status != Status_Normal {
+		return output
+	}
+	if message.View != replica.View {
+		return output
+	}
+	output.Messages = []Message{{
+		Kind:           Message_Kind_Predict_Response,
+		From:           replica.Identifier,
+		To:             message.From,
+		View:           replica.View,
+		Epoch:          replica.Epoch,
+		Client:         message.Client,
+		Request_Number: message.Request_Number,
+		Result:         replica_local_prediction(replica, message.Command),
+	}}
+	return output
+}
+
+// Tallies one backup's Predict_Response on the primary and, once f distinct backups have answered a
+// pending request, combines their predictions with the primary's own, appends the request, and
+// broadcasts the Prepare (§4.4 pre-step). A response for a round already completed, or for one
+// this replica is not running, is dropped; a duplicate from the same sender is idempotent, filed by
+// sender so it cannot inflate the count.
+func replica_receive_predict_response(replica *Replica, message Message) (output Step_Output) {
+	if replica.Status != Status_Normal {
+		return output
+	}
+	if message.View != replica.View {
+		return output
+	}
+	if replica.Identifier != replica_primary_identifier(replica) {
+		return output
+	}
+	key := Prediction_Round_Key{
+		Client:         message.Client,
+		Request_Number: message.Request_Number,
+	}
+	round, ok := replica.Predict_From[key]
+	if !ok {
+		return output // No open round: already completed, or never ours to run.
+	}
+	round.Responses[message.From] = message.Result
+	// The pre-step round needs f backups' predictions; f = quorum - 1, since the primary adds
+	// its own. Below that, keep collecting.
+	if len(round.Responses) < replica_quorum(replica)-1 {
+		return output
+	}
+	// The round is complete: a duplicate response after this point finds no open round and is
+	// dropped. Combine over the collected backups' predictions and the primary's own, then add.
+	// Iterate the configuration, not the map, so the responses reach Combine in a deterministic
+	// order — a map range would not, and Combine must be a pure function of its inputs.
+	responses := make([][]byte, 0, len(round.Responses))
+	for _, member := range replica.Configuration {
+		response, answered := round.Responses[member]
+		if answered {
+			responses = append(responses, response)
+		}
+	}
+	own := replica_local_prediction(replica, round.Command)
+	prediction := replica.State_Machine.Combine(round.Command, responses, own)
+	delete(replica.Predict_From, key)
+	return replica_append_request(replica, Log_Entry{
+		View:           replica.View,
+		Command:        round.Command,
+		Client:         message.Client,
+		Request_Number: message.Request_Number,
+		Prediction:     prediction,
+	})
+}
+
+// Builds the primary's cached Reply to a client, addressed by Client (clients are not in the
+// Configuration, so To stays zero) and carrying the current view, the request-number, and the
+// record's cached result.
+func replica_build_reply(
+	replica *Replica, client Client_Identifier, record Client_Record,
+) (reply Message) {
+	return Message{
+		Kind:           Message_Kind_Reply,
+		View:           replica.View,
+		Epoch:          replica.Epoch,
+		Client:         client,
+		Request_Number: record.Request_Number,
+		Result:         record.Result,
+	}
+}
+
+// Applies a backup's next op and acks it. A Prepare from a later view, or one that skips ahead of
+// the next op, means the backup is behind, so it catches up by state transfer rather than dropping
+// the message; one that skips an op the log must stay gap-free.
+func replica_receive_prepare(
+	replica *Replica, message Message, now time.Moment,
+) (output Step_Output) {
+	if replica.Status != Status_Normal {
+		return output
+	}
+	if message.View < replica.View {
+		return output
+	}
+	if message.View > replica.View {
+		return replica_begin_state_transfer(replica, message.View, message.From, now)
+	}
+	// Same view: hearing from the primary resets the failure detector and commits what we hold.
+	output.Timer = replica_arm_timer(replica, now)
+	output.Committed, output.Replies = replica_apply_commit(replica, message.Commit)
+	if message.Op <= replica.Op {
+		return output // A duplicate or already-held op; nothing to append.
+	}
+	if message.Op > replica.Op+1 {
+		transfer := replica_begin_state_transfer(replica, replica.View, message.From, now)
+		output.Messages = transfer.Messages
+		output.Timer = transfer.Timer
+		return output
+	}
+	replica.Log = append(replica.Log, message.Entry)
+	replica.Op = replica.Log_Start + Op(len(replica.Log))
+	// A backup adopts the Prepare's entry verbatim — including its predetermined prediction
+	// — and never recomputes it; that verbatim copy is what keeps every replica executing the
+	// op against the identical value (§4.4). It holds by construction; pin it so a future
+	// change that mutates the entry between receipt and append cannot silently break agreement.
+	appended_matches := string(replica_log_entry(replica, replica.Op).Prediction) ==
+		string(message.Entry.Prediction)
+	invariant.Dot_Product(invariant.Always(appended_matches))
+	output.Messages = []Message{{
+		Kind:  Message_Kind_Prepare_Ok,
+		From:  replica.Identifier,
+		To:    replica_primary_identifier(replica),
+		View:  replica.View,
+		Epoch: replica.Epoch,
+		Op:    replica.Op,
+	}}
+	return output
+}
+
+// Applies the primary's advertised commit number on a backup and resets the failure detector, since
+// a Commit is the primary's heartbeat. A Commit from a later view, or one advertising ops the
+// backup is missing, triggers state transfer to catch up.
+func replica_receive_commit(
+	replica *Replica, message Message, now time.Moment,
+) (output Step_Output) {
+	if replica.Status != Status_Normal {
+		return output
+	}
+	if message.View < replica.View {
+		return output
+	}
+	if message.View > replica.View {
+		return replica_begin_state_transfer(replica, message.View, message.From, now)
+	}
+	output.Timer = replica_arm_timer(replica, now)
+	output.Committed, output.Replies = replica_apply_commit(replica, message.Commit)
+	if message.Commit > Commit(replica.Op) {
+		transfer := replica_begin_state_transfer(replica, replica.View, message.From, now)
+		output.Messages = transfer.Messages
+		output.Timer = transfer.Timer
+	}
+	return output
+}
+
+// Begins catching a behind-but-not-crashed replica up by asking a more current peer for state. A
+// later view means the uncommitted tail may have been reordered by a view change, so it is dropped
+// to the committed prefix and the new view adopted before requesting; a same-view gap keeps the log
+// and just fetches forward. Truncation never goes below the commit number, so no committed op is
+// lost.
+func replica_begin_state_transfer(
+	replica *Replica, target_view View, source Replica_Identifier, now time.Moment,
+) (output Step_Output) {
+	if target_view > replica.View {
+		replica.View = target_view
+		// Drop the uncommitted tail back to the commit number. The committed prefix that
+		// remains in Log runs from Log_Start+1 through Commit, so the entries to keep
+		// number Commit - Log_Start; the compacted prefix below Log_Start is untouched.
+		replica.Log = replica.Log[:int(replica.Commit)-int(replica.Log_Start)]
+		replica.Op = Op(replica.Commit)
+		replica.Last_Normal_View = target_view
+	}
+	output.Messages = []Message{{
+		Kind:  Message_Kind_Get_State,
+		From:  replica.Identifier,
+		To:    source,
+		View:  replica.View,
+		Epoch: replica.Epoch,
+		Op:    replica.Op,
+	}}
+	output.Timer = replica_arm_timer(replica, now)
+	return output
+}
+
+// Answers a Get_State from a replica that is at least as current, sending the log it lacks so it
+// can catch up. When the requester's op is below this replica's Log_Start — the prefix it needs
+// has been garbage-collected (§5.2) — the answer instead carries the checkpoint and only the
+// suffix after the checkpoint op, since the GC'd prefix no longer exists to ship. A replica still
+// changing views answers too: it holds its complete last-normal log, and a new primary deferring an
+// install fetches the selected log from it precisely while it sits in view-change (§5.3), so
+// refusing here would deadlock that fetch. A recovering replica, whose log was wiped, has nothing
+// authoritative to offer and stays silent.
+func replica_receive_get_state(replica *Replica, message Message) (output Step_Output) {
+	if replica.Status == Status_Recovery {
+		return output
+	}
+	if replica.View < message.View {
+		return output
+	}
+	response := Message{
+		Kind:   Message_Kind_New_State,
+		From:   replica.Identifier,
+		To:     message.From,
+		View:   replica.View,
+		Epoch:  replica.Epoch,
+		Op:     replica.Op,
+		Commit: replica.Commit,
+	}
+	if message.Op < replica.Log_Start {
+		// The requester is behind the compacted prefix: ship the checkpoint and the suffix
+		// after it. The suffix begins at Checkpoint_Op+1, which is at or above Log_Start
+		// since the checkpoint never GCs above Checkpoint_Op - Log_Retain.
+		response.Checkpoint_Op = replica.Checkpoint_Op
+		response.Checkpoint_State = replica.Checkpoint_State
+		response.Log = replica_log_slice_from(replica, replica.Checkpoint_Op+1)
+	} else {
+		// The requester holds everything up to its op; ship only the entries beyond it. A
+		// requester already at or past this replica's op gets an empty suffix — it is no
+		// longer behind us, and its own apply guard will keep its longer log.
+		from := message.Op + 1
+		if from > replica.Op+1 {
+			from = replica.Op + 1
+		}
+		response.Log = replica_log_slice_from(replica, from)
+	}
+	output.Messages = []Message{response}
+	return output
+}
+
+// Adopts the state a peer sent in answer to this replica's Get_State, provided it is no older. The
+// answer carries a suffix — the entries from message.Op back over its length — which this
+// replica splices onto the prefix it already holds. A later view's log already preserves every
+// committed op (the view change guaranteed it); a same-view answer is adopted only when it carries
+// a strictly higher op, so it never shortens the log. When the answer carries a checkpoint (§5.2
+// gap), the replica first Restores from it, sets Log_Start to the checkpoint op, and adopts the
+// view in which the checkpoint was taken; then the committed prefix is executed so the application
+// state matches.
+func replica_receive_new_state(
+	replica *Replica, message Message, now time.Moment,
+) (output Step_Output) {
+	// A new primary that deferred its view-change install awaits exactly this: the selected
+	// reporter's complete log (§5.3). Route it to the deferred-install path, which adopts the
+	// fetched log wholesale and finally broadcasts the Start_View it withheld.
+	if replica.View_Change_Deferred {
+		if replica.Status == Status_View_Change {
+			return replica_complete_view_change_fetch(replica, message, now)
+		}
+	}
+	// A transitioning new-group member is catching up to the start of the epoch (§7.1.1): it
+	// applies the shipped state the same way, then completes the epoch once its log reaches the
+	// epoch-start op. This is the path a brand-new node takes from an empty log — checkpoint
+	// included — to serving in the new epoch.
+	if replica.Status == Status_Transition {
+		if message.Op <= replica.Op {
+			return output // Nothing newer to adopt; keep waiting for a later answer.
+		}
+		replica_apply_new_state(replica, message)
+		// Take the commit number the responder reported (capped to the ops just adopted),
+		// so completing the epoch executes the caught-up committed prefix. Everything up to
+		// the epoch start is committed — the reconfiguration op committed in the old group,
+		// and every op before it with it.
+		commit := message.Commit
+		if Commit(replica.Op) < commit {
+			commit = Commit(replica.Op)
+		}
+		if commit > replica.Commit {
+			replica.Commit = commit
+		}
+		return replica_catch_up_to_epoch(replica, now)
+	}
+	if replica.Status != Status_Normal {
+		return output
+	}
+	if message.View < replica.View {
+		return output
+	}
+	if message.View == replica.View {
+		if message.Op <= replica.Op {
+			return output
+		}
+	}
+	replica.View = message.View
+	replica.Last_Normal_View = message.View
+	replica_apply_new_state(replica, message)
+	output.Committed, output.Replies = replica_apply_commit(replica, message.Commit)
+	output.Timer = replica_arm_timer(replica, now)
+	return output
+}
+
+// Adopts the log a New_State carries onto this replica: when it ships a checkpoint (the §5.2 gap)
+// and the replica is behind it, restore from the checkpoint and rebuild the log from the shipped
+// suffix; then splice the suffix onto the held prefix and reconcile the client-table. It leaves
+// Commit to the caller, which differs by path (the normal path caps at the message's commit; the
+// transitioning path commits up to the epoch start). It is the shared apply body of both
+// state-transfer paths.
+func replica_apply_new_state(replica *Replica, message Message) {
+	if message.Checkpoint_State != nil {
+		if message.Checkpoint_Op > replica.Executed {
+			replica_restore_checkpoint(
+				replica, message.Checkpoint_Op, message.Checkpoint_State)
+			replica.Log = nil
+		}
+	}
+	// Splice the shipped suffix onto the prefix this replica holds: state transfer extends a
+	// catch-up log rather than replacing it, since the requester's committed prefix already
+	// matches the responder's by agreement.
+	replica_splice_suffix(replica, message.Op, message.Log)
+	replica_rebuild_client_table(replica)
+}
+
+// Completes a deferred view-change install when the awaited New_State arrives (§5.3). It accepts
+// only the New_State the deferred fetch is waiting for — from the selected reporter, in this view,
+// reaching at least its reported op — so a stray or stale New_State neither installs early nor
+// drops a committed op. The carrier is the reporter's complete log (suffix above the committed
+// floor the fetch requested, with the checkpoint when even that prefix was GC'd); installing it
+// wholesale replaces the new primary's own uncommitted tail with the winner's, then broadcasts the
+// Start_View that was withheld while fetching. A non-matching New_State is ignored, leaving the
+// fetch outstanding.
+func replica_complete_view_change_fetch(
+	replica *Replica, message Message, now time.Moment,
+) (output Step_Output) {
+	if message.From != replica.View_Change_Fetch_From {
+		return output
+	}
+	if message.View != replica.View {
+		return output
+	}
+	if message.Op < replica.View_Change_Fetch_Op {
+		return output // The fetched log is short of the winner's op; keep waiting.
+	}
+	return replica_complete_install(replica, message, replica.View_Change_Fetch_Op, now)
+}
+
+// Splices a suffix onto the log: suffix is the entries ending at final_op, so they begin at op
+// final_op minus the length plus one. The replica keeps the entries it already holds below that
+// start and appends the suffix, leaving Op at final_op. The kept count is clamped into the live
+// log: a replica more compacted than the carrier (its Log_Start above the suffix start) keeps its
+// whole suffix, and only the suffix entries above its current op are appended, so neither end
+// indexes out of range.
+func replica_splice_suffix(replica *Replica, final_op Op, suffix []Log_Entry) {
+	suffix_start := final_op - Op(len(suffix)) + 1
+	// Drop suffix entries the replica already holds — those at or below its current op — so
+	// a more compacted replica does not re-append ops its checkpoint and log already cover.
+	if suffix_start <= replica.Op {
+		skip := int(replica.Op - suffix_start + 1)
+		if skip > len(suffix) {
+			skip = len(suffix)
+		}
+		suffix = suffix[skip:]
+		suffix_start = replica.Op + 1
+	}
+	keep := int(suffix_start - replica.Log_Start - 1)
+	if keep < 0 {
+		keep = 0
+	}
+	kept := replica.Log
+	if keep < len(kept) {
+		kept = kept[:keep]
+	}
+	combined := make([]Log_Entry, 0, keep+len(suffix))
+	combined = append(combined, kept...)
+	combined = append(combined, suffix...)
+	replica.Log = combined
+	replica.Op = replica.Log_Start + Op(len(replica.Log))
+}
+
+// Replaces the log above the shared committed prefix with an authoritative suffix, discarding every
+// entry this replica holds beyond that prefix — the wholesale-adoption counterpart to
+// replica_splice_suffix. Where splice EXTENDS a catch-up log (state transfer, where the requester's
+// own suffix above the carrier is trusted), replace REPLACES it: the suffix comes from the agreed
+// log of a view (a Do_View_Change winner, a Start_View, or a Recovery_Response), so it supersedes
+// this replica's tail entirely. carrier_start is the op just below the suffix's first entry; the
+// shared committed prefix the replica keeps runs through floor, the higher of carrier_start and
+// the replica's own Log_Start, since a replica more compacted than the carrier already covers its
+// lower entries in its checkpoint. Suffix entries at or below floor are dropped (the
+// replica's checkpoint already covers them, so re-appending them would misalign the offset index),
+// and the replica's own live entries above floor are discarded, so a stale uncommitted entry from a
+// bypassed primary cannot persist into the adopted view (simulator_bugs.md, Bug 9). The kept prefix
+// is committed: the caller restricts this path to carrier_start <= Executed, and Log_Start <=
+// Checkpoint_Op <= Commit, so floor <= Commit either way.
+func replica_replace_from(replica *Replica, carrier_start Op, suffix []Log_Entry) {
+	floor := carrier_start
+	if replica.Log_Start > floor {
+		floor = replica.Log_Start
+	}
+	// Drop suffix entries at or below floor: the replica holds those in its retained log or
+	// checkpoint already, and the appended suffix must begin exactly at floor+1 so the kept
+	// prefix and the suffix stay contiguous under the Log_Start offset index.
+	suffix_start := carrier_start + 1
+	if suffix_start <= floor {
+		drop := int(floor - suffix_start + 1)
+		if drop > len(suffix) {
+			drop = len(suffix)
+		}
+		suffix = suffix[drop:]
+	}
+	keep := int(floor - replica.Log_Start)
+	if keep < 0 {
+		keep = 0
+	}
+	kept := replica.Log
+	if keep < len(kept) {
+		kept = kept[:keep]
+	}
+	combined := make([]Log_Entry, 0, keep+len(suffix))
+	combined = append(combined, kept...)
+	combined = append(combined, suffix...)
+	replica.Log = combined
+	replica.Op = replica.Log_Start + Op(len(replica.Log))
+}
+
+// Records a backup's acknowledgement and commits as far as the acknowledgements allow. The ack is
+// filed by sender so a duplicate cannot inflate the count.
+func replica_receive_prepare_ok(replica *Replica, message Message) (output Step_Output) {
+	if replica.Status != Status_Normal {
+		return output
+	}
+	if message.View != replica.View {
+		return output
+	}
+	if replica.Identifier != replica_primary_identifier(replica) {
+		return output
+	}
+	if replica.Prepare_Ok_From[message.Op] == nil {
+		replica.Prepare_Ok_From[message.Op] = map[Replica_Identifier]bool{}
+	}
+	replica.Prepare_Ok_From[message.Op][message.From] = true
+	replica_advance_commit_as_primary(replica)
+	output.Committed, output.Replies = replica_execute_to_commit(replica)
+	return output
+}
+
+// Walks the commit number forward over every contiguous op that has reached a quorum. Commit
+// advances in order — op k is committed only once k-1 is — so a quorum on a later op cannot
+// commit it ahead of an earlier gap. Execution is a separate step (replica_execute_to_commit) so
+// commit advance and state-machine execution share one path on every commit, normal or adopted.
+func replica_advance_commit_as_primary(replica *Replica) {
+	for op := replica.Commit + 1; op <= Commit(replica.Op); op++ {
+		// The primary holds every op it has assigned, so it counts toward each op's quorum
+		// itself, in addition to the distinct backups that have acked.
+		distinct_count := len(replica.Prepare_Ok_From[Op(op)]) + 1
+		if distinct_count < replica_quorum(replica) {
+			break
+		}
+		// A commit is only safe behind a quorum; assert it when the op commits.
+		invariant.Dot_Product(invariant.Always(distinct_count >= replica_quorum(replica)))
+		replica.Commit = op
+	}
+}
+
+// Advances a replica's commit number toward commit_number, but never past the ops it actually holds
+// — a backup cannot commit an entry it has not yet prepared — then executes up to the new
+// commit. Surfaces the entries that became committed, in op order, and the Replies executing them
+// produced. On a backup Replies is empty; only the primary, on its own commit path, replies.
+func replica_apply_commit(
+	replica *Replica, commit_number Commit,
+) (committed []Log_Entry, replies []Message) {
+	target := commit_number
+	if Commit(replica.Op) < target {
+		target = Commit(replica.Op)
+	}
+	if target > replica.Commit {
+		replica.Commit = target
+	}
+	return replica_execute_to_commit(replica)
+}
+
+// Executes a Reconfiguration op (§7.1): a VR-state-only op, never an up-call to the State_Machine.
+// It records the admin client's request-number so a retry is deduped (exactly-once applies to the
+// admin too) but caches no result, flags the epoch handoff for the top-level step to perform once
+// execution settles, and records the epoch-start op. The checkpoint at this op is still taken, so
+// the boundary the reconfiguration lands on is captured like any other.
+func replica_execute_reconfiguration(replica *Replica, entry Log_Entry, op Op) {
+	replica.Client_Table[entry.Client] = Client_Record{
+		Request_Number: entry.Request_Number,
+		Executed:       true,
+	}
+	replica.Epoch_Handoff_Due = true
+	replica.Epoch_Start_Op = op
+	// Capture the new configuration now, while the entry is in hand: the maybe-checkpoint below
+	// and the compaction at the end of the execution loop can garbage-collect this very op
+	// before the top-level drain runs, so the drain must not depend on re-reading the entry.
+	replica.Epoch_New_Configuration = entry.New_Configuration
+	replica_maybe_checkpoint(replica, op)
+}
+
+// Brings the state machine up to the commit number: it executes every committed op the state
+// machine has not yet executed, in op order, exactly once — the walk from Executed+1 to Commit is
+// the exactly-once guarantee, since Executed advances monotonically and an op is executed only as
+// it first crosses. It is the single execution site, shared by the normal commit path and every
+// path that adopts a committed prefix wholesale, so the application state always reflects exactly
+// Commit. With no state machine injected it only advances Executed (a no-op bookkeeping counter)
+// and returns nothing, leaving the core a pure agreement engine. An op below Log_Start lives only
+// in the checkpoint, never in Log; a caller that adopts a checkpoint must Restore and set Executed
+// to Checkpoint_Op (replica_restore_checkpoint) before calling this, so the walk here only ever
+// touches ops that are present in Log.
+func replica_execute_to_commit(
+	replica *Replica,
+) (committed []Log_Entry, replies []Message) {
+	primary := replica.Identifier == replica_primary_identifier(replica)
+	for op := replica.Executed + 1; op <= Op(replica.Commit); op++ {
+		entry := replica_log_entry(replica, op)
+		committed = append(committed, entry)
+		replica.Executed = op
+		if log_entry_is_reconfiguration(entry) {
+			replica_execute_reconfiguration(replica, entry, op)
+			continue
+		}
+		if replica.State_Machine.Execute == nil {
+			continue
+		}
+		// A Reconfiguration is never an up-call (§7.1): the branch above handled it and
+		// continued, so any entry reaching Execute must not be one. Pin it at the call site
+		// so a future change that lets a reconfiguration fall through here fails fast.
+		invariant.Dot_Product(invariant.Always(!log_entry_is_reconfiguration(entry)))
+		result := replica.State_Machine.Execute(entry.Command, entry.Prediction)
+		// Record the executed request without lowering the client's highest-seen number.
+		// Adoption can put a higher in-flight request in the log (recorded by the
+		// client-table rebuild) above a still-committing lower op; executing the lower op
+		// must not forget the higher, or the primary would re-append it at a fresh op —
+		// one client request committed twice, the exactly-once violation the simulator
+		// surfaced (see simulator_bugs.md, Bug 4). The cached reply in the table belongs to
+		// the highest request only when this op IS the highest seen.
+		current, seen := replica.Client_Table[entry.Client]
+		record := Client_Record{
+			Request_Number: entry.Request_Number,
+			Result:         result,
+			Executed:       true,
+		}
+		if seen {
+			if current.Request_Number > entry.Request_Number {
+				record.Request_Number = current.Request_Number
+				record.Result = nil
+				record.Executed = false
+			}
+		}
+		replica.Client_Table[entry.Client] = record
+		// The reply always carries the op actually executed, even when the table now
+		// records a higher pending request: the client matches it by request-number and
+		// ignores any that does not answer its outstanding one.
+		if primary {
+			reply := replica_build_reply(replica, entry.Client, Client_Record{
+				Request_Number: entry.Request_Number,
+				Result:         result,
+			})
+			replies = append(replies, reply)
+		}
+		// Snapshot at the exact op a checkpoint boundary falls on, while the application
+		// state reflects precisely op ops — not after the loop, where it would reflect
+		// Commit and a checkpoint labelled with a lower boundary would carry a higher op's
+		// state, diverging from a peer that checkpointed at the boundary (the divergence
+		// the simulator surfaced, Bug 5).
+		replica_maybe_checkpoint(replica, op)
+	}
+	replica_compact(replica)
+	return committed, replies
+}
+
+// Records a checkpoint at op when op is the next interval boundary and the application state, just
+// executed up to op, is exactly what Snapshot must capture (§5.1). It only snapshots —
+// compaction is deferred to after the execution loop so advancing Log_Start cannot disturb the
+// loop's indexing. A nil Snapshot or a zero interval disables checkpointing entirely, keeping a
+// log-only or non-checkpointing core behaving exactly as before.
+func replica_maybe_checkpoint(replica *Replica, op Op) {
+	if replica.State_Machine.Snapshot == nil {
+		return
+	}
+	if replica.Checkpoint_Interval == 0 {
+		return
+	}
+	if uint64(op)%replica.Checkpoint_Interval != 0 {
+		return
+	}
+	if op <= replica.Checkpoint_Op {
+		return
+	}
+	// Snapshot must reflect exactly the checkpoint op, so op must be both committed and
+	// executed at the capture point — pin it.
+	invariant.Dot_Product(
+		invariant.Always(op <= Op(replica.Commit)),
+		invariant.Always(op == replica.Executed),
+	)
+	replica.Checkpoint_Op = op
+	replica.Checkpoint_State = replica.State_Machine.Snapshot()
+}
+
+// Garbage-collects the log prefix the latest checkpoint has subsumed, keeping Log_Retain ops of
+// suffix past the checkpoint op so an in-flight recovery or transfer needing a recently-committed
+// op is not stranded (§5.1). It advances Log_Start to the op just before the first surviving
+// entry. It never drops above Checkpoint_Op - Log_Retain, and the commit number is always at or
+// above the checkpoint op, so a committed-but-unexecuted op is never discarded.
+func replica_compact(replica *Replica) {
+	// Keep Log_Retain ops of suffix after the checkpoint: the new Log_Start is the checkpoint
+	// op minus the retained suffix, clamped so it never moves backward.
+	new_start := replica.Checkpoint_Op
+	if Op(replica.Log_Retain) < new_start {
+		new_start = replica.Checkpoint_Op - Op(replica.Log_Retain)
+	} else {
+		new_start = 0
+	}
+	if new_start <= replica.Log_Start {
+		return // Nothing new to drop.
+	}
+	// The entries to drop are those with op in (Log_Start, new_start]; the survivors begin at
+	// op new_start+1, slice index new_start - Log_Start.
+	drop := int(new_start - replica.Log_Start)
+	survivors := make([]Log_Entry, len(replica.Log)-drop)
+	copy(survivors, replica.Log[drop:])
+	replica.Log = survivors
+	replica.Log_Start = new_start
+}
+
+// Restores the application state from an adopted checkpoint and marks the checkpoint's op executed,
+// so a following replica_execute_to_commit replays only the committed ops after the checkpoint
+// rather than re-running the prefix the checkpoint already covers (the §5.1/§5.2 catch-up). It is
+// the inverse half of compaction: Snapshot froze the prefix, Restore thaws it on the adopting
+// replica. With no Restore injected it only advances the executed and Log_Start markers.
+func replica_restore_checkpoint(replica *Replica, checkpoint_op Op, state []byte) {
+	replica.Checkpoint_Op = checkpoint_op
+	replica.Checkpoint_State = state
+	replica.Log_Start = checkpoint_op
+	replica.Executed = checkpoint_op
+	if replica.State_Machine.Restore == nil {
+		return
+	}
+	replica.State_Machine.Restore(state)
+}
+
+// Reconciles the client-table with the log after the log is replaced wholesale by a view change,
+// recovery, or state transfer. Each client's highest request-number present in the adopted log is
+// recorded, so a retry of an in-flight request — one appended on a prior primary but not yet
+// executed when the view changed — is recognized as a duplicate rather than appended a second
+// time. Without this the new primary, whose client-table only ever learned executed requests, would
+// re-append the surviving uncommitted entry, and the same request would commit at two ops: an
+// exactly-once violation the simulator surfaces (see simulator_bugs.md, Bug 2). An already-executed
+// record is preserved; a request only seen here stays unexecuted, its result filled in when the op
+// executes.
+func replica_rebuild_client_table(replica *Replica) {
+	for _, entry := range replica.Log {
+		record, ok := replica.Client_Table[entry.Client]
+		if ok {
+			if entry.Request_Number <= record.Request_Number {
+				continue // Not newer than what the table already holds.
+			}
+		}
+		replica.Client_Table[entry.Client] = Client_Record{
+			Request_Number: entry.Request_Number,
+			Executed:       false,
+		}
+	}
+}
+
+// Tallies a vote for a view change and, once a quorum of distinct replicas wants the new view,
+// reports this replica's log to the new view's primary. A vote for a higher view first pulls this
+// replica up into that view.
+func replica_receive_start_view_change(
+	replica *Replica, message Message, now time.Moment,
+) (output Step_Output) {
+	// A recovering replica's log was wiped by the restart, so it must not be pulled into a view
+	// change: its empty log could win the merge and drop a committed entry. It stays quiescent
+	// until Recovery_Response restores authoritative state. A transitioning replica is mid
+	// epoch handoff (§7): a new-group member still catching up has not finished installing the
+	// epoch's log, and a replaced replica is only serving transfers — neither participates in a
+	// view change until it is back to normal, so both stay quiescent here too.
+	if replica.Status == Status_Recovery {
+		return output
+	}
+	if replica.Status == Status_Transition {
+		return output
+	}
+	if message.View < replica.View {
+		return output
+	}
+	if message.View > replica.View {
+		output = replica_start_view_change(replica, message.View, now)
+	}
+	if replica.Status != Status_View_Change {
+		return output
+	}
+	before_count := len(replica.Start_View_Change_From)
+	replica.Start_View_Change_From[message.From] = true
+	if len(replica.Start_View_Change_From) < replica_quorum(replica) {
+		return output
+	}
+	if before_count >= replica_quorum(replica) {
+		return output
+	}
+	// The quorum was just reached. Report our log to the new view's primary; if we are that
+	// primary, fold the report straight into our own tally rather than mailing it to ourselves.
+	report := replica_build_do_view_change(replica)
+	if report.To == replica.Identifier {
+		install := replica_receive_do_view_change(replica, report, now)
+		output.Messages = append(output.Messages, install.Messages...)
+		output.Committed = append(output.Committed, install.Committed...)
+		return output
+	}
+	output.Messages = append(output.Messages, report)
+	return output
+}
+
+// Builds this replica's report to the new primary (§5.3): its op, commit, and last-normal-view —
+// the numbers the primary ranks reporters by — plus a BOUNDED suffix of at most View_Change_Suffix
+// trailing entries rather than the whole log, which can be arbitrarily large. The checkpoint
+// travels too, so when the winner is selected and a fetch is needed the receiver knows the winner's
+// compacted prefix; the receiver derives the suffix's first op as Op minus the suffix length.
+func replica_build_do_view_change(replica *Replica) (message Message) {
+	// The suffix is the last View_Change_Suffix entries, clamped to the first live op
+	// (Log_Start+1) so a compacted prefix is never indexed. With Op below the bound the suffix
+	// is the whole live log; with an empty log it is empty.
+	suffix_start := replica.Log_Start + 1
+	if replica.Op >= View_Change_Suffix {
+		candidate := replica.Op - View_Change_Suffix + 1
+		if candidate > suffix_start {
+			suffix_start = candidate
+		}
+	}
+	return Message{
+		Kind:             Message_Kind_Do_View_Change,
+		From:             replica.Identifier,
+		To:               replica_primary_identifier(replica),
+		View:             replica.View,
+		Epoch:            replica.Epoch,
+		Op:               replica.Op,
+		Commit:           replica.Commit,
+		Log_Suffix:       replica_log_slice_from(replica, suffix_start),
+		Last_Normal_View: replica.Last_Normal_View,
+		Checkpoint_Op:    replica.Checkpoint_Op,
+		Checkpoint_State: replica.Checkpoint_State,
+	}
+}
+
+// Processed only by the new view's primary: it tallies reports by sender and installs the new view
+// once a quorum has reported.
+func replica_receive_do_view_change(
+	replica *Replica, message Message, now time.Moment,
+) (output Step_Output) {
+	if replica.Status != Status_View_Change {
+		return output
+	}
+	if message.View != replica.View {
+		return output
+	}
+	if replica.Identifier != replica_primary_identifier(replica) {
+		return output
+	}
+	replica.Do_View_Change_From[message.From] = message
+	if len(replica.Do_View_Change_From) < replica_quorum(replica) {
+		return output
+	}
+	// A deferred install already chose a winner to fetch the selected log from (§5.3): keep
+	// tallying late reports, but do not re-run selection. Re-running it against the now-stale
+	// self-report could pick a shorter log and drop a committed op (simulator_bugs.md, Bug 6);
+	// the in-flight fetch owns the install until its New_State lands or a new view change
+	// abandons it.
+	if replica.View_Change_Deferred {
+		return output
+	}
+	return replica_install_new_view(replica, now)
+}
+
+// Selects the surviving log and either installs it now or defers until it can be fetched (§5.3).
+// The selection — largest last-normal-view, then largest op — is what guarantees every committed
+// entry survives: the reporting quorum intersects every quorum that ever committed, so the most
+// up-to-date reporter holds all committed entries. Because a report now carries only a bounded
+// suffix, the new primary installs directly only when it can reconstruct the winner's exact log
+// from its own committed prefix plus that suffix; otherwise it fetches the missing entries by state
+// transfer and stays in view-change until the New_State arrives.
+func replica_install_new_view(replica *Replica, now time.Moment) (output Step_Output) {
+	// The new view is installed only on a quorum of reports; that quorum is what guarantees the
+	// selected log holds every committed entry.
+	report_count := len(replica.Do_View_Change_From)
+	invariant.Dot_Product(invariant.Always(report_count >= replica_quorum(replica)))
+	best := replica_select_log(replica.Do_View_Change_From)
+	carrier, reconstructable := replica_reconstruct_selected_log(replica, best)
+	if !reconstructable {
+		// The winner reported more ops than its suffix supplies and the new primary cannot
+		// rebuild them from its own committed prefix: fetch the complete log and DEFER the
+		// install (§5.3) — no Start_View until the awaited New_State lands.
+		return replica_begin_view_change_fetch(replica, best, now)
+	}
+	return replica_complete_install(replica, carrier, best.Op, now)
+}
+
+// Reconstructs the selected reporter's exact log from what the new primary already holds plus the
+// reported suffix, returning the carrier to install and whether reconstruction was possible (§5.3).
+// It is possible in three cases: the new primary IS the winner (it holds the log already); the
+// winner's log is empty; or the winner's suffix attaches directly onto the new primary's committed
+// prefix — every op below the suffix is at or under the new primary's commit, so by agreement the
+// new primary holds an identical copy, and the suffix's first op is within its live log. Otherwise
+// the entries between the new primary's trustworthy prefix and the suffix are missing or possibly
+// divergent, and only a fetch can supply them safely.
+func replica_reconstruct_selected_log(
+	replica *Replica, best Message,
+) (carrier Message, reconstructable bool) {
+	// The carrier always ships the new primary's own checkpoint, which covers the prefix below
+	// the reconstructed log; adopt restores from it only if the new primary is behind it.
+	carrier.Checkpoint_Op = replica.Checkpoint_Op
+	carrier.Checkpoint_State = replica.Checkpoint_State
+	if best.From == replica.Identifier {
+		// The new primary is the winner: its own live log already IS the selected log.
+		carrier.Op = replica.Op
+		carrier.Log = replica_log_slice_from(replica, replica.Log_Start+1)
+		return carrier, true
+	}
+	if best.Op == 0 {
+		return carrier, true // The winner's log is empty; nothing to reconstruct.
+	}
+	suffix_start := best.Op - Op(len(best.Log_Suffix)) + 1
+	if suffix_start < replica.Log_Start+1 {
+		return carrier, false // The prefix below the suffix was GC'd here; fetch it.
+	}
+	if suffix_start-1 > Op(replica.Commit) {
+		return carrier, false // Entries below the suffix are uncommitted here; may diverge.
+	}
+	// Keep the new primary's committed entries below the suffix — identical to the winner's by
+	// agreement — and append the winner's suffix, yielding the winner's exact log.
+	keep := int(suffix_start - 1 - replica.Log_Start)
+	reconstructed := make([]Log_Entry, 0, keep+len(best.Log_Suffix))
+	reconstructed = append(reconstructed, replica.Log[:keep]...)
+	reconstructed = append(reconstructed, best.Log_Suffix...)
+	carrier.Op = best.Op
+	carrier.Log = reconstructed
+	return carrier, true
+}
+
+// Sends a Get_State to the selected reporter for the complete log and records the deferred install
+// (§5.3): the new primary stays in Status_View_Change with no Start_View until the awaited
+// New_State arrives, then adopts that log wholesale (replacing its own divergent uncommitted tail).
+// The fetch asks from the new primary's Log_Start, so the reporter ships everything from there
+// forward — keeping the carrier's suffix aligned with a checkpoint the new primary can then ship
+// in its own Start_View. When the reporter has garbage-collected even that prefix, its Get_State
+// answer falls back to its checkpoint, and the adopted log starts at that checkpoint instead.
+func replica_begin_view_change_fetch(
+	replica *Replica, best Message, now time.Moment,
+) (output Step_Output) {
+	replica.View_Change_Deferred = true
+	replica.View_Change_Fetch_From = best.From
+	replica.View_Change_Fetch_Op = best.Op
+	output.Messages = []Message{{
+		Kind:  Message_Kind_Get_State,
+		From:  replica.Identifier,
+		To:    best.From,
+		View:  replica.View,
+		Epoch: replica.Epoch,
+		Op:    replica.Log_Start,
+	}}
+	output.Timer = replica_arm_timer(replica, now)
+	return output
+}
+
+// Installs a reconstructed-or-fetched selected log: it takes commit to the highest any reporter
+// knew (capped at the adopted op), adopts the carrier, returns to normal in the new view, and
+// broadcasts a Start_View so the backups converge. Adoption executes the committed prefix, so the
+// new primary's application state reflects exactly its commit number — not stale, the bug a
+// stateful adopt without execution would hide (see simulator_bugs.md, Bug 3). selected_op is the
+// winning reporter's op: the installed op must reach it, or a committed op a too-short suffix
+// omitted would be silently dropped (§8 safety) — pinned here.
+func replica_complete_install(
+	replica *Replica, carrier Message, selected_op Op, now time.Moment,
+) (output Step_Output) {
+	commit := replica.Commit
+	for _, candidate := range replica.Do_View_Change_From {
+		if candidate.Commit > commit {
+			commit = candidate.Commit
+		}
+	}
+	output.Committed, output.Replies = replica_adopt_log(replica, carrier, commit)
+	// The selected reporter held every committed op (the reporting quorum intersects every
+	// commit quorum); the installed log must not fall short of its op, or a committed op the
+	// bounded suffix omitted would be lost.
+	invariant.Dot_Product(invariant.Always(replica.Op >= selected_op))
+	replica.Status = Status_Normal
+	replica.View_Change_Deferred = false
+	replica.Last_Normal_View = replica.View
+	output.Timer = replica_arm_timer(replica, now)
+	suffix := replica_log_slice_from(replica, replica.Log_Start+1)
+	output.Messages = append(output.Messages, replica_broadcast(replica, Message{
+		Kind:             Message_Kind_Start_View,
+		Op:               replica.Op,
+		Commit:           replica.Commit,
+		Log:              suffix,
+		Checkpoint_Op:    replica.Checkpoint_Op,
+		Checkpoint_State: replica.Checkpoint_State,
+	})...)
+	return output
+}
+
+// Installs a log carried by a Do_View_Change winner, Start_View, or Recovery_Response onto this
+// replica — the shared spine of every WHOLESALE adoption, where the carrier's log supersedes this
+// replica's above the shared committed prefix (the winner's uncommitted tail may differ, so the
+// replica's own tail must be discarded, not merged). The carrier's Log is the suffix from
+// carrier_start forward (carrier.Op minus the suffix length); its checkpoint covers the prefix
+// below. The replica restores from the checkpoint when it is behind it, replaces its log with the
+// carrier's suffix, reconciles the client-table, takes commit to the cap (clamped to the adopted
+// op), and executes the committed prefix so the application state reflects exactly the commit
+// number — never stale, the bug a stateful adopt without execution would hide (simulator_bugs.md,
+// Bug 4). Returns what executing committed. A committed op is never dropped: VSR's quorum
+// intersection guarantees the carrier holds every op committed in any prior view, so replacing the
+// suffix wholesale preserves the committed prefix even though it discards this replica's own tail.
+func replica_adopt_log(
+	replica *Replica, carrier Message, commit_cap Commit,
+) (committed []Log_Entry, replies []Message) {
+	carrier_start := carrier.Op - Op(len(carrier.Log))
+	if replica.Executed < carrier_start {
+		// The replica is behind the carrier's suffix start: it has no other source for the
+		// prefix the suffix omits, so restore from the carrier's checkpoint and replace the
+		// log wholesale from carrier_start. The prefix below now lives in the checkpoint.
+		replica_restore_checkpoint(replica, carrier.Checkpoint_Op, carrier.Checkpoint_State)
+		replica.Log_Start = carrier_start
+		suffix := make([]Log_Entry, len(carrier.Log))
+		copy(suffix, carrier.Log)
+		replica.Log = suffix
+	} else {
+		// The replica already holds (executed) a prefix at or past carrier_start, so it
+		// keeps its own consistent Log_Start and checkpoint and REPLACES its log from
+		// carrier_start forward with the carrier's authoritative suffix. Setting Log_Start
+		// to carrier_start here would be a bug: when the replica's own Log_Start is below
+		// carrier_start it would strand the ops between, leaving Log_Start above
+		// Checkpoint_Op with no source for the gap (the divergence the simulator surfaced,
+		// see simulator_bugs.md).
+		//
+		// The replacement is AUTHORITATIVE, not a splice: the carrier (a Do_View_Change
+		// winner, a Start_View, or a Recovery_Response) is the agreed log of its view, so
+		// every entry above carrier_start comes from it and any entry this replica holds
+		// above carrier_start is discarded, even one at an op the carrier also covers. A
+		// replica left Normal with an uncommitted entry from a bypassed primary would
+		// otherwise keep that stale entry, and the commit number advancing over it would
+		// commit a value the quorum never chose: the agreement violation the simulator
+		// surfaced (simulator_bugs.md, Bug 9). Keeping only the carrier-omitted committed
+		// prefix below carrier_start is safe: carrier_start <= Executed <= Commit, so those
+		// entries are committed and match the carrier's prefix by intersection.
+		replica_replace_from(replica, carrier_start, carrier.Log)
+	}
+	replica.Op = replica.Log_Start + Op(len(replica.Log))
+	replica_rebuild_client_table(replica)
+	commit := commit_cap
+	if Commit(replica.Op) < commit {
+		commit = Commit(replica.Op)
+	}
+	if commit > replica.Commit {
+		replica.Commit = commit
+	}
+	return replica_execute_to_commit(replica)
+}
+
+// Ranks the reports and returns the most up-to-date: the largest last-normal-view, breaking ties by
+// the largest op. It reads only those numbers — never a full log — which is what lets a report
+// carry just a bounded suffix (§5.3). Ranking by op rather than log length is what keeps it correct
+// even when the longest reported suffix belongs to an earlier-view reporter whose tail a later view
+// already discarded.
+func replica_select_log(candidates map[Replica_Identifier]Message) (best Message) {
+	chosen := false
+	for _, candidate := range candidates {
+		if !chosen {
+			best = candidate
+			chosen = true
+			continue
+		}
+		if candidate.Last_Normal_View > best.Last_Normal_View {
+			best = candidate
+			continue
+		}
+		if candidate.Last_Normal_View == best.Last_Normal_View {
+			if candidate.Op > best.Op {
+				best = candidate
+			}
+		}
+	}
+	return best
+}
+
+// Adopts the new view's installed log on a backup and returns it to normal. A Start_View for a view
+// it already serves normally is ignored.
+func replica_receive_start_view(
+	replica *Replica, message Message, now time.Moment,
+) (output Step_Output) {
+	// A recovering replica rejoins only through Recovery_Response, never via Start_View, so the
+	// nonce-protected path stays the single way its wiped state is restored. A transitioning
+	// replica catches up through the epoch state-transfer path (§7.1.1), not a Start_View, so
+	// it stays quiescent here — adopting a Start_View would flip it to normal with its handoff
+	// bookkeeping (Old_Configuration) still set.
+	if replica.Status == Status_Recovery {
+		return output
+	}
+	if replica.Status == Status_Transition {
+		return output
+	}
+	if message.View < replica.View {
+		return output
+	}
+	if message.View == replica.View {
+		if replica.Status == Status_Normal {
+			return output
+		}
+	}
+	replica.View = message.View
+	// Adopt the installed log with offset indexing and execute the committed prefix, so a
+	// backup's application state reflects exactly its commit number rather than going stale on
+	// adoption.
+	output.Committed, output.Replies = replica_adopt_log(replica, message, message.Commit)
+	replica.Status = Status_Normal
+	replica.Last_Normal_View = replica.View
+	output.Timer = replica_arm_timer(replica, now)
+	return output
+}
+
+// Answers a recovering peer. Only a normal replica may answer — a replica that is itself
+// recovering or changing views has nothing authoritative to report. The primary of the view reports
+// its full log; a backup reports only its view, since the recovering replica must take its log from
+// the primary.
+func replica_receive_recovery(replica *Replica, message Message) (output Step_Output) {
+	if replica.Status != Status_Normal {
+		return output
+	}
+	response := Message{
+		Kind:  Message_Kind_Recovery_Response,
+		From:  replica.Identifier,
+		To:    message.From,
+		View:  replica.View,
+		Epoch: replica.Epoch,
+		Nonce: message.Nonce,
+	}
+	if replica.Identifier == replica_primary_identifier(replica) {
+		response.Op = replica.Op
+		response.Commit = replica.Commit
+		// Ship the log suffix and the checkpoint. A warm-recovering replica that advertised
+		// a checkpoint at or above ours already holds the prefix and will keep it; one that
+		// did not needs the checkpoint to restore the prefix the suffix omits. Either way
+		// the suffix from Log_Start forward plus the checkpoint is the primary's complete
+		// authoritative state.
+		response.Log = replica_log_slice_from(replica, replica.Log_Start+1)
+		response.Checkpoint_Op = replica.Checkpoint_Op
+		response.Checkpoint_State = replica.Checkpoint_State
+	}
+	output.Messages = []Message{response}
+	return output
+}
+
+// Tallies a response and completes recovery once a quorum has answered and the primary of the
+// highest reported view is among them — only that primary's response carries the log the
+// recovering replica adopts. A response whose nonce does not match the in-flight one is dropped, so
+// a straggler from a previous attempt cannot complete this one.
+func replica_receive_recovery_response(
+	replica *Replica, message Message, now time.Moment,
+) (output Step_Output) {
+	if replica.Status != Status_Recovery {
+		return output
+	}
+	if message.Nonce != replica.Recovery_Nonce {
+		return output
+	}
+	replica.Recovery_From[message.From] = message
+	if len(replica.Recovery_From) < replica_quorum(replica) {
+		return output
+	}
+	// Recovery completes only behind a quorum of responses, the same intersection guarantee the
+	// other phases rely on.
+	response_count := len(replica.Recovery_From)
+	invariant.Dot_Product(invariant.Always(response_count >= replica_quorum(replica)))
+	highest := View(0)
+	for _, response := range replica.Recovery_From {
+		if response.View > highest {
+			highest = response.View
+		}
+	}
+	authority_index := uint64(highest) % uint64(len(replica.Configuration))
+	authority_identifier := replica.Configuration[authority_index]
+	authority, ok := replica.Recovery_From[authority_identifier]
+	if !ok {
+		return output
+	}
+	if authority.View != highest {
+		return output
+	}
+	replica.View = highest
+	// Adopt the authority's log with offset indexing and checkpoint-aware execution. A warm
+	// recovery keeps its on-disk checkpoint, so replica_adopt_log restores from it only if the
+	// authority's checkpoint is newer and replays only the un-checkpointed suffix; a cold
+	// recovery, whose checkpoint was wiped, restores from the authority's and replays from
+	// there.
+	output.Committed, output.Replies = replica_adopt_log(replica, authority, authority.Commit)
+	replica.Status = Status_Normal
+	replica.Last_Normal_View = replica.View
+	output.Timer = replica_arm_timer(replica, now)
+	return output
+}
+
+// Moves the replica into Status_View_Change for view, resets the per-view tallies, counts its own
+// vote, and broadcasts a Start_View_Change. Last_Normal_View is deliberately left untouched: it
+// must keep naming the last view this replica was normal in, which log-selection ranks by.
+func replica_start_view_change(replica *Replica, view View, now time.Moment) (output Step_Output) {
+	// VSR-Revisited (sections 4.3, 8): a recovering replica must never enter a view change; its
+	// wiped log could win the merge and drop a committed op, the unsafety recovery exists to
+	// prevent. And a view change always advances the view. These pin the quiescence and view
+	// monotonicity guarantees at the mutation point, in any embedding.
+	invariant.Dot_Product(
+		invariant.Always(replica.Status != Status_Recovery),
+		invariant.Always(view > replica.View),
+	)
+	replica.Status = Status_View_Change
+	replica.View = view
+	replica.Start_View_Change_From = map[Replica_Identifier]bool{replica.Identifier: true}
+	replica.Do_View_Change_From = map[Replica_Identifier]Message{}
+	// Abandon any deferred install from a prior view change: its fetch targets the old view, so
+	// a late New_State for it must not install into this fresh one (§5.3).
+	replica.View_Change_Deferred = false
+	output.Messages = replica_broadcast(replica, Message{Kind: Message_Kind_Start_View_Change})
+	output.Timer = replica_arm_timer(replica, now)
+	return output
+}
+
+// Sets the replica's next timer deadline from its current role and status — a primary heartbeats
+// every Heartbeat, everyone else waits Timeout — and reports what it armed.
+func replica_arm_timer(replica *Replica, now time.Moment) (timer Timer_Reset) {
+	kind := Timer_Kind_View_Change
+	interval := replica.Timeout
+	switch {
+	case replica.Status == Status_Recovery:
+		kind = Timer_Kind_Recovery
+	case replica.Status == Status_View_Change:
+		kind = Timer_Kind_View_Change
+	case replica.Identifier == replica_primary_identifier(replica):
+		kind = Timer_Kind_Commit
+		interval = replica.Heartbeat
+	}
+	replica.Timer_Deadline = now + time.Moment(interval)
+	return Timer_Reset{Kind: kind, Deadline: replica.Timer_Deadline}
+}
+
+// Stamps message with this replica's identity, current view, and epoch and addresses one copy to
+// every other member of the configuration, returning them in configuration order.
+func replica_broadcast(replica *Replica, message Message) (messages []Message) {
+	message.From = replica.Identifier
+	message.View = replica.View
+	message.Epoch = replica.Epoch
+	for _, identifier := range replica.Configuration {
+		if identifier == replica.Identifier {
+			continue
+		}
+		addressed := message
+		addressed.To = identifier
+		messages = append(messages, addressed)
+	}
+	return messages
+}
+
+// VSR's deterministic leader rule: the primary of a view is the member at index View mod
+// len(Configuration) in the ordered configuration.
+func replica_primary_identifier(replica *Replica) (identifier Replica_Identifier) {
+	return replica.Configuration[uint64(replica.View)%uint64(len(replica.Configuration))]
+}
+
+// Computes f+1 for a 2f+1 cluster — a simple majority, the smallest set that must intersect any
+// other quorum. It is EPOCH-RELATIVE during a handoff (§7): while the old group still owns the
+// reconfiguration op the deciding quorum is the OLD group's, so when Old_Configuration is populated
+// the quorum is computed over it; otherwise over the live Configuration. This keeps an old-group
+// decision (the reconfiguration's own commit, served out of Old_Configuration on a replaced
+// replica) counted against the right membership even after Configuration has been swapped for the
+// new group.
+func replica_quorum(replica *Replica) (size int) {
+	configuration := replica.Configuration
+	if len(replica.Old_Configuration) > 0 {
+		configuration = replica.Old_Configuration
+	}
+	return len(configuration)/2 + 1
+}
+
+// The new group's quorum, f'+1 over the new Configuration (§7.1.2): the count of Epoch_Started a
+// replaced replica needs before it may shut down, and the catch-up quorum the new group commits by.
+// It is the simple majority of the (new) Configuration regardless of any Old_Configuration, since
+// it names a decision the NEW group owns.
+func replica_new_group_quorum(replica *Replica) (size int) {
+	return len(replica.Configuration)/2 + 1
+}
+
+// Reports whether the primary is open to client requests. It is not once the epoch's
+// reconfiguration has been appended: that request is the epoch's last op (§7.1), recognized as the
+// topmost log entry carrying a New_Configuration. Reading the log rather than a separate flag keeps
+// the rule correct across a view change, where a new primary inherits the topmost entry but not any
+// volatile flag.
+func replica_open_to_requests(replica *Replica) (open bool) {
+	if replica.Op == 0 {
+		return true
+	}
+	if replica.Op <= replica.Log_Start {
+		// The whole log is compacted; a reconfiguration would never be GC'd here.
+		return true
+	}
+	return len(replica_log_entry(replica, replica.Op).New_Configuration) == 0
+}
+
+// Reports whether op's entry is a Reconfiguration (§7): one carrying a New_Configuration. A
+// reconfiguration entry affects only VR state and is never passed to the State_Machine.
+func log_entry_is_reconfiguration(entry Log_Entry) (yes bool) {
+	return len(entry.New_Configuration) > 0
+}
+
+// Returns op's entry from the log, translating the op-number into the slice index that compaction
+// offsets by Log_Start. It is the single site that knows op k lives at Log[k - Log_Start - 1], so
+// every caller routes through it rather than open-coding the arithmetic. An op at or below
+// Log_Start has been garbage-collected — it lives only in the checkpoint — and asking for it is
+// a caller bug (the caller must take the checkpoint path), pinned here so it fails fast rather than
+// reading the wrong entry.
+func replica_log_entry(replica *Replica, op Op) (entry Log_Entry) {
+	invariant.Dot_Product(
+		invariant.Always(op > replica.Log_Start),
+		invariant.Always(op <= replica.Op),
+	)
+	return replica.Log[op-replica.Log_Start-1]
+}
+
+// Returns the log entries from op forward, the suffix a heartbeat re-drive or a state-transfer
+// response ships. op must be the op just after a held op (Log_Start+1 at the earliest), since an op
+// at or below Log_Start has been compacted away; the slice is a copy so a caller may stash it in a
+// message without aliasing the live log.
+func replica_log_slice_from(replica *Replica, op Op) (entries []Log_Entry) {
+	invariant.Dot_Product(invariant.Always(op > replica.Log_Start))
+	start := int(op - replica.Log_Start - 1)
+	entries = make([]Log_Entry, len(replica.Log)-start)
+	copy(entries, replica.Log[start:])
+	return entries
+}
+
+// Lazily initializes the per-phase tally maps so a Replica built as a bare struct literal (the
+// common case in tests) is usable without the constructor.
+func replica_ensure_scratch(replica *Replica) {
+	if replica.Start_View_Change_From == nil {
+		replica.Start_View_Change_From = map[Replica_Identifier]bool{}
+	}
+	if replica.Do_View_Change_From == nil {
+		replica.Do_View_Change_From = map[Replica_Identifier]Message{}
+	}
+	if replica.Prepare_Ok_From == nil {
+		replica.Prepare_Ok_From = map[Op]map[Replica_Identifier]bool{}
+	}
+	if replica.Recovery_From == nil {
+		replica.Recovery_From = map[Replica_Identifier]Message{}
+	}
+	if replica.Client_Table == nil {
+		replica.Client_Table = map[Client_Identifier]Client_Record{}
+	}
+	if replica.Predict_From == nil {
+		replica.Predict_From = map[Prediction_Round_Key]Prediction_Round{}
+	}
+	if replica.Epoch_Started_From == nil {
+		replica.Epoch_Started_From = map[Replica_Identifier]bool{}
+	}
+}

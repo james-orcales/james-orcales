@@ -1,23 +1,43 @@
 
 # Parse
 
-Program_Parse resolves the active command from the arguments and populates its
-options, or returns an error describing the malformed input.
+Program_Parse resolves the active command and populates its options, returning an
+error on malformed input. A flag carries a default value; a positional argument has
+none and may also be given by position, without its label.
 
 ### Commands
 
-A named command resolves to itself, no command defaults to the first declared
-command, and an unrecognized name returns an error.
+A named command resolves to itself and an absent command defaults to the first
+declared; an unknown name returns an error that suggests the closest command when one
+is a likely typo.
+
+### Single Command
+
+A program built with New_Single has no command selector: the first token is the
+first positional argument, so a name that would select a sibling command is read as
+a positional. Help drops the selector and shows the program's own positionals.
 
 ### Arguments
 
-The positional count must match the command's arguments, and an integer argument
-must convert or the parse returns an error.
+Positionals fill the command's arguments in declaration order, skipping any already
+set by name; an integer argument must convert or the parse returns an error.
+
+### Named
+
+Every argument and flag is also settable by -label=value, in any order with the
+positionals. A scalar set twice errors; an unknown option errors and suggests the
+closest known one when it looks like a typo.
+
+### Variadic
+
+A command's last argument may be a slice, collecting the positionals left after the
+scalar arguments and appending each repeated -label=value; a slice declared before
+the last argument is rejected at construction.
 
 ### Flags
 
-A flag assigns its value by type; an unknown flag, a double-dash flag, or a
-non-boolean flag without a value returns an error.
+A flag assigns its value by type; a double-dash flag or a non-boolean flag without a
+value returns an error.
 
 # Trim Quotes
 
@@ -43,4 +63,5 @@ New validates a program's configuration and panics when it is malformed.
 
 ### Validation
 
-A command without a label panics during construction.
+A command without a label panics; so does an argument label that is not flag-safe or
+that collides with another option's name.

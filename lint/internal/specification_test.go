@@ -259,27 +259,48 @@ func Test_Repository_Path_Casing(t *testing.T) {
 	}
 }
 
-// Test_Repository_Symlinks verifies a symlink whose target does not resolve is flagged.
+// Test_Repository_Symlinks pins the tracked-symlink rule: a tracked symlink must
+// resolve to a tracked target. An untracked symlink, and every symlink when there
+// is no tracked set, are exempt.
 func Test_Repository_Symlinks(t *testing.T) {
 	t.Parallel()
-	fsys := fstest.MapFS{
-		"link": &fstest.MapFile{Mode: fs.ModeSymlink, Data: []byte("missing")},
+	// A target outside the tracked set is flagged whether it is missing on disk,
+	// escapes the repo, or merely sits outside the set.
+	if !specification_diagnosed(
+		symlink_lint(t, "missing", nil, map[string]bool{"link": true}),
+		"untracked symlink target") {
+		t.Fatal("an untracked symlink target must be flagged")
 	}
-	diags, err := lint.Check_File_System(&lint.Check_File_System_Input{
-		Fsys:           fsys,
-		Root_Directory: "/root",
-		Readlink: func(name string) (target string, err error) {
-			return "missing", nil
-		},
-		Stat: func(name string) (info fs.FileInfo, err error) {
-			return nil, fs.ErrNotExist
-		},
-	})
-	if err != nil {
-		t.Fatalf("Check_File_System: %v", err)
+	// A target that is a tracked file is clean.
+	if specification_diagnosed(symlink_lint(t, "real.txt", nil,
+		map[string]bool{"link": true, "real.txt": true}), "symlink") {
+		t.Fatal("a tracked file target must not be flagged")
 	}
-	if !specification_diagnosed(diags, "dangling symlink") {
-		t.Fatal("a dangling symlink must be flagged")
+	// A target directory that holds tracked files is clean.
+	if specification_diagnosed(symlink_lint(t, "dir", nil,
+		map[string]bool{"link": true, "dir/x": true}), "symlink") {
+		t.Fatal("a tracked directory target must not be flagged")
+	}
+	// Only tracked symlinks are checked, so one absent from the set is skipped.
+	if specification_diagnosed(symlink_lint(t, "missing", nil,
+		map[string]bool{"other": true}), "symlink") {
+		t.Fatal("an untracked symlink must not be checked")
+	}
+	// With no tracked set (a non-git tree) the rule self-disables.
+	if specification_diagnosed(symlink_lint(t, "missing", nil, nil), "symlink") {
+		t.Fatal("a nil tracked set must disable the check")
+	}
+	// A symlink to its own path is flagged though its own path is tracked.
+	if !specification_diagnosed(
+		symlink_lint(t, "link", nil, map[string]bool{"link": true}),
+		"symlink targets itself") {
+		t.Fatal("a self-referential symlink must be flagged")
+	}
+	// An unreadable target cannot be verified, so it is flagged.
+	if !specification_diagnosed(
+		symlink_lint(t, "x", fs.ErrInvalid, map[string]bool{"link": true}),
+		"unreadable symlink target") {
+		t.Fatal("an unreadable symlink target must be flagged")
 	}
 }
 
@@ -335,7 +356,7 @@ func Test_Repository_Github_Actions(t *testing.T) {
 	files := map[string][]byte{
 		".github/workflows/ci.yml": []byte("steps:\n  - uses: actions/checkout@v4\n"),
 	}
-	if !specification_flags(t, files, "third-party github action banned") {
+	if !repository_flags(t, files, "third-party github action banned") {
 		t.Fatal("a uses: line must be flagged")
 	}
 }
@@ -437,7 +458,7 @@ func Test_Markdown_Agent_Documentation_Pairing(t *testing.T) {
 	files := map[string][]byte{
 		"top/CLAUDE.md": []byte("Shared instructions.\n"),
 	}
-	if !specification_flags(t, files, "AGENTS.md is missing") {
+	if !repository_flags(t, files, "AGENTS.md is missing") {
 		t.Fatal("an unpaired CLAUDE.md must be flagged")
 	}
 }
@@ -498,51 +519,34 @@ func Test_Commits_Merge_Commits(t *testing.T) {
 	}
 }
 
-// Test_Module_Layout_Module_Definition verifies a go.mod whose directory is
-// absent from go.work is flagged.
-func Test_Module_Layout_Module_Definition(t *testing.T) {
+// Test_Component_Layout_Single_Module verifies a nested go.mod — a second
+// module inside the one-module repo — is flagged.
+func Test_Component_Layout_Single_Module(t *testing.T) {
 	t.Parallel()
 	files := map[string][]byte{
-		"go.work":           []byte("go 1.25\n\nuse ./registered\n"),
-		"registered/go.mod": []byte("module example.com/registered\n\ngo 1.25\n"),
-		"orphan/go.mod":     []byte("module example.com/orphan\n\ngo 1.25\n"),
+		"go.mod":     []byte(doctrine_root_go_module),
+		"pkg/go.mod": []byte("module example.com/nested\n\ngo 1.25\n"),
 	}
-	if !specification_flags(t, files, "not registered in go.work") {
-		t.Fatal("a module absent from go.work must be flagged")
+	if !specification_flags(t, files, "nested go.mod") {
+		t.Fatal("a nested go.mod must be flagged")
 	}
 }
 
-// Test_Module_Layout_Module_Location verifies a go.mod nested below the repo
-// root is flagged.
-func Test_Module_Layout_Module_Location(t *testing.T) {
-	t.Parallel()
-	files := map[string][]byte{
-		"nested/inner/go.mod": []byte("module example.com/inner\n\ngo 1.25\n"),
-	}
-	if !specification_flags(t, files, "located at the repository root") {
-		t.Fatal("a module below the repo root must be flagged")
-	}
-}
-
-// Test_Module_Layout_Shared_Module verifies the shared library's internal/ subtree
+// Test_Component_Layout_Shared_Component verifies the shared library's internal/ subtree
 // and any package main are flagged: the first hides surface, the second is an entry
 // point a fully-importable library has no business owning.
-func Test_Module_Layout_Shared_Module(t *testing.T) {
+func Test_Component_Layout_Shared_Component(t *testing.T) {
 	t.Parallel()
 	// The shared library lives in shared/ so its Root matches the
-	// shared-module directory the spec helper injects; binary fixtures in this
-	// file keep their go.mod at the root and so stay binaries.
+	// shared-component directory the spec helper passes; binary fixtures live in
+	// other top-level dirs and so stay binaries.
 	files := map[string][]byte{
-		"shared/go.mod": []byte("module github.com/james-orcales/" +
-			"james-orcales/shared\n\ngo 1.25\n"),
 		"shared/internal/x/x.go": []byte("// Package x is a fixture.\npackage x\n"),
 	}
 	if !specification_flags(t, files, "forbids internal/ directories") {
 		t.Fatal("a shared-library internal/ tree must be flagged")
 	}
 	main_files := map[string][]byte{
-		"shared/go.mod": []byte("module github.com/james-orcales/" +
-			"james-orcales/shared\n\ngo 1.25\n"),
 		"shared/main.go": []byte("package main\n\nfunc main() {\n\tprintln(0)\n}\n"),
 	}
 	if !specification_flags(t, main_files, "forbids package main") {
@@ -550,69 +554,63 @@ func Test_Module_Layout_Shared_Module(t *testing.T) {
 	}
 }
 
-// Test_Module_Layout_Binary_Module verifies a binary module's non-main package
-// outside internal/ is flagged.
-func Test_Module_Layout_Binary_Module(t *testing.T) {
+// Test_Component_Layout_Binary_Component verifies a binary component's non-main
+// package outside internal/ is flagged.
+func Test_Component_Layout_Binary_Component(t *testing.T) {
 	t.Parallel()
 	files := map[string][]byte{
-		"go.mod":             []byte("module example.com/bin\n\ngo 1.25\n"),
-		"feature/feature.go": []byte("// Package feature is a fixture.\npackage feature\n"),
+		"pkg/feature/feature.go": []byte(
+			"// Package feature is a fixture.\npackage feature\n"),
 	}
-	if !specification_flags(t, files, "move feature -> ./internal/feature") {
+	if !specification_flags(t, files, "move feature -> pkg/internal/feature") {
 		t.Fatal("a non-main package outside internal/ must be flagged")
 	}
 }
 
-// Test_Module_Layout_Main_Package verifies a binary module's main package outside
+// Test_Component_Layout_Main_Package verifies a binary module's main package outside
 // the module root — here under a cmd/ directory — is flagged.
-func Test_Module_Layout_Main_Package(t *testing.T) {
+func Test_Component_Layout_Main_Package(t *testing.T) {
 	t.Parallel()
 	files := map[string][]byte{
-		"go.mod":          []byte("module example.com/bin\n\ngo 1.25\n"),
-		"cmd/app/main.go": []byte("package main\n\nfunc main() {\n\tprintln(0)\n}\n"),
+		"pkg/cmd/app/main.go": []byte("package main\n\nfunc main() {\n\tprintln(0)\n}\n"),
 	}
-	if !specification_flags(t, files, "main package must sit at the module root") {
+	if !specification_flags(t, files, "main package must sit at the component root") {
 		t.Fatal("a main package outside the module root must be flagged")
 	}
 }
 
-// Test_Module_Layout_Internal_Entry_Point verifies a binary module without a
+// Test_Component_Layout_Internal_Entry_Point verifies a binary module without a
 // func Main in its top-level internal/ package is flagged.
-func Test_Module_Layout_Internal_Entry_Point(t *testing.T) {
+func Test_Component_Layout_Internal_Entry_Point(t *testing.T) {
 	t.Parallel()
 	files := map[string][]byte{
-		"go.mod":  []byte("module example.com/bin\n\ngo 1.25\n"),
-		"main.go": []byte("package main\n\nfunc main() {\n\tprintln(0)\n}\n"),
+		"pkg/main.go": []byte("package main\n\nfunc main() {\n\tprintln(0)\n}\n"),
 	}
 	if !specification_flags(t, files, "declares no func Main in internal/") {
 		t.Fatal("a binary module without an internal func Main must be flagged")
 	}
 }
 
-// Test_Module_Layout_Tier_Depth verifies a package nested beyond one non-main ancestor
+// Test_Component_Layout_Tier_Depth verifies a package nested beyond one non-main ancestor
 // is flagged.
-func Test_Module_Layout_Tier_Depth(t *testing.T) {
+func Test_Component_Layout_Tier_Depth(t *testing.T) {
 	t.Parallel()
 	files := map[string][]byte{
-		"go.mod": []byte("module github.com/james-orcales/" +
-			"james-orcales/shared\n\ngo 1.25\n"),
-		"a/a.go":     []byte("// Package a is a fixture.\npackage a\n"),
-		"a/b/b.go":   []byte("// Package b is a fixture.\npackage b\n"),
-		"a/b/c/c.go": []byte("// Package c is a fixture.\npackage c\n"),
+		"shared/a/a.go":     []byte("// Package a is a fixture.\npackage a\n"),
+		"shared/a/b/b.go":   []byte("// Package b is a fixture.\npackage b\n"),
+		"shared/a/b/c/c.go": []byte("// Package c is a fixture.\npackage c\n"),
 	}
 	if !specification_flags(t, files, "exceeds library tier") {
 		t.Fatal("an over-nested package must be flagged")
 	}
 }
 
-// Test_Module_Layout_Impure_Imports verifies a pure package importing a
+// Test_Component_Layout_Impure_Imports verifies a pure package importing a
 // denylisted impure stdlib package is flagged.
-func Test_Module_Layout_Impure_Imports(t *testing.T) {
+func Test_Component_Layout_Impure_Imports(t *testing.T) {
 	t.Parallel()
 	files := map[string][]byte{
-		"go.mod": []byte("module github.com/james-orcales/" +
-			"james-orcales/shared\n\ngo 1.25\n"),
-		"lib/library.go": []byte("// Package library is a fixture.\npackage library\n\n" +
+		"shared/lib/library.go": []byte("// Package library x.\npackage library\n\n" +
 			"import \"os\"\n\n// F reads.\nfunc F() (s string) {\n" +
 			"\treturn os.Getenv(\"X\")\n}\n"),
 	}
@@ -621,14 +619,12 @@ func Test_Module_Layout_Impure_Imports(t *testing.T) {
 	}
 }
 
-// Test_Module_Layout_Impure_Calls verifies a pure package making a denylisted
+// Test_Component_Layout_Impure_Calls verifies a pure package making a denylisted
 // impure stdlib call is flagged even when the package may be imported.
-func Test_Module_Layout_Impure_Calls(t *testing.T) {
+func Test_Component_Layout_Impure_Calls(t *testing.T) {
 	t.Parallel()
 	files := map[string][]byte{
-		"go.mod": []byte("module github.com/james-orcales/" +
-			"james-orcales/shared\n\ngo 1.25\n"),
-		"lib/library.go": []byte("// Package library is a fixture.\npackage library\n\n" +
+		"shared/lib/library.go": []byte("// Package library x.\npackage library\n\n" +
 			"import \"fmt\"\n\n// F prints.\nfunc F() {\n" +
 			"\tfmt.Println(\"x\")\n}\n"),
 	}
@@ -637,18 +633,17 @@ func Test_Module_Layout_Impure_Calls(t *testing.T) {
 	}
 }
 
-// Test_Module_Layout_Transitive_Purity verifies a pure package importing an
+// Test_Component_Layout_Transitive_Purity verifies a pure package importing an
 // impure `default` package is flagged.
-func Test_Module_Layout_Transitive_Purity(t *testing.T) {
+func Test_Component_Layout_Transitive_Purity(t *testing.T) {
 	t.Parallel()
 	const module = "github.com/james-orcales/james-orcales/shared"
 	files := map[string][]byte{
-		"go.mod": []byte("module " + module + "\n\ngo 1.25\n"),
-		"lib/library.go": []byte("// Package library is a fixture.\npackage library\n\n" +
+		"shared/lib/library.go": []byte("// Package library x.\npackage library\n\n" +
 			"import \"" + module + "/widget/default\"\n\n" +
 			"// F uses the default.\nfunc F() (s string) {\n" +
 			"\treturn widget.Name()\n}\n"),
-		"widget/default/wire.go": []byte(
+		"shared/widget/default/wire.go": []byte(
 			"// Package widget is a fixture.\npackage widget\n\n" +
 				"// Name names.\nfunc Name() (s string) {\n\treturn \"x\"\n}\n"),
 	}
@@ -657,17 +652,15 @@ func Test_Module_Layout_Transitive_Purity(t *testing.T) {
 	}
 }
 
-// Test_Module_Layout_Transitive_Stdlib verifies the ban reaches a pure package's
+// Test_Component_Layout_Transitive_Stdlib verifies the ban reaches a pure package's
 // test file: a curated stdlib API that is impure only transitively
 // (log.Fatal -> os.Exit) is caught even though importing log and calling
 // log.Print stay allowed, and even in _test.go.
-func Test_Module_Layout_Transitive_Stdlib(t *testing.T) {
+func Test_Component_Layout_Transitive_Stdlib(t *testing.T) {
 	t.Parallel()
-	const module = "github.com/james-orcales/james-orcales/shared"
 	test_files := map[string][]byte{
-		"go.mod":         []byte("module " + module + "\n\ngo 1.25\n"),
-		"lib/library.go": []byte("// Package library is a fixture.\npackage library\n"),
-		"lib/library_test.go": []byte("package library_test\n\nimport \"log\"\n\n" +
+		"shared/lib/library.go": []byte("// Package library x.\npackage library\n"),
+		"shared/lib/library_test.go": []byte("package library_test\n\nimport \"log\"\n\n" +
 			"// Test_F exits.\nfunc Test_F() {\n\tlog.Fatal(\"x\")\n}\n"),
 	}
 	if !specification_flags(t, test_files, "impure transitive call") {
@@ -675,13 +668,12 @@ func Test_Module_Layout_Transitive_Stdlib(t *testing.T) {
 	}
 }
 
-// Test_Module_Layout_Binary_Purity verifies package main is an impure home: a
+// Test_Component_Layout_Binary_Purity verifies package main is an impure home: a
 // binary's main package using impure stdlib is not flagged.
-func Test_Module_Layout_Binary_Purity(t *testing.T) {
+func Test_Component_Layout_Binary_Purity(t *testing.T) {
 	t.Parallel()
 	main_impure := map[string][]byte{
-		"go.mod": []byte("module example.com/app\n\ngo 1.25\n"),
-		"main.go": []byte("package main\n\nimport \"os\"\n\n" +
+		"pkg/main.go": []byte("package main\n\nimport \"os\"\n\n" +
 			"func main() {\n\t_ = os.Getenv(\"X\")\n}\n"),
 	}
 	if specification_flags(t, main_impure, "impure stdlib") {
@@ -689,14 +681,12 @@ func Test_Module_Layout_Binary_Purity(t *testing.T) {
 	}
 }
 
-// Test_Module_Layout_Library_Purity verifies a shared library's pure package
+// Test_Component_Layout_Library_Purity verifies a shared library's pure package
 // using impure stdlib is flagged.
-func Test_Module_Layout_Library_Purity(t *testing.T) {
+func Test_Component_Layout_Library_Purity(t *testing.T) {
 	t.Parallel()
-	const shared = "github.com/james-orcales/james-orcales/shared"
 	pure_impure := map[string][]byte{
-		"go.mod": []byte("module " + shared + "\n\ngo 1.25\n"),
-		"lib/library.go": []byte("// Package library is a fixture.\npackage library\n\n" +
+		"shared/lib/library.go": []byte("// Package library x.\npackage library\n\n" +
 			"import \"os\"\n\n// F reads.\nfunc F() (s string) {\n" +
 			"\treturn os.Getenv(\"X\")\n}\n"),
 	}
@@ -705,15 +695,13 @@ func Test_Module_Layout_Library_Purity(t *testing.T) {
 	}
 }
 
-// Test_Module_Layout_Default_Package_Impurity verifies a shared library's
+// Test_Component_Layout_Default_Package_Impurity verifies a shared library's
 // optional `default` package may be impure: it is not flagged.
-func Test_Module_Layout_Default_Package_Impurity(t *testing.T) {
+func Test_Component_Layout_Default_Package_Impurity(t *testing.T) {
 	t.Parallel()
-	const shared = "github.com/james-orcales/james-orcales/shared"
 	default_impure := map[string][]byte{
-		"go.mod":     []byte("module " + shared + "\n\ngo 1.25\n"),
-		"foo/foo.go": []byte("// Package foo is a fixture.\npackage foo\n"),
-		"foo/default/wire.go": []byte(
+		"shared/foo/foo.go": []byte("// Package foo is a fixture.\npackage foo\n"),
+		"shared/foo/default/wire.go": []byte(
 			"// Package foo is a fixture.\npackage foo\n\n" +
 				"import \"os\"\n\n// F reads.\nfunc F() (s string) {\n" +
 				"\treturn os.Getenv(\"X\")\n}\n"),
@@ -1350,6 +1338,34 @@ func Test_Source_And_Test_Requirements_File_Count_Build_Tags(t *testing.T) {
 	}
 }
 
+// Test_Deterministic_Entry_Format verifies an entry names a module's top-level
+// directory and the tier auto-applies to the pure packages under it: a pure
+// package nested below the entry is held to the tier (its goroutine flagged),
+// while an impure default tier in the same subtree is excluded (its select not
+// flagged) — so a directory covers its pure packages without listing each.
+func Test_Deterministic_Entry_Format(t *testing.T) {
+	t.Parallel()
+	files := map[string][]byte{
+		"go.mod": []byte("module fixture\n\ngo 1.25\n"),
+		"pkg/sub/p.go": []byte("// Package sub is a fixture.\n" +
+			"package sub\n\n" +
+			"// F is a fixture.\n" +
+			"func F() {\n\tgo done()\n}\n\n" +
+			"func done() {\n\treturn\n}\n"),
+		"pkg/sub/default/d.go": []byte("// Package sub is a fixture.\n" +
+			"package sub\n\n" +
+			"// G is a fixture.\n" +
+			"func G() {\n\tselect {}\n}\n"),
+	}
+	diags := deterministic_self_diagnostics(t, files, []string{"pkg"})
+	if !specification_diagnosed(diags, "must not start a goroutine") {
+		t.Fatal("a directory entry must cover a pure package nested below it")
+	}
+	if specification_diagnosed(diags, "must not use select") {
+		t.Fatal("an impure default tier under the entry must be excluded")
+	}
+}
+
 // Test_Deterministic_Goroutines verifies a go statement in a listed package is flagged.
 func Test_Deterministic_Goroutines(t *testing.T) {
 	t.Parallel()
@@ -1444,7 +1460,7 @@ func Test_Deterministic_Import_Induction(t *testing.T) {
 	exempt, err := lint.Check_File_System(&lint.Check_File_System_Input{
 		Fsys:                     fsys,
 		Scope:                    "pkg",
-		Shared_Module:            doctrine_shared_module_directory,
+		Shared_Component:         doctrine_shared_component_directory,
 		Deterministic_Packages:   []string{"pkg"},
 		Instrumentation_Packages: []string{"other"},
 	})
@@ -1456,8 +1472,10 @@ func Test_Deterministic_Import_Induction(t *testing.T) {
 	}
 }
 
-// Test_Deterministic_Impurity verifies an impure package listed as deterministic
-// is reported.
+// Test_Deterministic_Impurity verifies an entry that resolves to no pure package
+// — here an all-impure default tier — is reported as a coverage gap. Expansion
+// keeps pure packages only, so a directory holding nothing pure opts nothing into
+// the tier and must fail loudly rather than silently check nothing.
 func Test_Deterministic_Impurity(t *testing.T) {
 	t.Parallel()
 	files := map[string][]byte{
@@ -1467,13 +1485,13 @@ func Test_Deterministic_Impurity(t *testing.T) {
 	}
 	if !specification_diagnosed(
 		deterministic_self_diagnostics(t, files, []string{"./pkg/default/"}),
-		"must be pure") {
-		t.Fatal("an impure package listed as deterministic must be reported")
+		"no pure package found") {
+		t.Fatal("an entry covering no pure package must be reported")
 	}
 }
 
-// Test_Deterministic_Coverage verifies a deterministic_packages entry matching no
-// package is reported.
+// Test_Deterministic_Coverage verifies a deterministic_packages entry covering no
+// pure package is reported.
 func Test_Deterministic_Coverage(t *testing.T) {
 	t.Parallel()
 	files := map[string][]byte{
@@ -1482,9 +1500,46 @@ func Test_Deterministic_Coverage(t *testing.T) {
 			"package p\n"),
 	}
 	if !specification_diagnosed(
-		deterministic_self_diagnostics(t, files, []string{"nope/missing"}),
-		"no package found") {
-		t.Fatal("an entry matching no package must be reported")
+		deterministic_self_diagnostics(t, files, []string{"pkg/missing"}),
+		"no pure package found") {
+		t.Fatal("an entry covering no pure package must be reported")
+	}
+}
+
+// Test_Deterministic_Coverage_Scope verifies the coverage check is bounded by the
+// parse scope: an entry for a module outside the scope — whose files a scoped run
+// never parses — is not reported as a gap, while an entry inside the scope that
+// covers no pure package still is. So a scoped run flags its own typos and leaves
+// other modules' entries to the whole-workspace run, which alone parses them all.
+func Test_Deterministic_Coverage_Scope(t *testing.T) {
+	t.Parallel()
+	pure_file := "// Package fixture is a fixture.\npackage fixture\n"
+	fsys := fstest.MapFS{
+		"shared/go.mod": &fstest.MapFile{
+			Data: []byte("module example.com/shared\n")},
+		"mybinary/go.mod": &fstest.MapFile{
+			Data: []byte("module example.com/mybinary\n")},
+		"mybinary/internal/entry.go": &fstest.MapFile{Data: []byte(pure_file)},
+		"other/go.mod": &fstest.MapFile{
+			Data: []byte("module example.com/other\n")},
+		"other/internal/x.go": &fstest.MapFile{Data: []byte(pure_file)},
+	}
+	diags, err := lint.Check_File_System(&lint.Check_File_System_Input{
+		Fsys:             fsys,
+		Shared_Component: "shared",
+		Scope:            "mybinary",
+		Deterministic_Packages: []string{
+			"mybinary", "other", "mybinary/internal/nonexistent"},
+	})
+	if err != nil {
+		t.Fatalf("Check_File_System: %v", err)
+	}
+	if specification_diagnosed(diags, "no pure package found at \"other\"") {
+		t.Fatal("an out-of-scope module entry must not be reported as a coverage gap")
+	}
+	if !specification_diagnosed(diags,
+		"no pure package found at \"mybinary/internal/nonexistent\"") {
+		t.Fatal("an in-scope entry covering no pure package must still be reported")
 	}
 }
 
@@ -1501,7 +1556,7 @@ func Test_Stdlib_Time(t *testing.T) {
 			"func F() (d time.Duration) {\n\treturn 0\n}\n")},
 	}
 	diags, err := lint.Check_File_System(&lint.Check_File_System_Input{
-		Fsys: fsys, Scope: "pkg", Shared_Module: ".",
+		Fsys: fsys, Scope: "pkg", Shared_Component: "pkg",
 	})
 	if err != nil {
 		t.Fatalf("Check_File_System: %v", err)
@@ -1523,6 +1578,34 @@ func Test_Specification_Baseline(t *testing.T) {
 			t.Errorf("baseline flags the spec file: %s", diagnostic.Message)
 		}
 	}
+}
+
+// Runs the linter over a lone in-memory symlink and returns its diagnostics.
+// Readlink is injected because fstest.MapFS cannot represent a symlink's target,
+// and Tracked drives the tracked-membership the rule checks — the target need
+// not exist in the fixture, only in Tracked.
+func symlink_lint(
+	t *testing.T, target string, read_err error, tracked map[string]bool,
+) (diags []lint.Diagnostic) {
+	t.Helper()
+	diags, err := lint.Check_File_System(&lint.Check_File_System_Input{
+		Fsys: fstest.MapFS{
+			// Data is a fixed placeholder, not the target under test: fstest.MapFS
+			// resolves a self-referential or cyclic symlink into an infinite loop,
+			// and the rule reads the target through the injected Readlink below, not
+			// from the fixture's bytes.
+			"link": &fstest.MapFile{Mode: fs.ModeSymlink, Data: []byte("placeholder")},
+		},
+		Root_Directory: "/root",
+		Tracked:        tracked,
+		Readlink: func(_ string) (link_target string, link_err error) {
+			return target, read_err
+		},
+	})
+	if err != nil {
+		t.Fatalf("Check_File_System: %v", err)
+	}
+	return diags
 }
 
 func specification_baseline(t *testing.T) (files map[string][]byte) {
@@ -1556,8 +1639,11 @@ func specification_self_diagnostics(
 	for name, content := range files {
 		fsys[name] = &fstest.MapFile{Data: content}
 	}
+	if _, present := fsys["go.mod"]; !present {
+		fsys["go.mod"] = &fstest.MapFile{Data: []byte(doctrine_root_go_module)}
+	}
 	diags, err := lint.Check_File_System(&lint.Check_File_System_Input{
-		Fsys: fsys, Scope: "pkg", Shared_Module: doctrine_shared_module_directory,
+		Fsys: fsys, Scope: "pkg", Shared_Component: doctrine_shared_component_directory,
 		Word_Replacements: test_word_replacements()})
 	if err != nil {
 		t.Fatalf("Check_File_System: %v", err)
@@ -1582,6 +1668,28 @@ func specification_flags(
 ) (found bool) {
 	t.Helper()
 	return specification_diagnosed(specification_self_diagnostics(t, files), fragment)
+}
+
+// Lints the fixture at whole-workspace scope and reports whether some diagnostic
+// message contains the fragment. The repository-wide stream checks (banned files,
+// conflict markers, workflow pins, agent-doc pairing) are exercised whole-tree —
+// the way a whole-repo run reaches them — since a scoped run, by design, examines
+// only its own subtree and so would never visit a fixture placed elsewhere.
+func repository_flags(
+	t *testing.T, files map[string][]byte, fragment string,
+) (found bool) {
+	t.Helper()
+	fsys := fstest.MapFS{}
+	for name, content := range files {
+		fsys[name] = &fstest.MapFile{Data: content}
+	}
+	diags, err := lint.Check_File_System(&lint.Check_File_System_Input{
+		Fsys: fsys, Shared_Component: doctrine_shared_component_directory,
+		Word_Replacements: test_word_replacements()})
+	if err != nil {
+		t.Fatalf("Check_File_System: %v", err)
+	}
+	return specification_diagnosed(diags, fragment)
 }
 
 // Wraps one Go source string as the sole file of a fixture package. Kept
@@ -1614,7 +1722,7 @@ func deterministic_self_diagnostics(
 	diags, err := lint.Check_File_System(&lint.Check_File_System_Input{
 		Fsys:                   fsys,
 		Scope:                  "pkg",
-		Shared_Module:          doctrine_shared_module_directory,
+		Shared_Component:       doctrine_shared_component_directory,
 		Deterministic_Packages: listed,
 	})
 	if err != nil {

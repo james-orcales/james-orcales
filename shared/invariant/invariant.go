@@ -380,12 +380,21 @@ func Event_False(event Event) (reference Dot_Element_Reference) {
 }
 
 // Recorder_Dot_Product enforces the call's elements: an Always observed false
-// fails, and an Impossible whose referenced events all occurred fails.
+// fails, and an Impossible whose referenced events all occurred fails. Every axis
+// violated on the call is named in one panic, not just the first, so a single run
+// surfaces them all.
 //
 //go:noinline
 func Recorder_Dot_Product(recorder *Recorder, dot_elements ...Dot_Element) {
+	var violations []string
 	for _, dot_element := range dot_elements {
-		dot_element_enforce(dot_element, dot_elements)
+		violation := dot_element_violation(dot_element, dot_elements)
+		if violation != "" {
+			violations = append(violations, violation)
+		}
+	}
+	if len(violations) > 0 {
+		panic(Assertion_Failure_Message_Prefix + strings.Join(violations, "\n"))
 	}
 	recorder_dot_product_observe(recorder, dot_elements)
 }
@@ -495,36 +504,65 @@ func recorder_increment(recorder *Recorder, site string, fired_true bool) {
 	metadata.False_Frequency.Add(1)
 }
 
-// Fails the call when dot_element states an invariant that was violated: an
-// Always observed false, a Boundary with a deferred violation, or an Impossible
-// whose forbidden combination occurred.
-func dot_element_enforce(dot_element Dot_Element, dot_elements []Dot_Element) {
+// Returns the message describing how dot_element violates its invariant on this
+// call — an Always observed false, a Boundary with a deferred violation, or an
+// Impossible whose forbidden combination occurred — each naming the offending axis
+// by its site. Returns "" when the element holds.
+func dot_element_violation(
+	dot_element Dot_Element, dot_elements []Dot_Element,
+) (violation string) {
 	if dot_element.Kind == Dot_Element_Kind_Always {
 		if dot_element.Event == Event_Kind_False {
-			panic(Assertion_Failure_Message_Prefix + "an Always element is false")
+			return dot_element.Site + "  Always — condition was false"
 		}
+		return ""
 	}
 	if dot_element.Kind == Dot_Element_Kind_Boundary {
-		dot_element_enforce_boundary(dot_element)
+		return dot_element_boundary_violation(dot_element)
 	}
 	if dot_element.Kind != Dot_Element_Kind_Impossible {
-		return
+		return ""
 	}
 	if dot_element_impossible_violated(dot_element, dot_elements) {
-		panic(Assertion_Failure_Message_Prefix + "an Impossible combination occurred")
+		return dot_element_impossible_message(dot_element)
 	}
+	return ""
 }
 
-// Fails the call when a Boundary carries a deferred violation: X outside
-// [Lo, Hi], or bounds that aren't distinct (Lo >= Hi, or a NaN endpoint).
-func dot_element_enforce_boundary(dot_element Dot_Element) {
+// Returns the message for a Boundary carrying a deferred violation — X outside
+// [Lo, Hi], or bounds that aren't distinct (Lo >= Hi, or a NaN endpoint) — naming
+// the boundary's site. Returns "" when the boundary holds.
+func dot_element_boundary_violation(dot_element Dot_Element) (violation string) {
 	if dot_element.Event == Event_Kind_Outside {
-		panic(Assertion_Failure_Message_Prefix +
-			"a Distinct_Boundary value is outside its bounds")
+		return dot_element.Site + "  Boundary — value outside [Lo, Hi]"
 	}
 	if dot_element.Event == Event_Kind_Bad_Bounds {
-		panic(Assertion_Failure_Message_Prefix + "a Distinct_Boundary requires Lo < Hi")
+		return dot_element.Site + "  Boundary — endpoints not distinct (Lo < Hi required)"
 	}
+	return ""
+}
+
+// Renders an Impossible violation: a header plus one line per co-occurring
+// coordinate, each naming the referenced axis by its site and the event observed.
+// The Impossible element's own site is empty, so its identity is this set of
+// coordinates rather than a single site.
+func dot_element_impossible_message(impossible Dot_Element) (message string) {
+	message = "Impossible — forbidden combination occurred:"
+	for _, reference := range impossible.Impossibles {
+		event := event_kind_boolean_text(reference.Event_Kind)
+		message += "\n  " + reference.Site + "  " + event
+	}
+	return message
+}
+
+// Renders an event kind as the boolean word an Impossible reference carries.
+// References are built only at True / False (by Event_True / Event_False), so any
+// other kind falls back to "false".
+func event_kind_boolean_text(event_kind Event_Kind) (text string) {
+	if event_kind == Event_Kind_True {
+		return "true"
+	}
+	return "false"
 }
 
 // Reports whether every event the Impossible names was observed this call — the
@@ -619,11 +657,14 @@ func Recorder_Register_Packages_For_Analysis(recorder *Recorder, directories ...
 		Same_Set:          ast_index_functions(files),
 		Loaded:            map[string]map[string]indexed_function{},
 	}
+	var unresolved []string
 	for _, file := range files {
-		recorder_register_file(recorder, file_set, file, index)
+		unresolved = append(unresolved,
+			recorder_register_file(recorder, file_set, file, index)...)
 	}
 	recorder_check_bundle_dot_product(recorder, file_set, files)
 	recorder_check_orphan_axes(recorder, file_set, files)
+	recorder_check_unresolved(recorder, unresolved)
 }
 
 // Walks up from start_directory for the workspace root: the nearest ancestor
@@ -897,7 +938,7 @@ func ast_index_functions(files []*ast.File) (functions map[string]indexed_functi
 // import map is threaded down so a qualified cross-package bundle resolves.
 func recorder_register_file(
 	recorder *Recorder, file_set *token.FileSet, file *ast.File, index *bundle_index,
-) {
+) (unresolved []string) {
 	imports := ast_file_imports(file)
 	for _, declaration := range file.Decls {
 		function, is_function := declaration.(*ast.FuncDecl)
@@ -907,15 +948,17 @@ func recorder_register_file(
 		if function.Body == nil {
 			continue
 		}
-		recorder_register_function(recorder, file_set, function, imports, index)
+		unresolved = append(unresolved,
+			recorder_register_function(recorder, file_set, function, imports, index)...)
 	}
+	return unresolved
 }
 
 // Collects the function's bindings, then registers every Dot_Product call.
 func recorder_register_function(
 	recorder *Recorder, file_set *token.FileSet, function *ast.FuncDecl,
 	imports map[string]string, index *bundle_index,
-) {
+) (unresolved []string) {
 	bindings := ast_collect_bindings(function.Body)
 	ast.Inspect(function.Body, func(node ast.Node) (descend bool) {
 		call, is_call := node.(*ast.CallExpr)
@@ -925,11 +968,11 @@ func recorder_register_function(
 		if ast_invariant_selector(call) != "Dot_Product" {
 			return true
 		}
-		recorder_register_dot_product(
-			recorder, file_set, function.Body, call, bindings, imports, index,
-		)
+		unresolved = append(unresolved, recorder_register_dot_product(
+			recorder, file_set, function.Body, call, bindings, imports, index)...)
 		return true
 	})
+	return unresolved
 }
 
 // Checks the analyzed files for orphan axis constructors — invariant.Always /
@@ -973,6 +1016,24 @@ func recorder_check_orphan_axes(
 	fmt.Fprintln(recorder.Output, banner)
 	for _, orphan := range orphans {
 		fmt.Fprintln(recorder.Output, orphan)
+	}
+	fmt.Fprintln(recorder.Output, banner)
+	recorder.Exit(1)
+}
+
+// Reports every bundle the analyzer recognised by name but could not resolve to a
+// declaration, then exits. A recognised-but-unresolvable bundle would seed none of
+// its elements while the runtime still enforces them, so its coverage obligations
+// would vanish unnoticed; failing keeps coverage from being silently dropped — the
+// analyzer descends a bundle or refuses it.
+func recorder_check_unresolved(recorder *Recorder, unresolved []string) {
+	if len(unresolved) == 0 {
+		return
+	}
+	banner := "🚨 " + strconv.Itoa(len(unresolved)) + " unresolved bundles 🚨"
+	fmt.Fprintln(recorder.Output, banner)
+	for _, line := range unresolved {
+		fmt.Fprintln(recorder.Output, line)
 	}
 	fmt.Fprintln(recorder.Output, banner)
 	recorder.Exit(1)
@@ -1213,9 +1274,10 @@ func recorder_dot_product_arguments(
 func recorder_register_dot_product(
 	recorder *Recorder, file_set *token.FileSet, body *ast.BlockStmt, call *ast.CallExpr,
 	bindings map[string]*ast.CallExpr, imports map[string]string, index *bundle_index,
-) {
+) (unresolved []string) {
 	arguments := recorder_dot_product_arguments(body, call)
-	axes, carves := recorder_collect_elements(file_set, arguments, bindings, imports, index)
+	axes, carves, unresolved := recorder_collect_elements(
+		file_set, arguments, bindings, imports, index)
 	callsite := recorder_position(file_set, call)
 	for _, axis := range axes {
 		// A bundle element's own site is shared by every callsite that spreads the
@@ -1235,6 +1297,7 @@ func recorder_register_dot_product(
 		})
 	}
 	recorder_register_tuples(recorder, callsite, axes, carves)
+	return unresolved
 }
 
 // A collect_frame is one bundle scope mid-flatten: its argument list, the
@@ -1261,7 +1324,7 @@ type collect_frame struct {
 func recorder_collect_elements(
 	file_set *token.FileSet, arguments []ast.Expr,
 	bindings map[string]*ast.CallExpr, imports map[string]string, index *bundle_index,
-) (axes []registration_axis, carves [][]registration_cell) {
+) (axes []registration_axis, carves [][]registration_cell, unresolved []string) {
 	stack := []*collect_frame{{
 		Arguments:  arguments,
 		Bindings:   bindings,
@@ -1285,7 +1348,14 @@ func recorder_collect_elements(
 			child, ok := recorder_bundle_frame(bundle, frame.Imports, index)
 			if ok {
 				stack = append(stack, child)
+				continue
 			}
+			// A call named like a bundle but whose declaration the analyzer cannot
+			// reach (an external module, a missing source file) would seed none of
+			// its elements while the runtime still enforces them — its coverage
+			// obligations would vanish with no signal. Refuse it: the analyzer
+			// descends a bundle or fails on it, never silently drops it.
+			unresolved = append(unresolved, recorder_unresolved_line(file_set, bundle))
 			continue
 		}
 		element_call, resolved := ast_resolve_element(argument, frame.Bindings)
@@ -1305,7 +1375,14 @@ func recorder_collect_elements(
 		frame.Local_Axes = append(frame.Local_Axes, axis)
 		axes = append(axes, axis)
 	}
-	return axes, carves
+	return axes, carves, unresolved
+}
+
+// Renders one unresolvable bundle as
+// "<site>  unresolved bundle: <name> cannot be analyzed".
+func recorder_unresolved_line(file_set *token.FileSet, call *ast.CallExpr) (line string) {
+	return recorder_position(file_set, call) + "  unresolved bundle: " +
+		ast_callee_name(call) + " cannot be analyzed"
 }
 
 // Builds the scope frame for a *_Invariants bundle call, resolving the bundle's

@@ -103,7 +103,9 @@ segment — is exempt.
 
 ### Symlinks
 
-A symlink resolves to an existing target; a dangling symlink is banned.
+A tracked symlink resolves to a tracked target: a tracked file, or a directory that holds
+tracked files. A target outside the tracked set, or the symlink's own path, is banned. An
+untracked symlink is not checked.
 
 ### Banned Script Extensions
 
@@ -177,41 +179,38 @@ autosquash such commits into their target.
 A branch other than `main/master` carries no merge commit; a git-subtree merge is the sole
 exception; required when vendoring another repo's history.
 
-# Module Layout
+# Component Layout
 
-The following layout centralizes cross-module imports and splits pure and impure implementations.
-Shared module:  `shared/foo (pure) -> shared/foo/default (impure)`
-Binary modules: `main (impure) -> internal (pure)`
+The repo is one Go module; each top-level directory of Go code is a component. The layout splits
+pure from impure. Shared component: `shared/foo (pure) -> shared/foo/default (impure)`. Binary
+component: `main (impure) -> internal (pure)`.
 
-### Module Definition
+### Single Module
 
-A module is a directory containing `go.mod` and is registered in `go.work`.
+The repo is one Go module: exactly one `go.mod`, at the root, with no `go.work` and no nested
+`go.mod`. A component is a top-level directory of Go source, not a module of its own.
 
-### Module Location
+### Shared Component
 
-All modules are located at the repo root.
+The shared component, `shared`, has no `internal` directory at any depth and declares no
+`package main`. It is fully importable, never executed. Its root-relative directory is
+lint.json's `shared_component`.
 
-### Shared Module
+### Binary Component
 
-The shared module, `shared`, has no `internal` directory at any depth and declares no
-`package main`. It is fully importable, never executed. Its workspace-root-relative directory
-is lint.json's `shared_module`.
-
-### Binary Module
-
-In a binary module, every non-main package lives under a top-level internal directory; code at the
-module root or any non-internal directory is banned.
+In a binary component, every non-main package lives under a top-level internal directory; code at
+the component root or any non-internal directory is banned.
 
 ### Main Package
 
-A binary module holds exactly one main package, and it sits at the module root; a `cmd` directory is
-banned.
+A binary component holds exactly one main package, and it sits at the component root; a `cmd`
+directory is banned.
 
 ### Internal Entry Point
 
-A binary module declares exactly one free func Main in its top-level internal directory; it is
+A binary component declares exactly one free func Main in its top-level internal directory; it is
 the entry point its thin package main calls, and zero or several Main functions are banned. A shared
-module may also expose a func Main, representing an embeddable entry point.
+component may also expose a func Main, representing an embeddable entry point.
 
 ### Tier Depth
 
@@ -521,8 +520,14 @@ Files sharing a build-tag constraint form an independent group with its own tota
 
 # Deterministic
 
-A package listed in lint.json's deterministic_packages is held, atop purity, to
+A package covered by lint.json's deterministic_packages is held, atop purity, to
 bans making it reproducible; opt-in, and the bans bind its _test.go files too.
+
+### Entry Format
+
+A deterministic_packages entry names a module's top-level directory and the tier
+auto-applies to the pure packages at or under it; the shared module's libraries
+are named `shared/*` for every library or `shared/<lib>` for one.
 
 ### Goroutines
 
@@ -552,13 +557,20 @@ the induction exempts.
 
 ### Impurity
 
-A package listed as deterministic must be pure; determinism is stricter than
-purity, so an impure listed package is reported.
+Determinism is stricter than purity, so only pure packages join the tier; an
+impure package in a covered subtree (the main package, a default tier) is dropped
+from the expansion, not held to the bans.
 
 ### Coverage
 
-A deterministic_packages entry that matches no package is reported; a typo or
-stale path must not silently check nothing.
+A deterministic_packages entry that covers no pure package is reported; a typo, a
+stale path, or a directory holding nothing pure must not silently check nothing.
+
+### Coverage Scope
+
+A scoped run judges coverage only for entries within the scope it parsed; an entry
+for a module outside the scope is left to the whole-workspace run, which alone
+parses every module.
 
 # Stdlib Time
 
