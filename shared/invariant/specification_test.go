@@ -3,11 +3,14 @@ package invariant_test
 import (
 	"bytes"
 	"fmt"
+	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"testing/fstest"
 
 	"github.com/james-orcales/james-orcales/shared/invariant"
+	snap "github.com/james-orcales/james-orcales/shared/snap/default"
 )
 
 // Test_Always_Violation: a Dot_Product given an Always observed false panics, naming
@@ -434,6 +437,79 @@ func check(n int) {
 	}
 }
 
+// Test_Bundles_Recorder_Form: a bundle element built with the explicit Recorder_
+// constructor — which leads with the recorder argument — is descended like the bare
+// sugar form, its condition read past that leading recorder.
+func Test_Bundles_Recorder_Form(t *testing.T) {
+	const source = `package fixture
+
+func Pair_Invariants(n int) (dot_elements []invariant.Dot_Element) {
+	return append(dot_elements, invariant.Recorder_Sometimes(Default, n < 0))
+}
+
+func check(n int) {
+	invariant.Dot_Product(Pair_Invariants(n)...)
+}
+`
+	recorder := &invariant.Recorder{
+		File_System: fstest.MapFS{
+			"fixture/recorder_form.go": &fstest.MapFile{Data: []byte(source)},
+		},
+	}
+	invariant.Recorder_Register_Packages_For_Analysis(recorder, "/fixture")
+
+	value, ok := recorder.Assertions.Load(
+		"/fixture/recorder_form.go:8::from=/fixture/recorder_form.go:4")
+	if !ok {
+		t.Fatal("a Recorder_ element must be descended like the bare sugar form")
+	}
+	if condition := value.(*invariant.Assertion_Metadata).Condition; condition != "n < 0" {
+		t.Errorf("Condition = %q, want \"n < 0\" past the recorder", condition)
+	}
+}
+
+// Test_Bundles_Sugar: a bundle in the sugar package may call the primitives unqualified;
+// the descent recognizes the bare call only because Sugar_Package names that package. The
+// same fixture without Sugar_Package treats the bare call as the caller's own function and
+// seeds nothing.
+func Test_Bundles_Sugar(t *testing.T) {
+	const sugar = `package sugar
+
+func Pair_Invariants(n int) (dot_elements []invariant.Dot_Element) {
+	return append(dot_elements, Sometimes(n < 0))
+}
+`
+	const application = `package app
+
+import (
+	invariant "example.com/m/invariant"
+	"example.com/m/sugar"
+)
+
+func check(n int) {
+	invariant.Dot_Product(sugar.Pair_Invariants(n)...)
+}
+`
+	files := fstest.MapFS{
+		"m/go.mod":         &fstest.MapFile{Data: []byte("module example.com/m\n")},
+		"m/sugar/sugar.go": &fstest.MapFile{Data: []byte(sugar)},
+		"m/app/app.go":     &fstest.MapFile{Data: []byte(application)},
+	}
+	const key = "/m/app/app.go:9::from=/m/sugar/sugar.go:4"
+
+	recognized := &invariant.Recorder{File_System: files, Sugar_Package: "example.com/m/sugar"}
+	invariant.Recorder_Register_Packages_For_Analysis(recognized, "/m/app")
+	if _, ok := recognized.Assertions.Load(key); !ok {
+		t.Error("a sugar-package bundle's unqualified Sometimes must be recognized")
+	}
+
+	ignored := &invariant.Recorder{File_System: files}
+	invariant.Recorder_Register_Packages_For_Analysis(ignored, "/m/app")
+	if _, ok := ignored.Assertions.Load(key); ok {
+		t.Error("without Sugar_Package a bare call is not a primitive; nothing seeds")
+	}
+}
+
 // Test_Bundles_Cross_Package: a bundle in a sibling package of the same module is
 // resolved through the module path.
 func Test_Bundles_Cross_Package(t *testing.T) {
@@ -510,6 +586,70 @@ func check_b(n int) {
 	if _, ok := recorder.Assertions.Load("/fixture/two.go:12::from=/fixture/two.go:4"); !ok {
 		t.Error("callsite B must have its own coverage entry")
 	}
+}
+
+// Test_Bundles_Gap_Location: a composed bundle's coverage gap is named at the compound
+// callsite::from=site — the top-level Dot_Product (compose.go:12) joined to the deepest
+// nested element's site (compose.go:4) — while the cross-product gap names the callsite
+// alone. The snapshot captures the whole report so both locations are pinned.
+func Test_Bundles_Gap_Location(t *testing.T) {
+	const source = `package fixture
+
+func Inner_Invariants(n int) (dot_elements []invariant.Dot_Element) {
+	return append(dot_elements, invariant.Always(n > 0))
+}
+
+func Outer_Invariants(n int) (dot_elements []invariant.Dot_Element) {
+	return append(dot_elements, Inner_Invariants(n)...)
+}
+
+func check(n int) {
+	invariant.Dot_Product(Outer_Invariants(n)...)
+}
+`
+	var output bytes.Buffer
+	recorder := &invariant.Recorder{
+		File_System: fstest.MapFS{
+			"fixture/compose.go": &fstest.MapFile{Data: []byte(source)},
+		},
+		Is_Test: true, Output: &output, Exit: func(code int) {},
+	}
+	invariant.Recorder_Register_Packages_For_Analysis(recorder, "/fixture")
+	invariant.Recorder_Analyze_Assertion_Frequency(recorder)
+
+	snap.Expect(t, snap.Init(`🚨 2 coverage gaps 🚨
+
+# Cross-product gaps
+/fixture/compose.go:12  tuple (0) never observed
+
+# Reachability gaps
+/fixture/compose.go:12::from=/fixture/compose.go:4  Always — never reached: "n > 0"
+🚨 2 coverage gaps 🚨
+`), output.String())
+}
+
+// Test_Bundles_Failure_Location: a bundle element's assertion failure names only its own
+// in-bundle site (here transfer.go:9), never the consuming callsite — yet the call site is
+// not lost. The panic's Go stack still unwinds through Recorder_Dot_Product and the frame
+// that spread the bundle, so the snapshot pins both the site-only message and the stack
+// frames that carry the call site the message omits.
+func Test_Bundles_Failure_Location(t *testing.T) {
+	recorder := &invariant.Recorder{
+		Get_Caller: func(skip int) (file string, line int) { return "transfer.go", 9 },
+	}
+	element := invariant.Recorder_Always(recorder, false)
+	message, stack := recover_with_stack(func() {
+		dot_product_callsite(recorder, element)
+	})
+
+	snap.Expect(
+		t,
+		snap.Init(`🚨 Assertion Failure 🚨: transfer.go:9  Always — condition was false
+
+github.com/james-orcales/james-orcales/shared/invariant.Recorder_Dot_Product (invariant.go)
+github.com/james-orcales/james-orcales/shared/invariant_test.dot_product_callsite (specification_test.go)`),
+		message+"\n\n"+stack,
+	)
 }
 
 // Test_Bundles_Ban: a Dot_Product inside a bundle fails registration.
@@ -787,4 +927,45 @@ func recover_message(action func()) (message string) {
 	}()
 	action()
 	return ""
+}
+
+// Spreads element into a Dot_Product from a stable, named frame, so the panic stack
+// carries a recognizable call site for recover_with_stack to capture. The noinline keeps
+// it a frame of its own rather than folding into the caller.
+//
+//go:noinline
+func dot_product_callsite(recorder *invariant.Recorder, element invariant.Dot_Element) {
+	invariant.Recorder_Dot_Product(recorder, element)
+}
+
+// Runs action, recovers the panic it raises, and returns the panic message together with
+// the call stack at the panic point — kept to the invariant and call-site frames and
+// rendered "func (file)", dropping line numbers, addresses, and the runtime/testing
+// scaffolding — so a snapshot pins which frames the failure unwound through without
+// machine-specific or line-shifting noise. Captured inside the defer, where the panicking
+// frames below the recover are still live on the goroutine's stack.
+func recover_with_stack(action func()) (message string, stack string) {
+	defer func() {
+		message = fmt.Sprint(recover())
+		program_counters := make([]uintptr, 64)
+		count := runtime.Callers(0, program_counters)
+		frames := runtime.CallersFrames(program_counters[:count])
+		var lines []string
+		for range count {
+			frame, more := frames.Next()
+			is_core := strings.Contains(frame.Function, "/shared/invariant.")
+			is_callsite := strings.HasSuffix(frame.Function, ".dot_product_callsite")
+			keep := is_core || is_callsite
+			if keep {
+				rendered := frame.Function + " (" + filepath.Base(frame.File) + ")"
+				lines = append(lines, rendered)
+			}
+			if !more {
+				break
+			}
+		}
+		stack = strings.Join(lines, "\n")
+	}()
+	action()
+	return message, stack
 }

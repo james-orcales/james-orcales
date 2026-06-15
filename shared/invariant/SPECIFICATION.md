@@ -117,6 +117,18 @@ descended, not only the direct spread form.
 A bundle is recognized whether its type is exported (`_Invariants`) or unexported
 (`_invariants`), matching the type's casing.
 
+### Recorder Form
+
+A bundle element is recognized whether built with the bare sugar primitive (`Sometimes`)
+or the explicit `Recorder_Sometimes` form that leads with the recorder argument; the
+condition is then read past that leading recorder.
+
+### Sugar
+
+A bundle in the sugar package may call the primitives unqualified; the descent recognizes
+them because Sugar_Package names that package. Elsewhere a bare call is the caller's own
+function, not a primitive, and seeds nothing unless qualified.
+
 ### Cross Package
 
 A bundle defined in another package of the same module is resolved through the
@@ -131,6 +143,18 @@ through the workspace and descended.
 
 Two callsites spreading one bundle become independent coverage entries, so neither
 masks the other's gap.
+
+### Gap Location
+
+A bundle element's coverage gap is named at the compound `callsite::from=site` — the
+consuming Dot_Product joined to the element's site in its bundle — so a composed bundle's
+gap names the top-level callsite and the deepest nested site together.
+
+### Failure Location
+
+A bundle element's assertion failure message names only its own in-bundle site — for a
+composed bundle the deepest nested one — never the consuming callsite. The callsite is not
+lost: the panic's stack still unwinds through the Dot_Product, carrying it.
 
 ### Ban
 

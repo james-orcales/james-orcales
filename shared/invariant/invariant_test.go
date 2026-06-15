@@ -2,11 +2,14 @@ package invariant_test
 
 import (
 	"bytes"
+	"fmt"
+	"sort"
 	"strings"
 	"testing"
 	"testing/fstest"
 
 	"github.com/james-orcales/james-orcales/shared/invariant"
+	"github.com/james-orcales/james-orcales/shared/snap/default"
 )
 
 // A Dot_Product containing an Always(false) element must fail: the asserted
@@ -814,6 +817,407 @@ func check(n int) {
 	if _, ok := recorder.Assertions.Load("/m/b/b.go:9:tuple=(1)"); !ok {
 		t.Error("expected the Hi endpoint tuple (1) at b.go's Dot_Product (line 9)")
 	}
+}
+
+// Renders an Assertion_Kind as the short name the registration snapshot reads by.
+func kind_name(kind invariant.Assertion_Kind) (name string) {
+	switch kind {
+	case invariant.Assertion_Kind_Always:
+		return "Always"
+	case invariant.Assertion_Kind_Sometimes:
+		return "Sometimes"
+	case invariant.Assertion_Kind_Boundary:
+		return "Boundary"
+	case invariant.Assertion_Kind_Tuple:
+		return "Tuple"
+	}
+	return "Unknown"
+}
+
+// Renders every seeded assertion as one sorted "kind key detail" line so a bundle's whole
+// registration footprint compares against a golden as a single string. The map key (not
+// the metadata Site) is the identity: a bundle element's key is the caller::from=site
+// compound, a tuple's is the callsite plus its bucket combination.
+func snapshot_registered(recorder *invariant.Recorder) (snapshot string) {
+	var lines []string
+	recorder.Assertions.Range(func(key, value any) (more bool) {
+		metadata := value.(*invariant.Assertion_Metadata)
+		detail := metadata.Condition
+		if metadata.Kind == invariant.Assertion_Kind_Tuple {
+			detail = fmt.Sprint(metadata.Tuple_Indices)
+		}
+		line := fmt.Sprintf("%s %s %s", kind_name(metadata.Kind), key.(string), detail)
+		lines = append(lines, line)
+		return true
+	})
+	sort.Strings(lines)
+	return strings.Join(lines, "\n")
+}
+
+// Registration descends the Whole_Number_Invariants bundle — three Sometimes axes
+// (n == 0/1/2) and a Distinct_Boundary over the type's range — exactly as the preset
+// builds it: with the explicit Recorder_Sometimes / Recorder_Distinct_Boundary
+// constructors, whose condition rides the second argument past the leading recorder. The
+// snapshot pins the whole footprint: one per-element entry per axis (keyed
+// caller::from=site) plus the full 2^4 tuple grid (no Impossible carves), every entry
+// attributed to the caller's single Dot_Product.
+func Test_Register_Snapshots_Whole_Number_Invariants(t *testing.T) {
+	const package_a = `package a
+
+import invariant "example.com/m/invariant"
+
+func Whole_Number_Invariants[I invariant.Numeric](n I) (dot_elements []invariant.Dot_Element) {
+	return append(dot_elements,
+		invariant.Recorder_Sometimes(Default, n == 0),
+		invariant.Recorder_Sometimes(Default, n == 1),
+		invariant.Recorder_Sometimes(Default, n == 2),
+		invariant.Recorder_Distinct_Boundary(Default, &invariant.Boundary_Input[I]{
+			X:  n,
+			Lo: whole_number_min[I](),
+			Hi: whole_number_max[I](),
+		}),
+	)
+}
+`
+	const package_b = `package b
+
+import (
+	invariant "example.com/m/invariant"
+	"example.com/m/a"
+)
+
+func check(n int) {
+	invariant.Dot_Product(a.Whole_Number_Invariants(n)...)
+}
+`
+	recorder := &invariant.Recorder{
+		File_System: fstest.MapFS{
+			"m/go.mod": &fstest.MapFile{Data: []byte("module example.com/m\n")},
+			"m/a/a.go": &fstest.MapFile{Data: []byte(package_a)},
+			"m/b/b.go": &fstest.MapFile{Data: []byte(package_b)},
+		},
+	}
+	invariant.Recorder_Register_Packages_For_Analysis(recorder, "/m/b")
+
+	snap.Expect(t, snap.Init(`Boundary /m/b/b.go:9::from=/m/a/a.go:10 n
+Sometimes /m/b/b.go:9::from=/m/a/a.go:7 n == 0
+Sometimes /m/b/b.go:9::from=/m/a/a.go:8 n == 1
+Sometimes /m/b/b.go:9::from=/m/a/a.go:9 n == 2
+Tuple /m/b/b.go:9:tuple=(0,0,0,0) [0 0 0 0]
+Tuple /m/b/b.go:9:tuple=(0,0,0,1) [0 0 0 1]
+Tuple /m/b/b.go:9:tuple=(0,0,1,0) [0 0 1 0]
+Tuple /m/b/b.go:9:tuple=(0,0,1,1) [0 0 1 1]
+Tuple /m/b/b.go:9:tuple=(0,1,0,0) [0 1 0 0]
+Tuple /m/b/b.go:9:tuple=(0,1,0,1) [0 1 0 1]
+Tuple /m/b/b.go:9:tuple=(0,1,1,0) [0 1 1 0]
+Tuple /m/b/b.go:9:tuple=(0,1,1,1) [0 1 1 1]
+Tuple /m/b/b.go:9:tuple=(1,0,0,0) [1 0 0 0]
+Tuple /m/b/b.go:9:tuple=(1,0,0,1) [1 0 0 1]
+Tuple /m/b/b.go:9:tuple=(1,0,1,0) [1 0 1 0]
+Tuple /m/b/b.go:9:tuple=(1,0,1,1) [1 0 1 1]
+Tuple /m/b/b.go:9:tuple=(1,1,0,0) [1 1 0 0]
+Tuple /m/b/b.go:9:tuple=(1,1,0,1) [1 1 0 1]
+Tuple /m/b/b.go:9:tuple=(1,1,1,0) [1 1 1 0]
+Tuple /m/b/b.go:9:tuple=(1,1,1,1) [1 1 1 1]`), snapshot_registered(recorder))
+}
+
+// Registration descends the Float_Invariants bundle — three Sometimes axes (NaN,
+// negative, positive), each bound to a local and built with the unqualified sugar
+// primitive, plus three pairwise Impossibles. The snapshot pins the footprint: one
+// per-element entry per axis (keyed caller::from=site) and only the tuples the three
+// mutual-exclusions leave standing — every co-true pair is carved, so of the 2^3 grid
+// just the four with at most one axis true survive.
+func Test_Register_Snapshots_Float_Invariants(t *testing.T) {
+	const sugar = `package sugar
+
+func Float_Invariants[F ~float32 | ~float64](f F) (dot_elements []invariant.Dot_Element) {
+	value := float64(f)
+	not_a_number := Sometimes(math.IsNaN(value))
+	negative := Sometimes(value < 0)
+	positive := Sometimes(value > 0)
+	return append(dot_elements,
+		not_a_number, negative, positive,
+		Impossible(Event_True(not_a_number), Event_True(negative)),
+		Impossible(Event_True(not_a_number), Event_True(positive)),
+		Impossible(Event_True(negative), Event_True(positive)),
+	)
+}
+`
+	const application = `package app
+
+import (
+	invariant "example.com/m/invariant"
+	"example.com/m/sugar"
+)
+
+func check(f float64) {
+	invariant.Dot_Product(sugar.Float_Invariants(f)...)
+}
+`
+	recorder := &invariant.Recorder{
+		File_System: fstest.MapFS{
+			"m/go.mod":         &fstest.MapFile{Data: []byte("module example.com/m\n")},
+			"m/sugar/sugar.go": &fstest.MapFile{Data: []byte(sugar)},
+			"m/app/app.go":     &fstest.MapFile{Data: []byte(application)},
+		},
+		Output:        &bytes.Buffer{},
+		Sugar_Package: "example.com/m/sugar",
+	}
+	invariant.Recorder_Register_Packages_For_Analysis(recorder, "/m/app")
+
+	snap.Expect(t, snap.Init(`Sometimes /m/app/app.go:9::from=/m/sugar/sugar.go:5 math.IsNaN(value)
+Sometimes /m/app/app.go:9::from=/m/sugar/sugar.go:6 value < 0
+Sometimes /m/app/app.go:9::from=/m/sugar/sugar.go:7 value > 0
+Tuple /m/app/app.go:9:tuple=(0,0,0) [0 0 0]
+Tuple /m/app/app.go:9:tuple=(0,0,1) [0 0 1]
+Tuple /m/app/app.go:9:tuple=(0,1,0) [0 1 0]
+Tuple /m/app/app.go:9:tuple=(1,0,0) [1 0 0]`), snapshot_registered(recorder))
+}
+
+// The String_Invariants footprint is hoisted out of its test so the test body stays
+// within the function-length budget; the 8 axes x 9 carves leave 81 of the 2^8 cells.
+const string_invariants_snapshot = `Sometimes /m/app/app.go:9::from=/m/sugar/sugar.go:10 Sometimes_Has_Control(s)
+Sometimes /m/app/app.go:9::from=/m/sugar/sugar.go:11 Sometimes_Has_Line_Break(s)
+Sometimes /m/app/app.go:9::from=/m/sugar/sugar.go:4 len(s) == 0
+Sometimes /m/app/app.go:9::from=/m/sugar/sugar.go:5 Sometimes_Has_Edge_Whitespace(s)
+Sometimes /m/app/app.go:9::from=/m/sugar/sugar.go:6 Sometimes_Has_Interior_Whitespace(s)
+Sometimes /m/app/app.go:9::from=/m/sugar/sugar.go:7 Sometimes_Has_Invalid_UTF8(s)
+Sometimes /m/app/app.go:9::from=/m/sugar/sugar.go:8 Sometimes_Has_Nul(s)
+Sometimes /m/app/app.go:9::from=/m/sugar/sugar.go:9 Sometimes_Has_Multibyte_Rune(s)
+Tuple /m/app/app.go:9:tuple=(0,0,0,0,0,0,0,0) [0 0 0 0 0 0 0 0]
+Tuple /m/app/app.go:9:tuple=(0,0,0,0,0,0,1,0) [0 0 0 0 0 0 1 0]
+Tuple /m/app/app.go:9:tuple=(0,0,0,0,0,0,1,1) [0 0 0 0 0 0 1 1]
+Tuple /m/app/app.go:9:tuple=(0,0,0,0,0,1,0,0) [0 0 0 0 0 1 0 0]
+Tuple /m/app/app.go:9:tuple=(0,0,0,0,0,1,1,0) [0 0 0 0 0 1 1 0]
+Tuple /m/app/app.go:9:tuple=(0,0,0,0,0,1,1,1) [0 0 0 0 0 1 1 1]
+Tuple /m/app/app.go:9:tuple=(0,0,0,0,1,0,1,0) [0 0 0 0 1 0 1 0]
+Tuple /m/app/app.go:9:tuple=(0,0,0,0,1,0,1,1) [0 0 0 0 1 0 1 1]
+Tuple /m/app/app.go:9:tuple=(0,0,0,0,1,1,1,0) [0 0 0 0 1 1 1 0]
+Tuple /m/app/app.go:9:tuple=(0,0,0,0,1,1,1,1) [0 0 0 0 1 1 1 1]
+Tuple /m/app/app.go:9:tuple=(0,0,0,1,0,0,0,0) [0 0 0 1 0 0 0 0]
+Tuple /m/app/app.go:9:tuple=(0,0,0,1,0,0,1,0) [0 0 0 1 0 0 1 0]
+Tuple /m/app/app.go:9:tuple=(0,0,0,1,0,0,1,1) [0 0 0 1 0 0 1 1]
+Tuple /m/app/app.go:9:tuple=(0,0,0,1,0,1,0,0) [0 0 0 1 0 1 0 0]
+Tuple /m/app/app.go:9:tuple=(0,0,0,1,0,1,1,0) [0 0 0 1 0 1 1 0]
+Tuple /m/app/app.go:9:tuple=(0,0,0,1,0,1,1,1) [0 0 0 1 0 1 1 1]
+Tuple /m/app/app.go:9:tuple=(0,0,0,1,1,0,1,0) [0 0 0 1 1 0 1 0]
+Tuple /m/app/app.go:9:tuple=(0,0,0,1,1,0,1,1) [0 0 0 1 1 0 1 1]
+Tuple /m/app/app.go:9:tuple=(0,0,0,1,1,1,1,0) [0 0 0 1 1 1 1 0]
+Tuple /m/app/app.go:9:tuple=(0,0,0,1,1,1,1,1) [0 0 0 1 1 1 1 1]
+Tuple /m/app/app.go:9:tuple=(0,0,1,0,0,0,0,0) [0 0 1 0 0 0 0 0]
+Tuple /m/app/app.go:9:tuple=(0,0,1,0,0,0,1,0) [0 0 1 0 0 0 1 0]
+Tuple /m/app/app.go:9:tuple=(0,0,1,0,0,0,1,1) [0 0 1 0 0 0 1 1]
+Tuple /m/app/app.go:9:tuple=(0,0,1,0,0,1,0,0) [0 0 1 0 0 1 0 0]
+Tuple /m/app/app.go:9:tuple=(0,0,1,0,0,1,1,0) [0 0 1 0 0 1 1 0]
+Tuple /m/app/app.go:9:tuple=(0,0,1,0,0,1,1,1) [0 0 1 0 0 1 1 1]
+Tuple /m/app/app.go:9:tuple=(0,0,1,0,1,0,1,0) [0 0 1 0 1 0 1 0]
+Tuple /m/app/app.go:9:tuple=(0,0,1,0,1,0,1,1) [0 0 1 0 1 0 1 1]
+Tuple /m/app/app.go:9:tuple=(0,0,1,0,1,1,1,0) [0 0 1 0 1 1 1 0]
+Tuple /m/app/app.go:9:tuple=(0,0,1,0,1,1,1,1) [0 0 1 0 1 1 1 1]
+Tuple /m/app/app.go:9:tuple=(0,0,1,1,0,0,0,0) [0 0 1 1 0 0 0 0]
+Tuple /m/app/app.go:9:tuple=(0,0,1,1,0,0,1,0) [0 0 1 1 0 0 1 0]
+Tuple /m/app/app.go:9:tuple=(0,0,1,1,0,0,1,1) [0 0 1 1 0 0 1 1]
+Tuple /m/app/app.go:9:tuple=(0,0,1,1,0,1,0,0) [0 0 1 1 0 1 0 0]
+Tuple /m/app/app.go:9:tuple=(0,0,1,1,0,1,1,0) [0 0 1 1 0 1 1 0]
+Tuple /m/app/app.go:9:tuple=(0,0,1,1,0,1,1,1) [0 0 1 1 0 1 1 1]
+Tuple /m/app/app.go:9:tuple=(0,0,1,1,1,0,1,0) [0 0 1 1 1 0 1 0]
+Tuple /m/app/app.go:9:tuple=(0,0,1,1,1,0,1,1) [0 0 1 1 1 0 1 1]
+Tuple /m/app/app.go:9:tuple=(0,0,1,1,1,1,1,0) [0 0 1 1 1 1 1 0]
+Tuple /m/app/app.go:9:tuple=(0,0,1,1,1,1,1,1) [0 0 1 1 1 1 1 1]
+Tuple /m/app/app.go:9:tuple=(0,1,0,0,0,0,0,0) [0 1 0 0 0 0 0 0]
+Tuple /m/app/app.go:9:tuple=(0,1,0,0,0,0,1,0) [0 1 0 0 0 0 1 0]
+Tuple /m/app/app.go:9:tuple=(0,1,0,0,0,0,1,1) [0 1 0 0 0 0 1 1]
+Tuple /m/app/app.go:9:tuple=(0,1,0,0,0,1,0,0) [0 1 0 0 0 1 0 0]
+Tuple /m/app/app.go:9:tuple=(0,1,0,0,0,1,1,0) [0 1 0 0 0 1 1 0]
+Tuple /m/app/app.go:9:tuple=(0,1,0,0,0,1,1,1) [0 1 0 0 0 1 1 1]
+Tuple /m/app/app.go:9:tuple=(0,1,0,0,1,0,1,0) [0 1 0 0 1 0 1 0]
+Tuple /m/app/app.go:9:tuple=(0,1,0,0,1,0,1,1) [0 1 0 0 1 0 1 1]
+Tuple /m/app/app.go:9:tuple=(0,1,0,0,1,1,1,0) [0 1 0 0 1 1 1 0]
+Tuple /m/app/app.go:9:tuple=(0,1,0,0,1,1,1,1) [0 1 0 0 1 1 1 1]
+Tuple /m/app/app.go:9:tuple=(0,1,0,1,0,0,0,0) [0 1 0 1 0 0 0 0]
+Tuple /m/app/app.go:9:tuple=(0,1,0,1,0,0,1,0) [0 1 0 1 0 0 1 0]
+Tuple /m/app/app.go:9:tuple=(0,1,0,1,0,0,1,1) [0 1 0 1 0 0 1 1]
+Tuple /m/app/app.go:9:tuple=(0,1,0,1,0,1,0,0) [0 1 0 1 0 1 0 0]
+Tuple /m/app/app.go:9:tuple=(0,1,0,1,0,1,1,0) [0 1 0 1 0 1 1 0]
+Tuple /m/app/app.go:9:tuple=(0,1,0,1,0,1,1,1) [0 1 0 1 0 1 1 1]
+Tuple /m/app/app.go:9:tuple=(0,1,0,1,1,0,1,0) [0 1 0 1 1 0 1 0]
+Tuple /m/app/app.go:9:tuple=(0,1,0,1,1,0,1,1) [0 1 0 1 1 0 1 1]
+Tuple /m/app/app.go:9:tuple=(0,1,0,1,1,1,1,0) [0 1 0 1 1 1 1 0]
+Tuple /m/app/app.go:9:tuple=(0,1,0,1,1,1,1,1) [0 1 0 1 1 1 1 1]
+Tuple /m/app/app.go:9:tuple=(0,1,1,0,0,0,0,0) [0 1 1 0 0 0 0 0]
+Tuple /m/app/app.go:9:tuple=(0,1,1,0,0,0,1,0) [0 1 1 0 0 0 1 0]
+Tuple /m/app/app.go:9:tuple=(0,1,1,0,0,0,1,1) [0 1 1 0 0 0 1 1]
+Tuple /m/app/app.go:9:tuple=(0,1,1,0,0,1,0,0) [0 1 1 0 0 1 0 0]
+Tuple /m/app/app.go:9:tuple=(0,1,1,0,0,1,1,0) [0 1 1 0 0 1 1 0]
+Tuple /m/app/app.go:9:tuple=(0,1,1,0,0,1,1,1) [0 1 1 0 0 1 1 1]
+Tuple /m/app/app.go:9:tuple=(0,1,1,0,1,0,1,0) [0 1 1 0 1 0 1 0]
+Tuple /m/app/app.go:9:tuple=(0,1,1,0,1,0,1,1) [0 1 1 0 1 0 1 1]
+Tuple /m/app/app.go:9:tuple=(0,1,1,0,1,1,1,0) [0 1 1 0 1 1 1 0]
+Tuple /m/app/app.go:9:tuple=(0,1,1,0,1,1,1,1) [0 1 1 0 1 1 1 1]
+Tuple /m/app/app.go:9:tuple=(0,1,1,1,0,0,0,0) [0 1 1 1 0 0 0 0]
+Tuple /m/app/app.go:9:tuple=(0,1,1,1,0,0,1,0) [0 1 1 1 0 0 1 0]
+Tuple /m/app/app.go:9:tuple=(0,1,1,1,0,0,1,1) [0 1 1 1 0 0 1 1]
+Tuple /m/app/app.go:9:tuple=(0,1,1,1,0,1,0,0) [0 1 1 1 0 1 0 0]
+Tuple /m/app/app.go:9:tuple=(0,1,1,1,0,1,1,0) [0 1 1 1 0 1 1 0]
+Tuple /m/app/app.go:9:tuple=(0,1,1,1,0,1,1,1) [0 1 1 1 0 1 1 1]
+Tuple /m/app/app.go:9:tuple=(0,1,1,1,1,0,1,0) [0 1 1 1 1 0 1 0]
+Tuple /m/app/app.go:9:tuple=(0,1,1,1,1,0,1,1) [0 1 1 1 1 0 1 1]
+Tuple /m/app/app.go:9:tuple=(0,1,1,1,1,1,1,0) [0 1 1 1 1 1 1 0]
+Tuple /m/app/app.go:9:tuple=(0,1,1,1,1,1,1,1) [0 1 1 1 1 1 1 1]
+Tuple /m/app/app.go:9:tuple=(1,0,0,0,0,0,0,0) [1 0 0 0 0 0 0 0]`
+
+// Registration descends the String_Invariants bundle — eight Sometimes axes (the empty
+// axis plus seven content axes built from the Sometimes_Has_ helpers) and nine
+// Impossibles. The snapshot pins the footprint: one per-element entry per axis and the 81
+// tuples surviving the carves — empty excludes every content axis (so with empty true
+// only the all-false-content cell stands), and a NUL or a line break is itself a control
+// character.
+func Test_Register_Snapshots_String_Invariants(t *testing.T) {
+	const sugar = `package sugar
+
+func String_Invariants(s string) (dot_elements []invariant.Dot_Element) {
+	empty := Sometimes(len(s) == 0)
+	edge_whitespace := Sometimes_Has_Edge_Whitespace(s)
+	interior_whitespace := Sometimes_Has_Interior_Whitespace(s)
+	invalid_utf8 := Sometimes_Has_Invalid_UTF8(s)
+	nul := Sometimes_Has_Nul(s)
+	byte_rune_mismatch := Sometimes_Has_Multibyte_Rune(s)
+	control := Sometimes_Has_Control(s)
+	line_break := Sometimes_Has_Line_Break(s)
+	return append(dot_elements,
+		empty,
+		edge_whitespace, interior_whitespace, invalid_utf8, nul,
+		byte_rune_mismatch, control, line_break,
+		Impossible(Event_True(empty), Event_True(edge_whitespace)),
+		Impossible(Event_True(empty), Event_True(interior_whitespace)),
+		Impossible(Event_True(empty), Event_True(invalid_utf8)),
+		Impossible(Event_True(empty), Event_True(nul)),
+		Impossible(Event_True(empty), Event_True(byte_rune_mismatch)),
+		Impossible(Event_True(empty), Event_True(control)),
+		Impossible(Event_True(empty), Event_True(line_break)),
+		Impossible(Event_True(nul), Event_False(control)),
+		Impossible(Event_True(line_break), Event_False(control)),
+	)
+}
+`
+	const application = `package app
+
+import (
+	invariant "example.com/m/invariant"
+	"example.com/m/sugar"
+)
+
+func check(s string) {
+	invariant.Dot_Product(sugar.String_Invariants(s)...)
+}
+`
+	recorder := &invariant.Recorder{
+		File_System: fstest.MapFS{
+			"m/go.mod":         &fstest.MapFile{Data: []byte("module example.com/m\n")},
+			"m/sugar/sugar.go": &fstest.MapFile{Data: []byte(sugar)},
+			"m/app/app.go":     &fstest.MapFile{Data: []byte(application)},
+		},
+		Output:        &bytes.Buffer{},
+		Sugar_Package: "example.com/m/sugar",
+	}
+	invariant.Recorder_Register_Packages_For_Analysis(recorder, "/m/app")
+
+	snap.Expect(t, snap.Init(string_invariants_snapshot), snapshot_registered(recorder))
+}
+
+// Registration descends a user-defined bundle on a user-defined type exactly as it does a
+// default preset — same caller::from=site keying, same grid, same Impossible carve — the
+// only difference being that the primitives are qualified (invariant.Sometimes /
+// invariant.Impossible), since the bundle lives outside the sugar package and so no
+// Sugar_Package is set. Two Sometimes axes over an Account with an Impossible forbidding
+// overdrawn-and-empty leave three of the four tuples.
+func Test_Register_Snapshots_User_Defined_Bundle(t *testing.T) {
+	const source = `package fixture
+
+type Account struct {
+	Balance int
+}
+
+func Account_Invariants(a Account) (dot_elements []invariant.Dot_Element) {
+	overdrawn := invariant.Sometimes(a.Balance < 0)
+	empty := invariant.Sometimes(a.Balance == 0)
+	return append(dot_elements,
+		overdrawn, empty,
+		invariant.Impossible(invariant.Event_True(overdrawn), invariant.Event_True(empty)),
+	)
+}
+
+func check(a Account) {
+	invariant.Dot_Product(Account_Invariants(a)...)
+}
+`
+	recorder := &invariant.Recorder{
+		File_System: fstest.MapFS{
+			"fixture/account.go": &fstest.MapFile{Data: []byte(source)},
+		},
+	}
+	invariant.Recorder_Register_Packages_For_Analysis(recorder, "/fixture")
+
+	snap.Expect(t, snap.Init(`Sometimes /fixture/account.go:17::from=/fixture/account.go:8 a.Balance < 0
+Sometimes /fixture/account.go:17::from=/fixture/account.go:9 a.Balance == 0
+Tuple /fixture/account.go:17:tuple=(0,0) [0 0]
+Tuple /fixture/account.go:17:tuple=(0,1) [0 1]
+Tuple /fixture/account.go:17:tuple=(1,0) [1 0]`), snapshot_registered(recorder))
+}
+
+// Registration descends a composed bundle: Transfer_Invariants spreads Amount_Invariants
+// (which itself nests Sign_Invariants) and Memo_Invariants. The snapshot pins that every
+// axis — however deep its bundle nests — attributes to the one top-level Dot_Product
+// callsite (transfer.go:27), keyed by its own site in its own bundle, with the grid
+// spanning all three combined axes.
+func Test_Register_Snapshots_Composed_Bundle(t *testing.T) {
+	const source = `package fixture
+
+type Transfer struct {
+	Amount int
+	Memo   string
+}
+
+func Sign_Invariants(n int) (dot_elements []invariant.Dot_Element) {
+	return append(dot_elements, invariant.Sometimes(n < 0))
+}
+
+func Amount_Invariants(n int) (dot_elements []invariant.Dot_Element) {
+	dot_elements = append(dot_elements, invariant.Sometimes(n == 0))
+	return append(dot_elements, Sign_Invariants(n)...)
+}
+
+func Memo_Invariants(s string) (dot_elements []invariant.Dot_Element) {
+	return append(dot_elements, invariant.Sometimes(len(s) == 0))
+}
+
+func Transfer_Invariants(x Transfer) (dot_elements []invariant.Dot_Element) {
+	dot_elements = append(dot_elements, Amount_Invariants(x.Amount)...)
+	return append(dot_elements, Memo_Invariants(x.Memo)...)
+}
+
+func check(x Transfer) {
+	invariant.Dot_Product(Transfer_Invariants(x)...)
+}
+`
+	recorder := &invariant.Recorder{
+		File_System: fstest.MapFS{
+			"fixture/transfer.go": &fstest.MapFile{Data: []byte(source)},
+		},
+	}
+	invariant.Recorder_Register_Packages_For_Analysis(recorder, "/fixture")
+
+	snap.Expect(t, snap.Init(`Sometimes /fixture/transfer.go:27::from=/fixture/transfer.go:13 n == 0
+Sometimes /fixture/transfer.go:27::from=/fixture/transfer.go:18 len(s) == 0
+Sometimes /fixture/transfer.go:27::from=/fixture/transfer.go:9 n < 0
+Tuple /fixture/transfer.go:27:tuple=(0,0,0) [0 0 0]
+Tuple /fixture/transfer.go:27:tuple=(0,0,1) [0 0 1]
+Tuple /fixture/transfer.go:27:tuple=(0,1,0) [0 1 0]
+Tuple /fixture/transfer.go:27:tuple=(0,1,1) [0 1 1]
+Tuple /fixture/transfer.go:27:tuple=(1,0,0) [1 0 0]
+Tuple /fixture/transfer.go:27:tuple=(1,0,1) [1 0 1]
+Tuple /fixture/transfer.go:27:tuple=(1,1,0) [1 1 0]
+Tuple /fixture/transfer.go:27:tuple=(1,1,1) [1 1 1]`), snapshot_registered(recorder))
 }
 
 // A bundle whose package is in neither the analyzed module nor a go.work sibling
