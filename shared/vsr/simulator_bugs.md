@@ -252,10 +252,10 @@ that caused it. Each fix changes `vsr.go`, never the assertion.
   un-checkpointed suffix, never re-execute the whole log — a promoted standby materializes its state
   once when it returns to normal: `replica_materialize_application_state` restores the checkpoint it
   carries (a real snapshot adopted from an active replica) and replays the committed ops after it. A
-  one-shot `Witness_Promotion_Due` flag, set at the role flip and consumed at the return to normal,
+  one-shot `Standby_Promotion_Due` flag, set at the role flip and consumed at the return to normal,
   makes the rebuild fire exactly once across every epoch-completion path.
 - **Guard**: the per-delivery accumulator oracle (each active replica's live state equals the
-  reference at its commit) plus a `Test_Witness_Promotion` unit test; the 1200-seed scan is clean.
+  reference at its commit) plus a `Test_Standby_Promotion` unit test; the 1200-seed scan is clean.
 
 ## Bug 14 — recovery picked the authority by the wrong group size
 

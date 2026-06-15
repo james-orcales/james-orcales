@@ -1116,10 +1116,10 @@ func simulator_committed_entry(state *simulator, op vsr.Op) (entry vsr.Log_Entry
 // core wrongly running a committed op more than once. The (client, request) result map is fed from
 // replies and the reference, which carry reliable keys; execution feeds only this op-level check.
 func simulator_observe_execution(state *simulator, index int, command []byte) {
-	// A witness never runs the service (§6.1): if one ever makes an Execute up-call, the role
-	// split has leaked. This is the headline witness safety property.
-	if is_witness(&state.Replicas[index]) {
-		state.T.Fatalf("seed %d: witness replica %d executed command %q",
+	// A standby never runs the service (§6.1): if one ever makes an Execute up-call, the role
+	// split has leaked. This is the headline standby safety property.
+	if is_standby(&state.Replicas[index]) {
+		state.T.Fatalf("seed %d: standby replica %d executed command %q",
 			state.Seed, index, command)
 	}
 	if state.Executed[index][string(command)] {
@@ -1277,10 +1277,10 @@ func simulator_check_accumulator(state *simulator) {
 			continue // A dormant or shut-down replica is out of play.
 		}
 		replica := &state.Replicas[index]
-		// A witness never executes (§6.1): it maintains no application state, so its
+		// A standby never executes (§6.1): it maintains no application state, so its
 		// accumulator stays zero while its commit advances. The accumulator oracle is for
 		// active replicas.
-		if is_witness(replica) {
+		if is_standby(replica) {
 			continue
 		}
 		// A recovering replica's accumulator is mid-restore (its volatile state was lost
@@ -1357,7 +1357,7 @@ func simulator_record_replica_coverage(state *simulator, index int) {
 	// A standby must sometimes exist and follow — be a non-voting member (§6.1) holding
 	// committed log — so the standby paths (no vote, no execute, follow) are genuinely
 	// exercised rather than every member always being active.
-	invariant.Dot_Product(invariant.Sometimes(is_witness(replica) && replica.Op > 0))
+	invariant.Dot_Product(invariant.Sometimes(is_standby(replica) && replica.Op > 0))
 	// A new primary deferring its install while it fetches the selected log is the §5.3 fetch
 	// path running; record it so the Sometimes axis can witness it.
 	if replica.View_Change_Deferred {
@@ -1492,9 +1492,9 @@ func simulator_believed_primary(state *simulator) (identifier vsr.Replica_Identi
 }
 
 // The identifier this replica computes as the primary of its current view: Configuration[View mod
-// Active_Count], mirroring the core's witness-aware leader rule (§6.1), so the simulator's
+// Active_Count], mirroring the core's standby-aware leader rule (§6.1), so the simulator's
 // single-primary and believed-primary checks agree with the replicas about who leads. An
-// Active_Count of zero means no witnesses, so the whole configuration is active.
+// Active_Count of zero means no standbys, so the whole configuration is active.
 func acting_primary(replica *vsr.Replica) (identifier vsr.Replica_Identifier) {
 	active := uint64(replica.Active_Count)
 	if active == 0 {
@@ -1513,9 +1513,9 @@ func active_count_for(size int) (count uint8) {
 	return 3
 }
 
-// Reports whether a replica is a witness in its current configuration (§6.1): at or beyond the
-// active prefix. Witnesses never execute, so the simulator's application-state oracles skip them.
-func is_witness(replica *vsr.Replica) (yes bool) {
+// Reports whether a replica is a standby in its current configuration (§6.1): at or beyond the
+// active prefix. Standbys never execute, so the simulator's application-state oracles skip them.
+func is_standby(replica *vsr.Replica) (yes bool) {
 	active := int(replica.Active_Count)
 	if active == 0 {
 		active = len(replica.Configuration)

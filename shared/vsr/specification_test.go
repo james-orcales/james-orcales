@@ -2701,10 +2701,10 @@ func Test_Batching_Batch_Reconfiguration_Singleton(t *testing.T) {
 	}
 }
 
-// Test_Witness_Roles: the leading Active_Count members are active and execute committed ops; the
-// members after them are witnesses and do not. With Active_Count 2 on {0,1,2}, replica 1 executes a
+// Test_Standby_Roles: the leading Active_Count members are active and execute committed ops; the
+// members after them are standbys and do not. With Active_Count 2 on {0,1,2}, replica 1 executes a
 // committed op and replica 2 does not.
-func Test_Witness_Roles(t *testing.T) {
+func Test_Standby_Roles(t *testing.T) {
 	executed := map[vsr.Replica_Identifier]bool{}
 	for _, identifier := range []vsr.Replica_Identifier{1, 2} {
 		mark := identifier
@@ -2731,25 +2731,25 @@ func Test_Witness_Roles(t *testing.T) {
 		t.Errorf("expected active replica 1 to execute the committed op")
 	}
 	if executed[2] {
-		t.Errorf("expected witness replica 2 not to execute")
+		t.Errorf("expected standby replica 2 not to execute")
 	}
 }
 
-// Test_Witness_Primary_Always_Active: the primary is Configuration[View mod Active_Count], so a
-// witness is never primary. Replica 2 (a witness, Active_Count 2) refuses a client Request even at
-// view 2, where without witnesses it would be the primary; active replica 0 is the primary there.
-func Test_Witness_Primary_Always_Active(t *testing.T) {
-	witness := vsr.Replica{
+// Test_Standby_Primary_Always_Active: the primary is Configuration[View mod Active_Count], so a
+// standby is never primary. Replica 2 (a standby, Active_Count 2) refuses a client Request even at
+// view 2, where without standbys it would be the primary; active replica 0 is the primary there.
+func Test_Standby_Primary_Always_Active(t *testing.T) {
+	standby := vsr.Replica{
 		Identifier: 2, Configuration: vsr.Configuration{0, 1, 2}, Active_Count: 2, View: 2,
 		Status: vsr.Status_Normal,
 	}
-	receive(&witness, vsr.Message{
+	receive(&standby, vsr.Message{
 		Kind: vsr.Message_Kind_Request, To: 2, View: 2, Client: 7, Request_Number: 1,
 		Command: []byte("x"),
 	})
-	if witness.Op != 0 {
-		t.Fatalf("expected the witness to refuse the request (never primary), op %d",
-			witness.Op)
+	if standby.Op != 0 {
+		t.Fatalf("expected the standby to refuse the request (never primary), op %d",
+			standby.Op)
 	}
 	primary := vsr.Replica{
 		Identifier: 0, Configuration: vsr.Configuration{0, 1, 2}, Active_Count: 2, View: 2,
@@ -2764,12 +2764,12 @@ func Test_Witness_Primary_Always_Active(t *testing.T) {
 	}
 }
 
-// Test_Witness_No_Execution: a witness advances its commit number and retains the committed log,
+// Test_Standby_No_Execution: a standby advances its commit number and retains the committed log,
 // but makes no Execute up-call, emits no Reply, and takes no checkpoint of its own.
-func Test_Witness_No_Execution(t *testing.T) {
+func Test_Standby_No_Execution(t *testing.T) {
 	executed := false
 	snapshotted := false
-	witness := vsr.Replica{
+	standby := vsr.Replica{
 		Identifier: 2, Configuration: vsr.Configuration{0, 1, 2}, Active_Count: 2,
 		Checkpoint_Interval: 1,
 		State_Machine: vsr.State_Machine{
@@ -2780,35 +2780,36 @@ func Test_Witness_No_Execution(t *testing.T) {
 			Snapshot: func() (snapshot []byte) { snapshotted = true; return nil },
 		},
 	}
-	receive(&witness, vsr.Message{
+	receive(&standby, vsr.Message{
 		Kind: vsr.Message_Kind_Prepare, From: 0, To: 2, View: 0, Op: 1,
 		Entries: []vsr.Log_Entry{{Command: []byte("x")}},
 	})
-	output := receive(&witness, vsr.Message{
+	output := receive(&standby, vsr.Message{
 		Kind: vsr.Message_Kind_Commit, From: 0, To: 2, View: 0, Commit: 1,
 	})
-	if witness.Commit != 1 {
-		t.Fatalf("expected the witness to advance its commit number, got %d",
-			witness.Commit)
+	if standby.Commit != 1 {
+		t.Fatalf("expected the standby to advance its commit number, got %d",
+			standby.Commit)
 	}
-	if len(witness.Log) != 1 {
-		t.Fatalf("expected the witness to retain the committed log, got %d",
-			len(witness.Log))
+	if len(standby.Log) != 1 {
+		t.Fatalf("expected the standby to retain the committed log, got %d",
+			len(standby.Log))
 	}
 	if executed {
-		t.Errorf("expected no Execute up-call on a witness")
+		t.Errorf("expected no Execute up-call on a standby")
 	}
 	if snapshotted {
-		t.Errorf("expected no checkpoint taken on a witness")
+		t.Errorf("expected no checkpoint taken on a standby")
 	}
 	if len(output.Replies) != 0 {
-		t.Errorf("expected no Reply from a witness, got %+v", output.Replies)
+		t.Errorf("expected no Reply from a standby, got %+v", output.Replies)
 	}
 }
 
-// Test_Witness_Vote: a witness that receives a Prepare appends the entry and returns a Prepare_Ok,
-// so it is never counted toward a commit quorum (TigerBeetle's non-voting-standby design).
-func Test_Witness_No_Vote(t *testing.T) {
+// Test_Standby_No_Vote: a standby that receives a Prepare appends the entry and returns a
+// Prepare_Ok, so it is never counted toward a commit quorum (TigerBeetle's non-voting-standby
+// design).
+func Test_Standby_No_Vote(t *testing.T) {
 	standby := vsr.Replica{
 		Identifier: 2, Configuration: vsr.Configuration{0, 1, 2}, Active_Count: 2,
 	}
@@ -2825,11 +2826,11 @@ func Test_Witness_No_Vote(t *testing.T) {
 	}
 }
 
-// Test_Witness_Follow: a standby applies a Prepare and Commit to track the cluster, but on a
+// Test_Standby_Follow: a standby applies a Prepare and Commit to track the cluster, but on a
 // timeout it never starts a view change — it is not responsible for liveness and casts no
 // view-change vote (TigerBeetle's non-voting-standby design); the voting backups alone fail a
 // primary over.
-func Test_Witness_Follow(t *testing.T) {
+func Test_Standby_Follow(t *testing.T) {
 	standby := vsr.New_Replica(&vsr.New_Replica_Input{
 		Identifier: 2, Configuration: vsr.Configuration{0, 1, 2}, Active_Count: 2,
 		Heartbeat: 10, Timeout: 100, Now: 0,
@@ -2858,12 +2859,12 @@ func Test_Witness_Follow(t *testing.T) {
 	}
 }
 
-// Test_Witness_Promotion: a standby a reconfiguration moves into the voting set materializes the
+// Test_Standby_Promotion: a standby a reconfiguration moves into the voting set materializes the
 // application state it never built — it replays its committed log (TigerBeetle's state sync) and
 // serves as an active replica. Replica 3 follows as a standby in {0,1,2,3,4} (active {0,1,2}),
 // holding two committed ops it never executed; a Start_Epoch into {0,1,3} makes it active, and it
 // executes both as it completes the epoch.
-func Test_Witness_Promotion(t *testing.T) {
+func Test_Standby_Promotion(t *testing.T) {
 	executed := []string{}
 	standby := vsr.Replica{
 		Identifier:    3,
