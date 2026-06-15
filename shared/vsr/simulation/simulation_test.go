@@ -193,6 +193,10 @@ type simulation_result struct {
 	// Reconfigure_Over_Recovery counts the ticks where a replica was transitioning between
 	// epochs while another was recovering — the §7.2 overlap of a reconfiguration and recovery.
 	Reconfigure_Over_Recovery int
+	// Batches_Flushed counts the Prepares carrying more than one entry, witnessing that a busy
+	// primary actually batched several requests into one round (§6.2) rather than every Prepare
+	// being a batch of one.
+	Batches_Flushed int
 }
 
 // Scheduled_message is a message scheduled for delivery at a virtual moment.
@@ -275,6 +279,11 @@ const sim_checkpoint_interval = 4
 // How many ops of suffix each replica retains past a checkpoint; small, so a behind replica often
 // needs a prefix a peer has already garbage-collected, exercising the gap response.
 const sim_log_retain = 4
+
+// The most ops a busy primary batches into one Prepare (§6.2). Above one, so a primary loaded by
+// the clients' concurrent requests collects several into a batch, exercising the multi-entry
+// Prepare and the per-op acknowledgement of a batch.
+const sim_batch_max = 3
 
 // Identifies one client request for the exactly-once map.
 type outcome_key struct {
@@ -398,11 +407,13 @@ func simulator_allocate(state *simulator, cluster_count int) {
 		state.Replicas[index] = vsr.New_Replica(&vsr.New_Replica_Input{
 			Identifier:          vsr.Replica_Identifier(index),
 			Configuration:       configuration,
+			Active_Count:        active_count_for(len(configuration)),
 			Heartbeat:           10 * time.Millisecond,
 			Timeout:             jitter * time.Millisecond,
 			State_Machine:       simulator_state_machine(state, index),
 			Checkpoint_Interval: sim_checkpoint_interval,
 			Log_Retain:          sim_log_retain,
+			Batch_Max:           sim_batch_max,
 			Now:                 state.Clock.Now_Monotonic(),
 		})
 		state.Previous_Status[index] = state.Replicas[index].Status
@@ -598,6 +609,7 @@ func simulator_inject_reconfiguration(state *simulator, tick_index int, now time
 		Command: []byte(fmt.Sprintf(
 			"reconfigure-%d", state.Admin.Request_Number)),
 		New_Configuration: target,
+		New_Active_Count:  active_count_for(len(target)),
 	}}, now)
 }
 
@@ -1057,6 +1069,12 @@ func simulator_committed_entry(state *simulator, op vsr.Op) (entry vsr.Log_Entry
 // core wrongly running a committed op more than once. The (client, request) result map is fed from
 // replies and the reference, which carry reliable keys; execution feeds only this op-level check.
 func simulator_observe_execution(state *simulator, index int, command []byte) {
+	// A witness never runs the service (§6.1): if one ever makes an Execute up-call, the role
+	// split has leaked. This is the headline witness safety property.
+	if is_witness(&state.Replicas[index]) {
+		state.T.Fatalf("seed %d: witness replica %d executed command %q",
+			state.Seed, index, command)
+	}
 	if state.Executed[index][string(command)] {
 		state.T.Fatalf("seed %d: replica %d executed command %q twice",
 			state.Seed, index, command)
@@ -1107,6 +1125,15 @@ func simulator_send(state *simulator, messages []vsr.Message, now time.Moment) {
 		if message.Kind == vsr.Message_Kind_Predict_Request {
 			// Count the pre-step round even when the network later drops the request.
 			state.Result.Pre_Step_Rounds++
+		}
+		if message.Kind == vsr.Message_Kind_Prepare {
+			// A Prepare carrying more than one entry is a flushed batch (§6.2): the
+			// primary collected several requests into one round. Count it even if later
+			// dropped; the per-recipient copies overcount the fan-out, but the axis
+			// only witnesses that batching happened at all.
+			if len(message.Entries) > 1 {
+				state.Result.Batches_Flushed++
+			}
 		}
 		if message.Kind == vsr.Message_Kind_New_State {
 			// A New_State carrying a checkpoint is the §5.2 gap response: the
@@ -1203,6 +1230,12 @@ func simulator_check_accumulator(state *simulator) {
 			continue // A dormant or shut-down replica is out of play.
 		}
 		replica := &state.Replicas[index]
+		// A witness never executes (§6.1): it maintains no application state, so its
+		// accumulator stays zero while its commit advances. The accumulator oracle is for
+		// active replicas.
+		if is_witness(replica) {
+			continue
+		}
 		// A recovering replica's accumulator is mid-restore (its volatile state was lost
 		// and the rejoin has not completed), so it is not yet meaningful to compare.
 		if replica.Status == vsr.Status_Recovery {
@@ -1274,6 +1307,10 @@ func simulator_record_replica_coverage(state *simulator, index int) {
 	// witnessing the log prefix was garbage-collected rather than the cluster idling below the
 	// first checkpoint.
 	invariant.Dot_Product(invariant.Sometimes(replica.Log_Start > 0))
+	// A standby must sometimes exist and follow — be a non-voting member (§6.1) holding
+	// committed log — so the standby paths (no vote, no execute, follow) are genuinely
+	// exercised rather than every member always being active.
+	invariant.Dot_Product(invariant.Sometimes(is_witness(replica) && replica.Op > 0))
 	// A new primary deferring its install while it fetches the selected log is the §5.3 fetch
 	// path running; record it so the Sometimes axis can witness it.
 	if replica.View_Change_Deferred {
@@ -1388,9 +1425,7 @@ func simulator_believed_primary(state *simulator) (identifier vsr.Replica_Identi
 		if replica.Epoch != state.Epoch {
 			continue
 		}
-		size := uint64(len(replica.Configuration))
-		primary := replica.Configuration[uint64(replica.View)%size]
-		if replica.Identifier != primary {
+		if replica.Identifier != acting_primary(replica) {
 			continue
 		}
 		newer := !found
@@ -1407,6 +1442,43 @@ func simulator_believed_primary(state *simulator) (identifier vsr.Replica_Identi
 		return identifier
 	}
 	return state.Configuration[0]
+}
+
+// The identifier this replica computes as the primary of its current view: Configuration[View mod
+// Active_Count], mirroring the core's witness-aware leader rule (§6.1), so the simulator's
+// single-primary and believed-primary checks agree with the replicas about who leads. An
+// Active_Count of zero means no witnesses, so the whole configuration is active.
+func acting_primary(replica *vsr.Replica) (identifier vsr.Replica_Identifier) {
+	active := uint64(replica.Active_Count)
+	if active == 0 {
+		active = uint64(len(replica.Configuration))
+	}
+	return replica.Configuration[uint64(replica.View)%active]
+}
+
+// The active (voting) replica count for a configuration of the given size. The voting set is fixed
+// at three — f=1, a 2f+1 quorum set — and any members beyond it are non-voting standbys
+// (TigerBeetle's design, see vsr.go replica_quorum). So a three-member configuration is all voting
+// and a five-member one is three voting plus two standbys, and the voting count stays three across
+// the simulator's grow and shrink, keeping the per-handoff quorum well-defined without tracking a
+// separate old voting count.
+func active_count_for(size int) (count uint8) {
+	return 3
+}
+
+// Reports whether a replica is a witness in its current configuration (§6.1): at or beyond the
+// active prefix. Witnesses never execute, so the simulator's application-state oracles skip them.
+func is_witness(replica *vsr.Replica) (yes bool) {
+	active := int(replica.Active_Count)
+	if active == 0 {
+		active = len(replica.Configuration)
+	}
+	for index, member := range replica.Configuration {
+		if member == replica.Identifier {
+			return index >= active
+		}
+	}
+	return false
 }
 
 // Builds the identity configuration [0, 1, .., count-1], so a replica's identifier is also its
@@ -1439,9 +1511,7 @@ func simulator_check_single_primary(state *simulator) {
 		if replica.Status != vsr.Status_Normal {
 			continue
 		}
-		size := uint64(len(replica.Configuration))
-		primary := replica.Configuration[uint64(replica.View)%size]
-		if uint64(replica.Identifier) != uint64(primary) {
+		if replica.Identifier != acting_primary(replica) {
 			continue
 		}
 		key := epoch_view{Epoch: replica.Epoch, View: replica.View}

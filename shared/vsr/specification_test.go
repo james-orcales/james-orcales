@@ -55,9 +55,9 @@ func Test_Normal_Operation_Prepare(t *testing.T) {
 		if message.Op != 1 {
 			t.Errorf("expected op 1, got %d", message.Op)
 		}
-		if string(message.Entry.Command) != "set x=1" {
+		if string(message.Entries[0].Command) != "set x=1" {
 			t.Errorf("expected entry command %q, got %q",
-				"set x=1", message.Entry.Command)
+				"set x=1", message.Entries[0].Command)
 		}
 		if message.Commit != primary.Commit {
 			t.Errorf("expected commit %d, got %d", primary.Commit, message.Commit)
@@ -81,7 +81,7 @@ func Test_Normal_Operation_Prepare_Ok(t *testing.T) {
 	backup := vsr.Replica{Identifier: 1, Configuration: vsr.Configuration{0, 1, 2}}
 	prepare := vsr.Message{
 		Kind: vsr.Message_Kind_Prepare, From: 0, To: 1, View: 0,
-		Op: 1, Entry: vsr.Log_Entry{View: 0, Command: []byte("set x=1")},
+		Op: 1, Entries: []vsr.Log_Entry{{View: 0, Command: []byte("set x=1")}},
 	}
 	output := vsr.Replica_Receive(&vsr.Replica_Receive_Input{
 		Replica: &backup, Message: prepare,
@@ -112,7 +112,7 @@ func Test_Normal_Operation_Prepare_Ok(t *testing.T) {
 	// A Prepare that skips an op (the backup is at op 1, this is op 3) is not applied.
 	skip := vsr.Message{
 		Kind: vsr.Message_Kind_Prepare, From: 0, To: 1, View: 0,
-		Op: 3, Entry: vsr.Log_Entry{View: 0, Command: []byte("set z=9")},
+		Op: 3, Entries: []vsr.Log_Entry{{View: 0, Command: []byte("set z=9")}},
 	}
 	output = vsr.Replica_Receive(&vsr.Replica_Receive_Input{Replica: &backup, Message: skip})
 	if backup.Op != 1 {
@@ -232,8 +232,8 @@ func Test_Normal_Operation_Commit_Apply(t *testing.T) {
 			Replica: &backup,
 			Message: vsr.Message{
 				Kind: vsr.Message_Kind_Prepare, From: 0, To: 1, View: 0,
-				Op:    vsr.Op(op + 1),
-				Entry: vsr.Log_Entry{View: 0, Command: []byte(command)},
+				Op:      vsr.Op(op + 1),
+				Entries: []vsr.Log_Entry{{View: 0, Command: []byte(command)}},
 			},
 		})
 	}
@@ -465,9 +465,9 @@ func Test_Execution_Reply(t *testing.T) {
 	}
 	receive(&backup, vsr.Message{
 		Kind: vsr.Message_Kind_Prepare, From: 0, To: 1, View: 0, Op: 1,
-		Entry: vsr.Log_Entry{
+		Entries: []vsr.Log_Entry{{
 			View: 0, Command: []byte("x"), Client: 9, Request_Number: 1,
-		},
+		}},
 	})
 	output = receive(&backup, vsr.Message{
 		Kind: vsr.Message_Kind_Commit, From: 0, To: 1, View: 0, Commit: 1,
@@ -494,9 +494,9 @@ func Test_Execution_Client_Table(t *testing.T) {
 	}
 	receive(&backup, vsr.Message{
 		Kind: vsr.Message_Kind_Prepare, From: 0, To: 1, View: 0, Op: 1,
-		Entry: vsr.Log_Entry{
+		Entries: []vsr.Log_Entry{{
 			View: 0, Command: []byte("x"), Client: 5, Request_Number: 8,
-		},
+		}},
 	})
 	receive(&backup, vsr.Message{
 		Kind: vsr.Message_Kind_Commit, From: 0, To: 1, View: 0, Commit: 1,
@@ -543,9 +543,9 @@ func Test_Prediction_Local_Predict(t *testing.T) {
 	if !ok {
 		t.Fatalf("expected a Prepare, got %+v", output.Messages)
 	}
-	if string(prepare.Entry.Prediction) != "predicted-now" {
+	if string(prepare.Entries[0].Prediction) != "predicted-now" {
 		t.Fatalf("expected the Prepare to carry the prediction, got %q",
-			prepare.Entry.Prediction)
+			prepare.Entries[0].Prediction)
 	}
 
 	// A backup applies the Prepare and adopts the entry's prediction verbatim, never Predict.
@@ -619,10 +619,10 @@ func Test_Prediction_Predicted_Execution(t *testing.T) {
 	}
 	receive(&backup, vsr.Message{
 		Kind: vsr.Message_Kind_Prepare, From: 0, To: 1, View: 0, Op: 1,
-		Entry: vsr.Log_Entry{
+		Entries: []vsr.Log_Entry{{
 			View: 0, Command: []byte("stamp"), Client: 9, Request_Number: 1,
 			Prediction: []byte("ts-42"),
-		},
+		}},
 	})
 	receive(&backup, vsr.Message{
 		Kind: vsr.Message_Kind_Commit, From: 0, To: 1, View: 0, Commit: 1,
@@ -731,9 +731,9 @@ func Test_Prediction_Pre_Step_Combine(t *testing.T) {
 	if !ok {
 		t.Fatalf("expected a Prepare after the pre-step round, got %+v", output.Messages)
 	}
-	if string(prepare.Entry.Prediction) != "own+backup-1" {
+	if string(prepare.Entries[0].Prediction) != "own+backup-1" {
 		t.Fatalf("expected the Prepare to carry the combined prediction, got %q",
-			prepare.Entry.Prediction)
+			prepare.Entries[0].Prediction)
 	}
 }
 
@@ -894,9 +894,9 @@ func Test_Checkpoint_Offset_Index(t *testing.T) {
 	if prepare.Op != 5 {
 		t.Errorf("expected the re-drive at op 5, got %d", prepare.Op)
 	}
-	if string(prepare.Entry.Command) != "e" {
+	if string(prepare.Entries[0].Command) != "e" {
 		t.Errorf("expected op 5 entry e re-driven through the offset index, got %q",
-			prepare.Entry.Command)
+			prepare.Entries[0].Command)
 	}
 }
 
@@ -981,7 +981,7 @@ func Test_View_Change_Quorum(t *testing.T) {
 	})
 	receive(&replica, vsr.Message{
 		Kind: vsr.Message_Kind_Prepare, From: 0, To: 2, View: 0,
-		Op: 1, Entry: vsr.Log_Entry{View: 0, Command: []byte("a")},
+		Op: 1, Entries: []vsr.Log_Entry{{View: 0, Command: []byte("a")}},
 	})
 	// Self enters view-change for view 1, counting its own vote.
 	tick(&replica, 100)
@@ -1120,8 +1120,8 @@ func Test_View_Change_Suffix_Report(t *testing.T) {
 	for op, command := range []string{"a", "b", "c"} {
 		receive(&replica, vsr.Message{
 			Kind: vsr.Message_Kind_Prepare, From: 0, To: 2, View: 0,
-			Op:    vsr.Op(op + 1),
-			Entry: vsr.Log_Entry{View: 0, Command: []byte(command)},
+			Op:      vsr.Op(op + 1),
+			Entries: []vsr.Log_Entry{{View: 0, Command: []byte(command)}},
 		})
 	}
 	tick(&replica, 100) // Self enters view-change for view 1, counting its own vote.
@@ -1693,15 +1693,15 @@ func Test_State_Transfer_Behind_View(t *testing.T) {
 	})
 	receive(&backup, vsr.Message{
 		Kind: vsr.Message_Kind_Prepare, From: 0, To: 1, View: 0,
-		Op: 1, Entry: vsr.Log_Entry{View: 0, Command: []byte("a")},
+		Op: 1, Entries: []vsr.Log_Entry{{View: 0, Command: []byte("a")}},
 	})
 	receive(&backup, vsr.Message{
 		Kind: vsr.Message_Kind_Prepare, From: 0, To: 1, View: 0,
-		Op: 2, Commit: 1, Entry: vsr.Log_Entry{View: 0, Command: []byte("b")},
+		Op: 2, Commit: 1, Entries: []vsr.Log_Entry{{View: 0, Command: []byte("b")}},
 	})
 	output := receive(&backup, vsr.Message{
 		Kind: vsr.Message_Kind_Prepare, From: 2, To: 1, View: 2,
-		Op: 5, Entry: vsr.Log_Entry{View: 2, Command: []byte("x")},
+		Op: 5, Entries: []vsr.Log_Entry{{View: 2, Command: []byte("x")}},
 	})
 	if backup.View != 2 {
 		t.Fatalf("expected the later view 2 adopted, got %d", backup.View)
@@ -1736,11 +1736,11 @@ func Test_State_Transfer_Gap(t *testing.T) {
 	})
 	receive(&backup, vsr.Message{
 		Kind: vsr.Message_Kind_Prepare, From: 0, To: 1, View: 0,
-		Op: 1, Entry: vsr.Log_Entry{View: 0, Command: []byte("a")},
+		Op: 1, Entries: []vsr.Log_Entry{{View: 0, Command: []byte("a")}},
 	})
 	output := receive(&backup, vsr.Message{
 		Kind: vsr.Message_Kind_Prepare, From: 0, To: 1, View: 0,
-		Op: 3, Entry: vsr.Log_Entry{View: 0, Command: []byte("c")},
+		Op: 3, Entries: []vsr.Log_Entry{{View: 0, Command: []byte("c")}},
 	})
 	if backup.Op != 1 {
 		t.Fatalf("expected the gap not applied, op %d", backup.Op)
@@ -1974,9 +1974,9 @@ func Test_Reconfiguration_Request(t *testing.T) {
 	if !ok {
 		t.Fatalf("expected a Prepare for the reconfiguration, got %+v", output.Messages)
 	}
-	if len(prepare.Entry.New_Configuration) != 5 {
+	if len(prepare.Entries[0].New_Configuration) != 5 {
 		t.Fatalf("expected the Prepare entry to carry the new configuration, got %+v",
-			prepare.Entry)
+			prepare.Entries[0])
 	}
 
 	// A new configuration with fewer than three members is rejected: no append.
@@ -2273,10 +2273,10 @@ func Test_Reconfiguration_Old_Group_Shutdown(t *testing.T) {
 	// The reconfiguration sits at op 1 in its log; a Commit then commits and executes it.
 	receive(&replaced, vsr.Message{
 		Kind: vsr.Message_Kind_Prepare, From: 0, To: 2, View: 0, Epoch: 0, Op: 1,
-		Entry: vsr.Log_Entry{
+		Entries: []vsr.Log_Entry{{
 			View: 0, Client: 99, Request_Number: 1,
 			New_Configuration: vsr.Configuration{0, 1, 3},
-		},
+		}},
 	})
 	receive(&replaced, vsr.Message{
 		Kind: vsr.Message_Kind_Commit, From: 0, To: 2, View: 0, Epoch: 0, Commit: 1,
@@ -2326,7 +2326,7 @@ func Test_Reconfiguration_Epoch_Precedence(t *testing.T) {
 		replica := epoch_1_view_2_replica()
 		output := receive(&replica, vsr.Message{
 			Kind: vsr.Message_Kind_Prepare, From: 0, To: 1, Epoch: 0, View: view,
-			Op: 1, Entry: vsr.Log_Entry{Command: []byte("x")},
+			Op: 1, Entries: []vsr.Log_Entry{{Command: []byte("x")}},
 		})
 		if replica.Op != 0 {
 			t.Fatalf("lower epoch at view %d should be dropped, op %d",
@@ -2364,7 +2364,7 @@ func Test_Reconfiguration_Epoch_Precedence(t *testing.T) {
 	equal_low := epoch_1_view_2_replica()
 	receive(&equal_low, vsr.Message{
 		Kind: vsr.Message_Kind_Prepare, From: 0, To: 1, Epoch: 1, View: 1,
-		Op: 1, Entry: vsr.Log_Entry{Command: []byte("x")},
+		Op: 1, Entries: []vsr.Log_Entry{{Command: []byte("x")}},
 	})
 	if equal_low.Op != 0 {
 		t.Fatalf("equal epoch, lower view should be dropped, op %d", equal_low.Op)
@@ -2372,7 +2372,7 @@ func Test_Reconfiguration_Epoch_Precedence(t *testing.T) {
 	equal_same := epoch_1_view_2_replica()
 	output := receive(&equal_same, vsr.Message{
 		Kind: vsr.Message_Kind_Prepare, From: 0, To: 1, Epoch: 1, View: 2,
-		Op: 1, Entry: vsr.Log_Entry{Command: []byte("x")},
+		Op: 1, Entries: []vsr.Log_Entry{{Command: []byte("x")}},
 	})
 	if equal_same.Op != 1 {
 		t.Fatalf("equal epoch and view should be processed, op %d", equal_same.Op)
@@ -2456,5 +2456,455 @@ func Test_Reconfiguration_Client_Redirect(t *testing.T) {
 	}
 	if redirect.New_Configuration[2] != 3 {
 		t.Errorf("expected the redirect to carry the new configuration, got %+v", redirect)
+	}
+}
+
+// Test_Batching_Flush_Immediate: an idle primary — its commit number caught up to its op — accepts
+// a request and broadcasts a Prepare carrying that single entry at once, so batching costs no
+// latency when the primary is not loaded.
+func Test_Batching_Flush_Immediate(t *testing.T) {
+	primary := vsr.Replica{
+		Identifier: 0, Configuration: vsr.Configuration{0, 1, 2}, Batch_Max: 4,
+	}
+	output := receive(&primary, vsr.Message{
+		Kind: vsr.Message_Kind_Request, To: 0, Client: 7, Request_Number: 1,
+		Command: []byte("a"),
+	})
+	if primary.Op != 1 {
+		t.Fatalf("expected the idle primary to append at once, got op %d", primary.Op)
+	}
+	prepare, ok := first_message(output.Messages, vsr.Message_Kind_Prepare)
+	if !ok {
+		t.Fatalf("expected an immediate Prepare, got %+v", output.Messages)
+	}
+	if len(prepare.Entries) != 1 {
+		t.Fatalf("expected an immediate batch of one, got %d entries", len(prepare.Entries))
+	}
+	if prepare.Op != 1 {
+		t.Errorf("expected the Prepare at op 1, got %d", prepare.Op)
+	}
+	if string(prepare.Entries[0].Command) != "a" {
+		t.Errorf("expected the entry command a, got %q", prepare.Entries[0].Command)
+	}
+}
+
+// Test_Batching_Flush_Batched: a request that arrives while a round is in flight is buffered, not
+// sent; when the in-flight round commits, the primary appends the buffered requests as consecutive
+// ops and broadcasts them in one Prepare (§6.2).
+func Test_Batching_Flush_Batched(t *testing.T) {
+	primary := vsr.Replica{
+		Identifier: 0, Configuration: vsr.Configuration{0, 1, 2}, Batch_Max: 4,
+	}
+	// Request from client 7: the primary is idle, so it flushes op 1 immediately.
+	receive(&primary, vsr.Message{
+		Kind: vsr.Message_Kind_Request, To: 0, Client: 7, Request_Number: 1,
+		Command: []byte("a"),
+	})
+	// Requests from clients 8 and 9 arrive while op 1 is in flight: buffered, no Prepare
+	// emitted.
+	out2 := receive(&primary, vsr.Message{
+		Kind: vsr.Message_Kind_Request, To: 0, Client: 8, Request_Number: 1,
+		Command: []byte("b"),
+	})
+	if _, sent := first_message(out2.Messages, vsr.Message_Kind_Prepare); sent {
+		t.Fatalf("expected the request buffered while busy, got a Prepare")
+	}
+	out3 := receive(&primary, vsr.Message{
+		Kind: vsr.Message_Kind_Request, To: 0, Client: 9, Request_Number: 1,
+		Command: []byte("c"),
+	})
+	if _, sent := first_message(out3.Messages, vsr.Message_Kind_Prepare); sent {
+		t.Fatalf("expected the request buffered while busy, got a Prepare")
+	}
+	if primary.Op != 1 {
+		t.Fatalf("expected buffered requests not yet appended, got op %d", primary.Op)
+	}
+	// Op 1 commits on a quorum; the buffered batch flushes as one Prepare for ops 2..3.
+	output := receive(&primary, vsr.Message{
+		Kind: vsr.Message_Kind_Prepare_Ok, From: 1, To: 0, View: 0, Op: 1,
+	})
+	prepare, ok := first_message(output.Messages, vsr.Message_Kind_Prepare)
+	if !ok {
+		t.Fatalf("expected the buffered batch flushed on commit, got %+v", output.Messages)
+	}
+	if len(prepare.Entries) != 2 {
+		t.Fatalf("expected a batch of two, got %d entries", len(prepare.Entries))
+	}
+	if prepare.Op != 3 {
+		t.Errorf("expected the batch's highest op 3, got %d", prepare.Op)
+	}
+	if primary.Op != 3 {
+		t.Errorf("expected both buffered ops appended, got op %d", primary.Op)
+	}
+	if string(prepare.Entries[0].Command) != "b" {
+		t.Errorf(
+			"expected op 2 entry b first in the batch, got %q",
+			prepare.Entries[0].Command)
+	}
+	if string(prepare.Entries[1].Command) != "c" {
+		t.Errorf(
+			"expected op 3 entry c last in the batch, got %q",
+			prepare.Entries[1].Command)
+	}
+}
+
+// Test_Batching_Batch_Cap: a busy primary flushes once the buffer reaches Batch_Max even before the
+// in-flight round commits, bounding a single Prepare's size.
+func Test_Batching_Batch_Cap(t *testing.T) {
+	primary := vsr.Replica{
+		Identifier: 0, Configuration: vsr.Configuration{0, 1, 2}, Batch_Max: 2,
+	}
+	// Op 1 flushes immediately (idle).
+	receive(&primary, vsr.Message{
+		Kind: vsr.Message_Kind_Request, To: 0, Client: 7, Request_Number: 1,
+		Command: []byte("a"),
+	})
+	// One request buffered: below the cap of 2, no flush.
+	out2 := receive(&primary, vsr.Message{
+		Kind: vsr.Message_Kind_Request, To: 0, Client: 8, Request_Number: 1,
+		Command: []byte("b"),
+	})
+	if _, sent := first_message(out2.Messages, vsr.Message_Kind_Prepare); sent {
+		t.Fatalf("expected no flush below the cap, got a Prepare")
+	}
+	// The second buffered request reaches the cap of 2, flushing the batch though op 1 is
+	// unacked.
+	out3 := receive(&primary, vsr.Message{
+		Kind: vsr.Message_Kind_Request, To: 0, Client: 9, Request_Number: 1,
+		Command: []byte("c"),
+	})
+	prepare, ok := first_message(out3.Messages, vsr.Message_Kind_Prepare)
+	if !ok {
+		t.Fatalf("expected a flush at the cap, got %+v", out3.Messages)
+	}
+	if len(prepare.Entries) != 2 {
+		t.Fatalf("expected the batch capped at 2, got %d entries", len(prepare.Entries))
+	}
+	if prepare.Op != 3 {
+		t.Errorf("expected the capped batch's highest op 3, got %d", prepare.Op)
+	}
+	if primary.Commit != 0 {
+		t.Errorf(
+			"expected nothing committed while flushing at the cap, got %d",
+			primary.Commit)
+	}
+}
+
+// Test_Batching_Batch_Prepare_Ok: a backup applies every entry of a batched Prepare and returns one
+// Prepare_Ok per newly-appended op, so the primary tallies an explicit acknowledgement for each; a
+// primary commits the whole batch once a quorum has acknowledged every op in it.
+func Test_Batching_Batch_Prepare_Ok(t *testing.T) {
+	backup := vsr.Replica{Identifier: 1, Configuration: vsr.Configuration{0, 1, 2}}
+	output := receive(&backup, vsr.Message{
+		Kind: vsr.Message_Kind_Prepare, From: 0, To: 1, View: 0, Op: 3,
+		Entries: []vsr.Log_Entry{
+			{View: 0, Command: []byte("a")},
+			{View: 0, Command: []byte("b")},
+			{View: 0, Command: []byte("c")},
+		},
+	})
+	if backup.Op != 3 {
+		t.Fatalf("expected all three batch entries appended, got op %d", backup.Op)
+	}
+	if len(backup.Log) != 3 {
+		t.Fatalf("expected a three-entry log, got %d", len(backup.Log))
+	}
+	acked := map[vsr.Op]bool{}
+	for _, message := range output.Messages {
+		if message.Kind == vsr.Message_Kind_Prepare_Ok {
+			acked[message.Op] = true
+		}
+	}
+	if !acked[1] {
+		t.Fatalf("expected one Prepare_Ok per batch op (1,2,3), got acks for %v", acked)
+	}
+	if !acked[2] {
+		t.Fatalf("expected one Prepare_Ok per batch op (1,2,3), got acks for %v", acked)
+	}
+	if !acked[3] {
+		t.Fatalf("expected one Prepare_Ok per batch op (1,2,3), got acks for %v", acked)
+	}
+	if len(acked) != 3 {
+		t.Fatalf("expected one Prepare_Ok per batch op (1,2,3), got acks for %v", acked)
+	}
+
+	// A primary holding a three-op batch commits all of it once a backup acknowledges every op.
+	primary := vsr.Replica{
+		Identifier: 0, Configuration: vsr.Configuration{0, 1, 2}, Op: 3,
+		Log: []vsr.Log_Entry{
+			{View: 0, Command: []byte("a")},
+			{View: 0, Command: []byte("b")},
+			{View: 0, Command: []byte("c")},
+		},
+	}
+	for op := vsr.Op(1); op <= 3; op++ {
+		receive(&primary, vsr.Message{
+			Kind: vsr.Message_Kind_Prepare_Ok, From: 1, To: 0, View: 0, Op: op,
+		})
+	}
+	if primary.Commit != 3 {
+		t.Fatalf(
+			"expected the batch committed once every op is acknowledged, got commit %d",
+			primary.Commit)
+	}
+}
+
+// Test_Batching_Batch_Reconfiguration_Singleton: a Reconfiguration first flushes any buffered
+// client requests, so they are ordered ahead of it, then is appended alone as the epoch's last op
+// — never inside a batch — after which the primary accepts no further client requests.
+func Test_Batching_Batch_Reconfiguration_Singleton(t *testing.T) {
+	primary := vsr.Replica{
+		Identifier: 0, Configuration: vsr.Configuration{0, 1, 2}, Batch_Max: 8,
+	}
+	// Op 1 flushes immediately (idle); a second request buffers while op 1 is in flight.
+	receive(&primary, vsr.Message{
+		Kind: vsr.Message_Kind_Request, To: 0, Client: 7, Request_Number: 1,
+		Command: []byte("a"),
+	})
+	receive(&primary, vsr.Message{
+		Kind: vsr.Message_Kind_Request, To: 0, Client: 8, Request_Number: 1,
+		Command: []byte("b"),
+	})
+	if primary.Op != 1 {
+		t.Fatalf("expected the second request buffered, got op %d", primary.Op)
+	}
+	// The reconfiguration flushes the buffered client request as op 2, then appends alone as op
+	// 3.
+	receive(&primary, vsr.Message{
+		Kind: vsr.Message_Kind_Reconfiguration, To: 0, Client: 99, Request_Number: 1,
+		New_Configuration: vsr.Configuration{0, 1, 2, 3, 4},
+	})
+	if primary.Op != 3 {
+		t.Fatalf(
+			"expected op 2 (flushed client) then op 3 (reconfiguration), got op %d",
+			primary.Op)
+	}
+	last := primary.Log[len(primary.Log)-1]
+	if len(last.New_Configuration) != 5 {
+		t.Fatalf("expected the reconfiguration as the last op, got %+v", last)
+	}
+	ahead := primary.Log[len(primary.Log)-2]
+	if len(ahead.New_Configuration) != 0 {
+		t.Fatalf(
+			"expected the client request ordered ahead of the reconfiguration, got %+v",
+			ahead)
+	}
+	// No further client requests are accepted once the reconfiguration is the epoch's last op.
+	receive(&primary, vsr.Message{
+		Kind: vsr.Message_Kind_Request, To: 0, Client: 8, Request_Number: 2,
+		Command: []byte("c"),
+	})
+	if primary.Op != 3 {
+		t.Fatalf(
+			"expected client requests refused after the reconfiguration, got op %d",
+			primary.Op)
+	}
+}
+
+// Test_Witness_Roles: the leading Active_Count members are active and execute committed ops; the
+// members after them are witnesses and do not. With Active_Count 2 on {0,1,2}, replica 1 executes a
+// committed op and replica 2 does not.
+func Test_Witness_Roles(t *testing.T) {
+	executed := map[vsr.Replica_Identifier]bool{}
+	for _, identifier := range []vsr.Replica_Identifier{1, 2} {
+		mark := identifier
+		replica := vsr.Replica{
+			Identifier:    identifier,
+			Configuration: vsr.Configuration{0, 1, 2},
+			Active_Count:  2,
+			State_Machine: vsr.State_Machine{
+				Execute: func(cmd, pred []byte) (result []byte) {
+					executed[mark] = true
+					return cmd
+				},
+			},
+		}
+		receive(&replica, vsr.Message{
+			Kind: vsr.Message_Kind_Prepare, From: 0, To: identifier, View: 0, Op: 1,
+			Entries: []vsr.Log_Entry{{Command: []byte("x")}},
+		})
+		receive(&replica, vsr.Message{
+			Kind: vsr.Message_Kind_Commit, From: 0, To: identifier, View: 0, Commit: 1,
+		})
+	}
+	if !executed[1] {
+		t.Errorf("expected active replica 1 to execute the committed op")
+	}
+	if executed[2] {
+		t.Errorf("expected witness replica 2 not to execute")
+	}
+}
+
+// Test_Witness_Primary_Always_Active: the primary is Configuration[View mod Active_Count], so a
+// witness is never primary. Replica 2 (a witness, Active_Count 2) refuses a client Request even at
+// view 2, where without witnesses it would be the primary; active replica 0 is the primary there.
+func Test_Witness_Primary_Always_Active(t *testing.T) {
+	witness := vsr.Replica{
+		Identifier: 2, Configuration: vsr.Configuration{0, 1, 2}, Active_Count: 2, View: 2,
+		Status: vsr.Status_Normal,
+	}
+	receive(&witness, vsr.Message{
+		Kind: vsr.Message_Kind_Request, To: 2, View: 2, Client: 7, Request_Number: 1,
+		Command: []byte("x"),
+	})
+	if witness.Op != 0 {
+		t.Fatalf("expected the witness to refuse the request (never primary), op %d",
+			witness.Op)
+	}
+	primary := vsr.Replica{
+		Identifier: 0, Configuration: vsr.Configuration{0, 1, 2}, Active_Count: 2, View: 2,
+		Status: vsr.Status_Normal,
+	}
+	receive(&primary, vsr.Message{
+		Kind: vsr.Message_Kind_Request, To: 0, View: 2, Client: 7, Request_Number: 1,
+		Command: []byte("x"),
+	})
+	if primary.Op != 1 {
+		t.Fatalf("expected active replica 0 to be the primary of view 2, op %d", primary.Op)
+	}
+}
+
+// Test_Witness_No_Execution: a witness advances its commit number and retains the committed log,
+// but makes no Execute up-call, emits no Reply, and takes no checkpoint of its own.
+func Test_Witness_No_Execution(t *testing.T) {
+	executed := false
+	snapshotted := false
+	witness := vsr.Replica{
+		Identifier: 2, Configuration: vsr.Configuration{0, 1, 2}, Active_Count: 2,
+		Checkpoint_Interval: 1,
+		State_Machine: vsr.State_Machine{
+			Execute: func(cmd, pred []byte) (result []byte) {
+				executed = true
+				return cmd
+			},
+			Snapshot: func() (snapshot []byte) { snapshotted = true; return nil },
+		},
+	}
+	receive(&witness, vsr.Message{
+		Kind: vsr.Message_Kind_Prepare, From: 0, To: 2, View: 0, Op: 1,
+		Entries: []vsr.Log_Entry{{Command: []byte("x")}},
+	})
+	output := receive(&witness, vsr.Message{
+		Kind: vsr.Message_Kind_Commit, From: 0, To: 2, View: 0, Commit: 1,
+	})
+	if witness.Commit != 1 {
+		t.Fatalf("expected the witness to advance its commit number, got %d",
+			witness.Commit)
+	}
+	if len(witness.Log) != 1 {
+		t.Fatalf("expected the witness to retain the committed log, got %d",
+			len(witness.Log))
+	}
+	if executed {
+		t.Errorf("expected no Execute up-call on a witness")
+	}
+	if snapshotted {
+		t.Errorf("expected no checkpoint taken on a witness")
+	}
+	if len(output.Replies) != 0 {
+		t.Errorf("expected no Reply from a witness, got %+v", output.Replies)
+	}
+}
+
+// Test_Witness_Vote: a witness that receives a Prepare appends the entry and returns a Prepare_Ok,
+// so it is never counted toward a commit quorum (TigerBeetle's non-voting-standby design).
+func Test_Witness_No_Vote(t *testing.T) {
+	standby := vsr.Replica{
+		Identifier: 2, Configuration: vsr.Configuration{0, 1, 2}, Active_Count: 2,
+	}
+	output := receive(&standby, vsr.Message{
+		Kind: vsr.Message_Kind_Prepare, From: 0, To: 2, View: 0, Op: 1,
+		Entries: []vsr.Log_Entry{{Command: []byte("x")}},
+	})
+	if standby.Op != 1 {
+		t.Fatalf("expected the standby to append the entry to stay current, op %d",
+			standby.Op)
+	}
+	if _, voted := first_message(output.Messages, vsr.Message_Kind_Prepare_Ok); voted {
+		t.Errorf("expected a standby to cast no Prepare_Ok, got %+v", output.Messages)
+	}
+}
+
+// Test_Witness_Follow: a standby applies a Prepare and Commit to track the cluster, but on a
+// timeout it never starts a view change — it is not responsible for liveness and casts no
+// view-change vote (TigerBeetle's non-voting-standby design); the voting backups alone fail a
+// primary over.
+func Test_Witness_Follow(t *testing.T) {
+	standby := vsr.New_Replica(&vsr.New_Replica_Input{
+		Identifier: 2, Configuration: vsr.Configuration{0, 1, 2}, Active_Count: 2,
+		Heartbeat: 10, Timeout: 100, Now: 0,
+	})
+	receive(&standby, vsr.Message{
+		Kind: vsr.Message_Kind_Prepare, From: 0, To: 2, View: 0, Op: 1,
+		Entries: []vsr.Log_Entry{{Command: []byte("x")}},
+	})
+	receive(&standby, vsr.Message{
+		Kind: vsr.Message_Kind_Commit, From: 0, To: 2, View: 0, Commit: 1,
+	})
+	if standby.Commit != 1 {
+		t.Fatalf("expected the standby to track the commit number, got %d", standby.Commit)
+	}
+	// The primary falls silent; the standby's failure-detector deadline passes. It must NOT
+	// start a view change.
+	output := tick(&standby, 100)
+	if standby.Status != vsr.Status_Normal {
+		t.Fatalf("expected the standby to stay normal, not enter a view change, status %d",
+			standby.Status)
+	}
+	_, started := first_message(output.Messages, vsr.Message_Kind_Start_View_Change)
+	if started {
+		t.Errorf("expected a standby to start no view change on timeout, got %+v",
+			output.Messages)
+	}
+}
+
+// Test_Witness_Promotion: a standby a reconfiguration moves into the voting set materializes the
+// application state it never built — it replays its committed log (TigerBeetle's state sync) and
+// serves as an active replica. Replica 3 follows as a standby in {0,1,2,3,4} (active {0,1,2}),
+// holding two committed ops it never executed; a Start_Epoch into {0,1,3} makes it active, and it
+// executes both as it completes the epoch.
+func Test_Witness_Promotion(t *testing.T) {
+	executed := []string{}
+	standby := vsr.Replica{
+		Identifier:    3,
+		Configuration: vsr.Configuration{0, 1, 2, 3, 4},
+		Active_Count:  3,
+		Status:        vsr.Status_Normal,
+		Op:            2,
+		Commit:        2,
+		// Followed as a standby: commit advanced, but nothing was executed.
+		Executed: 2,
+		Log: []vsr.Log_Entry{
+			{View: 0, Command: []byte("a"), Client: 7, Request_Number: 1},
+			{View: 0, Command: []byte("b"), Client: 8, Request_Number: 1},
+		},
+		State_Machine: vsr.State_Machine{
+			Execute: func(command, prediction []byte) (result []byte) {
+				executed = append(executed, string(command))
+				return command
+			},
+		},
+	}
+	receive(&standby, vsr.Message{
+		Kind: vsr.Message_Kind_Start_Epoch, From: 0, To: 3, Epoch: 1, View: 0, Op: 2,
+		Old_Configuration: vsr.Configuration{0, 1, 2, 3, 4},
+		New_Configuration: vsr.Configuration{0, 1, 3},
+		New_Active_Count:  3,
+	})
+	if standby.Status != vsr.Status_Normal {
+		t.Fatalf("expected the promoted standby to complete the epoch as normal, status %d",
+			standby.Status)
+	}
+	if len(executed) != 2 {
+		t.Fatalf("expected the promotion to replay both committed ops, executed %v",
+			executed)
+	}
+	if executed[0] != "a" {
+		t.Fatalf("expected the promotion to replay both committed ops, executed %v",
+			executed)
+	}
+	if executed[1] != "b" {
+		t.Fatalf("expected the promotion to replay both committed ops, executed %v",
+			executed)
 	}
 }

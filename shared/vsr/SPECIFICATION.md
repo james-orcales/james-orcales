@@ -332,3 +332,75 @@ already happened.
 
 An old replica that receives a client request stamped with a stale epoch replies New_Epoch carrying
 the current view and the new configuration, so the client can find the group that moved.
+
+# Batching
+
+The primary amortizes agreement by collecting several requests into one Prepare when busy (§6.2),
+staying load-adaptive: an idle primary — commit caught up to op — sends each request at once for
+low latency, while a busy one buffers arrivals and flushes them as one batch when its round commits.
+
+### Flush Immediate
+
+An idle primary that accepts a request appends it and broadcasts a Prepare carrying that one entry
+at once, so latency is unchanged when the primary is not loaded.
+
+### Flush Batched
+
+A request that arrives while a round is in flight is buffered, not sent; when the in-flight round
+commits, the primary appends the buffered requests as consecutive ops and broadcasts them in one
+Prepare whose Entries hold the whole batch ending at its Op.
+
+### Batch Cap
+
+A primary buffering while busy flushes once the buffer reaches Batch_Max even before the round
+commits, bounding a single Prepare's size; Batch_Max of zero or one disables batching, flushing
+every request immediately.
+
+### Batch Prepare Ok
+
+A backup applying a batched Prepare appends every entry it lacks and returns one Prepare_Ok per
+newly-appended op, so the primary tallies an explicit acknowledgement per op rather than inferring
+lower ops from a high one. An op acquired by state transfer, never acknowledged, never counts.
+
+### Batch Reconfiguration Singleton
+
+A Reconfiguration first flushes any buffered client requests, so they are ordered ahead of it, then
+is appended alone as the epoch's last op — never inside a batch — and broadcast immediately.
+
+# Witness
+
+Active replicas execute ops; standbys only replicate the log. Following TigerBeetle, standbys here
+are NON-VOTING, unlike §6.1 witnesses: never in a quorum, so the voting set keeps the unchanged base
+protocol and its proven safety. A standby is promotable, outside the fault threshold.
+
+### Roles
+
+The leading Active_Count members of the configuration are the voting active replicas; any after them
+are standbys. An Active_Count of zero means every member is active, the no-standby default.
+
+### Primary Always Active
+
+The primary of a view is Configuration[View mod Active_Count], so view rotation only ever lands on
+an active replica — a standby is never the primary.
+
+### No Execution
+
+A standby advances its commit number and retains the committed log, but makes no Execute up-call,
+caches no result, emits no Reply, and takes no checkpoint of its own; only active replicas do.
+
+### No Vote
+
+A standby that receives a Prepare appends the entry to stay current but returns no Prepare_Ok, so it
+is never counted toward a commit quorum; the quorum is f+1 of the voting active replicas alone.
+
+### Follow
+
+A standby applies Prepare and Commit and adopts a Start_View to track the cluster, but never starts
+or votes in a view change and never answers a recovery; it learns a new view from the Start_View the
+new primary broadcasts, or by state transfer.
+
+### Promotion
+
+A standby a reconfiguration moves into the voting set materializes the application state it never
+built: it restores its carried checkpoint and replays the un-checkpointed committed suffix
+(TigerBeetle's state sync) rather than re-executing the whole log, then serves as an active replica.
