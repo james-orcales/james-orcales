@@ -367,7 +367,7 @@ lower ops from a high one. An op acquired by state transfer, never acknowledged,
 A Reconfiguration first flushes any buffered client requests, so they are ordered ahead of it, then
 is appended alone as the epoch's last op — never inside a batch — and broadcast immediately.
 
-# Witness
+# Standby
 
 Active replicas execute ops; standbys only replicate the log. Following TigerBeetle, standbys here
 are NON-VOTING, unlike §6.1 witnesses: never in a quorum, so the voting set keeps the unchanged base

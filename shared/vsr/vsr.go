@@ -186,7 +186,7 @@ type Log_Entry struct {
 	// VR state, never the State_Machine — exactly when this is non-empty.
 	New_Configuration Configuration
 	// New_Active_Count is the active-replica count the new epoch adopts (§6.1), carried
-	// alongside New_Configuration in a Reconfiguration entry so the witness layout travels with
+	// alongside New_Configuration in a Reconfiguration entry so the standby layout travels with
 	// the membership change; meaningful only when New_Configuration is non-empty.
 	New_Active_Count uint8
 }
@@ -201,7 +201,7 @@ type Replica struct {
 	Identifier Replica_Identifier
 	// Configuration is the ordered group membership this replica belongs to. The leading
 	// Active_Count members are the active replicas — they store the application state and
-	// execute operations — and any after them are witnesses (§6.1). The primary of a view is
+	// execute operations — and any after them are standbys (§6.1). The primary of a view is
 	// Configuration[View mod Active_Count], always an active replica.
 	Configuration Configuration
 	// Active_Count is how many leading members of Configuration are active replicas; the rest
@@ -342,13 +342,13 @@ type Replica struct {
 	// captured from the reconfiguration entry alongside Epoch_New_Configuration for the same
 	// reason; meaningful only while Epoch_Handoff_Due.
 	Epoch_New_Active_Count uint8
-	// Witness_Promotion_Due reports that a reconfiguration promoted this replica from
-	// witness to active (§6.1) and it has not yet materialized the application state it never
-	// built as a witness. It is set at the role flip and consumed when the replica next returns
+	// Standby_Promotion_Due reports that a reconfiguration promoted this replica from
+	// standby to active (§6.1) and it has not yet materialized the application state it never
+	// built as a standby. It is set at the role flip and consumed when the replica next returns
 	// to Status_Normal, which restores its carried checkpoint and replays the un-checkpointed
 	// suffix. It makes the rebuild fire exactly once regardless of which epoch-completion path
 	// runs.
-	Witness_Promotion_Due bool
+	Standby_Promotion_Due bool
 	// Epoch_Started_From tallies, at a replaced replica, the distinct new-group members that
 	// have reported their epoch started (§7.1.2). Once it holds f'+1 — the new group's quorum
 	// — the replaced replica's state is safely transferred and it shuts down.
@@ -505,7 +505,7 @@ type Message struct {
 	New_Configuration Configuration
 	// New_Active_Count is the new epoch's active-replica count (§6.1), carried with
 	// New_Configuration by a Reconfiguration, Start_Epoch, and New_Epoch so every replica
-	// adopts the same witness layout; meaningful only where New_Configuration is.
+	// adopts the same standby layout; meaningful only where New_Configuration is.
 	New_Active_Count uint8
 	// Old_Configuration is the prior epoch's membership a Start_Epoch carries (§7.1) so a brand
 	// new node knows which replicas to fetch state from; empty in every other message.
@@ -555,10 +555,10 @@ type New_Replica_Input struct {
 	// Identifier is the replica's fixed cluster index.
 	Identifier Replica_Identifier
 	// Configuration is the ordered group membership the replica belongs to; active replicas
-	// lead, witnesses (if any) follow.
+	// lead, standbys (if any) follow.
 	Configuration Configuration
 	// Active_Count is how many leading members of Configuration are active replicas (§6.1); 0
-	// means all are active (no witnesses).
+	// means all are active (no standbys).
 	Active_Count uint8
 	// Epoch is the reconfiguration epoch the replica starts in.
 	Epoch Epoch
@@ -668,7 +668,7 @@ func replica_tick_fire(replica *Replica, now time.Moment) (output Step_Output) {
 	// a timeout it simply re-arms and keeps following. It learns of a completed view change
 	// from the Start_View the new primary broadcasts, or catches up by state transfer on a
 	// later-view message. The voting backups alone fail a primary over.
-	if replica_is_witness(replica) {
+	if replica_is_standby(replica) {
 		output.Timer = replica_arm_timer(replica, now)
 		return output
 	}
@@ -717,22 +717,38 @@ func replica_resend_start_epoch(replica *Replica) (messages []Message) {
 	return messages
 }
 
-// Emits what an idle primary sends each Heartbeat: it re-drives every op not yet known committed as
-// a Prepare so a dropped Prepare still reaches a lagging backup (v1 has no separate state
-// transfer), then advertises the commit number.
+// Emits what a primary sends each Heartbeat: it advertises its commit number to everyone, and
+// re-drives each not-yet-committed op — one op per message — to just the backups that have not
+// acknowledged it. This mirrors TigerBeetle: the commit timer carries the commit number, and an
+// unacknowledged prepare is re-sent, one prepare per message (per-op), only to the replicas that
+// have not responded. A standby never acknowledges (§6.1), so it keeps receiving the op — it needs
+// the log to follow and to be promotable. A backup missing a committed op below the commit number
+// catches up by ranged state transfer (our pull-repair path), as TigerBeetle's backups pull missing
+// prepares. TigerBeetle splits this across a separate per-prepare timer and the commit timer; we
+// fold both onto the one heartbeat tick — a v1 simplification with the same per-op,
+// send-to-non-responders semantics.
 func replica_primary_heartbeat(replica *Replica) (messages []Message) {
-	// Re-drive every uncommitted op as its own single-entry Prepare. Batching (§6.2) amortizes
-	// agreement over a burst of NEW client requests at the primary; the heartbeat re-drive is a
-	// catch-up path for ops already in the log, and re-driving one op per message keeps it the
-	// behavior the protocol has always had — a lagging backup applies the op right after its
-	// own last, or fetches the gap by state transfer.
 	for op := replica.Commit + 1; op <= Commit(replica.Op); op++ {
-		messages = append(messages, replica_broadcast(replica, Message{
-			Kind:    Message_Kind_Prepare,
-			Op:      Op(op),
-			Entries: []Log_Entry{replica_log_entry(replica, Op(op))},
-			Commit:  replica.Commit,
-		})...)
+		acked := replica.Prepare_Ok_From[Op(op)]
+		entry := replica_log_entry(replica, Op(op))
+		for _, identifier := range replica.Configuration {
+			if identifier == replica.Identifier {
+				continue
+			}
+			if acked[identifier] {
+				continue // This backup already holds and acknowledged the op.
+			}
+			messages = append(messages, Message{
+				Kind:    Message_Kind_Prepare,
+				From:    replica.Identifier,
+				To:      identifier,
+				View:    replica.View,
+				Epoch:   replica.Epoch,
+				Op:      Op(op),
+				Entries: []Log_Entry{entry},
+				Commit:  replica.Commit,
+			})
+		}
 	}
 	return append(messages, replica_broadcast(replica, Message{
 		Kind:   Message_Kind_Commit,
@@ -818,8 +834,8 @@ func Replica_Recover(input *Replica_Recover_Input) (output Step_Output) {
 	replica.Epoch_Handoff_Due = false
 	replica.Epoch_Started_From = map[Replica_Identifier]bool{}
 	// Recovery materializes application state through the authority's checkpoint when it adopts
-	// the log, so drop any pending witness-promotion rebuild; recovery subsumes it.
-	replica.Witness_Promotion_Due = false
+	// the log, so drop any pending standby-promotion rebuild; recovery subsumes it.
+	replica.Standby_Promotion_Due = false
 	replica_reset_primary_scratch(replica)
 	replica.Recovery_Nonce = input.Nonce
 	replica.Recovery_From = map[Replica_Identifier]Message{}
@@ -1009,10 +1025,10 @@ func replica_enter_new_epoch(
 	replica *Replica, new_configuration Configuration, new_active_count uint8, now time.Moment,
 ) (output Step_Output) {
 	old_configuration := replica.Configuration
-	// Whether this replica was a witness in the OLD configuration, read before the swap below:
-	// a witness promoted to active by the reconfiguration must materialize the application
+	// Whether this replica was a standby in the OLD configuration, read before the swap below:
+	// a standby promoted to active by the reconfiguration must materialize the application
 	// state it never built (§6.1).
-	was_witness := replica_is_witness(replica)
+	was_standby := replica_is_standby(replica)
 	replica.Epoch++
 	replica.View = 0
 	replica.Last_Normal_View = 0
@@ -1023,13 +1039,13 @@ func replica_enter_new_epoch(
 	replica_reset_primary_scratch(replica)
 	replica.Configuration = new_configuration
 	replica.Active_Count = new_active_count
-	// A witness promoted to active by this reconfiguration must materialize application state
+	// A standby promoted to active by this reconfiguration must materialize application state
 	// it never built (§6.1); flag it so the rebuild fires once, when it returns to normal
 	// below.
-	if was_witness {
+	if was_standby {
 		if configuration_contains(new_configuration, replica.Identifier) {
-			if !replica_is_witness(replica) {
-				replica.Witness_Promotion_Due = true
+			if !replica_is_standby(replica) {
+				replica.Standby_Promotion_Due = true
 			}
 		}
 	}
@@ -1039,7 +1055,7 @@ func replica_enter_new_epoch(
 		// eventually shut down.
 		replica.Old_Configuration = nil
 		replica.Status = Status_Normal
-		committed, replies := replica_consume_witness_promotion(replica)
+		committed, replies := replica_consume_standby_promotion(replica)
 		output.Committed = append(output.Committed, committed...)
 		output.Replies = append(output.Replies, replies...)
 		output.Messages = replica_epoch_started_messages(replica, old_configuration)
@@ -1152,7 +1168,7 @@ func replica_receive_new_epoch(
 	// already-recovering replica keeps its nonce so earlier responses still count.
 	replica.Status = Status_Recovery
 	replica.Recovery_From = map[Replica_Identifier]Message{}
-	replica.Witness_Promotion_Due = false
+	replica.Standby_Promotion_Due = false
 	replica_reset_primary_scratch(replica)
 	output.Messages = replica_broadcast(replica, Message{
 		Kind:          Message_Kind_Recovery,
@@ -1277,8 +1293,8 @@ func replica_receive_start_epoch(
 		replica.Active_Count = message.New_Active_Count
 		return output
 	}
-	// Whether this replica was a witness in the OLD configuration, read before the swap below.
-	was_witness := replica_is_witness(replica)
+	// Whether this replica was a standby in the OLD configuration, read before the swap below.
+	was_standby := replica_is_standby(replica)
 	replica.Epoch = message.Epoch
 	replica.Epoch_Start_Op = message.Op
 	replica.Configuration = message.New_Configuration
@@ -1292,12 +1308,12 @@ func replica_receive_start_epoch(
 	replica.View_Change_Deferred = false
 	replica.Epoch_Started_From = map[Replica_Identifier]bool{}
 	replica_reset_primary_scratch(replica)
-	// A witness promoted to active here must materialize the application state it never built
+	// A standby promoted to active here must materialize the application state it never built
 	// (§6.1); flag it so the rebuild fires once when it returns to normal in complete-epoch,
 	// whether it completes locally or after a state-transfer catch-up.
-	if was_witness {
-		if !replica_is_witness(replica) {
-			replica.Witness_Promotion_Due = true
+	if was_standby {
+		if !replica_is_standby(replica) {
+			replica.Standby_Promotion_Due = true
 		}
 	}
 	return replica_catch_up_to_epoch(replica, now)
@@ -1364,11 +1380,11 @@ func replica_complete_epoch(replica *Replica, now time.Moment) (output Step_Outp
 	old_configuration := replica.Old_Configuration
 	replica.Status = Status_Normal
 	replica.Old_Configuration = nil
-	// A witness promoted to active by the reconfiguration materializes its application state
+	// A standby promoted to active by the reconfiguration materializes its application state
 	// here, once, before serving (§6.1); a replica that was already active just executes the
 	// catch-up.
-	if replica.Witness_Promotion_Due {
-		output.Committed, output.Replies = replica_consume_witness_promotion(replica)
+	if replica.Standby_Promotion_Due {
+		output.Committed, output.Replies = replica_consume_standby_promotion(replica)
 	} else {
 		output.Committed, output.Replies = replica_execute_to_commit(replica)
 	}
@@ -1423,7 +1439,7 @@ func replica_assert_safety(replica *Replica) {
 		replica.Log_Start <= replica.Checkpoint_Op
 	// The active prefix must fit inside the configuration: the primary is Configuration[View
 	// mod Active_Count], so an Active_Count above the membership would index out of range and
-	// could select a non-existent primary. Zero is the no-witness default and is always valid.
+	// could select a non-existent primary. Zero is the no-standby default and is always valid.
 	active_count_within_configuration := int(replica.Active_Count) <= len(replica.Configuration)
 	// One Dot_Product over all axes: it runs on every step, and a single consume pays one
 	// caller-frame lookup instead of one per axis in the hottest path.
@@ -1766,7 +1782,7 @@ func replica_receive_prepare(
 	// every op newly appended from this Prepare, one Prepare_Ok each, so the primary tallies an
 	// explicit acknowledgement per op — never crediting an op a backup did not append from a
 	// Prepare. A batched Prepare yields one ack per entry; a single-op Prepare yields one.
-	if replica_is_witness(replica) {
+	if replica_is_standby(replica) {
 		return output
 	}
 	for op := first_appended; op <= replica.Op; op++ {
@@ -2170,7 +2186,7 @@ func replica_execute_to_commit(
 		// no result, emits no Reply, and takes no checkpoint — only the active replicas
 		// store the application state. It still processed the reconfiguration above, since
 		// that is VR state, not service state, and a standby must follow the epoch.
-		if replica_is_witness(replica) {
+		if replica_is_standby(replica) {
 			continue
 		}
 		if replica.State_Machine.Execute == nil {
@@ -2223,14 +2239,14 @@ func replica_execute_to_commit(
 	return committed, replies
 }
 
-// Materializes the application state of a replica just promoted from witness to active across a
-// reconfiguration (§6.1, §7). A witness holds the committed log but ran no Execute up-calls, so it
+// Materializes the application state of a replica just promoted from standby to active across a
+// reconfiguration (§6.1, §7). A standby holds the committed log but ran no Execute up-calls, so it
 // has no application state; once active it must build it. Following TigerBeetle's state sync —
 // acquire the materialized checkpoint, then replay only the ops after it, never the whole log from
 // zero — it restores the checkpoint it already carries (a real snapshot it adopted from an active
-// replica while a witness) and re-executes the un-checkpointed suffix. Executed is reset to the
+// replica while a standby) and re-executes the un-checkpointed suffix. Executed is reset to the
 // checkpoint op so the replay runs; for a replica with no checkpoint (Checkpoint_Op zero, full log
-// retained) it replays from the first op. The caller invokes this only on a witness-to-active
+// retained) it replays from the first op. The caller invokes this only on a standby-to-active
 // promotion, so the suffix it replays was never executed here and no op runs twice.
 func replica_materialize_application_state(
 	replica *Replica,
@@ -2242,17 +2258,17 @@ func replica_materialize_application_state(
 	return replica_execute_to_commit(replica)
 }
 
-// Materializes the application state of a just-promoted witness when it returns to Status_Normal,
+// Materializes the application state of a just-promoted standby when it returns to Status_Normal,
 // then clears the pending flag, so the rebuild fires exactly once whichever epoch-completion path
 // (direct via enter-new-epoch, or after a catch-up via complete-epoch) brought it back to normal. A
 // replica with no pending promotion does nothing.
-func replica_consume_witness_promotion(
+func replica_consume_standby_promotion(
 	replica *Replica,
 ) (committed []Log_Entry, replies []Message) {
-	if !replica.Witness_Promotion_Due {
+	if !replica.Standby_Promotion_Due {
 		return committed, replies
 	}
-	replica.Witness_Promotion_Due = false
+	replica.Standby_Promotion_Due = false
 	return replica_materialize_application_state(replica)
 }
 
@@ -2262,12 +2278,12 @@ func replica_consume_witness_promotion(
 // loop's indexing. A nil Snapshot or a zero interval disables checkpointing entirely, keeping a
 // log-only or non-checkpointing core behaving exactly as before.
 func replica_maybe_checkpoint(replica *Replica, op Op) {
-	// A witness never snapshots (§6.1): it holds no application state, so it has nothing to
+	// A standby never snapshots (§6.1): it holds no application state, so it has nothing to
 	// capture. Snapshotting its empty state would write a bogus checkpoint that diverges from
-	// the active replicas and corrupts any replica that later state-transfers it. A witness
+	// the active replicas and corrupts any replica that later state-transfers it. A standby
 	// still compacts — it adopts a real checkpoint from an active replica during state transfer
 	// — so its log stays bounded without ever taking one of its own.
-	if replica_is_witness(replica) {
+	if replica_is_standby(replica) {
 		return
 	}
 	if replica.State_Machine.Snapshot == nil {
@@ -2381,7 +2397,7 @@ func replica_receive_start_view_change(
 	// stays in its current view and follows the outcome through the Start_View the new primary
 	// broadcasts, or catches up by state transfer on a later-view message. Pulling it in would
 	// have it tally toward a quorum it must not be part of.
-	if replica_is_witness(replica) {
+	if replica_is_standby(replica) {
 		return output
 	}
 	if message.View < replica.View {
@@ -2732,7 +2748,7 @@ func replica_receive_recovery(replica *Replica, message Message) (output Step_Ou
 	// replica_quorum): recovery completes on a quorum of responses over the voting set, so a
 	// standby's response must not be one of them, or it would let recovery finish without a
 	// true voting quorum. The recovering replica relearns its state from the voting replicas.
-	if replica_is_witness(replica) {
+	if replica_is_standby(replica) {
 		return output
 	}
 	response := Message{
@@ -2888,15 +2904,15 @@ func replica_broadcast(replica *Replica, message Message) (messages []Message) {
 }
 
 // VSR's deterministic leader rule, narrowed to the active replicas (§6.1): the primary of a view is
-// the member at index View mod Active_Count, so view rotation never lands on a witness — a witness
+// the member at index View mod Active_Count, so view rotation never lands on a standby — a standby
 // can never be primary.
 func replica_primary_identifier(replica *Replica) (identifier Replica_Identifier) {
 	return replica.Configuration[uint64(replica.View)%uint64(replica_active_count(replica))]
 }
 
 // The number of active replicas: the configured Active_Count, or the whole configuration when it is
-// zero (a group with no witnesses, the behavior before witnesses existed). The active replicas are
-// the leading Active_Count members of Configuration; the rest are witnesses.
+// zero (a group with no standbys, the behavior before standbys existed). The active replicas are
+// the leading Active_Count members of Configuration; the rest are standbys.
 func replica_active_count(replica *Replica) (count int) {
 	if replica.Active_Count == 0 {
 		return len(replica.Configuration)
@@ -2908,7 +2924,7 @@ func replica_active_count(replica *Replica) (count int) {
 // active prefix. A standby replicates the log but never votes, executes, replies, or becomes
 // primary (TigerBeetle's non-voting standby, see replica_quorum). A non-member is not a standby
 // here — membership is checked separately.
-func replica_identifier_is_witness(replica *Replica, identifier Replica_Identifier) (yes bool) {
+func replica_identifier_is_standby(replica *Replica, identifier Replica_Identifier) (yes bool) {
 	active := replica_active_count(replica)
 	for index, member := range replica.Configuration {
 		if member == identifier {
@@ -2918,9 +2934,9 @@ func replica_identifier_is_witness(replica *Replica, identifier Replica_Identifi
 	return false
 }
 
-// Reports whether this replica is a witness (§6.1).
-func replica_is_witness(replica *Replica) (yes bool) {
-	return replica_identifier_is_witness(replica, replica.Identifier)
+// Reports whether this replica is a standby (§6.1).
+func replica_is_standby(replica *Replica) (yes bool) {
+	return replica_identifier_is_standby(replica, replica.Identifier)
 }
 
 // Computes f+1 for a 2f+1 cluster — a simple majority, the smallest set that must intersect any
