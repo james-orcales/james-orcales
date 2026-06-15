@@ -859,6 +859,63 @@ func fzf_built(shell *sh.Shell, binary_directory string) (built bool) {
 	})
 }
 
+// Install_Command_Input carries the injected dependencies Install_Command needs to
+// build a command from this repository with the Go toolchain and place it on PATH.
+type Install_Command_Input struct {
+	// Package_Directory is the Go package in this repository go build compiles.
+	// Unlike the vendored tools, these depend only on the standard library and this
+	// module's own packages, so the build needs no vendor tree and no network.
+	Package_Directory string
+	// Binary_Directory is the directory on PATH the command is built into; it is the
+	// install location, the same one the build's output names.
+	Binary_Directory string
+	// Binary_Name is the built command's filename — the name it is invoked by on PATH
+	// and the name the idempotency gate looks up. markdown_to_pdf installs as "m2p",
+	// so a command's name is not always its package directory's name.
+	Binary_Name string
+	// Shell runs the PATH-presence gate and the go build.
+	Shell *sh.Shell
+}
+
+// Install_Command builds a command from this repository straight into the bin
+// directory. Its one idempotency check is whether the command already resolves on
+// PATH: these are this repo's own programs with no pinned version to match, rebuilt
+// freely, so a name already on PATH is left alone and an absent one is built. Like
+// fzf and direnv, it is a Go build, so the build output is the install — no separate
+// copy or symlink.
+func Install_Command(input *Install_Command_Input) (status_code int) {
+	if input.Package_Directory == "" {
+		return 0
+	}
+	if input.Binary_Directory == "" {
+		return 0
+	}
+	if input.Binary_Name == "" {
+		return 0
+	}
+	if command_on_path(input.Shell, input.Binary_Name) {
+		fmt.Fprintf(input.Shell.Stdout, "setup: %s installed\n", input.Binary_Name)
+		return 0
+	}
+	fmt.Fprintf(input.Shell.Stdout, "setup: %s: building...\n", input.Binary_Name)
+	destination := filepath.Join(input.Binary_Directory, input.Binary_Name)
+	build := "cd " + input.Package_Directory +
+		" && go build -o " + destination + " ."
+	if !sh.Shell_Spawn(input.Shell, "sh", "-c", build) {
+		fmt.Fprintf(input.Shell.Stderr, "setup: %s build failed\n", input.Binary_Name)
+		return exit_failure
+	}
+	return 0
+}
+
+// Reports whether a command of the given name already resolves on PATH — the only
+// idempotency gate for this repo's own commands. `which` prints the resolved path
+// on stdout and nothing when the name is unknown, so a non-empty result means the
+// command is present and the build is skipped.
+func command_on_path(shell *sh.Shell, name string) (present bool) {
+	return sh.Shell_Pipe(shell, "which", name) != ""
+}
+
 // Jj_version is the release the bootstrap wants — the prefix of `jj --version`.
 // jj's build.rs appends a commit hash, so the gate prefix-matches; tracks the
 // vendored third_party/jj workspace version, bump it with the source.
