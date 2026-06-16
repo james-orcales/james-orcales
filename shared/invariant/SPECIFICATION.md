@@ -84,8 +84,9 @@ runtime rendezvous on.
 
 ### Grid
 
-Registration seeds one demanded tuple per surviving combination of the axes'
-buckets, dropping the cells an `Impossible` carves.
+Registration seeds one demanded tuple per surviving combination of the varying axes'
+buckets, dropping the cells an `Impossible` carves. A single-bucket `Always` axis is
+constant: it defines no combination and is dropped, so an all-`Always` call seeds no tuple.
 
 ### Attribution
 
@@ -178,6 +179,12 @@ one is left unreported.
 
 A grid cell the run never witnessed is reported as a cross-product gap, named by its
 tuple of buckets.
+
+### Legend
+
+A cross-product gap prints its grid's axis legend once, each position named by kind,
+condition, and site (the deepest one for a bundle element), and decodes each cell's buckets
+back to the events they stand for, so a bare coordinate is debuggable across nested bundles.
 
 ### Boundary
 

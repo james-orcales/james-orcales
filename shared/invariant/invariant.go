@@ -453,12 +453,17 @@ func recorder_dot_product_observe(recorder *Recorder, dot_elements []Dot_Element
 	recorder_increment(recorder, tuple_key, true)
 }
 
-// Returns the observed tuple of bucket indices for the call's non-Impossible
-// elements, in order — the runtime counterpart to the static grid's tuples.
+// Returns the observed tuple of bucket indices for the call's varying elements, in order
+// — the runtime counterpart to the static grid's projected tuples. An Always is a constant
+// axis dropped from the grid at registration, so it is dropped here too, leaving the
+// observed coordinate to rendezvous with the seeded key over the varying axes alone.
 func dot_product_tuple(dot_elements []Dot_Element) (tuple []int) {
 	tuple = make([]int, 0, len(dot_elements))
 	for _, dot_element := range dot_elements {
 		if dot_element.Kind == Dot_Element_Kind_Impossible {
+			continue
+		}
+		if dot_element.Kind == Dot_Element_Kind_Always {
 			continue
 		}
 		tuple = append(tuple, dot_element_bucket(dot_element))
@@ -466,14 +471,11 @@ func dot_product_tuple(dot_elements []Dot_Element) (tuple []int) {
 	return tuple
 }
 
-// Maps an observed element to its bucket index, mirroring the static grid:
-// False / Lo = 0, True / Hi = 1, a Boundary interior = -1 (missing the seeded
-// grid, so it earns no coverage). An Always has the single bucket 0 — it survived
-// enforcement, so it held true, but its grid has only that one cell.
+// Maps an observed varying element to its bucket index, mirroring the static grid:
+// False / Lo = 0, True / Hi = 1, a Boundary interior = -1 (missing the seeded grid, so it
+// earns no coverage). An Always is constant and dropped from the grid before this point, so
+// it never reaches here.
 func dot_element_bucket(dot_element Dot_Element) (bucket int) {
-	if dot_element.Kind == Dot_Element_Kind_Always {
-		return 0
-	}
 	if dot_element.Event == Event_Kind_Interior {
 		return -1
 	}
@@ -2012,33 +2014,54 @@ func ast_boundary_composite(argument ast.Expr) (composite *ast.CompositeLit) {
 	return nil
 }
 
-// Seeds one tuple entry per bucket combination of the axes, skipping any tuple a
-// carve forbids.
+// Seeds one tuple entry per bucket combination of the varying axes, skipping any tuple a
+// carve forbids. Only a multi-bucket axis varies, so only it defines a combination; a
+// single-bucket axis (an Always) is constant and carves out no coordinate of its own, so
+// it is dropped from the grid — the coordinate carries only the axes that can vary, and the
+// dropped Always keeps its coverage in its own per-element reachability entry. An all-Always
+// Dot_Product therefore seeds nothing: there is no combination to cover.
 func recorder_register_tuples(
 	recorder *Recorder, site string, axes []registration_axis, carves [][]registration_cell,
 ) {
 	if len(axes) == 0 {
 		return
 	}
-	// The legend is one per grid, shared by every surviving cell: position i is the axis
-	// at axes[i], so the report can name a bare coordinate's positions without the
-	// runtime carrying any of this.
-	legend := make([]Tuple_Axis, len(axes))
+	coordinate_positions := make([]int, 0, len(axes))
 	for i, axis := range axes {
-		legend[i] = Tuple_Axis{Kind: axis.Kind, Condition: axis.Condition, Site: axis.Site}
+		if axis.Bucket_Count >= 2 {
+			coordinate_positions = append(coordinate_positions, i)
+		}
 	}
+	if len(coordinate_positions) == 0 {
+		return
+	}
+	// The legend is one per grid, shared by every surviving cell: legend position j is the
+	// varying axis the projected coordinate's position j stands for, so the report can name
+	// a bare coordinate's positions without the runtime carrying any of this.
+	legend := make([]Tuple_Axis, len(coordinate_positions))
+	for j, position := range coordinate_positions {
+		axis := axes[position]
+		legend[j] = Tuple_Axis{Kind: axis.Kind, Condition: axis.Condition, Site: axis.Site}
+	}
+	// The odometer still runs the full axis list so an Impossible's carve positions, which
+	// index that full list, stay valid; each surviving tuple is then projected onto the
+	// varying axes for the stored coordinate and key.
 	tuple := make([]int, len(axes))
 	for more := true; more; more = recorder_tuple_increment(tuple, axes) {
 		if recorder_tuple_carved(tuple, carves) {
 			continue
 		}
+		projected := make([]int, len(coordinate_positions))
+		for j, position := range coordinate_positions {
+			projected[j] = tuple[position]
+		}
 		metadata := &Assertion_Metadata{
 			Kind:          Assertion_Kind_Tuple,
 			Site:          site,
-			Tuple_Indices: append([]int(nil), tuple...),
+			Tuple_Indices: projected,
 			Axes:          legend,
 		}
-		recorder.Assertions.LoadOrStore(recorder_tuple_key(site, tuple), metadata)
+		recorder.Assertions.LoadOrStore(recorder_tuple_key(site, projected), metadata)
 	}
 }
 
@@ -2278,7 +2301,7 @@ func recorder_report_cross_product(output io.Writer, gaps []coverage_gap) {
 		})
 		recorder_report_grid_legend(output, callsite, grid[0].Metadata.Axes)
 		for _, cell := range grid {
-			fmt.Fprintln(output, recorder_cross_product_line(cell))
+			fmt.Fprintln(output, coverage_gap_cell(cell))
 		}
 	}
 }
@@ -2291,27 +2314,24 @@ func recorder_report_grid_legend(output io.Writer, callsite string, axes []Tuple
 	if len(axes) == 0 {
 		return
 	}
-	kind_width, condition_width := 0, 0
+	kind_width_count, condition_width_count := 0, 0
 	for _, axis := range axes {
-		if width := len(assertion_kind_name(axis.Kind)); width > kind_width {
-			kind_width = width
-		}
-		if width := len(strconv.Quote(axis.Condition)); width > condition_width {
-			condition_width = width
-		}
+		kind_width_count = max(kind_width_count, len(assertion_kind_name(axis.Kind)))
+		condition_width_count = max(
+			condition_width_count, len(strconv.Quote(axis.Condition)))
 	}
 	fmt.Fprintln(output, callsite+"  grid axes:")
-	for position, axis := range axes {
+	for i, axis := range axes {
 		fmt.Fprintf(output, "  [%d] %-*s %-*s from %s\n",
-			position, kind_width, assertion_kind_name(axis.Kind),
-			condition_width, strconv.Quote(axis.Condition), axis.Site)
+			i, kind_width_count, assertion_kind_name(axis.Kind),
+			condition_width_count, strconv.Quote(axis.Condition), axis.Site)
 	}
 }
 
 // Renders one never-observed cell: the bare bucket coordinate, then — when the legend is
 // present — each position decoded back to its axis's event, so the coordinate reads as
 // the combination it stands for rather than a tuple of indices.
-func recorder_cross_product_line(cell coverage_gap) (line string) {
+func coverage_gap_cell(cell coverage_gap) (line string) {
 	metadata := cell.Metadata
 	line = metadata.Site + "  tuple " +
 		recorder_tuple_indices_text(metadata.Tuple_Indices) + " " + cell.Reason
@@ -2321,7 +2341,7 @@ func recorder_cross_product_line(cell coverage_gap) (line string) {
 	decoded := make([]string, len(metadata.Tuple_Indices))
 	for position, index := range metadata.Tuple_Indices {
 		decoded[position] = "[" + strconv.Itoa(position) + "]=" +
-			tuple_axis_bucket_text(metadata.Axes[position].Kind, index)
+			assertion_kind_bucket_text(metadata.Axes[position].Kind, index)
 	}
 	return line + "  ->  " + strings.Join(decoded, " ")
 }
@@ -2329,7 +2349,7 @@ func recorder_cross_product_line(cell coverage_gap) (line string) {
 // Decodes a bucket index for an axis of the given kind into the event it stands for: a
 // Sometimes 0/1 into false/true, a Boundary 0/1 into Lo/Hi, an Always into held (its one
 // bucket means the condition held, the only outcome an Always records).
-func tuple_axis_bucket_text(kind Assertion_Kind, index int) (text string) {
+func assertion_kind_bucket_text(kind Assertion_Kind, index int) (text string) {
 	if kind == Assertion_Kind_Always {
 		return "held"
 	}
