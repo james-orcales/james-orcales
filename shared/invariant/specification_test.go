@@ -281,7 +281,9 @@ func Test_Dot_Product_Identity(t *testing.T) {
 	}
 }
 
-// Test_Dot_Product_Grid: registration seeds the surviving cells and drops the carve.
+// Test_Dot_Product_Grid: registration seeds the surviving cells, drops the carve, and
+// excludes the constant Always axis from the coordinate — the grid is over the varying
+// axes alone, so the surviving cells stay two-bucket coordinates despite the third axis.
 func Test_Dot_Product_Grid(t *testing.T) {
 	const source = `package fixture
 
@@ -289,7 +291,9 @@ func check(n int) {
 	zero := invariant.Sometimes(n == 0)
 	one := invariant.Sometimes(n == 1)
 	invariant.Dot_Product(
-		zero, one,
+		zero,
+		invariant.Always(n >= 0),
+		one,
 		invariant.Impossible(invariant.Event_True(zero), invariant.Event_True(one)),
 	)
 }
@@ -306,6 +310,9 @@ func check(n int) {
 	}
 	if _, ok := recorder.Assertions.Load("/fixture/check.go:6:tuple=(1,1)"); ok {
 		t.Error("the (1,1) cell carved by the Impossible must not be seeded")
+	}
+	if _, ok := recorder.Assertions.Load("/fixture/check.go:6:tuple=(0,0,0)"); ok {
+		t.Error("the constant Always axis must not occupy a coordinate position")
 	}
 }
 
@@ -590,9 +597,9 @@ func check_b(n int) {
 
 // Test_Bundles_Gap_Location: a composed bundle's coverage gap is named at the compound
 // callsite::from=site — the top-level Dot_Product (compose.go:12) joined to the deepest
-// nested element's site (compose.go:4). The cross-product gap names the callsite and, in
-// its grid legend, that same deepest site. The snapshot captures the whole report so both
-// locations are pinned.
+// nested element's site (compose.go:4). The lone element is an Always, a constant axis that
+// contributes no cross-product cell, so the report carries only its reachability gap; the
+// snapshot pins that compound location.
 func Test_Bundles_Gap_Location(t *testing.T) {
 	const source = `package fixture
 
@@ -618,16 +625,11 @@ func check(n int) {
 	invariant.Recorder_Register_Packages_For_Analysis(recorder, "/fixture")
 	invariant.Recorder_Analyze_Assertion_Frequency(recorder)
 
-	snap.Expect(t, snap.Init(`🚨 2 coverage gaps 🚨
-
-# Cross-product gaps
-/fixture/compose.go:12  grid axes:
-  [0] Always "n > 0" from /fixture/compose.go:4
-/fixture/compose.go:12  tuple (0) never observed  ->  [0]=held
+	snap.Expect(t, snap.Init(`🚨 1 coverage gaps 🚨
 
 # Reachability gaps
 /fixture/compose.go:12::from=/fixture/compose.go:4  Always — never reached: "n > 0"
-🚨 2 coverage gaps 🚨
+🚨 1 coverage gaps 🚨
 `), output.String())
 }
 
@@ -773,55 +775,13 @@ func Test_Analysis_Combination(t *testing.T) {
 	}
 }
 
-// Test_Cross_Product_Always_Coordinate snapshots what a cross-product tuple coordinate
-// looks like when its axes are Always. An Always is a single-bucket axis, so it rides
-// into the grid as a coordinate position frozen at 0: two Always axes seed exactly one
-// cell, (0,0), in which neither position can ever vary. The snapshot pins that the same
-// run reports the cell as a cross-product gap AND each Always as its own reachability
-// gap — the coordinate restates, per constant position, what the reachability section
-// already says, so it is shown here to make that redundancy legible.
-func Test_Cross_Product_Always_Coordinate(t *testing.T) {
-	const source = `package fixture
-
-func check(n int) {
-	invariant.Dot_Product(
-		invariant.Always(n >= 0),
-		invariant.Always(n < 100),
-	)
-}
-`
-	var output bytes.Buffer
-	recorder := &invariant.Recorder{
-		File_System: fstest.MapFS{
-			"fixture/pair.go": &fstest.MapFile{Data: []byte(source)},
-		},
-		Is_Test: true, Output: &output, Exit: func(code int) {},
-	}
-	invariant.Recorder_Register_Packages_For_Analysis(recorder, "/fixture")
-	invariant.Recorder_Analyze_Assertion_Frequency(recorder)
-
-	snap.Expect(t, snap.Init(`🚨 3 coverage gaps 🚨
-
-# Cross-product gaps
-/fixture/pair.go:4  grid axes:
-  [0] Always "n >= 0"  from /fixture/pair.go:5
-  [1] Always "n < 100" from /fixture/pair.go:6
-/fixture/pair.go:4  tuple (0,0) never observed  ->  [0]=held [1]=held
-
-# Reachability gaps
-/fixture/pair.go:5  Always — never reached: "n >= 0"
-/fixture/pair.go:6  Always — never reached: "n < 100"
-🚨 3 coverage gaps 🚨
-`), output.String())
-}
-
-// Test_Cross_Product_Legend: across a nested bundle, a never-observed grid cell must be
-// debuggable from the report alone. Each Dot_Product grid prints its axis legend once —
-// every coordinate position named by kind, condition source, and the axis's own site (the
-// deepest one for a composed bundle) — then each missing cell prints the bare bucket
-// coordinate decoded back to each axis's event. Without the legend, a bare "(0,1)" gives
-// no way to learn which axis position 1 is or what bucket 1 means there.
-func Test_Cross_Product_Legend(t *testing.T) {
+// Test_Analysis_Legend: across a nested bundle, a never-observed grid cell must be
+// debuggable from the report alone. The grid prints its axis legend once — each position
+// named by kind, condition, and the axis's own site (the deepest one for a composed
+// bundle) — then each cell decodes its bucket back to the axis's event. Without it a bare
+// "(1)" gives no way to learn which axis the position is or what bucket 1 means there. The
+// constant Always is absent from the coordinate; its coverage is its reachability gap alone.
+func Test_Analysis_Legend(t *testing.T) {
 	const source = `package fixture
 
 func Inner_Invariants(n int) (dot_elements []invariant.Dot_Element) {
@@ -851,10 +811,9 @@ func check(n int) {
 
 # Cross-product gaps
 /fixture/nested.go:13  grid axes:
-  [0] Always    "n != 0" from /fixture/nested.go:8
-  [1] Sometimes "n < 0"  from /fixture/nested.go:4
-/fixture/nested.go:13  tuple (0,0) never observed  ->  [0]=held [1]=false
-/fixture/nested.go:13  tuple (0,1) never observed  ->  [0]=held [1]=true
+  [0] Sometimes "n < 0" from /fixture/nested.go:4
+/fixture/nested.go:13  tuple (0) never observed  ->  [0]=false
+/fixture/nested.go:13  tuple (1) never observed  ->  [0]=true
 
 # Branch gaps
 /fixture/nested.go:13::from=/fixture/nested.go:4  Sometimes — false branch never observed: "n < 0"
