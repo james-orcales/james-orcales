@@ -590,8 +590,9 @@ func check_b(n int) {
 
 // Test_Bundles_Gap_Location: a composed bundle's coverage gap is named at the compound
 // callsite::from=site — the top-level Dot_Product (compose.go:12) joined to the deepest
-// nested element's site (compose.go:4) — while the cross-product gap names the callsite
-// alone. The snapshot captures the whole report so both locations are pinned.
+// nested element's site (compose.go:4). The cross-product gap names the callsite and, in
+// its grid legend, that same deepest site. The snapshot captures the whole report so both
+// locations are pinned.
 func Test_Bundles_Gap_Location(t *testing.T) {
 	const source = `package fixture
 
@@ -620,7 +621,9 @@ func check(n int) {
 	snap.Expect(t, snap.Init(`🚨 2 coverage gaps 🚨
 
 # Cross-product gaps
-/fixture/compose.go:12  tuple (0) never observed
+/fixture/compose.go:12  grid axes:
+  [0] Always "n > 0" from /fixture/compose.go:4
+/fixture/compose.go:12  tuple (0) never observed  ->  [0]=held
 
 # Reachability gaps
 /fixture/compose.go:12::from=/fixture/compose.go:4  Always — never reached: "n > 0"
@@ -768,6 +771,99 @@ func Test_Analysis_Combination(t *testing.T) {
 	if !strings.Contains(report, "(1,0)") {
 		t.Errorf("the cell must be named by its tuple, got: %s", report)
 	}
+}
+
+// Test_Cross_Product_Always_Coordinate snapshots what a cross-product tuple coordinate
+// looks like when its axes are Always. An Always is a single-bucket axis, so it rides
+// into the grid as a coordinate position frozen at 0: two Always axes seed exactly one
+// cell, (0,0), in which neither position can ever vary. The snapshot pins that the same
+// run reports the cell as a cross-product gap AND each Always as its own reachability
+// gap — the coordinate restates, per constant position, what the reachability section
+// already says, so it is shown here to make that redundancy legible.
+func Test_Cross_Product_Always_Coordinate(t *testing.T) {
+	const source = `package fixture
+
+func check(n int) {
+	invariant.Dot_Product(
+		invariant.Always(n >= 0),
+		invariant.Always(n < 100),
+	)
+}
+`
+	var output bytes.Buffer
+	recorder := &invariant.Recorder{
+		File_System: fstest.MapFS{
+			"fixture/pair.go": &fstest.MapFile{Data: []byte(source)},
+		},
+		Is_Test: true, Output: &output, Exit: func(code int) {},
+	}
+	invariant.Recorder_Register_Packages_For_Analysis(recorder, "/fixture")
+	invariant.Recorder_Analyze_Assertion_Frequency(recorder)
+
+	snap.Expect(t, snap.Init(`🚨 3 coverage gaps 🚨
+
+# Cross-product gaps
+/fixture/pair.go:4  grid axes:
+  [0] Always "n >= 0"  from /fixture/pair.go:5
+  [1] Always "n < 100" from /fixture/pair.go:6
+/fixture/pair.go:4  tuple (0,0) never observed  ->  [0]=held [1]=held
+
+# Reachability gaps
+/fixture/pair.go:5  Always — never reached: "n >= 0"
+/fixture/pair.go:6  Always — never reached: "n < 100"
+🚨 3 coverage gaps 🚨
+`), output.String())
+}
+
+// Test_Cross_Product_Legend: across a nested bundle, a never-observed grid cell must be
+// debuggable from the report alone. Each Dot_Product grid prints its axis legend once —
+// every coordinate position named by kind, condition source, and the axis's own site (the
+// deepest one for a composed bundle) — then each missing cell prints the bare bucket
+// coordinate decoded back to each axis's event. Without the legend, a bare "(0,1)" gives
+// no way to learn which axis position 1 is or what bucket 1 means there.
+func Test_Cross_Product_Legend(t *testing.T) {
+	const source = `package fixture
+
+func Inner_Invariants(n int) (dot_elements []invariant.Dot_Element) {
+	return append(dot_elements, invariant.Sometimes(n < 0))
+}
+
+func Outer_Invariants(n int) (dot_elements []invariant.Dot_Element) {
+	dot_elements = append(dot_elements, invariant.Always(n != 0))
+	return append(dot_elements, Inner_Invariants(n)...)
+}
+
+func check(n int) {
+	invariant.Dot_Product(Outer_Invariants(n)...)
+}
+`
+	var output bytes.Buffer
+	recorder := &invariant.Recorder{
+		File_System: fstest.MapFS{
+			"fixture/nested.go": &fstest.MapFile{Data: []byte(source)},
+		},
+		Is_Test: true, Output: &output, Exit: func(code int) {},
+	}
+	invariant.Recorder_Register_Packages_For_Analysis(recorder, "/fixture")
+	invariant.Recorder_Analyze_Assertion_Frequency(recorder)
+
+	snap.Expect(t, snap.Init(`🚨 5 coverage gaps 🚨
+
+# Cross-product gaps
+/fixture/nested.go:13  grid axes:
+  [0] Always    "n != 0" from /fixture/nested.go:8
+  [1] Sometimes "n < 0"  from /fixture/nested.go:4
+/fixture/nested.go:13  tuple (0,0) never observed  ->  [0]=held [1]=false
+/fixture/nested.go:13  tuple (0,1) never observed  ->  [0]=held [1]=true
+
+# Branch gaps
+/fixture/nested.go:13::from=/fixture/nested.go:4  Sometimes — false branch never observed: "n < 0"
+/fixture/nested.go:13::from=/fixture/nested.go:4  Sometimes — true branch never observed: "n < 0"
+
+# Reachability gaps
+/fixture/nested.go:13::from=/fixture/nested.go:8  Always — never reached: "n != 0"
+🚨 5 coverage gaps 🚨
+`), output.String())
 }
 
 // Test_Analysis_Boundary: a Distinct_Boundary endpoint never reached is reported as a

@@ -173,6 +173,25 @@ type Assertion_Metadata struct {
 	Condition string
 	// Tuple_Indices is the bucket combination a Tuple entry tracks; nil for elements.
 	Tuple_Indices []int
+	// Axes is a Tuple entry's per-position legend: Axes[i] describes the axis at
+	// Tuple_Indices[i]. Without it a bare coordinate cannot be mapped back to the axes
+	// it came from — undebuggable once those axes descend from nested bundles. Nil for
+	// element entries.
+	Axes []Tuple_Axis
+}
+
+// Tuple_Axis describes one coordinate position of a Dot_Product grid: the kind,
+// condition source, and site of the axis occupying it. The site is the axis's own —
+// the deepest nested one for a bundle element — so a never-observed cell names where
+// each position came from rather than printing a bare bucket index.
+type Tuple_Axis struct {
+	// Kind is the axis's kind, which decodes a bucket index into its event (a Sometimes
+	// 0/1 into false/true, a Boundary 0/1 into Lo/Hi, an Always into held).
+	Kind Assertion_Kind
+	// Condition is the source text of the axis's asserted expression.
+	Condition string
+	// Site is the axis's own file:line — the deepest one for a bundle element.
+	Site string
 }
 
 // Dot_Element is a discriminated union: an Always/Sometimes observation, or an
@@ -2001,6 +2020,13 @@ func recorder_register_tuples(
 	if len(axes) == 0 {
 		return
 	}
+	// The legend is one per grid, shared by every surviving cell: position i is the axis
+	// at axes[i], so the report can name a bare coordinate's positions without the
+	// runtime carrying any of this.
+	legend := make([]Tuple_Axis, len(axes))
+	for i, axis := range axes {
+		legend[i] = Tuple_Axis{Kind: axis.Kind, Condition: axis.Condition, Site: axis.Site}
+	}
 	tuple := make([]int, len(axes))
 	for more := true; more; more = recorder_tuple_increment(tuple, axes) {
 		if recorder_tuple_carved(tuple, carves) {
@@ -2010,6 +2036,7 @@ func recorder_register_tuples(
 			Kind:          Assertion_Kind_Tuple,
 			Site:          site,
 			Tuple_Indices: append([]int(nil), tuple...),
+			Axes:          legend,
 		}
 		recorder.Assertions.LoadOrStore(recorder_tuple_key(site, tuple), metadata)
 	}
@@ -2164,10 +2191,7 @@ func assertion_metadata_gaps(metadata *Assertion_Metadata) (gaps []coverage_gap)
 func recorder_report_gaps(recorder *Recorder, gaps []coverage_gap) {
 	banner := "🚨 " + strconv.Itoa(len(gaps)) + " coverage gaps 🚨"
 	fmt.Fprintln(recorder.Output, banner)
-	recorder_report_section(&recorder_report_section_input{
-		Output: recorder.Output, Title: "Cross-product gaps", Gaps: gaps,
-		Kind: Assertion_Kind_Tuple,
-	})
+	recorder_report_cross_product(recorder.Output, gaps)
 	recorder_report_section(&recorder_report_section_input{
 		Output: recorder.Output, Title: "Branch gaps", Gaps: gaps,
 		Kind: Assertion_Kind_Sometimes,
@@ -2204,8 +2228,14 @@ func recorder_report_section(input *recorder_report_section_input) {
 	if len(selected) == 0 {
 		return
 	}
+	// Two gaps can share a Site — a Sometimes missing both branches, a Boundary missing
+	// both endpoints — so the Reason breaks the tie. Without it the order rides on the
+	// tracker's unordered iteration and the report is non-deterministic.
 	sort.Slice(selected, func(i, j int) (less bool) {
-		return selected[i].Metadata.Site < selected[j].Metadata.Site
+		if selected[i].Metadata.Site != selected[j].Metadata.Site {
+			return selected[i].Metadata.Site < selected[j].Metadata.Site
+		}
+		return selected[i].Reason < selected[j].Reason
 	})
 	fmt.Fprintln(input.Output)
 	fmt.Fprintln(input.Output, "# "+input.Title)
@@ -2214,14 +2244,112 @@ func recorder_report_section(input *recorder_report_section_input) {
 	}
 }
 
-// Renders one gap as a report line. A tuple names the missing combination; a
-// branch or reachability gap names its kind, reason and condition source.
+// Prints the cross-product gaps grouped by their Dot_Product callsite: each grid prints
+// its axis legend once — every position named by kind, condition, and the axis's own site
+// (the deepest one for a bundle element) — then one line per never-observed cell, the bare
+// bucket coordinate decoded back to each axis's event. A bare coordinate is undebuggable
+// across nested bundles; the legend is what maps a position back to the axis it came from.
+// Callsites sort, and cells within a grid sort by their coordinate, so the report is
+// deterministic despite the tracker's unordered iteration.
+func recorder_report_cross_product(output io.Writer, gaps []coverage_gap) {
+	by_callsite := map[string][]coverage_gap{}
+	var callsites []string
+	for _, gap := range gaps {
+		if gap.Metadata.Kind != Assertion_Kind_Tuple {
+			continue
+		}
+		callsite := gap.Metadata.Site
+		if _, seen := by_callsite[callsite]; !seen {
+			callsites = append(callsites, callsite)
+		}
+		by_callsite[callsite] = append(by_callsite[callsite], gap)
+	}
+	if len(callsites) == 0 {
+		return
+	}
+	sort.Strings(callsites)
+	fmt.Fprintln(output)
+	fmt.Fprintln(output, "# Cross-product gaps")
+	for _, callsite := range callsites {
+		grid := by_callsite[callsite]
+		sort.Slice(grid, func(i, j int) (less bool) {
+			return recorder_tuple_indices_text(grid[i].Metadata.Tuple_Indices) <
+				recorder_tuple_indices_text(grid[j].Metadata.Tuple_Indices)
+		})
+		recorder_report_grid_legend(output, callsite, grid[0].Metadata.Axes)
+		for _, cell := range grid {
+			fmt.Fprintln(output, recorder_cross_product_line(cell))
+		}
+	}
+}
+
+// Prints "callsite  grid axes:" then one indented line per coordinate position, the kind
+// and quoted condition columns padded to the grid's widest so the sites line up. Prints
+// nothing when the legend is absent — a hand-seeded tuple with no axes still renders its
+// bare coordinate.
+func recorder_report_grid_legend(output io.Writer, callsite string, axes []Tuple_Axis) {
+	if len(axes) == 0 {
+		return
+	}
+	kind_width, condition_width := 0, 0
+	for _, axis := range axes {
+		if width := len(assertion_kind_name(axis.Kind)); width > kind_width {
+			kind_width = width
+		}
+		if width := len(strconv.Quote(axis.Condition)); width > condition_width {
+			condition_width = width
+		}
+	}
+	fmt.Fprintln(output, callsite+"  grid axes:")
+	for position, axis := range axes {
+		fmt.Fprintf(output, "  [%d] %-*s %-*s from %s\n",
+			position, kind_width, assertion_kind_name(axis.Kind),
+			condition_width, strconv.Quote(axis.Condition), axis.Site)
+	}
+}
+
+// Renders one never-observed cell: the bare bucket coordinate, then — when the legend is
+// present — each position decoded back to its axis's event, so the coordinate reads as
+// the combination it stands for rather than a tuple of indices.
+func recorder_cross_product_line(cell coverage_gap) (line string) {
+	metadata := cell.Metadata
+	line = metadata.Site + "  tuple " +
+		recorder_tuple_indices_text(metadata.Tuple_Indices) + " " + cell.Reason
+	if len(metadata.Axes) != len(metadata.Tuple_Indices) {
+		return line
+	}
+	decoded := make([]string, len(metadata.Tuple_Indices))
+	for position, index := range metadata.Tuple_Indices {
+		decoded[position] = "[" + strconv.Itoa(position) + "]=" +
+			tuple_axis_bucket_text(metadata.Axes[position].Kind, index)
+	}
+	return line + "  ->  " + strings.Join(decoded, " ")
+}
+
+// Decodes a bucket index for an axis of the given kind into the event it stands for: a
+// Sometimes 0/1 into false/true, a Boundary 0/1 into Lo/Hi, an Always into held (its one
+// bucket means the condition held, the only outcome an Always records).
+func tuple_axis_bucket_text(kind Assertion_Kind, index int) (text string) {
+	if kind == Assertion_Kind_Always {
+		return "held"
+	}
+	if kind == Assertion_Kind_Boundary {
+		if index == 1 {
+			return "Hi"
+		}
+		return "Lo"
+	}
+	if index == 1 {
+		return "true"
+	}
+	return "false"
+}
+
+// Renders one branch, boundary, or reachability gap as a report line, naming its kind,
+// reason, and condition source. Tuple gaps are rendered by recorder_report_cross_product,
+// which carries the per-grid legend this line cannot.
 func coverage_gap_line(gap coverage_gap) (line string) {
 	metadata := gap.Metadata
-	if metadata.Kind == Assertion_Kind_Tuple {
-		indices := recorder_tuple_indices_text(metadata.Tuple_Indices)
-		return metadata.Site + "  tuple " + indices + " " + gap.Reason
-	}
 	return metadata.Site + "  " + assertion_kind_name(metadata.Kind) + " — " + gap.Reason +
 		": " + strconv.Quote(metadata.Condition)
 }
