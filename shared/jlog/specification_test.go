@@ -580,3 +580,37 @@ func Test_Cover_Float_Exponent_No_Trim(t *testing.T) {
 	jlog.Logger_Info(new_logger(buffer), "", jlog.Float64("x", 1e-17))
 	assert_output(t, buffer, "{\"level\":\"info\",\"x\":1e-17}\n")
 }
+
+// Fuzz_Encode throws random field values at the logger and asserts every line is valid
+// JSON. It drives the string-escape paths (random and invalid-UTF-8 bytes), the float
+// NaN/Inf/exponent paths, and — via the fuzzed moment feeding both Auto_Timestamp and a
+// Time field — civil_from_days across the int64 epoch range, so the internal asserts that
+// guard the civil-date math are proven; any regression panics with the named invariant.
+func Fuzz_Encode(f *testing.F) {
+	f.Add([]byte("hello"), int64(1700000000000000000), int64(42), math.Float64bits(3.14))
+	f.Fuzz(func(t *testing.T, raw []byte, moment int64, number int64, float_bits uint64) {
+		buffer := &bytes.Buffer{}
+		clock := jtime.Clock{
+			Now_Realtime: func() (now jtime.Moment) { return jtime.Moment(moment) },
+		}
+		logger := jlog.New(jlog.New_Input{
+			Writer:         buffer,
+			Clock:          clock,
+			Floor:          jlog.Level_Trace,
+			Auto_Timestamp: true,
+		})
+		jlog.Logger_Info(logger, string(raw),
+			jlog.String("s", string(raw)),
+			jlog.Bytes("b", raw),
+			jlog.Int64("n", number),
+			jlog.Float64("f", math.Float64frombits(float_bits)),
+			jlog.Time("t", jtime.Moment(moment)),
+			jlog.Duration("d", jtime.Duration(number)),
+		)
+		line := buffer.Bytes()
+		var decoded map[string]any
+		if err := json.Unmarshal(line[:len(line)-1], &decoded); err != nil {
+			t.Fatalf("invalid JSON %q: %v", line, err)
+		}
+	})
+}

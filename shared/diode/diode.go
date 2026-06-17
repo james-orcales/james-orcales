@@ -113,6 +113,8 @@ func New(input New_Input) (writer *Writer) {
 	if alerter == nil {
 		alerter = func(missed int) {}
 	}
+	assert(input.Clock.Sleep != nil, "diode: Clock.Sleep is required")
+	assert(count > 0, "diode: ring count must be positive")
 	writer = &Writer{
 		Writer:        sink,
 		Clock:         input.Clock,
@@ -141,6 +143,7 @@ func new_bucket() (item any) {
 func (writer *Writer) Write(p []byte) (n int, err error) {
 	item := writer.Buffer_Pool.Get().(*bucket)
 	item.Data = append(item.Data[:0], p...)
+	assert(len(item.Data) == len(p), "diode: write copy length mismatch")
 	ring_set(writer, item)
 	return len(p), nil
 }
@@ -174,6 +177,7 @@ func ring_set(writer *Writer, item *bucket) {
 		stored = atomic.CompareAndSwapPointer(
 			&writer.Slots[slot], previous, unsafe.Pointer(item))
 		if stored {
+			assert(previous != unsafe.Pointer(item), "diode: recycled a live bucket")
 			recycle_overwritten(writer, previous)
 		}
 		// A failed CAS means another producer won this slot; loop to the next index.
@@ -227,6 +231,7 @@ func ring_try_next(writer *Writer) (item *bucket, ok bool) {
 		writer.Read_Index = sequence
 		writer.Alerter(int(dropped))
 	}
+	assert(sequence == writer.Read_Index, "diode: delivered off the read cursor")
 	writer.Read_Index++
 	return taken, true
 }
@@ -268,6 +273,7 @@ func drain_remainder(writer *Writer) {
 
 // Writes one line to the sink and returns its bucket to the pool.
 func forward(writer *Writer, item *bucket) {
+	assert(item != nil, "diode: forward got a nil bucket")
 	// One Write per line, exactly as a synchronous wrapped writer would have seen.
 	writer.Writer.Write(item.Data)
 	if cap(item.Data) > maximum_pooled_buffer {
@@ -275,4 +281,14 @@ func forward(writer *Writer, item *bucket) {
 	}
 	item.Data = item.Data[:0]
 	writer.Buffer_Pool.Put(item)
+}
+
+// Panics with message when condition is false. Unlike the invariant framework it captures
+// no caller site, so it inlines to a single predictable branch over a constant string —
+// free on the hot path and allocation-free. The panic's stack trace carries the location;
+// message names the invariant.
+func assert(condition bool, message string) {
+	if !condition {
+		panic(message)
+	}
 }
