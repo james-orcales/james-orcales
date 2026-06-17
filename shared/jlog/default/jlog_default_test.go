@@ -4,10 +4,13 @@ import (
 	"bytes"
 	"errors"
 	"net"
+	"os"
 	"testing"
 
+	"github.com/james-orcales/james-orcales/shared/diode"
 	jlog "github.com/james-orcales/james-orcales/shared/jlog/default"
 	jtime "github.com/james-orcales/james-orcales/shared/time"
+	system_time "github.com/james-orcales/james-orcales/shared/time/default"
 )
 
 // Test_Default_Global_Info covers the package-level convenience API writing
@@ -106,4 +109,52 @@ func Test_Default_Cover_API(t *testing.T) {
 	if buffer.Len() == 0 {
 		t.Fatal("expected output from the default wrappers")
 	}
+}
+
+// Opens the OS bit bucket as a real sink: writing to it still costs a write syscall
+// (unlike io.Discard), so benchmarks against it reflect a real backend.
+func null_sink(b *testing.B) (sink *os.File) {
+	b.Helper()
+	handle, err := os.OpenFile(os.DevNull, os.O_WRONLY, 0)
+	if err != nil {
+		b.Fatal(err)
+	}
+	return handle
+}
+
+// Benchmark_Caller_Synchronous measures what a caller pays to log one line straight to
+// a real sink: formatting plus the write syscall, on the caller's goroutine.
+func Benchmark_Caller_Synchronous(b *testing.B) {
+	sink := null_sink(b)
+	defer sink.Close()
+	logger := jlog.New(jlog.New_Input{Writer: sink, Clock: frozen(), Floor: jlog.Level_Trace})
+	b.ReportAllocs()
+	b.ResetTimer()
+	b.RunParallel(func(pb *testing.PB) {
+		for pb.Next() {
+			jlog.Logger_Info(logger, "request done", jlog.String("method", "GET"))
+		}
+	})
+}
+
+// Benchmark_Caller_Diode measures the same line through the default's non-blocking
+// diode: the caller pays formatting plus a ring handoff; the write syscall is moved to
+// the drain goroutine, which sleeps the real ten-millisecond poll interval.
+func Benchmark_Caller_Diode(b *testing.B) {
+	sink := null_sink(b)
+	defer sink.Close()
+	writer := diode.New(diode.New_Input{
+		Writer: sink,
+		Clock:  system_time.New_Operating_System_Clock(),
+		Count:  1024,
+	})
+	defer writer.Close()
+	logger := jlog.New(jlog.New_Input{Writer: writer, Clock: frozen(), Floor: jlog.Level_Trace})
+	b.ReportAllocs()
+	b.ResetTimer()
+	b.RunParallel(func(pb *testing.PB) {
+		for pb.Next() {
+			jlog.Logger_Info(logger, "request done", jlog.String("method", "GET"))
+		}
+	})
 }
