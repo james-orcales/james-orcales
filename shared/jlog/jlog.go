@@ -270,6 +270,8 @@ func New(input New_Input) (logger Logger) {
 	if unit == 0 {
 		unit = jtime.Nanosecond
 	}
+	assert(writer != nil, "jlog: writer must not be nil")
+	assert(unit > 0, "jlog: duration unit must be positive")
 	logger.Configuration = &Logger_Configuration{
 		Writer:          writer,
 		Clock:           input.Clock,
@@ -372,6 +374,9 @@ func logger_emit(logger Logger, level Level, message string, fields []Field) {
 	}
 	buffer = buffer_append_end_marker(buffer)
 	buffer = append(buffer, '\n')
+	assert(buffer[0] == '{', "jlog: line must open with a brace")
+	assert(buffer[len(buffer)-2] == '}', "jlog: line must close with a brace")
+	assert(buffer[len(buffer)-1] == '\n', "jlog: line must end with a newline")
 	configuration.Writer.Write(buffer)
 	buffer_recycle(holder, configuration.Buffer_Pool, buffer)
 }
@@ -854,7 +859,10 @@ func buffer_append_rfc3339(destination Buffer, nanos int64) (output Buffer) {
 		day_seconds += seconds_per_day
 		days--
 	}
+	assert(day_seconds >= 0 && day_seconds < seconds_per_day, "jlog: bad day seconds")
 	year, month, day := civil_from_days(days)
+	assert(month >= 1 && month <= 12, "jlog: civil month out of range")
+	assert(day >= 1 && day <= 31, "jlog: civil day out of range")
 	within_hour := day_seconds % seconds_per_hour
 	destination = append(destination, '"')
 	destination = buffer_append_four_digits(destination, year)
@@ -1156,4 +1164,14 @@ func byte_is_plain(value byte) (plain bool) {
 func hexadecimal_digit(nibble byte) (digit byte) {
 	const hexadecimal_digits = "0123456789abcdef"
 	return hexadecimal_digits[nibble]
+}
+
+// Panics with message when condition is false. A cheap always-on invariant check: it
+// inlines to a single predictable branch over a constant string and captures no caller
+// site, so it stays off the allocation budget the hot path depends on. The panic's stack
+// trace carries the location; message names the invariant.
+func assert(condition bool, message string) {
+	if !condition {
+		panic(message)
+	}
 }
