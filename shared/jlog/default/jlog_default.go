@@ -13,11 +13,13 @@ package jlog
 
 import (
 	"context"
+	"fmt"
 	"net"
 	"os"
 	"runtime"
 	"strconv"
 
+	"github.com/james-orcales/james-orcales/shared/diode"
 	"github.com/james-orcales/james-orcales/shared/jlog"
 	jtime "github.com/james-orcales/james-orcales/shared/time"
 	system_time "github.com/james-orcales/james-orcales/shared/time/default"
@@ -74,23 +76,51 @@ const Level_Disabled = jlog.Level_Disabled
 // their Caller location is off by one.
 const caller_base_frames = 6
 
+// The default diode ring capacity: how many finished lines can queue ahead of a slow
+// stderr before the oldest are dropped. Line buffers are pooled, so memory tracks
+// occupancy: an idle logger (or one whose sink keeps up) holds just the ~800 KB slot
+// array, and it tops out near 55 MB (~512 B per line plus its bucket) only if the ring
+// ever completely fills.
+const default_diode_count = 100_000
+
 // Default is the OS-bound logger the package-level convenience functions write to.
-// It writes JSON lines to stderr, stamps every line from the OS clock, and is
-// reassignable: tests redirect it to a buffer, and programs may replace it at
-// startup. Build a private logger with New when you need an independent one.
+// It writes JSON lines to stderr through a non-blocking diode, stamps every line from
+// the OS clock, and is reassignable: tests redirect it to a buffer, and programs may
+// replace it at startup. Build a private logger with New when you need an independent
+// one.
+//
+// Because the diode is non-blocking, a stderr that cannot keep up never stalls a
+// caller; instead the oldest queued lines are dropped (reported via report_dropped),
+// and lines still buffered at an unflushed exit are lost. A program that needs every
+// line guaranteed should build its own synchronous logger with New.
 var Default = New_Default_Logger()
 
-// New_Default_Logger builds the OS-bound logger: stderr output, the operating
-// system clock, automatic timestamps, and a runtime-backed caller lookup. This is
-// the one place in the jlog tree where ambient binding is permitted.
+// New_Default_Logger builds the OS-bound logger: a non-blocking diode over stderr, the
+// operating system clock (shared by the logger and the diode's drain), automatic
+// timestamps, and a runtime-backed caller lookup. This is the one place in the jlog
+// tree where ambient binding is permitted.
 func New_Default_Logger() (logger Logger) {
+	clock := system_time.New_Operating_System_Clock()
+	writer := diode.New(diode.New_Input{
+		Writer:        os.Stderr,
+		Clock:         clock,
+		Count:         default_diode_count,
+		Poll_Interval: 100 * jtime.Millisecond,
+		Alerter:       report_dropped,
+	})
 	return jlog.New(jlog.New_Input{
-		Writer:         os.Stderr,
-		Clock:          system_time.New_Operating_System_Clock(),
+		Writer:         writer,
+		Clock:          clock,
 		Floor:          jlog.Level_Trace,
 		Auto_Timestamp: true,
 		Caller:         operating_system_caller,
 	})
+}
+
+// Surfaces diode overflow on stderr so dropped lines never vanish silently when the
+// sink cannot keep up.
+func report_dropped(missed int) {
+	fmt.Fprintf(os.Stderr, "jlog: dropped %d log lines (sink too slow)\n", missed)
 }
 
 // Resolves a frame-skip count to a "file:line" location via runtime.Caller, the
