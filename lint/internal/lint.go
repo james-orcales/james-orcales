@@ -1036,13 +1036,9 @@ type check_function = func(
 
 // LINT POLICY: check_single_caller_callee is abandoned. It required every
 // unexported function with one caller to carry the caller's name as a
-// prefix, on the theory that the chain signals locality. The type-prefix
-// rule (check_file_system_method_prefix) supersedes it for any function whose first
-// param is a same-package named type: the type prefix is the load-bearing
-// signal, and forcing both prefixes produces verbose names like
-// main_git_input_check. For functions outside the type-prefix rule's
-// scope, the caller-prefix discipline turned out to be a soft convention
-// readers can navigate via grep without lint enforcement.
+// prefix, on the theory that the chain signals locality. In practice the
+// caller-prefix discipline turned out to be a soft convention readers can
+// navigate via grep without lint enforcement.
 
 // Tier 1: independent checks that can run on any well-formed Go file.
 
@@ -2031,7 +2027,6 @@ func check_file_system_doctrine(
 		check_file_system_run_checks(parsed_files, input.CPU_Count,
 			input.Instrumentation_Packages, input.Word_Replacements)...)
 	output = append(output, check_file_system_package_split(parsed_files)...)
-	output = append(output, check_file_system_method_prefix(parsed_files)...)
 	output = append(output, check_binary_component_layout(parsed_files, components)...)
 	output = append(output, check_binary_component_main_package(parsed_files, components)...)
 	output = append(output,
@@ -2427,189 +2422,6 @@ func check_file_system_package_split_build_key(file *ast.File) (key string) {
 				continue
 			}
 			return expression.String()
-		}
-	}
-	return ""
-}
-
-// Free functions whose first parameter is a named type declared in the same
-// package must be named `<Type>_<verb>`. The rule recovers the grouping
-// affordance that methods would have provided: check_unnecessary_method bans
-// non-stdlib methods and forces the receiver onto the first parameter, but
-// without a naming convention the resulting free function loses its visible
-// association with the type. This is Odin's convention applied to Go:
-// `func entity_update(e Entity)` over `func update(e Entity)`.
-//
-// Same-package visibility requires cross-file context, so the check runs at
-// the FS level rather than as a per-file check_function. Groups parsed_files by
-// (Dir, Package_Name, Build) — _test.go files declared as `package foo_test`
-// form a distinct group from `package foo` and cannot see foo's unexported
-// types, so package name is part of the key. Only bare *ast.Ident and
-// generic instances (*ast.IndexExpr / *ast.IndexListExpr over *ast.Ident)
-// trigger; pointers, slices, maps, channels, ellipsis, and selectors are
-// not unwrapped. Receivers (methods) are skipped — check_unnecessary_method
-// already covers them.
-func check_file_system_method_prefix(parsed_files []parsed_file) (diags []Diagnostic) {
-	type key struct {
-		Dir     string
-		Package string
-		Build   string
-	}
-	groups := map[key][]parsed_file{}
-	for _, pf := range parsed_files {
-		k := key{
-			Dir:     path.Dir(pf.Path),
-			Package: pf.File.Name.Name,
-			Build:   check_file_system_package_split_build_key(pf.File),
-		}
-		groups[k] = append(groups[k], pf)
-	}
-	keys := make([]key, 0, len(groups))
-	for k := range groups {
-		keys = append(keys, k)
-	}
-	sort.Slice(keys, func(i, j int) (less bool) {
-		if keys[i].Dir != keys[j].Dir {
-			return keys[i].Dir < keys[j].Dir
-		}
-		if keys[i].Package != keys[j].Package {
-			return keys[i].Package < keys[j].Package
-		}
-		return keys[i].Build < keys[j].Build
-	})
-	for _, k := range keys {
-		diags = append(diags, check_file_system_method_prefix_group(groups[k])...)
-	}
-	return diags
-}
-
-func check_file_system_method_prefix_group(files []parsed_file) (diags []Diagnostic) {
-	declared := check_file_system_method_prefix_group_declared(files)
-	if len(declared) == 0 {
-		return nil
-	}
-	for _, pf := range files {
-		diags = append(diags,
-			check_file_system_method_prefix_group_for_file(declared, pf)...)
-	}
-	sort.Slice(diags, func(i, j int) (less bool) {
-		if diags[i].Position.Filename != diags[j].Position.Filename {
-			return diags[i].Position.Filename < diags[j].Position.Filename
-		}
-		return diags[i].Position.Line < diags[j].Position.Line
-	})
-	return diags
-}
-
-// Returns the set of type names declared across files; used by the prefix
-// check to scope its "free function over a custom type" search.
-func check_file_system_method_prefix_group_declared(
-	files []parsed_file,
-) (declared map[string]bool) {
-	declared = map[string]bool{}
-	for _, pf := range files {
-		for _, declaration := range pf.File.Decls {
-			gd, ok := declaration.(*ast.GenDecl)
-			if !ok {
-				continue
-			}
-			if gd.Tok != token.TYPE {
-				continue
-			}
-			for _, specification := range gd.Specs {
-				type_specification, is_type_specification :=
-					specification.(*ast.TypeSpec)
-				if !is_type_specification {
-					continue
-				}
-				declared[type_specification.Name.Name] = true
-			}
-		}
-	}
-	return declared
-}
-
-// Emits per-file prefix-violation diagnostics for the free functions whose
-// first parameter type is in `declared`.
-func check_file_system_method_prefix_group_for_file(
-	declared map[string]bool, pf parsed_file,
-) (diags []Diagnostic) {
-	for _, declaration := range pf.File.Decls {
-		function_declaration, ok := declaration.(*ast.FuncDecl)
-		if !ok {
-			continue
-		}
-		if function_declaration.Recv != nil {
-			continue
-		}
-		if function_declaration.Type.Params == nil {
-			continue
-		}
-		if len(function_declaration.Type.Params.List) == 0 {
-			continue
-		}
-		first_parameter := function_declaration.Type.Params.List[0]
-		type_name := check_file_system_method_prefix_group_first_parameter_type(
-			first_parameter.Type)
-		if type_name == "" {
-			continue
-		}
-		if !declared[type_name] {
-			continue
-		}
-		// Constructor-input exception: type named `<FuncName>_Input` /
-		// `<func_name>_input` is named after the function, not vice versa.
-		if type_name == function_declaration.Name.Name+"_Input" {
-			continue
-		}
-		if type_name == function_declaration.Name.Name+"_input" {
-			continue
-		}
-		style := "snake_case"
-		if unicode.IsUpper(rune(function_declaration.Name.Name[0])) {
-			style = "Ada_Case"
-		}
-		prefix := suggest(&suggest_input{Name: type_name, Want: style})
-		if function_declaration.Name.Name == prefix {
-			continue
-		}
-		if strings.HasPrefix(function_declaration.Name.Name, prefix+"_") {
-			continue
-		}
-		diags = append(diags, Diagnostic{
-			Position: pf.File_Set.Position(function_declaration.Name.Pos()),
-			Name:     function_declaration.Name.Name,
-			Want:     prefix + "_<verb>",
-			Message: fmt.Sprintf(
-				"rename %s -> %s_<verb>",
-				function_declaration.Name.Name, prefix),
-		})
-	}
-	return diags
-}
-
-// Extracts the base named type from a parameter expression. Bare
-// identifiers, pointer receivers (`*T`), and generic instances over a bare
-// identifier qualify — all three are canonical "receiver promoted to first
-// param" shapes for methods that the linter forced into free-function form.
-// Slices, maps, channels, ellipsis, function types, interfaces, and
-// selectors (package-qualified types) are intentionally excluded: they are
-// collection or external-package shapes, not method-receiver shapes.
-func check_file_system_method_prefix_group_first_parameter_type(expression ast.Expr) (name string) {
-
-	if star, is_star := expression.(*ast.StarExpr); is_star {
-		expression = star.X
-	}
-	switch e := expression.(type) {
-	case *ast.Ident:
-		return e.Name
-	case *ast.IndexExpr:
-		if identifier, is_ident := e.X.(*ast.Ident); is_ident {
-			return identifier.Name
-		}
-	case *ast.IndexListExpr:
-		if identifier, is_ident := e.X.(*ast.Ident); is_ident {
-			return identifier.Name
 		}
 	}
 	return ""
@@ -6270,12 +6082,29 @@ func instrumentation_match(directory string, packages []string) (yes bool) {
 func import_path_is_instrumentation(
 	import_path string, components *component_index, packages []string,
 ) (yes bool) {
+	if is_stdlib_instrumentation(import_path) {
+		return true
+	}
 	component_index_number := component_index_for_import_path(import_path, components)
 	if component_index_number < 0 {
 		return false
 	}
 	m := components.Components[component_index_number]
 	return instrumentation_match(import_path_workspace_directory(import_path, m), packages)
+}
+
+// Reports whether the import path is a standard-library observability package the telemetry
+// doctrine treats as write-only instrumentation: the logging sinks log and log/slog, and the
+// profiling sinks runtime/trace and runtime/pprof. Emitting to them is a layer on top of the
+// program (see lint/README.md), so a pure or deterministic package may use them despite the
+// purity bans. Hardcoded rather than configured: the set is stdlib, identical across every
+// workspace, so it belongs in code, not each lint.json.
+func is_stdlib_instrumentation(import_path string) (yes bool) {
+	switch import_path {
+	case "log", "log/slog", "runtime/trace", "runtime/pprof":
+		return true
+	}
+	return false
 }
 
 // Binds the instrumentation list into the package-var check. The check_function
@@ -9136,6 +8965,12 @@ func check_transitive_purity_per_file(
 		}
 		import_path, has := local_to_path[ident.Name]
 		if !has {
+			return true
+		}
+		// A write-only instrumentation package is exempt at the call level as it is at
+		// the import level: emitting to a telemetry sink (log, slog, a profiler) is a
+		// layer on top of the program, not part of its evaluated result.
+		if import_path_is_instrumentation(import_path, components, instrumentation) {
 			return true
 		}
 		curated := &is_transitive_stdlib_ident_input{

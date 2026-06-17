@@ -71,6 +71,9 @@ context through call chains but it shouldn't be required. Otherwise, every funct
 a parameter. This goes through for other observability libraries such as the assertion library, or
 datadog-type libraries.
 
+In the standard library this names `log`, `log/slog`, `runtime/trace`, and `runtime/pprof`. A pure
+or deterministic package may call them, including `log.Fatal`, without tripping the purity bans.
+
 To put it simply, observability is a layer on top of the program and is not part of the runtime
 (technically it is but that's a shitty library if it harms your program in any tangible way).
 

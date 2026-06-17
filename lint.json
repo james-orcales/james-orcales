@@ -2,7 +2,8 @@
   "shared_component": "shared",
   "instrumentation_packages": [
           "shared/invariant",
-          "shared/snap"
+          "shared/snap",
+          "shared/jlog"
   ],
   "deterministic_packages": [
     "markdown_to_pdf",
@@ -148,7 +149,6 @@
     "impl":      ["implementation"],
     "in":        ["input"],
     "inc":       ["include", "increment", "increase", "inclusion"],
-    "info":      ["information"],
     "ins":       ["insertion", "instance", "insert"],
     "inst":      ["instance", "instruction", "installation"],
     "int":       ["integer", "internal", "intersection"],
