@@ -132,79 +132,6 @@ func Test_Sometimes_Gap(t *testing.T) {
 	}
 }
 
-// Test_Distinct_Boundary_Endpoints: Hi credits true, Lo credits false, interior
-// credits neither.
-func Test_Distinct_Boundary_Endpoints(t *testing.T) {
-	cases := []struct {
-		Name      string
-		X         int
-		Frequency int64
-		False     int64
-	}{
-		{"Hi endpoint", 3, 1, 0},
-		{"Lo endpoint", 0, 0, 1},
-		{"interior", 2, 0, 0},
-	}
-	for _, one := range cases {
-		recorder := new_test_recorder()
-		recorder.Is_Test = true
-		element := invariant.Recorder_Distinct_Boundary(
-			recorder, &invariant.Boundary_Input[int]{X: one.X, Lo: 0, Hi: 3}, "range")
-		key := "check" + invariant.Element_Message_Separator + element.Message
-		metadata := &invariant.Assertion_Metadata{
-			Kind: invariant.Assertion_Kind_Boundary, Message: key,
-		}
-		recorder.Events.Store(key, metadata)
-
-		invariant.Recorder_Dot_Product(recorder, "check", element)
-
-		if metadata.Frequency.Load() != one.Frequency {
-			t.Errorf("%s: Frequency = %d, want %d",
-				one.Name, metadata.Frequency.Load(), one.Frequency)
-		}
-		if metadata.False_Frequency.Load() != one.False {
-			t.Errorf("%s: False_Frequency = %d, want %d",
-				one.Name, metadata.False_Frequency.Load(), one.False)
-		}
-	}
-}
-
-// Test_Distinct_Boundary_Outside: a value beyond [Lo, Hi] panics at the Dot_Product,
-// naming the boundary by its message.
-func Test_Distinct_Boundary_Outside(t *testing.T) {
-	recorder := new_test_recorder()
-	boundary := invariant.Recorder_Distinct_Boundary(
-		recorder, &invariant.Boundary_Input[int]{X: 5, Lo: 0, Hi: 3}, "range")
-	message := recover_message(func() {
-		invariant.Recorder_Dot_Product(recorder, "check", boundary)
-	})
-	if message == "" {
-		t.Fatal("a value outside [Lo, Hi] must panic at the Dot_Product")
-	}
-	if !strings.Contains(message, boundary.Message) {
-		t.Fatalf("the panic must name the boundary message %q, got: %s",
-			boundary.Message, message)
-	}
-}
-
-// Test_Distinct_Boundary_Bad_Bounds: endpoints that are not distinct panic, naming the
-// boundary by its message.
-func Test_Distinct_Boundary_Bad_Bounds(t *testing.T) {
-	recorder := new_test_recorder()
-	boundary := invariant.Recorder_Distinct_Boundary(
-		recorder, &invariant.Boundary_Input[int]{X: 3, Lo: 3, Hi: 3}, "range")
-	message := recover_message(func() {
-		invariant.Recorder_Dot_Product(recorder, "check", boundary)
-	})
-	if message == "" {
-		t.Fatal("endpoints that are not distinct must panic at the Dot_Product")
-	}
-	if !strings.Contains(message, boundary.Message) {
-		t.Fatalf("the panic must name the boundary message %q, got: %s",
-			boundary.Message, message)
-	}
-}
-
 // Test_Impossible_Violation: when the forbidden combination occurs, Dot_Product panics,
 // naming each co-occurring axis by its message.
 func Test_Impossible_Violation(t *testing.T) {
@@ -287,29 +214,22 @@ func check(n int) {
 func Test_Impossible_Sibling(t *testing.T) {
 	recorder := new_test_recorder()
 	present := invariant.Recorder_Sometimes(recorder, true, "present")
-	// "orphan" is not an axis of the product below — only "present" is — so the Impossible names a
-	// message that is not a sibling.
+	// "orphan" is not an axis of the product below — only "present" is — so the Impossible
+	// names a message that is not a sibling.
 	if !did_panic(func() {
 		invariant.Recorder_Dot_Product(recorder, "check", present,
 			invariant.Impossible(invariant.Event_True("orphan")))
 	}) {
-		t.Fatal("an Impossible referencing a non-sibling message must panic at the Dot_Product")
+		t.Fatal("an Impossible naming a non-sibling must panic at the Dot_Product")
 	}
 }
 
-// Test_Dot_Product_Inert: constructing a Sometimes or Distinct_Boundary enforces and
-// records nothing until a Dot_Product consumes it. An Always, by contrast, is eager, as
-// Test_Always_Eager shows.
+// Test_Dot_Product_Inert: constructing a Sometimes enforces and records nothing until a
+// Dot_Product consumes it. An Always, by contrast, is eager, as Test_Always_Eager shows.
 func Test_Dot_Product_Inert(t *testing.T) {
 	recorder := new_test_recorder()
 	if did_panic(func() { invariant.Recorder_Sometimes(recorder, false, "zero") }) {
 		t.Fatal("constructing a Sometimes must not panic on its own")
-	}
-	if did_panic(func() {
-		invariant.Recorder_Distinct_Boundary(
-			recorder, &invariant.Boundary_Input[int]{X: 5, Lo: 0, Hi: 3}, "range")
-	}) {
-		t.Fatal("constructing an out-of-range Distinct_Boundary must not panic on its own")
 	}
 }
 
@@ -362,24 +282,21 @@ func check(n int) {
 }
 
 // Test_Dot_Product_Attribution: a panic names every element violated on the call — each
-// Distinct_Boundary by its message — not only the first. An eager Always is not part of
-// this; a false one short-circuits before the Dot_Product runs.
+// triggered Impossible, not only the first. An eager Always is not part of this; a false one
+// short-circuits before the Dot_Product runs.
 func Test_Dot_Product_Attribution(t *testing.T) {
 	recorder := new_test_recorder()
-	first := invariant.Recorder_Distinct_Boundary(
-		recorder, &invariant.Boundary_Input[int]{X: 5, Lo: 0, Hi: 3}, "first")
-	second := invariant.Recorder_Distinct_Boundary(
-		recorder, &invariant.Boundary_Input[int]{X: 9, Lo: 0, Hi: 3}, "second")
+	a := invariant.Recorder_Sometimes(recorder, true, "a")
+	b := invariant.Recorder_Sometimes(recorder, true, "b")
+	c := invariant.Recorder_Sometimes(recorder, true, "c")
 	message := recover_message(func() {
-		invariant.Recorder_Dot_Product(recorder, "check", first, second)
+		invariant.Recorder_Dot_Product(recorder, "check", a, b, c,
+			invariant.Impossible(invariant.Event_True("a"), invariant.Event_True("b")),
+			invariant.Impossible(invariant.Event_True("a"), invariant.Event_True("c")),
+		)
 	})
-	if !strings.Contains(message, first.Message) {
-		t.Fatalf("the panic must name the first violated element %q, got: %s",
-			first.Message, message)
-	}
-	if !strings.Contains(message, second.Message) {
-		t.Fatalf("the panic must name the second violated element %q, got: %s",
-			second.Message, message)
+	if strings.Count(message, "forbidden combination occurred") != 2 {
+		t.Fatalf("panic must name each violated element, not only the first: %s", message)
 	}
 }
 
@@ -688,22 +605,24 @@ positive  Always — never reached: "n > 0"
 `), output.String())
 }
 
-// Test_Bundles_Failure_Location: a bundle element's deferred violation (here a
-// Distinct_Boundary outside its bounds, named "amount") names only its own message, never
-// the consuming prefix — yet the call site is not lost. The panic's Go stack still unwinds
-// through Recorder_Dot_Product and the frame that spread the bundle, so the snapshot pins
-// both the message-only failure line and the stack frames that carry the omitted call site.
+// Test_Bundles_Failure_Location: a deferred violation (here a triggered Impossible) names its
+// axes by their own message, never the consuming "field" prefix — yet the call site is not lost.
+// The panic's Go stack still unwinds through Recorder_Dot_Product and the frame that spread the
+// elements, so the snapshot pins both the message-only failure line and the stack frames.
 func Test_Bundles_Failure_Location(t *testing.T) {
 	recorder := new_test_recorder()
-	element := invariant.Recorder_Distinct_Boundary(
-		recorder, &invariant.Boundary_Input[int]{X: 9, Lo: 0, Hi: 3}, "amount")
+	a := invariant.Recorder_Sometimes(recorder, true, "a")
+	b := invariant.Recorder_Sometimes(recorder, true, "b")
+	forbidden := invariant.Impossible(invariant.Event_True("a"), invariant.Event_True("b"))
 	message, stack := recover_with_stack(func() {
-		dot_product_callsite(recorder, element)
+		dot_product_callsite(recorder, a, b, forbidden)
 	})
 
 	snap.Expect(
 		t,
-		snap.Init(`🚨 Assertion Failure 🚨: amount  Boundary — value outside [Lo, Hi]
+		snap.Init(`🚨 Assertion Failure 🚨: Impossible — forbidden combination occurred:
+  a  true
+  b  true
 
 github.com/james-orcales/james-orcales/shared/invariant.Recorder_Dot_Product (invariant.go)
 github.com/james-orcales/james-orcales/shared/invariant_test.dot_product_callsite (specification_test.go)`),
@@ -852,34 +771,6 @@ nonzero  Always — never reached: "n != 0"
 `), output.String())
 }
 
-// Test_Analysis_Boundary: a Distinct_Boundary endpoint never reached is reported as a
-// boundary gap, named by the value it bounds.
-func Test_Analysis_Boundary(t *testing.T) {
-	var output bytes.Buffer
-	exit_code := -1
-	recorder := &invariant.Recorder{
-		Is_Test: true, Output: &output, Exit: func(code int) { exit_code = code },
-	}
-	boundary := &invariant.Assertion_Metadata{
-		Kind: invariant.Assertion_Kind_Boundary, Message: "age", Condition: "age",
-	}
-	boundary.Frequency.Add(1) // Hi endpoint seen; Lo (False_Frequency) never
-	recorder.Events.Store("age", boundary)
-
-	invariant.Recorder_Analyze_Assertion_Frequency(recorder)
-
-	if exit_code != 1 {
-		t.Fatalf("an unreached endpoint must exit 1, got %d", exit_code)
-	}
-	report := output.String()
-	if !strings.Contains(report, "Lo endpoint never observed") {
-		t.Errorf("the unreached Lo endpoint must be reported, got: %s", report)
-	}
-	if !strings.Contains(report, "age") {
-		t.Errorf("the boundary must be named by the value it bounds, got: %s", report)
-	}
-}
-
 // Test_Analysis_Summary: a clean run reports how many properties it tested, split into
 // individual and combination with the panic-able subset counted.
 func Test_Analysis_Summary(t *testing.T) {
@@ -1004,10 +895,9 @@ func Test_Coverage_Enforcement(t *testing.T) {
 	}
 	if !did_panic(func() {
 		invariant.Recorder_Dot_Product(recorder, "check",
-			invariant.Recorder_Distinct_Boundary(
-				recorder,
-				&invariant.Boundary_Input[int]{X: 9, Lo: 0, Hi: 3},
-				"range"))
+			invariant.Recorder_Sometimes(recorder, true, "a"),
+			invariant.Recorder_Sometimes(recorder, true, "b"),
+			invariant.Impossible(invariant.Event_True("a"), invariant.Event_True("b")))
 	}) {
 		t.Fatal("a Dot_Product must enforce its elements even without coverage recording")
 	}
@@ -1074,39 +964,6 @@ func check(n int) {
 	}
 }
 
-// Test_Coverage_Literal_Reference: an Impossible reference message must also be a string literal,
-// like every message — a non-literal reference fails registration, since the static side cannot
-// match it to a sibling axis to carve.
-func Test_Coverage_Literal_Reference(t *testing.T) {
-	const source = `package fixture
-
-func check(n int) {
-	a := invariant.Sometimes(n == 0, "a")
-	b := invariant.Sometimes(n == 1, "b")
-	axis := "a"
-	invariant.Dot_Product("field", a, b,
-		invariant.Impossible(invariant.Event_True(axis), invariant.Event_True("b")))
-}
-`
-	var output bytes.Buffer
-	exit_code := -1
-	recorder := &invariant.Recorder{
-		File_System: fstest.MapFS{
-			"fixture/check.go": &fstest.MapFile{Data: []byte(source)},
-		},
-		Output: &output,
-		Exit:   func(code int) { exit_code = code },
-	}
-	invariant.Recorder_Register_Packages_For_Analysis(recorder, "/fixture")
-
-	if exit_code != 1 {
-		t.Fatalf("a non-literal Impossible reference must exit 1, got %d", exit_code)
-	}
-	if !strings.Contains(output.String(), "non-literal") {
-		t.Errorf("the report must say non-literal, got: %s", output.String())
-	}
-}
-
 // Test_Coverage_Unresolved: a bundle the analyzer cannot resolve is fatal, never
 // silently skipped.
 func Test_Coverage_Unresolved(t *testing.T) {
@@ -1138,6 +995,39 @@ func check(n int) {
 	}
 	if !strings.Contains(output.String(), "Pair_Invariants") {
 		t.Errorf("the report must name the unresolved bundle, got: %s", output.String())
+	}
+}
+
+// Test_Coverage_Literal_Reference: an Impossible reference message must also be a string literal,
+// like every message — a non-literal reference fails registration, since the static side cannot
+// match it to a sibling axis to carve.
+func Test_Coverage_Literal_Reference(t *testing.T) {
+	const source = `package fixture
+
+func check(n int) {
+	a := invariant.Sometimes(n == 0, "a")
+	b := invariant.Sometimes(n == 1, "b")
+	axis := "a"
+	invariant.Dot_Product("field", a, b,
+		invariant.Impossible(invariant.Event_True(axis), invariant.Event_True("b")))
+}
+`
+	var output bytes.Buffer
+	exit_code := -1
+	recorder := &invariant.Recorder{
+		File_System: fstest.MapFS{
+			"fixture/check.go": &fstest.MapFile{Data: []byte(source)},
+		},
+		Output: &output,
+		Exit:   func(code int) { exit_code = code },
+	}
+	invariant.Recorder_Register_Packages_For_Analysis(recorder, "/fixture")
+
+	if exit_code != 1 {
+		t.Fatalf("a non-literal Impossible reference must exit 1, got %d", exit_code)
+	}
+	if !strings.Contains(output.String(), "non-literal") {
+		t.Errorf("the report must say non-literal, got: %s", output.String())
 	}
 }
 
@@ -1257,8 +1147,8 @@ func recover_message(action func()) (message string) {
 // it a frame of its own rather than folding into the caller.
 //
 //go:noinline
-func dot_product_callsite(recorder *invariant.Recorder, element invariant.Dot_Element) {
-	invariant.Recorder_Dot_Product(recorder, "field", element)
+func dot_product_callsite(recorder *invariant.Recorder, elements ...invariant.Dot_Element) {
+	invariant.Recorder_Dot_Product(recorder, "field", elements...)
 }
 
 // Runs action, recovers the panic it raises, and returns the panic message together with

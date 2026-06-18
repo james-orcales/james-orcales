@@ -38,9 +38,9 @@ seen only true means the suite never drove it false; that missing branch is a co
 at the end. So `Always` catches a value that should never occur, and `Sometimes` catches a case the
 tests forgot to cover — a panic versus a silent blind spot.
 
-`Always` and `Sometimes` are the only true atoms; everything else is sugar over them. The runtime
-special-cases a handful of derived forms purely to cut boilerplate such as `Distinct_Boundary`,
-which generates two `Always` and two `Sometimes` for the price of one.
+`Always` and `Sometimes` are the only true atoms; everything else is sugar over them. The sugar tier
+adds derived forms purely to cut boilerplate — the `Sometimes_Has_*` content axes and the
+`*_Invariants` preset bundles — each expanding into `Always` / `Sometimes` checks over a value.
 
 A `Sometimes` is inert alone: constructing one records nothing and enforces nothing; it is only when
 it is handed to a `Dot_Product` (directly, or by flowing through a bundle into one) that it is

@@ -13,66 +13,13 @@ import (
 // pattern.
 func event_signature(elements []core.Dot_Element, count int) (signature string) {
 	for index := 0; index < count; index++ {
-		if elements[index].Event == core.Event_Kind_True {
+		if elements[index].Event {
 			signature += "T"
 			continue
 		}
 		signature += "F"
 	}
 	return signature
-}
-
-// Asserts the trailing boundary of a Whole_Number_Invariants bundle (index 3, after
-// the three Sometimes axes) is a Distinct_Boundary firing the expected endpoint event.
-func assert_whole_number_boundary(
-	t *testing.T, name string, elements []core.Dot_Element, want core.Event_Kind,
-) {
-	t.Helper()
-	if len(elements) != 4 {
-		t.Fatalf("%s: returned %d elements, want 4", name, len(elements))
-	}
-	boundary := elements[3]
-	if boundary.Kind != core.Dot_Element_Kind_Boundary {
-		t.Errorf("%s: Kind = %d, want Boundary", name, boundary.Kind)
-	}
-	if boundary.Event != want {
-		t.Errorf("%s: Event = %d, want %d", name, boundary.Event, want)
-	}
-}
-
-// Whole_Number_Invariants is a Distinct_Boundary over the type's own range, so the
-// floor is the type's: a signed type bottoms out at signed_min (the value lands on the
-// Lo endpoint there), an unsigned type at 0. The maximum is the Hi endpoint and any
-// value between is interior — which is why zero is interior for a signed type but the
-// Lo endpoint for an unsigned one.
-func Test_Whole_Number_Invariants_Bounds(t *testing.T) {
-	signed := []struct {
-		Name string
-		N    int
-		Want core.Event_Kind
-	}{
-		{"signed minimum is the Lo endpoint", math.MinInt, core.Event_Kind_False},
-		{"signed maximum is the Hi endpoint", math.MaxInt, core.Event_Kind_True},
-		{"a middling signed value is interior", 5, core.Event_Kind_Interior},
-		{"zero is interior for a signed type", 0, core.Event_Kind_Interior},
-	}
-	for _, c := range signed {
-		assert_whole_number_boundary(
-			t, c.Name, invariant.Whole_Number_Invariants(c.N), c.Want)
-	}
-	unsigned := []struct {
-		Name string
-		N    uint
-		Want core.Event_Kind
-	}{
-		{"zero is the Lo endpoint for an unsigned type", 0, core.Event_Kind_False},
-		{"unsigned maximum is the Hi endpoint", math.MaxUint, core.Event_Kind_True},
-		{"a positive unsigned value is interior", 5, core.Event_Kind_Interior},
-	}
-	for _, c := range unsigned {
-		assert_whole_number_boundary(
-			t, c.Name, invariant.Whole_Number_Invariants(c.N), c.Want)
-	}
 }
 
 // Float_Invariants returns [NaN, negative, positive, 3 Impossibles]; a NaN lands

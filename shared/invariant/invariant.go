@@ -14,7 +14,6 @@ import (
 	"go/token"
 	"io"
 	"io/fs"
-	"math"
 	"path"
 	"path/filepath"
 	"sort"
@@ -59,41 +58,14 @@ const Dot_Element_Kind_Sometimes Dot_Element_Kind = 1
 // must never co-occur.
 const Dot_Element_Kind_Impossible Dot_Element_Kind = 2
 
-// Dot_Element_Kind_Boundary tags an element asserting Lo <= X <= Hi (with Lo <
-// Hi) and tracking which endpoint X lands on.
-const Dot_Element_Kind_Boundary Dot_Element_Kind = 3
-
-// Event_Kind_False is the outcome when a condition is false, and the Lo endpoint
-// of a Distinct_Boundary (the first bucket).
-const Event_Kind_False Event_Kind = 0
-
-// Event_Kind_True is the outcome when a condition is true, and the Hi endpoint of
-// a Distinct_Boundary (the second bucket).
-const Event_Kind_True Event_Kind = 1
-
-// Event_Kind_Interior is a Distinct_Boundary value strictly inside (Lo, Hi): it
-// satisfies the bound but lands on no endpoint, so it earns no coverage.
-const Event_Kind_Interior Event_Kind = 2
-
-// Event_Kind_Outside is a Distinct_Boundary value beyond [Lo, Hi] — a deferred
-// violation that fails in Recorder_Dot_Product.
-const Event_Kind_Outside Event_Kind = 3
-
-// Event_Kind_Bad_Bounds is a Distinct_Boundary whose endpoints aren't distinct
-// (Lo >= Hi, or a NaN endpoint) — a deferred violation enforced in Dot_Product.
-const Event_Kind_Bad_Bounds Event_Kind = 4
-
 // Assertion_Kind_Always classifies a per-element tracker entry for an Always.
 const Assertion_Kind_Always Assertion_Kind = 0
 
 // Assertion_Kind_Sometimes classifies a per-element tracker entry for a Sometimes.
 const Assertion_Kind_Sometimes Assertion_Kind = 1
 
-// Assertion_Kind_Boundary classifies a per-element entry for a Distinct_Boundary.
-const Assertion_Kind_Boundary Assertion_Kind = 2
-
 // Assertion_Kind_Tuple classifies a per-tuple entry of a Dot_Product's grid.
-const Assertion_Kind_Tuple Assertion_Kind = 3
+const Assertion_Kind_Tuple Assertion_Kind = 2
 
 // Recorder accumulates assertion observations for one run and identifies each
 // element by its caller Site.
@@ -153,21 +125,19 @@ type Recorder struct {
 	Merge_Fuzz_Coverage func()
 }
 
-// Assertion_Kind discriminates a coverage tracker entry: a per-element Always,
-// Sometimes, or Boundary, or a per-tuple cell of a Dot_Product's grid.
+// Assertion_Kind discriminates a coverage tracker entry: a per-element Always or
+// Sometimes, or a per-tuple cell of a Dot_Product's grid.
 type Assertion_Kind uint8
 
 // Assertion_Metadata is one coverage tracker entry: how often an element's event
 // (or a registered tuple) was observed across the run. Seeded at registration,
 // incremented at runtime, scanned by the never-fired report.
 type Assertion_Metadata struct {
-	// Frequency counts true-event observations: an Always/Sometimes true, a Boundary
-	// Hi endpoint, or a tuple.
+	// Frequency counts true-event observations: an Always/Sometimes true, or a tuple.
 	Frequency atomic.Int64
-	// False_Frequency counts false-event observations: a Sometimes false or a Boundary
-	// Lo endpoint.
+	// False_Frequency counts false-event observations: a Sometimes false.
 	False_Frequency atomic.Int64
-	// Kind discriminates the entry: Always, Sometimes, Boundary, or Tuple.
+	// Kind discriminates the entry: Always, Sometimes, or Tuple.
 	Kind Assertion_Kind
 	// Message is the identity the entry is keyed by — an axis's own message, or for
 	// a Tuple the Dot_Product's message prefix.
@@ -188,7 +158,7 @@ type Assertion_Metadata struct {
 // names where each position came from rather than printing a bare bucket index.
 type Tuple_Axis struct {
 	// Kind is the axis's kind, which decodes a bucket index into its event (a Sometimes
-	// 0/1 into false/true, a Boundary 0/1 into Lo/Hi, an Always into held).
+	// 0/1 into false/true, an Always into held).
 	Kind Assertion_Kind
 	// Condition is the source text of the axis's asserted expression.
 	Condition string
@@ -199,11 +169,11 @@ type Tuple_Axis struct {
 // Dot_Element is a discriminated union: an Always/Sometimes observation, or an
 // Impossible declaration. Kind selects which fields carry meaning.
 type Dot_Element struct {
-	// Kind selects which fields carry meaning: an Always/Sometimes/Boundary
-	// observation, or an Impossible declaration.
+	// Kind selects which fields carry meaning: an Always/Sometimes observation, or
+	// an Impossible declaration.
 	Kind Dot_Element_Kind
-	// Event is the observed outcome of an observation element.
-	Event Event_Kind
+	// Event is the observed outcome of an observation element: true when its condition held.
+	Event bool
 	// Message is the element's own message — joined to the consuming Dot_Product's
 	// prefix to form the coverage key.
 	Message string
@@ -216,22 +186,16 @@ type Dot_Element struct {
 // spread into a Dot_Product. An alias, so it stays interchangeable with []Dot_Element.
 type Bundle = []Dot_Element
 
-// Dot_Element_Kind discriminates a Dot_Element: Always, Sometimes, Impossible, or
-// Distinct_Boundary.
+// Dot_Element_Kind discriminates a Dot_Element: Always, Sometimes, or Impossible.
 type Dot_Element_Kind uint8
-
-// Event_Kind is an element's observed outcome: the True/False of an Always or
-// Sometimes condition, or which bucket a Distinct_Boundary landed in (its Lo/Hi
-// endpoints reuse False/True; Interior / Outside / Bad_Bounds are boundary-only).
-type Event_Kind uint8
 
 // Dot_Element_Reference names one element's event by its Message — a coordinate an
 // Impossible declares forbidden.
 type Dot_Element_Reference struct {
 	// Message is the referenced element's own message.
 	Message string
-	// Event_Kind is the outcome of that element this reference names.
-	Event_Kind Event_Kind
+	// Event is the outcome of that element this reference names: true for its true event.
+	Event bool
 }
 
 // Recorder_Always is an eager guard: it panics immediately when condition is false,
@@ -266,98 +230,11 @@ func Recorder_Always[T ~bool](recorder *Recorder, condition T, message string) {
 func Recorder_Sometimes[T ~bool](
 	recorder *Recorder, condition T, message string,
 ) (dot_element Dot_Element) {
-	event := Event_Kind_False
-	if condition {
-		event = Event_Kind_True
-	}
 	return Dot_Element{
 		Kind:    Dot_Element_Kind_Sometimes,
-		Event:   event,
+		Event:   bool(condition),
 		Message: message,
 	}
-}
-
-// Numeric constrains a Distinct_Boundary's value and endpoints to Go's ordered
-// numeric kinds.
-type Numeric interface {
-	~int | ~int8 | ~int16 | ~int32 | ~int64 |
-		~uint | ~uint8 | ~uint16 | ~uint32 | ~uint64 | ~uintptr |
-		~float32 | ~float64
-}
-
-// Boundary_Input is the value X and its inclusive endpoints Lo, Hi for a
-// Distinct_Boundary. Message-less by design, like the other element producers.
-type Boundary_Input[I Numeric] struct {
-	// X is the value the boundary tracks.
-	X I
-	// Lo is the inclusive lower endpoint.
-	Lo I
-	// Hi is the inclusive upper endpoint.
-	Hi I
-}
-
-// Recorder_Distinct_Boundary builds an element asserting Lo < Hi and Lo <= X <=
-// Hi, tracking which endpoint X lands on: the Lo bucket when X == Lo, the Hi
-// bucket when X == Hi. Interior values satisfy the bound but contribute no
-// coverage — only the endpoints are tracked. Like every element producer it
-// never panics on its own: a bad bound or out-of-range X fails only once the
-// element reaches Recorder_Dot_Product, so a bare Distinct_Boundary outside a
-// Dot_Product is an inert no-op (its dead message surfaces in the never-fired
-// report rather than enforcing anything).
-func Recorder_Distinct_Boundary[I Numeric](
-	recorder *Recorder, input *Boundary_Input[I], message string,
-) (dot_element Dot_Element) {
-	return Dot_Element{
-		Kind:    Dot_Element_Kind_Boundary,
-		Event:   boundary_input_event(input),
-		Message: message,
-	}
-}
-
-// Classifies input into its Event: bad bounds (Lo >= Hi or a NaN endpoint) and
-// out-of-range X are deferred-violation outcomes enforced in Recorder_Dot_Product;
-// an endpoint reuses False (Lo) / True (Hi); anything else is interior.
-func boundary_input_event[I Numeric](input *Boundary_Input[I]) (event Event_Kind) {
-	if boundary_input_bounds_invalid(input) {
-		return Event_Kind_Bad_Bounds
-	}
-	if input.X < input.Lo {
-		return Event_Kind_Outside
-	}
-	if input.X > input.Hi {
-		return Event_Kind_Outside
-	}
-	if input.X == input.Lo {
-		return Event_Kind_False
-	}
-	if input.X == input.Hi {
-		return Event_Kind_True
-	}
-	return Event_Kind_Interior
-}
-
-// Reports whether the endpoints are unusable: Lo >= Hi, or a NaN float endpoint
-// (NaN comparisons are unordered, so the ordering check would silently pass and
-// every X would route to the interior sentinel).
-func boundary_input_bounds_invalid[I Numeric](input *Boundary_Input[I]) (invalid bool) {
-	if numeric_is_nan(input.Lo) {
-		return true
-	}
-	if numeric_is_nan(input.Hi) {
-		return true
-	}
-	return input.Lo >= input.Hi
-}
-
-// Reports whether a numeric value is a float NaN; integer kinds are never NaN.
-func numeric_is_nan[I Numeric](value I) (is_nan bool) {
-	switch concrete := any(value).(type) {
-	case float32:
-		return math.IsNaN(float64(concrete))
-	case float64:
-		return math.IsNaN(concrete)
-	}
-	return false
 }
 
 // Impossible declares that the referenced element events must never all co-occur on
@@ -378,8 +255,8 @@ func Impossible(impossibles ...Dot_Element_Reference) (dot_element Dot_Element) 
 // message); Recorder_Dot_Product panics if it names no sibling.
 func Event_True(message string) (reference Dot_Element_Reference) {
 	return Dot_Element_Reference{
-		Message:    message,
-		Event_Kind: Event_Kind_True,
+		Message: message,
+		Event:   true,
 	}
 }
 
@@ -387,13 +264,13 @@ func Event_True(message string) (reference Dot_Element_Reference) {
 // Event_True for how the message is matched.
 func Event_False(message string) (reference Dot_Element_Reference) {
 	return Dot_Element_Reference{
-		Message:    message,
-		Event_Kind: Event_Kind_False,
+		Message: message,
+		Event:   false,
 	}
 }
 
-// Recorder_Dot_Product enforces the call's elements: a Distinct_Boundary outside its
-// bounds fails, and an Impossible whose referenced events all occurred fails. Every axis
+// Recorder_Dot_Product enforces the call's elements: an Impossible whose referenced events
+// all occurred fails. Every axis
 // violated on the call is named in one panic, not just the first, so a single run surfaces
 // them all. message is the grid's identity and is prefixed onto each held axis's own message
 // to form that axis's coverage key.
@@ -412,12 +289,12 @@ func Recorder_Dot_Product(recorder *Recorder, message string, bundle ...Dot_Elem
 	recorder_dot_product_observe(recorder, message, bundle)
 }
 
-// dot_product_check_references panics when an Impossible names a message that is not an axis of this
-// Dot_Product — one of its siblings. A reference can only carve a cell of this product's grid and can
-// only fire against an event observed on this same call, so naming a non-sibling is structurally
-// meaningless; catching it here, before any recording and on every call, surfaces a typo immediately
-// rather than as an unfillable gap — independent of whether the forbidden combination ever occurs. A
-// bundle with no Impossible costs nothing.
+// Panics when an Impossible names a message that is not an axis of this Dot_Product — one of its
+// siblings. A reference can only carve a cell of this product's grid and can only fire against an
+// event observed on this same call, so naming a non-sibling is structurally meaningless; catching
+// it here, before any recording and on every call, surfaces a typo immediately rather than as an
+// unfillable gap — independent of whether the forbidden combination ever occurs. A bundle with no
+// Impossible costs nothing.
 func dot_product_check_references(bundle Bundle) {
 	has_impossible := false
 	for _, dot_element := range bundle {
@@ -469,13 +346,10 @@ func recorder_dot_product_observe(
 		if dot_element.Kind == Dot_Element_Kind_Impossible {
 			continue
 		}
-		if dot_element.Event == Event_Kind_Interior {
-			continue
-		}
 		recorder_increment(
 			recorder,
 			message+Element_Message_Separator+dot_element.Message,
-			dot_element.Event == Event_Kind_True,
+			dot_element.Event,
 		)
 	}
 	tuple_key := recorder_tuple_key(message, dot_product_tuple(bundle))
@@ -483,8 +357,8 @@ func recorder_dot_product_observe(
 }
 
 // Returns the observed tuple of bucket indices for the call's varying elements, in order
-// — the runtime counterpart to the static grid's projected tuples. Only Sometimes and
-// Distinct_Boundary vary; an Impossible declares no axis and is skipped.
+// — the runtime counterpart to the static grid's projected tuples. Only Sometimes elements
+// vary; an Impossible declares no axis and is skipped.
 func dot_product_tuple(bundle Bundle) (tuple []int) {
 	tuple = make([]int, 0, len(bundle))
 	for _, dot_element := range bundle {
@@ -496,14 +370,10 @@ func dot_product_tuple(bundle Bundle) (tuple []int) {
 	return tuple
 }
 
-// Maps an observed varying element to its bucket index, mirroring the static grid:
-// False / Lo = 0, True / Hi = 1, a Boundary interior = -1 (missing the seeded grid, so it
-// earns no coverage). Only Sometimes and Distinct_Boundary reach here.
+// Maps an observed Sometimes element to its bucket index, mirroring the static grid:
+// false = 0, true = 1.
 func dot_element_bucket(dot_element Dot_Element) (bucket int) {
-	if dot_element.Event == Event_Kind_Interior {
-		return -1
-	}
-	if dot_element.Event == Event_Kind_True {
+	if dot_element.Event {
 		return 1
 	}
 	return 0
@@ -586,34 +456,17 @@ func Recorder_Merge_Fuzz_Coverage_From(recorder *Recorder, r io.Reader) {
 }
 
 // Returns the message describing how dot_element violates its invariant on this
-// call — a Boundary with a deferred violation, or an Impossible whose forbidden
-// combination occurred — naming the offending axis by its message. Returns "" when the
-// element holds. Always is not an element and never reaches here; it enforces eagerly.
+// call — an Impossible whose forbidden combination occurred — naming the offending axis by its
+// message. Returns "" when the element holds. Always is not an element and never reaches here; it
+// enforces eagerly.
 func dot_element_violation(
 	dot_element Dot_Element, bundle Bundle,
 ) (violation string) {
-	if dot_element.Kind == Dot_Element_Kind_Boundary {
-		return dot_element_boundary_violation(dot_element)
-	}
 	if dot_element.Kind != Dot_Element_Kind_Impossible {
 		return ""
 	}
 	if dot_element_impossible_violated(dot_element, bundle) {
 		return dot_element_impossible_message(dot_element)
-	}
-	return ""
-}
-
-// Returns the message for a Boundary carrying a deferred violation — X outside
-// [Lo, Hi], or bounds that aren't distinct (Lo >= Hi, or a NaN endpoint) — naming
-// the boundary's message. Returns "" when the boundary holds.
-func dot_element_boundary_violation(dot_element Dot_Element) (violation string) {
-	if dot_element.Event == Event_Kind_Outside {
-		return dot_element.Message + "  Boundary — value outside [Lo, Hi]"
-	}
-	if dot_element.Event == Event_Kind_Bad_Bounds {
-		return dot_element.Message +
-			"  Boundary — endpoints not distinct (Lo < Hi required)"
 	}
 	return ""
 }
@@ -625,17 +478,15 @@ func dot_element_boundary_violation(dot_element Dot_Element) (violation string) 
 func dot_element_impossible_message(impossible Dot_Element) (message string) {
 	message = "Impossible — forbidden combination occurred:"
 	for _, reference := range impossible.Impossibles {
-		event := event_kind_boolean_text(reference.Event_Kind)
+		event := event_boolean_text(reference.Event)
 		message += "\n  " + reference.Message + "  " + event
 	}
 	return message
 }
 
-// Renders an event kind as the boolean word an Impossible reference carries.
-// References are built only at True / False (by Event_True / Event_False), so any
-// other kind falls back to "false".
-func event_kind_boolean_text(event_kind Event_Kind) (text string) {
-	if event_kind == Event_Kind_True {
+// Renders an Impossible reference's event as the boolean word it carries.
+func event_boolean_text(event bool) (text string) {
+	if event {
 		return "true"
 	}
 	return "false"
@@ -671,7 +522,7 @@ func dot_element_reference_observed(
 		if dot_element.Message != reference.Message {
 			continue
 		}
-		if dot_element.Event != reference.Event_Kind {
+		if dot_element.Event != reference.Event {
 			continue
 		}
 		return true
@@ -1022,7 +873,7 @@ func recorder_register_function(
 // Seeds a reachability entry for a bare eager Always call — invariant.Always /
 // Recorder_Always / Always_Has_X / Never_Has_X — keyed by its own message. Without this a
 // never-reached Always could not be reported, since it never flows through a Dot_Product.
-// Calls of any other kind (a Sometimes, a Distinct_Boundary, a plain function) seed
+// Calls of any other kind (a Sometimes, a plain function) seed
 // nothing: a bare element records nothing and is the caller's responsibility to consume.
 // A duplicate Always message is a fatal collision.
 func recorder_register_eager_always(
@@ -1147,7 +998,7 @@ func recorder_check_bundle_dot_product(
 	recorder.Exit(1)
 }
 
-// A registration_axis is one Always/Sometimes/Boundary element discovered statically:
+// A registration_axis is one Always/Sometimes element discovered statically:
 // its Message (the element's own literal), the source text of its condition, its kind,
 // and how many buckets it contributes to the tuple grid (Always=1 true; Sometimes=2).
 // The consuming Dot_Product's message is prefixed onto Message to form the coverage key,
@@ -1644,33 +1495,28 @@ func ast_file_imports(file *ast.File) (imports map[string]string) {
 }
 
 // Maps an axis constructor selector to its assertion kind and the index of its
-// condition-bearing argument. The bare sugar forms (Always / Sometimes /
-// Distinct_Boundary) carry the condition first; the explicit Recorder_* forms lead with
-// the recorder, so the condition rides the second argument. is_axis is false for any
-// other selector. The Sometimes_Has_ / Always_Has_ / Never_Has_ helpers are absent here:
-// they take no recorder and report the whole call as their condition.
+// condition-bearing argument. The bare sugar forms (Always / Sometimes) carry the condition
+// first; the explicit Recorder_* forms lead with the recorder, so the condition rides the
+// second argument. is_axis is false for any other selector. The Sometimes_Has_ / Always_Has_ /
+// Never_Has_ helpers are absent here: they take no recorder and report the whole call as their
+// condition.
 func ast_axis_signature(selector string) (kind Assertion_Kind, condition_index int, is_axis bool) {
 	switch selector {
 	case "Always":
 		return Assertion_Kind_Always, 0, true
 	case "Sometimes":
 		return Assertion_Kind_Sometimes, 0, true
-	case "Distinct_Boundary":
-		return Assertion_Kind_Boundary, 0, true
 	case "Recorder_Always":
 		return Assertion_Kind_Always, 1, true
 	case "Recorder_Sometimes":
 		return Assertion_Kind_Sometimes, 1, true
-	case "Recorder_Distinct_Boundary":
-		return Assertion_Kind_Boundary, 1, true
 	}
 	return 0, 0, false
 }
 
-// Returns the axis for an Always/Sometimes/Distinct_Boundary constructor call, in either
-// the bare sugar form or the explicit Recorder_* form; is_axis is false for any other
-// call (Impossible, a bundle, a non-invariant call). A Boundary is a two-bucket axis
-// (Lo=0, Hi=1) named by its X expression.
+// Returns the axis for an Always/Sometimes constructor call, in either the bare sugar form or
+// the explicit Recorder_* form; is_axis is false for any other call (Impossible, a bundle, a
+// non-invariant call).
 func recorder_axis_of(
 	file_set *token.FileSet, call *ast.CallExpr, allow_unqualified bool, reg *registration,
 ) (axis registration_axis, is_axis bool) {
@@ -1680,11 +1526,6 @@ func recorder_axis_of(
 		bucket_count := 2
 		if kind == Assertion_Kind_Always {
 			bucket_count = 1
-		}
-		// A Boundary names itself by the X it bounds, dug out of the Boundary_Input
-		// composite literal rather than read as a plain condition expression.
-		if kind == Assertion_Kind_Boundary {
-			condition = ast_boundary_condition_text(file_set, call, condition_index)
 		}
 		// The message is the argument past the condition; the runtime stamps the same
 		// literal. A non-literal cannot be keyed, so it is reported and fails registration.
@@ -1812,8 +1653,8 @@ func ast_is_invariant_primitive(name string) (is_primitive bool) {
 		return true
 	}
 	switch name {
-	case "Always", "Sometimes", "Distinct_Boundary",
-		"Recorder_Always", "Recorder_Sometimes", "Recorder_Distinct_Boundary",
+	case "Always", "Sometimes",
+		"Recorder_Always", "Recorder_Sometimes",
 		"Impossible", "Event_True", "Event_False":
 		return true
 	}
@@ -1849,9 +1690,9 @@ func ast_resolve_element(
 }
 
 // Resolves an Impossible's Event_True("msg")/Event_False("msg") references into (axis position,
-// bucket) cells by matching each reference's message literal to a sibling axis. ok is false — and the
-// carve skipped — when a reference names no sibling (Recorder_Dot_Product panics on it at runtime, so
-// it is not a registration error) or is non-literal (recorded as a fatal diagnostic).
+// bucket) cells by matching each reference's message literal to a sibling axis. ok is false — and
+// the carve skipped — when a reference names no sibling (Recorder_Dot_Product panics on it at
+// runtime, so it is not a registration error) or is non-literal (recorded as a fatal diagnostic).
 func ast_resolve_cells(
 	file_set *token.FileSet, impossible *ast.CallExpr, axes []registration_axis,
 	allow_unqualified bool, reg *registration,
@@ -1875,13 +1716,16 @@ func ast_resolve_cells(
 				break
 			}
 		}
-		// A reference that names no sibling axis cannot be carved. It is not a registration error:
-		// Recorder_Dot_Product panics on it at runtime (dot_product_check_references), and an
-		// unexercised product fails as a gap anyway — so the carve is simply skipped here.
+		// A reference that names no sibling axis cannot be carved. It is not a
+		// registration error: Recorder_Dot_Product panics on it at runtime
+		// (dot_product_check_references), and an unexercised product fails as a gap
+		// anyway — so the carve is simply skipped here.
 		if position < 0 {
 			return nil, false
 		}
-		bucket := ast_event_bucket(ast_selector(reference, allow_unqualified), axes[position])
+		bucket := ast_event_bucket(
+			ast_selector(reference, allow_unqualified), axes[position],
+		)
 		if bucket < 0 {
 			return nil, false
 		}
@@ -1933,49 +1777,6 @@ func ast_expression_text(file_set *token.FileSet, expression ast.Expr) (text str
 		return ""
 	}
 	return buffer.String()
-}
-
-// Returns the source text of a Distinct_Boundary's X expression — the value the
-// boundary tracks — so the report names the boundary by what it bounds. Falls
-// back to the whole argument when the Boundary_Input literal can't be read.
-func ast_boundary_condition_text(
-	file_set *token.FileSet, call *ast.CallExpr, condition_index int,
-) (text string) {
-	if len(call.Args) <= condition_index {
-		return ""
-	}
-	composite := ast_boundary_composite(call.Args[condition_index])
-	if composite == nil {
-		return ast_expression_text(file_set, call.Args[condition_index])
-	}
-	for _, element := range composite.Elts {
-		keyed, is_keyed := element.(*ast.KeyValueExpr)
-		if !is_keyed {
-			continue
-		}
-		key, is_identifier := keyed.Key.(*ast.Ident)
-		if !is_identifier {
-			continue
-		}
-		if key.Name != "X" {
-			continue
-		}
-		return ast_expression_text(file_set, keyed.Value)
-	}
-	return ""
-}
-
-// Unwraps a Distinct_Boundary argument to its Boundary_Input composite literal,
-// tolerating the leading & (a &Boundary_Input{...} pointer). Returns nil when the
-// argument isn't a composite literal.
-func ast_boundary_composite(argument ast.Expr) (composite *ast.CompositeLit) {
-	if unary, is_unary := argument.(*ast.UnaryExpr); is_unary {
-		argument = unary.X
-	}
-	if literal, is_literal := argument.(*ast.CompositeLit); is_literal {
-		return literal
-	}
-	return nil
 }
 
 // Seeds one tuple entry per bucket combination of the varying axes, skipping any tuple a
@@ -2120,9 +1921,8 @@ func recorder_collect_gaps(recorder *Recorder) (gaps []coverage_gap) {
 }
 
 // Returns the coverage gaps one assertion exhibits. A Sometimes contributes a gap
-// per branch it never observed (true and/or false); a Boundary likewise per
-// endpoint (Hi via Frequency, Lo via False_Frequency); an Always or Tuple that
-// never fired is a single gap; a fully exercised assertion contributes none.
+// per branch it never observed (true and/or false); an Always or Tuple that never
+// fired is a single gap; a fully exercised assertion contributes none.
 func assertion_metadata_gaps(metadata *Assertion_Metadata) (gaps []coverage_gap) {
 	if metadata.Kind == Assertion_Kind_Sometimes {
 		if metadata.Frequency.Load() == 0 {
@@ -2133,19 +1933,6 @@ func assertion_metadata_gaps(metadata *Assertion_Metadata) (gaps []coverage_gap)
 		if metadata.False_Frequency.Load() == 0 {
 			gaps = append(gaps, coverage_gap{
 				Metadata: metadata, Reason: "false branch never observed",
-			})
-		}
-		return gaps
-	}
-	if metadata.Kind == Assertion_Kind_Boundary {
-		if metadata.Frequency.Load() == 0 {
-			gaps = append(gaps, coverage_gap{
-				Metadata: metadata, Reason: "Hi endpoint never observed",
-			})
-		}
-		if metadata.False_Frequency.Load() == 0 {
-			gaps = append(gaps, coverage_gap{
-				Metadata: metadata, Reason: "Lo endpoint never observed",
 			})
 		}
 		return gaps
@@ -2169,10 +1956,6 @@ func recorder_report_gaps(recorder *Recorder, gaps []coverage_gap) {
 	recorder_report_section(&recorder_report_section_input{
 		Output: recorder.Output, Title: "Branch gaps", Gaps: gaps,
 		Kind: Assertion_Kind_Sometimes,
-	})
-	recorder_report_section(&recorder_report_section_input{
-		Output: recorder.Output, Title: "Boundary gaps", Gaps: gaps,
-		Kind: Assertion_Kind_Boundary,
 	})
 	recorder_report_section(&recorder_report_section_input{
 		Output: recorder.Output, Title: "Reachability gaps", Gaps: gaps,
@@ -2202,9 +1985,9 @@ func recorder_report_section(input *recorder_report_section_input) {
 	if len(selected) == 0 {
 		return
 	}
-	// Two gaps can share a message — a Sometimes missing both branches, a Boundary missing
-	// both endpoints — so the Reason breaks the tie. Without it the order rides on the
-	// tracker's unordered iteration and the report is non-deterministic.
+	// Two gaps can share a message — a Sometimes missing both branches — so the Reason breaks
+	// the tie. Without it the order rides on the tracker's unordered iteration and the report
+	// is non-deterministic.
 	sort.Slice(selected, func(i, j int) (less bool) {
 		if selected[i].Metadata.Message != selected[j].Metadata.Message {
 			return selected[i].Metadata.Message < selected[j].Metadata.Message
@@ -2298,17 +2081,11 @@ func coverage_gap_cell(cell coverage_gap) (line string) {
 }
 
 // Decodes a bucket index for an axis of the given kind into the event it stands for: a
-// Sometimes 0/1 into false/true, a Boundary 0/1 into Lo/Hi, an Always into held (its one
-// bucket means the condition held, the only outcome an Always records).
+// Sometimes 0/1 into false/true, an Always into held (its one bucket means the condition held,
+// the only outcome an Always records).
 func assertion_kind_bucket_text(kind Assertion_Kind, index int) (text string) {
 	if kind == Assertion_Kind_Always {
 		return "held"
-	}
-	if kind == Assertion_Kind_Boundary {
-		if index == 1 {
-			return "Hi"
-		}
-		return "Lo"
 	}
 	if index == 1 {
 		return "true"
@@ -2316,7 +2093,7 @@ func assertion_kind_bucket_text(kind Assertion_Kind, index int) (text string) {
 	return "false"
 }
 
-// Renders one branch, boundary, or reachability gap as a report line, naming its kind,
+// Renders one branch or reachability gap as a report line, naming its kind,
 // reason, and condition source. Tuple gaps are rendered by recorder_report_cross_product,
 // which carries the per-grid legend this line cannot.
 func coverage_gap_line(gap coverage_gap) (line string) {
@@ -2336,9 +2113,6 @@ func message_display(message string) (display string) {
 func assertion_kind_name(kind Assertion_Kind) (name string) {
 	if kind == Assertion_Kind_Sometimes {
 		return "Sometimes"
-	}
-	if kind == Assertion_Kind_Boundary {
-		return "Boundary"
 	}
 	if kind == Assertion_Kind_Tuple {
 		return "Tuple"
@@ -2362,9 +2136,6 @@ func Recorder_Assertion_Summary(recorder *Recorder) (summary string) {
 			individual++
 		}
 		if metadata.Kind == Assertion_Kind_Always {
-			panic_able++
-		}
-		if metadata.Kind == Assertion_Kind_Boundary {
 			panic_able++
 		}
 		return true
