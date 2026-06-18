@@ -1,8 +1,8 @@
 // Package invariant_default is the composition-tier sibling of invariant. It
 // wires the pure library to the real OS — local filesystem, stderr, os.Args
-// sniffing, runtime.Callers, os.Exit — and re-exports the surface. Import it
-// aliased as invariant and use invariant.Always / invariant.Sometimes /
-// invariant.Dot_Product as if no split between pure and OS-bound tiers existed.
+// sniffing, os.Exit — and re-exports the surface. Import it aliased as invariant
+// and use invariant.Always / invariant.Sometimes / invariant.Dot_Product as if no
+// split between pure and OS-bound tiers existed.
 package invariant
 
 import (
@@ -10,7 +10,6 @@ import (
 	"math"
 	"os"
 	"reflect"
-	"runtime"
 	"strings"
 	"testing"
 	"unicode"
@@ -57,8 +56,9 @@ type sugar_package_marker struct{}
 var Default = Init_Default_Recorder()
 
 // Init_Default_Recorder builds a Recorder wired to the host OS: the local
-// filesystem rooted at "/", os.Stderr, os.Exit, and runtime.Callers. It sniffs
-// os.Args once for the test / fuzz / benchmark environment flags.
+// filesystem rooted at "/", os.Stderr, and os.Exit. It sniffs os.Args once for
+// the test / fuzz / benchmark environment flags. No caller seam is wired — an
+// assertion is identified by its message, not its source location.
 func Init_Default_Recorder() (recorder *invariant.Recorder) {
 	is_test, is_fuzz, is_benchmark := running_environment_flags()
 	// /dev/tty bypasses `go test`'s stdout/stderr capture so the success summary
@@ -71,18 +71,9 @@ func Init_Default_Recorder() (recorder *invariant.Recorder) {
 	}
 	working_directory, _ := os.Getwd()
 	return &invariant.Recorder{
-		Output:      os.Stderr,
-		Tty:         tty,
-		File_System: os.DirFS("/"),
-		Get_Caller: func(skip int) (file string, line int) {
-			// The +1 compensates for this closure's own frame: callers pass skip
-			// as if Get_Caller were a transparent passthrough, but the closure
-			// body is itself one frame above runtime.Callers.
-			program_counters := [1]uintptr{}
-			count := runtime.Callers(skip+1, program_counters[:])
-			frame, _ := runtime.CallersFrames(program_counters[:count]).Next()
-			return frame.File, frame.Line
-		},
+		Output:              os.Stderr,
+		Tty:                 tty,
+		File_System:         os.DirFS("/"),
 		Exit:                os.Exit,
 		Is_Test:             is_test,
 		Is_Fuzz:             is_fuzz,
@@ -126,32 +117,27 @@ func Analyze_Assertion_Frequency() {
 	invariant.Recorder_Analyze_Assertion_Frequency(Default)
 }
 
-// Always is an eager guard: it panics immediately when condition is false, naming its own
-// call site. It is not an element and is never passed to Dot_Product. Under a plain test
-// run a never-reached Always surfaces as a reachability gap.
-//
-//go:noinline
-func Always[T ~bool](condition T) {
-	invariant.Recorder_Always(Default, condition)
+// Always is an eager guard: it panics immediately when condition is false, naming itself by
+// message. It is not an element and is never passed to Dot_Product. Under a plain test run a
+// never-reached Always surfaces as a reachability gap.
+func Always[T ~bool](condition T, message string) {
+	invariant.Recorder_Always(Default, condition, message)
 }
 
-// Sometimes builds an element whose condition must be observed both true and
-// false across the run. Only Dot_Product enforces coverage of both branches.
-//
-//go:noinline
-func Sometimes[T ~bool](condition T) (dot_element invariant.Dot_Element) {
-	return invariant.Recorder_Sometimes(Default, condition)
+// Sometimes builds an element whose condition must be observed both true and false across
+// the run; message is its own identity, prefixed by the consuming Dot_Product. Only
+// Dot_Product enforces coverage of both branches.
+func Sometimes[T ~bool](condition T, message string) (dot_element invariant.Dot_Element) {
+	return invariant.Recorder_Sometimes(Default, condition, message)
 }
 
-// Distinct_Boundary builds an element asserting Lo < Hi and Lo <= X <= Hi,
-// tracking which endpoint X lands on. Like the other producers it never panics
+// Distinct_Boundary builds an element asserting Lo < Hi and Lo <= X <= Hi, tracking which
+// endpoint X lands on; message is its own identity. Like the other producers it never panics
 // on its own — enforcement fires only when the element is consumed by Dot_Product.
-//
-//go:noinline
 func Distinct_Boundary[I invariant.Numeric](
-	input *invariant.Boundary_Input[I],
+	input *invariant.Boundary_Input[I], message string,
 ) (dot_element invariant.Dot_Element) {
-	return invariant.Recorder_Distinct_Boundary(Default, input)
+	return invariant.Recorder_Distinct_Boundary(Default, input, message)
 }
 
 // Impossible declares that the referenced element events must never all co-occur on
@@ -173,12 +159,11 @@ func Event_False(event invariant.Event) (reference invariant.Dot_Element_Referen
 	return invariant.Event_False(event)
 }
 
-// Dot_Product enforces the call's elements and, under test, records the observed
-// element events and their combination against the pre-registered coverage grid.
-//
-//go:noinline
-func Dot_Product(dot_elements ...invariant.Dot_Element) {
-	invariant.Recorder_Dot_Product(Default, dot_elements...)
+// Dot_Product enforces the call's elements and, under test, records the observed element
+// events and their combination against the pre-registered coverage grid. message identifies
+// the grid and is prefixed onto each held axis's own message to form its coverage key.
+func Dot_Product(message string, dot_elements ...invariant.Dot_Element) {
+	invariant.Recorder_Dot_Product(Default, message, dot_elements...)
 }
 
 // Whole_Number constrains a generic to Go's integer kinds, signed and unsigned alike
@@ -222,18 +207,18 @@ func whole_number_min[I Whole_Number]() (lo I) {
 // axes 0, 1, 2 (each must be observed both ways) plus a Distinct_Boundary over the
 // type's full range [whole_number_min, whole_number_max]. The boundary tracks reaching
 // each endpoint, so the run is covered once the value is observed at both the floor and
-// the ceiling.
+// the ceiling. Element messages are local; the consuming Dot_Product namespaces them.
 func Whole_Number_Invariants[I Whole_Number](n I) (dot_elements []invariant.Dot_Element) {
 	return append(
 		dot_elements,
-		invariant.Recorder_Sometimes(Default, n == 0),
-		invariant.Recorder_Sometimes(Default, n == 1),
-		invariant.Recorder_Sometimes(Default, n == 2),
+		invariant.Recorder_Sometimes(Default, n == 0, "zero"),
+		invariant.Recorder_Sometimes(Default, n == 1, "one"),
+		invariant.Recorder_Sometimes(Default, n == 2, "two"),
 		invariant.Recorder_Distinct_Boundary(Default, &Boundary_Input[I]{
 			X:  n,
 			Lo: whole_number_min[I](),
 			Hi: whole_number_max[I](),
-		}),
+		}, "range"),
 	)
 }
 
@@ -242,9 +227,9 @@ func Whole_Number_Invariants[I Whole_Number](n I) (dot_elements []invariant.Dot_
 // either sign, and the two signs exclude each other. ±Inf fold into the signs.
 func Float_Invariants[F ~float32 | ~float64](f F) (dot_elements []invariant.Dot_Element) {
 	value := float64(f)
-	not_a_number := Sometimes(math.IsNaN(value))
-	negative := Sometimes(value < 0)
-	positive := Sometimes(value > 0)
+	not_a_number := Sometimes(math.IsNaN(value), "nan")
+	negative := Sometimes(value < 0, "negative")
+	positive := Sometimes(value > 0, "positive")
 	return append(dot_elements,
 		not_a_number, negative, positive,
 		Impossible(Event_True(not_a_number), Event_True(negative)),
@@ -261,7 +246,7 @@ func Float_Invariants[F ~float32 | ~float64](f F) (dot_elements []invariant.Dot_
 // string excludes every content axis, and a NUL byte or a line break is itself a
 // control character.
 func String_Invariants(s string) (dot_elements []invariant.Dot_Element) {
-	empty := Sometimes(len(s) == 0)
+	empty := Sometimes(len(s) == 0, "empty")
 	edge_whitespace := Sometimes_Has_Edge_Whitespace(s)
 	interior_whitespace := Sometimes_Has_Interior_Whitespace(s)
 	invalid_utf8 := Sometimes_Has_Invalid_UTF8(s)
@@ -285,182 +270,135 @@ func String_Invariants(s string) (dot_elements []invariant.Dot_Element) {
 	)
 }
 
-// Sometimes_Has_Edge_Whitespace records whether s begins or ends with whitespace.
-//
-//go:noinline
+// Sometimes_Has_Edge_Whitespace records whether s begins or ends with whitespace. Its
+// message is its own name, which the static registration derives from the call selector.
 func Sometimes_Has_Edge_Whitespace(s string) (dot_element invariant.Dot_Element) {
-	return invariant.Recorder_Sometimes(Default, string_has_edge_whitespace(s))
+	return invariant.Recorder_Sometimes(Default, string_has_edge_whitespace(s), "Sometimes_Has_Edge_Whitespace")
 }
 
 // Always_Has_Edge_Whitespace asserts s always begins or ends with whitespace.
-//
-//go:noinline
 func Always_Has_Edge_Whitespace(s string) {
-	invariant.Recorder_Always(Default, string_has_edge_whitespace(s))
+	invariant.Recorder_Always(Default, string_has_edge_whitespace(s), "Always_Has_Edge_Whitespace")
 }
 
 // Sometimes_Has_Interior_Whitespace records whether s has whitespace off its edges.
-//
-//go:noinline
 func Sometimes_Has_Interior_Whitespace(s string) (dot_element invariant.Dot_Element) {
-	return invariant.Recorder_Sometimes(Default, string_has_interior_whitespace(s))
+	return invariant.Recorder_Sometimes(Default, string_has_interior_whitespace(s), "Sometimes_Has_Interior_Whitespace")
 }
 
 // Always_Has_Interior_Whitespace asserts s always has whitespace off its edges.
-//
-//go:noinline
 func Always_Has_Interior_Whitespace(s string) {
-	invariant.Recorder_Always(Default, string_has_interior_whitespace(s))
+	invariant.Recorder_Always(Default, string_has_interior_whitespace(s), "Always_Has_Interior_Whitespace")
 }
 
 // Sometimes_Has_Invalid_UTF8 records whether s is sometimes not valid UTF-8.
-//
-//go:noinline
 func Sometimes_Has_Invalid_UTF8(s string) (dot_element invariant.Dot_Element) {
-	return invariant.Recorder_Sometimes(Default, string_has_invalid_utf8(s))
+	return invariant.Recorder_Sometimes(Default, string_has_invalid_utf8(s), "Sometimes_Has_Invalid_UTF8")
 }
 
 // Always_Has_Invalid_UTF8 asserts s is always not valid UTF-8.
-//
-//go:noinline
 func Always_Has_Invalid_UTF8(s string) {
-	invariant.Recorder_Always(Default, string_has_invalid_utf8(s))
+	invariant.Recorder_Always(Default, string_has_invalid_utf8(s), "Always_Has_Invalid_UTF8")
 }
 
 // Sometimes_Has_Nul records whether s sometimes contains a NUL (0x00) byte.
-//
-//go:noinline
 func Sometimes_Has_Nul(s string) (dot_element invariant.Dot_Element) {
-	return invariant.Recorder_Sometimes(Default, string_has_nul(s))
+	return invariant.Recorder_Sometimes(Default, string_has_nul(s), "Sometimes_Has_Nul")
 }
 
 // Always_Has_Nul asserts s always contains a NUL (0x00) byte.
-//
-//go:noinline
 func Always_Has_Nul(s string) {
-	invariant.Recorder_Always(Default, string_has_nul(s))
+	invariant.Recorder_Always(Default, string_has_nul(s), "Always_Has_Nul")
 }
 
 // Sometimes_Has_Multibyte_Rune records whether s's byte count sometimes differs from
 // its rune count — a multi-byte rune is present.
-//
-//go:noinline
 func Sometimes_Has_Multibyte_Rune(s string) (dot_element invariant.Dot_Element) {
-	return invariant.Recorder_Sometimes(Default, string_has_multibyte_rune(s))
+	return invariant.Recorder_Sometimes(Default, string_has_multibyte_rune(s), "Sometimes_Has_Multibyte_Rune")
 }
 
 // Always_Has_Multibyte_Rune asserts s's byte count always differs from its rune count.
-//
-//go:noinline
 func Always_Has_Multibyte_Rune(s string) {
-	invariant.Recorder_Always(Default, string_has_multibyte_rune(s))
+	invariant.Recorder_Always(Default, string_has_multibyte_rune(s), "Always_Has_Multibyte_Rune")
 }
 
 // Sometimes_Has_Control records whether s sometimes contains a control character.
-//
-//go:noinline
 func Sometimes_Has_Control(s string) (dot_element invariant.Dot_Element) {
-	return invariant.Recorder_Sometimes(Default, string_has_control(s))
+	return invariant.Recorder_Sometimes(Default, string_has_control(s), "Sometimes_Has_Control")
 }
 
 // Always_Has_Control asserts s always contains a control character.
-//
-//go:noinline
 func Always_Has_Control(s string) {
-	invariant.Recorder_Always(Default, string_has_control(s))
+	invariant.Recorder_Always(Default, string_has_control(s), "Always_Has_Control")
 }
 
 // Sometimes_Has_Line_Break records whether s sometimes contains a carriage return or
 // line feed.
-//
-//go:noinline
 func Sometimes_Has_Line_Break(s string) (dot_element invariant.Dot_Element) {
-	return invariant.Recorder_Sometimes(Default, string_has_line_break(s))
+	return invariant.Recorder_Sometimes(Default, string_has_line_break(s), "Sometimes_Has_Line_Break")
 }
 
 // Always_Has_Line_Break asserts s always contains a carriage return or line feed.
-//
-//go:noinline
 func Always_Has_Line_Break(s string) {
-	invariant.Recorder_Always(Default, string_has_line_break(s))
+	invariant.Recorder_Always(Default, string_has_line_break(s), "Always_Has_Line_Break")
 }
 
 // Sometimes_Has_Non_ASCII records whether s sometimes contains a non-ASCII byte.
-//
-//go:noinline
 func Sometimes_Has_Non_ASCII(s string) (dot_element invariant.Dot_Element) {
-	return invariant.Recorder_Sometimes(Default, string_has_non_ascii(s))
+	return invariant.Recorder_Sometimes(Default, string_has_non_ascii(s), "Sometimes_Has_Non_ASCII")
 }
 
 // Always_Has_Non_ASCII asserts s always contains a non-ASCII byte.
-//
-//go:noinline
 func Always_Has_Non_ASCII(s string) {
-	invariant.Recorder_Always(Default, string_has_non_ascii(s))
+	invariant.Recorder_Always(Default, string_has_non_ascii(s), "Always_Has_Non_ASCII")
 }
 
 // Never_Has_Edge_Whitespace asserts s never begins or ends with whitespace.
-//
-//go:noinline
 func Never_Has_Edge_Whitespace(s string) {
-	invariant.Recorder_Always(Default, !string_has_edge_whitespace(s))
+	invariant.Recorder_Always(Default, !string_has_edge_whitespace(s), "Never_Has_Edge_Whitespace")
 }
 
 // Never_Has_Interior_Whitespace asserts s never has whitespace off its edges.
-//
-//go:noinline
 func Never_Has_Interior_Whitespace(s string) {
-	invariant.Recorder_Always(Default, !string_has_interior_whitespace(s))
+	invariant.Recorder_Always(Default, !string_has_interior_whitespace(s), "Never_Has_Interior_Whitespace")
 }
 
 // Never_Has_Invalid_UTF8 asserts s is always valid UTF-8.
-//
-//go:noinline
 func Never_Has_Invalid_UTF8(s string) {
-	invariant.Recorder_Always(Default, !string_has_invalid_utf8(s))
+	invariant.Recorder_Always(Default, !string_has_invalid_utf8(s), "Never_Has_Invalid_UTF8")
 }
 
 // Never_Has_Nul asserts s never contains a NUL (0x00) byte.
-//
-//go:noinline
 func Never_Has_Nul(s string) {
-	invariant.Recorder_Always(Default, !string_has_nul(s))
+	invariant.Recorder_Always(Default, !string_has_nul(s), "Never_Has_Nul")
 }
 
 // Never_Has_Multibyte_Rune asserts s's byte count always equals its rune count.
-//
-//go:noinline
 func Never_Has_Multibyte_Rune(s string) {
-	invariant.Recorder_Always(Default, !string_has_multibyte_rune(s))
+	invariant.Recorder_Always(Default, !string_has_multibyte_rune(s), "Never_Has_Multibyte_Rune")
 }
 
 // Never_Has_Control asserts s never contains a control character.
-//
-//go:noinline
 func Never_Has_Control(s string) {
-	invariant.Recorder_Always(Default, !string_has_control(s))
+	invariant.Recorder_Always(Default, !string_has_control(s), "Never_Has_Control")
 }
 
 // Never_Has_Line_Break asserts s never contains a carriage return or line feed.
-//
-//go:noinline
 func Never_Has_Line_Break(s string) {
-	invariant.Recorder_Always(Default, !string_has_line_break(s))
+	invariant.Recorder_Always(Default, !string_has_line_break(s), "Never_Has_Line_Break")
 }
 
 // Never_Has_Non_ASCII asserts s never contains a non-ASCII byte.
-//
-//go:noinline
 func Never_Has_Non_ASCII(s string) {
-	invariant.Recorder_Always(Default, !string_has_non_ascii(s))
+	invariant.Recorder_Always(Default, !string_has_non_ascii(s), "Never_Has_Non_ASCII")
 }
 
 // Slice_Invariants is the preset coverage for a slice: nil, empty-but-non-nil,
 // and non-empty must each be observed — the nil/empty distinction Go draws. A nil
 // slice is necessarily empty, which the Impossible records.
 func Slice_Invariants[E any](s []E) (dot_elements []invariant.Dot_Element) {
-	empty := Sometimes(len(s) == 0)
-	is_nil := Sometimes(s == nil)
+	empty := Sometimes(len(s) == 0, "empty")
+	is_nil := Sometimes(s == nil, "nil")
 	return append(dot_elements,
 		empty, is_nil,
 		Impossible(Event_True(is_nil), Event_False(empty)),
@@ -470,8 +408,8 @@ func Slice_Invariants[E any](s []E) (dot_elements []invariant.Dot_Element) {
 // Map_Invariants is the preset coverage for a map: nil, empty-but-non-nil, and
 // non-empty must each be observed. A nil map is necessarily empty.
 func Map_Invariants[K comparable, V any](m map[K]V) (dot_elements []invariant.Dot_Element) {
-	empty := Sometimes(len(m) == 0)
-	is_nil := Sometimes(m == nil)
+	empty := Sometimes(len(m) == 0, "empty")
+	is_nil := Sometimes(m == nil, "nil")
 	return append(dot_elements,
 		empty, is_nil,
 		Impossible(Event_True(is_nil), Event_False(empty)),
