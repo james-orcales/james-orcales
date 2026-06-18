@@ -222,8 +222,13 @@ records nothing and is not flagged — consuming an element is the author's resp
 
 ### Modes
 
-Coverage is recorded and checked only under a plain test run; a fuzz or benchmark
-run records and checks nothing.
+Coverage is recorded in every mode but a benchmark — a plain test run, a fuzzing coordinator, and a
+fuzz worker subprocess all credit observations; only a benchmark records nothing. Under a fuzzing run
+the coordinator never executes the fuzzed body (the worker subprocesses do), so each worker appends
+every newly-covered cell to one shared file and the coordinator unions that file into its grid before
+the analysis. The analysis runs in a plain test and the coordinator, never in a worker (a worker's
+view is partial). Enforcement fires in every mode, workers included. Aggregation is best-effort: a
+worker killed mid-input loses at most that input's not-yet-written cells.
 
 ### Enforcement
 
