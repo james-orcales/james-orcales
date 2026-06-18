@@ -13,19 +13,18 @@ import (
 	snap "github.com/james-orcales/james-orcales/shared/snap/default"
 )
 
-// Test_Always_Violation: a false Always panics at its own call site, in every run mode,
-// naming itself by that site — there is no Dot_Product to defer to.
+// Test_Always_Violation: a false Always panics on its own, in every run mode, naming
+// itself by its message — there is no Dot_Product to defer to.
 func Test_Always_Violation(t *testing.T) {
 	recorder := new_test_recorder()
 	message := recover_message(func() {
-		invariant.Recorder_Always(recorder, false)
+		invariant.Recorder_Always(recorder, false, "balance non-negative")
 	})
 	if message == "" {
 		t.Fatal("a false Always must panic on its own")
 	}
-	// The first (and only) site lookup gets fixture.go:1 from new_test_recorder.
-	if !strings.Contains(message, "fixture.go:1") {
-		t.Fatalf("the panic must name the Always site, got: %s", message)
+	if !strings.Contains(message, "balance non-negative") {
+		t.Fatalf("the panic must name the Always by its message, got: %s", message)
 	}
 	if !strings.Contains(message, "Always — condition was false") {
 		t.Fatalf("the panic must describe the Always violation, got: %s", message)
@@ -38,7 +37,7 @@ func Test_Always_Eager(t *testing.T) {
 	recorder := new_test_recorder()
 	reached_next := false
 	did_panic(func() {
-		invariant.Recorder_Always(recorder, false)
+		invariant.Recorder_Always(recorder, false, "guard")
 		reached_next = true
 	})
 	if reached_next {
@@ -54,17 +53,17 @@ func Test_Always_Reachability(t *testing.T) {
 		Is_Test: true, Output: &output, Exit: func(code int) { exit_code = code },
 	}
 	metadata := &invariant.Assertion_Metadata{
-		Kind: invariant.Assertion_Kind_Always, Site: "f.go:9", Condition: "x > 0",
+		Kind: invariant.Assertion_Kind_Always, Message: "positive", Condition: "x > 0",
 	}
-	recorder.Assertions.Store("f.go:9", metadata)
+	recorder.Assertions.Store("positive", metadata)
 
 	invariant.Recorder_Analyze_Assertion_Frequency(recorder)
 
 	if exit_code != 1 {
 		t.Fatalf("an unreached Always must exit 1, got %d", exit_code)
 	}
-	if !strings.Contains(output.String(), "f.go:9") {
-		t.Errorf("report must name the unreached Always site, got: %s", output.String())
+	if !strings.Contains(output.String(), "positive") {
+		t.Errorf("report must name the unreached Always by its message, got: %s", output.String())
 	}
 }
 
@@ -72,13 +71,14 @@ func Test_Always_Reachability(t *testing.T) {
 func Test_Sometimes_Coverage(t *testing.T) {
 	recorder := new_test_recorder()
 	recorder.Is_Test = true
-	element := invariant.Recorder_Sometimes(recorder, true)
+	element := invariant.Recorder_Sometimes(recorder, true, "zero")
+	key := "check" + invariant.Element_Message_Separator + element.Message
 	metadata := &invariant.Assertion_Metadata{
-		Kind: invariant.Assertion_Kind_Sometimes, Site: element.Site,
+		Kind: invariant.Assertion_Kind_Sometimes, Message: key,
 	}
-	recorder.Assertions.Store(element.Site, metadata)
+	recorder.Assertions.Store(key, metadata)
 
-	invariant.Recorder_Dot_Product(recorder, element)
+	invariant.Recorder_Dot_Product(recorder, "check", element)
 
 	if metadata.Frequency.Load() != 1 {
 		t.Fatalf("a true Sometimes must credit the true branch, got %d",
@@ -108,15 +108,15 @@ func Test_Sometimes_Gap(t *testing.T) {
 			Is_Test: true, Output: &output, Exit: func(code int) { exit_code = code },
 		}
 		metadata := &invariant.Assertion_Metadata{
-			Kind: invariant.Assertion_Kind_Sometimes,
-			Site: "f.go:3", Condition: "n == 0",
+			Kind:    invariant.Assertion_Kind_Sometimes,
+			Message: "zero", Condition: "n == 0",
 		}
 		if one.Seen_True {
 			metadata.Frequency.Add(1)
 		} else {
 			metadata.False_Frequency.Add(1)
 		}
-		recorder.Assertions.Store("f.go:3", metadata)
+		recorder.Assertions.Store("zero", metadata)
 
 		invariant.Recorder_Analyze_Assertion_Frequency(recorder)
 
@@ -148,13 +148,14 @@ func Test_Distinct_Boundary_Endpoints(t *testing.T) {
 		recorder := new_test_recorder()
 		recorder.Is_Test = true
 		element := invariant.Recorder_Distinct_Boundary(
-			recorder, &invariant.Boundary_Input[int]{X: one.X, Lo: 0, Hi: 3})
+			recorder, &invariant.Boundary_Input[int]{X: one.X, Lo: 0, Hi: 3}, "range")
+		key := "check" + invariant.Element_Message_Separator + element.Message
 		metadata := &invariant.Assertion_Metadata{
-			Kind: invariant.Assertion_Kind_Boundary, Site: element.Site,
+			Kind: invariant.Assertion_Kind_Boundary, Message: key,
 		}
-		recorder.Assertions.Store(element.Site, metadata)
+		recorder.Assertions.Store(key, metadata)
 
-		invariant.Recorder_Dot_Product(recorder, element)
+		invariant.Recorder_Dot_Product(recorder, "check", element)
 
 		if metadata.Frequency.Load() != one.Frequency {
 			t.Errorf("%s: Frequency = %d, want %d",
@@ -168,74 +169,74 @@ func Test_Distinct_Boundary_Endpoints(t *testing.T) {
 }
 
 // Test_Distinct_Boundary_Outside: a value beyond [Lo, Hi] panics at the Dot_Product,
-// naming the boundary's site.
+// naming the boundary by its message.
 func Test_Distinct_Boundary_Outside(t *testing.T) {
 	recorder := new_test_recorder()
 	boundary := invariant.Recorder_Distinct_Boundary(
-		recorder, &invariant.Boundary_Input[int]{X: 5, Lo: 0, Hi: 3})
+		recorder, &invariant.Boundary_Input[int]{X: 5, Lo: 0, Hi: 3}, "range")
 	message := recover_message(func() {
-		invariant.Recorder_Dot_Product(recorder, boundary)
+		invariant.Recorder_Dot_Product(recorder, "check", boundary)
 	})
 	if message == "" {
 		t.Fatal("a value outside [Lo, Hi] must panic at the Dot_Product")
 	}
-	if !strings.Contains(message, boundary.Site) {
-		t.Fatalf("the panic must name the boundary site %q, got: %s",
-			boundary.Site, message)
+	if !strings.Contains(message, boundary.Message) {
+		t.Fatalf("the panic must name the boundary message %q, got: %s",
+			boundary.Message, message)
 	}
 }
 
 // Test_Distinct_Boundary_Bad_Bounds: endpoints that are not distinct panic, naming the
-// boundary's site.
+// boundary by its message.
 func Test_Distinct_Boundary_Bad_Bounds(t *testing.T) {
 	recorder := new_test_recorder()
 	boundary := invariant.Recorder_Distinct_Boundary(
-		recorder, &invariant.Boundary_Input[int]{X: 3, Lo: 3, Hi: 3})
+		recorder, &invariant.Boundary_Input[int]{X: 3, Lo: 3, Hi: 3}, "range")
 	message := recover_message(func() {
-		invariant.Recorder_Dot_Product(recorder, boundary)
+		invariant.Recorder_Dot_Product(recorder, "check", boundary)
 	})
 	if message == "" {
 		t.Fatal("endpoints that are not distinct must panic at the Dot_Product")
 	}
-	if !strings.Contains(message, boundary.Site) {
-		t.Fatalf("the panic must name the boundary site %q, got: %s",
-			boundary.Site, message)
+	if !strings.Contains(message, boundary.Message) {
+		t.Fatalf("the panic must name the boundary message %q, got: %s",
+			boundary.Message, message)
 	}
 }
 
 // Test_Impossible_Violation: when the forbidden combination occurs, Dot_Product panics,
-// naming each co-occurring axis by its site.
+// naming each co-occurring axis by its message.
 func Test_Impossible_Violation(t *testing.T) {
 	recorder := new_test_recorder()
-	first := invariant.Recorder_Sometimes(recorder, true)
-	second := invariant.Recorder_Sometimes(recorder, true)
+	first := invariant.Recorder_Sometimes(recorder, true, "first")
+	second := invariant.Recorder_Sometimes(recorder, true, "second")
 	forbidden := invariant.Impossible(
 		invariant.Event_True(first), invariant.Event_True(second))
 	message := recover_message(func() {
-		invariant.Recorder_Dot_Product(recorder, first, second, forbidden)
+		invariant.Recorder_Dot_Product(recorder, "check", first, second, forbidden)
 	})
 	if message == "" {
 		t.Fatal("an Impossible whose combination occurs must panic")
 	}
-	if !strings.Contains(message, first.Site) {
+	if !strings.Contains(message, first.Message) {
 		t.Fatalf("the panic must name the first co-occurring axis %q, got: %s",
-			first.Site, message)
+			first.Message, message)
 	}
-	if !strings.Contains(message, second.Site) {
+	if !strings.Contains(message, second.Message) {
 		t.Fatalf("the panic must name the second co-occurring axis %q, got: %s",
-			second.Site, message)
+			second.Message, message)
 	}
 }
 
 // Test_Impossible_Absent: when the combination is not fully present, no panic.
 func Test_Impossible_Absent(t *testing.T) {
 	recorder := new_test_recorder()
-	first := invariant.Recorder_Sometimes(recorder, true)
-	second := invariant.Recorder_Sometimes(recorder, false)
+	first := invariant.Recorder_Sometimes(recorder, true, "first")
+	second := invariant.Recorder_Sometimes(recorder, false, "second")
 	forbidden := invariant.Impossible(
 		invariant.Event_True(first), invariant.Event_True(second))
 	if did_panic(func() {
-		invariant.Recorder_Dot_Product(recorder, first, second, forbidden)
+		invariant.Recorder_Dot_Product(recorder, "check", first, second, forbidden)
 	}) {
 		t.Fatal("an Impossible whose combination is absent must not panic")
 	}
@@ -247,10 +248,10 @@ func Test_Impossible_Glob(t *testing.T) {
 	const source = `package fixture
 
 func check(n int) {
-	a := invariant.Sometimes(n == 0)
-	b := invariant.Sometimes(n == 1)
-	c := invariant.Sometimes(n == 2)
-	invariant.Dot_Product(
+	a := invariant.Sometimes(n == 0, "a")
+	b := invariant.Sometimes(n == 1, "b")
+	c := invariant.Sometimes(n == 2, "c")
+	invariant.Dot_Product("check",
 		a, b, c,
 		invariant.Impossible(invariant.Event_True(a), invariant.Event_True(b)),
 	)
@@ -265,15 +266,15 @@ func check(n int) {
 
 	// Both a and b true is carved for either value of the unnamed c, so neither
 	// (1,1,0) nor (1,1,1) survives.
-	if _, ok := recorder.Assertions.Load("/fixture/check.go:7:tuple=(1,1,0)"); ok {
+	if _, ok := recorder.Assertions.Load("check:tuple=(1,1,0)"); ok {
 		t.Error("the (1,1,0) cell must be carved across the unnamed c axis")
 	}
-	if _, ok := recorder.Assertions.Load("/fixture/check.go:7:tuple=(1,1,1)"); ok {
+	if _, ok := recorder.Assertions.Load("check:tuple=(1,1,1)"); ok {
 		t.Error("the (1,1,1) cell must be carved across the unnamed c axis")
 	}
 	// A cell that does not match the named events fully survives — only a and b
 	// both true is forbidden.
-	if _, ok := recorder.Assertions.Load("/fixture/check.go:7:tuple=(1,0,1)"); !ok {
+	if _, ok := recorder.Assertions.Load("check:tuple=(1,0,1)"); !ok {
 		t.Error("a cell not matching both named events must survive")
 	}
 }
@@ -283,39 +284,37 @@ func check(n int) {
 // Test_Always_Eager shows.
 func Test_Dot_Product_Inert(t *testing.T) {
 	recorder := new_test_recorder()
-	if did_panic(func() { invariant.Recorder_Sometimes(recorder, false) }) {
+	if did_panic(func() { invariant.Recorder_Sometimes(recorder, false, "zero") }) {
 		t.Fatal("constructing a Sometimes must not panic on its own")
 	}
 	if did_panic(func() {
 		invariant.Recorder_Distinct_Boundary(
-			recorder, &invariant.Boundary_Input[int]{X: 5, Lo: 0, Hi: 3})
+			recorder, &invariant.Boundary_Input[int]{X: 5, Lo: 0, Hi: 3}, "range")
 	}) {
 		t.Fatal("constructing an out-of-range Distinct_Boundary must not panic on its own")
 	}
 }
 
-// Test_Dot_Product_Identity: an element is keyed by its caller location.
+// Test_Dot_Product_Identity: an element is keyed by the author-supplied message it carries.
 func Test_Dot_Product_Identity(t *testing.T) {
-	recorder := &invariant.Recorder{
-		Get_Caller: func(skip int) (file string, line int) { return "fixture.go", 42 },
-	}
-	element := invariant.Recorder_Sometimes(recorder, true)
-	if element.Site != "fixture.go:42" {
-		t.Fatalf("element Site = %q, want fixture.go:42", element.Site)
+	recorder := new_test_recorder()
+	element := invariant.Recorder_Sometimes(recorder, true, "balance positive")
+	if element.Message != "balance positive" {
+		t.Fatalf("element Message = %q, want \"balance positive\"", element.Message)
 	}
 }
 
 // Test_Dot_Product_Grid: registration seeds the surviving cells and drops the carve. The
 // grid is over the varying Sometimes axes alone; the bare Always is not an element and
-// occupies no coordinate — it seeds only its own reachability entry at its site.
+// occupies no coordinate — it seeds only its own reachability entry under its message.
 func Test_Dot_Product_Grid(t *testing.T) {
 	const source = `package fixture
 
 func check(n int) {
-	invariant.Always(n >= 0)
-	zero := invariant.Sometimes(n == 0)
-	one := invariant.Sometimes(n == 1)
-	invariant.Dot_Product(
+	invariant.Always(n >= 0, "non-negative")
+	zero := invariant.Sometimes(n == 0, "zero")
+	one := invariant.Sometimes(n == 1, "one")
+	invariant.Dot_Product("check",
 		zero,
 		one,
 		invariant.Impossible(invariant.Event_True(zero), invariant.Event_True(one)),
@@ -329,15 +328,15 @@ func check(n int) {
 	}
 	invariant.Recorder_Register_Packages_For_Analysis(recorder, "/fixture")
 
-	if _, ok := recorder.Assertions.Load("/fixture/check.go:7:tuple=(0,0)"); !ok {
+	if _, ok := recorder.Assertions.Load("check:tuple=(0,0)"); !ok {
 		t.Error("the surviving (0,0) cell must be seeded")
 	}
-	if _, ok := recorder.Assertions.Load("/fixture/check.go:7:tuple=(1,1)"); ok {
+	if _, ok := recorder.Assertions.Load("check:tuple=(1,1)"); ok {
 		t.Error("the (1,1) cell carved by the Impossible must not be seeded")
 	}
-	always, ok := recorder.Assertions.Load("/fixture/check.go:4")
+	always, ok := recorder.Assertions.Load("non-negative")
 	if !ok {
-		t.Fatal("the bare Always must seed a reachability entry at its own site")
+		t.Fatal("the bare Always must seed a reachability entry under its message")
 	}
 	if always.(*invariant.Assertion_Metadata).Kind != invariant.Assertion_Kind_Always {
 		t.Error("the bare Always entry must be an Always axis")
@@ -345,24 +344,24 @@ func check(n int) {
 }
 
 // Test_Dot_Product_Attribution: a panic names every element violated on the call — each
-// Distinct_Boundary by its site — not only the first. An eager Always is not part of this;
-// a false one short-circuits before the Dot_Product runs.
+// Distinct_Boundary by its message — not only the first. An eager Always is not part of
+// this; a false one short-circuits before the Dot_Product runs.
 func Test_Dot_Product_Attribution(t *testing.T) {
 	recorder := new_test_recorder()
 	first := invariant.Recorder_Distinct_Boundary(
-		recorder, &invariant.Boundary_Input[int]{X: 5, Lo: 0, Hi: 3})
+		recorder, &invariant.Boundary_Input[int]{X: 5, Lo: 0, Hi: 3}, "first")
 	second := invariant.Recorder_Distinct_Boundary(
-		recorder, &invariant.Boundary_Input[int]{X: 9, Lo: 0, Hi: 3})
+		recorder, &invariant.Boundary_Input[int]{X: 9, Lo: 0, Hi: 3}, "second")
 	message := recover_message(func() {
-		invariant.Recorder_Dot_Product(recorder, first, second)
+		invariant.Recorder_Dot_Product(recorder, "check", first, second)
 	})
-	if !strings.Contains(message, first.Site) {
+	if !strings.Contains(message, first.Message) {
 		t.Fatalf("the panic must name the first violated element %q, got: %s",
-			first.Site, message)
+			first.Message, message)
 	}
-	if !strings.Contains(message, second.Site) {
+	if !strings.Contains(message, second.Message) {
 		t.Fatalf("the panic must name the second violated element %q, got: %s",
-			second.Site, message)
+			second.Message, message)
 	}
 }
 
@@ -371,11 +370,11 @@ func Test_Bundles_Descent(t *testing.T) {
 	const source = `package fixture
 
 func Pair_Invariants(n int) (dot_elements []invariant.Dot_Element) {
-	return append(dot_elements, invariant.Sometimes(n < 0))
+	return append(dot_elements, invariant.Sometimes(n < 0, "lo"))
 }
 
 func check(n int) {
-	invariant.Dot_Product(Pair_Invariants(n)...)
+	invariant.Dot_Product("field", Pair_Invariants(n)...)
 }
 `
 	recorder := &invariant.Recorder{
@@ -386,8 +385,8 @@ func check(n int) {
 	invariant.Recorder_Register_Packages_For_Analysis(recorder, "/fixture")
 
 	if _, ok := recorder.Assertions.Load(
-		"/fixture/pair.go:8::from=/fixture/pair.go:4"); !ok {
-		t.Error("the bundle element must be seeded under the Dot_Product callsite")
+		"field" + invariant.Element_Message_Separator + "lo"); !ok {
+		t.Error("the bundle element must be seeded under the Dot_Product prefix")
 	}
 }
 
@@ -397,16 +396,16 @@ func Test_Bundles_Composition(t *testing.T) {
 	const source = `package fixture
 
 func Inner_Invariants(n int) (dot_elements []invariant.Dot_Element) {
-	return append(dot_elements, invariant.Sometimes(n < 0))
+	return append(dot_elements, invariant.Sometimes(n < 0, "inner"))
 }
 
 func Outer_Invariants(n int) (dot_elements []invariant.Dot_Element) {
-	dot_elements = append(dot_elements, invariant.Sometimes(n > 0))
+	dot_elements = append(dot_elements, invariant.Sometimes(n > 0, "outer"))
 	return append(dot_elements, Inner_Invariants(n)...)
 }
 
 func check(n int) {
-	invariant.Dot_Product(Outer_Invariants(n)...)
+	invariant.Dot_Product("field", Outer_Invariants(n)...)
 }
 `
 	recorder := &invariant.Recorder{
@@ -417,8 +416,8 @@ func check(n int) {
 	invariant.Recorder_Register_Packages_For_Analysis(recorder, "/fixture")
 
 	if _, ok := recorder.Assertions.Load(
-		"/fixture/nested.go:13::from=/fixture/nested.go:4"); !ok {
-		t.Error("the deeply nested element must attribute to the top-level callsite")
+		"field" + invariant.Element_Message_Separator + "inner"); !ok {
+		t.Error("the deeply nested element must attribute to the top-level prefix")
 	}
 }
 
@@ -428,12 +427,12 @@ func Test_Bundles_Binding(t *testing.T) {
 	const source = `package fixture
 
 func Pair_Invariants(n int) (dot_elements []invariant.Dot_Element) {
-	return append(dot_elements, invariant.Sometimes(n < 0))
+	return append(dot_elements, invariant.Sometimes(n < 0, "lo"))
 }
 
 func check(n int) {
 	elements := Pair_Invariants(n)
-	invariant.Dot_Product(elements...)
+	invariant.Dot_Product("field", elements...)
 }
 `
 	recorder := &invariant.Recorder{
@@ -444,7 +443,7 @@ func check(n int) {
 	invariant.Recorder_Register_Packages_For_Analysis(recorder, "/fixture")
 
 	if _, ok := recorder.Assertions.Load(
-		"/fixture/bound.go:9::from=/fixture/bound.go:4"); !ok {
+		"field" + invariant.Element_Message_Separator + "lo"); !ok {
 		t.Error("a bundle reached through a binding must be descended")
 	}
 }
@@ -455,11 +454,11 @@ func Test_Bundles_Casing(t *testing.T) {
 	const source = `package fixture
 
 func pair_invariants(n int) (dot_elements []invariant.Dot_Element) {
-	return append(dot_elements, invariant.Sometimes(n < 0))
+	return append(dot_elements, invariant.Sometimes(n < 0, "lo"))
 }
 
 func check(n int) {
-	invariant.Dot_Product(pair_invariants(n)...)
+	invariant.Dot_Product("field", pair_invariants(n)...)
 }
 `
 	recorder := &invariant.Recorder{
@@ -470,7 +469,7 @@ func check(n int) {
 	invariant.Recorder_Register_Packages_For_Analysis(recorder, "/fixture")
 
 	if _, ok := recorder.Assertions.Load(
-		"/fixture/lower.go:8::from=/fixture/lower.go:4"); !ok {
+		"field" + invariant.Element_Message_Separator + "lo"); !ok {
 		t.Error("a snake_case bundle must be recognized like the Ada_Case form")
 	}
 }
@@ -482,11 +481,11 @@ func Test_Bundles_Recorder_Form(t *testing.T) {
 	const source = `package fixture
 
 func Pair_Invariants(n int) (dot_elements []invariant.Dot_Element) {
-	return append(dot_elements, invariant.Recorder_Sometimes(Default, n < 0))
+	return append(dot_elements, invariant.Recorder_Sometimes(Default, n < 0, "lo"))
 }
 
 func check(n int) {
-	invariant.Dot_Product(Pair_Invariants(n)...)
+	invariant.Dot_Product("field", Pair_Invariants(n)...)
 }
 `
 	recorder := &invariant.Recorder{
@@ -497,7 +496,7 @@ func check(n int) {
 	invariant.Recorder_Register_Packages_For_Analysis(recorder, "/fixture")
 
 	value, ok := recorder.Assertions.Load(
-		"/fixture/recorder_form.go:8::from=/fixture/recorder_form.go:4")
+		"field" + invariant.Element_Message_Separator + "lo")
 	if !ok {
 		t.Fatal("a Recorder_ element must be descended like the bare sugar form")
 	}
@@ -514,7 +513,7 @@ func Test_Bundles_Sugar(t *testing.T) {
 	const sugar = `package sugar
 
 func Pair_Invariants(n int) (dot_elements []invariant.Dot_Element) {
-	return append(dot_elements, Sometimes(n < 0))
+	return append(dot_elements, Sometimes(n < 0, "lo"))
 }
 `
 	const application = `package app
@@ -525,7 +524,7 @@ import (
 )
 
 func check(n int) {
-	invariant.Dot_Product(sugar.Pair_Invariants(n)...)
+	invariant.Dot_Product("field", sugar.Pair_Invariants(n)...)
 }
 `
 	files := fstest.MapFS{
@@ -533,7 +532,7 @@ func check(n int) {
 		"m/sugar/sugar.go": &fstest.MapFile{Data: []byte(sugar)},
 		"m/app/app.go":     &fstest.MapFile{Data: []byte(application)},
 	}
-	const key = "/m/app/app.go:9::from=/m/sugar/sugar.go:4"
+	key := "field" + invariant.Element_Message_Separator + "lo"
 
 	recognized := &invariant.Recorder{File_System: files, Sugar_Package: "example.com/m/sugar"}
 	invariant.Recorder_Register_Packages_For_Analysis(recognized, "/m/app")
@@ -556,7 +555,7 @@ func Test_Bundles_Cross_Package(t *testing.T) {
 import invariant "example.com/m/invariant"
 
 func Pair_Invariants(n int) (dot_elements []invariant.Dot_Element) {
-	return append(dot_elements, invariant.Sometimes(n < 0))
+	return append(dot_elements, invariant.Sometimes(n < 0, "lo"))
 }
 `
 	const package_b = `package b
@@ -567,7 +566,7 @@ import (
 )
 
 func check(n int) {
-	invariant.Dot_Product(a.Pair_Invariants(n)...)
+	invariant.Dot_Product("field", a.Pair_Invariants(n)...)
 }
 `
 	recorder := &invariant.Recorder{
@@ -579,7 +578,8 @@ func check(n int) {
 	}
 	invariant.Recorder_Register_Packages_For_Analysis(recorder, "/m/b")
 
-	if _, ok := recorder.Assertions.Load("/m/b/b.go:9::from=/m/a/a.go:6"); !ok {
+	if _, ok := recorder.Assertions.Load(
+		"field" + invariant.Element_Message_Separator + "lo"); !ok {
 		t.Error("a bundle in a sibling package of the module must be resolved")
 	}
 }
@@ -590,25 +590,28 @@ func Test_Bundles_Workspace(t *testing.T) {
 	recorder := &invariant.Recorder{File_System: workspace_bundle_fixture()}
 	invariant.Recorder_Register_Packages_For_Analysis(recorder, "/work/b")
 
-	if _, ok := recorder.Assertions.Load("b/b.go:9::from=a/a.go:6"); !ok {
+	if _, ok := recorder.Assertions.Load(
+		"field" + invariant.Element_Message_Separator + "lo"); !ok {
 		t.Error("a bundle in a sibling workspace module must be resolved")
 	}
 }
 
-// Test_Bundles_Callsite: two callsites of one bundle are independent entries.
+// Test_Bundles_Callsite: spreading one bundle into two Dot_Products with distinct
+// prefixes ("a" and "b") yields independent coverage entries — the per-field prefix is
+// what keeps them apart. (Reusing one prefix is instead a fatal duplicate.)
 func Test_Bundles_Callsite(t *testing.T) {
 	const source = `package fixture
 
 func Pair_Invariants(n int) (dot_elements []invariant.Dot_Element) {
-	return append(dot_elements, invariant.Sometimes(n < 0))
+	return append(dot_elements, invariant.Sometimes(n < 0, "lo"))
 }
 
 func check_a(n int) {
-	invariant.Dot_Product(Pair_Invariants(n)...)
+	invariant.Dot_Product("a", Pair_Invariants(n)...)
 }
 
 func check_b(n int) {
-	invariant.Dot_Product(Pair_Invariants(n)...)
+	invariant.Dot_Product("b", Pair_Invariants(n)...)
 }
 `
 	recorder := &invariant.Recorder{
@@ -618,23 +621,26 @@ func check_b(n int) {
 	}
 	invariant.Recorder_Register_Packages_For_Analysis(recorder, "/fixture")
 
-	if _, ok := recorder.Assertions.Load("/fixture/two.go:8::from=/fixture/two.go:4"); !ok {
-		t.Error("callsite A must have its own coverage entry")
+	if _, ok := recorder.Assertions.Load(
+		"a" + invariant.Element_Message_Separator + "lo"); !ok {
+		t.Error("prefix A must have its own coverage entry")
 	}
-	if _, ok := recorder.Assertions.Load("/fixture/two.go:12::from=/fixture/two.go:4"); !ok {
-		t.Error("callsite B must have its own coverage entry")
+	if _, ok := recorder.Assertions.Load(
+		"b" + invariant.Element_Message_Separator + "lo"); !ok {
+		t.Error("prefix B must have its own coverage entry")
 	}
 }
 
-// Test_Bundles_Gap_Location: a composed bundle's element gap is named at the compound
-// callsite::from=site (covered by Test_Analysis_Legend). An eager Always written inside a
-// bundle body is not an element; it fires when the bundle is built, and its reachability gap
-// is named at its own bare in-bundle site (compose.go:4), never a compound callsite key.
+// Test_Bundles_Gap_Location: a composed bundle's element gap is named by the consuming
+// Dot_Product's prefix joined to the element's own message (covered by
+// Test_Analysis_Legend). An eager Always written inside a bundle body is not an element;
+// it fires when the bundle is built, and its reachability gap is named by its own bare
+// message ("positive"), never a prefixed key.
 func Test_Bundles_Gap_Location(t *testing.T) {
 	const source = `package fixture
 
 func Inner_Invariants(n int) (dot_elements []invariant.Dot_Element) {
-	invariant.Always(n > 0)
+	invariant.Always(n > 0, "positive")
 	return dot_elements
 }
 
@@ -643,7 +649,7 @@ func Outer_Invariants(n int) (dot_elements []invariant.Dot_Element) {
 }
 
 func check(n int) {
-	invariant.Dot_Product(Outer_Invariants(n)...)
+	invariant.Dot_Product("field", Outer_Invariants(n)...)
 }
 `
 	var output bytes.Buffer
@@ -659,29 +665,27 @@ func check(n int) {
 	snap.Expect(t, snap.Init(`🚨 1 coverage gaps 🚨
 
 # Reachability gaps
-/fixture/compose.go:4  Always — never reached: "n > 0"
+positive  Always — never reached: "n > 0"
 🚨 1 coverage gaps 🚨
 `), output.String())
 }
 
 // Test_Bundles_Failure_Location: a bundle element's deferred violation (here a
-// Distinct_Boundary outside its bounds, sited at transfer.go:9) names only its own in-bundle
-// site, never the consuming callsite — yet the call site is not lost. The panic's Go stack
-// still unwinds through Recorder_Dot_Product and the frame that spread the bundle, so the
-// snapshot pins both the site-only message and the stack frames that carry the omitted site.
+// Distinct_Boundary outside its bounds, named "amount") names only its own message, never
+// the consuming prefix — yet the call site is not lost. The panic's Go stack still unwinds
+// through Recorder_Dot_Product and the frame that spread the bundle, so the snapshot pins
+// both the message-only failure line and the stack frames that carry the omitted call site.
 func Test_Bundles_Failure_Location(t *testing.T) {
-	recorder := &invariant.Recorder{
-		Get_Caller: func(skip int) (file string, line int) { return "transfer.go", 9 },
-	}
+	recorder := new_test_recorder()
 	element := invariant.Recorder_Distinct_Boundary(
-		recorder, &invariant.Boundary_Input[int]{X: 9, Lo: 0, Hi: 3})
+		recorder, &invariant.Boundary_Input[int]{X: 9, Lo: 0, Hi: 3}, "amount")
 	message, stack := recover_with_stack(func() {
 		dot_product_callsite(recorder, element)
 	})
 
 	snap.Expect(
 		t,
-		snap.Init(`🚨 Assertion Failure 🚨: transfer.go:9  Boundary — value outside [Lo, Hi]
+		snap.Init(`🚨 Assertion Failure 🚨: amount  Boundary — value outside [Lo, Hi]
 
 github.com/james-orcales/james-orcales/shared/invariant.Recorder_Dot_Product (invariant.go)
 github.com/james-orcales/james-orcales/shared/invariant_test.dot_product_callsite (specification_test.go)`),
@@ -694,7 +698,7 @@ func Test_Bundles_Ban(t *testing.T) {
 	const source = `package fixture
 
 func Pair_Invariants(n int) (dot_elements []invariant.Dot_Element) {
-	invariant.Dot_Product(invariant.Sometimes(n < 0))
+	invariant.Dot_Product("field", invariant.Sometimes(n < 0, "lo"))
 	return dot_elements
 }
 `
@@ -726,15 +730,15 @@ func Test_Analysis_Gaps(t *testing.T) {
 		Is_Test: true, Output: &output, Exit: func(code int) { exit_code = code },
 	}
 	gap := &invariant.Assertion_Metadata{
-		Kind: invariant.Assertion_Kind_Sometimes, Site: "f.go:3", Condition: "n == 0",
+		Kind: invariant.Assertion_Kind_Sometimes, Message: "zero", Condition: "n == 0",
 	}
 	gap.Frequency.Add(1) // true seen, false never: a gap
-	recorder.Assertions.Store("f.go:3", gap)
+	recorder.Assertions.Store("zero", gap)
 	fired := &invariant.Assertion_Metadata{
-		Kind: invariant.Assertion_Kind_Always, Site: "f.go:9", Condition: "x > 0",
+		Kind: invariant.Assertion_Kind_Always, Message: "positive", Condition: "x > 0",
 	}
 	fired.Frequency.Add(1) // reached: not a gap
-	recorder.Assertions.Store("f.go:9", fired)
+	recorder.Assertions.Store("positive", fired)
 
 	invariant.Recorder_Analyze_Assertion_Frequency(recorder)
 
@@ -742,13 +746,13 @@ func Test_Analysis_Gaps(t *testing.T) {
 		t.Fatalf("a gap must exit 1, got %d", exit_code)
 	}
 	report := output.String()
-	if !strings.Contains(report, "f.go:3") {
-		t.Errorf("the gap must be named by its site, got: %s", report)
+	if !strings.Contains(report, "zero") {
+		t.Errorf("the gap must be named by its message, got: %s", report)
 	}
 	if !strings.Contains(report, "n == 0") {
 		t.Errorf("the gap must be named by its condition, got: %s", report)
 	}
-	if strings.Contains(report, "f.go:9") {
+	if strings.Contains(report, "positive") {
 		t.Errorf("a fully exercised obligation must not be reported, got: %s", report)
 	}
 }
@@ -762,9 +766,9 @@ func Test_Analysis_Combination(t *testing.T) {
 		Is_Test: true, Output: &output, Exit: func(code int) { exit_code = code },
 	}
 	tuple := &invariant.Assertion_Metadata{
-		Kind: invariant.Assertion_Kind_Tuple, Site: "f.go:7", Tuple_Indices: []int{1, 0},
+		Kind: invariant.Assertion_Kind_Tuple, Message: "grid", Tuple_Indices: []int{1, 0},
 	}
-	recorder.Assertions.Store("f.go:7:tuple=(1,0)", tuple)
+	recorder.Assertions.Store("grid:tuple=(1,0)", tuple)
 
 	invariant.Recorder_Analyze_Assertion_Frequency(recorder)
 
@@ -790,16 +794,16 @@ func Test_Analysis_Legend(t *testing.T) {
 	const source = `package fixture
 
 func Inner_Invariants(n int) (dot_elements []invariant.Dot_Element) {
-	return append(dot_elements, invariant.Sometimes(n < 0))
+	return append(dot_elements, invariant.Sometimes(n < 0, "negative"))
 }
 
 func Outer_Invariants(n int) (dot_elements []invariant.Dot_Element) {
-	invariant.Always(n != 0)
+	invariant.Always(n != 0, "nonzero")
 	return append(dot_elements, Inner_Invariants(n)...)
 }
 
 func check(n int) {
-	invariant.Dot_Product(Outer_Invariants(n)...)
+	invariant.Dot_Product("field", Outer_Invariants(n)...)
 }
 `
 	var output bytes.Buffer
@@ -815,17 +819,17 @@ func check(n int) {
 	snap.Expect(t, snap.Init(`🚨 5 coverage gaps 🚨
 
 # Cross-product gaps
-/fixture/nested.go:13  grid axes:
-  [0] Sometimes "n < 0" from /fixture/nested.go:4
-/fixture/nested.go:13  tuple (0) never observed  ->  [0]=false
-/fixture/nested.go:13  tuple (1) never observed  ->  [0]=true
+field  grid axes:
+  [0] Sometimes "n < 0" from negative
+field  tuple (0) never observed  ->  [0]=false
+field  tuple (1) never observed  ->  [0]=true
 
 # Branch gaps
-/fixture/nested.go:13::from=/fixture/nested.go:4  Sometimes — false branch never observed: "n < 0"
-/fixture/nested.go:13::from=/fixture/nested.go:4  Sometimes — true branch never observed: "n < 0"
+field · negative  Sometimes — false branch never observed: "n < 0"
+field · negative  Sometimes — true branch never observed: "n < 0"
 
 # Reachability gaps
-/fixture/nested.go:8  Always — never reached: "n != 0"
+nonzero  Always — never reached: "n != 0"
 🚨 5 coverage gaps 🚨
 `), output.String())
 }
@@ -839,10 +843,10 @@ func Test_Analysis_Boundary(t *testing.T) {
 		Is_Test: true, Output: &output, Exit: func(code int) { exit_code = code },
 	}
 	boundary := &invariant.Assertion_Metadata{
-		Kind: invariant.Assertion_Kind_Boundary, Site: "b.go:5", Condition: "age",
+		Kind: invariant.Assertion_Kind_Boundary, Message: "age", Condition: "age",
 	}
 	boundary.Frequency.Add(1) // Hi endpoint seen; Lo (False_Frequency) never
-	recorder.Assertions.Store("b.go:5", boundary)
+	recorder.Assertions.Store("age", boundary)
 
 	invariant.Recorder_Analyze_Assertion_Frequency(recorder)
 
@@ -886,11 +890,11 @@ func Test_Analysis_Clean(t *testing.T) {
 		Is_Test: true, Output: &output, Exit: func(code int) { exited = true },
 	}
 	metadata := &invariant.Assertion_Metadata{
-		Kind: invariant.Assertion_Kind_Sometimes, Site: "f.go:3", Condition: "n == 0",
+		Kind: invariant.Assertion_Kind_Sometimes, Message: "zero", Condition: "n == 0",
 	}
 	metadata.Frequency.Add(1)
 	metadata.False_Frequency.Add(1)
-	recorder.Assertions.Store("f.go:3", metadata)
+	recorder.Assertions.Store("zero", metadata)
 
 	invariant.Recorder_Analyze_Assertion_Frequency(recorder)
 
@@ -907,13 +911,14 @@ func Test_Coverage_Modes(t *testing.T) {
 	recorder := new_test_recorder()
 	recorder.Is_Test = true
 	recorder.Is_Fuzz = true
-	element := invariant.Recorder_Sometimes(recorder, true)
+	element := invariant.Recorder_Sometimes(recorder, true, "zero")
+	key := "check" + invariant.Element_Message_Separator + element.Message
 	metadata := &invariant.Assertion_Metadata{
-		Kind: invariant.Assertion_Kind_Sometimes, Site: element.Site,
+		Kind: invariant.Assertion_Kind_Sometimes, Message: key,
 	}
-	recorder.Assertions.Store(element.Site, metadata)
+	recorder.Assertions.Store(key, metadata)
 
-	invariant.Recorder_Dot_Product(recorder, element)
+	invariant.Recorder_Dot_Product(recorder, "check", element)
 
 	if metadata.Frequency.Load() != 0 {
 		t.Fatalf("a fuzz run must record no coverage, got Frequency %d",
@@ -926,12 +931,12 @@ func Test_Coverage_Modes(t *testing.T) {
 // Dot_Product element kinds.
 func Test_Coverage_Enforcement(t *testing.T) {
 	recorder := &invariant.Recorder{} // Is_Test false: not a coverage run
-	if !did_panic(func() { invariant.Recorder_Always(recorder, false) }) {
+	if !did_panic(func() { invariant.Recorder_Always(recorder, false, "guard") }) {
 		t.Fatal("an eager Always must enforce even when coverage is not recorded")
 	}
 	if !did_panic(func() {
-		invariant.Recorder_Dot_Product(recorder, invariant.Recorder_Distinct_Boundary(
-			recorder, &invariant.Boundary_Input[int]{X: 9, Lo: 0, Hi: 3}))
+		invariant.Recorder_Dot_Product(recorder, "check", invariant.Recorder_Distinct_Boundary(
+			recorder, &invariant.Boundary_Input[int]{X: 9, Lo: 0, Hi: 3}, "range"))
 	}) {
 		t.Fatal("a Dot_Product must enforce its elements even without coverage recording")
 	}
@@ -948,7 +953,7 @@ import (
 )
 
 func check(n int) {
-	invariant.Dot_Product(x.Pair_Invariants(n)...)
+	invariant.Dot_Product("field", x.Pair_Invariants(n)...)
 }
 `
 	var output bytes.Buffer
@@ -1000,7 +1005,7 @@ func recover_message(action func()) (message string) {
 //
 //go:noinline
 func dot_product_callsite(recorder *invariant.Recorder, element invariant.Dot_Element) {
-	invariant.Recorder_Dot_Product(recorder, element)
+	invariant.Recorder_Dot_Product(recorder, "field", element)
 }
 
 // Runs action, recovers the panic it raises, and returns the panic message together with
