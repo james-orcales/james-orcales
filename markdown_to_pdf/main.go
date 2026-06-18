@@ -1,6 +1,6 @@
 // Package main is the markdown_to_pdf command. render converts a Markdown file to
-// PDF beside it or to -out; preview renders one to /tmp and opens it; golden
-// does the same with a built-in showcase.
+// PDF beside it or to -out; preview renders one to the system temp directory and
+// opens it; golden does the same with a built-in showcase.
 package main
 
 import (
@@ -31,10 +31,6 @@ const exit_failure = 1
 // Exit_exists marks the refusal to clobber: no -out was given and the path
 // derived beside the input already holds a file, so nothing is written.
 const exit_exists = 3
-
-// Golden_path is the fixed destination of the golden showcase, parked in /tmp
-// as a regenerate-on-demand reference rather than a file the caller names.
-const golden_path = "/tmp/markdown_to_pdf_golden.pdf"
 
 func main() {
 	program := main_program()
@@ -76,12 +72,12 @@ func main_program() (program cli.Program) {
 	}
 	preview := cli.Command{
 		Label:       "preview",
-		Description: "render a Markdown file to /tmp and open it",
+		Description: "render a Markdown file to the system temp directory and open it",
 		Arguments:   []cli.Option{input},
 	}
 	golden := cli.Command{
 		Label:       "golden",
-		Description: "write a feature showcase to /tmp and open it",
+		Description: "write a feature showcase to the system temp directory and open it",
 	}
 	return cli.New(cli.New_Input{
 		Label:       "markdown_to_pdf",
@@ -105,12 +101,17 @@ func main_render_command(command cli.Command) (status_code int) {
 	return main_render(markdown, output_path)
 }
 
-// Renders the built-in showcase to /tmp and opens it.
+// Renders the built-in showcase to the OS temp directory and opens it.
 func main_golden() (status_code int) {
-	return main_render_then_open([]byte(golden_showcase), golden_path)
+	return main_render_then_open([]byte(golden_showcase), golden_path())
 }
 
-// Renders the command's input file to a /tmp preview path and opens it,
+// Evaluated at call time so the process's $TMPDIR is always respected.
+func golden_path() (path string) {
+	return filepath.Join(os.TempDir(), "markdown_to_pdf_golden.pdf")
+}
+
+// Renders the command's input file to the OS temp directory and opens it,
 // overwriting any prior preview unconditionally.
 func main_preview(command cli.Command) (status_code int) {
 	input_path := cli.Get_Option(command.Arguments, "input").Value.(string)
@@ -121,12 +122,12 @@ func main_preview(command cli.Command) (status_code int) {
 	return main_render_then_open(markdown, main_preview_path(input_path))
 }
 
-// A preview is written to /tmp, named for the input's base so previewing
-// several files does not collide.
+// A preview is written to the OS temp directory, named for the input's base so
+// previewing several files does not collide.
 func main_preview_path(input_path string) (preview_path string) {
 	base_name := filepath.Base(input_path)
 	stem := strings.TrimSuffix(base_name, filepath.Ext(base_name))
-	return filepath.Join("/tmp", stem+".pdf")
+	return filepath.Join(os.TempDir(), stem+".pdf")
 }
 
 // Renders markdown to path, overwriting it, then opens the result in the default
