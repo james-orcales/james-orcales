@@ -78,6 +78,15 @@ type Recorder struct {
 	// per Dot_Product tuple, keyed by message and credited as observations arrive.
 	Events sync.Map
 
+	// Observe_Cache_Mu guards Observe_Cache: the first-observe build takes the
+	// write lock; the recording hot path reads under RLock.
+	Observe_Cache_Mu sync.RWMutex
+	// Observe_Cache memoizes, per Dot_Product message, the metadata pointers and
+	// tracker keys its elements and grid cells resolve to, so the recording hot path
+	// increments by pointer with no per-call key construction. Built lazily — the keys
+	// and Loads happen once. A plain map (not sync.Map) keeps the read allocation-free.
+	Observe_Cache map[string]*observe_handle
+
 	// Output receives the coverage-gap report and the orphan/bundle diagnostics.
 	Output io.Writer
 	// Exit ends the process with a status code; the composition tier wires it to os.Exit.
@@ -327,12 +336,31 @@ func dot_product_check_references(bundle Bundle) {
 	}
 }
 
-// Increments the seeded tracker entry for each observed element and the tuple
-// entry for the observed combination. No-op in a benchmark or a fuzz worker subprocess; a
-// plain test run and the fuzz coordinator both record. Identity travels with the data:
-// each element carries its own message and the Dot_Product carries the prefix, so the
-// per-element key (prefix + separator + own message) and the grid key are built without
-// consulting any caller frame.
+// An observe_handle memoizes, for one Dot_Product message, what its bundle resolves to so the
+// recording hot path builds no key per call: the metadata + tracker key for each non-Impossible
+// element (in bundle order) and for each grid cell (indexed by the packed bucket tuple).
+type observe_handle struct {
+	// Elements holds one entry per non-Impossible element, in bundle order.
+	Elements []handle_entry
+	// Tuples is indexed by the observed tuple packed big-endian — element 0 is the
+	// most significant bit, one per axis (a Sometimes has two buckets), size
+	// 1<<len(Elements). A nil-metadata entry is a cell an Impossible carved or never seeded.
+	Tuples []handle_entry
+}
+
+// A handle_entry is a resolved tracker slot: the seeded metadata and the tracker key, cached so
+// Coverage_Sink can persist it without rebuilding the string.
+type handle_entry struct {
+	// Metadata is the seeded tracker entry, nil when registration seeded none.
+	Metadata *Assertion_Metadata
+	// Key is the tracker key, cached so Coverage_Sink can persist it without rebuilding it.
+	Key string
+}
+
+// Increments the seeded tracker entry for each observed element and the tuple entry for the
+// observed combination, through the per-message observe_handle so the steady state allocates
+// nothing. Records under a plain test, the fuzz coordinator, and a fuzz worker (all carry
+// Is_Test); a no-op in a benchmark or a non-test binary, which only enforce.
 func recorder_dot_product_observe(
 	recorder *Recorder, message string, bundle Bundle,
 ) {
@@ -342,67 +370,120 @@ func recorder_dot_product_observe(
 	if recorder.Is_Benchmark {
 		return
 	}
+	handle := recorder_observe_handle(recorder, message, bundle)
+	element_index := 0
+	packed := 0
 	for _, dot_element := range bundle {
 		if dot_element.Kind == Dot_Element_Kind_Impossible {
 			continue
 		}
-		recorder_increment(
-			recorder,
-			message+Element_Message_Separator+dot_element.Message,
-			dot_element.Event,
-		)
+		packed <<= 1
+		if dot_element.Event {
+			packed |= 1
+		}
+		entry := handle.Elements[element_index]
+		element_index++
+		recorder_increment_entry(recorder, entry, dot_element.Event)
 	}
-	tuple_key := recorder_tuple_key(message, dot_product_tuple(bundle))
-	recorder_increment(recorder, tuple_key, true)
+	recorder_increment_entry(recorder, handle.Tuples[packed], true)
 }
 
-// Returns the observed tuple of bucket indices for the call's varying elements, in order
-// — the runtime counterpart to the static grid's projected tuples. Only Sometimes elements
-// vary; an Impossible declares no axis and is skipped.
-func dot_product_tuple(bundle Bundle) (tuple []int) {
-	tuple = make([]int, 0, len(bundle))
+// Returns the cached observe_handle for message, building it on first use. The build resolves
+// every element and grid-cell key against the seeded tracker once; later calls read it under
+// RLock with no allocation (a plain map keyed by the existing message string boxes nothing).
+func recorder_observe_handle(
+	recorder *Recorder, message string, bundle Bundle,
+) (handle *observe_handle) {
+	recorder.Observe_Cache_Mu.RLock()
+	handle = recorder.Observe_Cache[message]
+	recorder.Observe_Cache_Mu.RUnlock()
+	if handle != nil {
+		return handle
+	}
+	recorder.Observe_Cache_Mu.Lock()
+	defer recorder.Observe_Cache_Mu.Unlock()
+	if handle = recorder.Observe_Cache[message]; handle != nil {
+		return handle
+	}
+	handle = recorder_observe_handle_build(recorder, message, bundle)
+	if recorder.Observe_Cache == nil {
+		recorder.Observe_Cache = map[string]*observe_handle{}
+	}
+	recorder.Observe_Cache[message] = handle
+	return handle
+}
+
+// Builds an observe_handle: one element entry per non-Impossible element (keyed prefix +
+// separator + own message) and one tuple entry per grid cell, keyed by the projected coordinate
+// exactly as registration seeded it. A cell or element registration never seeded resolves to a
+// nil-metadata entry, so the runtime skips it.
+func recorder_observe_handle_build(
+	recorder *Recorder, message string, bundle Bundle,
+) (handle *observe_handle) {
+	handle = &observe_handle{}
 	for _, dot_element := range bundle {
 		if dot_element.Kind == Dot_Element_Kind_Impossible {
 			continue
 		}
-		tuple = append(tuple, dot_element_bucket(dot_element))
+		key := message + Element_Message_Separator + dot_element.Message
+		handle.Elements = append(handle.Elements, recorder_handle_entry(recorder, key))
 	}
-	return tuple
+	axis_count := len(handle.Elements)
+	handle.Tuples = make([]handle_entry, 1<<axis_count)
+	for packed := range handle.Tuples {
+		tuple := make([]int, axis_count)
+		for i := range tuple {
+			tuple[i] = packed >> (axis_count - 1 - i) & 1
+		}
+		tuple_key := recorder_tuple_key(message, tuple)
+		handle.Tuples[packed] = recorder_handle_entry(recorder, tuple_key)
+	}
+	return handle
 }
 
-// Maps an observed Sometimes element to its bucket index, mirroring the static grid:
-// false = 0, true = 1.
-func dot_element_bucket(dot_element Dot_Element) (bucket int) {
-	if dot_element.Event {
-		return 1
+// Resolves key to its seeded tracker metadata (nil when none was seeded), pairing it with the
+// key so Coverage_Sink can persist it on first coverage.
+func recorder_handle_entry(recorder *Recorder, key string) (entry handle_entry) {
+	entry.Key = key
+	if value, ok := recorder.Events.Load(key); ok {
+		entry.Metadata = value.(*Assertion_Metadata)
 	}
-	return 0
+	return entry
 }
 
-// Bumps the seeded entry at key: Frequency on a true event, False_Frequency on false. A missing
-// entry is skipped — registration seeds only reachable buckets. On the 0→1 transition (first
-// coverage of that branch) it fires Coverage_Sink if set — a fuzz worker persists the cell there
-// for the coordinator to union. atomic Add returns the post-increment value, so the sink fires
-// exactly once per branch.
+// Bumps entry's metadata: Frequency on a true event, False_Frequency on false. A nil-metadata
+// entry (registration seeded none, like a carved cell) is skipped. On the 0→1 transition of a
+// branch (its first coverage) it fires Coverage_Sink with the entry's cached key, so a fuzz
+// worker persists the cell; atomic Add returns the post-increment value, so the sink fires once
+// per branch.
+func recorder_increment_entry(recorder *Recorder, entry handle_entry, fired_true bool) {
+	if entry.Metadata == nil {
+		return
+	}
+	if fired_true {
+		if entry.Metadata.Frequency.Add(1) == 1 {
+			if recorder.Coverage_Sink != nil {
+				recorder.Coverage_Sink(entry.Key, true)
+			}
+		}
+		return
+	}
+	if entry.Metadata.False_Frequency.Add(1) == 1 {
+		if recorder.Coverage_Sink != nil {
+			recorder.Coverage_Sink(entry.Key, false)
+		}
+	}
+}
+
+// Bumps the seeded entry at key — the coordinator's merge path (Recorder_Merge_Fuzz_Coverage_From),
+// which holds only string keys, not the runtime's cached handles. A missing entry is skipped.
 func recorder_increment(recorder *Recorder, key string, fired_true bool) {
 	value, ok := recorder.Events.Load(key)
 	if !ok {
 		return
 	}
-	metadata := value.(*Assertion_Metadata)
-	if fired_true {
-		if metadata.Frequency.Add(1) == 1 {
-			if recorder.Coverage_Sink != nil {
-				recorder.Coverage_Sink(key, true)
-			}
-		}
-		return
-	}
-	if metadata.False_Frequency.Add(1) == 1 {
-		if recorder.Coverage_Sink != nil {
-			recorder.Coverage_Sink(key, false)
-		}
-	}
+	recorder_increment_entry(
+		recorder, handle_entry{Metadata: value.(*Assertion_Metadata), Key: key}, fired_true)
 }
 
 // Fuzz_Coverage_Line encodes one covered (key, branch) as the line a fuzz worker appends to

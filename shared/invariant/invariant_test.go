@@ -1440,3 +1440,45 @@ func check(n int) {
 func new_test_recorder() (recorder *invariant.Recorder) {
 	return &invariant.Recorder{}
 }
+
+// Benchmark_Dot_Product_Enforcement measures the shipped-binary hot path: a Dot_Product consuming
+// two Sometimes axes with recording off (Is_Test false), so only enforcement runs. This is the path
+// a production binary pays on every assertion and must not allocate.
+func Benchmark_Dot_Product_Enforcement(b *testing.B) {
+	recorder := &invariant.Recorder{}
+	b.ReportAllocs()
+	for range b.N {
+		invariant.Recorder_Dot_Product(recorder, "bench",
+			invariant.Recorder_Sometimes(recorder, true, "a"),
+			invariant.Recorder_Sometimes(recorder, false, "b"))
+	}
+}
+
+// Benchmark_Dot_Product_Recording measures the test / fuzz-worker hot path: recording on, the grid
+// pre-seeded as registration would, so each call credits its elements and tuple. The per-callsite
+// handle cache is warmed first, so the loop measures steady state — the cost a fuzz worker pays per
+// input — which must not allocate.
+func Benchmark_Dot_Product_Recording(b *testing.B) {
+	recorder := &invariant.Recorder{Is_Test: true}
+	for _, key := range []string{
+		"bench" + invariant.Element_Message_Separator + "a",
+		"bench" + invariant.Element_Message_Separator + "b",
+		"bench:tuple=(1,0)",
+	} {
+		recorder.Events.Store(key, &invariant.Assertion_Metadata{
+			Kind: invariant.Assertion_Kind_Sometimes, Message: key,
+		})
+	}
+	// Warm the per-callsite handle cache so the loop measures steady state, not the
+	// one-time key construction the first call pays.
+	invariant.Recorder_Dot_Product(recorder, "bench",
+		invariant.Recorder_Sometimes(recorder, true, "a"),
+		invariant.Recorder_Sometimes(recorder, false, "b"))
+	b.ReportAllocs()
+	b.ResetTimer()
+	for range b.N {
+		invariant.Recorder_Dot_Product(recorder, "bench",
+			invariant.Recorder_Sometimes(recorder, true, "a"),
+			invariant.Recorder_Sometimes(recorder, false, "b"))
+	}
+}
