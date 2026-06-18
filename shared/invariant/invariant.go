@@ -102,9 +102,9 @@ type Recorder struct {
 	// lookups strip the leading "/" before calling fs.ReadFile.
 	File_System fs.FS
 
-	// Assertions is the coverage tracker: one entry per registered element bucket and
+	// Events is the coverage tracker: one entry per registered element bucket and
 	// per Dot_Product tuple, keyed by message and credited as observations arrive.
-	Assertions sync.Map
+	Events sync.Map
 
 	// Output receives the coverage-gap report and the orphan/bundle diagnostics.
 	Output io.Writer
@@ -147,9 +147,9 @@ type Recorder struct {
 	// everywhere else — recording then just bumps the in-process counters.
 	Coverage_Sink func(key string, fired_true bool)
 
-	// Merge_Fuzz_Coverage, when set, is called by Recorder_Run_Test_Main after the suite runs and
-	// before the analysis. A fuzz coordinator wires it to read every worker's persisted coverage
-	// and credit it into the registered grid, so the analysis sees what the workers explored.
+	// Merge_Fuzz_Coverage, when set, is called by Recorder_Run_Test_Main after the suite runs
+	// and before the analysis. A fuzz coordinator wires it to read every worker's persisted
+	// coverage and credit it into the registered grid so the analysis sees what workers found.
 	Merge_Fuzz_Coverage func()
 }
 
@@ -216,6 +216,10 @@ type Dot_Element struct {
 // prefix the banned-methods convention requires for Event_True / Event_False.
 type Event = Dot_Element
 
+// Bundle is a slice of Dot_Element — what a _Invariants function returns for a caller to
+// spread into a Dot_Product. An alias, so it stays interchangeable with []Dot_Element.
+type Bundle = []Dot_Element
+
 // Dot_Element_Kind discriminates a Dot_Element: Always, Sometimes, Impossible, or
 // Distinct_Boundary.
 type Dot_Element_Kind uint8
@@ -244,10 +248,11 @@ func Recorder_Always[T ~bool](recorder *Recorder, condition T, message string) {
 	if !condition {
 		panic(Assertion_Failure_Message_Prefix + message + "  Always — condition was false")
 	}
-	// Enforcement (the panic above) runs in every mode; coverage is credited under a test run or
-	// the fuzz coordinator (not a worker), mirroring recorder_dot_product_observe. The reachability entry is
-	// seeded statically by recorder_register_eager_always; recorder_increment no-ops when the
-	// bare Always was never registered (an Always in a non-analyzed package).
+	// Enforcement (the panic above) runs in every mode; coverage is credited under a test run
+	// or the fuzz coordinator (not a worker), mirroring recorder_dot_product_observe. The
+	// reachability entry is seeded statically by recorder_register_eager_always;
+	// recorder_increment no-ops when the bare Always was never registered (an Always in a
+	// non-analyzed package).
 	if !recorder.Is_Test {
 		return
 	}
@@ -393,10 +398,10 @@ func Event_False(event Event) (reference Dot_Element_Reference) {
 // violated on the call is named in one panic, not just the first, so a single run surfaces
 // them all. message is the grid's identity and is prefixed onto each held axis's own message
 // to form that axis's coverage key.
-func Recorder_Dot_Product(recorder *Recorder, message string, dot_elements ...Dot_Element) {
+func Recorder_Dot_Product(recorder *Recorder, message string, bundle ...Dot_Element) {
 	var violations []string
-	for _, dot_element := range dot_elements {
-		violation := dot_element_violation(dot_element, dot_elements)
+	for _, dot_element := range bundle {
+		violation := dot_element_violation(dot_element, bundle)
 		if violation != "" {
 			violations = append(violations, violation)
 		}
@@ -404,7 +409,7 @@ func Recorder_Dot_Product(recorder *Recorder, message string, dot_elements ...Do
 	if len(violations) > 0 {
 		panic(Assertion_Failure_Message_Prefix + strings.Join(violations, "\n"))
 	}
-	recorder_dot_product_observe(recorder, message, dot_elements)
+	recorder_dot_product_observe(recorder, message, bundle)
 }
 
 // Increments the seeded tracker entry for each observed element and the tuple
@@ -414,7 +419,7 @@ func Recorder_Dot_Product(recorder *Recorder, message string, dot_elements ...Do
 // per-element key (prefix + separator + own message) and the grid key are built without
 // consulting any caller frame.
 func recorder_dot_product_observe(
-	recorder *Recorder, message string, dot_elements []Dot_Element,
+	recorder *Recorder, message string, bundle Bundle,
 ) {
 	if !recorder.Is_Test {
 		return
@@ -422,7 +427,7 @@ func recorder_dot_product_observe(
 	if recorder.Is_Benchmark {
 		return
 	}
-	for _, dot_element := range dot_elements {
+	for _, dot_element := range bundle {
 		if dot_element.Kind == Dot_Element_Kind_Impossible {
 			continue
 		}
@@ -435,16 +440,16 @@ func recorder_dot_product_observe(
 			dot_element.Event == Event_Kind_True,
 		)
 	}
-	tuple_key := recorder_tuple_key(message, dot_product_tuple(dot_elements))
+	tuple_key := recorder_tuple_key(message, dot_product_tuple(bundle))
 	recorder_increment(recorder, tuple_key, true)
 }
 
 // Returns the observed tuple of bucket indices for the call's varying elements, in order
 // — the runtime counterpart to the static grid's projected tuples. Only Sometimes and
 // Distinct_Boundary vary; an Impossible declares no axis and is skipped.
-func dot_product_tuple(dot_elements []Dot_Element) (tuple []int) {
-	tuple = make([]int, 0, len(dot_elements))
-	for _, dot_element := range dot_elements {
+func dot_product_tuple(bundle Bundle) (tuple []int) {
+	tuple = make([]int, 0, len(bundle))
+	for _, dot_element := range bundle {
 		if dot_element.Kind == Dot_Element_Kind_Impossible {
 			continue
 		}
@@ -472,27 +477,31 @@ func dot_element_bucket(dot_element Dot_Element) (bucket int) {
 // for the coordinator to union. atomic Add returns the post-increment value, so the sink fires
 // exactly once per branch.
 func recorder_increment(recorder *Recorder, key string, fired_true bool) {
-	value, ok := recorder.Assertions.Load(key)
+	value, ok := recorder.Events.Load(key)
 	if !ok {
 		return
 	}
 	metadata := value.(*Assertion_Metadata)
 	if fired_true {
-		if metadata.Frequency.Add(1) == 1 && recorder.Coverage_Sink != nil {
-			recorder.Coverage_Sink(key, true)
+		if metadata.Frequency.Add(1) == 1 {
+			if recorder.Coverage_Sink != nil {
+				recorder.Coverage_Sink(key, true)
+			}
 		}
 		return
 	}
-	if metadata.False_Frequency.Add(1) == 1 && recorder.Coverage_Sink != nil {
-		recorder.Coverage_Sink(key, false)
+	if metadata.False_Frequency.Add(1) == 1 {
+		if recorder.Coverage_Sink != nil {
+			recorder.Coverage_Sink(key, false)
+		}
 	}
 }
 
-// Fuzz_Coverage_Line encodes one covered (key, branch) as the line a fuzz worker appends to the
-// shared coverage file: base64(key) + "\t" + "T"/"F" + "\n". base64 because a key carries the NUL
-// element-separator and otherwise-arbitrary bytes; the trailing newline makes the file line-oriented
-// for the coordinator's merge. It is one string, so the worker writes it with a single Write under
-// O_APPEND (the lock-free-append requirement).
+// Fuzz_Coverage_Line encodes one covered (key, branch) as the line a fuzz worker appends to
+// the shared coverage file: base64(key) + "\t" + "T"/"F" + "\n". base64 because a key carries
+// the NUL element-separator and otherwise-arbitrary bytes; the trailing newline makes the file
+// line-oriented for the coordinator's merge. It is one string, so the worker writes it with a
+// single Write under O_APPEND (the lock-free-append requirement).
 func Fuzz_Coverage_Line(key string, fired_true bool) (line string) {
 	branch := "F"
 	if fired_true {
@@ -501,26 +510,40 @@ func Fuzz_Coverage_Line(key string, fired_true bool) (line string) {
 	return base64.StdEncoding.EncodeToString([]byte(key)) + "\t" + branch + "\n"
 }
 
-// Recorder_Merge_Fuzz_Coverage_From unions the coverage a fuzz coordinator reads from r (the workers'
-// shared file, one Fuzz_Coverage_Line per line) into the registered grid: each covered (key, branch)
-// marks that branch non-zero. Binary — per-process counts are not summed across workers. A malformed
-// or partial trailing line is skipped (a worker killed mid-write costs at most its last line); a key
-// with no seeded entry is skipped, like any runtime increment.
-func Recorder_Merge_Fuzz_Coverage_From(recorder *Recorder, r io.Reader) {
-	data, read_error := io.ReadAll(r)
-	if read_error != nil {
+func recorder_merge_process_line(recorder *Recorder, line string) {
+	tab_offset := strings.IndexByte(line, '\t')
+	if tab_offset < 0 {
 		return
 	}
-	for _, line := range strings.Split(string(data), "\n") {
-		tab := strings.IndexByte(line, '\t')
-		if tab < 0 {
-			continue
+	key, decode_error := base64.StdEncoding.DecodeString(line[:tab_offset])
+	if decode_error != nil {
+		return
+	}
+	recorder_increment(recorder, string(key), line[tab_offset+1:] == "T")
+}
+
+// Recorder_Merge_Fuzz_Coverage_From unions the coverage a fuzz coordinator reads from r
+// (the workers' shared file, one Fuzz_Coverage_Line per line) into the registered grid: each
+// covered (key, branch) marks that branch non-zero. Binary — per-process counts are not summed
+// across workers. A malformed or partial trailing line is skipped (a worker killed mid-write
+// costs at most its last line); a key with no seeded entry is skipped, like any runtime increment.
+func Recorder_Merge_Fuzz_Coverage_From(recorder *Recorder, r io.Reader) {
+	var buffer [4096]byte
+	var partial string
+	var read_error error
+	for read_error == nil {
+		var n int
+		n, read_error = r.Read(buffer[:])
+		if n > 0 {
+			chunk := partial + string(buffer[:n])
+			newline_offset := strings.IndexByte(chunk, '\n')
+			for newline_offset >= 0 {
+				recorder_merge_process_line(recorder, chunk[:newline_offset])
+				chunk = chunk[newline_offset+1:]
+				newline_offset = strings.IndexByte(chunk, '\n')
+			}
+			partial = chunk
 		}
-		key, decode_error := base64.StdEncoding.DecodeString(line[:tab])
-		if decode_error != nil {
-			continue
-		}
-		recorder_increment(recorder, string(key), line[tab+1:] == "T")
 	}
 }
 
@@ -529,7 +552,7 @@ func Recorder_Merge_Fuzz_Coverage_From(recorder *Recorder, r io.Reader) {
 // combination occurred — naming the offending axis by its message. Returns "" when the
 // element holds. Always is not an element and never reaches here; it enforces eagerly.
 func dot_element_violation(
-	dot_element Dot_Element, dot_elements []Dot_Element,
+	dot_element Dot_Element, bundle Bundle,
 ) (violation string) {
 	if dot_element.Kind == Dot_Element_Kind_Boundary {
 		return dot_element_boundary_violation(dot_element)
@@ -537,7 +560,7 @@ func dot_element_violation(
 	if dot_element.Kind != Dot_Element_Kind_Impossible {
 		return ""
 	}
-	if dot_element_impossible_violated(dot_element, dot_elements) {
+	if dot_element_impossible_violated(dot_element, bundle) {
 		return dot_element_impossible_message(dot_element)
 	}
 	return ""
@@ -551,7 +574,8 @@ func dot_element_boundary_violation(dot_element Dot_Element) (violation string) 
 		return dot_element.Message + "  Boundary — value outside [Lo, Hi]"
 	}
 	if dot_element.Event == Event_Kind_Bad_Bounds {
-		return dot_element.Message + "  Boundary — endpoints not distinct (Lo < Hi required)"
+		return dot_element.Message +
+			"  Boundary — endpoints not distinct (Lo < Hi required)"
 	}
 	return ""
 }
@@ -583,13 +607,13 @@ func event_kind_boolean_text(event_kind Event_Kind) (text string) {
 // forbidden combination occurred in full. An Impossible with no references
 // constrains nothing, so it never fires (rather than firing vacuously every call).
 func dot_element_impossible_violated(
-	impossible Dot_Element, dot_elements []Dot_Element,
+	impossible Dot_Element, bundle Bundle,
 ) (violated bool) {
 	if len(impossible.Impossibles) == 0 {
 		return false
 	}
 	for _, reference := range impossible.Impossibles {
-		if !dot_element_reference_observed(reference, dot_elements) {
+		if !dot_element_reference_observed(reference, bundle) {
 			return false
 		}
 	}
@@ -600,9 +624,9 @@ func dot_element_impossible_violated(
 // Message and was seen at the event the reference names. Impossible elements are
 // skipped — they observe nothing.
 func dot_element_reference_observed(
-	reference Dot_Element_Reference, dot_elements []Dot_Element,
+	reference Dot_Element_Reference, bundle Bundle,
 ) (observed bool) {
-	for _, dot_element := range dot_elements {
+	for _, dot_element := range bundle {
 		if dot_element.Kind == Dot_Element_Kind_Impossible {
 			continue
 		}
@@ -618,7 +642,7 @@ func dot_element_reference_observed(
 }
 
 // Recorder_Register_Packages_For_Analysis parses every non-test .go file under
-// the given directories and seeds recorder.Assertions with one entry per element
+// the given directories and seeds recorder.Events with one entry per element
 // bucket and one per non-carved tuple of each invariant.Dot_Product call. That
 // seeded set is the expected-coverage space the never-fired report scans after
 // the run; literal invariant.X selectors and *_Invariants bundles are recognised.
@@ -973,14 +997,15 @@ func recorder_register_eager_always(
 	if axis.Kind != Assertion_Kind_Always {
 		return
 	}
-	_, loaded := recorder.Assertions.LoadOrStore(axis.Message, &Assertion_Metadata{
+	_, loaded := recorder.Events.LoadOrStore(axis.Message, &Assertion_Metadata{
 		Kind:      Assertion_Kind_Always,
 		Message:   axis.Message,
 		Condition: axis.Condition,
 	})
 	if loaded {
 		reg.Collision = append(reg.Collision,
-			recorder_position(file_set, call)+"  duplicate message: "+strconv.Quote(axis.Message))
+			recorder_position(file_set, call)+
+				"  duplicate message: "+strconv.Quote(axis.Message))
 	}
 }
 
@@ -1103,7 +1128,7 @@ type registration_cell struct {
 	Bucket   int
 }
 
-// registration accumulates the diagnostics a registration pass gathers before deciding
+// Registration accumulates the diagnostics a registration pass gathers before deciding
 // whether to fail: bundles recognised by name but unresolvable, messages that are not
 // string literals, and message collisions. Each is fatal on its own (see the
 // recorder_check_* reporters). Seen_Prefix tracks Dot_Product messages so two grids
@@ -1181,27 +1206,32 @@ func recorder_register_dot_product(
 	prefix, literal := ast_string_literal(call, 0)
 	if !literal {
 		reg.Non_Literal = append(reg.Non_Literal,
-			recorder_position(file_set, call)+"  Dot_Product message is not a string literal")
+			recorder_position(file_set, call)+
+				"  Dot_Product message is not a string literal")
 		return
 	}
 	if reg.Seen_Prefix[prefix] {
 		reg.Collision = append(reg.Collision,
-			recorder_position(file_set, call)+"  duplicate Dot_Product message: "+strconv.Quote(prefix))
+			recorder_position(file_set, call)+
+				"  duplicate Dot_Product message: "+strconv.Quote(prefix))
 		return
 	}
 	reg.Seen_Prefix[prefix] = true
 	arguments := recorder_dot_product_arguments(body, call)
-	axes, carves := recorder_collect_elements(file_set, arguments, bindings, imports, index, reg)
+	axes, carves := recorder_collect_elements(
+		file_set, arguments, bindings, imports, index, reg)
 	for _, axis := range axes {
 		key := prefix + Element_Message_Separator + axis.Message
-		_, loaded := recorder.Assertions.LoadOrStore(key, &Assertion_Metadata{
+		_, loaded := recorder.Events.LoadOrStore(key, &Assertion_Metadata{
 			Kind:      axis.Kind,
 			Message:   key,
 			Condition: axis.Condition,
 		})
 		if loaded {
-			reg.Collision = append(reg.Collision, recorder_position(file_set, call)+
-				"  duplicate message: "+strconv.Quote(prefix)+" / "+strconv.Quote(axis.Message))
+			reg.Collision = append(reg.Collision,
+				recorder_position(file_set, call)+
+					"  duplicate message: "+strconv.Quote(prefix)+
+					" / "+strconv.Quote(axis.Message))
 		}
 	}
 	recorder_register_tuples(recorder, prefix, axes, carves)
@@ -1262,14 +1292,16 @@ func recorder_collect_elements(
 			// its elements while the runtime still enforces them — its coverage
 			// obligations would vanish with no signal. Refuse it: the analyzer
 			// descends a bundle or fails on it, never silently drops it.
-			reg.Unresolved = append(reg.Unresolved, recorder_unresolved_line(file_set, bundle))
+			reg.Unresolved = append(reg.Unresolved,
+				recorder_unresolved_line(file_set, bundle))
 			continue
 		}
 		element_call, resolved := ast_resolve_element(argument, frame.Bindings)
 		if !resolved {
 			continue
 		}
-		axis, is_axis := recorder_axis_of(file_set, element_call, frame.Unqualified_Sugar, reg)
+		axis, is_axis := recorder_axis_of(
+			file_set, element_call, frame.Unqualified_Sugar, reg)
 		if !is_axis {
 			continue
 		}
@@ -1493,7 +1525,7 @@ func ast_append_arguments(
 }
 
 // Collects every element expression appended in the body — each argument after
-// the first of every append(...) call — i.e. a bundle's returned dot_elements.
+// the first of every append(...) call — i.e. a bundle's returned bundle.
 func ast_collect_append_arguments(body *ast.BlockStmt) (arguments []ast.Expr) {
 	ast.Inspect(body, func(node ast.Node) (descend bool) {
 		call, is_call := node.(*ast.CallExpr)
@@ -1624,7 +1656,8 @@ func recorder_axis_of(
 		message, literal := ast_string_literal(call, condition_index+1)
 		if !literal {
 			reg.Non_Literal = append(reg.Non_Literal,
-				recorder_position(file_set, call)+"  "+selector+" message is not a string literal")
+				recorder_position(file_set, call)+
+					"  "+selector+" message is not a string literal")
 		}
 		return registration_axis{
 			Message:      message,
@@ -1932,7 +1965,8 @@ func recorder_register_tuples(
 	legend := make([]Tuple_Axis, len(coordinate_positions))
 	for j, position := range coordinate_positions {
 		axis := axes[position]
-		legend[j] = Tuple_Axis{Kind: axis.Kind, Condition: axis.Condition, Message: axis.Message}
+		legend[j] = Tuple_Axis{
+			Kind: axis.Kind, Condition: axis.Condition, Message: axis.Message}
 	}
 	// The odometer still runs the full axis list so an Impossible's carve positions, which
 	// index that full list, stay valid; each surviving tuple is then projected onto the
@@ -1952,7 +1986,7 @@ func recorder_register_tuples(
 			Tuple_Indices: projected,
 			Axes:          legend,
 		}
-		recorder.Assertions.LoadOrStore(recorder_tuple_key(prefix, projected), metadata)
+		recorder.Events.LoadOrStore(recorder_tuple_key(prefix, projected), metadata)
 	}
 }
 
@@ -2037,7 +2071,7 @@ func Recorder_Analyze_Assertion_Frequency(recorder *Recorder) {
 
 // Walks the tracker and returns every coverage gap across all seeded assertions.
 func recorder_collect_gaps(recorder *Recorder) (gaps []coverage_gap) {
-	recorder.Assertions.Range(func(key, value any) (continue_iteration bool) {
+	recorder.Events.Range(func(key, value any) (continue_iteration bool) {
 		metadata := value.(*Assertion_Metadata)
 		gaps = append(gaps, assertion_metadata_gaps(metadata)...)
 		return true
@@ -2280,7 +2314,7 @@ func Recorder_Assertion_Summary(recorder *Recorder) (summary string) {
 	individual := 0
 	combinations := 0
 	panic_able := 0
-	recorder.Assertions.Range(func(key, value any) (continue_iteration bool) {
+	recorder.Events.Range(func(key, value any) (continue_iteration bool) {
 		metadata := value.(*Assertion_Metadata)
 		if metadata.Kind == Assertion_Kind_Tuple {
 			combinations++

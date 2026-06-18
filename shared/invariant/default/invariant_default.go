@@ -26,9 +26,12 @@ type Recorder = invariant.Recorder
 // Assertion_Metadata re-exports the library coverage-tracker entry type.
 type Assertion_Metadata = invariant.Assertion_Metadata
 
-// Dot_Element re-exports the library element type so bundles can declare their
-// return type as []invariant.Dot_Element.
+// Dot_Element re-exports the library element type so bundles can name it in Bundle.
 type Dot_Element = invariant.Dot_Element
+
+// Bundle re-exports the library Bundle alias ([]Dot_Element) — the return type of a
+// _Invariants function, spread into a Dot_Product.
+type Bundle = invariant.Bundle
 
 // Dot_Element_Reference re-exports the library reference type used by Impossible.
 type Dot_Element_Reference = invariant.Dot_Element_Reference
@@ -89,7 +92,9 @@ func Init_Default_Recorder() (recorder *invariant.Recorder) {
 // coordinator, a fuzz worker subprocess, or a benchmark. "-test.fuzzworker" is a strict prefix
 // extension of the "-test.fuzz" the is_fuzz check also matches, so a worker reports both is_fuzz
 // and is_fuzz_worker; the recorder gates coverage on is_fuzz_worker.
-func running_environment_flags() (is_test bool, is_fuzz bool, is_fuzz_worker bool, is_benchmark bool) {
+func running_environment_flags() (
+	is_test bool, is_fuzz bool, is_fuzz_worker bool, is_benchmark bool,
+) {
 	for _, argument := range os.Args {
 		if strings.HasPrefix(argument, "-test.fuzzworker") {
 			is_fuzz_worker = true
@@ -115,18 +120,19 @@ func Run_Test_Main(m *testing.M, directories ...string) {
 	invariant.Recorder_Run_Test_Main(Default, m, directories...)
 }
 
-// fuzz_coverage_file_env names the env var a fuzz coordinator sets to the shared coverage file
-// path. The -test.fuzzworker subprocesses it spawns inherit the env (Go captures os.Environ() when
-// starting workers), so they find the same file.
-const fuzz_coverage_file_env = "INVARIANT_FUZZ_COVERAGE_FILE"
+// Fuzz_coverage_file_environment names the env var a fuzz coordinator sets to the shared
+// coverage file path. The -test.fuzzworker subprocesses it spawns inherit the env (Go captures
+// os.Environ() when starting workers), so they find the same file.
+const fuzz_coverage_file_environmentironment = "INVARIANT_FUZZ_COVERAGE_FILE"
 
-// fuzz_coverage_setup wires the cross-process coverage seams for a fuzzing run. Under -fuzz the
-// coordinator never executes the fuzzed body — that happens in worker subprocesses — so each worker
-// appends every newly-covered cell to one shared append-only file, and the coordinator unions that
-// file into its registered grid before analyzing. A plain test or benchmark wires nothing.
+// Fuzz_coverage_setup wires the cross-process coverage seams for a fuzzing run. Under -fuzz
+// the coordinator never executes the fuzzed body — that happens in worker subprocesses — so
+// each worker appends every newly-covered cell to one shared append-only file, and the
+// coordinator unions that file into its registered grid before analyzing. A plain test or
+// benchmark wires nothing.
 func fuzz_coverage_setup(recorder *invariant.Recorder) {
 	if recorder.Is_Fuzz_Worker {
-		path := os.Getenv(fuzz_coverage_file_env)
+		path := os.Getenv(fuzz_coverage_file_environment)
 		if path == "" {
 			return
 		}
@@ -134,9 +140,9 @@ func fuzz_coverage_setup(recorder *invariant.Recorder) {
 		if open_error != nil {
 			return
 		}
-		// One Write per line under O_APPEND: the kernel serializes the appends across worker
-		// processes, so no mutex (useless across processes) and no flock are needed. The line
-		// format lives in the core (Fuzz_Coverage_Line) so it round-trips with the merge.
+		// One Write per line under O_APPEND: the kernel serializes appends across worker
+		// processes, so no mutex (useless across processes) and no flock are needed.
+		// The line format lives in Fuzz_Coverage_Line so it round-trips with the merge.
 		recorder.Coverage_Sink = func(key string, fired_true bool) {
 			io.WriteString(file, invariant.Fuzz_Coverage_Line(key, fired_true))
 		}
@@ -145,15 +151,15 @@ func fuzz_coverage_setup(recorder *invariant.Recorder) {
 	if !recorder.Is_Fuzz {
 		return
 	}
-	// Coordinator: create the shared file now (before m.Run spawns workers) and hand its path to
-	// them via the inherited env; union and remove it after the run.
+	// Coordinator: create the shared file now (before m.Run spawns workers) and hand its
+	// path to them via the inherited env; union and remove it after the run.
 	file, create_error := os.CreateTemp("", "invariant-fuzz-coverage-*.tsv")
 	if create_error != nil {
 		return
 	}
 	path := file.Name()
 	file.Close()
-	os.Setenv(fuzz_coverage_file_env, path)
+	os.Setenv(fuzz_coverage_file_environment, path)
 	recorder.Merge_Fuzz_Coverage = func() {
 		opened, open_error := os.Open(path)
 		if open_error == nil {
@@ -265,7 +271,7 @@ func whole_number_min[I Whole_Number]() (lo I) {
 // type's full range [whole_number_min, whole_number_max]. The boundary tracks reaching
 // each endpoint, so the run is covered once the value is observed at both the floor and
 // the ceiling. Element messages are local; the consuming Dot_Product namespaces them.
-func Whole_Number_Invariants[I Whole_Number](n I) (dot_elements []invariant.Dot_Element) {
+func Whole_Number_Invariants[I Whole_Number](n I) (dot_elements Bundle) {
 	return append(
 		dot_elements,
 		invariant.Recorder_Sometimes(Default, n == 0, "zero"),
@@ -282,7 +288,7 @@ func Whole_Number_Invariants[I Whole_Number](n I) (dot_elements []invariant.Dot_
 // Float_Invariants is the preset coverage for a float: NaN, negative, and
 // positive must each be observed (zero is the shared finite cell). NaN excludes
 // either sign, and the two signs exclude each other. ±Inf fold into the signs.
-func Float_Invariants[F ~float32 | ~float64](f F) (dot_elements []invariant.Dot_Element) {
+func Float_Invariants[F ~float32 | ~float64](f F) (dot_elements Bundle) {
 	value := float64(f)
 	not_a_number := Sometimes(math.IsNaN(value), "nan")
 	negative := Sometimes(value < 0, "negative")
@@ -302,7 +308,7 @@ func Float_Invariants[F ~float32 | ~float64](f F) (dot_elements []invariant.Dot_
 // rune count (a multi-byte rune), a control character, and a line break. An empty
 // string excludes every content axis, and a NUL byte or a line break is itself a
 // control character.
-func String_Invariants(s string) (dot_elements []invariant.Dot_Element) {
+func String_Invariants(s string) (dot_elements Bundle) {
 	empty := Sometimes(len(s) == 0, "empty")
 	edge_whitespace := Sometimes_Has_Edge_Whitespace(s)
 	interior_whitespace := Sometimes_Has_Interior_Whitespace(s)
@@ -330,27 +336,32 @@ func String_Invariants(s string) (dot_elements []invariant.Dot_Element) {
 // Sometimes_Has_Edge_Whitespace records whether s begins or ends with whitespace. Its
 // message is its own name, which the static registration derives from the call selector.
 func Sometimes_Has_Edge_Whitespace(s string) (dot_element invariant.Dot_Element) {
-	return invariant.Recorder_Sometimes(Default, string_has_edge_whitespace(s), "Sometimes_Has_Edge_Whitespace")
+	return invariant.Recorder_Sometimes(
+		Default, string_has_edge_whitespace(s), "Sometimes_Has_Edge_Whitespace")
 }
 
 // Always_Has_Edge_Whitespace asserts s always begins or ends with whitespace.
 func Always_Has_Edge_Whitespace(s string) {
-	invariant.Recorder_Always(Default, string_has_edge_whitespace(s), "Always_Has_Edge_Whitespace")
+	invariant.Recorder_Always(
+		Default, string_has_edge_whitespace(s), "Always_Has_Edge_Whitespace")
 }
 
 // Sometimes_Has_Interior_Whitespace records whether s has whitespace off its edges.
 func Sometimes_Has_Interior_Whitespace(s string) (dot_element invariant.Dot_Element) {
-	return invariant.Recorder_Sometimes(Default, string_has_interior_whitespace(s), "Sometimes_Has_Interior_Whitespace")
+	return invariant.Recorder_Sometimes(
+		Default, string_has_interior_whitespace(s), "Sometimes_Has_Interior_Whitespace")
 }
 
 // Always_Has_Interior_Whitespace asserts s always has whitespace off its edges.
 func Always_Has_Interior_Whitespace(s string) {
-	invariant.Recorder_Always(Default, string_has_interior_whitespace(s), "Always_Has_Interior_Whitespace")
+	invariant.Recorder_Always(
+		Default, string_has_interior_whitespace(s), "Always_Has_Interior_Whitespace")
 }
 
 // Sometimes_Has_Invalid_UTF8 records whether s is sometimes not valid UTF-8.
 func Sometimes_Has_Invalid_UTF8(s string) (dot_element invariant.Dot_Element) {
-	return invariant.Recorder_Sometimes(Default, string_has_invalid_utf8(s), "Sometimes_Has_Invalid_UTF8")
+	return invariant.Recorder_Sometimes(
+		Default, string_has_invalid_utf8(s), "Sometimes_Has_Invalid_UTF8")
 }
 
 // Always_Has_Invalid_UTF8 asserts s is always not valid UTF-8.
@@ -371,12 +382,14 @@ func Always_Has_Nul(s string) {
 // Sometimes_Has_Multibyte_Rune records whether s's byte count sometimes differs from
 // its rune count — a multi-byte rune is present.
 func Sometimes_Has_Multibyte_Rune(s string) (dot_element invariant.Dot_Element) {
-	return invariant.Recorder_Sometimes(Default, string_has_multibyte_rune(s), "Sometimes_Has_Multibyte_Rune")
+	return invariant.Recorder_Sometimes(
+		Default, string_has_multibyte_rune(s), "Sometimes_Has_Multibyte_Rune")
 }
 
 // Always_Has_Multibyte_Rune asserts s's byte count always differs from its rune count.
 func Always_Has_Multibyte_Rune(s string) {
-	invariant.Recorder_Always(Default, string_has_multibyte_rune(s), "Always_Has_Multibyte_Rune")
+	invariant.Recorder_Always(
+		Default, string_has_multibyte_rune(s), "Always_Has_Multibyte_Rune")
 }
 
 // Sometimes_Has_Control records whether s sometimes contains a control character.
@@ -392,7 +405,8 @@ func Always_Has_Control(s string) {
 // Sometimes_Has_Line_Break records whether s sometimes contains a carriage return or
 // line feed.
 func Sometimes_Has_Line_Break(s string) (dot_element invariant.Dot_Element) {
-	return invariant.Recorder_Sometimes(Default, string_has_line_break(s), "Sometimes_Has_Line_Break")
+	return invariant.Recorder_Sometimes(
+		Default, string_has_line_break(s), "Sometimes_Has_Line_Break")
 }
 
 // Always_Has_Line_Break asserts s always contains a carriage return or line feed.
@@ -402,7 +416,8 @@ func Always_Has_Line_Break(s string) {
 
 // Sometimes_Has_Non_ASCII records whether s sometimes contains a non-ASCII byte.
 func Sometimes_Has_Non_ASCII(s string) (dot_element invariant.Dot_Element) {
-	return invariant.Recorder_Sometimes(Default, string_has_non_ascii(s), "Sometimes_Has_Non_ASCII")
+	return invariant.Recorder_Sometimes(
+		Default, string_has_non_ascii(s), "Sometimes_Has_Non_ASCII")
 }
 
 // Always_Has_Non_ASCII asserts s always contains a non-ASCII byte.
@@ -412,12 +427,14 @@ func Always_Has_Non_ASCII(s string) {
 
 // Never_Has_Edge_Whitespace asserts s never begins or ends with whitespace.
 func Never_Has_Edge_Whitespace(s string) {
-	invariant.Recorder_Always(Default, !string_has_edge_whitespace(s), "Never_Has_Edge_Whitespace")
+	invariant.Recorder_Always(
+		Default, !string_has_edge_whitespace(s), "Never_Has_Edge_Whitespace")
 }
 
 // Never_Has_Interior_Whitespace asserts s never has whitespace off its edges.
 func Never_Has_Interior_Whitespace(s string) {
-	invariant.Recorder_Always(Default, !string_has_interior_whitespace(s), "Never_Has_Interior_Whitespace")
+	invariant.Recorder_Always(
+		Default, !string_has_interior_whitespace(s), "Never_Has_Interior_Whitespace")
 }
 
 // Never_Has_Invalid_UTF8 asserts s is always valid UTF-8.
@@ -432,7 +449,8 @@ func Never_Has_Nul(s string) {
 
 // Never_Has_Multibyte_Rune asserts s's byte count always equals its rune count.
 func Never_Has_Multibyte_Rune(s string) {
-	invariant.Recorder_Always(Default, !string_has_multibyte_rune(s), "Never_Has_Multibyte_Rune")
+	invariant.Recorder_Always(
+		Default, !string_has_multibyte_rune(s), "Never_Has_Multibyte_Rune")
 }
 
 // Never_Has_Control asserts s never contains a control character.
@@ -453,7 +471,7 @@ func Never_Has_Non_ASCII(s string) {
 // Slice_Invariants is the preset coverage for a slice: nil, empty-but-non-nil,
 // and non-empty must each be observed — the nil/empty distinction Go draws. A nil
 // slice is necessarily empty, which the Impossible records.
-func Slice_Invariants[E any](s []E) (dot_elements []invariant.Dot_Element) {
+func Slice_Invariants[E any](s []E) (dot_elements Bundle) {
 	empty := Sometimes(len(s) == 0, "empty")
 	is_nil := Sometimes(s == nil, "nil")
 	return append(dot_elements,
@@ -464,7 +482,7 @@ func Slice_Invariants[E any](s []E) (dot_elements []invariant.Dot_Element) {
 
 // Map_Invariants is the preset coverage for a map: nil, empty-but-non-nil, and
 // non-empty must each be observed. A nil map is necessarily empty.
-func Map_Invariants[K comparable, V any](m map[K]V) (dot_elements []invariant.Dot_Element) {
+func Map_Invariants[K comparable, V any](m map[K]V) (dot_elements Bundle) {
 	empty := Sometimes(len(m) == 0, "empty")
 	is_nil := Sometimes(m == nil, "nil")
 	return append(dot_elements,

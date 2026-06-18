@@ -89,19 +89,15 @@ Constructing a `Sometimes` or `Distinct_Boundary` enforces and records nothing u
 
 ### Identity
 
-Identity is the message, never a source location. A `Dot_Product` takes a message as its
-first argument and prefixes it onto the message of every `Sometimes` and `Distinct_Boundary`
-axis it holds; an axis is identified by that compound `prefix` + own message. Registration
-reads both messages from the call's string-literal arguments and the runtime rendezvous on the
-identical string, with no caller lookup. Two `Dot_Product`s with distinct messages namespace
-their axes apart even when they spread the same elements.
+Identity is the message, never a source location. A `Dot_Product` prefixes its own message
+onto every axis it holds; an axis is identified by that compound prefix + own message, read
+from literal arguments. Two `Dot_Product`s with distinct messages namespace their axes apart.
 
 ### Grid
 
-Registration seeds one demanded tuple per surviving combination of the varying axes'
-buckets, dropping the cells an `Impossible` carves. The grid is over the `Sometimes` and
-`Distinct_Boundary` axes only; an `Always` is not an element and never occupies a coordinate.
-The grid is identified by the `Dot_Product`'s message.
+Registration seeds one tuple per surviving combination of varying axes' buckets, dropping
+cells an `Impossible` carves. The grid is over `Sometimes` and `Distinct_Boundary` only —
+an `Always` is not an element. The grid is identified by the `Dot_Product`'s message.
 
 ### Attribution
 
@@ -159,9 +155,8 @@ through the workspace and descended.
 ### Callsite
 
 Spreading one bundle into two `Dot_Product`s with distinct messages yields independent
-coverage entries, so neither masks the other's gap — the per-field message prefix is what
-keeps them apart. Reusing one message across two `Dot_Product`s is a duplicate and fails
-registration (see Coverage / Uniqueness).
+coverage entries — the per-field prefix keeps them apart, so neither masks the other's gap.
+Reusing one message across two `Dot_Product`s is a duplicate and fails registration.
 
 ### Gap Location
 
@@ -222,13 +217,9 @@ records nothing and is not flagged — consuming an element is the author's resp
 
 ### Modes
 
-Coverage is recorded in every mode but a benchmark — a plain test run, a fuzzing coordinator, and a
-fuzz worker subprocess all credit observations; only a benchmark records nothing. Under a fuzzing run
-the coordinator never executes the fuzzed body (the worker subprocesses do), so each worker appends
-every newly-covered cell to one shared file and the coordinator unions that file into its grid before
-the analysis. The analysis runs in a plain test and the coordinator, never in a worker (a worker's
-view is partial). Enforcement fires in every mode, workers included. Aggregation is best-effort: a
-worker killed mid-input loses at most that input's not-yet-written cells.
+Coverage is recorded in every mode but a benchmark — plain test, fuzz coordinator, and fuzz
+worker all credit observations. Under -fuzz each worker appends to a shared file; the
+coordinator unions that file before analysis. Enforcement fires in every mode.
 
 ### Enforcement
 
@@ -239,9 +230,8 @@ independently of any `Dot_Product`, also on every call in every run.
 ### Uniqueness
 
 Every assertion message is a global identity; registration fails when two distinct assertions
-would claim the same one — two `Dot_Product`s sharing a message, a repeated axis message within
-one `Dot_Product`, or two `Always` sharing a message. A duplicate would silently merge two
-obligations and mask a gap, so it is fatal, not merged.
+claim the same one — two `Dot_Product`s sharing a message, a repeated axis, or two `Always`
+sharing a message. A duplicate would mask a gap, so it is fatal, not merged.
 
 ### Literal
 
