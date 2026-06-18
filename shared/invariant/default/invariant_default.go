@@ -36,13 +36,6 @@ type Bundle = invariant.Bundle
 // Dot_Element_Reference re-exports the library reference type used by Impossible.
 type Dot_Element_Reference = invariant.Dot_Element_Reference
 
-// Numeric re-exports the library constraint for Boundary_Input's type parameter.
-type Numeric = invariant.Numeric
-
-// Boundary_Input re-exports the library type so callers can write
-// invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{...}).
-type Boundary_Input[I invariant.Numeric] = invariant.Boundary_Input[I]
-
 // Marker type whose reflect-reported import path is this package's own, so
 // Init_Default_Recorder can hand the static registration this package's path
 // (derived, not hardcoded) to recognise the unqualified primitive calls inside
@@ -190,15 +183,6 @@ func Sometimes[T ~bool](condition T, message string) (dot_element invariant.Dot_
 	return invariant.Recorder_Sometimes(Default, condition, message)
 }
 
-// Distinct_Boundary builds an element asserting Lo < Hi and Lo <= X <= Hi, tracking which
-// endpoint X lands on; message is its own identity. Like the other producers it never panics
-// on its own — enforcement fires only when the element is consumed by Dot_Product.
-func Distinct_Boundary[I invariant.Numeric](
-	input *invariant.Boundary_Input[I], message string,
-) (dot_element invariant.Dot_Element) {
-	return invariant.Recorder_Distinct_Boundary(Default, input, message)
-}
-
 // Impossible declares that the referenced element events must never all co-occur on
 // the same call, and globs over the axes it does not name (see invariant.Impossible).
 // Pure packaging — no Recorder needed.
@@ -232,52 +216,15 @@ type Whole_Number interface {
 		~uint | ~uint8 | ~uint16 | ~uint32 | ~uint64
 }
 
-// Reports whether the integer type I is signed. -1 is representable only by a signed
-// type; in an unsigned one I(0)-I(1) wraps to the type maximum, which is not < 0. The
-// expression is a compile-time-foldable constant once I is instantiated.
-func whole_number_is_signed[I Whole_Number]() (signed bool) {
-	return I(0)-I(1) < 0
-}
-
-// Returns the largest value of the integer type I. A width-B unsigned
-// integer maxes at 2^(8B) - 1 (all bits set); a signed one at 2^(8B-1) - 1, one bit
-// narrower for the sign. The shift derives B from the type's byte size, so the bound is
-// exact for every kind in Whole_Number and any ~-defined type over them.
-func whole_number_max[I Whole_Number]() (hi I) {
-	bits := uint(unsafe.Sizeof(hi)) * 8
-	if whole_number_is_signed[I]() {
-		return I(^uint64(0) >> (65 - bits))
-	}
-	return I(^uint64(0) >> (64 - bits))
-}
-
-// Returns the smallest value of the integer type I: 0 for an unsigned
-// type, and for a signed one the two's-complement floor -2^(8B-1), one below the negated
-// max. The negation is dead for unsigned I (it returns 0 first) but still must compile,
-// which it does — unary minus on an unsigned value is legal and wraps.
-func whole_number_min[I Whole_Number]() (lo I) {
-	if !whole_number_is_signed[I]() {
-		return 0
-	}
-	return -whole_number_max[I]() - 1
-}
-
-// Whole_Number_Invariants is the preset coverage for an integer: the small-magnitude
-// axes 0, 1, 2 (each must be observed both ways) plus a Distinct_Boundary over the
-// type's full range [whole_number_min, whole_number_max]. The boundary tracks reaching
-// each endpoint, so the run is covered once the value is observed at both the floor and
-// the ceiling. Element messages are local; the consuming Dot_Product namespaces them.
+// Whole_Number_Invariants is the preset coverage for an integer: the small-magnitude axes 0,
+// 1, 2, each of which must be observed both ways. Element messages are local; the consuming
+// Dot_Product namespaces them.
 func Whole_Number_Invariants[I Whole_Number](n I) (dot_elements Bundle) {
 	return append(
 		dot_elements,
 		invariant.Recorder_Sometimes(Default, n == 0, "zero"),
 		invariant.Recorder_Sometimes(Default, n == 1, "one"),
 		invariant.Recorder_Sometimes(Default, n == 2, "two"),
-		invariant.Recorder_Distinct_Boundary(Default, &Boundary_Input[I]{
-			X:  n,
-			Lo: whole_number_min[I](),
-			Hi: whole_number_max[I](),
-		}, "range"),
 	)
 }
 
@@ -325,7 +272,10 @@ func String_Invariants(s string) (dot_elements Bundle) {
 		Impossible(Event_True("empty"), Event_True("Sometimes_Has_Control")),
 		Impossible(Event_True("empty"), Event_True("Sometimes_Has_Line_Break")),
 		Impossible(Event_True("Sometimes_Has_Nul"), Event_False("Sometimes_Has_Control")),
-		Impossible(Event_True("Sometimes_Has_Line_Break"), Event_False("Sometimes_Has_Control")),
+		Impossible(
+			Event_True("Sometimes_Has_Line_Break"),
+			Event_False("Sometimes_Has_Control"),
+		),
 	)
 }
 

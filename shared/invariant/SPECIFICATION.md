@@ -37,26 +37,6 @@ branch on a false event.
 A `Sometimes` observed only one way, true without false or false without true, is
 reported as a coverage gap.
 
-# Distinct Boundary
-
-`Recorder_Distinct_Boundary` asserts `Lo < Hi` and `Lo <= X <= Hi`, recording which
-endpoint the value lands on.
-
-### Endpoints
-
-The `Hi` endpoint credits the true branch, the `Lo` endpoint the false branch, and
-an interior value credits neither.
-
-### Outside
-
-A value beyond `[Lo, Hi]` panics when the boundary reaches a `Dot_Product`,
-naming the boundary's message.
-
-### Bad Bounds
-
-Endpoints that are not distinct, a reversed or equal pair, panic at the
-`Dot_Product`, naming the boundary's message.
-
 # Impossible
 
 `Impossible` declares element events that must never all occur together on one
@@ -80,11 +60,9 @@ carves every cell matching the named events across all their values.
 
 ### Sibling
 
-A reference names an axis of its own `Dot_Product`. Naming a message that is not a sibling panics at
-the `Dot_Product` on every call — a structural precondition checked before recording, independent of
-whether the combination could occur — so a mistyped reference is caught at once rather than as an
-unfillable gap. A reference may name a sibling that a spread bundle contributed, which holding the
-axis value could not reach.
+A reference names an axis of its own `Dot_Product`. Naming a non-sibling panics at the `Dot_Product`
+on every call — a structural precondition checked before recording — so a typo is caught at once,
+not as an unfillable gap. A reference may name a sibling a spread bundle contributed.
 
 # Dot Product
 
@@ -93,8 +71,8 @@ nothing until it is passed here.
 
 ### Inert
 
-Constructing a `Sometimes` or `Distinct_Boundary` enforces and records nothing until a
-`Dot_Product` consumes it. An `Always`, by contrast, is eager (see Always / Eager).
+Constructing a `Sometimes` enforces and records nothing until a `Dot_Product` consumes it.
+An `Always`, by contrast, is eager (see Always / Eager).
 
 ### Identity
 
@@ -105,13 +83,13 @@ from literal arguments. Two `Dot_Product`s with distinct messages namespace thei
 ### Grid
 
 Registration seeds one tuple per surviving combination of varying axes' buckets, dropping
-cells an `Impossible` carves. The grid is over `Sometimes` and `Distinct_Boundary` only —
-an `Always` is not an element. The grid is identified by the `Dot_Product`'s message.
+cells an `Impossible` carves. The grid is over `Sometimes` axes only — an `Always` is not an
+element. The grid is identified by the `Dot_Product`'s message.
 
 ### Attribution
 
-A panic names every element it found violated on the call — each `Distinct_Boundary` or
-`Impossible` by its message, not only the first. A false eager `Always` is not part of this; it
+A panic names every element it found violated on the call — each triggered `Impossible`, not
+only the first. A false eager `Always` is not part of this; it
 panics at its own site, so consecutive `Always` guards short-circuit on the first failure.
 
 # Bundles
@@ -169,15 +147,15 @@ Reusing one message across two `Dot_Product`s is a duplicate and fails registrat
 
 ### Gap Location
 
-A bundle element's (`Sometimes` / `Distinct_Boundary`) gap is named by the consuming
+A bundle `Sometimes` element's gap is named by the consuming
 `Dot_Product`'s message prefixed to the element's own message. An eager `Always` in a bundle
 body is not an element; its gap names its own bare message.
 
 ### Failure Location
 
-A bundle element's deferred violation (a bad `Distinct_Boundary`, a triggered `Impossible`)
-names only its own message, never the consuming prefix — yet the panic's stack still
-unwinds through the Dot_Product, carrying it. An eager `Always` panics from its own frame.
+A bundle element's deferred violation (a triggered `Impossible`) names the co-occurring axes by
+their own message, never the consuming prefix — yet the panic's stack still unwinds through the
+Dot_Product, carrying it. An eager `Always` panics from its own frame.
 
 ### Ban
 
@@ -204,11 +182,6 @@ A cross-product gap prints its grid's axis legend once, each position named by k
 condition, and message (the axis's own message), and decodes each cell's buckets
 back to the events they stand for, so a bare coordinate is debuggable across nested bundles.
 
-### Boundary
-
-A `Distinct_Boundary` endpoint the run never reached is reported as a boundary gap,
-named by the value it bounds.
-
 ### Summary
 
 A clean run reports how many properties it tested, splitting individual from
@@ -221,8 +194,8 @@ With every obligation exercised, the analysis reports nothing and does not exit.
 # Coverage
 
 Coverage of a consumed construct is never silently dropped: the analyzer either accounts for
-it or fails on it. A bare `Sometimes` or `Distinct_Boundary` never passed to a `Dot_Product`
-records nothing and is not flagged — consuming an element is the author's responsibility.
+it or fails on it. A bare `Sometimes` never passed to a `Dot_Product` records nothing and is
+not flagged — consuming an element is the author's responsibility.
 
 ### Modes
 
@@ -232,7 +205,7 @@ coordinator unions that file before analysis. Enforcement fires in every mode.
 
 ### Enforcement
 
-A `Dot_Product` enforces its `Distinct_Boundary` and `Impossible` assertions on every call,
+A `Dot_Product` enforces its `Impossible` assertions on every call,
 in every run, even when no coverage is being recorded. An eager `Always` enforces
 independently of any `Dot_Product`, also on every call in every run.
 
@@ -244,10 +217,9 @@ sharing a message. A duplicate would mask a gap, so it is fatal, not merged.
 
 ### Literal
 
-An assertion's message must be a compile-time string literal, so registration can seed it under
-the same key the runtime emits. A non-literal message — a variable or a concatenation — cannot
-be statically keyed, so its coverage would vanish; it fails registration, not silently. An
-`Impossible` reference message is held to the same rule — a non-literal reference fails registration.
+An assertion's message must be a compile-time string literal, so registration can seed it under the
+same key the runtime emits. A non-literal message — a variable or a concatenation — cannot be keyed
+statically; its coverage would vanish, so it fails registration. `Impossible` references obey it.
 
 ### Unresolved
 

@@ -61,72 +61,6 @@ func Test_Dot_Product_Impossible_Combination_Absent_Passes(t *testing.T) {
 	}
 }
 
-// A Distinct_Boundary whose X falls outside [Lo, Hi] fails when consumed by
-// Recorder_Dot_Product — never at construction. Like every element producer, the
-// constructor is inert on its own.
-func Test_Dot_Product_Boundary_Outside_Bounds_Fails(t *testing.T) {
-	recorder := new_test_recorder()
-	outside_bounds := invariant.Recorder_Distinct_Boundary(
-		recorder, &invariant.Boundary_Input[int]{X: 5, Lo: 0, Hi: 3}, "bounds",
-	)
-	failed := false
-	func() {
-		defer func() {
-			if recover() != nil {
-				failed = true
-			}
-		}()
-		invariant.Recorder_Dot_Product(recorder, "check", outside_bounds)
-	}()
-	if !failed {
-		t.Fatal("Recorder_Dot_Product must fail when a " +
-			"Distinct_Boundary X is outside the bounds")
-	}
-}
-
-// An interior X satisfies the bound, so Recorder_Dot_Product does not fail — even
-// though an interior value contributes no endpoint coverage.
-func Test_Dot_Product_Boundary_Within_Bounds_Passes(t *testing.T) {
-	recorder := new_test_recorder()
-	within_bounds := invariant.Recorder_Distinct_Boundary(
-		recorder, &invariant.Boundary_Input[int]{X: 2, Lo: 0, Hi: 3}, "bounds",
-	)
-	failed := false
-	func() {
-		defer func() {
-			if recover() != nil {
-				failed = true
-			}
-		}()
-		invariant.Recorder_Dot_Product(recorder, "check", within_bounds)
-	}()
-	if failed {
-		t.Fatal("Recorder_Dot_Product must not fail when a " +
-			"Distinct_Boundary X is within bounds")
-	}
-}
-
-// Nonsensical bounds (Lo >= Hi) are a violation too, and like the rest they fire
-// only at consumption — never from the bare constructor.
-func Test_Dot_Product_Boundary_Bad_Bounds_Fails(t *testing.T) {
-	recorder := new_test_recorder()
-	bad_bounds := invariant.Recorder_Distinct_Boundary(
-		recorder, &invariant.Boundary_Input[int]{X: 3, Lo: 3, Hi: 3}, "bounds",
-	)
-	failed := false
-	func() {
-		defer func() {
-			if recover() != nil {
-				failed = true
-			}
-		}()
-		invariant.Recorder_Dot_Product(recorder, "check", bad_bounds)
-	}()
-	if !failed {
-		t.Fatal("Recorder_Dot_Product must fail when a Distinct_Boundary has Lo >= Hi")
-	}
-}
-
 // An element's identity is the author-supplied message it carries — the identity
 // that static registration and the runtime rendezvous on, with no caller lookup.
 func Test_Element_Message_Is_Identity(t *testing.T) {
@@ -202,43 +136,6 @@ func Test_Dot_Product_Increments_Seeded_Tuple(t *testing.T) {
 	invariant.Recorder_Dot_Product(recorder, "check", a, b)
 	if tuple.Frequency.Load() != 1 {
 		t.Fatalf("tuple Frequency = %d, want 1", tuple.Frequency.Load())
-	}
-}
-
-// A Distinct_Boundary increments its seeded endpoint counters: the Hi endpoint
-// bumps Frequency, the Lo endpoint bumps False_Frequency, and an interior value
-// (in range but at neither endpoint) bumps neither.
-func Test_Dot_Product_Boundary_Tracks_Endpoints(t *testing.T) {
-	cases := []struct {
-		Name           string
-		X              int
-		Want_Frequency int64
-		Want_False     int64
-	}{
-		{"Hi endpoint", 3, 1, 0},
-		{"Lo endpoint", 0, 0, 1},
-		{"interior", 2, 0, 0},
-	}
-	for _, c := range cases {
-		recorder := new_test_recorder()
-		recorder.Is_Test = true
-		element := invariant.Recorder_Distinct_Boundary(
-			recorder, &invariant.Boundary_Input[int]{X: c.X, Lo: 0, Hi: 3}, "range",
-		)
-		key := "check" + invariant.Element_Message_Separator + element.Message
-		metadata := &invariant.Assertion_Metadata{
-			Kind: invariant.Assertion_Kind_Boundary, Message: key,
-		}
-		recorder.Events.Store(key, metadata)
-		invariant.Recorder_Dot_Product(recorder, "check", element)
-		if metadata.Frequency.Load() != c.Want_Frequency {
-			t.Errorf("%s: Frequency = %d, want %d",
-				c.Name, metadata.Frequency.Load(), c.Want_Frequency)
-		}
-		if metadata.False_Frequency.Load() != c.Want_False {
-			t.Errorf("%s: False_Frequency = %d, want %d",
-				c.Name, metadata.False_Frequency.Load(), c.Want_False)
-		}
 	}
 }
 
@@ -398,46 +295,6 @@ func check(n int, prefix string) {
 	}
 	if !strings.Contains(output.String(), "non-literal messages") {
 		t.Errorf("the report must carry the non-literal banner, got: %s", output.String())
-	}
-}
-
-// Registration recognizes a Distinct_Boundary and seeds a two-bucket grid (Lo=0,
-// Hi=1) keyed by the Dot_Product prefix "age check", plus a per-element entry keyed
-// by that prefix joined to the boundary's own message "age", whose Condition is the
-// X expression source.
-func Test_Register_Distinct_Boundary_Seeds_Endpoints(t *testing.T) {
-	const source = `package fixture
-
-func check(age int) {
-	invariant.Dot_Product("age check",
-		invariant.Distinct_Boundary(&invariant.Boundary_Input[int]{X: age, Lo: 22, Hi: 34}, "age"),
-	)
-}
-`
-	recorder := &invariant.Recorder{
-		File_System: fstest.MapFS{
-			"fixture/b.go": &fstest.MapFile{Data: []byte(source)},
-		},
-	}
-	invariant.Recorder_Register_Packages_For_Analysis(recorder, "/fixture")
-
-	value, found := recorder.Events.Load(
-		"age check" + invariant.Element_Message_Separator + "age")
-	if !found {
-		t.Fatal("expected a per-element entry seeded for the Distinct_Boundary")
-	}
-	metadata := value.(*invariant.Assertion_Metadata)
-	if metadata.Kind != invariant.Assertion_Kind_Boundary {
-		t.Errorf("per-element Kind = %d, want Assertion_Kind_Boundary", metadata.Kind)
-	}
-	if metadata.Condition != "age" {
-		t.Errorf("per-element Condition = %q, want age", metadata.Condition)
-	}
-	if _, ok := recorder.Events.Load("age check:tuple=(0)"); !ok {
-		t.Error("expected the Lo endpoint tuple (0) seeded under the Dot_Product prefix")
-	}
-	if _, ok := recorder.Events.Load("age check:tuple=(1)"); !ok {
-		t.Error("expected the Hi endpoint tuple (1) seeded under the Dot_Product prefix")
 	}
 }
 
@@ -680,37 +537,6 @@ func Test_Analyze_Reports_Never_Fired_And_Exits(t *testing.T) {
 	}
 }
 
-// A Distinct_Boundary whose Lo endpoint was never observed is a coverage gap:
-// Recorder_Analyze_Assertion_Frequency reports it by its X condition and exits.
-func Test_Analyze_Reports_Boundary_Endpoint_Gap(t *testing.T) {
-	var output bytes.Buffer
-	exit_code := -1
-	recorder := &invariant.Recorder{
-		Is_Test: true,
-		Output:  &output,
-		Exit:    func(code int) { exit_code = code },
-	}
-	// Hi endpoint observed (Frequency), Lo never (False_Frequency == 0): one gap.
-	boundary := &invariant.Assertion_Metadata{
-		Kind: invariant.Assertion_Kind_Boundary, Message: "age", Condition: "age",
-	}
-	boundary.Frequency.Add(1)
-	recorder.Events.Store("age", boundary)
-
-	invariant.Recorder_Analyze_Assertion_Frequency(recorder)
-
-	if exit_code != 1 {
-		t.Fatalf("Exit code = %d, want 1", exit_code)
-	}
-	report := output.String()
-	if !strings.Contains(report, "Lo endpoint never observed") {
-		t.Errorf("report must flag the unobserved Lo endpoint, got: %s", report)
-	}
-	if !strings.Contains(report, "age") {
-		t.Error("report must name the boundary by its X condition")
-	}
-}
-
 // With every assertion fully exercised, Recorder_Analyze_Assertion_Frequency
 // reports nothing and does not exit.
 func Test_Analyze_Clean_Run_Is_Silent(t *testing.T) {
@@ -857,62 +683,6 @@ func check(n int) {
 	}
 }
 
-// Registration descends a generic *_Invariants bundle that returns a single appended
-// Distinct_Boundary over its value parameter — the shape Whole_Number_Invariants takes —
-// recognizing it cross-package as a Boundary axis keyed by the prefix joined to its own
-// message (field␀range), with the Lo/Hi tuple grid seeded under the caller's Dot_Product
-// prefix. Guards that the Sometimes→Boundary preset rewrite stays statically recognized,
-// generic Boundary_Input[I] and all.
-func Test_Register_Resolves_Generic_Boundary_Bundle(t *testing.T) {
-	const package_a = `package a
-
-import invariant "example.com/m/invariant"
-
-func Integer_Invariants[I invariant.Numeric](n I) (dot_elements []invariant.Dot_Element) {
-	return append(dot_elements,
-		invariant.Distinct_Boundary(&invariant.Boundary_Input[I]{X: n, Lo: 0, Hi: 9}, "range"))
-}
-`
-	const package_b = `package b
-
-import (
-	invariant "example.com/m/invariant"
-	"example.com/m/a"
-)
-
-func check(n int) {
-	invariant.Dot_Product("field", a.Integer_Invariants(n)...)
-}
-`
-	recorder := &invariant.Recorder{
-		File_System: fstest.MapFS{
-			"m/go.mod": &fstest.MapFile{Data: []byte("module example.com/m\n")},
-			"m/a/a.go": &fstest.MapFile{Data: []byte(package_a)},
-			"m/b/b.go": &fstest.MapFile{Data: []byte(package_b)},
-		},
-	}
-	invariant.Recorder_Register_Packages_For_Analysis(recorder, "/m/b")
-
-	value, found := recorder.Events.Load(
-		"field" + invariant.Element_Message_Separator + "range")
-	if !found {
-		t.Fatal("expected the boundary keyed under prefix field (field␀range)")
-	}
-	metadata := value.(*invariant.Assertion_Metadata)
-	if metadata.Kind != invariant.Assertion_Kind_Boundary {
-		t.Errorf("Kind = %d, want Assertion_Kind_Boundary", metadata.Kind)
-	}
-	if metadata.Condition != "n" {
-		t.Errorf("Condition = %q, want n", metadata.Condition)
-	}
-	if _, ok := recorder.Events.Load("field:tuple=(0)"); !ok {
-		t.Error("expected the Lo endpoint tuple (0) under b.go's Dot_Product prefix")
-	}
-	if _, ok := recorder.Events.Load("field:tuple=(1)"); !ok {
-		t.Error("expected the Hi endpoint tuple (1) under b.go's Dot_Product prefix")
-	}
-}
-
 // Renders an Assertion_Kind as the short name the registration snapshot reads by.
 func kind_name(kind invariant.Assertion_Kind) (name string) {
 	switch kind {
@@ -920,8 +690,6 @@ func kind_name(kind invariant.Assertion_Kind) (name string) {
 		return "Always"
 	case invariant.Assertion_Kind_Sometimes:
 		return "Sometimes"
-	case invariant.Assertion_Kind_Boundary:
-		return "Boundary"
 	case invariant.Assertion_Kind_Tuple:
 		return "Tuple"
 	}
@@ -952,27 +720,21 @@ func snapshot_registered(recorder *invariant.Recorder) (snapshot string) {
 }
 
 // Registration descends the Whole_Number_Invariants bundle — three Sometimes axes
-// (n == 0/1/2) and a Distinct_Boundary over the type's range — exactly as the preset
-// builds it: with the explicit Recorder_Sometimes / Recorder_Distinct_Boundary
-// constructors, whose condition rides the second argument and whose message rides the
-// argument past it. The snapshot pins the whole footprint: one per-element entry per axis
-// (keyed prefix · own-message) plus the full 2^4 tuple grid (no Impossible carves), every
-// entry attributed to the caller's single Dot_Product prefix "field".
+// (n == 0/1/2) — exactly as the preset builds it, with the explicit Recorder_Sometimes
+// constructor whose condition rides the second argument and whose message rides the argument
+// past it. The snapshot pins the whole footprint: one per-element entry per axis (keyed
+// prefix · own-message) plus the full 2^3 tuple grid (no Impossible carves), every entry
+// attributed to the caller's single Dot_Product prefix "field".
 func Test_Register_Snapshots_Whole_Number_Invariants(t *testing.T) {
 	const package_a = `package a
 
 import invariant "example.com/m/invariant"
 
-func Whole_Number_Invariants[I invariant.Numeric](n I) (dot_elements []invariant.Dot_Element) {
+func Whole_Number_Invariants[I ~int | ~int64](n I) (dot_elements []invariant.Dot_Element) {
 	return append(dot_elements,
 		invariant.Recorder_Sometimes(Default, n == 0, "zero"),
 		invariant.Recorder_Sometimes(Default, n == 1, "one"),
 		invariant.Recorder_Sometimes(Default, n == 2, "two"),
-		invariant.Recorder_Distinct_Boundary(Default, &invariant.Boundary_Input[I]{
-			X:  n,
-			Lo: whole_number_min[I](),
-			Hi: whole_number_max[I](),
-		}, "range"),
 	)
 }
 `
@@ -996,26 +758,17 @@ func check(n int) {
 	}
 	invariant.Recorder_Register_Packages_For_Analysis(recorder, "/m/b")
 
-	snap.Expect(t, snap.Init(`Boundary field · range n
-Sometimes field · one n == 1
+	snap.Expect(t, snap.Init(`Sometimes field · one n == 1
 Sometimes field · two n == 2
 Sometimes field · zero n == 0
-Tuple field:tuple=(0,0,0,0) [0 0 0 0]
-Tuple field:tuple=(0,0,0,1) [0 0 0 1]
-Tuple field:tuple=(0,0,1,0) [0 0 1 0]
-Tuple field:tuple=(0,0,1,1) [0 0 1 1]
-Tuple field:tuple=(0,1,0,0) [0 1 0 0]
-Tuple field:tuple=(0,1,0,1) [0 1 0 1]
-Tuple field:tuple=(0,1,1,0) [0 1 1 0]
-Tuple field:tuple=(0,1,1,1) [0 1 1 1]
-Tuple field:tuple=(1,0,0,0) [1 0 0 0]
-Tuple field:tuple=(1,0,0,1) [1 0 0 1]
-Tuple field:tuple=(1,0,1,0) [1 0 1 0]
-Tuple field:tuple=(1,0,1,1) [1 0 1 1]
-Tuple field:tuple=(1,1,0,0) [1 1 0 0]
-Tuple field:tuple=(1,1,0,1) [1 1 0 1]
-Tuple field:tuple=(1,1,1,0) [1 1 1 0]
-Tuple field:tuple=(1,1,1,1) [1 1 1 1]`), snapshot_registered(recorder))
+Tuple field:tuple=(0,0,0) [0 0 0]
+Tuple field:tuple=(0,0,1) [0 0 1]
+Tuple field:tuple=(0,1,0) [0 1 0]
+Tuple field:tuple=(0,1,1) [0 1 1]
+Tuple field:tuple=(1,0,0) [1 0 0]
+Tuple field:tuple=(1,0,1) [1 0 1]
+Tuple field:tuple=(1,1,0) [1 1 0]
+Tuple field:tuple=(1,1,1) [1 1 1]`), snapshot_registered(recorder))
 }
 
 // Registration descends the Float_Invariants bundle — three Sometimes axes (NaN,
