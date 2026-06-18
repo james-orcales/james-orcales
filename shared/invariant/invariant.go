@@ -6,6 +6,7 @@ package invariant
 
 import (
 	"bytes"
+	"encoding/base64"
 	"fmt"
 	"go/ast"
 	"go/parser"
@@ -112,11 +113,16 @@ type Recorder struct {
 	// Tty receives the clean-run success summary so it shows even without `go test -v`.
 	Tty io.Writer
 
-	// Is_Test reports a plain `go test` run — the only mode that seeds and checks coverage.
+	// Is_Test reports a `go test` run (plain, a `-fuzz` coordinator, or a fuzz worker) — every
+	// mode that records coverage. Only a benchmark opts out of recording.
 	Is_Test bool
-	// Is_Fuzz reports a fuzzing run, where coverage is not seeded.
+	// Is_Fuzz reports a fuzzing run (coordinator or worker).
 	Is_Fuzz bool
-	// Is_Benchmark reports a benchmark run, where coverage is not seeded.
+	// Is_Fuzz_Worker reports a `-test.fuzzworker` subprocess: it runs the fuzzed body (so it
+	// records, and persists each newly-covered key via Coverage_Sink for the coordinator to
+	// merge), but it does not analyze — its view of coverage is partial. It always enforces.
+	Is_Fuzz_Worker bool
+	// Is_Benchmark reports a benchmark run, which records and checks nothing.
 	Is_Benchmark bool
 
 	// Packages_To_Analyze are the directories whose source is parsed to seed the
@@ -134,6 +140,17 @@ type Recorder struct {
 	// primitives are recognised; empty disables that — bare calls elsewhere are
 	// not the invariant primitives and must stay unrecognised.
 	Sugar_Package string
+
+	// Coverage_Sink, when set, is called the first time each coverage key+branch is observed.
+	// A fuzz worker subprocess wires it to persist its exploration to a shared file so the
+	// coordinator can merge it (the coordinator never runs the fuzzed body itself). Nil
+	// everywhere else — recording then just bumps the in-process counters.
+	Coverage_Sink func(key string, fired_true bool)
+
+	// Merge_Fuzz_Coverage, when set, is called by Recorder_Run_Test_Main after the suite runs and
+	// before the analysis. A fuzz coordinator wires it to read every worker's persisted coverage
+	// and credit it into the registered grid, so the analysis sees what the workers explored.
+	Merge_Fuzz_Coverage func()
 }
 
 // Assertion_Kind discriminates a coverage tracker entry: a per-element Always,
@@ -227,17 +244,14 @@ func Recorder_Always[T ~bool](recorder *Recorder, condition T, message string) {
 	if !condition {
 		panic(Assertion_Failure_Message_Prefix + message + "  Always — condition was false")
 	}
-	// Enforcement (the panic above) runs in every mode; coverage is credited only under a
-	// plain `go test`, mirroring recorder_dot_product_observe. The reachability entry is
+	// Enforcement (the panic above) runs in every mode; coverage is credited under a test run or
+	// the fuzz coordinator (not a worker), mirroring recorder_dot_product_observe. The reachability entry is
 	// seeded statically by recorder_register_eager_always; recorder_increment no-ops when the
 	// bare Always was never registered (an Always in a non-analyzed package).
 	if !recorder.Is_Test {
 		return
 	}
 	if recorder.Is_Benchmark {
-		return
-	}
-	if recorder.Is_Fuzz {
 		return
 	}
 	recorder_increment(recorder, message, true)
@@ -394,8 +408,8 @@ func Recorder_Dot_Product(recorder *Recorder, message string, dot_elements ...Do
 }
 
 // Increments the seeded tracker entry for each observed element and the tuple
-// entry for the observed combination. No-op outside a plain `go test` run —
-// registration seeds nothing under benchmark or fuzz. Identity travels with the data:
+// entry for the observed combination. No-op in a benchmark or a fuzz worker subprocess; a
+// plain test run and the fuzz coordinator both record. Identity travels with the data:
 // each element carries its own message and the Dot_Product carries the prefix, so the
 // per-element key (prefix + separator + own message) and the grid key are built without
 // consulting any caller frame.
@@ -406,9 +420,6 @@ func recorder_dot_product_observe(
 		return
 	}
 	if recorder.Is_Benchmark {
-		return
-	}
-	if recorder.Is_Fuzz {
 		return
 	}
 	for _, dot_element := range dot_elements {
@@ -455,8 +466,11 @@ func dot_element_bucket(dot_element Dot_Element) (bucket int) {
 	return 0
 }
 
-// Bumps the seeded entry at key: Frequency on a true event, False_Frequency on
-// false. A missing entry is skipped — registration seeds only reachable buckets.
+// Bumps the seeded entry at key: Frequency on a true event, False_Frequency on false. A missing
+// entry is skipped — registration seeds only reachable buckets. On the 0→1 transition (first
+// coverage of that branch) it fires Coverage_Sink if set — a fuzz worker persists the cell there
+// for the coordinator to union. atomic Add returns the post-increment value, so the sink fires
+// exactly once per branch.
 func recorder_increment(recorder *Recorder, key string, fired_true bool) {
 	value, ok := recorder.Assertions.Load(key)
 	if !ok {
@@ -464,10 +478,50 @@ func recorder_increment(recorder *Recorder, key string, fired_true bool) {
 	}
 	metadata := value.(*Assertion_Metadata)
 	if fired_true {
-		metadata.Frequency.Add(1)
+		if metadata.Frequency.Add(1) == 1 && recorder.Coverage_Sink != nil {
+			recorder.Coverage_Sink(key, true)
+		}
 		return
 	}
-	metadata.False_Frequency.Add(1)
+	if metadata.False_Frequency.Add(1) == 1 && recorder.Coverage_Sink != nil {
+		recorder.Coverage_Sink(key, false)
+	}
+}
+
+// Fuzz_Coverage_Line encodes one covered (key, branch) as the line a fuzz worker appends to the
+// shared coverage file: base64(key) + "\t" + "T"/"F" + "\n". base64 because a key carries the NUL
+// element-separator and otherwise-arbitrary bytes; the trailing newline makes the file line-oriented
+// for the coordinator's merge. It is one string, so the worker writes it with a single Write under
+// O_APPEND (the lock-free-append requirement).
+func Fuzz_Coverage_Line(key string, fired_true bool) (line string) {
+	branch := "F"
+	if fired_true {
+		branch = "T"
+	}
+	return base64.StdEncoding.EncodeToString([]byte(key)) + "\t" + branch + "\n"
+}
+
+// Recorder_Merge_Fuzz_Coverage_From unions the coverage a fuzz coordinator reads from r (the workers'
+// shared file, one Fuzz_Coverage_Line per line) into the registered grid: each covered (key, branch)
+// marks that branch non-zero. Binary — per-process counts are not summed across workers. A malformed
+// or partial trailing line is skipped (a worker killed mid-write costs at most its last line); a key
+// with no seeded entry is skipped, like any runtime increment.
+func Recorder_Merge_Fuzz_Coverage_From(recorder *Recorder, r io.Reader) {
+	data, read_error := io.ReadAll(r)
+	if read_error != nil {
+		return
+	}
+	for _, line := range strings.Split(string(data), "\n") {
+		tab := strings.IndexByte(line, '\t')
+		if tab < 0 {
+			continue
+		}
+		key, decode_error := base64.StdEncoding.DecodeString(line[:tab])
+		if decode_error != nil {
+			continue
+		}
+		recorder_increment(recorder, string(key), line[tab+1:] == "T")
+	}
 }
 
 // Returns the message describing how dot_element violates its invariant on this
@@ -1960,9 +2014,9 @@ type coverage_gap struct {
 
 // Recorder_Analyze_Assertion_Frequency reports every pre-registered assertion
 // whose true branch never fired and every Sometimes whose false branch never
-// fired — naming each by its site and condition source — then calls Exit(1) when
-// any gap exists. It is a no-op outside a plain `go test` run, which seeds
-// nothing under benchmark or fuzz.
+// fired — naming each by its message and condition source — then calls Exit(1) when
+// any gap exists. It is a no-op in a benchmark or a fuzz worker subprocess; a plain test
+// run and the fuzz coordinator both analyze.
 func Recorder_Analyze_Assertion_Frequency(recorder *Recorder) {
 	if !recorder.Is_Test {
 		return
@@ -1970,7 +2024,7 @@ func Recorder_Analyze_Assertion_Frequency(recorder *Recorder) {
 	if recorder.Is_Benchmark {
 		return
 	}
-	if recorder.Is_Fuzz {
+	if recorder.Is_Fuzz_Worker {
 		return
 	}
 	gaps := recorder_collect_gaps(recorder)
@@ -2256,6 +2310,11 @@ func Recorder_Assertion_Summary(recorder *Recorder) (summary string) {
 func Recorder_Run_Test_Main(recorder *Recorder, m *testing.M, directories ...string) {
 	Recorder_Register_Packages_For_Analysis(recorder, directories...)
 	code := m.Run()
+	// A fuzz coordinator merges the workers' persisted coverage before analyzing — it never ran
+	// the fuzzed body itself, so without this its grid would be empty (see Coverage / Modes).
+	if recorder.Merge_Fuzz_Coverage != nil {
+		recorder.Merge_Fuzz_Coverage()
+	}
 	Recorder_Analyze_Assertion_Frequency(recorder)
 	if code != 0 {
 		recorder.Exit(code)
