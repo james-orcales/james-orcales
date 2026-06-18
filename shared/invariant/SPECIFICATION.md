@@ -60,7 +60,8 @@ Endpoints that are not distinct, a reversed or equal pair, panic at the
 # Impossible
 
 `Impossible` declares element events that must never all occur together on one
-call.
+call, naming each by the message of a sibling axis — `Event_True("m")` /
+`Event_False("m")` — not by holding the axis value.
 
 ### Violation
 
@@ -76,6 +77,14 @@ panic.
 
 An `Impossible` need not name every axis; the unnamed axes are wildcards, so it
 carves every cell matching the named events across all their values.
+
+### Sibling
+
+A reference names an axis of its own `Dot_Product`. Naming a message that is not a sibling panics at
+the `Dot_Product` on every call — a structural precondition checked before recording, independent of
+whether the combination could occur — so a mistyped reference is caught at once rather than as an
+unfillable gap. A reference may name a sibling that a spread bundle contributed, which holding the
+axis value could not reach.
 
 # Dot Product
 
@@ -237,7 +246,8 @@ sharing a message. A duplicate would mask a gap, so it is fatal, not merged.
 
 An assertion's message must be a compile-time string literal, so registration can seed it under
 the same key the runtime emits. A non-literal message — a variable or a concatenation — cannot
-be statically keyed, so its coverage would vanish; it fails registration, not silently.
+be statically keyed, so its coverage would vanish; it fails registration, not silently. An
+`Impossible` reference message is held to the same rule — a non-literal reference fails registration.
 
 ### Unresolved
 
