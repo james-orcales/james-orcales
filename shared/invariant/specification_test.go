@@ -55,7 +55,7 @@ func Test_Always_Reachability(t *testing.T) {
 	metadata := &invariant.Assertion_Metadata{
 		Kind: invariant.Assertion_Kind_Always, Message: "positive", Condition: "x > 0",
 	}
-	recorder.Assertions.Store("positive", metadata)
+	recorder.Events.Store("positive", metadata)
 
 	invariant.Recorder_Analyze_Assertion_Frequency(recorder)
 
@@ -63,7 +63,8 @@ func Test_Always_Reachability(t *testing.T) {
 		t.Fatalf("an unreached Always must exit 1, got %d", exit_code)
 	}
 	if !strings.Contains(output.String(), "positive") {
-		t.Errorf("report must name the unreached Always by its message, got: %s", output.String())
+		t.Errorf("report must name the unreached Always by its message, got: %s",
+			output.String())
 	}
 }
 
@@ -76,7 +77,7 @@ func Test_Sometimes_Coverage(t *testing.T) {
 	metadata := &invariant.Assertion_Metadata{
 		Kind: invariant.Assertion_Kind_Sometimes, Message: key,
 	}
-	recorder.Assertions.Store(key, metadata)
+	recorder.Events.Store(key, metadata)
 
 	invariant.Recorder_Dot_Product(recorder, "check", element)
 
@@ -116,7 +117,7 @@ func Test_Sometimes_Gap(t *testing.T) {
 		} else {
 			metadata.False_Frequency.Add(1)
 		}
-		recorder.Assertions.Store("zero", metadata)
+		recorder.Events.Store("zero", metadata)
 
 		invariant.Recorder_Analyze_Assertion_Frequency(recorder)
 
@@ -153,7 +154,7 @@ func Test_Distinct_Boundary_Endpoints(t *testing.T) {
 		metadata := &invariant.Assertion_Metadata{
 			Kind: invariant.Assertion_Kind_Boundary, Message: key,
 		}
-		recorder.Assertions.Store(key, metadata)
+		recorder.Events.Store(key, metadata)
 
 		invariant.Recorder_Dot_Product(recorder, "check", element)
 
@@ -266,15 +267,15 @@ func check(n int) {
 
 	// Both a and b true is carved for either value of the unnamed c, so neither
 	// (1,1,0) nor (1,1,1) survives.
-	if _, ok := recorder.Assertions.Load("check:tuple=(1,1,0)"); ok {
+	if _, ok := recorder.Events.Load("check:tuple=(1,1,0)"); ok {
 		t.Error("the (1,1,0) cell must be carved across the unnamed c axis")
 	}
-	if _, ok := recorder.Assertions.Load("check:tuple=(1,1,1)"); ok {
+	if _, ok := recorder.Events.Load("check:tuple=(1,1,1)"); ok {
 		t.Error("the (1,1,1) cell must be carved across the unnamed c axis")
 	}
 	// A cell that does not match the named events fully survives — only a and b
 	// both true is forbidden.
-	if _, ok := recorder.Assertions.Load("check:tuple=(1,0,1)"); !ok {
+	if _, ok := recorder.Events.Load("check:tuple=(1,0,1)"); !ok {
 		t.Error("a cell not matching both named events must survive")
 	}
 }
@@ -328,13 +329,13 @@ func check(n int) {
 	}
 	invariant.Recorder_Register_Packages_For_Analysis(recorder, "/fixture")
 
-	if _, ok := recorder.Assertions.Load("check:tuple=(0,0)"); !ok {
+	if _, ok := recorder.Events.Load("check:tuple=(0,0)"); !ok {
 		t.Error("the surviving (0,0) cell must be seeded")
 	}
-	if _, ok := recorder.Assertions.Load("check:tuple=(1,1)"); ok {
+	if _, ok := recorder.Events.Load("check:tuple=(1,1)"); ok {
 		t.Error("the (1,1) cell carved by the Impossible must not be seeded")
 	}
-	always, ok := recorder.Assertions.Load("non-negative")
+	always, ok := recorder.Events.Load("non-negative")
 	if !ok {
 		t.Fatal("the bare Always must seed a reachability entry under its message")
 	}
@@ -384,7 +385,7 @@ func check(n int) {
 	}
 	invariant.Recorder_Register_Packages_For_Analysis(recorder, "/fixture")
 
-	if _, ok := recorder.Assertions.Load(
+	if _, ok := recorder.Events.Load(
 		"field" + invariant.Element_Message_Separator + "lo"); !ok {
 		t.Error("the bundle element must be seeded under the Dot_Product prefix")
 	}
@@ -415,7 +416,7 @@ func check(n int) {
 	}
 	invariant.Recorder_Register_Packages_For_Analysis(recorder, "/fixture")
 
-	if _, ok := recorder.Assertions.Load(
+	if _, ok := recorder.Events.Load(
 		"field" + invariant.Element_Message_Separator + "inner"); !ok {
 		t.Error("the deeply nested element must attribute to the top-level prefix")
 	}
@@ -442,7 +443,7 @@ func check(n int) {
 	}
 	invariant.Recorder_Register_Packages_For_Analysis(recorder, "/fixture")
 
-	if _, ok := recorder.Assertions.Load(
+	if _, ok := recorder.Events.Load(
 		"field" + invariant.Element_Message_Separator + "lo"); !ok {
 		t.Error("a bundle reached through a binding must be descended")
 	}
@@ -468,7 +469,7 @@ func check(n int) {
 	}
 	invariant.Recorder_Register_Packages_For_Analysis(recorder, "/fixture")
 
-	if _, ok := recorder.Assertions.Load(
+	if _, ok := recorder.Events.Load(
 		"field" + invariant.Element_Message_Separator + "lo"); !ok {
 		t.Error("a snake_case bundle must be recognized like the Ada_Case form")
 	}
@@ -495,7 +496,7 @@ func check(n int) {
 	}
 	invariant.Recorder_Register_Packages_For_Analysis(recorder, "/fixture")
 
-	value, ok := recorder.Assertions.Load(
+	value, ok := recorder.Events.Load(
 		"field" + invariant.Element_Message_Separator + "lo")
 	if !ok {
 		t.Fatal("a Recorder_ element must be descended like the bare sugar form")
@@ -536,13 +537,13 @@ func check(n int) {
 
 	recognized := &invariant.Recorder{File_System: files, Sugar_Package: "example.com/m/sugar"}
 	invariant.Recorder_Register_Packages_For_Analysis(recognized, "/m/app")
-	if _, ok := recognized.Assertions.Load(key); !ok {
+	if _, ok := recognized.Events.Load(key); !ok {
 		t.Error("a sugar-package bundle's unqualified Sometimes must be recognized")
 	}
 
 	ignored := &invariant.Recorder{File_System: files}
 	invariant.Recorder_Register_Packages_For_Analysis(ignored, "/m/app")
-	if _, ok := ignored.Assertions.Load(key); ok {
+	if _, ok := ignored.Events.Load(key); ok {
 		t.Error("without Sugar_Package a bare call is not a primitive; nothing seeds")
 	}
 }
@@ -578,7 +579,7 @@ func check(n int) {
 	}
 	invariant.Recorder_Register_Packages_For_Analysis(recorder, "/m/b")
 
-	if _, ok := recorder.Assertions.Load(
+	if _, ok := recorder.Events.Load(
 		"field" + invariant.Element_Message_Separator + "lo"); !ok {
 		t.Error("a bundle in a sibling package of the module must be resolved")
 	}
@@ -590,7 +591,7 @@ func Test_Bundles_Workspace(t *testing.T) {
 	recorder := &invariant.Recorder{File_System: workspace_bundle_fixture()}
 	invariant.Recorder_Register_Packages_For_Analysis(recorder, "/work/b")
 
-	if _, ok := recorder.Assertions.Load(
+	if _, ok := recorder.Events.Load(
 		"field" + invariant.Element_Message_Separator + "lo"); !ok {
 		t.Error("a bundle in a sibling workspace module must be resolved")
 	}
@@ -598,7 +599,7 @@ func Test_Bundles_Workspace(t *testing.T) {
 
 // Test_Bundles_Callsite: spreading one bundle into two Dot_Products with distinct
 // prefixes ("a" and "b") yields independent coverage entries — the per-field prefix is
-// what keeps them apart. (Reusing one prefix is instead a fatal duplicate.)
+// what keeps them apart — reusing one prefix is instead a fatal duplicate.
 func Test_Bundles_Callsite(t *testing.T) {
 	const source = `package fixture
 
@@ -621,11 +622,11 @@ func check_b(n int) {
 	}
 	invariant.Recorder_Register_Packages_For_Analysis(recorder, "/fixture")
 
-	if _, ok := recorder.Assertions.Load(
+	if _, ok := recorder.Events.Load(
 		"a" + invariant.Element_Message_Separator + "lo"); !ok {
 		t.Error("prefix A must have its own coverage entry")
 	}
-	if _, ok := recorder.Assertions.Load(
+	if _, ok := recorder.Events.Load(
 		"b" + invariant.Element_Message_Separator + "lo"); !ok {
 		t.Error("prefix B must have its own coverage entry")
 	}
@@ -733,12 +734,12 @@ func Test_Analysis_Gaps(t *testing.T) {
 		Kind: invariant.Assertion_Kind_Sometimes, Message: "zero", Condition: "n == 0",
 	}
 	gap.Frequency.Add(1) // true seen, false never: a gap
-	recorder.Assertions.Store("zero", gap)
+	recorder.Events.Store("zero", gap)
 	fired := &invariant.Assertion_Metadata{
 		Kind: invariant.Assertion_Kind_Always, Message: "positive", Condition: "x > 0",
 	}
 	fired.Frequency.Add(1) // reached: not a gap
-	recorder.Assertions.Store("positive", fired)
+	recorder.Events.Store("positive", fired)
 
 	invariant.Recorder_Analyze_Assertion_Frequency(recorder)
 
@@ -768,7 +769,7 @@ func Test_Analysis_Combination(t *testing.T) {
 	tuple := &invariant.Assertion_Metadata{
 		Kind: invariant.Assertion_Kind_Tuple, Message: "grid", Tuple_Indices: []int{1, 0},
 	}
-	recorder.Assertions.Store("grid:tuple=(1,0)", tuple)
+	recorder.Events.Store("grid:tuple=(1,0)", tuple)
 
 	invariant.Recorder_Analyze_Assertion_Frequency(recorder)
 
@@ -846,7 +847,7 @@ func Test_Analysis_Boundary(t *testing.T) {
 		Kind: invariant.Assertion_Kind_Boundary, Message: "age", Condition: "age",
 	}
 	boundary.Frequency.Add(1) // Hi endpoint seen; Lo (False_Frequency) never
-	recorder.Assertions.Store("age", boundary)
+	recorder.Events.Store("age", boundary)
 
 	invariant.Recorder_Analyze_Assertion_Frequency(recorder)
 
@@ -867,7 +868,7 @@ func Test_Analysis_Boundary(t *testing.T) {
 func Test_Analysis_Summary(t *testing.T) {
 	recorder := &invariant.Recorder{}
 	store := func(key string, kind invariant.Assertion_Kind) {
-		recorder.Assertions.Store(key, &invariant.Assertion_Metadata{Kind: kind})
+		recorder.Events.Store(key, &invariant.Assertion_Metadata{Kind: kind})
 	}
 	store("a", invariant.Assertion_Kind_Always)
 	store("b", invariant.Assertion_Kind_Sometimes)
@@ -894,7 +895,7 @@ func Test_Analysis_Clean(t *testing.T) {
 	}
 	metadata.Frequency.Add(1)
 	metadata.False_Frequency.Add(1)
-	recorder.Assertions.Store("zero", metadata)
+	recorder.Events.Store("zero", metadata)
 
 	invariant.Recorder_Analyze_Assertion_Frequency(recorder)
 
@@ -906,14 +907,14 @@ func Test_Analysis_Clean(t *testing.T) {
 	}
 }
 
-// Test_Coverage_Modes: coverage is recorded in every mode but a benchmark — a plain test, a fuzzing
-// coordinator, and a fuzz worker all credit observations (the worker runs the fuzzed body). The
-// analysis runs in a plain test and the coordinator, never in a worker. Enforcement fires everywhere
-// (see Coverage/Enforcement).
+// Test_Coverage_Modes: coverage is recorded in every mode but a benchmark — a plain test, a
+// fuzzing coordinator, and a fuzz worker all credit observations (the worker runs the fuzzed
+// body). The analysis runs in a plain test and the coordinator, never in a worker. Enforcement
+// fires everywhere (see Coverage/Enforcement).
 func Test_Coverage_Modes(t *testing.T) {
-	// records reports whether a Dot_Product observation credits a pre-seeded entry in the given
-	// mode — i.e. whether coverage is recorded.
-	records := func(is_fuzz, is_fuzz_worker, is_benchmark bool) bool {
+	// Records reports whether a Dot_Product observation credits a pre-seeded entry in the
+	// given mode — i.e. whether coverage is recorded.
+	records := func(is_fuzz, is_fuzz_worker, is_benchmark bool) (recorded bool) {
 		recorder := &invariant.Recorder{
 			Is_Test:        true,
 			Is_Fuzz:        is_fuzz,
@@ -925,7 +926,7 @@ func Test_Coverage_Modes(t *testing.T) {
 		metadata := &invariant.Assertion_Metadata{
 			Kind: invariant.Assertion_Kind_Sometimes, Message: key,
 		}
-		recorder.Assertions.Store(key, metadata)
+		recorder.Events.Store(key, metadata)
 		invariant.Recorder_Dot_Product(recorder, "check", element)
 		return metadata.Frequency.Load() == 1
 	}
@@ -942,8 +943,8 @@ func Test_Coverage_Modes(t *testing.T) {
 		t.Error("a benchmark must record no coverage")
 	}
 
-	// The analysis follows the same gate: a fuzz coordinator checks a seeded gap (fatal), a fuzz
-	// worker checks nothing.
+	// The analysis follows the same gate: a fuzz coordinator checks a seeded gap
+	// (fatal), a fuzz worker checks nothing.
 	analyzes := func(is_fuzz_worker bool) (exit int, reported bool) {
 		var output bytes.Buffer
 		exit = -1
@@ -952,98 +953,27 @@ func Test_Coverage_Modes(t *testing.T) {
 			Output: &output, Exit: func(code int) { exit = code },
 		}
 		// A Sometimes that never fired either way: a gap.
-		recorder.Assertions.Store("g", &invariant.Assertion_Metadata{
+		recorder.Events.Store("g", &invariant.Assertion_Metadata{
 			Kind: invariant.Assertion_Kind_Sometimes, Message: "g",
 		})
 		invariant.Recorder_Analyze_Assertion_Frequency(recorder)
 		return exit, output.Len() > 0
 	}
-	if exit, reported := analyzes(false); exit != 1 || !reported {
-		t.Errorf("a fuzz coordinator must analyze (exit 1, report a gap), got exit=%d reported=%v",
+	exit, reported := analyzes(false)
+	if exit != 1 {
+		t.Errorf("fuzz coordinator must exit=1 and report, got exit=%d reported=%v",
 			exit, reported)
 	}
-	if exit, reported := analyzes(true); exit != -1 || reported {
+	if !reported {
+		t.Errorf("fuzz coordinator must exit=1 and report, got exit=%d reported=%v",
+			exit, reported)
+	}
+	exit, reported = analyzes(true)
+	if exit != -1 {
 		t.Errorf("a fuzz worker must not analyze, got exit=%d reported=%v", exit, reported)
 	}
-}
-
-// Test_Coverage_Sink_Fires_On_First_Coverage: a fuzz worker persists each cell the first time it is
-// covered. Coverage_Sink fires on the 0→1 transition of a branch and not on later observations, so a
-// long run appends at most one line per branch — the bound that keeps it off the syscall-per-assertion
-// path.
-func Test_Coverage_Sink_Fires_On_First_Coverage(t *testing.T) {
-	type event struct {
-		key   string
-		fired bool
-	}
-	var sunk []event
-	recorder := &invariant.Recorder{
-		Is_Test:        true,
-		Is_Fuzz:        true,
-		Is_Fuzz_Worker: true,
-		Coverage_Sink:  func(key string, fired_true bool) { sunk = append(sunk, event{key, fired_true}) },
-	}
-	key := "check" + invariant.Element_Message_Separator + "zero"
-	recorder.Assertions.Store(key, &invariant.Assertion_Metadata{
-		Kind: invariant.Assertion_Kind_Sometimes, Message: key,
-	})
-
-	for range 3 {
-		invariant.Recorder_Dot_Product(recorder, "check", invariant.Recorder_Sometimes(recorder, true, "zero"))
-	}
-	for range 2 {
-		invariant.Recorder_Dot_Product(recorder, "check", invariant.Recorder_Sometimes(recorder, false, "zero"))
-	}
-
-	if len(sunk) != 2 {
-		t.Fatalf("sink must fire once per branch on first coverage, got %d events: %v", len(sunk), sunk)
-	}
-	seen_true, seen_false := false, false
-	for _, e := range sunk {
-		if e.key != key {
-			t.Errorf("sink key = %q, want %q", e.key, key)
-		}
-		seen_true = seen_true || e.fired
-		seen_false = seen_false || !e.fired
-	}
-	if !seen_true || !seen_false {
-		t.Errorf("sink must fire for both branches, got %v", sunk)
-	}
-}
-
-// Test_Fuzz_Coverage_Line_Round_Trip: the worker's Fuzz_Coverage_Line and the coordinator's
-// Recorder_Merge_Fuzz_Coverage_From are inverses — encoding cells (including a NUL-bearing key) and
-// merging them back unions exactly those branches into a seeded grid, leaving the other branch alone
-// and skipping a key with no seeded entry.
-func Test_Fuzz_Coverage_Line_Round_Trip(t *testing.T) {
-	nul_key := "field" + invariant.Element_Message_Separator + "empty"
-	var file bytes.Buffer
-	file.WriteString(invariant.Fuzz_Coverage_Line(nul_key, true))
-	file.WriteString(invariant.Fuzz_Coverage_Line("plain", false))
-	file.WriteString(invariant.Fuzz_Coverage_Line("unseeded", true)) // no entry: skipped on merge
-
-	recorder := &invariant.Recorder{Is_Test: true}
-	for _, key := range []string{nul_key, "plain"} {
-		recorder.Assertions.Store(key, &invariant.Assertion_Metadata{
-			Kind: invariant.Assertion_Kind_Sometimes, Message: key,
-		})
-	}
-
-	invariant.Recorder_Merge_Fuzz_Coverage_From(recorder, &file)
-
-	covered, _ := recorder.Assertions.Load(nul_key)
-	if covered.(*invariant.Assertion_Metadata).Frequency.Load() == 0 {
-		t.Errorf("merge must mark %q covered on its true branch", nul_key)
-	}
-	if covered.(*invariant.Assertion_Metadata).False_Frequency.Load() != 0 {
-		t.Errorf("merge must not touch %q's false branch", nul_key)
-	}
-	plain, _ := recorder.Assertions.Load("plain")
-	if plain.(*invariant.Assertion_Metadata).False_Frequency.Load() == 0 {
-		t.Error(`merge must mark "plain" covered on its false branch`)
-	}
-	if _, seeded := recorder.Assertions.Load("unseeded"); seeded {
-		t.Error("merge must not create entries for unseeded keys")
+	if reported {
+		t.Errorf("a fuzz worker must not analyze, got exit=%d reported=%v", exit, reported)
 	}
 }
 
@@ -1056,10 +986,74 @@ func Test_Coverage_Enforcement(t *testing.T) {
 		t.Fatal("an eager Always must enforce even when coverage is not recorded")
 	}
 	if !did_panic(func() {
-		invariant.Recorder_Dot_Product(recorder, "check", invariant.Recorder_Distinct_Boundary(
-			recorder, &invariant.Boundary_Input[int]{X: 9, Lo: 0, Hi: 3}, "range"))
+		invariant.Recorder_Dot_Product(recorder, "check",
+			invariant.Recorder_Distinct_Boundary(
+				recorder,
+				&invariant.Boundary_Input[int]{X: 9, Lo: 0, Hi: 3},
+				"range"))
 	}) {
 		t.Fatal("a Dot_Product must enforce its elements even without coverage recording")
+	}
+}
+
+// Test_Coverage_Uniqueness: two Dot_Products sharing a message fail registration — a
+// duplicate would silently merge two obligations and mask a gap.
+func Test_Coverage_Uniqueness(t *testing.T) {
+	const source = `package fixture
+
+func check_a(n int) {
+	invariant.Dot_Product("field", invariant.Sometimes(n < 0, "lo"))
+}
+
+func check_b(n int) {
+	invariant.Dot_Product("field", invariant.Sometimes(n > 0, "hi"))
+}
+`
+	var output bytes.Buffer
+	exit_code := -1
+	recorder := &invariant.Recorder{
+		File_System: fstest.MapFS{
+			"fixture/check.go": &fstest.MapFile{Data: []byte(source)},
+		},
+		Output: &output,
+		Exit:   func(code int) { exit_code = code },
+	}
+	invariant.Recorder_Register_Packages_For_Analysis(recorder, "/fixture")
+
+	if exit_code != 1 {
+		t.Fatalf("duplicate messages must exit 1, got %d", exit_code)
+	}
+	if !strings.Contains(output.String(), "duplicate") {
+		t.Errorf("the report must name the collision, got: %s", output.String())
+	}
+}
+
+// Test_Coverage_Literal: a non-literal message fails registration — the static side cannot
+// key it, so the coverage would vanish if it were allowed through.
+func Test_Coverage_Literal(t *testing.T) {
+	const source = `package fixture
+
+func check(n int) {
+	msg := "zero"
+	invariant.Dot_Product("field", invariant.Sometimes(n == 0, msg))
+}
+`
+	var output bytes.Buffer
+	exit_code := -1
+	recorder := &invariant.Recorder{
+		File_System: fstest.MapFS{
+			"fixture/check.go": &fstest.MapFile{Data: []byte(source)},
+		},
+		Output: &output,
+		Exit:   func(code int) { exit_code = code },
+	}
+	invariant.Recorder_Register_Packages_For_Analysis(recorder, "/fixture")
+
+	if exit_code != 1 {
+		t.Fatalf("a non-literal message must exit 1, got %d", exit_code)
+	}
+	if !strings.Contains(output.String(), "non-literal") {
+		t.Errorf("the report must say non-literal messages, got: %s", output.String())
 	}
 }
 
@@ -1094,6 +1088,94 @@ func check(n int) {
 	}
 	if !strings.Contains(output.String(), "Pair_Invariants") {
 		t.Errorf("the report must name the unresolved bundle, got: %s", output.String())
+	}
+}
+
+// Test_Coverage_Sink_Fires_On_First_Coverage: a fuzz worker persists each cell the first
+// time it is covered. Coverage_Sink fires on the 0→1 transition of a branch and not on
+// later observations, so a long run appends at most one line per branch — the bound that
+// keeps it off the syscall-per-assertion path.
+func Test_Coverage_Sink_Fires_On_First_Coverage(t *testing.T) {
+	type event struct {
+		Key   string
+		Fired bool
+	}
+	var sunk []event
+	recorder := &invariant.Recorder{
+		Is_Test:        true,
+		Is_Fuzz:        true,
+		Is_Fuzz_Worker: true,
+		Coverage_Sink: func(key string, fired_true bool) {
+			sunk = append(sunk, event{key, fired_true})
+		},
+	}
+	key := "check" + invariant.Element_Message_Separator + "zero"
+	recorder.Events.Store(key, &invariant.Assertion_Metadata{
+		Kind: invariant.Assertion_Kind_Sometimes, Message: key,
+	})
+
+	for range 3 {
+		invariant.Recorder_Dot_Product(
+			recorder, "check", invariant.Recorder_Sometimes(recorder, true, "zero"))
+	}
+	for range 2 {
+		invariant.Recorder_Dot_Product(
+			recorder, "check", invariant.Recorder_Sometimes(recorder, false, "zero"))
+	}
+
+	if len(sunk) != 2 {
+		t.Fatalf("sink must fire once per branch on first coverage, got %d events: %v",
+			len(sunk), sunk)
+	}
+	seen_true, seen_false := false, false
+	for _, e := range sunk {
+		if e.Key != key {
+			t.Errorf("sink key = %q, want %q", e.Key, key)
+		}
+		seen_true = seen_true || e.Fired
+		seen_false = seen_false || !e.Fired
+	}
+	if !seen_true {
+		t.Errorf("sink must fire for both branches, got %v", sunk)
+	}
+	if !seen_false {
+		t.Errorf("sink must fire for both branches, got %v", sunk)
+	}
+}
+
+// Test_Fuzz_Coverage_Line_Round_Trip: the worker's Fuzz_Coverage_Line and the coordinator's
+// Recorder_Merge_Fuzz_Coverage_From are inverses — encoding cells (including a NUL-bearing
+// key) and merging them back unions exactly those branches into a seeded grid, leaving the
+// other branch alone and skipping a key with no seeded entry.
+func Test_Fuzz_Coverage_Line_Round_Trip(t *testing.T) {
+	nul_key := "field" + invariant.Element_Message_Separator + "empty"
+	var file bytes.Buffer
+	file.WriteString(invariant.Fuzz_Coverage_Line(nul_key, true))
+	file.WriteString(invariant.Fuzz_Coverage_Line("plain", false))
+	file.WriteString(invariant.Fuzz_Coverage_Line("unseeded", true)) // no entry: skipped
+
+	recorder := &invariant.Recorder{Is_Test: true}
+	for _, key := range []string{nul_key, "plain"} {
+		recorder.Events.Store(key, &invariant.Assertion_Metadata{
+			Kind: invariant.Assertion_Kind_Sometimes, Message: key,
+		})
+	}
+
+	invariant.Recorder_Merge_Fuzz_Coverage_From(recorder, &file)
+
+	covered, _ := recorder.Events.Load(nul_key)
+	if covered.(*invariant.Assertion_Metadata).Frequency.Load() == 0 {
+		t.Errorf("merge must mark %q covered on its true branch", nul_key)
+	}
+	if covered.(*invariant.Assertion_Metadata).False_Frequency.Load() != 0 {
+		t.Errorf("merge must not touch %q's false branch", nul_key)
+	}
+	plain, _ := recorder.Events.Load("plain")
+	if plain.(*invariant.Assertion_Metadata).False_Frequency.Load() == 0 {
+		t.Error(`merge must mark "plain" covered on its false branch`)
+	}
+	if _, seeded := recorder.Events.Load("unseeded"); seeded {
+		t.Error("merge must not create entries for unseeded keys")
 	}
 }
 
