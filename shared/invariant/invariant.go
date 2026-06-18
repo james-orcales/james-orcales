@@ -212,10 +212,6 @@ type Dot_Element struct {
 	Impossibles []Dot_Element_Reference
 }
 
-// Event is an alias of Dot_Element so the reference builders carry the Event_
-// prefix the banned-methods convention requires for Event_True / Event_False.
-type Event = Dot_Element
-
 // Bundle is a slice of Dot_Element — what a _Invariants function returns for a caller to
 // spread into a Dot_Product. An alias, so it stays interchangeable with []Dot_Element.
 type Bundle = []Dot_Element
@@ -371,24 +367,27 @@ func numeric_is_nan[I Numeric](value I) (is_nan bool) {
 // the coverage analyzer treats every unnamed axis as a wildcard — it forbids, and
 // prunes from the demanded cross-product grid, every tuple matching the named events
 // for all values of the other axes (see recorder_carve_matches). So
-// Impossible(Event_True(a), Event_True(b)) excludes "a and b both true" across every
+// Impossible(Event_True("a"), Event_True("b")) excludes "a and b both true" across every
 // combination of the remaining axes; naming a subset never enumerates full tuples.
 func Impossible(impossibles ...Dot_Element_Reference) (dot_element Dot_Element) {
 	return Dot_Element{Kind: Dot_Element_Kind_Impossible, Impossibles: impossibles}
 }
 
-// Event_True references event at its true outcome, for use in Impossible.
-func Event_True(event Event) (reference Dot_Element_Reference) {
+// Event_True references the axis carrying message at its true outcome, for use in Impossible. The
+// message names a sibling axis of the consuming Dot_Product (matched by value, like the axis's own
+// message); Recorder_Dot_Product panics if it names no sibling.
+func Event_True(message string) (reference Dot_Element_Reference) {
 	return Dot_Element_Reference{
-		Message:    event.Message,
+		Message:    message,
 		Event_Kind: Event_Kind_True,
 	}
 }
 
-// Event_False references event at its false outcome, for use in Impossible.
-func Event_False(event Event) (reference Dot_Element_Reference) {
+// Event_False references the axis carrying message at its false outcome, for use in Impossible. See
+// Event_True for how the message is matched.
+func Event_False(message string) (reference Dot_Element_Reference) {
 	return Dot_Element_Reference{
-		Message:    event.Message,
+		Message:    message,
 		Event_Kind: Event_Kind_False,
 	}
 }
@@ -399,6 +398,7 @@ func Event_False(event Event) (reference Dot_Element_Reference) {
 // them all. message is the grid's identity and is prefixed onto each held axis's own message
 // to form that axis's coverage key.
 func Recorder_Dot_Product(recorder *Recorder, message string, bundle ...Dot_Element) {
+	dot_product_check_references(bundle)
 	var violations []string
 	for _, dot_element := range bundle {
 		violation := dot_element_violation(dot_element, bundle)
@@ -410,6 +410,44 @@ func Recorder_Dot_Product(recorder *Recorder, message string, bundle ...Dot_Elem
 		panic(Assertion_Failure_Message_Prefix + strings.Join(violations, "\n"))
 	}
 	recorder_dot_product_observe(recorder, message, bundle)
+}
+
+// dot_product_check_references panics when an Impossible names a message that is not an axis of this
+// Dot_Product — one of its siblings. A reference can only carve a cell of this product's grid and can
+// only fire against an event observed on this same call, so naming a non-sibling is structurally
+// meaningless; catching it here, before any recording and on every call, surfaces a typo immediately
+// rather than as an unfillable gap — independent of whether the forbidden combination ever occurs. A
+// bundle with no Impossible costs nothing.
+func dot_product_check_references(bundle Bundle) {
+	has_impossible := false
+	for _, dot_element := range bundle {
+		if dot_element.Kind == Dot_Element_Kind_Impossible {
+			has_impossible = true
+			break
+		}
+	}
+	if !has_impossible {
+		return
+	}
+	siblings := map[string]bool{}
+	for _, dot_element := range bundle {
+		if dot_element.Kind != Dot_Element_Kind_Impossible {
+			siblings[dot_element.Message] = true
+		}
+	}
+	for _, dot_element := range bundle {
+		if dot_element.Kind != Dot_Element_Kind_Impossible {
+			continue
+		}
+		for _, reference := range dot_element.Impossibles {
+			if siblings[reference.Message] {
+				continue
+			}
+			panic(Assertion_Failure_Message_Prefix +
+				"Impossible references " + strconv.Quote(reference.Message) +
+				", not an axis of this Dot_Product")
+		}
+	}
 }
 
 // Increments the seeded tracker entry for each observed element and the tuple
@@ -568,7 +606,7 @@ func dot_element_violation(
 
 // Returns the message for a Boundary carrying a deferred violation — X outside
 // [Lo, Hi], or bounds that aren't distinct (Lo >= Hi, or a NaN endpoint) — naming
-// the boundary's site. Returns "" when the boundary holds.
+// the boundary's message. Returns "" when the boundary holds.
 func dot_element_boundary_violation(dot_element Dot_Element) (violation string) {
 	if dot_element.Event == Event_Kind_Outside {
 		return dot_element.Message + "  Boundary — value outside [Lo, Hi]"
@@ -581,9 +619,9 @@ func dot_element_boundary_violation(dot_element Dot_Element) (violation string) 
 }
 
 // Renders an Impossible violation: a header plus one line per co-occurring
-// coordinate, each naming the referenced axis by its site and the event observed.
-// The Impossible element's own site is empty, so its identity is this set of
-// coordinates rather than a single site.
+// coordinate, each naming the referenced axis by its message and the event observed.
+// The Impossible element's own message is empty, so its identity is this set of
+// coordinates rather than a single message.
 func dot_element_impossible_message(impossible Dot_Element) (message string) {
 	message = "Impossible — forbidden combination occurred:"
 	for _, reference := range impossible.Impossibles {
@@ -1238,16 +1276,15 @@ func recorder_register_dot_product(
 }
 
 // A collect_frame is one bundle scope mid-flatten: its argument list, the
-// bindings that resolve its Impossible references, a cursor over the arguments,
-// and the maps that turn this scope's direct axes into flattened positions (so
-// its carves can be remapped once the scope is fully walked).
+// bindings that resolve element and nested-bundle variables, a cursor over the
+// arguments, and the ordinal→global map that turns this scope's direct axes into
+// flattened positions (so its carves can be remapped once the scope is fully walked).
 type collect_frame struct {
 	Arguments         []ast.Expr
 	Bindings          map[string]*ast.CallExpr
 	Imports           map[string]string
 	Unqualified_Sugar bool
 	Cursor            int
-	Axis_Local        map[*ast.CallExpr]int
 	Axis_Global       []int
 	Local_Axes        []registration_axis
 }
@@ -1263,10 +1300,9 @@ func recorder_collect_elements(
 	reg *registration,
 ) (axes []registration_axis, carves [][]registration_cell) {
 	stack := []*collect_frame{{
-		Arguments:  arguments,
-		Bindings:   bindings,
-		Imports:    imports,
-		Axis_Local: map[*ast.CallExpr]int{},
+		Arguments: arguments,
+		Bindings:  bindings,
+		Imports:   imports,
 	}}
 	for step := 0; len(stack) > 0; step++ {
 		if step >= bundle_expansion_steps_max {
@@ -1274,7 +1310,7 @@ func recorder_collect_elements(
 		}
 		frame := stack[len(stack)-1]
 		if frame.Cursor == len(frame.Arguments) {
-			carves = append(carves, collect_frame_carves(frame)...)
+			carves = append(carves, collect_frame_carves(file_set, frame, reg)...)
 			stack = stack[:len(stack)-1]
 			continue
 		}
@@ -1305,7 +1341,6 @@ func recorder_collect_elements(
 		if !is_axis {
 			continue
 		}
-		frame.Axis_Local[element_call] = len(frame.Local_Axes)
 		frame.Axis_Global = append(frame.Axis_Global, len(axes))
 		frame.Local_Axes = append(frame.Local_Axes, axis)
 		axes = append(axes, axis)
@@ -1339,7 +1374,6 @@ func recorder_bundle_frame(
 		Bindings:          ast_collect_bindings(function.Declaration.Body),
 		Imports:           function.Imports,
 		Unqualified_Sugar: function.Is_Sugar,
-		Axis_Local:        map[*ast.CallExpr]int{},
 	}, true
 }
 
@@ -1431,7 +1465,9 @@ func bundle_index_load(
 // Resolves a finished scope's Impossibles into carves over the flattened axis
 // positions: ast_resolve_cells yields cells at this scope's local ordinals, which
 // the frame's ordinal→global map turns into flattened positions.
-func collect_frame_carves(frame *collect_frame) (carves [][]registration_cell) {
+func collect_frame_carves(
+	file_set *token.FileSet, frame *collect_frame, reg *registration,
+) (carves [][]registration_cell) {
 	for _, argument := range frame.Arguments {
 		element_call, resolved := ast_resolve_element(argument, frame.Bindings)
 		if !resolved {
@@ -1441,8 +1477,7 @@ func collect_frame_carves(frame *collect_frame) (carves [][]registration_cell) {
 			continue
 		}
 		cells, ok := ast_resolve_cells(
-			element_call, frame.Bindings, frame.Axis_Local, frame.Local_Axes,
-			frame.Unqualified_Sugar,
+			file_set, element_call, frame.Local_Axes, frame.Unqualified_Sugar, reg,
 		)
 		if !ok {
 			continue
@@ -1699,8 +1734,8 @@ func recorder_axis_of(
 	return registration_axis{}, false
 }
 
-// Maps each `name := invariant.X(...)` local to its constructor call, so an
-// Impossible's Event_True(name) can resolve name back to a Dot_Product axis.
+// Maps each `name := invariant.X(...)` local to its constructor call, so a Dot_Product spreading
+// name resolves to the element or bundle it accumulates.
 func ast_collect_bindings(body *ast.BlockStmt) (bindings map[string]*ast.CallExpr) {
 	bindings = map[string]*ast.CallExpr{}
 	ast.Inspect(body, func(node ast.Node) (descend bool) {
@@ -1813,35 +1848,40 @@ func ast_resolve_element(
 	return bound, true
 }
 
-// Resolves an Impossible's Event_True/Event_False(local) references into (axis
-// position, bucket) cells. ok is false when any reference fails to resolve to a
-// Dot_Product axis — that carve is then ignored.
+// Resolves an Impossible's Event_True("msg")/Event_False("msg") references into (axis position,
+// bucket) cells by matching each reference's message literal to a sibling axis. ok is false — and the
+// carve skipped — when a reference names no sibling (Recorder_Dot_Product panics on it at runtime, so
+// it is not a registration error) or is non-literal (recorded as a fatal diagnostic).
 func ast_resolve_cells(
-	impossible *ast.CallExpr, bindings map[string]*ast.CallExpr,
-	axis_position map[*ast.CallExpr]int, axes []registration_axis, allow_unqualified bool,
+	file_set *token.FileSet, impossible *ast.CallExpr, axes []registration_axis,
+	allow_unqualified bool, reg *registration,
 ) (cells []registration_cell, ok bool) {
 	for _, argument := range impossible.Args {
 		reference, is_call := argument.(*ast.CallExpr)
 		if !is_call {
 			return nil, false
 		}
-		if len(reference.Args) != 1 {
+		message, is_literal := ast_string_literal(reference, 0)
+		if !is_literal {
+			reg.Non_Literal = append(reg.Non_Literal,
+				recorder_position(file_set, reference)+
+					"  Impossible reference message is not a string literal")
 			return nil, false
 		}
-		identifier, is_identifier := reference.Args[0].(*ast.Ident)
-		if !is_identifier {
+		position := -1
+		for index, axis := range axes {
+			if axis.Message == message {
+				position = index
+				break
+			}
+		}
+		// A reference that names no sibling axis cannot be carved. It is not a registration error:
+		// Recorder_Dot_Product panics on it at runtime (dot_product_check_references), and an
+		// unexercised product fails as a gap anyway — so the carve is simply skipped here.
+		if position < 0 {
 			return nil, false
 		}
-		bound, has := bindings[identifier.Name]
-		if !has {
-			return nil, false
-		}
-		position, present := axis_position[bound]
-		if !present {
-			return nil, false
-		}
-		selector := ast_selector(reference, allow_unqualified)
-		bucket := ast_event_bucket(selector, axes[position])
+		bucket := ast_event_bucket(ast_selector(reference, allow_unqualified), axes[position])
 		if bucket < 0 {
 			return nil, false
 		}

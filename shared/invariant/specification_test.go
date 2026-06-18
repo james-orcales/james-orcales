@@ -212,7 +212,7 @@ func Test_Impossible_Violation(t *testing.T) {
 	first := invariant.Recorder_Sometimes(recorder, true, "first")
 	second := invariant.Recorder_Sometimes(recorder, true, "second")
 	forbidden := invariant.Impossible(
-		invariant.Event_True(first), invariant.Event_True(second))
+		invariant.Event_True("first"), invariant.Event_True("second"))
 	message := recover_message(func() {
 		invariant.Recorder_Dot_Product(recorder, "check", first, second, forbidden)
 	})
@@ -235,7 +235,7 @@ func Test_Impossible_Absent(t *testing.T) {
 	first := invariant.Recorder_Sometimes(recorder, true, "first")
 	second := invariant.Recorder_Sometimes(recorder, false, "second")
 	forbidden := invariant.Impossible(
-		invariant.Event_True(first), invariant.Event_True(second))
+		invariant.Event_True("first"), invariant.Event_True("second"))
 	if did_panic(func() {
 		invariant.Recorder_Dot_Product(recorder, "check", first, second, forbidden)
 	}) {
@@ -254,7 +254,7 @@ func check(n int) {
 	c := invariant.Sometimes(n == 2, "c")
 	invariant.Dot_Product("check",
 		a, b, c,
-		invariant.Impossible(invariant.Event_True(a), invariant.Event_True(b)),
+		invariant.Impossible(invariant.Event_True("a"), invariant.Event_True("b")),
 	)
 }
 `
@@ -277,6 +277,23 @@ func check(n int) {
 	// both true is forbidden.
 	if _, ok := recorder.Events.Load("check:tuple=(1,0,1)"); !ok {
 		t.Error("a cell not matching both named events must survive")
+	}
+}
+
+// Test_Impossible_Sibling: an Impossible may reference only axes of its own Dot_Product. Naming a
+// message that is not a sibling panics at the Dot_Product on every call — a structural precondition
+// checked before recording, independent of whether the forbidden combination can occur (here the
+// named axis is not even present in the product).
+func Test_Impossible_Sibling(t *testing.T) {
+	recorder := new_test_recorder()
+	present := invariant.Recorder_Sometimes(recorder, true, "present")
+	// "orphan" is not an axis of the product below — only "present" is — so the Impossible names a
+	// message that is not a sibling.
+	if !did_panic(func() {
+		invariant.Recorder_Dot_Product(recorder, "check", present,
+			invariant.Impossible(invariant.Event_True("orphan")))
+	}) {
+		t.Fatal("an Impossible referencing a non-sibling message must panic at the Dot_Product")
 	}
 }
 
@@ -318,7 +335,7 @@ func check(n int) {
 	invariant.Dot_Product("check",
 		zero,
 		one,
-		invariant.Impossible(invariant.Event_True(zero), invariant.Event_True(one)),
+		invariant.Impossible(invariant.Event_True("zero"), invariant.Event_True("one")),
 	)
 }
 `
@@ -1054,6 +1071,39 @@ func check(n int) {
 	}
 	if !strings.Contains(output.String(), "non-literal") {
 		t.Errorf("the report must say non-literal messages, got: %s", output.String())
+	}
+}
+
+// Test_Coverage_Literal_Reference: an Impossible reference message must also be a string literal,
+// like every message — a non-literal reference fails registration, since the static side cannot
+// match it to a sibling axis to carve.
+func Test_Coverage_Literal_Reference(t *testing.T) {
+	const source = `package fixture
+
+func check(n int) {
+	a := invariant.Sometimes(n == 0, "a")
+	b := invariant.Sometimes(n == 1, "b")
+	axis := "a"
+	invariant.Dot_Product("field", a, b,
+		invariant.Impossible(invariant.Event_True(axis), invariant.Event_True("b")))
+}
+`
+	var output bytes.Buffer
+	exit_code := -1
+	recorder := &invariant.Recorder{
+		File_System: fstest.MapFS{
+			"fixture/check.go": &fstest.MapFile{Data: []byte(source)},
+		},
+		Output: &output,
+		Exit:   func(code int) { exit_code = code },
+	}
+	invariant.Recorder_Register_Packages_For_Analysis(recorder, "/fixture")
+
+	if exit_code != 1 {
+		t.Fatalf("a non-literal Impossible reference must exit 1, got %d", exit_code)
+	}
+	if !strings.Contains(output.String(), "non-literal") {
+		t.Errorf("the report must say non-literal, got: %s", output.String())
 	}
 }
 

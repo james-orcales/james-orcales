@@ -36,10 +36,6 @@ type Bundle = invariant.Bundle
 // Dot_Element_Reference re-exports the library reference type used by Impossible.
 type Dot_Element_Reference = invariant.Dot_Element_Reference
 
-// Event re-exports the library Event alias so Event_True / Event_False read the
-// same here as in the pure tier.
-type Event = invariant.Event
-
 // Numeric re-exports the library constraint for Boundary_Input's type parameter.
 type Numeric = invariant.Numeric
 
@@ -123,7 +119,7 @@ func Run_Test_Main(m *testing.M, directories ...string) {
 // Fuzz_coverage_file_environment names the env var a fuzz coordinator sets to the shared
 // coverage file path. The -test.fuzzworker subprocesses it spawns inherit the env (Go captures
 // os.Environ() when starting workers), so they find the same file.
-const fuzz_coverage_file_environmentironment = "INVARIANT_FUZZ_COVERAGE_FILE"
+const fuzz_coverage_file_environment = "INVARIANT_FUZZ_COVERAGE_FILE"
 
 // Fuzz_coverage_setup wires the cross-process coverage seams for a fuzzing run. Under -fuzz
 // the coordinator never executes the fuzzed body — that happens in worker subprocesses — so
@@ -212,14 +208,14 @@ func Impossible(
 	return invariant.Impossible(impossibles...)
 }
 
-// Event_True references event at its true outcome, for use inside Impossible.
-func Event_True(event invariant.Event) (reference invariant.Dot_Element_Reference) {
-	return invariant.Event_True(event)
+// Event_True references the axis with message at its true outcome, for use inside Impossible.
+func Event_True(message string) (reference invariant.Dot_Element_Reference) {
+	return invariant.Event_True(message)
 }
 
-// Event_False references event at its false outcome, for use inside Impossible.
-func Event_False(event invariant.Event) (reference invariant.Dot_Element_Reference) {
-	return invariant.Event_False(event)
+// Event_False references the axis with message at its false outcome, for use inside Impossible.
+func Event_False(message string) (reference invariant.Dot_Element_Reference) {
+	return invariant.Event_False(message)
 }
 
 // Dot_Product enforces the call's elements and, under test, records the observed element
@@ -295,9 +291,9 @@ func Float_Invariants[F ~float32 | ~float64](f F) (dot_elements Bundle) {
 	positive := Sometimes(value > 0, "positive")
 	return append(dot_elements,
 		not_a_number, negative, positive,
-		Impossible(Event_True(not_a_number), Event_True(negative)),
-		Impossible(Event_True(not_a_number), Event_True(positive)),
-		Impossible(Event_True(negative), Event_True(positive)),
+		Impossible(Event_True("nan"), Event_True("negative")),
+		Impossible(Event_True("nan"), Event_True("positive")),
+		Impossible(Event_True("negative"), Event_True("positive")),
 	)
 }
 
@@ -321,15 +317,15 @@ func String_Invariants(s string) (dot_elements Bundle) {
 		empty,
 		edge_whitespace, interior_whitespace, invalid_utf8, nul,
 		byte_rune_mismatch, control, line_break,
-		Impossible(Event_True(empty), Event_True(edge_whitespace)),
-		Impossible(Event_True(empty), Event_True(interior_whitespace)),
-		Impossible(Event_True(empty), Event_True(invalid_utf8)),
-		Impossible(Event_True(empty), Event_True(nul)),
-		Impossible(Event_True(empty), Event_True(byte_rune_mismatch)),
-		Impossible(Event_True(empty), Event_True(control)),
-		Impossible(Event_True(empty), Event_True(line_break)),
-		Impossible(Event_True(nul), Event_False(control)),
-		Impossible(Event_True(line_break), Event_False(control)),
+		Impossible(Event_True("empty"), Event_True("Sometimes_Has_Edge_Whitespace")),
+		Impossible(Event_True("empty"), Event_True("Sometimes_Has_Interior_Whitespace")),
+		Impossible(Event_True("empty"), Event_True("Sometimes_Has_Invalid_UTF8")),
+		Impossible(Event_True("empty"), Event_True("Sometimes_Has_Nul")),
+		Impossible(Event_True("empty"), Event_True("Sometimes_Has_Multibyte_Rune")),
+		Impossible(Event_True("empty"), Event_True("Sometimes_Has_Control")),
+		Impossible(Event_True("empty"), Event_True("Sometimes_Has_Line_Break")),
+		Impossible(Event_True("Sometimes_Has_Nul"), Event_False("Sometimes_Has_Control")),
+		Impossible(Event_True("Sometimes_Has_Line_Break"), Event_False("Sometimes_Has_Control")),
 	)
 }
 
@@ -476,7 +472,7 @@ func Slice_Invariants[E any](s []E) (dot_elements Bundle) {
 	is_nil := Sometimes(s == nil, "nil")
 	return append(dot_elements,
 		empty, is_nil,
-		Impossible(Event_True(is_nil), Event_False(empty)),
+		Impossible(Event_True("nil"), Event_False("empty")),
 	)
 }
 
@@ -487,7 +483,7 @@ func Map_Invariants[K comparable, V any](m map[K]V) (dot_elements Bundle) {
 	is_nil := Sometimes(m == nil, "nil")
 	return append(dot_elements,
 		empty, is_nil,
-		Impossible(Event_True(is_nil), Event_False(empty)),
+		Impossible(Event_True("nil"), Event_False("empty")),
 	)
 }
 

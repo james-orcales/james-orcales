@@ -19,8 +19,8 @@ func Test_Dot_Product_Impossible_Combination_Fails(t *testing.T) {
 	a := invariant.Recorder_Sometimes(recorder, true, "a")
 	b := invariant.Recorder_Sometimes(recorder, true, "b")
 	forbidden := invariant.Impossible(
-		invariant.Event_True(a),
-		invariant.Event_True(b),
+		invariant.Event_True("a"),
+		invariant.Event_True("b"),
 	)
 	failed := false
 	func() {
@@ -43,8 +43,8 @@ func Test_Dot_Product_Impossible_Combination_Absent_Passes(t *testing.T) {
 	a := invariant.Recorder_Sometimes(recorder, true, "a")
 	b := invariant.Recorder_Sometimes(recorder, false, "b")
 	forbidden := invariant.Impossible(
-		invariant.Event_True(a),
-		invariant.Event_True(b),
+		invariant.Event_True("a"),
+		invariant.Event_True("b"),
 	)
 	failed := false
 	func() {
@@ -255,7 +255,7 @@ func check(n int) {
 	one := invariant.Sometimes(n == 1, "one")
 	invariant.Dot_Product("check",
 		zero, one,
-		invariant.Impossible(invariant.Event_True(zero), invariant.Event_True(one)),
+		invariant.Impossible(invariant.Event_True("zero"), invariant.Event_True("one")),
 	)
 }
 `
@@ -455,7 +455,7 @@ func Pair_Invariants(n int) (dot_elements []invariant.Dot_Element) {
 	dot_elements = append(
 		dot_elements,
 		lo, hi,
-		invariant.Impossible(invariant.Event_True(lo), invariant.Event_True(hi)),
+		invariant.Impossible(invariant.Event_True("lo"), invariant.Event_True("hi")),
 	)
 	return dot_elements
 }
@@ -819,7 +819,7 @@ func Pair_Invariants(n int) (dot_elements []invariant.Dot_Element) {
 	lo := invariant.Sometimes(n < 0, "lo")
 	hi := invariant.Sometimes(n > 0, "hi")
 	return append(dot_elements, lo, hi,
-		invariant.Impossible(invariant.Event_True(lo), invariant.Event_True(hi)))
+		invariant.Impossible(invariant.Event_True("lo"), invariant.Event_True("hi")))
 }
 `
 	const package_b = `package b
@@ -1034,9 +1034,9 @@ func Float_Invariants[F ~float32 | ~float64](f F) (dot_elements []invariant.Dot_
 	positive := Sometimes(value > 0, "positive")
 	return append(dot_elements,
 		not_a_number, negative, positive,
-		Impossible(Event_True(not_a_number), Event_True(negative)),
-		Impossible(Event_True(not_a_number), Event_True(positive)),
-		Impossible(Event_True(negative), Event_True(positive)),
+		Impossible(Event_True("nan"), Event_True("negative")),
+		Impossible(Event_True("nan"), Event_True("positive")),
+		Impossible(Event_True("negative"), Event_True("positive")),
 	)
 }
 `
@@ -1185,15 +1185,15 @@ func String_Invariants(s string) (dot_elements []invariant.Dot_Element) {
 		empty,
 		edge_whitespace, interior_whitespace, invalid_utf8, nul,
 		byte_rune_mismatch, control, line_break,
-		Impossible(Event_True(empty), Event_True(edge_whitespace)),
-		Impossible(Event_True(empty), Event_True(interior_whitespace)),
-		Impossible(Event_True(empty), Event_True(invalid_utf8)),
-		Impossible(Event_True(empty), Event_True(nul)),
-		Impossible(Event_True(empty), Event_True(byte_rune_mismatch)),
-		Impossible(Event_True(empty), Event_True(control)),
-		Impossible(Event_True(empty), Event_True(line_break)),
-		Impossible(Event_True(nul), Event_False(control)),
-		Impossible(Event_True(line_break), Event_False(control)),
+		Impossible(Event_True("empty"), Event_True("Sometimes_Has_Edge_Whitespace")),
+		Impossible(Event_True("empty"), Event_True("Sometimes_Has_Interior_Whitespace")),
+		Impossible(Event_True("empty"), Event_True("Sometimes_Has_Invalid_UTF8")),
+		Impossible(Event_True("empty"), Event_True("Sometimes_Has_Nul")),
+		Impossible(Event_True("empty"), Event_True("Sometimes_Has_Multibyte_Rune")),
+		Impossible(Event_True("empty"), Event_True("Sometimes_Has_Control")),
+		Impossible(Event_True("empty"), Event_True("Sometimes_Has_Line_Break")),
+		Impossible(Event_True("Sometimes_Has_Nul"), Event_False("Sometimes_Has_Control")),
+		Impossible(Event_True("Sometimes_Has_Line_Break"), Event_False("Sometimes_Has_Control")),
 	)
 }
 `
@@ -1240,7 +1240,7 @@ func Account_Invariants(a Account) (dot_elements []invariant.Dot_Element) {
 	empty := invariant.Sometimes(a.Balance == 0, "empty")
 	return append(dot_elements,
 		overdrawn, empty,
-		invariant.Impossible(invariant.Event_True(overdrawn), invariant.Event_True(empty)),
+		invariant.Impossible(invariant.Event_True("overdrawn"), invariant.Event_True("empty")),
 	)
 }
 
@@ -1373,7 +1373,7 @@ func Pair_Invariants(n int) (dot_elements []invariant.Dot_Element) {
 	lo := Sometimes(n < 0, "lo")
 	hi := Sometimes(n > 0, "hi")
 	return append(dot_elements, lo, hi,
-		Impossible(Event_True(lo), Event_True(hi)))
+		Impossible(Event_True("lo"), Event_True("hi")))
 }
 `
 	const application = `package app
@@ -1514,7 +1514,7 @@ func Pair_Invariants(n int) (dot_elements []invariant.Dot_Element) {
 	lo := Sometimes(n < 0, "lo")
 	hi := Sometimes(n > 0, "hi")
 	return append(dot_elements, lo, hi,
-		Impossible(Event_True(lo), Event_True(hi)))
+		Impossible(Event_True("lo"), Event_True("hi")))
 }
 `
 	const application = `package app
@@ -1562,7 +1562,7 @@ func Pair_Invariants(n int) (dot_elements []invariant.Dot_Element) {
 	lo := invariant.Sometimes(n < 0, "lo")
 	hi := invariant.Sometimes(n > 0, "hi")
 	return append(dot_elements, lo, hi,
-		invariant.Impossible(invariant.Event_True(lo), invariant.Event_True(hi)))
+		invariant.Impossible(invariant.Event_True("lo"), invariant.Event_True("hi")))
 }
 `
 	const package_b = `package b
@@ -1653,7 +1653,7 @@ func pair_invariants(n int) (dot_elements []invariant.Dot_Element) {
 	lo := invariant.Sometimes(n < 0, "lo")
 	hi := invariant.Sometimes(n > 0, "hi")
 	return append(dot_elements, lo, hi,
-		invariant.Impossible(invariant.Event_True(lo), invariant.Event_True(hi)))
+		invariant.Impossible(invariant.Event_True("lo"), invariant.Event_True("hi")))
 }
 
 func check(n int) {
