@@ -387,7 +387,7 @@ func parse_named_token(token string) (
 		}
 	}
 	// A lone "-" was already excluded by is_named_token.
-	invariant.Dot_Product(invariant.Always(token != "-"))
+	invariant.Always(token != "-")
 	label, value, value_was_set = strings.Cut(token[1:], "=")
 	return label, value, value_was_set, nil
 }
