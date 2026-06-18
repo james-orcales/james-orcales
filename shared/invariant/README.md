@@ -42,28 +42,28 @@ tests forgot to cover — a panic versus a silent blind spot.
 special-cases a handful of derived forms purely to cut boilerplate such as `Distinct_Boundary`,
 which generates two `Always` and two `Sometimes` for the price of one.
 
-Every atom is inert alone. Constructing one records nothing and enforces nothing; it is only when
-the atom is handed to a `Dot_Product` (directly, or by flowing through a bundle into one) that it is
-enforced and its coverage tracked. An atom that never reaches a `Dot_Product` is an orphan — it
-asserts nothing despite looking like it does — and is reported as such.
+A `Sometimes` is inert alone: constructing one records nothing and enforces nothing; it is only when
+it is handed to a `Dot_Product` (directly, or by flowing through a bundle into one) that it is
+enforced and its coverage tracked. `Always` is the exception — it is eager, enforcing the moment it
+is called, and is never handed to a `Dot_Product`.
 
 ### Axes compose into a grid
 
 A `Sometimes` is a two-outcome axis: the suite must witness it both true and false. An `Always`
-is a guard, not an axis — it has one legal outcome, so it never widens the grid; it is simply
-checked in every cell and panics the moment it fails. `Dot_Product` takes the cartesian product of
+is a guard, not an axis — it has one legal outcome, so it never widens the grid; it is eager and
+enforced at its own call, outside the `Dot_Product`. `Dot_Product` takes the cartesian product of
 the axes and demands every cell be witnessed.
 
 ```go
+invariant.Always(p) // eager guard: enforced right here, on every call
 invariant.Dot_Product(
-    invariant.Always(p),    // guard: must hold in every cell below, never a grid coordinate
     invariant.Sometimes(q), // axis
     invariant.Sometimes(r), // axis
 )
 ```
 
-The two `Sometimes` axes generate a 2×2 grid. Every cell must be reached by the suite — and in
-each, `Always(p)` must hold or the run panics:
+The two `Sometimes` axes generate a 2×2 grid. Every cell must be reached by the suite, while
+`Always(p)` is enforced eagerly on every call, independent of the grid:
 
 ```
 (q=0, r=0)
@@ -92,9 +92,10 @@ end to end, plus the cross-field properties no component can state on its own.
 type Token string
 
 func Token_Invariants(token Token) []invariant.Dot_Element {
+    // Eager guards fire when the bundle is built; only the axes ride the returned slice.
+    invariant.Always(token != "")
+    invariant.Never_Has_Edge_Whitespace(string(token))
     return []invariant.Dot_Element{
-        invariant.Always(token != ""),
-        invariant.Never_Has_Edge_Whitespace(string(token)),
         invariant.Sometimes(strings.Contains(string(token), "_")),
     }
 }
@@ -104,8 +105,8 @@ func Token_Invariants(token Token) []invariant.Dot_Element {
 type Span struct{ Lo, Hi int }
 
 func Span_Invariants(span Span) []invariant.Dot_Element {
+    invariant.Always(span.Lo <= span.Hi)
     return []invariant.Dot_Element{
-        invariant.Always(span.Lo <= span.Hi),
         invariant.Sometimes(span.Lo == span.Hi),
     }
 }
@@ -119,10 +120,11 @@ type Lexeme struct {
 }
 
 func Lexeme_Invariants(lexeme Lexeme) (dot_elements []invariant.Dot_Element) {
+    // The cross-field property relates the parts; an eager guard, not an axis.
+    invariant.Always(lexeme.Span.Hi-lexeme.Span.Lo == len(lexeme.Token))
     dot_elements = append(dot_elements, Token_Invariants(lexeme.Token)...)
     dot_elements = append(dot_elements, Span_Invariants(lexeme.Span)...)
-    return append(dot_elements,
-        invariant.Always(lexeme.Span.Hi-lexeme.Span.Lo == len(lexeme.Token)))
+    return dot_elements
 }
 ```
 

@@ -251,7 +251,7 @@ func snapper_is_equal_edit(
 	search := "snap.Edit(`"
 	replace := "snap.Init(`"
 	// Equal lengths keep the byte math below (Open+1-len(search)) aligned.
-	invariant.Dot_Product(invariant.Always(len(search) == len(replace)))
+	invariant.Always(len(search) == len(replace))
 	new_content := &bytes.Buffer{}
 	new_content.Grow(len(content))
 	new_content.Write(content[:span.Open+1-len(search)])
@@ -329,10 +329,10 @@ func snapper_locate_edit(s *Snapper, snapshot Snapshot, content []byte) (span sn
 	bounds := snapper_find_line(content, snapshot.Line)
 	// Sequential, not one Dot_Product: each guard must hold before the next line's
 	// content[...] index is evaluated, or an eager out-of-range read would panic first.
-	invariant.Dot_Product(invariant.Always(bounds.Start >= 0 && bounds.End >= 0))
-	invariant.Dot_Product(invariant.Always(bounds.Start > 1))
-	invariant.Dot_Product(invariant.Always(content[bounds.Start-1] == '\n'))
-	invariant.Dot_Product(invariant.Always(content[bounds.End] == '\n'))
+	invariant.Always(bounds.Start >= 0 && bounds.End >= 0)
+	invariant.Always(bounds.Start > 1)
+	invariant.Always(content[bounds.Start-1] == '\n')
+	invariant.Always(content[bounds.End] == '\n')
 
 	line := string(content[bounds.Start:bounds.End])
 	search := "snap.Edit(`"
@@ -343,7 +343,7 @@ func snapper_locate_edit(s *Snapper, snapshot Snapshot, content []byte) (span sn
 		)
 		return span
 	}
-	invariant.Dot_Product(invariant.Always(strings.Count(line, search) == 1))
+	invariant.Always(strings.Count(line, search) == 1)
 
 	call_offset := strings.Index(line, search) + bounds.Start
 	span.Open = call_offset + len(search) - 1
@@ -354,9 +354,9 @@ func snapper_locate_edit(s *Snapper, snapshot Snapshot, content []byte) (span sn
 			break
 		}
 	}
-	invariant.Dot_Product(invariant.Always(span.Open >= 0))
-	invariant.Dot_Product(invariant.Always(span.Close >= 0))
-	invariant.Dot_Product(invariant.Always(span.Open < span.Close))
+	invariant.Always(span.Open >= 0)
+	invariant.Always(span.Close >= 0)
+	invariant.Always(span.Open < span.Close)
 	span.Found = true
 	return span
 }
@@ -366,12 +366,12 @@ func snapper_locate_edit(s *Snapper, snapshot Snapshot, content []byte) (span sn
 // the old snapshot with the actual output and returns true.
 // On mismatch without editing, it prints a Myers diff to s.Out and returns false.
 func Snapshot_Is_Equal(snapshot Snapshot, actual string) (equal bool) {
-	invariant.Dot_Product(invariant.Always(snapshot.Snapper != nil))
+	invariant.Always(snapshot.Snapper != nil)
 	s := snapshot.Snapper
-	invariant.Dot_Product(invariant.Always(snapshot.Line > 0))
-	invariant.Dot_Product(invariant.Always(strings.Count(snapshot.Expected_Output, "`") == 0))
-	invariant.Dot_Product(invariant.Always(strings.Count(actual, "`") == 0))
-	invariant.Dot_Product(invariant.Always(filepath.IsAbs(snapshot.File_Path)))
+	invariant.Always(snapshot.Line > 0)
+	invariant.Always(strings.Count(snapshot.Expected_Output, "`") == 0)
+	invariant.Always(strings.Count(actual, "`") == 0)
+	invariant.Always(filepath.IsAbs(snapshot.File_Path))
 
 	is_equal := actual == snapshot.Expected_Output
 	if snapshot.Should_Edit {
@@ -405,7 +405,7 @@ func Snapshot_Is_Equal(snapshot Snapshot, actual string) (equal bool) {
 // Run resets Stdout and Stderr before calling function and reads them after.
 func Run(t *testing.T, function func(), snapshot Snapshot) (output string, err string) {
 	t.Helper()
-	invariant.Dot_Product(invariant.Always(snapshot.Snapper != nil))
+	invariant.Always(snapshot.Snapper != nil)
 	s := snapshot.Snapper
 	s.Stdout.Reset()
 	s.Stderr.Reset()

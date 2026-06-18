@@ -12,27 +12,6 @@ import (
 	"github.com/james-orcales/james-orcales/shared/snap/default"
 )
 
-// A Dot_Product containing an Always(false) element must fail: the asserted
-// condition did not hold. Mirrors v2's Always semantics, adapted to v3's
-// collect-then-check shape — Recorder_Always returns a False element rather
-// than failing at construction, so Recorder_Dot_Product is where the violation
-// is caught.
-func Test_Dot_Product_Always_False_Fails(t *testing.T) {
-	recorder := &invariant.Recorder{}
-	failed := false
-	func() {
-		defer func() {
-			if recover() != nil {
-				failed = true
-			}
-		}()
-		invariant.Recorder_Dot_Product(recorder, invariant.Recorder_Always(recorder, false))
-	}()
-	if !failed {
-		t.Fatal("Recorder_Dot_Product must fail when given an Always(false) element")
-	}
-}
-
 // When an Impossible declares a combination of element events and that exact
 // combination occurs in the call, Recorder_Dot_Product must fail.
 func Test_Dot_Product_Impossible_Combination_Fails(t *testing.T) {
@@ -1315,18 +1294,18 @@ func check(n int) {
 	}
 }
 
-// Registration recognizes a dedicated Sometimes_Has_X / Always_Has_X / Never_Has_X
-// helper called directly in a Dot_Product as a Sometimes / Always / Always axis
-// (Never_Has_X is Always(!has_X)), sited at the helper's call, with the whole call as
+// Registration recognizes a dedicated Sometimes_Has_X helper consumed by a Dot_Product as
+// a Sometimes axis, and a bare Always_Has_X / Never_Has_X statement as an eager Always axis
+// (Never_Has_X is Always(!has_X)), each sited at the helper's call, with the whole call as
 // the condition text.
 func Test_Register_Recognizes_String_Axis_Helpers(t *testing.T) {
 	const source = `package fixture
 
 func check(s string) {
+	invariant.Always_Has_Control(s)
+	invariant.Never_Has_Line_Break(s)
 	invariant.Dot_Product(
 		invariant.Sometimes_Has_Edge_Whitespace(s),
-		invariant.Always_Has_Control(s),
-		invariant.Never_Has_Line_Break(s),
 	)
 }
 `
@@ -1337,9 +1316,9 @@ func check(s string) {
 	}
 	invariant.Recorder_Register_Packages_For_Analysis(recorder, "/fixture")
 
-	value, found := recorder.Assertions.Load("/fixture/check.go:5")
+	value, found := recorder.Assertions.Load("/fixture/check.go:7")
 	if !found {
-		t.Fatal("expected an entry at Sometimes_Has_Edge_Whitespace (line 5)")
+		t.Fatal("expected a Sometimes entry at Sometimes_Has_Edge_Whitespace (line 7)")
 	}
 	metadata := value.(*invariant.Assertion_Metadata)
 	if metadata.Kind != invariant.Assertion_Kind_Sometimes {
@@ -1348,16 +1327,16 @@ func check(s string) {
 	if metadata.Condition != "invariant.Sometimes_Has_Edge_Whitespace(s)" {
 		t.Errorf("Condition = %q", metadata.Condition)
 	}
-	always, found := recorder.Assertions.Load("/fixture/check.go:6")
+	always, found := recorder.Assertions.Load("/fixture/check.go:4")
 	if !found {
-		t.Fatal("expected an entry at Always_Has_Control (line 6)")
+		t.Fatal("expected an entry at bare Always_Has_Control (line 4)")
 	}
 	if always.(*invariant.Assertion_Metadata).Kind != invariant.Assertion_Kind_Always {
 		t.Error("Always_Has_Control must register as an Always axis")
 	}
-	never, found := recorder.Assertions.Load("/fixture/check.go:7")
+	never, found := recorder.Assertions.Load("/fixture/check.go:5")
 	if !found {
-		t.Fatal("expected an entry at Never_Has_Line_Break (line 7)")
+		t.Fatal("expected an entry at bare Never_Has_Line_Break (line 5)")
 	}
 	if never.(*invariant.Assertion_Metadata).Kind != invariant.Assertion_Kind_Always {
 		t.Error("Never_Has_Line_Break must register as an Always axis")
@@ -1576,34 +1555,6 @@ func Test_Register_Sites_Relative_Across_Workspace_Modules(t *testing.T) {
 	}
 }
 
-// An axis constructor that never reaches a Dot_Product is an orphan: it enforces
-// nothing and seeds nothing. Registration reports it by site and exits non-zero.
-func Test_Register_Fatal_On_Orphan_Axis(t *testing.T) {
-	const source = `package fixture
-
-func check(n int) {
-	invariant.Sometimes(n == 0)
-}
-`
-	var output bytes.Buffer
-	exit_code := -1
-	recorder := &invariant.Recorder{
-		File_System: fstest.MapFS{
-			"fixture/o.go": &fstest.MapFile{Data: []byte(source)},
-		},
-		Output: &output,
-		Exit:   func(code int) { exit_code = code },
-	}
-	invariant.Recorder_Register_Packages_For_Analysis(recorder, "/fixture")
-
-	if exit_code != 1 {
-		t.Fatalf("expected Exit(1) for an orphan axis, got exit code %d", exit_code)
-	}
-	if !strings.Contains(output.String(), "o.go:4") {
-		t.Errorf("orphan report must name the axis site o.go:4, got: %s", output.String())
-	}
-}
-
 // A *_Invariants bundle returns its elements for a caller to consume; calling
 // invariant.Dot_Product inside the bundle is banned (it would key the assertions to
 // the bundle's own site, defeating per-callsite identity). Registration reports the
@@ -1632,91 +1583,6 @@ func Pair_Invariants(n int) (dot_elements []invariant.Dot_Element) {
 	}
 	if !strings.Contains(output.String(), "p.go:4") {
 		t.Errorf("ban report must name Dot_Product site p.go:4, got: %s", output.String())
-	}
-}
-
-// An axis appended inside a *_Invariants bundle flows into the returned slice (and
-// thence a Dot_Product when the bundle is spread), so it is not an orphan even
-// though no Dot_Product appears in the bundle itself.
-func Test_Register_Bundle_Axis_Not_Orphan(t *testing.T) {
-	const source = `package fixture
-
-func Pair_Invariants(n int) (dot_elements []invariant.Dot_Element) {
-	lo := invariant.Sometimes(n < 0)
-	return append(dot_elements, lo)
-}
-`
-	exited := false
-	recorder := &invariant.Recorder{
-		File_System: fstest.MapFS{
-			"fixture/b.go": &fstest.MapFile{Data: []byte(source)},
-		},
-		Output: &bytes.Buffer{},
-		Exit:   func(code int) { exited = true },
-	}
-	invariant.Recorder_Register_Packages_For_Analysis(recorder, "/fixture")
-
-	if exited {
-		t.Error("an axis appended in a *_Invariants bundle must not be flagged as orphan")
-	}
-}
-
-// An axis appended into a Dot_Product's own argument list — the post-condition
-// shape for a function whose bool return is composed beside another return's bundle
-// — is consumed by that Dot_Product, so it is not an orphan. The analyzer must
-// recurse append() reaching a Dot_Product just as it does inside a bundle.
-func Test_Register_Dot_Product_Append_Not_Orphan(t *testing.T) {
-	const source = `package fixture
-
-func Pair_Invariants(n int) (dot_elements []invariant.Dot_Element) {
-	return append(dot_elements, invariant.Sometimes(n < 0))
-}
-
-func check(n int) (size int, ok bool) {
-	defer func() {
-		invariant.Dot_Product(append(
-			Pair_Invariants(size), invariant.Sometimes(ok))...)
-	}()
-	return n, n > 0
-}
-`
-	exited := false
-	recorder := &invariant.Recorder{
-		File_System: fstest.MapFS{
-			"fixture/d.go": &fstest.MapFile{Data: []byte(source)},
-		},
-		Output: &bytes.Buffer{},
-		Exit:   func(code int) { exited = true },
-	}
-	invariant.Recorder_Register_Packages_For_Analysis(recorder, "/fixture")
-
-	if exited {
-		t.Error("an axis appended into a Dot_Product must not be orphan")
-	}
-}
-
-// An axis bound to a name that appears as a Dot_Product argument is consumed, so
-// it is not an orphan.
-func Test_Register_Consumed_Axis_Not_Orphan(t *testing.T) {
-	const source = `package fixture
-
-func check(n int) {
-	zero := invariant.Sometimes(n == 0)
-	invariant.Dot_Product(zero)
-}
-`
-	exited := false
-	recorder := &invariant.Recorder{
-		File_System: fstest.MapFS{
-			"fixture/c.go": &fstest.MapFile{Data: []byte(source)},
-		},
-		Output: &bytes.Buffer{},
-		Exit:   func(code int) { exited = true },
-	}
-	invariant.Recorder_Register_Packages_For_Analysis(recorder, "/fixture")
-
-	if exited {
-		t.Error("an axis bound to a name used as a Dot_Product argument must not be orphan")
 	}
 }
 
@@ -1756,31 +1622,6 @@ func check(n int) {
 	}
 	if _, ok := recorder.Assertions.Load("/fixture/lower.go:11:tuple=(1,1)"); ok {
 		t.Error("tuple (1,1) is carved by the lowercase bundle's Impossible; not seeded")
-	}
-}
-
-// An axis appended inside a snake_case bundle (pair_invariants) is consumed by the
-// bundle's returned slice just like in an Ada_Case bundle, so it is not an orphan.
-func Test_Register_Lowercase_Bundle_Axis_Not_Orphan(t *testing.T) {
-	const source = `package fixture
-
-func pair_invariants(n int) (dot_elements []invariant.Dot_Element) {
-	lo := invariant.Sometimes(n < 0)
-	return append(dot_elements, lo)
-}
-`
-	exited := false
-	recorder := &invariant.Recorder{
-		File_System: fstest.MapFS{
-			"fixture/b.go": &fstest.MapFile{Data: []byte(source)},
-		},
-		Output: &bytes.Buffer{},
-		Exit:   func(code int) { exited = true },
-	}
-	invariant.Recorder_Register_Packages_For_Analysis(recorder, "/fixture")
-
-	if exited {
-		t.Error("an axis appended in a snake_case bundle must not be flagged as orphan")
 	}
 }
 

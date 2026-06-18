@@ -13,20 +13,36 @@ import (
 	snap "github.com/james-orcales/james-orcales/shared/snap/default"
 )
 
-// Test_Always_Violation: a Dot_Product given an Always observed false panics, naming
-// the offending axis by its site.
+// Test_Always_Violation: a false Always panics at its own call site, in every run mode,
+// naming itself by that site — there is no Dot_Product to defer to.
 func Test_Always_Violation(t *testing.T) {
 	recorder := new_test_recorder()
-	element := invariant.Recorder_Always(recorder, false)
 	message := recover_message(func() {
-		invariant.Recorder_Dot_Product(recorder, element)
+		invariant.Recorder_Always(recorder, false)
 	})
 	if message == "" {
-		t.Fatal("a Dot_Product given an Always(false) must panic")
+		t.Fatal("a false Always must panic on its own")
 	}
-	if !strings.Contains(message, element.Site) {
-		t.Fatalf("the panic must name the offending axis site %q, got: %s",
-			element.Site, message)
+	// The first (and only) site lookup gets fixture.go:1 from new_test_recorder.
+	if !strings.Contains(message, "fixture.go:1") {
+		t.Fatalf("the panic must name the Always site, got: %s", message)
+	}
+	if !strings.Contains(message, "Always — condition was false") {
+		t.Fatalf("the panic must describe the Always violation, got: %s", message)
+	}
+}
+
+// Test_Always_Eager: a false Always panics at its own call, before the next statement runs
+// — it is never inert and never waits for a Dot_Product to consume it.
+func Test_Always_Eager(t *testing.T) {
+	recorder := new_test_recorder()
+	reached_next := false
+	did_panic(func() {
+		invariant.Recorder_Always(recorder, false)
+		reached_next = true
+	})
+	if reached_next {
+		t.Fatal("a false Always must panic at its own call, before the following statement")
 	}
 }
 
@@ -262,11 +278,19 @@ func check(n int) {
 	}
 }
 
-// Test_Dot_Product_Inert: constructing an element on its own enforces nothing.
+// Test_Dot_Product_Inert: constructing a Sometimes or Distinct_Boundary enforces and
+// records nothing until a Dot_Product consumes it. An Always, by contrast, is eager, as
+// Test_Always_Eager shows.
 func Test_Dot_Product_Inert(t *testing.T) {
 	recorder := new_test_recorder()
-	if did_panic(func() { invariant.Recorder_Always(recorder, false) }) {
-		t.Fatal("constructing an Always(false) must not panic on its own")
+	if did_panic(func() { invariant.Recorder_Sometimes(recorder, false) }) {
+		t.Fatal("constructing a Sometimes must not panic on its own")
+	}
+	if did_panic(func() {
+		invariant.Recorder_Distinct_Boundary(
+			recorder, &invariant.Boundary_Input[int]{X: 5, Lo: 0, Hi: 3})
+	}) {
+		t.Fatal("constructing an out-of-range Distinct_Boundary must not panic on its own")
 	}
 }
 
@@ -281,18 +305,18 @@ func Test_Dot_Product_Identity(t *testing.T) {
 	}
 }
 
-// Test_Dot_Product_Grid: registration seeds the surviving cells, drops the carve, and
-// excludes the constant Always axis from the coordinate — the grid is over the varying
-// axes alone, so the surviving cells stay two-bucket coordinates despite the third axis.
+// Test_Dot_Product_Grid: registration seeds the surviving cells and drops the carve. The
+// grid is over the varying Sometimes axes alone; the bare Always is not an element and
+// occupies no coordinate — it seeds only its own reachability entry at its site.
 func Test_Dot_Product_Grid(t *testing.T) {
 	const source = `package fixture
 
 func check(n int) {
+	invariant.Always(n >= 0)
 	zero := invariant.Sometimes(n == 0)
 	one := invariant.Sometimes(n == 1)
 	invariant.Dot_Product(
 		zero,
-		invariant.Always(n >= 0),
 		one,
 		invariant.Impossible(invariant.Event_True(zero), invariant.Event_True(one)),
 	)
@@ -305,32 +329,39 @@ func check(n int) {
 	}
 	invariant.Recorder_Register_Packages_For_Analysis(recorder, "/fixture")
 
-	if _, ok := recorder.Assertions.Load("/fixture/check.go:6:tuple=(0,0)"); !ok {
+	if _, ok := recorder.Assertions.Load("/fixture/check.go:7:tuple=(0,0)"); !ok {
 		t.Error("the surviving (0,0) cell must be seeded")
 	}
-	if _, ok := recorder.Assertions.Load("/fixture/check.go:6:tuple=(1,1)"); ok {
+	if _, ok := recorder.Assertions.Load("/fixture/check.go:7:tuple=(1,1)"); ok {
 		t.Error("the (1,1) cell carved by the Impossible must not be seeded")
 	}
-	if _, ok := recorder.Assertions.Load("/fixture/check.go:6:tuple=(0,0,0)"); ok {
-		t.Error("the constant Always axis must not occupy a coordinate position")
+	always, ok := recorder.Assertions.Load("/fixture/check.go:4")
+	if !ok {
+		t.Fatal("the bare Always must seed a reachability entry at its own site")
+	}
+	if always.(*invariant.Assertion_Metadata).Kind != invariant.Assertion_Kind_Always {
+		t.Error("the bare Always entry must be an Always axis")
 	}
 }
 
-// Test_Dot_Product_Attribution: a panic names every axis violated on the call, not only
-// the first.
+// Test_Dot_Product_Attribution: a panic names every element violated on the call — each
+// Distinct_Boundary by its site — not only the first. An eager Always is not part of this;
+// a false one short-circuits before the Dot_Product runs.
 func Test_Dot_Product_Attribution(t *testing.T) {
 	recorder := new_test_recorder()
-	first := invariant.Recorder_Always(recorder, false)
-	second := invariant.Recorder_Always(recorder, false)
+	first := invariant.Recorder_Distinct_Boundary(
+		recorder, &invariant.Boundary_Input[int]{X: 5, Lo: 0, Hi: 3})
+	second := invariant.Recorder_Distinct_Boundary(
+		recorder, &invariant.Boundary_Input[int]{X: 9, Lo: 0, Hi: 3})
 	message := recover_message(func() {
 		invariant.Recorder_Dot_Product(recorder, first, second)
 	})
 	if !strings.Contains(message, first.Site) {
-		t.Fatalf("the panic must name the first violated axis %q, got: %s",
+		t.Fatalf("the panic must name the first violated element %q, got: %s",
 			first.Site, message)
 	}
 	if !strings.Contains(message, second.Site) {
-		t.Fatalf("the panic must name the second violated axis %q, got: %s",
+		t.Fatalf("the panic must name the second violated element %q, got: %s",
 			second.Site, message)
 	}
 }
@@ -595,16 +626,16 @@ func check_b(n int) {
 	}
 }
 
-// Test_Bundles_Gap_Location: a composed bundle's coverage gap is named at the compound
-// callsite::from=site — the top-level Dot_Product (compose.go:12) joined to the deepest
-// nested element's site (compose.go:4). The lone element is an Always, a constant axis that
-// contributes no cross-product cell, so the report carries only its reachability gap; the
-// snapshot pins that compound location.
+// Test_Bundles_Gap_Location: a composed bundle's element gap is named at the compound
+// callsite::from=site (covered by Test_Analysis_Legend). An eager Always written inside a
+// bundle body is not an element; it fires when the bundle is built, and its reachability gap
+// is named at its own bare in-bundle site (compose.go:4), never a compound callsite key.
 func Test_Bundles_Gap_Location(t *testing.T) {
 	const source = `package fixture
 
 func Inner_Invariants(n int) (dot_elements []invariant.Dot_Element) {
-	return append(dot_elements, invariant.Always(n > 0))
+	invariant.Always(n > 0)
+	return dot_elements
 }
 
 func Outer_Invariants(n int) (dot_elements []invariant.Dot_Element) {
@@ -628,28 +659,29 @@ func check(n int) {
 	snap.Expect(t, snap.Init(`🚨 1 coverage gaps 🚨
 
 # Reachability gaps
-/fixture/compose.go:12::from=/fixture/compose.go:4  Always — never reached: "n > 0"
+/fixture/compose.go:4  Always — never reached: "n > 0"
 🚨 1 coverage gaps 🚨
 `), output.String())
 }
 
-// Test_Bundles_Failure_Location: a bundle element's assertion failure names only its own
-// in-bundle site (here transfer.go:9), never the consuming callsite — yet the call site is
-// not lost. The panic's Go stack still unwinds through Recorder_Dot_Product and the frame
-// that spread the bundle, so the snapshot pins both the site-only message and the stack
-// frames that carry the call site the message omits.
+// Test_Bundles_Failure_Location: a bundle element's deferred violation (here a
+// Distinct_Boundary outside its bounds, sited at transfer.go:9) names only its own in-bundle
+// site, never the consuming callsite — yet the call site is not lost. The panic's Go stack
+// still unwinds through Recorder_Dot_Product and the frame that spread the bundle, so the
+// snapshot pins both the site-only message and the stack frames that carry the omitted site.
 func Test_Bundles_Failure_Location(t *testing.T) {
 	recorder := &invariant.Recorder{
 		Get_Caller: func(skip int) (file string, line int) { return "transfer.go", 9 },
 	}
-	element := invariant.Recorder_Always(recorder, false)
+	element := invariant.Recorder_Distinct_Boundary(
+		recorder, &invariant.Boundary_Input[int]{X: 9, Lo: 0, Hi: 3})
 	message, stack := recover_with_stack(func() {
 		dot_product_callsite(recorder, element)
 	})
 
 	snap.Expect(
 		t,
-		snap.Init(`🚨 Assertion Failure 🚨: transfer.go:9  Always — condition was false
+		snap.Init(`🚨 Assertion Failure 🚨: transfer.go:9  Boundary — value outside [Lo, Hi]
 
 github.com/james-orcales/james-orcales/shared/invariant.Recorder_Dot_Product (invariant.go)
 github.com/james-orcales/james-orcales/shared/invariant_test.dot_product_callsite (specification_test.go)`),
@@ -682,33 +714,6 @@ func Pair_Invariants(n int) (dot_elements []invariant.Dot_Element) {
 	}
 	if !strings.Contains(output.String(), "p.go:4") {
 		t.Errorf("the ban report must name the Dot_Product site, got: %s", output.String())
-	}
-}
-
-// Test_Bundles_Orphan: an axis that never reaches a Dot_Product fails registration.
-func Test_Bundles_Orphan(t *testing.T) {
-	const source = `package fixture
-
-func check(n int) {
-	invariant.Sometimes(n == 0)
-}
-`
-	var output bytes.Buffer
-	exit_code := -1
-	recorder := &invariant.Recorder{
-		File_System: fstest.MapFS{
-			"fixture/o.go": &fstest.MapFile{Data: []byte(source)},
-		},
-		Output: &output,
-		Exit:   func(code int) { exit_code = code },
-	}
-	invariant.Recorder_Register_Packages_For_Analysis(recorder, "/fixture")
-
-	if exit_code != 1 {
-		t.Fatalf("an orphan axis must exit 1, got %d", exit_code)
-	}
-	if !strings.Contains(output.String(), "o.go:4") {
-		t.Errorf("the orphan report must name the axis site, got: %s", output.String())
 	}
 }
 
@@ -789,7 +794,7 @@ func Inner_Invariants(n int) (dot_elements []invariant.Dot_Element) {
 }
 
 func Outer_Invariants(n int) (dot_elements []invariant.Dot_Element) {
-	dot_elements = append(dot_elements, invariant.Always(n != 0))
+	invariant.Always(n != 0)
 	return append(dot_elements, Inner_Invariants(n)...)
 }
 
@@ -820,7 +825,7 @@ func check(n int) {
 /fixture/nested.go:13::from=/fixture/nested.go:4  Sometimes — true branch never observed: "n < 0"
 
 # Reachability gaps
-/fixture/nested.go:13::from=/fixture/nested.go:8  Always — never reached: "n != 0"
+/fixture/nested.go:8  Always — never reached: "n != 0"
 🚨 5 coverage gaps 🚨
 `), output.String())
 }
@@ -916,14 +921,19 @@ func Test_Coverage_Modes(t *testing.T) {
 	}
 }
 
-// Test_Coverage_Enforcement: a Dot_Product enforces assertions even when coverage is
-// not being recorded, like a production binary.
+// Test_Coverage_Enforcement: enforcement runs in every mode, even when coverage is not
+// being recorded (Is_Test false), like a production binary — both the eager Always and the
+// Dot_Product element kinds.
 func Test_Coverage_Enforcement(t *testing.T) {
 	recorder := &invariant.Recorder{} // Is_Test false: not a coverage run
+	if !did_panic(func() { invariant.Recorder_Always(recorder, false) }) {
+		t.Fatal("an eager Always must enforce even when coverage is not recorded")
+	}
 	if !did_panic(func() {
-		invariant.Recorder_Dot_Product(recorder, invariant.Recorder_Always(recorder, false))
+		invariant.Recorder_Dot_Product(recorder, invariant.Recorder_Distinct_Boundary(
+			recorder, &invariant.Boundary_Input[int]{X: 9, Lo: 0, Hi: 3}))
 	}) {
-		t.Fatal("a Dot_Product must enforce assertions even when coverage is not recorded")
+		t.Fatal("a Dot_Product must enforce its elements even without coverage recording")
 	}
 }
 

@@ -130,22 +130,26 @@ func Test_String_Invariants_Tracks_Content(t *testing.T) {
 	}
 }
 
-// Test_Never_Has_Asserts_Absence verifies a Never_Has_X helper is an Always element
-// (single bucket) whose event is the negation of the property: true when the string
-// lacks it, false when it carries it.
-func Test_Never_Has_Asserts_Absence(t *testing.T) {
-	clean := invariant.Never_Has_Control("abc")
-	if clean.Kind != core.Dot_Element_Kind_Always {
-		t.Errorf("Never_Has_Control Kind = %d, want Always (%d)",
-			clean.Kind, core.Dot_Element_Kind_Always)
+// Test_Never_Has_Panics_When_Present verifies a Never_Has_X helper is an eager Always: it
+// panics when the string carries the forbidden property and is a no-op when it does not.
+func Test_Never_Has_Panics_When_Present(t *testing.T) {
+	if did_panic(func() { invariant.Never_Has_Control("abc") }) {
+		t.Error(`Never_Has_Control("abc") must not panic — no control char`)
 	}
-	if clean.Event != core.Event_Kind_True {
-		t.Error(`Never_Has_Control("abc") must fire true — no control char`)
+	if !did_panic(func() { invariant.Never_Has_Control("a\x00b") }) {
+		t.Error(`Never_Has_Control("a\x00b") must panic — NUL is a control char`)
 	}
-	dirty := invariant.Never_Has_Control("a\x00b")
-	if dirty.Event != core.Event_Kind_False {
-		t.Error(`Never_Has_Control("a\x00b") must fire false — NUL is a control char`)
-	}
+}
+
+// Reports whether calling action panics, recovering so the test can assert on it.
+func did_panic(action func()) (panicked bool) {
+	defer func() {
+		if recover() != nil {
+			panicked = true
+		}
+	}()
+	action()
+	return false
 }
 
 // Slice_Invariants returns [empty, is_nil, Impossible]; it distinguishes nil from

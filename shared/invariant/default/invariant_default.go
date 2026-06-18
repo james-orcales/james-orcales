@@ -126,12 +126,13 @@ func Analyze_Assertion_Frequency() {
 	invariant.Recorder_Analyze_Assertion_Frequency(Default)
 }
 
-// Always builds an element asserting condition holds on every call. Only
-// Dot_Product enforces and reports it; an Always alone observes nothing.
+// Always is an eager guard: it panics immediately when condition is false, naming its own
+// call site. It is not an element and is never passed to Dot_Product. Under a plain test
+// run a never-reached Always surfaces as a reachability gap.
 //
 //go:noinline
-func Always[T ~bool](condition T) (dot_element invariant.Dot_Element) {
-	return invariant.Recorder_Always(Default, condition)
+func Always[T ~bool](condition T) {
+	invariant.Recorder_Always(Default, condition)
 }
 
 // Sometimes builds an element whose condition must be observed both true and
@@ -294,8 +295,8 @@ func Sometimes_Has_Edge_Whitespace(s string) (dot_element invariant.Dot_Element)
 // Always_Has_Edge_Whitespace asserts s always begins or ends with whitespace.
 //
 //go:noinline
-func Always_Has_Edge_Whitespace(s string) (dot_element invariant.Dot_Element) {
-	return invariant.Recorder_Always(Default, string_has_edge_whitespace(s))
+func Always_Has_Edge_Whitespace(s string) {
+	invariant.Recorder_Always(Default, string_has_edge_whitespace(s))
 }
 
 // Sometimes_Has_Interior_Whitespace records whether s has whitespace off its edges.
@@ -308,8 +309,8 @@ func Sometimes_Has_Interior_Whitespace(s string) (dot_element invariant.Dot_Elem
 // Always_Has_Interior_Whitespace asserts s always has whitespace off its edges.
 //
 //go:noinline
-func Always_Has_Interior_Whitespace(s string) (dot_element invariant.Dot_Element) {
-	return invariant.Recorder_Always(Default, string_has_interior_whitespace(s))
+func Always_Has_Interior_Whitespace(s string) {
+	invariant.Recorder_Always(Default, string_has_interior_whitespace(s))
 }
 
 // Sometimes_Has_Invalid_UTF8 records whether s is sometimes not valid UTF-8.
@@ -322,8 +323,8 @@ func Sometimes_Has_Invalid_UTF8(s string) (dot_element invariant.Dot_Element) {
 // Always_Has_Invalid_UTF8 asserts s is always not valid UTF-8.
 //
 //go:noinline
-func Always_Has_Invalid_UTF8(s string) (dot_element invariant.Dot_Element) {
-	return invariant.Recorder_Always(Default, string_has_invalid_utf8(s))
+func Always_Has_Invalid_UTF8(s string) {
+	invariant.Recorder_Always(Default, string_has_invalid_utf8(s))
 }
 
 // Sometimes_Has_Nul records whether s sometimes contains a NUL (0x00) byte.
@@ -336,8 +337,8 @@ func Sometimes_Has_Nul(s string) (dot_element invariant.Dot_Element) {
 // Always_Has_Nul asserts s always contains a NUL (0x00) byte.
 //
 //go:noinline
-func Always_Has_Nul(s string) (dot_element invariant.Dot_Element) {
-	return invariant.Recorder_Always(Default, string_has_nul(s))
+func Always_Has_Nul(s string) {
+	invariant.Recorder_Always(Default, string_has_nul(s))
 }
 
 // Sometimes_Has_Multibyte_Rune records whether s's byte count sometimes differs from
@@ -351,8 +352,8 @@ func Sometimes_Has_Multibyte_Rune(s string) (dot_element invariant.Dot_Element) 
 // Always_Has_Multibyte_Rune asserts s's byte count always differs from its rune count.
 //
 //go:noinline
-func Always_Has_Multibyte_Rune(s string) (dot_element invariant.Dot_Element) {
-	return invariant.Recorder_Always(Default, string_has_multibyte_rune(s))
+func Always_Has_Multibyte_Rune(s string) {
+	invariant.Recorder_Always(Default, string_has_multibyte_rune(s))
 }
 
 // Sometimes_Has_Control records whether s sometimes contains a control character.
@@ -365,8 +366,8 @@ func Sometimes_Has_Control(s string) (dot_element invariant.Dot_Element) {
 // Always_Has_Control asserts s always contains a control character.
 //
 //go:noinline
-func Always_Has_Control(s string) (dot_element invariant.Dot_Element) {
-	return invariant.Recorder_Always(Default, string_has_control(s))
+func Always_Has_Control(s string) {
+	invariant.Recorder_Always(Default, string_has_control(s))
 }
 
 // Sometimes_Has_Line_Break records whether s sometimes contains a carriage return or
@@ -380,8 +381,8 @@ func Sometimes_Has_Line_Break(s string) (dot_element invariant.Dot_Element) {
 // Always_Has_Line_Break asserts s always contains a carriage return or line feed.
 //
 //go:noinline
-func Always_Has_Line_Break(s string) (dot_element invariant.Dot_Element) {
-	return invariant.Recorder_Always(Default, string_has_line_break(s))
+func Always_Has_Line_Break(s string) {
+	invariant.Recorder_Always(Default, string_has_line_break(s))
 }
 
 // Sometimes_Has_Non_ASCII records whether s sometimes contains a non-ASCII byte.
@@ -394,64 +395,64 @@ func Sometimes_Has_Non_ASCII(s string) (dot_element invariant.Dot_Element) {
 // Always_Has_Non_ASCII asserts s always contains a non-ASCII byte.
 //
 //go:noinline
-func Always_Has_Non_ASCII(s string) (dot_element invariant.Dot_Element) {
-	return invariant.Recorder_Always(Default, string_has_non_ascii(s))
+func Always_Has_Non_ASCII(s string) {
+	invariant.Recorder_Always(Default, string_has_non_ascii(s))
 }
 
 // Never_Has_Edge_Whitespace asserts s never begins or ends with whitespace.
 //
 //go:noinline
-func Never_Has_Edge_Whitespace(s string) (dot_element invariant.Dot_Element) {
-	return invariant.Recorder_Always(Default, !string_has_edge_whitespace(s))
+func Never_Has_Edge_Whitespace(s string) {
+	invariant.Recorder_Always(Default, !string_has_edge_whitespace(s))
 }
 
 // Never_Has_Interior_Whitespace asserts s never has whitespace off its edges.
 //
 //go:noinline
-func Never_Has_Interior_Whitespace(s string) (dot_element invariant.Dot_Element) {
-	return invariant.Recorder_Always(Default, !string_has_interior_whitespace(s))
+func Never_Has_Interior_Whitespace(s string) {
+	invariant.Recorder_Always(Default, !string_has_interior_whitespace(s))
 }
 
 // Never_Has_Invalid_UTF8 asserts s is always valid UTF-8.
 //
 //go:noinline
-func Never_Has_Invalid_UTF8(s string) (dot_element invariant.Dot_Element) {
-	return invariant.Recorder_Always(Default, !string_has_invalid_utf8(s))
+func Never_Has_Invalid_UTF8(s string) {
+	invariant.Recorder_Always(Default, !string_has_invalid_utf8(s))
 }
 
 // Never_Has_Nul asserts s never contains a NUL (0x00) byte.
 //
 //go:noinline
-func Never_Has_Nul(s string) (dot_element invariant.Dot_Element) {
-	return invariant.Recorder_Always(Default, !string_has_nul(s))
+func Never_Has_Nul(s string) {
+	invariant.Recorder_Always(Default, !string_has_nul(s))
 }
 
 // Never_Has_Multibyte_Rune asserts s's byte count always equals its rune count.
 //
 //go:noinline
-func Never_Has_Multibyte_Rune(s string) (dot_element invariant.Dot_Element) {
-	return invariant.Recorder_Always(Default, !string_has_multibyte_rune(s))
+func Never_Has_Multibyte_Rune(s string) {
+	invariant.Recorder_Always(Default, !string_has_multibyte_rune(s))
 }
 
 // Never_Has_Control asserts s never contains a control character.
 //
 //go:noinline
-func Never_Has_Control(s string) (dot_element invariant.Dot_Element) {
-	return invariant.Recorder_Always(Default, !string_has_control(s))
+func Never_Has_Control(s string) {
+	invariant.Recorder_Always(Default, !string_has_control(s))
 }
 
 // Never_Has_Line_Break asserts s never contains a carriage return or line feed.
 //
 //go:noinline
-func Never_Has_Line_Break(s string) (dot_element invariant.Dot_Element) {
-	return invariant.Recorder_Always(Default, !string_has_line_break(s))
+func Never_Has_Line_Break(s string) {
+	invariant.Recorder_Always(Default, !string_has_line_break(s))
 }
 
 // Never_Has_Non_ASCII asserts s never contains a non-ASCII byte.
 //
 //go:noinline
-func Never_Has_Non_ASCII(s string) (dot_element invariant.Dot_Element) {
-	return invariant.Recorder_Always(Default, !string_has_non_ascii(s))
+func Never_Has_Non_ASCII(s string) {
+	invariant.Recorder_Always(Default, !string_has_non_ascii(s))
 }
 
 // Slice_Invariants is the preset coverage for a slice: nil, empty-but-non-nil,

@@ -51,8 +51,10 @@ const bundle_expansion_steps_max = 4096
 // discovery can't loop unboundedly on a pathological path.
 const module_search_depth_max = 256
 
-// Dot_Element_Kind_Always tags an element whose condition must hold on every call.
-const Dot_Element_Kind_Always Dot_Element_Kind = 0
+// Dot_Element_Kind value 0 is intentionally unassigned: Always left the element algebra
+// (it is now an eager guard, see Recorder_Always), and leaving the gap means a zero-value
+// Dot_Element{} carries no valid kind — it matches none of the runtime branches rather
+// than silently reading as a real kind.
 
 // Dot_Element_Kind_Sometimes tags an element whose condition must be observed
 // both true and false across the run.
@@ -248,22 +250,35 @@ func recorder_site(recorder *Recorder, skip int) (site string) {
 	return file + ":" + strconv.Itoa(line)
 }
 
-// Recorder_Always builds an element asserting condition holds on every call.
-// Like every element producer it never panics on its own: a false observation
-// fails only once the element is consumed by Recorder_Dot_Product, so a bare
-// Always outside a Dot_Product enforces nothing.
+// Recorder_Always is an eager guard: it panics immediately when condition is false,
+// naming its own call site, in every run mode. Unlike the element producers it is not a
+// Dot_Element and is never consumed by Recorder_Dot_Product — there is no inert phase, so
+// a constant axis does not masquerade as a cross-product element. Under a plain test run
+// it also credits its reachability entry, so an Always the suite never reaches surfaces as
+// a coverage gap.
 //
 //go:noinline
-func Recorder_Always[T ~bool](recorder *Recorder, condition T) (dot_element Dot_Element) {
-	event := Event_Kind_False
-	if condition {
-		event = Event_Kind_True
+func Recorder_Always[T ~bool](recorder *Recorder, condition T) {
+	if !condition {
+		site := recorder_site(recorder, recorder_constructor_skip)
+		panic(Assertion_Failure_Message_Prefix + site + "  Always — condition was false")
 	}
-	return Dot_Element{
-		Kind:  Dot_Element_Kind_Always,
-		Event: event,
-		Site:  recorder_site(recorder, recorder_constructor_skip),
+	// The site is computed only where it is used — on the violation panic above, or to credit
+	// coverage below — so the hot path (condition true, production binary) pays no caller-frame
+	// lookup at all. Enforcement runs in every mode; coverage is credited only under a plain
+	// `go test`, mirroring recorder_dot_product_observe. The reachability entry is seeded
+	// statically by recorder_register_eager_always; recorder_increment no-ops when the bare
+	// Always was never registered (an Always in a non-analyzed package).
+	if !recorder.Is_Test {
+		return
 	}
+	if recorder.Is_Benchmark {
+		return
+	}
+	if recorder.Is_Fuzz {
+		return
+	}
+	recorder_increment(recorder, recorder_site(recorder, recorder_constructor_skip), true)
 }
 
 // Recorder_Sometimes builds an element asserting condition is observed both true
@@ -454,16 +469,12 @@ func recorder_dot_product_observe(recorder *Recorder, dot_elements []Dot_Element
 }
 
 // Returns the observed tuple of bucket indices for the call's varying elements, in order
-// — the runtime counterpart to the static grid's projected tuples. An Always is a constant
-// axis dropped from the grid at registration, so it is dropped here too, leaving the
-// observed coordinate to rendezvous with the seeded key over the varying axes alone.
+// — the runtime counterpart to the static grid's projected tuples. Only Sometimes and
+// Distinct_Boundary vary; an Impossible declares no axis and is skipped.
 func dot_product_tuple(dot_elements []Dot_Element) (tuple []int) {
 	tuple = make([]int, 0, len(dot_elements))
 	for _, dot_element := range dot_elements {
 		if dot_element.Kind == Dot_Element_Kind_Impossible {
-			continue
-		}
-		if dot_element.Kind == Dot_Element_Kind_Always {
 			continue
 		}
 		tuple = append(tuple, dot_element_bucket(dot_element))
@@ -473,8 +484,7 @@ func dot_product_tuple(dot_elements []Dot_Element) (tuple []int) {
 
 // Maps an observed varying element to its bucket index, mirroring the static grid:
 // False / Lo = 0, True / Hi = 1, a Boundary interior = -1 (missing the seeded grid, so it
-// earns no coverage). An Always is constant and dropped from the grid before this point, so
-// it never reaches here.
+// earns no coverage). Only Sometimes and Distinct_Boundary reach here.
 func dot_element_bucket(dot_element Dot_Element) (bucket int) {
 	if dot_element.Event == Event_Kind_Interior {
 		return -1
@@ -526,18 +536,12 @@ func recorder_increment(recorder *Recorder, site string, fired_true bool) {
 }
 
 // Returns the message describing how dot_element violates its invariant on this
-// call — an Always observed false, a Boundary with a deferred violation, or an
-// Impossible whose forbidden combination occurred — each naming the offending axis
-// by its site. Returns "" when the element holds.
+// call — a Boundary with a deferred violation, or an Impossible whose forbidden
+// combination occurred — naming the offending axis by its site. Returns "" when the
+// element holds. Always is not an element and never reaches here; it enforces eagerly.
 func dot_element_violation(
 	dot_element Dot_Element, dot_elements []Dot_Element,
 ) (violation string) {
-	if dot_element.Kind == Dot_Element_Kind_Always {
-		if dot_element.Event == Event_Kind_False {
-			return dot_element.Site + "  Always — condition was false"
-		}
-		return ""
-	}
 	if dot_element.Kind == Dot_Element_Kind_Boundary {
 		return dot_element_boundary_violation(dot_element)
 	}
@@ -684,7 +688,6 @@ func Recorder_Register_Packages_For_Analysis(recorder *Recorder, directories ...
 			recorder_register_file(recorder, file_set, file, index)...)
 	}
 	recorder_check_bundle_dot_product(recorder, file_set, files)
-	recorder_check_orphan_axes(recorder, file_set, files)
 	recorder_check_unresolved(recorder, unresolved)
 }
 
@@ -975,7 +978,8 @@ func recorder_register_file(
 	return unresolved
 }
 
-// Collects the function's bindings, then registers every Dot_Product call.
+// Collects the function's bindings, then registers every Dot_Product call and seeds a
+// reachability entry for every bare eager Always.
 func recorder_register_function(
 	recorder *Recorder, file_set *token.FileSet, function *ast.FuncDecl,
 	imports map[string]string, index *bundle_index,
@@ -987,6 +991,10 @@ func recorder_register_function(
 			return true
 		}
 		if ast_invariant_selector(call) != "Dot_Product" {
+			// An eager Always never appears in a Dot_Product, so this walk is the only
+			// registration that sees it, including one inside a bundle body — seeded by
+			// its bare site like any other.
+			recorder_register_eager_always(recorder, file_set, call)
 			return true
 		}
 		unresolved = append(unresolved, recorder_register_dot_product(
@@ -996,50 +1004,26 @@ func recorder_register_function(
 	return unresolved
 }
 
-// Checks the analyzed files for orphan axis constructors — invariant.Always /
-// Sometimes / Distinct_Boundary calls that no Dot_Product consumes (directly, via
-// a binding, or via a *_Invariants bundle's append). An orphan enforces nothing
-// and seeds no coverage. Reports every orphan to recorder.Output and exits 1.
-func recorder_check_orphan_axes(
-	recorder *Recorder, file_set *token.FileSet, files []*ast.File,
+// Seeds a reachability entry for a bare eager Always call — invariant.Always /
+// Recorder_Always / Always_Has_X / Never_Has_X — keyed by its own site. Without this a
+// never-reached Always could not be reported, since it never flows through a Dot_Product.
+// Calls of any other kind (a Sometimes, a Distinct_Boundary, a plain function) seed
+// nothing: a bare element records nothing and is the caller's responsibility to consume.
+func recorder_register_eager_always(
+	recorder *Recorder, file_set *token.FileSet, call *ast.CallExpr,
 ) {
-	var orphans []string
-	for _, file := range files {
-		for _, declaration := range file.Decls {
-			function, is_function := declaration.(*ast.FuncDecl)
-			if !is_function {
-				continue
-			}
-			if function.Body == nil {
-				continue
-			}
-			legitimate := ast_collect_legitimate_axes(function)
-			ast.Inspect(function.Body, func(node ast.Node) (descend bool) {
-				call, is_call := node.(*ast.CallExpr)
-				if !is_call {
-					return true
-				}
-				if !ast_is_axis_selector(ast_invariant_selector(call)) {
-					return true
-				}
-				if legitimate[call] {
-					return true
-				}
-				orphans = append(orphans, recorder_orphan_line(file_set, call))
-				return true
-			})
-		}
-	}
-	if len(orphans) == 0 {
+	axis, is_axis := recorder_axis_of(file_set, call, false)
+	if !is_axis {
 		return
 	}
-	banner := "🚨 " + strconv.Itoa(len(orphans)) + " orphan axes 🚨"
-	fmt.Fprintln(recorder.Output, banner)
-	for _, orphan := range orphans {
-		fmt.Fprintln(recorder.Output, orphan)
+	if axis.Kind != Assertion_Kind_Always {
+		return
 	}
-	fmt.Fprintln(recorder.Output, banner)
-	recorder.Exit(1)
+	recorder.Assertions.LoadOrStore(axis.Site, &Assertion_Metadata{
+		Kind:      Assertion_Kind_Always,
+		Site:      axis.Site,
+		Condition: axis.Condition,
+	})
 }
 
 // Reports every bundle the analyzer recognised by name but could not resolve to a
@@ -1106,136 +1090,6 @@ func recorder_check_bundle_dot_product(
 	}
 	fmt.Fprintln(recorder.Output, banner)
 	recorder.Exit(1)
-}
-
-// Collects, for one function, the axis-constructor calls that are consumed: a
-// direct argument of an invariant.Dot_Product call, the RHS of a `name :=`
-// binding whose name is such an argument, or — inside a *_Invariants bundle — an
-// element passed to append(...). Mirrors v2's ast_collect_legitimate_axis_calls,
-// extended for v3 bundles.
-func ast_collect_legitimate_axes(function *ast.FuncDecl) (legitimate map[*ast.CallExpr]bool) {
-	legitimate = map[*ast.CallExpr]bool{}
-	consumed_names := map[string]bool{}
-	is_bundle := ast_is_invariants_name(function.Name.Name)
-	ast.Inspect(function, func(node ast.Node) (descend bool) {
-		call, is_call := node.(*ast.CallExpr)
-		if !is_call {
-			return true
-		}
-		for _, argument := range ast_consumer_arguments(call, is_bundle) {
-			argument_call, is_call_argument := argument.(*ast.CallExpr)
-			if is_call_argument {
-				legitimate[argument_call] = true
-				continue
-			}
-			argument_ident, is_ident_argument := argument.(*ast.Ident)
-			if is_ident_argument {
-				consumed_names[argument_ident.Name] = true
-			}
-		}
-		return true
-	})
-	ast.Inspect(function, func(node ast.Node) (descend bool) {
-		assignment, is_assignment := node.(*ast.AssignStmt)
-		if !is_assignment {
-			return true
-		}
-		if len(assignment.Lhs) != len(assignment.Rhs) {
-			return true
-		}
-		for index := range assignment.Lhs {
-			identifier, is_identifier := assignment.Lhs[index].(*ast.Ident)
-			if !is_identifier {
-				continue
-			}
-			if !consumed_names[identifier.Name] {
-				continue
-			}
-			call, is_call := assignment.Rhs[index].(*ast.CallExpr)
-			if !is_call {
-				continue
-			}
-			legitimate[call] = true
-		}
-		return true
-	})
-	return legitimate
-}
-
-// Returns the arguments of call that consume an axis: an invariant.Dot_Product's
-// arguments, or — in a bundle — the elements after the first of an append(...).
-// nil for any other call.
-func ast_consumer_arguments(call *ast.CallExpr, is_bundle bool) (arguments []ast.Expr) {
-	if ast_invariant_selector(call) == "Dot_Product" {
-		return ast_flatten_consumers(call.Args)
-	}
-	if !is_bundle {
-		return nil
-	}
-	identifier, is_identifier := call.Fun.(*ast.Ident)
-	if !is_identifier {
-		return nil
-	}
-	if identifier.Name != "append" {
-		return nil
-	}
-	if len(call.Args) < 2 {
-		return nil
-	}
-	return call.Args[1:]
-}
-
-// Expands a one-level append(...) among expressions into the axis-bearing
-// expressions after its accumulator slice, leaving non-append expressions unchanged.
-// A Dot_Product fed append(bundle, axis)... consumes that axis exactly as a bundle's
-// own append does; without this the axis would read as an orphan. A post-condition
-// appends a single axis to a bundle, so one level suffices — no nested-append walk.
-// The accumulator (the first append argument) is always a slice, never a bare axis,
-// so dropping it loses no axis.
-func ast_flatten_consumers(expressions []ast.Expr) (flattened []ast.Expr) {
-	for _, expression := range expressions {
-		call, is_call := expression.(*ast.CallExpr)
-		if !is_call {
-			flattened = append(flattened, expression)
-			continue
-		}
-		identifier, is_identifier := call.Fun.(*ast.Ident)
-		if !is_identifier {
-			flattened = append(flattened, expression)
-			continue
-		}
-		if identifier.Name != "append" {
-			flattened = append(flattened, expression)
-			continue
-		}
-		if len(call.Args) < 2 {
-			flattened = append(flattened, expression)
-			continue
-		}
-		flattened = append(flattened, call.Args[1:]...)
-	}
-	return flattened
-}
-
-// Reports whether selector names an axis constructor (Always / Sometimes /
-// Distinct_Boundary, in either the bare or explicit-recorder form) — the kinds that must
-// be consumed by a Dot_Product.
-func ast_is_axis_selector(selector string) (is_axis bool) {
-	_, _, is_axis = ast_axis_signature(selector)
-	return is_axis
-}
-
-// Renders one orphan as "<site>  orphan: invariant.<Kind>(<condition>) is never
-// passed to a Dot_Product".
-func recorder_orphan_line(file_set *token.FileSet, call *ast.CallExpr) (line string) {
-	selector := ast_invariant_selector(call)
-	kind, condition_index, _ := ast_axis_signature(selector)
-	condition := ast_condition_text(file_set, call, condition_index)
-	if kind == Assertion_Kind_Boundary {
-		condition = ast_boundary_condition_text(file_set, call, condition_index)
-	}
-	return recorder_position(file_set, call) + "  orphan: invariant." + selector +
-		"(" + condition + ") is never passed to a Dot_Product"
 }
 
 // A registration_axis is one Always/Sometimes element discovered statically: its

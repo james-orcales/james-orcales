@@ -1,17 +1,26 @@
 
 # Always
 
-`Recorder_Always` builds a guard whose condition must hold on every call; a false
-one fails only when a `Dot_Product` consumes it.
+`Recorder_Always` is an eager guard whose condition must hold on every call. Unlike the
+element kinds it is not a `Dot_Element` and never flows through a `Dot_Product`: it
+returns nothing and enforces on the spot.
 
 ### Violation
 
-A `Dot_Product` given an `Always` that was observed false panics, naming the
-offending axis by its site.
+A false `Always` panics at its own call site, in every run mode, naming itself by that
+site. There is no deferred phase — see Eager.
+
+### Eager
+
+Constructing a false `Always` panics immediately; an `Always` is never inert and never
+consumed. Contrast the element kinds, which stay inert until a `Dot_Product` (see Dot
+Product / Inert).
 
 ### Reachability
 
-An `Always` the suite never reaches is reported as a coverage gap.
+An `Always` the suite never reaches is reported as a coverage gap, named by its site. A
+bare `Always` is discovered by the same source scan that registers `Dot_Product` calls,
+so its reachability is tracked without being consumed.
 
 # Sometimes
 
@@ -75,7 +84,8 @@ nothing until it is passed here.
 
 ### Inert
 
-Constructing a false `Always` enforces nothing until a `Dot_Product` consumes it.
+Constructing a `Sometimes` or `Distinct_Boundary` enforces and records nothing until a
+`Dot_Product` consumes it. An `Always`, by contrast, is eager (see Always / Eager).
 
 ### Identity
 
@@ -85,13 +95,14 @@ runtime rendezvous on.
 ### Grid
 
 Registration seeds one demanded tuple per surviving combination of the varying axes'
-buckets, dropping the cells an `Impossible` carves. A single-bucket `Always` axis is
-constant: it defines no combination and is dropped, so an all-`Always` call seeds no tuple.
+buckets, dropping the cells an `Impossible` carves. The grid is over the `Sometimes` and
+`Distinct_Boundary` axes only; an `Always` is not an element and never occupies a coordinate.
 
 ### Attribution
 
-A panic names every axis it found violated on the call, each by its site, not only
-the first, so one run surfaces them all.
+A panic names every element it found violated on the call — each `Distinct_Boundary` or
+`Impossible` by its site, not only the first. A false eager `Always` is not part of this; it
+panics at its own site, so consecutive `Always` guards short-circuit on the first failure.
 
 # Bundles
 
@@ -147,23 +158,19 @@ masks the other's gap.
 
 ### Gap Location
 
-A bundle element's coverage gap is named at the compound `callsite::from=site` — the
-consuming Dot_Product joined to the element's site in its bundle — so a composed bundle's
-gap names the top-level callsite and the deepest nested site together.
+A bundle element's (`Sometimes` / `Distinct_Boundary`) gap is named at the compound
+`callsite::from=site`, joining the top-level Dot_Product to the element's deepest nested site.
+An eager `Always` in a bundle body is not an element; its gap names its own bare in-bundle site.
 
 ### Failure Location
 
-A bundle element's assertion failure message names only its own in-bundle site — for a
-composed bundle the deepest nested one — never the consuming callsite. The callsite is not
-lost: the panic's stack still unwinds through the Dot_Product, carrying it.
+A bundle element's deferred violation (a bad `Distinct_Boundary`, a triggered `Impossible`)
+names only its own in-bundle site, never the consuming callsite — yet the panic's stack still
+unwinds through the Dot_Product, carrying it. An eager `Always` panics from its own frame.
 
 ### Ban
 
 A `Dot_Product` called inside a bundle is reported and fails registration.
-
-### Orphan
-
-An axis that never reaches a `Dot_Product` is reported and fails registration.
 
 # Analysis
 
@@ -202,8 +209,9 @@ With every obligation exercised, the analysis reports nothing and does not exit.
 
 # Coverage
 
-Coverage is never silently dropped: the analyzer either accounts for a construct or
-fails on it.
+Coverage of a consumed construct is never silently dropped: the analyzer either accounts for
+it or fails on it. A bare `Sometimes` or `Distinct_Boundary` never passed to a `Dot_Product`
+records nothing and is not flagged — consuming an element is the author's responsibility.
 
 ### Modes
 
@@ -212,8 +220,9 @@ run records and checks nothing.
 
 ### Enforcement
 
-A `Dot_Product` enforces its assertions on every call, in every run, even when no
-coverage is being recorded.
+A `Dot_Product` enforces its `Distinct_Boundary` and `Impossible` assertions on every call,
+in every run, even when no coverage is being recorded. An eager `Always` enforces
+independently of any `Dot_Product`, also on every call in every run.
 
 ### Unresolved
 
