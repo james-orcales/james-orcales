@@ -7,8 +7,8 @@ returns nothing and enforces on the spot.
 
 ### Violation
 
-A false `Always` panics at its own call site, in every run mode, naming itself by that
-site. There is no deferred phase — see Eager.
+A false `Always` panics at its own call site, in every run mode, naming itself by its
+message. There is no deferred phase — see Eager.
 
 ### Eager
 
@@ -18,7 +18,7 @@ Product / Inert).
 
 ### Reachability
 
-An `Always` the suite never reaches is reported as a coverage gap, named by its site. A
+An `Always` the suite never reaches is reported as a coverage gap, named by its message. A
 bare `Always` is discovered by the same source scan that registers `Dot_Product` calls,
 so its reachability is tracked without being consumed.
 
@@ -50,12 +50,12 @@ an interior value credits neither.
 ### Outside
 
 A value beyond `[Lo, Hi]` panics when the boundary reaches a `Dot_Product`,
-naming the boundary's site.
+naming the boundary's message.
 
 ### Bad Bounds
 
 Endpoints that are not distinct, a reversed or equal pair, panic at the
-`Dot_Product`, naming the boundary's site.
+`Dot_Product`, naming the boundary's message.
 
 # Impossible
 
@@ -65,7 +65,7 @@ call.
 ### Violation
 
 When every named event is observed on the same call, the `Dot_Product` panics,
-naming each co-occurring axis by its site and observed event.
+naming each co-occurring axis by its message and observed event.
 
 ### Absent
 
@@ -89,19 +89,24 @@ Constructing a `Sometimes` or `Distinct_Boundary` enforces and records nothing u
 
 ### Identity
 
-An element is identified by its caller location, the site both registration and the
-runtime rendezvous on.
+Identity is the message, never a source location. A `Dot_Product` takes a message as its
+first argument and prefixes it onto the message of every `Sometimes` and `Distinct_Boundary`
+axis it holds; an axis is identified by that compound `prefix` + own message. Registration
+reads both messages from the call's string-literal arguments and the runtime rendezvous on the
+identical string, with no caller lookup. Two `Dot_Product`s with distinct messages namespace
+their axes apart even when they spread the same elements.
 
 ### Grid
 
 Registration seeds one demanded tuple per surviving combination of the varying axes'
 buckets, dropping the cells an `Impossible` carves. The grid is over the `Sometimes` and
 `Distinct_Boundary` axes only; an `Always` is not an element and never occupies a coordinate.
+The grid is identified by the `Dot_Product`'s message.
 
 ### Attribution
 
 A panic names every element it found violated on the call — each `Distinct_Boundary` or
-`Impossible` by its site, not only the first. A false eager `Always` is not part of this; it
+`Impossible` by its message, not only the first. A false eager `Always` is not part of this; it
 panics at its own site, so consecutive `Always` guards short-circuit on the first failure.
 
 # Bundles
@@ -112,12 +117,12 @@ A `_Invariants` function returns a type's elements for a caller to spread into a
 ### Descent
 
 Registration follows a bundle spread into a `Dot_Product` and seeds each of its
-elements under the consuming callsite.
+elements under the consuming `Dot_Product`'s message prefixed to the element's own message.
 
 ### Composition
 
 A bundle that composes other bundles attributes every element, however deeply
-nested, to the one top-level `Dot_Product` callsite that spread it.
+nested, to the one top-level `Dot_Product`'s message prefix.
 
 ### Binding
 
@@ -133,7 +138,7 @@ A bundle is recognized whether its type is exported (`_Invariants`) or unexporte
 
 A bundle element is recognized whether built with the bare sugar primitive (`Sometimes`)
 or the explicit `Recorder_Sometimes` form that leads with the recorder argument; the
-condition is then read past that leading recorder.
+condition is then read past that leading recorder and the message past the condition.
 
 ### Sugar
 
@@ -144,7 +149,7 @@ function, not a primitive, and seeds nothing unless qualified.
 ### Cross Package
 
 A bundle defined in another package of the same module is resolved through the
-module path and descended.
+module path and descended, so its elements' message literals are read.
 
 ### Workspace
 
@@ -153,19 +158,21 @@ through the workspace and descended.
 
 ### Callsite
 
-Two callsites spreading one bundle become independent coverage entries, so neither
-masks the other's gap.
+Spreading one bundle into two `Dot_Product`s with distinct messages yields independent
+coverage entries, so neither masks the other's gap — the per-field message prefix is what
+keeps them apart. Reusing one message across two `Dot_Product`s is a duplicate and fails
+registration (see Coverage / Uniqueness).
 
 ### Gap Location
 
-A bundle element's (`Sometimes` / `Distinct_Boundary`) gap is named at the compound
-`callsite::from=site`, joining the top-level Dot_Product to the element's deepest nested site.
-An eager `Always` in a bundle body is not an element; its gap names its own bare in-bundle site.
+A bundle element's (`Sometimes` / `Distinct_Boundary`) gap is named by the consuming
+`Dot_Product`'s message prefixed to the element's own message. An eager `Always` in a bundle
+body is not an element; its gap names its own bare message.
 
 ### Failure Location
 
 A bundle element's deferred violation (a bad `Distinct_Boundary`, a triggered `Impossible`)
-names only its own in-bundle site, never the consuming callsite — yet the panic's stack still
+names only its own message, never the consuming prefix — yet the panic's stack still
 unwinds through the Dot_Product, carrying it. An eager `Always` panics from its own frame.
 
 ### Ban
@@ -179,7 +186,7 @@ exits non-zero.
 
 ### Gaps
 
-A never-fired obligation is named by its site and condition, while a fully exercised
+A never-fired obligation is named by its message and condition, while a fully exercised
 one is left unreported.
 
 ### Combination
@@ -190,7 +197,7 @@ tuple of buckets.
 ### Legend
 
 A cross-product gap prints its grid's axis legend once, each position named by kind,
-condition, and site (the deepest one for a bundle element), and decodes each cell's buckets
+condition, and message (the axis's own message), and decodes each cell's buckets
 back to the events they stand for, so a bare coordinate is debuggable across nested bundles.
 
 ### Boundary
@@ -223,6 +230,19 @@ run records and checks nothing.
 A `Dot_Product` enforces its `Distinct_Boundary` and `Impossible` assertions on every call,
 in every run, even when no coverage is being recorded. An eager `Always` enforces
 independently of any `Dot_Product`, also on every call in every run.
+
+### Uniqueness
+
+Every assertion message is a global identity; registration fails when two distinct assertions
+would claim the same one — two `Dot_Product`s sharing a message, a repeated axis message within
+one `Dot_Product`, or two `Always` sharing a message. A duplicate would silently merge two
+obligations and mask a gap, so it is fatal, not merged.
+
+### Literal
+
+An assertion's message must be a compile-time string literal, so registration can seed it under
+the same key the runtime emits. A non-literal message — a variable or a concatenation — cannot
+be statically keyed, so its coverage would vanish; it fails registration, not silently.
 
 ### Unresolved
 
