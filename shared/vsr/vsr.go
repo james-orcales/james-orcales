@@ -1111,12 +1111,16 @@ func replica_message_epoch_check(
 	// processed normally. The Sometimes axes witness the {stale, processed-normally} outcomes
 	// and the Impossible forbids their co-occurrence — a stale message slipping past the gate
 	// would trip it.
-	stale := invariant.Sometimes(message.Epoch < replica.Epoch)
-	processed_normally := invariant.Sometimes(message.Epoch == replica.Epoch)
+	stale := invariant.Sometimes(message.Epoch < replica.Epoch,
+		"message epoch below replica epoch")
+	processed_normally := invariant.Sometimes(message.Epoch == replica.Epoch,
+		"message epoch matches replica epoch")
 	invariant.Dot_Product(
+		"vsr.epoch_gate.precedence",
 		stale, processed_normally,
 		invariant.Impossible(
-			invariant.Event_True(stale), invariant.Event_True(processed_normally)),
+			invariant.Event_True("message epoch below replica epoch"),
+			invariant.Event_True("message epoch matches replica epoch")),
 	)
 	if message.Epoch == replica.Epoch {
 		return output, true
@@ -1444,17 +1448,23 @@ func replica_assert_safety(replica *Replica) {
 	// Eager guards: in the hot path (all hold) each is a bare boolean test with no
 	// caller-frame lookup — the site is computed only on a violation — so this runs cheaply
 	// on every step.
-	invariant.Always(int(replica.Op) == int(replica.Log_Start)+len(replica.Log))
-	invariant.Always(replica.Commit <= Commit(replica.Op))
-	invariant.Always(replica.Last_Normal_View <= replica.View)
+	invariant.Always(int(replica.Op) == int(replica.Log_Start)+len(replica.Log),
+		"op equals log start plus log length")
+	invariant.Always(replica.Commit <= Commit(replica.Op), "commit does not exceed op")
+	invariant.Always(replica.Last_Normal_View <= replica.View,
+		"last normal view does not exceed current view")
 	// A 2f+1 group needs at least three members to tolerate one fault.
-	invariant.Always(len(replica.Configuration) >= 3)
+	invariant.Always(len(replica.Configuration) >= 3,
+		"configuration has at least three members")
 	// A replica must be a member of the configuration it serves, or it could never be a
 	// primary — unless it is a replaced replica handing off, exempted above.
-	invariant.Always(serves_own_group || handoff)
-	invariant.Always(old_configuration_within_handoff)
-	invariant.Always(log_start_below_checkpoint)
-	invariant.Always(active_count_within_configuration)
+	invariant.Always(serves_own_group || handoff,
+		"replica serves its own group unless handing off")
+	invariant.Always(old_configuration_within_handoff,
+		"old configuration set only during handoff")
+	invariant.Always(log_start_below_checkpoint, "log start does not exceed checkpoint op")
+	invariant.Always(active_count_within_configuration,
+		"active count fits within configuration")
 }
 
 // Reports whether identifier is a member of configuration.
@@ -1502,7 +1512,7 @@ func replica_receive_request(replica *Replica, message Message) (output Step_Out
 	// away anything not greater than the record. Pinning it here makes the exactly-once
 	// precondition hold at the mutation point in any embedding, not only under the simulator.
 	is_new_request := !ok || message.Request_Number > record.Request_Number
-	invariant.Always(is_new_request)
+	invariant.Always(is_new_request, "accepted request strictly advances client request number")
 	// The pre-step variant cannot append yet: the executed value must combine the cluster's
 	// predictions, so it first gathers f backups' predictions (§4.4). The request is buffered
 	// and a Predict_Request broadcast; the append happens when f responses arrive.
@@ -1774,7 +1784,7 @@ func replica_receive_prepare(
 	// break agreement.
 	appended_matches := string(replica_log_entry(replica, replica.Op).Prediction) ==
 		string(message.Entries[len(message.Entries)-1].Prediction)
-	invariant.Always(appended_matches)
+	invariant.Always(appended_matches, "appended entry prediction matches the prepare")
 	// A standby never votes (TigerBeetle's non-voting-standby design, see replica_quorum): it
 	// appends the entries to stay current and serve as a promotable spare, but sends no
 	// Prepare_Ok, so it is never counted toward a commit quorum. An active backup acknowledges
@@ -2115,7 +2125,8 @@ func replica_advance_commit_as_primary(replica *Replica) {
 			break
 		}
 		// A commit is only safe behind a quorum; assert it when the op commits.
-		invariant.Always(distinct_count >= replica_quorum(replica))
+		invariant.Always(distinct_count >= replica_quorum(replica),
+			"commit advances only behind a quorum")
 		replica.Commit = op
 	}
 }
@@ -2194,7 +2205,8 @@ func replica_execute_to_commit(
 		// A Reconfiguration is never an up-call (§7.1): the branch above handled it and
 		// continued, so any entry reaching Execute must not be one. Pin it at the call site
 		// so a future change that lets a reconfiguration fall through here fails fast.
-		invariant.Always(!log_entry_is_reconfiguration(entry))
+		invariant.Always(!log_entry_is_reconfiguration(entry),
+			"executed entry is not a reconfiguration")
 		result := replica.State_Machine.Execute(entry.Command, entry.Prediction)
 		// Record the executed request without lowering the client's highest-seen number.
 		// Adoption can put a higher in-flight request in the log (recorded by the
@@ -2299,8 +2311,8 @@ func replica_maybe_checkpoint(replica *Replica, op Op) {
 	}
 	// Snapshot must reflect exactly the checkpoint op, so op must be both committed and
 	// executed at the capture point — pin it.
-	invariant.Always(op <= Op(replica.Commit))
-	invariant.Always(op == replica.Executed)
+	invariant.Always(op <= Op(replica.Commit), "checkpoint op is committed")
+	invariant.Always(op == replica.Executed, "checkpoint op equals executed op")
 	replica.Checkpoint_Op = op
 	replica.Checkpoint_State = replica.State_Machine.Snapshot()
 }
@@ -2498,7 +2510,8 @@ func replica_install_new_view(replica *Replica, now time.Moment) (output Step_Ou
 	// The new view is installed only on a quorum of reports; that quorum is what guarantees the
 	// selected log holds every committed entry.
 	report_count := len(replica.Do_View_Change_From)
-	invariant.Always(report_count >= replica_quorum(replica))
+	invariant.Always(report_count >= replica_quorum(replica),
+		"new view installs only behind a quorum of reports")
 	best := replica_select_log(replica.Do_View_Change_From)
 	carrier, reconstructable := replica_reconstruct_selected_log(replica, best)
 	if !reconstructable {
@@ -2597,7 +2610,8 @@ func replica_complete_install(
 	// The selected reporter held every committed op (the reporting quorum intersects every
 	// commit quorum); the installed log must not fall short of its op, or a committed op the
 	// bounded suffix omitted would be lost.
-	invariant.Always(replica.Op >= selected_op)
+	invariant.Always(replica.Op >= selected_op,
+		"installed log reaches the selected reporter op")
 	replica.Status = Status_Normal
 	replica.View_Change_Deferred = false
 	replica.Last_Normal_View = replica.View
@@ -2792,7 +2806,8 @@ func replica_receive_recovery_response(
 	// Recovery completes only behind a quorum of responses, the same intersection guarantee the
 	// other phases rely on.
 	response_count := len(replica.Recovery_From)
-	invariant.Always(response_count >= replica_quorum(replica))
+	invariant.Always(response_count >= replica_quorum(replica),
+		"recovery completes only behind a quorum of responses")
 	highest := View(0)
 	for _, response := range replica.Recovery_From {
 		if response.View > highest {
@@ -2848,8 +2863,9 @@ func replica_start_view_change(replica *Replica, view View, now time.Moment) (ou
 	// wiped log could win the merge and drop a committed op, the unsafety recovery exists to
 	// prevent. And a view change always advances the view. These pin the quiescence and view
 	// monotonicity guarantees at the mutation point, in any embedding.
-	invariant.Always(replica.Status != Status_Recovery)
-	invariant.Always(view > replica.View)
+	invariant.Always(replica.Status != Status_Recovery,
+		"recovering replica never enters a view change")
+	invariant.Always(view > replica.View, "view change advances the view")
 	replica.Status = Status_View_Change
 	replica.View = view
 	replica.Start_View_Change_From = map[Replica_Identifier]bool{replica.Identifier: true}
@@ -3003,8 +3019,8 @@ func log_entry_is_reconfiguration(entry Log_Entry) (yes bool) {
 // a caller bug (the caller must take the checkpoint path), pinned here so it fails fast rather than
 // reading the wrong entry.
 func replica_log_entry(replica *Replica, op Op) (entry Log_Entry) {
-	invariant.Always(op > replica.Log_Start)
-	invariant.Always(op <= replica.Op)
+	invariant.Always(op > replica.Log_Start, "log entry op is above log start")
+	invariant.Always(op <= replica.Op, "log entry op is at or below the highest op")
 	return replica.Log[op-replica.Log_Start-1]
 }
 
@@ -3013,7 +3029,7 @@ func replica_log_entry(replica *Replica, op Op) (entry Log_Entry) {
 // at or below Log_Start has been compacted away; the slice is a copy so a caller may stash it in a
 // message without aliasing the live log.
 func replica_log_slice_from(replica *Replica, op Op) (entries []Log_Entry) {
-	invariant.Always(op > replica.Log_Start)
+	invariant.Always(op > replica.Log_Start, "log slice start op is above log start")
 	start := int(op - replica.Log_Start - 1)
 	entries = make([]Log_Entry, len(replica.Log)-start)
 	copy(entries, replica.Log[start:])
