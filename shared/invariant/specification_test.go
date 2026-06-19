@@ -176,11 +176,10 @@ func Test_Impossible_Glob(t *testing.T) {
 	const source = `package fixture
 
 func check(n int) {
-	a := invariant.Sometimes(n == 0, "a")
-	b := invariant.Sometimes(n == 1, "b")
-	c := invariant.Sometimes(n == 2, "c")
 	invariant.Dot_Product("check",
-		a, b, c,
+		invariant.Sometimes(n == 0, "a"),
+		invariant.Sometimes(n == 1, "b"),
+		invariant.Sometimes(n == 2, "c"),
 		invariant.Impossible(invariant.Event_True("a"), invariant.Event_True("b")),
 	)
 }
@@ -224,6 +223,100 @@ func Test_Impossible_Sibling(t *testing.T) {
 	}
 }
 
+// Test_Imply_Gated: a gated axis credits a branch only on a call where its prerequisite held; a
+// call where the prerequisite failed credits neither branch, so a failing prerequisite never
+// stands in for the gated false event.
+func Test_Imply_Gated(t *testing.T) {
+	recorder := new_test_recorder()
+	recorder.Is_Test = true
+	key := "check" + invariant.Element_Message_Separator + "gated"
+	metadata := &invariant.Assertion_Metadata{
+		Kind: invariant.Assertion_Kind_Sometimes, Message: key,
+	}
+	recorder.Events.Store(key, metadata)
+
+	// Prerequisite false: neither branch is credited, though the condition is true.
+	invariant.Recorder_Dot_Product(recorder, "check",
+		invariant.Recorder_Imply(recorder, false, true, "gated"))
+	if metadata.Frequency.Load() != 0 {
+		t.Fatalf("a failing prerequisite must not credit the true branch, got %d",
+			metadata.Frequency.Load())
+	}
+	if metadata.False_Frequency.Load() != 0 {
+		t.Fatalf("a failing prerequisite must not credit the false branch, got %d",
+			metadata.False_Frequency.Load())
+	}
+
+	// Prerequisite true, condition true: the true branch is credited.
+	invariant.Recorder_Dot_Product(recorder, "check",
+		invariant.Recorder_Imply(recorder, true, true, "gated"))
+	if metadata.Frequency.Load() != 1 {
+		t.Fatalf("a holding prerequisite must credit the observed branch, got %d",
+			metadata.Frequency.Load())
+	}
+}
+
+// Test_Imply_Excluded: a gated Imply axis is per-axis coverage only — seeded as its own entry but
+// joining no tuple of the grid, since the message-less prerequisite is no axis to cross.
+func Test_Imply_Excluded(t *testing.T) {
+	const source = `package fixture
+
+func check(n int, p *int) {
+	invariant.Dot_Product("check",
+		invariant.Sometimes(n == 0, "zero"),
+		invariant.Imply(p != nil, n == 1, "gated"),
+	)
+}
+`
+	recorder := &invariant.Recorder{
+		File_System: fstest.MapFS{
+			"fixture/check.go": &fstest.MapFile{Data: []byte(source)},
+		},
+	}
+	invariant.Recorder_Register_Packages_For_Analysis(recorder, "/fixture")
+
+	if _, ok := recorder.Events.Load(
+		"check" + invariant.Element_Message_Separator + "gated"); !ok {
+		t.Error("the gated axis must seed its own per-axis entry")
+	}
+	if _, ok := recorder.Events.Load("check:tuple=(0)"); !ok {
+		t.Error("the grid must be over the ungated axis alone: tuple (0)")
+	}
+	if _, ok := recorder.Events.Load("check:tuple=(0,0)"); ok {
+		t.Error("the gated axis must not widen the grid into a 2x2")
+	}
+}
+
+// Test_Imply_Conjunction: an axis meaningful only under several prerequisites gates on their
+// conjunction — it records only on a call where every one holds.
+func Test_Imply_Conjunction(t *testing.T) {
+	recorder := new_test_recorder()
+	recorder.Is_Test = true
+	key := "check" + invariant.Element_Message_Separator + "gated"
+	metadata := &invariant.Assertion_Metadata{
+		Kind: invariant.Assertion_Kind_Sometimes, Message: key,
+	}
+	recorder.Events.Store(key, metadata)
+	loaded, present := true, false
+
+	// One term of the conjunction fails: not recorded.
+	invariant.Recorder_Dot_Product(recorder, "check",
+		invariant.Recorder_Imply(recorder, loaded && present, true, "gated"))
+	if metadata.Frequency.Load() != 0 {
+		t.Fatalf("a conjunction with a failing term must not record, got %d",
+			metadata.Frequency.Load())
+	}
+
+	// Every term holds: recorded.
+	present = true
+	invariant.Recorder_Dot_Product(recorder, "check",
+		invariant.Recorder_Imply(recorder, loaded && present, true, "gated"))
+	if metadata.Frequency.Load() != 1 {
+		t.Fatalf("a conjunction with every term holding must record, got %d",
+			metadata.Frequency.Load())
+	}
+}
+
 // Test_Dot_Product_Inert: constructing a Sometimes enforces and records nothing until a
 // Dot_Product consumes it. An Always, by contrast, is eager, as Test_Always_Eager shows.
 func Test_Dot_Product_Inert(t *testing.T) {
@@ -250,11 +343,9 @@ func Test_Dot_Product_Grid(t *testing.T) {
 
 func check(n int) {
 	invariant.Always(n >= 0, "non-negative")
-	zero := invariant.Sometimes(n == 0, "zero")
-	one := invariant.Sometimes(n == 1, "one")
 	invariant.Dot_Product("check",
-		zero,
-		one,
+		invariant.Sometimes(n == 0, "zero"),
+		invariant.Sometimes(n == 1, "one"),
 		invariant.Impossible(invariant.Event_True("zero"), invariant.Event_True("one")),
 	)
 }
@@ -300,16 +391,17 @@ func Test_Dot_Product_Attribution(t *testing.T) {
 	}
 }
 
-// Test_Bundles_Descent: a bundle spread into a Dot_Product is followed and seeded.
+// Test_Bundles_Descent: registration follows a _Invariants(v, "lit") call and seeds the grid its
+// body self-emits, keyed by the callsite namespace.
 func Test_Bundles_Descent(t *testing.T) {
 	const source = `package fixture
 
-func Pair_Invariants(n int) (dot_elements []invariant.Dot_Element) {
-	return append(dot_elements, invariant.Sometimes(n < 0, "lo"))
+func Pair_Invariants(n int, namespace string) {
+	invariant.Dot_Product(namespace, invariant.Sometimes(n < 0, "lo"))
 }
 
 func check(n int) {
-	invariant.Dot_Product("field", Pair_Invariants(n)...)
+	Pair_Invariants(n, "field")
 }
 `
 	recorder := &invariant.Recorder{
@@ -325,22 +417,23 @@ func check(n int) {
 	}
 }
 
-// Test_Bundles_Composition: a nested bundle's element rolls up to the top-level
-// Dot_Product callsite, not the inner bundle's call site.
+// Test_Bundles_Composition: a composing _Invariants calls its sub-_Invariants with a literal
+// sub-namespace; the nested type registers its own self-contained grid, never flattened into the
+// parent.
 func Test_Bundles_Composition(t *testing.T) {
 	const source = `package fixture
 
-func Inner_Invariants(n int) (dot_elements []invariant.Dot_Element) {
-	return append(dot_elements, invariant.Sometimes(n < 0, "inner"))
+func Inner_Invariants(n int, namespace string) {
+	invariant.Dot_Product(namespace, invariant.Sometimes(n < 0, "inner"))
 }
 
-func Outer_Invariants(n int) (dot_elements []invariant.Dot_Element) {
-	dot_elements = append(dot_elements, invariant.Sometimes(n > 0, "outer"))
-	return append(dot_elements, Inner_Invariants(n)...)
+func Outer_Invariants(n int, namespace string) {
+	invariant.Dot_Product(namespace, invariant.Sometimes(n > 0, "outer"))
+	Inner_Invariants(n, "field.inner")
 }
 
 func check(n int) {
-	invariant.Dot_Product("field", Outer_Invariants(n)...)
+	Outer_Invariants(n, "field")
 }
 `
 	recorder := &invariant.Recorder{
@@ -351,35 +444,12 @@ func check(n int) {
 	invariant.Recorder_Register_Packages_For_Analysis(recorder, "/fixture")
 
 	if _, ok := recorder.Events.Load(
-		"field" + invariant.Element_Message_Separator + "inner"); !ok {
-		t.Error("the deeply nested element must attribute to the top-level prefix")
+		"field.inner" + invariant.Element_Message_Separator + "inner"); !ok {
+		t.Error("the nested _Invariants must register its own grid under its sub-namespace")
 	}
-}
-
-// Test_Bundles_Binding: a bundle reached through a local binding, not a direct
-// spread, is still descended.
-func Test_Bundles_Binding(t *testing.T) {
-	const source = `package fixture
-
-func Pair_Invariants(n int) (dot_elements []invariant.Dot_Element) {
-	return append(dot_elements, invariant.Sometimes(n < 0, "lo"))
-}
-
-func check(n int) {
-	elements := Pair_Invariants(n)
-	invariant.Dot_Product("field", elements...)
-}
-`
-	recorder := &invariant.Recorder{
-		File_System: fstest.MapFS{
-			"fixture/bound.go": &fstest.MapFile{Data: []byte(source)},
-		},
-	}
-	invariant.Recorder_Register_Packages_For_Analysis(recorder, "/fixture")
-
 	if _, ok := recorder.Events.Load(
-		"field" + invariant.Element_Message_Separator + "lo"); !ok {
-		t.Error("a bundle reached through a binding must be descended")
+		"field" + invariant.Element_Message_Separator + "inner"); ok {
+		t.Error("the nested axis must not flatten into the parent grid")
 	}
 }
 
@@ -388,12 +458,12 @@ func check(n int) {
 func Test_Bundles_Casing(t *testing.T) {
 	const source = `package fixture
 
-func pair_invariants(n int) (dot_elements []invariant.Dot_Element) {
-	return append(dot_elements, invariant.Sometimes(n < 0, "lo"))
+func pair_invariants(n int, namespace string) {
+	invariant.Dot_Product(namespace, invariant.Sometimes(n < 0, "lo"))
 }
 
 func check(n int) {
-	invariant.Dot_Product("field", pair_invariants(n)...)
+	pair_invariants(n, "field")
 }
 `
 	recorder := &invariant.Recorder{
@@ -409,57 +479,26 @@ func check(n int) {
 	}
 }
 
-// Test_Bundles_Recorder_Form: a bundle element built with the explicit Recorder_
-// constructor — which leads with the recorder argument — is descended like the bare
-// sugar form, its condition read past that leading recorder.
-func Test_Bundles_Recorder_Form(t *testing.T) {
-	const source = `package fixture
-
-func Pair_Invariants(n int) (dot_elements []invariant.Dot_Element) {
-	return append(dot_elements, invariant.Recorder_Sometimes(Default, n < 0, "lo"))
-}
-
-func check(n int) {
-	invariant.Dot_Product("field", Pair_Invariants(n)...)
-}
-`
-	recorder := &invariant.Recorder{
-		File_System: fstest.MapFS{
-			"fixture/recorder_form.go": &fstest.MapFile{Data: []byte(source)},
-		},
-	}
-	invariant.Recorder_Register_Packages_For_Analysis(recorder, "/fixture")
-
-	value, ok := recorder.Events.Load(
-		"field" + invariant.Element_Message_Separator + "lo")
-	if !ok {
-		t.Fatal("a Recorder_ element must be descended like the bare sugar form")
-	}
-	if condition := value.(*invariant.Assertion_Metadata).Condition; condition != "n < 0" {
-		t.Errorf("Condition = %q, want \"n < 0\" past the recorder", condition)
-	}
-}
-
-// Test_Bundles_Sugar: a bundle in the sugar package may call the primitives unqualified;
-// the descent recognizes the bare call only because Sugar_Package names that package. The
+// Test_Bundles_Sugar: a bundle in the sugar package may call the writers unqualified;
+// the scan recognizes the bare call only because Sugar_Package names that package. The
 // same fixture without Sugar_Package treats the bare call as the caller's own function and
 // seeds nothing.
 func Test_Bundles_Sugar(t *testing.T) {
 	const sugar = `package sugar
 
-func Pair_Invariants(n int) (dot_elements []invariant.Dot_Element) {
-	return append(dot_elements, Sometimes(n < 0, "lo"))
+func Pair_Invariants(n int, namespace string) {
+	Dot_Product(namespace, Sometimes(n < 0, "lo"))
 }
 `
 	const application = `package app
 
 import (
-	invariant "example.com/m/invariant"
+	_ "example.com/m/invariant"
 	"example.com/m/sugar"
 )
 
 func check(n int) {
-	invariant.Dot_Product("field", sugar.Pair_Invariants(n)...)
+	sugar.Pair_Invariants(n, "field")
 }
 `
 	files := fstest.MapFS{
@@ -489,19 +528,19 @@ func Test_Bundles_Cross_Package(t *testing.T) {
 
 import invariant "example.com/m/invariant"
 
-func Pair_Invariants(n int) (dot_elements []invariant.Dot_Element) {
-	return append(dot_elements, invariant.Sometimes(n < 0, "lo"))
+func Pair_Invariants(n int, namespace string) {
+	invariant.Dot_Product(namespace, invariant.Sometimes(n < 0, "lo"))
 }
 `
 	const package_b = `package b
 
 import (
-	invariant "example.com/m/invariant"
+	_ "example.com/m/invariant"
 	"example.com/m/a"
 )
 
 func check(n int) {
-	invariant.Dot_Product("field", a.Pair_Invariants(n)...)
+	a.Pair_Invariants(n, "field")
 }
 `
 	recorder := &invariant.Recorder{
@@ -531,22 +570,22 @@ func Test_Bundles_Workspace(t *testing.T) {
 	}
 }
 
-// Test_Bundles_Callsite: spreading one bundle into two Dot_Products with distinct
-// prefixes ("a" and "b") yields independent coverage entries — the per-field prefix is
-// what keeps them apart — reusing one prefix is instead a fatal duplicate.
+// Test_Bundles_Callsite: calling one _Invariants at two callsites with distinct namespaces
+// ("a" and "b") yields independent coverage entries — the per-namespace prefix keeps them
+// apart — reusing one namespace is instead a fatal duplicate.
 func Test_Bundles_Callsite(t *testing.T) {
 	const source = `package fixture
 
-func Pair_Invariants(n int) (dot_elements []invariant.Dot_Element) {
-	return append(dot_elements, invariant.Sometimes(n < 0, "lo"))
+func Pair_Invariants(n int, namespace string) {
+	invariant.Dot_Product(namespace, invariant.Sometimes(n < 0, "lo"))
 }
 
 func check_a(n int) {
-	invariant.Dot_Product("a", Pair_Invariants(n)...)
+	Pair_Invariants(n, "a")
 }
 
 func check_b(n int) {
-	invariant.Dot_Product("b", Pair_Invariants(n)...)
+	Pair_Invariants(n, "b")
 }
 `
 	recorder := &invariant.Recorder{
@@ -558,11 +597,11 @@ func check_b(n int) {
 
 	if _, ok := recorder.Events.Load(
 		"a" + invariant.Element_Message_Separator + "lo"); !ok {
-		t.Error("prefix A must have its own coverage entry")
+		t.Error("namespace A must have its own coverage entry")
 	}
 	if _, ok := recorder.Events.Load(
 		"b" + invariant.Element_Message_Separator + "lo"); !ok {
-		t.Error("prefix B must have its own coverage entry")
+		t.Error("namespace B must have its own coverage entry")
 	}
 }
 
@@ -574,17 +613,16 @@ func check_b(n int) {
 func Test_Bundles_Gap_Location(t *testing.T) {
 	const source = `package fixture
 
-func Inner_Invariants(n int) (dot_elements []invariant.Dot_Element) {
+func Inner_Invariants(n int, namespace string) {
 	invariant.Always(n > 0, "positive")
-	return dot_elements
 }
 
-func Outer_Invariants(n int) (dot_elements []invariant.Dot_Element) {
-	return append(dot_elements, Inner_Invariants(n)...)
+func Outer_Invariants(n int, namespace string) {
+	Inner_Invariants(n, "field.inner")
 }
 
 func check(n int) {
-	invariant.Dot_Product("field", Outer_Invariants(n)...)
+	Outer_Invariants(n, "field")
 }
 `
 	var output bytes.Buffer
@@ -630,13 +668,15 @@ github.com/james-orcales/james-orcales/shared/invariant_test.dot_product_callsit
 	)
 }
 
-// Test_Bundles_Ban: a Dot_Product inside a bundle fails registration.
-func Test_Bundles_Ban(t *testing.T) {
+// Test_Bundles_Static: a _Invariants body with a branching or looping statement fails
+// registration — the axes it self-emits must not depend on runtime values the scan cannot read.
+func Test_Bundles_Static(t *testing.T) {
 	const source = `package fixture
 
-func Pair_Invariants(n int) (dot_elements []invariant.Dot_Element) {
-	invariant.Dot_Product("field", invariant.Sometimes(n < 0, "lo"))
-	return dot_elements
+func Pair_Invariants(n int, namespace string) {
+	if n > 0 {
+		invariant.Dot_Product(namespace, invariant.Sometimes(n < 0, "lo"))
+	}
 }
 `
 	var output bytes.Buffer
@@ -651,10 +691,10 @@ func Pair_Invariants(n int) (dot_elements []invariant.Dot_Element) {
 	invariant.Recorder_Register_Packages_For_Analysis(recorder, "/fixture")
 
 	if exit_code != 1 {
-		t.Fatalf("a Dot_Product inside a bundle must exit 1, got %d", exit_code)
+		t.Fatalf("a _Invariants body with control flow must exit 1, got %d", exit_code)
 	}
-	if !strings.Contains(output.String(), "p.go:4") {
-		t.Errorf("the ban report must name the Dot_Product site, got: %s", output.String())
+	if !strings.Contains(output.String(), "control flow inside bundle") {
+		t.Errorf("the report must name the violation, got: %s", output.String())
 	}
 }
 
@@ -730,17 +770,17 @@ func Test_Analysis_Combination(t *testing.T) {
 func Test_Analysis_Legend(t *testing.T) {
 	const source = `package fixture
 
-func Inner_Invariants(n int) (dot_elements []invariant.Dot_Element) {
-	return append(dot_elements, invariant.Sometimes(n < 0, "negative"))
+func Inner_Invariants(n int, namespace string) {
+	invariant.Dot_Product(namespace, invariant.Sometimes(n < 0, "negative"))
 }
 
-func Outer_Invariants(n int) (dot_elements []invariant.Dot_Element) {
+func Outer_Invariants(n int, namespace string) {
 	invariant.Always(n != 0, "nonzero")
-	return append(dot_elements, Inner_Invariants(n)...)
+	Inner_Invariants(n, "field.inner")
 }
 
 func check(n int) {
-	invariant.Dot_Product("field", Outer_Invariants(n)...)
+	Outer_Invariants(n, "field")
 }
 `
 	var output bytes.Buffer
@@ -756,14 +796,14 @@ func check(n int) {
 	snap.Expect(t, snap.Init(`🚨 5 coverage gaps 🚨
 
 # Cross-product gaps
-field  grid axes:
+field.inner  grid axes:
   [0] Sometimes "n < 0" from negative
-field  tuple (0) never observed  ->  [0]=false
-field  tuple (1) never observed  ->  [0]=true
+field.inner  tuple (0) never observed  ->  [0]=false
+field.inner  tuple (1) never observed  ->  [0]=true
 
 # Branch gaps
-field · negative  Sometimes — false branch never observed: "n < 0"
-field · negative  Sometimes — true branch never observed: "n < 0"
+field.inner · negative  Sometimes — false branch never observed: "n < 0"
+field.inner · negative  Sometimes — true branch never observed: "n < 0"
 
 # Reachability gaps
 nonzero  Always — never reached: "n != 0"
@@ -970,12 +1010,12 @@ func Test_Coverage_Unresolved(t *testing.T) {
 	const source = `package b
 
 import (
-	invariant "example.com/m/invariant"
+	_ "example.com/m/invariant"
 	"other.com/x"
 )
 
 func check(n int) {
-	invariant.Dot_Product("field", x.Pair_Invariants(n)...)
+	x.Pair_Invariants(n, "field")
 }
 `
 	var output bytes.Buffer

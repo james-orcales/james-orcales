@@ -300,12 +300,18 @@ func Event_False(message string) (reference Dot_Element_Reference) {
 	}
 }
 
+// Namespace is a Dot_Product's grid identity — the literal a caller supplies, prefixed onto each
+// held axis's own message to form that axis's coverage key. It is its own type, not a bare string,
+// because it names a coverage grid rather than carrying arbitrary text; a caller always passes it
+// as an inline string literal, which converts to Namespace without ceremony.
+type Namespace string
+
 // Recorder_Dot_Product enforces the call's elements: an Impossible whose referenced events
 // all occurred fails. Every axis
 // violated on the call is named in one panic, not just the first, so a single run surfaces
-// them all. message is the grid's identity and is prefixed onto each held axis's own message
+// them all. namespace is the grid's identity and is prefixed onto each held axis's own message
 // to form that axis's coverage key.
-func Recorder_Dot_Product(recorder *Recorder, message string, bundle ...Dot_Element) {
+func Recorder_Dot_Product(recorder *Recorder, namespace Namespace, bundle ...Dot_Element) {
 	dot_product_check_references(bundle)
 	var violations []string
 	for _, dot_element := range bundle {
@@ -317,7 +323,7 @@ func Recorder_Dot_Product(recorder *Recorder, message string, bundle ...Dot_Elem
 	if len(violations) > 0 {
 		panic(Assertion_Failure_Message_Prefix + strings.Join(violations, "\n"))
 	}
-	recorder_dot_product_observe(recorder, message, bundle)
+	recorder_dot_product_observe(recorder, string(namespace), bundle)
 }
 
 // Panics when an Impossible names a message that is not an axis of this Dot_Product — one of its
@@ -991,8 +997,9 @@ func recorder_register_function(
 	})
 }
 
-// Returns the name of a _Invariants function's trailing string parameter — the namespace its
-// self-emitted Dot_Product is prefixed by. "" when there is no such parameter.
+// Returns the name of a _Invariants function's trailing namespace parameter — the grid identity
+// its self-emitted Dot_Product is prefixed by, typed string or Namespace. "" when there is no
+// such parameter.
 func ast_namespace_parameter(function *ast.FuncDecl) (name string) {
 	if function.Type.Params == nil {
 		return ""
@@ -1002,17 +1009,25 @@ func ast_namespace_parameter(function *ast.FuncDecl) (name string) {
 		return ""
 	}
 	last := fields[len(fields)-1]
-	identifier, is_string := last.Type.(*ast.Ident)
-	if !is_string {
-		return ""
-	}
-	if identifier.Name != "string" {
+	if !ast_is_namespace_type(last.Type) {
 		return ""
 	}
 	if len(last.Names) == 0 {
 		return ""
 	}
 	return last.Names[len(last.Names)-1].Name
+}
+
+// Reports whether expression is a namespace parameter's type: the bare `string`, the `Namespace`
+// defined type (bare in this package), or a qualified `pkg.Namespace` (the type re-exported).
+func ast_is_namespace_type(expression ast.Expr) (is_namespace bool) {
+	if identifier, ok := expression.(*ast.Ident); ok {
+		return identifier.Name == "string" || identifier.Name == "Namespace"
+	}
+	if selector, ok := expression.(*ast.SelectorExpr); ok {
+		return selector.Sel.Name == "Namespace"
+	}
+	return false
 }
 
 // Seeds a reachability entry for a bare eager Always call — invariant.Always /
