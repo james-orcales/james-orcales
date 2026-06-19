@@ -29,6 +29,9 @@ type Assertion_Metadata = invariant.Assertion_Metadata
 // Dot_Element re-exports the library element type so bundles can name it in Bundle.
 type Dot_Element = invariant.Dot_Element
 
+// Namespace re-exports the library grid-identity type a _Invariants takes and self-emits under.
+type Namespace = invariant.Namespace
+
 // Bundle re-exports the library Bundle alias ([]Dot_Element) — the return type of a
 // _Invariants function, spread into a Dot_Product.
 type Bundle = invariant.Bundle
@@ -183,6 +186,15 @@ func Sometimes[T ~bool](condition T, message string) (dot_element invariant.Dot_
 	return invariant.Recorder_Sometimes(Default, condition, message)
 }
 
+// Imply builds a gated Sometimes: an axis recorded only on a call where prerequisite holds,
+// don't-care otherwise, and excluded from the grid. condition is evaluated eagerly, so a
+// condition safe only under the prerequisite must self-guard. AND prerequisites to nest.
+func Imply[P ~bool, C ~bool](
+	prerequisite P, condition C, message string,
+) (dot_element invariant.Dot_Element) {
+	return invariant.Recorder_Imply(Default, prerequisite, condition, message)
+}
+
 // Impossible declares that the referenced element events must never all co-occur on
 // the same call, and globs over the axes it does not name (see invariant.Impossible).
 // Pure packaging — no Recorder needed.
@@ -203,10 +215,10 @@ func Event_False(message string) (reference invariant.Dot_Element_Reference) {
 }
 
 // Dot_Product enforces the call's elements and, under test, records the observed element
-// events and their combination against the pre-registered coverage grid. message identifies
+// events and their combination against the pre-registered coverage grid. namespace identifies
 // the grid and is prefixed onto each held axis's own message to form its coverage key.
-func Dot_Product(message string, dot_elements ...invariant.Dot_Element) {
-	invariant.Recorder_Dot_Product(Default, message, dot_elements...)
+func Dot_Product(namespace Namespace, dot_elements ...invariant.Dot_Element) {
+	invariant.Recorder_Dot_Product(Default, namespace, dot_elements...)
 }
 
 // Whole_Number constrains a generic to Go's integer kinds, signed and unsigned alike
@@ -217,27 +229,25 @@ type Whole_Number interface {
 }
 
 // Whole_Number_Invariants is the preset coverage for an integer: the small-magnitude axes 0,
-// 1, 2, each of which must be observed both ways. Element messages are local; the consuming
-// Dot_Product namespaces them.
-func Whole_Number_Invariants[I Whole_Number](n I) (dot_elements Bundle) {
-	return append(
-		dot_elements,
-		invariant.Recorder_Sometimes(Default, n == 0, "zero"),
-		invariant.Recorder_Sometimes(Default, n == 1, "one"),
-		invariant.Recorder_Sometimes(Default, n == 2, "two"),
+// 1, 2, each of which must be observed both ways. It self-emits its grid under namespace, the
+// per-caller identity the callsite supplies as a literal.
+func Whole_Number_Invariants[I Whole_Number](n I, namespace Namespace) {
+	Dot_Product(namespace,
+		Sometimes(n == 0, "zero"),
+		Sometimes(n == 1, "one"),
+		Sometimes(n == 2, "two"),
 	)
 }
 
 // Float_Invariants is the preset coverage for a float: NaN, negative, and
 // positive must each be observed (zero is the shared finite cell). NaN excludes
 // either sign, and the two signs exclude each other. ±Inf fold into the signs.
-func Float_Invariants[F ~float32 | ~float64](f F) (dot_elements Bundle) {
+func Float_Invariants[F ~float32 | ~float64](f F, namespace Namespace) {
 	value := float64(f)
-	not_a_number := Sometimes(math.IsNaN(value), "nan")
-	negative := Sometimes(value < 0, "negative")
-	positive := Sometimes(value > 0, "positive")
-	return append(dot_elements,
-		not_a_number, negative, positive,
+	Dot_Product(namespace,
+		Sometimes(math.IsNaN(value), "nan"),
+		Sometimes(value < 0, "negative"),
+		Sometimes(value > 0, "positive"),
 		Impossible(Event_True("nan"), Event_True("negative")),
 		Impossible(Event_True("nan"), Event_True("positive")),
 		Impossible(Event_True("negative"), Event_True("positive")),
@@ -251,19 +261,16 @@ func Float_Invariants[F ~float32 | ~float64](f F) (dot_elements Bundle) {
 // rune count (a multi-byte rune), a control character, and a line break. An empty
 // string excludes every content axis, and a NUL byte or a line break is itself a
 // control character.
-func String_Invariants(s string) (dot_elements Bundle) {
-	empty := Sometimes(len(s) == 0, "empty")
-	edge_whitespace := Sometimes_Has_Edge_Whitespace(s)
-	interior_whitespace := Sometimes_Has_Interior_Whitespace(s)
-	invalid_utf8 := Sometimes_Has_Invalid_UTF8(s)
-	nul := Sometimes_Has_Nul(s)
-	byte_rune_mismatch := Sometimes_Has_Multibyte_Rune(s)
-	control := Sometimes_Has_Control(s)
-	line_break := Sometimes_Has_Line_Break(s)
-	return append(dot_elements,
-		empty,
-		edge_whitespace, interior_whitespace, invalid_utf8, nul,
-		byte_rune_mismatch, control, line_break,
+func String_Invariants(s string, namespace Namespace) {
+	Dot_Product(namespace,
+		Sometimes(len(s) == 0, "empty"),
+		Sometimes_Has_Edge_Whitespace(s),
+		Sometimes_Has_Interior_Whitespace(s),
+		Sometimes_Has_Invalid_UTF8(s),
+		Sometimes_Has_Nul(s),
+		Sometimes_Has_Multibyte_Rune(s),
+		Sometimes_Has_Control(s),
+		Sometimes_Has_Line_Break(s),
 		Impossible(Event_True("empty"), Event_True("Sometimes_Has_Edge_Whitespace")),
 		Impossible(Event_True("empty"), Event_True("Sometimes_Has_Interior_Whitespace")),
 		Impossible(Event_True("empty"), Event_True("Sometimes_Has_Invalid_UTF8")),
@@ -417,22 +424,20 @@ func Never_Has_Non_ASCII(s string) {
 // Slice_Invariants is the preset coverage for a slice: nil, empty-but-non-nil,
 // and non-empty must each be observed — the nil/empty distinction Go draws. A nil
 // slice is necessarily empty, which the Impossible records.
-func Slice_Invariants[E any](s []E) (dot_elements Bundle) {
-	empty := Sometimes(len(s) == 0, "empty")
-	is_nil := Sometimes(s == nil, "nil")
-	return append(dot_elements,
-		empty, is_nil,
+func Slice_Invariants[E any](s []E, namespace Namespace) {
+	Dot_Product(namespace,
+		Sometimes(len(s) == 0, "empty"),
+		Sometimes(s == nil, "nil"),
 		Impossible(Event_True("nil"), Event_False("empty")),
 	)
 }
 
 // Map_Invariants is the preset coverage for a map: nil, empty-but-non-nil, and
 // non-empty must each be observed. A nil map is necessarily empty.
-func Map_Invariants[K comparable, V any](m map[K]V) (dot_elements Bundle) {
-	empty := Sometimes(len(m) == 0, "empty")
-	is_nil := Sometimes(m == nil, "nil")
-	return append(dot_elements,
-		empty, is_nil,
+func Map_Invariants[K comparable, V any](m map[K]V, namespace Namespace) {
+	Dot_Product(namespace,
+		Sometimes(len(m) == 0, "empty"),
+		Sometimes(m == nil, "nil"),
 		Impossible(Event_True("nil"), Event_False("empty")),
 	)
 }

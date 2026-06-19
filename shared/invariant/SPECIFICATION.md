@@ -62,7 +62,28 @@ carves every cell matching the named events across all their values.
 
 A reference names an axis of its own `Dot_Product`. Naming a non-sibling panics at the `Dot_Product`
 on every call — a structural precondition checked before recording — so a typo is caught at once,
-not as an unfillable gap. A reference may name a sibling a spread bundle contributed.
+not as an unfillable gap.
+
+# Imply
+
+`Imply` builds a gated `Sometimes`: an axis recorded only on a call where its prerequisite holds.
+The message-less prerequisite is no axis. The condition is evaluated eagerly, so one safe only under
+the prerequisite must self-guard (`p != nil && p.x`) — the prerequisite gates recording, not eval.
+
+### Gated
+
+A gated axis credits a branch only on a call where the prerequisite held; a call where it
+failed credits neither branch, so a failing prerequisite never stands in for the gated false event.
+
+### Excluded
+
+A gated axis is per-axis coverage only — it joins no tuple of the grid, since the message-less
+prerequisite is not an axis to cross with.
+
+### Conjunction
+
+An axis meaningful only under several prerequisites gates on their conjunction: it records only on a
+call where every one holds.
 
 # Dot Product
 
@@ -76,15 +97,15 @@ An `Always`, by contrast, is eager (see Always / Eager).
 
 ### Identity
 
-Identity is the message, never a source location. A `Dot_Product` prefixes its own message
-onto every axis it holds; an axis is identified by that compound prefix + own message, read
-from literal arguments. Two `Dot_Product`s with distinct messages namespace their axes apart.
+Identity is the message, not a source location. A `Dot_Product` prefixes its message onto each
+axis, keying it prefix + own message. The prefix is a literal: the `Dot_Product`'s own argument,
+or the literal namespace at each `_Invariants` callsite when it self-emits under its parameter.
 
 ### Grid
 
-Registration seeds one tuple per surviving combination of varying axes' buckets, dropping
-cells an `Impossible` carves. The grid is over `Sometimes` axes only — an `Always` is not an
-element. The grid is identified by the `Dot_Product`'s message.
+Registration seeds one tuple per surviving combination of the ungated axes' buckets, dropping
+cells an `Impossible` carves. The grid is over ungated `Sometimes` axes only — an `Always` is not an
+element and a gated `Imply` axis is excluded (see Imply / Excluded). The grid is the prefix.
 
 ### Attribution
 
@@ -94,72 +115,61 @@ panics at its own site, so consecutive `Always` guards short-circuit on the firs
 
 # Bundles
 
-A `_Invariants` function returns a type's elements for a caller to spread into a
-`Dot_Product`, so a type's properties travel and compose with it.
+A `_Invariants(v, namespace)` function self-emits its own `Dot_Product(namespace, …)` over a
+type's axes, so a type's properties travel and compose with it.
 
 ### Descent
 
-Registration follows a bundle spread into a `Dot_Product` and seeds each of its
-elements under the consuming `Dot_Product`'s message prefixed to the element's own message.
+Registration follows a `_Invariants(v, "lit")` call, resolves the function, and seeds the grid its
+body self-emits — keyed by the callsite's literal namespace prefixed onto each axis's own message.
 
 ### Composition
 
-A bundle that composes other bundles attributes every element, however deeply
-nested, to the one top-level `Dot_Product`'s message prefix.
-
-### Binding
-
-A bundle reached through a local binding or an append into the spread slice is
-descended, not only the direct spread form.
+A `_Invariants` that calls other `_Invariants` registers each as its own self-contained grid under
+its own namespace — never flattened into the parent. There is no joint cross-product across types.
 
 ### Casing
 
 A bundle is recognized whether its type is exported (`_Invariants`) or unexported
 (`_invariants`), matching the type's casing.
 
-### Recorder Form
-
-A bundle element is recognized whether built with the bare sugar primitive (`Sometimes`)
-or the explicit `Recorder_Sometimes` form that leads with the recorder argument; the
-condition is then read past that leading recorder and the message past the condition.
-
 ### Sugar
 
-A bundle in the sugar package may call the primitives unqualified; the descent recognizes
-them because Sugar_Package names that package. Elsewhere a bare call is the caller's own
-function, not a primitive, and seeds nothing unless qualified.
+A bundle in the sugar package may call the writers unqualified; the scan recognizes them because
+Sugar_Package names that package. Elsewhere a bare call is the caller's own function, not a writer,
+and seeds nothing unless qualified.
 
 ### Cross Package
 
-A bundle defined in another package of the same module is resolved through the
-module path and descended, so its elements' message literals are read.
+A `_Invariants` defined in another package of the same module is resolved through the
+module path, so its self-emitted axes' message literals are read.
 
 ### Workspace
 
-A bundle defined in a sibling module joined by a `go.work` workspace is resolved
-through the workspace and descended.
+A `_Invariants` defined in a sibling module joined by a `go.work` workspace is resolved
+through the workspace.
 
 ### Callsite
 
-Spreading one bundle into two `Dot_Product`s with distinct messages yields independent
-coverage entries — the per-field prefix keeps them apart, so neither masks the other's gap.
-Reusing one message across two `Dot_Product`s is a duplicate and fails registration.
+Calling one `_Invariants` at two callsites with distinct namespaces yields independent grids — the
+per-namespace prefix keeps them apart, so neither masks the other's gap. Reusing one namespace is a
+duplicate and fails registration.
 
 ### Gap Location
 
-A bundle `Sometimes` element's gap is named by the consuming
-`Dot_Product`'s message prefixed to the element's own message. An eager `Always` in a bundle
-body is not an element; its gap names its own bare message.
+A bundle axis's gap is named by the callsite namespace prefixed onto the axis's own message. An
+eager `Always` in a bundle body is not an axis; its gap names its own bare message.
 
 ### Failure Location
 
-A bundle element's deferred violation (a triggered `Impossible`) names the co-occurring axes by
-their own message, never the consuming prefix — yet the panic's stack still unwinds through the
-Dot_Product, carrying it. An eager `Always` panics from its own frame.
+A carve's violation names the co-occurring axes by their own message, never the namespace prefix —
+yet the panic's stack still unwinds through the `Dot_Product`, carrying it. An eager `Always` panics
+from its own frame.
 
-### Ban
+### Static
 
-A `Dot_Product` called inside a bundle is reported and fails registration.
+A `_Invariants` body must be straight-line: a branching or looping statement (`if`, `switch`, `for`,
+`select`) fails registration, since it would make the axes it self-emits depend on runtime values.
 
 # Analysis
 

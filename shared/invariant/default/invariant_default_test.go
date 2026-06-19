@@ -8,12 +8,28 @@ import (
 	"github.com/james-orcales/james-orcales/shared/invariant/default"
 )
 
-// Renders the True/False outcome of a preset's leading count Sometimes elements
-// as a compact signature ("T"/"F" per element), for comparing against an expected
-// pattern.
-func event_signature(elements []core.Dot_Element, count int) (signature string) {
-	for index := 0; index < count; index++ {
-		if elements[index].Event {
+// Seeds Default's tracker with the named axes under namespace, so a subsequent self-emitting
+// preset call records into resolvable entries (the static scan seeds these in a real run).
+func seed_preset_axes(namespace string, messages ...string) {
+	for _, message := range messages {
+		key := namespace + core.Element_Message_Separator + message
+		invariant.Default.Events.Store(key, &core.Assertion_Metadata{
+			Kind: core.Assertion_Kind_Sometimes, Message: key,
+		})
+	}
+}
+
+// Renders, as a compact "T"/"F" signature, which of the named axes recorded a true event under
+// namespace — read from Default's tracker after a single self-emitting preset call.
+func recorded_signature(namespace string, messages ...string) (signature string) {
+	for _, message := range messages {
+		key := namespace + core.Element_Message_Separator + message
+		value, loaded := invariant.Default.Events.Load(key)
+		if !loaded {
+			signature += "F"
+			continue
+		}
+		if value.(*core.Assertion_Metadata).Frequency.Load() > 0 {
 			signature += "T"
 			continue
 		}
@@ -36,11 +52,11 @@ func Test_Float_Invariants_Tracks_Special_Values(t *testing.T) {
 		{"zero", 0, "FFF"},
 	}
 	for _, c := range cases {
-		elements := invariant.Float_Invariants(c.F)
-		if len(elements) != 6 {
-			t.Fatalf("%s: returned %d elements, want 6", c.Name, len(elements))
-		}
-		if got := event_signature(elements, 3); got != c.Want {
+		namespace := "test.float." + c.Name
+		seed_preset_axes(namespace, "nan", "negative", "positive")
+		invariant.Float_Invariants(c.F, invariant.Namespace(namespace))
+		got := recorded_signature(namespace, "nan", "negative", "positive")
+		if got != c.Want {
 			t.Errorf("%s: [nan negative positive] = %q, want %q", c.Name, got, c.Want)
 		}
 	}
@@ -66,12 +82,16 @@ func Test_String_Invariants_Tracks_Content(t *testing.T) {
 		{"nul is control", "a\x00b", "FFFFTFTF"},
 		{"line break is whitespace and control", "a\nb", "FFTFFFTT"},
 	}
+	axes := []string{
+		"empty", "Sometimes_Has_Edge_Whitespace", "Sometimes_Has_Interior_Whitespace",
+		"Sometimes_Has_Invalid_UTF8", "Sometimes_Has_Nul", "Sometimes_Has_Multibyte_Rune",
+		"Sometimes_Has_Control", "Sometimes_Has_Line_Break",
+	}
 	for _, c := range cases {
-		elements := invariant.String_Invariants(c.S)
-		if len(elements) != 17 {
-			t.Fatalf("%s: returned %d elements, want 17", c.Name, len(elements))
-		}
-		if got := event_signature(elements, 8); got != c.Want {
+		namespace := "test.string." + c.Name
+		seed_preset_axes(namespace, axes...)
+		invariant.String_Invariants(c.S, invariant.Namespace(namespace))
+		if got := recorded_signature(namespace, axes...); got != c.Want {
 			t.Errorf("%s: signature = %q, want %q", c.Name, got, c.Want)
 		}
 	}
@@ -112,11 +132,10 @@ func Test_Slice_Invariants_Distinguishes_Nil_And_Empty(t *testing.T) {
 		{"populated", []int{1}, "FF"},
 	}
 	for _, c := range cases {
-		elements := invariant.Slice_Invariants(c.S)
-		if len(elements) != 3 {
-			t.Fatalf("%s: returned %d elements, want 3", c.Name, len(elements))
-		}
-		if got := event_signature(elements, 2); got != c.Want {
+		namespace := "test.slice." + c.Name
+		seed_preset_axes(namespace, "empty", "nil")
+		invariant.Slice_Invariants(c.S, invariant.Namespace(namespace))
+		if got := recorded_signature(namespace, "empty", "nil"); got != c.Want {
 			t.Errorf("%s: [empty is_nil] = %q, want %q", c.Name, got, c.Want)
 		}
 	}
@@ -135,11 +154,10 @@ func Test_Map_Invariants_Distinguishes_Nil_And_Empty(t *testing.T) {
 		{"populated", map[string]int{"a": 1}, "FF"},
 	}
 	for _, c := range cases {
-		elements := invariant.Map_Invariants(c.M)
-		if len(elements) != 3 {
-			t.Fatalf("%s: returned %d elements, want 3", c.Name, len(elements))
-		}
-		if got := event_signature(elements, 2); got != c.Want {
+		namespace := "test.map." + c.Name
+		seed_preset_axes(namespace, "empty", "nil")
+		invariant.Map_Invariants(c.M, invariant.Namespace(namespace))
+		if got := recorded_signature(namespace, "empty", "nil"); got != c.Want {
 			t.Errorf("%s: [empty is_nil] = %q, want %q", c.Name, got, c.Want)
 		}
 	}
