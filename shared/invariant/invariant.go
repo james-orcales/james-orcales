@@ -175,16 +175,21 @@ type Tuple_Axis struct {
 	Message string
 }
 
-// Dot_Element is a discriminated union: an Always/Sometimes observation, or an
-// Impossible declaration. Kind selects which fields carry meaning.
+// Dot_Element is a discriminated union: a Sometimes axis (gated or not), or an Impossible
+// declaration. Kind selects which fields carry meaning. An Imply is a gated Sometimes — the
+// same kind with Gated set — not a kind of its own.
 type Dot_Element struct {
-	// Kind selects which fields carry meaning: an Always/Sometimes observation, or
-	// an Impossible declaration.
+	// Kind selects which fields carry meaning: a Sometimes axis or an Impossible declaration.
 	Kind Dot_Element_Kind
-	// Event is the observed outcome of an observation element: true when its condition held.
+	// Event is the observed outcome of a Sometimes axis: true when its condition held.
 	Event bool
-	// Message is the element's own message — joined to the consuming Dot_Product's
-	// prefix to form the coverage key.
+	// Gated marks a Sometimes whose recording is conditional on Prerequisite (an Imply).
+	Gated bool
+	// Prerequisite is the gate value of a Gated Sometimes: it records only when this holds,
+	// and is don't-care otherwise.
+	Prerequisite bool
+	// Message is the axis's own message — joined to the consuming Dot_Product's prefix to
+	// form the coverage key.
 	Message string
 
 	// Impossibles are the forbidden event coordinates an Impossible declares.
@@ -246,15 +251,32 @@ func Recorder_Sometimes[T ~bool](
 	}
 }
 
-// Impossible declares that the referenced element events must never all co-occur on
-// the same call. Build references with Event_True / Event_False.
+// Recorder_Imply builds a gated Sometimes: an axis recorded only on a call where prerequisite
+// holds, and don't-care otherwise — a failing prerequisite credits neither branch, so it never
+// stands in for the gated false event. The axis is excluded from the grid (the message-less
+// prerequisite is not an axis to cross with). condition is evaluated eagerly, before this runs,
+// so a condition safe only under the prerequisite must still guard itself (p != nil && p.x):
+// the prerequisite gates recording, not evaluation. To gate on several prerequisites, AND them.
+func Recorder_Imply[P ~bool, C ~bool](
+	recorder *Recorder, prerequisite P, condition C, message string,
+) (dot_element Dot_Element) {
+	return Dot_Element{
+		Kind:         Dot_Element_Kind_Sometimes,
+		Event:        bool(condition),
+		Gated:        true,
+		Prerequisite: bool(prerequisite),
+		Message:      message,
+	}
+}
+
+// Impossible declares that the referenced axis events must never all co-occur on the same call.
+// Build references with Event_True / Event_False, naming sibling axes of the same Dot_Product.
 //
-// It globs over the axes you do not name: a carve holds only the axes you pass, and
-// the coverage analyzer treats every unnamed axis as a wildcard — it forbids, and
-// prunes from the demanded cross-product grid, every tuple matching the named events
-// for all values of the other axes (see recorder_carve_matches). So
-// Impossible(Event_True("a"), Event_True("b")) excludes "a and b both true" across every
-// combination of the remaining axes; naming a subset never enumerates full tuples.
+// It globs over the axes you do not name: the carve holds only the axes you pass, and the
+// analyzer treats every unnamed axis as a wildcard — it forbids, and prunes from the demanded
+// grid, every tuple matching the named events across all values of the other axes (see
+// recorder_carve_matches). So Impossible(Event_True("a"), Event_True("b")) excludes "a and b
+// both true" across every combination of the remaining axes.
 func Impossible(impossibles ...Dot_Element_Reference) (dot_element Dot_Element) {
 	return Dot_Element{Kind: Dot_Element_Kind_Impossible, Impossibles: impossibles}
 }
@@ -317,7 +339,7 @@ func dot_product_check_references(bundle Bundle) {
 	}
 	siblings := map[string]bool{}
 	for _, dot_element := range bundle {
-		if dot_element.Kind != Dot_Element_Kind_Impossible {
+		if dot_element.Kind == Dot_Element_Kind_Sometimes {
 			siblings[dot_element.Message] = true
 		}
 	}
@@ -371,18 +393,26 @@ func recorder_dot_product_observe(
 		return
 	}
 	handle := recorder_observe_handle(recorder, message, bundle)
-	element_index := 0
+	axis_index := 0
 	packed := 0
 	for _, dot_element := range bundle {
-		if dot_element.Kind == Dot_Element_Kind_Impossible {
+		if dot_element.Kind != Dot_Element_Kind_Sometimes {
+			continue
+		}
+		entry := handle.Elements[axis_index]
+		axis_index++
+		if dot_element.Gated {
+			// A gated axis records only when its prerequisite holds — else don't-care —
+			// and joins no tuple (an Imply is excluded from the grid).
+			if dot_element.Prerequisite {
+				recorder_increment_entry(recorder, entry, dot_element.Event)
+			}
 			continue
 		}
 		packed <<= 1
 		if dot_element.Event {
 			packed |= 1
 		}
-		entry := handle.Elements[element_index]
-		element_index++
 		recorder_increment_entry(recorder, entry, dot_element.Event)
 	}
 	recorder_increment_entry(recorder, handle.Tuples[packed], true)
@@ -421,19 +451,22 @@ func recorder_observe_handle_build(
 	recorder *Recorder, message string, bundle Bundle,
 ) (handle *observe_handle) {
 	handle = &observe_handle{}
+	ungated_count := 0
 	for _, dot_element := range bundle {
-		if dot_element.Kind == Dot_Element_Kind_Impossible {
+		if dot_element.Kind != Dot_Element_Kind_Sometimes {
 			continue
 		}
 		key := message + Element_Message_Separator + dot_element.Message
 		handle.Elements = append(handle.Elements, recorder_handle_entry(recorder, key))
+		if !dot_element.Gated {
+			ungated_count++
+		}
 	}
-	axis_count := len(handle.Elements)
-	handle.Tuples = make([]handle_entry, 1<<axis_count)
+	handle.Tuples = make([]handle_entry, 1<<ungated_count)
 	for packed := range handle.Tuples {
-		tuple := make([]int, axis_count)
+		tuple := make([]int, ungated_count)
 		for i := range tuple {
-			tuple[i] = packed >> (axis_count - 1 - i) & 1
+			tuple[i] = packed >> (ungated_count - 1 - i) & 1
 		}
 		tuple_key := recorder_tuple_key(message, tuple)
 		handle.Tuples[packed] = recorder_handle_entry(recorder, tuple_key)
@@ -559,8 +592,7 @@ func dot_element_violation(
 func dot_element_impossible_message(impossible Dot_Element) (message string) {
 	message = "Impossible — forbidden combination occurred:"
 	for _, reference := range impossible.Impossibles {
-		event := event_boolean_text(reference.Event)
-		message += "\n  " + reference.Message + "  " + event
+		message += "\n  " + reference.Message + "  " + event_boolean_text(reference.Event)
 	}
 	return message
 }
@@ -573,9 +605,9 @@ func event_boolean_text(event bool) (text string) {
 	return "false"
 }
 
-// Reports whether every event the Impossible names was observed this call — the
-// forbidden combination occurred in full. An Impossible with no references
-// constrains nothing, so it never fires (rather than firing vacuously every call).
+// Reports whether every event the Impossible names was observed this call — the forbidden
+// combination occurred in full. An Impossible with no references constrains nothing, so it
+// never fires (rather than firing vacuously every call).
 func dot_element_impossible_violated(
 	impossible Dot_Element, bundle Bundle,
 ) (violated bool) {
@@ -590,14 +622,13 @@ func dot_element_impossible_violated(
 	return true
 }
 
-// Reports whether some observation element in the call carries the reference's
-// Message and was seen at the event the reference names. Impossible elements are
-// skipped — they observe nothing.
+// Reports whether some Sometimes axis in the call carries the reference's Message and was seen
+// at the event the reference names. Impossible elements observe nothing and are skipped.
 func dot_element_reference_observed(
 	reference Dot_Element_Reference, bundle Bundle,
 ) (observed bool) {
 	for _, dot_element := range bundle {
-		if dot_element.Kind == Dot_Element_Kind_Impossible {
+		if dot_element.Kind != Dot_Element_Kind_Sometimes {
 			continue
 		}
 		if dot_element.Message != reference.Message {
@@ -665,7 +696,7 @@ func Recorder_Register_Packages_For_Analysis(recorder *Recorder, directories ...
 	for _, file := range files {
 		recorder_register_file(recorder, file_set, file, index, reg)
 	}
-	recorder_check_bundle_dot_product(recorder, file_set, files)
+	recorder_check_bundle_control_flow(recorder, file_set, files)
 	recorder_check_unresolved(recorder, reg.Unresolved)
 	recorder_check_non_literal_messages(recorder, reg.Non_Literal)
 	recorder_check_duplicate_messages(recorder, reg.Collision)
@@ -926,29 +957,62 @@ func recorder_register_file(
 	}
 }
 
-// Collects the function's bindings, then registers every Dot_Product call and seeds a
-// reachability entry for every bare eager Always.
+// Registers each invariant call in the function: a direct Dot_Product with a literal prefix
+// seeds a grid; a Dot_Product whose prefix is this function's namespace parameter is a
+// grid template, registered at its callsites instead; a _Invariants(v, "lit") call registers
+// the called template's grid under "lit"; any other call may be a bare eager Always.
 func recorder_register_function(
 	recorder *Recorder, file_set *token.FileSet, function *ast.FuncDecl,
 	imports map[string]string, index *bundle_index, reg *registration,
 ) {
-	bindings := ast_collect_bindings(function.Body)
+	namespace_parameter := ""
+	if ast_is_invariants_name(function.Name.Name) {
+		namespace_parameter = ast_namespace_parameter(function)
+	}
 	ast.Inspect(function.Body, func(node ast.Node) (descend bool) {
 		call, is_call := node.(*ast.CallExpr)
 		if !is_call {
 			return true
 		}
-		if ast_invariant_selector(call) != "Dot_Product" {
-			// An eager Always never appears in a Dot_Product, so this walk is the only
-			// registration that sees it, including one inside a bundle body — keyed by
-			// its own message like any other.
-			recorder_register_eager_always(recorder, file_set, call, reg)
+		if ast_invariant_selector(call) == "Dot_Product" {
+			recorder_register_dot_product(
+				recorder, file_set, call, namespace_parameter, imports, index, reg)
 			return true
 		}
-		recorder_register_dot_product(
-			recorder, file_set, function.Body, call, bindings, imports, index, reg)
+		if ast_is_invariants_name(ast_callee_name(call)) {
+			recorder_register_invariants_callsite(
+				recorder, file_set, call, imports, index, reg)
+			return true
+		}
+		// An eager Always never flows through a Dot_Product, so this walk is the only
+		// registration that sees it — keyed by its own message like any other.
+		recorder_register_eager_always(recorder, file_set, call, reg)
 		return true
 	})
+}
+
+// Returns the name of a _Invariants function's trailing string parameter — the namespace its
+// self-emitted Dot_Product is prefixed by. "" when there is no such parameter.
+func ast_namespace_parameter(function *ast.FuncDecl) (name string) {
+	if function.Type.Params == nil {
+		return ""
+	}
+	fields := function.Type.Params.List
+	if len(fields) == 0 {
+		return ""
+	}
+	last := fields[len(fields)-1]
+	identifier, is_string := last.Type.(*ast.Ident)
+	if !is_string {
+		return ""
+	}
+	if identifier.Name != "string" {
+		return ""
+	}
+	if len(last.Names) == 0 {
+		return ""
+	}
+	return last.Names[len(last.Names)-1].Name
 }
 
 // Seeds a reachability entry for a bare eager Always call — invariant.Always /
@@ -1031,12 +1095,12 @@ func recorder_check_duplicate_messages(recorder *Recorder, collisions []string) 
 	recorder.Exit(1)
 }
 
-// Checks the analyzed files for a *_Invariants / *_invariants bundle whose body
-// calls invariant.Dot_Product — banned, because a bundle returns its elements for a
-// caller to consume; consuming them itself would key the assertions to the bundle's
-// own site instead of each caller's, defeating the per-callsite identity. Reports
-// every violation under one banner and exits 1.
-func recorder_check_bundle_dot_product(
+// Checks the analyzed files for a *_Invariants / *_invariants bundle whose body contains a
+// branching or looping statement (if, switch, type-switch, for, range, select) — banned,
+// because it would make the axes the bundle self-emits depend on runtime values the static scan
+// cannot read, silently under-registering coverage. A bundle body must be straight-line.
+// Reports every violation under one banner and exits 1.
+func recorder_check_bundle_control_flow(
 	recorder *Recorder, file_set *token.FileSet, files []*ast.File,
 ) {
 	var violations []string
@@ -1054,15 +1118,11 @@ func recorder_check_bundle_dot_product(
 			}
 			name := function.Name.Name
 			ast.Inspect(function.Body, func(node ast.Node) (descend bool) {
-				call, is_call := node.(*ast.CallExpr)
-				if !is_call {
+				if !ast_is_control_flow(node) {
 					return true
 				}
-				if ast_invariant_selector(call) != "Dot_Product" {
-					return true
-				}
-				violations = append(violations, recorder_position(file_set, call)+
-					"  banned: invariant.Dot_Product inside bundle "+name)
+				violations = append(violations, recorder_position(file_set, node)+
+					"  banned: control flow inside bundle "+name)
 				return true
 			})
 		}
@@ -1070,13 +1130,23 @@ func recorder_check_bundle_dot_product(
 	if len(violations) == 0 {
 		return
 	}
-	banner := "🚨 " + strconv.Itoa(len(violations)) + " bundle Dot_Product calls 🚨"
+	banner := "🚨 " + strconv.Itoa(len(violations)) + " bundle control-flow statements 🚨"
 	fmt.Fprintln(recorder.Output, banner)
 	for _, violation := range violations {
 		fmt.Fprintln(recorder.Output, violation)
 	}
 	fmt.Fprintln(recorder.Output, banner)
 	recorder.Exit(1)
+}
+
+// Reports whether node is a branching or looping statement banned in a bundle body.
+func ast_is_control_flow(node ast.Node) (is_control_flow bool) {
+	switch node.(type) {
+	case *ast.IfStmt, *ast.SwitchStmt, *ast.TypeSwitchStmt,
+		*ast.ForStmt, *ast.RangeStmt, *ast.SelectStmt:
+		return true
+	}
+	return false
 }
 
 // A registration_axis is one Always/Sometimes element discovered statically:
@@ -1089,6 +1159,8 @@ type registration_axis struct {
 	Condition    string
 	Kind         Assertion_Kind
 	Bucket_Count int
+	// Gated marks an Imply axis — seeded per-axis but excluded from the tuple grid.
+	Gated bool
 }
 
 // A registration_cell is one coordinate of an Impossible carve: a Dot_Product
@@ -1132,64 +1204,124 @@ func ast_string_literal(call *ast.CallExpr, index int) (value string, ok bool) {
 	return unquoted, true
 }
 
-// Resolves the element expressions a Dot_Product consumes — the arguments after the
-// leading message prefix (call.Args[0]). A direct list (Dot_Product("p", a, b,
-// Foo_Invariants(x)...)) is returned unchanged. A spread of a single local variable
-// (Dot_Product("p", elems...)) is expanded to that variable's feeders — its initializer
-// plus every append(elems, …) — so a bundle reached through a binding is descended too.
-// The feeders fall back to the original argument when none resolve.
-func recorder_dot_product_arguments(
-	body *ast.BlockStmt, call *ast.CallExpr,
-) (arguments []ast.Expr) {
-	if len(call.Args) == 0 {
-		return nil
-	}
-	element_args := call.Args[1:]
-	if !call.Ellipsis.IsValid() {
-		return element_args
-	}
-	if len(element_args) != 1 {
-		return element_args
-	}
-	identifier, is_identifier := element_args[0].(*ast.Ident)
-	if !is_identifier {
-		return element_args
-	}
-	feeders := ast_collect_feeders(body, identifier.Name)
-	if len(feeders) == 0 {
-		return element_args
-	}
-	return feeders
-}
-
-// Reads the Dot_Product's message prefix (call.Args[0]), resolves its element arguments
-// into axes and carve sets (descending any *_Invariants bundle), then seeds a per-element
-// entry for each axis keyed by prefix + separator + the axis's own message, and a tuple
-// entry for every non-carved bucket combination keyed by the prefix. A non-literal prefix
-// or a prefix already seen is a fatal diagnostic; a per-element key collision (a repeated
-// local message within this Dot_Product) likewise.
+// Registers a Dot_Product call. A literal prefix seeds a grid from the call's inline axes. A
+// prefix that is this function's namespace parameter is a grid template — registered at the
+// _Invariants' callsites, not here. Any other non-literal prefix is fatal.
 func recorder_register_dot_product(
-	recorder *Recorder, file_set *token.FileSet, body *ast.BlockStmt, call *ast.CallExpr,
-	bindings map[string]*ast.CallExpr, imports map[string]string, index *bundle_index,
-	reg *registration,
+	recorder *Recorder, file_set *token.FileSet, call *ast.CallExpr, namespace_parameter string,
+	imports map[string]string, index *bundle_index, reg *registration,
 ) {
 	prefix, literal := ast_string_literal(call, 0)
 	if !literal {
+		if ast_is_template_prefix(call, namespace_parameter) {
+			return
+		}
 		reg.Non_Literal = append(reg.Non_Literal,
 			recorder_position(file_set, call)+
 				"  Dot_Product message is not a string literal")
 		return
 	}
+	axes, carves := recorder_collect_inline(file_set, call.Args[1:], false, reg)
+	recorder_seed_grid(recorder, file_set, call, prefix, axes, carves, reg)
+}
+
+// Reports whether the Dot_Product's prefix argument is this function's namespace parameter — the
+// shape of a grid template, registered at the _Invariants' callsites rather than here.
+func ast_is_template_prefix(call *ast.CallExpr, namespace_parameter string) (is_template bool) {
+	if namespace_parameter == "" {
+		return false
+	}
+	if len(call.Args) == 0 {
+		return false
+	}
+	identifier, is_identifier := call.Args[0].(*ast.Ident)
+	if !is_identifier {
+		return false
+	}
+	return identifier.Name == namespace_parameter
+}
+
+// Registers the grid of a _Invariants(v, "lit") callsite: resolves the called template, reads
+// the axes of its self-emitted Dot_Product, and seeds them under the literal namespace. A
+// non-literal namespace is fatal (its coverage could not be keyed); an unresolvable template is
+// fatal. Nested _Invariants calls inside the template body are registered separately by the
+// global walk, never flattened into this grid.
+func recorder_register_invariants_callsite(
+	recorder *Recorder, file_set *token.FileSet, call *ast.CallExpr,
+	imports map[string]string, index *bundle_index, reg *registration,
+) {
+	if len(call.Args) < 2 {
+		return
+	}
+	namespace, literal := ast_string_literal(call, len(call.Args)-1)
+	if !literal {
+		reg.Non_Literal = append(reg.Non_Literal,
+			recorder_position(file_set, call)+
+				"  _Invariants namespace is not a string literal")
+		return
+	}
+	function, found := bundle_index_lookup(index, imports, call)
+	if !found {
+		reg.Unresolved = append(reg.Unresolved, recorder_unresolved_line(file_set, call))
+		return
+	}
+	if function.Declaration.Body == nil {
+		reg.Unresolved = append(reg.Unresolved, recorder_unresolved_line(file_set, call))
+		return
+	}
+	dot_product, has := recorder_template_dot_product(function.Declaration)
+	if !has {
+		return
+	}
+	axes, carves := recorder_collect_inline(
+		file_set, dot_product.Args[1:], function.Is_Sugar, reg)
+	recorder_seed_grid(recorder, file_set, call, namespace, axes, carves, reg)
+}
+
+// Finds a _Invariants function's self-emitted Dot_Product — the one whose prefix argument is
+// the function's namespace parameter. has is false when the function emits no such Dot_Product.
+func recorder_template_dot_product(
+	function *ast.FuncDecl,
+) (call *ast.CallExpr, has bool) {
+	namespace_parameter := ast_namespace_parameter(function)
+	if namespace_parameter == "" {
+		return nil, false
+	}
+	ast.Inspect(function.Body, func(node ast.Node) (descend bool) {
+		if has {
+			return false
+		}
+		candidate, is_call := node.(*ast.CallExpr)
+		if !is_call {
+			return true
+		}
+		if ast_selector(candidate, true) != "Dot_Product" {
+			return true
+		}
+		if !ast_is_template_prefix(candidate, namespace_parameter) {
+			return true
+		}
+		call = candidate
+		has = true
+		return false
+	})
+	return call, has
+}
+
+// Seeds a grid under prefix: a per-axis entry for every axis (gated or not) and a tuple entry
+// for every non-carved combination of the ungated axes. A repeated prefix or a repeated axis
+// message within the grid is a duplicate collision.
+func recorder_seed_grid(
+	recorder *Recorder, file_set *token.FileSet, position ast.Node, prefix string,
+	axes []registration_axis, carves [][]registration_cell, reg *registration,
+) {
 	if reg.Seen_Prefix[prefix] {
 		reg.Collision = append(reg.Collision,
-			recorder_position(file_set, call)+
+			recorder_position(file_set, position)+
 				"  duplicate Dot_Product message: "+strconv.Quote(prefix))
 		return
 	}
 	reg.Seen_Prefix[prefix] = true
-	arguments := recorder_dot_product_arguments(body, call)
-	axes, carves := recorder_collect_elements(
-		file_set, arguments, bindings, imports, index, reg)
 	for _, axis := range axes {
 		key := prefix + Element_Message_Separator + axis.Message
 		_, loaded := recorder.Events.LoadOrStore(key, &Assertion_Metadata{
@@ -1199,83 +1331,57 @@ func recorder_register_dot_product(
 		})
 		if loaded {
 			reg.Collision = append(reg.Collision,
-				recorder_position(file_set, call)+
+				recorder_position(file_set, position)+
 					"  duplicate message: "+strconv.Quote(prefix)+
 					" / "+strconv.Quote(axis.Message))
 		}
 	}
-	recorder_register_tuples(recorder, prefix, axes, carves)
+	ungated := make([]registration_axis, 0, len(axes))
+	for _, axis := range axes {
+		if !axis.Gated {
+			ungated = append(ungated, axis)
+		}
+	}
+	recorder_register_tuples(recorder, prefix, ungated, carves)
 }
 
-// A collect_frame is one bundle scope mid-flatten: its argument list, the
-// bindings that resolve element and nested-bundle variables, a cursor over the
-// arguments, and the ordinal→global map that turns this scope's direct axes into
-// flattened positions (so its carves can be remapped once the scope is fully walked).
-type collect_frame struct {
-	Arguments         []ast.Expr
-	Bindings          map[string]*ast.CallExpr
-	Imports           map[string]string
-	Unqualified_Sugar bool
-	Cursor            int
-	Axis_Global       []int
-	Local_Axes        []registration_axis
-}
-
-// Resolves a list of element argument expressions into flattened axes and carve
-// sets, descending *_Invariants bundles in argument order. Nested bundles flatten
-// into one grid; a scope's Impossibles resolve against that scope's own direct
-// axes, remapped to flattened positions when the scope completes. An explicit
-// scope stack (not recursion) keeps stack depth bounded.
-func recorder_collect_elements(
-	file_set *token.FileSet, arguments []ast.Expr,
-	bindings map[string]*ast.CallExpr, imports map[string]string, index *bundle_index,
-	reg *registration,
+// Reads a Dot_Product's inline element arguments into axes and carves. A self-emitting
+// Dot_Product holds only inline Sometimes/Imply/Impossible — composition is separate _Invariants
+// calls, not spreads — so there is no bundle descent. Each Impossible carve resolves its two
+// references against the ungated axis positions; the grid excludes gated Imply axes.
+func recorder_collect_inline(
+	file_set *token.FileSet, arguments []ast.Expr, allow_unqualified bool, reg *registration,
 ) (axes []registration_axis, carves [][]registration_cell) {
-	stack := []*collect_frame{{
-		Arguments: arguments,
-		Bindings:  bindings,
-		Imports:   imports,
-	}}
-	for step := 0; len(stack) > 0; step++ {
-		if step >= bundle_expansion_steps_max {
-			break
-		}
-		frame := stack[len(stack)-1]
-		if frame.Cursor == len(frame.Arguments) {
-			carves = append(carves, collect_frame_carves(file_set, frame, reg)...)
-			stack = stack[:len(stack)-1]
+	var carve_calls []*ast.CallExpr
+	for _, argument := range arguments {
+		call, is_call := argument.(*ast.CallExpr)
+		if !is_call {
 			continue
 		}
-		argument := frame.Arguments[frame.Cursor]
-		frame.Cursor++
-		bundle, is_bundle := ast_bundle_call(argument)
-		if is_bundle {
-			child, ok := recorder_bundle_frame(bundle, frame.Imports, index)
-			if ok {
-				stack = append(stack, child)
-				continue
-			}
-			// A call named like a bundle but whose declaration the analyzer cannot
-			// reach (an external module, a missing source file) would seed none of
-			// its elements while the runtime still enforces them — its coverage
-			// obligations would vanish with no signal. Refuse it: the analyzer
-			// descends a bundle or fails on it, never silently drops it.
-			reg.Unresolved = append(reg.Unresolved,
-				recorder_unresolved_line(file_set, bundle))
+		if ast_selector(call, allow_unqualified) == "Impossible" {
+			carve_calls = append(carve_calls, call)
 			continue
 		}
-		element_call, resolved := ast_resolve_element(argument, frame.Bindings)
-		if !resolved {
+		axis, is_axis := recorder_axis_of(file_set, call, allow_unqualified, reg)
+		if is_axis {
+			axes = append(axes, axis)
+		}
+	}
+	position_of := map[string]int{}
+	ungated := 0
+	for _, axis := range axes {
+		if axis.Gated {
 			continue
 		}
-		axis, is_axis := recorder_axis_of(
-			file_set, element_call, frame.Unqualified_Sugar, reg)
-		if !is_axis {
-			continue
+		position_of[axis.Message] = ungated
+		ungated++
+	}
+	for _, carve_call := range carve_calls {
+		cells, ok := ast_resolve_carve(
+			file_set, carve_call, position_of, allow_unqualified, reg)
+		if ok {
+			carves = append(carves, cells)
 		}
-		frame.Axis_Global = append(frame.Axis_Global, len(axes))
-		frame.Local_Axes = append(frame.Local_Axes, axis)
-		axes = append(axes, axis)
 	}
 	return axes, carves
 }
@@ -1285,28 +1391,6 @@ func recorder_collect_elements(
 func recorder_unresolved_line(file_set *token.FileSet, call *ast.CallExpr) (line string) {
 	return recorder_position(file_set, call) + "  unresolved bundle: " +
 		ast_callee_name(call) + " cannot be analyzed"
-}
-
-// Builds the scope frame for a *_Invariants bundle call, resolving the bundle's
-// declaration through index (same-package or cross-package). ok=false when the
-// bundle can't be resolved — it is then skipped. The child frame carries the
-// resolved declaration's own file imports so its qualified sub-calls resolve.
-func recorder_bundle_frame(
-	bundle *ast.CallExpr, imports map[string]string, index *bundle_index,
-) (frame *collect_frame, ok bool) {
-	function, found := bundle_index_lookup(index, imports, bundle)
-	if !found {
-		return nil, false
-	}
-	if function.Declaration.Body == nil {
-		return nil, false
-	}
-	return &collect_frame{
-		Arguments:         ast_collect_append_arguments(function.Declaration.Body),
-		Bindings:          ast_collect_bindings(function.Declaration.Body),
-		Imports:           function.Imports,
-		Unqualified_Sugar: function.Is_Sugar,
-	}, true
 }
 
 // Resolves a bundle call to its declaration using the calling file's imports: a
@@ -1394,140 +1478,6 @@ func bundle_index_load(
 	return functions
 }
 
-// Resolves a finished scope's Impossibles into carves over the flattened axis
-// positions: ast_resolve_cells yields cells at this scope's local ordinals, which
-// the frame's ordinal→global map turns into flattened positions.
-func collect_frame_carves(
-	file_set *token.FileSet, frame *collect_frame, reg *registration,
-) (carves [][]registration_cell) {
-	for _, argument := range frame.Arguments {
-		element_call, resolved := ast_resolve_element(argument, frame.Bindings)
-		if !resolved {
-			continue
-		}
-		if ast_selector(element_call, frame.Unqualified_Sugar) != "Impossible" {
-			continue
-		}
-		cells, ok := ast_resolve_cells(
-			file_set, element_call, frame.Local_Axes, frame.Unqualified_Sugar, reg,
-		)
-		if !ok {
-			continue
-		}
-		global := make([]registration_cell, len(cells))
-		for cell_index, cell := range cells {
-			global[cell_index] = registration_cell{
-				Position: frame.Axis_Global[cell.Position],
-				Bucket:   cell.Bucket,
-			}
-		}
-		carves = append(carves, global)
-	}
-	return carves
-}
-
-// Collects the element expressions that flow into the local named name, in source
-// order: the RHS of each `name := …` / `name = …` whose RHS is not an append to
-// name, plus the arguments after the first of each `append(name, …)`. Straight-line
-// reading only — appends inside control flow, reassignment ordering, and aliasing
-// are not analyzed. Lets a Dot_Product spreading name resolve the bundles and
-// elements it accumulates.
-func ast_collect_feeders(body *ast.BlockStmt, name string) (feeders []ast.Expr) {
-	ast.Inspect(body, func(node ast.Node) (descend bool) {
-		assignment, is_assignment := node.(*ast.AssignStmt)
-		if !is_assignment {
-			return true
-		}
-		if len(assignment.Lhs) != len(assignment.Rhs) {
-			return true
-		}
-		for index := range assignment.Lhs {
-			identifier, is_identifier := assignment.Lhs[index].(*ast.Ident)
-			if !is_identifier {
-				continue
-			}
-			if identifier.Name != name {
-				continue
-			}
-			right := assignment.Rhs[index]
-			if appended, is_append := ast_append_arguments(right, name); is_append {
-				feeders = append(feeders, appended...)
-				continue
-			}
-			feeders = append(feeders, right)
-		}
-		return true
-	})
-	return feeders
-}
-
-// Returns the arguments after the first of an `append(name, …)` call, with
-// is_append true only when expression is exactly that — the accumulation step a
-// spread variable is built from.
-func ast_append_arguments(
-	expression ast.Expr, name string,
-) (arguments []ast.Expr, is_append bool) {
-	call, is_call := expression.(*ast.CallExpr)
-	if !is_call {
-		return nil, false
-	}
-	identifier, is_identifier := call.Fun.(*ast.Ident)
-	if !is_identifier {
-		return nil, false
-	}
-	if identifier.Name != "append" {
-		return nil, false
-	}
-	if len(call.Args) < 2 {
-		return nil, false
-	}
-	target, is_target := call.Args[0].(*ast.Ident)
-	if !is_target {
-		return nil, false
-	}
-	if target.Name != name {
-		return nil, false
-	}
-	return call.Args[1:], true
-}
-
-// Collects every element expression appended in the body — each argument after
-// the first of every append(...) call — i.e. a bundle's returned bundle.
-func ast_collect_append_arguments(body *ast.BlockStmt) (arguments []ast.Expr) {
-	ast.Inspect(body, func(node ast.Node) (descend bool) {
-		call, is_call := node.(*ast.CallExpr)
-		if !is_call {
-			return true
-		}
-		identifier, is_identifier := call.Fun.(*ast.Ident)
-		if !is_identifier {
-			return true
-		}
-		if identifier.Name != "append" {
-			return true
-		}
-		if len(call.Args) < 2 {
-			return true
-		}
-		arguments = append(arguments, call.Args[1:]...)
-		return true
-	})
-	return arguments
-}
-
-// Reports whether argument is a call to a *_Invariants function (bare or
-// qualified) and returns that call.
-func ast_bundle_call(argument ast.Expr) (call *ast.CallExpr, is_bundle bool) {
-	candidate, is_call := argument.(*ast.CallExpr)
-	if !is_call {
-		return nil, false
-	}
-	if !ast_is_invariants_name(ast_callee_name(candidate)) {
-		return nil, false
-	}
-	return candidate, true
-}
-
 // Returns the called function's name: the Ident name for a bare call or the Sel
 // name for a qualified call; "" otherwise.
 func ast_callee_name(call *ast.CallExpr) (name string) {
@@ -1581,18 +1531,24 @@ func ast_file_imports(file *ast.File) (imports map[string]string) {
 // second argument. is_axis is false for any other selector. The Sometimes_Has_ / Always_Has_ /
 // Never_Has_ helpers are absent here: they take no recorder and report the whole call as their
 // condition.
-func ast_axis_signature(selector string) (kind Assertion_Kind, condition_index int, is_axis bool) {
+func ast_axis_signature(
+	selector string,
+) (kind Assertion_Kind, condition_index int, gated bool, is_axis bool) {
 	switch selector {
 	case "Always":
-		return Assertion_Kind_Always, 0, true
+		return Assertion_Kind_Always, 0, false, true
 	case "Sometimes":
-		return Assertion_Kind_Sometimes, 0, true
+		return Assertion_Kind_Sometimes, 0, false, true
+	case "Imply":
+		return Assertion_Kind_Sometimes, 1, true, true
 	case "Recorder_Always":
-		return Assertion_Kind_Always, 1, true
+		return Assertion_Kind_Always, 1, false, true
 	case "Recorder_Sometimes":
-		return Assertion_Kind_Sometimes, 1, true
+		return Assertion_Kind_Sometimes, 1, false, true
+	case "Recorder_Imply":
+		return Assertion_Kind_Sometimes, 2, true, true
 	}
-	return 0, 0, false
+	return 0, 0, false, false
 }
 
 // Returns the axis for an Always/Sometimes constructor call, in either the bare sugar form or
@@ -1602,7 +1558,7 @@ func recorder_axis_of(
 	file_set *token.FileSet, call *ast.CallExpr, allow_unqualified bool, reg *registration,
 ) (axis registration_axis, is_axis bool) {
 	selector := ast_selector(call, allow_unqualified)
-	if kind, condition_index, ok := ast_axis_signature(selector); ok {
+	if kind, condition_index, gated, ok := ast_axis_signature(selector); ok {
 		condition := ast_condition_text(file_set, call, condition_index)
 		bucket_count := 2
 		if kind == Assertion_Kind_Always {
@@ -1621,6 +1577,7 @@ func recorder_axis_of(
 			Condition:    condition,
 			Kind:         kind,
 			Bucket_Count: bucket_count,
+			Gated:        gated,
 		}, true
 	}
 	// Dedicated string-axis helpers (Sometimes_Has_X / Always_Has_X / Never_Has_X) are
@@ -1654,35 +1611,6 @@ func recorder_axis_of(
 		}, true
 	}
 	return registration_axis{}, false
-}
-
-// Maps each `name := invariant.X(...)` local to its constructor call, so a Dot_Product spreading
-// name resolves to the element or bundle it accumulates.
-func ast_collect_bindings(body *ast.BlockStmt) (bindings map[string]*ast.CallExpr) {
-	bindings = map[string]*ast.CallExpr{}
-	ast.Inspect(body, func(node ast.Node) (descend bool) {
-		assignment, is_assignment := node.(*ast.AssignStmt)
-		if !is_assignment {
-			return true
-		}
-		if len(assignment.Lhs) != 1 {
-			return true
-		}
-		if len(assignment.Rhs) != 1 {
-			return true
-		}
-		identifier, is_identifier := assignment.Lhs[0].(*ast.Ident)
-		if !is_identifier {
-			return true
-		}
-		call, is_call := assignment.Rhs[0].(*ast.CallExpr)
-		if !is_call {
-			return true
-		}
-		bindings[identifier.Name] = call
-		return true
-	})
-	return bindings
 }
 
 // Returns the X in a literal `invariant.X(...)` selector call, or "" otherwise.
@@ -1734,8 +1662,8 @@ func ast_is_invariant_primitive(name string) (is_primitive bool) {
 		return true
 	}
 	switch name {
-	case "Always", "Sometimes",
-		"Recorder_Always", "Recorder_Sometimes",
+	case "Always", "Sometimes", "Imply", "Dot_Product",
+		"Recorder_Always", "Recorder_Sometimes", "Recorder_Imply",
 		"Impossible", "Event_True", "Event_False":
 		return true
 	}
@@ -1751,33 +1679,18 @@ func ast_is_invariants_name(name string) (is_bundle bool) {
 	return strings.HasSuffix(name, "_Invariants") || strings.HasSuffix(name, "_invariants")
 }
 
-// Resolves a Dot_Product argument to its constructor call: a direct call passes
-// through; a bare identifier resolves through the bindings map.
-func ast_resolve_element(
-	argument ast.Expr, bindings map[string]*ast.CallExpr,
-) (call *ast.CallExpr, resolved bool) {
-	if direct, is_call := argument.(*ast.CallExpr); is_call {
-		return direct, true
-	}
-	identifier, is_identifier := argument.(*ast.Ident)
-	if !is_identifier {
-		return nil, false
-	}
-	bound, has := bindings[identifier.Name]
-	if !has {
-		return nil, false
-	}
-	return bound, true
-}
-
-// Resolves an Impossible's Event_True("msg")/Event_False("msg") references into (axis position,
-// bucket) cells by matching each reference's message literal to a sibling axis. ok is false — and
-// the carve skipped — when a reference names no sibling (Recorder_Dot_Product panics on it at
-// runtime, so it is not a registration error) or is non-literal (recorded as a fatal diagnostic).
-func ast_resolve_cells(
-	file_set *token.FileSet, impossible *ast.CallExpr, axes []registration_axis,
+// Resolves an Impossible's two Event_True("m")/Event_False("m") references — its two arguments —
+// into (ungated grid position, bucket) cells, matching each reference's message literal to an
+// ungated axis via position_of. ok is false — the carve skipped — when a reference names no
+// ungated axis (the runtime precondition panics on a genuine non-sibling, so it is not a
+// registration error) or is non-literal (recorded as a fatal diagnostic).
+func ast_resolve_carve(
+	file_set *token.FileSet, impossible *ast.CallExpr, position_of map[string]int,
 	allow_unqualified bool, reg *registration,
 ) (cells []registration_cell, ok bool) {
+	if len(impossible.Args) == 0 {
+		return nil, false
+	}
 	for _, argument := range impossible.Args {
 		reference, is_call := argument.(*ast.CallExpr)
 		if !is_call {
@@ -1790,23 +1703,11 @@ func ast_resolve_cells(
 					"  Impossible reference message is not a string literal")
 			return nil, false
 		}
-		position := -1
-		for index, axis := range axes {
-			if axis.Message == message {
-				position = index
-				break
-			}
-		}
-		// A reference that names no sibling axis cannot be carved. It is not a
-		// registration error: Recorder_Dot_Product panics on it at runtime
-		// (dot_product_check_references), and an unexercised product fails as a gap
-		// anyway — so the carve is simply skipped here.
-		if position < 0 {
+		position, named := position_of[message]
+		if !named {
 			return nil, false
 		}
-		bucket := ast_event_bucket(
-			ast_selector(reference, allow_unqualified), axes[position],
-		)
+		bucket := ast_event_bucket(ast_selector(reference, allow_unqualified))
 		if bucket < 0 {
 			return nil, false
 		}
@@ -1815,16 +1716,9 @@ func ast_resolve_cells(
 	return cells, true
 }
 
-// Maps Event_True/Event_False to a bucket index for the axis: Sometimes is
-// false=0 / true=1; Always has only the true bucket at 0. Returns -1 when the
-// reference doesn't apply to the axis kind.
-func ast_event_bucket(selector string, axis registration_axis) (bucket int) {
-	if axis.Kind == Assertion_Kind_Always {
-		if selector == "Event_True" {
-			return 0
-		}
-		return -1
-	}
+// Maps Event_True/Event_False to an ungated Sometimes axis bucket: false=0, true=1. Returns -1
+// for any other selector.
+func ast_event_bucket(selector string) (bucket int) {
 	if selector == "Event_False" {
 		return 0
 	}
