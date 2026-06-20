@@ -391,6 +391,45 @@ func Test_Dot_Product_Attribution(t *testing.T) {
 	}
 }
 
+// Test_Bundles_Template: a _Invariants is recognized by its name suffix and trailing namespace
+// parameter; the Dot_Product it self-emits under that parameter is a template — not a non-literal
+// failure, seeded only at the callsite's literal namespace, never under the bare parameter.
+func Test_Bundles_Template(t *testing.T) {
+	const source = `package fixture
+
+func Pair_Invariants(n int, namespace string) {
+	invariant.Dot_Product(namespace, invariant.Sometimes(n < 0, "lo"))
+}
+
+func check(n int) {
+	Pair_Invariants(n, "field")
+}
+`
+	var output bytes.Buffer
+	exit_code := -1
+	recorder := &invariant.Recorder{
+		File_System: fstest.MapFS{
+			"fixture/pair.go": &fstest.MapFile{Data: []byte(source)},
+		},
+		Output: &output,
+		Exit:   func(code int) { exit_code = code },
+	}
+	invariant.Recorder_Register_Packages_For_Analysis(recorder, "/fixture")
+
+	if exit_code != -1 {
+		t.Fatalf("a namespace-parameter Dot_Product must not fail registration: %s",
+			output.String())
+	}
+	if _, ok := recorder.Events.Load(
+		"field" + invariant.Element_Message_Separator + "lo"); !ok {
+		t.Error("the template must seed the grid under the callsite namespace (field␀lo)")
+	}
+	if _, ok := recorder.Events.Load(
+		"namespace" + invariant.Element_Message_Separator + "lo"); ok {
+		t.Error("the template must not seed under the bare namespace parameter")
+	}
+}
+
 // Test_Bundles_Descent: registration follows a _Invariants(v, "lit") call and seeds the grid its
 // body self-emits, keyed by the callsite namespace.
 func Test_Bundles_Descent(t *testing.T) {

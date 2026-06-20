@@ -927,8 +927,8 @@ func ast_is_namespace_type(expression ast.Expr) (is_namespace bool) {
 	return false
 }
 
-// Seeds a reachability entry for a bare eager Always call — invariant.Always /
-// Recorder_Always / Always_Has_X / Never_Has_X — keyed by its own message. Without this a
+// Seeds a reachability entry for a bare eager Always call — invariant.Always or
+// Recorder_Always — keyed by its own message. Without this a
 // never-reached Always could not be reported, since it never flows through a Dot_Product.
 // Calls of any other kind (a Sometimes, a plain function) seed
 // nothing: a bare element records nothing and is the caller's responsibility to consume.
@@ -1425,9 +1425,7 @@ func ast_file_imports(file *ast.File) (imports map[string]string) {
 // Maps an axis constructor selector to its assertion kind and the index of its
 // condition-bearing argument. The bare sugar forms (Always / Sometimes) carry the condition
 // first; the explicit Recorder_* forms lead with the recorder, so the condition rides the
-// second argument. is_axis is false for any other selector. The Sometimes_Has_ / Always_Has_ /
-// Never_Has_ helpers are absent here: they take no recorder and report the whole call as their
-// condition.
+// second argument. is_axis is false for any other selector.
 func ast_axis_signature(
 	selector string,
 ) (kind Assertion_Kind, condition_index int, gated bool, is_axis bool) {
@@ -1477,36 +1475,6 @@ func recorder_axis_of(
 			Gated:        gated,
 		}, true
 	}
-	// Dedicated string-axis helpers (Sometimes_Has_X / Always_Has_X / Never_Has_X) are
-	// single-element constructors the framework owns. They take no message argument; their
-	// identity is the helper's own name, which the sugar passes verbatim to the underlying
-	// recorder, so the static side derives the same message here without a literal at the
-	// call. Never_Has_X is Always(!has_X), an Always axis like Always_Has_X. The whole call
-	// is the condition text so a gap names the property.
-	if strings.HasPrefix(selector, "Sometimes_Has_") {
-		return registration_axis{
-			Message:      selector,
-			Condition:    ast_expression_text(file_set, call),
-			Kind:         Assertion_Kind_Sometimes,
-			Bucket_Count: 2,
-		}, true
-	}
-	if strings.HasPrefix(selector, "Always_Has_") {
-		return registration_axis{
-			Message:      selector,
-			Condition:    ast_expression_text(file_set, call),
-			Kind:         Assertion_Kind_Always,
-			Bucket_Count: 1,
-		}, true
-	}
-	if strings.HasPrefix(selector, "Never_Has_") {
-		return registration_axis{
-			Message:      selector,
-			Condition:    ast_expression_text(file_set, call),
-			Kind:         Assertion_Kind_Always,
-			Bucket_Count: 1,
-		}, true
-	}
 	return registration_axis{}, false
 }
 
@@ -1546,18 +1514,6 @@ func ast_selector(call *ast.CallExpr, allow_unqualified bool) (name string) {
 // sugar tier exposes as bare functions and that may appear unqualified inside a
 // sugar-package bundle.
 func ast_is_invariant_primitive(name string) (is_primitive bool) {
-	// The dedicated string-axis helpers are sugar-tier functions too, so they may
-	// appear unqualified inside a sugar-package bundle (String_Invariants composes
-	// them); recorder_axis_of resolves the prefix to a Sometimes/Always axis.
-	if strings.HasPrefix(name, "Sometimes_Has_") {
-		return true
-	}
-	if strings.HasPrefix(name, "Always_Has_") {
-		return true
-	}
-	if strings.HasPrefix(name, "Never_Has_") {
-		return true
-	}
 	switch name {
 	case "Always", "Sometimes", "Imply", "Dot_Product",
 		"Recorder_Always", "Recorder_Sometimes", "Recorder_Imply",

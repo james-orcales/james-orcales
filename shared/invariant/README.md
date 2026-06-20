@@ -40,8 +40,8 @@ gap reported at the end. So `Always` catches a value that should never occur, an
 catches a case the tests forgot to cover — a panic versus a silent blind spot.
 
 `Always` and `Sometimes` are the only true atoms; everything else is sugar over them. The sugar tier
-adds derived forms purely to cut boilerplate — the `Sometimes_Has_*` content axes and the
-`*_Invariants` presets — each expanding into `Always` / `Sometimes` checks over a value.
+adds the `*_Invariants` presets purely to cut boilerplate — each expanding into `Always` /
+`Sometimes` checks over a value.
 
 A `Sometimes` is inert alone: constructing one records nothing and enforces nothing; it is only when
 it is handed to a `Dot_Product` that it is enforced and its coverage tracked. `Always` is the
@@ -108,7 +108,7 @@ type Token string
 func Token_Invariants(token Token, namespace invariant.Namespace) {
     // Eager guards fire right here; only the Sometimes axes form the grid.
     invariant.Always(token != "", "non-empty")
-    invariant.Never_Has_Edge_Whitespace(string(token))
+    invariant.Always(strings.TrimSpace(string(token)) == string(token), "no edge whitespace")
     invariant.Dot_Product(namespace,
         invariant.Sometimes(strings.Contains(string(token), "_"), "has underscore"),
     )

@@ -118,6 +118,12 @@ panics at its own site, so consecutive `Always` guards short-circuit on the firs
 A `_Invariants(v, namespace)` function self-emits its own `Dot_Product(namespace, …)` over a
 type's axes, so a type's properties travel and compose with it.
 
+### Template
+
+A `_Invariants` is recognized by its `_Invariants` or `_invariants` name together with a trailing
+`string` or `Namespace` parameter. The `Dot_Product` it self-emits under that parameter is a
+template, seeded not at the definition but at each callsite under its literal namespace.
+
 ### Descent
 
 Registration follows a `_Invariants(v, "lit")` call, resolves the function, and seeds the grid its
@@ -126,7 +132,8 @@ body self-emits — keyed by the callsite's literal namespace prefixed onto each
 ### Composition
 
 A `_Invariants` that calls other `_Invariants` registers each as its own self-contained grid under
-its own namespace — never flattened into the parent. There is no joint cross-product across types.
+its own namespace, never flattened into the parent — there is no joint cross-product. One with no
+`Dot_Product` of its own (pure composition, or only an eager `Always`) seeds no grid of its own.
 
 ### Casing
 
@@ -223,9 +230,9 @@ sharing a message. A duplicate would mask a gap, so it is fatal, not merged.
 
 ### Literal
 
-An assertion's message must be a compile-time string literal, so registration can seed it under the
-same key the runtime emits. A non-literal message — a variable or a concatenation — cannot be keyed
-statically; its coverage would vanish, so it fails registration. `Impossible` references obey it.
+A message must be a compile-time string literal, so registration seeds it under the key the runtime
+emits; a non-literal one (a variable, a concatenation, an `Impossible` reference) fails. The lone
+exception is a `_Invariants`'s namespace parameter, a template prefix (see Bundles / Template).
 
 ### Unresolved
 
