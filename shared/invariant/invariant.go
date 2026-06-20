@@ -666,7 +666,6 @@ func Recorder_Register_Packages_For_Analysis(recorder *Recorder, directories ...
 	var files []*ast.File
 	module_path := ""
 	module_root := ""
-	primary_directory := ""
 	for _, directory := range recorder.Packages_To_Analyze {
 		// A filepath.Abs here would reach the OS for the working directory, which a pure
 		// package must not do; Working_Directory is injected so this stays pure.
@@ -675,9 +674,6 @@ func Recorder_Register_Packages_For_Analysis(recorder *Recorder, directories ...
 			absolute = filepath.Join(recorder.Working_Directory, absolute)
 		}
 		absolute = filepath.Clean(absolute)
-		if primary_directory == "" {
-			primary_directory = absolute
-		}
 		if module_path == "" {
 			module_path, module_root = recorder_module(recorder, absolute)
 		}
@@ -689,14 +685,13 @@ func Recorder_Register_Packages_For_Analysis(recorder *Recorder, directories ...
 		files = append(files, parsed...)
 	}
 	index := &bundle_index{
-		File_System:       recorder.File_System,
-		File_Set:          file_set,
-		Module_Path:       module_path,
-		Module_Root:       module_root,
-		Sugar_Package:     recorder.Sugar_Package,
-		Workspace_Modules: recorder_workspace_modules(recorder, primary_directory),
-		Same_Set:          ast_index_functions(files),
-		Loaded:            map[string]map[string]indexed_function{},
+		File_System:   recorder.File_System,
+		File_Set:      file_set,
+		Module_Path:   module_path,
+		Module_Root:   module_root,
+		Sugar_Package: recorder.Sugar_Package,
+		Same_Set:      ast_index_functions(files),
+		Loaded:        map[string]map[string]indexed_function{},
 	}
 	reg := &registration{Seen_Prefix: map[string]bool{}}
 	for _, file := range files {
@@ -751,95 +746,6 @@ func parse_module_path(source []byte) (module_path string) {
 		return fields[1]
 	}
 	return ""
-}
-
-// Walks up from start_directory for a go.work, returning its absolute path, or ""
-// when none is found within module_search_depth_max — the workspace whose member
-// modules cross-package bundle resolution searches.
-func recorder_workspace_file(recorder *Recorder, start_directory string) (workspace_file string) {
-	directory := start_directory
-	for range module_search_depth_max {
-		base := strings.TrimPrefix(directory, "/")
-		if recorder_has_entry(recorder, path.Join(base, "go.work")) {
-			return path.Join(directory, "go.work")
-		}
-		parent := path.Dir(directory)
-		if parent == directory {
-			break
-		}
-		directory = parent
-	}
-	return ""
-}
-
-// Returns the directories named by a go.work's `use` directives — both the single
-// `use ./dir` form and the `use ( ... )` block. A line scan, no golang.org/x/mod
-// dependency; other directives (go, toolchain, godebug, replace) are ignored.
-func parse_workspace_uses(source []byte) (uses []string) {
-	within_block := false
-	for _, raw := range strings.Split(string(source), "\n") {
-		line := raw
-		if comment_offset := strings.Index(line, "//"); comment_offset >= 0 {
-			line = line[:comment_offset]
-		}
-		line = strings.TrimSpace(line)
-		if line == "" {
-			continue
-		}
-		if within_block {
-			if line == ")" {
-				within_block = false
-				continue
-			}
-			uses = append(uses, line)
-			continue
-		}
-		fields := strings.Fields(line)
-		if fields[0] != "use" {
-			continue
-		}
-		if len(fields) >= 2 {
-			if fields[1] == "(" {
-				within_block = true
-				continue
-			}
-		}
-		uses = append(uses, fields[1:]...)
-	}
-	return uses
-}
-
-// Resolves the go.work above start_directory into its member modules: each use
-// directory's go.mod gives a (module path, absolute root) pair. nil when there is
-// no go.work, so a non-workspace build keeps resolving same-module bundles only.
-func recorder_workspace_modules(
-	recorder *Recorder, start_directory string,
-) (modules []workspace_module) {
-	workspace_file := recorder_workspace_file(recorder, start_directory)
-	if workspace_file == "" {
-		return nil
-	}
-	source, read_error := fs.ReadFile(
-		recorder.File_System, strings.TrimPrefix(workspace_file, "/"),
-	)
-	if read_error != nil {
-		return nil
-	}
-	workspace_directory := path.Dir(workspace_file)
-	for _, use := range parse_workspace_uses(source) {
-		root := path.Clean(path.Join(workspace_directory, use))
-		module_file := path.Join(strings.TrimPrefix(root, "/"), "go.mod")
-		module_source, module_error := fs.ReadFile(recorder.File_System, module_file)
-		if module_error != nil {
-			continue
-		}
-		module_path := parse_module_path(module_source)
-		if module_path == "" {
-			continue
-		}
-		modules = append(modules, workspace_module{Path: module_path, Root: root})
-	}
-	return modules
 }
 
 // Input for recorder_parse_directory.
@@ -900,28 +806,19 @@ type indexed_function struct {
 	Is_Sugar    bool
 }
 
-// A workspace_module is one module joined by the go.work workspace: its module
-// path (from its go.mod) and the absolute directory of that go.mod. Used to resolve
-// a *_Invariants bundle that lives in a sibling workspace module.
-type workspace_module struct {
-	Path string
-	Root string
-}
-
 // A bundle_index resolves a *_Invariants bundle call to its declaration. Same_Set
 // holds the analyzed packages' functions by bare name (same-package bundles); a
 // qualified call resolves cross-package within the module via Module_Path /
-// Module_Root, or cross-module to a go.work sibling via Workspace_Modules, lazily
-// parsing and caching each package in Loaded.
+// Module_Root, lazily parsing and caching each package in Loaded. A bundle outside
+// this module is unresolvable.
 type bundle_index struct {
-	File_System       fs.FS
-	File_Set          *token.FileSet
-	Module_Path       string
-	Module_Root       string
-	Sugar_Package     string
-	Workspace_Modules []workspace_module
-	Same_Set          map[string]indexed_function
-	Loaded            map[string]map[string]indexed_function
+	File_System   fs.FS
+	File_Set      *token.FileSet
+	Module_Path   string
+	Module_Root   string
+	Sugar_Package string
+	Same_Set      map[string]indexed_function
+	Loaded        map[string]map[string]indexed_function
 }
 
 // Maps each function name to its declaration and its file's imports, for
@@ -1429,45 +1326,30 @@ func bundle_index_lookup(
 	return cross_package, present
 }
 
-// Resolves import_path to the absolute source directory of the module that owns
-// it: the primary module first, else a go.work sibling. resolved is false for a
-// path in no known module (a truly external dependency). The longest matching
-// module path wins, so a nested module shadows its parent.
+// Resolves import_path to its absolute source directory, treating every import path as relative to
+// the module path declared in go.mod: import_path must be the module path itself or sit under it,
+// and the remainder names the directory under Module_Root. resolved is false for a path outside
+// this module (an external dependency). This is pure string-prefix matching — the module path need
+// not be a URL, so `module local` resolves `local/shared/foo` to <root>/shared/foo all the same.
 func bundle_index_module_root(
 	index *bundle_index, import_path string,
 ) (directory string, resolved bool) {
-	best_path := ""
-	best_root := ""
-	consider := func(module_path string, module_root string) {
-		if module_path == "" {
-			return
-		}
-		if import_path != module_path {
-			if !strings.HasPrefix(import_path, module_path+"/") {
-				return
-			}
-		}
-		if len(module_path) <= len(best_path) {
-			return
-		}
-		best_path = module_path
-		best_root = module_root
-	}
-	consider(index.Module_Path, index.Module_Root)
-	for _, module := range index.Workspace_Modules {
-		consider(module.Path, module.Root)
-	}
-	if best_path == "" {
+	if index.Module_Path == "" {
 		return "", false
 	}
-	return best_root + strings.TrimPrefix(import_path, best_path), true
+	if import_path == index.Module_Path {
+		return index.Module_Root, true
+	}
+	if strings.HasPrefix(import_path, index.Module_Path+"/") {
+		return index.Module_Root + strings.TrimPrefix(import_path, index.Module_Path), true
+	}
+	return "", false
 }
 
 // Lazily parses the package at import_path and returns its functions by name,
 // caching the result. The cache is seeded before parsing so a cyclic import
 // resolves to the empty map rather than looping. Returns an empty map for a path
-// in no known module — the primary module or a go.work sibling (see
-// bundle_index_module_root).
+// outside this module (see bundle_index_module_root).
 func bundle_index_load(
 	index *bundle_index, import_path string,
 ) (functions map[string]indexed_function) {

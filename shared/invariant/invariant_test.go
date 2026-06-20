@@ -993,11 +993,10 @@ Tuple transfer.memo:tuple=(0) [0]
 Tuple transfer.memo:tuple=(1) [1]`), snapshot_registered(recorder))
 }
 
-// A bundle whose package is in neither the analyzed module nor a go.work sibling
-// (here there is no go.work at all) cannot be resolved. Its elements would be
-// enforced at runtime yet seed no coverage, so registration must fail rather than
-// drop them silently: it reports the bundle by site and exits non-zero, and nothing
-// is seeded.
+// A bundle whose package is outside the analyzed module — its import path does not sit under the
+// go.mod module path — cannot be resolved. Its elements would be enforced at runtime yet seed no
+// coverage, so registration must fail rather than drop them silently: it reports the bundle by site
+// and exits non-zero, and nothing is seeded.
 func Test_Register_Fatal_On_Unresolvable_Cross_Module_Bundle(t *testing.T) {
 	const package_b = `package b
 
@@ -1223,66 +1222,6 @@ func check(n int) {
 	}
 	if _, ok := recorder.Events.Load("field:tuple=(0,0)"); ok {
 		t.Error("no axes recognized means no tuple grid should be seeded")
-	}
-}
-
-// Returns a go.work workspace joining modules a and b: module a defines a
-// Pair_Invariants bundle, module b spreads it cross-module. Shared by the
-// cross-workspace resolution tests.
-func workspace_bundle_fixture() (file_system fstest.MapFS) {
-	const package_a = `package a
-
-import invariant "example.com/invariant"
-
-func Pair_Invariants(n int, namespace string) {
-	invariant.Dot_Product(namespace,
-		invariant.Sometimes(n < 0, "lo"),
-		invariant.Sometimes(n > 0, "hi"),
-		invariant.Impossible(invariant.Event_True("lo"), invariant.Event_True("hi")))
-}
-`
-	const package_b = `package b
-
-import (
-	invariant "example.com/invariant"
-	"example.com/a"
-)
-
-func check(n int) {
-	a.Pair_Invariants(n, "field")
-}
-`
-	const go_work = "go 1.25\n\nuse (\n\t./a\n\t./b\n)\n"
-	return fstest.MapFS{
-		"work/go.work":  &fstest.MapFile{Data: []byte(go_work)},
-		"work/a/go.mod": &fstest.MapFile{Data: []byte("module example.com/a\n")},
-		"work/a/a.go":   &fstest.MapFile{Data: []byte(package_a)},
-		"work/b/go.mod": &fstest.MapFile{Data: []byte("module example.com/b\n")},
-		"work/b/b.go":   &fstest.MapFile{Data: []byte(package_b)},
-	}
-}
-
-// Registration resolves a *_Invariants bundle defined in a SIBLING workspace
-// module: a go.work joins modules a and b, b's Dot_Product spreads
-// a.Pair_Invariants, and the bundle is descended via the workspace use-list (no
-// go/packages). The bundle element keys under b's Dot_Product prefix joined to its
-// own message (field␀lo); the bundle's Impossible still carves the (true, true) tuple.
-func Test_Register_Resolves_Cross_Workspace_Module_Bundle(t *testing.T) {
-	recorder := &invariant.Recorder{File_System: workspace_bundle_fixture()}
-	invariant.Recorder_Register_Packages_For_Analysis(recorder, "/work/b")
-
-	if _, ok := recorder.Events.Load(
-		"field" + invariant.Element_Message_Separator + "lo"); !ok {
-		t.Error("expected lo keyed under b's Dot_Product prefix (field␀lo)")
-	}
-	if _, ok := recorder.Events.Load("lo"); ok {
-		t.Error("lo must not be seeded under its bare cross-module message")
-	}
-	if _, ok := recorder.Events.Load("field:tuple=(0,0)"); !ok {
-		t.Error("expected the surviving tuple (0,0) under b's Dot_Product prefix")
-	}
-	if _, ok := recorder.Events.Load("field:tuple=(1,1)"); ok {
-		t.Error("tuple (1,1) carved by the sibling bundle's Impossible; not seeded")
 	}
 }
 

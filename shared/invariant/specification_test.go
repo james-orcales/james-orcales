@@ -558,18 +558,6 @@ func check(n int) {
 	}
 }
 
-// Test_Bundles_Workspace: a bundle in a sibling module joined by a go.work workspace
-// is resolved through the workspace.
-func Test_Bundles_Workspace(t *testing.T) {
-	recorder := &invariant.Recorder{File_System: workspace_bundle_fixture()}
-	invariant.Recorder_Register_Packages_For_Analysis(recorder, "/work/b")
-
-	if _, ok := recorder.Events.Load(
-		"field" + invariant.Element_Message_Separator + "lo"); !ok {
-		t.Error("a bundle in a sibling workspace module must be resolved")
-	}
-}
-
 // Test_Bundles_Callsite: calling one _Invariants at two callsites with distinct namespaces
 // ("a" and "b") yields independent coverage entries — the per-namespace prefix keeps them
 // apart — reusing one namespace is instead a fatal duplicate.
