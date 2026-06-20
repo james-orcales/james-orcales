@@ -85,11 +85,23 @@ func Test_Cluster_Exactly_Once(t *testing.T) {
 	}
 	t.Cleanup(func() {
 		replies := 0
+		batches := 0
+		reads := 0
 		for index := range results {
 			replies += results[index].Replies
+			batches += results[index].Batches_Flushed
+			reads += results[index].Reads_Committed
 		}
 		if replies == 0 {
 			t.Error("expected the cluster to reply to clients across seeds")
+		}
+		if batches == 0 {
+			t.Error("expected the primary to flush a " +
+				"multi-request batch across seeds (§6.2)")
+		}
+		if reads == 0 {
+			t.Error("expected read-only commands to commit " +
+				"through consensus across seeds (§6.3)")
 		}
 	})
 }

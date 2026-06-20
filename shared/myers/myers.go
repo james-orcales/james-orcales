@@ -73,12 +73,12 @@ func differ_assert_only_edits_mutated(d *Differ) (check func()) {
 	before := *d
 	return func() {
 		// Diffing reads the texts and writes only Edits; the inputs must survive intact.
-		invariant.Dot_Product(
-			invariant.Always(before.Old_String == d.Old_String),
-			invariant.Always(before.New_String == d.New_String),
-			invariant.Always(slices.Equal(before.Old, d.Old)),
-			invariant.Always(slices.Equal(before.New, d.New)),
-		)
+		invariant.Always(before.Old_String == d.Old_String,
+			"Old_String unchanged by diffing")
+		invariant.Always(before.New_String == d.New_String,
+			"New_String unchanged by diffing")
+		invariant.Always(slices.Equal(before.Old, d.Old), "Old runes unchanged by diffing")
+		invariant.Always(slices.Equal(before.New, d.New), "New runes unchanged by diffing")
 	}
 }
 
@@ -176,10 +176,12 @@ func Differ_Line_Diff(dfr *Differ) (diff string) {
 		return "-" + strings.ReplaceAll(dfr.Old_String, "\n", "\n-")
 	}
 
-	invariant.Dot_Product(invariant.Sometimes(
-		strings.LastIndexByte(dfr.Old_String, '\n') != len(dfr.Old_String)-1))
-	invariant.Dot_Product(invariant.Sometimes(
-		strings.LastIndexByte(dfr.New_String, '\n') != len(dfr.New_String)-1))
+	invariant.Dot_Product("Differ_Line_Diff.old_trailing_newline", invariant.Sometimes(
+		strings.LastIndexByte(dfr.Old_String, '\n') != len(dfr.Old_String)-1,
+		"old text lacks a trailing newline"))
+	invariant.Dot_Product("Differ_Line_Diff.new_trailing_newline", invariant.Sometimes(
+		strings.LastIndexByte(dfr.New_String, '\n') != len(dfr.New_String)-1,
+		"new text lacks a trailing newline"))
 
 	codes := differ_encode_lines(dfr)
 	d := New(New_Input{Old: codes.Old, New: codes.New})
@@ -217,8 +219,9 @@ func Differ_Diff(d *Differ) (diff string) {
 	// decoded to U+FFFD, so the runes can't reproduce the original bytes (the false
 	// branch, witnessed by the invalid-UTF-8 input).
 	rebuilt := differ_rebuild_string_from_edits(d)
-	invariant.Dot_Product(invariant.Sometimes(
-		(before.Old_String == rebuilt.Old) == (before.New_String == rebuilt.New)))
+	invariant.Dot_Product("Differ_Diff.roundtrip", invariant.Sometimes(
+		(before.Old_String == rebuilt.Old) == (before.New_String == rebuilt.New),
+		"both texts rebuild together"))
 	return d.String()
 }
 
@@ -262,19 +265,21 @@ func Differ_Merge_Shift_Diff_Cleanup(d *Differ) {
 		// The edits rebuild both texts together, save the invalid-UTF-8 case where a
 		// byte decoded to U+FFFD (the false branch).
 		rebuilt := differ_rebuild_string_from_edits(d)
-		invariant.Dot_Product(invariant.Sometimes(
-			(before.Old_String == rebuilt.Old) == (before.New_String == rebuilt.New)))
+		invariant.Dot_Product(
+			"Differ_Merge_Shift_Diff_Cleanup.roundtrip",
+			invariant.Sometimes(
+				(before.Old_String == rebuilt.Old) ==
+					(before.New_String == rebuilt.New),
+				"both texts rebuild together"))
 	}()
 	for is_shifted := true; is_shifted; {
 		if len(d.Edits) < 3 {
 			return
 		}
-		invariant.Dot_Product(
-			invariant.Always(len(d.Old_String) > 0),
-			invariant.Always(len(d.New_String) > 0),
-			invariant.Always(len(d.Old) > 0),
-			invariant.Always(len(d.New) > 0),
-		)
+		invariant.Always(len(d.Old_String) > 0, "cleanup loop sees non-empty Old_String")
+		invariant.Always(len(d.New_String) > 0, "cleanup loop sees non-empty New_String")
+		invariant.Always(len(d.Old) > 0, "cleanup loop sees non-empty Old")
+		invariant.Always(len(d.New) > 0, "cleanup loop sees non-empty New")
 
 		if d.Edits[0].Kind != Edit_Retain {
 			d.Edits = slices.Insert(d.Edits, 0, Edit{Kind: Edit_Retain, Data: nil})
@@ -286,7 +291,7 @@ func Differ_Merge_Shift_Diff_Cleanup(d *Differ) {
 		differ_merge(d)
 
 		// Both ends now carry empty retains (differ_merge padded them), so 3+ edits exist.
-		invariant.Dot_Product(invariant.Always(len(d.Edits) >= 3))
+		invariant.Always(len(d.Edits) >= 3, "padded edits number at least three")
 		if len(d.Edits[0].Data) == 0 {
 			d.Edits = d.Edits[1:]
 		}
@@ -294,14 +299,14 @@ func Differ_Merge_Shift_Diff_Cleanup(d *Differ) {
 			d.Edits = d.Edits[:len(d.Edits)-1]
 		}
 		// After trimming the empty boundary retains, every remaining edit carries data.
-		invariant.Dot_Product(invariant.Always(func() (ok bool) {
+		invariant.Always(func() (ok bool) {
 			for _, edit := range d.Edits {
 				if len(edit.Data) == 0 {
 					return false
 				}
 			}
 			return true
-		}()))
+		}(), "every remaining edit carries data")
 		is_shifted = differ_shift(d)
 	}
 }
@@ -411,7 +416,8 @@ func differ_shift(d *Differ) (is_shifted bool) {
 			continue
 		}
 		// Both neighbours are retains, so an interior edit between them is never a retain.
-		invariant.Dot_Product(invariant.Always(edit.Kind != Edit_Retain))
+		invariant.Always(edit.Kind != Edit_Retain,
+			"interior edit between retains is not a retain")
 		if Runes_Have_Suffix(
 			Runes_Have_Suffix_Input{String: edit.Data, Expect: previous.Data},
 		) {
@@ -446,8 +452,9 @@ func Differ_Optimized_Diff(d *Differ) {
 		// The edits rebuild both texts together, save the invalid-UTF-8 case where a
 		// byte decoded to U+FFFD (the false branch).
 		rebuilt := differ_rebuild_string_from_edits(d)
-		invariant.Dot_Product(invariant.Sometimes(
-			(before.Old_String == rebuilt.Old) == (before.New_String == rebuilt.New)))
+		invariant.Dot_Product("Differ_Optimized_Diff.roundtrip", invariant.Sometimes(
+			(before.Old_String == rebuilt.Old) == (before.New_String == rebuilt.New),
+			"both texts rebuild together"))
 	}()
 
 	old, new := d.Old, d.New
@@ -588,21 +595,24 @@ func Differ_Algorithm_Diff(d *Differ) {
 		// rest.
 		condition := (string(before.Old) == before.Old_String) ==
 			(string(before.New) == before.New_String)
-		invariant.Dot_Product(invariant.Sometimes(condition))
+		invariant.Dot_Product("Differ_Algorithm_Diff.runes_equal_text", invariant.Sometimes(
+			condition, "runes reproduce the text for both sides alike"))
 		if condition {
 			// With the runes equal to the text, the script must replay back to it.
 			rebuilt := differ_rebuild_string_from_edits(d)
-			invariant.Dot_Product(invariant.Always(
+			invariant.Always(
 				(before.Old_String == rebuilt.Old) ==
-					(before.New_String == rebuilt.New)))
+					(before.New_String == rebuilt.New),
+				"script replays back to both texts")
 		}
 	}()
 
 	if len(d.Old) == 0 {
 		if len(d.New) == 0 {
 			// Empty rune slices reach here only on a direct call with empty texts.
-			invariant.Dot_Product(invariant.Always(
-				d.Old_String == "" && d.New_String == ""))
+			invariant.Always(
+				d.Old_String == "" && d.New_String == "",
+				"empty rune slices imply empty texts")
 			return
 		}
 	}
@@ -614,12 +624,12 @@ func Differ_Algorithm_Diff(d *Differ) {
 	}
 	if d.New_String == "" {
 		// Reaching here with both texts empty is handled above, so Old is non-empty.
-		invariant.Dot_Product(invariant.Always(d.Old_String != ""))
+		invariant.Always(d.Old_String != "", "Old_String non-empty when New is empty")
 		d.Edits = append(d.Edits, Edit{Kind: Edit_Delete, Data: d.Old})
 		return
 	}
 	if d.Old_String == "" {
-		invariant.Dot_Product(invariant.Always(d.New_String != ""))
+		invariant.Always(d.New_String != "", "New_String non-empty when Old is empty")
 		d.Edits = append(d.Edits, Edit{Kind: Edit_Insert, Data: d.New})
 		return
 	}
@@ -706,37 +716,32 @@ func differ_forward_step(input differ_forward_step_input) (more bool) {
 
 		// Reaching x never falls below its diagonal k; x > k means a snake (matching run)
 		// extended this node, x == k means the diagonal was first reached here.
-		invariant.Dot_Product(
-			invariant.Always(x >= k),
-			invariant.Sometimes(x > k),
-		)
+		invariant.Always(x >= k, "x stays on or above its diagonal")
+		invariant.Dot_Product("differ_forward_step.snake", invariant.Sometimes(
+			x > k, "a snake extended this node"))
 
 		// Furthest-reaching X is monotonic across depths along each diagonal.
-		invariant.Dot_Product(invariant.Always(
-			tracker[k_offset] >= previous_tracker[k_offset]))
+		invariant.Always(tracker[k_offset] >= previous_tracker[k_offset],
+			"furthest-reaching x is monotonic across depths")
 		if k < depth {
-			invariant.Dot_Product(invariant.Always(
-				x >= previous_tracker[k_offset+1]))
+			invariant.Always(x >= previous_tracker[k_offset+1],
+				"x dominates the upper neighbour's prior reach")
 		}
 		if k > -depth {
-			invariant.Dot_Product(invariant.Always(
-				x >= previous_tracker[k_offset-1]))
+			invariant.Always(x >= previous_tracker[k_offset-1],
+				"x dominates the lower neighbour's prior reach")
 			if is_insert {
 				previous_k := k + 1
 				previous_y := previous_x - previous_k
 				// An insert step advances y by one and leaves x where it was.
-				invariant.Dot_Product(
-					invariant.Always(x == previous_x),
-					invariant.Always(y == previous_y+1),
-				)
+				invariant.Always(x == previous_x, "insert step leaves x unchanged")
+				invariant.Always(y == previous_y+1, "insert step advances y by one")
 			} else {
 				previous_k := k - 1
 				previous_y := previous_x - previous_k
 				// A delete step advances x by one and leaves y where it was.
-				invariant.Dot_Product(
-					invariant.Always(x == previous_x+1),
-					invariant.Always(y == previous_y),
-				)
+				invariant.Always(x == previous_x+1, "delete step advances x by one")
+				invariant.Always(y == previous_y, "delete step leaves y unchanged")
 			}
 		}
 
@@ -829,14 +834,12 @@ func Find_Common_Prefix(input Find_Common_Prefix_Input) (result []rune) {
 	a, b := input.A, input.B
 	defer func() {
 		if len(result) > 0 {
-			invariant.Dot_Product(
-				invariant.Always(Runes_Have_Prefix(Runes_Have_Prefix_Input{
-					String: a, Expect: result,
-				})),
-				invariant.Always(Runes_Have_Prefix(Runes_Have_Prefix_Input{
-					String: b, Expect: result,
-				})),
-			)
+			invariant.Always(Runes_Have_Prefix(Runes_Have_Prefix_Input{
+				String: a, Expect: result,
+			}), "result is a prefix of A")
+			invariant.Always(Runes_Have_Prefix(Runes_Have_Prefix_Input{
+				String: b, Expect: result,
+			}), "result is a prefix of B")
 		}
 	}()
 	if len(a) == 0 {
@@ -867,14 +870,12 @@ func Find_Common_Suffix(input Find_Common_Suffix_Input) (result []rune) {
 	a, b := input.A, input.B
 	defer func() {
 		if len(result) > 0 {
-			invariant.Dot_Product(
-				invariant.Always(Runes_Have_Suffix(Runes_Have_Suffix_Input{
-					String: a, Expect: result,
-				})),
-				invariant.Always(Runes_Have_Suffix(Runes_Have_Suffix_Input{
-					String: b, Expect: result,
-				})),
-			)
+			invariant.Always(Runes_Have_Suffix(Runes_Have_Suffix_Input{
+				String: a, Expect: result,
+			}), "result is a suffix of A")
+			invariant.Always(Runes_Have_Suffix(Runes_Have_Suffix_Input{
+				String: b, Expect: result,
+			}), "result is a suffix of B")
 		}
 	}()
 	la, lb := len(a), len(b)

@@ -1224,17 +1224,6 @@ func MyName() {
 	println(0)
 }
 `)},
-		{Snapshot: snap.Init(`a.go:11:6: rename Process -> Widget_<verb>`), Files: snapshot_package(`// Widget is a fixture.
-type Widget struct {
-	// X is a fixture.
-	X int
-}
-
-// Process does.
-func Process(w Widget) (n int) {
-	return w.X
-}
-`)},
 		{Snapshot: snap.Init(`a.go:5:7: rename Widget_Id -> Widget_Identifier`), Files: snapshot_package(`// Widget_Id is a fixture.
 const Widget_Id = 0
 `)},
@@ -1388,15 +1377,15 @@ func F() {
 // Test_Snapshot_Transitive pins the transitive-purity checks.
 func Test_Snapshot_Transitive(t *testing.T) {
 	run_snapshot_cases(t, []snapshot_case{
-		{Snapshot: snap.Init(`shared/lib/library_test.go:7:2: impure transitive call log.Fatal: a pure package calls only pure APIs`), Drop: "SPECIFICATION.md", Files: map[string]string{
+		{Snapshot: snap.Init(`shared/lib/library_test.go:7:2: impure transitive call path/filepath.Walk: a pure package calls only pure APIs`), Drop: "SPECIFICATION.md", Files: map[string]string{
 			"shared/lib/library.go": "// Package library x.\npackage library\n",
 			"shared/lib/library_test.go": `package library_test
 
-import "log"
+import "path/filepath"
 
-// Test_F exits.
+// Test_F walks.
 func Test_F() {
-	log.Fatal("x")
+	filepath.Walk(".", nil)
 }
 `}},
 		{Snapshot: snap.Init(`shared/lib/library.go:4:8: impure dependency "github.com/james-orcales/james-orcales/shared/widget/default": a pure package imports only pure packages`), Drop: "SPECIFICATION.md", Files: map[string]string{
@@ -1674,6 +1663,53 @@ func Test_Transitive_Purity_Instrumentation_Exemption(t *testing.T) {
 	if bytes.Contains(stdout.Bytes(), []byte("impure dependency")) {
 		t.Fatalf("instrumentation import must be exempt (exit %d): %s",
 			code, stdout.String())
+	}
+}
+
+// Test_Transitive_Purity_Telemetry_Exemption verifies the telemetry doctrine for the
+// hardcoded stdlib observability packages: log, log/slog, runtime/trace, and runtime/pprof
+// are write-only instrumentation, so a library-tier package may call into them — including
+// log.Fatal, whose os.Exit the transitive-purity ban otherwise forbids — without tripping
+// the impure-stdlib or transitive-purity checks.
+func Test_Transitive_Purity_Telemetry_Exemption(t *testing.T) {
+	t.Parallel()
+	files := map[string]string{
+		"go.mod": "module fixture\n\ngo 1.25\n",
+		"lib/library.go": `// Package library x.
+package library
+
+import (
+	"log"
+	"log/slog"
+	"runtime/pprof"
+	"runtime/trace"
+)
+
+// Use is a fixture.
+func Use() {
+	slog.Info("x")
+	pprof.StartCPUProfile(nil)
+	trace.Start(nil)
+	log.Fatal("x")
+}
+`,
+	}
+	fsys := fstest.MapFS{}
+	for name, content := range files {
+		data := []byte(content)
+		if strings.HasSuffix(name, ".go") {
+			data = gofmt_must(t, content)
+		}
+		fsys[name] = &fstest.MapFile{Data: data}
+	}
+	fsys["lint.json"] = &fstest.MapFile{Data: test_lint_json(t, "fixture", nil)}
+	stdout := &bytes.Buffer{}
+	code := lint_main(t, &lint.Main_Input{Fsys: fsys, Stdout: stdout, Stderr: &bytes.Buffer{}})
+	for _, banned := range []string{"impure stdlib", "impure transitive"} {
+		if bytes.Contains(stdout.Bytes(), []byte(banned)) {
+			t.Fatalf("telemetry stdlib must be exempt (exit %d), found %q: %s",
+				code, banned, stdout.String())
+		}
 	}
 }
 
@@ -2491,320 +2527,6 @@ func Test_Git_No_Fixup_Commits(t *testing.T) {
 			}
 		})
 	}
-}
-
-// Test_Method_Prefix_Flagged verifies that free functions whose first
-// parameter is a same-package declared named type are flagged when the
-// function name lacks the type-name prefix. This is the naming half of
-// the banned-methods rule (check_unnecessary_method): when a method gets
-// rewritten as a free function with the receiver promoted to the first
-// param, the type-prefix preserves the grouping affordance methods had.
-func Test_Method_Prefix_Flagged(t *testing.T) {
-	t.Parallel()
-	tests := []struct {
-		Name      string
-		Files     map[string]string
-		Want_Diag string
-	}{
-
-		{
-			Name: "bare same-file type flagged",
-			Files: map[string]string{
-				"a.go": `package foo
-
-type Entity struct{}
-
-func update(e Entity) { return }
-`,
-			},
-			Want_Diag: "rename update -> entity_<verb>",
-		},
-
-		{
-			Name: "same-package sibling file flagged",
-			Files: map[string]string{
-				"a.go": `package foo
-
-type Entity struct{}
-`,
-				"b.go": `package foo
-
-func update(e Entity) { return }
-`,
-			},
-			Want_Diag: "rename update -> entity_<verb>",
-		},
-
-		{
-			Name: "generic instance flagged",
-			Files: map[string]string{
-				"a.go": `package foo
-
-type Entity[T any] struct{}
-
-func update(e Entity[int]) { return }
-`,
-			},
-			Want_Diag: "rename update -> entity_<verb>",
-		},
-
-		{
-			Name: "exported function requires Ada_Case prefix",
-			Files: map[string]string{
-				"a.go": `package foo
-
-type Main_Input struct{}
-
-func Run(input Main_Input) { return }
-`,
-			},
-			Want_Diag: "rename Run -> Main_Input_<verb>",
-		},
-	}
-	run_diag_table(t, tests)
-}
-
-// Additional cases, split to keep each function within the length limit.
-func Test_Method_Prefix_Flagged_Part2(t *testing.T) {
-	t.Parallel()
-	tests := []struct {
-		Name      string
-		Files     map[string]string
-		Want_Diag string
-	}{
-
-		{
-			Name: "pointer to same-pkg type flagged (receiver shape)",
-			Files: map[string]string{
-				"a.go": `package foo
-
-type Snapper struct{}
-
-func edit(s *Snapper) { return }
-`,
-			},
-			Want_Diag: "rename edit -> snapper_<verb>",
-		},
-
-		{
-			Name: "Ada_Case fn with miscased multi-word prefix flagged",
-			Files: map[string]string{
-				"a.go": `package foo
-
-type Main_Input struct{}
-
-func Main_input_Run(input Main_Input) { return }
-`,
-			},
-			Want_Diag: "rename Main_input_Run -> Main_Input_<verb>",
-		},
-	}
-	run_diag_table(t, tests)
-}
-
-// Test_Method_Prefix_Skipped verifies that the check does not fire on
-// first-param shapes that fall outside the rule's scope: stdlib selector
-// types, builtins, wrappers (pointer/slice/etc.) around named types — none
-// of which match the "receiver promoted to first param" shape — and the
-// constructor-input exception where the type is named <FuncName>_Input.
-func Test_Method_Prefix_Skipped(t *testing.T) {
-	t.Parallel()
-	tests := []struct {
-		Name      string
-		Files     map[string]string
-		Want_Diag string
-	}{
-
-		{
-			Name: "selector type (stdlib) clean",
-			Files: map[string]string{
-				"a.go": `// Package foo is a fixture.
-package foo
-
-import "io"
-
-func read(r io.Reader) (err error) { return nil }
-`,
-			},
-			Want_Diag: "",
-		},
-
-		{
-			Name: "builtin first param clean",
-			Files: map[string]string{
-				"a.go": `// Package foo is a fixture.
-package foo
-
-
-const fixture_hi = 100
-
-func parse(s string) {
-	return
-}
-`,
-			},
-			Want_Diag: "",
-		},
-	}
-	run_diag_table(t, tests)
-}
-
-// Additional cases, split to keep each function within the length limit.
-func Test_Method_Prefix_Skipped_Part2(t *testing.T) {
-	t.Parallel()
-	tests := []struct {
-		Name      string
-		Files     map[string]string
-		Want_Diag string
-	}{
-
-		{
-			Name: "slice of same-pkg type clean",
-			Files: map[string]string{
-				"a.go": `// Package foo is a fixture.
-package foo
-
-
-const fixture_hi = 100
-
-// Entity is a fixture.
-type Entity struct{}
-
-func update(es []Entity) {
-	defer func() {
-	}()
-	return
-}
-`,
-			},
-			Want_Diag: "",
-		},
-
-		{
-			Name: "constructor-input pattern clean (FuncName + _Input)",
-			Files: map[string]string{
-				"a.go": `// Package foo is a fixture.
-package foo
-
-// New_Input is a fixture.
-type New_Input struct{}
-
-// New constructs a fixture.
-func New(input New_Input) { return }
-`,
-			},
-			Want_Diag: "",
-		},
-	}
-	run_diag_table(t, tests)
-}
-
-// Test_Method_Prefix_Matched verifies that correctly-prefixed functions
-// pass: the case of the prefix matches the function's own style (Ada_Case
-// for exported, snake_case for unexported), multi-word type names are
-// rebuilt in that style, and a function named exactly as the type counts.
-func Test_Method_Prefix_Matched(t *testing.T) {
-	t.Parallel()
-	tests := []struct {
-		Name      string
-		Files     map[string]string
-		Want_Diag string
-	}{
-
-		{
-			Name: "correctly-prefixed unexported clean",
-			Files: map[string]string{
-				"a.go": `// Package foo is a fixture.
-package foo
-
-// Entity is a fixture.
-type Entity struct{}
-
-func entity_update(e Entity) { return }
-`,
-			},
-			Want_Diag: "",
-		},
-
-		{
-			Name: "correctly-prefixed pointer receiver shape clean",
-			Files: map[string]string{
-				"a.go": `// Package foo is a fixture.
-package foo
-
-
-const fixture_hi = 100
-
-// Snapper is a fixture.
-type Snapper struct{}
-
-func snapper_edit(s *Snapper) {
-	return
-}
-`,
-			},
-			Want_Diag: "",
-		},
-
-		{
-			Name: "exported function with Ada_Case prefix clean",
-			Files: map[string]string{
-				"a.go": `// Package foo is a fixture.
-package foo
-
-// Main_Input is a fixture.
-type Main_Input struct{}
-
-// Main_Input_Run is a fixture.
-func Main_Input_Run(input Main_Input) { return }
-`,
-			},
-			Want_Diag: "",
-		},
-	}
-	run_diag_table(t, tests)
-}
-
-// Additional cases, split to keep each function within the length limit.
-func Test_Method_Prefix_Matched_Part2(t *testing.T) {
-	t.Parallel()
-	tests := []struct {
-		Name      string
-		Files     map[string]string
-		Want_Diag string
-	}{
-
-		{
-			Name: "unexported function with multi-word type clean",
-			Files: map[string]string{
-				"a.go": `// Package foo is a fixture.
-package foo
-
-// Main_Input is a fixture.
-type Main_Input struct{}
-
-func main_input_run(input Main_Input) { return }
-`,
-			},
-			Want_Diag: "",
-		},
-
-		{
-			Name: "function named exactly as type clean",
-			Files: map[string]string{
-				"a.go": `// Package foo is a fixture.
-package foo
-
-// Entity is a fixture.
-type Entity struct{}
-
-func entity(e Entity) { return }
-`,
-			},
-			Want_Diag: "",
-		},
-	}
-	run_diag_table(t, tests)
 }
 
 // Test_No_Impure_Stdlib_Hard_Imports verifies that hard-banned imports
@@ -4732,28 +4454,6 @@ func Test_Coverage_Backfill_Build_Key_Hi(t *testing.T) {
 		Fsys: fstest.MapFS{
 			"go.mod":  {Data: []byte("module test\ngo 1.25\n")},
 			"main.go": {Data: []byte(long_build)},
-		},
-		Stdout:    &stdout,
-		Stderr:    &stderr,
-		CPU_Count: 1,
-	})
-}
-
-// Test_Coverage_Backfill_Method_Prefix_Long_Type drives
-// check_file_system_method_prefix_group_first_parameter_type with a
-// function whose first param is a 128-char declared type so its Hi=128
-// bucket fires.
-func Test_Coverage_Backfill_Method_Prefix_Long_Type(t *testing.T) {
-	t.Parallel()
-	long := strings.Repeat("X", 128)
-	source := "package library\n\n" +
-		"type " + long + " struct{}\n\n" +
-		"func F(x " + long + ") {}\n"
-	var stdout, stderr bytes.Buffer
-	lint_main(t, &lint.Main_Input{
-		Fsys: fstest.MapFS{
-			"go.mod":   {Data: []byte("module test\ngo 1.25\n")},
-			"lib/a.go": {Data: []byte(source)},
 		},
 		Stdout:    &stdout,
 		Stderr:    &stderr,

@@ -58,9 +58,10 @@ func main() {
 		os.Exit(exit_usage)
 	}
 	// One bootstrap, in order: install direnv (everything downstream is driven by
-	// it), sync the dotfiles, install fonts and Neovim, then the toolchain builds
-	// (fzf, rust, fish, jj, ripgrep, fd) and finally Ghostty — the one network
-	// download — last, so a cheaper earlier failure surfaces before heavy work.
+	// it), sync the dotfiles, install fonts and Neovim, then the Go-toolchain builds
+	// (fzf and this repo's own commands — maddox, m2p, sloc), the cargo builds (rust,
+	// fish, jj, ripgrep, fd), and finally Ghostty — the one network download — last,
+	// so a cheaper earlier failure surfaces before heavy work.
 	os.Exit(setup.Bootstrap(&setup.Bootstrap_Input{
 		Stdout: os.Stdout,
 		Steps: []setup.Step{
@@ -69,6 +70,9 @@ func main() {
 			{Name: "fonts", Run: fonts_step(home)},
 			{Name: "neovim", Run: neovim_step(home)},
 			{Name: "fzf", Run: fzf_step(home)},
+			{Name: "maddox", Run: maddox_step(home)},
+			{Name: "m2p", Run: m2p_step(home)},
+			{Name: "sloc", Run: sloc_step(home)},
 			{Name: "rust", Run: rust_step(home)},
 			{Name: "fish", Run: fish_step(home)},
 			{Name: "jj", Run: jj_step(home)},
@@ -164,6 +168,53 @@ func fzf_step(home string) (run func() (status_code int)) {
 			Fzf_Directory:    filepath.Join(repository, "third_party", "fzf"),
 			Binary_Directory: filepath.Join(repository, "home", ".local", "bin"),
 			Shell:            sh.Init_Default_Shell(),
+		})
+	}
+}
+
+// Returns the bootstrap step that builds this repository's maddox command into
+// home/.local/bin with the Go toolchain. maddox is one of this repo's own tools,
+// so — unlike the vendored builds — its only idempotency check is whether maddox
+// already resolves on PATH; an absent one is rebuilt.
+func maddox_step(home string) (run func() (status_code int)) {
+	repository := filepath.Join(home, repository_subpath)
+	return func() (status_code int) {
+		return setup.Install_Command(&setup.Install_Command_Input{
+			Package_Directory: filepath.Join(repository, "maddox"),
+			Binary_Directory:  filepath.Join(repository, "home", ".local", "bin"),
+			Binary_Name:       "maddox",
+			Shell:             sh.Init_Default_Shell(),
+		})
+	}
+}
+
+// Returns the bootstrap step that builds this repository's markdown_to_pdf command
+// into home/.local/bin as m2p — the name it is invoked by, which is why the package
+// directory and the binary name differ. Its only idempotency check is whether m2p
+// already resolves on PATH.
+func m2p_step(home string) (run func() (status_code int)) {
+	repository := filepath.Join(home, repository_subpath)
+	return func() (status_code int) {
+		return setup.Install_Command(&setup.Install_Command_Input{
+			Package_Directory: filepath.Join(repository, "markdown_to_pdf"),
+			Binary_Directory:  filepath.Join(repository, "home", ".local", "bin"),
+			Binary_Name:       "m2p",
+			Shell:             sh.Init_Default_Shell(),
+		})
+	}
+}
+
+// Returns the bootstrap step that builds this repository's sloc command into
+// home/.local/bin with the Go toolchain. Its only idempotency check is whether sloc
+// already resolves on PATH.
+func sloc_step(home string) (run func() (status_code int)) {
+	repository := filepath.Join(home, repository_subpath)
+	return func() (status_code int) {
+		return setup.Install_Command(&setup.Install_Command_Input{
+			Package_Directory: filepath.Join(repository, "sloc"),
+			Binary_Directory:  filepath.Join(repository, "home", ".local", "bin"),
+			Binary_Name:       "sloc",
+			Shell:             sh.Init_Default_Shell(),
 		})
 	}
 }

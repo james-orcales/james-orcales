@@ -193,6 +193,14 @@ type simulation_result struct {
 	// Reconfigure_Over_Recovery counts the ticks where a replica was transitioning between
 	// epochs while another was recovering — the §7.2 overlap of a reconfiguration and recovery.
 	Reconfigure_Over_Recovery int
+	// Batches_Flushed counts the Prepares carrying more than one entry, witnessing that a busy
+	// primary actually batched several requests into one round (§6.2) rather than every Prepare
+	// being a batch of one.
+	Batches_Flushed int
+	// Reads_Committed counts the read-only commands that committed, witnessing that reads
+	// actually ran through consensus (§6.3, TigerBeetle's reads-through-consensus) rather than
+	// the workload being writes only.
+	Reads_Committed int
 }
 
 // Scheduled_message is a message scheduled for delivery at a virtual moment.
@@ -275,6 +283,11 @@ const sim_checkpoint_interval = 4
 // How many ops of suffix each replica retains past a checkpoint; small, so a behind replica often
 // needs a prefix a peer has already garbage-collected, exercising the gap response.
 const sim_log_retain = 4
+
+// The most ops a busy primary batches into one Prepare (§6.2). Above one, so a primary loaded by
+// the clients' concurrent requests collects several into a batch, exercising the multi-entry
+// Prepare and the per-op acknowledgement of a batch.
+const sim_batch_max = 3
 
 // Identifies one client request for the exactly-once map.
 type outcome_key struct {
@@ -398,11 +411,13 @@ func simulator_allocate(state *simulator, cluster_count int) {
 		state.Replicas[index] = vsr.New_Replica(&vsr.New_Replica_Input{
 			Identifier:          vsr.Replica_Identifier(index),
 			Configuration:       configuration,
+			Active_Count:        active_count_for(len(configuration)),
 			Heartbeat:           10 * time.Millisecond,
 			Timeout:             jitter * time.Millisecond,
 			State_Machine:       simulator_state_machine(state, index),
 			Checkpoint_Interval: sim_checkpoint_interval,
 			Log_Retain:          sim_log_retain,
+			Batch_Max:           sim_batch_max,
 			Now:                 state.Clock.Now_Monotonic(),
 		})
 		state.Previous_Status[index] = state.Replicas[index].Status
@@ -442,6 +457,17 @@ func simulator_state_machine(state *simulator, index int) (machine vsr.State_Mac
 	machine = vsr.State_Machine{
 		Execute: func(command []byte, prediction []byte) (result []byte) {
 			simulator_observe_execution(state, index, command)
+			if command_is_read(command) {
+				// A read returns the current application state without mutating it.
+				// It still ran through the log and committed like any op (§6.3
+				// reads-through-consensus, TigerBeetle's design); the result
+				// reflects the accumulator at this op, which is identical on every
+				// replica that executed the same committed prefix.
+				result = uint64_to_bytes(state.Accumulator[index])
+				state.Executed[index][string(command)] = true
+				state.Executed_Result[index][string(command)] = result
+				return result
+			}
 			state.Accumulator[index] = accumulator_fold(&accumulator_fold_input{
 				Previous:   state.Accumulator[index],
 				Command:    command,
@@ -598,6 +624,7 @@ func simulator_inject_reconfiguration(state *simulator, tick_index int, now time
 		Command: []byte(fmt.Sprintf(
 			"reconfigure-%d", state.Admin.Request_Number)),
 		New_Configuration: target,
+		New_Active_Count:  active_count_for(len(target)),
 	}}, now)
 }
 
@@ -789,8 +816,7 @@ func simulator_tick_clients(state *simulator, now time.Moment) {
 		this.Request_Number++
 		this.Unanswered = true
 		this.Request_Moment = now
-		this.Request_Command = []byte(fmt.Sprintf(
-			"client-%d-req-%d", this.Identifier, this.Request_Number))
+		this.Request_Command = client_command(this.Identifier, this.Request_Number)
 		// The request carries the simulator's current epoch — a client that has learned the
 		// latest configuration out of band (§7.4) — so the primary accepts it rather than
 		// redirecting it as stale.
@@ -806,10 +832,29 @@ func simulator_tick_clients(state *simulator, now time.Moment) {
 	}
 }
 
-// The command a recovering client re-sends: it remembers its last command text deterministically
-// from its identifier and request-number, the only state a §4.5-recovering client keeps.
+// The command for a client's request-number, a deterministic function of (identifier, number) so a
+// §4.5-recovering client that kept only its number rebuilds the identical command — read or write
+// alike. Every third request is a read ("read-" prefix), so the cluster runs a read/write mix; a
+// read is an ordinary command the state machine answers through consensus, TigerBeetle's design (it
+// has no lease fast-read path), so the core treats it no differently from a write.
+func client_command(identifier vsr.Client_Identifier, number vsr.Request_Number) (command []byte) {
+	if number%3 == 0 {
+		return []byte(fmt.Sprintf("read-client-%d-req-%d", identifier, number))
+	}
+	return []byte(fmt.Sprintf("client-%d-req-%d", identifier, number))
+}
+
+// The command a recovering client re-sends: it rebuilds the command deterministically from its
+// identifier and request-number, the only state a §4.5-recovering client keeps.
 func client_last_command(this *client) (command []byte) {
-	return []byte(fmt.Sprintf("client-%d-req-%d", this.Identifier, this.Request_Number))
+	return client_command(this.Identifier, this.Request_Number)
+}
+
+// Reports whether a command is a read (§6.3): the state machine answers it from current state
+// without mutating it. Reads run through consensus as ordinary ops, so this is only the
+// application's own interpretation, never a protocol distinction.
+func command_is_read(command []byte) (yes bool) {
+	return len(command) >= 5 && string(command[:5]) == "read-"
 }
 
 // Re-sends a client's outstanding request to every active replica, so a retry after a view change
@@ -1004,6 +1049,20 @@ func simulator_advance_reference(state *simulator) {
 			state.Reference.Accumulator_Of_Commit[op] = state.Reference.Accumulator
 			continue
 		}
+		// A read (§6.3, reads-through-consensus) returns the current state without folding
+		// it, so the accumulator is unchanged at this op and the canonical result is the
+		// state the executing replicas saw. Counted so a Sometimes-style cleanup confirms
+		// reads actually ran.
+		if command_is_read(entry.Command) {
+			result := uint64_to_bytes(state.Reference.Accumulator)
+			state.Reference.Result_Of_Op[op] = result
+			state.Reference.Accumulator_Of_Commit[op] = state.Reference.Accumulator
+			key := outcome_key{Client: entry.Client, Request: entry.Request_Number}
+			state.Reference.Request_Of_Op[op] = key
+			simulator_record_outcome(state, key, result)
+			state.Result.Reads_Committed++
+			continue
+		}
 		// The committed entry's prediction is identical on every replica (log agreement
 		// plus the verbatim-copy invariant), so applying it here reproduces the value every
 		// replica's Execute saw — the linearizability ground truth for a §4.4 op.
@@ -1057,6 +1116,12 @@ func simulator_committed_entry(state *simulator, op vsr.Op) (entry vsr.Log_Entry
 // core wrongly running a committed op more than once. The (client, request) result map is fed from
 // replies and the reference, which carry reliable keys; execution feeds only this op-level check.
 func simulator_observe_execution(state *simulator, index int, command []byte) {
+	// A standby never runs the service (§6.1): if one ever makes an Execute up-call, the role
+	// split has leaked. This is the headline standby safety property.
+	if is_standby(&state.Replicas[index]) {
+		state.T.Fatalf("seed %d: standby replica %d executed command %q",
+			state.Seed, index, command)
+	}
 	if state.Executed[index][string(command)] {
 		state.T.Fatalf("seed %d: replica %d executed command %q twice",
 			state.Seed, index, command)
@@ -1107,6 +1172,15 @@ func simulator_send(state *simulator, messages []vsr.Message, now time.Moment) {
 		if message.Kind == vsr.Message_Kind_Predict_Request {
 			// Count the pre-step round even when the network later drops the request.
 			state.Result.Pre_Step_Rounds++
+		}
+		if message.Kind == vsr.Message_Kind_Prepare {
+			// A Prepare carrying more than one entry is a flushed batch (§6.2): the
+			// primary collected several requests into one round. Count it even if later
+			// dropped; the per-recipient copies overcount the fan-out, but the axis
+			// only witnesses that batching happened at all.
+			if len(message.Entries) > 1 {
+				state.Result.Batches_Flushed++
+			}
 		}
 		if message.Kind == vsr.Message_Kind_New_State {
 			// A New_State carrying a checkpoint is the §5.2 gap response: the
@@ -1203,6 +1277,12 @@ func simulator_check_accumulator(state *simulator) {
 			continue // A dormant or shut-down replica is out of play.
 		}
 		replica := &state.Replicas[index]
+		// A standby never executes (§6.1): it maintains no application state, so its
+		// accumulator stays zero while its commit advances. The accumulator oracle is for
+		// active replicas.
+		if is_standby(replica) {
+			continue
+		}
 		// A recovering replica's accumulator is mid-restore (its volatile state was lost
 		// and the rejoin has not completed), so it is not yet meaningful to compare.
 		if replica.Status == vsr.Status_Recovery {
@@ -1257,23 +1337,42 @@ func simulator_check_result_agreement(state *simulator) {
 // recovery completions detected against its previous status.
 func simulator_record_replica_coverage(state *simulator, index int) {
 	replica := &state.Replicas[index]
-	invariant.Dot_Product(invariant.Sometimes(replica.Status == vsr.Status_Normal))
-	invariant.Dot_Product(invariant.Sometimes(replica.Status == vsr.Status_View_Change))
-	invariant.Dot_Product(invariant.Sometimes(replica.Status == vsr.Status_Recovery))
+	invariant.Dot_Product("sim.replica.status_normal",
+		invariant.Sometimes(replica.Status == vsr.Status_Normal, "replica is normal"))
+	invariant.Dot_Product("sim.replica.status_view_change",
+		invariant.Sometimes(
+			replica.Status == vsr.Status_View_Change,
+			"replica is view-changing"))
+	invariant.Dot_Product("sim.replica.status_recovery",
+		invariant.Sometimes(replica.Status == vsr.Status_Recovery, "replica is recovering"))
 	// The §7 reconfiguration statuses must be witnessed across the sweep: a replica mid epoch
 	// handoff (transitioning) and a replaced replica that has shut down.
-	invariant.Dot_Product(invariant.Sometimes(replica.Status == vsr.Status_Transition))
-	invariant.Dot_Product(invariant.Sometimes(replica.Status == vsr.Status_Shutdown))
-	invariant.Dot_Product(invariant.Sometimes(replica.View > 0))
+	invariant.Dot_Product("sim.replica.status_transition",
+		invariant.Sometimes(
+			replica.Status == vsr.Status_Transition,
+			"replica is transitioning"))
+	invariant.Dot_Product("sim.replica.status_shutdown",
+		invariant.Sometimes(replica.Status == vsr.Status_Shutdown, "replica is shut down"))
+	invariant.Dot_Product("sim.replica.view_advanced",
+		invariant.Sometimes(replica.View > 0, "replica view advanced past zero"))
 	// The epoch must sometimes advance past 0, witnessing a reconfiguration ran.
-	invariant.Dot_Product(invariant.Sometimes(replica.Epoch > 0))
+	invariant.Dot_Product("sim.replica.epoch_advanced",
+		invariant.Sometimes(replica.Epoch > 0, "replica epoch advanced past zero"))
 	if replica.Epoch > state.Result.Epoch_Max {
 		state.Result.Epoch_Max = replica.Epoch
 	}
 	// Compaction must actually run: a replica's Log_Start must sometimes advance past zero,
 	// witnessing the log prefix was garbage-collected rather than the cluster idling below the
 	// first checkpoint.
-	invariant.Dot_Product(invariant.Sometimes(replica.Log_Start > 0))
+	invariant.Dot_Product("sim.replica.log_compacted",
+		invariant.Sometimes(replica.Log_Start > 0, "replica log prefix was compacted"))
+	// A standby must sometimes exist and follow — be a non-voting member (§6.1) holding
+	// committed log — so the standby paths (no vote, no execute, follow) are genuinely
+	// exercised rather than every member always being active.
+	invariant.Dot_Product("sim.replica.standby_follows",
+		invariant.Sometimes(
+			is_standby(replica) && replica.Op > 0,
+			"standby exists and holds log"))
 	// A new primary deferring its install while it fetches the selected log is the §5.3 fetch
 	// path running; record it so the Sometimes axis can witness it.
 	if replica.View_Change_Deferred {
@@ -1334,39 +1433,80 @@ func simulator_record_coverage(state *simulator) {
 	// A client must sometimes have a request unanswered and sometimes not, so the request/reply
 	// path is genuinely exercised rather than idling.
 	for index := range state.Clients {
-		invariant.Dot_Product(invariant.Sometimes(state.Clients[index].Unanswered))
+		invariant.Dot_Product("sim.client.unanswered",
+			invariant.Sometimes(
+				state.Clients[index].Unanswered,
+				"client has an unanswered request"))
 	}
+	simulator_record_result_coverage(state)
+}
+
+func simulator_record_result_coverage(state *simulator) {
 	// Both new exactly-once branches must be witnessed across the sweep: a duplicate's cached
 	// reply re-sent, and a client recovering its forgotten request-number. Each reads false on
 	// a run's early ticks and true once the event occurs, covering both outcomes.
-	invariant.Dot_Product(invariant.Sometimes(state.Result.Cached_Replies > 0))
-	invariant.Dot_Product(invariant.Sometimes(state.Result.Client_Recoveries > 0))
+	invariant.Dot_Product("sim.result.cached_replies",
+		invariant.Sometimes(state.Result.Cached_Replies > 0, "a cached reply was re-sent"))
+	invariant.Dot_Product("sim.result.client_recoveries",
+		invariant.Sometimes(
+			state.Result.Client_Recoveries > 0,
+			"a client recovered its request number"))
 	// The §4.4 prediction path must be genuinely exercised: a committed op must sometimes
 	// carry a non-empty predetermined value, and the pre-step variant must sometimes open a
 	// round (it runs only on odd seeds, so a sweep over both parities witnesses both true and
 	// false).
-	invariant.Dot_Product(invariant.Sometimes(state.Result.Predictions_Stamped > 0))
-	invariant.Dot_Product(invariant.Sometimes(state.Result.Pre_Step_Rounds > 0))
+	invariant.Dot_Product("sim.result.predictions_stamped",
+		invariant.Sometimes(
+			state.Result.Predictions_Stamped > 0,
+			"a committed op carried a prediction"))
+	invariant.Dot_Product("sim.result.pre_step_rounds",
+		invariant.Sometimes(
+			state.Result.Pre_Step_Rounds > 0,
+			"a pre-step prediction round opened"))
 	// The §5.1/§5.2 checkpoint paths must genuinely run across the sweep: the gap response
 	// must sometimes ship a checkpoint to a requester behind a GC'd prefix, and a crash must
 	// sometimes recover warm from a surviving checkpoint.
-	invariant.Dot_Product(invariant.Sometimes(state.Result.Checkpoint_Gaps > 0))
-	invariant.Dot_Product(invariant.Sometimes(state.Result.Warm_Recoveries_Started > 0))
+	invariant.Dot_Product("sim.result.checkpoint_gaps",
+		invariant.Sometimes(
+			state.Result.Checkpoint_Gaps > 0,
+			"a gap response shipped a checkpoint"))
+	invariant.Dot_Product("sim.result.warm_recoveries",
+		invariant.Sometimes(
+			state.Result.Warm_Recoveries_Started > 0,
+			"a warm recovery started"))
 	// The §5.3 efficient-view-change paths must run across the sweep: a Do_View_Change must
 	// sometimes carry a bounded suffix shorter than its op (dropping held entries), and the
 	// new primary must sometimes defer its install to fetch the selected log it could not
 	// reconstruct from that suffix alone.
-	invariant.Dot_Product(invariant.Sometimes(state.Result.Do_View_Change_Suffixes > 0))
-	invariant.Dot_Product(invariant.Sometimes(state.Result.View_Change_Fetches > 0))
+	invariant.Dot_Product("sim.result.do_view_change_suffixes",
+		invariant.Sometimes(
+			state.Result.Do_View_Change_Suffixes > 0,
+			"a do-view-change carried a bounded suffix"))
+	invariant.Dot_Product("sim.result.view_change_fetches",
+		invariant.Sometimes(
+			state.Result.View_Change_Fetches > 0,
+			"a new primary deferred to fetch the selected log"))
 	// A reconfiguration must run to completion across the sweep: the epoch advanced and a new
 	// group came up.
-	invariant.Dot_Product(invariant.Sometimes(state.Result.Reconfigurations_Completed > 0))
+	invariant.Dot_Product("sim.result.reconfigurations_completed",
+		invariant.Sometimes(
+			state.Result.Reconfigurations_Completed > 0,
+			"a reconfiguration completed"))
 	// The §7 edge cases must genuinely run across the sweep: a brand-new node restoring a
 	// checkpoint to catch up to the epoch start, a reconfiguration overlapping a view change,
 	// and one overlapping recovery — the concurrent paths reconfiguration must survive.
-	invariant.Dot_Product(invariant.Sometimes(state.Result.Epoch_Checkpoint_Catch_Ups > 0))
-	invariant.Dot_Product(invariant.Sometimes(state.Result.Reconfigure_Over_View_Change > 0))
-	invariant.Dot_Product(invariant.Sometimes(state.Result.Reconfigure_Over_Recovery > 0))
+	invariant.Dot_Product("sim.result.epoch_checkpoint_catch_ups",
+		invariant.Sometimes(
+			state.Result.Epoch_Checkpoint_Catch_Ups > 0,
+			"a new node restored a checkpoint to catch up to the epoch"))
+	invariant.Dot_Product("sim.result.reconfigure_over_view_change",
+		invariant.Sometimes(
+			state.Result.Reconfigure_Over_View_Change > 0,
+			"a reconfiguration overlapped a view change"))
+	invariant.Dot_Product("sim.result.reconfigure_over_recovery",
+		invariant.Sometimes(
+			state.Result.Reconfigure_Over_Recovery > 0,
+			"a reconfiguration overlapped a recovery"))
 }
 
 // The acting primary of the current epoch's highest view — the simulator's stand-in for a client
@@ -1388,9 +1528,7 @@ func simulator_believed_primary(state *simulator) (identifier vsr.Replica_Identi
 		if replica.Epoch != state.Epoch {
 			continue
 		}
-		size := uint64(len(replica.Configuration))
-		primary := replica.Configuration[uint64(replica.View)%size]
-		if replica.Identifier != primary {
+		if replica.Identifier != acting_primary(replica) {
 			continue
 		}
 		newer := !found
@@ -1407,6 +1545,43 @@ func simulator_believed_primary(state *simulator) (identifier vsr.Replica_Identi
 		return identifier
 	}
 	return state.Configuration[0]
+}
+
+// The identifier this replica computes as the primary of its current view: Configuration[View mod
+// Active_Count], mirroring the core's standby-aware leader rule (§6.1), so the simulator's
+// single-primary and believed-primary checks agree with the replicas about who leads. An
+// Active_Count of zero means no standbys, so the whole configuration is active.
+func acting_primary(replica *vsr.Replica) (identifier vsr.Replica_Identifier) {
+	active := uint64(replica.Active_Count)
+	if active == 0 {
+		active = uint64(len(replica.Configuration))
+	}
+	return replica.Configuration[uint64(replica.View)%active]
+}
+
+// The active (voting) replica count for a configuration of the given size. The voting set is fixed
+// at three — f=1, a 2f+1 quorum set — and any members beyond it are non-voting standbys
+// (TigerBeetle's design, see vsr.go replica_quorum). So a three-member configuration is all voting
+// and a five-member one is three voting plus two standbys, and the voting count stays three across
+// the simulator's grow and shrink, keeping the per-handoff quorum well-defined without tracking a
+// separate old voting count.
+func active_count_for(size int) (count uint8) {
+	return 3
+}
+
+// Reports whether a replica is a standby in its current configuration (§6.1): at or beyond the
+// active prefix. Standbys never execute, so the simulator's application-state oracles skip them.
+func is_standby(replica *vsr.Replica) (yes bool) {
+	active := int(replica.Active_Count)
+	if active == 0 {
+		active = len(replica.Configuration)
+	}
+	for index, member := range replica.Configuration {
+		if member == replica.Identifier {
+			return index >= active
+		}
+	}
+	return false
 }
 
 // Builds the identity configuration [0, 1, .., count-1], so a replica's identifier is also its
@@ -1439,9 +1614,7 @@ func simulator_check_single_primary(state *simulator) {
 		if replica.Status != vsr.Status_Normal {
 			continue
 		}
-		size := uint64(len(replica.Configuration))
-		primary := replica.Configuration[uint64(replica.View)%size]
-		if uint64(replica.Identifier) != uint64(primary) {
+		if replica.Identifier != acting_primary(replica) {
 			continue
 		}
 		key := epoch_view{Epoch: replica.Epoch, View: replica.View}

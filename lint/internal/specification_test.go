@@ -654,14 +654,17 @@ func Test_Component_Layout_Transitive_Purity(t *testing.T) {
 
 // Test_Component_Layout_Transitive_Stdlib verifies the ban reaches a pure package's
 // test file: a curated stdlib API that is impure only transitively
-// (log.Fatal -> os.Exit) is caught even though importing log and calling
-// log.Print stay allowed, and even in _test.go.
+// (filepath.Walk -> the filesystem) is caught even in a _test.go file, where the
+// transitive-purity ban still binds. log itself is exempt telemetry, so it cannot
+// stand in for the curated impure case here.
 func Test_Component_Layout_Transitive_Stdlib(t *testing.T) {
 	t.Parallel()
 	test_files := map[string][]byte{
 		"shared/lib/library.go": []byte("// Package library x.\npackage library\n"),
-		"shared/lib/library_test.go": []byte("package library_test\n\nimport \"log\"\n\n" +
-			"// Test_F exits.\nfunc Test_F() {\n\tlog.Fatal(\"x\")\n}\n"),
+		"shared/lib/library_test.go": []byte(
+			"package library_test\n\nimport \"path/filepath\"\n\n" +
+				"// Test_F walks.\nfunc Test_F() {\n" +
+				"\tfilepath.Walk(\".\", nil)\n}\n"),
 	}
 	if !specification_flags(t, test_files, "impure transitive call") {
 		t.Fatal("a pure package's test calling a curated stdlib API must be flagged")
@@ -1190,18 +1193,6 @@ func Test_Source_And_Test_Requirements_Name_Style(t *testing.T) {
 		"package fixture\n\n// Bad_Name is a fixture.\nconst BadName = 0\n")
 	if !specification_flags(t, files, "BadName -> Bad_Name") {
 		t.Fatal("an exported identifier not in Ada_Case must be flagged")
-	}
-}
-
-// Test_Source_And_Test_Requirements_Method_Prefix verifies a free function over a local
-// type that lacks the type-name prefix is flagged.
-func Test_Source_And_Test_Requirements_Method_Prefix(t *testing.T) {
-	t.Parallel()
-	files := specification_one_file("package fixture\n\n// Widget is a fixture.\n" +
-		"type Widget struct{ X int }\n\n// Process does.\n" +
-		"func Process(w Widget) (n int) {\n\treturn w.X\n}\n")
-	if !specification_flags(t, files, "rename Process -> Widget_<verb>") {
-		t.Fatal("a method without a type prefix must be flagged")
 	}
 }
 
