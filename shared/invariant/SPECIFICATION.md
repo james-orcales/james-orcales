@@ -141,13 +141,9 @@ and seeds nothing unless qualified.
 
 ### Cross Package
 
-A `_Invariants` defined in another package of the same module is resolved through the
-module path, so its self-emitted axes' message literals are read.
-
-### Workspace
-
-A `_Invariants` defined in a sibling module joined by a `go.work` workspace is resolved
-through the workspace.
+A `_Invariants` in another package of the same module is resolved through the module path. Import
+paths resolve relative to the `go.mod` module path — a plain prefix match, so a non-URL `module
+local` works too; a `_Invariants` in a module outside this `go.mod` is unresolvable and fatal.
 
 ### Callsite
 
