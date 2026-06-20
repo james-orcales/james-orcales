@@ -755,14 +755,14 @@ Tuple field:tuple=(1,0,0) [1 0 0]`), snapshot_registered(recorder))
 
 // The String_Invariants footprint is hoisted out of its test so the test body stays
 // within the function-length budget; the 8 axes x 9 carves leave 81 of the 2^8 cells.
-const string_invariants = `Sometimes field · Sometimes_Has_Control Sometimes_Has_Control(s)
-Sometimes field · Sometimes_Has_Edge_Whitespace Sometimes_Has_Edge_Whitespace(s)
-Sometimes field · Sometimes_Has_Interior_Whitespace Sometimes_Has_Interior_Whitespace(s)
-Sometimes field · Sometimes_Has_Invalid_UTF8 Sometimes_Has_Invalid_UTF8(s)
-Sometimes field · Sometimes_Has_Line_Break Sometimes_Has_Line_Break(s)
-Sometimes field · Sometimes_Has_Multibyte_Rune Sometimes_Has_Multibyte_Rune(s)
-Sometimes field · Sometimes_Has_Nul Sometimes_Has_Nul(s)
-Sometimes field · empty len(s) == 0
+const string_invariants = `Sometimes field · The value has a NUL byte. string_has_nul(s)
+Sometimes field · The value has a control character. string_has_control(s)
+Sometimes field · The value has a line break. string_has_line_break(s)
+Sometimes field · The value has a multi-byte rune. string_has_multibyte_rune(s)
+Sometimes field · The value has edge whitespace. string_has_edge_whitespace(s)
+Sometimes field · The value has interior whitespace. string_has_interior_whitespace(s)
+Sometimes field · The value has invalid UTF-8. string_has_invalid_utf8(s)
+Sometimes field · The value is empty. len(s) == 0
 Tuple field:tuple=(0,0,0,0,0,0,0,0) [0 0 0 0 0 0 0 0]
 Tuple field:tuple=(0,0,0,0,0,0,1,0) [0 0 0 0 0 0 1 0]
 Tuple field:tuple=(0,0,0,0,0,0,1,1) [0 0 0 0 0 0 1 1]
@@ -846,33 +846,32 @@ Tuple field:tuple=(0,1,1,1,1,1,1,1) [0 1 1 1 1 1 1 1]
 Tuple field:tuple=(1,0,0,0,0,0,0,0) [1 0 0 0 0 0 0 0]`
 
 // Registration descends the String_Invariants bundle — eight Sometimes axes (the empty
-// axis plus seven content axes built from the Sometimes_Has_ helpers) and nine
-// Impossibles. The snapshot pins the footprint: one per-element entry per axis and the 81
-// tuples surviving the carves — empty excludes every content axis (so with empty true
-// only the all-false-content cell stands), and a NUL or a line break is itself a control
-// character.
+// axis plus seven content axes over string-content predicates) and nine Impossibles. The
+// snapshot pins the footprint: one per-element entry per axis and the 81 tuples surviving the
+// carves — empty excludes every content axis (so with empty true only the all-false-content
+// cell stands), and a NUL or a line break is itself a control character.
 func Test_Register_Snapshots_String_Invariants(t *testing.T) {
 	const sugar = `package sugar
 
 func String_Invariants(s string, namespace string) {
 	Dot_Product(namespace,
-		Sometimes(len(s) == 0, "empty"),
-		Sometimes_Has_Edge_Whitespace(s),
-		Sometimes_Has_Interior_Whitespace(s),
-		Sometimes_Has_Invalid_UTF8(s),
-		Sometimes_Has_Nul(s),
-		Sometimes_Has_Multibyte_Rune(s),
-		Sometimes_Has_Control(s),
-		Sometimes_Has_Line_Break(s),
-		Impossible(Event_True("empty"), Event_True("Sometimes_Has_Edge_Whitespace")),
-		Impossible(Event_True("empty"), Event_True("Sometimes_Has_Interior_Whitespace")),
-		Impossible(Event_True("empty"), Event_True("Sometimes_Has_Invalid_UTF8")),
-		Impossible(Event_True("empty"), Event_True("Sometimes_Has_Nul")),
-		Impossible(Event_True("empty"), Event_True("Sometimes_Has_Multibyte_Rune")),
-		Impossible(Event_True("empty"), Event_True("Sometimes_Has_Control")),
-		Impossible(Event_True("empty"), Event_True("Sometimes_Has_Line_Break")),
-		Impossible(Event_True("Sometimes_Has_Nul"), Event_False("Sometimes_Has_Control")),
-		Impossible(Event_True("Sometimes_Has_Line_Break"), Event_False("Sometimes_Has_Control")),
+		Sometimes(len(s) == 0, "The value is empty."),
+		Sometimes(string_has_edge_whitespace(s), "The value has edge whitespace."),
+		Sometimes(string_has_interior_whitespace(s), "The value has interior whitespace."),
+		Sometimes(string_has_invalid_utf8(s), "The value has invalid UTF-8."),
+		Sometimes(string_has_nul(s), "The value has a NUL byte."),
+		Sometimes(string_has_multibyte_rune(s), "The value has a multi-byte rune."),
+		Sometimes(string_has_control(s), "The value has a control character."),
+		Sometimes(string_has_line_break(s), "The value has a line break."),
+		Impossible(Event_True("The value is empty."), Event_True("The value has edge whitespace.")),
+		Impossible(Event_True("The value is empty."), Event_True("The value has interior whitespace.")),
+		Impossible(Event_True("The value is empty."), Event_True("The value has invalid UTF-8.")),
+		Impossible(Event_True("The value is empty."), Event_True("The value has a NUL byte.")),
+		Impossible(Event_True("The value is empty."), Event_True("The value has a multi-byte rune.")),
+		Impossible(Event_True("The value is empty."), Event_True("The value has a control character.")),
+		Impossible(Event_True("The value is empty."), Event_True("The value has a line break.")),
+		Impossible(Event_True("The value has a NUL byte."), Event_False("The value has a control character.")),
+		Impossible(Event_True("The value has a line break."), Event_False("The value has a control character.")),
 	)
 }
 `
@@ -1085,97 +1084,6 @@ func check(n int) {
 	}
 	if _, ok := recorder.Events.Load("field:tuple=(1,1)"); ok {
 		t.Error("tuple (1,1) must be carved by the unqualified Impossible; not seeded")
-	}
-}
-
-// Registration recognizes a dedicated Sometimes_Has_X helper consumed by a Dot_Product as
-// a Sometimes axis, and a bare Always_Has_X / Never_Has_X statement as an eager Always axis
-// (Never_Has_X is Always(!has_X)). These helpers take no message argument: their identity
-// is the helper's own name (the call selector), so the Sometimes_Has_ axis keys under the
-// Dot_Product prefix joined to "Sometimes_Has_Edge_Whitespace", and each bare Always keys
-// by its own selector name; the whole call is the condition text.
-func Test_Register_Recognizes_String_Axis_Helpers(t *testing.T) {
-	const source = `package fixture
-
-func check(s string) {
-	invariant.Always_Has_Control(s)
-	invariant.Never_Has_Line_Break(s)
-	invariant.Dot_Product("field",
-		invariant.Sometimes_Has_Edge_Whitespace(s),
-	)
-}
-`
-	recorder := &invariant.Recorder{
-		File_System: fstest.MapFS{
-			"fixture/check.go": &fstest.MapFile{Data: []byte(source)},
-		},
-	}
-	invariant.Recorder_Register_Packages_For_Analysis(recorder, "/fixture")
-
-	value, found := recorder.Events.Load(
-		"field" + invariant.Element_Message_Separator + "Sometimes_Has_Edge_Whitespace")
-	if !found {
-		t.Fatal("expected a Sometimes entry for Sometimes_Has_Edge_Whitespace")
-	}
-	metadata := value.(*invariant.Assertion_Metadata)
-	if metadata.Kind != invariant.Assertion_Kind_Sometimes {
-		t.Errorf("Kind = %d, want Assertion_Kind_Sometimes", metadata.Kind)
-	}
-	if metadata.Condition != "invariant.Sometimes_Has_Edge_Whitespace(s)" {
-		t.Errorf("Condition = %q", metadata.Condition)
-	}
-	always, found := recorder.Events.Load("Always_Has_Control")
-	if !found {
-		t.Fatal("expected an entry for bare Always_Has_Control by its own name")
-	}
-	if always.(*invariant.Assertion_Metadata).Kind != invariant.Assertion_Kind_Always {
-		t.Error("Always_Has_Control must register as an Always axis")
-	}
-	never, found := recorder.Events.Load("Never_Has_Line_Break")
-	if !found {
-		t.Fatal("expected an entry for bare Never_Has_Line_Break by its own name")
-	}
-	if never.(*invariant.Assertion_Metadata).Kind != invariant.Assertion_Kind_Always {
-		t.Error("Never_Has_Line_Break must register as an Always axis")
-	}
-}
-
-// A bundle in the sugar package composes a dedicated helper unqualified
-// (Sometimes_Has_Edge_Whitespace); the descent recognizes it as a Sometimes axis and keys
-// it under the Dot_Product prefix joined to the helper's own name (the call selector).
-func Test_Register_Recognizes_Unqualified_String_Axis(t *testing.T) {
-	const sugar = `package sugar
-
-func Token_Invariants(s string, namespace string) {
-	Dot_Product(namespace, Sometimes_Has_Edge_Whitespace(s))
-}
-`
-	const application = `package app
-
-import (
-	_ "example.com/m/invariant"
-	"example.com/m/sugar"
-)
-
-func check(s string) {
-	sugar.Token_Invariants(s, "field")
-}
-`
-	recorder := &invariant.Recorder{
-		File_System: fstest.MapFS{
-			"m/go.mod":         &fstest.MapFile{Data: []byte("module example.com/m\n")},
-			"m/sugar/sugar.go": &fstest.MapFile{Data: []byte(sugar)},
-			"m/app/app.go":     &fstest.MapFile{Data: []byte(application)},
-		},
-		Output:        &bytes.Buffer{},
-		Sugar_Package: "example.com/m/sugar",
-	}
-	invariant.Recorder_Register_Packages_For_Analysis(recorder, "/m/app")
-
-	if _, ok := recorder.Events.Load(
-		"field" + invariant.Element_Message_Separator +
-			"Sometimes_Has_Edge_Whitespace"); !ok {
-		t.Error("expected the unqualified helper keyed under prefix field")
 	}
 }
 

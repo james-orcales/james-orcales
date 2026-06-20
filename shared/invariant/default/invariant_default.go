@@ -14,7 +14,6 @@ import (
 	"testing"
 	"unicode"
 	"unicode/utf8"
-	"unsafe"
 
 	invariant "github.com/james-orcales/james-orcales/shared/invariant"
 )
@@ -221,36 +220,335 @@ func Dot_Product(namespace Namespace, dot_elements ...invariant.Dot_Element) {
 	invariant.Recorder_Dot_Product(Default, namespace, dot_elements...)
 }
 
-// Whole_Number constrains a generic to Go's integer kinds, signed and unsigned alike
-// (uintptr is excluded — it is an address width, not a quantity).
-type Whole_Number interface {
-	~int | ~int8 | ~int16 | ~int32 | ~int64 |
-		~uint | ~uint8 | ~uint16 | ~uint32 | ~uint64
-}
+// An int is assumed to be 64 bits wide, so that the minimum and maximum axes below are exactly an
+// int's bounds. This conversion fails to compile on a platform where int is narrower, because there
+// math.MaxInt is smaller than math.MaxInt64 and their difference is negative, which a uint cannot
+// represent. An int and a uint always share a width, so this guards the unsigned presets that name
+// math.MaxUint as well.
+const _ = uint(math.MaxInt - math.MaxInt64)
 
-// Whole_Number_Invariants is the preset coverage for an integer: the small-magnitude axes 0,
-// 1, 2, each of which must be observed both ways. It self-emits its grid under namespace, the
-// per-caller identity the callsite supplies as a literal.
-func Whole_Number_Invariants[I Whole_Number](n I, namespace Namespace) {
+// Int_Invariants is the preset coverage for an int. The suite must witness the value one, negative
+// one, the type's minimum, and the type's maximum, plus an ordinary value that is none of these.
+// The four are mutually exclusive, which the carves enforce.
+func Int_Invariants(n int, namespace Namespace) {
 	Dot_Product(namespace,
-		Sometimes(n == 0, "zero"),
-		Sometimes(n == 1, "one"),
-		Sometimes(n == 2, "two"),
+		Sometimes(n == 1, "The value is one."),
+		Sometimes(n == -1, "The value is negative one."),
+		Sometimes(n == math.MinInt64, "The value is the minimum int."),
+		Sometimes(n == math.MaxInt64, "The value is the maximum int."),
+		Impossible(
+			Event_True("The value is one."),
+			Event_True("The value is negative one."),
+		),
+		Impossible(
+			Event_True("The value is one."),
+			Event_True("The value is the minimum int."),
+		),
+		Impossible(
+			Event_True("The value is one."),
+			Event_True("The value is the maximum int."),
+		),
+		Impossible(
+			Event_True("The value is negative one."),
+			Event_True("The value is the minimum int."),
+		),
+		Impossible(
+			Event_True("The value is negative one."),
+			Event_True("The value is the maximum int."),
+		),
+		Impossible(
+			Event_True("The value is the minimum int."),
+			Event_True("The value is the maximum int."),
+		),
 	)
 }
 
-// Float_Invariants is the preset coverage for a float: NaN, negative, and
-// positive must each be observed (zero is the shared finite cell). NaN excludes
-// either sign, and the two signs exclude each other. ±Inf fold into the signs.
-func Float_Invariants[F ~float32 | ~float64](f F, namespace Namespace) {
+// Int8_Invariants is Int_Invariants for an int8, whose minimum and maximum are MinInt8 and MaxInt8.
+func Int8_Invariants(n int8, namespace Namespace) {
+	Dot_Product(namespace,
+		Sometimes(n == 1, "The value is one."),
+		Sometimes(n == -1, "The value is negative one."),
+		Sometimes(n == math.MinInt8, "The value is the minimum int8."),
+		Sometimes(n == math.MaxInt8, "The value is the maximum int8."),
+		Impossible(
+			Event_True("The value is one."),
+			Event_True("The value is negative one."),
+		),
+		Impossible(
+			Event_True("The value is one."),
+			Event_True("The value is the minimum int8."),
+		),
+		Impossible(
+			Event_True("The value is one."),
+			Event_True("The value is the maximum int8."),
+		),
+		Impossible(
+			Event_True("The value is negative one."),
+			Event_True("The value is the minimum int8."),
+		),
+		Impossible(
+			Event_True("The value is negative one."),
+			Event_True("The value is the maximum int8."),
+		),
+		Impossible(
+			Event_True("The value is the minimum int8."),
+			Event_True("The value is the maximum int8."),
+		),
+	)
+}
+
+// Int16_Invariants is Int_Invariants for an int16, whose bounds are MinInt16 and MaxInt16.
+func Int16_Invariants(n int16, namespace Namespace) {
+	Dot_Product(namespace,
+		Sometimes(n == 1, "The value is one."),
+		Sometimes(n == -1, "The value is negative one."),
+		Sometimes(n == math.MinInt16, "The value is the minimum int16."),
+		Sometimes(n == math.MaxInt16, "The value is the maximum int16."),
+		Impossible(
+			Event_True("The value is one."),
+			Event_True("The value is negative one."),
+		),
+		Impossible(
+			Event_True("The value is one."),
+			Event_True("The value is the minimum int16."),
+		),
+		Impossible(
+			Event_True("The value is one."),
+			Event_True("The value is the maximum int16."),
+		),
+		Impossible(
+			Event_True("The value is negative one."),
+			Event_True("The value is the minimum int16."),
+		),
+		Impossible(
+			Event_True("The value is negative one."),
+			Event_True("The value is the maximum int16."),
+		),
+		Impossible(
+			Event_True("The value is the minimum int16."),
+			Event_True("The value is the maximum int16."),
+		),
+	)
+}
+
+// Int32_Invariants is Int_Invariants for an int32, whose bounds are MinInt32 and MaxInt32.
+func Int32_Invariants(n int32, namespace Namespace) {
+	Dot_Product(namespace,
+		Sometimes(n == 1, "The value is one."),
+		Sometimes(n == -1, "The value is negative one."),
+		Sometimes(n == math.MinInt32, "The value is the minimum int32."),
+		Sometimes(n == math.MaxInt32, "The value is the maximum int32."),
+		Impossible(
+			Event_True("The value is one."),
+			Event_True("The value is negative one."),
+		),
+		Impossible(
+			Event_True("The value is one."),
+			Event_True("The value is the minimum int32."),
+		),
+		Impossible(
+			Event_True("The value is one."),
+			Event_True("The value is the maximum int32."),
+		),
+		Impossible(
+			Event_True("The value is negative one."),
+			Event_True("The value is the minimum int32."),
+		),
+		Impossible(
+			Event_True("The value is negative one."),
+			Event_True("The value is the maximum int32."),
+		),
+		Impossible(
+			Event_True("The value is the minimum int32."),
+			Event_True("The value is the maximum int32."),
+		),
+	)
+}
+
+// Int64_Invariants is Int_Invariants for an int64, whose bounds are MinInt64 and MaxInt64.
+func Int64_Invariants(n int64, namespace Namespace) {
+	Dot_Product(namespace,
+		Sometimes(n == 1, "The value is one."),
+		Sometimes(n == -1, "The value is negative one."),
+		Sometimes(n == math.MinInt64, "The value is the minimum int64."),
+		Sometimes(n == math.MaxInt64, "The value is the maximum int64."),
+		Impossible(
+			Event_True("The value is one."),
+			Event_True("The value is negative one."),
+		),
+		Impossible(
+			Event_True("The value is one."),
+			Event_True("The value is the minimum int64."),
+		),
+		Impossible(
+			Event_True("The value is one."),
+			Event_True("The value is the maximum int64."),
+		),
+		Impossible(
+			Event_True("The value is negative one."),
+			Event_True("The value is the minimum int64."),
+		),
+		Impossible(
+			Event_True("The value is negative one."),
+			Event_True("The value is the maximum int64."),
+		),
+		Impossible(
+			Event_True("The value is the minimum int64."),
+			Event_True("The value is the maximum int64."),
+		),
+	)
+}
+
+// Uint_Invariants is the preset coverage for a uint. The suite must witness the value zero, one,
+// and the type's maximum, plus the ordinary non-zero case that holds none of those axes. An
+// unsigned value has no sign, so zero stands in for the sign axis and the minimum is zero itself.
+// The carves keep zero, one, and the maximum mutually exclusive.
+func Uint_Invariants(n uint, namespace Namespace) {
+	Dot_Product(namespace,
+		Sometimes(n == 0, "The value is zero."),
+		Sometimes(n == 1, "The value is one."),
+		Sometimes(n == math.MaxUint64, "The value is the maximum uint."),
+		Impossible(
+			Event_True("The value is zero."),
+			Event_True("The value is one."),
+		),
+		Impossible(
+			Event_True("The value is zero."),
+			Event_True("The value is the maximum uint."),
+		),
+		Impossible(
+			Event_True("The value is one."),
+			Event_True("The value is the maximum uint."),
+		),
+	)
+}
+
+// Uint8_Invariants is Uint_Invariants for a uint8, whose maximum is MaxUint8.
+func Uint8_Invariants(n uint8, namespace Namespace) {
+	Dot_Product(namespace,
+		Sometimes(n == 0, "The value is zero."),
+		Sometimes(n == 1, "The value is one."),
+		Sometimes(n == math.MaxUint8, "The value is the maximum uint8."),
+		Impossible(
+			Event_True("The value is zero."),
+			Event_True("The value is one."),
+		),
+		Impossible(
+			Event_True("The value is zero."),
+			Event_True("The value is the maximum uint8."),
+		),
+		Impossible(
+			Event_True("The value is one."),
+			Event_True("The value is the maximum uint8."),
+		),
+	)
+}
+
+// Uint16_Invariants is Uint_Invariants for a uint16, whose maximum is MaxUint16.
+func Uint16_Invariants(n uint16, namespace Namespace) {
+	Dot_Product(namespace,
+		Sometimes(n == 0, "The value is zero."),
+		Sometimes(n == 1, "The value is one."),
+		Sometimes(n == math.MaxUint16, "The value is the maximum uint16."),
+		Impossible(
+			Event_True("The value is zero."),
+			Event_True("The value is one."),
+		),
+		Impossible(
+			Event_True("The value is zero."),
+			Event_True("The value is the maximum uint16."),
+		),
+		Impossible(
+			Event_True("The value is one."),
+			Event_True("The value is the maximum uint16."),
+		),
+	)
+}
+
+// Uint32_Invariants is Uint_Invariants for a uint32, whose maximum is MaxUint32.
+func Uint32_Invariants(n uint32, namespace Namespace) {
+	Dot_Product(namespace,
+		Sometimes(n == 0, "The value is zero."),
+		Sometimes(n == 1, "The value is one."),
+		Sometimes(n == math.MaxUint32, "The value is the maximum uint32."),
+		Impossible(
+			Event_True("The value is zero."),
+			Event_True("The value is one."),
+		),
+		Impossible(
+			Event_True("The value is zero."),
+			Event_True("The value is the maximum uint32."),
+		),
+		Impossible(
+			Event_True("The value is one."),
+			Event_True("The value is the maximum uint32."),
+		),
+	)
+}
+
+// Uint64_Invariants is Uint_Invariants for a uint64, whose maximum is MaxUint64.
+func Uint64_Invariants(n uint64, namespace Namespace) {
+	Dot_Product(namespace,
+		Sometimes(n == 0, "The value is zero."),
+		Sometimes(n == 1, "The value is one."),
+		Sometimes(n == math.MaxUint64, "The value is the maximum uint64."),
+		Impossible(
+			Event_True("The value is zero."),
+			Event_True("The value is one."),
+		),
+		Impossible(
+			Event_True("The value is zero."),
+			Event_True("The value is the maximum uint64."),
+		),
+		Impossible(
+			Event_True("The value is one."),
+			Event_True("The value is the maximum uint64."),
+		),
+	)
+}
+
+// Float64_Invariants is the preset coverage for a float64. The suite must witness NaN, negative
+// infinity, and positive infinity, plus an ordinary value that is none of these. The three are
+// mutually exclusive, which the carves enforce.
+func Float64_Invariants(f float64, namespace Namespace) {
+	Dot_Product(namespace,
+		Sometimes(math.IsNaN(f), "The value is NaN."),
+		Sometimes(f == math.Inf(-1), "The value is negative infinity."),
+		Sometimes(f == math.Inf(1), "The value is positive infinity."),
+		Impossible(
+			Event_True("The value is NaN."),
+			Event_True("The value is negative infinity."),
+		),
+		Impossible(
+			Event_True("The value is NaN."),
+			Event_True("The value is positive infinity."),
+		),
+		Impossible(
+			Event_True("The value is negative infinity."),
+			Event_True("The value is positive infinity."),
+		),
+	)
+}
+
+// Float32_Invariants is Float64_Invariants for a float32, widened to float64 for the comparisons.
+func Float32_Invariants(f float32, namespace Namespace) {
 	value := float64(f)
 	Dot_Product(namespace,
-		Sometimes(math.IsNaN(value), "nan"),
-		Sometimes(value < 0, "negative"),
-		Sometimes(value > 0, "positive"),
-		Impossible(Event_True("nan"), Event_True("negative")),
-		Impossible(Event_True("nan"), Event_True("positive")),
-		Impossible(Event_True("negative"), Event_True("positive")),
+		Sometimes(math.IsNaN(value), "The value is NaN."),
+		Sometimes(value == math.Inf(-1), "The value is negative infinity."),
+		Sometimes(value == math.Inf(1), "The value is positive infinity."),
+		Impossible(
+			Event_True("The value is NaN."),
+			Event_True("The value is negative infinity."),
+		),
+		Impossible(
+			Event_True("The value is NaN."),
+			Event_True("The value is positive infinity."),
+		),
+		Impossible(
+			Event_True("The value is negative infinity."),
+			Event_True("The value is positive infinity."),
+		),
 	)
 }
 
@@ -263,162 +561,51 @@ func Float_Invariants[F ~float32 | ~float64](f F, namespace Namespace) {
 // control character.
 func String_Invariants(s string, namespace Namespace) {
 	Dot_Product(namespace,
-		Sometimes(len(s) == 0, "empty"),
-		Sometimes_Has_Edge_Whitespace(s),
-		Sometimes_Has_Interior_Whitespace(s),
-		Sometimes_Has_Invalid_UTF8(s),
-		Sometimes_Has_Nul(s),
-		Sometimes_Has_Multibyte_Rune(s),
-		Sometimes_Has_Control(s),
-		Sometimes_Has_Line_Break(s),
-		Impossible(Event_True("empty"), Event_True("Sometimes_Has_Edge_Whitespace")),
-		Impossible(Event_True("empty"), Event_True("Sometimes_Has_Interior_Whitespace")),
-		Impossible(Event_True("empty"), Event_True("Sometimes_Has_Invalid_UTF8")),
-		Impossible(Event_True("empty"), Event_True("Sometimes_Has_Nul")),
-		Impossible(Event_True("empty"), Event_True("Sometimes_Has_Multibyte_Rune")),
-		Impossible(Event_True("empty"), Event_True("Sometimes_Has_Control")),
-		Impossible(Event_True("empty"), Event_True("Sometimes_Has_Line_Break")),
-		Impossible(Event_True("Sometimes_Has_Nul"), Event_False("Sometimes_Has_Control")),
+		Sometimes(len(s) == 0, "The value is empty."),
+		Sometimes(string_has_edge_whitespace(s), "The value has edge whitespace."),
+		Sometimes(string_has_interior_whitespace(s), "The value has interior whitespace."),
+		Sometimes(string_has_invalid_utf8(s), "The value has invalid UTF-8."),
+		Sometimes(string_has_nul(s), "The value has a NUL byte."),
+		Sometimes(string_has_multibyte_rune(s), "The value has a multi-byte rune."),
+		Sometimes(string_has_control(s), "The value has a control character."),
+		Sometimes(string_has_line_break(s), "The value has a line break."),
 		Impossible(
-			Event_True("Sometimes_Has_Line_Break"),
-			Event_False("Sometimes_Has_Control"),
+			Event_True("The value is empty."),
+			Event_True("The value has edge whitespace."),
+		),
+		Impossible(
+			Event_True("The value is empty."),
+			Event_True("The value has interior whitespace."),
+		),
+		Impossible(
+			Event_True("The value is empty."),
+			Event_True("The value has invalid UTF-8."),
+		),
+		Impossible(
+			Event_True("The value is empty."),
+			Event_True("The value has a NUL byte."),
+		),
+		Impossible(
+			Event_True("The value is empty."),
+			Event_True("The value has a multi-byte rune."),
+		),
+		Impossible(
+			Event_True("The value is empty."),
+			Event_True("The value has a control character."),
+		),
+		Impossible(
+			Event_True("The value is empty."),
+			Event_True("The value has a line break."),
+		),
+		Impossible(
+			Event_True("The value has a NUL byte."),
+			Event_False("The value has a control character."),
+		),
+		Impossible(
+			Event_True("The value has a line break."),
+			Event_False("The value has a control character."),
 		),
 	)
-}
-
-// Sometimes_Has_Edge_Whitespace records whether s begins or ends with whitespace. Its
-// message is its own name, which the static registration derives from the call selector.
-func Sometimes_Has_Edge_Whitespace(s string) (dot_element invariant.Dot_Element) {
-	return invariant.Recorder_Sometimes(
-		Default, string_has_edge_whitespace(s), "Sometimes_Has_Edge_Whitespace")
-}
-
-// Always_Has_Edge_Whitespace asserts s always begins or ends with whitespace.
-func Always_Has_Edge_Whitespace(s string) {
-	invariant.Recorder_Always(
-		Default, string_has_edge_whitespace(s), "Always_Has_Edge_Whitespace")
-}
-
-// Sometimes_Has_Interior_Whitespace records whether s has whitespace off its edges.
-func Sometimes_Has_Interior_Whitespace(s string) (dot_element invariant.Dot_Element) {
-	return invariant.Recorder_Sometimes(
-		Default, string_has_interior_whitespace(s), "Sometimes_Has_Interior_Whitespace")
-}
-
-// Always_Has_Interior_Whitespace asserts s always has whitespace off its edges.
-func Always_Has_Interior_Whitespace(s string) {
-	invariant.Recorder_Always(
-		Default, string_has_interior_whitespace(s), "Always_Has_Interior_Whitespace")
-}
-
-// Sometimes_Has_Invalid_UTF8 records whether s is sometimes not valid UTF-8.
-func Sometimes_Has_Invalid_UTF8(s string) (dot_element invariant.Dot_Element) {
-	return invariant.Recorder_Sometimes(
-		Default, string_has_invalid_utf8(s), "Sometimes_Has_Invalid_UTF8")
-}
-
-// Always_Has_Invalid_UTF8 asserts s is always not valid UTF-8.
-func Always_Has_Invalid_UTF8(s string) {
-	invariant.Recorder_Always(Default, string_has_invalid_utf8(s), "Always_Has_Invalid_UTF8")
-}
-
-// Sometimes_Has_Nul records whether s sometimes contains a NUL (0x00) byte.
-func Sometimes_Has_Nul(s string) (dot_element invariant.Dot_Element) {
-	return invariant.Recorder_Sometimes(Default, string_has_nul(s), "Sometimes_Has_Nul")
-}
-
-// Always_Has_Nul asserts s always contains a NUL (0x00) byte.
-func Always_Has_Nul(s string) {
-	invariant.Recorder_Always(Default, string_has_nul(s), "Always_Has_Nul")
-}
-
-// Sometimes_Has_Multibyte_Rune records whether s's byte count sometimes differs from
-// its rune count — a multi-byte rune is present.
-func Sometimes_Has_Multibyte_Rune(s string) (dot_element invariant.Dot_Element) {
-	return invariant.Recorder_Sometimes(
-		Default, string_has_multibyte_rune(s), "Sometimes_Has_Multibyte_Rune")
-}
-
-// Always_Has_Multibyte_Rune asserts s's byte count always differs from its rune count.
-func Always_Has_Multibyte_Rune(s string) {
-	invariant.Recorder_Always(
-		Default, string_has_multibyte_rune(s), "Always_Has_Multibyte_Rune")
-}
-
-// Sometimes_Has_Control records whether s sometimes contains a control character.
-func Sometimes_Has_Control(s string) (dot_element invariant.Dot_Element) {
-	return invariant.Recorder_Sometimes(Default, string_has_control(s), "Sometimes_Has_Control")
-}
-
-// Always_Has_Control asserts s always contains a control character.
-func Always_Has_Control(s string) {
-	invariant.Recorder_Always(Default, string_has_control(s), "Always_Has_Control")
-}
-
-// Sometimes_Has_Line_Break records whether s sometimes contains a carriage return or
-// line feed.
-func Sometimes_Has_Line_Break(s string) (dot_element invariant.Dot_Element) {
-	return invariant.Recorder_Sometimes(
-		Default, string_has_line_break(s), "Sometimes_Has_Line_Break")
-}
-
-// Always_Has_Line_Break asserts s always contains a carriage return or line feed.
-func Always_Has_Line_Break(s string) {
-	invariant.Recorder_Always(Default, string_has_line_break(s), "Always_Has_Line_Break")
-}
-
-// Sometimes_Has_Non_ASCII records whether s sometimes contains a non-ASCII byte.
-func Sometimes_Has_Non_ASCII(s string) (dot_element invariant.Dot_Element) {
-	return invariant.Recorder_Sometimes(
-		Default, string_has_non_ascii(s), "Sometimes_Has_Non_ASCII")
-}
-
-// Always_Has_Non_ASCII asserts s always contains a non-ASCII byte.
-func Always_Has_Non_ASCII(s string) {
-	invariant.Recorder_Always(Default, string_has_non_ascii(s), "Always_Has_Non_ASCII")
-}
-
-// Never_Has_Edge_Whitespace asserts s never begins or ends with whitespace.
-func Never_Has_Edge_Whitespace(s string) {
-	invariant.Recorder_Always(
-		Default, !string_has_edge_whitespace(s), "Never_Has_Edge_Whitespace")
-}
-
-// Never_Has_Interior_Whitespace asserts s never has whitespace off its edges.
-func Never_Has_Interior_Whitespace(s string) {
-	invariant.Recorder_Always(
-		Default, !string_has_interior_whitespace(s), "Never_Has_Interior_Whitespace")
-}
-
-// Never_Has_Invalid_UTF8 asserts s is always valid UTF-8.
-func Never_Has_Invalid_UTF8(s string) {
-	invariant.Recorder_Always(Default, !string_has_invalid_utf8(s), "Never_Has_Invalid_UTF8")
-}
-
-// Never_Has_Nul asserts s never contains a NUL (0x00) byte.
-func Never_Has_Nul(s string) {
-	invariant.Recorder_Always(Default, !string_has_nul(s), "Never_Has_Nul")
-}
-
-// Never_Has_Multibyte_Rune asserts s's byte count always equals its rune count.
-func Never_Has_Multibyte_Rune(s string) {
-	invariant.Recorder_Always(
-		Default, !string_has_multibyte_rune(s), "Never_Has_Multibyte_Rune")
-}
-
-// Never_Has_Control asserts s never contains a control character.
-func Never_Has_Control(s string) {
-	invariant.Recorder_Always(Default, !string_has_control(s), "Never_Has_Control")
-}
-
-// Never_Has_Line_Break asserts s never contains a carriage return or line feed.
-func Never_Has_Line_Break(s string) {
-	invariant.Recorder_Always(Default, !string_has_line_break(s), "Never_Has_Line_Break")
-}
-
-// Never_Has_Non_ASCII asserts s never contains a non-ASCII byte.
-func Never_Has_Non_ASCII(s string) {
-	invariant.Recorder_Always(Default, !string_has_non_ascii(s), "Never_Has_Non_ASCII")
 }
 
 // Slice_Invariants is the preset coverage for a slice: nil, empty-but-non-nil,
@@ -440,16 +627,6 @@ func Map_Invariants[K comparable, V any](m map[K]V, namespace Namespace) {
 		Sometimes(m == nil, "nil"),
 		Impossible(Event_True("nil"), Event_False("empty")),
 	)
-}
-
-// Reports whether s contains a Unicode whitespace rune.
-func string_has_whitespace(s string) (has bool) {
-	for _, character := range s {
-		if unicode.IsSpace(character) {
-			return true
-		}
-	}
-	return false
 }
 
 // Reports whether the first or last rune of s is a Unicode whitespace rune.
@@ -506,49 +683,4 @@ func string_has_multibyte_rune(s string) (has bool) {
 // Reports whether s contains a carriage return or line feed.
 func string_has_line_break(s string) (has bool) {
 	return strings.ContainsAny(s, "\r\n")
-}
-
-// Reports whether s contains a non-ASCII byte (any byte above 127). Every byte
-// of a multi-byte UTF-8 sequence has its high bit set, so a set high bit is
-// exactly equivalent to decoding runes and comparing against unicode.MaxASCII —
-// without paying the decoder cost on every code point.
-//
-// Scans 16 bytes per iteration (SWAR — SIMD within a register): a non-ASCII byte
-// is exactly a set high bit, so word & high_bits is non-zero iff some byte in the
-// word is non-ASCII. Two 8-byte words are ORed before the test, so one branch
-// covers 16 bytes. This framework enforces hundreds of thousands of assertions,
-// so the predicate is hot enough to justify the unsafe load. Benchmarked on a
-// 1 MiB all-ASCII string (worst case — no match, every byte visited), 100 runs,
-// startup subtracted, Apple M4, go1.26.3:
-//
-//	range over runes         730 ms    2.7 GiB/s    1.0x
-//	byte loop, high-bit      484 ms    4.1 GiB/s    1.5x
-//	hand-packed SWAR         321 ms    6.1 GiB/s    2.3x
-//	this (unsafe, 16B/iter)   38 ms   54.4 GiB/s   19.5x
-//
-// The unsafe load is what earns the last ~9x over hand-packed SWAR: s[i+1]..s[i+7]
-// each compile to their own bounds check, byte load, and a shift/OR chain to
-// assemble the word, whereas *(*uint64)(...) is a single MOVD with none. At
-// 54 GiB/s the 1 MiB string is L2-bandwidth bound, so wider unrolling or NEON buys
-// little more. Scan direction is irrelevant to the worst case (a two-pointer walk
-// touches the same bytes with worse prefetch); bytes-per-iteration is the lever.
-func string_has_non_ascii(s string) (has bool) {
-	const high_bits = 0x8080808080808080
-	// In-bounds despite unsafe: the loads fire only when i+16 <= len(s), so they
-	// never read past s; the tail handles the final fewer-than-16 bytes one at a
-	// time. base is never dereferenced when len(s) == 0 (both loops are skipped).
-	base := unsafe.Pointer(unsafe.StringData(s))
-	i := 0
-	for ; i+16 <= len(s); i += 16 {
-		word := *(*uint64)(unsafe.Add(base, i)) | *(*uint64)(unsafe.Add(base, i+8))
-		if word&high_bits != 0 {
-			return true
-		}
-	}
-	for ; i < len(s); i++ {
-		if s[i] >= utf8.RuneSelf {
-			return true
-		}
-	}
-	return false
 }

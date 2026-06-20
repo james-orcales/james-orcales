@@ -151,7 +151,6 @@
     "inc":       ["include", "increment", "increase", "inclusion"],
     "ins":       ["insertion", "instance", "insert"],
     "inst":      ["instance", "instruction", "installation"],
-    "int":       ["integer", "internal", "intersection"],
     "intf":      ["interface"],
     "inv":       ["inverse", "invocation", "inventory", "invalid"],
     "km":        ["keymap", "kilometer"],
