@@ -462,11 +462,6 @@ Every struct field of an exported package-level struct carries a doc comment.
 
 Exported identifiers use Ada_Case, unexported use snake_case, TestMain aside.
 
-### Method Prefix
-
-A free function over a locally (same package) declared type carries that type as its name prefix, as
-`type_verb/Type_Verb`; its own input struct is the exception.
-
 ### Full Words
 
 A declared name splits into words; each word, lowercased, is looked up in lint.json's required

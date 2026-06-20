@@ -822,6 +822,63 @@ func Test_Install_Fzf_Reports_A_Build_Failure(t *testing.T) {
 	}
 }
 
+// Test_Install_Command_Skips_Build_When_Already_On_Path verifies that when the
+// command name already resolves on PATH, no build runs — proving the only
+// idempotency gate for this repo's own tools is PATH presence, not a version.
+func Test_Install_Command_Skips_Build_When_Already_On_Path(t *testing.T) {
+	t.Parallel()
+	commands := []sh.Command{}
+	status := setup.Install_Command(&setup.Install_Command_Input{
+		Package_Directory: test_command_directory,
+		Binary_Directory:  test_link_directory,
+		Binary_Name:       "maddox",
+		Shell: recording_shell(&commands, map[string]string{
+			"which": test_link_directory + "/maddox\n",
+		}, 0),
+	})
+	if status != 0 {
+		t.Fatalf("expected success, got status %d", status)
+	}
+	if builds := commands_named(commands, "sh"); len(builds) != 0 {
+		t.Fatalf("expected no build when already on PATH, ran %v", builds)
+	}
+}
+
+// Test_Install_Command_Builds_When_Absent verifies that when the command name does
+// not resolve on PATH, the Go toolchain builds it into the bin directory.
+func Test_Install_Command_Builds_When_Absent(t *testing.T) {
+	t.Parallel()
+	commands := []sh.Command{}
+	status := setup.Install_Command(&setup.Install_Command_Input{
+		Package_Directory: test_command_directory,
+		Binary_Directory:  test_link_directory,
+		Binary_Name:       "m2p",
+		Shell:             recording_shell(&commands, nil, 0),
+	})
+	if status != 0 {
+		t.Fatalf("expected success, got status %d", status)
+	}
+	if builds := commands_named(commands, "sh"); len(builds) != 1 {
+		t.Fatalf("expected one build command, ran %d", len(builds))
+	}
+}
+
+// Test_Install_Command_Reports_A_Build_Failure verifies a failing build reports a
+// non-zero exit code.
+func Test_Install_Command_Reports_A_Build_Failure(t *testing.T) {
+	t.Parallel()
+	commands := []sh.Command{}
+	status := setup.Install_Command(&setup.Install_Command_Input{
+		Package_Directory: test_command_directory,
+		Binary_Directory:  test_link_directory,
+		Binary_Name:       "sloc",
+		Shell:             recording_shell(&commands, nil, 1),
+	})
+	if status == 0 {
+		t.Fatal("expected a non-zero status on build failure")
+	}
+}
+
 // Test_Install_Jj_Skips_Build_When_Already_Built verifies that when the jj binary
 // under CARGO_HOME already reports the wanted version, the build is skipped and
 // the binary is relinked — the gate prefix-matches the commit suffix jj appends.
@@ -1164,6 +1221,10 @@ const test_fish_directory = "/fish"
 // The fixed absolute fzf source directory the Install_Fzf tests build from; a
 // constant keeps the expected build paths deterministic.
 const test_fzf_directory = "/fzf"
+
+// The fixed absolute package directory the Install_Command tests build from; a
+// constant keeps the expected build paths deterministic.
+const test_command_directory = "/command-src"
 
 // The fixed absolute jj source directory the Install_Jj tests build from; a
 // constant keeps the expected build paths deterministic.

@@ -176,3 +176,100 @@ that caused it. Each fix changes `vsr.go`, never the assertion.
 - **Guard**: seeds 1045, 1166, 1841, 6605, 7683, 7642 are permanent regression seeds in
   `Test_Cluster_Reconfiguration`; the per-delivery agreement, exactly-once, and commit ≤ op checks
   run on every reconfiguration seed.
+
+## Bug 10 — a pre-step prediction round completed after its request's ordering point
+
+- **Symptom** (Stage 6a batching; the per-delivery exactly-once check on odd, pre-step seeds): seed
+  93 `replica 0 executed command "client-1002-req-7" twice`, with the log showing the request at two
+  consecutive ops straddling a committed `reconfigure-1` op; seed 13 likewise. A single client
+  request committed at two op-numbers.
+- **Root cause**: the §4.4 pre-step path opens a prediction round when a request arrives
+  (`replica_begin_pre_step`) and appends the request only later, when f backups' predictions arrive
+  (`replica_receive_predict_response`). The append at completion did not re-check that the request
+  was still acceptable. While the round was open, the epoch's reconfiguration was appended (closing
+  the primary to new requests, §7.1) and the epoch advanced. The round then completed and appended
+  the request anyway — after the reconfiguration, in the wrong epoch — and the client, retried,
+  committed it again. The synchronous local-predict path checks `replica_open_to_requests` and the
+  client-table before it appends; the deferred pre-step path skipped that check.
+- **Fix**: `replica_receive_predict_response` re-validates at completion — it deletes the round,
+  then drops it without appending if the primary is no longer open to requests or the request-number
+  is no longer fresh — so a round that opened optimistically cannot append a request whose ordering
+  point has passed. The client retries and the new primary runs it afresh.
+- **Guard**: the per-delivery exactly-once and linearizability checks on every odd (pre-step) seed;
+  a 1200-seed scan is clean.
+
+## Bug 11 — a matchIndex commit model counted ops a backup never acknowledged
+
+- **Symptom** (Stage 6a batching): seed 180 (linearizability) and seed 210 (reconfiguration)
+  reported one client request mapping to two different results; a request committed at op 40 (and
+  replied) then reappeared at op 43 after a view change — a committed op was not preserved.
+- **Root cause**: batching needs a backup to acknowledge a multi-entry Prepare in one round, which
+  first prompted a Raft-style matchIndex model — record each backup's highest acknowledged op and
+  credit it for every op through that high. It over-commits: a backup that acquires ops by STATE
+  TRANSFER never acknowledges them, yet once it acks any later op its recorded high credits the
+  transferred ops too. Those ops are not durably anchored on that backup — it can truncate a
+  state-transferred, never-locally-committed op on a later view change — so a quorum resting on the
+  inferred credit could commit an op the group does not actually hold, and a subsequent view change
+  drops it.
+- **Fix**: keep the explicit per-op acknowledgement tally (`Prepare_Ok_From[op][backup]`); a backup
+  is counted toward an op's quorum only by a Prepare_Ok it sent for THAT op, which it sends only
+  after appending the op from a Prepare. A batched Prepare is acknowledged op by op — the backup
+  emits one Prepare_Ok per newly-appended entry — so batching is supported without inferring
+  acknowledgements a backup never gave, and a state-transferred op is never counted until the backup
+  re-receives it via a Prepare.
+- **Guard**: the per-delivery agreement, exactly-once, and linearizability checks across the seed
+  sweep; a 1200-seed scan is clean. The batch path is exercised every run (`Batch_Max` > 1 in the
+  simulator, with a coverage assertion that a multi-entry Prepare is flushed).
+
+## Bug 12 — a standby checkpointed empty application state
+
+- **Symptom** (Stage 6b standbys): the checkpoint-agreement check failed across many seeds, e.g.
+  `checkpoint op 4 diverges: r0=ec72... r2=0000000000000000` — a standby holding a checkpoint whose
+  state blob was all zeros, the snapshot of an empty accumulator, where the active replicas held the
+  real state. A replica that then state-transferred that checkpoint adopted the empty state and its
+  own accumulator diverged.
+- **Root cause**: a standby never executes (§6.1), so its application state is empty, but
+  `replica_execute_reconfiguration` still called `replica_maybe_checkpoint`, and the standby's
+  injected `Snapshot` happily captured its empty accumulator — writing a bogus checkpoint at the
+  reconfiguration's op that disagreed with the active replicas and corrupted any replica that later
+  fetched it.
+- **Fix**: `replica_maybe_checkpoint` returns immediately for a standby — a replica with no
+  application state has nothing to snapshot. A standby still bounds its log: it compacts by adopting
+  a REAL checkpoint from an active replica during state transfer, never by taking one of its own.
+- **Guard**: the per-delivery checkpoint-agreement check (equal Checkpoint_Op ⇒ equal
+  Checkpoint_State) over the standby-enabled sweep; a 1200-seed scan is clean.
+
+## Bug 13 — a promoted standby served with no application state
+
+- **Symptom** (Stage 6b standbys): the accumulator oracle failed, e.g. `replica 2 accumulator 0 at
+  commit 9 != reference c584...` — a replica reporting its commit number advanced but its
+  application state empty, after a reconfiguration grew the group and moved it into the voting set.
+- **Root cause**: a standby advances its Executed marker without executing (so it does not re-walk
+  the log every step), so on promotion to active it believed it had executed up to its commit when
+  it had built no application state at all. It then served reads and took checkpoints from an empty
+  state.
+- **Fix**: following TigerBeetle's state sync — acquire the materialized checkpoint, replay only the
+  un-checkpointed suffix, never re-execute the whole log — a promoted standby materializes its state
+  once when it returns to normal: `replica_materialize_application_state` restores the checkpoint it
+  carries (a real snapshot adopted from an active replica) and replays the committed ops after it. A
+  one-shot `Standby_Promotion_Due` flag, set at the role flip and consumed at the return to normal,
+  makes the rebuild fire exactly once across every epoch-completion path.
+- **Guard**: the per-delivery accumulator oracle (each active replica's live state equals the
+  reference at its commit) plus a `Test_Standby_Promotion` unit test; the 1200-seed scan is clean.
+
+## Bug 14 — recovery picked the authority by the wrong group size
+
+- **Symptom** (Stage 6b standbys, a 1200-seed scan): agreement divergence across an epoch boundary,
+  e.g. seed 356 `op 1 diverges: r0="reconfigure-1" r1="client-1002-req-1"`, two active replicas
+  disagreeing on a committed op after a reconfiguration where standbys were present.
+- **Root cause**: a recovering replica picks its authority as the primary of the highest reported
+  view, computed inline as `Configuration[highest mod len(Configuration)]`. With standbys the
+  primary is `Configuration[View mod Active_Count]` — over the voting prefix, not the whole — so the
+  recovering replica adopted the log of the WRONG member (a standby, or a different active), then
+  rejoined with a divergent log that a later commit propagated.
+- **Fix**: compute the authority index over the active count, `highest mod Active_Count`, the same
+  voting-aware leader rule the rest of the core uses (replica_primary_identifier). With no standbys
+  (Active_Count zero, the active count is the whole group) this is unchanged.
+- **Guard**: the per-delivery agreement check over the standby-enabled, reconfiguring sweep; the
+  1200-seed scan is clean. Standbys are exercised every run (the voting set is fixed at three, so a
+  five-member configuration carries two standbys; a coverage axis witnesses a standby following).

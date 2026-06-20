@@ -1,15 +1,15 @@
 
 # Order of Operations
 
-The setup binary runs one bootstrap in a fixed order — direnv, dotfiles, fonts, Neovim, fzf, Rust,
-fish, jj, ripgrep, fd, Ghostty — each announced by name, exiting on the first failure. direnv is
-first; Ghostty, the one network download, is last, after the compile-bound cargo steps.
+The setup binary runs one bootstrap in a fixed order — direnv, dotfiles, fonts, Neovim, fzf,
+maddox, m2p, sloc, Rust, fish, jj, ripgrep, fd, Ghostty — each announced by name, exiting on the
+first failure. direnv is first; the Go builds precede the cargo steps; Ghostty downloads last.
 
 # Idempotency
 
-Every binary install obeys one rule: skip when the binary at its managed location reports the wanted
-version and stays reachable on PATH; otherwise reinstall and link it in. The cargo and Go builds
-share the Installed probe; Ghostty also checks its code signature, and Neovim checks its own way.
+Every binary install skips when the binary at its managed location reports the wanted version and
+stays reachable on PATH; otherwise it reinstalls and links in. Ghostty also checks its signature,
+Neovim its own way; Install_Command, for this repo's own unversioned commands, gates on PATH alone.
 
 ### Accepts A Matching Version
 
@@ -196,6 +196,24 @@ When the fzf binary in the bin directory already reports the wanted version, the
 ### Builds When Absent
 
 When no fzf at the wanted version is present, the Go toolchain builds it into the bin directory.
+
+### Reports A Build Failure
+
+A failing build reports a non-zero exit code.
+
+# Install Command
+
+Install_Command builds a command from this repository — maddox, m2p (markdown_to_pdf), or sloc —
+with the Go toolchain straight into `home/.local/bin`, where the build output is the install. Unlike
+the vendored tools, its only idempotency check is whether the command already resolves on PATH.
+
+### Skips Build When Already On Path
+
+When the command name already resolves on PATH, no build runs.
+
+### Builds When Absent
+
+When the command name does not resolve on PATH, the Go toolchain builds it into the bin directory.
 
 ### Reports A Build Failure
 

@@ -323,8 +323,9 @@ func Program_Parse(
 		argument_count := len(active_command.Arguments)
 		flag_count := len(active_command.Flags)
 		invariant.Dot_Product(
-			invariant.Sometimes(argument_count > 0),
-			invariant.Sometimes(flag_count > 0),
+			"cli.parse.command_shape",
+			invariant.Sometimes(argument_count > 0, "command has positional arguments"),
+			invariant.Sometimes(flag_count > 0, "command has flags"),
 		)
 	}()
 
@@ -387,7 +388,7 @@ func parse_named_token(token string) (
 		}
 	}
 	// A lone "-" was already excluded by is_named_token.
-	invariant.Dot_Product(invariant.Always(token != "-"))
+	invariant.Always(token != "-", "named token is not a lone dash")
 	label, value, value_was_set = strings.Cut(token[1:], "=")
 	return label, value, value_was_set, nil
 }

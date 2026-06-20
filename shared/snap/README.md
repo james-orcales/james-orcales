@@ -66,8 +66,4 @@ SNAPSHOT_EDIT_ALL=1 go test ./...
 - One snapshot per line.
 - Backticks must already be inside `snap.Init(``)` before calling `snap.Edit`
 
-## Example
-
-Refer to `shared/tree/main/itlog/unit_test.go`.
-
 [tigerbeetle-snap]: https://tigerbeetle.com/blog/2024-05-14-snapshot-testing-for-the-masses/

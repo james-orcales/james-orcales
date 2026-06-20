@@ -1,17 +1,26 @@
 
 # Always
 
-`Recorder_Always` builds a guard whose condition must hold on every call; a false
-one fails only when a `Dot_Product` consumes it.
+`Recorder_Always` is an eager guard whose condition must hold on every call. Unlike the
+element kinds it is not a `Dot_Element` and never flows through a `Dot_Product`: it
+returns nothing and enforces on the spot.
 
 ### Violation
 
-A `Dot_Product` given an `Always` that was observed false panics, naming the
-offending axis by its site.
+A false `Always` panics at its own call site, in every run mode, naming itself by its
+message. There is no deferred phase — see Eager.
+
+### Eager
+
+Constructing a false `Always` panics immediately; an `Always` is never inert and never
+consumed. Contrast the element kinds, which stay inert until a `Dot_Product` (see Dot
+Product / Inert).
 
 ### Reachability
 
-An `Always` the suite never reaches is reported as a coverage gap.
+An `Always` the suite never reaches is reported as a coverage gap, named by its message. A
+bare `Always` is discovered by the same source scan that registers `Dot_Product` calls,
+so its reachability is tracked without being consumed.
 
 # Sometimes
 
@@ -28,35 +37,16 @@ branch on a false event.
 A `Sometimes` observed only one way, true without false or false without true, is
 reported as a coverage gap.
 
-# Distinct Boundary
-
-`Recorder_Distinct_Boundary` asserts `Lo < Hi` and `Lo <= X <= Hi`, recording which
-endpoint the value lands on.
-
-### Endpoints
-
-The `Hi` endpoint credits the true branch, the `Lo` endpoint the false branch, and
-an interior value credits neither.
-
-### Outside
-
-A value beyond `[Lo, Hi]` panics when the boundary reaches a `Dot_Product`,
-naming the boundary's site.
-
-### Bad Bounds
-
-Endpoints that are not distinct, a reversed or equal pair, panic at the
-`Dot_Product`, naming the boundary's site.
-
 # Impossible
 
 `Impossible` declares element events that must never all occur together on one
-call.
+call, naming each by the message of a sibling axis — `Event_True("m")` /
+`Event_False("m")` — not by holding the axis value.
 
 ### Violation
 
 When every named event is observed on the same call, the `Dot_Product` panics,
-naming each co-occurring axis by its site and observed event.
+naming each co-occurring axis by its message and observed event.
 
 ### Absent
 
@@ -68,6 +58,33 @@ panic.
 An `Impossible` need not name every axis; the unnamed axes are wildcards, so it
 carves every cell matching the named events across all their values.
 
+### Sibling
+
+A reference names an axis of its own `Dot_Product`. Naming a non-sibling panics at the `Dot_Product`
+on every call — a structural precondition checked before recording — so a typo is caught at once,
+not as an unfillable gap.
+
+# Imply
+
+`Imply` builds a gated `Sometimes`: an axis recorded only on a call where its prerequisite holds.
+The message-less prerequisite is no axis. The condition is evaluated eagerly, so one safe only under
+the prerequisite must self-guard (`p != nil && p.x`) — the prerequisite gates recording, not eval.
+
+### Gated
+
+A gated axis credits a branch only on a call where the prerequisite held; a call where it
+failed credits neither branch, so a failing prerequisite never stands in for the gated false event.
+
+### Excluded
+
+A gated axis is per-axis coverage only — it joins no tuple of the grid, since the message-less
+prerequisite is not an axis to cross with.
+
+### Conjunction
+
+An axis meaningful only under several prerequisites gates on their conjunction: it records only on a
+call where every one holds.
+
 # Dot Product
 
 `Recorder_Dot_Product` is the only consumer: an element enforces and records
@@ -75,70 +92,87 @@ nothing until it is passed here.
 
 ### Inert
 
-Constructing a false `Always` enforces nothing until a `Dot_Product` consumes it.
+Constructing a `Sometimes` enforces and records nothing until a `Dot_Product` consumes it.
+An `Always`, by contrast, is eager (see Always / Eager).
 
 ### Identity
 
-An element is identified by its caller location, the site both registration and the
-runtime rendezvous on.
+Identity is the message, not a source location. A `Dot_Product` prefixes its message onto each
+axis, keying it prefix + own message. The prefix is a literal: the `Dot_Product`'s own argument,
+or the literal namespace at each `_Invariants` callsite when it self-emits under its parameter.
 
 ### Grid
 
-Registration seeds one demanded tuple per surviving combination of the axes'
-buckets, dropping the cells an `Impossible` carves.
+Registration seeds one tuple per surviving combination of the ungated axes' buckets, dropping
+cells an `Impossible` carves. The grid is over ungated `Sometimes` axes only — an `Always` is not an
+element and a gated `Imply` axis is excluded (see Imply / Excluded). The grid is the prefix.
 
 ### Attribution
 
-A panic names every axis it found violated on the call, each by its site, not only
-the first, so one run surfaces them all.
+A panic names every element it found violated on the call — each triggered `Impossible`, not
+only the first. A false eager `Always` is not part of this; it
+panics at its own site, so consecutive `Always` guards short-circuit on the first failure.
 
 # Bundles
 
-A `_Invariants` function returns a type's elements for a caller to spread into a
-`Dot_Product`, so a type's properties travel and compose with it.
+A `_Invariants(v, namespace)` function self-emits its own `Dot_Product(namespace, …)` over a
+type's axes, so a type's properties travel and compose with it.
+
+### Template
+
+A `_Invariants` is recognized by its `_Invariants` or `_invariants` name together with a trailing
+`string` or `Namespace` parameter. The `Dot_Product` it self-emits under that parameter is a
+template, seeded not at the definition but at each callsite under its literal namespace.
 
 ### Descent
 
-Registration follows a bundle spread into a `Dot_Product` and seeds each of its
-elements under the consuming callsite.
+Registration follows a `_Invariants(v, "lit")` call, resolves the function, and seeds the grid its
+body self-emits — keyed by the callsite's literal namespace prefixed onto each axis's own message.
 
 ### Composition
 
-A bundle that composes other bundles attributes every element, however deeply
-nested, to the one top-level `Dot_Product` callsite that spread it.
-
-### Binding
-
-A bundle reached through a local binding or an append into the spread slice is
-descended, not only the direct spread form.
+A `_Invariants` that calls other `_Invariants` registers each as its own self-contained grid under
+its own namespace, never flattened into the parent — there is no joint cross-product. One with no
+`Dot_Product` of its own (pure composition, or only an eager `Always`) seeds no grid of its own.
 
 ### Casing
 
 A bundle is recognized whether its type is exported (`_Invariants`) or unexported
 (`_invariants`), matching the type's casing.
 
+### Sugar
+
+A bundle in the sugar package may call the writers unqualified; the scan recognizes them because
+Sugar_Package names that package. Elsewhere a bare call is the caller's own function, not a writer,
+and seeds nothing unless qualified.
+
 ### Cross Package
 
-A bundle defined in another package of the same module is resolved through the
-module path and descended.
-
-### Workspace
-
-A bundle defined in a sibling module joined by a `go.work` workspace is resolved
-through the workspace and descended.
+A `_Invariants` in another package of the same module is resolved through the module path. Import
+paths resolve relative to the `go.mod` module path — a plain prefix match, so a non-URL `module
+local` works too; a `_Invariants` in a module outside this `go.mod` is unresolvable and fatal.
 
 ### Callsite
 
-Two callsites spreading one bundle become independent coverage entries, so neither
-masks the other's gap.
+Calling one `_Invariants` at two callsites with distinct namespaces yields independent grids — the
+per-namespace prefix keeps them apart, so neither masks the other's gap. Reusing one namespace is a
+duplicate and fails registration.
 
-### Ban
+### Gap Location
 
-A `Dot_Product` called inside a bundle is reported and fails registration.
+A bundle axis's gap is named by the callsite namespace prefixed onto the axis's own message. An
+eager `Always` in a bundle body is not an axis; its gap names its own bare message.
 
-### Orphan
+### Failure Location
 
-An axis that never reaches a `Dot_Product` is reported and fails registration.
+A carve's violation names the co-occurring axes by their own message, never the namespace prefix —
+yet the panic's stack still unwinds through the `Dot_Product`, carrying it. An eager `Always` panics
+from its own frame.
+
+### Static
+
+A `_Invariants` body must be straight-line: a branching or looping statement (`if`, `switch`, `for`,
+`select`) fails registration, since it would make the axes it self-emits depend on runtime values.
 
 # Analysis
 
@@ -147,7 +181,7 @@ exits non-zero.
 
 ### Gaps
 
-A never-fired obligation is named by its site and condition, while a fully exercised
+A never-fired obligation is named by its message and condition, while a fully exercised
 one is left unreported.
 
 ### Combination
@@ -155,10 +189,11 @@ one is left unreported.
 A grid cell the run never witnessed is reported as a cross-product gap, named by its
 tuple of buckets.
 
-### Boundary
+### Legend
 
-A `Distinct_Boundary` endpoint the run never reached is reported as a boundary gap,
-named by the value it bounds.
+A cross-product gap prints its grid's axis legend once, each position named by kind,
+condition, and message (the axis's own message), and decodes each cell's buckets
+back to the events they stand for, so a bare coordinate is debuggable across nested bundles.
 
 ### Summary
 
@@ -171,18 +206,33 @@ With every obligation exercised, the analysis reports nothing and does not exit.
 
 # Coverage
 
-Coverage is never silently dropped: the analyzer either accounts for a construct or
-fails on it.
+Coverage of a consumed construct is never silently dropped: the analyzer either accounts for
+it or fails on it. A bare `Sometimes` never passed to a `Dot_Product` records nothing and is
+not flagged — consuming an element is the author's responsibility.
 
 ### Modes
 
-Coverage is recorded and checked only under a plain test run; a fuzz or benchmark
-run records and checks nothing.
+Coverage is recorded in every mode but a benchmark — plain test, fuzz coordinator, and fuzz
+worker all credit observations. Under -fuzz each worker appends to a shared file; the
+coordinator unions that file before analysis. Enforcement fires in every mode.
 
 ### Enforcement
 
-A `Dot_Product` enforces its assertions on every call, in every run, even when no
-coverage is being recorded.
+A `Dot_Product` enforces its `Impossible` assertions on every call,
+in every run, even when no coverage is being recorded. An eager `Always` enforces
+independently of any `Dot_Product`, also on every call in every run.
+
+### Uniqueness
+
+Every assertion message is a global identity; registration fails when two distinct assertions
+claim the same one — two `Dot_Product`s sharing a message, a repeated axis, or two `Always`
+sharing a message. A duplicate would mask a gap, so it is fatal, not merged.
+
+### Literal
+
+A message must be a compile-time string literal, so registration seeds it under the key the runtime
+emits; a non-literal one (a variable, a concatenation, an `Impossible` reference) fails. The lone
+exception is a `_Invariants`'s namespace parameter, a template prefix (see Bundles / Template).
 
 ### Unresolved
 
