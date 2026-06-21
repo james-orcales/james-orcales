@@ -21,7 +21,7 @@ import (
 
 	"github.com/james-orcales/james-orcales/shared/diode"
 	"github.com/james-orcales/james-orcales/shared/jlog"
-	jtime "github.com/james-orcales/james-orcales/shared/time"
+	"github.com/james-orcales/james-orcales/shared/time"
 	system_time "github.com/james-orcales/james-orcales/shared/time/default"
 )
 
@@ -105,7 +105,7 @@ func New_Default_Logger() (logger Logger) {
 		Writer:        os.Stderr,
 		Clock:         clock,
 		Count:         default_diode_count,
-		Poll_Interval: 100 * jtime.Millisecond,
+		Poll_Interval: 100 * time.Millisecond,
 		Alerter:       report_dropped,
 	})
 	return jlog.New(jlog.New_Input{
@@ -283,12 +283,12 @@ func Raw_JSON(key Key, value []byte) (field Field) {
 }
 
 // Time re-exports jlog.Time.
-func Time(key Key, value jtime.Moment) (field Field) {
+func Time(key Key, value time.Moment) (field Field) {
 	return jlog.Time(key, value)
 }
 
 // Duration re-exports jlog.Duration.
-func Duration(key Key, value jtime.Duration) (field Field) {
+func Duration(key Key, value time.Duration) (field Field) {
 	return jlog.Duration(key, value)
 }
 
@@ -328,7 +328,7 @@ func Booleans(key Key, value []bool) (field Field) {
 }
 
 // Durations re-exports jlog.Durations.
-func Durations(key Key, value []jtime.Duration) (field Field) {
+func Durations(key Key, value []time.Duration) (field Field) {
 	return jlog.Durations(key, value)
 }
 
