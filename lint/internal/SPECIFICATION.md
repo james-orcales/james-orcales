@@ -538,6 +538,11 @@ since cross-goroutine handoff order is not the program's to decide.
 A deterministic package uses no select; the runtime randomizes the choice among
 the ready cases.
 
+### Floats
+
+A deterministic package uses no float32 or float64; IEEE-754 results diverge across
+platforms through fused-multiply-add contraction and extended-precision intermediates.
+
 ### Banned Imports
 
 A deterministic package imports none of time, context, sync, or sync/atomic; it

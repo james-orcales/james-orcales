@@ -9583,6 +9583,7 @@ func check_deterministic(input *check_deterministic_input) (diags []Diagnostic) 
 			continue
 		}
 		diags = append(diags, check_deterministic_constructs(pf.File_Set, pf.File)...)
+		diags = append(diags, check_deterministic_floats(pf.File_Set, pf.File)...)
 		diags = append(diags, check_deterministic_imports(
 			pf.File_Set, pf.File, input.Components, covered, input.Instrumentation)...)
 	}
@@ -9694,6 +9695,39 @@ func check_deterministic_constructs(
 				report(file_set.Position(node.Pos()), "must not use a channel")
 			}
 		}
+		return true
+	})
+	return diags
+}
+
+// Flags the float types a deterministic package may not use. IEEE-754 results
+// diverge across platforms — fused-multiply-add contraction, x87 extended-precision
+// intermediates, and compiler reassociation each rewrite the arithmetic — so the
+// same source yields different bits on different machines. Matching the bare
+// predeclared identifier catches every position the type reaches: a declaration's
+// type, a struct field, a parameter or result, and a float64(x) conversion. A bare
+// Ident named float32/float64 that is not the predeclared type would have to be a
+// user shadow of a predeclared name, which the language never idiomatically does.
+func check_deterministic_floats(
+	file_set *token.FileSet, file *ast.File,
+) (diags []Diagnostic) {
+
+	ast.Inspect(file, func(n ast.Node) (descend bool) {
+		identifier, is_identifier := n.(*ast.Ident)
+		if !is_identifier {
+			return true
+		}
+		if identifier.Name != "float32" {
+			if identifier.Name != "float64" {
+				return true
+			}
+		}
+		diags = append(diags, Diagnostic{
+			Position: file_set.Position(identifier.Pos()),
+			Name:     "deterministic",
+			Message:  "deterministic package must not use " + identifier.Name,
+			Tier:     1,
+		})
 		return true
 	})
 	return diags
