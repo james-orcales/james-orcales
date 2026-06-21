@@ -158,6 +158,7 @@ func New(input New_Input) (writer *Writer) {
 		Alerter:       alerter,
 		Rate_Limit:    limit,
 		Tokens:        int64(limit.Burst),
+		Last_Refill:   input.Clock.Now_Monotonic(),
 		Buffer_Pool:   &sync.Pool{New: new_bucket},
 		Slots:         make([]unsafe.Pointer, count),
 		Stop:          make(chan struct{}),
@@ -330,16 +331,24 @@ func forward(writer *Writer, item *bucket) {
 // line is dropped, never delayed). A disabled limiter (Bytes_Per_Second <= 0) never sheds.
 // Only the drain goroutine calls this, so the bucket state needs no synchronization.
 func rate_limit_sheds(writer *Writer, size int) (shed bool) {
-	if writer.Rate_Limit.Bytes_Per_Second <= 0 {
+	rate := int64(writer.Rate_Limit.Bytes_Per_Second)
+	if rate <= 0 {
 		return false
 	}
+	burst := int64(writer.Rate_Limit.Burst)
 	now := writer.Clock.Now_Monotonic()
 	elapsed := int64(now) - int64(writer.Last_Refill)
 	writer.Last_Refill = now
-	refilled := elapsed * int64(writer.Rate_Limit.Bytes_Per_Second) / int64(jtime.Second)
-	writer.Tokens += refilled
-	if writer.Tokens > int64(writer.Rate_Limit.Burst) {
-		writer.Tokens = int64(writer.Rate_Limit.Burst)
+	// Cap elapsed at the time to refill a full burst: beyond that the refill is wasted (the
+	// balance is capped at Burst anyway), and the cap keeps elapsed*rate from overflowing
+	// int64 after a long idle gap or against a large monotonic clock reading.
+	full := burst * int64(jtime.Second) / rate
+	if elapsed > full {
+		elapsed = full
+	}
+	writer.Tokens += elapsed * rate / int64(jtime.Second)
+	if writer.Tokens > burst {
+		writer.Tokens = burst
 	}
 	if writer.Tokens <= 0 {
 		return true
