@@ -3974,6 +3974,127 @@ func F(a int) (result int) {
 	})
 }
 
+// Test_Input_Struct_Declaration_Location verifies the "declared just above it"
+// half of the rule: once a function takes *<Func>_Input, that struct must be the
+// declaration immediately preceding the function. A struct drifting below the
+// function is flagged.
+func Test_Input_Struct_Declaration_Location(t *testing.T) {
+	t.Parallel()
+	run_diag_table(t, []struct {
+		Name      string
+		Files     map[string]string
+		Want_Diag string
+	}{
+
+		{
+			Name: "input struct below function flagged",
+			Files: map[string]string{
+				"test.go": `package main
+
+` + fixture_invariant_import + `
+const fixture_hi = 100
+
+func F(input *F_Input) (result int) {
+	defer func() {
+	}()
+	return input.A + input.B
+}
+
+type F_Input struct {
+	// A is a fixture.
+	A int
+	// B is a fixture.
+	B int
+}
+`,
+			},
+			Want_Diag: "declare F_Input directly above F",
+		},
+	})
+}
+
+// Test_Input_Struct_Declaration_Location_Part2 covers a struct fenced off from
+// its function by an intervening declaration: adjacency, not mere precedence, is
+// required.
+func Test_Input_Struct_Declaration_Location_Part2(t *testing.T) {
+	t.Parallel()
+	run_diag_table(t, []struct {
+		Name      string
+		Files     map[string]string
+		Want_Diag string
+	}{
+
+		{
+			Name: "input struct fenced off by another decl flagged",
+			Files: map[string]string{
+				"test.go": `package main
+
+` + fixture_invariant_import + `
+const fixture_hi = 100
+
+type F_Input struct {
+	// A is a fixture.
+	A int
+	// B is a fixture.
+	B int
+}
+
+func interpose() (result int) {
+	defer func() {
+	}()
+	return 0
+}
+
+func F(input *F_Input) (result int) {
+	defer func() {
+	}()
+	return input.A + input.B
+}
+`,
+			},
+			Want_Diag: "declare F_Input directly above F",
+		},
+	})
+}
+
+// Test_Input_Struct_Declaration_Location_Skip verifies the locality rule keys off
+// the *<Func>_Input name: a single pointer parameter of an unrelated type is left
+// alone wherever its type is declared.
+func Test_Input_Struct_Declaration_Location_Skip(t *testing.T) {
+	t.Parallel()
+	run_diag_table(t, []struct {
+		Name      string
+		Files     map[string]string
+		Want_Diag string
+	}{
+
+		{
+			Name: "unrelated pointer param not subject to locality",
+			Files: map[string]string{
+				"test.go": `package main
+
+` + fixture_invariant_import + `
+type fixture_thing struct {
+	// A is a fixture.
+	A int
+	// B is a fixture.
+	B int
+}
+
+const fixture_hi = 100
+
+func F(thing *fixture_thing) (result int) {
+	defer func() {
+	}()
+	return thing.A + thing.B
+}
+`,
+			},
+			Want_Diag: "",
+		},
+	})
+}
+
 // Test_No_Empty_Function_Body verifies that empty-body functions and methods are
 // flagged while interface method signatures (Body == nil) are allowed.
 func Test_No_Empty_Function_Body(t *testing.T) {

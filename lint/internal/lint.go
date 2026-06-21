@@ -5820,21 +5820,82 @@ func check_names_vocabulary_message(input *check_names_vocabulary_message_input)
 // become compile errors.
 func check_input_struct(file_set *token.FileSet, file *ast.File, _ []byte) (diags []Diagnostic) {
 
-	for _, declaration := range file.Decls {
+	for index, declaration := range file.Decls {
 		function_declaration, ok := declaration.(*ast.FuncDecl)
 		if !ok {
 			continue
 		}
-		if !check_input_struct_should_trigger(function_declaration) {
+		want_name := check_input_struct_expected_name(function_declaration.Name.Name)
+		if check_input_struct_should_trigger(function_declaration) {
+			diag := check_input_struct_validate(file_set, function_declaration, want_name)
+			if diag != nil {
+				diags = append(diags, *diag)
+			}
 			continue
 		}
-		want_name := check_input_struct_expected_name(function_declaration.Name.Name)
-		diag := check_input_struct_validate(file_set, function_declaration, want_name)
-		if diag != nil {
-			diags = append(diags, *diag)
+		// A function that has already adopted the struct (its parameter is
+		// *<Func>_Input) must keep that struct adjacent. The call site reads the
+		// field shape from the lines directly above the call's target; a struct
+		// drifting below the function, or fenced off behind another
+		// declaration, severs that locality and is no better than the loose
+		// positional parameters the rule exists to abolish.
+		if !check_input_struct_uses_named_input(function_declaration, want_name) {
+			continue
 		}
+		if check_input_struct_declared_directly_above(file, index, want_name) {
+			continue
+		}
+		diags = append(diags, Diagnostic{
+			Position: file_set.Position(function_declaration.Pos()),
+			Message: "declare " + want_name + " directly above " +
+				function_declaration.Name.Name,
+		})
 	}
 	return diags
+}
+
+// Reports whether function takes a parameter typed *<want_name> — the adopted
+// input-struct shape whose declaration the locality rule then governs. Keying on
+// the expected name, not on "any pointer parameter", leaves an unrelated single
+// pointer argument untouched.
+func check_input_struct_uses_named_input(function *ast.FuncDecl, want_name string) (uses bool) {
+
+	if function.Type.Params == nil {
+		return false
+	}
+	pointer := "*" + want_name
+	for _, f := range function.Type.Params.List {
+		if types.ExprString(f.Type) == pointer {
+			return true
+		}
+	}
+	return false
+}
+
+// Reports whether the declaration immediately preceding index declares want_name
+// as a struct type — the "declared just above it" half of the rule. A doc
+// comment attaches to the GenDecl, so it never counts as an intervening
+// declaration; any other declaration in the gap does.
+func check_input_struct_declared_directly_above(
+	file *ast.File, index int, want_name string,
+) (above bool) {
+
+	if index == 0 {
+		return false
+	}
+	general, ok := file.Decls[index-1].(*ast.GenDecl)
+	if !ok || general.Tok != token.TYPE {
+		return false
+	}
+	for _, spec := range general.Specs {
+		type_specification, ok := spec.(*ast.TypeSpec)
+		if !ok || type_specification.Name.Name != want_name {
+			continue
+		}
+		_, is_struct := type_specification.Type.(*ast.StructType)
+		return is_struct
+	}
+	return false
 }
 
 func check_input_struct_should_trigger(function *ast.FuncDecl) (trigger bool) {
