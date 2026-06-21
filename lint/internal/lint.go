@@ -590,6 +590,38 @@ type Configuration struct {
 	Ignore []string `json:"ignore"`
 }
 
+// Git_Commit is one commit's identity for the git-history tier:
+// the full hash and the subject line of the commit message.
+type Git_Commit struct {
+	// Hash is the commit's full object name, used to attribute a diagnostic
+	// to the offending commit.
+	Hash string
+	// Subject is the first line of the commit message — the only part the
+	// commit-history rules inspect.
+	Subject string
+}
+
+// Git_Input drives the git-history tier. Zero value (Enabled=false) skips
+// the tier — used when HEAD is on main, when the binary isn't run from a
+// git repo, or in fstest.MapFS-backed unit tests that aren't about git.
+// Main_Reference_Absent distinguishes "no main ref locally" (shallow CI checkout,
+// brand-new repo) from "main ref present, no offending commits" so CI
+// misconfiguration surfaces as a specific failure instead of silent pass.
+type Git_Input struct {
+	// Enabled gates the whole tier; the zero value skips git checks so
+	// non-git callers and FS-only tests stay clean.
+	Enabled bool
+	// Main_Reference_Absent flags that no main ref was reachable, turning a
+	// silent pass on a shallow checkout into an explicit diagnostic.
+	Main_Reference_Absent bool
+	// Merge_Commits holds the branch's merge commits, screened for the
+	// no-merge-commits rule (subtree merges excepted).
+	Merge_Commits []Git_Commit
+	// Non_Merge_Commits holds the branch's ordinary commits, screened for
+	// the subject-size, conventional-subject, and fixup rules.
+	Non_Merge_Commits []Git_Commit
+}
+
 // Main_Input bundles every external dependency the linter needs.
 // Construction lives in main.go (production) or fstest.MapFS-backed
 // tests (unit tests) — the library tier never reaches out to impure
@@ -632,38 +664,6 @@ type Main_Input struct {
 	// suppressed from output and don't count toward the exit code.
 	// Empty disables the filter.
 	Scope_Prefix string
-}
-
-// Git_Commit is one commit's identity for the git-history tier:
-// the full hash and the subject line of the commit message.
-type Git_Commit struct {
-	// Hash is the commit's full object name, used to attribute a diagnostic
-	// to the offending commit.
-	Hash string
-	// Subject is the first line of the commit message — the only part the
-	// commit-history rules inspect.
-	Subject string
-}
-
-// Git_Input drives the git-history tier. Zero value (Enabled=false) skips
-// the tier — used when HEAD is on main, when the binary isn't run from a
-// git repo, or in fstest.MapFS-backed unit tests that aren't about git.
-// Main_Reference_Absent distinguishes "no main ref locally" (shallow CI checkout,
-// brand-new repo) from "main ref present, no offending commits" so CI
-// misconfiguration surfaces as a specific failure instead of silent pass.
-type Git_Input struct {
-	// Enabled gates the whole tier; the zero value skips git checks so
-	// non-git callers and FS-only tests stay clean.
-	Enabled bool
-	// Main_Reference_Absent flags that no main ref was reachable, turning a
-	// silent pass on a shallow checkout into an explicit diagnostic.
-	Main_Reference_Absent bool
-	// Merge_Commits holds the branch's merge commits, screened for the
-	// no-merge-commits rule (subtree merges excepted).
-	Merge_Commits []Git_Commit
-	// Non_Merge_Commits holds the branch's ordinary commits, screened for
-	// the subject-size, conventional-subject, and fixup rules.
-	Non_Merge_Commits []Git_Commit
 }
 
 // Main is the linter's entry point. Returns the process exit code:
@@ -5827,7 +5827,8 @@ func check_input_struct(file_set *token.FileSet, file *ast.File, _ []byte) (diag
 		}
 		want_name := check_input_struct_expected_name(function_declaration.Name.Name)
 		if check_input_struct_should_trigger(function_declaration) {
-			diag := check_input_struct_validate(file_set, function_declaration, want_name)
+			diag := check_input_struct_validate(
+				file_set, function_declaration, want_name)
 			if diag != nil {
 				diags = append(diags, *diag)
 			}
@@ -5883,16 +5884,22 @@ func check_input_struct_declared_directly_above(
 	if index == 0 {
 		return false
 	}
-	general, ok := file.Decls[index-1].(*ast.GenDecl)
-	if !ok || general.Tok != token.TYPE {
+	general, is_general := file.Decls[index-1].(*ast.GenDecl)
+	if !is_general {
 		return false
 	}
-	for _, spec := range general.Specs {
-		type_specification, ok := spec.(*ast.TypeSpec)
-		if !ok || type_specification.Name.Name != want_name {
+	if general.Tok != token.TYPE {
+		return false
+	}
+	for _, declaration := range general.Specs {
+		type_definition, is_type := declaration.(*ast.TypeSpec)
+		if !is_type {
 			continue
 		}
-		_, is_struct := type_specification.Type.(*ast.StructType)
+		if type_definition.Name.Name != want_name {
+			continue
+		}
+		_, is_struct := type_definition.Type.(*ast.StructType)
 		return is_struct
 	}
 	return false
