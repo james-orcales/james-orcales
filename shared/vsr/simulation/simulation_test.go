@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	invariant "github.com/james-orcales/james-orcales/shared/invariant/default"
+	"github.com/james-orcales/james-orcales/shared/prng"
 	"github.com/james-orcales/james-orcales/shared/time"
 	"github.com/james-orcales/james-orcales/shared/vsr"
 )
@@ -132,6 +133,12 @@ const sim_isolate_every = 180
 // How many millisecond grains a partition lasts.
 const sim_isolate_window = 150
 
+// The tick interval between transient clock-fault onsets, under the clock-skew sweep.
+const sim_clock_fault_every = 200
+
+// How many millisecond grains a transient clock fault lasts before it heals.
+const sim_clock_fault_window = 120
+
 // The largest message delay, in millisecond grains.
 const sim_delay_max = 3
 
@@ -213,19 +220,35 @@ type scheduled_message struct {
 // schedule, the fault generator, the clients, and the verification models. Its free functions
 // evolve it; run_simulation owns its life.
 type simulator struct {
-	T               *testing.T
-	Seed            int64
-	Generator       pseudo_random
-	Clock           time.Clock
-	Cluster_Count   int
-	Replicas        []vsr.Replica
-	Previous_Status []vsr.Status
-	Network         []scheduled_message
-	Isolated_Until  []time.Moment
-	Next_Nonce      vsr.Nonce
-	Next_Command    int
-	Result          simulation_result
-	Clients         []client
+	T         *testing.T
+	Seed      int64
+	Generator pseudo_random
+	Clock     time.Clock
+	// Replica_Clocks is one virtual clock per replica index, ticked in lockstep with Clock
+	// but read independently so each replica perceives its own time — no two nodes share a
+	// clock. Skew off makes each read like Clock; skew and drift bend them apart.
+	Replica_Clocks []time.Clock
+	// Clock_Generator draws all per-replica clock randomness (offsets, drifts, fault onsets)
+	// from a stream SEPARATE from Generator, so adding clocks does not perturb the fault
+	// schedule the documented regression seeds reproduce.
+	Clock_Generator prng.Generator
+	// Clock_Skew enables per-replica offset, drift, and injected clock faults. Off (the
+	// default run) keeps every clock identical for exact traces; the sweep turns it on.
+	Clock_Skew bool
+	// Clock_Fault_Until and Clock_Fault_Offset model a transient clock fault (an NTP jump or
+	// a bad oscillator): while the true clock is before Clock_Fault_Until[i], replica i's
+	// perceived time is shifted by Clock_Fault_Offset[i]; past it the fault heals.
+	Clock_Fault_Until  []time.Moment
+	Clock_Fault_Offset []time.Duration
+	Cluster_Count      int
+	Replicas           []vsr.Replica
+	Previous_Status    []vsr.Status
+	Network            []scheduled_message
+	Isolated_Until     []time.Moment
+	Next_Nonce         vsr.Nonce
+	Next_Command       int
+	Result             simulation_result
+	Clients            []client
 	// Executed records, per replica, the set of commands it has applied. Commands are globally
 	// unique per request, so a command applied twice on one replica is a double-execution —
 	// the reliable Stage-1 exactly-once check, since op-numbers are not visible inside Execute
@@ -343,6 +366,14 @@ func accumulator_fold(input *accumulator_fold_input) (next uint64) {
 // every delivery and recording the liveness coverage axes. A safety violation fails the test naming
 // the seed; the framework's Always/Sometimes do the rest.
 func run_simulation(t *testing.T, seed int64) (result simulation_result) {
+	return run_simulation_with(t, seed, false)
+}
+
+// Drives one seed, optionally with per-replica clock skew, drift, and injected clock faults. The
+// default run_simulation leaves every clock identical so its traces — and the regression seeds
+// pinned to them — are unchanged; Test_Cluster_Clock_Skew turns skew on to prove the safety
+// oracles still hold when no two nodes share a clock.
+func run_simulation_with(t *testing.T, seed int64, clock_skew bool) (result simulation_result) {
 	t.Helper()
 	cluster_count := 3
 	if seed%2 == 0 {
@@ -350,19 +381,26 @@ func run_simulation(t *testing.T, seed int64) (result simulation_result) {
 	}
 	clock := time.Virtual_Clock_To_Clock(time.Virtual_Clock{Resolution: time.Millisecond})
 	state := &simulator{
-		T:               t,
-		Seed:            seed,
-		Generator:       pseudo_random{State: uint64(seed)},
-		Clock:           clock,
-		Cluster_Count:   cluster_count,
-		Replicas:        make([]vsr.Replica, sim_superset),
-		Previous_Status: make([]vsr.Status, sim_superset),
-		Isolated_Until:  make([]time.Moment, sim_superset),
-		Active:          make([]bool, sim_superset),
-		Next_Nonce:      vsr.Nonce(1),
-		Executed:        make([]map[string]bool, sim_superset),
-		Executed_Result: make([]map[string][]byte, sim_superset),
-		Accumulator:     make([]uint64, sim_superset),
+		T:              t,
+		Seed:           seed,
+		Generator:      pseudo_random{State: uint64(seed)},
+		Clock:          clock,
+		Replica_Clocks: make([]time.Clock, sim_superset),
+		// Clock stream seeded apart from Generator so per-replica clocks draw without
+		// shifting the main fault schedule the regression seeds reproduce.
+		Clock_Generator:    prng.New(uint64(seed) ^ 0xc10cc10cc10cc10c),
+		Clock_Skew:         clock_skew,
+		Clock_Fault_Until:  make([]time.Moment, sim_superset),
+		Clock_Fault_Offset: make([]time.Duration, sim_superset),
+		Cluster_Count:      cluster_count,
+		Replicas:           make([]vsr.Replica, sim_superset),
+		Previous_Status:    make([]vsr.Status, sim_superset),
+		Isolated_Until:     make([]time.Moment, sim_superset),
+		Active:             make([]bool, sim_superset),
+		Next_Nonce:         vsr.Nonce(1),
+		Executed:           make([]map[string]bool, sim_superset),
+		Executed_Result:    make([]map[string][]byte, sim_superset),
+		Accumulator:        make([]uint64, sim_superset),
 		Reference: reference_model{
 			Result_Of_Op:          map[vsr.Op][]byte{},
 			Request_Of_Op:         map[vsr.Op]outcome_key{},
@@ -380,6 +418,11 @@ func run_simulation(t *testing.T, seed int64) (result simulation_result) {
 	simulator_allocate(state, cluster_count)
 	for tick_index := 0; tick_index < sim_total_ticks; tick_index++ {
 		state.Clock.Tick()
+		// Advance every replica's own clock with the true clock; a drifting clock falls
+		// behind or races ahead within the same wall-clock tick.
+		for index := range state.Replica_Clocks {
+			state.Replica_Clocks[index].Tick()
+		}
 		now := state.Clock.Now_Monotonic()
 		simulator_inject_faults(state, tick_index, now)
 		simulator_inject_reconfiguration(state, tick_index, now)
@@ -408,6 +451,7 @@ func simulator_allocate(state *simulator, cluster_count int) {
 			configuration = dormant_configuration(index)
 		}
 		state.Active[index] = active
+		state.Replica_Clocks[index] = simulator_replica_clock(state)
 		state.Replicas[index] = vsr.New_Replica(&vsr.New_Replica_Input{
 			Identifier:          vsr.Replica_Identifier(index),
 			Configuration:       configuration,
@@ -418,7 +462,7 @@ func simulator_allocate(state *simulator, cluster_count int) {
 			Checkpoint_Interval: sim_checkpoint_interval,
 			Log_Retain:          sim_log_retain,
 			Batch_Max:           sim_batch_max,
-			Now:                 state.Clock.Now_Monotonic(),
+			Now:                 state.Replica_Clocks[index].Now_Realtime(),
 		})
 		state.Previous_Status[index] = state.Replicas[index].Status
 	}
@@ -427,6 +471,23 @@ func simulator_allocate(state *simulator, cluster_count int) {
 		// Client identifiers start above any replica identifier so they never alias.
 		state.Clients[index] = client{Identifier: vsr.Client_Identifier(1000 + index)}
 	}
+}
+
+// Builds one replica's clock. Skew off makes it read like the true clock; skew on gives it a
+// per-replica offset (Epoch) and a bounded linear drift, so no two replicas share time: the
+// offset differentiates the §4.4 timestamps each would stamp and the drift desynchronizes their
+// timeouts — what VSR safety must survive by leaning on consensus, not the clock.
+func simulator_replica_clock(state *simulator) (clock time.Clock) {
+	virtual := time.Virtual_Clock{Resolution: time.Millisecond}
+	if state.Clock_Skew {
+		virtual.Epoch = time.Moment(prng.Generator_Below(&state.Clock_Generator, 50)) *
+			time.Moment(time.Millisecond)
+		// Drift A ns/tick shifts the effective rate to Resolution-A; |A| far below
+		// Resolution keeps the clock monotonic while still drifting up to ~2%.
+		rate := time.Duration(prng.Generator_Below(&state.Clock_Generator, 40001) - 20000)
+		virtual.Skew = time.Skew(time.Skew_Input{Kind: time.Skew_Kind_Linear, A: rate})
+	}
+	return time.Virtual_Clock_To_Clock(virtual)
 }
 
 // A dormant pre-allocated node's placeholder configuration: three members including itself,
@@ -482,7 +543,7 @@ func simulator_state_machine(state *simulator, index int) (machine vsr.State_Mac
 			return result
 		},
 		Predict: func(command []byte) (prediction []byte) {
-			return moment_to_bytes(state.Clock.Now_Monotonic())
+			return moment_to_bytes(simulator_replica_now(state, index))
 		},
 		Snapshot: func() (snapshot []byte) {
 			return uint64_to_bytes(state.Accumulator[index])
@@ -545,6 +606,29 @@ func simulator_inject_faults(state *simulator, tick_index int, now time.Moment) 
 			state.Isolated_Until[victim] = now + window
 		}
 	}
+	if state.Clock_Skew {
+		if tick_index%sim_clock_fault_every == 0 {
+			simulator_inject_clock_fault(state, now)
+		}
+	}
+}
+
+// Applies a transient clock fault to one active replica: a forward step in its perceived time for a
+// window, modeling an NTP correction or a bad oscillator. Perceived time jumps forward while the
+// fault is open and snaps back when it heals — both directions a clock can move that safety must
+// survive and liveness must recover from. The draw is from the separate clock stream, and the fault
+// fires only under the clock-skew sweep.
+func simulator_inject_clock_fault(state *simulator, now time.Moment) {
+	active := simulator_active_indices(state)
+	if len(active) == 0 {
+		return
+	}
+	victim := active[prng.Generator_Below(&state.Clock_Generator, len(active))]
+	jump := time.Duration(20+prng.Generator_Below(&state.Clock_Generator, 40)) *
+		time.Duration(time.Millisecond)
+	state.Clock_Fault_Offset[victim] = jump
+	state.Clock_Fault_Until[victim] = now +
+		time.Moment(sim_clock_fault_window)*time.Moment(time.Millisecond)
 }
 
 // Crash-restarts one active normal replica, keeping the active normal count above the active
@@ -719,13 +803,28 @@ func simulator_active_normal_count(state *simulator) (count int) {
 // to their clients and advancing the verification models. A dormant pre-allocated node and a
 // shut-down replica are not ticked: they are out of the protocol. Membership is refreshed afterward
 // so a replica that shut down or joined this tick is reflected before delivery.
+// Returns a replica's perceived time: its own virtual clock's reading. Each replica reads its own
+// clock rather than a shared global one, so no two nodes' clocks are assumed equal — the realistic
+// model, and the adversarial test that VSR safety depends only on consensus, never on the clock.
+// With skew off this equals the true clock; the skew step bends Epoch/drift per replica and an
+// injected clock fault offsets it for a window.
+func simulator_replica_now(state *simulator, index int) (now time.Moment) {
+	now = state.Replica_Clocks[index].Now_Realtime()
+	// A transient clock fault shifts perceived time until it heals at Clock_Fault_Until; a zero
+	// (unset) deadline is always in the past, so a replica with no fault is unaffected.
+	if state.Clock.Now_Monotonic() < state.Clock_Fault_Until[index] {
+		now += time.Moment(state.Clock_Fault_Offset[index])
+	}
+	return now
+}
+
 func simulator_tick_replicas(state *simulator, now time.Moment) {
 	for index := range state.Replicas {
 		if !state.Active[index] {
 			continue
 		}
 		output := vsr.Replica_Tick(&vsr.Replica_Tick_Input{
-			Replica: &state.Replicas[index], Now: now,
+			Replica: &state.Replicas[index], Now: simulator_replica_now(state, index),
 		})
 		simulator_handle_output(state, output, now)
 	}
@@ -1438,7 +1537,59 @@ func simulator_record_coverage(state *simulator) {
 				state.Clients[index].Unanswered,
 				"client has an unanswered request"))
 	}
+	// Clock skew must be witnessed both ways: the spread between the fastest and slowest
+	// replica's perceived time sometimes exceeds five milliseconds (the skew sweep) and
+	// sometimes does not (the default shared-clock runs), so the model is genuinely exercised.
+	invariant.Dot_Product("sim.clock.skew_observed",
+		invariant.Sometimes(
+			simulator_clock_skew(state) > time.Moment(5)*time.Moment(time.Millisecond),
+			"replica clocks skewed past five milliseconds"))
+	// A transient clock fault must sometimes be active (the skew sweep injects them) and
+	// sometimes not, so the fault path is witnessed both ways across the sweep.
+	invariant.Dot_Product("sim.clock.fault_active",
+		invariant.Sometimes(
+			simulator_clock_fault_active(state),
+			"a replica clock is faulted"))
 	simulator_record_result_coverage(state)
+}
+
+// Reports whether any active replica is currently inside a transient clock-fault window.
+func simulator_clock_fault_active(state *simulator) (active bool) {
+	now := state.Clock.Now_Monotonic()
+	for index := range state.Replicas {
+		if !state.Active[index] {
+			continue
+		}
+		if now < state.Clock_Fault_Until[index] {
+			return true
+		}
+	}
+	return false
+}
+
+// Returns the spread between the highest and lowest perceived time across active replicas — the
+// cluster's clock skew this tick. Zero when fewer than two replicas are active.
+func simulator_clock_skew(state *simulator) (spread time.Moment) {
+	low := time.Moment(0)
+	high := time.Moment(0)
+	seen := false
+	for index := range state.Replicas {
+		if !state.Active[index] {
+			continue
+		}
+		now := simulator_replica_now(state, index)
+		if !seen {
+			low, high, seen = now, now, true
+			continue
+		}
+		if now < low {
+			low = now
+		}
+		if now > high {
+			high = now
+		}
+	}
+	return high - low
 }
 
 func simulator_record_result_coverage(state *simulator) {
