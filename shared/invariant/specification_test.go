@@ -858,6 +858,27 @@ func Test_Analysis_Summary(t *testing.T) {
 	}
 }
 
+// Test_Analysis_Summary_Names_Package: the summary names the registered package so the
+// line is identifiable when many packages print to the same terminal in parallel.
+func Test_Analysis_Summary_Names_Package(t *testing.T) {
+	recorder := &invariant.Recorder{Package_Label: "shared/prng"}
+	store := func(key string, kind invariant.Assertion_Kind) {
+		recorder.Events.Store(key, &invariant.Assertion_Metadata{Kind: kind})
+	}
+	store("a", invariant.Assertion_Kind_Always)
+	store("b", invariant.Assertion_Kind_Sometimes)
+	store("c:tuple=(0)", invariant.Assertion_Kind_Tuple)
+	store("c:tuple=(1)", invariant.Assertion_Kind_Tuple)
+
+	summary := invariant.Recorder_Assertion_Summary(recorder)
+
+	want := "✓ shared/prng: tested 4 properties " +
+		"(2 individual + 2 combinations, of which 1 are panic-able)"
+	if summary != want {
+		t.Fatalf("summary = %q, want %q", summary, want)
+	}
+}
+
 // Test_Analysis_Clean: a fully exercised run reports nothing and does not exit.
 func Test_Analysis_Clean(t *testing.T) {
 	var output bytes.Buffer
