@@ -273,3 +273,45 @@ that caused it. Each fix changes `vsr.go`, never the assertion.
 - **Guard**: the per-delivery agreement check over the standby-enabled, reconfiguring sweep; the
   1200-seed scan is clean. Standbys are exercised every run (the voting set is fixed at three, so a
   five-member configuration carries two standbys; a coverage axis witnesses a standby following).
+
+## Bug 15 — a checkpoint restore left a stale Op, overwriting a committed op (agreement)
+
+- **Symptom** (seed 1266, N=5; surfaced by a wider seed scan beyond the committed ranges):
+  `op 17 diverges: 1="read-client-1000-req-6" 3="read-client-1001-req-6"` — two replicas committed
+  different commands at op 17, an agreement violation. The committed 0–239 ranges never reached it;
+  a 400–1399 scan did, so the bug existed in the shipped core, latent.
+- **Root cause**: `replica_restore_checkpoint` set `Log_Start` and `Executed` to the checkpoint op
+  but left `replica.Op` at its stale pre-restore value, and `replica_apply_new_state` nilled the log
+  without fixing `Op` either — so after restoring a state-transfer checkpoint the replica violated
+  `Op == Log_Start + len(Log)`. The following `replica_splice_suffix` read the stale higher `Op`,
+  treated the suffix's first (committed) op as one it already held, dropped it, and shifted the
+  remaining entry down one op — overwriting the committed op 17 with op 18's command. A later
+  delivery committed past it, and two replicas disagreed on a committed op.
+- **Fix**: `replica_restore_checkpoint` now leaves a self-consistent state — `Op = Log_Start =
+  checkpoint_op`, `Log` empty — upholding `Op == Log_Start + len(Log)` itself; the redundant
+  log-nil in `replica_apply_new_state` is removed. The splice then sees the true post-restore op and
+  appends the whole suffix without dropping its committed head.
+- **Guard**: seed 1266 is a permanent regression seed in `Test_Cluster_Agreement`; the per-delivery
+  agreement and accumulator oracles, run after every delivery.
+
+## Bug 16 — a deferred view-change fetch accepted a stale, non-attaching New_State (gap)
+
+- **Symptom** (seed 1378, N=5, with per-replica clock skew enabled): `log entry op is above log
+  start` (`Always`) tripped in `replica_log_entry`, reached from a deferred view-change fetch
+  completing → `replica_adopt_log` → execution walking into a garbage-collected op. Skew-specific:
+  the same seed without clock skew is clean; the timing skew produces is what delivers the stale
+  answer at the wrong moment.
+- **Root cause**: the deferred view-change fetch (§5.3) asks the reporter for state from the
+  new primary's `Log_Start`, but `replica_complete_view_change_fetch` accepted ANY `New_State`
+  matching `(from, view, op >= fetch_op)`. A stale answer to an earlier state-transfer `Get_State` —
+  one this replica sent while a normal backup — satisfied that check. Its suffix attached ABOVE the
+  new primary's commit (`carrier_start > Commit`) and carried no checkpoint, so `replica_adopt_log`
+  took its behind-branch and restored from a non-existent checkpoint (`Checkpoint_Op` 0), leaving
+  `Log_Start` above `Executed` — a checkpoint-to-log gap the commit walk then indexed into.
+- **Fix**: `replica_complete_view_change_fetch` now ignores a `New_State` whose suffix sits above
+  the committed prefix (`carrier_start > Commit`) unless it carries a checkpoint. A faithful answer
+  to the `Log_Start` fetch attaches at or below the commit (or ships a checkpoint), so only stale or
+  mismatched answers are dropped, keeping the fetch outstanding for the real one.
+- **Guard**: seed 1378 (clock skew on) is a permanent regression seed in `Test_Cluster_Clock_Skew`;
+  the `replica_log_entry` bounds assertion and the cluster agreement oracle under the clock-skew
+  sweep.

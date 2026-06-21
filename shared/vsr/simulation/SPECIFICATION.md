@@ -34,6 +34,12 @@ Every result a client receives equals a reference machine over the committed log
 every replica's live accumulator at commit C equals the reference's over the first C committed ops,
 so the cluster, snapshot/restore included, is indistinguishable from a single correct machine.
 
+### Clock Skew
+
+Safety holds when every replica reads its own clock — a per-replica offset, a bounded drift, and
+injected clock faults, so no two nodes share time — proving the protocol leans on consensus, not the
+clock; the §4.4 prediction and the timeout-driven view change both run against divergent clocks.
+
 ### Reconfiguration
 
 A reconfiguration grows, shrinks, and swaps the group across a run (§7): the epoch advances, the new

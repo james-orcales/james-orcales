@@ -1977,7 +1977,6 @@ func replica_apply_new_state(replica *Replica, message Message) {
 		if message.Checkpoint_Op > replica.Executed {
 			replica_restore_checkpoint(
 				replica, message.Checkpoint_Op, message.Checkpoint_State)
-			replica.Log = nil
 		}
 	}
 	// Splice the shipped suffix onto the prefix this replica holds: state transfer extends a
@@ -2006,6 +2005,20 @@ func replica_complete_view_change_fetch(
 	}
 	if message.Op < replica.View_Change_Fetch_Op {
 		return output // The fetched log is short of the winner's op; keep waiting.
+	}
+	// The fetch asked from this replica's Log_Start, so a faithful answer attaches at or
+	// below the committed prefix (carrier_start <= Commit) or ships a checkpoint covering the
+	// gap. A New_State attaching ABOVE the commit with no checkpoint is stale or mismatched —
+	// typically a reply to an earlier state-transfer Get_State this replica sent as a backup —
+	// whose omitted prefix lands on this replica's own UNCOMMITTED entries, which may diverge
+	// from the selected log and which adopt cannot restore. Ignoring it keeps the fetch
+	// outstanding for the faithful answer rather than installing a gap over a committed op
+	// (simulator_bugs.md, Bug 16).
+	carrier_start := message.Op - Op(len(message.Log))
+	if message.Checkpoint_State == nil {
+		if carrier_start > Op(replica.Commit) {
+			return output
+		}
 	}
 	return replica_complete_install(replica, message, replica.View_Change_Fetch_Op, now)
 }
@@ -2353,6 +2366,13 @@ func replica_restore_checkpoint(replica *Replica, checkpoint_op Op, state []byte
 	replica.Checkpoint_State = state
 	replica.Log_Start = checkpoint_op
 	replica.Executed = checkpoint_op
+	// A restore materializes the state through checkpoint_op and holds no log beyond it yet:
+	// the caller rebuilds the log from the incoming suffix. Op and Log must reflect that empty
+	// state, keeping Op == Log_Start + len(Log). A stale higher Op here makes the following
+	// splice treat the suffix's first (committed) op as already held and drop it, shifting the
+	// rest down and overwriting a committed op (simulator_bugs.md, Bug 15).
+	replica.Op = checkpoint_op
+	replica.Log = nil
 	if replica.State_Machine.Restore == nil {
 		return
 	}
