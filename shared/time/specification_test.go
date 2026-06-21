@@ -45,6 +45,21 @@ func Test_Virtual_Clock_Skew(t *testing.T) {
 	if got := c.Now_Realtime(); got != 1998 {
 		t.Fatalf("realtime = %d, want 1998 (skewed)", got)
 	}
+
+	// A periodic skew of amplitude 1000 over a four-tick period peaks at a quarter
+	// turn: at tick 1, sin(2pi/4) = 1, so the skew equals the full amplitude and
+	// cancels the elapsed span exactly.
+	periodic := time.Virtual_Clock_To_Clock(time.Virtual_Clock{
+		Resolution: 1000,
+		Epoch:      0,
+		Skew: time.Skew(time.Skew_Input{
+			Kind: time.Skew_Kind_Periodic, A: 1000, B: 4,
+		}),
+	})
+	periodic.Tick()
+	if got := periodic.Now_Realtime(); got != 0 {
+		t.Fatalf("periodic realtime at quarter turn = %d, want 0", got)
+	}
 }
 
 // Test_Virtual_Clock_Sleep verifies sleeping advances the virtual clock by the
