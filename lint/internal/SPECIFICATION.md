@@ -414,9 +414,8 @@ A function spans at most seventy lines.
 
 ### Input Structs
 
-A function whose parameters or whose returns repeat a type takes a single input struct pointer or
-returns one output struct, named for the function and declared just above it; a variadic may remain
-a separate parameter.
+A function whose parameters repeat a type takes a single input struct pointer, named for the
+function and declared just above it; a variadic may remain a separate parameter.
 
 ### Named Returns
 

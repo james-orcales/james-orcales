@@ -63,13 +63,17 @@ func Test_Overflow_Drops_Oldest(t *testing.T) {
 // overwritten entries when the writer laps the drain.
 func Test_Drop_Count_Is_Reported(t *testing.T) {
 	dropped := make(chan int, 8)
+	causes := make(chan diode.Drop_Cause, 8)
 	sink := &recording_sink{Written: make(chan string, 8)}
 	clock, parked, resume := gated_clock()
 	writer := diode.New(diode.New_Input{
-		Writer:  sink,
-		Clock:   clock,
-		Count:   4,
-		Alerter: func(missed int) { dropped <- missed },
+		Writer: sink,
+		Clock:  clock,
+		Count:  4,
+		Alerter: func(missed int, cause diode.Drop_Cause) {
+			dropped <- missed
+			causes <- cause
+		},
 	})
 	<-parked
 	for index := 0; index < 8; index++ {
@@ -78,6 +82,9 @@ func Test_Drop_Count_Is_Reported(t *testing.T) {
 	close(resume)
 	if missed := <-dropped; missed != 4 {
 		t.Fatalf("alerter reported %d drops, want 4", missed)
+	}
+	if cause := <-causes; cause != diode.Drop_Overflow {
+		t.Fatalf("drop cause %v, want Drop_Overflow", cause)
 	}
 	writer.Close()
 }
@@ -155,6 +162,59 @@ func Test_Dropping_Does_Not_Allocate(t *testing.T) {
 	writer.Close()
 }
 
+// Test_Rate_Limit_Sheds_By_Bytes checks the byte budget: up to the burst is delivered and
+// the rest is shed with cause Drop_Rate_Limit, while a clock that advances refills tokens so
+// every line passes.
+func Test_Rate_Limit_Sheds_By_Bytes(t *testing.T) {
+	sink := &recording_sink{Written: make(chan string, 16)}
+	causes := make(chan diode.Drop_Cause, 16)
+	writer := diode.New(diode.New_Input{
+		Writer:     sink,
+		Clock:      instant_clock(),
+		Count:      16,
+		Rate_Limit: diode.Rate_Limit{Bytes_Per_Second: 1, Burst: 6},
+		Alerter: func(missed int, cause diode.Drop_Cause) {
+			for index := 0; index < missed; index++ {
+				causes <- cause
+			}
+		},
+	})
+	for index := 0; index < 8; index++ {
+		writer.Write([]byte("ab"))
+	}
+	for index := 0; index < 3; index++ {
+		if got := <-sink.Written; got != "ab" {
+			t.Fatalf("delivered %q, want ab", got)
+		}
+	}
+	for index := 0; index < 5; index++ {
+		if cause := <-causes; cause != diode.Drop_Rate_Limit {
+			t.Fatalf("shed cause %v, want Drop_Rate_Limit", cause)
+		}
+	}
+	writer.Close()
+
+	steady_sink := &recording_sink{Written: make(chan string, 16)}
+	steady := diode.New(diode.New_Input{
+		Writer:     steady_sink,
+		Clock:      stepping_clock(jtime.Second),
+		Count:      16,
+		Rate_Limit: diode.Rate_Limit{Bytes_Per_Second: 1000, Burst: 2},
+		Alerter: func(missed int, cause diode.Drop_Cause) {
+			t.Errorf("unexpected drop of %d (%v); tokens should refill", missed, cause)
+		},
+	})
+	for index := 0; index < 8; index++ {
+		steady.Write([]byte("ab"))
+	}
+	for index := 0; index < 8; index++ {
+		if got := <-steady_sink.Written; got != "ab" {
+			t.Fatalf("steady delivery %q, want ab", got)
+		}
+	}
+	steady.Close()
+}
+
 // A sink that forwards every line the drain writes onto Written so a test can observe
 // deliveries without polling.
 type recording_sink struct {
@@ -206,6 +266,23 @@ func gated_clock() (clock jtime.Clock, parked chan struct{}, resume chan struct{
 		},
 	}
 	return clock, parked, resume
+}
+
+// A clock whose monotonic reading advances by step on every read, so a test can drive the
+// rate limiter's token refill deterministically; Sleep returns at once like instant_clock.
+// Only the single drain goroutine reads Now_Monotonic, so the captured counter needs no
+// synchronization.
+func stepping_clock(step jtime.Duration) (clock jtime.Clock) {
+	elapsed := int64(0)
+	return jtime.Clock{
+		Now_Monotonic: func() (moment jtime.Moment) {
+			elapsed += int64(step)
+			return jtime.Moment(elapsed)
+		},
+		Now_Realtime: func() (moment jtime.Moment) { return 0 },
+		Tick:         func() {},
+		Sleep:        func(duration jtime.Duration) {},
+	}
 }
 
 // Builds a diode with the configured interval and returns the duration the drain
@@ -367,7 +444,7 @@ func Fuzz_Ring(f *testing.F) {
 			Writer:  witness,
 			Clock:   instant_clock(),
 			Count:   count,
-			Alerter: func(missed int) {},
+			Alerter: func(missed int, cause diode.Drop_Cause) {},
 		})
 		var crew sync.WaitGroup
 		for producer_index := 0; producer_index < producer_count; producer_index++ {

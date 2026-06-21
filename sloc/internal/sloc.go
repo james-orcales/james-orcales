@@ -23,6 +23,16 @@ const exit_success = 0
 const exit_usage = 2
 const exit_failure = 1
 
+// The resolved scope and override flags of one run.
+type main_scope struct {
+	// Paths is the list of files or directories to count.
+	Paths []string
+	// No_Ignore counts gitignored files too.
+	No_Ignore bool
+	// Include_Hidden counts hidden dot-files and dot-directories.
+	Include_Hidden bool
+}
+
 // Main_Input carries the command line and the host bindings Main needs. The library
 // tier does no ambient I/O, so the filesystem, stat, read, and ignore operations are
 // injected.
@@ -43,16 +53,6 @@ type Main_Input struct {
 	Ignore_For func(root string) (is_ignored Ignore_Predicate)
 	// Concurrency bounds the file-counting worker pool.
 	Concurrency int
-}
-
-// The resolved scope and override flags of one run.
-type main_scope struct {
-	// Paths is the list of files or directories to count.
-	Paths []string
-	// No_Ignore counts gitignored files too.
-	No_Ignore bool
-	// Include_Hidden counts hidden dot-files and dot-directories.
-	Include_Hidden bool
 }
 
 // Main parses the command line, counts every path, and renders the table, returning a

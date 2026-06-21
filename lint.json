@@ -13,6 +13,7 @@
     "shared/sh",
     "shared/vsr",
     "shared/levenshtein",
+    "shared/prng",
     "setup",
     "maddox"
   ],
@@ -214,7 +215,6 @@
     "rm":        ["remove"],
     "rmv":       ["remove"],
     "rnd":       ["random", "round", "render"],
-    "rng":       ["range", "random_number_generator"],
     "sc":        ["script", "scope", "source_code"],
     "sec":       ["secant", "second", "section", "security"],
     "sel":       ["selection", "selector", "select"],
@@ -232,7 +232,6 @@
     "stmt":      ["statement"],
     "str":       ["string", "structure", "stream", "struct", "strategy"],
     "sub":       ["substring", "subtraction", "subscriber", "subject", "submodule"],
-    "sum":       ["summation", "summary"],
     "svc":       ["service"],
     "sync":      ["synchronization", "synchronous"],
     "tan":       ["tangent"],

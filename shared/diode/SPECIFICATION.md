@@ -17,7 +17,7 @@ are overwritten and the newest survive.
 # Drop Count Is Reported
 
 When the drain finds the writer has lapped it, the Alerter is called with the number
-of entries that were overwritten unread.
+of entries that were overwritten unread and the cause Drop_Overflow.
 
 # Order Is Preserved
 
@@ -37,3 +37,9 @@ closes the wrapped sink when it implements io.Closer.
 
 A producer that overwrites an unread entry returns the dropped bucket to the pool, so a
 diode shedding load under sustained overload allocates nothing per dropped line.
+
+# Rate Limit Sheds By Bytes
+
+With a bytes-per-second rate limit, the drain delivers up to the burst of bytes and sheds
+the rest without blocking, reporting each shed line with cause Drop_Rate_Limit; tokens
+refill over the injected clock so later lines pass again.
