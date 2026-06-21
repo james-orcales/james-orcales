@@ -212,8 +212,8 @@ type simulation_result struct {
 	// actually ran through consensus (§6.3, TigerBeetle's reads-through-consensus) rather than
 	// the workload being writes only.
 	Reads_Committed int
-	// Tail_Drained counts runs whose fault-free tail had outstanding requests to drain, witnessing
-	// the liveness check exercised real pending work, not an already-quiescent cluster.
+	// Tail_Drained counts runs whose fault-free tail had open requests to drain, witnessing the
+	// liveness check exercised real work, not an already-quiescent cluster.
 	Tail_Drained int
 }
 
@@ -247,8 +247,8 @@ type simulator struct {
 	// perceived time is shifted by Clock_Fault_Offset[i]; past it the fault heals.
 	Clock_Fault_Until  []time.Moment
 	Clock_Fault_Offset []time.Duration
-	// Faultless, set for the fault-free tail, stops message drops and new client requests so the
-	// cluster can drain to a converged state for the liveness check.
+	// Faultless, set for the fault-free tail, stops message drops and new client requests so
+	// the cluster can drain to a converged state for the liveness check.
 	Faultless       bool
 	Cluster_Count   int
 	Replicas        []vsr.Replica
@@ -387,23 +387,23 @@ func run_simulation_with(t *testing.T, seed int64, clock_skew bool) (result simu
 	t.Helper()
 	state := new_simulator(t, seed, clock_skew)
 	simulator_run_main(state)
-	// Fault-free tail: heal every fault, then drain. After faults cease the cluster must converge —
-	// every outstanding request commits and the voting set settles to Status_Normal — or it has
-	// wedged, a liveness violation the tail reports naming the seed.
+	// Fault-free tail: heal every fault, then drain. After faults cease the cluster must
+	// converge (every open request commits, the voting set settles to Normal) or it has
+	// wedged — a liveness violation the tail reports naming the seed.
 	for index := range state.Isolated_Until {
 		state.Isolated_Until[index] = 0
 		state.Clock_Fault_Until[index] = 0
 	}
-	draining := false
+	had_open_requests := false
 	for index := range state.Clients {
 		if state.Clients[index].Unanswered {
-			draining = true
+			had_open_requests = true
 		}
 	}
 	if !simulator_run_tail(state) {
 		t.Fatalf("seed %d: cluster did not converge in the fault-free tail (wedged)", seed)
 	}
-	if draining {
+	if had_open_requests {
 		state.Result.Tail_Drained++
 	}
 	return state.Result
@@ -484,7 +484,7 @@ func simulator_run_main(state *simulator) {
 // watches it fail to converge, proving the liveness check is not vacuous.
 func simulator_run_tail(state *simulator) (converged bool) {
 	state.Faultless = true
-	for tick := 0; tick < sim_tail_ticks; tick++ {
+	for tick_index := 0; tick_index < sim_tail_ticks; tick_index++ {
 		state.Clock.Tick()
 		for index := range state.Replica_Clocks {
 			state.Replica_Clocks[index].Tick()
@@ -501,8 +501,8 @@ func simulator_run_tail(state *simulator) (converged bool) {
 	return false
 }
 
-// Reports whether the cluster has drained: every client request answered, and every voting member of
-// the current configuration active and back to Status_Normal (no one stuck in view change or
+// Reports whether the cluster has drained: every client request answered, and every voting member
+// of the current configuration active and back to Status_Normal (no one stuck in view change or
 // recovery). Standbys are not required to have caught up, only the voting set that serves requests.
 func simulator_converged(state *simulator) (converged bool) {
 	for index := range state.Clients {
@@ -510,9 +510,12 @@ func simulator_converged(state *simulator) (converged bool) {
 			return false
 		}
 	}
-	voting := int(active_count_for(len(state.Configuration)))
-	for position := 0; position < voting && position < len(state.Configuration); position++ {
-		identifier := state.Configuration[position]
+	voting_count := int(active_count_for(len(state.Configuration)))
+	for position_index := 0; position_index < voting_count; position_index++ {
+		if position_index >= len(state.Configuration) {
+			break
+		}
+		identifier := state.Configuration[position_index]
 		if !state.Active[identifier] {
 			return false
 		}
@@ -687,24 +690,7 @@ func simulator_inject_faults(state *simulator, tick_index int, now time.Moment) 
 		simulator_inject_crash(state, now)
 	}
 	if tick_index%sim_isolate_every == 0 {
-		active := simulator_active_indices(state)
-		if len(active) > 0 {
-			victim := active[pseudo_random_below(&state.Generator, len(active))]
-			// Partitioning a voting replica strands it behind the cluster, costing the voting set's
-			// single fault, so partition one only when the group is fully settled — otherwise a
-			// reconfiguration's already-stranded member plus this one leave two behind, deadlocking
-			// recovery (beyond the fault model). A standby never threatens the quorum.
-			blocked := false
-			if !is_standby(&state.Replicas[victim]) {
-				if !simulator_group_settled(state) {
-					blocked = true
-				}
-			}
-			if !blocked {
-				window := time.Moment(sim_isolate_window) * time.Moment(time.Millisecond)
-				state.Isolated_Until[victim] = now + window
-			}
-		}
+		simulator_inject_isolation(state, now)
 	}
 	if state.Clock_Skew {
 		if tick_index%sim_clock_fault_every == 0 {
@@ -731,6 +717,25 @@ func simulator_inject_clock_fault(state *simulator, now time.Moment) {
 		time.Moment(sim_clock_fault_window)*time.Moment(time.Millisecond)
 }
 
+// Partitions one active replica for a window. A voting replica is partitioned only when the group
+// is fully settled: a reconfiguration's stranded member plus a freshly partitioned one would leave
+// two voting replicas behind, deadlocking recovery (beyond the fault model). A standby never
+// threatens the quorum.
+func simulator_inject_isolation(state *simulator, now time.Moment) {
+	active := simulator_active_indices(state)
+	if len(active) == 0 {
+		return
+	}
+	victim := active[pseudo_random_below(&state.Generator, len(active))]
+	if !is_standby(&state.Replicas[victim]) {
+		if !simulator_group_settled(state) {
+			return
+		}
+	}
+	window := time.Moment(sim_isolate_window) * time.Moment(time.Millisecond)
+	state.Isolated_Until[victim] = now + window
+}
+
 // Crash-restarts one active normal replica, respecting the fault model so the cluster stays
 // recoverable. Half the crashes are warm (checkpoint survived on disk) and half cold (everything
 // lost), so both recovery paths run across the sweep.
@@ -743,14 +748,12 @@ func simulator_inject_crash(state *simulator, now time.Moment) {
 	if state.Replicas[victim].Status != vsr.Status_Normal {
 		return
 	}
-	// Respect the fault model. The voting set tolerates one fault, but a reconfiguration already
-	// strands up to that one (the non-quorum voting member catches up after the handoff), so crash a
-	// voting replica only when the group is fully settled — every voting member Normal at the
-	// frontier epoch, nothing transitioning. Crashing one mid-handoff would put two voting replicas
-	// behind at once; they re-learn the epoch through recovery simultaneously with no quorum to
-	// answer them and deadlock (the fault-model wedge the liveness tail surfaced). A standby is
-	// non-voting, so crashing one never threatens the quorum — and a standby recovering during a
-	// handoff still witnesses the §7.2 reconfigure-over-recovery overlap.
+	// Respect the fault model. The voting set tolerates one fault, but a reconfiguration can
+	// strand one, so crash a voting replica only when the group is fully settled
+	// (every voting member Normal at the frontier). Crashing mid-handoff strands two at once;
+	// they recover with no quorum to answer them and deadlock. A standby is non-voting, so
+	// crashing one never threatens the quorum, and a standby recovering during a handoff still
+	// witnesses the §7.2 reconfigure-over-recovery overlap.
 	if !is_standby(&state.Replicas[victim]) {
 		if !simulator_group_settled(state) {
 			return
@@ -1002,7 +1005,7 @@ func simulator_tick_clients(state *simulator, now time.Moment) {
 			continue
 		}
 		if state.Faultless {
-			continue // The tail drains the requests already outstanding; it issues no new ones.
+			continue // The tail drains open requests; it issues no new ones.
 		}
 		recover := pseudo_random_below(&state.Generator, 100) < sim_client_recover_percent
 		if recover {
@@ -1451,34 +1454,26 @@ func simulator_assert_safety(state *simulator) {
 // f = (active_count-1)/2 faults, so at most f voting replicas may be recovering at once. Past that,
 // fewer than a quorum are Normal, so no one can answer the recoveries and the cluster is
 // unrecoverable — a state the fault-free tail could never drain. Checking after every delivery pins
-// the exact step that broke the model, rather than leaving it to surface as a wedge 1500 ticks later.
+// the exact step that broke the model, not a wedge 1500 ticks later.
 func simulator_check_fault_model(state *simulator) {
-	voting := int(active_count_for(len(state.Configuration)))
-	if voting > len(state.Configuration) {
-		voting = len(state.Configuration)
+	voting_count := int(active_count_for(len(state.Configuration)))
+	if voting_count > len(state.Configuration) {
+		voting_count = len(state.Configuration)
 	}
-	f := (voting - 1) / 2
-	recovering := 0
-	for position := 0; position < voting; position++ {
-		id := state.Configuration[position]
-		if !state.Active[id] {
+	f := (voting_count - 1) / 2
+	recovery_count := 0
+	for position_index := 0; position_index < voting_count; position_index++ {
+		identifier := state.Configuration[position_index]
+		if !state.Active[identifier] {
 			continue
 		}
-		if state.Replicas[id].Status == vsr.Status_Recovery {
-			recovering++
+		if state.Replicas[identifier].Status == vsr.Status_Recovery {
+			recovery_count++
 		}
 	}
-	if recovering > f {
-		for position := 0; position < voting; position++ {
-			id := state.Configuration[position]
-			r := &state.Replicas[id]
-			if state.Active[id] && r.Status == vsr.Status_Recovery {
-				fmt.Printf("FM seed %d recovering r%d view=%d epoch=%d commit=%d op=%d\n",
-					state.Seed, id, r.View, r.Epoch, r.Commit, r.Op)
-			}
-		}
-		state.T.Fatalf("seed %d: %d of %d voting replicas recovering, exceeds f=%d (fault model)",
-			state.Seed, recovering, voting, f)
+	if recovery_count > f {
+		state.T.Fatalf("seed %d: %d of %d voting recovering, over f=%d (fault model)",
+			state.Seed, recovery_count, voting_count, f)
 	}
 }
 
