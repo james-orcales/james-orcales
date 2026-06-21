@@ -215,6 +215,31 @@ func Test_Rate_Limit_Sheds_By_Bytes(t *testing.T) {
 	steady.Close()
 }
 
+// Test_Rate_Limit_Survives_A_Large_Clock guards the refill math against int64 overflow: a real
+// monotonic clock reads large (nanoseconds since boot) and can gap by hours when idle, which a
+// naive elapsed*rate would overflow into a negative balance that then sheds every line.
+func Test_Rate_Limit_Survives_A_Large_Clock(t *testing.T) {
+	sink := &recording_sink{Written: make(chan string, 16)}
+	writer := diode.New(diode.New_Input{
+		Writer:     sink,
+		Clock:      stepping_clock(10_000 * jtime.Second),
+		Count:      16,
+		Rate_Limit: diode.Rate_Limit{Bytes_Per_Second: 1 << 20, Burst: 1 << 20},
+		Alerter: func(missed int, cause diode.Drop_Cause) {
+			t.Errorf("unexpected drop of %d (%v) under a large clock", missed, cause)
+		},
+	})
+	for index := 0; index < 4; index++ {
+		writer.Write([]byte("ab"))
+	}
+	for index := 0; index < 4; index++ {
+		if got := <-sink.Written; got != "ab" {
+			t.Fatalf("large-clock delivery %q, want ab", got)
+		}
+	}
+	writer.Close()
+}
+
 // A sink that forwards every line the drain writes onto Written so a test can observe
 // deliveries without polling.
 type recording_sink struct {
