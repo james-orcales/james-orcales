@@ -70,6 +70,15 @@ const sim_client_timeout = 60
 // recovers it from the cluster's cached reply — modeling §4.5 client recovery.
 const sim_client_recover_percent = 2
 
+// State_machine_apply_input is the command and its predetermined prediction the application folds.
+type state_machine_apply_input struct {
+	// Command is the opaque op payload.
+	Command []byte
+	// Prediction is the value the primary predetermined for the op (§4.4); empty for a
+	// deterministic op.
+	Prediction []byte
+}
+
 // Applies one command against its predetermined prediction (§4.4): an 8-byte hash folding both the
 // command bytes and the prediction bytes. The result depends on BOTH, so a divergent prediction
 // would produce a divergent result — which is exactly what the prediction protocol must prevent
@@ -93,15 +102,6 @@ func state_machine_apply(input *state_machine_apply_input) (result []byte) {
 		result[index] = byte(hash >> (56 - 8*index))
 	}
 	return result
-}
-
-// State_machine_apply_input is the command and its predetermined prediction the application folds.
-type state_machine_apply_input struct {
-	// Command is the opaque op payload.
-	Command []byte
-	// Prediction is the value the primary predetermined for the op (§4.4); empty for a
-	// deterministic op.
-	Prediction []byte
 }
 
 // A process outside the cluster issuing requests under exactly-once semantics. It holds one

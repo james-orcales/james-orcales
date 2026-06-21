@@ -37,6 +37,28 @@ const default_poll_interval = 100 * jtime.Millisecond
 // bloat every pooled entry (see Go issue 23199).
 const maximum_pooled_buffer = 1 << 16
 
+// Drop_Cause distinguishes why a line never reached the sink.
+type Drop_Cause int
+
+// Drop_Overflow marks a line lost because the ring lapped: the sink could not keep up.
+const Drop_Overflow Drop_Cause = 0
+
+// Drop_Rate_Limit marks a line shed by the rate limiter.
+const Drop_Rate_Limit Drop_Cause = 1
+
+// Alerter surfaces dropped lines, tagged with their cause; one is installed per diode.
+type Alerter func(missed int, cause Drop_Cause)
+
+// Rate_Limit caps how fast a diode writes to its sink, in bytes per second; lines over the
+// budget are shed (reported Drop_Rate_Limit), never blocked.
+type Rate_Limit struct {
+	// Bytes_Per_Second is the sustained throughput to the sink; zero disables the limiter.
+	Bytes_Per_Second int
+	// Burst is the most bytes that may accumulate while idle; zero defaults to
+	// Bytes_Per_Second (one second of slack).
+	Burst int
+}
+
 // Writer is a non-blocking io.Writer. Build it with New; it is always used by pointer
 // because it owns a background goroutine and atomic state.
 type Writer struct {
@@ -47,9 +69,9 @@ type Writer struct {
 	Clock jtime.Clock
 	// Poll_Interval is how long the drain sleeps when it finds the ring empty.
 	Poll_Interval jtime.Duration
-	// Alerter receives the number of entries overwritten unread whenever the writer
-	// laps the drain; it is how dropped lines are surfaced rather than lost silently.
-	Alerter func(missed int)
+	// Alerter surfaces dropped lines (overflow or rate-limit) rather than losing them
+	// silently; see Drop_Cause.
+	Alerter Alerter
 	// Buffer_Pool recycles the per-line buckets and their backing arrays so a steady
 	// stream of writes allocates nothing once the pool is warm.
 	Buffer_Pool *sync.Pool
@@ -61,6 +83,12 @@ type Writer struct {
 	// Read_Index is the drain's cursor; only the single drain goroutine touches it,
 	// so it needs no atomic access.
 	Read_Index uint64
+	// Rate_Limit caps the sink write rate; zero Bytes_Per_Second disables it.
+	Rate_Limit Rate_Limit
+	// Tokens is the rate limiter's byte balance, touched only by the drain goroutine.
+	Tokens int64
+	// Last_Refill is when Tokens were last replenished, for the drain's elapsed-time refill.
+	Last_Refill jtime.Moment
 	// Stop is closed by Close to ask the drain to flush and exit.
 	Stop chan struct{}
 	// Done is closed by the drain once it has flushed and returned.
@@ -77,8 +105,10 @@ type New_Input struct {
 	Count int
 	// Poll_Interval is the empty-ring sleep; zero or negative uses one hundred milliseconds.
 	Poll_Interval jtime.Duration
-	// Alerter receives the dropped-entry count on a lap; nil installs a no-op.
-	Alerter func(missed int)
+	// Rate_Limit caps the sink write rate in bytes per second; the zero value is no limit.
+	Rate_Limit Rate_Limit
+	// Alerter receives the dropped-entry count and cause; nil installs a no-op.
+	Alerter Alerter
 }
 
 // One queued line, stored behind an unsafe.Pointer in a ring slot.
@@ -111,7 +141,13 @@ func New(input New_Input) (writer *Writer) {
 	}
 	alerter := input.Alerter
 	if alerter == nil {
-		alerter = func(missed int) {}
+		alerter = func(missed int, cause Drop_Cause) {}
+	}
+	limit := input.Rate_Limit
+	if limit.Bytes_Per_Second > 0 {
+		if limit.Burst <= 0 {
+			limit.Burst = limit.Bytes_Per_Second
+		}
 	}
 	assert(input.Clock.Sleep != nil, "diode: Clock.Sleep is required")
 	assert(count > 0, "diode: ring count must be positive")
@@ -120,6 +156,8 @@ func New(input New_Input) (writer *Writer) {
 		Clock:         input.Clock,
 		Poll_Interval: interval,
 		Alerter:       alerter,
+		Rate_Limit:    limit,
+		Tokens:        int64(limit.Burst),
 		Buffer_Pool:   &sync.Pool{New: new_bucket},
 		Slots:         make([]unsafe.Pointer, count),
 		Stop:          make(chan struct{}),
@@ -229,7 +267,7 @@ func ring_try_next(writer *Writer) (item *bucket, ok bool) {
 	if sequence > writer.Read_Index {
 		dropped := sequence - writer.Read_Index
 		writer.Read_Index = sequence
-		writer.Alerter(int(dropped))
+		writer.Alerter(int(dropped), Drop_Overflow)
 	}
 	assert(sequence == writer.Read_Index, "diode: delivered off the read cursor")
 	writer.Read_Index++
@@ -274,13 +312,40 @@ func drain_remainder(writer *Writer) {
 // Writes one line to the sink and returns its bucket to the pool.
 func forward(writer *Writer, item *bucket) {
 	assert(item != nil, "diode: forward got a nil bucket")
-	// One Write per line, exactly as a synchronous wrapped writer would have seen.
-	writer.Writer.Write(item.Data)
+	if rate_limit_sheds(writer, len(item.Data)) {
+		writer.Alerter(1, Drop_Rate_Limit)
+	} else {
+		// One Write per line, exactly as a synchronous wrapped writer would have seen.
+		writer.Writer.Write(item.Data)
+	}
 	if cap(item.Data) > maximum_pooled_buffer {
 		return
 	}
 	item.Data = item.Data[:0]
 	writer.Buffer_Pool.Put(item)
+}
+
+// Reports whether the rate limiter sheds a line of size bytes. It refills the byte token
+// bucket from the clock, caps it at the burst, and a non-positive balance means shed (the
+// line is dropped, never delayed). A disabled limiter (Bytes_Per_Second <= 0) never sheds.
+// Only the drain goroutine calls this, so the bucket state needs no synchronization.
+func rate_limit_sheds(writer *Writer, size int) (shed bool) {
+	if writer.Rate_Limit.Bytes_Per_Second <= 0 {
+		return false
+	}
+	now := writer.Clock.Now_Monotonic()
+	elapsed := int64(now) - int64(writer.Last_Refill)
+	writer.Last_Refill = now
+	refilled := elapsed * int64(writer.Rate_Limit.Bytes_Per_Second) / int64(jtime.Second)
+	writer.Tokens += refilled
+	if writer.Tokens > int64(writer.Rate_Limit.Burst) {
+		writer.Tokens = int64(writer.Rate_Limit.Burst)
+	}
+	if writer.Tokens <= 0 {
+		return true
+	}
+	writer.Tokens -= int64(size)
+	return false
 }
 
 // Panics with message when condition is false. Unlike the invariant framework it captures

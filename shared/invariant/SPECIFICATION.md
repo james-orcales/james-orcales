@@ -200,6 +200,11 @@ back to the events they stand for, so a bare coordinate is debuggable across nes
 A clean run reports how many properties it tested, splitting individual from
 combination and counting the panic-able subset.
 
+### Summary Names Package
+
+When the analyzed package is resolvable from the module root, the summary prefixes
+the package path so the line is identifiable when many packages print to the same terminal.
+
 ### Clean
 
 With every obligation exercised, the analysis reports nothing and does not exit.

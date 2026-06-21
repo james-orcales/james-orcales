@@ -117,10 +117,14 @@ func New_Default_Logger() (logger Logger) {
 	})
 }
 
-// Surfaces diode overflow on stderr so dropped lines never vanish silently when the
-// sink cannot keep up.
-func report_dropped(missed int) {
-	fmt.Fprintf(os.Stderr, "jlog: dropped %d log lines (sink too slow)\n", missed)
+// Surfaces diode drops on stderr so they never vanish silently, naming the cause so a slow
+// sink and a rate limit are told apart.
+func report_dropped(missed int, cause diode.Drop_Cause) {
+	reason := "sink too slow"
+	if cause == diode.Drop_Rate_Limit {
+		reason = "rate limited"
+	}
+	fmt.Fprintf(os.Stderr, "jlog: dropped %d log lines (%s)\n", missed, reason)
 }
 
 // Resolves a frame-skip count to a "file:line" location via runtime.Caller, the

@@ -85,40 +85,6 @@ type Sampler struct {
 	Measure func(command sh.Command) (result Run_Result)
 }
 
-// Main_Input carries the injected dependencies Main needs, so the library tier
-// spawns nothing and reads no ambient clock.
-type Main_Input struct {
-	// Commands are the commands to benchmark; the first is the reference.
-	Commands []sh.Command
-	// Clock times each run; production wires the OS clock, tests a virtual one.
-	Clock time.Clock
-	// Sampler runs and measures one command; production wires the cgo measurer.
-	Sampler Sampler
-	// Duration_Max is the per-command time budget; 0 disables it, leaving Runs_Max.
-	Duration_Max time.Duration
-	// Runs_Max is the per-command run cap; 0 disables it, leaving Duration_Max. The
-	// 3-run minimum still applies. Sampling stops at whichever limit is met first.
-	Runs_Max int
-	// Warmup_Count is how many runs are taken and discarded before sampling.
-	Warmup_Count int
-	// Allow_Failures keeps benchmarking a command that exits non-zero.
-	Allow_Failures bool
-	// Format selects the report rendering; the zero value is the table.
-	Format Output_Format
-	// Color enables ANSI color in the table rendering.
-	Color bool
-	// Progress writes an in-place run counter to Stderr while sampling; gate it on an
-	// interactive Stderr so piped output stays clean.
-	Progress bool
-	// Output is where the report is written.
-	Output io.Writer
-	// Stderr is where a failing command's diagnostics are written.
-	Stderr io.Writer
-	// Machine is the host hardware and OS snapshot; injected so the library makes no
-	// ambient OS reads. Production wires acquire_machine_specs(); tests inject a stub.
-	Machine Machine_Specs
-}
-
 // Machine_Specs is a snapshot of the host hardware and OS taken once at startup,
 // carried in the report so benchmark results are reproducible across machines.
 type Machine_Specs struct {
@@ -266,6 +232,40 @@ type Document struct {
 	Machine Machine_Specs `json:"machine"`
 	// Benchmarks is one entry per command, in invocation order.
 	Benchmarks []Benchmark `json:"benchmarks"`
+}
+
+// Main_Input carries the injected dependencies Main needs, so the library tier
+// spawns nothing and reads no ambient clock.
+type Main_Input struct {
+	// Commands are the commands to benchmark; the first is the reference.
+	Commands []sh.Command
+	// Clock times each run; production wires the OS clock, tests a virtual one.
+	Clock time.Clock
+	// Sampler runs and measures one command; production wires the cgo measurer.
+	Sampler Sampler
+	// Duration_Max is the per-command time budget; 0 disables it, leaving Runs_Max.
+	Duration_Max time.Duration
+	// Runs_Max is the per-command run cap; 0 disables it, leaving Duration_Max. The
+	// 3-run minimum still applies. Sampling stops at whichever limit is met first.
+	Runs_Max int
+	// Warmup_Count is how many runs are taken and discarded before sampling.
+	Warmup_Count int
+	// Allow_Failures keeps benchmarking a command that exits non-zero.
+	Allow_Failures bool
+	// Format selects the report rendering; the zero value is the table.
+	Format Output_Format
+	// Color enables ANSI color in the table rendering.
+	Color bool
+	// Progress writes an in-place run counter to Stderr while sampling; gate it on an
+	// interactive Stderr so piped output stays clean.
+	Progress bool
+	// Output is where the report is written.
+	Output io.Writer
+	// Stderr is where a failing command's diagnostics are written.
+	Stderr io.Writer
+	// Machine is the host hardware and OS snapshot; injected so the library makes no
+	// ambient OS reads. Production wires acquire_machine_specs(); tests inject a stub.
+	Machine Machine_Specs
 }
 
 // Main benchmarks each command in turn — the binary's one entry point — and writes

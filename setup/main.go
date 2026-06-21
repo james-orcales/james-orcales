@@ -340,15 +340,15 @@ func font_destination(home string) (directory string, refresh_cache bool) {
 
 // Copy_file_input names the source and destination copy_file moves between,
 // bundled so the repeated-string-param rule is satisfied.
-type copy_file_input struct {
-	Source      string
-	Destination string
-}
-
 // Copy_bytes_max bounds a single streamed copy. 64 MiB dwarfs an Iosevka face
 // (~13 MiB) or the direnv binary yet caps the read, satisfying the linter's
 // unbounded-read ban.
 const copy_bytes_max = 67108864
+
+type copy_file_input struct {
+	Source      string
+	Destination string
+}
 
 // Streams Source to Destination, creating Destination's parent directory first
 // and capping the copy at copy_bytes_max. It is the real filesystem binding the

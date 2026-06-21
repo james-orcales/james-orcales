@@ -201,75 +201,6 @@ type layout struct {
 	Cursor float64
 }
 
-type layout_prose_input struct {
-	Runs        []text_run
-	Size        float64
-	Indent      float64
-	Line_Height float64
-	Color       string
-}
-
-type wrap_pieces_input struct {
-	Runs      []text_run
-	Size      float64
-	Width_Max float64
-}
-
-type layout_line_input struct {
-	Pieces      []word_piece
-	Size        float64
-	Indent      float64
-	Line_Height float64
-	Color       string
-}
-
-type emit_text_line_input struct {
-	Pieces []word_piece
-	Size   float64
-	X      float64
-	Y      float64
-	Color  string
-}
-
-type emit_stroke_input struct {
-	X1 float64
-	Y1 float64
-	X2 float64
-	Y2 float64
-}
-
-type emit_glyphs_input struct {
-	Text string
-	Font int
-	Size float64
-	X    float64
-	Y    float64
-}
-
-type emit_panel_input struct {
-	Fill   string
-	X      float64
-	Y      float64
-	Width  float64
-	Height float64
-}
-
-type emit_link_run_input struct {
-	Target string
-	Start  float64
-	End    float64
-	Y      float64
-	Size   float64
-}
-
-type emit_code_panel_input struct {
-	Piece word_piece
-	Start float64
-	End   float64
-	Y     float64
-	Size  float64
-}
-
 func parse_blocks(markdown []byte) (blocks []block) {
 	lines := split_lines(markdown)
 	index := 0
@@ -918,21 +849,6 @@ func layout_rule(state *layout) {
 	state.Cursor -= body_size * paragraph_gap_ratio
 }
 
-type layout_table_row_input struct {
-	Cells        []string
-	Column_Width float64
-	Columns      int
-	Header       bool
-	Shaded       bool
-}
-
-type emit_table_grid_input struct {
-	Top          float64
-	Bottom       float64
-	Column_Width float64
-	Columns      int
-}
-
 func layout_table(state *layout, current *block) {
 	columns := table_column_count(current.Cells)
 	if columns == 0 {
@@ -960,6 +876,14 @@ func table_column_count(rows [][]string) (columns int) {
 		}
 	}
 	return columns
+}
+
+type layout_table_row_input struct {
+	Cells        []string
+	Column_Width float64
+	Columns      int
+	Header       bool
+	Shaded       bool
 }
 
 func layout_table_row(state *layout, input *layout_table_row_input) {
@@ -1061,6 +985,13 @@ func table_cell_runs(cell_text string, header bool) (runs []text_run) {
 
 // The GitHub gray cell grid for one row: its top and bottom edges plus a
 // vertical at every column boundary, then the stroke color is restored.
+type emit_table_grid_input struct {
+	Top          float64
+	Bottom       float64
+	Column_Width float64
+	Columns      int
+}
+
 func emit_table_grid(stream *strings.Builder, input *emit_table_grid_input) {
 	stream.WriteString(table_border_stroke)
 	stream.WriteByte('\n')
@@ -1098,6 +1029,14 @@ func table_cell_text(cells []string, index int) (text string) {
 	return cells[index]
 }
 
+type layout_prose_input struct {
+	Runs        []text_run
+	Size        float64
+	Indent      float64
+	Line_Height float64
+	Color       string
+}
+
 func layout_prose(state *layout, input *layout_prose_input) {
 	available_width := page_width - 2*page_margin - input.Indent
 	lines := wrap_pieces(&wrap_pieces_input{
@@ -1114,6 +1053,12 @@ func layout_prose(state *layout, input *layout_prose_input) {
 			Color:       input.Color,
 		})
 	}
+}
+
+type wrap_pieces_input struct {
+	Runs      []text_run
+	Size      float64
+	Width_Max float64
 }
 
 func wrap_pieces(input *wrap_pieces_input) (lines [][]word_piece) {
@@ -1214,6 +1159,14 @@ func split_piece(input *split_piece_input) (chunks []word_piece) {
 		start_index = end_index
 	}
 	return chunks
+}
+
+type layout_line_input struct {
+	Pieces      []word_piece
+	Size        float64
+	Indent      float64
+	Line_Height float64
+	Color       string
 }
 
 func layout_line(state *layout, input *layout_line_input) {
@@ -1471,6 +1424,14 @@ func helvetica_bold_advance_high(code byte) (advance int) {
 
 // The wrapper drops the gaps between tokens, so each piece after the first is
 // shown with a leading space; the font switches per piece inside one text run.
+type emit_text_line_input struct {
+	Pieces []word_piece
+	Size   float64
+	X      float64
+	Y      float64
+	Color  string
+}
+
 func emit_text_line(stream *strings.Builder, input *emit_text_line_input) (links []link_box) {
 	if len(input.Pieces) == 0 {
 		return nil
@@ -1554,6 +1515,14 @@ func emit_line_decorations(
 
 // A link run's underline strokes blue, then the stroke color is restored; the
 // run also yields the clickable rectangle covering its glyphs.
+type emit_link_run_input struct {
+	Target string
+	Start  float64
+	End    float64
+	Y      float64
+	Size   float64
+}
+
 func emit_link_run(stream *strings.Builder, input *emit_link_run_input) (box link_box) {
 	stream.WriteString(link_stroke)
 	stream.WriteByte('\n')
@@ -1574,6 +1543,14 @@ func emit_link_run(stream *strings.Builder, input *emit_link_run_input) (box lin
 	}
 }
 
+type emit_code_panel_input struct {
+	Piece word_piece
+	Start float64
+	End   float64
+	Y     float64
+	Size  float64
+}
+
 func emit_code_panel(stream *strings.Builder, input *emit_code_panel_input) {
 	if input.Piece.Font != font_code {
 		return
@@ -1587,10 +1564,25 @@ func emit_code_panel(stream *strings.Builder, input *emit_code_panel_input) {
 	})
 }
 
+type emit_stroke_input struct {
+	X1 float64
+	Y1 float64
+	X2 float64
+	Y2 float64
+}
+
 func emit_stroke(stream *strings.Builder, input *emit_stroke_input) {
 	fmt.Fprintf(stream, "%s %s m %s %s l S\n",
 		format_number(input.X1), format_number(input.Y1),
 		format_number(input.X2), format_number(input.Y2))
+}
+
+type emit_panel_input struct {
+	Fill   string
+	X      float64
+	Y      float64
+	Width  float64
+	Height float64
 }
 
 func emit_panel(stream *strings.Builder, input *emit_panel_input) {
@@ -1634,6 +1626,14 @@ func emit_text_color(stream *strings.Builder, font int, is_link bool, base_color
 	}
 	stream.WriteString(base_color)
 	stream.WriteByte('\n')
+}
+
+type emit_glyphs_input struct {
+	Text string
+	Font int
+	Size float64
+	X    float64
+	Y    float64
 }
 
 func emit_glyphs(stream *strings.Builder, input *emit_glyphs_input) {
