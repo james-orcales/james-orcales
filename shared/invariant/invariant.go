@@ -122,6 +122,12 @@ type Recorder struct {
 	// not the invariant primitives and must stay unrecognised.
 	Sugar_Package string
 
+	// Package_Label is the package's path relative to the module root, derived by
+	// Recorder_Register_Packages_For_Analysis and printed in the clean-run summary so
+	// the line is identifiable when many packages print to the same terminal. Empty
+	// when no go.mod is found or when the registered directory is the module root.
+	Package_Label string
+
 	// Coverage_Sink, when set, is called the first time each coverage key+branch is observed.
 	// A fuzz worker subprocess wires it to persist its exploration to a shared file so the
 	// coordinator can merge it (the coordinator never runs the fuzzed body itself). Nil
@@ -676,6 +682,15 @@ func Recorder_Register_Packages_For_Analysis(recorder *Recorder, directories ...
 		absolute = filepath.Clean(absolute)
 		if module_path == "" {
 			module_path, module_root = recorder_module(recorder, absolute)
+		}
+		if recorder.Package_Label == "" {
+			if module_root != "" {
+				relative := strings.TrimPrefix(absolute, module_root)
+				relative = strings.TrimPrefix(relative, "/")
+				if relative != "" {
+					recorder.Package_Label = relative
+				}
+			}
 		}
 		parsed := recorder_parse_directory(&recorder_parse_directory_input{
 			File_System: recorder.File_System,
@@ -1968,6 +1983,14 @@ func Recorder_Assertion_Summary(recorder *Recorder) (summary string) {
 		}
 		return true
 	})
+	if recorder.Package_Label != "" {
+		return fmt.Sprintf(
+			"✓ %s: tested %d properties (%d individual + %d combinations, "+
+				"of which %d are panic-able)",
+			recorder.Package_Label,
+			individual+combinations, individual, combinations, panic_able,
+		)
+	}
 	return fmt.Sprintf(
 		"✓ tested %d properties (%d individual + %d combinations, "+
 			"of which %d are panic-able)",
