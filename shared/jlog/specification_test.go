@@ -10,7 +10,7 @@ import (
 	"testing"
 
 	"github.com/james-orcales/james-orcales/shared/jlog"
-	jtime "github.com/james-orcales/james-orcales/shared/time"
+	"github.com/james-orcales/james-orcales/shared/time"
 )
 
 // Test_Message_Renders_Level_And_Message covers the minimal line: a level field
@@ -88,8 +88,8 @@ func Test_Auto_Timestamp(t *testing.T) {
 func Test_Time_And_Duration(t *testing.T) {
 	buffer := &bytes.Buffer{}
 	jlog.Logger_Info(new_logger(buffer), "",
-		jlog.Time("t", jtime.Moment(5)),
-		jlog.Duration("d", jtime.Second),
+		jlog.Time("t", time.Moment(5)),
+		jlog.Duration("d", time.Second),
 	)
 	assert_output(t, buffer,
 		"{\"level\":\"info\",\"t\":\"1970-01-01T00:00:00.000000005Z\",\"d\":1000000000}\n")
@@ -213,8 +213,8 @@ func Test_Hot_Path_Is_Zero_Allocation(t *testing.T) {
 }
 
 // A clock whose realtime reading is always fixed_moment.
-func frozen_clock() (clock jtime.Clock) {
-	return jtime.Clock{Now_Realtime: func() (moment jtime.Moment) { return fixed_moment }}
+func frozen_clock() (clock time.Clock) {
+	return time.Clock{Now_Realtime: func() (moment time.Moment) { return fixed_moment }}
 }
 
 // A logger writing JSON lines to buffer with the frozen clock and the lowest level
@@ -238,7 +238,7 @@ func assert_output(t *testing.T, buffer *bytes.Buffer, want string) {
 
 // Every test clock returns this fixed reading so timestamp output is deterministic
 // and assertable byte-for-byte.
-const fixed_moment jtime.Moment = 1700000000000000000
+const fixed_moment time.Moment = 1700000000000000000
 
 // The exact benchmark message zerolog uses, so the benchmarks below are a 1:1
 // workload comparison against zerolog's same-named benchmarks.
@@ -363,7 +363,7 @@ func Test_Cover_Numeric_And_Slice_Fields(t *testing.T) {
 		jlog.Float32("c", 1.5),
 		jlog.Floats64("d", []float64{1.5, 2.5}),
 		jlog.Booleans("e", []bool{true, false}),
-		jlog.Durations("f", []jtime.Duration{jtime.Second, 2 * jtime.Second}),
+		jlog.Durations("f", []time.Duration{time.Second, 2 * time.Second}),
 		jlog.Boolean("g", false),
 	)
 	want := "{\"level\":\"info\",\"a\":-5,\"b\":6,\"c\":1.5,\"d\":[1.5,2.5]," +
@@ -538,7 +538,7 @@ func Test_Cover_Floats(t *testing.T) {
 // the negative-fraction and negative-day paths of the RFC 3339 conversion.
 func Test_Cover_Pre_Epoch_Time(t *testing.T) {
 	buffer := &bytes.Buffer{}
-	jlog.Logger_Info(new_logger(buffer), "", jlog.Time("t", jtime.Moment(-1)))
+	jlog.Logger_Info(new_logger(buffer), "", jlog.Time("t", time.Moment(-1)))
 	want := "{\"level\":\"info\",\"t\":\"1969-12-31T23:59:59.999999999Z\"}\n"
 	assert_output(t, buffer, want)
 }
@@ -590,8 +590,8 @@ func Fuzz_Encode(f *testing.F) {
 	f.Add([]byte("hello"), int64(1700000000000000000), int64(42), math.Float64bits(3.14))
 	f.Fuzz(func(t *testing.T, raw []byte, moment int64, number int64, float_bits uint64) {
 		buffer := &bytes.Buffer{}
-		clock := jtime.Clock{
-			Now_Realtime: func() (now jtime.Moment) { return jtime.Moment(moment) },
+		clock := time.Clock{
+			Now_Realtime: func() (now time.Moment) { return time.Moment(moment) },
 		}
 		logger := jlog.New(jlog.New_Input{
 			Writer:         buffer,
@@ -604,8 +604,8 @@ func Fuzz_Encode(f *testing.F) {
 			jlog.Bytes("b", raw),
 			jlog.Int64("n", number),
 			jlog.Float64("f", math.Float64frombits(float_bits)),
-			jlog.Time("t", jtime.Moment(moment)),
-			jlog.Duration("d", jtime.Duration(number)),
+			jlog.Time("t", time.Moment(moment)),
+			jlog.Duration("d", time.Duration(number)),
 		)
 		line := buffer.Bytes()
 		var decoded map[string]any

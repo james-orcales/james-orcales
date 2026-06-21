@@ -8,7 +8,7 @@ import (
 	"testing"
 
 	"github.com/james-orcales/james-orcales/shared/diode"
-	jtime "github.com/james-orcales/james-orcales/shared/time"
+	"github.com/james-orcales/james-orcales/shared/time"
 )
 
 // Test_Write_Forwards_To_Sink checks that a written line reaches the wrapped sink.
@@ -107,12 +107,12 @@ func Test_Order_Is_Preserved(t *testing.T) {
 // Test_Poll_Interval_Is_Configurable checks the empty-ring sleep duration: the
 // default is one hundred milliseconds, and an explicit interval is honored.
 func Test_Poll_Interval_Is_Configurable(t *testing.T) {
-	if observed := capture_interval(t, 0); observed != 100*jtime.Millisecond {
-		t.Fatalf("default interval %d, want %d", observed, 100*jtime.Millisecond)
+	if observed := capture_interval(t, 0); observed != 100*time.Millisecond {
+		t.Fatalf("default interval %d, want %d", observed, 100*time.Millisecond)
 	}
-	observed := capture_interval(t, 250*jtime.Millisecond)
-	if observed != 250*jtime.Millisecond {
-		t.Fatalf("custom interval %d, want %d", observed, 250*jtime.Millisecond)
+	observed := capture_interval(t, 250*time.Millisecond)
+	if observed != 250*time.Millisecond {
+		t.Fatalf("custom interval %d, want %d", observed, 250*time.Millisecond)
 	}
 }
 
@@ -197,7 +197,7 @@ func Test_Rate_Limit_Sheds_By_Bytes(t *testing.T) {
 	steady_sink := &recording_sink{Written: make(chan string, 16)}
 	steady := diode.New(diode.New_Input{
 		Writer:     steady_sink,
-		Clock:      stepping_clock(jtime.Second),
+		Clock:      stepping_clock(time.Second),
 		Count:      16,
 		Rate_Limit: diode.Rate_Limit{Bytes_Per_Second: 1000, Burst: 2},
 		Alerter: func(missed int, cause diode.Drop_Cause) {
@@ -222,7 +222,7 @@ func Test_Rate_Limit_Survives_A_Large_Clock(t *testing.T) {
 	sink := &recording_sink{Written: make(chan string, 16)}
 	writer := diode.New(diode.New_Input{
 		Writer:     sink,
-		Clock:      stepping_clock(10_000 * jtime.Second),
+		Clock:      stepping_clock(10_000 * time.Second),
 		Count:      16,
 		Rate_Limit: diode.Rate_Limit{Bytes_Per_Second: 1 << 20, Burst: 1 << 20},
 		Alerter: func(missed int, cause diode.Drop_Cause) {
@@ -265,27 +265,27 @@ func (sink *blocking_sink) Write(p []byte) (n int, err error) {
 
 // A clock whose Sleep returns immediately, so the drain spins and tests synchronize on
 // the sink rather than on wall-clock time.
-func instant_clock() (clock jtime.Clock) {
-	return jtime.Clock{
-		Now_Monotonic: func() (moment jtime.Moment) { return 0 },
-		Now_Realtime:  func() (moment jtime.Moment) { return 0 },
+func instant_clock() (clock time.Clock) {
+	return time.Clock{
+		Now_Monotonic: func() (moment time.Moment) { return 0 },
+		Now_Realtime:  func() (moment time.Moment) { return 0 },
 		Tick:          func() {},
-		Sleep:         func(duration jtime.Duration) {},
+		Sleep:         func(duration time.Duration) {},
 	}
 }
 
 // A clock that parks the drain inside its first Sleep: the first call closes parked
 // (so a test learns the drain is idle on an empty ring) and every call blocks until
 // resume closes. After resume closes, Sleep returns immediately.
-func gated_clock() (clock jtime.Clock, parked chan struct{}, resume chan struct{}) {
+func gated_clock() (clock time.Clock, parked chan struct{}, resume chan struct{}) {
 	parked = make(chan struct{})
 	resume = make(chan struct{})
 	var once sync.Once
-	clock = jtime.Clock{
-		Now_Monotonic: func() (moment jtime.Moment) { return 0 },
-		Now_Realtime:  func() (moment jtime.Moment) { return 0 },
+	clock = time.Clock{
+		Now_Monotonic: func() (moment time.Moment) { return 0 },
+		Now_Realtime:  func() (moment time.Moment) { return 0 },
 		Tick:          func() {},
-		Sleep: func(duration jtime.Duration) {
+		Sleep: func(duration time.Duration) {
 			once.Do(func() { close(parked) })
 			<-resume
 		},
@@ -297,29 +297,29 @@ func gated_clock() (clock jtime.Clock, parked chan struct{}, resume chan struct{
 // rate limiter's token refill deterministically; Sleep returns at once like instant_clock.
 // Only the single drain goroutine reads Now_Monotonic, so the captured counter needs no
 // synchronization.
-func stepping_clock(step jtime.Duration) (clock jtime.Clock) {
+func stepping_clock(step time.Duration) (clock time.Clock) {
 	elapsed := int64(0)
-	return jtime.Clock{
-		Now_Monotonic: func() (moment jtime.Moment) {
+	return time.Clock{
+		Now_Monotonic: func() (moment time.Moment) {
 			elapsed += int64(step)
-			return jtime.Moment(elapsed)
+			return time.Moment(elapsed)
 		},
-		Now_Realtime: func() (moment jtime.Moment) { return 0 },
+		Now_Realtime: func() (moment time.Moment) { return 0 },
 		Tick:         func() {},
-		Sleep:        func(duration jtime.Duration) {},
+		Sleep:        func(duration time.Duration) {},
 	}
 }
 
 // Builds a diode with the configured interval and returns the duration the drain
 // actually passed to Sleep on its first empty poll.
-func capture_interval(t *testing.T, configured jtime.Duration) (observed jtime.Duration) {
+func capture_interval(t *testing.T, configured time.Duration) (observed time.Duration) {
 	t.Helper()
-	intervals := make(chan jtime.Duration, 1)
-	clock := jtime.Clock{
-		Now_Monotonic: func() (moment jtime.Moment) { return 0 },
-		Now_Realtime:  func() (moment jtime.Moment) { return 0 },
+	intervals := make(chan time.Duration, 1)
+	clock := time.Clock{
+		Now_Monotonic: func() (moment time.Moment) { return 0 },
+		Now_Realtime:  func() (moment time.Moment) { return 0 },
 		Tick:          func() {},
-		Sleep: func(duration jtime.Duration) {
+		Sleep: func(duration time.Duration) {
 			select {
 			case intervals <- duration:
 			default:

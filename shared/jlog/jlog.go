@@ -37,7 +37,7 @@ import (
 	"unicode/utf8"
 	"unsafe"
 
-	jtime "github.com/james-orcales/james-orcales/shared/time"
+	"github.com/james-orcales/james-orcales/shared/time"
 )
 
 // A fresh line buffer holds a typical event without growing, so steady-state
@@ -144,7 +144,7 @@ type Logger_Configuration struct {
 	Writer io.Writer
 	// Clock supplies wall-clock readings; injected so tests are deterministic and
 	// the library tier never imports stdlib time.
-	Clock jtime.Clock
+	Clock time.Clock
 	// Caller maps a frame-skip count to a "file:line" string; nil disables Caller.
 	Caller func(skip int) (location string)
 	// Stack_Marshaler renders an error's stack; nil disables Err stacks.
@@ -162,7 +162,7 @@ type Logger_Configuration struct {
 	// Stack_Field_Name is the key used by Err for the rendered stack.
 	Stack_Field_Name string
 	// Duration_Unit divides Duration values before rendering; defaults to Nanosecond.
-	Duration_Unit jtime.Duration
+	Duration_Unit time.Duration
 	// Buffer_Pool recycles line buffers so emitting stays allocation-free.
 	Buffer_Pool *sync.Pool
 }
@@ -188,7 +188,7 @@ type New_Input struct {
 	// Writer receives finished lines; nil becomes io.Discard.
 	Writer io.Writer
 	// Clock supplies Timestamp and Auto_Timestamp readings.
-	Clock jtime.Clock
+	Clock time.Clock
 	// Floor is the lowest emitted level.
 	Floor Level
 	// Caller maps a frame-skip count to a location string; nil disables Caller.
@@ -208,7 +208,7 @@ type New_Input struct {
 	// Stack_Field_Name overrides the stack key; empty uses the default.
 	Stack_Field_Name string
 	// Duration_Unit divides Duration values; zero uses Nanosecond.
-	Duration_Unit jtime.Duration
+	Duration_Unit time.Duration
 	// Auto_Timestamp stamps every line automatically.
 	Auto_Timestamp bool
 	// Auto_Caller adds the caller location to every line automatically.
@@ -268,7 +268,7 @@ func New(input New_Input) (logger Logger) {
 	}
 	unit := input.Duration_Unit
 	if unit == 0 {
-		unit = jtime.Nanosecond
+		unit = time.Nanosecond
 	}
 	assert(writer != nil, "jlog: writer must not be nil")
 	assert(unit > 0, "jlog: duration unit must be positive")
@@ -500,12 +500,12 @@ func Raw_JSON(key Key, value []byte) (field Field) {
 }
 
 // Time builds a field rendering a Moment as an RFC 3339 UTC timestamp string.
-func Time(key Key, value jtime.Moment) (field Field) {
+func Time(key Key, value time.Moment) (field Field) {
 	return Field{Key: key, Kind: kind_time, Number: int64(value)}
 }
 
 // Duration builds a field rendering a Duration as an integer in the logger unit.
-func Duration(key Key, value jtime.Duration) (field Field) {
+func Duration(key Key, value time.Duration) (field Field) {
 	return Field{Key: key, Kind: kind_duration, Number: int64(value)}
 }
 
@@ -590,7 +590,7 @@ func Booleans(key Key, value []bool) (field Field) {
 }
 
 // Durations builds a field rendering a []Duration as a JSON array.
-func Durations(key Key, value []jtime.Duration) (field Field) {
+func Durations(key Key, value []time.Duration) (field Field) {
 	return Field{
 		Key:    key,
 		Kind:   kind_durations,
@@ -670,7 +670,7 @@ func buffer_encode_field(
 	case kind_booleans:
 		return buffer_append_booleans(destination, unsafe.Slice((*bool)(field.Data), count))
 	case kind_durations:
-		values := unsafe.Slice((*jtime.Duration)(field.Data), count)
+		values := unsafe.Slice((*time.Duration)(field.Data), count)
 		return buffer_append_durations(destination, values, configuration.Duration_Unit)
 	}
 	return destination
@@ -768,7 +768,7 @@ func buffer_append_booleans(destination Buffer, values []bool) (output Buffer) {
 }
 
 func buffer_append_durations(
-	destination Buffer, values []jtime.Duration, unit jtime.Duration,
+	destination Buffer, values []time.Duration, unit time.Duration,
 ) (output Buffer) {
 	destination = append(destination, '[')
 	for index := 0; index < len(values); index++ {
