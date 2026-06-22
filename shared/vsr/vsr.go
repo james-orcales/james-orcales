@@ -474,6 +474,13 @@ type Message struct {
 	// (§6.2), in op order ending at Op.
 	Entries []Log_Entry
 
+	// View_Change_Fetch marks a Get_State sent by a new primary completing a §5.3 view-change
+	// install: it fetches the selected reporter's reported Do_View_Change log for the merge.
+	// Such a fetch must be answered by a reporter still in Status_View_Change, whereas a plain
+	// catch-up Get_State is answered only by a Status_Normal replica (§5.2): without this flag
+	// the two are indistinguishable and one rule cannot serve both.
+	View_Change_Fetch bool
+
 	// Command carries a client Request's payload before it becomes a log entry.
 	Command []byte
 
@@ -1089,12 +1096,12 @@ func replica_start_epoch_messages(
 // (simulator_bugs.md, Bug 19).
 const handoff_commit_redrive = 16
 
-// The view-change timeout backs off by the number of views a replica has gone through without
-// returning to normal, capped at this multiplier. A cluster that cannot settle — the view's elected
-// primary is down, or backups are leapfrogging views faster than a Do_View_Change quorum can gather
-// — lengthens its window until one view change completes, the growing-election-timeout livelock break
-// real VSR and Raft use. The per-replica base timeout differs (jitter), so the backed-off windows
-// diverge and one replica's view change finishes inside another's wait.
+// The view-change timeout backs off by the number of views a replica has spent without returning to
+// normal, capped at this multiplier. A cluster that cannot settle (the view's primary is down, or
+// backups leapfrog views faster than a Do_View_Change quorum gathers) lengthens its window until
+// one view change completes. This is the growing-timeout livelock break VSR and Raft both use. The
+// per-replica base timeout differs (jitter), so the backed-off windows diverge and one replica's
+// view change finishes inside another's wait.
 const view_change_backoff_cap = 6
 
 // Applies a replica's role in the new epoch after the reconfiguration executed (§7.1.1, §7.1.2). It
@@ -1318,14 +1325,7 @@ func replica_rejoin_new_epoch(
 	// primary's divergent copy of a differently-committed op. Keeping and later committing that
 	// copy forks the log (Bug 19). The catch-up below re-fetches the authoritative ops, so
 	// intersection holds without trusting our suffix.
-	keep := int(replica.Commit) - int(replica.Log_Start)
-	if keep < 0 {
-		keep = 0
-	}
-	if keep < len(replica.Log) {
-		replica.Log = replica.Log[:keep]
-		replica.Op = Op(replica.Commit)
-	}
+	replica_truncate_to_commit(replica)
 	// Catch up to the redirector's commit (every committed op) before serving, so this replica
 	// never votes in a view change missing one. Epoch_Start_Op drives catch_up_to_epoch and
 	// gates the overshoot trigger; the redirector's commit is at or above the epoch-start op.
@@ -1505,20 +1505,11 @@ func replica_receive_start_epoch(
 			replica.Standby_Promotion_Due = true
 		}
 	}
-	// Drop any uncommitted suffix above this replica's own commit before catching up, exactly as
-	// replica_rejoin_new_epoch does. A replica reaching the new epoch by Start_Epoch may be a
-	// deposed old-epoch primary holding a divergent uncommitted op a higher view already committed
-	// differently; kept and later committed in the new epoch it forks the log across the epoch
-	// boundary (the agreement violation the wider PRNG sweep surfaced). The committed prefix is
-	// agreed by safety, and the catch-up re-fetches the authoritative ops above it.
-	keep := int(replica.Commit) - int(replica.Log_Start)
-	if keep < 0 {
-		keep = 0
-	}
-	if keep < len(replica.Log) {
-		replica.Log = replica.Log[:keep]
-		replica.Op = Op(replica.Commit)
-	}
+	// Drop any uncommitted suffix above this replica's commit before catching up: it may be a
+	// deposed old-epoch primary's divergent op a higher view committed elsewhere. Kept and
+	// recommitted in the new epoch it would fork the log across the epoch boundary (a fork the
+	// PRNG sweep found). The catch-up re-fetches the authoritative ops above the commit.
+	replica_truncate_to_commit(replica)
 	return replica_catch_up_to_epoch(replica, now)
 }
 
@@ -2247,12 +2238,13 @@ func replica_begin_state_transfer(
 ) (output Step_Output) {
 	if target_view > replica.View {
 		replica.View = target_view
-		// Drop the uncommitted tail back to the commit number. The committed prefix that
-		// remains in Log runs from Log_Start+1 through Commit, so the entries to keep
-		// number Commit - Log_Start; the compacted prefix below Log_Start is untouched.
-		replica.Log = replica.Log[:int(replica.Commit)-int(replica.Log_Start)]
-		replica.Op = Op(replica.Commit)
 		replica.Last_Normal_View = target_view
+		// Truncate to commit (§5.2: ops above may be reordered in the view change). And run
+		// the §8.1 cutoff: a state-transfer view advance leaves the old view behind like a
+		// view change, so drop the prior-view ack tally too, else a deposed primary could
+		// commit on a stale ack. Only on a real view advance, not a same-view gap fetch.
+		replica_truncate_to_commit(replica)
+		replica_leave_view(replica)
 	}
 	output.Messages = []Message{{
 		Kind:  Message_Kind_Get_State,
@@ -2281,13 +2273,34 @@ func replica_receive_get_state(replica *Replica, message Message) (output Step_O
 	if replica.View < message.View {
 		return output
 	}
+	// A replica that left its view for a view change (or is transitioning to a new epoch) but has
+	// not adopted the authoritative log holds an uncommitted suffix the view change may supersede.
+	// It may still share its COMMITTED prefix — committed ops are agreed — but shipping the
+	// uncommitted suffix stamped with the current view would let a catch-up requester keep an op
+	// the view change is about to replace and commit it on a bare Commit (VSR-Revisited §5.2; the
+	// fork the wider PRNG sweep surfaced). So a non-normal replica CAPS its answer at its commit;
+	// it still answers, which keeps the requester progressing rather than wedging on a silent
+	// non-answer. The lone full-log exception is a §5.3 view-change fetch: the new primary fetching
+	// this reporter's already-reported Do_View_Change log, which needs the uncommitted suffix to
+	// complete the merge.
+	ship_full := false
+	if replica.Status == Status_Normal {
+		ship_full = true
+	}
+	if message.View_Change_Fetch {
+		ship_full = true
+	}
+	ceiling := replica.Op
+	if !ship_full {
+		ceiling = Op(replica.Commit)
+	}
 	response := Message{
 		Kind:   Message_Kind_New_State,
 		From:   replica.Identifier,
 		To:     message.From,
 		View:   replica.View,
 		Epoch:  replica.Epoch,
-		Op:     replica.Op,
+		Op:     ceiling,
 		Commit: replica.Commit,
 	}
 	if message.Op < replica.Log_Start {
@@ -2303,10 +2316,20 @@ func replica_receive_get_state(replica *Replica, message Message) (output Step_O
 		// requester already at or past this replica's op gets an empty suffix — it is no
 		// longer behind us, and its own apply guard will keep its longer log.
 		from := message.Op + 1
-		if from > replica.Op+1 {
-			from = replica.Op + 1
+		if from > ceiling+1 {
+			from = ceiling + 1
 		}
 		response.Log = replica_log_slice_from(replica, from)
+	}
+	// replica_log_slice_from ships through replica.Op; a capped answer drops the uncommitted tail
+	// above the ceiling so the requester never receives an op this replica might still supersede.
+	over := int(replica.Op) - int(ceiling)
+	if over > 0 {
+		if over < len(response.Log) {
+			response.Log = response.Log[:len(response.Log)-over]
+		} else {
+			response.Log = nil
+		}
 	}
 	output.Messages = []Message{response}
 	return output
@@ -3049,12 +3072,13 @@ func replica_begin_view_change_fetch(
 	replica.View_Change_Fetch_From = best.From
 	replica.View_Change_Fetch_Op = best.Op
 	output.Messages = []Message{{
-		Kind:  Message_Kind_Get_State,
-		From:  replica.Identifier,
-		To:    best.From,
-		View:  replica.View,
-		Epoch: replica.Epoch,
-		Op:    replica.Log_Start,
+		Kind:              Message_Kind_Get_State,
+		From:              replica.Identifier,
+		To:                best.From,
+		View:              replica.View,
+		Epoch:             replica.Epoch,
+		Op:                replica.Log_Start,
+		View_Change_Fetch: true,
 	}}
 	output.Timer = replica_arm_timer(replica, now)
 	return output
@@ -3070,6 +3094,13 @@ func replica_begin_view_change_fetch(
 func replica_complete_install(
 	replica *Replica, carrier Message, selected_op Op, now time.Moment,
 ) (output Step_Output) {
+	// The new primary reached here only through Status_View_Change, set solely by
+	// replica_start_view_change, which funnels through replica_leave_view and empties the tally
+	// (no ack is accepted while view-changing). So the tally is empty now; the installed tail
+	// commits only as the heartbeat re-drives Prepares for it and the backups re-acknowledge,
+	// never on a prior view's acks. Pin it.
+	invariant.Always(len(replica.Prepare_Ok_From) == 0,
+		"new primary installs with an empty acknowledgement tally")
 	commit := replica.Commit
 	for _, candidate := range replica.Do_View_Change_From {
 		if candidate.Commit > commit {
@@ -3323,6 +3354,36 @@ func replica_receive_recovery_response(
 	return output
 }
 
+// Drops the uncommitted tail back to the commit number: keeps the committed prefix
+// (Log_Start+1 .. Commit) and leaves the compacted prefix below Log_Start untouched. The one way a
+// replica discards ops above its commit (a divergent uncommitted suffix a higher view may have
+// superseded) when it leaves a view or jumps to a new epoch, before catching up authoritatively.
+func replica_truncate_to_commit(replica *Replica) {
+	keep := int(replica.Commit) - int(replica.Log_Start)
+	if keep < 0 {
+		keep = 0
+	}
+	if keep < len(replica.Log) {
+		replica.Log = replica.Log[:keep]
+		replica.Op = Op(replica.Commit)
+	}
+}
+
+// Discards the tallies scoped to the view the replica is leaving: the per-op acknowledgement
+// tally Prepare_Ok_From and the primary-only request scratch. This is VSR §8.1's cutoff in one
+// place: a replica that has left a view must never commit on an acknowledgement gathered in it,
+// else a deposed primary could commit a tail op on stale acks after a new view formed without it.
+// Called by the two paths that leave a view while holding a primary tally: the view change
+// (replica_start_view_change) and a state-transfer view advance (replica_begin_state_transfer).
+// The new view starts empty; a new primary re-commits its installed tail as the heartbeat
+// re-drives Prepares for un-acked ops and the backups re-acknowledge (the Bug-17 path). An epoch
+// handoff (§7) is not a view change: it brings the new group up by state transfer and keeps its
+// tally via replica_reset_primary_scratch, so it is not routed here.
+func replica_leave_view(replica *Replica) {
+	replica.Prepare_Ok_From = map[Op]map[Replica_Identifier]bool{}
+	replica_reset_primary_scratch(replica)
+}
+
 // Clears the primary-only deferred-request scratch — the unflushed batch buffer and the
 // in-progress pre-step prediction rounds — for a replica leaving its current view or epoch. Both
 // hold requests the primary accepted but has not yet placed in the log: a buffered batch awaiting
@@ -3330,10 +3391,9 @@ func replica_receive_recovery_response(
 // primary of the view it accepted them in must not later flush or complete them — doing so would
 // append a request the new view's log may already hold, committing one client request at two ops
 // (the duplicate the simulator surfaced). The client whose request is dropped here retries, and the
-// new primary runs it afresh. The acknowledgement tally Prepare_Ok_From is deliberately NOT
-// cleared: its entries are per-op, the commit walk only reads ops above the commit number, and a
-// new primary relies on acknowledgements gathered before the view change to commit the tail it
-// installs (Start_View does not re-acknowledge).
+// new primary runs it afresh. Reached on a view change via replica_leave_view, which also clears
+// the acknowledgement tally Prepare_Ok_From (the §8.1 cutoff), and directly from the epoch and
+// recovery resets, which keep their tally.
 func replica_reset_primary_scratch(replica *Replica) {
 	replica.Request_Buffer = nil
 	replica.Predict_From = map[Prediction_Round_Key]Prediction_Round{}
@@ -3358,7 +3418,7 @@ func replica_start_view_change(replica *Replica, view View, now time.Moment) (ou
 	replica.View = view
 	replica.Start_View_Change_From = map[Replica_Identifier]bool{replica.Identifier: true}
 	replica.Do_View_Change_From = map[Replica_Identifier]Message{}
-	replica_reset_primary_scratch(replica)
+	replica_leave_view(replica)
 	// Abandon any deferred install from a prior view change: its fetch targets the old view, so
 	// a late New_State for it must not install into this fresh one (§5.3).
 	replica.View_Change_Deferred = false
@@ -3377,8 +3437,8 @@ func replica_arm_timer(replica *Replica, now time.Moment) (timer Timer_Reset) {
 		kind = Timer_Kind_Recovery
 	case replica.Status == Status_View_Change:
 		kind = Timer_Kind_View_Change
-		// Back off by how many views have passed without returning to normal, so a cluster that
-		// cannot settle lengthens its view-change window until one completes (livelock break).
+		// Back off by views passed without returning to normal, so a cluster that cannot
+		// settle lengthens its view-change window until one completes (livelock break).
 		attempts := uint64(replica.View - replica.Last_Normal_View)
 		if attempts > view_change_backoff_cap {
 			attempts = view_change_backoff_cap
