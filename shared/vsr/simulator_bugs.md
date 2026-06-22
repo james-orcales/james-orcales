@@ -491,8 +491,56 @@ that caused it. Each fix changes `vsr.go`, never the assertion.
   request unexecuted and not in its (compacted) log, re-accepted it, and committed it twice.
   Fix: on an equal request number, keep the local record only if it is already executed; otherwise
   take the checkpoint's executed record. Sweep 1 to 0.
-- **RESOLVED**: the full 0–4999 × {skew off, skew on} sweep (10000 runs) passes with zero forks,
+- **0–4999 clean**: the full 0–4999 × {skew off, skew on} sweep (10000 runs) passes with zero forks,
   wedges, exactly-once, checkpoint, or fault-model violations. The PRNG switch surfaced ~49 latent
   bugs across §4.2 view change, §5.2/§5.3 state transfer, §7 reconfiguration, §4.3 recovery, and the
-  clock model; all are closed. The temporary `Test_Sweep` enumerator is removed and its finds pinned
-  as regression seeds in the default cluster groups.
+  clock model; all are closed.
+- **Wider 0–24999 sweep found 8 more** (the 0–4999 range was a subset). Of these:
+- **Fix (higher-view New_State drops the uncommitted tail)**: seed 13018 — agreement fork. A
+  higher-view `New_State` whose op is BELOW the receiver's op was spliced (extend semantics), so a
+  stale view-0 entry survived into the new view and a later heartbeat bare-committed it — two values
+  at one op. Fix: on adopting a higher view via New_State, `replica_truncate_to_commit` first, so
+  the uncommitted old-view tail is dropped and the new view re-supplies those ops. The truncate
+  floor MUST be the commit point, not the New_State's op (truncating to the op regressed 10 seeds by
+  discarding committed ops — caught by an invariant). Verified: 13018 passes, 0–4999 stays 0.
+- **Fix (a removed standby reconciles Executed to its checkpoint) — the divergence trio (9194,
+  10700, 22312)**: state-machine execution divergence with an identical committed log (every replica
+  commits byte-identical `(cmd, pred)` at every op, yet checkpoint/accumulator state diverges). A
+  standby (a member at index >= Active_Count, §6.1) advances `Executed` as it walks the committed
+  log but runs no `Execute` up-call, so its application state stays at its checkpoint while
+  `Executed` runs ahead. The protocol already rebuilds (`replica_materialize_application_state`) on
+  a standby-to-active promotion, but a standby that is first REMOVED, then later REJOINS as active
+  (r3: standby in epoch 1 [0 1 2 3 4 5 6] -> removed in epoch 2 [0 1 2] -> active in epoch 3
+  [0 1 3]) is not a standby at rejoin time, so the `was_standby` trigger missed it. It rejoined with
+  `Executed` ahead of its stale state, executed forward on the stale accumulator, and shipped the
+  stale checkpoint to peers (10700 is a peer re-shipping it; 9194 is the stale state read back).
+  Fix: when `replica_enter_new_epoch` puts a was-standby into the being-replaced branch, reconcile
+  `Executed` down to `Checkpoint_Op` so the counter matches the state machine; the eventual rejoin
+  catch-up then re-executes the gap and rebuilds. Verified: the trio passes, 0-4999 stays 0.
+- **Fix (a replaced replica retires only when the new group is fault-tolerant) — wedges 22678,
+  9437**: the deadlock is a degraded reconfigured group that cannot bring an ADDED member up. A
+  replaced replica used to shut down at a QUORUM of Epoch_Started, which the continuing members
+  alone satisfy, leaving the added member stranded; a later crash then drops the group below quorum,
+  driver left to prod it. Fix: `replica_receive_epoch_started` retires only once EVERY active
+  new-group member has confirmed, so the replaced replica keeps re-driving Start_Epoch (on its own
+  Transition tick — no view-change churn) to the stranded member until it joins. Fixed 22678 + 9437
+  with no 0-4999 regression. (The earlier backup-driven re-drive that regressed 9 seeds is NOT used;
+  this drives from the retiring old replica instead, which adds no traffic during view changes.)
+- **Fix (two coordinated changes) — wedges 8185, 20229**: same family, harder variant. Here the
+  replica being replaced learns of the new epoch via a New_Epoch redirect (not by committing the
+  reconfiguration), and the only other epoch-N members are a crashed primary and a view-changing
+  backup, so the added member has no driver AND the one op it still needs (the epoch-start op) sits
+  only on the view-changing backup. Two fixes, both non-disruptive:
+  (1) `replica_receive_new_epoch`: a replica replaced via redirect becomes a transitioning
+  replaced replica (`replica_become_replaced`) instead of shutting down at once, so it re-drives
+  Start_Epoch to the stranded member on its own tick (same mechanism as the retirement fix, no
+  view-change traffic). This wakes the member and it catches up to the committed frontier.
+  (2) `replica_receive_get_state`: a VIEW-CHANGING replica now answers a plain catch-up Get_State,
+  shipping ONLY its committed prefix (it was silent before, the §5.2 "normal only" rule). The
+  committed prefix is agreed and safe; the uncommitted tail (the Bug 22 fork risk) is still
+  withheld, and the §5.3 merge fetch still ships the full log. This lets the catching-up member
+  reach the epoch-start op that lived only on the view-changer. Together they break the deadlock.
+  Verified: 8185 + 20229 pass, no 0-4999 regression.
+- **Status: ALL 8 of the wider-sweep findings fixed** — 4 safety (13018 + the 9194/10700/22312
+  trio) and 4 liveness wedges (8185, 20229, 22678, 9437). 0-4999 x skew stays at 0; a fresh full
+  0-24999 x skew sweep confirms no new regressions.

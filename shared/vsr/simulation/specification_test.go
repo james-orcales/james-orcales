@@ -167,6 +167,13 @@ func Test_Cluster_Clock_Skew(t *testing.T) {
 	// next view before the tail ended (639, 4171); a recovery that counted a replaced replica's
 	// stale response (997); and a reconfiguration grow that built a duplicate config (4405).
 	seeds = append(seeds, 281, 639, 4171, 997, 4405)
+	// Permanent regression seeds for the skew-on findings of the wider 0..24999 sweep
+	// (simulator_bugs.md, Bug 22): the divergence trio where a removed standby's Executed ran
+	// ahead of its applied state and it shipped a stale checkpoint (9194, 10700, 22312); an
+	// agreement fork from a higher-view New_State leaving a stale tail (13018); and two
+	// reconfiguration wedges where a fault-tolerant-retirement gate brings a stranded added
+	// member up (22678, 9437).
+	seeds = append(seeds, 9194, 10700, 22312, 13018, 22678, 9437)
 	for _, seed := range seeds {
 		t.Run(fmt.Sprintf("seed_%d", seed), func(t *testing.T) {
 			t.Parallel()
@@ -195,6 +202,11 @@ func Test_Cluster_Reconfiguration(t *testing.T) {
 	// redirect made the new-epoch primary truncate it (3678); and an adopted-not-executed
 	// client-table record kept over the checkpoint's executed one, re-committing it (680).
 	seeds = append(seeds, 2268, 460, 3678, 680)
+	// Permanent regression seeds for the skew-off reconfiguration-liveness wedges of the wider
+	// 0..24999 sweep (simulator_bugs.md, Bug 22): an added member stranded when the new epoch's
+	// primary is down, broken by a replica replaced via redirect becoming a transitioning
+	// driver and a view-changing replica serving its committed prefix.
+	seeds = append(seeds, 8185, 20229)
 	results := make([]simulation_result, len(seeds))
 	for index, seed := range seeds {
 		t.Run(fmt.Sprintf("seed_%d", seed), func(t *testing.T) {

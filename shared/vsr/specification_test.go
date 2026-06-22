@@ -2299,19 +2299,30 @@ func Test_Reconfiguration_Old_Group_Shutdown(t *testing.T) {
 		t.Fatalf("expected the new configuration adopted, got %+v", replaced.Configuration)
 	}
 
-	// One Epoch_Started is below the new group's quorum of 2: still serving.
+	// Retire only once EVERY active new-group member ({0,1,3}) is up, not merely a quorum: the
+	// ADDED member 3 must confirm too, so the new group is fault-tolerant before the handoff
+	// completes. A quorum of just the continuing members {0,1} would leave 3 stranded; a later
+	// crash then drops the group below quorum with no driver to bring 3 up, the reconfiguration
+	// wedge the simulator surfaced (seeds 8185/20229/22678/9437).
 	receive(&replaced, vsr.Message{
 		Kind: vsr.Message_Kind_Epoch_Started, From: 0, To: 2, View: 0, Epoch: 1,
 	})
 	if replaced.Status != vsr.Status_Transition {
-		t.Fatalf("expected still serving below f'+1, got %d", replaced.Status)
+		t.Fatalf("expected still serving with one member up, got %d", replaced.Status)
 	}
-	// The second distinct Epoch_Started reaches f'+1: shut down.
+	// Continuing members 0 and 1 are up (a quorum), but added member 3 is not: still serving.
 	receive(&replaced, vsr.Message{
 		Kind: vsr.Message_Kind_Epoch_Started, From: 1, To: 2, View: 0, Epoch: 1,
 	})
+	if replaced.Status != vsr.Status_Transition {
+		t.Fatalf("expected still serving until member 3 is up, got %d", replaced.Status)
+	}
+	// The added member 3 confirms: every active new-group member is up, so the handoff is done.
+	receive(&replaced, vsr.Message{
+		Kind: vsr.Message_Kind_Epoch_Started, From: 3, To: 2, View: 0, Epoch: 1,
+	})
 	if replaced.Status != vsr.Status_Shutdown {
-		t.Fatalf("expected Shutdown once f'+1 Epoch_Started arrive, got %d",
+		t.Fatalf("expected Shutdown once every active new-group member is up, got %d",
 			replaced.Status)
 	}
 }
