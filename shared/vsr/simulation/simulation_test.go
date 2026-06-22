@@ -603,6 +603,14 @@ func simulator_state_machine(state *simulator, index int) (machine vsr.State_Mac
 	machine = vsr.State_Machine{
 		Execute: func(command []byte, prediction []byte) (result []byte) {
 			simulator_observe_execution(state, index, command)
+			if state.Trace_Sink != nil {
+				defer func() {
+					jlog.Logger_Info(state.Trace, "execute",
+						jlog.Integer("id", index),
+						jlog.String("cmd", string(command)),
+						jlog.Uint64("acc", state.Accumulator[index]))
+				}()
+			}
 			if command_is_read(command) {
 				// A read returns the current application state without mutating it.
 				// It still ran through the log and committed like any op (§6.3
@@ -635,6 +643,11 @@ func simulator_state_machine(state *simulator, index int) (machine vsr.State_Mac
 		},
 		Restore: func(snapshot []byte) {
 			state.Accumulator[index] = bytes_to_uint64(snapshot)
+			if state.Trace_Sink != nil {
+				jlog.Logger_Info(state.Trace, "restore",
+					jlog.Integer("id", index),
+					jlog.Uint64("acc", state.Accumulator[index]))
+			}
 		},
 	}
 	if state.Seed%2 != 0 {
@@ -1240,11 +1253,15 @@ func simulator_deliver(state *simulator, now time.Moment) {
 			for index := range output.Messages {
 				log_message(state.Trace, "send", now, output.Messages[index])
 			}
+			commit_base := int(target.Commit) - len(output.Committed) + 1
 			for index := range output.Committed {
 				entry := output.Committed[index]
 				jlog.Logger_Info(state.Trace, "commit", jlog.Int64("t", now),
+					jlog.Uint8("id", message.To),
+					jlog.Integer("op", commit_base+index),
 					jlog.Uint64("birth_view", entry.View),
-					jlog.String("cmd", string(entry.Command)))
+					jlog.String("cmd", string(entry.Command)),
+					jlog.String("pred", fmt.Sprintf("%x", entry.Prediction)))
 			}
 		}
 		simulator_count_delivery(state, message, target_transition, output)
@@ -2110,7 +2127,18 @@ func log_message(logger jlog.Logger, event string, now time.Moment, message vsr.
 		jlog.Uint64("nonce", message.Nonce),
 		jlog.Strings("entries", trace_entries(message.Entries)),
 		jlog.Strings("log", trace_entries(message.Log)),
-		jlog.Strings("suffix", trace_entries(message.Log_Suffix)))
+		jlog.Strings("suffix", trace_entries(message.Log_Suffix)),
+		jlog.Uint64("ckpt_op", uint64(message.Checkpoint_Op)),
+		jlog.Uint64("ckpt_acc", trace_checkpoint_acc(message.Checkpoint_State)))
+}
+
+// Trace_checkpoint_acc renders a shipped checkpoint snapshot as its accumulator value (the snapshot
+// is an 8-byte big-endian uint64), or 0 when the message carries no checkpoint.
+func trace_checkpoint_acc(snapshot []byte) (accumulator uint64) {
+	if len(snapshot) != 8 {
+		return 0
+	}
+	return bytes_to_uint64(snapshot)
 }
 
 // Log_replica logs a replica's whole consensus state and live log as one structured line under the
