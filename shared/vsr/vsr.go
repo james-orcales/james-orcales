@@ -506,6 +506,12 @@ type Message struct {
 	// when the requester needs a prefix the responder has already garbage-collected; nil means
 	// none.
 	Checkpoint_State []byte
+	// Checkpoint_Client_Table ships the responder's client-table alongside Checkpoint_State.
+	// The exactly-once records for requests the checkpoint compacted live only in the table, not
+	// in the shipped log suffix; without them a restoring replica that later becomes primary
+	// would re-append an already-executed request at a fresh op (an exactly-once violation). It
+	// travels exactly when Checkpoint_State does.
+	Checkpoint_Client_Table map[Client_Identifier]Client_Record
 
 	// New_Configuration is the membership a Reconfiguration requests, a Start_Epoch installs,
 	// and a New_Epoch redirect advertises (§7); empty in every other message.
@@ -1606,6 +1612,25 @@ func configuration_contains(
 	return false
 }
 
+// Configurations_Equal_Input is the pair of configurations a membership comparison checks.
+type configurations_equal_input struct {
+	A Configuration
+	B Configuration
+}
+
+// Reports whether two configurations are the identical membership in the same order.
+func configurations_equal(input *configurations_equal_input) (yes bool) {
+	if len(input.A) != len(input.B) {
+		return false
+	}
+	for index := range input.A {
+		if input.A[index] != input.B[index] {
+			return false
+		}
+	}
+	return true
+}
+
 // Turns a client command into a new log entry on the primary, deduplicated by the client-table for
 // exactly-once semantics. Only the primary of the current view, and only while normal, may append.
 // A request the client-table has already seen is never re-appended: a stale one is dropped, an
@@ -1971,7 +1996,11 @@ func replica_redriven_prepare(
 		return replica_reack_redriven_prepare(replica, message), false
 	}
 	if diverge <= Op(replica.Commit) {
-		return replica_reack_redriven_prepare(replica, message), false
+		// The Prepare's entry differs from one this replica COMMITTED. Committed ops
+		// are immutable, so the sender is a behind primary reusing the op-number for a new
+		// value (across a reconfiguration). REJECT it: re-acking would let it commit on a
+		// false quorum and fork the log (Bug 19).
+		return nil, false
 	}
 	keep := int(diverge) - 1 - int(replica.Log_Start)
 	if keep < 0 {
@@ -2139,6 +2168,7 @@ func replica_receive_get_state(replica *Replica, message Message) (output Step_O
 		// since the checkpoint never GCs above Checkpoint_Op - Log_Retain.
 		response.Checkpoint_Op = replica.Checkpoint_Op
 		response.Checkpoint_State = replica.Checkpoint_State
+		response.Checkpoint_Client_Table = clone_client_table(replica.Client_Table)
 		response.Log = replica_log_slice_from(replica, replica.Checkpoint_Op+1)
 	} else {
 		// The requester holds everything up to its op; ship only the entries beyond it. A
@@ -2224,7 +2254,8 @@ func replica_apply_new_state(replica *Replica, message Message) {
 	if message.Checkpoint_State != nil {
 		if message.Checkpoint_Op > replica.Executed {
 			replica_restore_checkpoint(
-				replica, message.Checkpoint_Op, message.Checkpoint_State)
+				replica, message.Checkpoint_Op, message.Checkpoint_State,
+				message.Checkpoint_Client_Table)
 		}
 	}
 	// Splice the shipped suffix onto the prefix this replica holds: state transfer extends a
@@ -2419,17 +2450,24 @@ func replica_execute_reconfiguration(replica *Replica, entry Log_Entry, op Op) {
 		Request_Number: entry.Request_Number,
 		Executed:       true,
 	}
-	// Trigger the epoch handoff only for a reconfiguration ABOVE this replica's epoch-start op.
-	// A replica that joined via Start_Epoch caught up to the reconfiguration op creating its
-	// epoch (op == Epoch_Start_Op); re-executing it must not advance the epoch again and
-	// overshoot the cluster (Bug 19). Capture the new configuration and active count now, while
-	// the entry is in hand: the maybe-checkpoint below and end-of-loop compaction can GC the op
-	// before the top-level drain reads it.
+	// Record this reconfiguration op as the epoch-start op if it is the newest executed, and
+	// trigger the handoff only to a DIFFERENT configuration. A replica that jumped to this
+	// epoch (redirect or recovery) and is catching up executes the reconfiguration op that
+	// CREATED its current epoch (New_Configuration equals the current configuration); it must
+	// learn its epoch-start op from it without advancing the epoch again and overshooting
+	// (Bug 19). Capture the new configuration/active count now: the maybe-checkpoint below and
+	// end-of-loop compaction can GC the op before the drain reads it.
 	if op > replica.Epoch_Start_Op {
-		replica.Epoch_Handoff_Due = true
 		replica.Epoch_Start_Op = op
-		replica.Epoch_New_Configuration = entry.New_Configuration
-		replica.Epoch_New_Active_Count = entry.New_Active_Count
+		differs := !configurations_equal(&configurations_equal_input{
+			A: entry.New_Configuration,
+			B: replica.Configuration,
+		})
+		if differs {
+			replica.Epoch_Handoff_Due = true
+			replica.Epoch_New_Configuration = entry.New_Configuration
+			replica.Epoch_New_Active_Count = entry.New_Active_Count
+		}
 	}
 	replica_maybe_checkpoint(replica, op)
 }
@@ -2613,11 +2651,28 @@ func replica_compact(replica *Replica) {
 // rather than re-running the prefix the checkpoint already covers (the §5.1/§5.2 catch-up). It is
 // the inverse half of compaction: Snapshot froze the prefix, Restore thaws it on the adopting
 // replica. With no Restore injected it only advances the executed and Log_Start markers.
-func replica_restore_checkpoint(replica *Replica, checkpoint_op Op, state []byte) {
+func replica_restore_checkpoint(
+	replica *Replica, checkpoint_op Op, state []byte,
+	client_table map[Client_Identifier]Client_Record,
+) {
 	replica.Checkpoint_Op = checkpoint_op
 	replica.Checkpoint_State = state
 	replica.Log_Start = checkpoint_op
 	replica.Executed = checkpoint_op
+	// Merge the checkpoint's client-table: it carries the exactly-once record for every request
+	// the checkpoint compacted, which the shipped log suffix omits. Keep the higher request-number
+	// per client so a record this replica already holds for an op above the checkpoint is not
+	// lowered. Without this the rebuild below, scanning only the suffix, never re-learns a
+	// compacted request and the replica re-appends it on becoming primary (an exactly-once bug).
+	for client, record := range client_table {
+		current, seen := replica.Client_Table[client]
+		if seen {
+			if current.Request_Number >= record.Request_Number {
+				continue
+			}
+		}
+		replica.Client_Table[client] = record
+	}
 	// A restore materializes the state through checkpoint_op and holds no log beyond it yet:
 	// the caller rebuilds the log from the incoming suffix. Op and Log must reflect that empty
 	// state, keeping Op == Log_Start + len(Log). A stale higher Op here makes the following
@@ -2629,6 +2684,18 @@ func replica_restore_checkpoint(replica *Replica, checkpoint_op Op, state []byte
 		return
 	}
 	replica.State_Machine.Restore(state)
+}
+
+// Returns an independent copy of a client-table for shipping inside a checkpoint-bearing message,
+// so a later mutation of the sender's live table cannot alter a message already in flight.
+func clone_client_table(
+	table map[Client_Identifier]Client_Record,
+) (copied map[Client_Identifier]Client_Record) {
+	copied = make(map[Client_Identifier]Client_Record, len(table))
+	for client, record := range table {
+		copied[client] = record
+	}
+	return copied
 }
 
 // Reconciles the client-table with the log after the log is replaced wholesale by a view change,
@@ -2739,6 +2806,8 @@ func replica_build_do_view_change(replica *Replica) (message Message) {
 		Last_Normal_View: replica.Last_Normal_View,
 		Checkpoint_Op:    replica.Checkpoint_Op,
 		Checkpoint_State: replica.Checkpoint_State,
+
+		Checkpoint_Client_Table: clone_client_table(replica.Client_Table),
 	}
 }
 
@@ -2810,6 +2879,7 @@ func replica_reconstruct_selected_log(
 	// the reconstructed log; adopt restores from it only if the new primary is behind it.
 	carrier.Checkpoint_Op = replica.Checkpoint_Op
 	carrier.Checkpoint_State = replica.Checkpoint_State
+	carrier.Checkpoint_Client_Table = clone_client_table(replica.Client_Table)
 	if best.From == replica.Identifier {
 		// The new primary is the winner: its own live log already IS the selected log.
 		carrier.Op = replica.Op
@@ -2896,6 +2966,8 @@ func replica_complete_install(
 		Log:              suffix,
 		Checkpoint_Op:    replica.Checkpoint_Op,
 		Checkpoint_State: replica.Checkpoint_State,
+
+		Checkpoint_Client_Table: clone_client_table(replica.Client_Table),
 	})...)
 	return output
 }
@@ -2920,7 +2992,8 @@ func replica_adopt_log(
 		// The replica is behind the carrier's suffix start: it has no other source for the
 		// prefix the suffix omits, so restore from the carrier's checkpoint and replace the
 		// log wholesale from carrier_start. The prefix below now lives in the checkpoint.
-		replica_restore_checkpoint(replica, carrier.Checkpoint_Op, carrier.Checkpoint_State)
+		replica_restore_checkpoint(replica, carrier.Checkpoint_Op, carrier.Checkpoint_State,
+			carrier.Checkpoint_Client_Table)
 		replica.Log_Start = carrier_start
 		suffix := make([]Log_Entry, len(carrier.Log))
 		copy(suffix, carrier.Log)
@@ -3063,6 +3136,7 @@ func replica_receive_recovery(replica *Replica, message Message) (output Step_Ou
 		response.Log = replica_log_slice_from(replica, replica.Log_Start+1)
 		response.Checkpoint_Op = replica.Checkpoint_Op
 		response.Checkpoint_State = replica.Checkpoint_State
+		response.Checkpoint_Client_Table = clone_client_table(replica.Client_Table)
 	}
 	output.Messages = []Message{response}
 	return output
@@ -3097,7 +3171,7 @@ func replica_receive_recovery_response(
 		}
 	}
 	// The authority is the primary of the highest reported view, and the primary is chosen from
-	// the active replicas alone (§6.1) — Configuration[View mod Active_Count], never a standby.
+	// the active replicas alone (§6.1): Configuration[View mod Active_Count], never a standby.
 	// The whole configuration's size here would pick the wrong member when standbys exist.
 	authority_index := uint64(highest) % uint64(replica_active_count(replica))
 	authority_identifier := replica.Configuration[authority_index]
