@@ -315,3 +315,81 @@ that caused it. Each fix changes `vsr.go`, never the assertion.
 - **Guard**: seed 1378 (clock skew on) is a permanent regression seed in `Test_Cluster_Clock_Skew`;
   the `replica_log_entry` bounds assertion and the cluster agreement oracle under the clock-skew
   sweep.
+
+## Bug 17 — a lost Prepare_Ok was never recovered (liveness)
+
+- **Symptom**: the fault-free tail wedged with an op uncommitted under a stable primary, the
+  client's retries dropped as in flight, no view change to rescue it.
+- **Root cause**: the primary's heartbeat re-drives an uncommitted op to a backup that already holds
+  it; `replica_receive_prepare` returned early without re-acking, so the dropped `Prepare_Ok` was
+  never regenerated.
+- **Fix**: `replica_receive_prepare` re-acks the still-uncommitted ops a re-driven Prepare carries
+  (`replica_redriven_prepare`), re-acking ONLY entries it holds identically to the primary's and
+  reconciling a divergent one rather than re-acking a stale copy.
+- **Guard**: the fault-free-tail convergence oracle (`simulator_run_tail`).
+
+## Bug 18 — the primary stayed closed to requests after a reconfiguration (liveness)
+
+- **Symptom**: the cluster never accepted client requests again after any reconfiguration.
+- **Root cause**: `replica_open_to_requests` returned false whenever the topmost log entry was a
+  reconfiguration; after it committed and the epoch advanced, the new epoch's primary still saw it
+  on top and could never append its first op.
+- **Fix**: a topmost reconfiguration closes requests only while UNCOMMITTED; once committed the
+  epoch has advanced, so `replica_open_to_requests` returns `Op <= Commit` for that case.
+- **Guard**: `Test_Cluster_Reconfiguration` cleanup (reconfigurations complete, epoch advances) and
+  the tail oracle.
+
+## Bug 19 — op-number reuse across a reconfiguration via a stale epoch-start op
+
+- **Symptom** (seeds 222 op 220, 415 op 141, 64 op 126): `op N diverges` and one client request
+  `mapped to two results`.
+- **Root cause**: a replica reached epoch N+1 WITHOUT executing N+1's reconfiguration op — recovery
+  and redirect JUMPED `replica.Epoch = message.Epoch` and copied `Epoch_Start_Op` from a (possibly
+  stale) message. With a stale `Epoch_Start_Op` the new epoch's primary re-used op-numbers the old
+  epoch had committed: two values at one op (fork) and one request at two ops (exactly-once). This
+  is a §7.3 violation: a replica must CATCH UP to the new epoch, and the epoch advances by
+  EXECUTING the reconfiguration op.
+- **Fix**: `replica_execute_reconfiguration` triggers the epoch handoff only when the
+  reconfiguration CHANGES the configuration (`configurations_equal`). A replica catching up to or
+  recovering into the epoch its own reconfiguration op created executes that op (same configuration)
+  and learns its epoch-start op from it WITHOUT advancing again or overshooting — so
+  `Epoch_Start_Op` always comes from the executed op, not a message, so op-numbers never reuse.
+- **Rejected** (measured net-negative, do not retry): joint consensus (a Raft mechanism, not VSR);
+  a recovery "most-committed authority"; `Start_View` op-rejects; commit clamps. Each traded a fork
+  for a wedge or a `commit > op` panic.
+- **Guard**: the agreement and exactly-once oracles across `Test_Cluster_Reconfiguration` /
+  `_Agreement` / `_Clock_Skew`.
+
+## Bug 20 — a client-table record outliving its log entry stranded or duplicated a request
+
+- **Symptom**: a request `mapped to two results` (seed 78 op 184/186), or the fault-free tail wedged
+  with one request unanswered though the quorum was healthy (seeds 20, 105) — the primary held a
+  client-table record for the request but no log entry, so it neither re-accepted nor committed it.
+- **Root cause**: the client-table record is written at flush, but a view change can drop the
+  uncommitted entry while the record survives. (a) On a checkpoint restore the record was lost for
+  COMPACTED requests, so a new primary re-appended an already-executed one. (b) The flush-written
+  record made `replica_receive_request` and the deferred prediction round treat a dropped request as
+  in flight, so it was never re-accepted.
+- **Fix**: ship the client-table with the checkpoint (`Checkpoint_Client_Table`, merged in
+  `replica_restore_checkpoint`) so compacted exactly-once records survive a restore; and gate the
+  in-flight dedup on whether the request is actually in the log (`replica_request_logged`) in both
+  `replica_receive_request` and `replica_pre_step_appendable`, re-accepting a request the log no
+  longer holds. The prediction-round freshness check abandons only on a STRICTLY newer or
+  already-executed request, never on the same not-yet-executed number.
+- **Guard**: the exactly-once oracle and the tail convergence oracle across the sweep.
+
+## Bug 21 — a reconfiguration-added or re-added replica was never brought up (liveness)
+
+- **Symptom** (seeds 205, 218, 86): the tail wedged with a voting member of the new configuration
+  never active — stuck at the old epoch, or shut down and unable to rejoin.
+- **Root cause**: only the replicas being replaced re-drove `Start_Epoch` to new members, and they
+  retire after f'+1 `Epoch_Started` (a quorum, satisfied by the CONTINUING members) before a newly
+  added member caught up — leaving it stranded with nobody to prod it. A member that legitimately
+  shut down when an earlier epoch dropped it could never rejoin when a later epoch re-added its
+  identifier, because every message to a shut-down replica was dropped.
+- **Fix**: the new primary re-drives `Start_Epoch` to any configured member not yet confirmed active
+  in the epoch (`replica_primary_resend_start_epoch`, tracked by `Epoch_Up_From`), per §7.2; and the
+  epoch-precedence gate admits a `Start_Epoch` that names a shut-down replica in its new
+  configuration, reviving it as a fresh member via the adopt path. The harness models a re-added
+  identifier as a fresh node (§7.5) by delivering that revival `Start_Epoch`.
+- **Guard**: the tail convergence oracle, which requires every voting member active and normal.

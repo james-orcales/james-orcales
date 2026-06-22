@@ -287,6 +287,21 @@ and some equal-epoch messages.
 **Angle** — the commit walk crossing the epoch's last op.
 **Why** — a reconfiguration is control-plane, not application data (paper §7.1).
 
+### epoch-iff-reconfiguration-op-executed — epoch advances only by executing its reconfig op
+*Safety · Tier-2 agreement + exactly-once oracles · enforced-simulator (Bug 19; seeds 222/415/64)*
+
+**Property** — a replica reaches epoch N+1 only by EXECUTING the reconfiguration op that created it,
+which sets `Epoch_Start_Op` to that op; it never advances the epoch by copying a number from a
+message. So a replica normal in epoch N+1 holds N+1's reconfiguration op and the committed prefix
+below it, and never re-uses an op-number the old epoch committed.
+**Invariant** — `replica_execute_reconfiguration` triggers the handoff only when the reconfig
+changes the configuration (`configurations_equal`); the agreement and exactly-once oracles witness
+no divergence or duplicate across the boundary.
+**Angle** — recovery or redirect jumping the epoch with a stale `Epoch_Start_Op`, then the new
+primary re-using op-numbers (Bug 19).
+**Why** — op-numbers must stay globally monotonic through a reconfiguration (paper §7.3); a stale
+epoch-start op breaks that and forks the log.
+
 ### old-group-no-commit-after-epoch — replaced group can't commit a conflicting op
 *Safety · Tier-2 agreement oracle · enforced-simulator (regression: Bug 9; seeds 6605/7683)*
 

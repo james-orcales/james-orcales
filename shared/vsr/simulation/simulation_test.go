@@ -1202,7 +1202,12 @@ func simulator_deliver(state *simulator, now time.Moment) {
 // that adds it; everything else to it is dropped, since it is not in play.
 func simulator_deliverable(state *simulator, message vsr.Message) (deliverable bool) {
 	if state.Replicas[message.To].Status == vsr.Status_Shutdown {
-		return false
+		// A shut-down node accepts only a Start_Epoch: a later reconfiguration that
+		// re-adds its identifier revives it as a fresh member (the paper provisions a
+		// fresh node for the new configuration). Without this a node that shut down when
+		// an earlier epoch dropped it could never rejoin when a later epoch adds it back,
+		// wedging the cluster below quorum; receive_start_epoch's adopt path catches it up.
+		return message.Kind == vsr.Message_Kind_Start_Epoch
 	}
 	if state.Active[message.To] {
 		return true
