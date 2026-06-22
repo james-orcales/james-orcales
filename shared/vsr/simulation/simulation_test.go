@@ -2,6 +2,9 @@ package simulation_test
 
 import (
 	"fmt"
+	"os"
+	"strconv"
+	"strings"
 	"testing"
 
 	invariant "github.com/james-orcales/james-orcales/shared/invariant/default"
@@ -277,6 +280,10 @@ type simulator struct {
 	// interval boundary, which under constant faults would otherwise leave a run with no
 	// reconfiguration at all.
 	Reconfigure_After int
+	// Trace, when non-nil (VSR_TRACE selected this seed), accumulates the run's timeline for
+	// offline inspection of a fork. It is write-only during the run and flushed to a file at
+	// the end; nil keeps the whole facility inert for the sweep.
+	Trace *strings.Builder
 }
 
 // How many committed ops pass between checkpoints in the simulated cluster — small, so compaction
@@ -356,6 +363,8 @@ func run_simulation(t *testing.T, seed int64) (result simulation_result) {
 func run_simulation_with(t *testing.T, seed int64, clock_skew bool) (result simulation_result) {
 	t.Helper()
 	state := new_simulator(t, seed, clock_skew)
+	// Flush even when a safety Fatalf unwinds this goroutine, so the trace ends at the fork.
+	defer simulator_flush_trace(state)
 	simulator_run_main(state)
 	// Fault-free tail: heal every fault, then drain. After faults cease the cluster must
 	// converge (every open request commits, the voting set settles to Normal) or it has
@@ -423,6 +432,11 @@ func new_simulator(t *testing.T, seed int64, clock_skew bool) (state *simulator)
 		Reconfigure_After: sim_reconfigure_every,
 	}
 	simulator_allocate(state, cluster_count)
+	if trace_enabled(seed) {
+		state.Trace = &strings.Builder{}
+		simulator_trace(state, "SEED %d skew=%v cluster=%d config=%v",
+			seed, clock_skew, cluster_count, state.Configuration)
+	}
 	return state
 }
 
@@ -704,6 +718,8 @@ func simulator_inject_isolation(state *simulator, now time.Moment) {
 	}
 	window := time.Moment(sim_isolate_window) * time.Moment(time.Millisecond)
 	state.Isolated_Until[victim] = now + window
+	simulator_trace(state, "t=%d FAULT isolate r%d until=%d", now, victim,
+		state.Isolated_Until[victim])
 }
 
 // Crash-restarts one active normal replica, respecting the fault model so the cluster stays
@@ -751,6 +767,7 @@ func simulator_inject_crash(state *simulator, now time.Moment) {
 	if !warm {
 		state.Accumulator[victim] = 0
 	}
+	simulator_trace(state, "t=%d FAULT crash r%d warm=%v", now, victim, warm)
 	simulator_send(state, output.Messages, now)
 }
 
@@ -779,6 +796,8 @@ func simulator_inject_reconfiguration(state *simulator, tick_index int, now time
 	state.Admin.Request_Number++
 	state.Reconfigure_After = tick_index + sim_reconfigure_every
 	primary := simulator_believed_primary(state)
+	simulator_trace(state, "t=%d FAULT reconfigure-%d -> %v active=%d", now,
+		state.Admin.Request_Number, target, active_count_for(len(target)))
 	simulator_send(state, []vsr.Message{{
 		Kind:           vsr.Message_Kind_Reconfiguration,
 		From:           primary,
@@ -1120,12 +1139,15 @@ func simulator_deliver(state *simulator, now time.Moment) {
 	prng.Generator_Shuffle(&state.Generator, due)
 	for _, flight := range due {
 		if simulator_is_isolated(state, flight.Message.From, now) {
+			simulator_trace_drop(state, now, "iso-from", flight.Message)
 			continue // A partition drops the message; senders' timers will retry.
 		}
 		if simulator_is_isolated(state, flight.Message.To, now) {
+			simulator_trace_drop(state, now, "iso-to", flight.Message)
 			continue // A partition drops the message; senders' timers will retry.
 		}
 		if !simulator_deliverable(state, flight.Message) {
+			simulator_trace_drop(state, now, "undeliverable", flight.Message)
 			continue // Target shut down, or dormant and this is not its Start_Epoch.
 		}
 		// A Start_Epoch to a dormant pre-allocated node adds it to the group (§7.1):
@@ -1136,11 +1158,15 @@ func simulator_deliver(state *simulator, now time.Moment) {
 		}
 		target := &state.Replicas[flight.Message.To]
 		target_transition := target.Status == vsr.Status_Transition
+		simulator_trace(state, "t=%d DELIVER %s", now, trace_message(flight.Message))
+		simulator_trace(state, "  r%d BEFORE %s", flight.Message.To, trace_replica(target))
 		output := vsr.Replica_Receive(&vsr.Replica_Receive_Input{
 			Replica: target,
 			Message: flight.Message,
 			Now:     now,
 		})
+		simulator_trace(state, "  r%d AFTER  %s", flight.Message.To, trace_replica(target))
+		simulator_trace_output(state, output)
 		// A transitioning new-group member adopting a checkpoint-bearing New_State is a
 		// brand-new node restoring a checkpoint to catch up to the epoch (§7.1.1), the
 		// empty-log path.
@@ -1951,6 +1977,10 @@ func simulator_check_agreement_pair(input *simulator_check_agreement_pair_input)
 		ai := op - vsr.Commit(a.Log_Start) - 1
 		bi := op - vsr.Commit(b.Log_Start) - 1
 		if string(a.Log[ai].Command) != string(b.Log[bi].Command) {
+			simulator_trace(input.State,
+				"VIOLATION op=%d r%d=%q(bv%d ep%d v%d) r%d=%q(bv%d ep%d v%d)", op,
+				a.Identifier, a.Log[ai].Command, a.Log[ai].View, a.Epoch, a.View,
+				b.Identifier, b.Log[bi].Command, b.Log[bi].View, b.Epoch, b.View)
 			input.State.T.Fatalf("seed %d: op %d diverges: %d=%q(bview=%d ep=%d "+
 				"view=%d commit=%d) %d=%q(bview=%d ep=%d view=%d commit=%d)",
 				input.State.Seed, op,
@@ -1959,4 +1989,141 @@ func simulator_check_agreement_pair(input *simulator_check_agreement_pair_input)
 				b.View, b.Commit)
 		}
 	}
+}
+
+// The trace facility serializes one seed's entire timeline — every delivery with the target's state
+// before and after the step, every message produced, every commit, every injected fault, and the
+// safety violation that ends the run — to a file, so a fork can be read offline instead of being
+// chased with throwaway print statements that perturb the schedule and have to be ripped back out.
+// It is inert unless VSR_TRACE names the running seed, so the sweep pays nothing for it.
+
+// Trace_enabled reports whether VSR_TRACE selects this seed. Both the skew-off and skew-on runs of
+// the seed trace, to separate files, because a fork often reproduces under only one of them.
+func trace_enabled(seed int64) (enabled bool) {
+	want := os.Getenv("VSR_TRACE")
+	if want == "" {
+		return false
+	}
+	parsed, err := strconv.ParseInt(want, 10, 64)
+	if err != nil {
+		return false
+	}
+	return parsed == seed
+}
+
+// Simulator_trace appends one formatted line to the trace, or does nothing when tracing is off. It
+// reads only the arguments it is given, never the live cluster, so it cannot perturb the run.
+func simulator_trace(state *simulator, format string, args ...any) {
+	if state.Trace == nil {
+		return
+	}
+	fmt.Fprintf(state.Trace, format+"\n", args...)
+}
+
+// Simulator_flush_trace writes the accumulated trace to /tmp once the run ends — including when a
+// safety Fatalf unwinds the goroutine, since the caller defers this. The filename carries the seed
+// and skew so the off and on runs do not clobber each other.
+func simulator_flush_trace(state *simulator) {
+	if state.Trace == nil {
+		return
+	}
+	name := fmt.Sprintf("/tmp/vsr_trace_%d_skew_%v.log", state.Seed, state.Clock_Skew)
+	if err := os.WriteFile(name, []byte(state.Trace.String()), 0o644); err != nil {
+		state.T.Logf("trace flush to %s failed: %v", name, err)
+	}
+}
+
+// Simulator_trace_drop records a message the network dropped before delivery (a partition or a
+// shut-down target), so the trace shows the gaps that explain a stalled or diverging replica.
+func simulator_trace_drop(state *simulator, now time.Moment, reason string, message vsr.Message) {
+	simulator_trace(state, "t=%d DROP %s %s", now, reason, trace_message(message))
+}
+
+// Simulator_trace_output records the messages a step emitted and the ops it committed, so the trace
+// shows both what a delivery produced and the exact point a command became committed on a replica.
+func simulator_trace_output(state *simulator, output vsr.Step_Output) {
+	if state.Trace == nil {
+		return
+	}
+	for index := range output.Messages {
+		simulator_trace(state, "    -> %s", trace_message(output.Messages[index]))
+	}
+	for index := range output.Committed {
+		entry := output.Committed[index]
+		simulator_trace(state, "    COMMIT v%d:%s", entry.View, entry.Command)
+	}
+}
+
+// Trace_kind_names maps a Message_Kind to a readable name; the index is the kind's integer value.
+var trace_kind_names = [...]string{
+	"Request", "Prepare", "Prepare_Ok", "Commit", "Start_View_Change",
+	"Do_View_Change", "Start_View", "Recovery", "Recovery_Response", "Get_State",
+	"New_State", "Reply", "Predict_Request", "Predict_Response", "Reconfiguration",
+	"Start_Epoch", "Epoch_Started", "New_Epoch", "Check_Epoch",
+}
+
+// Trace_status_names maps a Status to a readable name; the index is the status's integer value.
+var trace_status_names = [...]string{"Normal", "View_Change", "Recovery", "Transition", "Shutdown"}
+
+// Message_kind_name renders a kind as its name, falling back to the integer for an unknown value.
+func message_kind_name(kind vsr.Message_Kind) (name string) {
+	if int(kind) < 0 {
+		return fmt.Sprintf("Kind(%d)", int(kind))
+	}
+	if int(kind) >= len(trace_kind_names) {
+		return fmt.Sprintf("Kind(%d)", int(kind))
+	}
+	return trace_kind_names[kind]
+}
+
+// Status_name renders a status as its name, falling back to the integer for an unknown value.
+func status_name(status vsr.Status) (name string) {
+	if int(status) < 0 {
+		return fmt.Sprintf("Status(%d)", int(status))
+	}
+	if int(status) >= len(trace_status_names) {
+		return fmt.Sprintf("Status(%d)", int(status))
+	}
+	return trace_status_names[status]
+}
+
+// Trace_entries renders a log slice as [vBIRTH:COMMAND ...]; commands are readable strings, so a
+// reused or resurrected op-number is visible at a glance. An empty slice renders as the empty
+// string so the caller can omit the field entirely.
+func trace_entries(entries []vsr.Log_Entry) (rendered string) {
+	if len(entries) == 0 {
+		return ""
+	}
+	parts := make([]string, 0, len(entries))
+	for index := range entries {
+		entry := entries[index]
+		parts = append(parts, fmt.Sprintf("v%d:%s", entry.View, entry.Command))
+	}
+	return "[" + strings.Join(parts, " ") + "]"
+}
+
+// Trace_message renders a message's routing and consensus fields plus whichever log slice it
+// carries (Prepare in Entries, Start_View/New_State in Log, Do_View_Change in Log_Suffix).
+func trace_message(message vsr.Message) (rendered string) {
+	rendered = fmt.Sprintf("%s from=%d to=%d view=%d epoch=%d op=%d commit=%d",
+		message_kind_name(message.Kind), message.From, message.To, message.View,
+		message.Epoch, message.Op, message.Commit)
+	if carried := trace_entries(message.Entries); carried != "" {
+		rendered += " entries=" + carried
+	}
+	if carried := trace_entries(message.Log); carried != "" {
+		rendered += " log=" + carried
+	}
+	if carried := trace_entries(message.Log_Suffix); carried != "" {
+		rendered += " suffix=" + carried
+	}
+	return rendered
+}
+
+// Trace_replica renders a replica's consensus state and live log — the before/after snapshot around
+// a step that shows exactly how a delivery changed it.
+func trace_replica(replica *vsr.Replica) (rendered string) {
+	return fmt.Sprintf("status=%s view=%d epoch=%d op=%d commit=%d log_start=%d log=%s",
+		status_name(replica.Status), replica.View, replica.Epoch, replica.Op,
+		replica.Commit, replica.Log_Start, trace_entries(replica.Log))
 }
