@@ -2312,10 +2312,10 @@ func replica_receive_get_state(replica *Replica, message Message) (output Step_O
 		}
 		response.Log = replica_log_slice_from(replica, from)
 	}
-	// A transitioning replica (mid §7.1.1 epoch catch-up) must answer state transfer so peers also
-	// catching up are not starved, but it holds an uncommitted suffix the new epoch may supersede.
-	// Ship only its committed prefix (the state up to the reconfiguration op that §7.1.1 step 2
-	// needs); shipping the stale suffix is the epoch-handoff analogue of Bug 22's view leak.
+	// A transitioning replica (mid §7.1.1 catch-up) answers state transfer so peers are not
+	// starved, but it holds an uncommitted suffix the new epoch may supersede. Ship only its
+	// committed prefix (the state up to the reconfiguration op §7.1.1 needs); the stale tail is
+	// the epoch-handoff analogue of Bug 22's view-change leak.
 	if replica.Status == Status_Transition {
 		ceiling := Op(replica.Commit)
 		over := int(replica.Op) - int(ceiling)
@@ -2991,10 +2991,10 @@ func replica_receive_do_view_change(
 // Selects the surviving log and either installs it now or defers until it can be fetched (§5.3).
 // The selection — largest last-normal-view, then largest op — is what guarantees every committed
 // entry survives: the reporting quorum intersects every quorum that ever committed, so the most
-// up-to-date reporter holds all committed entries. Because a report now carries only a bounded
-// suffix, the new primary installs directly only when it can reconstruct the winner's exact log
-// from its own committed prefix plus that suffix; otherwise it fetches the missing entries by state
-// transfer and stays in view-change until the New_State arrives.
+// up-to-date reporter holds all committed entries. Because a report carries only a bounded suffix,
+// the new primary installs directly only when it can reconstruct the winner's exact log from its
+// own committed prefix plus that suffix; otherwise it fetches the missing entries by state
+// transfer, staying in view-change until the New_State arrives.
 func replica_install_new_view(replica *Replica, now time.Moment) (output Step_Output) {
 	// The new view is installed only on a quorum of reports; that quorum is what guarantees the
 	// selected log holds every committed entry.
@@ -3053,6 +3053,42 @@ func replica_reconstruct_selected_log(
 	carrier.Op = best.Op
 	carrier.Log = reconstructed
 	return carrier, true
+}
+
+// Ranks the reports and returns the most up-to-date: the largest last-normal-view, breaking ties by
+// the largest op. It reads only those numbers — never a full log — which is what lets a report
+// carry just a bounded suffix (§5.3). Ranking by op rather than log length is what keeps it correct
+// even when the longest reported suffix belongs to an earlier-view reporter whose tail a later view
+// already discarded.
+func replica_select_log(candidates map[Replica_Identifier]Message) (best Message) {
+	chosen := false
+	for _, candidate := range candidates {
+		if !chosen {
+			best = candidate
+			chosen = true
+			continue
+		}
+		if candidate.Last_Normal_View > best.Last_Normal_View {
+			best = candidate
+			continue
+		}
+		if candidate.Last_Normal_View < best.Last_Normal_View {
+			continue
+		}
+		if candidate.Op > best.Op {
+			best = candidate
+			continue
+		}
+		// Equal (Last_Normal_View, Op): break the tie on the smaller identifier so the pick
+		// is deterministic across the map's unstable order. The tied logs match (same view,
+		// op), so either is correct; only the determinism matters.
+		if candidate.Op == best.Op {
+			if candidate.From < best.From {
+				best = candidate
+			}
+		}
+	}
+	return best
 }
 
 // Sends a Get_State to the selected reporter for the complete log and records the deferred install
@@ -3185,42 +3221,6 @@ func replica_adopt_log(
 		replica.Commit = commit
 	}
 	return replica_execute_to_commit(replica)
-}
-
-// Ranks the reports and returns the most up-to-date: the largest last-normal-view, breaking ties by
-// the largest op. It reads only those numbers — never a full log — which is what lets a report
-// carry just a bounded suffix (§5.3). Ranking by op rather than log length is what keeps it correct
-// even when the longest reported suffix belongs to an earlier-view reporter whose tail a later view
-// already discarded.
-func replica_select_log(candidates map[Replica_Identifier]Message) (best Message) {
-	chosen := false
-	for _, candidate := range candidates {
-		if !chosen {
-			best = candidate
-			chosen = true
-			continue
-		}
-		if candidate.Last_Normal_View > best.Last_Normal_View {
-			best = candidate
-			continue
-		}
-		if candidate.Last_Normal_View < best.Last_Normal_View {
-			continue
-		}
-		if candidate.Op > best.Op {
-			best = candidate
-			continue
-		}
-		// Equal (Last_Normal_View, Op): break the tie on the smaller identifier so the pick
-		// is deterministic across the map's unstable order. The tied logs match (same view,
-		// op), so either is correct; only the determinism matters.
-		if candidate.Op == best.Op {
-			if candidate.From < best.From {
-				best = candidate
-			}
-		}
-	}
-	return best
 }
 
 // Adopts the new view's installed log on a backup and returns it to normal. A Start_View for a view

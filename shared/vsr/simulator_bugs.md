@@ -415,9 +415,22 @@ that caused it. Each fix changes `vsr.go`, never the assertion.
   catch-ups, so the §7.1.1 epoch catch-up is not starved into a wedge (a blanket Normal-only gate
   wedged the epoch handoff). Across 0–5000 × skew this took the sweep from 36 to 31 failures (forks
   11→6, no liveness regression).
+  The epoch-handoff analogue (a `Status_Transition` replica leaking its uncommitted suffix during
+  §7.1.1 catch-up) is closed the same way: a transitioning replica still answers state transfer
+  (so peers catching up are not starved) but caps its answer at its commit, shipping only the
+  committed prefix the catch-up needs — fixing seeds 248 and 3072.
 - **Guard**: pinned seed 3470 in `Test_Cluster_Agreement`. Reverting the view-change gate in
   `replica_receive_get_state` makes it fork `op 109 diverges`; the fix makes it pass.
-- **Residual**: the analogous leak through a `Status_Transition` replica during an epoch handoff
-  (seeds 2268, 460, and others) is NOT yet fixed — it needs an authoritative-source rule for the
-  §7.1.1 epoch catch-up so a transitioning replica does not ship a stale suffix while still serving
-  the committed prefix. Tracked as open.
+- **Residual**: seeds 2268, 460, 3678, 26 still fork — the deposed-primary-late-commit, the hardest
+  class. A view change ABANDONS an uncommitted op (op 75 = read-client-1002-req-42 at view 0), which
+  the merge correctly drops and the new view reuses; a deposed/partitioned primary then commits the
+  old value LATE on persisted acks, and a replica that still holds the old copy commits it on a bare
+  Commit. A per-op "nack merge" was tried and REJECTED: keeping every op a quorum holds resurrects
+  ops a later view legitimately abandoned, breaking `Test_View_Change_Log_Selection` (the §4.2
+  viewstamp rule — the latest view's log prevails entirely, length included). Hash-chained commit
+  does not help either: the deposed primary's commit is locally consistent (its own view-0 op + a
+  view-0 Commit). The op is abandoned precisely because it never reached a real quorum, so the true
+  fix is preventing the deposed primary from committing on acks from replicas that have since moved
+  to a later view and overwritten the op — i.e. acks that no longer reflect a current quorum. That
+  needs the full TigerBeetle DVC machinery (per-op headers + nacks to determine the canonical log,
+  distinguishing committed from abandoned) done coherently, not a point fix. Open.
