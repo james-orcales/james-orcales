@@ -5,17 +5,16 @@ import (
 	"testing"
 )
 
-// Test_Sweep is a TEMPORARY wide scan under the new PRNG to enumerate every latent bug it surfaces
-// across a large seed range, skew off and on, so the true scope is known before fixing. Each seed is
-// an isolated subtest so one failure does not abort the rest. Removed once the scope is mapped.
+// Test_Sweep is a TEMPORARY wide scan to enumerate latent bugs across a seed range, skew off and
+// on, while the §7 epoch-handoff residual is being fixed. Removed once the residual is closed.
 func Test_Sweep(t *testing.T) {
 	t.Parallel()
 	const limit = 5000
-	run := func(seed int64, skew bool) func(*testing.T) {
+	run := func(seed int64, skew bool) func(t *testing.T) {
 		return func(t *testing.T) {
 			t.Parallel()
 			// invariant.Always panics rather than t.Fatalf; recover so one seed's panic does
-			// not abort the whole binary and the scan can enumerate every failure.
+			// not abort the binary and the scan enumerates every failure.
 			defer func() {
 				if r := recover(); r != nil {
 					t.Errorf("seed %d skew=%v PANIC %v", seed, skew, r)
@@ -55,11 +54,11 @@ func Test_Cluster_Agreement(t *testing.T) {
 	// state-transfer splice overwrite a committed op — two replicas disagreeing on a committed
 	// op (simulator_bugs.md, Bug 15). A wider 400..1399 scan found it; this seed pins it.
 	seeds = append(seeds, 1266)
-	// Permanent regression seed for a view-changing replica answering a catch-up Get_State with
-	// its stale uncommitted suffix (a §5.2 violation): the requester kept op 109 = client-1002-req-49
-	// past the view change that reused that op for reconfigure-2, then committed it on a bare Commit
-	// (simulator_bugs.md, Bug 22). Reverting the Status_Normal gate in replica_receive_get_state
-	// makes this seed fork "op 109 diverges"; the fix makes it pass.
+	// Regression seed: a view-changing replica answered a catch-up Get_State with its stale
+	// uncommitted suffix (§5.2), so the requester kept op 109 = client-1002-req-49 past the
+	// view change that reused it for reconfigure-2, then committed it on a Commit (Bug 22).
+	// Reverting the view-change gate in replica_receive_get_state makes this seed fork; the fix
+	// makes it pass.
 	seeds = append(seeds, 3470)
 	for _, seed := range seeds {
 		t.Run(fmt.Sprintf("seed_%d", seed), func(t *testing.T) {

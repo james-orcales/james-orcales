@@ -408,10 +408,16 @@ that caused it. Each fix changes `vsr.go`, never the assertion.
   `reconfigure-2`), and then committed it on a bare Commit advertising commit 109. Two committed
   values at one op. This violates VSR-Revisited §5.2: "a replica responds to a GETSTATE message only
   if its status is normal."
-- **Fix**: `replica_receive_get_state` answers a plain catch-up Get_State only when `Status_Normal`
-  (§5.2). The §5.3 view-change merge fetch is the lone exception — the new primary fetching a
-  selected reporter's already-reported Do_View_Change log — so a `View_Change_Fetch` flag on that
-  Get_State lets a reporter still in `Status_View_Change` answer it (and only it), preserving the
-  deferred-install liveness that a blanket Normal-only gate would wedge.
-- **Guard**: pinned seed 3470 in `Test_Cluster_Agreement`. Reverting the `Status_Normal` gate in
+- **Fix**: a `Status_View_Change` replica no longer answers a plain catch-up Get_State (§5.2). The
+  §5.3 view-change merge fetch is the lone exception — the new primary fetching a selected
+  reporter's reported Do_View_Change log — so a `View_Change_Fetch` flag on that Get_State lets a
+  view-changing reporter answer it (and only it). A `Status_Transition` replica still answers normal
+  catch-ups, so the §7.1.1 epoch catch-up is not starved into a wedge (a blanket Normal-only gate
+  wedged the epoch handoff). Across 0–5000 × skew this took the sweep from 36 to 31 failures (forks
+  11→6, no liveness regression).
+- **Guard**: pinned seed 3470 in `Test_Cluster_Agreement`. Reverting the view-change gate in
   `replica_receive_get_state` makes it fork `op 109 diverges`; the fix makes it pass.
+- **Residual**: the analogous leak through a `Status_Transition` replica during an epoch handoff
+  (seeds 2268, 460, and others) is NOT yet fixed — it needs an authoritative-source rule for the
+  §7.1.1 epoch catch-up so a transitioning replica does not ship a stale suffix while still serving
+  the committed prefix. Tracked as open.
