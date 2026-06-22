@@ -1951,10 +1951,12 @@ func simulator_check_agreement_pair(input *simulator_check_agreement_pair_input)
 		ai := op - vsr.Commit(a.Log_Start) - 1
 		bi := op - vsr.Commit(b.Log_Start) - 1
 		if string(a.Log[ai].Command) != string(b.Log[bi].Command) {
-			input.State.T.Fatalf("seed %d: op %d diverges: %d=%q %d=%q",
+			input.State.T.Fatalf("seed %d: op %d diverges: %d=%q(bview=%d ep=%d "+
+				"view=%d commit=%d) %d=%q(bview=%d ep=%d view=%d commit=%d)",
 				input.State.Seed, op,
-				a.Identifier, a.Log[ai].Command,
-				b.Identifier, b.Log[bi].Command)
+				a.Identifier, a.Log[ai].Command, a.Log[ai].View, a.Epoch, a.View,
+				a.Commit, b.Identifier, b.Log[bi].Command, b.Log[bi].View, b.Epoch,
+				b.View, b.Commit)
 		}
 	}
 }

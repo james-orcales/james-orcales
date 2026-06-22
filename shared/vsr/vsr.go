@@ -1505,6 +1505,20 @@ func replica_receive_start_epoch(
 			replica.Standby_Promotion_Due = true
 		}
 	}
+	// Drop any uncommitted suffix above this replica's own commit before catching up, exactly as
+	// replica_rejoin_new_epoch does. A replica reaching the new epoch by Start_Epoch may be a
+	// deposed old-epoch primary holding a divergent uncommitted op a higher view already committed
+	// differently; kept and later committed in the new epoch it forks the log across the epoch
+	// boundary (the agreement violation the wider PRNG sweep surfaced). The committed prefix is
+	// agreed by safety, and the catch-up re-fetches the authoritative ops above it.
+	keep := int(replica.Commit) - int(replica.Log_Start)
+	if keep < 0 {
+		keep = 0
+	}
+	if keep < len(replica.Log) {
+		replica.Log = replica.Log[:keep]
+		replica.Op = Op(replica.Commit)
+	}
 	return replica_catch_up_to_epoch(replica, now)
 }
 
