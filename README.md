@@ -4,7 +4,8 @@ i like going down rabbit holes so here i am
 
 ### Programming Languages
 
-<img src="https://github.com/odin-lang/Odin/blob/master/misc/logo-slim.png" height="30" alt="Odin Logo"> <img src="https://upload.wikimedia.org/wikipedia/commons/thumb/0/05/Go_Logo_Blue.svg/330px-Go_Logo_Blue.svg.png" height="30" alt="Golang"> <img src="https://upload.wikimedia.org/wikipedia/commons/thumb/c/cf/Lua-Logo.svg/250px-Lua-Logo.svg.png" height="30" alt="Lua Logo"> <img width="30" height="30" alt="Bash" src="https://github.com/user-attachments/assets/b8771a9c-44bd-43ee-8940-92fef853093f" />
+<img src="https://github.com/odin-lang/Odin/blob/master/misc/logo-slim.png" height="30" alt="Odin Logo"> <img src="https://upload.wikimedia.org/wikipedia/commons/thumb/0/05/Go_Logo_Blue.svg/330px-Go_Logo_Blue.svg.png" height="30" alt="Golang"> <img width="30" height="30" alt="Rust" src="https://github.com/user-attachments/assets/6ae9e6b9-f0ce-4b9e-bbe1-3d5e72ebf04c" />
+<img src="https://upload.wikimedia.org/wikipedia/commons/thumb/c/cf/Lua-Logo.svg/250px-Lua-Logo.svg.png" height="30" alt="Lua Logo"> <img width="30" height="30" alt="Bash" src="https://github.com/user-attachments/assets/b8771a9c-44bd-43ee-8940-92fef853093f" />
 
 
 ### Developer Setup
