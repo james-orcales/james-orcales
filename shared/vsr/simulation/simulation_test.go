@@ -1209,7 +1209,9 @@ func simulator_deliver(state *simulator, now time.Moment) {
 	for _, flight := range due {
 		message := flight.Message
 		if reason := simulator_drop_reason(state, message, now); reason != "" {
-			jlog.Logger_Info(state.Trace, reason, trace_message_fields(now, message)...)
+			if state.Trace_Sink != nil {
+				log_message(state.Trace, reason, now, message)
+			}
 			continue // Partition, or shut-down/dormant target; senders' timers retry.
 		}
 		// A Start_Epoch to a dormant pre-allocated node adds it to the group (§7.1):
@@ -1221,9 +1223,8 @@ func simulator_deliver(state *simulator, now time.Moment) {
 		target := &state.Replicas[message.To]
 		target_transition := target.Status == vsr.Status_Transition
 		if state.Trace_Sink != nil {
-			jlog.Logger_Info(state.Trace, "deliver",
-				trace_message_fields(now, message)...)
-			jlog.Logger_Info(state.Trace, "before", trace_replica_fields(target)...)
+			log_message(state.Trace, "deliver", now, message)
+			log_replica(state.Trace, "before", target)
 		}
 		// A replica processes a received message on its own clock, like a tick, not a
 		// global one it cannot read. Arming the timer here off the true clock while ticks
@@ -1235,10 +1236,9 @@ func simulator_deliver(state *simulator, now time.Moment) {
 			Now:     simulator_replica_now(state, int(message.To)),
 		})
 		if state.Trace_Sink != nil {
-			jlog.Logger_Info(state.Trace, "after", trace_replica_fields(target)...)
+			log_replica(state.Trace, "after", target)
 			for index := range output.Messages {
-				jlog.Logger_Info(state.Trace, "send",
-					trace_message_fields(now, output.Messages[index])...)
+				log_message(state.Trace, "send", now, output.Messages[index])
 			}
 			for index := range output.Committed {
 				entry := output.Committed[index]
@@ -2093,11 +2093,12 @@ func simulator_flush_trace(state *simulator) {
 	}
 }
 
-// Trace_message_fields builds the jlog fields for a message — its routing and consensus numbers
-// plus whichever log slice it carries (Prepare in Entries, Start_View/New_State in Log,
-// Do_View_Change in Log_Suffix) — for a caller to pass straight to jlog.Logger_Info.
-func trace_message_fields(now time.Moment, message vsr.Message) (fields []jlog.Field) {
-	fields = []jlog.Field{
+// Log_message logs a message's whole state as one structured line under the given event. It takes
+// the logger and the value and writes the fields straight to jlog's pooled buffer — no String()
+// blob allocated per call. Whichever log slice the kind carries shows under entries (Prepare), log
+// (Start_View/New_State), or suffix (Do_View_Change).
+func log_message(logger jlog.Logger, event string, now time.Moment, message vsr.Message) {
+	jlog.Logger_Info(logger, event,
 		jlog.Int64("t", now),
 		jlog.String("kind", message_kind_name(message.Kind)),
 		jlog.Uint8("from", message.From),
@@ -2106,26 +2107,16 @@ func trace_message_fields(now time.Moment, message vsr.Message) (fields []jlog.F
 		jlog.Uint64("epoch", message.Epoch),
 		jlog.Uint64("op", message.Op),
 		jlog.Uint64("commit", message.Commit),
-	}
-	if message.Nonce != 0 {
-		fields = append(fields, jlog.Uint64("nonce", message.Nonce))
-	}
-	if entries := trace_entries(message.Entries); len(entries) > 0 {
-		fields = append(fields, jlog.Strings("entries", entries))
-	}
-	if log := trace_entries(message.Log); len(log) > 0 {
-		fields = append(fields, jlog.Strings("log", log))
-	}
-	if suffix := trace_entries(message.Log_Suffix); len(suffix) > 0 {
-		fields = append(fields, jlog.Strings("suffix", suffix))
-	}
-	return fields
+		jlog.Uint64("nonce", message.Nonce),
+		jlog.Strings("entries", trace_entries(message.Entries)),
+		jlog.Strings("log", trace_entries(message.Log)),
+		jlog.Strings("suffix", trace_entries(message.Log_Suffix)))
 }
 
-// Trace_replica_fields builds the jlog fields for a replica's consensus state and live log — the
-// before/after snapshot around a step — for a caller to pass straight to jlog.Logger_Info.
-func trace_replica_fields(replica *vsr.Replica) (fields []jlog.Field) {
-	return []jlog.Field{
+// Log_replica logs a replica's whole consensus state and live log as one structured line under the
+// given event ("before"/"after"). Same shape as log_message: fields straight to the buffer.
+func log_replica(logger jlog.Logger, event string, replica *vsr.Replica) {
+	jlog.Logger_Info(logger, event,
 		jlog.Uint8("id", replica.Identifier),
 		jlog.String("status", status_name(replica.Status)),
 		jlog.Uint64("view", replica.View),
@@ -2134,12 +2125,21 @@ func trace_replica_fields(replica *vsr.Replica) (fields []jlog.Field) {
 		jlog.Uint64("commit", replica.Commit),
 		jlog.Uint64("log_start", replica.Log_Start),
 		jlog.Uint64("epoch_start_op", replica.Epoch_Start_Op),
-		jlog.String("config", fmt.Sprintf("%v", replica.Configuration)),
 		jlog.Integer("active_count", int(replica.Active_Count)),
 		jlog.Integer("recovery_responses", len(replica.Recovery_From)),
 		jlog.Uint64("recovery_nonce", replica.Recovery_Nonce),
-		jlog.Strings("log", trace_entries(replica.Log)),
+		jlog.Strings("config", configuration_strings(replica.Configuration)),
+		jlog.Strings("log", trace_entries(replica.Log)))
+}
+
+// Configuration_strings renders a configuration as decimal id strings, for a jlog string array
+// (avoids the fmt.Sprintf("%v") allocation a single string field would cost).
+func configuration_strings(configuration vsr.Configuration) (ids []string) {
+	ids = make([]string, 0, len(configuration))
+	for index := range configuration {
+		ids = append(ids, strconv.FormatUint(uint64(configuration[index]), 10))
 	}
+	return ids
 }
 
 // Message_kind_name renders a kind as its name, falling back to the integer for an unknown value.
