@@ -1406,6 +1406,22 @@ func Test_Deterministic_Select(t *testing.T) {
 	}
 }
 
+// Test_Deterministic_Floats verifies a float type in a listed package is flagged.
+func Test_Deterministic_Floats(t *testing.T) {
+	t.Parallel()
+	files := map[string][]byte{
+		"go.mod": []byte("module fixture\n\ngo 1.25\n"),
+		"pkg/p.go": []byte("// Package p is a fixture.\n" +
+			"package p\n\n" +
+			"// F is a fixture.\n" +
+			"func F() (f float32) {\n\treturn 0\n}\n"),
+	}
+	if !specification_diagnosed(deterministic_self_diagnostics(t, files, []string{"pkg"}),
+		"must not use float") {
+		t.Fatal("a float in a deterministic package must be flagged")
+	}
+}
+
 // Test_Deterministic_Banned_Imports verifies a time import in a listed package is flagged.
 func Test_Deterministic_Banned_Imports(t *testing.T) {
 	t.Parallel()

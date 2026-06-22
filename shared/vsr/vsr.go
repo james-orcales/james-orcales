@@ -353,6 +353,18 @@ type Replica struct {
 	// have reported their epoch started (§7.1.2). Once it holds f'+1 — the new group's quorum
 	// — the replaced replica's state is safely transferred and it shuts down.
 	Epoch_Started_From map[Replica_Identifier]bool
+	// Epoch_Up_From tallies, at the new primary, the configured members confirmed active in
+	// the current epoch (they reported Epoch_Started, or were continuing members at the
+	// handoff). The primary re-drives Start_Epoch to a configured member NOT in this set, so a
+	// replica added by a reconfiguration is still brought up after replaced ones retire (§7.2).
+	Epoch_Up_From map[Replica_Identifier]bool
+	// Handoff_Commit_Redrive counts the heartbeats the new primary keeps re-driving the
+	// reconfiguration commit to the old epoch. That commit is sent once at handoff drain; if
+	// lost, an old member that acked the reconfiguration op never learns it committed and
+	// strands at the old epoch, re-learning via quorum-blocking recovery. Several stranded at
+	// once deadlock beyond the fault model, so the primary re-sends for a window; an advanced
+	// member sees a stale commit and drops it (Bug 19).
+	Handoff_Commit_Redrive int
 }
 
 // Message_Kind_Request is a client command arriving at the primary; it carries Command.
@@ -499,6 +511,12 @@ type Message struct {
 	// when the requester needs a prefix the responder has already garbage-collected; nil means
 	// none.
 	Checkpoint_State []byte
+	// Checkpoint_Client_Table ships the responder's client-table alongside Checkpoint_State.
+	// The exactly-once records for requests the checkpoint compacted live only in the table,
+	// not in the shipped log suffix; without them a restoring replica that later becomes
+	// primary would re-append an already-executed request at a fresh op (an exactly-once
+	// violation). It travels exactly when Checkpoint_State does.
+	Checkpoint_Client_Table map[Client_Identifier]Client_Record
 
 	// New_Configuration is the membership a Reconfiguration requests, a Start_Epoch installs,
 	// and a New_Epoch redirect advertises (§7); empty in every other message.
@@ -750,10 +768,62 @@ func replica_primary_heartbeat(replica *Replica) (messages []Message) {
 			})
 		}
 	}
-	return append(messages, replica_broadcast(replica, Message{
+	messages = append(messages, replica_broadcast(replica, Message{
 		Kind:   Message_Kind_Commit,
 		Commit: replica.Commit,
 	})...)
+	// Re-drive the reconfiguration commit at the OLD epoch so an old member that missed the
+	// one-shot handoff commit advances rather than stranding recovery (Bug 19). An advanced
+	// member sees a stale-epoch commit and just redirects, which the primary ignores at its own
+	// epoch; the window closes once it has been re-sent enough times.
+	if replica.Handoff_Commit_Redrive > 0 {
+		replica.Handoff_Commit_Redrive--
+		for _, identifier := range replica.Configuration {
+			if identifier == replica.Identifier {
+				continue
+			}
+			messages = append(messages, Message{
+				Kind:   Message_Kind_Commit,
+				From:   replica.Identifier,
+				To:     identifier,
+				View:   replica.View,
+				Epoch:  replica.Epoch - 1,
+				Commit: replica.Commit,
+			})
+		}
+	}
+	messages = append(messages, replica_primary_resend_start_epoch(replica)...)
+	return messages
+}
+
+// The new primary re-drives Start_Epoch to any configured member not yet confirmed active in this
+// epoch (§7.2): a replica ADDED by a reconfiguration whose Start_Epoch was lost, and whose replaced
+// senders have since retired at f'+1, is otherwise stranded at the old epoch forever. Only past the
+// founding epoch, where a reconfiguration can have added a member; an up member re-acks
+// Epoch_Started and is then skipped, so this self-terminates once the new group is whole.
+func replica_primary_resend_start_epoch(replica *Replica) (messages []Message) {
+	if replica.Epoch == 0 {
+		return nil
+	}
+	for _, identifier := range replica.Configuration {
+		if identifier == replica.Identifier {
+			continue
+		}
+		if replica.Epoch_Up_From[identifier] {
+			continue
+		}
+		messages = append(messages, Message{
+			Kind:              Message_Kind_Start_Epoch,
+			From:              replica.Identifier,
+			To:                identifier,
+			View:              0,
+			Epoch:             replica.Epoch,
+			Op:                replica.Epoch_Start_Op,
+			New_Configuration: replica.Configuration,
+			New_Active_Count:  replica.Active_Count,
+		})
+	}
+	return messages
 }
 
 // Replica_Recover_Input restarts Replica into recovery with a fresh Nonce at time Now.
@@ -1014,6 +1084,19 @@ func replica_start_epoch_messages(
 	return messages
 }
 
+// How many heartbeats the new epoch's primary re-drives the reconfiguration commit to the old epoch
+// (§7.1.1), so a member that missed the one-shot commit catches up rather than stranding recovery
+// (simulator_bugs.md, Bug 19).
+const handoff_commit_redrive = 16
+
+// The view-change timeout backs off by the number of views a replica has gone through without
+// returning to normal, capped at this multiplier. A cluster that cannot settle — the view's elected
+// primary is down, or backups are leapfrogging views faster than a Do_View_Change quorum can gather
+// — lengthens its window until one view change completes, the growing-election-timeout livelock break
+// real VSR and Raft use. The per-replica base timeout differs (jitter), so the backed-off windows
+// diverge and one replica's view change finishes inside another's wait.
+const view_change_backoff_cap = 6
+
 // Applies a replica's role in the new epoch after the reconfiguration executed (§7.1.1, §7.1.2). It
 // advances the epoch and resets to view 0 (the new epoch must start in view 0, §8.3, so Start_Epoch
 // messages from old replicas at differing views cannot install two primaries). A member of the new
@@ -1052,9 +1135,19 @@ func replica_enter_new_epoch(
 	if configuration_contains(new_configuration, replica.Identifier) {
 		// A member of the new group, already holding the log to the epoch start: return to
 		// normal in view 0 and tell the replaced replicas the epoch has started so they may
-		// eventually shut down.
+		// eventually shut down. Arm the commit re-drive so the primary keeps telling the
+		// old group the reconfiguration committed, in case the commit was lost (Bug 19).
 		replica.Old_Configuration = nil
 		replica.Status = Status_Normal
+		replica.Handoff_Commit_Redrive = handoff_commit_redrive
+		// Mark the CONTINUING members up: present in both groups, they already hold the
+		// epoch's log and need no Start_Epoch. Only a member ADDED by this reconfiguration
+		// is left unconfirmed, so the heartbeat re-drives Start_Epoch to just those (§7.2).
+		for _, identifier := range old_configuration {
+			if configuration_contains(new_configuration, identifier) {
+				replica.Epoch_Up_From[identifier] = true
+			}
+		}
 		committed, replies := replica_consume_standby_promotion(replica)
 		output.Committed = append(output.Committed, committed...)
 		output.Replies = append(output.Replies, replies...)
@@ -1103,8 +1196,16 @@ func replica_epoch_started_messages(
 func replica_message_epoch_check(
 	replica *Replica, message Message, now time.Moment,
 ) (output Step_Output, proceed bool) {
-	// A replaced replica that has shut down is done: it participates in nothing further.
+	// A replaced replica that has shut down is done — EXCEPT a later reconfiguration may re-add
+	// its identifier, in which case a Start_Epoch naming it in the new configuration revives it
+	// as a fresh member (§7.2 brings up the new group; the adopt path catches it up). Any other
+	// message to a shut-down replica is still ignored.
 	if replica.Status == Status_Shutdown {
+		if message.Kind == Message_Kind_Start_Epoch {
+			if configuration_contains(message.New_Configuration, replica.Identifier) {
+				return replica_receive_start_epoch(replica, message, now), false
+			}
+		}
 		return output, false
 	}
 	// Encode epoch precedence at the gate: a message below the replica's epoch must never be
@@ -1154,6 +1255,33 @@ func replica_message_epoch_check(
 func replica_receive_new_epoch(
 	replica *Replica, message Message, now time.Moment,
 ) (output Step_Output) {
+	if message.Epoch <= replica.Epoch {
+		// Already at this epoch: redundant redirect, ignore (Bug 19, re-drive).
+		return output
+	}
+	// A replica one epoch behind whose topmost entry is the reconfiguration holds that op
+	// (acked it) and only missed the commit. It advances the normal way: commit the op, which
+	// drains the handoff into the new epoch, not recovery. This caps the recovering replicas
+	// at the f that never acked the op, within fault tolerance, not a deadlock of many
+	// recovering at once (Bug 19). The execute_reconfiguration overshoot guard stops a
+	// double advance.
+	if message.Epoch == replica.Epoch+1 {
+		// Already executing the reconfiguration into this epoch: the next tick's drain
+		// advances us. A redirect must not preempt that into recovery, stranding a replica
+		// mid-handoff with no quorum (Bug 19).
+		if replica.Epoch_Handoff_Due {
+			output.Timer = replica_arm_timer(replica, now)
+			return output
+		}
+		if replica.Op > replica.Log_Start {
+			if len(replica_log_entry(replica, replica.Op).New_Configuration) > 0 {
+				output.Committed, output.Replies = replica_apply_commit(
+					replica, Commit(replica.Op))
+				output.Timer = replica_arm_timer(replica, now)
+				return output
+			}
+		}
+	}
 	if !configuration_contains(message.New_Configuration, replica.Identifier) {
 		replica.Status = Status_Shutdown
 		replica.Old_Configuration = nil
@@ -1163,16 +1291,64 @@ func replica_receive_new_epoch(
 	replica.Configuration = message.New_Configuration
 	replica.Active_Count = message.New_Active_Count
 	replica.Old_Configuration = nil
-	// The replica re-learns the new epoch's state through the RECOVERY protocol, whose quorum
-	// guarantees the authority holds every committed op; a single peer might be behind this
-	// replica's own commit and shorten the log below the commit number. It does NOT wipe op,
-	// commit, log, checkpoint, or the Executed marker: it has not lost state, committed ops
-	// survive a reconfiguration, so its prefix is valid and recovery executes only beyond
-	// Executed. Re-executing the prefix would double-apply to a stateful app (Bug 9). An
-	// already-recovering replica keeps its nonce so earlier responses still count.
+	replica.Standby_Promotion_Due = false
+	// A replica that never crashed still holds its committed prefix, so it rejoins by catching
+	// up, not quorum-blocking recovery: several behind replicas redirected together would
+	// deadlock with no Normal quorum to answer them (Bug 19). A crashed replica lost its state
+	// and still needs recovery.
+	if replica.Status != Status_Recovery {
+		// A never-crashed replica catches up as a Transition member, not via recovery
+		// (which blocks on a quorum): it keeps its committed prefix, re-fetches the rest.
+		// Only a crash that lost state recovers (Bug 19).
+		return replica_rejoin_new_epoch(replica, message.Op, now)
+	}
+	return replica_recover_into_new_epoch(replica, now)
+}
+
+// Rejoins a never-crashed, redirected replica into the new epoch by catching up as a TRANSITION
+// member, the path a new group member takes. A Transition member does NOT commit or vote until
+// caught up, so a Commit cannot commit a stale entry mid-catch-up (the fork rejoining as Normal
+// caused). Recovery is reserved for a crash that lost state; a replica that still holds its state
+// must not block on a recovery quorum (Bug 19).
+func replica_rejoin_new_epoch(
+	replica *Replica, catch_up_target Op, now time.Moment,
+) (output Step_Output) {
+	// Drop EVERYTHING above this replica's own commit. The committed prefix is agreed by
+	// safety, so keeping it is correct; the suffix above is uncommitted and may be a bypassed
+	// primary's divergent copy of a differently-committed op. Keeping and later committing that
+	// copy forks the log (Bug 19). The catch-up below re-fetches the authoritative ops, so
+	// intersection holds without trusting our suffix.
+	keep := int(replica.Commit) - int(replica.Log_Start)
+	if keep < 0 {
+		keep = 0
+	}
+	if keep < len(replica.Log) {
+		replica.Log = replica.Log[:keep]
+		replica.Op = Op(replica.Commit)
+	}
+	// Catch up to the redirector's commit (every committed op) before serving, so this replica
+	// never votes in a view change missing one. Epoch_Start_Op drives catch_up_to_epoch and
+	// gates the overshoot trigger; the redirector's commit is at or above the epoch-start op.
+	replica.Epoch_Start_Op = catch_up_target
+	replica.View = 0
+	replica.Last_Normal_View = 0
+	replica.Status = Status_Transition
+	replica.Start_View_Change_From = map[Replica_Identifier]bool{}
+	replica.Do_View_Change_From = map[Replica_Identifier]Message{}
+	replica.View_Change_Deferred = false
+	replica.Epoch_Started_From = map[Replica_Identifier]bool{}
+	replica_reset_primary_scratch(replica)
+	return replica_catch_up_to_epoch(replica, now)
+}
+
+// Enters recovery for a crash-restarted replica redirected into the new epoch. Recovery's quorum
+// guarantees the authority holds every committed op; this does NOT wipe op, commit, log, or the
+// checkpoint/Executed marker (a warm restart's prefix is valid and recovery executes only beyond
+// Executed; re-executing it would double-apply, Bug 9). It keeps its nonce so earlier responses
+// still count.
+func replica_recover_into_new_epoch(replica *Replica, now time.Moment) (output Step_Output) {
 	replica.Status = Status_Recovery
 	replica.Recovery_From = map[Replica_Identifier]Message{}
-	replica.Standby_Promotion_Due = false
 	replica_reset_primary_scratch(replica)
 	output.Messages = replica_broadcast(replica, Message{
 		Kind:          Message_Kind_Recovery,
@@ -1195,6 +1371,10 @@ func replica_redirect_stale_epoch(replica *Replica, message Message) (output Ste
 		Epoch:             replica.Epoch,
 		New_Configuration: replica.Configuration,
 		New_Active_Count:  replica.Active_Count,
+		// Op carries the new epoch's start op (the reconfiguration op): a never-crashed
+		// replica redirected here catches up to it as a Transition member before serving.
+		Op:     replica.Epoch_Start_Op,
+		Commit: replica.Commit,
 	}
 	is_client := message.Kind == Message_Kind_Request ||
 		message.Kind == Message_Kind_Reconfiguration ||
@@ -1250,6 +1430,11 @@ func replica_receive_reconfiguration(replica *Replica, message Message) (output 
 		New_Configuration: message.New_Configuration,
 		New_Active_Count:  message.New_Active_Count,
 	}}
+	// Drop any in-flight prediction rounds opened before the reconfiguration: they would
+	// otherwise complete after it and append a client op above it, an op at the old epoch past
+	// its final op, a false commit the new epoch never holds (Bug 18/Bug 19). Those clients
+	// retry and the new epoch's primary runs them afresh.
+	replica.Predict_From = map[Prediction_Round_Key]Prediction_Round{}
 	step_output_fold(&output, replica_flush_batch(replica))
 	return output
 }
@@ -1320,6 +1505,20 @@ func replica_receive_start_epoch(
 			replica.Standby_Promotion_Due = true
 		}
 	}
+	// Drop any uncommitted suffix above this replica's own commit before catching up, exactly as
+	// replica_rejoin_new_epoch does. A replica reaching the new epoch by Start_Epoch may be a
+	// deposed old-epoch primary holding a divergent uncommitted op a higher view already committed
+	// differently; kept and later committed in the new epoch it forks the log across the epoch
+	// boundary (the agreement violation the wider PRNG sweep surfaced). The committed prefix is
+	// agreed by safety, and the catch-up re-fetches the authoritative ops above it.
+	keep := int(replica.Commit) - int(replica.Log_Start)
+	if keep < 0 {
+		keep = 0
+	}
+	if keep < len(replica.Log) {
+		replica.Log = replica.Log[:keep]
+		replica.Op = Op(replica.Commit)
+	}
 	return replica_catch_up_to_epoch(replica, now)
 }
 
@@ -1329,7 +1528,15 @@ func replica_receive_start_epoch(
 // replicas (which serve the new group during the handoff) and the other new replicas, staying
 // transitioning until a New_State carries it to the epoch start.
 func replica_catch_up_to_epoch(replica *Replica, now time.Moment) (output Step_Output) {
-	if replica.Op >= replica.Epoch_Start_Op {
+	// Catch up to the epoch start AND to every committed op known so far (Commit tracks the
+	// responder's commit). Completing at only the epoch-start op leaves the replica serving and
+	// voting while behind the frontier; if a quorum of such short replicas then runs a view
+	// change, it merges to the short log and drops a committed op longer ones held (Bug 19).
+	target := replica.Epoch_Start_Op
+	if Op(replica.Commit) > target {
+		target = Op(replica.Commit)
+	}
+	if replica.Op >= target {
 		return replica_complete_epoch(replica, now)
 	}
 	output.Messages = replica_epoch_state_transfer(replica)
@@ -1403,6 +1610,13 @@ func replica_complete_epoch(replica *Replica, now time.Moment) (output Step_Outp
 // needed. A replica that is not being replaced (a retained member, or one not transitioning) has
 // nothing to do with it.
 func replica_receive_epoch_started(replica *Replica, message Message) (output Step_Output) {
+	// A member already normal in this epoch — the new primary in particular — records that the
+	// sender is active, which ends the heartbeat's Start_Epoch re-drive to it (§7.2). The
+	// epoch-precedence gate has already discarded any stale-epoch Epoch_Started.
+	if replica.Status == Status_Normal {
+		replica.Epoch_Up_From[message.From] = true
+		return output
+	}
 	if replica.Status != Status_Transition {
 		return output
 	}
@@ -1479,6 +1693,25 @@ func configuration_contains(
 	return false
 }
 
+// Configurations_Equal_Input is the pair of configurations a membership comparison checks.
+type configurations_equal_input struct {
+	A Configuration
+	B Configuration
+}
+
+// Reports whether two configurations are the identical membership in the same order.
+func configurations_equal(input *configurations_equal_input) (yes bool) {
+	if len(input.A) != len(input.B) {
+		return false
+	}
+	for index := range input.A {
+		if input.A[index] != input.B[index] {
+			return false
+		}
+	}
+	return true
+}
+
 // Turns a client command into a new log entry on the primary, deduplicated by the client-table for
 // exactly-once semantics. Only the primary of the current view, and only while normal, may append.
 // A request the client-table has already seen is never re-appended: a stale one is dropped, an
@@ -1503,16 +1736,31 @@ func replica_receive_request(replica *Replica, message Message) (output Step_Out
 			if record.Executed {
 				reply := replica_build_reply(replica, message.Client, record)
 				output.Replies = []Message{reply}
+				return output // Cached reply re-sent for an executed request.
 			}
-			return output // Re-sent the cached reply, or the op is still in flight.
+			// Recorded as latest but not executed: in flight only while still in
+			// the log. A view change can drop the uncommitted entry but keep the
+			// flush-written record, stranding it: recorded so never re-accepted,
+			// unlogged so never committed. Gone from the log, re-accept it below
+			// (Bug 20); the buffer/prediction checks still dedup a live retry.
+			if replica_request_logged(replica, message.Client, message.Request_Number) {
+				return output
+			}
 		}
 	}
-	// We are about to accept the request, so it strictly advances the client's number: the
-	// client numbers its requests monotonically, and the two early returns above already turned
-	// away anything not greater than the record. Pinning it here makes the exactly-once
-	// precondition hold at the mutation point in any embedding, not only under the simulator.
-	is_new_request := !ok || message.Request_Number > record.Request_Number
-	invariant.Always(is_new_request, "accepted request strictly advances client request number")
+	// The client-table records a request only once it reaches the log (at flush). One accepted
+	// into the batch buffer or a prediction round but not yet logged is in flight without a
+	// record, so dedup it here; else re-buffering commits one request at two ops. A request the
+	// buffer was cleared of on a view change is in neither, so its retry is re-accepted afresh:
+	// never logged, it cannot have committed (Bug 20).
+	if replica_request_buffered(replica, message.Client, message.Request_Number) {
+		return output
+	}
+	// An accepted request never regresses the client's number: the early stale return turned
+	// away anything below the record, leaving a strictly newer request or a re-accept of the
+	// client's latest one that a view change dropped from the log (equal number, Bug 20).
+	does_not_regress := !ok || message.Request_Number >= record.Request_Number
+	invariant.Always(does_not_regress, "accepted request does not regress request number")
 	// The pre-step variant cannot append yet: the executed value must combine the cluster's
 	// predictions, so it first gathers f backups' predictions (§4.4). The request is buffered
 	// and a Predict_Request broadcast; the append happens when f responses arrive.
@@ -1531,6 +1779,45 @@ func replica_receive_request(replica *Replica, message Message) (output Step_Out
 	})
 }
 
+// Reports whether the client's request-number is already in this primary's batch buffer: accepted
+// but not yet logged, so it has no client-table record yet (written at flush). Dedups a retry so it
+// is not buffered and committed twice. A request the buffer was cleared of on a view change is not
+// here, so its retry is re-accepted (Bug 20). A request still in a prediction round is deliberately
+// NOT reported: its retry must fall through to replica_begin_pre_step, which re-broadcasts the
+// Predict_Request so a round whose request or responses were lost still completes rather than
+// wedging the client (begin_pre_step is idempotent and never opens a second round).
+func replica_request_buffered(
+	replica *Replica, client Client_Identifier, number Request_Number,
+) (buffered bool) {
+	for _, entry := range replica.Request_Buffer {
+		if entry.Client != client {
+			continue
+		}
+		if entry.Request_Number == number {
+			return true
+		}
+	}
+	return false
+}
+
+// Reports whether the request (client, number) is present in this replica's live log. A request
+// the client-table records as the client's latest-but-unexecuted may have been dropped from the
+// log by a view change (the record, written at flush, outlives the entry); only checking the log
+// tells an in-flight request from one the primary must re-accept (Bug 20).
+func replica_request_logged(
+	replica *Replica, client Client_Identifier, number Request_Number,
+) (logged bool) {
+	for _, entry := range replica.Log {
+		if entry.Client != client {
+			continue
+		}
+		if entry.Request_Number == number {
+			return true
+		}
+	}
+	return false
+}
+
 // Computes the primary's local prediction for a command, or empty when no Predict is injected (an
 // ordinary deterministic op needs none).
 func replica_local_prediction(replica *Replica, command []byte) (prediction []byte) {
@@ -1540,17 +1827,14 @@ func replica_local_prediction(replica *Replica, command []byte) (prediction []by
 	return replica.State_Machine.Predict(command)
 }
 
-// Accepts one request's entry — already carrying its predetermined prediction — recording its
-// in-flight client-table record and buffering it for batching (§6.2), then flushing the batch when
-// load-adaptive batching says to. Shared by the local-predict path and the pre-step path, which
-// differ only in how the entry's prediction was computed; both arrive here with the entry built.
-// The client-table record is written here, at acceptance, so a retry of a request still buffered is
-// recognized as in-flight and dropped rather than buffered twice.
+// Accepts one request's entry — already carrying its predetermined prediction — buffering it for
+// batching (§6.2), then flushing the batch when load-adaptive batching says to. Shared by the
+// local-predict path and the pre-step path, which differ only in how the entry's prediction was
+// computed; both arrive here with the entry built. The in-flight client-table record is NOT written
+// here: a buffered request the buffer is later cleared of on a view change would otherwise orphan
+// its record and wedge the client's retries (Bug 20). The record is written at flush, when the
+// request reaches the log; until then a retry is deduped by replica_request_buffered.
 func replica_accept_entry(replica *Replica, entry Log_Entry) (output Step_Output) {
-	replica.Client_Table[entry.Client] = Client_Record{
-		Request_Number: entry.Request_Number,
-		Executed:       false,
-	}
 	replica.Request_Buffer = append(replica.Request_Buffer, entry)
 	return replica_maybe_flush_batch(replica)
 }
@@ -1590,6 +1874,15 @@ func replica_flush_batch(replica *Replica) (output Step_Output) {
 	replica.Request_Buffer = nil
 	replica.Log = append(replica.Log, batch...)
 	replica.Op = replica.Log_Start + Op(len(replica.Log))
+	// Record each request as in-flight now that it is in the log, not at acceptance, so a batch
+	// dropped on a view change before reaching here leaves no orphan record to wedge its client
+	// (Bug 20). The commit-time execute later marks the record executed with its result.
+	for _, entry := range batch {
+		replica.Client_Table[entry.Client] = Client_Record{
+			Request_Number: entry.Request_Number,
+			Executed:       false,
+		}
+	}
 	// To every backup, standbys included (§6.1): a standby replicates the log so it stays
 	// current and can be promoted, though it never votes or executes. This is TigerBeetle's
 	// design — it replicates to its non-voting standbys; the paper's "witnesses uninvolved in
@@ -1658,6 +1951,34 @@ func replica_receive_predict_request(replica *Replica, message Message) (output 
 // broadcasts the Prepare (§4.4 pre-step). A response for a round already completed, or for one
 // this replica is not running, is dropped; a duplicate from the same sender is idempotent, filed by
 // sender so it cannot inflate the count.
+// Reports whether a completed prediction round for (client, number) may still be appended. The
+// round opened optimistically and the cluster can move on while predictions are gathered, so the
+// deferred append re-checks what replica_receive_request checks synchronously: the epoch still
+// accepts requests, no strictly newer request superseded this one, this exact request is not
+// already executed, and it is not already in the log (appending it then would be a second op for
+// one request). A record at the same number but NOT executed is this very in-flight request — its
+// flush-written record can outlive an entry a view change dropped — so it must still be appended,
+// else the round completes forever without logging the request (a liveness gap).
+func replica_pre_step_appendable(
+	replica *Replica, client Client_Identifier, number Request_Number,
+) (appendable bool) {
+	if !replica_open_to_requests(replica) {
+		return false
+	}
+	record, fresh := replica.Client_Table[client]
+	if fresh {
+		if number < record.Request_Number {
+			return false
+		}
+		if number == record.Request_Number {
+			if record.Executed {
+				return false
+			}
+		}
+	}
+	return !replica_request_logged(replica, client, number)
+}
+
 func replica_receive_predict_response(replica *Replica, message Message) (output Step_Output) {
 	if replica.Status != Status_Normal {
 		return output
@@ -1693,14 +2014,8 @@ func replica_receive_predict_response(replica *Replica, message Message) (output
 	// because its append is deferred. The client retries and the new primary runs the request
 	// afresh.
 	delete(replica.Predict_From, key)
-	if !replica_open_to_requests(replica) {
+	if !replica_pre_step_appendable(replica, message.Client, message.Request_Number) {
 		return output
-	}
-	record, fresh := replica.Client_Table[message.Client]
-	if fresh {
-		if message.Request_Number <= record.Request_Number {
-			return output
-		}
 	}
 	// Combine over the collected backups' predictions and the primary's own, then add. Iterate
 	// the configuration, not the map, so the responses reach Combine in a deterministic order
@@ -1739,6 +2054,91 @@ func replica_build_reply(
 	}
 }
 
+// Returns the first op of a re-driven Prepare (ops this replica already holds) whose held entry
+// differs from the primary's authoritative entry, and whether any such op exists. A difference
+// means this replica holds a stale entry (a bypassed primary's, or one a bad state transfer spliced
+// in) that the primary's current-view log replaces. A compacted op is committed and cannot differ.
+func replica_redriven_divergence(replica *Replica, message Message) (op Op, found bool) {
+	base_op := message.Op - Op(len(message.Entries)) + 1
+	for candidate := base_op; candidate <= message.Op; candidate++ {
+		if candidate <= replica.Log_Start {
+			continue
+		}
+		held := replica_log_entry(replica, candidate)
+		offered := message.Entries[candidate-base_op]
+		if string(held.Command) != string(offered.Command) {
+			return candidate, true
+		}
+		if string(held.Prediction) != string(offered.Prediction) {
+			return candidate, true
+		}
+	}
+	return 0, false
+}
+
+// Re-acknowledges a re-driven Prepare whose ops this replica already holds: the primary re-sent it
+// because this op's Prepare_Ok was lost, so without a fresh ack the op wedges uncommitted with no
+// view change to rescue it (simulator_bugs.md, Bug 17). It re-acks ONLY ops held from the CURRENT
+// view (entry view == replica view): a stale entry carried in by state transfer from a bypassed
+// primary differs from the primary's entry there, and acking it would let the primary commit on a
+// false quorum while this replica commits its own divergent entry — forking the log (the agreement
+// violation the simulator surfaced). A standby never votes; ops at or below Log_Start are compacted
+// (committed) and need no re-ack, and message.Commit can sit below this replica's Log_Start.
+func replica_reack_redriven_prepare(replica *Replica, message Message) (messages []Message) {
+	if replica_is_standby(replica) {
+		return nil
+	}
+	first := Op(message.Commit) + 1
+	base_op := message.Op - Op(len(message.Entries)) + 1
+	if base_op > first {
+		first = base_op
+	}
+	if first <= replica.Log_Start {
+		first = replica.Log_Start + 1
+	}
+	for op := first; op <= message.Op; op++ {
+		// The caller reconciled any divergence, so every op here holds the primary's
+		// authoritative entry and is safe to acknowledge.
+		messages = append(messages, Message{
+			Kind:  Message_Kind_Prepare_Ok,
+			From:  replica.Identifier,
+			To:    replica_primary_identifier(replica),
+			View:  replica.View,
+			Epoch: replica.Epoch,
+			Op:    op,
+		})
+	}
+	return messages
+}
+
+// Handles a re-driven Prepare whose ops this replica already holds. If every held op matches the
+// primary's authoritative entry it returns the re-acks, so a lost Prepare_Ok cannot wedge the
+// primary (Bug 17). If one diverges (a bypassed primary's entry, or one a bad state transfer
+// spliced in) it truncates from the divergence and returns fall_through, so the caller appends the
+// primary's entries instead — committing the stale entry would fork the log (seed-162).
+func replica_redriven_prepare(
+	replica *Replica, message Message,
+) (acks []Message, fall_through bool) {
+	diverge, found := replica_redriven_divergence(replica, message)
+	if !found {
+		return replica_reack_redriven_prepare(replica, message), false
+	}
+	if diverge <= Op(replica.Commit) {
+		// The Prepare's entry differs from one this replica COMMITTED. Committed ops
+		// are immutable, so the sender is a behind primary reusing the op-number for a new
+		// value (across a reconfiguration). REJECT it: re-acking would let it commit on a
+		// false quorum and fork the log (Bug 19).
+		return nil, false
+	}
+	keep := int(diverge) - 1 - int(replica.Log_Start)
+	if keep < 0 {
+		keep = 0
+	}
+	replica.Log = replica.Log[:keep]
+	replica.Op = diverge - 1
+	return nil, true
+}
+
 // Applies a backup's next op and acks it. A Prepare from a later view, or one that skips ahead of
 // the next op, means the backup is behind, so it catches up by state transfer rather than dropping
 // the message; one that skips an op the log must stay gap-free.
@@ -1758,7 +2158,12 @@ func replica_receive_prepare(
 	output.Timer = replica_arm_timer(replica, now)
 	output.Committed, output.Replies = replica_apply_commit(replica, message.Commit)
 	if message.Op <= replica.Op {
-		return output // The whole batch is a duplicate or already held; nothing to append.
+		acks, fall_through := replica_redriven_prepare(replica, message)
+		if !fall_through {
+			output.Messages = acks
+			return output
+		}
+		// Divergence reconciled (stale suffix truncated); append the primary's entries.
 	}
 	// The batch covers ops base_op..message.Op; base_op is the highest op minus the entry count
 	// plus one. A batch whose first op is beyond this backup's next op leaves a gap, so the
@@ -1891,6 +2296,7 @@ func replica_receive_get_state(replica *Replica, message Message) (output Step_O
 		// since the checkpoint never GCs above Checkpoint_Op - Log_Retain.
 		response.Checkpoint_Op = replica.Checkpoint_Op
 		response.Checkpoint_State = replica.Checkpoint_State
+		response.Checkpoint_Client_Table = clone_client_table(replica.Client_Table)
 		response.Log = replica_log_slice_from(replica, replica.Checkpoint_Op+1)
 	} else {
 		// The requester holds everything up to its op; ship only the entries beyond it. A
@@ -1976,8 +2382,8 @@ func replica_apply_new_state(replica *Replica, message Message) {
 	if message.Checkpoint_State != nil {
 		if message.Checkpoint_Op > replica.Executed {
 			replica_restore_checkpoint(
-				replica, message.Checkpoint_Op, message.Checkpoint_State)
-			replica.Log = nil
+				replica, message.Checkpoint_Op, message.Checkpoint_State,
+				message.Checkpoint_Client_Table)
 		}
 	}
 	// Splice the shipped suffix onto the prefix this replica holds: state transfer extends a
@@ -2006,6 +2412,20 @@ func replica_complete_view_change_fetch(
 	}
 	if message.Op < replica.View_Change_Fetch_Op {
 		return output // The fetched log is short of the winner's op; keep waiting.
+	}
+	// The fetch asked from this replica's Log_Start, so a faithful answer attaches at or
+	// below the committed prefix (carrier_start <= Commit) or ships a checkpoint covering the
+	// gap. A New_State attaching ABOVE the commit with no checkpoint is stale or mismatched —
+	// typically a reply to an earlier state-transfer Get_State this replica sent as a backup —
+	// whose omitted prefix lands on this replica's own UNCOMMITTED entries, which may diverge
+	// from the selected log and which adopt cannot restore. Ignoring it keeps the fetch
+	// outstanding for the faithful answer rather than installing a gap over a committed op
+	// (simulator_bugs.md, Bug 16).
+	carrier_start := message.Op - Op(len(message.Log))
+	if message.Checkpoint_State == nil {
+		if carrier_start > Op(replica.Commit) {
+			return output
+		}
 	}
 	return replica_complete_install(replica, message, replica.View_Change_Fetch_Op, now)
 }
@@ -2158,14 +2578,25 @@ func replica_execute_reconfiguration(replica *Replica, entry Log_Entry, op Op) {
 		Request_Number: entry.Request_Number,
 		Executed:       true,
 	}
-	replica.Epoch_Handoff_Due = true
-	replica.Epoch_Start_Op = op
-	// Capture the new configuration and its active count now, while the entry is in hand: the
-	// maybe-checkpoint below and the compaction at the end of the execution loop can
-	// garbage-collect this very op before the top-level drain runs, so the drain must not
-	// depend on re-reading the entry.
-	replica.Epoch_New_Configuration = entry.New_Configuration
-	replica.Epoch_New_Active_Count = entry.New_Active_Count
+	// Record this reconfiguration op as the epoch-start op if it is the newest executed, and
+	// trigger the handoff only to a DIFFERENT configuration. A replica that jumped to this
+	// epoch (redirect or recovery) and is catching up executes the reconfiguration op that
+	// CREATED its current epoch (New_Configuration equals the current configuration); it must
+	// learn its epoch-start op from it without advancing the epoch again and overshooting
+	// (Bug 19). Capture the new configuration/active count now: the maybe-checkpoint below and
+	// end-of-loop compaction can GC the op before the drain reads it.
+	if op > replica.Epoch_Start_Op {
+		replica.Epoch_Start_Op = op
+		differs := !configurations_equal(&configurations_equal_input{
+			A: entry.New_Configuration,
+			B: replica.Configuration,
+		})
+		if differs {
+			replica.Epoch_Handoff_Due = true
+			replica.Epoch_New_Configuration = entry.New_Configuration
+			replica.Epoch_New_Active_Count = entry.New_Active_Count
+		}
+	}
 	replica_maybe_checkpoint(replica, op)
 }
 
@@ -2348,15 +2779,51 @@ func replica_compact(replica *Replica) {
 // rather than re-running the prefix the checkpoint already covers (the §5.1/§5.2 catch-up). It is
 // the inverse half of compaction: Snapshot froze the prefix, Restore thaws it on the adopting
 // replica. With no Restore injected it only advances the executed and Log_Start markers.
-func replica_restore_checkpoint(replica *Replica, checkpoint_op Op, state []byte) {
+func replica_restore_checkpoint(
+	replica *Replica, checkpoint_op Op, state []byte,
+	client_table map[Client_Identifier]Client_Record,
+) {
 	replica.Checkpoint_Op = checkpoint_op
 	replica.Checkpoint_State = state
 	replica.Log_Start = checkpoint_op
 	replica.Executed = checkpoint_op
+	// Merge the checkpoint's client-table: it carries the exactly-once record for every request
+	// the checkpoint compacted, which the shipped log suffix omits. Keep the higher request
+	// number per client so a record this replica holds for an op above the checkpoint is not
+	// lowered. Without this the rebuild below, scanning only the suffix, never re-learns a
+	// compacted request and the replica re-appends it on becoming primary (exactly-once bug).
+	for client, record := range client_table {
+		current, seen := replica.Client_Table[client]
+		if seen {
+			if current.Request_Number >= record.Request_Number {
+				continue
+			}
+		}
+		replica.Client_Table[client] = record
+	}
+	// A restore materializes the state through checkpoint_op and holds no log beyond it yet:
+	// the caller rebuilds the log from the incoming suffix. Op and Log must reflect that empty
+	// state, keeping Op == Log_Start + len(Log). A stale higher Op here makes the following
+	// splice treat the suffix's first (committed) op as already held and drop it, shifting the
+	// rest down and overwriting a committed op (simulator_bugs.md, Bug 15).
+	replica.Op = checkpoint_op
+	replica.Log = nil
 	if replica.State_Machine.Restore == nil {
 		return
 	}
 	replica.State_Machine.Restore(state)
+}
+
+// Returns an independent copy of a client-table for shipping inside a checkpoint-bearing message,
+// so a later mutation of the sender's live table cannot alter a message already in flight.
+func clone_client_table(
+	table map[Client_Identifier]Client_Record,
+) (copied map[Client_Identifier]Client_Record) {
+	copied = make(map[Client_Identifier]Client_Record, len(table))
+	for client, record := range table {
+		copied[client] = record
+	}
+	return copied
 }
 
 // Reconciles the client-table with the log after the log is replaced wholesale by a view change,
@@ -2467,6 +2934,8 @@ func replica_build_do_view_change(replica *Replica) (message Message) {
 		Last_Normal_View: replica.Last_Normal_View,
 		Checkpoint_Op:    replica.Checkpoint_Op,
 		Checkpoint_State: replica.Checkpoint_State,
+
+		Checkpoint_Client_Table: clone_client_table(replica.Client_Table),
 	}
 }
 
@@ -2538,6 +3007,7 @@ func replica_reconstruct_selected_log(
 	// the reconstructed log; adopt restores from it only if the new primary is behind it.
 	carrier.Checkpoint_Op = replica.Checkpoint_Op
 	carrier.Checkpoint_State = replica.Checkpoint_State
+	carrier.Checkpoint_Client_Table = clone_client_table(replica.Client_Table)
 	if best.From == replica.Identifier {
 		// The new primary is the winner: its own live log already IS the selected log.
 		carrier.Op = replica.Op
@@ -2624,6 +3094,8 @@ func replica_complete_install(
 		Log:              suffix,
 		Checkpoint_Op:    replica.Checkpoint_Op,
 		Checkpoint_State: replica.Checkpoint_State,
+
+		Checkpoint_Client_Table: clone_client_table(replica.Client_Table),
 	})...)
 	return output
 }
@@ -2648,7 +3120,8 @@ func replica_adopt_log(
 		// The replica is behind the carrier's suffix start: it has no other source for the
 		// prefix the suffix omits, so restore from the carrier's checkpoint and replace the
 		// log wholesale from carrier_start. The prefix below now lives in the checkpoint.
-		replica_restore_checkpoint(replica, carrier.Checkpoint_Op, carrier.Checkpoint_State)
+		replica_restore_checkpoint(replica, carrier.Checkpoint_Op, carrier.Checkpoint_State,
+			carrier.Checkpoint_Client_Table)
 		replica.Log_Start = carrier_start
 		suffix := make([]Log_Entry, len(carrier.Log))
 		copy(suffix, carrier.Log)
@@ -2703,8 +3176,18 @@ func replica_select_log(candidates map[Replica_Identifier]Message) (best Message
 			best = candidate
 			continue
 		}
-		if candidate.Last_Normal_View == best.Last_Normal_View {
-			if candidate.Op > best.Op {
+		if candidate.Last_Normal_View < best.Last_Normal_View {
+			continue
+		}
+		if candidate.Op > best.Op {
+			best = candidate
+			continue
+		}
+		// Equal (Last_Normal_View, Op): break the tie on the smaller identifier so the pick
+		// is deterministic across the map's unstable order. The tied logs match (same view,
+		// op), so either is correct; only the determinism matters.
+		if candidate.Op == best.Op {
+			if candidate.From < best.From {
 				best = candidate
 			}
 		}
@@ -2781,6 +3264,7 @@ func replica_receive_recovery(replica *Replica, message Message) (output Step_Ou
 		response.Log = replica_log_slice_from(replica, replica.Log_Start+1)
 		response.Checkpoint_Op = replica.Checkpoint_Op
 		response.Checkpoint_State = replica.Checkpoint_State
+		response.Checkpoint_Client_Table = clone_client_table(replica.Client_Table)
 	}
 	output.Messages = []Message{response}
 	return output
@@ -2815,7 +3299,7 @@ func replica_receive_recovery_response(
 		}
 	}
 	// The authority is the primary of the highest reported view, and the primary is chosen from
-	// the active replicas alone (§6.1) — Configuration[View mod Active_Count], never a standby.
+	// the active replicas alone (§6.1): Configuration[View mod Active_Count], never a standby.
 	// The whole configuration's size here would pick the wrong member when standbys exist.
 	authority_index := uint64(highest) % uint64(replica_active_count(replica))
 	authority_identifier := replica.Configuration[authority_index]
@@ -2853,6 +3337,10 @@ func replica_receive_recovery_response(
 func replica_reset_primary_scratch(replica *Replica) {
 	replica.Request_Buffer = nil
 	replica.Predict_From = map[Prediction_Round_Key]Prediction_Round{}
+	// Epoch_Up_From is epoch-relative: every caller is an epoch transition (enter/rejoin/start
+	// epoch, recovery) or the constructor, never a plain view change, so clearing it here keeps
+	// a view-change-elected primary's accumulated confirmations while a new epoch starts fresh.
+	replica.Epoch_Up_From = map[Replica_Identifier]bool{}
 }
 
 // Moves the replica into Status_View_Change for view, resets the per-view tallies, counts its own
@@ -2889,6 +3377,13 @@ func replica_arm_timer(replica *Replica, now time.Moment) (timer Timer_Reset) {
 		kind = Timer_Kind_Recovery
 	case replica.Status == Status_View_Change:
 		kind = Timer_Kind_View_Change
+		// Back off by how many views have passed without returning to normal, so a cluster that
+		// cannot settle lengthens its view-change window until one completes (livelock break).
+		attempts := uint64(replica.View - replica.Last_Normal_View)
+		if attempts > view_change_backoff_cap {
+			attempts = view_change_backoff_cap
+		}
+		interval = replica.Timeout * time.Duration(1+attempts)
 	case replica.Identifier == replica_primary_identifier(replica):
 		kind = Timer_Kind_Commit
 		interval = replica.Heartbeat
@@ -3003,7 +3498,14 @@ func replica_open_to_requests(replica *Replica) (open bool) {
 		// The whole log is compacted; a reconfiguration would never be GC'd here.
 		return true
 	}
-	return len(replica_log_entry(replica, replica.Op).New_Configuration) == 0
+	if len(replica_log_entry(replica, replica.Op).New_Configuration) == 0 {
+		return true
+	}
+	// The topmost entry is a reconfiguration. It closes the primary to new requests only while
+	// uncommitted (the reconfiguration is the epoch's last op). Once it commits, the epoch has
+	// advanced and the new epoch's primary serves on top of it; without this the new primary
+	// could never append its first op, wedging the cluster after a reconfiguration (Bug 18).
+	return replica.Op <= Op(replica.Commit)
 }
 
 // Reports whether op's entry is a Reconfiguration (§7): one carrying a New_Configuration. A
@@ -3059,5 +3561,8 @@ func replica_ensure_scratch(replica *Replica) {
 	}
 	if replica.Epoch_Started_From == nil {
 		replica.Epoch_Started_From = map[Replica_Identifier]bool{}
+	}
+	if replica.Epoch_Up_From == nil {
+		replica.Epoch_Up_From = map[Replica_Identifier]bool{}
 	}
 }

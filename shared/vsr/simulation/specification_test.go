@@ -5,6 +5,32 @@ import (
 	"testing"
 )
 
+// Test_Sweep is a TEMPORARY wide scan under the new PRNG to enumerate every latent bug it surfaces
+// across a large seed range, skew off and on, so the true scope is known before fixing. Each seed is
+// an isolated subtest so one failure does not abort the rest. Removed once the scope is mapped.
+func Test_Sweep(t *testing.T) {
+	t.Parallel()
+	const limit = 5000
+	run := func(seed int64, skew bool) func(*testing.T) {
+		return func(t *testing.T) {
+			t.Parallel()
+			// invariant.Always panics rather than t.Fatalf; recover so one seed's panic does
+			// not abort the whole binary and the scan can enumerate every failure.
+			defer func() {
+				if r := recover(); r != nil {
+					t.Errorf("seed %d skew=%v PANIC %v", seed, skew, r)
+				}
+			}()
+			run_simulation_with(t, seed, skew)
+		}
+	}
+	for seed := int64(0); seed < limit; seed++ {
+		seed := seed
+		t.Run(fmt.Sprintf("off_%d", seed), run(seed, false))
+		t.Run(fmt.Sprintf("on_%d", seed), run(seed, true))
+	}
+}
+
 // Test_Cluster_Single_Primary drives many seeds in parallel, asserting no view ever has two acting
 // primaries. Seed 1 is the regression guard for the recovery-quiescence bug: before the fix it
 // drove the cluster into an agreement violation (op 2 committed as two different commands).
@@ -21,7 +47,15 @@ func Test_Cluster_Single_Primary(t *testing.T) {
 // Test_Cluster_Agreement drives many seeds in parallel, asserting committed entries never diverge.
 func Test_Cluster_Agreement(t *testing.T) {
 	t.Parallel()
+	seeds := []int64{}
 	for seed := int64(40); seed < 80; seed++ {
+		seeds = append(seeds, seed)
+	}
+	// Permanent regression seed for restore_checkpoint leaving a stale Op, which made a
+	// state-transfer splice overwrite a committed op — two replicas disagreeing on a committed
+	// op (simulator_bugs.md, Bug 15). A wider 400..1399 scan found it; this seed pins it.
+	seeds = append(seeds, 1266)
+	for _, seed := range seeds {
 		t.Run(fmt.Sprintf("seed_%d", seed), func(t *testing.T) {
 			t.Parallel()
 			run_simulation(t, seed)
@@ -130,6 +164,29 @@ func Test_Cluster_Linearizability(t *testing.T) {
 			t.Error("expected clients to receive results across seeds")
 		}
 	})
+}
+
+// Test_Cluster_Clock_Skew drives many seeds with per-replica clock skew and drift, asserting every
+// safety oracle inside run_simulation still holds when no two nodes share a clock — the proof that
+// VSR safety rests on consensus, not on time (§4.4 prediction and the timeout-driven view
+// change both run against divergent clocks here). Clocks bend only in this sweep; the others keep
+// identical clocks so their regression seeds reproduce exactly.
+func Test_Cluster_Clock_Skew(t *testing.T) {
+	t.Parallel()
+	seeds := []int64{}
+	for seed := int64(400); seed < 440; seed++ {
+		seeds = append(seeds, seed)
+	}
+	// Permanent regression seed for the deferred view-change fetch accepting a stale,
+	// non-attaching New_State under clock skew, which left a checkpoint-to-log gap the commit
+	// walk indexed into (simulator_bugs.md, Bug 16). A wider 400..1399 skew-on scan found it.
+	seeds = append(seeds, 1378)
+	for _, seed := range seeds {
+		t.Run(fmt.Sprintf("seed_%d", seed), func(t *testing.T) {
+			t.Parallel()
+			run_simulation_with(t, seed, true)
+		})
+	}
 }
 
 // Test_Cluster_Reconfiguration drives many seeds in parallel, asserting the §7 reconfiguration runs

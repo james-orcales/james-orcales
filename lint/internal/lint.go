@@ -1413,7 +1413,6 @@ func Check_File(
 		check_compound_if,
 		check_comments,
 		check_main_first,
-		check_assertion_named_constant,
 		check_no_discard,
 		check_public_struct_fields,
 		check_struct_field_documentation_comment,
@@ -5245,220 +5244,6 @@ func check_blank_synchronization_mutex(
 	return diags
 }
 
-// Required-shape invariant assertions carry numeric bounds — Distinct_Boundary's
-// Lo/Hi, and the RHS of `Always(x op N)` / `Sometimes(x op N)` comparisons. An
-// inline literal at one of those positions has no name: the reader can't tell
-// which budget it represents, the linter can't grep for related sites, and
-// identical literals scattered through the codebase drift independently. The
-// rule: every bound is either a single named identifier (or selector chain),
-// or a zero-state sentinel (literal 0, "", or nil) — never an inline numeric
-// literal, signed literal, arithmetic expression, or typed conversion.
-func check_assertion_named_constant(
-	file_set *token.FileSet, file *ast.File, _ []byte,
-) (diags []Diagnostic) {
-
-	invariant_idents := collect_invariant_idents(file)
-	if len(invariant_idents) == 0 {
-		return nil
-	}
-	ast.Inspect(file, func(n ast.Node) (descend bool) {
-		call, is_call := n.(*ast.CallExpr)
-		if !is_call {
-			return true
-		}
-		selector, is_selector := call.Fun.(*ast.SelectorExpr)
-		if !is_selector {
-			return true
-		}
-		identifier, is_identifier := selector.X.(*ast.Ident)
-		if !is_identifier {
-			return true
-		}
-		if !invariant_idents[identifier.Name] {
-			return true
-		}
-		name := selector.Sel.Name
-		if name == "Distinct_Boundary" {
-			diags = append(diags,
-				check_assertion_named_constant_distinct_boundary(file_set, call)...)
-			return true
-		}
-		if name == "Always" {
-			diags = append(diags,
-				check_assertion_named_constant_predicate(file_set, call)...)
-			return true
-		}
-		if name == "Sometimes" {
-			diags = append(diags,
-				check_assertion_named_constant_predicate(file_set, call)...)
-			return true
-		}
-		return true
-	})
-	return diags
-}
-
-func check_assertion_named_constant_distinct_boundary(
-	file_set *token.FileSet, call *ast.CallExpr,
-) (diags []Diagnostic) {
-	if len(call.Args) == 0 {
-		return nil
-	}
-	expression := call.Args[0]
-	if unary, is_unary := expression.(*ast.UnaryExpr); is_unary {
-		expression = unary.X
-	}
-	composite, is_composite := expression.(*ast.CompositeLit)
-	if !is_composite {
-		return nil
-	}
-	for _, element := range composite.Elts {
-		key_value, is_key_value := element.(*ast.KeyValueExpr)
-		if !is_key_value {
-			continue
-		}
-		key_identifier, is_key_identifier := key_value.Key.(*ast.Ident)
-		if !is_key_identifier {
-			continue
-		}
-		if key_identifier.Name != "Lo" {
-			if key_identifier.Name != "Hi" {
-				continue
-			}
-		}
-		if assertion_bound_is_valid(key_value.Value) {
-			continue
-		}
-		diags = append(diags, Diagnostic{
-			Position: file_set.Position(key_value.Value.Pos()),
-			Message: "assertion bound must be a file-level named constant, not an " +
-				"inline literal",
-		})
-	}
-	return diags
-}
-
-func check_assertion_named_constant_predicate(
-	file_set *token.FileSet, call *ast.CallExpr,
-) (diags []Diagnostic) {
-	if len(call.Args) == 0 {
-		return nil
-	}
-	predicate := call.Args[0]
-	for step := 0; ; step++ {
-		paren, is_paren := predicate.(*ast.ParenExpr)
-		if !is_paren {
-			break
-		}
-		predicate = paren.X
-	}
-	binary, is_binary := predicate.(*ast.BinaryExpr)
-	if !is_binary {
-		return nil
-	}
-	op := binary.Op
-	is_comparison := false
-	if op == token.EQL {
-		is_comparison = true
-	}
-	if op == token.NEQ {
-		is_comparison = true
-	}
-	if op == token.LSS {
-		is_comparison = true
-	}
-	if op == token.GTR {
-		is_comparison = true
-	}
-	if op == token.LEQ {
-		is_comparison = true
-	}
-	if op == token.GEQ {
-		is_comparison = true
-	}
-	if !is_comparison {
-		return nil
-	}
-	if assertion_bound_is_valid(binary.Y) {
-		return nil
-	}
-	return []Diagnostic{{
-		Position: file_set.Position(binary.Y.Pos()),
-		Message: "assertion bound must be a file-level named constant, not an inline " +
-			"literal",
-	}}
-}
-
-// Assertion_bound_is_valid reports whether expression is an allowed shape at
-// the bound position of a required-shape invariant assertion: a single
-// identifier, a selector chain bottoming out at an identifier, the literal
-// nil, or a zero-state sentinel (literal 0, 0.0, signed zero, or empty
-// string).
-func assertion_bound_is_valid(expression ast.Expr) (yes bool) {
-	for step := 0; ; step++ {
-		paren, is_paren := expression.(*ast.ParenExpr)
-		if !is_paren {
-			break
-		}
-		expression = paren.X
-	}
-	if identifier, is_identifier := expression.(*ast.Ident); is_identifier {
-		return identifier.Name != "_"
-	}
-	if selector, is_selector := expression.(*ast.SelectorExpr); is_selector {
-		current := ast.Expr(selector)
-		for step := 0; ; step++ {
-			inner_selector, is_inner_selector := current.(*ast.SelectorExpr)
-			if !is_inner_selector {
-				break
-			}
-			current = inner_selector.X
-		}
-		_, bottom_is_identifier := current.(*ast.Ident)
-		return bottom_is_identifier
-	}
-	if basic, is_basic := expression.(*ast.BasicLit); is_basic {
-		return basic_lit_is_zero_or_empty(basic)
-	}
-	if unary, is_unary := expression.(*ast.UnaryExpr); is_unary {
-		if unary.Op != token.ADD {
-			if unary.Op != token.SUB {
-				return false
-			}
-		}
-		inner_basic, inner_is_basic := unary.X.(*ast.BasicLit)
-		if !inner_is_basic {
-			return false
-		}
-		return basic_lit_is_zero_or_empty(inner_basic)
-	}
-	return false
-}
-
-func basic_lit_is_zero_or_empty(basic *ast.BasicLit) (yes bool) {
-
-	if basic.Kind == token.STRING {
-		if basic.Value == `""` {
-			return true
-		}
-		if basic.Value == "``" {
-			return true
-		}
-		return false
-	}
-	if basic.Kind == token.INT {
-		return basic.Value == "0"
-	}
-	if basic.Kind == token.FLOAT {
-		f, err := strconv.ParseFloat(basic.Value, 64)
-		if err != nil {
-			return false
-		}
-		return f == 0
-	}
-	return false
-}
-
 // Positional struct literals break silently when fields are added or reordered.
 // Without go/types we can only be certain about same-file struct declarations;
 // cross-file and cross-package literals are skipped to keep false positives at
@@ -9228,36 +9013,6 @@ func is_bare_for_condition(condition ast.Expr) (yes bool) {
 	return ident.Name == "true"
 }
 
-// Walks file.Imports and returns the set of import-spec local names that
-// resolve to the invariant package or its composition tier. The local name
-// defaults to the package's declared name (`invariant` for the pure tier,
-// `invariant_default` for the composition tier) unless an explicit alias
-// is supplied. Files that don't import either path return an empty set.
-func collect_invariant_idents(file *ast.File) (idents map[string]bool) {
-	idents = map[string]bool{}
-	const pure_path = "github.com/james-orcales/james-orcales/shared/invariant/v2"
-	const default_path = "github.com/james-orcales/james-orcales/shared/" +
-		"invariant/v2/invariant_default"
-	for _, import_specification := range file.Imports {
-		path := strings.Trim(import_specification.Path.Value, `"`)
-		if path != pure_path {
-			if path != default_path {
-				continue
-			}
-		}
-		if import_specification.Name != nil {
-			idents[import_specification.Name.Name] = true
-			continue
-		}
-		if path == default_path {
-			idents["invariant_default"] = true
-			continue
-		}
-		idents["invariant"] = true
-	}
-	return idents
-}
-
 // Reports whether type_expression is a `<stdlib>.Mutex` or `<stdlib>.RWMutex`
 // selector. The package qualifier must be in stdlib_imports; the selector
 // name must be Mutex or RWMutex. Mutex/RWMutex are unique to the sync stdlib
@@ -9583,6 +9338,7 @@ func check_deterministic(input *check_deterministic_input) (diags []Diagnostic) 
 			continue
 		}
 		diags = append(diags, check_deterministic_constructs(pf.File_Set, pf.File)...)
+		diags = append(diags, check_deterministic_floats(pf.File_Set, pf.File)...)
 		diags = append(diags, check_deterministic_imports(
 			pf.File_Set, pf.File, input.Components, covered, input.Instrumentation)...)
 	}
@@ -9694,6 +9450,39 @@ func check_deterministic_constructs(
 				report(file_set.Position(node.Pos()), "must not use a channel")
 			}
 		}
+		return true
+	})
+	return diags
+}
+
+// Flags the float types a deterministic package may not use. IEEE-754 results
+// diverge across platforms — fused-multiply-add contraction, x87 extended-precision
+// intermediates, and compiler reassociation each rewrite the arithmetic — so the
+// same source yields different bits on different machines. Matching the bare
+// predeclared identifier catches every position the type reaches: a declaration's
+// type, a struct field, a parameter or result, and a float64(x) conversion. A bare
+// Ident named float32/float64 that is not the predeclared type would have to be a
+// user shadow of a predeclared name, which the language never idiomatically does.
+func check_deterministic_floats(
+	file_set *token.FileSet, file *ast.File,
+) (diags []Diagnostic) {
+
+	ast.Inspect(file, func(n ast.Node) (descend bool) {
+		identifier, is_identifier := n.(*ast.Ident)
+		if !is_identifier {
+			return true
+		}
+		if identifier.Name != "float32" {
+			if identifier.Name != "float64" {
+				return true
+			}
+		}
+		diags = append(diags, Diagnostic{
+			Position: file_set.Position(identifier.Pos()),
+			Name:     "deterministic",
+			Message:  "deterministic package must not use " + identifier.Name,
+			Tier:     1,
+		})
 		return true
 	})
 	return diags

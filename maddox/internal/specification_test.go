@@ -3,11 +3,11 @@ package maddox_test
 import (
 	"bytes"
 	"encoding/json"
-	"math"
 	"strings"
 	"testing"
 
 	"github.com/james-orcales/james-orcales/maddox/internal"
+	"github.com/james-orcales/james-orcales/shared/fixedpoint"
 	"github.com/james-orcales/james-orcales/shared/sh"
 	"github.com/james-orcales/james-orcales/shared/time"
 )
@@ -19,31 +19,32 @@ import (
 // samples to the mean, standard deviation, extrema, median, and quartiles poop
 // reports — checked against a hand-computed five-point set.
 func Test_Statistics_Distribution(t *testing.T) {
-	measurement := maddox.Measurement_Compute([]float64{10, 20, 30, 40, 50}, "count")
+	measurement := maddox.Measurement_Compute([]int64{10, 20, 30, 40, 50}, "count")
 	if measurement.Sample_Count != 5 {
 		t.Fatalf("sample count = %d, want 5", measurement.Sample_Count)
 	}
-	if math.Abs(measurement.Mean-30) > epsilon {
-		t.Fatalf("mean = %v, want 30", measurement.Mean)
+	if measurement.Mean != fixedpoint.From_Integer(30) {
+		t.Fatalf("mean = %d, want 30.0", measurement.Mean)
 	}
-	// Sample standard deviation uses n-1 in the denominator: sqrt(1000/4).
-	if math.Abs(measurement.Standard_Deviation-15.8113883) > epsilon {
-		t.Fatalf("stddev = %v, want ~15.8113883", measurement.Standard_Deviation)
+	// Sample standard deviation uses n-1 in the denominator: sqrt(1000/4) = 15.811388.
+	if fixedpoint.Format(measurement.Standard_Deviation, 3) != "15.811" {
+		t.Fatalf("stddev = %s, want 15.811",
+			fixedpoint.Format(measurement.Standard_Deviation, 3))
 	}
-	if math.Abs(measurement.Min-10) > epsilon {
-		t.Fatalf("min = %v, want 10", measurement.Min)
+	if measurement.Min != fixedpoint.From_Integer(10) {
+		t.Fatalf("min = %d, want 10.0", measurement.Min)
 	}
-	if math.Abs(measurement.Max-50) > epsilon {
-		t.Fatalf("max = %v, want 50", measurement.Max)
+	if measurement.Max != fixedpoint.From_Integer(50) {
+		t.Fatalf("max = %d, want 50.0", measurement.Max)
 	}
-	if math.Abs(measurement.Median-30) > epsilon {
-		t.Fatalf("median = %v, want 30", measurement.Median)
+	if measurement.Median != fixedpoint.From_Integer(30) {
+		t.Fatalf("median = %d, want 30.0", measurement.Median)
 	}
-	if math.Abs(measurement.Q1-20) > epsilon {
-		t.Fatalf("q1 = %v, want 20", measurement.Q1)
+	if measurement.Q1 != fixedpoint.From_Integer(20) {
+		t.Fatalf("q1 = %d, want 20.0", measurement.Q1)
 	}
-	if math.Abs(measurement.Q3-50) > epsilon {
-		t.Fatalf("q3 = %v, want 50", measurement.Q3)
+	if measurement.Q3 != fixedpoint.From_Integer(50) {
+		t.Fatalf("q3 = %d, want 50.0", measurement.Q3)
 	}
 }
 
@@ -52,7 +53,7 @@ func Test_Statistics_Distribution(t *testing.T) {
 // points collapse the IQR to zero, so the lone large point falls outside.
 func Test_Statistics_Outliers(t *testing.T) {
 	measurement := maddox.Measurement_Compute(
-		[]float64{10, 10, 10, 10, 10, 10, 10, 10, 10, 1000}, "count")
+		[]int64{10, 10, 10, 10, 10, 10, 10, 10, 10, 1000}, "count")
 	if measurement.Outlier_Count != 1 {
 		t.Fatalf("outlier count = %d, want 1", measurement.Outlier_Count)
 	}
@@ -62,13 +63,28 @@ func Test_Statistics_Outliers(t *testing.T) {
 // reference command against its own numbers — yields a zero delta that is not
 // significant, so the baseline never flags itself as a change.
 func Test_Comparison_Reference(t *testing.T) {
-	reference := maddox.Measurement{Mean: 100, Standard_Deviation: 5, Sample_Count: 10}
+	reference := maddox.Measurement{
+		Mean:               fixedpoint.From_Integer(100),
+		Standard_Deviation: fixedpoint.From_Integer(5),
+		Sample_Count:       10,
+	}
 	delta := maddox.Compare(&maddox.Compare_Input{Reference: reference, Candidate: reference})
-	if math.Abs(delta.Diff_Percent) > epsilon {
-		t.Fatalf("diff percent = %v, want 0", delta.Diff_Percent)
+	if delta.Diff_Percent != 0 {
+		t.Fatalf("diff percent = %d, want 0", delta.Diff_Percent)
 	}
 	if delta.Significant {
 		t.Fatal("a measurement compared to itself must not be significant")
+	}
+	// A real program reports metrics in the billions; a standard deviation past 2^32
+	// must not overflow the pooled-variance arithmetic.
+	large := maddox.Measurement{
+		Mean:               fixedpoint.From_Integer(20_000_000_000),
+		Standard_Deviation: fixedpoint.From_Integer(6_000_000_000),
+		Sample_Count:       10,
+	}
+	big := maddox.Compare(&maddox.Compare_Input{Reference: large, Candidate: large})
+	if big.Significant {
+		t.Fatal("a large measurement compared to itself must not be significant")
 	}
 }
 
@@ -76,8 +92,16 @@ func Test_Comparison_Reference(t *testing.T) {
 // reference's, with tight variance, is reported as a significant slowdown: the
 // confidence interval clears the +1% band, and the candidate is not faster.
 func Test_Comparison_Significance(t *testing.T) {
-	reference := maddox.Measurement{Mean: 100, Standard_Deviation: 1, Sample_Count: 20}
-	candidate := maddox.Measurement{Mean: 200, Standard_Deviation: 1, Sample_Count: 20}
+	reference := maddox.Measurement{
+		Mean:               fixedpoint.From_Integer(100),
+		Standard_Deviation: fixedpoint.From_Integer(1),
+		Sample_Count:       20,
+	}
+	candidate := maddox.Measurement{
+		Mean:               fixedpoint.From_Integer(200),
+		Standard_Deviation: fixedpoint.From_Integer(1),
+		Sample_Count:       20,
+	}
 	delta := maddox.Compare(&maddox.Compare_Input{Reference: reference, Candidate: candidate})
 	if !delta.Significant {
 		t.Fatal("a doubled mean with tight variance must be significant")
@@ -85,8 +109,8 @@ func Test_Comparison_Significance(t *testing.T) {
 	if delta.Faster {
 		t.Fatal("a doubled mean is slower, not faster")
 	}
-	if math.Abs(delta.Diff_Percent-100) > epsilon {
-		t.Fatalf("diff percent = %v, want 100", delta.Diff_Percent)
+	if delta.Diff_Percent != fixedpoint.From_Integer(100) {
+		t.Fatalf("diff percent = %d, want 100.0", delta.Diff_Percent)
 	}
 }
 
@@ -299,14 +323,16 @@ func Test_Table_Header(t *testing.T) {
 // Test_Table_Units verifies a raw nanosecond value is scaled to a human unit: a
 // ~14.9ms mean renders in milliseconds, not bare nanoseconds.
 func Test_Table_Units(t *testing.T) {
+	wall_ns := fixedpoint.From_Integer(14906807)
 	wall := maddox.Measurement{
-		Mean: 14906807, Min: 14906807, Max: 14906807, Median: 14906807,
-		Q1: 14906807, Q3: 14906807, Sample_Count: 3, Unit: "nanoseconds",
+		Mean: wall_ns, Min: wall_ns, Max: wall_ns, Median: wall_ns,
+		Q1: wall_ns, Q3: wall_ns, Sample_Count: 3, Unit: "nanoseconds",
 	}
 	// 2 MiB exactly: binary scaling renders "2MiB", decimal would be "2.10MB".
+	bytes_2mib := fixedpoint.From_Integer(2097152)
 	memory := maddox.Measurement{
-		Mean: 2097152, Min: 2097152, Max: 2097152, Median: 2097152,
-		Q1: 2097152, Q3: 2097152, Sample_Count: 3, Unit: "bytes",
+		Mean: bytes_2mib, Min: bytes_2mib, Max: bytes_2mib, Median: bytes_2mib,
+		Q1: bytes_2mib, Q3: bytes_2mib, Sample_Count: 3, Unit: "bytes",
 	}
 	document := maddox.Document{Benchmarks: []maddox.Benchmark{{
 		Command:      []string{"x"},
@@ -325,9 +351,14 @@ func Test_Table_Units(t *testing.T) {
 // Test_Table_Delta verifies a non-reference benchmark's row carries its signed
 // percentage change against the reference.
 func Test_Table_Delta(t *testing.T) {
-	wall := maddox.Measurement{Mean: 1e6, Max: 1e6, Sample_Count: 3, Unit: "nanoseconds"}
+	mean := fixedpoint.From_Integer(1_000_000)
+	wall := maddox.Measurement{Mean: mean, Max: mean, Sample_Count: 3, Unit: "nanoseconds"}
 	deltas := maddox.Deltas{
-		Wall_Time: maddox.Delta{Diff_Percent: 50, Half_Percent: 2, Significant: true},
+		Wall_Time: maddox.Delta{
+			Diff_Percent: fixedpoint.From_Integer(50),
+			Half_Percent: fixedpoint.From_Integer(2),
+			Significant:  true,
+		},
 	}
 	measurements := maddox.Measurements{Wall_Time: wall}
 	document := maddox.Document{Benchmarks: []maddox.Benchmark{
@@ -343,9 +374,14 @@ func Test_Table_Delta(t *testing.T) {
 // Test_Table_Color verifies ANSI escapes mark the delta only when color is enabled,
 // and never otherwise.
 func Test_Table_Color(t *testing.T) {
-	wall := maddox.Measurement{Mean: 1e6, Max: 1e6, Sample_Count: 3, Unit: "nanoseconds"}
+	mean := fixedpoint.From_Integer(1_000_000)
+	wall := maddox.Measurement{Mean: mean, Max: mean, Sample_Count: 3, Unit: "nanoseconds"}
 	deltas := maddox.Deltas{
-		Wall_Time: maddox.Delta{Diff_Percent: 50, Half_Percent: 2, Significant: true},
+		Wall_Time: maddox.Delta{
+			Diff_Percent: fixedpoint.From_Integer(50),
+			Half_Percent: fixedpoint.From_Integer(2),
+			Significant:  true,
+		},
 	}
 	measurements := maddox.Measurements{Wall_Time: wall}
 	document := maddox.Document{Benchmarks: []maddox.Benchmark{
@@ -370,7 +406,8 @@ func Test_Table_Color(t *testing.T) {
 // Linux-only counters on macOS — is omitted from the table, while a metric that has
 // data is shown.
 func Test_Table_Sparse(t *testing.T) {
-	wall := maddox.Measurement{Mean: 1e6, Max: 1e6, Sample_Count: 3, Unit: "nanoseconds"}
+	mean := fixedpoint.From_Integer(1_000_000)
+	wall := maddox.Measurement{Mean: mean, Max: mean, Sample_Count: 3, Unit: "nanoseconds"}
 	document := maddox.Document{Benchmarks: []maddox.Benchmark{{
 		Command:      []string{"x"},
 		Runs:         3,
@@ -516,10 +553,6 @@ func Test_Progress(t *testing.T) {
 		t.Fatalf("progress disabled must write nothing, got: %q", hidden.String())
 	}
 }
-
-// Epsilon bounds floating-point equality for the statistics assertions; the
-// hand-computed expectations are exact to well within it.
-const epsilon = 1e-4
 
 // Decode unmarshals a JSON report from the buffer, failing the test if it is not
 // well-formed.

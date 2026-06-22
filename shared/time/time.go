@@ -5,7 +5,7 @@
 // backend lives here because it is pure arithmetic with no operating-system call.
 package time
 
-import "math"
+import "github.com/james-orcales/james-orcales/shared/fixedpoint"
 
 // Moment is a clock reading in nanoseconds since an arbitrary, clock-specific epoch
 // (TigerBeetle's stdx.Instant). Only the difference between two Moments from the
@@ -135,8 +135,23 @@ func Skew(input Skew_Input) (offset Offset) {
 	switch input.Kind {
 	case Skew_Kind_Periodic:
 		return func(ticks int64) (skew Duration) {
-			radians := float64(ticks) * 2 * math.Pi / float64(input.B)
-			return Duration(float64(input.A) * math.Sin(radians))
+			// A zero period is a degenerate sinusoid; report no skew rather than divide
+			// (or take a remainder) by zero.
+			if input.B == 0 {
+				return 0
+			}
+			// Reduce the phase to one period before lifting it into fixed-point, so a
+			// long-running tick count cannot overflow the scaled numerator.
+			phase := ticks % input.B
+			turns := fixedpoint.Divide(&fixedpoint.Divide_Input{
+				Dividend: fixedpoint.From_Integer(phase),
+				Divisor:  fixedpoint.From_Integer(input.B),
+			})
+			wobble := fixedpoint.Multiply(&fixedpoint.Multiply_Input{
+				A: fixedpoint.From_Integer(int64(input.A)),
+				B: fixedpoint.Sine_Turns(turns),
+			})
+			return Duration(fixedpoint.Whole(wobble))
 		}
 	case Skew_Kind_Step:
 		return func(ticks int64) (skew Duration) {

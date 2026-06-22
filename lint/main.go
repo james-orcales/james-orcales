@@ -342,11 +342,11 @@ func main_walk_worktree(
 	walk_err := filepath.WalkDir(root,
 		func(p string, d fs.DirEntry, entry_err error) (output error) {
 			if entry_err != nil {
-				return nil
+				return entry_err
 			}
 			relative, relative_err := filepath.Rel(root, p)
 			if relative_err != nil {
-				return nil
+				return relative_err
 			}
 			slash := filepath.ToSlash(relative)
 			if d.IsDir() {
