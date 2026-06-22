@@ -365,6 +365,12 @@ type Replica struct {
 	// once deadlock beyond the fault model, so the primary re-sends for a window; an advanced
 	// member sees a stale commit and drops it (Bug 19).
 	Handoff_Commit_Redrive int
+	// Handoff_Commit is the commit when this replica entered the current epoch: the
+	// reconfiguration op, the old epoch's final commit. The re-drive advertises THIS, not the
+	// live commit, so an old member is told only that the reconfiguration committed, not that
+	// later new-epoch ops did. Telling a stale member to commit past it would make it
+	// bare-commit a tail it never reconciled (the deposed-primary fork).
+	Handoff_Commit Commit
 }
 
 // Message_Kind_Request is a client command arriving at the primary; it carries Command.
@@ -479,6 +485,13 @@ type Message struct {
 	// reporter still in Status_View_Change must answer it; a view-changing replica otherwise
 	// does not answer a plain catch-up (§5.2). Without the flag the two are indistinguishable.
 	View_Change_Fetch bool
+
+	// Handoff_Redrive marks a Commit re-driven at the old epoch by a new-epoch primary (Bug 19)
+	// carrying the reconfiguration op's commit. A receiver that does not hold the
+	// reconfiguration entry at that op must not bare-commit its pre-reconfiguration tail on
+	// this (the deposed-primary fork). A normal Commit has the flag clear and commits up to
+	// what it holds; without the flag the two are indistinguishable.
+	Handoff_Redrive bool
 
 	// Command carries a client Request's payload before it becomes a log entry.
 	Command []byte
@@ -789,12 +802,13 @@ func replica_primary_heartbeat(replica *Replica) (messages []Message) {
 				continue
 			}
 			messages = append(messages, Message{
-				Kind:   Message_Kind_Commit,
-				From:   replica.Identifier,
-				To:     identifier,
-				View:   replica.View,
-				Epoch:  replica.Epoch - 1,
-				Commit: replica.Commit,
+				Kind:            Message_Kind_Commit,
+				From:            replica.Identifier,
+				To:              identifier,
+				View:            replica.View,
+				Epoch:           replica.Epoch - 1,
+				Commit:          replica.Handoff_Commit,
+				Handoff_Redrive: true,
 			})
 		}
 	}
@@ -1146,6 +1160,9 @@ func replica_enter_new_epoch(
 		replica.Old_Configuration = nil
 		replica.Status = Status_Normal
 		replica.Handoff_Commit_Redrive = handoff_commit_redrive
+		// Capture the handoff commit (the reconfiguration op) so the re-drive advertises a
+		// fixed point, never the live commit that grows as the new epoch commits.
+		replica.Handoff_Commit = replica.Commit
 		// Mark the CONTINUING members up: present in both groups, they already hold the
 		// epoch's log and need no Start_Epoch. Only a member ADDED by this reconfiguration
 		// is left unconfirmed, so the heartbeat re-drives Start_Epoch to just those (§7.2).
@@ -1279,12 +1296,19 @@ func replica_receive_new_epoch(
 			output.Timer = replica_arm_timer(replica, now)
 			return output
 		}
+		// Drain ONLY a topmost reconfiguration acked but not committed yet (commit < op):
+		// committing it enters the new epoch. An already-committed topmost is the reconfig
+		// that brought this replica to its current epoch, not a pending one; re-applying it
+		// is a no-op that strands the replica, so fall through to adopt the new epoch.
 		if replica.Op > replica.Log_Start {
-			if len(replica_log_entry(replica, replica.Op).New_Configuration) > 0 {
-				output.Committed, output.Replies = replica_apply_commit(
-					replica, Commit(replica.Op))
-				output.Timer = replica_arm_timer(replica, now)
-				return output
+			if replica.Commit < Commit(replica.Op) {
+				entry := replica_log_entry(replica, replica.Op)
+				if len(entry.New_Configuration) > 0 {
+					output.Committed, output.Replies = replica_apply_commit(
+						replica, Commit(replica.Op))
+					output.Timer = replica_arm_timer(replica, now)
+					return output
+				}
 			}
 		}
 	}
@@ -2216,6 +2240,18 @@ func replica_receive_commit(
 	}
 	if message.View > replica.View {
 		return replica_begin_state_transfer(replica, message.View, message.From, now)
+	}
+	// A handoff commit re-drive (Bug 19) commits the old epoch's final op, the reconfiguration,
+	// so an old member that missed it commits it and transitions. Act only if this replica
+	// holds the reconfiguration entry AT that op: a member lacking it is further behind than
+	// the reconfiguration, and one holding a DIFFERENT entry there has a superseded-view tail.
+	// Either way, bare-committing on the re-drive would commit a divergent tail (the
+	// deposed-primary fork); it reconciles when a current-epoch message catches it up. A normal
+	// Commit has the flag clear and still commits up to the ops it holds.
+	if message.Handoff_Redrive {
+		if !replica_holds_reconfiguration_at(replica, message.Commit) {
+			return output
+		}
 	}
 	output.Timer = replica_arm_timer(replica, now)
 	output.Committed, output.Replies = replica_apply_commit(replica, message.Commit)
@@ -3569,6 +3605,22 @@ func replica_open_to_requests(replica *Replica) (open bool) {
 // reconfiguration entry affects only VR state and is never passed to the State_Machine.
 func log_entry_is_reconfiguration(entry Log_Entry) (yes bool) {
 	return len(entry.New_Configuration) > 0
+}
+
+// Reports whether this replica holds the reconfiguration entry exactly at op in its live log. The
+// handoff commit re-drive uses it to refuse advancing a replica that lacks that op (further behind
+// than the reconfiguration) or holds a different entry there (a superseded-view tail) — either of
+// which would otherwise bare-commit a divergent tail (the deposed-primary fork). An op below
+// Log_Start is already committed-and-compacted, so the re-drive is moot there.
+func replica_holds_reconfiguration_at(replica *Replica, op Commit) (holds bool) {
+	if Op(op) <= replica.Log_Start {
+		return false
+	}
+	if Op(op) > replica.Op {
+		return false
+	}
+	index := int(op) - int(replica.Log_Start) - 1
+	return log_entry_is_reconfiguration(replica.Log[index])
 }
 
 // Returns op's entry from the log, translating the op-number into the slice index that compaction
