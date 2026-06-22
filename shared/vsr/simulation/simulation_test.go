@@ -868,13 +868,15 @@ func simulator_next_configuration(state *simulator) (target vsr.Configuration, o
 	current := append(vsr.Configuration{}, state.Configuration...)
 	switch state.Admin.Request_Number % 3 {
 	case 0:
-		// Grow: add the next two fresh nodes if the superset has room.
-		if state.Next_Fresh+1 >= sim_superset {
+		// Grow: add the next two DISTINCT pristine nodes (the second searched past the
+		// first, so neither re-adds a current member — a duplicate breaks quorum math).
+		first := simulator_next_fresh_from(state, 0)
+		second := simulator_next_fresh_from(state, first+1)
+		if second >= sim_superset {
 			return target, false
 		}
 		target = append(current,
-			vsr.Replica_Identifier(state.Next_Fresh),
-			vsr.Replica_Identifier(state.Next_Fresh+1))
+			vsr.Replica_Identifier(first), vsr.Replica_Identifier(second))
 	case 1:
 		// Shrink: drop the last two members if that keeps at least three.
 		if len(current) < 5 {
@@ -984,7 +986,15 @@ func simulator_refresh_membership(state *simulator) {
 // would plant a dead, un-catchable node in the voting set that no fault-free tail could ever bring
 // to Normal (the wedge the liveness tail surfaced).
 func simulator_next_fresh(state *simulator) (index int) {
-	for index = 0; index < sim_superset; index++ {
+	return simulator_next_fresh_from(state, 0)
+}
+
+// The first pristine identifier at or after start. Splitting out the start lets a grow pick TWO
+// distinct fresh nodes: the second search begins past the first, so it never re-adds the first nor
+// any current member (the duplicate-member config a naive Next_Fresh+1 produced, which broke quorum
+// math and tripped the commit-not-past-op assertion).
+func simulator_next_fresh_from(state *simulator, start int) (index int) {
+	for index = start; index < sim_superset; index++ {
 		if configuration_contains(state.Configuration, vsr.Replica_Identifier(index)) {
 			continue
 		}
@@ -2097,6 +2107,9 @@ func trace_message_fields(now time.Moment, message vsr.Message) (fields []jlog.F
 		jlog.Uint64("op", message.Op),
 		jlog.Uint64("commit", message.Commit),
 	}
+	if message.Nonce != 0 {
+		fields = append(fields, jlog.Uint64("nonce", message.Nonce))
+	}
 	if entries := trace_entries(message.Entries); len(entries) > 0 {
 		fields = append(fields, jlog.Strings("entries", entries))
 	}
@@ -2120,6 +2133,10 @@ func trace_replica_fields(replica *vsr.Replica) (fields []jlog.Field) {
 		jlog.Uint64("op", replica.Op),
 		jlog.Uint64("commit", replica.Commit),
 		jlog.Uint64("log_start", replica.Log_Start),
+		jlog.String("config", fmt.Sprintf("%v", replica.Configuration)),
+		jlog.Integer("active_count", int(replica.Active_Count)),
+		jlog.Integer("recovery_responses", len(replica.Recovery_From)),
+		jlog.Uint64("recovery_nonce", replica.Recovery_Nonce),
 		jlog.Strings("log", trace_entries(replica.Log)),
 	}
 }
