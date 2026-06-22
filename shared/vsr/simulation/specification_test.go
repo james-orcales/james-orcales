@@ -5,32 +5,6 @@ import (
 	"testing"
 )
 
-// Test_Sweep is a TEMPORARY wide scan under the new PRNG to enumerate every latent bug it surfaces
-// across a large seed range, skew off and on, so the true scope is known before fixing. Each seed is
-// an isolated subtest so one failure does not abort the rest. Removed once the scope is mapped.
-func Test_Sweep(t *testing.T) {
-	t.Parallel()
-	const limit = 5000
-	run := func(seed int64, skew bool) func(*testing.T) {
-		return func(t *testing.T) {
-			t.Parallel()
-			// invariant.Always panics rather than t.Fatalf; recover so one seed's panic does
-			// not abort the whole binary and the scan can enumerate every failure.
-			defer func() {
-				if r := recover(); r != nil {
-					t.Errorf("seed %d skew=%v PANIC %v", seed, skew, r)
-				}
-			}()
-			run_simulation_with(t, seed, skew)
-		}
-	}
-	for seed := int64(0); seed < limit; seed++ {
-		seed := seed
-		t.Run(fmt.Sprintf("off_%d", seed), run(seed, false))
-		t.Run(fmt.Sprintf("on_%d", seed), run(seed, true))
-	}
-}
-
 // Test_Cluster_Single_Primary drives many seeds in parallel, asserting no view ever has two acting
 // primaries. Seed 1 is the regression guard for the recovery-quiescence bug: before the fix it
 // drove the cluster into an agreement violation (op 2 committed as two different commands).
@@ -55,6 +29,12 @@ func Test_Cluster_Agreement(t *testing.T) {
 	// state-transfer splice overwrite a committed op — two replicas disagreeing on a committed
 	// op (simulator_bugs.md, Bug 15). A wider 400..1399 scan found it; this seed pins it.
 	seeds = append(seeds, 1266)
+	// Regression seed: a view-changing replica answered a catch-up Get_State with its stale
+	// uncommitted suffix (§5.2), so the requester kept op 109 = client-1002-req-49 past the
+	// view change that reused it for reconfigure-2, then committed it on a Commit (Bug 22).
+	// Reverting the view-change gate in replica_receive_get_state makes this seed fork; the fix
+	// makes it pass.
+	seeds = append(seeds, 3470)
 	for _, seed := range seeds {
 		t.Run(fmt.Sprintf("seed_%d", seed), func(t *testing.T) {
 			t.Parallel()
@@ -181,6 +161,19 @@ func Test_Cluster_Clock_Skew(t *testing.T) {
 	// non-attaching New_State under clock skew, which left a checkpoint-to-log gap the commit
 	// walk indexed into (simulator_bugs.md, Bug 16). A wider 400..1399 skew-on scan found it.
 	seeds = append(seeds, 1378)
+	// Permanent regression seeds for the skew-on liveness bugs the PRNG sweep surfaced
+	// (simulator_bugs.md, Bug 22): view-thrash from arming a delivery timer off the true clock
+	// while ticks read the perceived one (281); a stuck cluster that could not retry into the
+	// next view before the tail ended (639, 4171); a recovery that counted a replaced replica's
+	// stale response (997); and a reconfiguration grow that built a duplicate config (4405).
+	seeds = append(seeds, 281, 639, 4171, 997, 4405)
+	// Permanent regression seeds for the skew-on findings of the wider 0..24999 sweep
+	// (simulator_bugs.md, Bug 22): the divergence trio where a removed standby's Executed ran
+	// ahead of its applied state and it shipped a stale checkpoint (9194, 10700, 22312); an
+	// agreement fork from a higher-view New_State leaving a stale tail (13018); and two
+	// reconfiguration wedges where a fault-tolerant-retirement gate brings a stranded added
+	// member up (22678, 9437).
+	seeds = append(seeds, 9194, 10700, 22312, 13018, 22678, 9437)
 	for _, seed := range seeds {
 		t.Run(fmt.Sprintf("seed_%d", seed), func(t *testing.T) {
 			t.Parallel()
@@ -203,6 +196,17 @@ func Test_Cluster_Reconfiguration(t *testing.T) {
 	// Permanent regression seeds for the reconfiguration bugs the simulator found across the
 	// epoch boundary (simulator_bugs.md, Bug 9): exactly-once double-apply and commit-past-op.
 	seeds = append(seeds, 1045, 1166, 1841, 6605, 7683, 7642)
+	// Permanent regression seeds for the §7 deposed-primary / new-epoch-primary fork family the
+	// PRNG sweep surfaced (simulator_bugs.md, Bug 22): a stale old-epoch member bare-committing
+	// a divergent tail (2268, 460); a committed op lost when a recovering replica's op=0
+	// redirect made the new-epoch primary truncate it (3678); and an adopted-not-executed
+	// client-table record kept over the checkpoint's executed one, re-committing it (680).
+	seeds = append(seeds, 2268, 460, 3678, 680)
+	// Permanent regression seeds for the skew-off reconfiguration-liveness wedges of the wider
+	// 0..24999 sweep (simulator_bugs.md, Bug 22): an added member stranded when the new epoch's
+	// primary is down, broken by a replica replaced via redirect becoming a transitioning
+	// driver and a view-changing replica serving its committed prefix.
+	seeds = append(seeds, 8185, 20229)
 	results := make([]simulation_result, len(seeds))
 	for index, seed := range seeds {
 		t.Run(fmt.Sprintf("seed_%d", seed), func(t *testing.T) {
