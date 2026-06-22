@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	invariant "github.com/james-orcales/james-orcales/shared/invariant/default"
+	"github.com/james-orcales/james-orcales/shared/prng"
 	"github.com/james-orcales/james-orcales/shared/time"
 	"github.com/james-orcales/james-orcales/shared/vsr"
 )
@@ -16,38 +17,12 @@ func TestMain(m *testing.M) {
 	invariant.Run_Test_Main(m)
 }
 
-// Pseudo_random is a deterministic splitmix64 source. The simulator carries its own reproducible
-// generator so every choice flows from one seed and any failure reproduces exactly from it.
-type pseudo_random struct {
-	State uint64
-}
-
-// Advances the splitmix64 state and returns the next value.
-func pseudo_random_next(generator *pseudo_random) (value uint64) {
-	generator.State += 0x9e3779b97f4a7c15
-	value = generator.State
-	value = (value ^ (value >> 30)) * 0xbf58476d1ce4e5b9
-	value = (value ^ (value >> 27)) * 0x94d049bb133111eb
-	return value ^ (value >> 31)
-}
-
-// Returns a value in the half-open range [0, bound); bound must be positive. Modulo bias is
-// irrelevant to the simulation, which only needs reproducible spread.
-func pseudo_random_below(generator *pseudo_random, bound int) (value int) {
-	return int(pseudo_random_next(generator) % uint64(bound))
-}
-
-// Permutes messages in place by Fisher-Yates so delivery order is independent of send order,
-// modeling network reordering.
-func pseudo_random_shuffle(generator *pseudo_random, messages []scheduled_message) {
-	for index := len(messages) - 1; index > 0; index-- {
-		swap := pseudo_random_below(generator, index+1)
-		messages[index], messages[swap] = messages[swap], messages[index]
-	}
-}
-
 // How many virtual ticks one simulated run spans.
 const sim_total_ticks = 1500
+
+// How many virtual ticks the fault-free tail runs before declaring the cluster wedged. Generous: a
+// view change, a recovery, and a few client retries must all complete once faults cease.
+const sim_tail_ticks = 800
 
 // The superset of replicas pre-allocated for a run (§7): membership grows, shrinks, and swaps
 // within it as reconfigurations move the group, so the array must hold the largest group plus the
@@ -132,6 +107,12 @@ const sim_isolate_every = 180
 // How many millisecond grains a partition lasts.
 const sim_isolate_window = 150
 
+// The tick interval between transient clock-fault onsets, under the clock-skew sweep.
+const sim_clock_fault_every = 200
+
+// How many millisecond grains a transient clock fault lasts before it heals.
+const sim_clock_fault_window = 120
+
 // The largest message delay, in millisecond grains.
 const sim_delay_max = 3
 
@@ -201,6 +182,9 @@ type simulation_result struct {
 	// actually ran through consensus (§6.3, TigerBeetle's reads-through-consensus) rather than
 	// the workload being writes only.
 	Reads_Committed int
+	// Tail_Drained counts runs whose fault-free tail had open requests to drain, witnessing the
+	// liveness check exercised real work, not an already-quiescent cluster.
+	Tail_Drained int
 }
 
 // Scheduled_message is a message scheduled for delivery at a virtual moment.
@@ -213,10 +197,29 @@ type scheduled_message struct {
 // schedule, the fault generator, the clients, and the verification models. Its free functions
 // evolve it; run_simulation owns its life.
 type simulator struct {
-	T               *testing.T
-	Seed            int64
-	Generator       pseudo_random
-	Clock           time.Clock
+	T         *testing.T
+	Seed      int64
+	Generator prng.Generator
+	Clock     time.Clock
+	// Replica_Clocks is one virtual clock per replica index, ticked in lockstep with Clock
+	// but read independently so each replica perceives its own time — no two nodes share a
+	// clock. Skew off makes each read like Clock; skew and drift bend them apart.
+	Replica_Clocks []time.Clock
+	// Clock_Generator draws all per-replica clock randomness (offsets, drifts, fault onsets)
+	// from a stream SEPARATE from Generator, so adding clocks does not perturb the fault
+	// schedule the documented regression seeds reproduce.
+	Clock_Generator prng.Generator
+	// Clock_Skew enables per-replica offset, drift, and injected clock faults. Off (the
+	// default run) keeps every clock identical for exact traces; the sweep turns it on.
+	Clock_Skew bool
+	// Clock_Fault_Until and Clock_Fault_Offset model a transient clock fault (an NTP jump or
+	// a bad oscillator): while the true clock is before Clock_Fault_Until[i], replica i's
+	// perceived time is shifted by Clock_Fault_Offset[i]; past it the fault heals.
+	Clock_Fault_Until  []time.Moment
+	Clock_Fault_Offset []time.Duration
+	// Faultless, set for the fault-free tail, stops message drops and new client requests so
+	// the cluster can drain to a converged state for the liveness check.
+	Faultless       bool
 	Cluster_Count   int
 	Replicas        []vsr.Replica
 	Previous_Status []vsr.Status
@@ -343,26 +346,68 @@ func accumulator_fold(input *accumulator_fold_input) (next uint64) {
 // every delivery and recording the liveness coverage axes. A safety violation fails the test naming
 // the seed; the framework's Always/Sometimes do the rest.
 func run_simulation(t *testing.T, seed int64) (result simulation_result) {
+	return run_simulation_with(t, seed, false)
+}
+
+// Drives one seed, optionally with per-replica clock skew, drift, and injected clock faults. The
+// default run_simulation leaves every clock identical so its traces — and the regression seeds
+// pinned to them — are unchanged; Test_Cluster_Clock_Skew turns skew on to prove the safety
+// oracles still hold when no two nodes share a clock.
+func run_simulation_with(t *testing.T, seed int64, clock_skew bool) (result simulation_result) {
 	t.Helper()
+	state := new_simulator(t, seed, clock_skew)
+	simulator_run_main(state)
+	// Fault-free tail: heal every fault, then drain. After faults cease the cluster must
+	// converge (every open request commits, the voting set settles to Normal) or it has
+	// wedged — a liveness violation the tail reports naming the seed.
+	for index := range state.Isolated_Until {
+		state.Isolated_Until[index] = 0
+		state.Clock_Fault_Until[index] = 0
+	}
+	had_open_requests := false
+	for index := range state.Clients {
+		if state.Clients[index].Unanswered {
+			had_open_requests = true
+		}
+	}
+	if !simulator_run_tail(state) {
+		t.Fatalf("seed %d: cluster did not converge in the fault-free tail (wedged)", seed)
+	}
+	if had_open_requests {
+		state.Result.Tail_Drained++
+	}
+	return state.Result
+}
+
+// Builds one run's world: the superset of replicas, the clients, the verification models, and —
+// when clock_skew is set — each replica's own skewing clock.
+func new_simulator(t *testing.T, seed int64, clock_skew bool) (state *simulator) {
 	cluster_count := 3
 	if seed%2 == 0 {
 		cluster_count = 5 // Exercise both quorum sizes.
 	}
 	clock := time.Virtual_Clock_To_Clock(time.Virtual_Clock{Resolution: time.Millisecond})
-	state := &simulator{
-		T:               t,
-		Seed:            seed,
-		Generator:       pseudo_random{State: uint64(seed)},
-		Clock:           clock,
-		Cluster_Count:   cluster_count,
-		Replicas:        make([]vsr.Replica, sim_superset),
-		Previous_Status: make([]vsr.Status, sim_superset),
-		Isolated_Until:  make([]time.Moment, sim_superset),
-		Active:          make([]bool, sim_superset),
-		Next_Nonce:      vsr.Nonce(1),
-		Executed:        make([]map[string]bool, sim_superset),
-		Executed_Result: make([]map[string][]byte, sim_superset),
-		Accumulator:     make([]uint64, sim_superset),
+	state = &simulator{
+		T:              t,
+		Seed:           seed,
+		Generator:      prng.New(uint64(seed)),
+		Clock:          clock,
+		Replica_Clocks: make([]time.Clock, sim_superset),
+		// Clock stream seeded apart from Generator so per-replica clocks draw without
+		// shifting the main fault schedule the regression seeds reproduce.
+		Clock_Generator:    prng.New(uint64(seed) ^ 0xc10cc10cc10cc10c),
+		Clock_Skew:         clock_skew,
+		Clock_Fault_Until:  make([]time.Moment, sim_superset),
+		Clock_Fault_Offset: make([]time.Duration, sim_superset),
+		Cluster_Count:      cluster_count,
+		Replicas:           make([]vsr.Replica, sim_superset),
+		Previous_Status:    make([]vsr.Status, sim_superset),
+		Isolated_Until:     make([]time.Moment, sim_superset),
+		Active:             make([]bool, sim_superset),
+		Next_Nonce:         vsr.Nonce(1),
+		Executed:           make([]map[string]bool, sim_superset),
+		Executed_Result:    make([]map[string][]byte, sim_superset),
+		Accumulator:        make([]uint64, sim_superset),
 		Reference: reference_model{
 			Result_Of_Op:          map[vsr.Op][]byte{},
 			Request_Of_Op:         map[vsr.Op]outcome_key{},
@@ -378,8 +423,20 @@ func run_simulation(t *testing.T, seed int64) (result simulation_result) {
 		Reconfigure_After: sim_reconfigure_every,
 	}
 	simulator_allocate(state, cluster_count)
+	return state
+}
+
+// Drives the faulty phase: client load, crashes, partitions, reconfigurations, and message
+// loss/reorder/duplication on a virtual clock, asserting safety after every delivery and recording
+// the coverage axes.
+func simulator_run_main(state *simulator) {
 	for tick_index := 0; tick_index < sim_total_ticks; tick_index++ {
 		state.Clock.Tick()
+		// Advance every replica's own clock with the true clock; a drifting clock falls
+		// behind or races ahead within the same wall-clock tick.
+		for index := range state.Replica_Clocks {
+			state.Replica_Clocks[index].Tick()
+		}
 		now := state.Clock.Now_Monotonic()
 		simulator_inject_faults(state, tick_index, now)
 		simulator_inject_reconfiguration(state, tick_index, now)
@@ -389,7 +446,54 @@ func run_simulation(t *testing.T, seed int64) (result simulation_result) {
 		simulator_record_coverage(state)
 		simulator_deliver(state, now)
 	}
-	return state.Result
+}
+
+// Runs the fault-free tail: it stops new faults and new client requests, lets timers and delivery
+// drain the cluster, and returns whether it converged within sim_tail_ticks. The caller heals
+// partitions and clock faults first; a caller that leaves a fault in place (the negative test)
+// watches it fail to converge, proving the liveness check is not vacuous.
+func simulator_run_tail(state *simulator) (converged bool) {
+	state.Faultless = true
+	for tick_index := 0; tick_index < sim_tail_ticks; tick_index++ {
+		state.Clock.Tick()
+		for index := range state.Replica_Clocks {
+			state.Replica_Clocks[index].Tick()
+		}
+		now := state.Clock.Now_Monotonic()
+		simulator_tick_clients(state, now)
+		simulator_tick_replicas(state, now)
+		simulator_assert_safety(state)
+		simulator_deliver(state, now)
+		if simulator_converged(state) {
+			return true
+		}
+	}
+	return false
+}
+
+// Reports whether the cluster has drained: every client request answered, and every voting member
+// of the current configuration active and back to Status_Normal (no one stuck in view change or
+// recovery). Standbys are not required to have caught up, only the voting set that serves requests.
+func simulator_converged(state *simulator) (converged bool) {
+	for index := range state.Clients {
+		if state.Clients[index].Unanswered {
+			return false
+		}
+	}
+	voting_count := int(active_count_for(len(state.Configuration)))
+	for position_index := 0; position_index < voting_count; position_index++ {
+		if position_index >= len(state.Configuration) {
+			break
+		}
+		identifier := state.Configuration[position_index]
+		if !state.Active[identifier] {
+			return false
+		}
+		if state.Replicas[identifier].Status != vsr.Status_Normal {
+			return false
+		}
+	}
+	return true
 }
 
 // Builds the superset of replicas and the clients for a run. The initial group's members start
@@ -401,13 +505,14 @@ func simulator_allocate(state *simulator, cluster_count int) {
 	for index := range state.Replicas {
 		state.Executed[index] = map[string]bool{}
 		state.Executed_Result[index] = map[string][]byte{}
-		jitter := time.Duration(50 + pseudo_random_below(&state.Generator, 40))
+		jitter := time.Duration(50 + prng.Generator_Below(&state.Generator, 40))
 		configuration := initial
 		active := index < cluster_count
 		if !active {
 			configuration = dormant_configuration(index)
 		}
 		state.Active[index] = active
+		state.Replica_Clocks[index] = simulator_replica_clock(state)
 		state.Replicas[index] = vsr.New_Replica(&vsr.New_Replica_Input{
 			Identifier:          vsr.Replica_Identifier(index),
 			Configuration:       configuration,
@@ -418,7 +523,7 @@ func simulator_allocate(state *simulator, cluster_count int) {
 			Checkpoint_Interval: sim_checkpoint_interval,
 			Log_Retain:          sim_log_retain,
 			Batch_Max:           sim_batch_max,
-			Now:                 state.Clock.Now_Monotonic(),
+			Now:                 state.Replica_Clocks[index].Now_Realtime(),
 		})
 		state.Previous_Status[index] = state.Replicas[index].Status
 	}
@@ -427,6 +532,23 @@ func simulator_allocate(state *simulator, cluster_count int) {
 		// Client identifiers start above any replica identifier so they never alias.
 		state.Clients[index] = client{Identifier: vsr.Client_Identifier(1000 + index)}
 	}
+}
+
+// Builds one replica's clock. Skew off makes it read like the true clock; skew on gives it a
+// per-replica offset (Epoch) and a bounded linear drift, so no two replicas share time: the
+// offset differentiates the §4.4 timestamps each would stamp and the drift desynchronizes their
+// timeouts — what VSR safety must survive by leaning on consensus, not the clock.
+func simulator_replica_clock(state *simulator) (clock time.Clock) {
+	virtual := time.Virtual_Clock{Resolution: time.Millisecond}
+	if state.Clock_Skew {
+		virtual.Epoch = time.Moment(prng.Generator_Below(&state.Clock_Generator, 50)) *
+			time.Moment(time.Millisecond)
+		// Drift A ns/tick shifts the effective rate to Resolution-A; |A| far below
+		// Resolution keeps the clock monotonic while still drifting up to ~2%.
+		rate := time.Duration(prng.Generator_Below(&state.Clock_Generator, 40001) - 20000)
+		virtual.Skew = time.Skew(time.Skew_Input{Kind: time.Skew_Kind_Linear, A: rate})
+	}
+	return time.Virtual_Clock_To_Clock(virtual)
 }
 
 // A dormant pre-allocated node's placeholder configuration: three members including itself,
@@ -482,7 +604,7 @@ func simulator_state_machine(state *simulator, index int) (machine vsr.State_Mac
 			return result
 		},
 		Predict: func(command []byte) (prediction []byte) {
-			return moment_to_bytes(state.Clock.Now_Monotonic())
+			return moment_to_bytes(simulator_replica_now(state, index))
 		},
 		Snapshot: func() (snapshot []byte) {
 			return uint64_to_bytes(state.Accumulator[index])
@@ -538,33 +660,76 @@ func simulator_inject_faults(state *simulator, tick_index int, now time.Moment) 
 		simulator_inject_crash(state, now)
 	}
 	if tick_index%sim_isolate_every == 0 {
-		active := simulator_active_indices(state)
-		if len(active) > 0 {
-			victim := active[pseudo_random_below(&state.Generator, len(active))]
-			window := time.Moment(sim_isolate_window) * time.Moment(time.Millisecond)
-			state.Isolated_Until[victim] = now + window
+		simulator_inject_isolation(state, now)
+	}
+	if state.Clock_Skew {
+		if tick_index%sim_clock_fault_every == 0 {
+			simulator_inject_clock_fault(state, now)
 		}
 	}
 }
 
-// Crash-restarts one active normal replica, keeping the active normal count above the active
-// group's quorum so the cluster can still make progress (and a recovering replica still finds a
-// quorum to answer it). Half the crashes are warm (checkpoint survived on disk) and half cold
-// (everything lost), so both recovery paths run across the sweep.
-func simulator_inject_crash(state *simulator, now time.Moment) {
+// Applies a transient clock fault to one active replica: a forward step in its perceived time for a
+// window, modeling an NTP correction or a bad oscillator. Perceived time jumps forward while the
+// fault is open and snaps back when it heals — both directions a clock can move that safety must
+// survive and liveness must recover from. The draw is from the separate clock stream, and the fault
+// fires only under the clock-skew sweep.
+func simulator_inject_clock_fault(state *simulator, now time.Moment) {
 	active := simulator_active_indices(state)
-	quorum := len(state.Configuration)/2 + 1
-	if simulator_active_normal_count(state) <= quorum {
-		return // Too few up to spare one; a crash would stall the active group.
-	}
 	if len(active) == 0 {
 		return
 	}
-	victim := active[pseudo_random_below(&state.Generator, len(active))]
+	victim := active[prng.Generator_Below(&state.Clock_Generator, len(active))]
+	jump := time.Duration(20+prng.Generator_Below(&state.Clock_Generator, 40)) *
+		time.Duration(time.Millisecond)
+	state.Clock_Fault_Offset[victim] = jump
+	state.Clock_Fault_Until[victim] = now +
+		time.Moment(sim_clock_fault_window)*time.Moment(time.Millisecond)
+}
+
+// Partitions one active replica for a window. A voting replica is partitioned only when the group
+// is fully settled: a reconfiguration's stranded member plus a freshly partitioned one would leave
+// two voting replicas behind, deadlocking recovery (beyond the fault model). A standby never
+// threatens the quorum.
+func simulator_inject_isolation(state *simulator, now time.Moment) {
+	active := simulator_active_indices(state)
+	if len(active) == 0 {
+		return
+	}
+	victim := active[prng.Generator_Below(&state.Generator, len(active))]
+	if !is_standby(&state.Replicas[victim]) {
+		if !simulator_group_settled(state) {
+			return
+		}
+	}
+	window := time.Moment(sim_isolate_window) * time.Moment(time.Millisecond)
+	state.Isolated_Until[victim] = now + window
+}
+
+// Crash-restarts one active normal replica, respecting the fault model so the cluster stays
+// recoverable. Half the crashes are warm (checkpoint survived on disk) and half cold (everything
+// lost), so both recovery paths run across the sweep.
+func simulator_inject_crash(state *simulator, now time.Moment) {
+	active := simulator_active_indices(state)
+	if len(active) == 0 {
+		return
+	}
+	victim := active[prng.Generator_Below(&state.Generator, len(active))]
 	if state.Replicas[victim].Status != vsr.Status_Normal {
 		return
 	}
-	warm := pseudo_random_below(&state.Generator, 2) == 0
+	// Respect the fault model. The voting set tolerates one fault, but a reconfiguration can
+	// strand one, so crash a voting replica only when the group is fully settled
+	// (every voting member Normal at the frontier). Crashing mid-handoff strands two at once;
+	// they recover with no quorum to answer them and deadlock. A standby is non-voting, so
+	// crashing one never threatens the quorum, and a standby recovering during a handoff still
+	// witnesses the §7.2 reconfigure-over-recovery overlap.
+	if !is_standby(&state.Replicas[victim]) {
+		if !simulator_group_settled(state) {
+			return
+		}
+	}
+	warm := prng.Generator_Below(&state.Generator, 2) == 0
 	if warm {
 		state.Result.Warm_Recoveries_Started++
 	}
@@ -701,31 +866,32 @@ func simulator_active_indices(state *simulator) (indices []int) {
 	return indices
 }
 
-// How many active replicas are currently serving normally — the count the crash injector must keep
-// above the active group's quorum.
-func simulator_active_normal_count(state *simulator) (count int) {
-	for index := range state.Replicas {
-		if !state.Active[index] {
-			continue
-		}
-		if state.Replicas[index].Status == vsr.Status_Normal {
-			count++
-		}
-	}
-	return count
-}
-
 // Folds the current moment into every ACTIVE replica and ships what each emits, routing any replies
 // to their clients and advancing the verification models. A dormant pre-allocated node and a
 // shut-down replica are not ticked: they are out of the protocol. Membership is refreshed afterward
 // so a replica that shut down or joined this tick is reflected before delivery.
+// Returns a replica's perceived time: its own virtual clock's reading. Each replica reads its own
+// clock rather than a shared global one, so no two nodes' clocks are assumed equal — the realistic
+// model, and the adversarial test that VSR safety depends only on consensus, never on the clock.
+// With skew off this equals the true clock; the skew step bends Epoch/drift per replica and an
+// injected clock fault offsets it for a window.
+func simulator_replica_now(state *simulator, index int) (now time.Moment) {
+	now = state.Replica_Clocks[index].Now_Realtime()
+	// A transient clock fault shifts perceived time until it heals at Clock_Fault_Until; a zero
+	// (unset) deadline is always in the past, so a replica with no fault is unaffected.
+	if state.Clock.Now_Monotonic() < state.Clock_Fault_Until[index] {
+		now += time.Moment(state.Clock_Fault_Offset[index])
+	}
+	return now
+}
+
 func simulator_tick_replicas(state *simulator, now time.Moment) {
 	for index := range state.Replicas {
 		if !state.Active[index] {
 			continue
 		}
 		output := vsr.Replica_Tick(&vsr.Replica_Tick_Input{
-			Replica: &state.Replicas[index], Now: now,
+			Replica: &state.Replicas[index], Now: simulator_replica_now(state, index),
 		})
 		simulator_handle_output(state, output, now)
 	}
@@ -771,14 +937,24 @@ func simulator_refresh_membership(state *simulator) {
 	state.Epoch = highest
 }
 
-// The next pre-allocated index not in the current configuration, the fresh node a future swap or
-// grow brings in. It walks the superset for the first identifier the current group does not already
-// hold, so a reconfiguration never re-adds a node that is already a member.
+// The next pre-allocated index a future swap or grow brings in as a brand-new node. It walks the
+// superset for the first PRISTINE identifier — one not in the current group and never used before —
+// so a reconfiguration never re-adds a node that is already a member, nor resurrects a spent one. A
+// replaced node has shut down for good and advanced its epoch past zero; re-adding its identifier
+// would plant a dead, un-catchable node in the voting set that no fault-free tail could ever bring
+// to Normal (the wedge the liveness tail surfaced).
 func simulator_next_fresh(state *simulator) (index int) {
 	for index = 0; index < sim_superset; index++ {
-		if !configuration_contains(state.Configuration, vsr.Replica_Identifier(index)) {
-			return index
+		if configuration_contains(state.Configuration, vsr.Replica_Identifier(index)) {
+			continue
 		}
+		if state.Replicas[index].Epoch != 0 {
+			continue
+		}
+		if state.Replicas[index].Status == vsr.Status_Shutdown {
+			continue
+		}
+		return index
 	}
 	return sim_superset
 }
@@ -798,7 +974,10 @@ func simulator_tick_clients(state *simulator, now time.Moment) {
 			}
 			continue
 		}
-		recover := pseudo_random_below(&state.Generator, 100) < sim_client_recover_percent
+		if state.Faultless {
+			continue // The tail drains open requests; it issues no new ones.
+		}
+		recover := prng.Generator_Below(&state.Generator, 100) < sim_client_recover_percent
 		if recover {
 			// Forget the request-number and re-send the last command to relearn the
 			// number from the cached reply, the §4.5 recovery path. A client with no
@@ -938,7 +1117,7 @@ func simulator_deliver(state *simulator, now time.Moment) {
 		}
 	}
 	state.Network = held_back
-	pseudo_random_shuffle(&state.Generator, due)
+	prng.Generator_Shuffle(&state.Generator, due)
 	for _, flight := range due {
 		if simulator_is_isolated(state, flight.Message.From, now) {
 			continue // A partition drops the message; senders' timers will retry.
@@ -993,7 +1172,12 @@ func simulator_deliver(state *simulator, now time.Moment) {
 // that adds it; everything else to it is dropped, since it is not in play.
 func simulator_deliverable(state *simulator, message vsr.Message) (deliverable bool) {
 	if state.Replicas[message.To].Status == vsr.Status_Shutdown {
-		return false
+		// A shut-down node accepts only a Start_Epoch: a later reconfiguration that
+		// re-adds its identifier revives it as a fresh member (the paper provisions a
+		// fresh node for the new configuration). Without this a node that shut down when
+		// an earlier epoch dropped it could never rejoin when a later epoch adds it back,
+		// wedging the cluster below quorum; receive_start_epoch's adopt path catches it up.
+		return message.Kind == vsr.Message_Kind_Start_Epoch
 	}
 	if state.Active[message.To] {
 		return true
@@ -1198,15 +1382,18 @@ func simulator_send(state *simulator, messages []vsr.Message, now time.Moment) {
 				state.Result.Do_View_Change_Suffixes++
 			}
 		}
-		if pseudo_random_below(&state.Generator, 100) < sim_drop_percent {
-			continue
+		if !state.Faultless {
+			// The fault-free tail delivers everything; only the faulty phase drops.
+			if prng.Generator_Below(&state.Generator, 100) < sim_drop_percent {
+				continue
+			}
 		}
 		copies := 1
-		if pseudo_random_below(&state.Generator, 100) < sim_duplicate_percent {
+		if prng.Generator_Below(&state.Generator, 100) < sim_duplicate_percent {
 			copies = 2
 		}
 		for copy_index := 0; copy_index < copies; copy_index++ {
-			grains := pseudo_random_below(&state.Generator, sim_delay_max+1)
+			grains := prng.Generator_Below(&state.Generator, sim_delay_max+1)
 			delay := time.Moment(grains) * time.Moment(time.Millisecond)
 			state.Network = append(state.Network, scheduled_message{
 				Message: message, Deliver_At: now + delay,
@@ -1235,6 +1422,34 @@ func simulator_assert_safety(state *simulator) {
 	simulator_check_result_agreement(state)
 	simulator_check_checkpoint_agreement(state)
 	simulator_check_accumulator(state)
+	simulator_check_fault_model(state)
+}
+
+// Asserts the harness keeps the cluster within its fault model: the voting set tolerates
+// f = (active_count-1)/2 faults, so at most f voting replicas may be recovering at once. Past that,
+// fewer than a quorum are Normal, so no one can answer the recoveries and the cluster is
+// unrecoverable — a state the fault-free tail could never drain. Checking after every delivery pins
+// the exact step that broke the model, not a wedge 1500 ticks later.
+func simulator_check_fault_model(state *simulator) {
+	voting_count := int(active_count_for(len(state.Configuration)))
+	if voting_count > len(state.Configuration) {
+		voting_count = len(state.Configuration)
+	}
+	f := (voting_count - 1) / 2
+	recovery_count := 0
+	for position_index := 0; position_index < voting_count; position_index++ {
+		identifier := state.Configuration[position_index]
+		if !state.Active[identifier] {
+			continue
+		}
+		if state.Replicas[identifier].Status == vsr.Status_Recovery {
+			recovery_count++
+		}
+	}
+	if recovery_count > f {
+		state.T.Fatalf("seed %d: %d of %d voting recovering, over f=%d (fault model)",
+			state.Seed, recovery_count, voting_count, f)
+	}
 }
 
 // Asserts any two replicas that have taken a checkpoint at the same op hold byte-identical
@@ -1438,7 +1653,59 @@ func simulator_record_coverage(state *simulator) {
 				state.Clients[index].Unanswered,
 				"client has an unanswered request"))
 	}
+	// Clock skew must be witnessed both ways: the spread between the fastest and slowest
+	// replica's perceived time sometimes exceeds five milliseconds (the skew sweep) and
+	// sometimes does not (the default shared-clock runs), so the model is genuinely exercised.
+	invariant.Dot_Product("sim.clock.skew_observed",
+		invariant.Sometimes(
+			simulator_clock_skew(state) > time.Moment(5)*time.Moment(time.Millisecond),
+			"replica clocks skewed past five milliseconds"))
+	// A transient clock fault must sometimes be active (the skew sweep injects them) and
+	// sometimes not, so the fault path is witnessed both ways across the sweep.
+	invariant.Dot_Product("sim.clock.fault_active",
+		invariant.Sometimes(
+			simulator_clock_fault_active(state),
+			"a replica clock is faulted"))
 	simulator_record_result_coverage(state)
+}
+
+// Reports whether any active replica is currently inside a transient clock-fault window.
+func simulator_clock_fault_active(state *simulator) (active bool) {
+	now := state.Clock.Now_Monotonic()
+	for index := range state.Replicas {
+		if !state.Active[index] {
+			continue
+		}
+		if now < state.Clock_Fault_Until[index] {
+			return true
+		}
+	}
+	return false
+}
+
+// Returns the spread between the highest and lowest perceived time across active replicas — the
+// cluster's clock skew this tick. Zero when fewer than two replicas are active.
+func simulator_clock_skew(state *simulator) (spread time.Moment) {
+	low := time.Moment(0)
+	high := time.Moment(0)
+	seen := false
+	for index := range state.Replicas {
+		if !state.Active[index] {
+			continue
+		}
+		now := simulator_replica_now(state, index)
+		if !seen {
+			low, high, seen = now, now, true
+			continue
+		}
+		if now < low {
+			low = now
+		}
+		if now > high {
+			high = now
+		}
+	}
+	return high - low
 }
 
 func simulator_record_result_coverage(state *simulator) {
@@ -1684,10 +1951,12 @@ func simulator_check_agreement_pair(input *simulator_check_agreement_pair_input)
 		ai := op - vsr.Commit(a.Log_Start) - 1
 		bi := op - vsr.Commit(b.Log_Start) - 1
 		if string(a.Log[ai].Command) != string(b.Log[bi].Command) {
-			input.State.T.Fatalf("seed %d: op %d diverges: %d=%q %d=%q",
+			input.State.T.Fatalf("seed %d: op %d diverges: %d=%q(bview=%d ep=%d "+
+				"view=%d commit=%d) %d=%q(bview=%d ep=%d view=%d commit=%d)",
 				input.State.Seed, op,
-				a.Identifier, a.Log[ai].Command,
-				b.Identifier, b.Log[bi].Command)
+				a.Identifier, a.Log[ai].Command, a.Log[ai].View, a.Epoch, a.View,
+				a.Commit, b.Identifier, b.Log[bi].Command, b.Log[bi].View, b.Epoch,
+				b.View, b.Commit)
 		}
 	}
 }

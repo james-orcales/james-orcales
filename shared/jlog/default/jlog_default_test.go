@@ -9,7 +9,7 @@ import (
 
 	"github.com/james-orcales/james-orcales/shared/diode"
 	jlog "github.com/james-orcales/james-orcales/shared/jlog/default"
-	jtime "github.com/james-orcales/james-orcales/shared/time"
+	"github.com/james-orcales/james-orcales/shared/time"
 	system_time "github.com/james-orcales/james-orcales/shared/time/default"
 )
 
@@ -21,7 +21,7 @@ func Test_Default_Global_Info(t *testing.T) {
 	defer func() { jlog.Default = saved }()
 	jlog.Default = jlog.New(jlog.New_Input{
 		Writer: buffer,
-		Clock:  jtime.Clock{Now_Realtime: func() (moment jtime.Moment) { return 0 }},
+		Clock:  time.Clock{Now_Realtime: func() (moment time.Moment) { return 0 }},
 		Floor:  jlog.Level_Trace,
 	})
 	jlog.Info("hello", jlog.String("user", "bob"))
@@ -33,8 +33,8 @@ func Test_Default_Global_Info(t *testing.T) {
 }
 
 // A clock whose realtime reading is always zero.
-func frozen() (clock jtime.Clock) {
-	return jtime.Clock{Now_Realtime: func() (moment jtime.Moment) { return 0 }}
+func frozen() (clock time.Clock) {
+	return time.Clock{Now_Realtime: func() (moment time.Moment) { return 0 }}
 }
 
 // Test_Default_Caller_Uses_Runtime exercises the OS-backed caller lookup wired into
@@ -88,8 +88,8 @@ func Test_Default_Cover_API(t *testing.T) {
 		jlog.Bytes("i", []byte("x")),
 		jlog.Hexadecimal("j", []byte{1}),
 		jlog.Raw_JSON("k", []byte("1")),
-		jlog.Time("l", jtime.Moment(0)),
-		jlog.Duration("m", jtime.Second),
+		jlog.Time("l", time.Moment(0)),
+		jlog.Duration("m", time.Second),
 		jlog.IP_Address("n", net.IPv4(1, 2, 3, 4)),
 		jlog.MAC_Address("o", net.HardwareAddr{1, 2, 3, 4, 5, 6}),
 		jlog.Any("p", 1),
@@ -97,7 +97,7 @@ func Test_Default_Cover_API(t *testing.T) {
 		jlog.Integers("r", []int{1}),
 		jlog.Floats64("s", []float64{1}),
 		jlog.Booleans("u", []bool{true}),
-		jlog.Durations("w", []jtime.Duration{jtime.Second}),
+		jlog.Durations("w", []time.Duration{time.Second}),
 		jlog.Err(errors.New("boom")),
 		jlog.Timestamp(),
 		jlog.Caller(),

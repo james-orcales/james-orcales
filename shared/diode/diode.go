@@ -8,7 +8,7 @@
 // This is a house-style port of the diode in CloudFoundry's go-diodes (the same
 // structure rs/zerolog wraps). It uses the Poller strategy: when the ring is empty
 // the drain sleeps for Poll_Interval before checking again. The sleep is taken via
-// the injected jtime.Clock so the library tier holds no impure time dependency and
+// the injected time.Clock so the library tier holds no impure time dependency and
 // the drain loop stays deterministic under a virtual clock in tests.
 //
 // A diode trades reliability for non-blocking writes. Lines can be dropped under
@@ -23,7 +23,7 @@ import (
 	"sync/atomic"
 	"unsafe"
 
-	jtime "github.com/james-orcales/james-orcales/shared/time"
+	"github.com/james-orcales/james-orcales/shared/time"
 )
 
 // Ring slot count used when New_Input.Count is unset; 1000 lines of slack absorbs
@@ -31,7 +31,7 @@ import (
 const default_count = 1000
 
 // How long the drain sleeps on an empty ring when New_Input.Poll_Interval is unset.
-const default_poll_interval = 100 * jtime.Millisecond
+const default_poll_interval = 100 * time.Millisecond
 
 // Caps the capacity of a line buffer returned to the pool, so one giant line cannot
 // bloat every pooled entry (see Go issue 23199).
@@ -66,9 +66,9 @@ type Writer struct {
 	Writer io.Writer
 	// Clock supplies the drain loop's Sleep; the library tier never calls stdlib
 	// time, so a real sleep is injected here (and a virtual one in tests).
-	Clock jtime.Clock
+	Clock time.Clock
 	// Poll_Interval is how long the drain sleeps when it finds the ring empty.
-	Poll_Interval jtime.Duration
+	Poll_Interval time.Duration
 	// Alerter surfaces dropped lines (overflow or rate-limit) rather than losing them
 	// silently; see Drop_Cause.
 	Alerter Alerter
@@ -88,7 +88,7 @@ type Writer struct {
 	// Tokens is the rate limiter's byte balance, touched only by the drain goroutine.
 	Tokens int64
 	// Last_Refill is when Tokens were last replenished, for the drain's elapsed-time refill.
-	Last_Refill jtime.Moment
+	Last_Refill time.Moment
 	// Stop is closed by Close to ask the drain to flush and exit.
 	Stop chan struct{}
 	// Done is closed by the drain once it has flushed and returned.
@@ -100,11 +100,11 @@ type New_Input struct {
 	// Writer is the sink to wrap; nil becomes io.Discard.
 	Writer io.Writer
 	// Clock supplies the drain's Sleep; required (the drain panics without it).
-	Clock jtime.Clock
+	Clock time.Clock
 	// Count is the ring slot count; zero or negative uses default_count.
 	Count int
 	// Poll_Interval is the empty-ring sleep; zero or negative uses one hundred milliseconds.
-	Poll_Interval jtime.Duration
+	Poll_Interval time.Duration
 	// Rate_Limit caps the sink write rate in bytes per second; the zero value is no limit.
 	Rate_Limit Rate_Limit
 	// Alerter receives the dropped-entry count and cause; nil installs a no-op.
@@ -158,6 +158,7 @@ func New(input New_Input) (writer *Writer) {
 		Alerter:       alerter,
 		Rate_Limit:    limit,
 		Tokens:        int64(limit.Burst),
+		Last_Refill:   input.Clock.Now_Monotonic(),
 		Buffer_Pool:   &sync.Pool{New: new_bucket},
 		Slots:         make([]unsafe.Pointer, count),
 		Stop:          make(chan struct{}),
@@ -330,16 +331,24 @@ func forward(writer *Writer, item *bucket) {
 // line is dropped, never delayed). A disabled limiter (Bytes_Per_Second <= 0) never sheds.
 // Only the drain goroutine calls this, so the bucket state needs no synchronization.
 func rate_limit_sheds(writer *Writer, size int) (shed bool) {
-	if writer.Rate_Limit.Bytes_Per_Second <= 0 {
+	rate := int64(writer.Rate_Limit.Bytes_Per_Second)
+	if rate <= 0 {
 		return false
 	}
+	burst := int64(writer.Rate_Limit.Burst)
 	now := writer.Clock.Now_Monotonic()
 	elapsed := int64(now) - int64(writer.Last_Refill)
 	writer.Last_Refill = now
-	refilled := elapsed * int64(writer.Rate_Limit.Bytes_Per_Second) / int64(jtime.Second)
-	writer.Tokens += refilled
-	if writer.Tokens > int64(writer.Rate_Limit.Burst) {
-		writer.Tokens = int64(writer.Rate_Limit.Burst)
+	// Cap elapsed at the time to refill a full burst: beyond that the refill is wasted (the
+	// balance is capped at Burst anyway), and the cap keeps elapsed*rate from overflowing
+	// int64 after a long idle gap or against a large monotonic clock reading.
+	full := burst * int64(time.Second) / rate
+	if elapsed > full {
+		elapsed = full
+	}
+	writer.Tokens += elapsed * rate / int64(time.Second)
+	if writer.Tokens > burst {
+		writer.Tokens = burst
 	}
 	if writer.Tokens <= 0 {
 		return true
