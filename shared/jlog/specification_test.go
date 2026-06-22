@@ -36,7 +36,7 @@ func Test_Scalar_Fields(t *testing.T) {
 		jlog.String("s", "v"),
 		jlog.Boolean("b", true),
 		jlog.Integer("i", -7),
-		jlog.Uint64("u", 9),
+		jlog.Uint64("u", uint64(9)),
 		jlog.Float64("f", 1.5),
 	)
 	assert_output(t, buffer,
@@ -305,7 +305,7 @@ func Benchmark_Log_Fields(b *testing.B) {
 				jlog.String("string", "four!"),
 				jlog.Time("time", fixed_moment),
 				jlog.Integer("int", 123),
-				jlog.Float32("float", -2.203230293249593),
+				jlog.Float32("float", float32(-2.203230293249593)),
 			)
 		}
 	})
@@ -317,7 +317,7 @@ func Benchmark_Context_Fields(b *testing.B) {
 		jlog.String("string", "four!"),
 		jlog.Time("time", fixed_moment),
 		jlog.Integer("int", 123),
-		jlog.Float32("float", -2.203230293249593),
+		jlog.Float32("float", float32(-2.203230293249593)),
 	)
 	b.ReportAllocs()
 	b.ResetTimer()
@@ -358,9 +358,9 @@ func Test_Cover_Level_String(t *testing.T) {
 func Test_Cover_Numeric_And_Slice_Fields(t *testing.T) {
 	buffer := &bytes.Buffer{}
 	jlog.Logger_Info(new_logger(buffer), "",
-		jlog.Int64("a", -5),
-		jlog.Uint("b", 6),
-		jlog.Float32("c", 1.5),
+		jlog.Int64("a", int64(-5)),
+		jlog.Uint("b", uint(6)),
+		jlog.Float32("c", float32(1.5)),
 		jlog.Floats64("d", []float64{1.5, 2.5}),
 		jlog.Booleans("e", []bool{true, false}),
 		jlog.Durations("f", []time.Duration{time.Second, 2 * time.Second}),
@@ -523,11 +523,11 @@ func Test_Cover_Floats(t *testing.T) {
 		jlog.Float64("nan", math.NaN()),
 		jlog.Float64("pinf", math.Inf(1)),
 		jlog.Float64("ninf", math.Inf(-1)),
-		jlog.Float64("zero", 0),
-		jlog.Float64("small", 1e-7),
-		jlog.Float64("big", 1e21),
-		jlog.Float32("small32", 1e-7),
-		jlog.Float32("big32", 1e21),
+		jlog.Float64("zero", float64(0)),
+		jlog.Float64("small", float64(1e-7)),
+		jlog.Float64("big", float64(1e21)),
+		jlog.Float32("small32", float32(1e-7)),
+		jlog.Float32("big32", float32(1e21)),
 	)
 	want := "{\"level\":\"info\",\"nan\":\"NaN\",\"pinf\":\"+Inf\",\"ninf\":\"-Inf\"," +
 		"\"zero\":0,\"small\":1e-7,\"big\":1e+21,\"small32\":1e-7,\"big32\":1e+21}\n"
