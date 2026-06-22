@@ -17,36 +17,6 @@ func TestMain(m *testing.M) {
 	invariant.Run_Test_Main(m)
 }
 
-// Pseudo_random is a deterministic splitmix64 source. The simulator carries its own reproducible
-// generator so every choice flows from one seed and any failure reproduces exactly from it.
-type pseudo_random struct {
-	State uint64
-}
-
-// Advances the splitmix64 state and returns the next value.
-func pseudo_random_next(generator *pseudo_random) (value uint64) {
-	generator.State += 0x9e3779b97f4a7c15
-	value = generator.State
-	value = (value ^ (value >> 30)) * 0xbf58476d1ce4e5b9
-	value = (value ^ (value >> 27)) * 0x94d049bb133111eb
-	return value ^ (value >> 31)
-}
-
-// Returns a value in the half-open range [0, bound); bound must be positive. Modulo bias is
-// irrelevant to the simulation, which only needs reproducible spread.
-func pseudo_random_below(generator *pseudo_random, bound int) (value int) {
-	return int(pseudo_random_next(generator) % uint64(bound))
-}
-
-// Permutes messages in place by Fisher-Yates so delivery order is independent of send order,
-// modeling network reordering.
-func pseudo_random_shuffle(generator *pseudo_random, messages []scheduled_message) {
-	for index := len(messages) - 1; index > 0; index-- {
-		swap := pseudo_random_below(generator, index+1)
-		messages[index], messages[swap] = messages[swap], messages[index]
-	}
-}
-
 // How many virtual ticks one simulated run spans.
 const sim_total_ticks = 1500
 
@@ -229,7 +199,7 @@ type scheduled_message struct {
 type simulator struct {
 	T         *testing.T
 	Seed      int64
-	Generator pseudo_random
+	Generator prng.Generator
 	Clock     time.Clock
 	// Replica_Clocks is one virtual clock per replica index, ticked in lockstep with Clock
 	// but read independently so each replica perceives its own time — no two nodes share a
@@ -420,7 +390,7 @@ func new_simulator(t *testing.T, seed int64, clock_skew bool) (state *simulator)
 	state = &simulator{
 		T:              t,
 		Seed:           seed,
-		Generator:      pseudo_random{State: uint64(seed)},
+		Generator:      prng.New(uint64(seed)),
 		Clock:          clock,
 		Replica_Clocks: make([]time.Clock, sim_superset),
 		// Clock stream seeded apart from Generator so per-replica clocks draw without
@@ -535,7 +505,7 @@ func simulator_allocate(state *simulator, cluster_count int) {
 	for index := range state.Replicas {
 		state.Executed[index] = map[string]bool{}
 		state.Executed_Result[index] = map[string][]byte{}
-		jitter := time.Duration(50 + pseudo_random_below(&state.Generator, 40))
+		jitter := time.Duration(50 + prng.Generator_Below(&state.Generator, 40))
 		configuration := initial
 		active := index < cluster_count
 		if !active {
@@ -726,7 +696,7 @@ func simulator_inject_isolation(state *simulator, now time.Moment) {
 	if len(active) == 0 {
 		return
 	}
-	victim := active[pseudo_random_below(&state.Generator, len(active))]
+	victim := active[prng.Generator_Below(&state.Generator, len(active))]
 	if !is_standby(&state.Replicas[victim]) {
 		if !simulator_group_settled(state) {
 			return
@@ -744,7 +714,7 @@ func simulator_inject_crash(state *simulator, now time.Moment) {
 	if len(active) == 0 {
 		return
 	}
-	victim := active[pseudo_random_below(&state.Generator, len(active))]
+	victim := active[prng.Generator_Below(&state.Generator, len(active))]
 	if state.Replicas[victim].Status != vsr.Status_Normal {
 		return
 	}
@@ -759,7 +729,7 @@ func simulator_inject_crash(state *simulator, now time.Moment) {
 			return
 		}
 	}
-	warm := pseudo_random_below(&state.Generator, 2) == 0
+	warm := prng.Generator_Below(&state.Generator, 2) == 0
 	if warm {
 		state.Result.Warm_Recoveries_Started++
 	}
@@ -1007,7 +977,7 @@ func simulator_tick_clients(state *simulator, now time.Moment) {
 		if state.Faultless {
 			continue // The tail drains open requests; it issues no new ones.
 		}
-		recover := pseudo_random_below(&state.Generator, 100) < sim_client_recover_percent
+		recover := prng.Generator_Below(&state.Generator, 100) < sim_client_recover_percent
 		if recover {
 			// Forget the request-number and re-send the last command to relearn the
 			// number from the cached reply, the §4.5 recovery path. A client with no
@@ -1147,7 +1117,7 @@ func simulator_deliver(state *simulator, now time.Moment) {
 		}
 	}
 	state.Network = held_back
-	pseudo_random_shuffle(&state.Generator, due)
+	prng.Generator_Shuffle(&state.Generator, due)
 	for _, flight := range due {
 		if simulator_is_isolated(state, flight.Message.From, now) {
 			continue // A partition drops the message; senders' timers will retry.
@@ -1414,16 +1384,16 @@ func simulator_send(state *simulator, messages []vsr.Message, now time.Moment) {
 		}
 		if !state.Faultless {
 			// The fault-free tail delivers everything; only the faulty phase drops.
-			if pseudo_random_below(&state.Generator, 100) < sim_drop_percent {
+			if prng.Generator_Below(&state.Generator, 100) < sim_drop_percent {
 				continue
 			}
 		}
 		copies := 1
-		if pseudo_random_below(&state.Generator, 100) < sim_duplicate_percent {
+		if prng.Generator_Below(&state.Generator, 100) < sim_duplicate_percent {
 			copies = 2
 		}
 		for copy_index := 0; copy_index < copies; copy_index++ {
-			grains := pseudo_random_below(&state.Generator, sim_delay_max+1)
+			grains := prng.Generator_Below(&state.Generator, sim_delay_max+1)
 			delay := time.Moment(grains) * time.Moment(time.Millisecond)
 			state.Network = append(state.Network, scheduled_message{
 				Message: message, Deliver_At: now + delay,
