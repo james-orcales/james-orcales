@@ -228,42 +228,77 @@ func From_Context(ctx context.Context) (logger Logger) {
 }
 
 // String re-exports jlog.String.
-func String(key Key, value string) (field Field) {
+func String[T ~string](key Key, value T) (field Field) {
 	return jlog.String(key, value)
 }
 
 // Integer re-exports jlog.Integer.
-func Integer(key Key, value int) (field Field) {
+func Integer[T ~int](key Key, value T) (field Field) {
 	return jlog.Integer(key, value)
 }
 
+// Int8 re-exports jlog.Int8.
+func Int8[T ~int8](key Key, value T) (field Field) {
+	return jlog.Int8(key, value)
+}
+
+// Int16 re-exports jlog.Int16.
+func Int16[T ~int16](key Key, value T) (field Field) {
+	return jlog.Int16(key, value)
+}
+
+// Int32 re-exports jlog.Int32.
+func Int32[T ~int32](key Key, value T) (field Field) {
+	return jlog.Int32(key, value)
+}
+
 // Int64 re-exports jlog.Int64.
-func Int64(key Key, value int64) (field Field) {
+func Int64[T ~int64](key Key, value T) (field Field) {
 	return jlog.Int64(key, value)
 }
 
 // Uint re-exports jlog.Uint.
-func Uint(key Key, value uint) (field Field) {
+func Uint[T ~uint](key Key, value T) (field Field) {
 	return jlog.Uint(key, value)
 }
 
+// Uint8 re-exports jlog.Uint8.
+func Uint8[T ~uint8](key Key, value T) (field Field) {
+	return jlog.Uint8(key, value)
+}
+
+// Uint16 re-exports jlog.Uint16.
+func Uint16[T ~uint16](key Key, value T) (field Field) {
+	return jlog.Uint16(key, value)
+}
+
+// Uint32 re-exports jlog.Uint32.
+func Uint32[T ~uint32](key Key, value T) (field Field) {
+	return jlog.Uint32(key, value)
+}
+
 // Uint64 re-exports jlog.Uint64.
-func Uint64(key Key, value uint64) (field Field) {
+func Uint64[T ~uint64](key Key, value T) (field Field) {
 	return jlog.Uint64(key, value)
 }
 
+// Uintptr re-exports jlog.Uintptr.
+func Uintptr[T ~uintptr](key Key, value T) (field Field) {
+	return jlog.Uintptr(key, value)
+}
+
 // Float32 re-exports jlog.Float32.
-func Float32(key Key, value float32) (field Field) {
+func Float32[T ~float32](key Key, value T) (field Field) {
 	return jlog.Float32(key, value)
 }
 
 // Float64 re-exports jlog.Float64.
-func Float64(key Key, value float64) (field Field) {
+func Float64[T ~float64](key Key, value T) (field Field) {
 	return jlog.Float64(key, value)
 }
 
 // Boolean re-exports jlog.Boolean.
-func Boolean(key Key, value bool) (field Field) {
+func Boolean[T ~bool](key Key, value T) (field Field) {
 	return jlog.Boolean(key, value)
 }
 

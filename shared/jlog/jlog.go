@@ -425,48 +425,84 @@ func From_Context(ctx context.Context) (logger Logger) {
 }
 
 // String builds a string field.
-func String(key Key, value string) (field Field) {
+func String[T ~string](key Key, value T) (field Field) {
+	s := string(value)
 	return Field{
 		Key:    key,
 		Kind:   kind_string,
-		Data:   unsafe.Pointer(unsafe.StringData(value)),
-		Number: int64(len(value)),
+		Data:   unsafe.Pointer(unsafe.StringData(s)),
+		Number: int64(len(s)),
 	}
 }
 
 // Integer builds a signed-integer field.
-func Integer(key Key, value int) (field Field) {
+func Integer[T ~int](key Key, value T) (field Field) {
+	return Field{Key: key, Kind: kind_integer, Number: int64(value)}
+}
+
+// Int8 builds an 8-bit signed-integer field.
+func Int8[T ~int8](key Key, value T) (field Field) {
+	return Field{Key: key, Kind: kind_integer, Number: int64(value)}
+}
+
+// Int16 builds a 16-bit signed-integer field.
+func Int16[T ~int16](key Key, value T) (field Field) {
+	return Field{Key: key, Kind: kind_integer, Number: int64(value)}
+}
+
+// Int32 builds a 32-bit signed-integer field.
+func Int32[T ~int32](key Key, value T) (field Field) {
 	return Field{Key: key, Kind: kind_integer, Number: int64(value)}
 }
 
 // Int64 builds a 64-bit signed-integer field.
-func Int64(key Key, value int64) (field Field) {
-	return Field{Key: key, Kind: kind_integer, Number: value}
+func Int64[T ~int64](key Key, value T) (field Field) {
+	return Field{Key: key, Kind: kind_integer, Number: int64(value)}
 }
 
 // Uint builds an unsigned-integer field.
-func Uint(key Key, value uint) (field Field) {
+func Uint[T ~uint](key Key, value T) (field Field) {
+	return Field{Key: key, Kind: kind_unsigned, Number: int64(value)}
+}
+
+// Uint8 builds an 8-bit unsigned-integer field.
+func Uint8[T ~uint8](key Key, value T) (field Field) {
+	return Field{Key: key, Kind: kind_unsigned, Number: int64(value)}
+}
+
+// Uint16 builds a 16-bit unsigned-integer field.
+func Uint16[T ~uint16](key Key, value T) (field Field) {
+	return Field{Key: key, Kind: kind_unsigned, Number: int64(value)}
+}
+
+// Uint32 builds a 32-bit unsigned-integer field.
+func Uint32[T ~uint32](key Key, value T) (field Field) {
 	return Field{Key: key, Kind: kind_unsigned, Number: int64(value)}
 }
 
 // Uint64 builds a 64-bit unsigned-integer field.
-func Uint64(key Key, value uint64) (field Field) {
+func Uint64[T ~uint64](key Key, value T) (field Field) {
+	return Field{Key: key, Kind: kind_unsigned, Number: int64(value)}
+}
+
+// Uintptr builds an unsigned-pointer-sized integer field.
+func Uintptr[T ~uintptr](key Key, value T) (field Field) {
 	return Field{Key: key, Kind: kind_unsigned, Number: int64(value)}
 }
 
 // Float32 builds a float field rendered at float32 precision.
-func Float32(key Key, value float32) (field Field) {
+func Float32[T ~float32](key Key, value T) (field Field) {
 	return Field{Key: key, Kind: kind_float32, Number: int64(math.Float64bits(float64(value)))}
 }
 
 // Float64 builds a float field rendered at float64 precision.
-func Float64(key Key, value float64) (field Field) {
-	return Field{Key: key, Kind: kind_float64, Number: int64(math.Float64bits(value))}
+func Float64[T ~float64](key Key, value T) (field Field) {
+	return Field{Key: key, Kind: kind_float64, Number: int64(math.Float64bits(float64(value)))}
 }
 
 // Boolean builds a boolean field.
-func Boolean(key Key, value bool) (field Field) {
-	return Field{Key: key, Kind: kind_boolean, Number: boolean_to_int64(value)}
+func Boolean[T ~bool](key Key, value T) (field Field) {
+	return Field{Key: key, Kind: kind_boolean, Number: boolean_to_int64(bool(value))}
 }
 
 // Bytes builds a field whose []byte value is rendered as a JSON string.
