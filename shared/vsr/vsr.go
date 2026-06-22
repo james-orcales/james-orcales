@@ -1089,6 +1089,14 @@ func replica_start_epoch_messages(
 // (simulator_bugs.md, Bug 19).
 const handoff_commit_redrive = 16
 
+// The view-change timeout backs off by the number of views a replica has gone through without
+// returning to normal, capped at this multiplier. A cluster that cannot settle — the view's elected
+// primary is down, or backups are leapfrogging views faster than a Do_View_Change quorum can gather
+// — lengthens its window until one view change completes, the growing-election-timeout livelock break
+// real VSR and Raft use. The per-replica base timeout differs (jitter), so the backed-off windows
+// diverge and one replica's view change finishes inside another's wait.
+const view_change_backoff_cap = 6
+
 // Applies a replica's role in the new epoch after the reconfiguration executed (§7.1.1, §7.1.2). It
 // advances the epoch and resets to view 0 (the new epoch must start in view 0, §8.3, so Start_Epoch
 // messages from old replicas at differing views cannot install two primaries). A member of the new
@@ -3355,6 +3363,13 @@ func replica_arm_timer(replica *Replica, now time.Moment) (timer Timer_Reset) {
 		kind = Timer_Kind_Recovery
 	case replica.Status == Status_View_Change:
 		kind = Timer_Kind_View_Change
+		// Back off by how many views have passed without returning to normal, so a cluster that
+		// cannot settle lengthens its view-change window until one completes (livelock break).
+		attempts := uint64(replica.View - replica.Last_Normal_View)
+		if attempts > view_change_backoff_cap {
+			attempts = view_change_backoff_cap
+		}
+		interval = replica.Timeout * time.Duration(1+attempts)
 	case replica.Identifier == replica_primary_identifier(replica):
 		kind = Timer_Kind_Commit
 		interval = replica.Heartbeat

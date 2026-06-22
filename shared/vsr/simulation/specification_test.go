@@ -5,6 +5,32 @@ import (
 	"testing"
 )
 
+// Test_Sweep is a TEMPORARY wide scan under the new PRNG to enumerate every latent bug it surfaces
+// across a large seed range, skew off and on, so the true scope is known before fixing. Each seed is
+// an isolated subtest so one failure does not abort the rest. Removed once the scope is mapped.
+func Test_Sweep(t *testing.T) {
+	t.Parallel()
+	const limit = 5000
+	run := func(seed int64, skew bool) func(*testing.T) {
+		return func(t *testing.T) {
+			t.Parallel()
+			// invariant.Always panics rather than t.Fatalf; recover so one seed's panic does
+			// not abort the whole binary and the scan can enumerate every failure.
+			defer func() {
+				if r := recover(); r != nil {
+					t.Errorf("seed %d skew=%v PANIC %v", seed, skew, r)
+				}
+			}()
+			run_simulation_with(t, seed, skew)
+		}
+	}
+	for seed := int64(0); seed < limit; seed++ {
+		seed := seed
+		t.Run(fmt.Sprintf("off_%d", seed), run(seed, false))
+		t.Run(fmt.Sprintf("on_%d", seed), run(seed, true))
+	}
+}
+
 // Test_Cluster_Single_Primary drives many seeds in parallel, asserting no view ever has two acting
 // primaries. Seed 1 is the regression guard for the recovery-quiescence bug: before the fix it
 // drove the cluster into an agreement violation (op 2 committed as two different commands).
