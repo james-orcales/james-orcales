@@ -1,0 +1,56 @@
+# Workspace-wide Layer 2 of the `mut` ban — applies to every member crate
+# (lint_rs, shared_rs, future libraries), because clippy reads the nearest
+# clippy.toml walking up to the workspace root.
+#
+# The `mut`-keyword ban (enforced by lint_rs) makes every `&mut self` stdlib API
+# uncallable: you cannot form the receiver without a `mut` binding. What slips
+# under that net is *interior mutability* — types that mutate through a shared
+# `&self`, leaving no `mut` in the source. Those are banned here. Denied (not
+# just warned) via `[workspace.lints.clippy]` in the root Cargo.toml.
+#
+# BLESSED — deliberately NOT banned: `std::sync::mpsc` channels. `Sender::send`
+# also mutates through `&self`, but a channel is the sanctioned message-passing
+# primitive (the actor mailbox), so it stays allowed. Add it here only if you
+# adopt a stricter no-concurrency / determinism tier.
+
+disallowed-types = [
+    # Shared-ownership refcounted pointers. The dialect forces integer handles
+    # into an arena (see shared_rs::arena / gen_arena), not pointers, with batched
+    # reclamation rather than per-node refcounting.
+    { path = "alloc::rc::Rc",     reason = "refcounted shared pointer; use an arena handle" },
+    { path = "alloc::sync::Arc",  reason = "refcounted shared pointer; use an arena handle" },
+    { path = "alloc::rc::Weak",   reason = "Rc companion; refcounted sharing is banned" },
+    { path = "alloc::sync::Weak", reason = "Arc companion; refcounted sharing is banned" },
+    { path = "core::cell::Cell",       reason = "interior mutability is banned" },
+    { path = "core::cell::RefCell",    reason = "interior mutability is banned" },
+    { path = "core::cell::UnsafeCell", reason = "interior mutability is banned" },
+    { path = "core::cell::OnceCell",   reason = "interior mutability is banned" },
+    { path = "core::cell::LazyCell",   reason = "interior mutability is banned" },
+    { path = "std::sync::Mutex",       reason = "shared mutation; prefer a pure design" },
+    { path = "std::sync::RwLock",      reason = "shared mutation; prefer a pure design" },
+    { path = "std::sync::OnceLock",    reason = "interior mutability is banned" },
+    { path = "std::sync::LazyLock",    reason = "interior mutability is banned" },
+    # Atomics mutate through &self with no `mut` token; clippy.toml has no glob
+    # support, so each width is listed explicitly.
+    { path = "std::sync::atomic::AtomicBool",  reason = "shared mutation" },
+    { path = "std::sync::atomic::AtomicUsize", reason = "shared mutation" },
+    { path = "std::sync::atomic::AtomicIsize", reason = "shared mutation" },
+    { path = "std::sync::atomic::AtomicU8",    reason = "shared mutation" },
+    { path = "std::sync::atomic::AtomicU16",   reason = "shared mutation" },
+    { path = "std::sync::atomic::AtomicU32",   reason = "shared mutation" },
+    { path = "std::sync::atomic::AtomicU64",   reason = "shared mutation" },
+    { path = "std::sync::atomic::AtomicI8",    reason = "shared mutation" },
+    { path = "std::sync::atomic::AtomicI16",   reason = "shared mutation" },
+    { path = "std::sync::atomic::AtomicI32",   reason = "shared mutation" },
+    { path = "std::sync::atomic::AtomicI64",   reason = "shared mutation" },
+    { path = "std::sync::atomic::AtomicPtr",   reason = "shared mutation" },
+]
+
+# The other gap: std fns that *hand you* a `&mut`/`*mut` you never named, so no
+# `mut` token appears at the call site.
+disallowed-methods = [
+    { path = "alloc::boxed::Box::leak",     reason = "yields &mut without a `mut` binding" },
+    { path = "alloc::vec::Vec::leak",       reason = "yields &mut without a `mut` binding" },
+    { path = "alloc::string::String::leak", reason = "yields &mut without a `mut` binding" },
+    { path = "core::cell::UnsafeCell::get", reason = "yields *mut from &self" },
+]
