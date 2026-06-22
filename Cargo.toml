@@ -1,0 +1,30 @@
+# Single workspace governing the whole Rust codebase: one Cargo.lock, one
+# target/, one place for dependency versions and lint policy. Libraries live
+# under shared_rs/ (the Rust analog of the Go `shared` component); `lint_rs` is
+# the dialect's linter tool. Dependencies are vendored into third_party/rust/
+# and used via .cargo/config.toml — never crates.io at build time.
+[workspace]
+resolver = "3"
+members = ["lint_rs", "shared_rs"]
+
+# rustc's casing lints are redundant with (and contradict) the dialect's
+# Ada_Case rule, which `lint_rs` enforces. Silence all three once, here.
+[workspace.lints.rust]
+# The capstone on the no-mutation guarantee: with `unsafe` forbidden, the only
+# way to mutate is the linter-whitelisted `mut`, so no `*mut`/`UnsafeCell`/leak
+# path can launder a mutation. `forbid` cannot be overridden by an inner allow.
+unsafe_code = "forbid"
+non_camel_case_types = "allow"
+non_snake_case = "allow"
+non_upper_case_globals = "allow"
+
+# Interior-mutability ban (the lists live in the root clippy.toml) — denied for
+# every member on every clippy run, not just under `-D warnings`.
+[workspace.lints.clippy]
+disallowed_types = "deny"
+disallowed_methods = "deny"
+
+# Dependency versions pinned once; members reference with `dep.workspace = true`.
+[workspace.dependencies]
+proc-macro2 = { version = "1", features = ["span-locations"] }
+syn = { version = "2", features = ["full", "printing"] }
