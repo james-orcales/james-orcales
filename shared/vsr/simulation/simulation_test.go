@@ -1160,10 +1160,14 @@ func simulator_deliver(state *simulator, now time.Moment) {
 		target_transition := target.Status == vsr.Status_Transition
 		simulator_trace(state, "t=%d DELIVER %s", now, trace_message(flight.Message))
 		simulator_trace(state, "  r%d BEFORE %s", flight.Message.To, trace_replica(target))
+		// A replica processes a received message on its own clock, like a tick, not a
+		// global one it cannot read. Arming the timer here off the true clock while ticks
+		// read the perceived clock lets drift diverge them by ~a full Timeout, firing a
+		// just-armed view-change timer almost immediately and thrashing the view under skew.
 		output := vsr.Replica_Receive(&vsr.Replica_Receive_Input{
 			Replica: target,
 			Message: flight.Message,
-			Now:     now,
+			Now:     simulator_replica_now(state, int(flight.Message.To)),
 		})
 		simulator_trace(state, "  r%d AFTER  %s", flight.Message.To, trace_replica(target))
 		simulator_trace_output(state, output)

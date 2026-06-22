@@ -435,8 +435,25 @@ that caused it. Each fix changes `vsr.go`, never the assertion.
   than bare-committing the divergent tail. A normal Commit is untouched (the apply-when-behind path,
   `Test_Normal_Operation_Commit_Apply`). Across 0–5000 × skew this took the sweep 31 to 26, no
   liveness regression.
-- **Residual**: seeds 3631, 3678 are the within-epoch analogue — a stale view-0 primary commits its
-  op on a stale Prepare_Ok while the cluster advanced to a higher view. Seed 173 is a pre-existing
-  wedge (it wedges with the re-drive fix reverted too): a replica stuck in `Status_View_Change` at a
-  superseded epoch ignores the higher-epoch Commits that would reconcile it. Skew-on forks remain
-  too. Open.
+- **Fix (New_Epoch drain misfire)**: seed 173 was a wedge — a replica stuck in `Status_View_Change`
+  at a superseded epoch, never adopting the new epoch. `replica_receive_new_epoch`'s epoch+1 "drain"
+  branch fired because the replica's topmost op was A reconfiguration, but it was the ALREADY-
+  committed one that brought it to its current epoch, not a pending handoff into the next; it
+  re-applied a no-op commit and returned without transitioning. Guarded the branch with
+  `replica.Commit < Commit(replica.Op)` (acked-but-not-yet-committed): an already-committed topmost
+  reconfiguration now falls through to adopt the new epoch. Sweep 26 to 25; default suite green.
+- **Fix (delivery clock frame — harness bug, not protocol)**: ~19 skew-on seeds were liveness
+  WEDGES, all view-thrash — a fast-clocked replica timed out the instant it reached normal and
+  drove the view-number unboundedly (seed 281 hit view 163; 453 hit 180). Root cause, traced:
+  `simulator_deliver` armed the receiver's timers off the TRUE clock while `simulator_tick_replicas`
+  read each replica's PERCEIVED (skewed) clock. As drift accumulated, the two frames diverged by
+  nearly a full Timeout, so a view-change timer armed on a delivery fired almost immediately on the
+  next tick. A real replica processes a received message on its OWN clock; the fix passes
+  `simulator_replica_now(receiver)` to `Replica_Receive`, matching ticks. A first attempt at a
+  progress-based view-change backoff had been tried and REVERTED (it grew too aggressively for
+  healthy non-committing backups, 25 to 40); this clock fix is the real cause and took the sweep
+  25 to 6, default suite still green. (The same true-vs-perceived swap in the crash injector was
+  tried and reverted — it shifted a pinned recovery seed.)
+- **Residual** (6 of 10000): seeds 3631, 3678 are the within-epoch deposed-primary fork — a stale
+  view-0 primary commits its op on a stale Prepare_Ok while the cluster advanced to a higher view.
+  Seeds 639, 997, 4171, 4405 are skew-on (mostly wedges, one fork) still to be triaged. Open.
