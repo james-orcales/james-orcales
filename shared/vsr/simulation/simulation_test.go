@@ -2133,6 +2133,7 @@ func trace_replica_fields(replica *vsr.Replica) (fields []jlog.Field) {
 		jlog.Uint64("op", replica.Op),
 		jlog.Uint64("commit", replica.Commit),
 		jlog.Uint64("log_start", replica.Log_Start),
+		jlog.Uint64("epoch_start_op", replica.Epoch_Start_Op),
 		jlog.String("config", fmt.Sprintf("%v", replica.Configuration)),
 		jlog.Integer("active_count", int(replica.Active_Count)),
 		jlog.Integer("recovery_responses", len(replica.Recovery_From)),
@@ -2141,37 +2142,66 @@ func trace_replica_fields(replica *vsr.Replica) (fields []jlog.Field) {
 	}
 }
 
-// Trace_kind_names maps a Message_Kind to a readable name; the index is the kind's integer value.
-var trace_kind_names = [...]string{
-	"Request", "Prepare", "Prepare_Ok", "Commit", "Start_View_Change",
-	"Do_View_Change", "Start_View", "Recovery", "Recovery_Response", "Get_State",
-	"New_State", "Reply", "Predict_Request", "Predict_Response", "Reconfiguration",
-	"Start_Epoch", "Epoch_Started", "New_Epoch", "Check_Epoch",
-}
-
-// Trace_status_names maps a Status to a readable name; the index is the status's integer value.
-var trace_status_names = [...]string{"Normal", "View_Change", "Recovery", "Transition", "Shutdown"}
-
 // Message_kind_name renders a kind as its name, falling back to the integer for an unknown value.
 func message_kind_name(kind vsr.Message_Kind) (name string) {
-	if int(kind) < 0 {
-		return fmt.Sprintf("Kind(%d)", int(kind))
+	switch kind {
+	case vsr.Message_Kind_Request:
+		return "Request"
+	case vsr.Message_Kind_Prepare:
+		return "Prepare"
+	case vsr.Message_Kind_Prepare_Ok:
+		return "Prepare_Ok"
+	case vsr.Message_Kind_Commit:
+		return "Commit"
+	case vsr.Message_Kind_Start_View_Change:
+		return "Start_View_Change"
+	case vsr.Message_Kind_Do_View_Change:
+		return "Do_View_Change"
+	case vsr.Message_Kind_Start_View:
+		return "Start_View"
+	case vsr.Message_Kind_Recovery:
+		return "Recovery"
+	case vsr.Message_Kind_Recovery_Response:
+		return "Recovery_Response"
+	case vsr.Message_Kind_Get_State:
+		return "Get_State"
+	case vsr.Message_Kind_New_State:
+		return "New_State"
+	case vsr.Message_Kind_Reply:
+		return "Reply"
+	case vsr.Message_Kind_Predict_Request:
+		return "Predict_Request"
+	case vsr.Message_Kind_Predict_Response:
+		return "Predict_Response"
+	case vsr.Message_Kind_Reconfiguration:
+		return "Reconfiguration"
+	case vsr.Message_Kind_Start_Epoch:
+		return "Start_Epoch"
+	case vsr.Message_Kind_Epoch_Started:
+		return "Epoch_Started"
+	case vsr.Message_Kind_New_Epoch:
+		return "New_Epoch"
+	case vsr.Message_Kind_Check_Epoch:
+		return "Check_Epoch"
 	}
-	if int(kind) >= len(trace_kind_names) {
-		return fmt.Sprintf("Kind(%d)", int(kind))
-	}
-	return trace_kind_names[kind]
+	return fmt.Sprintf("Kind(%d)", int(kind))
 }
 
 // Status_name renders a status as its name, falling back to the integer for an unknown value.
 func status_name(status vsr.Status) (name string) {
-	if int(status) < 0 {
-		return fmt.Sprintf("Status(%d)", int(status))
+	switch status {
+	case vsr.Status_Normal:
+		return "Normal"
+	case vsr.Status_View_Change:
+		return "View_Change"
+	case vsr.Status_Recovery:
+		return "Recovery"
+	case vsr.Status_Transition:
+		return "Transition"
+	case vsr.Status_Shutdown:
+		return "Shutdown"
 	}
-	if int(status) >= len(trace_status_names) {
-		return fmt.Sprintf("Status(%d)", int(status))
-	}
-	return trace_status_names[status]
+	return fmt.Sprintf("Status(%d)", int(status))
 }
 
 // Trace_entries renders a log slice as one "vBIRTH:COMMAND" string per entry, so a reused or
