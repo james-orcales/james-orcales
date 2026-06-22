@@ -393,3 +393,25 @@ that caused it. Each fix changes `vsr.go`, never the assertion.
   configuration, reviving it as a fresh member via the adopt path. The harness models a re-added
   identifier as a fresh node (§7.5) by delivering that revival `Start_Epoch`.
 - **Guard**: the tail convergence oracle, which requires every voting member active and normal.
+
+## Bug 22 — a view-changing replica answered Get_State with its stale uncommitted suffix
+
+- **Symptom** (seed 3470, skew off): op 109 committed as two commands — `reconfigure-2` on the
+  cluster (which advanced to the new epoch) and `client-1002-req-49` on one replica stuck in the old
+  epoch. Surfaced once the simulator's main stream moved to the unbiased `shared/prng`; it was the
+  dominant agreement-fork class the weaker generator had hidden.
+- **Root cause**: `replica_receive_get_state` answered any Get_State except from a recovering
+  replica. A replica that had advanced its view-number for a view change but not yet adopted the new
+  view's log still held its old uncommitted suffix; answering a catch-up Get_State, it shipped that
+  stale suffix stamped with the NEW view. The requester — already normal in the new view — accepted
+  it, kept op 109 = `client-1002-req-49` (which the view change was about to supersede with
+  `reconfigure-2`), and then committed it on a bare Commit advertising commit 109. Two committed
+  values at one op. This violates VSR-Revisited §5.2: "a replica responds to a GETSTATE message only
+  if its status is normal."
+- **Fix**: `replica_receive_get_state` answers a plain catch-up Get_State only when `Status_Normal`
+  (§5.2). The §5.3 view-change merge fetch is the lone exception — the new primary fetching a
+  selected reporter's already-reported Do_View_Change log — so a `View_Change_Fetch` flag on that
+  Get_State lets a reporter still in `Status_View_Change` answer it (and only it), preserving the
+  deferred-install liveness that a blanket Normal-only gate would wedge.
+- **Guard**: pinned seed 3470 in `Test_Cluster_Agreement`. Reverting the `Status_Normal` gate in
+  `replica_receive_get_state` makes it fork `op 109 diverges`; the fix makes it pass.

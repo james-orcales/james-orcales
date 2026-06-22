@@ -55,6 +55,12 @@ func Test_Cluster_Agreement(t *testing.T) {
 	// state-transfer splice overwrite a committed op — two replicas disagreeing on a committed
 	// op (simulator_bugs.md, Bug 15). A wider 400..1399 scan found it; this seed pins it.
 	seeds = append(seeds, 1266)
+	// Permanent regression seed for a view-changing replica answering a catch-up Get_State with
+	// its stale uncommitted suffix (a §5.2 violation): the requester kept op 109 = client-1002-req-49
+	// past the view change that reused that op for reconfigure-2, then committed it on a bare Commit
+	// (simulator_bugs.md, Bug 22). Reverting the Status_Normal gate in replica_receive_get_state
+	// makes this seed fork "op 109 diverges"; the fix makes it pass.
+	seeds = append(seeds, 3470)
 	for _, seed := range seeds {
 		t.Run(fmt.Sprintf("seed_%d", seed), func(t *testing.T) {
 			t.Parallel()
