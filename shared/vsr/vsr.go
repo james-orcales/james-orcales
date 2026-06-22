@@ -475,10 +475,9 @@ type Message struct {
 	Entries []Log_Entry
 
 	// View_Change_Fetch marks a Get_State sent by a new primary completing a §5.3 view-change
-	// install: it fetches the selected reporter's reported Do_View_Change log for the merge.
-	// Such a fetch must be answered by a reporter still in Status_View_Change, whereas a plain
-	// catch-up Get_State is answered only by a Status_Normal replica (§5.2): without this flag
-	// the two are indistinguishable and one rule cannot serve both.
+	// install: it fetches the selected reporter's reported Do_View_Change log for the merge. A
+	// reporter still in Status_View_Change must answer it; a view-changing replica otherwise
+	// does not answer a plain catch-up (§5.2). Without the flag the two are indistinguishable.
 	View_Change_Fetch bool
 
 	// Command carries a client Request's payload before it becomes a log entry.
@@ -2270,29 +2269,21 @@ func replica_receive_get_state(replica *Replica, message Message) (output Step_O
 	if replica.Status == Status_Recovery {
 		return output
 	}
+	// A VIEW-CHANGING replica must not answer a plain catch-up Get_State (VSR-Revisited §5.2: a
+	// replica responds only if normal). It advanced its view-number but has not adopted the new
+	// view's log, so it still holds its old uncommitted suffix; answering would ship that stale
+	// suffix stamped with the new view, and the requester, already there, would keep an op the
+	// view change is about to supersede and commit it on a bare Commit (the fork the PRNG sweep
+	// surfaced). The lone exception is the §5.3 merge fetch: the new primary fetching this
+	// reporter's reported Do_View_Change log. A transitioning replica (§7.1.1 catch-up)
+	// still answers, so peers catching up to the new epoch are not starved into a wedge.
+	if replica.Status == Status_View_Change {
+		if !message.View_Change_Fetch {
+			return output
+		}
+	}
 	if replica.View < message.View {
 		return output
-	}
-	// A replica that left its view for a view change (or is transitioning to a new epoch) but has
-	// not adopted the authoritative log holds an uncommitted suffix the view change may supersede.
-	// It may still share its COMMITTED prefix — committed ops are agreed — but shipping the
-	// uncommitted suffix stamped with the current view would let a catch-up requester keep an op
-	// the view change is about to replace and commit it on a bare Commit (VSR-Revisited §5.2; the
-	// fork the wider PRNG sweep surfaced). So a non-normal replica CAPS its answer at its commit;
-	// it still answers, which keeps the requester progressing rather than wedging on a silent
-	// non-answer. The lone full-log exception is a §5.3 view-change fetch: the new primary fetching
-	// this reporter's already-reported Do_View_Change log, which needs the uncommitted suffix to
-	// complete the merge.
-	ship_full := false
-	if replica.Status == Status_Normal {
-		ship_full = true
-	}
-	if message.View_Change_Fetch {
-		ship_full = true
-	}
-	ceiling := replica.Op
-	if !ship_full {
-		ceiling = Op(replica.Commit)
 	}
 	response := Message{
 		Kind:   Message_Kind_New_State,
@@ -2300,7 +2291,7 @@ func replica_receive_get_state(replica *Replica, message Message) (output Step_O
 		To:     message.From,
 		View:   replica.View,
 		Epoch:  replica.Epoch,
-		Op:     ceiling,
+		Op:     replica.Op,
 		Commit: replica.Commit,
 	}
 	if message.Op < replica.Log_Start {
@@ -2316,19 +2307,25 @@ func replica_receive_get_state(replica *Replica, message Message) (output Step_O
 		// requester already at or past this replica's op gets an empty suffix — it is no
 		// longer behind us, and its own apply guard will keep its longer log.
 		from := message.Op + 1
-		if from > ceiling+1 {
-			from = ceiling + 1
+		if from > replica.Op+1 {
+			from = replica.Op + 1
 		}
 		response.Log = replica_log_slice_from(replica, from)
 	}
-	// replica_log_slice_from ships through replica.Op; a capped answer drops the uncommitted tail
-	// above the ceiling so the requester never receives an op this replica might still supersede.
-	over := int(replica.Op) - int(ceiling)
-	if over > 0 {
-		if over < len(response.Log) {
-			response.Log = response.Log[:len(response.Log)-over]
-		} else {
-			response.Log = nil
+	// A transitioning replica (mid §7.1.1 epoch catch-up) must answer state transfer so peers also
+	// catching up are not starved, but it holds an uncommitted suffix the new epoch may supersede.
+	// Ship only its committed prefix (the state up to the reconfiguration op that §7.1.1 step 2
+	// needs); shipping the stale suffix is the epoch-handoff analogue of Bug 22's view leak.
+	if replica.Status == Status_Transition {
+		ceiling := Op(replica.Commit)
+		over := int(replica.Op) - int(ceiling)
+		if over > 0 {
+			if over >= len(response.Log) {
+				response.Log = nil
+			} else {
+				response.Log = response.Log[:len(response.Log)-over]
+			}
+			response.Op = ceiling
 		}
 	}
 	output.Messages = []Message{response}
