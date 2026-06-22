@@ -473,10 +473,26 @@ that caused it. Each fix changes `vsr.go`, never the assertion.
   pristine, so it could re-add a current member, producing a duplicate-member config (`[0 1 3 2 3]`)
   that broke the quorum math. Fix: `simulator_next_fresh_from` searches the second fresh id past the
   first, so the two are distinct and neither is a current member. Sweep 2 to 1. (Harness bug.)
-- **Residual** (1 of 10000): seed 3678 — a COMMITTED op lost across a reconfiguration. Epoch 1
-  view 4 committed op 121 = `client-1001-req-46`; then epoch 2's primary r0, which entered the new
-  epoch BEHIND (at op 120, lacking the committed op 121), reused op-number 121 for a different
-  command (`client-1002-req-46`). A new-epoch primary served before catching up to the epoch-start
-  op, so a committed op-number was reused (§8.3 violation). The fix is to hold a new-epoch primary
-  from proposing until it has caught up to `Epoch_Start_Op` (the reconfiguration op, the old epoch's
-  final commit). Open.
+- **Fix (a recovering replica must not redirect)**: seed 3678 — a COMMITTED op lost across a
+  reconfiguration. Epoch 1 view 4 committed op 121 = `client-1001-req-46`; r0 held it uncommitted
+  locally. A RECOVERING replica (r2, its `Epoch_Start_Op` wiped to 0) sent r0 a New_Epoch redirect
+  carrying op=0, so r0 truncated its tail (dropping the committed op 121), saw catch-up target 0,
+  became the epoch-2 primary at op 120, and reused op-number 121 (§8.3 violation). Fix:
+  `replica_redirect_stale_epoch` returns silently when the replica is `Status_Recovery` — it has no
+  authoritative epoch-start op; a normal peer redirects with the real one, so r0 catches up keeping
+  op 121. Sweep 1 to 0 forks; the lone remaining failure schedule-shifted to seed 680.
+- **Fix (checkpoint merge prefers the executed record)**: seed 680 — an exactly-once violation
+  across a reconfiguration, the same family but via the client table, not the log.
+  `client-1001-req-109` committed at op 268 in epoch 2; epoch 3's primary r0 holds it in its client
+  table only as ADOPTED-not-executed (`rebuild_client_table` records `{109, Executed:false}` when it
+  scans the op in a log) and jumped its Executed counter past op 268 via a checkpoint restore. When
+  `replica_restore_checkpoint` merged the caught-up sender's `{109, Executed:true}`, it KEPT r0's
+  `{109, false}` because the request numbers were equal (`>=` continue). So on a retry r0 saw the
+  request unexecuted and not in its (compacted) log, re-accepted it, and committed it twice.
+  Fix: on an equal request number, keep the local record only if it is already executed; otherwise
+  take the checkpoint's executed record. Sweep 1 to 0.
+- **RESOLVED**: the full 0–4999 × {skew off, skew on} sweep (10000 runs) passes with zero forks,
+  wedges, exactly-once, checkpoint, or fault-model violations. The PRNG switch surfaced ~49 latent
+  bugs across §4.2 view change, §5.2/§5.3 state transfer, §7 reconfiguration, §4.3 recovery, and the
+  clock model; all are closed. The temporary `Test_Sweep` enumerator is removed and its finds pinned
+  as regression seeds in the default cluster groups.

@@ -1387,6 +1387,14 @@ func replica_recover_into_new_epoch(replica *Replica, now time.Moment) (output S
 // other sender is a replica, informed with a New_Epoch addressed to it. The redirect carries the
 // replica's current view and the new (now-current) configuration.
 func replica_redirect_stale_epoch(replica *Replica, message Message) (output Step_Output) {
+	// A recovering replica must not redirect: its Epoch_Start_Op was wiped to 0, so the
+	// New_Epoch tells the stale recipient its catch-up target is 0. The recipient truncates
+	// its uncommitted tail and, believing itself caught up, serves as the new epoch's primary
+	// while missing an op committed cluster-wide — reusing that committed op-number (§8.3
+	// violation). A normal peer holds the real epoch-start op and redirects authoritatively.
+	if replica.Status == Status_Recovery {
+		return output
+	}
 	redirect := Message{
 		Kind:              Message_Kind_New_Epoch,
 		From:              replica.Identifier,
@@ -2856,8 +2864,17 @@ func replica_restore_checkpoint(
 	for client, record := range client_table {
 		current, seen := replica.Client_Table[client]
 		if seen {
-			if current.Request_Number >= record.Request_Number {
-				continue
+			if current.Request_Number > record.Request_Number {
+				continue // A strictly newer request here; keep it.
+			}
+			// Same request: keep ours only if executed here. If merely adopted
+			// (rebuild_client_table records it unexecuted) while the checkpoint's is
+			// executed, take the checkpoint's; keeping the unexecuted one re-accepts a
+			// compacted committed request, committing it twice (seed 680).
+			if current.Request_Number == record.Request_Number {
+				if current.Executed {
+					continue
+				}
 			}
 		}
 		replica.Client_Table[client] = record
