@@ -1115,7 +1115,7 @@ const handoff_commit_redrive = 16
 // one view change completes. This is the growing-timeout livelock break VSR and Raft both use. The
 // per-replica base timeout differs (jitter), so the backed-off windows diverge and one replica's
 // view change finishes inside another's wait.
-const view_change_backoff_cap = 6
+const view_change_backoff_cap = 2
 
 // Applies a replica's role in the new epoch after the reconfiguration executed (§7.1.1, §7.1.2). It
 // advances the epoch and resets to view 0 (the new epoch must start in view 0, §8.3, so Start_Epoch
@@ -1503,6 +1503,11 @@ func replica_receive_start_epoch(
 		replica.Epoch = message.Epoch
 		replica.Configuration = message.New_Configuration
 		replica.Active_Count = message.New_Active_Count
+		// Drop recovery responses from the old epoch; only this epoch's count. A stale
+		// old-epoch response from a replaced replica inflates the reported views, so the
+		// highest-view authority no longer matches the tally and recovery wedges (see
+		// replica_receive_recovery_response).
+		replica.Recovery_From = map[Replica_Identifier]Message{}
 		return output
 	}
 	// Whether this replica was a standby in the OLD configuration, read before the swap below.
@@ -3345,6 +3350,14 @@ func replica_receive_recovery_response(
 		return output
 	}
 	if message.Nonce != replica.Recovery_Nonce {
+		return output
+	}
+	// Only a response from THIS replica's current epoch is authoritative for its recovery. A
+	// replaced replica left behind in an old epoch (or any stale in-flight response from before
+	// this replica advanced epoch) still carries the matching nonce; counting it inflates the
+	// reported views, so the highest-view authority no longer matches the tally and recovery
+	// wedges (§7.2: a replica ignores messages from an epoch other than its own).
+	if message.Epoch != replica.Epoch {
 		return output
 	}
 	replica.Recovery_From[message.From] = message

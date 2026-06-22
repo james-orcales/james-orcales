@@ -454,6 +454,29 @@ that caused it. Each fix changes `vsr.go`, never the assertion.
   healthy non-committing backups, 25 to 40); this clock fix is the real cause and took the sweep
   25 to 6, default suite still green. (The same true-vs-perceived swap in the crash injector was
   tried and reverted — it shifted a pinned recovery seed.)
-- **Residual** (6 of 10000): seeds 3631, 3678 are the within-epoch deposed-primary fork — a stale
-  view-0 primary commits its op on a stale Prepare_Ok while the cluster advanced to a higher view.
-  Seeds 639, 997, 4171, 4405 are skew-on (mostly wedges, one fork) still to be triaged. Open.
+- **Fix (view-change backoff cap 6 to 2)**: seeds 639, 4171, 3631 were liveness WEDGES — a cluster
+  that entered a dead view (e.g. one whose primary-elect is itself recovering) late in the run could
+  not retry into the next view before the 800-tick fault-free tail ended, because the backoff capped
+  the view-change window at 7×Timeout (~620 ms). With the delivery-clock thrash cause gone, the high
+  cap is overkill; the per-replica timeout jitter (50–89 ms) already desynchronizes retries.
+  Lowering `view_change_backoff_cap` to 2 (window up to 3×Timeout) lets a stuck cluster retry
+  several times per tail. Sweep 6 to 3, default suite green.
+- **Fix (recovery counts only its own epoch)**: seed 997 was a recovery WEDGE. A cold-recovering
+  replica advanced epoch via a Start_Epoch but `replica_receive_start_epoch` did not clear
+  `Recovery_From`, so a stale response from a replaced replica left in the OLD epoch lingered in the
+  tally; it carried the matching nonce and a higher view, so the highest-view authority no longer
+  matched the tally and recovery never completed. Fix: clear `Recovery_From` on that epoch advance,
+  and reject a recovery response whose epoch differs from the replica's in
+  `replica_receive_recovery_response`. Sweep 3 to 2.
+- **Fix (grow adds distinct pristine nodes)**: seed 4405 PANICked "commit does not exceed op". The
+  reconfiguration grow appended `Next_Fresh` and `Next_Fresh+1` without checking the latter was
+  pristine, so it could re-add a current member, producing a duplicate-member config (`[0 1 3 2 3]`)
+  that broke the quorum math. Fix: `simulator_next_fresh_from` searches the second fresh id past the
+  first, so the two are distinct and neither is a current member. Sweep 2 to 1. (Harness bug.)
+- **Residual** (1 of 10000): seed 3678 — a COMMITTED op lost across a reconfiguration. Epoch 1
+  view 4 committed op 121 = `client-1001-req-46`; then epoch 2's primary r0, which entered the new
+  epoch BEHIND (at op 120, lacking the committed op 121), reused op-number 121 for a different
+  command (`client-1002-req-46`). A new-epoch primary served before catching up to the epoch-start
+  op, so a committed op-number was reused (§8.3 violation). The fix is to hold a new-epoch primary
+  from proposing until it has caught up to `Epoch_Start_Op` (the reconfiguration op, the old epoch's
+  final commit). Open.
