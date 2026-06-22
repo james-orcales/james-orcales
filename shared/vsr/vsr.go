@@ -1231,12 +1231,10 @@ func replica_receive_new_epoch(
 	// deadlock with no Normal quorum to answer them (Bug 19). A crashed replica lost its state
 	// and still needs recovery.
 	if replica.Status != Status_Recovery {
-		// Catch up only if at or behind the new epoch's commit. A commit ahead of it means
-		// ops the new epoch lacks (a bypassed primary's, never truly committed): re-learn
-		// through recovery rather than carry them forward and fork (Bug 19).
-		if message.Commit >= replica.Commit {
-			return replica_rejoin_new_epoch(replica, Op(message.Commit), now)
-		}
+		// A never-crashed replica catches up as a Transition member, not via recovery
+		// (which blocks on a quorum): it keeps its committed prefix, re-fetches the rest.
+		// Only a crash that lost state recovers (Bug 19).
+		return replica_rejoin_new_epoch(replica, message.Op, now)
 	}
 	return replica_recover_into_new_epoch(replica, now)
 }
@@ -1249,23 +1247,18 @@ func replica_receive_new_epoch(
 func replica_rejoin_new_epoch(
 	replica *Replica, catch_up_target Op, now time.Moment,
 ) (output Step_Output) {
-	// Drop only the suffix above both the redirector's commit and this replica's own commit.
-	// An op at or below a cluster commit is agreed, so keeping it preserves this replica's
-	// contribution to an in-flight commit quorum (truncating to the lower LOCAL commit would
-	// discard an op it acked that a quorum committed, breaking intersection and forking a view
-	// change, Bug 19). The suffix above is uncommitted; the catch-up re-fetches it. Keeping
-	// own commits also keeps commit <= op.
-	floor := catch_up_target
-	if Op(replica.Commit) > floor {
-		floor = Op(replica.Commit)
-	}
-	keep := int(floor) - int(replica.Log_Start)
+	// Drop EVERYTHING above this replica's own commit. The committed prefix is agreed by
+	// safety, so keeping it is correct; the suffix above is uncommitted and may be a bypassed
+	// primary's divergent copy of a differently-committed op. Keeping and later committing that
+	// copy forks the log (Bug 19). The catch-up below re-fetches the authoritative ops, so
+	// intersection holds without trusting our suffix.
+	keep := int(replica.Commit) - int(replica.Log_Start)
 	if keep < 0 {
 		keep = 0
 	}
 	if keep < len(replica.Log) {
 		replica.Log = replica.Log[:keep]
-		replica.Op = floor
+		replica.Op = Op(replica.Commit)
 	}
 	// Catch up to the redirector's commit (every committed op) before serving, so this replica
 	// never votes in a view change missing one. Epoch_Start_Op drives catch_up_to_epoch and
@@ -1312,9 +1305,9 @@ func replica_redirect_stale_epoch(replica *Replica, message Message) (output Ste
 		Epoch:             replica.Epoch,
 		New_Configuration: replica.Configuration,
 		New_Active_Count:  replica.Active_Count,
-		// This replica's commit. A never-crashed replica redirected here catches up to it
-		// as a Transition member (not recovery), before serving or voting, so it never
-		// votes in a view change missing a committed op (Bug 19).
+		// Op carries the new epoch's start op (the reconfiguration op): a never-crashed
+		// replica redirected here catches up to it as a Transition member before serving.
+		Op:     replica.Epoch_Start_Op,
 		Commit: replica.Commit,
 	}
 	is_client := message.Kind == Message_Kind_Request ||
@@ -1371,6 +1364,11 @@ func replica_receive_reconfiguration(replica *Replica, message Message) (output 
 		New_Configuration: message.New_Configuration,
 		New_Active_Count:  message.New_Active_Count,
 	}}
+	// Drop any in-flight prediction rounds opened before the reconfiguration: they would
+	// otherwise complete after it and append a client op above it, an op at the old epoch past
+	// its final op, a false commit the new epoch never holds (Bug 18/Bug 19). Those clients
+	// retry and the new epoch's primary runs them afresh.
+	replica.Predict_From = map[Prediction_Round_Key]Prediction_Round{}
 	step_output_fold(&output, replica_flush_batch(replica))
 	return output
 }
