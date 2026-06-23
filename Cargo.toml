@@ -5,7 +5,7 @@
 # and used via .cargo/config.toml — never crates.io at build time.
 [workspace]
 resolver = "3"
-members = ["lint_rs", "shared_rs"]
+members = ["lint_rs", "shared_rs", "sloc_rs"]
 
 # rustc's casing lints are redundant with (and contradict) the dialect's
 # Ada_Case rule, which `lint_rs` enforces. Silence all three once, here.
