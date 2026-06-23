@@ -28,3 +28,6 @@ disallowed_methods = "deny"
 [workspace.dependencies]
 proc-macro2 = { version = "1", features = ["span-locations"] }
 syn = { version = "2", features = ["full", "printing"] }
+
+[profile.release]
+strip = true
