@@ -30,3 +30,14 @@ Benchmark 3 (28 runs, 30.3s): .local/share/rust/target/release/sloc_rs
   instructions    39.2G ± 47.2M        39.1G ... 39.4G        2 (7%)  -  6.1% ±  0.2%
   cpu_user       66.2ms ± 172us       65.9ms ... 66.5ms       1 (4%)  + 31.3% ±  0.3%
   cpu_system     76.2ms ± 2.95ms      70.7ms ... 82.4ms       0 (0%)  - 29.9% ±  2.7%
+
+## Binary size
+
+Same program, release/native builds (arm64 macOS):
+
+| binary             | size    | bytes     | notes                               |
+| ------------------ | ------- | --------- | ----------------------------------- |
+| `sloc` (Go)        | 3.4 MiB | 3,511,714 | default `go build`                  |
+| `sloc` (Go)        | 2.3 MiB | 2,384,738 | stripped, `-ldflags="-s -w"`        |
+| `sloc_ocaml`       | 1.4 MiB | 1,501,288 | `ocamlopt` native, unstripped       |
+| `sloc_rs`          | 619 KiB |   633,424 | `cargo build --release` (`strip = true`) |

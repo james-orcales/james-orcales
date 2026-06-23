@@ -12,6 +12,14 @@ offline = true
 [build]
 target-dir = ".local/share/rust/target"
 
+# Release binaries install into `.local/bin/` (gitignored), next to the Go `sloc`
+# and OCaml `sloc_ocaml` builds, instead of `~/.cargo/bin`. `cargo build` can't
+# redirect just the binary — target-dir relocates every artifact — so the
+# release binary ships via `cargo install --path <crate>`, which lands here.
+[install]
+# Trailing slash: resolve relative to this config's workspace root, not the cwd.
+root = ".local/"
+
 # Enforce vendoring: all crates.io dependencies resolve from the vendored tree
 # in third_party/rust/ (populated by `cargo vendor third_party/rust`), never
 # from the network. Regenerate after changing dependencies with the same command.
