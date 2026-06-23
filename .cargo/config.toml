@@ -1,3 +1,11 @@
+# Offline by default — every dependency resolves from the vendored tree below,
+# so the network is never needed for a build and no command has to pass
+# `--offline`. To add a dependency (which must fetch), override for that one
+# command with `CARGO_NET_OFFLINE=false`, then re-run `cargo vendor`.
+# (`--locked` has no config equivalent and stays an explicit CI-only flag.)
+[net]
+offline = true
+
 # Build output goes under the repo-local rust state dir (gitignored via
 # `.local/*`) instead of a `target/` at the repo root. Relative to the workspace
 # root. Change this one line to relocate it.
