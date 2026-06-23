@@ -1,0 +1,14 @@
+# Build output goes under the repo-local rust state dir (gitignored via
+# `.local/*`) instead of a `target/` at the repo root. Relative to the workspace
+# root. Change this one line to relocate it.
+[build]
+target-dir = ".local/share/rust/target"
+
+# Enforce vendoring: all crates.io dependencies resolve from the vendored tree
+# in third_party/rust/ (populated by `cargo vendor third_party/rust`), never
+# from the network. Regenerate after changing dependencies with the same command.
+[source.crates-io]
+replace-with = "vendored-sources"
+
+[source.vendored-sources]
+directory = "third_party/cargo_deps"
