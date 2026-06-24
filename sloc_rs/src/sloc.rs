@@ -8,7 +8,7 @@ use std::collections;
 use std::iter;
 use std::thread;
 
-// ---- core data ----
+// Core data.
 
 /// The line partition of a file or a group of files.
 #[derive(Copy, Clone, Default, Debug, PartialEq, Eq)]
@@ -134,7 +134,7 @@ pub struct Classify_File_Input {
     pub language: Language,
 }
 
-// ---- counts helpers ----
+// Counts helpers.
 
 /// The total physical line count: the three partitions sum to it because every
 /// line is counted exactly once.
@@ -160,7 +160,7 @@ fn counts_add(into: Counts, more: Counts) -> Counts {
     }
 }
 
-// ---- scanner ----
+// Scanner.
 
 /// Partitions every physical line of the source into code, comment, and blank
 /// counts. Each line is counted once, so the three sum to the line count.
@@ -734,7 +734,7 @@ fn starts_with_any(line: &[u8], cursor: usize, prefixes: &[String]) -> bool {
     prefixes.iter().any(|prefix| has_prefix_at(line, cursor, prefix.as_bytes()))
 }
 
-// ---- languages ----
+// Languages.
 
 /// The double-quoted string and single-quoted character delimiters shared by the
 /// C-family languages.
@@ -1689,7 +1689,7 @@ fn path_extension(file_path: &str) -> String {
     }
 }
 
-// ---- count ----
+// Count.
 
 /// One counted file: its path, the language it was read as, and its line
 /// partition.
@@ -1900,7 +1900,7 @@ fn path_is_hidden(file_path: &str) -> bool {
     path_base(file_path).starts_with('.')
 }
 
-// ---- in-memory tree (for tests and the explicit-file path) ----
+// In-memory tree (for tests and the explicit-file path).
 
 /// An in-memory file tree: the seam the tests count against without touching a
 /// real filesystem.
@@ -1956,7 +1956,7 @@ pub fn tree_read_file(tree: &File_Tree, path: &str) -> Option<Vec<u8>> {
     tree.files.iter().find(|file| file.path == path).map(|file| file.data.clone())
 }
 
-// ---- render ----
+// Render.
 
 /// A report and whether to break each language into its files.
 #[derive(Clone, Debug)]
@@ -2350,7 +2350,7 @@ fn with_thousands_separators(value: usize) -> String {
     iter::once(digits[..lead_count].to_string()).chain(groups).collect::<Vec<String>>().join(",")
 }
 
-// ---- json ----
+// JSON.
 
 /// Writes the report as indented JSON: a name-sorted languages array, each with
 /// its category and source/test split, and a total. The format matches Go's
@@ -2434,7 +2434,7 @@ fn json_string(value: &str) -> String {
     format!("\"{escaped}\"")
 }
 
-// ---- run ----
+// Run.
 
 /// The resolved scope and override flags of one run.
 #[derive(Clone, Debug, Default)]
