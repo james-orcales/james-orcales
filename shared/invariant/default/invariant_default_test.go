@@ -195,9 +195,10 @@ func Test_Slice_Invariants_Distinguishes_Nil_And_Empty(t *testing.T) {
 	}
 	for _, c := range cases {
 		namespace := "test.slice." + c.Name
-		seed_preset_axes(namespace, "empty", "nil")
+		seed_preset_axes(namespace, "The value is empty.", "The value is nil.")
 		invariant.Slice_Invariants(c.S, invariant.Namespace(namespace))
-		if got := recorded_signature(namespace, "empty", "nil"); got != c.Want {
+		got := recorded_signature(namespace, "The value is empty.", "The value is nil.")
+		if got != c.Want {
 			t.Errorf("%s: [empty is_nil] = %q, want %q", c.Name, got, c.Want)
 		}
 	}
@@ -217,9 +218,10 @@ func Test_Map_Invariants_Distinguishes_Nil_And_Empty(t *testing.T) {
 	}
 	for _, c := range cases {
 		namespace := "test.map." + c.Name
-		seed_preset_axes(namespace, "empty", "nil")
+		seed_preset_axes(namespace, "The value is empty.", "The value is nil.")
 		invariant.Map_Invariants(c.M, invariant.Namespace(namespace))
-		if got := recorded_signature(namespace, "empty", "nil"); got != c.Want {
+		got := recorded_signature(namespace, "The value is empty.", "The value is nil.")
+		if got != c.Want {
 			t.Errorf("%s: [empty is_nil] = %q, want %q", c.Name, got, c.Want)
 		}
 	}

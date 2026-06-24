@@ -560,9 +560,9 @@ func Float32_Invariants(f float32, namespace Namespace) {
 // string excludes every content axis, and a NUL byte or a line break is itself a
 // control character.
 func String_Invariants(s string, namespace Namespace) {
-	Always(len(s) <= 1<<20, "Untrusted string is streamed at a max of 1 MiB chunks")
+	Always(len(s) <= 1<<20, "Untrusted string is streamed at a max of 1 MiB chunks.")
 	Dot_Product(namespace,
-		Sometimes(len(s) == 1<<20, "Untrusted string is 1 MiB"),
+		Sometimes(len(s) == 1<<20, "Untrusted string is 1 MiB."),
 		Sometimes(len(s) == 0, "The value is empty."),
 		Sometimes(string_has_edge_whitespace(s), "The value has edge whitespace."),
 		Sometimes(string_has_interior_whitespace(s), "The value has interior whitespace."),
@@ -572,7 +572,7 @@ func String_Invariants(s string, namespace Namespace) {
 		Sometimes(string_has_control(s), "The value has a control character."),
 		Sometimes(string_has_line_break(s), "The value has a line break."),
 		Impossible(
-			Event_True("Untrusted string is 1 MiB"),
+			Event_True("Untrusted string is 1 MiB."),
 			Event_True("The value is empty."),
 		),
 		Impossible(
@@ -621,10 +621,13 @@ func Slice_Invariants[E any](s []E, namespace Namespace) {
 	Always(len(s) <= math.MaxInt16, "The slice holds at most MaxInt16 elements.")
 	Dot_Product(namespace,
 		Sometimes(len(s) == math.MaxInt16, "The slice holds MaxInt16 elements."),
-		Sometimes(len(s) == 0, "empty"),
-		Sometimes(s == nil, "nil"),
-		Impossible(Event_True("nil"), Event_False("empty")),
-		Impossible(Event_True("The slice holds MaxInt16 elements."), Event_True("empty")),
+		Sometimes(len(s) == 0, "The value is empty."),
+		Sometimes(s == nil, "The value is nil."),
+		Impossible(Event_True("The value is nil."), Event_False("The value is empty.")),
+		Impossible(
+			Event_True("The slice holds MaxInt16 elements."),
+			Event_True("The value is empty."),
+		),
 	)
 }
 
@@ -634,10 +637,13 @@ func Map_Invariants[K comparable, V any](m map[K]V, namespace Namespace) {
 	Always(len(m) <= math.MaxInt16, "The map holds at most MaxInt16 entries.")
 	Dot_Product(namespace,
 		Sometimes(len(m) == math.MaxInt16, "The map holds MaxInt16 entries."),
-		Sometimes(len(m) == 0, "empty"),
-		Sometimes(m == nil, "nil"),
-		Impossible(Event_True("nil"), Event_False("empty")),
-		Impossible(Event_True("The map holds MaxInt16 entries."), Event_True("empty")),
+		Sometimes(len(m) == 0, "The value is empty."),
+		Sometimes(m == nil, "The value is nil."),
+		Impossible(Event_True("The value is nil."), Event_False("The value is empty.")),
+		Impossible(
+			Event_True("The map holds MaxInt16 entries."),
+			Event_True("The value is empty."),
+		),
 	)
 }
 
