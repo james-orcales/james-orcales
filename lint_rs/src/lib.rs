@@ -9,8 +9,14 @@
 //! a trait *name* for method syntax. The traversal is a visitor returning owned
 //! results — it never returns a borrowed AST node, so it obeys its own ban 2.
 
+use proc_macro2;
 use std::fs;
+use std::io;
+use std::io::Read;
+use std::iter;
 use std::path;
+use std::slice;
+use syn;
 
 /// A single rule violation at a source location.
 pub struct Violation {
@@ -46,10 +52,10 @@ fn rust_files(root: &path::Path) -> Vec<path::PathBuf> {
 
 fn scan_file(path: &path::Path) -> Vec<String> {
     let display = path.display().to_string();
-    let source = match fs::read_to_string(path) {
-        Ok(text) => text,
+    let source = match read_capped(path) {
+        Some(text) => text,
         // Unreadable files are an I/O concern, out of the linter's remit.
-        Err(_) => return Vec::new(),
+        None => return Vec::new(),
     };
     // The mut pass is independent of syn so it still reports on files whose
     // delimiters balance but whose grammar syn rejects.
@@ -59,19 +65,43 @@ fn scan_file(path: &path::Path) -> Vec<String> {
         Err(error) => keyword
             .iter()
             .map(|v| render(&display, v))
-            .chain(std::iter::once(format!("{display}: parse error: {error}")))
+            .chain(iter::once(format!("{display}: parse error: {error}")))
             .collect(),
         // Drop the `mut` tokens that fall inside a whitelisted primitive function.
         Ok(file) => {
             let exempt = mut_whitelist_spans(&file, path);
+            // The crate roots that must be `use`d depend on this file's crate, so
+            // resolve its Cargo.toml dependencies before the path scan.
+            let roots = crate_roots(path);
             keyword
                 .iter()
                 .filter(|v| !within_any(v, &exempt))
                 .map(|v| render(&display, v))
                 .chain(check_file(&file).iter().map(|v| render(&display, v)))
+                // Comments live in the raw source, not the `syn` AST (the lexer
+                // drops `//` trivia), so this pass takes the text directly.
+                .chain(comment_violations(&source).iter().map(|v| render(&display, v)))
+                .chain(
+                    inline_path_violations(&file, &source, &roots)
+                        .iter()
+                        .map(|v| render(&display, v)),
+                )
+                .chain(unbounded_api_violations(&source).iter().map(|v| render(&display, v)))
                 .collect()
         }
     }
+}
+
+// A bounded read cap: the dialect bans `fs::read_to_string`, so the linter caps
+// its own reads here. No real source file approaches this, so the cap only fires
+// on pathological input — the unbounded hazard the ban guards against.
+const SOURCE_BYTES_MAX: u64 = 64 * 1024 * 1024;
+
+/// The file as text, read through a `take` cap rather than the banned unbounded
+/// `fs::read_to_string`. `None` on any I/O error.
+fn read_capped(path: &path::Path) -> Option<String> {
+    let file = fs::File::open(path).ok()?;
+    io::read_to_string(file.take(SOURCE_BYTES_MAX)).ok()
 }
 
 fn render(path: &str, violation: &Violation) -> String {
@@ -91,10 +121,12 @@ fn check_file(file: &syn::File) -> Vec<Violation> {
         .chain(each_item(items, reference_field_check))
         .chain(each_item(items, reference_return_check))
         .chain(each_item(items, lifetime_param_check))
+        .chain(each_item(items, function_size_check))
+        .chain(entry_point_check(file))
         .collect()
 }
 
-// ---- item visitor: owned results, borrows only inward ----
+// Item visitor: owned results, borrows only inward.
 
 /// Applies `check` to every item under `items`, including items nested in module
 /// bodies and function/method bodies. Returns owned results; no reference
@@ -143,7 +175,7 @@ fn block_items<R>(block: &syn::Block, check: impl Fn(&syn::Item) -> Vec<R> + Cop
         .stmts
         .iter()
         .flat_map(|stmt| match stmt {
-            syn::Stmt::Item(nested) => each_item(std::slice::from_ref(nested), check),
+            syn::Stmt::Item(nested) => each_item(slice::from_ref(nested), check),
             // A `let` initializer (and its `else` block) can hold items in a
             // block expression; an expression statement can too (if/match/loop
             // bodies, closures). Both were previously skipped.
@@ -168,6 +200,10 @@ fn block_items<R>(block: &syn::Block, check: impl Fn(&syn::Item) -> Vec<R> + Cop
 /// reaches every item; leaf and opaque expressions contribute nothing.
 fn expr_items<R>(expr: &syn::Expr, check: impl Fn(&syn::Item) -> Vec<R> + Copy) -> Vec<R> {
     match expr {
+        // Block-bearing expressions: each carries one or more blocks whose
+        // statements may declare items. The compound and operand expressions —
+        // which only nest sub-expressions — are split off below to keep each
+        // arm-set within the function-size cap.
         syn::Expr::Block(e) => block_items(&e.block, check),
         syn::Expr::Unsafe(e) => block_items(&e.block, check),
         syn::Expr::Async(e) => block_items(&e.block, check),
@@ -195,6 +231,18 @@ fn expr_items<R>(expr: &syn::Expr, check: impl Fn(&syn::Item) -> Vec<R> + Copy) 
             }))
             .collect(),
         syn::Expr::Closure(e) => expr_items(&e.body, check),
+        _ => compound_expr_items(expr, check),
+    }
+}
+
+/// The operand and container expressions: those that only nest sub-expressions,
+/// never a block of their own. Split out of `expr_items` so neither half exceeds
+/// the function-size cap; together they cover every block-reaching variant.
+fn compound_expr_items<R>(
+    expr: &syn::Expr,
+    check: impl Fn(&syn::Item) -> Vec<R> + Copy,
+) -> Vec<R> {
+    match expr {
         syn::Expr::Array(e) => e.elems.iter().flat_map(|x| expr_items(x, check)).collect(),
         syn::Expr::Tuple(e) => e.elems.iter().flat_map(|x| expr_items(x, check)).collect(),
         syn::Expr::Call(e) => expr_items(&e.func, check)
@@ -245,7 +293,7 @@ fn expr_items<R>(expr: &syn::Expr, check: impl Fn(&syn::Item) -> Vec<R> + Copy) 
     }
 }
 
-// ---- span helpers ----
+// Span helpers.
 
 /// Start line/column of any spanned node, via UFCS so we need not import the
 /// `Spanned` trait name (the import rule forbids it).
@@ -259,7 +307,7 @@ fn violation(node: &impl syn::spanned::Spanned, message: String) -> Violation {
     Violation { line, column, message }
 }
 
-// ---- mut: token pass + exact-function whitelist ----
+// The `mut` pass: a token scan plus an exact-function whitelist.
 
 // The exact functions allowed to write `mut`: the trusted arena/handle
 // primitive, whose in-place O(1) growth has no mut-free equivalent. Each entry
@@ -331,7 +379,7 @@ fn mut_idents(tokens: proc_macro2::TokenStream) -> Vec<Violation> {
         .collect()
 }
 
-// ---- shared: does a type contain a reference anywhere? ----
+// Shared: does a type contain a reference anywhere?
 
 fn type_has_reference(ty: &syn::Type) -> bool {
     match ty {
@@ -385,7 +433,7 @@ fn bound_has_reference(bound: &syn::TypeParamBound) -> bool {
     }
 }
 
-// ---- ban 1: reference fields ----
+// Ban 1: reference fields.
 
 /// A struct/enum/union field may not hold a reference (directly or nested), so
 /// no type ever needs a lifetime to carry a borrow. Own the value, or store an
@@ -425,7 +473,7 @@ fn field_reference(field: &syn::Field) -> Option<Violation> {
     }
 }
 
-// ---- ban 2: reference returns ----
+// Ban 2: reference returns.
 
 /// A function may not return a reference; borrows flow in, never out. Return an
 /// owned value, or expose reads via a visitor (`with(&arena, h, |x| ...)`).
@@ -463,11 +511,11 @@ fn return_reference(sig: &syn::Signature) -> Vec<Violation> {
     }
 }
 
-// ---- ban 3: lifetime parameters ----
+// Ban 3: lifetime parameters.
 
 /// No `<'a>` may be declared on any item. With references barred from fields and
 /// returns, elision covers every remaining case, so a named lifetime is never
-/// needed. (`'static` is a fixed bound, not a parameter, and is untouched.)
+/// needed. `'static` is a fixed bound, not a parameter, and is untouched.
 fn lifetime_param_check(item: &syn::Item) -> Vec<Violation> {
     match item {
         syn::Item::Fn(item_fn) => lifetime_params(&item_fn.sig.generics),
@@ -511,7 +559,7 @@ fn lifetime_params(generics: &syn::Generics) -> Vec<Violation> {
         .collect()
 }
 
-// ---- ban: macro authoring ----
+// Ban: macro authoring.
 
 fn macro_check(item: &syn::Item) -> Vec<Violation> {
     match item {
@@ -546,7 +594,7 @@ fn has_proc_macro_attr(item_fn: &syn::ItemFn) -> bool {
     })
 }
 
-// ---- ban: user-authored polymorphism ----
+// Ban: user-authored polymorphism.
 
 fn polymorphism_check(item: &syn::Item) -> Vec<Violation> {
     match item {
@@ -570,7 +618,7 @@ fn trait_has_method(item_trait: &syn::ItemTrait) -> bool {
     item_trait.items.iter().any(|trait_item| matches!(trait_item, syn::TraitItem::Fn(_)))
 }
 
-// ---- ban: non-pub struct/union fields ----
+// Ban: non-pub struct/union fields.
 
 fn fields_public_check(item: &syn::Item) -> Vec<Violation> {
     match item {
@@ -597,7 +645,7 @@ fn field_public(field: &syn::Field) -> Option<Violation> {
     }
 }
 
-// ---- layout: inline modules ----
+// Layout: inline modules.
 
 fn layout_check(item: &syn::Item) -> Vec<Violation> {
     match item {
@@ -615,7 +663,7 @@ fn layout_check(item: &syn::Item) -> Vec<Violation> {
     }
 }
 
-// ---- imports: module-only ----
+// Imports: module-only.
 
 fn import_check(item: &syn::Item) -> Vec<Violation> {
     match item {
@@ -678,7 +726,7 @@ fn is_denylisted_free_function(parent: Option<&syn::Ident>, name: &str) -> bool 
     }
 }
 
-// ---- casing: first-char-driven snake_case / Ada_Case ----
+// Casing: first-char-driven snake_case / Ada_Case.
 
 fn item_casing(item: &syn::Item) -> Vec<Violation> {
     match item {
@@ -872,5 +920,577 @@ fn pat_casing(pat: &syn::Pat) -> Option<Violation> {
         syn::Pat::Ident(pat_ident) => check_name(&pat_ident.ident, None),
         syn::Pat::Type(pat_type) => pat_casing(&pat_type.pat),
         _ => None,
+    }
+}
+
+// Size: function body line count.
+
+// A body wider than this hides its control flow; the cap forces a split. Mirrors
+// the Go linter's `function_lines_max`.
+const FUNCTION_LINES_MAX: usize = 70;
+
+/// A function body spans at most `FUNCTION_LINES_MAX` lines, counted from the
+/// opening brace's line to the closing brace's line inclusive. Free functions,
+/// trait-impl methods, and trait default methods are all measured. Closures are
+/// deferred, matching the casing pass, which also defers closure interiors.
+fn function_size_check(item: &syn::Item) -> Vec<Violation> {
+    match item {
+        syn::Item::Fn(item_fn) => block_size(&item_fn.sig.ident, &item_fn.block),
+        syn::Item::Impl(item_impl) => item_impl
+            .items
+            .iter()
+            .flat_map(|impl_item| match impl_item {
+                syn::ImplItem::Fn(method) => block_size(&method.sig.ident, &method.block),
+                _ => Vec::new(),
+            })
+            .collect(),
+        syn::Item::Trait(item_trait) => item_trait
+            .items
+            .iter()
+            .flat_map(|trait_item| match trait_item {
+                syn::TraitItem::Fn(method) => match &method.default {
+                    Some(block) => block_size(&method.sig.ident, block),
+                    None => Vec::new(),
+                },
+                _ => Vec::new(),
+            })
+            .collect(),
+        _ => Vec::new(),
+    }
+}
+
+fn block_size(ident: &syn::Ident, block: &syn::Block) -> Vec<Violation> {
+    let span = block.brace_token.span;
+    let open_line = span.open().start().line;
+    let close_line = span.close().start().line;
+    // Brace-to-brace inclusive, matching the Go linter's lbrace..rbrace count.
+    let line_count = close_line - open_line + 1;
+    match line_count > FUNCTION_LINES_MAX {
+        true => vec![violation(
+            ident,
+            format!("function spans {line_count} lines (max {FUNCTION_LINES_MAX})"),
+        )],
+        false => Vec::new(),
+    }
+}
+
+// Layout: entry point first.
+
+/// When a file declares `fn main`, it must be the first function. Non-function
+/// items — a `use`, a `struct`, a `const` — may precede it. Only top-level
+/// functions count, so this reads `file.items` directly rather than via the
+/// item visitor, which would also descend into nested functions. Rust has no
+/// `Main`/`TestMain` convention, so `main` is the sole entry point.
+fn entry_point_check(file: &syn::File) -> Vec<Violation> {
+    file.items
+        .iter()
+        .filter_map(|item| match item {
+            syn::Item::Fn(item_fn) => Some(item_fn),
+            _ => None,
+        })
+        .skip(1)
+        .filter(|item_fn| item_fn.sig.ident == "main")
+        .map(|item_fn| {
+            violation(
+                &item_fn.sig.ident,
+                "fn main must be the first function in the file".to_string(),
+            )
+        })
+        .collect()
+}
+
+// Comments: opening, ending, and spacing.
+
+/// A line comment opens with a space then a capital letter and ends in `.`, `:`,
+/// `?`, or `!`. In a group of comments on consecutive lines only the first
+/// line's opening and the last line's ending are judged; a trailing (inline)
+/// comment is exempt from both, but every line still needs the space.
+fn comment_violations(source: &str) -> Vec<Violation> {
+    let lines = comment_lines(source);
+    lines.chunk_by(|a, b| b.line == a.line + 1).flat_map(comment_group_violations).collect()
+}
+
+fn comment_group_violations(group: &[Comment_Line]) -> Vec<Violation> {
+    let space: Vec<Violation> = group.iter().filter_map(comment_space_violation).collect();
+    // A trailing comment (code precedes the `//`) is exempt from the opening and
+    // ending rules; whether the group is trailing is decided by its first line.
+    // Lines in a markdown code fence are exempt too — the ``` line and the code
+    // it encloses are not prose. The space rule still binds every line.
+    let trailing = group.first().is_some_and(|first| first.inline);
+    let opening = match trailing || group.first().is_some_and(is_fence) {
+        true => Vec::new(),
+        false => group.first().and_then(comment_capital_violation).into_iter().collect(),
+    };
+    let ending = match trailing || last_in_fenced_code(group) {
+        true => Vec::new(),
+        false => group.last().and_then(comment_terminator_violation).into_iter().collect(),
+    };
+    space.into_iter().chain(opening).chain(ending).collect()
+}
+
+/// A comment line opening a markdown code fence: its prose, after the marker,
+/// starts with three backticks (an optional language tag may follow).
+fn is_fence(comment: &Comment_Line) -> bool {
+    comment_body(&comment.text).starts_with("```")
+}
+
+/// Whether a group's last line sits in a code fence — the fence line itself, or
+/// any line an earlier fence left open. An odd count of fence lines before the
+/// last means the block is still open at it.
+fn last_in_fenced_code(group: &[Comment_Line]) -> bool {
+    match group.split_last() {
+        Some((last, rest)) => rest.iter().filter(|c| is_fence(c)).count() % 2 == 1 || is_fence(last),
+        None => false,
+    }
+}
+
+/// One `//` line comment: its position, whether code precedes it on the line (a
+/// trailing comment), and the raw text from `//` to end of line.
+struct Comment_Line {
+    pub line: usize,
+    pub column: usize,
+    pub inline: bool,
+    pub text: String,
+}
+
+fn comment_lines(source: &str) -> Vec<Comment_Line> {
+    let spans = literal_spans(source);
+    source
+        .lines()
+        .enumerate()
+        .filter_map(|(index, line)| comment_on_line(index + 1, line, &spans))
+        .collect()
+}
+
+fn comment_on_line(
+    line_number: usize,
+    line: &str,
+    spans: &[(proc_macro2::LineColumn, proc_macro2::LineColumn)],
+) -> Option<Comment_Line> {
+    let chars: Vec<char> = line.chars().collect();
+    // The comment starts at the first `//` not sitting inside a string or char
+    // literal, so a `//` in a URL string is not mistaken for a comment.
+    let column = (0..chars.len().saturating_sub(1))
+        .find(|&i| chars[i] == '/' && chars[i + 1] == '/' && !within_spans(line_number, i, spans))?;
+    let inline = chars[..column].iter().any(|c| !c.is_whitespace());
+    let text = chars[column..].iter().collect();
+    Some(Comment_Line { line: line_number, column, inline, text })
+}
+
+fn within_spans(
+    line: usize,
+    column: usize,
+    spans: &[(proc_macro2::LineColumn, proc_macro2::LineColumn)],
+) -> bool {
+    let at = (line, column);
+    spans.iter().any(|(start, end)| {
+        at >= (start.line, start.column) && at < (end.line, end.column)
+    })
+}
+
+/// Spans of the real string/char/number literals, used to mask `//` that lives
+/// inside a literal. A doc comment desugars to a `#[doc = "..."]` literal whose
+/// span covers the original `///`/`//!` source, which begins with a slash, never
+/// a quote — excluding it would hide doc comments from the scan, so those are
+/// kept by checking the literal's first source character.
+fn literal_spans(source: &str) -> Vec<(proc_macro2::LineColumn, proc_macro2::LineColumn)> {
+    match source.parse::<proc_macro2::TokenStream>() {
+        Ok(tokens) => literal_spans_in(tokens, source),
+        // The caller only reaches this on a file `syn` already parsed, so a
+        // re-tokenize failure is unreachable; degrade to no masking regardless.
+        Err(_) => Vec::new(),
+    }
+}
+
+fn literal_spans_in(
+    tokens: proc_macro2::TokenStream,
+    source: &str,
+) -> Vec<(proc_macro2::LineColumn, proc_macro2::LineColumn)> {
+    tokens
+        .into_iter()
+        .flat_map(|token| match token {
+            proc_macro2::TokenTree::Literal(literal) => {
+                let span = literal.span();
+                match char_at(source, span.start()) {
+                    Some('/') => Vec::new(),
+                    _ => vec![(span.start(), span.end())],
+                }
+            }
+            proc_macro2::TokenTree::Group(group) => literal_spans_in(group.stream(), source),
+            _ => Vec::new(),
+        })
+        .collect()
+}
+
+fn char_at(source: &str, at: proc_macro2::LineColumn) -> Option<char> {
+    source.lines().nth(at.line - 1).and_then(|line| line.chars().nth(at.column))
+}
+
+fn comment_space_violation(comment: &Comment_Line) -> Option<Violation> {
+    match has_space_after_marker(&comment.text) {
+        true => None,
+        false => Some(Violation {
+            line: comment.line,
+            column: comment.column,
+            message: "comment: missing space after `//`".to_string(),
+        }),
+    }
+}
+
+fn comment_capital_violation(comment: &Comment_Line) -> Option<Violation> {
+    match comment_body(&comment.text).chars().next() {
+        // Empty body, or a non-letter lead (a digit, a path) — nothing to cap.
+        None => None,
+        Some(first) if !first.is_alphabetic() => None,
+        Some(first) if first.is_uppercase() => None,
+        Some(_) => Some(Violation {
+            line: comment.line,
+            column: comment.column,
+            message: "comment: should start with capital letter".to_string(),
+        }),
+    }
+}
+
+fn comment_terminator_violation(comment: &Comment_Line) -> Option<Violation> {
+    let body = comment_body(&comment.text);
+    match body.trim_end_matches([' ', '\t']).chars().last() {
+        None => None,
+        Some('.' | ':' | '?' | '!') => None,
+        Some(_) => Some(Violation {
+            line: comment.line,
+            column: comment.column,
+            message: "comment: should end with `.`, `:`, `?`, or `!`".to_string(),
+        }),
+    }
+}
+
+/// The comment prose: the `//`/`///`/`//!` marker stripped — every leading
+/// slash, then an optional `!` — and the result left-trimmed. Owned, since the
+/// dialect forbids returning a borrow.
+fn comment_body(text: &str) -> String {
+    let after_slashes = text.trim_start_matches('/');
+    let after_marker = after_slashes.strip_prefix('!').unwrap_or(after_slashes);
+    after_marker.trim_start_matches([' ', '\t']).to_string()
+}
+
+fn has_space_after_marker(text: &str) -> bool {
+    let after_slashes = text.trim_start_matches('/');
+    let after_marker = after_slashes.strip_prefix('!').unwrap_or(after_slashes);
+    after_marker.is_empty() || after_marker.starts_with([' ', '\t'])
+}
+
+// Imports: no inlined crate-root paths.
+
+/// A path may not inline a crate root at the call site. `std`, `core`, `alloc`,
+/// `crate`, `super`, and every dependency crate (read from Cargo.toml) must be
+/// brought into scope with a `use` and referenced by the bound short name — Go's
+/// rule that every package you touch has an explicit import. So `syn::Item` needs
+/// `use syn;`, and `std::iter::once` must become `use std::iter;` then
+/// `iter::once`. This is a token pass — so it catches macro bodies too — with the
+/// `use` statements themselves masked out by span.
+fn inline_path_violations(file: &syn::File, source: &str, roots: &[String]) -> Vec<Violation> {
+    let spans = use_item_spans(file);
+    let leaves = use_leaf_names(file);
+    match source.parse::<proc_macro2::TokenStream>() {
+        Ok(tokens) => path_root_violations(tokens, roots, &leaves, &spans),
+        // Unreachable: the caller only runs on a file `syn` already parsed.
+        Err(_) => Vec::new(),
+    }
+}
+
+fn path_root_violations(
+    tokens: proc_macro2::TokenStream,
+    roots: &[String],
+    leaves: &[String],
+    spans: &[(proc_macro2::LineColumn, proc_macro2::LineColumn)],
+) -> Vec<Violation> {
+    // A path never crosses a delimiter, so each group's stream is its own flat
+    // level for the neighbour lookups; descend into groups for nested paths.
+    let level: Vec<proc_macro2::TokenTree> = tokens.into_iter().collect();
+    level
+        .iter()
+        .enumerate()
+        .flat_map(|(index, token)| {
+            let nested = match token {
+                proc_macro2::TokenTree::Group(group) => {
+                    path_root_violations(group.stream(), roots, leaves, spans)
+                }
+                _ => Vec::new(),
+            };
+            inlined_root(&level, index, roots, leaves, spans)
+                .into_iter()
+                .chain(nested)
+                .collect::<Vec<Violation>>()
+        })
+        .collect()
+}
+
+fn inlined_root(
+    level: &[proc_macro2::TokenTree],
+    index: usize,
+    roots: &[String],
+    leaves: &[String],
+    spans: &[(proc_macro2::LineColumn, proc_macro2::LineColumn)],
+) -> Option<Violation> {
+    let ident = match &level[index] {
+        proc_macro2::TokenTree::Ident(ident) => ident,
+        _ => return None,
+    };
+    let name = ident.to_string();
+    let start = ident.span().start();
+    // A crate-root head with a `::` after it, that no `use` binds and that does
+    // not itself sit after a `::` (so it really is the path's first segment), and
+    // that is not inside a `use` statement.
+    let inlined = roots.contains(&name)
+        && !leaves.contains(&name)
+        && followed_by_path_sep(level, index)
+        && !preceded_by_path_sep(level, index)
+        && !within_spans(start.line, start.column, spans);
+    match inlined {
+        true => Some(Violation {
+            line: start.line,
+            column: start.column,
+            message: format!(
+                "inlined import `{name}::…`; bind `{name}` with a `use` and qualify by short name"
+            ),
+        }),
+        false => None,
+    }
+}
+
+fn followed_by_path_sep(level: &[proc_macro2::TokenTree], index: usize) -> bool {
+    is_colon(level.get(index + 1)) && is_colon(level.get(index + 2))
+}
+
+fn preceded_by_path_sep(level: &[proc_macro2::TokenTree], index: usize) -> bool {
+    index >= 2 && is_colon(level.get(index - 1)) && is_colon(level.get(index - 2))
+}
+
+fn is_colon(token: Option<&proc_macro2::TokenTree>) -> bool {
+    matches!(token, Some(proc_macro2::TokenTree::Punct(punct)) if punct.as_char() == ':')
+}
+
+fn use_item_spans(file: &syn::File) -> Vec<(proc_macro2::LineColumn, proc_macro2::LineColumn)> {
+    each_item(&file.items, |item| match item {
+        syn::Item::Use(item_use) => {
+            let span = syn::spanned::Spanned::span(item_use);
+            vec![(span.start(), span.end())]
+        }
+        _ => Vec::new(),
+    })
+}
+
+fn use_leaf_names(file: &syn::File) -> Vec<String> {
+    each_item(&file.items, |item| match item {
+        syn::Item::Use(item_use) => use_tree_leaves(&item_use.tree),
+        _ => Vec::new(),
+    })
+}
+
+/// The names a `use` binds into scope: the last path segment, or the rename. A
+/// glob binds nothing nameable. These are the names that exempt a crate root.
+fn use_tree_leaves(tree: &syn::UseTree) -> Vec<String> {
+    match tree {
+        syn::UseTree::Path(use_path) => use_tree_leaves(&use_path.tree),
+        syn::UseTree::Name(use_name) => vec![use_name.ident.to_string()],
+        syn::UseTree::Rename(use_rename) => vec![use_rename.rename.to_string()],
+        syn::UseTree::Glob(_) => Vec::new(),
+        syn::UseTree::Group(use_group) => use_group.items.iter().flat_map(use_tree_leaves).collect(),
+    }
+}
+
+/// `std`/`core`/`alloc`/`crate`/`super` plus every dependency crate named in the
+/// nearest Cargo.toml. A path led by one of these, unbound by a `use`, is an
+/// inlined import.
+fn crate_roots(file_path: &path::Path) -> Vec<String> {
+    let universal = ["std", "core", "alloc", "crate", "super"];
+    universal.iter().map(|name| name.to_string()).chain(cargo_dependencies(file_path)).collect()
+}
+
+fn cargo_dependencies(file_path: &path::Path) -> Vec<String> {
+    match find_cargo_toml(file_path).and_then(|manifest| read_capped(&manifest)) {
+        Some(text) => dependency_names(&text),
+        None => Vec::new(),
+    }
+}
+
+fn find_cargo_toml(file_path: &path::Path) -> Option<path::PathBuf> {
+    file_path
+        .ancestors()
+        .skip(1)
+        .map(|dir| dir.join("Cargo.toml"))
+        .find(|candidate| candidate.is_file())
+}
+
+/// The crate names under any `[dependencies]` / `[dev-dependencies]` /
+/// `[build-dependencies]` table, in flat or `[dependencies.name]` form, with
+/// Cargo's hyphens normalized to the underscores used in code.
+fn dependency_names(manifest: &str) -> Vec<String> {
+    manifest.lines().fold((false, Vec::new()), dependency_names_step).1
+}
+
+fn dependency_names_step(state: (bool, Vec<String>), line: &str) -> (bool, Vec<String>) {
+    let (in_section, names) = state;
+    let trimmed = line.trim();
+    match trimmed.strip_prefix('[') {
+        Some(rest) => dependency_section(rest.split(']').next().unwrap_or("").trim(), names),
+        None => match in_section {
+            true => (true, dependency_entry(trimmed, names)),
+            false => (false, names),
+        },
+    }
+}
+
+fn dependency_section(header: &str, names: Vec<String>) -> (bool, Vec<String>) {
+    let plain = matches!(header, "dependencies" | "dev-dependencies" | "build-dependencies");
+    match plain {
+        // Following key lines name dependencies.
+        true => (true, names),
+        // `[dependencies.foo]` names `foo`; its following lines are foo's fields.
+        false => (false, dependency_table(header, names)),
+    }
+}
+
+fn dependency_table(header: &str, names: Vec<String>) -> Vec<String> {
+    match header.split_once('.') {
+        Some(("dependencies" | "dev-dependencies" | "build-dependencies", rest)) => {
+            append_name(names, normalize_crate_name(rest))
+        }
+        _ => names,
+    }
+}
+
+fn dependency_entry(line: &str, names: Vec<String>) -> Vec<String> {
+    match line.is_empty() || line.starts_with('#') {
+        true => names,
+        false => {
+            let name: String =
+                line.chars().take_while(|c| !c.is_whitespace() && *c != '=' && *c != '.').collect();
+            match name.is_empty() {
+                true => names,
+                false => append_name(names, normalize_crate_name(&name)),
+            }
+        }
+    }
+}
+
+fn normalize_crate_name(raw: &str) -> String {
+    raw.trim().replace('-', "_")
+}
+
+fn append_name(names: Vec<String>, name: String) -> Vec<String> {
+    names.into_iter().chain(iter::once(name)).collect()
+}
+
+// Bans: unbounded stdlib APIs (the blacklist bucket).
+
+// Path calls whose bounded twin is a *different* function, so a flat
+// `(parent, name)`-tail ban has no false positives (see unbounded_stdlib_audit).
+// Each row: parent segment, function name, the bounded remedy.
+const UNBOUNDED_PATHS: &[(&str, &str, &str)] = &[
+    ("fs", "read", "read into a fixed buffer (`File::open` + `take`)"),
+    ("fs", "read_to_string", "read into a fixed buffer (`File::open` + `take`)"),
+    ("iter", "repeat", "use `iter::repeat_n` for a bounded count"),
+    ("TcpStream", "connect", "use `TcpStream::connect_timeout`"),
+];
+
+// Method calls bannable by bare name because the name rarely collides with a
+// bounded method (`join` is excluded — it clashes with `Path`/slice `join`).
+const UNBOUNDED_METHODS: &[(&str, &str)] = &[
+    ("recv", "use `recv_timeout` or `try_recv`"),
+    ("accept", "set a read timeout or use a nonblocking listener"),
+];
+
+/// Unbounded APIs whose work or memory grows with attacker-controlled input and
+/// that have a same-named-free bounded twin. Matched syntactically — path calls
+/// on the `parent::name` tail, methods on the bare name — by a token pass that
+/// also reaches macro bodies. The take / literal-arg buckets need dataflow the
+/// linter lacks and are not handled here.
+fn unbounded_api_violations(source: &str) -> Vec<Violation> {
+    match source.parse::<proc_macro2::TokenStream>() {
+        Ok(tokens) => unbounded_calls(tokens),
+        // Unreachable: the caller only runs on a file `syn` already parsed.
+        Err(_) => Vec::new(),
+    }
+}
+
+fn unbounded_calls(tokens: proc_macro2::TokenStream) -> Vec<Violation> {
+    let level: Vec<proc_macro2::TokenTree> = tokens.into_iter().collect();
+    level
+        .iter()
+        .enumerate()
+        .flat_map(|(index, token)| {
+            let nested = match token {
+                proc_macro2::TokenTree::Group(group) => unbounded_calls(group.stream()),
+                _ => Vec::new(),
+            };
+            unbounded_call(&level, index).into_iter().chain(nested).collect::<Vec<Violation>>()
+        })
+        .collect()
+}
+
+fn unbounded_call(level: &[proc_macro2::TokenTree], index: usize) -> Option<Violation> {
+    let ident = match &level[index] {
+        proc_macro2::TokenTree::Ident(ident) => ident,
+        _ => return None,
+    };
+    let name = ident.to_string();
+    let start = ident.span().start();
+    unbounded_path_call(level, index, &name, start)
+        .or_else(|| unbounded_method_call(level, index, &name, start))
+}
+
+fn unbounded_path_call(
+    level: &[proc_macro2::TokenTree],
+    index: usize,
+    parent: &str,
+    start: proc_macro2::LineColumn,
+) -> Option<Violation> {
+    let child = match (followed_by_path_sep(level, index), level.get(index + 3)) {
+        (true, Some(proc_macro2::TokenTree::Ident(child))) => child.to_string(),
+        _ => return None,
+    };
+    UNBOUNDED_PATHS.iter().find(|(p, c, _)| *p == parent && *c == child.as_str()).map(
+        |(p, c, remedy)| Violation {
+            line: start.line,
+            column: start.column,
+            message: format!("unbounded `{p}::{c}` banned; {remedy}"),
+        },
+    )
+}
+
+fn unbounded_method_call(
+    level: &[proc_macro2::TokenTree],
+    index: usize,
+    name: &str,
+    start: proc_macro2::LineColumn,
+) -> Option<Violation> {
+    let is_method = index >= 1
+        && is_dot(level.get(index - 1))
+        && is_call_continuation(level.get(index + 1));
+    match is_method {
+        true => UNBOUNDED_METHODS.iter().find(|(method, _)| *method == name).map(
+            |(method, remedy)| Violation {
+                line: start.line,
+                column: start.column,
+                message: format!("unbounded `{method}` banned; {remedy}"),
+            },
+        ),
+        false => None,
+    }
+}
+
+fn is_dot(token: Option<&proc_macro2::TokenTree>) -> bool {
+    matches!(token, Some(proc_macro2::TokenTree::Punct(punct)) if punct.as_char() == '.')
+}
+
+/// A method name is a call when followed by `(...)`, or by `::` for a turbofish
+/// (`recv::<T>()`); a bare `.recv` field access is not.
+fn is_call_continuation(token: Option<&proc_macro2::TokenTree>) -> bool {
+    match token {
+        Some(proc_macro2::TokenTree::Group(group)) => {
+            matches!(group.delimiter(), proc_macro2::Delimiter::Parenthesis)
+        }
+        other => is_colon(other),
     }
 }
