@@ -1772,6 +1772,40 @@ func Test_Invariants_Field_Composition(t *testing.T) {
 	}
 }
 
+// Test_Invariants_Parameter_Assertion verifies a function that does not assert an
+// input parameter is flagged.
+func Test_Invariants_Parameter_Assertion(t *testing.T) {
+	t.Parallel()
+	files := specification_one_file("package fixture\n\n" +
+		"import \"fixture/shared/invariant\"\n\n" +
+		"// Token is a fixture.\ntype Token string\n\n" +
+		"// Token_Invariants is a fixture.\n" +
+		"func Token_Invariants(v Token, namespace invariant.Namespace) {\n" +
+		"\tinvariant.Dot_Product(namespace, " +
+		"invariant.Sometimes(len(v) == 0, \"x\"))\n}\n\n" +
+		"// Consume does.\nfunc Consume(tok Token) {\n\tprintln(0)\n}\n")
+	if !specification_flags(t, files, "must assert tok") {
+		t.Fatal("a function that does not assert an input parameter must be flagged")
+	}
+}
+
+// Test_Invariants_Output_Assertion verifies a function that does not assert a
+// named return in a first-statement defer is flagged.
+func Test_Invariants_Output_Assertion(t *testing.T) {
+	t.Parallel()
+	files := specification_one_file("package fixture\n\n" +
+		"import \"fixture/shared/invariant\"\n\n" +
+		"// Token is a fixture.\ntype Token string\n\n" +
+		"// Token_Invariants is a fixture.\n" +
+		"func Token_Invariants(v Token, namespace invariant.Namespace) {\n" +
+		"\tinvariant.Dot_Product(namespace, " +
+		"invariant.Sometimes(len(v) == 0, \"x\"))\n}\n\n" +
+		"// Make does.\nfunc Make() (tok Token) {\n\treturn \"\"\n}\n")
+	if !specification_flags(t, files, "must assert tok in a first-statement defer") {
+		t.Fatal("a function that does not assert its return in a defer must be flagged")
+	}
+}
+
 // Test_Specification_Baseline pins that the unmutated package is clean, so every
 // other test isolates the single rule it violates.
 func Test_Specification_Baseline(t *testing.T) {
@@ -2343,5 +2377,75 @@ func Test_Type_Invariant_Struct_Pointer_Field_Composed(t *testing.T) {
 		"\tinvariant.Dot_Product(namespace, invariant.Sometimes(true, \"x\"))\n}\n")
 	if specification_flags(t, files, "must call") {
 		t.Fatal("a pointer field composed via its pointee must not be flagged")
+	}
+}
+
+// Test_Function_Assertion_Complete_Passes verifies a function that asserts its
+// input after a first-statement output defer is not flagged.
+func Test_Function_Assertion_Complete_Passes(t *testing.T) {
+	t.Parallel()
+	files := specification_one_file("package fixture\n\n" +
+		"import \"fixture/shared/invariant\"\n\n" +
+		"// Token is a fixture.\ntype Token string\n\n" +
+		"// Token_Invariants is a fixture.\n" +
+		"func Token_Invariants(v Token, namespace invariant.Namespace) {\n" +
+		"\tinvariant.Dot_Product(namespace, " +
+		"invariant.Sometimes(len(v) == 0, \"x\"))\n}\n\n" +
+		"// Count is a fixture.\ntype Count int\n\n" +
+		"// Count_Invariants is a fixture.\n" +
+		"func Count_Invariants(v Count, namespace invariant.Namespace) {\n" +
+		"\tinvariant.Dot_Product(namespace, invariant.Sometimes(v == 0, \"x\"))\n}\n\n" +
+		"// Process does.\nfunc Process(tok Token) (n Count) {\n" +
+		"\tdefer func() {\n\t\tCount_Invariants(n, \"Process.n\")\n\t}()\n" +
+		"\tToken_Invariants(tok, \"Process.tok\")\n\treturn 0\n}\n")
+	if specification_flags(t, files, "must assert") {
+		t.Fatal("a fully-asserting function must not be flagged")
+	}
+}
+
+// Test_Function_Assertion_Exempt_Subjects verifies func/error params and returns,
+// which have no invariant, need no assertion.
+func Test_Function_Assertion_Exempt_Subjects(t *testing.T) {
+	t.Parallel()
+	files := specification_one_file("package fixture\n\n" +
+		"// Run does.\nfunc Run(action func(), failure error) (result error) {\n" +
+		"\tprintln(0)\n\treturn nil\n}\n")
+	if specification_flags(t, files, "must assert") {
+		t.Fatal("func/error subjects have no invariant and need no assertion")
+	}
+}
+
+// Test_Function_Assertion_Slice_Loop_Passes verifies a slice parameter asserted by
+// an element-wise range loop is not flagged.
+func Test_Function_Assertion_Slice_Loop_Passes(t *testing.T) {
+	t.Parallel()
+	files := specification_one_file("package fixture\n\n" +
+		"import \"fixture/shared/invariant\"\n\n" +
+		"// Token is a fixture.\ntype Token string\n\n" +
+		"// Token_Invariants is a fixture.\n" +
+		"func Token_Invariants(v Token, namespace invariant.Namespace) {\n" +
+		"\tinvariant.Dot_Product(namespace, " +
+		"invariant.Sometimes(len(v) == 0, \"x\"))\n}\n\n" +
+		"// Scan does.\nfunc Scan(toks []Token) {\n" +
+		"\tfor _, t := range toks {\n\t\tToken_Invariants(t, \"Scan.tok\")\n\t}\n" +
+		"\tprintln(0)\n}\n")
+	if specification_flags(t, files, "must assert") {
+		t.Fatal("a slice parameter asserted element-wise must not be flagged")
+	}
+}
+
+// Test_Function_Assertion_Bundle_Exempt verifies a _Invariants bundle is exempt
+// from the function-assertion rule (else it would assert its own value).
+func Test_Function_Assertion_Bundle_Exempt(t *testing.T) {
+	t.Parallel()
+	files := specification_one_file("package fixture\n\n" +
+		"import \"fixture/shared/invariant\"\n\n" +
+		"// Token is a fixture.\ntype Token string\n\n" +
+		"// Token_Invariants is a fixture.\n" +
+		"func Token_Invariants(v Token, namespace invariant.Namespace) {\n" +
+		"\tinvariant.Dot_Product(namespace, " +
+		"invariant.Sometimes(len(v) == 0, \"x\"))\n}\n")
+	if specification_flags(t, files, "must assert") {
+		t.Fatal("a _Invariants bundle is exempt from the function-assertion rule")
 	}
 }

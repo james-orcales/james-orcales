@@ -1789,6 +1789,10 @@ func lint_output_minus(
 	}
 	all, err := lint.Check_File_System(&lint.Check_File_System_Input{
 		Fsys: fsys, Shared_Component: doctrine_shared_component_directory,
+		// The doctrine table targets other rules; the invariant rules (which fire
+		// on every typed field/param/return) are exercised by their own tests, so
+		// disable them wholesale here.
+		Invariant_Exempt_Packages: []string{"."},
 	})
 	if err != nil {
 		t.Fatalf("Check_File_System: %v", err)
