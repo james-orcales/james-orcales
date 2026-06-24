@@ -1751,6 +1751,27 @@ func Test_Invariants_Count_Coverage(t *testing.T) {
 	}
 }
 
+// Test_Invariants_Field_Composition verifies a struct bundle that fails to call a
+// field type's _Invariants is flagged.
+func Test_Invariants_Field_Composition(t *testing.T) {
+	t.Parallel()
+	files := specification_one_file("package fixture\n\n" +
+		"import \"fixture/shared/invariant\"\n\n" +
+		"// Token is a fixture.\ntype Token string\n\n" +
+		"// Token_Invariants is a fixture.\n" +
+		"func Token_Invariants(v Token, namespace invariant.Namespace) {\n" +
+		"\tinvariant.Dot_Product(namespace, " +
+		"invariant.Sometimes(len(v) == 0, \"x\"))\n}\n\n" +
+		"// Lexeme is a fixture.\ntype Lexeme struct {\n" +
+		"\t// Tok is a fixture.\n\tTok Token\n}\n\n" +
+		"// Lexeme_Invariants is a fixture.\n" +
+		"func Lexeme_Invariants(v Lexeme, namespace invariant.Namespace) {\n" +
+		"\tinvariant.Dot_Product(namespace, invariant.Sometimes(true, \"x\"))\n}\n")
+	if !specification_flags(t, files, "must call Token_Invariants") {
+		t.Fatal("a struct that does not compose a field's invariant must be flagged")
+	}
+}
+
 // Test_Specification_Baseline pins that the unmutated package is clean, so every
 // other test isolates the single rule it violates.
 func Test_Specification_Baseline(t *testing.T) {
@@ -2228,5 +2249,99 @@ func Test_Type_Invariant_Count_Generic_Passes(t *testing.T) {
 	}
 	if specification_flags(t, files, "must claim") {
 		t.Fatal("a complete generic count bundle must not be flagged for coverage")
+	}
+}
+
+// Test_Type_Invariant_Struct_Composition_Passes verifies a struct that composes
+// every coverable field's invariant is not flagged.
+func Test_Type_Invariant_Struct_Composition_Passes(t *testing.T) {
+	t.Parallel()
+	files := specification_one_file("package fixture\n\n" +
+		"import \"fixture/shared/invariant\"\n\n" +
+		"// Token is a fixture.\ntype Token string\n\n" +
+		"// Token_Invariants is a fixture.\n" +
+		"func Token_Invariants(v Token, namespace invariant.Namespace) {\n" +
+		"\tinvariant.Dot_Product(namespace, " +
+		"invariant.Sometimes(len(v) == 0, \"x\"))\n}\n\n" +
+		"// Pair is a fixture.\ntype Pair struct {\n" +
+		"\t// Tok is a fixture.\n\tTok Token\n" +
+		"\t// Count is a fixture.\n\tCount int\n}\n\n" +
+		"// Pair_Invariants is a fixture.\n" +
+		"func Pair_Invariants(v Pair, namespace invariant.Namespace) {\n" +
+		"\tToken_Invariants(v.Tok, \"Pair.Tok\")\n" +
+		"\tinvariant.Int_Invariants(v.Count, \"Pair.Count\")\n" +
+		"\tinvariant.Dot_Product(namespace, invariant.Sometimes(true, \"x\"))\n}\n")
+	if specification_flags(t, files, "must call") {
+		t.Fatal("a struct composing all field invariants must not be flagged")
+	}
+}
+
+// Test_Type_Invariant_Struct_Mutex_Skipped verifies a struct with a sync.Mutex
+// field is skipped entirely.
+func Test_Type_Invariant_Struct_Mutex_Skipped(t *testing.T) {
+	t.Parallel()
+	files := specification_one_file("package fixture\n\n" +
+		"import \"fixture/shared/invariant\"\n\nimport \"sync\"\n\n" +
+		"// Guarded is a fixture.\ntype Guarded struct {\n" +
+		"\t// Mu is a fixture.\n\tMu sync.Mutex\n\t// N is a fixture.\n\tN int\n}\n\n" +
+		"// Guarded_Invariants is a fixture.\n" +
+		"func Guarded_Invariants(v Guarded, namespace invariant.Namespace) {\n" +
+		"\tinvariant.Dot_Product(namespace, invariant.Sometimes(true, \"x\"))\n}\n")
+	if specification_flags(t, files, "must call") {
+		t.Fatal("a struct with a sync.Mutex field must be skipped entirely")
+	}
+}
+
+// Test_Type_Invariant_Struct_Function_Fields_Exempt verifies a func-typed field,
+// which has no invariant, is exempt.
+func Test_Type_Invariant_Struct_Function_Fields_Exempt(t *testing.T) {
+	t.Parallel()
+	files := specification_one_file("package fixture\n\n" +
+		"import \"fixture/shared/invariant\"\n\n" +
+		"// Ops is a fixture.\ntype Ops struct {\n" +
+		"\t// Run is a fixture.\n\tRun func()\n}\n\n" +
+		"// Ops_Invariants is a fixture.\n" +
+		"func Ops_Invariants(v Ops, namespace invariant.Namespace) {\n" +
+		"\tinvariant.Dot_Product(namespace, invariant.Sometimes(true, \"x\"))\n}\n")
+	if specification_flags(t, files, "must call") {
+		t.Fatal("a func-typed field has no invariant and must be exempt")
+	}
+}
+
+// Test_Type_Invariant_Struct_Boolean_Field_Required verifies a bool field requires
+// the Boolean_Invariants preset.
+func Test_Type_Invariant_Struct_Boolean_Field_Required(t *testing.T) {
+	t.Parallel()
+	files := specification_one_file("package fixture\n\n" +
+		"import \"fixture/shared/invariant\"\n\n" +
+		"// Flag is a fixture.\ntype Flag struct {\n" +
+		"\t// On is a fixture.\n\tOn bool\n}\n\n" +
+		"// Flag_Invariants is a fixture.\n" +
+		"func Flag_Invariants(v Flag, namespace invariant.Namespace) {\n" +
+		"\tinvariant.Dot_Product(namespace, invariant.Sometimes(true, \"x\"))\n}\n")
+	if !specification_flags(t, files, "must call Boolean_Invariants(v.On") {
+		t.Fatal("a bool field must require the Boolean_Invariants preset")
+	}
+}
+
+// Test_Type_Invariant_Struct_Pointer_Field_Composed verifies a pointer field is
+// composed via its pointee, not exempt.
+func Test_Type_Invariant_Struct_Pointer_Field_Composed(t *testing.T) {
+	t.Parallel()
+	files := specification_one_file("package fixture\n\n" +
+		"import \"fixture/shared/invariant\"\n\n" +
+		"// Token is a fixture.\ntype Token string\n\n" +
+		"// Token_Invariants is a fixture.\n" +
+		"func Token_Invariants(v Token, namespace invariant.Namespace) {\n" +
+		"\tinvariant.Dot_Product(namespace, " +
+		"invariant.Sometimes(len(v) == 0, \"x\"))\n}\n\n" +
+		"// Holder is a fixture.\ntype Holder struct {\n" +
+		"\t// Tok is a fixture.\n\tTok *Token\n}\n\n" +
+		"// Holder_Invariants is a fixture.\n" +
+		"func Holder_Invariants(v Holder, namespace invariant.Namespace) {\n" +
+		"\tToken_Invariants(v.Tok, \"Holder.Tok\")\n" +
+		"\tinvariant.Dot_Product(namespace, invariant.Sometimes(true, \"x\"))\n}\n")
+	if specification_flags(t, files, "must call") {
+		t.Fatal("a pointer field composed via its pointee must not be flagged")
 	}
 }

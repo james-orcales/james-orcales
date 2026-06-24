@@ -675,3 +675,408 @@ func numeric_math_member(function ast.Expr) (member string) {
 	}
 	return selector.Sel.Name
 }
+
+// Flags a struct bundle that fails to call the _Invariants of a field whose type
+// has one. Existence-driven: a field is required only when an _Invariants for its
+// type exists in the module (presets always do), so adding one later auto-enables
+// the field. A struct with an immediate sync.Mutex/RWMutex field is skipped whole.
+// Cross-file because the bundle index spans the whole module.
+func check_struct_invariants(parsed_files []parsed_file, exempt []string) (diags []Diagnostic) {
+	defined := struct_bundle_index(parsed_files)
+	for _, pf := range parsed_files {
+		if strings.HasSuffix(pf.Path, "_test.go") {
+			continue
+		}
+		if type_invariants_path_exempt(pf.Path, exempt) {
+			continue
+		}
+		diags = append(diags, struct_file_diagnostics(pf, defined)...)
+	}
+	return diags
+}
+
+// Collects the base names of every bundle defined in the module's non-test files,
+// so a field whose type has gained one is recognized without cross-package resolution.
+func struct_bundle_index(parsed_files []parsed_file) (defined map[string]bool) {
+	defined = map[string]bool{}
+	for _, pf := range parsed_files {
+		if strings.HasSuffix(pf.Path, "_test.go") {
+			continue
+		}
+		for _, declaration := range pf.File.Decls {
+			function, is_function := declaration.(*ast.FuncDecl)
+			if !is_function {
+				continue
+			}
+			if function.Recv != nil {
+				continue
+			}
+			if type_invariants_is_bundle_name(function.Name.Name) {
+				defined[function.Name.Name] = true
+			}
+		}
+	}
+	return defined
+}
+
+// Checks every struct type + value/pointer-parameter bundle pair in one file.
+func struct_file_diagnostics(file parsed_file, defined map[string]bool) (diags []Diagnostic) {
+	for index, declaration := range file.File.Decls {
+		general, is_general := declaration.(*ast.GenDecl)
+		if !is_general {
+			continue
+		}
+		if general.Tok != token.TYPE {
+			continue
+		}
+		type_specification, is_type := general.Specs[0].(*ast.TypeSpec)
+		if !is_type {
+			continue
+		}
+		struct_type, is_struct := type_specification.Type.(*ast.StructType)
+		if !is_struct {
+			continue
+		}
+		if len(struct_type.Fields.List) == 0 {
+			continue
+		}
+		if struct_has_mutex(struct_type) {
+			continue
+		}
+		diags = append(diags, struct_type_diagnostics(&struct_type_input{
+			File: file, Index: index, Type: type_specification,
+			Struct: struct_type, Defined: defined,
+		})...)
+	}
+	return diags
+}
+
+// Carries one struct and the module bundle index; the parsed file and the map
+// keep it off loose parameters.
+type struct_type_input struct {
+	File    parsed_file
+	Index   int
+	Type    *ast.TypeSpec
+	Struct  *ast.StructType
+	Defined map[string]bool
+}
+
+// Checks that one struct's bundle composes every coverable field.
+func struct_type_diagnostics(input *struct_type_input) (diags []Diagnostic) {
+	bundle := type_invariants_following_function(input.File.File, input.Index)
+	if bundle == nil {
+		return nil
+	}
+	if bundle.Name.Name != type_invariant_name(input.Type.Name.Name) {
+		return nil
+	}
+	parameter := struct_parameter_name(bundle, input.Type.Name.Name)
+	if parameter == "" {
+		return nil
+	}
+	present := struct_present_calls(bundle, parameter)
+	for _, field := range input.Struct.Fields.List {
+		diags = append(diags, struct_field_diagnostics(&struct_field_input{
+			Field:           field,
+			Type_Parameters: struct_type_parameter_set(input.Type),
+			Defined:         input.Defined,
+			Present:         present,
+			Parameter:       parameter,
+			Bundle:          bundle.Name.Name,
+			Position:        input.File.File_Set.Position(bundle.Name.Pos()),
+		})...)
+	}
+	return diags
+}
+
+// Carries one field and everything its check reads; three maps keep it off loose
+// parameters.
+type struct_field_input struct {
+	Field           *ast.Field
+	Type_Parameters map[string]bool
+	Defined         map[string]bool
+	Present         map[string]bool
+	Parameter       string
+	Bundle          string
+	Position        token.Position
+}
+
+// Reports the missing composition call for one field, per declared name.
+func struct_field_diagnostics(input *struct_field_input) (diags []Diagnostic) {
+	if len(input.Field.Names) == 0 {
+		return nil
+	}
+	expected, preset := struct_field_invariant(input.Field.Type, input.Type_Parameters)
+	if expected == "" {
+		return nil
+	}
+	if !preset {
+		if !input.Defined[expected] {
+			return nil
+		}
+	}
+	for _, name := range input.Field.Names {
+		if input.Present[expected+"\x00"+name.Name] {
+			continue
+		}
+		diags = append(diags, Diagnostic{
+			Position: input.Position,
+			Message: input.Bundle + " must call " + expected + "(" +
+				input.Parameter + "." + name.Name + ", ...)",
+		})
+	}
+	return diags
+}
+
+// Reports whether an immediate field is a sync.Mutex or sync.RWMutex.
+func struct_has_mutex(struct_type *ast.StructType) (yes bool) {
+	for _, field := range struct_type.Fields.List {
+		if struct_is_mutex(field.Type) {
+			return true
+		}
+	}
+	return false
+}
+
+// Reports whether field_type is sync.Mutex or sync.RWMutex.
+func struct_is_mutex(field_type ast.Expr) (yes bool) {
+	selector, is_selector := field_type.(*ast.SelectorExpr)
+	if !is_selector {
+		return false
+	}
+	qualifier, is_identifier := selector.X.(*ast.Ident)
+	if !is_identifier {
+		return false
+	}
+	if qualifier.Name != "sync" {
+		return false
+	}
+	if selector.Sel.Name == "Mutex" {
+		return true
+	}
+	return selector.Sel.Name == "RWMutex"
+}
+
+// Returns the struct bundle's first parameter name when it is the struct by value
+// or pointer (possibly a generic instantiation), or "" otherwise.
+func struct_parameter_name(bundle *ast.FuncDecl, type_name string) (name string) {
+	if bundle.Type.Params == nil {
+		return ""
+	}
+	if len(bundle.Type.Params.List) == 0 {
+		return ""
+	}
+	first := bundle.Type.Params.List[0]
+	parameter_type := first.Type
+	star, is_star := parameter_type.(*ast.StarExpr)
+	if is_star {
+		parameter_type = star.X
+	}
+	if numeric_type_base_name(parameter_type) != type_name {
+		return ""
+	}
+	if len(first.Names) == 0 {
+		return ""
+	}
+	return first.Names[0].Name
+}
+
+// Returns the struct's own type-parameter names, so a field typed as one is exempt.
+func struct_type_parameter_set(type_specification *ast.TypeSpec) (parameters map[string]bool) {
+	parameters = map[string]bool{}
+	if type_specification.TypeParams == nil {
+		return parameters
+	}
+	for _, field := range type_specification.TypeParams.List {
+		for _, name := range field.Names {
+			parameters[name.Name] = true
+		}
+	}
+	return parameters
+}
+
+// Collects "callee\x00field" for every call in the bundle whose first argument is
+// the parameter's field (value or deref), so a composition call can be looked up.
+func struct_present_calls(bundle *ast.FuncDecl, parameter string) (present map[string]bool) {
+	present = map[string]bool{}
+	ast.Inspect(bundle.Body, func(node ast.Node) (recurse bool) {
+		call, is_call := node.(*ast.CallExpr)
+		if !is_call {
+			return true
+		}
+		callee := struct_callee_name(call.Fun)
+		if callee == "" {
+			return true
+		}
+		field := struct_first_argument_field(call, parameter)
+		if field == "" {
+			return true
+		}
+		present[callee+"\x00"+field] = true
+		return true
+	})
+	return present
+}
+
+// Returns a call's final callee name: a bare ident, a selector's member, or the
+// base of a generic call; "" otherwise.
+func struct_callee_name(callee ast.Expr) (name string) {
+	// A generic call Foo_Invariants[T](...) wraps the callee in an index; unwrap it.
+	index, is_index := callee.(*ast.IndexExpr)
+	if is_index {
+		callee = index.X
+	}
+	index_list, is_index_list := callee.(*ast.IndexListExpr)
+	if is_index_list {
+		callee = index_list.X
+	}
+	switch typed := callee.(type) {
+	case *ast.Ident:
+		return typed.Name
+	case *ast.SelectorExpr:
+		return typed.Sel.Name
+	default:
+		return ""
+	}
+}
+
+// Returns the field name when a call's first argument is parameter.Field or
+// *parameter.Field; "" otherwise.
+func struct_first_argument_field(call *ast.CallExpr, parameter string) (field string) {
+	if len(call.Args) == 0 {
+		return ""
+	}
+	argument := call.Args[0]
+	star, is_star := argument.(*ast.StarExpr)
+	if is_star {
+		argument = star.X
+	}
+	selector, is_selector := argument.(*ast.SelectorExpr)
+	if !is_selector {
+		return ""
+	}
+	base, is_identifier := selector.X.(*ast.Ident)
+	if !is_identifier {
+		return ""
+	}
+	if base.Name != parameter {
+		return ""
+	}
+	return selector.Sel.Name
+}
+
+// Returns the _Invariants name a field of the given type must call and whether it
+// is a preset (always available), or "" when the field is exempt.
+func struct_field_invariant(
+	field_type ast.Expr, type_parameters map[string]bool,
+) (name string, preset bool) {
+
+	core := field_type
+	star, is_star := core.(*ast.StarExpr)
+	if is_star {
+		core = star.X
+	}
+	switch typed := core.(type) {
+	case *ast.ArrayType:
+		if typed.Len != nil {
+			return "", false
+		}
+		return "Slice_Invariants", true
+	case *ast.MapType:
+		return "Map_Invariants", true
+	case *ast.SelectorExpr:
+		return typed.Sel.Name + "_Invariants", false
+	case *ast.IndexExpr:
+		return struct_named_invariant(typed.X, type_parameters)
+	case *ast.IndexListExpr:
+		return struct_named_invariant(typed.X, type_parameters)
+	case *ast.Ident:
+		return struct_field_ident_invariant(typed.Name, type_parameters)
+	default:
+		return "", false
+	}
+}
+
+// Returns the bundle name for a generic instantiation's base (an ident or a
+// cross-package selector), or "" otherwise.
+func struct_named_invariant(
+	base ast.Expr, type_parameters map[string]bool,
+) (name string, preset bool) {
+
+	selector, is_selector := base.(*ast.SelectorExpr)
+	if is_selector {
+		return selector.Sel.Name + "_Invariants", false
+	}
+	identifier, is_identifier := base.(*ast.Ident)
+	if is_identifier {
+		return struct_field_ident_invariant(identifier.Name, type_parameters)
+	}
+	return "", false
+}
+
+// Maps a field ident to its expected bundle: a struct type param is exempt, a
+// primitive maps to its preset, a no-preset builtin is exempt, else it is a
+// defined type whose own bundle (by casing) is expected.
+func struct_field_ident_invariant(
+	name string, type_parameters map[string]bool,
+) (invariant_name string, preset bool) {
+
+	if type_parameters[name] {
+		return "", false
+	}
+	mapped := struct_primitive_preset(name)
+	if mapped != "" {
+		return mapped, true
+	}
+	if struct_is_builtin(name) {
+		return "", false
+	}
+	return type_invariant_name(name), false
+}
+
+// Maps a builtin primitive to its framework preset name, or "" when none.
+func struct_primitive_preset(name string) (preset string) {
+	switch name {
+	case "int":
+		return "Int_Invariants"
+	case "int8":
+		return "Int8_Invariants"
+	case "int16":
+		return "Int16_Invariants"
+	case "int32", "rune":
+		return "Int32_Invariants"
+	case "int64":
+		return "Int64_Invariants"
+	case "uint":
+		return "Uint_Invariants"
+	case "uint8", "byte":
+		return "Uint8_Invariants"
+	case "uint16":
+		return "Uint16_Invariants"
+	case "uint32":
+		return "Uint32_Invariants"
+	case "uint64":
+		return "Uint64_Invariants"
+	case "float32":
+		return "Float32_Invariants"
+	case "float64":
+		return "Float64_Invariants"
+	case "string":
+		return "String_Invariants"
+	case "bool":
+		return "Boolean_Invariants"
+	default:
+		return ""
+	}
+}
+
+// Reports whether name is a predeclared type that has no preset, so a field of it
+// is exempt rather than mistaken for a defined type.
+func struct_is_builtin(name string) (yes bool) {
+	switch name {
+	case "uintptr", "complex64", "complex128", "error", "any", "comparable":
+		return true
+	default:
+		return false
+	}
+}

@@ -637,3 +637,9 @@ selector.
 
 The bundle claims each length boundary by Sometimes(len(v) == V) or Always(len(v) ==/!= V): MIN,
 MAX, 0, 1, and 2.
+
+### Field Composition
+
+A struct type's bundle calls the _Invariants of every field whose type has one — a preset for a
+primitive, the type's own bundle otherwise. A struct with an immediate sync.Mutex or sync.RWMutex
+field is exempt.
