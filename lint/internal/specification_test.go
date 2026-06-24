@@ -1595,7 +1595,8 @@ func Test_Invariants_Presence(t *testing.T) {
 func Test_Invariants_Casing(t *testing.T) {
 	t.Parallel()
 	files := specification_one_file("package fixture\n\n" +
-		"// Widget is a fixture.\ntype Widget struct {\n\t// X is a fixture.\n\tX int\n}\n\n" +
+		"// Widget is a fixture.\ntype Widget struct {\n" +
+		"\t// X is a fixture.\n\tX int\n}\n\n" +
 		"// Widget_invariants is wrongly cased.\n" +
 		"func Widget_invariants(w Widget) {\n\tprintln(0)\n}\n")
 	if !specification_flags(t, files, "declare Widget_Invariants") {
@@ -1608,7 +1609,8 @@ func Test_Invariants_Casing(t *testing.T) {
 func Test_Invariants_Signature(t *testing.T) {
 	t.Parallel()
 	files := specification_one_file("package fixture\n\n" +
-		"// Widget is a fixture.\ntype Widget struct {\n\t// X is a fixture.\n\tX int\n}\n\n" +
+		"// Widget is a fixture.\ntype Widget struct {\n" +
+		"\t// X is a fixture.\n\tX int\n}\n\n" +
 		"// Widget_Invariants is a fixture.\n" +
 		"func Widget_Invariants(w Widget) {\n\tprintln(0)\n}\n")
 	if !specification_flags(t, files, "must take") {
@@ -1636,6 +1638,61 @@ func Test_Invariants_Scope(t *testing.T) {
 		"// Count is a fixture.\ntype Count uint64\n")
 	if !specification_flags(t, files, "directly below Count") {
 		t.Fatal("a defined scalar type is in scope")
+	}
+}
+
+// Test_Invariants_Numeric_Bounds verifies a numeric bundle lacking the Always
+// upper/lower bound guards is flagged.
+func Test_Invariants_Numeric_Bounds(t *testing.T) {
+	t.Parallel()
+	files := specification_one_file("package fixture\n\n" +
+		"import \"fixture/shared/invariant\"\n\n" +
+		"// Tiny is a fixture.\ntype Tiny uint8\n\n" +
+		"// Tiny_Invariants is a fixture.\n" +
+		"func Tiny_Invariants(v Tiny, namespace invariant.Namespace) {\n" +
+		"\tinvariant.Dot_Product(namespace, invariant.Sometimes(v == 0, \"zero\"))\n}\n")
+	if !specification_flags(t, files, "must guard both ends") {
+		t.Fatal("a numeric bundle without Always bounds must be flagged")
+	}
+}
+
+// Test_Invariants_Numeric_Bound_Constant verifies an inline-literal bound is flagged.
+func Test_Invariants_Numeric_Bound_Constant(t *testing.T) {
+	t.Parallel()
+	files := specification_one_file("package fixture\n\n" +
+		"import \"fixture/shared/invariant\"\n\n" +
+		"// Tiny is a fixture.\ntype Tiny uint8\n\n" +
+		"// Tiny_Invariants is a fixture.\n" +
+		"func Tiny_Invariants(v Tiny, namespace invariant.Namespace) {\n" +
+		"\tinvariant.Always(v <= 7, \"max\")\n" +
+		"\tinvariant.Always(v >= 0, \"min\")\n" +
+		"\tinvariant.Dot_Product(namespace, invariant.Sometimes(v == 0, \"zero\"))\n}\n")
+	if !specification_flags(t, files, "must be a package-level constant") {
+		t.Fatal("an inline-literal numeric bound must be flagged")
+	}
+}
+
+// Test_Invariants_Numeric_Coverage verifies a signed numeric bundle missing the
+// -1 boundary claim is flagged.
+func Test_Invariants_Numeric_Coverage(t *testing.T) {
+	t.Parallel()
+	files := specification_one_file("package fixture\n\n" +
+		"import \"fixture/shared/invariant\"\n\n" +
+		"const Sig_Max Sig = 7\n\nconst Sig_Min Sig = -8\n\n" +
+		"// Sig is a fixture.\ntype Sig int8\n\n" +
+		"// Sig_Invariants is a fixture.\n" +
+		"func Sig_Invariants(v Sig, namespace invariant.Namespace) {\n" +
+		"\tinvariant.Always(v <= Sig_Max, \"max bound\")\n" +
+		"\tinvariant.Always(v >= Sig_Min, \"min bound\")\n" +
+		"\tinvariant.Dot_Product(namespace,\n" +
+		"\t\tinvariant.Sometimes(v == Sig_Max, \"max\"),\n" +
+		"\t\tinvariant.Sometimes(v == Sig_Min, \"min\"),\n" +
+		"\t\tinvariant.Sometimes(v == 0, \"zero\"),\n" +
+		"\t\tinvariant.Sometimes(v == 1, \"one\"),\n" +
+		"\t\tinvariant.Sometimes(v == 2, \"two\"),\n" +
+		"\t)\n}\n")
+	if !specification_flags(t, files, "must claim -1") {
+		t.Fatal("a signed numeric bundle missing the -1 claim must be flagged")
 	}
 }
 
@@ -1804,8 +1861,8 @@ func deterministic_self_diagnostics(
 	return diags
 }
 
-// invariant_exempt_self_diagnostics mirrors specification_self_diagnostics but
-// threads invariant_exempt_packages, the type-invariant rule's opt-out.
+// Mirrors specification_self_diagnostics but threads invariant_exempt_packages,
+// the type-invariant rule's opt-out.
 func invariant_exempt_self_diagnostics(
 	t *testing.T, files map[string][]byte, exempt []string,
 ) (diags []lint.Diagnostic) {
@@ -1845,9 +1902,11 @@ func Test_Type_Invariant_Clean_Pair_Passes(t *testing.T) {
 	t.Parallel()
 	files := specification_one_file("package fixture\n\n" +
 		"import \"fixture/shared/invariant\"\n\n" +
-		"// Widget is a fixture.\ntype Widget struct {\n\t// X is a fixture.\n\tX int\n}\n\n" +
+		"// Widget is a fixture.\ntype Widget struct {\n" +
+		"\t// X is a fixture.\n\tX int\n}\n\n" +
 		"// Widget_Invariants is a fixture.\n" +
-		"func Widget_Invariants(w Widget, namespace invariant.Namespace) {\n\tprintln(0)\n}\n")
+		"func Widget_Invariants(w Widget, namespace invariant.Namespace) {\n" +
+		"\tprintln(0)\n}\n")
 	if specification_flags(t, files, "directly below Widget") {
 		t.Fatal("a well-formed pair must not be flagged")
 	}
@@ -1862,9 +1921,11 @@ func Test_Type_Invariant_Pointer_First_Parameter_Passes(t *testing.T) {
 	t.Parallel()
 	files := specification_one_file("package fixture\n\n" +
 		"import \"fixture/shared/invariant\"\n\n" +
-		"// Widget is a fixture.\ntype Widget struct {\n\t// X is a fixture.\n\tX int\n}\n\n" +
+		"// Widget is a fixture.\ntype Widget struct {\n" +
+		"\t// X is a fixture.\n\tX int\n}\n\n" +
 		"// Widget_Invariants is a fixture.\n" +
-		"func Widget_Invariants(w *Widget, namespace invariant.Namespace) {\n\tprintln(0)\n}\n")
+		"func Widget_Invariants(w *Widget, namespace invariant.Namespace) {\n" +
+		"\tprintln(0)\n}\n")
 	if specification_flags(t, files, "must take") {
 		t.Fatal("a pointer first parameter must satisfy the signature")
 	}
@@ -1876,9 +1937,11 @@ func Test_Type_Invariant_Generic_Passes(t *testing.T) {
 	t.Parallel()
 	files := specification_one_file("package fixture\n\n" +
 		"import \"fixture/shared/invariant\"\n\n" +
-		"// Box is a fixture.\ntype Box[T any] struct {\n\t// Item is a fixture.\n\tItem T\n}\n\n" +
+		"// Box is a fixture.\ntype Box[T any] struct {\n" +
+		"\t// Item is a fixture.\n\tItem T\n}\n\n" +
 		"// Box_Invariants is a fixture.\n" +
-		"func Box_Invariants[T any](b Box[T], namespace invariant.Namespace) {\n\tprintln(0)\n}\n")
+		"func Box_Invariants[T any](b Box[T], namespace invariant.Namespace) {\n" +
+		"\tprintln(0)\n}\n")
 	if specification_flags(t, files, "directly below Box") {
 		t.Fatal("a matching generic bundle must not be flagged")
 	}
@@ -1912,11 +1975,95 @@ func Test_Type_Invariant_Between_Input_Struct_And_Function(t *testing.T) {
 		"// Foo_Input_Invariants is a fixture.\n" +
 		"func Foo_Input_Invariants(input Foo_Input, namespace invariant.Namespace) {\n" +
 		"\tprintln(0)\n}\n\n" +
-		"// Foo does.\nfunc Foo(input *Foo_Input) (n int) {\n\treturn input.A + input.B\n}\n")
+		"// Foo does.\nfunc Foo(input *Foo_Input) (n int) {\n" +
+		"\treturn input.A + input.B\n}\n")
 	if specification_flags(t, files, "directly above") {
 		t.Fatal("the input struct may be parted from its function by its invariant")
 	}
 	if specification_flags(t, files, "directly below Foo_Input") {
 		t.Fatal("the bundle directly below the input struct satisfies the rule")
+	}
+}
+
+// Test_Type_Invariant_Numeric_Signed_Passes verifies a complete signed numeric
+// bundle (const bounds, all six boundary claims) is not flagged.
+func Test_Type_Invariant_Numeric_Signed_Passes(t *testing.T) {
+	t.Parallel()
+	files := specification_one_file("package fixture\n\n" +
+		"import \"fixture/shared/invariant\"\n\n" +
+		"const Level_Max Level = 7\n\nconst Level_Min Level = -1\n\n" +
+		"// Level is a fixture.\ntype Level int8\n\n" +
+		"// Level_Invariants is a fixture.\n" +
+		"func Level_Invariants(v Level, namespace invariant.Namespace) {\n" +
+		"\tinvariant.Always(v <= Level_Max, \"max bound\")\n" +
+		"\tinvariant.Always(v >= Level_Min, \"min bound\")\n" +
+		"\tinvariant.Dot_Product(namespace,\n" +
+		"\t\tinvariant.Sometimes(v == Level_Max, \"max\"),\n" +
+		"\t\tinvariant.Sometimes(v == Level_Min, \"min\"),\n" +
+		"\t\tinvariant.Sometimes(v == 0, \"zero\"),\n" +
+		"\t\tinvariant.Sometimes(v == 1, \"one\"),\n" +
+		"\t\tinvariant.Sometimes(v == -1, \"neg one\"),\n" +
+		"\t\tinvariant.Sometimes(v == 2, \"two\"),\n" +
+		"\t)\n}\n")
+	if specification_flags(t, files, "must guard both ends") {
+		t.Fatal("a complete signed bundle must not be flagged for bounds")
+	}
+	if specification_flags(t, files, "must be a package-level constant") {
+		t.Fatal("named const bounds must not be flagged")
+	}
+	if specification_flags(t, files, "must claim") {
+		t.Fatal("a complete signed bundle must not be flagged for coverage")
+	}
+}
+
+// Test_Type_Invariant_Numeric_Unsigned_Passes verifies a complete unsigned bundle
+// (no -1 claim, MIN a named const) is not flagged.
+func Test_Type_Invariant_Numeric_Unsigned_Passes(t *testing.T) {
+	t.Parallel()
+	files := specification_one_file("package fixture\n\n" +
+		"import \"fixture/shared/invariant\"\n\n" +
+		"const Count_Max Count = 7\n\nconst Count_Min Count = 0\n\n" +
+		"// Count is a fixture.\ntype Count uint8\n\n" +
+		"// Count_Invariants is a fixture.\n" +
+		"func Count_Invariants(v Count, namespace invariant.Namespace) {\n" +
+		"\tinvariant.Always(v <= Count_Max, \"max bound\")\n" +
+		"\tinvariant.Always(v >= Count_Min, \"min bound\")\n" +
+		"\tinvariant.Dot_Product(namespace,\n" +
+		"\t\tinvariant.Sometimes(v == Count_Max, \"max\"),\n" +
+		"\t\tinvariant.Sometimes(v == Count_Min, \"min\"),\n" +
+		"\t\tinvariant.Sometimes(v == 0, \"zero\"),\n" +
+		"\t\tinvariant.Sometimes(v == 1, \"one\"),\n" +
+		"\t\tinvariant.Sometimes(v == 2, \"two\"),\n" +
+		"\t)\n}\n")
+	if specification_flags(t, files, "must claim") {
+		t.Fatal("a complete unsigned bundle (no -1) must not be flagged for coverage")
+	}
+	if specification_flags(t, files, "must guard both ends") {
+		t.Fatal("unsigned bounds must not be flagged")
+	}
+}
+
+// Test_Type_Invariant_Numeric_Float_Passes verifies a float bundle with NaN/+-Inf
+// claims and const Always bounds is not flagged.
+func Test_Type_Invariant_Numeric_Float_Passes(t *testing.T) {
+	t.Parallel()
+	files := specification_one_file("package fixture\n\n" +
+		"import \"fixture/shared/invariant\"\n\nimport \"math\"\n\n" +
+		"const Scale_Max Scale = 100\n\nconst Scale_Min Scale = -100\n\n" +
+		"// Scale is a fixture.\ntype Scale float64\n\n" +
+		"// Scale_Invariants is a fixture.\n" +
+		"func Scale_Invariants(v Scale, namespace invariant.Namespace) {\n" +
+		"\tinvariant.Always(v <= Scale_Max, \"max bound\")\n" +
+		"\tinvariant.Always(v >= Scale_Min, \"min bound\")\n" +
+		"\tinvariant.Dot_Product(namespace,\n" +
+		"\t\tinvariant.Sometimes(math.IsNaN(float64(v)), \"nan\"),\n" +
+		"\t\tinvariant.Sometimes(float64(v) == math.Inf(-1), \"neg inf\"),\n" +
+		"\t\tinvariant.Sometimes(float64(v) == math.Inf(1), \"pos inf\"),\n" +
+		"\t)\n}\n")
+	if specification_flags(t, files, "must claim") {
+		t.Fatal("a complete float bundle (NaN/+-Inf) must not be flagged for coverage")
+	}
+	if specification_flags(t, files, "must guard both ends") {
+		t.Fatal("float const bounds must not be flagged")
 	}
 }

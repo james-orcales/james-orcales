@@ -1405,18 +1405,34 @@ func check_shadow(
 	}
 }
 
+// Check_File_Input bundles the inputs of Check_File: the parsed file with its
+// position set and source, and the lint.json lists the per-file checks consult.
+type Check_File_Input struct {
+	// File_Set resolves the file's token positions for diagnostics.
+	File_Set *token.FileSet
+	// File is the parsed syntax tree the per-file checks read.
+	File *ast.File
+	// Source is the file's raw bytes, for checks that scan text rather than AST.
+	Source []byte
+	// Instrumentation is the lint.json instrumentation_packages list, exempting
+	// the package-var ban.
+	Instrumentation []string
+	// Word_Replacements is the lint.json vocabulary table; nil disables the check.
+	Word_Replacements map[string][]string
+	// Invariant_Exempt is the lint.json invariant_exempt_packages list, exempting
+	// the type-invariant check.
+	Invariant_Exempt []string
+}
+
 // Check_File runs every per-file check (tier-1 first, then tier-2 if
 // tier-1 was clean) on one already-parsed file and returns the
 // accumulated diagnostics. Used both by Check_Source and by the
 // file-system tier's per-file pass. Stamps each diagnostic with its
 // origin tier so the printer can gate tier-2 output globally on the
 // presence of any tier-1 diagnostic.
-func Check_File(
-	file_set *token.FileSet, file *ast.File, source []byte, instrumentation []string,
-	word_replacements map[string][]string, invariant_exempt []string,
-) (diags []Diagnostic) {
+func Check_File(input *Check_File_Input) (diags []Diagnostic) {
 	diags = check_file_run_tier([]check_function{
-		make_check_type_invariants(invariant_exempt),
+		make_check_type_invariants(input.Invariant_Exempt),
 		check_casing,
 		check_named_returns,
 		check_no_naked_return,
@@ -1442,14 +1458,14 @@ func Check_File(
 		check_no_empty_function_body,
 		check_no_interfaces,
 		check_input_struct,
-		make_check_names_vocabulary(word_replacements),
+		make_check_names_vocabulary(input.Word_Replacements),
 		check_test_documentation_comment,
 		check_snap_backtick,
 		check_names,
 		check_no_bare_for,
 		check_exported_documentation_comment,
 		check_blank_synchronization_mutex,
-	}, file_set, file, source)
+	}, input.File_Set, input.File, input.Source)
 	if len(diags) > 0 {
 		for i := range diags {
 			diags[i].Tier = 1
@@ -1458,10 +1474,10 @@ func Check_File(
 	}
 	diags = check_file_run_tier([]check_function{
 		check_no_unbounded_apis, check_no_recursion,
-		check_no_function_init, make_check_no_package_vars(instrumentation),
+		check_no_function_init, make_check_no_package_vars(input.Instrumentation),
 		check_unnecessary_method,
 		check_no_third_party_struct_tag,
-	}, file_set, file, source)
+	}, input.File_Set, input.File, input.Source)
 	for i := range diags {
 		diags[i].Tier = 2
 	}
@@ -1875,7 +1891,8 @@ func Check_Source(filename string, source any) (diags []Diagnostic, err error) {
 	// no package to declare a var Default, and a nil word-replacements table
 	// disables the vocabulary check (it has no config to read from). Both are the
 	// strict, dependency-free defaults for single-file checks.
-	return Check_File(file_set, file, source_bytes, nil, nil, nil), nil
+	return Check_File(&Check_File_Input{
+		File_Set: file_set, File: file, Source: source_bytes}), nil
 }
 
 // Check_File_System_Input bundles the per-run dependencies for the
@@ -2044,9 +2061,13 @@ func check_file_system_doctrine(
 	output = append(output, input.Parse_Diags...)
 	output = append(output, check_path_casing(input.Fsys, input.Tracked)...)
 	output = append(output,
-		check_file_system_run_checks(parsed_files, input.CPU_Count,
-			input.Instrumentation_Packages, input.Word_Replacements,
-			input.Invariant_Exempt_Packages)...)
+		check_file_system_run_checks(&check_file_system_run_checks_input{
+			Parsed_Files:      parsed_files,
+			CPU_Count:         input.CPU_Count,
+			Instrumentation:   input.Instrumentation_Packages,
+			Word_Replacements: input.Word_Replacements,
+			Invariant_Exempt:  input.Invariant_Exempt_Packages,
+		})...)
 	output = append(output, check_file_system_package_split(parsed_files)...)
 	output = append(output, check_binary_component_layout(parsed_files, components)...)
 	output = append(output, check_binary_component_main_package(parsed_files, components)...)
@@ -2074,6 +2095,8 @@ func check_file_system_doctrine(
 	})...)
 	output = append(output, check_time_import_gateway(parsed_files, components)...)
 	output = append(output, check_package_documentation_comment(parsed_files)...)
+	output = append(output,
+		check_numeric_invariants(parsed_files, input.Invariant_Exempt_Packages)...)
 	return append(output,
 		check_specification(input.Fsys, parsed_files, components, input.Scope)...)
 }
@@ -4065,24 +4088,37 @@ func specification_ada_case(heading string) (name string) {
 	return strings.Join(words, "_")
 }
 
+// Carries the parsed set, the parallelism cap, and the lint.json lists the
+// per-file checks consult.
+type check_file_system_run_checks_input struct {
+	Parsed_Files      []parsed_file
+	CPU_Count         int
+	Instrumentation   []string
+	Word_Replacements map[string][]string
+	Invariant_Exempt  []string
+}
+
 // Runs checks per file in parallel — CPU bound, capped at the injected
 // CPU_Count (typically runtime.NumCPU from main.go).
 func check_file_system_run_checks(
-	parsed_files []parsed_file, cpu_count int, instrumentation []string,
-	word_replacements map[string][]string, invariant_exempt []string,
+	input *check_file_system_run_checks_input,
 ) (diags []Diagnostic) {
 
-	per_file_diags := make([][]Diagnostic, len(parsed_files))
-	sem := make(chan struct{}, cpu_count)
+	per_file_diags := make([][]Diagnostic, len(input.Parsed_Files))
+	sem := make(chan struct{}, input.CPU_Count)
 	var wg sync.WaitGroup
-	for i, pf := range parsed_files {
+	for i, pf := range input.Parsed_Files {
 		wg.Add(1)
 		sem <- struct{}{}
 		go func(i int, pf parsed_file) {
 			defer wg.Done()
 			defer func() { <-sem }()
-			per_file_diags[i] = Check_File(pf.File_Set, pf.File, pf.Source,
-				instrumentation, word_replacements, invariant_exempt)
+			per_file_diags[i] = Check_File(&Check_File_Input{
+				File_Set: pf.File_Set, File: pf.File, Source: pf.Source,
+				Instrumentation:   input.Instrumentation,
+				Word_Replacements: input.Word_Replacements,
+				Invariant_Exempt:  input.Invariant_Exempt,
+			})
 		}(i, pf)
 	}
 	wg.Wait()

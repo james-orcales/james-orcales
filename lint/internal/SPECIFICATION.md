@@ -607,3 +607,18 @@ matching type, never adrift.
 Structs with fields, defined non-alias types, and generic types are in scope. Aliases, function
 and interface types, empty structs, function-local types, _test.go files, and the packages in
 lint.json's invariant_exempt_packages are exempt.
+
+### Numeric Bounds
+
+A numeric type's value-parameter bundle guards both ends with the value on the left:
+Always(v <= MAX) and Always(v >= MIN).
+
+### Numeric Bound Constant
+
+MAX and MIN are each a package-level constant, named so the bound reads as a deliberate limit —
+never an inline literal nor an imported selector.
+
+### Numeric Coverage
+
+The bundle claims each boundary by Sometimes(v == V) or Always(v ==/!= V): MIN, MAX, 0, 1, 2, and
+-1 for signed types; a float claims NaN and both infinities instead.
