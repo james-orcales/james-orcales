@@ -175,8 +175,11 @@ to OCaml than to a C-flavored safety standard.
 
 AST (`lint_rs`): `mut` ban + whitelist; no inherent methods / method traits; module-only
 imports; no inline modules; casing; `pub` fields; no macro authoring; no reference fields;
-no reference returns; no lifetime parameters. Files that fail to parse are reported, not
-skipped.
+no reference returns; no lifetime parameters; function size (a body spans at most 70 lines,
+brace to brace); entry point first (`fn main` leads its file); comment style (a line comment
+opens with a space then a capital and ends in `.`, `:`, `?`, or `!` — trailing comments and
+markdown code fences are exempt, and `//` inside a string literal is not a comment). Files
+that fail to parse are reported, not skipped.
 
 Types (workspace `clippy.toml`, denied by default): no interior mutability
 (`Cell`/`RefCell`/`Mutex`/`RwLock`/atomics/`Once`/`LazyLock`); no `Rc`/`Arc`/`Weak`; no
