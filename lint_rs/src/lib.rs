@@ -9,8 +9,12 @@
 //! a trait *name* for method syntax. The traversal is a visitor returning owned
 //! results — it never returns a borrowed AST node, so it obeys its own ban 2.
 
+use proc_macro2;
 use std::fs;
+use std::iter;
 use std::path;
+use std::slice;
+use syn;
 
 /// A single rule violation at a source location.
 pub struct Violation {
@@ -59,11 +63,14 @@ fn scan_file(path: &path::Path) -> Vec<String> {
         Err(error) => keyword
             .iter()
             .map(|v| render(&display, v))
-            .chain(std::iter::once(format!("{display}: parse error: {error}")))
+            .chain(iter::once(format!("{display}: parse error: {error}")))
             .collect(),
         // Drop the `mut` tokens that fall inside a whitelisted primitive function.
         Ok(file) => {
             let exempt = mut_whitelist_spans(&file, path);
+            // The crate roots that must be `use`d depend on this file's crate, so
+            // resolve its Cargo.toml dependencies before the path scan.
+            let roots = crate_roots(path);
             keyword
                 .iter()
                 .filter(|v| !within_any(v, &exempt))
@@ -72,6 +79,11 @@ fn scan_file(path: &path::Path) -> Vec<String> {
                 // Comments live in the raw source, not the `syn` AST (the lexer
                 // drops `//` trivia), so this pass takes the text directly.
                 .chain(comment_violations(&source).iter().map(|v| render(&display, v)))
+                .chain(
+                    inline_path_violations(&file, &source, &roots)
+                        .iter()
+                        .map(|v| render(&display, v)),
+                )
                 .collect()
         }
     }
@@ -148,7 +160,7 @@ fn block_items<R>(block: &syn::Block, check: impl Fn(&syn::Item) -> Vec<R> + Cop
         .stmts
         .iter()
         .flat_map(|stmt| match stmt {
-            syn::Stmt::Item(nested) => each_item(std::slice::from_ref(nested), check),
+            syn::Stmt::Item(nested) => each_item(slice::from_ref(nested), check),
             // A `let` initializer (and its `else` block) can hold items in a
             // block expression; an expression statement can too (if/match/loop
             // bodies, closures). Both were previously skipped.
@@ -1150,4 +1162,210 @@ fn has_space_after_marker(text: &str) -> bool {
     let after_slashes = text.trim_start_matches('/');
     let after_marker = after_slashes.strip_prefix('!').unwrap_or(after_slashes);
     after_marker.is_empty() || after_marker.starts_with([' ', '\t'])
+}
+
+// Imports: no inlined crate-root paths.
+
+/// A path may not inline a crate root at the call site. `std`, `core`, `alloc`,
+/// `crate`, `super`, and every dependency crate (read from Cargo.toml) must be
+/// brought into scope with a `use` and referenced by the bound short name — Go's
+/// rule that every package you touch has an explicit import. So `syn::Item` needs
+/// `use syn;`, and `std::iter::once` must become `use std::iter;` then
+/// `iter::once`. This is a token pass — so it catches macro bodies too — with the
+/// `use` statements themselves masked out by span.
+fn inline_path_violations(file: &syn::File, source: &str, roots: &[String]) -> Vec<Violation> {
+    let spans = use_item_spans(file);
+    let leaves = use_leaf_names(file);
+    match source.parse::<proc_macro2::TokenStream>() {
+        Ok(tokens) => path_root_violations(tokens, roots, &leaves, &spans),
+        // Unreachable: the caller only runs on a file `syn` already parsed.
+        Err(_) => Vec::new(),
+    }
+}
+
+fn path_root_violations(
+    tokens: proc_macro2::TokenStream,
+    roots: &[String],
+    leaves: &[String],
+    spans: &[(proc_macro2::LineColumn, proc_macro2::LineColumn)],
+) -> Vec<Violation> {
+    // A path never crosses a delimiter, so each group's stream is its own flat
+    // level for the neighbour lookups; descend into groups for nested paths.
+    let level: Vec<proc_macro2::TokenTree> = tokens.into_iter().collect();
+    level
+        .iter()
+        .enumerate()
+        .flat_map(|(index, token)| {
+            let nested = match token {
+                proc_macro2::TokenTree::Group(group) => {
+                    path_root_violations(group.stream(), roots, leaves, spans)
+                }
+                _ => Vec::new(),
+            };
+            inlined_root(&level, index, roots, leaves, spans)
+                .into_iter()
+                .chain(nested)
+                .collect::<Vec<Violation>>()
+        })
+        .collect()
+}
+
+fn inlined_root(
+    level: &[proc_macro2::TokenTree],
+    index: usize,
+    roots: &[String],
+    leaves: &[String],
+    spans: &[(proc_macro2::LineColumn, proc_macro2::LineColumn)],
+) -> Option<Violation> {
+    let ident = match &level[index] {
+        proc_macro2::TokenTree::Ident(ident) => ident,
+        _ => return None,
+    };
+    let name = ident.to_string();
+    let start = ident.span().start();
+    // A crate-root head with a `::` after it, that no `use` binds and that does
+    // not itself sit after a `::` (so it really is the path's first segment), and
+    // that is not inside a `use` statement.
+    let inlined = roots.contains(&name)
+        && !leaves.contains(&name)
+        && followed_by_path_sep(level, index)
+        && !preceded_by_path_sep(level, index)
+        && !within_spans(start.line, start.column, spans);
+    match inlined {
+        true => Some(Violation {
+            line: start.line,
+            column: start.column,
+            message: format!(
+                "inlined import `{name}::…`; bind `{name}` with a `use` and qualify by short name"
+            ),
+        }),
+        false => None,
+    }
+}
+
+fn followed_by_path_sep(level: &[proc_macro2::TokenTree], index: usize) -> bool {
+    is_colon(level.get(index + 1)) && is_colon(level.get(index + 2))
+}
+
+fn preceded_by_path_sep(level: &[proc_macro2::TokenTree], index: usize) -> bool {
+    index >= 2 && is_colon(level.get(index - 1)) && is_colon(level.get(index - 2))
+}
+
+fn is_colon(token: Option<&proc_macro2::TokenTree>) -> bool {
+    matches!(token, Some(proc_macro2::TokenTree::Punct(punct)) if punct.as_char() == ':')
+}
+
+fn use_item_spans(file: &syn::File) -> Vec<(proc_macro2::LineColumn, proc_macro2::LineColumn)> {
+    each_item(&file.items, |item| match item {
+        syn::Item::Use(item_use) => {
+            let span = syn::spanned::Spanned::span(item_use);
+            vec![(span.start(), span.end())]
+        }
+        _ => Vec::new(),
+    })
+}
+
+fn use_leaf_names(file: &syn::File) -> Vec<String> {
+    each_item(&file.items, |item| match item {
+        syn::Item::Use(item_use) => use_tree_leaves(&item_use.tree),
+        _ => Vec::new(),
+    })
+}
+
+/// The names a `use` binds into scope: the last path segment, or the rename. A
+/// glob binds nothing nameable. These are the names that exempt a crate root.
+fn use_tree_leaves(tree: &syn::UseTree) -> Vec<String> {
+    match tree {
+        syn::UseTree::Path(use_path) => use_tree_leaves(&use_path.tree),
+        syn::UseTree::Name(use_name) => vec![use_name.ident.to_string()],
+        syn::UseTree::Rename(use_rename) => vec![use_rename.rename.to_string()],
+        syn::UseTree::Glob(_) => Vec::new(),
+        syn::UseTree::Group(use_group) => use_group.items.iter().flat_map(use_tree_leaves).collect(),
+    }
+}
+
+/// `std`/`core`/`alloc`/`crate`/`super` plus every dependency crate named in the
+/// nearest Cargo.toml. A path led by one of these, unbound by a `use`, is an
+/// inlined import.
+fn crate_roots(file_path: &path::Path) -> Vec<String> {
+    let universal = ["std", "core", "alloc", "crate", "super"];
+    universal.iter().map(|name| name.to_string()).chain(cargo_dependencies(file_path)).collect()
+}
+
+fn cargo_dependencies(file_path: &path::Path) -> Vec<String> {
+    match find_cargo_toml(file_path) {
+        Some(manifest) => match fs::read_to_string(&manifest) {
+            Ok(text) => dependency_names(&text),
+            Err(_) => Vec::new(),
+        },
+        None => Vec::new(),
+    }
+}
+
+fn find_cargo_toml(file_path: &path::Path) -> Option<path::PathBuf> {
+    file_path
+        .ancestors()
+        .skip(1)
+        .map(|dir| dir.join("Cargo.toml"))
+        .find(|candidate| candidate.is_file())
+}
+
+/// The crate names under any `[dependencies]` / `[dev-dependencies]` /
+/// `[build-dependencies]` table, in flat or `[dependencies.name]` form, with
+/// Cargo's hyphens normalized to the underscores used in code.
+fn dependency_names(manifest: &str) -> Vec<String> {
+    manifest.lines().fold((false, Vec::new()), dependency_names_step).1
+}
+
+fn dependency_names_step(state: (bool, Vec<String>), line: &str) -> (bool, Vec<String>) {
+    let (in_section, names) = state;
+    let trimmed = line.trim();
+    match trimmed.strip_prefix('[') {
+        Some(rest) => dependency_section(rest.split(']').next().unwrap_or("").trim(), names),
+        None => match in_section {
+            true => (true, dependency_entry(trimmed, names)),
+            false => (false, names),
+        },
+    }
+}
+
+fn dependency_section(header: &str, names: Vec<String>) -> (bool, Vec<String>) {
+    let plain = matches!(header, "dependencies" | "dev-dependencies" | "build-dependencies");
+    match plain {
+        // Following key lines name dependencies.
+        true => (true, names),
+        // `[dependencies.foo]` names `foo`; its following lines are foo's fields.
+        false => (false, dependency_table(header, names)),
+    }
+}
+
+fn dependency_table(header: &str, names: Vec<String>) -> Vec<String> {
+    match header.split_once('.') {
+        Some(("dependencies" | "dev-dependencies" | "build-dependencies", rest)) => {
+            append_name(names, normalize_crate_name(rest))
+        }
+        _ => names,
+    }
+}
+
+fn dependency_entry(line: &str, names: Vec<String>) -> Vec<String> {
+    match line.is_empty() || line.starts_with('#') {
+        true => names,
+        false => {
+            let name: String =
+                line.chars().take_while(|c| !c.is_whitespace() && *c != '=' && *c != '.').collect();
+            match name.is_empty() {
+                true => names,
+                false => append_name(names, normalize_crate_name(&name)),
+            }
+        }
+    }
+}
+
+fn normalize_crate_name(raw: &str) -> String {
+    raw.trim().replace('-', "_")
+}
+
+fn append_name(names: Vec<String>, name: String) -> Vec<String> {
+    names.into_iter().chain(iter::once(name)).collect()
 }

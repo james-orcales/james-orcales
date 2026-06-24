@@ -4,6 +4,7 @@
 //! table or JSON. The dialect bans `mut`, so state threads through return
 //! values rather than in-place mutation, and reads use visitor parameters.
 
+use std::array;
 use std::collections;
 use std::iter;
 use std::thread;
@@ -201,7 +202,7 @@ fn classify_bytes(source: &[u8], language: &Language) -> Counts {
 /// language defines, taken from its fields alone so no language is special-cased.
 /// A miss would skip a real opener as if it were code.
 fn build_trigger(language: &Language) -> [bool; 256] {
-    std::array::from_fn(|byte| is_trigger_byte(byte as u8, language))
+    array::from_fn(|byte| is_trigger_byte(byte as u8, language))
 }
 
 /// Reports whether a byte can begin one of the language's openers.

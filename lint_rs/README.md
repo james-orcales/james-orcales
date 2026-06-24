@@ -174,12 +174,15 @@ to OCaml than to a C-flavored safety standard.
 ## Rules enforced
 
 AST (`lint_rs`): `mut` ban + whitelist; no inherent methods / method traits; module-only
-imports; no inline modules; casing; `pub` fields; no macro authoring; no reference fields;
-no reference returns; no lifetime parameters; function size (a body spans at most 70 lines,
-brace to brace); entry point first (`fn main` leads its file); comment style (a line comment
-opens with a space then a capital and ends in `.`, `:`, `?`, or `!` — trailing comments and
-markdown code fences are exempt, and `//` inside a string literal is not a comment). Files
-that fail to parse are reported, not skipped.
+imports; no inlined crate-root paths (`std`/`core`/`alloc`/`crate`/`super` and every
+dependency crate must be `use`d and referenced by the bound short name — Go's import-per-
+package rule; so `syn::Item` needs `use syn;`, and `std::iter::once` becomes `use std::iter;`
+then `iter::once`); no inline modules; casing; `pub` fields; no macro authoring; no reference
+fields; no reference returns; no lifetime parameters; function size (a body spans at most 70
+lines, brace to brace); entry point first (`fn main` leads its file); comment style (a line
+comment opens with a space then a capital and ends in `.`, `:`, `?`, or `!` — trailing
+comments and markdown code fences are exempt, and `//` inside a string literal is not a
+comment). Files that fail to parse are reported, not skipped.
 
 Types (workspace `clippy.toml`, denied by default): no interior mutability
 (`Cell`/`RefCell`/`Mutex`/`RwLock`/atomics/`Once`/`LazyLock`); no `Rc`/`Arc`/`Weak`; no
