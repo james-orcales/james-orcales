@@ -4977,7 +4977,7 @@ func Test_Coverage_Backfill_Check_File_Empty_Source(t *testing.T) {
 	if err != nil {
 		t.Fatalf("parse: %v", err)
 	}
-	diags := lint.Check_File(file_set, file, nil, nil, nil)
+	diags := lint.Check_File(file_set, file, nil, nil, nil, nil)
 	t.Logf("empty_source diags=%d", len(diags))
 }
 

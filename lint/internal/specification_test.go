@@ -816,7 +816,10 @@ func Test_Source_And_Test_Bans_Methods(t *testing.T) {
 	files := specification_one_file("package fixture\n\n// T is a fixture.\n" +
 		"type T struct {\n\t// X is a fixture.\n\tX int\n}\n\n// Compute does.\n" +
 		"func (t T) Compute() (n int) {\n\treturn t.X\n}\n")
-	if !specification_flags(t, files, "does not satisfy any stdlib interface") {
+	// Exempt the type-invariant rule: it is tier one and would otherwise suppress
+	// the tier-two method diagnostic this test isolates.
+	diags := invariant_exempt_self_diagnostics(t, files, []string{"pkg"})
+	if !specification_diagnosed(diags, "does not satisfy any stdlib interface") {
 		t.Fatal("a non-interface method must be flagged")
 	}
 }
@@ -889,7 +892,10 @@ func Test_Source_And_Test_Bans_Struct_Tags(t *testing.T) {
 	t.Parallel()
 	files := specification_one_file("package fixture\n\n// T is a fixture.\n" +
 		"type T struct {\n\t// X is a fixture.\n\tX int `yaml:\"x\"`\n}\n")
-	if !specification_flags(t, files, "is not stdlib") {
+	// Exempt the type-invariant rule: it is tier one and would otherwise suppress
+	// the tier-two struct-tag diagnostic this test isolates.
+	diags := invariant_exempt_self_diagnostics(t, files, []string{"pkg"})
+	if !specification_diagnosed(diags, "is not stdlib") {
 		t.Fatal("a non-stdlib struct tag must be flagged")
 	}
 }
@@ -1573,6 +1579,66 @@ func Test_Stdlib_Time(t *testing.T) {
 	}
 }
 
+// Test_Invariants_Presence verifies an in-scope type with no bundle function
+// directly below it is flagged.
+func Test_Invariants_Presence(t *testing.T) {
+	t.Parallel()
+	files := specification_one_file("package fixture\n\n" +
+		"// Widget is a fixture.\ntype Widget struct {\n\t// X is a fixture.\n\tX int\n}\n")
+	if !specification_flags(t, files, "directly below Widget") {
+		t.Fatal("a type without its invariant must be flagged")
+	}
+}
+
+// Test_Invariants_Casing verifies a wrongly-cased bundle name does not satisfy an
+// exported type, which still wants the _Invariants suffix.
+func Test_Invariants_Casing(t *testing.T) {
+	t.Parallel()
+	files := specification_one_file("package fixture\n\n" +
+		"// Widget is a fixture.\ntype Widget struct {\n\t// X is a fixture.\n\tX int\n}\n\n" +
+		"// Widget_invariants is wrongly cased.\n" +
+		"func Widget_invariants(w Widget) {\n\tprintln(0)\n}\n")
+	if !specification_flags(t, files, "declare Widget_Invariants") {
+		t.Fatal("an exported type wants the _Invariants suffix")
+	}
+}
+
+// Test_Invariants_Signature verifies a bundle missing its invariant.Namespace
+// parameter is flagged.
+func Test_Invariants_Signature(t *testing.T) {
+	t.Parallel()
+	files := specification_one_file("package fixture\n\n" +
+		"// Widget is a fixture.\ntype Widget struct {\n\t// X is a fixture.\n\tX int\n}\n\n" +
+		"// Widget_Invariants is a fixture.\n" +
+		"func Widget_Invariants(w Widget) {\n\tprintln(0)\n}\n")
+	if !specification_flags(t, files, "must take") {
+		t.Fatal("a bundle without the namespace parameter must be flagged")
+	}
+}
+
+// Test_Invariants_Orphan verifies a bundle-named function not declared below its
+// type is flagged.
+func Test_Invariants_Orphan(t *testing.T) {
+	t.Parallel()
+	files := specification_one_file("package fixture\n\n" +
+		"// Stray_Invariants is a fixture.\n" +
+		"func Stray_Invariants() {\n\tprintln(0)\n}\n")
+	if !specification_flags(t, files, "directly below its type") {
+		t.Fatal("an orphan invariant function must be flagged")
+	}
+}
+
+// Test_Invariants_Scope verifies a defined scalar type, not just a struct, is in
+// scope and flagged when it lacks a bundle.
+func Test_Invariants_Scope(t *testing.T) {
+	t.Parallel()
+	files := specification_one_file("package fixture\n\n" +
+		"// Count is a fixture.\ntype Count uint64\n")
+	if !specification_flags(t, files, "directly below Count") {
+		t.Fatal("a defined scalar type is in scope")
+	}
+}
+
 // Test_Specification_Baseline pins that the unmutated package is clean, so every
 // other test isolates the single rule it violates.
 func Test_Specification_Baseline(t *testing.T) {
@@ -1736,4 +1802,121 @@ func deterministic_self_diagnostics(
 		t.Fatalf("Check_File_System: %v", err)
 	}
 	return diags
+}
+
+// invariant_exempt_self_diagnostics mirrors specification_self_diagnostics but
+// threads invariant_exempt_packages, the type-invariant rule's opt-out.
+func invariant_exempt_self_diagnostics(
+	t *testing.T, files map[string][]byte, exempt []string,
+) (diags []lint.Diagnostic) {
+	t.Helper()
+	fsys := fstest.MapFS{}
+	for name, content := range files {
+		fsys[name] = &fstest.MapFile{Data: content}
+	}
+	diags, err := lint.Check_File_System(&lint.Check_File_System_Input{
+		Fsys:                      fsys,
+		Scope:                     "pkg",
+		Shared_Component:          doctrine_shared_component_directory,
+		Word_Replacements:         test_word_replacements(),
+		Invariant_Exempt_Packages: exempt,
+	})
+	if err != nil {
+		t.Fatalf("Check_File_System: %v", err)
+	}
+	return diags
+}
+
+// Test_Type_Invariant_Exempt_List_Skips_Package verifies a package listed in
+// invariant_exempt_packages is skipped by the type-invariant rule.
+func Test_Type_Invariant_Exempt_List_Skips_Package(t *testing.T) {
+	t.Parallel()
+	files := specification_one_file("package fixture\n\n" +
+		"// Widget is a fixture.\ntype Widget struct {\n\t// X is a fixture.\n\tX int\n}\n")
+	diags := invariant_exempt_self_diagnostics(t, files, []string{"pkg"})
+	if specification_diagnosed(diags, "directly below Widget") {
+		t.Fatal("a type in an exempt package must not be flagged")
+	}
+}
+
+// Test_Type_Invariant_Clean_Pair_Passes verifies a type immediately followed by a
+// correctly-signed bundle is not flagged.
+func Test_Type_Invariant_Clean_Pair_Passes(t *testing.T) {
+	t.Parallel()
+	files := specification_one_file("package fixture\n\n" +
+		"import \"fixture/shared/invariant\"\n\n" +
+		"// Widget is a fixture.\ntype Widget struct {\n\t// X is a fixture.\n\tX int\n}\n\n" +
+		"// Widget_Invariants is a fixture.\n" +
+		"func Widget_Invariants(w Widget, namespace invariant.Namespace) {\n\tprintln(0)\n}\n")
+	if specification_flags(t, files, "directly below Widget") {
+		t.Fatal("a well-formed pair must not be flagged")
+	}
+	if specification_flags(t, files, "must take") {
+		t.Fatal("a well-formed signature must not be flagged")
+	}
+}
+
+// Test_Type_Invariant_Pointer_First_Parameter_Passes verifies a pointer-typed
+// first parameter satisfies the signature.
+func Test_Type_Invariant_Pointer_First_Parameter_Passes(t *testing.T) {
+	t.Parallel()
+	files := specification_one_file("package fixture\n\n" +
+		"import \"fixture/shared/invariant\"\n\n" +
+		"// Widget is a fixture.\ntype Widget struct {\n\t// X is a fixture.\n\tX int\n}\n\n" +
+		"// Widget_Invariants is a fixture.\n" +
+		"func Widget_Invariants(w *Widget, namespace invariant.Namespace) {\n\tprintln(0)\n}\n")
+	if specification_flags(t, files, "must take") {
+		t.Fatal("a pointer first parameter must satisfy the signature")
+	}
+}
+
+// Test_Type_Invariant_Generic_Passes verifies a generic type whose bundle's type
+// parameters match is not flagged.
+func Test_Type_Invariant_Generic_Passes(t *testing.T) {
+	t.Parallel()
+	files := specification_one_file("package fixture\n\n" +
+		"import \"fixture/shared/invariant\"\n\n" +
+		"// Box is a fixture.\ntype Box[T any] struct {\n\t// Item is a fixture.\n\tItem T\n}\n\n" +
+		"// Box_Invariants is a fixture.\n" +
+		"func Box_Invariants[T any](b Box[T], namespace invariant.Namespace) {\n\tprintln(0)\n}\n")
+	if specification_flags(t, files, "directly below Box") {
+		t.Fatal("a matching generic bundle must not be flagged")
+	}
+	if specification_flags(t, files, "must take") {
+		t.Fatal("a matching generic signature must not be flagged")
+	}
+}
+
+// Test_Type_Invariant_Exempt_Kinds_Pass verifies aliases, function types, and
+// empty structs need no bundle.
+func Test_Type_Invariant_Exempt_Kinds_Pass(t *testing.T) {
+	t.Parallel()
+	files := specification_one_file("package fixture\n\n" +
+		"// Alias is a fixture.\ntype Alias = int\n\n" +
+		"// Callback is a fixture.\ntype Callback func()\n\n" +
+		"// Marker is a fixture.\ntype Marker struct{}\n")
+	if specification_flags(t, files, "directly below") {
+		t.Fatal("aliases, function types, and empty structs are exempt")
+	}
+}
+
+// Test_Type_Invariant_Between_Input_Struct_And_Function verifies the amended
+// input-struct rule: a bundle may sit between an input struct and the function it
+// feeds, satisfying both the locality rule and the type-invariant rule.
+func Test_Type_Invariant_Between_Input_Struct_And_Function(t *testing.T) {
+	t.Parallel()
+	files := specification_one_file("package fixture\n\n" +
+		"import \"fixture/shared/invariant\"\n\n" +
+		"// Foo_Input is a fixture.\ntype Foo_Input struct {\n" +
+		"\t// A is a fixture.\n\tA int\n\t// B is a fixture.\n\tB int\n}\n\n" +
+		"// Foo_Input_Invariants is a fixture.\n" +
+		"func Foo_Input_Invariants(input Foo_Input, namespace invariant.Namespace) {\n" +
+		"\tprintln(0)\n}\n\n" +
+		"// Foo does.\nfunc Foo(input *Foo_Input) (n int) {\n\treturn input.A + input.B\n}\n")
+	if specification_flags(t, files, "directly above") {
+		t.Fatal("the input struct may be parted from its function by its invariant")
+	}
+	if specification_flags(t, files, "directly below Foo_Input") {
+		t.Fatal("the bundle directly below the input struct satisfies the rule")
+	}
 }

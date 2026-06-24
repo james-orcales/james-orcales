@@ -21,6 +21,7 @@ import (
 	"path"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -588,6 +589,15 @@ type Configuration struct {
 	// matching path is dropped from the scan set entirely, so no tier fires on it.
 	// Opt-in; empty ignores nothing.
 	Ignore []string `json:"ignore"`
+	// Invariant_Exempt_Packages names the workspace-root-relative directories
+	// whose files are exempt from the type-invariant rule — the rule's sole
+	// escape hatch. The framework package that defines the bundle machinery lives
+	// here so it is not bootstrapped against itself, and a directory is listed
+	// while its types are still being given invariants, then removed. Segment-
+	// prefix: an entry covers itself and its whole subtree, and a lone "." exempts
+	// the whole tree — the wholesale off switch for a staged rollout. Opt-in; empty
+	// exempts nothing, so the rule binds every package by default.
+	Invariant_Exempt_Packages []string `json:"invariant_exempt_packages"`
 }
 
 // Git_Commit is one commit's identity for the git-history tier:
@@ -696,18 +706,19 @@ func Main(input *Main_Input) (code int) {
 	// Git tier runs first: it reads only repo metadata, not the FS, for the fastest signal.
 	git_diags := Git_Input_Check(input.Git)
 	filesystem_diags, err := Check_File_System(&Check_File_System_Input{
-		Fsys:                     input.Fsys,
-		Root:                     ".",
-		Root_Directory:           input.Root_Directory,
-		Tracked:                  input.Tracked,
-		CPU_Count:                input.CPU_Count,
-		Readlink:                 input.Readlink,
-		Scope:                    input.Scope_Prefix,
-		Instrumentation_Packages: configuration.Instrumentation_Packages,
-		Shared_Component:         configuration.Shared_Component,
-		Deterministic_Packages:   configuration.Deterministic_Packages,
-		Word_Replacements:        configuration.Word_Replacements,
-		Ignore:                   configuration.Ignore,
+		Fsys:                      input.Fsys,
+		Root:                      ".",
+		Root_Directory:            input.Root_Directory,
+		Tracked:                   input.Tracked,
+		CPU_Count:                 input.CPU_Count,
+		Readlink:                  input.Readlink,
+		Scope:                     input.Scope_Prefix,
+		Instrumentation_Packages:  configuration.Instrumentation_Packages,
+		Shared_Component:          configuration.Shared_Component,
+		Deterministic_Packages:    configuration.Deterministic_Packages,
+		Word_Replacements:         configuration.Word_Replacements,
+		Ignore:                    configuration.Ignore,
+		Invariant_Exempt_Packages: configuration.Invariant_Exempt_Packages,
 	})
 	if err != nil {
 		fmt.Fprintln(input.Stderr, err)
@@ -809,11 +820,12 @@ func Parse_Configuration(data []byte) (configuration *Configuration, err error) 
 		return nil, decode_err
 	}
 	known_keys := map[string]bool{
-		"shared_component":         true,
-		"instrumentation_packages": true,
-		"deterministic_packages":   true,
-		"word_replacements":        true,
-		"ignore":                   true,
+		"shared_component":          true,
+		"instrumentation_packages":  true,
+		"deterministic_packages":    true,
+		"word_replacements":         true,
+		"ignore":                    true,
+		"invariant_exempt_packages": true,
 	}
 	for key := range keys {
 		if known_keys[key] {
@@ -1401,9 +1413,10 @@ func check_shadow(
 // presence of any tier-1 diagnostic.
 func Check_File(
 	file_set *token.FileSet, file *ast.File, source []byte, instrumentation []string,
-	word_replacements map[string][]string,
+	word_replacements map[string][]string, invariant_exempt []string,
 ) (diags []Diagnostic) {
 	diags = check_file_run_tier([]check_function{
+		make_check_type_invariants(invariant_exempt),
 		check_casing,
 		check_named_returns,
 		check_no_naked_return,
@@ -1862,7 +1875,7 @@ func Check_Source(filename string, source any) (diags []Diagnostic, err error) {
 	// no package to declare a var Default, and a nil word-replacements table
 	// disables the vocabulary check (it has no config to read from). Both are the
 	// strict, dependency-free defaults for single-file checks.
-	return Check_File(file_set, file, source_bytes, nil, nil), nil
+	return Check_File(file_set, file, source_bytes, nil, nil, nil), nil
 }
 
 // Check_File_System_Input bundles the per-run dependencies for the
@@ -1915,6 +1928,10 @@ type Check_File_System_Input struct {
 	// to every tier. Applied once here against Tracked; with no Tracked set (the
 	// non-git fallback) it is inert, like every other tracked-set filter.
 	Ignore []string
+	// Invariant_Exempt_Packages is the lint.json invariant_exempt_packages list
+	// forwarded from Main_Input: workspace-root-relative directories whose files
+	// the type-invariant check skips. Threaded per-file to make_check_type_invariants.
+	Invariant_Exempt_Packages []string
 }
 
 // Check_File_System runs the stream tier, parses all Go files, and
@@ -1972,19 +1989,20 @@ func Check_File_System(input *Check_File_System_Input) (diags []Diagnostic, err 
 	parsed_files, parse_diags := check_file_system_parse_files(paths, sources, cpu_count)
 	components := build_component_index(component_roots, parsed_files, input.Shared_Component)
 	return check_file_system_doctrine(&check_file_system_doctrine_input{
-		Fsys:                     input.Fsys,
-		Tracked:                  tracked,
-		Directory_Has_Tracked:    directory_has_tracked,
-		Parsed_Files:             parsed_files,
-		Components:               components,
-		CPU_Count:                cpu_count,
-		Stream_Diags:             stream_diags,
-		Parse_Diags:              parse_diags,
-		Instrumentation_Packages: input.Instrumentation_Packages,
-		Word_Replacements:        input.Word_Replacements,
-		Deterministic_Packages:   input.Deterministic_Packages,
-		Scope:                    input.Scope,
-		Scan_Prefixes:            scan_prefixes,
+		Fsys:                      input.Fsys,
+		Tracked:                   tracked,
+		Directory_Has_Tracked:     directory_has_tracked,
+		Parsed_Files:              parsed_files,
+		Components:                components,
+		CPU_Count:                 cpu_count,
+		Stream_Diags:              stream_diags,
+		Parse_Diags:               parse_diags,
+		Instrumentation_Packages:  input.Instrumentation_Packages,
+		Word_Replacements:         input.Word_Replacements,
+		Deterministic_Packages:    input.Deterministic_Packages,
+		Scope:                     input.Scope,
+		Scan_Prefixes:             scan_prefixes,
+		Invariant_Exempt_Packages: input.Invariant_Exempt_Packages,
 	}), nil
 }
 
@@ -2006,6 +2024,9 @@ type check_file_system_doctrine_input struct {
 	// run. The deterministic coverage check needs it to tell an out-of-scope entry
 	// (a real package this run never parsed) from a genuine stale one.
 	Scan_Prefixes []string
+	// Invariant_Exempt_Packages is the lint.json invariant_exempt_packages list:
+	// workspace-root-relative directories whose files the type-invariant check skips.
+	Invariant_Exempt_Packages []string
 }
 
 // Runs the AST and cross-file doctrine tiers over the parsed set and unions their
@@ -2024,7 +2045,8 @@ func check_file_system_doctrine(
 	output = append(output, check_path_casing(input.Fsys, input.Tracked)...)
 	output = append(output,
 		check_file_system_run_checks(parsed_files, input.CPU_Count,
-			input.Instrumentation_Packages, input.Word_Replacements)...)
+			input.Instrumentation_Packages, input.Word_Replacements,
+			input.Invariant_Exempt_Packages)...)
 	output = append(output, check_file_system_package_split(parsed_files)...)
 	output = append(output, check_binary_component_layout(parsed_files, components)...)
 	output = append(output, check_binary_component_main_package(parsed_files, components)...)
@@ -4047,7 +4069,7 @@ func specification_ada_case(heading string) (name string) {
 // CPU_Count (typically runtime.NumCPU from main.go).
 func check_file_system_run_checks(
 	parsed_files []parsed_file, cpu_count int, instrumentation []string,
-	word_replacements map[string][]string,
+	word_replacements map[string][]string, invariant_exempt []string,
 ) (diags []Diagnostic) {
 
 	per_file_diags := make([][]Diagnostic, len(parsed_files))
@@ -4059,8 +4081,8 @@ func check_file_system_run_checks(
 		go func(i int, pf parsed_file) {
 			defer wg.Done()
 			defer func() { <-sem }()
-			per_file_diags[i] = Check_File(
-				pf.File_Set, pf.File, pf.Source, instrumentation, word_replacements)
+			per_file_diags[i] = Check_File(pf.File_Set, pf.File, pf.Source,
+				instrumentation, word_replacements, invariant_exempt)
 		}(i, pf)
 	}
 	wg.Wait()
@@ -5659,12 +5681,284 @@ func check_input_struct_uses_named_input(function *ast.FuncDecl, want_name strin
 }
 
 // Reports whether the declaration immediately preceding index declares want_name
-// as a struct type — the "declared just above it" half of the rule. A doc
+// as a struct type — the "declared just above it" half of the rule. The struct
+// may sit directly above, or be parted from the function only by its own
+// invariant function, the slot the # Invariants rule reserves there. A doc
 // comment attaches to the GenDecl, so it never counts as an intervening
 // declaration; any other declaration in the gap does.
 func check_input_struct_declared_directly_above(
 	file *ast.File, index int, want_name string,
 ) (above bool) {
+
+	if index == 0 {
+		return false
+	}
+	if check_input_struct_declaration_is_named_struct(file.Decls[index-1], want_name) {
+		return true
+	}
+	// The struct's invariant function may sit between the struct and the function
+	// it feeds, so the struct is two slots up — still adjacent for this rule.
+	if index < 2 {
+		return false
+	}
+	if !check_input_struct_declaration_is_invariant(file.Decls[index-1], want_name) {
+		return false
+	}
+	return check_input_struct_declaration_is_named_struct(file.Decls[index-2], want_name)
+}
+
+// Reports whether declaration declares want_name as a struct type.
+func check_input_struct_declaration_is_named_struct(
+	declaration ast.Decl, want_name string,
+) (yes bool) {
+
+	general, is_general := declaration.(*ast.GenDecl)
+	if !is_general {
+		return false
+	}
+	if general.Tok != token.TYPE {
+		return false
+	}
+	for _, specification := range general.Specs {
+		type_definition, is_type := specification.(*ast.TypeSpec)
+		if !is_type {
+			continue
+		}
+		if type_definition.Name.Name != want_name {
+			continue
+		}
+		_, is_struct := type_definition.Type.(*ast.StructType)
+		return is_struct
+	}
+	return false
+}
+
+// Reports whether declaration is the invariant function for the struct named
+// struct_name, the only declaration the locality rule tolerates between the
+// input struct and the function it feeds.
+func check_input_struct_declaration_is_invariant(
+	declaration ast.Decl, struct_name string,
+) (yes bool) {
+
+	function, is_function := declaration.(*ast.FuncDecl)
+	if !is_function {
+		return false
+	}
+	if function.Recv != nil {
+		return false
+	}
+	return function.Name.Name == type_invariant_name(struct_name)
+}
+
+// Builds the type-invariant check, closing over the
+// lint.json invariant_exempt_packages list. Every in-scope type must be followed
+// directly by its bundle function (the forward half), and every bundle-named
+// function must itself sit directly below its type (the orphan half). The rule is
+// AST-only and per-file: a type and its bundle are adjacent declarations in one
+// file, so no cross-file or type resolution is needed. Test files are exempt, as
+// is any file under a listed exempt package.
+func make_check_type_invariants(invariant_exempt []string) (check check_function) {
+	return func(
+		file_set *token.FileSet, file *ast.File, _ []byte,
+	) (diags []Diagnostic) {
+		filename := file_set.Position(file.Pos()).Filename
+		if strings.HasSuffix(filename, "_test.go") {
+			return nil
+		}
+		if type_invariants_path_exempt(filename, invariant_exempt) {
+			return nil
+		}
+		invariant_names := type_invariants_import_names(file)
+		diags = append(diags,
+			check_type_invariants_forward(file_set, file, invariant_names)...)
+		diags = append(diags, check_type_invariants_orphan(file_set, file)...)
+		return diags
+	}
+}
+
+// Flags every in-scope type whose next declaration
+// is not its correctly-named, correctly-signed bundle function.
+func check_type_invariants_forward(
+	file_set *token.FileSet, file *ast.File, invariant_names map[string]bool,
+) (diags []Diagnostic) {
+
+	for index, declaration := range file.Decls {
+		general, is_general := declaration.(*ast.GenDecl)
+		if !is_general {
+			continue
+		}
+		if general.Tok != token.TYPE {
+			continue
+		}
+		// Grouped Declarations bans type (...) groups, so a type holds one spec.
+		type_specification, is_type := general.Specs[0].(*ast.TypeSpec)
+		if !is_type {
+			continue
+		}
+		if !type_invariant_required(type_specification) {
+			continue
+		}
+		diags = append(diags, check_type_invariants_one(
+			file_set, file, index, type_specification, invariant_names)...)
+	}
+	return diags
+}
+
+// Judges the in-scope type at file.Decls[index]:
+// presence and casing of the following bundle, then its signature and the gap.
+func check_type_invariants_one(
+	file_set *token.FileSet, file *ast.File, index int,
+	type_specification *ast.TypeSpec, invariant_names map[string]bool,
+) (diags []Diagnostic) {
+
+	want := type_invariant_name(type_specification.Name.Name)
+	bundle := type_invariants_following_function(file, index)
+	if bundle == nil {
+		return append(diags, type_invariants_absent(file_set, type_specification, want))
+	}
+	if bundle.Name.Name != want {
+		return append(diags, type_invariants_absent(file_set, type_specification, want))
+	}
+	if !type_invariants_signature_ok(bundle, type_specification, invariant_names) {
+		diags = append(diags,
+			type_invariants_bad_signature(file_set, bundle, type_specification))
+	}
+	diags = append(diags,
+		check_type_invariants_gap(file_set, file, type_specification, bundle)...)
+	return diags
+}
+
+// Builds the diagnostic for a type with no bundle below it.
+func type_invariants_absent(
+	file_set *token.FileSet, type_specification *ast.TypeSpec, want string,
+) (diag Diagnostic) {
+
+	type_name := type_specification.Name.Name
+	return Diagnostic{
+		Position: file_set.Position(type_specification.Name.Pos()),
+		Message: "declare " + want + "(" + type_name +
+			", invariant.Namespace) directly below " + type_name,
+	}
+}
+
+// Builds the diagnostic for a bundle whose parameters
+// are not the type, by value or pointer, first and an invariant.Namespace last.
+func type_invariants_bad_signature(
+	file_set *token.FileSet, function *ast.FuncDecl, type_specification *ast.TypeSpec,
+) (diag Diagnostic) {
+
+	type_name := type_specification.Name.Name
+	return Diagnostic{
+		Position: file_set.Position(function.Name.Pos()),
+		Message: function.Name.Name + " must take (" + type_name + " or *" +
+			type_name + ", invariant.Namespace)",
+	}
+}
+
+// Flags a bundle-named function adrift from its
+// type: one whose immediately preceding declaration is not the type it names.
+func check_type_invariants_orphan(
+	file_set *token.FileSet, file *ast.File,
+) (diags []Diagnostic) {
+
+	for index, declaration := range file.Decls {
+		function, is_function := declaration.(*ast.FuncDecl)
+		if !is_function {
+			continue
+		}
+		if function.Recv != nil {
+			continue
+		}
+		if !type_invariants_is_bundle_name(function.Name.Name) {
+			continue
+		}
+		if type_invariants_preceding_type(file, index, function.Name.Name) {
+			continue
+		}
+		diags = append(diags, Diagnostic{
+			Position: file_set.Position(function.Name.Pos()),
+			Message:  function.Name.Name + " must be declared directly below its type",
+		})
+	}
+	return diags
+}
+
+// Flags a comment between a type and its bundle that is
+// not the bundle's own doc comment, so only blank lines and that doc may separate
+// them.
+func check_type_invariants_gap(
+	file_set *token.FileSet, file *ast.File,
+	type_specification *ast.TypeSpec, function *ast.FuncDecl,
+) (diags []Diagnostic) {
+
+	for _, group := range file.Comments {
+		if group == function.Doc {
+			continue
+		}
+		if group.Pos() <= type_specification.End() {
+			continue
+		}
+		if group.End() >= function.Pos() {
+			continue
+		}
+		diags = append(diags, Diagnostic{
+			Position: file_set.Position(group.Pos()),
+			Message: "remove the comment between " + type_specification.Name.Name +
+				" and " + function.Name.Name,
+		})
+	}
+	return diags
+}
+
+// Reports whether a type declaration must carry a bundle.
+// Aliases, function and interface types, and empty structs state no properties
+// worth a bundle; every other defined type is in scope.
+func type_invariant_required(type_specification *ast.TypeSpec) (required bool) {
+	if type_specification.Assign.IsValid() {
+		return false
+	}
+	switch base := type_specification.Type.(type) {
+	case *ast.FuncType:
+		return false
+	case *ast.InterfaceType:
+		return false
+	case *ast.StructType:
+		return len(base.Fields.List) > 0
+	default:
+		return true
+	}
+}
+
+// Maps a type name to its bundle name, suffixing by the
+// type's casing: an exported type takes _Invariants, an unexported _invariants.
+func type_invariant_name(type_name string) (name string) {
+	if ast.IsExported(type_name) {
+		return type_name + "_Invariants"
+	}
+	return type_name + "_invariants"
+}
+
+// Returns the function declared immediately
+// below the declaration at index, or nil when the next declaration is not one.
+func type_invariants_following_function(
+	file *ast.File, index int,
+) (function *ast.FuncDecl) {
+
+	if index+1 >= len(file.Decls) {
+		return nil
+	}
+	next, is_function := file.Decls[index+1].(*ast.FuncDecl)
+	if !is_function {
+		return nil
+	}
+	return next
+}
+
+// Reports whether the declaration before index is
+// the type whose bundle name is function_name.
+func type_invariants_preceding_type(
+	file *ast.File, index int, function_name string,
+) (yes bool) {
 
 	if index == 0 {
 		return false
@@ -5676,16 +5970,194 @@ func check_input_struct_declared_directly_above(
 	if general.Tok != token.TYPE {
 		return false
 	}
-	for _, declaration := range general.Specs {
-		type_definition, is_type := declaration.(*ast.TypeSpec)
-		if !is_type {
+	type_specification, is_type := general.Specs[0].(*ast.TypeSpec)
+	if !is_type {
+		return false
+	}
+	return type_invariant_name(type_specification.Name.Name) == function_name
+}
+
+// Reports whether name ends in the bundle suffix.
+func type_invariants_is_bundle_name(name string) (yes bool) {
+	if strings.HasSuffix(name, "_Invariants") {
+		return true
+	}
+	return strings.HasSuffix(name, "_invariants")
+}
+
+// Reports whether the bundle takes its type, by
+// value or pointer, first and an invariant.Namespace last.
+func type_invariants_signature_ok(
+	function *ast.FuncDecl, type_specification *ast.TypeSpec,
+	invariant_names map[string]bool,
+) (ok bool) {
+
+	if function.Type.Params == nil {
+		return false
+	}
+	list := function.Type.Params.List
+	if len(list) < 2 {
+		return false
+	}
+	if !type_invariants_first_is_type(list[0].Type, type_specification) {
+		return false
+	}
+	return type_invariants_last_is_namespace(list[len(list)-1].Type, invariant_names)
+}
+
+// Reports whether expression is the bundle's type,
+// dereferencing a leading pointer and, for a generic type, requiring it be
+// instantiated over its own parameters in order.
+func type_invariants_first_is_type(
+	expression ast.Expr, type_specification *ast.TypeSpec,
+) (ok bool) {
+
+	star, is_star := expression.(*ast.StarExpr)
+	if is_star {
+		expression = star.X
+	}
+	if type_specification.TypeParams == nil {
+		identifier, is_identifier := expression.(*ast.Ident)
+		if !is_identifier {
+			return false
+		}
+		return identifier.Name == type_specification.Name.Name
+	}
+	return type_invariants_generic_matches(expression, type_specification)
+}
+
+// Reports whether expression is the generic type
+// instantiated over its declared parameters in order: Box[T] for type Box[T any].
+func type_invariants_generic_matches(
+	expression ast.Expr, type_specification *ast.TypeSpec,
+) (ok bool) {
+
+	base, arguments := type_invariants_instantiation(expression)
+	if base == nil {
+		return false
+	}
+	if base.Name != type_specification.Name.Name {
+		return false
+	}
+	want := type_invariants_field_names(type_specification.TypeParams)
+	got := type_invariants_argument_names(arguments)
+	return slices.Equal(want, got)
+}
+
+// Splits a generic instantiation into its base
+// identifier and type arguments, handling the one- and many-argument AST forms.
+func type_invariants_instantiation(
+	expression ast.Expr,
+) (base *ast.Ident, arguments []ast.Expr) {
+
+	switch node := expression.(type) {
+	case *ast.IndexExpr:
+		identifier, is_identifier := node.X.(*ast.Ident)
+		if !is_identifier {
+			return nil, nil
+		}
+		return identifier, []ast.Expr{node.Index}
+	case *ast.IndexListExpr:
+		identifier, is_identifier := node.X.(*ast.Ident)
+		if !is_identifier {
+			return nil, nil
+		}
+		return identifier, node.Indices
+	default:
+		return nil, nil
+	}
+}
+
+// Flattens a field list to its declared names.
+func type_invariants_field_names(fields *ast.FieldList) (names []string) {
+	for _, field := range fields.List {
+		for _, name := range field.Names {
+			names = append(names, name.Name)
+		}
+	}
+	return names
+}
+
+// Returns the identifier names of type arguments,
+// or nil when any argument is not a bare identifier so a mismatch is reported.
+func type_invariants_argument_names(arguments []ast.Expr) (names []string) {
+	for _, argument := range arguments {
+		identifier, is_identifier := argument.(*ast.Ident)
+		if !is_identifier {
+			return nil
+		}
+		names = append(names, identifier.Name)
+	}
+	return names
+}
+
+// Reports whether expression is the selector
+// <pkg>.Namespace for a local name bound to the invariant package.
+func type_invariants_last_is_namespace(
+	expression ast.Expr, invariant_names map[string]bool,
+) (ok bool) {
+
+	selector, is_selector := expression.(*ast.SelectorExpr)
+	if !is_selector {
+		return false
+	}
+	if selector.Sel.Name != "Namespace" {
+		return false
+	}
+	qualifier, is_identifier := selector.X.(*ast.Ident)
+	if !is_identifier {
+		return false
+	}
+	return invariant_names[qualifier.Name]
+}
+
+// Returns the local names the invariant package is
+// bound to in this file — its own package name, or an explicit import alias — so
+// the namespace parameter is recognized however the package was imported.
+func type_invariants_import_names(file *ast.File) (names map[string]bool) {
+	names = map[string]bool{}
+	for _, specification := range file.Imports {
+		unquoted, unquote_err := strconv.Unquote(specification.Path.Value)
+		if unquote_err != nil {
 			continue
 		}
-		if type_definition.Name.Name != want_name {
+		if !type_invariants_path_is_invariant(unquoted) {
 			continue
 		}
-		_, is_struct := type_definition.Type.(*ast.StructType)
-		return is_struct
+		if specification.Name != nil {
+			names[specification.Name.Name] = true
+			continue
+		}
+		names[path.Base(unquoted)] = true
+	}
+	return names
+}
+
+// Reports whether an import path has a segment
+// named invariant — the framework package, wherever it sits in the module.
+func type_invariants_path_is_invariant(import_path string) (yes bool) {
+	for _, segment := range strings.Split(import_path, "/") {
+		if segment == "invariant" {
+			return true
+		}
+	}
+	return false
+}
+
+// Reports whether filename lies under a listed exempt
+// package directory, by the segment-prefix rule the other lint.json lists use. A
+// lone "." exempts the whole tree — the wholesale off switch for staged rollout.
+func type_invariants_path_exempt(filename string, exempt []string) (yes bool) {
+	for _, entry := range exempt {
+		if entry == "." {
+			return true
+		}
+		if filename == entry {
+			return true
+		}
+		if strings.HasPrefix(filename, entry+"/") {
+			return true
+		}
 	}
 	return false
 }

@@ -415,7 +415,8 @@ A function spans at most seventy lines.
 ### Input Structs
 
 A function whose parameters repeat a type takes a single input struct pointer, named for the
-function and declared just above it; a variadic may remain a separate parameter.
+function and declared just above it, or parted from it only by the struct's own invariant function;
+a variadic may remain a separate parameter.
 
 ### Named Returns
 
@@ -575,3 +576,34 @@ parses every module.
 
 Stdlib time may be imported only by the shared module's time/default gateway;
 every other shared-module package injects the Clock instead.
+
+# Invariants
+
+Every type states its properties in a companion function beside it, the shared/invariant bundle
+convention made mandatory.
+
+### Presence
+
+An in-scope type declaration is immediately followed by its invariant function; only that
+function's own doc comment and blank lines may sit between them.
+
+### Casing
+
+The function takes the type name with an _Invariants suffix when the type is exported, an
+_invariants suffix when it is unexported.
+
+### Signature
+
+The function takes the type, by value or pointer, as its first parameter and an
+invariant.Namespace as its last.
+
+### Orphan
+
+A function whose name ends in _Invariants or _invariants is itself declared directly below its
+matching type, never adrift.
+
+### Scope
+
+Structs with fields, defined non-alias types, and generic types are in scope. Aliases, function
+and interface types, empty structs, function-local types, _test.go files, and the packages in
+lint.json's invariant_exempt_packages are exempt.

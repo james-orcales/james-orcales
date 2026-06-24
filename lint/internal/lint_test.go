@@ -1606,6 +1606,11 @@ func test_lint_json(t *testing.T, shared_component string, allowlist []string) (
 		Shared_Component:         shared_component,
 		Instrumentation_Packages: allowlist,
 		Word_Replacements:        test_word_replacements(),
+		// The behavioral suite isolates one rule per fixture; the type-invariant
+		// rule fires on every typed fixture, so disable it wholesale here. Its own
+		// coverage lives in the Test_Invariants_* doctrine tests and the
+		// Test_Type_Invariant_* behavioral tests, which drive the rule directly.
+		Invariant_Exempt_Packages: []string{"."},
 	})
 	if err != nil {
 		t.Fatalf("test_lint_json: %v", err)
