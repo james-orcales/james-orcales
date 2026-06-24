@@ -2099,6 +2099,8 @@ func check_file_system_doctrine(
 		check_numeric_invariants(parsed_files, input.Invariant_Exempt_Packages)...)
 	output = append(output,
 		check_struct_invariants(parsed_files, input.Invariant_Exempt_Packages)...)
+	output = append(output,
+		check_function_invariants(parsed_files, input.Invariant_Exempt_Packages)...)
 	return append(output,
 		check_specification(input.Fsys, parsed_files, components, input.Scope)...)
 }

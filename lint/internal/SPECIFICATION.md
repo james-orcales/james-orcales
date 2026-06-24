@@ -643,3 +643,14 @@ MAX, 0, 1, and 2.
 A struct type's bundle calls the _Invariants of every field whose type has one — a preset for a
 primitive, the type's own bundle otherwise. A struct with an immediate sync.Mutex or sync.RWMutex
 field is exempt.
+
+### Parameter Assertion
+
+A named free function asserts every input parameter whose type has an _Invariants, in the leading
+block right after the output defer: a flat call, or a range loop over a slice's elements. A bundle,
+method, or entry point is exempt.
+
+### Output Assertion
+
+A named free function whose return values include one with an _Invariants asserts each in a defer
+that is the first statement of the body.

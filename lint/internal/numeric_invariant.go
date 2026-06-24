@@ -1080,3 +1080,428 @@ func struct_is_builtin(name string) (yes bool) {
 		return false
 	}
 }
+
+// Flags an ordinary function that fails to assert an input parameter or a named
+// return value. Each subject must have its type's _Invariants called on it
+// (existence-driven, like the struct rule); named returns are asserted in a
+// first-statement defer, inputs in the leading block right after it. Cross-file
+// because the bundle index spans the whole module.
+func check_function_invariants(parsed_files []parsed_file, exempt []string) (diags []Diagnostic) {
+	defined := struct_bundle_index(parsed_files)
+	for _, pf := range parsed_files {
+		if strings.HasSuffix(pf.Path, "_test.go") {
+			continue
+		}
+		if type_invariants_path_exempt(pf.Path, exempt) {
+			continue
+		}
+		diags = append(diags, function_file_diagnostics(pf, defined)...)
+	}
+	return diags
+}
+
+// Checks every named free function in one file.
+func function_file_diagnostics(file parsed_file, defined map[string]bool) (diags []Diagnostic) {
+	for _, declaration := range file.File.Decls {
+		function, is_function := declaration.(*ast.FuncDecl)
+		if !is_function {
+			continue
+		}
+		if function.Recv != nil {
+			continue
+		}
+		if function.Body == nil {
+			continue
+		}
+		if function_is_exempt(function.Name.Name) {
+			continue
+		}
+		diags = append(diags, function_diagnostics(&function_input{
+			File: file, Function: function, Defined: defined,
+		})...)
+	}
+	return diags
+}
+
+// Reports whether a function name is exempt: an entry point, init, or a bundle
+// (a bundle asserting its own value/namespace would be self-referential).
+func function_is_exempt(name string) (yes bool) {
+	if name == "main" {
+		return true
+	}
+	if name == "Main" {
+		return true
+	}
+	if name == "TestMain" {
+		return true
+	}
+	if name == "init" {
+		return true
+	}
+	return type_invariants_is_bundle_name(name)
+}
+
+// Carries one function and the module bundle index.
+type function_input struct {
+	File     parsed_file
+	Function *ast.FuncDecl
+	Defined  map[string]bool
+}
+
+// Carries the two name maps a requirement derivation reads, so they stay off
+// loose parameters.
+type function_scope struct {
+	Type_Parameters map[string]bool
+	Defined         map[string]bool
+}
+
+// One subject (param or named return) and the assertion it must carry: a flat
+// call, or an element-wise range loop for a slice.
+type assertion_requirement struct {
+	Subject  string
+	Expected string
+	Loop     bool
+}
+
+// Collects the assertion gaps for one function's inputs and outputs.
+func function_diagnostics(input *function_input) (diags []Diagnostic) {
+	scope := &function_scope{
+		Type_Parameters: function_type_parameter_set(input.Function),
+		Defined:         input.Defined,
+	}
+	inputs := function_requirements(input.Function.Type.Params, scope)
+	outputs := function_requirements(input.Function.Type.Results, scope)
+	if len(inputs) == 0 {
+		if len(outputs) == 0 {
+			return nil
+		}
+	}
+	position := input.File.File_Set.Position(input.Function.Name.Pos())
+	name := input.Function.Name.Name
+	lead, defer_body, has_defer := function_lead_and_defer(input.Function.Body.List)
+	for _, requirement := range outputs {
+		if !has_defer {
+			diags = append(diags, Diagnostic{Position: position,
+				Message: name + " must assert " + requirement.Subject +
+					" in a first-statement defer"})
+			continue
+		}
+		if !function_requirement_met(defer_body, requirement) {
+			diags = append(diags, Diagnostic{Position: position,
+				Message: name + " must assert " + requirement.Subject +
+					" in the output defer"})
+		}
+	}
+	for _, requirement := range inputs {
+		if function_requirement_met(lead, requirement) {
+			continue
+		}
+		diags = append(diags, Diagnostic{Position: position,
+			Message: name + " must assert " + requirement.Subject + " via " +
+				function_form(requirement)})
+	}
+	return diags
+}
+
+// Returns the function's own type-parameter names.
+func function_type_parameter_set(function *ast.FuncDecl) (parameters map[string]bool) {
+	parameters = map[string]bool{}
+	if function.Type.TypeParams == nil {
+		return parameters
+	}
+	for _, field := range function.Type.TypeParams.List {
+		for _, name := range field.Names {
+			parameters[name.Name] = true
+		}
+	}
+	return parameters
+}
+
+// Builds the assertion requirements for a parameter or result list, skipping
+// blank and exempt subjects.
+func function_requirements(
+	fields *ast.FieldList, scope *function_scope,
+) (requirements []assertion_requirement) {
+
+	if fields == nil {
+		return nil
+	}
+	for _, field := range fields.List {
+		expected, loop, required := function_requirement(field.Type, scope)
+		if !required {
+			continue
+		}
+		for _, name := range field.Names {
+			if name.Name == "_" {
+				continue
+			}
+			requirements = append(requirements, assertion_requirement{
+				Subject: name.Name, Expected: expected, Loop: loop,
+			})
+		}
+	}
+	return requirements
+}
+
+// Derives one subject's requirement: a slice/variadic asks for the element type's
+// _Invariants in a loop, a map for Map_Invariants, anything else for a flat call.
+func function_requirement(
+	field_type ast.Expr, scope *function_scope,
+) (expected string, loop bool, required bool) {
+
+	core := field_type
+	star, is_star := core.(*ast.StarExpr)
+	if is_star {
+		core = star.X
+	}
+	array, is_array := core.(*ast.ArrayType)
+	if is_array {
+		element, element_required := function_named_invariant(array.Elt, scope)
+		return element, true, element_required
+	}
+	ellipsis, is_ellipsis := core.(*ast.Ellipsis)
+	if is_ellipsis {
+		element, element_required := function_named_invariant(ellipsis.Elt, scope)
+		return element, true, element_required
+	}
+	_, is_map := core.(*ast.MapType)
+	if is_map {
+		return "Map_Invariants", false, true
+	}
+	flat, flat_required := function_named_invariant(core, scope)
+	return flat, false, flat_required
+}
+
+// Maps a named type expression (ident, selector, pointer, or generic
+// instantiation) to its _Invariants name and whether one exists.
+func function_named_invariant(
+	type_expression ast.Expr, scope *function_scope,
+) (expected string, required bool) {
+
+	core := type_expression
+	star, is_star := core.(*ast.StarExpr)
+	if is_star {
+		core = star.X
+	}
+	index, is_index := core.(*ast.IndexExpr)
+	if is_index {
+		core = index.X
+	}
+	index_list, is_index_list := core.(*ast.IndexListExpr)
+	if is_index_list {
+		core = index_list.X
+	}
+	selector, is_selector := core.(*ast.SelectorExpr)
+	if is_selector {
+		name := selector.Sel.Name + "_Invariants"
+		return name, scope.Defined[name]
+	}
+	identifier, is_identifier := core.(*ast.Ident)
+	if !is_identifier {
+		return "", false
+	}
+	if scope.Type_Parameters[identifier.Name] {
+		return "", false
+	}
+	preset := struct_primitive_preset(identifier.Name)
+	if preset != "" {
+		return preset, true
+	}
+	if struct_is_builtin(identifier.Name) {
+		return "", false
+	}
+	name := type_invariant_name(identifier.Name)
+	return name, scope.Defined[name]
+}
+
+// Splits a body into the leading assertion block and the first-statement defer's
+// body (when the first statement is a defer of a func literal).
+func function_lead_and_defer(
+	body []ast.Stmt,
+) (lead []ast.Stmt, defer_body []ast.Stmt, has_defer bool) {
+
+	start := 0
+	if len(body) > 0 {
+		literal := function_defer_literal(body[0])
+		if literal != nil {
+			defer_body = literal.Body.List
+			has_defer = true
+			start = 1
+		}
+	}
+	for _, statement := range body[start:] {
+		if !function_is_assertion_statement(statement) {
+			break
+		}
+		lead = append(lead, statement)
+	}
+	return lead, defer_body, has_defer
+}
+
+// Returns the func literal of a first-statement `defer func(){…}()`, or nil.
+func function_defer_literal(statement ast.Stmt) (literal *ast.FuncLit) {
+	defer_statement, is_defer := statement.(*ast.DeferStmt)
+	if !is_defer {
+		return nil
+	}
+	function_literal, is_literal := defer_statement.Call.Fun.(*ast.FuncLit)
+	if !is_literal {
+		return nil
+	}
+	return function_literal
+}
+
+// Reports whether a statement is an assertion: an _Invariants call, or a range
+// loop whose body is only _Invariants calls.
+func function_is_assertion_statement(statement ast.Stmt) (yes bool) {
+	if function_is_invariant_call(statement) {
+		return true
+	}
+	range_statement, is_range := statement.(*ast.RangeStmt)
+	if !is_range {
+		return false
+	}
+	if len(range_statement.Body.List) == 0 {
+		return false
+	}
+	for _, inner := range range_statement.Body.List {
+		if !function_is_invariant_call(inner) {
+			return false
+		}
+	}
+	return true
+}
+
+// Reports whether a statement is a bare `X_Invariants(...)` call.
+func function_is_invariant_call(statement ast.Stmt) (yes bool) {
+	expression_statement, is_expression := statement.(*ast.ExprStmt)
+	if !is_expression {
+		return false
+	}
+	call, is_call := expression_statement.X.(*ast.CallExpr)
+	if !is_call {
+		return false
+	}
+	return type_invariants_is_bundle_name(struct_callee_name(call.Fun))
+}
+
+// Reports whether the statements satisfy one requirement.
+func function_requirement_met(
+	statements []ast.Stmt, requirement assertion_requirement,
+) (met bool) {
+
+	if requirement.Loop {
+		return function_loop_asserts(statements, requirement)
+	}
+	return function_flat_asserts(statements, requirement)
+}
+
+// Reports whether some statement is a flat Expected(subject, …) call.
+func function_flat_asserts(
+	statements []ast.Stmt, requirement assertion_requirement,
+) (met bool) {
+
+	for _, statement := range statements {
+		found := false
+		ast.Inspect(statement, func(node ast.Node) (recurse bool) {
+			call, is_call := node.(*ast.CallExpr)
+			if !is_call {
+				return true
+			}
+			if struct_callee_name(call.Fun) != requirement.Expected {
+				return true
+			}
+			if function_first_argument_name(call) != requirement.Subject {
+				return true
+			}
+			found = true
+			return false
+		})
+		if found {
+			return true
+		}
+	}
+	return false
+}
+
+// Reports whether some statement is a `range subject` loop asserting each element
+// with Expected.
+func function_loop_asserts(
+	statements []ast.Stmt, requirement assertion_requirement,
+) (met bool) {
+
+	for _, statement := range statements {
+		range_statement, is_range := statement.(*ast.RangeStmt)
+		if !is_range {
+			continue
+		}
+		subject, is_subject := range_statement.X.(*ast.Ident)
+		if !is_subject {
+			continue
+		}
+		if subject.Name != requirement.Subject {
+			continue
+		}
+		value, is_value := range_statement.Value.(*ast.Ident)
+		if !is_value {
+			continue
+		}
+		if function_block_asserts(range_statement.Body, requirement, value.Name) {
+			return true
+		}
+	}
+	return false
+}
+
+// Reports whether a range body calls the requirement's expected invariant on the
+// loop's value identifier.
+func function_block_asserts(
+	block *ast.BlockStmt, requirement assertion_requirement, value string,
+) (yes bool) {
+
+	for _, statement := range block.List {
+		expression_statement, is_expression := statement.(*ast.ExprStmt)
+		if !is_expression {
+			continue
+		}
+		call, is_call := expression_statement.X.(*ast.CallExpr)
+		if !is_call {
+			continue
+		}
+		if struct_callee_name(call.Fun) != requirement.Expected {
+			continue
+		}
+		if function_first_argument_name(call) != value {
+			continue
+		}
+		return true
+	}
+	return false
+}
+
+// Returns a call's first-argument identifier name, dereferencing a leading
+// pointer; "" when the first argument is not an identifier.
+func function_first_argument_name(call *ast.CallExpr) (name string) {
+	if len(call.Args) == 0 {
+		return ""
+	}
+	argument := call.Args[0]
+	star, is_star := argument.(*ast.StarExpr)
+	if is_star {
+		argument = star.X
+	}
+	identifier, is_identifier := argument.(*ast.Ident)
+	if !is_identifier {
+		return ""
+	}
+	return identifier.Name
+}
+
+// Renders the expected assertion form for a diagnostic.
+func function_form(requirement assertion_requirement) (form string) {
+	if requirement.Loop {
+		return "for _, x := range " + requirement.Subject + " { " +
+			requirement.Expected + "(x, ...) }"
+	}
+	return requirement.Expected + "(" + requirement.Subject + ", ...)"
+}
