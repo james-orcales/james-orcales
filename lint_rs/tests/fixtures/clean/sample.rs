@@ -1,4 +1,4 @@
-// the word mut appears in this comment and must be ignored
+// The word mut appears in this comment and must be ignored.
 fn demo() {
     let label = "mut";
     let immutable = 0;

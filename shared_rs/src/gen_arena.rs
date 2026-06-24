@@ -17,6 +17,8 @@
 //! assert_eq!(gen_arena::with(&store, h, |value| *value), None); // stale rejected
 //! ```
 
+use std::mem;
+
 /// Handle into an [`Arena`]. It pairs the slot index with the generation the slot
 /// had when the handle was minted; a removal bumps the slot's generation so any
 /// handle minted before that removal no longer matches and is rejected.
@@ -107,7 +109,7 @@ pub fn remove<T>(mut arena: Arena<T>, handle: Handle) -> (Arena<T>, Option<T>) {
     // Bumping the generation is what defeats the ABA problem: a future occupant
     // of this slot will have a higher generation, so `handle` no longer matches.
     slot.generation += 1;
-    let old_entry = std::mem::replace(&mut slot.entry, Entry::Free { next_free: arena.free_head });
+    let old_entry = mem::replace(&mut slot.entry, Entry::Free { next_free: arena.free_head });
     arena.free_head = Some(handle.index);
     arena.len -= 1;
 

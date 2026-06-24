@@ -23,6 +23,12 @@ non_upper_case_globals = "allow"
 [workspace.lints.clippy]
 disallowed_types = "deny"
 disallowed_methods = "deny"
+# The dialect requires an explicit `use` for every crate referenced (Go's
+# import-per-package rule, enforced by `lint_rs`). That deliberately conflicts
+# with clippy's single_component_path_imports, which flags `use syn;` for an
+# extern-prelude crate — so silence it here, as the rustc casing lints are
+# silenced above for contradicting the Ada_Case rule.
+single_component_path_imports = "allow"
 
 # Dependency versions pinned once; members reference with `dep.workspace = true`.
 [workspace.dependencies]

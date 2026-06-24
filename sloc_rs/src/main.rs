@@ -73,16 +73,13 @@ fn read_file(path: &str) -> Option<Vec<u8>> {
     read_capped(path)
 }
 
-/// Reads a file, never holding more than the byte cap. A file within the cap is
-/// read in one bulk pass (its size already bounds the memory); only an oversized
-/// file takes the streaming path, which stops at the cap rather than slurping the
-/// whole file first. The bounded read uses the allowlisted `Read` adapters
-/// (`take`/`bytes`), whose iteration `mut` lives in the desugaring, not here.
+/// Reads a file, never holding more than the byte cap: a streaming read stopped
+/// at `MAIN_FILE_BYTES_MAX` through the allowlisted `Read` adapters (`take` and
+/// `bytes`), whose iteration `mut` lives in the desugaring, not here. The bulk
+/// `fs::read` is banned as an unbounded read, and it is the only `mut`-free way
+/// to slurp raw bytes (`io::read_to_string` would reject non-UTF-8), so every
+/// file takes the streaming path.
 fn read_capped(path: &str) -> Option<Vec<u8>> {
-    let size = fs::metadata(path).ok()?.len();
-    if size <= MAIN_FILE_BYTES_MAX {
-        return fs::read(path).ok();
-    }
     let file = fs::File::open(path).ok()?;
     io::BufReader::new(file)
         .take(MAIN_FILE_BYTES_MAX)
