@@ -622,3 +622,18 @@ never an inline literal nor an imported selector.
 
 The bundle claims each boundary by Sometimes(v == V) or Always(v ==/!= V): MIN, MAX, 0, 1, 2, and
 -1 for signed types; a float claims NaN and both infinities instead.
+
+### Count Bounds
+
+A string, slice, or map type's bundle guards its length with the length on the left:
+Always(len(v) <= MAX) and Always(len(v) >= MIN).
+
+### Count Bound Constant
+
+MAX and MIN for a length are each a package-level constant, never an inline literal nor an imported
+selector.
+
+### Count Coverage
+
+The bundle claims each length boundary by Sometimes(len(v) == V) or Always(len(v) ==/!= V): MIN,
+MAX, 0, 1, and 2.
