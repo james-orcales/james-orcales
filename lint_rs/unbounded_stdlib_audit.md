@@ -95,6 +95,11 @@ subprocess captures, and bounding one needs piping plus reaping the child via `C
 
 ## The live ban list, by bucket
 
+Status: the blacklist bucket is implemented in `lint_rs` as flat call-name bans — the path
+calls `fs::read`, `fs::read_to_string`, `iter::repeat`, `TcpStream::connect`, plus the methods
+`recv` and `accept`. `join` stays legal (it collides with `Path`/slice `join`). The take and
+literal-arg buckets are not implemented; they need dataflow the linter does not have.
+
 - **blacklist** — `fs::read`, `fs::read_to_string`, `iter::repeat`, `TcpStream::connect`,
   `TcpListener::accept`, `mpsc::Receiver::recv`, `thread::JoinHandle::join`.
 - **blessed** — `Command::output`, `Child::wait_with_output`: unbounded, but the only mut-free

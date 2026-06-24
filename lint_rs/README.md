@@ -182,7 +182,10 @@ fields; no reference returns; no lifetime parameters; function size (a body span
 lines, brace to brace); entry point first (`fn main` leads its file); comment style (a line
 comment opens with a space then a capital and ends in `.`, `:`, `?`, or `!` — trailing
 comments and markdown code fences are exempt, and `//` inside a string literal is not a
-comment). Files that fail to parse are reported, not skipped.
+comment); unbounded-API blacklist (`fs::read`, `fs::read_to_string`, `iter::repeat`,
+`TcpStream::connect`, and the methods `recv`/`accept` — each has a bounded twin such as
+`repeat_n` / `connect_timeout` / `try_recv`; the take and literal-arg buckets need dataflow
+the linter lacks and are not covered). Files that fail to parse are reported, not skipped.
 
 Types (workspace `clippy.toml`, denied by default): no interior mutability
 (`Cell`/`RefCell`/`Mutex`/`RwLock`/atomics/`Once`/`LazyLock`); no `Rc`/`Arc`/`Weak`; no

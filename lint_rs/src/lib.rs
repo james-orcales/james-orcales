@@ -11,6 +11,8 @@
 
 use proc_macro2;
 use std::fs;
+use std::io;
+use std::io::Read;
 use std::iter;
 use std::path;
 use std::slice;
@@ -50,10 +52,10 @@ fn rust_files(root: &path::Path) -> Vec<path::PathBuf> {
 
 fn scan_file(path: &path::Path) -> Vec<String> {
     let display = path.display().to_string();
-    let source = match fs::read_to_string(path) {
-        Ok(text) => text,
+    let source = match read_capped(path) {
+        Some(text) => text,
         // Unreadable files are an I/O concern, out of the linter's remit.
-        Err(_) => return Vec::new(),
+        None => return Vec::new(),
     };
     // The mut pass is independent of syn so it still reports on files whose
     // delimiters balance but whose grammar syn rejects.
@@ -84,9 +86,22 @@ fn scan_file(path: &path::Path) -> Vec<String> {
                         .iter()
                         .map(|v| render(&display, v)),
                 )
+                .chain(unbounded_api_violations(&source).iter().map(|v| render(&display, v)))
                 .collect()
         }
     }
+}
+
+// A bounded read cap: the dialect bans `fs::read_to_string`, so the linter caps
+// its own reads here. No real source file approaches this, so the cap only fires
+// on pathological input — the unbounded hazard the ban guards against.
+const SOURCE_BYTES_MAX: u64 = 64 * 1024 * 1024;
+
+/// The file as text, read through a `take` cap rather than the banned unbounded
+/// `fs::read_to_string`. `None` on any I/O error.
+fn read_capped(path: &path::Path) -> Option<String> {
+    let file = fs::File::open(path).ok()?;
+    io::read_to_string(file.take(SOURCE_BYTES_MAX)).ok()
 }
 
 fn render(path: &str, violation: &Violation) -> String {
@@ -1293,11 +1308,8 @@ fn crate_roots(file_path: &path::Path) -> Vec<String> {
 }
 
 fn cargo_dependencies(file_path: &path::Path) -> Vec<String> {
-    match find_cargo_toml(file_path) {
-        Some(manifest) => match fs::read_to_string(&manifest) {
-            Ok(text) => dependency_names(&text),
-            Err(_) => Vec::new(),
-        },
+    match find_cargo_toml(file_path).and_then(|manifest| read_capped(&manifest)) {
+        Some(text) => dependency_names(&text),
         None => Vec::new(),
     }
 }
@@ -1368,4 +1380,117 @@ fn normalize_crate_name(raw: &str) -> String {
 
 fn append_name(names: Vec<String>, name: String) -> Vec<String> {
     names.into_iter().chain(iter::once(name)).collect()
+}
+
+// Bans: unbounded stdlib APIs (the blacklist bucket).
+
+// Path calls whose bounded twin is a *different* function, so a flat
+// `(parent, name)`-tail ban has no false positives (see unbounded_stdlib_audit).
+// Each row: parent segment, function name, the bounded remedy.
+const UNBOUNDED_PATHS: &[(&str, &str, &str)] = &[
+    ("fs", "read", "read into a fixed buffer (`File::open` + `take`)"),
+    ("fs", "read_to_string", "read into a fixed buffer (`File::open` + `take`)"),
+    ("iter", "repeat", "use `iter::repeat_n` for a bounded count"),
+    ("TcpStream", "connect", "use `TcpStream::connect_timeout`"),
+];
+
+// Method calls bannable by bare name because the name rarely collides with a
+// bounded method (`join` is excluded — it clashes with `Path`/slice `join`).
+const UNBOUNDED_METHODS: &[(&str, &str)] = &[
+    ("recv", "use `recv_timeout` or `try_recv`"),
+    ("accept", "set a read timeout or use a nonblocking listener"),
+];
+
+/// Unbounded APIs whose work or memory grows with attacker-controlled input and
+/// that have a same-named-free bounded twin. Matched syntactically — path calls
+/// on the `parent::name` tail, methods on the bare name — by a token pass that
+/// also reaches macro bodies. The take / literal-arg buckets need dataflow the
+/// linter lacks and are not handled here.
+fn unbounded_api_violations(source: &str) -> Vec<Violation> {
+    match source.parse::<proc_macro2::TokenStream>() {
+        Ok(tokens) => unbounded_calls(tokens),
+        // Unreachable: the caller only runs on a file `syn` already parsed.
+        Err(_) => Vec::new(),
+    }
+}
+
+fn unbounded_calls(tokens: proc_macro2::TokenStream) -> Vec<Violation> {
+    let level: Vec<proc_macro2::TokenTree> = tokens.into_iter().collect();
+    level
+        .iter()
+        .enumerate()
+        .flat_map(|(index, token)| {
+            let nested = match token {
+                proc_macro2::TokenTree::Group(group) => unbounded_calls(group.stream()),
+                _ => Vec::new(),
+            };
+            unbounded_call(&level, index).into_iter().chain(nested).collect::<Vec<Violation>>()
+        })
+        .collect()
+}
+
+fn unbounded_call(level: &[proc_macro2::TokenTree], index: usize) -> Option<Violation> {
+    let ident = match &level[index] {
+        proc_macro2::TokenTree::Ident(ident) => ident,
+        _ => return None,
+    };
+    let name = ident.to_string();
+    let start = ident.span().start();
+    unbounded_path_call(level, index, &name, start)
+        .or_else(|| unbounded_method_call(level, index, &name, start))
+}
+
+fn unbounded_path_call(
+    level: &[proc_macro2::TokenTree],
+    index: usize,
+    parent: &str,
+    start: proc_macro2::LineColumn,
+) -> Option<Violation> {
+    let child = match (followed_by_path_sep(level, index), level.get(index + 3)) {
+        (true, Some(proc_macro2::TokenTree::Ident(child))) => child.to_string(),
+        _ => return None,
+    };
+    UNBOUNDED_PATHS.iter().find(|(p, c, _)| *p == parent && *c == child.as_str()).map(
+        |(p, c, remedy)| Violation {
+            line: start.line,
+            column: start.column,
+            message: format!("unbounded `{p}::{c}` banned; {remedy}"),
+        },
+    )
+}
+
+fn unbounded_method_call(
+    level: &[proc_macro2::TokenTree],
+    index: usize,
+    name: &str,
+    start: proc_macro2::LineColumn,
+) -> Option<Violation> {
+    let is_method = index >= 1
+        && is_dot(level.get(index - 1))
+        && is_call_continuation(level.get(index + 1));
+    match is_method {
+        true => UNBOUNDED_METHODS.iter().find(|(method, _)| *method == name).map(
+            |(method, remedy)| Violation {
+                line: start.line,
+                column: start.column,
+                message: format!("unbounded `{method}` banned; {remedy}"),
+            },
+        ),
+        false => None,
+    }
+}
+
+fn is_dot(token: Option<&proc_macro2::TokenTree>) -> bool {
+    matches!(token, Some(proc_macro2::TokenTree::Punct(punct)) if punct.as_char() == '.')
+}
+
+/// A method name is a call when followed by `(...)`, or by `::` for a turbofish
+/// (`recv::<T>()`); a bare `.recv` field access is not.
+fn is_call_continuation(token: Option<&proc_macro2::TokenTree>) -> bool {
+    match token {
+        Some(proc_macro2::TokenTree::Group(group)) => {
+            matches!(group.delimiter(), proc_macro2::Delimiter::Parenthesis)
+        }
+        other => is_colon(other),
+    }
 }
