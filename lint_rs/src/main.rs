@@ -1,11 +1,12 @@
 //! `lint_rs` CLI. Scans a directory (default `src`, or the first argument) and
 //! exits non-zero if any rule fires, so it drops into CI or a pre-commit hook.
 
+use std::env;
 use std::path;
 use std::process;
 
 fn main() -> process::ExitCode {
-    let root = std::env::args()
+    let root = env::args()
         .nth(1)
         .map(path::PathBuf::from)
         .unwrap_or_else(|| path::PathBuf::from("src"));
