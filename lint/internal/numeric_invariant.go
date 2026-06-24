@@ -90,13 +90,13 @@ func numeric_file_diagnostics(
 		if !is_type {
 			continue
 		}
-		kind := numeric_type_kind(type_specification)
+		kind, count := numeric_subject_kind(type_specification)
 		if kind == "" {
 			continue
 		}
 		diags = append(diags, numeric_type_diagnostics(&numeric_type_input{
 			File: file, Index: index, Type: type_specification, Kind: kind,
-			Constants: constants, Invariant_Names: invariant_names,
+			Count: count, Constants: constants, Invariant_Names: invariant_names,
 		})...)
 	}
 	return diags
@@ -109,6 +109,7 @@ type numeric_type_input struct {
 	Index           int
 	Type            *ast.TypeSpec
 	Kind            string
+	Count           bool
 	Constants       map[string]bool
 	Invariant_Names map[string]bool
 }
@@ -129,7 +130,7 @@ func numeric_type_diagnostics(input *numeric_type_input) (diags []Diagnostic) {
 	}
 	return numeric_bundle_diagnostics(&numeric_bundle_input{
 		File_Set: input.File.File_Set, Bundle: candidate, Value: value,
-		Kind: input.Kind, Constants: input.Constants,
+		Count: input.Count, Kind: input.Kind, Constants: input.Constants,
 		Invariant_Names: input.Invariant_Names,
 	})
 }
@@ -164,8 +165,50 @@ func numeric_kind(name string) (kind string) {
 	}
 }
 
+// Returns the boundary-coverage kind and whether it applies to the value's
+// count. A numeric defined type yields its signedness and false; a string,
+// slice, or map type yields "unsigned" and true; anything else "".
+func numeric_subject_kind(type_specification *ast.TypeSpec) (kind string, count bool) {
+	kind = numeric_type_kind(type_specification)
+	if kind != "" {
+		return kind, false
+	}
+	if numeric_is_count_type(type_specification) {
+		return "unsigned", true
+	}
+	return "", false
+}
+
+// Reports whether the type is a defined string, slice, or map — a container whose
+// count carries the boundary discipline. Generics are in scope; an alias, a
+// fixed array, or a channel is not.
+func numeric_is_count_type(type_specification *ast.TypeSpec) (yes bool) {
+	if type_specification.Assign.IsValid() {
+		return false
+	}
+	switch base := type_specification.Type.(type) {
+	case *ast.MapType:
+		return true
+	case *ast.ArrayType:
+		return base.Len == nil
+	case *ast.Ident:
+		return base.Name == "string"
+	default:
+		return false
+	}
+}
+
+// Renders the asserted subject for diagnostics: the value, or len(value).
+func numeric_subject_text(input *numeric_bundle_input) (text string) {
+	if input.Count {
+		return "len(" + input.Value + ")"
+	}
+	return input.Value
+}
+
 // Returns the bundle's first parameter name when it is the type by value, or ""
-// when there is no parameter or it is a pointer.
+// when there is no parameter or it is a pointer. The value may be a generic
+// instantiation (v Stack[T]), so the base name is compared.
 func numeric_value_parameter_name(
 	bundle *ast.FuncDecl, type_name string,
 ) (name string) {
@@ -177,11 +220,7 @@ func numeric_value_parameter_name(
 		return ""
 	}
 	first := bundle.Type.Params.List[0]
-	identifier, is_identifier := first.Type.(*ast.Ident)
-	if !is_identifier {
-		return ""
-	}
-	if identifier.Name != type_name {
+	if numeric_type_base_name(first.Type) != type_name {
 		return ""
 	}
 	if len(first.Names) == 0 {
@@ -190,12 +229,27 @@ func numeric_value_parameter_name(
 	return first.Names[0].Name
 }
 
+// Returns the base type name of a value parameter: a bare identifier, or the base
+// of a generic instantiation Name[...]; "" for a pointer or anything else.
+func numeric_type_base_name(expression ast.Expr) (name string) {
+	identifier, is_identifier := expression.(*ast.Ident)
+	if is_identifier {
+		return identifier.Name
+	}
+	base, _ := type_invariants_instantiation(expression)
+	if base == nil {
+		return ""
+	}
+	return base.Name
+}
+
 // Carries the bundle and the facts its checks read: two maps keep it off loose
 // parameters.
 type numeric_bundle_input struct {
 	File_Set        *token.FileSet
 	Bundle          *ast.FuncDecl
 	Value           string
+	Count           bool
 	Kind            string
 	Constants       map[string]bool
 	Invariant_Names map[string]bool
@@ -222,6 +276,7 @@ func numeric_bundle_diagnostics(input *numeric_bundle_input) (diags []Diagnostic
 // Walks the bundle body, summarizing every Always/Sometimes condition into facts.
 func numeric_collect_facts(input *numeric_bundle_input) (facts numeric_facts) {
 	facts.Claimed_Values = map[string]bool{}
+	is_subject := numeric_subject_matcher(input)
 	ast.Inspect(input.Bundle.Body, func(node ast.Node) (recurse bool) {
 		call, is_call := node.(*ast.CallExpr)
 		if !is_call {
@@ -231,10 +286,45 @@ func numeric_collect_facts(input *numeric_bundle_input) (facts numeric_facts) {
 		if !matched {
 			return true
 		}
-		numeric_classify_condition(call.Args[0], input.Value, is_always, &facts)
+		numeric_classify_condition(call.Args[0], is_subject, is_always, &facts)
 		return true
 	})
 	return facts
+}
+
+// Reports whether an expression is the asserted subject — the value, or its count.
+type numeric_subject func(expression ast.Expr) (matches bool)
+
+// Builds the predicate that recognizes the asserted subject: the value itself, or
+// its count when the type is a string, slice, or map.
+func numeric_subject_matcher(input *numeric_bundle_input) (match numeric_subject) {
+	if input.Count {
+		return func(expression ast.Expr) (matches bool) {
+			return numeric_is_count(expression, input.Value)
+		}
+	}
+	return func(expression ast.Expr) (matches bool) {
+		return numeric_is_value(expression, input.Value)
+	}
+}
+
+// Reports whether expression is len(value).
+func numeric_is_count(expression ast.Expr, value string) (yes bool) {
+	call, is_call := expression.(*ast.CallExpr)
+	if !is_call {
+		return false
+	}
+	identifier, is_identifier := call.Fun.(*ast.Ident)
+	if !is_identifier {
+		return false
+	}
+	if identifier.Name != "len" {
+		return false
+	}
+	if len(call.Args) != 1 {
+		return false
+	}
+	return numeric_is_value(call.Args[0], value)
 }
 
 // Reports whether call is invariant.Always/Sometimes and which, by the local
@@ -269,7 +359,8 @@ func numeric_invariant_call(
 // Folds one condition into facts: bounds come only from Always; claims (equality,
 // inequality, NaN, infinities) from either Always or Sometimes.
 func numeric_classify_condition(
-	condition ast.Expr, value string, is_always bool, facts *numeric_facts,
+	condition ast.Expr, is_subject numeric_subject, is_always bool,
+	facts *numeric_facts,
 ) {
 	if numeric_nan_call(condition) {
 		facts.Claimed_Values["NaN"] = true
@@ -280,31 +371,32 @@ func numeric_classify_condition(
 		return
 	}
 	if binary.Op == token.LEQ {
-		numeric_record_upper(binary, value, is_always, facts)
+		numeric_record_upper(binary, is_subject, is_always, facts)
 		return
 	}
 	if binary.Op == token.GEQ {
-		numeric_record_lower(binary, value, is_always, facts)
+		numeric_record_lower(binary, is_subject, is_always, facts)
 		return
 	}
 	if binary.Op == token.EQL {
-		numeric_record_claim(binary, value, facts)
+		numeric_record_claim(binary, is_subject, facts)
 		return
 	}
 	if binary.Op == token.NEQ {
-		numeric_record_claim(binary, value, facts)
+		numeric_record_claim(binary, is_subject, facts)
 		return
 	}
 }
 
 // Records an Always(v <= C) upper bound guard and its operand name.
 func numeric_record_upper(
-	binary *ast.BinaryExpr, value string, is_always bool, facts *numeric_facts,
+	binary *ast.BinaryExpr, is_subject numeric_subject, is_always bool,
+	facts *numeric_facts,
 ) {
 	if !is_always {
 		return
 	}
-	if !numeric_is_value(binary.X, value) {
+	if !is_subject(binary.X) {
 		return
 	}
 	facts.Has_Upper = true
@@ -313,12 +405,13 @@ func numeric_record_upper(
 
 // Records an Always(v >= C) lower bound guard and its operand name.
 func numeric_record_lower(
-	binary *ast.BinaryExpr, value string, is_always bool, facts *numeric_facts,
+	binary *ast.BinaryExpr, is_subject numeric_subject, is_always bool,
+	facts *numeric_facts,
 ) {
 	if !is_always {
 		return
 	}
-	if !numeric_is_value(binary.X, value) {
+	if !is_subject(binary.X) {
 		return
 	}
 	facts.Has_Lower = true
@@ -326,7 +419,9 @@ func numeric_record_lower(
 }
 
 // Records a boundary claim: an infinity (float) or an integer/const equality.
-func numeric_record_claim(binary *ast.BinaryExpr, value string, facts *numeric_facts) {
+func numeric_record_claim(
+	binary *ast.BinaryExpr, is_subject numeric_subject, facts *numeric_facts,
+) {
 	sign := numeric_infinity_sign(binary.X)
 	if sign == 0 {
 		sign = numeric_infinity_sign(binary.Y)
@@ -339,7 +434,7 @@ func numeric_record_claim(binary *ast.BinaryExpr, value string, facts *numeric_f
 		facts.Claimed_Values["+Inf"] = true
 		return
 	}
-	operand := numeric_other_operand(binary, value)
+	operand := numeric_other_operand(binary, is_subject)
 	if operand == nil {
 		return
 	}
@@ -357,6 +452,7 @@ func numeric_bound_diagnostics(
 
 	position := input.File_Set.Position(input.Bundle.Name.Pos())
 	name := input.Bundle.Name.Name
+	subject := numeric_subject_text(input)
 	incomplete := false
 	if !facts.Has_Upper {
 		incomplete = true
@@ -366,8 +462,8 @@ func numeric_bound_diagnostics(
 	}
 	if incomplete {
 		diags = append(diags, Diagnostic{Position: position,
-			Message: name + " must guard both ends: Always(" + input.Value +
-				" <= MAX) and Always(" + input.Value + " >= MIN)"})
+			Message: name + " must guard both ends: Always(" + subject +
+				" <= MAX) and Always(" + subject + " >= MIN)"})
 	}
 	if facts.Has_Upper {
 		if !numeric_is_package_constant(facts.Upper_Name, input.Constants) {
@@ -421,11 +517,12 @@ func numeric_limit_claim(
 
 // Builds the diagnostic for a boundary value the bundle never claims.
 func numeric_missing_claim(label string, input *numeric_bundle_input) (diag Diagnostic) {
+	subject := numeric_subject_text(input)
 	return Diagnostic{
 		Position: input.File_Set.Position(input.Bundle.Name.Pos()),
 		Message: input.Bundle.Name.Name + " must claim " + label +
-			" via Sometimes(" + input.Value + " == " + label + ") or Always(" +
-			input.Value + " ==/!= " + label + ")",
+			" via Sometimes(" + subject + " == " + label + ") or Always(" +
+			subject + " ==/!= " + label + ")",
 	}
 }
 
@@ -467,12 +564,14 @@ func numeric_operand_name(operand ast.Expr) (name string) {
 	return identifier.Name
 }
 
-// Returns the comparison operand that is not the value, or nil when neither is.
-func numeric_other_operand(binary *ast.BinaryExpr, value string) (operand ast.Expr) {
-	if numeric_is_value(binary.X, value) {
+// Returns the comparison operand that is not the subject, or nil when neither is.
+func numeric_other_operand(
+	binary *ast.BinaryExpr, is_subject numeric_subject,
+) (operand ast.Expr) {
+	if is_subject(binary.X) {
 		return binary.Y
 	}
-	if numeric_is_value(binary.Y, value) {
+	if is_subject(binary.Y) {
 		return binary.X
 	}
 	return nil

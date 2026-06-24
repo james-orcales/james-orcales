@@ -1696,6 +1696,61 @@ func Test_Invariants_Numeric_Coverage(t *testing.T) {
 	}
 }
 
+// Test_Invariants_Count_Bounds verifies a string/slice/map bundle lacking the
+// Always len bounds is flagged.
+func Test_Invariants_Count_Bounds(t *testing.T) {
+	t.Parallel()
+	files := specification_one_file("package fixture\n\n" +
+		"import \"fixture/shared/invariant\"\n\n" +
+		"// Name is a fixture.\ntype Name string\n\n" +
+		"// Name_Invariants is a fixture.\n" +
+		"func Name_Invariants(v Name, namespace invariant.Namespace) {\n" +
+		"\tinvariant.Dot_Product(namespace, " +
+		"invariant.Sometimes(len(v) == 0, \"empty\"))\n}\n")
+	if !specification_flags(t, files, "Always(len(v) <= MAX)") {
+		t.Fatal("a length bundle without Always len bounds must be flagged")
+	}
+}
+
+// Test_Invariants_Count_Bound_Constant verifies an inline-literal len bound is flagged.
+func Test_Invariants_Count_Bound_Constant(t *testing.T) {
+	t.Parallel()
+	files := specification_one_file("package fixture\n\n" +
+		"import \"fixture/shared/invariant\"\n\n" +
+		"// Name is a fixture.\ntype Name string\n\n" +
+		"// Name_Invariants is a fixture.\n" +
+		"func Name_Invariants(v Name, namespace invariant.Namespace) {\n" +
+		"\tinvariant.Always(len(v) <= 32, \"max\")\n" +
+		"\tinvariant.Always(len(v) >= 0, \"min\")\n" +
+		"\tinvariant.Dot_Product(namespace, " +
+		"invariant.Sometimes(len(v) == 0, \"empty\"))\n}\n")
+	if !specification_flags(t, files, "must be a package-level constant") {
+		t.Fatal("an inline-literal len bound must be flagged")
+	}
+}
+
+// Test_Invariants_Count_Coverage verifies a length bundle missing the 2 claim is flagged.
+func Test_Invariants_Count_Coverage(t *testing.T) {
+	t.Parallel()
+	files := specification_one_file("package fixture\n\n" +
+		"import \"fixture/shared/invariant\"\n\n" +
+		"const Name_Max = 32\n\nconst Name_Min = 0\n\n" +
+		"// Name is a fixture.\ntype Name string\n\n" +
+		"// Name_Invariants is a fixture.\n" +
+		"func Name_Invariants(v Name, namespace invariant.Namespace) {\n" +
+		"\tinvariant.Always(len(v) <= Name_Max, \"max bound\")\n" +
+		"\tinvariant.Always(len(v) >= Name_Min, \"min bound\")\n" +
+		"\tinvariant.Dot_Product(namespace,\n" +
+		"\t\tinvariant.Sometimes(len(v) == Name_Max, \"max\"),\n" +
+		"\t\tinvariant.Sometimes(len(v) == Name_Min, \"min\"),\n" +
+		"\t\tinvariant.Sometimes(len(v) == 0, \"zero\"),\n" +
+		"\t\tinvariant.Sometimes(len(v) == 1, \"one\"),\n" +
+		"\t)\n}\n")
+	if !specification_flags(t, files, "must claim 2") {
+		t.Fatal("a length bundle missing the 2 claim must be flagged")
+	}
+}
+
 // Test_Specification_Baseline pins that the unmutated package is clean, so every
 // other test isolates the single rule it violates.
 func Test_Specification_Baseline(t *testing.T) {
@@ -2065,5 +2120,113 @@ func Test_Type_Invariant_Numeric_Float_Passes(t *testing.T) {
 	}
 	if specification_flags(t, files, "must guard both ends") {
 		t.Fatal("float const bounds must not be flagged")
+	}
+}
+
+// Test_Type_Invariant_Count_String_Passes verifies a complete string length
+// bundle is not flagged.
+func Test_Type_Invariant_Count_String_Passes(t *testing.T) {
+	t.Parallel()
+	files := specification_one_file("package fixture\n\n" +
+		"import \"fixture/shared/invariant\"\n\n" +
+		"const Name_Max = 32\n\nconst Name_Min = 0\n\n" +
+		"// Name is a fixture.\ntype Name string\n\n" +
+		"// Name_Invariants is a fixture.\n" +
+		"func Name_Invariants(v Name, namespace invariant.Namespace) {\n" +
+		"\tinvariant.Always(len(v) <= Name_Max, \"max bound\")\n" +
+		"\tinvariant.Always(len(v) >= Name_Min, \"min bound\")\n" +
+		"\tinvariant.Dot_Product(namespace,\n" +
+		"\t\tinvariant.Sometimes(len(v) == Name_Max, \"max\"),\n" +
+		"\t\tinvariant.Sometimes(len(v) == Name_Min, \"min\"),\n" +
+		"\t\tinvariant.Sometimes(len(v) == 0, \"zero\"),\n" +
+		"\t\tinvariant.Sometimes(len(v) == 1, \"one\"),\n" +
+		"\t\tinvariant.Sometimes(len(v) == 2, \"two\"),\n" +
+		"\t)\n}\n")
+	if specification_flags(t, files, "must guard both ends") {
+		t.Fatal("a complete string length bundle must not be flagged for bounds")
+	}
+	if specification_flags(t, files, "must claim") {
+		t.Fatal("a complete string length bundle must not be flagged for coverage")
+	}
+}
+
+// Test_Type_Invariant_Count_Slice_Passes verifies a complete slice length bundle
+// is not flagged.
+func Test_Type_Invariant_Count_Slice_Passes(t *testing.T) {
+	t.Parallel()
+	files := specification_one_file("package fixture\n\n" +
+		"import \"fixture/shared/invariant\"\n\n" +
+		"const Buffer_Max = 64\n\nconst Buffer_Min = 0\n\n" +
+		"// Buffer is a fixture.\ntype Buffer []byte\n\n" +
+		"// Buffer_Invariants is a fixture.\n" +
+		"func Buffer_Invariants(v Buffer, namespace invariant.Namespace) {\n" +
+		"\tinvariant.Always(len(v) <= Buffer_Max, \"max bound\")\n" +
+		"\tinvariant.Always(len(v) >= Buffer_Min, \"min bound\")\n" +
+		"\tinvariant.Dot_Product(namespace,\n" +
+		"\t\tinvariant.Sometimes(len(v) == Buffer_Max, \"max\"),\n" +
+		"\t\tinvariant.Sometimes(len(v) == Buffer_Min, \"min\"),\n" +
+		"\t\tinvariant.Sometimes(len(v) == 0, \"zero\"),\n" +
+		"\t\tinvariant.Sometimes(len(v) == 1, \"one\"),\n" +
+		"\t\tinvariant.Sometimes(len(v) == 2, \"two\"),\n" +
+		"\t)\n}\n")
+	if specification_flags(t, files, "must guard both ends") {
+		t.Fatal("a complete slice length bundle must not be flagged for bounds")
+	}
+	if specification_flags(t, files, "must claim") {
+		t.Fatal("a complete slice length bundle must not be flagged for coverage")
+	}
+}
+
+// Test_Type_Invariant_Count_Map_Passes verifies a complete map length bundle is
+// not flagged.
+func Test_Type_Invariant_Count_Map_Passes(t *testing.T) {
+	t.Parallel()
+	files := specification_one_file("package fixture\n\n" +
+		"import \"fixture/shared/invariant\"\n\n" +
+		"const Registry_Max = 16\n\nconst Registry_Min = 0\n\n" +
+		"// Registry is a fixture.\ntype Registry map[string]int\n\n" +
+		"// Registry_Invariants is a fixture.\n" +
+		"func Registry_Invariants(v Registry, namespace invariant.Namespace) {\n" +
+		"\tinvariant.Always(len(v) <= Registry_Max, \"max bound\")\n" +
+		"\tinvariant.Always(len(v) >= Registry_Min, \"min bound\")\n" +
+		"\tinvariant.Dot_Product(namespace,\n" +
+		"\t\tinvariant.Sometimes(len(v) == Registry_Max, \"max\"),\n" +
+		"\t\tinvariant.Sometimes(len(v) == Registry_Min, \"min\"),\n" +
+		"\t\tinvariant.Sometimes(len(v) == 0, \"zero\"),\n" +
+		"\t\tinvariant.Sometimes(len(v) == 1, \"one\"),\n" +
+		"\t\tinvariant.Sometimes(len(v) == 2, \"two\"),\n" +
+		"\t)\n}\n")
+	if specification_flags(t, files, "must guard both ends") {
+		t.Fatal("a complete map length bundle must not be flagged for bounds")
+	}
+	if specification_flags(t, files, "must claim") {
+		t.Fatal("a complete map length bundle must not be flagged for coverage")
+	}
+}
+
+// Test_Type_Invariant_Count_Generic_Passes verifies a complete generic-container
+// length bundle (a generic slice) is not flagged.
+func Test_Type_Invariant_Count_Generic_Passes(t *testing.T) {
+	t.Parallel()
+	files := specification_one_file("package fixture\n\n" +
+		"import \"fixture/shared/invariant\"\n\n" +
+		"const Stack_Max = 8\n\nconst Stack_Min = 0\n\n" +
+		"// Stack is a fixture.\ntype Stack[T any] []T\n\n" +
+		"// Stack_Invariants is a fixture.\n" +
+		"func Stack_Invariants[T any](v Stack[T], namespace invariant.Namespace) {\n" +
+		"\tinvariant.Always(len(v) <= Stack_Max, \"max bound\")\n" +
+		"\tinvariant.Always(len(v) >= Stack_Min, \"min bound\")\n" +
+		"\tinvariant.Dot_Product(namespace,\n" +
+		"\t\tinvariant.Sometimes(len(v) == Stack_Max, \"max\"),\n" +
+		"\t\tinvariant.Sometimes(len(v) == Stack_Min, \"min\"),\n" +
+		"\t\tinvariant.Sometimes(len(v) == 0, \"zero\"),\n" +
+		"\t\tinvariant.Sometimes(len(v) == 1, \"one\"),\n" +
+		"\t\tinvariant.Sometimes(len(v) == 2, \"two\"),\n" +
+		"\t)\n}\n")
+	if specification_flags(t, files, "must guard both ends") {
+		t.Fatal("a complete generic-container length bundle must not be flagged for bounds")
+	}
+	if specification_flags(t, files, "must claim") {
+		t.Fatal("a complete generic count bundle must not be flagged for coverage")
 	}
 }
