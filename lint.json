@@ -24,6 +24,9 @@
           "home",
           "documentation/youtube"
   ],
+  "invariant_exempt_packages": [
+          "shared/invariant"
+  ],
   "word_replacements": {
     "len":       [],
     "length":    [],
