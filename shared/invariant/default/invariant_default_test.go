@@ -224,3 +224,23 @@ func Test_Map_Invariants_Distinguishes_Nil_And_Empty(t *testing.T) {
 		}
 	}
 }
+
+// Boolean_Invariants returns one axis; the suite must witness the value true and false.
+func Test_Boolean_Invariants_Tracks_Values(t *testing.T) {
+	cases := []struct {
+		Name string
+		B    bool
+		Want string
+	}{
+		{"true", true, "T"},
+		{"false", false, "F"},
+	}
+	for _, c := range cases {
+		namespace := "test.bool." + c.Name
+		seed_preset_axes(namespace, "The value is true.")
+		invariant.Boolean_Invariants(c.B, invariant.Namespace(namespace))
+		if got := recorded_signature(namespace, "The value is true."); got != c.Want {
+			t.Errorf("%s: [is_true] = %q, want %q", c.Name, got, c.Want)
+		}
+	}
+}
