@@ -163,6 +163,11 @@ func emit(lexeme Lexeme, source string) {
 }
 ```
 
+Declare your own `_Invariants` only for a custom, defined type. The presets are the framework's
+bundles for the primitive types; user code never re-declares one. To cover a primitive, call a
+preset, state its axes inline, or wrap it in a custom type — registration rejects a user bundle
+whose subject is a primitive (a builtin, an unnamed slice/map, or any unnamed composite).
+
 Each callsite namespace is the grid's identity: two callsites with distinct namespaces register
 independent grids that never mask each other's gaps, and reusing one namespace is a duplicate that
 fails registration. A `_Invariants` body must be straight-line — a branching or looping statement

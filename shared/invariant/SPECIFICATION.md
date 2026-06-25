@@ -176,9 +176,9 @@ A `_Invariants` body must be straight-line: a branching or looping statement (`i
 
 ### Custom Types
 
-A bundle's subject is a custom, defined type. A primitive subject — a builtin, an unnamed slice, map,
-or composite — fails registration, except in the framework package that owns the presets. Cover a
-primitive inline, or wrap it in a custom type that carries its own bundle.
+A bundle's subject is a custom, defined type. A primitive subject — a builtin, an unnamed slice,
+map, or composite — fails registration, except in the framework package that owns the presets.
+Cover a primitive inline, or wrap it in a custom type that carries its own bundle.
 
 # Analysis
 

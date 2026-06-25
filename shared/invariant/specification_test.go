@@ -397,7 +397,9 @@ func Test_Dot_Product_Attribution(t *testing.T) {
 func Test_Bundles_Template(t *testing.T) {
 	const source = `package fixture
 
-func Pair_Invariants(n int, namespace string) {
+type Pair int
+
+func Pair_Invariants(n Pair, namespace string) {
 	invariant.Dot_Product(namespace, invariant.Sometimes(n < 0, "lo"))
 }
 
@@ -435,7 +437,9 @@ func check(n int) {
 func Test_Bundles_Descent(t *testing.T) {
 	const source = `package fixture
 
-func Pair_Invariants(n int, namespace string) {
+type Pair int
+
+func Pair_Invariants(n Pair, namespace string) {
 	invariant.Dot_Product(namespace, invariant.Sometimes(n < 0, "lo"))
 }
 
@@ -462,11 +466,15 @@ func check(n int) {
 func Test_Bundles_Composition(t *testing.T) {
 	const source = `package fixture
 
-func Inner_Invariants(n int, namespace string) {
+type Inner int
+
+func Inner_Invariants(n Inner, namespace string) {
 	invariant.Dot_Product(namespace, invariant.Sometimes(n < 0, "inner"))
 }
 
-func Outer_Invariants(n int, namespace string) {
+type Outer int
+
+func Outer_Invariants(n Outer, namespace string) {
 	invariant.Dot_Product(namespace, invariant.Sometimes(n > 0, "outer"))
 	Inner_Invariants(n, "field.inner")
 }
@@ -497,7 +505,9 @@ func check(n int) {
 func Test_Bundles_Casing(t *testing.T) {
 	const source = `package fixture
 
-func pair_invariants(n int, namespace string) {
+type pair int
+
+func pair_invariants(n pair, namespace string) {
 	invariant.Dot_Product(namespace, invariant.Sometimes(n < 0, "lo"))
 }
 
@@ -525,7 +535,9 @@ func check(n int) {
 func Test_Bundles_Sugar(t *testing.T) {
 	const sugar = `package sugar
 
-func Pair_Invariants(n int, namespace string) {
+type Pair int
+
+func Pair_Invariants(n Pair, namespace string) {
 	Dot_Product(namespace, Sometimes(n < 0, "lo"))
 }
 `
@@ -567,7 +579,9 @@ func Test_Bundles_Cross_Package(t *testing.T) {
 
 import invariant "example.com/m/invariant"
 
-func Pair_Invariants(n int, namespace string) {
+type Pair int
+
+func Pair_Invariants(n Pair, namespace string) {
 	invariant.Dot_Product(namespace, invariant.Sometimes(n < 0, "lo"))
 }
 `
@@ -603,7 +617,9 @@ func check(n int) {
 func Test_Bundles_Callsite(t *testing.T) {
 	const source = `package fixture
 
-func Pair_Invariants(n int, namespace string) {
+type Pair int
+
+func Pair_Invariants(n Pair, namespace string) {
 	invariant.Dot_Product(namespace, invariant.Sometimes(n < 0, "lo"))
 }
 
@@ -640,11 +656,15 @@ func check_b(n int) {
 func Test_Bundles_Gap_Location(t *testing.T) {
 	const source = `package fixture
 
-func Inner_Invariants(n int, namespace string) {
+type Inner int
+
+func Inner_Invariants(n Inner, namespace string) {
 	invariant.Always(n > 0, "positive")
 }
 
-func Outer_Invariants(n int, namespace string) {
+type Outer int
+
+func Outer_Invariants(n Outer, namespace string) {
 	Inner_Invariants(n, "field.inner")
 }
 
@@ -700,7 +720,9 @@ github.com/james-orcales/james-orcales/shared/invariant_test.dot_product_callsit
 func Test_Bundles_Static(t *testing.T) {
 	const source = `package fixture
 
-func Pair_Invariants(n int, namespace string) {
+type Pair int
+
+func Pair_Invariants(n Pair, namespace string) {
 	if n > 0 {
 		invariant.Dot_Product(namespace, invariant.Sometimes(n < 0, "lo"))
 	}
@@ -839,11 +861,15 @@ func Test_Analysis_Combination(t *testing.T) {
 func Test_Analysis_Legend(t *testing.T) {
 	const source = `package fixture
 
-func Inner_Invariants(n int, namespace string) {
+type Inner int
+
+func Inner_Invariants(n Inner, namespace string) {
 	invariant.Dot_Product(namespace, invariant.Sometimes(n < 0, "negative"))
 }
 
-func Outer_Invariants(n int, namespace string) {
+type Outer int
+
+func Outer_Invariants(n Outer, namespace string) {
 	invariant.Always(n != 0, "nonzero")
 	Inner_Invariants(n, "field.inner")
 }
