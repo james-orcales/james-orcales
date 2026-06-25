@@ -1,3 +1,3 @@
-module github.com/james-orcales/james-orcales
+module local/james-orcales
 
 go 1.26.3
