@@ -1611,6 +1611,11 @@ func test_lint_json(t *testing.T, shared_component string, allowlist []string) (
 		// coverage lives in the Test_Invariants_* doctrine tests and the
 		// Test_Type_Invariant_* behavioral tests, which drive the rule directly.
 		Invariant_Exempt_Packages: []string{"."},
+		// Likewise the deterministic tier now binds every pure package by default,
+		// so a fixture using time/sync/a channel to exercise another rule would trip
+		// it; "**" releases the whole tree. The Test_Deterministic_* tests drive the
+		// tier directly.
+		Pure_But_Indeterministic: []string{"**"},
 	})
 	if err != nil {
 		t.Fatalf("test_lint_json: %v", err)
@@ -1790,9 +1795,11 @@ func lint_output_minus(
 	all, err := lint.Check_File_System(&lint.Check_File_System_Input{
 		Fsys: fsys, Shared_Component: doctrine_shared_component_directory,
 		// The doctrine table targets other rules; the invariant rules (which fire
-		// on every typed field/param/return) are exercised by their own tests, so
-		// disable them wholesale here.
+		// on every typed field/param/return) and the deterministic tier (which now
+		// binds every pure package) are exercised by their own tests, so disable
+		// both wholesale here — "." exempts the invariant tree, "**" the pure tree.
 		Invariant_Exempt_Packages: []string{"."},
+		Pure_But_Indeterministic:  []string{"**"},
 	})
 	if err != nil {
 		t.Fatalf("Check_File_System: %v", err)

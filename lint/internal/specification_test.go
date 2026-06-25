@@ -1089,35 +1089,38 @@ func Test_Source_And_Test_Requirements_File_Count_Build_Tags(t *testing.T) {
 	}
 }
 
-// Test_Deterministic_Entry_Format verifies an entry names a module's top-level
-// directory and the tier auto-applies to the pure packages under it: a pure
-// package nested below the entry is held to the tier (its goroutine flagged),
-// while an impure default tier in the same subtree is excluded (its select not
-// flagged) — so a directory covers its pure packages without listing each.
+// Test_Deterministic_Entry_Format verifies an entry is an exact-path glob: a bare
+// package path releases that one package and not a child — the goroutine in pkg is
+// released while the select in the nested pkg/sub is still flagged — and a `**`
+// entry releases the whole subtree.
 func Test_Deterministic_Entry_Format(t *testing.T) {
 	t.Parallel()
 	files := map[string][]byte{
 		"go.mod": []byte("module fixture\n\ngo 1.25\n"),
-		"pkg/sub/p.go": []byte("// Package sub is a fixture.\n" +
-			"package sub\n\n" +
+		"pkg/p.go": []byte("// Package p is a fixture.\n" +
+			"package p\n\n" +
 			"// F is a fixture.\n" +
 			"func F() {\n\tgo done()\n}\n\n" +
 			"func done() {\n\treturn\n}\n"),
-		"pkg/sub/default/d.go": []byte("// Package sub is a fixture.\n" +
+		"pkg/sub/s.go": []byte("// Package sub is a fixture.\n" +
 			"package sub\n\n" +
 			"// G is a fixture.\n" +
 			"func G() {\n\tselect {}\n}\n"),
 	}
-	diags := deterministic_self_diagnostics(t, files, []string{"pkg"})
-	if !specification_diagnosed(diags, "must not start a goroutine") {
-		t.Fatal("a directory entry must cover a pure package nested below it")
+	exact := deterministic_self_diagnostics(t, files, []string{"pkg"})
+	if specification_diagnosed(exact, "must not start a goroutine") {
+		t.Fatal("an exact-path entry must release the named package")
 	}
-	if specification_diagnosed(diags, "must not use select") {
-		t.Fatal("an impure default tier under the entry must be excluded")
+	if !specification_diagnosed(exact, "must not use select") {
+		t.Fatal("an exact-path entry must not release a child package")
+	}
+	subtree := deterministic_self_diagnostics(t, files, []string{"pkg/**"})
+	if specification_diagnosed(subtree, "must not use select") {
+		t.Fatal("a ** entry must release the whole subtree")
 	}
 }
 
-// Test_Deterministic_Goroutines verifies a go statement in a listed package is flagged.
+// Test_Deterministic_Goroutines verifies a go statement in a pure package is flagged.
 func Test_Deterministic_Goroutines(t *testing.T) {
 	t.Parallel()
 	files := map[string][]byte{
@@ -1128,13 +1131,13 @@ func Test_Deterministic_Goroutines(t *testing.T) {
 			"func F() {\n\tgo done()\n}\n\n" +
 			"func done() {\n\treturn\n}\n"),
 	}
-	if !specification_diagnosed(deterministic_self_diagnostics(t, files, []string{"pkg"}),
+	if !specification_diagnosed(deterministic_self_diagnostics(t, files, nil),
 		"must not start a goroutine") {
 		t.Fatal("a go statement in a deterministic package must be flagged")
 	}
 }
 
-// Test_Deterministic_Channels verifies a channel in a listed package is flagged.
+// Test_Deterministic_Channels verifies a channel in a pure package is flagged.
 func Test_Deterministic_Channels(t *testing.T) {
 	t.Parallel()
 	files := map[string][]byte{
@@ -1144,13 +1147,13 @@ func Test_Deterministic_Channels(t *testing.T) {
 			"// F is a fixture.\n" +
 			"func F() {\n\tc := make(chan int)\n\tclose(c)\n}\n"),
 	}
-	if !specification_diagnosed(deterministic_self_diagnostics(t, files, []string{"pkg"}),
+	if !specification_diagnosed(deterministic_self_diagnostics(t, files, nil),
 		"must not use a channel") {
 		t.Fatal("a channel in a deterministic package must be flagged")
 	}
 }
 
-// Test_Deterministic_Select verifies a select in a listed package is flagged.
+// Test_Deterministic_Select verifies a select in a pure package is flagged.
 func Test_Deterministic_Select(t *testing.T) {
 	t.Parallel()
 	files := map[string][]byte{
@@ -1160,13 +1163,13 @@ func Test_Deterministic_Select(t *testing.T) {
 			"// F is a fixture.\n" +
 			"func F() {\n\tselect {}\n}\n"),
 	}
-	if !specification_diagnosed(deterministic_self_diagnostics(t, files, []string{"pkg"}),
+	if !specification_diagnosed(deterministic_self_diagnostics(t, files, nil),
 		"must not use select") {
 		t.Fatal("a select in a deterministic package must be flagged")
 	}
 }
 
-// Test_Deterministic_Floats verifies a float type in a listed package is flagged.
+// Test_Deterministic_Floats verifies a float type in a pure package is flagged.
 func Test_Deterministic_Floats(t *testing.T) {
 	t.Parallel()
 	files := map[string][]byte{
@@ -1176,13 +1179,13 @@ func Test_Deterministic_Floats(t *testing.T) {
 			"// F is a fixture.\n" +
 			"func F() (f float32) {\n\treturn 0\n}\n"),
 	}
-	if !specification_diagnosed(deterministic_self_diagnostics(t, files, []string{"pkg"}),
+	if !specification_diagnosed(deterministic_self_diagnostics(t, files, nil),
 		"must not use float") {
 		t.Fatal("a float in a deterministic package must be flagged")
 	}
 }
 
-// Test_Deterministic_Banned_Imports verifies a time import in a listed package is flagged.
+// Test_Deterministic_Banned_Imports verifies a time import in a pure package is flagged.
 func Test_Deterministic_Banned_Imports(t *testing.T) {
 	t.Parallel()
 	files := map[string][]byte{
@@ -1193,15 +1196,16 @@ func Test_Deterministic_Banned_Imports(t *testing.T) {
 			"// F is a fixture.\n" +
 			"func F() (d time.Duration) {\n\treturn 0\n}\n"),
 	}
-	if !specification_diagnosed(deterministic_self_diagnostics(t, files, []string{"pkg"}),
+	if !specification_diagnosed(deterministic_self_diagnostics(t, files, nil),
 		"must not import") {
 		t.Fatal("a time import in a deterministic package must be flagged")
 	}
 }
 
-// Test_Deterministic_Import_Induction verifies importing a non-deterministic
-// first-party package is flagged, while a package listed in instrumentation_packages
-// is exempt: instrumentation is a write-only side channel the induction does not reach.
+// Test_Deterministic_Import_Induction verifies a deterministic package importing a
+// pure_but_indeterministic first-party package is flagged — that import is no longer
+// deterministic — while a package also listed in instrumentation_packages is exempt:
+// instrumentation is a write-only side channel the induction does not reach.
 func Test_Deterministic_Import_Induction(t *testing.T) {
 	t.Parallel()
 	files := map[string][]byte{
@@ -1216,9 +1220,9 @@ func Test_Deterministic_Import_Induction(t *testing.T) {
 			"// G is a fixture.\n" +
 			"func G() {\n\treturn\n}\n"),
 	}
-	if !specification_diagnosed(deterministic_self_diagnostics(t, files, []string{"pkg"}),
+	if !specification_diagnosed(deterministic_self_diagnostics(t, files, []string{"other"}),
 		"import only deterministic packages") {
-		t.Fatal("importing a non-deterministic first-party package must be flagged")
+		t.Fatal("importing an opted-out first-party package must be flagged")
 	}
 	fsys := fstest.MapFS{}
 	for name, content := range files {
@@ -1228,7 +1232,7 @@ func Test_Deterministic_Import_Induction(t *testing.T) {
 		Fsys:                     fsys,
 		Scope:                    "pkg",
 		Shared_Component:         doctrine_shared_component_directory,
-		Deterministic_Packages:   []string{"pkg"},
+		Pure_But_Indeterministic: []string{"other"},
 		Instrumentation_Packages: []string{"other"},
 	})
 	if err != nil {
@@ -1239,10 +1243,10 @@ func Test_Deterministic_Import_Induction(t *testing.T) {
 	}
 }
 
-// Test_Deterministic_Impurity verifies an entry that resolves to no pure package
-// — here an all-impure default tier — is reported as a coverage gap. Expansion
-// keeps pure packages only, so a directory holding nothing pure opts nothing into
-// the tier and must fail loudly rather than silently check nothing.
+// Test_Deterministic_Impurity verifies a pure_but_indeterministic entry naming an
+// all-impure directory — here a default tier — matches no pure package and is
+// reported as a coverage gap. An impure package is never deterministic, so listing
+// it releases nothing; the dead entry must fail loudly rather than pass silently.
 func Test_Deterministic_Impurity(t *testing.T) {
 	t.Parallel()
 	files := map[string][]byte{
@@ -1251,13 +1255,13 @@ func Test_Deterministic_Impurity(t *testing.T) {
 			"package pkg\n"),
 	}
 	if !specification_diagnosed(
-		deterministic_self_diagnostics(t, files, []string{"./pkg/default/"}),
+		deterministic_self_diagnostics(t, files, []string{"pkg/default"}),
 		"no pure package found") {
-		t.Fatal("an entry covering no pure package must be reported")
+		t.Fatal("an entry matching no pure package must be reported")
 	}
 }
 
-// Test_Deterministic_Coverage verifies a deterministic_packages entry covering no
+// Test_Deterministic_Coverage verifies a pure_but_indeterministic entry matching no
 // pure package is reported.
 func Test_Deterministic_Coverage(t *testing.T) {
 	t.Parallel()
@@ -1269,7 +1273,7 @@ func Test_Deterministic_Coverage(t *testing.T) {
 	if !specification_diagnosed(
 		deterministic_self_diagnostics(t, files, []string{"pkg/missing"}),
 		"no pure package found") {
-		t.Fatal("an entry covering no pure package must be reported")
+		t.Fatal("an entry matching no pure package must be reported")
 	}
 }
 
@@ -1295,13 +1299,13 @@ func Test_Deterministic_Coverage_Scope(t *testing.T) {
 		Fsys:             fsys,
 		Shared_Component: "shared",
 		Scope:            "mybinary",
-		Deterministic_Packages: []string{
-			"mybinary", "other", "mybinary/internal/nonexistent"},
+		Pure_But_Indeterministic: []string{
+			"mybinary/internal", "other/internal", "mybinary/internal/nonexistent"},
 	})
 	if err != nil {
 		t.Fatalf("Check_File_System: %v", err)
 	}
-	if specification_diagnosed(diags, "no pure package found at \"other\"") {
+	if specification_diagnosed(diags, "no pure package found at \"other/internal\"") {
 		t.Fatal("an out-of-scope module entry must not be reported as a coverage gap")
 	}
 	if !specification_diagnosed(diags,
@@ -1796,10 +1800,10 @@ func recursion_exempt_self_diagnostics(
 
 // Runs the linter over the fixture with the given package directories opted into
 // the deterministic tier, returning its diagnostics. Mirrors
-// specification_self_diagnostics but threads Deterministic_Packages, which
-// specification_flags does not carry.
+// specification_self_diagnostics but threads Pure_But_Indeterministic (the
+// deterministic tier's opt-out list), which specification_flags does not carry.
 func deterministic_self_diagnostics(
-	t *testing.T, files map[string][]byte, listed []string,
+	t *testing.T, files map[string][]byte, exempt []string,
 ) (diags []lint.Diagnostic) {
 	t.Helper()
 	fsys := fstest.MapFS{}
@@ -1807,10 +1811,10 @@ func deterministic_self_diagnostics(
 		fsys[name] = &fstest.MapFile{Data: content}
 	}
 	diags, err := lint.Check_File_System(&lint.Check_File_System_Input{
-		Fsys:                   fsys,
-		Scope:                  "pkg",
-		Shared_Component:       doctrine_shared_component_directory,
-		Deterministic_Packages: listed,
+		Fsys:                     fsys,
+		Scope:                    "pkg",
+		Shared_Component:         doctrine_shared_component_directory,
+		Pure_But_Indeterministic: exempt,
 	})
 	if err != nil {
 		t.Fatalf("Check_File_System: %v", err)

@@ -5747,9 +5747,9 @@ func Test_Scope_Parses_Target_And_Shared_Components(t *testing.T) {
 	}
 }
 
-// Test_Deterministic_Library_Glob verifies the shared/* form — which names every
-// library in a single module — expands to each child package. The trailing /* is
-// stripped to the parent, so it covers the same subtree as the bare directory.
+// Test_Deterministic_Library_Glob verifies a `*` entry releases each direct child
+// package of a directory — `*` spans one path segment — so both pkg/a and pkg/b are
+// released, which a bare "pkg" entry (matching only the empty "pkg" dir) would not.
 func Test_Deterministic_Library_Glob(t *testing.T) {
 	t.Parallel()
 	files := map[string][]byte{
@@ -5760,21 +5760,24 @@ func Test_Deterministic_Library_Glob(t *testing.T) {
 			"func F() {\n\tgo done()\n}\n\n" +
 			"func done() {\n\treturn\n}\n"),
 		"pkg/b/b.go": []byte("// Package b is a fixture.\n" +
-			"package b\n"),
+			"package b\n\n" +
+			"// G is a fixture.\n" +
+			"func G() {\n\tselect {}\n}\n"),
 	}
-	if !specification_diagnosed(deterministic_self_diagnostics(t, files, []string{"pkg/*"}),
-		"must not start a goroutine") {
-		t.Fatal("the shared/* form must expand to each library in the module")
+	diags := deterministic_self_diagnostics(t, files, []string{"pkg/*"})
+	if specification_diagnosed(diags, "must not start a goroutine") {
+		t.Fatal("a * entry must release each direct child package")
+	}
+	if specification_diagnosed(diags, "must not use select") {
+		t.Fatal("a * entry must release each direct child package")
 	}
 }
 
-// Test_Deterministic_Induction_Over_Expansion verifies the import-induction
-// membership is the expanded set of concrete pure packages, not the raw entry: a
-// package covered by a directory entry is itself held to the tier (its goroutine
-// flagged) and may import a sibling the same entry covers (no induction
-// violation). An exact-match set keyed by the raw "pkg/grp" entry would match
-// neither package, so the goroutine would go unflagged.
-func Test_Deterministic_Induction_Over_Expansion(t *testing.T) {
+// Test_Deterministic_Sibling_Import verifies a deterministic package importing
+// another deterministic first-party package satisfies the induction — no violation
+// — while still held to the bans itself. With no exceptions every pure package is
+// deterministic, so the sibling import is clean and only the goroutine is flagged.
+func Test_Deterministic_Sibling_Import(t *testing.T) {
 	t.Parallel()
 	files := map[string][]byte{
 		"go.mod": []byte("module fixture\n\ngo 1.25\n"),
@@ -5789,11 +5792,11 @@ func Test_Deterministic_Induction_Over_Expansion(t *testing.T) {
 			"// G is a fixture.\n" +
 			"func G() {\n\treturn\n}\n"),
 	}
-	diags := deterministic_self_diagnostics(t, files, []string{"pkg/grp"})
+	diags := deterministic_self_diagnostics(t, files, nil)
 	if !specification_diagnosed(diags, "must not start a goroutine") {
-		t.Fatal("a package covered by a directory entry must be held to the tier")
+		t.Fatal("a pure package is held to the tier by default")
 	}
 	if specification_diagnosed(diags, "import only deterministic packages") {
-		t.Fatal("a sibling covered by the same entry must satisfy the induction")
+		t.Fatal("importing a deterministic sibling must satisfy the induction")
 	}
 }
