@@ -795,33 +795,47 @@ func Parse_Configuration(data []byte) (configuration *Configuration, err error) 
 	if decode_err := json.Unmarshal(data, &keys); decode_err != nil {
 		return nil, decode_err
 	}
-	known_keys := map[string]bool{
-		"shared_component":          true,
-		"instrumentation_packages":  true,
-		"pure_but_indeterministic":  true,
-		"word_replacements":         true,
-		"ignore":                    true,
-		"invariant_exempt_packages": true,
-		"opt_out_recursion_ban":     true,
+	// Every key is required, so a config states its whole surface: an absent key is
+	// as much a misconfiguration as a wrong value, never a silent default. The one
+	// ordering fixes which missing key is named first, keeping the error stable.
+	required_keys := []string{
+		"shared_component",
+		"instrumentation_packages",
+		"pure_but_indeterministic",
+		"word_replacements",
+		"ignore",
+		"invariant_exempt_packages",
+		"opt_out_recursion_ban",
+	}
+	known := map[string]bool{}
+	for _, key := range required_keys {
+		known[key] = true
 	}
 	for key := range keys {
-		if known_keys[key] {
+		if known[key] {
 			continue
 		}
 		return nil, fmt.Errorf("lint.json: unknown key %q", key)
+	}
+	for _, key := range required_keys {
+		if _, present := keys[key]; present {
+			continue
+		}
+		return nil, fmt.Errorf("lint.json: %s is required", key)
 	}
 	configuration = &Configuration{}
 	if decode_err := json.Unmarshal(data, configuration); decode_err != nil {
 		return nil, decode_err
 	}
+	// The keys are all present by now; these two carry a value that an empty form
+	// would nullify. A blank shared_component names no module, and an empty
+	// word_replacements would silently disable the vocabulary check (which has no
+	// built-in table any more) rather than fail loudly.
 	if configuration.Shared_Component == "" {
-		return nil, fmt.Errorf("lint.json: shared_component is required")
+		return nil, fmt.Errorf("lint.json: shared_component must not be empty")
 	}
-	// Empty (or absent) word_replacements is rejected, not defaulted: the
-	// vocabulary check has no built-in table any more, so a missing one would
-	// silently disable it rather than fail loudly.
 	if len(configuration.Word_Replacements) == 0 {
-		return nil, fmt.Errorf("lint.json: word_replacements is required")
+		return nil, fmt.Errorf("lint.json: word_replacements must not be empty")
 	}
 	if validate_err := validate_glob_patterns(
 		"ignore", configuration.Ignore); validate_err != nil {

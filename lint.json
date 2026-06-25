@@ -19,6 +19,7 @@
           "home",
           "documentation/youtube"
   ],
+  "opt_out_recursion_ban": [],
   "invariant_exempt_packages": [
           "lint",
           "lint/internal",
