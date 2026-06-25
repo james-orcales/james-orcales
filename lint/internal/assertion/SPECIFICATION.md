@@ -28,7 +28,7 @@ matching type, never adrift.
 
 Structs with fields, defined non-alias types, and generic types are in scope. Aliases, function
 and interface types, empty structs, function-local types, _test.go files, and the packages in
-lint.json's invariant_exempt_packages are exempt.
+lint.json's opt_out_assertion_mandate_packages are exempt.
 
 ### Numeric Bounds
 
@@ -87,8 +87,8 @@ Any other body, or no TestMain, is banned.
 ### Primitive Types
 
 A raw string, slice, or map may not be a function parameter, result, or struct field; it has no
-preset and no bundle of its own. Wrap it in a defined type. A stdlib-interface method is exempt, as
-are _test.go files and the packages in invariant_exempt_packages — the invariant rules' opt-out.
+preset and no bundle of its own. Wrap it in a defined type. A stdlib-interface method, a _test.go
+file, and a package in opt_out_assertion_mandate_packages are exempt.
 
 # Simulation
 

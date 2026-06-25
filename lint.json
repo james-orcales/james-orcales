@@ -5,7 +5,7 @@
           "shared/snap/**",
           "shared/jlog/**"
   ],
-  "pure_but_indeterministic": [
+  "pure_but_indeterministic_packages": [
     "lint/internal/",
     "sloc/internal/",
     "shared/diode/",
@@ -20,7 +20,7 @@
           "documentation/youtube/**"
   ],
   "opt_out_recursion_ban": [],
-  "invariant_exempt_packages": [
+  "opt_out_assertion_mandate_packages": [
           "disk_usage/**",
           "lint/**",
           "markdown_to_pdf/**",

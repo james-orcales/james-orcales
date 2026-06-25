@@ -419,11 +419,11 @@ Files sharing a build-tag constraint form an independent group with its own tota
 # Deterministic
 
 Every pure package is held, atop purity, to bans making it reproducible; a package
-in lint.json's pure_but_indeterministic opts out, and the bans bind _test.go too.
+in lint.json's pure_but_indeterministic_packages opts out, and the bans bind _test.go too.
 
 ### Entry Format
 
-A pure_but_indeterministic entry is an exact-path glob naming a pure package to opt
+A pure_but_indeterministic_packages entry is an exact-path glob naming a pure package to opt
 out: `shared/io` releases that package, `shared/io/**` its subtree, `*` and `**`
 spanning one path segment or many.
 
@@ -462,11 +462,11 @@ the induction exempts.
 
 Determinism is stricter than purity, so only pure packages are held; an impure
 package (the main package, a default tier) is never deterministic and needs no
-pure_but_indeterministic entry to be excused.
+pure_but_indeterministic_packages entry to be excused.
 
 ### Coverage
 
-A pure_but_indeterministic entry that names a concrete path matching no pure
+A pure_but_indeterministic_packages entry that names a concrete path matching no pure
 package is reported — a typo or stale path releasing nothing; a root-anchored
 wildcard, naming no path, is exempt.
 

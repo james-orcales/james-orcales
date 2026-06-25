@@ -35,7 +35,7 @@ type Check_Input struct {
 	Parsed_Files []source.Parsed_File
 	// Components is the workspace's component graph; recorder and simulation need it.
 	Components *source.Component_Index
-	// Exempt is lint.json's invariant_exempt_packages.
+	// Exempt is lint.json's opt_out_assertion_mandate_packages.
 	Exempt []string
 }
 

@@ -1203,7 +1203,7 @@ func Test_Deterministic_Banned_Imports(t *testing.T) {
 }
 
 // Test_Deterministic_Import_Induction verifies a deterministic package importing a
-// pure_but_indeterministic first-party package is flagged — that import is no longer
+// pure_but_indeterministic_packages first-party package is flagged — that import is no longer
 // deterministic — while a package also listed in instrumentation_packages is exempt:
 // instrumentation is a write-only side channel the induction does not reach.
 func Test_Deterministic_Import_Induction(t *testing.T) {
@@ -1243,7 +1243,7 @@ func Test_Deterministic_Import_Induction(t *testing.T) {
 	}
 }
 
-// Test_Deterministic_Impurity verifies a pure_but_indeterministic entry naming an
+// Test_Deterministic_Impurity verifies a pure_but_indeterministic_packages entry naming an
 // all-impure directory — here a default tier — matches no pure package and is
 // reported as a coverage gap. An impure package is never deterministic, so listing
 // it releases nothing; the dead entry must fail loudly rather than pass silently.
@@ -1261,7 +1261,7 @@ func Test_Deterministic_Impurity(t *testing.T) {
 	}
 }
 
-// Test_Deterministic_Coverage verifies a pure_but_indeterministic entry matching no
+// Test_Deterministic_Coverage verifies a pure_but_indeterministic_packages entry matching no
 // pure package is reported.
 func Test_Deterministic_Coverage(t *testing.T) {
 	t.Parallel()
@@ -1853,7 +1853,7 @@ func deterministic_self_diagnostics(
 	return diags
 }
 
-// Mirrors specification_self_diagnostics but threads invariant_exempt_packages,
+// Mirrors specification_self_diagnostics but threads opt_out_assertion_mandate_packages,
 // the type-invariant rule's opt-out.
 func invariant_exempt_self_diagnostics(
 	t *testing.T, files map[string][]byte, exempt []string,
@@ -1877,7 +1877,7 @@ func invariant_exempt_self_diagnostics(
 }
 
 // Test_Type_Invariant_Exempt_List_Skips_Package verifies a package listed in
-// invariant_exempt_packages is skipped by the type-invariant rule.
+// opt_out_assertion_mandate_packages is skipped by the type-invariant rule.
 func Test_Type_Invariant_Exempt_List_Skips_Package(t *testing.T) {
 	t.Parallel()
 	files := specification_one_file("package fixture\n\n" +
@@ -2602,7 +2602,7 @@ func Test_Recorder_Registration_Main_Exempt(t *testing.T) {
 }
 
 // Test_Recorder_Registration_Exempt_Passes verifies a package listed in
-// invariant_exempt_packages is skipped even with no TestMain.
+// opt_out_assertion_mandate_packages is skipped even with no TestMain.
 func Test_Recorder_Registration_Exempt_Passes(t *testing.T) {
 	t.Parallel()
 	files := map[string][]byte{"pkg/rule.go": []byte(recorder_fixture_source)}
