@@ -28,6 +28,9 @@ import (
 	"sync"
 	"unicode"
 	"unicode/utf8"
+
+	"github.com/james-orcales/james-orcales/lint/internal/diagnostic"
+	"github.com/james-orcales/james-orcales/lint/internal/specification"
 )
 
 const line_chars_max = 100
@@ -737,30 +740,11 @@ func Main(input *Main_Input) (code int) {
 // unchanged.
 func report_diagnostics(
 	diagnostics []Diagnostic, scope_prefix string, stdout io.Writer) (code int) {
-	has_tier1 := false
-	for _, d := range diagnostics {
-		if !diagnostic_within_scope(d, scope_prefix) {
-			continue
-		}
-		if d.Tier == 1 {
-			has_tier1 = true
-			break
-		}
+	reportable := diagnostic.Reportable(diagnostics, scope_prefix)
+	for _, d := range reportable {
+		fmt.Fprintln(stdout, diagnostic.Format(d))
 	}
-	emitted_count := 0
-	for _, d := range diagnostics {
-		if !diagnostic_within_scope(d, scope_prefix) {
-			continue
-		}
-		if has_tier1 {
-			if d.Tier == 2 {
-				continue
-			}
-		}
-		emitted_count++
-		fmt.Fprintf(stdout, "%s: %s\n", d.Position, d.Message)
-	}
-	if emitted_count > 0 {
+	if len(reportable) > 0 {
 		return 1
 	}
 	// AI agents keep checking exit code if there's no explicit success message in output.
@@ -881,49 +865,10 @@ func validate_glob_patterns(field string, patterns []string) (err error) {
 	return nil
 }
 
-// True iff the diagnostic is inside the user's scope. Empty scope means
-// no filter — all diagnostics pass. Git-tier diagnostics use synthetic
-// `<git:…>` filenames; those never live under any scope prefix, so we
-// admit them whenever the scope is anything other than empty by checking
-// the leading "<" sentinel.
-func diagnostic_within_scope(d Diagnostic, scope_prefix string) (within bool) {
-
-	if scope_prefix == "" {
-		return true
-	}
-	if strings.HasPrefix(d.Position.Filename, "<") {
-		return true
-	}
-	if d.Position.Filename == scope_prefix {
-		return true
-	}
-	return strings.HasPrefix(d.Position.Filename, scope_prefix+"/")
-}
-
-// Diagnostic is one rule violation. Position is the offending source
-// location; Name and Want are machine-readable rule identity and
-// suggested fix; Message is the human-readable line printed to stdout.
-// Tier carries the file-check tier for print-time gating: 1 = tier-1
-// (always printed; presence anywhere suppresses tier-2 output), 2 =
-// tier-2 (printed only when no tier-1 fires globally). Diagnostics
-// from non-file tiers (git, stream, cross-file) leave Tier zero — they
-// always print and never gate tier-2.
-type Diagnostic struct {
-	// Position is the offending source location, printed as the clickable
-	// file:line:col prefix.
-	Position token.Position
-	// Name is the machine-readable rule identity, stable for tooling that
-	// groups or suppresses by rule.
-	Name string
-	// Want is the suggested fix, phrased as the desired post-state.
-	Want string
-	// Message is the human-readable line printed to stdout.
-	Message string
-	// Tier carries the file-check tier for print-time gating: 1 always
-	// prints and suppresses tier-2 globally when present; 2 prints only
-	// when no tier-1 fired; non-file tiers leave it 0.
-	Tier int
-}
+// Diagnostic is one rule violation, aliased from the diagnostic package so the
+// core keeps naming it Diagnostic while the type lives in a deterministic leaf a
+// rule subpackage can import without reaching back into this impure package.
+type Diagnostic = diagnostic.Diagnostic
 
 type parsed_file struct {
 	Path     string
@@ -3494,19 +3439,20 @@ func check_package_documentation_comment(
 	return diags
 }
 
-// SPECIFICATION.md doctrine: every pure Go package carries a SPECIFICATION.md whose
-// `##` headings each map, in order, to a leading Test_<Heading> function in
-// specification_test.go. Enforced here rather than per-file because the
-// contract spans three artifacts — the package directory, the markdown, and
-// the test file — that no single-file checker sees together. Diagnostics
-// attach to paths under the package directory so Main's scope filter limits
-// the coverage requirement to whatever package argument the linter was given.
+// SPECIFICATION.md doctrine: every pure Go package carries a SPECIFICATION.md
+// whose leaf headings each map, in order, to a leading Test_<Heading> in
+// specification_test.go. The rule logic lives in the specification package; this
+// adapter gathers, from the single parse, each directory's module membership,
+// impurity, exact-cased spec bytes, and already-parsed specification_test.go, so
+// that package reads and parses nothing. Diagnostics attach under the package
+// directory so Main's scope filter limits the mandate to the package argument.
 func check_specification(
 	fsys fs.FS, parsed_files []parsed_file, index *component_index, scope string,
 ) (diags []Diagnostic) {
 	directories := map[string]bool{}
 	has_module := map[string]bool{}
 	impure := map[string]bool{}
+	test_ast := map[string]*ast.File{}
 	for _, pf := range parsed_files {
 		directory := path.Dir(pf.Path)
 		directories[directory] = true
@@ -3516,432 +3462,42 @@ func check_specification(
 		if parsed_file_is_impure_package(pf, index) {
 			impure[directory] = true
 		}
+		if path.Base(pf.Path) == "specification_test.go" {
+			test_ast[directory] = pf.File
+		}
 	}
 	sorted := make([]string, 0, len(directories))
 	for directory := range directories {
 		sorted = append(sorted, directory)
 	}
 	sort.Strings(sorted)
+	packages := make([]specification.Package, 0, len(sorted))
 	for _, directory := range sorted {
-		input := &check_specification_directory_input{
-			Fsys: fsys, Directory: directory, Scope: scope,
-			Has_Module: has_module[directory], Impure: impure[directory],
-		}
-		diags = append(diags, check_specification_directory(input)...)
+		packages = append(packages, specification.Package{
+			Path:       directory,
+			Has_Module: has_module[directory],
+			Impure:     impure[directory],
+			Markdown:   specification_content(fsys, directory),
+			Test:       test_ast[directory],
+		})
 	}
-	return diags
+	return specification.Check(&specification.Check_Input{Packages: packages, Scope: scope})
 }
 
-type check_specification_directory_input struct {
-	Fsys      fs.FS
-	Directory string
-	Scope     string
-	// Has_Module is true when at least one file in the directory resolves to a
-	// discovered module. The coverage mandate no-ops on module-less directories
-	// — the same rule every other doctrine check follows for File_To_Component == -1
-	// (see build_component_index) — so transient fixtures and subtrees scanned
-	// without their go.mod in view are never required to carry a spec.
-	Has_Module bool
-	// Impure is true when the directory holds an impure package — `package main`
-	// or a `default` package. The contract a SPECIFICATION.md documents is a
-	// pure package's; the impure tier is the composition root, exempt from the
-	// coverage mandate (an existing file is still format-validated).
-	Impure bool
-}
-
-func check_specification_directory(
-	input *check_specification_directory_input,
-) (diags []Diagnostic) {
-	specification_path := path.Join(input.Directory, "SPECIFICATION.md")
-	// Presence is decided by the real directory listing, not fs.ReadFile: a
-	// case-insensitive filesystem resolves SPECIFICATION.md to a differently-cased
-	// file, so only an exact, byte-for-byte entry name counts as the spec.
-	if !specification_directory_has_exact(input.Fsys, specification_path) {
-		// Coverage follows the package argument: an explicit scope demands the
-		// file within that subtree, and an empty scope — a whole-workspace run —
-		// demands it everywhere. Vendored, example, and impure (package main or
-		// `default`) trees are never required to carry one; they host
-		// third-party, illustrative, or composition-root code, not the pure
-		// package contract a SPECIFICATION.md documents.
-		if !input.Has_Module {
-			return nil
-		}
-		if specification_directory_exempt(input.Directory) {
-			return nil
-		}
-		if input.Impure {
-			return nil
-		}
-		covered := input.Scope == ""
-		if !covered {
-			covered = input.Directory == input.Scope
-		}
-		if !covered {
-			covered = strings.HasPrefix(input.Directory, input.Scope+"/")
-		}
-		if !covered {
-			return nil
-		}
-		return []Diagnostic{specification_coverage_diag(input.Directory)}
+// Returns the bytes of an exact-cased SPECIFICATION.md in directory, or nil when
+// absent — the exact-name guard defeats a case-insensitive filesystem resolving
+// a differently-cased file. This is the specification tier's only I/O; the
+// specification package works purely from these bytes and the pre-parsed test AST.
+func specification_content(fsys fs.FS, directory string) (content []byte) {
+	specification_path := path.Join(directory, "SPECIFICATION.md")
+	if !specification_directory_has_exact(fsys, specification_path) {
+		return nil
 	}
-	content, err := fs.ReadFile(input.Fsys, specification_path)
+	data, err := fs.ReadFile(fsys, specification_path)
 	if err != nil {
-		return []Diagnostic{specification_coverage_diag(input.Directory)}
-	}
-	lines := strings.Split(string(content), "\n")
-	leaves, format_diags := check_specification_format(specification_path, lines)
-	diags = append(diags, format_diags...)
-	return append(diags, check_specification_tests(input.Fsys, input.Directory, leaves)...)
-}
-
-// Validates the structural rules a SPECIFICATION.md must obey — no preamble
-// before the first heading, a single `##` heading level, unique headings of
-// letters-and-digits words, a blank line either side of every heading, a
-// contiguous body of one to three lines per section. Line width is not checked
-// here: check_stream_markdown_line_max enforces it for every .md file. Returns
-// the headings in source order so the test-correspondence rules can use them.
-func check_specification_format(
-	specification_path string, lines []string,
-) (leaves []string, diags []Diagnostic) {
-	headings, scan_diags := specification_scan_headings(specification_path, lines)
-	diags = append(diags, scan_diags...)
-	leaf_lines, names, leaf_diags := specification_leaves(specification_path, headings)
-	diags = append(diags, leaf_diags...)
-	body_diags := specification_scan_bodies(specification_path, lines, headings, leaf_lines)
-	return names, append(diags, body_diags...)
-}
-
-// One heading found in a SPECIFICATION.md: its level (2 or 3), 1-based source
-// line, the raw text after the marker, and its Ada_Case form.
-type specification_heading struct {
-	Level int
-	Line  int
-	Raw   string
-	Ada   string
-}
-
-func specification_position(path string, line int) (position token.Position) {
-	return token.Position{Filename: path, Line: line}
-}
-
-// Reports a line's heading level: 3 for "### ", 1 for "# ", 0 otherwise.
-func specification_heading_parse(line string) (level int, raw string) {
-	if strings.HasPrefix(line, "### ") {
-		return 3, strings.TrimPrefix(line, "### ")
-	}
-	if strings.HasPrefix(line, "# ") {
-		return 1, strings.TrimPrefix(line, "# ")
-	}
-	return 0, ""
-}
-
-// Pass one: collect every ## / ### heading and emit the diagnostics that need
-// only line context — bad heading levels, content before the first heading,
-// blank-line fencing, and non-letter/digit heading words.
-func specification_scan_headings(
-	specification_path string, lines []string,
-) (headings []specification_heading, diags []Diagnostic) {
-	seen_heading := false
-	for i, line := range lines {
-		position := specification_position(specification_path, i+1)
-		level, raw := specification_heading_parse(line)
-		if level == 0 {
-			if strings.HasPrefix(line, "#") {
-				diags = append(diags, specification_heading_level_diag(position))
-				continue
-			}
-			if strings.TrimSpace(line) == "" {
-				continue
-			}
-			if !seen_heading {
-				diags = append(diags, specification_preamble_diag(position))
-			}
-			continue
-		}
-		headings = append(headings, specification_heading{
-			Level: level, Line: i + 1, Raw: raw, Ada: specification_ada_case(raw)})
-		diags = append(diags, specification_heading_line_diags(position, lines, i, raw)...)
-		seen_heading = true
-	}
-	return headings, diags
-}
-
-// The per-heading diagnostics for one heading line: non-letter/digit words and
-// blank-line fencing.
-func specification_heading_line_diags(
-	position token.Position, lines []string, i int, raw string,
-) (diags []Diagnostic) {
-	if specification_heading_words_invalid(raw) {
-		diags = append(diags, specification_heading_words_diag(position, raw))
-	}
-	return append(diags, check_specification_blank_lines(position, lines, i, raw)...)
-}
-
-// State for the tree walk that determines leaves: a ## with no ### child is a
-// leaf named Ada(##); each ### is a leaf named Ada(##)_Ada(###). ## names are
-// unique file-wide; ### names are unique within their parent ##.
-type specification_tree struct {
-	Path       string
-	Seen_H2    map[string]bool
-	Seen_H3    map[string]bool
-	Parent     specification_heading
-	Has_Child  bool
-	Leaf_Lines map[int]bool
-	Names      []string
-}
-
-// Pass two: walk the headings into the tree, returning the lines that open a
-// leaf section, the ordered leaf test-name bases, and the uniqueness diagnostics.
-func specification_leaves(
-	specification_path string, headings []specification_heading,
-) (leaf_lines map[int]bool, names []string, diags []Diagnostic) {
-	tree := &specification_tree{
-		Path: specification_path, Seen_H2: map[string]bool{},
-		Seen_H3: map[string]bool{}, Leaf_Lines: map[int]bool{},
-	}
-	for _, heading := range headings {
-		diags = append(diags, specification_tree_add(tree, heading)...)
-	}
-	specification_tree_close(tree)
-	return tree.Leaf_Lines, tree.Names, diags
-}
-
-func specification_tree_add(
-	tree *specification_tree, heading specification_heading,
-) (diags []Diagnostic) {
-	if heading.Level == 3 {
-		return specification_tree_child(tree, heading)
-	}
-	specification_tree_close(tree)
-	if tree.Seen_H2[heading.Raw] {
-		diags = append(diags, specification_tree_duplicate(tree, heading))
-	}
-	tree.Seen_H2[heading.Raw] = true
-	tree.Parent = heading
-	tree.Has_Child = false
-	tree.Seen_H3 = map[string]bool{}
-	return diags
-}
-
-func specification_tree_child(
-	tree *specification_tree, heading specification_heading,
-) (diags []Diagnostic) {
-	position := specification_position(tree.Path, heading.Line)
-	if tree.Parent.Line == 0 {
-		return []Diagnostic{specification_orphan_diag(position, heading.Raw)}
-	}
-	tree.Has_Child = true
-	if tree.Seen_H3[heading.Raw] {
-		diags = append(diags, specification_tree_duplicate(tree, heading))
-	}
-	tree.Seen_H3[heading.Raw] = true
-	tree.Leaf_Lines[heading.Line] = true
-	tree.Names = append(tree.Names, tree.Parent.Ada+"_"+heading.Ada)
-	return diags
-}
-
-// Records the just-finished ## as a leaf when it gained no ### child.
-func specification_tree_close(tree *specification_tree) {
-	if tree.Parent.Line == 0 {
-		return
-	}
-	if tree.Has_Child {
-		return
-	}
-	tree.Leaf_Lines[tree.Parent.Line] = true
-	tree.Names = append(tree.Names, tree.Parent.Ada)
-}
-
-func specification_tree_duplicate(
-	tree *specification_tree, heading specification_heading,
-) (diag Diagnostic) {
-	position := specification_position(tree.Path, heading.Line)
-	return specification_heading_duplicate_diag(position, heading.Raw)
-}
-
-// State for the body pass: the currently open section, its accumulated body line
-// count, and whether a blank line has already interrupted that body.
-type specification_body struct {
-	Path       string
-	Leaf_Lines map[int]bool
-	Open       specification_heading
-	Body       int
-	Blank      bool
-}
-
-// Pass three: attribute body lines to their opening heading, flagging oversized
-// sections, gaps in a section body, and leaf sections with no body. A branch ##
-// intro is size- and gap-checked but, not being a leaf, may be empty.
-func specification_scan_bodies(
-	specification_path string, lines []string,
-	headings []specification_heading, leaf_lines map[int]bool,
-) (diags []Diagnostic) {
-	at := map[int]specification_heading{}
-	for _, heading := range headings {
-		at[heading.Line] = heading
-	}
-	state := &specification_body{Path: specification_path, Leaf_Lines: leaf_lines}
-	for i, line := range lines {
-		heading, is_heading := at[i+1]
-		if is_heading {
-			diags = append(diags, specification_body_close(state)...)
-			state.Open = heading
-			state.Body = 0
-			state.Blank = false
-			continue
-		}
-		if strings.HasPrefix(line, "#") {
-			diags = append(diags, specification_body_close(state)...)
-			state.Open = specification_heading{}
-			state.Body = 0
-			state.Blank = false
-			continue
-		}
-		if strings.TrimSpace(line) == "" {
-			if state.Body > 0 {
-				state.Blank = true
-			}
-			continue
-		}
-		if state.Open.Line == 0 {
-			continue
-		}
-		diags = append(diags, specification_body_line(state, i+1)...)
-	}
-	return append(diags, specification_body_close(state)...)
-}
-
-func specification_body_line(
-	state *specification_body, line int,
-) (diags []Diagnostic) {
-	position := specification_position(state.Path, line)
-	raw := state.Open.Raw
-	if state.Blank {
-		diags = append(diags, specification_section_contiguity_diag(position, raw))
-		state.Blank = false
-	}
-	state.Body++
-	if state.Body == 4 {
-		diags = append(diags, specification_section_diag(position, raw))
-	}
-	return diags
-}
-
-// Emits the body-required diagnostic when a leaf section closed with no body.
-func specification_body_close(state *specification_body) (diags []Diagnostic) {
-	if state.Open.Line == 0 {
 		return nil
 	}
-	if !state.Leaf_Lines[state.Open.Line] {
-		return nil
-	}
-	if state.Body != 0 {
-		return nil
-	}
-	position := specification_position(state.Path, state.Open.Line)
-	return []Diagnostic{specification_section_body_diag(position, state.Open.Raw)}
-}
-
-// True when a heading carries a word with a rune that is neither a letter nor a
-// digit. Such a rune survives into the normalized Test_<Heading> name and makes
-// it an illegal Go identifier, so the test-correspondence rule could never be
-// satisfied for that heading.
-func specification_heading_words_invalid(heading string) (invalid bool) {
-	for _, word := range strings.Fields(heading) {
-		for _, letter := range word {
-			if unicode.IsLetter(letter) {
-				continue
-			}
-			if unicode.IsDigit(letter) {
-				continue
-			}
-			return true
-		}
-	}
-	return false
-}
-
-func specification_preamble_diag(position token.Position) (diag Diagnostic) {
-	return Diagnostic{
-		Position: position, Name: "specification",
-		Want: "open with a heading",
-		Message: fmt.Sprintf("%s:%d content precedes the first heading",
-			position.Filename, position.Line),
-	}
-}
-
-func specification_section_body_diag(
-	position token.Position, heading string,
-) (diag Diagnostic) {
-	return Diagnostic{
-		Position: position, Name: "specification",
-		Want: "give the section a body line",
-		Message: fmt.Sprintf("%s:%d section %q has no body line",
-			position.Filename, position.Line, heading),
-	}
-}
-
-func specification_section_contiguity_diag(
-	position token.Position, heading string,
-) (diag Diagnostic) {
-	return Diagnostic{
-		Position: position, Name: "specification",
-		Want: "keep the section body contiguous",
-		Message: fmt.Sprintf("%s:%d section %q has a blank line between body lines",
-			position.Filename, position.Line, heading),
-	}
-}
-
-func specification_heading_duplicate_diag(
-	position token.Position, heading string,
-) (diag Diagnostic) {
-	return Diagnostic{
-		Position: position, Name: "specification",
-		Want: "make every heading unique",
-		Message: fmt.Sprintf("%s:%d heading %q is duplicated",
-			position.Filename, position.Line, heading),
-	}
-}
-
-func specification_heading_words_diag(
-	position token.Position, heading string,
-) (diag Diagnostic) {
-	return Diagnostic{
-		Position: position, Name: "specification",
-		Want: "use only letters and digits in headings",
-		Message: fmt.Sprintf("%s:%d heading %q must use only letters and digits",
-			position.Filename, position.Line, heading),
-	}
-}
-
-func specification_heading_level_diag(position token.Position) (diag Diagnostic) {
-	return Diagnostic{
-		Position: position, Name: "specification", Want: "use a # or ### heading",
-		Message: fmt.Sprintf("%s:%d uses a heading that is not level # or ###",
-			position.Filename, position.Line),
-	}
-}
-
-func specification_orphan_diag(
-	position token.Position, heading string,
-) (diag Diagnostic) {
-	return Diagnostic{
-		Position: position, Name: "specification",
-		Want: "nest the subheading under a #",
-		Message: fmt.Sprintf("%s:%d ### %q has no parent #",
-			position.Filename, position.Line, heading),
-	}
-}
-
-func specification_section_diag(
-	position token.Position, heading string,
-) (diag Diagnostic) {
-	return Diagnostic{
-		Position: position, Name: "specification",
-		Want: "limit sections to three lines",
-		Message: fmt.Sprintf("%s:%d section %q exceeds three lines",
-			position.Filename, position.Line, heading),
-	}
+	return data
 }
 
 // Reports whether the directory holds an entry whose name is exactly `name`,
@@ -3962,156 +3518,6 @@ func specification_directory_has_exact(
 		}
 	}
 	return false
-}
-
-// A directory is exempt from the coverage mandate when any path segment is
-// `third_party` (vendored code in a separate module) or `examples`
-// (illustrative, not a real package contract). An existing SPECIFICATION.md in
-// such a tree is still format-validated; it just is never required to exist.
-func specification_directory_exempt(directory string) (exempt bool) {
-	for _, segment := range strings.Split(directory, "/") {
-		if segment == "third_party" {
-			return true
-		}
-		if segment == "examples" {
-			return true
-		}
-	}
-	return false
-}
-
-func specification_coverage_diag(directory string) (diag Diagnostic) {
-	return Diagnostic{
-		Position: token.Position{Filename: path.Join(directory, "SPECIFICATION.md")},
-		Name:     "specification",
-		Want:     "add SPECIFICATION.md",
-		Message:  fmt.Sprintf("package %q is missing SPECIFICATION.md", directory),
-	}
-}
-
-func specification_test_file_diag(directory string) (diag Diagnostic) {
-	return Diagnostic{
-		Position: token.Position{Filename: path.Join(directory, "specification_test.go")},
-		Name:     "specification",
-		Want:     "add specification_test.go",
-		Message:  fmt.Sprintf("package %q is missing specification_test.go", directory),
-	}
-}
-
-func check_specification_blank_lines(
-	position token.Position, lines []string, i int, heading string,
-) (diags []Diagnostic) {
-	preceded := i > 0
-	if preceded {
-		preceded = lines[i-1] == ""
-	}
-	if !preceded {
-		diags = append(diags, Diagnostic{
-			Position: position, Name: "specification",
-			Want: "precede heading with a blank line",
-			Message: fmt.Sprintf("%s:%d heading %q is not preceded by a blank line",
-				position.Filename, i+1, heading),
-		})
-	}
-	followed := i+1 < len(lines)
-	if followed {
-		followed = lines[i+1] == ""
-	}
-	if !followed {
-		diags = append(diags, Diagnostic{
-			Position: position, Name: "specification",
-			Want: "follow heading with a blank line",
-			Message: fmt.Sprintf("%s:%d heading %q is not followed by a blank line",
-				position.Filename, i+1, heading),
-		})
-	}
-	return diags
-}
-
-// Verifies specification_test.go exists and that its leading function
-// declarations are exactly Test_<Heading> for each heading, in heading order.
-// Comparing by index enforces both the per-heading correspondence and the
-// "tests at the very top, in order" rule in one pass: a helper or a misordered
-// test shifts the sequence and surfaces as a mismatch at that position.
-func check_specification_tests(
-	fsys fs.FS, directory string, leaves []string,
-) (diags []Diagnostic) {
-	test_path := path.Join(directory, "specification_test.go")
-	// Exact name first, for the same reason as SPECIFICATION.md: a
-	// case-insensitive filesystem would otherwise let a differently-cased file
-	// stand in for specification_test.go.
-	if !specification_directory_has_exact(fsys, test_path) {
-		return []Diagnostic{specification_test_file_diag(directory)}
-	}
-	functions, ok := check_specification_test_function_names(fsys, test_path)
-	if !ok {
-		return []Diagnostic{specification_test_file_diag(directory)}
-	}
-	for i, leaf := range leaves {
-		want := "Test_" + leaf
-		matched := i < len(functions)
-		if matched {
-			matched = functions[i] == want
-		}
-		if matched {
-			continue
-		}
-		diags = append(diags, Diagnostic{
-			Position: token.Position{Filename: test_path},
-			Name:     "specification",
-			Want:     want,
-			Message: fmt.Sprintf(
-				"%s:%d needs %s for leaf %q (in order, at top)",
-				test_path, i+1, want, leaf),
-		})
-	}
-	return diags
-}
-
-func check_specification_test_function_names(
-	fsys fs.FS, test_path string,
-) (functions []string, ok bool) {
-	content, err := fs.ReadFile(fsys, test_path)
-	if err != nil {
-		return nil, false
-	}
-	file_set := token.NewFileSet()
-	file, parse_err := parser.ParseFile(
-		file_set, test_path, content, parser.SkipObjectResolution)
-	if parse_err != nil {
-		return nil, true
-	}
-	for _, declaration := range file.Decls {
-		if generic, is_generic := declaration.(*ast.GenDecl); is_generic {
-			if generic.Tok == token.IMPORT {
-				continue
-			}
-			// A var/const/type before the heading tests breaks the "tests at the
-			// very top" rule. Surface it as a slot that can never match a
-			// Test_<Heading> name, so the ordering check flags it at its position.
-			functions = append(functions, generic.Tok.String())
-			continue
-		}
-		function, is_function := declaration.(*ast.FuncDecl)
-		if !is_function {
-			continue
-		}
-		functions = append(functions, function.Name.Name)
-	}
-	return functions, true
-}
-
-// Normalizes a heading to the Ada_Case form used for its test name: each
-// space-separated word's first rune is upper-cased and the words are joined
-// with underscores ("Test File Name" -> "Test_File_Name").
-func specification_ada_case(heading string) (name string) {
-	words := strings.Fields(heading)
-	for i, word := range words {
-		runes := []rune(word)
-		runes[0] = unicode.ToUpper(runes[0])
-		words[i] = string(runes)
-	}
-	return strings.Join(words, "_")
 }
 
 // Carries the parsed set, the parallelism cap, and the lint.json lists the
@@ -10388,11 +9794,14 @@ func io_gateway_call_diagnostic(pf parsed_file, selector *ast.SelectorExpr) (dia
 	}
 }
 
-// Reports whether an os selector is a file operation banned outside the gateway.
+// Reports whether an os selector is a file operation banned outside the gateway. Directory
+// traversal and metadata calls (Stat, Lstat, Mkdir, MkdirAll) join reads and writes here, so
+// a consumer walks and stats through the loop rather than sidestepping it to the OS.
 func io_gateway_banned_operating_system(name string) (banned bool) {
 	switch name {
 	case "Open", "Create", "ReadFile", "WriteFile",
-		"OpenFile", "Pipe", "DirFS", "NewFile":
+		"OpenFile", "Pipe", "DirFS", "NewFile",
+		"Stat", "Lstat", "Mkdir", "MkdirAll":
 		return true
 	}
 	return false
