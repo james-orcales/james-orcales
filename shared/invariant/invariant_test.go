@@ -556,7 +556,7 @@ func Test_Assertion_Summary_Counts_Properties(t *testing.T) {
 
 	summary := invariant.Recorder_Assertion_Summary(recorder)
 
-	want := "✓ tested 4 properties (2 individual + 2 combinations, of which 1 are panic-able)"
+	want := "✓ tested 5 properties (3 individual + 2 combinations, of which 1 are panic-able)"
 	if summary != want {
 		t.Fatalf("summary = %q, want %q", summary, want)
 	}
@@ -586,9 +586,9 @@ func check(n int) {
 
 	summary := invariant.Recorder_Assertion_Summary(recorder)
 
-	// 3 axes individual + 6 surviving combinations + 2 forbidden cells; the two
-	// forbidden cells are the panic-able subset.
-	want := "✓ tested 11 properties (3 individual + 8 combinations, of which 2 are panic-able)"
+	// 3 Sometimes × 2 branches = 6 individual; 6 surviving + 2 forbidden = 8
+	// combinations; the two forbidden cells are the panic-able subset.
+	want := "✓ tested 14 properties (6 individual + 8 combinations, of which 2 are panic-able)"
 	if summary != want {
 		t.Fatalf("summary = %q, want %q", summary, want)
 	}

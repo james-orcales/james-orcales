@@ -198,8 +198,8 @@ back to the events they stand for, so a bare coordinate is debuggable across nes
 ### Summary
 
 A clean run reports the count as individual plus combination, of which a panic-able subset.
-Individual is the per-element Always and Sometimes entries; combination is the surviving grid cells
-plus every cell an Impossible carves; panic-able is the Always entries plus every carved cell.
+Individual counts each Always once and each Sometimes twice — true and false are two obligations;
+combination is the surviving and carved cells; panic-able is the Always and the carved cells.
 
 ### Tally
 

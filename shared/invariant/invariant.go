@@ -1976,23 +1976,26 @@ func assertion_kind_name(kind Assertion_Kind) (name string) {
 }
 
 // Recorder_Assertion_Summary renders the clean-run banner naming how many
-// properties the run tested: per-element entries (Always, Sometimes) are
-// individual properties; Tuple entries and the cells an Impossible carves are
-// combinations; the Always family plus every carved cell is the panic-able subset
-// whose violation fails fatally at runtime.
+// properties the run tested: an Always is one individual property, a Sometimes is
+// two (its true and its false branch are separate obligations); Tuple entries and
+// the cells an Impossible carves are combinations; the Always family plus every
+// carved cell is the panic-able subset whose violation fails fatally at runtime.
 func Recorder_Assertion_Summary(recorder *Recorder) (summary string) {
 	individual := 0
 	combinations := 0
 	panic_able := 0
 	recorder.Events.Range(func(key, value any) (continue_iteration bool) {
 		metadata := value.(*Assertion_Metadata)
-		if metadata.Kind == Assertion_Kind_Tuple {
+		switch metadata.Kind {
+		case Assertion_Kind_Tuple:
 			combinations++
-		} else {
+		case Assertion_Kind_Always:
 			individual++
-		}
-		if metadata.Kind == Assertion_Kind_Always {
 			panic_able++
+		default:
+			// A Sometimes — including a gated Imply, recorded as a Sometimes —
+			// must witness both its true and its false branch, so it counts twice.
+			individual += 2
 		}
 		return true
 	})
