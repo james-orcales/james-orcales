@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/james-orcales/james-orcales/maddox/internal"
+	maddox "github.com/james-orcales/james-orcales/maddox/internal"
 	"github.com/james-orcales/james-orcales/shared/fixedpoint"
 	"github.com/james-orcales/james-orcales/shared/sh"
 	"github.com/james-orcales/james-orcales/shared/time"
@@ -67,6 +67,7 @@ func Test_Comparison_Reference(t *testing.T) {
 		Mean:               fixedpoint.From_Integer(100),
 		Standard_Deviation: fixedpoint.From_Integer(5),
 		Sample_Count:       10,
+		Unit:               "count",
 	}
 	delta := maddox.Compare(&maddox.Compare_Input{Reference: reference, Candidate: reference})
 	if delta.Diff_Percent != 0 {
@@ -81,6 +82,7 @@ func Test_Comparison_Reference(t *testing.T) {
 		Mean:               fixedpoint.From_Integer(20_000_000_000),
 		Standard_Deviation: fixedpoint.From_Integer(6_000_000_000),
 		Sample_Count:       10,
+		Unit:               "count",
 	}
 	big := maddox.Compare(&maddox.Compare_Input{Reference: large, Candidate: large})
 	if big.Significant {
@@ -96,11 +98,13 @@ func Test_Comparison_Significance(t *testing.T) {
 		Mean:               fixedpoint.From_Integer(100),
 		Standard_Deviation: fixedpoint.From_Integer(1),
 		Sample_Count:       20,
+		Unit:               "count",
 	}
 	candidate := maddox.Measurement{
 		Mean:               fixedpoint.From_Integer(200),
 		Standard_Deviation: fixedpoint.From_Integer(1),
 		Sample_Count:       20,
+		Unit:               "count",
 	}
 	delta := maddox.Compare(&maddox.Compare_Input{Reference: reference, Candidate: candidate})
 	if !delta.Significant {
@@ -136,7 +140,7 @@ func Test_Sampling_Budget(t *testing.T) {
 		Output:       &bytes.Buffer{},
 		Stderr:       &bytes.Buffer{},
 	}
-	if code := maddox.Main(input); code != 0 {
+	if code := maddox.Main(*input); code != 0 {
 		t.Fatalf("exit code = %d, want 0", code)
 	}
 	if calls != 6 {
@@ -165,7 +169,7 @@ func Test_Sampling_Runs(t *testing.T) {
 		Output:       &bytes.Buffer{},
 		Stderr:       &bytes.Buffer{},
 	}
-	maddox.Main(input)
+	maddox.Main(*input)
 	if calls != 5 {
 		t.Fatalf("runs = %d, want the 5-run cap", calls)
 	}
@@ -191,7 +195,7 @@ func Test_Sampling_Minimum(t *testing.T) {
 		Output:       &bytes.Buffer{},
 		Stderr:       &bytes.Buffer{},
 	}
-	maddox.Main(input)
+	maddox.Main(*input)
 	if calls != 3 {
 		t.Fatalf("runs = %d, want the 3-run minimum on a spent budget", calls)
 	}
@@ -221,7 +225,7 @@ func Test_Sampling_Warmup(t *testing.T) {
 		Output:       output,
 		Stderr:       &bytes.Buffer{},
 	}
-	maddox.Main(input)
+	maddox.Main(*input)
 	if calls != 5 {
 		t.Fatalf("total measure calls = %d, want 5 (2 warmup + 3 kept)", calls)
 	}
@@ -233,8 +237,8 @@ func Test_Sampling_Warmup(t *testing.T) {
 }
 
 // Test_Output_Document verifies the JSON report shape: one benchmark per command in
-// order, the first (reference) carrying no deltas and the rest carrying them, each
-// labeled with its command words.
+// order, each labeled with its command words, the first (reference) compared against
+// nothing and so carrying the zero delta.
 func Test_Output_Document(t *testing.T) {
 	clock := time.Virtual_Clock_To_Clock(time.Virtual_Clock{Resolution: time.Millisecond})
 	sampler := maddox.Sampler{
@@ -254,7 +258,7 @@ func Test_Output_Document(t *testing.T) {
 		Output:       output,
 		Stderr:       &bytes.Buffer{},
 	}
-	maddox.Main(input)
+	maddox.Main(*input)
 	document := decode(t, output)
 	if len(document.Benchmarks) != 2 {
 		t.Fatalf("benchmarks = %d, want 2", len(document.Benchmarks))
@@ -262,11 +266,13 @@ func Test_Output_Document(t *testing.T) {
 	if document.Benchmarks[0].Command[0] != "a" {
 		t.Fatalf("first command = %v, want [a]", document.Benchmarks[0].Command)
 	}
-	if document.Benchmarks[0].Deltas != nil {
-		t.Fatal("the reference command must carry no deltas")
+	if document.Benchmarks[1].Command[0] != "b" {
+		t.Fatalf("second command = %v, want [b]", document.Benchmarks[1].Command)
 	}
-	if document.Benchmarks[1].Deltas == nil {
-		t.Fatal("a non-reference command must carry deltas")
+	// The reference is compared against nothing, so its delta is the zero value; which
+	// command is the reference is positional — the first — not a delta-presence flag.
+	if document.Benchmarks[0].Deltas != (maddox.Deltas{}) {
+		t.Fatal("the reference command must carry the zero delta")
 	}
 }
 
@@ -291,7 +297,7 @@ func Test_Output_Failure(t *testing.T) {
 		Output:       &bytes.Buffer{},
 		Stderr:       stderr,
 	}
-	if code := maddox.Main(input); code == 0 {
+	if code := maddox.Main(*input); code == 0 {
 		t.Fatal("a non-zero exit must abort with a non-zero status")
 	}
 	if !strings.Contains(stderr.String(), "boom") {
@@ -303,7 +309,12 @@ func Test_Output_Failure(t *testing.T) {
 // position, kept-run count, and command words.
 func Test_Table_Header(t *testing.T) {
 	document := maddox.Document{Benchmarks: []maddox.Benchmark{
-		{Command: []string{"echo", "hi"}, Runs: 5, Elapsed: 2 * time.Second},
+		{
+			Command:      []maddox.Command_Word{"echo", "hi"},
+			Runs:         5,
+			Elapsed:      2 * time.Second,
+			Measurements: filled_measurements(),
+		},
 	}}
 	output := string(maddox.Render_Table(&maddox.Render_Table_Input{Document: document}))
 	if !strings.Contains(output, "Benchmark 1") {
@@ -334,10 +345,13 @@ func Test_Table_Units(t *testing.T) {
 		Mean: bytes_2mib, Min: bytes_2mib, Max: bytes_2mib, Median: bytes_2mib,
 		Q1: bytes_2mib, Q3: bytes_2mib, Sample_Count: 3, Unit: "bytes",
 	}
+	measurements := filled_measurements()
+	measurements.Wall_Time = wall
+	measurements.Peak_RSS = memory
 	document := maddox.Document{Benchmarks: []maddox.Benchmark{{
-		Command:      []string{"x"},
+		Command:      []maddox.Command_Word{"x"},
 		Runs:         3,
-		Measurements: maddox.Measurements{Wall_Time: wall, Peak_RSS: memory},
+		Measurements: measurements,
 	}}}
 	output := string(maddox.Render_Table(&maddox.Render_Table_Input{Document: document}))
 	if !strings.Contains(output, "14.9ms") {
@@ -360,10 +374,14 @@ func Test_Table_Delta(t *testing.T) {
 			Significant:  true,
 		},
 	}
-	measurements := maddox.Measurements{Wall_Time: wall}
+	measurements := filled_measurements()
+	measurements.Wall_Time = wall
 	document := maddox.Document{Benchmarks: []maddox.Benchmark{
-		{Command: []string{"a"}, Runs: 3, Measurements: measurements},
-		{Command: []string{"b"}, Runs: 3, Measurements: measurements, Deltas: &deltas},
+		{Command: []maddox.Command_Word{"a"}, Runs: 3, Measurements: measurements},
+		{
+			Command: []maddox.Command_Word{"b"}, Runs: 3,
+			Measurements: measurements, Deltas: deltas,
+		},
 	}}
 	output := string(maddox.Render_Table(&maddox.Render_Table_Input{Document: document}))
 	if !strings.Contains(output, "50.0%") {
@@ -383,10 +401,14 @@ func Test_Table_Color(t *testing.T) {
 			Significant:  true,
 		},
 	}
-	measurements := maddox.Measurements{Wall_Time: wall}
+	measurements := filled_measurements()
+	measurements.Wall_Time = wall
 	document := maddox.Document{Benchmarks: []maddox.Benchmark{
-		{Command: []string{"a"}, Runs: 3, Measurements: measurements},
-		{Command: []string{"b"}, Runs: 3, Measurements: measurements, Deltas: &deltas},
+		{Command: []maddox.Command_Word{"a"}, Runs: 3, Measurements: measurements},
+		{
+			Command: []maddox.Command_Word{"b"}, Runs: 3,
+			Measurements: measurements, Deltas: deltas,
+		},
 	}}
 	colored := string(maddox.Render_Table(&maddox.Render_Table_Input{
 		Document: document, Color: true,
@@ -408,10 +430,12 @@ func Test_Table_Color(t *testing.T) {
 func Test_Table_Sparse(t *testing.T) {
 	mean := fixedpoint.From_Integer(1_000_000)
 	wall := maddox.Measurement{Mean: mean, Max: mean, Sample_Count: 3, Unit: "nanoseconds"}
+	measurements := filled_measurements()
+	measurements.Wall_Time = wall
 	document := maddox.Document{Benchmarks: []maddox.Benchmark{{
-		Command:      []string{"x"},
+		Command:      []maddox.Command_Word{"x"},
 		Runs:         3,
-		Measurements: maddox.Measurements{Wall_Time: wall},
+		Measurements: measurements,
 	}}}
 	output := string(maddox.Render_Table(&maddox.Render_Table_Input{Document: document}))
 	if !strings.Contains(output, "wall_time") {
@@ -446,7 +470,7 @@ func Test_Machine_Document(t *testing.T) {
 		Operating_System_Version: "1.0",
 		Kernel_Version:           "1.0.0",
 	}
-	maddox.Main(&maddox.Main_Input{
+	maddox.Main(maddox.Main_Input{
 		Commands:     []sh.Command{{Path: "noop"}},
 		Clock:        clock,
 		Sampler:      sampler,
@@ -492,8 +516,12 @@ func Test_Machine_Table(t *testing.T) {
 		Kernel_Version:           "1.0.0",
 	}
 	document := maddox.Document{
-		Machine:    specs,
-		Benchmarks: []maddox.Benchmark{{Command: []string{"echo"}, Runs: 3}},
+		Machine: specs,
+		Benchmarks: []maddox.Benchmark{{
+			Command:      []maddox.Command_Word{"echo"},
+			Runs:         3,
+			Measurements: filled_measurements(),
+		}},
 	}
 	output := string(maddox.Render_Table(&maddox.Render_Table_Input{Document: document}))
 	if !strings.Contains(output, "TestCPU X1") {
@@ -520,7 +548,7 @@ func Test_Progress(t *testing.T) {
 		},
 	}
 	shown := &bytes.Buffer{}
-	maddox.Main(&maddox.Main_Input{
+	maddox.Main(maddox.Main_Input{
 		Commands:     []sh.Command{{Path: "noop"}},
 		Clock:        clock,
 		Sampler:      sampler,
@@ -539,7 +567,7 @@ func Test_Progress(t *testing.T) {
 	}
 
 	hidden := &bytes.Buffer{}
-	maddox.Main(&maddox.Main_Input{
+	maddox.Main(maddox.Main_Input{
 		Commands:     []sh.Command{{Path: "noop"}},
 		Clock:        clock,
 		Sampler:      sampler,
@@ -562,4 +590,20 @@ func decode(t *testing.T, buffer *bytes.Buffer) (document maddox.Document) {
 		t.Fatalf("report is not valid JSON: %v", unmarshal_err)
 	}
 	return document
+}
+
+// Filled_measurements is a full set of measured-but-empty metrics, so a hand-built
+// benchmark carries what Main always produces: a quorum of all-zero samples, each in its
+// own unit. The table omits every one — their maxima are zero — just as it omits unmeasured
+// metrics, but they carry the valid sample count and unit a real measurement always has.
+// A test overrides a field with real data where it exercises it.
+func filled_measurements() (measurements maddox.Measurements) {
+	span := maddox.Measurement{Sample_Count: 3, Unit: "nanoseconds"}
+	size := maddox.Measurement{Sample_Count: 3, Unit: "bytes"}
+	count := maddox.Measurement{Sample_Count: 3, Unit: "count"}
+	return maddox.Measurements{
+		Wall_Time: span, Peak_RSS: size, CPU_Cycles: count, Instructions: count,
+		Cache_References: count, Cache_Misses: count, Branch_Misses: count,
+		CPU_User: span, CPU_System: span,
+	}
 }
