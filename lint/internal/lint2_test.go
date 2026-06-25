@@ -1984,21 +1984,17 @@ func Test_Ignore_Trims_Scan_Set(t *testing.T) {
 	}
 }
 
-// Builds a lint.json carrying the given ignore globs beside the required
-// shared_component and word_replacements. Marshaled from a map rather than
-// lint.Configuration so a renamed or dropped key surfaces as a decode failure
-// instead of compiling silently.
+// Builds a lint.json carrying the given ignore globs, with the other required
+// keys present and valid (via configuration_document, which marshals from a map so
+// a renamed or dropped key surfaces as a decode failure instead of compiling
+// silently).
 func lint_json_ignore(t *testing.T, ignore []string) (data string) {
 	t.Helper()
-	raw, err := json.Marshal(map[string]any{
+	return configuration_document(map[string]any{
 		"shared_component":  "lint_test_no_shared_component",
 		"word_replacements": test_word_replacements(),
 		"ignore":            ignore,
 	})
-	if err != nil {
-		t.Fatalf("lint_json_ignore: %v", err)
-	}
-	return string(raw)
 }
 
 // Lints in-memory files end-to-end (the caller supplies lint.json), marking
@@ -5512,10 +5508,10 @@ func Test_Specification_Subheading_Empty(t *testing.T) {
 	}
 }
 
-// Test_Parse_Configuration covers lint.json decoding: a valid document yields
-// the shared module and the allowlist in declaration order; a missing or empty
-// shared_component, an unknown top-level key, and malformed JSON are hard errors;
-// the allowlist is optional and defaults to empty.
+// Test_Parse_Configuration covers lint.json decoding: a document with every key
+// present yields the shared module and the allowlist; a missing required key, an
+// empty value where one is required, an unknown top-level key, a rejected glob,
+// and malformed JSON are all hard errors.
 func Test_Parse_Configuration(t *testing.T) {
 	t.Parallel()
 	for _, tt := range parse_configuration_cases() {
@@ -5551,88 +5547,122 @@ func parse_configuration_cases() (cases []parse_configuration_case) {
 	return append(parse_configuration_valid_cases(), parse_configuration_error_cases()...)
 }
 
-// The lint.json documents that decode cleanly: a full document, the minimal
-// required pair, and an accepted ignore list.
+// Renders a lint.json with every required key present and valid. An override
+// replaces a key's value, or deletes the key when the value is nil, so a case can
+// isolate one decode behavior without tripping the all-keys-required guard on an
+// unrelated absent key. Marshaled from a map so each key name lives in one place.
+func configuration_document(overrides map[string]any) (document string) {
+	fields := map[string]any{
+		"shared_component":          "example.com/lib",
+		"instrumentation_packages":  []string{},
+		"pure_but_indeterministic":  []string{},
+		"word_replacements":         map[string][]string{"id": {"identifier"}},
+		"ignore":                    []string{},
+		"invariant_exempt_packages": []string{},
+		"opt_out_recursion_ban":     []string{},
+	}
+	for key, value := range overrides {
+		if value == nil {
+			delete(fields, key)
+			continue
+		}
+		fields[key] = value
+	}
+	raw, _ := json.Marshal(fields)
+	return string(raw)
+}
+
+// The lint.json documents that decode cleanly: the full document, one with every
+// list empty, and one carrying ignore globs.
 func parse_configuration_valid_cases() (cases []parse_configuration_case) {
 	return []parse_configuration_case{
 		{
 			Name: "valid full document",
-			Input: `{"shared_component":"example.com/lib",` +
-				`"instrumentation_packages":["a/b","c/d"],` +
-				`"word_replacements":{"id":["identifier"]}}`,
+			Input: configuration_document(
+				map[string]any{"instrumentation_packages": []string{"a/b", "c/d"}}),
 			Want_Shared: "example.com/lib",
 			Want_List:   []string{"a/b", "c/d"},
 		},
 		{
-			Name: "shared_component and table only, empty allowlist",
-			Input: `{"shared_component":"example.com/lib",` +
-				`"word_replacements":{"id":["identifier"]}}`,
+			Name:        "empty lists accepted",
+			Input:       configuration_document(nil),
 			Want_Shared: "example.com/lib",
 		},
 		{
-			Name: "ignore accepted",
-			Input: `{"shared_component":"x","word_replacements":{"id":["identifier"]},` +
-				`"ignore":["big_bang/dotfiles","weird.md"]}`,
-			Want_Shared: "x",
+			Name: "ignore globs accepted",
+			Input: configuration_document(
+				map[string]any{"ignore": []string{"a/b", "c.md"}}),
+			Want_Shared: "example.com/lib",
 		},
 	}
 }
 
-// Every hard-error lint.json form: missing/empty shared_component, a removed or
-// unknown key, a rejected glob, missing/empty word_replacements, a wrong value
-// type, and malformed JSON.
+// Every hard-error lint.json form, each with all other keys valid so the case
+// reaches the check it names: a missing required key (including the newest,
+// opt_out_recursion_ban), an empty value where one is required, an unknown or
+// removed key, a rejected glob, a wrong value type, and malformed JSON.
 func parse_configuration_error_cases() (cases []parse_configuration_case) {
 	return []parse_configuration_case{
 		{
 			Name:     "missing shared_component rejected",
-			Input:    `{"instrumentation_packages":[]}`,
+			Input:    configuration_document(map[string]any{"shared_component": nil}),
+			Want_Err: true,
+		},
+		{
+			Name: "missing opt_out_recursion_ban rejected",
+			Input: configuration_document(
+				map[string]any{"opt_out_recursion_ban": nil}),
 			Want_Err: true,
 		},
 		{
 			Name:     "empty shared_component rejected",
-			Input:    `{"shared_component":""}`,
-			Want_Err: true,
-		},
-		{
-			Name:     "unknown key rejected",
-			Input:    `{"shared_component":"x","global_api_allowlst":[]}`,
-			Want_Err: true,
-		},
-		{
-			Name: "removed path_casing_allowlist rejected",
-			Input: `{"shared_component":"x","word_replacements":{"id":["identifier"]},` +
-				`"path_casing_allowlist":["foo"]}`,
-			Want_Err: true,
-		},
-		{
-			Name: "ignore negation rejected",
-			Input: `{"shared_component":"x","word_replacements":{"id":["identifier"]},` +
-				`"ignore":["!keep"]}`,
-			Want_Err: true,
-		},
-		{
-			Name:     "wrong value type rejected",
-			Input:    `{"shared_component":"x","instrumentation_packages":"no"}`,
-			Want_Err: true,
-		},
-		{
-			Name:     "malformed json rejected",
-			Input:    `{`,
+			Input:    configuration_document(map[string]any{"shared_component": ""}),
 			Want_Err: true,
 		},
 		{
 			Name:     "missing word_replacements rejected",
-			Input:    `{"shared_component":"x"}`,
+			Input:    configuration_document(map[string]any{"word_replacements": nil}),
 			Want_Err: true,
 		},
 		{
-			Name:     "empty word_replacements rejected",
-			Input:    `{"shared_component":"x","word_replacements":{}}`,
+			Name: "empty word_replacements rejected",
+			Input: configuration_document(
+				map[string]any{"word_replacements": map[string][]string{}}),
 			Want_Err: true,
 		},
 		{
-			Name:     "unknown key word_replacement typo rejected",
-			Input:    `{"shared_component":"x","word_replacement":{"id":["identifier"]}}`,
+			Name: "unknown key rejected",
+			Input: configuration_document(
+				map[string]any{"global_api_allowlst": []string{}}),
+			Want_Err: true,
+		},
+		{
+			Name: "removed path_casing_allowlist rejected",
+			Input: configuration_document(
+				map[string]any{"path_casing_allowlist": []string{"foo"}}),
+			Want_Err: true,
+		},
+		{
+			Name: "unknown key word_replacement typo rejected",
+			Input: configuration_document(
+				map[string]any{"word_replacement": []string{}}),
+			Want_Err: true,
+		},
+		{
+			Name: "ignore negation rejected",
+			Input: configuration_document(
+				map[string]any{"ignore": []string{"!keep"}}),
+			Want_Err: true,
+		},
+		{
+			Name: "wrong value type rejected",
+			Input: configuration_document(
+				map[string]any{"instrumentation_packages": "no"}),
+			Want_Err: true,
+		},
+		{
+			Name:     "malformed json rejected",
+			Input:    "{",
 			Want_Err: true,
 		},
 	}

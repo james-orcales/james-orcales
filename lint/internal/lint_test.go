@@ -3023,8 +3023,10 @@ func Test_Names_Vocabulary_Part2(t *testing.T) {
 func Test_Vocabulary_Sourced_From_Lint_Json(t *testing.T) {
 	t.Parallel()
 	fsys := fstest.MapFS{
-		"lint.json": &fstest.MapFile{Data: []byte(
-			`{"shared_component":"x","word_replacements":{"wibble":["wobble"]}}`)},
+		"lint.json": &fstest.MapFile{Data: []byte(configuration_document(map[string]any{
+			"shared_component":  "x",
+			"word_replacements": map[string][]string{"wibble": {"wobble"}},
+		}))},
 		"test.go": &fstest.MapFile{Data: gofmt_must(t, `package main
 
 func F() (x int) {
