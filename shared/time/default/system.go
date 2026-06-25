@@ -10,22 +10,19 @@ import (
 	"github.com/james-orcales/james-orcales/shared/time"
 )
 
-// New_Operating_System_Clock returns a Clock backed by the host operating system —
-// TigerBeetle's
-// TimeOS. Now_Monotonic reads the OS monotonic clock behind a guard that panics on
-// regression; Now_Realtime reads the wall clock; Tick is a no-op.
-func New_Operating_System_Clock() (host time.Clock) {
+// New_Operating_System_Clock returns a read-only Clock backed by the host operating
+// system — TigerBeetle's TimeOS — plus the driver's tick. Now_Monotonic reads the OS
+// monotonic clock behind a guard that panics on regression; Now_Realtime reads the
+// wall clock. The OS clock advances on its own, so tick is a no-op.
+func New_Operating_System_Clock() (host time.Clock, tick func()) {
 	// The guard remembers the last monotonic read so a regression — which a hardware
 	// or kernel bug can cause — is caught instead of wedging callers.
 	guard := &atomic.Int64{}
-	return time.Clock{
+	host = time.Clock{
 		Now_Monotonic: func() (moment time.Moment) { return read_monotonic(guard) },
 		Now_Realtime:  func() (moment time.Moment) { return read_realtime() },
-		Tick:          func() {},
-		Sleep: func(duration time.Duration) {
-			wallclock.Sleep(wallclock.Duration(duration))
-		},
 	}
+	return host, func() {}
 }
 
 // Reads the per-OS monotonic clock and panics if it ran backwards.

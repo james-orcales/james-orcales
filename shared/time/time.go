@@ -41,8 +41,9 @@ const Day = Hour * 24
 const Week = Day * 7
 
 // Clock is the injected time source — the Go translation of TigerBeetle's `Time`
-// vtable { monotonic, realtime, tick }, expressed as closures so the backend is
-// chosen by value.
+// vtable, expressed as closures so the backend is chosen by value. It is read-only:
+// advancing time is the driver's job (the tick returned beside the clock at
+// construction), so a holder can only read the current Moment, never move time.
 type Clock struct {
 	// Now_Monotonic reads the monotonic clock, which never regresses; use it to
 	// measure elapsed time, timeouts, and latency.
@@ -50,12 +51,6 @@ type Clock struct {
 	// Now_Realtime reads wall-clock time as nanoseconds since the Unix epoch; it can
 	// jump, so use it only for calendar timestamps, never for elapsed time.
 	Now_Realtime func() (moment Moment)
-	// Tick advances a virtual clock by one resolution; on a real clock it is a no-op.
-	Tick func()
-	// Sleep blocks until the duration elapses on this clock. A real clock waits real
-	// time; a virtual clock advances its own time instead of waiting, so a simulation
-	// never blocks.
-	Sleep func(duration Duration)
 }
 
 // Offset models how a simulated wall clock deviates from true elapsed time —
@@ -78,12 +73,14 @@ type Virtual_Clock struct {
 	Skew Offset
 }
 
-// Virtual_Clock_To_Clock returns a Clock backed by a deterministic, OS-free virtual
-// clock. The closures share one tick counter, so Tick advances what the next
-// Now_Monotonic reads.
-func Virtual_Clock_To_Clock(virtual Virtual_Clock) (clock Clock) {
+// Virtual_Clock_To_Clock returns a read-only Clock backed by a deterministic, OS-free
+// virtual clock, plus the tick that advances it. The clock's closures and tick share
+// one counter, so tick advances what the next Now_Monotonic reads. Only the driver —
+// package main or a test harness — holds tick; pure code holds only the Clock and so
+// can read time but never move it.
+func Virtual_Clock_To_Clock(virtual Virtual_Clock) (clock Clock, tick func()) {
 	ticks := int64(0)
-	return Clock{
+	clock = Clock{
 		Now_Monotonic: func() (moment Moment) {
 			return Moment(ticks * int64(virtual.Resolution))
 		},
@@ -94,13 +91,8 @@ func Virtual_Clock_To_Clock(virtual Virtual_Clock) (clock Clock) {
 			}
 			return now - Moment(virtual.Skew(ticks))
 		},
-		Tick: func() { ticks++ },
-		// Sleeping advances virtual time rather than waiting: a sleeper reaches a Moment
-		// the slept span later, in resolution grains, with no wall-clock wait.
-		Sleep: func(duration Duration) {
-			ticks += int64(duration) / int64(virtual.Resolution)
-		},
 	}
+	return clock, func() { ticks++ }
 }
 
 // Skew_Kind_Linear models constant drift: A nanoseconds of skew per tick plus an

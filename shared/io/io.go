@@ -35,17 +35,11 @@ type Completion struct {
 	Ready_At time.Moment
 }
 
-// IO is the injected async IO surface — TigerBeetle's `IO`. Code submits operations
-// with a Completion and callback and drives the loop with Run or Run_For, never
-// knowing which backend it holds. Recv, Send, Accept, Connect, Close, and Fsync
-// follow Read and Write's shape and are omitted here.
+// IO is the injected async IO submit surface — TigerBeetle's `IO`. Code submits
+// operations with a Completion and callback and reacts to completions; it never drives
+// the loop — that is the Driver's job — so a holder can submit IO but not advance time.
+// Recv, Send, Accept, Connect, Close, and Fsync follow Read and Write's shape.
 type IO struct {
-	// Run submits queued operations and reaps every ready completion without
-	// blocking, then advances the clock one tick (TigerBeetle IO.run).
-	Run func()
-	// Run_For runs the loop until the duration has elapsed on the clock, delivering
-	// completions as they come due (TigerBeetle IO.run_for_ns).
-	Run_For func(duration time.Duration)
 	// Read reads len(buffer) bytes from file at offset; callback fires with the byte
 	// count or error once the operation completes (TigerBeetle IO.read).
 	Read func(
@@ -80,14 +74,35 @@ type IO struct {
 	Close func(completion *Completion, callback Timeout_Callback, file File)
 }
 
+// Driver advances the loop — the only capability that moves time and delivers
+// completions. It is held solely by the composition root (package main) or a test
+// harness, never by pure code, so submitting IO and driving the loop stay separate: a
+// pure package holds an IO, the driver holds a Driver.
+type Driver struct {
+	// Run drains every ready completion without blocking, then advances the clock one
+	// tick (TigerBeetle IO.run).
+	Run func()
+	// Run_For drives the loop until the duration has elapsed on the clock, delivering
+	// completions as they come due (TigerBeetle IO.run_for_ns).
+	Run_For func(duration time.Duration)
+	// Run_Until drives the loop until done reports true — the run-until-complete pump
+	// that lets straight-line code wait for its own op inline. Top-level and
+	// single-loop only: never call it from within a completion callback.
+	Run_Until func(done func() bool)
+}
+
 // Sim is the deterministic, in-memory IO backend — TigerBeetle's simulated Storage
 // plus PacketSimulator. Each operation is scheduled to complete at now plus a
 // latency on the injected clock; a run fires every operation whose Ready_At has
 // arrived, then advances the clock one tick. No real syscalls and no waiting, so a
 // run is fully reproducible from the clock and the latency model.
 type Sim struct {
-	// Clock is the time source; "now" is Clock.Now_Monotonic.
+	// Clock is the read-only time source; "now" is Clock.Now_Monotonic.
 	Clock time.Clock
+	// Tick advances the virtual clock one resolution — the tick returned beside Clock
+	// by Virtual_Clock_To_Clock. The driver calls it after each drain; it lives on the
+	// Sim (driver side) so pure code, which holds only an IO, can never advance time.
+	Tick func()
 	// Latency returns the modeled completion delay for the next operation;
 	// deterministic when seeded, mirroring TigerBeetle's Storage.read_latency.
 	Latency func() (duration time.Duration)
@@ -101,10 +116,8 @@ type Sim struct {
 
 // Sim_To_IO returns an IO backed by sim. The closures share sim, so a submitted
 // operation and the loop that completes it see the same queue and time.
-func Sim_To_IO(sim *Sim) (loop IO) {
-	return IO{
-		Run:     func() { sim_run(sim) },
-		Run_For: func(duration time.Duration) { sim_run_for(sim, duration) },
+func Sim_To_IO(sim *Sim) (loop IO, driver Driver) {
+	loop = IO{
 		Read: func(
 			completion *Completion, callback Callback,
 			file File, buffer []byte, offset int64,
@@ -159,6 +172,12 @@ func Sim_To_IO(sim *Sim) (loop IO) {
 			})
 		},
 	}
+	driver = Driver{
+		Run:       func() { sim_run(sim) },
+		Run_For:   func(duration time.Duration) { sim_run_for(sim, duration) },
+		Run_Until: func(done func() bool) { sim_run_until(sim, done) },
+	}
+	return loop, driver
 }
 
 // Returns the current virtual Moment; Sim never reads the operating-system time.
@@ -206,18 +225,32 @@ func sim_step(sim *Sim) (advanced bool) {
 	return true
 }
 
-// Drains every completion that is due, then advances the clock one tick, mirroring
-// TigerBeetle's Storage.run.
-func sim_run(sim *Sim) {
+// Drains every completion due as of now, in Ready_At order; it never advances time —
+// advancing is the driver's job, so the queue itself stays passive.
+func sim_drain(sim *Sim) {
 	for sim_step(sim) {
 	}
-	sim.Clock.Tick()
 }
 
-// Ticks until the duration has elapsed, delivering completions as they come due.
+// The driver's step: drain due completions, then advance the clock one tick via the
+// injected tick (not the read-only Clock), mirroring TigerBeetle's Storage.run.
+func sim_run(sim *Sim) {
+	sim_drain(sim)
+	sim.Tick()
+}
+
+// Drives the loop until the duration has elapsed, delivering completions as due.
 func sim_run_for(sim *Sim, duration time.Duration) {
 	deadline := sim_now(sim) + time.Moment(duration)
 	for sim_now(sim) < deadline {
+		sim_run(sim)
+	}
+}
+
+// Drives the loop until done reports true — the run-until-complete pump. Top-level and
+// single-loop only; each step drains then ticks.
+func sim_run_until(sim *Sim, done func() bool) {
+	for !done() {
 		sim_run(sim)
 	}
 }

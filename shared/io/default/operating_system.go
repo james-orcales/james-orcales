@@ -12,6 +12,11 @@ import (
 // syscalls without an unbounded buffer.
 const poll_events_max = 64
 
+// Operating_system_tick bounds each Run_Until pump step: the loop blocks at most this
+// long waiting for real events before re-checking done, so the pump neither spins nor
+// oversleeps.
+const operating_system_tick = 10 * time.Millisecond
+
 // One ready descriptor the poll reports, decoded from the platform's native event
 // into a direction the dispatch understands.
 type poll_ready struct {
@@ -56,11 +61,9 @@ type operating_system struct {
 // kqueue/epoll readiness loop; timeouts fire when the clock passes their deadline,
 // and Run_For blocks real time bounded by the nearest deadline or socket event —
 // the same deadline-bounded wait TigerBeetle performs in kevent/io_uring.
-func New_Operating_System_IO(host time.Clock) (loop io.IO) {
+func New_Operating_System_IO(host time.Clock) (loop io.IO, driver io.Driver) {
 	state := &operating_system{Host: host}
-	return io.IO{
-		Run:     func() { operating_system_run(state) },
-		Run_For: func(duration time.Duration) { operating_system_run_for(state, duration) },
+	loop = io.IO{
 		Read: func(
 			completion *io.Completion, callback io.Callback,
 			file io.File, buffer []byte, offset int64,
@@ -120,6 +123,16 @@ func New_Operating_System_IO(host time.Clock) (loop io.IO) {
 			operating_system_close(state, completion, callback, file)
 		},
 	}
+	driver = io.Driver{
+		Run:     func() { operating_system_run(state) },
+		Run_For: func(duration time.Duration) { operating_system_run_for(state, duration) },
+		Run_Until: func(done func() bool) {
+			for !done() {
+				operating_system_run_for(state, operating_system_tick)
+			}
+		},
+	}
+	return loop, driver
 }
 
 // Runs ready completions and one non-blocking socket poll; the host clock moves on
@@ -149,7 +162,8 @@ func operating_system_run_for(state *operating_system, duration time.Duration) {
 }
 
 // Idles for gap nanoseconds: blocks in the socket poll when a socket is armed so
-// readiness wakes it early, otherwise sleeps the host clock.
+// readiness wakes it early, otherwise blocks real time directly. The block lives here
+// in the backend, not on the clock — the clock is read-only.
 func operating_system_idle(state *operating_system, gap time.Moment) {
 	if gap <= 0 {
 		return
@@ -161,7 +175,7 @@ func operating_system_idle(state *operating_system, gap time.Moment) {
 			return
 		}
 	}
-	state.Host.Sleep(time.Duration(gap))
+	sleep_real(time.Duration(gap))
 }
 
 // Moves every timeout whose deadline has passed into the completed queue.
