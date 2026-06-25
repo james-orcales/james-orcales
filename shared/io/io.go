@@ -7,7 +7,11 @@
 // as IO completions — the heart of the model.
 package io
 
-import "github.com/james-orcales/james-orcales/shared/time"
+import (
+	"errors"
+
+	"github.com/james-orcales/james-orcales/shared/time"
+)
 
 // File identifies an open file or socket. The simulated backend ignores it (its
 // storage is in-memory); a real backend maps it to a descriptor or handle.
@@ -23,6 +27,11 @@ type Timeout_Callback func(completion *Completion, err error)
 // connection or a completed client connect — or an error.
 type Socket_Callback func(completion *Completion, socket File, err error)
 
+// Cancelled is the error a callback receives when its operation was cancelled before
+// it completed. Cancelling still delivers the callback exactly once — with this error
+// instead of a result — so every submission resolves.
+var Cancelled = errors.New("io: operation cancelled")
+
 // Completion is the caller-owned storage for one in-flight operation —
 // TigerBeetle's IO.Completion. The caller allocates it, so the loop never does, and
 // must keep it alive until the callback fires.
@@ -33,6 +42,9 @@ type Completion struct {
 	// Ready_At is the virtual Moment this operation completes, mirroring
 	// TigerBeetle's Storage.Read.ready_at.
 	Ready_At time.Moment
+	// Cancelled marks that Cancel reached this operation before it fired; the backend's
+	// Callback then delivers the Cancelled error instead of a result. Reset on submit.
+	Cancelled bool
 }
 
 // IO is the injected async IO submit surface — TigerBeetle's `IO`. Code submits
@@ -72,6 +84,10 @@ type IO struct {
 	// Close releases file's descriptor; callback fires once it is closed
 	// (TigerBeetle IO.close).
 	Close func(completion *Completion, callback Timeout_Callback, file File)
+	// Cancel stops an in-flight operation: its callback still fires exactly once, with
+	// the Cancelled error rather than a result. Cancelling an already-completed or
+	// unknown completion is a harmless no-op (TigerBeetle IO.cancel).
+	Cancel func(completion *Completion)
 }
 
 // Driver advances the loop — the only capability that moves time and delivers
@@ -122,23 +138,23 @@ func Sim_To_IO(sim *Sim) (loop IO, driver Driver) {
 			completion *Completion, callback Callback,
 			file File, buffer []byte, offset int64,
 		) {
-			sim_submit(sim, completion, sim.Latency(), func() {
-				callback(completion, len(buffer), nil)
-			})
+			sim_bytes(sim, completion, callback, buffer)
 		},
 		Write: func(
 			completion *Completion, callback Callback,
 			file File, buffer []byte, offset int64,
 		) {
-			sim_submit(sim, completion, sim.Latency(), func() {
-				callback(completion, len(buffer), nil)
-			})
+			sim_bytes(sim, completion, callback, buffer)
 		},
 		Timeout: func(
 			completion *Completion, callback Timeout_Callback,
 			duration time.Duration,
 		) {
 			sim_submit(sim, completion, duration, func() {
+				if completion.Cancelled {
+					callback(completion, Cancelled)
+					return
+				}
 				callback(completion, nil)
 			})
 		},
@@ -157,27 +173,45 @@ func Sim_To_IO(sim *Sim) (loop IO, driver Driver) {
 		Receive: func(
 			completion *Completion, callback Callback, socket File, buffer []byte,
 		) {
-			sim_submit(sim, completion, sim.Latency(), func() {
-				callback(completion, len(buffer), nil)
-			})
+			sim_bytes(sim, completion, callback, buffer)
 		},
 		Send: func(completion *Completion, callback Callback, socket File, buffer []byte) {
-			sim_submit(sim, completion, sim.Latency(), func() {
-				callback(completion, len(buffer), nil)
-			})
+			sim_bytes(sim, completion, callback, buffer)
 		},
 		Close: func(completion *Completion, callback Timeout_Callback, file File) {
 			sim_submit(sim, completion, sim.Latency(), func() {
+				if completion.Cancelled {
+					callback(completion, Cancelled)
+					return
+				}
 				callback(completion, nil)
 			})
 		},
+		Cancel: func(completion *Completion) { sim_cancel(sim, completion) },
 	}
-	driver = Driver{
+	return loop, sim_to_driver(sim)
+}
+
+// Submits a byte-count operation — read, write, receive, or send — reporting the
+// buffer length after the modeled latency, or the Cancelled error if cancelled.
+func sim_bytes(sim *Sim, completion *Completion, callback Callback, buffer []byte) {
+	sim_submit(sim, completion, sim.Latency(), func() {
+		if completion.Cancelled {
+			callback(completion, 0, Cancelled)
+			return
+		}
+		callback(completion, len(buffer), nil)
+	})
+}
+
+// Builds the driver over sim — the loop-advancing capability, held only by main or a
+// test, never by code that merely submits IO.
+func sim_to_driver(sim *Sim) (driver Driver) {
+	return Driver{
 		Run:       func() { sim_run(sim) },
 		Run_For:   func(duration time.Duration) { sim_run_for(sim, duration) },
 		Run_Until: func(done func() (finished bool)) { sim_run_until(sim, done) },
 	}
-	return loop, driver
 }
 
 // Returns the current virtual Moment; Sim never reads the operating-system time.
@@ -186,11 +220,17 @@ func sim_now(sim *Sim) (now time.Moment) {
 }
 
 // Schedules completion to fire at now plus latency and inserts it in Ready_At order,
-// mirroring TigerBeetle's ready_at = tick_instant + latency.
+// mirroring TigerBeetle's ready_at = tick_instant + latency. Clears any stale Cancelled
+// mark so a reused completion starts a fresh operation.
 func sim_submit(sim *Sim, completion *Completion, latency time.Duration, callback func()) {
 	completion.Ready_At = sim_now(sim) + time.Moment(latency)
 	completion.Callback = callback
+	completion.Cancelled = false
+	sim_enqueue(sim, completion)
+}
 
+// Inserts completion into the queue in Ready_At order, earliest first.
+func sim_enqueue(sim *Sim, completion *Completion) {
 	index := 0
 	for index < len(sim.Queue) && sim.Queue[index].Ready_At <= completion.Ready_At {
 		index++
@@ -200,12 +240,32 @@ func sim_submit(sim *Sim, completion *Completion, latency time.Duration, callbac
 	sim.Queue[index] = completion
 }
 
+// Cancels an in-flight completion: if still queued, mark it Cancelled and make it due
+// now so the next drain delivers its callback with the Cancelled error. A completion
+// already fired or never queued is left untouched — cancel is then a harmless no-op.
+func sim_cancel(sim *Sim, completion *Completion) {
+	for index := 0; index < len(sim.Queue); index++ {
+		if sim.Queue[index] != completion {
+			continue
+		}
+		sim.Queue = append(sim.Queue[:index], sim.Queue[index+1:]...)
+		completion.Cancelled = true
+		completion.Ready_At = sim_now(sim)
+		sim_enqueue(sim, completion)
+		return
+	}
+}
+
 // Schedules callback to receive the next synthetic descriptor after the modeled
 // latency, shared by Accept and Connect.
 func sim_yield_socket(sim *Sim, completion *Completion, callback Socket_Callback) {
 	sim.Next_File++
 	socket := sim.Next_File
 	sim_submit(sim, completion, sim.Latency(), func() {
+		if completion.Cancelled {
+			callback(completion, 0, Cancelled)
+			return
+		}
 		callback(completion, socket, nil)
 	})
 }
