@@ -27,8 +27,6 @@
   "invariant_exempt_packages": [
           "lint",
           "lint/internal",
-          "maddox",
-          "maddox/internal",
           "markdown_to_pdf",
           "markdown_to_pdf/internal",
           "setup",
