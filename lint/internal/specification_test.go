@@ -1901,16 +1901,16 @@ func Test_Simulation_Blackbox(t *testing.T) {
 	}
 }
 
-// Test_Event_Loop_Driver verifies a non-main, non-test package that calls a loop or
-// clock constructor is flagged.
+// Test_Event_Loop_Driver verifies a non-main, non-test package that calls an IO loop
+// constructor is flagged.
 func Test_Event_Loop_Driver(t *testing.T) {
 	t.Parallel()
 	files := specification_one_file("package fixture\n\n" +
-		"import time \"fixture/shared/time\"\n\n" +
-		"// Build makes a clock.\nfunc Build() (clock time.Clock) {\n" +
-		"\tc, _ := time.Virtual_Clock_To_Clock(time.Virtual_Clock{})\n\treturn c\n}\n")
-	if !specification_flags(t, files, "mints a loop/clock driver") {
-		t.Fatal("a library call to a loop/clock constructor must be flagged")
+		"import io \"fixture/shared/io\"\n\n" +
+		"// Build makes a loop.\nfunc Build() (loop io.IO) {\n" +
+		"\tl, _ := io.Sim_To_IO(nil)\n\treturn l\n}\n")
+	if !specification_flags(t, files, "mints a loop driver") {
+		t.Fatal("a library call to an IO loop constructor must be flagged")
 	}
 }
 
@@ -1922,6 +1922,108 @@ func Test_Event_Loop_Gateway(t *testing.T) {
 		"// Dial does.\nfunc Dial() (connection net.Conn) {\n\treturn nil\n}\n")
 	if !specification_flags(t, files, "route IO through shared/io") {
 		t.Fatal("importing raw IO stdlib outside the gateway must be flagged")
+	}
+}
+
+// Test_Driver_Gateway_Main_Allowed verifies package main may construct a loop.
+func Test_Driver_Gateway_Main_Allowed(t *testing.T) {
+	t.Parallel()
+	files := map[string][]byte{
+		"pkg/main.go": []byte("// Package main is a fixture.\npackage main\n\n" +
+			"import io \"fixture/shared/io\"\n\n" +
+			"func main() {\n\tio.Sim_To_IO(nil)\n}\n"),
+	}
+	if specification_flags(t, files, "mints a loop driver") {
+		t.Fatal("package main must be allowed to construct a loop driver")
+	}
+}
+
+// Test_Driver_Gateway_Test_Allowed verifies a test may construct a loop.
+func Test_Driver_Gateway_Test_Allowed(t *testing.T) {
+	t.Parallel()
+	files := map[string][]byte{
+		"pkg/rule.go": []byte("// Package fixture is a fixture.\npackage fixture\n"),
+		"pkg/rule_test.go": []byte("package fixture_test\n\n" +
+			"import (\n\t\"testing\"\n\n" +
+			"\tiodefault \"fixture/shared/io/default\"\n)\n\n" +
+			"// Test_X is a fixture.\nfunc Test_X(t *testing.T) {\n" +
+			"\tiodefault.New_Operating_System_IO(nil)\n}\n"),
+	}
+	if specification_flags(t, files, "mints a loop driver") {
+		t.Fatal("a test may construct a loop driver")
+	}
+}
+
+// Test_Driver_Gateway_Logical_Clock_Allowed verifies constructing the virtual (logical)
+// clock is not gated: the clock is read-only, and its tick drives a loop only through a
+// Driver, which is gated separately.
+func Test_Driver_Gateway_Logical_Clock_Allowed(t *testing.T) {
+	t.Parallel()
+	files := specification_one_file("package fixture\n\n" +
+		"import time \"fixture/shared/time\"\n\n" +
+		"// Build makes a clock.\nfunc Build() (clock time.Clock) {\n" +
+		"\tc, _ := time.Virtual_Clock_To_Clock(time.Virtual_Clock{})\n\treturn c\n}\n")
+	if specification_flags(t, files, "mints a loop driver") {
+		t.Fatal("the read-only logical clock constructor must not be gated")
+	}
+}
+
+// Test_IO_Gateway_Call verifies an os file-operation call outside the gateway is flagged.
+func Test_IO_Gateway_Call(t *testing.T) {
+	t.Parallel()
+	files := specification_one_file("package fixture\n\nimport \"os\"\n\n" +
+		"// F opens.\nfunc F() (file *os.File, err error) {\n\treturn os.Open(\"x\")\n}\n")
+	if !specification_flags(t, files, "os.Open does raw IO") {
+		t.Fatal("os.Open outside the gateway must be flagged")
+	}
+}
+
+// Test_IO_Gateway_Process_Args verifies os.Args, not raw IO, is left alone.
+func Test_IO_Gateway_Process_Args(t *testing.T) {
+	t.Parallel()
+	files := specification_one_file("package fixture\n\nimport \"os\"\n\n" +
+		"// F counts args.\nfunc F() (count int) {\n\treturn len(os.Args)\n}\n")
+	if specification_flags(t, files, "does raw IO") {
+		t.Fatal("os.Args is not raw IO and must be allowed")
+	}
+}
+
+// Test_IO_Gateway_Test_Exempt verifies a test may import raw IO stdlib.
+func Test_IO_Gateway_Test_Exempt(t *testing.T) {
+	t.Parallel()
+	files := map[string][]byte{
+		"pkg/rule.go": []byte("// Package fixture is a fixture.\npackage fixture\n"),
+		"pkg/rule_test.go": []byte("package fixture_test\n\n" +
+			"import (\n\t\"net\"\n\t\"testing\"\n)\n\n// Test_X is a fixture.\n" +
+			"func Test_X(t *testing.T) {\n\tnet.ParseIP(\"\")\n}\n"),
+	}
+	if specification_flags(t, files, "route IO through shared/io") {
+		t.Fatal("a test may import raw IO stdlib")
+	}
+}
+
+// Test_IO_Gateway_Instrumentation_Exempt verifies an instrumentation package may do
+// raw IO — it is the diagnostics side channel.
+func Test_IO_Gateway_Instrumentation_Exempt(t *testing.T) {
+	t.Parallel()
+	fsys := fstest.MapFS{
+		"go.mod": &fstest.MapFile{Data: []byte(doctrine_root_go_module)},
+		"pkg/rule.go": &fstest.MapFile{Data: []byte(
+			"// Package fixture is a fixture.\npackage fixture\n\nimport \"net\"\n\n" +
+				"// Dial does.\nfunc Dial() (connection net.Conn) {\n" +
+				"\treturn nil\n}\n")},
+	}
+	diags, err := lint.Check_File_System(&lint.Check_File_System_Input{
+		Fsys:                     fsys,
+		Scope:                    "pkg",
+		Shared_Component:         doctrine_shared_component_directory,
+		Instrumentation_Packages: []string{"pkg"},
+	})
+	if err != nil {
+		t.Fatalf("Check_File_System: %v", err)
+	}
+	if specification_diagnosed(diags, "route IO through shared/io") {
+		t.Fatal("an instrumentation package may do raw IO")
 	}
 }
 
