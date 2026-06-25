@@ -380,7 +380,7 @@ const if_init_identifier_chars_max = 55
 // length axis. Updated whenever a check is added or removed from the
 // dispatcher in Check_File.
 const tier_2_checks_count = 6
-const tier_1_checks_count = 31
+const tier_1_checks_count = 30
 
 // Go_filename_chars_min is the shortest Go filename: a single-letter package
 // name followed by the .go extension, e.g. `a.go`. Used as the Lo bound on
@@ -1454,7 +1454,6 @@ func Check_File(input *Check_File_Input) (diags []Diagnostic) {
 		check_gofmt,
 		check_no_dot_import,
 		check_default_package_name,
-		check_test_package,
 		check_no_empty_function_body,
 		check_no_interfaces,
 		check_input_struct,
@@ -2102,9 +2101,12 @@ func check_file_system_doctrine(
 	output = append(output,
 		check_function_invariants(parsed_files, input.Invariant_Exempt_Packages)...)
 	output = append(output,
-		check_recorder_test_main(parsed_files, input.Invariant_Exempt_Packages)...)
+		check_recorder_test_main(
+			parsed_files, components, input.Invariant_Exempt_Packages)...)
 	output = append(output,
 		check_primitive_types(parsed_files, input.Invariant_Exempt_Packages)...)
+	output = append(output,
+		check_simulation(parsed_files, components, input.Invariant_Exempt_Packages)...)
 	return append(output,
 		check_specification(input.Fsys, parsed_files, components, input.Scope)...)
 }
@@ -2367,6 +2369,7 @@ type package_group_key struct {
 	Directory             string
 	Is_Test               bool
 	Is_Specification_Test bool
+	Test_Is_External      bool
 	Build                 string
 }
 
@@ -2378,11 +2381,15 @@ type package_group_state struct {
 func check_file_system_package_split(parsed_files []parsed_file) (diags []Diagnostic) {
 	groups := map[package_group_key]*package_group_state{}
 	for _, pf := range parsed_files {
+		is_test := strings.HasSuffix(pf.Path, "_test.go")
 		key := package_group_key{
 			Directory:             path.Dir(pf.Path),
-			Is_Test:               strings.HasSuffix(pf.Path, "_test.go"),
+			Is_Test:               is_test,
 			Is_Specification_Test: path.Base(pf.Path) == "specification_test.go",
-			Build:                 check_file_system_package_split_build_key(pf.File),
+			// A whitebox (foo) test package and a blackbox (foo_test) test package
+			// compile into different binaries, so they fragment independently.
+			Test_Is_External: is_test && strings.HasSuffix(pf.File.Name.Name, "_test"),
+			Build:            check_file_system_package_split_build_key(pf.File),
 		}
 		st := groups[key]
 		if st == nil {
@@ -2405,6 +2412,9 @@ func check_file_system_package_split(parsed_files []parsed_file) (diags []Diagno
 		}
 		if keys[i].Is_Test != keys[j].Is_Test {
 			return !keys[i].Is_Test
+		}
+		if keys[i].Test_Is_External != keys[j].Test_Is_External {
+			return keys[i].Test_Is_External
 		}
 		return keys[i].Build < keys[j].Build
 	})
@@ -2433,6 +2443,9 @@ func package_group_key_diag(
 		label = "specification_test"
 	} else if key.Is_Test {
 		label = "test"
+		if !key.Test_Is_External {
+			label = "whitebox test"
+		}
 	}
 	build_suffix := ""
 	if key.Build != "" {
@@ -5474,40 +5487,6 @@ func check_default_package_name(
 			parent, file.Name.Name),
 	})
 	return diags
-}
-
-// Whitebox test packages couple tests to internals; main packages cannot be
-// blackbox-tested coherently. Force every _test.go to declare `package
-// <X>_test`, which keeps the test suite restricted to the same public API
-// callers see and prevents tests from being written against `package main`.
-func check_test_package(file_set *token.FileSet, file *ast.File, _ []byte) (diags []Diagnostic) {
-
-	tok_file := file_set.File(file.Pos())
-	if tok_file == nil {
-		return nil
-	}
-	if !strings.HasSuffix(tok_file.Name(), "_test.go") {
-		return nil
-	}
-	name := file.Name.Name
-	flag := false
-	if name == "main" {
-		flag = true
-	}
-	if name == "main_test" {
-		flag = true
-	}
-	if !strings.HasSuffix(name, "_test") {
-		flag = true
-	}
-	if !flag {
-		return nil
-	}
-	return []Diagnostic{{
-		Position: file_set.Position(file.Name.Pos()),
-		Message: fmt.Sprintf("test file must declare 'package <X>_test'; got 'package "+
-			"%s'", name),
-	}}
 }
 
 // Flags any tokenized word in a declared name that appears in the

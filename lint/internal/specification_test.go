@@ -1003,18 +1003,6 @@ func Test_Source_And_Test_Bans_Banned_Function_Words(t *testing.T) {
 	}
 }
 
-// Test_Source_And_Test_Bans_Whitebox_Tests verifies a whitebox test package is flagged.
-func Test_Source_And_Test_Bans_Whitebox_Tests(t *testing.T) {
-	t.Parallel()
-	files := map[string][]byte{
-		"pkg/thing_test.go": []byte("package fixture\n\nimport \"testing\"\n\n" +
-			"// Test_X is a fixture.\nfunc Test_X(t *testing.T) { _ = t }\n"),
-	}
-	if !specification_flags(t, files, "test file must declare") {
-		t.Fatal("a whitebox test package must be flagged")
-	}
-}
-
 // Test_Source_And_Test_Requirements_Goimports verifies non-goimports formatting is flagged.
 func Test_Source_And_Test_Requirements_Goimports(t *testing.T) {
 	t.Parallel()
@@ -1822,7 +1810,7 @@ func Test_Invariants_Recorder_Registration(t *testing.T) {
 	t.Parallel()
 	files := recorder_test_files("package fixture_test\n\nimport \"testing\"\n\n" +
 		"func Test_Widget(t *testing.T) {}\n")
-	if !specification_flags(t, files, "must wire invariant.Run_Test_Main") {
+	if !recorder_flags(t, files, "must wire invariant.Run_Test_Main") {
 		t.Fatal("a package with no TestMain must be flagged")
 	}
 }
@@ -1838,6 +1826,49 @@ func Test_Invariants_Primitive_Types(t *testing.T) {
 	}
 	if !specification_flags(t, files, "raw string result") {
 		t.Fatal("a raw string result must be flagged")
+	}
+}
+
+// Test_Simulation_Presence verifies a binary component with a non-exempt internal
+// package but no simulation_test package is flagged.
+func Test_Simulation_Presence(t *testing.T) {
+	t.Parallel()
+	files := simulation_component_files()
+	if !specification_flags(t, files, "must declare an internal/simulation_test") {
+		t.Fatal("a binary component without a simulation package must be flagged")
+	}
+}
+
+// Test_Simulation_Contents verifies a simulation package that declares anything
+// beyond its one Fuzz function and TestMain is flagged.
+func Test_Simulation_Contents(t *testing.T) {
+	t.Parallel()
+	files := simulation_test_files(simulation_fixture_source(
+		"invariant.Run_Test_Main(m, \"..\")",
+		"\n// Extra is disallowed.\ntype Extra struct{}\n"))
+	if !specification_flags(t, files, "may declare only a fuzz function and TestMain") {
+		t.Fatal("a simulation package with an extra declaration must be flagged")
+	}
+}
+
+// Test_Simulation_Test_Main verifies a simulation TestMain that is not exactly
+// invariant.Run_Test_Main(m, <dirs>) is flagged.
+func Test_Simulation_Test_Main(t *testing.T) {
+	t.Parallel()
+	files := simulation_test_files(simulation_fixture_source("invariant.Run_Test_Main(m)"))
+	if !specification_flags(t, files, "simulation TestMain must be exactly") {
+		t.Fatal("a simulation TestMain without directory arguments must be flagged")
+	}
+}
+
+// Test_Simulation_Coverage verifies a simulation TestMain whose directory arguments
+// do not register every internal package is flagged.
+func Test_Simulation_Coverage(t *testing.T) {
+	t.Parallel()
+	files := simulation_test_files(
+		simulation_fixture_source("invariant.Run_Test_Main(m, \"../other\")"))
+	if !specification_flags(t, files, "must register every internal package") {
+		t.Fatal("a simulation that omits an internal package must be flagged")
 	}
 }
 
@@ -2556,12 +2587,139 @@ func recorder_test_files(test string) (files map[string][]byte) {
 
 const recorder_fixture_source = "// Package fixture is a fixture.\npackage fixture\n"
 
+// Lints the recorder fixture with pkg treated as the shared library, since the
+// recorder rule now binds shared libraries only — a binary component's packages
+// are witnessed through its simulation instead, so pkg must be shared to be judged.
+func recorder_self_diagnostics(
+	t *testing.T, files map[string][]byte, exempt []string,
+) (diags []lint.Diagnostic) {
+	t.Helper()
+	fsys := fstest.MapFS{}
+	for name, content := range files {
+		fsys[name] = &fstest.MapFile{Data: content}
+	}
+	if _, present := fsys["go.mod"]; !present {
+		fsys["go.mod"] = &fstest.MapFile{Data: []byte(doctrine_root_go_module)}
+	}
+	diags, err := lint.Check_File_System(&lint.Check_File_System_Input{
+		Fsys: fsys, Scope: "pkg", Shared_Component: "pkg",
+		Word_Replacements:         test_word_replacements(),
+		Invariant_Exempt_Packages: exempt,
+	})
+	if err != nil {
+		t.Fatalf("Check_File_System: %v", err)
+	}
+	return diags
+}
+
+// Reports whether the recorder fixture produces a diagnostic containing fragment.
+func recorder_flags(t *testing.T, files map[string][]byte, fragment string) (found bool) {
+	t.Helper()
+	return specification_diagnosed(recorder_self_diagnostics(t, files, nil), fragment)
+}
+
+// Reports whether some diagnostic carries the given rule name — used where a
+// fragment match would be fooled by another rule mentioning the same word.
+func specification_named(diags []lint.Diagnostic, name string) (found bool) {
+	for _, diagnostic := range diags {
+		if diagnostic.Name == name {
+			return true
+		}
+	}
+	return false
+}
+
+// The binary-component fixture without its simulation package — a thin main and an
+// internal entry point — the base each simulation test builds on.
+func simulation_component_files() (files map[string][]byte) {
+	return map[string][]byte{
+		"pkg/main.go": []byte(
+			"// Package main is a fixture.\npackage main\n\nfunc main() {}\n"),
+		"pkg/internal/entry.go": []byte(
+			"// Package internal is a fixture.\npackage internal\n\n" +
+				"// Main is the entry point.\nfunc Main() {}\n"),
+	}
+}
+
+// The base fixture plus the given simulation package source, so the simulation rule
+// has a real component whose internal/simulation_test package it can judge.
+func simulation_test_files(sim string) (files map[string][]byte) {
+	files = simulation_component_files()
+	files["pkg/internal/simulation_test/sim_test.go"] = []byte(sim)
+	return files
+}
+
+// A simulation package source with the given TestMain call and any extra trailing
+// declarations, so each simulation test varies only the part it exercises.
+func simulation_fixture_source(call string, extra ...string) (source string) {
+	tail := ""
+	for _, piece := range extra {
+		tail += piece
+	}
+	return "package simulation_test\n\n" +
+		"import (\n\t\"testing\"\n\n\tinvariant \"fixture/shared/invariant\"\n)\n\n" +
+		"func TestMain(m *testing.M) {\n\t" + call + "\n}\n\n" +
+		"func Fuzz_Main(f *testing.F) {\n\t" +
+		"f.Fuzz(func(t *testing.T, data []byte) {})\n}\n" +
+		tail
+}
+
+// Test_Simulation_Wired_Passes verifies a simulation package with the canonical
+// TestMain and a lone Fuzz function satisfies the rule.
+func Test_Simulation_Wired_Passes(t *testing.T) {
+	t.Parallel()
+	files := simulation_test_files(
+		simulation_fixture_source("invariant.Run_Test_Main(m, \"..\")"))
+	if specification_named(specification_self_diagnostics(t, files), "simulation") {
+		t.Fatal("a canonical simulation package must not be flagged")
+	}
+}
+
+// Test_Simulation_Exempt_Passes verifies a binary component whose internal packages
+// are all exempt needs no simulation package.
+func Test_Simulation_Exempt_Passes(t *testing.T) {
+	t.Parallel()
+	files := simulation_component_files()
+	diags := invariant_exempt_self_diagnostics(t, files, []string{"pkg/internal"})
+	if specification_named(diags, "simulation") {
+		t.Fatal("a wholly exempt internal tree must not require a simulation package")
+	}
+}
+
+// Test_File_Count_Blackbox_Whitebox_Separate verifies external (foo_test) and
+// internal (foo) test files are counted as separate groups, not lumped together.
+func Test_File_Count_Blackbox_Whitebox_Separate(t *testing.T) {
+	t.Parallel()
+	files := map[string][]byte{
+		"pkg/fixture.go":    []byte("// Package fixture is a fixture.\npackage fixture\n"),
+		"pkg/white_test.go": []byte("package fixture\n"),
+		"pkg/black_test.go": []byte("package fixture_test\n"),
+	}
+	if specification_flags(t, files, "has 2 test files") {
+		t.Fatal("blackbox and whitebox test files must count as separate groups")
+	}
+}
+
+// Test_File_Count_Whitebox verifies whitebox (internal) test files carry their own
+// independent count, flagged when they exceed the per-file cap.
+func Test_File_Count_Whitebox(t *testing.T) {
+	t.Parallel()
+	files := map[string][]byte{
+		"pkg/fixture.go": []byte("// Package fixture is a fixture.\npackage fixture\n"),
+		"pkg/a_test.go":  []byte("package fixture\n"),
+		"pkg/b_test.go":  []byte("package fixture\n"),
+	}
+	if !specification_flags(t, files, "has 2 whitebox test files") {
+		t.Fatal("two whitebox test files must be flagged as their own group")
+	}
+}
+
 // Test_Recorder_Registration_No_Tests verifies a non-exempt package with no test
 // file at all is flagged: it can never verify its coverage.
 func Test_Recorder_Registration_No_Tests(t *testing.T) {
 	t.Parallel()
 	files := map[string][]byte{"pkg/rule.go": []byte(recorder_fixture_source)}
-	if !specification_flags(t, files, "must wire invariant.Run_Test_Main") {
+	if !recorder_flags(t, files, "must wire invariant.Run_Test_Main") {
 		t.Fatal("a package with no test file must be flagged")
 	}
 }
@@ -2573,7 +2731,7 @@ func Test_Recorder_Registration_Unwired(t *testing.T) {
 	files := recorder_test_files(
 		"package fixture_test\n\nimport (\n\t\"os\"\n\t\"testing\"\n)\n\n" +
 			"func TestMain(m *testing.M) {\n\tos.Exit(m.Run())\n}\n")
-	if !specification_flags(t, files, "TestMain must be exactly") {
+	if !recorder_flags(t, files, "TestMain must be exactly") {
 		t.Fatal("a TestMain that never calls Run_Test_Main must be flagged")
 	}
 }
@@ -2587,7 +2745,7 @@ func Test_Recorder_Registration_Extra_Statements(t *testing.T) {
 			"\tinvariant \"fixture/shared/invariant\"\n)\n\n" +
 			"func TestMain(m *testing.M) {\n\tinvariant.Run_Test_Main(m)\n" +
 			"\tinvariant.Run_Test_Main(m)\n}\n")
-	if !specification_flags(t, files, "TestMain must be exactly") {
+	if !recorder_flags(t, files, "TestMain must be exactly") {
 		t.Fatal("a TestMain with extra statements must be flagged")
 	}
 }
@@ -2600,7 +2758,7 @@ func Test_Recorder_Registration_Wired_Passes(t *testing.T) {
 		"package fixture_test\n\nimport (\n\t\"testing\"\n\n" +
 			"\tinvariant \"fixture/shared/invariant\"\n)\n\n" +
 			"func TestMain(m *testing.M) {\n\tinvariant.Run_Test_Main(m)\n}\n")
-	if specification_flags(t, files, "Run_Test_Main") {
+	if recorder_flags(t, files, "Run_Test_Main") {
 		t.Fatal("a TestMain wiring Run_Test_Main must not be flagged")
 	}
 }
@@ -2623,7 +2781,7 @@ func Test_Recorder_Registration_Main_Exempt(t *testing.T) {
 func Test_Recorder_Registration_Exempt_Passes(t *testing.T) {
 	t.Parallel()
 	files := map[string][]byte{"pkg/rule.go": []byte(recorder_fixture_source)}
-	diags := invariant_exempt_self_diagnostics(t, files, []string{"pkg"})
+	diags := recorder_self_diagnostics(t, files, []string{"pkg"})
 	if specification_diagnosed(diags, "Run_Test_Main") {
 		t.Fatal("an exempt package must not be flagged for missing wiring")
 	}

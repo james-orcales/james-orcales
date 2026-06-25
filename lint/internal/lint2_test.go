@@ -1541,15 +1541,6 @@ import  "strings"
 // F does.
 func F() (s string) { return strings.TrimSpace("x") }
 `}},
-		{Snapshot: snap.Init(`a_test.go:2:9: test file must declare 'package <X>_test'; got 'package fixture'`), Files: map[string]string{
-			"a_test.go": `// Package fixture is a fixture.
-package fixture
-
-import "testing"
-
-// Test_X is a fixture.
-func Test_X(t *testing.T) { t.Parallel() }
-`}},
 	})
 }
 
