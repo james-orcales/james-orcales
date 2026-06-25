@@ -2053,6 +2053,30 @@ func Test_IO_Gateway_Main_Exempt(t *testing.T) {
 	}
 }
 
+// Test_IO_Gateway_Time_Exempt verifies the time/default clock gateway may import
+// syscall — the clock is the one capability the loop is built on, not IO it carries.
+func Test_IO_Gateway_Time_Exempt(t *testing.T) {
+	t.Parallel()
+	fsys := fstest.MapFS{
+		"go.mod": &fstest.MapFile{Data: []byte(doctrine_root_go_module)},
+		"shared/time/default/system.go": &fstest.MapFile{Data: []byte(
+			"// Package time is a fixture.\npackage time\n\nimport \"syscall\"\n\n" +
+				"// Now reads the clock.\nfunc Now() (n int64) {\n" +
+				"\tstamp := syscall.Timespec{}\n\treturn stamp.Sec\n}\n")},
+	}
+	diags, err := lint.Check_File_System(&lint.Check_File_System_Input{
+		Fsys:             fsys,
+		Scope:            "shared/time/default",
+		Shared_Component: doctrine_shared_component_directory,
+	})
+	if err != nil {
+		t.Fatalf("Check_File_System: %v", err)
+	}
+	if specification_diagnosed(diags, "route IO through shared/io") {
+		t.Fatal("the time/default clock gateway may import syscall")
+	}
+}
+
 // Test_Sim_Script_Seed_Allowed verifies New_Sim taking only a seed is not flagged.
 func Test_Sim_Script_Seed_Allowed(t *testing.T) {
 	t.Parallel()
