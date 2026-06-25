@@ -672,10 +672,11 @@ func dot_element_reference_observed(
 // seeded set is the expected-coverage space the never-fired report scans after
 // the run; literal invariant.X selectors and *_Invariants bundles are recognised.
 //
-// Directories default to recorder.Packages_To_Analyze when none are passed. Each
-// assertion is keyed by its message; a duplicate message, or a message that is not a
-// string literal, fails registration (see recorder_check_duplicate_messages /
-// recorder_check_non_literal_messages).
+// Directories default to recorder.Packages_To_Analyze when none are passed; a
+// directory may glob, a `*` segment matching one path element and `**` any depth,
+// expanded against File_System. Each assertion is keyed by its message; a duplicate
+// message, or one that is not a string literal, fails registration (see
+// recorder_check_duplicate_messages / recorder_check_non_literal_messages).
 func Recorder_Register_Packages_For_Analysis(recorder *Recorder, directories ...string) {
 	if len(directories) > 0 {
 		recorder.Packages_To_Analyze = directories
@@ -692,24 +693,27 @@ func Recorder_Register_Packages_For_Analysis(recorder *Recorder, directories ...
 			absolute = filepath.Join(recorder.Working_Directory, absolute)
 		}
 		absolute = filepath.Clean(absolute)
-		if module_path == "" {
-			module_path, module_root = recorder_module(recorder, absolute)
-		}
-		if recorder.Package_Label == "" {
-			if module_root != "" {
-				relative := strings.TrimPrefix(absolute, module_root)
-				relative = strings.TrimPrefix(relative, "/")
-				if relative != "" {
-					recorder.Package_Label = relative
+		expanded_directories := recorder_expand_directories(recorder.File_System, absolute)
+		for _, expanded := range expanded_directories {
+			if module_path == "" {
+				module_path, module_root = recorder_module(recorder, expanded)
+			}
+			if recorder.Package_Label == "" {
+				if module_root != "" {
+					relative := strings.TrimPrefix(expanded, module_root)
+					relative = strings.TrimPrefix(relative, "/")
+					if relative != "" {
+						recorder.Package_Label = relative
+					}
 				}
 			}
+			parsed := recorder_parse_directory(&recorder_parse_directory_input{
+				File_System: recorder.File_System,
+				File_Set:    file_set,
+				Directory:   expanded,
+			})
+			files = append(files, parsed...)
 		}
-		parsed := recorder_parse_directory(&recorder_parse_directory_input{
-			File_System: recorder.File_System,
-			File_Set:    file_set,
-			Directory:   absolute,
-		})
-		files = append(files, parsed...)
 	}
 	index := &bundle_index{
 		File_System:   recorder.File_System,
@@ -822,6 +826,91 @@ func recorder_parse_directory(input *recorder_parse_directory_input) (files []*a
 		return nil
 	})
 	return files
+}
+
+// One frontier entry of the directory-glob walk: a directory reached so far and the
+// index of the next pattern segment to match against its children.
+type recorder_glob_state struct {
+	Directory string
+	Index     int
+}
+
+// Expands a directory pattern against the file system into concrete directories. A
+// `*` segment matches one path element; a `**` segment matches zero or more, so
+// `a/**` covers a and every directory beneath it. A pattern holding no `*` is
+// returned unchanged. Results are unique and lexically sorted for a stable seed.
+func recorder_expand_directories(file_system fs.FS, pattern string) (directories []string) {
+	if !strings.Contains(pattern, "*") {
+		return []string{pattern}
+	}
+	rooted := strings.HasPrefix(pattern, "/")
+	segments := strings.Split(strings.TrimPrefix(pattern, "/"), "/")
+	frontier := []recorder_glob_state{{Directory: ".", Index: 0}}
+	matched := map[string]bool{}
+	for len(frontier) > 0 {
+		current := frontier[len(frontier)-1]
+		frontier = frontier[:len(frontier)-1]
+		if current.Index == len(segments) {
+			matched[current.Directory] = true
+			continue
+		}
+		frontier = append(frontier,
+			recorder_glob_step(file_system, current, segments[current.Index])...)
+	}
+	for directory := range matched {
+		result := directory
+		if rooted {
+			result = "/" + directory
+		}
+		directories = append(directories, result)
+	}
+	sort.Strings(directories)
+	return directories
+}
+
+// The frontier entries reached by matching one pattern segment against current's
+// children. A `**` also matches in place (zero elements) and stays in play as it
+// descends, so it spans any depth.
+func recorder_glob_step(
+	file_system fs.FS, current recorder_glob_state, segment string,
+) (next []recorder_glob_state) {
+	children := recorder_child_directories(file_system, current.Directory)
+	if segment == "**" {
+		next = append(next, recorder_glob_state{
+			Directory: current.Directory, Index: current.Index + 1})
+		for _, child := range children {
+			next = append(next,
+				recorder_glob_state{Directory: child, Index: current.Index})
+		}
+		return next
+	}
+	for _, child := range children {
+		matched, _ := path.Match(segment, path.Base(child))
+		if !matched {
+			continue
+		}
+		next = append(next, recorder_glob_state{Directory: child, Index: current.Index + 1})
+	}
+	return next
+}
+
+// The immediate subdirectories of directory in the file system, as fs paths.
+func recorder_child_directories(file_system fs.FS, directory string) (children []string) {
+	entries, read_error := fs.ReadDir(file_system, directory)
+	if read_error != nil {
+		return nil
+	}
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+		child := entry.Name()
+		if directory != "." {
+			child = directory + "/" + entry.Name()
+		}
+		children = append(children, child)
+	}
+	return children
 }
 
 // An indexed_function is a discovered FuncDecl paired with the local-name →
