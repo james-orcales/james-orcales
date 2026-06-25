@@ -620,8 +620,9 @@ never an inline literal nor an imported selector.
 
 ### Numeric Coverage
 
-The bundle claims each boundary by Sometimes(v == V) or Always(v ==/!= V): MIN, MAX, 0, 1, 2, and
--1 for signed types; a float claims NaN and both infinities instead.
+The bundle witnesses each bound, MIN and MAX, with Sometimes(v == bound), and claims 0, 1, 2,
+and -1 for signed by Sometimes(v == V) or Always(v ==/!= V). A float claims NaN and both
+infinities instead.
 
 ### Count Bounds
 
@@ -635,8 +636,8 @@ selector.
 
 ### Count Coverage
 
-The bundle claims each length boundary by Sometimes(len(v) == V) or Always(len(v) ==/!= V): MIN,
-MAX, 0, 1, and 2.
+The bundle witnesses each length bound, MIN and MAX, with Sometimes(len(v) == bound), and claims
+0, 1, and 2 by Sometimes(len(v) == V) or Always(len(v) ==/!= V).
 
 ### Field Composition
 
