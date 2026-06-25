@@ -2094,6 +2094,7 @@ func check_file_system_doctrine(
 	})...)
 	output = append(output, check_time_import_gateway(parsed_files, components)...)
 	output = append(output, check_driver_gateway(parsed_files)...)
+	output = append(output, check_sim_script(parsed_files)...)
 	output = append(output,
 		check_io_gateway(parsed_files, components, input.Instrumentation_Packages)...)
 	output = append(output, check_package_documentation_comment(parsed_files)...)
@@ -10241,7 +10242,7 @@ func io_gateway_import_diagnostics(pf parsed_file) (diags []Diagnostic) {
 // Reports whether an import path is raw IO stdlib banned outside the gateway.
 func io_gateway_banned_import(import_path string) (banned bool) {
 	switch import_path {
-	case "net", "net/http", "syscall", "os/exec", "bufio":
+	case "net", "net/http", "syscall", "os/exec", "bufio", "crypto/tls", "os/signal":
 		return true
 	}
 	return false
@@ -10319,4 +10320,148 @@ func component_index_io_gateway(components *component_index) (gateway string) {
 		return m.Root + "/io/default"
 	}
 	return ""
+}
+
+// A simulated backend's only input is its seed: New_Sim(seed) is the sole entry, the sim
+// type stays unexported, and no exported Sim-family surface lets a caller pre-load
+// outcomes. This flags the scripting API trying to return — an exported Sim type or Sim_*
+// function, or a New_Sim parameter that is not the seed — in the package defining New_Sim,
+// so a run stays a pure function of its seed and the fuzzer explores the whole space.
+func check_sim_script(parsed_files []parsed_file) (diags []Diagnostic) {
+	directory := sim_script_directory(parsed_files)
+	if directory == "" {
+		return nil
+	}
+	for _, pf := range parsed_files {
+		if path.Dir(pf.Path) != directory {
+			continue
+		}
+		if strings.HasSuffix(pf.Path, "_test.go") {
+			continue
+		}
+		for _, declaration := range pf.File.Decls {
+			diags = append(diags,
+				sim_script_declaration_diagnostics(pf, declaration)...)
+		}
+	}
+	return diags
+}
+
+// Returns the directory of the package defining New_Sim, or "" when none does.
+func sim_script_directory(parsed_files []parsed_file) (directory string) {
+	for _, pf := range parsed_files {
+		for _, declaration := range pf.File.Decls {
+			function, is_function := declaration.(*ast.FuncDecl)
+			if !is_function {
+				continue
+			}
+			if function.Recv != nil {
+				continue
+			}
+			if function.Name.Name != "New_Sim" {
+				continue
+			}
+			return path.Dir(pf.Path)
+		}
+	}
+	return ""
+}
+
+// Flags one declaration that reopens the scripting surface: an exported Sim type or Sim_*
+// function, or a New_Sim whose parameter is not the seed.
+func sim_script_declaration_diagnostics(pf parsed_file, declaration ast.Decl) (diags []Diagnostic) {
+	function, is_function := declaration.(*ast.FuncDecl)
+	if is_function {
+		return sim_script_function_diagnostics(pf, function)
+	}
+	generic, is_generic := declaration.(*ast.GenDecl)
+	if !is_generic {
+		return nil
+	}
+	return sim_script_type_diagnostics(pf, generic)
+}
+
+// Flags New_Sim carrying a non-seed parameter, or any exported Sim_* helper function.
+func sim_script_function_diagnostics(
+	pf parsed_file, function *ast.FuncDecl,
+) (diags []Diagnostic) {
+	if function.Recv != nil {
+		return nil
+	}
+	if function.Name.Name == "New_Sim" {
+		return sim_script_constructor_diagnostics(pf, function)
+	}
+	if !sim_script_named(function.Name.Name) {
+		return nil
+	}
+	return []Diagnostic{sim_script_diagnostic(pf, function,
+		function.Name.Name+" is a scripting entry; a sim's only input is its seed")}
+}
+
+// Flags New_Sim unless it takes exactly one integer seed and nothing else.
+func sim_script_constructor_diagnostics(
+	pf parsed_file, function *ast.FuncDecl,
+) (diags []Diagnostic) {
+	params := function.Type.Params
+	count := 0
+	if params != nil {
+		for _, field := range params.List {
+			count += len(field.Names)
+		}
+	}
+	if count == 1 {
+		if sim_script_seed_type(params.List[0].Type) {
+			return nil
+		}
+	}
+	return []Diagnostic{sim_script_diagnostic(pf, function,
+		"New_Sim takes only the seed; a parameter that carries outcomes is scripting")}
+}
+
+// Flags an exported Sim type, which would hand a caller the handle to script.
+func sim_script_type_diagnostics(pf parsed_file, generic *ast.GenDecl) (diags []Diagnostic) {
+	for _, specification := range generic.Specs {
+		type_specification, is_type := specification.(*ast.TypeSpec)
+		if !is_type {
+			continue
+		}
+		if !sim_script_named(type_specification.Name.Name) {
+			continue
+		}
+		diags = append(diags, sim_script_diagnostic(pf, type_specification,
+			type_specification.Name.Name+" exposes the sim; keep it unexported"))
+	}
+	return diags
+}
+
+// Reports whether name is the exported Sim-family surface: the Sim type or a Sim_* helper.
+func sim_script_named(name string) (named bool) {
+	if name == "Sim" {
+		return true
+	}
+	return strings.HasPrefix(name, "Sim_")
+}
+
+// Reports whether expression is an integer type — the shape a seed parameter takes.
+func sim_script_seed_type(expression ast.Expr) (seed bool) {
+	identifier, is_identifier := expression.(*ast.Ident)
+	if !is_identifier {
+		return false
+	}
+	switch identifier.Name {
+	case "uint64", "uint32", "int64", "int", "uint":
+		return true
+	}
+	return false
+}
+
+// One sim-scripting diagnostic anchored at node.
+func sim_script_diagnostic(pf parsed_file, node ast.Node, message string) (diag Diagnostic) {
+	return Diagnostic{
+		Position: pf.File_Set.Position(node.Pos()),
+		Name:     "sim-script",
+		Want:     "drive the sim only by its seed",
+		Message:  message,
+		Tier:     1,
+	}
 }

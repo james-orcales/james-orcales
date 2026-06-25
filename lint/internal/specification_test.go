@@ -1925,6 +1925,18 @@ func Test_Event_Loop_Gateway(t *testing.T) {
 	}
 }
 
+// Test_Event_Loop_Seed verifies a New_Sim whose parameter carries outcomes, not a seed,
+// is flagged.
+func Test_Event_Loop_Seed(t *testing.T) {
+	t.Parallel()
+	files := specification_one_file("package fixture\n\n" +
+		"// New_Sim builds a sim.\nfunc New_Sim(payloads [][]byte) (count int) {\n" +
+		"\treturn len(payloads)\n}\n")
+	if !specification_flags(t, files, "New_Sim takes only the seed") {
+		t.Fatal("a New_Sim parameter that carries outcomes must be flagged")
+	}
+}
+
 // Test_Driver_Gateway_Main_Allowed verifies package main may construct a loop.
 func Test_Driver_Gateway_Main_Allowed(t *testing.T) {
 	t.Parallel()
@@ -2024,6 +2036,27 @@ func Test_IO_Gateway_Instrumentation_Exempt(t *testing.T) {
 	}
 	if specification_diagnosed(diags, "route IO through shared/io") {
 		t.Fatal("an instrumentation package may do raw IO")
+	}
+}
+
+// Test_Sim_Script_Seed_Allowed verifies New_Sim taking only a seed is not flagged.
+func Test_Sim_Script_Seed_Allowed(t *testing.T) {
+	t.Parallel()
+	files := specification_one_file("package fixture\n\n" +
+		"// New_Sim builds a sim.\nfunc New_Sim(seed uint64) (count int) { return 0 }\n")
+	if specification_flags(t, files, "New_Sim takes only the seed") {
+		t.Fatal("New_Sim taking only a seed must be allowed")
+	}
+}
+
+// Test_Sim_Script_Export_Flagged verifies an exported Sim_ function is flagged.
+func Test_Sim_Script_Export_Flagged(t *testing.T) {
+	t.Parallel()
+	files := specification_one_file("package fixture\n\n" +
+		"// New_Sim builds a sim.\nfunc New_Sim(seed uint64) (count int) { return 0 }\n\n" +
+		"// Sim_Raise scripts a signal.\nfunc Sim_Raise(signal int) {}\n")
+	if !specification_flags(t, files, "is a scripting entry") {
+		t.Fatal("an exported Sim_ function must be flagged")
 	}
 }
 
