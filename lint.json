@@ -8,6 +8,7 @@
   "deterministic_packages": [
     "lint/internal/diagnostic",
     "lint/internal/specification",
+    "lint/internal/vcs",
     "markdown_to_pdf",
     "disk_usage",
     "shared/cli",
@@ -32,6 +33,7 @@
           "lint/internal",
           "lint/internal/diagnostic",
           "lint/internal/specification",
+          "lint/internal/vcs",
           "disk_usage",
           "markdown_to_pdf",
           "markdown_to_pdf/internal",

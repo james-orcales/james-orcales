@@ -285,62 +285,6 @@ func Test_Markdown_Agent_Documentation_Pairing(t *testing.T) {
 	}
 }
 
-// Test_Commits_Subject_Size verifies a subject over the character cap is flagged.
-func Test_Commits_Subject_Size(t *testing.T) {
-	t.Parallel()
-	diags := lint.Git_Input_Check(lint.Git_Input{
-		Enabled: true,
-		Non_Merge_Commits: []lint.Git_Commit{
-			{Hash: "abc", Subject: "feat: " + strings.Repeat("x", 200)},
-		},
-	})
-	if !specification_diagnosed(diags, "commit subject is") {
-		t.Fatal("an over-long subject must be flagged")
-	}
-}
-
-// Test_Commits_Conventional_Subjects verifies a non-conventional subject is flagged.
-func Test_Commits_Conventional_Subjects(t *testing.T) {
-	t.Parallel()
-	diags := lint.Git_Input_Check(lint.Git_Input{
-		Enabled: true,
-		Non_Merge_Commits: []lint.Git_Commit{
-			{Hash: "abc", Subject: "did some stuff"},
-		},
-	})
-	if !specification_diagnosed(diags, "non-conventional commit subject") {
-		t.Fatal("a non-conventional subject must be flagged")
-	}
-}
-
-// Test_Commits_Fixup_Commits verifies a fixup! subject is flagged.
-func Test_Commits_Fixup_Commits(t *testing.T) {
-	t.Parallel()
-	diags := lint.Git_Input_Check(lint.Git_Input{
-		Enabled: true,
-		Non_Merge_Commits: []lint.Git_Commit{
-			{Hash: "abc", Subject: "fixup! feat: thing"},
-		},
-	})
-	if !specification_diagnosed(diags, "fixup commit on branch") {
-		t.Fatal("a fixup commit must be flagged")
-	}
-}
-
-// Test_Commits_Merge_Commits verifies a non-subtree merge commit is flagged.
-func Test_Commits_Merge_Commits(t *testing.T) {
-	t.Parallel()
-	diags := lint.Git_Input_Check(lint.Git_Input{
-		Enabled: true,
-		Merge_Commits: []lint.Git_Commit{
-			{Hash: "abc", Subject: "Merge branch 'feature' into main"},
-		},
-	})
-	if !specification_diagnosed(diags, "merge commit on branch") {
-		t.Fatal("a merge commit must be flagged")
-	}
-}
-
 // Test_Component_Layout_Single_Module verifies a nested go.mod — a second
 // module inside the one-module repo — is flagged.
 func Test_Component_Layout_Single_Module(t *testing.T) {

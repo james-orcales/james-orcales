@@ -31,6 +31,7 @@ import (
 
 	"github.com/james-orcales/james-orcales/lint/internal/diagnostic"
 	"github.com/james-orcales/james-orcales/lint/internal/specification"
+	"github.com/james-orcales/james-orcales/lint/internal/vcs"
 )
 
 const line_chars_max = 100
@@ -473,23 +474,15 @@ const banned_segment_chars_max = 9
 
 const function_lines_max = 70
 
-// Git's default short-hash width.
-const git_short_hash_chars = 10
-
 // Git's full SHA-1 width — the maximum a `%H` format will produce. Used
 // as the hard bound for hash-shaped inputs when git is in SHA-1 mode.
 const git_full_hash_chars = 40
 
 // Git's SHA-256 hash width — git's optional SHA-256 object format. Used
-// as the hard bound for hash-shaped inputs since git_input_check_short_hash
-// must accept either format.
+// as the hard bound for hash-shaped inputs, which must accept either format.
 const git_full_hash_chars_sha_256 = 64
 
 const lines_per_file_max = 10000
-
-// Mirrors line_chars_max used by the source-line check: code-review UIs
-// truncate around 72–100 chars and longer subjects force horizontal scroll.
-const commit_subject_chars_max = 100
 
 // Diagnostics_per_call_max caps the slice length of `diags []Diagnostic`
 // returns. A single check may emit one diagnostic per source line at worst,
@@ -603,16 +596,10 @@ type Configuration struct {
 	Invariant_Exempt_Packages []string `json:"invariant_exempt_packages"`
 }
 
-// Git_Commit is one commit's identity for the git-history tier:
-// the full hash and the subject line of the commit message.
-type Git_Commit struct {
-	// Hash is the commit's full object name, used to attribute a diagnostic
-	// to the offending commit.
-	Hash string
-	// Subject is the first line of the commit message — the only part the
-	// commit-history rules inspect.
-	Subject string
-}
+// Git_Commit is one commit's identity for the git-history tier, aliased from the
+// commits package so this seam keeps naming it Git_Commit while the type and its
+// rules live in a deterministic leaf.
+type Git_Commit = vcs.Commit
 
 // Git_Input drives the git-history tier. Zero value (Enabled=false) skips
 // the tier — used when HEAD is on main, when the binary isn't run from a
@@ -885,12 +872,6 @@ var snake_case_re = regexp.MustCompile(`^[a-z][a-z0-9]*(_[a-z0-9]+)*$`)
 // APIs" could not have a conformant Test_<...>_Unbounded_APIs name.
 var ada_case_re = regexp.MustCompile(
 	`^([A-Z][a-z0-9]*|[A-Z][A-Z0-9]*s?)(_([A-Z][a-z0-9]*|[A-Z][A-Z0-9]*s?))*$`)
-
-// Conventional Commits subject: lowercase type, optional (scope), optional
-// `!` breaking-change marker, `: `, non-empty description. Scope contents
-// are not whitelisted — package paths and ad-hoc area names both occur in
-// the wild and a strict charset would generate more friction than signal.
-var conventional_commit_re = regexp.MustCompile(`^[a-z]+(\([^)]+\))?!?: \S`)
 
 func suggest_split_words(name string) (words []string) {
 	var current []rune
@@ -2140,171 +2121,10 @@ func Git_Input_Check(input Git_Input) (diags []Diagnostic) {
 				"set actions/checkout fetch-depth: 0",
 		}}
 	}
-	diags = append(diags, git_input_check_merge_diagnostics(input.Merge_Commits)...)
-	diags = append(diags, git_input_check_non_merge_diagnostics(input.Non_Merge_Commits)...)
-	return diags
-}
-
-// Flags each merge commit on the branch (rebase-instead violation) plus any
-// over-length subject. Subtree merges are exempt. Split out of Git_Input_Check
-// so each commit-slice carries its boundary coverage in a function that fits
-// the length cap.
-func git_input_check_merge_diagnostics(commits []Git_Commit) (diags []Diagnostic) {
-	for _, c := range commits {
-		if c.Subject == "" {
-			continue
-		}
-		filename := "<git:" + git_input_check_short_hash(c.Hash) + ">"
-		if len(c.Subject) > commit_subject_chars_max {
-			diags = append(diags, Diagnostic{
-				Position: token.Position{Filename: filename},
-				Name:     "commit-subject-length",
-				Want: fmt.Sprintf(
-					"subject ≤ %d chars", commit_subject_chars_max),
-				Message: fmt.Sprintf(
-					"commit subject is %d chars (max %d)",
-					len(c.Subject), commit_subject_chars_max),
-			})
-			// Helpers below assert subject ≤ commit_subject_chars_max as
-			// a precondition; over-limit subjects are fully diagnosed by
-			// the length entry above, so short-circuit before calling them.
-			continue
-		}
-		if git_input_check_is_subtree_merge_subject(c.Subject) {
-			continue
-		}
-		diags = append(diags, Diagnostic{
-			Position: token.Position{Filename: filename},
-			Name:     "no-merge-commits",
-			Want: "rebase onto main: git fetch origin main && " +
-				"git rebase origin/main",
-			Message: "merge commit on branch: " + c.Subject,
-		})
-	}
-	return diags
-}
-
-// Flags fixup commits (autosquash-instead) and non-conventional subjects on
-// the branch, plus any over-length subject. Split out of Git_Input_Check for
-// the same length-cap reason as the merge variant.
-func git_input_check_non_merge_diagnostics(commits []Git_Commit) (diags []Diagnostic) {
-	for _, c := range commits {
-		if c.Subject == "" {
-			continue
-		}
-		if len(c.Subject) > commit_subject_chars_max {
-			filename := "<git:" + git_input_check_short_hash(c.Hash) + ">"
-			diags = append(diags, Diagnostic{
-				Position: token.Position{Filename: filename},
-				Name:     "commit-subject-length",
-				Want: fmt.Sprintf(
-					"subject ≤ %d chars", commit_subject_chars_max),
-				Message: fmt.Sprintf(
-					"commit subject is %d chars (max %d)",
-					len(c.Subject), commit_subject_chars_max),
-			})
-			continue
-		}
-		if git_input_check_is_fixup_subject(c.Subject) {
-			filename := "<git:" + git_input_check_short_hash(c.Hash) + ">"
-			diags = append(diags, Diagnostic{
-				Position: token.Position{Filename: filename},
-				Name:     "no-fixup-commits",
-				Want:     "autosquash: git rebase -i --autosquash origin/main",
-				Message:  "fixup commit on branch: " + c.Subject,
-			})
-			// Fixup subjects aren't conventional by construction (e.g.
-			// `fixup! feat: foo`); skip the conventional check so they
-			// don't double-flag. The autosquash that removes the fixup
-			// also removes the violation.
-			continue
-		}
-		if !conventional_commit_re.MatchString(c.Subject) {
-			filename := "<git:" + git_input_check_short_hash(c.Hash) + ">"
-			diags = append(diags, Diagnostic{
-				Position: token.Position{Filename: filename},
-				Name:     "conventional-commits",
-				Want: "subject like: type(scope)?!?: description " +
-					"(https://www.conventionalcommits.org/)",
-				Message: "non-conventional commit subject: " + c.Subject,
-			})
-		}
-	}
-	return diags
-}
-
-// Matches the default subjects that `git subtree add` and `git subtree pull`
-// produce. Both forms are documented in git-subtree(1) and have remained
-// stable for years; commits authored by the porcelain match exactly.
-// Hand-authored subtree merges with custom messages aren't recognised and
-// will trip the no-merge-commits rule — intentional, since custom-worded
-// merges are indistinguishable from regular merges.
-func git_input_check_is_subtree_merge_subject(subject string) (yes bool) {
-	if strings.HasPrefix(subject, "Add '") {
-		if strings.Contains(subject, "' from commit '") {
-			return true
-		}
-	}
-	if strings.HasPrefix(subject, "Merge commit '") {
-		if strings.Contains(subject, "' as '") {
-			return true
-		}
-	}
-	return false
-}
-
-// Matches commit subjects that should have been autosquashed before merge.
-// Two families: the literal fixup!/squash! prefixes that `git commit --fixup`
-// produces, and review-comment phrasings that show up when people address
-// feedback in a follow-up commit instead of amending. The phrasing checks
-// are conjunctive (verb + noun + "review") so isolated mentions of "review"
-// or "comment" in unrelated subjects don't get caught.
-func git_input_check_is_fixup_subject(subject string) (yes bool) {
-	if strings.HasPrefix(subject, "fixup!") {
-		return true
-	}
-	if strings.HasPrefix(subject, "squash!") {
-		return true
-	}
-	s := strings.ToLower(subject)
-	has_review := strings.Contains(s, "review")
-	has_address := strings.Contains(s, "address")
-	has_apply := strings.Contains(s, "apply")
-	has_action := has_address || has_apply
-	has_comment := strings.Contains(s, "comment")
-	has_feedback := strings.Contains(s, "feedback")
-	has_nit := strings.Contains(s, "nit")
-	has_target := has_comment || has_feedback || has_nit
-	if has_review {
-		if has_action {
-			if has_target {
-				return true
-			}
-		}
-	}
-	if strings.Contains(s, "cr comment") {
-		return true
-	}
-	if strings.Contains(s, "code review comment") {
-		return true
-	}
-	if strings.Contains(s, "review fix") {
-		return true
-	}
-	if strings.Contains(s, "review nit") {
-		return true
-	}
-	return false
-}
-
-// Truncates a git hash to git_short_hash_chars chars. Pass-through for
-// already-short or malformed inputs so test fixtures don't have to supply
-// full 40-char hashes.
-func git_input_check_short_hash(h string) (s string) {
-	if len(h) > git_short_hash_chars {
-		return h[:git_short_hash_chars]
-	}
-	return h
+	return vcs.Check(&vcs.Check_Input{
+		Merge_Commits:     input.Merge_Commits,
+		Non_Merge_Commits: input.Non_Merge_Commits,
+	})
 }
 
 // File-fragmentation check. Splitting code across many tiny files makes a

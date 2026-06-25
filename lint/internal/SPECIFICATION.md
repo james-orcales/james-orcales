@@ -85,30 +85,6 @@ A CLAUDE.md, AGENTS.md, or SKILL.md spans at most 100 lines.
 AGENTS.md and CLAUDE.md exist as a byte-identical pair in one directory, at the repository root or
 one level below.
 
-# Commits
-
-These rules govern the commit history on a branch.
-
-### Subject Size
-
-A commit subject runs to at most 100 characters.
-
-### Conventional Subjects
-
-A commit subject is a lowercase type, an optional (scope), an optional ! breaking marker, then a
-colon, a space, and a non-empty description — the conventional-commits form.
-
-### Fixup Commits
-
-A subject is a fixup when it starts with fixup! or squash!, pairs review with address or apply and
-with comment, feedback, or nit, or reads cr comment, code review comment, review fix, or review nit;
-autosquash such commits into their target.
-
-### Merge Commits
-
-A branch other than `main/master` carries no merge commit; a git-subtree merge is the sole
-exception; required when vendoring another repo's history.
-
 # Component Layout
 
 The repo is one Go module; each top-level directory of Go code is a component. The layout splits
