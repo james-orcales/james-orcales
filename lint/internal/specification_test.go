@@ -2039,6 +2039,20 @@ func Test_IO_Gateway_Instrumentation_Exempt(t *testing.T) {
 	}
 }
 
+// Test_IO_Gateway_Main_Exempt verifies package main may do raw IO — the un-simulated
+// wiring shell the framework never witnesses.
+func Test_IO_Gateway_Main_Exempt(t *testing.T) {
+	t.Parallel()
+	files := map[string][]byte{
+		"pkg/main.go": []byte("// Package main is a fixture.\npackage main\n\n" +
+			"import \"net\"\n\n" +
+			"// main dials.\nfunc main() {\n\tnet.ParseIP(\"\")\n}\n"),
+	}
+	if specification_flags(t, files, "route IO through shared/io") {
+		t.Fatal("package main may do raw IO")
+	}
+}
+
 // Test_Sim_Script_Seed_Allowed verifies New_Sim taking only a seed is not flagged.
 func Test_Sim_Script_Seed_Allowed(t *testing.T) {
 	t.Parallel()

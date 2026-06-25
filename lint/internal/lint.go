@@ -10191,15 +10191,18 @@ func driver_gateway_constructor(name string) (constructor bool) {
 }
 
 // Raw blocking and non-blocking IO stdlib lives only in the io/default gateway; every
-// other package routes IO through shared/io. This bans the raw-IO imports and calls
-// outside the gateway, the instrumentation packages (a diagnostics side channel), and
-// tests (their own IO harness).
+// other package routes IO through shared/io. Exempt: the instrumentation packages (a
+// diagnostics side channel), tests (their own IO harness), and package main (the
+// un-simulated wiring shell the framework never witnesses).
 func check_io_gateway(
 	parsed_files []parsed_file, components *component_index, instrumentation []string,
 ) (diags []Diagnostic) {
 	gateway := component_index_io_gateway(components)
 	for _, pf := range parsed_files {
 		if strings.HasSuffix(pf.Path, "_test.go") {
+			continue
+		}
+		if pf.File.Name.Name == "main" {
 			continue
 		}
 		if check_no_unbounded_apis_is_generated(pf.File) {
