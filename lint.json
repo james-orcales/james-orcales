@@ -51,6 +51,8 @@
           "shared/time/default",
           "shared/vsr",
           "shared/vsr/simulation",
+          "shared/bzip2",
+          "shared/zip",
           "sloc",
           "sloc/internal"
   ],
