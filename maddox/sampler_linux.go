@@ -438,7 +438,7 @@ func read_cache_size(level int) (size uint64) {
 	invariant.Int_Invariants(level, "read_cache_size.level")
 	path := "/sys/devices/system/cpu/cpu0/cache/index" +
 		strconv.Itoa(level-1) + "/size"
-	text := strings.TrimSpace(string(read_proc_file(path)))
+	text := strings.TrimSpace(string(read_proc_file(proc_path(path))))
 	if len(text) == 0 {
 		return 0
 	}
