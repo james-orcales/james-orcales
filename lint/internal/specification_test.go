@@ -2303,10 +2303,10 @@ func Test_Type_Invariant_Count_Slice_Passes(t *testing.T) {
 	}
 }
 
-// Test_Type_Invariant_Count_Bound_Witnessed verifies a length bundle that claims
-// its MAX/MIN with Always(!=) rather than witnessing them with Sometimes(==) is
-// flagged: the bound must be reachable, not asserted unreachable.
-func Test_Type_Invariant_Count_Bound_Witnessed(t *testing.T) {
+// Test_Type_Invariant_Count_Bound_Not_Claimed verifies a length bundle whose
+// MAX/MIN appear only in the Always guards — with no boundary claim for them — is
+// not flagged: the guard is the bound, not a claimed value.
+func Test_Type_Invariant_Count_Bound_Not_Claimed(t *testing.T) {
 	t.Parallel()
 	files := specification_one_file("package fixture\n\n" +
 		"import \"fixture/shared/invariant\"\n\n" +
@@ -2316,15 +2316,13 @@ func Test_Type_Invariant_Count_Bound_Witnessed(t *testing.T) {
 		"func Buffer_Invariants(v Buffer, namespace invariant.Namespace) {\n" +
 		"\tinvariant.Always(len(v) <= Buffer_Max, \"max bound\")\n" +
 		"\tinvariant.Always(len(v) >= Buffer_Min, \"min bound\")\n" +
-		"\tinvariant.Always(len(v) != Buffer_Max, \"below max\")\n" +
-		"\tinvariant.Always(len(v) != Buffer_Min, \"above min\")\n" +
 		"\tinvariant.Dot_Product(namespace,\n" +
 		"\t\tinvariant.Sometimes(len(v) == 0, \"zero\"),\n" +
 		"\t\tinvariant.Sometimes(len(v) == 1, \"one\"),\n" +
 		"\t\tinvariant.Sometimes(len(v) == 2, \"two\"),\n" +
 		"\t)\n}\n")
-	if !specification_flags(t, files, "must witness Buffer_Max") {
-		t.Fatal("a length bundle that does not witness its MAX must be flagged")
+	if specification_flags(t, files, "must claim") {
+		t.Fatal("a length bundle need not claim its MAX/MIN — the guard is the bound")
 	}
 }
 

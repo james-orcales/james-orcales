@@ -263,12 +263,8 @@ type numeric_facts struct {
 	Upper_Name string
 	Lower_Name string
 	// Claimed_Values holds every boundary value the bundle names in any equality or
-	// inequality claim, by either Always or Sometimes — satisfies the 0/1/2/-1 claims.
+	// inequality claim, by either Always or Sometimes.
 	Claimed_Values map[string]bool
-	// Witnessed_Values holds only the values a Sometimes(subject == V) witnesses
-	// reachable — the stricter proof MAX and MIN require: a bound asserted unreachable
-	// with Always(!= bound) is never tested at its edge.
-	Witnessed_Values map[string]bool
 }
 
 // Collects bound and coverage diagnostics for one numeric bundle.
@@ -282,7 +278,6 @@ func numeric_bundle_diagnostics(input *numeric_bundle_input) (diags []Diagnostic
 // Walks the bundle body, summarizing every Always/Sometimes condition into facts.
 func numeric_collect_facts(input *numeric_bundle_input) (facts numeric_facts) {
 	facts.Claimed_Values = map[string]bool{}
-	facts.Witnessed_Values = map[string]bool{}
 	is_subject := numeric_subject_matcher(input)
 	ast.Inspect(input.Bundle.Body, func(node ast.Node) (recurse bool) {
 		call, is_call := node.(*ast.CallExpr)
@@ -387,31 +382,12 @@ func numeric_classify_condition(
 	}
 	if binary.Op == token.EQL {
 		numeric_record_claim(binary, is_subject, facts)
-		if !is_always {
-			numeric_record_witness(binary, is_subject, facts)
-		}
 		return
 	}
 	if binary.Op == token.NEQ {
 		numeric_record_claim(binary, is_subject, facts)
 		return
 	}
-}
-
-// Records that a Sometimes(subject == V) witnesses V reachable — the proof MAX and
-// MIN require beyond a bare claim.
-func numeric_record_witness(
-	binary *ast.BinaryExpr, is_subject numeric_subject, facts *numeric_facts,
-) {
-	operand := numeric_other_operand(binary, is_subject)
-	if operand == nil {
-		return
-	}
-	label := numeric_value_label(operand)
-	if label == "" {
-		return
-	}
-	facts.Witnessed_Values[label] = true
 }
 
 // Records an Always(v <= C) upper bound guard and its operand name.
@@ -507,7 +483,10 @@ func numeric_bound_diagnostics(
 }
 
 // Reports the boundary-coverage diagnostics for one bundle: a claim for each
-// required value, plus the MAX/MIN claims tied to the bound constants (non-float).
+// required interior value. The MAX/MIN bound itself is the Always(<=)/Always(>=)
+// guard (see numeric_bound_diagnostics), not a boundary claim — claiming it as
+// Always(!= bound) is a loophole and witnessing it as Sometimes(== bound) forces
+// allocating the max, so neither is required here.
 func numeric_coverage_diagnostics(
 	facts numeric_facts, input *numeric_bundle_input,
 ) (diags []Diagnostic) {
@@ -518,39 +497,7 @@ func numeric_coverage_diagnostics(
 		}
 		diags = append(diags, numeric_missing_claim(label, input))
 	}
-	if input.Kind == "float" {
-		return diags
-	}
-	diags = append(diags, numeric_limit_claim(facts, facts.Upper_Name, input)...)
-	diags = append(diags, numeric_limit_claim(facts, facts.Lower_Name, input)...)
 	return diags
-}
-
-// Reports the missing-witness diagnostic for a bound constant the bundle never
-// witnesses reachable with a Sometimes(subject == bound); silent when the bound is
-// not a known package constant. A bare claim (Always ==/!=) does not satisfy a
-// bound — the edge must be exercised, not asserted away.
-func numeric_limit_claim(
-	facts numeric_facts, name string, input *numeric_bundle_input,
-) (diags []Diagnostic) {
-
-	if !numeric_is_package_constant(name, input.Constants) {
-		return nil
-	}
-	if facts.Witnessed_Values[name] {
-		return nil
-	}
-	return []Diagnostic{numeric_missing_witness(name, input)}
-}
-
-// Builds the diagnostic for a bound the bundle never witnesses reachable.
-func numeric_missing_witness(label string, input *numeric_bundle_input) (diag Diagnostic) {
-	subject := numeric_subject_text(input)
-	return Diagnostic{
-		Position: input.File_Set.Position(input.Bundle.Name.Pos()),
-		Message: input.Bundle.Name.Name + " must witness " + label +
-			" via Sometimes(" + subject + " == " + label + ")",
-	}
 }
 
 // Builds the diagnostic for a boundary value the bundle never claims.

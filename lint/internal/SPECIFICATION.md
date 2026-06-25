@@ -620,9 +620,9 @@ never an inline literal nor an imported selector.
 
 ### Numeric Coverage
 
-The bundle witnesses each bound, MIN and MAX, with Sometimes(v == bound), and claims 0, 1, 2,
-and -1 for signed by Sometimes(v == V) or Always(v ==/!= V). A float claims NaN and both
-infinities instead.
+The bundle claims 0, 1, 2, and -1 for signed by Sometimes(v == V) or Always(v ==/!= V); a float
+claims NaN and both infinities instead. The bound itself is the Always(v <= MAX)/Always(v >= MIN)
+guard, not a boundary claim.
 
 ### Count Bounds
 
@@ -636,8 +636,8 @@ selector.
 
 ### Count Coverage
 
-The bundle witnesses each length bound, MIN and MAX, with Sometimes(len(v) == bound), and claims
-0, 1, and 2 by Sometimes(len(v) == V) or Always(len(v) ==/!= V).
+The bundle claims 0, 1, and 2 by Sometimes(len(v) == V) or Always(len(v) ==/!= V). The length
+bound itself is the Always(len(v) <= MAX)/Always(len(v) >= MIN) guard, not a boundary claim.
 
 ### Field Composition
 
