@@ -98,10 +98,11 @@ const non_empty_min = 1
 const split_suggestion_chars_min = 3
 
 // Naming_style_chars_min / naming_style_chars_max bound the length of the
-// `Want` field on suggest_input. Callers pass exactly one of "Ada_Case" (8)
-// or "snake_case" (10) — the only two style words the casing checks know.
+// `Want` field on suggest_input. Callers pass exactly one of "Ada_Case" (8),
+// "snake_case" (10), or "SCREAMING_SNAKE_CASE" (20) — the three style words
+// the casing checks know.
 const naming_style_chars_min = 8
-const naming_style_chars_max = 10
+const naming_style_chars_max = 20
 
 // Stream_check_name_chars_min / stream_check_name_chars_max bound the
 // `Name` field on check_function_stream constructors. Shortest is "symlink"
@@ -953,6 +954,11 @@ var snake_case_re = regexp.MustCompile(`^[a-z][a-z0-9]*(_[a-z0-9]+)*$`)
 var ada_case_re = regexp.MustCompile(
 	`^([A-Z][a-z0-9]*|[A-Z][A-Z0-9]*s?)(_([A-Z][a-z0-9]*|[A-Z][A-Z0-9]*s?))*$`)
 
+// Screaming_snake_case_re binds an exported top-level const, same shape as
+// snake_case_re uppercased. No acronym-plural arm is needed like ada_case_re's:
+// every segment is already all-caps, so "IDS" needs no special-casing.
+var screaming_snake_case_re = regexp.MustCompile(`^[A-Z][A-Z0-9]*(_[A-Z0-9]+)*$`)
+
 func suggest_split_words(name string) (words []string) {
 	var current []rune
 	runes := []rune(name)
@@ -1004,6 +1010,10 @@ func suggest(input *suggest_input) (output string) {
 	for i, w := range words {
 		if input.Want == "snake_case" {
 			parts[i] = strings.ToLower(w)
+			continue
+		}
+		if input.Want == "SCREAMING_SNAKE_CASE" {
+			parts[i] = strings.ToUpper(w)
 			continue
 		}
 		if suggest_is_all_upper(w) {
@@ -1443,6 +1453,7 @@ func Check_File(input *Check_File_Input) (diags []Diagnostic) {
 	diags = check_file_run_tier([]check_function{
 		make_check_type_invariants(input.Invariant_Exempt),
 		check_casing,
+		check_constant_casing,
 		check_named_returns,
 		check_no_naked_return,
 		check_shadows,
@@ -1539,6 +1550,14 @@ func check_casing_ident(file_set *token.FileSet, identifier *ast.Ident, diags *[
 
 func check_casing(file_set *token.FileSet, file *ast.File, _ []byte) (diags []Diagnostic) {
 
+	// Held to screaming_snake_case_re by check_constant_casing instead of this
+	// function's Ada_Case rule; keyed by ident pointer (not name) so a local
+	// variable shadowing an exported const's name is never accidentally skipped.
+	screaming_case_constants := map[*ast.Ident]bool{}
+	for _, identifier := range check_casing_exported_constant_idents(file) {
+		screaming_case_constants[identifier] = true
+	}
+
 	check := func(identifier *ast.Ident) {
 		check_casing_ident(file_set, identifier, &diags)
 	}
@@ -1568,6 +1587,9 @@ func check_casing(file_set *token.FileSet, file *ast.File, _ []byte) (diags []Di
 			check(x.Name)
 		case *ast.ValueSpec:
 			for _, name := range x.Names {
+				if screaming_case_constants[name] {
+					continue
+				}
 				check(name)
 			}
 		case *ast.FuncType:
@@ -1588,6 +1610,53 @@ func check_casing(file_set *token.FileSet, file *ast.File, _ []byte) (diags []Di
 		}
 		return true
 	})
+	return diags
+}
+
+// Check_casing_exported_constant_idents walks only file.Decls — never a
+// function body — so "exported" falls out of the package-level-only walk for
+// free: Go's actual export semantics, not check_casing's scope-blind
+// first-letter check. An exported top-level const is held to
+// screaming_snake_case_re instead of the general Ada_Case rule.
+func check_casing_exported_constant_idents(file *ast.File) (idents []*ast.Ident) {
+	for _, declaration := range file.Decls {
+		generic_declaration, ok := declaration.(*ast.GenDecl)
+		if !ok {
+			continue
+		}
+		if generic_declaration.Tok != token.CONST {
+			continue
+		}
+		for _, specification := range generic_declaration.Specs {
+			value_specification, is_value_specification :=
+				specification.(*ast.ValueSpec)
+			if !is_value_specification {
+				continue
+			}
+			for _, name := range value_specification.Names {
+				if ast.IsExported(name.Name) {
+					idents = append(idents, name)
+				}
+			}
+		}
+	}
+	return idents
+}
+
+func check_constant_casing(file_set *token.FileSet, file *ast.File, _ []byte) (diags []Diagnostic) {
+	for _, identifier := range check_casing_exported_constant_idents(file) {
+		if screaming_snake_case_re.MatchString(identifier.Name) {
+			continue
+		}
+		suggestion := suggest(&suggest_input{
+			Name: identifier.Name, Want: "SCREAMING_SNAKE_CASE"})
+		diags = append(diags, Diagnostic{
+			Position: file_set.Position(identifier.Pos()),
+			Name:     identifier.Name,
+			Want:     "SCREAMING_SNAKE_CASE",
+			Message:  fmt.Sprintf("%s -> %s", identifier.Name, suggestion),
+		})
+	}
 	return diags
 }
 

@@ -2558,6 +2558,75 @@ func F(N int) (result int) {
 	run_diag_table(t, tests)
 }
 
+// Test_Naming_Constant_Casing verifies the const-specific carve-out of the Name
+// Style rule: an exported top-level const must be SCREAMING_SNAKE_CASE, not the
+// general Ada_Case every other exported identifier takes — including a name that
+// already happens to satisfy ada_case_re's acronym leniency (Retry_Count_Max),
+// which must still fail since it isn't fully uppercase. Unexported and
+// function-local consts are unaffected regressions.
+func Test_Naming_Constant_Casing(t *testing.T) {
+	t.Parallel()
+	run_diag_table(t, []struct {
+		Name      string
+		Files     map[string]string
+		Want_Diag string
+	}{
+		{
+			Name: "exported const not screaming is flagged",
+			Files: map[string]string{
+				"test.go": `package main
+
+const BadName = 0
+`,
+			},
+			Want_Diag: "BadName -> BAD_NAME",
+		},
+		{
+			Name: "exported const already passing ada_case_re must still flag",
+			Files: map[string]string{
+				"test.go": `package main
+
+const Retry_Count_Max = 3
+`,
+			},
+			Want_Diag: "Retry_Count_Max -> RETRY_COUNT_MAX",
+		},
+		{
+			Name: "exported const already screaming is clean",
+			Files: map[string]string{
+				"test.go": `package main
+
+const RETRY_COUNT_MAX = 3
+`,
+			},
+			Want_Diag: "",
+		},
+		{
+			Name: "unexported const is unaffected",
+			Files: map[string]string{
+				"test.go": `package main
+
+const retry_count_max = 3
+`,
+			},
+			Want_Diag: "",
+		},
+		{
+			Name: "function-local const is unaffected",
+			Files: map[string]string{
+				"test.go": `package main
+
+func F() {
+	const Local_Thing = 1
+	println(Local_Thing)
+}
+`,
+			},
+			Want_Diag: "",
+		},
+	})
+}
+
 // Test_Naming_Arithmetic verifies the tier-3 operand-suffix invariant:
 // when both operands of `+` or `-` carry recognized suffixes, the
 // combination must match the table (_index - _index = _count, etc.).
