@@ -113,6 +113,11 @@ A panic names every element it found violated on the call — each triggered `Im
 only the first. A false eager `Always` is not part of this; it
 panics at its own site, so consecutive `Always` guards short-circuit on the first failure.
 
+### Empty
+
+A `Dot_Product` with no elements panics: an empty grid asserts nothing, so it is always a mistake
+rather than a silent no-op.
+
 # Bundles
 
 A `_Invariants(v, namespace)` function self-emits its own `Dot_Product(namespace, …)` over a
