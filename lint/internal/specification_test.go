@@ -1980,6 +1980,59 @@ func Test_Driver_Gateway_Logical_Clock_Allowed(t *testing.T) {
 	}
 }
 
+// Test_Driver_Gateway_Type_Flagged verifies a non-main package that names the io.Driver
+// type is flagged — internal takes io.IO, and only the harness holds the Driver.
+func Test_Driver_Gateway_Type_Flagged(t *testing.T) {
+	t.Parallel()
+	library := "// Package io is a fixture.\npackage io\n\n" +
+		"// Driver drives.\ntype Driver struct{}\n"
+	consumer := "// Package fixture is a fixture.\npackage fixture\n\n" +
+		"import io \"github.com/james-orcales/james-orcales/shared/io\"\n\n" +
+		"// Main drives.\nfunc Main(driver io.Driver) {}\n"
+	fsys := fstest.MapFS{
+		"go.mod":          &fstest.MapFile{Data: []byte(doctrine_root_go_module)},
+		"shared/io/io.go": &fstest.MapFile{Data: []byte(library)},
+		"pkg/rule.go":     &fstest.MapFile{Data: []byte(consumer)},
+	}
+	diags, err := lint.Check_File_System(&lint.Check_File_System_Input{
+		Fsys:             fsys,
+		Scope:            "pkg",
+		Shared_Component: doctrine_shared_component_directory,
+	})
+	if err != nil {
+		t.Fatalf("Check_File_System: %v", err)
+	}
+	if !specification_diagnosed(diags, "io.Driver may be held only") {
+		t.Fatal("naming io.Driver outside main or a test must be flagged")
+	}
+}
+
+// Test_Driver_Gateway_Type_Main_Allowed verifies package main may hold the io.Driver type.
+func Test_Driver_Gateway_Type_Main_Allowed(t *testing.T) {
+	t.Parallel()
+	library := "// Package io is a fixture.\npackage io\n\n" +
+		"// Driver drives.\ntype Driver struct{}\n"
+	consumer := "// Package main is a fixture.\npackage main\n\n" +
+		"import io \"github.com/james-orcales/james-orcales/shared/io\"\n\n" +
+		"// hold takes a driver.\nfunc hold(driver io.Driver) {}\n\nfunc main() {}\n"
+	fsys := fstest.MapFS{
+		"go.mod":          &fstest.MapFile{Data: []byte(doctrine_root_go_module)},
+		"shared/io/io.go": &fstest.MapFile{Data: []byte(library)},
+		"pkg/main.go":     &fstest.MapFile{Data: []byte(consumer)},
+	}
+	diags, err := lint.Check_File_System(&lint.Check_File_System_Input{
+		Fsys:             fsys,
+		Scope:            "pkg",
+		Shared_Component: doctrine_shared_component_directory,
+	})
+	if err != nil {
+		t.Fatalf("Check_File_System: %v", err)
+	}
+	if specification_diagnosed(diags, "io.Driver may be held only") {
+		t.Fatal("package main may hold io.Driver")
+	}
+}
+
 // Test_IO_Gateway_Call verifies an os file-operation call outside the gateway is flagged.
 func Test_IO_Gateway_Call(t *testing.T) {
 	t.Parallel()

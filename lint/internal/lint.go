@@ -2094,6 +2094,7 @@ func check_file_system_doctrine(
 	})...)
 	output = append(output, check_time_import_gateway(parsed_files, components)...)
 	output = append(output, check_driver_gateway(parsed_files)...)
+	output = append(output, check_driver_type(parsed_files, components)...)
 	output = append(output, check_sim_script(parsed_files)...)
 	output = append(output,
 		check_io_gateway(parsed_files, components, input.Instrumentation_Packages)...)
@@ -10188,6 +10189,87 @@ func driver_gateway_constructor(name string) (constructor bool) {
 		return true
 	}
 	return false
+}
+
+// The Driver drives the loop; only package main or a test may hold it, so internal.Main
+// takes io.IO and the harness holds the Driver. This flags naming the io.Driver type
+// (a param, field, var, or return) outside main, tests, and the io backend that returns
+// it — the construction ban stops minting one, this stops receiving one.
+func check_driver_type(
+	parsed_files []parsed_file, components *component_index,
+) (diags []Diagnostic) {
+	shared := component_index_shared_import(components)
+	if shared == "" {
+		return nil
+	}
+	driver_path := shared + "/io"
+	gateway := component_index_io_gateway(components)
+	for _, pf := range parsed_files {
+		if strings.HasSuffix(pf.Path, "_test.go") {
+			continue
+		}
+		if pf.File.Name.Name == "main" {
+			continue
+		}
+		if gateway != "" {
+			if type_invariants_path_exempt(pf.Path, []string{gateway}) {
+				continue
+			}
+		}
+		diags = append(diags, driver_type_file_diagnostics(pf, driver_path)...)
+	}
+	return diags
+}
+
+// The io.Driver references in one file, resolved through the shared/io import's local
+// name so a same-named Driver from another package is not caught.
+func driver_type_file_diagnostics(pf parsed_file, driver_path string) (diags []Diagnostic) {
+	local := ""
+	for _, implementation := range pf.File.Imports {
+		if strings.Trim(implementation.Path.Value, `"`) == driver_path {
+			local = import_local_name(implementation, driver_path)
+		}
+	}
+	if local == "" {
+		return nil
+	}
+	ast.Inspect(pf.File, func(node ast.Node) (recurse bool) {
+		selector, is_selector := node.(*ast.SelectorExpr)
+		if !is_selector {
+			return true
+		}
+		if selector.Sel.Name != "Driver" {
+			return true
+		}
+		identifier, is_identifier := selector.X.(*ast.Ident)
+		if !is_identifier {
+			return true
+		}
+		if identifier.Name != local {
+			return true
+		}
+		diags = append(diags, Diagnostic{
+			Position: pf.File_Set.Position(selector.Pos()),
+			Name:     "driver-gateway",
+			Want:     "hold the Driver only in package main or a test",
+			Message: "io.Driver may be held only in package main or a test; " +
+				"internal takes io.IO and the harness drives",
+			Tier: 1,
+		})
+		return true
+	})
+	return diags
+}
+
+// Returns the shared library component's import path, or "" when no module is the
+// shared library.
+func component_index_shared_import(components *component_index) (import_path string) {
+	for _, m := range components.Components {
+		if m.Is_Shared_Library {
+			return m.Import_Path
+		}
+	}
+	return ""
 }
 
 // Raw blocking and non-blocking IO stdlib lives only in the io/default gateway; every
