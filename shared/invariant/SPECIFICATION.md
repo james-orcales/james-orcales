@@ -174,6 +174,12 @@ from its own frame.
 A `_Invariants` body must be straight-line: a branching or looping statement (`if`, `switch`, `for`,
 `select`) fails registration, since it would make the axes it self-emits depend on runtime values.
 
+### Custom Types
+
+A bundle's subject is a custom, defined type. A primitive subject — a builtin, an unnamed slice, map,
+or composite — fails registration, except in the framework package that owns the presets. Cover a
+primitive inline, or wrap it in a custom type that carries its own bundle.
+
 # Analysis
 
 After the suite, every unexercised obligation is reported under its kind and the run
