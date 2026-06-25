@@ -129,6 +129,63 @@ func Test_Operating_System_IO_Socket(t *testing.T) {
 	}
 }
 
+// Test_Operating_System_IO_Cancel verifies cancelling a pending timeout fires its
+// callback exactly once, with the Cancelled error, and promptly rather than at its
+// far-off deadline.
+func Test_Operating_System_IO_Cancel(t *testing.T) {
+	clock, _ := timeos.New_Operating_System_Clock()
+	loop, driver := iodefault.New_Operating_System_IO(clock)
+
+	got := error(nil)
+	fired := 0
+	var completion io.Completion
+	loop.Timeout(&completion, func(_ *io.Completion, err error) {
+		fired++
+		got = err
+	}, time.Second)
+
+	loop.Cancel(&completion)
+	driver.Run_For(10 * time.Millisecond)
+
+	if fired != 1 {
+		t.Fatalf("callback fired %d times, want exactly 1", fired)
+	}
+	if got != io.Cancelled {
+		t.Fatalf("cancel error = %v, want io.Cancelled", got)
+	}
+}
+
+// Test_Operating_System_IO_Cancel_Accept verifies cancelling a socket operation armed
+// on the poll drops the waiter and delivers the Cancelled error exactly once.
+func Test_Operating_System_IO_Cancel_Accept(t *testing.T) {
+	port := free_port(t)
+	clock, _ := timeos.New_Operating_System_Clock()
+	loop, driver := iodefault.New_Operating_System_IO(clock)
+
+	listener, listen_err := loop.Listen("127.0.0.1", port)
+	if listen_err != nil {
+		t.Fatalf("listen: %v", listen_err)
+	}
+
+	got := error(nil)
+	fired := 0
+	var completion io.Completion
+	loop.Accept(&completion, func(_ *io.Completion, socket io.File, err error) {
+		fired++
+		got = err
+	}, listener)
+
+	loop.Cancel(&completion)
+	driver.Run_For(10 * time.Millisecond)
+
+	if fired != 1 {
+		t.Fatalf("accept callback fired %d times, want exactly 1", fired)
+	}
+	if got != io.Cancelled {
+		t.Fatalf("cancelled accept error = %v, want io.Cancelled", got)
+	}
+}
+
 // Returns a probably-free TCP port by binding and releasing one through the standard
 // library, used only to pick a target for the backend under test.
 func free_port(t *testing.T) (port int) {

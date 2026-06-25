@@ -176,6 +176,30 @@ func Test_Sim_Run_Until(t *testing.T) {
 	}
 }
 
+// Test_Sim_Cancel verifies cancelling an in-flight op still fires its callback exactly
+// once, with the Cancelled error, rather than dropping it.
+func Test_Sim_Cancel(t *testing.T) {
+	loop, driver, _ := sim_loop(0)
+
+	got := error(nil)
+	fired := 0
+	var completion io.Completion
+	loop.Timeout(&completion, func(_ *io.Completion, err error) {
+		fired++
+		got = err
+	}, 5*time.Nanosecond)
+
+	loop.Cancel(&completion)
+	driver.Run_For(10 * time.Nanosecond)
+
+	if fired != 1 {
+		t.Fatalf("callback fired %d times, want exactly 1", fired)
+	}
+	if got != io.Cancelled {
+		t.Fatalf("cancel error = %v, want io.Cancelled", got)
+	}
+}
+
 // Builds a simulated loop, its driver, and the read-only clock, with a fixed per-op
 // latency. The tick returned beside the clock is wired into the Sim so the driver can
 // advance time; a test holds only the IO, the driver, and the clock — never the tick.

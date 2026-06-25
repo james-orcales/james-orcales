@@ -48,3 +48,8 @@ A close completes after the modeled latency and reports no error.
 
 Run_Until drives the loop until its predicate reports true, delivering completions each
 step, so a straight-line caller can wait for its own operation inline.
+
+### Cancel
+
+Cancelling an in-flight operation still fires its callback exactly once, with the
+Cancelled error rather than a result, so every submission resolves and nothing leaks.

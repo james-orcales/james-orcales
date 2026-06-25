@@ -68,29 +68,19 @@ func New_Operating_System_IO(host time.Clock) (loop io.IO, driver io.Driver) {
 			completion *io.Completion, callback io.Callback,
 			file io.File, buffer []byte, offset int64,
 		) {
-			completion.Callback = func() {
-				count, err := read_at(file, buffer, offset)
-				callback(completion, count, err)
-			}
-			state.Completed = append(state.Completed, completion)
+			operating_system_read(state, completion, callback, file, buffer, offset)
 		},
 		Write: func(
 			completion *io.Completion, callback io.Callback,
 			file io.File, buffer []byte, offset int64,
 		) {
-			completion.Callback = func() {
-				count, err := write_at(file, buffer, offset)
-				callback(completion, count, err)
-			}
-			state.Completed = append(state.Completed, completion)
+			operating_system_write(state, completion, callback, file, buffer, offset)
 		},
 		Timeout: func(
 			completion *io.Completion, callback io.Timeout_Callback,
 			duration time.Duration,
 		) {
-			completion.Ready_At = host.Now_Monotonic() + time.Moment(duration)
-			completion.Callback = func() { callback(completion, nil) }
-			operating_system_insert(state, completion)
+			operating_system_timeout(state, host, completion, callback, duration)
 		},
 		Listen: func(host_address string, port int) (listener io.File, err error) {
 			descriptor, listen_err := socket_listen(host_address, port)
@@ -122,8 +112,66 @@ func New_Operating_System_IO(host time.Clock) (loop io.IO, driver io.Driver) {
 		Close: func(completion *io.Completion, callback io.Timeout_Callback, file io.File) {
 			operating_system_close(state, completion, callback, file)
 		},
+		Cancel: func(completion *io.Completion) {
+			operating_system_cancel(state, completion)
+		},
 	}
 	return loop, operating_system_to_driver(state)
+}
+
+// Queues a file read to run inside the loop, delivering the byte count — or the
+// Cancelled error if the completion was cancelled first. Clears any stale Cancelled
+// mark so a reused completion starts fresh.
+func operating_system_read(
+	state *operating_system, completion *io.Completion, callback io.Callback,
+	file io.File, buffer []byte, offset int64,
+) {
+	completion.Cancelled = false
+	completion.Callback = func() {
+		if completion.Cancelled {
+			callback(completion, 0, io.Cancelled)
+			return
+		}
+		count, err := read_at(file, buffer, offset)
+		callback(completion, count, err)
+	}
+	state.Completed = append(state.Completed, completion)
+}
+
+// Queues a file write to run inside the loop, delivering the byte count — or the
+// Cancelled error if the completion was cancelled first.
+func operating_system_write(
+	state *operating_system, completion *io.Completion, callback io.Callback,
+	file io.File, buffer []byte, offset int64,
+) {
+	completion.Cancelled = false
+	completion.Callback = func() {
+		if completion.Cancelled {
+			callback(completion, 0, io.Cancelled)
+			return
+		}
+		count, err := write_at(file, buffer, offset)
+		callback(completion, count, err)
+	}
+	state.Completed = append(state.Completed, completion)
+}
+
+// Schedules a timeout to fire when the clock passes its deadline, delivering success —
+// or the Cancelled error if the completion was cancelled first.
+func operating_system_timeout(
+	state *operating_system, host time.Clock, completion *io.Completion,
+	callback io.Timeout_Callback, duration time.Duration,
+) {
+	completion.Cancelled = false
+	completion.Ready_At = host.Now_Monotonic() + time.Moment(duration)
+	completion.Callback = func() {
+		if completion.Cancelled {
+			callback(completion, io.Cancelled)
+			return
+		}
+		callback(completion, nil)
+	}
+	operating_system_insert(state, completion)
 }
 
 // Builds the driver — the loop-advancing capability — over state; held only by the
@@ -275,6 +323,7 @@ func operating_system_accept(
 ) {
 	operating_system_poll_ensure(state)
 	descriptor := int(listener)
+	completion.Callback = func() { callback(completion, 0, io.Cancelled) }
 	state.Read_Waiters[descriptor] = &socket_operation{
 		Completion: completion,
 		Perform: func() (done bool) {
@@ -302,6 +351,7 @@ func operating_system_connect(
 		state.Completed = append(state.Completed, completion)
 		return
 	}
+	completion.Callback = func() { callback(completion, 0, io.Cancelled) }
 	state.Write_Waiters[descriptor] = &socket_operation{
 		Completion: completion,
 		Perform: func() (done bool) {
@@ -320,6 +370,7 @@ func operating_system_receive(
 ) {
 	operating_system_poll_ensure(state)
 	descriptor := int(socket)
+	completion.Callback = func() { callback(completion, 0, io.Cancelled) }
 	state.Read_Waiters[descriptor] = &socket_operation{
 		Completion: completion,
 		Perform: func() (done bool) {
@@ -342,6 +393,7 @@ func operating_system_send(
 ) {
 	operating_system_poll_ensure(state)
 	descriptor := int(socket)
+	completion.Callback = func() { callback(completion, 0, io.Cancelled) }
 	state.Write_Waiters[descriptor] = &socket_operation{
 		Completion: completion,
 		Perform: func() (done bool) {
@@ -361,7 +413,71 @@ func operating_system_close(
 	state *operating_system, completion *io.Completion,
 	callback io.Timeout_Callback, file io.File,
 ) {
+	completion.Cancelled = false
 	err := socket_close(int(file))
-	completion.Callback = func() { callback(completion, err) }
+	completion.Callback = func() {
+		if completion.Cancelled {
+			callback(completion, io.Cancelled)
+			return
+		}
+		callback(completion, err)
+	}
 	state.Completed = append(state.Completed, completion)
+}
+
+// Cancels an in-flight operation. A socket op armed on the poll is dropped, disarmed,
+// and queued so its cancel callback fires; a pending timeout is moved to the completed
+// queue, where its Cancelled-marked callback delivers the error; a file op already
+// queued fires cancelled the same way. An already-delivered completion is a no-op.
+func operating_system_cancel(state *operating_system, completion *io.Completion) {
+	completion.Cancelled = true
+	if operating_system_cancel_socket(state, completion) {
+		return
+	}
+	operating_system_cancel_timeout(state, completion)
+}
+
+// Drops and queues completion's socket waiter, from either direction, reporting
+// whether one was armed.
+func operating_system_cancel_socket(
+	state *operating_system, completion *io.Completion,
+) (found bool) {
+	if operating_system_cancel_waiter(state, state.Read_Waiters, completion, false) {
+		return true
+	}
+	return operating_system_cancel_waiter(state, state.Write_Waiters, completion, true)
+}
+
+// Removes completion's waiter from waiters, disarms the poll for its descriptor and
+// direction, and queues the completion so its cancel callback fires on the next drain.
+func operating_system_cancel_waiter(
+	state *operating_system, waiters map[int]*socket_operation,
+	completion *io.Completion, writable bool,
+) (found bool) {
+	for descriptor, operation := range waiters {
+		if operation.Completion != completion {
+			continue
+		}
+		delete(waiters, descriptor)
+		poll_file_disarm(state.Poll, descriptor, writable)
+		state.Completed = append(state.Completed, completion)
+		return true
+	}
+	return false
+}
+
+// Moves a pending timeout matching completion into the completed queue so its
+// Cancelled-marked callback fires promptly, reporting whether it was present.
+func operating_system_cancel_timeout(
+	state *operating_system, completion *io.Completion,
+) (found bool) {
+	for index := 0; index < len(state.Timeouts); index++ {
+		if state.Timeouts[index] != completion {
+			continue
+		}
+		state.Timeouts = append(state.Timeouts[:index], state.Timeouts[index+1:]...)
+		state.Completed = append(state.Completed, completion)
+		return true
+	}
+	return false
 }
