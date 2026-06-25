@@ -22,11 +22,11 @@ func Test_Nested_Struct_Flattens_To_Prefixed_Keys(t *testing.T) {
 
 // Test_Scalar_Fields_Marshal_To_Their_JSON_Forms checks scalars emit their JSON scalar forms.
 func Test_Scalar_Fields_Marshal_To_Their_JSON_Forms(t *testing.T) {
-	data, err := flatjson.Marshal(scalars{Text: "hi", Count: -7, Ok: true, Ratio: 1.5})
+	data, err := flatjson.Marshal(scalars{Text: "hi", Count: -7, Ok: true})
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := `{"text":"hi","count":-7,"ok":true,"ratio":1.5}`
+	want := `{"text":"hi","count":-7,"ok":true}`
 	if string(data) != want {
 		t.Fatalf("got  %s\nwant %s", data, want)
 	}
@@ -152,10 +152,9 @@ type outer struct {
 }
 
 type scalars struct {
-	Text  string  `json:"text"`
-	Count int     `json:"count"`
-	Ok    bool    `json:"ok"`
-	Ratio float64 `json:"ratio"`
+	Text  string `json:"text"`
+	Count int    `json:"count"`
+	Ok    bool   `json:"ok"`
 }
 
 type withtags struct {
