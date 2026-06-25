@@ -1,9 +1,9 @@
 
 # Sim
 
-The simulated IO backend schedules every operation to complete at now plus a modeled
-latency on its injected clock, then fires each one when the clock reaches its
-Ready_At — TigerBeetle's in-memory Storage and PacketSimulator, fully reproducible.
+The simulated IO backend schedules every operation at now plus a seed-drawn latency and
+fires it when the clock reaches its Ready_At. New_Sim(seed) builds it and never hands it
+out, drawing every outcome from that seed, so a run reproduces and nothing is scriptable.
 
 ### Timeout
 
@@ -53,3 +53,9 @@ step, so a straight-line caller can wait for its own operation inline.
 
 Cancelling an in-flight operation still fires its callback exactly once, with the
 Cancelled error rather than a result, so every submission resolves and nothing leaks.
+
+### Reuse
+
+Submitting a completion that is still in flight panics: one Completion backs at most one
+operation at a time, so reusing it before its callback fires fails loudly rather than
+corrupting the queue.
