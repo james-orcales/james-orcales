@@ -708,9 +708,9 @@ mints it.
 
 ### Driver
 
-The loop constructors (Sim_To_IO, New_Operating_System_IO) mint a Driver that advances time and
-drives the loop, so they may be called only in package main or a test. The read-only clock
-constructors mint no Driver and are not gated.
+The Driver advances time and drives the loop; only package main or a test may mint it
+(Sim_To_IO, New_Operating_System_IO) or name the io.Driver type, so internal takes io.IO and the
+harness drives. The read-only clock constructors mint no Driver and are not gated.
 
 ### Gateway
 
