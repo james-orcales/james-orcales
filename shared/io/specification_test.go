@@ -31,7 +31,7 @@ func Test_Sim_Timeout(t *testing.T) {
 // Test_Sim_Read verifies a read completes after the modeled latency and reports the
 // buffer length.
 func Test_Sim_Read(t *testing.T) {
-	loop, driver, _ := sim_loop(3 * time.Nanosecond)
+	loop, driver, _ := sim_loop(1)
 
 	count := -1
 	var completion io.Completion
@@ -62,7 +62,7 @@ func Test_Sim_Listen(t *testing.T) {
 // Test_Sim_Accept verifies an accept completes after the modeled latency and
 // yields a descriptor distinct from its listener.
 func Test_Sim_Accept(t *testing.T) {
-	loop, driver, _ := sim_loop(2 * time.Nanosecond)
+	loop, driver, _ := sim_loop(2)
 
 	listener, _ := loop.Listen("127.0.0.1", 0)
 	accepted := io.File(-1)
@@ -84,7 +84,7 @@ func Test_Sim_Accept(t *testing.T) {
 // Test_Sim_Connect verifies a connect completes after the modeled latency and
 // yields a fresh connected descriptor.
 func Test_Sim_Connect(t *testing.T) {
-	loop, driver, _ := sim_loop(4 * time.Nanosecond)
+	loop, driver, _ := sim_loop(3)
 
 	connected := io.File(-1)
 	var completion io.Completion
@@ -102,7 +102,7 @@ func Test_Sim_Connect(t *testing.T) {
 // Test_Sim_Receive verifies a receive completes after the modeled latency and
 // reports the buffer length.
 func Test_Sim_Receive(t *testing.T) {
-	loop, driver, _ := sim_loop(3 * time.Nanosecond)
+	loop, driver, _ := sim_loop(1)
 
 	count := -1
 	var completion io.Completion
@@ -120,7 +120,7 @@ func Test_Sim_Receive(t *testing.T) {
 // Test_Sim_Send verifies a send completes after the modeled latency and reports
 // the buffer length.
 func Test_Sim_Send(t *testing.T) {
-	loop, driver, _ := sim_loop(3 * time.Nanosecond)
+	loop, driver, _ := sim_loop(1)
 
 	count := -1
 	var completion io.Completion
@@ -138,7 +138,7 @@ func Test_Sim_Send(t *testing.T) {
 // Test_Sim_Close verifies a close completes after the modeled latency and reports
 // no error.
 func Test_Sim_Close(t *testing.T) {
-	loop, driver, _ := sim_loop(time.Nanosecond)
+	loop, driver, _ := sim_loop(4)
 
 	closed := false
 	failed := error(nil)
@@ -161,7 +161,7 @@ func Test_Sim_Close(t *testing.T) {
 // Test_Sim_Run_Until verifies the driver pumps the loop until the predicate reports
 // true, delivering the op's completion inline for a straight-line caller.
 func Test_Sim_Run_Until(t *testing.T) {
-	loop, driver, _ := sim_loop(3 * time.Nanosecond)
+	loop, driver, _ := sim_loop(1)
 
 	done := false
 	var completion io.Completion
@@ -200,16 +200,23 @@ func Test_Sim_Cancel(t *testing.T) {
 	}
 }
 
-// Builds a simulated loop, its driver, and the read-only clock, with a fixed per-op
-// latency. The tick returned beside the clock is wired into the Sim so the driver can
-// advance time; a test holds only the IO, the driver, and the clock — never the tick.
-func sim_loop(latency time.Duration) (loop io.IO, driver io.Driver, clock time.Clock) {
-	clock, tick := time.Virtual_Clock_To_Clock(time.Virtual_Clock{Resolution: time.Nanosecond})
-	sim := &io.Sim{
-		Clock:   clock,
-		Tick:    tick,
-		Latency: func() (duration time.Duration) { return latency },
-	}
-	loop, driver = io.Sim_To_IO(sim)
-	return loop, driver, clock
+// Test_Sim_Reuse verifies submitting a completion that is still in flight panics, so a
+// reused completion fails loudly instead of corrupting the queue.
+func Test_Sim_Reuse(t *testing.T) {
+	loop, _, _ := sim_loop(0)
+	var completion io.Completion
+	loop.Timeout(&completion, func(_ *io.Completion, err error) {}, 5*time.Nanosecond)
+	defer func() {
+		if recover() == nil {
+			t.Fatal("reusing an in-flight completion must panic")
+		}
+	}()
+	loop.Timeout(&completion, func(_ *io.Completion, err error) {}, 5*time.Nanosecond)
+}
+
+// Builds a simulated loop, its driver, and the read-only clock, seeded by seed. A test
+// holds only the IO, the driver, and the clock — never the sim, which New_Sim keeps to
+// itself so the run stays a pure function of the seed.
+func sim_loop(seed uint64) (loop io.IO, driver io.Driver, clock time.Clock) {
+	return io.New_Sim(seed)
 }
