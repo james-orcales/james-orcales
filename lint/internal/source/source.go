@@ -535,36 +535,51 @@ func Invariant_Name(type_name string) (name string) {
 	return type_name + "_invariants"
 }
 
-// Path_Matches_Glob reports whether filename matches any of patterns as an
-// exact-path glob: "pkg/sub" matches only that path, "pkg/**" its whole subtree,
-// and "**" everything. These are the same * / ** globs the deterministic tier's
+// Path_Matches_Glob reports whether filename matches patterns as an exact-path
+// glob list: "pkg/sub" matches only that path, "pkg/**" its whole subtree, and
+// "**" everything. These are the same * / ** globs the deterministic tier's
 // exceptions use, so the invariant and recursion exemption lists — both
-// user-written lint.json globs — read alike.
+// user-written lint.json globs — read alike. A "!"-prefixed entry negates:
+// negation always wins, so a filename any negated entry matches is reported as
+// not matching, regardless of whether — or where in patterns — a positive entry
+// also matches it.
 func Path_Matches_Glob(filename string, patterns []string) (yes bool) {
+	matched := false
 	for _, entry := range patterns {
-		matched, _ := Glob_Match(&Glob_Match_Input{
-			Pattern: Parse_Glob_Pattern(entry).Core, Path: filename})
-		if matched {
-			return true
+		parsed := Parse_Glob_Pattern(entry)
+		hit, _ := Glob_Match(&Glob_Match_Input{Pattern: parsed.Core, Path: filename})
+		if !hit {
+			continue
 		}
+		if parsed.Negate {
+			return false
+		}
+		matched = true
 	}
-	return false
+	return matched
 }
 
-// A Glob_Pattern is a lint.json glob entry parsed into the one fact the matcher
-// needs: Core, the pattern reduced to a form Glob_Match runs against a full path.
-// An unanchored, slash-less entry is rewritten with a leading **/ so it matches at
-// any depth.
+// A Glob_Pattern is a lint.json glob entry parsed into the two facts the matcher
+// needs: Core, the pattern reduced to a form Glob_Match runs against a full path,
+// and Negate, whether the entry vetoes rather than grants a match. An unanchored,
+// slash-less entry is rewritten with a leading **/ so it matches at any depth.
 type Glob_Pattern struct {
 	// Core is the pattern reduced to the form Glob_Match runs against a full path.
 	Core string
+	// Negate marks a "!"-prefixed entry — one that vetoes a match rather than
+	// grants one. See Path_Matches_Glob.
+	Negate bool
 }
 
-// Parse_Glob_Pattern reduces a raw lint.json entry to a Glob_Pattern. A trailing
-// slash is stripped; a leading or interior slash anchors the entry to the root; a
-// slash-less entry floats, modeled as **/ + entry so one matcher serves both.
-// Assumes the entry is non-empty and un-negated.
+// Parse_Glob_Pattern reduces a raw lint.json entry to a Glob_Pattern. A leading
+// "!" is stripped into Negate before the rest of the reduction runs, so Core never
+// carries it. A trailing slash is stripped; a leading or interior slash anchors
+// the entry to the root; a slash-less entry floats, modeled as **/ + entry so one
+// matcher serves both. Assumes the entry is non-empty once any leading "!" is
+// stripped.
 func Parse_Glob_Pattern(raw string) (parsed Glob_Pattern) {
+	parsed.Negate = strings.HasPrefix(raw, "!")
+	raw = strings.TrimPrefix(raw, "!")
 	trimmed := strings.TrimSuffix(raw, "/")
 	had_leading_slash := strings.HasPrefix(trimmed, "/")
 	trimmed = strings.TrimPrefix(trimmed, "/")

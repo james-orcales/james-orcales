@@ -561,7 +561,8 @@ type Configuration struct {
 	// back into the importer. Exact-path globs, like the other lists: "shared/x/**"
 	// names a package and its whole subtree. Names a package only — an entry naming
 	// one exact file is rejected; Ignore and Recursion_Exempt are the two lists that
-	// may name a file.
+	// may name a file. A "!"-prefixed entry revokes instrumentation status from a
+	// package a broader entry granted it, regardless of either entry's position.
 	Instrumentation_Packages []string `json:"instrumentation_packages"`
 	// Pure_But_Indeterministic names the pure packages opted OUT of the deterministic
 	// tier. The tier — no goroutine, channel, select, or float; no time/context/sync
@@ -573,7 +574,8 @@ type Configuration struct {
 	// Opt-out; empty holds every pure package. An entry matching no pure package is
 	// reported as a coverage gap (a typo or stale path that releases nothing). Names
 	// a package only, like Instrumentation_Packages and Invariant_Exempt_Packages —
-	// an entry naming one exact file is rejected.
+	// an entry naming one exact file is rejected. A "!"-prefixed entry holds a
+	// package to the tier despite a broader release entry, regardless of order.
 	Pure_But_Indeterministic []string `json:"pure_but_indeterministic_packages"`
 	// Word_Replacements drives the vocabulary check: each tokenized, lowercased
 	// word maps to its preferred replacements (id -> identifier). An empty list
@@ -588,7 +590,8 @@ type Configuration struct {
 	// and ** spans path segments while * stays within one. A matching path is
 	// dropped from the scan set entirely, so no tier fires on it. Opt-in; empty
 	// ignores nothing. Unlike the other lists, an entry here may name a package or
-	// one exact file (e.g. "build.go").
+	// one exact file (e.g. "build.go"). A "!"-prefixed entry re-includes a path a
+	// broader entry ignored, winning regardless of either entry's position.
 	Ignore []string `json:"ignore"`
 	// Invariant_Exempt_Packages names the packages exempt from the type-invariant
 	// rule — the rule's sole escape hatch. The framework package that defines the
@@ -598,13 +601,18 @@ type Configuration struct {
 	// "shared/**" its whole subtree, and "**" the whole tree — the wholesale off
 	// switch for a staged rollout. Opt-in; empty exempts nothing, so the rule binds
 	// every package by default. Names a package only, like Instrumentation_Packages
-	// and Pure_But_Indeterministic — an entry naming one exact file is rejected.
+	// and Pure_But_Indeterministic — an entry naming one exact file is rejected. A
+	// "!"-prefixed entry binds a package to the rule despite a broader exemption,
+	// regardless of order — e.g. "shared/**", "!shared/io" exempts shared/** except
+	// shared/io.
 	Invariant_Exempt_Packages []string `json:"opt_out_assertion_mandate_packages"`
 	// Recursion_Exempt names packages exempt from the self- and mutual-recursion
 	// ban — a hand-written recursive-descent parser, whose recursion is intentional.
 	// Exact-path globs, like opt_out_assertion_mandate_packages; opt-in, empty exempts
 	// nothing. Unlike that list, an entry here may name a package or one exact file —
-	// a single recursive function living in an otherwise-unexceptional package.
+	// a single recursive function living in an otherwise-unexceptional package. A
+	// "!"-prefixed entry re-bans recursion in a package or file a broader entry
+	// exempted, regardless of order.
 	Recursion_Exempt []string `json:"opt_out_recursion_ban"`
 }
 
@@ -881,17 +889,24 @@ func validate_configuration_globs(configuration *Configuration) (err error) {
 
 // Rejects glob entries the matcher cannot honor, so a broken list fails loudly at
 // config load rather than silently matching nothing. field names the lint.json key
-// for the error. An empty entry has no path to match; a leading "!" is negation,
-// which our additive lists give no meaning; and a segment that path.Match deems
-// malformed (an unterminated "[") would error on every comparison.
+// for the error. An empty entry has no path to match; a bare "!" (or "!" followed
+// only by whitespace) negates nothing; a list that is entirely negation entries has
+// no positive entry for any negation to override and so can never affect a single
+// path — both are rejected as meaningless rather than silently inert; and a segment
+// that path.Match deems malformed (an unterminated "[") would error on every
+// comparison.
 func validate_glob_patterns(field string, patterns []string) (err error) {
+	negated_count := 0
 	for _, raw := range patterns {
 		where := fmt.Sprintf("lint.json: %s entry %q", field, raw)
 		if strings.TrimSpace(raw) == "" {
 			return fmt.Errorf("lint.json: %s entry is empty", field)
 		}
 		if strings.HasPrefix(raw, "!") {
-			return fmt.Errorf("%s: negation is unsupported", where)
+			if strings.TrimSpace(strings.TrimPrefix(raw, "!")) == "" {
+				return fmt.Errorf("%s: negates nothing", where)
+			}
+			negated_count++
 		}
 		// The ONLY wildcards this linter supports are * (within one path segment) and
 		// ** (spanning segments). The matcher delegates non-** segments to path.Match,
@@ -909,6 +924,11 @@ func validate_glob_patterns(field string, patterns []string) (err error) {
 			if _, match_err := path.Match(segment, ""); match_err != nil {
 				return fmt.Errorf("%s: %w", where, match_err)
 			}
+		}
+	}
+	if len(patterns) > 0 {
+		if negated_count == len(patterns) {
+			return fmt.Errorf("lint.json: %s is entirely negation entries", field)
 		}
 	}
 	return nil
@@ -8169,12 +8189,17 @@ func check_deterministic(input *check_deterministic_input) (diags []Diagnostic) 
 	// "shared/io/**" opts out its subtree — a bare parent cannot silently drop its
 	// children. The subtraction runs before the checks so the import induction
 	// tests against the concrete deterministic set, and matched records which
-	// entries hit a package for the coverage-gap check.
+	// entries hit a package for the coverage-gap check. negated collects the
+	// directories a "!" entry hit; negation always wins regardless of processing
+	// order, so those are added back to covered only after every entry (positive
+	// and negated) has had a chance to hit — a negated entry seen before the
+	// positive entry it overrides must still win.
 	covered := map[string]bool{}
 	for directory := range pure {
 		covered[directory] = true
 	}
 	matched := map[string]bool{}
+	negated := map[string]bool{}
 	for _, entry := range input.Exceptions {
 		pattern := source.Parse_Glob_Pattern(entry)
 		for directory := range pure {
@@ -8183,9 +8208,16 @@ func check_deterministic(input *check_deterministic_input) (diags []Diagnostic) 
 			if !hit {
 				continue
 			}
-			delete(covered, directory)
 			matched[entry] = true
+			if pattern.Negate {
+				negated[directory] = true
+				continue
+			}
+			delete(covered, directory)
 		}
+	}
+	for directory := range negated {
+		covered[directory] = true
 	}
 	for _, pf := range input.Parsed_Files {
 		if !covered[path.Dir(pf.Path)] {
@@ -8284,8 +8316,10 @@ func check_deterministic_coverage(
 // Returns an entry's leading literal path — the segments before its first glob
 // metacharacter — as the directory the scan-scope check anchors on. "shared/**"
 // yields "shared", "shared/io" yields itself, and a leading-glob entry yields ".",
-// which scan_prefixes_reach admits everywhere.
+// which scan_prefixes_reach admits everywhere. A leading "!" is stripped first, so
+// a negated entry's anchor names the same path its positive form would.
 func glob_literal_prefix(entry string) (prefix string) {
+	entry = strings.TrimPrefix(entry, "!")
 	kept := []string{}
 	for _, segment := range strings.Split(entry, "/") {
 		if strings.ContainsAny(segment, "*?[") {
