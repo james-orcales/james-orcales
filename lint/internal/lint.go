@@ -554,12 +554,12 @@ type Configuration struct {
 	// module at the workspace root is treated as a binary. Slash-relative, like
 	// the allowlist. Required: a config without it is rejected.
 	Shared_Component string `json:"shared_component"`
-	// Instrumentation_Packages names the workspace-root-relative directories of
-	// write-only instrumentation — assertions, snapshot tooling, telemetry. They
-	// may expose a `var Default`, and a pure or deterministic package may import
-	// them despite the import bans, since emitting to a write-only side channel
-	// cannot feed impurity or nondeterminism back into the importer. Segment-
-	// prefix: an entry covers itself and its whole subtree.
+	// Instrumentation_Packages names the packages of write-only instrumentation —
+	// assertions, snapshot tooling, telemetry. They may expose a `var Default`, and
+	// a pure or deterministic package may import them despite the import bans, since
+	// emitting to a write-only side channel cannot feed impurity or nondeterminism
+	// back into the importer. Exact-path globs, like the other lists: "shared/x/**"
+	// names a package and its whole subtree.
 	Instrumentation_Packages []string `json:"instrumentation_packages"`
 	// Pure_But_Indeterministic names the pure packages opted OUT of the deterministic
 	// tier. The tier — no goroutine, channel, select, or float; no time/context/sync
@@ -578,12 +578,12 @@ type Configuration struct {
 	// silently go dark.
 	Word_Replacements map[string][]string `json:"word_replacements"`
 	// Ignore extends the hardcoded global ignore list (Ignored_Directory) with
-	// per-workspace entries, as gitignore-style globs: a slash-less entry floats
-	// and matches that basename at any depth, an entry with a slash is anchored to
-	// the workspace root, a trailing slash binds to directories (and thus their
-	// whole subtree), and ** spans path segments while * stays within one. A
-	// matching path is dropped from the scan set entirely, so no tier fires on it.
-	// Opt-in; empty ignores nothing.
+	// per-workspace entries, as exact-path globs like the other lists: a slash-less
+	// entry floats and matches that basename at any depth, an entry with a slash is
+	// anchored to the workspace root, "dir/**" covers a directory's whole subtree,
+	// and ** spans path segments while * stays within one. A matching path is
+	// dropped from the scan set entirely, so no tier fires on it. Opt-in; empty
+	// ignores nothing.
 	Ignore []string `json:"ignore"`
 	// Invariant_Exempt_Packages names the packages exempt from the type-invariant
 	// rule — the rule's sole escape hatch. The framework package that defines the
@@ -837,24 +837,39 @@ func Parse_Configuration(data []byte) (configuration *Configuration, err error) 
 	if len(configuration.Word_Replacements) == 0 {
 		return nil, fmt.Errorf("lint.json: word_replacements must not be empty")
 	}
-	if validate_err := validate_glob_patterns(
-		"ignore", configuration.Ignore); validate_err != nil {
-		return nil, validate_err
-	}
-	if validate_err := validate_glob_patterns(
-		"pure_but_indeterministic",
-		configuration.Pure_But_Indeterministic); validate_err != nil {
+	if validate_err := validate_configuration_globs(configuration); validate_err != nil {
 		return nil, validate_err
 	}
 	return configuration, nil
 }
 
-// Rejects gitignore-style glob entries the matcher cannot honor, so a broken
-// list fails loudly at config load rather than silently matching nothing. field
-// names the lint.json key for the error. An empty entry has no path to match; a
-// leading "!" is gitignore negation, which our additive lists give no meaning;
-// and a segment that path.Match deems malformed (an unterminated "[") would error
-// on every comparison.
+// Rejects a malformed glob in any lint.json path list at load, so a bad pattern
+// fails fast rather than silently matching nothing at use. Every list is matched
+// by the one exact-path glob matcher (source.Path_Matches_Glob), so every list is
+// validated the same way.
+func validate_configuration_globs(configuration *Configuration) (err error) {
+	for _, list := range []struct {
+		Name  string
+		Globs []string
+	}{
+		{Name: "ignore", Globs: configuration.Ignore},
+		{Name: "pure_but_indeterministic", Globs: configuration.Pure_But_Indeterministic},
+		{Name: "instrumentation_packages", Globs: configuration.Instrumentation_Packages},
+		{Name: "invariant_exempt_packages", Globs: configuration.Invariant_Exempt_Packages},
+		{Name: "opt_out_recursion_ban", Globs: configuration.Recursion_Exempt},
+	} {
+		if err = validate_glob_patterns(list.Name, list.Globs); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// Rejects glob entries the matcher cannot honor, so a broken list fails loudly at
+// config load rather than silently matching nothing. field names the lint.json key
+// for the error. An empty entry has no path to match; a leading "!" is negation,
+// which our additive lists give no meaning; and a segment that path.Match deems
+// malformed (an unterminated "[") would error on every comparison.
 func validate_glob_patterns(field string, patterns []string) (err error) {
 	for _, raw := range patterns {
 		where := fmt.Sprintf("lint.json: %s entry %q", field, raw)
@@ -1870,9 +1885,9 @@ type Check_File_System_Input struct {
 	// make_check_names_vocabulary. nil disables the check (no config to read),
 	// which is what the Check_Source single-file path passes.
 	Word_Replacements map[string][]string
-	// Ignore is the lint.json ignore list forwarded from Main_Input: gitignore-
-	// style globs that trim the tracked scan set, so a matching path is invisible
-	// to every tier. Applied once here against Tracked; with no Tracked set (the
+	// Ignore is the lint.json ignore list forwarded from Main_Input: exact-path
+	// globs that trim the tracked scan set, so a matching path is invisible to
+	// every tier. Applied once here against Tracked; with no Tracked set (the
 	// non-git fallback) it is inert, like every other tracked-set filter.
 	Ignore []string
 	// Invariant_Exempt_Packages is the lint.json invariant_exempt_packages list
@@ -2064,13 +2079,9 @@ func filter_ignored(tracked map[string]bool, ignore []string) (kept map[string]b
 	if len(ignore) == 0 {
 		return tracked
 	}
-	patterns := make([]source.Glob_Pattern, 0, len(ignore))
-	for _, raw := range ignore {
-		patterns = append(patterns, source.Parse_Glob_Pattern(raw))
-	}
 	kept = make(map[string]bool, len(tracked))
 	for p := range tracked {
-		if glob_patterns_match(p, false, patterns) {
+		if source.Path_Matches_Glob(p, ignore) {
 			continue
 		}
 		kept[p] = true
@@ -5104,23 +5115,6 @@ func check_no_interfaces(file_set *token.FileSet, file *ast.File, _ []byte) (dia
 	return diags
 }
 
-// Reports whether the workspace-root-relative directory is a listed instrumentation
-// package or sits in one's subtree. Segment-prefix so a family entry
-// (shared/invariant) covers its versions and default tier; entries are path-cleaned
-// so "./pkg/" and "pkg" name the same directory.
-func instrumentation_match(directory string, packages []string) (yes bool) {
-	for _, entry := range packages {
-		clean := path.Clean(entry)
-		if directory == clean {
-			return true
-		}
-		if strings.HasPrefix(directory, clean+"/") {
-			return true
-		}
-	}
-	return false
-}
-
 // Reports whether the import resolves to a first-party package at or under a listed
 // instrumentation package. Instrumentation is write-only — emitting to it cannot
 // feed impurity or nondeterminism back into the importer — so pure and
@@ -5136,7 +5130,7 @@ func import_path_is_instrumentation(
 		return false
 	}
 	m := components.Components[component_index_number]
-	return instrumentation_match(import_path_workspace_directory(import_path, m), packages)
+	return source.Path_Matches_Glob(import_path_workspace_directory(import_path, m), packages)
 }
 
 // Reports whether the import path is a standard-library observability package the telemetry
@@ -5239,8 +5233,8 @@ func check_no_package_vars_is_map_or_slice_literal(vs *ast.ValueSpec) (yes bool)
 
 // Composition-tier packages are allowed to expose a single `var Default = …`
 // binding — that's literally the shape they exist for. The package's directory
-// (workspace-root-relative) must be at or under a listed instrumentation_packages
-// entry; the literal `default/` directory name confers nothing on its own. Allowed
+// (workspace-root-relative) must match a listed instrumentation_packages glob;
+// the literal `default/` directory name confers nothing on its own. Allowed
 // only for the literal name "Default" and only as a single-name
 // single-initializer spec.
 func check_no_package_vars_is_default(
@@ -5251,7 +5245,7 @@ func check_no_package_vars_is_default(
 	if tok_file == nil {
 		return false
 	}
-	if !instrumentation_match(path.Dir(tok_file.Name()), instrumentation) {
+	if !source.Path_Matches_Glob(path.Dir(tok_file.Name()), instrumentation) {
 		return false
 	}
 	if len(vs.Names) != 1 {
@@ -7084,44 +7078,6 @@ func check_path_casing_paths(fsys fs.FS, tracked map[string]bool) (paths []strin
 	return paths
 }
 
-// Reports whether key — or any of its ancestor directories — matches one of the
-// gitignore-style patterns. gitignore excludes a path when the path or any
-// ancestor directory matches, so we test every prefix of key; each ancestor is a
-// directory, and the leaf's directory status is key_is_directory. A
-// Directory_Only entry is skipped at prefixes that are files, which is what makes
-// a trailing-slash entry bind to directories and their subtree but not to a
-// same-named file.
-func glob_patterns_match(
-	key string, key_is_directory bool, patterns []source.Glob_Pattern,
-) (found bool) {
-
-	if len(patterns) == 0 {
-		return false
-	}
-	segments := strings.Split(key, "/")
-	for i := range segments {
-		prefix := strings.Join(segments[:i+1], "/")
-		prefix_is_directory := i < len(segments)-1 || key_is_directory
-		for _, p := range patterns {
-			// A trailing-slash entry binds to directories, so it must skip a
-			// prefix that is a file (gitignore's directory-only semantics).
-			if p.Directory_Only {
-				if !prefix_is_directory {
-					continue
-				}
-			}
-			// The entry passed parse-time validation, so glob_match cannot return
-			// ErrBadPattern here; a non-match is the only other outcome.
-			matched, _ := source.Glob_Match(
-				&source.Glob_Match_Input{Pattern: p.Core, Path: prefix})
-			if matched {
-				return true
-			}
-		}
-	}
-	return false
-}
-
 type check_file_system_stream_checks_stream_symlinks_checker_input struct {
 	Root_Directory        string
 	Tracked               map[string]bool
@@ -8096,8 +8052,7 @@ func check_deterministic(input *check_deterministic_input) (diags []Diagnostic) 
 
 	// Determinism is the default, so covered starts as every pure package and the
 	// exceptions are subtracted out. Each entry is an exact-path glob matched
-	// against the full directory (glob_match, not the gitignore-subtree
-	// glob_patterns_match), so "shared/io" opts out that one package while
+	// against the full directory, so "shared/io" opts out that one package while
 	// "shared/io/**" opts out its subtree — a bare parent cannot silently drop its
 	// children. The subtraction runs before the checks so the import induction
 	// tests against the concrete deterministic set, and matched records which
@@ -8503,7 +8458,7 @@ func check_driver_type(
 			continue
 		}
 		if gateway != "" {
-			if source.Path_Is_Exempt(pf.Path, []string{gateway}) {
+			if source.Path_Matches_Glob(pf.Path, []string{gateway + "/**"}) {
 				continue
 			}
 		}
@@ -8572,16 +8527,16 @@ func check_io_gateway(
 			continue
 		}
 		if gateway != "" {
-			if source.Path_Is_Exempt(pf.Path, []string{gateway}) {
+			if source.Path_Matches_Glob(pf.Path, []string{gateway + "/**"}) {
 				continue
 			}
 		}
 		if time_gateway != "" {
-			if source.Path_Is_Exempt(pf.Path, []string{time_gateway}) {
+			if source.Path_Matches_Glob(pf.Path, []string{time_gateway + "/**"}) {
 				continue
 			}
 		}
-		if source.Path_Is_Exempt(pf.Path, instrumentation) {
+		if source.Path_Matches_Glob(pf.Path, instrumentation) {
 			continue
 		}
 		diags = append(diags, io_gateway_import_diagnostics(pf)...)
