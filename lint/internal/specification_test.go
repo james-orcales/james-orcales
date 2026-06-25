@@ -1827,6 +1827,56 @@ func Test_Invariants_Recorder_Registration(t *testing.T) {
 	}
 }
 
+// Test_Invariants_Primitive_Types verifies a raw string, slice, or map in a
+// function signature or struct field is flagged: wrap it in a defined type.
+func Test_Invariants_Primitive_Types(t *testing.T) {
+	t.Parallel()
+	files := specification_one_file("package fixture\n\n" +
+		"// Greet does.\nfunc Greet(name string) (greeting string) {\n\treturn \"\"\n}\n")
+	if !specification_flags(t, files, "raw string parameter") {
+		t.Fatal("a raw string parameter must be flagged")
+	}
+	if !specification_flags(t, files, "raw string result") {
+		t.Fatal("a raw string result must be flagged")
+	}
+}
+
+// Test_Primitive_Field_Flagged verifies a raw slice struct field is flagged.
+func Test_Primitive_Field_Flagged(t *testing.T) {
+	t.Parallel()
+	files := specification_one_file("package fixture\n\n" +
+		"// Bag is a fixture.\ntype Bag struct {\n" +
+		"\t// Items is a fixture.\n\tItems []int\n}\n")
+	if !specification_flags(t, files, "raw slice field") {
+		t.Fatal("a raw slice field must be flagged")
+	}
+}
+
+// Test_Primitive_Defined_Type_Passes verifies a defined wrapper over a primitive
+// is allowed in a signature.
+func Test_Primitive_Defined_Type_Passes(t *testing.T) {
+	t.Parallel()
+	files := specification_one_file("package fixture\n\n" +
+		"// Name is a fixture.\ntype Name string\n\n" +
+		"// Greet does.\nfunc Greet(who Name) {\n}\n")
+	if specification_flags(t, files, "raw ") {
+		t.Fatal("a defined type wrapping a primitive must not be flagged")
+	}
+}
+
+// Test_Primitive_Stdlib_Method_Exempt verifies a method satisfying a stdlib
+// interface keeps its dictated primitive signature.
+func Test_Primitive_Stdlib_Method_Exempt(t *testing.T) {
+	t.Parallel()
+	files := specification_one_file("package fixture\n\n" +
+		"// Level is a fixture.\ntype Level int\n\n" +
+		"// String is a fixture.\n" +
+		"func (l Level) String() (name string) {\n\treturn \"\"\n}\n")
+	if specification_flags(t, files, "raw ") {
+		t.Fatal("a stdlib-interface method must keep its primitive signature")
+	}
+}
+
 // Test_Specification_Baseline pins that the unmutated package is clean, so every
 // other test isolates the single rule it violates.
 func Test_Specification_Baseline(t *testing.T) {

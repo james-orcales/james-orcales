@@ -660,3 +660,9 @@ that is the first statement of the body.
 A non-exempt, non-main package's TestMain body is exactly invariant.Run_Test_Main(m) — nothing
 more, nothing less — so its suite registers with the coverage recorder. Any other body, or no
 TestMain at all, is banned.
+
+### Primitive Types
+
+A raw string, slice, or map may not be a function parameter, result, or struct field; it has no
+preset and no bundle of its own. Wrap it in a defined type. A stdlib-interface method is exempt, as
+are _test.go files and the packages in invariant_exempt_packages — the invariant rules' opt-out.
