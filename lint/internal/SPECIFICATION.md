@@ -221,12 +221,12 @@ otherwise make it a free function taking the receiver as its first parameter.
 ### Self Recursion
 
 A function never calls itself by bare name within its own file; method and package-qualified calls
-do not count.
+do not count. A package in opt_out_recursion_ban is exempt.
 
 ### Mutual Recursion
 
 A function never reaches itself through a cycle of bare-name same-file calls; method and
-package-qualified calls do not count.
+package-qualified calls do not count. A package in opt_out_recursion_ban is exempt.
 
 ### Compound Conditions
 

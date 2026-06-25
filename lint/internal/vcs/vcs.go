@@ -27,6 +27,13 @@ const subject_chars_max = 100
 // strict charset would generate more friction than signal.
 var conventional_subject_re = regexp.MustCompile(`^[a-z]+(\([^)]+\))?!?: \S`)
 
+// GitHub's synthetic merge subjects. On a shallow checkout the merge's second
+// parent is pruned, so `git log --no-merges` lets the merge through as an
+// ordinary commit; its capitalized subject would then trip the conventional
+// check, so it is exempt.
+var github_synthetic_merge_re = regexp.MustCompile(
+	`^Merge [0-9a-f]{7,64} into [0-9a-f]{7,64}$|^Merge pull request #\d+ from \S`)
+
 // Commit is one commit's identity for the history tier: the full hash and the
 // subject line of its message.
 type Commit struct {
@@ -98,6 +105,9 @@ func merge_diagnostics(commits []Commit) (diags []diagnostic.Diagnostic) {
 func non_merge_diagnostics(commits []Commit) (diags []diagnostic.Diagnostic) {
 	for _, c := range commits {
 		if c.Subject == "" {
+			continue
+		}
+		if github_synthetic_merge_re.MatchString(c.Subject) {
 			continue
 		}
 		if len(c.Subject) > subject_chars_max {

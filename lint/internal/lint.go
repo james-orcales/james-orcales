@@ -595,6 +595,10 @@ type Configuration struct {
 	// the whole tree — the wholesale off switch for a staged rollout. Opt-in; empty
 	// exempts nothing, so the rule binds every package by default.
 	Invariant_Exempt_Packages []string `json:"invariant_exempt_packages"`
+	// Recursion_Exempt names directories exempt from the self- and mutual-
+	// recursion ban — a hand-written recursive-descent parser, whose recursion
+	// is intentional. Segment-prefix, opt-in; empty exempts nothing.
+	Recursion_Exempt []string `json:"opt_out_recursion_ban"`
 }
 
 // Git_Commit is one commit's identity for the git-history tier, aliased from the
@@ -710,6 +714,7 @@ func Main(input *Main_Input) (code int) {
 		Word_Replacements:         configuration.Word_Replacements,
 		Ignore:                    configuration.Ignore,
 		Invariant_Exempt_Packages: configuration.Invariant_Exempt_Packages,
+		Recursion_Exempt:          configuration.Recursion_Exempt,
 	})
 	if err != nil {
 		fmt.Fprintln(input.Stderr, err)
@@ -798,6 +803,7 @@ func Parse_Configuration(data []byte) (configuration *Configuration, err error) 
 		"word_replacements":         true,
 		"ignore":                    true,
 		"invariant_exempt_packages": true,
+		"opt_out_recursion_ban":     true,
 	}
 	for key := range keys {
 		if known_keys[key] {
@@ -1347,6 +1353,9 @@ type Check_File_Input struct {
 	// Invariant_Exempt is the lint.json invariant_exempt_packages list, exempting
 	// the type-invariant check.
 	Invariant_Exempt []string
+	// Recursion_Exempt is the lint.json opt_out_recursion_ban list: directories
+	// exempt from the recursion ban (a recursive-descent parser). Threaded per-file.
+	Recursion_Exempt []string
 }
 
 // Check_File runs every per-file check (tier-1 first, then tier-2 if
@@ -1397,7 +1406,7 @@ func Check_File(input *Check_File_Input) (diags []Diagnostic) {
 		return diags
 	}
 	diags = check_file_run_tier([]check_function{
-		check_no_unbounded_apis, check_no_recursion,
+		check_no_unbounded_apis, make_check_no_recursion(input.Recursion_Exempt),
 		check_no_function_init, make_check_no_package_vars(input.Instrumentation),
 		check_unnecessary_method,
 		check_no_third_party_struct_tag,
@@ -1852,6 +1861,9 @@ type Check_File_System_Input struct {
 	// forwarded from Main_Input: workspace-root-relative directories whose files
 	// the type-invariant check skips. Threaded per-file to make_check_type_invariants.
 	Invariant_Exempt_Packages []string
+	// Recursion_Exempt is the lint.json opt_out_recursion_ban list: directories
+	// exempt from the recursion ban (a recursive-descent parser). Threaded per-file.
+	Recursion_Exempt []string
 }
 
 // Check_File_System runs the stream tier, parses all Go files, and
@@ -1924,6 +1936,7 @@ func Check_File_System(input *Check_File_System_Input) (diags []Diagnostic, err 
 		Scope:                     input.Scope,
 		Scan_Prefixes:             scan_prefixes,
 		Invariant_Exempt_Packages: input.Invariant_Exempt_Packages,
+		Recursion_Exempt:          input.Recursion_Exempt,
 	}), nil
 }
 
@@ -1948,6 +1961,9 @@ type check_file_system_doctrine_input struct {
 	// Invariant_Exempt_Packages is the lint.json invariant_exempt_packages list:
 	// workspace-root-relative directories whose files the type-invariant check skips.
 	Invariant_Exempt_Packages []string
+	// Recursion_Exempt is the lint.json opt_out_recursion_ban list: directories
+	// exempt from the recursion ban (a recursive-descent parser). Threaded per-file.
+	Recursion_Exempt []string
 }
 
 // Runs the AST and cross-file doctrine tiers over the parsed set and unions their
@@ -1971,6 +1987,7 @@ func check_file_system_doctrine(
 			Instrumentation:   input.Instrumentation_Packages,
 			Word_Replacements: input.Word_Replacements,
 			Invariant_Exempt:  input.Invariant_Exempt_Packages,
+			Recursion_Exempt:  input.Recursion_Exempt,
 		})...)
 	output = append(output, check_file_system_package_split(parsed_files)...)
 	output = append(output, check_binary_component_layout(parsed_files, components)...)
@@ -3160,6 +3177,7 @@ type check_file_system_run_checks_input struct {
 	Instrumentation   []string
 	Word_Replacements map[string][]string
 	Invariant_Exempt  []string
+	Recursion_Exempt  []string
 }
 
 // Runs checks per file in parallel — CPU bound, capped at the injected
@@ -3182,6 +3200,7 @@ func check_file_system_run_checks(
 				Instrumentation:   input.Instrumentation,
 				Word_Replacements: input.Word_Replacements,
 				Invariant_Exempt:  input.Invariant_Exempt,
+				Recursion_Exempt:  input.Recursion_Exempt,
 			})
 		}(i, pf)
 	}
@@ -3292,6 +3311,21 @@ func check_comments_group_has_space_after_slashes(text string) (ok bool) {
 		return true
 	}
 	return false
+}
+
+// Wraps the recursion ban with the opt_out_recursion_ban exemption: a file under
+// a listed directory — a hand-written recursive-descent parser, where recursion
+// is intentional — is skipped. An empty list exempts nothing.
+func make_check_no_recursion(exempt []string) (check check_function) {
+	return func(
+		file_set *token.FileSet, file *ast.File, source_bytes []byte,
+	) (diags []Diagnostic) {
+		filename := file_set.Position(file.Pos()).Filename
+		if source.Path_Is_Exempt(filename, exempt) {
+			return nil
+		}
+		return check_no_recursion(file_set, file, source_bytes)
+	}
 }
 
 // TigerStyle: recursion makes stack depth depend on input, which is

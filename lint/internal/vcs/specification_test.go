@@ -55,6 +55,24 @@ func Test_Commits_Merge_Commits(t *testing.T) {
 	}
 }
 
+// Test_Commits_Synthetic_Merge_Exempt verifies a GitHub synthetic-merge subject
+// that lands in the non-merge tier on a shallow checkout is not flagged.
+func Test_Commits_Synthetic_Merge_Exempt(t *testing.T) {
+	t.Parallel()
+	pull := vcs.Check_Input{Non_Merge_Commits: []vcs.Commit{
+		{Hash: "abc", Subject: "Merge pull request #42 from owner/branch"},
+	}}
+	if flagged(pull, "non-conventional") {
+		t.Fatal("a GitHub pull-request merge subject must be exempt")
+	}
+	octopus := vcs.Check_Input{Non_Merge_Commits: []vcs.Commit{
+		{Hash: "abc", Subject: "Merge abc1234 into def5678"},
+	}}
+	if flagged(octopus, "non-conventional") {
+		t.Fatal("a GitHub sha-into-sha merge subject must be exempt")
+	}
+}
+
 // Reports whether Check emits a diagnostic whose message contains fragment for
 // the given input.
 func flagged(input vcs.Check_Input, fragment string) (found bool) {
