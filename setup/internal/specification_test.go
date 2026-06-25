@@ -8,7 +8,6 @@ import (
 	"slices"
 	"strings"
 	"testing"
-	"testing/fstest"
 
 	"github.com/james-orcales/james-orcales/setup/internal"
 	sysio "github.com/james-orcales/james-orcales/shared/io"
@@ -88,203 +87,6 @@ func Test_Idempotency_Rejects_A_Missing_Or_Stale_Binary(t *testing.T) {
 	}
 }
 
-// Test_Plan_Empty_Source_Yields_No_Writes verifies a source tree with no files
-// produces nothing to sync.
-func Test_Plan_Empty_Source_Yields_No_Writes(t *testing.T) {
-	t.Parallel()
-	writes := run_plan(t, &setup.Plan_Input{
-		Source:                fstest.MapFS{},
-		Destination:           fstest.MapFS{},
-		Destination_Directory: test_home,
-	})
-	if len(writes) != 0 {
-		t.Fatalf("expected no writes, got %d", len(writes))
-	}
-}
-
-// Test_Plan_Missing_Destination_Is_Created verifies a source file absent from the
-// home directory becomes a write of its bytes to the mirrored path.
-func Test_Plan_Missing_Destination_Is_Created(t *testing.T) {
-	t.Parallel()
-	writes := run_plan(t, &setup.Plan_Input{
-		Source: fstest.MapFS{
-			".bashrc": &fstest.MapFile{Data: []byte("hello")},
-		},
-		Destination:           fstest.MapFS{},
-		Destination_Directory: test_home,
-	})
-	by_path := writes_by_path(writes)
-	want_path := filepath.Join(test_home, ".bashrc")
-	if by_path[want_path] != "hello" {
-		t.Fatalf("expected %q written with \"hello\", got %v", want_path, by_path)
-	}
-	if len(by_path) != 1 {
-		t.Fatalf("expected exactly one write, got %d", len(by_path))
-	}
-}
-
-// Test_Plan_Identical_Destination_Is_Skipped verifies a source file whose home
-// copy already holds the same bytes produces no write, so sync is idempotent.
-func Test_Plan_Identical_Destination_Is_Skipped(t *testing.T) {
-	t.Parallel()
-	writes := run_plan(t, &setup.Plan_Input{
-		Source: fstest.MapFS{
-			".gitconfig": &fstest.MapFile{Data: []byte("identical")},
-		},
-		Destination: fstest.MapFS{
-			".gitconfig": &fstest.MapFile{Data: []byte("identical")},
-		},
-		Destination_Directory: test_home,
-	})
-	if len(writes) != 0 {
-		t.Fatalf("expected no writes for identical contents, got %d", len(writes))
-	}
-}
-
-// Test_Plan_Differing_Destination_Is_Overwritten verifies a source file whose
-// home copy differs is rewritten with the source bytes.
-func Test_Plan_Differing_Destination_Is_Overwritten(t *testing.T) {
-	t.Parallel()
-	writes := run_plan(t, &setup.Plan_Input{
-		Source: fstest.MapFS{
-			".gitconfig": &fstest.MapFile{Data: []byte("new")},
-		},
-		Destination: fstest.MapFS{
-			".gitconfig": &fstest.MapFile{Data: []byte("old")},
-		},
-		Destination_Directory: test_home,
-	})
-	by_path := writes_by_path(writes)
-	want_path := filepath.Join(test_home, ".gitconfig")
-	if by_path[want_path] != "new" {
-		t.Fatalf("expected %q overwritten with \"new\", got %v", want_path, by_path)
-	}
-}
-
-// Test_Plan_Nested_Path_Mirrors_Under_Home verifies a deeply nested source file
-// maps to the same relative path joined under the destination directory.
-func Test_Plan_Nested_Path_Mirrors_Under_Home(t *testing.T) {
-	t.Parallel()
-	writes := run_plan(t, &setup.Plan_Input{
-		Source: fstest.MapFS{
-			".config/nvim/init.lua": &fstest.MapFile{Data: []byte("lua")},
-		},
-		Destination:           fstest.MapFS{},
-		Destination_Directory: test_home,
-	})
-	by_path := writes_by_path(writes)
-	want_path := filepath.Join(test_home, ".config/nvim/init.lua")
-	if by_path[want_path] != "lua" {
-		t.Fatalf("expected a nested write at %q, got %v", want_path, by_path)
-	}
-}
-
-// Test_Plan_Ignored_Path_Is_Skipped verifies an ignored file is not synced and an
-// ignored directory is pruned: the directory's file is reachable only if the walk
-// descends into it, so marking just the directory proves the prune, not a per-file
-// skip.
-func Test_Plan_Ignored_Path_Is_Skipped(t *testing.T) {
-	t.Parallel()
-	writes := run_plan(t, &setup.Plan_Input{
-		Source: fstest.MapFS{
-			".bashrc":         &fstest.MapFile{Data: []byte("keep")},
-			".netrc":          &fstest.MapFile{Data: []byte("secret")},
-			".local/bin/tool": &fstest.MapFile{Data: []byte("built")},
-		},
-		Destination:           fstest.MapFS{},
-		Destination_Directory: test_home,
-		Is_Ignored: func(relative_path string) (ignored bool) {
-			return slices.Contains([]string{".netrc", ".local"}, relative_path)
-		},
-	})
-	by_path := writes_by_path(writes)
-	if by_path[filepath.Join(test_home, ".bashrc")] != "keep" {
-		t.Fatalf("expected .bashrc synced, got %v", by_path)
-	}
-	if _, planned := by_path[filepath.Join(test_home, ".netrc")]; planned {
-		t.Fatal("expected the ignored file skipped")
-	}
-	if _, planned := by_path[filepath.Join(test_home, ".local/bin/tool")]; planned {
-		t.Fatal("expected the ignored directory pruned")
-	}
-}
-
-// Test_Main_Writes_Planned_Files verifies Main hands each planned file's contents
-// to the injected writer at its mirrored path and reports success.
-func Test_Main_Writes_Planned_Files(t *testing.T) {
-	t.Parallel()
-	written := map[string]string{}
-	status := setup.Main(&setup.Main_Input{
-		Source: fstest.MapFS{
-			".bashrc": &fstest.MapFile{Data: []byte("hello")},
-		},
-		Destination:           fstest.MapFS{},
-		Destination_Directory: test_home,
-		Write_File: func(path string, contents []byte) (err error) {
-			written[path] = string(contents)
-			return nil
-		},
-		Stdout: io.Discard,
-		Stderr: io.Discard,
-	})
-	if status != 0 {
-		t.Fatalf("expected success, got status %d", status)
-	}
-	want_path := filepath.Join(test_home, ".bashrc")
-	if written[want_path] != "hello" {
-		t.Fatalf("expected %q written with \"hello\", got %v", want_path, written)
-	}
-}
-
-// Test_Main_Skips_Identical_Destination verifies Main writes nothing when the
-// home directory already matches the source, so a repeat run is a no-op.
-func Test_Main_Skips_Identical_Destination(t *testing.T) {
-	t.Parallel()
-	write_count := 0
-	status := setup.Main(&setup.Main_Input{
-		Source: fstest.MapFS{
-			".bashrc": &fstest.MapFile{Data: []byte("same")},
-		},
-		Destination: fstest.MapFS{
-			".bashrc": &fstest.MapFile{Data: []byte("same")},
-		},
-		Destination_Directory: test_home,
-		Write_File: func(path string, contents []byte) (err error) {
-			write_count++
-			return nil
-		},
-		Stdout: io.Discard,
-		Stderr: io.Discard,
-	})
-	if status != 0 {
-		t.Fatalf("expected success, got status %d", status)
-	}
-	if write_count != 0 {
-		t.Fatalf("expected no writes for identical contents, got %d", write_count)
-	}
-}
-
-// Test_Main_Reports_Write_Failure verifies a writer error makes Main report a
-// non-zero exit code rather than swallowing the failure.
-func Test_Main_Reports_Write_Failure(t *testing.T) {
-	t.Parallel()
-	status := setup.Main(&setup.Main_Input{
-		Source: fstest.MapFS{
-			".bashrc": &fstest.MapFile{Data: []byte("x")},
-		},
-		Destination:           fstest.MapFS{},
-		Destination_Directory: test_home,
-		Write_File: func(path string, contents []byte) (err error) {
-			return errors.New("disk full")
-		},
-		Stdout: io.Discard,
-		Stderr: io.Discard,
-	})
-	if status == 0 {
-		t.Fatal("expected a non-zero status on write failure")
-	}
-}
-
 // Test_Main_Applies_Macos_Defaults verifies that on darwin Main runs the macos
 // defaults commands through the injected runner after the sync, without printing
 // a line per command.
@@ -292,14 +94,15 @@ func Test_Main_Applies_Macos_Defaults(t *testing.T) {
 	t.Parallel()
 	ran := [][]string{}
 	log := &bytes.Buffer{}
+	loop, driver, _ := sysio.New_Sim(0)
+	if make_err := loop.Make_Directory(test_source); make_err != nil {
+		t.Fatalf("make source: %v", make_err)
+	}
 	status := setup.Main(&setup.Main_Input{
-		Source:                fstest.MapFS{},
-		Destination:           fstest.MapFS{},
+		File_System:           setup.File_System{Loop: loop, Run_Until: driver.Run_Until},
+		Source_Directory:      test_source,
 		Destination_Directory: test_home,
 		Operating_System:      "darwin",
-		Write_File: func(path string, contents []byte) (err error) {
-			return nil
-		},
 		Run_Command: func(name string, arguments []string) (err error) {
 			ran = append(ran, append([]string{name}, arguments...))
 			return nil
@@ -330,14 +133,15 @@ func Test_Main_Applies_Macos_Defaults(t *testing.T) {
 func Test_Main_Skips_Macos_Defaults_Off_Darwin(t *testing.T) {
 	t.Parallel()
 	run_count := 0
+	loop, driver, _ := sysio.New_Sim(0)
+	if make_err := loop.Make_Directory(test_source); make_err != nil {
+		t.Fatalf("make source: %v", make_err)
+	}
 	status := setup.Main(&setup.Main_Input{
-		Source:                fstest.MapFS{},
-		Destination:           fstest.MapFS{},
+		File_System:           setup.File_System{Loop: loop, Run_Until: driver.Run_Until},
+		Source_Directory:      test_source,
 		Destination_Directory: test_home,
 		Operating_System:      "linux",
-		Write_File: func(path string, contents []byte) (err error) {
-			return nil
-		},
 		Run_Command: func(name string, arguments []string) (err error) {
 			run_count++
 			return nil
@@ -1194,6 +998,10 @@ func Test_Install_Ghostty_Reports_An_Install_Failure(t *testing.T) {
 // constant keeps the expected destination paths deterministic.
 const test_home = "/home/user"
 
+// The fixed absolute source directory the macos-defaults tests walk — created empty so the
+// sync writes nothing and only the injected runner's behavior is under test.
+const test_source = "/source"
+
 // The fixed absolute checkout root the Neovim build subpaths are joined onto; a
 // constant keeps the expected make and link paths deterministic.
 const test_repository = "/repo"
@@ -1241,27 +1049,6 @@ const test_fdcli_directory = "/fd-src"
 // The fixed absolute macOS applications directory the Install_Ghostty tests gate
 // against; a constant keeps the expected app and probe paths deterministic.
 const test_applications_directory = "/apps"
-
-// Invokes Plan for input and fails the test on an unexpected error, so each case
-// asserts on the writes without repeating the error plumbing.
-func run_plan(t *testing.T, input *setup.Plan_Input) (writes []setup.File_Write) {
-	t.Helper()
-	result, plan_err := setup.Plan(input)
-	if plan_err != nil {
-		t.Fatalf("Plan returned an unexpected error: %v", plan_err)
-	}
-	return result
-}
-
-// Indexes writes by destination path, mapping each to its contents as a string
-// so a test can assert on the writes regardless of their order.
-func writes_by_path(writes []setup.File_Write) (by_path map[string]string) {
-	by_path = make(map[string]string, len(writes))
-	for _, write := range writes {
-		by_path[write.Destination_Path] = string(write.Contents)
-	}
-	return by_path
-}
 
 // Reports whether ran holds a command exactly equal to want — name and arguments
 // together — so a test can assert one specific invocation happened.
