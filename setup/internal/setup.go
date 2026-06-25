@@ -12,7 +12,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"io/fs"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -29,18 +28,27 @@ const dotfile_bytes_max = 1048576
 // an otherwise well-formed run.
 const exit_failure = 1
 
+// File_System is the injected filesystem capability the sync runs on: the shared/io loop it
+// submits reads, writes, and traversal to, and the Run_Until pump that drives each submitted
+// op to completion. package main backs Run_Until with the real driver (the loop is ticked
+// only there) and the simulation with the sim driver; this tier submits but never drives.
+type File_System struct {
+	// Loop is the submit surface for the file ops: Open/Read/Write/Close are pumped, while
+	// Read_Directory/Status/Make_Directory return inline.
+	Loop sysio.IO
+	// Run_Until drives the loop until a submitted op reports done — the per-op pump.
+	Run_Until func(done func() (finished bool))
+}
+
 // Main_Input carries the injected dependencies Main needs to sync dotfiles.
 type Main_Input struct {
-	// Source is the dotfiles tree to mirror from.
-	Source fs.FS
-	// Destination is a read-only view of the home directory, used for diffing.
-	Destination fs.FS
-	// Destination_Directory is the absolute home directory writes land under.
+	// File_System is the loop the dotfiles tree is walked, read, and written through.
+	File_System File_System
+	// Source_Directory is the absolute dotfiles tree walked in full from its root.
+	Source_Directory string
+	// Destination_Directory is the absolute home directory writes land under, and the diff
+	// reads existing files from.
 	Destination_Directory string
-	// Write_File persists contents at an absolute path, creating parent
-	// directories. It is injected so this library tier never binds to os
-	// directly; package main supplies the filesystem-backed implementation.
-	Write_File func(path string, contents []byte) (err error)
 	// Operating_System gates the macos defaults step, which runs only on
 	// "darwin" (a runtime.GOOS value).
 	Operating_System string
@@ -63,8 +71,8 @@ type Main_Input struct {
 // entry point, kept here so package main stays a thin, untested shell.
 func Main(input *Main_Input) (status_code int) {
 	writes, plan_err := Plan(&Plan_Input{
-		Source:                input.Source,
-		Destination:           input.Destination,
+		File_System:           input.File_System,
+		Source_Directory:      input.Source_Directory,
 		Destination_Directory: input.Destination_Directory,
 		Is_Ignored:            input.Is_Ignored,
 	})
@@ -73,7 +81,7 @@ func Main(input *Main_Input) (status_code int) {
 		return exit_failure
 	}
 	for _, write := range writes {
-		write_err := input.Write_File(write.Destination_Path, write.Contents)
+		write_err := write_file(&input.File_System, write.Destination_Path, write.Contents)
 		if write_err != nil {
 			fmt.Fprintf(input.Stderr, "setup: %v\n", write_err)
 			return exit_failure
@@ -221,11 +229,11 @@ type File_Write struct {
 
 // Plan_Input carries the injected dependencies Plan needs to decide what to sync.
 type Plan_Input struct {
-	// Source is the dotfiles tree, walked in full from its root.
-	Source fs.FS
-	// Destination is a read-only view of the home directory, used only to read
-	// existing files so Plan can skip writes that would change nothing.
-	Destination fs.FS
+	// File_System is the loop the source tree is walked and read through, and the
+	// destination read through for diffing.
+	File_System File_System
+	// Source_Directory is the absolute dotfiles tree, walked in full from its root.
+	Source_Directory string
 	// Destination_Directory is the absolute home directory the relative source
 	// paths are mirrored under to form each write's Destination_Path.
 	Destination_Directory string
@@ -236,41 +244,38 @@ type Plan_Input struct {
 	Is_Ignored func(relative_path string) (ignored bool)
 }
 
-// Plan returns the writes that would bring the home directory in line with the
-// source dotfiles: every regular file under the source tree, each emitted only
-// when the destination is missing or its contents differ.
+// Plan returns the writes that would bring the home directory in line with the source
+// dotfiles: every regular file under the source tree, each emitted only when the destination
+// is missing or its contents differ. It walks the tree iteratively through the loop's
+// Read_Directory, pruning an ignored directory so the install tree under .local is never read.
 func Plan(input *Plan_Input) (writes []File_Write, err error) {
 	writes = []File_Write{}
-	walk_err := fs.WalkDir(input.Source, ".",
-		func(source_path string, entry fs.DirEntry, step_err error) (result error) {
-			if step_err != nil {
-				return step_err
+	worklist := []string{"."}
+	for len(worklist) > 0 {
+		directory := worklist[len(worklist)-1]
+		worklist = worklist[:len(worklist)-1]
+		entries, read_err := input.File_System.Loop.Read_Directory(
+			filepath.Join(input.Source_Directory, directory))
+		if read_err != nil {
+			return nil, read_err
+		}
+		for _, entry := range entries {
+			relative := filepath.Join(directory, entry.Name)
+			if plan_is_ignored(input.Is_Ignored, relative) {
+				continue
 			}
-			if plan_is_ignored(input.Is_Ignored, source_path) {
-				// Prune an ignored directory so its contents — the install tree can
-				// be thousands of files — are never walked or read; skip a file.
-				if entry.IsDir() {
-					return fs.SkipDir
-				}
-				return nil
+			if entry.Is_Directory {
+				worklist = append(worklist, relative)
+				continue
 			}
-			if entry.IsDir() {
-				return nil
-			}
-			write, planned, plan_err := plan_file(&plan_file_input{
-				Input:       input,
-				Source_Path: source_path,
-			})
+			write, planned, plan_err := plan_file(input, relative)
 			if plan_err != nil {
-				return plan_err
+				return nil, plan_err
 			}
 			if planned {
 				writes = append(writes, write)
 			}
-			return nil
-		})
-	if walk_err != nil {
-		return nil, walk_err
+		}
 	}
 	return writes, nil
 }
@@ -286,74 +291,118 @@ func plan_is_ignored(
 	return is_ignored(source_path)
 }
 
-// Carries the arguments for planning one source file.
-type plan_file_input struct {
-	Input       *Plan_Input
-	Source_Path string
-}
-
-// Decides whether one source file needs syncing. planned is false when the
-// destination already holds identical bytes; otherwise it returns the write
-// mirroring the source path under the home directory.
-func plan_file(input *plan_file_input) (write File_Write, planned bool, err error) {
-	source_contents, read_err := read_source(input.Input.Source, input.Source_Path)
+// Decides whether the source file at relative needs syncing. planned is false when the
+// source is absent or the destination already holds identical bytes; otherwise it returns
+// the write mirroring the relative path under the home directory.
+func plan_file(input *Plan_Input, relative string) (write File_Write, planned bool, err error) {
+	source_contents, found, read_err := read_bounded(
+		&input.File_System, filepath.Join(input.Source_Directory, relative))
 	if read_err != nil {
 		return File_Write{}, false, read_err
 	}
-	if destination_matches(input.Input.Destination, input.Source_Path, source_contents) {
+	if !found {
 		return File_Write{}, false, nil
 	}
-	destination_path := filepath.Join(input.Input.Destination_Directory, input.Source_Path)
-	return File_Write{
-		Destination_Path: destination_path,
-		Contents:         source_contents,
-	}, true, nil
-}
-
-// Reads a source file's full contents, bounded by dotfile_bytes_max.
-func read_source(source fs.FS, source_path string) (contents []byte, err error) {
-	file, open_err := source.Open(source_path)
-	if open_err != nil {
-		return nil, open_err
+	destination_path := filepath.Join(input.Destination_Directory, relative)
+	if destination_matches(&input.File_System, destination_path, source_contents) {
+		return File_Write{}, false, nil
 	}
-	defer file.Close()
-	return read_bounded(file)
+	return File_Write{Destination_Path: destination_path, Contents: source_contents}, true, nil
 }
 
-// Reports whether the home directory already holds exactly source_contents at
-// relative_path. A destination that is absent or unreadable counts as a
-// mismatch, so the file is written — the rule the original installer used.
+// Reports whether the home directory already holds exactly source_contents at path. A
+// destination that is absent or unreadable counts as a mismatch, so the file is written.
 func destination_matches(
-	destination fs.FS, relative_path string, source_contents []byte) (matches bool) {
-	file, open_err := destination.Open(relative_path)
-	if open_err != nil {
+	system *File_System, path string, source_contents []byte,
+) (matches bool) {
+	destination_contents, found, err := read_bounded(system, path)
+	if err != nil {
 		return false
 	}
-	defer file.Close()
-	destination_contents, read_err := read_bounded(file)
-	if read_err != nil {
+	if !found {
 		return false
 	}
 	return bytes.Equal(source_contents, destination_contents)
 }
 
-// Reads up to dotfile_bytes_max bytes from file into one fixed buffer, erroring
-// if the file overflows the cap or a read fails mid-stream, so a silently
-// truncated dotfile never passes as the whole file.
-func read_bounded(file fs.File) (contents []byte, err error) {
+// Reads the file at path in full through the loop, bounded by dotfile_bytes_max into one
+// fixed buffer. found is false when the path is absent — the caller treats that as a
+// mismatch — and a file overflowing the cap errors, so a truncated dotfile never passes.
+func read_bounded(system *File_System, path string) (contents []byte, found bool, err error) {
+	file, open_err := system.Loop.Open(path)
+	if open_err != nil {
+		return nil, false, nil
+	}
 	buffer := make([]byte, dotfile_bytes_max)
-	read_total := 0
-	for read_total < len(buffer) {
-		n, read_err := file.Read(buffer[read_total:])
-		read_total += n
-		if read_err == io.EOF {
-			return buffer[:read_total], nil
-		}
+	total := 0
+	for total < len(buffer) {
+		count, read_err := loop_read(system, file, buffer[total:], int64(total))
 		if read_err != nil {
-			return nil, read_err
+			loop_close(system, file)
+			return nil, false, read_err
+		}
+		total += count
+		if count == 0 {
+			loop_close(system, file)
+			return buffer[:total], true, nil
 		}
 	}
-	return nil, errors.New("dotfile exceeds the maximum size")
+	loop_close(system, file)
+	return nil, false, errors.New("dotfile exceeds the maximum size")
+}
+
+// Writes contents to path through the loop, creating its parent directories first. It is the
+// filesystem binding the sync writes through, replacing the injected os writer.
+func write_file(system *File_System, path string, contents []byte) (err error) {
+	mkdir_err := system.Loop.Make_Directory(filepath.Dir(path))
+	if mkdir_err != nil {
+		return mkdir_err
+	}
+	file, create_err := system.Loop.Create(path)
+	if create_err != nil {
+		return create_err
+	}
+	write_err := loop_write(system, file, contents, 0)
+	loop_close(system, file)
+	return write_err
+}
+
+// Reads up to len(buffer) bytes from file at offset through the loop, driving the submitted
+// read to completion and returning its byte count.
+func loop_read(
+	system *File_System, file sysio.File, buffer []byte, offset int64,
+) (count int, err error) {
+	var completion sysio.Completion
+	done := false
+	system.Loop.Read(&completion, func(_ *sysio.Completion, read int, read_err error) {
+		count = read
+		err = read_err
+		done = true
+	}, file, buffer, offset)
+	system.Run_Until(func() (finished bool) { return done })
+	return count, err
+}
+
+// Writes buffer to file at offset through the loop, driving the submitted write to completion.
+func loop_write(
+	system *File_System, file sysio.File, buffer []byte, offset int64,
+) (err error) {
+	var completion sysio.Completion
+	done := false
+	system.Loop.Write(&completion, func(_ *sysio.Completion, _ int, write_err error) {
+		err = write_err
+		done = true
+	}, file, buffer, offset)
+	system.Run_Until(func() (finished bool) { return done })
+	return err
+}
+
+// Closes file through the loop, driving the submitted close to completion.
+func loop_close(system *File_System, file sysio.File) {
+	var completion sysio.Completion
+	done := false
+	system.Loop.Close(&completion, func(_ *sysio.Completion, _ error) { done = true }, file)
+	system.Run_Until(func() (finished bool) { return done })
 }
 
 // Spawn runs one command to completion and returns its outcome — the synchronous adapter

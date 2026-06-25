@@ -39,10 +39,6 @@ const iosevka_subpath = repository_subpath + "/third_party/iosevka_nerd_font_mon
 // owner-writable, world-readable.
 const directory_permissions = 0o755
 
-// File_permissions is applied to the dotfiles write_file writes: owner-writable,
-// world-readable.
-const file_permissions = 0o644
-
 // Root_refusal is printed when setup is invoked as root: os.UserHomeDir would then
 // resolve to root's home, so the bootstrap would build and write everything in the
 // wrong place and leave root-owned files behind.
@@ -64,6 +60,7 @@ func main() {
 	clock, _ := timeos.New_Operating_System_Clock()
 	loop, driver := iodefault.New_Operating_System_IO(clock)
 	spawn := spawn_command(loop, driver)
+	system := setup.File_System{Loop: loop, Run_Until: driver.Run_Until}
 	// One bootstrap, in order: install direnv (everything downstream is driven by
 	// it), sync the dotfiles, install fonts and Neovim, then the Go-toolchain builds
 	// (fzf and this repo's own commands — maddox, m2p, sloc), the cargo builds (rust,
@@ -73,7 +70,7 @@ func main() {
 		Stdout: os.Stdout,
 		Steps: []setup.Step{
 			{Name: "direnv", Run: direnv_step(home, spawn)},
-			{Name: "dotfiles", Run: dotfiles_step(home, spawn)},
+			{Name: "dotfiles", Run: dotfiles_step(home, system, spawn)},
 			{Name: "fonts", Run: fonts_step(home, spawn)},
 			{Name: "neovim", Run: neovim_step(home, spawn)},
 			{Name: "fzf", Run: fzf_step(home, spawn)},
@@ -134,15 +131,16 @@ func direnv_step(home string, spawn setup.Spawn) (run func() (status_code int)) 
 
 // Returns the bootstrap step that mirrors the dotfiles tree into the home
 // directory and, on darwin, applies the macos defaults.
-func dotfiles_step(home string, spawn setup.Spawn) (run func() (status_code int)) {
+func dotfiles_step(
+	home string, system setup.File_System, spawn setup.Spawn,
+) (run func() (status_code int)) {
 	dotfiles_directory := filepath.Join(home, dotfiles_subpath)
 	return func() (status_code int) {
 		return setup.Main(&setup.Main_Input{
-			Source:                os.DirFS(dotfiles_directory),
-			Destination:           os.DirFS(home),
+			File_System:           system,
+			Source_Directory:      dotfiles_directory,
 			Destination_Directory: home,
 			Operating_System:      runtime.GOOS,
-			Write_File:            write_file,
 			Run_Command:           run_command(spawn),
 			Is_Ignored:            git_ignores(spawn, dotfiles_directory),
 			Stdout:                os.Stdout,
@@ -415,16 +413,6 @@ func copy_file(input *copy_file_input) (err error) {
 		return copy_err
 	}
 	return destination.Close()
-}
-
-// Writes contents at path, creating its parent directories first. It is the real
-// filesystem binding injected into setup.Main so the library tier stays pure.
-func write_file(path string, contents []byte) (err error) {
-	mkdir_err := os.MkdirAll(filepath.Dir(path), directory_permissions)
-	if mkdir_err != nil {
-		return mkdir_err
-	}
-	return os.WriteFile(path, contents, file_permissions)
 }
 
 // Returns the external-program runner injected into setup.Main, also used for fc-cache,

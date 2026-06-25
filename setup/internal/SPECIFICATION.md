@@ -19,50 +19,11 @@ Installed reports true when the binary's --version output starts with the wanted
 
 Installed reports false when the binary is absent or reports a different version.
 
-# Plan
-
-Plan returns the writes that bring the home directory in line with the source dotfiles.
-
-### Empty Source Yields No Writes
-
-A source tree with no files produces nothing to sync.
-
-### Missing Destination Is Created
-
-A source file absent from the home directory is written to its mirrored path.
-
-### Identical Destination Is Skipped
-
-A source file whose home copy already holds the same bytes is left untouched.
-
-### Differing Destination Is Overwritten
-
-A source file whose home copy differs is rewritten with the source bytes.
-
-### Nested Path Mirrors Under Home
-
-A nested source file maps to the same relative path joined under the home directory.
-
-### Ignored Path Is Skipped
-
-A source path the gitignore predicate marks ignored is not synced, and an ignored directory is
-pruned so its contents are never read.
-
 # Main
 
-Main plans the sync and writes each pending file through the injected writer.
-
-### Writes Planned Files
-
-Each planned file's contents reach the writer at its mirrored path, reporting success.
-
-### Skips Identical Destination
-
-A home directory already matching the source yields no writes on a repeat run.
-
-### Reports Write Failure
-
-A writer error makes the run report a non-zero exit code.
+Main plans the sync, writing each pending file through the loop, then on darwin applies the
+macos defaults through the injected runner. The mirror's own properties are proved by the
+simulation harness, not example cases here.
 
 ### Applies Macos Defaults
 
