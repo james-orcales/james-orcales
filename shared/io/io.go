@@ -88,7 +88,7 @@ type Driver struct {
 	// Run_Until drives the loop until done reports true — the run-until-complete pump
 	// that lets straight-line code wait for its own op inline. Top-level and
 	// single-loop only: never call it from within a completion callback.
-	Run_Until func(done func() bool)
+	Run_Until func(done func() (finished bool))
 }
 
 // Sim is the deterministic, in-memory IO backend — TigerBeetle's simulated Storage
@@ -175,7 +175,7 @@ func Sim_To_IO(sim *Sim) (loop IO, driver Driver) {
 	driver = Driver{
 		Run:       func() { sim_run(sim) },
 		Run_For:   func(duration time.Duration) { sim_run_for(sim, duration) },
-		Run_Until: func(done func() bool) { sim_run_until(sim, done) },
+		Run_Until: func(done func() (finished bool)) { sim_run_until(sim, done) },
 	}
 	return loop, driver
 }
@@ -249,7 +249,7 @@ func sim_run_for(sim *Sim, duration time.Duration) {
 
 // Drives the loop until done reports true — the run-until-complete pump. Top-level and
 // single-loop only; each step drains then ticks.
-func sim_run_until(sim *Sim, done func() bool) {
+func sim_run_until(sim *Sim, done func() (finished bool)) {
 	for !done() {
 		sim_run(sim)
 	}

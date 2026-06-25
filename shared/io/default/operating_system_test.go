@@ -23,7 +23,8 @@ func Test_Operating_System_IO_Read(t *testing.T) {
 		t.Fatal(write_err)
 	}
 
-	loop := iodefault.New_Operating_System_IO(timeos.New_Operating_System_Clock())
+	clock, _ := timeos.New_Operating_System_Clock()
+	loop, driver := iodefault.New_Operating_System_IO(clock)
 	buffer := make([]byte, 5)
 	count := -1
 	var completion io.Completion
@@ -33,7 +34,7 @@ func Test_Operating_System_IO_Read(t *testing.T) {
 		}
 		count = bytes
 	}, io.File(file.Fd()), buffer, 0)
-	loop.Run()
+	driver.Run()
 
 	if count != 5 {
 		t.Fatalf("read %d bytes, want 5", count)
@@ -46,13 +47,14 @@ func Test_Operating_System_IO_Read(t *testing.T) {
 // Test_Operating_System_IO_Timeout verifies a timeout fires once real time passes
 // its deadline.
 func Test_Operating_System_IO_Timeout(t *testing.T) {
-	loop := iodefault.New_Operating_System_IO(timeos.New_Operating_System_Clock())
+	clock, _ := timeos.New_Operating_System_Clock()
+	loop, driver := iodefault.New_Operating_System_IO(clock)
 	fired := false
 	var completion io.Completion
 	loop.Timeout(&completion, func(_ *io.Completion, err error) {
 		fired = true
 	}, time.Millisecond)
-	loop.Run_For(50 * time.Millisecond)
+	driver.Run_For(50 * time.Millisecond)
 	if !fired {
 		t.Fatal("timeout did not fire")
 	}
@@ -63,7 +65,8 @@ func Test_Operating_System_IO_Timeout(t *testing.T) {
 // socket receives them — all driven by the single event loop.
 func Test_Operating_System_IO_Socket(t *testing.T) {
 	port := free_port(t)
-	loop := iodefault.New_Operating_System_IO(timeos.New_Operating_System_Clock())
+	clock, _ := timeos.New_Operating_System_Clock()
+	loop, driver := iodefault.New_Operating_System_IO(clock)
 
 	listener, listen_err := loop.Listen("127.0.0.1", port)
 	if listen_err != nil {
@@ -92,7 +95,7 @@ func Test_Operating_System_IO_Socket(t *testing.T) {
 		"127.0.0.1", port,
 	)
 
-	loop.Run_For(500 * time.Millisecond)
+	driver.Run_For(500 * time.Millisecond)
 	if accepted <= 0 {
 		t.Fatalf("accept did not complete, got %d", accepted)
 	}
@@ -117,7 +120,7 @@ func Test_Operating_System_IO_Socket(t *testing.T) {
 		received = count
 	}, accepted, buffer)
 
-	loop.Run_For(500 * time.Millisecond)
+	driver.Run_For(500 * time.Millisecond)
 	if received != 4 {
 		t.Fatalf("received %d bytes, want 4", received)
 	}

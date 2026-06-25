@@ -7,7 +7,6 @@ import (
 	"syscall"
 
 	"github.com/james-orcales/james-orcales/shared/io"
-	"github.com/james-orcales/james-orcales/shared/time"
 )
 
 // Reads up to len(buffer) bytes from file at offset via the pread syscall — the raw
@@ -19,17 +18,6 @@ func read_at(file io.File, buffer []byte, offset int64) (count int, err error) {
 // Writes buffer to file at offset via the pwrite syscall.
 func write_at(file io.File, buffer []byte, offset int64) (count int, err error) {
 	return syscall.Pwrite(int(file), buffer, offset)
-}
-
-// Blocks the calling thread for the duration in real wall-clock time — the backend's
-// idle-block, kept off the read-only clock. The loop uses it only when no socket is
-// armed to wake it earlier.
-func sleep_real(duration time.Duration) {
-	if duration <= 0 {
-		return
-	}
-	span := syscall.NsecToTimespec(int64(duration))
-	syscall.Nanosleep(&span, nil)
 }
 
 // Reports whether err is the non-blocking "try again" signal that keeps an operation

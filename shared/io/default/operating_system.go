@@ -123,16 +123,21 @@ func New_Operating_System_IO(host time.Clock) (loop io.IO, driver io.Driver) {
 			operating_system_close(state, completion, callback, file)
 		},
 	}
-	driver = io.Driver{
+	return loop, operating_system_to_driver(state)
+}
+
+// Builds the driver — the loop-advancing capability — over state; held only by the
+// composition root or a test, never by code that merely submits IO.
+func operating_system_to_driver(state *operating_system) (driver io.Driver) {
+	return io.Driver{
 		Run:     func() { operating_system_run(state) },
 		Run_For: func(duration time.Duration) { operating_system_run_for(state, duration) },
-		Run_Until: func(done func() bool) {
+		Run_Until: func(done func() (finished bool)) {
 			for !done() {
 				operating_system_run_for(state, operating_system_tick)
 			}
 		},
 	}
-	return loop, driver
 }
 
 // Runs ready completions and one non-blocking socket poll; the host clock moves on
@@ -161,21 +166,16 @@ func operating_system_run_for(state *operating_system, duration time.Duration) {
 	}
 }
 
-// Idles for gap nanoseconds: blocks in the socket poll when a socket is armed so
-// readiness wakes it early, otherwise blocks real time directly. The block lives here
-// in the backend, not on the clock — the clock is read-only.
+// Idles for gap nanoseconds by blocking on the readiness poll with that timeout: an
+// empty poll wait is a portable real-time sleep, and an armed socket's readiness wakes
+// it early. The block lives on the poll fd, not on the clock — the clock is read-only,
+// and the backend must not import stdlib time (the time/default gateway's alone).
 func operating_system_idle(state *operating_system, gap time.Moment) {
 	if gap <= 0 {
 		return
 	}
-	armed := len(state.Read_Waiters) + len(state.Write_Waiters)
-	if state.Poll_Active {
-		if armed > 0 {
-			operating_system_poll(state, int64(gap))
-			return
-		}
-	}
-	sleep_real(time.Duration(gap))
+	operating_system_poll_ensure(state)
+	operating_system_poll(state, int64(gap))
 }
 
 // Moves every timeout whose deadline has passed into the completed queue.
