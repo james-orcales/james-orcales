@@ -423,9 +423,9 @@ in lint.json's pure_but_indeterministic_packages opts out, and the bans bind _te
 
 ### Entry Format
 
-A pure_but_indeterministic_packages entry is an exact-path glob naming a pure package to opt
-out: `shared/io` releases that package, `shared/io/**` its subtree, `*` and `**`
-spanning one path segment or many.
+A pure_but_indeterministic_packages entry is an exact-path glob naming a pure package
+to opt out: `shared/io` releases that package, `shared/io/**` its subtree, `*` and
+`**` spanning one path segment or many; a `!`-prefixed entry negates, always winning.
 
 ### Goroutines
 

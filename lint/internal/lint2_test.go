@@ -2132,14 +2132,17 @@ func Test_Ignore_Segment_Glob(t *testing.T) {
 	}
 }
 
-// A negated, empty, or ?/[ entry, or one path.Match deems malformed, is rejected at
-// config-parse time, aborting the run with exit 2 — the same loud failure every
-// other bad lint.json earns.
+// A bare negation, empty, or ?/[ entry, or one path.Match deems malformed, is
+// rejected at config-parse time, aborting the run with exit 2 — the same loud
+// failure every other bad lint.json earns.
 func Test_Ignore_Parse_Rejects(t *testing.T) {
 	t.Parallel()
 	// ? and [class] are the path.Match tokens we deliberately do not support — only
 	// * and ** — so even a well-formed class is rejected, not just a malformed "bad[".
-	for _, bad := range [][]string{{"!neg"}, {""}, {"bad["}, {"a?b"}, {"a[bc]"}} {
+	// "!" negates nothing, and a list of only negation entries can never match
+	// anything (Test_Ignore_Negation covers the accepted, meaningful negation form).
+	bad_entries := [][]string{{"!"}, {""}, {"bad["}, {"a?b"}, {"a[bc]"}, {"!neg", "!other"}}
+	for _, bad := range bad_entries {
 		files := map[string]string{
 			"good.txt":  "x\n",
 			"lint.json": lint_json_ignore(t, bad),
@@ -2151,6 +2154,28 @@ func Test_Ignore_Parse_Rejects(t *testing.T) {
 		if stderr == "" {
 			t.Fatalf("entry %q must explain the rejection on stderr", bad)
 		}
+	}
+}
+
+// A "!"-prefixed entry re-includes a path a broader entry ignored: dir/** drops
+// the whole directory, but !dir/keep-File.txt holds that one path-casing
+// violation out of the drop while its sibling stays dropped.
+func Test_Ignore_Negation(t *testing.T) {
+	t.Parallel()
+	files := map[string]string{
+		"dir/keep-File.txt":  "x\n",
+		"dir/other-File.txt": "x\n",
+		"lint.json":          lint_json_ignore(t, []string{"dir/**", "!dir/keep-File.txt"}),
+	}
+	code, stdout, stderr := run_lint_tracked(t, files)
+	if code != 1 {
+		t.Fatalf("want dir/keep-File.txt still flagged, got %d; stderr %q", code, stderr)
+	}
+	if !strings.Contains(stdout, "keep-File.txt") {
+		t.Fatalf("!dir/keep-File.txt must re-include the ignored path: %s", stdout)
+	}
+	if strings.Contains(stdout, "other-File.txt") {
+		t.Fatalf("dir/** must still drop the rest of the directory: %s", stdout)
 	}
 }
 
@@ -5528,7 +5553,8 @@ type parse_configuration_case struct {
 // every hard-error form. Split by outcome so each list stays within the function
 // length cap.
 func parse_configuration_cases() (cases []parse_configuration_case) {
-	return append(parse_configuration_valid_cases(), parse_configuration_error_cases()...)
+	cases = append(parse_configuration_valid_cases(), parse_configuration_error_cases()...)
+	return append(cases, parse_configuration_negation_error_cases()...)
 }
 
 // Renders a lint.json with every required key present and valid. An override
@@ -5576,6 +5602,12 @@ func parse_configuration_valid_cases() (cases []parse_configuration_case) {
 			Name: "ignore globs accepted",
 			Input: configuration_document(
 				map[string]any{"ignore": []string{"a/b", "c.md"}}),
+			Want_Shared: "example.com/lib",
+		},
+		{
+			Name: "mixed positive and negated globs accepted",
+			Input: configuration_document(
+				map[string]any{"ignore": []string{"keep/**", "!keep/sub"}}),
 			Want_Shared: "example.com/lib",
 		},
 	}
@@ -5633,12 +5665,6 @@ func parse_configuration_error_cases() (cases []parse_configuration_case) {
 			Want_Err: true,
 		},
 		{
-			Name: "ignore negation rejected",
-			Input: configuration_document(
-				map[string]any{"ignore": []string{"!keep"}}),
-			Want_Err: true,
-		},
-		{
 			Name: "wrong value type rejected",
 			Input: configuration_document(
 				map[string]any{"instrumentation_packages": "no"}),
@@ -5647,6 +5673,32 @@ func parse_configuration_error_cases() (cases []parse_configuration_case) {
 		{
 			Name:     "malformed json rejected",
 			Input:    "{",
+			Want_Err: true,
+		},
+	}
+}
+
+// The negation-specific hard-error forms, split from parse_configuration_error_cases
+// to keep each case-returning function within the function-length cap: a bare "!",
+// a "!" negating only whitespace, and a list that is entirely negation entries.
+func parse_configuration_negation_error_cases() (cases []parse_configuration_case) {
+	return []parse_configuration_case{
+		{
+			Name: "bare negation rejected",
+			Input: configuration_document(
+				map[string]any{"ignore": []string{"!"}}),
+			Want_Err: true,
+		},
+		{
+			Name: "negation of only whitespace rejected",
+			Input: configuration_document(
+				map[string]any{"ignore": []string{"!  "}}),
+			Want_Err: true,
+		},
+		{
+			Name: "all-negation list rejected",
+			Input: configuration_document(
+				map[string]any{"ignore": []string{"!keep", "!other"}}),
 			Want_Err: true,
 		},
 	}
@@ -5784,6 +5836,33 @@ func Test_Deterministic_Library_Glob(t *testing.T) {
 	}
 	if specification_diagnosed(diags, "must not use select") {
 		t.Fatal("a * entry must release each direct child package")
+	}
+}
+
+// Test_Deterministic_Negation_Holds_Package verifies a "!"-prefixed entry holds
+// one package to the deterministic tier despite a broader release entry: pkg/keep
+// stays covered (its goroutine is flagged) while pkg/other, matched only by the
+// broader entry, is released.
+func Test_Deterministic_Negation_Holds_Package(t *testing.T) {
+	t.Parallel()
+	files := map[string][]byte{
+		"go.mod": []byte("module fixture\n\ngo 1.25\n"),
+		"pkg/keep/keep.go": []byte("// Package keep is a fixture.\n" +
+			"package keep\n\n" +
+			"// F is a fixture.\n" +
+			"func F() {\n\tgo done()\n}\n\n" +
+			"func done() {\n\treturn\n}\n"),
+		"pkg/other/other.go": []byte("// Package other is a fixture.\n" +
+			"package other\n\n" +
+			"// G is a fixture.\n" +
+			"func G() {\n\tselect {}\n}\n"),
+	}
+	diags := deterministic_self_diagnostics(t, files, []string{"pkg/*", "!pkg/keep"})
+	if !specification_diagnosed(diags, "must not start a goroutine") {
+		t.Fatal("!pkg/keep must hold pkg/keep to the deterministic tier")
+	}
+	if specification_diagnosed(diags, "must not use select") {
+		t.Fatal("pkg/* must still release pkg/other, which the negation does not name")
 	}
 }
 
