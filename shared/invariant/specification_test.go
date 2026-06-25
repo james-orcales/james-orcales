@@ -852,7 +852,7 @@ func Test_Analysis_Summary(t *testing.T) {
 
 	summary := invariant.Recorder_Assertion_Summary(recorder)
 
-	want := "✓ tested 4 properties (2 individual + 2 combinations, of which 1 are panic-able)"
+	want := "✓ tested 5 properties (3 individual + 2 combinations, of which 1 are panic-able)"
 	if summary != want {
 		t.Fatalf("summary = %q, want %q", summary, want)
 	}
@@ -889,9 +889,10 @@ func check(n int) {
 
 	summary := invariant.Recorder_Assertion_Summary(recorder)
 
-	// Always once; two namespaces each: 3 axes, 6 surviving cells, 2 carved cells.
-	// Individual 1+6, combination 12+4, panic-able 1+4.
-	want := "✓ tested 23 properties (7 individual + 16 combinations, of which 5 are panic-able)"
+	// Always 1 individual; two namespaces × 3 Sometimes × 2 branches = 12, so 13
+	// individual; 12 surviving + 4 carved = 16 combination; panic-able 1 + 4.
+	want := "✓ tested 29 properties " +
+		"(13 individual + 16 combinations, of which 5 are panic-able)"
 	if summary != want {
 		t.Fatalf("summary = %q, want %q", summary, want)
 	}
@@ -911,8 +912,8 @@ func Test_Analysis_Summary_Names_Package(t *testing.T) {
 
 	summary := invariant.Recorder_Assertion_Summary(recorder)
 
-	want := "✓ shared/prng: tested 4 properties " +
-		"(2 individual + 2 combinations, of which 1 are panic-able)"
+	want := "✓ shared/prng: tested 5 properties " +
+		"(3 individual + 2 combinations, of which 1 are panic-able)"
 	if summary != want {
 		t.Fatalf("summary = %q, want %q", summary, want)
 	}
