@@ -640,9 +640,9 @@ MAX, 0, 1, and 2.
 
 ### Field Composition
 
-A struct type's bundle calls the _Invariants of every value field whose type has one — a preset for
-a primitive, the type's own bundle otherwise. An optional (nil-able) pointer field is exempt; gate
-its present-only properties with Imply. An immediate sync.Mutex or sync.RWMutex field is exempt.
+A struct type's bundle calls the _Invariants of every field whose type has one — a preset for a
+primitive, the type's own bundle otherwise. A pointer field composes its pointee. An immediate
+sync.Mutex or sync.RWMutex field is exempt.
 
 ### Parameter Assertion
 
