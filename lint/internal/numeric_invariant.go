@@ -1752,7 +1752,12 @@ func simulation_component_diagnostics(
 			strconv.Quote(component.Import_Path)+" must declare an internal/"+
 			simulation_directory+" package driving internal.Main")
 	}
+	diags = append(diags, simulation_package_diagnostics(sim_files, position)...)
 	diags = append(diags, simulation_contents_diagnostics(sim_files, position)...)
+	internal_functions := simulation_internal_functions(
+		parsed_files, components, component_index_number, internal_root)
+	diags = append(diags, simulation_entry_diagnostics(
+		sim_files, internal_functions, component.Import_Path+"/internal", position)...)
 	return append(diags, simulation_test_main_diagnostics(sim_files, position)...)
 }
 
@@ -1812,69 +1817,151 @@ func simulation_package_files(
 	return files
 }
 
-// The simulation package declares nothing but its one fuzz function and its
-// TestMain; any other declaration would run in the same isolated test binary and
-// could witness an invariant without driving internal.Main, defeating the point.
-func simulation_contents_diagnostics(
-	files []parsed_file, position token.Position,
+// The simulation directory holds one blackbox test package and no source package:
+// every file is a _test.go whose clause ends in _test. A source file would compile
+// into the same tree the fuzz drives, a back door around the isolated test binary.
+func simulation_package_diagnostics(
+	sim_files []parsed_file, position token.Position,
 ) (diags []Diagnostic) {
-	fuzz_count := 0
-	test_main_count := 0
-	for _, pf := range files {
-		for _, declaration := range pf.File.Decls {
-			kind := simulation_declaration_kind(declaration)
-			if kind == "fuzz" {
-				fuzz_count++
-				continue
-			}
-			if kind == "test_main" {
-				test_main_count++
-				continue
-			}
-			if kind == "import" {
-				continue
-			}
+	for _, pf := range sim_files {
+		if !strings.HasSuffix(pf.Path, "_test.go") {
 			return simulation_diagnostic(position,
-				"simulation package may declare only a fuzz function and TestMain")
+				"simulation holds only a blackbox test package; no source file")
 		}
-	}
-	if fuzz_count != 1 {
-		return simulation_diagnostic(position,
-			"simulation package must declare exactly one fuzz function")
-	}
-	if test_main_count != 1 {
-		return simulation_diagnostic(position,
-			"simulation package must declare exactly one TestMain")
+		if !strings.HasSuffix(pf.File.Name.Name, "_test") {
+			return simulation_diagnostic(position,
+				"simulation package must be blackbox: package <name>_test")
+		}
 	}
 	return nil
 }
 
-// Classifies a simulation-package declaration as import, fuzz, test_main, or other.
-func simulation_declaration_kind(declaration ast.Decl) (kind string) {
-	general, is_general := declaration.(*ast.GenDecl)
-	if is_general {
-		if general.Tok == token.IMPORT {
-			return "import"
+// The simulation package declares a fuzz function that drives internal.Main — the
+// witness for the component's invariants. Any other declaration is allowed; the fuzz
+// driver just has to be present.
+func simulation_contents_diagnostics(
+	files []parsed_file, position token.Position,
+) (diags []Diagnostic) {
+	for _, pf := range files {
+		for _, declaration := range pf.File.Decls {
+			if simulation_is_fuzz(declaration) {
+				return nil
+			}
 		}
-		return "other"
 	}
+	return simulation_diagnostic(position,
+		"simulation package must declare a fuzz function driving internal.Main")
+}
+
+// Reports whether the declaration is a free Fuzz function taking a *testing.F.
+func simulation_is_fuzz(declaration ast.Decl) (fuzz bool) {
 	function, is_function := declaration.(*ast.FuncDecl)
 	if !is_function {
-		return "other"
+		return false
 	}
 	if function.Recv != nil {
-		return "other"
-	}
-	if function.Name.Name == "TestMain" {
-		return "test_main"
+		return false
 	}
 	if !strings.HasPrefix(function.Name.Name, "Fuzz") {
-		return "other"
+		return false
 	}
-	if simulation_fuzz_parameter(function) == "" {
-		return "other"
+	return simulation_fuzz_parameter(function) != ""
+}
+
+// The exported free-function names, Main aside, declared across the component's
+// internal tree — the functions the simulation is forbidden to reference, since
+// each is a second entry point that could witness an invariant without driving Main.
+func simulation_internal_functions(
+	parsed_files []parsed_file, components *component_index,
+	component_index_number int, internal_root string,
+) (functions map[string]bool) {
+	functions = map[string]bool{}
+	for _, pf := range parsed_files {
+		if strings.HasSuffix(pf.Path, "_test.go") {
+			continue
+		}
+		if components.File_To_Component[pf.Path] != component_index_number {
+			continue
+		}
+		directory := path.Dir(pf.Path)
+		under := directory == internal_root
+		if strings.HasPrefix(directory, internal_root+"/") {
+			under = true
+		}
+		if !under {
+			continue
+		}
+		for _, declaration := range pf.File.Decls {
+			function, is_function := declaration.(*ast.FuncDecl)
+			if !is_function {
+				continue
+			}
+			if function.Recv != nil {
+				continue
+			}
+			if function.Name.Name == "Main" {
+				continue
+			}
+			if !token.IsExported(function.Name.Name) {
+				continue
+			}
+			functions[function.Name.Name] = true
+		}
 	}
-	return "fuzz"
+	return functions
+}
+
+// The local names the simulation file binds to internal-subtree imports, so a
+// selector on one of them can be checked against the forbidden-function set.
+func simulation_internal_import_locals(
+	file *ast.File, internal_import_path string,
+) (locals map[string]bool) {
+	locals = map[string]bool{}
+	for _, specification := range file.Imports {
+		import_path := strings.Trim(specification.Path.Value, "\"")
+		under := import_path == internal_import_path
+		if strings.HasPrefix(import_path, internal_import_path+"/") {
+			under = true
+		}
+		if !under {
+			continue
+		}
+		locals[import_local_name(specification, import_path)] = true
+	}
+	return locals
+}
+
+// The simulation may reference only Main among the internal tree's functions: any
+// other exported internal function it names is a second entry point that could
+// fabricate a witness without driving Main. Types, constants, and vars stay free.
+func simulation_entry_diagnostics(
+	sim_files []parsed_file, internal_functions map[string]bool,
+	internal_import_path string, position token.Position,
+) (diags []Diagnostic) {
+	for _, pf := range sim_files {
+		locals := simulation_internal_import_locals(pf.File, internal_import_path)
+		ast.Inspect(pf.File, func(node ast.Node) (descend bool) {
+			selector, is_selector := node.(*ast.SelectorExpr)
+			if !is_selector {
+				return true
+			}
+			identifier, is_identifier := selector.X.(*ast.Ident)
+			if !is_identifier {
+				return true
+			}
+			if !locals[identifier.Name] {
+				return true
+			}
+			if !internal_functions[selector.Sel.Name] {
+				return true
+			}
+			diags = append(diags, simulation_diagnostic(position,
+				"simulation may reference only Main; got "+
+					identifier.Name+"."+selector.Sel.Name)...)
+			return true
+		})
+	}
+	return diags
 }
 
 // Returns the name of the function's *testing.F parameter, or "" when it has none —
