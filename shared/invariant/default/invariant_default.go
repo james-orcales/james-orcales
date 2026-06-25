@@ -611,6 +611,11 @@ func String_Invariants(s string, namespace Namespace) {
 			Event_True("The value has a line break."),
 			Event_False("The value has a control character."),
 		),
+		Impossible(
+			Event_True("The value has a line break."),
+			Event_False("The value has edge whitespace."),
+			Event_False("The value has interior whitespace."),
+		),
 	)
 }
 

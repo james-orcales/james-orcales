@@ -78,6 +78,13 @@ type Recorder struct {
 	// per Dot_Product tuple, keyed by message and credited as observations arrive.
 	Events sync.Map
 
+	// Forbidden holds the grid cells an Impossible carves, keyed by the same
+	// namespaced tuple key Events uses. A carved cell is never witnessed (so it is
+	// not a coverage entry) but it is a panic-able property — reaching it fails
+	// fatally — so the clean-run summary counts it. Seeded per call-site namespace,
+	// one entry per cell the carve's glob expands to.
+	Forbidden sync.Map
+
 	// Observe_Cache_Mu guards Observe_Cache: the first-observe build takes the
 	// write lock; the recording hot path reads under RLock.
 	Observe_Cache_Mu sync.RWMutex
@@ -1657,12 +1664,17 @@ func recorder_register_tuples(
 	// varying axes for the stored coordinate and key.
 	tuple := make([]int, len(axes))
 	for more := true; more; more = recorder_tuple_increment(tuple, axes) {
-		if recorder_tuple_carved(tuple, carves) {
-			continue
-		}
 		projected := make([]int, len(coordinate_positions))
 		for j, position := range coordinate_positions {
 			projected[j] = tuple[position]
+		}
+		key := recorder_tuple_key(prefix, projected)
+		if recorder_tuple_carved(tuple, carves) {
+			// A carved cell is a forbidden combination: never a coverage entry (it
+			// must never be witnessed) but a panic-able property the summary counts.
+			// The glob expands here — every projected cell a carve matches is one.
+			recorder.Forbidden.LoadOrStore(key, struct{}{})
+			continue
 		}
 		metadata := &Assertion_Metadata{
 			Kind:          Assertion_Kind_Tuple,
@@ -1670,7 +1682,7 @@ func recorder_register_tuples(
 			Tuple_Indices: projected,
 			Axes:          legend,
 		}
-		recorder.Events.LoadOrStore(recorder_tuple_key(prefix, projected), metadata)
+		recorder.Events.LoadOrStore(key, metadata)
 	}
 }
 
@@ -1965,8 +1977,9 @@ func assertion_kind_name(kind Assertion_Kind) (name string) {
 
 // Recorder_Assertion_Summary renders the clean-run banner naming how many
 // properties the run tested: per-element entries (Always, Sometimes) are
-// individual properties, Tuple entries are combinations, and the Always family
-// is the panic-able subset whose violation fails fatally at runtime.
+// individual properties; Tuple entries and the cells an Impossible carves are
+// combinations; the Always family plus every carved cell is the panic-able subset
+// whose violation fails fatally at runtime.
 func Recorder_Assertion_Summary(recorder *Recorder) (summary string) {
 	individual := 0
 	combinations := 0
@@ -1981,6 +1994,13 @@ func Recorder_Assertion_Summary(recorder *Recorder) (summary string) {
 		if metadata.Kind == Assertion_Kind_Always {
 			panic_able++
 		}
+		return true
+	})
+	// Each carved cell is a forbidden combination, counted as a panic-able
+	// combination: reaching it fails fatally and it lives in the grid.
+	recorder.Forbidden.Range(func(key, value any) (continue_iteration bool) {
+		combinations++
+		panic_able++
 		return true
 	})
 	if recorder.Package_Label != "" {

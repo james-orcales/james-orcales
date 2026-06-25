@@ -858,6 +858,45 @@ func Test_Analysis_Summary(t *testing.T) {
 	}
 }
 
+// Test_Analysis_Tally: the eager Always tallies once, keyed by its literal message, while each
+// Dot_Product is keyed by its call-site namespace — so the same three-axis shape under two
+// namespaces tallies twice, the glob carve (a,b over c) counting two cells per namespace.
+func Test_Analysis_Tally(t *testing.T) {
+	const source = `package fixture
+
+func check(n int) {
+	invariant.Always(n >= 0, "non-negative")
+	invariant.Dot_Product("x",
+		invariant.Sometimes(n == 0, "a"),
+		invariant.Sometimes(n == 1, "b"),
+		invariant.Sometimes(n == 2, "c"),
+		invariant.Impossible(invariant.Event_True("a"), invariant.Event_True("b")),
+	)
+	invariant.Dot_Product("y",
+		invariant.Sometimes(n == 0, "a"),
+		invariant.Sometimes(n == 1, "b"),
+		invariant.Sometimes(n == 2, "c"),
+		invariant.Impossible(invariant.Event_True("a"), invariant.Event_True("b")),
+	)
+}
+`
+	recorder := &invariant.Recorder{
+		File_System: fstest.MapFS{
+			"fixture/check.go": &fstest.MapFile{Data: []byte(source)},
+		},
+	}
+	invariant.Recorder_Register_Packages_For_Analysis(recorder, "/fixture")
+
+	summary := invariant.Recorder_Assertion_Summary(recorder)
+
+	// Always once; two namespaces each: 3 axes, 6 surviving cells, 2 carved cells.
+	// Individual 1+6, combination 12+4, panic-able 1+4.
+	want := "✓ tested 23 properties (7 individual + 16 combinations, of which 5 are panic-able)"
+	if summary != want {
+		t.Fatalf("summary = %q, want %q", summary, want)
+	}
+}
+
 // Test_Analysis_Summary_Names_Package: the summary names the registered package so the
 // line is identifiable when many packages print to the same terminal in parallel.
 func Test_Analysis_Summary_Names_Package(t *testing.T) {

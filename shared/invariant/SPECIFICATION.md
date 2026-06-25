@@ -197,8 +197,15 @@ back to the events they stand for, so a bare coordinate is debuggable across nes
 
 ### Summary
 
-A clean run reports how many properties it tested, splitting individual from
-combination and counting the panic-able subset.
+A clean run reports the count as individual plus combination, of which a panic-able subset.
+Individual is the per-element Always and Sometimes entries; combination is the surviving grid cells
+plus every cell an Impossible carves; panic-able is the Always entries plus every carved cell.
+
+### Tally
+
+An eager Always, keyed by its literal message, tallies once for the whole run. Anything inside a
+Dot_Product — each axis, grid cell, and carved cell — is keyed by the call-site namespace, so one
+shape under N namespaces tallies N times; a carve's glob counts every cell it spans.
 
 ### Summary Names Package
 
