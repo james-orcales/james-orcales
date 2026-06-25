@@ -61,6 +61,18 @@ Submitting a completion that is still in flight panics: one Completion backs at 
 operation at a time, so reusing it before its callback fires fails loudly rather than
 corrupting the queue.
 
+### Copy
+
+Submitting a by-value copy of a completion panics: the loop tracks a completion by its own
+address, so a copy carries the original's identity and fails loudly rather than splitting
+the loop's view from the caller's.
+
+### Reentrancy
+
+Driving the loop from within a completion callback panics: Run, Run_For, and Run_Until are
+top-level only, so a re-entrant drive fails loudly rather than corrupting the queue
+mid-drain.
+
 ### Open
 
 Open returns a descriptor for an existing file synchronously; an absent path or a directory

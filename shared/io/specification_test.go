@@ -235,6 +235,39 @@ func Test_Sim_Reuse(t *testing.T) {
 	loop.Timeout(&completion, func(_ *io.Completion, err error) {}, 5*time.Nanosecond)
 }
 
+// Test_Sim_Copy verifies submitting a by-value copy of a completion panics, so a copied
+// completion fails loudly instead of splitting the loop's view from the caller's. It fires
+// the original first so the copy is unarmed — isolating the copy guard from the reuse one.
+func Test_Sim_Copy(t *testing.T) {
+	loop, driver, _ := sim_loop(0)
+	var completion io.Completion
+	loop.Timeout(&completion, func(_ *io.Completion, err error) {}, 5*time.Nanosecond)
+	driver.Run_For(10 * time.Nanosecond)
+	duplicate := completion
+	defer func() {
+		if recover() == nil {
+			t.Fatal("submitting a copied completion must panic")
+		}
+	}()
+	loop.Timeout(&duplicate, func(_ *io.Completion, err error) {}, 5*time.Nanosecond)
+}
+
+// Test_Sim_Reentrancy verifies driving the loop from within a completion callback panics,
+// so a re-entrant Run* fails loudly instead of corrupting the queue mid-drain.
+func Test_Sim_Reentrancy(t *testing.T) {
+	loop, driver, _ := sim_loop(0)
+	var completion io.Completion
+	loop.Timeout(&completion, func(_ *io.Completion, err error) {
+		driver.Run()
+	}, 5*time.Nanosecond)
+	defer func() {
+		if recover() == nil {
+			t.Fatal("driving from within a callback must panic")
+		}
+	}()
+	driver.Run_For(10 * time.Nanosecond)
+}
+
 // Test_Sim_Open verifies Open returns a fresh descriptor synchronously.
 func Test_Sim_Open(t *testing.T) {
 	loop, _, _ := sim_loop(0)

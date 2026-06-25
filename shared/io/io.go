@@ -147,6 +147,11 @@ type Completion struct {
 	// cancelled. sim_submit asserts it clear, so reusing one Completion for a second op
 	// before the first fires panics loudly instead of corrupting the queue.
 	Armed bool
+	// Self is the completion's own address, stamped on its first submit and never cleared.
+	// The loop tracks an in-flight op by pointer, so a by-value copy carries this original
+	// address; submitting the copy trips sim_submit's assert instead of silently splitting
+	// the loop's view from the caller's. Only sim_submit touches it.
+	Self *Completion
 }
 
 // IO is the injected async IO submit surface — TigerBeetle's `IO`. Code submits
@@ -335,6 +340,9 @@ type sim struct {
 	// Files binds an open file descriptor to its node, so Read/Write route to real tree
 	// bytes; a descriptor absent from this map is a socket, whose bytes stay synthetic.
 	Files map[File]*sim_node
+	// Drive_Active is set while a Run* is driving the loop, so a Run* called from within a
+	// completion callback — which would re-enter the driver mid-drain — panics loudly.
+	Drive_Active bool
 }
 
 // New_Sim returns a deterministic loop seeded by seed: the read-only clock and submit
@@ -505,6 +513,12 @@ func sim_descriptor(state *sim) (file File) {
 	return state.Next_File
 }
 
+// Returns a fresh empty directory node, the shape the root, mkdir, and the generator all
+// build.
+func sim_new_directory() (node *sim_node) {
+	return &sim_node{Directory: true, Children: map[string]*sim_node{}}
+}
+
 // Splits an absolute path into its non-empty component names, so "/a/b" walks as a, b.
 func sim_path_names(path string) (names []string) {
 	names = []string{}
@@ -572,7 +586,7 @@ func sim_make_directory(root *sim_node, path string) (err error) {
 		}
 		child, present := node.Children[name]
 		if !present {
-			child = &sim_node{Directory: true, Children: map[string]*sim_node{}}
+			child = sim_new_directory()
 			node.Children[name] = child
 		}
 		node = child
@@ -689,51 +703,70 @@ func sim_node_write(node *sim_node, buffer []byte, offset int64) {
 	copy(node.Contents[offset:], buffer)
 }
 
-// One in this many "keep going?" coins ends a run of siblings or of content bytes, so a
-// directory's breadth and a file's size are geometric — the seed alone decides the scale,
-// with no ceiling capping how wide or large the reachable filesystem can be. It shapes the
-// distribution the way sim_latency_grains shapes latency; it does not fence off the space.
-const sim_continue_grains = 4
+// The file-size percentiles the generated contents are sampled from: most files are a
+// handful of bytes, a few reach hundreds, and the top one percent the largest — a
+// heavy-tailed spread (prng.Percentile_Distribution) so a sweep meets many scales at once.
+const sim_size_p50 = 4
+const sim_size_p75 = 16
+const sim_size_p95 = 64
+const sim_size_p99 = 256
+const sim_size_p100 = 1024
 
-// One in this many children is a subdirectory rather than a file. Kept below the breadth so
-// the branching stays subcritical and generation halts almost surely — the only thing this
-// bounds is non-termination, not the depths a seed can reach.
-const sim_subdirectory_grains = 4
+// Returns how often the generator adds another sibling — a 3-in-4 Chance, so a directory's
+// breadth is geometric and any width is reachable rather than capped at a fixed count.
+func sim_grow_chance() (chance prng.Ratio) {
+	return prng.Ratio{Numerator: 3, Denominator: 4}
+}
 
-// Fabricates a filesystem from the seed: a tree grown by the Generator's coins — a directory
-// takes siblings while the coin continues, and a child is now and then a subdirectory — with
-// each file's contents drawn from the seed. No fixed breadth, depth, or size: the seed alone
-// decides the shape. It knows no consumer's layout; a program walking it imposes its own
-// meaning on the paths it finds.
+// Returns how often a generated child is a subdirectory rather than a file — kept below the
+// grow chance so the branching stays subcritical and generation halts almost surely.
+func sim_subdirectory_chance() (chance prng.Ratio) {
+	return prng.Ratio{Numerator: 1, Denominator: 4}
+}
+
+// Fabricates a filesystem from the seed, drawing its shape from prng's distributions: each
+// directory grows siblings on a Chance coin (geometric breadth and depth, no ceiling), a
+// child is a subdirectory on another Chance, and a file's size is Sampled from a heavy-tailed
+// Percentile spread. It knows no consumer's layout; a walker imposes its own meaning.
 func sim_generate(generator *prng.Generator) (root *sim_node) {
-	root = &sim_node{Directory: true, Children: map[string]*sim_node{}}
+	sizes := prng.Percentile_Distribution(&prng.Percentile_Distribution_Input{
+		P25:  0,
+		P50:  sim_size_p50,
+		P75:  sim_size_p75,
+		P95:  sim_size_p95,
+		P99:  sim_size_p99,
+		P100: sim_size_p100,
+	})
+	root = sim_new_directory()
 	directories := []*sim_node{root}
 	for len(directories) > 0 {
 		directory := directories[len(directories)-1]
 		directories = directories[:len(directories)-1]
 		index := 0
-		for prng.Generator_Below(generator, sim_continue_grains) != 0 {
+		for prng.Generator_Chance(generator, sim_grow_chance()) {
 			name := "e" + strconv.Itoa(index)
 			index++
-			if prng.Generator_Below(generator, sim_subdirectory_grains) != 0 {
-				contents := sim_generate_bytes(generator)
-				directory.Children[name] = &sim_node{Contents: contents}
+			if prng.Generator_Chance(generator, sim_subdirectory_chance()) {
+				child := sim_new_directory()
+				directory.Children[name] = child
+				directories = append(directories, child)
 				continue
 			}
-			child := &sim_node{Directory: true, Children: map[string]*sim_node{}}
-			directory.Children[name] = child
-			directories = append(directories, child)
+			contents := sim_generate_bytes(generator, sizes)
+			directory.Children[name] = &sim_node{Contents: contents}
 		}
 	}
 	return root
 }
 
-// Draws a file's contents from the seed: bytes appended while the seed's coin continues, so
-// the size is geometric and unbounded — no fixed cap on how large a generated file can be.
-func sim_generate_bytes(generator *prng.Generator) (contents []byte) {
-	contents = []byte{}
-	for prng.Generator_Below(generator, sim_continue_grains) != 0 {
-		contents = append(contents, byte(prng.Generator_Next(generator)))
+// Draws a file's contents from the seed: a size Sampled from the heavy-tailed distribution,
+// filled with seed-drawn bytes.
+func sim_generate_bytes(
+	generator *prng.Generator, sizes prng.Distribution[uint64],
+) (contents []byte) {
+	contents = make([]byte, prng.Generator_Sample(generator, sizes))
+	for index := range contents {
+		contents[index] = byte(prng.Generator_Next(generator))
 	}
 	return contents
 }
@@ -833,10 +866,25 @@ func sim_compute(
 // test, never by code that merely submits IO.
 func sim_to_driver(state *sim) (driver Driver) {
 	return Driver{
-		Run:       func() { sim_run(state) },
-		Run_For:   func(duration time.Duration) { sim_run_for(state, duration) },
-		Run_Until: func(done func() (finished bool)) { sim_run_until(state, done) },
+		Run: func() { sim_drive(state, func() { sim_run(state) }) },
+		Run_For: func(duration time.Duration) {
+			sim_drive(state, func() { sim_run_for(state, duration) })
+		},
+		Run_Until: func(done func() (finished bool)) {
+			sim_drive(state, func() { sim_run_until(state, done) })
+		},
 	}
+}
+
+// Runs pump as the top-level drive, asserting no drive is already in progress so a Run*
+// called from within a completion callback panics instead of re-entering the driver. The
+// internal per-tick functions call one another directly, not through here, so nested
+// ticking within one drive does not trip it.
+func sim_drive(state *sim, pump func()) {
+	assert(!state.Drive_Active)
+	state.Drive_Active = true
+	defer func() { state.Drive_Active = false }()
+	pump()
 }
 
 // Returns the current virtual Moment; the sim never reads the operating-system time.
@@ -845,10 +893,13 @@ func sim_now(state *sim) (now time.Moment) {
 }
 
 // Schedules completion to fire at now plus latency and inserts it in Ready_At order.
-// Asserts the completion is not already armed, so reusing one for a second in-flight op
-// panics loudly. Clears any stale Cancelled mark so a reused completion starts fresh.
+// Asserts the completion is its own original (not a by-value copy) and not already armed,
+// so a copied or reused Completion panics loudly. Clears any stale Cancelled mark so a
+// reused completion starts fresh.
 func sim_submit(state *sim, completion *Completion, latency time.Duration, callback func()) {
+	assert(completion.Self == nil || completion.Self == completion)
 	assert(!completion.Armed)
+	completion.Self = completion
 	completion.Armed = true
 	completion.Ready_At = sim_now(state) + time.Moment(latency)
 	completion.Callback = callback
