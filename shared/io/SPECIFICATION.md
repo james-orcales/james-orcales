@@ -103,4 +103,5 @@ timeline; the simulator runs it inline so the result stays reproducible.
 ### Spawn
 
 A spawn completes after the drawn latency with a seed-drawn exit code and no captured
-output — the seed decides success or failure, since scripted output is disallowed.
+output — the seed decides success or failure, since scripted output is disallowed. A live
+Stdout or Stderr sink instead streams that output on the real backend, uncaptured.

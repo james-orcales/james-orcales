@@ -284,10 +284,21 @@ func process_execute(request io.Process_Request) (result io.Process_Result, err 
 	if len(request.Input) > 0 {
 		command.Stdin = bytes.NewReader(request.Input)
 	}
+	// A caller-supplied sink streams the child's output live as it runs; without one the
+	// output is captured into a buffer and returned. The two are exclusive: streamed
+	// output leaves the corresponding Result field empty.
 	output := bytes.Buffer{}
 	error_output := bytes.Buffer{}
-	command.Stdout = &output
-	command.Stderr = &error_output
+	if request.Stdout != nil {
+		command.Stdout = request.Stdout
+	} else {
+		command.Stdout = &output
+	}
+	if request.Stderr != nil {
+		command.Stderr = request.Stderr
+	} else {
+		command.Stderr = &error_output
+	}
 	run_err := command.Run()
 	result.Output = output.Bytes()
 	result.Error_Output = error_output.Bytes()
