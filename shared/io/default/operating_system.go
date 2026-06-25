@@ -366,6 +366,21 @@ func operating_system_wire_file(state *operating_system, loop *io.IO) {
 		descriptor, create_err := file_create(path)
 		return io.File(descriptor), create_err
 	}
+	loop.Read_Directory = func(path string) (entries []io.Directory_Entry, err error) {
+		return file_read_directory(path)
+	}
+	loop.Status = func(path string) (status io.File_Status, err error) {
+		return file_status(path)
+	}
+	loop.Make_Directory = func(path string) (err error) {
+		return file_make_directory(path)
+	}
+}
+
+// Creates path and any missing parents; an existing directory is not an error, so a
+// repeated mkdir converges. os.MkdirAll is the gateway's bounded parent-creating mkdir.
+func file_make_directory(path string) (err error) {
+	return os.MkdirAll(path, 0o755)
 }
 
 // Wires the lifecycle operations — timeout, close, cancel — onto loop.

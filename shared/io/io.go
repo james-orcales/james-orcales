@@ -10,6 +10,9 @@ package io
 import (
 	"errors"
 	"io"
+	"slices"
+	"strconv"
+	"strings"
 
 	"github.com/james-orcales/james-orcales/shared/prng"
 	"github.com/james-orcales/james-orcales/shared/time"
@@ -96,6 +99,24 @@ type Process_Result struct {
 // could not be started at all.
 type Process_Callback func(completion *Completion, result Process_Result, err error)
 
+// Directory_Entry is one child of a directory: its name and whether it is itself a
+// directory, the two facts a walk needs to recurse into subdirectories and sync files.
+type Directory_Entry struct {
+	// Name is the child's name within its directory, not a full path.
+	Name string
+	// Is_Directory reports whether the child is a directory, so a walk knows to recurse.
+	Is_Directory bool
+}
+
+// File_Status is what a stat reports: whether the path exists, and if so whether it is a
+// directory — metadata a mirror consults before it reads or writes.
+type File_Status struct {
+	// Exists reports whether the path is present; an absent path is not an error.
+	Exists bool
+	// Is_Directory reports whether an existing path is a directory rather than a file.
+	Is_Directory bool
+}
+
 // Cancelled is the error a callback receives when its operation was cancelled before
 // it completed. Cancelling still delivers the callback exactly once — with this error
 // instead of a result — so every submission resolves.
@@ -154,6 +175,16 @@ type IO struct {
 	// Create opens path for writing, truncating it, and returns its descriptor
 	// synchronously; a later Write persists bytes to it.
 	Create func(path string) (file File, err error)
+	// Read_Directory lists path's immediate children synchronously — a readdir never blocks
+	// the loop, so it carries no Completion; each entry names a child and whether it is
+	// itself a directory.
+	Read_Directory func(path string) (entries []Directory_Entry, err error)
+	// Status reports whether path exists and is a directory, synchronously; an absent path
+	// is Exists false with a nil error, so a caller branches on the status, not the error.
+	Status func(path string) (status File_Status, err error)
+	// Make_Directory creates path and any missing parents synchronously; an existing
+	// directory is not an error, so a repeated mkdir converges.
+	Make_Directory func(path string) (err error)
 	// Accept yields one inbound connection on listener; callback fires with the
 	// accepted socket once a peer arrives (TigerBeetle IO.accept).
 	Accept func(completion *Completion, callback Socket_Callback, listener File)
@@ -261,6 +292,28 @@ type Driver struct {
 // impossible to add by accident: no caller ever holds a *sim to hang a field on. If you
 // find yourself wanting to export it, or wanting to add a parameter to New_Sim that is
 // not the seed, stop — that is the scripting API trying to come back. Keep it shut.
+
+// Returned when a path resolves to nothing — the simulator's ENOENT.
+var sim_file_absent = errors.New("io: no such file or directory")
+
+// Returned when a path component that must be a directory is a file.
+var sim_not_a_directory = errors.New("io: not a directory")
+
+// Returned when a file operation names a directory.
+var sim_is_a_directory = errors.New("io: is a directory")
+
+// A sim_node is one entry in the simulator's in-memory filesystem: a directory with named
+// children, or a file holding bytes. Generated from the seed at New_Sim and mutated by
+// Create/Write/Make_Directory, so a later read reflects an earlier write.
+type sim_node struct {
+	// Directory reports whether this node is a directory rather than a file.
+	Directory bool
+	// Contents holds a file's bytes; nil for a directory.
+	Contents []byte
+	// Children maps a directory's entry names to their nodes; nil for a file.
+	Children map[string]*sim_node
+}
+
 type sim struct {
 	// Clock is the read-only time source; "now" is Clock.Now_Monotonic.
 	Clock time.Clock
@@ -276,6 +329,12 @@ type sim struct {
 	// Next_File is the synthetic descriptor counter; Listen, Accept, Connect, Open, and
 	// Create hand out the next value so every descriptor is distinct.
 	Next_File File
+	// Root is the in-memory filesystem the file ops read and mutate, fabricated from the
+	// seed at New_Sim. Socket descriptors ignore it.
+	Root *sim_node
+	// Files binds an open file descriptor to its node, so Read/Write route to real tree
+	// bytes; a descriptor absent from this map is a socket, whose bytes stay synthetic.
+	Files map[File]*sim_node
 }
 
 // New_Sim returns a deterministic loop seeded by seed: the read-only clock and submit
@@ -285,7 +344,13 @@ type sim struct {
 // hand-fed outcomes.
 func New_Sim(seed uint64) (loop IO, driver Driver, clock time.Clock) {
 	clock, tick := time.Virtual_Clock_To_Clock(time.Virtual_Clock{Resolution: time.Nanosecond})
-	state := &sim{Clock: clock, Tick: tick, Generator: prng.New(seed)}
+	state := &sim{
+		Clock:     clock,
+		Tick:      tick,
+		Generator: prng.New(seed),
+		Files:     map[File]*sim_node{},
+	}
+	state.Root = sim_generate(&state.Generator)
 	sim_wire_bytes(state, &loop)
 	sim_wire_lifecycle(state, &loop)
 	sim_wire_socket(state, &loop)
@@ -298,11 +363,21 @@ func sim_wire_bytes(state *sim, loop *IO) {
 	loop.Read = func(
 		completion *Completion, callback Callback, file File, buffer []byte, offset int64,
 	) {
+		node := state.Files[file]
+		if node != nil {
+			sim_file_read(state, completion, callback, node, buffer, offset)
+			return
+		}
 		sim_bytes(state, completion, callback, buffer)
 	}
 	loop.Write = func(
 		completion *Completion, callback Callback, file File, buffer []byte, offset int64,
 	) {
+		node := state.Files[file]
+		if node != nil {
+			sim_file_write(state, completion, callback, node, buffer, offset)
+			return
+		}
 		sim_bytes(state, completion, callback, buffer)
 	}
 	loop.Receive = func(completion *Completion, callback Callback, socket File, buffer []byte) {
@@ -325,14 +400,23 @@ func sim_wire_lifecycle(state *sim, loop *IO) {
 		return sim_descriptor(state), nil
 	}
 	loop.Open = func(path string) (file File, err error) {
-		return sim_descriptor(state), nil
+		return sim_open(state, path)
 	}
 	loop.Create = func(path string) (file File, err error) {
-		return sim_descriptor(state), nil
+		return sim_create(state, path)
+	}
+	loop.Read_Directory = func(path string) (entries []Directory_Entry, err error) {
+		return sim_read_directory(state.Root, path)
+	}
+	loop.Status = func(path string) (status File_Status, err error) {
+		return sim_status(state.Root, path), nil
+	}
+	loop.Make_Directory = func(path string) (err error) {
+		return sim_make_directory(state.Root, path)
 	}
 	loop.Close = func(completion *Completion, callback Timeout_Callback, file File) {
-		latency := sim_latency(state)
-		sim_submit(state, completion, latency,
+		delete(state.Files, file)
+		sim_submit(state, completion, sim_latency(state),
 			sim_deliver_status(completion, callback, nil))
 	}
 	loop.Cancel = func(completion *Completion) { sim_cancel(state, completion) }
@@ -419,6 +503,239 @@ func assert(ok bool) {
 func sim_descriptor(state *sim) (file File) {
 	state.Next_File++
 	return state.Next_File
+}
+
+// Splits an absolute path into its non-empty component names, so "/a/b" walks as a, b.
+func sim_path_names(path string) (names []string) {
+	names = []string{}
+	for _, name := range strings.Split(path, "/") {
+		if name != "" {
+			names = append(names, name)
+		}
+	}
+	return names
+}
+
+// Resolves path against root, returning the node it names and whether it was found.
+func sim_resolve(root *sim_node, path string) (node *sim_node, found bool) {
+	node = root
+	for _, name := range sim_path_names(path) {
+		if !node.Directory {
+			return nil, false
+		}
+		child, present := node.Children[name]
+		if !present {
+			return nil, false
+		}
+		node = child
+	}
+	return node, true
+}
+
+// Reports path's status against root: an unresolved path is Exists false, else its kind.
+func sim_status(root *sim_node, path string) (status File_Status) {
+	node, found := sim_resolve(root, path)
+	if !found {
+		return File_Status{}
+	}
+	return File_Status{Exists: true, Is_Directory: node.Directory}
+}
+
+// Lists path's immediate children sorted by name — sorted so the order is deterministic
+// despite the backing map, since a run must reproduce. Absent or non-directory paths error.
+func sim_read_directory(root *sim_node, path string) (entries []Directory_Entry, err error) {
+	node, found := sim_resolve(root, path)
+	if !found {
+		return nil, sim_file_absent
+	}
+	if !node.Directory {
+		return nil, sim_not_a_directory
+	}
+	entries = []Directory_Entry{}
+	for name, child := range node.Children {
+		entry := Directory_Entry{Name: name, Is_Directory: child.Directory}
+		entries = append(entries, entry)
+	}
+	slices.SortFunc(entries, func(left, right Directory_Entry) (order int) {
+		return strings.Compare(left.Name, right.Name)
+	})
+	return entries, nil
+}
+
+// Creates path and any missing parents against root; an existing directory converges, and a
+// file where a directory is needed errors.
+func sim_make_directory(root *sim_node, path string) (err error) {
+	node := root
+	for _, name := range sim_path_names(path) {
+		if !node.Directory {
+			return sim_not_a_directory
+		}
+		child, present := node.Children[name]
+		if !present {
+			child = &sim_node{Directory: true, Children: map[string]*sim_node{}}
+			node.Children[name] = child
+		}
+		node = child
+	}
+	if !node.Directory {
+		return sim_not_a_directory
+	}
+	return nil
+}
+
+// Opens path for reading against state.Root, binding a fresh descriptor to its node. An
+// absent path, or a directory, errors — matching a real open of a missing or non-file path.
+func sim_open(state *sim, path string) (file File, err error) {
+	node, found := sim_resolve(state.Root, path)
+	if !found {
+		return 0, sim_file_absent
+	}
+	if node.Directory {
+		return 0, sim_is_a_directory
+	}
+	descriptor := sim_descriptor(state)
+	state.Files[descriptor] = node
+	return descriptor, nil
+}
+
+// Creates or truncates the file at path against state.Root and binds a fresh descriptor to
+// it. The parent directory must already exist, matching a real create.
+func sim_create(state *sim, path string) (file File, err error) {
+	node, create_err := sim_create_file(state.Root, path)
+	if create_err != nil {
+		return 0, create_err
+	}
+	descriptor := sim_descriptor(state)
+	state.Files[descriptor] = node
+	return descriptor, nil
+}
+
+// Resolves path's parent (which must be an existing directory), then creates a fresh file
+// node under it or truncates an existing file, returning the node.
+func sim_create_file(root *sim_node, path string) (node *sim_node, err error) {
+	names := sim_path_names(path)
+	if len(names) == 0 {
+		return nil, sim_is_a_directory
+	}
+	parent := root
+	for _, name := range names[:len(names)-1] {
+		child, present := parent.Children[name]
+		if !present {
+			return nil, sim_file_absent
+		}
+		if !child.Directory {
+			return nil, sim_not_a_directory
+		}
+		parent = child
+	}
+	leaf := names[len(names)-1]
+	leaf_node, present := parent.Children[leaf]
+	if present {
+		if leaf_node.Directory {
+			return nil, sim_is_a_directory
+		}
+		leaf_node.Contents = []byte{}
+		return leaf_node, nil
+	}
+	created := &sim_node{Contents: []byte{}}
+	parent.Children[leaf] = created
+	return created, nil
+}
+
+// Submits a file read that, when it fires, copies the node's bytes from offset into the
+// buffer and reports the count — so a read reflects whatever an earlier write stored.
+func sim_file_read(
+	state *sim, completion *Completion, callback Callback, node *sim_node,
+	buffer []byte, offset int64,
+) {
+	sim_submit(state, completion, sim_latency(state), func() {
+		if completion.Cancelled {
+			callback(completion, 0, Cancelled)
+			return
+		}
+		count := 0
+		if offset < int64(len(node.Contents)) {
+			count = copy(buffer, node.Contents[offset:])
+		}
+		callback(completion, count, nil)
+	})
+}
+
+// Submits a file write that, when it fires, stores the buffer into the node at offset,
+// growing its contents as needed, and reports the byte count.
+func sim_file_write(
+	state *sim, completion *Completion, callback Callback, node *sim_node,
+	buffer []byte, offset int64,
+) {
+	sim_submit(state, completion, sim_latency(state), func() {
+		if completion.Cancelled {
+			callback(completion, 0, Cancelled)
+			return
+		}
+		sim_node_write(node, buffer, offset)
+		callback(completion, len(buffer), nil)
+	})
+}
+
+// Stores buffer into node's contents at offset, growing the backing bytes when the write
+// extends past the current end.
+func sim_node_write(node *sim_node, buffer []byte, offset int64) {
+	end_size := offset + int64(len(buffer))
+	if end_size > int64(len(node.Contents)) {
+		grown := make([]byte, end_size)
+		copy(grown, node.Contents)
+		node.Contents = grown
+	}
+	copy(node.Contents[offset:], buffer)
+}
+
+// One in this many "keep going?" coins ends a run of siblings or of content bytes, so a
+// directory's breadth and a file's size are geometric — the seed alone decides the scale,
+// with no ceiling capping how wide or large the reachable filesystem can be. It shapes the
+// distribution the way sim_latency_grains shapes latency; it does not fence off the space.
+const sim_continue_grains = 4
+
+// One in this many children is a subdirectory rather than a file. Kept below the breadth so
+// the branching stays subcritical and generation halts almost surely — the only thing this
+// bounds is non-termination, not the depths a seed can reach.
+const sim_subdirectory_grains = 4
+
+// Fabricates a filesystem from the seed: a tree grown by the Generator's coins — a directory
+// takes siblings while the coin continues, and a child is now and then a subdirectory — with
+// each file's contents drawn from the seed. No fixed breadth, depth, or size: the seed alone
+// decides the shape. It knows no consumer's layout; a program walking it imposes its own
+// meaning on the paths it finds.
+func sim_generate(generator *prng.Generator) (root *sim_node) {
+	root = &sim_node{Directory: true, Children: map[string]*sim_node{}}
+	directories := []*sim_node{root}
+	for len(directories) > 0 {
+		directory := directories[len(directories)-1]
+		directories = directories[:len(directories)-1]
+		index := 0
+		for prng.Generator_Below(generator, sim_continue_grains) != 0 {
+			name := "e" + strconv.Itoa(index)
+			index++
+			if prng.Generator_Below(generator, sim_subdirectory_grains) != 0 {
+				contents := sim_generate_bytes(generator)
+				directory.Children[name] = &sim_node{Contents: contents}
+				continue
+			}
+			child := &sim_node{Directory: true, Children: map[string]*sim_node{}}
+			directory.Children[name] = child
+			directories = append(directories, child)
+		}
+	}
+	return root
+}
+
+// Draws a file's contents from the seed: bytes appended while the seed's coin continues, so
+// the size is geometric and unbounded — no fixed cap on how large a generated file can be.
+func sim_generate_bytes(generator *prng.Generator) (contents []byte) {
+	contents = []byte{}
+	for prng.Generator_Below(generator, sim_continue_grains) != 0 {
+		contents = append(contents, byte(prng.Generator_Next(generator)))
+	}
+	return contents
 }
 
 // Draws the next operation's completion delay from the seed, so completion order

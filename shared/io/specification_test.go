@@ -28,21 +28,42 @@ func Test_Sim_Timeout(t *testing.T) {
 	}
 }
 
-// Test_Sim_Read verifies a read completes after the modeled latency and reports the
-// buffer length.
+// Test_Sim_Read verifies a read on an opened file returns the bytes an earlier write
+// stored — the file descriptor's real-bytes path, distinct from a socket's byte count.
 func Test_Sim_Read(t *testing.T) {
 	loop, driver, _ := sim_loop(1)
 
+	writer, create_err := loop.Create("file")
+	if create_err != nil {
+		t.Fatalf("create: %v", create_err)
+	}
+	wrote := false
+	var write_completion io.Completion
+	loop.Write(&write_completion, func(_ *io.Completion, _ int, err error) {
+		if err != nil {
+			t.Fatalf("write: %v", err)
+		}
+		wrote = true
+	}, writer, []byte("hello"), 0)
+	driver.Run_Until(func() (finished bool) { return wrote })
+
+	reader, open_err := loop.Open("file")
+	if open_err != nil {
+		t.Fatalf("open: %v", open_err)
+	}
+	buffer := make([]byte, 64)
 	count := -1
-	var completion io.Completion
-	loop.Read(&completion, func(_ *io.Completion, bytes int, err error) {
+	var read_completion io.Completion
+	loop.Read(&read_completion, func(_ *io.Completion, bytes int, _ error) {
 		count = bytes
-	}, io.File(0), make([]byte, 64), 0)
+	}, reader, buffer, 0)
+	driver.Run_Until(func() (finished bool) { return count >= 0 })
 
-	driver.Run_For(10 * time.Nanosecond)
-
-	if count != 64 {
-		t.Fatalf("read reported %d bytes, want 64", count)
+	if count != 5 {
+		t.Fatalf("read reported %d bytes, want 5", count)
+	}
+	if string(buffer[:count]) != "hello" {
+		t.Fatalf("read %q, want hello", buffer[:count])
 	}
 }
 
@@ -217,12 +238,18 @@ func Test_Sim_Reuse(t *testing.T) {
 // Test_Sim_Open verifies Open returns a fresh descriptor synchronously.
 func Test_Sim_Open(t *testing.T) {
 	loop, _, _ := sim_loop(0)
+	if _, create_err := loop.Create("path"); create_err != nil {
+		t.Fatalf("create: %v", create_err)
+	}
 	file, err := loop.Open("path")
 	if err != nil {
 		t.Fatalf("open error: %v", err)
 	}
 	if file <= 0 {
 		t.Fatalf("open yielded %d, want a positive descriptor", file)
+	}
+	if _, absent_err := loop.Open("absent"); absent_err == nil {
+		t.Fatal("open of an absent path should error")
 	}
 }
 
@@ -347,6 +374,84 @@ func Test_Sim_Spawn(t *testing.T) {
 	driver.Run_For(16 * time.Nanosecond)
 	if fired != 1 {
 		t.Fatalf("spawn callback fired %d times, want 1", fired)
+	}
+}
+
+// Test_Sim_Read_Directory verifies Read_Directory lists a directory's immediate children,
+// each named with whether it is itself a directory.
+func Test_Sim_Read_Directory(t *testing.T) {
+	loop, _, _ := sim_loop(0)
+	if make_err := loop.Make_Directory("/a/b"); make_err != nil {
+		t.Fatalf("make directory: %v", make_err)
+	}
+	if _, create_err := loop.Create("/a/b/file"); create_err != nil {
+		t.Fatalf("create: %v", create_err)
+	}
+	entries, err := loop.Read_Directory("/a/b")
+	if err != nil {
+		t.Fatalf("read directory: %v", err)
+	}
+	if len(entries) != 1 {
+		t.Fatalf("entries = %v, want exactly one", entries)
+	}
+	if entries[0].Name != "file" {
+		t.Fatalf("entry name = %q, want file", entries[0].Name)
+	}
+	if entries[0].Is_Directory {
+		t.Fatal("file entry reported as a directory")
+	}
+	parents, _ := loop.Read_Directory("/a")
+	if len(parents) != 1 {
+		t.Fatalf("parent entries = %v, want exactly one", parents)
+	}
+	if !parents[0].Is_Directory {
+		t.Fatal("nested entry b should be a directory")
+	}
+}
+
+// Test_Sim_Status verifies Status reports a directory, a file, and an absent path.
+func Test_Sim_Status(t *testing.T) {
+	loop, _, _ := sim_loop(0)
+	if make_err := loop.Make_Directory("/dir"); make_err != nil {
+		t.Fatalf("make directory: %v", make_err)
+	}
+	if _, create_err := loop.Create("/dir/file"); create_err != nil {
+		t.Fatalf("create: %v", create_err)
+	}
+	directory, _ := loop.Status("/dir")
+	if !directory.Exists {
+		t.Fatalf("dir status = %+v, want exists", directory)
+	}
+	if !directory.Is_Directory {
+		t.Fatalf("dir status = %+v, want a directory", directory)
+	}
+	regular, _ := loop.Status("/dir/file")
+	if regular.Is_Directory {
+		t.Fatalf("file status = %+v, want a non-directory", regular)
+	}
+	absent, _ := loop.Status("/nope")
+	if absent.Exists {
+		t.Fatalf("absent status = %+v, want not exists", absent)
+	}
+}
+
+// Test_Sim_Make_Directory verifies Make_Directory creates a nested path and its parents,
+// and that a repeated call converges.
+func Test_Sim_Make_Directory(t *testing.T) {
+	loop, _, _ := sim_loop(0)
+	if make_err := loop.Make_Directory("/x/y/z"); make_err != nil {
+		t.Fatalf("make directory: %v", make_err)
+	}
+	leaf, _ := loop.Status("/x/y/z")
+	if !leaf.Is_Directory {
+		t.Fatalf("leaf status = %+v, want a directory", leaf)
+	}
+	parent, _ := loop.Status("/x")
+	if !parent.Is_Directory {
+		t.Fatalf("parent status = %+v, want a directory created by mkdir -p", parent)
+	}
+	if repeat_err := loop.Make_Directory("/x/y/z"); repeat_err != nil {
+		t.Fatalf("repeated make directory should converge, got %v", repeat_err)
 	}
 }
 
