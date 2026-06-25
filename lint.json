@@ -6,6 +6,8 @@
           "shared/jlog"
   ],
   "deterministic_packages": [
+    "lint/internal/diagnostic",
+    "lint/internal/specification",
     "markdown_to_pdf",
     "disk_usage",
     "shared/cli",
@@ -28,6 +30,8 @@
   "invariant_exempt_packages": [
           "lint",
           "lint/internal",
+          "lint/internal/diagnostic",
+          "lint/internal/specification",
           "disk_usage",
           "markdown_to_pdf",
           "markdown_to_pdf/internal",
