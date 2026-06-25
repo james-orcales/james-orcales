@@ -683,10 +683,10 @@ test binary can witness an invariant only by driving internal.Main, not by direc
 
 ### Test Main
 
-The simulation TestMain body is exactly invariant.Run_Test_Main(m, <dirs>), the dirs string
-literals; any other body, or a missing TestMain, is banned.
+The simulation TestMain body is exactly invariant.Run_Test_Main(m, "../**"); any other body, or
+a missing TestMain, is banned.
 
 ### Coverage
 
-The TestMain dirs register exactly the non-exempt internal packages, each relative to the
-simulation package; a missing one loses coverage and an unknown one is banned.
+The "../**" glob registers the internal package and every package beneath it, so all are
+witnessed in one pattern; a narrower argument that omits some is banned.
