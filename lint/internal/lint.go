@@ -10191,13 +10191,14 @@ func driver_gateway_constructor(name string) (constructor bool) {
 }
 
 // Raw blocking and non-blocking IO stdlib lives only in the io/default gateway; every
-// other package routes IO through shared/io. Exempt: the instrumentation packages (a
-// diagnostics side channel), tests (their own IO harness), and package main (the
-// un-simulated wiring shell the framework never witnesses).
+// other package routes IO through shared/io. Exempt: the io/default and time/default
+// gateways (time is the clock the loop is built on, not IO the loop carries), the
+// instrumentation packages (a diagnostics side channel), tests, and package main.
 func check_io_gateway(
 	parsed_files []parsed_file, components *component_index, instrumentation []string,
 ) (diags []Diagnostic) {
 	gateway := component_index_io_gateway(components)
+	time_gateway := component_index_time_gateway(components)
 	for _, pf := range parsed_files {
 		if strings.HasSuffix(pf.Path, "_test.go") {
 			continue
@@ -10210,6 +10211,11 @@ func check_io_gateway(
 		}
 		if gateway != "" {
 			if type_invariants_path_exempt(pf.Path, []string{gateway}) {
+				continue
+			}
+		}
+		if time_gateway != "" {
+			if type_invariants_path_exempt(pf.Path, []string{time_gateway}) {
 				continue
 			}
 		}
