@@ -980,12 +980,11 @@ func struct_field_invariant(
 	}
 	switch typed := field_type.(type) {
 	case *ast.ArrayType:
-		if typed.Len != nil {
-			return "", false
-		}
-		return "Slice_Invariants", true
+		// A raw slice field is banned by check_primitive_types, not composed here.
+		return "", false
 	case *ast.MapType:
-		return "Map_Invariants", true
+		// A raw map field is banned by check_primitive_types, not composed here.
+		return "", false
 	case *ast.SelectorExpr:
 		return typed.Sel.Name + "_Invariants", false
 	case *ast.IndexExpr:
@@ -1026,6 +1025,10 @@ func struct_field_ident_invariant(
 	if type_parameters[name] {
 		return "", false
 	}
+	if name == "string" {
+		// A raw string field is banned by check_primitive_types, not composed here.
+		return "", false
+	}
 	mapped := struct_primitive_preset(name)
 	if mapped != "" {
 		return mapped, true
@@ -1063,8 +1066,6 @@ func struct_primitive_preset(name string) (preset string) {
 		return "Float32_Invariants"
 	case "float64":
 		return "Float64_Invariants"
-	case "string":
-		return "String_Invariants"
 	case "bool":
 		return "Boolean_Invariants"
 	default:
@@ -1230,8 +1231,9 @@ func function_requirements(
 	return requirements
 }
 
-// Derives one subject's requirement: a slice/variadic asks for the element type's
-// _Invariants in a loop, a map for Map_Invariants, anything else for a flat call.
+// Derives one subject's requirement: a defined type asks for a flat _Invariants
+// call. A raw slice, variadic, or map is banned by check_primitive_types rather
+// than asserted here, so it carries no requirement.
 func function_requirement(
 	field_type ast.Expr, scope *function_scope,
 ) (expected string, loop bool, required bool) {
@@ -1241,19 +1243,14 @@ func function_requirement(
 	if is_star {
 		core = star.X
 	}
-	array, is_array := core.(*ast.ArrayType)
-	if is_array {
-		element, element_required := function_named_invariant(array.Elt, scope)
-		return element, true, element_required
+	if _, is_array := core.(*ast.ArrayType); is_array {
+		return "", false, false
 	}
-	ellipsis, is_ellipsis := core.(*ast.Ellipsis)
-	if is_ellipsis {
-		element, element_required := function_named_invariant(ellipsis.Elt, scope)
-		return element, true, element_required
+	if _, is_ellipsis := core.(*ast.Ellipsis); is_ellipsis {
+		return "", false, false
 	}
-	_, is_map := core.(*ast.MapType)
-	if is_map {
-		return "Map_Invariants", false, true
+	if _, is_map := core.(*ast.MapType); is_map {
+		return "", false, false
 	}
 	flat, flat_required := function_named_invariant(core, scope)
 	return flat, false, flat_required
@@ -1288,6 +1285,10 @@ func function_named_invariant(
 		return "", false
 	}
 	if scope.Type_Parameters[identifier.Name] {
+		return "", false
+	}
+	if identifier.Name == "string" {
+		// A raw string subject is banned by check_primitive_types, not asserted here.
 		return "", false
 	}
 	preset := struct_primitive_preset(identifier.Name)
@@ -1695,4 +1696,148 @@ func recorder_group_diagnostics(group *recorder_group) (diags []Diagnostic) {
 		}}
 	}
 	return nil
+}
+
+// Flags a raw string, slice, or map used as a function/method parameter or result,
+// or as a struct field. Such a type has no preset and cannot carry its own bundle;
+// a defined wrapper gives it well-defined coverage. A method satisfying a stdlib
+// interface keeps its dictated signature. Shares the type-invariant opt-out.
+func check_primitive_types(parsed_files []parsed_file, exempt []string) (diags []Diagnostic) {
+	for _, pf := range parsed_files {
+		if strings.HasSuffix(pf.Path, "_test.go") {
+			continue
+		}
+		if type_invariants_path_exempt(pf.Path, exempt) {
+			continue
+		}
+		diags = append(diags, primitive_file_diagnostics(pf)...)
+	}
+	return diags
+}
+
+// Checks every function signature and struct field in one file.
+func primitive_file_diagnostics(file parsed_file) (diags []Diagnostic) {
+	for _, declaration := range file.File.Decls {
+		switch typed := declaration.(type) {
+		case *ast.FuncDecl:
+			diags = append(diags, primitive_function_diagnostics(file, typed)...)
+		case *ast.GenDecl:
+			diags = append(diags, primitive_struct_diagnostics(file, typed)...)
+		}
+	}
+	return diags
+}
+
+// Flags a non-stdlib function's raw string/slice/map parameters and results.
+func primitive_function_diagnostics(
+	file parsed_file, function *ast.FuncDecl,
+) (diags []Diagnostic) {
+
+	if check_casing_method_satisfies_stdlib(function) {
+		return nil
+	}
+	position := file.File_Set.Position(function.Name.Pos())
+	diags = append(diags, primitive_field_diagnostics(&primitive_field_input{
+		Fields: function.Type.Params, Role: "parameter",
+		Owner: function.Name.Name, Position: position,
+	})...)
+	diags = append(diags, primitive_field_diagnostics(&primitive_field_input{
+		Fields: function.Type.Results, Role: "result",
+		Owner: function.Name.Name, Position: position,
+	})...)
+	return diags
+}
+
+// Flags each struct type's raw string/slice/map fields.
+func primitive_struct_diagnostics(file parsed_file, general *ast.GenDecl) (diags []Diagnostic) {
+	if general.Tok != token.TYPE {
+		return nil
+	}
+	for _, specification := range general.Specs {
+		type_specification, is_type := specification.(*ast.TypeSpec)
+		if !is_type {
+			continue
+		}
+		struct_type, is_struct := type_specification.Type.(*ast.StructType)
+		if !is_struct {
+			continue
+		}
+		diags = append(diags, primitive_field_diagnostics(&primitive_field_input{
+			Fields: struct_type.Fields, Role: "field",
+			Owner:    type_specification.Name.Name,
+			Position: file.File_Set.Position(type_specification.Name.Pos()),
+		})...)
+	}
+	return diags
+}
+
+// Carries one field list and how to name its diagnostics; a struct keeps the role
+// and owner off loose string parameters.
+type primitive_field_input struct {
+	Fields   *ast.FieldList
+	Role     string
+	Owner    string
+	Position token.Position
+}
+
+// Flags each field in the list whose type is a raw string, slice, or map.
+func primitive_field_diagnostics(input *primitive_field_input) (diags []Diagnostic) {
+	if input.Fields == nil {
+		return nil
+	}
+	for _, field := range input.Fields.List {
+		kind := numeric_raw_primitive_kind(field.Type)
+		if kind == "" {
+			continue
+		}
+		for _, identifier := range primitive_field_names(field) {
+			diags = append(diags, Diagnostic{
+				Position: input.Position,
+				Message: input.Owner + ": raw " + kind + " " + input.Role + " " +
+					identifier + "; wrap it in a defined type",
+			})
+		}
+	}
+	return diags
+}
+
+// Returns a field's declared names, or one empty name for an anonymous field so it
+// still yields a diagnostic.
+func primitive_field_names(field *ast.Field) (names []string) {
+	if len(field.Names) == 0 {
+		return []string{""}
+	}
+	for _, name := range field.Names {
+		names = append(names, name.Name)
+	}
+	return names
+}
+
+// Returns "string", "slice", or "map" when the type is a raw primitive of that kind
+// — a leading * unwrapped, a variadic counted as a slice — or "" otherwise. A fixed
+// [N]T array is not a slice; a defined type that wraps a primitive is not raw.
+func numeric_raw_primitive_kind(expression ast.Expr) (kind string) {
+	core := expression
+	if star, is_star := core.(*ast.StarExpr); is_star {
+		core = star.X
+	}
+	if _, is_ellipsis := core.(*ast.Ellipsis); is_ellipsis {
+		return "slice"
+	}
+	switch typed := core.(type) {
+	case *ast.Ident:
+		if typed.Name == "string" {
+			return "string"
+		}
+		return ""
+	case *ast.ArrayType:
+		if typed.Len != nil {
+			return ""
+		}
+		return "slice"
+	case *ast.MapType:
+		return "map"
+	default:
+		return ""
+	}
 }
