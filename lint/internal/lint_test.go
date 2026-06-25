@@ -9,7 +9,7 @@ import (
 	"testing"
 	"testing/fstest"
 
-	"github.com/james-orcales/james-orcales/lint/internal"
+	"local/james-orcales/lint/internal"
 )
 
 // Gofmt_must formats test sources so fixtures don't need to be hand-perfect

@@ -13,10 +13,10 @@ import (
 	"strings"
 	"testing"
 
-	maddox "github.com/james-orcales/james-orcales/maddox/internal"
-	invariant "github.com/james-orcales/james-orcales/shared/invariant/default"
-	sysio "github.com/james-orcales/james-orcales/shared/io"
-	"github.com/james-orcales/james-orcales/shared/time"
+	maddox "local/james-orcales/maddox/internal"
+	invariant "local/james-orcales/shared/invariant/default"
+	sysio "local/james-orcales/shared/io"
+	"local/james-orcales/shared/time"
 )
 
 // TestMain wires the coverage recorder over the internal tree ("../**"): every

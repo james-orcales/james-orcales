@@ -13,7 +13,7 @@ import (
 	"strings"
 	"testing"
 
-	invariant "github.com/james-orcales/james-orcales/shared/invariant"
+	invariant "local/james-orcales/shared/invariant"
 )
 
 // Recorder re-exports the library type so callers importing only this package

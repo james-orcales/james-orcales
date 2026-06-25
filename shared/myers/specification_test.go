@@ -6,8 +6,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/james-orcales/james-orcales/shared/myers"
-	"github.com/james-orcales/james-orcales/shared/snap/default"
+	"local/james-orcales/shared/myers"
+	"local/james-orcales/shared/snap/default"
 )
 
 // Test_Edit_Stringer verifies String renders kind prefixes and escapes quotes.

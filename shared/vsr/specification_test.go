@@ -3,7 +3,7 @@ package vsr_test
 import (
 	"testing"
 
-	"github.com/james-orcales/james-orcales/shared/vsr"
+	"local/james-orcales/shared/vsr"
 )
 
 // Test_Normal_Operation_Append: a client command received by the primary becomes one log entry

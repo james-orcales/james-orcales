@@ -13,8 +13,8 @@ import (
 	"testing"
 	"testing/fstest"
 
-	"github.com/james-orcales/james-orcales/lint/internal"
-	"github.com/james-orcales/james-orcales/shared/snap/default"
+	"local/james-orcales/lint/internal"
+	"local/james-orcales/shared/snap/default"
 )
 
 // Additional cases, split to keep each function within the length limit.

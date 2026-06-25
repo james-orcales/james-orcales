@@ -12,10 +12,10 @@ import (
 	"path/filepath"
 	"runtime"
 
-	"github.com/james-orcales/james-orcales/setup/internal"
-	sysio "github.com/james-orcales/james-orcales/shared/io"
-	iodefault "github.com/james-orcales/james-orcales/shared/io/default"
-	timeos "github.com/james-orcales/james-orcales/shared/time/default"
+	"local/james-orcales/setup/internal"
+	sysio "local/james-orcales/shared/io"
+	iodefault "local/james-orcales/shared/io/default"
+	timeos "local/james-orcales/shared/time/default"
 )
 
 // Exit_usage marks a home directory that cannot be resolved, kept distinct from

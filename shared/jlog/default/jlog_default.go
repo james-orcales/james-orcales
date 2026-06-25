@@ -3,7 +3,7 @@
 // runtime.Caller — in the one Default logger, exposes package-level convenience
 // functions that log to it, and re-exports the library surface so callers can:
 //
-//	import jlog "github.com/james-orcales/james-orcales/shared/jlog/default"
+//	import jlog "local/james-orcales/shared/jlog/default"
 //
 //	jlog.Info("hello", jlog.String("user", name))
 //
@@ -19,10 +19,10 @@ import (
 	"runtime"
 	"strconv"
 
-	"github.com/james-orcales/james-orcales/shared/diode"
-	"github.com/james-orcales/james-orcales/shared/jlog"
-	"github.com/james-orcales/james-orcales/shared/time"
-	system_time "github.com/james-orcales/james-orcales/shared/time/default"
+	"local/james-orcales/shared/diode"
+	"local/james-orcales/shared/jlog"
+	"local/james-orcales/shared/time"
+	system_time "local/james-orcales/shared/time/default"
 )
 
 // Logger re-exports jlog.Logger.

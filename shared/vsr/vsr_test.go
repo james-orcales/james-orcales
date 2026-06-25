@@ -3,9 +3,9 @@ package vsr_test
 import (
 	"testing"
 
-	invariant "github.com/james-orcales/james-orcales/shared/invariant/default"
-	"github.com/james-orcales/james-orcales/shared/time"
-	"github.com/james-orcales/james-orcales/shared/vsr"
+	invariant "local/james-orcales/shared/invariant/default"
+	"local/james-orcales/shared/time"
+	"local/james-orcales/shared/vsr"
 )
 
 // TestMain runs the suite through the invariant harness so that, under a plain `go test`, every

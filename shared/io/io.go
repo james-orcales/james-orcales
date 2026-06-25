@@ -14,8 +14,8 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/james-orcales/james-orcales/shared/prng"
-	"github.com/james-orcales/james-orcales/shared/time"
+	"local/james-orcales/shared/prng"
+	"local/james-orcales/shared/time"
 )
 
 // File identifies an open file or socket. The simulated backend ignores it (its

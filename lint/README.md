@@ -91,7 +91,7 @@ may live within each, so the end-to-end injection chain has a known shape.
 ```
 james-orcales/
 ├── shared/      ← shared library (the only one)
-│   └── go.mod          ← module github.com/james-orcales/james-orcales/shared
+│   └── go.mod          ← module local/james-orcales/shared
 ├── lint/               ← binary
 │   └── go.mod
 └── big_bang/           ← binary

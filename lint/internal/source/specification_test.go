@@ -5,7 +5,7 @@ import (
 	"go/token"
 	"testing"
 
-	"github.com/james-orcales/james-orcales/lint/internal/source"
+	"local/james-orcales/lint/internal/source"
 )
 
 // Test_Parsed_File_Path verifies Path carries the repo-relative file path.

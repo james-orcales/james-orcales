@@ -3,8 +3,8 @@ package io_test
 import (
 	"testing"
 
-	"github.com/james-orcales/james-orcales/shared/io"
-	"github.com/james-orcales/james-orcales/shared/time"
+	"local/james-orcales/shared/io"
+	"local/james-orcales/shared/time"
 )
 
 // Test_Sim_Timeout verifies a timeout fires exactly when the virtual clock reaches

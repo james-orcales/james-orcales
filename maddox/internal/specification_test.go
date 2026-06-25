@@ -6,10 +6,10 @@ import (
 	"strings"
 	"testing"
 
-	maddox "github.com/james-orcales/james-orcales/maddox/internal"
-	"github.com/james-orcales/james-orcales/shared/fixedpoint"
-	"github.com/james-orcales/james-orcales/shared/io"
-	"github.com/james-orcales/james-orcales/shared/time"
+	maddox "local/james-orcales/maddox/internal"
+	"local/james-orcales/shared/fixedpoint"
+	"local/james-orcales/shared/io"
+	"local/james-orcales/shared/time"
 )
 
 // The specification tests mirror SPECIFICATION.md: one leaf per heading, in

@@ -3,7 +3,7 @@ package source_test
 import (
 	"testing"
 
-	"github.com/james-orcales/james-orcales/lint/internal/source"
+	"local/james-orcales/lint/internal/source"
 )
 
 // Test_Parse_Glob_Pattern_Negate verifies a leading "!" is stripped into Negate,

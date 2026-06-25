@@ -6,7 +6,7 @@ import (
 	"testing"
 	"testing/fstest"
 
-	sloc "github.com/james-orcales/james-orcales/sloc/internal"
+	sloc "local/james-orcales/sloc/internal"
 )
 
 // Test_Main_Paths verifies the commandless command line: a directory given as a

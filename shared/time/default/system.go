@@ -7,7 +7,7 @@ import (
 	"sync/atomic"
 	wallclock "time"
 
-	"github.com/james-orcales/james-orcales/shared/time"
+	"local/james-orcales/shared/time"
 )
 
 // New_Operating_System_Clock returns a read-only Clock backed by the host operating

@@ -20,7 +20,7 @@ package prng
 import (
 	"math/bits"
 
-	invariant "github.com/james-orcales/james-orcales/shared/invariant/default"
+	invariant "local/james-orcales/shared/invariant/default"
 )
 
 // The splitmix64 increment, derived from the golden ratio, strides the seed state.

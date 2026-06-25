@@ -8,8 +8,8 @@ import (
 	"testing"
 	"testing/fstest"
 
-	"github.com/james-orcales/james-orcales/shared/invariant"
-	"github.com/james-orcales/james-orcales/shared/snap/default"
+	"local/james-orcales/shared/invariant"
+	"local/james-orcales/shared/snap/default"
 )
 
 // When an Impossible declares a combination of element events and that exact

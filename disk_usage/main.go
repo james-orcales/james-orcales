@@ -8,7 +8,7 @@ import (
 	"os"
 	"syscall"
 
-	disk_usage "github.com/james-orcales/james-orcales/disk_usage/internal"
+	disk_usage "local/james-orcales/disk_usage/internal"
 )
 
 // A stat block is 512 bytes on every Unix — the unit st_blocks counts and du divides by —

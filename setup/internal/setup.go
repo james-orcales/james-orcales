@@ -16,7 +16,7 @@ import (
 	"slices"
 	"strings"
 
-	sysio "github.com/james-orcales/james-orcales/shared/io"
+	sysio "local/james-orcales/shared/io"
 )
 
 // Dotfile_bytes_max bounds a single dotfile read into one fixed buffer. 1 MiB

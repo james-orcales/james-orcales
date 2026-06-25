@@ -6,7 +6,7 @@ import (
 	"testing"
 	"testing/fstest"
 
-	"github.com/james-orcales/james-orcales/lint/internal"
+	"local/james-orcales/lint/internal"
 )
 
 // This file is the doctrine, enforced by the lint tool, which dogfoods on this

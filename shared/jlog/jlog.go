@@ -37,7 +37,7 @@ import (
 	"unicode/utf8"
 	"unsafe"
 
-	"github.com/james-orcales/james-orcales/shared/time"
+	"local/james-orcales/shared/time"
 )
 
 // A fresh line buffer holds a typical event without growing, so steady-state

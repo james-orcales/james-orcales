@@ -11,9 +11,9 @@ import (
 	"strings"
 	"testing"
 
-	setup "github.com/james-orcales/james-orcales/setup/internal"
-	sysio "github.com/james-orcales/james-orcales/shared/io"
-	"github.com/james-orcales/james-orcales/shared/prng"
+	setup "local/james-orcales/setup/internal"
+	sysio "local/james-orcales/shared/io"
+	"local/james-orcales/shared/prng"
 )
 
 // The destination directory, relative to the source root, pruned from the source walk so the

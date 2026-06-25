@@ -7,7 +7,7 @@ import (
 	"slices"
 	"strings"
 
-	invariant "github.com/james-orcales/james-orcales/shared/invariant/default"
+	invariant "local/james-orcales/shared/invariant/default"
 )
 
 // Edit_Retain marks runes present unchanged in both Old and New.

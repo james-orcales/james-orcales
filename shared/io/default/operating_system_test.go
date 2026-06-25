@@ -9,10 +9,10 @@ import (
 	"syscall"
 	"testing"
 
-	"github.com/james-orcales/james-orcales/shared/io"
-	iodefault "github.com/james-orcales/james-orcales/shared/io/default"
-	"github.com/james-orcales/james-orcales/shared/time"
-	timeos "github.com/james-orcales/james-orcales/shared/time/default"
+	"local/james-orcales/shared/io"
+	iodefault "local/james-orcales/shared/io/default"
+	"local/james-orcales/shared/time"
+	timeos "local/james-orcales/shared/time/default"
 )
 
 // Test_Operating_System_IO_Read writes a temp file and reads it back through the

@@ -7,10 +7,10 @@ import (
 	"os"
 	"testing"
 
-	"github.com/james-orcales/james-orcales/shared/diode"
-	jlog "github.com/james-orcales/james-orcales/shared/jlog/default"
-	"github.com/james-orcales/james-orcales/shared/time"
-	system_time "github.com/james-orcales/james-orcales/shared/time/default"
+	"local/james-orcales/shared/diode"
+	jlog "local/james-orcales/shared/jlog/default"
+	"local/james-orcales/shared/time"
+	system_time "local/james-orcales/shared/time/default"
 )
 
 // Test_Default_Global_Info covers the package-level convenience API writing

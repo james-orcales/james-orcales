@@ -19,8 +19,8 @@ import (
 	"sync"
 	"testing"
 
-	invariant "github.com/james-orcales/james-orcales/shared/invariant/default"
-	"github.com/james-orcales/james-orcales/shared/myers"
+	invariant "local/james-orcales/shared/invariant/default"
+	"local/james-orcales/shared/myers"
 )
 
 // Keys the diff colors so readers can map - / + to red / green without

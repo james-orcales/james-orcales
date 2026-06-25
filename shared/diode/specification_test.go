@@ -7,8 +7,8 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/james-orcales/james-orcales/shared/diode"
-	"github.com/james-orcales/james-orcales/shared/time"
+	"local/james-orcales/shared/diode"
+	"local/james-orcales/shared/time"
 )
 
 // Test_Write_Forwards_To_Sink checks that a written line reaches the wrapped sink.

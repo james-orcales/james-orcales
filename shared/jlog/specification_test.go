@@ -9,8 +9,8 @@ import (
 	"net"
 	"testing"
 
-	"github.com/james-orcales/james-orcales/shared/jlog"
-	"github.com/james-orcales/james-orcales/shared/time"
+	"local/james-orcales/shared/jlog"
+	"local/james-orcales/shared/time"
 )
 
 // Test_Message_Renders_Level_And_Message covers the minimal line: a level field

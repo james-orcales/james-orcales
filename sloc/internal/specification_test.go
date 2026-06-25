@@ -5,7 +5,7 @@ import (
 	"testing"
 	"testing/fstest"
 
-	sloc "github.com/james-orcales/james-orcales/sloc/internal"
+	sloc "local/james-orcales/sloc/internal"
 )
 
 // Test_Classify_Comments verifies line comments across languages, a trailing comment

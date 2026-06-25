@@ -23,7 +23,7 @@ import (
 	"sync/atomic"
 	"unsafe"
 
-	"github.com/james-orcales/james-orcales/shared/time"
+	"local/james-orcales/shared/time"
 )
 
 // Ring slot count used when New_Input.Count is unset; 1000 lines of slack absorbs

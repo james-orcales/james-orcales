@@ -9,8 +9,8 @@ import (
 	"testing"
 	"testing/fstest"
 
-	"github.com/james-orcales/james-orcales/shared/invariant"
-	snap "github.com/james-orcales/james-orcales/shared/snap/default"
+	"local/james-orcales/shared/invariant"
+	snap "local/james-orcales/shared/snap/default"
 )
 
 // Test_Always_Violation: a false Always panics on its own, in every run mode, naming
@@ -717,8 +717,8 @@ func Test_Bundles_Failure_Location(t *testing.T) {
   a  true
   b  true
 
-github.com/james-orcales/james-orcales/shared/invariant.Recorder_Dot_Product (invariant.go)
-github.com/james-orcales/james-orcales/shared/invariant_test.dot_product_callsite (specification_test.go)`),
+local/james-orcales/shared/invariant.Recorder_Dot_Product (invariant.go)
+local/james-orcales/shared/invariant_test.dot_product_callsite (specification_test.go)`),
 		message+"\n\n"+stack,
 	)
 }

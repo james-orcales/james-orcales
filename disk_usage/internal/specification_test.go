@@ -8,7 +8,7 @@ import (
 	"testing"
 	"testing/fstest"
 
-	disk_usage "github.com/james-orcales/james-orcales/disk_usage/internal"
+	disk_usage "local/james-orcales/disk_usage/internal"
 )
 
 // Test_Analyze_Cumulative_Sizes verifies a directory's bytes are the sum of every file
