@@ -714,6 +714,12 @@ constructors mint no Driver and are not gated.
 
 ### Gateway
 
-Raw IO stdlib lives only in the io/default gateway: net, net/http, syscall, os/exec, and bufio are
-unimportable elsewhere, and os file operations uncallable; route IO through shared/io.
-Instrumentation packages, tests, and generated files are exempt.
+Raw IO stdlib lives only in the io/default gateway: net, net/http, syscall, os/exec, bufio,
+crypto/tls, and os/signal are unimportable elsewhere, and os file operations uncallable; route IO
+through shared/io. Instrumentation packages, tests, and generated files are exempt.
+
+### Seed
+
+A simulated backend takes only a seed: New_Sim(seed) is the sole entry, the sim type stays
+unexported, and no exported Sim type or Sim_* helper lets a caller script outcomes — so a run is a
+pure function of its seed.
