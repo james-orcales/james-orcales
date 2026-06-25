@@ -8,7 +8,7 @@ import (
 
 	maddox "github.com/james-orcales/james-orcales/maddox/internal"
 	"github.com/james-orcales/james-orcales/shared/fixedpoint"
-	"github.com/james-orcales/james-orcales/shared/sh"
+	"github.com/james-orcales/james-orcales/shared/io"
 	"github.com/james-orcales/james-orcales/shared/time"
 )
 
@@ -122,19 +122,19 @@ func Test_Comparison_Significance(t *testing.T) {
 // spent: at 10ms per run a 55ms budget admits exactly six runs, the run after the
 // budget elapses being the one that stops the loop.
 func Test_Sampling_Budget(t *testing.T) {
-	clock := time.Virtual_Clock_To_Clock(time.Virtual_Clock{Resolution: time.Millisecond})
 	per_run := 10 * time.Millisecond
 	calls := 0
 	sampler := maddox.Sampler{
-		Measure: func(_ sh.Command) (result maddox.Run_Result) {
+		Measure: func(_ io.Process_Request) (result maddox.Run_Result) {
 			calls++
-			clock.Sleep(per_run)
+			result.Sample.Wall = per_run
+			// A real clock advances each run; the stopwatch reads this stamp.
+			result.Completed_At = time.Moment(time.Duration(calls) * per_run)
 			return result
 		},
 	}
 	input := &maddox.Main_Input{
-		Commands:     []sh.Command{{Path: "noop"}},
-		Clock:        clock,
+		Commands:     []io.Process_Request{{Path: "noop"}},
 		Sampler:      sampler,
 		Duration_Max: 55 * time.Millisecond,
 		Output:       &bytes.Buffer{},
@@ -151,18 +151,17 @@ func Test_Sampling_Budget(t *testing.T) {
 // Test_Sampling_Runs verifies that the run cap stops sampling: a cap of five with the
 // time budget disabled (zero) yields exactly five runs.
 func Test_Sampling_Runs(t *testing.T) {
-	clock := time.Virtual_Clock_To_Clock(time.Virtual_Clock{Resolution: time.Millisecond})
+	per_run := 10 * time.Millisecond
 	calls := 0
 	sampler := maddox.Sampler{
-		Measure: func(_ sh.Command) (result maddox.Run_Result) {
+		Measure: func(_ io.Process_Request) (result maddox.Run_Result) {
 			calls++
-			clock.Sleep(10 * time.Millisecond)
+			result.Sample.Wall = per_run
 			return result
 		},
 	}
 	input := &maddox.Main_Input{
-		Commands:     []sh.Command{{Path: "noop"}},
-		Clock:        clock,
+		Commands:     []io.Process_Request{{Path: "noop"}},
 		Sampler:      sampler,
 		Duration_Max: 0,
 		Runs_Max:     5,
@@ -178,18 +177,17 @@ func Test_Sampling_Runs(t *testing.T) {
 // Test_Sampling_Minimum verifies that Main runs a command at least three times even
 // when the budget is already spent, so the statistics always have a quorum.
 func Test_Sampling_Minimum(t *testing.T) {
-	clock := time.Virtual_Clock_To_Clock(time.Virtual_Clock{Resolution: time.Millisecond})
+	per_run := 10 * time.Millisecond
 	calls := 0
 	sampler := maddox.Sampler{
-		Measure: func(_ sh.Command) (result maddox.Run_Result) {
+		Measure: func(_ io.Process_Request) (result maddox.Run_Result) {
 			calls++
-			clock.Sleep(10 * time.Millisecond)
+			result.Sample.Wall = per_run
 			return result
 		},
 	}
 	input := &maddox.Main_Input{
-		Commands:     []sh.Command{{Path: "noop"}},
-		Clock:        clock,
+		Commands:     []io.Process_Request{{Path: "noop"}},
 		Sampler:      sampler,
 		Duration_Max: time.Nanosecond,
 		Output:       &bytes.Buffer{},
@@ -205,19 +203,18 @@ func Test_Sampling_Minimum(t *testing.T) {
 // two warmup runs plus the three-run minimum is five measurements taken, but the
 // report counts only the three that were kept.
 func Test_Sampling_Warmup(t *testing.T) {
-	clock := time.Virtual_Clock_To_Clock(time.Virtual_Clock{Resolution: time.Millisecond})
+	per_run := 10 * time.Millisecond
 	calls := 0
 	sampler := maddox.Sampler{
-		Measure: func(_ sh.Command) (result maddox.Run_Result) {
+		Measure: func(_ io.Process_Request) (result maddox.Run_Result) {
 			calls++
-			clock.Sleep(10 * time.Millisecond)
+			result.Sample.Wall = per_run
 			return result
 		},
 	}
 	output := &bytes.Buffer{}
 	input := &maddox.Main_Input{
-		Commands:     []sh.Command{{Path: "noop"}},
-		Clock:        clock,
+		Commands:     []io.Process_Request{{Path: "noop"}},
 		Sampler:      sampler,
 		Duration_Max: time.Nanosecond,
 		Warmup_Count: 2,
@@ -240,18 +237,15 @@ func Test_Sampling_Warmup(t *testing.T) {
 // order, each labeled with its command words, the first (reference) compared against
 // nothing and so carrying the zero delta.
 func Test_Output_Document(t *testing.T) {
-	clock := time.Virtual_Clock_To_Clock(time.Virtual_Clock{Resolution: time.Millisecond})
 	sampler := maddox.Sampler{
-		Measure: func(_ sh.Command) (result maddox.Run_Result) {
-			clock.Sleep(time.Millisecond)
-			result.Sample = maddox.Sample{Instructions: 100}
+		Measure: func(_ io.Process_Request) (result maddox.Run_Result) {
+			result.Sample = maddox.Sample{Wall: time.Millisecond, Instructions: 100}
 			return result
 		},
 	}
 	output := &bytes.Buffer{}
 	input := &maddox.Main_Input{
-		Commands:     []sh.Command{{Path: "a"}, {Path: "b"}},
-		Clock:        clock,
+		Commands:     []io.Process_Request{{Path: "a"}, {Path: "b"}},
 		Sampler:      sampler,
 		Duration_Max: time.Nanosecond,
 		Format:       maddox.Output_Format_Json,
@@ -280,9 +274,8 @@ func Test_Output_Document(t *testing.T) {
 // a non-zero status and the command's captured stderr surfaced to the diagnostic
 // sink, rather than reporting numbers for a broken command.
 func Test_Output_Failure(t *testing.T) {
-	clock := time.Virtual_Clock_To_Clock(time.Virtual_Clock{Resolution: time.Millisecond})
 	sampler := maddox.Sampler{
-		Measure: func(_ sh.Command) (result maddox.Run_Result) {
+		Measure: func(_ io.Process_Request) (result maddox.Run_Result) {
 			result.Exit = 1
 			result.Stderr = []byte("boom")
 			return result
@@ -290,8 +283,7 @@ func Test_Output_Failure(t *testing.T) {
 	}
 	stderr := &bytes.Buffer{}
 	input := &maddox.Main_Input{
-		Commands:     []sh.Command{{Path: "broken"}},
-		Clock:        clock,
+		Commands:     []io.Process_Request{{Path: "broken"}},
 		Sampler:      sampler,
 		Duration_Max: time.Nanosecond,
 		Output:       &bytes.Buffer{},
@@ -450,10 +442,9 @@ func Test_Table_Sparse(t *testing.T) {
 // specs as a top-level "machine" field alongside "benchmarks", with every provided
 // field round-tripping through the marshaled output.
 func Test_Machine_Document(t *testing.T) {
-	clock := time.Virtual_Clock_To_Clock(time.Virtual_Clock{Resolution: time.Millisecond})
 	sampler := maddox.Sampler{
-		Measure: func(_ sh.Command) (result maddox.Run_Result) {
-			clock.Sleep(time.Millisecond)
+		Measure: func(_ io.Process_Request) (result maddox.Run_Result) {
+			result.Sample.Wall = time.Millisecond
 			return result
 		},
 	}
@@ -471,8 +462,7 @@ func Test_Machine_Document(t *testing.T) {
 		Kernel_Version:           "1.0.0",
 	}
 	maddox.Main(maddox.Main_Input{
-		Commands:     []sh.Command{{Path: "noop"}},
-		Clock:        clock,
+		Commands:     []io.Process_Request{{Path: "noop"}},
 		Sampler:      sampler,
 		Duration_Max: time.Nanosecond,
 		Machine:      specs,
@@ -541,16 +531,14 @@ func Test_Machine_Table(t *testing.T) {
 // Test_Progress verifies that, with progress enabled, Main writes the run counter to
 // the diagnostic sink while sampling, and writes nothing there when it is disabled.
 func Test_Progress(t *testing.T) {
-	clock := time.Virtual_Clock_To_Clock(time.Virtual_Clock{Resolution: time.Millisecond})
 	sampler := maddox.Sampler{
-		Measure: func(_ sh.Command) (result maddox.Run_Result) {
+		Measure: func(_ io.Process_Request) (result maddox.Run_Result) {
 			return result
 		},
 	}
 	shown := &bytes.Buffer{}
 	maddox.Main(maddox.Main_Input{
-		Commands:     []sh.Command{{Path: "noop"}},
-		Clock:        clock,
+		Commands:     []io.Process_Request{{Path: "noop"}},
 		Sampler:      sampler,
 		Duration_Max: 0,
 		Runs_Max:     5,
@@ -568,8 +556,7 @@ func Test_Progress(t *testing.T) {
 
 	hidden := &bytes.Buffer{}
 	maddox.Main(maddox.Main_Input{
-		Commands:     []sh.Command{{Path: "noop"}},
-		Clock:        clock,
+		Commands:     []io.Process_Request{{Path: "noop"}},
 		Sampler:      sampler,
 		Duration_Max: 0,
 		Runs_Max:     5,
