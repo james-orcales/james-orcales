@@ -325,6 +325,11 @@ type Namespace string
 // them all. namespace is the grid's identity and is prefixed onto each held axis's own message
 // to form that axis's coverage key.
 func Recorder_Dot_Product(recorder *Recorder, namespace Namespace, bundle ...Dot_Element) {
+	// A Dot_Product with no elements asserts nothing — a no-op grid is always a
+	// mistake, so it fails immediately rather than silently recording nothing.
+	if len(bundle) == 0 {
+		panic(Assertion_Failure_Message_Prefix + "Dot_Product has no elements")
+	}
 	dot_product_check_references(bundle)
 	var violations []string
 	for _, dot_element := range bundle {

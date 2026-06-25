@@ -391,6 +391,14 @@ func Test_Dot_Product_Attribution(t *testing.T) {
 	}
 }
 
+// Test_Dot_Product_Empty: a Dot_Product with no elements asserts nothing, so it panics.
+func Test_Dot_Product_Empty(t *testing.T) {
+	recorder := new_test_recorder()
+	if !did_panic(func() { invariant.Recorder_Dot_Product(recorder, "check") }) {
+		t.Fatal("a Dot_Product with no elements must panic")
+	}
+}
+
 // Test_Bundles_Template: a _Invariants is recognized by its name suffix and trailing namespace
 // parameter; the Dot_Product it self-emits under that parameter is a template — not a non-literal
 // failure, seeded only at the callsite's literal namespace, never under the bare parameter.
