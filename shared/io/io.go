@@ -122,6 +122,15 @@ type File_Status struct {
 // instead of a result — so every submission resolves.
 var Cancelled = errors.New("io: operation cancelled")
 
+// FOREVER is the Run_Until timeout that never expires: the loop pumps until done reports
+// true, however long that takes — for a caller (a server) that runs until an event, not a
+// clock.
+const FOREVER time.Duration = -1
+
+// IMMEDIATE is the Run_Until timeout that expires at once: done is evaluated a single time
+// and the loop is not driven — a non-blocking poll of the predicate.
+const IMMEDIATE time.Duration = 0
+
 // The number of virtual grains a simulated operation may take to complete, drawn from
 // the seed so the completion order varies per run while staying reproducible.
 const sim_latency_grains = 8
@@ -260,12 +269,23 @@ type Driver struct {
 	// tick (TigerBeetle IO.run).
 	Run func()
 	// Run_For drives the loop until the duration has elapsed on the clock, delivering
-	// completions as they come due (TigerBeetle IO.run_for_ns).
+	// completions as they come due (TigerBeetle IO.run_for_ns). Here time is the GOAL: it
+	// advances exactly duration, draining as it goes, regardless of what completes — reach
+	// for it to let a span of time pass, not to wait for a particular op.
 	Run_For func(duration time.Duration)
-	// Run_Until drives the loop until done reports true — the run-until-complete pump
-	// that lets straight-line code wait for its own op inline. Top-level and
-	// single-loop only: never call it from within a completion callback.
-	Run_Until func(done func() (finished bool))
+	// Run_Until drives the loop until done reports true — the run-until-complete pump that
+	// lets straight-line code wait for its own op inline. Here completion is the GOAL and
+	// time is the GUARD: it stops the instant done holds, and timeout only caps the wait so
+	// a stalled op can't hang the caller. This opposite emphasis — completion-first with a
+	// time bound, versus Run_For's time-first — is why the two stay separate ops.
+	//
+	// timeout < 0 (FOREVER) waits unbounded — a server pumping until a shutdown signal.
+	// timeout == 0 (IMMEDIATE) evaluates done once and returns without driving — a poll.
+	// timeout > 0 pumps until done or the clock passes now+timeout. completed reports which
+	// won: done (true) or the timeout (false).
+	//
+	// Top-level and single-loop only: never call it from within a completion callback.
+	Run_Until func(done func() (finished bool), timeout time.Duration) (completed bool)
 }
 
 // The sim type is the deterministic, in-memory IO backend — TigerBeetle's simulated
@@ -870,8 +890,11 @@ func sim_to_driver(state *sim) (driver Driver) {
 		Run_For: func(duration time.Duration) {
 			sim_drive(state, func() { sim_run_for(state, duration) })
 		},
-		Run_Until: func(done func() (finished bool)) {
-			sim_drive(state, func() { sim_run_until(state, done) })
+		Run_Until: func(
+			done func() (finished bool), timeout time.Duration,
+		) (completed bool) {
+			sim_drive(state, func() { completed = sim_run_until(state, done, timeout) })
+			return completed
 		},
 	}
 }
@@ -979,10 +1002,22 @@ func sim_run_for(state *sim, duration time.Duration) {
 	}
 }
 
-// Drives the loop until done reports true — the run-until-complete pump. Top-level and
+// Drives the loop until done reports true, or until timeout of virtual time has elapsed —
+// the run-until-complete pump, capped so a stalled op cannot spin the sim forever. A
+// negative timeout waits unbounded; a zero timeout checks done once and drives nothing.
+// completed reports whether done tripped rather than the deadline. Top-level and
 // single-loop only; each step drains then ticks.
-func sim_run_until(state *sim, done func() (finished bool)) {
+func sim_run_until(
+	state *sim, done func() (finished bool), timeout time.Duration,
+) (completed bool) {
+	deadline := sim_now(state) + time.Moment(timeout)
 	for !done() {
+		if timeout >= 0 {
+			if sim_now(state) >= deadline {
+				return false
+			}
+		}
 		sim_run(state)
 	}
+	return true
 }

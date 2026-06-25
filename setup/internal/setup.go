@@ -17,6 +17,7 @@ import (
 	"strings"
 
 	sysio "local/james-orcales/shared/io"
+	systime "local/james-orcales/shared/time"
 )
 
 // Dotfile_bytes_max bounds a single dotfile read into one fixed buffer. 1 MiB
@@ -36,8 +37,9 @@ type File_System struct {
 	// Loop is the submit surface for the file ops: Open/Read/Write/Close are pumped, while
 	// Read_Directory/Status/Make_Directory return inline.
 	Loop sysio.IO
-	// Run_Until drives the loop until a submitted op reports done — the per-op pump.
-	Run_Until func(done func() (finished bool))
+	// Run_Until drives the loop until a submitted op reports done, capped by timeout
+	// (sysio.FOREVER waits unbounded) — the per-op pump; returns whether the op completed.
+	Run_Until func(done func() (finished bool), timeout systime.Duration) (completed bool)
 }
 
 // Main_Input carries the injected dependencies Main needs to sync dotfiles.
@@ -379,7 +381,7 @@ func loop_read(
 		err = read_err
 		done = true
 	}, file, buffer, offset)
-	system.Run_Until(func() (finished bool) { return done })
+	system.Run_Until(func() (finished bool) { return done }, sysio.FOREVER)
 	return count, err
 }
 
@@ -393,7 +395,7 @@ func loop_write(
 		err = write_err
 		done = true
 	}, file, buffer, offset)
-	system.Run_Until(func() (finished bool) { return done })
+	system.Run_Until(func() (finished bool) { return done }, sysio.FOREVER)
 	return err
 }
 
@@ -402,7 +404,7 @@ func loop_close(system *File_System, file sysio.File) {
 	var completion sysio.Completion
 	done := false
 	system.Loop.Close(&completion, func(_ *sysio.Completion, _ error) { done = true }, file)
-	system.Run_Until(func() (finished bool) { return done })
+	system.Run_Until(func() (finished bool) { return done }, sysio.FOREVER)
 }
 
 // Spawn runs one command to completion and returns its outcome — the synchronous adapter
