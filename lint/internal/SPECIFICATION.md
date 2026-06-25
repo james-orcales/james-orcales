@@ -716,7 +716,7 @@ constructors mint no Driver and are not gated.
 
 Raw IO stdlib lives only in the io/default gateway: net, net/http, syscall, os/exec, bufio,
 crypto/tls, and os/signal are unimportable elsewhere, and os file operations uncallable; route IO
-through shared/io. Instrumentation packages, tests, and generated files are exempt.
+through shared/io. Instrumentation packages, tests, generated files, and package main are exempt.
 
 ### Seed
 
