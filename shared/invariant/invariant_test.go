@@ -174,6 +174,83 @@ func check(n int) {
 	}
 }
 
+// A `**` directory pattern registers a package and every package beneath it, so one
+// glob covers a whole subtree instead of naming each directory.
+func Test_Register_Double_Star_Seeds_Whole_Subtree(t *testing.T) {
+	const top = `package fixture
+
+func check_top(n int) {
+	invariant.Dot_Product("top", invariant.Sometimes(n == 0, "top zero"))
+}
+`
+	const deep = `package deep
+
+func check_deep(n int) {
+	invariant.Dot_Product("deep", invariant.Sometimes(n == 0, "deep zero"))
+}
+`
+	recorder := &invariant.Recorder{
+		File_System: fstest.MapFS{
+			"fixture/top.go":       &fstest.MapFile{Data: []byte(top)},
+			"fixture/deep/deep.go": &fstest.MapFile{Data: []byte(deep)},
+		},
+	}
+	invariant.Recorder_Register_Packages_For_Analysis(recorder, "/fixture/**")
+
+	if _, ok := recorder.Events.Load(
+		"top" + invariant.Element_Message_Separator + "top zero"); !ok {
+		t.Error("the top package's Sometimes must be seeded")
+	}
+	if _, ok := recorder.Events.Load(
+		"deep" + invariant.Element_Message_Separator + "deep zero"); !ok {
+		t.Error("a nested package's Sometimes must be seeded through the ** glob")
+	}
+}
+
+// A `*` directory pattern registers each immediate child package but neither the
+// parent package nor a grandchild.
+func Test_Register_Single_Star_Seeds_Only_Immediate_Children(t *testing.T) {
+	const parent = `package fixture
+
+func check_parent(n int) {
+	invariant.Dot_Product("parent", invariant.Sometimes(n == 0, "parent zero"))
+}
+`
+	const child = `package child
+
+func check_child(n int) {
+	invariant.Dot_Product("child", invariant.Sometimes(n == 0, "child zero"))
+}
+`
+	const grand = `package grand
+
+func check_grand(n int) {
+	invariant.Dot_Product("grand", invariant.Sometimes(n == 0, "grand zero"))
+}
+`
+	recorder := &invariant.Recorder{
+		File_System: fstest.MapFS{
+			"fixture/parent.go":            &fstest.MapFile{Data: []byte(parent)},
+			"fixture/child/child.go":       &fstest.MapFile{Data: []byte(child)},
+			"fixture/child/grand/grand.go": &fstest.MapFile{Data: []byte(grand)},
+		},
+	}
+	invariant.Recorder_Register_Packages_For_Analysis(recorder, "/fixture/*")
+
+	if _, ok := recorder.Events.Load(
+		"child" + invariant.Element_Message_Separator + "child zero"); !ok {
+		t.Error("an immediate child package must be seeded through the * glob")
+	}
+	if _, ok := recorder.Events.Load(
+		"parent" + invariant.Element_Message_Separator + "parent zero"); ok {
+		t.Error("the parent package must not be seeded by a * child glob")
+	}
+	if _, ok := recorder.Events.Load(
+		"grand" + invariant.Element_Message_Separator + "grand zero"); ok {
+		t.Error("a grandchild package must not be seeded by a single * glob")
+	}
+}
+
 // A Dot_Product's message prefix composes into each held axis's coverage key: the
 // element names itself "zero", the Dot_Product carries prefix "p", and the seeded
 // per-element key is the prefix joined to the local message by the separator ("p␀zero").
