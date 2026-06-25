@@ -1404,6 +1404,58 @@ func Test_Configuration_Directory_Slash(t *testing.T) {
 	}
 }
 
+// Test_Configuration_Packages_Only verifies an exact-file entry is flagged in every
+// lint.json glob list except ignore and opt_out_recursion_ban, and that a wildcard-free
+// entry matching neither a tracked file nor a directory is flagged as a coverage gap.
+func Test_Configuration_Packages_Only(t *testing.T) {
+	t.Parallel()
+	fsys := fstest.MapFS{
+		"go.mod":   {Data: []byte(doctrine_root_go_module)},
+		"pkg/p.go": {Data: []byte("// Package p is a fixture.\npackage p\n")},
+	}
+	tracked := map[string]bool{"go.mod": true, "pkg/p.go": true}
+	run := func(input *lint.Check_File_System_Input) (diags []lint.Diagnostic) {
+		input.Fsys = fsys
+		input.Tracked = tracked
+		input.Shared_Component = doctrine_shared_component_directory
+		diags, err := lint.Check_File_System(input)
+		if err != nil {
+			t.Fatalf("Check_File_System: %v", err)
+		}
+		return diags
+	}
+	if !specification_diagnosed(
+		run(&lint.Check_File_System_Input{Pure_But_Indeterministic: []string{"pkg/p.go"}}),
+		"may name a file") {
+		t.Fatal("an exact-file entry in pure_but_indeterministic_packages must be flagged")
+	}
+	if !specification_diagnosed(
+		run(&lint.Check_File_System_Input{Instrumentation_Packages: []string{"pkg/p.go"}}),
+		"may name a file") {
+		t.Fatal("an exact-file entry in instrumentation_packages must be flagged")
+	}
+	if !specification_diagnosed(
+		run(&lint.Check_File_System_Input{Invariant_Exempt_Packages: []string{"pkg/p.go"}}),
+		"may name a file") {
+		t.Fatal("an exact-file entry in opt_out_assertion_mandate_packages must be flagged")
+	}
+	if specification_diagnosed(
+		run(&lint.Check_File_System_Input{Ignore: []string{"pkg/p.go"}}),
+		"may name a file") {
+		t.Fatal("an exact-file ignore entry must be allowed")
+	}
+	if specification_diagnosed(
+		run(&lint.Check_File_System_Input{Recursion_Exempt: []string{"pkg/p.go"}}),
+		"may name a file") {
+		t.Fatal("an exact-file opt_out_recursion_ban entry must be allowed")
+	}
+	if !specification_diagnosed(
+		run(&lint.Check_File_System_Input{Ignore: []string{"pkg/missing"}}),
+		"matches no tracked file or directory") {
+		t.Fatal("an entry matching neither a file nor a directory must be a coverage gap")
+	}
+}
+
 // Test_Driver_Gateway_Main_Allowed verifies package main may construct a loop.
 func Test_Driver_Gateway_Main_Allowed(t *testing.T) {
 	t.Parallel()
@@ -1804,6 +1856,19 @@ func Test_Source_And_Test_Bans_Recursion_Exempt(t *testing.T) {
 	diags := recursion_exempt_self_diagnostics(t, files, []string{"pkg/**"})
 	if specification_diagnosed(diags, "calls itself") {
 		t.Fatal("recursion in an exempt package must not be flagged")
+	}
+}
+
+// Test_Source_And_Test_Bans_Recursion_Exempt_File verifies a recursive function in a
+// file listed in opt_out_recursion_ban by its exact path is not flagged, proving the
+// exemption works at file granularity, not just package granularity.
+func Test_Source_And_Test_Bans_Recursion_Exempt_File(t *testing.T) {
+	t.Parallel()
+	files := specification_one_file(
+		"package fixture\n\n// F loops.\nfunc F() {\n\tF()\n}\n")
+	diags := recursion_exempt_self_diagnostics(t, files, []string{"pkg/rule.go"})
+	if specification_diagnosed(diags, "calls itself") {
+		t.Fatal("recursion in an exempt file must not be flagged")
 	}
 }
 

@@ -559,7 +559,9 @@ type Configuration struct {
 	// a pure or deterministic package may import them despite the import bans, since
 	// emitting to a write-only side channel cannot feed impurity or nondeterminism
 	// back into the importer. Exact-path globs, like the other lists: "shared/x/**"
-	// names a package and its whole subtree.
+	// names a package and its whole subtree. Names a package only — an entry naming
+	// one exact file is rejected; Ignore and Recursion_Exempt are the two lists that
+	// may name a file.
 	Instrumentation_Packages []string `json:"instrumentation_packages"`
 	// Pure_But_Indeterministic names the pure packages opted OUT of the deterministic
 	// tier. The tier — no goroutine, channel, select, or float; no time/context/sync
@@ -569,7 +571,9 @@ type Configuration struct {
 	// whole subtree, "*"/"**" spanning one path segment or many. Impure packages
 	// (the main package, a default tier) are never deterministic and need no entry.
 	// Opt-out; empty holds every pure package. An entry matching no pure package is
-	// reported as a coverage gap (a typo or stale path that releases nothing).
+	// reported as a coverage gap (a typo or stale path that releases nothing). Names
+	// a package only, like Instrumentation_Packages and Invariant_Exempt_Packages —
+	// an entry naming one exact file is rejected.
 	Pure_But_Indeterministic []string `json:"pure_but_indeterministic_packages"`
 	// Word_Replacements drives the vocabulary check: each tokenized, lowercased
 	// word maps to its preferred replacements (id -> identifier). An empty list
@@ -583,7 +587,8 @@ type Configuration struct {
 	// anchored to the workspace root, "dir/**" covers a directory's whole subtree,
 	// and ** spans path segments while * stays within one. A matching path is
 	// dropped from the scan set entirely, so no tier fires on it. Opt-in; empty
-	// ignores nothing.
+	// ignores nothing. Unlike the other lists, an entry here may name a package or
+	// one exact file (e.g. "build.go").
 	Ignore []string `json:"ignore"`
 	// Invariant_Exempt_Packages names the packages exempt from the type-invariant
 	// rule — the rule's sole escape hatch. The framework package that defines the
@@ -592,11 +597,14 @@ type Configuration struct {
 	// removed. Each entry is an exact-path glob: "shared/foo" exempts that package,
 	// "shared/**" its whole subtree, and "**" the whole tree — the wholesale off
 	// switch for a staged rollout. Opt-in; empty exempts nothing, so the rule binds
-	// every package by default.
+	// every package by default. Names a package only, like Instrumentation_Packages
+	// and Pure_But_Indeterministic — an entry naming one exact file is rejected.
 	Invariant_Exempt_Packages []string `json:"opt_out_assertion_mandate_packages"`
 	// Recursion_Exempt names packages exempt from the self- and mutual-recursion
 	// ban — a hand-written recursive-descent parser, whose recursion is intentional.
-	// Exact-path globs, like opt_out_assertion_mandate_packages; opt-in, empty exempts nothing.
+	// Exact-path globs, like opt_out_assertion_mandate_packages; opt-in, empty exempts
+	// nothing. Unlike that list, an entry here may name a package or one exact file —
+	// a single recursive function living in an otherwise-unexceptional package.
 	Recursion_Exempt []string `json:"opt_out_recursion_ban"`
 }
 
@@ -1999,10 +2007,14 @@ type configuration_glob_list struct {
 // Requires a wildcard-free lint.json entry to end in a slash when it names a
 // directory and to omit one when it names a file, so the trailing slash alone tells
 // them apart under the one exact-path matcher. A wildcard entry (* ? [) is exempt —
-// it already expresses its shape — and an entry resolving to neither is left to the
-// per-list coverage guards. Entries classify against the full tracked tree (not the
-// ignore-filtered one, so an ignore entry still resolves) and the check is skipped
-// when that set is absent (the non-git fallback), where dir-versus-file is unknowable.
+// it already expresses its shape. An entry resolving to neither a tracked file nor a
+// directory is a stale or typo'd reference and is flagged as a coverage gap. An entry
+// resolving to a file is flagged outright in every list but ignore and
+// opt_out_recursion_ban, the two lists a single exempted file may live in — the other
+// three name packages, so one file silently covers less than the list promises.
+// Entries classify against the full tracked tree (not the ignore-filtered one, so an
+// ignore entry still resolves) and the check is skipped when that set is absent (the
+// non-git fallback), where dir-versus-file is unknowable.
 func check_configuration_directory_slash(input *Check_File_System_Input) (diags []Diagnostic) {
 	if input.Tracked == nil {
 		return nil
@@ -2019,6 +2031,10 @@ func check_configuration_directory_slash(input *Check_File_System_Input) (diags 
 		{Name: "opt_out_recursion_ban", Globs: input.Recursion_Exempt},
 	}
 	for _, list := range lists {
+		// Only ignore and opt_out_recursion_ban may exempt one exact file; the other
+		// three lists name packages that group many files under one policy, so a
+		// single-file entry there silently covers less than its name promises.
+		packages_only := list.Name != "ignore" && list.Name != "opt_out_recursion_ban"
 		for _, entry := range list.Globs {
 			// A * (or **) entry names a shape, not one path, so the slash rule skips
 			// it. * is the only wildcard we support — ? and [ are rejected at config
@@ -2028,16 +2044,31 @@ func check_configuration_directory_slash(input *Check_File_System_Input) (diags 
 			}
 			literal := strings.TrimSuffix(entry, "/")
 			has_slash := entry != literal
+			is_directory := directories[literal]
+			is_file := input.Tracked[literal]
 			// A path is a directory or a file, never both, so at most one arm fires.
 			fix := ""
-			if directories[literal] {
+			if !is_directory {
+				if !is_file {
+					fix = "matches no tracked file or directory"
+				}
+			}
+			if is_directory {
 				if !has_slash {
 					fix = "names a directory; add a trailing slash"
 				}
 			}
-			if input.Tracked[literal] {
+			if is_file {
 				if has_slash {
 					fix = "names a file; drop the trailing slash"
+				}
+			}
+			// Wrong-list is the more fundamental problem than notation, so it wins
+			// over the slash-correctness fix above.
+			if is_file {
+				if packages_only {
+					fix = "names a file; only ignore and " +
+						"opt_out_recursion_ban may name a file"
 				}
 			}
 			if fix == "" {
