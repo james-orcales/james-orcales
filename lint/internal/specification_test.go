@@ -1752,7 +1752,7 @@ func Test_Invariants_Count_Coverage(t *testing.T) {
 }
 
 // Test_Invariants_Field_Composition verifies a struct bundle that fails to call a
-// field type's _Invariants is flagged.
+// value field type's _Invariants is flagged, while an optional pointer field is exempt.
 func Test_Invariants_Field_Composition(t *testing.T) {
 	t.Parallel()
 	files := specification_one_file("package fixture\n\n" +
@@ -1766,9 +1766,20 @@ func Test_Invariants_Field_Composition(t *testing.T) {
 		"\t// Tok is a fixture.\n\tTok Token\n}\n\n" +
 		"// Lexeme_Invariants is a fixture.\n" +
 		"func Lexeme_Invariants(v Lexeme, namespace invariant.Namespace) {\n" +
-		"\tinvariant.Dot_Product(namespace, invariant.Sometimes(true, \"x\"))\n}\n")
-	if !specification_flags(t, files, "must call Token_Invariants") {
-		t.Fatal("a struct that does not compose a field's invariant must be flagged")
+		"\tinvariant.Dot_Product(namespace, invariant.Sometimes(true, \"x\"))\n}\n\n" +
+		"// Phrase is a fixture.\ntype Phrase struct {\n" +
+		"\t// Tok is a fixture.\n\tTok *Token\n}\n\n" +
+		"// Phrase_Invariants is a fixture.\n" +
+		"func Phrase_Invariants(v Phrase, namespace invariant.Namespace) {\n" +
+		"\tinvariant.Dot_Product(namespace, invariant.Sometimes(true, \"y\"))\n}\n")
+	if !specification_flags(t, files, "Lexeme_Invariants must call Token_Invariants") {
+		t.Fatal("a struct that does not compose a value field's invariant must be flagged")
+	}
+	// A pointer field is optional — it may be nil — so a straight-line bundle cannot
+	// unconditionally compose it; its present-only properties belong in an Imply. So the
+	// pointer field is exempt from the mandatory composition call.
+	if specification_flags(t, files, "Phrase_Invariants must call Token_Invariants") {
+		t.Fatal("an optional pointer field must be exempt from mandatory composition")
 	}
 }
 
@@ -1803,6 +1814,17 @@ func Test_Invariants_Output_Assertion(t *testing.T) {
 		"// Make does.\nfunc Make() (tok Token) {\n\treturn \"\"\n}\n")
 	if !specification_flags(t, files, "must assert tok in a first-statement defer") {
 		t.Fatal("a function that does not assert its return in a defer must be flagged")
+	}
+}
+
+// Test_Invariants_Recorder_Registration verifies a non-exempt package whose test
+// file declares no TestMain is flagged for the missing recorder wiring.
+func Test_Invariants_Recorder_Registration(t *testing.T) {
+	t.Parallel()
+	files := recorder_test_files("package fixture_test\n\nimport \"testing\"\n\n" +
+		"func Test_Widget(t *testing.T) {}\n")
+	if !specification_flags(t, files, "must wire invariant.Run_Test_Main") {
+		t.Fatal("a package with no TestMain must be flagged")
 	}
 }
 
@@ -2447,5 +2469,90 @@ func Test_Function_Assertion_Bundle_Exempt(t *testing.T) {
 		"invariant.Sometimes(len(v) == 0, \"x\"))\n}\n")
 	if specification_flags(t, files, "must assert") {
 		t.Fatal("a _Invariants bundle is exempt from the function-assertion rule")
+	}
+}
+
+// One non-exempt fixture package: the shared source plus the given test file, so
+// the recorder rule has a real package to judge. A single string parameter keeps
+// it clear of the input-struct rule.
+func recorder_test_files(test string) (files map[string][]byte) {
+	return map[string][]byte{
+		"pkg/rule.go":      []byte(recorder_fixture_source),
+		"pkg/rule_test.go": []byte(test),
+	}
+}
+
+const recorder_fixture_source = "// Package fixture is a fixture.\npackage fixture\n"
+
+// Test_Recorder_Registration_No_Tests verifies a non-exempt package with no test
+// file at all is flagged: it can never verify its coverage.
+func Test_Recorder_Registration_No_Tests(t *testing.T) {
+	t.Parallel()
+	files := map[string][]byte{"pkg/rule.go": []byte(recorder_fixture_source)}
+	if !specification_flags(t, files, "must wire invariant.Run_Test_Main") {
+		t.Fatal("a package with no test file must be flagged")
+	}
+}
+
+// Test_Recorder_Registration_Unwired verifies a hand-rolled TestMain that runs
+// the suite itself without Run_Test_Main is flagged.
+func Test_Recorder_Registration_Unwired(t *testing.T) {
+	t.Parallel()
+	files := recorder_test_files(
+		"package fixture_test\n\nimport (\n\t\"os\"\n\t\"testing\"\n)\n\n" +
+			"func TestMain(m *testing.M) {\n\tos.Exit(m.Run())\n}\n")
+	if !specification_flags(t, files, "TestMain must be exactly") {
+		t.Fatal("a TestMain that never calls Run_Test_Main must be flagged")
+	}
+}
+
+// Test_Recorder_Registration_Extra_Statements verifies a TestMain carrying any
+// statement beyond the one canonical call is flagged: the body must be exactly it.
+func Test_Recorder_Registration_Extra_Statements(t *testing.T) {
+	t.Parallel()
+	files := recorder_test_files(
+		"package fixture_test\n\nimport (\n\t\"testing\"\n\n" +
+			"\tinvariant \"fixture/shared/invariant\"\n)\n\n" +
+			"func TestMain(m *testing.M) {\n\tinvariant.Run_Test_Main(m)\n" +
+			"\tinvariant.Run_Test_Main(m)\n}\n")
+	if !specification_flags(t, files, "TestMain must be exactly") {
+		t.Fatal("a TestMain with extra statements must be flagged")
+	}
+}
+
+// Test_Recorder_Registration_Wired_Passes verifies the canonical TestMain wiring
+// satisfies the rule.
+func Test_Recorder_Registration_Wired_Passes(t *testing.T) {
+	t.Parallel()
+	files := recorder_test_files(
+		"package fixture_test\n\nimport (\n\t\"testing\"\n\n" +
+			"\tinvariant \"fixture/shared/invariant\"\n)\n\n" +
+			"func TestMain(m *testing.M) {\n\tinvariant.Run_Test_Main(m)\n}\n")
+	if specification_flags(t, files, "Run_Test_Main") {
+		t.Fatal("a TestMain wiring Run_Test_Main must not be flagged")
+	}
+}
+
+// Test_Recorder_Registration_Main_Exempt verifies a main package, which holds no
+// testable invariant logic, is exempt even without tests.
+func Test_Recorder_Registration_Main_Exempt(t *testing.T) {
+	t.Parallel()
+	files := map[string][]byte{
+		"pkg/main.go": []byte("// Package main is a fixture.\npackage main\n\n" +
+			"func main() {}\n"),
+	}
+	if specification_flags(t, files, "Run_Test_Main") {
+		t.Fatal("a main package must be exempt from the recorder rule")
+	}
+}
+
+// Test_Recorder_Registration_Exempt_Passes verifies a package listed in
+// invariant_exempt_packages is skipped even with no TestMain.
+func Test_Recorder_Registration_Exempt_Passes(t *testing.T) {
+	t.Parallel()
+	files := map[string][]byte{"pkg/rule.go": []byte(recorder_fixture_source)}
+	diags := invariant_exempt_self_diagnostics(t, files, []string{"pkg"})
+	if specification_diagnosed(diags, "Run_Test_Main") {
+		t.Fatal("an exempt package must not be flagged for missing wiring")
 	}
 }
