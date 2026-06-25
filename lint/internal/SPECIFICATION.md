@@ -387,10 +387,6 @@ utilities, len, length). Use sites go unchecked, so the len and cap builtins sta
 A function name's words include no helper, ignoring case; other identifiers may. The narrow ban
 keeps helper from hiding what the function does.
 
-### Whitebox Tests
-
-A test file declares an external test package as `foo_test`; whitebox test packages are banned.
-
 # Source And Test Requirements
 
 These forms are required in source and test files alike.
@@ -503,7 +499,8 @@ A package holds exactly ceil(total_sloc/10000) source files.
 
 ### File Count Tests
 
-Test files carry an independent total_sloc count from source files.
+Blackbox (foo_test) and whitebox (foo) test files each carry an independent total_sloc count,
+from source files and from each other.
 
 ### File Count Specification Test
 
@@ -658,12 +655,38 @@ that is the first statement of the body.
 
 ### Recorder Registration
 
-A non-exempt, non-main package's TestMain body is exactly invariant.Run_Test_Main(m) — nothing
-more, nothing less — so its suite registers with the coverage recorder. Any other body, or no
-TestMain at all, is banned.
+A non-exempt shared-library package's TestMain body is exactly invariant.Run_Test_Main(m), so its
+suite registers with the coverage recorder; a binary component is witnessed via its simulation.
+Any other body, or no TestMain, is banned.
 
 ### Primitive Types
 
 A raw string, slice, or map may not be a function parameter, result, or struct field; it has no
 preset and no bundle of its own. Wrap it in a defined type. A stdlib-interface method is exempt, as
 are _test.go files and the packages in invariant_exempt_packages — the invariant rules' opt-out.
+
+# Simulation
+
+A binary component's invariants are witnessed only by a simulation package under its internal
+directory, whose fuzz test drives internal.Main; its coverage is judged tier two.
+
+### Presence
+
+A binary component with a non-exempt internal package declares an internal/simulation_test package;
+absent one, there is no blackbox witness for its invariants. A wholly exempt internal tree needs
+none.
+
+### Contents
+
+The simulation package declares nothing but one Fuzz function and one TestMain, so its isolated
+test binary can witness an invariant only by driving internal.Main, not by direct construction.
+
+### Test Main
+
+The simulation TestMain body is exactly invariant.Run_Test_Main(m, <dirs>), the dirs string
+literals; any other body, or a missing TestMain, is banned.
+
+### Coverage
+
+The TestMain dirs register exactly the non-exempt internal packages, each relative to the
+simulation package; a missing one loses coverage and an unknown one is banned.

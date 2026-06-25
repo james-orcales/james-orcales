@@ -4,6 +4,8 @@ import (
 	"go/ast"
 	"go/token"
 	"path"
+	"sort"
+	"strconv"
 	"strings"
 )
 
@@ -1486,13 +1488,25 @@ func function_form(requirement assertion_requirement) (form string) {
 // silently evaporates. Package-level because the TestMain may live in any of the
 // directory's test files, so the whole directory is judged together. Shares the
 // type-invariant rule's opt-out.
-func check_recorder_test_main(parsed_files []parsed_file, exempt []string) (diags []Diagnostic) {
+func check_recorder_test_main(
+	parsed_files []parsed_file, components *component_index, exempt []string,
+) (diags []Diagnostic) {
 	for _, group := range recorder_test_main_groups(parsed_files) {
 		if type_invariants_path_exempt(group.Directory, exempt) {
 			continue
 		}
 		// A main package holds the binary's wiring, not testable invariant logic.
 		if group.Is_Main {
+			continue
+		}
+		// A binary component's invariants are witnessed through its simulation
+		// package driving internal.Main, so only a shared library still registers
+		// its own recorder here; a binary internal package is covered there instead.
+		component_index_number := components.File_To_Component[group.Any_Path]
+		if component_index_number < 0 {
+			continue
+		}
+		if !components.Components[component_index_number].Is_Shared_Library {
 			continue
 		}
 		diags = append(diags, recorder_group_diagnostics(group)...)
@@ -1503,6 +1517,7 @@ func check_recorder_test_main(parsed_files []parsed_file, exempt []string) (diag
 // One directory's recorder-relevant facts, gathered across all its files.
 type recorder_group struct {
 	Directory           string
+	Any_Path            string
 	Is_Main             bool
 	Has_Test            bool
 	Source_Anchor       token.Position
@@ -1532,6 +1547,9 @@ func recorder_test_main_groups(parsed_files []parsed_file) (groups []*recorder_g
 // Folds one file's facts into its directory group: a test file may carry the
 // TestMain and is the preferred anchor; a source file marks the main package.
 func recorder_group_absorb(group *recorder_group, file parsed_file) {
+	if group.Any_Path == "" {
+		group.Any_Path = file.Path
+	}
 	position := file.File_Set.Position(file.File.Name.Pos())
 	if strings.HasSuffix(file.Path, "_test.go") {
 		group.Has_Test = true
@@ -1681,6 +1699,373 @@ func recorder_group_diagnostics(group *recorder_group) (diags []Diagnostic) {
 		}}
 	}
 	return nil
+}
+
+// Simulation_directory names the test-only package under a binary component's
+// internal/ whose fuzz test drives internal.Main.
+const simulation_directory = "simulation_test"
+
+// A binary component's invariants are witnessed only by a simulation package that
+// drives internal.Main through a fuzz test, never by a per-package Run_Test_Main.
+// This holds that package to its contract: it exists, declares nothing but the
+// fuzz driver and its TestMain, and registers every non-exempt internal package
+// for coverage. Every diagnostic is tier two, so a tier-one issue suppresses it.
+func check_simulation(
+	parsed_files []parsed_file, components *component_index, exempt []string,
+) (diags []Diagnostic) {
+	for i := range components.Components {
+		if components.Components[i].Is_Shared_Library {
+			continue
+		}
+		diags = append(diags,
+			simulation_component_diagnostics(parsed_files, components, i, exempt)...)
+	}
+	for i := range diags {
+		diags[i].Tier = 2
+	}
+	return diags
+}
+
+// The simulation diagnostics for one binary component: none when its internal tree
+// carries no non-exempt package (nothing to witness), else the presence, contents,
+// and TestMain checks against the package at internal/simulation_test.
+func simulation_component_diagnostics(
+	parsed_files []parsed_file, components *component_index,
+	component_index_number int, exempt []string,
+) (diags []Diagnostic) {
+	component := components.Components[component_index_number]
+	internal_root := component.Root + "/internal"
+	internal_dirs := simulation_internal_dirs(
+		parsed_files, components, component_index_number, exempt, internal_root)
+	if len(internal_dirs) == 0 {
+		return nil
+	}
+	position := token.Position{Filename: internal_root, Line: 1, Column: 1}
+	sim_directory := internal_root + "/" + simulation_directory
+	sim_files := simulation_package_files(parsed_files, sim_directory)
+	if len(sim_files) == 0 {
+		return simulation_diagnostic(position, "binary component "+
+			strconv.Quote(component.Import_Path)+" must declare an internal/"+
+			simulation_directory+" package driving internal.Main")
+	}
+	diags = append(diags, simulation_contents_diagnostics(sim_files, position)...)
+	return append(diags, simulation_test_main_diagnostics(
+		sim_files, internal_dirs, internal_root, position)...)
+}
+
+// The non-exempt internal package directories of the component, sorted, excluding
+// the simulation package itself — the packages the TestMain must register so their
+// invariants seed and judge in the simulation's isolated test binary.
+func simulation_internal_dirs(
+	parsed_files []parsed_file, components *component_index,
+	component_index_number int, exempt []string, internal_root string,
+) (dirs []string) {
+	sim_directory := internal_root + "/" + simulation_directory
+	seen := map[string]bool{}
+	for _, pf := range parsed_files {
+		if strings.HasSuffix(pf.Path, "_test.go") {
+			continue
+		}
+		if components.File_To_Component[pf.Path] != component_index_number {
+			continue
+		}
+		directory := path.Dir(pf.Path)
+		under_internal := directory == internal_root
+		if strings.HasPrefix(directory, internal_root+"/") {
+			under_internal = true
+		}
+		if !under_internal {
+			continue
+		}
+		if directory == sim_directory {
+			continue
+		}
+		if strings.HasPrefix(directory, sim_directory+"/") {
+			continue
+		}
+		if type_invariants_path_exempt(directory, exempt) {
+			continue
+		}
+		if seen[directory] {
+			continue
+		}
+		seen[directory] = true
+		dirs = append(dirs, directory)
+	}
+	sort.Strings(dirs)
+	return dirs
+}
+
+// The parsed test files that make up the simulation package at sim_directory.
+func simulation_package_files(
+	parsed_files []parsed_file, sim_directory string,
+) (files []parsed_file) {
+	for _, pf := range parsed_files {
+		if path.Dir(pf.Path) != sim_directory {
+			continue
+		}
+		files = append(files, pf)
+	}
+	return files
+}
+
+// The simulation package declares nothing but its one fuzz function and its
+// TestMain; any other declaration would run in the same isolated test binary and
+// could witness an invariant without driving internal.Main, defeating the point.
+func simulation_contents_diagnostics(
+	files []parsed_file, position token.Position,
+) (diags []Diagnostic) {
+	fuzz_count := 0
+	test_main_count := 0
+	for _, pf := range files {
+		for _, declaration := range pf.File.Decls {
+			kind := simulation_declaration_kind(declaration)
+			if kind == "fuzz" {
+				fuzz_count++
+				continue
+			}
+			if kind == "test_main" {
+				test_main_count++
+				continue
+			}
+			if kind == "import" {
+				continue
+			}
+			return simulation_diagnostic(position,
+				"simulation package may declare only a fuzz function and TestMain")
+		}
+	}
+	if fuzz_count != 1 {
+		return simulation_diagnostic(position,
+			"simulation package must declare exactly one fuzz function")
+	}
+	if test_main_count != 1 {
+		return simulation_diagnostic(position,
+			"simulation package must declare exactly one TestMain")
+	}
+	return nil
+}
+
+// Classifies a simulation-package declaration as import, fuzz, test_main, or other.
+func simulation_declaration_kind(declaration ast.Decl) (kind string) {
+	general, is_general := declaration.(*ast.GenDecl)
+	if is_general {
+		if general.Tok == token.IMPORT {
+			return "import"
+		}
+		return "other"
+	}
+	function, is_function := declaration.(*ast.FuncDecl)
+	if !is_function {
+		return "other"
+	}
+	if function.Recv != nil {
+		return "other"
+	}
+	if function.Name.Name == "TestMain" {
+		return "test_main"
+	}
+	if !strings.HasPrefix(function.Name.Name, "Fuzz") {
+		return "other"
+	}
+	if simulation_fuzz_parameter(function) == "" {
+		return "other"
+	}
+	return "fuzz"
+}
+
+// Returns the name of the function's *testing.F parameter, or "" when it has none —
+// a Fuzz function without one is not a real fuzz target.
+func simulation_fuzz_parameter(function *ast.FuncDecl) (name string) {
+	if function.Type.Params == nil {
+		return ""
+	}
+	for _, field := range function.Type.Params.List {
+		star, is_star := field.Type.(*ast.StarExpr)
+		if !is_star {
+			continue
+		}
+		selector, is_selector := star.X.(*ast.SelectorExpr)
+		if !is_selector {
+			continue
+		}
+		qualifier, is_qualifier := selector.X.(*ast.Ident)
+		if !is_qualifier {
+			continue
+		}
+		if qualifier.Name != "testing" {
+			continue
+		}
+		if selector.Sel.Name != "F" {
+			continue
+		}
+		if len(field.Names) == 0 {
+			continue
+		}
+		return field.Names[0].Name
+	}
+	return ""
+}
+
+// The simulation's TestMain must be exactly invariant.Run_Test_Main(m, <dirs>), and
+// those dirs must register every non-exempt internal package — no more, no fewer —
+// so the isolated simulation binary seeds and judges them all.
+func simulation_test_main_diagnostics(
+	files []parsed_file, internal_dirs []string,
+	internal_root string, position token.Position,
+) (diags []Diagnostic) {
+	function := simulation_find_test_main(files)
+	if function == nil {
+		return simulation_diagnostic(position,
+			"simulation package must wire invariant.Run_Test_Main in a TestMain")
+	}
+	arguments, canonical := simulation_test_main_directories(function)
+	if !canonical {
+		return simulation_diagnostic(position,
+			"simulation TestMain must be exactly invariant.Run_Test_Main(m, <dirs>)")
+	}
+	want := simulation_expected_directories(internal_dirs, internal_root)
+	if simulation_directories_match(arguments, want...) {
+		return nil
+	}
+	return simulation_diagnostic(position,
+		"simulation must register every internal package: "+strings.Join(want, ", "))
+}
+
+// The first TestMain with a *testing.M parameter among the simulation files.
+func simulation_find_test_main(files []parsed_file) (function *ast.FuncDecl) {
+	for _, pf := range files {
+		for _, declaration := range pf.File.Decls {
+			candidate, is_function := declaration.(*ast.FuncDecl)
+			if !is_function {
+				continue
+			}
+			if candidate.Name.Name != "TestMain" {
+				continue
+			}
+			if recorder_test_main_parameter(candidate) == "" {
+				continue
+			}
+			return candidate
+		}
+	}
+	return nil
+}
+
+// The directory arguments of the simulation TestMain's sole statement, and whether
+// that statement is exactly invariant.Run_Test_Main(m, <one or more string literals>).
+func simulation_test_main_directories(
+	function *ast.FuncDecl,
+) (directories []string, canonical bool) {
+	if recorder_test_main_parameter(function) != "m" {
+		return nil, false
+	}
+	if function.Body == nil {
+		return nil, false
+	}
+	if len(function.Body.List) != 1 {
+		return nil, false
+	}
+	expression, is_expression := function.Body.List[0].(*ast.ExprStmt)
+	if !is_expression {
+		return nil, false
+	}
+	call, is_call := expression.X.(*ast.CallExpr)
+	if !is_call {
+		return nil, false
+	}
+	return simulation_call_directories(call)
+}
+
+// The string-literal directory arguments after m, and whether the call is exactly
+// invariant.Run_Test_Main(m, <one or more string literals>).
+func simulation_call_directories(call *ast.CallExpr) (directories []string, canonical bool) {
+	selector, is_selector := call.Fun.(*ast.SelectorExpr)
+	if !is_selector {
+		return nil, false
+	}
+	qualifier, is_qualifier := selector.X.(*ast.Ident)
+	if !is_qualifier {
+		return nil, false
+	}
+	if qualifier.Name != "invariant" {
+		return nil, false
+	}
+	if selector.Sel.Name != "Run_Test_Main" {
+		return nil, false
+	}
+	if len(call.Args) < 2 {
+		return nil, false
+	}
+	first, is_ident := call.Args[0].(*ast.Ident)
+	if !is_ident {
+		return nil, false
+	}
+	if first.Name != "m" {
+		return nil, false
+	}
+	for _, argument := range call.Args[1:] {
+		literal, ok := simulation_string_literal(argument)
+		if !ok {
+			return nil, false
+		}
+		directories = append(directories, literal)
+	}
+	return directories, true
+}
+
+// The unquoted value of a string-literal expression, or ok false when it is not one.
+func simulation_string_literal(expression ast.Expr) (value string, ok bool) {
+	literal, is_literal := expression.(*ast.BasicLit)
+	if !is_literal {
+		return "", false
+	}
+	if literal.Kind != token.STRING {
+		return "", false
+	}
+	unquoted, unquote_error := strconv.Unquote(literal.Value)
+	if unquote_error != nil {
+		return "", false
+	}
+	return unquoted, true
+}
+
+// The internal package directories expressed relative to the simulation package,
+// the exact set the TestMain's directory arguments must equal.
+func simulation_expected_directories(
+	internal_dirs []string, internal_root string,
+) (relatives []string) {
+	for _, directory := range internal_dirs {
+		suffix := strings.TrimPrefix(directory, internal_root)
+		relatives = append(relatives, ".."+suffix)
+	}
+	return relatives
+}
+
+// Reports whether got and want hold the same directory set.
+func simulation_directories_match(got []string, want ...string) (match bool) {
+	if len(got) != len(want) {
+		return false
+	}
+	present := map[string]bool{}
+	for _, directory := range got {
+		present[directory] = true
+	}
+	for _, directory := range want {
+		if !present[directory] {
+			return false
+		}
+	}
+	return true
+}
+
+// One simulation diagnostic at position with the given message.
+func simulation_diagnostic(position token.Position, message string) (diags []Diagnostic) {
+	return []Diagnostic{{
+		Position: position,
+		Name:     "simulation",
+		Message:  message,
+	}}
 }
 
 // Flags a raw string, slice, or map used as a function/method parameter or result,

@@ -4287,62 +4287,6 @@ func (t T) Foo() (result int) {
 	})
 }
 
-// Test_Test_Package verifies that _test.go files must declare
-// `package <X>_test`; main, main_test, and whitebox packages are flagged.
-func Test_Test_Package(t *testing.T) {
-	t.Parallel()
-	run_diag_table(t, []struct {
-		Name      string
-		Files     map[string]string
-		Want_Diag string
-	}{
-
-		{
-			Name: "whitebox package flagged",
-			Files: map[string]string{
-				"foo_test.go": `package foo
-
-func f() (result int) { return 1 }
-`,
-			},
-			Want_Diag: "test file must declare",
-		},
-
-		{
-			Name: "package main flagged",
-			Files: map[string]string{
-				"foo_test.go": `package main
-
-func f() (result int) { return 1 }
-`,
-			},
-			Want_Diag: "test file must declare",
-		},
-
-		{
-			Name: "package main_test flagged",
-			Files: map[string]string{
-				"foo_test.go": `package main_test
-
-func f() (result int) { return 1 }
-`,
-			},
-			Want_Diag: "test file must declare",
-		},
-
-		{
-			Name: "blackbox _test package allowed",
-			Files: map[string]string{
-				"foo_test.go": `package foo_test
-
-func f() (result int) { return 1 }
-`,
-			},
-			Want_Diag: "",
-		},
-	})
-}
-
 // Additional cases, split to keep each function within the length limit.
 func Test_Test_Package_Part2(t *testing.T) {
 	t.Parallel()
