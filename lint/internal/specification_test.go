@@ -1844,7 +1844,7 @@ func Test_Simulation_Presence(t *testing.T) {
 func Test_Simulation_Contents(t *testing.T) {
 	t.Parallel()
 	files := simulation_test_files(simulation_fixture_source(
-		"invariant.Run_Test_Main(m, \"..\")",
+		"invariant.Run_Test_Main(m, \"../**\")",
 		"\n// Extra is disallowed.\ntype Extra struct{}\n"))
 	if !specification_flags(t, files, "may declare only a fuzz function and TestMain") {
 		t.Fatal("a simulation package with an extra declaration must be flagged")
@@ -1866,9 +1866,9 @@ func Test_Simulation_Test_Main(t *testing.T) {
 func Test_Simulation_Coverage(t *testing.T) {
 	t.Parallel()
 	files := simulation_test_files(
-		simulation_fixture_source("invariant.Run_Test_Main(m, \"../other\")"))
-	if !specification_flags(t, files, "must register every internal package") {
-		t.Fatal("a simulation that omits an internal package must be flagged")
+		simulation_fixture_source("invariant.Run_Test_Main(m, \"../*\")"))
+	if !specification_flags(t, files, "simulation TestMain must be exactly") {
+		t.Fatal("a narrower glob that omits nested internal packages must be flagged")
 	}
 }
 
@@ -2669,7 +2669,7 @@ func simulation_fixture_source(call string, extra ...string) (source string) {
 func Test_Simulation_Wired_Passes(t *testing.T) {
 	t.Parallel()
 	files := simulation_test_files(
-		simulation_fixture_source("invariant.Run_Test_Main(m, \"..\")"))
+		simulation_fixture_source("invariant.Run_Test_Main(m, \"../**\")"))
 	if specification_named(specification_self_diagnostics(t, files), "simulation") {
 		t.Fatal("a canonical simulation package must not be flagged")
 	}

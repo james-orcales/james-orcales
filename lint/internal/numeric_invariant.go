@@ -1705,6 +1705,10 @@ func recorder_group_diagnostics(group *recorder_group) (diags []Diagnostic) {
 // internal/ whose fuzz test drives internal.Main.
 const simulation_directory = "simulation_test"
 
+// Simulation_glob is the sole TestMain directory argument: the internal package and
+// every package beneath it, registered in one pattern since the recorder recurses on **.
+const simulation_glob = "../**"
+
 // A binary component's invariants are witnessed only by a simulation package that
 // drives internal.Main through a fuzz test, never by a per-package Run_Test_Main.
 // This holds that package to its contract: it exists, declares nothing but the
@@ -1749,8 +1753,7 @@ func simulation_component_diagnostics(
 			simulation_directory+" package driving internal.Main")
 	}
 	diags = append(diags, simulation_contents_diagnostics(sim_files, position)...)
-	return append(diags, simulation_test_main_diagnostics(
-		sim_files, internal_dirs, internal_root, position)...)
+	return append(diags, simulation_test_main_diagnostics(sim_files, position)...)
 }
 
 // The non-exempt internal package directories of the component, sorted, excluding
@@ -1907,29 +1910,35 @@ func simulation_fuzz_parameter(function *ast.FuncDecl) (name string) {
 	return ""
 }
 
-// The simulation's TestMain must be exactly invariant.Run_Test_Main(m, <dirs>), and
-// those dirs must register every non-exempt internal package — no more, no fewer —
-// so the isolated simulation binary seeds and judges them all.
+// The simulation's TestMain body must be exactly invariant.Run_Test_Main(m, "../**"):
+// that one glob registers the internal package and every package beneath it, so the
+// isolated simulation binary seeds and judges them all without enumerating each.
 func simulation_test_main_diagnostics(
-	files []parsed_file, internal_dirs []string,
-	internal_root string, position token.Position,
+	files []parsed_file, position token.Position,
 ) (diags []Diagnostic) {
 	function := simulation_find_test_main(files)
 	if function == nil {
 		return simulation_diagnostic(position,
 			"simulation package must wire invariant.Run_Test_Main in a TestMain")
 	}
-	arguments, canonical := simulation_test_main_directories(function)
-	if !canonical {
-		return simulation_diagnostic(position,
-			"simulation TestMain must be exactly invariant.Run_Test_Main(m, <dirs>)")
-	}
-	want := simulation_expected_directories(internal_dirs, internal_root)
-	if simulation_directories_match(arguments, want...) {
+	if simulation_test_main_canonical(function) {
 		return nil
 	}
 	return simulation_diagnostic(position,
-		"simulation must register every internal package: "+strings.Join(want, ", "))
+		"simulation TestMain must be exactly: invariant.Run_Test_Main(m, "+
+			strconv.Quote(simulation_glob)+")")
+}
+
+// Reports whether the TestMain body is exactly invariant.Run_Test_Main(m, "../**").
+func simulation_test_main_canonical(function *ast.FuncDecl) (canonical bool) {
+	directories, ok := simulation_test_main_directories(function)
+	if !ok {
+		return false
+	}
+	if len(directories) != 1 {
+		return false
+	}
+	return directories[0] == simulation_glob
 }
 
 // The first TestMain with a *testing.M parameter among the simulation files.
@@ -2028,35 +2037,6 @@ func simulation_string_literal(expression ast.Expr) (value string, ok bool) {
 		return "", false
 	}
 	return unquoted, true
-}
-
-// The internal package directories expressed relative to the simulation package,
-// the exact set the TestMain's directory arguments must equal.
-func simulation_expected_directories(
-	internal_dirs []string, internal_root string,
-) (relatives []string) {
-	for _, directory := range internal_dirs {
-		suffix := strings.TrimPrefix(directory, internal_root)
-		relatives = append(relatives, ".."+suffix)
-	}
-	return relatives
-}
-
-// Reports whether got and want hold the same directory set.
-func simulation_directories_match(got []string, want ...string) (match bool) {
-	if len(got) != len(want) {
-		return false
-	}
-	present := map[string]bool{}
-	for _, directory := range got {
-		present[directory] = true
-	}
-	for _, directory := range want {
-		if !present[directory] {
-			return false
-		}
-	}
-	return true
 }
 
 // One simulation diagnostic at position with the given message.
