@@ -879,6 +879,14 @@ func validate_glob_patterns(field string, patterns []string) (err error) {
 		if strings.HasPrefix(raw, "!") {
 			return fmt.Errorf("%s: negation is unsupported", where)
 		}
+		// The ONLY wildcards this linter supports are * (within one path segment) and
+		// ** (spanning segments). The matcher delegates non-** segments to path.Match,
+		// which ALSO honors ? and [class] tokens — but that leaked in from the stdlib
+		// and is NOT a feature we support. Reject them here so no entry can ever lean
+		// on path.Match's extra syntax.
+		if strings.ContainsAny(raw, "?[") {
+			return fmt.Errorf("%s: ? and [ are unsupported; use * and **", where)
+		}
 		for _, segment := range strings.Split(source.Parse_Glob_Pattern(raw).Core, "/") {
 			// ** is the matcher's own segment wildcard, not a path.Match token.
 			if segment == "**" {
@@ -2003,7 +2011,10 @@ func check_configuration_directory_slash(input *Check_File_System_Input) (diags 
 	}
 	for _, list := range lists {
 		for _, entry := range list.Globs {
-			if strings.ContainsAny(entry, "*?[") {
+			// A * (or **) entry names a shape, not one path, so the slash rule skips
+			// it. * is the only wildcard we support — ? and [ are rejected at config
+			// load — so a *-free entry here is a plain literal path.
+			if strings.Contains(entry, "*") {
 				continue
 			}
 			literal := strings.TrimSuffix(entry, "/")
