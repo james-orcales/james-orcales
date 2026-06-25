@@ -5,24 +5,13 @@
           "shared/snap",
           "shared/jlog"
   ],
-  "deterministic_packages": [
-    "lint/internal/assertion",
-    "lint/internal/diagnostic",
-    "lint/internal/source",
-    "lint/internal/specification",
-    "lint/internal/vcs",
-    "markdown_to_pdf",
-    "disk_usage",
-    "shared/cli",
-    "shared/time",
-    "shared/io",
-    "shared/vsr",
-    "shared/levenshtein",
-    "shared/prng",
-    "shared/fixedpoint",
-    "shared/flatjson",
-    "setup",
-    "maddox"
+  "pure_but_indeterministic": [
+    "lint/internal",
+    "sloc/internal",
+    "shared/diode",
+    "shared/invariant",
+    "shared/jlog",
+    "shared/snap"
   ],
   "ignore": [
           "install_golang.sh",

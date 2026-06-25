@@ -561,17 +561,16 @@ type Configuration struct {
 	// cannot feed impurity or nondeterminism back into the importer. Segment-
 	// prefix: an entry covers itself and its whole subtree.
 	Instrumentation_Packages []string `json:"instrumentation_packages"`
-	// Deterministic_Packages names the module top-level directories whose pure
-	// packages are held to the deterministic tier on top of purity: no goroutine,
-	// channel, select, nor time/context/sync import, and every first-party import
-	// must itself be deterministic. An entry covers the pure packages at or under
-	// it, so a binary component is named by its bare top-level directory and the
-	// shared module's libraries by `shared/*` (all) or `shared/<lib>` (one); the
-	// fixed module shape lets the tier auto-apply without listing each package.
-	// Impure packages in the subtree (the main package, a default tier) are
-	// dropped, not reported. Opt-in; empty lists none. An entry covering no pure
-	// package is reported as a coverage gap.
-	Deterministic_Packages []string `json:"deterministic_packages"`
+	// Pure_But_Indeterministic names the pure packages opted OUT of the deterministic
+	// tier. The tier — no goroutine, channel, select, or float; no time/context/sync
+	// import; deterministic-only first-party imports — binds every pure package by
+	// default, on top of purity; an entry here releases one. Each entry is an
+	// exact-path glob: "shared/io" releases that one package, "shared/io/**" its
+	// whole subtree, "*"/"**" spanning one path segment or many. Impure packages
+	// (the main package, a default tier) are never deterministic and need no entry.
+	// Opt-out; empty holds every pure package. An entry matching no pure package is
+	// reported as a coverage gap (a typo or stale path that releases nothing).
+	Pure_But_Indeterministic []string `json:"pure_but_indeterministic"`
 	// Word_Replacements drives the vocabulary check: each tokenized, lowercased
 	// word maps to its preferred replacements (id -> identifier). An empty list
 	// bans the word with no rename suggestion (util, len); an absent key is left
@@ -710,7 +709,7 @@ func Main(input *Main_Input) (code int) {
 		Scope:                     input.Scope_Prefix,
 		Instrumentation_Packages:  configuration.Instrumentation_Packages,
 		Shared_Component:          configuration.Shared_Component,
-		Deterministic_Packages:    configuration.Deterministic_Packages,
+		Pure_But_Indeterministic:  configuration.Pure_But_Indeterministic,
 		Word_Replacements:         configuration.Word_Replacements,
 		Ignore:                    configuration.Ignore,
 		Invariant_Exempt_Packages: configuration.Invariant_Exempt_Packages,
@@ -799,7 +798,7 @@ func Parse_Configuration(data []byte) (configuration *Configuration, err error) 
 	known_keys := map[string]bool{
 		"shared_component":          true,
 		"instrumentation_packages":  true,
-		"deterministic_packages":    true,
+		"pure_but_indeterministic":  true,
 		"word_replacements":         true,
 		"ignore":                    true,
 		"invariant_exempt_packages": true,
@@ -826,6 +825,11 @@ func Parse_Configuration(data []byte) (configuration *Configuration, err error) 
 	}
 	if validate_err := validate_glob_patterns(
 		"ignore", configuration.Ignore); validate_err != nil {
+		return nil, validate_err
+	}
+	if validate_err := validate_glob_patterns(
+		"pure_but_indeterministic",
+		configuration.Pure_But_Indeterministic); validate_err != nil {
 		return nil, validate_err
 	}
 	return configuration, nil
@@ -1841,11 +1845,11 @@ type Check_File_System_Input struct {
 	// directory, forwarded from Main_Input. It drives shared-vs-binary
 	// classification in the module index.
 	Shared_Component string
-	// Deterministic_Packages is the lint.json deterministic tier list forwarded
-	// from Main_Input: workspace-root-relative package directories whose pure
-	// packages are held to the deterministic bans. Built into a set once per run
-	// and threaded to check_deterministic.
-	Deterministic_Packages []string
+	// Pure_But_Indeterministic is the lint.json opt-out list forwarded from
+	// Main_Input: exact-path globs naming the pure packages released from the
+	// deterministic tier (which otherwise binds every pure package). Threaded to
+	// check_deterministic, which subtracts them from the pure set.
+	Pure_But_Indeterministic []string
 	// Word_Replacements is the lint.json word_replacements table: each tokenized,
 	// lowercased word maps to its preferred expansions (an empty list bans the
 	// word outright). Threaded to the vocabulary check via
@@ -1932,7 +1936,7 @@ func Check_File_System(input *Check_File_System_Input) (diags []Diagnostic, err 
 		Parse_Diags:               parse_diags,
 		Instrumentation_Packages:  input.Instrumentation_Packages,
 		Word_Replacements:         input.Word_Replacements,
-		Deterministic_Packages:    input.Deterministic_Packages,
+		Pure_But_Indeterministic:  input.Pure_But_Indeterministic,
 		Scope:                     input.Scope,
 		Scan_Prefixes:             scan_prefixes,
 		Invariant_Exempt_Packages: input.Invariant_Exempt_Packages,
@@ -1951,7 +1955,7 @@ type check_file_system_doctrine_input struct {
 	Parse_Diags              []Diagnostic
 	Instrumentation_Packages []string
 	Word_Replacements        map[string][]string
-	Deterministic_Packages   []string
+	Pure_But_Indeterministic []string
 	Scope                    string
 	// Scan_Prefixes is the scope-narrowed parse set (resolve_parse_prefixes): the
 	// directory subtrees this run actually parsed, or nil for a whole-workspace
@@ -2010,7 +2014,7 @@ func check_file_system_doctrine(
 	output = append(output, check_deterministic(&check_deterministic_input{
 		Parsed_Files:    parsed_files,
 		Components:      components,
-		Packages:        input.Deterministic_Packages,
+		Exceptions:      input.Pure_But_Indeterministic,
 		Instrumentation: input.Instrumentation_Packages,
 		Scan_Prefixes:   input.Scan_Prefixes,
 	})...)
@@ -8158,8 +8162,9 @@ type check_deterministic_input struct {
 	Parsed_Files []parsed_file
 	// Components is the resolved module index.
 	Components *component_index
-	// Packages is lint.json's deterministic_packages.
-	Packages []string
+	// Exceptions is lint.json's pure_but_indeterministic: the pure packages opted
+	// out of the tier, each an exact-path glob (* spans one segment, ** many).
+	Exceptions []string
 	// Instrumentation is lint.json's instrumentation_packages: write-only imports a
 	// deterministic package may make despite the induction.
 	Instrumentation []string
@@ -8169,40 +8174,41 @@ type check_deterministic_input struct {
 	Scan_Prefixes []string
 }
 
-// Enforces the opt-in deterministic tier: a deterministic_packages entry names a
-// module's top-level directory and the tier auto-applies to that module's pure
-// packages, since the fixed module shape lets purity stand in for an explicit
-// listing. A covered package is held, atop purity, to bans on every construct
-// whose result is decided outside the program — a goroutine, a channel, a
-// select, or a time/context/sync import — and may import only other
-// deterministic first-party packages. Impure packages in the subtree (the main
-// package, a default tier) are not deterministic, so expansion drops them rather
-// than reporting them. The bans bind a covered package's _test.go files too.
+// Enforces the deterministic tier: every pure package is held, atop purity, to
+// bans on the constructs whose result is decided outside the program — a
+// goroutine, a channel, a select, a float, a time/context/sync import — and may
+// import only other deterministic first-party packages. The tier is the default,
+// so purity alone opts a package in; a pure_but_indeterministic entry opts one
+// back out, matched as an exact-path glob. Impure packages (the main package, a
+// default tier) are never deterministic and need no listing. The bans bind a
+// covered package's _test.go files too.
 func check_deterministic(input *check_deterministic_input) (diags []Diagnostic) {
 
 	pure := deterministic_pure_directories(input.Parsed_Files, input.Components)
 
-	// Expand each entry to the pure package directories at or under it, so a
-	// module's top-level directory covers its packages without listing each. The
-	// trailing /* of the shared/* form is stripped to the parent directory it
-	// names; an entry is otherwise path-cleaned so "./pkg/" and "pkg" name the one
-	// directory the parsed files are keyed by. The expansion runs before the
-	// checks so the import induction tests against the concrete covered
-	// directories, not the coarse entry, which would falsely flag a covered import.
+	// Determinism is the default, so covered starts as every pure package and the
+	// exceptions are subtracted out. Each entry is an exact-path glob matched
+	// against the full directory (glob_match, not the gitignore-subtree
+	// glob_patterns_match), so "shared/io" opts out that one package while
+	// "shared/io/**" opts out its subtree — a bare parent cannot silently drop its
+	// children. The subtraction runs before the checks so the import induction
+	// tests against the concrete deterministic set, and matched records which
+	// entries hit a package for the coverage-gap check.
 	covered := map[string]bool{}
+	for directory := range pure {
+		covered[directory] = true
+	}
 	matched := map[string]bool{}
-	for _, entry := range input.Packages {
-		base := strings.TrimSuffix(path.Clean(entry), "/*")
+	for _, entry := range input.Exceptions {
+		pattern := parse_glob_pattern(entry)
 		for directory := range pure {
-			under := directory == base
-			if !under {
-				under = strings.HasPrefix(directory, base+"/")
-			}
-			if !under {
+			hit, _ := glob_match(
+				&glob_match_input{Pattern: pattern.Core, Path: directory})
+			if !hit {
 				continue
 			}
-			covered[directory] = true
-			matched[path.Clean(entry)] = true
+			delete(covered, directory)
+			matched[entry] = true
 		}
 	}
 	for _, pf := range input.Parsed_Files {
@@ -8215,7 +8221,7 @@ func check_deterministic(input *check_deterministic_input) (diags []Diagnostic) 
 			pf.File_Set, pf.File, input.Components, covered, input.Instrumentation)...)
 	}
 	return append(diags, check_deterministic_coverage(&check_deterministic_coverage_input{
-		Packages:      input.Packages,
+		Exceptions:    input.Exceptions,
 		Matched:       matched,
 		Scan_Prefixes: input.Scan_Prefixes,
 	})...)
@@ -8252,43 +8258,64 @@ func deterministic_pure_directories(
 // Bundles check_deterministic_coverage's inputs: the entry list and the scan
 // prefixes both being string slices repeat a type, which the input-struct rule folds.
 type check_deterministic_coverage_input struct {
-	// Packages is lint.json's deterministic_packages, reported verbatim on a gap.
-	Packages []string
-	// Matched marks, by cleaned entry, which entries covered a pure package.
+	// Exceptions is lint.json's pure_but_indeterministic, reported verbatim on a gap.
+	Exceptions []string
+	// Matched marks, by raw entry, which entries matched a pure package.
 	Matched map[string]bool
 	// Scan_Prefixes is the scope-narrowed parse set, nil for a whole-workspace run;
 	// an entry outside it was never parsed and so is not judged.
 	Scan_Prefixes []string
 }
 
-// Reports any deterministic_packages entry that covered no pure package. A typo,
-// a stale path, or a directory holding nothing pure would otherwise opt nothing
-// into the tier and pass silently — the exact coverage gap the tier exists to
-// close. An entry outside the scan prefixes is skipped: a scoped run never parsed
-// its module, so its emptiness is an artifact of scope, not a real gap, and a
-// full run (nil prefixes, which scan_prefixes_reach admits everywhere) judges it.
+// Reports any pure_but_indeterministic entry naming a concrete path that matched no
+// pure package — a typo or stale path the author believes opts a package out while
+// it stays held to the tier. A root-anchored wildcard names no path and is exempt
+// (it binds once a pure package appears). An entry outside the scan prefixes is
+// skipped: a scoped run never parsed its module, so its emptiness is an artifact of
+// scope, and a full run (nil prefixes) judges it.
 func check_deterministic_coverage(
 	input *check_deterministic_coverage_input,
 ) (diags []Diagnostic) {
 
-	for _, entry := range input.Packages {
-		if input.Matched[path.Clean(entry)] {
+	for _, entry := range input.Exceptions {
+		if input.Matched[entry] {
 			continue
 		}
-		base := strings.TrimSuffix(path.Clean(entry), "/*")
-		if !scan_prefixes_reach(input.Scan_Prefixes, base) {
+		anchor := glob_literal_prefix(entry)
+		// A root-anchored wildcard ("**", "*") names no concrete path, so matching
+		// nothing is a no-op — a deliberate blanket opt-out that binds once a pure
+		// package appears — not a typo. Only a concrete path is worth flagging.
+		if anchor == "." {
+			continue
+		}
+		if !scan_prefixes_reach(input.Scan_Prefixes, anchor) {
 			continue
 		}
 		diags = append(diags, Diagnostic{
 			Position: token.Position{Filename: "<lint.json>"},
 			Name:     "deterministic",
-			Want:     "every deterministic_packages entry covers a pure package",
+			Want:     "every pure_but_indeterministic entry matches a pure package",
 			Message: fmt.Sprintf(
-				"deterministic_packages: no pure package found at %q", entry),
+				"pure_but_indeterministic: no pure package found at %q", entry),
 			Tier: 1,
 		})
 	}
 	return diags
+}
+
+// Returns an entry's leading literal path — the segments before its first glob
+// metacharacter — as the directory the scan-scope check anchors on. "shared/**"
+// yields "shared", "shared/io" yields itself, and a leading-glob entry yields ".",
+// which scan_prefixes_reach admits everywhere.
+func glob_literal_prefix(entry string) (prefix string) {
+	kept := []string{}
+	for _, segment := range strings.Split(entry, "/") {
+		if strings.ContainsAny(segment, "*?[") {
+			break
+		}
+		kept = append(kept, segment)
+	}
+	return path.Clean(strings.Join(kept, "/"))
 }
 
 // Flags the nondeterministic control constructs a deterministic package may not
