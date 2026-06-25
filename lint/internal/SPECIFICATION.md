@@ -708,12 +708,12 @@ mints it.
 
 ### Driver
 
-The loop and clock constructors (Virtual_Clock_To_Clock, New_Operating_System_Clock, Sim_To_IO,
-New_Operating_System_IO) mint a tick and Driver, so they may be called only in package main or a
-test, never in library code.
+The loop constructors (Sim_To_IO, New_Operating_System_IO) mint a Driver that advances time and
+drives the loop, so they may be called only in package main or a test. The read-only clock
+constructors mint no Driver and are not gated.
 
 ### Gateway
 
 Raw IO stdlib lives only in the io/default gateway: net, net/http, syscall, os/exec, and bufio are
-banned elsewhere, and os file IO and the blocking io helpers too; route IO through shared/io.
-Instrumentation packages and tests are exempt.
+unimportable elsewhere, and os file operations uncallable; route IO through shared/io.
+Instrumentation packages, tests, and generated files are exempt.

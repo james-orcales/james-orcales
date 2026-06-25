@@ -1448,7 +1448,8 @@ func F() {
 	bytes.NewBuffer(nil)
 }
 `)},
-		{Snapshot: snap.Init(`a.go:8:9: unbounded-http: unbounded API 'http.Get'; use (&http.Client{Timeout: N}).Get(...) instead`), Drop: "impure stdlib call", Files: snapshot_package(`import "net/http"
+		{Snapshot: snap.Init(`a.go:8:9: unbounded-http: unbounded API 'http.Get'; use (&http.Client{Timeout: N}).Get(...) instead
+a.go:4:8: "net/http" is banned outside io/default; route IO through shared/io`), Drop: "impure stdlib call", Files: snapshot_package(`import "net/http"
 
 // F fetches.
 func F(url string) (resp *http.Response, err error) {
@@ -2779,7 +2780,7 @@ func F() (c *http.Client) { return http.DefaultClient }
 			Want_Diag: "impure stdlib call",
 		},
 		{
-			Name: "library uses http.Request type clean",
+			Name: "library uses http.Request type is io-gateway-banned",
 			Files: map[string]string{
 				"a.go": `// Package library x.
 package library
@@ -2795,7 +2796,7 @@ func F(r *http.Request) (h http.Header) {
 }
 `,
 			},
-			Want_Diag: "",
+			Want_Diag: "route IO through shared/io",
 		},
 		{
 			Name: "library calls net.Dial",

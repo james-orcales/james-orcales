@@ -10135,9 +10135,10 @@ func component_index_time_gateway(components *component_index) (gateway string) 
 	return ""
 }
 
-// A package advances the loop only through package main or a test; elsewhere it may
-// submit IO and read the clock but never mint a tick or Driver. This flags a call to a
-// loop/clock constructor outside package main and _test.go.
+// A package drives the loop only through package main or a test; elsewhere it may
+// submit IO and read the clock but never mint the loop Driver. This flags a call to an
+// IO loop constructor (Sim_To_IO, New_Operating_System_IO) outside main and _test.go.
+// The read-only clock constructors mint no Driver, so they are not gated.
 func check_driver_gateway(parsed_files []parsed_file) (diags []Diagnostic) {
 	for _, pf := range parsed_files {
 		if strings.HasSuffix(pf.Path, "_test.go") {
@@ -10151,8 +10152,8 @@ func check_driver_gateway(parsed_files []parsed_file) (diags []Diagnostic) {
 	return diags
 }
 
-// The loop/clock constructor calls in one file. The four names are unique to shared/io
-// and shared/time, so a selector match needs no import resolution.
+// The IO loop-constructor calls in one file. Both names are unique to shared/io, so a
+// selector match needs no import resolution.
 func driver_gateway_file_diagnostics(pf parsed_file) (diags []Diagnostic) {
 	ast.Inspect(pf.File, func(node ast.Node) (recurse bool) {
 		call, is_call := node.(*ast.CallExpr)
@@ -10171,7 +10172,7 @@ func driver_gateway_file_diagnostics(pf parsed_file) (diags []Diagnostic) {
 			Name:     "driver-gateway",
 			Want:     "call the constructor only in package main or a test",
 			Message: selector.Sel.Name +
-				" mints a loop/clock driver; call it only in package main or a test",
+				" mints a loop driver; call it only in main or a test",
 			Tier: 1,
 		})
 		return true
@@ -10179,11 +10180,10 @@ func driver_gateway_file_diagnostics(pf parsed_file) (diags []Diagnostic) {
 	return diags
 }
 
-// Reports whether name is a loop or clock constructor that mints a tick or Driver.
+// Reports whether name is an IO loop constructor that mints a Driver.
 func driver_gateway_constructor(name string) (constructor bool) {
 	switch name {
-	case "Virtual_Clock_To_Clock", "New_Operating_System_Clock",
-		"Sim_To_IO", "New_Operating_System_IO":
+	case "Sim_To_IO", "New_Operating_System_IO":
 		return true
 	}
 	return false
@@ -10199,6 +10199,9 @@ func check_io_gateway(
 	gateway := component_index_io_gateway(components)
 	for _, pf := range parsed_files {
 		if strings.HasSuffix(pf.Path, "_test.go") {
+			continue
+		}
+		if check_no_unbounded_apis_is_generated(pf.File) {
 			continue
 		}
 		if gateway != "" {
@@ -10227,9 +10230,9 @@ func io_gateway_import_diagnostics(pf parsed_file) (diags []Diagnostic) {
 			Name:     "io-gateway",
 			Want:     "route IO through shared/io",
 			Message: fmt.Sprintf(
-				"%q is banned outside the io/default gateway; route IO through shared/io",
+				"%q is banned outside io/default; route IO through shared/io",
 				import_path),
-			Tier: 1,
+			Tier: 2,
 		})
 	}
 	return diags
@@ -10244,24 +10247,20 @@ func io_gateway_banned_import(import_path string) (banned bool) {
 	return false
 }
 
-// Flags each raw-IO call on os or io in one file — os file operations and the blocking
-// io helpers. The read-only parts (os.Args, io.Reader, io.EOF) are left alone.
+// Flags each os file-operation call in one file. Only os is call-banned: net/syscall/
+// os-exec/bufio are import-banned above, and the io helpers operate on injected
+// io.Reader/Writer interfaces (io.ReadFull/io.CopyN are the endorsed bounded reads),
+// not raw OS IO. os.Args/os.Exit/os.Getenv are left alone.
 func io_gateway_call_diagnostics(pf parsed_file) (diags []Diagnostic) {
-	os_local := ""
-	io_local := ""
+	operating_system_local := ""
 	for _, implementation := range pf.File.Imports {
 		import_path := strings.Trim(implementation.Path.Value, `"`)
 		if import_path == "os" {
-			os_local = import_local_name(implementation, import_path)
-		}
-		if import_path == "io" {
-			io_local = import_local_name(implementation, import_path)
+			operating_system_local = import_local_name(implementation, import_path)
 		}
 	}
-	if os_local == "" {
-		if io_local == "" {
-			return nil
-		}
+	if operating_system_local == "" {
+		return nil
 	}
 	ast.Inspect(pf.File, func(node ast.Node) (recurse bool) {
 		selector, is_selector := node.(*ast.SelectorExpr)
@@ -10272,16 +10271,13 @@ func io_gateway_call_diagnostics(pf parsed_file) (diags []Diagnostic) {
 		if !is_identifier {
 			return true
 		}
-		if identifier.Name == os_local {
-			if io_gateway_banned_os(selector.Sel.Name) {
-				diags = append(diags, io_gateway_call_diagnostic(pf, selector))
-			}
+		if identifier.Name != operating_system_local {
+			return true
 		}
-		if identifier.Name == io_local {
-			if io_gateway_banned_io(selector.Sel.Name) {
-				diags = append(diags, io_gateway_call_diagnostic(pf, selector))
-			}
+		if !io_gateway_banned_operating_system(selector.Sel.Name) {
+			return true
 		}
+		diags = append(diags, io_gateway_call_diagnostic(pf, selector))
 		return true
 	})
 	return diags
@@ -10296,24 +10292,15 @@ func io_gateway_call_diagnostic(pf parsed_file, selector *ast.SelectorExpr) (dia
 		Want:     "route IO through shared/io",
 		Message: identifier.Name + "." + selector.Sel.Name +
 			" does raw IO; route it through shared/io",
-		Tier: 1,
+		Tier: 2,
 	}
 }
 
 // Reports whether an os selector is a file operation banned outside the gateway.
-func io_gateway_banned_os(name string) (banned bool) {
+func io_gateway_banned_operating_system(name string) (banned bool) {
 	switch name {
 	case "Open", "Create", "ReadFile", "WriteFile",
 		"OpenFile", "Pipe", "DirFS", "NewFile":
-		return true
-	}
-	return false
-}
-
-// Reports whether an io selector is a blocking helper banned outside the gateway.
-func io_gateway_banned_io(name string) (banned bool) {
-	switch name {
-	case "Copy", "CopyN", "ReadAll", "ReadFull", "Pipe":
 		return true
 	}
 	return false
