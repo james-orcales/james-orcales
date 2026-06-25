@@ -28,6 +28,22 @@ type Timeout_Callback func(completion *Completion, err error)
 // connection or a completed client connect — or an error.
 type Socket_Callback func(completion *Completion, socket File, err error)
 
+// Signal identifies an operating-system signal in backend-independent form, so the
+// deterministic and OS backends agree on a value without the pure tier importing syscall.
+type Signal int
+
+// Signal_Terminate is the graceful-termination request (SIGTERM on the OS backend).
+const Signal_Terminate Signal = 0
+
+// Signal_Interrupt is the interactive interrupt (SIGINT on the OS backend).
+const Signal_Interrupt Signal = 1
+
+// Signal_Callback receives a delivered signal on the loop thread.
+type Signal_Callback func(completion *Completion, signal Signal)
+
+// Compute_Callback fires on the loop thread once offloaded work has finished.
+type Compute_Callback func(completion *Completion)
+
 // Cancelled is the error a callback receives when its operation was cancelled before
 // it completed. Cancelling still delivers the callback exactly once — with this error
 // instead of a result — so every submission resolves.
@@ -75,12 +91,41 @@ type IO struct {
 	// Listen binds and listens on host:port, returning the listening socket
 	// synchronously — bind never blocks, so it carries no Completion.
 	Listen func(host string, port int) (listener File, err error)
+	// Open opens the file at path for reading, returning its descriptor synchronously —
+	// opening never blocks the loop, so it carries no Completion. A later Read of the
+	// descriptor yields the file's bytes.
+	Open func(path string) (file File, err error)
+	// Create opens path for writing, truncating it, and returns its descriptor
+	// synchronously; a later Write persists bytes to it.
+	Create func(path string) (file File, err error)
 	// Accept yields one inbound connection on listener; callback fires with the
 	// accepted socket once a peer arrives (TigerBeetle IO.accept).
 	Accept func(completion *Completion, callback Socket_Callback, listener File)
+	// Accept_Secure is Accept with server-side TLS termination: the accepted socket
+	// carries decrypted bytes so the caller speaks plaintext while the backend owns TLS.
+	// The certificate provider is opaque so this pure surface names no crypto/tls type;
+	// the simulator has no TLS and drives the same socket as Accept, ignoring it.
+	Accept_Secure func(
+		completion *Completion, callback Socket_Callback,
+		listener File, certificate func() (value any),
+	)
 	// Connect opens a socket to host:port; callback fires with the connected
 	// socket once the handshake completes (TigerBeetle IO.connect).
 	Connect func(completion *Completion, callback Socket_Callback, host string, port int)
+	// Connect_Secure opens a verified TLS client connection to host:port; Receive and
+	// Send on the returned socket carry decrypted bytes. The simulator models it like
+	// Connect — TLS is a backend concern the pure tier never sees.
+	Connect_Secure func(
+		completion *Completion, callback Socket_Callback,
+		host string, port int, server_name string,
+	)
+	// Connect_Insecure is Connect_Secure without certificate verification, for probing a
+	// freshly-rebuilt host whose cert is self-signed until ACME runs; never use it
+	// against a peer whose identity is depended on. The simulator models it like Connect.
+	Connect_Insecure func(
+		completion *Completion, callback Socket_Callback,
+		host string, port int, server_name string,
+	)
 	// Receive reads up to len(buffer) bytes from socket; callback reports the byte
 	// count once data arrives (TigerBeetle IO.recv).
 	Receive func(completion *Completion, callback Callback, socket File, buffer []byte)
@@ -94,6 +139,19 @@ type IO struct {
 	// the Cancelled error rather than a result. Cancelling an already-completed or
 	// unknown completion is a harmless no-op (TigerBeetle IO.cancel).
 	Cancel func(completion *Completion)
+	// Peer_Address returns the remote IP address of a connected socket, synchronously —
+	// a getpeername has no completion. It is the source a control-plane connection is
+	// gated on.
+	Peer_Address func(file File) (address string, err error)
+	// Watch_Signal fires callback on the loop thread when the process receives signal,
+	// so a buffered shutdown can drain before exit. In the simulator the signal arrives
+	// at a seed-drawn grain — the OS event modeled as a seed outcome, not scripted.
+	Watch_Signal func(completion *Completion, callback Signal_Callback, signal Signal)
+	// Compute runs work off the loop thread — a worker pool in the OS backend, inline in
+	// the simulator — and fires callback on the loop thread once it finishes, so
+	// CPU-heavy pure work leaves the single writer while staying in the completion model.
+	// work must touch only memory the loop leaves alone until callback fires.
+	Compute func(completion *Completion, callback Compute_Callback, work func())
 }
 
 // Driver advances the loop — the only capability that moves time and delivers
@@ -154,8 +212,8 @@ type sim struct {
 	Generator prng.Generator
 	// Queue holds in-flight completions ordered by Ready_At, earliest first.
 	Queue []*Completion
-	// Next_File is the synthetic descriptor counter; Listen, Accept, and Connect
-	// hand out the next value so every socket is distinct.
+	// Next_File is the synthetic descriptor counter; Listen, Accept, Connect, Open, and
+	// Create hand out the next value so every descriptor is distinct.
 	Next_File File
 }
 
@@ -167,63 +225,101 @@ type sim struct {
 func New_Sim(seed uint64) (loop IO, driver Driver, clock time.Clock) {
 	clock, tick := time.Virtual_Clock_To_Clock(time.Virtual_Clock{Resolution: time.Nanosecond})
 	state := &sim{Clock: clock, Tick: tick, Generator: prng.New(seed)}
-	loop = IO{
-		Read: func(
-			completion *Completion, callback Callback,
-			file File, buffer []byte, offset int64,
-		) {
-			sim_bytes(state, completion, callback, buffer)
-		},
-		Write: func(
-			completion *Completion, callback Callback,
-			file File, buffer []byte, offset int64,
-		) {
-			sim_bytes(state, completion, callback, buffer)
-		},
-		Timeout: func(
-			completion *Completion, callback Timeout_Callback,
-			duration time.Duration,
-		) {
-			sim_submit(state, completion, duration, func() {
-				if completion.Cancelled {
-					callback(completion, Cancelled)
-					return
-				}
-				callback(completion, nil)
-			})
-		},
-		Listen: func(host string, port int) (listener File, err error) {
-			state.Next_File++
-			return state.Next_File, nil
-		},
-		Accept: func(completion *Completion, callback Socket_Callback, listener File) {
-			sim_yield_socket(state, completion, callback)
-		},
-		Connect: func(
-			completion *Completion, callback Socket_Callback, host string, port int,
-		) {
-			sim_yield_socket(state, completion, callback)
-		},
-		Receive: func(
-			completion *Completion, callback Callback, socket File, buffer []byte,
-		) {
-			sim_bytes(state, completion, callback, buffer)
-		},
-		Send: func(completion *Completion, callback Callback, socket File, buffer []byte) {
-			sim_bytes(state, completion, callback, buffer)
-		},
-		Close: func(completion *Completion, callback Timeout_Callback, file File) {
-			sim_submit(state, completion, sim_latency(state), func() {
-				if completion.Cancelled {
-					callback(completion, Cancelled)
-					return
-				}
-				callback(completion, nil)
-			})
-		},
-		Cancel: func(completion *Completion) { sim_cancel(state, completion) },
-	}
+	sim_wire_bytes(state, &loop)
+	sim_wire_lifecycle(state, &loop)
+	sim_wire_socket(state, &loop)
+	sim_wire_effects(state, &loop)
 	return loop, sim_to_driver(state), clock
+}
+
+// Wires the byte-count operations — read, write, receive, send — onto loop.
+func sim_wire_bytes(state *sim, loop *IO) {
+	loop.Read = func(
+		completion *Completion, callback Callback, file File, buffer []byte, offset int64,
+	) {
+		sim_bytes(state, completion, callback, buffer)
+	}
+	loop.Write = func(
+		completion *Completion, callback Callback, file File, buffer []byte, offset int64,
+	) {
+		sim_bytes(state, completion, callback, buffer)
+	}
+	loop.Receive = func(completion *Completion, callback Callback, socket File, buffer []byte) {
+		sim_bytes(state, completion, callback, buffer)
+	}
+	loop.Send = func(completion *Completion, callback Callback, socket File, buffer []byte) {
+		sim_bytes(state, completion, callback, buffer)
+	}
+}
+
+// Wires the lifecycle operations — timer, listen, open, create, close, cancel — onto loop.
+func sim_wire_lifecycle(state *sim, loop *IO) {
+	loop.Timeout = func(
+		completion *Completion, callback Timeout_Callback, duration time.Duration,
+	) {
+		sim_submit(state, completion, duration,
+			sim_deliver_status(completion, callback, nil))
+	}
+	loop.Listen = func(host string, port int) (listener File, err error) {
+		return sim_descriptor(state), nil
+	}
+	loop.Open = func(path string) (file File, err error) {
+		return sim_descriptor(state), nil
+	}
+	loop.Create = func(path string) (file File, err error) {
+		return sim_descriptor(state), nil
+	}
+	loop.Close = func(completion *Completion, callback Timeout_Callback, file File) {
+		latency := sim_latency(state)
+		sim_submit(state, completion, latency,
+			sim_deliver_status(completion, callback, nil))
+	}
+	loop.Cancel = func(completion *Completion) { sim_cancel(state, completion) }
+}
+
+// Wires the socket operations — accept, connect, their TLS variants, peer address —
+// onto loop. The TLS variants reuse the plaintext socket: the simulator has no TLS, so
+// the certificate provider and server name are ignored (a backend-only concern).
+func sim_wire_socket(state *sim, loop *IO) {
+	loop.Accept = func(completion *Completion, callback Socket_Callback, listener File) {
+		sim_yield_socket(state, completion, callback)
+	}
+	loop.Accept_Secure = func(
+		completion *Completion, callback Socket_Callback,
+		listener File, _ func() (value any),
+	) {
+		sim_yield_socket(state, completion, callback)
+	}
+	loop.Connect = func(
+		completion *Completion, callback Socket_Callback, host string, port int,
+	) {
+		sim_yield_socket(state, completion, callback)
+	}
+	loop.Connect_Secure = func(
+		completion *Completion, callback Socket_Callback, host string, port int, _ string,
+	) {
+		sim_yield_socket(state, completion, callback)
+	}
+	loop.Connect_Insecure = func(
+		completion *Completion, callback Socket_Callback, host string, port int, _ string,
+	) {
+		sim_yield_socket(state, completion, callback)
+	}
+	loop.Peer_Address = func(file File) (address string, err error) {
+		return sim_peer_address(file), nil
+	}
+}
+
+// Wires the effect operations — signal watch and compute offload — onto loop.
+func sim_wire_effects(state *sim, loop *IO) {
+	loop.Watch_Signal = func(
+		completion *Completion, callback Signal_Callback, signal Signal,
+	) {
+		sim_watch_signal(state, completion, callback, signal)
+	}
+	loop.Compute = func(completion *Completion, callback Compute_Callback, work func()) {
+		sim_compute(state, completion, callback, work)
+	}
 }
 
 // Panics on a violated invariant, fail-closed — a tripped assert is always a bug in
@@ -234,22 +330,100 @@ func assert(ok bool) {
 	}
 }
 
+// Hands out the next distinct synthetic descriptor.
+func sim_descriptor(state *sim) (file File) {
+	state.Next_File++
+	return state.Next_File
+}
+
 // Draws the next operation's completion delay from the seed, so completion order
 // varies per run yet reproduces exactly.
 func sim_latency(state *sim) (latency time.Duration) {
 	return time.Duration(prng.Generator_Below(&state.Generator, sim_latency_grains))
 }
 
-// Submits a byte-count operation — read, write, receive, or send — reporting the
-// buffer length after the drawn latency, or the Cancelled error if cancelled.
-func sim_bytes(state *sim, completion *Completion, callback Callback, buffer []byte) {
-	count := len(buffer)
-	sim_submit(state, completion, sim_latency(state), func() {
+// Wraps a byte-count delivery so a cancelled completion reports Cancelled instead.
+func sim_deliver_bytes(completion *Completion, callback Callback, count int) (deliver func()) {
+	return func() {
 		if completion.Cancelled {
 			callback(completion, 0, Cancelled)
 			return
 		}
 		callback(completion, count, nil)
+	}
+}
+
+// Wraps a status delivery (timeout, close) so a cancelled completion reports Cancelled.
+func sim_deliver_status(
+	completion *Completion, callback Timeout_Callback, err error,
+) (deliver func()) {
+	return func() {
+		if completion.Cancelled {
+			callback(completion, Cancelled)
+			return
+		}
+		callback(completion, err)
+	}
+}
+
+// Wraps a socket delivery so a cancelled completion reports Cancelled instead.
+func sim_deliver_socket(
+	completion *Completion, callback Socket_Callback, socket File,
+) (deliver func()) {
+	return func() {
+		if completion.Cancelled {
+			callback(completion, 0, Cancelled)
+			return
+		}
+		callback(completion, socket, nil)
+	}
+}
+
+// Submits a byte-count operation — read, write, receive, or send — reporting the
+// buffer length after the drawn latency, or the Cancelled error if cancelled.
+func sim_bytes(state *sim, completion *Completion, callback Callback, buffer []byte) {
+	sim_submit(state, completion, sim_latency(state),
+		sim_deliver_bytes(completion, callback, len(buffer)))
+}
+
+// Schedules callback to receive the next synthetic descriptor after the drawn latency,
+// shared by Accept and Connect and their TLS variants.
+func sim_yield_socket(state *sim, completion *Completion, callback Socket_Callback) {
+	socket := sim_descriptor(state)
+	sim_submit(state, completion, sim_latency(state),
+		sim_deliver_socket(completion, callback, socket))
+}
+
+// Reports a synthetic peer address for a live descriptor, the simulator's getpeername;
+// empty with no error for an unknown descriptor.
+func sim_peer_address(file File) (address string) {
+	if file <= 0 {
+		return ""
+	}
+	return "127.0.0.1"
+}
+
+// Watches for a signal that, in the simulator, arrives at a seed-drawn grain — the OS
+// event modeled as a seed outcome. It fires callback with the signal exactly once.
+func sim_watch_signal(
+	state *sim, completion *Completion, callback Signal_Callback, signal Signal,
+) {
+	sim_submit(state, completion, sim_latency(state), func() {
+		callback(completion, signal)
+	})
+}
+
+// Runs work inline after the drawn latency, then fires callback on the loop — the
+// deterministic counterpart of the OS backend's worker pool. A cancelled compute skips
+// the work but still fires callback so the submission resolves.
+func sim_compute(
+	state *sim, completion *Completion, callback Compute_Callback, work func(),
+) {
+	sim_submit(state, completion, sim_latency(state), func() {
+		if !completion.Cancelled {
+			work()
+		}
+		callback(completion)
 	})
 }
 
@@ -305,20 +479,6 @@ func sim_cancel(state *sim, completion *Completion) {
 		sim_enqueue(state, completion)
 		return
 	}
-}
-
-// Schedules callback to receive the next synthetic descriptor after the drawn latency,
-// shared by Accept and Connect.
-func sim_yield_socket(state *sim, completion *Completion, callback Socket_Callback) {
-	state.Next_File++
-	socket := state.Next_File
-	sim_submit(state, completion, sim_latency(state), func() {
-		if completion.Cancelled {
-			callback(completion, 0, Cancelled)
-			return
-		}
-		callback(completion, socket, nil)
-	})
 }
 
 // Fires the earliest completion if it is due as of now, reporting whether it did,
