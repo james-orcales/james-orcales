@@ -9,12 +9,13 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"runtime"
 
 	"github.com/james-orcales/james-orcales/setup/internal"
-	sh "github.com/james-orcales/james-orcales/shared/sh/default"
+	sysio "github.com/james-orcales/james-orcales/shared/io"
+	iodefault "github.com/james-orcales/james-orcales/shared/io/default"
+	timeos "github.com/james-orcales/james-orcales/shared/time/default"
 )
 
 // Exit_usage marks a home directory that cannot be resolved, kept distinct from
@@ -57,6 +58,12 @@ func main() {
 		fmt.Fprintf(os.Stderr, "setup: %v\n", home_err)
 		os.Exit(exit_usage)
 	}
+	// The install steps spawn every subprocess through one shared io loop, ticked only
+	// here. setup runs its commands sequentially, so a single loop driven by successive
+	// Run_Until pumps is correct and never re-enters the driver.
+	clock, _ := timeos.New_Operating_System_Clock()
+	loop, driver := iodefault.New_Operating_System_IO(clock)
+	spawn := spawn_command(loop, driver)
 	// One bootstrap, in order: install direnv (everything downstream is driven by
 	// it), sync the dotfiles, install fonts and Neovim, then the Go-toolchain builds
 	// (fzf and this repo's own commands — maddox, m2p, sloc), the cargo builds (rust,
@@ -65,41 +72,69 @@ func main() {
 	os.Exit(setup.Bootstrap(&setup.Bootstrap_Input{
 		Stdout: os.Stdout,
 		Steps: []setup.Step{
-			{Name: "direnv", Run: direnv_step(home)},
-			{Name: "dotfiles", Run: dotfiles_step(home)},
-			{Name: "fonts", Run: fonts_step(home)},
-			{Name: "neovim", Run: neovim_step(home)},
-			{Name: "fzf", Run: fzf_step(home)},
-			{Name: "maddox", Run: maddox_step(home)},
-			{Name: "m2p", Run: m2p_step(home)},
-			{Name: "sloc", Run: sloc_step(home)},
-			{Name: "rust", Run: rust_step(home)},
-			{Name: "fish", Run: fish_step(home)},
-			{Name: "jj", Run: jj_step(home)},
-			{Name: "ripgrep", Run: ripgrep_step(home)},
-			{Name: "fd", Run: fdcli_step(home)},
-			{Name: "ghostty", Run: ghostty_step(home)},
+			{Name: "direnv", Run: direnv_step(home, spawn)},
+			{Name: "dotfiles", Run: dotfiles_step(home, spawn)},
+			{Name: "fonts", Run: fonts_step(home, spawn)},
+			{Name: "neovim", Run: neovim_step(home, spawn)},
+			{Name: "fzf", Run: fzf_step(home, spawn)},
+			{Name: "maddox", Run: maddox_step(home, spawn)},
+			{Name: "m2p", Run: m2p_step(home, spawn)},
+			{Name: "sloc", Run: sloc_step(home, spawn)},
+			{Name: "rust", Run: rust_step(home, spawn)},
+			{Name: "fish", Run: fish_step(home, spawn)},
+			{Name: "jj", Run: jj_step(home, spawn)},
+			{Name: "ripgrep", Run: ripgrep_step(home, spawn)},
+			{Name: "fd", Run: fdcli_step(home, spawn)},
+			{Name: "ghostty", Run: ghostty_step(home, spawn)},
 		},
 	}))
+}
+
+// Returns the synchronous Spawn the install steps are injected with, backed by the real io
+// loop: it submits one Spawn op and drives the loop until that op completes, the one place
+// the loop is ticked. A start failure folds into a non-zero exit so the seam stays
+// exit-only, matching the outcome of a command that ran and failed.
+func spawn_command(loop sysio.IO, driver sysio.Driver) (spawn setup.Spawn) {
+	return func(request sysio.Process_Request) (result sysio.Process_Result) {
+		var completion sysio.Completion
+		done := false
+		// A failed start yields no exit code of its own, so report it as a failure.
+		complete := func(_ *sysio.Completion, spawned sysio.Process_Result, err error) {
+			if err != nil {
+				spawned.Exit = 1
+			}
+			result = spawned
+			done = true
+		}
+		loop.Spawn(&completion, complete, request)
+		driver.Run_Until(func() (finished bool) { return done })
+		return result
+	}
+}
+
+// Returns the Shell a bootstrap step runs commands through: the loop-backed spawn and the
+// process stdout/stderr, the sinks a build's streamed output and setup's narration share.
+func step_shell(spawn setup.Spawn) (shell setup.Shell) {
+	return setup.Shell{Spawn: spawn, Stdout: os.Stdout, Stderr: os.Stderr}
 }
 
 // Returns the bootstrap step that builds direnv from the vendored source with the
 // Go toolchain straight into home/.local/bin. It runs first because the shell hook
 // and every .envrc depend on direnv being on PATH.
-func direnv_step(home string) (run func() (status_code int)) {
+func direnv_step(home string, spawn setup.Spawn) (run func() (status_code int)) {
 	repository := filepath.Join(home, repository_subpath)
 	return func() (status_code int) {
 		return setup.Install_Direnv(&setup.Install_Direnv_Input{
 			Direnv_Directory: filepath.Join(repository, "third_party", "direnv"),
 			Binary_Directory: filepath.Join(repository, "home", ".local", "bin"),
-			Shell:            sh.Init_Default_Shell(),
+			Shell:            step_shell(spawn),
 		})
 	}
 }
 
 // Returns the bootstrap step that mirrors the dotfiles tree into the home
 // directory and, on darwin, applies the macos defaults.
-func dotfiles_step(home string) (run func() (status_code int)) {
+func dotfiles_step(home string, spawn setup.Spawn) (run func() (status_code int)) {
 	dotfiles_directory := filepath.Join(home, dotfiles_subpath)
 	return func() (status_code int) {
 		return setup.Main(&setup.Main_Input{
@@ -108,8 +143,8 @@ func dotfiles_step(home string) (run func() (status_code int)) {
 			Destination_Directory: home,
 			Operating_System:      runtime.GOOS,
 			Write_File:            write_file,
-			Run_Command:           run_command,
-			Is_Ignored:            git_ignores(dotfiles_directory),
+			Run_Command:           run_command(spawn),
+			Is_Ignored:            git_ignores(spawn, dotfiles_directory),
 			Stdout:                os.Stdout,
 			Stderr:                os.Stderr,
 		})
@@ -118,13 +153,14 @@ func dotfiles_step(home string) (run func() (status_code int)) {
 
 // Returns the bootstrap step that copies the vendored Iosevka faces into the
 // per-OS font directory, refreshing the cache where the OS needs it.
-func fonts_step(home string) (run func() (status_code int)) {
+func fonts_step(home string, spawn setup.Spawn) (run func() (status_code int)) {
 	font_directory, refresh_cache := font_destination(home)
 	font_source := filepath.Join(home, iosevka_subpath)
 	var refresh func() (err error)
 	if refresh_cache {
+		runner := run_command(spawn)
 		refresh = func() (err error) {
-			return run_command("fc-cache", []string{"-f", font_directory})
+			return runner("fc-cache", []string{"-f", font_directory})
 		}
 	}
 	return func() (status_code int) {
@@ -148,11 +184,11 @@ func fonts_step(home string) (run func() (status_code int)) {
 }
 
 // Returns the bootstrap step that builds and installs the vendored Neovim.
-func neovim_step(home string) (run func() (status_code int)) {
+func neovim_step(home string, spawn setup.Spawn) (run func() (status_code int)) {
 	return func() (status_code int) {
 		return setup.Install_Neovim(&setup.Install_Neovim_Input{
 			Repository_Directory: filepath.Join(home, repository_subpath),
-			Shell:                sh.Init_Default_Shell(),
+			Shell:                step_shell(spawn),
 		})
 	}
 }
@@ -161,13 +197,13 @@ func neovim_step(home string) (run func() (status_code int)) {
 // toolchain straight into home/.local/bin. fzf is a Go binary, so the build output
 // is the install; it only needs the Go toolchain, not cargo, so it runs before the
 // rust and fish steps.
-func fzf_step(home string) (run func() (status_code int)) {
+func fzf_step(home string, spawn setup.Spawn) (run func() (status_code int)) {
 	repository := filepath.Join(home, repository_subpath)
 	return func() (status_code int) {
 		return setup.Install_Fzf(&setup.Install_Fzf_Input{
 			Fzf_Directory:    filepath.Join(repository, "third_party", "fzf"),
 			Binary_Directory: filepath.Join(repository, "home", ".local", "bin"),
-			Shell:            sh.Init_Default_Shell(),
+			Shell:            step_shell(spawn),
 		})
 	}
 }
@@ -176,14 +212,14 @@ func fzf_step(home string) (run func() (status_code int)) {
 // home/.local/bin with the Go toolchain. maddox is one of this repo's own tools,
 // so — unlike the vendored builds — its only idempotency check is whether maddox
 // already resolves on PATH; an absent one is rebuilt.
-func maddox_step(home string) (run func() (status_code int)) {
+func maddox_step(home string, spawn setup.Spawn) (run func() (status_code int)) {
 	repository := filepath.Join(home, repository_subpath)
 	return func() (status_code int) {
 		return setup.Install_Command(&setup.Install_Command_Input{
 			Package_Directory: filepath.Join(repository, "maddox"),
 			Binary_Directory:  filepath.Join(repository, "home", ".local", "bin"),
 			Binary_Name:       "maddox",
-			Shell:             sh.Init_Default_Shell(),
+			Shell:             step_shell(spawn),
 		})
 	}
 }
@@ -192,14 +228,14 @@ func maddox_step(home string) (run func() (status_code int)) {
 // into home/.local/bin as m2p — the name it is invoked by, which is why the package
 // directory and the binary name differ. Its only idempotency check is whether m2p
 // already resolves on PATH.
-func m2p_step(home string) (run func() (status_code int)) {
+func m2p_step(home string, spawn setup.Spawn) (run func() (status_code int)) {
 	repository := filepath.Join(home, repository_subpath)
 	return func() (status_code int) {
 		return setup.Install_Command(&setup.Install_Command_Input{
 			Package_Directory: filepath.Join(repository, "markdown_to_pdf"),
 			Binary_Directory:  filepath.Join(repository, "home", ".local", "bin"),
 			Binary_Name:       "m2p",
-			Shell:             sh.Init_Default_Shell(),
+			Shell:             step_shell(spawn),
 		})
 	}
 }
@@ -207,14 +243,14 @@ func m2p_step(home string) (run func() (status_code int)) {
 // Returns the bootstrap step that builds this repository's sloc command into
 // home/.local/bin with the Go toolchain. Its only idempotency check is whether sloc
 // already resolves on PATH.
-func sloc_step(home string) (run func() (status_code int)) {
+func sloc_step(home string, spawn setup.Spawn) (run func() (status_code int)) {
 	repository := filepath.Join(home, repository_subpath)
 	return func() (status_code int) {
 		return setup.Install_Command(&setup.Install_Command_Input{
 			Package_Directory: filepath.Join(repository, "sloc"),
 			Binary_Directory:  filepath.Join(repository, "home", ".local", "bin"),
 			Binary_Name:       "sloc",
-			Shell:             sh.Init_Default_Shell(),
+			Shell:             step_shell(spawn),
 		})
 	}
 }
@@ -223,12 +259,12 @@ func sloc_step(home string) (run func() (status_code int)) {
 // symlinks it onto PATH. CARGO_HOME (where rustup installs) comes from the
 // environment the .envrc exports; the binaries are linked into the repo's
 // .local/bin, the single directory the .envrc puts on PATH.
-func rust_step(home string) (run func() (status_code int)) {
+func rust_step(home string, spawn setup.Spawn) (run func() (status_code int)) {
 	return func() (status_code int) {
 		return setup.Install_Rust(&setup.Install_Rust_Input{
 			Cargo_Directory: os.Getenv("CARGO_HOME"),
 			Link_Directory:  filepath.Join(home, repository_subpath, ".local", "bin"),
-			Shell:           sh.Init_Default_Shell(),
+			Shell:           step_shell(spawn),
 		})
 	}
 }
@@ -237,14 +273,14 @@ func rust_step(home string) (run func() (status_code int)) {
 // and symlinks it onto PATH. cargo installs into CARGO_HOME (from the .envrc
 // environment); fish and its tools, user-facing programs, are linked into
 // home/.local/bin alongside Neovim, not the repo .local/bin that holds dev tools.
-func fish_step(home string) (run func() (status_code int)) {
+func fish_step(home string, spawn setup.Spawn) (run func() (status_code int)) {
 	repository := filepath.Join(home, repository_subpath)
 	return func() (status_code int) {
 		return setup.Install_Fish(&setup.Install_Fish_Input{
 			Fish_Directory:  filepath.Join(repository, "third_party", "fish-shell"),
 			Cargo_Directory: os.Getenv("CARGO_HOME"),
 			Link_Directory:  filepath.Join(repository, "home", ".local", "bin"),
-			Shell:           sh.Init_Default_Shell(),
+			Shell:           step_shell(spawn),
 		})
 	}
 }
@@ -253,14 +289,14 @@ func fish_step(home string) (run func() (status_code int)) {
 // and symlinks it into home/.local/bin. cargo installs into CARGO_HOME (from the
 // .envrc environment); jj, a user-facing program, is linked alongside Neovim and
 // fish, not the repo .local/bin that holds the dev toolchain.
-func jj_step(home string) (run func() (status_code int)) {
+func jj_step(home string, spawn setup.Spawn) (run func() (status_code int)) {
 	repository := filepath.Join(home, repository_subpath)
 	return func() (status_code int) {
 		return setup.Install_Jj(&setup.Install_Jj_Input{
 			Jj_Directory:    filepath.Join(repository, "third_party", "jj"),
 			Cargo_Directory: os.Getenv("CARGO_HOME"),
 			Link_Directory:  filepath.Join(repository, "home", ".local", "bin"),
-			Shell:           sh.Init_Default_Shell(),
+			Shell:           step_shell(spawn),
 		})
 	}
 }
@@ -268,14 +304,14 @@ func jj_step(home string) (run func() (status_code int)) {
 // Returns the bootstrap step that builds ripgrep (rg) from the vendored crate with
 // cargo and symlinks it into home/.local/bin alongside the other user-facing
 // tools. cargo installs into CARGO_HOME (from the .envrc environment).
-func ripgrep_step(home string) (run func() (status_code int)) {
+func ripgrep_step(home string, spawn setup.Spawn) (run func() (status_code int)) {
 	repository := filepath.Join(home, repository_subpath)
 	return func() (status_code int) {
 		return setup.Install_Ripgrep(&setup.Install_Ripgrep_Input{
 			Ripgrep_Directory: filepath.Join(repository, "third_party", "ripgrep"),
 			Cargo_Directory:   os.Getenv("CARGO_HOME"),
 			Link_Directory:    filepath.Join(repository, "home", ".local", "bin"),
-			Shell:             sh.Init_Default_Shell(),
+			Shell:             step_shell(spawn),
 		})
 	}
 }
@@ -283,14 +319,14 @@ func ripgrep_step(home string) (run func() (status_code int)) {
 // Returns the bootstrap step that builds fd from the vendored crate with cargo and
 // symlinks it into home/.local/bin alongside the other user-facing tools. cargo
 // installs into CARGO_HOME (from the .envrc environment).
-func fdcli_step(home string) (run func() (status_code int)) {
+func fdcli_step(home string, spawn setup.Spawn) (run func() (status_code int)) {
 	repository := filepath.Join(home, repository_subpath)
 	return func() (status_code int) {
 		return setup.Install_Fdcli(&setup.Install_Fdcli_Input{
 			Fdcli_Directory: filepath.Join(repository, "third_party", "fd"),
 			Cargo_Directory: os.Getenv("CARGO_HOME"),
 			Link_Directory:  filepath.Join(repository, "home", ".local", "bin"),
-			Shell:           sh.Init_Default_Shell(),
+			Shell:           step_shell(spawn),
 		})
 	}
 }
@@ -299,13 +335,13 @@ func fdcli_step(home string) (run func() (status_code int)) {
 // macOS applications directory and symlinks the app's CLI into home/.local/bin
 // alongside the other user-facing tools. It runs last because it is the one network
 // download, after every vendored build; off darwin it does nothing.
-func ghostty_step(home string) (run func() (status_code int)) {
+func ghostty_step(home string, spawn setup.Spawn) (run func() (status_code int)) {
 	repository := filepath.Join(home, repository_subpath)
 	return func() (status_code int) {
 		return setup.Install_Ghostty(&setup.Install_Ghostty_Input{
 			Applications_Directory: ghostty_applications_directory(),
 			Link_Directory:         filepath.Join(repository, "home", ".local", "bin"),
-			Shell:                  sh.Init_Default_Shell(),
+			Shell:                  step_shell(spawn),
 		})
 	}
 }
@@ -391,23 +427,38 @@ func write_file(path string, contents []byte) (err error) {
 	return os.WriteFile(path, contents, file_permissions)
 }
 
-// Runs name with arguments, forwarding setup's own stdout and stderr so a failing
-// default surfaces its diagnostics. It is the real binding injected into
-// setup.Main so the library tier never executes anything itself.
-func run_command(name string, arguments []string) (err error) {
-	command := exec.Command(name, arguments...)
-	command.Stdout = os.Stdout
-	command.Stderr = os.Stderr
-	return command.Run()
+// Returns the external-program runner injected into setup.Main, also used for fc-cache,
+// backed by the loop's spawn so setup executes nothing itself. It streams the command's
+// output live — forwarding setup's own stdout and stderr — and reports a non-zero exit as
+// an error, the signal the macos defaults and the cache refresh check.
+func run_command(spawn setup.Spawn) (run func(name string, arguments []string) (err error)) {
+	return func(name string, arguments []string) (err error) {
+		result := spawn(sysio.Process_Request{
+			Path:      name,
+			Arguments: arguments,
+			Stdout:    os.Stdout,
+			Stderr:    os.Stderr,
+		})
+		if result.Exit != 0 {
+			return fmt.Errorf("%s exited with status %d", name, result.Exit)
+		}
+		return nil
+	}
 }
 
-// Returns a predicate reporting whether a path under directory is gitignored,
-// backed by `git check-ignore`. A git error (not a repository, or git missing)
-// reports not-ignored, so a file still syncs rather than silently vanishing.
-func git_ignores(directory string) (is_ignored func(relative_path string) (ignored bool)) {
+// Returns a predicate reporting whether a path under directory is gitignored, backed by
+// `git check-ignore` run through the loop. A non-zero exit — not ignored, or a git error
+// such as no repository or git missing — reports not-ignored, so a file still syncs rather
+// than silently vanishing.
+func git_ignores(
+	spawn setup.Spawn, directory string,
+) (is_ignored func(relative_path string) (ignored bool)) {
 	return func(relative_path string) (ignored bool) {
 		target := filepath.Join(directory, relative_path)
-		probe := exec.Command("git", "-C", directory, "check-ignore", "--quiet", target)
-		return probe.Run() == nil
+		result := spawn(sysio.Process_Request{
+			Path:      "git",
+			Arguments: []string{"-C", directory, "check-ignore", "--quiet", target},
+		})
+		return result.Exit == 0
 	}
 }
