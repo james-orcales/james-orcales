@@ -45,7 +45,7 @@ func Test_Sim_Read(t *testing.T) {
 		}
 		wrote = true
 	}, writer, []byte("hello"), 0)
-	driver.Run_Until(func() (finished bool) { return wrote })
+	driver.Run_Until(func() (finished bool) { return wrote }, sim_deadline)
 
 	reader, open_err := loop.Open("file")
 	if open_err != nil {
@@ -57,7 +57,7 @@ func Test_Sim_Read(t *testing.T) {
 	loop.Read(&read_completion, func(_ *io.Completion, bytes int, _ error) {
 		count = bytes
 	}, reader, buffer, 0)
-	driver.Run_Until(func() (finished bool) { return count >= 0 })
+	driver.Run_Until(func() (finished bool) { return count >= 0 }, sim_deadline)
 
 	if count != 5 {
 		t.Fatalf("read reported %d bytes, want 5", count)
@@ -179,8 +179,9 @@ func Test_Sim_Close(t *testing.T) {
 	}
 }
 
-// Test_Sim_Run_Until verifies the driver pumps the loop until the predicate reports
-// true, delivering the op's completion inline for a straight-line caller.
+// Test_Sim_Run_Until verifies the driver pumps the loop until the predicate reports true,
+// reporting completed, and — the point of the timeout — that a never-satisfied predicate
+// returns false at the deadline instead of spinning the sim forever.
 func Test_Sim_Run_Until(t *testing.T) {
 	loop, driver, _ := sim_loop(1)
 
@@ -190,10 +191,15 @@ func Test_Sim_Run_Until(t *testing.T) {
 		done = true
 	}, io.File(0), make([]byte, 8), 0)
 
-	driver.Run_Until(func() (finished bool) { return done })
-
+	if !driver.Run_Until(func() (finished bool) { return done }, sim_deadline) {
+		t.Fatal("Run_Until reported the read did not complete")
+	}
 	if !done {
 		t.Fatal("Run_Until returned before the read completed")
+	}
+
+	if driver.Run_Until(func() (finished bool) { return false }, sim_deadline) {
+		t.Fatal("Run_Until reported completion for a predicate that never trips")
 	}
 }
 
@@ -494,3 +500,8 @@ func Test_Sim_Make_Directory(t *testing.T) {
 func sim_loop(seed uint64) (loop io.IO, driver io.Driver, clock time.Clock) {
 	return io.New_Sim(seed)
 }
+
+// The Run_Until cap for the sim tests, in virtual time: ample for ops that finish in a
+// handful of grains, while a never-satisfied predicate fails after this many cheap grains
+// instead of spinning the sim forever.
+const sim_deadline = time.MICROSECOND

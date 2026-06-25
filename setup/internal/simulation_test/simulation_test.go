@@ -14,7 +14,12 @@ import (
 	setup "local/james-orcales/setup/internal"
 	sysio "local/james-orcales/shared/io"
 	"local/james-orcales/shared/prng"
+	systime "local/james-orcales/shared/time"
 )
+
+// The Run_Until cap for the harness's own writes, in virtual time: the write and close
+// finish in a few grains, so this ample bound only bites a bug that stalls one.
+const harness_deadline = systime.MICROSECOND
 
 // The destination directory, relative to the source root, pruned from the source walk so the
 // mirror never copies its own output back into itself.
@@ -175,11 +180,11 @@ func harness_overwrite(system *setup.File_System, path string) {
 	system.Loop.Write(&write_completion, func(_ *sysio.Completion, _ int, _ error) {
 		written = true
 	}, file, []byte(harness_poison), 0)
-	system.Run_Until(func() (finished bool) { return written })
+	system.Run_Until(func() (finished bool) { return written }, harness_deadline)
 	var close_completion sysio.Completion
 	closed := false
 	system.Loop.Close(&close_completion, func(_ *sysio.Completion, _ error) {
 		closed = true
 	}, file)
-	system.Run_Until(func() (finished bool) { return closed })
+	system.Run_Until(func() (finished bool) { return closed }, harness_deadline)
 }

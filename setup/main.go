@@ -104,7 +104,7 @@ func spawn_command(loop sysio.IO, driver sysio.Driver) (spawn setup.Spawn) {
 			done = true
 		}
 		loop.Spawn(&completion, complete, request)
-		driver.Run_Until(func() (finished bool) { return done })
+		driver.Run_Until(func() (finished bool) { return done }, sysio.FOREVER)
 		return result
 	}
 }

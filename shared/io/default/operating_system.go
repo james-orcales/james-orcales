@@ -501,14 +501,34 @@ func operating_system_to_driver(state *operating_system) (driver io.Driver) {
 				operating_system_run_for(state, duration)
 			})
 		},
-		Run_Until: func(done func() (finished bool)) {
+		Run_Until: func(
+			done func() (finished bool), timeout time.Duration,
+		) (completed bool) {
 			operating_system_drive(state, func() {
-				for !done() {
-					operating_system_run_for(state, operating_system_tick)
-				}
+				completed = operating_system_run_until(state, done, timeout)
 			})
+			return completed
 		},
 	}
+}
+
+// Drives the loop until done reports true, or until timeout of host time has elapsed —
+// the run-until-complete pump, capped so a stalled op cannot hang the caller. A negative
+// timeout waits unbounded; a zero timeout checks done once and drives nothing. completed
+// reports whether done tripped rather than the deadline.
+func operating_system_run_until(
+	state *operating_system, done func() (finished bool), timeout time.Duration,
+) (completed bool) {
+	deadline := state.Host.Now_Monotonic() + time.Moment(timeout)
+	for !done() {
+		if timeout >= 0 {
+			if state.Host.Now_Monotonic() >= deadline {
+				return false
+			}
+		}
+		operating_system_run_for(state, operating_system_tick)
+	}
+	return true
 }
 
 // Runs pump as the top-level drive, panicking if a drive is already in progress so a Run*
