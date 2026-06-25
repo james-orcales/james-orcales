@@ -64,6 +64,23 @@ func Test_Operating_System_IO_Timeout(t *testing.T) {
 	}
 }
 
+// Test_Operating_System_IO_Reentrancy verifies driving the real loop from within a
+// completion callback panics, so a re-entrant Run* fails loudly rather than corrupting it.
+func Test_Operating_System_IO_Reentrancy(t *testing.T) {
+	clock, _ := timeos.New_Operating_System_Clock()
+	loop, driver := iodefault.New_Operating_System_IO(clock)
+	var completion io.Completion
+	loop.Timeout(&completion, func(_ *io.Completion, err error) {
+		driver.Run()
+	}, time.Millisecond)
+	defer func() {
+		if recover() == nil {
+			t.Fatal("driving from within a callback must panic")
+		}
+	}()
+	driver.Run_For(50 * time.Millisecond)
+}
+
 // Test_Operating_System_IO_Socket runs a TCP loopback round-trip through the real
 // backend: a client connects to a listener, sends bytes, and the accepted server
 // socket receives them — all driven by the single event loop.

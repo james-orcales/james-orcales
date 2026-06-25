@@ -117,6 +117,9 @@ type operating_system struct {
 	Wake_Active bool
 	// Compute_Active reports whether the worker pool has been started.
 	Compute_Active bool
+	// Drive_Active is set while a Run* is driving the loop, so a Run* called from within a
+	// completion callback — which would re-enter the driver mid-drain — panics loudly.
+	Drive_Active bool
 	// TLS maps a synthetic descriptor to its connection goroutine's request channel.
 	TLS map[io.File]*tls_connection
 	// Next_TLS is the synthetic TLS descriptor counter, based at tls_file_base.
@@ -490,14 +493,35 @@ func operating_system_timeout(
 // composition root or a test, never by code that merely submits IO.
 func operating_system_to_driver(state *operating_system) (driver io.Driver) {
 	return io.Driver{
-		Run:     func() { operating_system_run(state) },
-		Run_For: func(duration time.Duration) { operating_system_run_for(state, duration) },
+		Run: func() {
+			operating_system_drive(state, func() { operating_system_run(state) })
+		},
+		Run_For: func(duration time.Duration) {
+			operating_system_drive(state, func() {
+				operating_system_run_for(state, duration)
+			})
+		},
 		Run_Until: func(done func() (finished bool)) {
-			for !done() {
-				operating_system_run_for(state, operating_system_tick)
-			}
+			operating_system_drive(state, func() {
+				for !done() {
+					operating_system_run_for(state, operating_system_tick)
+				}
+			})
 		},
 	}
+}
+
+// Runs pump as the top-level drive, panicking if a drive is already in progress so a Run*
+// called from within a completion callback fails loudly instead of re-entering the driver.
+// The internal run functions call one another directly, not through here, so a drive's own
+// iteration does not trip it.
+func operating_system_drive(state *operating_system, pump func()) {
+	if state.Drive_Active {
+		panic("io: Run called from within a callback")
+	}
+	state.Drive_Active = true
+	defer func() { state.Drive_Active = false }()
+	pump()
 }
 
 // Runs ready completions and one non-blocking socket poll; the host clock moves on
