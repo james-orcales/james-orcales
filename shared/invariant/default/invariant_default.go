@@ -12,8 +12,6 @@ import (
 	"reflect"
 	"strings"
 	"testing"
-	"unicode"
-	"unicode/utf8"
 
 	invariant "github.com/james-orcales/james-orcales/shared/invariant"
 )
@@ -552,106 +550,6 @@ func Float32_Invariants(f float32, namespace Namespace) {
 	)
 }
 
-// String_Invariants is the preset coverage for a string. Over the empty axis (a
-// Sometimes over len(s) == 0; not a length boundary, which would demand an
-// unobservably-long string at its Hi endpoint) it layers seven content axes: edge vs
-// interior whitespace, invalid UTF-8, a NUL byte, a byte count that differs from the
-// rune count (a multi-byte rune), a control character, and a line break. An empty
-// string excludes every content axis, and a NUL byte or a line break is itself a
-// control character.
-func String_Invariants(s string, namespace Namespace) {
-	Always(len(s) <= 1<<20, "Untrusted string is streamed at a max of 1 MiB chunks.")
-	Dot_Product(namespace,
-		Sometimes(len(s) == 1<<20, "Untrusted string is 1 MiB."),
-		Sometimes(len(s) == 0, "The value is empty."),
-		Sometimes(string_has_edge_whitespace(s), "The value has edge whitespace."),
-		Sometimes(string_has_interior_whitespace(s), "The value has interior whitespace."),
-		Sometimes(string_has_invalid_utf8(s), "The value has invalid UTF-8."),
-		Sometimes(string_has_nul(s), "The value has a NUL byte."),
-		Sometimes(string_has_multibyte_rune(s), "The value has a multi-byte rune."),
-		Sometimes(string_has_control(s), "The value has a control character."),
-		Sometimes(string_has_line_break(s), "The value has a line break."),
-		Impossible(
-			Event_True("Untrusted string is 1 MiB."),
-			Event_True("The value is empty."),
-		),
-		Impossible(
-			Event_True("The value is empty."),
-			Event_True("The value has edge whitespace."),
-		),
-		Impossible(
-			Event_True("The value is empty."),
-			Event_True("The value has interior whitespace."),
-		),
-		Impossible(
-			Event_True("The value is empty."),
-			Event_True("The value has invalid UTF-8."),
-		),
-		Impossible(
-			Event_True("The value is empty."),
-			Event_True("The value has a NUL byte."),
-		),
-		Impossible(
-			Event_True("The value is empty."),
-			Event_True("The value has a multi-byte rune."),
-		),
-		Impossible(
-			Event_True("The value is empty."),
-			Event_True("The value has a control character."),
-		),
-		Impossible(
-			Event_True("The value is empty."),
-			Event_True("The value has a line break."),
-		),
-		Impossible(
-			Event_True("The value has a NUL byte."),
-			Event_False("The value has a control character."),
-		),
-		Impossible(
-			Event_True("The value has a line break."),
-			Event_False("The value has a control character."),
-		),
-		Impossible(
-			Event_True("The value has a line break."),
-			Event_False("The value has edge whitespace."),
-			Event_False("The value has interior whitespace."),
-		),
-	)
-}
-
-// Slice_Invariants is the preset coverage for a slice: nil, empty-but-non-nil,
-// and non-empty must each be observed — the nil/empty distinction Go draws. A nil
-// slice is necessarily empty, which the Impossible records.
-func Slice_Invariants[E any](s []E, namespace Namespace) {
-	Always(len(s) <= math.MaxInt16, "The slice holds at most MaxInt16 elements.")
-	Dot_Product(namespace,
-		Sometimes(len(s) == math.MaxInt16, "The slice holds MaxInt16 elements."),
-		Sometimes(len(s) == 0, "The value is empty."),
-		Sometimes(s == nil, "The value is nil."),
-		Impossible(Event_True("The value is nil."), Event_False("The value is empty.")),
-		Impossible(
-			Event_True("The slice holds MaxInt16 elements."),
-			Event_True("The value is empty."),
-		),
-	)
-}
-
-// Map_Invariants is the preset coverage for a map: nil, empty-but-non-nil, and
-// non-empty must each be observed. A nil map is necessarily empty.
-func Map_Invariants[K comparable, V any](m map[K]V, namespace Namespace) {
-	Always(len(m) <= math.MaxInt16, "The map holds at most MaxInt16 entries.")
-	Dot_Product(namespace,
-		Sometimes(len(m) == math.MaxInt16, "The map holds MaxInt16 entries."),
-		Sometimes(len(m) == 0, "The value is empty."),
-		Sometimes(m == nil, "The value is nil."),
-		Impossible(Event_True("The value is nil."), Event_False("The value is empty.")),
-		Impossible(
-			Event_True("The map holds MaxInt16 entries."),
-			Event_True("The value is empty."),
-		),
-	)
-}
-
 // Boolean_Invariants is the preset coverage for a bool: the suite must witness the
 // value both true and false. A single axis carries it — its true branch is the
 // value, its false branch the negation — so one Sometimes demands both.
@@ -659,60 +557,4 @@ func Boolean_Invariants(b bool, namespace Namespace) {
 	Dot_Product(namespace,
 		Sometimes(b, "The value is true."),
 	)
-}
-
-// Reports whether the first or last rune of s is a Unicode whitespace rune.
-func string_has_edge_whitespace(s string) (has bool) {
-	if s == "" {
-		return false
-	}
-	first, _ := utf8.DecodeRuneInString(s)
-	if unicode.IsSpace(first) {
-		return true
-	}
-	last, _ := utf8.DecodeLastRuneInString(s)
-	return unicode.IsSpace(last)
-}
-
-// Reports whether s has a Unicode whitespace rune at a position that is neither the
-// first nor the last rune — whitespace the edge check does not already account for.
-func string_has_interior_whitespace(s string) (has bool) {
-	runes := []rune(s)
-	for index := 1; index < len(runes)-1; index++ {
-		if unicode.IsSpace(runes[index]) {
-			return true
-		}
-	}
-	return false
-}
-
-// Reports whether s contains a Unicode control character.
-func string_has_control(s string) (has bool) {
-	for _, character := range s {
-		if unicode.IsControl(character) {
-			return true
-		}
-	}
-	return false
-}
-
-// Reports whether s is not valid UTF-8.
-func string_has_invalid_utf8(s string) (has bool) {
-	return !utf8.ValidString(s)
-}
-
-// Reports whether s contains a NUL (0x00) byte.
-func string_has_nul(s string) (has bool) {
-	return strings.IndexByte(s, 0) >= 0
-}
-
-// Reports whether s's byte count differs from its rune count — it contains a
-// multi-byte rune.
-func string_has_multibyte_rune(s string) (has bool) {
-	return len(s) != utf8.RuneCountInString(s)
-}
-
-// Reports whether s contains a carriage return or line feed.
-func string_has_line_break(s string) (has bool) {
-	return strings.ContainsAny(s, "\r\n")
 }
