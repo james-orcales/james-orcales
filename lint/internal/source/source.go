@@ -365,3 +365,189 @@ func IO_Gateway(components *Component_Index) (gateway string) {
 	}
 	return ""
 }
+
+// Method_Satisfies_Stdlib reports whether the method's signature implements a
+// standard-library interface (e.g. Read([]byte) (int, error)). The rules that
+// exempt such a method — the Methods ban and the Primitive Types rule — share it.
+func Method_Satisfies_Stdlib(function_declaration *ast.FuncDecl) (yes bool) {
+	if function_declaration.Recv == nil {
+		return false
+	}
+	params := method_field_types(function_declaration.Type.Params)
+	results := method_field_types(function_declaration.Type.Results)
+	return method_signature_matches(&method_signature{
+		Name:    function_declaration.Name.Name,
+		Params:  strings.Join(params, ","),
+		Results: strings.Join(results, ","),
+	})
+}
+
+type method_signature struct {
+	Name    string
+	Params  string
+	Results string
+}
+
+func method_signature_matches(input *method_signature) (yes bool) {
+	switch input.Name {
+	case "Error", "String", "GoString":
+		return input.Params == "" && input.Results == "string"
+	case "Read", "Write":
+		return input.Params == "[]byte" && input.Results == "int,error"
+	case "Close":
+		return input.Params == "" && input.Results == "error"
+	case "Seek":
+		return input.Params == "int64,int" && input.Results == "int64,error"
+	case "WriteTo":
+		return input.Params == "io.Writer" && input.Results == "int64,error"
+	case "ReadFrom":
+		return input.Params == "io.Reader" && input.Results == "int64,error"
+	case "Len":
+		return input.Params == "" && input.Results == "int"
+	case "Less":
+		return input.Params == "int,int" && input.Results == "bool"
+	case "Swap":
+		return input.Params == "int,int" && input.Results == ""
+	case "MarshalJSON", "MarshalText", "MarshalBinary":
+		return input.Params == "" && input.Results == "[]byte,error"
+	case "UnmarshalJSON", "UnmarshalText", "UnmarshalBinary":
+		return input.Params == "[]byte" && input.Results == "error"
+	case "Format":
+		return input.Params == "fmt.State,rune" && input.Results == ""
+	case "Set":
+		return input.Params == "string" && input.Results == "error"
+	case "Scan":
+		return input.Params == "any" && input.Results == "error"
+	case "Visit":
+		return input.Params == "ast.Node" && input.Results == "ast.Visitor"
+	case "Open":
+		return input.Params == "string" && input.Results == "fs.File,error"
+	case "ReadFile":
+		return input.Params == "string" && input.Results == "[]byte,error"
+	case "ReadDir":
+		return input.Params == "string" && input.Results == "[]fs.DirEntry,error"
+	case "Stat":
+		switch input.Params {
+		case "":
+			return input.Results == "fs.FileInfo,error"
+		case "string":
+			return input.Results == "fs.FileInfo,error"
+		}
+		return false
+	case "Name":
+		return input.Params == "" && input.Results == "string"
+	case "Size":
+		return input.Params == "" && input.Results == "int64"
+	case "Mode":
+		return input.Params == "" && input.Results == "fs.FileMode"
+	case "ModTime":
+		return input.Params == "" && input.Results == "time.Time"
+	case "IsDir":
+		return input.Params == "" && input.Results == "bool"
+	case "Sys":
+		return input.Params == "" && input.Results == "any"
+	case "Type":
+		return input.Params == "" && input.Results == "fs.FileMode"
+	case "Info":
+		return input.Params == "" && input.Results == "fs.FileInfo,error"
+	}
+	return false
+}
+
+func method_field_types(fl *ast.FieldList) (output_list []string) {
+	if fl == nil {
+		return nil
+	}
+	for _, f := range fl.List {
+		rendered := method_render_type(f.Type)
+		count := len(f.Names)
+		if count == 0 {
+			count = 1
+		}
+		for range count {
+			output_list = append(output_list, rendered)
+		}
+	}
+	return output_list
+}
+
+func method_render_type(expression ast.Expr) (output_string string) {
+	prefix := ""
+	for step := 0; ; step++ {
+		stripped := false
+		switch e := expression.(type) {
+		case *ast.StarExpr:
+			prefix += "*"
+			expression = e.X
+			stripped = true
+		case *ast.ArrayType:
+			if e.Len != nil {
+				return "<unknown>"
+			}
+			prefix += "[]"
+			expression = e.Elt
+			stripped = true
+		case *ast.Ellipsis:
+			prefix += "..."
+			expression = e.Elt
+			stripped = true
+		}
+		if !stripped {
+			break
+		}
+	}
+	switch e := expression.(type) {
+	case *ast.Ident:
+		return prefix + e.Name
+	case *ast.SelectorExpr:
+		package_identifier, ok := e.X.(*ast.Ident)
+		if !ok {
+			return "<unknown>"
+		}
+		return prefix + package_identifier.Name + "." + e.Sel.Name
+	case *ast.InterfaceType:
+		if e.Methods == nil {
+			return prefix + "any"
+		}
+		if len(e.Methods.List) == 0 {
+			return prefix + "any"
+		}
+	}
+	return "<unknown>"
+}
+
+// Import_Local_Name is a named import's local name, or the last path segment of
+// an unnamed one.
+func Import_Local_Name(implementation *ast.ImportSpec, import_path string) (name string) {
+	if implementation.Name != nil {
+		return implementation.Name.Name
+	}
+	slash_offset := strings.LastIndex(import_path, "/")
+	return import_path[slash_offset+1:]
+}
+
+// Invariant_Name is the _Invariants bundle-function name for a type: Name_Invariants
+// when the type is exported, name_invariants when it is unexported.
+func Invariant_Name(type_name string) (name string) {
+	if ast.IsExported(type_name) {
+		return type_name + "_Invariants"
+	}
+	return type_name + "_invariants"
+}
+
+// Path_Is_Exempt is true when filename equals, or lives under, any entry in
+// exempt; a "." entry exempts everything.
+func Path_Is_Exempt(filename string, exempt []string) (yes bool) {
+	for _, entry := range exempt {
+		if entry == "." {
+			return true
+		}
+		if filename == entry {
+			return true
+		}
+		if strings.HasPrefix(filename, entry+"/") {
+			return true
+		}
+	}
+	return false
+}

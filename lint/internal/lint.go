@@ -1475,7 +1475,7 @@ func check_casing(file_set *token.FileSet, file *ast.File, _ []byte) (diags []Di
 			// TestMain is a Go testing-package reserved name; the
 			// runner only recognizes that exact spelling.
 			if x.Name.Name != "TestMain" {
-				if !check_casing_method_satisfies_stdlib(x) {
+				if !source.Method_Satisfies_Stdlib(x) {
 					check(x.Name)
 				}
 			}
@@ -1505,27 +1505,6 @@ func check_casing(file_set *token.FileSet, file *ast.File, _ []byte) (diags []Di
 		return true
 	})
 	return diags
-}
-
-// Reports whether function_declaration is a method whose name + signature
-// satisfies a known stdlib interface (fs.FS.Open, fs.ReadFileFS.ReadFile,
-// fs.DirEntry.IsDir, …). Stdlib interface names are conventionally
-// PascalCase (no underscores) and can't be renamed; check_casing exempts
-// them so test fixtures can implement these interfaces without lint
-// flagging their method names.
-func check_casing_method_satisfies_stdlib(function_declaration *ast.FuncDecl) (yes bool) {
-
-	if function_declaration.Recv == nil {
-		return false
-	}
-	params := check_unnecessary_method_field_list_types(function_declaration.Type.Params)
-	results := check_unnecessary_method_field_list_types(function_declaration.Type.Results)
-	return check_unnecessary_method_matches_stdlib(
-		&check_unnecessary_method_matches_stdlib_input{
-			Name:    function_declaration.Name.Name,
-			Params:  strings.Join(params, ","),
-			Results: strings.Join(results, ","),
-		})
 }
 
 func check_named_returns(file_set *token.FileSet, file *ast.File, _ []byte) (diags []Diagnostic) {
@@ -4820,17 +4799,6 @@ func check_input_struct_declaration_is_named_struct(
 	return false
 }
 
-// The bundle-function name for a type: Name_Invariants when exported,
-// name_invariants otherwise. Duplicated from the assertion package's Casing rule;
-// the Input Structs rule needs it to recognise the one declaration allowed
-// between an input struct and its function.
-func type_invariant_name(type_name string) (name string) {
-	if ast.IsExported(type_name) {
-		return type_name + "_Invariants"
-	}
-	return type_name + "_invariants"
-}
-
 // Reports whether declaration is the invariant function for the struct named
 // struct_name, the only declaration the locality rule tolerates between the
 // input struct and the function it feeds.
@@ -4845,7 +4813,7 @@ func check_input_struct_declaration_is_invariant(
 	if function.Recv != nil {
 		return false
 	}
-	return function.Name.Name == type_invariant_name(struct_name)
+	return function.Name.Name == source.Invariant_Name(struct_name)
 }
 
 // Builds the type-invariant check, closing over the
@@ -4861,24 +4829,6 @@ func make_check_type_invariants(invariant_exempt []string) (check check_function
 	) (diags []Diagnostic) {
 		return assertion.Check_Type(file_set, file, invariant_exempt)
 	}
-}
-
-// True when filename equals, or lives under, any entry in exempt; a "." entry
-// exempts everything. A shared path-prefix predicate the gateway rules use to
-// skip a package's own gateway directory and the instrumentation packages.
-func path_is_exempt(filename string, exempt []string) (yes bool) {
-	for _, entry := range exempt {
-		if entry == "." {
-			return true
-		}
-		if filename == entry {
-			return true
-		}
-		if strings.HasPrefix(filename, entry+"/") {
-			return true
-		}
-	}
-	return false
 }
 
 func check_input_struct_should_trigger(function *ast.FuncDecl) (trigger bool) {
@@ -5336,16 +5286,7 @@ func check_unnecessary_method(
 		if function_declaration.Recv == nil {
 			continue
 		}
-		params := check_unnecessary_method_field_list_types(
-			function_declaration.Type.Params)
-		results := check_unnecessary_method_field_list_types(
-			function_declaration.Type.Results)
-		match := check_unnecessary_method_matches_stdlib(
-			&check_unnecessary_method_matches_stdlib_input{
-				Name:    function_declaration.Name.Name,
-				Params:  strings.Join(params, ","),
-				Results: strings.Join(results, ","),
-			})
+		match := source.Method_Satisfies_Stdlib(function_declaration)
 		if match {
 			continue
 		}
@@ -5361,162 +5302,6 @@ func check_unnecessary_method(
 		})
 	}
 	return diags
-}
-
-type check_unnecessary_method_matches_stdlib_input struct {
-	Name    string
-	Params  string
-	Results string
-}
-
-func check_unnecessary_method_matches_stdlib(
-	input *check_unnecessary_method_matches_stdlib_input,
-) (yes bool) {
-
-	return check_unnecessary_method_matches_stdlib_input_signature(input)
-}
-
-func check_unnecessary_method_matches_stdlib_input_signature(
-	input *check_unnecessary_method_matches_stdlib_input,
-) (yes bool) {
-	switch input.Name {
-	case "Error", "String", "GoString":
-		return input.Params == "" && input.Results == "string"
-	case "Read", "Write":
-		return input.Params == "[]byte" && input.Results == "int,error"
-	case "Close":
-		return input.Params == "" && input.Results == "error"
-	case "Seek":
-		return input.Params == "int64,int" && input.Results == "int64,error"
-	case "WriteTo":
-		return input.Params == "io.Writer" && input.Results == "int64,error"
-	case "ReadFrom":
-		return input.Params == "io.Reader" && input.Results == "int64,error"
-	case "Len":
-		return input.Params == "" && input.Results == "int"
-	case "Less":
-		return input.Params == "int,int" && input.Results == "bool"
-	case "Swap":
-		return input.Params == "int,int" && input.Results == ""
-	case "MarshalJSON", "MarshalText", "MarshalBinary":
-		return input.Params == "" && input.Results == "[]byte,error"
-	case "UnmarshalJSON", "UnmarshalText", "UnmarshalBinary":
-		return input.Params == "[]byte" && input.Results == "error"
-	case "Format":
-		return input.Params == "fmt.State,rune" && input.Results == ""
-	case "Set":
-		return input.Params == "string" && input.Results == "error"
-	case "Scan":
-		return input.Params == "any" && input.Results == "error"
-	case "Visit":
-		return input.Params == "ast.Node" && input.Results == "ast.Visitor"
-	case "Open":
-		return input.Params == "string" && input.Results == "fs.File,error"
-	case "ReadFile":
-		return input.Params == "string" && input.Results == "[]byte,error"
-	case "ReadDir":
-		return input.Params == "string" && input.Results == "[]fs.DirEntry,error"
-	case "Stat":
-		switch input.Params {
-		case "":
-			return input.Results == "fs.FileInfo,error"
-		case "string":
-			return input.Results == "fs.FileInfo,error"
-		}
-		return false
-	case "Name":
-		return input.Params == "" && input.Results == "string"
-	case "Size":
-		return input.Params == "" && input.Results == "int64"
-	case "Mode":
-		return input.Params == "" && input.Results == "fs.FileMode"
-	case "ModTime":
-		return input.Params == "" && input.Results == "time.Time"
-	case "IsDir":
-		return input.Params == "" && input.Results == "bool"
-	case "Sys":
-		return input.Params == "" && input.Results == "any"
-	case "Type":
-		return input.Params == "" && input.Results == "fs.FileMode"
-	case "Info":
-		return input.Params == "" && input.Results == "fs.FileInfo,error"
-	}
-	return false
-}
-
-// Flattens a FieldList into one rendered type string per declared name. A
-// field with no names contributes a single entry (e.g., `(string)` →
-// ["string"]), while a field with N names contributes N entries (e.g.,
-// `(a, b int)` → ["int", "int"]).
-func check_unnecessary_method_field_list_types(fl *ast.FieldList) (output_list []string) {
-
-	if fl == nil {
-		return nil
-	}
-	for _, f := range fl.List {
-		rendered := check_unnecessary_method_field_list_types_render_type(f.Type)
-		count := len(f.Names)
-		if count == 0 {
-			count = 1
-		}
-		for range count {
-			output_list = append(output_list, rendered)
-		}
-	}
-	return output_list
-}
-
-// Renders an ast.Expr representing a type into a canonical string. The outer
-// loop strips type prefixes (`*`, `[]`, `...`) onto a string accumulator
-// without recursion; the inner switch handles base cases. Anything outside
-// this set returns a sentinel that cannot match a stdlib table entry, so
-// unusual signatures correctly fall through to the "not stdlib" diagnostic.
-func check_unnecessary_method_field_list_types_render_type(
-	expression ast.Expr,
-) (output_string string) {
-
-	prefix := ""
-	for step := 0; ; step++ {
-		stripped := false
-		switch e := expression.(type) {
-		case *ast.StarExpr:
-			prefix += "*"
-			expression = e.X
-			stripped = true
-		case *ast.ArrayType:
-			if e.Len != nil {
-				return "<unknown>"
-			}
-			prefix += "[]"
-			expression = e.Elt
-			stripped = true
-		case *ast.Ellipsis:
-			prefix += "..."
-			expression = e.Elt
-			stripped = true
-		}
-		if !stripped {
-			break
-		}
-	}
-	switch e := expression.(type) {
-	case *ast.Ident:
-		return prefix + e.Name
-	case *ast.SelectorExpr:
-		package_identifier, ok := e.X.(*ast.Ident)
-		if !ok {
-			return "<unknown>"
-		}
-		return prefix + package_identifier.Name + "." + e.Sel.Name
-	case *ast.InterfaceType:
-		if e.Methods == nil {
-			return prefix + "any"
-		}
-		if len(e.Methods.List) == 0 {
-			return prefix + "any"
-		}
-	}
-	return "<unknown>"
 }
 
 // Snap.Init / snap.Edit carry snapshot literals — the canonical form is
@@ -7923,7 +7708,7 @@ func check_transitive_purity_per_file(
 				})
 			}
 		}
-		name := import_local_name(implementation, import_path)
+		name := source.Import_Local_Name(implementation, import_path)
 		if name == "_" {
 			continue
 		}
@@ -7965,17 +7750,6 @@ func check_transitive_purity_per_file(
 		return true
 	})
 	return diags
-}
-
-// Resolves the in-file identifier an import binds: its explicit alias, or the
-// final path segment when none is given.
-func import_local_name(implementation *ast.ImportSpec, import_path string) (name string) {
-
-	if implementation.Name != nil {
-		return implementation.Name.Name
-	}
-	slash_offset := strings.LastIndex(import_path, "/")
-	return import_path[slash_offset+1:]
 }
 
 type is_transitive_stdlib_ident_input struct {
@@ -8760,7 +8534,7 @@ func check_driver_type(
 			continue
 		}
 		if gateway != "" {
-			if path_is_exempt(pf.Path, []string{gateway}) {
+			if source.Path_Is_Exempt(pf.Path, []string{gateway}) {
 				continue
 			}
 		}
@@ -8775,7 +8549,7 @@ func driver_type_file_diagnostics(pf parsed_file, driver_path string) (diags []D
 	local := ""
 	for _, implementation := range pf.File.Imports {
 		if strings.Trim(implementation.Path.Value, `"`) == driver_path {
-			local = import_local_name(implementation, driver_path)
+			local = source.Import_Local_Name(implementation, driver_path)
 		}
 	}
 	if local == "" {
@@ -8829,16 +8603,16 @@ func check_io_gateway(
 			continue
 		}
 		if gateway != "" {
-			if path_is_exempt(pf.Path, []string{gateway}) {
+			if source.Path_Is_Exempt(pf.Path, []string{gateway}) {
 				continue
 			}
 		}
 		if time_gateway != "" {
-			if path_is_exempt(pf.Path, []string{time_gateway}) {
+			if source.Path_Is_Exempt(pf.Path, []string{time_gateway}) {
 				continue
 			}
 		}
-		if path_is_exempt(pf.Path, instrumentation) {
+		if source.Path_Is_Exempt(pf.Path, instrumentation) {
 			continue
 		}
 		diags = append(diags, io_gateway_import_diagnostics(pf)...)
@@ -8885,7 +8659,8 @@ func io_gateway_call_diagnostics(pf parsed_file) (diags []Diagnostic) {
 	for _, implementation := range pf.File.Imports {
 		import_path := strings.Trim(implementation.Path.Value, `"`)
 		if import_path == "os" {
-			operating_system_local = import_local_name(implementation, import_path)
+			operating_system_local = source.Import_Local_Name(
+				implementation, import_path)
 		}
 	}
 	if operating_system_local == "" {
