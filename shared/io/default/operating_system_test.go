@@ -58,7 +58,7 @@ func Test_Operating_System_IO_Timeout(t *testing.T) {
 	loop.Timeout(&completion, func(_ *io.Completion, err error) {
 		fired = true
 	}, time.Millisecond)
-	driver.Run_For(50 * time.Millisecond)
+	driver.Run_Until(func() (finished bool) { return fired })
 	if !fired {
 		t.Fatal("timeout did not fire")
 	}
@@ -116,7 +116,8 @@ func Test_Operating_System_IO_Socket(t *testing.T) {
 		"127.0.0.1", port,
 	)
 
-	driver.Run_For(500 * time.Millisecond)
+	driver.Run_Until(func() (finished bool) { return accepted > 0 })
+	driver.Run_Until(func() (finished bool) { return connected > 0 })
 	if accepted <= 0 {
 		t.Fatalf("accept did not complete, got %d", accepted)
 	}
@@ -141,7 +142,7 @@ func Test_Operating_System_IO_Socket(t *testing.T) {
 		received = count
 	}, accepted, buffer)
 
-	driver.Run_For(500 * time.Millisecond)
+	driver.Run_Until(func() (finished bool) { return received >= 0 })
 	if received != 4 {
 		t.Fatalf("received %d bytes, want 4", received)
 	}
@@ -303,7 +304,7 @@ func Test_Operating_System_IO_Peer_Address(t *testing.T) {
 		func(_ *io.Completion, socket io.File, err error) {},
 		"127.0.0.1", port,
 	)
-	driver.Run_For(500 * time.Millisecond)
+	driver.Run_Until(func() (finished bool) { return accepted > 0 })
 
 	if accepted <= 0 {
 		t.Fatalf("accept did not complete, got %d", accepted)
@@ -327,7 +328,7 @@ func Test_Operating_System_IO_Compute(t *testing.T) {
 	loop.Compute(&completion, func(_ *io.Completion) {
 		fired = true
 	}, func() { ran = true })
-	driver.Run_For(500 * time.Millisecond)
+	driver.Run_Until(func() (finished bool) { return fired })
 
 	if !ran {
 		t.Fatal("compute work did not run")
@@ -351,7 +352,7 @@ func Test_Operating_System_IO_Watch_Signal(t *testing.T) {
 	if kill_err := syscall.Kill(os.Getpid(), syscall.SIGTERM); kill_err != nil {
 		t.Fatalf("kill: %v", kill_err)
 	}
-	driver.Run_For(500 * time.Millisecond)
+	driver.Run_Until(func() (finished bool) { return fired > 0 })
 
 	if fired != 1 {
 		t.Fatalf("signal callback fired %d times, want 1", fired)
@@ -392,7 +393,8 @@ func Test_Operating_System_IO_TLS(t *testing.T) {
 			client = socket
 		}, "127.0.0.1", port, "localhost")
 
-	driver.Run_For(3 * time.Second)
+	driver.Run_Until(func() (finished bool) { return server > 0 })
+	driver.Run_Until(func() (finished bool) { return client > 0 })
 	if server <= 0 {
 		t.Fatalf("secure accept did not complete, got %d", server)
 	}
@@ -415,7 +417,7 @@ func Test_Operating_System_IO_TLS(t *testing.T) {
 		}
 		received = count
 	}, server, buffer)
-	driver.Run_For(3 * time.Second)
+	driver.Run_Until(func() (finished bool) { return received >= 0 })
 
 	if received != 4 {
 		t.Fatalf("received %d bytes, want 4", received)
@@ -469,7 +471,7 @@ func Test_Operating_System_IO_Spawn(t *testing.T) {
 		echo = result
 		echoed = true
 	}, io.Process_Request{Path: "/bin/echo", Arguments: []string{"hi"}})
-	driver.Run_For(2 * time.Second)
+	driver.Run_Until(func() (finished bool) { return echoed })
 
 	if !echoed {
 		t.Fatal("echo did not complete")
@@ -491,7 +493,7 @@ func Test_Operating_System_IO_Spawn(t *testing.T) {
 		fail = result
 		failed = true
 	}, io.Process_Request{Path: "/bin/sh", Arguments: []string{"-c", "exit 1"}})
-	driver.Run_For(2 * time.Second)
+	driver.Run_Until(func() (finished bool) { return failed })
 
 	if !failed {
 		t.Fatal("false did not complete")
@@ -519,7 +521,7 @@ func Test_Operating_System_IO_Spawn_Streams_To_Sink(t *testing.T) {
 		result = spawned
 		done = true
 	}, io.Process_Request{Path: "/bin/echo", Arguments: []string{"hi"}, Stdout: &streamed})
-	driver.Run_For(2 * time.Second)
+	driver.Run_Until(func() (finished bool) { return done })
 
 	if !done {
 		t.Fatal("echo did not complete")
