@@ -944,15 +944,32 @@ func Test_Source_And_Test_Requirements_Struct_Field_Documentation_Comments(t *te
 }
 
 // Test_Source_And_Test_Requirements_Name_Style verifies an exported identifier
-// not in Ada_Case is flagged. The rule governs identifier casing, not file
-// names; a hyphenated path is the Path Casing rule's domain, so a file-name
-// fixture would pass on that rule alone and never exercise this one.
+// not in Ada_Case is flagged, and that an exported top-level const is held to
+// SCREAMING_SNAKE_CASE instead — a separate diagnostic, not the general Ada_Case
+// one. The rule governs identifier casing, not file names; a hyphenated path is
+// the Path Casing rule's domain, so a file-name fixture would never exercise it.
 func Test_Source_And_Test_Requirements_Name_Style(t *testing.T) {
 	t.Parallel()
 	files := specification_one_file(
-		"package fixture\n\n// Bad_Name is a fixture.\nconst BadName = 0\n")
+		"package fixture\n\n// BadName is a fixture.\nfunc BadName() { println(0) }\n")
 	if !specification_flags(t, files, "BadName -> Bad_Name") {
 		t.Fatal("an exported identifier not in Ada_Case must be flagged")
+	}
+
+	constant_files := specification_one_file(
+		"package fixture\n\n// BadName is a fixture.\nconst BadName = 0\n")
+	diags := specification_self_diagnostics(t, constant_files)
+	if !specification_diagnosed(diags, "BadName -> BAD_NAME") {
+		t.Fatal("an exported const not in SCREAMING_SNAKE_CASE must be flagged")
+	}
+	if specification_diagnosed(diags, "BadName -> Bad_Name") {
+		t.Fatal("an exported const must not also receive the general Ada_Case suggestion")
+	}
+
+	clean_files := specification_one_file(
+		"package fixture\n\n// GOOD_NAME is a fixture.\nconst GOOD_NAME = 0\n")
+	if specification_diagnosed(specification_self_diagnostics(t, clean_files), "GOOD_NAME ->") {
+		t.Fatal("a SCREAMING_SNAKE_CASE exported const must not be flagged")
 	}
 }
 

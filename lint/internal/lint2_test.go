@@ -1157,9 +1157,15 @@ var X = 0
 // Test_Snapshot_Bans_Words pins the banned-word checks.
 func Test_Snapshot_Bans_Words(t *testing.T) {
 	run_snapshot_cases(t, []snapshot_case{
-		{Snapshot: snap.Init(`a.go:5:7: identifier "Length" contains banned substring "length"`), Files: snapshot_package(`// Length is a fixture.
+		{
+			Snapshot: snap.Init(`a.go:5:7: identifier "Length" contains banned substring "length"`),
+			Files: snapshot_package(`// Length is a fixture.
 const Length = 0
-`)},
+`),
+			// Length is also an exported const not in SCREAMING_SNAKE_CASE, incidental
+			// to the rule this case pins; drop that diagnostic rather than pin it too.
+			Drop: "Length -> LENGTH",
+		},
 		{Snapshot: snap.Init(`a.go:5:6: identifier "Helper" contains banned substring "helper"`), Files: snapshot_package(`// Helper helps.
 func Helper() (n int) {
 	return 0
@@ -1224,9 +1230,15 @@ func MyName() {
 	println(0)
 }
 `)},
-		{Snapshot: snap.Init(`a.go:5:7: rename Widget_Id -> Widget_Identifier`), Files: snapshot_package(`// Widget_Id is a fixture.
+		{
+			Snapshot: snap.Init(`a.go:5:7: rename Widget_Id -> Widget_Identifier`),
+			Files: snapshot_package(`// Widget_Id is a fixture.
 const Widget_Id = 0
-`)},
+`),
+			// Widget_Id is also an exported const not in SCREAMING_SNAKE_CASE,
+			// incidental to the rule this case pins; drop it rather than pin it too.
+			Drop: "Widget_Id -> WIDGET_ID",
+		},
 		{Snapshot: snap.Init(`a.go:5:6: present participle "parsing" → rename to a noun form`), Files: snapshot_package(`// Parsing is a fixture.
 type Parsing struct {
 	// X is a fixture.
