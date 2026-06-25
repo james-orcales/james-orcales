@@ -1,6 +1,7 @@
 package io_test
 
 import (
+	"bytes"
 	"crypto/tls"
 	"net"
 	"os"
@@ -479,6 +480,37 @@ func Test_Operating_System_IO_Spawn(t *testing.T) {
 	}
 	if fail.Exit != 1 {
 		t.Fatalf("false exit = %d, want 1", fail.Exit)
+	}
+}
+
+// Test_Operating_System_IO_Spawn_Streams_To_Sink runs a command with a live stdout sink,
+// confirming the backend streams the child's output to the writer as it runs instead of
+// capturing it — the affordance a long build needs — and leaves Output empty.
+func Test_Operating_System_IO_Spawn_Streams_To_Sink(t *testing.T) {
+	clock, _ := timeos.New_Operating_System_Clock()
+	loop, driver := iodefault.New_Operating_System_IO(clock)
+
+	streamed := bytes.Buffer{}
+	result := io.Process_Result{}
+	done := false
+	var completion io.Completion
+	loop.Spawn(&completion, func(_ *io.Completion, spawned io.Process_Result, err error) {
+		if err != nil {
+			t.Errorf("echo spawn: %v", err)
+		}
+		result = spawned
+		done = true
+	}, io.Process_Request{Path: "/bin/echo", Arguments: []string{"hi"}, Stdout: &streamed})
+	driver.Run_For(2 * time.Second)
+
+	if !done {
+		t.Fatal("echo did not complete")
+	}
+	if streamed.String() != "hi\n" {
+		t.Fatalf("streamed output = %q, want hi", streamed.String())
+	}
+	if len(result.Output) != 0 {
+		t.Fatalf("Output = %q, want empty when streamed to a sink", result.Output)
 	}
 }
 
