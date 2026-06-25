@@ -143,9 +143,11 @@ func Benchmark_Caller_Synchronous(b *testing.B) {
 func Benchmark_Caller_Diode(b *testing.B) {
 	sink := null_sink(b)
 	defer sink.Close()
+	clock, _ := system_time.New_Operating_System_Clock()
 	writer := diode.New(diode.New_Input{
 		Writer: sink,
-		Clock:  system_time.New_Operating_System_Clock(),
+		Clock:  clock,
+		Sleep:  system_time.Sleep,
 		Count:  1024,
 	})
 	defer writer.Close()

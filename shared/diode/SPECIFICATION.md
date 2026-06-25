@@ -25,7 +25,7 @@ Entries the drain delivers reach the sink in the order they were written.
 
 # Poll Interval Is Configurable
 
-The drain sleeps Poll_Interval on an empty ring via the injected clock; an unset
+The drain sleeps Poll_Interval on an empty ring via the injected sleep; an unset
 interval defaults to one hundred milliseconds.
 
 # Close Flushes And Stops

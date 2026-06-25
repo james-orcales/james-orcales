@@ -100,10 +100,11 @@ var Default = New_Default_Logger()
 // timestamps, and a runtime-backed caller lookup. This is the one place in the jlog
 // tree where ambient binding is permitted.
 func New_Default_Logger() (logger Logger) {
-	clock := system_time.New_Operating_System_Clock()
+	clock, _ := system_time.New_Operating_System_Clock()
 	writer := diode.New(diode.New_Input{
 		Writer:        os.Stderr,
 		Clock:         clock,
+		Sleep:         system_time.Sleep,
 		Count:         default_diode_count,
 		Poll_Interval: 100 * time.Millisecond,
 		Alerter:       report_dropped,
