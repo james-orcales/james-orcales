@@ -1760,6 +1760,40 @@ func specification_markdown_prepend(files map[string][]byte, text string) {
 	files["pkg/SPECIFICATION.md"] = append([]byte(text), files["pkg/SPECIFICATION.md"]...)
 }
 
+// Test_Source_And_Test_Bans_Recursion_Exempt verifies a recursive function in a
+// package listed in opt_out_recursion_ban is not flagged.
+func Test_Source_And_Test_Bans_Recursion_Exempt(t *testing.T) {
+	t.Parallel()
+	files := specification_one_file(
+		"package fixture\n\n// F loops.\nfunc F() {\n\tF()\n}\n")
+	diags := recursion_exempt_self_diagnostics(t, files, []string{"pkg"})
+	if specification_diagnosed(diags, "calls itself") {
+		t.Fatal("recursion in an exempt package must not be flagged")
+	}
+}
+
+// Mirrors specification_self_diagnostics but threads opt_out_recursion_ban, the
+// recursion ban's escape hatch for a recursive-descent parser package.
+func recursion_exempt_self_diagnostics(
+	t *testing.T, files map[string][]byte, exempt []string,
+) (diags []lint.Diagnostic) {
+	t.Helper()
+	fsys := fstest.MapFS{}
+	for name, content := range files {
+		fsys[name] = &fstest.MapFile{Data: content}
+	}
+	diags, err := lint.Check_File_System(&lint.Check_File_System_Input{
+		Fsys:             fsys,
+		Scope:            "pkg",
+		Shared_Component: doctrine_shared_component_directory,
+		Recursion_Exempt: exempt,
+	})
+	if err != nil {
+		t.Fatalf("Check_File_System: %v", err)
+	}
+	return diags
+}
+
 // Runs the linter over the fixture with the given package directories opted into
 // the deterministic tier, returning its diagnostics. Mirrors
 // specification_self_diagnostics but threads Deterministic_Packages, which
