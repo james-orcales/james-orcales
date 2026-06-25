@@ -305,7 +305,9 @@ func check(n int, prefix string) {
 func Test_Register_Descends_Bundle(t *testing.T) {
 	const source = `package fixture
 
-func Pair_Invariants(n int, namespace string) {
+type Pair int
+
+func Pair_Invariants(n Pair, namespace string) {
 	invariant.Dot_Product(namespace,
 		invariant.Sometimes(n < 0, "lo"),
 		invariant.Sometimes(n > 0, "hi"),
@@ -346,11 +348,15 @@ func check(n int) {
 func Test_Register_Nested_Invariants_Register_Separate_Grids(t *testing.T) {
 	const source = `package fixture
 
-func Inner_Invariants(n int, namespace string) {
+type Inner int
+
+func Inner_Invariants(n Inner, namespace string) {
 	invariant.Dot_Product(namespace, invariant.Sometimes(n < 0, "inner"))
 }
 
-func Outer_Invariants(n int, namespace string) {
+type Outer int
+
+func Outer_Invariants(n Outer, namespace string) {
 	invariant.Dot_Product(namespace, invariant.Sometimes(n > 0, "outer"))
 	Inner_Invariants(n, "field.inner")
 }
@@ -387,7 +393,9 @@ func check(n int) {
 func Test_Register_Two_Namespaces_Of_One_Invariants_Yield_Distinct_Entries(t *testing.T) {
 	const source = `package fixture
 
-func Pair_Invariants(n int, namespace string) {
+type Pair int
+
+func Pair_Invariants(n Pair, namespace string) {
 	invariant.Dot_Product(namespace, invariant.Sometimes(n < 0, "lo"))
 }
 
@@ -603,7 +611,9 @@ func Test_Register_Resolves_Cross_Package_Bundle(t *testing.T) {
 
 import invariant "example.com/m/invariant"
 
-func Pair_Invariants(n int, namespace string) {
+type Pair int
+
+func Pair_Invariants(n Pair, namespace string) {
 	invariant.Dot_Product(namespace,
 		invariant.Sometimes(n < 0, "lo"),
 		invariant.Sometimes(n > 0, "hi"),
@@ -984,16 +994,22 @@ type Transfer struct {
 	Memo   string
 }
 
-func Sign_Invariants(n int, namespace string) {
+type Sign int
+
+func Sign_Invariants(n Sign, namespace string) {
 	invariant.Dot_Product(namespace, invariant.Sometimes(n < 0, "sign"))
 }
 
-func Amount_Invariants(n int, namespace string) {
+type Amount int
+
+func Amount_Invariants(n Amount, namespace string) {
 	invariant.Dot_Product(namespace, invariant.Sometimes(n == 0, "amount"))
 	Sign_Invariants(n, "transfer.amount.sign")
 }
 
-func Memo_Invariants(s string, namespace string) {
+type Memo string
+
+func Memo_Invariants(s Memo, namespace string) {
 	invariant.Dot_Product(namespace, invariant.Sometimes(len(s) == 0, "memo"))
 }
 
@@ -1075,7 +1091,9 @@ func check(n int) {
 func Test_Register_Recognizes_Unqualified_Sugar(t *testing.T) {
 	const sugar = `package sugar
 
-func Pair_Invariants(n int, namespace string) {
+type Pair int
+
+func Pair_Invariants(n Pair, namespace string) {
 	Dot_Product(namespace,
 		Sometimes(n < 0, "lo"),
 		Sometimes(n > 0, "hi"),
@@ -1125,7 +1143,9 @@ func check(n int) {
 func Test_Register_Unqualified_Sugar_Ignored_Outside_Sugar_Package(t *testing.T) {
 	const sugar = `package sugar
 
-func Pair_Invariants(n int, namespace string) {
+type Pair int
+
+func Pair_Invariants(n Pair, namespace string) {
 	Dot_Product(namespace,
 		Sometimes(n < 0, "lo"),
 		Sometimes(n > 0, "hi"),
@@ -1173,7 +1193,9 @@ func check(n int) {
 func Test_Register_Recognizes_Lowercase_Invariants_Bundle(t *testing.T) {
 	const source = `package fixture
 
-func pair_invariants(n int, namespace string) {
+type pair int
+
+func pair_invariants(n pair, namespace string) {
 	invariant.Dot_Product(namespace,
 		invariant.Sometimes(n < 0, "lo"),
 		invariant.Sometimes(n > 0, "hi"),

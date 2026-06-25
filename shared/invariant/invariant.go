@@ -720,7 +720,7 @@ func Recorder_Register_Packages_For_Analysis(recorder *Recorder, directories ...
 		recorder_register_file(recorder, file_set, file, index, reg)
 	}
 	recorder_check_bundle_control_flow(recorder, file_set, files)
-	recorder_check_primitive_bundles(recorder, file_set, files, module_path, module_root)
+	recorder_check_primitive_bundles(recorder, file_set, files, index)
 	recorder_check_unresolved(recorder, reg.Unresolved)
 	recorder_check_non_literal_messages(recorder, reg.Non_Literal)
 	recorder_check_duplicate_messages(recorder, reg.Collision)
@@ -1080,14 +1080,12 @@ func recorder_check_bundle_control_flow(
 // primitive inline or wraps it in a custom type. The Sugar_Package, which owns the
 // presets, is exempt.
 func recorder_check_primitive_bundles(
-	recorder *Recorder, file_set *token.FileSet, files []*ast.File,
-	module_path string, module_root string,
+	recorder *Recorder, file_set *token.FileSet, files []*ast.File, index *bundle_index,
 ) {
 	var offenders []string
 	for _, file := range files {
-		if recorder.Sugar_Package != "" {
-			if recorder_file_package(file_set, file, module_path, module_root) ==
-				recorder.Sugar_Package {
+		if index.Sugar_Package != "" {
+			if recorder_file_package(file_set, file, index) == index.Sugar_Package {
 				continue
 			}
 		}
@@ -1208,20 +1206,20 @@ func recorder_is_builtin_type_name(name string) (yes bool) {
 }
 
 // Returns the import path of file's package, derived from its absolute path against
-// the module root and path. "" when no module was found.
+// the index's module root and path. "" when no module was found.
 func recorder_file_package(
-	file_set *token.FileSet, file *ast.File, module_path string, module_root string,
+	file_set *token.FileSet, file *ast.File, index *bundle_index,
 ) (import_path string) {
-	if module_path == "" {
+	if index.Module_Path == "" {
 		return ""
 	}
 	absolute := file_set.Position(file.Pos()).Filename
-	relative := strings.TrimPrefix(path.Dir(absolute), module_root)
+	relative := strings.TrimPrefix(path.Dir(absolute), index.Module_Root)
 	relative = strings.TrimPrefix(relative, "/")
 	if relative == "" {
-		return module_path
+		return index.Module_Path
 	}
-	return path.Join(module_path, relative)
+	return path.Join(index.Module_Path, relative)
 }
 
 // Reports whether node is a branching or looping statement banned in a bundle body.
