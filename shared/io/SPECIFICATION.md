@@ -12,8 +12,9 @@ Ready_At queue the IO completions use, so every wait rides one timeline.
 
 ### Read
 
-A read completes after the modeled latency and reports the buffer length, with no
-real syscall and no waiting.
+A read on an opened file returns its stored bytes from the offset after the modeled latency,
+so a mirror reads back what an earlier write stored; a read on any other descriptor reports
+the buffer length.
 
 ### Listen
 
@@ -62,8 +63,8 @@ corrupting the queue.
 
 ### Open
 
-Open returns a fresh descriptor synchronously; opening never blocks, so it carries no
-completion, and a later Read of the descriptor delivers bytes on the loop.
+Open returns a descriptor for an existing file synchronously; an absent path or a directory
+errors instead. A later Read of the descriptor delivers the file's bytes on the loop.
 
 ### Create
 
@@ -105,3 +106,18 @@ timeline; the simulator runs it inline so the result stays reproducible.
 A spawn completes after the drawn latency with a seed-drawn exit code and no captured
 output — the seed decides success or failure, since scripted output is disallowed. A live
 Stdout or Stderr sink instead streams that output on the real backend, uncaptured.
+
+### Read Directory
+
+Read_Directory lists a directory's immediate children synchronously, sorted by name so the
+run reproduces, each entry naming a child and whether it is itself a directory.
+
+### Status
+
+Status reports synchronously whether a path exists and, if so, whether it is a directory; an
+absent path is not-exists with a nil error, so a caller branches on the status, not an error.
+
+### Make Directory
+
+Make_Directory creates a path and any missing parents synchronously against the tree; an
+existing directory converges, so a repeated mkdir is not an error.

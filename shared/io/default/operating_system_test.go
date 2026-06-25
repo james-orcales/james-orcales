@@ -5,6 +5,7 @@ import (
 	"crypto/tls"
 	"net"
 	"os"
+	"path/filepath"
 	"syscall"
 	"testing"
 
@@ -511,6 +512,61 @@ func Test_Operating_System_IO_Spawn_Streams_To_Sink(t *testing.T) {
 	}
 	if len(result.Output) != 0 {
 		t.Fatalf("Output = %q, want empty when streamed to a sink", result.Output)
+	}
+}
+
+// Test_Operating_System_IO_Directory exercises the filesystem-traversal ops on a real temp
+// tree: Make_Directory builds a nested path (into which the fixture file is seeded), and
+// Status and Read_Directory then report the tree's shape, including an absent path.
+func Test_Operating_System_IO_Directory(t *testing.T) {
+	clock, _ := timeos.New_Operating_System_Clock()
+	loop, _ := iodefault.New_Operating_System_IO(clock)
+
+	root := t.TempDir()
+	nested := filepath.Join(root, "a", "b")
+	if make_err := loop.Make_Directory(nested); make_err != nil {
+		t.Fatalf("make directory: %v", make_err)
+	}
+	file_path := filepath.Join(nested, "file.txt")
+	if seed_err := os.WriteFile(file_path, []byte("hello"), 0o644); seed_err != nil {
+		t.Fatalf("seed file (proves Make_Directory built the parents): %v", seed_err)
+	}
+
+	directory_status, _ := loop.Status(nested)
+	if !directory_status.Exists {
+		t.Fatalf("nested status = %+v, want an existing path", directory_status)
+	}
+	if !directory_status.Is_Directory {
+		t.Fatalf("nested status = %+v, want a directory", directory_status)
+	}
+	regular_status, _ := loop.Status(file_path)
+	if !regular_status.Exists {
+		t.Fatalf("file status = %+v, want an existing path", regular_status)
+	}
+	if regular_status.Is_Directory {
+		t.Fatalf("file status = %+v, want a non-directory", regular_status)
+	}
+	absent_status, _ := loop.Status(filepath.Join(root, "nope"))
+	if absent_status.Exists {
+		t.Fatalf("absent status = %+v, want not exists", absent_status)
+	}
+
+	entries, read_err := loop.Read_Directory(nested)
+	if read_err != nil {
+		t.Fatalf("read directory: %v", read_err)
+	}
+	found := false
+	for _, entry := range entries {
+		if entry.Name != "file.txt" {
+			continue
+		}
+		found = true
+		if entry.Is_Directory {
+			t.Fatal("file.txt reported as a directory")
+		}
+	}
+	if !found {
+		t.Fatalf("read directory %q missing file.txt, got %v", nested, entries)
 	}
 }
 

@@ -3,11 +3,21 @@
 package io
 
 import (
+	"errors"
 	"net"
+	"path/filepath"
 	"syscall"
 
 	"github.com/james-orcales/james-orcales/shared/io"
 )
+
+// Bounds one readdir pass into a fixed buffer, so a large directory is read in repeated
+// passes rather than one unbounded allocation.
+const directory_read_bytes = 8192
+
+// Caps the number of readdir passes so a pathological directory errors rather than looping
+// unbounded; 4096 passes of directory_read_bytes cover hundreds of thousands of entries.
+const directory_read_passes_max = 4096
 
 // Reads up to len(buffer) bytes from file at offset via the pread syscall — the raw
 // positioned read TigerBeetle's posix backend uses.
@@ -28,6 +38,56 @@ func file_open(path string) (descriptor int, err error) {
 // Creates or truncates path for writing via the open syscall, returning its descriptor.
 func file_create(path string) (descriptor int, err error) {
 	return syscall.Open(path, syscall.O_WRONLY|syscall.O_CREAT|syscall.O_TRUNC, 0o644)
+}
+
+// Reports whether path exists and is a directory via lstat. An absent path is Exists
+// false with a nil error, so a caller distinguishes "not there" from a real stat failure.
+func file_status(path string) (status io.File_Status, err error) {
+	metadata := syscall.Stat_t{}
+	stat_err := syscall.Lstat(path, &metadata)
+	if stat_err == syscall.ENOENT {
+		return io.File_Status{}, nil
+	}
+	if stat_err != nil {
+		return io.File_Status{}, stat_err
+	}
+	return io.File_Status{
+		Exists:       true,
+		Is_Directory: metadata.Mode&syscall.S_IFMT == syscall.S_IFDIR,
+	}, nil
+}
+
+// Lists path's immediate children, each named with whether it is a directory. It reads the
+// directory's raw entries in fixed-size passes and stats each name for its kind — the same
+// per-entry stat a walk over os.DirFS performs.
+func file_read_directory(path string) (entries []io.Directory_Entry, err error) {
+	descriptor, open_err := syscall.Open(path, syscall.O_RDONLY, 0)
+	if open_err != nil {
+		return nil, open_err
+	}
+	defer syscall.Close(descriptor)
+	buffer := make([]byte, directory_read_bytes)
+	for pass_index := 0; pass_index < directory_read_passes_max; pass_index++ {
+		count, read_err := syscall.ReadDirent(descriptor, buffer)
+		if read_err != nil {
+			return nil, read_err
+		}
+		if count <= 0 {
+			return entries, nil
+		}
+		_, _, names := syscall.ParseDirent(buffer[:count], -1, nil)
+		for _, name := range names {
+			status, status_err := file_status(filepath.Join(path, name))
+			if status_err != nil {
+				return nil, status_err
+			}
+			entries = append(entries, io.Directory_Entry{
+				Name:         name,
+				Is_Directory: status.Is_Directory,
+			})
+		}
+	}
+	return nil, errors.New("io: directory exceeds the maximum entry count")
 }
 
 // Reports the remote IP address of descriptor via getpeername; a non-IP peer yields the
