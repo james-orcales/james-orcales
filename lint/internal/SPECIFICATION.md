@@ -678,8 +678,8 @@ none.
 
 ### Contents
 
-The simulation package declares nothing but one Fuzz function and one TestMain, so its isolated
-test binary can witness an invariant only by driving internal.Main, not by direct construction.
+The simulation package declares a Fuzz function that drives internal.Main; that fuzz, in its own
+isolated test binary, witnesses the component's invariants. Other declarations are allowed.
 
 ### Test Main
 
@@ -690,3 +690,13 @@ a missing TestMain, is banned.
 
 The "../**" glob registers the internal package and every package beneath it, so all are
 witnessed in one pattern; a narrower argument that omits some is banned.
+
+### Entry
+
+The simulation references only Main among the internal tree's functions; any other internal
+function it names is a second entry point and is banned. Internal's exports are otherwise free.
+
+### Blackbox
+
+The simulation directory holds one blackbox test package and no source package: every file is a
+_test.go declaring package <name>_test.

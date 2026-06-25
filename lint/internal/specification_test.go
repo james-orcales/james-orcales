@@ -1839,15 +1839,16 @@ func Test_Simulation_Presence(t *testing.T) {
 	}
 }
 
-// Test_Simulation_Contents verifies a simulation package that declares anything
-// beyond its one Fuzz function and TestMain is flagged.
+// Test_Simulation_Contents verifies a simulation package with no Fuzz function is
+// flagged: the fuzz driver must be present.
 func Test_Simulation_Contents(t *testing.T) {
 	t.Parallel()
-	files := simulation_test_files(simulation_fixture_source(
-		"invariant.Run_Test_Main(m, \"../**\")",
-		"\n// Extra is disallowed.\ntype Extra struct{}\n"))
-	if !specification_flags(t, files, "may declare only a fuzz function and TestMain") {
-		t.Fatal("a simulation package with an extra declaration must be flagged")
+	sim := "package simulation_test\n\nimport (\n\t\"testing\"\n\n" +
+		"\tinvariant \"fixture/shared/invariant\"\n)\n\n" +
+		"func TestMain(m *testing.M) {\n\tinvariant.Run_Test_Main(m, \"../**\")\n}\n"
+	files := simulation_test_files(sim)
+	if !specification_flags(t, files, "must declare a fuzz function") {
+		t.Fatal("a simulation package without a fuzz function must be flagged")
 	}
 }
 
@@ -1869,6 +1870,34 @@ func Test_Simulation_Coverage(t *testing.T) {
 		simulation_fixture_source("invariant.Run_Test_Main(m, \"../*\")"))
 	if !specification_flags(t, files, "simulation TestMain must be exactly") {
 		t.Fatal("a narrower glob that omits nested internal packages must be flagged")
+	}
+}
+
+// Test_Simulation_Entry verifies the simulation is flagged when it references an
+// internal function other than Main.
+func Test_Simulation_Entry(t *testing.T) {
+	t.Parallel()
+	internal_source := "// Package internal is a fixture.\npackage internal\n\n" +
+		"// Main is the entry point.\nfunc Main() {}\n\n" +
+		"// Extra is a fixture.\nfunc Extra() {}\n"
+	files := simulation_test_files(simulation_entry_source("internal.Extra()"))
+	files["pkg/internal/entry.go"] = []byte(internal_source)
+	if !specification_flags(t, files, "simulation may reference only Main") {
+		t.Fatal("referencing a non-Main internal function must be flagged")
+	}
+}
+
+// Test_Simulation_Blackbox verifies a simulation package that is not an external
+// _test package is flagged.
+func Test_Simulation_Blackbox(t *testing.T) {
+	t.Parallel()
+	sim := "package simulation\n\nimport (\n\t\"testing\"\n\n" +
+		"\tinvariant \"fixture/shared/invariant\"\n)\n\n" +
+		"func TestMain(m *testing.M) {\n\tinvariant.Run_Test_Main(m, \"../**\")\n}\n\n" +
+		"func Fuzz_Main(f *testing.F) {\n\tf.Fuzz(func(t *testing.T, data []byte) {})\n}\n"
+	files := simulation_test_files(sim)
+	if !specification_flags(t, files, "must be blackbox") {
+		t.Fatal("a whitebox simulation package must be flagged")
 	}
 }
 
@@ -2664,6 +2693,16 @@ func simulation_fixture_source(call string, extra ...string) (source string) {
 		tail
 }
 
+// A simulation package source that imports pkg/internal and runs the given statement
+// in its fuzz body, for exercising the entry restriction to internal.Main.
+func simulation_entry_source(body string) (source string) {
+	return "package simulation_test\n\nimport (\n\t\"testing\"\n\n" +
+		"\t\"github.com/james-orcales/james-orcales/pkg/internal\"\n" +
+		"\tinvariant \"fixture/shared/invariant\"\n)\n\n" +
+		"func TestMain(m *testing.M) {\n\tinvariant.Run_Test_Main(m, \"../**\")\n}\n\n" +
+		"func Fuzz_Main(f *testing.F) {\n\t" + body + "\n}\n"
+}
+
 // Test_Simulation_Wired_Passes verifies a simulation package with the canonical
 // TestMain and a lone Fuzz function satisfies the rule.
 func Test_Simulation_Wired_Passes(t *testing.T) {
@@ -2683,6 +2722,41 @@ func Test_Simulation_Exempt_Passes(t *testing.T) {
 	diags := invariant_exempt_self_diagnostics(t, files, []string{"pkg/internal"})
 	if specification_named(diags, "simulation") {
 		t.Fatal("a wholly exempt internal tree must not require a simulation package")
+	}
+}
+
+// Test_Simulation_Helpers_Allowed verifies a simulation package may declare helper
+// functions and types alongside its fuzz driver and TestMain.
+func Test_Simulation_Helpers_Allowed(t *testing.T) {
+	t.Parallel()
+	files := simulation_test_files(simulation_fixture_source(
+		"invariant.Run_Test_Main(m, \"../**\")",
+		"\n// Extra is a fixture.\nfunc extra() (n int) { return 0 }\n"))
+	if specification_named(specification_self_diagnostics(t, files), "simulation") {
+		t.Fatal("a helper declaration must not be flagged")
+	}
+}
+
+// Test_Simulation_Entry_Main_Allowed verifies a simulation that references only
+// internal.Main is not flagged.
+func Test_Simulation_Entry_Main_Allowed(t *testing.T) {
+	t.Parallel()
+	files := simulation_test_files(simulation_entry_source("internal.Main()"))
+	if specification_named(specification_self_diagnostics(t, files), "simulation") {
+		t.Fatal("referencing only internal.Main must not be flagged")
+	}
+}
+
+// Test_Simulation_No_Source verifies a source (non-test) file in the simulation
+// directory is flagged: the directory holds only the blackbox test package.
+func Test_Simulation_No_Source(t *testing.T) {
+	t.Parallel()
+	files := simulation_test_files(
+		simulation_fixture_source("invariant.Run_Test_Main(m, \"../**\")"))
+	files["pkg/internal/simulation_test/source.go"] =
+		[]byte("// Package simulation is a fixture.\npackage simulation\n")
+	if !specification_flags(t, files, "no source file") {
+		t.Fatal("a source file in the simulation directory must be flagged")
 	}
 }
 
