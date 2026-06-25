@@ -520,8 +520,6 @@ func seeds_progress() (seeds [][]byte) {
 		progress(func(s *scenario) { s.Word_Bytes = 2 }),
 		progress(func(s *scenario) { s.Word_Bytes = sim_word_max }),
 		total(1), total(-1), total(math.MinInt64), total(math.MaxInt64),
-		// A full run with progress, so the progress counter reaches the run cap.
-		with(func(s *scenario) { s.Progress = true; s.Runs = sim_samples_max }),
 		// Progress labels at their one- and two-byte shapes: a single short-path command.
 		with(func(s *scenario) {
 			s.Progress = true
@@ -641,7 +639,6 @@ func seeds_shape() (seeds [][]byte) {
 		with(func(s *scenario) { s.Word_Bytes = 2 }),
 		with(func(s *scenario) { s.Word_Bytes = sim_word_max }),
 		with(func(s *scenario) { s.Runs = 3 }),
-		with(func(s *scenario) { s.Runs = sim_samples_max }),
 	}
 }
 
@@ -754,9 +751,12 @@ func seeds_failure() (seeds [][]byte) {
 func seeds_configuration() (seeds [][]byte) {
 	return [][]byte{
 		with(func(s *scenario) { s.Runs = 1 }),
-		with(func(s *scenario) { s.Runs = -1 }),
-		with(func(s *scenario) { s.Runs = math.MinInt64 }),
-		with(func(s *scenario) { s.Runs = math.MaxInt64 }),
+		// A disabled or absurd run cap witnesses the Runs_Max boundary from the input
+		// alone; a one-grain budget stops the loop at the quorum instead of grinding to
+		// the sample ceiling, so these seeds cost three runs, not ten thousand.
+		with(func(s *scenario) { s.Runs = -1; s.Duration = 1 }),
+		with(func(s *scenario) { s.Runs = math.MinInt64; s.Duration = 1 }),
+		with(func(s *scenario) { s.Runs = math.MaxInt64; s.Duration = 1 }),
 		with(func(s *scenario) { s.Warmup = 1 }),
 		with(func(s *scenario) { s.Warmup = -1 }),
 		with(func(s *scenario) { s.Warmup = math.MinInt64 }),

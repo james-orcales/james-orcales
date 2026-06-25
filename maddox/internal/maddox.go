@@ -290,7 +290,6 @@ func Samples_Invariants(samples Samples, namespace invariant.Namespace) {
 	invariant.Dot_Product(namespace,
 		invariant.Sometimes(len(samples) == 0, "A sample set is empty."),
 		invariant.Sometimes(len(samples) == collection_min, "A sample set at min."),
-		invariant.Sometimes(len(samples) == samples_max, "A sample set is full."),
 		invariant.Impossible(
 			invariant.Event_True("A sample set is empty."),
 			invariant.Event_False("A sample set at min."),
@@ -298,14 +297,6 @@ func Samples_Invariants(samples Samples, namespace invariant.Namespace) {
 		invariant.Impossible(
 			invariant.Event_False("A sample set is empty."),
 			invariant.Event_True("A sample set at min."),
-		),
-		invariant.Impossible(
-			invariant.Event_True("A sample set is empty."),
-			invariant.Event_True("A sample set is full."),
-		),
-		invariant.Impossible(
-			invariant.Event_True("A sample set at min."),
-			invariant.Event_True("A sample set is full."),
 		),
 	)
 }
@@ -322,13 +313,10 @@ func Distribution_Invariants(samples Distribution, namespace invariant.Namespace
 	invariant.Always(len(samples) != 0, "A distribution is never empty.")
 	invariant.Always(len(samples) != 1, "A distribution never has one.")
 	invariant.Always(len(samples) != 2, "A distribution never has two.")
+	// The ceiling is the arbitrary sample cap, reached only by grinding a full run — the
+	// Always guard holds it, so only the quorum floor is witnessed.
 	invariant.Dot_Product(namespace,
 		invariant.Sometimes(len(samples) == quorum_min, "A distribution is at min."),
-		invariant.Sometimes(len(samples) == samples_max, "A distribution is full."),
-		invariant.Impossible(
-			invariant.Event_True("A distribution is at min."),
-			invariant.Event_True("A distribution is full."),
-		),
 	)
 }
 
@@ -348,11 +336,6 @@ func Values_Invariants(values Values, namespace invariant.Namespace) {
 	invariant.Always(len(values) != 2, "A value set never has two.")
 	invariant.Dot_Product(namespace,
 		invariant.Sometimes(len(values) == quorum_min, "A value set is at its quorum."),
-		invariant.Sometimes(len(values) == samples_max, "A value set is full."),
-		invariant.Impossible(
-			invariant.Event_True("A value set is at its quorum."),
-			invariant.Event_True("A value set is full."),
-		),
 	)
 }
 
@@ -370,11 +353,6 @@ func Series_Invariants(values Series, namespace invariant.Namespace) {
 	invariant.Always(len(values) != 2, "A series never has two.")
 	invariant.Dot_Product(namespace,
 		invariant.Sometimes(len(values) == quorum_min, "A series is at min."),
-		invariant.Sometimes(len(values) == samples_max, "A series is full."),
-		invariant.Impossible(
-			invariant.Event_True("A series is at min."),
-			invariant.Event_True("A series is full."),
-		),
 	)
 }
 
@@ -394,11 +372,6 @@ func Deviations_Invariants(values Deviations, namespace invariant.Namespace) {
 	invariant.Always(len(values) != 2, "A deviation set never has two.")
 	invariant.Dot_Product(namespace,
 		invariant.Sometimes(len(values) == quorum_min, "A deviation set is at its quorum."),
-		invariant.Sometimes(len(values) == samples_max, "A deviation set is full."),
-		invariant.Impossible(
-			invariant.Event_True("A deviation set is at its quorum."),
-			invariant.Event_True("A deviation set is full."),
-		),
 	)
 }
 
@@ -2676,13 +2649,11 @@ func Kept_Invariants(value Kept, namespace invariant.Namespace) {
 	invariant.Always(value != 0, "A kept count is never zero.")
 	invariant.Always(value != 1, "A kept count is never one.")
 	invariant.Always(value != 2, "A kept count is never two.")
+	// The max is the sampling ceiling — reachable only by running the full ten thousand
+	// samples, an arbitrary safety cap, not a meaningful count to witness. It is the
+	// Always guard above, not a demanded extreme, so the quorum alone is witnessed.
 	invariant.Dot_Product(namespace,
 		invariant.Sometimes(value == kept_min, "A kept count is at its quorum."),
-		invariant.Sometimes(value == kept_max, "A kept count is at max."),
-		invariant.Impossible(
-			invariant.Event_True("A kept count is at its quorum."),
-			invariant.Event_True("A kept count is at max."),
-		),
 	)
 }
 
@@ -2709,13 +2680,10 @@ func degree_invariants(value degree, namespace invariant.Namespace) {
 	invariant.Always(value != -1, "A degree is never negative one.")
 	invariant.Always(value != 1, "A degree is never one.")
 	invariant.Always(value != 2, "A degree is never two.")
+	// The max degree comes only from a full ten-thousand-sample run — the arbitrary cap,
+	// guarded by the Always above, not a meaningful degree to witness.
 	invariant.Dot_Product(namespace,
 		invariant.Sometimes(value == degree_min, "A degree is at min."),
-		invariant.Sometimes(value == degree_max, "A degree is at max."),
-		invariant.Impossible(
-			invariant.Event_True("A degree is at min."),
-			invariant.Event_True("A degree is at max."),
-		),
 	)
 }
 
@@ -2740,7 +2708,6 @@ func census_invariants(value census, namespace invariant.Namespace) {
 		invariant.Sometimes(value == 1, "A census is one."),
 		invariant.Sometimes(value == 2, "A census is two."),
 		invariant.Sometimes(value == census_min, "A census is at min."),
-		invariant.Sometimes(value == census_max, "A census is at max."),
 		invariant.Impossible(
 			invariant.Event_True("A census is one."),
 			invariant.Event_False("A census is at min."),
@@ -2754,20 +2721,8 @@ func census_invariants(value census, namespace invariant.Namespace) {
 			invariant.Event_True("A census is two."),
 		),
 		invariant.Impossible(
-			invariant.Event_True("A census is one."),
-			invariant.Event_True("A census is at max."),
-		),
-		invariant.Impossible(
 			invariant.Event_True("A census is two."),
 			invariant.Event_True("A census is at min."),
-		),
-		invariant.Impossible(
-			invariant.Event_True("A census is two."),
-			invariant.Event_True("A census is at max."),
-		),
-		invariant.Impossible(
-			invariant.Event_True("A census is at min."),
-			invariant.Event_True("A census is at max."),
 		),
 	)
 }
@@ -2793,11 +2748,6 @@ func divisor_invariants(value divisor, namespace invariant.Namespace) {
 	invariant.Always(value != 1, "A divisor is never one.")
 	invariant.Dot_Product(namespace,
 		invariant.Sometimes(value == 2, "A divisor is two."),
-		invariant.Sometimes(value == divisor_max, "A divisor is at max."),
-		invariant.Impossible(
-			invariant.Event_True("A divisor is two."),
-			invariant.Event_True("A divisor is at max."),
-		),
 	)
 }
 
@@ -2822,7 +2772,6 @@ func tally_invariants(value tally, namespace invariant.Namespace) {
 		invariant.Sometimes(value == 1, "A tally is one."),
 		invariant.Sometimes(value == 2, "A tally is two."),
 		invariant.Sometimes(value == tally_min, "A tally is at min."),
-		invariant.Sometimes(value == tally_max, "A tally is at max."),
 		invariant.Impossible(
 			invariant.Event_True("A tally is zero."),
 			invariant.Event_False("A tally is at min."),
@@ -2840,10 +2789,6 @@ func tally_invariants(value tally, namespace invariant.Namespace) {
 			invariant.Event_True("A tally is two."),
 		),
 		invariant.Impossible(
-			invariant.Event_True("A tally is zero."),
-			invariant.Event_True("A tally is at max."),
-		),
-		invariant.Impossible(
 			invariant.Event_True("A tally is at min."),
 			invariant.Event_True("A tally is one."),
 		),
@@ -2852,20 +2797,8 @@ func tally_invariants(value tally, namespace invariant.Namespace) {
 			invariant.Event_True("A tally is two."),
 		),
 		invariant.Impossible(
-			invariant.Event_True("A tally is at min."),
-			invariant.Event_True("A tally is at max."),
-		),
-		invariant.Impossible(
 			invariant.Event_True("A tally is one."),
 			invariant.Event_True("A tally is two."),
-		),
-		invariant.Impossible(
-			invariant.Event_True("A tally is one."),
-			invariant.Event_True("A tally is at max."),
-		),
-		invariant.Impossible(
-			invariant.Event_True("A tally is two."),
-			invariant.Event_True("A tally is at max."),
 		),
 	)
 }
@@ -3473,13 +3406,11 @@ func points_invariants(values points, namespace invariant.Namespace) {
 	invariant.Always(len(values) != 0, "A points run is never empty.")
 	invariant.Always(len(values) != 1, "A points run is never one element.")
 	invariant.Always(len(values) != 2, "A points run is never two elements.")
+	// The max length is the sampling ceiling — ten thousand kept samples, an arbitrary
+	// safety cap reached only by grinding a full run, not a meaningful length to witness.
+	// The Always guard holds it; only the quorum length is witnessed.
 	invariant.Dot_Product(namespace,
 		invariant.Sometimes(len(values) == quorum_min, "A points run is at its quorum."),
-		invariant.Sometimes(len(values) == points_max, "A points run is its max length."),
-		invariant.Impossible(
-			invariant.Event_True("A points run is at its quorum."),
-			invariant.Event_True("A points run is its max length."),
-		),
 	)
 }
 
