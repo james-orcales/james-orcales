@@ -700,3 +700,20 @@ function it names is a second entry point and is banned. Internal's exports are 
 
 The simulation directory holds one blackbox test package and no source package: every file is a
 _test.go declaring package <name>_test.
+
+# Event Loop
+
+Blocking and non-blocking IO runs on one event loop; pure code submits to it and never drives or
+mints it.
+
+### Driver
+
+The loop and clock constructors (Virtual_Clock_To_Clock, New_Operating_System_Clock, Sim_To_IO,
+New_Operating_System_IO) mint a tick and Driver, so they may be called only in package main or a
+test, never in library code.
+
+### Gateway
+
+Raw IO stdlib lives only in the io/default gateway: net, net/http, syscall, os/exec, and bufio are
+banned elsewhere, and os file IO and the blocking io helpers too; route IO through shared/io.
+Instrumentation packages and tests are exempt.

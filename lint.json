@@ -7,6 +7,7 @@
   ],
   "deterministic_packages": [
     "markdown_to_pdf",
+    "disk_usage",
     "shared/cli",
     "shared/time",
     "shared/io",
@@ -15,6 +16,7 @@
     "shared/levenshtein",
     "shared/prng",
     "shared/fixedpoint",
+    "shared/flatjson",
     "setup",
     "maddox"
   ],
@@ -27,6 +29,7 @@
   "invariant_exempt_packages": [
           "lint",
           "lint/internal",
+          "disk_usage",
           "markdown_to_pdf",
           "markdown_to_pdf/internal",
           "setup",

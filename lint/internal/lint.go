@@ -2093,6 +2093,9 @@ func check_file_system_doctrine(
 		Scan_Prefixes:   input.Scan_Prefixes,
 	})...)
 	output = append(output, check_time_import_gateway(parsed_files, components)...)
+	output = append(output, check_driver_gateway(parsed_files)...)
+	output = append(output,
+		check_io_gateway(parsed_files, components, input.Instrumentation_Packages)...)
 	output = append(output, check_package_documentation_comment(parsed_files)...)
 	output = append(output,
 		check_numeric_invariants(parsed_files, input.Invariant_Exempt_Packages)...)
@@ -10128,6 +10131,205 @@ func component_index_time_gateway(components *component_index) (gateway string) 
 			return "time/default"
 		}
 		return m.Root + "/time/default"
+	}
+	return ""
+}
+
+// A package advances the loop only through package main or a test; elsewhere it may
+// submit IO and read the clock but never mint a tick or Driver. This flags a call to a
+// loop/clock constructor outside package main and _test.go.
+func check_driver_gateway(parsed_files []parsed_file) (diags []Diagnostic) {
+	for _, pf := range parsed_files {
+		if strings.HasSuffix(pf.Path, "_test.go") {
+			continue
+		}
+		if pf.File.Name.Name == "main" {
+			continue
+		}
+		diags = append(diags, driver_gateway_file_diagnostics(pf)...)
+	}
+	return diags
+}
+
+// The loop/clock constructor calls in one file. The four names are unique to shared/io
+// and shared/time, so a selector match needs no import resolution.
+func driver_gateway_file_diagnostics(pf parsed_file) (diags []Diagnostic) {
+	ast.Inspect(pf.File, func(node ast.Node) (recurse bool) {
+		call, is_call := node.(*ast.CallExpr)
+		if !is_call {
+			return true
+		}
+		selector, is_selector := call.Fun.(*ast.SelectorExpr)
+		if !is_selector {
+			return true
+		}
+		if !driver_gateway_constructor(selector.Sel.Name) {
+			return true
+		}
+		diags = append(diags, Diagnostic{
+			Position: pf.File_Set.Position(selector.Pos()),
+			Name:     "driver-gateway",
+			Want:     "call the constructor only in package main or a test",
+			Message: selector.Sel.Name +
+				" mints a loop/clock driver; call it only in package main or a test",
+			Tier: 1,
+		})
+		return true
+	})
+	return diags
+}
+
+// Reports whether name is a loop or clock constructor that mints a tick or Driver.
+func driver_gateway_constructor(name string) (constructor bool) {
+	switch name {
+	case "Virtual_Clock_To_Clock", "New_Operating_System_Clock",
+		"Sim_To_IO", "New_Operating_System_IO":
+		return true
+	}
+	return false
+}
+
+// Raw blocking and non-blocking IO stdlib lives only in the io/default gateway; every
+// other package routes IO through shared/io. This bans the raw-IO imports and calls
+// outside the gateway, the instrumentation packages (a diagnostics side channel), and
+// tests (their own IO harness).
+func check_io_gateway(
+	parsed_files []parsed_file, components *component_index, instrumentation []string,
+) (diags []Diagnostic) {
+	gateway := component_index_io_gateway(components)
+	for _, pf := range parsed_files {
+		if strings.HasSuffix(pf.Path, "_test.go") {
+			continue
+		}
+		if gateway != "" {
+			if type_invariants_path_exempt(pf.Path, []string{gateway}) {
+				continue
+			}
+		}
+		if type_invariants_path_exempt(pf.Path, instrumentation) {
+			continue
+		}
+		diags = append(diags, io_gateway_import_diagnostics(pf)...)
+		diags = append(diags, io_gateway_call_diagnostics(pf)...)
+	}
+	return diags
+}
+
+// Flags each raw-IO stdlib import in one file.
+func io_gateway_import_diagnostics(pf parsed_file) (diags []Diagnostic) {
+	for _, implementation := range pf.File.Imports {
+		import_path := strings.Trim(implementation.Path.Value, `"`)
+		if !io_gateway_banned_import(import_path) {
+			continue
+		}
+		diags = append(diags, Diagnostic{
+			Position: pf.File_Set.Position(implementation.Pos()),
+			Name:     "io-gateway",
+			Want:     "route IO through shared/io",
+			Message: fmt.Sprintf(
+				"%q is banned outside the io/default gateway; route IO through shared/io",
+				import_path),
+			Tier: 1,
+		})
+	}
+	return diags
+}
+
+// Reports whether an import path is raw IO stdlib banned outside the gateway.
+func io_gateway_banned_import(import_path string) (banned bool) {
+	switch import_path {
+	case "net", "net/http", "syscall", "os/exec", "bufio":
+		return true
+	}
+	return false
+}
+
+// Flags each raw-IO call on os or io in one file — os file operations and the blocking
+// io helpers. The read-only parts (os.Args, io.Reader, io.EOF) are left alone.
+func io_gateway_call_diagnostics(pf parsed_file) (diags []Diagnostic) {
+	os_local := ""
+	io_local := ""
+	for _, implementation := range pf.File.Imports {
+		import_path := strings.Trim(implementation.Path.Value, `"`)
+		if import_path == "os" {
+			os_local = import_local_name(implementation, import_path)
+		}
+		if import_path == "io" {
+			io_local = import_local_name(implementation, import_path)
+		}
+	}
+	if os_local == "" {
+		if io_local == "" {
+			return nil
+		}
+	}
+	ast.Inspect(pf.File, func(node ast.Node) (recurse bool) {
+		selector, is_selector := node.(*ast.SelectorExpr)
+		if !is_selector {
+			return true
+		}
+		identifier, is_identifier := selector.X.(*ast.Ident)
+		if !is_identifier {
+			return true
+		}
+		if identifier.Name == os_local {
+			if io_gateway_banned_os(selector.Sel.Name) {
+				diags = append(diags, io_gateway_call_diagnostic(pf, selector))
+			}
+		}
+		if identifier.Name == io_local {
+			if io_gateway_banned_io(selector.Sel.Name) {
+				diags = append(diags, io_gateway_call_diagnostic(pf, selector))
+			}
+		}
+		return true
+	})
+	return diags
+}
+
+// One io-gateway diagnostic for a raw-IO call at selector.
+func io_gateway_call_diagnostic(pf parsed_file, selector *ast.SelectorExpr) (diag Diagnostic) {
+	identifier := selector.X.(*ast.Ident)
+	return Diagnostic{
+		Position: pf.File_Set.Position(selector.Pos()),
+		Name:     "io-gateway",
+		Want:     "route IO through shared/io",
+		Message: identifier.Name + "." + selector.Sel.Name +
+			" does raw IO; route it through shared/io",
+		Tier: 1,
+	}
+}
+
+// Reports whether an os selector is a file operation banned outside the gateway.
+func io_gateway_banned_os(name string) (banned bool) {
+	switch name {
+	case "Open", "Create", "ReadFile", "WriteFile",
+		"OpenFile", "Pipe", "DirFS", "NewFile":
+		return true
+	}
+	return false
+}
+
+// Reports whether an io selector is a blocking helper banned outside the gateway.
+func io_gateway_banned_io(name string) (banned bool) {
+	switch name {
+	case "Copy", "CopyN", "ReadAll", "ReadFull", "Pipe":
+		return true
+	}
+	return false
+}
+
+// Returns the workspace-relative directory of the shared module's raw-IO gateway (its
+// io/default), or "" when no module is the shared library.
+func component_index_io_gateway(components *component_index) (gateway string) {
+	for _, m := range components.Components {
+		if !m.Is_Shared_Library {
+			continue
+		}
+		if m.Root == "." {
+			return "io/default"
+		}
+		return m.Root + "/io/default"
 	}
 	return ""
 }

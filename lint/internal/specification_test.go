@@ -1901,6 +1901,30 @@ func Test_Simulation_Blackbox(t *testing.T) {
 	}
 }
 
+// Test_Event_Loop_Driver verifies a non-main, non-test package that calls a loop or
+// clock constructor is flagged.
+func Test_Event_Loop_Driver(t *testing.T) {
+	t.Parallel()
+	files := specification_one_file("package fixture\n\n" +
+		"import time \"fixture/shared/time\"\n\n" +
+		"// Build makes a clock.\nfunc Build() (clock time.Clock) {\n" +
+		"\tc, _ := time.Virtual_Clock_To_Clock(time.Virtual_Clock{})\n\treturn c\n}\n")
+	if !specification_flags(t, files, "mints a loop/clock driver") {
+		t.Fatal("a library call to a loop/clock constructor must be flagged")
+	}
+}
+
+// Test_Event_Loop_Gateway verifies a non-gateway package that imports a raw IO stdlib
+// package is flagged.
+func Test_Event_Loop_Gateway(t *testing.T) {
+	t.Parallel()
+	files := specification_one_file("package fixture\n\nimport \"net\"\n\n" +
+		"// Dial does.\nfunc Dial() (connection net.Conn) {\n\treturn nil\n}\n")
+	if !specification_flags(t, files, "route IO through shared/io") {
+		t.Fatal("importing raw IO stdlib outside the gateway must be flagged")
+	}
+}
+
 // Test_Primitive_Field_Flagged verifies a raw slice struct field is flagged.
 func Test_Primitive_Field_Flagged(t *testing.T) {
 	t.Parallel()
