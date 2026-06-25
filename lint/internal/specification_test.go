@@ -1373,6 +1373,37 @@ func Test_Event_Loop_Seed(t *testing.T) {
 	}
 }
 
+// Test_Configuration_Directory_Slash verifies a wildcard-free lint.json entry that
+// names a directory must end in a slash, and one that names a file must not.
+func Test_Configuration_Directory_Slash(t *testing.T) {
+	t.Parallel()
+	fsys := fstest.MapFS{
+		"go.mod":   {Data: []byte(doctrine_root_go_module)},
+		"pkg/p.go": {Data: []byte("// Package p is a fixture.\npackage p\n")},
+	}
+	tracked := map[string]bool{"go.mod": true, "pkg/p.go": true}
+	run := func(entry string) (diags []lint.Diagnostic) {
+		diags, err := lint.Check_File_System(&lint.Check_File_System_Input{
+			Fsys: fsys, Tracked: tracked,
+			Shared_Component:         doctrine_shared_component_directory,
+			Pure_But_Indeterministic: []string{entry},
+		})
+		if err != nil {
+			t.Fatalf("Check_File_System: %v", err)
+		}
+		return diags
+	}
+	if !specification_diagnosed(run("pkg"), "names a directory") {
+		t.Fatal("a directory entry without a trailing slash must be flagged")
+	}
+	if specification_diagnosed(run("pkg/"), "names a directory") {
+		t.Fatal("a directory entry with a trailing slash must pass")
+	}
+	if !specification_diagnosed(run("pkg/p.go/"), "names a file") {
+		t.Fatal("a file entry with a trailing slash must be flagged")
+	}
+}
+
 // Test_Driver_Gateway_Main_Allowed verifies package main may construct a loop.
 func Test_Driver_Gateway_Main_Allowed(t *testing.T) {
 	t.Parallel()

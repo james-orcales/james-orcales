@@ -6,12 +6,12 @@
           "shared/jlog/**"
   ],
   "pure_but_indeterministic": [
-    "lint/internal",
-    "sloc/internal",
-    "shared/diode",
-    "shared/invariant",
-    "shared/jlog",
-    "shared/snap"
+    "lint/internal/",
+    "sloc/internal/",
+    "shared/diode/",
+    "shared/invariant/",
+    "shared/jlog/",
+    "shared/snap/"
   ],
   "ignore": [
           "install_golang.sh",

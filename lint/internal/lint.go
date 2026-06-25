@@ -1954,7 +1954,7 @@ func Check_File_System(input *Check_File_System_Input) (diags []Diagnostic, err 
 	parsed_files, parse_diags := check_file_system_parse_files(paths, sources, cpu_count)
 	components := source.Build_Component_Index(
 		component_roots, parsed_files, input.Shared_Component)
-	return check_file_system_doctrine(&check_file_system_doctrine_input{
+	return append(check_file_system_doctrine(&check_file_system_doctrine_input{
 		Fsys:                      input.Fsys,
 		Tracked:                   tracked,
 		Directory_Has_Tracked:     directory_has_tracked,
@@ -1970,7 +1970,69 @@ func Check_File_System(input *Check_File_System_Input) (diags []Diagnostic, err 
 		Scan_Prefixes:             scan_prefixes,
 		Invariant_Exempt_Packages: input.Invariant_Exempt_Packages,
 		Recursion_Exempt:          input.Recursion_Exempt,
-	}), nil
+	}), check_configuration_directory_slash(input)...), nil
+}
+
+// A configuration_glob_list is a lint.json glob list paired with its key, so a
+// cross-list check names the offending key in its diagnostic.
+type configuration_glob_list struct {
+	// Name is the lint.json key.
+	Name string
+	// Globs is the key's raw entries.
+	Globs []string
+}
+
+// Requires a wildcard-free lint.json entry to end in a slash when it names a
+// directory and to omit one when it names a file, so the trailing slash alone tells
+// them apart under the one exact-path matcher. A wildcard entry (* ? [) is exempt —
+// it already expresses its shape — and an entry resolving to neither is left to the
+// per-list coverage guards. Entries classify against the full tracked tree (not the
+// ignore-filtered one, so an ignore entry still resolves) and the check is skipped
+// when that set is absent (the non-git fallback), where dir-versus-file is unknowable.
+func check_configuration_directory_slash(input *Check_File_System_Input) (diags []Diagnostic) {
+	if input.Tracked == nil {
+		return nil
+	}
+	directories := check_file_system_directory_index(input.Tracked)
+	lists := []configuration_glob_list{
+		{Name: "ignore", Globs: input.Ignore},
+		{Name: "pure_but_indeterministic", Globs: input.Pure_But_Indeterministic},
+		{Name: "instrumentation_packages", Globs: input.Instrumentation_Packages},
+		{Name: "invariant_exempt_packages", Globs: input.Invariant_Exempt_Packages},
+		{Name: "opt_out_recursion_ban", Globs: input.Recursion_Exempt},
+	}
+	for _, list := range lists {
+		for _, entry := range list.Globs {
+			if strings.ContainsAny(entry, "*?[") {
+				continue
+			}
+			literal := strings.TrimSuffix(entry, "/")
+			has_slash := entry != literal
+			// A path is a directory or a file, never both, so at most one arm fires.
+			fix := ""
+			if directories[literal] {
+				if !has_slash {
+					fix = "names a directory; add a trailing slash"
+				}
+			}
+			if input.Tracked[literal] {
+				if has_slash {
+					fix = "names a file; drop the trailing slash"
+				}
+			}
+			if fix == "" {
+				continue
+			}
+			diags = append(diags, Diagnostic{
+				Position: token.Position{Filename: "<lint.json>"},
+				Name:     "config-directory-slash",
+				Want:     "directory entries end in a slash, file entries do not",
+				Message:  fmt.Sprintf("%s: %q %s", list.Name, entry, fix),
+				Tier:     1,
+			})
+		}
+	}
+	return diags
 }
 
 type check_file_system_doctrine_input struct {
