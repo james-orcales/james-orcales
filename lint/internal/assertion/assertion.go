@@ -64,7 +64,7 @@ func Check_Type(
 	if strings.HasSuffix(filename, "_test.go") {
 		return nil
 	}
-	if type_invariants_path_exempt(filename, exempt) {
+	if source.Path_Is_Exempt(filename, exempt) {
 		return nil
 	}
 	invariant_names := type_invariants_import_names(file)
@@ -87,7 +87,7 @@ func check_numeric_invariants(
 		if strings.HasSuffix(pf.Path, "_test.go") {
 			continue
 		}
-		if type_invariants_path_exempt(pf.Path, exempt) {
+		if source.Path_Is_Exempt(pf.Path, exempt) {
 			continue
 		}
 		diags = append(diags,
@@ -187,7 +187,7 @@ func numeric_type_diagnostics(input *numeric_type_input) (diags []Diagnostic) {
 	if candidate == nil {
 		return nil
 	}
-	if candidate.Name.Name != type_invariant_name(input.Type.Name.Name) {
+	if candidate.Name.Name != source.Invariant_Name(input.Type.Name.Name) {
 		return nil
 	}
 	value := numeric_value_parameter_name(candidate, input.Type.Name.Name)
@@ -738,7 +738,7 @@ func check_struct_invariants(parsed_files []parsed_file, exempt []string) (diags
 		if strings.HasSuffix(pf.Path, "_test.go") {
 			continue
 		}
-		if type_invariants_path_exempt(pf.Path, exempt) {
+		if source.Path_Is_Exempt(pf.Path, exempt) {
 			continue
 		}
 		diags = append(diags, struct_file_diagnostics(pf, defined)...)
@@ -818,7 +818,7 @@ func struct_type_diagnostics(input *struct_type_input) (diags []Diagnostic) {
 	if bundle == nil {
 		return nil
 	}
-	if bundle.Name.Name != type_invariant_name(input.Type.Name.Name) {
+	if bundle.Name.Name != source.Invariant_Name(input.Type.Name.Name) {
 		return nil
 	}
 	parameter := struct_parameter_name(bundle, input.Type.Name.Name)
@@ -1087,7 +1087,7 @@ func struct_field_ident_invariant(
 	if struct_is_builtin(name) {
 		return "", false
 	}
-	return type_invariant_name(name), false
+	return source.Invariant_Name(name), false
 }
 
 // Maps a builtin primitive to its framework preset name, or "" when none.
@@ -1146,7 +1146,7 @@ func check_function_invariants(parsed_files []parsed_file, exempt []string) (dia
 		if strings.HasSuffix(pf.Path, "_test.go") {
 			continue
 		}
-		if type_invariants_path_exempt(pf.Path, exempt) {
+		if source.Path_Is_Exempt(pf.Path, exempt) {
 			continue
 		}
 		diags = append(diags, function_file_diagnostics(pf, defined)...)
@@ -1349,7 +1349,7 @@ func function_named_invariant(
 	if struct_is_builtin(identifier.Name) {
 		return "", false
 	}
-	name := type_invariant_name(identifier.Name)
+	name := source.Invariant_Name(identifier.Name)
 	return name, scope.Defined[name]
 }
 
@@ -1556,7 +1556,7 @@ func check_recorder_test_main(
 	parsed_files []parsed_file, components *component_index, exempt []string,
 ) (diags []Diagnostic) {
 	for _, group := range recorder_test_main_groups(parsed_files) {
-		if type_invariants_path_exempt(group.Directory, exempt) {
+		if source.Path_Is_Exempt(group.Directory, exempt) {
 			continue
 		}
 		// A main package holds the binary's wiring, not testable invariant logic.
@@ -1855,7 +1855,7 @@ func simulation_internal_dirs(
 		if strings.HasPrefix(directory, sim_directory+"/") {
 			continue
 		}
-		if type_invariants_path_exempt(directory, exempt) {
+		if source.Path_Is_Exempt(directory, exempt) {
 			continue
 		}
 		if seen[directory] {
@@ -1990,7 +1990,7 @@ func simulation_internal_import_locals(
 		if !under {
 			continue
 		}
-		locals[import_local_name(specification, import_path)] = true
+		locals[source.Import_Local_Name(specification, import_path)] = true
 	}
 	return locals
 }
@@ -2208,7 +2208,7 @@ func check_primitive_types(parsed_files []parsed_file, exempt []string) (diags [
 		if strings.HasSuffix(pf.Path, "_test.go") {
 			continue
 		}
-		if type_invariants_path_exempt(pf.Path, exempt) {
+		if source.Path_Is_Exempt(pf.Path, exempt) {
 			continue
 		}
 		diags = append(diags, primitive_file_diagnostics(pf)...)
@@ -2234,7 +2234,7 @@ func primitive_function_diagnostics(
 	file parsed_file, function *ast.FuncDecl,
 ) (diags []Diagnostic) {
 
-	if method_satisfies_stdlib(function) {
+	if source.Method_Satisfies_Stdlib(function) {
 		return nil
 	}
 	position := file.File_Set.Position(function.Name.Pos())
@@ -2378,7 +2378,7 @@ func check_type_invariants_one(
 	type_specification *ast.TypeSpec, invariant_names map[string]bool,
 ) (diags []Diagnostic) {
 
-	want := type_invariant_name(type_specification.Name.Name)
+	want := source.Invariant_Name(type_specification.Name.Name)
 	bundle := type_invariants_following_function(file, index)
 	if bundle == nil {
 		return append(diags, type_invariants_absent(file_set, type_specification, want))
@@ -2496,15 +2496,6 @@ func type_invariant_required(type_specification *ast.TypeSpec) (required bool) {
 	}
 }
 
-// Maps a type name to its bundle name, suffixing by the
-// type's casing: an exported type takes _Invariants, an unexported _invariants.
-func type_invariant_name(type_name string) (name string) {
-	if ast.IsExported(type_name) {
-		return type_name + "_Invariants"
-	}
-	return type_name + "_invariants"
-}
-
 // Returns the function declared immediately
 // below the declaration at index, or nil when the next declaration is not one.
 func type_invariants_following_function(
@@ -2541,7 +2532,7 @@ func type_invariants_preceding_type(
 	if !is_type {
 		return false
 	}
-	return type_invariant_name(type_specification.Name.Name) == function_name
+	return source.Invariant_Name(type_specification.Name.Name) == function_name
 }
 
 // Reports whether name ends in the bundle suffix.
@@ -2709,184 +2700,4 @@ func type_invariants_path_is_invariant(import_path string) (yes bool) {
 		}
 	}
 	return false
-}
-
-// Reports whether filename lies under a listed exempt
-// package directory, by the segment-prefix rule the other lint.json lists use. A
-// lone "." exempts the whole tree — the wholesale off switch for staged rollout.
-func type_invariants_path_exempt(filename string, exempt []string) (yes bool) {
-	for _, entry := range exempt {
-		if entry == "." {
-			return true
-		}
-		if filename == entry {
-			return true
-		}
-		if strings.HasPrefix(filename, entry+"/") {
-			return true
-		}
-	}
-	return false
-}
-
-// The matcher below mirrors lint's Methods-rule stdlib-interface matcher: the
-// Primitive Types rule exempts a method whose signature implements a
-// standard-library interface (e.g. Read([]byte) (int, error)). Duplicated to
-// keep this package self-contained; unify into a shared home when the Source And
-// Test Bans concern is extracted.
-func method_satisfies_stdlib(function_declaration *ast.FuncDecl) (yes bool) {
-	if function_declaration.Recv == nil {
-		return false
-	}
-	params := method_field_types(function_declaration.Type.Params)
-	results := method_field_types(function_declaration.Type.Results)
-	return method_signature_matches(&method_signature{
-		Name:    function_declaration.Name.Name,
-		Params:  strings.Join(params, ","),
-		Results: strings.Join(results, ","),
-	})
-}
-
-type method_signature struct {
-	Name    string
-	Params  string
-	Results string
-}
-
-func method_signature_matches(input *method_signature) (yes bool) {
-	switch input.Name {
-	case "Error", "String", "GoString":
-		return input.Params == "" && input.Results == "string"
-	case "Read", "Write":
-		return input.Params == "[]byte" && input.Results == "int,error"
-	case "Close":
-		return input.Params == "" && input.Results == "error"
-	case "Seek":
-		return input.Params == "int64,int" && input.Results == "int64,error"
-	case "WriteTo":
-		return input.Params == "io.Writer" && input.Results == "int64,error"
-	case "ReadFrom":
-		return input.Params == "io.Reader" && input.Results == "int64,error"
-	case "Len":
-		return input.Params == "" && input.Results == "int"
-	case "Less":
-		return input.Params == "int,int" && input.Results == "bool"
-	case "Swap":
-		return input.Params == "int,int" && input.Results == ""
-	case "MarshalJSON", "MarshalText", "MarshalBinary":
-		return input.Params == "" && input.Results == "[]byte,error"
-	case "UnmarshalJSON", "UnmarshalText", "UnmarshalBinary":
-		return input.Params == "[]byte" && input.Results == "error"
-	case "Format":
-		return input.Params == "fmt.State,rune" && input.Results == ""
-	case "Set":
-		return input.Params == "string" && input.Results == "error"
-	case "Scan":
-		return input.Params == "any" && input.Results == "error"
-	case "Visit":
-		return input.Params == "ast.Node" && input.Results == "ast.Visitor"
-	case "Open":
-		return input.Params == "string" && input.Results == "fs.File,error"
-	case "ReadFile":
-		return input.Params == "string" && input.Results == "[]byte,error"
-	case "ReadDir":
-		return input.Params == "string" && input.Results == "[]fs.DirEntry,error"
-	case "Stat":
-		switch input.Params {
-		case "":
-			return input.Results == "fs.FileInfo,error"
-		case "string":
-			return input.Results == "fs.FileInfo,error"
-		}
-		return false
-	case "Name":
-		return input.Params == "" && input.Results == "string"
-	case "Size":
-		return input.Params == "" && input.Results == "int64"
-	case "Mode":
-		return input.Params == "" && input.Results == "fs.FileMode"
-	case "ModTime":
-		return input.Params == "" && input.Results == "time.Time"
-	case "IsDir":
-		return input.Params == "" && input.Results == "bool"
-	case "Sys":
-		return input.Params == "" && input.Results == "any"
-	case "Type":
-		return input.Params == "" && input.Results == "fs.FileMode"
-	case "Info":
-		return input.Params == "" && input.Results == "fs.FileInfo,error"
-	}
-	return false
-}
-
-func method_field_types(fl *ast.FieldList) (output_list []string) {
-	if fl == nil {
-		return nil
-	}
-	for _, f := range fl.List {
-		rendered := method_render_type(f.Type)
-		count := len(f.Names)
-		if count == 0 {
-			count = 1
-		}
-		for range count {
-			output_list = append(output_list, rendered)
-		}
-	}
-	return output_list
-}
-
-func method_render_type(expression ast.Expr) (output_string string) {
-	prefix := ""
-	for step := 0; ; step++ {
-		stripped := false
-		switch e := expression.(type) {
-		case *ast.StarExpr:
-			prefix += "*"
-			expression = e.X
-			stripped = true
-		case *ast.ArrayType:
-			if e.Len != nil {
-				return "<unknown>"
-			}
-			prefix += "[]"
-			expression = e.Elt
-			stripped = true
-		case *ast.Ellipsis:
-			prefix += "..."
-			expression = e.Elt
-			stripped = true
-		}
-		if !stripped {
-			break
-		}
-	}
-	switch e := expression.(type) {
-	case *ast.Ident:
-		return prefix + e.Name
-	case *ast.SelectorExpr:
-		package_identifier, ok := e.X.(*ast.Ident)
-		if !ok {
-			return "<unknown>"
-		}
-		return prefix + package_identifier.Name + "." + e.Sel.Name
-	case *ast.InterfaceType:
-		if e.Methods == nil {
-			return prefix + "any"
-		}
-		if len(e.Methods.List) == 0 {
-			return prefix + "any"
-		}
-	}
-	return "<unknown>"
-}
-
-// A duplicate of lint's helper (see the matcher note above): a named import uses
-// its local name, an unnamed one the last path segment.
-func import_local_name(implementation *ast.ImportSpec, import_path string) (name string) {
-	if implementation.Name != nil {
-		return implementation.Name.Name
-	}
-	slash_offset := strings.LastIndex(import_path, "/")
-	return import_path[slash_offset+1:]
 }
