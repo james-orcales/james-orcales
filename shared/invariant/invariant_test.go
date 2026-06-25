@@ -562,6 +562,38 @@ func Test_Assertion_Summary_Counts_Properties(t *testing.T) {
 	}
 }
 
+// Every cell an Impossible carves is a panic-able property — reaching it fails
+// fatally — so the summary tallies all of them, glob included. Impossible(a, b)
+// over a third axis c forbids two cells, (1,1,0) and (1,1,1).
+func Test_Assertion_Summary_Counts_Forbidden(t *testing.T) {
+	const source = `package fixture
+
+func check(n int) {
+	invariant.Dot_Product("check",
+		invariant.Sometimes(n == 0, "a"),
+		invariant.Sometimes(n == 1, "b"),
+		invariant.Sometimes(n == 2, "c"),
+		invariant.Impossible(invariant.Event_True("a"), invariant.Event_True("b")),
+	)
+}
+`
+	recorder := &invariant.Recorder{
+		File_System: fstest.MapFS{
+			"fixture/check.go": &fstest.MapFile{Data: []byte(source)},
+		},
+	}
+	invariant.Recorder_Register_Packages_For_Analysis(recorder, "/fixture")
+
+	summary := invariant.Recorder_Assertion_Summary(recorder)
+
+	// 3 axes individual + 6 surviving combinations + 2 forbidden cells; the two
+	// forbidden cells are the panic-able subset.
+	want := "✓ tested 11 properties (3 individual + 8 combinations, of which 2 are panic-able)"
+	if summary != want {
+		t.Fatalf("summary = %q, want %q", summary, want)
+	}
+}
+
 // Registration resolves a *_Invariants bundle defined in another same-module
 // package: package b's Dot_Product spreads a.Pair_Invariants, and the module's
 // go.mod maps the import path "example.com/m/a" to its directory so the bundle's
