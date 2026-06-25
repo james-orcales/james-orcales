@@ -49,26 +49,26 @@ type Level = jlog.Level
 // Buffer re-exports jlog.Buffer.
 type Buffer = jlog.Buffer
 
-// Level_Trace re-exports jlog.Level_Trace.
-const Level_Trace = jlog.Level_Trace
+// LEVEL_TRACE re-exports jlog.LEVEL_TRACE.
+const LEVEL_TRACE = jlog.LEVEL_TRACE
 
-// Level_Debug re-exports jlog.Level_Debug.
-const Level_Debug = jlog.Level_Debug
+// LEVEL_DEBUG re-exports jlog.LEVEL_DEBUG.
+const LEVEL_DEBUG = jlog.LEVEL_DEBUG
 
-// Level_Info re-exports jlog.Level_Info.
-const Level_Info = jlog.Level_Info
+// LEVEL_INFO re-exports jlog.LEVEL_INFO.
+const LEVEL_INFO = jlog.LEVEL_INFO
 
-// Level_Warn re-exports jlog.Level_Warn.
-const Level_Warn = jlog.Level_Warn
+// LEVEL_WARN re-exports jlog.LEVEL_WARN.
+const LEVEL_WARN = jlog.LEVEL_WARN
 
-// Level_Error re-exports jlog.Level_Error.
-const Level_Error = jlog.Level_Error
+// LEVEL_ERROR re-exports jlog.LEVEL_ERROR.
+const LEVEL_ERROR = jlog.LEVEL_ERROR
 
-// Level_None re-exports jlog.Level_None.
-const Level_None = jlog.Level_None
+// LEVEL_NONE re-exports jlog.LEVEL_NONE.
+const LEVEL_NONE = jlog.LEVEL_NONE
 
-// Level_Disabled re-exports jlog.Level_Disabled.
-const Level_Disabled = jlog.Level_Disabled
+// LEVEL_DISABLED re-exports jlog.LEVEL_DISABLED.
+const LEVEL_DISABLED = jlog.LEVEL_DISABLED
 
 // The number of internal frames between the injected caller lookup and a
 // package-level convenience function's call site. Tuned for the global helpers
@@ -106,13 +106,13 @@ func New_Default_Logger() (logger Logger) {
 		Clock:         clock,
 		Sleep:         system_time.Sleep,
 		Count:         default_diode_count,
-		Poll_Interval: 100 * time.Millisecond,
+		Poll_Interval: 100 * time.MILLISECOND,
 		Alerter:       report_dropped,
 	})
 	return jlog.New(jlog.New_Input{
 		Writer:         writer,
 		Clock:          clock,
-		Floor:          jlog.Level_Trace,
+		Floor:          jlog.LEVEL_TRACE,
 		Auto_Timestamp: true,
 		Caller:         operating_system_caller,
 	})
@@ -122,7 +122,7 @@ func New_Default_Logger() (logger Logger) {
 // sink and a rate limit are told apart.
 func report_dropped(missed int, cause diode.Drop_Cause) {
 	reason := "sink too slow"
-	if cause == diode.Drop_Rate_Limit {
+	if cause == diode.DROP_RATE_LIMIT {
 		reason = "rate limited"
 	}
 	fmt.Fprintf(os.Stderr, "jlog: dropped %d log lines (%s)\n", missed, reason)

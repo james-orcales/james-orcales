@@ -53,7 +53,7 @@ func Test_Always_Reachability(t *testing.T) {
 		Is_Test: true, Output: &output, Exit: func(code int) { exit_code = code },
 	}
 	metadata := &invariant.Assertion_Metadata{
-		Kind: invariant.Assertion_Kind_Always, Message: "positive", Condition: "x > 0",
+		Kind: invariant.ASSERTION_KIND_ALWAYS, Message: "positive", Condition: "x > 0",
 	}
 	recorder.Events.Store("positive", metadata)
 
@@ -73,9 +73,9 @@ func Test_Sometimes_Coverage(t *testing.T) {
 	recorder := new_test_recorder()
 	recorder.Is_Test = true
 	element := invariant.Recorder_Sometimes(recorder, true, "zero")
-	key := "check" + invariant.Element_Message_Separator + element.Message
+	key := "check" + invariant.ELEMENT_MESSAGE_SEPARATOR + element.Message
 	metadata := &invariant.Assertion_Metadata{
-		Kind: invariant.Assertion_Kind_Sometimes, Message: key,
+		Kind: invariant.ASSERTION_KIND_SOMETIMES, Message: key,
 	}
 	recorder.Events.Store(key, metadata)
 
@@ -109,7 +109,7 @@ func Test_Sometimes_Gap(t *testing.T) {
 			Is_Test: true, Output: &output, Exit: func(code int) { exit_code = code },
 		}
 		metadata := &invariant.Assertion_Metadata{
-			Kind:    invariant.Assertion_Kind_Sometimes,
+			Kind:    invariant.ASSERTION_KIND_SOMETIMES,
 			Message: "zero", Condition: "n == 0",
 		}
 		if one.Seen_True {
@@ -229,9 +229,9 @@ func Test_Impossible_Sibling(t *testing.T) {
 func Test_Imply_Gated(t *testing.T) {
 	recorder := new_test_recorder()
 	recorder.Is_Test = true
-	key := "check" + invariant.Element_Message_Separator + "gated"
+	key := "check" + invariant.ELEMENT_MESSAGE_SEPARATOR + "gated"
 	metadata := &invariant.Assertion_Metadata{
-		Kind: invariant.Assertion_Kind_Sometimes, Message: key,
+		Kind: invariant.ASSERTION_KIND_SOMETIMES, Message: key,
 	}
 	recorder.Events.Store(key, metadata)
 
@@ -276,7 +276,7 @@ func check(n int, p *int) {
 	invariant.Recorder_Register_Packages_For_Analysis(recorder, "/fixture")
 
 	if _, ok := recorder.Events.Load(
-		"check" + invariant.Element_Message_Separator + "gated"); !ok {
+		"check" + invariant.ELEMENT_MESSAGE_SEPARATOR + "gated"); !ok {
 		t.Error("the gated axis must seed its own per-axis entry")
 	}
 	if _, ok := recorder.Events.Load("check:tuple=(0)"); !ok {
@@ -292,9 +292,9 @@ func check(n int, p *int) {
 func Test_Imply_Conjunction(t *testing.T) {
 	recorder := new_test_recorder()
 	recorder.Is_Test = true
-	key := "check" + invariant.Element_Message_Separator + "gated"
+	key := "check" + invariant.ELEMENT_MESSAGE_SEPARATOR + "gated"
 	metadata := &invariant.Assertion_Metadata{
-		Kind: invariant.Assertion_Kind_Sometimes, Message: key,
+		Kind: invariant.ASSERTION_KIND_SOMETIMES, Message: key,
 	}
 	recorder.Events.Store(key, metadata)
 	loaded, present := true, false
@@ -367,7 +367,7 @@ func check(n int) {
 	if !ok {
 		t.Fatal("the bare Always must seed a reachability entry under its message")
 	}
-	if always.(*invariant.Assertion_Metadata).Kind != invariant.Assertion_Kind_Always {
+	if always.(*invariant.Assertion_Metadata).Kind != invariant.ASSERTION_KIND_ALWAYS {
 		t.Error("the bare Always entry must be an Always axis")
 	}
 }
@@ -431,11 +431,11 @@ func check(n int) {
 			output.String())
 	}
 	if _, ok := recorder.Events.Load(
-		"field" + invariant.Element_Message_Separator + "lo"); !ok {
+		"field" + invariant.ELEMENT_MESSAGE_SEPARATOR + "lo"); !ok {
 		t.Error("the template must seed the grid under the callsite namespace (field␀lo)")
 	}
 	if _, ok := recorder.Events.Load(
-		"namespace" + invariant.Element_Message_Separator + "lo"); ok {
+		"namespace" + invariant.ELEMENT_MESSAGE_SEPARATOR + "lo"); ok {
 		t.Error("the template must not seed under the bare namespace parameter")
 	}
 }
@@ -463,7 +463,7 @@ func check(n int) {
 	invariant.Recorder_Register_Packages_For_Analysis(recorder, "/fixture")
 
 	if _, ok := recorder.Events.Load(
-		"field" + invariant.Element_Message_Separator + "lo"); !ok {
+		"field" + invariant.ELEMENT_MESSAGE_SEPARATOR + "lo"); !ok {
 		t.Error("the bundle element must be seeded under the Dot_Product prefix")
 	}
 }
@@ -499,11 +499,11 @@ func check(n int) {
 	invariant.Recorder_Register_Packages_For_Analysis(recorder, "/fixture")
 
 	if _, ok := recorder.Events.Load(
-		"field.inner" + invariant.Element_Message_Separator + "inner"); !ok {
+		"field.inner" + invariant.ELEMENT_MESSAGE_SEPARATOR + "inner"); !ok {
 		t.Error("the nested _Invariants must register its own grid under its sub-namespace")
 	}
 	if _, ok := recorder.Events.Load(
-		"field" + invariant.Element_Message_Separator + "inner"); ok {
+		"field" + invariant.ELEMENT_MESSAGE_SEPARATOR + "inner"); ok {
 		t.Error("the nested axis must not flatten into the parent grid")
 	}
 }
@@ -531,7 +531,7 @@ func check(n int) {
 	invariant.Recorder_Register_Packages_For_Analysis(recorder, "/fixture")
 
 	if _, ok := recorder.Events.Load(
-		"field" + invariant.Element_Message_Separator + "lo"); !ok {
+		"field" + invariant.ELEMENT_MESSAGE_SEPARATOR + "lo"); !ok {
 		t.Error("a snake_case bundle must be recognized like the Ada_Case form")
 	}
 }
@@ -565,7 +565,7 @@ func check(n int) {
 		"m/sugar/sugar.go": &fstest.MapFile{Data: []byte(sugar)},
 		"m/app/app.go":     &fstest.MapFile{Data: []byte(application)},
 	}
-	key := "field" + invariant.Element_Message_Separator + "lo"
+	key := "field" + invariant.ELEMENT_MESSAGE_SEPARATOR + "lo"
 
 	recognized := &invariant.Recorder{File_System: files, Sugar_Package: "example.com/m/sugar"}
 	invariant.Recorder_Register_Packages_For_Analysis(recognized, "/m/app")
@@ -614,7 +614,7 @@ func check(n int) {
 	invariant.Recorder_Register_Packages_For_Analysis(recorder, "/m/b")
 
 	if _, ok := recorder.Events.Load(
-		"field" + invariant.Element_Message_Separator + "lo"); !ok {
+		"field" + invariant.ELEMENT_MESSAGE_SEPARATOR + "lo"); !ok {
 		t.Error("a bundle in a sibling package of the module must be resolved")
 	}
 }
@@ -647,11 +647,11 @@ func check_b(n int) {
 	invariant.Recorder_Register_Packages_For_Analysis(recorder, "/fixture")
 
 	if _, ok := recorder.Events.Load(
-		"a" + invariant.Element_Message_Separator + "lo"); !ok {
+		"a" + invariant.ELEMENT_MESSAGE_SEPARATOR + "lo"); !ok {
 		t.Error("namespace A must have its own coverage entry")
 	}
 	if _, ok := recorder.Events.Load(
-		"b" + invariant.Element_Message_Separator + "lo"); !ok {
+		"b" + invariant.ELEMENT_MESSAGE_SEPARATOR + "lo"); !ok {
 		t.Error("namespace B must have its own coverage entry")
 	}
 }
@@ -806,12 +806,12 @@ func Test_Analysis_Gaps(t *testing.T) {
 		Is_Test: true, Output: &output, Exit: func(code int) { exit_code = code },
 	}
 	gap := &invariant.Assertion_Metadata{
-		Kind: invariant.Assertion_Kind_Sometimes, Message: "zero", Condition: "n == 0",
+		Kind: invariant.ASSERTION_KIND_SOMETIMES, Message: "zero", Condition: "n == 0",
 	}
 	gap.Frequency.Add(1) // true seen, false never: a gap
 	recorder.Events.Store("zero", gap)
 	fired := &invariant.Assertion_Metadata{
-		Kind: invariant.Assertion_Kind_Always, Message: "positive", Condition: "x > 0",
+		Kind: invariant.ASSERTION_KIND_ALWAYS, Message: "positive", Condition: "x > 0",
 	}
 	fired.Frequency.Add(1) // reached: not a gap
 	recorder.Events.Store("positive", fired)
@@ -842,7 +842,7 @@ func Test_Analysis_Combination(t *testing.T) {
 		Is_Test: true, Output: &output, Exit: func(code int) { exit_code = code },
 	}
 	tuple := &invariant.Assertion_Metadata{
-		Kind: invariant.Assertion_Kind_Tuple, Message: "grid", Tuple_Indices: []int{1, 0},
+		Kind: invariant.ASSERTION_KIND_TUPLE, Message: "grid", Tuple_Indices: []int{1, 0},
 	}
 	recorder.Events.Store("grid:tuple=(1,0)", tuple)
 
@@ -921,10 +921,10 @@ func Test_Analysis_Summary(t *testing.T) {
 	store := func(key string, kind invariant.Assertion_Kind) {
 		recorder.Events.Store(key, &invariant.Assertion_Metadata{Kind: kind})
 	}
-	store("a", invariant.Assertion_Kind_Always)
-	store("b", invariant.Assertion_Kind_Sometimes)
-	store("c:tuple=(0)", invariant.Assertion_Kind_Tuple)
-	store("c:tuple=(1)", invariant.Assertion_Kind_Tuple)
+	store("a", invariant.ASSERTION_KIND_ALWAYS)
+	store("b", invariant.ASSERTION_KIND_SOMETIMES)
+	store("c:tuple=(0)", invariant.ASSERTION_KIND_TUPLE)
+	store("c:tuple=(1)", invariant.ASSERTION_KIND_TUPLE)
 
 	summary := invariant.Recorder_Assertion_Summary(recorder)
 
@@ -981,10 +981,10 @@ func Test_Analysis_Summary_Names_Package(t *testing.T) {
 	store := func(key string, kind invariant.Assertion_Kind) {
 		recorder.Events.Store(key, &invariant.Assertion_Metadata{Kind: kind})
 	}
-	store("a", invariant.Assertion_Kind_Always)
-	store("b", invariant.Assertion_Kind_Sometimes)
-	store("c:tuple=(0)", invariant.Assertion_Kind_Tuple)
-	store("c:tuple=(1)", invariant.Assertion_Kind_Tuple)
+	store("a", invariant.ASSERTION_KIND_ALWAYS)
+	store("b", invariant.ASSERTION_KIND_SOMETIMES)
+	store("c:tuple=(0)", invariant.ASSERTION_KIND_TUPLE)
+	store("c:tuple=(1)", invariant.ASSERTION_KIND_TUPLE)
 
 	summary := invariant.Recorder_Assertion_Summary(recorder)
 
@@ -1003,7 +1003,7 @@ func Test_Analysis_Clean(t *testing.T) {
 		Is_Test: true, Output: &output, Exit: func(code int) { exited = true },
 	}
 	metadata := &invariant.Assertion_Metadata{
-		Kind: invariant.Assertion_Kind_Sometimes, Message: "zero", Condition: "n == 0",
+		Kind: invariant.ASSERTION_KIND_SOMETIMES, Message: "zero", Condition: "n == 0",
 	}
 	metadata.Frequency.Add(1)
 	metadata.False_Frequency.Add(1)
@@ -1034,9 +1034,9 @@ func Test_Coverage_Modes(t *testing.T) {
 			Is_Benchmark:   is_benchmark,
 		}
 		element := invariant.Recorder_Sometimes(recorder, true, "zero")
-		key := "check" + invariant.Element_Message_Separator + element.Message
+		key := "check" + invariant.ELEMENT_MESSAGE_SEPARATOR + element.Message
 		metadata := &invariant.Assertion_Metadata{
-			Kind: invariant.Assertion_Kind_Sometimes, Message: key,
+			Kind: invariant.ASSERTION_KIND_SOMETIMES, Message: key,
 		}
 		recorder.Events.Store(key, metadata)
 		invariant.Recorder_Dot_Product(recorder, "check", element)
@@ -1066,7 +1066,7 @@ func Test_Coverage_Modes(t *testing.T) {
 		}
 		// A Sometimes that never fired either way: a gap.
 		recorder.Events.Store("g", &invariant.Assertion_Metadata{
-			Kind: invariant.Assertion_Kind_Sometimes, Message: "g",
+			Kind: invariant.ASSERTION_KIND_SOMETIMES, Message: "g",
 		})
 		invariant.Recorder_Analyze_Assertion_Frequency(recorder)
 		return exit, output.Len() > 0
@@ -1253,9 +1253,9 @@ func Test_Coverage_Sink_Fires_On_First_Coverage(t *testing.T) {
 			sunk = append(sunk, event{key, fired_true})
 		},
 	}
-	key := "check" + invariant.Element_Message_Separator + "zero"
+	key := "check" + invariant.ELEMENT_MESSAGE_SEPARATOR + "zero"
 	recorder.Events.Store(key, &invariant.Assertion_Metadata{
-		Kind: invariant.Assertion_Kind_Sometimes, Message: key,
+		Kind: invariant.ASSERTION_KIND_SOMETIMES, Message: key,
 	})
 
 	for range 3 {
@@ -1292,7 +1292,7 @@ func Test_Coverage_Sink_Fires_On_First_Coverage(t *testing.T) {
 // key) and merging them back unions exactly those branches into a seeded grid, leaving the
 // other branch alone and skipping a key with no seeded entry.
 func Test_Fuzz_Coverage_Line_Round_Trip(t *testing.T) {
-	nul_key := "field" + invariant.Element_Message_Separator + "empty"
+	nul_key := "field" + invariant.ELEMENT_MESSAGE_SEPARATOR + "empty"
 	var file bytes.Buffer
 	file.WriteString(invariant.Fuzz_Coverage_Line(nul_key, true))
 	file.WriteString(invariant.Fuzz_Coverage_Line("plain", false))
@@ -1301,7 +1301,7 @@ func Test_Fuzz_Coverage_Line_Round_Trip(t *testing.T) {
 	recorder := &invariant.Recorder{Is_Test: true}
 	for _, key := range []string{nul_key, "plain"} {
 		recorder.Events.Store(key, &invariant.Assertion_Metadata{
-			Kind: invariant.Assertion_Kind_Sometimes, Message: key,
+			Kind: invariant.ASSERTION_KIND_SOMETIMES, Message: key,
 		})
 	}
 

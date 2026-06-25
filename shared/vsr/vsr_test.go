@@ -57,6 +57,6 @@ func messages_of_kind(
 func epoch_1_view_2_replica() (replica vsr.Replica) {
 	return vsr.Replica{
 		Identifier: 1, Configuration: vsr.Configuration{0, 1, 2},
-		Epoch: 1, View: 2, Status: vsr.Status_Normal,
+		Epoch: 1, View: 2, Status: vsr.STATUS_NORMAL,
 	}
 }

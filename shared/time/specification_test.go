@@ -34,7 +34,7 @@ func Test_Virtual_Clock_Skew(t *testing.T) {
 	c, tick := time.Virtual_Clock_To_Clock(time.Virtual_Clock{
 		Resolution: 1000,
 		Epoch:      0,
-		Skew:       time.Skew(time.Skew_Input{Kind: time.Skew_Kind_Linear, A: 1, B: 0}),
+		Skew:       time.Skew(time.Skew_Input{Kind: time.SKEW_KIND_LINEAR, A: 1, B: 0}),
 	})
 	tick()
 	tick()
@@ -53,7 +53,7 @@ func Test_Virtual_Clock_Skew(t *testing.T) {
 		Resolution: 1000,
 		Epoch:      0,
 		Skew: time.Skew(time.Skew_Input{
-			Kind: time.Skew_Kind_Periodic, A: 1000, B: 4,
+			Kind: time.SKEW_KIND_PERIODIC, A: 1000, B: 4,
 		}),
 	})
 	periodic_tick()

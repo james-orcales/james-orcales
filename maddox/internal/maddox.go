@@ -84,7 +84,7 @@ func Main(input Main_Input) (code exit_code) {
 		benchmarks = append(benchmarks, benchmark)
 	}
 	document := Document{Machine: input.Machine, Benchmarks: benchmarks}
-	if input.Format == Output_Format_Json {
+	if input.Format == OUTPUT_FORMAT_JSON {
 		return write_report(input.Output, document)
 	}
 	return write_table(input.Output, &Render_Table_Input{
@@ -99,14 +99,14 @@ type Output_Format uint8
 // Output_Format_Invariants bounds an Output_Format to its declared rendering modes
 // and claims each boundary of that range.
 func Output_Format_Invariants(format Output_Format, namespace invariant.Namespace) {
-	invariant.Always(format <= Output_Format_Json, "An Output_Format is at most Json.")
-	invariant.Always(format >= Output_Format_Table, "An Output_Format is at least Table.")
+	invariant.Always(format <= OUTPUT_FORMAT_JSON, "An Output_Format is at most Json.")
+	invariant.Always(format >= OUTPUT_FORMAT_TABLE, "An Output_Format is at least Table.")
 	invariant.Always(format != 2, "An Output_Format is never two.")
 	invariant.Dot_Product(namespace,
 		invariant.Sometimes(format == 0, "An Output_Format is zero."),
 		invariant.Sometimes(format == 1, "An Output_Format is one."),
-		invariant.Sometimes(format == Output_Format_Table, "An Output_Format is Table."),
-		invariant.Sometimes(format == Output_Format_Json, "An Output_Format is Json."),
+		invariant.Sometimes(format == OUTPUT_FORMAT_TABLE, "An Output_Format is Table."),
+		invariant.Sometimes(format == OUTPUT_FORMAT_JSON, "An Output_Format is Json."),
 		// Table is zero and Json is one, so those axes are pinned to the literals; a
 		// format is one of the two, so it is never both and never neither.
 		invariant.Impossible(
@@ -136,11 +136,11 @@ func Output_Format_Invariants(format Output_Format, namespace invariant.Namespac
 	)
 }
 
-// Output_Format_Table renders the human-readable comparison table; the default.
-const Output_Format_Table Output_Format = 0
+// OUTPUT_FORMAT_TABLE renders the human-readable comparison table; the default.
+const OUTPUT_FORMAT_TABLE Output_Format = 0
 
-// Output_Format_Json renders the machine-readable JSON document.
-const Output_Format_Json Output_Format = 1
+// OUTPUT_FORMAT_JSON renders the machine-readable JSON document.
+const OUTPUT_FORMAT_JSON Output_Format = 1
 
 // Sample is one run's measurements.
 type Sample struct {
@@ -1353,7 +1353,7 @@ func write_failure(input *write_failure_input) {
 }
 
 // Tukey_fence_ratio is poop's 1.5*IQR outlier fence multiplier as a fixed ratio.
-const tukey_fence_ratio fixedpoint.Ratio = 3 * fixedpoint.Scale / 2
+const tukey_fence_ratio fixedpoint.Ratio = 3 * fixedpoint.SCALE / 2
 
 // Int64_max is the largest signed 64-bit value, used to test whether a 128-bit variance
 // still fits a word before the fixed-point square root.
@@ -3277,7 +3277,7 @@ func accumulator_invariants(value accumulator, namespace invariant.Namespace) {
 const metric_min = 0
 
 // Metric_max bounds a metric to the fixed-point representable ceiling. The statistics lift
-// each value with From_Integer, a multiply by Scale (2^20) that overflows int64 at 2^43, so a
+// each value with From_Integer, a multiply by SCALE (2^20) that overflows int64 at 2^43, so a
 // value the pipeline can reduce stays below this. It is the honest ceiling, not the signed
 // word's max: a metric past it cannot be represented, so the sampler must not report one, and
 // the guard surfaces such a value rather than letting the sum-of-squares silently overflow.
@@ -3664,7 +3664,7 @@ func render_progress_input_invariants(input render_progress_input, namespace inv
 func render_progress(stderr io.Writer, input *render_progress_input) {
 	render_progress_input_invariants(*input, "render_progress.input")
 	seconds := fixedpoint.From_Ratio(&fixedpoint.From_Ratio_Input{
-		Numerator: int64(input.Elapsed), Denominator: int64(time.Second),
+		Numerator: int64(input.Elapsed), Denominator: int64(time.SECOND),
 	})
 	counter := strconv.Itoa(int(input.Count))
 	if input.Total > 0 {

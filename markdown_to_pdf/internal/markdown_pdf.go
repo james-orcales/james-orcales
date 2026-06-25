@@ -60,57 +60,57 @@ func Render(markdown []byte) (document []byte) {
 // text by a transport that rewrites line endings.
 const pdf_header = "%PDF-1.7\n%\xE2\xE3\xCF\xD3\n"
 
-const page_width fixedpoint.Number = 595 * fixedpoint.Scale
-const page_height fixedpoint.Number = 842 * fixedpoint.Scale
-const page_margin fixedpoint.Number = 56 * fixedpoint.Scale
+const page_width fixedpoint.Number = 595 * fixedpoint.SCALE
+const page_height fixedpoint.Number = 842 * fixedpoint.SCALE
+const page_margin fixedpoint.Number = 56 * fixedpoint.SCALE
 
-const body_size fixedpoint.Number = 11 * fixedpoint.Scale
+const body_size fixedpoint.Number = 11 * fixedpoint.SCALE
 
 // The largest whole point size at which a 100-column Courier line fits the A4
 // text column: 100 glyphs * 0.6 * 8pt = 480pt within the 483pt margin span.
-const code_size fixedpoint.Number = 8 * fixedpoint.Scale
-const heading_size_1 fixedpoint.Number = 24 * fixedpoint.Scale
-const heading_size_2 fixedpoint.Number = 20 * fixedpoint.Scale
-const heading_size_3 fixedpoint.Number = 16 * fixedpoint.Scale
-const heading_size_4 fixedpoint.Number = 14 * fixedpoint.Scale
-const heading_size_5 fixedpoint.Number = 12 * fixedpoint.Scale
-const heading_size_6 fixedpoint.Number = 11 * fixedpoint.Scale
+const code_size fixedpoint.Number = 8 * fixedpoint.SCALE
+const heading_size_1 fixedpoint.Number = 24 * fixedpoint.SCALE
+const heading_size_2 fixedpoint.Number = 20 * fixedpoint.SCALE
+const heading_size_3 fixedpoint.Number = 16 * fixedpoint.SCALE
+const heading_size_4 fixedpoint.Number = 14 * fixedpoint.SCALE
+const heading_size_5 fixedpoint.Number = 12 * fixedpoint.SCALE
+const heading_size_6 fixedpoint.Number = 11 * fixedpoint.SCALE
 
-const line_leading_ratio fixedpoint.Ratio = 13 * fixedpoint.Scale / 10
-const paragraph_gap_ratio fixedpoint.Ratio = 3 * fixedpoint.Scale / 5
-const heading_gap_ratio fixedpoint.Ratio = 2 * fixedpoint.Scale / 5
+const line_leading_ratio fixedpoint.Ratio = 13 * fixedpoint.SCALE / 10
+const paragraph_gap_ratio fixedpoint.Ratio = 3 * fixedpoint.SCALE / 5
+const heading_gap_ratio fixedpoint.Ratio = 2 * fixedpoint.SCALE / 5
 const heading_rule_level_max = 2
-const heading_rule_gap_ratio fixedpoint.Ratio = fixedpoint.Scale / 2
-const table_row_ratio fixedpoint.Ratio = 2 * fixedpoint.Scale
+const heading_rule_gap_ratio fixedpoint.Ratio = fixedpoint.SCALE / 2
+const table_row_ratio fixedpoint.Ratio = 2 * fixedpoint.SCALE
 
 // Courier is monospaced at 600 units per 1000-em, so each of its glyphs
 // advances exactly 0.6 of the point size.
-const courier_advance_ratio fixedpoint.Ratio = 3 * fixedpoint.Scale / 5
+const courier_advance_ratio fixedpoint.Ratio = 3 * fixedpoint.SCALE / 5
 
-const list_indent fixedpoint.Number = 18 * fixedpoint.Scale
-const quote_indent fixedpoint.Number = 18 * fixedpoint.Scale
-const quote_bar_width fixedpoint.Number = 3 * fixedpoint.Scale
-const quote_bar_rise_ratio fixedpoint.Ratio = 4 * fixedpoint.Scale / 5
-const quote_bar_drop_ratio fixedpoint.Ratio = fixedpoint.Scale / 4
-const quote_vertical_inset fixedpoint.Number = 8 * fixedpoint.Scale
+const list_indent fixedpoint.Number = 18 * fixedpoint.SCALE
+const quote_indent fixedpoint.Number = 18 * fixedpoint.SCALE
+const quote_bar_width fixedpoint.Number = 3 * fixedpoint.SCALE
+const quote_bar_rise_ratio fixedpoint.Ratio = 4 * fixedpoint.SCALE / 5
+const quote_bar_drop_ratio fixedpoint.Ratio = fixedpoint.SCALE / 4
+const quote_vertical_inset fixedpoint.Number = 8 * fixedpoint.SCALE
 
 // A block quote sits on a light gray background with a darker left bar and gray
 // body text.
 const quote_back_fill = "0.95 0.95 0.95 rg"
 const quote_bar_fill = "0.75 0.75 0.75 rg"
 const quote_text_fill = "0.4 0.4 0.4 rg"
-const table_padding fixedpoint.Number = 4 * fixedpoint.Scale
-const table_top_baseline_ratio fixedpoint.Ratio = 63 * fixedpoint.Scale / 50
+const table_padding fixedpoint.Number = 4 * fixedpoint.SCALE
+const table_top_baseline_ratio fixedpoint.Ratio = 63 * fixedpoint.SCALE / 50
 
 // A quote or table ends at a drawn box edge, not at a dropped text baseline
 // like a paragraph, so its trailing gap must also clear the next line's ascent —
 // hence larger than paragraph_gap_ratio, or following prose laps the edge.
-const box_gap_ratio fixedpoint.Ratio = 9 * fixedpoint.Scale / 5
+const box_gap_ratio fixedpoint.Ratio = 9 * fixedpoint.SCALE / 5
 
 // A GitHub table draws a soft gray cell grid and shades alternate rows.
 const table_border_stroke = "0.82 0.82 0.82 RG"
 const table_shade_fill = "0.97 0.97 0.97 rg"
-const underline_drop fixedpoint.Number = 2 * fixedpoint.Scale
+const underline_drop fixedpoint.Number = 2 * fixedpoint.SCALE
 
 // Code renders as white glyphs on a JetBrains Darcula gray panel (#2B2B2B);
 // these are the PDF fill-color operators for the panel, the code text, and
@@ -124,13 +124,13 @@ const normal_text_fill = "0 0 0 rg"
 const link_fill = "0 0 0.93 rg"
 const link_stroke = "0 0 0.93 RG"
 const normal_stroke = "0 0 0 RG"
-const link_ascent_ratio fixedpoint.Ratio = 4 * fixedpoint.Scale / 5
-const link_descent_ratio fixedpoint.Ratio = fixedpoint.Scale / 4
+const link_ascent_ratio fixedpoint.Ratio = 4 * fixedpoint.SCALE / 5
+const link_descent_ratio fixedpoint.Ratio = fixedpoint.SCALE / 4
 
-const code_panel_inset fixedpoint.Number = 3 * fixedpoint.Scale / 2
-const code_inline_descent_ratio fixedpoint.Ratio = fixedpoint.Scale / 4
-const code_inline_height_ratio fixedpoint.Ratio = 6 * fixedpoint.Scale / 5
-const code_band_descent_ratio fixedpoint.Ratio = 3 * fixedpoint.Scale / 10
+const code_panel_inset fixedpoint.Number = 3 * fixedpoint.SCALE / 2
+const code_inline_descent_ratio fixedpoint.Ratio = fixedpoint.SCALE / 4
+const code_inline_height_ratio fixedpoint.Ratio = 6 * fixedpoint.SCALE / 5
+const code_band_descent_ratio fixedpoint.Ratio = 3 * fixedpoint.SCALE / 10
 
 const heading_level_max = 6
 

@@ -12,9 +12,9 @@ import (
 // preset call records into resolvable entries (the static scan seeds these in a real run).
 func seed_preset_axes(namespace string, messages ...string) {
 	for _, message := range messages {
-		key := namespace + core.Element_Message_Separator + message
+		key := namespace + core.ELEMENT_MESSAGE_SEPARATOR + message
 		invariant.Default.Events.Store(key, &core.Assertion_Metadata{
-			Kind: core.Assertion_Kind_Sometimes, Message: key,
+			Kind: core.ASSERTION_KIND_SOMETIMES, Message: key,
 		})
 	}
 }
@@ -23,7 +23,7 @@ func seed_preset_axes(namespace string, messages ...string) {
 // namespace — read from Default's tracker after a single self-emitting preset call.
 func recorded_signature(namespace string, messages ...string) (signature string) {
 	for _, message := range messages {
-		key := namespace + core.Element_Message_Separator + message
+		key := namespace + core.ELEMENT_MESSAGE_SEPARATOR + message
 		value, loaded := invariant.Default.Events.Load(key)
 		if !loaded {
 			signature += "F"

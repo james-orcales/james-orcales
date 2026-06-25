@@ -45,11 +45,11 @@ const tab_width = 8
 // a test can satisfy the Hi-equals-X tuple. Constants are named for the
 // domain so reading the assertion at a call site makes the bound obvious.
 
-// Identifier_Chars_Max caps Go identifier lengths the linter processes.
+// IDENTIFIER_CHARS_MAX caps Go identifier lengths the linter processes.
 // 128 chars is wider than any identifier representable on a line_chars_max
 // (140) source line after the surrounding syntax; the repo's longest
 // production identifier is 83 chars.
-const Identifier_Chars_Max = 128
+const IDENTIFIER_CHARS_MAX = 128
 
 // Invariant_helper_name_chars_max caps the longest invariant.X helper name
 // the linter recognises; "Recorder_Is_Distinct_Boundary" is the longest
@@ -82,7 +82,7 @@ const diagnostic_source_chars_max = 12
 
 // Function_label_chars_min caps the shortest function_label string: a
 // single-character function name like `f`. Paired with
-// Identifier_Chars_Max as Hi.
+// IDENTIFIER_CHARS_MAX as Hi.
 const function_label_chars_min = 1
 
 // Non_empty_min is the universal Lo for length axes on inputs the caller
@@ -295,7 +295,7 @@ const stdlib_term_chars_min = 4
 // method: a 1-char type `A` joined to a 128-char type via `,` totals 130.
 // Bounded axes over input.Params in check_unnecessary_method_matches_stdlib
 // use this as Hi so Bar's call observes the Hi bucket.
-const method_params_test_corpus_max = Identifier_Chars_Max + 2
+const method_params_test_corpus_max = IDENTIFIER_CHARS_MAX + 2
 
 // Qualified_ident_chars_min caps `pkg.Func` shapes at their minimum: a
 // single-letter package, dot, single-letter func — three characters.
@@ -378,7 +378,7 @@ const suggested_axis_call_chars_max = 228
 const invariant_selector_chars_max = 26
 
 // If_init_identifier_chars_max caps identifier strings appearing in
-// if/for/switch init lines: a tighter bound than Identifier_Chars_Max to
+// if/for/switch init lines: a tighter bound than IDENTIFIER_CHARS_MAX to
 // reflect what fits in a single statement line within the line-length budget.
 const if_init_identifier_chars_max = 55
 
@@ -434,9 +434,9 @@ const inside_if_message_chars_min = 113
 // Want_name_chars_min / want_name_chars_max cap the input-struct
 // expected name (e.g. "f_Input" for function `f`). The "_Input" suffix
 // is 6 chars; combined with the shortest (1-char) function name the
-// minimum is 7. Max is Identifier_Chars_Max + 6 = 134.
+// minimum is 7. Max is IDENTIFIER_CHARS_MAX + 6 = 134.
 const want_name_chars_min = 7
-const want_name_chars_max = Identifier_Chars_Max + 6
+const want_name_chars_max = IDENTIFIER_CHARS_MAX + 6
 
 // Filesystem_path_chars_max caps filesystem path strings the linter
 // processes. POSIX PATH_MAX is 4096 on Linux; the linter inherits this
@@ -457,13 +457,13 @@ const inferred_field_kind_chars_max = 7
 // Field_description_chars_max caps `<name> <type_str>` descriptions:
 // at most one identifier plus a space plus a type expression that itself
 // is bounded by identifier length, yielding 2*identifier + 1.
-const field_description_chars_max = 2*Identifier_Chars_Max + 1
+const field_description_chars_max = 2*IDENTIFIER_CHARS_MAX + 1
 
 // Suggested_sig_chars_max caps suggested function-signature strings of the
 // form `<funcname>(*<funcname>_Input) (result <type>)`. The funcname
 // appears twice (raw plus inside `_Input`), plus the wrapping syntax and
 // a result clause; budget is 2*identifier + 6 (`_Input`) + ~16 (result).
-const suggested_sig_chars_max = 2*Identifier_Chars_Max + 22
+const suggested_sig_chars_max = 2*IDENTIFIER_CHARS_MAX + 22
 
 // Comment_text_chars_max caps raw comment text. comment_body strips the
 // leading `//` and any whitespace, so the text bound is the body budget
@@ -511,7 +511,7 @@ const string_slice_per_call_max = lines_per_file_max
 // Coverage_pairs_per_call_max caps invariant-assertion coverage-pair slices.
 // One call may produce one pair per (path, kind) tuple — bounded by the
 // number of tracked identifiers in any one function, which is well below
-// Identifier_Chars_Max × credit_kind_chars_max in practice.
+// IDENTIFIER_CHARS_MAX × credit_kind_chars_max in practice.
 const coverage_pairs_per_call_max = lines_per_file_max
 
 // Caps the three agent-facing docs at 100 lines. These files are loaded into

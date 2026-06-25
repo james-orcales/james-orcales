@@ -10,18 +10,18 @@ import (
 	invariant "local/james-orcales/shared/invariant/default"
 )
 
-// Edit_Retain marks runes present unchanged in both Old and New.
-const Edit_Retain uint8 = 10
+// EDIT_RETAIN marks runes present unchanged in both Old and New.
+const EDIT_RETAIN uint8 = 10
 
-// Edit_Delete marks runes present only in Old.
-const Edit_Delete uint8 = 20
+// EDIT_DELETE marks runes present only in Old.
+const EDIT_DELETE uint8 = 20
 
-// Edit_Insert marks runes present only in New.
-const Edit_Insert uint8 = 30
+// EDIT_INSERT marks runes present only in New.
+const EDIT_INSERT uint8 = 30
 
 // Edit is one contiguous run of runes sharing a single kind in the diff script.
 type Edit struct {
-	// Kind is Edit_Retain, Edit_Delete, or Edit_Insert.
+	// Kind is EDIT_RETAIN, EDIT_DELETE, or EDIT_INSERT.
 	Kind uint8
 	// Data is the runes this edit covers.
 	Data []rune
@@ -96,16 +96,16 @@ func differ_rebuild_string_from_edits(d *Differ) (text differ_rebuilt_text) {
 	var old strings.Builder
 	var new strings.Builder
 	for _, edit := range d.Edits {
-		if edit.Kind == Edit_Retain {
+		if edit.Kind == EDIT_RETAIN {
 			for _, r := range edit.Data {
 				old.WriteRune(r)
 				new.WriteRune(r)
 			}
-		} else if edit.Kind == Edit_Delete {
+		} else if edit.Kind == EDIT_DELETE {
 			for _, r := range edit.Data {
 				old.WriteRune(r)
 			}
-		} else if edit.Kind == Edit_Insert {
+		} else if edit.Kind == EDIT_INSERT {
 			for _, r := range edit.Data {
 				new.WriteRune(r)
 			}
@@ -196,11 +196,11 @@ func Differ_Line_Diff(dfr *Differ) (diff string) {
 		}
 		indicator := ""
 		switch edit.Kind {
-		case Edit_Retain:
+		case EDIT_RETAIN:
 			indicator = " "
-		case Edit_Insert:
+		case EDIT_INSERT:
 			indicator = "+"
-		case Edit_Delete:
+		case EDIT_DELETE:
 			indicator = "-"
 		}
 		for _, character := range edit.Data {
@@ -234,11 +234,11 @@ func (d Differ) String() (s string) {
 		}
 		kind := ""
 		switch edit.Kind {
-		case Edit_Retain:
+		case EDIT_RETAIN:
 			kind = " "
-		case Edit_Insert:
+		case EDIT_INSERT:
 			kind = "+"
-		case Edit_Delete:
+		case EDIT_DELETE:
 			kind = "-"
 		}
 		sb.WriteString(kind)
@@ -281,11 +281,11 @@ func Differ_Merge_Shift_Diff_Cleanup(d *Differ) {
 		invariant.Always(len(d.Old) > 0, "cleanup loop sees non-empty Old")
 		invariant.Always(len(d.New) > 0, "cleanup loop sees non-empty New")
 
-		if d.Edits[0].Kind != Edit_Retain {
-			d.Edits = slices.Insert(d.Edits, 0, Edit{Kind: Edit_Retain, Data: nil})
+		if d.Edits[0].Kind != EDIT_RETAIN {
+			d.Edits = slices.Insert(d.Edits, 0, Edit{Kind: EDIT_RETAIN, Data: nil})
 		}
-		if d.Edits[len(d.Edits)-1].Kind != Edit_Retain {
-			d.Edits = append(d.Edits, Edit{Kind: Edit_Retain, Data: nil})
+		if d.Edits[len(d.Edits)-1].Kind != EDIT_RETAIN {
+			d.Edits = append(d.Edits, Edit{Kind: EDIT_RETAIN, Data: nil})
 		}
 
 		differ_merge(d)
@@ -321,11 +321,11 @@ func differ_merge(d *Differ) {
 	old, new := d.Old, d.New
 	var to_delete, to_insert []rune
 	for _, edit := range d.Edits {
-		if edit.Kind == Edit_Delete {
+		if edit.Kind == EDIT_DELETE {
 			to_delete = old[:len(to_delete)+len(edit.Data)]
 			continue
 		}
-		if edit.Kind == Edit_Insert {
+		if edit.Kind == EDIT_INSERT {
 			to_insert = new[:len(to_insert)+len(edit.Data)]
 			continue
 		}
@@ -345,11 +345,11 @@ func differ_merge(d *Differ) {
 			}
 		}
 		if has_delete {
-			result = append(result, Edit{Kind: Edit_Delete, Data: to_delete})
+			result = append(result, Edit{Kind: EDIT_DELETE, Data: to_delete})
 			old = old[len(to_delete):]
 		}
 		if has_insert {
-			result = append(result, Edit{Kind: Edit_Insert, Data: to_insert})
+			result = append(result, Edit{Kind: EDIT_INSERT, Data: to_insert})
 			new = new[len(to_insert):]
 		}
 		result = append(result, current_edit)
@@ -407,16 +407,16 @@ func differ_shift(d *Differ) (is_shifted bool) {
 		offset++
 		previous := &result[len(result)-1]
 		next := &d.Edits[offset+1]
-		if previous.Kind != Edit_Retain {
+		if previous.Kind != EDIT_RETAIN {
 			result = append(result, edit)
 			continue
 		}
-		if next.Kind != Edit_Retain {
+		if next.Kind != EDIT_RETAIN {
 			result = append(result, edit)
 			continue
 		}
 		// Both neighbours are retains, so an interior edit between them is never a retain.
-		invariant.Always(edit.Kind != Edit_Retain,
+		invariant.Always(edit.Kind != EDIT_RETAIN,
 			"interior edit between retains is not a retain")
 		if Runes_Have_Suffix(
 			Runes_Have_Suffix_Input{String: edit.Data, Expect: previous.Data},
@@ -459,21 +459,21 @@ func Differ_Optimized_Diff(d *Differ) {
 
 	old, new := d.Old, d.New
 	if d.Old_String == d.New_String {
-		d.Edits = append(d.Edits, Edit{Kind: Edit_Retain, Data: old})
+		d.Edits = append(d.Edits, Edit{Kind: EDIT_RETAIN, Data: old})
 		return
 	}
 	if d.New_String == "" {
-		d.Edits = append(d.Edits, Edit{Kind: Edit_Delete, Data: old})
+		d.Edits = append(d.Edits, Edit{Kind: EDIT_DELETE, Data: old})
 		return
 	}
 	if d.Old_String == "" {
-		d.Edits = append(d.Edits, Edit{Kind: Edit_Insert, Data: new})
+		d.Edits = append(d.Edits, Edit{Kind: EDIT_INSERT, Data: new})
 		return
 	}
 
 	prefix := Find_Common_Prefix(Find_Common_Prefix_Input{A: old, B: new})
 	if len(prefix) > 0 {
-		d.Edits = append(d.Edits, Edit{Kind: Edit_Retain, Data: prefix})
+		d.Edits = append(d.Edits, Edit{Kind: EDIT_RETAIN, Data: prefix})
 	}
 	old = old[len(prefix):]
 	new = new[len(prefix):]
@@ -481,7 +481,7 @@ func Differ_Optimized_Diff(d *Differ) {
 	suffix := Find_Common_Suffix(Find_Common_Suffix_Input{A: old, B: new})
 	defer func() {
 		if len(suffix) > 0 {
-			d.Edits = append(d.Edits, Edit{Kind: Edit_Retain, Data: suffix})
+			d.Edits = append(d.Edits, Edit{Kind: EDIT_RETAIN, Data: suffix})
 		}
 	}()
 	old = old[:len(old)-len(suffix)]
@@ -507,11 +507,11 @@ func differ_optimized_core(input differ_optimized_core_input) {
 	is_simple_delete := len(old) > 0 && len(new) == 0
 	is_simple_insert := len(old) == 0 && len(new) > 0
 	if is_simple_delete {
-		d.Edits = append(d.Edits, Edit{Kind: Edit_Delete, Data: old})
+		d.Edits = append(d.Edits, Edit{Kind: EDIT_DELETE, Data: old})
 		return
 	}
 	if is_simple_insert {
-		d.Edits = append(d.Edits, Edit{Kind: Edit_Insert, Data: new})
+		d.Edits = append(d.Edits, Edit{Kind: EDIT_INSERT, Data: new})
 		return
 	}
 
@@ -519,20 +519,20 @@ func differ_optimized_core(input differ_optimized_core_input) {
 	y := runes_index(runes_index_input{Haystack: new, Needle: old})
 	is_delete_sandwich := x > 0
 	if is_delete_sandwich {
-		d.Edits = append(d.Edits, Edit{Kind: Edit_Delete, Data: old[:x]})
+		d.Edits = append(d.Edits, Edit{Kind: EDIT_DELETE, Data: old[:x]})
 		old = old[x:]
-		d.Edits = append(d.Edits, Edit{Kind: Edit_Retain, Data: old[:len(new)]})
+		d.Edits = append(d.Edits, Edit{Kind: EDIT_RETAIN, Data: old[:len(new)]})
 		old = old[len(new):]
-		d.Edits = append(d.Edits, Edit{Kind: Edit_Delete, Data: old})
+		d.Edits = append(d.Edits, Edit{Kind: EDIT_DELETE, Data: old})
 		return
 	}
 	is_insert_sandwich := y > 0
 	if is_insert_sandwich {
-		d.Edits = append(d.Edits, Edit{Kind: Edit_Insert, Data: new[:y]})
+		d.Edits = append(d.Edits, Edit{Kind: EDIT_INSERT, Data: new[:y]})
 		new = new[y:]
-		d.Edits = append(d.Edits, Edit{Kind: Edit_Retain, Data: new[:len(old)]})
+		d.Edits = append(d.Edits, Edit{Kind: EDIT_RETAIN, Data: new[:len(old)]})
 		new = new[len(old):]
-		d.Edits = append(d.Edits, Edit{Kind: Edit_Insert, Data: new})
+		d.Edits = append(d.Edits, Edit{Kind: EDIT_INSERT, Data: new})
 		return
 	}
 
@@ -567,7 +567,7 @@ func differ_optimized_split(d *Differ) {
 			recurse(&clone)
 			diff.Edits = clone.Edits
 		}
-		diff.Edits = append(diff.Edits, Edit{Kind: Edit_Retain, Data: run})
+		diff.Edits = append(diff.Edits, Edit{Kind: EDIT_RETAIN, Data: run})
 		{
 			clone := Differ{
 				Edits:      diff.Edits,
@@ -618,19 +618,19 @@ func Differ_Algorithm_Diff(d *Differ) {
 	}
 	if d.Old_String == d.New_String {
 		if d.Old_String != "" {
-			d.Edits = append(d.Edits, Edit{Kind: Edit_Retain, Data: d.Old})
+			d.Edits = append(d.Edits, Edit{Kind: EDIT_RETAIN, Data: d.Old})
 			return
 		}
 	}
 	if d.New_String == "" {
 		// Reaching here with both texts empty is handled above, so Old is non-empty.
 		invariant.Always(d.Old_String != "", "Old_String non-empty when New is empty")
-		d.Edits = append(d.Edits, Edit{Kind: Edit_Delete, Data: d.Old})
+		d.Edits = append(d.Edits, Edit{Kind: EDIT_DELETE, Data: d.Old})
 		return
 	}
 	if d.Old_String == "" {
 		invariant.Always(d.New_String != "", "New_String non-empty when Old is empty")
-		d.Edits = append(d.Edits, Edit{Kind: Edit_Insert, Data: d.New})
+		d.Edits = append(d.Edits, Edit{Kind: EDIT_INSERT, Data: d.New})
 		return
 	}
 
@@ -783,10 +783,10 @@ func differ_algorithm_backtrack(input differ_algorithm_backtrack_input) (edits [
 		is_insert := k == -depth ||
 			(k != depth && trace_entry[k_offset+1] > trace_entry[k_offset-1])
 		if is_insert {
-			edit.Kind = Edit_Insert
+			edit.Kind = EDIT_INSERT
 			previous_k = k + 1
 		} else {
-			edit.Kind = Edit_Delete
+			edit.Kind = EDIT_DELETE
 			previous_k = k - 1
 		}
 
@@ -799,14 +799,14 @@ func differ_algorithm_backtrack(input differ_algorithm_backtrack_input) (edits [
 		}
 		left := x
 		if left < right {
-			edits = append(edits, Edit{Kind: Edit_Retain, Data: old[left:right]})
+			edits = append(edits, Edit{Kind: EDIT_RETAIN, Data: old[left:right]})
 		}
 
 		if depth > 0 {
-			if edit.Kind == Edit_Delete {
+			if edit.Kind == EDIT_DELETE {
 				edit.Data = old[previous_x:][:1]
 			}
-			if edit.Kind == Edit_Insert {
+			if edit.Kind == EDIT_INSERT {
 				edit.Data = new[previous_y:][:1]
 			}
 		}

@@ -38,13 +38,13 @@ type Nonce uint64
 // reconfiguration.
 type Epoch uint64
 
-// View_Change_Suffix is how many trailing log entries a Do_View_Change carries (§5.3). The new
+// VIEW_CHANGE_SUFFIX is how many trailing log entries a Do_View_Change carries (§5.3). The new
 // primary ranks reporters by (last-normal-view, op) — numbers, not the log — and reconstructs the
 // winner's log from its own committed prefix plus this suffix, fetching anything still missing. Two
 // is the paper's default: enough that the common case (the new primary already holds the committed
 // prefix the suffix attaches onto) needs no fetch, while the message stays bounded regardless of
 // log length.
-const View_Change_Suffix Op = 2
+const VIEW_CHANGE_SUFFIX Op = 2
 
 // Client_Identifier names a client of the cluster. It is not a Replica_Identifier: clients are not
 // in the Configuration, so a reply is addressed by Client, never by To.
@@ -135,27 +135,27 @@ type Prediction_Round struct {
 	Responses map[Replica_Identifier][]byte
 }
 
-// Status_Normal is the steady state: the replica serves Prepare and Commit and, if primary, drives
+// STATUS_NORMAL is the steady state: the replica serves Prepare and Commit and, if primary, drives
 // replication.
-const Status_Normal Status = 0
+const STATUS_NORMAL Status = 0
 
-// Status_View_Change means the replica has stopped normal work and is collecting the votes that
+// STATUS_VIEW_CHANGE means the replica has stopped normal work and is collecting the votes that
 // install a new view.
-const Status_View_Change Status = 1
+const STATUS_VIEW_CHANGE Status = 1
 
-// Status_Recovery means the replica lost its volatile state and is awaiting a quorum of
+// STATUS_RECOVERY means the replica lost its volatile state and is awaiting a quorum of
 // Recovery_Response before it may participate again.
-const Status_Recovery Status = 2
+const STATUS_RECOVERY Status = 2
 
-// Status_Transition means the replica is moving between epochs (§7): a new-group member catching up
+// STATUS_TRANSITION means the replica is moving between epochs (§7): a new-group member catching up
 // to the start of the epoch, or a replaced replica serving state transfer until the new group is
 // up. It is the status a replica holds from the moment it learns the new epoch until it is either
-// caught up (back to Status_Normal) or done serving the new group (Status_Shutdown).
-const Status_Transition Status = 3
+// caught up (back to STATUS_NORMAL) or done serving the new group (STATUS_SHUTDOWN).
+const STATUS_TRANSITION Status = 3
 
-// Status_Shutdown means a replaced replica has handed its state to the new group — it has seen
+// STATUS_SHUTDOWN means a replaced replica has handed its state to the new group — it has seen
 // f'+1 Epoch_Started — and is done (§7.1.2). It no longer participates in any protocol.
-const Status_Shutdown Status = 4
+const STATUS_SHUTDOWN Status = 4
 
 // Status selects which phase of the protocol a replica is in.
 type Status uint8
@@ -211,7 +211,7 @@ type Replica struct {
 	// standbys, the behavior before standbys existed. Set by the caller, never mutated.
 	Active_Count uint8
 	// Old_Configuration is the prior epoch's membership during a handoff (§7); empty unless
-	// this replica is Status_Transition or Status_Shutdown. A replaced replica serves state
+	// this replica is STATUS_TRANSITION or STATUS_SHUTDOWN. A replaced replica serves state
 	// transfer to the new group out of it, and a quorum over the OLD group (the
 	// decision-relevant configuration while the old group still owns the reconfiguration op) is
 	// computed from it.
@@ -268,7 +268,7 @@ type Replica struct {
 	// restored on warm recovery.
 	Checkpoint_State []byte
 
-	// Last_Normal_View is the highest view in which this replica was Status_Normal; the
+	// Last_Normal_View is the highest view in which this replica was STATUS_NORMAL; the
 	// view-change merge ranks Do_View_Change logs by it.
 	Last_Normal_View View
 	// Timer_Deadline is when the replica's active timer next fires, in the injected clock's
@@ -284,7 +284,7 @@ type Replica struct {
 	// View_Change_Deferred reports that the new primary selected a winning report it cannot
 	// reconstruct from its own log plus the received suffix and is awaiting a New_State before
 	// it installs (§5.3 deferred install). While it is set the primary stays in
-	// Status_View_Change and emits no Start_View; only a New_State from View_Change_Fetch_From
+	// STATUS_VIEW_CHANGE and emits no Start_View; only a New_State from View_Change_Fetch_From
 	// at op at least View_Change_Fetch_Op completes the install, so a stray New_State cannot
 	// install early and the Start_View is emitted exactly once.
 	View_Change_Deferred bool
@@ -345,7 +345,7 @@ type Replica struct {
 	// Standby_Promotion_Due reports that a reconfiguration promoted this replica from
 	// standby to active (§6.1) and it has not yet materialized the application state it never
 	// built as a standby. It is set at the role flip and consumed when the replica next returns
-	// to Status_Normal, which restores its carried checkpoint and replays the un-checkpointed
+	// to STATUS_NORMAL, which restores its carried checkpoint and replays the un-checkpointed
 	// suffix. It makes the rebuild fire exactly once regardless of which epoch-completion path
 	// runs.
 	Standby_Promotion_Due bool
@@ -373,83 +373,83 @@ type Replica struct {
 	Handoff_Commit Commit
 }
 
-// Message_Kind_Request is a client command arriving at the primary; it carries Command.
-const Message_Kind_Request Message_Kind = 0
+// MESSAGE_KIND_REQUEST is a client command arriving at the primary; it carries Command.
+const MESSAGE_KIND_REQUEST Message_Kind = 0
 
-// Message_Kind_Prepare is the primary asking backups to replicate a batch of one or more ops
+// MESSAGE_KIND_PREPARE is the primary asking backups to replicate a batch of one or more ops
 // (§6.2); it carries Entries, the highest Op in the batch, and the primary's Commit. A batch of one
 // is the common case; a busy primary collects several requests into one Prepare.
-const Message_Kind_Prepare Message_Kind = 1
+const MESSAGE_KIND_PREPARE Message_Kind = 1
 
-// Message_Kind_Prepare_Ok is a backup acknowledging a prepared op; it carries Op, the highest op
+// MESSAGE_KIND_PREPARE_OK is a backup acknowledging a prepared op; it carries Op, the highest op
 // the backup has appended, which acknowledges every op through it since the log is gap-free.
-const Message_Kind_Prepare_Ok Message_Kind = 2
+const MESSAGE_KIND_PREPARE_OK Message_Kind = 2
 
-// Message_Kind_Commit is the primary's heartbeat advertising its commit number.
-const Message_Kind_Commit Message_Kind = 3
+// MESSAGE_KIND_COMMIT is the primary's heartbeat advertising its commit number.
+const MESSAGE_KIND_COMMIT Message_Kind = 3
 
-// Message_Kind_Start_View_Change proposes moving to View.
-const Message_Kind_Start_View_Change Message_Kind = 4
+// MESSAGE_KIND_START_VIEW_CHANGE proposes moving to View.
+const MESSAGE_KIND_START_VIEW_CHANGE Message_Kind = 4
 
-// Message_Kind_Do_View_Change reports a replica's state to the new primary; it carries Op,
+// MESSAGE_KIND_DO_VIEW_CHANGE reports a replica's state to the new primary; it carries Op,
 // Last_Normal_View, Commit, and a bounded Log_Suffix (§5.3), not the full log.
-const Message_Kind_Do_View_Change Message_Kind = 5
+const MESSAGE_KIND_DO_VIEW_CHANGE Message_Kind = 5
 
-// Message_Kind_Start_View installs a new view's log on the backups; it carries Log and Commit.
-const Message_Kind_Start_View Message_Kind = 6
+// MESSAGE_KIND_START_VIEW installs a new view's log on the backups; it carries Log and Commit.
+const MESSAGE_KIND_START_VIEW Message_Kind = 6
 
-// Message_Kind_Recovery asks the cluster for current state; it carries Nonce.
-const Message_Kind_Recovery Message_Kind = 7
+// MESSAGE_KIND_RECOVERY asks the cluster for current state; it carries Nonce.
+const MESSAGE_KIND_RECOVERY Message_Kind = 7
 
-// Message_Kind_Recovery_Response answers a Recovery; it echoes Nonce and reports View, and from the
+// MESSAGE_KIND_RECOVERY_RESPONSE answers a Recovery; it echoes Nonce and reports View, and from the
 // primary also Log, Op, and Commit.
-const Message_Kind_Recovery_Response Message_Kind = 8
+const MESSAGE_KIND_RECOVERY_RESPONSE Message_Kind = 8
 
-// Message_Kind_Get_State asks a more current replica for its state; it carries the requester's View
+// MESSAGE_KIND_GET_STATE asks a more current replica for its state; it carries the requester's View
 // and Op so a behind replica can catch up without a full view change.
-const Message_Kind_Get_State Message_Kind = 9
+const MESSAGE_KIND_GET_STATE Message_Kind = 9
 
-// Message_Kind_New_State answers a Get_State with the responder's View, Log, Op, and Commit, and
+// MESSAGE_KIND_NEW_STATE answers a Get_State with the responder's View, Log, Op, and Commit, and
 // — when the requested prefix has been garbage-collected — the responder's Checkpoint_Op and
 // Checkpoint_State, with Log carrying only the suffix after the checkpoint.
-const Message_Kind_New_State Message_Kind = 10
+const MESSAGE_KIND_NEW_STATE Message_Kind = 10
 
-// Message_Kind_Reply is the primary's answer to a client, addressed by Client rather than To; it
+// MESSAGE_KIND_REPLY is the primary's answer to a client, addressed by Client rather than To; it
 // carries the Request_Number it answers and the Execute Result.
-const Message_Kind_Reply Message_Kind = 11
+const MESSAGE_KIND_REPLY Message_Kind = 11
 
-// Message_Kind_Predict_Request is the primary asking backups for their prediction of a pending
+// MESSAGE_KIND_PREDICT_REQUEST is the primary asking backups for their prediction of a pending
 // non-deterministic op (§4.4 pre-step); it carries the Command and the Client/Request_Number that
 // matches the response back to the pending request.
-const Message_Kind_Predict_Request Message_Kind = 12
+const MESSAGE_KIND_PREDICT_REQUEST Message_Kind = 12
 
-// Message_Kind_Predict_Response is a backup's prediction answering a Predict_Request; it echoes the
+// MESSAGE_KIND_PREDICT_RESPONSE is a backup's prediction answering a Predict_Request; it echoes the
 // Client/Request_Number and carries the backup's predicted value in Result.
-const Message_Kind_Predict_Response Message_Kind = 13
+const MESSAGE_KIND_PREDICT_RESPONSE Message_Kind = 13
 
-// Message_Kind_Reconfiguration is the administrator client's request to change the group (§7); it
+// MESSAGE_KIND_RECONFIGURATION is the administrator client's request to change the group (§7); it
 // carries the client's Epoch and Request_Number for the freshness check and the New_Configuration
 // the group is to become.
-const Message_Kind_Reconfiguration Message_Kind = 14
+const MESSAGE_KIND_RECONFIGURATION Message_Kind = 14
 
-// Message_Kind_Start_Epoch tells a member of the new group the epoch has begun (§7.1): it carries
+// MESSAGE_KIND_START_EPOCH tells a member of the new group the epoch has begun (§7.1): it carries
 // the new Epoch, the epoch-start Op, the old configuration (in Log, repurposed), and the
 // New_Configuration, so a new node knows where to fetch state and how far to catch up.
-const Message_Kind_Start_Epoch Message_Kind = 15
+const MESSAGE_KIND_START_EPOCH Message_Kind = 15
 
-// Message_Kind_Epoch_Started is a caught-up new replica's acknowledgement to the replaced replicas
+// MESSAGE_KIND_EPOCH_STARTED is a caught-up new replica's acknowledgement to the replaced replicas
 // (§7.1.1): it carries the new Epoch and the sender's identifier (From), counting toward the f'+1 a
 // replaced replica needs before it may shut down.
-const Message_Kind_Epoch_Started Message_Kind = 16
+const MESSAGE_KIND_EPOCH_STARTED Message_Kind = 16
 
-// Message_Kind_New_Epoch is an old replica's redirect to a stale-epoch client (§7.4): it carries
+// MESSAGE_KIND_NEW_EPOCH is an old replica's redirect to a stale-epoch client (§7.4): it carries
 // the current View and the New_Configuration so the client can find the group that moved on.
-const Message_Kind_New_Epoch Message_Kind = 17
+const MESSAGE_KIND_NEW_EPOCH Message_Kind = 17
 
-// Message_Kind_Check_Epoch is the administrator's completion probe (§7.3): a normal-case request in
+// MESSAGE_KIND_CHECK_EPOCH is the administrator's completion probe (§7.3): a normal-case request in
 // the new epoch whose reply tells the administrator the reconfiguration has finished. It carries
 // the client's Epoch and Request_Number like any client request.
-const Message_Kind_Check_Epoch Message_Kind = 18
+const MESSAGE_KIND_CHECK_EPOCH Message_Kind = 18
 
 // Message_Kind selects which fields of a Message carry meaning.
 type Message_Kind uint8
@@ -482,7 +482,7 @@ type Message struct {
 
 	// View_Change_Fetch marks a Get_State sent by a new primary completing a §5.3 view-change
 	// install: it fetches the selected reporter's reported Do_View_Change log for the merge. A
-	// reporter still in Status_View_Change must answer it; a view-changing replica otherwise
+	// reporter still in STATUS_VIEW_CHANGE must answer it; a view-changing replica otherwise
 	// does not answer a plain catch-up (§5.2). Without the flag the two are indistinguishable.
 	View_Change_Fetch bool
 
@@ -511,11 +511,11 @@ type Message struct {
 	// bounded Log_Suffix instead (§5.3).
 	Log []Log_Entry
 	// Log_Suffix is the bounded trailing slice a Do_View_Change carries instead of the full log
-	// (§5.3): the last View_Change_Suffix entries, ending at Op. The receiver derives its first
+	// (§5.3): the last VIEW_CHANGE_SUFFIX entries, ending at Op. The receiver derives its first
 	// op as Op minus the suffix length, and ranks reporters by (Last_Normal_View, Op) without
 	// needing the rest of the log.
 	Log_Suffix []Log_Entry
-	// Last_Normal_View is the sender's last view in Status_Normal, the merge key.
+	// Last_Normal_View is the sender's last view in STATUS_NORMAL, the merge key.
 	Last_Normal_View View
 
 	// Nonce ties a Recovery to its Recovery_Response.
@@ -549,17 +549,17 @@ type Message struct {
 	Old_Configuration Configuration
 }
 
-// Timer_Kind_None means the step armed no timer.
-const Timer_Kind_None Timer_Kind = 0
+// TIMER_KIND_NONE means the step armed no timer.
+const TIMER_KIND_NONE Timer_Kind = 0
 
-// Timer_Kind_Commit is the primary's heartbeat timer.
-const Timer_Kind_Commit Timer_Kind = 1
+// TIMER_KIND_COMMIT is the primary's heartbeat timer.
+const TIMER_KIND_COMMIT Timer_Kind = 1
 
-// Timer_Kind_View_Change is a backup's failure-detector and view-change-retry timer.
-const Timer_Kind_View_Change Timer_Kind = 2
+// TIMER_KIND_VIEW_CHANGE is a backup's failure-detector and view-change-retry timer.
+const TIMER_KIND_VIEW_CHANGE Timer_Kind = 2
 
-// Timer_Kind_Recovery is a recovering replica's Recovery-retry timer.
-const Timer_Kind_Recovery Timer_Kind = 3
+// TIMER_KIND_RECOVERY is a recovering replica's Recovery-retry timer.
+const TIMER_KIND_RECOVERY Timer_Kind = 3
 
 // Timer_Kind selects which timer a Timer_Reset re-arms.
 type Timer_Kind uint8
@@ -644,7 +644,7 @@ func New_Replica(input *New_Replica_Input) (replica Replica) {
 		Checkpoint_Interval: input.Checkpoint_Interval,
 		Log_Retain:          retain,
 		Batch_Max:           input.Batch_Max,
-		Status:              Status_Normal,
+		Status:              STATUS_NORMAL,
 	}
 	replica_ensure_scratch(&replica)
 	replica_arm_timer(&replica, input.Now)
@@ -677,23 +677,23 @@ func replica_tick_fire(replica *Replica, now time.Moment) (output Step_Output) {
 	if now < replica.Timer_Deadline {
 		return output
 	}
-	if replica.Status == Status_Recovery {
+	if replica.Status == STATUS_RECOVERY {
 		// Retry recovery with the same nonce in case the first Recovery, or the responses,
 		// were lost; the nonce stays fixed so earlier responses still count.
 		output.Messages = replica_broadcast(replica, Message{
-			Kind:  Message_Kind_Recovery,
+			Kind:  MESSAGE_KIND_RECOVERY,
 			Nonce: replica.Recovery_Nonce,
 		})
 		output.Timer = replica_arm_timer(replica, now)
 		return output
 	}
-	if replica.Status == Status_Shutdown {
+	if replica.Status == STATUS_SHUTDOWN {
 		return output // Out of the protocol; a shutdown replica does nothing.
 	}
-	if replica.Status == Status_Transition {
+	if replica.Status == STATUS_TRANSITION {
 		return replica_tick_transition(replica, now)
 	}
-	if replica.Status == Status_Normal {
+	if replica.Status == STATUS_NORMAL {
 		if replica.Identifier == replica_primary_identifier(replica) {
 			output.Messages = replica_primary_heartbeat(replica)
 			output.Timer = replica_arm_timer(replica, now)
@@ -740,7 +740,7 @@ func replica_resend_start_epoch(replica *Replica) (messages []Message) {
 			continue // Already heard from this new replica; no need to prod it.
 		}
 		messages = append(messages, Message{
-			Kind:              Message_Kind_Start_Epoch,
+			Kind:              MESSAGE_KIND_START_EPOCH,
 			From:              replica.Identifier,
 			To:                identifier,
 			View:              0,
@@ -776,7 +776,7 @@ func replica_primary_heartbeat(replica *Replica) (messages []Message) {
 				continue // This backup already holds and acknowledged the op.
 			}
 			messages = append(messages, Message{
-				Kind:    Message_Kind_Prepare,
+				Kind:    MESSAGE_KIND_PREPARE,
 				From:    replica.Identifier,
 				To:      identifier,
 				View:    replica.View,
@@ -788,7 +788,7 @@ func replica_primary_heartbeat(replica *Replica) (messages []Message) {
 		}
 	}
 	messages = append(messages, replica_broadcast(replica, Message{
-		Kind:   Message_Kind_Commit,
+		Kind:   MESSAGE_KIND_COMMIT,
 		Commit: replica.Commit,
 	})...)
 	// Re-drive the reconfiguration commit at the OLD epoch so an old member that missed the
@@ -802,7 +802,7 @@ func replica_primary_heartbeat(replica *Replica) (messages []Message) {
 				continue
 			}
 			messages = append(messages, Message{
-				Kind:            Message_Kind_Commit,
+				Kind:            MESSAGE_KIND_COMMIT,
 				From:            replica.Identifier,
 				To:              identifier,
 				View:            replica.View,
@@ -833,7 +833,7 @@ func replica_primary_resend_start_epoch(replica *Replica) (messages []Message) {
 			continue
 		}
 		messages = append(messages, Message{
-			Kind:              Message_Kind_Start_Epoch,
+			Kind:              MESSAGE_KIND_START_EPOCH,
 			From:              replica.Identifier,
 			To:                identifier,
 			View:              0,
@@ -863,7 +863,7 @@ type Replica_Recover_Input struct {
 }
 
 // Replica_Recover models a replica restarting with its volatile state lost: it keeps only its
-// identity and configuration, discards view, op, commit, and log, enters Status_Recovery, and
+// identity and configuration, discards view, op, commit, and log, enters STATUS_RECOVERY, and
 // broadcasts a Recovery stamped with the caller-supplied nonce. The nonce is injected rather than
 // drawn internally so the core stays pure and deterministic; the caller owns randomness. A warm
 // recovery (Keep_Checkpoint) preserves the on-disk checkpoint and advertises it, so the primary
@@ -876,12 +876,12 @@ func Replica_Recover(input *Replica_Recover_Input) (output Step_Output) {
 	// rule that an old replica not in the new group does not rejoin. Its state was already
 	// handed to the new group, or will be served by the other old replicas.
 	if !configuration_contains(replica.Configuration, replica.Identifier) {
-		replica.Status = Status_Shutdown
+		replica.Status = STATUS_SHUTDOWN
 		replica.Old_Configuration = nil
 		replica_assert_safety(replica)
 		return output
 	}
-	replica.Status = Status_Recovery
+	replica.Status = STATUS_RECOVERY
 	replica.View = 0
 	replica.Op = 0
 	replica.Commit = 0
@@ -930,7 +930,7 @@ func Replica_Recover(input *Replica_Recover_Input) (output Step_Output) {
 	replica.Recovery_Nonce = input.Nonce
 	replica.Recovery_From = map[Replica_Identifier]Message{}
 	output.Messages = replica_broadcast(replica, Message{
-		Kind:          Message_Kind_Recovery,
+		Kind:          MESSAGE_KIND_RECOVERY,
 		Nonce:         input.Nonce,
 		Checkpoint_Op: replica.Checkpoint_Op,
 	})
@@ -971,41 +971,41 @@ func replica_dispatch(replica *Replica, message Message, now time.Moment) (outpu
 		return gate
 	}
 	switch message.Kind {
-	case Message_Kind_Request:
+	case MESSAGE_KIND_REQUEST:
 		return replica_receive_request(replica, message)
-	case Message_Kind_Reconfiguration:
+	case MESSAGE_KIND_RECONFIGURATION:
 		return replica_receive_reconfiguration(replica, message)
-	case Message_Kind_Check_Epoch:
+	case MESSAGE_KIND_CHECK_EPOCH:
 		// A Check_Epoch (§7.3) is an ordinary client request in the new epoch whose reply
 		// signals completion; the request path handles it like any client command.
 		return replica_receive_request(replica, message)
-	case Message_Kind_Prepare:
+	case MESSAGE_KIND_PREPARE:
 		return replica_receive_prepare(replica, message, now)
-	case Message_Kind_Prepare_Ok:
+	case MESSAGE_KIND_PREPARE_OK:
 		return replica_receive_prepare_ok(replica, message)
-	case Message_Kind_Commit:
+	case MESSAGE_KIND_COMMIT:
 		return replica_receive_commit(replica, message, now)
-	case Message_Kind_Start_View_Change:
+	case MESSAGE_KIND_START_VIEW_CHANGE:
 		return replica_receive_start_view_change(replica, message, now)
-	case Message_Kind_Do_View_Change:
+	case MESSAGE_KIND_DO_VIEW_CHANGE:
 		return replica_receive_do_view_change(replica, message, now)
-	case Message_Kind_Start_View:
+	case MESSAGE_KIND_START_VIEW:
 		return replica_receive_start_view(replica, message, now)
-	case Message_Kind_Recovery:
+	case MESSAGE_KIND_RECOVERY:
 		return replica_receive_recovery(replica, message)
-	case Message_Kind_Recovery_Response:
+	case MESSAGE_KIND_RECOVERY_RESPONSE:
 		return replica_receive_recovery_response(replica, message, now)
-	case Message_Kind_Get_State:
+	case MESSAGE_KIND_GET_STATE:
 		return replica_receive_get_state(replica, message)
-	case Message_Kind_New_State:
+	case MESSAGE_KIND_NEW_STATE:
 		return replica_receive_new_state(replica, message, now)
-	case Message_Kind_Predict_Request:
+	case MESSAGE_KIND_PREDICT_REQUEST:
 		return replica_receive_predict_request(replica, message)
-	case Message_Kind_Predict_Response:
+	case MESSAGE_KIND_PREDICT_RESPONSE:
 		return replica_receive_predict_response(replica, message)
-	case Message_Kind_Start_Epoch:
+	case MESSAGE_KIND_START_EPOCH:
 		return replica_receive_start_epoch(replica, message, now)
-	case Message_Kind_Epoch_Started:
+	case MESSAGE_KIND_EPOCH_STARTED:
 		return replica_receive_epoch_started(replica, message)
 	}
 	return output
@@ -1018,7 +1018,7 @@ func step_output_fold(into *Step_Output, more Step_Output) {
 	into.Messages = append(into.Messages, more.Messages...)
 	into.Committed = append(into.Committed, more.Committed...)
 	into.Replies = append(into.Replies, more.Replies...)
-	if more.Timer.Kind != Timer_Kind_None {
+	if more.Timer.Kind != TIMER_KIND_NONE {
 		into.Timer = more.Timer
 	}
 }
@@ -1067,7 +1067,7 @@ func replica_old_group_commit(replica *Replica) (messages []Message) {
 			continue
 		}
 		messages = append(messages, Message{
-			Kind:   Message_Kind_Commit,
+			Kind:   MESSAGE_KIND_COMMIT,
 			From:   replica.Identifier,
 			To:     identifier,
 			View:   replica.View,
@@ -1090,7 +1090,7 @@ func replica_start_epoch_messages(
 			continue // Already a member; it learns the new epoch by executing the op.
 		}
 		messages = append(messages, Message{
-			Kind:              Message_Kind_Start_Epoch,
+			Kind:              MESSAGE_KIND_START_EPOCH,
 			From:              replica.Identifier,
 			To:                identifier,
 			View:              0,
@@ -1158,7 +1158,7 @@ func replica_enter_new_epoch(
 		// eventually shut down. Arm the commit re-drive so the primary keeps telling the
 		// old group the reconfiguration committed, in case the commit was lost (Bug 19).
 		replica.Old_Configuration = nil
-		replica.Status = Status_Normal
+		replica.Status = STATUS_NORMAL
 		replica.Handoff_Commit_Redrive = handoff_commit_redrive
 		// Capture the handoff commit (the reconfiguration op) so the re-drive advertises a
 		// fixed point, never the live commit that grows as the new epoch commits.
@@ -1181,7 +1181,7 @@ func replica_enter_new_epoch(
 	// A replica being replaced: keep the old configuration to serve state transfer and stay
 	// transitioning until f'+1 Epoch_Started.
 	replica.Old_Configuration = old_configuration
-	replica.Status = Status_Transition
+	replica.Status = STATUS_TRANSITION
 	// A standby being replaced advanced Executed as it walked the committed log but ran no
 	// Execute up-call (§6.1), so its application state sits at its checkpoint while Executed
 	// runs ahead. Reconcile Executed down to the checkpoint op so the counter matches the state
@@ -1207,7 +1207,7 @@ func replica_epoch_started_messages(
 			continue // Still a member of the new group; not being replaced.
 		}
 		messages = append(messages, Message{
-			Kind:  Message_Kind_Epoch_Started,
+			Kind:  MESSAGE_KIND_EPOCH_STARTED,
 			From:  replica.Identifier,
 			To:    identifier,
 			View:  replica.View,
@@ -1233,8 +1233,8 @@ func replica_message_epoch_check(
 	// its identifier, in which case a Start_Epoch naming it in the new configuration revives it
 	// as a fresh member (§7.2 brings up the new group; the adopt path catches it up). Any other
 	// message to a shut-down replica is still ignored.
-	if replica.Status == Status_Shutdown {
-		if message.Kind == Message_Kind_Start_Epoch {
+	if replica.Status == STATUS_SHUTDOWN {
+		if message.Kind == MESSAGE_KIND_START_EPOCH {
 			if configuration_contains(message.New_Configuration, replica.Identifier) {
 				return replica_receive_start_epoch(replica, message, now), false
 			}
@@ -1269,10 +1269,10 @@ func replica_message_epoch_check(
 	// than rejoining an emptied old-epoch remnant and breaking quorum intersection. Any OTHER
 	// higher-epoch message leaves this replica behind until a Start_Epoch or New_Epoch reaches
 	// it; dropping it is safe, since it is not stale — there is no sender to redirect.
-	if message.Kind == Message_Kind_Start_Epoch {
+	if message.Kind == MESSAGE_KIND_START_EPOCH {
 		return replica_receive_start_epoch(replica, message, now), false
 	}
-	if message.Kind == Message_Kind_New_Epoch {
+	if message.Kind == MESSAGE_KIND_NEW_EPOCH {
 		return replica_receive_new_epoch(replica, message, now), false
 	}
 	return output, false
@@ -1292,7 +1292,7 @@ func replica_become_replaced(
 	replica.Epoch_Start_Op = epoch_start_op
 	replica.View = 0
 	replica.Last_Normal_View = 0
-	replica.Status = Status_Transition
+	replica.Status = STATUS_TRANSITION
 	replica.Start_View_Change_From = map[Replica_Identifier]bool{}
 	replica.Do_View_Change_From = map[Replica_Identifier]Message{}
 	replica.View_Change_Deferred = false
@@ -1359,7 +1359,7 @@ func replica_receive_new_epoch(
 	// up, not quorum-blocking recovery: several behind replicas redirected together would
 	// deadlock with no Normal quorum to answer them (Bug 19). A crashed replica lost its state
 	// and still needs recovery.
-	if replica.Status != Status_Recovery {
+	if replica.Status != STATUS_RECOVERY {
 		// A never-crashed replica catches up as a Transition member, not via recovery
 		// (which blocks on a quorum): it keeps its committed prefix, re-fetches the rest.
 		// Only a crash that lost state recovers (Bug 19).
@@ -1388,7 +1388,7 @@ func replica_rejoin_new_epoch(
 	replica.Epoch_Start_Op = catch_up_target
 	replica.View = 0
 	replica.Last_Normal_View = 0
-	replica.Status = Status_Transition
+	replica.Status = STATUS_TRANSITION
 	replica.Start_View_Change_From = map[Replica_Identifier]bool{}
 	replica.Do_View_Change_From = map[Replica_Identifier]Message{}
 	replica.View_Change_Deferred = false
@@ -1403,11 +1403,11 @@ func replica_rejoin_new_epoch(
 // Executed; re-executing it would double-apply, Bug 9). It keeps its nonce so earlier responses
 // still count.
 func replica_recover_into_new_epoch(replica *Replica, now time.Moment) (output Step_Output) {
-	replica.Status = Status_Recovery
+	replica.Status = STATUS_RECOVERY
 	replica.Recovery_From = map[Replica_Identifier]Message{}
 	replica_reset_primary_scratch(replica)
 	output.Messages = replica_broadcast(replica, Message{
-		Kind:          Message_Kind_Recovery,
+		Kind:          MESSAGE_KIND_RECOVERY,
 		Nonce:         replica.Recovery_Nonce,
 		Checkpoint_Op: replica.Checkpoint_Op,
 	})
@@ -1425,11 +1425,11 @@ func replica_redirect_stale_epoch(replica *Replica, message Message) (output Ste
 	// its uncommitted tail and, believing itself caught up, serves as the new epoch's primary
 	// while missing an op committed cluster-wide — reusing that committed op-number (§8.3
 	// violation). A normal peer holds the real epoch-start op and redirects authoritatively.
-	if replica.Status == Status_Recovery {
+	if replica.Status == STATUS_RECOVERY {
 		return output
 	}
 	redirect := Message{
-		Kind:              Message_Kind_New_Epoch,
+		Kind:              MESSAGE_KIND_NEW_EPOCH,
 		From:              replica.Identifier,
 		View:              replica.View,
 		Epoch:             replica.Epoch,
@@ -1440,9 +1440,9 @@ func replica_redirect_stale_epoch(replica *Replica, message Message) (output Ste
 		Op:     replica.Epoch_Start_Op,
 		Commit: replica.Commit,
 	}
-	is_client := message.Kind == Message_Kind_Request ||
-		message.Kind == Message_Kind_Reconfiguration ||
-		message.Kind == Message_Kind_Check_Epoch
+	is_client := message.Kind == MESSAGE_KIND_REQUEST ||
+		message.Kind == MESSAGE_KIND_RECONFIGURATION ||
+		message.Kind == MESSAGE_KIND_CHECK_EPOCH
 	if is_client {
 		redirect.Client = message.Client
 		output.Replies = []Message{redirect}
@@ -1461,7 +1461,7 @@ func replica_redirect_stale_epoch(replica *Replica, message Message) (output Ste
 // refuses client requests: replica_open_to_requests reads the topmost entry and sees the
 // reconfiguration, so the request path turns new commands away without any extra flag.
 func replica_receive_reconfiguration(replica *Replica, message Message) (output Step_Output) {
-	if replica.Status != Status_Normal {
+	if replica.Status != STATUS_NORMAL {
 		return output
 	}
 	if replica.Identifier != replica_primary_identifier(replica) {
@@ -1513,11 +1513,11 @@ func replica_receive_start_epoch(
 	replica *Replica, message Message, now time.Moment,
 ) (output Step_Output) {
 	if replica.Epoch == message.Epoch {
-		if replica.Status == Status_Normal {
+		if replica.Status == STATUS_NORMAL {
 			// Already caught up and serving in this epoch: re-acknowledge so the
 			// resending replaced replica can reach its f'+1 and shut down.
 			output.Messages = []Message{{
-				Kind:  Message_Kind_Epoch_Started,
+				Kind:  MESSAGE_KIND_EPOCH_STARTED,
 				From:  replica.Identifier,
 				To:    message.From,
 				View:  replica.View,
@@ -1536,9 +1536,9 @@ func replica_receive_start_epoch(
 	// otherwise it adopts the new epoch's configuration and continues recovery against the new
 	// group, the nonce-protected rejoin staying the single way its wiped log is restored
 	// (recovery quiescence, Bug 1).
-	if replica.Status == Status_Recovery {
+	if replica.Status == STATUS_RECOVERY {
 		if !configuration_contains(message.New_Configuration, replica.Identifier) {
-			replica.Status = Status_Shutdown
+			replica.Status = STATUS_SHUTDOWN
 			return output
 		}
 		replica.Epoch = message.Epoch
@@ -1560,7 +1560,7 @@ func replica_receive_start_epoch(
 	replica.Old_Configuration = message.Old_Configuration
 	replica.View = 0
 	replica.Last_Normal_View = 0
-	replica.Status = Status_Transition
+	replica.Status = STATUS_TRANSITION
 	replica.Start_View_Change_From = map[Replica_Identifier]bool{}
 	replica.Do_View_Change_From = map[Replica_Identifier]Message{}
 	replica.View_Change_Deferred = false
@@ -1631,7 +1631,7 @@ func replica_epoch_state_transfer(replica *Replica) (messages []Message) {
 		}
 		emitted[identifier] = true
 		messages = append(messages, Message{
-			Kind:  Message_Kind_Get_State,
+			Kind:  MESSAGE_KIND_GET_STATE,
 			From:  replica.Identifier,
 			To:    identifier,
 			View:  replica.View,
@@ -1649,7 +1649,7 @@ func replica_epoch_state_transfer(replica *Replica) (messages []Message) {
 // current primary.
 func replica_complete_epoch(replica *Replica, now time.Moment) (output Step_Output) {
 	old_configuration := replica.Old_Configuration
-	replica.Status = Status_Normal
+	replica.Status = STATUS_NORMAL
 	replica.Old_Configuration = nil
 	// A standby promoted to active by the reconfiguration materializes its application state
 	// here, once, before serving (§6.1); a replica that was already active just executes the
@@ -1673,11 +1673,11 @@ func replica_receive_epoch_started(replica *Replica, message Message) (output St
 	// A member already normal in this epoch — the new primary in particular — records that the
 	// sender is active, which ends the heartbeat's Start_Epoch re-drive to it (§7.2). The
 	// epoch-precedence gate has already discarded any stale-epoch Epoch_Started.
-	if replica.Status == Status_Normal {
+	if replica.Status == STATUS_NORMAL {
 		replica.Epoch_Up_From[message.From] = true
 		return output
 	}
-	if replica.Status != Status_Transition {
+	if replica.Status != STATUS_TRANSITION {
 		return output
 	}
 	// Only a replica being replaced — handing off, so not a member of the new group — counts
@@ -1699,7 +1699,7 @@ func replica_receive_epoch_started(replica *Replica, message Message) (output St
 		}
 	}
 	// Every active new-group member is up: the handoff is complete, so this replica shuts down.
-	replica.Status = Status_Shutdown
+	replica.Status = STATUS_SHUTDOWN
 	return output
 }
 
@@ -1716,7 +1716,7 @@ func replica_assert_safety(replica *Replica) {
 	serves_own_group := configuration_contains(replica.Configuration, replica.Identifier)
 	// Old_Configuration is populated only across an epoch handoff, where the status is
 	// Transitioning or Shutdown; a non-empty Old_Configuration outside those is a leak.
-	handoff := replica.Status == Status_Transition || replica.Status == Status_Shutdown
+	handoff := replica.Status == STATUS_TRANSITION || replica.Status == STATUS_SHUTDOWN
 	old_configuration_within_handoff := len(replica.Old_Configuration) == 0 || handoff
 	// Log_Start must never sit above the checkpoint op: the ops between would be in neither the
 	// log nor the checkpoint, a gap that walks execution into an absent op. A 0 Log_Start means
@@ -1786,7 +1786,7 @@ func configurations_equal(input *configurations_equal_input) (yes bool) {
 // in-flight one is dropped (its op will reply when it commits), and a duplicate of an
 // already-executed request is answered from the cache (§4.5, a client that lost its reply).
 func replica_receive_request(replica *Replica, message Message) (output Step_Output) {
-	if replica.Status != Status_Normal {
+	if replica.Status != STATUS_NORMAL {
 		return output
 	}
 	if replica.Identifier != replica_primary_identifier(replica) {
@@ -1957,7 +1957,7 @@ func replica_flush_batch(replica *Replica) (output Step_Output) {
 	// the normal case" message-reduction is the cost we deliberately trade away for the
 	// simpler, safer non-voting standby.
 	output.Messages = replica_broadcast(replica, Message{
-		Kind:    Message_Kind_Prepare,
+		Kind:    MESSAGE_KIND_PREPARE,
 		Op:      replica.Op,
 		Entries: batch,
 		Commit:  replica.Commit,
@@ -1982,7 +1982,7 @@ func replica_begin_pre_step(replica *Replica, message Message) (output Step_Outp
 		}
 	}
 	output.Messages = replica_broadcast(replica, Message{
-		Kind:           Message_Kind_Predict_Request,
+		Kind:           MESSAGE_KIND_PREDICT_REQUEST,
 		Command:        message.Command,
 		Client:         message.Client,
 		Request_Number: message.Request_Number,
@@ -1995,14 +1995,14 @@ func replica_begin_pre_step(replica *Replica, message Message) (output Step_Outp
 // stays silent, and the pre-step round waits for f replies from the backups that are current. With
 // no Predict injected the response is empty, which Combine must tolerate.
 func replica_receive_predict_request(replica *Replica, message Message) (output Step_Output) {
-	if replica.Status != Status_Normal {
+	if replica.Status != STATUS_NORMAL {
 		return output
 	}
 	if message.View != replica.View {
 		return output
 	}
 	output.Messages = []Message{{
-		Kind:           Message_Kind_Predict_Response,
+		Kind:           MESSAGE_KIND_PREDICT_RESPONSE,
 		From:           replica.Identifier,
 		To:             message.From,
 		View:           replica.View,
@@ -2048,7 +2048,7 @@ func replica_pre_step_appendable(
 }
 
 func replica_receive_predict_response(replica *Replica, message Message) (output Step_Output) {
-	if replica.Status != Status_Normal {
+	if replica.Status != STATUS_NORMAL {
 		return output
 	}
 	if message.View != replica.View {
@@ -2113,7 +2113,7 @@ func replica_build_reply(
 	replica *Replica, client Client_Identifier, record Client_Record,
 ) (reply Message) {
 	return Message{
-		Kind:           Message_Kind_Reply,
+		Kind:           MESSAGE_KIND_REPLY,
 		View:           replica.View,
 		Epoch:          replica.Epoch,
 		Client:         client,
@@ -2168,7 +2168,7 @@ func replica_reack_redriven_prepare(replica *Replica, message Message) (messages
 		// The caller reconciled any divergence, so every op here holds the primary's
 		// authoritative entry and is safe to acknowledge.
 		messages = append(messages, Message{
-			Kind:  Message_Kind_Prepare_Ok,
+			Kind:  MESSAGE_KIND_PREPARE_OK,
 			From:  replica.Identifier,
 			To:    replica_primary_identifier(replica),
 			View:  replica.View,
@@ -2213,7 +2213,7 @@ func replica_redriven_prepare(
 func replica_receive_prepare(
 	replica *Replica, message Message, now time.Moment,
 ) (output Step_Output) {
-	if replica.Status != Status_Normal {
+	if replica.Status != STATUS_NORMAL {
 		return output
 	}
 	if message.View < replica.View {
@@ -2269,7 +2269,7 @@ func replica_receive_prepare(
 	}
 	for op := first_appended; op <= replica.Op; op++ {
 		output.Messages = append(output.Messages, Message{
-			Kind:  Message_Kind_Prepare_Ok,
+			Kind:  MESSAGE_KIND_PREPARE_OK,
 			From:  replica.Identifier,
 			To:    replica_primary_identifier(replica),
 			View:  replica.View,
@@ -2286,7 +2286,7 @@ func replica_receive_prepare(
 func replica_receive_commit(
 	replica *Replica, message Message, now time.Moment,
 ) (output Step_Output) {
-	if replica.Status != Status_Normal {
+	if replica.Status != STATUS_NORMAL {
 		return output
 	}
 	if message.View < replica.View {
@@ -2336,7 +2336,7 @@ func replica_begin_state_transfer(
 		replica_leave_view(replica)
 	}
 	output.Messages = []Message{{
-		Kind:  Message_Kind_Get_State,
+		Kind:  MESSAGE_KIND_GET_STATE,
 		From:  replica.Identifier,
 		To:    source,
 		View:  replica.View,
@@ -2356,7 +2356,7 @@ func replica_begin_state_transfer(
 // refusing here would deadlock that fetch. A recovering replica, whose log was wiped, has nothing
 // authoritative to offer and stays silent.
 func replica_receive_get_state(replica *Replica, message Message) (output Step_Output) {
-	if replica.Status == Status_Recovery {
+	if replica.Status == STATUS_RECOVERY {
 		return output
 	}
 	// A VIEW-CHANGING replica still answers a plain catch-up Get_State, but ships ONLY its
@@ -2370,7 +2370,7 @@ func replica_receive_get_state(replica *Replica, message Message) (output Step_O
 		return output
 	}
 	response := Message{
-		Kind:   Message_Kind_New_State,
+		Kind:   MESSAGE_KIND_NEW_STATE,
 		From:   replica.Identifier,
 		To:     message.From,
 		View:   replica.View,
@@ -2400,8 +2400,8 @@ func replica_receive_get_state(replica *Replica, message Message) (output Step_O
 	// catch-up (not the §5.3 merge fetch), holds an uncommitted suffix the new epoch/view may
 	// supersede. Ship only its committed prefix; the stale tail is Bug 22's leak, and a
 	// committed prefix is all a catching-up peer needs to reach the frontier.
-	cap_to_commit := replica.Status == Status_Transition
-	if replica.Status == Status_View_Change {
+	cap_to_commit := replica.Status == STATUS_TRANSITION
+	if replica.Status == STATUS_VIEW_CHANGE {
 		if !message.View_Change_Fetch {
 			cap_to_commit = true
 		}
@@ -2437,7 +2437,7 @@ func replica_receive_new_state(
 	// reporter's complete log (§5.3). Route it to the deferred-install path, which adopts the
 	// fetched log wholesale and finally broadcasts the Start_View it withheld.
 	if replica.View_Change_Deferred {
-		if replica.Status == Status_View_Change {
+		if replica.Status == STATUS_VIEW_CHANGE {
 			return replica_complete_view_change_fetch(replica, message, now)
 		}
 	}
@@ -2445,7 +2445,7 @@ func replica_receive_new_state(
 	// applies the shipped state the same way, then completes the epoch once its log reaches the
 	// epoch-start op. This is the path a brand-new node takes from an empty log — checkpoint
 	// included — to serving in the new epoch.
-	if replica.Status == Status_Transition {
+	if replica.Status == STATUS_TRANSITION {
 		if message.Op <= replica.Op {
 			return output // Nothing newer to adopt; keep waiting for a later answer.
 		}
@@ -2463,7 +2463,7 @@ func replica_receive_new_state(
 		}
 		return replica_catch_up_to_epoch(replica, now)
 	}
-	if replica.Status != Status_Normal {
+	if replica.Status != STATUS_NORMAL {
 		return output
 	}
 	if message.View < replica.View {
@@ -2630,7 +2630,7 @@ func replica_replace_from(replica *Replica, carrier_start Op, suffix []Log_Entry
 // Records a backup's acknowledgement and commits as far as the acknowledgements allow. The ack is
 // filed by sender so a duplicate cannot inflate the count.
 func replica_receive_prepare_ok(replica *Replica, message Message) (output Step_Output) {
-	if replica.Status != Status_Normal {
+	if replica.Status != STATUS_NORMAL {
 		return output
 	}
 	if message.View != replica.View {
@@ -2819,7 +2819,7 @@ func replica_materialize_application_state(
 	return replica_execute_to_commit(replica)
 }
 
-// Materializes the application state of a just-promoted standby when it returns to Status_Normal,
+// Materializes the application state of a just-promoted standby when it returns to STATUS_NORMAL,
 // then clears the pending flag, so the rebuild fires exactly once whichever epoch-completion path
 // (direct via enter-new-epoch, or after a catch-up via complete-epoch) brought it back to normal. A
 // replica with no pending promotion does nothing.
@@ -2990,10 +2990,10 @@ func replica_receive_start_view_change(
 	// epoch handoff (§7): a new-group member still catching up has not finished installing the
 	// epoch's log, and a replaced replica is only serving transfers — neither participates in a
 	// view change until it is back to normal, so both stay quiescent here too.
-	if replica.Status == Status_Recovery {
+	if replica.Status == STATUS_RECOVERY {
 		return output
 	}
-	if replica.Status == Status_Transition {
+	if replica.Status == STATUS_TRANSITION {
 		return output
 	}
 	// A standby casts no view-change vote and is never the new primary, so it does not join the
@@ -3010,7 +3010,7 @@ func replica_receive_start_view_change(
 	if message.View > replica.View {
 		output = replica_start_view_change(replica, message.View, now)
 	}
-	if replica.Status != Status_View_Change {
+	if replica.Status != STATUS_VIEW_CHANGE {
 		return output
 	}
 	before_count := len(replica.Start_View_Change_From)
@@ -3035,23 +3035,23 @@ func replica_receive_start_view_change(
 }
 
 // Builds this replica's report to the new primary (§5.3): its op, commit, and last-normal-view —
-// the numbers the primary ranks reporters by — plus a BOUNDED suffix of at most View_Change_Suffix
+// the numbers the primary ranks reporters by — plus a BOUNDED suffix of at most VIEW_CHANGE_SUFFIX
 // trailing entries rather than the whole log, which can be arbitrarily large. The checkpoint
 // travels too, so when the winner is selected and a fetch is needed the receiver knows the winner's
 // compacted prefix; the receiver derives the suffix's first op as Op minus the suffix length.
 func replica_build_do_view_change(replica *Replica) (message Message) {
-	// The suffix is the last View_Change_Suffix entries, clamped to the first live op
+	// The suffix is the last VIEW_CHANGE_SUFFIX entries, clamped to the first live op
 	// (Log_Start+1) so a compacted prefix is never indexed. With Op below the bound the suffix
 	// is the whole live log; with an empty log it is empty.
 	suffix_start := replica.Log_Start + 1
-	if replica.Op >= View_Change_Suffix {
-		candidate := replica.Op - View_Change_Suffix + 1
+	if replica.Op >= VIEW_CHANGE_SUFFIX {
+		candidate := replica.Op - VIEW_CHANGE_SUFFIX + 1
 		if candidate > suffix_start {
 			suffix_start = candidate
 		}
 	}
 	return Message{
-		Kind:             Message_Kind_Do_View_Change,
+		Kind:             MESSAGE_KIND_DO_VIEW_CHANGE,
 		From:             replica.Identifier,
 		To:               replica_primary_identifier(replica),
 		View:             replica.View,
@@ -3072,7 +3072,7 @@ func replica_build_do_view_change(replica *Replica) (message Message) {
 func replica_receive_do_view_change(
 	replica *Replica, message Message, now time.Moment,
 ) (output Step_Output) {
-	if replica.Status != Status_View_Change {
+	if replica.Status != STATUS_VIEW_CHANGE {
 		return output
 	}
 	if message.View != replica.View {
@@ -3200,7 +3200,7 @@ func replica_select_log(candidates map[Replica_Identifier]Message) (best Message
 }
 
 // Sends a Get_State to the selected reporter for the complete log and records the deferred install
-// (§5.3): the new primary stays in Status_View_Change with no Start_View until the awaited
+// (§5.3): the new primary stays in STATUS_VIEW_CHANGE with no Start_View until the awaited
 // New_State arrives, then adopts that log wholesale (replacing its own divergent uncommitted tail).
 // The fetch asks from the new primary's Log_Start, so the reporter ships everything from there
 // forward — keeping the carrier's suffix aligned with a checkpoint the new primary can then ship
@@ -3213,7 +3213,7 @@ func replica_begin_view_change_fetch(
 	replica.View_Change_Fetch_From = best.From
 	replica.View_Change_Fetch_Op = best.Op
 	output.Messages = []Message{{
-		Kind:              Message_Kind_Get_State,
+		Kind:              MESSAGE_KIND_GET_STATE,
 		From:              replica.Identifier,
 		To:                best.From,
 		View:              replica.View,
@@ -3235,7 +3235,7 @@ func replica_begin_view_change_fetch(
 func replica_complete_install(
 	replica *Replica, carrier Message, selected_op Op, now time.Moment,
 ) (output Step_Output) {
-	// The new primary reached here only through Status_View_Change, set solely by
+	// The new primary reached here only through STATUS_VIEW_CHANGE, set solely by
 	// replica_start_view_change, which funnels through replica_leave_view and empties the tally
 	// (no ack is accepted while view-changing). So the tally is empty now; the installed tail
 	// commits only as the heartbeat re-drives Prepares for it and the backups re-acknowledge,
@@ -3254,13 +3254,13 @@ func replica_complete_install(
 	// bounded suffix omitted would be lost.
 	invariant.Always(replica.Op >= selected_op,
 		"installed log reaches the selected reporter op")
-	replica.Status = Status_Normal
+	replica.Status = STATUS_NORMAL
 	replica.View_Change_Deferred = false
 	replica.Last_Normal_View = replica.View
 	output.Timer = replica_arm_timer(replica, now)
 	suffix := replica_log_slice_from(replica, replica.Log_Start+1)
 	output.Messages = append(output.Messages, replica_broadcast(replica, Message{
-		Kind:             Message_Kind_Start_View,
+		Kind:             MESSAGE_KIND_START_VIEW,
 		Op:               replica.Op,
 		Commit:           replica.Commit,
 		Log:              suffix,
@@ -3341,17 +3341,17 @@ func replica_receive_start_view(
 	// replica catches up through the epoch state-transfer path (§7.1.1), not a Start_View, so
 	// it stays quiescent here — adopting a Start_View would flip it to normal with its handoff
 	// bookkeeping (Old_Configuration) still set.
-	if replica.Status == Status_Recovery {
+	if replica.Status == STATUS_RECOVERY {
 		return output
 	}
-	if replica.Status == Status_Transition {
+	if replica.Status == STATUS_TRANSITION {
 		return output
 	}
 	if message.View < replica.View {
 		return output
 	}
 	if message.View == replica.View {
-		if replica.Status == Status_Normal {
+		if replica.Status == STATUS_NORMAL {
 			return output
 		}
 	}
@@ -3360,7 +3360,7 @@ func replica_receive_start_view(
 	// backup's application state reflects exactly its commit number rather than going stale on
 	// adoption.
 	output.Committed, output.Replies = replica_adopt_log(replica, message, message.Commit)
-	replica.Status = Status_Normal
+	replica.Status = STATUS_NORMAL
 	replica.Last_Normal_View = replica.View
 	output.Timer = replica_arm_timer(replica, now)
 	return output
@@ -3371,7 +3371,7 @@ func replica_receive_start_view(
 // its full log; a backup reports only its view, since the recovering replica must take its log from
 // the primary.
 func replica_receive_recovery(replica *Replica, message Message) (output Step_Output) {
-	if replica.Status != Status_Normal {
+	if replica.Status != STATUS_NORMAL {
 		return output
 	}
 	// A standby does not answer recoveries (TigerBeetle's non-voting-standby design, see
@@ -3382,7 +3382,7 @@ func replica_receive_recovery(replica *Replica, message Message) (output Step_Ou
 		return output
 	}
 	response := Message{
-		Kind:  Message_Kind_Recovery_Response,
+		Kind:  MESSAGE_KIND_RECOVERY_RESPONSE,
 		From:  replica.Identifier,
 		To:    message.From,
 		View:  replica.View,
@@ -3413,7 +3413,7 @@ func replica_receive_recovery(replica *Replica, message Message) (output Step_Ou
 func replica_receive_recovery_response(
 	replica *Replica, message Message, now time.Moment,
 ) (output Step_Output) {
-	if replica.Status != Status_Recovery {
+	if replica.Status != STATUS_RECOVERY {
 		return output
 	}
 	if message.Nonce != replica.Recovery_Nonce {
@@ -3461,7 +3461,7 @@ func replica_receive_recovery_response(
 	// recovery, whose checkpoint was wiped, restores from the authority's and replays from
 	// there.
 	output.Committed, output.Replies = replica_adopt_log(replica, authority, authority.Commit)
-	replica.Status = Status_Normal
+	replica.Status = STATUS_NORMAL
 	replica.Last_Normal_View = replica.View
 	output.Timer = replica_arm_timer(replica, now)
 	return output
@@ -3516,7 +3516,7 @@ func replica_reset_primary_scratch(replica *Replica) {
 	replica.Epoch_Up_From = map[Replica_Identifier]bool{}
 }
 
-// Moves the replica into Status_View_Change for view, resets the per-view tallies, counts its own
+// Moves the replica into STATUS_VIEW_CHANGE for view, resets the per-view tallies, counts its own
 // vote, and broadcasts a Start_View_Change. Last_Normal_View is deliberately left untouched: it
 // must keep naming the last view this replica was normal in, which log-selection ranks by.
 func replica_start_view_change(replica *Replica, view View, now time.Moment) (output Step_Output) {
@@ -3524,10 +3524,10 @@ func replica_start_view_change(replica *Replica, view View, now time.Moment) (ou
 	// wiped log could win the merge and drop a committed op, the unsafety recovery exists to
 	// prevent. And a view change always advances the view. These pin the quiescence and view
 	// monotonicity guarantees at the mutation point, in any embedding.
-	invariant.Always(replica.Status != Status_Recovery,
+	invariant.Always(replica.Status != STATUS_RECOVERY,
 		"recovering replica never enters a view change")
 	invariant.Always(view > replica.View, "view change advances the view")
-	replica.Status = Status_View_Change
+	replica.Status = STATUS_VIEW_CHANGE
 	replica.View = view
 	replica.Start_View_Change_From = map[Replica_Identifier]bool{replica.Identifier: true}
 	replica.Do_View_Change_From = map[Replica_Identifier]Message{}
@@ -3535,7 +3535,7 @@ func replica_start_view_change(replica *Replica, view View, now time.Moment) (ou
 	// Abandon any deferred install from a prior view change: its fetch targets the old view, so
 	// a late New_State for it must not install into this fresh one (§5.3).
 	replica.View_Change_Deferred = false
-	output.Messages = replica_broadcast(replica, Message{Kind: Message_Kind_Start_View_Change})
+	output.Messages = replica_broadcast(replica, Message{Kind: MESSAGE_KIND_START_VIEW_CHANGE})
 	output.Timer = replica_arm_timer(replica, now)
 	return output
 }
@@ -3543,13 +3543,13 @@ func replica_start_view_change(replica *Replica, view View, now time.Moment) (ou
 // Sets the replica's next timer deadline from its current role and status — a primary heartbeats
 // every Heartbeat, everyone else waits Timeout — and reports what it armed.
 func replica_arm_timer(replica *Replica, now time.Moment) (timer Timer_Reset) {
-	kind := Timer_Kind_View_Change
+	kind := TIMER_KIND_VIEW_CHANGE
 	interval := replica.Timeout
 	switch {
-	case replica.Status == Status_Recovery:
-		kind = Timer_Kind_Recovery
-	case replica.Status == Status_View_Change:
-		kind = Timer_Kind_View_Change
+	case replica.Status == STATUS_RECOVERY:
+		kind = TIMER_KIND_RECOVERY
+	case replica.Status == STATUS_VIEW_CHANGE:
+		kind = TIMER_KIND_VIEW_CHANGE
 		// Back off by views passed without returning to normal, so a cluster that cannot
 		// settle lengthens its view-change window until one completes (livelock break).
 		attempts := uint64(replica.View - replica.Last_Normal_View)
@@ -3558,7 +3558,7 @@ func replica_arm_timer(replica *Replica, now time.Moment) (timer Timer_Reset) {
 		}
 		interval = replica.Timeout * time.Duration(1+attempts)
 	case replica.Identifier == replica_primary_identifier(replica):
-		kind = Timer_Kind_Commit
+		kind = TIMER_KIND_COMMIT
 		interval = replica.Heartbeat
 	}
 	replica.Timer_Deadline = now + time.Moment(interval)

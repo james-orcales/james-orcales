@@ -128,18 +128,18 @@ that caused it. Each fix changes `vsr.go`, never the assertion.
 
 - **Symptom** (seed 5449, N=5): `Always(old_configuration_within_handoff)` failed in
   `replica_assert_safety` — replica 4 held a non-empty `Old_Configuration` while its status was
-  `Status_View_Change`, the contradictory state of carrying epoch-handoff bookkeeping while no
+  `STATUS_VIEW_CHANGE`, the contradictory state of carrying epoch-handoff bookkeeping while no
   handoff is underway.
 - **Root cause**: a replica being replaced (transitioning, serving state transfer to the new group)
   still processed `Start_View_Change`/`Start_View`. A higher-view `Start_View_Change` pulled it into
-  `replica_start_view_change`, flipping its status to `Status_View_Change` without clearing the
+  `replica_start_view_change`, flipping its status to `STATUS_VIEW_CHANGE` without clearing the
   `Old_Configuration` the handoff had set — so it sat mid view change with stale handoff state, and
   (worse) a transitioning replica's view-change role has no defined meaning in §7.
 - **Fix**: a transitioning replica is quiescent in the view-change protocol, mirroring the
   recovery-quiescence rule (Bug 1): `replica_receive_start_view_change` and
-  `replica_receive_start_view` return early on `Status_Transition`
+  `replica_receive_start_view` return early on `STATUS_TRANSITION`
   (`replica_receive_do_view_change` already required
-  `Status_View_Change`). It catches up only through the §7.1.1 epoch state-transfer path and
+  `STATUS_VIEW_CHANGE`). It catches up only through the §7.1.1 epoch state-transfer path and
   rejoins normal operation through `replica_complete_epoch`, which clears `Old_Configuration`. And
   `Replica_Recover` now discards the handoff scratch (`Old_Configuration`, `Epoch_Start_Op`,
   `Epoch_Handoff_Due`, `Epoch_Started_From`) and shuts a recovering replica down when it is no
@@ -408,14 +408,14 @@ that caused it. Each fix changes `vsr.go`, never the assertion.
   `reconfigure-2`), and then committed it on a bare Commit advertising commit 109. Two committed
   values at one op. This violates VSR-Revisited §5.2: "a replica responds to a GETSTATE message only
   if its status is normal."
-- **Fix**: a `Status_View_Change` replica no longer answers a plain catch-up Get_State (§5.2). The
+- **Fix**: a `STATUS_VIEW_CHANGE` replica no longer answers a plain catch-up Get_State (§5.2). The
   §5.3 view-change merge fetch is the lone exception — the new primary fetching a selected
   reporter's reported Do_View_Change log — so a `View_Change_Fetch` flag on that Get_State lets a
-  view-changing reporter answer it (and only it). A `Status_Transition` replica still answers normal
+  view-changing reporter answer it (and only it). A `STATUS_TRANSITION` replica still answers normal
   catch-ups, so the §7.1.1 epoch catch-up is not starved into a wedge (a blanket Normal-only gate
   wedged the epoch handoff). Across 0–5000 × skew this took the sweep from 36 to 31 failures (forks
   11→6, no liveness regression).
-  The epoch-handoff analogue (a `Status_Transition` replica leaking its uncommitted suffix during
+  The epoch-handoff analogue (a `STATUS_TRANSITION` replica leaking its uncommitted suffix during
   §7.1.1 catch-up) is closed the same way: a transitioning replica still answers state transfer
   (so peers catching up are not starved) but caps its answer at its commit, shipping only the
   committed prefix the catch-up needs — fixing seeds 248 and 3072.
@@ -435,7 +435,7 @@ that caused it. Each fix changes `vsr.go`, never the assertion.
   than bare-committing the divergent tail. A normal Commit is untouched (the apply-when-behind path,
   `Test_Normal_Operation_Commit_Apply`). Across 0–5000 × skew this took the sweep 31 to 26, no
   liveness regression.
-- **Fix (New_Epoch drain misfire)**: seed 173 was a wedge — a replica stuck in `Status_View_Change`
+- **Fix (New_Epoch drain misfire)**: seed 173 was a wedge — a replica stuck in `STATUS_VIEW_CHANGE`
   at a superseded epoch, never adopting the new epoch. `replica_receive_new_epoch`'s epoch+1 "drain"
   branch fired because the replica's topmost op was A reconfiguration, but it was the ALREADY-
   committed one that brought it to its current epoch, not a pending handoff into the next; it
@@ -478,7 +478,7 @@ that caused it. Each fix changes `vsr.go`, never the assertion.
   locally. A RECOVERING replica (r2, its `Epoch_Start_Op` wiped to 0) sent r0 a New_Epoch redirect
   carrying op=0, so r0 truncated its tail (dropping the committed op 121), saw catch-up target 0,
   became the epoch-2 primary at op 120, and reused op-number 121 (§8.3 violation). Fix:
-  `replica_redirect_stale_epoch` returns silently when the replica is `Status_Recovery` — it has no
+  `replica_redirect_stale_epoch` returns silently when the replica is `STATUS_RECOVERY` — it has no
   authoritative epoch-start op; a normal peer redirects with the real one, so r0 catches up keeping
   op 121. Sweep 1 to 0 forks; the lone remaining failure schedule-shifted to seed 680.
 - **Fix (checkpoint merge prefers the executed record)**: seed 680 — an exactly-once violation

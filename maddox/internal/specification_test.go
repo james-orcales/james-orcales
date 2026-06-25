@@ -122,7 +122,7 @@ func Test_Comparison_Significance(t *testing.T) {
 // spent: at 10ms per run a 55ms budget admits exactly six runs, the run after the
 // budget elapses being the one that stops the loop.
 func Test_Sampling_Budget(t *testing.T) {
-	per_run := 10 * time.Millisecond
+	per_run := 10 * time.MILLISECOND
 	calls := 0
 	sampler := maddox.Sampler{
 		Measure: func(_ io.Process_Request) (result maddox.Run_Result) {
@@ -136,7 +136,7 @@ func Test_Sampling_Budget(t *testing.T) {
 	input := &maddox.Main_Input{
 		Commands:     []io.Process_Request{{Path: "noop"}},
 		Sampler:      sampler,
-		Duration_Max: 55 * time.Millisecond,
+		Duration_Max: 55 * time.MILLISECOND,
 		Output:       &bytes.Buffer{},
 		Stderr:       &bytes.Buffer{},
 	}
@@ -151,7 +151,7 @@ func Test_Sampling_Budget(t *testing.T) {
 // Test_Sampling_Runs verifies that the run cap stops sampling: a cap of five with the
 // time budget disabled (zero) yields exactly five runs.
 func Test_Sampling_Runs(t *testing.T) {
-	per_run := 10 * time.Millisecond
+	per_run := 10 * time.MILLISECOND
 	calls := 0
 	sampler := maddox.Sampler{
 		Measure: func(_ io.Process_Request) (result maddox.Run_Result) {
@@ -177,7 +177,7 @@ func Test_Sampling_Runs(t *testing.T) {
 // Test_Sampling_Minimum verifies that Main runs a command at least three times even
 // when the budget is already spent, so the statistics always have a quorum.
 func Test_Sampling_Minimum(t *testing.T) {
-	per_run := 10 * time.Millisecond
+	per_run := 10 * time.MILLISECOND
 	calls := 0
 	sampler := maddox.Sampler{
 		Measure: func(_ io.Process_Request) (result maddox.Run_Result) {
@@ -189,7 +189,7 @@ func Test_Sampling_Minimum(t *testing.T) {
 	input := &maddox.Main_Input{
 		Commands:     []io.Process_Request{{Path: "noop"}},
 		Sampler:      sampler,
-		Duration_Max: time.Nanosecond,
+		Duration_Max: time.NANOSECOND,
 		Output:       &bytes.Buffer{},
 		Stderr:       &bytes.Buffer{},
 	}
@@ -203,7 +203,7 @@ func Test_Sampling_Minimum(t *testing.T) {
 // two warmup runs plus the three-run minimum is five measurements taken, but the
 // report counts only the three that were kept.
 func Test_Sampling_Warmup(t *testing.T) {
-	per_run := 10 * time.Millisecond
+	per_run := 10 * time.MILLISECOND
 	calls := 0
 	sampler := maddox.Sampler{
 		Measure: func(_ io.Process_Request) (result maddox.Run_Result) {
@@ -216,9 +216,9 @@ func Test_Sampling_Warmup(t *testing.T) {
 	input := &maddox.Main_Input{
 		Commands:     []io.Process_Request{{Path: "noop"}},
 		Sampler:      sampler,
-		Duration_Max: time.Nanosecond,
+		Duration_Max: time.NANOSECOND,
 		Warmup_Count: 2,
-		Format:       maddox.Output_Format_Json,
+		Format:       maddox.OUTPUT_FORMAT_JSON,
 		Output:       output,
 		Stderr:       &bytes.Buffer{},
 	}
@@ -239,7 +239,7 @@ func Test_Sampling_Warmup(t *testing.T) {
 func Test_Output_Document(t *testing.T) {
 	sampler := maddox.Sampler{
 		Measure: func(_ io.Process_Request) (result maddox.Run_Result) {
-			result.Sample = maddox.Sample{Wall: time.Millisecond, Instructions: 100}
+			result.Sample = maddox.Sample{Wall: time.MILLISECOND, Instructions: 100}
 			return result
 		},
 	}
@@ -247,8 +247,8 @@ func Test_Output_Document(t *testing.T) {
 	input := &maddox.Main_Input{
 		Commands:     []io.Process_Request{{Path: "a"}, {Path: "b"}},
 		Sampler:      sampler,
-		Duration_Max: time.Nanosecond,
-		Format:       maddox.Output_Format_Json,
+		Duration_Max: time.NANOSECOND,
+		Format:       maddox.OUTPUT_FORMAT_JSON,
 		Output:       output,
 		Stderr:       &bytes.Buffer{},
 	}
@@ -285,7 +285,7 @@ func Test_Output_Failure(t *testing.T) {
 	input := &maddox.Main_Input{
 		Commands:     []io.Process_Request{{Path: "broken"}},
 		Sampler:      sampler,
-		Duration_Max: time.Nanosecond,
+		Duration_Max: time.NANOSECOND,
 		Output:       &bytes.Buffer{},
 		Stderr:       stderr,
 	}
@@ -304,7 +304,7 @@ func Test_Table_Header(t *testing.T) {
 		{
 			Command:      []maddox.Command_Word{"echo", "hi"},
 			Runs:         5,
-			Elapsed:      2 * time.Second,
+			Elapsed:      2 * time.SECOND,
 			Measurements: filled_measurements(),
 		},
 	}}
@@ -444,7 +444,7 @@ func Test_Table_Sparse(t *testing.T) {
 func Test_Machine_Document(t *testing.T) {
 	sampler := maddox.Sampler{
 		Measure: func(_ io.Process_Request) (result maddox.Run_Result) {
-			result.Sample.Wall = time.Millisecond
+			result.Sample.Wall = time.MILLISECOND
 			return result
 		},
 	}
@@ -464,9 +464,9 @@ func Test_Machine_Document(t *testing.T) {
 	maddox.Main(maddox.Main_Input{
 		Commands:     []io.Process_Request{{Path: "noop"}},
 		Sampler:      sampler,
-		Duration_Max: time.Nanosecond,
+		Duration_Max: time.NANOSECOND,
 		Machine:      specs,
-		Format:       maddox.Output_Format_Json,
+		Format:       maddox.OUTPUT_FORMAT_JSON,
 		Output:       output,
 		Stderr:       &bytes.Buffer{},
 	})

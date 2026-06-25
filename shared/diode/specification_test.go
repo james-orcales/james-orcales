@@ -88,8 +88,8 @@ func Test_Drop_Count_Is_Reported(t *testing.T) {
 	if missed := <-dropped; missed != 4 {
 		t.Fatalf("alerter reported %d drops, want 4", missed)
 	}
-	if cause := <-causes; cause != diode.Drop_Overflow {
-		t.Fatalf("drop cause %v, want Drop_Overflow", cause)
+	if cause := <-causes; cause != diode.DROP_OVERFLOW {
+		t.Fatalf("drop cause %v, want DROP_OVERFLOW", cause)
 	}
 	writer.Close()
 }
@@ -114,12 +114,12 @@ func Test_Order_Is_Preserved(t *testing.T) {
 // Test_Poll_Interval_Is_Configurable checks the empty-ring sleep duration: the
 // default is one hundred milliseconds, and an explicit interval is honored.
 func Test_Poll_Interval_Is_Configurable(t *testing.T) {
-	if observed := capture_interval(t, 0); observed != 100*time.Millisecond {
-		t.Fatalf("default interval %d, want %d", observed, 100*time.Millisecond)
+	if observed := capture_interval(t, 0); observed != 100*time.MILLISECOND {
+		t.Fatalf("default interval %d, want %d", observed, 100*time.MILLISECOND)
 	}
-	observed := capture_interval(t, 250*time.Millisecond)
-	if observed != 250*time.Millisecond {
-		t.Fatalf("custom interval %d, want %d", observed, 250*time.Millisecond)
+	observed := capture_interval(t, 250*time.MILLISECOND)
+	if observed != 250*time.MILLISECOND {
+		t.Fatalf("custom interval %d, want %d", observed, 250*time.MILLISECOND)
 	}
 }
 
@@ -172,7 +172,7 @@ func Test_Dropping_Does_Not_Allocate(t *testing.T) {
 }
 
 // Test_Rate_Limit_Sheds_By_Bytes checks the byte budget: up to the burst is delivered and
-// the rest is shed with cause Drop_Rate_Limit, while a clock that advances refills tokens so
+// the rest is shed with cause DROP_RATE_LIMIT, while a clock that advances refills tokens so
 // every line passes.
 func Test_Rate_Limit_Sheds_By_Bytes(t *testing.T) {
 	sink := &recording_sink{Written: make(chan string, 16)}
@@ -198,8 +198,8 @@ func Test_Rate_Limit_Sheds_By_Bytes(t *testing.T) {
 		}
 	}
 	for index := 0; index < 5; index++ {
-		if cause := <-causes; cause != diode.Drop_Rate_Limit {
-			t.Fatalf("shed cause %v, want Drop_Rate_Limit", cause)
+		if cause := <-causes; cause != diode.DROP_RATE_LIMIT {
+			t.Fatalf("shed cause %v, want DROP_RATE_LIMIT", cause)
 		}
 	}
 	writer.Close()
@@ -207,7 +207,7 @@ func Test_Rate_Limit_Sheds_By_Bytes(t *testing.T) {
 	steady_sink := &recording_sink{Written: make(chan string, 16)}
 	steady := diode.New(diode.New_Input{
 		Writer:     steady_sink,
-		Clock:      stepping_clock(time.Second),
+		Clock:      stepping_clock(time.SECOND),
 		Sleep:      no_sleep(),
 		Count:      16,
 		Rate_Limit: diode.Rate_Limit{Bytes_Per_Second: 1000, Burst: 2},
@@ -233,7 +233,7 @@ func Test_Rate_Limit_Survives_A_Large_Clock(t *testing.T) {
 	sink := &recording_sink{Written: make(chan string, 16)}
 	writer := diode.New(diode.New_Input{
 		Writer:     sink,
-		Clock:      stepping_clock(10_000 * time.Second),
+		Clock:      stepping_clock(10_000 * time.SECOND),
 		Sleep:      no_sleep(),
 		Count:      16,
 		Rate_Limit: diode.Rate_Limit{Bytes_Per_Second: 1 << 20, Burst: 1 << 20},

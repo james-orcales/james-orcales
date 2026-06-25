@@ -27,7 +27,7 @@ const poll_events_max = 64
 // Operating_system_tick bounds each Run_Until pump step: the loop blocks at most this
 // long waiting for real events before re-checking done, so the pump neither spins nor
 // oversleeps.
-const operating_system_tick = 10 * time.Millisecond
+const operating_system_tick = 10 * time.MILLISECOND
 
 // Bounds one wake-pipe drain so a flood of pokes cannot spin the loop.
 const wake_drain_passes_max = 16
@@ -37,7 +37,7 @@ const signal_queue_depth = 8
 
 // Caps the idle gap while a signal watcher exists, since a signal does not wake the poll;
 // the loop re-checks the signal channel at least this often.
-const signal_poll_interval = 10 * time.Millisecond
+const signal_poll_interval = 10 * time.MILLISECOND
 
 // Buffers submitted compute jobs so bursts do not block the loop thread.
 const compute_queue_depth = 1024
@@ -960,7 +960,7 @@ func operating_system_signal_ensure(state *operating_system) {
 
 // Maps a backend-independent signal to its OS signal.
 func signal_to_operating_system(kind io.Signal) (system os.Signal) {
-	if kind == io.Signal_Interrupt {
+	if kind == io.SIGNAL_INTERRUPT {
 		return syscall.SIGINT
 	}
 	return syscall.SIGTERM

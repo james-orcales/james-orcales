@@ -4,7 +4,7 @@ A zero-allocation, dependency-injected, flat JSON logger written in the house
 free-function style (no methods, no fluent builder). One call per line:
 
 ```go
-logger := jlog.New(jlog.New_Input{Writer: os.Stderr, Floor: jlog.Level_Info})
+logger := jlog.New(jlog.New_Input{Writer: os.Stderr, Floor: jlog.LEVEL_INFO})
 
 jlog.Logger_Info(logger, "request done",
     jlog.String("method", method),

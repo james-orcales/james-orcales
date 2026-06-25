@@ -17,23 +17,23 @@ import (
 // magnitudes the deterministic callers work in.
 const fractional_bits = 20
 
-// Scale is the count of fixed-point units in one whole — two raised to fractional_bits.
-// A Number's real value is its stored integer divided by Scale.
-const Scale = 1 << fractional_bits
+// SCALE is the count of fixed-point units in one whole — two raised to fractional_bits.
+// A Number's real value is its stored integer divided by SCALE.
+const SCALE = 1 << fractional_bits
 
 // Number is a base-two fixed-point value. Addition, subtraction, negation, and the
-// ordering comparisons are the native int64 operators, the shared Scale aligning them;
+// ordering comparisons are the native int64 operators, the shared SCALE aligning them;
 // multiplication and division need the functions below because the scale must cancel.
 type Number int64
 
-// Ratio is a dimensionless fixed-point multiplier denoting ratio divided by Scale. It
+// Ratio is a dimensionless fixed-point multiplier denoting ratio divided by SCALE. It
 // is a type distinct from Number so Apply takes one of each — sidestepping the
 // input-struct rule two Numbers would trip — and so a ratio reads as a plain constant.
 type Ratio int64
 
 // From_Integer lifts a whole number into fixed-point.
 func From_Integer(value int64) (number Number) {
-	return Number(value * Scale)
+	return Number(value * SCALE)
 }
 
 // From_Ratio_Input holds the operands of From_Ratio, which repeat a type.
@@ -61,12 +61,12 @@ func From_Ratio(input *From_Ratio_Input) (number Number) {
 
 // Whole truncates a fixed-point value toward zero to the integer it contains.
 func Whole(value Number) (whole int64) {
-	return int64(value) / Scale
+	return int64(value) / SCALE
 }
 
 // Is_Integer reports whether a value carries no fractional part.
 func Is_Integer(value Number) (yes bool) {
-	return int64(value)%Scale == 0
+	return int64(value)%SCALE == 0
 }
 
 // Multiply_Input pairs the two factors of Multiply, which repeat a type.
@@ -124,9 +124,9 @@ func Square_Root(value Number) (root Number) {
 	if value < 0 {
 		return 0
 	}
-	// The root of value/Scale, scaled back up, is the root of value*Scale; the product
+	// The root of value/SCALE, scaled back up, is the root of value*SCALE; the product
 	// can exceed int64, so it is taken as a 128-bit radicand.
-	high, low := bits.Mul64(uint64(value), Scale)
+	high, low := bits.Mul64(uint64(value), SCALE)
 	return Number(square_root_uint128(&Integer_Root_Input{High: high, Low: low}))
 }
 
@@ -137,8 +137,8 @@ func Square_Root_Scaled(value int64) (root Number) {
 	if value < 0 {
 		return 0
 	}
-	// The root of value, scaled up by Scale, is the root of value*Scale*Scale.
-	high, low := bits.Mul64(uint64(value), Scale*Scale)
+	// The root of value, scaled up by SCALE, is the root of value*SCALE*SCALE.
+	high, low := bits.Mul64(uint64(value), SCALE*SCALE)
 	return Number(square_root_uint128(&Integer_Root_Input{High: high, Low: low}))
 }
 
@@ -161,19 +161,19 @@ func Integer_Root(input *Integer_Root_Input) (root int64) {
 // to one period and approximated by Bhaskara's rational formula for sin(pi*theta), so no
 // irrational pi enters and the quarter-turn extremes land exactly on plus or minus one.
 func Sine_Turns(turns Number) (sine Number) {
-	fraction := turns % Number(Scale)
+	fraction := turns % Number(SCALE)
 	if fraction < 0 {
-		fraction += Number(Scale)
+		fraction += Number(SCALE)
 	}
 	negative := false
-	if fraction >= Number(Scale)/2 {
+	if fraction >= Number(SCALE)/2 {
 		negative = true
-		fraction -= Number(Scale) / 2
+		fraction -= Number(SCALE) / 2
 	}
 	// Theta in [0,1] is twice the half-period fraction; the product theta*(1-theta)
 	// drives Bhaskara's 16p / (5 - 4p) approximation of sin(pi*theta).
 	theta := fraction * 2
-	product := Multiply(&Multiply_Input{A: theta, B: Number(Scale) - theta})
+	product := Multiply(&Multiply_Input{A: theta, B: Number(SCALE) - theta})
 	numerator := 16 * product
 	magnitude := Divide(&Divide_Input{
 		Dividend: numerator, Divisor: From_Integer(5) - 4*product,
@@ -234,7 +234,7 @@ func (number *Number) UnmarshalJSON(data []byte) (err error) {
 	if err != nil {
 		return err
 	}
-	value := whole_part*Scale + fraction_to_units(fraction_text)
+	value := whole_part*SCALE + fraction_to_units(fraction_text)
 	if negative {
 		value = -value
 	}
@@ -339,8 +339,8 @@ func square_root_uint64(value uint64) (root uint64) {
 	return estimate
 }
 
-// Returns round(magnitude * 10^digits / Scale): the magnitude expressed as an integer
-// with digits decimal places, the divide by the power-of-two Scale done as a rounding add
+// Returns round(magnitude * 10^digits / SCALE): the magnitude expressed as an integer
+// with digits decimal places, the divide by the power-of-two SCALE done as a rounding add
 // and a shift.
 func decimal_scaled(magnitude uint64, digits int) (scaled uint64) {
 	high, low := bits.Mul64(magnitude, uint64(power_of_ten(digits)))
@@ -385,7 +385,7 @@ func trim_trailing_zeros(text string) (trimmed string) {
 	return text[:end_count]
 }
 
-// Reads decimal fraction digits as a count of fixed-point units, rounding fraction*Scale.
+// Reads decimal fraction digits as a count of fixed-point units, rounding fraction*SCALE.
 // Digits past the ninth are dropped, far beyond the grid's resolution.
 func fraction_to_units(fraction_text string) (units int64) {
 	digits := fraction_text
