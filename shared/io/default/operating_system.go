@@ -16,8 +16,8 @@ import (
 	"sync"
 	"syscall"
 
-	"github.com/james-orcales/james-orcales/shared/io"
-	"github.com/james-orcales/james-orcales/shared/time"
+	"local/james-orcales/shared/io"
+	"local/james-orcales/shared/time"
 )
 
 // Caps the ready set one poll_file_wait returns; sized to drain a busy loop in few

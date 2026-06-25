@@ -5,7 +5,7 @@ import (
 	"strconv"
 	"testing"
 
-	"github.com/james-orcales/james-orcales/shared/flatjson"
+	"local/james-orcales/shared/flatjson"
 )
 
 // Test_Nested_Struct_Flattens_To_Prefixed_Keys checks nested fields join into one key.

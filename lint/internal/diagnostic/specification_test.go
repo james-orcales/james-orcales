@@ -4,7 +4,7 @@ import (
 	"go/token"
 	"testing"
 
-	"github.com/james-orcales/james-orcales/lint/internal/diagnostic"
+	"local/james-orcales/lint/internal/diagnostic"
 )
 
 // Test_Diagnostic_Position verifies Position carries the offending source

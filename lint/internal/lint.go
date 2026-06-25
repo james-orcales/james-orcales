@@ -28,11 +28,11 @@ import (
 	"unicode"
 	"unicode/utf8"
 
-	"github.com/james-orcales/james-orcales/lint/internal/assertion"
-	"github.com/james-orcales/james-orcales/lint/internal/diagnostic"
-	"github.com/james-orcales/james-orcales/lint/internal/source"
-	"github.com/james-orcales/james-orcales/lint/internal/specification"
-	"github.com/james-orcales/james-orcales/lint/internal/vcs"
+	"local/james-orcales/lint/internal/assertion"
+	"local/james-orcales/lint/internal/diagnostic"
+	"local/james-orcales/lint/internal/source"
+	"local/james-orcales/lint/internal/specification"
+	"local/james-orcales/lint/internal/vcs"
 )
 
 const line_chars_max = 100

@@ -3,7 +3,7 @@ package time_test
 import (
 	"testing"
 
-	timeos "github.com/james-orcales/james-orcales/shared/time/default"
+	timeos "local/james-orcales/shared/time/default"
 )
 
 // Test_Operating_System_Smoke verifies the host clock never reads monotonic

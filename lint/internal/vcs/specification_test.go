@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/james-orcales/james-orcales/lint/internal/vcs"
+	"local/james-orcales/lint/internal/vcs"
 )
 
 // This file dogfoods the doctrine it enforces: each leaf test builds the commit

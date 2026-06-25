@@ -8,7 +8,7 @@ import (
 	"testing"
 	"testing/fstest"
 
-	"github.com/james-orcales/james-orcales/shared/snap"
+	"local/james-orcales/shared/snap"
 )
 
 // Test_Equal_Match verifies a matching value returns true and emits no output.

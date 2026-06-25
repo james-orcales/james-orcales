@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/james-orcales/james-orcales/lint/internal/specification"
+	"local/james-orcales/lint/internal/specification"
 )
 
 // This file dogfoods the doctrine it enforces: each leaf test builds a Package,

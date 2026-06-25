@@ -14,8 +14,8 @@ import (
 	"strings"
 	"text/tabwriter"
 
-	"github.com/james-orcales/james-orcales/shared/cli"
-	"github.com/james-orcales/james-orcales/shared/flatjson"
+	"local/james-orcales/shared/cli"
+	"local/james-orcales/shared/flatjson"
 )
 
 // The process exit codes.

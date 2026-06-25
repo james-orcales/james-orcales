@@ -3,7 +3,7 @@ package time_test
 import (
 	"testing"
 
-	"github.com/james-orcales/james-orcales/shared/time"
+	"local/james-orcales/shared/time"
 )
 
 // Test_Virtual_Clock_Monotonic verifies the deterministic clock advances exactly one

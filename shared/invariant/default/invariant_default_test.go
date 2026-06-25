@@ -4,8 +4,8 @@ import (
 	"math"
 	"testing"
 
-	core "github.com/james-orcales/james-orcales/shared/invariant"
-	"github.com/james-orcales/james-orcales/shared/invariant/default"
+	core "local/james-orcales/shared/invariant"
+	"local/james-orcales/shared/invariant/default"
 )
 
 // Seeds Default's tracker with the named axes under namespace, so a subsequent self-emitting

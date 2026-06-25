@@ -13,7 +13,7 @@ import (
 	"runtime"
 	"strings"
 
-	sloc "github.com/james-orcales/james-orcales/sloc/internal"
+	sloc "local/james-orcales/sloc/internal"
 )
 
 // Caps a single explicitly-named file read, bounding memory on a pathologically large

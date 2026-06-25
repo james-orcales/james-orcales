@@ -5,9 +5,9 @@ package main
 import (
 	"os"
 
-	"github.com/james-orcales/james-orcales/maddox/internal"
-	invariant "github.com/james-orcales/james-orcales/shared/invariant/default"
-	"github.com/james-orcales/james-orcales/shared/io"
+	"local/james-orcales/maddox/internal"
+	invariant "local/james-orcales/shared/invariant/default"
+	"local/james-orcales/shared/io"
 )
 
 // Stderr_bytes_max bounds how much of a failing command's stderr is read back, so

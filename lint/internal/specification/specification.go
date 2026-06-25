@@ -13,7 +13,7 @@ import (
 	"strings"
 	"unicode"
 
-	"github.com/james-orcales/james-orcales/lint/internal/diagnostic"
+	"local/james-orcales/lint/internal/diagnostic"
 )
 
 // Package is one package directory under spec-check, with everything Check needs

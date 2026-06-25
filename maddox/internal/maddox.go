@@ -16,10 +16,10 @@ import (
 	"strings"
 	"unicode/utf8"
 
-	"github.com/james-orcales/james-orcales/shared/fixedpoint"
-	invariant "github.com/james-orcales/james-orcales/shared/invariant/default"
-	sysio "github.com/james-orcales/james-orcales/shared/io"
-	"github.com/james-orcales/james-orcales/shared/time"
+	"local/james-orcales/shared/fixedpoint"
+	invariant "local/james-orcales/shared/invariant/default"
+	sysio "local/james-orcales/shared/io"
+	"local/james-orcales/shared/time"
 )
 
 // Exit_success is the status Main returns when every command was benchmarked and

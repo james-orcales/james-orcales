@@ -7,11 +7,11 @@ import (
 	"strconv"
 	"testing"
 
-	invariant "github.com/james-orcales/james-orcales/shared/invariant/default"
-	"github.com/james-orcales/james-orcales/shared/jlog"
-	"github.com/james-orcales/james-orcales/shared/prng"
-	"github.com/james-orcales/james-orcales/shared/time"
-	"github.com/james-orcales/james-orcales/shared/vsr"
+	invariant "local/james-orcales/shared/invariant/default"
+	"local/james-orcales/shared/jlog"
+	"local/james-orcales/shared/prng"
+	"local/james-orcales/shared/time"
+	"local/james-orcales/shared/vsr"
 )
 
 // TestMain runs the suite through the invariant harness so that, under a plain `go test`, every
@@ -543,7 +543,8 @@ func simulator_allocate(state *simulator, cluster_count int) {
 			configuration = dormant_configuration(index)
 		}
 		state.Active[index] = active
-		state.Replica_Clocks[index], state.Replica_Ticks[index] = simulator_replica_clock(state)
+		clock, tick := simulator_replica_clock(state)
+		state.Replica_Clocks[index], state.Replica_Ticks[index] = clock, tick
 		state.Replicas[index] = vsr.New_Replica(&vsr.New_Replica_Input{
 			Identifier:          vsr.Replica_Identifier(index),
 			Configuration:       configuration,

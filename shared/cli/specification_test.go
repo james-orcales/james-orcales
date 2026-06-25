@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/james-orcales/james-orcales/shared/cli"
+	"local/james-orcales/shared/cli"
 )
 
 // Test_Parse_Commands verifies named, default, and unknown command resolution.

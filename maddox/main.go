@@ -12,11 +12,11 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/james-orcales/james-orcales/maddox/internal"
-	"github.com/james-orcales/james-orcales/shared/cli"
-	invariant "github.com/james-orcales/james-orcales/shared/invariant/default"
-	"github.com/james-orcales/james-orcales/shared/io"
-	"github.com/james-orcales/james-orcales/shared/time"
+	"local/james-orcales/maddox/internal"
+	"local/james-orcales/shared/cli"
+	invariant "local/james-orcales/shared/invariant/default"
+	"local/james-orcales/shared/io"
+	"local/james-orcales/shared/time"
 )
 
 // Exit_usage marks a malformed command line, kept distinct from a benchmark

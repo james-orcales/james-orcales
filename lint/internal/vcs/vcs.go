@@ -11,7 +11,7 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/james-orcales/james-orcales/lint/internal/diagnostic"
+	"local/james-orcales/lint/internal/diagnostic"
 )
 
 // Git's default short-hash width, used to shorten a hash in a diagnostic filename.

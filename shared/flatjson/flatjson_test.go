@@ -3,7 +3,7 @@ package flatjson_test
 import (
 	"testing"
 
-	invariant "github.com/james-orcales/james-orcales/shared/invariant/default"
+	invariant "local/james-orcales/shared/invariant/default"
 )
 
 // TestMain runs the suite under the invariant framework so the Always assertions in

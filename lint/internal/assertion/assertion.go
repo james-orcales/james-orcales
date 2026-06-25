@@ -15,8 +15,8 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/james-orcales/james-orcales/lint/internal/diagnostic"
-	"github.com/james-orcales/james-orcales/lint/internal/source"
+	"local/james-orcales/lint/internal/diagnostic"
+	"local/james-orcales/lint/internal/source"
 )
 
 // Unexported aliases so the moved rule bodies name these types unqualified, as

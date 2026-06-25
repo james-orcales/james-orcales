@@ -146,11 +146,11 @@ import (
 	"syscall"
 	"unsafe"
 
-	"github.com/james-orcales/james-orcales/maddox/internal"
-	invariant "github.com/james-orcales/james-orcales/shared/invariant/default"
-	"github.com/james-orcales/james-orcales/shared/io"
-	"github.com/james-orcales/james-orcales/shared/time"
-	time_default "github.com/james-orcales/james-orcales/shared/time/default"
+	"local/james-orcales/maddox/internal"
+	invariant "local/james-orcales/shared/invariant/default"
+	"local/james-orcales/shared/io"
+	"local/james-orcales/shared/time"
+	time_default "local/james-orcales/shared/time/default"
 )
 
 // System_sampler returns the production Sampler, whose Measure spawns each command

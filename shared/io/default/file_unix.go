@@ -8,7 +8,7 @@ import (
 	"path/filepath"
 	"syscall"
 
-	"github.com/james-orcales/james-orcales/shared/io"
+	"local/james-orcales/shared/io"
 )
 
 // Bounds one readdir pass into a fixed buffer, so a large directory is read in repeated

@@ -6,9 +6,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/james-orcales/james-orcales/shared/cli"
-	invariant "github.com/james-orcales/james-orcales/shared/invariant/default"
-	"github.com/james-orcales/james-orcales/shared/snap/default"
+	"local/james-orcales/shared/cli"
+	invariant "local/james-orcales/shared/invariant/default"
+	"local/james-orcales/shared/snap/default"
 )
 
 func TestMain(m *testing.M) {

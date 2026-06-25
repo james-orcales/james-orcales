@@ -6,7 +6,7 @@ import (
 	"testing"
 	"testing/fstest"
 
-	disk_usage "github.com/james-orcales/james-orcales/disk_usage/internal"
+	disk_usage "local/james-orcales/disk_usage/internal"
 )
 
 // Runs Main over an in-memory tree and returns its stdout, stderr, and exit code.

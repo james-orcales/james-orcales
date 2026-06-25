@@ -5,7 +5,7 @@
 // backend lives here because it is pure arithmetic with no operating-system call.
 package time
 
-import "github.com/james-orcales/james-orcales/shared/fixedpoint"
+import "local/james-orcales/shared/fixedpoint"
 
 // Moment is a clock reading in nanoseconds since an arbitrary, clock-specific epoch
 // (TigerBeetle's stdx.Instant). Only the difference between two Moments from the

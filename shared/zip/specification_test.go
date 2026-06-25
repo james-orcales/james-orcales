@@ -6,7 +6,7 @@ import (
 	"os"
 	"testing"
 
-	"github.com/james-orcales/james-orcales/shared/zip"
+	"local/james-orcales/shared/zip"
 )
 
 // Test_Bounded_Entry verifies New_Reader extracts a named entry capped at the

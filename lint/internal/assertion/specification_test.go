@@ -6,9 +6,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/james-orcales/james-orcales/lint/internal/assertion"
-	"github.com/james-orcales/james-orcales/lint/internal/diagnostic"
-	"github.com/james-orcales/james-orcales/lint/internal/source"
+	"local/james-orcales/lint/internal/assertion"
+	"local/james-orcales/lint/internal/diagnostic"
+	"local/james-orcales/lint/internal/source"
 )
 
 // Test_Invariants_Presence verifies an in-scope type with no bundle function

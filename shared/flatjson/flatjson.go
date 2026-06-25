@@ -31,7 +31,7 @@ import (
 	"reflect"
 	"strings"
 
-	invariant "github.com/james-orcales/james-orcales/shared/invariant/default"
+	invariant "local/james-orcales/shared/invariant/default"
 )
 
 // The path-segment joiner: Addr.City becomes "addr_city".

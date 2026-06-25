@@ -9,8 +9,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/james-orcales/james-orcales/setup/internal"
-	sysio "github.com/james-orcales/james-orcales/shared/io"
+	"local/james-orcales/setup/internal"
+	sysio "local/james-orcales/shared/io"
 )
 
 // Each test drives Plan and Main with in-memory filesystems and a recording or

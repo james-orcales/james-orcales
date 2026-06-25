@@ -13,7 +13,7 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/james-orcales/james-orcales/lint/internal"
+	"local/james-orcales/lint/internal"
 )
 
 // Filesystem_path_chars_max caps any filesystem path or path fragment the

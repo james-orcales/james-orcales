@@ -5,9 +5,9 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/james-orcales/james-orcales/shared/prng"
+	"local/james-orcales/shared/prng"
 
-	invariant "github.com/james-orcales/james-orcales/shared/invariant/default"
+	invariant "local/james-orcales/shared/invariant/default"
 )
 
 // Test_Seed_Expands_To_State checks New is deterministic and seed-sensitive.
