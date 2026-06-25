@@ -1,13 +1,77 @@
-package lint
+// Package assertion enforces the _Invariants doctrine — every in-scope type
+// states its properties in a companion bundle function beside it, and every named
+// function asserts its typed inputs and outputs — and the sibling simulation
+// doctrine that witnesses those invariants. The caller hands over the
+// already-parsed files and the component graph, so this package reads and parses
+// nothing: it is a pure, deterministic function of its input.
+package assertion
 
 import (
 	"go/ast"
 	"go/token"
 	"path"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
+
+	"github.com/james-orcales/james-orcales/lint/internal/diagnostic"
+	"github.com/james-orcales/james-orcales/lint/internal/source"
 )
+
+// Unexported aliases so the moved rule bodies name these types unqualified, as
+// they did in package lint.
+type parsed_file = source.Parsed_File
+type component_index = source.Component_Index
+type component_information = source.Component
+
+// Diagnostic aliases the diagnostic package's type so the moved rule bodies name
+// it unqualified.
+type Diagnostic = diagnostic.Diagnostic
+
+// Check_Input carries the parsed set, the component graph, and the exempt list.
+type Check_Input struct {
+	// Parsed_Files is the whole parsed tree.
+	Parsed_Files []source.Parsed_File
+	// Components is the workspace's component graph; recorder and simulation need it.
+	Components *source.Component_Index
+	// Exempt is lint.json's invariant_exempt_packages.
+	Exempt []string
+}
+
+// Check runs the cross-file invariant and simulation checks over the parsed set,
+// in the order the doctrine aggregator ran them.
+func Check(input *Check_Input) (diags []diagnostic.Diagnostic) {
+	diags = append(diags, check_numeric_invariants(input.Parsed_Files, input.Exempt)...)
+	diags = append(diags, check_struct_invariants(input.Parsed_Files, input.Exempt)...)
+	diags = append(diags, check_function_invariants(input.Parsed_Files, input.Exempt)...)
+	diags = append(diags,
+		check_recorder_test_main(input.Parsed_Files, input.Components, input.Exempt)...)
+	diags = append(diags, check_primitive_types(input.Parsed_Files, input.Exempt)...)
+	diags = append(diags,
+		check_simulation(input.Parsed_Files, input.Components, input.Exempt)...)
+	return diags
+}
+
+// Check_Type enforces the per-file type-invariant rules (Presence, Casing,
+// Signature, Orphan, Scope): every in-scope type is followed directly by its
+// correctly-named, correctly-signed bundle, and every bundle sits below its type.
+// Test files and files under an exempt package are skipped.
+func Check_Type(
+	file_set *token.FileSet, file *ast.File, exempt []string,
+) (diags []diagnostic.Diagnostic) {
+	filename := file_set.Position(file.Pos()).Filename
+	if strings.HasSuffix(filename, "_test.go") {
+		return nil
+	}
+	if type_invariants_path_exempt(filename, exempt) {
+		return nil
+	}
+	invariant_names := type_invariants_import_names(file)
+	diags = append(diags,
+		check_type_invariants_forward(file_set, file, invariant_names)...)
+	return append(diags, check_type_invariants_orphan(file_set, file)...)
+}
 
 // Flags numeric defined types whose bundle omits a required bound guard, bound
 // constant, or boundary claim. Cross-file because a bound's constant may live in
@@ -2170,7 +2234,7 @@ func primitive_function_diagnostics(
 	file parsed_file, function *ast.FuncDecl,
 ) (diags []Diagnostic) {
 
-	if check_casing_method_satisfies_stdlib(function) {
+	if method_satisfies_stdlib(function) {
 		return nil
 	}
 	position := file.File_Set.Position(function.Name.Pos())
@@ -2277,4 +2341,552 @@ func numeric_raw_primitive_kind(expression ast.Expr) (kind string) {
 	default:
 		return ""
 	}
+}
+
+// Flags every in-scope type whose next declaration
+// is not its correctly-named, correctly-signed bundle function.
+func check_type_invariants_forward(
+	file_set *token.FileSet, file *ast.File, invariant_names map[string]bool,
+) (diags []Diagnostic) {
+
+	for index, declaration := range file.Decls {
+		general, is_general := declaration.(*ast.GenDecl)
+		if !is_general {
+			continue
+		}
+		if general.Tok != token.TYPE {
+			continue
+		}
+		// Grouped Declarations bans type (...) groups, so a type holds one spec.
+		type_specification, is_type := general.Specs[0].(*ast.TypeSpec)
+		if !is_type {
+			continue
+		}
+		if !type_invariant_required(type_specification) {
+			continue
+		}
+		diags = append(diags, check_type_invariants_one(
+			file_set, file, index, type_specification, invariant_names)...)
+	}
+	return diags
+}
+
+// Judges the in-scope type at file.Decls[index]:
+// presence and casing of the following bundle, then its signature and the gap.
+func check_type_invariants_one(
+	file_set *token.FileSet, file *ast.File, index int,
+	type_specification *ast.TypeSpec, invariant_names map[string]bool,
+) (diags []Diagnostic) {
+
+	want := type_invariant_name(type_specification.Name.Name)
+	bundle := type_invariants_following_function(file, index)
+	if bundle == nil {
+		return append(diags, type_invariants_absent(file_set, type_specification, want))
+	}
+	if bundle.Name.Name != want {
+		return append(diags, type_invariants_absent(file_set, type_specification, want))
+	}
+	if !type_invariants_signature_ok(bundle, type_specification, invariant_names) {
+		diags = append(diags,
+			type_invariants_bad_signature(file_set, bundle, type_specification))
+	}
+	diags = append(diags,
+		check_type_invariants_gap(file_set, file, type_specification, bundle)...)
+	return diags
+}
+
+// Builds the diagnostic for a type with no bundle below it.
+func type_invariants_absent(
+	file_set *token.FileSet, type_specification *ast.TypeSpec, want string,
+) (diag Diagnostic) {
+
+	type_name := type_specification.Name.Name
+	return Diagnostic{
+		Position: file_set.Position(type_specification.Name.Pos()),
+		Message: "declare " + want + "(" + type_name +
+			", invariant.Namespace) directly below " + type_name,
+	}
+}
+
+// Builds the diagnostic for a bundle whose parameters
+// are not the type, by value or pointer, first and an invariant.Namespace last.
+func type_invariants_bad_signature(
+	file_set *token.FileSet, function *ast.FuncDecl, type_specification *ast.TypeSpec,
+) (diag Diagnostic) {
+
+	type_name := type_specification.Name.Name
+	return Diagnostic{
+		Position: file_set.Position(function.Name.Pos()),
+		Message: function.Name.Name + " must take (" + type_name + " or *" +
+			type_name + ", invariant.Namespace)",
+	}
+}
+
+// Flags a bundle-named function adrift from its
+// type: one whose immediately preceding declaration is not the type it names.
+func check_type_invariants_orphan(
+	file_set *token.FileSet, file *ast.File,
+) (diags []Diagnostic) {
+
+	for index, declaration := range file.Decls {
+		function, is_function := declaration.(*ast.FuncDecl)
+		if !is_function {
+			continue
+		}
+		if function.Recv != nil {
+			continue
+		}
+		if !type_invariants_is_bundle_name(function.Name.Name) {
+			continue
+		}
+		if type_invariants_preceding_type(file, index, function.Name.Name) {
+			continue
+		}
+		diags = append(diags, Diagnostic{
+			Position: file_set.Position(function.Name.Pos()),
+			Message:  function.Name.Name + " must be declared directly below its type",
+		})
+	}
+	return diags
+}
+
+// Flags a comment between a type and its bundle that is
+// not the bundle's own doc comment, so only blank lines and that doc may separate
+// them.
+func check_type_invariants_gap(
+	file_set *token.FileSet, file *ast.File,
+	type_specification *ast.TypeSpec, function *ast.FuncDecl,
+) (diags []Diagnostic) {
+
+	for _, group := range file.Comments {
+		if group == function.Doc {
+			continue
+		}
+		if group.Pos() <= type_specification.End() {
+			continue
+		}
+		if group.End() >= function.Pos() {
+			continue
+		}
+		diags = append(diags, Diagnostic{
+			Position: file_set.Position(group.Pos()),
+			Message: "remove the comment between " + type_specification.Name.Name +
+				" and " + function.Name.Name,
+		})
+	}
+	return diags
+}
+
+// Reports whether a type declaration must carry a bundle.
+// Aliases, function and interface types, and empty structs state no properties
+// worth a bundle; every other defined type is in scope.
+func type_invariant_required(type_specification *ast.TypeSpec) (required bool) {
+	if type_specification.Assign.IsValid() {
+		return false
+	}
+	switch base := type_specification.Type.(type) {
+	case *ast.FuncType:
+		return false
+	case *ast.InterfaceType:
+		return false
+	case *ast.StructType:
+		return len(base.Fields.List) > 0
+	default:
+		return true
+	}
+}
+
+// Maps a type name to its bundle name, suffixing by the
+// type's casing: an exported type takes _Invariants, an unexported _invariants.
+func type_invariant_name(type_name string) (name string) {
+	if ast.IsExported(type_name) {
+		return type_name + "_Invariants"
+	}
+	return type_name + "_invariants"
+}
+
+// Returns the function declared immediately
+// below the declaration at index, or nil when the next declaration is not one.
+func type_invariants_following_function(
+	file *ast.File, index int,
+) (function *ast.FuncDecl) {
+
+	if index+1 >= len(file.Decls) {
+		return nil
+	}
+	next, is_function := file.Decls[index+1].(*ast.FuncDecl)
+	if !is_function {
+		return nil
+	}
+	return next
+}
+
+// Reports whether the declaration before index is
+// the type whose bundle name is function_name.
+func type_invariants_preceding_type(
+	file *ast.File, index int, function_name string,
+) (yes bool) {
+
+	if index == 0 {
+		return false
+	}
+	general, is_general := file.Decls[index-1].(*ast.GenDecl)
+	if !is_general {
+		return false
+	}
+	if general.Tok != token.TYPE {
+		return false
+	}
+	type_specification, is_type := general.Specs[0].(*ast.TypeSpec)
+	if !is_type {
+		return false
+	}
+	return type_invariant_name(type_specification.Name.Name) == function_name
+}
+
+// Reports whether name ends in the bundle suffix.
+func type_invariants_is_bundle_name(name string) (yes bool) {
+	if strings.HasSuffix(name, "_Invariants") {
+		return true
+	}
+	return strings.HasSuffix(name, "_invariants")
+}
+
+// Reports whether the bundle takes its type, by
+// value or pointer, first and an invariant.Namespace last.
+func type_invariants_signature_ok(
+	function *ast.FuncDecl, type_specification *ast.TypeSpec,
+	invariant_names map[string]bool,
+) (ok bool) {
+
+	if function.Type.Params == nil {
+		return false
+	}
+	list := function.Type.Params.List
+	if len(list) < 2 {
+		return false
+	}
+	if !type_invariants_first_is_type(list[0].Type, type_specification) {
+		return false
+	}
+	return type_invariants_last_is_namespace(list[len(list)-1].Type, invariant_names)
+}
+
+// Reports whether expression is the bundle's type,
+// dereferencing a leading pointer and, for a generic type, requiring it be
+// instantiated over its own parameters in order.
+func type_invariants_first_is_type(
+	expression ast.Expr, type_specification *ast.TypeSpec,
+) (ok bool) {
+
+	star, is_star := expression.(*ast.StarExpr)
+	if is_star {
+		expression = star.X
+	}
+	if type_specification.TypeParams == nil {
+		identifier, is_identifier := expression.(*ast.Ident)
+		if !is_identifier {
+			return false
+		}
+		return identifier.Name == type_specification.Name.Name
+	}
+	return type_invariants_generic_matches(expression, type_specification)
+}
+
+// Reports whether expression is the generic type
+// instantiated over its declared parameters in order: Box[T] for type Box[T any].
+func type_invariants_generic_matches(
+	expression ast.Expr, type_specification *ast.TypeSpec,
+) (ok bool) {
+
+	base, arguments := type_invariants_instantiation(expression)
+	if base == nil {
+		return false
+	}
+	if base.Name != type_specification.Name.Name {
+		return false
+	}
+	want := type_invariants_field_names(type_specification.TypeParams)
+	got := type_invariants_argument_names(arguments)
+	return slices.Equal(want, got)
+}
+
+// Splits a generic instantiation into its base
+// identifier and type arguments, handling the one- and many-argument AST forms.
+func type_invariants_instantiation(
+	expression ast.Expr,
+) (base *ast.Ident, arguments []ast.Expr) {
+
+	switch node := expression.(type) {
+	case *ast.IndexExpr:
+		identifier, is_identifier := node.X.(*ast.Ident)
+		if !is_identifier {
+			return nil, nil
+		}
+		return identifier, []ast.Expr{node.Index}
+	case *ast.IndexListExpr:
+		identifier, is_identifier := node.X.(*ast.Ident)
+		if !is_identifier {
+			return nil, nil
+		}
+		return identifier, node.Indices
+	default:
+		return nil, nil
+	}
+}
+
+// Flattens a field list to its declared names.
+func type_invariants_field_names(fields *ast.FieldList) (names []string) {
+	for _, field := range fields.List {
+		for _, name := range field.Names {
+			names = append(names, name.Name)
+		}
+	}
+	return names
+}
+
+// Returns the identifier names of type arguments,
+// or nil when any argument is not a bare identifier so a mismatch is reported.
+func type_invariants_argument_names(arguments []ast.Expr) (names []string) {
+	for _, argument := range arguments {
+		identifier, is_identifier := argument.(*ast.Ident)
+		if !is_identifier {
+			return nil
+		}
+		names = append(names, identifier.Name)
+	}
+	return names
+}
+
+// Reports whether expression is the selector
+// <pkg>.Namespace for a local name bound to the invariant package.
+func type_invariants_last_is_namespace(
+	expression ast.Expr, invariant_names map[string]bool,
+) (ok bool) {
+
+	selector, is_selector := expression.(*ast.SelectorExpr)
+	if !is_selector {
+		return false
+	}
+	if selector.Sel.Name != "Namespace" {
+		return false
+	}
+	qualifier, is_identifier := selector.X.(*ast.Ident)
+	if !is_identifier {
+		return false
+	}
+	return invariant_names[qualifier.Name]
+}
+
+// Returns the local names the invariant package is
+// bound to in this file — its own package name, or an explicit import alias — so
+// the namespace parameter is recognized however the package was imported.
+func type_invariants_import_names(file *ast.File) (names map[string]bool) {
+	names = map[string]bool{}
+	for _, specification := range file.Imports {
+		unquoted, unquote_err := strconv.Unquote(specification.Path.Value)
+		if unquote_err != nil {
+			continue
+		}
+		if !type_invariants_path_is_invariant(unquoted) {
+			continue
+		}
+		if specification.Name != nil {
+			names[specification.Name.Name] = true
+			continue
+		}
+		names[path.Base(unquoted)] = true
+	}
+	return names
+}
+
+// Reports whether an import path has a segment
+// named invariant — the framework package, wherever it sits in the module.
+func type_invariants_path_is_invariant(import_path string) (yes bool) {
+	for _, segment := range strings.Split(import_path, "/") {
+		if segment == "invariant" {
+			return true
+		}
+	}
+	return false
+}
+
+// Reports whether filename lies under a listed exempt
+// package directory, by the segment-prefix rule the other lint.json lists use. A
+// lone "." exempts the whole tree — the wholesale off switch for staged rollout.
+func type_invariants_path_exempt(filename string, exempt []string) (yes bool) {
+	for _, entry := range exempt {
+		if entry == "." {
+			return true
+		}
+		if filename == entry {
+			return true
+		}
+		if strings.HasPrefix(filename, entry+"/") {
+			return true
+		}
+	}
+	return false
+}
+
+// The matcher below mirrors lint's Methods-rule stdlib-interface matcher: the
+// Primitive Types rule exempts a method whose signature implements a
+// standard-library interface (e.g. Read([]byte) (int, error)). Duplicated to
+// keep this package self-contained; unify into a shared home when the Source And
+// Test Bans concern is extracted.
+func method_satisfies_stdlib(function_declaration *ast.FuncDecl) (yes bool) {
+	if function_declaration.Recv == nil {
+		return false
+	}
+	params := method_field_types(function_declaration.Type.Params)
+	results := method_field_types(function_declaration.Type.Results)
+	return method_signature_matches(&method_signature{
+		Name:    function_declaration.Name.Name,
+		Params:  strings.Join(params, ","),
+		Results: strings.Join(results, ","),
+	})
+}
+
+type method_signature struct {
+	Name    string
+	Params  string
+	Results string
+}
+
+func method_signature_matches(input *method_signature) (yes bool) {
+	switch input.Name {
+	case "Error", "String", "GoString":
+		return input.Params == "" && input.Results == "string"
+	case "Read", "Write":
+		return input.Params == "[]byte" && input.Results == "int,error"
+	case "Close":
+		return input.Params == "" && input.Results == "error"
+	case "Seek":
+		return input.Params == "int64,int" && input.Results == "int64,error"
+	case "WriteTo":
+		return input.Params == "io.Writer" && input.Results == "int64,error"
+	case "ReadFrom":
+		return input.Params == "io.Reader" && input.Results == "int64,error"
+	case "Len":
+		return input.Params == "" && input.Results == "int"
+	case "Less":
+		return input.Params == "int,int" && input.Results == "bool"
+	case "Swap":
+		return input.Params == "int,int" && input.Results == ""
+	case "MarshalJSON", "MarshalText", "MarshalBinary":
+		return input.Params == "" && input.Results == "[]byte,error"
+	case "UnmarshalJSON", "UnmarshalText", "UnmarshalBinary":
+		return input.Params == "[]byte" && input.Results == "error"
+	case "Format":
+		return input.Params == "fmt.State,rune" && input.Results == ""
+	case "Set":
+		return input.Params == "string" && input.Results == "error"
+	case "Scan":
+		return input.Params == "any" && input.Results == "error"
+	case "Visit":
+		return input.Params == "ast.Node" && input.Results == "ast.Visitor"
+	case "Open":
+		return input.Params == "string" && input.Results == "fs.File,error"
+	case "ReadFile":
+		return input.Params == "string" && input.Results == "[]byte,error"
+	case "ReadDir":
+		return input.Params == "string" && input.Results == "[]fs.DirEntry,error"
+	case "Stat":
+		switch input.Params {
+		case "":
+			return input.Results == "fs.FileInfo,error"
+		case "string":
+			return input.Results == "fs.FileInfo,error"
+		}
+		return false
+	case "Name":
+		return input.Params == "" && input.Results == "string"
+	case "Size":
+		return input.Params == "" && input.Results == "int64"
+	case "Mode":
+		return input.Params == "" && input.Results == "fs.FileMode"
+	case "ModTime":
+		return input.Params == "" && input.Results == "time.Time"
+	case "IsDir":
+		return input.Params == "" && input.Results == "bool"
+	case "Sys":
+		return input.Params == "" && input.Results == "any"
+	case "Type":
+		return input.Params == "" && input.Results == "fs.FileMode"
+	case "Info":
+		return input.Params == "" && input.Results == "fs.FileInfo,error"
+	}
+	return false
+}
+
+func method_field_types(fl *ast.FieldList) (output_list []string) {
+	if fl == nil {
+		return nil
+	}
+	for _, f := range fl.List {
+		rendered := method_render_type(f.Type)
+		count := len(f.Names)
+		if count == 0 {
+			count = 1
+		}
+		for range count {
+			output_list = append(output_list, rendered)
+		}
+	}
+	return output_list
+}
+
+func method_render_type(expression ast.Expr) (output_string string) {
+	prefix := ""
+	for step := 0; ; step++ {
+		stripped := false
+		switch e := expression.(type) {
+		case *ast.StarExpr:
+			prefix += "*"
+			expression = e.X
+			stripped = true
+		case *ast.ArrayType:
+			if e.Len != nil {
+				return "<unknown>"
+			}
+			prefix += "[]"
+			expression = e.Elt
+			stripped = true
+		case *ast.Ellipsis:
+			prefix += "..."
+			expression = e.Elt
+			stripped = true
+		}
+		if !stripped {
+			break
+		}
+	}
+	switch e := expression.(type) {
+	case *ast.Ident:
+		return prefix + e.Name
+	case *ast.SelectorExpr:
+		package_identifier, ok := e.X.(*ast.Ident)
+		if !ok {
+			return "<unknown>"
+		}
+		return prefix + package_identifier.Name + "." + e.Sel.Name
+	case *ast.InterfaceType:
+		if e.Methods == nil {
+			return prefix + "any"
+		}
+		if len(e.Methods.List) == 0 {
+			return prefix + "any"
+		}
+	}
+	return "<unknown>"
+}
+
+// A duplicate of lint's helper (see the matcher note above): a named import uses
+// its local name, an unnamed one the last path segment.
+func import_local_name(implementation *ast.ImportSpec, import_path string) (name string) {
+	if implementation.Name != nil {
+		return implementation.Name.Name
+	}
+	slash_offset := strings.LastIndex(import_path, "/")
+	return import_path[slash_offset+1:]
 }

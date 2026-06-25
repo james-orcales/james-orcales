@@ -21,7 +21,6 @@ import (
 	"path"
 	"path/filepath"
 	"regexp"
-	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -29,7 +28,9 @@ import (
 	"unicode"
 	"unicode/utf8"
 
+	"github.com/james-orcales/james-orcales/lint/internal/assertion"
 	"github.com/james-orcales/james-orcales/lint/internal/diagnostic"
+	"github.com/james-orcales/james-orcales/lint/internal/source"
 	"github.com/james-orcales/james-orcales/lint/internal/specification"
 	"github.com/james-orcales/james-orcales/lint/internal/vcs"
 )
@@ -857,12 +858,10 @@ func validate_glob_patterns(field string, patterns []string) (err error) {
 // rule subpackage can import without reaching back into this impure package.
 type Diagnostic = diagnostic.Diagnostic
 
-type parsed_file struct {
-	Path     string
-	File_Set *token.FileSet
-	File     *ast.File
-	Source   []byte
-}
+// Parsed_File, aliased from the source package so the core keeps naming it
+// parsed_file while the type lives in a deterministic leaf a rule subpackage can
+// import without reaching back into this impure package.
+type parsed_file = source.Parsed_File
 
 var snake_case_re = regexp.MustCompile(`^[a-z][a-z0-9]*(_[a-z0-9]+)*$`)
 
@@ -1929,7 +1928,8 @@ func Check_File_System(input *Check_File_System_Input) (diags []Diagnostic, err 
 		return nil, err
 	}
 	parsed_files, parse_diags := check_file_system_parse_files(paths, sources, cpu_count)
-	components := build_component_index(component_roots, parsed_files, input.Shared_Component)
+	components := source.Build_Component_Index(
+		component_roots, parsed_files, input.Shared_Component)
 	return check_file_system_doctrine(&check_file_system_doctrine_input{
 		Fsys:                      input.Fsys,
 		Tracked:                   tracked,
@@ -2025,19 +2025,11 @@ func check_file_system_doctrine(
 	output = append(output,
 		check_io_gateway(parsed_files, components, input.Instrumentation_Packages)...)
 	output = append(output, check_package_documentation_comment(parsed_files)...)
-	output = append(output,
-		check_numeric_invariants(parsed_files, input.Invariant_Exempt_Packages)...)
-	output = append(output,
-		check_struct_invariants(parsed_files, input.Invariant_Exempt_Packages)...)
-	output = append(output,
-		check_function_invariants(parsed_files, input.Invariant_Exempt_Packages)...)
-	output = append(output,
-		check_recorder_test_main(
-			parsed_files, components, input.Invariant_Exempt_Packages)...)
-	output = append(output,
-		check_primitive_types(parsed_files, input.Invariant_Exempt_Packages)...)
-	output = append(output,
-		check_simulation(parsed_files, components, input.Invariant_Exempt_Packages)...)
+	output = append(output, assertion.Check(&assertion.Check_Input{
+		Parsed_Files: parsed_files,
+		Components:   components,
+		Exempt:       input.Invariant_Exempt_Packages,
+	})...)
 	return append(output,
 		check_specification(input.Fsys, parsed_files, components, input.Scope)...)
 }
@@ -2350,27 +2342,11 @@ func check_file_system_parse_files(
 // (1024) with zero work; the worker pool would idle, so reaching it
 // signals misconfigured input rather than a meaningful state.
 
-// Module identity for a single Go module discovered under Fsys. The
-// doctrine's layout rules need three things per file: which module owns
-// it, whether that module is the shared imports, and which directories
-// contain non-main Go packages (the "Go ancestor" set used by the
-// component-tier-depth rule).
-type component_information struct {
-	Root              string
-	Import_Path       string
-	Is_Shared_Library bool
-	Directory_Package map[string]string
-}
+// Aliased from the source package, like parsed_file above.
+type component_information = source.Component
 
-// All-doctrine-checks input. Built once after parsing and threaded
-// through the directory-level checks so module discovery is paid for
-// at most once per Main invocation. Components is sorted longest-Root
-// first so File_To_Component resolution is a linear scan with the
-// longest-prefix wins guarantee.
-type component_index struct {
-	Components        []component_information
-	File_To_Component map[string]int
-}
+// Aliased from the source package, like parsed_file above.
+type component_index = source.Component_Index
 
 var component_index_module_re = regexp.MustCompile(`(?m)^module\s+(\S+)`)
 
@@ -2464,64 +2440,6 @@ func discover_root_module_path(fsys fs.FS) (module_path string) {
 		return ""
 	}
 	return string(match[1])
-}
-
-// Classifies, orders, and binds parsed files to the components discovered by
-// discover_components. Components is sorted longest-Root first so File_To_Component
-// resolution is a linear longest-prefix scan. A scoped run passes only the
-// parsed subset; the resulting index still covers every module's Root (for
-// import resolution) but its File_To_Component and Directory_Package describe only
-// the files actually parsed — which is all the in-scope checks consult.
-func build_component_index(
-	components []component_information, parsed_files []parsed_file, shared_component string,
-) (index *component_index) {
-
-	index = &component_index{
-		Components: components, File_To_Component: make(map[string]int, len(parsed_files))}
-	// Classify the shared library by its workspace-root-relative directory (the
-	// module Root, e.g. "shared"), matching the slash-relative form used
-	// by the rest of lint.json; every other module is a binary. An empty
-	// shared_component (e.g. a test that doesn't set one) leaves every module a binary.
-	// path.Clean so "./shared/" matches the cleaned module Root; guard the
-	// empty case, since path.Clean("") is "." and would wrongly match a root module.
-	shared_root := shared_component
-	if shared_root != "" {
-		shared_root = path.Clean(shared_root)
-	}
-	for i := range index.Components {
-		index.Components[i].Is_Shared_Library = index.Components[i].Root == shared_root
-	}
-	sort.Slice(index.Components, func(i, j int) (less bool) {
-		return len(index.Components[i].Root) > len(index.Components[j].Root)
-	})
-	for _, pf := range parsed_files {
-		index.File_To_Component[pf.Path] =
-			component_index_resolve(pf.Path, index.Components)
-	}
-	// Directory_Package excludes test/main files (component-tier-depth rule).
-	for _, pf := range parsed_files {
-		if strings.HasSuffix(pf.Path, "_test.go") {
-			continue
-		}
-		if pf.File.Name.Name == "main" {
-			continue
-		}
-		component_index_number := index.File_To_Component[pf.Path]
-		if component_index_number < 0 {
-			continue
-		}
-		root := index.Components[component_index_number].Root
-		relative := pf.Path
-		if root != "." {
-			relative = strings.TrimPrefix(pf.Path, root+"/")
-		}
-		canonical_directory := component_index_canonicalize(path.Dir(relative))
-		directory_package := index.Components[component_index_number].Directory_Package
-		if _, has := directory_package[canonical_directory]; !has {
-			directory_package[canonical_directory] = pf.File.Name.Name
-		}
-	}
-	return index
 }
 
 // Widens a scope argument to the module that must be parsed whole for it. The
@@ -2627,47 +2545,6 @@ func scan_prefixes_reach(prefixes []string, directory string) (reachable bool) {
 		}
 	}
 	return false
-}
-
-// Strips ^v[0-9]+$ segments from a slash-separated directory path so
-// snap/v2/X is treated identically to snap/X. Major-version segments
-// are Go module-versioning convention rather than real package tiers,
-// and the doctrine's depth rules must see through them.
-func component_index_canonicalize(directory string) (canonical string) {
-
-	if directory == "." {
-		return "."
-	}
-	segments := strings.Split(directory, "/")
-	filtered := make([]string, 0, len(segments))
-	for _, s := range segments {
-		if component_index_version_re.MatchString(s) {
-			continue
-		}
-		filtered = append(filtered, s)
-	}
-	if len(filtered) == 0 {
-		return "."
-	}
-	return strings.Join(filtered, "/")
-}
-
-var component_index_version_re = regexp.MustCompile(`^v[0-9]+$`)
-
-func component_index_resolve(file_path string, components []component_information) (index int) {
-
-	for i, module := range components {
-		if module.Root == "." {
-			return i
-		}
-		if file_path == module.Root {
-			return i
-		}
-		if strings.HasPrefix(file_path, module.Root+"/") {
-			return i
-		}
-	}
-	return -1
 }
 
 // Binary components confine all non-main source to internal/ so the module
@@ -2996,11 +2873,11 @@ func check_component_tier_depth(
 		if m.Root != "." {
 			relative = strings.TrimPrefix(pf.Path, m.Root+"/")
 		}
-		canonical := component_index_canonicalize(path.Dir(relative))
+		canonical := source.Canonicalize(path.Dir(relative))
 		if canonical == "." {
 			continue
 		}
-		ancestor_names := component_information_library_ancestors(m, canonical)
+		ancestor_names := source.Library_Ancestors(m, canonical)
 		if len(ancestor_names) <= 1 {
 			continue
 		}
@@ -3020,50 +2897,6 @@ func check_component_tier_depth(
 		})
 	}
 	return diags
-}
-
-// Returns ancestor directories of `directory` from nearest to module
-// root, exclusive of "." itself. invariant.GameLoop annotates the loop
-// as intentionally unbounded — path.Dir's fixed point on "." provides
-// the real termination.
-func check_component_tier_depth_ancestors(directory string) (ancestors []string) {
-
-	current := directory
-	for step := 0; ; step++ {
-		parent := path.Dir(current)
-		if parent == "." {
-			break
-		}
-		if parent == current {
-			break
-		}
-		ancestors = append(ancestors, parent)
-		current = parent
-	}
-	return ancestors
-}
-
-// Returns the non-main Go ancestor packages of canonical that count toward
-// tier depth. A binary component's top-level internal directory is excluded: all
-// its code sits under internal and func Main lives there, so internal is the
-// directory the count starts from — the same role a shared module's root
-// plays — not a package nested above another. Without the exclusion
-// internal/foo/default would count internal as a second ancestor and read as
-// nested too deep. Shared components have no internal directory, so the exclusion
-// never affects them.
-func component_information_library_ancestors(
-	m component_information, canonical string,
-) (ancestors []string) {
-	for _, a := range check_component_tier_depth_ancestors(canonical) {
-		if a == "internal" {
-			continue
-		}
-		if _, has := m.Directory_Package[a]; !has {
-			continue
-		}
-		ancestors = append(ancestors, a)
-	}
-	return ancestors
 }
 
 type check_single_module_input struct {
@@ -3279,7 +3112,7 @@ func check_specification(
 		if index.File_To_Component[pf.Path] >= 0 {
 			has_module[directory] = true
 		}
-		if parsed_file_is_impure_package(pf, index) {
+		if source.Is_Impure_Package(pf, index) {
 			impure[directory] = true
 		}
 		if path.Base(pf.Path) == "specification_test.go" {
@@ -4987,6 +4820,17 @@ func check_input_struct_declaration_is_named_struct(
 	return false
 }
 
+// The bundle-function name for a type: Name_Invariants when exported,
+// name_invariants otherwise. Duplicated from the assertion package's Casing rule;
+// the Input Structs rule needs it to recognise the one declaration allowed
+// between an input struct and its function.
+func type_invariant_name(type_name string) (name string) {
+	if ast.IsExported(type_name) {
+		return type_name + "_Invariants"
+	}
+	return type_name + "_invariants"
+}
+
 // Reports whether declaration is the invariant function for the struct named
 // struct_name, the only declaration the locality rule tolerates between the
 // input struct and the function it feeds.
@@ -5015,393 +4859,14 @@ func make_check_type_invariants(invariant_exempt []string) (check check_function
 	return func(
 		file_set *token.FileSet, file *ast.File, _ []byte,
 	) (diags []Diagnostic) {
-		filename := file_set.Position(file.Pos()).Filename
-		if strings.HasSuffix(filename, "_test.go") {
-			return nil
-		}
-		if type_invariants_path_exempt(filename, invariant_exempt) {
-			return nil
-		}
-		invariant_names := type_invariants_import_names(file)
-		diags = append(diags,
-			check_type_invariants_forward(file_set, file, invariant_names)...)
-		diags = append(diags, check_type_invariants_orphan(file_set, file)...)
-		return diags
+		return assertion.Check_Type(file_set, file, invariant_exempt)
 	}
 }
 
-// Flags every in-scope type whose next declaration
-// is not its correctly-named, correctly-signed bundle function.
-func check_type_invariants_forward(
-	file_set *token.FileSet, file *ast.File, invariant_names map[string]bool,
-) (diags []Diagnostic) {
-
-	for index, declaration := range file.Decls {
-		general, is_general := declaration.(*ast.GenDecl)
-		if !is_general {
-			continue
-		}
-		if general.Tok != token.TYPE {
-			continue
-		}
-		// Grouped Declarations bans type (...) groups, so a type holds one spec.
-		type_specification, is_type := general.Specs[0].(*ast.TypeSpec)
-		if !is_type {
-			continue
-		}
-		if !type_invariant_required(type_specification) {
-			continue
-		}
-		diags = append(diags, check_type_invariants_one(
-			file_set, file, index, type_specification, invariant_names)...)
-	}
-	return diags
-}
-
-// Judges the in-scope type at file.Decls[index]:
-// presence and casing of the following bundle, then its signature and the gap.
-func check_type_invariants_one(
-	file_set *token.FileSet, file *ast.File, index int,
-	type_specification *ast.TypeSpec, invariant_names map[string]bool,
-) (diags []Diagnostic) {
-
-	want := type_invariant_name(type_specification.Name.Name)
-	bundle := type_invariants_following_function(file, index)
-	if bundle == nil {
-		return append(diags, type_invariants_absent(file_set, type_specification, want))
-	}
-	if bundle.Name.Name != want {
-		return append(diags, type_invariants_absent(file_set, type_specification, want))
-	}
-	if !type_invariants_signature_ok(bundle, type_specification, invariant_names) {
-		diags = append(diags,
-			type_invariants_bad_signature(file_set, bundle, type_specification))
-	}
-	diags = append(diags,
-		check_type_invariants_gap(file_set, file, type_specification, bundle)...)
-	return diags
-}
-
-// Builds the diagnostic for a type with no bundle below it.
-func type_invariants_absent(
-	file_set *token.FileSet, type_specification *ast.TypeSpec, want string,
-) (diag Diagnostic) {
-
-	type_name := type_specification.Name.Name
-	return Diagnostic{
-		Position: file_set.Position(type_specification.Name.Pos()),
-		Message: "declare " + want + "(" + type_name +
-			", invariant.Namespace) directly below " + type_name,
-	}
-}
-
-// Builds the diagnostic for a bundle whose parameters
-// are not the type, by value or pointer, first and an invariant.Namespace last.
-func type_invariants_bad_signature(
-	file_set *token.FileSet, function *ast.FuncDecl, type_specification *ast.TypeSpec,
-) (diag Diagnostic) {
-
-	type_name := type_specification.Name.Name
-	return Diagnostic{
-		Position: file_set.Position(function.Name.Pos()),
-		Message: function.Name.Name + " must take (" + type_name + " or *" +
-			type_name + ", invariant.Namespace)",
-	}
-}
-
-// Flags a bundle-named function adrift from its
-// type: one whose immediately preceding declaration is not the type it names.
-func check_type_invariants_orphan(
-	file_set *token.FileSet, file *ast.File,
-) (diags []Diagnostic) {
-
-	for index, declaration := range file.Decls {
-		function, is_function := declaration.(*ast.FuncDecl)
-		if !is_function {
-			continue
-		}
-		if function.Recv != nil {
-			continue
-		}
-		if !type_invariants_is_bundle_name(function.Name.Name) {
-			continue
-		}
-		if type_invariants_preceding_type(file, index, function.Name.Name) {
-			continue
-		}
-		diags = append(diags, Diagnostic{
-			Position: file_set.Position(function.Name.Pos()),
-			Message:  function.Name.Name + " must be declared directly below its type",
-		})
-	}
-	return diags
-}
-
-// Flags a comment between a type and its bundle that is
-// not the bundle's own doc comment, so only blank lines and that doc may separate
-// them.
-func check_type_invariants_gap(
-	file_set *token.FileSet, file *ast.File,
-	type_specification *ast.TypeSpec, function *ast.FuncDecl,
-) (diags []Diagnostic) {
-
-	for _, group := range file.Comments {
-		if group == function.Doc {
-			continue
-		}
-		if group.Pos() <= type_specification.End() {
-			continue
-		}
-		if group.End() >= function.Pos() {
-			continue
-		}
-		diags = append(diags, Diagnostic{
-			Position: file_set.Position(group.Pos()),
-			Message: "remove the comment between " + type_specification.Name.Name +
-				" and " + function.Name.Name,
-		})
-	}
-	return diags
-}
-
-// Reports whether a type declaration must carry a bundle.
-// Aliases, function and interface types, and empty structs state no properties
-// worth a bundle; every other defined type is in scope.
-func type_invariant_required(type_specification *ast.TypeSpec) (required bool) {
-	if type_specification.Assign.IsValid() {
-		return false
-	}
-	switch base := type_specification.Type.(type) {
-	case *ast.FuncType:
-		return false
-	case *ast.InterfaceType:
-		return false
-	case *ast.StructType:
-		return len(base.Fields.List) > 0
-	default:
-		return true
-	}
-}
-
-// Maps a type name to its bundle name, suffixing by the
-// type's casing: an exported type takes _Invariants, an unexported _invariants.
-func type_invariant_name(type_name string) (name string) {
-	if ast.IsExported(type_name) {
-		return type_name + "_Invariants"
-	}
-	return type_name + "_invariants"
-}
-
-// Returns the function declared immediately
-// below the declaration at index, or nil when the next declaration is not one.
-func type_invariants_following_function(
-	file *ast.File, index int,
-) (function *ast.FuncDecl) {
-
-	if index+1 >= len(file.Decls) {
-		return nil
-	}
-	next, is_function := file.Decls[index+1].(*ast.FuncDecl)
-	if !is_function {
-		return nil
-	}
-	return next
-}
-
-// Reports whether the declaration before index is
-// the type whose bundle name is function_name.
-func type_invariants_preceding_type(
-	file *ast.File, index int, function_name string,
-) (yes bool) {
-
-	if index == 0 {
-		return false
-	}
-	general, is_general := file.Decls[index-1].(*ast.GenDecl)
-	if !is_general {
-		return false
-	}
-	if general.Tok != token.TYPE {
-		return false
-	}
-	type_specification, is_type := general.Specs[0].(*ast.TypeSpec)
-	if !is_type {
-		return false
-	}
-	return type_invariant_name(type_specification.Name.Name) == function_name
-}
-
-// Reports whether name ends in the bundle suffix.
-func type_invariants_is_bundle_name(name string) (yes bool) {
-	if strings.HasSuffix(name, "_Invariants") {
-		return true
-	}
-	return strings.HasSuffix(name, "_invariants")
-}
-
-// Reports whether the bundle takes its type, by
-// value or pointer, first and an invariant.Namespace last.
-func type_invariants_signature_ok(
-	function *ast.FuncDecl, type_specification *ast.TypeSpec,
-	invariant_names map[string]bool,
-) (ok bool) {
-
-	if function.Type.Params == nil {
-		return false
-	}
-	list := function.Type.Params.List
-	if len(list) < 2 {
-		return false
-	}
-	if !type_invariants_first_is_type(list[0].Type, type_specification) {
-		return false
-	}
-	return type_invariants_last_is_namespace(list[len(list)-1].Type, invariant_names)
-}
-
-// Reports whether expression is the bundle's type,
-// dereferencing a leading pointer and, for a generic type, requiring it be
-// instantiated over its own parameters in order.
-func type_invariants_first_is_type(
-	expression ast.Expr, type_specification *ast.TypeSpec,
-) (ok bool) {
-
-	star, is_star := expression.(*ast.StarExpr)
-	if is_star {
-		expression = star.X
-	}
-	if type_specification.TypeParams == nil {
-		identifier, is_identifier := expression.(*ast.Ident)
-		if !is_identifier {
-			return false
-		}
-		return identifier.Name == type_specification.Name.Name
-	}
-	return type_invariants_generic_matches(expression, type_specification)
-}
-
-// Reports whether expression is the generic type
-// instantiated over its declared parameters in order: Box[T] for type Box[T any].
-func type_invariants_generic_matches(
-	expression ast.Expr, type_specification *ast.TypeSpec,
-) (ok bool) {
-
-	base, arguments := type_invariants_instantiation(expression)
-	if base == nil {
-		return false
-	}
-	if base.Name != type_specification.Name.Name {
-		return false
-	}
-	want := type_invariants_field_names(type_specification.TypeParams)
-	got := type_invariants_argument_names(arguments)
-	return slices.Equal(want, got)
-}
-
-// Splits a generic instantiation into its base
-// identifier and type arguments, handling the one- and many-argument AST forms.
-func type_invariants_instantiation(
-	expression ast.Expr,
-) (base *ast.Ident, arguments []ast.Expr) {
-
-	switch node := expression.(type) {
-	case *ast.IndexExpr:
-		identifier, is_identifier := node.X.(*ast.Ident)
-		if !is_identifier {
-			return nil, nil
-		}
-		return identifier, []ast.Expr{node.Index}
-	case *ast.IndexListExpr:
-		identifier, is_identifier := node.X.(*ast.Ident)
-		if !is_identifier {
-			return nil, nil
-		}
-		return identifier, node.Indices
-	default:
-		return nil, nil
-	}
-}
-
-// Flattens a field list to its declared names.
-func type_invariants_field_names(fields *ast.FieldList) (names []string) {
-	for _, field := range fields.List {
-		for _, name := range field.Names {
-			names = append(names, name.Name)
-		}
-	}
-	return names
-}
-
-// Returns the identifier names of type arguments,
-// or nil when any argument is not a bare identifier so a mismatch is reported.
-func type_invariants_argument_names(arguments []ast.Expr) (names []string) {
-	for _, argument := range arguments {
-		identifier, is_identifier := argument.(*ast.Ident)
-		if !is_identifier {
-			return nil
-		}
-		names = append(names, identifier.Name)
-	}
-	return names
-}
-
-// Reports whether expression is the selector
-// <pkg>.Namespace for a local name bound to the invariant package.
-func type_invariants_last_is_namespace(
-	expression ast.Expr, invariant_names map[string]bool,
-) (ok bool) {
-
-	selector, is_selector := expression.(*ast.SelectorExpr)
-	if !is_selector {
-		return false
-	}
-	if selector.Sel.Name != "Namespace" {
-		return false
-	}
-	qualifier, is_identifier := selector.X.(*ast.Ident)
-	if !is_identifier {
-		return false
-	}
-	return invariant_names[qualifier.Name]
-}
-
-// Returns the local names the invariant package is
-// bound to in this file — its own package name, or an explicit import alias — so
-// the namespace parameter is recognized however the package was imported.
-func type_invariants_import_names(file *ast.File) (names map[string]bool) {
-	names = map[string]bool{}
-	for _, specification := range file.Imports {
-		unquoted, unquote_err := strconv.Unquote(specification.Path.Value)
-		if unquote_err != nil {
-			continue
-		}
-		if !type_invariants_path_is_invariant(unquoted) {
-			continue
-		}
-		if specification.Name != nil {
-			names[specification.Name.Name] = true
-			continue
-		}
-		names[path.Base(unquoted)] = true
-	}
-	return names
-}
-
-// Reports whether an import path has a segment
-// named invariant — the framework package, wherever it sits in the module.
-func type_invariants_path_is_invariant(import_path string) (yes bool) {
-	for _, segment := range strings.Split(import_path, "/") {
-		if segment == "invariant" {
-			return true
-		}
-	}
-	return false
-}
-
-// Reports whether filename lies under a listed exempt
-// package directory, by the segment-prefix rule the other lint.json lists use. A
-// lone "." exempts the whole tree — the wholesale off switch for staged rollout.
-func type_invariants_path_exempt(filename string, exempt []string) (yes bool) {
+// True when filename equals, or lives under, any entry in exempt; a "." entry
+// exempts everything. A shared path-prefix predicate the gateway rules use to
+// skip a package's own gateway directory and the instrumentation packages.
+func path_is_exempt(filename string, exempt []string) (yes bool) {
 	for _, entry := range exempt {
 		if entry == "." {
 			return true
@@ -5664,7 +5129,7 @@ func import_path_is_instrumentation(
 	if is_stdlib_instrumentation(import_path) {
 		return true
 	}
-	component_index_number := component_index_for_import_path(import_path, components)
+	component_index_number := source.For_Import_Path(import_path, components)
 	if component_index_number < 0 {
 		return false
 	}
@@ -8291,33 +7756,12 @@ func check_no_impure_stdlib(
 		if strings.HasSuffix(pf.Path, "_test.go") {
 			continue
 		}
-		if parsed_file_is_composition_tier(pf, components) {
+		if source.Is_Composition_Tier(pf, components) {
 			continue
 		}
 		diags = append(diags, check_no_impure_stdlib_per_file(pf.File_Set, pf.File)...)
 	}
 	return diags
-}
-
-// True iff the file sits exactly one non-main Go ancestor below the
-// library tier in its module. Mirrors check_component_tier_depth's
-// counting logic but inverts the threshold: tier-depth fires when
-// count > 1, the composition-tier exemption fires when count == 1.
-func parsed_file_is_composition_tier(pf parsed_file, components *component_index) (yes bool) {
-	component_index_number := components.File_To_Component[pf.Path]
-	if component_index_number < 0 {
-		return false
-	}
-	m := components.Components[component_index_number]
-	relative := pf.Path
-	if m.Root != "." {
-		relative = strings.TrimPrefix(pf.Path, m.Root+"/")
-	}
-	canonical := component_index_canonicalize(path.Dir(relative))
-	if canonical == "." {
-		return false
-	}
-	return len(component_information_library_ancestors(m, canonical)) == 1
 }
 
 func check_no_impure_stdlib_per_file(
@@ -8444,58 +7888,13 @@ func check_transitive_purity(
 ) (diags []Diagnostic) {
 
 	for _, pf := range parsed_files {
-		if parsed_file_is_impure_package(pf, components) {
+		if source.Is_Impure_Package(pf, components) {
 			continue
 		}
 		diags = append(diags, check_transitive_purity_per_file(
 			pf.File_Set, pf.File, components, instrumentation)...)
 	}
 	return diags
-}
-
-// True iff the file belongs to an impure package: package main, or a `default`
-// package or one a Go ancestor below the library tier. Those are the very
-// packages a pure package may not depend on, so they are exempt as callers too
-// — including their _test.go files, classified by directory since tests carry
-// no entry in Directory_Package. A file owned by no module (index -1) is left
-// to the downstream no-op convention every other doctrine check follows.
-func parsed_file_is_impure_package(pf parsed_file, components *component_index) (yes bool) {
-
-	base := strings.TrimSuffix(pf.File.Name.Name, "_test")
-	if base == "main" {
-		return true
-	}
-	component_index_number := components.File_To_Component[pf.Path]
-	if component_index_number < 0 {
-		return false
-	}
-	m := components.Components[component_index_number]
-	relative := pf.Path
-	if m.Root != "." {
-		relative = strings.TrimPrefix(pf.Path, m.Root+"/")
-	}
-	canonical := component_index_canonicalize(path.Dir(relative))
-	return directory_is_impure(canonical, m)
-}
-
-// True iff the module-relative directory holds an impure package: a `default`
-// directory (the naming convention for an impure global binding, see
-// check_default_package_name) or a package sitting exactly one non-main Go
-// ancestor below the library tier.
-func directory_is_impure(canonical string, m component_information) (yes bool) {
-
-	if canonical == "." {
-		return false
-	}
-	last := canonical
-	slash_offset := strings.LastIndex(canonical, "/")
-	if slash_offset >= 0 {
-		last = canonical[slash_offset+1:]
-	}
-	if last == "default" {
-		return true
-	}
-	return len(component_information_library_ancestors(m, canonical)) == 1
 }
 
 // Flags the two routes impurity launders into a pure file: an import of an
@@ -8513,7 +7912,7 @@ func check_transitive_purity_per_file(
 	local_to_path := make(map[string]string, len(file.Imports))
 	for _, implementation := range file.Imports {
 		import_path := strings.Trim(implementation.Path.Value, `"`)
-		if import_path_is_impure_first_party(import_path, components) {
+		if source.Import_Path_Is_Impure(import_path, components) {
 			if !import_path_is_instrumentation(
 				import_path, components, instrumentation) {
 				diags = append(diags, Diagnostic{
@@ -8577,67 +7976,6 @@ func import_local_name(implementation *ast.ImportSpec, import_path string) (name
 	}
 	slash_offset := strings.LastIndex(import_path, "/")
 	return import_path[slash_offset+1:]
-}
-
-// True iff the import path resolves to a first-party package that is itself
-// impure (a `default` package, or one a Go ancestor below the library tier). A stdlib
-// or third-party path is owned by no module and so is never first-party here.
-func import_path_is_impure_first_party(import_path string, components *component_index) (yes bool) {
-
-	component_index_number := component_index_for_import_path(import_path, components)
-	if component_index_number < 0 {
-		return false
-	}
-	m := components.Components[component_index_number]
-	relative := strings.TrimPrefix(import_path, m.Import_Path)
-	relative = strings.TrimPrefix(relative, "/")
-	if relative == "" {
-		relative = "."
-	}
-	canonical := component_index_canonicalize(relative)
-	return directory_is_impure(canonical, m)
-}
-
-// Returns the index of the module whose path is the longest prefix of the
-// import path, or -1 for a stdlib/third-party path owned by no module.
-func component_index_for_import_path(import_path string, components *component_index) (index int) {
-
-	index = -1
-	for i := range components.Components {
-		m := components.Components[i]
-		if m.Import_Path == "" {
-			continue
-		}
-		under := &import_path_under_component_input{
-			Import_Path: import_path, Component_Path: m.Import_Path}
-		if !import_path_under_component(under) {
-			continue
-		}
-		if index < 0 {
-			index = i
-			continue
-		}
-		if len(m.Import_Path) > len(components.Components[index].Import_Path) {
-			index = i
-		}
-	}
-	return index
-}
-
-type import_path_under_component_input struct {
-	// Import_Path is the candidate package path under test.
-	Import_Path string
-	// Component_Path is the component's declared import prefix.
-	Component_Path string
-}
-
-// True iff the import path names the component itself or a package within it.
-func import_path_under_component(input *import_path_under_component_input) (yes bool) {
-
-	if input.Import_Path == input.Component_Path {
-		return true
-	}
-	return strings.HasPrefix(input.Import_Path, input.Component_Path+"/")
 }
 
 type is_transitive_stdlib_ident_input struct {
@@ -9088,7 +8426,7 @@ func deterministic_pure_directories(
 	pure = map[string]bool{}
 	for _, pf := range parsed_files {
 		directory := path.Dir(pf.Path)
-		if parsed_file_is_impure_package(pf, components) {
+		if source.Is_Impure_Package(pf, components) {
 			impure[directory] = true
 			continue
 		}
@@ -9275,7 +8613,7 @@ func import_path_is_nondeterministic_first_party(
 	import_path string, components *component_index, set map[string]bool,
 ) (yes bool) {
 
-	component_index_number := component_index_for_import_path(import_path, components)
+	component_index_number := source.For_Import_Path(import_path, components)
 	if component_index_number < 0 {
 		return false
 	}
@@ -9314,7 +8652,7 @@ func check_time_import_gateway(
 	parsed_files []parsed_file, components *component_index,
 ) (diags []Diagnostic) {
 
-	gateway := component_index_time_gateway(components)
+	gateway := source.Time_Gateway(components)
 	if gateway == "" {
 		return nil
 	}
@@ -9345,22 +8683,6 @@ func check_time_import_gateway(
 		}
 	}
 	return diags
-}
-
-// Returns the workspace-relative directory of the shared module's stdlib-time
-// gateway (its time/default), or "" when no module is the shared library.
-func component_index_time_gateway(components *component_index) (gateway string) {
-
-	for _, m := range components.Components {
-		if !m.Is_Shared_Library {
-			continue
-		}
-		if m.Root == "." {
-			return "time/default"
-		}
-		return m.Root + "/time/default"
-	}
-	return ""
 }
 
 // A package drives the loop only through package main or a test; elsewhere it may
@@ -9424,12 +8746,12 @@ func driver_gateway_constructor(name string) (constructor bool) {
 func check_driver_type(
 	parsed_files []parsed_file, components *component_index,
 ) (diags []Diagnostic) {
-	shared := component_index_shared_import(components)
+	shared := source.Shared_Import(components)
 	if shared == "" {
 		return nil
 	}
 	driver_path := shared + "/io"
-	gateway := component_index_io_gateway(components)
+	gateway := source.IO_Gateway(components)
 	for _, pf := range parsed_files {
 		if strings.HasSuffix(pf.Path, "_test.go") {
 			continue
@@ -9438,7 +8760,7 @@ func check_driver_type(
 			continue
 		}
 		if gateway != "" {
-			if type_invariants_path_exempt(pf.Path, []string{gateway}) {
+			if path_is_exempt(pf.Path, []string{gateway}) {
 				continue
 			}
 		}
@@ -9487,17 +8809,6 @@ func driver_type_file_diagnostics(pf parsed_file, driver_path string) (diags []D
 	return diags
 }
 
-// Returns the shared library component's import path, or "" when no module is the
-// shared library.
-func component_index_shared_import(components *component_index) (import_path string) {
-	for _, m := range components.Components {
-		if m.Is_Shared_Library {
-			return m.Import_Path
-		}
-	}
-	return ""
-}
-
 // Raw blocking and non-blocking IO stdlib lives only in the io/default gateway; every
 // other package routes IO through shared/io. Exempt: the io/default and time/default
 // gateways (time is the clock the loop is built on, not IO the loop carries), the
@@ -9505,8 +8816,8 @@ func component_index_shared_import(components *component_index) (import_path str
 func check_io_gateway(
 	parsed_files []parsed_file, components *component_index, instrumentation []string,
 ) (diags []Diagnostic) {
-	gateway := component_index_io_gateway(components)
-	time_gateway := component_index_time_gateway(components)
+	gateway := source.IO_Gateway(components)
+	time_gateway := source.Time_Gateway(components)
 	for _, pf := range parsed_files {
 		if strings.HasSuffix(pf.Path, "_test.go") {
 			continue
@@ -9518,16 +8829,16 @@ func check_io_gateway(
 			continue
 		}
 		if gateway != "" {
-			if type_invariants_path_exempt(pf.Path, []string{gateway}) {
+			if path_is_exempt(pf.Path, []string{gateway}) {
 				continue
 			}
 		}
 		if time_gateway != "" {
-			if type_invariants_path_exempt(pf.Path, []string{time_gateway}) {
+			if path_is_exempt(pf.Path, []string{time_gateway}) {
 				continue
 			}
 		}
-		if type_invariants_path_exempt(pf.Path, instrumentation) {
+		if path_is_exempt(pf.Path, instrumentation) {
 			continue
 		}
 		diags = append(diags, io_gateway_import_diagnostics(pf)...)
@@ -9625,21 +8936,6 @@ func io_gateway_banned_operating_system(name string) (banned bool) {
 		return true
 	}
 	return false
-}
-
-// Returns the workspace-relative directory of the shared module's raw-IO gateway (its
-// io/default), or "" when no module is the shared library.
-func component_index_io_gateway(components *component_index) (gateway string) {
-	for _, m := range components.Components {
-		if !m.Is_Shared_Library {
-			continue
-		}
-		if m.Root == "." {
-			return "io/default"
-		}
-		return m.Root + "/io/default"
-	}
-	return ""
 }
 
 // A simulated backend's only input is its seed: New_Sim(seed) is the sole entry, the sim
