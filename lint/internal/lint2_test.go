@@ -2132,12 +2132,14 @@ func Test_Ignore_Segment_Glob(t *testing.T) {
 	}
 }
 
-// A malformed, negated, or empty ignore entry is rejected at config-parse time,
-// aborting the run with exit 2 — the same loud failure every other bad lint.json
-// earns.
+// A negated, empty, or ?/[ entry, or one path.Match deems malformed, is rejected at
+// config-parse time, aborting the run with exit 2 — the same loud failure every
+// other bad lint.json earns.
 func Test_Ignore_Parse_Rejects(t *testing.T) {
 	t.Parallel()
-	for _, bad := range [][]string{{"!neg"}, {""}, {"bad["}} {
+	// ? and [class] are the path.Match tokens we deliberately do not support — only
+	// * and ** — so even a well-formed class is rejected, not just a malformed "bad[".
+	for _, bad := range [][]string{{"!neg"}, {""}, {"bad["}, {"a?b"}, {"a[bc]"}} {
 		files := map[string]string{
 			"good.txt":  "x\n",
 			"lint.json": lint_json_ignore(t, bad),
