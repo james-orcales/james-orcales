@@ -1752,7 +1752,7 @@ func Test_Invariants_Count_Coverage(t *testing.T) {
 }
 
 // Test_Invariants_Field_Composition verifies a struct bundle that fails to call a
-// value field type's _Invariants is flagged, while an optional pointer field is exempt.
+// field type's _Invariants is flagged, whether the field is a value or a pointer.
 func Test_Invariants_Field_Composition(t *testing.T) {
 	t.Parallel()
 	files := specification_one_file("package fixture\n\n" +
@@ -1775,11 +1775,10 @@ func Test_Invariants_Field_Composition(t *testing.T) {
 	if !specification_flags(t, files, "Lexeme_Invariants must call Token_Invariants") {
 		t.Fatal("a struct that does not compose a value field's invariant must be flagged")
 	}
-	// A pointer field is optional — it may be nil — so a straight-line bundle cannot
-	// unconditionally compose it; its present-only properties belong in an Imply. So the
-	// pointer field is exempt from the mandatory composition call.
-	if specification_flags(t, files, "Phrase_Invariants must call Token_Invariants") {
-		t.Fatal("an optional pointer field must be exempt from mandatory composition")
+	// A pointer field composes its pointee, the same as a value field of that type,
+	// so a bundle that omits it is flagged too.
+	if !specification_flags(t, files, "Phrase_Invariants must call Token_Invariants") {
+		t.Fatal("a struct that does not compose a pointer field's pointee must be flagged")
 	}
 }
 
@@ -2381,7 +2380,8 @@ func Test_Type_Invariant_Struct_Boolean_Field_Required(t *testing.T) {
 }
 
 // Test_Type_Invariant_Struct_Pointer_Field_Composed verifies a pointer field is
-// composed via its pointee, not exempt.
+// composed through its pointee: a bundle that omits its pointee invariant is
+// flagged, the same as a value field of that type.
 func Test_Type_Invariant_Struct_Pointer_Field_Composed(t *testing.T) {
 	t.Parallel()
 	files := specification_one_file("package fixture\n\n" +
@@ -2395,10 +2395,9 @@ func Test_Type_Invariant_Struct_Pointer_Field_Composed(t *testing.T) {
 		"\t// Tok is a fixture.\n\tTok *Token\n}\n\n" +
 		"// Holder_Invariants is a fixture.\n" +
 		"func Holder_Invariants(v Holder, namespace invariant.Namespace) {\n" +
-		"\tToken_Invariants(v.Tok, \"Holder.Tok\")\n" +
 		"\tinvariant.Dot_Product(namespace, invariant.Sometimes(true, \"x\"))\n}\n")
-	if specification_flags(t, files, "must call") {
-		t.Fatal("a pointer field composed via its pointee must not be flagged")
+	if !specification_flags(t, files, "must call Token_Invariants") {
+		t.Fatal("a pointer field whose pointee invariant is omitted must be flagged")
 	}
 }
 

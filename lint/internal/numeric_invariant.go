@@ -971,12 +971,12 @@ func struct_field_invariant(
 	field_type ast.Expr, type_parameters map[string]bool,
 ) (name string, preset bool) {
 
-	// A pointer field is optional: it may be nil, so a straight-line bundle cannot
-	// unconditionally compose it (the invariant recorder bans the guarding if). Its
-	// present-only properties belong in an Imply, not a mandatory composition call.
-	_, is_pointer := field_type.(*ast.StarExpr)
+	// A pointer field composes its pointee: *Token requires Token_Invariants, the
+	// same as a Token field. The bundle passes the field, or its dereference, as the
+	// value — struct_present_calls accepts both.
+	star, is_pointer := field_type.(*ast.StarExpr)
 	if is_pointer {
-		return "", false
+		field_type = star.X
 	}
 	switch typed := field_type.(type) {
 	case *ast.ArrayType:
