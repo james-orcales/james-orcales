@@ -1233,7 +1233,7 @@ func Test_Deterministic_Import_Induction(t *testing.T) {
 		Scope:                    "pkg",
 		Shared_Component:         doctrine_shared_component_directory,
 		Pure_But_Indeterministic: []string{"other"},
-		Instrumentation_Packages: []string{"other"},
+		Instrumentation_Packages: []string{"other/**"},
 	})
 	if err != nil {
 		t.Fatalf("Check_File_System: %v", err)
@@ -1518,7 +1518,7 @@ func Test_IO_Gateway_Instrumentation_Exempt(t *testing.T) {
 		Fsys:                     fsys,
 		Scope:                    "pkg",
 		Shared_Component:         doctrine_shared_component_directory,
-		Instrumentation_Packages: []string{"pkg"},
+		Instrumentation_Packages: []string{"pkg/**"},
 	})
 	if err != nil {
 		t.Fatalf("Check_File_System: %v", err)

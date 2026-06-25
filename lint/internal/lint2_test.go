@@ -1649,7 +1649,8 @@ func Test_Transitive_Purity_Instrumentation_Exemption(t *testing.T) {
 		}
 		fsys[name] = &fstest.MapFile{Data: data}
 	}
-	fsys["lint.json"] = &fstest.MapFile{Data: test_lint_json(t, "fixture", []string{"instr"})}
+	fsys["lint.json"] = &fstest.MapFile{
+		Data: test_lint_json(t, "fixture", []string{"instr/**"})}
 	stdout := &bytes.Buffer{}
 	code := lint_main(t, &lint.Main_Input{Fsys: fsys, Stdout: stdout, Stderr: &bytes.Buffer{}})
 	if bytes.Contains(stdout.Bytes(), []byte("impure dependency")) {
@@ -1729,7 +1730,8 @@ func Test_Module_Discovery_Ignores_Untracked(t *testing.T) {
 		}
 		fsys[name] = &fstest.MapFile{Data: data}
 	}
-	fsys["lint.json"] = &fstest.MapFile{Data: test_lint_json(t, "fixture", []string{"instr"})}
+	fsys["lint.json"] = &fstest.MapFile{
+		Data: test_lint_json(t, "fixture", []string{"instr/**"})}
 	// A gitignored gopls temp module, absent from Tracked, declaring the same path.
 	fsys["tmp/m/go.mod"] = &fstest.MapFile{Data: []byte(gomod)}
 	stdout := &bytes.Buffer{}
@@ -1971,7 +1973,7 @@ func Test_Ignore_Trims_Scan_Set(t *testing.T) {
 		t.Fatalf("control must flag the bad-cased directory: %v", control)
 	}
 	ignored, err := lint.Check_File_System(&lint.Check_File_System_Input{
-		Fsys: fsys, Tracked: tracked, Ignore: []string{"foo"},
+		Fsys: fsys, Tracked: tracked, Ignore: []string{"foo/**"},
 	})
 	if err != nil {
 		t.Fatalf("ignored Check_File_System: %v", err)
@@ -2053,26 +2055,6 @@ func Test_Ignore_Recursive(t *testing.T) {
 	}
 	if strings.Contains(stdout, "bad-Dir") {
 		t.Fatalf("ignored: bad-Dir/** must drop the subtree: %s", stdout)
-	}
-}
-
-// A trailing-slash dir/ entry follows gitignore: it matches the directory and
-// thus drops everything beneath it, including a badly-cased file inside.
-func Test_Ignore_Directory(t *testing.T) {
-	t.Parallel()
-	files := map[string]string{
-		"bad-Dir/Also-Bad.txt": "x\n",
-		"lint.json":            lint_json_ignore(t, []string{"bad-Dir/"}),
-	}
-	code, stdout, stderr := run_lint_tracked(t, files)
-	if code != 0 {
-		t.Fatalf("bad-Dir/ must yield a clean run, got %d; stderr %q", code, stderr)
-	}
-	if strings.Contains(stdout, "bad-Dir") {
-		t.Fatalf("bad-Dir/ must drop the directory name: %s", stdout)
-	}
-	if strings.Contains(stdout, "Also-Bad") {
-		t.Fatalf("bad-Dir/ must drop the subtree file: %s", stdout)
 	}
 }
 

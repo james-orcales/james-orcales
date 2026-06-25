@@ -535,25 +535,6 @@ func Invariant_Name(type_name string) (name string) {
 	return type_name + "_invariants"
 }
 
-// Path_Is_Exempt reports whether filename equals, or lives under, any entry in
-// exempt — segment-prefix containment. It serves directory-scoped exemptions: a
-// file living under a gateway or instrumentation package's directory, where the
-// entry is a single computed directory, not a user-written glob.
-func Path_Is_Exempt(filename string, exempt []string) (yes bool) {
-	for _, entry := range exempt {
-		if entry == "." {
-			return true
-		}
-		if filename == entry {
-			return true
-		}
-		if strings.HasPrefix(filename, entry+"/") {
-			return true
-		}
-	}
-	return false
-}
-
 // Path_Matches_Glob reports whether filename matches any of patterns as an
 // exact-path glob: "pkg/sub" matches only that path, "pkg/**" its whole subtree,
 // and "**" everything. These are the same * / ** globs the deterministic tier's
@@ -570,33 +551,26 @@ func Path_Matches_Glob(filename string, patterns []string) (yes bool) {
 	return false
 }
 
-// A Glob_Pattern is a lint.json glob entry parsed into the facts the matcher
-// needs: Core is the pattern reduced to a form Glob_Match runs against a full
-// path (an unanchored, slash-less entry is rewritten with a leading **/ so it
-// matches at any depth); Anchored records whether the entry was tied to the
-// workspace root (it held a slash) rather than floating; Directory_Only records a
-// trailing slash, gitignore's directory marker.
+// A Glob_Pattern is a lint.json glob entry parsed into the one fact the matcher
+// needs: Core, the pattern reduced to a form Glob_Match runs against a full path.
+// An unanchored, slash-less entry is rewritten with a leading **/ so it matches at
+// any depth.
 type Glob_Pattern struct {
 	// Core is the pattern reduced to the form Glob_Match runs against a full path.
 	Core string
-	// Anchored records whether the entry was tied to the root (it held a slash).
-	Anchored bool
-	// Directory_Only records a trailing slash — gitignore's directory marker.
-	Directory_Only bool
 }
 
 // Parse_Glob_Pattern reduces a raw lint.json entry to a Glob_Pattern. A trailing
-// slash is gitignore's directory marker; a leading or interior slash anchors the
-// entry to the root; a slash-less entry floats, modeled as **/ + entry so one
-// matcher serves both. Assumes the entry is non-empty and un-negated.
+// slash is stripped; a leading or interior slash anchors the entry to the root; a
+// slash-less entry floats, modeled as **/ + entry so one matcher serves both.
+// Assumes the entry is non-empty and un-negated.
 func Parse_Glob_Pattern(raw string) (parsed Glob_Pattern) {
-	parsed.Directory_Only = strings.HasSuffix(raw, "/")
 	trimmed := strings.TrimSuffix(raw, "/")
 	had_leading_slash := strings.HasPrefix(trimmed, "/")
 	trimmed = strings.TrimPrefix(trimmed, "/")
-	parsed.Anchored = had_leading_slash || strings.Contains(trimmed, "/")
+	anchored := had_leading_slash || strings.Contains(trimmed, "/")
 	parsed.Core = trimmed
-	if !parsed.Anchored {
+	if !anchored {
 		parsed.Core = "**/" + trimmed
 	}
 	return parsed

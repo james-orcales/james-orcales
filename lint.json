@@ -1,9 +1,9 @@
 {
   "shared_component": "shared",
   "instrumentation_packages": [
-          "shared/invariant",
-          "shared/snap",
-          "shared/jlog"
+          "shared/invariant/**",
+          "shared/snap/**",
+          "shared/jlog/**"
   ],
   "pure_but_indeterministic": [
     "lint/internal",
@@ -16,8 +16,8 @@
   "ignore": [
           "install_golang.sh",
           "build.go",
-          "home",
-          "documentation/youtube"
+          "home/**",
+          "documentation/youtube/**"
   ],
   "opt_out_recursion_ban": [],
   "invariant_exempt_packages": [
