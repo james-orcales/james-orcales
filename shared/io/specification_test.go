@@ -10,9 +10,7 @@ import (
 // Test_Sim_Timeout verifies a timeout fires exactly when the virtual clock reaches
 // its deadline — no real waiting, fully deterministic.
 func Test_Sim_Timeout(t *testing.T) {
-	virtual := time.Virtual_Clock_To_Clock(time.Virtual_Clock{Resolution: time.Nanosecond})
-	sim := &io.Sim{Clock: virtual, Latency: func() (duration time.Duration) { return 0 }}
-	loop := io.Sim_To_IO(sim)
+	loop, driver, clock := sim_loop(0)
 
 	fired_at := time.Moment(-1)
 	var completion io.Completion
@@ -20,10 +18,10 @@ func Test_Sim_Timeout(t *testing.T) {
 		if err != nil {
 			t.Fatalf("timeout error: %v", err)
 		}
-		fired_at = virtual.Now_Monotonic()
+		fired_at = clock.Now_Monotonic()
 	}, 5*time.Nanosecond)
 
-	loop.Run_For(10 * time.Nanosecond)
+	driver.Run_For(10 * time.Nanosecond)
 
 	if fired_at != 5 {
 		t.Fatalf("timeout fired at %d, want 5", fired_at)
@@ -33,11 +31,7 @@ func Test_Sim_Timeout(t *testing.T) {
 // Test_Sim_Read verifies a read completes after the modeled latency and reports the
 // buffer length.
 func Test_Sim_Read(t *testing.T) {
-	virtual := time.Virtual_Clock_To_Clock(time.Virtual_Clock{Resolution: time.Nanosecond})
-	sim := &io.Sim{Clock: virtual, Latency: func() (duration time.Duration) {
-		return 3 * time.Nanosecond
-	}}
-	loop := io.Sim_To_IO(sim)
+	loop, driver, _ := sim_loop(3 * time.Nanosecond)
 
 	count := -1
 	var completion io.Completion
@@ -45,7 +39,7 @@ func Test_Sim_Read(t *testing.T) {
 		count = bytes
 	}, io.File(0), make([]byte, 64), 0)
 
-	loop.Run_For(10 * time.Nanosecond)
+	driver.Run_For(10 * time.Nanosecond)
 
 	if count != 64 {
 		t.Fatalf("read reported %d bytes, want 64", count)
@@ -54,9 +48,7 @@ func Test_Sim_Read(t *testing.T) {
 
 // Test_Sim_Listen verifies Listen returns a fresh descriptor synchronously.
 func Test_Sim_Listen(t *testing.T) {
-	virtual := time.Virtual_Clock_To_Clock(time.Virtual_Clock{Resolution: time.Nanosecond})
-	sim := &io.Sim{Clock: virtual, Latency: func() (duration time.Duration) { return 0 }}
-	loop := io.Sim_To_IO(sim)
+	loop, _, _ := sim_loop(0)
 
 	listener, err := loop.Listen("127.0.0.1", 0)
 	if err != nil {
@@ -70,11 +62,7 @@ func Test_Sim_Listen(t *testing.T) {
 // Test_Sim_Accept verifies an accept completes after the modeled latency and
 // yields a descriptor distinct from its listener.
 func Test_Sim_Accept(t *testing.T) {
-	virtual := time.Virtual_Clock_To_Clock(time.Virtual_Clock{Resolution: time.Nanosecond})
-	sim := &io.Sim{Clock: virtual, Latency: func() (duration time.Duration) {
-		return 2 * time.Nanosecond
-	}}
-	loop := io.Sim_To_IO(sim)
+	loop, driver, _ := sim_loop(2 * time.Nanosecond)
 
 	listener, _ := loop.Listen("127.0.0.1", 0)
 	accepted := io.File(-1)
@@ -83,7 +71,7 @@ func Test_Sim_Accept(t *testing.T) {
 		accepted = socket
 	}, listener)
 
-	loop.Run_For(10 * time.Nanosecond)
+	driver.Run_For(10 * time.Nanosecond)
 
 	if accepted == listener {
 		t.Fatalf("accept yielded the listener descriptor %d", accepted)
@@ -96,11 +84,7 @@ func Test_Sim_Accept(t *testing.T) {
 // Test_Sim_Connect verifies a connect completes after the modeled latency and
 // yields a fresh connected descriptor.
 func Test_Sim_Connect(t *testing.T) {
-	virtual := time.Virtual_Clock_To_Clock(time.Virtual_Clock{Resolution: time.Nanosecond})
-	sim := &io.Sim{Clock: virtual, Latency: func() (duration time.Duration) {
-		return 4 * time.Nanosecond
-	}}
-	loop := io.Sim_To_IO(sim)
+	loop, driver, _ := sim_loop(4 * time.Nanosecond)
 
 	connected := io.File(-1)
 	var completion io.Completion
@@ -108,7 +92,7 @@ func Test_Sim_Connect(t *testing.T) {
 		connected = socket
 	}, "127.0.0.1", 8123)
 
-	loop.Run_For(10 * time.Nanosecond)
+	driver.Run_For(10 * time.Nanosecond)
 
 	if connected <= 0 {
 		t.Fatalf("connect yielded %d, want a positive descriptor", connected)
@@ -118,11 +102,7 @@ func Test_Sim_Connect(t *testing.T) {
 // Test_Sim_Receive verifies a receive completes after the modeled latency and
 // reports the buffer length.
 func Test_Sim_Receive(t *testing.T) {
-	virtual := time.Virtual_Clock_To_Clock(time.Virtual_Clock{Resolution: time.Nanosecond})
-	sim := &io.Sim{Clock: virtual, Latency: func() (duration time.Duration) {
-		return 3 * time.Nanosecond
-	}}
-	loop := io.Sim_To_IO(sim)
+	loop, driver, _ := sim_loop(3 * time.Nanosecond)
 
 	count := -1
 	var completion io.Completion
@@ -130,7 +110,7 @@ func Test_Sim_Receive(t *testing.T) {
 		count = bytes
 	}, io.File(1), make([]byte, 64))
 
-	loop.Run_For(10 * time.Nanosecond)
+	driver.Run_For(10 * time.Nanosecond)
 
 	if count != 64 {
 		t.Fatalf("receive reported %d bytes, want 64", count)
@@ -140,11 +120,7 @@ func Test_Sim_Receive(t *testing.T) {
 // Test_Sim_Send verifies a send completes after the modeled latency and reports
 // the buffer length.
 func Test_Sim_Send(t *testing.T) {
-	virtual := time.Virtual_Clock_To_Clock(time.Virtual_Clock{Resolution: time.Nanosecond})
-	sim := &io.Sim{Clock: virtual, Latency: func() (duration time.Duration) {
-		return 3 * time.Nanosecond
-	}}
-	loop := io.Sim_To_IO(sim)
+	loop, driver, _ := sim_loop(3 * time.Nanosecond)
 
 	count := -1
 	var completion io.Completion
@@ -152,7 +128,7 @@ func Test_Sim_Send(t *testing.T) {
 		count = bytes
 	}, io.File(1), make([]byte, 32))
 
-	loop.Run_For(10 * time.Nanosecond)
+	driver.Run_For(10 * time.Nanosecond)
 
 	if count != 32 {
 		t.Fatalf("send reported %d bytes, want 32", count)
@@ -162,11 +138,7 @@ func Test_Sim_Send(t *testing.T) {
 // Test_Sim_Close verifies a close completes after the modeled latency and reports
 // no error.
 func Test_Sim_Close(t *testing.T) {
-	virtual := time.Virtual_Clock_To_Clock(time.Virtual_Clock{Resolution: time.Nanosecond})
-	sim := &io.Sim{Clock: virtual, Latency: func() (duration time.Duration) {
-		return time.Nanosecond
-	}}
-	loop := io.Sim_To_IO(sim)
+	loop, driver, _ := sim_loop(time.Nanosecond)
 
 	closed := false
 	failed := error(nil)
@@ -176,7 +148,7 @@ func Test_Sim_Close(t *testing.T) {
 		failed = err
 	}, io.File(1))
 
-	loop.Run_For(10 * time.Nanosecond)
+	driver.Run_For(10 * time.Nanosecond)
 
 	if !closed {
 		t.Fatal("close did not complete")
@@ -184,4 +156,36 @@ func Test_Sim_Close(t *testing.T) {
 	if failed != nil {
 		t.Fatalf("close error: %v", failed)
 	}
+}
+
+// Test_Sim_Run_Until verifies the driver pumps the loop until the predicate reports
+// true, delivering the op's completion inline for a straight-line caller.
+func Test_Sim_Run_Until(t *testing.T) {
+	loop, driver, _ := sim_loop(3 * time.Nanosecond)
+
+	done := false
+	var completion io.Completion
+	loop.Read(&completion, func(_ *io.Completion, bytes int, err error) {
+		done = true
+	}, io.File(0), make([]byte, 8), 0)
+
+	driver.Run_Until(func() (finished bool) { return done })
+
+	if !done {
+		t.Fatal("Run_Until returned before the read completed")
+	}
+}
+
+// Builds a simulated loop, its driver, and the read-only clock, with a fixed per-op
+// latency. The tick returned beside the clock is wired into the Sim so the driver can
+// advance time; a test holds only the IO, the driver, and the clock — never the tick.
+func sim_loop(latency time.Duration) (loop io.IO, driver io.Driver, clock time.Clock) {
+	clock, tick := time.Virtual_Clock_To_Clock(time.Virtual_Clock{Resolution: time.Nanosecond})
+	sim := &io.Sim{
+		Clock:   clock,
+		Tick:    tick,
+		Latency: func() (duration time.Duration) { return latency },
+	}
+	loop, driver = io.Sim_To_IO(sim)
+	return loop, driver, clock
 }

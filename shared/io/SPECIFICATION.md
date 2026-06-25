@@ -43,3 +43,8 @@ real syscall and no waiting.
 ### Close
 
 A close completes after the modeled latency and reports no error.
+
+### Run Until
+
+Run_Until drives the loop until its predicate reports true, delivering completions each
+step, so a straight-line caller can wait for its own operation inline.
