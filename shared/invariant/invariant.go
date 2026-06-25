@@ -720,6 +720,7 @@ func Recorder_Register_Packages_For_Analysis(recorder *Recorder, directories ...
 		recorder_register_file(recorder, file_set, file, index, reg)
 	}
 	recorder_check_bundle_control_flow(recorder, file_set, files)
+	recorder_check_primitive_bundles(recorder, file_set, files, module_path, module_root)
 	recorder_check_unresolved(recorder, reg.Unresolved)
 	recorder_check_non_literal_messages(recorder, reg.Non_Literal)
 	recorder_check_duplicate_messages(recorder, reg.Collision)
@@ -1071,6 +1072,156 @@ func recorder_check_bundle_control_flow(
 	}
 	fmt.Fprintln(recorder.Output, banner)
 	recorder.Exit(1)
+}
+
+// Fails registration when a bundle outside the framework's own package takes a
+// primitive subject — a builtin, an unnamed slice/map, or any unnamed composite.
+// Bundles for primitive types are the framework's presets; user code states a
+// primitive inline or wraps it in a custom type. The Sugar_Package, which owns the
+// presets, is exempt.
+func recorder_check_primitive_bundles(
+	recorder *Recorder, file_set *token.FileSet, files []*ast.File,
+	module_path string, module_root string,
+) {
+	var offenders []string
+	for _, file := range files {
+		if recorder.Sugar_Package != "" {
+			if recorder_file_package(file_set, file, module_path, module_root) ==
+				recorder.Sugar_Package {
+				continue
+			}
+		}
+		offenders = append(offenders,
+			recorder_file_primitive_bundles(file_set, file)...)
+	}
+	if len(offenders) == 0 {
+		return
+	}
+	banner := "🚨 " + strconv.Itoa(len(offenders)) + " primitive bundles 🚨"
+	fmt.Fprintln(recorder.Output, banner)
+	for _, line := range offenders {
+		fmt.Fprintln(recorder.Output, line)
+	}
+	fmt.Fprintln(recorder.Output, banner)
+	recorder.Exit(1)
+}
+
+// Collects every primitive-subject bundle declared in one file.
+func recorder_file_primitive_bundles(
+	file_set *token.FileSet, file *ast.File,
+) (offenders []string) {
+	for _, declaration := range file.Decls {
+		function, is_function := declaration.(*ast.FuncDecl)
+		if !is_function {
+			continue
+		}
+		if !ast_is_invariants_name(function.Name.Name) {
+			continue
+		}
+		if ast_namespace_parameter(function) == "" {
+			continue
+		}
+		subject := recorder_bundle_subject(function)
+		if subject == nil {
+			continue
+		}
+		if !recorder_type_is_primitive(subject, recorder_bundle_type_parameters(function)) {
+			continue
+		}
+		offenders = append(offenders, recorder_position(file_set, function)+
+			"  primitive bundle subject: "+function.Name.Name)
+	}
+	return offenders
+}
+
+// Returns a bundle's subject type — its first parameter's type — or nil when the
+// function declares no parameters.
+func recorder_bundle_subject(function *ast.FuncDecl) (subject ast.Expr) {
+	if function.Type.Params == nil {
+		return nil
+	}
+	if len(function.Type.Params.List) == 0 {
+		return nil
+	}
+	return function.Type.Params.List[0].Type
+}
+
+// Returns the bundle's own type-parameter names; a subject naming one of them is a
+// generic custom subject, not a primitive.
+func recorder_bundle_type_parameters(function *ast.FuncDecl) (names map[string]bool) {
+	names = map[string]bool{}
+	if function.Type.TypeParams == nil {
+		return names
+	}
+	for _, field := range function.Type.TypeParams.List {
+		for _, name := range field.Names {
+			names[name.Name] = true
+		}
+	}
+	return names
+}
+
+// Reports whether a bundle subject is a primitive: a predeclared builtin, or an
+// unnamed composite (slice, map, channel, anonymous struct/interface/func). A bare
+// defined-type name, an imported pkg.Type, or a type parameter is a custom subject.
+func recorder_type_is_primitive(
+	expression ast.Expr, type_parameters map[string]bool,
+) (yes bool) {
+	core := expression
+	star, is_star := core.(*ast.StarExpr)
+	if is_star {
+		core = star.X
+	}
+	index, is_index := core.(*ast.IndexExpr)
+	if is_index {
+		core = index.X
+	}
+	index_list, is_index_list := core.(*ast.IndexListExpr)
+	if is_index_list {
+		core = index_list.X
+	}
+	identifier, is_identifier := core.(*ast.Ident)
+	if is_identifier {
+		if type_parameters[identifier.Name] {
+			return false
+		}
+		return recorder_is_builtin_type_name(identifier.Name)
+	}
+	_, is_selector := core.(*ast.SelectorExpr)
+	if is_selector {
+		return false
+	}
+	return true
+}
+
+// Reports whether name is a Go predeclared type name.
+func recorder_is_builtin_type_name(name string) (yes bool) {
+	switch name {
+	case "string", "bool", "int", "int8", "int16", "int32", "int64",
+		"uint", "uint8", "uint16", "uint32", "uint64", "uintptr",
+		"byte", "rune", "float32", "float64", "complex64", "complex128",
+		"error", "any", "comparable":
+		return true
+	default:
+		return false
+	}
+}
+
+// Returns the import path of file's package, derived from its absolute path against
+// the module root and path. "" when no module was found.
+func recorder_file_package(
+	file_set *token.FileSet, file *ast.File, module_path string, module_root string,
+) (import_path string) {
+	if module_path == "" {
+		return ""
+	}
+	absolute := file_set.Position(file.Pos()).Filename
+	relative := strings.TrimPrefix(path.Dir(absolute), module_root)
+	relative = strings.TrimPrefix(relative, "/")
+	if relative == "" {
+		return module_path
+	}
+	return path.Join(module_path, relative)
 }
 
 // Reports whether node is a branching or looping statement banned in a bundle body.

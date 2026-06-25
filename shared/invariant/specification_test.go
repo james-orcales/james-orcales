@@ -725,6 +725,48 @@ func Pair_Invariants(n int, namespace string) {
 	}
 }
 
+// Test_Bundles_Custom_Types: a bundle's subject is a custom defined type. A primitive
+// subject — a builtin, an unnamed slice/map — fails registration outside the framework's
+// own preset package, which the Sugar_Package exemption allows.
+func Test_Bundles_Custom_Types(t *testing.T) {
+	primitive := "package fixture\n\n" +
+		"func Blob_Invariants(b []byte, namespace string) {\n" +
+		"\tinvariant.Dot_Product(namespace, invariant.Sometimes(len(b) == 0, \"e\"))\n}\n"
+	code, report := bundle_subject_register(bundle_subject_case{
+		Directory: "/fixture",
+		Files:     fstest.MapFS{"fixture/p.go": &fstest.MapFile{Data: []byte(primitive)}},
+	})
+	if code != 1 {
+		t.Fatalf("a primitive-subject bundle must exit 1, got %d", code)
+	}
+	if !strings.Contains(report, "primitive bundle") {
+		t.Errorf("the report must name the primitive bundle, got: %s", report)
+	}
+	custom := "package fixture\n\ntype Blob []byte\n\n" +
+		"func Blob_Invariants(b Blob, namespace string) {\n" +
+		"\tinvariant.Dot_Product(namespace, invariant.Sometimes(len(b) == 0, \"e\"))\n}\n"
+	code, _ = bundle_subject_register(bundle_subject_case{
+		Directory: "/fixture",
+		Files:     fstest.MapFS{"fixture/p.go": &fstest.MapFile{Data: []byte(custom)}},
+	})
+	if code == 1 {
+		t.Error("a bundle on a custom defined type must not be flagged")
+	}
+	sugar := "package sugar\n\n" +
+		"func Token_Invariants(s string, namespace string) {\n" +
+		"\tDot_Product(namespace, Sometimes(len(s) == 0, \"e\"))\n}\n"
+	code, _ = bundle_subject_register(bundle_subject_case{
+		Directory: "/m/sugar", Sugar: "example.com/m/sugar",
+		Files: fstest.MapFS{
+			"m/go.mod":         &fstest.MapFile{Data: []byte("module example.com/m\n")},
+			"m/sugar/sugar.go": &fstest.MapFile{Data: []byte(sugar)},
+		},
+	})
+	if code == 1 {
+		t.Error("a primitive bundle in the framework's own package is exempt")
+	}
+}
+
 // Test_Analysis_Gaps: a never-fired obligation is named by site and condition, while
 // a fully exercised one is left unreported.
 func Test_Analysis_Gaps(t *testing.T) {
@@ -1309,4 +1351,28 @@ func recover_with_stack(action func()) (message string, stack string) {
 	}()
 	action()
 	return message, stack
+}
+
+// One registration run for the bundle-subject test: the fixture file set, the
+// directory to register, and the Sugar_Package that exempts the framework's own
+// preset package. A struct keeps the helper clear of repeated string parameters.
+type bundle_subject_case struct {
+	Files     fstest.MapFS
+	Directory string
+	Sugar     string
+}
+
+// Registers the case and returns the exit code the registration produced (-1 when
+// it never exited) together with the report it printed.
+func bundle_subject_register(test_case bundle_subject_case) (code int, report string) {
+	var output bytes.Buffer
+	code = -1
+	recorder := &invariant.Recorder{
+		File_System:   test_case.Files,
+		Output:        &output,
+		Exit:          func(exit int) { code = exit },
+		Sugar_Package: test_case.Sugar,
+	}
+	invariant.Recorder_Register_Packages_For_Analysis(recorder, test_case.Directory)
+	return code, output.String()
 }
