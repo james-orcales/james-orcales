@@ -15,8 +15,8 @@ import (
 // monotonic clock behind a guard that panics on regression; Now_Realtime reads the
 // wall clock. The OS clock advances on its own, so tick is a no-op.
 func New_Operating_System_Clock() (host time.Clock, tick func()) {
-	// The guard remembers the last monotonic read so a regression — which a hardware
-	// or kernel bug can cause — is caught instead of wedging callers.
+	// The guard holds the highest monotonic read handed out, so a real regression is caught
+	// even when the IO backend's off-loop goroutines read the clock alongside the loop.
 	guard := &atomic.Int64{}
 	host = time.Clock{
 		Now_Monotonic: func() (moment time.Moment) { return read_monotonic(guard) },
@@ -32,12 +32,25 @@ func Sleep(duration time.Duration) {
 	wallclock.Sleep(wallclock.Duration(int64(duration)))
 }
 
-// Reads the per-OS monotonic clock and panics if it ran backwards.
+// Reads the per-OS monotonic clock and panics if it genuinely ran backwards, staying
+// correct when several goroutines read at once (the IO backend times a spawn off the loop
+// thread). guard holds the highest value handed out. A read below it is either a reorder (a
+// concurrent reader recorded a later time) or a real regression; the re-read tells them
+// apart. Because the re-read happens after this goroutine observed previous, it is causally
+// after the read that set previous, so on a healthy clock it returns at least previous —
+// only a clock that is truly behind stays below it. A false ordering from a racing store
+// resolves itself; a regressing clock does not.
 func read_monotonic(guard *atomic.Int64) (now time.Moment) {
 	raw := monotonic_nanoseconds()
-	previous := guard.Swap(raw)
+	previous := guard.Load()
+	for raw >= previous && !guard.CompareAndSwap(previous, raw) {
+		previous = guard.Load()
+	}
 	if raw < previous {
-		panic("time: the monotonic clock regressed (a hardware or kernel bug)")
+		if monotonic_nanoseconds() < previous {
+			panic("time: the monotonic clock regressed (a hardware or kernel bug)")
+		}
+		return time.Moment(previous)
 	}
 	return time.Moment(raw)
 }
