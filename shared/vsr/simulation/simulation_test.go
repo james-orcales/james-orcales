@@ -205,10 +205,15 @@ type simulator struct {
 	Seed      int64
 	Generator prng.Generator
 	Clock     time.Clock
+	// Tick advances the main virtual clock one resolution — returned beside Clock by
+	// Virtual_Clock_To_Clock now that the clock itself is read-only.
+	Tick func()
 	// Replica_Clocks is one virtual clock per replica index, ticked in lockstep with Clock
 	// but read independently so each replica perceives its own time — no two nodes share a
 	// clock. Skew off makes each read like Clock; skew and drift bend them apart.
 	Replica_Clocks []time.Clock
+	// Replica_Ticks advances each replica clock, one tick per Replica_Clocks entry.
+	Replica_Ticks []func()
 	// Clock_Generator draws all per-replica clock randomness (offsets, drifts, fault onsets)
 	// from a stream SEPARATE from Generator, so adding clocks does not perturb the fault
 	// schedule the documented regression seeds reproduce.
@@ -399,13 +404,15 @@ func new_simulator(t *testing.T, seed int64, clock_skew bool) (state *simulator)
 	if seed%2 == 0 {
 		cluster_count = 5 // Exercise both quorum sizes.
 	}
-	clock := time.Virtual_Clock_To_Clock(time.Virtual_Clock{Resolution: time.Millisecond})
+	clock, tick := time.Virtual_Clock_To_Clock(time.Virtual_Clock{Resolution: time.Millisecond})
 	state = &simulator{
 		T:              t,
 		Seed:           seed,
 		Generator:      prng.New(uint64(seed)),
 		Clock:          clock,
+		Tick:           tick,
 		Replica_Clocks: make([]time.Clock, sim_superset),
+		Replica_Ticks:  make([]func(), sim_superset),
 		// Clock stream seeded apart from Generator so per-replica clocks draw without
 		// shifting the main fault schedule the regression seeds reproduce.
 		Clock_Generator:    prng.New(uint64(seed) ^ 0xc10cc10cc10cc10c),
@@ -455,11 +462,11 @@ func new_simulator(t *testing.T, seed int64, clock_skew bool) (state *simulator)
 // the coverage axes.
 func simulator_run_main(state *simulator) {
 	for tick_index := 0; tick_index < sim_total_ticks; tick_index++ {
-		state.Clock.Tick()
+		state.Tick()
 		// Advance every replica's own clock with the true clock; a drifting clock falls
 		// behind or races ahead within the same wall-clock tick.
 		for index := range state.Replica_Clocks {
-			state.Replica_Clocks[index].Tick()
+			state.Replica_Ticks[index]()
 		}
 		now := state.Clock.Now_Monotonic()
 		simulator_inject_faults(state, tick_index, now)
@@ -479,9 +486,9 @@ func simulator_run_main(state *simulator) {
 func simulator_run_tail(state *simulator) (converged bool) {
 	state.Faultless = true
 	for tick_index := 0; tick_index < sim_tail_ticks; tick_index++ {
-		state.Clock.Tick()
+		state.Tick()
 		for index := range state.Replica_Clocks {
-			state.Replica_Clocks[index].Tick()
+			state.Replica_Ticks[index]()
 		}
 		now := state.Clock.Now_Monotonic()
 		simulator_tick_clients(state, now)
@@ -536,7 +543,7 @@ func simulator_allocate(state *simulator, cluster_count int) {
 			configuration = dormant_configuration(index)
 		}
 		state.Active[index] = active
-		state.Replica_Clocks[index] = simulator_replica_clock(state)
+		state.Replica_Clocks[index], state.Replica_Ticks[index] = simulator_replica_clock(state)
 		state.Replicas[index] = vsr.New_Replica(&vsr.New_Replica_Input{
 			Identifier:          vsr.Replica_Identifier(index),
 			Configuration:       configuration,
@@ -562,7 +569,7 @@ func simulator_allocate(state *simulator, cluster_count int) {
 // per-replica offset (Epoch) and a bounded linear drift, so no two replicas share time: the
 // offset differentiates the §4.4 timestamps each would stamp and the drift desynchronizes their
 // timeouts — what VSR safety must survive by leaning on consensus, not the clock.
-func simulator_replica_clock(state *simulator) (clock time.Clock) {
+func simulator_replica_clock(state *simulator) (clock time.Clock, tick func()) {
 	virtual := time.Virtual_Clock{Resolution: time.Millisecond}
 	if state.Clock_Skew {
 		virtual.Epoch = time.Moment(prng.Generator_Below(&state.Clock_Generator, 50)) *

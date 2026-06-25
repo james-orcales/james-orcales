@@ -25,6 +25,13 @@ func New_Operating_System_Clock() (host time.Clock, tick func()) {
 	return host, func() {}
 }
 
+// Sleep blocks the calling goroutine for duration against the host clock — the real
+// counterpart of a virtual clock's tick, held by the composition root and injected into
+// code that must wait (a diode drain, say) so the pure tier still touches no wall clock.
+func Sleep(duration time.Duration) {
+	wallclock.Sleep(wallclock.Duration(int64(duration)))
+}
+
 // Reads the per-OS monotonic clock and panics if it ran backwards.
 func read_monotonic(guard *atomic.Int64) (now time.Moment) {
 	raw := monotonic_nanoseconds()

@@ -64,9 +64,12 @@ type Rate_Limit struct {
 type Writer struct {
 	// Writer is the wrapped sink the drain goroutine forwards finished lines to.
 	Writer io.Writer
-	// Clock supplies the drain loop's Sleep; the library tier never calls stdlib
-	// time, so a real sleep is injected here (and a virtual one in tests).
+	// Clock is the read-only time source the rate limiter refills against; the library
+	// tier never reads a wall clock, so it is injected.
 	Clock time.Clock
+	// Sleep parks the drain for the poll interval on an empty ring; the library tier never
+	// calls stdlib time, so a real sleep is injected here (and a virtual one in tests).
+	Sleep func(duration time.Duration)
 	// Poll_Interval is how long the drain sleeps when it finds the ring empty.
 	Poll_Interval time.Duration
 	// Alerter surfaces dropped lines (overflow or rate-limit) rather than losing them
@@ -99,8 +102,10 @@ type Writer struct {
 type New_Input struct {
 	// Writer is the sink to wrap; nil becomes io.Discard.
 	Writer io.Writer
-	// Clock supplies the drain's Sleep; required (the drain panics without it).
+	// Clock is the read-only time source the rate limiter refills against; required.
 	Clock time.Clock
+	// Sleep parks the drain on an empty ring; required (the drain panics without it).
+	Sleep func(duration time.Duration)
 	// Count is the ring slot count; zero or negative uses default_count.
 	Count int
 	// Poll_Interval is the empty-ring sleep; zero or negative uses one hundred milliseconds.
@@ -149,11 +154,12 @@ func New(input New_Input) (writer *Writer) {
 			limit.Burst = limit.Bytes_Per_Second
 		}
 	}
-	assert(input.Clock.Sleep != nil, "diode: Clock.Sleep is required")
+	assert(input.Sleep != nil, "diode: Sleep is required")
 	assert(count > 0, "diode: ring count must be positive")
 	writer = &Writer{
 		Writer:        sink,
 		Clock:         input.Clock,
+		Sleep:         input.Sleep,
 		Poll_Interval: interval,
 		Alerter:       alerter,
 		Rate_Limit:    limit,
@@ -284,7 +290,7 @@ func drain(writer *Writer) {
 			forward(writer, item)
 			continue
 		}
-		writer.Clock.Sleep(writer.Poll_Interval)
+		writer.Sleep(writer.Poll_Interval)
 	}
 	drain_remainder(writer)
 	close(writer.Done)
