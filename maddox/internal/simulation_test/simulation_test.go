@@ -15,7 +15,7 @@ import (
 
 	maddox "github.com/james-orcales/james-orcales/maddox/internal"
 	invariant "github.com/james-orcales/james-orcales/shared/invariant/default"
-	"github.com/james-orcales/james-orcales/shared/sh"
+	sysio "github.com/james-orcales/james-orcales/shared/io"
 	"github.com/james-orcales/james-orcales/shared/time"
 )
 
@@ -140,12 +140,14 @@ func report_sink(s scenario) (sink io.Writer) {
 // synthesizes each run's measurements from the scenario, the clock is virtual,
 // and the report is discarded — only the invariants observed along the way matter.
 func drive(s scenario) {
-	clock := time.Virtual_Clock_To_Clock(time.Virtual_Clock{Resolution: time.Nanosecond})
 	run := 0
 	command_index := -1
 	previous := ""
+	// The sim is the sampler's clock: virtual time accrues by each run's sleep, and the
+	// completion stamp reports it so the budget stopwatch advances without a real clock.
+	var elapsed_virtual time.Duration
 	sampler := maddox.Sampler{
-		Measure: func(command sh.Command) (result maddox.Run_Result) {
+		Measure: func(command sysio.Process_Request) (result maddox.Run_Result) {
 			// Commands are measured in sequence, each with a distinct path, so a path
 			// change marks the next benchmark and resets the run counter.
 			if command.Path != previous {
@@ -153,14 +155,16 @@ func drive(s scenario) {
 				command_index++
 				run = 0
 			}
-			if s.Sleep > 0 {
-				clock.Sleep(time.Duration(s.Sleep))
-			}
 			value := s.Base + int64(command_index)*s.Divergence
 			if len(s.Deltas) > 0 {
 				value += s.Deltas[run%len(s.Deltas)]
 			}
 			result.Sample = sample_from(value)
+			// Wall is this run's tight cost for the statistics; the completion stamp is
+			// the accrued virtual time for the budget stopwatch. A run costs its sleep.
+			result.Sample.Wall = time.Duration(s.Sleep)
+			elapsed_virtual += time.Duration(s.Sleep)
+			result.Completed_At = time.Moment(elapsed_virtual)
 			fail := false
 			if s.Fail_Command > 0 {
 				if command_index == s.Fail_Command-1 {
@@ -184,7 +188,6 @@ func drive(s scenario) {
 	}
 	maddox.Main(maddox.Main_Input{
 		Commands:       command_set(s),
-		Clock:          clock,
 		Sampler:        sampler,
 		Duration_Max:   time.Duration(s.Duration),
 		Runs_Max:       s.Runs,
@@ -215,7 +218,7 @@ func command_set(s scenario) (commands maddox.Commands) {
 				path = strings.Repeat("z", s.Path_Bytes)
 			}
 		}
-		command := sh.Command{Path: path}
+		command := sysio.Process_Request{Path: path}
 		for word_index := 1; word_index < s.Words; word_index++ {
 			command.Arguments = append(command.Arguments, argument)
 		}

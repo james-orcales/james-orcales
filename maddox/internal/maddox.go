@@ -18,7 +18,7 @@ import (
 
 	"github.com/james-orcales/james-orcales/shared/fixedpoint"
 	invariant "github.com/james-orcales/james-orcales/shared/invariant/default"
-	"github.com/james-orcales/james-orcales/shared/sh"
+	sysio "github.com/james-orcales/james-orcales/shared/io"
 	"github.com/james-orcales/james-orcales/shared/time"
 )
 
@@ -144,7 +144,7 @@ const Output_Format_Json Output_Format = 1
 
 // Sample is one run's measurements.
 type Sample struct {
-	// Wall is the run's elapsed time, filled by Main from the injected clock.
+	// Wall is the run's elapsed time, measured and reported by the sampler that ran it.
 	Wall time.Duration
 	// RSS_Bytes_Max is the run's peak physical memory footprint, in bytes.
 	RSS_Bytes_Max Metric
@@ -248,8 +248,13 @@ func Captured_Output_Invariants(output Captured_Output, namespace invariant.Name
 // Run_Result is everything one measured run reports: its Sample, the exit code,
 // and the stderr captured for a failing run.
 type Run_Result struct {
-	// Sample is the run's measurements.
+	// Sample is the run's measurements, including its own tight wall time.
 	Sample Sample
+	// Completed_At is the sampler's monotonic-clock reading when this run finished. It
+	// drives the time budget as a real stopwatch — spanning the gaps between runs, which
+	// the reported per-run wall does not — while the library itself reads no clock: it
+	// only subtracts the moments the sampler hands it. Left zero when the budget is off.
+	Completed_At time.Moment
 	// Exit is the command's exit code; non-zero is a failure.
 	Exit Exit_Status
 	// Stderr is the command's captured stderr, surfaced on failure.
@@ -436,7 +441,7 @@ func Command_Line_Invariants(words Command_Line, namespace invariant.Namespace) 
 }
 
 // Commands is the set of commands a run benchmarks, in invocation order.
-type Commands []sh.Command
+type Commands []sysio.Process_Request
 
 // Commands_Invariants bounds the command count: the empty min, the one- and two-command
 // shapes, and the max are witnessed.
@@ -569,7 +574,7 @@ func Ladder_Invariants(ladder Ladder, namespace invariant.Namespace) {
 // and report what happened.
 type Sampler struct {
 	// Measure runs the command once and reports the Run_Result.
-	Measure func(command sh.Command) (result Run_Result)
+	Measure func(command sysio.Process_Request) (result Run_Result)
 }
 
 // Sampler_Invariants states the one property the function field carries that a func
@@ -908,9 +913,9 @@ func Document_Invariants(document Document, namespace invariant.Namespace) {
 type Main_Input struct {
 	// Commands are the commands to benchmark; the first is the reference.
 	Commands Commands
-	// Clock times each run; production wires the OS clock, tests a virtual one.
-	Clock time.Clock
-	// Sampler runs and measures one command; production wires the cgo measurer.
+	// Sampler runs and measures one command, reporting its wall time; production wires
+	// the cgo measurer. Main never reads a clock — only the driver in func main advances
+	// one — so wall time is a measurement the sampler returns, not a clock delta.
 	Sampler Sampler
 	// Duration_Max is the per-command time budget; 0 disables it, leaving Runs_Max.
 	Duration_Max time.Duration
@@ -956,7 +961,7 @@ func Main_Input_Invariants(input Main_Input, namespace invariant.Namespace) {
 // returns that exit and its stderr to abort the run; with Allow_Failures the run is
 // kept and a zero exit is returned so sampling continues.
 func main_input_collect_samples(
-	input *Main_Input, command sh.Command,
+	input *Main_Input, command sysio.Process_Request,
 ) (samples Samples, exit Exit_Status, stderr Captured_Output) {
 	defer func() {
 		Samples_Invariants(samples, "main_input_collect_samples.samples")
@@ -964,8 +969,10 @@ func main_input_collect_samples(
 		Captured_Output_Invariants(stderr, "main_input_collect_samples.stderr")
 	}()
 	Main_Input_Invariants(*input, "main_input_collect_samples.input")
-	warmup_start := input.Clock.Now_Monotonic()
 	warmups := 0
+	// Elapsed is the running sum of measured wall time, the budget's clock: the library
+	// reads no ambient clock, so a run's cost is the wall the sampler reports, accrued.
+	var warmup_elapsed time.Duration
 	for warmups < input.Warmup_Count {
 		// Warming up past the kept-sample cap is pointless and would carry the warmup
 		// counter past a tally's range, so the cap bounds both.
@@ -979,10 +986,11 @@ func main_input_collect_samples(
 			}
 		}
 		warmups++
+		warmup_elapsed += warm.Sample.Wall
 		if input.Progress {
 			render_progress(input.Stderr, &render_progress_input{
 				Command: command,
-				Elapsed: time.Duration(input.Clock.Now_Monotonic() - warmup_start),
+				Elapsed: warmup_elapsed,
 				Phase:   "warmup",
 				Count:   census(warmups),
 				Total:   input.Warmup_Count,
@@ -990,16 +998,15 @@ func main_input_collect_samples(
 		}
 	}
 
-	start := input.Clock.Now_Monotonic()
 	samples = make([]Sample, 0)
+	var elapsed time.Duration
+	var stopwatch_start time.Moment
 	for sampling_should_continue(&sampling_should_continue_input{
-		Clock:        input.Clock,
-		Start:        start,
 		Duration_Max: input.Duration_Max,
 		Runs_Max:     input.Runs_Max,
 		Count:        tally(len(samples)),
+		Elapsed:      elapsed,
 	}) {
-		run_start := input.Clock.Now_Monotonic()
 		result := input.Sampler.Measure(command)
 		Run_Result_Invariants(result, "main_input_collect_samples.result")
 		if result.Exit != 0 {
@@ -1008,12 +1015,16 @@ func main_input_collect_samples(
 			}
 		}
 		sample := result.Sample
-		sample.Wall = time.Duration(input.Clock.Now_Monotonic() - run_start)
+		if len(samples) == 0 {
+			// Anchor at the first run's start so between-run gaps count in the budget.
+			stopwatch_start = result.Completed_At - time.Moment(sample.Wall)
+		}
 		samples = append(samples, sample)
+		elapsed = time.Duration(result.Completed_At - stopwatch_start)
 		if input.Progress {
 			render_progress(input.Stderr, &render_progress_input{
 				Command: command,
-				Elapsed: time.Duration(input.Clock.Now_Monotonic() - start),
+				Elapsed: elapsed,
 				Count:   census(len(samples)),
 				Total:   input.Runs_Max,
 			})
@@ -1024,15 +1035,14 @@ func main_input_collect_samples(
 
 // Sampling_should_continue_input is the loop state sampling_should_continue judges.
 type sampling_should_continue_input struct {
-	Clock        time.Clock
-	Start        time.Moment
+	Elapsed      time.Duration
 	Duration_Max time.Duration
 	Runs_Max     int
 	Count        tally
 }
 
 // Sampling_should_continue_input_invariants states the loop state's integer fields;
-// the clock and moments have no preset of their own.
+// the durations have no preset of their own.
 func sampling_should_continue_input_invariants(
 	input sampling_should_continue_input, namespace invariant.Namespace,
 ) {
@@ -1062,8 +1072,7 @@ func sampling_should_continue(input *sampling_should_continue_input) (yes bool) 
 		}
 	}
 	if input.Duration_Max > 0 {
-		elapsed := time.Duration(input.Clock.Now_Monotonic() - input.Start)
-		if elapsed >= input.Duration_Max {
+		if input.Elapsed >= input.Duration_Max {
 			return false
 		}
 	}
@@ -1308,7 +1317,7 @@ func Command_Word_Invariants(word Command_Word, namespace invariant.Namespace) {
 
 // Command_words flattens a command back to the words a reader recognizes:
 // environment assignments, the executable, then its arguments.
-func command_words(command sh.Command) (words Command_Line) {
+func command_words(command sysio.Process_Request) (words Command_Line) {
 	defer func() {
 		Command_Line_Invariants(words, "command_words.words")
 		for _, x := range words {
@@ -3703,7 +3712,7 @@ const progress_label_runes_max = 50
 // Render_progress_input is one progress update: the command being sampled, how long
 // it has been sampling, and how many runs are done against the cap.
 type render_progress_input struct {
-	Command sh.Command
+	Command sysio.Process_Request
 	Elapsed time.Duration
 	Phase   phase
 	Count   census

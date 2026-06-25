@@ -148,8 +148,9 @@ import (
 
 	"github.com/james-orcales/james-orcales/maddox/internal"
 	invariant "github.com/james-orcales/james-orcales/shared/invariant/default"
-	"github.com/james-orcales/james-orcales/shared/sh"
+	"github.com/james-orcales/james-orcales/shared/io"
 	"github.com/james-orcales/james-orcales/shared/time"
+	time_default "github.com/james-orcales/james-orcales/shared/time/default"
 )
 
 // System_sampler returns the production Sampler, whose Measure spawns each command
@@ -162,10 +163,12 @@ func system_sampler() (sampler maddox.Sampler) {
 
 // Measure_command resolves the executable, spawns it under the perf counters, and
 // reports the Run_Result. PATH is resolved here so the child can execve an absolute
-// path with no malloc between fork and exec. Wall time is left zero — Main times each
-// run with the injected clock.
-func measure_command(command sh.Command) (result maddox.Run_Result) {
+// path with no malloc between fork and exec. The child's wall is timed around the spawn
+// with a monotonic clock — Main reads none of its own, only func main's driver ticks.
+func measure_command(command io.Process_Request) (result maddox.Run_Result) {
 	defer func() { maddox.Run_Result_Invariants(result, "measure_command.result") }()
+	// Built outside the timed bracket, so the clock's own setup never counts as wall.
+	clock, _ := time_default.New_Operating_System_Clock()
 	path, lookup_err := exec.LookPath(command.Path)
 	if lookup_err != nil {
 		result.Exit = spawn_failure_exit
@@ -190,7 +193,12 @@ func measure_command(command sh.Command) (result maddox.Run_Result) {
 	defer os.Remove(capture.Name())
 	defer capture.Close()
 
+	before := clock.Now_Monotonic()
 	counters := C.maddox_measure(c_path, argv, envp, C.int(capture.Fd()))
+	after := clock.Now_Monotonic()
+	wall := time.Duration(after - before)
+	// The completion stamp drives the budget stopwatch, spanning the gaps between runs.
+	result.Completed_At = after
 	if counters.spawn_errno != 0 {
 		result.Exit = spawn_failure_exit
 		result.Stderr = []byte("maddox: cannot spawn " + command.Path + "\n")
@@ -198,6 +206,7 @@ func measure_command(command sh.Command) (result maddox.Run_Result) {
 	}
 
 	result.Sample = maddox.Sample{
+		Wall:             wall,
 		RSS_Bytes_Max:    maddox.Metric(counters.rss_bytes),
 		CPU_Cycles:       maddox.Metric(counters.cycles),
 		Instructions:     maddox.Metric(counters.instructions),

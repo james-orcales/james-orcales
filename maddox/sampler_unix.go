@@ -7,7 +7,7 @@ import (
 
 	"github.com/james-orcales/james-orcales/maddox/internal"
 	invariant "github.com/james-orcales/james-orcales/shared/invariant/default"
-	"github.com/james-orcales/james-orcales/shared/sh"
+	"github.com/james-orcales/james-orcales/shared/io"
 )
 
 // Stderr_bytes_max bounds how much of a failing command's stderr is read back, so
@@ -50,7 +50,7 @@ func Argv_Invariants(argv Argv, namespace invariant.Namespace) {
 }
 
 // Command_argv flattens a command to argv: the executable followed by its arguments.
-func command_argv(command sh.Command) (argv Argv) {
+func command_argv(command io.Process_Request) (argv Argv) {
 	defer func() { Argv_Invariants(argv, "command_argv.argv") }()
 	argv = make(Argv, 0, 1+len(command.Arguments))
 	argv = append(argv, command.Path)

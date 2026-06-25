@@ -15,9 +15,8 @@ import (
 	"github.com/james-orcales/james-orcales/maddox/internal"
 	"github.com/james-orcales/james-orcales/shared/cli"
 	invariant "github.com/james-orcales/james-orcales/shared/invariant/default"
-	"github.com/james-orcales/james-orcales/shared/sh"
+	"github.com/james-orcales/james-orcales/shared/io"
 	"github.com/james-orcales/james-orcales/shared/time"
-	time_default "github.com/james-orcales/james-orcales/shared/time/default"
 )
 
 // Exit_usage marks a malformed command line, kept distinct from a benchmark
@@ -69,7 +68,6 @@ func main() {
 
 	input := &maddox.Main_Input{
 		Commands:       commands,
-		Clock:          time_default.New_Operating_System_Clock(),
 		Sampler:        system_sampler(),
 		Duration_Max:   time.Duration(duration_seconds) * time.Second,
 		Runs_Max:       runs,
@@ -203,17 +201,37 @@ func stream_mode_invariants(mode stream_mode, namespace invariant.Namespace) {
 	)
 }
 
-// Commands_from_strings turns each command string into an sh.Command, splitting it
-// on whitespace and partitioning leading KEY=VALUE assignments off via the sh
-// library's parser. It errors on a string with no executable.
+// Commands_from_strings turns each command string into an io.Process_Request,
+// splitting it on whitespace and partitioning leading KEY=VALUE assignments off as the
+// process environment. It errors on a string with no executable.
 func commands_from_strings(command_strings cli_commands) (commands maddox.Commands, err error) {
 	defer func() { maddox.Commands_Invariants(commands, "commands_from_strings.commands") }()
 	cli_commands_invariants(command_strings, "commands_from_strings.command_strings")
 	commands = make(maddox.Commands, 0, len(command_strings))
 	for _, text := range command_strings {
-		command, ok := sh.Spawn_Raw_Plan(strings.Fields(text))
-		if !ok {
+		fields := strings.Fields(text)
+		// A leading KEY=VALUE is an environment assignment: its '=' sits past index 0 so
+		// the key is non-empty (IndexByte returns -1 with no '=', also <= 0). The first
+		// field failing this is the executable, so stop partitioning there.
+		var environment []string
+		cut := 0
+		for _, field := range fields {
+			if strings.IndexByte(field, '=') <= 0 {
+				break
+			}
+			environment = append(environment, field)
+			cut++
+		}
+		remainder := fields[cut:]
+		if len(remainder) == 0 {
 			return nil, errors.New("empty command: " + strconv.Quote(text))
+		}
+		if remainder[0] == "" {
+			return nil, errors.New("empty command: " + strconv.Quote(text))
+		}
+		command := io.Process_Request{Environment: environment, Path: remainder[0]}
+		if len(remainder) > 1 {
+			command.Arguments = remainder[1:]
 		}
 		commands = append(commands, command)
 	}

@@ -95,8 +95,9 @@ import (
 
 	"github.com/james-orcales/james-orcales/maddox/internal"
 	invariant "github.com/james-orcales/james-orcales/shared/invariant/default"
-	"github.com/james-orcales/james-orcales/shared/sh"
+	"github.com/james-orcales/james-orcales/shared/io"
 	"github.com/james-orcales/james-orcales/shared/time"
+	time_default "github.com/james-orcales/james-orcales/shared/time/default"
 )
 
 // System_sampler returns the production Sampler, whose Measure spawns each command
@@ -108,9 +109,12 @@ func system_sampler() (sampler maddox.Sampler) {
 }
 
 // Measure_command spawns the command, reads its hardware counters, and reports the
-// Run_Result. Wall time is left zero — Main times each run with the injected clock.
-func measure_command(command sh.Command) (result maddox.Run_Result) {
+// Run_Result, timing the child's wall around the spawn with a monotonic clock. Main reads
+// no clock of its own — only func main's driver advances one — so wall is measured here.
+func measure_command(command io.Process_Request) (result maddox.Run_Result) {
 	defer func() { maddox.Run_Result_Invariants(result, "measure_command.result") }()
+	// Built outside the timed bracket, so the clock's own setup never counts as wall.
+	clock, _ := time_default.New_Operating_System_Clock()
 	argv_words := command_argv(command)
 	envp_words := append(os.Environ(), command.Environment...)
 	argv := build_c_array(argv_words)
@@ -127,7 +131,12 @@ func measure_command(command sh.Command) (result maddox.Run_Result) {
 	defer os.Remove(capture.Name())
 	defer capture.Close()
 
+	before := clock.Now_Monotonic()
 	counters := C.maddox_measure(argv, envp, C.int(capture.Fd()))
+	after := clock.Now_Monotonic()
+	wall := time.Duration(after - before)
+	// The completion stamp drives the budget stopwatch, spanning the gaps between runs.
+	result.Completed_At = after
 	if counters.spawn_errno != 0 {
 		result.Exit = spawn_failure_exit
 		result.Stderr = []byte("maddox: cannot spawn " + command.Path + "\n")
@@ -135,6 +144,7 @@ func measure_command(command sh.Command) (result maddox.Run_Result) {
 	}
 
 	result.Sample = maddox.Sample{
+		Wall:          wall,
 		RSS_Bytes_Max: maddox.Metric(counters.peak_footprint),
 		CPU_Cycles:    maddox.Metric(counters.cycles),
 		Instructions:  maddox.Metric(counters.instructions),
