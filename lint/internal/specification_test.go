@@ -584,7 +584,7 @@ func Test_Source_And_Test_Bans_Methods(t *testing.T) {
 		"func (t T) Compute() (n int) {\n\treturn t.X\n}\n")
 	// Exempt the type-invariant rule: it is tier one and would otherwise suppress
 	// the tier-two method diagnostic this test isolates.
-	diags := invariant_exempt_self_diagnostics(t, files, []string{"pkg"})
+	diags := invariant_exempt_self_diagnostics(t, files, []string{"pkg/**"})
 	if !specification_diagnosed(diags, "does not satisfy any stdlib interface") {
 		t.Fatal("a non-interface method must be flagged")
 	}
@@ -660,7 +660,7 @@ func Test_Source_And_Test_Bans_Struct_Tags(t *testing.T) {
 		"type T struct {\n\t// X is a fixture.\n\tX int `yaml:\"x\"`\n}\n")
 	// Exempt the type-invariant rule: it is tier one and would otherwise suppress
 	// the tier-two struct-tag diagnostic this test isolates.
-	diags := invariant_exempt_self_diagnostics(t, files, []string{"pkg"})
+	diags := invariant_exempt_self_diagnostics(t, files, []string{"pkg/**"})
 	if !specification_diagnosed(diags, "is not stdlib") {
 		t.Fatal("a non-stdlib struct tag must be flagged")
 	}
@@ -1770,7 +1770,7 @@ func Test_Source_And_Test_Bans_Recursion_Exempt(t *testing.T) {
 	t.Parallel()
 	files := specification_one_file(
 		"package fixture\n\n// F loops.\nfunc F() {\n\tF()\n}\n")
-	diags := recursion_exempt_self_diagnostics(t, files, []string{"pkg"})
+	diags := recursion_exempt_self_diagnostics(t, files, []string{"pkg/**"})
 	if specification_diagnosed(diags, "calls itself") {
 		t.Fatal("recursion in an exempt package must not be flagged")
 	}
@@ -1851,7 +1851,7 @@ func Test_Type_Invariant_Exempt_List_Skips_Package(t *testing.T) {
 	t.Parallel()
 	files := specification_one_file("package fixture\n\n" +
 		"// Widget is a fixture.\ntype Widget struct {\n\t// X is a fixture.\n\tX int\n}\n")
-	diags := invariant_exempt_self_diagnostics(t, files, []string{"pkg"})
+	diags := invariant_exempt_self_diagnostics(t, files, []string{"pkg/**"})
 	if specification_diagnosed(diags, "directly below Widget") {
 		t.Fatal("a type in an exempt package must not be flagged")
 	}
@@ -2439,7 +2439,7 @@ func Test_Simulation_Wired_Passes(t *testing.T) {
 func Test_Simulation_Exempt_Passes(t *testing.T) {
 	t.Parallel()
 	files := simulation_component_files()
-	diags := invariant_exempt_self_diagnostics(t, files, []string{"pkg/internal"})
+	diags := invariant_exempt_self_diagnostics(t, files, []string{"pkg/internal/**"})
 	if specification_named(diags, "simulation") {
 		t.Fatal("a wholly exempt internal tree must not require a simulation package")
 	}
