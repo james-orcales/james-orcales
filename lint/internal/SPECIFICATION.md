@@ -503,3 +503,13 @@ Route IO through shared/io; instrumentation packages, tests, generated files, an
 A simulated backend takes only a seed: New_Sim(seed) is the sole entry, the sim type stays
 unexported, and no exported Sim type or Sim_* helper lets a caller script outcomes — so a run is a
 pure function of its seed.
+
+# Configuration
+
+lint.json's path lists share one glob matcher, so one rule keeps every entry unambiguous about
+whether it names a directory or a file.
+
+### Directory Slash
+
+A wildcard-free entry that resolves to a directory ends in a slash and a file entry does not, so
+the slash alone tells them apart. A wildcard entry is exempt, already expressing its shape.
