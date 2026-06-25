@@ -64,7 +64,7 @@ func Check_Type(
 	if strings.HasSuffix(filename, "_test.go") {
 		return nil
 	}
-	if source.Path_Is_Exempt(filename, exempt) {
+	if source.Path_Matches_Glob(filename, exempt) {
 		return nil
 	}
 	invariant_names := type_invariants_import_names(file)
@@ -87,7 +87,7 @@ func check_numeric_invariants(
 		if strings.HasSuffix(pf.Path, "_test.go") {
 			continue
 		}
-		if source.Path_Is_Exempt(pf.Path, exempt) {
+		if source.Path_Matches_Glob(pf.Path, exempt) {
 			continue
 		}
 		diags = append(diags,
@@ -738,7 +738,7 @@ func check_struct_invariants(parsed_files []parsed_file, exempt []string) (diags
 		if strings.HasSuffix(pf.Path, "_test.go") {
 			continue
 		}
-		if source.Path_Is_Exempt(pf.Path, exempt) {
+		if source.Path_Matches_Glob(pf.Path, exempt) {
 			continue
 		}
 		diags = append(diags, struct_file_diagnostics(pf, defined)...)
@@ -1146,7 +1146,7 @@ func check_function_invariants(parsed_files []parsed_file, exempt []string) (dia
 		if strings.HasSuffix(pf.Path, "_test.go") {
 			continue
 		}
-		if source.Path_Is_Exempt(pf.Path, exempt) {
+		if source.Path_Matches_Glob(pf.Path, exempt) {
 			continue
 		}
 		diags = append(diags, function_file_diagnostics(pf, defined)...)
@@ -1556,7 +1556,7 @@ func check_recorder_test_main(
 	parsed_files []parsed_file, components *component_index, exempt []string,
 ) (diags []Diagnostic) {
 	for _, group := range recorder_test_main_groups(parsed_files) {
-		if source.Path_Is_Exempt(group.Directory, exempt) {
+		if source.Path_Matches_Glob(group.Directory, exempt) {
 			continue
 		}
 		// A main package holds the binary's wiring, not testable invariant logic.
@@ -1855,7 +1855,7 @@ func simulation_internal_dirs(
 		if strings.HasPrefix(directory, sim_directory+"/") {
 			continue
 		}
-		if source.Path_Is_Exempt(directory, exempt) {
+		if source.Path_Matches_Glob(directory, exempt) {
 			continue
 		}
 		if seen[directory] {
@@ -2208,7 +2208,7 @@ func check_primitive_types(parsed_files []parsed_file, exempt []string) (diags [
 		if strings.HasSuffix(pf.Path, "_test.go") {
 			continue
 		}
-		if source.Path_Is_Exempt(pf.Path, exempt) {
+		if source.Path_Matches_Glob(pf.Path, exempt) {
 			continue
 		}
 		diags = append(diags, primitive_file_diagnostics(pf)...)

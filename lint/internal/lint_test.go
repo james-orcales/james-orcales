@@ -1610,7 +1610,7 @@ func test_lint_json(t *testing.T, shared_component string, allowlist []string) (
 		// rule fires on every typed fixture, so disable it wholesale here. Its own
 		// coverage lives in the Test_Invariants_* doctrine tests and the
 		// Test_Type_Invariant_* behavioral tests, which drive the rule directly.
-		Invariant_Exempt_Packages: []string{"."},
+		Invariant_Exempt_Packages: []string{"**"},
 		// Likewise the deterministic tier now binds every pure package by default,
 		// so a fixture using time/sync/a channel to exercise another rule would trip
 		// it; "**" releases the whole tree. The Test_Deterministic_* tests drive the
@@ -1798,7 +1798,7 @@ func lint_output_minus(
 		// on every typed field/param/return) and the deterministic tier (which now
 		// binds every pure package) are exercised by their own tests, so disable
 		// both wholesale here — "." exempts the invariant tree, "**" the pure tree.
-		Invariant_Exempt_Packages: []string{"."},
+		Invariant_Exempt_Packages: []string{"**"},
 		Pure_But_Indeterministic:  []string{"**"},
 	})
 	if err != nil {

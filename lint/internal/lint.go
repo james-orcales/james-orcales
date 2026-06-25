@@ -585,18 +585,18 @@ type Configuration struct {
 	// matching path is dropped from the scan set entirely, so no tier fires on it.
 	// Opt-in; empty ignores nothing.
 	Ignore []string `json:"ignore"`
-	// Invariant_Exempt_Packages names the workspace-root-relative directories
-	// whose files are exempt from the type-invariant rule — the rule's sole
-	// escape hatch. The framework package that defines the bundle machinery lives
-	// here so it is not bootstrapped against itself, and a directory is listed
-	// while its types are still being given invariants, then removed. Segment-
-	// prefix: an entry covers itself and its whole subtree, and a lone "." exempts
-	// the whole tree — the wholesale off switch for a staged rollout. Opt-in; empty
-	// exempts nothing, so the rule binds every package by default.
+	// Invariant_Exempt_Packages names the packages exempt from the type-invariant
+	// rule — the rule's sole escape hatch. The framework package that defines the
+	// bundle machinery lives here so it is not bootstrapped against itself, and a
+	// package is listed while its types are still being given invariants, then
+	// removed. Each entry is an exact-path glob: "shared/foo" exempts that package,
+	// "shared/**" its whole subtree, and "**" the whole tree — the wholesale off
+	// switch for a staged rollout. Opt-in; empty exempts nothing, so the rule binds
+	// every package by default.
 	Invariant_Exempt_Packages []string `json:"invariant_exempt_packages"`
-	// Recursion_Exempt names directories exempt from the self- and mutual-
-	// recursion ban — a hand-written recursive-descent parser, whose recursion
-	// is intentional. Segment-prefix, opt-in; empty exempts nothing.
+	// Recursion_Exempt names packages exempt from the self- and mutual-recursion
+	// ban — a hand-written recursive-descent parser, whose recursion is intentional.
+	// Exact-path globs, like invariant_exempt_packages; opt-in, empty exempts nothing.
 	Recursion_Exempt []string `json:"opt_out_recursion_ban"`
 }
 
@@ -864,7 +864,7 @@ func validate_glob_patterns(field string, patterns []string) (err error) {
 		if strings.HasPrefix(raw, "!") {
 			return fmt.Errorf("%s: negation is unsupported", where)
 		}
-		for _, segment := range strings.Split(parse_glob_pattern(raw).Core, "/") {
+		for _, segment := range strings.Split(source.Parse_Glob_Pattern(raw).Core, "/") {
 			// ** is the matcher's own segment wildcard, not a path.Match token.
 			if segment == "**" {
 				continue
@@ -2064,9 +2064,9 @@ func filter_ignored(tracked map[string]bool, ignore []string) (kept map[string]b
 	if len(ignore) == 0 {
 		return tracked
 	}
-	patterns := make([]glob_pattern, 0, len(ignore))
+	patterns := make([]source.Glob_Pattern, 0, len(ignore))
 	for _, raw := range ignore {
-		patterns = append(patterns, parse_glob_pattern(raw))
+		patterns = append(patterns, source.Parse_Glob_Pattern(raw))
 	}
 	kept = make(map[string]bool, len(tracked))
 	for p := range tracked {
@@ -3331,15 +3331,15 @@ func check_comments_group_has_space_after_slashes(text string) (ok bool) {
 	return false
 }
 
-// Wraps the recursion ban with the opt_out_recursion_ban exemption: a file under
-// a listed directory — a hand-written recursive-descent parser, where recursion
-// is intentional — is skipped. An empty list exempts nothing.
+// Wraps the recursion ban with the opt_out_recursion_ban exemption: a file
+// matching one of its exact-path globs — a hand-written recursive-descent parser,
+// where recursion is intentional — is skipped. An empty list exempts nothing.
 func make_check_no_recursion(exempt []string) (check check_function) {
 	return func(
 		file_set *token.FileSet, file *ast.File, source_bytes []byte,
 	) (diags []Diagnostic) {
 		filename := file_set.Position(file.Pos()).Filename
-		if source.Path_Is_Exempt(filename, exempt) {
+		if source.Path_Matches_Glob(filename, exempt) {
 			return nil
 		}
 		return check_no_recursion(file_set, file, source_bytes)
@@ -4874,7 +4874,7 @@ func check_input_struct_declaration_is_invariant(
 // function must itself sit directly below its type (the orphan half). The rule is
 // AST-only and per-file: a type and its bundle are adjacent declarations in one
 // file, so no cross-file or type resolution is needed. Test files are exempt, as
-// is any file under a listed exempt package.
+// is any file matching an invariant_exempt_packages glob.
 func make_check_type_invariants(invariant_exempt []string) (check check_function) {
 	return func(
 		file_set *token.FileSet, file *ast.File, _ []byte,
@@ -7084,37 +7084,6 @@ func check_path_casing_paths(fsys fs.FS, tracked map[string]bool) (paths []strin
 	return paths
 }
 
-// A glob_pattern is a lint.json ignore entry parsed into the three facts the
-// matcher needs: Core is the gitignore pattern reduced to a form
-// glob_match can run against a full prefix (an unanchored, slash-less entry is
-// rewritten with a leading **/ so "weird.md" matches at any depth); Anchored
-// records whether the original entry was tied to the workspace root (it held a
-// slash) rather than floating; Directory_Only records a trailing slash, which in
-// gitignore binds the entry to directories.
-type glob_pattern struct {
-	Core           string
-	Anchored       bool
-	Directory_Only bool
-}
-
-// Reduces a raw lint.json entry to a glob_pattern. A trailing slash is
-// gitignore's directory marker; a leading or interior slash anchors the entry to
-// the root; a slash-less entry floats, which we model as **/ + entry so the same
-// prefix matcher serves both. Assumes the entry already passed
-// validate_glob_patterns, so it cannot be empty or negated.
-func parse_glob_pattern(raw string) (parsed glob_pattern) {
-	parsed.Directory_Only = strings.HasSuffix(raw, "/")
-	trimmed := strings.TrimSuffix(raw, "/")
-	had_leading_slash := strings.HasPrefix(trimmed, "/")
-	trimmed = strings.TrimPrefix(trimmed, "/")
-	parsed.Anchored = had_leading_slash || strings.Contains(trimmed, "/")
-	parsed.Core = trimmed
-	if !parsed.Anchored {
-		parsed.Core = "**/" + trimmed
-	}
-	return parsed
-}
-
 // Reports whether key — or any of its ancestor directories — matches one of the
 // gitignore-style patterns. gitignore excludes a path when the path or any
 // ancestor directory matches, so we test every prefix of key; each ancestor is a
@@ -7123,7 +7092,7 @@ func parse_glob_pattern(raw string) (parsed glob_pattern) {
 // a trailing-slash entry bind to directories and their subtree but not to a
 // same-named file.
 func glob_patterns_match(
-	key string, key_is_directory bool, patterns []glob_pattern,
+	key string, key_is_directory bool, patterns []source.Glob_Pattern,
 ) (found bool) {
 
 	if len(patterns) == 0 {
@@ -7143,89 +7112,14 @@ func glob_patterns_match(
 			}
 			// The entry passed parse-time validation, so glob_match cannot return
 			// ErrBadPattern here; a non-match is the only other outcome.
-			matched, _ := glob_match(&glob_match_input{Pattern: p.Core, Path: prefix})
+			matched, _ := source.Glob_Match(
+				&source.Glob_Match_Input{Pattern: p.Core, Path: prefix})
 			if matched {
 				return true
 			}
 		}
 	}
 	return false
-}
-
-type glob_match_input struct {
-	Pattern string
-	Path    string
-}
-
-// Reports whether Path matches the doublestar Pattern. A ** segment matches zero
-// or more whole path segments; every other segment is matched against the
-// corresponding path segment by path.Match, so *, ?, and [...] keep their
-// single-segment meaning (none crosses a slash) and a malformed segment surfaces
-// as path.Match's ErrBadPattern.
-func glob_match(input *glob_match_input) (matched bool, err error) {
-	return glob_match_segments(&glob_match_segments_input{
-		Pattern: strings.Split(input.Pattern, "/"),
-		Name:    strings.Split(input.Path, "/"),
-	})
-}
-
-type glob_match_segments_input struct {
-	Pattern []string
-	Name    []string
-}
-
-// Matches the Pattern segments against the Name segments with a two-pointer scan
-// that backtracks across **, the segment-level analogue of wildcard matching. A
-// ** is remembered as a resume point and first tried as matching zero segments;
-// on a later mismatch the scan returns to it and lets the ** swallow one more
-// name segment, which is how a single ** spans an unknown depth. Trailing **s
-// match the empty remainder, which is why dir/** also matches dir itself.
-func glob_match_segments(input *glob_match_segments_input) (matched bool, err error) {
-	pattern := input.Pattern
-	name := input.Name
-	pattern_index := 0
-	name_index := 0
-	// The resume index sits just after the most recent **; -1 means no ** is
-	// available to backtrack to. star_name_index records how much of name that **
-	// has been charged with so far.
-	star_pattern_index := -1
-	star_name_index := 0
-	for name_index < len(name) {
-		if pattern_index < len(pattern) {
-			if pattern[pattern_index] == "**" {
-				star_pattern_index = pattern_index + 1
-				star_name_index = name_index
-				pattern_index++
-				continue
-			}
-			ok, match_err := path.Match(pattern[pattern_index], name[name_index])
-			if match_err != nil {
-				return false, match_err
-			}
-			if ok {
-				pattern_index++
-				name_index++
-				continue
-			}
-		}
-		// No literal segment matched here, so the only way forward is to charge
-		// the last ** with one more name segment; absent a **, the match fails.
-		if star_pattern_index < 0 {
-			return false, nil
-		}
-		pattern_index = star_pattern_index
-		star_name_index++
-		name_index = star_name_index
-	}
-	// Name is exhausted; the match holds only if every leftover pattern segment
-	// is a ** standing for the empty remainder.
-	for pattern_index < len(pattern) {
-		if pattern[pattern_index] != "**" {
-			return false, nil
-		}
-		pattern_index++
-	}
-	return true, nil
 }
 
 type check_file_system_stream_checks_stream_symlinks_checker_input struct {
@@ -8214,10 +8108,10 @@ func check_deterministic(input *check_deterministic_input) (diags []Diagnostic) 
 	}
 	matched := map[string]bool{}
 	for _, entry := range input.Exceptions {
-		pattern := parse_glob_pattern(entry)
+		pattern := source.Parse_Glob_Pattern(entry)
 		for directory := range pure {
-			hit, _ := glob_match(
-				&glob_match_input{Pattern: pattern.Core, Path: directory})
+			hit, _ := source.Glob_Match(
+				&source.Glob_Match_Input{Pattern: pattern.Core, Path: directory})
 			if !hit {
 				continue
 			}

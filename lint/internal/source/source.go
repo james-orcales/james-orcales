@@ -535,8 +535,10 @@ func Invariant_Name(type_name string) (name string) {
 	return type_name + "_invariants"
 }
 
-// Path_Is_Exempt is true when filename equals, or lives under, any entry in
-// exempt; a "." entry exempts everything.
+// Path_Is_Exempt reports whether filename equals, or lives under, any entry in
+// exempt — segment-prefix containment. It serves directory-scoped exemptions: a
+// file living under a gateway or instrumentation package's directory, where the
+// entry is a single computed directory, not a user-written glob.
 func Path_Is_Exempt(filename string, exempt []string) (yes bool) {
 	for _, entry := range exempt {
 		if entry == "." {
@@ -550,4 +552,131 @@ func Path_Is_Exempt(filename string, exempt []string) (yes bool) {
 		}
 	}
 	return false
+}
+
+// Path_Matches_Glob reports whether filename matches any of patterns as an
+// exact-path glob: "pkg/sub" matches only that path, "pkg/**" its whole subtree,
+// and "**" everything. These are the same * / ** globs the deterministic tier's
+// exceptions use, so the invariant and recursion exemption lists — both
+// user-written lint.json globs — read alike.
+func Path_Matches_Glob(filename string, patterns []string) (yes bool) {
+	for _, entry := range patterns {
+		matched, _ := Glob_Match(&Glob_Match_Input{
+			Pattern: Parse_Glob_Pattern(entry).Core, Path: filename})
+		if matched {
+			return true
+		}
+	}
+	return false
+}
+
+// A Glob_Pattern is a lint.json glob entry parsed into the facts the matcher
+// needs: Core is the pattern reduced to a form Glob_Match runs against a full
+// path (an unanchored, slash-less entry is rewritten with a leading **/ so it
+// matches at any depth); Anchored records whether the entry was tied to the
+// workspace root (it held a slash) rather than floating; Directory_Only records a
+// trailing slash, gitignore's directory marker.
+type Glob_Pattern struct {
+	// Core is the pattern reduced to the form Glob_Match runs against a full path.
+	Core string
+	// Anchored records whether the entry was tied to the root (it held a slash).
+	Anchored bool
+	// Directory_Only records a trailing slash — gitignore's directory marker.
+	Directory_Only bool
+}
+
+// Parse_Glob_Pattern reduces a raw lint.json entry to a Glob_Pattern. A trailing
+// slash is gitignore's directory marker; a leading or interior slash anchors the
+// entry to the root; a slash-less entry floats, modeled as **/ + entry so one
+// matcher serves both. Assumes the entry is non-empty and un-negated.
+func Parse_Glob_Pattern(raw string) (parsed Glob_Pattern) {
+	parsed.Directory_Only = strings.HasSuffix(raw, "/")
+	trimmed := strings.TrimSuffix(raw, "/")
+	had_leading_slash := strings.HasPrefix(trimmed, "/")
+	trimmed = strings.TrimPrefix(trimmed, "/")
+	parsed.Anchored = had_leading_slash || strings.Contains(trimmed, "/")
+	parsed.Core = trimmed
+	if !parsed.Anchored {
+		parsed.Core = "**/" + trimmed
+	}
+	return parsed
+}
+
+// Glob_Match_Input pairs a doublestar pattern with the path tested against it.
+type Glob_Match_Input struct {
+	// Pattern is the doublestar pattern: ** spans whole segments, * spans one.
+	Pattern string
+	// Path is the slash-separated path tested against Pattern.
+	Path string
+}
+
+// Glob_Match reports whether Path matches the doublestar Pattern. A ** segment
+// matches zero or more whole path segments; every other segment is matched against
+// the corresponding path segment by path.Match, so *, ?, and [...] keep their
+// single-segment meaning (none crosses a slash) and a malformed segment surfaces
+// as path.Match's ErrBadPattern.
+func Glob_Match(input *Glob_Match_Input) (matched bool, err error) {
+	return glob_match_segments(&glob_match_segments_input{
+		Pattern: strings.Split(input.Pattern, "/"),
+		Name:    strings.Split(input.Path, "/"),
+	})
+}
+
+type glob_match_segments_input struct {
+	Pattern []string
+	Name    []string
+}
+
+// Matches the Pattern segments against the Name segments with a two-pointer scan
+// that backtracks across **, the segment-level analogue of wildcard matching. A
+// ** is remembered as a resume point and first tried as matching zero segments;
+// on a later mismatch the scan returns to it and lets the ** swallow one more
+// name segment, which is how a single ** spans an unknown depth. Trailing **s
+// match the empty remainder, which is why dir/** also matches dir itself.
+func glob_match_segments(input *glob_match_segments_input) (matched bool, err error) {
+	pattern := input.Pattern
+	name := input.Name
+	pattern_index := 0
+	name_index := 0
+	// The resume index sits just after the most recent **; -1 means no ** is
+	// available to backtrack to. star_name_index records how much of name that **
+	// has been charged with so far.
+	star_pattern_index := -1
+	star_name_index := 0
+	for name_index < len(name) {
+		if pattern_index < len(pattern) {
+			if pattern[pattern_index] == "**" {
+				star_pattern_index = pattern_index + 1
+				star_name_index = name_index
+				pattern_index++
+				continue
+			}
+			ok, match_err := path.Match(pattern[pattern_index], name[name_index])
+			if match_err != nil {
+				return false, match_err
+			}
+			if ok {
+				pattern_index++
+				name_index++
+				continue
+			}
+		}
+		// No literal segment matched here, so the only way forward is to charge
+		// the last ** with one more name segment; absent a **, the match fails.
+		if star_pattern_index < 0 {
+			return false, nil
+		}
+		pattern_index = star_pattern_index
+		star_name_index++
+		name_index = star_name_index
+	}
+	// Name is exhausted; the match holds only if every leftover pattern segment
+	// is a ** standing for the empty remainder.
+	for pattern_index < len(pattern) {
+		if pattern[pattern_index] != "**" {
+			return false, nil
+		}
+		pattern_index++
+	}
+	return true, nil
 }
