@@ -77,7 +77,7 @@ func Test_Auto_Timestamp(t *testing.T) {
 	logger := jlog.New(jlog.New_Input{
 		Writer:         buffer,
 		Clock:          frozen_clock(),
-		Floor:          jlog.Level_Trace,
+		Floor:          jlog.LEVEL_TRACE,
 		Auto_Timestamp: true,
 	})
 	jlog.Logger_Info(logger, "")
@@ -89,7 +89,7 @@ func Test_Time_And_Duration(t *testing.T) {
 	buffer := &bytes.Buffer{}
 	jlog.Logger_Info(new_logger(buffer), "",
 		jlog.Time("t", time.Moment(5)),
-		jlog.Duration("d", time.Second),
+		jlog.Duration("d", time.SECOND),
 	)
 	assert_output(t, buffer,
 		"{\"level\":\"info\",\"t\":\"1970-01-01T00:00:00.000000005Z\",\"d\":1000000000}\n")
@@ -124,7 +124,7 @@ func Test_Err_With_Stack(t *testing.T) {
 	logger := jlog.New(jlog.New_Input{
 		Writer:          buffer,
 		Clock:           frozen_clock(),
-		Floor:           jlog.Level_Trace,
+		Floor:           jlog.LEVEL_TRACE,
 		Stack_Marshaler: func(value error) (stack string) { return "TRACE" },
 	})
 	jlog.Logger_Error(logger, "", jlog.Err(errors.New("boom")))
@@ -146,7 +146,7 @@ func Test_Caller_Uses_Injected_Function(t *testing.T) {
 	logger := jlog.New(jlog.New_Input{
 		Writer: buffer,
 		Clock:  frozen_clock(),
-		Floor:  jlog.Level_Trace,
+		Floor:  jlog.LEVEL_TRACE,
 		Caller: func(skip int) (location string) { return "file.go:10" },
 	})
 	jlog.Logger_Info(logger, "", jlog.Caller())
@@ -169,7 +169,7 @@ func Test_Level_Floor_Filters(t *testing.T) {
 	logger := jlog.New(jlog.New_Input{
 		Writer: buffer,
 		Clock:  frozen_clock(),
-		Floor:  jlog.Level_Info,
+		Floor:  jlog.LEVEL_INFO,
 	})
 	jlog.Logger_Debug(logger, "dropped", jlog.String("k", "v"))
 	assert_output(t, buffer, "")
@@ -198,7 +198,7 @@ func Test_Hot_Path_Is_Zero_Allocation(t *testing.T) {
 	logger := jlog.New(jlog.New_Input{
 		Writer: io.Discard,
 		Clock:  frozen_clock(),
-		Floor:  jlog.Level_Trace,
+		Floor:  jlog.LEVEL_TRACE,
 	})
 	allocations := testing.AllocsPerRun(1000, func() {
 		jlog.Logger_Info(logger, "done",
@@ -223,7 +223,7 @@ func new_logger(buffer io.Writer) (logger jlog.Logger) {
 	return jlog.New(jlog.New_Input{
 		Writer: buffer,
 		Clock:  frozen_clock(),
-		Floor:  jlog.Level_Trace,
+		Floor:  jlog.LEVEL_TRACE,
 	})
 }
 
@@ -249,7 +249,7 @@ func discard_logger() (logger jlog.Logger) {
 	return jlog.New(jlog.New_Input{
 		Writer: io.Discard,
 		Clock:  frozen_clock(),
-		Floor:  jlog.Level_Trace,
+		Floor:  jlog.LEVEL_TRACE,
 	})
 }
 
@@ -282,7 +282,7 @@ func Benchmark_Disabled(b *testing.B) {
 	logger := jlog.New(jlog.New_Input{
 		Writer: io.Discard,
 		Clock:  frozen_clock(),
-		Floor:  jlog.Level_Disabled,
+		Floor:  jlog.LEVEL_DISABLED,
 	})
 	b.ReportAllocs()
 	b.ResetTimer()
@@ -336,8 +336,8 @@ func Test_Cover_Levels(t *testing.T) {
 	jlog.Logger_Debug(logger, "")
 	jlog.Logger_Warn(logger, "")
 	jlog.Logger_Log(logger, "")
-	jlog.Logger_At_Level(logger, jlog.Level_Error, "")
-	jlog.Logger_At_Level(logger, jlog.Level_Disabled, "")
+	jlog.Logger_At_Level(logger, jlog.LEVEL_ERROR, "")
+	jlog.Logger_At_Level(logger, jlog.LEVEL_DISABLED, "")
 	want := "{\"level\":\"trace\"}\n" + "{\"level\":\"debug\"}\n" +
 		"{\"level\":\"warn\"}\n" + "{}\n" + "{\"level\":\"error\"}\n" +
 		"{\"level\":\"disabled\"}\n"
@@ -346,8 +346,8 @@ func Test_Cover_Levels(t *testing.T) {
 
 // Test_Cover_Level_String covers the cases not reached through emit.
 func Test_Cover_Level_String(t *testing.T) {
-	if jlog.Level_None.String() != "" {
-		t.Fatalf("none = %q, want empty", jlog.Level_None.String())
+	if jlog.LEVEL_NONE.String() != "" {
+		t.Fatalf("none = %q, want empty", jlog.LEVEL_NONE.String())
 	}
 	if jlog.Level(50).String() != "50" {
 		t.Fatalf("custom = %q, want 50", jlog.Level(50).String())
@@ -363,7 +363,7 @@ func Test_Cover_Numeric_And_Slice_Fields(t *testing.T) {
 		jlog.Float32("c", float32(1.5)),
 		jlog.Floats64("d", []float64{1.5, 2.5}),
 		jlog.Booleans("e", []bool{true, false}),
-		jlog.Durations("f", []time.Duration{time.Second, 2 * time.Second}),
+		jlog.Durations("f", []time.Duration{time.SECOND, 2 * time.SECOND}),
 		jlog.Boolean("g", false),
 	)
 	want := "{\"level\":\"info\",\"a\":-5,\"b\":6,\"c\":1.5,\"d\":[1.5,2.5]," +
@@ -388,7 +388,7 @@ func Test_Cover_Err_Nil(t *testing.T) {
 	logger := jlog.New(jlog.New_Input{
 		Writer:          buffer,
 		Clock:           frozen_clock(),
-		Floor:           jlog.Level_Trace,
+		Floor:           jlog.LEVEL_TRACE,
 		Stack_Marshaler: func(value error) (stack string) { return "S" },
 	})
 	jlog.Logger_Error(logger, "", jlog.Err(nil))
@@ -408,7 +408,7 @@ func Test_Cover_Auto_Caller(t *testing.T) {
 	logger := jlog.New(jlog.New_Input{
 		Writer:      buffer,
 		Clock:       frozen_clock(),
-		Floor:       jlog.Level_Trace,
+		Floor:       jlog.LEVEL_TRACE,
 		Auto_Caller: true,
 		Caller:      func(skip int) (location string) { return "x.go:1" },
 	})
@@ -422,7 +422,7 @@ func Test_Cover_Disabled_Floor(t *testing.T) {
 	logger := jlog.New(jlog.New_Input{
 		Writer: buffer,
 		Clock:  frozen_clock(),
-		Floor:  jlog.Level_Disabled,
+		Floor:  jlog.LEVEL_DISABLED,
 	})
 	jlog.Logger_Info(logger, "x")
 	assert_output(t, buffer, "")
@@ -443,7 +443,7 @@ func Test_Cover_Custom_Field_Names(t *testing.T) {
 	logger := jlog.New(jlog.New_Input{
 		Writer:             buffer,
 		Clock:              frozen_clock(),
-		Floor:              jlog.Level_Trace,
+		Floor:              jlog.LEVEL_TRACE,
 		Level_Field_Name:   "lvl",
 		Message_Field_Name: "msg",
 	})
@@ -453,7 +453,7 @@ func Test_Cover_Custom_Field_Names(t *testing.T) {
 
 // Test_Cover_Nil_Writer covers New defaulting a nil writer to a discard sink.
 func Test_Cover_Nil_Writer(t *testing.T) {
-	logger := jlog.New(jlog.New_Input{Clock: frozen_clock(), Floor: jlog.Level_Trace})
+	logger := jlog.New(jlog.New_Input{Clock: frozen_clock(), Floor: jlog.LEVEL_TRACE})
 	jlog.Logger_Info(logger, "to nowhere")
 }
 
@@ -596,7 +596,7 @@ func Fuzz_Encode(f *testing.F) {
 		logger := jlog.New(jlog.New_Input{
 			Writer:         buffer,
 			Clock:          clock,
-			Floor:          jlog.Level_Trace,
+			Floor:          jlog.LEVEL_TRACE,
 			Auto_Timestamp: true,
 		})
 		jlog.Logger_Info(logger, string(raw),

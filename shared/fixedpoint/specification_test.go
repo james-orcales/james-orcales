@@ -13,8 +13,8 @@ import (
 func Test_Conversion(t *testing.T) {
 	t.Parallel()
 	integer := fixedpoint.From_Integer
-	if integer(5) != 5*fixedpoint.Scale {
-		t.Fatalf("From_Integer(5) = %d, want %d", integer(5), 5*fixedpoint.Scale)
+	if integer(5) != 5*fixedpoint.SCALE {
+		t.Fatalf("From_Integer(5) = %d, want %d", integer(5), 5*fixedpoint.SCALE)
 	}
 	if fixedpoint.Whole(integer(5)) != 5 {
 		t.Fatalf("Whole(5.0) = %d, want 5", fixedpoint.Whole(integer(5)))
@@ -77,12 +77,12 @@ func Test_Ratio(t *testing.T) {
 	t.Parallel()
 	integer := fixedpoint.From_Integer
 	// 1.3 is not exact in base two, so 10*1.3 lands near 13 within a unit or two.
-	thirteen_tenths := fixedpoint.Ratio(13 * fixedpoint.Scale / 10)
+	thirteen_tenths := fixedpoint.Ratio(13 * fixedpoint.SCALE / 10)
 	near(t, &near_input{
 		Got: fixedpoint.Apply(integer(10), thirteen_tenths), Want: integer(13), Slack: 16,
 	})
 	// One half is exact, so 10*0.5 is exactly 5.
-	halved := fixedpoint.Apply(integer(10), fixedpoint.Ratio(fixedpoint.Scale/2))
+	halved := fixedpoint.Apply(integer(10), fixedpoint.Ratio(fixedpoint.SCALE/2))
 	if halved != integer(5) {
 		t.Fatalf("10*0.5 = %d, want %d", halved, integer(5))
 	}

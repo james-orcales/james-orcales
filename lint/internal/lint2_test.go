@@ -4177,7 +4177,7 @@ func Test_Coverage_Backfill_Module_Index_Hi_Index(t *testing.T) {
 	const module_count = 1025
 	for i_index := 0; i_index < module_count; i_index++ {
 		// Module / package names stay short (numbered suffix) so the
-		// generated identifiers fit within Identifier_Chars_Max; the
+		// generated identifiers fit within IDENTIFIER_CHARS_MAX; the
 		// COUNT of modules is what drives module_index_resolve to its
 		// Hi=1024 index bucket.
 		name := fmt.Sprintf("m%04d", i_index)

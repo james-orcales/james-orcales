@@ -161,7 +161,7 @@ type simulation_result struct {
 	// witnessing the suffix bound bit rather than every log fitting within it.
 	Do_View_Change_Suffixes int
 	// Reconfigurations_Completed counts the reconfigurations that ran to completion in a run:
-	// the epoch advanced and a member of the new group reached Status_Normal in it (§7),
+	// the epoch advanced and a member of the new group reached STATUS_NORMAL in it (§7),
 	// witnessing the whole handoff actually executed end to end.
 	Reconfigurations_Completed int
 	// Epoch_Max is the highest epoch any replica reached, witnessing reconfigurations advanced
@@ -404,7 +404,7 @@ func new_simulator(t *testing.T, seed int64, clock_skew bool) (state *simulator)
 	if seed%2 == 0 {
 		cluster_count = 5 // Exercise both quorum sizes.
 	}
-	clock, tick := time.Virtual_Clock_To_Clock(time.Virtual_Clock{Resolution: time.Millisecond})
+	clock, tick := time.Virtual_Clock_To_Clock(time.Virtual_Clock{Resolution: time.MILLISECOND})
 	state = &simulator{
 		T:              t,
 		Seed:           seed,
@@ -447,7 +447,7 @@ func new_simulator(t *testing.T, seed int64, clock_skew bool) (state *simulator)
 		state.Trace_Sink = &bytes.Buffer{}
 		state.Trace = jlog.New(jlog.New_Input{
 			Writer: state.Trace_Sink,
-			Floor:  jlog.Level_Trace,
+			Floor:  jlog.LEVEL_TRACE,
 		})
 		jlog.Logger_Info(state.Trace, "seed",
 			jlog.Int64("seed", seed),
@@ -503,7 +503,7 @@ func simulator_run_tail(state *simulator) (converged bool) {
 }
 
 // Reports whether the cluster has drained: every client request answered, and every voting member
-// of the current configuration active and back to Status_Normal (no one stuck in view change or
+// of the current configuration active and back to STATUS_NORMAL (no one stuck in view change or
 // recovery). Standbys are not required to have caught up, only the voting set that serves requests.
 func simulator_converged(state *simulator) (converged bool) {
 	for index := range state.Clients {
@@ -520,7 +520,7 @@ func simulator_converged(state *simulator) (converged bool) {
 		if !state.Active[identifier] {
 			return false
 		}
-		if state.Replicas[identifier].Status != vsr.Status_Normal {
+		if state.Replicas[identifier].Status != vsr.STATUS_NORMAL {
 			return false
 		}
 	}
@@ -549,8 +549,8 @@ func simulator_allocate(state *simulator, cluster_count int) {
 			Identifier:          vsr.Replica_Identifier(index),
 			Configuration:       configuration,
 			Active_Count:        active_count_for(len(configuration)),
-			Heartbeat:           10 * time.Millisecond,
-			Timeout:             jitter * time.Millisecond,
+			Heartbeat:           10 * time.MILLISECOND,
+			Timeout:             jitter * time.MILLISECOND,
 			State_Machine:       simulator_state_machine(state, index),
 			Checkpoint_Interval: sim_checkpoint_interval,
 			Log_Retain:          sim_log_retain,
@@ -571,14 +571,14 @@ func simulator_allocate(state *simulator, cluster_count int) {
 // offset differentiates the §4.4 timestamps each would stamp and the drift desynchronizes their
 // timeouts — what VSR safety must survive by leaning on consensus, not the clock.
 func simulator_replica_clock(state *simulator) (clock time.Clock, tick func()) {
-	virtual := time.Virtual_Clock{Resolution: time.Millisecond}
+	virtual := time.Virtual_Clock{Resolution: time.MILLISECOND}
 	if state.Clock_Skew {
 		virtual.Epoch = time.Moment(prng.Generator_Below(&state.Clock_Generator, 50)) *
-			time.Moment(time.Millisecond)
+			time.Moment(time.MILLISECOND)
 		// Drift A ns/tick shifts the effective rate to Resolution-A; |A| far below
 		// Resolution keeps the clock monotonic while still drifting up to ~2%.
 		rate := time.Duration(prng.Generator_Below(&state.Clock_Generator, 40001) - 20000)
-		virtual.Skew = time.Skew(time.Skew_Input{Kind: time.Skew_Kind_Linear, A: rate})
+		virtual.Skew = time.Skew(time.Skew_Input{Kind: time.SKEW_KIND_LINEAR, A: rate})
 	}
 	return time.Virtual_Clock_To_Clock(virtual)
 }
@@ -726,10 +726,10 @@ func simulator_inject_clock_fault(state *simulator, now time.Moment) {
 	}
 	victim := active[prng.Generator_Below(&state.Clock_Generator, len(active))]
 	jump := time.Duration(20+prng.Generator_Below(&state.Clock_Generator, 40)) *
-		time.Duration(time.Millisecond)
+		time.Duration(time.MILLISECOND)
 	state.Clock_Fault_Offset[victim] = jump
 	state.Clock_Fault_Until[victim] = now +
-		time.Moment(sim_clock_fault_window)*time.Moment(time.Millisecond)
+		time.Moment(sim_clock_fault_window)*time.Moment(time.MILLISECOND)
 }
 
 // Partitions one active replica for a window. A voting replica is partitioned only when the group
@@ -747,7 +747,7 @@ func simulator_inject_isolation(state *simulator, now time.Moment) {
 			return
 		}
 	}
-	window := time.Moment(sim_isolate_window) * time.Moment(time.Millisecond)
+	window := time.Moment(sim_isolate_window) * time.Moment(time.MILLISECOND)
 	state.Isolated_Until[victim] = now + window
 	jlog.Logger_Info(state.Trace, "fault",
 		jlog.Int64("t", now),
@@ -765,7 +765,7 @@ func simulator_inject_crash(state *simulator, now time.Moment) {
 		return
 	}
 	victim := active[prng.Generator_Below(&state.Generator, len(active))]
-	if state.Replicas[victim].Status != vsr.Status_Normal {
+	if state.Replicas[victim].Status != vsr.STATUS_NORMAL {
 		return
 	}
 	// Respect the fault model. The voting set tolerates one fault, but a reconfiguration can
@@ -841,7 +841,7 @@ func simulator_inject_reconfiguration(state *simulator, tick_index int, now time
 		jlog.String("config", fmt.Sprintf("%v", target)),
 		jlog.Uint8("active", active_count_for(len(target))))
 	simulator_send(state, []vsr.Message{{
-		Kind:           vsr.Message_Kind_Reconfiguration,
+		Kind:           vsr.MESSAGE_KIND_RECONFIGURATION,
 		From:           primary,
 		To:             primary,
 		Epoch:          state.Epoch,
@@ -861,7 +861,7 @@ func simulator_inject_reconfiguration(state *simulator, tick_index int, now time
 // simpler this way).
 func simulator_group_settled(state *simulator) (settled bool) {
 	for index := range state.Replicas {
-		if state.Replicas[index].Status == vsr.Status_Transition {
+		if state.Replicas[index].Status == vsr.STATUS_TRANSITION {
 			return false
 		}
 	}
@@ -870,7 +870,7 @@ func simulator_group_settled(state *simulator) (settled bool) {
 		if !state.Active[identifier] {
 			return false
 		}
-		if replica.Status != vsr.Status_Normal {
+		if replica.Status != vsr.STATUS_NORMAL {
 			return false
 		}
 		if replica.Epoch != state.Epoch {
@@ -967,7 +967,7 @@ func simulator_tick_replicas(state *simulator, now time.Moment) {
 // dictating them — the simulator follows where the replicas have actually moved.
 func simulator_refresh_membership(state *simulator) {
 	for index := range state.Replicas {
-		if state.Replicas[index].Status == vsr.Status_Shutdown {
+		if state.Replicas[index].Status == vsr.STATUS_SHUTDOWN {
 			state.Active[index] = false
 		}
 	}
@@ -977,7 +977,7 @@ func simulator_refresh_membership(state *simulator) {
 			continue
 		}
 		replica := &state.Replicas[index]
-		if replica.Status != vsr.Status_Normal {
+		if replica.Status != vsr.STATUS_NORMAL {
 			continue
 		}
 		if replica.Epoch < highest {
@@ -1022,7 +1022,7 @@ func simulator_next_fresh_from(state *simulator, start int) (index int) {
 		if state.Replicas[index].Epoch != 0 {
 			continue
 		}
-		if state.Replicas[index].Status == vsr.Status_Shutdown {
+		if state.Replicas[index].Status == vsr.STATUS_SHUTDOWN {
 			continue
 		}
 		return index
@@ -1035,7 +1035,7 @@ func simulator_next_fresh_from(state *simulator, start int) (index int) {
 // client's request-number to model §4.5 client recovery.
 func simulator_tick_clients(state *simulator, now time.Moment) {
 	primary := simulator_believed_primary(state)
-	timeout := time.Moment(sim_client_timeout) * time.Moment(time.Millisecond)
+	timeout := time.Moment(sim_client_timeout) * time.Moment(time.MILLISECOND)
 	for index := range state.Clients {
 		this := &state.Clients[index]
 		if this.Unanswered {
@@ -1071,7 +1071,7 @@ func simulator_tick_clients(state *simulator, now time.Moment) {
 		// latest configuration out of band (§7.4) — so the primary accepts it rather than
 		// redirecting it as stale.
 		simulator_send(state, []vsr.Message{{
-			Kind:           vsr.Message_Kind_Request,
+			Kind:           vsr.MESSAGE_KIND_REQUEST,
 			From:           primary,
 			To:             primary,
 			Epoch:          state.Epoch,
@@ -1118,7 +1118,7 @@ func simulator_broadcast_request(state *simulator, this *client, now time.Moment
 			continue
 		}
 		messages = append(messages, vsr.Message{
-			Kind:           vsr.Message_Kind_Request,
+			Kind:           vsr.MESSAGE_KIND_REQUEST,
 			From:           vsr.Replica_Identifier(index),
 			To:             vsr.Replica_Identifier(index),
 			Epoch:          state.Epoch,
@@ -1141,7 +1141,7 @@ func simulator_handle_output(state *simulator, output vsr.Step_Output, now time.
 		// a command result: the simulator's clients learn the epoch out of band (they stamp
 		// state.Epoch), so the redirect is dropped here and kept out of the result and
 		// exactly-once oracles, which only a true Reply feeds.
-		if reply.Kind == vsr.Message_Kind_New_Epoch {
+		if reply.Kind == vsr.MESSAGE_KIND_NEW_EPOCH {
 			continue
 		}
 		state.Result.Replies++
@@ -1183,13 +1183,13 @@ func simulator_count_delivery(
 	state *simulator, message vsr.Message, target_transition bool, output vsr.Step_Output,
 ) {
 	if target_transition {
-		if message.Kind == vsr.Message_Kind_New_State {
+		if message.Kind == vsr.MESSAGE_KIND_NEW_STATE {
 			if message.Checkpoint_State != nil {
 				state.Result.Epoch_Checkpoint_Catch_Ups++
 			}
 		}
 	}
-	if message.Kind == vsr.Message_Kind_Request {
+	if message.Kind == vsr.MESSAGE_KIND_REQUEST {
 		if len(output.Replies) > 0 {
 			if len(output.Committed) == 0 {
 				state.Result.Cached_Replies++
@@ -1238,11 +1238,11 @@ func simulator_deliver(state *simulator, now time.Moment) {
 		// A Start_Epoch to a dormant pre-allocated node adds it to the group (§7.1):
 		// activate it so it is ticked and delivered to from here on, then let it process
 		// the message.
-		if message.Kind == vsr.Message_Kind_Start_Epoch {
+		if message.Kind == vsr.MESSAGE_KIND_START_EPOCH {
 			state.Active[message.To] = true
 		}
 		target := &state.Replicas[message.To]
-		target_transition := target.Status == vsr.Status_Transition
+		target_transition := target.Status == vsr.STATUS_TRANSITION
 		if state.Trace_Sink != nil {
 			log_message(state.Trace, "deliver", now, message)
 			log_replica(state.Trace, "before", target)
@@ -1283,18 +1283,18 @@ func simulator_deliver(state *simulator, now time.Moment) {
 // dormant pre-allocated node (not yet added to any group) receives only a Start_Epoch — the message
 // that adds it; everything else to it is dropped, since it is not in play.
 func simulator_deliverable(state *simulator, message vsr.Message) (deliverable bool) {
-	if state.Replicas[message.To].Status == vsr.Status_Shutdown {
+	if state.Replicas[message.To].Status == vsr.STATUS_SHUTDOWN {
 		// A shut-down node accepts only a Start_Epoch: a later reconfiguration that
 		// re-adds its identifier revives it as a fresh member (the paper provisions a
 		// fresh node for the new configuration). Without this a node that shut down when
 		// an earlier epoch dropped it could never rejoin when a later epoch adds it back,
 		// wedging the cluster below quorum; receive_start_epoch's adopt path catches it up.
-		return message.Kind == vsr.Message_Kind_Start_Epoch
+		return message.Kind == vsr.MESSAGE_KIND_START_EPOCH
 	}
 	if state.Active[message.To] {
 		return true
 	}
-	return message.Kind == vsr.Message_Kind_Start_Epoch
+	return message.Kind == vsr.MESSAGE_KIND_START_EPOCH
 }
 
 // Reports whether identifier is a member of configuration — the simulation-side mirror of the
@@ -1461,15 +1461,15 @@ func simulator_record_outcome(state *simulator, key outcome_key, result []byte) 
 // duplicated independently.
 func simulator_send(state *simulator, messages []vsr.Message, now time.Moment) {
 	for _, message := range messages {
-		if message.Kind == vsr.Message_Kind_Get_State {
+		if message.Kind == vsr.MESSAGE_KIND_GET_STATE {
 			// Count the catch-up even when the network later drops the request.
 			state.Result.State_Transfers++
 		}
-		if message.Kind == vsr.Message_Kind_Predict_Request {
+		if message.Kind == vsr.MESSAGE_KIND_PREDICT_REQUEST {
 			// Count the pre-step round even when the network later drops the request.
 			state.Result.Pre_Step_Rounds++
 		}
-		if message.Kind == vsr.Message_Kind_Prepare {
+		if message.Kind == vsr.MESSAGE_KIND_PREPARE {
 			// A Prepare carrying more than one entry is a flushed batch (§6.2): the
 			// primary collected several requests into one round. Count it even if later
 			// dropped; the per-recipient copies overcount the fan-out, but the axis
@@ -1478,7 +1478,7 @@ func simulator_send(state *simulator, messages []vsr.Message, now time.Moment) {
 				state.Result.Batches_Flushed++
 			}
 		}
-		if message.Kind == vsr.Message_Kind_New_State {
+		if message.Kind == vsr.MESSAGE_KIND_NEW_STATE {
 			// A New_State carrying a checkpoint is the §5.2 gap response: the
 			// requester needed a prefix the responder had already garbage-collected.
 			// Count it even if later dropped.
@@ -1486,7 +1486,7 @@ func simulator_send(state *simulator, messages []vsr.Message, now time.Moment) {
 				state.Result.Checkpoint_Gaps++
 			}
 		}
-		if message.Kind == vsr.Message_Kind_Do_View_Change {
+		if message.Kind == vsr.MESSAGE_KIND_DO_VIEW_CHANGE {
 			// A report whose op exceeds its suffix length dropped entries the reporter
 			// still held: the §5.3 bounded suffix genuinely bit. Count it even if the
 			// network later drops the report.
@@ -1506,7 +1506,7 @@ func simulator_send(state *simulator, messages []vsr.Message, now time.Moment) {
 		}
 		for copy_index := 0; copy_index < copies; copy_index++ {
 			grains := prng.Generator_Below(&state.Generator, sim_delay_max+1)
-			delay := time.Moment(grains) * time.Moment(time.Millisecond)
+			delay := time.Moment(grains) * time.Moment(time.MILLISECOND)
 			state.Network = append(state.Network, scheduled_message{
 				Message: message, Deliver_At: now + delay,
 			})
@@ -1554,7 +1554,7 @@ func simulator_check_fault_model(state *simulator) {
 		if !state.Active[identifier] {
 			continue
 		}
-		if state.Replicas[identifier].Status == vsr.Status_Recovery {
+		if state.Replicas[identifier].Status == vsr.STATUS_RECOVERY {
 			recovery_count++
 		}
 	}
@@ -1612,12 +1612,12 @@ func simulator_check_accumulator(state *simulator) {
 		}
 		// A recovering replica's accumulator is mid-restore (its volatile state was lost
 		// and the rejoin has not completed), so it is not yet meaningful to compare.
-		if replica.Status == vsr.Status_Recovery {
+		if replica.Status == vsr.STATUS_RECOVERY {
 			continue
 		}
 		// A transitioning replica is mid-catch-up to a new epoch (§7.1), its accumulator
 		// not yet at its commit; compare it only once it is back to normal.
-		if replica.Status == vsr.Status_Transition {
+		if replica.Status == vsr.STATUS_TRANSITION {
 			continue
 		}
 		expected, ok := state.Reference.Accumulator_Of_Commit[vsr.Op(replica.Commit)]
@@ -1665,21 +1665,21 @@ func simulator_check_result_agreement(state *simulator) {
 func simulator_record_replica_coverage(state *simulator, index int) {
 	replica := &state.Replicas[index]
 	invariant.Dot_Product("sim.replica.status_normal",
-		invariant.Sometimes(replica.Status == vsr.Status_Normal, "replica is normal"))
+		invariant.Sometimes(replica.Status == vsr.STATUS_NORMAL, "replica is normal"))
 	invariant.Dot_Product("sim.replica.status_view_change",
 		invariant.Sometimes(
-			replica.Status == vsr.Status_View_Change,
+			replica.Status == vsr.STATUS_VIEW_CHANGE,
 			"replica is view-changing"))
 	invariant.Dot_Product("sim.replica.status_recovery",
-		invariant.Sometimes(replica.Status == vsr.Status_Recovery, "replica is recovering"))
+		invariant.Sometimes(replica.Status == vsr.STATUS_RECOVERY, "replica is recovering"))
 	// The §7 reconfiguration statuses must be witnessed across the sweep: a replica mid epoch
 	// handoff (transitioning) and a replaced replica that has shut down.
 	invariant.Dot_Product("sim.replica.status_transition",
 		invariant.Sometimes(
-			replica.Status == vsr.Status_Transition,
+			replica.Status == vsr.STATUS_TRANSITION,
 			"replica is transitioning"))
 	invariant.Dot_Product("sim.replica.status_shutdown",
-		invariant.Sometimes(replica.Status == vsr.Status_Shutdown, "replica is shut down"))
+		invariant.Sometimes(replica.Status == vsr.STATUS_SHUTDOWN, "replica is shut down"))
 	invariant.Dot_Product("sim.replica.view_advanced",
 		invariant.Sometimes(replica.View > 0, "replica view advanced past zero"))
 	// The epoch must sometimes advance past 0, witnessing a reconfiguration ran.
@@ -1706,13 +1706,13 @@ func simulator_record_replica_coverage(state *simulator, index int) {
 		state.Result.View_Change_Fetches++
 	}
 	previous := state.Previous_Status[index]
-	if previous == vsr.Status_View_Change {
-		if replica.Status == vsr.Status_Normal {
+	if previous == vsr.STATUS_VIEW_CHANGE {
+		if replica.Status == vsr.STATUS_NORMAL {
 			state.Result.View_Changes_Completed++
 		}
 	}
-	if previous == vsr.Status_Recovery {
-		if replica.Status == vsr.Status_Normal {
+	if previous == vsr.STATUS_RECOVERY {
+		if replica.Status == vsr.STATUS_NORMAL {
 			state.Result.Recoveries_Completed++
 		}
 	}
@@ -1730,11 +1730,11 @@ func simulator_record_overlap_coverage(state *simulator) {
 	any_recovery := false
 	for index := range state.Replicas {
 		switch state.Replicas[index].Status {
-		case vsr.Status_Transition:
+		case vsr.STATUS_TRANSITION:
 			any_transition = true
-		case vsr.Status_View_Change:
+		case vsr.STATUS_VIEW_CHANGE:
 			any_view_change = true
-		case vsr.Status_Recovery:
+		case vsr.STATUS_RECOVERY:
 			any_recovery = true
 		}
 	}
@@ -1770,7 +1770,7 @@ func simulator_record_coverage(state *simulator) {
 	// sometimes does not (the default shared-clock runs), so the model is genuinely exercised.
 	invariant.Dot_Product("sim.clock.skew_observed",
 		invariant.Sometimes(
-			simulator_clock_skew(state) > time.Moment(5)*time.Moment(time.Millisecond),
+			simulator_clock_skew(state) > time.Moment(5)*time.Moment(time.MILLISECOND),
 			"replica clocks skewed past five milliseconds"))
 	// A transient clock fault must sometimes be active (the skew sweep injects them) and
 	// sometimes not, so the fault path is witnessed both ways across the sweep.
@@ -1901,7 +1901,7 @@ func simulator_believed_primary(state *simulator) (identifier vsr.Replica_Identi
 			continue
 		}
 		replica := &state.Replicas[index]
-		if replica.Status != vsr.Status_Normal {
+		if replica.Status != vsr.STATUS_NORMAL {
 			continue
 		}
 		if replica.Epoch != state.Epoch {
@@ -1990,7 +1990,7 @@ func simulator_check_single_primary(state *simulator) {
 			continue
 		}
 		replica := &state.Replicas[index]
-		if replica.Status != vsr.Status_Normal {
+		if replica.Status != vsr.STATUS_NORMAL {
 			continue
 		}
 		if replica.Identifier != acting_primary(replica) {
@@ -2181,43 +2181,43 @@ func configuration_strings(configuration vsr.Configuration) (ids []string) {
 // Message_kind_name renders a kind as its name, falling back to the integer for an unknown value.
 func message_kind_name(kind vsr.Message_Kind) (name string) {
 	switch kind {
-	case vsr.Message_Kind_Request:
+	case vsr.MESSAGE_KIND_REQUEST:
 		return "Request"
-	case vsr.Message_Kind_Prepare:
+	case vsr.MESSAGE_KIND_PREPARE:
 		return "Prepare"
-	case vsr.Message_Kind_Prepare_Ok:
+	case vsr.MESSAGE_KIND_PREPARE_OK:
 		return "Prepare_Ok"
-	case vsr.Message_Kind_Commit:
+	case vsr.MESSAGE_KIND_COMMIT:
 		return "Commit"
-	case vsr.Message_Kind_Start_View_Change:
+	case vsr.MESSAGE_KIND_START_VIEW_CHANGE:
 		return "Start_View_Change"
-	case vsr.Message_Kind_Do_View_Change:
+	case vsr.MESSAGE_KIND_DO_VIEW_CHANGE:
 		return "Do_View_Change"
-	case vsr.Message_Kind_Start_View:
+	case vsr.MESSAGE_KIND_START_VIEW:
 		return "Start_View"
-	case vsr.Message_Kind_Recovery:
+	case vsr.MESSAGE_KIND_RECOVERY:
 		return "Recovery"
-	case vsr.Message_Kind_Recovery_Response:
+	case vsr.MESSAGE_KIND_RECOVERY_RESPONSE:
 		return "Recovery_Response"
-	case vsr.Message_Kind_Get_State:
+	case vsr.MESSAGE_KIND_GET_STATE:
 		return "Get_State"
-	case vsr.Message_Kind_New_State:
+	case vsr.MESSAGE_KIND_NEW_STATE:
 		return "New_State"
-	case vsr.Message_Kind_Reply:
+	case vsr.MESSAGE_KIND_REPLY:
 		return "Reply"
-	case vsr.Message_Kind_Predict_Request:
+	case vsr.MESSAGE_KIND_PREDICT_REQUEST:
 		return "Predict_Request"
-	case vsr.Message_Kind_Predict_Response:
+	case vsr.MESSAGE_KIND_PREDICT_RESPONSE:
 		return "Predict_Response"
-	case vsr.Message_Kind_Reconfiguration:
+	case vsr.MESSAGE_KIND_RECONFIGURATION:
 		return "Reconfiguration"
-	case vsr.Message_Kind_Start_Epoch:
+	case vsr.MESSAGE_KIND_START_EPOCH:
 		return "Start_Epoch"
-	case vsr.Message_Kind_Epoch_Started:
+	case vsr.MESSAGE_KIND_EPOCH_STARTED:
 		return "Epoch_Started"
-	case vsr.Message_Kind_New_Epoch:
+	case vsr.MESSAGE_KIND_NEW_EPOCH:
 		return "New_Epoch"
-	case vsr.Message_Kind_Check_Epoch:
+	case vsr.MESSAGE_KIND_CHECK_EPOCH:
 		return "Check_Epoch"
 	}
 	return fmt.Sprintf("Kind(%d)", int(kind))
@@ -2226,15 +2226,15 @@ func message_kind_name(kind vsr.Message_Kind) (name string) {
 // Status_name renders a status as its name, falling back to the integer for an unknown value.
 func status_name(status vsr.Status) (name string) {
 	switch status {
-	case vsr.Status_Normal:
+	case vsr.STATUS_NORMAL:
 		return "Normal"
-	case vsr.Status_View_Change:
+	case vsr.STATUS_VIEW_CHANGE:
 		return "View_Change"
-	case vsr.Status_Recovery:
+	case vsr.STATUS_RECOVERY:
 		return "Recovery"
-	case vsr.Status_Transition:
+	case vsr.STATUS_TRANSITION:
 		return "Transition"
-	case vsr.Status_Shutdown:
+	case vsr.STATUS_SHUTDOWN:
 		return "Shutdown"
 	}
 	return fmt.Sprintf("Status(%d)", int(status))

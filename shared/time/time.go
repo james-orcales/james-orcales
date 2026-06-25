@@ -16,29 +16,29 @@ type Moment int64
 // Duration is a span of nanoseconds (TigerBeetle's stdx.Duration).
 type Duration int64
 
-// Nanosecond is the unit a Duration counts in.
-const Nanosecond Duration = 1
+// NANOSECOND is the unit a Duration counts in.
+const NANOSECOND Duration = 1
 
-// Microsecond is a thousand nanoseconds.
-const Microsecond = Nanosecond * 1000
+// MICROSECOND is a thousand nanoseconds.
+const MICROSECOND = NANOSECOND * 1000
 
-// Millisecond is a thousand microseconds.
-const Millisecond = Microsecond * 1000
+// MILLISECOND is a thousand microseconds.
+const MILLISECOND = MICROSECOND * 1000
 
-// Second is a thousand milliseconds.
-const Second = Millisecond * 1000
+// SECOND is a thousand milliseconds.
+const SECOND = MILLISECOND * 1000
 
-// Minute is sixty seconds.
-const Minute = Second * 60
+// MINUTE is sixty seconds.
+const MINUTE = SECOND * 60
 
-// Hour is sixty minutes.
-const Hour = Minute * 60
+// HOUR is sixty minutes.
+const HOUR = MINUTE * 60
 
-// Day is twenty-four hours.
-const Day = Hour * 24
+// DAY is twenty-four hours.
+const DAY = HOUR * 24
 
-// Week is seven days.
-const Week = Day * 7
+// WEEK is seven days.
+const WEEK = DAY * 7
 
 // Clock is the injected time source — the Go translation of TigerBeetle's `Time`
 // vtable, expressed as closures so the backend is chosen by value. It is read-only:
@@ -95,17 +95,17 @@ func Virtual_Clock_To_Clock(virtual Virtual_Clock) (clock Clock, tick func()) {
 	return clock, func() { ticks++ }
 }
 
-// Skew_Kind_Linear models constant drift: A nanoseconds of skew per tick plus an
+// SKEW_KIND_LINEAR models constant drift: A nanoseconds of skew per tick plus an
 // initial B (TimeSim OffsetType.linear, A*x + B).
-const Skew_Kind_Linear Skew_Kind = 0
+const SKEW_KIND_LINEAR Skew_Kind = 0
 
-// Skew_Kind_Periodic models a sinusoidal wobble of amplitude A over a period of B
+// SKEW_KIND_PERIODIC models a sinusoidal wobble of amplitude A over a period of B
 // ticks (TimeSim OffsetType.periodic, A*sin(x*2pi/B)).
-const Skew_Kind_Periodic Skew_Kind = 1
+const SKEW_KIND_PERIODIC Skew_Kind = 1
 
-// Skew_Kind_Step models a discontinuous jump of A after B ticks — an NTP correction
+// SKEW_KIND_STEP models a discontinuous jump of A after B ticks — an NTP correction
 // or operator clock change (TimeSim OffsetType.step).
-const Skew_Kind_Step Skew_Kind = 2
+const SKEW_KIND_STEP Skew_Kind = 2
 
 // Skew_Kind selects which clock-deviation model Skew builds.
 type Skew_Kind uint8
@@ -125,7 +125,7 @@ type Skew_Input struct {
 // Skew builds the Offset described by input.
 func Skew(input Skew_Input) (offset Offset) {
 	switch input.Kind {
-	case Skew_Kind_Periodic:
+	case SKEW_KIND_PERIODIC:
 		return func(ticks int64) (skew Duration) {
 			// A zero period is a degenerate sinusoid; report no skew rather than divide
 			// (or take a remainder) by zero.
@@ -145,7 +145,7 @@ func Skew(input Skew_Input) (offset Offset) {
 			})
 			return Duration(fixedpoint.Whole(wobble))
 		}
-	case Skew_Kind_Step:
+	case SKEW_KIND_STEP:
 		return func(ticks int64) (skew Duration) {
 			if ticks > input.B {
 				return input.A

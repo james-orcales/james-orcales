@@ -19,9 +19,9 @@ func Test_Sim_Timeout(t *testing.T) {
 			t.Fatalf("timeout error: %v", err)
 		}
 		fired_at = clock.Now_Monotonic()
-	}, 5*time.Nanosecond)
+	}, 5*time.NANOSECOND)
 
-	driver.Run_For(10 * time.Nanosecond)
+	driver.Run_For(10 * time.NANOSECOND)
 
 	if fired_at != 5 {
 		t.Fatalf("timeout fired at %d, want 5", fired_at)
@@ -92,7 +92,7 @@ func Test_Sim_Accept(t *testing.T) {
 		accepted = socket
 	}, listener)
 
-	driver.Run_For(10 * time.Nanosecond)
+	driver.Run_For(10 * time.NANOSECOND)
 
 	if accepted == listener {
 		t.Fatalf("accept yielded the listener descriptor %d", accepted)
@@ -113,7 +113,7 @@ func Test_Sim_Connect(t *testing.T) {
 		connected = socket
 	}, "127.0.0.1", 8123)
 
-	driver.Run_For(10 * time.Nanosecond)
+	driver.Run_For(10 * time.NANOSECOND)
 
 	if connected <= 0 {
 		t.Fatalf("connect yielded %d, want a positive descriptor", connected)
@@ -131,7 +131,7 @@ func Test_Sim_Receive(t *testing.T) {
 		count = bytes
 	}, io.File(1), make([]byte, 64))
 
-	driver.Run_For(10 * time.Nanosecond)
+	driver.Run_For(10 * time.NANOSECOND)
 
 	if count != 64 {
 		t.Fatalf("receive reported %d bytes, want 64", count)
@@ -149,7 +149,7 @@ func Test_Sim_Send(t *testing.T) {
 		count = bytes
 	}, io.File(1), make([]byte, 32))
 
-	driver.Run_For(10 * time.Nanosecond)
+	driver.Run_For(10 * time.NANOSECOND)
 
 	if count != 32 {
 		t.Fatalf("send reported %d bytes, want 32", count)
@@ -169,7 +169,7 @@ func Test_Sim_Close(t *testing.T) {
 		failed = err
 	}, io.File(1))
 
-	driver.Run_For(10 * time.Nanosecond)
+	driver.Run_For(10 * time.NANOSECOND)
 
 	if !closed {
 		t.Fatal("close did not complete")
@@ -208,10 +208,10 @@ func Test_Sim_Cancel(t *testing.T) {
 	loop.Timeout(&completion, func(_ *io.Completion, err error) {
 		fired++
 		got = err
-	}, 5*time.Nanosecond)
+	}, 5*time.NANOSECOND)
 
 	loop.Cancel(&completion)
-	driver.Run_For(10 * time.Nanosecond)
+	driver.Run_For(10 * time.NANOSECOND)
 
 	if fired != 1 {
 		t.Fatalf("callback fired %d times, want exactly 1", fired)
@@ -226,13 +226,13 @@ func Test_Sim_Cancel(t *testing.T) {
 func Test_Sim_Reuse(t *testing.T) {
 	loop, _, _ := sim_loop(0)
 	var completion io.Completion
-	loop.Timeout(&completion, func(_ *io.Completion, err error) {}, 5*time.Nanosecond)
+	loop.Timeout(&completion, func(_ *io.Completion, err error) {}, 5*time.NANOSECOND)
 	defer func() {
 		if recover() == nil {
 			t.Fatal("reusing an in-flight completion must panic")
 		}
 	}()
-	loop.Timeout(&completion, func(_ *io.Completion, err error) {}, 5*time.Nanosecond)
+	loop.Timeout(&completion, func(_ *io.Completion, err error) {}, 5*time.NANOSECOND)
 }
 
 // Test_Sim_Copy verifies submitting a by-value copy of a completion panics, so a copied
@@ -241,15 +241,15 @@ func Test_Sim_Reuse(t *testing.T) {
 func Test_Sim_Copy(t *testing.T) {
 	loop, driver, _ := sim_loop(0)
 	var completion io.Completion
-	loop.Timeout(&completion, func(_ *io.Completion, err error) {}, 5*time.Nanosecond)
-	driver.Run_For(10 * time.Nanosecond)
+	loop.Timeout(&completion, func(_ *io.Completion, err error) {}, 5*time.NANOSECOND)
+	driver.Run_For(10 * time.NANOSECOND)
 	duplicate := completion
 	defer func() {
 		if recover() == nil {
 			t.Fatal("submitting a copied completion must panic")
 		}
 	}()
-	loop.Timeout(&duplicate, func(_ *io.Completion, err error) {}, 5*time.Nanosecond)
+	loop.Timeout(&duplicate, func(_ *io.Completion, err error) {}, 5*time.NANOSECOND)
 }
 
 // Test_Sim_Reentrancy verifies driving the loop from within a completion callback panics,
@@ -259,13 +259,13 @@ func Test_Sim_Reentrancy(t *testing.T) {
 	var completion io.Completion
 	loop.Timeout(&completion, func(_ *io.Completion, err error) {
 		driver.Run()
-	}, 5*time.Nanosecond)
+	}, 5*time.NANOSECOND)
 	defer func() {
 		if recover() == nil {
 			t.Fatal("driving from within a callback must panic")
 		}
 	}()
-	driver.Run_For(10 * time.Nanosecond)
+	driver.Run_For(10 * time.NANOSECOND)
 }
 
 // Test_Sim_Open verifies Open returns a fresh descriptor synchronously.
@@ -324,7 +324,7 @@ func Test_Sim_Accept_Secure(t *testing.T) {
 	loop.Accept_Secure(&completion, func(_ *io.Completion, socket io.File, err error) {
 		accepted = socket
 	}, listener, func() (value any) { return nil })
-	driver.Run_For(16 * time.Nanosecond)
+	driver.Run_For(16 * time.NANOSECOND)
 	if accepted <= 0 {
 		t.Fatalf("secure accept yielded %d, want a positive descriptor", accepted)
 	}
@@ -338,7 +338,7 @@ func Test_Sim_Connect_Secure(t *testing.T) {
 	loop.Connect_Secure(&completion, func(_ *io.Completion, socket io.File, err error) {
 		connected = socket
 	}, "127.0.0.1", 443, "host")
-	driver.Run_For(16 * time.Nanosecond)
+	driver.Run_For(16 * time.NANOSECOND)
 	if connected <= 0 {
 		t.Fatalf("secure connect yielded %d, want a positive descriptor", connected)
 	}
@@ -352,7 +352,7 @@ func Test_Sim_Connect_Insecure(t *testing.T) {
 	loop.Connect_Insecure(&completion, func(_ *io.Completion, socket io.File, err error) {
 		connected = socket
 	}, "127.0.0.1", 443, "host")
-	driver.Run_For(16 * time.Nanosecond)
+	driver.Run_For(16 * time.NANOSECOND)
 	if connected <= 0 {
 		t.Fatalf("insecure connect yielded %d, want a positive descriptor", connected)
 	}
@@ -368,13 +368,13 @@ func Test_Sim_Watch_Signal(t *testing.T) {
 	loop.Watch_Signal(&completion, func(_ *io.Completion, signal io.Signal) {
 		fired++
 		got = signal
-	}, io.Signal_Terminate)
-	driver.Run_For(16 * time.Nanosecond)
+	}, io.SIGNAL_TERMINATE)
+	driver.Run_For(16 * time.NANOSECOND)
 	if fired != 1 {
 		t.Fatalf("signal callback fired %d times, want 1", fired)
 	}
-	if got != io.Signal_Terminate {
-		t.Fatalf("signal = %d, want Signal_Terminate", got)
+	if got != io.SIGNAL_TERMINATE {
+		t.Fatalf("signal = %d, want SIGNAL_TERMINATE", got)
 	}
 }
 
@@ -387,7 +387,7 @@ func Test_Sim_Compute(t *testing.T) {
 	loop.Compute(&completion, func(_ *io.Completion) {
 		fired = true
 	}, func() { ran = true })
-	driver.Run_For(16 * time.Nanosecond)
+	driver.Run_For(16 * time.NANOSECOND)
 	if !ran {
 		t.Fatal("compute work did not run")
 	}
@@ -404,7 +404,7 @@ func Test_Sim_Spawn(t *testing.T) {
 	loop.Spawn(&completion, func(_ *io.Completion, result io.Process_Result, err error) {
 		fired++
 	}, io.Process_Request{Path: "echo"})
-	driver.Run_For(16 * time.Nanosecond)
+	driver.Run_For(16 * time.NANOSECOND)
 	if fired != 1 {
 		t.Fatalf("spawn callback fired %d times, want 1", fired)
 	}

@@ -129,12 +129,12 @@ move to the new view and transfer the most up-to-date log to that predetermined 
 ### Timeout
 
 A backup whose view-change deadline passes in Replica_Tick without contact from the primary
-enters Status_View_Change and broadcasts a Start_View_Change for the next view.
+enters STATUS_VIEW_CHANGE and broadcasts a Start_View_Change for the next view.
 
 ### Start View Change
 
 A replica that sees a Start_View_Change for a view above its own advances to it, enters
-Status_View_Change, and broadcasts its own Start_View_Change for that view.
+STATUS_VIEW_CHANGE, and broadcasts its own Start_View_Change for that view.
 
 ### Quorum
 
@@ -166,19 +166,19 @@ reporter's checkpoint when the prefix was garbage-collected — before it instal
 
 ### Deferred Install
 
-The new primary stays in Status_View_Change and broadcasts no Start_View until it holds the
+The new primary stays in STATUS_VIEW_CHANGE and broadcasts no Start_View until it holds the
 complete selected log; only once the awaited state arrives does it install, return to normal, and
 broadcast Start_View, which it emits exactly once.
 
 ### Start View
 
-The new primary installs the selected log, returns to Status_Normal in the new view, and
+The new primary installs the selected log, returns to STATUS_NORMAL in the new view, and
 broadcasts a Start_View carrying that log so the backups converge on it.
 
 ### Adoption
 
 A backup that receives a Start_View adopts the message's log, view, op, and commit number
-and returns to Status_Normal.
+and returns to STATUS_NORMAL.
 
 ### Commit Preservation
 
@@ -213,7 +213,7 @@ replicas that includes the primary of the highest view among them.
 
 ### Rejoin
 
-A recovered replica adopts the primary's log, op, and commit, returns to Status_Normal in
+A recovered replica adopts the primary's log, op, and commit, returns to STATUS_NORMAL in
 that view, and resumes normal operation.
 
 ### Quiescence

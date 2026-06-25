@@ -57,7 +57,7 @@ func Test_Operating_System_IO_Timeout(t *testing.T) {
 	var completion io.Completion
 	loop.Timeout(&completion, func(_ *io.Completion, err error) {
 		fired = true
-	}, time.Millisecond)
+	}, time.MILLISECOND)
 	driver.Run_Until(func() (finished bool) { return fired })
 	if !fired {
 		t.Fatal("timeout did not fire")
@@ -72,13 +72,13 @@ func Test_Operating_System_IO_Reentrancy(t *testing.T) {
 	var completion io.Completion
 	loop.Timeout(&completion, func(_ *io.Completion, err error) {
 		driver.Run()
-	}, time.Millisecond)
+	}, time.MILLISECOND)
 	defer func() {
 		if recover() == nil {
 			t.Fatal("driving from within a callback must panic")
 		}
 	}()
-	driver.Run_For(50 * time.Millisecond)
+	driver.Run_For(50 * time.MILLISECOND)
 }
 
 // Test_Operating_System_IO_Socket runs a TCP loopback round-trip through the real
@@ -164,10 +164,10 @@ func Test_Operating_System_IO_Cancel(t *testing.T) {
 	loop.Timeout(&completion, func(_ *io.Completion, err error) {
 		fired++
 		got = err
-	}, time.Second)
+	}, time.SECOND)
 
 	loop.Cancel(&completion)
-	driver.Run_For(10 * time.Millisecond)
+	driver.Run_For(10 * time.MILLISECOND)
 
 	if fired != 1 {
 		t.Fatalf("callback fired %d times, want exactly 1", fired)
@@ -198,7 +198,7 @@ func Test_Operating_System_IO_Cancel_Accept(t *testing.T) {
 	}, listener)
 
 	loop.Cancel(&completion)
-	driver.Run_For(10 * time.Millisecond)
+	driver.Run_For(10 * time.MILLISECOND)
 
 	if fired != 1 {
 		t.Fatalf("accept callback fired %d times, want exactly 1", fired)
@@ -348,7 +348,7 @@ func Test_Operating_System_IO_Watch_Signal(t *testing.T) {
 	loop.Watch_Signal(&completion, func(_ *io.Completion, signal io.Signal) {
 		fired++
 		got = signal
-	}, io.Signal_Terminate)
+	}, io.SIGNAL_TERMINATE)
 	if kill_err := syscall.Kill(os.Getpid(), syscall.SIGTERM); kill_err != nil {
 		t.Fatalf("kill: %v", kill_err)
 	}
@@ -357,8 +357,8 @@ func Test_Operating_System_IO_Watch_Signal(t *testing.T) {
 	if fired != 1 {
 		t.Fatalf("signal callback fired %d times, want 1", fired)
 	}
-	if got != io.Signal_Terminate {
-		t.Fatalf("signal = %d, want Signal_Terminate", got)
+	if got != io.SIGNAL_TERMINATE {
+		t.Fatalf("signal = %d, want SIGNAL_TERMINATE", got)
 	}
 }
 

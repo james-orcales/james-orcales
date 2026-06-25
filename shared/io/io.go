@@ -36,11 +36,11 @@ type Socket_Callback func(completion *Completion, socket File, err error)
 // deterministic and OS backends agree on a value without the pure tier importing syscall.
 type Signal int
 
-// Signal_Terminate is the graceful-termination request (SIGTERM on the OS backend).
-const Signal_Terminate Signal = 0
+// SIGNAL_TERMINATE is the graceful-termination request (SIGTERM on the OS backend).
+const SIGNAL_TERMINATE Signal = 0
 
-// Signal_Interrupt is the interactive interrupt (SIGINT on the OS backend).
-const Signal_Interrupt Signal = 1
+// SIGNAL_INTERRUPT is the interactive interrupt (SIGINT on the OS backend).
+const SIGNAL_INTERRUPT Signal = 1
 
 // Signal_Callback receives a delivered signal on the loop thread.
 type Signal_Callback func(completion *Completion, signal Signal)
@@ -351,7 +351,7 @@ type sim struct {
 // nothing can be scripted into it — correctness is asserted by invariants, not by
 // hand-fed outcomes.
 func New_Sim(seed uint64) (loop IO, driver Driver, clock time.Clock) {
-	clock, tick := time.Virtual_Clock_To_Clock(time.Virtual_Clock{Resolution: time.Nanosecond})
+	clock, tick := time.Virtual_Clock_To_Clock(time.Virtual_Clock{Resolution: time.NANOSECOND})
 	state := &sim{
 		Clock:     clock,
 		Tick:      tick,

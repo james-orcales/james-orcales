@@ -48,8 +48,8 @@ pass (the standing "enforce later"); they are the input to a reviewed encoding p
   no sweep invariant.
 - `batch-never-spans-reconfiguration` — spec'd (§Batch Reconfiguration Singleton), unit-tested, no
   sweep invariant.
-- `view-change-suffix-bounded` — `View_Change_Suffix` is *used* (vsr.go:2452) but
-  `len(Log_Suffix) <= View_Change_Suffix` is never asserted.
+- `view-change-suffix-bounded` — `VIEW_CHANGE_SUFFIX` is *used* (vsr.go:2452) but
+  `len(Log_Suffix) <= VIEW_CHANGE_SUFFIX` is never asserted.
 - `status-in-range` / `message-kind-in-range` — no defensive enum-membership check.
 - `request-eventually-commits` / `view-change-eventually-completes` — **true liveness is untested**:
   `specification_test.go:55` checks only *aggregate* "commits make progress across seeds," not
@@ -210,8 +210,8 @@ by coverage axes `sim.result.cached_replies` and `sim.client.unanswered`.
 ### recovery-quiescence — a recovering replica never view-changes
 *Safety · Tier-1 vsr.go:2866 · enforced-inline (regression: Bug 1; seed 1 permanent)*
 
-**Property** — a replica in `Status_Recovery` never enters or participates in a view change.
-**Invariant** — `invariant.Always(Status != Status_Recovery)` in `replica_start_view_change`.
+**Property** — a replica in `STATUS_RECOVERY` never enters or participates in a view change.
+**Invariant** — `invariant.Always(Status != STATUS_RECOVERY)` in `replica_start_view_change`.
 **Angle** — a crashed replica with a wiped log, dragged into a view change, wins the merge with its
 empty log (Bug 1).
 **Why** — an empty log winning a merge drops a committed entry (paper §4.3).
@@ -445,8 +445,8 @@ checkpoint, replay suffix) before serving.
 *Safety · Tier-1 (proposed) · GAP*
 
 **Property** — a `Status` / `Message_Kind` value is always a defined enum member.
-**Invariant** — would be `invariant.Always(s <= Status_Shutdown)` /
-`invariant.Always(k <= Message_Kind_Check_Epoch)`, reach-only Always — deliberately not a
+**Invariant** — would be `invariant.Always(s <= STATUS_SHUTDOWN)` /
+`invariant.Always(k <= MESSAGE_KIND_CHECK_EPOCH)`, reach-only Always — deliberately not a
 `Distinct_Boundary`, whose full-type-range form would gap.
 **Angle** — a corrupted/uninitialised field surfacing during a malformed transition.
 **Why** — an out-of-range discriminant routes a message to the wrong handler.
@@ -454,11 +454,11 @@ checkpoint, replay suffix) before serving.
 ### view-change-suffix-bounded — Do_View_Change suffix is bounded
 *Safety · Tier-1 (proposed) · GAP*
 
-**Property** — a Do_View_Change's `Log_Suffix` never exceeds `View_Change_Suffix` entries.
-**Invariant** — would be `invariant.Always(len(Log_Suffix) <= View_Change_Suffix)`.
+**Property** — a Do_View_Change's `Log_Suffix` never exceeds `VIEW_CHANGE_SUFFIX` entries.
+**Invariant** — would be `invariant.Always(len(Log_Suffix) <= VIEW_CHANGE_SUFFIX)`.
 **Angle** — a reporter with a long log emitting its suffix.
 **Why** — an unbounded suffix defeats §5.3's bounded-report optimization.
-**Status note** — `View_Change_Suffix` is used at vsr.go:2452, never asserted.
+**Status note** — `VIEW_CHANGE_SUFFIX` is used at vsr.go:2452, never asserted.
 
 ## J. Liveness (progress)
 
@@ -496,7 +496,7 @@ harness to stop injecting — a design question for the encoding pass)`
 single
 normal primary.
 **Invariant** — would be an end-of-run check: in the quiescent tail, exactly one replica is a
-`Status_Normal` primary and the rest converge.
+`STATUS_NORMAL` primary and the rest converge.
 **Angle** — repeated view changes / dueling candidates that fail to settle.
 **Why** — a cluster stuck in perpetual view change serves nothing.
 

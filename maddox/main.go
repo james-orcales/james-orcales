@@ -55,9 +55,9 @@ func main() {
 		os.Exit(exit_usage)
 	}
 
-	format := maddox.Output_Format_Table
+	format := maddox.OUTPUT_FORMAT_TABLE
 	if cli.Get_Option(command.Flags, "json").Value.(bool) {
-		format = maddox.Output_Format_Json
+		format = maddox.OUTPUT_FORMAT_JSON
 	}
 	duration_seconds := cli.Get_Option(command.Flags, "duration").Value.(int)
 	runs := cli.Get_Option(command.Flags, "runs").Value.(int)
@@ -69,7 +69,7 @@ func main() {
 	input := &maddox.Main_Input{
 		Commands:       commands,
 		Sampler:        system_sampler(),
-		Duration_Max:   time.Duration(duration_seconds) * time.Second,
+		Duration_Max:   time.Duration(duration_seconds) * time.SECOND,
 		Runs_Max:       runs,
 		Warmup_Count:   warmup,
 		Allow_Failures: allow_failures,

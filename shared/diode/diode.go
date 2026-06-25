@@ -31,7 +31,7 @@ import (
 const default_count = 1000
 
 // How long the drain sleeps on an empty ring when New_Input.Poll_Interval is unset.
-const default_poll_interval = 100 * time.Millisecond
+const default_poll_interval = 100 * time.MILLISECOND
 
 // Caps the capacity of a line buffer returned to the pool, so one giant line cannot
 // bloat every pooled entry (see Go issue 23199).
@@ -40,17 +40,17 @@ const maximum_pooled_buffer = 1 << 16
 // Drop_Cause distinguishes why a line never reached the sink.
 type Drop_Cause int
 
-// Drop_Overflow marks a line lost because the ring lapped: the sink could not keep up.
-const Drop_Overflow Drop_Cause = 0
+// DROP_OVERFLOW marks a line lost because the ring lapped: the sink could not keep up.
+const DROP_OVERFLOW Drop_Cause = 0
 
-// Drop_Rate_Limit marks a line shed by the rate limiter.
-const Drop_Rate_Limit Drop_Cause = 1
+// DROP_RATE_LIMIT marks a line shed by the rate limiter.
+const DROP_RATE_LIMIT Drop_Cause = 1
 
 // Alerter surfaces dropped lines, tagged with their cause; one is installed per diode.
 type Alerter func(missed int, cause Drop_Cause)
 
 // Rate_Limit caps how fast a diode writes to its sink, in bytes per second; lines over the
-// budget are shed (reported Drop_Rate_Limit), never blocked.
+// budget are shed (reported DROP_RATE_LIMIT), never blocked.
 type Rate_Limit struct {
 	// Bytes_Per_Second is the sustained throughput to the sink; zero disables the limiter.
 	Bytes_Per_Second int
@@ -274,7 +274,7 @@ func ring_try_next(writer *Writer) (item *bucket, ok bool) {
 	if sequence > writer.Read_Index {
 		dropped := sequence - writer.Read_Index
 		writer.Read_Index = sequence
-		writer.Alerter(int(dropped), Drop_Overflow)
+		writer.Alerter(int(dropped), DROP_OVERFLOW)
 	}
 	assert(sequence == writer.Read_Index, "diode: delivered off the read cursor")
 	writer.Read_Index++
@@ -320,7 +320,7 @@ func drain_remainder(writer *Writer) {
 func forward(writer *Writer, item *bucket) {
 	assert(item != nil, "diode: forward got a nil bucket")
 	if rate_limit_sheds(writer, len(item.Data)) {
-		writer.Alerter(1, Drop_Rate_Limit)
+		writer.Alerter(1, DROP_RATE_LIMIT)
 	} else {
 		// One Write per line, exactly as a synchronous wrapped writer would have seen.
 		writer.Writer.Write(item.Data)
@@ -348,11 +348,11 @@ func rate_limit_sheds(writer *Writer, size int) (shed bool) {
 	// Cap elapsed at the time to refill a full burst: beyond that the refill is wasted (the
 	// balance is capped at Burst anyway), and the cap keeps elapsed*rate from overflowing
 	// int64 after a long idle gap or against a large monotonic clock reading.
-	full := burst * int64(time.Second) / rate
+	full := burst * int64(time.SECOND) / rate
 	if elapsed > full {
 		elapsed = full
 	}
-	writer.Tokens += elapsed * rate / int64(time.Second)
+	writer.Tokens += elapsed * rate / int64(time.SECOND)
 	if writer.Tokens > burst {
 		writer.Tokens = burst
 	}

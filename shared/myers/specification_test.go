@@ -13,9 +13,9 @@ import (
 // Test_Edit_Stringer verifies String renders kind prefixes and escapes quotes.
 func Test_Edit_Stringer(t *testing.T) {
 	d := myers.Differ{Edits: []myers.Edit{
-		{Kind: myers.Edit_Retain, Data: []rune(`a"b`)},
-		{Kind: myers.Edit_Delete, Data: []rune("x")},
-		{Kind: myers.Edit_Insert, Data: []rune("y")},
+		{Kind: myers.EDIT_RETAIN, Data: []rune(`a"b`)},
+		{Kind: myers.EDIT_DELETE, Data: []rune("x")},
+		{Kind: myers.EDIT_INSERT, Data: []rune("y")},
 	}}
 	if !snap.Snapshot_Is_Equal(snap.Init(` "a\"b"-"x"+"y"`), d.String()) {
 		t.Error("Snapshot mismatch")
