@@ -434,6 +434,54 @@ func self_signed(t *testing.T) (certificate tls.Certificate) {
 	return pair
 }
 
+// Test_Operating_System_IO_Spawn runs real commands through the loop: a success with
+// captured output, and a non-zero exit reported without a start error.
+func Test_Operating_System_IO_Spawn(t *testing.T) {
+	clock, _ := timeos.New_Operating_System_Clock()
+	loop, driver := iodefault.New_Operating_System_IO(clock)
+
+	echo := io.Process_Result{}
+	echoed := false
+	var echo_completion io.Completion
+	loop.Spawn(&echo_completion, func(_ *io.Completion, result io.Process_Result, err error) {
+		if err != nil {
+			t.Errorf("echo spawn: %v", err)
+		}
+		echo = result
+		echoed = true
+	}, io.Process_Request{Path: "/bin/echo", Arguments: []string{"hi"}})
+	driver.Run_For(2 * time.Second)
+
+	if !echoed {
+		t.Fatal("echo did not complete")
+	}
+	if echo.Exit != 0 {
+		t.Fatalf("echo exit = %d, want 0", echo.Exit)
+	}
+	if string(echo.Output) != "hi\n" {
+		t.Fatalf("echo output = %q, want hi", echo.Output)
+	}
+
+	fail := io.Process_Result{}
+	failed := false
+	var fail_completion io.Completion
+	loop.Spawn(&fail_completion, func(_ *io.Completion, result io.Process_Result, err error) {
+		if err != nil {
+			t.Errorf("false spawn: %v", err)
+		}
+		fail = result
+		failed = true
+	}, io.Process_Request{Path: "/bin/sh", Arguments: []string{"-c", "exit 1"}})
+	driver.Run_For(2 * time.Second)
+
+	if !failed {
+		t.Fatal("false did not complete")
+	}
+	if fail.Exit != 1 {
+		t.Fatalf("false exit = %d, want 1", fail.Exit)
+	}
+}
+
 // Returns a probably-free TCP port by binding and releasing one through the standard
 // library, used only to pick a target for the backend under test.
 func free_port(t *testing.T) (port int) {

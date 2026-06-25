@@ -4,10 +4,12 @@
 package io
 
 import (
+	"bytes"
 	"crypto/tls"
 	"errors"
 	"net"
 	"os"
+	"os/exec"
 	"os/signal"
 	"runtime"
 	"strconv"
@@ -236,6 +238,99 @@ func operating_system_wire_effects(state *operating_system, loop *io.IO) {
 	loop.Compute = func(completion *io.Completion, callback io.Compute_Callback, work func()) {
 		operating_system_compute_submit(state, completion, callback, work)
 	}
+	loop.Spawn = func(
+		completion *io.Completion, callback io.Process_Callback, request io.Process_Request,
+	) {
+		operating_system_spawn(state, completion, callback, request)
+	}
+}
+
+// Runs request's command on its own goroutine and posts the finished result to the loop.
+func operating_system_spawn(
+	state *operating_system, completion *io.Completion,
+	callback io.Process_Callback, request io.Process_Request,
+) {
+	operating_system_wake_ensure(state)
+	if !state.Wake_Active {
+		completion.Callback = func() {
+			callback(completion, io.Process_Result{},
+				errors.New("io: wake pipe unavailable"))
+		}
+		state.Completed = append(state.Completed, completion)
+		return
+	}
+	go process_run(state, completion, callback, request)
+}
+
+// Executes the command and posts its result — or a start failure — back on the loop.
+func process_run(
+	state *operating_system, completion *io.Completion,
+	callback io.Process_Callback, request io.Process_Request,
+) {
+	start := state.Host.Now_Monotonic()
+	result, err := process_execute(request)
+	result.Usage.Wall = time.Duration(int64(state.Host.Now_Monotonic()) - int64(start))
+	operating_system_post(state, completion, func() {
+		callback(completion, result, err)
+	})
+}
+
+// Runs the command to completion, capturing stdout and stderr. A non-zero exit is
+// reported in the result with a nil error; a failure to start is the error.
+func process_execute(request io.Process_Request) (result io.Process_Result, err error) {
+	command := exec.Command(request.Path, request.Arguments...)
+	command.Dir = request.Working_Directory
+	command.Env = request.Environment
+	if len(request.Input) > 0 {
+		command.Stdin = bytes.NewReader(request.Input)
+	}
+	output := bytes.Buffer{}
+	error_output := bytes.Buffer{}
+	command.Stdout = &output
+	command.Stderr = &error_output
+	run_err := command.Run()
+	result.Output = output.Bytes()
+	result.Error_Output = error_output.Bytes()
+	if command.ProcessState != nil {
+		result.Exit = command.ProcessState.ExitCode()
+		result.Usage = process_usage(command.ProcessState)
+	}
+	return process_execute_result(result, run_err)
+}
+
+// Distinguishes a non-zero exit (reported in the result, nil error) from a real
+// start/run failure (returned as the error).
+func process_execute_result(
+	result io.Process_Result, run_err error,
+) (final io.Process_Result, err error) {
+	if run_err == nil {
+		return result, nil
+	}
+	var exit_err *exec.ExitError
+	if errors.As(run_err, &exit_err) {
+		return result, nil
+	}
+	return result, run_err
+}
+
+// Extracts CPU and peak-RSS accounting from a finished process's state.
+func process_usage(state *os.ProcessState) (usage io.Process_Usage) {
+	usage.CPU_User = time.Duration(int64(state.UserTime()))
+	usage.CPU_System = time.Duration(int64(state.SystemTime()))
+	rusage, ok := state.SysUsage().(*syscall.Rusage)
+	if !ok {
+		return usage
+	}
+	usage.RSS_Bytes_Max = process_rss_bytes(int64(rusage.Maxrss))
+	return usage
+}
+
+// Normalizes a rusage Maxrss to bytes: Darwin reports bytes, Linux reports KiB.
+func process_rss_bytes(maxrss int64) (size int64) {
+	if runtime.GOOS == "linux" {
+		return maxrss * 1024
+	}
+	return maxrss
 }
 
 // Wires the file operations — read, write, open, create — onto loop.

@@ -336,6 +336,20 @@ func Test_Sim_Compute(t *testing.T) {
 	}
 }
 
+// Test_Sim_Spawn verifies a spawn delivers a result on the loop.
+func Test_Sim_Spawn(t *testing.T) {
+	loop, driver, _ := sim_loop(0)
+	fired := 0
+	var completion io.Completion
+	loop.Spawn(&completion, func(_ *io.Completion, result io.Process_Result, err error) {
+		fired++
+	}, io.Process_Request{Path: "echo"})
+	driver.Run_For(16 * time.Nanosecond)
+	if fired != 1 {
+		t.Fatalf("spawn callback fired %d times, want 1", fired)
+	}
+}
+
 // Builds a simulated loop, its driver, and the read-only clock, seeded by seed. A test
 // holds only the IO, the driver, and the clock — never the sim, which New_Sim keeps to
 // itself so the run stays a pure function of the seed.

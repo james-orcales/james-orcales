@@ -44,6 +44,50 @@ type Signal_Callback func(completion *Completion, signal Signal)
 // Compute_Callback fires on the loop thread once offloaded work has finished.
 type Compute_Callback func(completion *Completion)
 
+// Process_Request describes a subprocess to run: the executable, its arguments and
+// environment, the working directory, and the bytes fed to its standard input.
+type Process_Request struct {
+	// Path is the executable to run.
+	Path string
+	// Arguments are the process arguments, excluding the program name.
+	Arguments []string
+	// Environment is the process environment; nil inherits the parent's.
+	Environment []string
+	// Working_Directory is the process's directory; empty uses the current one.
+	Working_Directory string
+	// Input is the bytes written to the process's standard input.
+	Input []byte
+}
+
+// Process_Usage is the resource accounting a finished process reports.
+type Process_Usage struct {
+	// Wall is the elapsed wall-clock time the process ran.
+	Wall time.Duration
+	// CPU_User is the user-mode CPU time consumed.
+	CPU_User time.Duration
+	// CPU_System is the kernel-mode CPU time consumed.
+	CPU_System time.Duration
+	// RSS_Bytes_Max is the peak resident set size in bytes.
+	RSS_Bytes_Max int64
+}
+
+// Process_Result is a finished process's outcome: its exit code, captured output, and
+// resource usage.
+type Process_Result struct {
+	// Exit is the process exit code; zero on success.
+	Exit int
+	// Output is the captured standard output.
+	Output []byte
+	// Error_Output is the captured standard error.
+	Error_Output []byte
+	// Usage is the process's resource accounting.
+	Usage Process_Usage
+}
+
+// Process_Callback receives a finished process's result, or an error when the process
+// could not be started at all.
+type Process_Callback func(completion *Completion, result Process_Result, err error)
+
 // Cancelled is the error a callback receives when its operation was cancelled before
 // it completed. Cancelling still delivers the callback exactly once — with this error
 // instead of a result — so every submission resolves.
@@ -52,6 +96,10 @@ var Cancelled = errors.New("io: operation cancelled")
 // The number of virtual grains a simulated operation may take to complete, drawn from
 // the seed so the completion order varies per run while staying reproducible.
 const sim_latency_grains = 8
+
+// One in this many simulated spawns exits non-zero, so a seed sweep exercises both the
+// success and the failure path without a scripted outcome.
+const sim_spawn_fail_grains = 4
 
 // Completion is the caller-owned storage for one in-flight operation —
 // TigerBeetle's IO.Completion. The caller allocates it, so the loop never does, and
@@ -152,6 +200,11 @@ type IO struct {
 	// CPU-heavy pure work leaves the single writer while staying in the completion model.
 	// work must touch only memory the loop leaves alone until callback fires.
 	Compute func(completion *Completion, callback Compute_Callback, work func())
+	// Spawn runs the command in request to completion off the loop thread, firing
+	// callback on the loop with its exit code, captured output, and resource usage — the
+	// subprocess counterpart of the other completion ops. The simulator draws the exit
+	// code from the seed and returns no output, since scripted output is disallowed.
+	Spawn func(completion *Completion, callback Process_Callback, request Process_Request)
 }
 
 // Driver advances the loop — the only capability that moves time and delivers
@@ -320,6 +373,30 @@ func sim_wire_effects(state *sim, loop *IO) {
 	loop.Compute = func(completion *Completion, callback Compute_Callback, work func()) {
 		sim_compute(state, completion, callback, work)
 	}
+	loop.Spawn = func(
+		completion *Completion, callback Process_Callback, request Process_Request,
+	) {
+		sim_spawn(state, completion, callback, request)
+	}
+}
+
+// Delivers a subprocess result drawn from the seed: the exit code varies (usually zero,
+// occasionally non-zero for fault coverage) with no captured output — scripted output is
+// disallowed, so the seed decides success or failure, not a canned payload.
+func sim_spawn(
+	state *sim, completion *Completion, callback Process_Callback, request Process_Request,
+) {
+	exit := 0
+	if prng.Generator_Below(&state.Generator, sim_spawn_fail_grains) == 0 {
+		exit = 1
+	}
+	sim_submit(state, completion, sim_latency(state), func() {
+		if completion.Cancelled {
+			callback(completion, Process_Result{}, Cancelled)
+			return
+		}
+		callback(completion, Process_Result{Exit: exit}, nil)
+	})
 }
 
 // Panics on a violated invariant, fail-closed — a tripped assert is always a bug in
