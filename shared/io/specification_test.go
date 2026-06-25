@@ -214,6 +214,128 @@ func Test_Sim_Reuse(t *testing.T) {
 	loop.Timeout(&completion, func(_ *io.Completion, err error) {}, 5*time.Nanosecond)
 }
 
+// Test_Sim_Open verifies Open returns a fresh descriptor synchronously.
+func Test_Sim_Open(t *testing.T) {
+	loop, _, _ := sim_loop(0)
+	file, err := loop.Open("path")
+	if err != nil {
+		t.Fatalf("open error: %v", err)
+	}
+	if file <= 0 {
+		t.Fatalf("open yielded %d, want a positive descriptor", file)
+	}
+}
+
+// Test_Sim_Create verifies Create returns a fresh writable descriptor synchronously.
+func Test_Sim_Create(t *testing.T) {
+	loop, _, _ := sim_loop(0)
+	file, err := loop.Create("path")
+	if err != nil {
+		t.Fatalf("create error: %v", err)
+	}
+	if file <= 0 {
+		t.Fatalf("create yielded %d, want a positive descriptor", file)
+	}
+}
+
+// Test_Sim_Peer_Address verifies Peer_Address reports an address for a live descriptor
+// and the empty address for an unknown one.
+func Test_Sim_Peer_Address(t *testing.T) {
+	loop, _, _ := sim_loop(0)
+	listener, _ := loop.Listen("127.0.0.1", 0)
+	address, err := loop.Peer_Address(listener)
+	if err != nil {
+		t.Fatalf("peer address error: %v", err)
+	}
+	if address == "" {
+		t.Fatal("peer address of a live descriptor must not be empty")
+	}
+	if unknown, _ := loop.Peer_Address(0); unknown != "" {
+		t.Fatalf("peer address of an unknown descriptor = %q, want empty", unknown)
+	}
+}
+
+// Test_Sim_Accept_Secure verifies a secure accept yields a distinct descriptor.
+func Test_Sim_Accept_Secure(t *testing.T) {
+	loop, driver, _ := sim_loop(0)
+	listener, _ := loop.Listen("127.0.0.1", 0)
+	accepted := io.File(-1)
+	var completion io.Completion
+	loop.Accept_Secure(&completion, func(_ *io.Completion, socket io.File, err error) {
+		accepted = socket
+	}, listener, func() (value any) { return nil })
+	driver.Run_For(16 * time.Nanosecond)
+	if accepted <= 0 {
+		t.Fatalf("secure accept yielded %d, want a positive descriptor", accepted)
+	}
+}
+
+// Test_Sim_Connect_Secure verifies a secure connect yields a connected descriptor.
+func Test_Sim_Connect_Secure(t *testing.T) {
+	loop, driver, _ := sim_loop(0)
+	connected := io.File(-1)
+	var completion io.Completion
+	loop.Connect_Secure(&completion, func(_ *io.Completion, socket io.File, err error) {
+		connected = socket
+	}, "127.0.0.1", 443, "host")
+	driver.Run_For(16 * time.Nanosecond)
+	if connected <= 0 {
+		t.Fatalf("secure connect yielded %d, want a positive descriptor", connected)
+	}
+}
+
+// Test_Sim_Connect_Insecure verifies an insecure connect yields a connected descriptor.
+func Test_Sim_Connect_Insecure(t *testing.T) {
+	loop, driver, _ := sim_loop(0)
+	connected := io.File(-1)
+	var completion io.Completion
+	loop.Connect_Insecure(&completion, func(_ *io.Completion, socket io.File, err error) {
+		connected = socket
+	}, "127.0.0.1", 443, "host")
+	driver.Run_For(16 * time.Nanosecond)
+	if connected <= 0 {
+		t.Fatalf("insecure connect yielded %d, want a positive descriptor", connected)
+	}
+}
+
+// Test_Sim_Watch_Signal verifies a watched signal fires its callback once with that
+// signal.
+func Test_Sim_Watch_Signal(t *testing.T) {
+	loop, driver, _ := sim_loop(0)
+	got := io.Signal(-1)
+	fired := 0
+	var completion io.Completion
+	loop.Watch_Signal(&completion, func(_ *io.Completion, signal io.Signal) {
+		fired++
+		got = signal
+	}, io.Signal_Terminate)
+	driver.Run_For(16 * time.Nanosecond)
+	if fired != 1 {
+		t.Fatalf("signal callback fired %d times, want 1", fired)
+	}
+	if got != io.Signal_Terminate {
+		t.Fatalf("signal = %d, want Signal_Terminate", got)
+	}
+}
+
+// Test_Sim_Compute verifies offloaded work runs and its callback fires on the loop.
+func Test_Sim_Compute(t *testing.T) {
+	loop, driver, _ := sim_loop(0)
+	ran := false
+	fired := false
+	var completion io.Completion
+	loop.Compute(&completion, func(_ *io.Completion) {
+		fired = true
+	}, func() { ran = true })
+	driver.Run_For(16 * time.Nanosecond)
+	if !ran {
+		t.Fatal("compute work did not run")
+	}
+	if !fired {
+		t.Fatal("compute callback did not fire")
+	}
+}
+
 // Builds a simulated loop, its driver, and the read-only clock, seeded by seed. A test
 // holds only the IO, the driver, and the clock — never the sim, which New_Sim keeps to
 // itself so the run stays a pure function of the seed.

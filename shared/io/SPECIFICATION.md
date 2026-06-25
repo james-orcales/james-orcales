@@ -59,3 +59,43 @@ Cancelled error rather than a result, so every submission resolves and nothing l
 Submitting a completion that is still in flight panics: one Completion backs at most one
 operation at a time, so reusing it before its callback fires fails loudly rather than
 corrupting the queue.
+
+### Open
+
+Open returns a fresh descriptor synchronously; opening never blocks, so it carries no
+completion, and a later Read of the descriptor delivers bytes on the loop.
+
+### Create
+
+Create returns a fresh writable descriptor synchronously, distinct from every other; a
+later Write persists bytes to it on the loop.
+
+### Peer Address
+
+Peer_Address reports a connected descriptor's remote address synchronously — a
+getpeername has no completion; an unknown descriptor yields the empty address.
+
+### Accept Secure
+
+A secure accept completes after the drawn latency and yields a new descriptor, modeling
+one inbound TLS connection; the simulator has no TLS, so it drives the plaintext socket.
+
+### Connect Secure
+
+A secure connect completes after the drawn latency and yields a fresh connected
+descriptor; the simulator models it like Connect, since it has no TLS.
+
+### Connect Insecure
+
+An insecure connect behaves identically to a secure one in the simulator, which has no
+TLS: it yields a fresh connected descriptor after the drawn latency.
+
+### Watch Signal
+
+A watched signal arrives at a seed-drawn grain and fires its callback exactly once with
+that signal — the operating-system event modeled as a seed outcome, not scripted.
+
+### Compute
+
+Offloaded work runs and its completion fires on a later drain, on the loop's own
+timeline; the simulator runs it inline so the result stays reproducible.
