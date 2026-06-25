@@ -640,17 +640,23 @@ MAX, 0, 1, and 2.
 
 ### Field Composition
 
-A struct type's bundle calls the _Invariants of every field whose type has one — a preset for a
-primitive, the type's own bundle otherwise. A struct with an immediate sync.Mutex or sync.RWMutex
-field is exempt.
+A struct type's bundle calls the _Invariants of every value field whose type has one — a preset for
+a primitive, the type's own bundle otherwise. An optional (nil-able) pointer field is exempt; gate
+its present-only properties with Imply. An immediate sync.Mutex or sync.RWMutex field is exempt.
 
 ### Parameter Assertion
 
 A named free function asserts every input parameter whose type has an _Invariants, in the leading
-block right after the output defer: a flat call, or a range loop over a slice's elements. A bundle,
-method, or entry point is exempt.
+block right after the output defer: a flat call, or a range loop over a slice's elements. A bundle
+or a method is exempt.
 
 ### Output Assertion
 
 A named free function whose return values include one with an _Invariants asserts each in a defer
 that is the first statement of the body.
+
+### Recorder Registration
+
+A non-exempt, non-main package's TestMain body is exactly invariant.Run_Test_Main(m) — nothing
+more, nothing less — so its suite registers with the coverage recorder. Any other body, or no
+TestMain at all, is banned.

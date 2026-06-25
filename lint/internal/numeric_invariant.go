@@ -971,12 +971,14 @@ func struct_field_invariant(
 	field_type ast.Expr, type_parameters map[string]bool,
 ) (name string, preset bool) {
 
-	core := field_type
-	star, is_star := core.(*ast.StarExpr)
-	if is_star {
-		core = star.X
+	// A pointer field is optional: it may be nil, so a straight-line bundle cannot
+	// unconditionally compose it (the invariant recorder bans the guarding if). Its
+	// present-only properties belong in an Imply, not a mandatory composition call.
+	_, is_pointer := field_type.(*ast.StarExpr)
+	if is_pointer {
+		return "", false
 	}
-	switch typed := core.(type) {
+	switch typed := field_type.(type) {
 	case *ast.ArrayType:
 		if typed.Len != nil {
 			return "", false
@@ -1113,7 +1115,10 @@ func function_file_diagnostics(file parsed_file, defined map[string]bool) (diags
 		if function.Body == nil {
 			continue
 		}
-		if function_is_exempt(function.Name.Name) {
+		// A bundle asserting its own value would be self-referential. Methods are
+		// excluded above; main and init have no parameters or results to assert,
+		// and TestMain lives in a _test.go file the whole check already skips.
+		if type_invariants_is_bundle_name(function.Name.Name) {
 			continue
 		}
 		diags = append(diags, function_diagnostics(&function_input{
@@ -1121,24 +1126,6 @@ func function_file_diagnostics(file parsed_file, defined map[string]bool) (diags
 		})...)
 	}
 	return diags
-}
-
-// Reports whether a function name is exempt: an entry point, init, or a bundle
-// (a bundle asserting its own value/namespace would be self-referential).
-func function_is_exempt(name string) (yes bool) {
-	if name == "main" {
-		return true
-	}
-	if name == "Main" {
-		return true
-	}
-	if name == "TestMain" {
-		return true
-	}
-	if name == "init" {
-		return true
-	}
-	return type_invariants_is_bundle_name(name)
 }
 
 // Carries one function and the module bundle index.
@@ -1504,4 +1491,208 @@ func function_form(requirement assertion_requirement) (form string) {
 			requirement.Expected + "(x, ...) }"
 	}
 	return requirement.Expected + "(" + requirement.Subject + ", ...)"
+}
+
+// Flags every non-exempt, non-main package whose test binary fails to wire the
+// invariant coverage recorder. invariant.Run_Test_Main is the canonical TestMain
+// body; without it a package's mandated _Invariants bundles run but their
+// Sometimes axes and Always reachability are never verified — the discipline
+// silently evaporates. Package-level because the TestMain may live in any of the
+// directory's test files, so the whole directory is judged together. Shares the
+// type-invariant rule's opt-out.
+func check_recorder_test_main(parsed_files []parsed_file, exempt []string) (diags []Diagnostic) {
+	for _, group := range recorder_test_main_groups(parsed_files) {
+		if type_invariants_path_exempt(group.Directory, exempt) {
+			continue
+		}
+		// A main package holds the binary's wiring, not testable invariant logic.
+		if group.Is_Main {
+			continue
+		}
+		diags = append(diags, recorder_group_diagnostics(group)...)
+	}
+	return diags
+}
+
+// One directory's recorder-relevant facts, gathered across all its files.
+type recorder_group struct {
+	Directory           string
+	Is_Main             bool
+	Has_Test            bool
+	Source_Anchor       token.Position
+	Test_Anchor         token.Position
+	Test_Main_Found     bool
+	Test_Main_Canonical bool
+	Test_Main_Position  token.Position
+}
+
+// Buckets parsed files by directory, preserving first-seen order (parsed_files is
+// path-sorted) so diagnostics are deterministic without a separate sort.
+func recorder_test_main_groups(parsed_files []parsed_file) (groups []*recorder_group) {
+	index := map[string]*recorder_group{}
+	for _, pf := range parsed_files {
+		directory := path.Dir(pf.Path)
+		group := index[directory]
+		if group == nil {
+			group = &recorder_group{Directory: directory}
+			index[directory] = group
+			groups = append(groups, group)
+		}
+		recorder_group_absorb(group, pf)
+	}
+	return groups
+}
+
+// Folds one file's facts into its directory group: a test file may carry the
+// TestMain and is the preferred anchor; a source file marks the main package.
+func recorder_group_absorb(group *recorder_group, file parsed_file) {
+	position := file.File_Set.Position(file.File.Name.Pos())
+	if strings.HasSuffix(file.Path, "_test.go") {
+		group.Has_Test = true
+		if group.Test_Anchor.Line == 0 {
+			group.Test_Anchor = position
+		}
+		recorder_group_scan_test_main(group, file)
+		return
+	}
+	if file.File.Name.Name == "main" {
+		group.Is_Main = true
+	}
+	if group.Source_Anchor.Line == 0 {
+		group.Source_Anchor = position
+	}
+}
+
+// Records the directory's first real TestMain — name TestMain with a *testing.M
+// parameter — and whether it is the exact canonical shape.
+func recorder_group_scan_test_main(group *recorder_group, file parsed_file) {
+	if group.Test_Main_Found {
+		return
+	}
+	for _, declaration := range file.File.Decls {
+		function, is_function := declaration.(*ast.FuncDecl)
+		if !is_function {
+			continue
+		}
+		if function.Name.Name != "TestMain" {
+			continue
+		}
+		parameter := recorder_test_main_parameter(function)
+		if parameter == "" {
+			continue
+		}
+		group.Test_Main_Found = true
+		group.Test_Main_Position = file.File_Set.Position(function.Name.Pos())
+		group.Test_Main_Canonical = recorder_test_main_canonical(function, parameter)
+		return
+	}
+}
+
+// Returns the name of TestMain's *testing.M parameter, or "" when it has none —
+// a TestMain without one is not the suite entry point.
+func recorder_test_main_parameter(function *ast.FuncDecl) (name string) {
+	if function.Type.Params == nil {
+		return ""
+	}
+	for _, field := range function.Type.Params.List {
+		star, is_star := field.Type.(*ast.StarExpr)
+		if !is_star {
+			continue
+		}
+		selector, is_selector := star.X.(*ast.SelectorExpr)
+		if !is_selector {
+			continue
+		}
+		qualifier, is_qualifier := selector.X.(*ast.Ident)
+		if !is_qualifier {
+			continue
+		}
+		if qualifier.Name != "testing" {
+			continue
+		}
+		if selector.Sel.Name != "M" {
+			continue
+		}
+		if len(field.Names) == 0 {
+			continue
+		}
+		return field.Names[0].Name
+	}
+	return ""
+}
+
+// Reports whether the function is the one allowed shape exactly:
+// func TestMain(m *testing.M) { invariant.Run_Test_Main(m) } — its parameter
+// named m and its body that sole call, nothing more.
+func recorder_test_main_canonical(
+	function *ast.FuncDecl, parameter string,
+) (canonical bool) {
+
+	if parameter != "m" {
+		return false
+	}
+	if function.Body == nil {
+		return false
+	}
+	if len(function.Body.List) != 1 {
+		return false
+	}
+	expression, is_expression := function.Body.List[0].(*ast.ExprStmt)
+	if !is_expression {
+		return false
+	}
+	call, is_call := expression.X.(*ast.CallExpr)
+	if !is_call {
+		return false
+	}
+	return recorder_canonical_call(call)
+}
+
+// Reports whether the call is exactly invariant.Run_Test_Main(m).
+func recorder_canonical_call(call *ast.CallExpr) (canonical bool) {
+	selector, is_selector := call.Fun.(*ast.SelectorExpr)
+	if !is_selector {
+		return false
+	}
+	qualifier, is_qualifier := selector.X.(*ast.Ident)
+	if !is_qualifier {
+		return false
+	}
+	if qualifier.Name != "invariant" {
+		return false
+	}
+	if selector.Sel.Name != "Run_Test_Main" {
+		return false
+	}
+	if len(call.Args) != 1 {
+		return false
+	}
+	argument, is_argument := call.Args[0].(*ast.Ident)
+	if !is_argument {
+		return false
+	}
+	return argument.Name == "m"
+}
+
+// Emits the one diagnostic a non-exempt package's wiring gap warrants: a missing
+// TestMain, or a TestMain that is not the one allowed shape.
+func recorder_group_diagnostics(group *recorder_group) (diags []Diagnostic) {
+	if !group.Test_Main_Found {
+		anchor := group.Source_Anchor
+		if group.Has_Test {
+			anchor = group.Test_Anchor
+		}
+		return []Diagnostic{{
+			Position: anchor,
+			Message: group.Directory +
+				" must wire invariant.Run_Test_Main in a TestMain",
+		}}
+	}
+	if !group.Test_Main_Canonical {
+		return []Diagnostic{{
+			Position: group.Test_Main_Position,
+			Message:  "TestMain must be exactly: invariant.Run_Test_Main(m)",
+		}}
+	}
+	return nil
 }
