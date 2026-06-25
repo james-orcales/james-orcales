@@ -5537,13 +5537,13 @@ func parse_configuration_cases() (cases []parse_configuration_case) {
 // unrelated absent key. Marshaled from a map so each key name lives in one place.
 func configuration_document(overrides map[string]any) (document string) {
 	fields := map[string]any{
-		"shared_component":          "example.com/lib",
-		"instrumentation_packages":  []string{},
-		"pure_but_indeterministic":  []string{},
-		"word_replacements":         map[string][]string{"id": {"identifier"}},
-		"ignore":                    []string{},
-		"invariant_exempt_packages": []string{},
-		"opt_out_recursion_ban":     []string{},
+		"shared_component":                   "example.com/lib",
+		"instrumentation_packages":           []string{},
+		"pure_but_indeterministic_packages":  []string{},
+		"word_replacements":                  map[string][]string{"id": {"identifier"}},
+		"ignore":                             []string{},
+		"opt_out_assertion_mandate_packages": []string{},
+		"opt_out_recursion_ban":              []string{},
 	}
 	for key, value := range overrides {
 		if value == nil {

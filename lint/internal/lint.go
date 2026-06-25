@@ -570,7 +570,7 @@ type Configuration struct {
 	// (the main package, a default tier) are never deterministic and need no entry.
 	// Opt-out; empty holds every pure package. An entry matching no pure package is
 	// reported as a coverage gap (a typo or stale path that releases nothing).
-	Pure_But_Indeterministic []string `json:"pure_but_indeterministic"`
+	Pure_But_Indeterministic []string `json:"pure_but_indeterministic_packages"`
 	// Word_Replacements drives the vocabulary check: each tokenized, lowercased
 	// word maps to its preferred replacements (id -> identifier). An empty list
 	// bans the word with no rename suggestion (util, len); an absent key is left
@@ -593,10 +593,10 @@ type Configuration struct {
 	// "shared/**" its whole subtree, and "**" the whole tree — the wholesale off
 	// switch for a staged rollout. Opt-in; empty exempts nothing, so the rule binds
 	// every package by default.
-	Invariant_Exempt_Packages []string `json:"invariant_exempt_packages"`
+	Invariant_Exempt_Packages []string `json:"opt_out_assertion_mandate_packages"`
 	// Recursion_Exempt names packages exempt from the self- and mutual-recursion
 	// ban — a hand-written recursive-descent parser, whose recursion is intentional.
-	// Exact-path globs, like invariant_exempt_packages; opt-in, empty exempts nothing.
+	// Exact-path globs, like opt_out_assertion_mandate_packages; opt-in, empty exempts nothing.
 	Recursion_Exempt []string `json:"opt_out_recursion_ban"`
 }
 
@@ -801,10 +801,10 @@ func Parse_Configuration(data []byte) (configuration *Configuration, err error) 
 	required_keys := []string{
 		"shared_component",
 		"instrumentation_packages",
-		"pure_but_indeterministic",
+		"pure_but_indeterministic_packages",
 		"word_replacements",
 		"ignore",
-		"invariant_exempt_packages",
+		"opt_out_assertion_mandate_packages",
 		"opt_out_recursion_ban",
 	}
 	known := map[string]bool{}
@@ -853,9 +853,15 @@ func validate_configuration_globs(configuration *Configuration) (err error) {
 		Globs []string
 	}{
 		{Name: "ignore", Globs: configuration.Ignore},
-		{Name: "pure_but_indeterministic", Globs: configuration.Pure_But_Indeterministic},
+		{
+			Name:  "pure_but_indeterministic_packages",
+			Globs: configuration.Pure_But_Indeterministic,
+		},
 		{Name: "instrumentation_packages", Globs: configuration.Instrumentation_Packages},
-		{Name: "invariant_exempt_packages", Globs: configuration.Invariant_Exempt_Packages},
+		{
+			Name:  "opt_out_assertion_mandate_packages",
+			Globs: configuration.Invariant_Exempt_Packages,
+		},
 		{Name: "opt_out_recursion_ban", Globs: configuration.Recursion_Exempt},
 	} {
 		if err = validate_glob_patterns(list.Name, list.Globs); err != nil {
@@ -1391,7 +1397,7 @@ type Check_File_Input struct {
 	Instrumentation []string
 	// Word_Replacements is the lint.json vocabulary table; nil disables the check.
 	Word_Replacements map[string][]string
-	// Invariant_Exempt is the lint.json invariant_exempt_packages list, exempting
+	// Invariant_Exempt is the lint.json opt_out_assertion_mandate_packages list, exempting
 	// the type-invariant check.
 	Invariant_Exempt []string
 	// Recursion_Exempt is the lint.json opt_out_recursion_ban list: directories
@@ -1898,7 +1904,7 @@ type Check_File_System_Input struct {
 	// every tier. Applied once here against Tracked; with no Tracked set (the
 	// non-git fallback) it is inert, like every other tracked-set filter.
 	Ignore []string
-	// Invariant_Exempt_Packages is the lint.json invariant_exempt_packages list
+	// Invariant_Exempt_Packages is the lint.json opt_out_assertion_mandate_packages list
 	// forwarded from Main_Input: workspace-root-relative directories whose files
 	// the type-invariant check skips. Threaded per-file to make_check_type_invariants.
 	Invariant_Exempt_Packages []string
@@ -2004,9 +2010,12 @@ func check_configuration_directory_slash(input *Check_File_System_Input) (diags 
 	directories := check_file_system_directory_index(input.Tracked)
 	lists := []configuration_glob_list{
 		{Name: "ignore", Globs: input.Ignore},
-		{Name: "pure_but_indeterministic", Globs: input.Pure_But_Indeterministic},
+		{Name: "pure_but_indeterministic_packages", Globs: input.Pure_But_Indeterministic},
 		{Name: "instrumentation_packages", Globs: input.Instrumentation_Packages},
-		{Name: "invariant_exempt_packages", Globs: input.Invariant_Exempt_Packages},
+		{
+			Name:  "opt_out_assertion_mandate_packages",
+			Globs: input.Invariant_Exempt_Packages,
+		},
 		{Name: "opt_out_recursion_ban", Globs: input.Recursion_Exempt},
 	}
 	for _, list := range lists {
@@ -2064,7 +2073,7 @@ type check_file_system_doctrine_input struct {
 	// run. The deterministic coverage check needs it to tell an out-of-scope entry
 	// (a real package this run never parsed) from a genuine stale one.
 	Scan_Prefixes []string
-	// Invariant_Exempt_Packages is the lint.json invariant_exempt_packages list:
+	// Invariant_Exempt_Packages is the lint.json opt_out_assertion_mandate_packages list:
 	// workspace-root-relative directories whose files the type-invariant check skips.
 	Invariant_Exempt_Packages []string
 	// Recursion_Exempt is the lint.json opt_out_recursion_ban list: directories
@@ -4953,12 +4962,12 @@ func check_input_struct_declaration_is_invariant(
 }
 
 // Builds the type-invariant check, closing over the
-// lint.json invariant_exempt_packages list. Every in-scope type must be followed
+// lint.json opt_out_assertion_mandate_packages list. Every in-scope type must be followed
 // directly by its bundle function (the forward half), and every bundle-named
 // function must itself sit directly below its type (the orphan half). The rule is
 // AST-only and per-file: a type and its bundle are adjacent declarations in one
 // file, so no cross-file or type resolution is needed. Test files are exempt, as
-// is any file matching an invariant_exempt_packages glob.
+// is any file matching an opt_out_assertion_mandate_packages glob.
 func make_check_type_invariants(invariant_exempt []string) (check check_function) {
 	return func(
 		file_set *token.FileSet, file *ast.File, _ []byte,
@@ -8099,7 +8108,7 @@ type check_deterministic_input struct {
 	Parsed_Files []parsed_file
 	// Components is the resolved module index.
 	Components *component_index
-	// Exceptions is lint.json's pure_but_indeterministic: the pure packages opted
+	// Exceptions is lint.json's pure_but_indeterministic_packages: the pure packages opted
 	// out of the tier, each an exact-path glob (* spans one segment, ** many).
 	Exceptions []string
 	// Instrumentation is lint.json's instrumentation_packages: write-only imports a
@@ -8115,7 +8124,7 @@ type check_deterministic_input struct {
 // bans on the constructs whose result is decided outside the program — a
 // goroutine, a channel, a select, a float, a time/context/sync import — and may
 // import only other deterministic first-party packages. The tier is the default,
-// so purity alone opts a package in; a pure_but_indeterministic entry opts one
+// so purity alone opts a package in; a pure_but_indeterministic_packages entry opts one
 // back out, matched as an exact-path glob. Impure packages (the main package, a
 // default tier) are never deterministic and need no listing. The bans bind a
 // covered package's _test.go files too.
@@ -8194,7 +8203,7 @@ func deterministic_pure_directories(
 // Bundles check_deterministic_coverage's inputs: the entry list and the scan
 // prefixes both being string slices repeat a type, which the input-struct rule folds.
 type check_deterministic_coverage_input struct {
-	// Exceptions is lint.json's pure_but_indeterministic, reported verbatim on a gap.
+	// Exceptions is lint.json's pure_but_indeterministic_packages, reported verbatim on a gap.
 	Exceptions []string
 	// Matched marks, by raw entry, which entries matched a pure package.
 	Matched map[string]bool
@@ -8203,7 +8212,7 @@ type check_deterministic_coverage_input struct {
 	Scan_Prefixes []string
 }
 
-// Reports any pure_but_indeterministic entry naming a concrete path that matched no
+// Reports any pure_but_indeterministic_packages entry naming a concrete path that matched no
 // pure package — a typo or stale path the author believes opts a package out while
 // it stays held to the tier. A root-anchored wildcard names no path and is exempt
 // (it binds once a pure package appears). An entry outside the scan prefixes is
@@ -8230,9 +8239,11 @@ func check_deterministic_coverage(
 		diags = append(diags, Diagnostic{
 			Position: token.Position{Filename: "<lint.json>"},
 			Name:     "deterministic",
-			Want:     "every pure_but_indeterministic entry matches a pure package",
+			Want: "every pure_but_indeterministic_packages entry matches " +
+				"a pure package",
 			Message: fmt.Sprintf(
-				"pure_but_indeterministic: no pure package found at %q", entry),
+				"pure_but_indeterministic_packages: no pure package found at %q",
+				entry),
 			Tier: 1,
 		})
 	}
