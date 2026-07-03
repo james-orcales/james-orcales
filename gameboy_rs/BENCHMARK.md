@@ -274,13 +274,23 @@ disjoint fields and share only the commutative interrupt-OR, so they collapse in
 reconstruction. Byte-exact across 253 ROMs; synth:nop 1.60→1.42s, cpu_instrs to **13.3×**.
 
 **How low it goes.** Past this the profile is *diffuse* — `mmu` tick ≈25%, `Gpu` logic ≈20%, CPU
-interpreter ≈21%, rendering ≈7% — no concentrated lever, because what remains is the genuine
-value-threaded work of reconstructing the machine value every cycle plus the fetch/decode/match
-dispatch. The dialect's match-over-enums + free-function + ≤70-line style makes that dispatch
-inherently heavier than rboy's inlined mutating giant-match, so it is a floor a byte-exact
-value-threaded interpreter can't cross. Further hot/cold splitting (`Gpu` config, the `Mmu` behind
-a `Cpu`-level arena handle, stack-array scanlines) would shave a few percent each toward ~9–10×,
-but ~5× is below the floor of this architecture. The high-leverage, clean wins are banked.
+interpreter ≈21%, rendering ≈7% — no concentrated lever. What remains is the genuine cost of
+**reconstructing the machine value every cycle** (the same fetch/decode/execute/tick work rboy
+does, but produced by value instead of mutated in place). That is the floor a byte-exact
+value-threaded interpreter can't cross. (An earlier draft blamed the floor on the dialect's
+"match-over-enums" dispatch; that was wrong — an `enum` + `match` is a branch, *faster* than
+rboy's `Box<dyn MBC>` vtable call, not heavier. The measured floor is the per-cycle
+value-reconstruction, not the dispatch shape.)
+
+The remaining levers were *probed and found not to be clean wins*: (1) the `Gpu`'s "cold" config
+is read *hot* during rendering (`tilebase`, `sprite_size`, scroll, palettes, per-scanline), so
+boxing it trades reconstruction-move savings for a per-read `deref` — net a wash; (2) the `Mmu` is
+reconstructed every cycle, so `Box`/arena both force a per-cycle allocation (or a deep clone to
+get an owned value back) — the big lever does not exist; (3) the scanline row is threaded by
+value, so a stack array trades the heap alloc for an inline move. So **~13× is effectively the
+clean floor of this architecture** — the high-leverage, byte-exact wins (region paging, four
+`Box`es, tick fusion) are banked, and going lower means accepting read regressions or a large
+rewrite that still lands well above 5×.
 
 ## Reproduce
 
