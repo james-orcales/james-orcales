@@ -1,0 +1,14 @@
+[package]
+name = "gameboy_diff"
+version = "0.1.0"
+edition = "2024"
+
+# The differential harness deliberately does NOT opt into the workspace dialect
+# lints: it is the measuring instrument, not the artifact under test, so it may use
+# `mut`, shared buffers, and the original rboy freely. `lint_rs` is never pointed at
+# it. It drives the original rboy (headless library, no GUI feature) and gameboy_rs
+# on the same ROM and diffs their framebuffer hash and serial output.
+
+[dependencies]
+rboy = { path = "../third_party/rboy" }
+gameboy_rs = { path = "../gameboy_rs" }
