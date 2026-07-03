@@ -44,7 +44,8 @@ original by a wide margin, but too noisy (±0.5–0.9 percentage points on the
 deltas) to tell the three fixes apart from each other.
 
 ```
-$ maddox cli_bench_before cli_bench_after cli_bench_arena cli_bench_arena_plain -warmup=3 -runs=30 -duration=25
+$ maddox cli_bench_before cli_bench_after cli_bench_arena cli_bench_arena_plain -warmup=3 -runs=30 \
+-duration=25
 Machine: Apple M4 (arm64)
   cores: 4 P + 6 E = 10 logical   freq: ?   ram: 16GiB   storage: 460GiB
   L1: 128KiB   L2: 16MiB   OS: macOS 26.2   kernel: Darwin 25.2.0
