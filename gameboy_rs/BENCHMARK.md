@@ -135,6 +135,49 @@ function, yet still byte-exact with the mutable original across 866 ROMs. The di
 trades ~20× runtime and ~2× memory for total value-semantics and the absence of an
 entire class of aliasing/mutation bugs.
 
+## Raising the ceiling: arena-backed, allocate-once pages
+
+The tax above is the naïve representation (R1): every write rebuilds the whole region.
+The dialect's blessed `gen_arena` (`insert`/`update`/`with` — already whitelisted, **no
+new primitive, no change to `lint_rs` or `shared_rs`**) lets a region instead be a grid
+of fixed-size pages, each a slot inserted once at construction; a write rebuilds only
+the one page (O(page), not O(region)). Applied to the two write-heavy hot regions — the
+framebuffer (rebuilt per scanline) and WRAM — with `PAGE = 64`, this stays byte-exact
+across 241 ROMs and 100% lint-clean (every `mut` remains inside `shared_rs`; gameboy_rs
+has zero `mut` tokens still):
+
+| ROM | R1 wall | paged wall | Δ wall | Δ instructions | Δ cycles | peak RSS |
+| --- | ------- | ---------- | ------ | -------------- | -------- | ------------- |
+| cpu_instrs (CPU) | 2.65s | **2.37s** | −10.6% | −6.4% | −10.7% | 13.0 → 16.9 MiB |
+| dmg_sound (APU)  | 1.67s | **1.49s** | −10.8% | −4.4% | −11.4% | ~unchanged |
+| cgb-acid2 (CGB)  | 2.68s | **2.58s** | −3.7%  |  ~0%   | −2.8%  | ~unchanged |
+
+**~10–11% off the wall time on CPU/APU, ~4% on render-bound CGB** — still ~18× rboy (the
+goal was never to beat it, only to lift the dialect's own floor).
+
+**The tell is that instructions barely move while cycles drop ~11%.** Paging copies far
+fewer bytes per write, so the win is almost entirely reduced memory traffic / cache
+thrash, not fewer retired instructions — attacking exactly the "cycles outran
+instructions" effect noted above. Which pins down the honest limit: **the region
+rebuilds were only a minority of the tax.** The instruction-count gap to rboy (~11–13×)
+hardly changes, because the bulk is *structural* — threading the whole machine value
+through every step — and no arena touches that without abandoning the value-semantics
+model the experiment exists to test.
+
+Two more findings:
+- **Allocate-once costs memory.** Keeping every page resident plus the per-page arena
+  `Slot` overhead (generation + tag) raised CPU peak RSS ~30% (13 → 17 MiB) — a
+  deliberate time-for-memory trade.
+- **Page write-dominated regions; keep read-dominated ones flat.** Converting VRAM (read
+  per-pixel during rendering) *measured a regression* — CGB 2.55 → 2.58s, the per-read
+  visitor cost outweighing the rare tile-write savings — so it was reverted. That rule
+  is the real takeaway; cart RAM (write-heavy but idle in these ROMs) is left convertible
+  for save-heavy titles.
+
+Bottom line: within the existing rules, no new primitive, byte-exact — the paged
+representation recovers ~10% of the wall-time tax and, more usefully, proves the
+remaining ~18× is structural value-threading, not `memcpy`.
+
 ## Reproduce
 
 ```

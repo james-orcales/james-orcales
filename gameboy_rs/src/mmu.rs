@@ -11,6 +11,7 @@ use crate::gpu;
 use crate::keypad;
 use crate::mbc;
 use crate::memory;
+use crate::region;
 use crate::serial;
 use crate::sound;
 use crate::timer;
@@ -32,7 +33,7 @@ pub enum Dma_Type {
 /// cartridge, and the CGB banking/DMA/speed state.
 #[derive(Clone, Debug)]
 pub struct Mmu {
-    pub wram: Vec<u8>,
+    pub wram: region::Region,
     pub zram: Vec<u8>,
     pub hdma: Vec<u8>,
     pub inte: u8,
@@ -59,7 +60,7 @@ pub struct Mmu {
 /// run in Classic mode.
 pub fn new(cart: mbc::Mbc, mode: gbmode::Gb_Mode) -> Result<Mmu, String> {
     let bus = Mmu {
-        wram: random_wram(42, WRAM_SIZE),
+        wram: region::from_bytes(&random_wram(42, WRAM_SIZE)),
         zram: vec![0; ZRAM_SIZE],
         hdma: vec![0; 4],
         inte: 0,
@@ -132,9 +133,9 @@ pub fn read_byte(mmu: &Mmu, address: u16) -> u8 {
         0x0000..=0x7FFF => mbc::read_rom(&mmu.mbc, address),
         0x8000..=0x9FFF => gpu::read_byte(&mmu.gpu, address),
         0xA000..=0xBFFF => mbc::read_ram(&mmu.mbc, address),
-        0xC000..=0xCFFF | 0xE000..=0xEFFF => mmu.wram[address as usize & 0x0FFF],
+        0xC000..=0xCFFF | 0xE000..=0xEFFF => region::read(&mmu.wram, address as usize & 0x0FFF),
         0xD000..=0xDFFF | 0xF000..=0xFDFF => {
-            mmu.wram[(mmu.wrambank * 0x1000) | (address as usize & 0x0FFF)]
+            region::read(&mmu.wram, (mmu.wrambank * 0x1000) | (address as usize & 0x0FFF))
         }
         0xFE00..=0xFE9F => gpu::read_byte(&mmu.gpu, address),
         0xFEA0..=0xFEFF => 0xFF,
@@ -181,11 +182,11 @@ pub fn write_byte(mmu: Mmu, address: u16, value: u8) -> Mmu {
         0x8000..=0x9FFF => Mmu { gpu: gpu::write_byte(mmu.gpu, address, value), ..mmu },
         0xA000..=0xBFFF => Mmu { mbc: mbc::write_ram(mmu.mbc, address, value), ..mmu },
         0xC000..=0xCFFF | 0xE000..=0xEFFF => {
-            Mmu { wram: memory::write(&mmu.wram, address as usize & 0x0FFF, value), ..mmu }
+            Mmu { wram: region::write(mmu.wram, address as usize & 0x0FFF, value), ..mmu }
         }
         0xD000..=0xDFFF | 0xF000..=0xFDFF => {
             let index = (mmu.wrambank * 0x1000) | (address as usize & 0x0FFF);
-            Mmu { wram: memory::write(&mmu.wram, index, value), ..mmu }
+            Mmu { wram: region::write(mmu.wram, index, value), ..mmu }
         }
         0xFE00..=0xFE9F => Mmu { gpu: gpu::write_byte(mmu.gpu, address, value), ..mmu },
         0xFEA0..=0xFEFF => mmu,

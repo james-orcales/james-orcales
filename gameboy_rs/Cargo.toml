@@ -3,5 +3,11 @@ name = "gameboy_rs"
 version = "0.1.0"
 edition = "2024"
 
+# The one sanctioned dependency: shared_rs::gen_arena is the dialect's blessed
+# mutation primitive, used by the paged `region` module to shrink the per-write
+# region rebuild from O(n) to O(page). Every `mut` stays inside shared_rs.
+[dependencies]
+shared_rs = { path = "../shared_rs" }
+
 [lints]
 workspace = true

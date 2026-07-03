@@ -18,6 +18,7 @@ pub mod mbc;
 pub mod memory;
 pub mod mmu;
 pub mod printer;
+pub mod region;
 pub mod register;
 pub mod serial;
 pub mod sound;

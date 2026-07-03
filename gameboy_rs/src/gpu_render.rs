@@ -9,7 +9,7 @@
 
 use crate::gbmode;
 use crate::gpu;
-use crate::memory;
+use crate::region;
 use std::cmp;
 use std::collections;
 
@@ -48,7 +48,7 @@ fn draw_line(gpu: gpu::Gpu) -> gpu::Gpu {
     let row = sprite_row(&advanced, bg_row(&advanced, winy_line));
     let bytes = expand_row(&row);
     let base = advanced.line as usize * gpu::SCREEN_W * 3;
-    gpu::Gpu { data: memory::write_slice(&advanced.data, base, &bytes), ..advanced }
+    gpu::Gpu { data: region::write_slice(advanced.data, base, &bytes), ..advanced }
 }
 
 // The window's source line for this scanline (or -1 when inactive) and the updated
