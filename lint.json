@@ -17,7 +17,8 @@
           "install_golang.sh",
           "build.go",
           "home/**",
-          "documentation/youtube/**"
+          "documentation/youtube/**",
+          "gameboy_emulator/test_roms/**"
   ],
   "opt_out_recursion_ban": [],
   "opt_out_assertion_mandate_packages": [
