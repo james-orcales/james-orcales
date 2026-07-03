@@ -17,6 +17,7 @@ exclude = [
         "third_party/jj",
         "third_party/ripgrep",
         "third_party/resonate",
+        "third_party/bombadil",
 ]
 
 # rustc's casing lints are redundant with (and contradict) the dialect's

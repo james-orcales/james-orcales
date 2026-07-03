@@ -1,0 +1,40 @@
+[package]
+name = "bombadil"
+version.workspace = true
+edition.workspace = true
+
+[lib]
+name = "bombadil"
+path = "src/lib.rs"
+
+[dependencies]
+anyhow = { workspace = true, features = ["backtrace"] }
+boa_engine.workspace = true
+bombadil-schema = { path = "../bombadil-schema" }
+bombadil-ltl = { path = "../bombadil-ltl" }
+hotpath.workspace = true
+include_dir.workspace = true
+log.workspace = true
+oxc = { workspace = true, features = ["codegen", "semantic", "transformer"] }
+oxc_resolver.workspace = true
+oxc_str.workspace = true
+oxc_traverse.workspace = true
+owo-colors = { workspace = true, features = ["supports-colors"] }
+num-traits.workspace = true
+rand.workspace = true
+rand_distr.workspace = true
+rand_regex.workspace = true
+regex.workspace = true
+regex-syntax.workspace = true
+serde = { workspace = true, features = ["derive"] }
+serde_json.workspace = true
+supports-color.workspace = true
+tempfile.workspace = true
+tokio = { workspace = true, features = ["full"] }
+url = { workspace = true, features = ["serde"] }
+willow-tree = { path = "../willow-tree" }
+
+[dev-dependencies]
+indoc.workspace = true
+insta.workspace = true
+hegeltest.workspace = true
