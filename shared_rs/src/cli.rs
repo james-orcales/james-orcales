@@ -25,6 +25,7 @@
 use std::collections;
 use std::iter;
 
+use crate::gen_arena;
 use crate::levenshtein;
 
 /// The value an argument or flag carries: the default before parsing, the
@@ -362,7 +363,7 @@ fn program_parse_tokens(
     // directly rather than being cloned a second time from a borrow.
     let Command { label, description, arguments, flags } = command;
     let named = assign_named(program, arguments, flags, tokens)?;
-    let global_flags = named.global_flags.clone();
+    let global_flags = drain_arena(&named.global_flags);
     let (final_command, filled) = assign_positionals(label, description, named)?;
     validate_required(&final_command, &filled)?;
     Ok(Parse_Outcome { command: final_command, global_flags })
@@ -396,29 +397,26 @@ fn unknown_command_error(program: &Program, name: &str) -> Parse_Error {
 
 /// Where an option was found: which of the three label namespaces (a
 /// command's arguments, its flags, or the program's global flags) and its
-/// index within that namespace.
+/// handle within that namespace's arena.
 enum Option_Site {
-    Argument(usize),
-    Flag(usize),
-    Global(usize),
+    Argument(gen_arena::Handle),
+    Flag(gen_arena::Handle),
+    Global(gen_arena::Handle),
 }
 
-/// The running state of [`assign_named`]'s left-to-right token walk. The
-/// command's arguments/flags and the program's global flags start as clones
-/// and stay untouched throughout the walk — read for lookups and type
-/// checks, but never rebuilt per token. Each scalar assignment instead
-/// queues into `pending`, applied to all three in one pass per namespace
-/// once the walk finishes ([`apply_pending_updates`]): rebuilding an
-/// `O(n)`-sized `Vec<Parameter>` on every one of `m` tokens costs `O(n·m)`,
-/// while collecting and applying once costs `O(n+m)`.
+/// The running state of [`assign_named`]'s left-to-right token walk.
+/// Arguments/flags/global-flags are each seeded once into a
+/// [`gen_arena::Arena`] ([`seed_arena`]) instead of a `Vec<Parameter>`, so a
+/// scalar assignment can call [`gen_arena::update`] directly — an `O(1)`
+/// in-place overwrite through the handle, keeping it valid — rather than
+/// rebuilding the whole `O(n)`-sized vector on every one of `m` tokens.
 struct Named_State {
-    pub arguments: Vec<Parameter>,
-    pub flags: Vec<Parameter>,
-    pub global_flags: Vec<Parameter>,
+    pub arguments: gen_arena::Arena<Parameter>,
+    pub flags: gen_arena::Arena<Parameter>,
+    pub global_flags: gen_arena::Arena<Parameter>,
     pub filled: Vec<String>,
     pub positionals: Vec<(usize, String)>,
     pub slice_contributions: Vec<(usize, String)>,
-    pub pending: Vec<(Option_Site, Parameter_Value)>,
 }
 
 /// Applies every `-label=value` token to its option and records the bare
@@ -431,55 +429,61 @@ fn assign_named(
     program: &Program, arguments: Vec<Parameter>, flags: Vec<Parameter>, tokens: &[String],
 ) -> Result<Named_State, Parse_Error> {
     let initial = Named_State {
-        arguments,
-        flags,
-        global_flags: program.global_flags.clone(),
+        arguments: seed_arena(arguments),
+        flags: seed_arena(flags),
+        global_flags: seed_arena(program.global_flags.clone()),
         filled: Vec::new(),
         positionals: Vec::new(),
         slice_contributions: Vec::new(),
-        pending: Vec::new(),
     };
-    let walked = tokens.iter().enumerate().try_fold(initial, assign_named_token)?;
-    Ok(apply_pending_updates(walked))
+    tokens.iter().enumerate().try_fold(initial, assign_named_token)
 }
 
-/// Applies every scalar assignment collected during the token walk in one
-/// pass per namespace (arguments, flags, global flags) instead of the
-/// `O(n)` rebuild [`assign_scalar_site`] used to do on every single token.
-fn apply_pending_updates(state: Named_State) -> Named_State {
-    let grouped = partition_pending(state.pending);
-    Named_State {
-        arguments: apply_updates(state.arguments, grouped.arguments),
-        flags: apply_updates(state.flags, grouped.flags),
-        global_flags: apply_updates(state.global_flags, grouped.global_flags),
-        pending: Vec::new(),
-        ..state
-    }
+/// Inserts every parameter into a fresh arena, in order — index `i`'s handle
+/// is always `{index: i, generation: 0}`, since nothing is ever removed
+/// within a parse call, so a handle need never be threaded separately from
+/// its position.
+fn seed_arena(parameters: Vec<Parameter>) -> gen_arena::Arena<Parameter> {
+    parameters.into_iter().fold(gen_arena::new(), insert_into_arena)
 }
 
-/// Pending updates grouped by namespace — the shape [`apply_pending_updates`]
-/// applies in one pass each.
-struct Pending_Updates {
-    pub arguments: Vec<(usize, Parameter_Value)>,
-    pub flags: Vec<(usize, Parameter_Value)>,
-    pub global_flags: Vec<(usize, Parameter_Value)>,
+fn insert_into_arena(arena: gen_arena::Arena<Parameter>, parameter: Parameter) -> gen_arena::Arena<Parameter> {
+    let (arena, _handle) = gen_arena::insert(arena, parameter);
+    arena
 }
 
-fn partition_pending(pending: Vec<(Option_Site, Parameter_Value)>) -> Pending_Updates {
-    let empty = Pending_Updates { arguments: Vec::new(), flags: Vec::new(), global_flags: Vec::new() };
-    pending.into_iter().fold(empty, partition_pending_step)
+/// The handle for the parameter at `index`, valid for the lifetime of a
+/// single parse call's arena (see [`seed_arena`]).
+fn handle_at(index: usize) -> gen_arena::Handle {
+    gen_arena::Handle { index: index as u32, generation: 0 }
 }
 
-fn partition_pending_step(updates: Pending_Updates, (site, value): (Option_Site, Parameter_Value)) -> Pending_Updates {
-    match site {
-        Option_Site::Argument(index) => {
-            Pending_Updates { arguments: append_update(updates.arguments, index, value), ..updates }
-        }
-        Option_Site::Flag(index) => Pending_Updates { flags: append_update(updates.flags, index, value), ..updates },
-        Option_Site::Global(index) => {
-            Pending_Updates { global_flags: append_update(updates.global_flags, index, value), ..updates }
-        }
-    }
+/// Reads the parameter behind `handle`. Every handle used here was minted by
+/// this same parse call's [`seed_arena`] and nothing is ever removed before
+/// it's read, so a miss is unreachable.
+fn arena_read<Result_Type>(
+    arena: &gen_arena::Arena<Parameter>, handle: gen_arena::Handle, reader: impl FnOnce(&Parameter) -> Result_Type,
+) -> Result_Type {
+    gen_arena::with(arena, handle, reader).unwrap_or_else(|| unreachable!("parse-time arena never removes a slot"))
+}
+
+/// Every label in `arena`, in insertion order — the candidate set for a
+/// did-you-mean suggestion and the raw material for a label lookup.
+fn arena_labels(arena: &gen_arena::Arena<Parameter>) -> Vec<String> {
+    (0..gen_arena::len(arena)).map(|index| arena_read(arena, handle_at(index), |p| p.label.clone())).collect()
+}
+
+/// Finds the handle of the parameter labeled `label`, scanning in insertion
+/// order.
+fn find_handle(arena: &gen_arena::Arena<Parameter>, label: &str) -> Option<gen_arena::Handle> {
+    (0..gen_arena::len(arena)).map(handle_at).find(|&handle| arena_read(arena, handle, |p| p.label == label))
+}
+
+/// Reads every parameter back out of `arena`, in insertion order — the
+/// mutation-free stand-in for handing back ownership of the underlying
+/// storage once the arena's per-token `O(1)` updates are done.
+fn drain_arena(arena: &gen_arena::Arena<Parameter>) -> Vec<Parameter> {
+    (0..gen_arena::len(arena)).map(|index| arena_read(arena, handle_at(index), |p| p.clone())).collect()
 }
 
 fn append_update(
@@ -490,8 +494,8 @@ fn append_update(
 
 /// Applies every pending `(index, value)` update to `parameters` in one pass,
 /// via a `HashMap` lookup per element — `O(n + u)` for `n` parameters and `u`
-/// updates, rather than the `O(n)`-per-update cost of rebuilding the whole
-/// vector once per pending change.
+/// updates, used by [`fill_scalar_positionals`] to batch positional fills
+/// (typically few, unlike the named-option hot path the arena now handles).
 fn apply_updates(parameters: Vec<Parameter>, updates: Vec<(usize, Parameter_Value)>) -> Vec<Parameter> {
     let by_index: collections::HashMap<usize, Parameter_Value> = updates.into_iter().collect();
     parameters
@@ -550,23 +554,17 @@ fn parse_named_token(token: &str) -> Result<(String, String, bool), Parse_Error>
 /// Finds the option named by a `-label` token across the command's arguments,
 /// then its flags, then the program's global flags.
 fn find_option_site(state: &Named_State, label: &str) -> Option<Option_Site> {
-    find_index(&state.arguments, label)
+    find_handle(&state.arguments, label)
         .map(Option_Site::Argument)
-        .or_else(|| find_index(&state.flags, label).map(Option_Site::Flag))
-        .or_else(|| find_index(&state.global_flags, label).map(Option_Site::Global))
-}
-
-fn find_index(parameters: &[Parameter], label: &str) -> Option<usize> {
-    parameters.iter().position(|parameter| parameter.label == label)
+        .or_else(|| find_handle(&state.flags, label).map(Option_Site::Flag))
+        .or_else(|| find_handle(&state.global_flags, label).map(Option_Site::Global))
 }
 
 fn unknown_option_error(state: &Named_State, label: &str) -> Parse_Error {
-    let candidates: Vec<String> = state
-        .arguments
-        .iter()
-        .chain(state.flags.iter())
-        .chain(state.global_flags.iter())
-        .map(|parameter| parameter.label.clone())
+    let candidates: Vec<String> = arena_labels(&state.arguments)
+        .into_iter()
+        .chain(arena_labels(&state.flags))
+        .chain(arena_labels(&state.global_flags))
         .collect();
     Parse_Error::Unknown_Option { label: label.to_string(), suggestion: levenshtein::closest(label, &candidates) }
 }
@@ -588,9 +586,9 @@ fn assign_option_site(
 
 fn option_value_at(state: &Named_State, site: &Option_Site) -> Parameter_Value {
     match site {
-        Option_Site::Argument(index) => state.arguments[*index].value.clone(),
-        Option_Site::Flag(index) => state.flags[*index].value.clone(),
-        Option_Site::Global(index) => state.global_flags[*index].value.clone(),
+        Option_Site::Argument(handle) => arena_read(&state.arguments, *handle, |p| p.value.clone()),
+        Option_Site::Flag(handle) => arena_read(&state.flags, *handle, |p| p.value.clone()),
+        Option_Site::Global(handle) => arena_read(&state.global_flags, *handle, |p| p.value.clone()),
     }
 }
 
@@ -622,17 +620,34 @@ fn assign_scalar_site(
         return Err(Parse_Error::Flag_Needs_Value { label: label.to_string() });
     }
     let new_value = apply_scalar_value(current, value, label)?;
-    Ok(Named_State {
-        pending: append_pending(state.pending, site, new_value),
-        filled: append(state.filled, label.to_string()),
-        ..state
-    })
+    let state = update_option_site(state, site, new_value);
+    Ok(Named_State { filled: append(state.filled, label.to_string()), ..state })
 }
 
-fn append_pending(
-    pending: Vec<(Option_Site, Parameter_Value)>, site: Option_Site, value: Parameter_Value,
-) -> Vec<(Option_Site, Parameter_Value)> {
-    pending.into_iter().chain(iter::once((site, value))).collect()
+/// Overwrites the value at `site` in place via [`gen_arena::update`] — an
+/// `O(1)` in-place write through the handle, unlike the `O(n)` rebuild a
+/// `Vec<Parameter>` would need for the same assignment.
+fn update_option_site(state: Named_State, site: Option_Site, value: Parameter_Value) -> Named_State {
+    match site {
+        Option_Site::Argument(handle) => {
+            Named_State { arguments: update_value(state.arguments, handle, value), ..state }
+        }
+        Option_Site::Flag(handle) => Named_State { flags: update_value(state.flags, handle, value), ..state },
+        Option_Site::Global(handle) => {
+            Named_State { global_flags: update_value(state.global_flags, handle, value), ..state }
+        }
+    }
+}
+
+/// Reads the parameter at `handle` to keep its label/description/`is_flag`,
+/// swaps in the new value, and writes it back in place.
+fn update_value(
+    arena: gen_arena::Arena<Parameter>, handle: gen_arena::Handle, value: Parameter_Value,
+) -> gen_arena::Arena<Parameter> {
+    let current = arena_read(&arena, handle, |parameter| parameter.clone());
+    let updated = Parameter { value, ..current };
+    let (arena, _updated) = gen_arena::update(arena, handle, updated);
+    arena
 }
 
 fn append(list: Vec<String>, item: String) -> Vec<String> {
@@ -680,17 +695,18 @@ fn trim_quotes_chars(chars: &[char], original: &str) -> String {
 fn assign_positionals(
     label: String, description: String, named: Named_State,
 ) -> Result<(Command, Vec<String>), Parse_Error> {
-    let slice_index = variadic_argument_index(&named.arguments);
-    let fill_targets: Vec<usize> = named
-        .arguments
+    let arguments = drain_arena(&named.arguments);
+    let flags = drain_arena(&named.flags);
+    let slice_index = variadic_argument_index(&arguments);
+    let fill_targets: Vec<usize> = arguments
         .iter()
         .enumerate()
         .filter(|(_, argument)| !is_variadic(&argument.value) && !named.filled.contains(&argument.label))
         .map(|(index, _)| index)
         .collect();
-    let fill = fill_scalar_positionals(named.arguments, &fill_targets, &named.positionals, named.filled)?;
+    let fill = fill_scalar_positionals(arguments, &fill_targets, &named.positionals, named.filled)?;
     let arguments = merge_slice_argument(fill.arguments, slice_index, fill.overflow, named.slice_contributions)?;
-    let command = Command { label, description, arguments, flags: named.flags };
+    let command = Command { label, description, arguments, flags };
     Ok((command, fill.filled))
 }
 
