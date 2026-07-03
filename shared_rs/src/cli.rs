@@ -357,9 +357,13 @@ pub fn program_parse(program: &Program, arguments: &[String]) -> Result<Parse_Ou
 fn program_parse_tokens(
     program: &Program, command: Command, tokens: &[String],
 ) -> Result<Parse_Outcome, Parse_Error> {
-    let named = assign_named(program, &command, tokens)?;
+    // `command` is already this call's own owned copy (cloned once in
+    // `resolve_command`), so its arguments/flags move into `assign_named`
+    // directly rather than being cloned a second time from a borrow.
+    let Command { label, description, arguments, flags } = command;
+    let named = assign_named(program, arguments, flags, tokens)?;
     let global_flags = named.global_flags.clone();
-    let (final_command, filled) = assign_positionals(&command, named)?;
+    let (final_command, filled) = assign_positionals(label, description, named)?;
     validate_required(&final_command, &filled)?;
     Ok(Parse_Outcome { command: final_command, global_flags })
 }
@@ -401,8 +405,12 @@ enum Option_Site {
 
 /// The running state of [`assign_named`]'s left-to-right token walk. The
 /// command's arguments/flags and the program's global flags start as clones
-/// and are progressively rebuilt as named tokens are applied — no in-place
-/// mutation, since the dialect bans it.
+/// and stay untouched throughout the walk — read for lookups and type
+/// checks, but never rebuilt per token. Each scalar assignment instead
+/// queues into `pending`, applied to all three in one pass per namespace
+/// once the walk finishes ([`apply_pending_updates`]): rebuilding an
+/// `O(n)`-sized `Vec<Parameter>` on every one of `m` tokens costs `O(n·m)`,
+/// while collecting and applying once costs `O(n+m)`.
 struct Named_State {
     pub arguments: Vec<Parameter>,
     pub flags: Vec<Parameter>,
@@ -410,6 +418,7 @@ struct Named_State {
     pub filled: Vec<String>,
     pub positionals: Vec<(usize, String)>,
     pub slice_contributions: Vec<(usize, String)>,
+    pub pending: Vec<(Option_Site, Parameter_Value)>,
 }
 
 /// Applies every `-label=value` token to its option and records the bare
@@ -418,16 +427,81 @@ struct Named_State {
 /// order. A single `try_fold` over the tokens — no `mut` binding needed, since
 /// `try_fold` is callable on the unbound temporary iterator and each step
 /// returns a fresh [`Named_State`] rather than mutating one in place.
-fn assign_named(program: &Program, command: &Command, tokens: &[String]) -> Result<Named_State, Parse_Error> {
+fn assign_named(
+    program: &Program, arguments: Vec<Parameter>, flags: Vec<Parameter>, tokens: &[String],
+) -> Result<Named_State, Parse_Error> {
     let initial = Named_State {
-        arguments: command.arguments.clone(),
-        flags: command.flags.clone(),
+        arguments,
+        flags,
         global_flags: program.global_flags.clone(),
         filled: Vec::new(),
         positionals: Vec::new(),
         slice_contributions: Vec::new(),
+        pending: Vec::new(),
     };
-    tokens.iter().enumerate().try_fold(initial, assign_named_token)
+    let walked = tokens.iter().enumerate().try_fold(initial, assign_named_token)?;
+    Ok(apply_pending_updates(walked))
+}
+
+/// Applies every scalar assignment collected during the token walk in one
+/// pass per namespace (arguments, flags, global flags) instead of the
+/// `O(n)` rebuild [`assign_scalar_site`] used to do on every single token.
+fn apply_pending_updates(state: Named_State) -> Named_State {
+    let grouped = partition_pending(state.pending);
+    Named_State {
+        arguments: apply_updates(state.arguments, grouped.arguments),
+        flags: apply_updates(state.flags, grouped.flags),
+        global_flags: apply_updates(state.global_flags, grouped.global_flags),
+        pending: Vec::new(),
+        ..state
+    }
+}
+
+/// Pending updates grouped by namespace — the shape [`apply_pending_updates`]
+/// applies in one pass each.
+struct Pending_Updates {
+    pub arguments: Vec<(usize, Parameter_Value)>,
+    pub flags: Vec<(usize, Parameter_Value)>,
+    pub global_flags: Vec<(usize, Parameter_Value)>,
+}
+
+fn partition_pending(pending: Vec<(Option_Site, Parameter_Value)>) -> Pending_Updates {
+    let empty = Pending_Updates { arguments: Vec::new(), flags: Vec::new(), global_flags: Vec::new() };
+    pending.into_iter().fold(empty, partition_pending_step)
+}
+
+fn partition_pending_step(updates: Pending_Updates, (site, value): (Option_Site, Parameter_Value)) -> Pending_Updates {
+    match site {
+        Option_Site::Argument(index) => {
+            Pending_Updates { arguments: append_update(updates.arguments, index, value), ..updates }
+        }
+        Option_Site::Flag(index) => Pending_Updates { flags: append_update(updates.flags, index, value), ..updates },
+        Option_Site::Global(index) => {
+            Pending_Updates { global_flags: append_update(updates.global_flags, index, value), ..updates }
+        }
+    }
+}
+
+fn append_update(
+    list: Vec<(usize, Parameter_Value)>, index: usize, value: Parameter_Value,
+) -> Vec<(usize, Parameter_Value)> {
+    list.into_iter().chain(iter::once((index, value))).collect()
+}
+
+/// Applies every pending `(index, value)` update to `parameters` in one pass,
+/// via a `HashMap` lookup per element — `O(n + u)` for `n` parameters and `u`
+/// updates, rather than the `O(n)`-per-update cost of rebuilding the whole
+/// vector once per pending change.
+fn apply_updates(parameters: Vec<Parameter>, updates: Vec<(usize, Parameter_Value)>) -> Vec<Parameter> {
+    let by_index: collections::HashMap<usize, Parameter_Value> = updates.into_iter().collect();
+    parameters
+        .into_iter()
+        .enumerate()
+        .map(|(index, parameter)| match by_index.get(&index) {
+            Some(value) => Parameter { value: value.clone(), ..parameter },
+            None => parameter,
+        })
+        .collect()
 }
 
 fn assign_named_token(state: Named_State, (index, token): (usize, &String)) -> Result<Named_State, Parse_Error> {
@@ -520,18 +594,6 @@ fn option_value_at(state: &Named_State, site: &Option_Site) -> Parameter_Value {
     }
 }
 
-fn replace_option_at(state: Named_State, site: Option_Site, value: Parameter_Value) -> Named_State {
-    match site {
-        Option_Site::Argument(index) => {
-            Named_State { arguments: replace_value(state.arguments, index, value), ..state }
-        }
-        Option_Site::Flag(index) => Named_State { flags: replace_value(state.flags, index, value), ..state },
-        Option_Site::Global(index) => {
-            Named_State { global_flags: replace_value(state.global_flags, index, value), ..state }
-        }
-    }
-}
-
 /// Rebuilds `parameters` with the value at `index` replaced — the
 /// mutation-free stand-in for assigning through a pointer into the slot.
 fn replace_value(parameters: Vec<Parameter>, index: usize, value: Parameter_Value) -> Vec<Parameter> {
@@ -560,8 +622,17 @@ fn assign_scalar_site(
         return Err(Parse_Error::Flag_Needs_Value { label: label.to_string() });
     }
     let new_value = apply_scalar_value(current, value, label)?;
-    let state = replace_option_at(state, site, new_value);
-    Ok(Named_State { filled: append(state.filled, label.to_string()), ..state })
+    Ok(Named_State {
+        pending: append_pending(state.pending, site, new_value),
+        filled: append(state.filled, label.to_string()),
+        ..state
+    })
+}
+
+fn append_pending(
+    pending: Vec<(Option_Site, Parameter_Value)>, site: Option_Site, value: Parameter_Value,
+) -> Vec<(Option_Site, Parameter_Value)> {
+    pending.into_iter().chain(iter::once((site, value))).collect()
 }
 
 fn append(list: Vec<String>, item: String) -> Vec<String> {
@@ -606,7 +677,9 @@ fn trim_quotes_chars(chars: &[char], original: &str) -> String {
 /// declaration order, skipping any already set by name, then routes the rest
 /// into the trailing variadic argument (if any) together with its named
 /// contributions, merged in command-line order.
-fn assign_positionals(command: &Command, named: Named_State) -> Result<(Command, Vec<String>), Parse_Error> {
+fn assign_positionals(
+    label: String, description: String, named: Named_State,
+) -> Result<(Command, Vec<String>), Parse_Error> {
     let slice_index = variadic_argument_index(&named.arguments);
     let fill_targets: Vec<usize> = named
         .arguments
@@ -617,12 +690,7 @@ fn assign_positionals(command: &Command, named: Named_State) -> Result<(Command,
         .collect();
     let fill = fill_scalar_positionals(named.arguments, &fill_targets, &named.positionals, named.filled)?;
     let arguments = merge_slice_argument(fill.arguments, slice_index, fill.overflow, named.slice_contributions)?;
-    let command = Command {
-        label: command.label.clone(),
-        description: command.description.clone(),
-        arguments,
-        flags: named.flags,
-    };
+    let command = Command { label, description, arguments, flags: named.flags };
     Ok((command, fill.filled))
 }
 
@@ -645,38 +713,37 @@ struct Positional_Fill {
     pub filled: Vec<String>,
 }
 
-/// Assigns positionals to `fill_targets` in order — extending `filled` with
-/// each one, exactly as a named assignment would, so the required-argument
-/// check sees it.
+/// Resolves positionals against `fill_targets` in order — extending `filled`
+/// with each one, exactly as a named assignment would, so the
+/// required-argument check sees it — and applies them to `arguments` in one
+/// pass, rather than rebuilding the whole vector once per positional.
 fn fill_scalar_positionals(
     arguments: Vec<Parameter>, fill_targets: &[usize], positionals: &[(usize, String)], filled: Vec<String>,
 ) -> Result<Positional_Fill, Parse_Error> {
-    let (arguments, filled) = fill_targets.iter().zip(positionals.iter()).try_fold(
-        (arguments, filled),
-        |(arguments, filled), (&target, (_, value))| {
+    let (updates, filled) = fill_targets.iter().zip(positionals.iter()).try_fold(
+        (Vec::new(), filled),
+        |(updates, filled), (&target, (_, value))| {
             let label = arguments[target].label.clone();
-            let arguments = set_positional(arguments, target, value)?;
-            Ok((arguments, append(filled, label)))
+            let resolved = resolve_positional_value(&arguments[target].value, value, &label)?;
+            Ok((append_update(updates, target, resolved), append(filled, label)))
         },
     )?;
     let overflow: Vec<(usize, String)> = positionals.iter().skip(fill_targets.len()).cloned().collect();
-    Ok(Positional_Fill { arguments, overflow, filled })
+    Ok(Positional_Fill { arguments: apply_updates(arguments, updates), overflow, filled })
 }
 
-/// Converts a positional token to the scalar argument's type and assigns it.
-/// Unlike a named value, a positional is taken verbatim: no quote trimming,
-/// and empty is allowed.
-fn set_positional(arguments: Vec<Parameter>, index: usize, value: &str) -> Result<Vec<Parameter>, Parse_Error> {
-    let label = arguments[index].label.clone();
-    let new_value = match &arguments[index].value {
-        Parameter_Value::Str(_) => Parameter_Value::Str(value.to_string()),
+/// Converts a positional token to the scalar argument's type. Unlike a named
+/// value, a positional is taken verbatim: no quote trimming, and empty is
+/// allowed.
+fn resolve_positional_value(current: &Parameter_Value, value: &str, label: &str) -> Result<Parameter_Value, Parse_Error> {
+    match current {
+        Parameter_Value::Str(_) => Ok(Parameter_Value::Str(value.to_string())),
         Parameter_Value::Int(_) => match value.parse::<i64>() {
-            Ok(number) => Parameter_Value::Int(number),
-            Err(_) => return Err(Parse_Error::Invalid_Integer { label, value: value.to_string() }),
+            Ok(number) => Ok(Parameter_Value::Int(number)),
+            Err(_) => Err(Parse_Error::Invalid_Integer { label: label.to_string(), value: value.to_string() }),
         },
         _ => unreachable!("fill_targets excludes variadic arguments"),
-    };
-    Ok(replace_value(arguments, index, new_value))
+    }
 }
 
 /// Merges the overflow positionals and the slice argument's named
