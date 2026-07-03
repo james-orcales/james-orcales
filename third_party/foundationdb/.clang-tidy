@@ -1,0 +1,34 @@
+---
+Checks: >
+  -*,
+  bugprone-dangling-handle,
+  bugprone-redundant-branch-condition,
+  bugprone-shared-ptr-array-mismatch,
+  bugprone-sizeof-expression,
+  bugprone-string-constructor,
+  bugprone-stringview-nullptr,
+  bugprone-suspicious-memory-comparison,
+  bugprone-suspicious-memset-usage,
+  bugprone-suspicious-semicolon,
+  bugprone-suspicious-string-compare,
+  bugprone-unique-ptr-array-mismatch,
+  bugprone-use-after-move,
+  modernize-use-auto,
+  modernize-use-equals-default,
+  modernize-use-override,
+  modernize-use-using,
+  performance-for-range-copy,
+  performance-move-const-arg,
+  readability-braces-around-statements,
+  readability-container-contains,
+  readability-const-return-type,
+  readability-container-size-empty,
+  readability-delete-null-pointer,
+  readability-duplicate-include,
+  readability-inconsistent-ifelse-braces
+CheckOptions:
+  - key: modernize-use-auto.MinTypeNameLength
+    value: '11'
+  - key: readability-braces-around-statements.ShortStatementLines
+    value: '3'
+...
