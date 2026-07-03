@@ -25,7 +25,7 @@
 use std::collections;
 use std::iter;
 
-use crate::gen_arena;
+use crate::arena;
 use crate::levenshtein;
 
 /// The value an argument or flag carries: the default before parsing, the
@@ -399,21 +399,24 @@ fn unknown_command_error(program: &Program, name: &str) -> Parse_Error {
 /// command's arguments, its flags, or the program's global flags) and its
 /// handle within that namespace's arena.
 enum Option_Site {
-    Argument(gen_arena::Handle),
-    Flag(gen_arena::Handle),
-    Global(gen_arena::Handle),
+    Argument(arena::Handle),
+    Flag(arena::Handle),
+    Global(arena::Handle),
 }
 
 /// The running state of [`assign_named`]'s left-to-right token walk.
-/// Arguments/flags/global-flags are each seeded once into a
-/// [`gen_arena::Arena`] ([`seed_arena`]) instead of a `Vec<Parameter>`, so a
-/// scalar assignment can call [`gen_arena::update`] directly — an `O(1)`
-/// in-place overwrite through the handle, keeping it valid — rather than
+/// Arguments/flags/global-flags are each seeded once into an
+/// append-only [`arena::Arena`] ([`seed_arena`]) instead of a
+/// `Vec<Parameter>`, so a scalar assignment can call [`arena::update`]
+/// directly — an `O(1)` in-place overwrite through the handle — rather than
 /// rebuilding the whole `O(n)`-sized vector on every one of `m` tokens.
+/// Nothing is ever removed within a parse call, so the plain arena (a bare
+/// `Vec<Parameter>`, no generation to track) is enough — `gen_arena`'s
+/// stale-handle protection would buy nothing here.
 struct Named_State {
-    pub arguments: gen_arena::Arena<Parameter>,
-    pub flags: gen_arena::Arena<Parameter>,
-    pub global_flags: gen_arena::Arena<Parameter>,
+    pub arguments: arena::Arena<Parameter>,
+    pub flags: arena::Arena<Parameter>,
+    pub global_flags: arena::Arena<Parameter>,
     pub filled: Vec<String>,
     pub positionals: Vec<(usize, String)>,
     pub slice_contributions: Vec<(usize, String)>,
@@ -440,50 +443,49 @@ fn assign_named(
 }
 
 /// Inserts every parameter into a fresh arena, in order — index `i`'s handle
-/// is always `{index: i, generation: 0}`, since nothing is ever removed
-/// within a parse call, so a handle need never be threaded separately from
-/// its position.
-fn seed_arena(parameters: Vec<Parameter>) -> gen_arena::Arena<Parameter> {
-    parameters.into_iter().fold(gen_arena::new(), insert_into_arena)
+/// is always `Handle(i)`, since nothing is ever removed within a parse call,
+/// so a handle need never be threaded separately from its position.
+fn seed_arena(parameters: Vec<Parameter>) -> arena::Arena<Parameter> {
+    parameters.into_iter().fold(arena::new(), insert_into_arena)
 }
 
-fn insert_into_arena(arena: gen_arena::Arena<Parameter>, parameter: Parameter) -> gen_arena::Arena<Parameter> {
-    let (arena, _handle) = gen_arena::insert(arena, parameter);
-    arena
+fn insert_into_arena(store: arena::Arena<Parameter>, parameter: Parameter) -> arena::Arena<Parameter> {
+    let (store, _handle) = arena::insert(store, parameter);
+    store
 }
 
 /// The handle for the parameter at `index`, valid for the lifetime of a
 /// single parse call's arena (see [`seed_arena`]).
-fn handle_at(index: usize) -> gen_arena::Handle {
-    gen_arena::Handle { index: index as u32, generation: 0 }
+fn handle_at(index: usize) -> arena::Handle {
+    arena::Handle(index as u32)
 }
 
 /// Reads the parameter behind `handle`. Every handle used here was minted by
 /// this same parse call's [`seed_arena`] and nothing is ever removed before
 /// it's read, so a miss is unreachable.
 fn arena_read<Result_Type>(
-    arena: &gen_arena::Arena<Parameter>, handle: gen_arena::Handle, reader: impl FnOnce(&Parameter) -> Result_Type,
+    store: &arena::Arena<Parameter>, handle: arena::Handle, reader: impl FnOnce(&Parameter) -> Result_Type,
 ) -> Result_Type {
-    gen_arena::with(arena, handle, reader).unwrap_or_else(|| unreachable!("parse-time arena never removes a slot"))
+    arena::with(store, handle, reader).unwrap_or_else(|| unreachable!("parse-time arena never removes a slot"))
 }
 
-/// Every label in `arena`, in insertion order — the candidate set for a
+/// Every label in `store`, in insertion order — the candidate set for a
 /// did-you-mean suggestion and the raw material for a label lookup.
-fn arena_labels(arena: &gen_arena::Arena<Parameter>) -> Vec<String> {
-    (0..gen_arena::len(arena)).map(|index| arena_read(arena, handle_at(index), |p| p.label.clone())).collect()
+fn arena_labels(store: &arena::Arena<Parameter>) -> Vec<String> {
+    (0..arena::len(store)).map(|index| arena_read(store, handle_at(index), |p| p.label.clone())).collect()
 }
 
 /// Finds the handle of the parameter labeled `label`, scanning in insertion
 /// order.
-fn find_handle(arena: &gen_arena::Arena<Parameter>, label: &str) -> Option<gen_arena::Handle> {
-    (0..gen_arena::len(arena)).map(handle_at).find(|&handle| arena_read(arena, handle, |p| p.label == label))
+fn find_handle(store: &arena::Arena<Parameter>, label: &str) -> Option<arena::Handle> {
+    (0..arena::len(store)).map(handle_at).find(|&handle| arena_read(store, handle, |p| p.label == label))
 }
 
-/// Reads every parameter back out of `arena`, in insertion order — the
+/// Reads every parameter back out of `store`, in insertion order — the
 /// mutation-free stand-in for handing back ownership of the underlying
 /// storage once the arena's per-token `O(1)` updates are done.
-fn drain_arena(arena: &gen_arena::Arena<Parameter>) -> Vec<Parameter> {
-    (0..gen_arena::len(arena)).map(|index| arena_read(arena, handle_at(index), |p| p.clone())).collect()
+fn drain_arena(store: &arena::Arena<Parameter>) -> Vec<Parameter> {
+    (0..arena::len(store)).map(|index| arena_read(store, handle_at(index), |p| p.clone())).collect()
 }
 
 fn append_update(
@@ -624,7 +626,7 @@ fn assign_scalar_site(
     Ok(Named_State { filled: append(state.filled, label.to_string()), ..state })
 }
 
-/// Overwrites the value at `site` in place via [`gen_arena::update`] — an
+/// Overwrites the value at `site` in place via [`arena::update`] — an
 /// `O(1)` in-place write through the handle, unlike the `O(n)` rebuild a
 /// `Vec<Parameter>` would need for the same assignment.
 fn update_option_site(state: Named_State, site: Option_Site, value: Parameter_Value) -> Named_State {
@@ -642,12 +644,12 @@ fn update_option_site(state: Named_State, site: Option_Site, value: Parameter_Va
 /// Reads the parameter at `handle` to keep its label/description/`is_flag`,
 /// swaps in the new value, and writes it back in place.
 fn update_value(
-    arena: gen_arena::Arena<Parameter>, handle: gen_arena::Handle, value: Parameter_Value,
-) -> gen_arena::Arena<Parameter> {
-    let current = arena_read(&arena, handle, |parameter| parameter.clone());
+    store: arena::Arena<Parameter>, handle: arena::Handle, value: Parameter_Value,
+) -> arena::Arena<Parameter> {
+    let current = arena_read(&store, handle, |parameter| parameter.clone());
     let updated = Parameter { value, ..current };
-    let (arena, _updated) = gen_arena::update(arena, handle, updated);
-    arena
+    let (store, _updated) = arena::update(store, handle, updated);
+    store
 }
 
 fn append(list: Vec<String>, item: String) -> Vec<String> {
