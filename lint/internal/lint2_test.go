@@ -5925,3 +5925,35 @@ func Test_Deterministic_Sibling_Import(t *testing.T) {
 		t.Fatal("importing a deterministic sibling must satisfy the induction")
 	}
 }
+
+// Test_Deterministic_Instrumentation_Auto_Released verifies an instrumentation
+// package is released from the deterministic tier with no duplicate
+// pure_but_indeterministic_packages entry: write-only instrumentation is inherently
+// nondeterministic, so listing it in instrumentation_packages implies the release.
+func Test_Deterministic_Instrumentation_Auto_Released(t *testing.T) {
+	t.Parallel()
+	files := map[string][]byte{
+		"go.mod": []byte("module fixture\n\ngo 1.25\n"),
+		"pkg/instr/instr.go": []byte("// Package instr is a fixture.\n" +
+			"package instr\n\n" +
+			"// F is a fixture.\n" +
+			"func F() {\n\tgo done()\n}\n\n" +
+			"func done() {\n\treturn\n}\n"),
+	}
+	fsys := fstest.MapFS{}
+	for name, content := range files {
+		fsys[name] = &fstest.MapFile{Data: content}
+	}
+	diags, err := lint.Check_File_System(&lint.Check_File_System_Input{
+		Fsys:                     fsys,
+		Scope:                    "pkg",
+		Shared_Component:         doctrine_shared_component_directory,
+		Instrumentation_Packages: []string{"pkg/instr/**"},
+	})
+	if err != nil {
+		t.Fatalf("Check_File_System: %v", err)
+	}
+	if specification_diagnosed(diags, "must not start a goroutine") {
+		t.Fatal("instrumentation package must auto-release from determinism")
+	}
+}
