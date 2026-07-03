@@ -13,6 +13,7 @@ use crate::gpu;
 use crate::keypad;
 use crate::mbc;
 use crate::mmu;
+use crate::region;
 use crate::register;
 use crate::serial;
 use crate::sound;
@@ -502,7 +503,7 @@ fn encode_gpu(g: &gpu::Gpu) -> Vec<u8> {
         e_u8(g.scx), e_u8(g.winy), e_u8(g.winx), e_bool(g.wy_trigger), e_i32(g.wy_pos), e_u8(g.palbr), e_u8(g.pal0r),
         e_u8(g.pal1r), g.palb.to_vec(), g.pal0.to_vec(), g.pal1.to_vec(), e_bytes(&g.vram), e_bytes(&g.voam),
         e_usize(g.vrambank), e_bool(g.cbgpal_inc), e_u8(g.cbgpal_ind), e_palette(&g.cbgpal), e_bool(g.csprit_inc),
-        e_u8(g.csprit_ind), e_palette(&g.csprit), e_bytes(&g.data), e_bool(g.updated), e_u8(g.interrupt),
+        e_u8(g.csprit_ind), e_palette(&g.csprit), e_bytes(&region::to_vec(&g.data)), e_bool(g.updated), e_u8(g.interrupt),
         e_mode(g.gbmode), e_bool(g.hblanking), e_bool(g.first_frame),
     ]
     .concat()
@@ -554,7 +555,7 @@ fn decode_gpu_tail(b: &[u8], o: usize, head: gpu::Gpu) -> Option<(gpu::Gpu, usiz
     let (csprit_inc, o) = d_bool(b, o)?;
     let (csprit_ind, o) = d_u8(b, o)?;
     let (csprit, o) = d_palette(b, o)?;
-    let (data, o) = d_bytes(b, o)?;
+    let (data_bytes, o) = d_bytes(b, o)?;
     let (updated, o) = d_bool(b, o)?;
     let (interrupt, o) = d_u8(b, o)?;
     let (gbmode, o) = d_mode(b, o)?;
@@ -563,8 +564,8 @@ fn decode_gpu_tail(b: &[u8], o: usize, head: gpu::Gpu) -> Option<(gpu::Gpu, usiz
     Some((
         gpu::Gpu {
             scy, scx, winy, winx, wy_trigger, wy_pos, palbr, pal0r, pal1r, palb, pal0, pal1, vram, voam, vrambank,
-            cbgpal_inc, cbgpal_ind, cbgpal, csprit_inc, csprit_ind, csprit, data, updated, interrupt, gbmode,
-            hblanking, first_frame, ..head
+            cbgpal_inc, cbgpal_ind, cbgpal, csprit_inc, csprit_ind, csprit, data: region::from_bytes(&data_bytes),
+            updated, interrupt, gbmode, hblanking, first_frame, ..head
         },
         o,
     ))
@@ -685,7 +686,7 @@ fn decode_mbc5(b: &[u8], o: usize) -> Option<(mbc::Mbc, usize)> {
 
 fn encode_mmu(m: &mmu::Mmu) -> Vec<u8> {
     [
-        e_bytes(&m.wram), e_bytes(&m.zram), e_bytes(&m.hdma), e_u8(m.inte), e_u8(m.intf), encode_serial(&m.serial),
+        e_bytes(&region::to_vec(&m.wram)), e_bytes(&m.zram), e_bytes(&m.hdma), e_u8(m.inte), e_u8(m.intf), encode_serial(&m.serial),
         encode_timer(&m.timer), encode_keypad(&m.keypad), encode_gpu(&m.gpu), encode_sound(&m.sound),
         e_dma(m.hdma_status), e_u16(m.hdma_src), e_u16(m.hdma_dst), e_u8(m.hdma_len), e_usize(m.wrambank),
         encode_mbc(&m.mbc), e_mode(m.gbmode), e_speed(m.gbspeed), e_bool(m.speed_switch_req),
@@ -695,7 +696,7 @@ fn encode_mmu(m: &mmu::Mmu) -> Vec<u8> {
 }
 
 fn decode_mmu(b: &[u8], o: usize) -> Option<(mmu::Mmu, usize)> {
-    let (wram, o) = d_bytes(b, o)?;
+    let (wram_bytes, o) = d_bytes(b, o)?;
     let (zram, o) = d_bytes(b, o)?;
     let (hdma, o) = d_bytes(b, o)?;
     let (inte, o) = d_u8(b, o)?;
@@ -717,7 +718,7 @@ fn decode_mmu(b: &[u8], o: usize) -> Option<(mmu::Mmu, usize)> {
     let (regs, o) = d_arr3(b, o)?;
     Some((
         mmu::Mmu {
-            wram, zram, hdma, inte, intf, serial, timer, keypad, gpu, sound, hdma_status, hdma_src, hdma_dst,
+            wram: region::from_bytes(&wram_bytes), zram, hdma, inte, intf, serial, timer, keypad, gpu, sound, hdma_status, hdma_src, hdma_dst,
             hdma_len, wrambank, mbc, gbmode, gbspeed, speed_switch_req, undocumented_cgb_regs: regs,
         },
         o,

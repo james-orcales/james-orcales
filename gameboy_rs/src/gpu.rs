@@ -13,6 +13,7 @@
 use crate::gbmode;
 use crate::gpu_render;
 use crate::memory;
+use crate::region;
 use std::array;
 
 /// The visible screen dimensions; the framebuffer is `SCREEN_W * SCREEN_H * 3` RGB.
@@ -63,7 +64,7 @@ pub struct Gpu {
     pub csprit_inc: bool,
     pub csprit_ind: u8,
     pub csprit: [[[u8; 3]; 4]; 8],
-    pub data: Vec<u8>,
+    pub data: region::Region,
     pub updated: bool,
     pub interrupt: u8,
     pub gbmode: gbmode::Gb_Mode,
@@ -110,7 +111,7 @@ pub fn new() -> Gpu {
         csprit_inc: false,
         csprit_ind: 0,
         csprit: [[[0; 3]; 4]; 8],
-        data: vec![0; SCREEN_W * SCREEN_H * 3],
+        data: region::new(SCREEN_W * SCREEN_H * 3),
         updated: false,
         interrupt: 0,
         gbmode: gbmode::Gb_Mode::Classic,
@@ -425,7 +426,7 @@ fn write_lcdc(gpu: Gpu, value: u8) -> Gpu {
 
 // Blanks the framebuffer to white when the LCD switches off.
 fn clear_screen(gpu: Gpu) -> Gpu {
-    Gpu { data: vec![255u8; SCREEN_W * SCREEN_H * 3], updated: true, ..gpu }
+    Gpu { data: region::filled(SCREEN_W * SCREEN_H * 3, 255), updated: true, ..gpu }
 }
 
 // Recomputes the three DMG palettes from their register bytes.

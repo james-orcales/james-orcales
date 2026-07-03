@@ -7,6 +7,7 @@
 use crate::cpu;
 use crate::gbmode;
 use crate::mbc;
+use crate::region;
 use std::ops;
 
 /// The observable result of a headless run: the RGB framebuffer, every byte the
@@ -43,7 +44,7 @@ pub fn run(machine: cpu::Cpu, budget: u64) -> cpu::Cpu {
 /// The observable output of a finished machine: framebuffer, serial, and audio.
 pub fn output_of(done: cpu::Cpu) -> Run_Output {
     let audio = done.mmu.sound.audio_left.iter().zip(&done.mmu.sound.audio_right).flat_map(|(&l, &r)| [l, r]).collect();
-    Run_Output { audio, framebuffer: done.mmu.gpu.data, serial: done.mmu.serial.output }
+    Run_Output { audio, framebuffer: region::to_vec(&done.mmu.gpu.data), serial: done.mmu.serial.output }
 }
 
 // Threads the machine through `do_cycle` until the tick budget is met. `try_fold`
