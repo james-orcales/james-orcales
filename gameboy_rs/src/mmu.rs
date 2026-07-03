@@ -402,6 +402,11 @@ fn perform_hdma(mmu: Mmu) -> (Mmu, u32) {
 // Copies one 16-byte row from the source into VRAM and advances the pointers.
 fn perform_vramdma_row(mmu: Mmu) -> Mmu {
     let block: Vec<u8> = (0..0x10u16).map(|j| read_byte(&mmu, mmu.hdma_src + j)).collect();
+    // Intentional divergence from rboy, and the more hardware-accurate of the two: masking
+    // the destination to the low 13 bits wraps it within the VRAM bank once it climbs past
+    // 0x9FFF, as real CGB HDMA does. rboy instead writes each byte via gpu.wb(hdma_dst + j),
+    // whose catch-all panics on the first out-of-VRAM address (0xA000) — so gambatte's
+    // dma_dst_wrap / hdma_disable_display / hdma_late_length tests crash rboy but not mine.
     let index = (mmu.gpu.vrambank * 0x2000) | ((mmu.hdma_dst as usize) & 0x1FFF);
     let vram = memory::write_slice(&mmu.gpu.vram, index, &block);
     let hdma_len = match mmu.hdma_len {
