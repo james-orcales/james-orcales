@@ -1,0 +1,24 @@
+---
+/**
+ * /changelog/ — Main releases. A hand-authored, summarised view of the
+ * stable releases (src/changelog-summary.md). The companion /changelog/dev/
+ * page renders the full per-version detail straight from CHANGELOG.md.
+ *
+ * Summaries are editorial — they don't map 1:1 to the detailed changelog
+ * entries — so they're authored, not generated. The shared head (the
+ * "# Changelog" h1 + preamble) is generated from CHANGELOG.md by
+ * scripts/gen-pages.mjs (docs:pages).
+ */
+import DocsLayout from '../layouts/DocsLayout.astro'
+import ChangelogNav from '../components/ChangelogNav.astro'
+import { Content as ChangelogHead } from '../generated/changelog-head.md'
+import { Content } from '../changelog-summary.md'
+---
+
+<DocsLayout title="Changelog">
+  <div class="changelog">
+    <ChangelogHead />
+    <ChangelogNav active="main" />
+    <Content />
+  </div>
+</DocsLayout>

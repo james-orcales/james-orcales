@@ -1,0 +1,60 @@
+@layer anta {
+  a-title {
+    display: block;
+    color: var(--text-1);
+    font-weight: 584.62;
+    letter-spacing: 0;
+    text-wrap: balance;
+    /* Anta's stylistic sets: ss02 (alternate l) + ss05, plus tnum for tabular
+       (fixed-width) figures. Re-stated explicitly (not just inherited from :root)
+       so a consumer's font-feature-settings on an ancestor can't drop them — the
+       property replaces, not merges. */
+    font-feature-settings: 'ss02', 'ss05', 'tnum';
+  }
+
+  a-title a-icon {
+    transform: translateY(-0.05em);
+  }
+
+  a-title[level="1"] { font-size: 28px; line-height: 32px; margin-block-start: 0;    margin-block-end: 16px; }
+  a-title[level="2"] { font-size: 24px; line-height: 28px; margin-block-start: 32px; margin-block-end: 12px; }
+  a-title[level="3"] { font-size: 20px; line-height: 24px; margin-block-start: 24px; margin-block-end: 12px; }
+  a-title[level="4"] { font-size: 17px; line-height: 20px; margin-block-start: 20px; margin-block-end: 8px;  }
+  a-title[level="5"] { font-size: 15px; line-height: 20px; margin-block-start: 16px; margin-block-end: 8px;  }
+  a-title[level="6"] { font-size: 13px; line-height: 16px; margin-block-start: 16px; margin-block-end: 4px;  }
+
+  a-title[priority="secondary"]  { color: var(--text-2); }
+  a-title[priority="tertiary"]   { color: var(--text-3); }
+  a-title[priority="quaternary"] { color: var(--text-4); }
+  a-title[priority="quinary"]    { color: var(--text-5); }
+
+  a-title[tone="brand"]                          { color: var(--text-1-brand);    }
+  a-title[tone="brand"][priority="secondary"]    { color: var(--text-2-brand);    }
+  a-title[tone="brand"][priority="tertiary"]     { color: var(--text-3-brand);    }
+  a-title[tone="brand"][priority="quaternary"]   { color: var(--text-4-brand);    }
+  a-title[tone="brand"][priority="quinary"]      { color: var(--text-5-brand);    }
+
+  a-title[tone="success"]                        { color: var(--text-1-success);  }
+  a-title[tone="success"][priority="secondary"]  { color: var(--text-2-success);  }
+  a-title[tone="success"][priority="tertiary"]   { color: var(--text-3-success);  }
+  a-title[tone="success"][priority="quaternary"] { color: var(--text-4-success);  }
+  a-title[tone="success"][priority="quinary"]    { color: var(--text-5-success);  }
+
+  a-title[tone="critical"]                          { color: var(--text-1-critical); }
+  a-title[tone="critical"][priority="secondary"]    { color: var(--text-2-critical); }
+  a-title[tone="critical"][priority="tertiary"]     { color: var(--text-3-critical); }
+  a-title[tone="critical"][priority="quaternary"]   { color: var(--text-4-critical); }
+  a-title[tone="critical"][priority="quinary"]      { color: var(--text-5-critical); }
+
+  a-title[tone="warning"]                           { color: var(--text-1-warning);  }
+  a-title[tone="warning"][priority="secondary"]     { color: var(--text-2-warning);  }
+  a-title[tone="warning"][priority="tertiary"]      { color: var(--text-3-warning);  }
+  a-title[tone="warning"][priority="quaternary"]    { color: var(--text-4-warning);  }
+  a-title[tone="warning"][priority="quinary"]       { color: var(--text-5-warning);  }
+
+  a-title[tone="info"]                              { color: var(--text-1-info);     }
+  a-title[tone="info"][priority="secondary"]        { color: var(--text-2-info);     }
+  a-title[tone="info"][priority="tertiary"]         { color: var(--text-3-info);     }
+  a-title[tone="info"][priority="quaternary"]       { color: var(--text-4-info);     }
+  a-title[tone="info"][priority="quinary"]          { color: var(--text-5-info);     }
+}

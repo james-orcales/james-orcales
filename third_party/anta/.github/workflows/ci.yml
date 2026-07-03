@@ -1,0 +1,26 @@
+name: CI
+on:
+  pull_request:
+    branches: [main]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm run build
+      - run: pnpm run typecheck
+      - name: Build stickers
+        run: pnpm --filter @antadesign/stickers run build
+      - name: Typecheck stickers
+        run: pnpm --filter @antadesign/stickers run typecheck
+      - name: Lint site CSS
+        run: pnpm --filter anta-site run lint:css
+      - name: Build site
+        run: pnpm --filter anta-site build

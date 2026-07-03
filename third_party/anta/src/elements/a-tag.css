@@ -1,0 +1,306 @@
+@layer anta {
+  /* `<a-tag>` is intentionally CSS-only — no JS, no shadow DOM, no
+     `customElements.define`. It's a small uppercase pill / chip styled
+     purely from attributes; the `Tag` JSX wrapper composes its content
+     from `icon` / `label` / `value` / `iconTrailing` props (mirroring
+     `<a-button>`) into the light-DOM child elements styled below.
+
+     Sizing is intrinsic — no fixed height. Like `<a-button>`, the pill's
+     height falls out of `line-height` + `padding-block` + the border, so
+     the text is never clipped and a consumer can retune the padding
+     tokens without fighting a hard height.
+
+     Color is driven by two axes: `tone` (neutral / brand / info / success /
+     warning / critical, or any literal CSS color) and `priority`
+     (`secondary` default / `primary` / `tertiary`), mirroring the Figma
+     `component/tag/{primary,secondary,tertiary}/*` set. Each tone declares
+     a few hue anchors and the priority rules pick how they map to the
+     fill / border / text. Text comes from Anta's theme-aware
+     `--text-3{,-tone}` tokens, so most of dark mode re-themes for free; the
+     `.dark` rules below only re-tune the alpha tints + the solid fills. */
+
+  a-tag {
+    /* Per-tone hue anchors (neutral defaults here; the tone rules below
+       re-point them). The priority rules read these:
+         --tag-tint  vivid hue → secondary fill tint + secondary/primary border
+         --tag-fill  solid hue → primary fill
+         --tag-edge  deep hue  → tertiary border (= --text-2-{tone}; neutral
+                                 reuses the tint, which flips light↔dark)
+       Neutral's tint is a plum-gray that flips light↔dark (see the `.dark`
+       rule); the colored tones keep one tint hue and just deepen their
+       alpha for dark mode. */
+    --tag-text: var(--text-3);
+    --tag-tint: #44374b;        /* neutral tint hue (light) */
+    --tag-fill: #776e77;        /* neutral primary fill (light) */
+    --tag-edge: var(--tag-tint);/* neutral tertiary border reuses the tint */
+
+    --_tag-bg-alpha: 7%;        /* neutral fill is fainter than the colored tones */
+    --_tag-border-alpha: 15%;
+    --_tag-edge-alpha: 25%;     /* neutral tertiary border (light + dark) */
+
+    --tag-bg:        color-mix(in oklch, var(--tag-tint) var(--_tag-bg-alpha), transparent);
+    --tag-border:    color-mix(in oklch, var(--tag-tint) var(--_tag-border-alpha), transparent);
+    --tag-separator: color-mix(in oklch, var(--tag-text) 30%, transparent);
+
+    /* 1.5px top/bottom — the extra 0.5px each side compensates for the
+       0.5px (vs 1px) border, keeping the pill at its original 20px height. */
+    --tag-padding-block: 1.5px;
+    --tag-padding-inline: 6.5px;
+    --tag-icon-size: 13px;
+    --tag-label-weight: 600;
+    --tag-gap: 0.6ch;
+
+    display: inline-flex;
+    align-items: center;
+    gap: var(--tag-gap);
+    box-sizing: border-box;
+    max-width: 100%;
+    vertical-align: middle;
+    overflow: hidden;
+    white-space: nowrap;
+    -webkit-user-drag: none;
+
+    color: var(--tag-text);
+    background: var(--tag-bg);
+    border: 0.5px solid var(--tag-border);
+    border-radius: 22px;
+
+    padding-block: var(--tag-padding-block);
+    padding-inline: var(--tag-padding-inline);
+
+    font-family: var(--sans-serif);
+    font-weight: 450;
+    font-size: 11px;
+    line-height: 16px;
+    text-transform: uppercase;
+    letter-spacing: 0.08ch;
+    /* Tabular figures are always on (so counts / versions / timers don't
+       reflow), plus `ss05` alternate numerals — both layered on top of
+       the default ss01 / case / calt set. */
+    font-feature-settings: 'tnum' 1, 'ss05' 1, 'ss01', 'case', 'calt';
+  }
+
+  /* Icons scale to the pill (the default 16px a-icon is too big here) and
+     don't shrink in the flex row. */
+  a-tag a-icon {
+    --icon-size: var(--tag-icon-size);
+    flex: none;
+  }
+
+  /* label / value segments. Each ellipsizes independently if the pill is
+     width-constrained. */
+  a-tag a-tag-label,
+  a-tag a-tag-value {
+    display: inline-block;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  /* `value` is the default, unmodified text — it just inherits the tag's
+     color and base weight. */
+  a-tag a-tag-value { font-weight: 450; }
+  /* `label` is the bold "key" placed before the value: same color, just
+     heavier (weight 600). It only renders as <a-tag-label> when paired
+     with a value — the JSX wrapper drops a lone label into <a-tag-value>
+     so a standalone tag keeps the default styling. No divider; the weight
+     contrast does the separating. */
+  a-tag a-tag-label { font-weight: var(--tag-label-weight); }
+
+  /* Optical edge padding: an icon at an edge needs less room than a text
+     edge, so trim ~2px on whichever side a leading / trailing icon sits.
+     `max(0px, …)` keeps it from going negative at small sizes. */
+  a-tag:has(> a-icon:first-child) { padding-inline-start: max(0px, var(--tag-padding-inline) - 2px); }
+  a-tag:has(> a-icon:last-child)  { padding-inline-end:   max(0px, var(--tag-padding-inline) - 2px); }
+
+  /* Segmented children — when raw children (not the structured label /
+     value) are passed, each segment after the first gets a hairline
+     divider, the legacy multi-part style. Icons and the label / value
+     elements are excluded, so `label` + `value` stay divider-less and a
+     leading / trailing icon sits flush. The flex `gap` sits to the left
+     of the border and `padding-left` balances it on the right. */
+  a-tag
+    > :not(a-icon, a-tag-label, a-tag-value)
+    ~ :not(a-icon, a-tag-label, a-tag-value) {
+    padding-left: var(--tag-gap);
+    border-left: 0.5px solid var(--tag-separator);
+  }
+
+  /* Named tones — text uses the theme-aware `--text-3-{tone}` (self-themes
+     for dark). Each tone re-points the three hue anchors: `--tag-tint`
+     (vivid, for the secondary fill + secondary/primary border), `--tag-fill`
+     (the solid primary fill — light value; the `.dark` block re-points it),
+     and `--tag-edge` (the deep tertiary-border hue = `--text-2-{tone}`, which
+     already flips for dark). Colored fill alpha is 10% (vs neutral's 7%) and
+     the tertiary edge alpha is 20% (vs neutral's 25%); dark deepens them. */
+  a-tag[tone="brand"]    { --tag-text: var(--text-3-brand);    --tag-tint: #7460d7; --tag-fill: #7460d7; --tag-edge: var(--text-2-brand);    --_tag-bg-alpha: 10%; --_tag-edge-alpha: 20%; }
+  a-tag[tone="info"]     { --tag-text: var(--text-3-info);     --tag-tint: #2686d9; --tag-fill: #2686d9; --tag-edge: var(--text-2-info);     --_tag-bg-alpha: 10%; --_tag-edge-alpha: 20%; }
+  a-tag[tone="success"]  { --tag-text: var(--text-3-success);  --tag-tint: #329550; --tag-fill: #329550; --tag-edge: var(--text-2-success);  --_tag-bg-alpha: 10%; --_tag-edge-alpha: 20%; }
+  a-tag[tone="warning"]  { --tag-text: var(--text-3-warning);  --tag-tint: #c37416; --tag-fill: #ae6613; --tag-edge: var(--text-2-warning);  --_tag-bg-alpha: 10%; --_tag-edge-alpha: 20%; }
+  a-tag[tone="critical"] { --tag-text: var(--text-3-critical); --tag-tint: #de4545; --tag-fill: #de4545; --tag-edge: var(--text-2-critical); --_tag-bg-alpha: 10%; --_tag-edge-alpha: 20%; }
+
+  /* Neutral, dark — the tint flips to a light plum so it still reads as a
+     tint on the dark surface; the solid primary fill darkens; the fill alpha
+     lifts to ≈12%, border + edge stay (≈15% / ≈25%). (Scoped to the default
+     + explicit `neutral` so it never touches a colored or custom tone.) */
+  .dark a-tag:not([tone]),
+  .dark a-tag[tone="neutral"] {
+    --tag-tint: #e4d1ef;
+    --tag-fill: #635b65;
+    --_tag-bg-alpha: 12%;
+  }
+
+  /* Colored tones, dark — same vivid tint, deeper alphas (fill ≈20%, border
+     ≈25%, tertiary edge ≈30%). `--tag-edge` (= `--text-2-{tone}`) and
+     `--tag-text` flip via their tokens; only `--tag-fill` needs a literal
+     dark value per tone. */
+  .dark a-tag[tone="brand"],
+  .dark a-tag[tone="info"],
+  .dark a-tag[tone="success"],
+  .dark a-tag[tone="warning"],
+  .dark a-tag[tone="critical"] {
+    --_tag-bg-alpha: 20%;
+    --_tag-border-alpha: 25%;
+    --_tag-edge-alpha: 30%;
+  }
+  .dark a-tag[tone="brand"]    { --tag-fill: #5f4bc3; }
+  .dark a-tag[tone="info"]     { --tag-fill: #1f6eb2; }
+  .dark a-tag[tone="success"]  { --tag-fill: #2a7e43; }
+  .dark a-tag[tone="warning"]  { --tag-fill: #995200; }
+  .dark a-tag[tone="critical"] { --tag-fill: #c9302c; }
+
+  /* Custom tone — any non-named `tone` value. Built like the named
+     secondary tones (the "brand secondary" recipe): the fill + border are
+     alpha tints of the source hue, and the text deepens that same hue to a
+     readable foreground, pinned at the `--text-2-brand` lightness/chroma and
+     carried at the 80% alpha the `--text-3-{tone}` tokens use. The JSX
+     wrapper writes `--tag-tone-source` inline; the typed `attr()` fallback
+     picks up raw `<a-tag tone="…">` on modern engines.
+     (oklch relative color: Chrome 119+, Safari 16.4+, Firefox 128+.) */
+  a-tag[tone]:not(
+      [tone="neutral"],
+      [tone="brand"],
+      [tone="info"],
+      [tone="success"],
+      [tone="warning"],
+      [tone="critical"]
+    ) {
+    --tag-tone-source: attr(tone type(<color>), currentColor);
+    --_tag-bg-alpha: 10%;
+    --_tag-border-alpha: 15%;
+    --_tag-edge-alpha: 20%;
+
+    /* Tint — source hue, but lightness/chroma pinned near Brand so any
+       input tints like a sibling of the named tones instead of alpha-ing
+       the raw color (the alpha is applied by the base `--tag-bg` /
+       `--tag-border` formula). Mirrors `<a-button>`'s custom-tone bg. */
+    --_tag-tint-l: 0.54;   /* tint lightness — near Brand (light) */
+    --_tag-tint-c: 0.16;   /* tint chroma */
+    --tag-tint: oklch(from var(--tag-tone-source) var(--_tag-tint-l) var(--_tag-tint-c) h);
+
+    /* Solid primary fill — same hue, pinned to a Brand-like fill lightness so
+       white text stays legible on any input (the `.dark` block lowers it). */
+    --_tag-fill-l: 0.50;
+    --tag-fill: oklch(from var(--tag-tone-source) var(--_tag-fill-l) var(--_tag-tint-c) h);
+
+    --_tag-text-l: 0.40;   /* fg lightness — matches --text-2-brand (light) */
+    --_tag-text-c: 0.15;   /* fg chroma */
+    --tag-text: color-mix(in oklch,
+      oklch(from var(--tag-tone-source) var(--_tag-text-l) var(--_tag-text-c) h) 80%,
+      transparent);
+    /* Tertiary edge — the deep foreground hue (same L/C as the text base),
+       so the outline reads like `--text-2-{tone}` does for the named tones. */
+    --tag-edge: oklch(from var(--tag-tone-source) var(--_tag-text-l) var(--_tag-text-c) h);
+  }
+
+  /* Custom tone, dark mode — deeper tint / edge alphas (fill ≈20%, border
+     ≈25%, edge ≈30%), a lighter foreground, and a slightly darker solid fill,
+     mirroring the colored tones' dark bump and the dark `--text-3-{tone}`
+     base. (`--tag-edge`/`--tag-fill` recompute from the re-tuned knobs.) */
+  .dark a-tag[tone]:not(
+      [tone="neutral"],
+      [tone="brand"],
+      [tone="info"],
+      [tone="success"],
+      [tone="warning"],
+      [tone="critical"]
+    ) {
+    --_tag-bg-alpha: 20%;
+    --_tag-border-alpha: 25%;
+    --_tag-edge-alpha: 30%;
+    --_tag-tint-l: 0.58;   /* tint lifts a touch to read against a dark page */
+    --_tag-fill-l: 0.45;   /* solid primary fill darkens, like the named tones */
+    --_tag-text-l: 0.75;   /* matches --text-2-brand dark base */
+    --_tag-text-c: 0.11;
+  }
+
+  /* ---- Priority ----------------------------------------------------------
+     `secondary` is the default (the alpha-tint formula in the base rule).
+     These re-map the same per-tone hue anchors for the other two priorities;
+     they sit after the tone rules so their equal-specificity `--tag-bg` /
+     `--tag-text` overrides win the cascade. */
+
+  /* Primary — solid `--tag-fill` with white text. The hairline border keeps
+     the vivid `--tag-tint` edge (= the secondary border). */
+  a-tag[priority="primary"] {
+    --tag-bg: var(--tag-fill);
+    --tag-text: #fff;
+  }
+  /* Custom-tone primary needs the white text re-stated at higher specificity
+     to out-rank the custom `--tag-text` (the `[tone]:not(…)` selector). */
+  a-tag[priority="primary"][tone]:not(
+      [tone="neutral"],
+      [tone="brand"],
+      [tone="info"],
+      [tone="success"],
+      [tone="warning"],
+      [tone="critical"]
+    ) {
+    --tag-text: #fff;
+  }
+
+  /* Tertiary — no fill, just a deeper-hue outline (`--tag-edge` at the edge
+     alpha); text stays the tone's `--text-3-{tone}`. */
+  a-tag[priority="tertiary"] {
+    --tag-bg: transparent;
+    --tag-border: color-mix(in oklch, var(--tag-edge) var(--_tag-edge-alpha), transparent);
+  }
+
+  a-tag[size="small"] {
+    --tag-padding-block: 0.5px;
+    --tag-padding-inline: 4.5px;
+    --tag-icon-size: 11px;
+
+    font-size: 10px;
+    line-height: 14px;
+  }
+
+  /* Large — 24px tall (line-height 18 + 2×2.5 padding + 2×0.5 border),
+     on par with Button's large. */
+  a-tag[size="large"] {
+    --tag-padding-block: 2.5px;
+    --tag-padding-inline: 8.5px;
+    --tag-icon-size: 15px;
+
+    font-size: 12px;
+    line-height: 18px;
+  }
+
+  /* Normal-case opt-out: drop the uppercase transform for proportional,
+     mixed-case text. Keep a small body-text tracking (Anta's 0.02ch)
+     rather than zero — uppercase just needs more (0.08ch). Tabular
+     figures + `ss05` stay on (only the case / stylistic-set extras
+     change). */
+  a-tag[nocaps] {
+    font-size: 12px;
+    text-transform: none;
+    letter-spacing: 0.02ch;
+    font-feature-settings: 'tnum' 1, 'ss05' 1, 'lnum', 'ss01', 'ss04', 'case', 'calt';
+  }
+  /* Large + nocaps reads larger too — bump to 13px (one over the 12px
+     uppercase large), keeping the same +1px over-uppercase relationship
+     medium has. Height is unchanged (driven by line-height + padding). */
+  a-tag[size="large"][nocaps] {
+    font-size: 13px;
+  }
+}
