@@ -175,8 +175,78 @@ Two more findings:
   for save-heavy titles.
 
 Bottom line: within the existing rules, no new primitive, byte-exact — the paged
-representation recovers ~10% of the wall-time tax and, more usefully, proves the
-remaining ~18× is structural value-threading, not `memcpy`.
+representation recovers ~10% of the wall-time tax. Where the *rest* goes is measured
+below, not assumed.
+
+## Where the residual tax lives (measured)
+
+The paging result implies the region rebuilds are a minority of the tax, but that is an
+inference. Two direct measurements pin it down.
+
+**Isolating microbenchmarks** — both engines run tight loop ROMs (`emu_bench synth:<kind>`:
+a valid ROM that loops one operation forever), so the per-instruction ratio attributes
+each slice cleanly:
+
+| loop | operation | mine / rboy |
+| ---- | --------- | ----------- |
+| `nop`   | fetch + decode + peripheral tick (no data memory) | **25.0×** |
+| `alu`   | `INC A` | 25.8× |
+| `write` | `LD (HL),A` | 21.2× |
+| `read`  | `LD A,(HL)` | 19.7× |
+| `stack` | `PUSH/POP` | 14.4× |
+
+The **core fetch/decode/tick loop is the worst at 25×**; the memory data ops are a
+*lower*-ratio increment on top (isolated op-tax 5.6–12.7×). So the paged region access is
+not the bottleneck — the per-`do_cycle` machinery is. Real ROMs blend these to ~18×.
+
+**A Time Profiler run** of the `nop` loop (14.4k samples) locates the cost — and rules out
+the obvious suspect:
+
+| self-time | where |
+| --------- | ----- |
+| ~69% | interpreter + loop (`device::run`, `mmu::do_cycle`, `cpu::do_cycle`/`execute`) |
+| ~14% | peripheral tick (`gpu::step_ticks`/`do_cycle`/render, `sound::do_cycle`) |
+| ~2%  | `Vec` construction / allocator |
+| **~1.2%** | **`_platform_memmove`** |
+
+So despite `Cpu` measuring **1224 bytes** (`size_of`), bulk struct-copy is *not* the tax —
+LLVM elides the move. The cost is the value-oriented control flow itself: `Struct { field:
+new, ..old }` reads and writes *every* field of the ~1.2 KB `Mmu`/`Gpu`/`Sound` to change
+one, and the peripheral tick reconstructs them every cycle — versus rboy's single in-place
+field write. That is distributed per-field moves plus genuine interpreter work, i.e.
+**compute-bound, not memory-bandwidth-bound**, which is exactly why `memmove` stays at 1%.
+
+**Is ~18× the floor?** It is the floor *of this struct layout* — not of the dialect, and not
+fixed. A spike measured the slope directly: box the two biggest cold blocks that ride the hot
+loop for nothing (the `Gpu` palettes, 192 B, and `Sound`, 464 B — idle in a `nop` loop) so the
+per-cycle reconstruction moves a pointer instead of copying them, and re-measure the core loop:
+
+| threaded bytes removed | `synth:nop` | core tax |
+| ---------------------- | ----------- | -------- |
+| 0 (baseline)           | 2.75s | 25.0× |
+| 192 (palettes)         | 2.49s | 22.6× |
+| 656 (+ Sound, ~53% of `Cpu`) | 1.74s | **15.8×** |
+
+The tax falls with the **inline bytes copied per reconstruction — not with field count.** Both
+changes boxed a large *inline* field: the palettes (a `[[[u8;3];4];8]` fixed array) and `Sound`
+(a 464 B inline struct), turning an inline by-value field into a heap pointer so `..old` moves 8
+bytes instead of the payload. No fields were removed. Rust already moves `Vec`/`Box` fields as
+fat pointers for free; what costs is specifically the *large inline* fields (fixed-size arrays,
+big value-structs) that get byte-copied on every reconstruction — and only across the `gpu`/
+`sound` `do_cycle` boundaries the compiler did not inline (a small `Copy` struct like the
+register file is shredded into SSA values by SROA and threads for free). So the lever is
+**heap-indirect the large inline fields** on the hot path — *not* reduce field count, and *not*
+"pass primitives" (you cannot hand a buffer to a function as a scalar). `Box` supplies it: on a
+linear timeline it shares the payload across the version transition (move the pointer, rebuild
+only on the field's own events) — structural sharing without `Rc`/`Arc`.
+
+This is a **distinct cost from the memory-write tax above.** That one is the buffer *rebuild*
+itself (`concat`, O(1)→O(n)), internal to the one field and identical regardless of struct
+shape — fixed by `region.rs`'s paging. The core-loop cost here is the *by-value copy of large
+inline fields* during reconstruction — fixed by heap-indirecting them. Two costs, two
+representations, both orthogonal to how many fields the enclosing struct has. The spike was
+reverted; banking it — `Box`/handle the remaining large inline blocks — is a separate, now
+narrowly-scoped effort (not `with_mut`, not boxing hot fields, which would allocate every cycle).
 
 ## Reproduce
 
