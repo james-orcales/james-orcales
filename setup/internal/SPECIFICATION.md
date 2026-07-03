@@ -127,22 +127,21 @@ A failing install reports a non-zero exit code.
 # Install Fish
 
 Install_Fish builds fish from the vendored `third_party/fish-shell` with cargo, offline against its
-committed vendor tree, and symlinks fish, fish_indent, and fish_key_reader into the PATH directory.
-It probes the built binary, so a present build is relinked rather than recompiled.
+committed vendor tree, and installs fish, fish_indent, and fish_key_reader straight into the bin
+directory via cargo `--root`. It probes the built binary, so a present build is left alone.
 
 ### Skips Build When Already Built
 
-When the fish binary under CARGO_HOME already reports the wanted version, the build is skipped and
-the binaries are relinked rather than recompiled.
+When the fish binary in the bin directory already reports the wanted version, the build is skipped.
 
-### Builds Then Links When Absent
+### Builds When Absent
 
-When no fish at the wanted version is present, cargo builds and installs it and then the binaries
-are symlinked into the link directory.
+When no fish at the wanted version is present, cargo builds and installs the three binaries into the
+bin directory.
 
 ### Reports A Build Failure
 
-A failing build stops before linking and reports a non-zero exit code.
+A failing build reports a non-zero exit code.
 
 # Install Fzf
 
@@ -183,62 +182,56 @@ A failing build reports a non-zero exit code.
 # Install Jj
 
 Install_Jj builds jj from the vendored `third_party/jj` workspace with cargo, offline against its
-committed vendor tree, and symlinks the binary into the PATH directory. It probes the built binary,
-so a present build is relinked rather than recompiled when only the symlink is missing.
+committed vendor tree, and installs the binary straight into the bin directory via cargo `--root`,
+probing the built binary so a present build at the wanted version is left alone rather than rebuilt.
 
 ### Skips Build When Already Built
 
-When the jj binary under CARGO_HOME already reports the wanted version, the build is skipped and the
-binary is relinked rather than recompiled.
+When the jj binary in the bin directory already reports the wanted version, the build is skipped.
 
-### Builds Then Links When Absent
+### Builds When Absent
 
-When no jj at the wanted version is present, cargo builds and installs it and then the binary is
-symlinked into the link directory.
+When no jj at the wanted version is present, cargo builds and installs it into the bin directory.
 
 ### Reports A Build Failure
 
-A failing build stops before linking and reports a non-zero exit code.
+A failing build reports a non-zero exit code.
 
 # Install Ripgrep
 
 Install_Ripgrep builds ripgrep from the vendored `third_party/ripgrep` with cargo and the pcre2
-feature, offline against its committed vendor tree, and symlinks the rg binary into the PATH
-directory. It probes the built binary, so a present build is relinked rather than recompiled.
+feature, offline against its committed vendor tree, installing the rg binary straight into the bin
+directory via cargo `--root`; a present build at the wanted version is left alone, not recompiled.
 
 ### Skips Build When Already Built
 
-When the rg binary under CARGO_HOME already reports the wanted version, the build is skipped and the
-binary is relinked rather than recompiled.
+When the rg binary in the bin directory already reports the wanted version, the build is skipped.
 
-### Builds Then Links When Absent
+### Builds When Absent
 
-When no rg at the wanted version is present, cargo builds and installs it and then the binary is
-symlinked into the link directory.
+When no rg at the wanted version is present, cargo builds and installs it into the bin directory.
 
 ### Reports A Build Failure
 
-A failing build stops before linking and reports a non-zero exit code.
+A failing build reports a non-zero exit code.
 
 # Install Fdcli
 
 Install_Fdcli builds fd from the vendored `third_party/fd` with cargo, offline against its committed
-vendor tree, and symlinks the binary into the PATH directory. It probes the built binary, so a
-present build is relinked rather than recompiled.
+vendor tree, and installs the binary straight into the bin directory (via cargo `--root`). It probes
+the built binary, so a present build at the wanted version is left alone rather than recompiled.
 
 ### Skips Build When Already Built
 
-When the fd binary under CARGO_HOME already reports the wanted version, the build is skipped and the
-binary is relinked rather than recompiled.
+When the fd binary in the bin directory already reports the wanted version, the build is skipped.
 
-### Builds Then Links When Absent
+### Builds When Absent
 
-When no fd at the wanted version is present, cargo builds and installs it and then the binary is
-symlinked into the link directory.
+When no fd at the wanted version is present, cargo builds and installs it into the bin directory.
 
 ### Reports A Build Failure
 
-A failing build stops before linking and reports a non-zero exit code.
+A failing build reports a non-zero exit code.
 
 # Install Ghostty
 

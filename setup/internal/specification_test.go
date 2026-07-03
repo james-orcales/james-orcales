@@ -506,18 +506,16 @@ func Test_Install_Rust_Reports_An_Install_Failure(t *testing.T) {
 }
 
 // Test_Install_Fish_Skips_Build_When_Already_Built verifies that when the fish
-// binary under CARGO_HOME already reports the wanted version, the build is skipped
-// and the binary is relinked — proving the gate probes the build path, not PATH,
-// so a missing symlink does not force a recompile.
+// binary in the bin directory already reports the wanted version, the build is
+// skipped — proving the gate probes the installed binary, so nothing recompiles.
 func Test_Install_Fish_Skips_Build_When_Already_Built(t *testing.T) {
 	t.Parallel()
 	commands := []sysio.Process_Request{}
 	status := setup.Install_Fish(&setup.Install_Fish_Input{
-		Fish_Directory:  test_fish_directory,
-		Cargo_Directory: test_cargo_directory,
-		Link_Directory:  test_link_directory,
+		Fish_Directory:   test_fish_directory,
+		Binary_Directory: test_link_directory,
 		Shell: recording_shell(&commands, map[string]string{
-			test_cargo_directory + "/bin/fish": "fish, version 4.7.1\n",
+			test_link_directory + "/fish": "fish, version 4.7.1\n",
 		}, 0),
 	})
 	if status != 0 {
@@ -526,49 +524,49 @@ func Test_Install_Fish_Skips_Build_When_Already_Built(t *testing.T) {
 	if builds := commands_named(commands, "sh"); len(builds) != 0 {
 		t.Fatalf("expected no build when already built, ran %v", builds)
 	}
-	if links := commands_named(commands, "ln"); len(links) != 3 {
-		t.Fatalf("expected the existing build relinked, ran %d", len(links))
+	if links := commands_named(commands, "ln"); len(links) != 0 {
+		t.Fatalf("expected no symlink; fish installs in place, ran %v", links)
 	}
 }
 
-// Test_Install_Fish_Builds_Then_Links_When_Absent verifies that when no fish at
-// the wanted version is present, cargo builds it and then the binary is linked.
-func Test_Install_Fish_Builds_Then_Links_When_Absent(t *testing.T) {
+// Test_Install_Fish_Builds_When_Absent verifies that when no fish at the wanted
+// version is present, cargo builds and installs it into the bin directory with
+// --root, and no symlink is created.
+func Test_Install_Fish_Builds_When_Absent(t *testing.T) {
 	t.Parallel()
 	commands := []sysio.Process_Request{}
 	status := setup.Install_Fish(&setup.Install_Fish_Input{
-		Fish_Directory:  test_fish_directory,
-		Cargo_Directory: test_cargo_directory,
-		Link_Directory:  test_link_directory,
-		Shell:           recording_shell(&commands, nil, 0),
+		Fish_Directory:   test_fish_directory,
+		Binary_Directory: test_link_directory,
+		Shell:            recording_shell(&commands, nil, 0),
 	})
 	if status != 0 {
 		t.Fatalf("expected success, got status %d", status)
 	}
-	if builds := commands_named(commands, "sh"); len(builds) != 1 {
+	builds := commands_named(commands, "sh")
+	if len(builds) != 1 {
 		t.Fatalf("expected one build command, ran %d", len(builds))
 	}
-	if links := commands_named(commands, "ln"); len(links) != 3 {
-		t.Fatalf("expected three binaries symlinked, ran %d", len(links))
+	if !strings.Contains(strings.Join(builds[0].Arguments, " "), "--root") {
+		t.Fatalf("expected cargo install --root, ran %v", builds[0].Arguments)
+	}
+	if links := commands_named(commands, "ln"); len(links) != 0 {
+		t.Fatalf("expected no symlink; fish installs in place, ran %v", links)
 	}
 }
 
-// Test_Install_Fish_Reports_A_Build_Failure verifies a failing build stops before
-// linking and reports a non-zero exit code.
+// Test_Install_Fish_Reports_A_Build_Failure verifies a failing build reports a
+// non-zero exit code.
 func Test_Install_Fish_Reports_A_Build_Failure(t *testing.T) {
 	t.Parallel()
 	commands := []sysio.Process_Request{}
 	status := setup.Install_Fish(&setup.Install_Fish_Input{
-		Fish_Directory:  test_fish_directory,
-		Cargo_Directory: test_cargo_directory,
-		Link_Directory:  test_link_directory,
-		Shell:           recording_shell(&commands, nil, 1),
+		Fish_Directory:   test_fish_directory,
+		Binary_Directory: test_link_directory,
+		Shell:            recording_shell(&commands, nil, 1),
 	})
 	if status == 0 {
 		t.Fatal("expected a non-zero status on build failure")
-	}
-	if links := commands_named(commands, "ln"); len(links) != 0 {
-		t.Fatalf("expected no link after a failed build, ran %v", links)
 	}
 }
 
@@ -684,17 +682,16 @@ func Test_Install_Command_Reports_A_Build_Failure(t *testing.T) {
 }
 
 // Test_Install_Jj_Skips_Build_When_Already_Built verifies that when the jj binary
-// under CARGO_HOME already reports the wanted version, the build is skipped and
-// the binary is relinked — the gate prefix-matches the commit suffix jj appends.
+// in the bin directory already reports the wanted version, the build is skipped —
+// the gate prefix-matches the commit suffix jj appends.
 func Test_Install_Jj_Skips_Build_When_Already_Built(t *testing.T) {
 	t.Parallel()
 	commands := []sysio.Process_Request{}
 	status := setup.Install_Jj(&setup.Install_Jj_Input{
-		Jj_Directory:    test_jj_directory,
-		Cargo_Directory: test_cargo_directory,
-		Link_Directory:  test_link_directory,
+		Jj_Directory:     test_jj_directory,
+		Binary_Directory: test_link_directory,
 		Shell: recording_shell(&commands, map[string]string{
-			test_cargo_directory + "/bin/jj": "jj 0.42.0-abc123\n",
+			test_link_directory + "/jj": "jj 0.42.0-abc123\n",
 		}, 0),
 	})
 	if status != 0 {
@@ -703,64 +700,63 @@ func Test_Install_Jj_Skips_Build_When_Already_Built(t *testing.T) {
 	if builds := commands_named(commands, "sh"); len(builds) != 0 {
 		t.Fatalf("expected no build when already built, ran %v", builds)
 	}
-	if links := commands_named(commands, "ln"); len(links) != 1 {
-		t.Fatalf("expected the existing build relinked once, ran %d", len(links))
+	if links := commands_named(commands, "ln"); len(links) != 0 {
+		t.Fatalf("expected no symlink; jj installs in place, ran %v", links)
 	}
 }
 
-// Test_Install_Jj_Builds_Then_Links_When_Absent verifies that when no jj at the
-// wanted version is present, cargo builds it and then the binary is linked.
-func Test_Install_Jj_Builds_Then_Links_When_Absent(t *testing.T) {
+// Test_Install_Jj_Builds_When_Absent verifies that when no jj at the wanted
+// version is present, cargo builds and installs it into the bin directory with
+// --root, and no symlink is created.
+func Test_Install_Jj_Builds_When_Absent(t *testing.T) {
 	t.Parallel()
 	commands := []sysio.Process_Request{}
 	status := setup.Install_Jj(&setup.Install_Jj_Input{
-		Jj_Directory:    test_jj_directory,
-		Cargo_Directory: test_cargo_directory,
-		Link_Directory:  test_link_directory,
-		Shell:           recording_shell(&commands, nil, 0),
+		Jj_Directory:     test_jj_directory,
+		Binary_Directory: test_link_directory,
+		Shell:            recording_shell(&commands, nil, 0),
 	})
 	if status != 0 {
 		t.Fatalf("expected success, got status %d", status)
 	}
-	if builds := commands_named(commands, "sh"); len(builds) != 1 {
+	builds := commands_named(commands, "sh")
+	if len(builds) != 1 {
 		t.Fatalf("expected one build command, ran %d", len(builds))
 	}
-	if links := commands_named(commands, "ln"); len(links) != 1 {
-		t.Fatalf("expected jj symlinked once, ran %d", len(links))
+	if !strings.Contains(strings.Join(builds[0].Arguments, " "), "--root") {
+		t.Fatalf("expected cargo install --root, ran %v", builds[0].Arguments)
+	}
+	if links := commands_named(commands, "ln"); len(links) != 0 {
+		t.Fatalf("expected no symlink; jj installs in place, ran %v", links)
 	}
 }
 
-// Test_Install_Jj_Reports_A_Build_Failure verifies a failing build stops before
-// linking and reports a non-zero exit code.
+// Test_Install_Jj_Reports_A_Build_Failure verifies a failing build reports a
+// non-zero exit code.
 func Test_Install_Jj_Reports_A_Build_Failure(t *testing.T) {
 	t.Parallel()
 	commands := []sysio.Process_Request{}
 	status := setup.Install_Jj(&setup.Install_Jj_Input{
-		Jj_Directory:    test_jj_directory,
-		Cargo_Directory: test_cargo_directory,
-		Link_Directory:  test_link_directory,
-		Shell:           recording_shell(&commands, nil, 1),
+		Jj_Directory:     test_jj_directory,
+		Binary_Directory: test_link_directory,
+		Shell:            recording_shell(&commands, nil, 1),
 	})
 	if status == 0 {
 		t.Fatal("expected a non-zero status on build failure")
 	}
-	if links := commands_named(commands, "ln"); len(links) != 0 {
-		t.Fatalf("expected no link after a failed build, ran %v", links)
-	}
 }
 
 // Test_Install_Ripgrep_Skips_Build_When_Already_Built verifies that when the rg
-// binary under CARGO_HOME already reports the wanted version, the build is skipped
-// and the binary is relinked — the gate prefix-matches the rev suffix rg appends.
+// binary in the bin directory already reports the wanted version, the build is
+// skipped — the gate prefix-matches the rev suffix rg appends.
 func Test_Install_Ripgrep_Skips_Build_When_Already_Built(t *testing.T) {
 	t.Parallel()
 	commands := []sysio.Process_Request{}
 	status := setup.Install_Ripgrep(&setup.Install_Ripgrep_Input{
 		Ripgrep_Directory: test_ripgrep_directory,
-		Cargo_Directory:   test_cargo_directory,
-		Link_Directory:    test_link_directory,
+		Binary_Directory:  test_link_directory,
 		Shell: recording_shell(&commands, map[string]string{
-			test_cargo_directory + "/bin/rg": "ripgrep 15.1.0 (rev abc123)\n",
+			test_link_directory + "/rg": "ripgrep 15.1.0 (rev abc123)\n",
 		}, 0),
 	})
 	if status != 0 {
@@ -769,64 +765,63 @@ func Test_Install_Ripgrep_Skips_Build_When_Already_Built(t *testing.T) {
 	if builds := commands_named(commands, "sh"); len(builds) != 0 {
 		t.Fatalf("expected no build when already built, ran %v", builds)
 	}
-	if links := commands_named(commands, "ln"); len(links) != 1 {
-		t.Fatalf("expected the existing build relinked once, ran %d", len(links))
+	if links := commands_named(commands, "ln"); len(links) != 0 {
+		t.Fatalf("expected no symlink; rg installs in place, ran %v", links)
 	}
 }
 
-// Test_Install_Ripgrep_Builds_Then_Links_When_Absent verifies that when no rg at
-// the wanted version is present, cargo builds it and then the binary is linked.
-func Test_Install_Ripgrep_Builds_Then_Links_When_Absent(t *testing.T) {
+// Test_Install_Ripgrep_Builds_When_Absent verifies that when no rg at the wanted
+// version is present, cargo builds and installs it into the bin directory with
+// --root, and no symlink is created.
+func Test_Install_Ripgrep_Builds_When_Absent(t *testing.T) {
 	t.Parallel()
 	commands := []sysio.Process_Request{}
 	status := setup.Install_Ripgrep(&setup.Install_Ripgrep_Input{
 		Ripgrep_Directory: test_ripgrep_directory,
-		Cargo_Directory:   test_cargo_directory,
-		Link_Directory:    test_link_directory,
+		Binary_Directory:  test_link_directory,
 		Shell:             recording_shell(&commands, nil, 0),
 	})
 	if status != 0 {
 		t.Fatalf("expected success, got status %d", status)
 	}
-	if builds := commands_named(commands, "sh"); len(builds) != 1 {
+	builds := commands_named(commands, "sh")
+	if len(builds) != 1 {
 		t.Fatalf("expected one build command, ran %d", len(builds))
 	}
-	if links := commands_named(commands, "ln"); len(links) != 1 {
-		t.Fatalf("expected rg symlinked once, ran %d", len(links))
+	if !strings.Contains(strings.Join(builds[0].Arguments, " "), "--root") {
+		t.Fatalf("expected cargo install --root, ran %v", builds[0].Arguments)
+	}
+	if links := commands_named(commands, "ln"); len(links) != 0 {
+		t.Fatalf("expected no symlink; rg installs in place, ran %v", links)
 	}
 }
 
-// Test_Install_Ripgrep_Reports_A_Build_Failure verifies a failing build stops
-// before linking and reports a non-zero exit code.
+// Test_Install_Ripgrep_Reports_A_Build_Failure verifies a failing build reports a
+// non-zero exit code.
 func Test_Install_Ripgrep_Reports_A_Build_Failure(t *testing.T) {
 	t.Parallel()
 	commands := []sysio.Process_Request{}
 	status := setup.Install_Ripgrep(&setup.Install_Ripgrep_Input{
 		Ripgrep_Directory: test_ripgrep_directory,
-		Cargo_Directory:   test_cargo_directory,
-		Link_Directory:    test_link_directory,
+		Binary_Directory:  test_link_directory,
 		Shell:             recording_shell(&commands, nil, 1),
 	})
 	if status == 0 {
 		t.Fatal("expected a non-zero status on build failure")
 	}
-	if links := commands_named(commands, "ln"); len(links) != 0 {
-		t.Fatalf("expected no link after a failed build, ran %v", links)
-	}
 }
 
 // Test_Install_Fdcli_Skips_Build_When_Already_Built verifies that when the fd binary
-// under CARGO_HOME already reports the wanted version, the build is skipped and
-// the binary is relinked rather than recompiled.
+// in the bin directory already reports the wanted version, the build is skipped
+// rather than recompiled.
 func Test_Install_Fdcli_Skips_Build_When_Already_Built(t *testing.T) {
 	t.Parallel()
 	commands := []sysio.Process_Request{}
 	status := setup.Install_Fdcli(&setup.Install_Fdcli_Input{
-		Fdcli_Directory: test_fdcli_directory,
-		Cargo_Directory: test_cargo_directory,
-		Link_Directory:  test_link_directory,
+		Fdcli_Directory:  test_fdcli_directory,
+		Binary_Directory: test_link_directory,
 		Shell: recording_shell(&commands, map[string]string{
-			test_cargo_directory + "/bin/fd": "fd 10.4.2\n",
+			test_link_directory + "/fd": "fd 10.4.2\n",
 		}, 0),
 	})
 	if status != 0 {
@@ -835,49 +830,49 @@ func Test_Install_Fdcli_Skips_Build_When_Already_Built(t *testing.T) {
 	if builds := commands_named(commands, "sh"); len(builds) != 0 {
 		t.Fatalf("expected no build when already built, ran %v", builds)
 	}
-	if links := commands_named(commands, "ln"); len(links) != 1 {
-		t.Fatalf("expected the existing build relinked once, ran %d", len(links))
+	if links := commands_named(commands, "ln"); len(links) != 0 {
+		t.Fatalf("expected no symlink; fd installs in place, ran %v", links)
 	}
 }
 
-// Test_Install_Fdcli_Builds_Then_Links_When_Absent verifies that when no fd at the
-// wanted version is present, cargo builds it and then the binary is linked.
-func Test_Install_Fdcli_Builds_Then_Links_When_Absent(t *testing.T) {
+// Test_Install_Fdcli_Builds_When_Absent verifies that when no fd at the wanted
+// version is present, cargo builds and installs it into the bin directory with
+// --root, and no symlink is created.
+func Test_Install_Fdcli_Builds_When_Absent(t *testing.T) {
 	t.Parallel()
 	commands := []sysio.Process_Request{}
 	status := setup.Install_Fdcli(&setup.Install_Fdcli_Input{
-		Fdcli_Directory: test_fdcli_directory,
-		Cargo_Directory: test_cargo_directory,
-		Link_Directory:  test_link_directory,
-		Shell:           recording_shell(&commands, nil, 0),
+		Fdcli_Directory:  test_fdcli_directory,
+		Binary_Directory: test_link_directory,
+		Shell:            recording_shell(&commands, nil, 0),
 	})
 	if status != 0 {
 		t.Fatalf("expected success, got status %d", status)
 	}
-	if builds := commands_named(commands, "sh"); len(builds) != 1 {
+	builds := commands_named(commands, "sh")
+	if len(builds) != 1 {
 		t.Fatalf("expected one build command, ran %d", len(builds))
 	}
-	if links := commands_named(commands, "ln"); len(links) != 1 {
-		t.Fatalf("expected fd symlinked once, ran %d", len(links))
+	if !strings.Contains(strings.Join(builds[0].Arguments, " "), "--root") {
+		t.Fatalf("expected cargo install --root, ran %v", builds[0].Arguments)
+	}
+	if links := commands_named(commands, "ln"); len(links) != 0 {
+		t.Fatalf("expected no symlink; fd installs in place, ran %v", links)
 	}
 }
 
-// Test_Install_Fdcli_Reports_A_Build_Failure verifies a failing build stops before
-// linking and reports a non-zero exit code.
+// Test_Install_Fdcli_Reports_A_Build_Failure verifies a failing build reports a
+// non-zero exit code.
 func Test_Install_Fdcli_Reports_A_Build_Failure(t *testing.T) {
 	t.Parallel()
 	commands := []sysio.Process_Request{}
 	status := setup.Install_Fdcli(&setup.Install_Fdcli_Input{
-		Fdcli_Directory: test_fdcli_directory,
-		Cargo_Directory: test_cargo_directory,
-		Link_Directory:  test_link_directory,
-		Shell:           recording_shell(&commands, nil, 1),
+		Fdcli_Directory:  test_fdcli_directory,
+		Binary_Directory: test_link_directory,
+		Shell:            recording_shell(&commands, nil, 1),
 	})
 	if status == 0 {
 		t.Fatal("expected a non-zero status on build failure")
-	}
-	if links := commands_named(commands, "ln"); len(links) != 0 {
-		t.Fatalf("expected no link after a failed build, ran %v", links)
 	}
 }
 
