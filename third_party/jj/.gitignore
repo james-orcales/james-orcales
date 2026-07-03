@@ -28,3 +28,12 @@ jj-trace-*.json
 
 # To make working on buck2 easier (#1997, #4413)
 /buck-out/
+
+# vendor/ is pinned third-party crate source, not jj's own tree. cargo's
+# directory-source checksums verify every vendored file at build time, so files
+# the dev-tree rules above strip (.envrc from ansi-to-tui, *.snap* from insta
+# crates, ...) break the offline build. Keep the vendored copies tracked.
+!vendor/**/.envrc
+!vendor/**/*.snap*
+!vendor/**/*.pending-snap
+!vendor/**/.direnv

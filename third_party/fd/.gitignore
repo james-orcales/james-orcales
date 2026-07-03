@@ -1,3 +1,9 @@
 target/
 /autocomplete/
 **/*.rs.bk
+
+# vendor/ is pinned crate source; cargo's directory-source checksums verify every
+# file at build time. The `target/` rule above also matches vendored crates'
+# source dirs (e.g. the cc crate's src/target/), stripping them on commit and
+# breaking the offline build. Keep them tracked.
+!vendor/**/target/
