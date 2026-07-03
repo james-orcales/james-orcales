@@ -35,6 +35,20 @@ pub fn insert<T>(mut arena: Arena<T>, value: T) -> (Arena<T>, Handle) {
     (arena, handle)
 }
 
+/// Overwrites the value at `handle` in place. Returns `(arena, false)`
+/// unchanged if the handle is out of bounds — there is no generation to go
+/// stale, since nothing is ever removed.
+pub fn update<T>(mut arena: Arena<T>, handle: Handle, value: T) -> (Arena<T>, bool) {
+    let index = handle.0 as usize;
+    match index < arena.items.len() {
+        true => {
+            arena.items[index] = value;
+            (arena, true)
+        }
+        false => (arena, false),
+    }
+}
+
 pub fn with<T, Result_Type>(
     arena: &Arena<T>,
     handle: Handle,

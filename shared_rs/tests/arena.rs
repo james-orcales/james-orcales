@@ -34,3 +34,21 @@ fn with_out_of_range_returns_none() {
     let _ = longer;
     assert_eq!(arena::with(&store, far, |value| *value), None);
 }
+
+#[test]
+fn update_changes_the_value_read_back_through_the_same_handle() {
+    let store: arena::Arena<&str> = arena::new();
+    let (store, h) = arena::insert(store, "old");
+    let (store, updated) = arena::update(store, h, "new");
+    assert!(updated);
+    assert_eq!(arena::with(&store, h, |value| *value), Some("new"));
+}
+
+#[test]
+fn update_on_an_out_of_bounds_handle_is_a_no_op() {
+    let store: arena::Arena<i32> = arena::new();
+    let far = arena::Handle(7);
+    let (store, updated) = arena::update(store, far, 1);
+    assert!(!updated);
+    assert!(arena::is_empty(&store));
+}
