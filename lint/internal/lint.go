@@ -2093,6 +2093,15 @@ type configuration_glob_list struct {
 	Globs []string
 }
 
+// Reduces a lint.json entry to the path the slash rule classifies: strip the "!"
+// negation and the redundant leading slash (matching Parse_Glob_Pattern), and
+// report whether a trailing slash — the directory marker — remained.
+func configuration_entry_literal(entry string) (literal string, has_slash bool) {
+	normalized := strings.TrimPrefix(strings.TrimPrefix(entry, "!"), "/")
+	literal = strings.TrimSuffix(normalized, "/")
+	return literal, normalized != literal
+}
+
 // Requires a wildcard-free lint.json entry to end in a slash when it names a
 // directory and to omit one when it names a file, so the trailing slash alone tells
 // them apart under the one exact-path matcher. A wildcard entry (* ? [) is exempt —
@@ -2131,8 +2140,7 @@ func check_configuration_directory_slash(input *Check_File_System_Input) (diags 
 			if strings.Contains(entry, "*") {
 				continue
 			}
-			literal := strings.TrimSuffix(entry, "/")
-			has_slash := entry != literal
+			literal, has_slash := configuration_entry_literal(entry)
 			is_directory := directories[literal]
 			is_file := input.Tracked[literal]
 			// A path is a directory or a file, never both, so at most one arm fires.

@@ -561,8 +561,9 @@ func Path_Matches_Glob(filename string, patterns []string) (yes bool) {
 
 // A Glob_Pattern is a lint.json glob entry parsed into the two facts the matcher
 // needs: Core, the pattern reduced to a form Glob_Match runs against a full path,
-// and Negate, whether the entry vetoes rather than grants a match. An unanchored,
-// slash-less entry is rewritten with a leading **/ so it matches at any depth.
+// and Negate, whether the entry vetoes rather than grants a match. Every entry is
+// relative to the repository root; matching at any depth is spelled out with a
+// leading **/.
 type Glob_Pattern struct {
 	// Core is the pattern reduced to the form Glob_Match runs against a full path.
 	Core string
@@ -573,21 +574,17 @@ type Glob_Pattern struct {
 
 // Parse_Glob_Pattern reduces a raw lint.json entry to a Glob_Pattern. A leading
 // "!" is stripped into Negate before the rest of the reduction runs, so Core never
-// carries it. A trailing slash is stripped; a leading or interior slash anchors
-// the entry to the root; a slash-less entry floats, modeled as **/ + entry so one
-// matcher serves both. Assumes the entry is non-empty once any leading "!" is
-// stripped.
+// carries it. Every entry is relative to the repository root: a leading slash is
+// redundant and stripped, and a trailing slash is stripped, so "go.mod" and
+// "/go.mod" both name the root go.mod and never a nested one. Match at any depth is
+// requested explicitly with a leading "**/". Assumes the entry is non-empty once
+// any leading "!" is stripped.
 func Parse_Glob_Pattern(raw string) (parsed Glob_Pattern) {
 	parsed.Negate = strings.HasPrefix(raw, "!")
 	raw = strings.TrimPrefix(raw, "!")
 	trimmed := strings.TrimSuffix(raw, "/")
-	had_leading_slash := strings.HasPrefix(trimmed, "/")
 	trimmed = strings.TrimPrefix(trimmed, "/")
-	anchored := had_leading_slash || strings.Contains(trimmed, "/")
 	parsed.Core = trimmed
-	if !anchored {
-		parsed.Core = "**/" + trimmed
-	}
 	return parsed
 }
 

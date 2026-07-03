@@ -2070,9 +2070,10 @@ func Test_Ignore_Recursive(t *testing.T) {
 	}
 }
 
-// A slash-less entry is unanchored: it matches the basename at any depth, the
-// way gitignore floats a pattern that carries no slash.
-func Test_Ignore_Unanchored(t *testing.T) {
+// A slash-less entry is relative to the repo root: it drops the root-level file
+// and never the same basename under a subdirectory. Any-depth matching is spelled
+// with a leading **/.
+func Test_Ignore_Root_Relative(t *testing.T) {
 	t.Parallel()
 	fixture := func(ignore []string) (files map[string]string) {
 		return map[string]string{
@@ -2088,12 +2089,21 @@ func Test_Ignore_Unanchored(t *testing.T) {
 	if !strings.Contains(stdout, "weird-File.txt") {
 		t.Fatalf("control: want weird-File.txt flagged: %s", stdout)
 	}
+	// Root-relative: the root file is dropped, the nested one stays flagged.
 	code, stdout, stderr := run_lint_tracked(t, fixture([]string{"weird-File.txt"}))
+	if code != 1 {
+		t.Fatalf("root-relative: nested still flagged, got %d; %q", code, stderr)
+	}
+	if !strings.Contains(stdout, "a/weird-File.txt") {
+		t.Fatalf("a root-relative entry must not drop the nested file: %s", stdout)
+	}
+	// A leading **/ opts into any-depth matching, dropping both.
+	code, stdout, stderr = run_lint_tracked(t, fixture([]string{"**/weird-File.txt"}))
 	if code != 0 {
-		t.Fatalf("unanchored: want clean run, got %d; stderr %q", code, stderr)
+		t.Fatalf("**/: want clean run, got %d; stderr %q", code, stderr)
 	}
 	if strings.Contains(stdout, "weird-File") {
-		t.Fatalf("a slash-less entry must drop every depth: %s", stdout)
+		t.Fatalf("a leading **/ must drop every depth: %s", stdout)
 	}
 }
 
@@ -2118,7 +2128,8 @@ func Test_Ignore_Anchored(t *testing.T) {
 	}
 }
 
-// A single-segment glob (*.weird) matches that pattern at any depth.
+// A single-segment glob (*.weird) is root-relative: it drops matching names at the
+// repo root only. Any-depth matching is spelled **/*.weird.
 func Test_Ignore_Segment_Glob(t *testing.T) {
 	t.Parallel()
 	fixture := func(ignore []string) (files map[string]string) {
@@ -2135,12 +2146,21 @@ func Test_Ignore_Segment_Glob(t *testing.T) {
 	if !strings.Contains(stdout, ".weird") {
 		t.Fatalf("control: want *.weird names flagged: %s", stdout)
 	}
+	// Root-relative: *.weird drops the root name, the nested one stays flagged.
 	code, stdout, stderr := run_lint_tracked(t, fixture([]string{"*.weird"}))
+	if code != 1 {
+		t.Fatalf("*.weird: nested still flagged, got %d; %q", code, stderr)
+	}
+	if !strings.Contains(stdout, "a/Bad-Two.weird") {
+		t.Fatalf("*.weird must not drop the nested name: %s", stdout)
+	}
+	// **/*.weird opts into any-depth matching, dropping both.
+	code, stdout, stderr = run_lint_tracked(t, fixture([]string{"**/*.weird"}))
 	if code != 0 {
-		t.Fatalf("*.weird: want clean run, got %d; stderr %q", code, stderr)
+		t.Fatalf("**/*.weird: want clean run, got %d; stderr %q", code, stderr)
 	}
 	if strings.Contains(stdout, ".weird") {
-		t.Fatalf("*.weird must drop matching names at any depth: %s", stdout)
+		t.Fatalf("**/*.weird must drop matching names at any depth: %s", stdout)
 	}
 }
 
