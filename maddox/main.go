@@ -12,11 +12,11 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/james-orcales/james-orcales/maddox/internal"
-	"github.com/james-orcales/james-orcales/shared/cli"
-	"github.com/james-orcales/james-orcales/shared/sh"
-	"github.com/james-orcales/james-orcales/shared/time"
-	time_default "github.com/james-orcales/james-orcales/shared/time/default"
+	"local/james-orcales/maddox/internal"
+	"local/james-orcales/shared/cli"
+	invariant "local/james-orcales/shared/invariant/default"
+	"local/james-orcales/shared/io"
+	"local/james-orcales/shared/time"
 )
 
 // Exit_usage marks a malformed command line, kept distinct from a benchmark
@@ -55,9 +55,9 @@ func main() {
 		os.Exit(exit_usage)
 	}
 
-	format := maddox.Output_Format_Table
+	format := maddox.OUTPUT_FORMAT_TABLE
 	if cli.Get_Option(command.Flags, "json").Value.(bool) {
-		format = maddox.Output_Format_Json
+		format = maddox.OUTPUT_FORMAT_JSON
 	}
 	duration_seconds := cli.Get_Option(command.Flags, "duration").Value.(int)
 	runs := cli.Get_Option(command.Flags, "runs").Value.(int)
@@ -68,20 +68,19 @@ func main() {
 
 	input := &maddox.Main_Input{
 		Commands:       commands,
-		Clock:          time_default.New_Operating_System_Clock(),
 		Sampler:        system_sampler(),
-		Duration_Max:   time.Duration(duration_seconds) * time.Second,
+		Duration_Max:   time.Duration(duration_seconds) * time.SECOND,
 		Runs_Max:       runs,
 		Warmup_Count:   warmup,
 		Allow_Failures: allow_failures,
 		Format:         format,
-		Color:          resolve_stream(color_mode, os.Stdout),
-		Progress:       resolve_stream(progress_mode, os.Stderr),
+		Color:          resolve_stream(stream_mode(color_mode), os.Stdout),
+		Progress:       resolve_stream(stream_mode(progress_mode), os.Stderr),
 		Output:         os.Stdout,
 		Stderr:         os.Stderr,
 		Machine:        acquire_machine_specs(),
 	}
-	os.Exit(maddox.Main(input))
+	os.Exit(int(maddox.Main(*input)))
 }
 
 // Main_program declares the maddox command line: a variadic list of commands to
@@ -136,15 +135,103 @@ func main_program() (program cli.Program) {
 	})
 }
 
-// Commands_from_strings turns each command string into an sh.Command, splitting it
-// on whitespace and partitioning leading KEY=VALUE assignments off via the sh
-// library's parser. It errors on a string with no executable.
-func commands_from_strings(command_strings []string) (commands []sh.Command, err error) {
-	commands = make([]sh.Command, 0, len(command_strings))
+// Bound_min and bound_max bound the command-tier defined types' lengths; min is vacuous
+// and max is eager, so the bounds hold for any real command line without observation.
+const bound_min = -1
+const bound_max = 1 << 16
+
+// Cli_commands is the raw command strings from the command line, each one a command to
+// benchmark before it is parsed into words.
+type cli_commands []string
+
+// Cli_commands_invariants bounds the command-string count.
+func cli_commands_invariants(commands cli_commands, namespace invariant.Namespace) {
+	invariant.Always(len(commands) <= bound_max, "A command list is at most its max.")
+	invariant.Always(len(commands) >= bound_min, "A command list is at least its min.")
+	invariant.Always(len(commands) != bound_min, "A command list never reaches its min.")
+	invariant.Always(len(commands) != bound_max, "A command list is below its max.")
+	invariant.Dot_Product(namespace,
+		invariant.Sometimes(len(commands) == 0, "A command list is empty."),
+		invariant.Sometimes(len(commands) == 1, "A command list has one."),
+		invariant.Sometimes(len(commands) == 2, "A command list has two."),
+		invariant.Sometimes(len(commands) == bound_min, "A command list is at its min."),
+		invariant.Sometimes(len(commands) == bound_max, "A command list is at its max."),
+		invariant.Impossible(
+			invariant.Event_True("A command list is empty."),
+			invariant.Event_True("A command list has one."),
+		),
+		invariant.Impossible(
+			invariant.Event_True("A command list is empty."),
+			invariant.Event_True("A command list has two."),
+		),
+		invariant.Impossible(
+			invariant.Event_True("A command list has one."),
+			invariant.Event_True("A command list has two."),
+		),
+	)
+}
+
+// Stream_mode is a color/progress toggle from the command line: never, always, or auto.
+type stream_mode string
+
+// Stream_mode_invariants bounds the mode word's length.
+func stream_mode_invariants(mode stream_mode, namespace invariant.Namespace) {
+	invariant.Always(len(mode) <= bound_max, "A stream mode is at most its max.")
+	invariant.Always(len(mode) >= bound_min, "A stream mode is at least its min.")
+	invariant.Always(len(mode) != bound_min, "A stream mode never reaches its min.")
+	invariant.Always(len(mode) != bound_max, "A stream mode is below its max.")
+	invariant.Dot_Product(namespace,
+		invariant.Sometimes(len(mode) == 0, "A stream mode is empty."),
+		invariant.Sometimes(len(mode) == 1, "A stream mode is one byte."),
+		invariant.Sometimes(len(mode) == 2, "A stream mode is two bytes."),
+		invariant.Sometimes(len(mode) == bound_min, "A stream mode is at its min."),
+		invariant.Sometimes(len(mode) == bound_max, "A stream mode is at its max."),
+		invariant.Impossible(
+			invariant.Event_True("A stream mode is empty."),
+			invariant.Event_True("A stream mode is one byte."),
+		),
+		invariant.Impossible(
+			invariant.Event_True("A stream mode is empty."),
+			invariant.Event_True("A stream mode is two bytes."),
+		),
+		invariant.Impossible(
+			invariant.Event_True("A stream mode is one byte."),
+			invariant.Event_True("A stream mode is two bytes."),
+		),
+	)
+}
+
+// Commands_from_strings turns each command string into an io.Process_Request,
+// splitting it on whitespace and partitioning leading KEY=VALUE assignments off as the
+// process environment. It errors on a string with no executable.
+func commands_from_strings(command_strings cli_commands) (commands maddox.Commands, err error) {
+	defer func() { maddox.Commands_Invariants(commands, "commands_from_strings.commands") }()
+	cli_commands_invariants(command_strings, "commands_from_strings.command_strings")
+	commands = make(maddox.Commands, 0, len(command_strings))
 	for _, text := range command_strings {
-		command, ok := sh.Spawn_Raw_Plan(strings.Fields(text))
-		if !ok {
+		fields := strings.Fields(text)
+		// A leading KEY=VALUE is an environment assignment: its '=' sits past index 0 so
+		// the key is non-empty (IndexByte returns -1 with no '=', also <= 0). The first
+		// field failing this is the executable, so stop partitioning there.
+		var environment []string
+		cut := 0
+		for _, field := range fields {
+			if strings.IndexByte(field, '=') <= 0 {
+				break
+			}
+			environment = append(environment, field)
+			cut++
+		}
+		remainder := fields[cut:]
+		if len(remainder) == 0 {
 			return nil, errors.New("empty command: " + strconv.Quote(text))
+		}
+		if remainder[0] == "" {
+			return nil, errors.New("empty command: " + strconv.Quote(text))
+		}
+		command := io.Process_Request{Environment: environment, Path: remainder[0]}
+		if len(remainder) > 1 {
+			command.Arguments = remainder[1:]
 		}
 		commands = append(commands, command)
 	}
@@ -153,7 +240,9 @@ func commands_from_strings(command_strings []string) (commands []sh.Command, err
 
 // Resolve_stream turns an auto/never/always mode into a decision: always or never as
 // named, auto when the stream is a terminal.
-func resolve_stream(mode string, file *os.File) (enabled bool) {
+func resolve_stream(mode stream_mode, file *os.File) (enabled bool) {
+	defer func() { invariant.Boolean_Invariants(enabled, "resolve_stream.enabled") }()
+	stream_mode_invariants(mode, "resolve_stream.mode")
 	if mode == "always" {
 		return true
 	}
@@ -166,6 +255,7 @@ func resolve_stream(mode string, file *os.File) (enabled bool) {
 // Is_terminal reports whether the file is a character device, so color and progress
 // are suppressed when the stream is piped or redirected to a file.
 func is_terminal(file *os.File) (terminal bool) {
+	defer func() { invariant.Boolean_Invariants(terminal, "is_terminal.terminal") }()
 	stat, stat_err := file.Stat()
 	if stat_err != nil {
 		return false

@@ -7,10 +7,10 @@ import (
 	"os"
 	"testing"
 
-	"github.com/james-orcales/james-orcales/shared/diode"
-	jlog "github.com/james-orcales/james-orcales/shared/jlog/default"
-	"github.com/james-orcales/james-orcales/shared/time"
-	system_time "github.com/james-orcales/james-orcales/shared/time/default"
+	"local/james-orcales/shared/diode"
+	jlog "local/james-orcales/shared/jlog/default"
+	"local/james-orcales/shared/time"
+	system_time "local/james-orcales/shared/time/default"
 )
 
 // Test_Default_Global_Info covers the package-level convenience API writing
@@ -22,7 +22,7 @@ func Test_Default_Global_Info(t *testing.T) {
 	jlog.Default = jlog.New(jlog.New_Input{
 		Writer: buffer,
 		Clock:  time.Clock{Now_Realtime: func() (moment time.Moment) { return 0 }},
-		Floor:  jlog.Level_Trace,
+		Floor:  jlog.LEVEL_TRACE,
 	})
 	jlog.Info("hello", jlog.String("user", "bob"))
 	got := buffer.String()
@@ -52,7 +52,7 @@ func Test_Default_Cover_API(t *testing.T) {
 	jlog.Default = jlog.New(jlog.New_Input{
 		Writer: buffer,
 		Clock:  frozen(),
-		Floor:  jlog.Level_Trace,
+		Floor:  jlog.LEVEL_TRACE,
 	})
 
 	jlog.Trace("a")
@@ -66,7 +66,7 @@ func Test_Default_Cover_API(t *testing.T) {
 	logger := jlog.New(jlog.New_Input{
 		Writer:          buffer,
 		Clock:           frozen(),
-		Floor:           jlog.Level_Trace,
+		Floor:           jlog.LEVEL_TRACE,
 		Stack_Marshaler: func(value error) (stack string) { return "S" },
 	})
 	jlog.Logger_Trace(logger, "")
@@ -74,7 +74,7 @@ func Test_Default_Cover_API(t *testing.T) {
 	jlog.Logger_Warn(logger, "")
 	jlog.Logger_Error(logger, "")
 	jlog.Logger_Log(logger, "")
-	jlog.Logger_At_Level(logger, jlog.Level_Warn, "")
+	jlog.Logger_At_Level(logger, jlog.LEVEL_WARN, "")
 	jlog.Logger_Info(jlog.Logger_With(logger, jlog.String("x", "y")), "with")
 	jlog.Logger_Info(logger, "fields",
 		jlog.String("a", "s"),
@@ -89,7 +89,7 @@ func Test_Default_Cover_API(t *testing.T) {
 		jlog.Hexadecimal("j", []byte{1}),
 		jlog.Raw_JSON("k", []byte("1")),
 		jlog.Time("l", time.Moment(0)),
-		jlog.Duration("m", time.Second),
+		jlog.Duration("m", time.SECOND),
 		jlog.IP_Address("n", net.IPv4(1, 2, 3, 4)),
 		jlog.MAC_Address("o", net.HardwareAddr{1, 2, 3, 4, 5, 6}),
 		jlog.Any("p", 1),
@@ -97,7 +97,7 @@ func Test_Default_Cover_API(t *testing.T) {
 		jlog.Integers("r", []int{1}),
 		jlog.Floats64("s", []float64{1}),
 		jlog.Booleans("u", []bool{true}),
-		jlog.Durations("w", []time.Duration{time.Second}),
+		jlog.Durations("w", []time.Duration{time.SECOND}),
 		jlog.Err(errors.New("boom")),
 		jlog.Timestamp(),
 		jlog.Caller(),
@@ -127,7 +127,7 @@ func null_sink(b *testing.B) (sink *os.File) {
 func Benchmark_Caller_Synchronous(b *testing.B) {
 	sink := null_sink(b)
 	defer sink.Close()
-	logger := jlog.New(jlog.New_Input{Writer: sink, Clock: frozen(), Floor: jlog.Level_Trace})
+	logger := jlog.New(jlog.New_Input{Writer: sink, Clock: frozen(), Floor: jlog.LEVEL_TRACE})
 	b.ReportAllocs()
 	b.ResetTimer()
 	b.RunParallel(func(pb *testing.PB) {
@@ -143,13 +143,15 @@ func Benchmark_Caller_Synchronous(b *testing.B) {
 func Benchmark_Caller_Diode(b *testing.B) {
 	sink := null_sink(b)
 	defer sink.Close()
+	clock, _ := system_time.New_Operating_System_Clock()
 	writer := diode.New(diode.New_Input{
 		Writer: sink,
-		Clock:  system_time.New_Operating_System_Clock(),
+		Clock:  clock,
+		Sleep:  system_time.Sleep,
 		Count:  1024,
 	})
 	defer writer.Close()
-	logger := jlog.New(jlog.New_Input{Writer: writer, Clock: frozen(), Floor: jlog.Level_Trace})
+	logger := jlog.New(jlog.New_Input{Writer: writer, Clock: frozen(), Floor: jlog.LEVEL_TRACE})
 	b.ReportAllocs()
 	b.ResetTimer()
 	b.RunParallel(func(pb *testing.PB) {

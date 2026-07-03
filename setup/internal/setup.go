@@ -12,12 +12,12 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"io/fs"
 	"path/filepath"
 	"slices"
 	"strings"
 
-	"github.com/james-orcales/james-orcales/shared/sh"
+	sysio "local/james-orcales/shared/io"
+	systime "local/james-orcales/shared/time"
 )
 
 // Dotfile_bytes_max bounds a single dotfile read into one fixed buffer. 1 MiB
@@ -29,18 +29,28 @@ const dotfile_bytes_max = 1048576
 // an otherwise well-formed run.
 const exit_failure = 1
 
+// File_System is the injected filesystem capability the sync runs on: the shared/io loop it
+// submits reads, writes, and traversal to, and the Run_Until pump that drives each submitted
+// op to completion. package main backs Run_Until with the real driver (the loop is ticked
+// only there) and the simulation with the sim driver; this tier submits but never drives.
+type File_System struct {
+	// Loop is the submit surface for the file ops: Open/Read/Write/Close are pumped, while
+	// Read_Directory/Status/Make_Directory return inline.
+	Loop sysio.IO
+	// Run_Until drives the loop until a submitted op reports done, capped by timeout
+	// (sysio.FOREVER waits unbounded) — the per-op pump; returns whether the op completed.
+	Run_Until func(done func() (finished bool), timeout systime.Duration) (completed bool)
+}
+
 // Main_Input carries the injected dependencies Main needs to sync dotfiles.
 type Main_Input struct {
-	// Source is the dotfiles tree to mirror from.
-	Source fs.FS
-	// Destination is a read-only view of the home directory, used for diffing.
-	Destination fs.FS
-	// Destination_Directory is the absolute home directory writes land under.
+	// File_System is the loop the dotfiles tree is walked, read, and written through.
+	File_System File_System
+	// Source_Directory is the absolute dotfiles tree walked in full from its root.
+	Source_Directory string
+	// Destination_Directory is the absolute home directory writes land under, and the diff
+	// reads existing files from.
 	Destination_Directory string
-	// Write_File persists contents at an absolute path, creating parent
-	// directories. It is injected so this library tier never binds to os
-	// directly; package main supplies the filesystem-backed implementation.
-	Write_File func(path string, contents []byte) (err error)
 	// Operating_System gates the macos defaults step, which runs only on
 	// "darwin" (a runtime.GOOS value).
 	Operating_System string
@@ -63,8 +73,8 @@ type Main_Input struct {
 // entry point, kept here so package main stays a thin, untested shell.
 func Main(input *Main_Input) (status_code int) {
 	writes, plan_err := Plan(&Plan_Input{
-		Source:                input.Source,
-		Destination:           input.Destination,
+		File_System:           input.File_System,
+		Source_Directory:      input.Source_Directory,
 		Destination_Directory: input.Destination_Directory,
 		Is_Ignored:            input.Is_Ignored,
 	})
@@ -73,7 +83,7 @@ func Main(input *Main_Input) (status_code int) {
 		return exit_failure
 	}
 	for _, write := range writes {
-		write_err := input.Write_File(write.Destination_Path, write.Contents)
+		write_err := write_file(&input.File_System, write.Destination_Path, write.Contents)
 		if write_err != nil {
 			fmt.Fprintf(input.Stderr, "setup: %v\n", write_err)
 			return exit_failure
@@ -221,11 +231,11 @@ type File_Write struct {
 
 // Plan_Input carries the injected dependencies Plan needs to decide what to sync.
 type Plan_Input struct {
-	// Source is the dotfiles tree, walked in full from its root.
-	Source fs.FS
-	// Destination is a read-only view of the home directory, used only to read
-	// existing files so Plan can skip writes that would change nothing.
-	Destination fs.FS
+	// File_System is the loop the source tree is walked and read through, and the
+	// destination read through for diffing.
+	File_System File_System
+	// Source_Directory is the absolute dotfiles tree, walked in full from its root.
+	Source_Directory string
 	// Destination_Directory is the absolute home directory the relative source
 	// paths are mirrored under to form each write's Destination_Path.
 	Destination_Directory string
@@ -236,41 +246,38 @@ type Plan_Input struct {
 	Is_Ignored func(relative_path string) (ignored bool)
 }
 
-// Plan returns the writes that would bring the home directory in line with the
-// source dotfiles: every regular file under the source tree, each emitted only
-// when the destination is missing or its contents differ.
+// Plan returns the writes that would bring the home directory in line with the source
+// dotfiles: every regular file under the source tree, each emitted only when the destination
+// is missing or its contents differ. It walks the tree iteratively through the loop's
+// Read_Directory, pruning an ignored directory so the install tree under .local is never read.
 func Plan(input *Plan_Input) (writes []File_Write, err error) {
 	writes = []File_Write{}
-	walk_err := fs.WalkDir(input.Source, ".",
-		func(source_path string, entry fs.DirEntry, step_err error) (result error) {
-			if step_err != nil {
-				return step_err
+	worklist := []string{"."}
+	for len(worklist) > 0 {
+		directory := worklist[len(worklist)-1]
+		worklist = worklist[:len(worklist)-1]
+		entries, read_err := input.File_System.Loop.Read_Directory(
+			filepath.Join(input.Source_Directory, directory))
+		if read_err != nil {
+			return nil, read_err
+		}
+		for _, entry := range entries {
+			relative := filepath.Join(directory, entry.Name)
+			if plan_is_ignored(input.Is_Ignored, relative) {
+				continue
 			}
-			if plan_is_ignored(input.Is_Ignored, source_path) {
-				// Prune an ignored directory so its contents — the install tree can
-				// be thousands of files — are never walked or read; skip a file.
-				if entry.IsDir() {
-					return fs.SkipDir
-				}
-				return nil
+			if entry.Is_Directory {
+				worklist = append(worklist, relative)
+				continue
 			}
-			if entry.IsDir() {
-				return nil
-			}
-			write, planned, plan_err := plan_file(&plan_file_input{
-				Input:       input,
-				Source_Path: source_path,
-			})
+			write, planned, plan_err := plan_file(input, relative)
 			if plan_err != nil {
-				return plan_err
+				return nil, plan_err
 			}
 			if planned {
 				writes = append(writes, write)
 			}
-			return nil
-		})
-	if walk_err != nil {
-		return nil, walk_err
+		}
 	}
 	return writes, nil
 }
@@ -286,81 +293,163 @@ func plan_is_ignored(
 	return is_ignored(source_path)
 }
 
-// Carries the arguments for planning one source file.
-type plan_file_input struct {
-	Input       *Plan_Input
-	Source_Path string
-}
-
-// Decides whether one source file needs syncing. planned is false when the
-// destination already holds identical bytes; otherwise it returns the write
-// mirroring the source path under the home directory.
-func plan_file(input *plan_file_input) (write File_Write, planned bool, err error) {
-	source_contents, read_err := read_source(input.Input.Source, input.Source_Path)
+// Decides whether the source file at relative needs syncing. planned is false when the
+// source is absent or the destination already holds identical bytes; otherwise it returns
+// the write mirroring the relative path under the home directory.
+func plan_file(input *Plan_Input, relative string) (write File_Write, planned bool, err error) {
+	source_contents, found, read_err := read_bounded(
+		&input.File_System, filepath.Join(input.Source_Directory, relative))
 	if read_err != nil {
 		return File_Write{}, false, read_err
 	}
-	if destination_matches(input.Input.Destination, input.Source_Path, source_contents) {
+	if !found {
 		return File_Write{}, false, nil
 	}
-	destination_path := filepath.Join(input.Input.Destination_Directory, input.Source_Path)
-	return File_Write{
-		Destination_Path: destination_path,
-		Contents:         source_contents,
-	}, true, nil
-}
-
-// Reads a source file's full contents, bounded by dotfile_bytes_max.
-func read_source(source fs.FS, source_path string) (contents []byte, err error) {
-	file, open_err := source.Open(source_path)
-	if open_err != nil {
-		return nil, open_err
+	destination_path := filepath.Join(input.Destination_Directory, relative)
+	if destination_matches(&input.File_System, destination_path, source_contents) {
+		return File_Write{}, false, nil
 	}
-	defer file.Close()
-	return read_bounded(file)
+	return File_Write{Destination_Path: destination_path, Contents: source_contents}, true, nil
 }
 
-// Reports whether the home directory already holds exactly source_contents at
-// relative_path. A destination that is absent or unreadable counts as a
-// mismatch, so the file is written — the rule the original installer used.
+// Reports whether the home directory already holds exactly source_contents at path. A
+// destination that is absent or unreadable counts as a mismatch, so the file is written.
 func destination_matches(
-	destination fs.FS, relative_path string, source_contents []byte) (matches bool) {
-	file, open_err := destination.Open(relative_path)
-	if open_err != nil {
+	system *File_System, path string, source_contents []byte,
+) (matches bool) {
+	destination_contents, found, err := read_bounded(system, path)
+	if err != nil {
 		return false
 	}
-	defer file.Close()
-	destination_contents, read_err := read_bounded(file)
-	if read_err != nil {
+	if !found {
 		return false
 	}
 	return bytes.Equal(source_contents, destination_contents)
 }
 
-// Reads up to dotfile_bytes_max bytes from file into one fixed buffer, erroring
-// if the file overflows the cap or a read fails mid-stream, so a silently
-// truncated dotfile never passes as the whole file.
-func read_bounded(file fs.File) (contents []byte, err error) {
+// Reads the file at path in full through the loop, bounded by dotfile_bytes_max into one
+// fixed buffer. found is false when the path is absent — the caller treats that as a
+// mismatch — and a file overflowing the cap errors, so a truncated dotfile never passes.
+func read_bounded(system *File_System, path string) (contents []byte, found bool, err error) {
+	file, open_err := system.Loop.Open(path)
+	if open_err != nil {
+		return nil, false, nil
+	}
 	buffer := make([]byte, dotfile_bytes_max)
-	read_total := 0
-	for read_total < len(buffer) {
-		n, read_err := file.Read(buffer[read_total:])
-		read_total += n
-		if read_err == io.EOF {
-			return buffer[:read_total], nil
-		}
+	total := 0
+	for total < len(buffer) {
+		count, read_err := loop_read(system, file, buffer[total:], int64(total))
 		if read_err != nil {
-			return nil, read_err
+			loop_close(system, file)
+			return nil, false, read_err
+		}
+		total += count
+		if count == 0 {
+			loop_close(system, file)
+			return buffer[:total], true, nil
 		}
 	}
-	return nil, errors.New("dotfile exceeds the maximum size")
+	loop_close(system, file)
+	return nil, false, errors.New("dotfile exceeds the maximum size")
+}
+
+// Writes contents to path through the loop, creating its parent directories first. It is the
+// filesystem binding the sync writes through, replacing the injected os writer.
+func write_file(system *File_System, path string, contents []byte) (err error) {
+	mkdir_err := system.Loop.Make_Directory(filepath.Dir(path))
+	if mkdir_err != nil {
+		return mkdir_err
+	}
+	file, create_err := system.Loop.Create(path)
+	if create_err != nil {
+		return create_err
+	}
+	write_err := loop_write(system, file, contents, 0)
+	loop_close(system, file)
+	return write_err
+}
+
+// Reads up to len(buffer) bytes from file at offset through the loop, driving the submitted
+// read to completion and returning its byte count.
+func loop_read(
+	system *File_System, file sysio.File, buffer []byte, offset int64,
+) (count int, err error) {
+	var completion sysio.Completion
+	done := false
+	system.Loop.Read(&completion, func(_ *sysio.Completion, read int, read_err error) {
+		count = read
+		err = read_err
+		done = true
+	}, file, buffer, offset)
+	system.Run_Until(func() (finished bool) { return done }, sysio.FOREVER)
+	return count, err
+}
+
+// Writes buffer to file at offset through the loop, driving the submitted write to completion.
+func loop_write(
+	system *File_System, file sysio.File, buffer []byte, offset int64,
+) (err error) {
+	var completion sysio.Completion
+	done := false
+	system.Loop.Write(&completion, func(_ *sysio.Completion, _ int, write_err error) {
+		err = write_err
+		done = true
+	}, file, buffer, offset)
+	system.Run_Until(func() (finished bool) { return done }, sysio.FOREVER)
+	return err
+}
+
+// Closes file through the loop, driving the submitted close to completion.
+func loop_close(system *File_System, file sysio.File) {
+	var completion sysio.Completion
+	done := false
+	system.Loop.Close(&completion, func(_ *sysio.Completion, _ error) { done = true }, file)
+	system.Run_Until(func() (finished bool) { return done }, sysio.FOREVER)
+}
+
+// Spawn runs one command to completion and returns its outcome — the synchronous adapter
+// over the shared/io loop's async Spawn. package main backs it with a Run_Until pump (the
+// loop is ticked only there) and tests with a recording fake, so this library tier submits
+// work but never drives the loop and spawns nothing itself.
+type Spawn func(request sysio.Process_Request) (result sysio.Process_Result)
+
+// Shell is the injected subprocess capability the install steps run commands through: Spawn
+// executes one command through the loop, and the two sinks receive its streamed output and
+// setup's own narration. A thin carrier over the loop, not a revival of a shell package —
+// the library binds no process itself.
+type Shell struct {
+	// Spawn runs a command to completion and returns its outcome.
+	Spawn Spawn
+	// Stdout receives setup's narration and a build's streamed standard output.
+	Stdout io.Writer
+	// Stderr receives setup's diagnostics and a build's streamed standard error.
+	Stderr io.Writer
+}
+
+// Runs path with arguments and returns its captured standard output, trimmed — the version
+// probes' one use. It passes no sink, so the loop captures the output for parsing rather than
+// streaming it. Trimming strips the trailing newline `which` appends, so a resolved path is
+// usable as the next probe's executable.
+func run_pipe(shell Shell, path string, arguments ...string) (output string) {
+	result := shell.Spawn(sysio.Process_Request{Path: path, Arguments: arguments})
+	return strings.TrimSpace(string(result.Output))
+}
+
+// Runs the command named by the first argument and reports success, streaming the process's
+// output live to the shell's sinks so a multi-minute build's progress reaches the user as it
+// happens rather than in one burst at the end.
+func run_spawn(shell Shell, arguments ...string) (ok bool) {
+	return shell.Spawn(sysio.Process_Request{
+		Path: arguments[0], Arguments: arguments[1:],
+		Stdout: shell.Stdout, Stderr: shell.Stderr,
+	}).Exit == 0
 }
 
 // Installed_Input names the binary an install step probes and the version it must
 // report. Two string fields, so it is a struct rather than two parameters.
 type Installed_Input struct {
 	// Shell runs the version probe.
-	Shell *sh.Shell
+	Shell Shell
 	// Executable is the binary's exact managed path — probed directly, not via
 	// PATH, so a missing symlink never hides a present install.
 	Executable string
@@ -374,7 +463,7 @@ type Installed_Input struct {
 // Installed does no work; one that is not reinstalls. direnv and Neovim verify the
 // same rule their own way (a version subcommand, and a which-resolved path).
 func Installed(input *Installed_Input) (yes bool) {
-	version := sh.Shell_Pipe(input.Shell, input.Executable, "--version")
+	version := run_pipe(input.Shell, input.Executable, "--version")
 	return strings.HasPrefix(version, input.Version)
 }
 
@@ -410,9 +499,8 @@ type Install_Neovim_Input struct {
 	// Repository_Directory is the absolute checkout root the build subpaths join
 	// onto to form the source and prefix locations.
 	Repository_Directory string
-	// Shell runs make. Its Stdout and Stderr also receive setup's own narration,
-	// so the build output and the lines reporting on it share one stream.
-	Shell *sh.Shell
+	// Shell runs make; its sinks receive setup's narration and the streamed make output.
+	Shell Shell
 }
 
 // Install_Neovim builds the vendored Neovim and installs it under the local
@@ -428,9 +516,9 @@ func Install_Neovim(input *Install_Neovim_Input) (status_code int) {
 	}
 	for index, arguments := range neovim_make_invocations(input.Repository_Directory) {
 		fmt.Fprintf(input.Shell.Stdout, "setup: neovim: %s\n", neovim_make_phase(index))
-		// Shell_Spawn reads the first argument as the executable; make's own output
-		// already streamed to the Shell, so a generic line is all setup adds.
-		if !sh.Shell_Spawn(input.Shell, arguments...) {
+		// The first argument is the executable; make's output streams to the sinks, so
+		// a generic line is all setup adds.
+		if !run_spawn(input.Shell, arguments...) {
 			fmt.Fprintln(input.Shell.Stderr, "setup: neovim build failed")
 			return exit_failure
 		}
@@ -448,7 +536,7 @@ func neovim_make_phase(index int) (phase string) {
 }
 
 // Returns the two make invocations the build runs in order: configure-and-build,
-// then install. Each begins with the executable, "make", because Shell_Spawn
+// then install. Each begins with the executable, "make", because run_spawn
 // reads the first argument as the program. Both carry the same prefix so the
 // Makefile's checkprefix never re-runs cmake between them; the install pass
 // differs only by the appended install goal. -C aims make at the vendored source
@@ -485,12 +573,12 @@ func neovim_version_present(version_output string) (present bool) {
 // release. It resolves nvim first and rejects a path outside the repository, so a
 // system package at the same version cannot stand in; only an in-repository
 // binary then has its version checked.
-func neovim_already_installed(shell *sh.Shell, repository_directory string) (installed bool) {
-	executable := sh.Shell_Pipe(shell, "which", "nvim")
+func neovim_already_installed(shell Shell, repository_directory string) (installed bool) {
+	executable := run_pipe(shell, "which", "nvim")
 	if !strings.HasPrefix(executable, repository_directory+"/") {
 		return false
 	}
-	return neovim_version_present(sh.Shell_Pipe(shell, executable, "--version"))
+	return neovim_version_present(run_pipe(shell, executable, "--version"))
 }
 
 // Returns the Iosevka TTF filenames the install copies. A function rather than a
@@ -579,7 +667,7 @@ type Install_Direnv_Input struct {
 	// install location and the gate's probe target.
 	Binary_Directory string
 	// Shell runs the version gate and the go build.
-	Shell *sh.Shell
+	Shell Shell
 }
 
 // Install_Direnv builds the vendored direnv straight into the bin directory, where
@@ -602,7 +690,7 @@ func Install_Direnv(input *Install_Direnv_Input) (status_code int) {
 	build := "cd " + input.Direnv_Directory +
 		" && CGO_ENABLED=0 go build -mod=vendor" +
 		" -o " + destination + " ."
-	if !sh.Shell_Spawn(input.Shell, "sh", "-c", build) {
+	if !run_spawn(input.Shell, "sh", "-c", build) {
 		fmt.Fprintln(input.Shell.Stderr, "setup: direnv build failed")
 		return exit_failure
 	}
@@ -611,7 +699,7 @@ func Install_Direnv(input *Install_Direnv_Input) (status_code int) {
 
 // Reports whether the direnv binary in the bin directory already reports the
 // wanted version. Probing that exact path leaves a present build alone.
-func direnv_built(shell *sh.Shell, binary_directory string) (built bool) {
+func direnv_built(shell Shell, binary_directory string) (built bool) {
 	return Installed(&Installed_Input{
 		Shell:      shell,
 		Executable: filepath.Join(binary_directory, "direnv"),
@@ -635,10 +723,10 @@ type Install_Rust_Input struct {
 	// symlinked into, so PATH carries a single entry rather than CARGO_HOME/bin as
 	// well. Empty disables the step for the same reason as an empty Cargo_Directory.
 	Link_Directory string
-	// Shell runs the `which` probes that gate the step, the rustup script, and the
-	// ln calls. rustup reads CARGO_HOME and RUSTUP_HOME from the Shell's
-	// environment, so the toolchain lands under Cargo_Directory without plumbing.
-	Shell *sh.Shell
+	// Shell runs the `which` probes that gate the step, the rustup script, and the ln
+	// calls. rustup reads CARGO_HOME and RUSTUP_HOME from the inherited environment, so
+	// the toolchain lands under Cargo_Directory without plumbing.
+	Shell Shell
 }
 
 // Install_Rust installs the Rust toolchain with rustup and symlinks cargo,
@@ -656,7 +744,7 @@ func Install_Rust(input *Install_Rust_Input) (status_code int) {
 		fmt.Fprintln(input.Shell.Stdout, "setup: rust installed")
 	} else {
 		fmt.Fprintln(input.Shell.Stdout, "setup: rust: installing...")
-		if !sh.Shell_Spawn(input.Shell, rust_install_invocation()...) {
+		if !run_spawn(input.Shell, rust_install_invocation()...) {
 			fmt.Fprintln(input.Shell.Stderr, "setup: rust install failed")
 			return exit_failure
 		}
@@ -692,7 +780,7 @@ func rust_install_invocation() (arguments []string) {
 // CARGO_HOME, probing rustc (which carries the toolchain version; cargo and rustup
 // install with it). A stale symlink to an old CARGO_HOME or a wrong version does
 // not pass, so a moved or mismatched toolchain is reinstalled.
-func rust_installed(shell *sh.Shell, cargo_directory string) (installed bool) {
+func rust_installed(shell Shell, cargo_directory string) (installed bool) {
 	return Installed(&Installed_Input{
 		Shell:      shell,
 		Executable: filepath.Join(cargo_directory, "bin", "rustc"),
@@ -702,7 +790,7 @@ func rust_installed(shell *sh.Shell, cargo_directory string) (installed bool) {
 
 // Carries the arguments for symlinking the rust toolchain onto PATH.
 type rust_link_input struct {
-	Shell           *sh.Shell
+	Shell           Shell
 	Cargo_Directory string
 	Link_Directory  string
 }
@@ -714,7 +802,7 @@ func rust_link(input *rust_link_input) (linked bool) {
 	for _, tool := range []string{"cargo", "rustup", "rustc"} {
 		source := filepath.Join(input.Cargo_Directory, "bin", tool)
 		target := filepath.Join(input.Link_Directory, tool)
-		if !sh.Shell_Spawn(input.Shell, "ln", "-sf", source, target) {
+		if !run_spawn(input.Shell, "ln", "-sf", source, target) {
 			return false
 		}
 	}
@@ -739,7 +827,7 @@ type Install_Fish_Input struct {
 	Link_Directory string
 	// Shell runs the `fish --version` gate, the cargo build, and the ln call. cargo
 	// — linked onto PATH by the rust step — reads CARGO_HOME from the environment.
-	Shell *sh.Shell
+	Shell Shell
 }
 
 // Install_Fish builds fish from the vendored source with cargo and symlinks fish,
@@ -760,7 +848,8 @@ func Install_Fish(input *Install_Fish_Input) (status_code int) {
 		fmt.Fprintln(input.Shell.Stdout, "setup: fish built")
 	} else {
 		fmt.Fprintln(input.Shell.Stdout, "setup: fish: building...")
-		if !sh.Shell_Spawn(input.Shell, fish_install_invocation(input.Fish_Directory)...) {
+		if !run_spawn(input.Shell,
+			fish_install_invocation(input.Fish_Directory)...) {
 			fmt.Fprintln(input.Shell.Stderr, "setup: fish build failed")
 			return exit_failure
 		}
@@ -771,7 +860,7 @@ func Install_Fish(input *Install_Fish_Input) (status_code int) {
 	for _, binary := range []string{"fish", "fish_indent", "fish_key_reader"} {
 		source := filepath.Join(input.Cargo_Directory, "bin", binary)
 		target := filepath.Join(input.Link_Directory, binary)
-		if !sh.Shell_Spawn(input.Shell, "ln", "-sf", source, target) {
+		if !run_spawn(input.Shell, "ln", "-sf", source, target) {
 			fmt.Fprintln(input.Shell.Stderr, "setup: fish link failed")
 			return exit_failure
 		}
@@ -795,7 +884,7 @@ func fish_install_invocation(fish_directory string) (arguments []string) {
 // Reports whether the fish binary already installed under CARGO_HOME reports the
 // wanted version. Probing the exact path, not PATH, keeps a missing symlink from
 // triggering a needless multi-minute recompile of an existing build.
-func fish_built(shell *sh.Shell, cargo_directory string) (built bool) {
+func fish_built(shell Shell, cargo_directory string) (built bool) {
 	return Installed(&Installed_Input{
 		Shell:      shell,
 		Executable: filepath.Join(cargo_directory, "bin", "fish"),
@@ -818,7 +907,7 @@ type Install_Fzf_Input struct {
 	// both the install location and the gate's probe target.
 	Binary_Directory string
 	// Shell runs the version gate and the go build.
-	Shell *sh.Shell
+	Shell Shell
 }
 
 // Install_Fzf builds fzf from the vendored source straight into the bin directory.
@@ -842,7 +931,7 @@ func Install_Fzf(input *Install_Fzf_Input) (status_code int) {
 		" && go build -mod=vendor" +
 		" -ldflags '-s -w -X main.version=" + fzf_version + " -X main.revision='" +
 		" -o " + destination + " ."
-	if !sh.Shell_Spawn(input.Shell, "sh", "-c", build) {
+	if !run_spawn(input.Shell, "sh", "-c", build) {
 		fmt.Fprintln(input.Shell.Stderr, "setup: fzf build failed")
 		return exit_failure
 	}
@@ -851,7 +940,7 @@ func Install_Fzf(input *Install_Fzf_Input) (status_code int) {
 
 // Reports whether the fzf binary in the bin directory already reports the wanted
 // version. Probing that exact path leaves a present build alone.
-func fzf_built(shell *sh.Shell, binary_directory string) (built bool) {
+func fzf_built(shell Shell, binary_directory string) (built bool) {
 	return Installed(&Installed_Input{
 		Shell:      shell,
 		Executable: filepath.Join(binary_directory, "fzf"),
@@ -874,7 +963,7 @@ type Install_Command_Input struct {
 	// so a command's name is not always its package directory's name.
 	Binary_Name string
 	// Shell runs the PATH-presence gate and the go build.
-	Shell *sh.Shell
+	Shell Shell
 }
 
 // Install_Command builds a command from this repository straight into the bin
@@ -901,7 +990,7 @@ func Install_Command(input *Install_Command_Input) (status_code int) {
 	destination := filepath.Join(input.Binary_Directory, input.Binary_Name)
 	build := "cd " + input.Package_Directory +
 		" && go build -o " + destination + " ."
-	if !sh.Shell_Spawn(input.Shell, "sh", "-c", build) {
+	if !run_spawn(input.Shell, "sh", "-c", build) {
 		fmt.Fprintf(input.Shell.Stderr, "setup: %s build failed\n", input.Binary_Name)
 		return exit_failure
 	}
@@ -912,8 +1001,8 @@ func Install_Command(input *Install_Command_Input) (status_code int) {
 // idempotency gate for this repo's own commands. `which` prints the resolved path
 // on stdout and nothing when the name is unknown, so a non-empty result means the
 // command is present and the build is skipped.
-func command_on_path(shell *sh.Shell, name string) (present bool) {
-	return sh.Shell_Pipe(shell, "which", name) != ""
+func command_on_path(shell Shell, name string) (present bool) {
+	return run_pipe(shell, "which", name) != ""
 }
 
 // Jj_version is the release the bootstrap wants — the prefix of `jj --version`.
@@ -933,7 +1022,7 @@ type Install_Jj_Input struct {
 	// Link_Directory is the one directory on PATH jj is symlinked into.
 	Link_Directory string
 	// Shell runs the `jj --version` gate, the cargo build, and the ln call.
-	Shell *sh.Shell
+	Shell Shell
 }
 
 // Install_Jj builds jj from the vendored workspace with cargo and symlinks the
@@ -954,7 +1043,8 @@ func Install_Jj(input *Install_Jj_Input) (status_code int) {
 		fmt.Fprintln(input.Shell.Stdout, "setup: jj built")
 	} else {
 		fmt.Fprintln(input.Shell.Stdout, "setup: jj: building...")
-		if !sh.Shell_Spawn(input.Shell, jj_install_invocation(input.Jj_Directory)...) {
+		if !run_spawn(input.Shell,
+			jj_install_invocation(input.Jj_Directory)...) {
 			fmt.Fprintln(input.Shell.Stderr, "setup: jj build failed")
 			return exit_failure
 		}
@@ -963,7 +1053,7 @@ func Install_Jj(input *Install_Jj_Input) (status_code int) {
 	// restored without recompiling. ln -sf is idempotent.
 	source := filepath.Join(input.Cargo_Directory, "bin", "jj")
 	target := filepath.Join(input.Link_Directory, "jj")
-	if !sh.Shell_Spawn(input.Shell, "ln", "-sf", source, target) {
+	if !run_spawn(input.Shell, "ln", "-sf", source, target) {
 		fmt.Fprintln(input.Shell.Stderr, "setup: jj link failed")
 		return exit_failure
 	}
@@ -985,7 +1075,7 @@ func jj_install_invocation(jj_directory string) (arguments []string) {
 // Reports whether the jj binary already installed under CARGO_HOME reports the
 // wanted version. Probing the exact path, not PATH, keeps a missing symlink from
 // triggering a needless multi-minute recompile of an existing build.
-func jj_built(shell *sh.Shell, cargo_directory string) (built bool) {
+func jj_built(shell Shell, cargo_directory string) (built bool) {
 	return Installed(&Installed_Input{
 		Shell:      shell,
 		Executable: filepath.Join(cargo_directory, "bin", "jj"),
@@ -1010,7 +1100,7 @@ type Install_Ripgrep_Input struct {
 	// Link_Directory is the one directory on PATH rg is symlinked into.
 	Link_Directory string
 	// Shell runs the `rg --version` gate, the cargo build, and the ln call.
-	Shell *sh.Shell
+	Shell Shell
 }
 
 // Install_Ripgrep builds ripgrep from the vendored crate with cargo and symlinks
@@ -1032,7 +1122,7 @@ func Install_Ripgrep(input *Install_Ripgrep_Input) (status_code int) {
 	} else {
 		fmt.Fprintln(input.Shell.Stdout, "setup: ripgrep: building...")
 		invocation := ripgrep_install_invocation(input.Ripgrep_Directory)
-		if !sh.Shell_Spawn(input.Shell, invocation...) {
+		if !run_spawn(input.Shell, invocation...) {
 			fmt.Fprintln(input.Shell.Stderr, "setup: ripgrep build failed")
 			return exit_failure
 		}
@@ -1041,7 +1131,7 @@ func Install_Ripgrep(input *Install_Ripgrep_Input) (status_code int) {
 	// restored without recompiling. ln -sf is idempotent.
 	source := filepath.Join(input.Cargo_Directory, "bin", "rg")
 	target := filepath.Join(input.Link_Directory, "rg")
-	if !sh.Shell_Spawn(input.Shell, "ln", "-sf", source, target) {
+	if !run_spawn(input.Shell, "ln", "-sf", source, target) {
 		fmt.Fprintln(input.Shell.Stderr, "setup: ripgrep link failed")
 		return exit_failure
 	}
@@ -1063,7 +1153,7 @@ func ripgrep_install_invocation(ripgrep_directory string) (arguments []string) {
 // Reports whether the rg binary already installed under CARGO_HOME reports the
 // wanted version. Probing the exact path, not PATH, keeps a missing symlink from
 // triggering a needless multi-minute recompile of an existing build.
-func ripgrep_built(shell *sh.Shell, cargo_directory string) (built bool) {
+func ripgrep_built(shell Shell, cargo_directory string) (built bool) {
 	return Installed(&Installed_Input{
 		Shell:      shell,
 		Executable: filepath.Join(cargo_directory, "bin", "rg"),
@@ -1087,7 +1177,7 @@ type Install_Fdcli_Input struct {
 	// Link_Directory is the one directory on PATH fd is symlinked into.
 	Link_Directory string
 	// Shell runs the `fd --version` gate, the cargo build, and the ln call.
-	Shell *sh.Shell
+	Shell Shell
 }
 
 // Install_Fdcli builds fd from the vendored crate with cargo and symlinks the binary
@@ -1109,7 +1199,7 @@ func Install_Fdcli(input *Install_Fdcli_Input) (status_code int) {
 	} else {
 		fmt.Fprintln(input.Shell.Stdout, "setup: fd: building...")
 		invocation := fdcli_install_invocation(input.Fdcli_Directory)
-		if !sh.Shell_Spawn(input.Shell, invocation...) {
+		if !run_spawn(input.Shell, invocation...) {
 			fmt.Fprintln(input.Shell.Stderr, "setup: fd build failed")
 			return exit_failure
 		}
@@ -1118,7 +1208,7 @@ func Install_Fdcli(input *Install_Fdcli_Input) (status_code int) {
 	// restored without recompiling. ln -sf is idempotent.
 	source := filepath.Join(input.Cargo_Directory, "bin", "fd")
 	target := filepath.Join(input.Link_Directory, "fd")
-	if !sh.Shell_Spawn(input.Shell, "ln", "-sf", source, target) {
+	if !run_spawn(input.Shell, "ln", "-sf", source, target) {
 		fmt.Fprintln(input.Shell.Stderr, "setup: fd link failed")
 		return exit_failure
 	}
@@ -1139,7 +1229,7 @@ func fdcli_install_invocation(fdcli_directory string) (arguments []string) {
 // Reports whether the fd binary already installed under CARGO_HOME reports the
 // wanted version. Probing the exact path, not PATH, keeps a missing symlink from
 // triggering a needless multi-minute recompile of an existing build.
-func fdcli_built(shell *sh.Shell, cargo_directory string) (built bool) {
+func fdcli_built(shell Shell, cargo_directory string) (built bool) {
 	return Installed(&Installed_Input{
 		Shell:      shell,
 		Executable: filepath.Join(cargo_directory, "bin", "fd"),
@@ -1184,7 +1274,7 @@ type Install_Ghostty_Input struct {
 	// the step.
 	Link_Directory string
 	// Shell runs the version gate, the download-and-install script, and the ln call.
-	Shell *sh.Shell
+	Shell Shell
 }
 
 // Install_Ghostty installs Ghostty from its pinned DMG into the applications
@@ -1203,7 +1293,7 @@ func Install_Ghostty(input *Install_Ghostty_Input) (status_code int) {
 	} else {
 		fmt.Fprintln(input.Shell.Stdout, "setup: ghostty: installing...")
 		invocation := ghostty_install_invocation(input.Applications_Directory)
-		if !sh.Shell_Spawn(input.Shell, invocation...) {
+		if !run_spawn(input.Shell, invocation...) {
 			fmt.Fprintln(input.Shell.Stderr, "setup: ghostty install failed")
 			return exit_failure
 		}
@@ -1212,7 +1302,7 @@ func Install_Ghostty(input *Install_Ghostty_Input) (status_code int) {
 	// restored without re-downloading. ln -sf is idempotent.
 	source := filepath.Join(input.Applications_Directory, ghostty_application_binary_subpath)
 	target := filepath.Join(input.Link_Directory, "ghostty")
-	if !sh.Shell_Spawn(input.Shell, "ln", "-sf", source, target) {
+	if !run_spawn(input.Shell, "ln", "-sf", source, target) {
 		fmt.Fprintln(input.Shell.Stderr, "setup: ghostty link failed")
 		return exit_failure
 	}
@@ -1249,7 +1339,7 @@ func ghostty_install_invocation(applications_directory string) (arguments []stri
 // Reports whether the installed Ghostty app is the wanted version AND still carries
 // a verifying code signature. Probing the app's own binary, not PATH, keeps a
 // missing symlink from forcing a needless re-download of an app already in place.
-func ghostty_installed(shell *sh.Shell, applications_directory string) (installed bool) {
+func ghostty_installed(shell Shell, applications_directory string) (installed bool) {
 	binary := filepath.Join(applications_directory, ghostty_application_binary_subpath)
 	version_present := Installed(&Installed_Input{
 		Shell:      shell,
@@ -1264,7 +1354,7 @@ func ghostty_installed(shell *sh.Shell, applications_directory string) (installe
 	// if codesign verifies the bundle against Ghostty's signing identity. codesign is
 	// offline and deterministic, so a failure means a tampered or foreign bundle.
 	application := filepath.Join(applications_directory, "Ghostty.app")
-	return sh.Shell_Spawn(shell, ghostty_codesign_invocation(application)...)
+	return run_spawn(shell, ghostty_codesign_invocation(application)...)
 }
 
 // Returns the codesign invocation that verifies the bundle and pins it to Ghostty's

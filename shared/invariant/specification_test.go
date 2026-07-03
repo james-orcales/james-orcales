@@ -9,8 +9,8 @@ import (
 	"testing"
 	"testing/fstest"
 
-	"github.com/james-orcales/james-orcales/shared/invariant"
-	snap "github.com/james-orcales/james-orcales/shared/snap/default"
+	"local/james-orcales/shared/invariant"
+	snap "local/james-orcales/shared/snap/default"
 )
 
 // Test_Always_Violation: a false Always panics on its own, in every run mode, naming
@@ -53,7 +53,7 @@ func Test_Always_Reachability(t *testing.T) {
 		Is_Test: true, Output: &output, Exit: func(code int) { exit_code = code },
 	}
 	metadata := &invariant.Assertion_Metadata{
-		Kind: invariant.Assertion_Kind_Always, Message: "positive", Condition: "x > 0",
+		Kind: invariant.ASSERTION_KIND_ALWAYS, Message: "positive", Condition: "x > 0",
 	}
 	recorder.Events.Store("positive", metadata)
 
@@ -73,9 +73,9 @@ func Test_Sometimes_Coverage(t *testing.T) {
 	recorder := new_test_recorder()
 	recorder.Is_Test = true
 	element := invariant.Recorder_Sometimes(recorder, true, "zero")
-	key := "check" + invariant.Element_Message_Separator + element.Message
+	key := "check" + invariant.ELEMENT_MESSAGE_SEPARATOR + element.Message
 	metadata := &invariant.Assertion_Metadata{
-		Kind: invariant.Assertion_Kind_Sometimes, Message: key,
+		Kind: invariant.ASSERTION_KIND_SOMETIMES, Message: key,
 	}
 	recorder.Events.Store(key, metadata)
 
@@ -109,7 +109,7 @@ func Test_Sometimes_Gap(t *testing.T) {
 			Is_Test: true, Output: &output, Exit: func(code int) { exit_code = code },
 		}
 		metadata := &invariant.Assertion_Metadata{
-			Kind:    invariant.Assertion_Kind_Sometimes,
+			Kind:    invariant.ASSERTION_KIND_SOMETIMES,
 			Message: "zero", Condition: "n == 0",
 		}
 		if one.Seen_True {
@@ -229,9 +229,9 @@ func Test_Impossible_Sibling(t *testing.T) {
 func Test_Imply_Gated(t *testing.T) {
 	recorder := new_test_recorder()
 	recorder.Is_Test = true
-	key := "check" + invariant.Element_Message_Separator + "gated"
+	key := "check" + invariant.ELEMENT_MESSAGE_SEPARATOR + "gated"
 	metadata := &invariant.Assertion_Metadata{
-		Kind: invariant.Assertion_Kind_Sometimes, Message: key,
+		Kind: invariant.ASSERTION_KIND_SOMETIMES, Message: key,
 	}
 	recorder.Events.Store(key, metadata)
 
@@ -276,7 +276,7 @@ func check(n int, p *int) {
 	invariant.Recorder_Register_Packages_For_Analysis(recorder, "/fixture")
 
 	if _, ok := recorder.Events.Load(
-		"check" + invariant.Element_Message_Separator + "gated"); !ok {
+		"check" + invariant.ELEMENT_MESSAGE_SEPARATOR + "gated"); !ok {
 		t.Error("the gated axis must seed its own per-axis entry")
 	}
 	if _, ok := recorder.Events.Load("check:tuple=(0)"); !ok {
@@ -292,9 +292,9 @@ func check(n int, p *int) {
 func Test_Imply_Conjunction(t *testing.T) {
 	recorder := new_test_recorder()
 	recorder.Is_Test = true
-	key := "check" + invariant.Element_Message_Separator + "gated"
+	key := "check" + invariant.ELEMENT_MESSAGE_SEPARATOR + "gated"
 	metadata := &invariant.Assertion_Metadata{
-		Kind: invariant.Assertion_Kind_Sometimes, Message: key,
+		Kind: invariant.ASSERTION_KIND_SOMETIMES, Message: key,
 	}
 	recorder.Events.Store(key, metadata)
 	loaded, present := true, false
@@ -367,7 +367,7 @@ func check(n int) {
 	if !ok {
 		t.Fatal("the bare Always must seed a reachability entry under its message")
 	}
-	if always.(*invariant.Assertion_Metadata).Kind != invariant.Assertion_Kind_Always {
+	if always.(*invariant.Assertion_Metadata).Kind != invariant.ASSERTION_KIND_ALWAYS {
 		t.Error("the bare Always entry must be an Always axis")
 	}
 }
@@ -391,13 +391,23 @@ func Test_Dot_Product_Attribution(t *testing.T) {
 	}
 }
 
+// Test_Dot_Product_Empty: a Dot_Product with no elements asserts nothing, so it panics.
+func Test_Dot_Product_Empty(t *testing.T) {
+	recorder := new_test_recorder()
+	if !did_panic(func() { invariant.Recorder_Dot_Product(recorder, "check") }) {
+		t.Fatal("a Dot_Product with no elements must panic")
+	}
+}
+
 // Test_Bundles_Template: a _Invariants is recognized by its name suffix and trailing namespace
 // parameter; the Dot_Product it self-emits under that parameter is a template — not a non-literal
 // failure, seeded only at the callsite's literal namespace, never under the bare parameter.
 func Test_Bundles_Template(t *testing.T) {
 	const source = `package fixture
 
-func Pair_Invariants(n int, namespace string) {
+type Pair int
+
+func Pair_Invariants(n Pair, namespace string) {
 	invariant.Dot_Product(namespace, invariant.Sometimes(n < 0, "lo"))
 }
 
@@ -421,11 +431,11 @@ func check(n int) {
 			output.String())
 	}
 	if _, ok := recorder.Events.Load(
-		"field" + invariant.Element_Message_Separator + "lo"); !ok {
+		"field" + invariant.ELEMENT_MESSAGE_SEPARATOR + "lo"); !ok {
 		t.Error("the template must seed the grid under the callsite namespace (field␀lo)")
 	}
 	if _, ok := recorder.Events.Load(
-		"namespace" + invariant.Element_Message_Separator + "lo"); ok {
+		"namespace" + invariant.ELEMENT_MESSAGE_SEPARATOR + "lo"); ok {
 		t.Error("the template must not seed under the bare namespace parameter")
 	}
 }
@@ -435,7 +445,9 @@ func check(n int) {
 func Test_Bundles_Descent(t *testing.T) {
 	const source = `package fixture
 
-func Pair_Invariants(n int, namespace string) {
+type Pair int
+
+func Pair_Invariants(n Pair, namespace string) {
 	invariant.Dot_Product(namespace, invariant.Sometimes(n < 0, "lo"))
 }
 
@@ -451,7 +463,7 @@ func check(n int) {
 	invariant.Recorder_Register_Packages_For_Analysis(recorder, "/fixture")
 
 	if _, ok := recorder.Events.Load(
-		"field" + invariant.Element_Message_Separator + "lo"); !ok {
+		"field" + invariant.ELEMENT_MESSAGE_SEPARATOR + "lo"); !ok {
 		t.Error("the bundle element must be seeded under the Dot_Product prefix")
 	}
 }
@@ -462,11 +474,15 @@ func check(n int) {
 func Test_Bundles_Composition(t *testing.T) {
 	const source = `package fixture
 
-func Inner_Invariants(n int, namespace string) {
+type Inner int
+
+func Inner_Invariants(n Inner, namespace string) {
 	invariant.Dot_Product(namespace, invariant.Sometimes(n < 0, "inner"))
 }
 
-func Outer_Invariants(n int, namespace string) {
+type Outer int
+
+func Outer_Invariants(n Outer, namespace string) {
 	invariant.Dot_Product(namespace, invariant.Sometimes(n > 0, "outer"))
 	Inner_Invariants(n, "field.inner")
 }
@@ -483,11 +499,11 @@ func check(n int) {
 	invariant.Recorder_Register_Packages_For_Analysis(recorder, "/fixture")
 
 	if _, ok := recorder.Events.Load(
-		"field.inner" + invariant.Element_Message_Separator + "inner"); !ok {
+		"field.inner" + invariant.ELEMENT_MESSAGE_SEPARATOR + "inner"); !ok {
 		t.Error("the nested _Invariants must register its own grid under its sub-namespace")
 	}
 	if _, ok := recorder.Events.Load(
-		"field" + invariant.Element_Message_Separator + "inner"); ok {
+		"field" + invariant.ELEMENT_MESSAGE_SEPARATOR + "inner"); ok {
 		t.Error("the nested axis must not flatten into the parent grid")
 	}
 }
@@ -497,7 +513,9 @@ func check(n int) {
 func Test_Bundles_Casing(t *testing.T) {
 	const source = `package fixture
 
-func pair_invariants(n int, namespace string) {
+type pair int
+
+func pair_invariants(n pair, namespace string) {
 	invariant.Dot_Product(namespace, invariant.Sometimes(n < 0, "lo"))
 }
 
@@ -513,7 +531,7 @@ func check(n int) {
 	invariant.Recorder_Register_Packages_For_Analysis(recorder, "/fixture")
 
 	if _, ok := recorder.Events.Load(
-		"field" + invariant.Element_Message_Separator + "lo"); !ok {
+		"field" + invariant.ELEMENT_MESSAGE_SEPARATOR + "lo"); !ok {
 		t.Error("a snake_case bundle must be recognized like the Ada_Case form")
 	}
 }
@@ -525,7 +543,9 @@ func check(n int) {
 func Test_Bundles_Sugar(t *testing.T) {
 	const sugar = `package sugar
 
-func Pair_Invariants(n int, namespace string) {
+type Pair int
+
+func Pair_Invariants(n Pair, namespace string) {
 	Dot_Product(namespace, Sometimes(n < 0, "lo"))
 }
 `
@@ -545,7 +565,7 @@ func check(n int) {
 		"m/sugar/sugar.go": &fstest.MapFile{Data: []byte(sugar)},
 		"m/app/app.go":     &fstest.MapFile{Data: []byte(application)},
 	}
-	key := "field" + invariant.Element_Message_Separator + "lo"
+	key := "field" + invariant.ELEMENT_MESSAGE_SEPARATOR + "lo"
 
 	recognized := &invariant.Recorder{File_System: files, Sugar_Package: "example.com/m/sugar"}
 	invariant.Recorder_Register_Packages_For_Analysis(recognized, "/m/app")
@@ -567,7 +587,9 @@ func Test_Bundles_Cross_Package(t *testing.T) {
 
 import invariant "example.com/m/invariant"
 
-func Pair_Invariants(n int, namespace string) {
+type Pair int
+
+func Pair_Invariants(n Pair, namespace string) {
 	invariant.Dot_Product(namespace, invariant.Sometimes(n < 0, "lo"))
 }
 `
@@ -592,7 +614,7 @@ func check(n int) {
 	invariant.Recorder_Register_Packages_For_Analysis(recorder, "/m/b")
 
 	if _, ok := recorder.Events.Load(
-		"field" + invariant.Element_Message_Separator + "lo"); !ok {
+		"field" + invariant.ELEMENT_MESSAGE_SEPARATOR + "lo"); !ok {
 		t.Error("a bundle in a sibling package of the module must be resolved")
 	}
 }
@@ -603,7 +625,9 @@ func check(n int) {
 func Test_Bundles_Callsite(t *testing.T) {
 	const source = `package fixture
 
-func Pair_Invariants(n int, namespace string) {
+type Pair int
+
+func Pair_Invariants(n Pair, namespace string) {
 	invariant.Dot_Product(namespace, invariant.Sometimes(n < 0, "lo"))
 }
 
@@ -623,11 +647,11 @@ func check_b(n int) {
 	invariant.Recorder_Register_Packages_For_Analysis(recorder, "/fixture")
 
 	if _, ok := recorder.Events.Load(
-		"a" + invariant.Element_Message_Separator + "lo"); !ok {
+		"a" + invariant.ELEMENT_MESSAGE_SEPARATOR + "lo"); !ok {
 		t.Error("namespace A must have its own coverage entry")
 	}
 	if _, ok := recorder.Events.Load(
-		"b" + invariant.Element_Message_Separator + "lo"); !ok {
+		"b" + invariant.ELEMENT_MESSAGE_SEPARATOR + "lo"); !ok {
 		t.Error("namespace B must have its own coverage entry")
 	}
 }
@@ -640,11 +664,15 @@ func check_b(n int) {
 func Test_Bundles_Gap_Location(t *testing.T) {
 	const source = `package fixture
 
-func Inner_Invariants(n int, namespace string) {
+type Inner int
+
+func Inner_Invariants(n Inner, namespace string) {
 	invariant.Always(n > 0, "positive")
 }
 
-func Outer_Invariants(n int, namespace string) {
+type Outer int
+
+func Outer_Invariants(n Outer, namespace string) {
 	Inner_Invariants(n, "field.inner")
 }
 
@@ -689,8 +717,8 @@ func Test_Bundles_Failure_Location(t *testing.T) {
   a  true
   b  true
 
-github.com/james-orcales/james-orcales/shared/invariant.Recorder_Dot_Product (invariant.go)
-github.com/james-orcales/james-orcales/shared/invariant_test.dot_product_callsite (specification_test.go)`),
+local/james-orcales/shared/invariant.Recorder_Dot_Product (invariant.go)
+local/james-orcales/shared/invariant_test.dot_product_callsite (specification_test.go)`),
 		message+"\n\n"+stack,
 	)
 }
@@ -700,7 +728,9 @@ github.com/james-orcales/james-orcales/shared/invariant_test.dot_product_callsit
 func Test_Bundles_Static(t *testing.T) {
 	const source = `package fixture
 
-func Pair_Invariants(n int, namespace string) {
+type Pair int
+
+func Pair_Invariants(n Pair, namespace string) {
 	if n > 0 {
 		invariant.Dot_Product(namespace, invariant.Sometimes(n < 0, "lo"))
 	}
@@ -725,6 +755,48 @@ func Pair_Invariants(n int, namespace string) {
 	}
 }
 
+// Test_Bundles_Custom_Types: a bundle's subject is a custom defined type. A primitive
+// subject — a builtin, an unnamed slice/map — fails registration outside the framework's
+// own preset package, which the Sugar_Package exemption allows.
+func Test_Bundles_Custom_Types(t *testing.T) {
+	primitive := "package fixture\n\n" +
+		"func Blob_Invariants(b []byte, namespace string) {\n" +
+		"\tinvariant.Dot_Product(namespace, invariant.Sometimes(len(b) == 0, \"e\"))\n}\n"
+	code, report := bundle_subject_register(bundle_subject_case{
+		Directory: "/fixture",
+		Files:     fstest.MapFS{"fixture/p.go": &fstest.MapFile{Data: []byte(primitive)}},
+	})
+	if code != 1 {
+		t.Fatalf("a primitive-subject bundle must exit 1, got %d", code)
+	}
+	if !strings.Contains(report, "primitive bundle") {
+		t.Errorf("the report must name the primitive bundle, got: %s", report)
+	}
+	custom := "package fixture\n\ntype Blob []byte\n\n" +
+		"func Blob_Invariants(b Blob, namespace string) {\n" +
+		"\tinvariant.Dot_Product(namespace, invariant.Sometimes(len(b) == 0, \"e\"))\n}\n"
+	code, _ = bundle_subject_register(bundle_subject_case{
+		Directory: "/fixture",
+		Files:     fstest.MapFS{"fixture/p.go": &fstest.MapFile{Data: []byte(custom)}},
+	})
+	if code == 1 {
+		t.Error("a bundle on a custom defined type must not be flagged")
+	}
+	sugar := "package sugar\n\n" +
+		"func Token_Invariants(s string, namespace string) {\n" +
+		"\tDot_Product(namespace, Sometimes(len(s) == 0, \"e\"))\n}\n"
+	code, _ = bundle_subject_register(bundle_subject_case{
+		Directory: "/m/sugar", Sugar: "example.com/m/sugar",
+		Files: fstest.MapFS{
+			"m/go.mod":         &fstest.MapFile{Data: []byte("module example.com/m\n")},
+			"m/sugar/sugar.go": &fstest.MapFile{Data: []byte(sugar)},
+		},
+	})
+	if code == 1 {
+		t.Error("a primitive bundle in the framework's own package is exempt")
+	}
+}
+
 // Test_Analysis_Gaps: a never-fired obligation is named by site and condition, while
 // a fully exercised one is left unreported.
 func Test_Analysis_Gaps(t *testing.T) {
@@ -734,12 +806,12 @@ func Test_Analysis_Gaps(t *testing.T) {
 		Is_Test: true, Output: &output, Exit: func(code int) { exit_code = code },
 	}
 	gap := &invariant.Assertion_Metadata{
-		Kind: invariant.Assertion_Kind_Sometimes, Message: "zero", Condition: "n == 0",
+		Kind: invariant.ASSERTION_KIND_SOMETIMES, Message: "zero", Condition: "n == 0",
 	}
 	gap.Frequency.Add(1) // true seen, false never: a gap
 	recorder.Events.Store("zero", gap)
 	fired := &invariant.Assertion_Metadata{
-		Kind: invariant.Assertion_Kind_Always, Message: "positive", Condition: "x > 0",
+		Kind: invariant.ASSERTION_KIND_ALWAYS, Message: "positive", Condition: "x > 0",
 	}
 	fired.Frequency.Add(1) // reached: not a gap
 	recorder.Events.Store("positive", fired)
@@ -770,7 +842,7 @@ func Test_Analysis_Combination(t *testing.T) {
 		Is_Test: true, Output: &output, Exit: func(code int) { exit_code = code },
 	}
 	tuple := &invariant.Assertion_Metadata{
-		Kind: invariant.Assertion_Kind_Tuple, Message: "grid", Tuple_Indices: []int{1, 0},
+		Kind: invariant.ASSERTION_KIND_TUPLE, Message: "grid", Tuple_Indices: []int{1, 0},
 	}
 	recorder.Events.Store("grid:tuple=(1,0)", tuple)
 
@@ -797,11 +869,15 @@ func Test_Analysis_Combination(t *testing.T) {
 func Test_Analysis_Legend(t *testing.T) {
 	const source = `package fixture
 
-func Inner_Invariants(n int, namespace string) {
+type Inner int
+
+func Inner_Invariants(n Inner, namespace string) {
 	invariant.Dot_Product(namespace, invariant.Sometimes(n < 0, "negative"))
 }
 
-func Outer_Invariants(n int, namespace string) {
+type Outer int
+
+func Outer_Invariants(n Outer, namespace string) {
 	invariant.Always(n != 0, "nonzero")
 	Inner_Invariants(n, "field.inner")
 }
@@ -845,14 +921,54 @@ func Test_Analysis_Summary(t *testing.T) {
 	store := func(key string, kind invariant.Assertion_Kind) {
 		recorder.Events.Store(key, &invariant.Assertion_Metadata{Kind: kind})
 	}
-	store("a", invariant.Assertion_Kind_Always)
-	store("b", invariant.Assertion_Kind_Sometimes)
-	store("c:tuple=(0)", invariant.Assertion_Kind_Tuple)
-	store("c:tuple=(1)", invariant.Assertion_Kind_Tuple)
+	store("a", invariant.ASSERTION_KIND_ALWAYS)
+	store("b", invariant.ASSERTION_KIND_SOMETIMES)
+	store("c:tuple=(0)", invariant.ASSERTION_KIND_TUPLE)
+	store("c:tuple=(1)", invariant.ASSERTION_KIND_TUPLE)
 
 	summary := invariant.Recorder_Assertion_Summary(recorder)
 
-	want := "✓ tested 4 properties (2 individual + 2 combinations, of which 1 are panic-able)"
+	want := "✓ tested 5 properties (3 individual + 2 combinations, of which 1 are panic-able)"
+	if summary != want {
+		t.Fatalf("summary = %q, want %q", summary, want)
+	}
+}
+
+// Test_Analysis_Tally: the eager Always tallies once, keyed by its literal message, while each
+// Dot_Product is keyed by its call-site namespace — so the same three-axis shape under two
+// namespaces tallies twice, the glob carve (a,b over c) counting two cells per namespace.
+func Test_Analysis_Tally(t *testing.T) {
+	const source = `package fixture
+
+func check(n int) {
+	invariant.Always(n >= 0, "non-negative")
+	invariant.Dot_Product("x",
+		invariant.Sometimes(n == 0, "a"),
+		invariant.Sometimes(n == 1, "b"),
+		invariant.Sometimes(n == 2, "c"),
+		invariant.Impossible(invariant.Event_True("a"), invariant.Event_True("b")),
+	)
+	invariant.Dot_Product("y",
+		invariant.Sometimes(n == 0, "a"),
+		invariant.Sometimes(n == 1, "b"),
+		invariant.Sometimes(n == 2, "c"),
+		invariant.Impossible(invariant.Event_True("a"), invariant.Event_True("b")),
+	)
+}
+`
+	recorder := &invariant.Recorder{
+		File_System: fstest.MapFS{
+			"fixture/check.go": &fstest.MapFile{Data: []byte(source)},
+		},
+	}
+	invariant.Recorder_Register_Packages_For_Analysis(recorder, "/fixture")
+
+	summary := invariant.Recorder_Assertion_Summary(recorder)
+
+	// Always 1 individual; two namespaces × 3 Sometimes × 2 branches = 12, so 13
+	// individual; 12 surviving + 4 carved = 16 combination; panic-able 1 + 4.
+	want := "✓ tested 29 properties " +
+		"(13 individual + 16 combinations, of which 5 are panic-able)"
 	if summary != want {
 		t.Fatalf("summary = %q, want %q", summary, want)
 	}
@@ -865,15 +981,15 @@ func Test_Analysis_Summary_Names_Package(t *testing.T) {
 	store := func(key string, kind invariant.Assertion_Kind) {
 		recorder.Events.Store(key, &invariant.Assertion_Metadata{Kind: kind})
 	}
-	store("a", invariant.Assertion_Kind_Always)
-	store("b", invariant.Assertion_Kind_Sometimes)
-	store("c:tuple=(0)", invariant.Assertion_Kind_Tuple)
-	store("c:tuple=(1)", invariant.Assertion_Kind_Tuple)
+	store("a", invariant.ASSERTION_KIND_ALWAYS)
+	store("b", invariant.ASSERTION_KIND_SOMETIMES)
+	store("c:tuple=(0)", invariant.ASSERTION_KIND_TUPLE)
+	store("c:tuple=(1)", invariant.ASSERTION_KIND_TUPLE)
 
 	summary := invariant.Recorder_Assertion_Summary(recorder)
 
-	want := "✓ shared/prng: tested 4 properties " +
-		"(2 individual + 2 combinations, of which 1 are panic-able)"
+	want := "✓ shared/prng: tested 5 properties " +
+		"(3 individual + 2 combinations, of which 1 are panic-able)"
 	if summary != want {
 		t.Fatalf("summary = %q, want %q", summary, want)
 	}
@@ -887,7 +1003,7 @@ func Test_Analysis_Clean(t *testing.T) {
 		Is_Test: true, Output: &output, Exit: func(code int) { exited = true },
 	}
 	metadata := &invariant.Assertion_Metadata{
-		Kind: invariant.Assertion_Kind_Sometimes, Message: "zero", Condition: "n == 0",
+		Kind: invariant.ASSERTION_KIND_SOMETIMES, Message: "zero", Condition: "n == 0",
 	}
 	metadata.Frequency.Add(1)
 	metadata.False_Frequency.Add(1)
@@ -918,9 +1034,9 @@ func Test_Coverage_Modes(t *testing.T) {
 			Is_Benchmark:   is_benchmark,
 		}
 		element := invariant.Recorder_Sometimes(recorder, true, "zero")
-		key := "check" + invariant.Element_Message_Separator + element.Message
+		key := "check" + invariant.ELEMENT_MESSAGE_SEPARATOR + element.Message
 		metadata := &invariant.Assertion_Metadata{
-			Kind: invariant.Assertion_Kind_Sometimes, Message: key,
+			Kind: invariant.ASSERTION_KIND_SOMETIMES, Message: key,
 		}
 		recorder.Events.Store(key, metadata)
 		invariant.Recorder_Dot_Product(recorder, "check", element)
@@ -950,7 +1066,7 @@ func Test_Coverage_Modes(t *testing.T) {
 		}
 		// A Sometimes that never fired either way: a gap.
 		recorder.Events.Store("g", &invariant.Assertion_Metadata{
-			Kind: invariant.Assertion_Kind_Sometimes, Message: "g",
+			Kind: invariant.ASSERTION_KIND_SOMETIMES, Message: "g",
 		})
 		invariant.Recorder_Analyze_Assertion_Frequency(recorder)
 		return exit, output.Len() > 0
@@ -1137,9 +1253,9 @@ func Test_Coverage_Sink_Fires_On_First_Coverage(t *testing.T) {
 			sunk = append(sunk, event{key, fired_true})
 		},
 	}
-	key := "check" + invariant.Element_Message_Separator + "zero"
+	key := "check" + invariant.ELEMENT_MESSAGE_SEPARATOR + "zero"
 	recorder.Events.Store(key, &invariant.Assertion_Metadata{
-		Kind: invariant.Assertion_Kind_Sometimes, Message: key,
+		Kind: invariant.ASSERTION_KIND_SOMETIMES, Message: key,
 	})
 
 	for range 3 {
@@ -1176,7 +1292,7 @@ func Test_Coverage_Sink_Fires_On_First_Coverage(t *testing.T) {
 // key) and merging them back unions exactly those branches into a seeded grid, leaving the
 // other branch alone and skipping a key with no seeded entry.
 func Test_Fuzz_Coverage_Line_Round_Trip(t *testing.T) {
-	nul_key := "field" + invariant.Element_Message_Separator + "empty"
+	nul_key := "field" + invariant.ELEMENT_MESSAGE_SEPARATOR + "empty"
 	var file bytes.Buffer
 	file.WriteString(invariant.Fuzz_Coverage_Line(nul_key, true))
 	file.WriteString(invariant.Fuzz_Coverage_Line("plain", false))
@@ -1185,7 +1301,7 @@ func Test_Fuzz_Coverage_Line_Round_Trip(t *testing.T) {
 	recorder := &invariant.Recorder{Is_Test: true}
 	for _, key := range []string{nul_key, "plain"} {
 		recorder.Events.Store(key, &invariant.Assertion_Metadata{
-			Kind: invariant.Assertion_Kind_Sometimes, Message: key,
+			Kind: invariant.ASSERTION_KIND_SOMETIMES, Message: key,
 		})
 	}
 
@@ -1269,4 +1385,28 @@ func recover_with_stack(action func()) (message string, stack string) {
 	}()
 	action()
 	return message, stack
+}
+
+// One registration run for the bundle-subject test: the fixture file set, the
+// directory to register, and the Sugar_Package that exempts the framework's own
+// preset package. A struct keeps the helper clear of repeated string parameters.
+type bundle_subject_case struct {
+	Files     fstest.MapFS
+	Directory string
+	Sugar     string
+}
+
+// Registers the case and returns the exit code the registration produced (-1 when
+// it never exited) together with the report it printed.
+func bundle_subject_register(test_case bundle_subject_case) (code int, report string) {
+	var output bytes.Buffer
+	code = -1
+	recorder := &invariant.Recorder{
+		File_System:   test_case.Files,
+		Output:        &output,
+		Exit:          func(exit int) { code = exit },
+		Sugar_Package: test_case.Sugar,
+	}
+	invariant.Recorder_Register_Packages_For_Analysis(recorder, test_case.Directory)
+	return code, output.String()
 }

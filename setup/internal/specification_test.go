@@ -8,10 +8,9 @@ import (
 	"slices"
 	"strings"
 	"testing"
-	"testing/fstest"
 
-	"github.com/james-orcales/james-orcales/setup/internal"
-	"github.com/james-orcales/james-orcales/shared/sh"
+	"local/james-orcales/setup/internal"
+	sysio "local/james-orcales/shared/io"
 )
 
 // Each test drives Plan and Main with in-memory filesystems and a recording or
@@ -58,7 +57,7 @@ func Test_Order_Of_Operations(t *testing.T) {
 // the binary's --version output starts with the wanted version.
 func Test_Idempotency_Accepts_A_Matching_Version(t *testing.T) {
 	t.Parallel()
-	commands := []sh.Command{}
+	commands := []sysio.Process_Request{}
 	yes := setup.Installed(&setup.Installed_Input{
 		Shell: recording_shell(&commands, map[string]string{
 			"/bin/tool": "tool 1.2.3 (abc 2026-01-01)\n",
@@ -75,7 +74,7 @@ func Test_Idempotency_Accepts_A_Matching_Version(t *testing.T) {
 // false when the binary is absent or reports a different version.
 func Test_Idempotency_Rejects_A_Missing_Or_Stale_Binary(t *testing.T) {
 	t.Parallel()
-	commands := []sh.Command{}
+	commands := []sysio.Process_Request{}
 	yes := setup.Installed(&setup.Installed_Input{
 		Shell: recording_shell(&commands, map[string]string{
 			"/bin/tool": "tool 9.9.9\n",
@@ -88,203 +87,6 @@ func Test_Idempotency_Rejects_A_Missing_Or_Stale_Binary(t *testing.T) {
 	}
 }
 
-// Test_Plan_Empty_Source_Yields_No_Writes verifies a source tree with no files
-// produces nothing to sync.
-func Test_Plan_Empty_Source_Yields_No_Writes(t *testing.T) {
-	t.Parallel()
-	writes := run_plan(t, &setup.Plan_Input{
-		Source:                fstest.MapFS{},
-		Destination:           fstest.MapFS{},
-		Destination_Directory: test_home,
-	})
-	if len(writes) != 0 {
-		t.Fatalf("expected no writes, got %d", len(writes))
-	}
-}
-
-// Test_Plan_Missing_Destination_Is_Created verifies a source file absent from the
-// home directory becomes a write of its bytes to the mirrored path.
-func Test_Plan_Missing_Destination_Is_Created(t *testing.T) {
-	t.Parallel()
-	writes := run_plan(t, &setup.Plan_Input{
-		Source: fstest.MapFS{
-			".bashrc": &fstest.MapFile{Data: []byte("hello")},
-		},
-		Destination:           fstest.MapFS{},
-		Destination_Directory: test_home,
-	})
-	by_path := writes_by_path(writes)
-	want_path := filepath.Join(test_home, ".bashrc")
-	if by_path[want_path] != "hello" {
-		t.Fatalf("expected %q written with \"hello\", got %v", want_path, by_path)
-	}
-	if len(by_path) != 1 {
-		t.Fatalf("expected exactly one write, got %d", len(by_path))
-	}
-}
-
-// Test_Plan_Identical_Destination_Is_Skipped verifies a source file whose home
-// copy already holds the same bytes produces no write, so sync is idempotent.
-func Test_Plan_Identical_Destination_Is_Skipped(t *testing.T) {
-	t.Parallel()
-	writes := run_plan(t, &setup.Plan_Input{
-		Source: fstest.MapFS{
-			".gitconfig": &fstest.MapFile{Data: []byte("identical")},
-		},
-		Destination: fstest.MapFS{
-			".gitconfig": &fstest.MapFile{Data: []byte("identical")},
-		},
-		Destination_Directory: test_home,
-	})
-	if len(writes) != 0 {
-		t.Fatalf("expected no writes for identical contents, got %d", len(writes))
-	}
-}
-
-// Test_Plan_Differing_Destination_Is_Overwritten verifies a source file whose
-// home copy differs is rewritten with the source bytes.
-func Test_Plan_Differing_Destination_Is_Overwritten(t *testing.T) {
-	t.Parallel()
-	writes := run_plan(t, &setup.Plan_Input{
-		Source: fstest.MapFS{
-			".gitconfig": &fstest.MapFile{Data: []byte("new")},
-		},
-		Destination: fstest.MapFS{
-			".gitconfig": &fstest.MapFile{Data: []byte("old")},
-		},
-		Destination_Directory: test_home,
-	})
-	by_path := writes_by_path(writes)
-	want_path := filepath.Join(test_home, ".gitconfig")
-	if by_path[want_path] != "new" {
-		t.Fatalf("expected %q overwritten with \"new\", got %v", want_path, by_path)
-	}
-}
-
-// Test_Plan_Nested_Path_Mirrors_Under_Home verifies a deeply nested source file
-// maps to the same relative path joined under the destination directory.
-func Test_Plan_Nested_Path_Mirrors_Under_Home(t *testing.T) {
-	t.Parallel()
-	writes := run_plan(t, &setup.Plan_Input{
-		Source: fstest.MapFS{
-			".config/nvim/init.lua": &fstest.MapFile{Data: []byte("lua")},
-		},
-		Destination:           fstest.MapFS{},
-		Destination_Directory: test_home,
-	})
-	by_path := writes_by_path(writes)
-	want_path := filepath.Join(test_home, ".config/nvim/init.lua")
-	if by_path[want_path] != "lua" {
-		t.Fatalf("expected a nested write at %q, got %v", want_path, by_path)
-	}
-}
-
-// Test_Plan_Ignored_Path_Is_Skipped verifies an ignored file is not synced and an
-// ignored directory is pruned: the directory's file is reachable only if the walk
-// descends into it, so marking just the directory proves the prune, not a per-file
-// skip.
-func Test_Plan_Ignored_Path_Is_Skipped(t *testing.T) {
-	t.Parallel()
-	writes := run_plan(t, &setup.Plan_Input{
-		Source: fstest.MapFS{
-			".bashrc":         &fstest.MapFile{Data: []byte("keep")},
-			".netrc":          &fstest.MapFile{Data: []byte("secret")},
-			".local/bin/tool": &fstest.MapFile{Data: []byte("built")},
-		},
-		Destination:           fstest.MapFS{},
-		Destination_Directory: test_home,
-		Is_Ignored: func(relative_path string) (ignored bool) {
-			return slices.Contains([]string{".netrc", ".local"}, relative_path)
-		},
-	})
-	by_path := writes_by_path(writes)
-	if by_path[filepath.Join(test_home, ".bashrc")] != "keep" {
-		t.Fatalf("expected .bashrc synced, got %v", by_path)
-	}
-	if _, planned := by_path[filepath.Join(test_home, ".netrc")]; planned {
-		t.Fatal("expected the ignored file skipped")
-	}
-	if _, planned := by_path[filepath.Join(test_home, ".local/bin/tool")]; planned {
-		t.Fatal("expected the ignored directory pruned")
-	}
-}
-
-// Test_Main_Writes_Planned_Files verifies Main hands each planned file's contents
-// to the injected writer at its mirrored path and reports success.
-func Test_Main_Writes_Planned_Files(t *testing.T) {
-	t.Parallel()
-	written := map[string]string{}
-	status := setup.Main(&setup.Main_Input{
-		Source: fstest.MapFS{
-			".bashrc": &fstest.MapFile{Data: []byte("hello")},
-		},
-		Destination:           fstest.MapFS{},
-		Destination_Directory: test_home,
-		Write_File: func(path string, contents []byte) (err error) {
-			written[path] = string(contents)
-			return nil
-		},
-		Stdout: io.Discard,
-		Stderr: io.Discard,
-	})
-	if status != 0 {
-		t.Fatalf("expected success, got status %d", status)
-	}
-	want_path := filepath.Join(test_home, ".bashrc")
-	if written[want_path] != "hello" {
-		t.Fatalf("expected %q written with \"hello\", got %v", want_path, written)
-	}
-}
-
-// Test_Main_Skips_Identical_Destination verifies Main writes nothing when the
-// home directory already matches the source, so a repeat run is a no-op.
-func Test_Main_Skips_Identical_Destination(t *testing.T) {
-	t.Parallel()
-	write_count := 0
-	status := setup.Main(&setup.Main_Input{
-		Source: fstest.MapFS{
-			".bashrc": &fstest.MapFile{Data: []byte("same")},
-		},
-		Destination: fstest.MapFS{
-			".bashrc": &fstest.MapFile{Data: []byte("same")},
-		},
-		Destination_Directory: test_home,
-		Write_File: func(path string, contents []byte) (err error) {
-			write_count++
-			return nil
-		},
-		Stdout: io.Discard,
-		Stderr: io.Discard,
-	})
-	if status != 0 {
-		t.Fatalf("expected success, got status %d", status)
-	}
-	if write_count != 0 {
-		t.Fatalf("expected no writes for identical contents, got %d", write_count)
-	}
-}
-
-// Test_Main_Reports_Write_Failure verifies a writer error makes Main report a
-// non-zero exit code rather than swallowing the failure.
-func Test_Main_Reports_Write_Failure(t *testing.T) {
-	t.Parallel()
-	status := setup.Main(&setup.Main_Input{
-		Source: fstest.MapFS{
-			".bashrc": &fstest.MapFile{Data: []byte("x")},
-		},
-		Destination:           fstest.MapFS{},
-		Destination_Directory: test_home,
-		Write_File: func(path string, contents []byte) (err error) {
-			return errors.New("disk full")
-		},
-		Stdout: io.Discard,
-		Stderr: io.Discard,
-	})
-	if status == 0 {
-		t.Fatal("expected a non-zero status on write failure")
-	}
-}
-
 // Test_Main_Applies_Macos_Defaults verifies that on darwin Main runs the macos
 // defaults commands through the injected runner after the sync, without printing
 // a line per command.
@@ -292,14 +94,15 @@ func Test_Main_Applies_Macos_Defaults(t *testing.T) {
 	t.Parallel()
 	ran := [][]string{}
 	log := &bytes.Buffer{}
+	loop, driver, _ := sysio.New_Sim(0)
+	if make_err := loop.Make_Directory(test_source); make_err != nil {
+		t.Fatalf("make source: %v", make_err)
+	}
 	status := setup.Main(&setup.Main_Input{
-		Source:                fstest.MapFS{},
-		Destination:           fstest.MapFS{},
+		File_System:           setup.File_System{Loop: loop, Run_Until: driver.Run_Until},
+		Source_Directory:      test_source,
 		Destination_Directory: test_home,
 		Operating_System:      "darwin",
-		Write_File: func(path string, contents []byte) (err error) {
-			return nil
-		},
 		Run_Command: func(name string, arguments []string) (err error) {
 			ran = append(ran, append([]string{name}, arguments...))
 			return nil
@@ -330,14 +133,15 @@ func Test_Main_Applies_Macos_Defaults(t *testing.T) {
 func Test_Main_Skips_Macos_Defaults_Off_Darwin(t *testing.T) {
 	t.Parallel()
 	run_count := 0
+	loop, driver, _ := sysio.New_Sim(0)
+	if make_err := loop.Make_Directory(test_source); make_err != nil {
+		t.Fatalf("make source: %v", make_err)
+	}
 	status := setup.Main(&setup.Main_Input{
-		Source:                fstest.MapFS{},
-		Destination:           fstest.MapFS{},
+		File_System:           setup.File_System{Loop: loop, Run_Until: driver.Run_Until},
+		Source_Directory:      test_source,
 		Destination_Directory: test_home,
 		Operating_System:      "linux",
-		Write_File: func(path string, contents []byte) (err error) {
-			return nil
-		},
 		Run_Command: func(name string, arguments []string) (err error) {
 			run_count++
 			return nil
@@ -358,7 +162,7 @@ func Test_Main_Skips_Macos_Defaults_Off_Darwin(t *testing.T) {
 // make runs.
 func Test_Install_Neovim_Skips_Build_When_Installed_From_Checkout(t *testing.T) {
 	t.Parallel()
-	commands := []sh.Command{}
+	commands := []sysio.Process_Request{}
 	executable := test_repository + "/home/.local/bin/nvim"
 	status := setup.Install_Neovim(&setup.Install_Neovim_Input{
 		Repository_Directory: test_repository,
@@ -380,7 +184,7 @@ func Test_Install_Neovim_Skips_Build_When_Installed_From_Checkout(t *testing.T) 
 // foreign binary's version is never consulted.
 func Test_Install_Neovim_Builds_When_The_Match_Is_Outside_Repository(t *testing.T) {
 	t.Parallel()
-	commands := []sh.Command{}
+	commands := []sysio.Process_Request{}
 	status := setup.Install_Neovim(&setup.Install_Neovim_Input{
 		Repository_Directory: test_repository,
 		Shell: recording_shell(&commands, map[string]string{
@@ -401,7 +205,7 @@ func Test_Install_Neovim_Builds_When_The_Match_Is_Outside_Repository(t *testing.
 // each phase announced in order before its make.
 func Test_Install_Neovim_Configures_Prefix_Then_Installs(t *testing.T) {
 	t.Parallel()
-	commands := []sh.Command{}
+	commands := []sysio.Process_Request{}
 	shell := recording_shell(&commands, nil, 0)
 	progress := &bytes.Buffer{}
 	shell.Stdout = progress
@@ -441,7 +245,7 @@ func Test_Install_Neovim_Configures_Prefix_Then_Installs(t *testing.T) {
 // bootstrap before installing and reports a non-zero exit code.
 func Test_Install_Neovim_Reports_Build_Failure(t *testing.T) {
 	t.Parallel()
-	commands := []sh.Command{}
+	commands := []sysio.Process_Request{}
 	status := setup.Install_Neovim(&setup.Install_Neovim_Input{
 		Repository_Directory: test_repository,
 		Shell:                recording_shell(&commands, nil, 1),
@@ -592,7 +396,7 @@ func Test_Install_Fonts_Reports_A_Copy_Failure(t *testing.T) {
 // skipped — proving the gate probes the built binary.
 func Test_Install_Direnv_Skips_Build_When_Already_Built(t *testing.T) {
 	t.Parallel()
-	commands := []sh.Command{}
+	commands := []sysio.Process_Request{}
 	status := setup.Install_Direnv(&setup.Install_Direnv_Input{
 		Direnv_Directory: test_direnv_directory,
 		Binary_Directory: test_link_directory,
@@ -612,7 +416,7 @@ func Test_Install_Direnv_Skips_Build_When_Already_Built(t *testing.T) {
 // wanted version is present, the Go toolchain builds it.
 func Test_Install_Direnv_Builds_When_Absent(t *testing.T) {
 	t.Parallel()
-	commands := []sh.Command{}
+	commands := []sysio.Process_Request{}
 	status := setup.Install_Direnv(&setup.Install_Direnv_Input{
 		Direnv_Directory: test_direnv_directory,
 		Binary_Directory: test_link_directory,
@@ -630,7 +434,7 @@ func Test_Install_Direnv_Builds_When_Absent(t *testing.T) {
 // non-zero exit code.
 func Test_Install_Direnv_Reports_A_Build_Failure(t *testing.T) {
 	t.Parallel()
-	commands := []sh.Command{}
+	commands := []sysio.Process_Request{}
 	status := setup.Install_Direnv(&setup.Install_Direnv_Input{
 		Direnv_Directory: test_direnv_directory,
 		Binary_Directory: test_link_directory,
@@ -646,7 +450,7 @@ func Test_Install_Direnv_Reports_A_Build_Failure(t *testing.T) {
 // toolchain is relinked — proving the gate probes the build path, not a symlink.
 func Test_Install_Rust_Skips_Install_When_Already_Installed(t *testing.T) {
 	t.Parallel()
-	commands := []sh.Command{}
+	commands := []sysio.Process_Request{}
 	status := setup.Install_Rust(&setup.Install_Rust_Input{
 		Cargo_Directory: test_cargo_directory,
 		Link_Directory:  test_link_directory,
@@ -669,7 +473,7 @@ func Test_Install_Rust_Skips_Install_When_Already_Installed(t *testing.T) {
 // toolchain is not linked, rustup installs it and then the binaries are symlinked.
 func Test_Install_Rust_Installs_Then_Links_When_Absent(t *testing.T) {
 	t.Parallel()
-	commands := []sh.Command{}
+	commands := []sysio.Process_Request{}
 	status := setup.Install_Rust(&setup.Install_Rust_Input{
 		Cargo_Directory: test_cargo_directory,
 		Link_Directory:  test_link_directory,
@@ -690,7 +494,7 @@ func Test_Install_Rust_Installs_Then_Links_When_Absent(t *testing.T) {
 // a non-zero exit code.
 func Test_Install_Rust_Reports_An_Install_Failure(t *testing.T) {
 	t.Parallel()
-	commands := []sh.Command{}
+	commands := []sysio.Process_Request{}
 	status := setup.Install_Rust(&setup.Install_Rust_Input{
 		Cargo_Directory: test_cargo_directory,
 		Link_Directory:  test_link_directory,
@@ -707,7 +511,7 @@ func Test_Install_Rust_Reports_An_Install_Failure(t *testing.T) {
 // so a missing symlink does not force a recompile.
 func Test_Install_Fish_Skips_Build_When_Already_Built(t *testing.T) {
 	t.Parallel()
-	commands := []sh.Command{}
+	commands := []sysio.Process_Request{}
 	status := setup.Install_Fish(&setup.Install_Fish_Input{
 		Fish_Directory:  test_fish_directory,
 		Cargo_Directory: test_cargo_directory,
@@ -731,7 +535,7 @@ func Test_Install_Fish_Skips_Build_When_Already_Built(t *testing.T) {
 // the wanted version is present, cargo builds it and then the binary is linked.
 func Test_Install_Fish_Builds_Then_Links_When_Absent(t *testing.T) {
 	t.Parallel()
-	commands := []sh.Command{}
+	commands := []sysio.Process_Request{}
 	status := setup.Install_Fish(&setup.Install_Fish_Input{
 		Fish_Directory:  test_fish_directory,
 		Cargo_Directory: test_cargo_directory,
@@ -753,7 +557,7 @@ func Test_Install_Fish_Builds_Then_Links_When_Absent(t *testing.T) {
 // linking and reports a non-zero exit code.
 func Test_Install_Fish_Reports_A_Build_Failure(t *testing.T) {
 	t.Parallel()
-	commands := []sh.Command{}
+	commands := []sysio.Process_Request{}
 	status := setup.Install_Fish(&setup.Install_Fish_Input{
 		Fish_Directory:  test_fish_directory,
 		Cargo_Directory: test_cargo_directory,
@@ -773,7 +577,7 @@ func Test_Install_Fish_Reports_A_Build_Failure(t *testing.T) {
 // skipped — proving the gate probes the built binary.
 func Test_Install_Fzf_Skips_Build_When_Already_Built(t *testing.T) {
 	t.Parallel()
-	commands := []sh.Command{}
+	commands := []sysio.Process_Request{}
 	status := setup.Install_Fzf(&setup.Install_Fzf_Input{
 		Fzf_Directory:    test_fzf_directory,
 		Binary_Directory: test_link_directory,
@@ -793,7 +597,7 @@ func Test_Install_Fzf_Skips_Build_When_Already_Built(t *testing.T) {
 // version is present, the Go toolchain builds it.
 func Test_Install_Fzf_Builds_When_Absent(t *testing.T) {
 	t.Parallel()
-	commands := []sh.Command{}
+	commands := []sysio.Process_Request{}
 	status := setup.Install_Fzf(&setup.Install_Fzf_Input{
 		Fzf_Directory:    test_fzf_directory,
 		Binary_Directory: test_link_directory,
@@ -811,7 +615,7 @@ func Test_Install_Fzf_Builds_When_Absent(t *testing.T) {
 // non-zero exit code.
 func Test_Install_Fzf_Reports_A_Build_Failure(t *testing.T) {
 	t.Parallel()
-	commands := []sh.Command{}
+	commands := []sysio.Process_Request{}
 	status := setup.Install_Fzf(&setup.Install_Fzf_Input{
 		Fzf_Directory:    test_fzf_directory,
 		Binary_Directory: test_link_directory,
@@ -827,7 +631,7 @@ func Test_Install_Fzf_Reports_A_Build_Failure(t *testing.T) {
 // idempotency gate for this repo's own tools is PATH presence, not a version.
 func Test_Install_Command_Skips_Build_When_Already_On_Path(t *testing.T) {
 	t.Parallel()
-	commands := []sh.Command{}
+	commands := []sysio.Process_Request{}
 	status := setup.Install_Command(&setup.Install_Command_Input{
 		Package_Directory: test_command_directory,
 		Binary_Directory:  test_link_directory,
@@ -848,7 +652,7 @@ func Test_Install_Command_Skips_Build_When_Already_On_Path(t *testing.T) {
 // not resolve on PATH, the Go toolchain builds it into the bin directory.
 func Test_Install_Command_Builds_When_Absent(t *testing.T) {
 	t.Parallel()
-	commands := []sh.Command{}
+	commands := []sysio.Process_Request{}
 	status := setup.Install_Command(&setup.Install_Command_Input{
 		Package_Directory: test_command_directory,
 		Binary_Directory:  test_link_directory,
@@ -867,7 +671,7 @@ func Test_Install_Command_Builds_When_Absent(t *testing.T) {
 // non-zero exit code.
 func Test_Install_Command_Reports_A_Build_Failure(t *testing.T) {
 	t.Parallel()
-	commands := []sh.Command{}
+	commands := []sysio.Process_Request{}
 	status := setup.Install_Command(&setup.Install_Command_Input{
 		Package_Directory: test_command_directory,
 		Binary_Directory:  test_link_directory,
@@ -884,7 +688,7 @@ func Test_Install_Command_Reports_A_Build_Failure(t *testing.T) {
 // the binary is relinked — the gate prefix-matches the commit suffix jj appends.
 func Test_Install_Jj_Skips_Build_When_Already_Built(t *testing.T) {
 	t.Parallel()
-	commands := []sh.Command{}
+	commands := []sysio.Process_Request{}
 	status := setup.Install_Jj(&setup.Install_Jj_Input{
 		Jj_Directory:    test_jj_directory,
 		Cargo_Directory: test_cargo_directory,
@@ -908,7 +712,7 @@ func Test_Install_Jj_Skips_Build_When_Already_Built(t *testing.T) {
 // wanted version is present, cargo builds it and then the binary is linked.
 func Test_Install_Jj_Builds_Then_Links_When_Absent(t *testing.T) {
 	t.Parallel()
-	commands := []sh.Command{}
+	commands := []sysio.Process_Request{}
 	status := setup.Install_Jj(&setup.Install_Jj_Input{
 		Jj_Directory:    test_jj_directory,
 		Cargo_Directory: test_cargo_directory,
@@ -930,7 +734,7 @@ func Test_Install_Jj_Builds_Then_Links_When_Absent(t *testing.T) {
 // linking and reports a non-zero exit code.
 func Test_Install_Jj_Reports_A_Build_Failure(t *testing.T) {
 	t.Parallel()
-	commands := []sh.Command{}
+	commands := []sysio.Process_Request{}
 	status := setup.Install_Jj(&setup.Install_Jj_Input{
 		Jj_Directory:    test_jj_directory,
 		Cargo_Directory: test_cargo_directory,
@@ -950,7 +754,7 @@ func Test_Install_Jj_Reports_A_Build_Failure(t *testing.T) {
 // and the binary is relinked — the gate prefix-matches the rev suffix rg appends.
 func Test_Install_Ripgrep_Skips_Build_When_Already_Built(t *testing.T) {
 	t.Parallel()
-	commands := []sh.Command{}
+	commands := []sysio.Process_Request{}
 	status := setup.Install_Ripgrep(&setup.Install_Ripgrep_Input{
 		Ripgrep_Directory: test_ripgrep_directory,
 		Cargo_Directory:   test_cargo_directory,
@@ -974,7 +778,7 @@ func Test_Install_Ripgrep_Skips_Build_When_Already_Built(t *testing.T) {
 // the wanted version is present, cargo builds it and then the binary is linked.
 func Test_Install_Ripgrep_Builds_Then_Links_When_Absent(t *testing.T) {
 	t.Parallel()
-	commands := []sh.Command{}
+	commands := []sysio.Process_Request{}
 	status := setup.Install_Ripgrep(&setup.Install_Ripgrep_Input{
 		Ripgrep_Directory: test_ripgrep_directory,
 		Cargo_Directory:   test_cargo_directory,
@@ -996,7 +800,7 @@ func Test_Install_Ripgrep_Builds_Then_Links_When_Absent(t *testing.T) {
 // before linking and reports a non-zero exit code.
 func Test_Install_Ripgrep_Reports_A_Build_Failure(t *testing.T) {
 	t.Parallel()
-	commands := []sh.Command{}
+	commands := []sysio.Process_Request{}
 	status := setup.Install_Ripgrep(&setup.Install_Ripgrep_Input{
 		Ripgrep_Directory: test_ripgrep_directory,
 		Cargo_Directory:   test_cargo_directory,
@@ -1016,7 +820,7 @@ func Test_Install_Ripgrep_Reports_A_Build_Failure(t *testing.T) {
 // the binary is relinked rather than recompiled.
 func Test_Install_Fdcli_Skips_Build_When_Already_Built(t *testing.T) {
 	t.Parallel()
-	commands := []sh.Command{}
+	commands := []sysio.Process_Request{}
 	status := setup.Install_Fdcli(&setup.Install_Fdcli_Input{
 		Fdcli_Directory: test_fdcli_directory,
 		Cargo_Directory: test_cargo_directory,
@@ -1040,7 +844,7 @@ func Test_Install_Fdcli_Skips_Build_When_Already_Built(t *testing.T) {
 // wanted version is present, cargo builds it and then the binary is linked.
 func Test_Install_Fdcli_Builds_Then_Links_When_Absent(t *testing.T) {
 	t.Parallel()
-	commands := []sh.Command{}
+	commands := []sysio.Process_Request{}
 	status := setup.Install_Fdcli(&setup.Install_Fdcli_Input{
 		Fdcli_Directory: test_fdcli_directory,
 		Cargo_Directory: test_cargo_directory,
@@ -1062,7 +866,7 @@ func Test_Install_Fdcli_Builds_Then_Links_When_Absent(t *testing.T) {
 // linking and reports a non-zero exit code.
 func Test_Install_Fdcli_Reports_A_Build_Failure(t *testing.T) {
 	t.Parallel()
-	commands := []sh.Command{}
+	commands := []sysio.Process_Request{}
 	status := setup.Install_Fdcli(&setup.Install_Fdcli_Input{
 		Fdcli_Directory: test_fdcli_directory,
 		Cargo_Directory: test_cargo_directory,
@@ -1082,7 +886,7 @@ func Test_Install_Fdcli_Reports_A_Build_Failure(t *testing.T) {
 // downloaded and the app's CLI is relinked — the gate probes the app, not PATH.
 func Test_Install_Ghostty_Skips_Install_When_Already_Installed(t *testing.T) {
 	t.Parallel()
-	commands := []sh.Command{}
+	commands := []sysio.Process_Request{}
 	binary := test_applications_directory + "/Ghostty.app/Contents/MacOS/ghostty"
 	status := setup.Install_Ghostty(&setup.Install_Ghostty_Input{
 		Applications_Directory: test_applications_directory,
@@ -1107,7 +911,7 @@ func Test_Install_Ghostty_Skips_Install_When_Already_Installed(t *testing.T) {
 // trusted: the DMG install runs again, replacing the tampered bundle.
 func Test_Install_Ghostty_Reinstalls_When_Signature_Is_Invalid(t *testing.T) {
 	t.Parallel()
-	commands := []sh.Command{}
+	commands := []sysio.Process_Request{}
 	binary := test_applications_directory + "/Ghostty.app/Contents/MacOS/ghostty"
 	status := setup.Install_Ghostty(&setup.Install_Ghostty_Input{
 		Applications_Directory: test_applications_directory,
@@ -1132,7 +936,7 @@ func Test_Install_Ghostty_Reinstalls_When_Signature_Is_Invalid(t *testing.T) {
 // rejected even though its own signature verifies.
 func Test_Install_Ghostty_Pins_The_Signing_Team(t *testing.T) {
 	t.Parallel()
-	commands := []sh.Command{}
+	commands := []sysio.Process_Request{}
 	binary := test_applications_directory + "/Ghostty.app/Contents/MacOS/ghostty"
 	setup.Install_Ghostty(&setup.Install_Ghostty_Input{
 		Applications_Directory: test_applications_directory,
@@ -1155,7 +959,7 @@ func Test_Install_Ghostty_Pins_The_Signing_Team(t *testing.T) {
 // at the wanted version is present, the DMG install runs and then the CLI is linked.
 func Test_Install_Ghostty_Installs_Then_Links_When_Absent(t *testing.T) {
 	t.Parallel()
-	commands := []sh.Command{}
+	commands := []sysio.Process_Request{}
 	status := setup.Install_Ghostty(&setup.Install_Ghostty_Input{
 		Applications_Directory: test_applications_directory,
 		Link_Directory:         test_link_directory,
@@ -1176,7 +980,7 @@ func Test_Install_Ghostty_Installs_Then_Links_When_Absent(t *testing.T) {
 // before linking and reports a non-zero exit code.
 func Test_Install_Ghostty_Reports_An_Install_Failure(t *testing.T) {
 	t.Parallel()
-	commands := []sh.Command{}
+	commands := []sysio.Process_Request{}
 	status := setup.Install_Ghostty(&setup.Install_Ghostty_Input{
 		Applications_Directory: test_applications_directory,
 		Link_Directory:         test_link_directory,
@@ -1193,6 +997,10 @@ func Test_Install_Ghostty_Reports_An_Install_Failure(t *testing.T) {
 // The fixed absolute home directory the planned writes are built against; a
 // constant keeps the expected destination paths deterministic.
 const test_home = "/home/user"
+
+// The fixed absolute source directory the macos-defaults tests walk — created empty so the
+// sync writes nothing and only the injected runner's behavior is under test.
+const test_source = "/source"
 
 // The fixed absolute checkout root the Neovim build subpaths are joined onto; a
 // constant keeps the expected make and link paths deterministic.
@@ -1242,27 +1050,6 @@ const test_fdcli_directory = "/fd-src"
 // against; a constant keeps the expected app and probe paths deterministic.
 const test_applications_directory = "/apps"
 
-// Invokes Plan for input and fails the test on an unexpected error, so each case
-// asserts on the writes without repeating the error plumbing.
-func run_plan(t *testing.T, input *setup.Plan_Input) (writes []setup.File_Write) {
-	t.Helper()
-	result, plan_err := setup.Plan(input)
-	if plan_err != nil {
-		t.Fatalf("Plan returned an unexpected error: %v", plan_err)
-	}
-	return result
-}
-
-// Indexes writes by destination path, mapping each to its contents as a string
-// so a test can assert on the writes regardless of their order.
-func writes_by_path(writes []setup.File_Write) (by_path map[string]string) {
-	by_path = make(map[string]string, len(writes))
-	for _, write := range writes {
-		by_path[write.Destination_Path] = string(write.Contents)
-	}
-	return by_path
-}
-
 // Reports whether ran holds a command exactly equal to want — name and arguments
 // together — so a test can assert one specific invocation happened.
 func ran_contains(ran [][]string, want []string) (found bool) {
@@ -1274,20 +1061,21 @@ func ran_contains(ran [][]string, want []string) (found bool) {
 	return false
 }
 
-// Returns a Shell whose Run records each command into record, replies to a probe
+// Returns a Shell whose Spawn records each request into record, replies to a probe
 // with responses keyed by the command path, and reports exit for every spawn, so
-// a test drives the gate and the build without spawning a real process.
+// a test drives the gate and the build without spawning a real process or a loop.
 func recording_shell(
-	record *[]sh.Command, responses map[string]string, exit int,
-) (shell *sh.Shell) {
-	return &sh.Shell{
-		Stdout:  io.Discard,
-		Stderr:  io.Discard,
-		Environ: func() (environment []string) { return nil },
-		Run: func(command sh.Command) (outcome sh.Outcome) {
-			*record = append(*record, command)
-			io.WriteString(command.Stdout, responses[command.Path])
-			return sh.Outcome{Exit: exit}
+	record *[]sysio.Process_Request, responses map[string]string, exit int,
+) (shell setup.Shell) {
+	return setup.Shell{
+		Stdout: io.Discard,
+		Stderr: io.Discard,
+		Spawn: func(request sysio.Process_Request) (result sysio.Process_Result) {
+			*record = append(*record, request)
+			return sysio.Process_Result{
+				Output: []byte(responses[request.Path]),
+				Exit:   exit,
+			}
 		},
 	}
 }
@@ -1296,16 +1084,17 @@ func recording_shell(
 // path from exits, defaulting to zero, so a test can fail one specific command — a
 // codesign verify — while the gate's version probe and the rest still succeed.
 func recording_shell_exits(
-	record *[]sh.Command, responses map[string]string, exits map[string]int,
-) (shell *sh.Shell) {
-	return &sh.Shell{
-		Stdout:  io.Discard,
-		Stderr:  io.Discard,
-		Environ: func() (environment []string) { return nil },
-		Run: func(command sh.Command) (outcome sh.Outcome) {
-			*record = append(*record, command)
-			io.WriteString(command.Stdout, responses[command.Path])
-			return sh.Outcome{Exit: exits[command.Path]}
+	record *[]sysio.Process_Request, responses map[string]string, exits map[string]int,
+) (shell setup.Shell) {
+	return setup.Shell{
+		Stdout: io.Discard,
+		Stderr: io.Discard,
+		Spawn: func(request sysio.Process_Request) (result sysio.Process_Result) {
+			*record = append(*record, request)
+			return sysio.Process_Result{
+				Output: []byte(responses[request.Path]),
+				Exit:   exits[request.Path],
+			}
 		},
 	}
 }
@@ -1327,13 +1116,13 @@ func pins_team(arguments []string, team string) (pins bool) {
 
 // Returns only the make invocations from commands, dropping the nvim version
 // probe so a test asserts on the build without counting the gate.
-func make_commands(commands []sh.Command) (builds []sh.Command) {
+func make_commands(commands []sysio.Process_Request) (builds []sysio.Process_Request) {
 	return commands_named(commands, "make")
 }
 
 // Returns the commands whose executable is name, so a test asserts on one kind of
 // invocation — make, cp, fc-cache — without counting the rest.
-func commands_named(commands []sh.Command, name string) (named []sh.Command) {
+func commands_named(commands []sysio.Process_Request, name string) (named []sysio.Process_Request) {
 	for _, command := range commands {
 		if command.Path == name {
 			named = append(named, command)

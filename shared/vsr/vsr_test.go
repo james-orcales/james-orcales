@@ -3,9 +3,9 @@ package vsr_test
 import (
 	"testing"
 
-	invariant "github.com/james-orcales/james-orcales/shared/invariant/default"
-	"github.com/james-orcales/james-orcales/shared/time"
-	"github.com/james-orcales/james-orcales/shared/vsr"
+	invariant "local/james-orcales/shared/invariant/default"
+	"local/james-orcales/shared/time"
+	"local/james-orcales/shared/vsr"
 )
 
 // TestMain runs the suite through the invariant harness so that, under a plain `go test`, every
@@ -57,6 +57,6 @@ func messages_of_kind(
 func epoch_1_view_2_replica() (replica vsr.Replica) {
 	return vsr.Replica{
 		Identifier: 1, Configuration: vsr.Configuration{0, 1, 2},
-		Epoch: 1, View: 2, Status: vsr.Status_Normal,
+		Epoch: 1, View: 2, Status: vsr.STATUS_NORMAL,
 	}
 }

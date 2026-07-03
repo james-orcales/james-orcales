@@ -6,7 +6,7 @@ reordering, duplication, delay, partition, and crash-restart, asserted after eve
 
 ### Single Primary
 
-No two replicas in Status_Normal ever act as the primary of the same (epoch, view); single-primary
+No two replicas in STATUS_NORMAL ever act as the primary of the same (epoch, view); single-primary
 is epoch-relative (§8.3), so the old and new groups' primaries coexisting across a handoff is
 allowed while two primaries of one (epoch, view) is not.
 

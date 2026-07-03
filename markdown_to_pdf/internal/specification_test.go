@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/james-orcales/james-orcales/markdown_to_pdf/internal"
+	"local/james-orcales/markdown_to_pdf/internal"
 )
 
 // Each leaf test feeds the renderer a Markdown fragment that exercises exactly

@@ -27,6 +27,12 @@ import (
 	"sync"
 	"unicode"
 	"unicode/utf8"
+
+	"local/james-orcales/lint/internal/assertion"
+	"local/james-orcales/lint/internal/diagnostic"
+	"local/james-orcales/lint/internal/source"
+	"local/james-orcales/lint/internal/specification"
+	"local/james-orcales/lint/internal/vcs"
 )
 
 const line_chars_max = 100
@@ -39,11 +45,11 @@ const tab_width = 8
 // a test can satisfy the Hi-equals-X tuple. Constants are named for the
 // domain so reading the assertion at a call site makes the bound obvious.
 
-// Identifier_Chars_Max caps Go identifier lengths the linter processes.
+// IDENTIFIER_CHARS_MAX caps Go identifier lengths the linter processes.
 // 128 chars is wider than any identifier representable on a line_chars_max
 // (140) source line after the surrounding syntax; the repo's longest
 // production identifier is 83 chars.
-const Identifier_Chars_Max = 128
+const IDENTIFIER_CHARS_MAX = 128
 
 // Invariant_helper_name_chars_max caps the longest invariant.X helper name
 // the linter recognises; "Recorder_Is_Distinct_Boundary" is the longest
@@ -76,7 +82,7 @@ const diagnostic_source_chars_max = 12
 
 // Function_label_chars_min caps the shortest function_label string: a
 // single-character function name like `f`. Paired with
-// Identifier_Chars_Max as Hi.
+// IDENTIFIER_CHARS_MAX as Hi.
 const function_label_chars_min = 1
 
 // Non_empty_min is the universal Lo for length axes on inputs the caller
@@ -92,10 +98,11 @@ const non_empty_min = 1
 const split_suggestion_chars_min = 3
 
 // Naming_style_chars_min / naming_style_chars_max bound the length of the
-// `Want` field on suggest_input. Callers pass exactly one of "Ada_Case" (8)
-// or "snake_case" (10) — the only two style words the casing checks know.
+// `Want` field on suggest_input. Callers pass exactly one of "Ada_Case" (8),
+// "snake_case" (10), or "SCREAMING_SNAKE_CASE" (20) — the three style words
+// the casing checks know.
 const naming_style_chars_min = 8
-const naming_style_chars_max = 10
+const naming_style_chars_max = 20
 
 // Stream_check_name_chars_min / stream_check_name_chars_max bound the
 // `Name` field on check_function_stream constructors. Shortest is "symlink"
@@ -288,7 +295,7 @@ const stdlib_term_chars_min = 4
 // method: a 1-char type `A` joined to a 128-char type via `,` totals 130.
 // Bounded axes over input.Params in check_unnecessary_method_matches_stdlib
 // use this as Hi so Bar's call observes the Hi bucket.
-const method_params_test_corpus_max = Identifier_Chars_Max + 2
+const method_params_test_corpus_max = IDENTIFIER_CHARS_MAX + 2
 
 // Qualified_ident_chars_min caps `pkg.Func` shapes at their minimum: a
 // single-letter package, dot, single-letter func — three characters.
@@ -371,7 +378,7 @@ const suggested_axis_call_chars_max = 228
 const invariant_selector_chars_max = 26
 
 // If_init_identifier_chars_max caps identifier strings appearing in
-// if/for/switch init lines: a tighter bound than Identifier_Chars_Max to
+// if/for/switch init lines: a tighter bound than IDENTIFIER_CHARS_MAX to
 // reflect what fits in a single statement line within the line-length budget.
 const if_init_identifier_chars_max = 55
 
@@ -379,7 +386,7 @@ const if_init_identifier_chars_max = 55
 // length axis. Updated whenever a check is added or removed from the
 // dispatcher in Check_File.
 const tier_2_checks_count = 6
-const tier_1_checks_count = 31
+const tier_1_checks_count = 30
 
 // Go_filename_chars_min is the shortest Go filename: a single-letter package
 // name followed by the .go extension, e.g. `a.go`. Used as the Lo bound on
@@ -427,9 +434,9 @@ const inside_if_message_chars_min = 113
 // Want_name_chars_min / want_name_chars_max cap the input-struct
 // expected name (e.g. "f_Input" for function `f`). The "_Input" suffix
 // is 6 chars; combined with the shortest (1-char) function name the
-// minimum is 7. Max is Identifier_Chars_Max + 6 = 134.
+// minimum is 7. Max is IDENTIFIER_CHARS_MAX + 6 = 134.
 const want_name_chars_min = 7
-const want_name_chars_max = Identifier_Chars_Max + 6
+const want_name_chars_max = IDENTIFIER_CHARS_MAX + 6
 
 // Filesystem_path_chars_max caps filesystem path strings the linter
 // processes. POSIX PATH_MAX is 4096 on Linux; the linter inherits this
@@ -450,13 +457,13 @@ const inferred_field_kind_chars_max = 7
 // Field_description_chars_max caps `<name> <type_str>` descriptions:
 // at most one identifier plus a space plus a type expression that itself
 // is bounded by identifier length, yielding 2*identifier + 1.
-const field_description_chars_max = 2*Identifier_Chars_Max + 1
+const field_description_chars_max = 2*IDENTIFIER_CHARS_MAX + 1
 
 // Suggested_sig_chars_max caps suggested function-signature strings of the
 // form `<funcname>(*<funcname>_Input) (result <type>)`. The funcname
 // appears twice (raw plus inside `_Input`), plus the wrapping syntax and
 // a result clause; budget is 2*identifier + 6 (`_Input`) + ~16 (result).
-const suggested_sig_chars_max = 2*Identifier_Chars_Max + 22
+const suggested_sig_chars_max = 2*IDENTIFIER_CHARS_MAX + 22
 
 // Comment_text_chars_max caps raw comment text. comment_body strips the
 // leading `//` and any whitespace, so the text bound is the body budget
@@ -469,23 +476,15 @@ const banned_segment_chars_max = 9
 
 const function_lines_max = 70
 
-// Git's default short-hash width.
-const git_short_hash_chars = 10
-
 // Git's full SHA-1 width — the maximum a `%H` format will produce. Used
 // as the hard bound for hash-shaped inputs when git is in SHA-1 mode.
 const git_full_hash_chars = 40
 
 // Git's SHA-256 hash width — git's optional SHA-256 object format. Used
-// as the hard bound for hash-shaped inputs since git_input_check_short_hash
-// must accept either format.
+// as the hard bound for hash-shaped inputs, which must accept either format.
 const git_full_hash_chars_sha_256 = 64
 
 const lines_per_file_max = 10000
-
-// Mirrors line_chars_max used by the source-line check: code-review UIs
-// truncate around 72–100 chars and longer subjects force horizontal scroll.
-const commit_subject_chars_max = 100
 
 // Diagnostics_per_call_max caps the slice length of `diags []Diagnostic`
 // returns. A single check may emit one diagnostic per source line at worst,
@@ -512,7 +511,7 @@ const string_slice_per_call_max = lines_per_file_max
 // Coverage_pairs_per_call_max caps invariant-assertion coverage-pair slices.
 // One call may produce one pair per (path, kind) tuple — bounded by the
 // number of tracked identifiers in any one function, which is well below
-// Identifier_Chars_Max × credit_kind_chars_max in practice.
+// IDENTIFIER_CHARS_MAX × credit_kind_chars_max in practice.
 const coverage_pairs_per_call_max = lines_per_file_max
 
 // Caps the three agent-facing docs at 100 lines. These files are loaded into
@@ -556,24 +555,29 @@ type Configuration struct {
 	// module at the workspace root is treated as a binary. Slash-relative, like
 	// the allowlist. Required: a config without it is rejected.
 	Shared_Component string `json:"shared_component"`
-	// Instrumentation_Packages names the workspace-root-relative directories of
-	// write-only instrumentation — assertions, snapshot tooling, telemetry. They
-	// may expose a `var Default`, and a pure or deterministic package may import
-	// them despite the import bans, since emitting to a write-only side channel
-	// cannot feed impurity or nondeterminism back into the importer. Segment-
-	// prefix: an entry covers itself and its whole subtree.
+	// Instrumentation_Packages names the packages of write-only instrumentation —
+	// assertions, snapshot tooling, telemetry. They may expose a `var Default`, and
+	// a pure or deterministic package may import them despite the import bans, since
+	// emitting to a write-only side channel cannot feed impurity or nondeterminism
+	// back into the importer. Exact-path globs, like the other lists: "shared/x/**"
+	// names a package and its whole subtree. Names a package only — an entry naming
+	// one exact file is rejected; Ignore and Recursion_Exempt are the two lists that
+	// may name a file. A "!"-prefixed entry revokes instrumentation status from a
+	// package a broader entry granted it, regardless of either entry's position.
 	Instrumentation_Packages []string `json:"instrumentation_packages"`
-	// Deterministic_Packages names the module top-level directories whose pure
-	// packages are held to the deterministic tier on top of purity: no goroutine,
-	// channel, select, nor time/context/sync import, and every first-party import
-	// must itself be deterministic. An entry covers the pure packages at or under
-	// it, so a binary component is named by its bare top-level directory and the
-	// shared module's libraries by `shared/*` (all) or `shared/<lib>` (one); the
-	// fixed module shape lets the tier auto-apply without listing each package.
-	// Impure packages in the subtree (the main package, a default tier) are
-	// dropped, not reported. Opt-in; empty lists none. An entry covering no pure
-	// package is reported as a coverage gap.
-	Deterministic_Packages []string `json:"deterministic_packages"`
+	// Pure_But_Indeterministic names the pure packages opted OUT of the deterministic
+	// tier. The tier — no goroutine, channel, select, or float; no time/context/sync
+	// import; deterministic-only first-party imports — binds every pure package by
+	// default, on top of purity; an entry here releases one. Each entry is an
+	// exact-path glob: "shared/io" releases that one package, "shared/io/**" its
+	// whole subtree, "*"/"**" spanning one path segment or many. Impure packages
+	// (the main package, a default tier) are never deterministic and need no entry.
+	// Opt-out; empty holds every pure package. An entry matching no pure package is
+	// reported as a coverage gap (a typo or stale path that releases nothing). Names
+	// a package only, like Instrumentation_Packages and Invariant_Exempt_Packages —
+	// an entry naming one exact file is rejected. A "!"-prefixed entry holds a
+	// package to the tier despite a broader release entry, regardless of order.
+	Pure_But_Indeterministic []string `json:"pure_but_indeterministic_packages"`
 	// Word_Replacements drives the vocabulary check: each tokenized, lowercased
 	// word maps to its preferred replacements (id -> identifier). An empty list
 	// bans the word with no rename suggestion (util, len); an absent key is left
@@ -581,25 +585,42 @@ type Configuration struct {
 	// silently go dark.
 	Word_Replacements map[string][]string `json:"word_replacements"`
 	// Ignore extends the hardcoded global ignore list (Ignored_Directory) with
-	// per-workspace entries, as gitignore-style globs: a slash-less entry floats
-	// and matches that basename at any depth, an entry with a slash is anchored to
-	// the workspace root, a trailing slash binds to directories (and thus their
-	// whole subtree), and ** spans path segments while * stays within one. A
-	// matching path is dropped from the scan set entirely, so no tier fires on it.
-	// Opt-in; empty ignores nothing.
+	// per-workspace entries, as exact-path globs like the other lists: a slash-less
+	// entry floats and matches that basename at any depth, an entry with a slash is
+	// anchored to the workspace root, "dir/**" covers a directory's whole subtree,
+	// and ** spans path segments while * stays within one. A matching path is
+	// dropped from the scan set entirely, so no tier fires on it. Opt-in; empty
+	// ignores nothing. Unlike the other lists, an entry here may name a package or
+	// one exact file (e.g. "build.go"). A "!"-prefixed entry re-includes a path a
+	// broader entry ignored, winning regardless of either entry's position.
 	Ignore []string `json:"ignore"`
+	// Invariant_Exempt_Packages names the packages exempt from the type-invariant
+	// rule — the rule's sole escape hatch. The framework package that defines the
+	// bundle machinery lives here so it is not bootstrapped against itself, and a
+	// package is listed while its types are still being given invariants, then
+	// removed. Each entry is an exact-path glob: "shared/foo" exempts that package,
+	// "shared/**" its whole subtree, and "**" the whole tree — the wholesale off
+	// switch for a staged rollout. Opt-in; empty exempts nothing, so the rule binds
+	// every package by default. Names a package only, like Instrumentation_Packages
+	// and Pure_But_Indeterministic — an entry naming one exact file is rejected. A
+	// "!"-prefixed entry binds a package to the rule despite a broader exemption,
+	// regardless of order — e.g. "shared/**", "!shared/io" exempts shared/** except
+	// shared/io.
+	Invariant_Exempt_Packages []string `json:"opt_out_assertion_mandate_packages"`
+	// Recursion_Exempt names packages exempt from the self- and mutual-recursion
+	// ban — a hand-written recursive-descent parser, whose recursion is intentional.
+	// Exact-path globs, like opt_out_assertion_mandate_packages; opt-in, empty exempts
+	// nothing. Unlike that list, an entry here may name a package or one exact file —
+	// a single recursive function living in an otherwise-unexceptional package. A
+	// "!"-prefixed entry re-bans recursion in a package or file a broader entry
+	// exempted, regardless of order.
+	Recursion_Exempt []string `json:"opt_out_recursion_ban"`
 }
 
-// Git_Commit is one commit's identity for the git-history tier:
-// the full hash and the subject line of the commit message.
-type Git_Commit struct {
-	// Hash is the commit's full object name, used to attribute a diagnostic
-	// to the offending commit.
-	Hash string
-	// Subject is the first line of the commit message — the only part the
-	// commit-history rules inspect.
-	Subject string
-}
+// Git_Commit is one commit's identity for the git-history tier, aliased from the
+// commits package so this seam keeps naming it Git_Commit while the type and its
+// rules live in a deterministic leaf.
+type Git_Commit = vcs.Commit
 
 // Git_Input drives the git-history tier. Zero value (Enabled=false) skips
 // the tier — used when HEAD is on main, when the binary isn't run from a
@@ -696,18 +717,20 @@ func Main(input *Main_Input) (code int) {
 	// Git tier runs first: it reads only repo metadata, not the FS, for the fastest signal.
 	git_diags := Git_Input_Check(input.Git)
 	filesystem_diags, err := Check_File_System(&Check_File_System_Input{
-		Fsys:                     input.Fsys,
-		Root:                     ".",
-		Root_Directory:           input.Root_Directory,
-		Tracked:                  input.Tracked,
-		CPU_Count:                input.CPU_Count,
-		Readlink:                 input.Readlink,
-		Scope:                    input.Scope_Prefix,
-		Instrumentation_Packages: configuration.Instrumentation_Packages,
-		Shared_Component:         configuration.Shared_Component,
-		Deterministic_Packages:   configuration.Deterministic_Packages,
-		Word_Replacements:        configuration.Word_Replacements,
-		Ignore:                   configuration.Ignore,
+		Fsys:                      input.Fsys,
+		Root:                      ".",
+		Root_Directory:            input.Root_Directory,
+		Tracked:                   input.Tracked,
+		CPU_Count:                 input.CPU_Count,
+		Readlink:                  input.Readlink,
+		Scope:                     input.Scope_Prefix,
+		Instrumentation_Packages:  configuration.Instrumentation_Packages,
+		Shared_Component:          configuration.Shared_Component,
+		Pure_But_Indeterministic:  configuration.Pure_But_Indeterministic,
+		Word_Replacements:         configuration.Word_Replacements,
+		Ignore:                    configuration.Ignore,
+		Invariant_Exempt_Packages: configuration.Invariant_Exempt_Packages,
+		Recursion_Exempt:          configuration.Recursion_Exempt,
 	})
 	if err != nil {
 		fmt.Fprintln(input.Stderr, err)
@@ -726,30 +749,11 @@ func Main(input *Main_Input) (code int) {
 // unchanged.
 func report_diagnostics(
 	diagnostics []Diagnostic, scope_prefix string, stdout io.Writer) (code int) {
-	has_tier1 := false
-	for _, d := range diagnostics {
-		if !diagnostic_within_scope(d, scope_prefix) {
-			continue
-		}
-		if d.Tier == 1 {
-			has_tier1 = true
-			break
-		}
+	reportable := diagnostic.Reportable(diagnostics, scope_prefix)
+	for _, d := range reportable {
+		fmt.Fprintln(stdout, diagnostic.Format(d))
 	}
-	emitted_count := 0
-	for _, d := range diagnostics {
-		if !diagnostic_within_scope(d, scope_prefix) {
-			continue
-		}
-		if has_tier1 {
-			if d.Tier == 2 {
-				continue
-			}
-		}
-		emitted_count++
-		fmt.Fprintf(stdout, "%s: %s\n", d.Position, d.Message)
-	}
-	if emitted_count > 0 {
+	if len(reportable) > 0 {
 		return 1
 	}
 	// AI agents keep checking exit code if there's no explicit success message in output.
@@ -808,55 +812,112 @@ func Parse_Configuration(data []byte) (configuration *Configuration, err error) 
 	if decode_err := json.Unmarshal(data, &keys); decode_err != nil {
 		return nil, decode_err
 	}
-	known_keys := map[string]bool{
-		"shared_component":         true,
-		"instrumentation_packages": true,
-		"deterministic_packages":   true,
-		"word_replacements":        true,
-		"ignore":                   true,
+	// Every key is required, so a config states its whole surface: an absent key is
+	// as much a misconfiguration as a wrong value, never a silent default. The one
+	// ordering fixes which missing key is named first, keeping the error stable.
+	required_keys := []string{
+		"shared_component",
+		"instrumentation_packages",
+		"pure_but_indeterministic_packages",
+		"word_replacements",
+		"ignore",
+		"opt_out_assertion_mandate_packages",
+		"opt_out_recursion_ban",
+	}
+	known := map[string]bool{}
+	for _, key := range required_keys {
+		known[key] = true
 	}
 	for key := range keys {
-		if known_keys[key] {
+		if known[key] {
 			continue
 		}
 		return nil, fmt.Errorf("lint.json: unknown key %q", key)
+	}
+	for _, key := range required_keys {
+		if _, present := keys[key]; present {
+			continue
+		}
+		return nil, fmt.Errorf("lint.json: %s is required", key)
 	}
 	configuration = &Configuration{}
 	if decode_err := json.Unmarshal(data, configuration); decode_err != nil {
 		return nil, decode_err
 	}
+	// The keys are all present by now; these two carry a value that an empty form
+	// would nullify. A blank shared_component names no module, and an empty
+	// word_replacements would silently disable the vocabulary check (which has no
+	// built-in table any more) rather than fail loudly.
 	if configuration.Shared_Component == "" {
-		return nil, fmt.Errorf("lint.json: shared_component is required")
+		return nil, fmt.Errorf("lint.json: shared_component must not be empty")
 	}
-	// Empty (or absent) word_replacements is rejected, not defaulted: the
-	// vocabulary check has no built-in table any more, so a missing one would
-	// silently disable it rather than fail loudly.
 	if len(configuration.Word_Replacements) == 0 {
-		return nil, fmt.Errorf("lint.json: word_replacements is required")
+		return nil, fmt.Errorf("lint.json: word_replacements must not be empty")
 	}
-	if validate_err := validate_glob_patterns(
-		"ignore", configuration.Ignore); validate_err != nil {
+	if validate_err := validate_configuration_globs(configuration); validate_err != nil {
 		return nil, validate_err
 	}
 	return configuration, nil
 }
 
-// Rejects gitignore-style glob entries the matcher cannot honor, so a broken
-// list fails loudly at config load rather than silently matching nothing. field
-// names the lint.json key for the error. An empty entry has no path to match; a
-// leading "!" is gitignore negation, which our additive lists give no meaning;
-// and a segment that path.Match deems malformed (an unterminated "[") would error
-// on every comparison.
+// Rejects a malformed glob in any lint.json path list at load, so a bad pattern
+// fails fast rather than silently matching nothing at use. Every list is matched
+// by the one exact-path glob matcher (source.Path_Matches_Glob), so every list is
+// validated the same way.
+func validate_configuration_globs(configuration *Configuration) (err error) {
+	for _, list := range []struct {
+		Name  string
+		Globs []string
+	}{
+		{Name: "ignore", Globs: configuration.Ignore},
+		{
+			Name:  "pure_but_indeterministic_packages",
+			Globs: configuration.Pure_But_Indeterministic,
+		},
+		{Name: "instrumentation_packages", Globs: configuration.Instrumentation_Packages},
+		{
+			Name:  "opt_out_assertion_mandate_packages",
+			Globs: configuration.Invariant_Exempt_Packages,
+		},
+		{Name: "opt_out_recursion_ban", Globs: configuration.Recursion_Exempt},
+	} {
+		if err = validate_glob_patterns(list.Name, list.Globs); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// Rejects glob entries the matcher cannot honor, so a broken list fails loudly at
+// config load rather than silently matching nothing. field names the lint.json key
+// for the error. An empty entry has no path to match; a bare "!" (or "!" followed
+// only by whitespace) negates nothing; a list that is entirely negation entries has
+// no positive entry for any negation to override and so can never affect a single
+// path — both are rejected as meaningless rather than silently inert; and a segment
+// that path.Match deems malformed (an unterminated "[") would error on every
+// comparison.
 func validate_glob_patterns(field string, patterns []string) (err error) {
+	negated_count := 0
 	for _, raw := range patterns {
 		where := fmt.Sprintf("lint.json: %s entry %q", field, raw)
 		if strings.TrimSpace(raw) == "" {
 			return fmt.Errorf("lint.json: %s entry is empty", field)
 		}
 		if strings.HasPrefix(raw, "!") {
-			return fmt.Errorf("%s: negation is unsupported", where)
+			if strings.TrimSpace(strings.TrimPrefix(raw, "!")) == "" {
+				return fmt.Errorf("%s: negates nothing", where)
+			}
+			negated_count++
 		}
-		for _, segment := range strings.Split(parse_glob_pattern(raw).Core, "/") {
+		// The ONLY wildcards this linter supports are * (within one path segment) and
+		// ** (spanning segments). The matcher delegates non-** segments to path.Match,
+		// which ALSO honors ? and [class] tokens — but that leaked in from the stdlib
+		// and is NOT a feature we support. Reject them here so no entry can ever lean
+		// on path.Match's extra syntax.
+		if strings.ContainsAny(raw, "?[") {
+			return fmt.Errorf("%s: ? and [ are unsupported; use * and **", where)
+		}
+		for _, segment := range strings.Split(source.Parse_Glob_Pattern(raw).Core, "/") {
 			// ** is the matcher's own segment wildcard, not a path.Match token.
 			if segment == "**" {
 				continue
@@ -866,59 +927,23 @@ func validate_glob_patterns(field string, patterns []string) (err error) {
 			}
 		}
 	}
+	if len(patterns) > 0 {
+		if negated_count == len(patterns) {
+			return fmt.Errorf("lint.json: %s is entirely negation entries", field)
+		}
+	}
 	return nil
 }
 
-// True iff the diagnostic is inside the user's scope. Empty scope means
-// no filter — all diagnostics pass. Git-tier diagnostics use synthetic
-// `<git:…>` filenames; those never live under any scope prefix, so we
-// admit them whenever the scope is anything other than empty by checking
-// the leading "<" sentinel.
-func diagnostic_within_scope(d Diagnostic, scope_prefix string) (within bool) {
+// Diagnostic is one rule violation, aliased from the diagnostic package so the
+// core keeps naming it Diagnostic while the type lives in a deterministic leaf a
+// rule subpackage can import without reaching back into this impure package.
+type Diagnostic = diagnostic.Diagnostic
 
-	if scope_prefix == "" {
-		return true
-	}
-	if strings.HasPrefix(d.Position.Filename, "<") {
-		return true
-	}
-	if d.Position.Filename == scope_prefix {
-		return true
-	}
-	return strings.HasPrefix(d.Position.Filename, scope_prefix+"/")
-}
-
-// Diagnostic is one rule violation. Position is the offending source
-// location; Name and Want are machine-readable rule identity and
-// suggested fix; Message is the human-readable line printed to stdout.
-// Tier carries the file-check tier for print-time gating: 1 = tier-1
-// (always printed; presence anywhere suppresses tier-2 output), 2 =
-// tier-2 (printed only when no tier-1 fires globally). Diagnostics
-// from non-file tiers (git, stream, cross-file) leave Tier zero — they
-// always print and never gate tier-2.
-type Diagnostic struct {
-	// Position is the offending source location, printed as the clickable
-	// file:line:col prefix.
-	Position token.Position
-	// Name is the machine-readable rule identity, stable for tooling that
-	// groups or suppresses by rule.
-	Name string
-	// Want is the suggested fix, phrased as the desired post-state.
-	Want string
-	// Message is the human-readable line printed to stdout.
-	Message string
-	// Tier carries the file-check tier for print-time gating: 1 always
-	// prints and suppresses tier-2 globally when present; 2 prints only
-	// when no tier-1 fired; non-file tiers leave it 0.
-	Tier int
-}
-
-type parsed_file struct {
-	Path     string
-	File_Set *token.FileSet
-	File     *ast.File
-	Source   []byte
-}
+// Parsed_File, aliased from the source package so the core keeps naming it
+// parsed_file while the type lives in a deterministic leaf a rule subpackage can
+// import without reaching back into this impure package.
+type parsed_file = source.Parsed_File
 
 var snake_case_re = regexp.MustCompile(`^[a-z][a-z0-9]*(_[a-z0-9]+)*$`)
 
@@ -929,11 +954,10 @@ var snake_case_re = regexp.MustCompile(`^[a-z][a-z0-9]*(_[a-z0-9]+)*$`)
 var ada_case_re = regexp.MustCompile(
 	`^([A-Z][a-z0-9]*|[A-Z][A-Z0-9]*s?)(_([A-Z][a-z0-9]*|[A-Z][A-Z0-9]*s?))*$`)
 
-// Conventional Commits subject: lowercase type, optional (scope), optional
-// `!` breaking-change marker, `: `, non-empty description. Scope contents
-// are not whitelisted — package paths and ad-hoc area names both occur in
-// the wild and a strict charset would generate more friction than signal.
-var conventional_commit_re = regexp.MustCompile(`^[a-z]+(\([^)]+\))?!?: \S`)
+// Screaming_snake_case_re binds an exported top-level const, same shape as
+// snake_case_re uppercased. No acronym-plural arm is needed like ada_case_re's:
+// every segment is already all-caps, so "IDS" needs no special-casing.
+var screaming_snake_case_re = regexp.MustCompile(`^[A-Z][A-Z0-9]*(_[A-Z0-9]+)*$`)
 
 func suggest_split_words(name string) (words []string) {
 	var current []rune
@@ -986,6 +1010,10 @@ func suggest(input *suggest_input) (output string) {
 	for i, w := range words {
 		if input.Want == "snake_case" {
 			parts[i] = strings.ToLower(w)
+			continue
+		}
+		if input.Want == "SCREAMING_SNAKE_CASE" {
+			parts[i] = strings.ToUpper(w)
 			continue
 		}
 		if suggest_is_all_upper(w) {
@@ -1393,18 +1421,39 @@ func check_shadow(
 	}
 }
 
+// Check_File_Input bundles the inputs of Check_File: the parsed file with its
+// position set and source, and the lint.json lists the per-file checks consult.
+type Check_File_Input struct {
+	// File_Set resolves the file's token positions for diagnostics.
+	File_Set *token.FileSet
+	// File is the parsed syntax tree the per-file checks read.
+	File *ast.File
+	// Source is the file's raw bytes, for checks that scan text rather than AST.
+	Source []byte
+	// Instrumentation is the lint.json instrumentation_packages list, exempting
+	// the package-var ban.
+	Instrumentation []string
+	// Word_Replacements is the lint.json vocabulary table; nil disables the check.
+	Word_Replacements map[string][]string
+	// Invariant_Exempt is the lint.json opt_out_assertion_mandate_packages list, exempting
+	// the type-invariant check.
+	Invariant_Exempt []string
+	// Recursion_Exempt is the lint.json opt_out_recursion_ban list: directories
+	// exempt from the recursion ban (a recursive-descent parser). Threaded per-file.
+	Recursion_Exempt []string
+}
+
 // Check_File runs every per-file check (tier-1 first, then tier-2 if
 // tier-1 was clean) on one already-parsed file and returns the
 // accumulated diagnostics. Used both by Check_Source and by the
 // file-system tier's per-file pass. Stamps each diagnostic with its
 // origin tier so the printer can gate tier-2 output globally on the
 // presence of any tier-1 diagnostic.
-func Check_File(
-	file_set *token.FileSet, file *ast.File, source []byte, instrumentation []string,
-	word_replacements map[string][]string,
-) (diags []Diagnostic) {
+func Check_File(input *Check_File_Input) (diags []Diagnostic) {
 	diags = check_file_run_tier([]check_function{
+		make_check_type_invariants(input.Invariant_Exempt),
 		check_casing,
+		check_constant_casing,
 		check_named_returns,
 		check_no_naked_return,
 		check_shadows,
@@ -1425,18 +1474,17 @@ func Check_File(
 		check_gofmt,
 		check_no_dot_import,
 		check_default_package_name,
-		check_test_package,
 		check_no_empty_function_body,
 		check_no_interfaces,
 		check_input_struct,
-		make_check_names_vocabulary(word_replacements),
+		make_check_names_vocabulary(input.Word_Replacements),
 		check_test_documentation_comment,
 		check_snap_backtick,
 		check_names,
 		check_no_bare_for,
 		check_exported_documentation_comment,
 		check_blank_synchronization_mutex,
-	}, file_set, file, source)
+	}, input.File_Set, input.File, input.Source)
 	if len(diags) > 0 {
 		for i := range diags {
 			diags[i].Tier = 1
@@ -1444,11 +1492,11 @@ func Check_File(
 		return diags
 	}
 	diags = check_file_run_tier([]check_function{
-		check_no_unbounded_apis, check_no_recursion,
-		check_no_function_init, make_check_no_package_vars(instrumentation),
+		check_no_unbounded_apis, make_check_no_recursion(input.Recursion_Exempt),
+		check_no_function_init, make_check_no_package_vars(input.Instrumentation),
 		check_unnecessary_method,
 		check_no_third_party_struct_tag,
-	}, file_set, file, source)
+	}, input.File_Set, input.File, input.Source)
 	for i := range diags {
 		diags[i].Tier = 2
 	}
@@ -1502,6 +1550,14 @@ func check_casing_ident(file_set *token.FileSet, identifier *ast.Ident, diags *[
 
 func check_casing(file_set *token.FileSet, file *ast.File, _ []byte) (diags []Diagnostic) {
 
+	// Held to screaming_snake_case_re by check_constant_casing instead of this
+	// function's Ada_Case rule; keyed by ident pointer (not name) so a local
+	// variable shadowing an exported const's name is never accidentally skipped.
+	screaming_case_constants := map[*ast.Ident]bool{}
+	for _, identifier := range check_casing_exported_constant_idents(file) {
+		screaming_case_constants[identifier] = true
+	}
+
 	check := func(identifier *ast.Ident) {
 		check_casing_ident(file_set, identifier, &diags)
 	}
@@ -1522,7 +1578,7 @@ func check_casing(file_set *token.FileSet, file *ast.File, _ []byte) (diags []Di
 			// TestMain is a Go testing-package reserved name; the
 			// runner only recognizes that exact spelling.
 			if x.Name.Name != "TestMain" {
-				if !check_casing_method_satisfies_stdlib(x) {
+				if !source.Method_Satisfies_Stdlib(x) {
 					check(x.Name)
 				}
 			}
@@ -1531,6 +1587,9 @@ func check_casing(file_set *token.FileSet, file *ast.File, _ []byte) (diags []Di
 			check(x.Name)
 		case *ast.ValueSpec:
 			for _, name := range x.Names {
+				if screaming_case_constants[name] {
+					continue
+				}
 				check(name)
 			}
 		case *ast.FuncType:
@@ -1554,25 +1613,51 @@ func check_casing(file_set *token.FileSet, file *ast.File, _ []byte) (diags []Di
 	return diags
 }
 
-// Reports whether function_declaration is a method whose name + signature
-// satisfies a known stdlib interface (fs.FS.Open, fs.ReadFileFS.ReadFile,
-// fs.DirEntry.IsDir, …). Stdlib interface names are conventionally
-// PascalCase (no underscores) and can't be renamed; check_casing exempts
-// them so test fixtures can implement these interfaces without lint
-// flagging their method names.
-func check_casing_method_satisfies_stdlib(function_declaration *ast.FuncDecl) (yes bool) {
-
-	if function_declaration.Recv == nil {
-		return false
+// Check_casing_exported_constant_idents walks only file.Decls — never a
+// function body — so "exported" falls out of the package-level-only walk for
+// free: Go's actual export semantics, not check_casing's scope-blind
+// first-letter check. An exported top-level const is held to
+// screaming_snake_case_re instead of the general Ada_Case rule.
+func check_casing_exported_constant_idents(file *ast.File) (idents []*ast.Ident) {
+	for _, declaration := range file.Decls {
+		generic_declaration, ok := declaration.(*ast.GenDecl)
+		if !ok {
+			continue
+		}
+		if generic_declaration.Tok != token.CONST {
+			continue
+		}
+		for _, specification := range generic_declaration.Specs {
+			value_specification, is_value_specification :=
+				specification.(*ast.ValueSpec)
+			if !is_value_specification {
+				continue
+			}
+			for _, name := range value_specification.Names {
+				if ast.IsExported(name.Name) {
+					idents = append(idents, name)
+				}
+			}
+		}
 	}
-	params := check_unnecessary_method_field_list_types(function_declaration.Type.Params)
-	results := check_unnecessary_method_field_list_types(function_declaration.Type.Results)
-	return check_unnecessary_method_matches_stdlib(
-		&check_unnecessary_method_matches_stdlib_input{
-			Name:    function_declaration.Name.Name,
-			Params:  strings.Join(params, ","),
-			Results: strings.Join(results, ","),
+	return idents
+}
+
+func check_constant_casing(file_set *token.FileSet, file *ast.File, _ []byte) (diags []Diagnostic) {
+	for _, identifier := range check_casing_exported_constant_idents(file) {
+		if screaming_snake_case_re.MatchString(identifier.Name) {
+			continue
+		}
+		suggestion := suggest(&suggest_input{
+			Name: identifier.Name, Want: "SCREAMING_SNAKE_CASE"})
+		diags = append(diags, Diagnostic{
+			Position: file_set.Position(identifier.Pos()),
+			Name:     identifier.Name,
+			Want:     "SCREAMING_SNAKE_CASE",
+			Message:  fmt.Sprintf("%s -> %s", identifier.Name, suggestion),
 		})
+	}
+	return diags
 }
 
 func check_named_returns(file_set *token.FileSet, file *ast.File, _ []byte) (diags []Diagnostic) {
@@ -1862,7 +1947,8 @@ func Check_Source(filename string, source any) (diags []Diagnostic, err error) {
 	// no package to declare a var Default, and a nil word-replacements table
 	// disables the vocabulary check (it has no config to read from). Both are the
 	// strict, dependency-free defaults for single-file checks.
-	return Check_File(file_set, file, source_bytes, nil, nil), nil
+	return Check_File(&Check_File_Input{
+		File_Set: file_set, File: file, Source: source_bytes}), nil
 }
 
 // Check_File_System_Input bundles the per-run dependencies for the
@@ -1899,22 +1985,29 @@ type Check_File_System_Input struct {
 	// directory, forwarded from Main_Input. It drives shared-vs-binary
 	// classification in the module index.
 	Shared_Component string
-	// Deterministic_Packages is the lint.json deterministic tier list forwarded
-	// from Main_Input: workspace-root-relative package directories whose pure
-	// packages are held to the deterministic bans. Built into a set once per run
-	// and threaded to check_deterministic.
-	Deterministic_Packages []string
+	// Pure_But_Indeterministic is the lint.json opt-out list forwarded from
+	// Main_Input: exact-path globs naming the pure packages released from the
+	// deterministic tier (which otherwise binds every pure package). Threaded to
+	// check_deterministic, which subtracts them from the pure set.
+	Pure_But_Indeterministic []string
 	// Word_Replacements is the lint.json word_replacements table: each tokenized,
 	// lowercased word maps to its preferred expansions (an empty list bans the
 	// word outright). Threaded to the vocabulary check via
 	// make_check_names_vocabulary. nil disables the check (no config to read),
 	// which is what the Check_Source single-file path passes.
 	Word_Replacements map[string][]string
-	// Ignore is the lint.json ignore list forwarded from Main_Input: gitignore-
-	// style globs that trim the tracked scan set, so a matching path is invisible
-	// to every tier. Applied once here against Tracked; with no Tracked set (the
+	// Ignore is the lint.json ignore list forwarded from Main_Input: exact-path
+	// globs that trim the tracked scan set, so a matching path is invisible to
+	// every tier. Applied once here against Tracked; with no Tracked set (the
 	// non-git fallback) it is inert, like every other tracked-set filter.
 	Ignore []string
+	// Invariant_Exempt_Packages is the lint.json opt_out_assertion_mandate_packages list
+	// forwarded from Main_Input: workspace-root-relative directories whose files
+	// the type-invariant check skips. Threaded per-file to make_check_type_invariants.
+	Invariant_Exempt_Packages []string
+	// Recursion_Exempt is the lint.json opt_out_recursion_ban list: directories
+	// exempt from the recursion ban (a recursive-descent parser). Threaded per-file.
+	Recursion_Exempt []string
 }
 
 // Check_File_System runs the stream tier, parses all Go files, and
@@ -1970,22 +2063,116 @@ func Check_File_System(input *Check_File_System_Input) (diags []Diagnostic, err 
 		return nil, err
 	}
 	parsed_files, parse_diags := check_file_system_parse_files(paths, sources, cpu_count)
-	components := build_component_index(component_roots, parsed_files, input.Shared_Component)
-	return check_file_system_doctrine(&check_file_system_doctrine_input{
-		Fsys:                     input.Fsys,
-		Tracked:                  tracked,
-		Directory_Has_Tracked:    directory_has_tracked,
-		Parsed_Files:             parsed_files,
-		Components:               components,
-		CPU_Count:                cpu_count,
-		Stream_Diags:             stream_diags,
-		Parse_Diags:              parse_diags,
-		Instrumentation_Packages: input.Instrumentation_Packages,
-		Word_Replacements:        input.Word_Replacements,
-		Deterministic_Packages:   input.Deterministic_Packages,
-		Scope:                    input.Scope,
-		Scan_Prefixes:            scan_prefixes,
-	}), nil
+	components := source.Build_Component_Index(
+		component_roots, parsed_files, input.Shared_Component)
+	return append(check_file_system_doctrine(&check_file_system_doctrine_input{
+		Fsys:                      input.Fsys,
+		Tracked:                   tracked,
+		Directory_Has_Tracked:     directory_has_tracked,
+		Parsed_Files:              parsed_files,
+		Components:                components,
+		CPU_Count:                 cpu_count,
+		Stream_Diags:              stream_diags,
+		Parse_Diags:               parse_diags,
+		Instrumentation_Packages:  input.Instrumentation_Packages,
+		Word_Replacements:         input.Word_Replacements,
+		Pure_But_Indeterministic:  input.Pure_But_Indeterministic,
+		Scope:                     input.Scope,
+		Scan_Prefixes:             scan_prefixes,
+		Invariant_Exempt_Packages: input.Invariant_Exempt_Packages,
+		Recursion_Exempt:          input.Recursion_Exempt,
+	}), check_configuration_directory_slash(input)...), nil
+}
+
+// A configuration_glob_list is a lint.json glob list paired with its key, so a
+// cross-list check names the offending key in its diagnostic.
+type configuration_glob_list struct {
+	// Name is the lint.json key.
+	Name string
+	// Globs is the key's raw entries.
+	Globs []string
+}
+
+// Requires a wildcard-free lint.json entry to end in a slash when it names a
+// directory and to omit one when it names a file, so the trailing slash alone tells
+// them apart under the one exact-path matcher. A wildcard entry (* ? [) is exempt —
+// it already expresses its shape. An entry resolving to neither a tracked file nor a
+// directory is a stale or typo'd reference and is flagged as a coverage gap. An entry
+// resolving to a file is flagged outright in every list but ignore and
+// opt_out_recursion_ban, the two lists a single exempted file may live in — the other
+// three name packages, so one file silently covers less than the list promises.
+// Entries classify against the full tracked tree (not the ignore-filtered one, so an
+// ignore entry still resolves) and the check is skipped when that set is absent (the
+// non-git fallback), where dir-versus-file is unknowable.
+func check_configuration_directory_slash(input *Check_File_System_Input) (diags []Diagnostic) {
+	if input.Tracked == nil {
+		return nil
+	}
+	directories := check_file_system_directory_index(input.Tracked)
+	lists := []configuration_glob_list{
+		{Name: "ignore", Globs: input.Ignore},
+		{Name: "pure_but_indeterministic_packages", Globs: input.Pure_But_Indeterministic},
+		{Name: "instrumentation_packages", Globs: input.Instrumentation_Packages},
+		{
+			Name:  "opt_out_assertion_mandate_packages",
+			Globs: input.Invariant_Exempt_Packages,
+		},
+		{Name: "opt_out_recursion_ban", Globs: input.Recursion_Exempt},
+	}
+	for _, list := range lists {
+		// Only ignore and opt_out_recursion_ban may exempt one exact file; the other
+		// three lists name packages that group many files under one policy, so a
+		// single-file entry there silently covers less than its name promises.
+		packages_only := list.Name != "ignore" && list.Name != "opt_out_recursion_ban"
+		for _, entry := range list.Globs {
+			// A * (or **) entry names a shape, not one path, so the slash rule skips
+			// it. * is the only wildcard we support — ? and [ are rejected at config
+			// load — so a *-free entry here is a plain literal path.
+			if strings.Contains(entry, "*") {
+				continue
+			}
+			literal := strings.TrimSuffix(entry, "/")
+			has_slash := entry != literal
+			is_directory := directories[literal]
+			is_file := input.Tracked[literal]
+			// A path is a directory or a file, never both, so at most one arm fires.
+			fix := ""
+			if !is_directory {
+				if !is_file {
+					fix = "matches no tracked file or directory"
+				}
+			}
+			if is_directory {
+				if !has_slash {
+					fix = "names a directory; add a trailing slash"
+				}
+			}
+			if is_file {
+				if has_slash {
+					fix = "names a file; drop the trailing slash"
+				}
+			}
+			// Wrong-list is the more fundamental problem than notation, so it wins
+			// over the slash-correctness fix above.
+			if is_file {
+				if packages_only {
+					fix = "names a file; only ignore and " +
+						"opt_out_recursion_ban may name a file"
+				}
+			}
+			if fix == "" {
+				continue
+			}
+			diags = append(diags, Diagnostic{
+				Position: token.Position{Filename: "<lint.json>"},
+				Name:     "config-directory-slash",
+				Want:     "directory entries end in a slash, file entries do not",
+				Message:  fmt.Sprintf("%s: %q %s", list.Name, entry, fix),
+				Tier:     1,
+			})
+		}
+	}
+	return diags
 }
 
 type check_file_system_doctrine_input struct {
@@ -1999,13 +2186,19 @@ type check_file_system_doctrine_input struct {
 	Parse_Diags              []Diagnostic
 	Instrumentation_Packages []string
 	Word_Replacements        map[string][]string
-	Deterministic_Packages   []string
+	Pure_But_Indeterministic []string
 	Scope                    string
 	// Scan_Prefixes is the scope-narrowed parse set (resolve_parse_prefixes): the
 	// directory subtrees this run actually parsed, or nil for a whole-workspace
 	// run. The deterministic coverage check needs it to tell an out-of-scope entry
 	// (a real package this run never parsed) from a genuine stale one.
 	Scan_Prefixes []string
+	// Invariant_Exempt_Packages is the lint.json opt_out_assertion_mandate_packages list:
+	// workspace-root-relative directories whose files the type-invariant check skips.
+	Invariant_Exempt_Packages []string
+	// Recursion_Exempt is the lint.json opt_out_recursion_ban list: directories
+	// exempt from the recursion ban (a recursive-descent parser). Threaded per-file.
+	Recursion_Exempt []string
 }
 
 // Runs the AST and cross-file doctrine tiers over the parsed set and unions their
@@ -2023,8 +2216,14 @@ func check_file_system_doctrine(
 	output = append(output, input.Parse_Diags...)
 	output = append(output, check_path_casing(input.Fsys, input.Tracked)...)
 	output = append(output,
-		check_file_system_run_checks(parsed_files, input.CPU_Count,
-			input.Instrumentation_Packages, input.Word_Replacements)...)
+		check_file_system_run_checks(&check_file_system_run_checks_input{
+			Parsed_Files:      parsed_files,
+			CPU_Count:         input.CPU_Count,
+			Instrumentation:   input.Instrumentation_Packages,
+			Word_Replacements: input.Word_Replacements,
+			Invariant_Exempt:  input.Invariant_Exempt_Packages,
+			Recursion_Exempt:  input.Recursion_Exempt,
+		})...)
 	output = append(output, check_file_system_package_split(parsed_files)...)
 	output = append(output, check_binary_component_layout(parsed_files, components)...)
 	output = append(output, check_binary_component_main_package(parsed_files, components)...)
@@ -2046,12 +2245,22 @@ func check_file_system_doctrine(
 	output = append(output, check_deterministic(&check_deterministic_input{
 		Parsed_Files:    parsed_files,
 		Components:      components,
-		Packages:        input.Deterministic_Packages,
+		Exceptions:      input.Pure_But_Indeterministic,
 		Instrumentation: input.Instrumentation_Packages,
 		Scan_Prefixes:   input.Scan_Prefixes,
 	})...)
 	output = append(output, check_time_import_gateway(parsed_files, components)...)
+	output = append(output, check_driver_gateway(parsed_files)...)
+	output = append(output, check_driver_type(parsed_files, components)...)
+	output = append(output, check_sim_script(parsed_files)...)
+	output = append(output,
+		check_io_gateway(parsed_files, components, input.Instrumentation_Packages)...)
 	output = append(output, check_package_documentation_comment(parsed_files)...)
+	output = append(output, assertion.Check(&assertion.Check_Input{
+		Parsed_Files: parsed_files,
+		Components:   components,
+		Exempt:       input.Invariant_Exempt_Packages,
+	})...)
 	return append(output,
 		check_specification(input.Fsys, parsed_files, components, input.Scope)...)
 }
@@ -2072,13 +2281,9 @@ func filter_ignored(tracked map[string]bool, ignore []string) (kept map[string]b
 	if len(ignore) == 0 {
 		return tracked
 	}
-	patterns := make([]glob_pattern, 0, len(ignore))
-	for _, raw := range ignore {
-		patterns = append(patterns, parse_glob_pattern(raw))
-	}
 	kept = make(map[string]bool, len(tracked))
 	for p := range tracked {
-		if glob_patterns_match(p, false, patterns) {
+		if source.Path_Matches_Glob(p, ignore) {
 			continue
 		}
 		kept[p] = true
@@ -2135,171 +2340,10 @@ func Git_Input_Check(input Git_Input) (diags []Diagnostic) {
 				"set actions/checkout fetch-depth: 0",
 		}}
 	}
-	diags = append(diags, git_input_check_merge_diagnostics(input.Merge_Commits)...)
-	diags = append(diags, git_input_check_non_merge_diagnostics(input.Non_Merge_Commits)...)
-	return diags
-}
-
-// Flags each merge commit on the branch (rebase-instead violation) plus any
-// over-length subject. Subtree merges are exempt. Split out of Git_Input_Check
-// so each commit-slice carries its boundary coverage in a function that fits
-// the length cap.
-func git_input_check_merge_diagnostics(commits []Git_Commit) (diags []Diagnostic) {
-	for _, c := range commits {
-		if c.Subject == "" {
-			continue
-		}
-		filename := "<git:" + git_input_check_short_hash(c.Hash) + ">"
-		if len(c.Subject) > commit_subject_chars_max {
-			diags = append(diags, Diagnostic{
-				Position: token.Position{Filename: filename},
-				Name:     "commit-subject-length",
-				Want: fmt.Sprintf(
-					"subject ≤ %d chars", commit_subject_chars_max),
-				Message: fmt.Sprintf(
-					"commit subject is %d chars (max %d)",
-					len(c.Subject), commit_subject_chars_max),
-			})
-			// Helpers below assert subject ≤ commit_subject_chars_max as
-			// a precondition; over-limit subjects are fully diagnosed by
-			// the length entry above, so short-circuit before calling them.
-			continue
-		}
-		if git_input_check_is_subtree_merge_subject(c.Subject) {
-			continue
-		}
-		diags = append(diags, Diagnostic{
-			Position: token.Position{Filename: filename},
-			Name:     "no-merge-commits",
-			Want: "rebase onto main: git fetch origin main && " +
-				"git rebase origin/main",
-			Message: "merge commit on branch: " + c.Subject,
-		})
-	}
-	return diags
-}
-
-// Flags fixup commits (autosquash-instead) and non-conventional subjects on
-// the branch, plus any over-length subject. Split out of Git_Input_Check for
-// the same length-cap reason as the merge variant.
-func git_input_check_non_merge_diagnostics(commits []Git_Commit) (diags []Diagnostic) {
-	for _, c := range commits {
-		if c.Subject == "" {
-			continue
-		}
-		if len(c.Subject) > commit_subject_chars_max {
-			filename := "<git:" + git_input_check_short_hash(c.Hash) + ">"
-			diags = append(diags, Diagnostic{
-				Position: token.Position{Filename: filename},
-				Name:     "commit-subject-length",
-				Want: fmt.Sprintf(
-					"subject ≤ %d chars", commit_subject_chars_max),
-				Message: fmt.Sprintf(
-					"commit subject is %d chars (max %d)",
-					len(c.Subject), commit_subject_chars_max),
-			})
-			continue
-		}
-		if git_input_check_is_fixup_subject(c.Subject) {
-			filename := "<git:" + git_input_check_short_hash(c.Hash) + ">"
-			diags = append(diags, Diagnostic{
-				Position: token.Position{Filename: filename},
-				Name:     "no-fixup-commits",
-				Want:     "autosquash: git rebase -i --autosquash origin/main",
-				Message:  "fixup commit on branch: " + c.Subject,
-			})
-			// Fixup subjects aren't conventional by construction (e.g.
-			// `fixup! feat: foo`); skip the conventional check so they
-			// don't double-flag. The autosquash that removes the fixup
-			// also removes the violation.
-			continue
-		}
-		if !conventional_commit_re.MatchString(c.Subject) {
-			filename := "<git:" + git_input_check_short_hash(c.Hash) + ">"
-			diags = append(diags, Diagnostic{
-				Position: token.Position{Filename: filename},
-				Name:     "conventional-commits",
-				Want: "subject like: type(scope)?!?: description " +
-					"(https://www.conventionalcommits.org/)",
-				Message: "non-conventional commit subject: " + c.Subject,
-			})
-		}
-	}
-	return diags
-}
-
-// Matches the default subjects that `git subtree add` and `git subtree pull`
-// produce. Both forms are documented in git-subtree(1) and have remained
-// stable for years; commits authored by the porcelain match exactly.
-// Hand-authored subtree merges with custom messages aren't recognised and
-// will trip the no-merge-commits rule — intentional, since custom-worded
-// merges are indistinguishable from regular merges.
-func git_input_check_is_subtree_merge_subject(subject string) (yes bool) {
-	if strings.HasPrefix(subject, "Add '") {
-		if strings.Contains(subject, "' from commit '") {
-			return true
-		}
-	}
-	if strings.HasPrefix(subject, "Merge commit '") {
-		if strings.Contains(subject, "' as '") {
-			return true
-		}
-	}
-	return false
-}
-
-// Matches commit subjects that should have been autosquashed before merge.
-// Two families: the literal fixup!/squash! prefixes that `git commit --fixup`
-// produces, and review-comment phrasings that show up when people address
-// feedback in a follow-up commit instead of amending. The phrasing checks
-// are conjunctive (verb + noun + "review") so isolated mentions of "review"
-// or "comment" in unrelated subjects don't get caught.
-func git_input_check_is_fixup_subject(subject string) (yes bool) {
-	if strings.HasPrefix(subject, "fixup!") {
-		return true
-	}
-	if strings.HasPrefix(subject, "squash!") {
-		return true
-	}
-	s := strings.ToLower(subject)
-	has_review := strings.Contains(s, "review")
-	has_address := strings.Contains(s, "address")
-	has_apply := strings.Contains(s, "apply")
-	has_action := has_address || has_apply
-	has_comment := strings.Contains(s, "comment")
-	has_feedback := strings.Contains(s, "feedback")
-	has_nit := strings.Contains(s, "nit")
-	has_target := has_comment || has_feedback || has_nit
-	if has_review {
-		if has_action {
-			if has_target {
-				return true
-			}
-		}
-	}
-	if strings.Contains(s, "cr comment") {
-		return true
-	}
-	if strings.Contains(s, "code review comment") {
-		return true
-	}
-	if strings.Contains(s, "review fix") {
-		return true
-	}
-	if strings.Contains(s, "review nit") {
-		return true
-	}
-	return false
-}
-
-// Truncates a git hash to git_short_hash_chars chars. Pass-through for
-// already-short or malformed inputs so test fixtures don't have to supply
-// full 40-char hashes.
-func git_input_check_short_hash(h string) (s string) {
-	if len(h) > git_short_hash_chars {
-		return h[:git_short_hash_chars]
-	}
-	return h
+	return vcs.Check(&vcs.Check_Input{
+		Merge_Commits:     input.Merge_Commits,
+		Non_Merge_Commits: input.Non_Merge_Commits,
+	})
 }
 
 // File-fragmentation check. Splitting code across many tiny files makes a
@@ -2314,6 +2358,7 @@ type package_group_key struct {
 	Directory             string
 	Is_Test               bool
 	Is_Specification_Test bool
+	Test_Is_External      bool
 	Build                 string
 }
 
@@ -2325,11 +2370,15 @@ type package_group_state struct {
 func check_file_system_package_split(parsed_files []parsed_file) (diags []Diagnostic) {
 	groups := map[package_group_key]*package_group_state{}
 	for _, pf := range parsed_files {
+		is_test := strings.HasSuffix(pf.Path, "_test.go")
 		key := package_group_key{
 			Directory:             path.Dir(pf.Path),
-			Is_Test:               strings.HasSuffix(pf.Path, "_test.go"),
+			Is_Test:               is_test,
 			Is_Specification_Test: path.Base(pf.Path) == "specification_test.go",
-			Build:                 check_file_system_package_split_build_key(pf.File),
+			// A whitebox (foo) test package and a blackbox (foo_test) test package
+			// compile into different binaries, so they fragment independently.
+			Test_Is_External: is_test && strings.HasSuffix(pf.File.Name.Name, "_test"),
+			Build:            check_file_system_package_split_build_key(pf.File),
 		}
 		st := groups[key]
 		if st == nil {
@@ -2352,6 +2401,9 @@ func check_file_system_package_split(parsed_files []parsed_file) (diags []Diagno
 		}
 		if keys[i].Is_Test != keys[j].Is_Test {
 			return !keys[i].Is_Test
+		}
+		if keys[i].Test_Is_External != keys[j].Test_Is_External {
+			return keys[i].Test_Is_External
 		}
 		return keys[i].Build < keys[j].Build
 	})
@@ -2380,6 +2432,9 @@ func package_group_key_diag(
 		label = "specification_test"
 	} else if key.Is_Test {
 		label = "test"
+		if !key.Test_Is_External {
+			label = "whitebox test"
+		}
 	}
 	build_suffix := ""
 	if key.Build != "" {
@@ -2514,27 +2569,11 @@ func check_file_system_parse_files(
 // (1024) with zero work; the worker pool would idle, so reaching it
 // signals misconfigured input rather than a meaningful state.
 
-// Module identity for a single Go module discovered under Fsys. The
-// doctrine's layout rules need three things per file: which module owns
-// it, whether that module is the shared imports, and which directories
-// contain non-main Go packages (the "Go ancestor" set used by the
-// component-tier-depth rule).
-type component_information struct {
-	Root              string
-	Import_Path       string
-	Is_Shared_Library bool
-	Directory_Package map[string]string
-}
+// Aliased from the source package, like parsed_file above.
+type component_information = source.Component
 
-// All-doctrine-checks input. Built once after parsing and threaded
-// through the directory-level checks so module discovery is paid for
-// at most once per Main invocation. Components is sorted longest-Root
-// first so File_To_Component resolution is a linear scan with the
-// longest-prefix wins guarantee.
-type component_index struct {
-	Components        []component_information
-	File_To_Component map[string]int
-}
+// Aliased from the source package, like parsed_file above.
+type component_index = source.Component_Index
 
 var component_index_module_re = regexp.MustCompile(`(?m)^module\s+(\S+)`)
 
@@ -2628,64 +2667,6 @@ func discover_root_module_path(fsys fs.FS) (module_path string) {
 		return ""
 	}
 	return string(match[1])
-}
-
-// Classifies, orders, and binds parsed files to the components discovered by
-// discover_components. Components is sorted longest-Root first so File_To_Component
-// resolution is a linear longest-prefix scan. A scoped run passes only the
-// parsed subset; the resulting index still covers every module's Root (for
-// import resolution) but its File_To_Component and Directory_Package describe only
-// the files actually parsed — which is all the in-scope checks consult.
-func build_component_index(
-	components []component_information, parsed_files []parsed_file, shared_component string,
-) (index *component_index) {
-
-	index = &component_index{
-		Components: components, File_To_Component: make(map[string]int, len(parsed_files))}
-	// Classify the shared library by its workspace-root-relative directory (the
-	// module Root, e.g. "shared"), matching the slash-relative form used
-	// by the rest of lint.json; every other module is a binary. An empty
-	// shared_component (e.g. a test that doesn't set one) leaves every module a binary.
-	// path.Clean so "./shared/" matches the cleaned module Root; guard the
-	// empty case, since path.Clean("") is "." and would wrongly match a root module.
-	shared_root := shared_component
-	if shared_root != "" {
-		shared_root = path.Clean(shared_root)
-	}
-	for i := range index.Components {
-		index.Components[i].Is_Shared_Library = index.Components[i].Root == shared_root
-	}
-	sort.Slice(index.Components, func(i, j int) (less bool) {
-		return len(index.Components[i].Root) > len(index.Components[j].Root)
-	})
-	for _, pf := range parsed_files {
-		index.File_To_Component[pf.Path] =
-			component_index_resolve(pf.Path, index.Components)
-	}
-	// Directory_Package excludes test/main files (component-tier-depth rule).
-	for _, pf := range parsed_files {
-		if strings.HasSuffix(pf.Path, "_test.go") {
-			continue
-		}
-		if pf.File.Name.Name == "main" {
-			continue
-		}
-		component_index_number := index.File_To_Component[pf.Path]
-		if component_index_number < 0 {
-			continue
-		}
-		root := index.Components[component_index_number].Root
-		relative := pf.Path
-		if root != "." {
-			relative = strings.TrimPrefix(pf.Path, root+"/")
-		}
-		canonical_directory := component_index_canonicalize(path.Dir(relative))
-		directory_package := index.Components[component_index_number].Directory_Package
-		if _, has := directory_package[canonical_directory]; !has {
-			directory_package[canonical_directory] = pf.File.Name.Name
-		}
-	}
-	return index
 }
 
 // Widens a scope argument to the module that must be parsed whole for it. The
@@ -2791,47 +2772,6 @@ func scan_prefixes_reach(prefixes []string, directory string) (reachable bool) {
 		}
 	}
 	return false
-}
-
-// Strips ^v[0-9]+$ segments from a slash-separated directory path so
-// snap/v2/X is treated identically to snap/X. Major-version segments
-// are Go module-versioning convention rather than real package tiers,
-// and the doctrine's depth rules must see through them.
-func component_index_canonicalize(directory string) (canonical string) {
-
-	if directory == "." {
-		return "."
-	}
-	segments := strings.Split(directory, "/")
-	filtered := make([]string, 0, len(segments))
-	for _, s := range segments {
-		if component_index_version_re.MatchString(s) {
-			continue
-		}
-		filtered = append(filtered, s)
-	}
-	if len(filtered) == 0 {
-		return "."
-	}
-	return strings.Join(filtered, "/")
-}
-
-var component_index_version_re = regexp.MustCompile(`^v[0-9]+$`)
-
-func component_index_resolve(file_path string, components []component_information) (index int) {
-
-	for i, module := range components {
-		if module.Root == "." {
-			return i
-		}
-		if file_path == module.Root {
-			return i
-		}
-		if strings.HasPrefix(file_path, module.Root+"/") {
-			return i
-		}
-	}
-	return -1
 }
 
 // Binary components confine all non-main source to internal/ so the module
@@ -3160,11 +3100,11 @@ func check_component_tier_depth(
 		if m.Root != "." {
 			relative = strings.TrimPrefix(pf.Path, m.Root+"/")
 		}
-		canonical := component_index_canonicalize(path.Dir(relative))
+		canonical := source.Canonicalize(path.Dir(relative))
 		if canonical == "." {
 			continue
 		}
-		ancestor_names := component_information_library_ancestors(m, canonical)
+		ancestor_names := source.Library_Ancestors(m, canonical)
 		if len(ancestor_names) <= 1 {
 			continue
 		}
@@ -3184,50 +3124,6 @@ func check_component_tier_depth(
 		})
 	}
 	return diags
-}
-
-// Returns ancestor directories of `directory` from nearest to module
-// root, exclusive of "." itself. invariant.GameLoop annotates the loop
-// as intentionally unbounded — path.Dir's fixed point on "." provides
-// the real termination.
-func check_component_tier_depth_ancestors(directory string) (ancestors []string) {
-
-	current := directory
-	for step := 0; ; step++ {
-		parent := path.Dir(current)
-		if parent == "." {
-			break
-		}
-		if parent == current {
-			break
-		}
-		ancestors = append(ancestors, parent)
-		current = parent
-	}
-	return ancestors
-}
-
-// Returns the non-main Go ancestor packages of canonical that count toward
-// tier depth. A binary component's top-level internal directory is excluded: all
-// its code sits under internal and func Main lives there, so internal is the
-// directory the count starts from — the same role a shared module's root
-// plays — not a package nested above another. Without the exclusion
-// internal/foo/default would count internal as a second ancestor and read as
-// nested too deep. Shared components have no internal directory, so the exclusion
-// never affects them.
-func component_information_library_ancestors(
-	m component_information, canonical string,
-) (ancestors []string) {
-	for _, a := range check_component_tier_depth_ancestors(canonical) {
-		if a == "internal" {
-			continue
-		}
-		if _, has := m.Directory_Package[a]; !has {
-			continue
-		}
-		ancestors = append(ancestors, a)
-	}
-	return ancestors
 }
 
 type check_single_module_input struct {
@@ -3423,27 +3319,31 @@ func check_package_documentation_comment(
 	return diags
 }
 
-// SPECIFICATION.md doctrine: every pure Go package carries a SPECIFICATION.md whose
-// `##` headings each map, in order, to a leading Test_<Heading> function in
-// specification_test.go. Enforced here rather than per-file because the
-// contract spans three artifacts — the package directory, the markdown, and
-// the test file — that no single-file checker sees together. Diagnostics
-// attach to paths under the package directory so Main's scope filter limits
-// the coverage requirement to whatever package argument the linter was given.
+// SPECIFICATION.md doctrine: every pure Go package carries a SPECIFICATION.md
+// whose leaf headings each map, in order, to a leading Test_<Heading> in
+// specification_test.go. The rule logic lives in the specification package; this
+// adapter gathers, from the single parse, each directory's module membership,
+// impurity, exact-cased spec bytes, and already-parsed specification_test.go, so
+// that package reads and parses nothing. Diagnostics attach under the package
+// directory so Main's scope filter limits the mandate to the package argument.
 func check_specification(
 	fsys fs.FS, parsed_files []parsed_file, index *component_index, scope string,
 ) (diags []Diagnostic) {
 	directories := map[string]bool{}
 	has_module := map[string]bool{}
 	impure := map[string]bool{}
+	test_ast := map[string]*ast.File{}
 	for _, pf := range parsed_files {
 		directory := path.Dir(pf.Path)
 		directories[directory] = true
 		if index.File_To_Component[pf.Path] >= 0 {
 			has_module[directory] = true
 		}
-		if parsed_file_is_impure_package(pf, index) {
+		if source.Is_Impure_Package(pf, index) {
 			impure[directory] = true
+		}
+		if path.Base(pf.Path) == "specification_test.go" {
+			test_ast[directory] = pf.File
 		}
 	}
 	sorted := make([]string, 0, len(directories))
@@ -3451,426 +3351,33 @@ func check_specification(
 		sorted = append(sorted, directory)
 	}
 	sort.Strings(sorted)
+	packages := make([]specification.Package, 0, len(sorted))
 	for _, directory := range sorted {
-		input := &check_specification_directory_input{
-			Fsys: fsys, Directory: directory, Scope: scope,
-			Has_Module: has_module[directory], Impure: impure[directory],
-		}
-		diags = append(diags, check_specification_directory(input)...)
+		packages = append(packages, specification.Package{
+			Path:       directory,
+			Has_Module: has_module[directory],
+			Impure:     impure[directory],
+			Markdown:   specification_content(fsys, directory),
+			Test:       test_ast[directory],
+		})
 	}
-	return diags
+	return specification.Check(&specification.Check_Input{Packages: packages, Scope: scope})
 }
 
-type check_specification_directory_input struct {
-	Fsys      fs.FS
-	Directory string
-	Scope     string
-	// Has_Module is true when at least one file in the directory resolves to a
-	// discovered module. The coverage mandate no-ops on module-less directories
-	// — the same rule every other doctrine check follows for File_To_Component == -1
-	// (see build_component_index) — so transient fixtures and subtrees scanned
-	// without their go.mod in view are never required to carry a spec.
-	Has_Module bool
-	// Impure is true when the directory holds an impure package — `package main`
-	// or a `default` package. The contract a SPECIFICATION.md documents is a
-	// pure package's; the impure tier is the composition root, exempt from the
-	// coverage mandate (an existing file is still format-validated).
-	Impure bool
-}
-
-func check_specification_directory(
-	input *check_specification_directory_input,
-) (diags []Diagnostic) {
-	specification_path := path.Join(input.Directory, "SPECIFICATION.md")
-	// Presence is decided by the real directory listing, not fs.ReadFile: a
-	// case-insensitive filesystem resolves SPECIFICATION.md to a differently-cased
-	// file, so only an exact, byte-for-byte entry name counts as the spec.
-	if !specification_directory_has_exact(input.Fsys, specification_path) {
-		// Coverage follows the package argument: an explicit scope demands the
-		// file within that subtree, and an empty scope — a whole-workspace run —
-		// demands it everywhere. Vendored, example, and impure (package main or
-		// `default`) trees are never required to carry one; they host
-		// third-party, illustrative, or composition-root code, not the pure
-		// package contract a SPECIFICATION.md documents.
-		if !input.Has_Module {
-			return nil
-		}
-		if specification_directory_exempt(input.Directory) {
-			return nil
-		}
-		if input.Impure {
-			return nil
-		}
-		covered := input.Scope == ""
-		if !covered {
-			covered = input.Directory == input.Scope
-		}
-		if !covered {
-			covered = strings.HasPrefix(input.Directory, input.Scope+"/")
-		}
-		if !covered {
-			return nil
-		}
-		return []Diagnostic{specification_coverage_diag(input.Directory)}
+// Returns the bytes of an exact-cased SPECIFICATION.md in directory, or nil when
+// absent — the exact-name guard defeats a case-insensitive filesystem resolving
+// a differently-cased file. This is the specification tier's only I/O; the
+// specification package works purely from these bytes and the pre-parsed test AST.
+func specification_content(fsys fs.FS, directory string) (content []byte) {
+	specification_path := path.Join(directory, "SPECIFICATION.md")
+	if !specification_directory_has_exact(fsys, specification_path) {
+		return nil
 	}
-	content, err := fs.ReadFile(input.Fsys, specification_path)
+	data, err := fs.ReadFile(fsys, specification_path)
 	if err != nil {
-		return []Diagnostic{specification_coverage_diag(input.Directory)}
-	}
-	lines := strings.Split(string(content), "\n")
-	leaves, format_diags := check_specification_format(specification_path, lines)
-	diags = append(diags, format_diags...)
-	return append(diags, check_specification_tests(input.Fsys, input.Directory, leaves)...)
-}
-
-// Validates the structural rules a SPECIFICATION.md must obey — no preamble
-// before the first heading, a single `##` heading level, unique headings of
-// letters-and-digits words, a blank line either side of every heading, a
-// contiguous body of one to three lines per section. Line width is not checked
-// here: check_stream_markdown_line_max enforces it for every .md file. Returns
-// the headings in source order so the test-correspondence rules can use them.
-func check_specification_format(
-	specification_path string, lines []string,
-) (leaves []string, diags []Diagnostic) {
-	headings, scan_diags := specification_scan_headings(specification_path, lines)
-	diags = append(diags, scan_diags...)
-	leaf_lines, names, leaf_diags := specification_leaves(specification_path, headings)
-	diags = append(diags, leaf_diags...)
-	body_diags := specification_scan_bodies(specification_path, lines, headings, leaf_lines)
-	return names, append(diags, body_diags...)
-}
-
-// One heading found in a SPECIFICATION.md: its level (2 or 3), 1-based source
-// line, the raw text after the marker, and its Ada_Case form.
-type specification_heading struct {
-	Level int
-	Line  int
-	Raw   string
-	Ada   string
-}
-
-func specification_position(path string, line int) (position token.Position) {
-	return token.Position{Filename: path, Line: line}
-}
-
-// Reports a line's heading level: 3 for "### ", 1 for "# ", 0 otherwise.
-func specification_heading_parse(line string) (level int, raw string) {
-	if strings.HasPrefix(line, "### ") {
-		return 3, strings.TrimPrefix(line, "### ")
-	}
-	if strings.HasPrefix(line, "# ") {
-		return 1, strings.TrimPrefix(line, "# ")
-	}
-	return 0, ""
-}
-
-// Pass one: collect every ## / ### heading and emit the diagnostics that need
-// only line context — bad heading levels, content before the first heading,
-// blank-line fencing, and non-letter/digit heading words.
-func specification_scan_headings(
-	specification_path string, lines []string,
-) (headings []specification_heading, diags []Diagnostic) {
-	seen_heading := false
-	for i, line := range lines {
-		position := specification_position(specification_path, i+1)
-		level, raw := specification_heading_parse(line)
-		if level == 0 {
-			if strings.HasPrefix(line, "#") {
-				diags = append(diags, specification_heading_level_diag(position))
-				continue
-			}
-			if strings.TrimSpace(line) == "" {
-				continue
-			}
-			if !seen_heading {
-				diags = append(diags, specification_preamble_diag(position))
-			}
-			continue
-		}
-		headings = append(headings, specification_heading{
-			Level: level, Line: i + 1, Raw: raw, Ada: specification_ada_case(raw)})
-		diags = append(diags, specification_heading_line_diags(position, lines, i, raw)...)
-		seen_heading = true
-	}
-	return headings, diags
-}
-
-// The per-heading diagnostics for one heading line: non-letter/digit words and
-// blank-line fencing.
-func specification_heading_line_diags(
-	position token.Position, lines []string, i int, raw string,
-) (diags []Diagnostic) {
-	if specification_heading_words_invalid(raw) {
-		diags = append(diags, specification_heading_words_diag(position, raw))
-	}
-	return append(diags, check_specification_blank_lines(position, lines, i, raw)...)
-}
-
-// State for the tree walk that determines leaves: a ## with no ### child is a
-// leaf named Ada(##); each ### is a leaf named Ada(##)_Ada(###). ## names are
-// unique file-wide; ### names are unique within their parent ##.
-type specification_tree struct {
-	Path       string
-	Seen_H2    map[string]bool
-	Seen_H3    map[string]bool
-	Parent     specification_heading
-	Has_Child  bool
-	Leaf_Lines map[int]bool
-	Names      []string
-}
-
-// Pass two: walk the headings into the tree, returning the lines that open a
-// leaf section, the ordered leaf test-name bases, and the uniqueness diagnostics.
-func specification_leaves(
-	specification_path string, headings []specification_heading,
-) (leaf_lines map[int]bool, names []string, diags []Diagnostic) {
-	tree := &specification_tree{
-		Path: specification_path, Seen_H2: map[string]bool{},
-		Seen_H3: map[string]bool{}, Leaf_Lines: map[int]bool{},
-	}
-	for _, heading := range headings {
-		diags = append(diags, specification_tree_add(tree, heading)...)
-	}
-	specification_tree_close(tree)
-	return tree.Leaf_Lines, tree.Names, diags
-}
-
-func specification_tree_add(
-	tree *specification_tree, heading specification_heading,
-) (diags []Diagnostic) {
-	if heading.Level == 3 {
-		return specification_tree_child(tree, heading)
-	}
-	specification_tree_close(tree)
-	if tree.Seen_H2[heading.Raw] {
-		diags = append(diags, specification_tree_duplicate(tree, heading))
-	}
-	tree.Seen_H2[heading.Raw] = true
-	tree.Parent = heading
-	tree.Has_Child = false
-	tree.Seen_H3 = map[string]bool{}
-	return diags
-}
-
-func specification_tree_child(
-	tree *specification_tree, heading specification_heading,
-) (diags []Diagnostic) {
-	position := specification_position(tree.Path, heading.Line)
-	if tree.Parent.Line == 0 {
-		return []Diagnostic{specification_orphan_diag(position, heading.Raw)}
-	}
-	tree.Has_Child = true
-	if tree.Seen_H3[heading.Raw] {
-		diags = append(diags, specification_tree_duplicate(tree, heading))
-	}
-	tree.Seen_H3[heading.Raw] = true
-	tree.Leaf_Lines[heading.Line] = true
-	tree.Names = append(tree.Names, tree.Parent.Ada+"_"+heading.Ada)
-	return diags
-}
-
-// Records the just-finished ## as a leaf when it gained no ### child.
-func specification_tree_close(tree *specification_tree) {
-	if tree.Parent.Line == 0 {
-		return
-	}
-	if tree.Has_Child {
-		return
-	}
-	tree.Leaf_Lines[tree.Parent.Line] = true
-	tree.Names = append(tree.Names, tree.Parent.Ada)
-}
-
-func specification_tree_duplicate(
-	tree *specification_tree, heading specification_heading,
-) (diag Diagnostic) {
-	position := specification_position(tree.Path, heading.Line)
-	return specification_heading_duplicate_diag(position, heading.Raw)
-}
-
-// State for the body pass: the currently open section, its accumulated body line
-// count, and whether a blank line has already interrupted that body.
-type specification_body struct {
-	Path       string
-	Leaf_Lines map[int]bool
-	Open       specification_heading
-	Body       int
-	Blank      bool
-}
-
-// Pass three: attribute body lines to their opening heading, flagging oversized
-// sections, gaps in a section body, and leaf sections with no body. A branch ##
-// intro is size- and gap-checked but, not being a leaf, may be empty.
-func specification_scan_bodies(
-	specification_path string, lines []string,
-	headings []specification_heading, leaf_lines map[int]bool,
-) (diags []Diagnostic) {
-	at := map[int]specification_heading{}
-	for _, heading := range headings {
-		at[heading.Line] = heading
-	}
-	state := &specification_body{Path: specification_path, Leaf_Lines: leaf_lines}
-	for i, line := range lines {
-		heading, is_heading := at[i+1]
-		if is_heading {
-			diags = append(diags, specification_body_close(state)...)
-			state.Open = heading
-			state.Body = 0
-			state.Blank = false
-			continue
-		}
-		if strings.HasPrefix(line, "#") {
-			diags = append(diags, specification_body_close(state)...)
-			state.Open = specification_heading{}
-			state.Body = 0
-			state.Blank = false
-			continue
-		}
-		if strings.TrimSpace(line) == "" {
-			if state.Body > 0 {
-				state.Blank = true
-			}
-			continue
-		}
-		if state.Open.Line == 0 {
-			continue
-		}
-		diags = append(diags, specification_body_line(state, i+1)...)
-	}
-	return append(diags, specification_body_close(state)...)
-}
-
-func specification_body_line(
-	state *specification_body, line int,
-) (diags []Diagnostic) {
-	position := specification_position(state.Path, line)
-	raw := state.Open.Raw
-	if state.Blank {
-		diags = append(diags, specification_section_contiguity_diag(position, raw))
-		state.Blank = false
-	}
-	state.Body++
-	if state.Body == 4 {
-		diags = append(diags, specification_section_diag(position, raw))
-	}
-	return diags
-}
-
-// Emits the body-required diagnostic when a leaf section closed with no body.
-func specification_body_close(state *specification_body) (diags []Diagnostic) {
-	if state.Open.Line == 0 {
 		return nil
 	}
-	if !state.Leaf_Lines[state.Open.Line] {
-		return nil
-	}
-	if state.Body != 0 {
-		return nil
-	}
-	position := specification_position(state.Path, state.Open.Line)
-	return []Diagnostic{specification_section_body_diag(position, state.Open.Raw)}
-}
-
-// True when a heading carries a word with a rune that is neither a letter nor a
-// digit. Such a rune survives into the normalized Test_<Heading> name and makes
-// it an illegal Go identifier, so the test-correspondence rule could never be
-// satisfied for that heading.
-func specification_heading_words_invalid(heading string) (invalid bool) {
-	for _, word := range strings.Fields(heading) {
-		for _, letter := range word {
-			if unicode.IsLetter(letter) {
-				continue
-			}
-			if unicode.IsDigit(letter) {
-				continue
-			}
-			return true
-		}
-	}
-	return false
-}
-
-func specification_preamble_diag(position token.Position) (diag Diagnostic) {
-	return Diagnostic{
-		Position: position, Name: "specification",
-		Want: "open with a heading",
-		Message: fmt.Sprintf("%s:%d content precedes the first heading",
-			position.Filename, position.Line),
-	}
-}
-
-func specification_section_body_diag(
-	position token.Position, heading string,
-) (diag Diagnostic) {
-	return Diagnostic{
-		Position: position, Name: "specification",
-		Want: "give the section a body line",
-		Message: fmt.Sprintf("%s:%d section %q has no body line",
-			position.Filename, position.Line, heading),
-	}
-}
-
-func specification_section_contiguity_diag(
-	position token.Position, heading string,
-) (diag Diagnostic) {
-	return Diagnostic{
-		Position: position, Name: "specification",
-		Want: "keep the section body contiguous",
-		Message: fmt.Sprintf("%s:%d section %q has a blank line between body lines",
-			position.Filename, position.Line, heading),
-	}
-}
-
-func specification_heading_duplicate_diag(
-	position token.Position, heading string,
-) (diag Diagnostic) {
-	return Diagnostic{
-		Position: position, Name: "specification",
-		Want: "make every heading unique",
-		Message: fmt.Sprintf("%s:%d heading %q is duplicated",
-			position.Filename, position.Line, heading),
-	}
-}
-
-func specification_heading_words_diag(
-	position token.Position, heading string,
-) (diag Diagnostic) {
-	return Diagnostic{
-		Position: position, Name: "specification",
-		Want: "use only letters and digits in headings",
-		Message: fmt.Sprintf("%s:%d heading %q must use only letters and digits",
-			position.Filename, position.Line, heading),
-	}
-}
-
-func specification_heading_level_diag(position token.Position) (diag Diagnostic) {
-	return Diagnostic{
-		Position: position, Name: "specification", Want: "use a # or ### heading",
-		Message: fmt.Sprintf("%s:%d uses a heading that is not level # or ###",
-			position.Filename, position.Line),
-	}
-}
-
-func specification_orphan_diag(
-	position token.Position, heading string,
-) (diag Diagnostic) {
-	return Diagnostic{
-		Position: position, Name: "specification",
-		Want: "nest the subheading under a #",
-		Message: fmt.Sprintf("%s:%d ### %q has no parent #",
-			position.Filename, position.Line, heading),
-	}
-}
-
-func specification_section_diag(
-	position token.Position, heading string,
-) (diag Diagnostic) {
-	return Diagnostic{
-		Position: position, Name: "specification",
-		Want: "limit sections to three lines",
-		Message: fmt.Sprintf("%s:%d section %q exceeds three lines",
-			position.Filename, position.Line, heading),
-	}
+	return data
 }
 
 // Reports whether the directory holds an entry whose name is exactly `name`,
@@ -3893,174 +3400,39 @@ func specification_directory_has_exact(
 	return false
 }
 
-// A directory is exempt from the coverage mandate when any path segment is
-// `third_party` (vendored code in a separate module) or `examples`
-// (illustrative, not a real package contract). An existing SPECIFICATION.md in
-// such a tree is still format-validated; it just is never required to exist.
-func specification_directory_exempt(directory string) (exempt bool) {
-	for _, segment := range strings.Split(directory, "/") {
-		if segment == "third_party" {
-			return true
-		}
-		if segment == "examples" {
-			return true
-		}
-	}
-	return false
-}
-
-func specification_coverage_diag(directory string) (diag Diagnostic) {
-	return Diagnostic{
-		Position: token.Position{Filename: path.Join(directory, "SPECIFICATION.md")},
-		Name:     "specification",
-		Want:     "add SPECIFICATION.md",
-		Message:  fmt.Sprintf("package %q is missing SPECIFICATION.md", directory),
-	}
-}
-
-func specification_test_file_diag(directory string) (diag Diagnostic) {
-	return Diagnostic{
-		Position: token.Position{Filename: path.Join(directory, "specification_test.go")},
-		Name:     "specification",
-		Want:     "add specification_test.go",
-		Message:  fmt.Sprintf("package %q is missing specification_test.go", directory),
-	}
-}
-
-func check_specification_blank_lines(
-	position token.Position, lines []string, i int, heading string,
-) (diags []Diagnostic) {
-	preceded := i > 0
-	if preceded {
-		preceded = lines[i-1] == ""
-	}
-	if !preceded {
-		diags = append(diags, Diagnostic{
-			Position: position, Name: "specification",
-			Want: "precede heading with a blank line",
-			Message: fmt.Sprintf("%s:%d heading %q is not preceded by a blank line",
-				position.Filename, i+1, heading),
-		})
-	}
-	followed := i+1 < len(lines)
-	if followed {
-		followed = lines[i+1] == ""
-	}
-	if !followed {
-		diags = append(diags, Diagnostic{
-			Position: position, Name: "specification",
-			Want: "follow heading with a blank line",
-			Message: fmt.Sprintf("%s:%d heading %q is not followed by a blank line",
-				position.Filename, i+1, heading),
-		})
-	}
-	return diags
-}
-
-// Verifies specification_test.go exists and that its leading function
-// declarations are exactly Test_<Heading> for each heading, in heading order.
-// Comparing by index enforces both the per-heading correspondence and the
-// "tests at the very top, in order" rule in one pass: a helper or a misordered
-// test shifts the sequence and surfaces as a mismatch at that position.
-func check_specification_tests(
-	fsys fs.FS, directory string, leaves []string,
-) (diags []Diagnostic) {
-	test_path := path.Join(directory, "specification_test.go")
-	// Exact name first, for the same reason as SPECIFICATION.md: a
-	// case-insensitive filesystem would otherwise let a differently-cased file
-	// stand in for specification_test.go.
-	if !specification_directory_has_exact(fsys, test_path) {
-		return []Diagnostic{specification_test_file_diag(directory)}
-	}
-	functions, ok := check_specification_test_function_names(fsys, test_path)
-	if !ok {
-		return []Diagnostic{specification_test_file_diag(directory)}
-	}
-	for i, leaf := range leaves {
-		want := "Test_" + leaf
-		matched := i < len(functions)
-		if matched {
-			matched = functions[i] == want
-		}
-		if matched {
-			continue
-		}
-		diags = append(diags, Diagnostic{
-			Position: token.Position{Filename: test_path},
-			Name:     "specification",
-			Want:     want,
-			Message: fmt.Sprintf(
-				"%s:%d needs %s for leaf %q (in order, at top)",
-				test_path, i+1, want, leaf),
-		})
-	}
-	return diags
-}
-
-func check_specification_test_function_names(
-	fsys fs.FS, test_path string,
-) (functions []string, ok bool) {
-	content, err := fs.ReadFile(fsys, test_path)
-	if err != nil {
-		return nil, false
-	}
-	file_set := token.NewFileSet()
-	file, parse_err := parser.ParseFile(
-		file_set, test_path, content, parser.SkipObjectResolution)
-	if parse_err != nil {
-		return nil, true
-	}
-	for _, declaration := range file.Decls {
-		if generic, is_generic := declaration.(*ast.GenDecl); is_generic {
-			if generic.Tok == token.IMPORT {
-				continue
-			}
-			// A var/const/type before the heading tests breaks the "tests at the
-			// very top" rule. Surface it as a slot that can never match a
-			// Test_<Heading> name, so the ordering check flags it at its position.
-			functions = append(functions, generic.Tok.String())
-			continue
-		}
-		function, is_function := declaration.(*ast.FuncDecl)
-		if !is_function {
-			continue
-		}
-		functions = append(functions, function.Name.Name)
-	}
-	return functions, true
-}
-
-// Normalizes a heading to the Ada_Case form used for its test name: each
-// space-separated word's first rune is upper-cased and the words are joined
-// with underscores ("Test File Name" -> "Test_File_Name").
-func specification_ada_case(heading string) (name string) {
-	words := strings.Fields(heading)
-	for i, word := range words {
-		runes := []rune(word)
-		runes[0] = unicode.ToUpper(runes[0])
-		words[i] = string(runes)
-	}
-	return strings.Join(words, "_")
+// Carries the parsed set, the parallelism cap, and the lint.json lists the
+// per-file checks consult.
+type check_file_system_run_checks_input struct {
+	Parsed_Files      []parsed_file
+	CPU_Count         int
+	Instrumentation   []string
+	Word_Replacements map[string][]string
+	Invariant_Exempt  []string
+	Recursion_Exempt  []string
 }
 
 // Runs checks per file in parallel — CPU bound, capped at the injected
 // CPU_Count (typically runtime.NumCPU from main.go).
 func check_file_system_run_checks(
-	parsed_files []parsed_file, cpu_count int, instrumentation []string,
-	word_replacements map[string][]string,
+	input *check_file_system_run_checks_input,
 ) (diags []Diagnostic) {
 
-	per_file_diags := make([][]Diagnostic, len(parsed_files))
-	sem := make(chan struct{}, cpu_count)
+	per_file_diags := make([][]Diagnostic, len(input.Parsed_Files))
+	sem := make(chan struct{}, input.CPU_Count)
 	var wg sync.WaitGroup
-	for i, pf := range parsed_files {
+	for i, pf := range input.Parsed_Files {
 		wg.Add(1)
 		sem <- struct{}{}
 		go func(i int, pf parsed_file) {
 			defer wg.Done()
 			defer func() { <-sem }()
-			per_file_diags[i] = Check_File(
-				pf.File_Set, pf.File, pf.Source, instrumentation, word_replacements)
+			per_file_diags[i] = Check_File(&Check_File_Input{
+				File_Set: pf.File_Set, File: pf.File, Source: pf.Source,
+				Instrumentation:   input.Instrumentation,
+				Word_Replacements: input.Word_Replacements,
+				Invariant_Exempt:  input.Invariant_Exempt,
+				Recursion_Exempt:  input.Recursion_Exempt,
+			})
 		}(i, pf)
 	}
 	wg.Wait()
@@ -4170,6 +3542,21 @@ func check_comments_group_has_space_after_slashes(text string) (ok bool) {
 		return true
 	}
 	return false
+}
+
+// Wraps the recursion ban with the opt_out_recursion_ban exemption: a file
+// matching one of its exact-path globs — a hand-written recursive-descent parser,
+// where recursion is intentional — is skipped. An empty list exempts nothing.
+func make_check_no_recursion(exempt []string) (check check_function) {
+	return func(
+		file_set *token.FileSet, file *ast.File, source_bytes []byte,
+	) (diags []Diagnostic) {
+		filename := file_set.Position(file.Pos()).Filename
+		if source.Path_Matches_Glob(filename, exempt) {
+			return nil
+		}
+		return check_no_recursion(file_set, file, source_bytes)
+	}
 }
 
 // TigerStyle: recursion makes stack depth depend on input, which is
@@ -5410,40 +4797,6 @@ func check_default_package_name(
 	return diags
 }
 
-// Whitebox test packages couple tests to internals; main packages cannot be
-// blackbox-tested coherently. Force every _test.go to declare `package
-// <X>_test`, which keeps the test suite restricted to the same public API
-// callers see and prevents tests from being written against `package main`.
-func check_test_package(file_set *token.FileSet, file *ast.File, _ []byte) (diags []Diagnostic) {
-
-	tok_file := file_set.File(file.Pos())
-	if tok_file == nil {
-		return nil
-	}
-	if !strings.HasSuffix(tok_file.Name(), "_test.go") {
-		return nil
-	}
-	name := file.Name.Name
-	flag := false
-	if name == "main" {
-		flag = true
-	}
-	if name == "main_test" {
-		flag = true
-	}
-	if !strings.HasSuffix(name, "_test") {
-		flag = true
-	}
-	if !flag {
-		return nil
-	}
-	return []Diagnostic{{
-		Position: file_set.Position(file.Name.Pos()),
-		Message: fmt.Sprintf("test file must declare 'package <X>_test'; got 'package "+
-			"%s'", name),
-	}}
-}
-
 // Flags any tokenized word in a declared name that appears in the
 // word_replacements table. This is the single home for two related
 // naming rules sharing one table: abbreviations get a `rename x -> ...`
@@ -5659,7 +5012,9 @@ func check_input_struct_uses_named_input(function *ast.FuncDecl, want_name strin
 }
 
 // Reports whether the declaration immediately preceding index declares want_name
-// as a struct type — the "declared just above it" half of the rule. A doc
+// as a struct type — the "declared just above it" half of the rule. The struct
+// may sit directly above, or be parted from the function only by its own
+// invariant function, the slot the # Invariants rule reserves there. A doc
 // comment attaches to the GenDecl, so it never counts as an intervening
 // declaration; any other declaration in the gap does.
 func check_input_struct_declared_directly_above(
@@ -5669,15 +5024,34 @@ func check_input_struct_declared_directly_above(
 	if index == 0 {
 		return false
 	}
-	general, is_general := file.Decls[index-1].(*ast.GenDecl)
+	if check_input_struct_declaration_is_named_struct(file.Decls[index-1], want_name) {
+		return true
+	}
+	// The struct's invariant function may sit between the struct and the function
+	// it feeds, so the struct is two slots up — still adjacent for this rule.
+	if index < 2 {
+		return false
+	}
+	if !check_input_struct_declaration_is_invariant(file.Decls[index-1], want_name) {
+		return false
+	}
+	return check_input_struct_declaration_is_named_struct(file.Decls[index-2], want_name)
+}
+
+// Reports whether declaration declares want_name as a struct type.
+func check_input_struct_declaration_is_named_struct(
+	declaration ast.Decl, want_name string,
+) (yes bool) {
+
+	general, is_general := declaration.(*ast.GenDecl)
 	if !is_general {
 		return false
 	}
 	if general.Tok != token.TYPE {
 		return false
 	}
-	for _, declaration := range general.Specs {
-		type_definition, is_type := declaration.(*ast.TypeSpec)
+	for _, specification := range general.Specs {
+		type_definition, is_type := specification.(*ast.TypeSpec)
 		if !is_type {
 			continue
 		}
@@ -5688,6 +5062,38 @@ func check_input_struct_declared_directly_above(
 		return is_struct
 	}
 	return false
+}
+
+// Reports whether declaration is the invariant function for the struct named
+// struct_name, the only declaration the locality rule tolerates between the
+// input struct and the function it feeds.
+func check_input_struct_declaration_is_invariant(
+	declaration ast.Decl, struct_name string,
+) (yes bool) {
+
+	function, is_function := declaration.(*ast.FuncDecl)
+	if !is_function {
+		return false
+	}
+	if function.Recv != nil {
+		return false
+	}
+	return function.Name.Name == source.Invariant_Name(struct_name)
+}
+
+// Builds the type-invariant check, closing over the
+// lint.json opt_out_assertion_mandate_packages list. Every in-scope type must be followed
+// directly by its bundle function (the forward half), and every bundle-named
+// function must itself sit directly below its type (the orphan half). The rule is
+// AST-only and per-file: a type and its bundle are adjacent declarations in one
+// file, so no cross-file or type resolution is needed. Test files are exempt, as
+// is any file matching an opt_out_assertion_mandate_packages glob.
+func make_check_type_invariants(invariant_exempt []string) (check check_function) {
+	return func(
+		file_set *token.FileSet, file *ast.File, _ []byte,
+	) (diags []Diagnostic) {
+		return assertion.Check_Type(file_set, file, invariant_exempt)
+	}
 }
 
 func check_input_struct_should_trigger(function *ast.FuncDecl) (trigger bool) {
@@ -5911,23 +5317,6 @@ func check_no_interfaces(file_set *token.FileSet, file *ast.File, _ []byte) (dia
 	return diags
 }
 
-// Reports whether the workspace-root-relative directory is a listed instrumentation
-// package or sits in one's subtree. Segment-prefix so a family entry
-// (shared/invariant) covers its versions and default tier; entries are path-cleaned
-// so "./pkg/" and "pkg" name the same directory.
-func instrumentation_match(directory string, packages []string) (yes bool) {
-	for _, entry := range packages {
-		clean := path.Clean(entry)
-		if directory == clean {
-			return true
-		}
-		if strings.HasPrefix(directory, clean+"/") {
-			return true
-		}
-	}
-	return false
-}
-
 // Reports whether the import resolves to a first-party package at or under a listed
 // instrumentation package. Instrumentation is write-only — emitting to it cannot
 // feed impurity or nondeterminism back into the importer — so pure and
@@ -5938,12 +5327,12 @@ func import_path_is_instrumentation(
 	if is_stdlib_instrumentation(import_path) {
 		return true
 	}
-	component_index_number := component_index_for_import_path(import_path, components)
+	component_index_number := source.For_Import_Path(import_path, components)
 	if component_index_number < 0 {
 		return false
 	}
 	m := components.Components[component_index_number]
-	return instrumentation_match(import_path_workspace_directory(import_path, m), packages)
+	return source.Path_Matches_Glob(import_path_workspace_directory(import_path, m), packages)
 }
 
 // Reports whether the import path is a standard-library observability package the telemetry
@@ -6046,8 +5435,8 @@ func check_no_package_vars_is_map_or_slice_literal(vs *ast.ValueSpec) (yes bool)
 
 // Composition-tier packages are allowed to expose a single `var Default = …`
 // binding — that's literally the shape they exist for. The package's directory
-// (workspace-root-relative) must be at or under a listed instrumentation_packages
-// entry; the literal `default/` directory name confers nothing on its own. Allowed
+// (workspace-root-relative) must match a listed instrumentation_packages glob;
+// the literal `default/` directory name confers nothing on its own. Allowed
 // only for the literal name "Default" and only as a single-name
 // single-initializer spec.
 func check_no_package_vars_is_default(
@@ -6058,7 +5447,7 @@ func check_no_package_vars_is_default(
 	if tok_file == nil {
 		return false
 	}
-	if !instrumentation_match(path.Dir(tok_file.Name()), instrumentation) {
+	if !source.Path_Matches_Glob(path.Dir(tok_file.Name()), instrumentation) {
 		return false
 	}
 	if len(vs.Names) != 1 {
@@ -6145,16 +5534,7 @@ func check_unnecessary_method(
 		if function_declaration.Recv == nil {
 			continue
 		}
-		params := check_unnecessary_method_field_list_types(
-			function_declaration.Type.Params)
-		results := check_unnecessary_method_field_list_types(
-			function_declaration.Type.Results)
-		match := check_unnecessary_method_matches_stdlib(
-			&check_unnecessary_method_matches_stdlib_input{
-				Name:    function_declaration.Name.Name,
-				Params:  strings.Join(params, ","),
-				Results: strings.Join(results, ","),
-			})
+		match := source.Method_Satisfies_Stdlib(function_declaration)
 		if match {
 			continue
 		}
@@ -6170,162 +5550,6 @@ func check_unnecessary_method(
 		})
 	}
 	return diags
-}
-
-type check_unnecessary_method_matches_stdlib_input struct {
-	Name    string
-	Params  string
-	Results string
-}
-
-func check_unnecessary_method_matches_stdlib(
-	input *check_unnecessary_method_matches_stdlib_input,
-) (yes bool) {
-
-	return check_unnecessary_method_matches_stdlib_input_signature(input)
-}
-
-func check_unnecessary_method_matches_stdlib_input_signature(
-	input *check_unnecessary_method_matches_stdlib_input,
-) (yes bool) {
-	switch input.Name {
-	case "Error", "String", "GoString":
-		return input.Params == "" && input.Results == "string"
-	case "Read", "Write":
-		return input.Params == "[]byte" && input.Results == "int,error"
-	case "Close":
-		return input.Params == "" && input.Results == "error"
-	case "Seek":
-		return input.Params == "int64,int" && input.Results == "int64,error"
-	case "WriteTo":
-		return input.Params == "io.Writer" && input.Results == "int64,error"
-	case "ReadFrom":
-		return input.Params == "io.Reader" && input.Results == "int64,error"
-	case "Len":
-		return input.Params == "" && input.Results == "int"
-	case "Less":
-		return input.Params == "int,int" && input.Results == "bool"
-	case "Swap":
-		return input.Params == "int,int" && input.Results == ""
-	case "MarshalJSON", "MarshalText", "MarshalBinary":
-		return input.Params == "" && input.Results == "[]byte,error"
-	case "UnmarshalJSON", "UnmarshalText", "UnmarshalBinary":
-		return input.Params == "[]byte" && input.Results == "error"
-	case "Format":
-		return input.Params == "fmt.State,rune" && input.Results == ""
-	case "Set":
-		return input.Params == "string" && input.Results == "error"
-	case "Scan":
-		return input.Params == "any" && input.Results == "error"
-	case "Visit":
-		return input.Params == "ast.Node" && input.Results == "ast.Visitor"
-	case "Open":
-		return input.Params == "string" && input.Results == "fs.File,error"
-	case "ReadFile":
-		return input.Params == "string" && input.Results == "[]byte,error"
-	case "ReadDir":
-		return input.Params == "string" && input.Results == "[]fs.DirEntry,error"
-	case "Stat":
-		switch input.Params {
-		case "":
-			return input.Results == "fs.FileInfo,error"
-		case "string":
-			return input.Results == "fs.FileInfo,error"
-		}
-		return false
-	case "Name":
-		return input.Params == "" && input.Results == "string"
-	case "Size":
-		return input.Params == "" && input.Results == "int64"
-	case "Mode":
-		return input.Params == "" && input.Results == "fs.FileMode"
-	case "ModTime":
-		return input.Params == "" && input.Results == "time.Time"
-	case "IsDir":
-		return input.Params == "" && input.Results == "bool"
-	case "Sys":
-		return input.Params == "" && input.Results == "any"
-	case "Type":
-		return input.Params == "" && input.Results == "fs.FileMode"
-	case "Info":
-		return input.Params == "" && input.Results == "fs.FileInfo,error"
-	}
-	return false
-}
-
-// Flattens a FieldList into one rendered type string per declared name. A
-// field with no names contributes a single entry (e.g., `(string)` →
-// ["string"]), while a field with N names contributes N entries (e.g.,
-// `(a, b int)` → ["int", "int"]).
-func check_unnecessary_method_field_list_types(fl *ast.FieldList) (output_list []string) {
-
-	if fl == nil {
-		return nil
-	}
-	for _, f := range fl.List {
-		rendered := check_unnecessary_method_field_list_types_render_type(f.Type)
-		count := len(f.Names)
-		if count == 0 {
-			count = 1
-		}
-		for range count {
-			output_list = append(output_list, rendered)
-		}
-	}
-	return output_list
-}
-
-// Renders an ast.Expr representing a type into a canonical string. The outer
-// loop strips type prefixes (`*`, `[]`, `...`) onto a string accumulator
-// without recursion; the inner switch handles base cases. Anything outside
-// this set returns a sentinel that cannot match a stdlib table entry, so
-// unusual signatures correctly fall through to the "not stdlib" diagnostic.
-func check_unnecessary_method_field_list_types_render_type(
-	expression ast.Expr,
-) (output_string string) {
-
-	prefix := ""
-	for step := 0; ; step++ {
-		stripped := false
-		switch e := expression.(type) {
-		case *ast.StarExpr:
-			prefix += "*"
-			expression = e.X
-			stripped = true
-		case *ast.ArrayType:
-			if e.Len != nil {
-				return "<unknown>"
-			}
-			prefix += "[]"
-			expression = e.Elt
-			stripped = true
-		case *ast.Ellipsis:
-			prefix += "..."
-			expression = e.Elt
-			stripped = true
-		}
-		if !stripped {
-			break
-		}
-	}
-	switch e := expression.(type) {
-	case *ast.Ident:
-		return prefix + e.Name
-	case *ast.SelectorExpr:
-		package_identifier, ok := e.X.(*ast.Ident)
-		if !ok {
-			return "<unknown>"
-		}
-		return prefix + package_identifier.Name + "." + e.Sel.Name
-	case *ast.InterfaceType:
-		if e.Methods == nil {
-			return prefix + "any"
-		}
-		if len(e.Methods.List) == 0 {
-			return prefix + "any"
-		}
-	}
-	return "<unknown>"
 }
 
 // Snap.Init / snap.Edit carry snapshot literals — the canonical form is
@@ -8056,150 +7280,6 @@ func check_path_casing_paths(fsys fs.FS, tracked map[string]bool) (paths []strin
 	return paths
 }
 
-// A glob_pattern is a lint.json ignore entry parsed into the three facts the
-// matcher needs: Core is the gitignore pattern reduced to a form
-// glob_match can run against a full prefix (an unanchored, slash-less entry is
-// rewritten with a leading **/ so "weird.md" matches at any depth); Anchored
-// records whether the original entry was tied to the workspace root (it held a
-// slash) rather than floating; Directory_Only records a trailing slash, which in
-// gitignore binds the entry to directories.
-type glob_pattern struct {
-	Core           string
-	Anchored       bool
-	Directory_Only bool
-}
-
-// Reduces a raw lint.json entry to a glob_pattern. A trailing slash is
-// gitignore's directory marker; a leading or interior slash anchors the entry to
-// the root; a slash-less entry floats, which we model as **/ + entry so the same
-// prefix matcher serves both. Assumes the entry already passed
-// validate_glob_patterns, so it cannot be empty or negated.
-func parse_glob_pattern(raw string) (parsed glob_pattern) {
-	parsed.Directory_Only = strings.HasSuffix(raw, "/")
-	trimmed := strings.TrimSuffix(raw, "/")
-	had_leading_slash := strings.HasPrefix(trimmed, "/")
-	trimmed = strings.TrimPrefix(trimmed, "/")
-	parsed.Anchored = had_leading_slash || strings.Contains(trimmed, "/")
-	parsed.Core = trimmed
-	if !parsed.Anchored {
-		parsed.Core = "**/" + trimmed
-	}
-	return parsed
-}
-
-// Reports whether key — or any of its ancestor directories — matches one of the
-// gitignore-style patterns. gitignore excludes a path when the path or any
-// ancestor directory matches, so we test every prefix of key; each ancestor is a
-// directory, and the leaf's directory status is key_is_directory. A
-// Directory_Only entry is skipped at prefixes that are files, which is what makes
-// a trailing-slash entry bind to directories and their subtree but not to a
-// same-named file.
-func glob_patterns_match(
-	key string, key_is_directory bool, patterns []glob_pattern,
-) (found bool) {
-
-	if len(patterns) == 0 {
-		return false
-	}
-	segments := strings.Split(key, "/")
-	for i := range segments {
-		prefix := strings.Join(segments[:i+1], "/")
-		prefix_is_directory := i < len(segments)-1 || key_is_directory
-		for _, p := range patterns {
-			// A trailing-slash entry binds to directories, so it must skip a
-			// prefix that is a file (gitignore's directory-only semantics).
-			if p.Directory_Only {
-				if !prefix_is_directory {
-					continue
-				}
-			}
-			// The entry passed parse-time validation, so glob_match cannot return
-			// ErrBadPattern here; a non-match is the only other outcome.
-			matched, _ := glob_match(&glob_match_input{Pattern: p.Core, Path: prefix})
-			if matched {
-				return true
-			}
-		}
-	}
-	return false
-}
-
-type glob_match_input struct {
-	Pattern string
-	Path    string
-}
-
-// Reports whether Path matches the doublestar Pattern. A ** segment matches zero
-// or more whole path segments; every other segment is matched against the
-// corresponding path segment by path.Match, so *, ?, and [...] keep their
-// single-segment meaning (none crosses a slash) and a malformed segment surfaces
-// as path.Match's ErrBadPattern.
-func glob_match(input *glob_match_input) (matched bool, err error) {
-	return glob_match_segments(&glob_match_segments_input{
-		Pattern: strings.Split(input.Pattern, "/"),
-		Name:    strings.Split(input.Path, "/"),
-	})
-}
-
-type glob_match_segments_input struct {
-	Pattern []string
-	Name    []string
-}
-
-// Matches the Pattern segments against the Name segments with a two-pointer scan
-// that backtracks across **, the segment-level analogue of wildcard matching. A
-// ** is remembered as a resume point and first tried as matching zero segments;
-// on a later mismatch the scan returns to it and lets the ** swallow one more
-// name segment, which is how a single ** spans an unknown depth. Trailing **s
-// match the empty remainder, which is why dir/** also matches dir itself.
-func glob_match_segments(input *glob_match_segments_input) (matched bool, err error) {
-	pattern := input.Pattern
-	name := input.Name
-	pattern_index := 0
-	name_index := 0
-	// The resume index sits just after the most recent **; -1 means no ** is
-	// available to backtrack to. star_name_index records how much of name that **
-	// has been charged with so far.
-	star_pattern_index := -1
-	star_name_index := 0
-	for name_index < len(name) {
-		if pattern_index < len(pattern) {
-			if pattern[pattern_index] == "**" {
-				star_pattern_index = pattern_index + 1
-				star_name_index = name_index
-				pattern_index++
-				continue
-			}
-			ok, match_err := path.Match(pattern[pattern_index], name[name_index])
-			if match_err != nil {
-				return false, match_err
-			}
-			if ok {
-				pattern_index++
-				name_index++
-				continue
-			}
-		}
-		// No literal segment matched here, so the only way forward is to charge
-		// the last ** with one more name segment; absent a **, the match fails.
-		if star_pattern_index < 0 {
-			return false, nil
-		}
-		pattern_index = star_pattern_index
-		star_name_index++
-		name_index = star_name_index
-	}
-	// Name is exhausted; the match holds only if every leftover pattern segment
-	// is a ** standing for the empty remainder.
-	for pattern_index < len(pattern) {
-		if pattern[pattern_index] != "**" {
-			return false, nil
-		}
-		pattern_index++
-	}
-	return true, nil
-}
-
 type check_file_system_stream_checks_stream_symlinks_checker_input struct {
 	Root_Directory        string
 	Tracked               map[string]bool
@@ -8565,33 +7645,12 @@ func check_no_impure_stdlib(
 		if strings.HasSuffix(pf.Path, "_test.go") {
 			continue
 		}
-		if parsed_file_is_composition_tier(pf, components) {
+		if source.Is_Composition_Tier(pf, components) {
 			continue
 		}
 		diags = append(diags, check_no_impure_stdlib_per_file(pf.File_Set, pf.File)...)
 	}
 	return diags
-}
-
-// True iff the file sits exactly one non-main Go ancestor below the
-// library tier in its module. Mirrors check_component_tier_depth's
-// counting logic but inverts the threshold: tier-depth fires when
-// count > 1, the composition-tier exemption fires when count == 1.
-func parsed_file_is_composition_tier(pf parsed_file, components *component_index) (yes bool) {
-	component_index_number := components.File_To_Component[pf.Path]
-	if component_index_number < 0 {
-		return false
-	}
-	m := components.Components[component_index_number]
-	relative := pf.Path
-	if m.Root != "." {
-		relative = strings.TrimPrefix(pf.Path, m.Root+"/")
-	}
-	canonical := component_index_canonicalize(path.Dir(relative))
-	if canonical == "." {
-		return false
-	}
-	return len(component_information_library_ancestors(m, canonical)) == 1
 }
 
 func check_no_impure_stdlib_per_file(
@@ -8718,58 +7777,13 @@ func check_transitive_purity(
 ) (diags []Diagnostic) {
 
 	for _, pf := range parsed_files {
-		if parsed_file_is_impure_package(pf, components) {
+		if source.Is_Impure_Package(pf, components) {
 			continue
 		}
 		diags = append(diags, check_transitive_purity_per_file(
 			pf.File_Set, pf.File, components, instrumentation)...)
 	}
 	return diags
-}
-
-// True iff the file belongs to an impure package: package main, or a `default`
-// package or one a Go ancestor below the library tier. Those are the very
-// packages a pure package may not depend on, so they are exempt as callers too
-// — including their _test.go files, classified by directory since tests carry
-// no entry in Directory_Package. A file owned by no module (index -1) is left
-// to the downstream no-op convention every other doctrine check follows.
-func parsed_file_is_impure_package(pf parsed_file, components *component_index) (yes bool) {
-
-	base := strings.TrimSuffix(pf.File.Name.Name, "_test")
-	if base == "main" {
-		return true
-	}
-	component_index_number := components.File_To_Component[pf.Path]
-	if component_index_number < 0 {
-		return false
-	}
-	m := components.Components[component_index_number]
-	relative := pf.Path
-	if m.Root != "." {
-		relative = strings.TrimPrefix(pf.Path, m.Root+"/")
-	}
-	canonical := component_index_canonicalize(path.Dir(relative))
-	return directory_is_impure(canonical, m)
-}
-
-// True iff the module-relative directory holds an impure package: a `default`
-// directory (the naming convention for an impure global binding, see
-// check_default_package_name) or a package sitting exactly one non-main Go
-// ancestor below the library tier.
-func directory_is_impure(canonical string, m component_information) (yes bool) {
-
-	if canonical == "." {
-		return false
-	}
-	last := canonical
-	slash_offset := strings.LastIndex(canonical, "/")
-	if slash_offset >= 0 {
-		last = canonical[slash_offset+1:]
-	}
-	if last == "default" {
-		return true
-	}
-	return len(component_information_library_ancestors(m, canonical)) == 1
 }
 
 // Flags the two routes impurity launders into a pure file: an import of an
@@ -8787,7 +7801,7 @@ func check_transitive_purity_per_file(
 	local_to_path := make(map[string]string, len(file.Imports))
 	for _, implementation := range file.Imports {
 		import_path := strings.Trim(implementation.Path.Value, `"`)
-		if import_path_is_impure_first_party(import_path, components) {
+		if source.Import_Path_Is_Impure(import_path, components) {
 			if !import_path_is_instrumentation(
 				import_path, components, instrumentation) {
 				diags = append(diags, Diagnostic{
@@ -8798,7 +7812,7 @@ func check_transitive_purity_per_file(
 				})
 			}
 		}
-		name := import_local_name(implementation, import_path)
+		name := source.Import_Local_Name(implementation, import_path)
 		if name == "_" {
 			continue
 		}
@@ -8840,78 +7854,6 @@ func check_transitive_purity_per_file(
 		return true
 	})
 	return diags
-}
-
-// Resolves the in-file identifier an import binds: its explicit alias, or the
-// final path segment when none is given.
-func import_local_name(implementation *ast.ImportSpec, import_path string) (name string) {
-
-	if implementation.Name != nil {
-		return implementation.Name.Name
-	}
-	slash_offset := strings.LastIndex(import_path, "/")
-	return import_path[slash_offset+1:]
-}
-
-// True iff the import path resolves to a first-party package that is itself
-// impure (a `default` package, or one a Go ancestor below the library tier). A stdlib
-// or third-party path is owned by no module and so is never first-party here.
-func import_path_is_impure_first_party(import_path string, components *component_index) (yes bool) {
-
-	component_index_number := component_index_for_import_path(import_path, components)
-	if component_index_number < 0 {
-		return false
-	}
-	m := components.Components[component_index_number]
-	relative := strings.TrimPrefix(import_path, m.Import_Path)
-	relative = strings.TrimPrefix(relative, "/")
-	if relative == "" {
-		relative = "."
-	}
-	canonical := component_index_canonicalize(relative)
-	return directory_is_impure(canonical, m)
-}
-
-// Returns the index of the module whose path is the longest prefix of the
-// import path, or -1 for a stdlib/third-party path owned by no module.
-func component_index_for_import_path(import_path string, components *component_index) (index int) {
-
-	index = -1
-	for i := range components.Components {
-		m := components.Components[i]
-		if m.Import_Path == "" {
-			continue
-		}
-		under := &import_path_under_component_input{
-			Import_Path: import_path, Component_Path: m.Import_Path}
-		if !import_path_under_component(under) {
-			continue
-		}
-		if index < 0 {
-			index = i
-			continue
-		}
-		if len(m.Import_Path) > len(components.Components[index].Import_Path) {
-			index = i
-		}
-	}
-	return index
-}
-
-type import_path_under_component_input struct {
-	// Import_Path is the candidate package path under test.
-	Import_Path string
-	// Component_Path is the component's declared import prefix.
-	Component_Path string
-}
-
-// True iff the import path names the component itself or a package within it.
-func import_path_under_component(input *import_path_under_component_input) (yes bool) {
-
-	if input.Import_Path == input.Component_Path {
-		return true
-	}
-	return strings.HasPrefix(input.Import_Path, input.Component_Path+"/")
 }
 
 type is_transitive_stdlib_ident_input struct {
@@ -9286,8 +8228,9 @@ type check_deterministic_input struct {
 	Parsed_Files []parsed_file
 	// Components is the resolved module index.
 	Components *component_index
-	// Packages is lint.json's deterministic_packages.
-	Packages []string
+	// Exceptions is lint.json's pure_but_indeterministic_packages: the pure packages opted
+	// out of the tier, each an exact-path glob (* spans one segment, ** many).
+	Exceptions []string
 	// Instrumentation is lint.json's instrumentation_packages: write-only imports a
 	// deterministic package may make despite the induction.
 	Instrumentation []string
@@ -9297,41 +8240,53 @@ type check_deterministic_input struct {
 	Scan_Prefixes []string
 }
 
-// Enforces the opt-in deterministic tier: a deterministic_packages entry names a
-// module's top-level directory and the tier auto-applies to that module's pure
-// packages, since the fixed module shape lets purity stand in for an explicit
-// listing. A covered package is held, atop purity, to bans on every construct
-// whose result is decided outside the program — a goroutine, a channel, a
-// select, or a time/context/sync import — and may import only other
-// deterministic first-party packages. Impure packages in the subtree (the main
-// package, a default tier) are not deterministic, so expansion drops them rather
-// than reporting them. The bans bind a covered package's _test.go files too.
+// Enforces the deterministic tier: every pure package is held, atop purity, to
+// bans on the constructs whose result is decided outside the program — a
+// goroutine, a channel, a select, a float, a time/context/sync import — and may
+// import only other deterministic first-party packages. The tier is the default,
+// so purity alone opts a package in; a pure_but_indeterministic_packages entry opts one
+// back out, matched as an exact-path glob. Impure packages (the main package, a
+// default tier) are never deterministic and need no listing. The bans bind a
+// covered package's _test.go files too.
 func check_deterministic(input *check_deterministic_input) (diags []Diagnostic) {
 
 	pure := deterministic_pure_directories(input.Parsed_Files, input.Components)
 
-	// Expand each entry to the pure package directories at or under it, so a
-	// module's top-level directory covers its packages without listing each. The
-	// trailing /* of the shared/* form is stripped to the parent directory it
-	// names; an entry is otherwise path-cleaned so "./pkg/" and "pkg" name the one
-	// directory the parsed files are keyed by. The expansion runs before the
-	// checks so the import induction tests against the concrete covered
-	// directories, not the coarse entry, which would falsely flag a covered import.
+	// Determinism is the default, so covered starts as every pure package and the
+	// exceptions are subtracted out. Each entry is an exact-path glob matched
+	// against the full directory, so "shared/io" opts out that one package while
+	// "shared/io/**" opts out its subtree — a bare parent cannot silently drop its
+	// children. The subtraction runs before the checks so the import induction
+	// tests against the concrete deterministic set, and matched records which
+	// entries hit a package for the coverage-gap check. negated collects the
+	// directories a "!" entry hit; negation always wins regardless of processing
+	// order, so those are added back to covered only after every entry (positive
+	// and negated) has had a chance to hit — a negated entry seen before the
+	// positive entry it overrides must still win.
 	covered := map[string]bool{}
+	for directory := range pure {
+		covered[directory] = true
+	}
 	matched := map[string]bool{}
-	for _, entry := range input.Packages {
-		base := strings.TrimSuffix(path.Clean(entry), "/*")
+	negated := map[string]bool{}
+	for _, entry := range input.Exceptions {
+		pattern := source.Parse_Glob_Pattern(entry)
 		for directory := range pure {
-			under := directory == base
-			if !under {
-				under = strings.HasPrefix(directory, base+"/")
-			}
-			if !under {
+			hit, _ := source.Glob_Match(
+				&source.Glob_Match_Input{Pattern: pattern.Core, Path: directory})
+			if !hit {
 				continue
 			}
-			covered[directory] = true
-			matched[path.Clean(entry)] = true
+			matched[entry] = true
+			if pattern.Negate {
+				negated[directory] = true
+				continue
+			}
+			delete(covered, directory)
 		}
+	}
+	for directory := range negated {
+		covered[directory] = true
 	}
 	for _, pf := range input.Parsed_Files {
 		if !covered[path.Dir(pf.Path)] {
@@ -9343,7 +8298,7 @@ func check_deterministic(input *check_deterministic_input) (diags []Diagnostic) 
 			pf.File_Set, pf.File, input.Components, covered, input.Instrumentation)...)
 	}
 	return append(diags, check_deterministic_coverage(&check_deterministic_coverage_input{
-		Packages:      input.Packages,
+		Exceptions:    input.Exceptions,
 		Matched:       matched,
 		Scan_Prefixes: input.Scan_Prefixes,
 	})...)
@@ -9362,7 +8317,7 @@ func deterministic_pure_directories(
 	pure = map[string]bool{}
 	for _, pf := range parsed_files {
 		directory := path.Dir(pf.Path)
-		if parsed_file_is_impure_package(pf, components) {
+		if source.Is_Impure_Package(pf, components) {
 			impure[directory] = true
 			continue
 		}
@@ -9380,43 +8335,68 @@ func deterministic_pure_directories(
 // Bundles check_deterministic_coverage's inputs: the entry list and the scan
 // prefixes both being string slices repeat a type, which the input-struct rule folds.
 type check_deterministic_coverage_input struct {
-	// Packages is lint.json's deterministic_packages, reported verbatim on a gap.
-	Packages []string
-	// Matched marks, by cleaned entry, which entries covered a pure package.
+	// Exceptions is lint.json's pure_but_indeterministic_packages, reported verbatim on a gap.
+	Exceptions []string
+	// Matched marks, by raw entry, which entries matched a pure package.
 	Matched map[string]bool
 	// Scan_Prefixes is the scope-narrowed parse set, nil for a whole-workspace run;
 	// an entry outside it was never parsed and so is not judged.
 	Scan_Prefixes []string
 }
 
-// Reports any deterministic_packages entry that covered no pure package. A typo,
-// a stale path, or a directory holding nothing pure would otherwise opt nothing
-// into the tier and pass silently — the exact coverage gap the tier exists to
-// close. An entry outside the scan prefixes is skipped: a scoped run never parsed
-// its module, so its emptiness is an artifact of scope, not a real gap, and a
-// full run (nil prefixes, which scan_prefixes_reach admits everywhere) judges it.
+// Reports any pure_but_indeterministic_packages entry naming a concrete path that matched no
+// pure package — a typo or stale path the author believes opts a package out while
+// it stays held to the tier. A root-anchored wildcard names no path and is exempt
+// (it binds once a pure package appears). An entry outside the scan prefixes is
+// skipped: a scoped run never parsed its module, so its emptiness is an artifact of
+// scope, and a full run (nil prefixes) judges it.
 func check_deterministic_coverage(
 	input *check_deterministic_coverage_input,
 ) (diags []Diagnostic) {
 
-	for _, entry := range input.Packages {
-		if input.Matched[path.Clean(entry)] {
+	for _, entry := range input.Exceptions {
+		if input.Matched[entry] {
 			continue
 		}
-		base := strings.TrimSuffix(path.Clean(entry), "/*")
-		if !scan_prefixes_reach(input.Scan_Prefixes, base) {
+		anchor := glob_literal_prefix(entry)
+		// A root-anchored wildcard ("**", "*") names no concrete path, so matching
+		// nothing is a no-op — a deliberate blanket opt-out that binds once a pure
+		// package appears — not a typo. Only a concrete path is worth flagging.
+		if anchor == "." {
+			continue
+		}
+		if !scan_prefixes_reach(input.Scan_Prefixes, anchor) {
 			continue
 		}
 		diags = append(diags, Diagnostic{
 			Position: token.Position{Filename: "<lint.json>"},
 			Name:     "deterministic",
-			Want:     "every deterministic_packages entry covers a pure package",
+			Want: "every pure_but_indeterministic_packages entry matches " +
+				"a pure package",
 			Message: fmt.Sprintf(
-				"deterministic_packages: no pure package found at %q", entry),
+				"pure_but_indeterministic_packages: no pure package found at %q",
+				entry),
 			Tier: 1,
 		})
 	}
 	return diags
+}
+
+// Returns an entry's leading literal path — the segments before its first glob
+// metacharacter — as the directory the scan-scope check anchors on. "shared/**"
+// yields "shared", "shared/io" yields itself, and a leading-glob entry yields ".",
+// which scan_prefixes_reach admits everywhere. A leading "!" is stripped first, so
+// a negated entry's anchor names the same path its positive form would.
+func glob_literal_prefix(entry string) (prefix string) {
+	entry = strings.TrimPrefix(entry, "!")
+	kept := []string{}
+	for _, segment := range strings.Split(entry, "/") {
+		if strings.ContainsAny(segment, "*?[") {
+			break
+		}
+		kept = append(kept, segment)
+	}
+	return path.Clean(strings.Join(kept, "/"))
 }
 
 // Flags the nondeterministic control constructs a deterministic package may not
@@ -9549,7 +8529,7 @@ func import_path_is_nondeterministic_first_party(
 	import_path string, components *component_index, set map[string]bool,
 ) (yes bool) {
 
-	component_index_number := component_index_for_import_path(import_path, components)
+	component_index_number := source.For_Import_Path(import_path, components)
 	if component_index_number < 0 {
 		return false
 	}
@@ -9588,7 +8568,7 @@ func check_time_import_gateway(
 	parsed_files []parsed_file, components *component_index,
 ) (diags []Diagnostic) {
 
-	gateway := component_index_time_gateway(components)
+	gateway := source.Time_Gateway(components)
 	if gateway == "" {
 		return nil
 	}
@@ -9621,18 +8601,400 @@ func check_time_import_gateway(
 	return diags
 }
 
-// Returns the workspace-relative directory of the shared module's stdlib-time
-// gateway (its time/default), or "" when no module is the shared library.
-func component_index_time_gateway(components *component_index) (gateway string) {
-
-	for _, m := range components.Components {
-		if !m.Is_Shared_Library {
+// A package drives the loop only through package main or a test; elsewhere it may
+// submit IO and read the clock but never mint the loop Driver. This flags a call to an
+// IO loop constructor (Sim_To_IO, New_Operating_System_IO) outside main and _test.go.
+// The read-only clock constructors mint no Driver, so they are not gated.
+func check_driver_gateway(parsed_files []parsed_file) (diags []Diagnostic) {
+	for _, pf := range parsed_files {
+		if strings.HasSuffix(pf.Path, "_test.go") {
 			continue
 		}
-		if m.Root == "." {
-			return "time/default"
+		if pf.File.Name.Name == "main" {
+			continue
 		}
-		return m.Root + "/time/default"
+		diags = append(diags, driver_gateway_file_diagnostics(pf)...)
+	}
+	return diags
+}
+
+// The IO loop-constructor calls in one file. Both names are unique to shared/io, so a
+// selector match needs no import resolution.
+func driver_gateway_file_diagnostics(pf parsed_file) (diags []Diagnostic) {
+	ast.Inspect(pf.File, func(node ast.Node) (recurse bool) {
+		call, is_call := node.(*ast.CallExpr)
+		if !is_call {
+			return true
+		}
+		selector, is_selector := call.Fun.(*ast.SelectorExpr)
+		if !is_selector {
+			return true
+		}
+		if !driver_gateway_constructor(selector.Sel.Name) {
+			return true
+		}
+		diags = append(diags, Diagnostic{
+			Position: pf.File_Set.Position(selector.Pos()),
+			Name:     "driver-gateway",
+			Want:     "call the constructor only in package main or a test",
+			Message: selector.Sel.Name +
+				" mints a loop driver; call it only in main or a test",
+			Tier: 1,
+		})
+		return true
+	})
+	return diags
+}
+
+// Reports whether name is an IO loop constructor that mints a Driver.
+func driver_gateway_constructor(name string) (constructor bool) {
+	switch name {
+	case "Sim_To_IO", "New_Operating_System_IO":
+		return true
+	}
+	return false
+}
+
+// The Driver drives the loop; only package main or a test may hold it, so internal.Main
+// takes io.IO and the harness holds the Driver. This flags naming the io.Driver type
+// (a param, field, var, or return) outside main, tests, and the io backend that returns
+// it — the construction ban stops minting one, this stops receiving one.
+func check_driver_type(
+	parsed_files []parsed_file, components *component_index,
+) (diags []Diagnostic) {
+	shared := source.Shared_Import(components)
+	if shared == "" {
+		return nil
+	}
+	driver_path := shared + "/io"
+	gateway := source.IO_Gateway(components)
+	for _, pf := range parsed_files {
+		if strings.HasSuffix(pf.Path, "_test.go") {
+			continue
+		}
+		if pf.File.Name.Name == "main" {
+			continue
+		}
+		if gateway != "" {
+			if source.Path_Matches_Glob(pf.Path, []string{gateway + "/**"}) {
+				continue
+			}
+		}
+		diags = append(diags, driver_type_file_diagnostics(pf, driver_path)...)
+	}
+	return diags
+}
+
+// The io.Driver references in one file, resolved through the shared/io import's local
+// name so a same-named Driver from another package is not caught.
+func driver_type_file_diagnostics(pf parsed_file, driver_path string) (diags []Diagnostic) {
+	local := ""
+	for _, implementation := range pf.File.Imports {
+		if strings.Trim(implementation.Path.Value, `"`) == driver_path {
+			local = source.Import_Local_Name(implementation, driver_path)
+		}
+	}
+	if local == "" {
+		return nil
+	}
+	ast.Inspect(pf.File, func(node ast.Node) (recurse bool) {
+		selector, is_selector := node.(*ast.SelectorExpr)
+		if !is_selector {
+			return true
+		}
+		if selector.Sel.Name != "Driver" {
+			return true
+		}
+		identifier, is_identifier := selector.X.(*ast.Ident)
+		if !is_identifier {
+			return true
+		}
+		if identifier.Name != local {
+			return true
+		}
+		diags = append(diags, Diagnostic{
+			Position: pf.File_Set.Position(selector.Pos()),
+			Name:     "driver-gateway",
+			Want:     "hold the Driver only in package main or a test",
+			Message: "io.Driver may be held only in package main or a test; " +
+				"internal takes io.IO and the harness drives",
+			Tier: 1,
+		})
+		return true
+	})
+	return diags
+}
+
+// Raw blocking and non-blocking IO stdlib lives only in the io/default gateway; every
+// other package routes IO through shared/io. Exempt: the io/default and time/default
+// gateways (time is the clock the loop is built on, not IO the loop carries), the
+// instrumentation packages (a diagnostics side channel), tests, and package main.
+func check_io_gateway(
+	parsed_files []parsed_file, components *component_index, instrumentation []string,
+) (diags []Diagnostic) {
+	gateway := source.IO_Gateway(components)
+	time_gateway := source.Time_Gateway(components)
+	for _, pf := range parsed_files {
+		if strings.HasSuffix(pf.Path, "_test.go") {
+			continue
+		}
+		if pf.File.Name.Name == "main" {
+			continue
+		}
+		if check_no_unbounded_apis_is_generated(pf.File) {
+			continue
+		}
+		if gateway != "" {
+			if source.Path_Matches_Glob(pf.Path, []string{gateway + "/**"}) {
+				continue
+			}
+		}
+		if time_gateway != "" {
+			if source.Path_Matches_Glob(pf.Path, []string{time_gateway + "/**"}) {
+				continue
+			}
+		}
+		if source.Path_Matches_Glob(pf.Path, instrumentation) {
+			continue
+		}
+		diags = append(diags, io_gateway_import_diagnostics(pf)...)
+		diags = append(diags, io_gateway_call_diagnostics(pf)...)
+	}
+	return diags
+}
+
+// Flags each raw-IO stdlib import in one file.
+func io_gateway_import_diagnostics(pf parsed_file) (diags []Diagnostic) {
+	for _, implementation := range pf.File.Imports {
+		import_path := strings.Trim(implementation.Path.Value, `"`)
+		if !io_gateway_banned_import(import_path) {
+			continue
+		}
+		diags = append(diags, Diagnostic{
+			Position: pf.File_Set.Position(implementation.Pos()),
+			Name:     "io-gateway",
+			Want:     "route IO through shared/io",
+			Message: fmt.Sprintf(
+				"%q is banned outside io/default; route IO through shared/io",
+				import_path),
+			Tier: 2,
+		})
+	}
+	return diags
+}
+
+// Reports whether an import path is raw IO stdlib banned outside the gateway.
+func io_gateway_banned_import(import_path string) (banned bool) {
+	switch import_path {
+	case "net", "net/http", "syscall", "os/exec", "bufio", "crypto/tls", "os/signal":
+		return true
+	}
+	return false
+}
+
+// Flags each os file-operation call in one file. Only os is call-banned: net/syscall/
+// os-exec/bufio are import-banned above, and the io helpers operate on injected
+// io.Reader/Writer interfaces (io.ReadFull/io.CopyN are the endorsed bounded reads),
+// not raw OS IO. os.Args/os.Exit/os.Getenv are left alone.
+func io_gateway_call_diagnostics(pf parsed_file) (diags []Diagnostic) {
+	operating_system_local := ""
+	for _, implementation := range pf.File.Imports {
+		import_path := strings.Trim(implementation.Path.Value, `"`)
+		if import_path == "os" {
+			operating_system_local = source.Import_Local_Name(
+				implementation, import_path)
+		}
+	}
+	if operating_system_local == "" {
+		return nil
+	}
+	ast.Inspect(pf.File, func(node ast.Node) (recurse bool) {
+		selector, is_selector := node.(*ast.SelectorExpr)
+		if !is_selector {
+			return true
+		}
+		identifier, is_identifier := selector.X.(*ast.Ident)
+		if !is_identifier {
+			return true
+		}
+		if identifier.Name != operating_system_local {
+			return true
+		}
+		if !io_gateway_banned_operating_system(selector.Sel.Name) {
+			return true
+		}
+		diags = append(diags, io_gateway_call_diagnostic(pf, selector))
+		return true
+	})
+	return diags
+}
+
+// One io-gateway diagnostic for a raw-IO call at selector.
+func io_gateway_call_diagnostic(pf parsed_file, selector *ast.SelectorExpr) (diag Diagnostic) {
+	identifier := selector.X.(*ast.Ident)
+	return Diagnostic{
+		Position: pf.File_Set.Position(selector.Pos()),
+		Name:     "io-gateway",
+		Want:     "route IO through shared/io",
+		Message: identifier.Name + "." + selector.Sel.Name +
+			" does raw IO; route it through shared/io",
+		Tier: 2,
+	}
+}
+
+// Reports whether an os selector is a file operation banned outside the gateway. Directory
+// traversal and metadata calls (Stat, Lstat, Mkdir, MkdirAll) join reads and writes here, so
+// a consumer walks and stats through the loop rather than sidestepping it to the OS.
+func io_gateway_banned_operating_system(name string) (banned bool) {
+	switch name {
+	case "Open", "Create", "ReadFile", "WriteFile",
+		"OpenFile", "Pipe", "DirFS", "NewFile",
+		"Stat", "Lstat", "Mkdir", "MkdirAll":
+		return true
+	}
+	return false
+}
+
+// A simulated backend's only input is its seed: New_Sim(seed) is the sole entry, the sim
+// type stays unexported, and no exported Sim-family surface lets a caller pre-load
+// outcomes. This flags the scripting API trying to return — an exported Sim type or Sim_*
+// function, or a New_Sim parameter that is not the seed — in the package defining New_Sim,
+// so a run stays a pure function of its seed and the fuzzer explores the whole space.
+func check_sim_script(parsed_files []parsed_file) (diags []Diagnostic) {
+	directory := sim_script_directory(parsed_files)
+	if directory == "" {
+		return nil
+	}
+	for _, pf := range parsed_files {
+		if path.Dir(pf.Path) != directory {
+			continue
+		}
+		if strings.HasSuffix(pf.Path, "_test.go") {
+			continue
+		}
+		for _, declaration := range pf.File.Decls {
+			diags = append(diags,
+				sim_script_declaration_diagnostics(pf, declaration)...)
+		}
+	}
+	return diags
+}
+
+// Returns the directory of the package defining New_Sim, or "" when none does.
+func sim_script_directory(parsed_files []parsed_file) (directory string) {
+	for _, pf := range parsed_files {
+		for _, declaration := range pf.File.Decls {
+			function, is_function := declaration.(*ast.FuncDecl)
+			if !is_function {
+				continue
+			}
+			if function.Recv != nil {
+				continue
+			}
+			if function.Name.Name != "New_Sim" {
+				continue
+			}
+			return path.Dir(pf.Path)
+		}
 	}
 	return ""
+}
+
+// Flags one declaration that reopens the scripting surface: an exported Sim type or Sim_*
+// function, or a New_Sim whose parameter is not the seed.
+func sim_script_declaration_diagnostics(pf parsed_file, declaration ast.Decl) (diags []Diagnostic) {
+	function, is_function := declaration.(*ast.FuncDecl)
+	if is_function {
+		return sim_script_function_diagnostics(pf, function)
+	}
+	generic, is_generic := declaration.(*ast.GenDecl)
+	if !is_generic {
+		return nil
+	}
+	return sim_script_type_diagnostics(pf, generic)
+}
+
+// Flags New_Sim carrying a non-seed parameter, or any exported Sim_* helper function.
+func sim_script_function_diagnostics(
+	pf parsed_file, function *ast.FuncDecl,
+) (diags []Diagnostic) {
+	if function.Recv != nil {
+		return nil
+	}
+	if function.Name.Name == "New_Sim" {
+		return sim_script_constructor_diagnostics(pf, function)
+	}
+	if !sim_script_named(function.Name.Name) {
+		return nil
+	}
+	return []Diagnostic{sim_script_diagnostic(pf, function,
+		function.Name.Name+" is a scripting entry; a sim's only input is its seed")}
+}
+
+// Flags New_Sim unless it takes exactly one integer seed and nothing else.
+func sim_script_constructor_diagnostics(
+	pf parsed_file, function *ast.FuncDecl,
+) (diags []Diagnostic) {
+	params := function.Type.Params
+	count := 0
+	if params != nil {
+		for _, field := range params.List {
+			count += len(field.Names)
+		}
+	}
+	if count == 1 {
+		if sim_script_seed_type(params.List[0].Type) {
+			return nil
+		}
+	}
+	return []Diagnostic{sim_script_diagnostic(pf, function,
+		"New_Sim takes only the seed; a parameter that carries outcomes is scripting")}
+}
+
+// Flags an exported Sim type, which would hand a caller the handle to script.
+func sim_script_type_diagnostics(pf parsed_file, generic *ast.GenDecl) (diags []Diagnostic) {
+	for _, specification := range generic.Specs {
+		type_specification, is_type := specification.(*ast.TypeSpec)
+		if !is_type {
+			continue
+		}
+		if !sim_script_named(type_specification.Name.Name) {
+			continue
+		}
+		diags = append(diags, sim_script_diagnostic(pf, type_specification,
+			type_specification.Name.Name+" exposes the sim; keep it unexported"))
+	}
+	return diags
+}
+
+// Reports whether name is the exported Sim-family surface: the Sim type or a Sim_* helper.
+func sim_script_named(name string) (named bool) {
+	if name == "Sim" {
+		return true
+	}
+	return strings.HasPrefix(name, "Sim_")
+}
+
+// Reports whether expression is an integer type — the shape a seed parameter takes.
+func sim_script_seed_type(expression ast.Expr) (seed bool) {
+	identifier, is_identifier := expression.(*ast.Ident)
+	if !is_identifier {
+		return false
+	}
+	switch identifier.Name {
+	case "uint64", "uint32", "int64", "int", "uint":
+		return true
+	}
+	return false
+}
+
+// One sim-scripting diagnostic anchored at node.
+func sim_script_diagnostic(pf parsed_file, node ast.Node, message string) (diag Diagnostic) {
+	return Diagnostic{
+		Position: pf.File_Set.Position(node.Pos()),
+		Name:     "sim-script",
+		Want:     "drive the sim only by its seed",
+		Message:  message,
+		Tier:     1,
+	}
 }

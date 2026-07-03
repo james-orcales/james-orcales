@@ -39,8 +39,8 @@ import (
 	"strings"
 	"text/tabwriter"
 
-	invariant "github.com/james-orcales/james-orcales/shared/invariant/default"
-	"github.com/james-orcales/james-orcales/shared/levenshtein"
+	invariant "local/james-orcales/shared/invariant/default"
+	"local/james-orcales/shared/levenshtein"
 )
 
 // Program represents a command-line application with one or more commands.

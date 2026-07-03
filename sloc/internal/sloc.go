@@ -15,7 +15,7 @@ import (
 	"sync"
 	"unicode/utf8"
 
-	"github.com/james-orcales/james-orcales/shared/cli"
+	"local/james-orcales/shared/cli"
 )
 
 // The process exit codes.

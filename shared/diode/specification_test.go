@@ -7,14 +7,16 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/james-orcales/james-orcales/shared/diode"
-	"github.com/james-orcales/james-orcales/shared/time"
+	"local/james-orcales/shared/diode"
+	"local/james-orcales/shared/time"
 )
 
 // Test_Write_Forwards_To_Sink checks that a written line reaches the wrapped sink.
 func Test_Write_Forwards_To_Sink(t *testing.T) {
 	sink := &recording_sink{Written: make(chan string, 4)}
-	writer := diode.New(diode.New_Input{Writer: sink, Clock: instant_clock(), Count: 8})
+	writer := diode.New(diode.New_Input{
+		Writer: sink, Clock: instant_clock(), Sleep: no_sleep(), Count: 8,
+	})
 	writer.Write([]byte("hello"))
 	if got := <-sink.Written; got != "hello" {
 		t.Fatalf("forwarded %q, want hello", got)
@@ -26,7 +28,9 @@ func Test_Write_Forwards_To_Sink(t *testing.T) {
 // synchronous wrapper would deadlock here and the test would time out.
 func Test_Write_Does_Not_Block(t *testing.T) {
 	sink := &blocking_sink{Release: make(chan struct{})}
-	writer := diode.New(diode.New_Input{Writer: sink, Clock: instant_clock(), Count: 4})
+	writer := diode.New(diode.New_Input{
+		Writer: sink, Clock: instant_clock(), Sleep: no_sleep(), Count: 4,
+	})
 	for index := 0; index < 16; index++ {
 		n, err := writer.Write([]byte("x"))
 		if n != 1 {
@@ -44,8 +48,8 @@ func Test_Write_Does_Not_Block(t *testing.T) {
 // entries and discards the oldest.
 func Test_Overflow_Drops_Oldest(t *testing.T) {
 	sink := &recording_sink{Written: make(chan string, 8)}
-	clock, parked, resume := gated_clock()
-	writer := diode.New(diode.New_Input{Writer: sink, Clock: clock, Count: 4})
+	clock, sleep, parked, resume := gated_clock()
+	writer := diode.New(diode.New_Input{Writer: sink, Clock: clock, Sleep: sleep, Count: 4})
 	<-parked
 	for index := 0; index < 8; index++ {
 		writer.Write([]byte(decimal(index)))
@@ -65,10 +69,11 @@ func Test_Drop_Count_Is_Reported(t *testing.T) {
 	dropped := make(chan int, 8)
 	causes := make(chan diode.Drop_Cause, 8)
 	sink := &recording_sink{Written: make(chan string, 8)}
-	clock, parked, resume := gated_clock()
+	clock, sleep, parked, resume := gated_clock()
 	writer := diode.New(diode.New_Input{
 		Writer: sink,
 		Clock:  clock,
+		Sleep:  sleep,
 		Count:  4,
 		Alerter: func(missed int, cause diode.Drop_Cause) {
 			dropped <- missed
@@ -83,8 +88,8 @@ func Test_Drop_Count_Is_Reported(t *testing.T) {
 	if missed := <-dropped; missed != 4 {
 		t.Fatalf("alerter reported %d drops, want 4", missed)
 	}
-	if cause := <-causes; cause != diode.Drop_Overflow {
-		t.Fatalf("drop cause %v, want Drop_Overflow", cause)
+	if cause := <-causes; cause != diode.DROP_OVERFLOW {
+		t.Fatalf("drop cause %v, want DROP_OVERFLOW", cause)
 	}
 	writer.Close()
 }
@@ -92,7 +97,9 @@ func Test_Drop_Count_Is_Reported(t *testing.T) {
 // Test_Order_Is_Preserved checks that delivered entries keep write order.
 func Test_Order_Is_Preserved(t *testing.T) {
 	sink := &recording_sink{Written: make(chan string, 16)}
-	writer := diode.New(diode.New_Input{Writer: sink, Clock: instant_clock(), Count: 16})
+	writer := diode.New(diode.New_Input{
+		Writer: sink, Clock: instant_clock(), Sleep: no_sleep(), Count: 16,
+	})
 	for index := 0; index < 10; index++ {
 		writer.Write([]byte(decimal(index)))
 	}
@@ -107,12 +114,12 @@ func Test_Order_Is_Preserved(t *testing.T) {
 // Test_Poll_Interval_Is_Configurable checks the empty-ring sleep duration: the
 // default is one hundred milliseconds, and an explicit interval is honored.
 func Test_Poll_Interval_Is_Configurable(t *testing.T) {
-	if observed := capture_interval(t, 0); observed != 100*time.Millisecond {
-		t.Fatalf("default interval %d, want %d", observed, 100*time.Millisecond)
+	if observed := capture_interval(t, 0); observed != 100*time.MILLISECOND {
+		t.Fatalf("default interval %d, want %d", observed, 100*time.MILLISECOND)
 	}
-	observed := capture_interval(t, 250*time.Millisecond)
-	if observed != 250*time.Millisecond {
-		t.Fatalf("custom interval %d, want %d", observed, 250*time.Millisecond)
+	observed := capture_interval(t, 250*time.MILLISECOND)
+	if observed != 250*time.MILLISECOND {
+		t.Fatalf("custom interval %d, want %d", observed, 250*time.MILLISECOND)
 	}
 }
 
@@ -120,8 +127,8 @@ func Test_Poll_Interval_Is_Configurable(t *testing.T) {
 // sink and that Close then returns (the drain goroutine has exited).
 func Test_Close_Flushes_And_Stops(t *testing.T) {
 	sink := &recording_sink{Written: make(chan string, 4)}
-	clock, parked, resume := gated_clock()
-	writer := diode.New(diode.New_Input{Writer: sink, Clock: clock, Count: 8})
+	clock, sleep, parked, resume := gated_clock()
+	writer := diode.New(diode.New_Input{Writer: sink, Clock: clock, Sleep: sleep, Count: 8})
 	<-parked
 	for index := 0; index < 3; index++ {
 		writer.Write([]byte(decimal(index)))
@@ -143,8 +150,10 @@ func Test_Close_Flushes_And_Stops(t *testing.T) {
 // Test_Dropping_Does_Not_Allocate checks that overwriting unread entries recycles
 // their buckets, so a diode shedding load allocates nothing per dropped line.
 func Test_Dropping_Does_Not_Allocate(t *testing.T) {
-	clock, parked, resume := gated_clock()
-	writer := diode.New(diode.New_Input{Writer: io.Discard, Clock: clock, Count: 8})
+	clock, sleep, parked, resume := gated_clock()
+	writer := diode.New(diode.New_Input{
+		Writer: io.Discard, Clock: clock, Sleep: sleep, Count: 8,
+	})
 	<-parked
 	line := []byte("a dropped line")
 	// Warm past one full lap so the pool reaches steady-state recycling before the
@@ -163,7 +172,7 @@ func Test_Dropping_Does_Not_Allocate(t *testing.T) {
 }
 
 // Test_Rate_Limit_Sheds_By_Bytes checks the byte budget: up to the burst is delivered and
-// the rest is shed with cause Drop_Rate_Limit, while a clock that advances refills tokens so
+// the rest is shed with cause DROP_RATE_LIMIT, while a clock that advances refills tokens so
 // every line passes.
 func Test_Rate_Limit_Sheds_By_Bytes(t *testing.T) {
 	sink := &recording_sink{Written: make(chan string, 16)}
@@ -171,6 +180,7 @@ func Test_Rate_Limit_Sheds_By_Bytes(t *testing.T) {
 	writer := diode.New(diode.New_Input{
 		Writer:     sink,
 		Clock:      instant_clock(),
+		Sleep:      no_sleep(),
 		Count:      16,
 		Rate_Limit: diode.Rate_Limit{Bytes_Per_Second: 1, Burst: 6},
 		Alerter: func(missed int, cause diode.Drop_Cause) {
@@ -188,8 +198,8 @@ func Test_Rate_Limit_Sheds_By_Bytes(t *testing.T) {
 		}
 	}
 	for index := 0; index < 5; index++ {
-		if cause := <-causes; cause != diode.Drop_Rate_Limit {
-			t.Fatalf("shed cause %v, want Drop_Rate_Limit", cause)
+		if cause := <-causes; cause != diode.DROP_RATE_LIMIT {
+			t.Fatalf("shed cause %v, want DROP_RATE_LIMIT", cause)
 		}
 	}
 	writer.Close()
@@ -197,7 +207,8 @@ func Test_Rate_Limit_Sheds_By_Bytes(t *testing.T) {
 	steady_sink := &recording_sink{Written: make(chan string, 16)}
 	steady := diode.New(diode.New_Input{
 		Writer:     steady_sink,
-		Clock:      stepping_clock(time.Second),
+		Clock:      stepping_clock(time.SECOND),
+		Sleep:      no_sleep(),
 		Count:      16,
 		Rate_Limit: diode.Rate_Limit{Bytes_Per_Second: 1000, Burst: 2},
 		Alerter: func(missed int, cause diode.Drop_Cause) {
@@ -222,7 +233,8 @@ func Test_Rate_Limit_Survives_A_Large_Clock(t *testing.T) {
 	sink := &recording_sink{Written: make(chan string, 16)}
 	writer := diode.New(diode.New_Input{
 		Writer:     sink,
-		Clock:      stepping_clock(10_000 * time.Second),
+		Clock:      stepping_clock(10_000 * time.SECOND),
+		Sleep:      no_sleep(),
 		Count:      16,
 		Rate_Limit: diode.Rate_Limit{Bytes_Per_Second: 1 << 20, Burst: 1 << 20},
 		Alerter: func(missed int, cause diode.Drop_Cause) {
@@ -263,40 +275,45 @@ func (sink *blocking_sink) Write(p []byte) (n int, err error) {
 	return len(p), nil
 }
 
-// A clock whose Sleep returns immediately, so the drain spins and tests synchronize on
-// the sink rather than on wall-clock time.
+// A read-only clock reading zero, paired with no_sleep in tests that synchronize on the
+// sink rather than on wall-clock time.
 func instant_clock() (clock time.Clock) {
 	return time.Clock{
 		Now_Monotonic: func() (moment time.Moment) { return 0 },
 		Now_Realtime:  func() (moment time.Moment) { return 0 },
-		Tick:          func() {},
-		Sleep:         func(duration time.Duration) {},
 	}
 }
 
-// A clock that parks the drain inside its first Sleep: the first call closes parked
-// (so a test learns the drain is idle on an empty ring) and every call blocks until
-// resume closes. After resume closes, Sleep returns immediately.
-func gated_clock() (clock time.Clock, parked chan struct{}, resume chan struct{}) {
+// A sleep that returns immediately, so the drain spins and a test synchronizes on the sink
+// rather than on wall-clock time.
+func no_sleep() (sleep func(duration time.Duration)) {
+	return func(duration time.Duration) {}
+}
+
+// A read-only clock and a sleep that parks the drain on its first call: the first sleep
+// closes parked (so a test learns the drain is idle on an empty ring) and every call blocks
+// until resume closes. After resume closes, the sleep returns immediately.
+func gated_clock() (
+	clock time.Clock, sleep func(duration time.Duration),
+	parked chan struct{}, resume chan struct{},
+) {
 	parked = make(chan struct{})
 	resume = make(chan struct{})
 	var once sync.Once
 	clock = time.Clock{
 		Now_Monotonic: func() (moment time.Moment) { return 0 },
 		Now_Realtime:  func() (moment time.Moment) { return 0 },
-		Tick:          func() {},
-		Sleep: func(duration time.Duration) {
-			once.Do(func() { close(parked) })
-			<-resume
-		},
 	}
-	return clock, parked, resume
+	sleep = func(duration time.Duration) {
+		once.Do(func() { close(parked) })
+		<-resume
+	}
+	return clock, sleep, parked, resume
 }
 
-// A clock whose monotonic reading advances by step on every read, so a test can drive the
-// rate limiter's token refill deterministically; Sleep returns at once like instant_clock.
-// Only the single drain goroutine reads Now_Monotonic, so the captured counter needs no
-// synchronization.
+// A read-only clock whose monotonic reading advances by step on every read, so a test can
+// drive the rate limiter's token refill deterministically; pair it with no_sleep. Only the
+// single drain goroutine reads Now_Monotonic, so the captured counter needs no synchronization.
 func stepping_clock(step time.Duration) (clock time.Clock) {
 	elapsed := int64(0)
 	return time.Clock{
@@ -305,8 +322,6 @@ func stepping_clock(step time.Duration) (clock time.Clock) {
 			return time.Moment(elapsed)
 		},
 		Now_Realtime: func() (moment time.Moment) { return 0 },
-		Tick:         func() {},
-		Sleep:        func(duration time.Duration) {},
 	}
 }
 
@@ -318,17 +333,17 @@ func capture_interval(t *testing.T, configured time.Duration) (observed time.Dur
 	clock := time.Clock{
 		Now_Monotonic: func() (moment time.Moment) { return 0 },
 		Now_Realtime:  func() (moment time.Moment) { return 0 },
-		Tick:          func() {},
-		Sleep: func(duration time.Duration) {
-			select {
-			case intervals <- duration:
-			default:
-			}
-		},
+	}
+	sleep := func(duration time.Duration) {
+		select {
+		case intervals <- duration:
+		default:
+		}
 	}
 	writer := diode.New(diode.New_Input{
 		Writer:        io.Discard,
 		Clock:         clock,
+		Sleep:         sleep,
 		Poll_Interval: configured,
 	})
 	observed = <-intervals
@@ -349,7 +364,7 @@ const benchmark_line = "Test logging, but use a somewhat realistic message lengt
 // with, so it reflects the steady-state, no-drop path.
 func Benchmark_Write(b *testing.B) {
 	writer := diode.New(diode.New_Input{
-		Writer: io.Discard, Clock: instant_clock(), Count: 1024,
+		Writer: io.Discard, Clock: instant_clock(), Sleep: no_sleep(), Count: 1024,
 	})
 	line := []byte(benchmark_line)
 	b.ReportAllocs()
@@ -367,7 +382,7 @@ func Benchmark_Write(b *testing.B) {
 // atomic-counter contention that the parallel benchmark adds.
 func Benchmark_Write_Serial(b *testing.B) {
 	writer := diode.New(diode.New_Input{
-		Writer: io.Discard, Clock: instant_clock(), Count: 1024,
+		Writer: io.Discard, Clock: instant_clock(), Sleep: no_sleep(), Count: 1024,
 	})
 	line := []byte(benchmark_line)
 	b.ReportAllocs()
@@ -382,7 +397,9 @@ func Benchmark_Write_Serial(b *testing.B) {
 // Benchmark_Write_Full_Ring measures the producer cost when a tiny ring is saturated
 // and dropping, the worst case for collision retries and bucket churn.
 func Benchmark_Write_Full_Ring(b *testing.B) {
-	writer := diode.New(diode.New_Input{Writer: io.Discard, Clock: instant_clock(), Count: 8})
+	writer := diode.New(diode.New_Input{
+		Writer: io.Discard, Clock: instant_clock(), Sleep: no_sleep(), Count: 8,
+	})
 	line := []byte(benchmark_line)
 	b.ReportAllocs()
 	b.ResetTimer()
@@ -468,6 +485,7 @@ func Fuzz_Ring(f *testing.F) {
 		writer := diode.New(diode.New_Input{
 			Writer:  witness,
 			Clock:   instant_clock(),
+			Sleep:   no_sleep(),
 			Count:   count,
 			Alerter: func(missed int, cause diode.Drop_Cause) {},
 		})

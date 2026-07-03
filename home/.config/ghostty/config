@@ -1,7 +1,7 @@
 background          = 000
 theme               = Rose Pine
 font-size           = 16
-font-family         = Iosevka Nerd Font
+font-family         = Iosevka Nerd Font Mono
 window-height       = 9999
 window-width        = 9999
 macos-option-as-alt = true

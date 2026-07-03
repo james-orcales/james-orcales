@@ -11,8 +11,8 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/james-orcales/james-orcales/markdown_to_pdf/internal"
-	"github.com/james-orcales/james-orcales/shared/cli"
+	"local/james-orcales/markdown_to_pdf/internal"
+	"local/james-orcales/shared/cli"
 )
 
 // Markdown_bytes_max caps the input the command reads into its fixed buffer.

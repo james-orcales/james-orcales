@@ -1,74 +1,4 @@
 
-# Specification
-
-These rules govern this SPECIFICATION.md file.
-
-### File Name
-
-The specification lives in a file named exactly `SPECIFICATION.md`.
-
-### Coverage
-
-Only a pure package carries this file; a scopeless run requires it of every pure package.
-Impure packages — `package main` and `default` — are exempt, as are vendored and `example`
-packages.
-
-### Preamble
-
-The specification opens directly with a heading; no content precedes the first `#`.
-
-### Leaf
-
-A `#` is a leaf when it has no `###` children, and a branch when it does — in which case its `###`
-children are the leaves. Only leaves require a test, mirroring Go's namespacing depth.
-
-### Heading Blank Lines
-
-Every heading is preceded and followed by a blank line.
-
-### Heading Level
-
-The specification uses heading levels `#` and `###`, and no others. A purely subjective judgement
-call on the "readable" size difference of the two heading styles.
-
-### Heading Characters
-
-A heading's words are made of letters and digits only.
-
-### Heading Uniqueness
-
-No two `#` share a name; `###` are unique within their parent `#`. Otherwise, one test could satisfy
-multiple sections.
-
-### Section Not Empty
-
-Every leaf is followed by at least one body line; a branch's intro body is optional.
-
-### Section Size
-
-A section holds at most three lines, excluding the blank lines around its heading.
-
-### Section Contiguity
-
-A section's body lines are contiguous; no blank line falls between them.
-
-### Test File Name
-
-Tests live in a file named exactly `specification_test.go`.
-
-### Test Per Heading
-
-Each leaf has a test named from its headings: a top-level `#` leaf is Test_<Heading>, a `###` leaf
-is Test_<Parent>_<Heading>.
-
-### Test Name Normalization
-
-The heading is normalized to Ada_Case to form the test name.
-
-### Test Order
-
-The leaf tests are the file's first declarations, in leaf order, none preceding.
-
 # Diagnostics
 
 A per-file diagnostic is tier one or tier two. Tier one always prints; any tier-one anywhere in
@@ -154,30 +84,6 @@ A CLAUDE.md, AGENTS.md, or SKILL.md spans at most 100 lines.
 
 AGENTS.md and CLAUDE.md exist as a byte-identical pair in one directory, at the repository root or
 one level below.
-
-# Commits
-
-These rules govern the commit history on a branch.
-
-### Subject Size
-
-A commit subject runs to at most 100 characters.
-
-### Conventional Subjects
-
-A commit subject is a lowercase type, an optional (scope), an optional ! breaking marker, then a
-colon, a space, and a non-empty description — the conventional-commits form.
-
-### Fixup Commits
-
-A subject is a fixup when it starts with fixup! or squash!, pairs review with address or apply and
-with comment, feedback, or nit, or reads cr comment, code review comment, review fix, or review nit;
-autosquash such commits into their target.
-
-### Merge Commits
-
-A branch other than `main/master` carries no merge commit; a git-subtree merge is the sole
-exception; required when vendoring another repo's history.
 
 # Component Layout
 
@@ -315,12 +221,12 @@ otherwise make it a free function taking the receiver as its first parameter.
 ### Self Recursion
 
 A function never calls itself by bare name within its own file; method and package-qualified calls
-do not count.
+do not count. A package in opt_out_recursion_ban is exempt.
 
 ### Mutual Recursion
 
 A function never reaches itself through a cycle of bare-name same-file calls; method and
-package-qualified calls do not count.
+package-qualified calls do not count. A package in opt_out_recursion_ban is exempt.
 
 ### Compound Conditions
 
@@ -387,10 +293,6 @@ utilities, len, length). Use sites go unchecked, so the len and cap builtins sta
 A function name's words include no helper, ignoring case; other identifiers may. The narrow ban
 keeps helper from hiding what the function does.
 
-### Whitebox Tests
-
-A test file declares an external test package as `foo_test`; whitebox test packages are banned.
-
 # Source And Test Requirements
 
 These forms are required in source and test files alike.
@@ -415,7 +317,8 @@ A function spans at most seventy lines.
 ### Input Structs
 
 A function whose parameters repeat a type takes a single input struct pointer, named for the
-function and declared just above it; a variadic may remain a separate parameter.
+function and declared just above it, or parted from it only by the struct's own invariant function;
+a variadic may remain a separate parameter.
 
 ### Named Returns
 
@@ -459,7 +362,8 @@ Every struct field of an exported package-level struct carries a doc comment.
 
 ### Name Style
 
-Exported identifiers use Ada_Case, unexported use snake_case, TestMain aside.
+Exported identifiers use Ada_Case, unexported use snake_case, TestMain aside; an exported
+top-level const uses SCREAMING_SNAKE_CASE instead of Ada_Case.
 
 ### Full Words
 
@@ -502,7 +406,8 @@ A package holds exactly ceil(total_sloc/10000) source files.
 
 ### File Count Tests
 
-Test files carry an independent total_sloc count from source files.
+Blackbox (foo_test) and whitebox (foo) test files each carry an independent total_sloc count,
+from source files and from each other.
 
 ### File Count Specification Test
 
@@ -514,14 +419,14 @@ Files sharing a build-tag constraint form an independent group with its own tota
 
 # Deterministic
 
-A package covered by lint.json's deterministic_packages is held, atop purity, to
-bans making it reproducible; opt-in, and the bans bind its _test.go files too.
+Every pure package is held, atop purity, to bans making it reproducible; a package
+in lint.json's pure_but_indeterministic_packages opts out, and the bans bind _test.go too.
 
 ### Entry Format
 
-A deterministic_packages entry names a module's top-level directory and the tier
-auto-applies to the pure packages at or under it; the shared module's libraries
-are named `shared/*` for every library or `shared/<lib>` for one.
+A pure_but_indeterministic_packages entry is an exact-path glob naming a pure package
+to opt out: `shared/io` releases that package, `shared/io/**` its subtree, `*` and
+`**` spanning one path segment or many; a `!`-prefixed entry negates, always winning.
 
 ### Goroutines
 
@@ -556,14 +461,15 @@ the induction exempts.
 
 ### Impurity
 
-Determinism is stricter than purity, so only pure packages join the tier; an
-impure package in a covered subtree (the main package, a default tier) is dropped
-from the expansion, not held to the bans.
+Determinism is stricter than purity, so only pure packages are held; an impure
+package (the main package, a default tier) is never deterministic and needs no
+pure_but_indeterministic_packages entry to be excused.
 
 ### Coverage
 
-A deterministic_packages entry that covers no pure package is reported; a typo, a
-stale path, or a directory holding nothing pure must not silently check nothing.
+A pure_but_indeterministic_packages entry that names a concrete path matching no pure
+package is reported — a typo or stale path releasing nothing; a root-anchored
+wildcard, naming no path, is exempt.
 
 ### Coverage Scope
 
@@ -575,3 +481,36 @@ parses every module.
 
 Stdlib time may be imported only by the shared module's time/default gateway;
 every other shared-module package injects the Clock instead.
+
+# Event Loop
+
+Blocking and non-blocking IO runs on one event loop; pure code submits to it and never drives or
+mints it.
+
+### Driver
+
+The Driver advances time and drives the loop; only package main or a test may mint it
+(Sim_To_IO, New_Operating_System_IO) or name the io.Driver type, so internal takes io.IO and the
+harness drives. The read-only clock constructors mint no Driver and are not gated.
+
+### Gateway
+
+Raw IO stdlib lives only in the io/default and time/default gateways: net, net/http, syscall,
+os/exec, bufio, crypto/tls, os/signal are unimportable elsewhere and os file operations uncallable.
+Route IO through shared/io; instrumentation packages, tests, generated files, and main are exempt.
+
+### Seed
+
+A simulated backend takes only a seed: New_Sim(seed) is the sole entry, the sim type stays
+unexported, and no exported Sim type or Sim_* helper lets a caller script outcomes — so a run is a
+pure function of its seed.
+
+# Configuration
+
+lint.json's path lists share one glob matcher, so one rule keeps every entry unambiguous about
+whether it names a directory or a file.
+
+### Directory Slash
+
+A wildcard-free entry that resolves to a directory ends in a slash and a file entry does not, so
+the slash alone tells them apart. A wildcard entry is exempt, already expressing its shape.

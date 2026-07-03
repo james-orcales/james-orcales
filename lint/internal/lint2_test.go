@@ -13,8 +13,8 @@ import (
 	"testing"
 	"testing/fstest"
 
-	"github.com/james-orcales/james-orcales/lint/internal"
-	"github.com/james-orcales/james-orcales/shared/snap/default"
+	"local/james-orcales/lint/internal"
+	"local/james-orcales/shared/snap/default"
 )
 
 // Additional cases, split to keep each function within the length limit.
@@ -1157,9 +1157,15 @@ var X = 0
 // Test_Snapshot_Bans_Words pins the banned-word checks.
 func Test_Snapshot_Bans_Words(t *testing.T) {
 	run_snapshot_cases(t, []snapshot_case{
-		{Snapshot: snap.Init(`a.go:5:7: identifier "Length" contains banned substring "length"`), Files: snapshot_package(`// Length is a fixture.
+		{
+			Snapshot: snap.Init(`a.go:5:7: identifier "Length" contains banned substring "length"`),
+			Files: snapshot_package(`// Length is a fixture.
 const Length = 0
-`)},
+`),
+			// Length is also an exported const not in SCREAMING_SNAKE_CASE, incidental
+			// to the rule this case pins; drop that diagnostic rather than pin it too.
+			Drop: "Length -> LENGTH",
+		},
 		{Snapshot: snap.Init(`a.go:5:6: identifier "Helper" contains banned substring "helper"`), Files: snapshot_package(`// Helper helps.
 func Helper() (n int) {
 	return 0
@@ -1224,9 +1230,15 @@ func MyName() {
 	println(0)
 }
 `)},
-		{Snapshot: snap.Init(`a.go:5:7: rename Widget_Id -> Widget_Identifier`), Files: snapshot_package(`// Widget_Id is a fixture.
+		{
+			Snapshot: snap.Init(`a.go:5:7: rename Widget_Id -> Widget_Identifier`),
+			Files: snapshot_package(`// Widget_Id is a fixture.
 const Widget_Id = 0
-`)},
+`),
+			// Widget_Id is also an exported const not in SCREAMING_SNAKE_CASE,
+			// incidental to the rule this case pins; drop it rather than pin it too.
+			Drop: "Widget_Id -> WIDGET_ID",
+		},
 		{Snapshot: snap.Init(`a.go:5:6: present participle "parsing" → rename to a noun form`), Files: snapshot_package(`// Parsing is a fixture.
 type Parsing struct {
 	// X is a fixture.
@@ -1448,7 +1460,8 @@ func F() {
 	bytes.NewBuffer(nil)
 }
 `)},
-		{Snapshot: snap.Init(`a.go:8:9: unbounded-http: unbounded API 'http.Get'; use (&http.Client{Timeout: N}).Get(...) instead`), Drop: "impure stdlib call", Files: snapshot_package(`import "net/http"
+		{Snapshot: snap.Init(`a.go:8:9: unbounded-http: unbounded API 'http.Get'; use (&http.Client{Timeout: N}).Get(...) instead
+a.go:4:8: "net/http" is banned outside io/default; route IO through shared/io`), Drop: "impure stdlib call", Files: snapshot_package(`import "net/http"
 
 // F fetches.
 func F(url string) (resp *http.Response, err error) {
@@ -1540,15 +1553,6 @@ import  "strings"
 
 // F does.
 func F() (s string) { return strings.TrimSpace("x") }
-`}},
-		{Snapshot: snap.Init(`a_test.go:2:9: test file must declare 'package <X>_test'; got 'package fixture'`), Files: map[string]string{
-			"a_test.go": `// Package fixture is a fixture.
-package fixture
-
-import "testing"
-
-// Test_X is a fixture.
-func Test_X(t *testing.T) { t.Parallel() }
 `}},
 	})
 }
@@ -1657,7 +1661,8 @@ func Test_Transitive_Purity_Instrumentation_Exemption(t *testing.T) {
 		}
 		fsys[name] = &fstest.MapFile{Data: data}
 	}
-	fsys["lint.json"] = &fstest.MapFile{Data: test_lint_json(t, "fixture", []string{"instr"})}
+	fsys["lint.json"] = &fstest.MapFile{
+		Data: test_lint_json(t, "fixture", []string{"instr/**"})}
 	stdout := &bytes.Buffer{}
 	code := lint_main(t, &lint.Main_Input{Fsys: fsys, Stdout: stdout, Stderr: &bytes.Buffer{}})
 	if bytes.Contains(stdout.Bytes(), []byte("impure dependency")) {
@@ -1737,7 +1742,8 @@ func Test_Module_Discovery_Ignores_Untracked(t *testing.T) {
 		}
 		fsys[name] = &fstest.MapFile{Data: data}
 	}
-	fsys["lint.json"] = &fstest.MapFile{Data: test_lint_json(t, "fixture", []string{"instr"})}
+	fsys["lint.json"] = &fstest.MapFile{
+		Data: test_lint_json(t, "fixture", []string{"instr/**"})}
 	// A gitignored gopls temp module, absent from Tracked, declaring the same path.
 	fsys["tmp/m/go.mod"] = &fstest.MapFile{Data: []byte(gomod)}
 	stdout := &bytes.Buffer{}
@@ -1979,7 +1985,7 @@ func Test_Ignore_Trims_Scan_Set(t *testing.T) {
 		t.Fatalf("control must flag the bad-cased directory: %v", control)
 	}
 	ignored, err := lint.Check_File_System(&lint.Check_File_System_Input{
-		Fsys: fsys, Tracked: tracked, Ignore: []string{"foo"},
+		Fsys: fsys, Tracked: tracked, Ignore: []string{"foo/**"},
 	})
 	if err != nil {
 		t.Fatalf("ignored Check_File_System: %v", err)
@@ -1992,21 +1998,17 @@ func Test_Ignore_Trims_Scan_Set(t *testing.T) {
 	}
 }
 
-// Builds a lint.json carrying the given ignore globs beside the required
-// shared_component and word_replacements. Marshaled from a map rather than
-// lint.Configuration so a renamed or dropped key surfaces as a decode failure
-// instead of compiling silently.
+// Builds a lint.json carrying the given ignore globs, with the other required
+// keys present and valid (via configuration_document, which marshals from a map so
+// a renamed or dropped key surfaces as a decode failure instead of compiling
+// silently).
 func lint_json_ignore(t *testing.T, ignore []string) (data string) {
 	t.Helper()
-	raw, err := json.Marshal(map[string]any{
+	return configuration_document(map[string]any{
 		"shared_component":  "lint_test_no_shared_component",
 		"word_replacements": test_word_replacements(),
 		"ignore":            ignore,
 	})
-	if err != nil {
-		t.Fatalf("lint_json_ignore: %v", err)
-	}
-	return string(raw)
 }
 
 // Lints in-memory files end-to-end (the caller supplies lint.json), marking
@@ -2065,26 +2067,6 @@ func Test_Ignore_Recursive(t *testing.T) {
 	}
 	if strings.Contains(stdout, "bad-Dir") {
 		t.Fatalf("ignored: bad-Dir/** must drop the subtree: %s", stdout)
-	}
-}
-
-// A trailing-slash dir/ entry follows gitignore: it matches the directory and
-// thus drops everything beneath it, including a badly-cased file inside.
-func Test_Ignore_Directory(t *testing.T) {
-	t.Parallel()
-	files := map[string]string{
-		"bad-Dir/Also-Bad.txt": "x\n",
-		"lint.json":            lint_json_ignore(t, []string{"bad-Dir/"}),
-	}
-	code, stdout, stderr := run_lint_tracked(t, files)
-	if code != 0 {
-		t.Fatalf("bad-Dir/ must yield a clean run, got %d; stderr %q", code, stderr)
-	}
-	if strings.Contains(stdout, "bad-Dir") {
-		t.Fatalf("bad-Dir/ must drop the directory name: %s", stdout)
-	}
-	if strings.Contains(stdout, "Also-Bad") {
-		t.Fatalf("bad-Dir/ must drop the subtree file: %s", stdout)
 	}
 }
 
@@ -2162,12 +2144,17 @@ func Test_Ignore_Segment_Glob(t *testing.T) {
 	}
 }
 
-// A malformed, negated, or empty ignore entry is rejected at config-parse time,
-// aborting the run with exit 2 — the same loud failure every other bad lint.json
-// earns.
+// A bare negation, empty, or ?/[ entry, or one path.Match deems malformed, is
+// rejected at config-parse time, aborting the run with exit 2 — the same loud
+// failure every other bad lint.json earns.
 func Test_Ignore_Parse_Rejects(t *testing.T) {
 	t.Parallel()
-	for _, bad := range [][]string{{"!neg"}, {""}, {"bad["}} {
+	// ? and [class] are the path.Match tokens we deliberately do not support — only
+	// * and ** — so even a well-formed class is rejected, not just a malformed "bad[".
+	// "!" negates nothing, and a list of only negation entries can never match
+	// anything (Test_Ignore_Negation covers the accepted, meaningful negation form).
+	bad_entries := [][]string{{"!"}, {""}, {"bad["}, {"a?b"}, {"a[bc]"}, {"!neg", "!other"}}
+	for _, bad := range bad_entries {
 		files := map[string]string{
 			"good.txt":  "x\n",
 			"lint.json": lint_json_ignore(t, bad),
@@ -2179,6 +2166,28 @@ func Test_Ignore_Parse_Rejects(t *testing.T) {
 		if stderr == "" {
 			t.Fatalf("entry %q must explain the rejection on stderr", bad)
 		}
+	}
+}
+
+// A "!"-prefixed entry re-includes a path a broader entry ignored: dir/** drops
+// the whole directory, but !dir/keep-File.txt holds that one path-casing
+// violation out of the drop while its sibling stays dropped.
+func Test_Ignore_Negation(t *testing.T) {
+	t.Parallel()
+	files := map[string]string{
+		"dir/keep-File.txt":  "x\n",
+		"dir/other-File.txt": "x\n",
+		"lint.json":          lint_json_ignore(t, []string{"dir/**", "!dir/keep-File.txt"}),
+	}
+	code, stdout, stderr := run_lint_tracked(t, files)
+	if code != 1 {
+		t.Fatalf("want dir/keep-File.txt still flagged, got %d; stderr %q", code, stderr)
+	}
+	if !strings.Contains(stdout, "keep-File.txt") {
+		t.Fatalf("!dir/keep-File.txt must re-include the ignored path: %s", stdout)
+	}
+	if strings.Contains(stdout, "other-File.txt") {
+		t.Fatalf("dir/** must still drop the rest of the directory: %s", stdout)
 	}
 }
 
@@ -2788,7 +2797,7 @@ func F() (c *http.Client) { return http.DefaultClient }
 			Want_Diag: "impure stdlib call",
 		},
 		{
-			Name: "library uses http.Request type clean",
+			Name: "library uses http.Request type is io-gateway-banned",
 			Files: map[string]string{
 				"a.go": `// Package library x.
 package library
@@ -2804,7 +2813,7 @@ func F(r *http.Request) (h http.Header) {
 }
 `,
 			},
-			Want_Diag: "",
+			Want_Diag: "route IO through shared/io",
 		},
 		{
 			Name: "library calls net.Dial",
@@ -4168,7 +4177,7 @@ func Test_Coverage_Backfill_Module_Index_Hi_Index(t *testing.T) {
 	const module_count = 1025
 	for i_index := 0; i_index < module_count; i_index++ {
 		// Module / package names stay short (numbered suffix) so the
-		// generated identifiers fit within Identifier_Chars_Max; the
+		// generated identifiers fit within IDENTIFIER_CHARS_MAX; the
 		// COUNT of modules is what drives module_index_resolve to its
 		// Hi=1024 index bucket.
 		name := fmt.Sprintf("m%04d", i_index)
@@ -4977,7 +4986,7 @@ func Test_Coverage_Backfill_Check_File_Empty_Source(t *testing.T) {
 	if err != nil {
 		t.Fatalf("parse: %v", err)
 	}
-	diags := lint.Check_File(file_set, file, nil, nil, nil)
+	diags := lint.Check_File(&lint.Check_File_Input{File_Set: file_set, File: file})
 	t.Logf("empty_source diags=%d", len(diags))
 }
 
@@ -5520,10 +5529,10 @@ func Test_Specification_Subheading_Empty(t *testing.T) {
 	}
 }
 
-// Test_Parse_Configuration covers lint.json decoding: a valid document yields
-// the shared module and the allowlist in declaration order; a missing or empty
-// shared_component, an unknown top-level key, and malformed JSON are hard errors;
-// the allowlist is optional and defaults to empty.
+// Test_Parse_Configuration covers lint.json decoding: a document with every key
+// present yields the shared module and the allowlist; a missing required key, an
+// empty value where one is required, an unknown top-level key, a rejected glob,
+// and malformed JSON are all hard errors.
 func Test_Parse_Configuration(t *testing.T) {
 	t.Parallel()
 	for _, tt := range parse_configuration_cases() {
@@ -5556,91 +5565,152 @@ type parse_configuration_case struct {
 // every hard-error form. Split by outcome so each list stays within the function
 // length cap.
 func parse_configuration_cases() (cases []parse_configuration_case) {
-	return append(parse_configuration_valid_cases(), parse_configuration_error_cases()...)
+	cases = append(parse_configuration_valid_cases(), parse_configuration_error_cases()...)
+	return append(cases, parse_configuration_negation_error_cases()...)
 }
 
-// The lint.json documents that decode cleanly: a full document, the minimal
-// required pair, and an accepted ignore list.
+// Renders a lint.json with every required key present and valid. An override
+// replaces a key's value, or deletes the key when the value is nil, so a case can
+// isolate one decode behavior without tripping the all-keys-required guard on an
+// unrelated absent key. Marshaled from a map so each key name lives in one place.
+func configuration_document(overrides map[string]any) (document string) {
+	fields := map[string]any{
+		"shared_component":                   "example.com/lib",
+		"instrumentation_packages":           []string{},
+		"pure_but_indeterministic_packages":  []string{},
+		"word_replacements":                  map[string][]string{"id": {"identifier"}},
+		"ignore":                             []string{},
+		"opt_out_assertion_mandate_packages": []string{},
+		"opt_out_recursion_ban":              []string{},
+	}
+	for key, value := range overrides {
+		if value == nil {
+			delete(fields, key)
+			continue
+		}
+		fields[key] = value
+	}
+	raw, _ := json.Marshal(fields)
+	return string(raw)
+}
+
+// The lint.json documents that decode cleanly: the full document, one with every
+// list empty, and one carrying ignore globs.
 func parse_configuration_valid_cases() (cases []parse_configuration_case) {
 	return []parse_configuration_case{
 		{
 			Name: "valid full document",
-			Input: `{"shared_component":"example.com/lib",` +
-				`"instrumentation_packages":["a/b","c/d"],` +
-				`"word_replacements":{"id":["identifier"]}}`,
+			Input: configuration_document(
+				map[string]any{"instrumentation_packages": []string{"a/b", "c/d"}}),
 			Want_Shared: "example.com/lib",
 			Want_List:   []string{"a/b", "c/d"},
 		},
 		{
-			Name: "shared_component and table only, empty allowlist",
-			Input: `{"shared_component":"example.com/lib",` +
-				`"word_replacements":{"id":["identifier"]}}`,
+			Name:        "empty lists accepted",
+			Input:       configuration_document(nil),
 			Want_Shared: "example.com/lib",
 		},
 		{
-			Name: "ignore accepted",
-			Input: `{"shared_component":"x","word_replacements":{"id":["identifier"]},` +
-				`"ignore":["big_bang/dotfiles","weird.md"]}`,
-			Want_Shared: "x",
+			Name: "ignore globs accepted",
+			Input: configuration_document(
+				map[string]any{"ignore": []string{"a/b", "c.md"}}),
+			Want_Shared: "example.com/lib",
+		},
+		{
+			Name: "mixed positive and negated globs accepted",
+			Input: configuration_document(
+				map[string]any{"ignore": []string{"keep/**", "!keep/sub"}}),
+			Want_Shared: "example.com/lib",
 		},
 	}
 }
 
-// Every hard-error lint.json form: missing/empty shared_component, a removed or
-// unknown key, a rejected glob, missing/empty word_replacements, a wrong value
-// type, and malformed JSON.
+// Every hard-error lint.json form, each with all other keys valid so the case
+// reaches the check it names: a missing required key (including the newest,
+// opt_out_recursion_ban), an empty value where one is required, an unknown or
+// removed key, a rejected glob, a wrong value type, and malformed JSON.
 func parse_configuration_error_cases() (cases []parse_configuration_case) {
 	return []parse_configuration_case{
 		{
 			Name:     "missing shared_component rejected",
-			Input:    `{"instrumentation_packages":[]}`,
+			Input:    configuration_document(map[string]any{"shared_component": nil}),
+			Want_Err: true,
+		},
+		{
+			Name: "missing opt_out_recursion_ban rejected",
+			Input: configuration_document(
+				map[string]any{"opt_out_recursion_ban": nil}),
 			Want_Err: true,
 		},
 		{
 			Name:     "empty shared_component rejected",
-			Input:    `{"shared_component":""}`,
-			Want_Err: true,
-		},
-		{
-			Name:     "unknown key rejected",
-			Input:    `{"shared_component":"x","global_api_allowlst":[]}`,
-			Want_Err: true,
-		},
-		{
-			Name: "removed path_casing_allowlist rejected",
-			Input: `{"shared_component":"x","word_replacements":{"id":["identifier"]},` +
-				`"path_casing_allowlist":["foo"]}`,
-			Want_Err: true,
-		},
-		{
-			Name: "ignore negation rejected",
-			Input: `{"shared_component":"x","word_replacements":{"id":["identifier"]},` +
-				`"ignore":["!keep"]}`,
-			Want_Err: true,
-		},
-		{
-			Name:     "wrong value type rejected",
-			Input:    `{"shared_component":"x","instrumentation_packages":"no"}`,
-			Want_Err: true,
-		},
-		{
-			Name:     "malformed json rejected",
-			Input:    `{`,
+			Input:    configuration_document(map[string]any{"shared_component": ""}),
 			Want_Err: true,
 		},
 		{
 			Name:     "missing word_replacements rejected",
-			Input:    `{"shared_component":"x"}`,
+			Input:    configuration_document(map[string]any{"word_replacements": nil}),
 			Want_Err: true,
 		},
 		{
-			Name:     "empty word_replacements rejected",
-			Input:    `{"shared_component":"x","word_replacements":{}}`,
+			Name: "empty word_replacements rejected",
+			Input: configuration_document(
+				map[string]any{"word_replacements": map[string][]string{}}),
 			Want_Err: true,
 		},
 		{
-			Name:     "unknown key word_replacement typo rejected",
-			Input:    `{"shared_component":"x","word_replacement":{"id":["identifier"]}}`,
+			Name: "unknown key rejected",
+			Input: configuration_document(
+				map[string]any{"global_api_allowlst": []string{}}),
+			Want_Err: true,
+		},
+		{
+			Name: "removed path_casing_allowlist rejected",
+			Input: configuration_document(
+				map[string]any{"path_casing_allowlist": []string{"foo"}}),
+			Want_Err: true,
+		},
+		{
+			Name: "unknown key word_replacement typo rejected",
+			Input: configuration_document(
+				map[string]any{"word_replacement": []string{}}),
+			Want_Err: true,
+		},
+		{
+			Name: "wrong value type rejected",
+			Input: configuration_document(
+				map[string]any{"instrumentation_packages": "no"}),
+			Want_Err: true,
+		},
+		{
+			Name:     "malformed json rejected",
+			Input:    "{",
+			Want_Err: true,
+		},
+	}
+}
+
+// The negation-specific hard-error forms, split from parse_configuration_error_cases
+// to keep each case-returning function within the function-length cap: a bare "!",
+// a "!" negating only whitespace, and a list that is entirely negation entries.
+func parse_configuration_negation_error_cases() (cases []parse_configuration_case) {
+	return []parse_configuration_case{
+		{
+			Name: "bare negation rejected",
+			Input: configuration_document(
+				map[string]any{"ignore": []string{"!"}}),
+			Want_Err: true,
+		},
+		{
+			Name: "negation of only whitespace rejected",
+			Input: configuration_document(
+				map[string]any{"ignore": []string{"!  "}}),
+			Want_Err: true,
+		},
+		{
+			Name: "all-negation list rejected",
+			Input: configuration_document(
+				map[string]any{"ignore": []string{"!keep", "!other"}}),
 			Want_Err: true,
 		},
 	}
@@ -5755,9 +5825,9 @@ func Test_Scope_Parses_Target_And_Shared_Components(t *testing.T) {
 	}
 }
 
-// Test_Deterministic_Library_Glob verifies the shared/* form — which names every
-// library in a single module — expands to each child package. The trailing /* is
-// stripped to the parent, so it covers the same subtree as the bare directory.
+// Test_Deterministic_Library_Glob verifies a `*` entry releases each direct child
+// package of a directory — `*` spans one path segment — so both pkg/a and pkg/b are
+// released, which a bare "pkg" entry (matching only the empty "pkg" dir) would not.
 func Test_Deterministic_Library_Glob(t *testing.T) {
 	t.Parallel()
 	files := map[string][]byte{
@@ -5768,21 +5838,51 @@ func Test_Deterministic_Library_Glob(t *testing.T) {
 			"func F() {\n\tgo done()\n}\n\n" +
 			"func done() {\n\treturn\n}\n"),
 		"pkg/b/b.go": []byte("// Package b is a fixture.\n" +
-			"package b\n"),
+			"package b\n\n" +
+			"// G is a fixture.\n" +
+			"func G() {\n\tselect {}\n}\n"),
 	}
-	if !specification_diagnosed(deterministic_self_diagnostics(t, files, []string{"pkg/*"}),
-		"must not start a goroutine") {
-		t.Fatal("the shared/* form must expand to each library in the module")
+	diags := deterministic_self_diagnostics(t, files, []string{"pkg/*"})
+	if specification_diagnosed(diags, "must not start a goroutine") {
+		t.Fatal("a * entry must release each direct child package")
+	}
+	if specification_diagnosed(diags, "must not use select") {
+		t.Fatal("a * entry must release each direct child package")
 	}
 }
 
-// Test_Deterministic_Induction_Over_Expansion verifies the import-induction
-// membership is the expanded set of concrete pure packages, not the raw entry: a
-// package covered by a directory entry is itself held to the tier (its goroutine
-// flagged) and may import a sibling the same entry covers (no induction
-// violation). An exact-match set keyed by the raw "pkg/grp" entry would match
-// neither package, so the goroutine would go unflagged.
-func Test_Deterministic_Induction_Over_Expansion(t *testing.T) {
+// Test_Deterministic_Negation_Holds_Package verifies a "!"-prefixed entry holds
+// one package to the deterministic tier despite a broader release entry: pkg/keep
+// stays covered (its goroutine is flagged) while pkg/other, matched only by the
+// broader entry, is released.
+func Test_Deterministic_Negation_Holds_Package(t *testing.T) {
+	t.Parallel()
+	files := map[string][]byte{
+		"go.mod": []byte("module fixture\n\ngo 1.25\n"),
+		"pkg/keep/keep.go": []byte("// Package keep is a fixture.\n" +
+			"package keep\n\n" +
+			"// F is a fixture.\n" +
+			"func F() {\n\tgo done()\n}\n\n" +
+			"func done() {\n\treturn\n}\n"),
+		"pkg/other/other.go": []byte("// Package other is a fixture.\n" +
+			"package other\n\n" +
+			"// G is a fixture.\n" +
+			"func G() {\n\tselect {}\n}\n"),
+	}
+	diags := deterministic_self_diagnostics(t, files, []string{"pkg/*", "!pkg/keep"})
+	if !specification_diagnosed(diags, "must not start a goroutine") {
+		t.Fatal("!pkg/keep must hold pkg/keep to the deterministic tier")
+	}
+	if specification_diagnosed(diags, "must not use select") {
+		t.Fatal("pkg/* must still release pkg/other, which the negation does not name")
+	}
+}
+
+// Test_Deterministic_Sibling_Import verifies a deterministic package importing
+// another deterministic first-party package satisfies the induction — no violation
+// — while still held to the bans itself. With no exceptions every pure package is
+// deterministic, so the sibling import is clean and only the goroutine is flagged.
+func Test_Deterministic_Sibling_Import(t *testing.T) {
 	t.Parallel()
 	files := map[string][]byte{
 		"go.mod": []byte("module fixture\n\ngo 1.25\n"),
@@ -5797,11 +5897,11 @@ func Test_Deterministic_Induction_Over_Expansion(t *testing.T) {
 			"// G is a fixture.\n" +
 			"func G() {\n\treturn\n}\n"),
 	}
-	diags := deterministic_self_diagnostics(t, files, []string{"pkg/grp"})
+	diags := deterministic_self_diagnostics(t, files, nil)
 	if !specification_diagnosed(diags, "must not start a goroutine") {
-		t.Fatal("a package covered by a directory entry must be held to the tier")
+		t.Fatal("a pure package is held to the tier by default")
 	}
 	if specification_diagnosed(diags, "import only deterministic packages") {
-		t.Fatal("a sibling covered by the same entry must satisfy the induction")
+		t.Fatal("importing a deterministic sibling must satisfy the induction")
 	}
 }

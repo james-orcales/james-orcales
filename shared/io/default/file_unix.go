@@ -3,11 +3,21 @@
 package io
 
 import (
+	"errors"
 	"net"
+	"path/filepath"
 	"syscall"
 
-	"github.com/james-orcales/james-orcales/shared/io"
+	"local/james-orcales/shared/io"
 )
+
+// Bounds one readdir pass into a fixed buffer, so a large directory is read in repeated
+// passes rather than one unbounded allocation.
+const directory_read_bytes = 8192
+
+// Caps the number of readdir passes so a pathological directory errors rather than looping
+// unbounded; 4096 passes of directory_read_bytes cover hundreds of thousands of entries.
+const directory_read_passes_max = 4096
 
 // Reads up to len(buffer) bytes from file at offset via the pread syscall — the raw
 // positioned read TigerBeetle's posix backend uses.
@@ -18,6 +28,82 @@ func read_at(file io.File, buffer []byte, offset int64) (count int, err error) {
 // Writes buffer to file at offset via the pwrite syscall.
 func write_at(file io.File, buffer []byte, offset int64) (count int, err error) {
 	return syscall.Pwrite(int(file), buffer, offset)
+}
+
+// Opens the file at path for reading via the open syscall, returning its descriptor.
+func file_open(path string) (descriptor int, err error) {
+	return syscall.Open(path, syscall.O_RDONLY, 0)
+}
+
+// Creates or truncates path for writing via the open syscall, returning its descriptor.
+func file_create(path string) (descriptor int, err error) {
+	return syscall.Open(path, syscall.O_WRONLY|syscall.O_CREAT|syscall.O_TRUNC, 0o644)
+}
+
+// Reports whether path exists and is a directory via lstat. An absent path is Exists
+// false with a nil error, so a caller distinguishes "not there" from a real stat failure.
+func file_status(path string) (status io.File_Status, err error) {
+	metadata := syscall.Stat_t{}
+	stat_err := syscall.Lstat(path, &metadata)
+	if stat_err == syscall.ENOENT {
+		return io.File_Status{}, nil
+	}
+	if stat_err != nil {
+		return io.File_Status{}, stat_err
+	}
+	return io.File_Status{
+		Exists:       true,
+		Is_Directory: metadata.Mode&syscall.S_IFMT == syscall.S_IFDIR,
+	}, nil
+}
+
+// Lists path's immediate children, each named with whether it is a directory. It reads the
+// directory's raw entries in fixed-size passes and stats each name for its kind — the same
+// per-entry stat a walk over os.DirFS performs.
+func file_read_directory(path string) (entries []io.Directory_Entry, err error) {
+	descriptor, open_err := syscall.Open(path, syscall.O_RDONLY, 0)
+	if open_err != nil {
+		return nil, open_err
+	}
+	defer syscall.Close(descriptor)
+	buffer := make([]byte, directory_read_bytes)
+	for pass_index := 0; pass_index < directory_read_passes_max; pass_index++ {
+		count, read_err := syscall.ReadDirent(descriptor, buffer)
+		if read_err != nil {
+			return nil, read_err
+		}
+		if count <= 0 {
+			return entries, nil
+		}
+		_, _, names := syscall.ParseDirent(buffer[:count], -1, nil)
+		for _, name := range names {
+			status, status_err := file_status(filepath.Join(path, name))
+			if status_err != nil {
+				return nil, status_err
+			}
+			entries = append(entries, io.Directory_Entry{
+				Name:         name,
+				Is_Directory: status.Is_Directory,
+			})
+		}
+	}
+	return nil, errors.New("io: directory exceeds the maximum entry count")
+}
+
+// Reports the remote IP address of descriptor via getpeername; a non-IP peer yields the
+// empty address with no error.
+func socket_peer_address(descriptor int) (address string, err error) {
+	name, get_err := syscall.Getpeername(descriptor)
+	if get_err != nil {
+		return "", get_err
+	}
+	switch peer := name.(type) {
+	case *syscall.SockaddrInet4:
+		return net.IP(peer.Addr[:]).String(), nil
+	case *syscall.SockaddrInet6:
+		return net.IP(peer.Addr[:]).String(), nil
+	}
+	return "", nil
 }
 
 // Reports whether err is the non-blocking "try again" signal that keeps an operation
@@ -150,4 +236,38 @@ func socket_send(descriptor int, buffer []byte) (count int, again bool, err erro
 // Releases descriptor.
 func socket_close(descriptor int) (err error) {
 	return syscall.Close(descriptor)
+}
+
+// Creates a non-blocking self-pipe used to wake the loop out of a blocking poll when a
+// worker or TLS goroutine posts a completion from off the loop thread.
+func wake_create() (read int, write int, err error) {
+	pair := [2]int{}
+	pipe_err := syscall.Pipe(pair[:])
+	if pipe_err != nil {
+		return -1, -1, pipe_err
+	}
+	syscall.SetNonblock(pair[0], true)
+	syscall.SetNonblock(pair[1], true)
+	return pair[0], pair[1], nil
+}
+
+// Writes one byte to the wake pipe so a blocked poll returns; a full pipe's failed
+// non-blocking write is ignored, since one pending byte already wakes the loop.
+func wake_poke(write int) {
+	one := [1]byte{}
+	syscall.Write(write, one[:])
+}
+
+// Drains the wake pipe's pending bytes, bounded so a flood cannot spin the loop.
+func wake_drain(read int) {
+	scratch := make([]byte, 4096)
+	for pass_index := 0; pass_index < wake_drain_passes_max; pass_index++ {
+		count, err := syscall.Read(read, scratch)
+		if err != nil {
+			return
+		}
+		if count < len(scratch) {
+			return
+		}
+	}
 }

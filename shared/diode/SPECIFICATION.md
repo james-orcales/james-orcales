@@ -17,7 +17,7 @@ are overwritten and the newest survive.
 # Drop Count Is Reported
 
 When the drain finds the writer has lapped it, the Alerter is called with the number
-of entries that were overwritten unread and the cause Drop_Overflow.
+of entries that were overwritten unread and the cause DROP_OVERFLOW.
 
 # Order Is Preserved
 
@@ -25,7 +25,7 @@ Entries the drain delivers reach the sink in the order they were written.
 
 # Poll Interval Is Configurable
 
-The drain sleeps Poll_Interval on an empty ring via the injected clock; an unset
+The drain sleeps Poll_Interval on an empty ring via the injected sleep; an unset
 interval defaults to one hundred milliseconds.
 
 # Close Flushes And Stops
@@ -41,5 +41,5 @@ diode shedding load under sustained overload allocates nothing per dropped line.
 # Rate Limit Sheds By Bytes
 
 With a bytes-per-second rate limit, the drain delivers up to the burst of bytes and sheds
-the rest without blocking, reporting each shed line with cause Drop_Rate_Limit; tokens
+the rest without blocking, reporting each shed line with cause DROP_RATE_LIMIT; tokens
 refill over the injected clock so later lines pass again.

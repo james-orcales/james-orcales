@@ -1,28 +1,32 @@
 {
   "shared_component": "shared",
   "instrumentation_packages": [
-          "shared/invariant",
-          "shared/snap",
-          "shared/jlog"
+          "shared/invariant/**",
+          "shared/snap/**",
+          "shared/jlog/**"
   ],
-  "deterministic_packages": [
-    "markdown_to_pdf",
-    "shared/cli",
-    "shared/time",
-    "shared/io",
-    "shared/sh",
-    "shared/vsr",
-    "shared/levenshtein",
-    "shared/prng",
-    "shared/fixedpoint",
-    "setup",
-    "maddox"
+  "pure_but_indeterministic_packages": [
+    "lint/internal/",
+    "sloc/internal/",
+    "shared/diode/",
+    "shared/invariant/",
+    "shared/jlog/",
+    "shared/snap/"
   ],
   "ignore": [
           "install_golang.sh",
           "build.go",
-          "home",
-          "documentation/youtube"
+          "home/**",
+          "documentation/youtube/**"
+  ],
+  "opt_out_recursion_ban": [],
+  "opt_out_assertion_mandate_packages": [
+          "disk_usage/**",
+          "lint/**",
+          "markdown_to_pdf/**",
+          "setup/**",
+          "sloc/**",
+          "shared/**"
   ],
   "word_replacements": {
     "len":       [],

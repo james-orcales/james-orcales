@@ -9,7 +9,7 @@ import (
 	"testing"
 	"testing/fstest"
 
-	"github.com/james-orcales/james-orcales/lint/internal"
+	"local/james-orcales/lint/internal"
 )
 
 // Gofmt_must formats test sources so fixtures don't need to be hand-perfect
@@ -1606,6 +1606,16 @@ func test_lint_json(t *testing.T, shared_component string, allowlist []string) (
 		Shared_Component:         shared_component,
 		Instrumentation_Packages: allowlist,
 		Word_Replacements:        test_word_replacements(),
+		// The behavioral suite isolates one rule per fixture; the type-invariant
+		// rule fires on every typed fixture, so disable it wholesale here. Its own
+		// coverage lives in the Test_Invariants_* doctrine tests and the
+		// Test_Type_Invariant_* behavioral tests, which drive the rule directly.
+		Invariant_Exempt_Packages: []string{"**"},
+		// Likewise the deterministic tier now binds every pure package by default,
+		// so a fixture using time/sync/a channel to exercise another rule would trip
+		// it; "**" releases the whole tree. The Test_Deterministic_* tests drive the
+		// tier directly.
+		Pure_But_Indeterministic: []string{"**"},
 	})
 	if err != nil {
 		t.Fatalf("test_lint_json: %v", err)
@@ -1784,6 +1794,12 @@ func lint_output_minus(
 	}
 	all, err := lint.Check_File_System(&lint.Check_File_System_Input{
 		Fsys: fsys, Shared_Component: doctrine_shared_component_directory,
+		// The doctrine table targets other rules; the invariant rules (which fire
+		// on every typed field/param/return) and the deterministic tier (which now
+		// binds every pure package) are exercised by their own tests, so disable
+		// both wholesale here — "." exempts the invariant tree, "**" the pure tree.
+		Invariant_Exempt_Packages: []string{"**"},
+		Pure_But_Indeterministic:  []string{"**"},
 	})
 	if err != nil {
 		t.Fatalf("Check_File_System: %v", err)
@@ -2542,6 +2558,75 @@ func F(N int) (result int) {
 	run_diag_table(t, tests)
 }
 
+// Test_Naming_Constant_Casing verifies the const-specific carve-out of the Name
+// Style rule: an exported top-level const must be SCREAMING_SNAKE_CASE, not the
+// general Ada_Case every other exported identifier takes — including a name that
+// already happens to satisfy ada_case_re's acronym leniency (Retry_Count_Max),
+// which must still fail since it isn't fully uppercase. Unexported and
+// function-local consts are unaffected regressions.
+func Test_Naming_Constant_Casing(t *testing.T) {
+	t.Parallel()
+	run_diag_table(t, []struct {
+		Name      string
+		Files     map[string]string
+		Want_Diag string
+	}{
+		{
+			Name: "exported const not screaming is flagged",
+			Files: map[string]string{
+				"test.go": `package main
+
+const BadName = 0
+`,
+			},
+			Want_Diag: "BadName -> BAD_NAME",
+		},
+		{
+			Name: "exported const already passing ada_case_re must still flag",
+			Files: map[string]string{
+				"test.go": `package main
+
+const Retry_Count_Max = 3
+`,
+			},
+			Want_Diag: "Retry_Count_Max -> RETRY_COUNT_MAX",
+		},
+		{
+			Name: "exported const already screaming is clean",
+			Files: map[string]string{
+				"test.go": `package main
+
+const RETRY_COUNT_MAX = 3
+`,
+			},
+			Want_Diag: "",
+		},
+		{
+			Name: "unexported const is unaffected",
+			Files: map[string]string{
+				"test.go": `package main
+
+const retry_count_max = 3
+`,
+			},
+			Want_Diag: "",
+		},
+		{
+			Name: "function-local const is unaffected",
+			Files: map[string]string{
+				"test.go": `package main
+
+func F() {
+	const Local_Thing = 1
+	println(Local_Thing)
+}
+`,
+			},
+			Want_Diag: "",
+		},
+	})
+}
+
 // Test_Naming_Arithmetic verifies the tier-3 operand-suffix invariant:
 // when both operands of `+` or `-` carry recognized suffixes, the
 // combination must match the table (_index - _index = _count, etc.).
@@ -3007,8 +3092,10 @@ func Test_Names_Vocabulary_Part2(t *testing.T) {
 func Test_Vocabulary_Sourced_From_Lint_Json(t *testing.T) {
 	t.Parallel()
 	fsys := fstest.MapFS{
-		"lint.json": &fstest.MapFile{Data: []byte(
-			`{"shared_component":"x","word_replacements":{"wibble":["wobble"]}}`)},
+		"lint.json": &fstest.MapFile{Data: []byte(configuration_document(map[string]any{
+			"shared_component":  "x",
+			"word_replacements": map[string][]string{"wibble": {"wobble"}},
+		}))},
 		"test.go": &fstest.MapFile{Data: gofmt_must(t, `package main
 
 func F() (x int) {
@@ -4274,62 +4361,6 @@ func (t T) Foo() (result int) {
 `,
 			},
 			Want_Diag: "does not satisfy any stdlib interface",
-		},
-	})
-}
-
-// Test_Test_Package verifies that _test.go files must declare
-// `package <X>_test`; main, main_test, and whitebox packages are flagged.
-func Test_Test_Package(t *testing.T) {
-	t.Parallel()
-	run_diag_table(t, []struct {
-		Name      string
-		Files     map[string]string
-		Want_Diag string
-	}{
-
-		{
-			Name: "whitebox package flagged",
-			Files: map[string]string{
-				"foo_test.go": `package foo
-
-func f() (result int) { return 1 }
-`,
-			},
-			Want_Diag: "test file must declare",
-		},
-
-		{
-			Name: "package main flagged",
-			Files: map[string]string{
-				"foo_test.go": `package main
-
-func f() (result int) { return 1 }
-`,
-			},
-			Want_Diag: "test file must declare",
-		},
-
-		{
-			Name: "package main_test flagged",
-			Files: map[string]string{
-				"foo_test.go": `package main_test
-
-func f() (result int) { return 1 }
-`,
-			},
-			Want_Diag: "test file must declare",
-		},
-
-		{
-			Name: "blackbox _test package allowed",
-			Files: map[string]string{
-				"foo_test.go": `package foo_test
-
-func f() (result int) { return 1 }
-`,
-			},
-			Want_Diag: "",
 		},
 	})
 }

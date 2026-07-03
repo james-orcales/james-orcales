@@ -3,7 +3,7 @@ package vsr_test
 import (
 	"testing"
 
-	"github.com/james-orcales/james-orcales/shared/vsr"
+	"local/james-orcales/shared/vsr"
 )
 
 // Test_Normal_Operation_Append: a client command received by the primary becomes one log entry
@@ -13,7 +13,7 @@ func Test_Normal_Operation_Append(t *testing.T) {
 	vsr.Replica_Receive(&vsr.Replica_Receive_Input{
 		Replica: &primary,
 		Message: vsr.Message{
-			Kind: vsr.Message_Kind_Request, To: 0, Command: []byte("set x=1"),
+			Kind: vsr.MESSAGE_KIND_REQUEST, To: 0, Command: []byte("set x=1"),
 		},
 	})
 	if primary.Op != 1 {
@@ -38,7 +38,7 @@ func Test_Normal_Operation_Prepare(t *testing.T) {
 	output := vsr.Replica_Receive(&vsr.Replica_Receive_Input{
 		Replica: &primary,
 		Message: vsr.Message{
-			Kind: vsr.Message_Kind_Request, To: 0, Command: []byte("set x=1"),
+			Kind: vsr.MESSAGE_KIND_REQUEST, To: 0, Command: []byte("set x=1"),
 		},
 	})
 	if len(output.Messages) != 2 {
@@ -46,7 +46,7 @@ func Test_Normal_Operation_Prepare(t *testing.T) {
 	}
 	recipients := map[vsr.Replica_Identifier]bool{}
 	for _, message := range output.Messages {
-		if message.Kind != vsr.Message_Kind_Prepare {
+		if message.Kind != vsr.MESSAGE_KIND_PREPARE {
 			t.Errorf("expected a Prepare, got kind %d", message.Kind)
 		}
 		if message.From != 0 {
@@ -80,7 +80,7 @@ func Test_Normal_Operation_Prepare(t *testing.T) {
 func Test_Normal_Operation_Prepare_Ok(t *testing.T) {
 	backup := vsr.Replica{Identifier: 1, Configuration: vsr.Configuration{0, 1, 2}}
 	prepare := vsr.Message{
-		Kind: vsr.Message_Kind_Prepare, From: 0, To: 1, View: 0,
+		Kind: vsr.MESSAGE_KIND_PREPARE, From: 0, To: 1, View: 0,
 		Op: 1, Entries: []vsr.Log_Entry{{View: 0, Command: []byte("set x=1")}},
 	}
 	output := vsr.Replica_Receive(&vsr.Replica_Receive_Input{
@@ -96,7 +96,7 @@ func Test_Normal_Operation_Prepare_Ok(t *testing.T) {
 		t.Fatalf("expected one Prepare_Ok, got %d messages", len(output.Messages))
 	}
 	ack := output.Messages[0]
-	if ack.Kind != vsr.Message_Kind_Prepare_Ok {
+	if ack.Kind != vsr.MESSAGE_KIND_PREPARE_OK {
 		t.Errorf("expected a Prepare_Ok, got %+v", ack)
 	}
 	if ack.From != 1 {
@@ -111,14 +111,14 @@ func Test_Normal_Operation_Prepare_Ok(t *testing.T) {
 
 	// A Prepare that skips an op (the backup is at op 1, this is op 3) is not applied.
 	skip := vsr.Message{
-		Kind: vsr.Message_Kind_Prepare, From: 0, To: 1, View: 0,
+		Kind: vsr.MESSAGE_KIND_PREPARE, From: 0, To: 1, View: 0,
 		Op: 3, Entries: []vsr.Log_Entry{{View: 0, Command: []byte("set z=9")}},
 	}
 	output = vsr.Replica_Receive(&vsr.Replica_Receive_Input{Replica: &backup, Message: skip})
 	if backup.Op != 1 {
 		t.Errorf("expected a skipped op to be ignored, op advanced to %d", backup.Op)
 	}
-	if _, acked := first_message(output.Messages, vsr.Message_Kind_Prepare_Ok); acked {
+	if _, acked := first_message(output.Messages, vsr.MESSAGE_KIND_PREPARE_OK); acked {
 		t.Errorf("expected no Prepare_Ok for a skipped op, got %+v", output.Messages)
 	}
 }
@@ -131,14 +131,14 @@ func Test_Normal_Operation_Commit(t *testing.T) {
 	vsr.Replica_Receive(&vsr.Replica_Receive_Input{
 		Replica: &primary,
 		Message: vsr.Message{
-			Kind: vsr.Message_Kind_Request, To: 0, Command: []byte("set x=1"),
+			Kind: vsr.MESSAGE_KIND_REQUEST, To: 0, Command: []byte("set x=1"),
 		},
 	})
 
 	output := vsr.Replica_Receive(&vsr.Replica_Receive_Input{
 		Replica: &primary,
 		Message: vsr.Message{
-			Kind: vsr.Message_Kind_Prepare_Ok, From: 1, To: 0, View: 0, Op: 1,
+			Kind: vsr.MESSAGE_KIND_PREPARE_OK, From: 1, To: 0, View: 0, Op: 1,
 		},
 	})
 	if primary.Commit != 1 {
@@ -154,7 +154,7 @@ func Test_Normal_Operation_Commit(t *testing.T) {
 	output = vsr.Replica_Receive(&vsr.Replica_Receive_Input{
 		Replica: &primary,
 		Message: vsr.Message{
-			Kind: vsr.Message_Kind_Prepare_Ok, From: 1, To: 0, View: 0, Op: 1,
+			Kind: vsr.MESSAGE_KIND_PREPARE_OK, From: 1, To: 0, View: 0, Op: 1,
 		},
 	})
 	if primary.Commit != 1 {
@@ -177,13 +177,13 @@ func Test_Normal_Operation_Commit_Broadcast(t *testing.T) {
 	vsr.Replica_Receive(&vsr.Replica_Receive_Input{
 		Replica: &primary,
 		Message: vsr.Message{
-			Kind: vsr.Message_Kind_Request, To: 0, Command: []byte("set x=1"),
+			Kind: vsr.MESSAGE_KIND_REQUEST, To: 0, Command: []byte("set x=1"),
 		},
 	})
 	vsr.Replica_Receive(&vsr.Replica_Receive_Input{
 		Replica: &primary,
 		Message: vsr.Message{
-			Kind: vsr.Message_Kind_Prepare_Ok, From: 1, To: 0, View: 0, Op: 1,
+			Kind: vsr.MESSAGE_KIND_PREPARE_OK, From: 1, To: 0, View: 0, Op: 1,
 		},
 	})
 
@@ -198,7 +198,7 @@ func Test_Normal_Operation_Commit_Broadcast(t *testing.T) {
 			len(output.Messages))
 	}
 	for _, message := range output.Messages {
-		if message.Kind != vsr.Message_Kind_Commit {
+		if message.Kind != vsr.MESSAGE_KIND_COMMIT {
 			t.Errorf("expected a Commit, got %+v", message)
 		}
 		if message.From != 0 {
@@ -208,7 +208,7 @@ func Test_Normal_Operation_Commit_Broadcast(t *testing.T) {
 			t.Errorf("expected the Commit to carry commit 1, got %+v", message)
 		}
 	}
-	if output.Timer.Kind != vsr.Timer_Kind_Commit {
+	if output.Timer.Kind != vsr.TIMER_KIND_COMMIT {
 		t.Errorf("expected the heartbeat timer re-armed, got %+v", output.Timer)
 	}
 	if output.Timer.Deadline != 20 {
@@ -231,7 +231,7 @@ func Test_Normal_Operation_Commit_Apply(t *testing.T) {
 		vsr.Replica_Receive(&vsr.Replica_Receive_Input{
 			Replica: &backup,
 			Message: vsr.Message{
-				Kind: vsr.Message_Kind_Prepare, From: 0, To: 1, View: 0,
+				Kind: vsr.MESSAGE_KIND_PREPARE, From: 0, To: 1, View: 0,
 				Op:      vsr.Op(op + 1),
 				Entries: []vsr.Log_Entry{{View: 0, Command: []byte(command)}},
 			},
@@ -246,7 +246,7 @@ func Test_Normal_Operation_Commit_Apply(t *testing.T) {
 	output := vsr.Replica_Receive(&vsr.Replica_Receive_Input{
 		Replica: &backup,
 		Message: vsr.Message{
-			Kind: vsr.Message_Kind_Commit, From: 0, To: 1, View: 0, Commit: 5,
+			Kind: vsr.MESSAGE_KIND_COMMIT, From: 0, To: 1, View: 0, Commit: 5,
 		},
 	})
 	if backup.Commit != 2 {
@@ -281,11 +281,11 @@ func Test_Normal_Operation_Duplicate_Request(t *testing.T) {
 	}
 	// Append and commit op 1 for client 7, request 3, so it becomes executed.
 	receive(&primary, vsr.Message{
-		Kind: vsr.Message_Kind_Request, To: 0, Client: 7, Request_Number: 3,
+		Kind: vsr.MESSAGE_KIND_REQUEST, To: 0, Client: 7, Request_Number: 3,
 		Command: []byte("set x=1"),
 	})
 	receive(&primary, vsr.Message{
-		Kind: vsr.Message_Kind_Prepare_Ok, From: 1, To: 0, View: 0, Op: 1,
+		Kind: vsr.MESSAGE_KIND_PREPARE_OK, From: 1, To: 0, View: 0, Op: 1,
 	})
 	if calls != 1 {
 		t.Fatalf("expected one execution after commit, got %d", calls)
@@ -293,7 +293,7 @@ func Test_Normal_Operation_Duplicate_Request(t *testing.T) {
 
 	// A duplicate of the executed request: not re-appended, but the cached reply is re-sent.
 	output := receive(&primary, vsr.Message{
-		Kind: vsr.Message_Kind_Request, To: 0, Client: 7, Request_Number: 3,
+		Kind: vsr.MESSAGE_KIND_REQUEST, To: 0, Client: 7, Request_Number: 3,
 		Command: []byte("set x=1"),
 	})
 	if primary.Op != 1 {
@@ -302,7 +302,7 @@ func Test_Normal_Operation_Duplicate_Request(t *testing.T) {
 	if calls != 1 {
 		t.Fatalf("expected no re-execution on a duplicate, calls is %d", calls)
 	}
-	reply, ok := first_message(output.Replies, vsr.Message_Kind_Reply)
+	reply, ok := first_message(output.Replies, vsr.MESSAGE_KIND_REPLY)
 	if !ok {
 		t.Fatalf("expected the cached reply re-sent, got %+v", output.Replies)
 	}
@@ -318,7 +318,7 @@ func Test_Normal_Operation_Duplicate_Request(t *testing.T) {
 
 	// A strictly stale request (request 2 < 3) is dropped silently: no append, no reply.
 	output = receive(&primary, vsr.Message{
-		Kind: vsr.Message_Kind_Request, To: 0, Client: 7, Request_Number: 2,
+		Kind: vsr.MESSAGE_KIND_REQUEST, To: 0, Client: 7, Request_Number: 2,
 		Command: []byte("old"),
 	})
 	if primary.Op != 1 {
@@ -344,7 +344,7 @@ func Test_Normal_Operation_Inflight_Request(t *testing.T) {
 	}
 	// Append op 1 for client 7, request 3, but do NOT commit it: it stays in flight.
 	receive(&primary, vsr.Message{
-		Kind: vsr.Message_Kind_Request, To: 0, Client: 7, Request_Number: 3,
+		Kind: vsr.MESSAGE_KIND_REQUEST, To: 0, Client: 7, Request_Number: 3,
 		Command: []byte("set x=1"),
 	})
 	if primary.Op != 1 {
@@ -353,7 +353,7 @@ func Test_Normal_Operation_Inflight_Request(t *testing.T) {
 
 	// A re-send of the still-in-flight request: dropped, no second entry, no reply.
 	output := receive(&primary, vsr.Message{
-		Kind: vsr.Message_Kind_Request, To: 0, Client: 7, Request_Number: 3,
+		Kind: vsr.MESSAGE_KIND_REQUEST, To: 0, Client: 7, Request_Number: 3,
 		Command: []byte("set x=1"),
 	})
 	if primary.Op != 1 {
@@ -383,13 +383,13 @@ func Test_Execution_Up_Call(t *testing.T) {
 	}
 	for request, command := range []string{"a", "b"} {
 		receive(&primary, vsr.Message{
-			Kind: vsr.Message_Kind_Request, To: 0, Client: 7,
+			Kind: vsr.MESSAGE_KIND_REQUEST, To: 0, Client: 7,
 			Request_Number: vsr.Request_Number(request + 1), Command: []byte(command),
 		})
 	}
 	// One ack commits op 1 (quorum of two with the primary); a later ack for op 2 commits it.
 	receive(&primary, vsr.Message{
-		Kind: vsr.Message_Kind_Prepare_Ok, From: 1, To: 0, View: 0, Op: 1,
+		Kind: vsr.MESSAGE_KIND_PREPARE_OK, From: 1, To: 0, View: 0, Op: 1,
 	})
 	if len(executed) != 1 {
 		t.Fatalf("expected exactly op 1 executed, got %+v", executed)
@@ -398,7 +398,7 @@ func Test_Execution_Up_Call(t *testing.T) {
 		t.Fatalf("expected op 1 = a executed first, got %+v", executed)
 	}
 	receive(&primary, vsr.Message{
-		Kind: vsr.Message_Kind_Prepare_Ok, From: 1, To: 0, View: 0, Op: 2,
+		Kind: vsr.MESSAGE_KIND_PREPARE_OK, From: 1, To: 0, View: 0, Op: 2,
 	})
 	if len(executed) != 2 {
 		t.Fatalf("expected op 2 executed, never twice, got %+v", executed)
@@ -409,7 +409,7 @@ func Test_Execution_Up_Call(t *testing.T) {
 
 	// A duplicate ack must commit nothing further and so execute nothing further.
 	receive(&primary, vsr.Message{
-		Kind: vsr.Message_Kind_Prepare_Ok, From: 1, To: 0, View: 0, Op: 2,
+		Kind: vsr.MESSAGE_KIND_PREPARE_OK, From: 1, To: 0, View: 0, Op: 2,
 	})
 	if len(executed) != 2 {
 		t.Errorf("expected no re-execution on a duplicate ack, got %+v", executed)
@@ -430,13 +430,13 @@ func Test_Execution_Reply(t *testing.T) {
 		}},
 	}
 	receive(&primary, vsr.Message{
-		Kind: vsr.Message_Kind_Request, To: 0, Client: 9, Request_Number: 1,
+		Kind: vsr.MESSAGE_KIND_REQUEST, To: 0, Client: 9, Request_Number: 1,
 		Command: []byte("x"),
 	})
 	output := receive(&primary, vsr.Message{
-		Kind: vsr.Message_Kind_Prepare_Ok, From: 1, To: 0, View: 0, Op: 1,
+		Kind: vsr.MESSAGE_KIND_PREPARE_OK, From: 1, To: 0, View: 0, Op: 1,
 	})
-	reply, ok := first_message(output.Replies, vsr.Message_Kind_Reply)
+	reply, ok := first_message(output.Replies, vsr.MESSAGE_KIND_REPLY)
 	if !ok {
 		t.Fatalf("expected a Reply from the primary on commit, got %+v", output.Replies)
 	}
@@ -464,13 +464,13 @@ func Test_Execution_Reply(t *testing.T) {
 		}},
 	}
 	receive(&backup, vsr.Message{
-		Kind: vsr.Message_Kind_Prepare, From: 0, To: 1, View: 0, Op: 1,
+		Kind: vsr.MESSAGE_KIND_PREPARE, From: 0, To: 1, View: 0, Op: 1,
 		Entries: []vsr.Log_Entry{{
 			View: 0, Command: []byte("x"), Client: 9, Request_Number: 1,
 		}},
 	})
 	output = receive(&backup, vsr.Message{
-		Kind: vsr.Message_Kind_Commit, From: 0, To: 1, View: 0, Commit: 1,
+		Kind: vsr.MESSAGE_KIND_COMMIT, From: 0, To: 1, View: 0, Commit: 1,
 	})
 	if backup.Commit != 1 {
 		t.Fatalf("expected the backup to commit op 1, got %d", backup.Commit)
@@ -493,13 +493,13 @@ func Test_Execution_Client_Table(t *testing.T) {
 		}},
 	}
 	receive(&backup, vsr.Message{
-		Kind: vsr.Message_Kind_Prepare, From: 0, To: 1, View: 0, Op: 1,
+		Kind: vsr.MESSAGE_KIND_PREPARE, From: 0, To: 1, View: 0, Op: 1,
 		Entries: []vsr.Log_Entry{{
 			View: 0, Command: []byte("x"), Client: 5, Request_Number: 8,
 		}},
 	})
 	receive(&backup, vsr.Message{
-		Kind: vsr.Message_Kind_Commit, From: 0, To: 1, View: 0, Commit: 1,
+		Kind: vsr.MESSAGE_KIND_COMMIT, From: 0, To: 1, View: 0, Commit: 1,
 	})
 	record, ok := backup.Client_Table[5]
 	if !ok {
@@ -533,13 +533,13 @@ func Test_Prediction_Local_Predict(t *testing.T) {
 		},
 	}
 	output := receive(&primary, vsr.Message{
-		Kind: vsr.Message_Kind_Request, To: 0, Command: []byte("now"),
+		Kind: vsr.MESSAGE_KIND_REQUEST, To: 0, Command: []byte("now"),
 	})
 	if string(primary.Log[0].Prediction) != "predicted-now" {
 		t.Fatalf("expected the entry stamped with the prediction, got %q",
 			primary.Log[0].Prediction)
 	}
-	prepare, ok := first_message(output.Messages, vsr.Message_Kind_Prepare)
+	prepare, ok := first_message(output.Messages, vsr.MESSAGE_KIND_PREPARE)
 	if !ok {
 		t.Fatalf("expected a Prepare, got %+v", output.Messages)
 	}
@@ -591,11 +591,11 @@ func Test_Prediction_Predicted_Execution(t *testing.T) {
 		},
 	}
 	receive(&primary, vsr.Message{
-		Kind: vsr.Message_Kind_Request, To: 0, Client: 9, Request_Number: 1,
+		Kind: vsr.MESSAGE_KIND_REQUEST, To: 0, Client: 9, Request_Number: 1,
 		Command: []byte("stamp"),
 	})
 	receive(&primary, vsr.Message{
-		Kind: vsr.Message_Kind_Prepare_Ok, From: 1, To: 0, View: 0, Op: 1,
+		Kind: vsr.MESSAGE_KIND_PREPARE_OK, From: 1, To: 0, View: 0, Op: 1,
 	})
 	if string(primary_prediction) != "ts-42" {
 		t.Fatalf("expected the primary's Execute to receive the prediction, got %q",
@@ -618,14 +618,14 @@ func Test_Prediction_Predicted_Execution(t *testing.T) {
 		},
 	}
 	receive(&backup, vsr.Message{
-		Kind: vsr.Message_Kind_Prepare, From: 0, To: 1, View: 0, Op: 1,
+		Kind: vsr.MESSAGE_KIND_PREPARE, From: 0, To: 1, View: 0, Op: 1,
 		Entries: []vsr.Log_Entry{{
 			View: 0, Command: []byte("stamp"), Client: 9, Request_Number: 1,
 			Prediction: []byte("ts-42"),
 		}},
 	})
 	receive(&backup, vsr.Message{
-		Kind: vsr.Message_Kind_Commit, From: 0, To: 1, View: 0, Commit: 1,
+		Kind: vsr.MESSAGE_KIND_COMMIT, From: 0, To: 1, View: 0, Commit: 1,
 	})
 	if string(backup_prediction) != "ts-42" {
 		t.Fatalf("expected the backup's Execute to receive the same prediction, got %q",
@@ -658,16 +658,16 @@ func Test_Prediction_Pre_Step_Request(t *testing.T) {
 		},
 	}
 	output := receive(&primary, vsr.Message{
-		Kind: vsr.Message_Kind_Request, To: 0, Client: 9, Request_Number: 1,
+		Kind: vsr.MESSAGE_KIND_REQUEST, To: 0, Client: 9, Request_Number: 1,
 		Command: []byte("stamp"),
 	})
 	if primary.Op != 0 {
 		t.Fatalf("expected no append before the pre-step round, op is %d", primary.Op)
 	}
-	if _, prepared := first_message(output.Messages, vsr.Message_Kind_Prepare); prepared {
+	if _, prepared := first_message(output.Messages, vsr.MESSAGE_KIND_PREPARE); prepared {
 		t.Fatalf("expected no Prepare before the pre-step round, got %+v", output.Messages)
 	}
-	request, ok := first_message(output.Messages, vsr.Message_Kind_Predict_Request)
+	request, ok := first_message(output.Messages, vsr.MESSAGE_KIND_PREDICT_REQUEST)
 	if !ok {
 		t.Fatalf("expected a Predict_Request, got %+v", output.Messages)
 	}
@@ -711,13 +711,13 @@ func Test_Prediction_Pre_Step_Combine(t *testing.T) {
 		},
 	}
 	receive(&primary, vsr.Message{
-		Kind: vsr.Message_Kind_Request, To: 0, Client: 9, Request_Number: 1,
+		Kind: vsr.MESSAGE_KIND_REQUEST, To: 0, Client: 9, Request_Number: 1,
 		Command: []byte("stamp"),
 	})
 
 	// The f-th (here first) Predict_Response triggers the combine, append, and Prepare.
 	output := receive(&primary, vsr.Message{
-		Kind: vsr.Message_Kind_Predict_Response, From: 1, To: 0, View: 0,
+		Kind: vsr.MESSAGE_KIND_PREDICT_RESPONSE, From: 1, To: 0, View: 0,
 		Client: 9, Request_Number: 1, Result: []byte("backup-1"),
 	})
 	if primary.Op != 1 {
@@ -727,7 +727,7 @@ func Test_Prediction_Pre_Step_Combine(t *testing.T) {
 		t.Fatalf("expected the combined prediction stored, got %q",
 			primary.Log[0].Prediction)
 	}
-	prepare, ok := first_message(output.Messages, vsr.Message_Kind_Prepare)
+	prepare, ok := first_message(output.Messages, vsr.MESSAGE_KIND_PREPARE)
 	if !ok {
 		t.Fatalf("expected a Prepare after the pre-step round, got %+v", output.Messages)
 	}
@@ -759,11 +759,11 @@ func Test_Checkpoint_Take(t *testing.T) {
 	}
 	// Commit op 1: below the interval, no checkpoint yet.
 	receive(&primary, vsr.Message{
-		Kind: vsr.Message_Kind_Request, To: 0, Client: 7, Request_Number: 1,
+		Kind: vsr.MESSAGE_KIND_REQUEST, To: 0, Client: 7, Request_Number: 1,
 		Command: []byte("a"),
 	})
 	receive(&primary, vsr.Message{
-		Kind: vsr.Message_Kind_Prepare_Ok, From: 1, To: 0, View: 0, Op: 1,
+		Kind: vsr.MESSAGE_KIND_PREPARE_OK, From: 1, To: 0, View: 0, Op: 1,
 	})
 	if primary.Checkpoint_Op != 0 {
 		t.Fatalf("expected no checkpoint before the interval, op %d", primary.Checkpoint_Op)
@@ -774,11 +774,11 @@ func Test_Checkpoint_Take(t *testing.T) {
 
 	// Commit op 2: crosses the interval of 2, so the checkpoint is taken at op 2.
 	receive(&primary, vsr.Message{
-		Kind: vsr.Message_Kind_Request, To: 0, Client: 7, Request_Number: 2,
+		Kind: vsr.MESSAGE_KIND_REQUEST, To: 0, Client: 7, Request_Number: 2,
 		Command: []byte("b"),
 	})
 	receive(&primary, vsr.Message{
-		Kind: vsr.Message_Kind_Prepare_Ok, From: 1, To: 0, View: 0, Op: 2,
+		Kind: vsr.MESSAGE_KIND_PREPARE_OK, From: 1, To: 0, View: 0, Op: 2,
 	})
 	if primary.Checkpoint_Op != 2 {
 		t.Fatalf("expected the checkpoint taken at op 2, got op %d", primary.Checkpoint_Op)
@@ -811,12 +811,12 @@ func Test_Checkpoint_Compact(t *testing.T) {
 	// 4-2 == 2 are dropped, so ops 3 and 4 survive and Log_Start advances to 2.
 	for op := 1; op <= 4; op++ {
 		receive(&primary, vsr.Message{
-			Kind: vsr.Message_Kind_Request, To: 0, Client: 7,
+			Kind: vsr.MESSAGE_KIND_REQUEST, To: 0, Client: 7,
 			Request_Number: vsr.Request_Number(op),
 			Command:        []byte{byte('a' + op - 1)},
 		})
 		receive(&primary, vsr.Message{
-			Kind: vsr.Message_Kind_Prepare_Ok, From: 1, To: 0, View: 0, Op: vsr.Op(op),
+			Kind: vsr.MESSAGE_KIND_PREPARE_OK, From: 1, To: 0, View: 0, Op: vsr.Op(op),
 		})
 	}
 	if primary.Checkpoint_Op != 4 {
@@ -857,12 +857,12 @@ func Test_Checkpoint_Offset_Index(t *testing.T) {
 	})
 	for op := 1; op <= 4; op++ {
 		receive(&primary, vsr.Message{
-			Kind: vsr.Message_Kind_Request, To: 0, Client: 7,
+			Kind: vsr.MESSAGE_KIND_REQUEST, To: 0, Client: 7,
 			Request_Number: vsr.Request_Number(op),
 			Command:        []byte{byte('a' + op - 1)},
 		})
 		receive(&primary, vsr.Message{
-			Kind: vsr.Message_Kind_Prepare_Ok, From: 1, To: 0, View: 0, Op: vsr.Op(op),
+			Kind: vsr.MESSAGE_KIND_PREPARE_OK, From: 1, To: 0, View: 0, Op: vsr.Op(op),
 		})
 	}
 	if vsr.Op(int(primary.Log_Start)+len(primary.Log)) != primary.Op {
@@ -883,11 +883,11 @@ func Test_Checkpoint_Offset_Index(t *testing.T) {
 	// index and ships a Prepare carrying op-number 5 and entry e, proving the index serves a
 	// live op above a compacted prefix rather than panicking.
 	receive(&primary, vsr.Message{
-		Kind: vsr.Message_Kind_Request, To: 0, Client: 7, Request_Number: 5,
+		Kind: vsr.MESSAGE_KIND_REQUEST, To: 0, Client: 7, Request_Number: 5,
 		Command: []byte("e"),
 	})
 	output := tick(&primary, 10)
-	prepare, ok := first_message(output.Messages, vsr.Message_Kind_Prepare)
+	prepare, ok := first_message(output.Messages, vsr.MESSAGE_KIND_PREPARE)
 	if !ok {
 		t.Fatalf("expected the heartbeat to re-drive op 5, got %+v", output.Messages)
 	}
@@ -901,15 +901,15 @@ func Test_Checkpoint_Offset_Index(t *testing.T) {
 }
 
 // Test_View_Change_Timeout: a backup that hears nothing from the primary past its deadline enters
-// Status_View_Change and broadcasts a Start_View_Change for the next view.
+// STATUS_VIEW_CHANGE and broadcasts a Start_View_Change for the next view.
 func Test_View_Change_Timeout(t *testing.T) {
 	backup := vsr.New_Replica(&vsr.New_Replica_Input{
 		Identifier: 1, Configuration: vsr.Configuration{0, 1, 2},
 		Heartbeat: 10, Timeout: 100, Now: 0,
 	})
 	output := vsr.Replica_Tick(&vsr.Replica_Tick_Input{Replica: &backup, Now: 100})
-	if backup.Status != vsr.Status_View_Change {
-		t.Fatalf("expected Status_View_Change, got %d", backup.Status)
+	if backup.Status != vsr.STATUS_VIEW_CHANGE {
+		t.Fatalf("expected STATUS_VIEW_CHANGE, got %d", backup.Status)
 	}
 	if backup.View != 1 {
 		t.Fatalf("expected view advanced to 1, got %d", backup.View)
@@ -920,7 +920,7 @@ func Test_View_Change_Timeout(t *testing.T) {
 	}
 	recipients := map[vsr.Replica_Identifier]bool{}
 	for _, message := range output.Messages {
-		if message.Kind != vsr.Message_Kind_Start_View_Change {
+		if message.Kind != vsr.MESSAGE_KIND_START_VIEW_CHANGE {
 			t.Errorf("expected a Start_View_Change, got %+v", message)
 		}
 		if message.From != 1 {
@@ -940,7 +940,7 @@ func Test_View_Change_Timeout(t *testing.T) {
 }
 
 // Test_View_Change_Start_View_Change: a replica that sees a Start_View_Change for a view above its
-// own advances to that view, enters Status_View_Change, and rebroadcasts its own. N=5, so a single
+// own advances to that view, enters STATUS_VIEW_CHANGE, and rebroadcasts its own. N=5, so a single
 // vote does not yet form a quorum and trigger a Do_View_Change.
 func Test_View_Change_Start_View_Change(t *testing.T) {
 	replica := vsr.New_Replica(&vsr.New_Replica_Input{
@@ -948,15 +948,15 @@ func Test_View_Change_Start_View_Change(t *testing.T) {
 		Heartbeat: 10, Timeout: 100, Now: 0,
 	})
 	output := receive(&replica, vsr.Message{
-		Kind: vsr.Message_Kind_Start_View_Change, From: 1, To: 2, View: 1,
+		Kind: vsr.MESSAGE_KIND_START_VIEW_CHANGE, From: 1, To: 2, View: 1,
 	})
-	if replica.Status != vsr.Status_View_Change {
+	if replica.Status != vsr.STATUS_VIEW_CHANGE {
 		t.Fatalf("expected view-change, got status %d", replica.Status)
 	}
 	if replica.View != 1 {
 		t.Fatalf("expected view 1, got view %d", replica.View)
 	}
-	broadcast, ok := first_message(output.Messages, vsr.Message_Kind_Start_View_Change)
+	broadcast, ok := first_message(output.Messages, vsr.MESSAGE_KIND_START_VIEW_CHANGE)
 	if !ok {
 		t.Fatalf("expected own Start_View_Change(view 1), got %+v ok=%v", broadcast, ok)
 	}
@@ -966,7 +966,7 @@ func Test_View_Change_Start_View_Change(t *testing.T) {
 	if broadcast.View != 1 {
 		t.Fatalf("expected own Start_View_Change for view 1, got %+v", broadcast)
 	}
-	if _, sent := first_message(output.Messages, vsr.Message_Kind_Do_View_Change); sent {
+	if _, sent := first_message(output.Messages, vsr.MESSAGE_KIND_DO_VIEW_CHANGE); sent {
 		t.Error("expected no Do_View_Change before a quorum on a 5-node cluster")
 	}
 }
@@ -980,16 +980,16 @@ func Test_View_Change_Quorum(t *testing.T) {
 		Heartbeat: 10, Timeout: 100, Now: 0,
 	})
 	receive(&replica, vsr.Message{
-		Kind: vsr.Message_Kind_Prepare, From: 0, To: 2, View: 0,
+		Kind: vsr.MESSAGE_KIND_PREPARE, From: 0, To: 2, View: 0,
 		Op: 1, Entries: []vsr.Log_Entry{{View: 0, Command: []byte("a")}},
 	})
 	// Self enters view-change for view 1, counting its own vote.
 	tick(&replica, 100)
 	output := receive(&replica, vsr.Message{
-		Kind: vsr.Message_Kind_Start_View_Change, From: 0, To: 2, View: 1,
+		Kind: vsr.MESSAGE_KIND_START_VIEW_CHANGE, From: 0, To: 2, View: 1,
 	})
 
-	do_view_change, ok := first_message(output.Messages, vsr.Message_Kind_Do_View_Change)
+	do_view_change, ok := first_message(output.Messages, vsr.MESSAGE_KIND_DO_VIEW_CHANGE)
 	if !ok {
 		t.Fatalf("expected a Do_View_Change at quorum, got %+v", output.Messages)
 	}
@@ -1017,7 +1017,7 @@ func Test_View_Change_Quorum(t *testing.T) {
 }
 
 // Test_View_Change_Do_View_Change: the new primary installs the view only once it holds a quorum of
-// Do_View_Change; fewer leave it in Status_View_Change with no Start_View, with N=5, quorum 3.
+// Do_View_Change; fewer leave it in STATUS_VIEW_CHANGE with no Start_View, with N=5, quorum 3.
 func Test_View_Change_Do_View_Change(t *testing.T) {
 	primary := vsr.New_Replica(&vsr.New_Replica_Input{
 		Identifier: 0, Configuration: vsr.Configuration{0, 1, 2, 3, 4},
@@ -1026,29 +1026,29 @@ func Test_View_Change_Do_View_Change(t *testing.T) {
 	// Drive the new primary into view-change for view 5 (5 mod 5 == 0) via a Start_View_Change
 	// quorum, which folds in its own Do_View_Change.
 	receive(&primary, vsr.Message{
-		Kind: vsr.Message_Kind_Start_View_Change, From: 1, To: 0, View: 5,
+		Kind: vsr.MESSAGE_KIND_START_VIEW_CHANGE, From: 1, To: 0, View: 5,
 	})
 	receive(&primary, vsr.Message{
-		Kind: vsr.Message_Kind_Start_View_Change, From: 2, To: 0, View: 5,
+		Kind: vsr.MESSAGE_KIND_START_VIEW_CHANGE, From: 2, To: 0, View: 5,
 	})
 
 	output := receive(&primary, vsr.Message{
-		Kind: vsr.Message_Kind_Do_View_Change, From: 1, To: 0, View: 5,
+		Kind: vsr.MESSAGE_KIND_DO_VIEW_CHANGE, From: 1, To: 0, View: 5,
 	})
-	if _, installed := first_message(output.Messages, vsr.Message_Kind_Start_View); installed {
+	if _, installed := first_message(output.Messages, vsr.MESSAGE_KIND_START_VIEW); installed {
 		t.Fatal("expected no Start_View before a quorum of Do_View_Change")
 	}
-	if primary.Status != vsr.Status_View_Change {
+	if primary.Status != vsr.STATUS_VIEW_CHANGE {
 		t.Fatalf("expected still in view-change, got status %d", primary.Status)
 	}
 
 	output = receive(&primary, vsr.Message{
-		Kind: vsr.Message_Kind_Do_View_Change, From: 2, To: 0, View: 5,
+		Kind: vsr.MESSAGE_KIND_DO_VIEW_CHANGE, From: 2, To: 0, View: 5,
 	})
-	if _, installed := first_message(output.Messages, vsr.Message_Kind_Start_View); !installed {
+	if _, installed := first_message(output.Messages, vsr.MESSAGE_KIND_START_VIEW); !installed {
 		t.Fatalf("expected Start_View once the quorum is met, got %+v", output.Messages)
 	}
-	if primary.Status != vsr.Status_Normal {
+	if primary.Status != vsr.STATUS_NORMAL {
 		t.Errorf("expected normal after install, got status %d", primary.Status)
 	}
 	if primary.View != 5 {
@@ -1065,28 +1065,28 @@ func Test_View_Change_Log_Selection(t *testing.T) {
 		Heartbeat: 10, Timeout: 100, Now: 0,
 	})
 	receive(&primary, vsr.Message{
-		Kind: vsr.Message_Kind_Start_View_Change, From: 1, To: 0, View: 5,
+		Kind: vsr.MESSAGE_KIND_START_VIEW_CHANGE, From: 1, To: 0, View: 5,
 	})
 	receive(&primary, vsr.Message{
-		Kind: vsr.Message_Kind_Start_View_Change, From: 2, To: 0, View: 5,
+		Kind: vsr.MESSAGE_KIND_START_VIEW_CHANGE, From: 2, To: 0, View: 5,
 	})
 
 	// A short log from a later view (the correct winner) and a long log from an earlier view
 	// (the trap for "longest wins"), each reported as a bounded suffix plus its op.
 	receive(&primary, vsr.Message{
-		Kind: vsr.Message_Kind_Do_View_Change, From: 1, To: 0, View: 5,
+		Kind: vsr.MESSAGE_KIND_DO_VIEW_CHANGE, From: 1, To: 0, View: 5,
 		Last_Normal_View: 4, Op: 1,
 		Log_Suffix: []vsr.Log_Entry{{View: 4, Command: []byte("x")}},
 	})
 	output := receive(&primary, vsr.Message{
-		Kind: vsr.Message_Kind_Do_View_Change, From: 2, To: 0, View: 5,
+		Kind: vsr.MESSAGE_KIND_DO_VIEW_CHANGE, From: 2, To: 0, View: 5,
 		Last_Normal_View: 3, Op: 3, Log_Suffix: []vsr.Log_Entry{
 			{View: 3, Command: []byte("p")},
 			{View: 3, Command: []byte("q")},
 			{View: 3, Command: []byte("r")},
 		},
 	})
-	if primary.Status != vsr.Status_Normal {
+	if primary.Status != vsr.STATUS_NORMAL {
 		t.Fatalf("expected install after the quorum, got status %d", primary.Status)
 	}
 	if primary.Op != 1 {
@@ -1099,7 +1099,7 @@ func Test_View_Change_Log_Selection(t *testing.T) {
 	if string(primary.Log[0].Command) != "x" {
 		t.Fatalf("expected the later-view log [x], got log %+v", primary.Log)
 	}
-	start_view, _ := first_message(output.Messages, vsr.Message_Kind_Start_View)
+	start_view, _ := first_message(output.Messages, vsr.MESSAGE_KIND_START_VIEW)
 	if len(start_view.Log) != 1 {
 		t.Errorf("expected Start_View to carry [x], got %+v", start_view.Log)
 	}
@@ -1109,7 +1109,7 @@ func Test_View_Change_Log_Selection(t *testing.T) {
 }
 
 // Test_View_Change_Suffix_Report: a Do_View_Change carries only a bounded log suffix — the last
-// View_Change_Suffix entries — together with the reporter's op, last-normal-view, and commit, not
+// VIEW_CHANGE_SUFFIX entries — together with the reporter's op, last-normal-view, and commit, not
 // its full log; a reporter whose op exceeds the suffix length reports fewer entries than it holds.
 func Test_View_Change_Suffix_Report(t *testing.T) {
 	replica := vsr.New_Replica(&vsr.New_Replica_Input{
@@ -1119,16 +1119,16 @@ func Test_View_Change_Suffix_Report(t *testing.T) {
 	// Build a log longer than the suffix bound so the report must drop entries.
 	for op, command := range []string{"a", "b", "c"} {
 		receive(&replica, vsr.Message{
-			Kind: vsr.Message_Kind_Prepare, From: 0, To: 2, View: 0,
+			Kind: vsr.MESSAGE_KIND_PREPARE, From: 0, To: 2, View: 0,
 			Op:      vsr.Op(op + 1),
 			Entries: []vsr.Log_Entry{{View: 0, Command: []byte(command)}},
 		})
 	}
 	tick(&replica, 100) // Self enters view-change for view 1, counting its own vote.
 	output := receive(&replica, vsr.Message{
-		Kind: vsr.Message_Kind_Start_View_Change, From: 0, To: 2, View: 1,
+		Kind: vsr.MESSAGE_KIND_START_VIEW_CHANGE, From: 0, To: 2, View: 1,
 	})
-	report, ok := first_message(output.Messages, vsr.Message_Kind_Do_View_Change)
+	report, ok := first_message(output.Messages, vsr.MESSAGE_KIND_DO_VIEW_CHANGE)
 	if !ok {
 		t.Fatalf("expected a Do_View_Change at quorum, got %+v", output.Messages)
 	}
@@ -1138,11 +1138,11 @@ func Test_View_Change_Suffix_Report(t *testing.T) {
 	if len(report.Log) != 0 {
 		t.Errorf("expected no full log carried, got %+v", report.Log)
 	}
-	if len(report.Log_Suffix) != int(vsr.View_Change_Suffix) {
+	if len(report.Log_Suffix) != int(vsr.VIEW_CHANGE_SUFFIX) {
 		t.Fatalf("expected a suffix of %d entries, got %+v",
-			vsr.View_Change_Suffix, report.Log_Suffix)
+			vsr.VIEW_CHANGE_SUFFIX, report.Log_Suffix)
 	}
-	// The suffix is the LAST View_Change_Suffix entries, b and c, not a, b.
+	// The suffix is the LAST VIEW_CHANGE_SUFFIX entries, b and c, not a, b.
 	if string(report.Log_Suffix[0].Command) != "b" {
 		t.Errorf("expected the suffix to begin at op 2 = b, got %q",
 			report.Log_Suffix[0].Command)
@@ -1169,22 +1169,22 @@ func Test_View_Change_Suffix_Fetch(t *testing.T) {
 	// Drive replica 1 (primary of view 1) into view-change for view 1; it folds in its own
 	// empty report.
 	receive(&primary, vsr.Message{
-		Kind: vsr.Message_Kind_Start_View_Change, From: 0, To: 1, View: 1,
+		Kind: vsr.MESSAGE_KIND_START_VIEW_CHANGE, From: 0, To: 1, View: 1,
 	})
 	// The winner reports op 5 but a suffix of only its last two entries (ops 4, 5), and the new
 	// primary holds nothing below them: ops 1..3 are missing and uncommitted on the primary, so
 	// the suffix cannot be spliced onto a trusted prefix.
 	output := receive(&primary, vsr.Message{
-		Kind: vsr.Message_Kind_Do_View_Change, From: 0, To: 1, View: 1,
+		Kind: vsr.MESSAGE_KIND_DO_VIEW_CHANGE, From: 0, To: 1, View: 1,
 		Last_Normal_View: 0, Op: 5, Commit: 3,
 		Log_Suffix: []vsr.Log_Entry{
 			{View: 0, Command: []byte("d")}, {View: 0, Command: []byte("e")},
 		},
 	})
-	if _, installed := first_message(output.Messages, vsr.Message_Kind_Start_View); installed {
+	if _, installed := first_message(output.Messages, vsr.MESSAGE_KIND_START_VIEW); installed {
 		t.Fatal("expected no Start_View when the selected log cannot be reconstructed")
 	}
-	request, ok := first_message(output.Messages, vsr.Message_Kind_Get_State)
+	request, ok := first_message(output.Messages, vsr.MESSAGE_KIND_GET_STATE)
 	if !ok {
 		t.Fatalf("expected a Get_State to fetch the rest, got %+v", output.Messages)
 	}
@@ -1196,7 +1196,7 @@ func Test_View_Change_Suffix_Fetch(t *testing.T) {
 	}
 }
 
-// Test_View_Change_Deferred_Install: the new primary stays in Status_View_Change and broadcasts no
+// Test_View_Change_Deferred_Install: the new primary stays in STATUS_VIEW_CHANGE and broadcasts no
 // Start_View until the awaited state arrives; only then does it install — with op at least the
 // selected reporter's op so no committed op is dropped — return to normal, and emit Start_View
 // exactly once.
@@ -1206,10 +1206,10 @@ func Test_View_Change_Deferred_Install(t *testing.T) {
 		Heartbeat: 10, Timeout: 100, Now: 0,
 	})
 	receive(&primary, vsr.Message{
-		Kind: vsr.Message_Kind_Start_View_Change, From: 0, To: 1, View: 1,
+		Kind: vsr.MESSAGE_KIND_START_VIEW_CHANGE, From: 0, To: 1, View: 1,
 	})
 	receive(&primary, vsr.Message{
-		Kind: vsr.Message_Kind_Do_View_Change, From: 0, To: 1, View: 1,
+		Kind: vsr.MESSAGE_KIND_DO_VIEW_CHANGE, From: 0, To: 1, View: 1,
 		Last_Normal_View: 0, Op: 5, Commit: 3,
 		Log_Suffix: []vsr.Log_Entry{
 			{View: 0, Command: []byte("d")}, {View: 0, Command: []byte("e")},
@@ -1217,37 +1217,37 @@ func Test_View_Change_Deferred_Install(t *testing.T) {
 	})
 	// The fetch is outstanding: the install is deferred, so the primary is still changing views
 	// and has emitted no Start_View.
-	if primary.Status != vsr.Status_View_Change {
+	if primary.Status != vsr.STATUS_VIEW_CHANGE {
 		t.Fatalf("expected the primary still in view-change while fetching, got status %d",
 			primary.Status)
 	}
 
 	// A stray New_State from a non-selected replica must not prematurely install.
 	stray := receive(&primary, vsr.Message{
-		Kind: vsr.Message_Kind_New_State, From: 2, To: 1, View: 1, Op: 5, Commit: 3,
+		Kind: vsr.MESSAGE_KIND_NEW_STATE, From: 2, To: 1, View: 1, Op: 5, Commit: 3,
 		Log: []vsr.Log_Entry{
 			{View: 0, Command: []byte("p")}, {View: 0, Command: []byte("q")},
 			{View: 0, Command: []byte("r")}, {View: 0, Command: []byte("d")},
 			{View: 0, Command: []byte("e")},
 		},
 	})
-	if _, installed := first_message(stray.Messages, vsr.Message_Kind_Start_View); installed {
+	if _, installed := first_message(stray.Messages, vsr.MESSAGE_KIND_START_VIEW); installed {
 		t.Fatal("expected no Start_View from a stray New_State while still awaiting")
 	}
-	if primary.Status != vsr.Status_View_Change {
+	if primary.Status != vsr.STATUS_VIEW_CHANGE {
 		t.Fatalf("expected a stray New_State ignored, status is %d", primary.Status)
 	}
 
 	// The awaited New_State arrives from the selected reporter 0, carrying the complete log.
 	output := receive(&primary, vsr.Message{
-		Kind: vsr.Message_Kind_New_State, From: 0, To: 1, View: 1, Op: 5, Commit: 3,
+		Kind: vsr.MESSAGE_KIND_NEW_STATE, From: 0, To: 1, View: 1, Op: 5, Commit: 3,
 		Log: []vsr.Log_Entry{
 			{View: 0, Command: []byte("a")}, {View: 0, Command: []byte("b")},
 			{View: 0, Command: []byte("c")}, {View: 0, Command: []byte("d")},
 			{View: 0, Command: []byte("e")},
 		},
 	})
-	if primary.Status != vsr.Status_Normal {
+	if primary.Status != vsr.STATUS_NORMAL {
 		t.Fatalf("expected install once the awaited state arrives, status is %d",
 			primary.Status)
 	}
@@ -1257,7 +1257,7 @@ func Test_View_Change_Deferred_Install(t *testing.T) {
 	// Exactly one Start_View per backup, and no more — the deferred install emits it once.
 	starts := 0
 	for _, message := range output.Messages {
-		if message.Kind == vsr.Message_Kind_Start_View {
+		if message.Kind == vsr.MESSAGE_KIND_START_VIEW {
 			starts++
 		}
 	}
@@ -1274,14 +1274,14 @@ func Test_View_Change_Start_View(t *testing.T) {
 		Heartbeat: 10, Timeout: 100, Now: 0,
 	})
 	receive(&primary, vsr.Message{
-		Kind: vsr.Message_Kind_Start_View_Change, From: 0, To: 1, View: 1,
+		Kind: vsr.MESSAGE_KIND_START_VIEW_CHANGE, From: 0, To: 1, View: 1,
 	})
 	output := receive(&primary, vsr.Message{
-		Kind: vsr.Message_Kind_Do_View_Change, From: 0, To: 1, View: 1,
+		Kind: vsr.MESSAGE_KIND_DO_VIEW_CHANGE, From: 0, To: 1, View: 1,
 		Last_Normal_View: 0, Op: 1, Commit: 1,
 		Log_Suffix: []vsr.Log_Entry{{View: 0, Command: []byte("a")}},
 	})
-	if primary.Status != vsr.Status_Normal {
+	if primary.Status != vsr.STATUS_NORMAL {
 		t.Fatalf("expected normal in view 1, got status %d", primary.Status)
 	}
 	if primary.View != 1 {
@@ -1289,7 +1289,7 @@ func Test_View_Change_Start_View(t *testing.T) {
 	}
 	recipients := map[vsr.Replica_Identifier]bool{}
 	for _, message := range output.Messages {
-		if message.Kind != vsr.Message_Kind_Start_View {
+		if message.Kind != vsr.MESSAGE_KIND_START_VIEW {
 			continue
 		}
 		if message.From != 1 {
@@ -1316,12 +1316,12 @@ func Test_View_Change_Adoption(t *testing.T) {
 		Heartbeat: 10, Timeout: 100, Now: 0,
 	})
 	receive(&backup, vsr.Message{
-		Kind: vsr.Message_Kind_Start_View, From: 1, To: 2, View: 1, Commit: 1, Op: 2,
+		Kind: vsr.MESSAGE_KIND_START_VIEW, From: 1, To: 2, View: 1, Commit: 1, Op: 2,
 		Log: []vsr.Log_Entry{
 			{View: 0, Command: []byte("a")}, {View: 1, Command: []byte("b")},
 		},
 	})
-	if backup.Status != vsr.Status_Normal {
+	if backup.Status != vsr.STATUS_NORMAL {
 		t.Fatalf("expected normal in view 1, got status %d", backup.Status)
 	}
 	if backup.View != 1 {
@@ -1349,16 +1349,16 @@ func Test_View_Change_Commit_Preservation(t *testing.T) {
 		Heartbeat: 10, Timeout: 100, Now: 0,
 	})
 	receive(&primary, vsr.Message{
-		Kind: vsr.Message_Kind_Start_View_Change, From: 1, To: 0, View: 3,
+		Kind: vsr.MESSAGE_KIND_START_VIEW_CHANGE, From: 1, To: 0, View: 3,
 	})
 	receive(&primary, vsr.Message{
-		Kind: vsr.Message_Kind_Do_View_Change, From: 2, To: 0, View: 3,
+		Kind: vsr.MESSAGE_KIND_DO_VIEW_CHANGE, From: 2, To: 0, View: 3,
 		Last_Normal_View: 1, Op: 2, Commit: 1,
 		Log_Suffix: []vsr.Log_Entry{
 			{View: 1, Command: []byte("a")}, {View: 1, Command: []byte("b")},
 		},
 	})
-	if primary.Status != vsr.Status_Normal {
+	if primary.Status != vsr.STATUS_NORMAL {
 		t.Fatalf("expected install, got status %d", primary.Status)
 	}
 	if len(primary.Log) < 1 {
@@ -1373,7 +1373,7 @@ func Test_View_Change_Commit_Preservation(t *testing.T) {
 	}
 }
 
-// Test_Recovery_Nonce: a recovering replica enters Status_Recovery and broadcasts a Recovery
+// Test_Recovery_Nonce: a recovering replica enters STATUS_RECOVERY and broadcasts a Recovery
 // carrying its fresh nonce to the rest of the cluster.
 func Test_Recovery_Nonce(t *testing.T) {
 	replica := vsr.New_Replica(&vsr.New_Replica_Input{
@@ -1383,15 +1383,15 @@ func Test_Recovery_Nonce(t *testing.T) {
 	output := vsr.Replica_Recover(&vsr.Replica_Recover_Input{
 		Replica: &replica, Nonce: 42, Now: 0,
 	})
-	if replica.Status != vsr.Status_Recovery {
-		t.Fatalf("expected Status_Recovery, got %d", replica.Status)
+	if replica.Status != vsr.STATUS_RECOVERY {
+		t.Fatalf("expected STATUS_RECOVERY, got %d", replica.Status)
 	}
 	if len(output.Messages) != 2 {
 		t.Fatalf("expected Recovery to the other two replicas, got %d",
 			len(output.Messages))
 	}
 	for _, message := range output.Messages {
-		if message.Kind != vsr.Message_Kind_Recovery {
+		if message.Kind != vsr.MESSAGE_KIND_RECOVERY {
 			t.Errorf("expected a Recovery, got %+v", message)
 		}
 		if message.From != 1 {
@@ -1411,16 +1411,16 @@ func Test_Recovery_Response(t *testing.T) {
 		Heartbeat: 10, Timeout: 100, Now: 0,
 	})
 	receive(&primary, vsr.Message{
-		Kind: vsr.Message_Kind_Request, To: 0, Command: []byte("x"),
+		Kind: vsr.MESSAGE_KIND_REQUEST, To: 0, Command: []byte("x"),
 	})
 	receive(&primary, vsr.Message{
-		Kind: vsr.Message_Kind_Prepare_Ok, From: 1, To: 0, View: 0, Op: 1,
+		Kind: vsr.MESSAGE_KIND_PREPARE_OK, From: 1, To: 0, View: 0, Op: 1,
 	})
 
 	output := receive(&primary, vsr.Message{
-		Kind: vsr.Message_Kind_Recovery, From: 1, To: 0, Nonce: 42,
+		Kind: vsr.MESSAGE_KIND_RECOVERY, From: 1, To: 0, Nonce: 42,
 	})
-	response, ok := first_message(output.Messages, vsr.Message_Kind_Recovery_Response)
+	response, ok := first_message(output.Messages, vsr.MESSAGE_KIND_RECOVERY_RESPONSE)
 	if !ok {
 		t.Fatalf("expected Recovery_Response(nonce 42) from 0 to 1, got %+v ok=%v",
 			response, ok)
@@ -1455,9 +1455,9 @@ func Test_Recovery_Response(t *testing.T) {
 		Heartbeat: 10, Timeout: 100, Now: 0,
 	})
 	output = receive(&backup, vsr.Message{
-		Kind: vsr.Message_Kind_Recovery, From: 1, To: 2, Nonce: 7,
+		Kind: vsr.MESSAGE_KIND_RECOVERY, From: 1, To: 2, Nonce: 7,
 	})
-	response, _ = first_message(output.Messages, vsr.Message_Kind_Recovery_Response)
+	response, _ = first_message(output.Messages, vsr.MESSAGE_KIND_RECOVERY_RESPONSE)
 	if response.From != 2 {
 		t.Errorf("expected a backup to answer from 2, got %+v", response)
 	}
@@ -1478,15 +1478,15 @@ func Test_Recovery_Stale_Rejection(t *testing.T) {
 	})
 	vsr.Replica_Recover(&vsr.Replica_Recover_Input{Replica: &replica, Nonce: 42, Now: 0})
 	receive(&replica, vsr.Message{
-		Kind: vsr.Message_Kind_Recovery_Response, From: 0, To: 1, Nonce: 42, View: 0,
+		Kind: vsr.MESSAGE_KIND_RECOVERY_RESPONSE, From: 0, To: 1, Nonce: 42, View: 0,
 		Op: 1, Commit: 1, Log: []vsr.Log_Entry{{View: 0, Command: []byte("x")}},
 	})
 	// A stale response from the second replica would, if wrongly counted, form a quorum that
 	// includes the primary and complete recovery.
 	receive(&replica, vsr.Message{
-		Kind: vsr.Message_Kind_Recovery_Response, From: 2, To: 1, Nonce: 99, View: 0,
+		Kind: vsr.MESSAGE_KIND_RECOVERY_RESPONSE, From: 2, To: 1, Nonce: 99, View: 0,
 	})
-	if replica.Status != vsr.Status_Recovery {
+	if replica.Status != vsr.STATUS_RECOVERY {
 		t.Fatalf("expected a stale-nonce response to be ignored, status is %d",
 			replica.Status)
 	}
@@ -1503,19 +1503,19 @@ func Test_Recovery_Quorum(t *testing.T) {
 	// A quorum of backups (3 of 5) replies, but none is the primary of view 0.
 	for _, identifier := range []vsr.Replica_Identifier{1, 3, 4} {
 		receive(&replica, vsr.Message{
-			Kind: vsr.Message_Kind_Recovery_Response, From: identifier, To: 2,
+			Kind: vsr.MESSAGE_KIND_RECOVERY_RESPONSE, From: identifier, To: 2,
 			Nonce: 42, View: 0,
 		})
 	}
-	if replica.Status != vsr.Status_Recovery {
+	if replica.Status != vsr.STATUS_RECOVERY {
 		t.Fatalf("expected to wait for the primary's response, status is %d",
 			replica.Status)
 	}
 	receive(&replica, vsr.Message{
-		Kind: vsr.Message_Kind_Recovery_Response, From: 0, To: 2, Nonce: 42, View: 0,
+		Kind: vsr.MESSAGE_KIND_RECOVERY_RESPONSE, From: 0, To: 2, Nonce: 42, View: 0,
 		Op: 1, Commit: 1, Log: []vsr.Log_Entry{{View: 0, Command: []byte("x")}},
 	})
-	if replica.Status != vsr.Status_Normal {
+	if replica.Status != vsr.STATUS_NORMAL {
 		t.Fatalf("expected recovery to complete once the primary replies, status is %d",
 			replica.Status)
 	}
@@ -1530,15 +1530,15 @@ func Test_Recovery_Rejoin(t *testing.T) {
 	})
 	vsr.Replica_Recover(&vsr.Replica_Recover_Input{Replica: &replica, Nonce: 42, Now: 0})
 	receive(&replica, vsr.Message{
-		Kind: vsr.Message_Kind_Recovery_Response, From: 2, To: 1, Nonce: 42, View: 0,
+		Kind: vsr.MESSAGE_KIND_RECOVERY_RESPONSE, From: 2, To: 1, Nonce: 42, View: 0,
 	})
 	receive(&replica, vsr.Message{
-		Kind: vsr.Message_Kind_Recovery_Response, From: 0, To: 1, Nonce: 42, View: 0,
+		Kind: vsr.MESSAGE_KIND_RECOVERY_RESPONSE, From: 0, To: 1, Nonce: 42, View: 0,
 		Op: 2, Commit: 1, Log: []vsr.Log_Entry{
 			{View: 0, Command: []byte("a")}, {View: 0, Command: []byte("b")},
 		},
 	})
-	if replica.Status != vsr.Status_Normal {
+	if replica.Status != vsr.STATUS_NORMAL {
 		t.Fatalf("expected normal in view 0, got status %d", replica.Status)
 	}
 	if replica.View != 0 {
@@ -1568,9 +1568,9 @@ func Test_Recovery_Quiescence(t *testing.T) {
 	vsr.Replica_Recover(&vsr.Replica_Recover_Input{Replica: &replica, Nonce: 7, Now: 0})
 
 	output := receive(&replica, vsr.Message{
-		Kind: vsr.Message_Kind_Start_View_Change, From: 2, To: 1, View: 1,
+		Kind: vsr.MESSAGE_KIND_START_VIEW_CHANGE, From: 2, To: 1, View: 1,
 	})
-	if replica.Status != vsr.Status_Recovery {
+	if replica.Status != vsr.STATUS_RECOVERY {
 		t.Fatalf("expected a recovering replica to ignore Start_View_Change, status %d",
 			replica.Status)
 	}
@@ -1579,10 +1579,10 @@ func Test_Recovery_Quiescence(t *testing.T) {
 	}
 
 	receive(&replica, vsr.Message{
-		Kind: vsr.Message_Kind_Start_View, From: 1, To: 1, View: 1, Op: 1,
+		Kind: vsr.MESSAGE_KIND_START_VIEW, From: 1, To: 1, View: 1, Op: 1,
 		Log: []vsr.Log_Entry{{View: 1, Command: []byte("z")}},
 	})
-	if replica.Status != vsr.Status_Recovery {
+	if replica.Status != vsr.STATUS_RECOVERY {
 		t.Fatalf("recovering replica must ignore Start_View, status %d", replica.Status)
 	}
 }
@@ -1611,7 +1611,7 @@ func Test_Recovery_Checkpoint_Advertise(t *testing.T) {
 	output := vsr.Replica_Recover(&vsr.Replica_Recover_Input{
 		Replica: &replica, Nonce: 42, Now: 0, Keep_Checkpoint: true,
 	})
-	recovery, ok := first_message(output.Messages, vsr.Message_Kind_Recovery)
+	recovery, ok := first_message(output.Messages, vsr.MESSAGE_KIND_RECOVERY)
 	if !ok {
 		t.Fatalf("expected a Recovery broadcast, got %+v", output.Messages)
 	}
@@ -1652,15 +1652,15 @@ func Test_Recovery_Checkpoint_Restore(t *testing.T) {
 	// The backup answers so a quorum forms; the primary ships the suffix from the checkpoint op
 	// forward, op 5 and op 6, with commit 6.
 	receive(&replica, vsr.Message{
-		Kind: vsr.Message_Kind_Recovery_Response, From: 2, To: 1, Nonce: 42, View: 0,
+		Kind: vsr.MESSAGE_KIND_RECOVERY_RESPONSE, From: 2, To: 1, Nonce: 42, View: 0,
 	})
 	receive(&replica, vsr.Message{
-		Kind: vsr.Message_Kind_Recovery_Response, From: 0, To: 1, Nonce: 42, View: 0,
+		Kind: vsr.MESSAGE_KIND_RECOVERY_RESPONSE, From: 0, To: 1, Nonce: 42, View: 0,
 		Op: 6, Commit: 6, Checkpoint_Op: 4, Log: []vsr.Log_Entry{
 			{View: 0, Command: []byte("e")}, {View: 0, Command: []byte("f")},
 		},
 	})
-	if replica.Status != vsr.Status_Normal {
+	if replica.Status != vsr.STATUS_NORMAL {
 		t.Fatalf("expected normal after recovery, got status %d", replica.Status)
 	}
 	if string(restored) != "disk-snap" {
@@ -1692,15 +1692,15 @@ func Test_State_Transfer_Behind_View(t *testing.T) {
 		Heartbeat: 10, Timeout: 100, Now: 0,
 	})
 	receive(&backup, vsr.Message{
-		Kind: vsr.Message_Kind_Prepare, From: 0, To: 1, View: 0,
+		Kind: vsr.MESSAGE_KIND_PREPARE, From: 0, To: 1, View: 0,
 		Op: 1, Entries: []vsr.Log_Entry{{View: 0, Command: []byte("a")}},
 	})
 	receive(&backup, vsr.Message{
-		Kind: vsr.Message_Kind_Prepare, From: 0, To: 1, View: 0,
+		Kind: vsr.MESSAGE_KIND_PREPARE, From: 0, To: 1, View: 0,
 		Op: 2, Commit: 1, Entries: []vsr.Log_Entry{{View: 0, Command: []byte("b")}},
 	})
 	output := receive(&backup, vsr.Message{
-		Kind: vsr.Message_Kind_Prepare, From: 2, To: 1, View: 2,
+		Kind: vsr.MESSAGE_KIND_PREPARE, From: 2, To: 1, View: 2,
 		Op: 5, Entries: []vsr.Log_Entry{{View: 2, Command: []byte("x")}},
 	})
 	if backup.View != 2 {
@@ -1715,7 +1715,7 @@ func Test_State_Transfer_Behind_View(t *testing.T) {
 	if string(backup.Log[0].Command) != "a" {
 		t.Errorf("expected the committed entry a retained, got %q", backup.Log[0].Command)
 	}
-	request, ok := first_message(output.Messages, vsr.Message_Kind_Get_State)
+	request, ok := first_message(output.Messages, vsr.MESSAGE_KIND_GET_STATE)
 	if !ok {
 		t.Fatalf("expected a Get_State, got %+v", output.Messages)
 	}
@@ -1735,17 +1735,17 @@ func Test_State_Transfer_Gap(t *testing.T) {
 		Heartbeat: 10, Timeout: 100, Now: 0,
 	})
 	receive(&backup, vsr.Message{
-		Kind: vsr.Message_Kind_Prepare, From: 0, To: 1, View: 0,
+		Kind: vsr.MESSAGE_KIND_PREPARE, From: 0, To: 1, View: 0,
 		Op: 1, Entries: []vsr.Log_Entry{{View: 0, Command: []byte("a")}},
 	})
 	output := receive(&backup, vsr.Message{
-		Kind: vsr.Message_Kind_Prepare, From: 0, To: 1, View: 0,
+		Kind: vsr.MESSAGE_KIND_PREPARE, From: 0, To: 1, View: 0,
 		Op: 3, Entries: []vsr.Log_Entry{{View: 0, Command: []byte("c")}},
 	})
 	if backup.Op != 1 {
 		t.Fatalf("expected the gap not applied, op %d", backup.Op)
 	}
-	request, ok := first_message(output.Messages, vsr.Message_Kind_Get_State)
+	request, ok := first_message(output.Messages, vsr.MESSAGE_KIND_GET_STATE)
 	if !ok {
 		t.Fatalf("expected a Get_State, got %+v", output.Messages)
 	}
@@ -1755,7 +1755,7 @@ func Test_State_Transfer_Gap(t *testing.T) {
 	if request.View != 0 {
 		t.Errorf("expected the Get_State in view 0, got %d", request.View)
 	}
-	if _, acked := first_message(output.Messages, vsr.Message_Kind_Prepare_Ok); acked {
+	if _, acked := first_message(output.Messages, vsr.MESSAGE_KIND_PREPARE_OK); acked {
 		t.Errorf("expected no ack on a gap, got %+v", output.Messages)
 	}
 }
@@ -1767,19 +1767,19 @@ func Test_State_Transfer_Response(t *testing.T) {
 		Heartbeat: 10, Timeout: 100, Now: 0,
 	})
 	receive(&primary, vsr.Message{
-		Kind: vsr.Message_Kind_Request, To: 0, Request_Number: 1, Command: []byte("a"),
+		Kind: vsr.MESSAGE_KIND_REQUEST, To: 0, Request_Number: 1, Command: []byte("a"),
 	})
 	receive(&primary, vsr.Message{
-		Kind: vsr.Message_Kind_Prepare_Ok, From: 1, To: 0, View: 0, Op: 1,
+		Kind: vsr.MESSAGE_KIND_PREPARE_OK, From: 1, To: 0, View: 0, Op: 1,
 	})
 	receive(&primary, vsr.Message{
-		Kind: vsr.Message_Kind_Request, To: 0, Request_Number: 2, Command: []byte("b"),
+		Kind: vsr.MESSAGE_KIND_REQUEST, To: 0, Request_Number: 2, Command: []byte("b"),
 	})
 
 	output := receive(&primary, vsr.Message{
-		Kind: vsr.Message_Kind_Get_State, From: 1, To: 0, View: 0, Op: 0,
+		Kind: vsr.MESSAGE_KIND_GET_STATE, From: 1, To: 0, View: 0, Op: 0,
 	})
-	state, ok := first_message(output.Messages, vsr.Message_Kind_New_State)
+	state, ok := first_message(output.Messages, vsr.MESSAGE_KIND_NEW_STATE)
 	if !ok {
 		t.Fatalf("expected a New_State, got %+v", output.Messages)
 	}
@@ -1811,14 +1811,14 @@ func Test_State_Transfer_Apply(t *testing.T) {
 		Heartbeat: 10, Timeout: 100, Now: 0,
 	})
 	receive(&replica, vsr.Message{
-		Kind: vsr.Message_Kind_New_State, From: 0, To: 1, View: 2, Op: 3, Commit: 2,
+		Kind: vsr.MESSAGE_KIND_NEW_STATE, From: 0, To: 1, View: 2, Op: 3, Commit: 2,
 		Log: []vsr.Log_Entry{
 			{View: 0, Command: []byte("a")},
 			{View: 0, Command: []byte("b")},
 			{View: 2, Command: []byte("c")},
 		},
 	})
-	if replica.Status != vsr.Status_Normal {
+	if replica.Status != vsr.STATUS_NORMAL {
 		t.Fatalf("expected normal status, got %d", replica.Status)
 	}
 	if replica.View != 2 {
@@ -1857,12 +1857,12 @@ func Test_State_Transfer_Checkpoint_Gap(t *testing.T) {
 	// Commit ops 1..4 so the checkpoint lands at op 4 and the prefix (ops 1, 2) is compacted.
 	for op := 1; op <= 4; op++ {
 		receive(&primary, vsr.Message{
-			Kind: vsr.Message_Kind_Request, To: 0, Client: 7,
+			Kind: vsr.MESSAGE_KIND_REQUEST, To: 0, Client: 7,
 			Request_Number: vsr.Request_Number(op),
 			Command:        []byte{byte('a' + op - 1)},
 		})
 		receive(&primary, vsr.Message{
-			Kind: vsr.Message_Kind_Prepare_Ok, From: 1, To: 0, View: 0, Op: vsr.Op(op),
+			Kind: vsr.MESSAGE_KIND_PREPARE_OK, From: 1, To: 0, View: 0, Op: vsr.Op(op),
 		})
 	}
 	if primary.Log_Start != 2 {
@@ -1872,9 +1872,9 @@ func Test_State_Transfer_Checkpoint_Gap(t *testing.T) {
 	// A requester asks for op 1 — below Log_Start, already GC'd. The responder cannot ship
 	// it, so it answers with the checkpoint plus the suffix from the checkpoint op forward.
 	output := receive(&primary, vsr.Message{
-		Kind: vsr.Message_Kind_Get_State, From: 1, To: 0, View: 0, Op: 1,
+		Kind: vsr.MESSAGE_KIND_GET_STATE, From: 1, To: 0, View: 0, Op: 1,
 	})
-	state, ok := first_message(output.Messages, vsr.Message_Kind_New_State)
+	state, ok := first_message(output.Messages, vsr.MESSAGE_KIND_NEW_STATE)
 	if !ok {
 		t.Fatalf("expected a New_State, got %+v", output.Messages)
 	}
@@ -1917,13 +1917,13 @@ func Test_State_Transfer_Checkpoint_Apply(t *testing.T) {
 		},
 	})
 	receive(&replica, vsr.Message{
-		Kind: vsr.Message_Kind_New_State, From: 0, To: 1, View: 3, Op: 6, Commit: 6,
+		Kind: vsr.MESSAGE_KIND_NEW_STATE, From: 0, To: 1, View: 3, Op: 6, Commit: 6,
 		Checkpoint_Op: 4, Checkpoint_State: []byte("snap-at-4"),
 		Log: []vsr.Log_Entry{
 			{View: 3, Command: []byte("e")}, {View: 3, Command: []byte("f")},
 		},
 	})
-	if replica.Status != vsr.Status_Normal {
+	if replica.Status != vsr.STATUS_NORMAL {
 		t.Fatalf("expected normal status, got %d", replica.Status)
 	}
 	if string(restored) != "snap-at-4" {
@@ -1964,13 +1964,13 @@ func Test_State_Transfer_Checkpoint_Apply(t *testing.T) {
 func Test_Reconfiguration_Request(t *testing.T) {
 	primary := vsr.Replica{Identifier: 0, Configuration: vsr.Configuration{0, 1, 2}}
 	output := receive(&primary, vsr.Message{
-		Kind: vsr.Message_Kind_Reconfiguration, To: 0, Client: 99, Request_Number: 1,
+		Kind: vsr.MESSAGE_KIND_RECONFIGURATION, To: 0, Client: 99, Request_Number: 1,
 		Epoch: 0, New_Configuration: vsr.Configuration{0, 1, 2, 3, 4},
 	})
 	if primary.Op != 1 {
 		t.Fatalf("expected the reconfiguration appended at op 1, got %d", primary.Op)
 	}
-	prepare, ok := first_message(output.Messages, vsr.Message_Kind_Prepare)
+	prepare, ok := first_message(output.Messages, vsr.MESSAGE_KIND_PREPARE)
 	if !ok {
 		t.Fatalf("expected a Prepare for the reconfiguration, got %+v", output.Messages)
 	}
@@ -1982,7 +1982,7 @@ func Test_Reconfiguration_Request(t *testing.T) {
 	// A new configuration with fewer than three members is rejected: no append.
 	primary2 := vsr.Replica{Identifier: 0, Configuration: vsr.Configuration{0, 1, 2}}
 	receive(&primary2, vsr.Message{
-		Kind: vsr.Message_Kind_Reconfiguration, To: 0, Client: 99, Request_Number: 1,
+		Kind: vsr.MESSAGE_KIND_RECONFIGURATION, To: 0, Client: 99, Request_Number: 1,
 		Epoch: 0, New_Configuration: vsr.Configuration{0, 1},
 	})
 	if primary2.Op != 0 {
@@ -1991,7 +1991,7 @@ func Test_Reconfiguration_Request(t *testing.T) {
 
 	// After accepting the reconfiguration the primary stops accepting client requests.
 	dropped := receive(&primary, vsr.Message{
-		Kind: vsr.Message_Kind_Request, To: 0, Client: 7, Request_Number: 1,
+		Kind: vsr.MESSAGE_KIND_REQUEST, To: 0, Client: 7, Request_Number: 1,
 		Command: []byte("after"),
 	})
 	if primary.Op != 1 {
@@ -2011,14 +2011,14 @@ func Test_Reconfiguration_Request(t *testing.T) {
 func Test_Reconfiguration_Threshold(t *testing.T) {
 	primary := vsr.Replica{Identifier: 0, Configuration: vsr.Configuration{0, 1, 2}}
 	receive(&primary, vsr.Message{
-		Kind: vsr.Message_Kind_Reconfiguration, To: 0, Client: 99, Request_Number: 1,
+		Kind: vsr.MESSAGE_KIND_RECONFIGURATION, To: 0, Client: 99, Request_Number: 1,
 		Epoch: 0, New_Configuration: vsr.Configuration{0, 1, 2, 3, 4},
 	})
 	// One ack from the old group (a quorum of two with the primary) commits the
 	// reconfiguration, even though the new group of five would need three. The epoch increments
 	// on that commit.
 	receive(&primary, vsr.Message{
-		Kind: vsr.Message_Kind_Prepare_Ok, From: 1, To: 0, View: 0, Epoch: 0, Op: 1,
+		Kind: vsr.MESSAGE_KIND_PREPARE_OK, From: 1, To: 0, View: 0, Epoch: 0, Op: 1,
 	})
 	if primary.Commit != 1 {
 		t.Fatalf("expected the reconfiguration committed at the old group's quorum, "+
@@ -2049,20 +2049,20 @@ func Test_Reconfiguration_Epoch_Increment(t *testing.T) {
 	// A client op precedes the reconfiguration; it must execute when the reconfiguration
 	// commits.
 	receive(&primary, vsr.Message{
-		Kind: vsr.Message_Kind_Request, To: 0, Client: 7, Request_Number: 1,
+		Kind: vsr.MESSAGE_KIND_REQUEST, To: 0, Client: 7, Request_Number: 1,
 		Command: []byte("work"),
 	})
 	receive(&primary, vsr.Message{
-		Kind: vsr.Message_Kind_Reconfiguration, To: 0, Client: 99, Request_Number: 1,
+		Kind: vsr.MESSAGE_KIND_RECONFIGURATION, To: 0, Client: 99, Request_Number: 1,
 		Epoch: 0, New_Configuration: vsr.Configuration{0, 1, 2, 3, 4},
 	})
 	// Ack op 1 (the client op) then op 2 (the reconfiguration); the reconfiguration commit
 	// drives the handoff.
 	receive(&primary, vsr.Message{
-		Kind: vsr.Message_Kind_Prepare_Ok, From: 1, To: 0, View: 0, Epoch: 0, Op: 1,
+		Kind: vsr.MESSAGE_KIND_PREPARE_OK, From: 1, To: 0, View: 0, Epoch: 0, Op: 1,
 	})
 	output := receive(&primary, vsr.Message{
-		Kind: vsr.Message_Kind_Prepare_Ok, From: 1, To: 0, View: 0, Epoch: 0, Op: 2,
+		Kind: vsr.MESSAGE_KIND_PREPARE_OK, From: 1, To: 0, View: 0, Epoch: 0, Op: 2,
 	})
 	if primary.Epoch != 1 {
 		t.Fatalf("expected epoch incremented to 1, got %d", primary.Epoch)
@@ -2074,7 +2074,7 @@ func Test_Reconfiguration_Epoch_Increment(t *testing.T) {
 		t.Fatalf("expected the prior client op executed, got %v", executed)
 	}
 	// A Commit to the other old replicas (1 and 2) at the old epoch so they self-advance.
-	commits := messages_of_kind(output.Messages, vsr.Message_Kind_Commit)
+	commits := messages_of_kind(output.Messages, vsr.MESSAGE_KIND_COMMIT)
 	if _, ok := commits[1]; !ok {
 		t.Errorf("expected a Commit to old replica 1, got %v", commits)
 	}
@@ -2083,7 +2083,7 @@ func Test_Reconfiguration_Epoch_Increment(t *testing.T) {
 	}
 	// A Start_Epoch to each added node (3 and 4), carrying both configurations and the start
 	// op.
-	starts := messages_of_kind(output.Messages, vsr.Message_Kind_Start_Epoch)
+	starts := messages_of_kind(output.Messages, vsr.MESSAGE_KIND_START_EPOCH)
 	if len(starts) != 2 {
 		t.Fatalf("expected a Start_Epoch to added nodes 3 and 4, got %v", starts)
 	}
@@ -2109,14 +2109,14 @@ func Test_Reconfiguration_Epoch_Increment(t *testing.T) {
 func Test_Reconfiguration_Start_Epoch(t *testing.T) {
 	added := vsr.Replica{Identifier: 3, Configuration: vsr.Configuration{0, 1, 2, 3, 4}}
 	output := receive(&added, vsr.Message{
-		Kind: vsr.Message_Kind_Start_Epoch, From: 0, To: 3, View: 0, Epoch: 1, Op: 2,
+		Kind: vsr.MESSAGE_KIND_START_EPOCH, From: 0, To: 3, View: 0, Epoch: 1, Op: 2,
 		Old_Configuration: vsr.Configuration{0, 1, 2},
 		New_Configuration: vsr.Configuration{0, 1, 2, 3, 4},
 	})
 	if added.Epoch != 1 {
 		t.Fatalf("expected epoch 1 adopted, got %d", added.Epoch)
 	}
-	if added.Status != vsr.Status_Transition {
+	if added.Status != vsr.STATUS_TRANSITION {
 		t.Fatalf("expected Status_Transitioning, got %d", added.Status)
 	}
 	if added.View != 0 {
@@ -2133,7 +2133,7 @@ func Test_Reconfiguration_Start_Epoch(t *testing.T) {
 		t.Fatalf("expected the new configuration adopted, got %+v", added.Configuration)
 	}
 	// The new node is short of the epoch start, so it asks the old replicas for state.
-	transfer, ok := first_message(output.Messages, vsr.Message_Kind_Get_State)
+	transfer, ok := first_message(output.Messages, vsr.MESSAGE_KIND_GET_STATE)
 	if !ok {
 		t.Fatalf("expected a Get_State to catch up, got %+v", output.Messages)
 	}
@@ -2143,7 +2143,7 @@ func Test_Reconfiguration_Start_Epoch(t *testing.T) {
 	}
 	sources := map[vsr.Replica_Identifier]bool{}
 	for _, message := range output.Messages {
-		if message.Kind == vsr.Message_Kind_Get_State {
+		if message.Kind == vsr.MESSAGE_KIND_GET_STATE {
 			sources[message.To] = true
 		}
 	}
@@ -2173,24 +2173,24 @@ func Test_Reconfiguration_New_Group_Catch_Up(t *testing.T) {
 	})
 	// Learn the epoch: epoch 1 begins at op 6, old group {0,1,2}, new group {0,1,2,3,4}.
 	receive(&added, vsr.Message{
-		Kind: vsr.Message_Kind_Start_Epoch, From: 0, To: 3, View: 0, Epoch: 1, Op: 6,
+		Kind: vsr.MESSAGE_KIND_START_EPOCH, From: 0, To: 3, View: 0, Epoch: 1, Op: 6,
 		Old_Configuration: vsr.Configuration{0, 1, 2},
 		New_Configuration: vsr.Configuration{0, 1, 2, 3, 4},
 	})
-	if added.Status != vsr.Status_Transition {
+	if added.Status != vsr.STATUS_TRANSITION {
 		t.Fatalf("expected Transitioning while catching up, got %d", added.Status)
 	}
 	// An old replica answers the catch-up with a checkpoint at op 4 and the suffix (ops 5, 6),
 	// stamped with the new epoch. The new node, empty, must Restore the checkpoint then replay.
 	receive(&added, vsr.Message{
-		Kind: vsr.Message_Kind_New_State, From: 0, To: 3, View: 0, Epoch: 1,
+		Kind: vsr.MESSAGE_KIND_NEW_STATE, From: 0, To: 3, View: 0, Epoch: 1,
 		Op: 6, Commit: 6,
 		Checkpoint_Op: 4, Checkpoint_State: []byte("snap-at-4"),
 		Log: []vsr.Log_Entry{
 			{View: 0, Command: []byte("e")}, {View: 0, Command: []byte("f")},
 		},
 	})
-	if added.Status != vsr.Status_Normal {
+	if added.Status != vsr.STATUS_NORMAL {
 		t.Fatalf("expected Normal once caught up to the epoch start, got %d", added.Status)
 	}
 	if string(restored) != "snap-at-4" {
@@ -2220,19 +2220,19 @@ func Test_Reconfiguration_Epoch_Started(t *testing.T) {
 	added := vsr.Replica{Identifier: 3, Configuration: vsr.Configuration{0, 1, 3}}
 	// Learn the epoch at start op 1, then catch up to it in one New_State so it completes.
 	receive(&added, vsr.Message{
-		Kind: vsr.Message_Kind_Start_Epoch, From: 0, To: 3, View: 0, Epoch: 1, Op: 1,
+		Kind: vsr.MESSAGE_KIND_START_EPOCH, From: 0, To: 3, View: 0, Epoch: 1, Op: 1,
 		Old_Configuration: vsr.Configuration{0, 1, 2},
 		New_Configuration: vsr.Configuration{0, 1, 3},
 	})
 	output := receive(&added, vsr.Message{
-		Kind: vsr.Message_Kind_New_State, From: 0, To: 3, View: 0, Epoch: 1,
+		Kind: vsr.MESSAGE_KIND_NEW_STATE, From: 0, To: 3, View: 0, Epoch: 1,
 		Op: 1, Commit: 1,
 		Log: []vsr.Log_Entry{{View: 0, Command: []byte("a")}},
 	})
-	if added.Status != vsr.Status_Normal {
+	if added.Status != vsr.STATUS_NORMAL {
 		t.Fatalf("expected Normal once caught up, got %d", added.Status)
 	}
-	started, ok := first_message(output.Messages, vsr.Message_Kind_Epoch_Started)
+	started, ok := first_message(output.Messages, vsr.MESSAGE_KIND_EPOCH_STARTED)
 	if !ok {
 		t.Fatalf("expected an Epoch_Started to the replaced replica, got %+v",
 			output.Messages)
@@ -2249,11 +2249,11 @@ func Test_Reconfiguration_Epoch_Started(t *testing.T) {
 
 	// A duplicate Start_Epoch arriving after completion is answered with Epoch_Started.
 	dup := receive(&added, vsr.Message{
-		Kind: vsr.Message_Kind_Start_Epoch, From: 2, To: 3, View: 0, Epoch: 1, Op: 1,
+		Kind: vsr.MESSAGE_KIND_START_EPOCH, From: 2, To: 3, View: 0, Epoch: 1, Op: 1,
 		Old_Configuration: vsr.Configuration{0, 1, 2},
 		New_Configuration: vsr.Configuration{0, 1, 3},
 	})
-	ack, ok := first_message(dup.Messages, vsr.Message_Kind_Epoch_Started)
+	ack, ok := first_message(dup.Messages, vsr.MESSAGE_KIND_EPOCH_STARTED)
 	if !ok {
 		t.Fatalf("expected a duplicate Start_Epoch answered with Epoch_Started, got %+v",
 			dup.Messages)
@@ -2272,16 +2272,16 @@ func Test_Reconfiguration_Old_Group_Shutdown(t *testing.T) {
 	replaced := vsr.Replica{Identifier: 2, Configuration: vsr.Configuration{0, 1, 2}}
 	// The reconfiguration sits at op 1 in its log; a Commit then commits and executes it.
 	receive(&replaced, vsr.Message{
-		Kind: vsr.Message_Kind_Prepare, From: 0, To: 2, View: 0, Epoch: 0, Op: 1,
+		Kind: vsr.MESSAGE_KIND_PREPARE, From: 0, To: 2, View: 0, Epoch: 0, Op: 1,
 		Entries: []vsr.Log_Entry{{
 			View: 0, Client: 99, Request_Number: 1,
 			New_Configuration: vsr.Configuration{0, 1, 3},
 		}},
 	})
 	receive(&replaced, vsr.Message{
-		Kind: vsr.Message_Kind_Commit, From: 0, To: 2, View: 0, Epoch: 0, Commit: 1,
+		Kind: vsr.MESSAGE_KIND_COMMIT, From: 0, To: 2, View: 0, Epoch: 0, Commit: 1,
 	})
-	if replaced.Status != vsr.Status_Transition {
+	if replaced.Status != vsr.STATUS_TRANSITION {
 		t.Fatalf("expected Transitioning after executing the reconfiguration, got %d",
 			replaced.Status)
 	}
@@ -2305,23 +2305,23 @@ func Test_Reconfiguration_Old_Group_Shutdown(t *testing.T) {
 	// crash then drops the group below quorum with no driver to bring 3 up, the reconfiguration
 	// wedge the simulator surfaced (seeds 8185/20229/22678/9437).
 	receive(&replaced, vsr.Message{
-		Kind: vsr.Message_Kind_Epoch_Started, From: 0, To: 2, View: 0, Epoch: 1,
+		Kind: vsr.MESSAGE_KIND_EPOCH_STARTED, From: 0, To: 2, View: 0, Epoch: 1,
 	})
-	if replaced.Status != vsr.Status_Transition {
+	if replaced.Status != vsr.STATUS_TRANSITION {
 		t.Fatalf("expected still serving with one member up, got %d", replaced.Status)
 	}
 	// Continuing members 0 and 1 are up (a quorum), but added member 3 is not: still serving.
 	receive(&replaced, vsr.Message{
-		Kind: vsr.Message_Kind_Epoch_Started, From: 1, To: 2, View: 0, Epoch: 1,
+		Kind: vsr.MESSAGE_KIND_EPOCH_STARTED, From: 1, To: 2, View: 0, Epoch: 1,
 	})
-	if replaced.Status != vsr.Status_Transition {
+	if replaced.Status != vsr.STATUS_TRANSITION {
 		t.Fatalf("expected still serving until member 3 is up, got %d", replaced.Status)
 	}
 	// The added member 3 confirms: every active new-group member is up, so the handoff is done.
 	receive(&replaced, vsr.Message{
-		Kind: vsr.Message_Kind_Epoch_Started, From: 3, To: 2, View: 0, Epoch: 1,
+		Kind: vsr.MESSAGE_KIND_EPOCH_STARTED, From: 3, To: 2, View: 0, Epoch: 1,
 	})
-	if replaced.Status != vsr.Status_Shutdown {
+	if replaced.Status != vsr.STATUS_SHUTDOWN {
 		t.Fatalf("expected Shutdown once every active new-group member is up, got %d",
 			replaced.Status)
 	}
@@ -2336,14 +2336,14 @@ func Test_Reconfiguration_Epoch_Precedence(t *testing.T) {
 	for _, view := range []vsr.View{1, 2, 3} { // Below, equal, above the replica's view 2.
 		replica := epoch_1_view_2_replica()
 		output := receive(&replica, vsr.Message{
-			Kind: vsr.Message_Kind_Prepare, From: 0, To: 1, Epoch: 0, View: view,
+			Kind: vsr.MESSAGE_KIND_PREPARE, From: 0, To: 1, Epoch: 0, View: view,
 			Op: 1, Entries: []vsr.Log_Entry{{Command: []byte("x")}},
 		})
 		if replica.Op != 0 {
 			t.Fatalf("lower epoch at view %d should be dropped, op %d",
 				view, replica.Op)
 		}
-		redirect, ok := first_message(output.Messages, vsr.Message_Kind_New_Epoch)
+		redirect, ok := first_message(output.Messages, vsr.MESSAGE_KIND_NEW_EPOCH)
 		if !ok {
 			t.Fatalf("lower epoch at view %d should send New_Epoch, got %+v",
 				view, output.Messages)
@@ -2360,7 +2360,7 @@ func Test_Reconfiguration_Epoch_Precedence(t *testing.T) {
 	// moves the replica to epoch 2 and view 0, proving epoch dominates view.
 	higher := epoch_1_view_2_replica()
 	receive(&higher, vsr.Message{
-		Kind: vsr.Message_Kind_Start_Epoch, From: 0, To: 1, Epoch: 2, View: 0, Op: 0,
+		Kind: vsr.MESSAGE_KIND_START_EPOCH, From: 0, To: 1, Epoch: 2, View: 0, Op: 0,
 		Old_Configuration: vsr.Configuration{0, 1, 2},
 		New_Configuration: vsr.Configuration{0, 1, 2, 3, 4},
 	})
@@ -2374,7 +2374,7 @@ func Test_Reconfiguration_Epoch_Precedence(t *testing.T) {
 	// processed normally.
 	equal_low := epoch_1_view_2_replica()
 	receive(&equal_low, vsr.Message{
-		Kind: vsr.Message_Kind_Prepare, From: 0, To: 1, Epoch: 1, View: 1,
+		Kind: vsr.MESSAGE_KIND_PREPARE, From: 0, To: 1, Epoch: 1, View: 1,
 		Op: 1, Entries: []vsr.Log_Entry{{Command: []byte("x")}},
 	})
 	if equal_low.Op != 0 {
@@ -2382,13 +2382,13 @@ func Test_Reconfiguration_Epoch_Precedence(t *testing.T) {
 	}
 	equal_same := epoch_1_view_2_replica()
 	output := receive(&equal_same, vsr.Message{
-		Kind: vsr.Message_Kind_Prepare, From: 0, To: 1, Epoch: 1, View: 2,
+		Kind: vsr.MESSAGE_KIND_PREPARE, From: 0, To: 1, Epoch: 1, View: 2,
 		Op: 1, Entries: []vsr.Log_Entry{{Command: []byte("x")}},
 	})
 	if equal_same.Op != 1 {
 		t.Fatalf("equal epoch and view should be processed, op %d", equal_same.Op)
 	}
-	if _, ok := first_message(output.Messages, vsr.Message_Kind_Prepare_Ok); !ok {
+	if _, ok := first_message(output.Messages, vsr.MESSAGE_KIND_PREPARE_OK); !ok {
 		t.Errorf("equal epoch and view should ack, got %+v", output.Messages)
 	}
 }
@@ -2404,12 +2404,12 @@ func Test_Reconfiguration_View_Change_Across_Epoch(t *testing.T) {
 		Heartbeat: 10, Timeout: 100, Now: 0,
 	})
 	receive(&primary, vsr.Message{
-		Kind: vsr.Message_Kind_Start_View_Change, From: 0, To: 1, View: 1, Epoch: 0,
+		Kind: vsr.MESSAGE_KIND_START_VIEW_CHANGE, From: 0, To: 1, View: 1, Epoch: 0,
 	})
 	// The winner reports a committed reconfiguration at op 1 (its topmost), growing to
 	// {0,1,2,3,4}.
 	output := receive(&primary, vsr.Message{
-		Kind: vsr.Message_Kind_Do_View_Change, From: 0, To: 1, View: 1, Epoch: 0,
+		Kind: vsr.MESSAGE_KIND_DO_VIEW_CHANGE, From: 0, To: 1, View: 1, Epoch: 0,
 		Last_Normal_View: 0, Op: 1, Commit: 1,
 		Log_Suffix: []vsr.Log_Entry{{
 			View: 0, Client: 99, Request_Number: 1,
@@ -2423,7 +2423,7 @@ func Test_Reconfiguration_View_Change_Across_Epoch(t *testing.T) {
 	}
 	starts := map[vsr.Replica_Identifier]bool{}
 	for _, message := range output.Messages {
-		if message.Kind == vsr.Message_Kind_Start_Epoch {
+		if message.Kind == vsr.MESSAGE_KIND_START_EPOCH {
 			starts[message.To] = true
 		}
 	}
@@ -2443,16 +2443,16 @@ func Test_Reconfiguration_Client_Redirect(t *testing.T) {
 	// A replica that has advanced to epoch 2, now serving the new configuration {0,1,3}.
 	replica := vsr.Replica{
 		Identifier: 0, Configuration: vsr.Configuration{0, 1, 3},
-		Epoch: 2, View: 1, Status: vsr.Status_Normal,
+		Epoch: 2, View: 1, Status: vsr.STATUS_NORMAL,
 	}
 	output := receive(&replica, vsr.Message{
-		Kind: vsr.Message_Kind_Request, To: 0, Epoch: 0, Client: 77, Request_Number: 5,
+		Kind: vsr.MESSAGE_KIND_REQUEST, To: 0, Epoch: 0, Client: 77, Request_Number: 5,
 		Command: []byte("stale"),
 	})
 	if replica.Op != 0 {
 		t.Fatalf("expected the stale-epoch request not appended, op %d", replica.Op)
 	}
-	redirect, ok := first_message(output.Replies, vsr.Message_Kind_New_Epoch)
+	redirect, ok := first_message(output.Replies, vsr.MESSAGE_KIND_NEW_EPOCH)
 	if !ok {
 		t.Fatalf("expected a New_Epoch redirect to the client, got %+v", output.Replies)
 	}
@@ -2478,13 +2478,13 @@ func Test_Batching_Flush_Immediate(t *testing.T) {
 		Identifier: 0, Configuration: vsr.Configuration{0, 1, 2}, Batch_Max: 4,
 	}
 	output := receive(&primary, vsr.Message{
-		Kind: vsr.Message_Kind_Request, To: 0, Client: 7, Request_Number: 1,
+		Kind: vsr.MESSAGE_KIND_REQUEST, To: 0, Client: 7, Request_Number: 1,
 		Command: []byte("a"),
 	})
 	if primary.Op != 1 {
 		t.Fatalf("expected the idle primary to append at once, got op %d", primary.Op)
 	}
-	prepare, ok := first_message(output.Messages, vsr.Message_Kind_Prepare)
+	prepare, ok := first_message(output.Messages, vsr.MESSAGE_KIND_PREPARE)
 	if !ok {
 		t.Fatalf("expected an immediate Prepare, got %+v", output.Messages)
 	}
@@ -2508,23 +2508,23 @@ func Test_Batching_Flush_Batched(t *testing.T) {
 	}
 	// Request from client 7: the primary is idle, so it flushes op 1 immediately.
 	receive(&primary, vsr.Message{
-		Kind: vsr.Message_Kind_Request, To: 0, Client: 7, Request_Number: 1,
+		Kind: vsr.MESSAGE_KIND_REQUEST, To: 0, Client: 7, Request_Number: 1,
 		Command: []byte("a"),
 	})
 	// Requests from clients 8 and 9 arrive while op 1 is in flight: buffered, no Prepare
 	// emitted.
 	out2 := receive(&primary, vsr.Message{
-		Kind: vsr.Message_Kind_Request, To: 0, Client: 8, Request_Number: 1,
+		Kind: vsr.MESSAGE_KIND_REQUEST, To: 0, Client: 8, Request_Number: 1,
 		Command: []byte("b"),
 	})
-	if _, sent := first_message(out2.Messages, vsr.Message_Kind_Prepare); sent {
+	if _, sent := first_message(out2.Messages, vsr.MESSAGE_KIND_PREPARE); sent {
 		t.Fatalf("expected the request buffered while busy, got a Prepare")
 	}
 	out3 := receive(&primary, vsr.Message{
-		Kind: vsr.Message_Kind_Request, To: 0, Client: 9, Request_Number: 1,
+		Kind: vsr.MESSAGE_KIND_REQUEST, To: 0, Client: 9, Request_Number: 1,
 		Command: []byte("c"),
 	})
-	if _, sent := first_message(out3.Messages, vsr.Message_Kind_Prepare); sent {
+	if _, sent := first_message(out3.Messages, vsr.MESSAGE_KIND_PREPARE); sent {
 		t.Fatalf("expected the request buffered while busy, got a Prepare")
 	}
 	if primary.Op != 1 {
@@ -2532,9 +2532,9 @@ func Test_Batching_Flush_Batched(t *testing.T) {
 	}
 	// Op 1 commits on a quorum; the buffered batch flushes as one Prepare for ops 2..3.
 	output := receive(&primary, vsr.Message{
-		Kind: vsr.Message_Kind_Prepare_Ok, From: 1, To: 0, View: 0, Op: 1,
+		Kind: vsr.MESSAGE_KIND_PREPARE_OK, From: 1, To: 0, View: 0, Op: 1,
 	})
-	prepare, ok := first_message(output.Messages, vsr.Message_Kind_Prepare)
+	prepare, ok := first_message(output.Messages, vsr.MESSAGE_KIND_PREPARE)
 	if !ok {
 		t.Fatalf("expected the buffered batch flushed on commit, got %+v", output.Messages)
 	}
@@ -2567,24 +2567,24 @@ func Test_Batching_Batch_Cap(t *testing.T) {
 	}
 	// Op 1 flushes immediately (idle).
 	receive(&primary, vsr.Message{
-		Kind: vsr.Message_Kind_Request, To: 0, Client: 7, Request_Number: 1,
+		Kind: vsr.MESSAGE_KIND_REQUEST, To: 0, Client: 7, Request_Number: 1,
 		Command: []byte("a"),
 	})
 	// One request buffered: below the cap of 2, no flush.
 	out2 := receive(&primary, vsr.Message{
-		Kind: vsr.Message_Kind_Request, To: 0, Client: 8, Request_Number: 1,
+		Kind: vsr.MESSAGE_KIND_REQUEST, To: 0, Client: 8, Request_Number: 1,
 		Command: []byte("b"),
 	})
-	if _, sent := first_message(out2.Messages, vsr.Message_Kind_Prepare); sent {
+	if _, sent := first_message(out2.Messages, vsr.MESSAGE_KIND_PREPARE); sent {
 		t.Fatalf("expected no flush below the cap, got a Prepare")
 	}
 	// The second buffered request reaches the cap of 2, flushing the batch though op 1 is
 	// unacked.
 	out3 := receive(&primary, vsr.Message{
-		Kind: vsr.Message_Kind_Request, To: 0, Client: 9, Request_Number: 1,
+		Kind: vsr.MESSAGE_KIND_REQUEST, To: 0, Client: 9, Request_Number: 1,
 		Command: []byte("c"),
 	})
-	prepare, ok := first_message(out3.Messages, vsr.Message_Kind_Prepare)
+	prepare, ok := first_message(out3.Messages, vsr.MESSAGE_KIND_PREPARE)
 	if !ok {
 		t.Fatalf("expected a flush at the cap, got %+v", out3.Messages)
 	}
@@ -2607,7 +2607,7 @@ func Test_Batching_Batch_Cap(t *testing.T) {
 func Test_Batching_Batch_Prepare_Ok(t *testing.T) {
 	backup := vsr.Replica{Identifier: 1, Configuration: vsr.Configuration{0, 1, 2}}
 	output := receive(&backup, vsr.Message{
-		Kind: vsr.Message_Kind_Prepare, From: 0, To: 1, View: 0, Op: 3,
+		Kind: vsr.MESSAGE_KIND_PREPARE, From: 0, To: 1, View: 0, Op: 3,
 		Entries: []vsr.Log_Entry{
 			{View: 0, Command: []byte("a")},
 			{View: 0, Command: []byte("b")},
@@ -2622,7 +2622,7 @@ func Test_Batching_Batch_Prepare_Ok(t *testing.T) {
 	}
 	acked := map[vsr.Op]bool{}
 	for _, message := range output.Messages {
-		if message.Kind == vsr.Message_Kind_Prepare_Ok {
+		if message.Kind == vsr.MESSAGE_KIND_PREPARE_OK {
 			acked[message.Op] = true
 		}
 	}
@@ -2650,7 +2650,7 @@ func Test_Batching_Batch_Prepare_Ok(t *testing.T) {
 	}
 	for op := vsr.Op(1); op <= 3; op++ {
 		receive(&primary, vsr.Message{
-			Kind: vsr.Message_Kind_Prepare_Ok, From: 1, To: 0, View: 0, Op: op,
+			Kind: vsr.MESSAGE_KIND_PREPARE_OK, From: 1, To: 0, View: 0, Op: op,
 		})
 	}
 	if primary.Commit != 3 {
@@ -2669,11 +2669,11 @@ func Test_Batching_Batch_Reconfiguration_Singleton(t *testing.T) {
 	}
 	// Op 1 flushes immediately (idle); a second request buffers while op 1 is in flight.
 	receive(&primary, vsr.Message{
-		Kind: vsr.Message_Kind_Request, To: 0, Client: 7, Request_Number: 1,
+		Kind: vsr.MESSAGE_KIND_REQUEST, To: 0, Client: 7, Request_Number: 1,
 		Command: []byte("a"),
 	})
 	receive(&primary, vsr.Message{
-		Kind: vsr.Message_Kind_Request, To: 0, Client: 8, Request_Number: 1,
+		Kind: vsr.MESSAGE_KIND_REQUEST, To: 0, Client: 8, Request_Number: 1,
 		Command: []byte("b"),
 	})
 	if primary.Op != 1 {
@@ -2682,7 +2682,7 @@ func Test_Batching_Batch_Reconfiguration_Singleton(t *testing.T) {
 	// The reconfiguration flushes the buffered client request as op 2, then appends alone as op
 	// 3.
 	receive(&primary, vsr.Message{
-		Kind: vsr.Message_Kind_Reconfiguration, To: 0, Client: 99, Request_Number: 1,
+		Kind: vsr.MESSAGE_KIND_RECONFIGURATION, To: 0, Client: 99, Request_Number: 1,
 		New_Configuration: vsr.Configuration{0, 1, 2, 3, 4},
 	})
 	if primary.Op != 3 {
@@ -2702,7 +2702,7 @@ func Test_Batching_Batch_Reconfiguration_Singleton(t *testing.T) {
 	}
 	// No further client requests are accepted once the reconfiguration is the epoch's last op.
 	receive(&primary, vsr.Message{
-		Kind: vsr.Message_Kind_Request, To: 0, Client: 8, Request_Number: 2,
+		Kind: vsr.MESSAGE_KIND_REQUEST, To: 0, Client: 8, Request_Number: 2,
 		Command: []byte("c"),
 	})
 	if primary.Op != 3 {
@@ -2731,11 +2731,11 @@ func Test_Standby_Roles(t *testing.T) {
 			},
 		}
 		receive(&replica, vsr.Message{
-			Kind: vsr.Message_Kind_Prepare, From: 0, To: identifier, View: 0, Op: 1,
+			Kind: vsr.MESSAGE_KIND_PREPARE, From: 0, To: identifier, View: 0, Op: 1,
 			Entries: []vsr.Log_Entry{{Command: []byte("x")}},
 		})
 		receive(&replica, vsr.Message{
-			Kind: vsr.Message_Kind_Commit, From: 0, To: identifier, View: 0, Commit: 1,
+			Kind: vsr.MESSAGE_KIND_COMMIT, From: 0, To: identifier, View: 0, Commit: 1,
 		})
 	}
 	if !executed[1] {
@@ -2752,10 +2752,10 @@ func Test_Standby_Roles(t *testing.T) {
 func Test_Standby_Primary_Always_Active(t *testing.T) {
 	standby := vsr.Replica{
 		Identifier: 2, Configuration: vsr.Configuration{0, 1, 2}, Active_Count: 2, View: 2,
-		Status: vsr.Status_Normal,
+		Status: vsr.STATUS_NORMAL,
 	}
 	receive(&standby, vsr.Message{
-		Kind: vsr.Message_Kind_Request, To: 2, View: 2, Client: 7, Request_Number: 1,
+		Kind: vsr.MESSAGE_KIND_REQUEST, To: 2, View: 2, Client: 7, Request_Number: 1,
 		Command: []byte("x"),
 	})
 	if standby.Op != 0 {
@@ -2764,10 +2764,10 @@ func Test_Standby_Primary_Always_Active(t *testing.T) {
 	}
 	primary := vsr.Replica{
 		Identifier: 0, Configuration: vsr.Configuration{0, 1, 2}, Active_Count: 2, View: 2,
-		Status: vsr.Status_Normal,
+		Status: vsr.STATUS_NORMAL,
 	}
 	receive(&primary, vsr.Message{
-		Kind: vsr.Message_Kind_Request, To: 0, View: 2, Client: 7, Request_Number: 1,
+		Kind: vsr.MESSAGE_KIND_REQUEST, To: 0, View: 2, Client: 7, Request_Number: 1,
 		Command: []byte("x"),
 	})
 	if primary.Op != 1 {
@@ -2792,11 +2792,11 @@ func Test_Standby_No_Execution(t *testing.T) {
 		},
 	}
 	receive(&standby, vsr.Message{
-		Kind: vsr.Message_Kind_Prepare, From: 0, To: 2, View: 0, Op: 1,
+		Kind: vsr.MESSAGE_KIND_PREPARE, From: 0, To: 2, View: 0, Op: 1,
 		Entries: []vsr.Log_Entry{{Command: []byte("x")}},
 	})
 	output := receive(&standby, vsr.Message{
-		Kind: vsr.Message_Kind_Commit, From: 0, To: 2, View: 0, Commit: 1,
+		Kind: vsr.MESSAGE_KIND_COMMIT, From: 0, To: 2, View: 0, Commit: 1,
 	})
 	if standby.Commit != 1 {
 		t.Fatalf("expected the standby to advance its commit number, got %d",
@@ -2825,14 +2825,14 @@ func Test_Standby_No_Vote(t *testing.T) {
 		Identifier: 2, Configuration: vsr.Configuration{0, 1, 2}, Active_Count: 2,
 	}
 	output := receive(&standby, vsr.Message{
-		Kind: vsr.Message_Kind_Prepare, From: 0, To: 2, View: 0, Op: 1,
+		Kind: vsr.MESSAGE_KIND_PREPARE, From: 0, To: 2, View: 0, Op: 1,
 		Entries: []vsr.Log_Entry{{Command: []byte("x")}},
 	})
 	if standby.Op != 1 {
 		t.Fatalf("expected the standby to append the entry to stay current, op %d",
 			standby.Op)
 	}
-	if _, voted := first_message(output.Messages, vsr.Message_Kind_Prepare_Ok); voted {
+	if _, voted := first_message(output.Messages, vsr.MESSAGE_KIND_PREPARE_OK); voted {
 		t.Errorf("expected a standby to cast no Prepare_Ok, got %+v", output.Messages)
 	}
 }
@@ -2847,11 +2847,11 @@ func Test_Standby_Follow(t *testing.T) {
 		Heartbeat: 10, Timeout: 100, Now: 0,
 	})
 	receive(&standby, vsr.Message{
-		Kind: vsr.Message_Kind_Prepare, From: 0, To: 2, View: 0, Op: 1,
+		Kind: vsr.MESSAGE_KIND_PREPARE, From: 0, To: 2, View: 0, Op: 1,
 		Entries: []vsr.Log_Entry{{Command: []byte("x")}},
 	})
 	receive(&standby, vsr.Message{
-		Kind: vsr.Message_Kind_Commit, From: 0, To: 2, View: 0, Commit: 1,
+		Kind: vsr.MESSAGE_KIND_COMMIT, From: 0, To: 2, View: 0, Commit: 1,
 	})
 	if standby.Commit != 1 {
 		t.Fatalf("expected the standby to track the commit number, got %d", standby.Commit)
@@ -2859,11 +2859,11 @@ func Test_Standby_Follow(t *testing.T) {
 	// The primary falls silent; the standby's failure-detector deadline passes. It must NOT
 	// start a view change.
 	output := tick(&standby, 100)
-	if standby.Status != vsr.Status_Normal {
+	if standby.Status != vsr.STATUS_NORMAL {
 		t.Fatalf("expected the standby to stay normal, not enter a view change, status %d",
 			standby.Status)
 	}
-	_, started := first_message(output.Messages, vsr.Message_Kind_Start_View_Change)
+	_, started := first_message(output.Messages, vsr.MESSAGE_KIND_START_VIEW_CHANGE)
 	if started {
 		t.Errorf("expected a standby to start no view change on timeout, got %+v",
 			output.Messages)
@@ -2881,7 +2881,7 @@ func Test_Standby_Promotion(t *testing.T) {
 		Identifier:    3,
 		Configuration: vsr.Configuration{0, 1, 2, 3, 4},
 		Active_Count:  3,
-		Status:        vsr.Status_Normal,
+		Status:        vsr.STATUS_NORMAL,
 		Op:            2,
 		Commit:        2,
 		// Followed as a standby: commit advanced, but nothing was executed.
@@ -2898,12 +2898,12 @@ func Test_Standby_Promotion(t *testing.T) {
 		},
 	}
 	receive(&standby, vsr.Message{
-		Kind: vsr.Message_Kind_Start_Epoch, From: 0, To: 3, Epoch: 1, View: 0, Op: 2,
+		Kind: vsr.MESSAGE_KIND_START_EPOCH, From: 0, To: 3, Epoch: 1, View: 0, Op: 2,
 		Old_Configuration: vsr.Configuration{0, 1, 2, 3, 4},
 		New_Configuration: vsr.Configuration{0, 1, 3},
 		New_Active_Count:  3,
 	})
-	if standby.Status != vsr.Status_Normal {
+	if standby.Status != vsr.STATUS_NORMAL {
 		t.Fatalf("expected the promoted standby to complete the epoch as normal, status %d",
 			standby.Status)
 	}
@@ -2936,7 +2936,7 @@ func Test_Read_Through_Consensus(t *testing.T) {
 	}
 	// A read-only command arrives like any request and is appended to the log.
 	receive(&primary, vsr.Message{
-		Kind: vsr.Message_Kind_Request, To: 0, Client: 7, Request_Number: 1,
+		Kind: vsr.MESSAGE_KIND_REQUEST, To: 0, Client: 7, Request_Number: 1,
 		Command: []byte("read-x"),
 	})
 	if primary.Op != 1 {
@@ -2944,12 +2944,12 @@ func Test_Read_Through_Consensus(t *testing.T) {
 	}
 	// A quorum ack commits it; the state machine executes it and the primary replies.
 	output := receive(&primary, vsr.Message{
-		Kind: vsr.Message_Kind_Prepare_Ok, From: 1, To: 0, View: 0, Op: 1,
+		Kind: vsr.MESSAGE_KIND_PREPARE_OK, From: 1, To: 0, View: 0, Op: 1,
 	})
 	if primary.Commit != 1 {
 		t.Fatalf("expected the read committed on a quorum, commit %d", primary.Commit)
 	}
-	reply, ok := first_message(output.Replies, vsr.Message_Kind_Reply)
+	reply, ok := first_message(output.Replies, vsr.MESSAGE_KIND_REPLY)
 	if !ok {
 		t.Fatalf("expected a Reply for the committed read, got %+v", output.Replies)
 	}

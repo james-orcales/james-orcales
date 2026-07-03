@@ -1,10 +1,13 @@
 package prng_test
 
 import (
+	"io"
 	"reflect"
 	"testing"
 
-	"github.com/james-orcales/james-orcales/shared/prng"
+	"local/james-orcales/shared/prng"
+
+	invariant "local/james-orcales/shared/invariant/default"
 )
 
 // Test_Seed_Expands_To_State checks New is deterministic and seed-sensitive.
@@ -77,12 +80,12 @@ func Test_Element_Comes_From_Slice(t *testing.T) {
 			t.Fatalf("Element returned %q, not in the slice", item)
 		}
 	}
-	panicked := did_panic(func() {
+	died := did_die(func() {
 		empty := []string{}
 		prng.Generator_Element(&generator, empty)
 	})
-	if !panicked {
-		t.Fatalf("Element on an empty slice did not panic")
+	if !died {
+		t.Fatalf("Element on an empty slice did not exit")
 	}
 }
 
@@ -313,16 +316,27 @@ func Test_Percentile_Distribution_Hits_Percentiles(t *testing.T) {
 	}
 }
 
-// Runs action and reports whether it panicked, used to assert preconditions.
-func did_panic(action func()) (panicked bool) {
+// Runs action and reports whether it tripped a fatal invariant, used to assert preconditions. A
+// violation exits through the Default recorder, which os.Exit cannot recover, so the helper swaps
+// Exit for a panic — and silences the recorder's stderr — for the duration, then recovers it, so
+// the exit is observable in-process. Exit and Output are restored before returning.
+func did_die(action func()) (died bool) {
+	exit, output := invariant.Default.Exit, invariant.Default.Output
+	invariant.Default.Exit = func(int) { panic(tripped_invariant{}) }
+	invariant.Default.Output = io.Discard
 	defer func() {
+		invariant.Default.Exit, invariant.Default.Output = exit, output
 		if recover() != nil {
-			panicked = true
+			died = true
 		}
 	}()
 	action()
-	return panicked
+	return died
 }
+
+// Marks the swapped-in Exit's panic, so did_die's recover tells a deliberately tripped guard from
+// an unrelated panic in the action.
+type tripped_invariant struct{}
 
 // Reports whether a struct type, or the element of a slice or array field, is floating point.
 func type_has_float(structure reflect.Type) (has bool) {

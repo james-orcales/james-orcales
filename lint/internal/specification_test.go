@@ -6,194 +6,16 @@ import (
 	"testing"
 	"testing/fstest"
 
-	"github.com/james-orcales/james-orcales/lint/internal"
+	"local/james-orcales/lint/internal"
 )
 
 // This file is the doctrine, enforced by the lint tool, which dogfoods on this
 // very package whenever the tool lints lint/internal. Each Test_<Heading> builds
 // an in-memory fixture, violates exactly the rule its heading names, and asserts
 // the tool reports it — so there is no duplicated checking logic. The
-// Specification-section tests start from specification_baseline, a minimal but
-// self-consistent spec and test pair built inline (no os, no embed: the real
-// files are dogfooded separately), and knock one rule out of true.
-// Test_Specification_Baseline pins that the unmutated pair is clean.
-
-// Test_Specification_File_Name verifies a spec present only under a different
-// case is treated as missing.
-func Test_Specification_File_Name(t *testing.T) {
-	t.Parallel()
-	files := specification_baseline(t)
-	files["pkg/specification.md"] = files["pkg/SPECIFICATION.md"]
-	delete(files, "pkg/SPECIFICATION.md")
-	if !specification_diagnosed(specification_self_diagnostics(t, files),
-		"missing SPECIFICATION.md") {
-		t.Fatal("a wrong-case spec file must be flagged as missing")
-	}
-}
-
-// Test_Specification_Coverage verifies an in-scope package without the file is
-// flagged.
-func Test_Specification_Coverage(t *testing.T) {
-	t.Parallel()
-	files := specification_baseline(t)
-	delete(files, "pkg/SPECIFICATION.md")
-	if !specification_diagnosed(specification_self_diagnostics(t, files),
-		"missing SPECIFICATION.md") {
-		t.Fatal("a package missing the spec must be flagged")
-	}
-}
-
-// Test_Specification_Preamble verifies content before the first heading is flagged.
-func Test_Specification_Preamble(t *testing.T) {
-	t.Parallel()
-	files := specification_baseline(t)
-	specification_markdown_prepend(files, "Stray prose.\n")
-	if !specification_diagnosed(specification_self_diagnostics(t, files),
-		"content precedes the first heading") {
-		t.Fatal("preamble content must be flagged")
-	}
-}
-
-// Test_Specification_Leaf verifies a # that gains a ### child becomes a branch
-// whose leaf is the ###, requiring Test_<Parent>_<Child>.
-func Test_Specification_Leaf(t *testing.T) {
-	t.Parallel()
-	files := specification_baseline(t)
-	// A fresh top-level section owns the child, so the expected parent prefix
-	// stays Test_Extra_Child no matter how the real sections above are ordered.
-	specification_markdown_append(files, "\n# Extra\n\n### Child\n\nA child leaf.\n")
-	if !specification_diagnosed(specification_self_diagnostics(t, files),
-		"Test_Extra_Child") {
-		t.Fatal("a new ### child must require its leaf test")
-	}
-}
-
-// Test_Specification_Heading_Blank_Lines verifies an unfenced heading is flagged.
-func Test_Specification_Heading_Blank_Lines(t *testing.T) {
-	t.Parallel()
-	files := specification_baseline(t)
-	specification_markdown_append(files, "# No Fence\n\nIt lacks a leading blank.\n")
-	if !specification_diagnosed(specification_self_diagnostics(t, files),
-		"not preceded by a blank line") {
-		t.Fatal("an unfenced heading must be flagged")
-	}
-}
-
-// Test_Specification_Heading_Level verifies a heading at a forbidden level (##)
-// is flagged; only # and ### are permitted.
-func Test_Specification_Heading_Level(t *testing.T) {
-	t.Parallel()
-	files := specification_baseline(t)
-	specification_markdown_append(files, "\n## Mid Level\n\nLevel two.\n")
-	if !specification_diagnosed(specification_self_diagnostics(t, files),
-		"not level # or ###") {
-		t.Fatal("a level-two heading must be flagged")
-	}
-}
-
-// Test_Specification_Heading_Characters verifies a heading word with a non-letter/digit rune is
-// flagged, since it could not form a legal test name.
-func Test_Specification_Heading_Characters(t *testing.T) {
-	t.Parallel()
-	files := specification_baseline(t)
-	specification_markdown_append(files, "\n# Bad-Word\n\nIt has a hyphen.\n")
-	if !specification_diagnosed(specification_self_diagnostics(t, files),
-		"must use only letters and digits") {
-		t.Fatal("a punctuated heading must be flagged")
-	}
-}
-
-// Test_Specification_Heading_Uniqueness verifies two headings sharing a name are flagged.
-func Test_Specification_Heading_Uniqueness(t *testing.T) {
-	t.Parallel()
-	files := specification_baseline(t)
-	specification_markdown_append(files, "\n# Twin\n\nFirst.\n\n# Twin\n\nSecond.\n")
-	if !specification_diagnosed(specification_self_diagnostics(t, files),
-		"is duplicated") {
-		t.Fatal("a duplicate heading must be flagged")
-	}
-}
-
-// Test_Specification_Section_Not_Empty verifies a heading with no body line is flagged.
-func Test_Specification_Section_Not_Empty(t *testing.T) {
-	t.Parallel()
-	files := specification_baseline(t)
-	specification_markdown_append(files, "\n# Empty\n")
-	if !specification_diagnosed(specification_self_diagnostics(t, files),
-		"has no body line") {
-		t.Fatal("a bodyless section must be flagged")
-	}
-}
-
-// Test_Specification_Section_Size verifies a section over three lines is flagged.
-func Test_Specification_Section_Size(t *testing.T) {
-	t.Parallel()
-	files := specification_baseline(t)
-	specification_markdown_append(files, "\n# Long\n\none\ntwo\nthree\nfour\n")
-	if !specification_diagnosed(specification_self_diagnostics(t, files),
-		"exceeds three lines") {
-		t.Fatal("an oversized section must be flagged")
-	}
-}
-
-// Test_Specification_Section_Contiguity verifies a blank line between body lines is flagged.
-func Test_Specification_Section_Contiguity(t *testing.T) {
-	t.Parallel()
-	files := specification_baseline(t)
-	specification_markdown_append(files, "\n# Gapped\n\none\n\ntwo\n")
-	if !specification_diagnosed(specification_self_diagnostics(t, files),
-		"blank line between body lines") {
-		t.Fatal("a gapped section body must be flagged")
-	}
-}
-
-// Test_Specification_Test_File_Name verifies a test file under a different name is missing.
-func Test_Specification_Test_File_Name(t *testing.T) {
-	t.Parallel()
-	files := specification_baseline(t)
-	files["pkg/spec_test.go"] = files["pkg/specification_test.go"]
-	delete(files, "pkg/specification_test.go")
-	if !specification_diagnosed(specification_self_diagnostics(t, files),
-		"missing specification_test.go") {
-		t.Fatal("a wrong-name test file must be flagged as missing")
-	}
-}
-
-// Test_Specification_Test_Per_Heading verifies a heading with no matching test is flagged.
-func Test_Specification_Test_Per_Heading(t *testing.T) {
-	t.Parallel()
-	files := specification_baseline(t)
-	specification_markdown_append(files, "\n# Phantom\n\nIt has no test.\n")
-	if !specification_diagnosed(specification_self_diagnostics(t, files),
-		"Test_Phantom") {
-		t.Fatal("a heading without a test must be flagged")
-	}
-}
-
-// Test_Specification_Test_Name_Normalization verifies a test not named for its heading's
-// Ada_Case form is flagged.
-func Test_Specification_Test_Name_Normalization(t *testing.T) {
-	t.Parallel()
-	files := specification_baseline(t)
-	renamed := strings.Replace(string(files["pkg/specification_test.go"]),
-		"func Test_Sole_Rule(", "func Test_Misnamed(", 1)
-	files["pkg/specification_test.go"] = []byte(renamed)
-	if !specification_diagnosed(specification_self_diagnostics(t, files),
-		"needs Test_Sole_Rule") {
-		t.Fatal("a misnamed heading test must be flagged")
-	}
-}
-
-// Test_Specification_Test_Order verifies a heading whose test is not in order is flagged.
-func Test_Specification_Test_Order(t *testing.T) {
-	t.Parallel()
-	files := specification_baseline(t)
-	specification_markdown_prepend(files, "\n# Alpha\n\nIt jumps the order.\n")
-	if !specification_diagnosed(specification_self_diagnostics(t, files),
-		"in order") {
-		t.Fatal("an out-of-order test must be flagged")
-	}
-}
+// SPECIFICATION.md-structure rules now live in the specification subpackage and
+// are tested there; specification_baseline remains here for the markdown and
+// file-count rules that build on a minimal, self-consistent spec fixture.
 
 // Test_Diagnostics_Tier_One verifies a tier-one diagnostic always prints, and
 // any tier-one anywhere in scope suppresses every tier-two diagnostic.
@@ -460,62 +282,6 @@ func Test_Markdown_Agent_Documentation_Pairing(t *testing.T) {
 	}
 	if !repository_flags(t, files, "AGENTS.md is missing") {
 		t.Fatal("an unpaired CLAUDE.md must be flagged")
-	}
-}
-
-// Test_Commits_Subject_Size verifies a subject over the character cap is flagged.
-func Test_Commits_Subject_Size(t *testing.T) {
-	t.Parallel()
-	diags := lint.Git_Input_Check(lint.Git_Input{
-		Enabled: true,
-		Non_Merge_Commits: []lint.Git_Commit{
-			{Hash: "abc", Subject: "feat: " + strings.Repeat("x", 200)},
-		},
-	})
-	if !specification_diagnosed(diags, "commit subject is") {
-		t.Fatal("an over-long subject must be flagged")
-	}
-}
-
-// Test_Commits_Conventional_Subjects verifies a non-conventional subject is flagged.
-func Test_Commits_Conventional_Subjects(t *testing.T) {
-	t.Parallel()
-	diags := lint.Git_Input_Check(lint.Git_Input{
-		Enabled: true,
-		Non_Merge_Commits: []lint.Git_Commit{
-			{Hash: "abc", Subject: "did some stuff"},
-		},
-	})
-	if !specification_diagnosed(diags, "non-conventional commit subject") {
-		t.Fatal("a non-conventional subject must be flagged")
-	}
-}
-
-// Test_Commits_Fixup_Commits verifies a fixup! subject is flagged.
-func Test_Commits_Fixup_Commits(t *testing.T) {
-	t.Parallel()
-	diags := lint.Git_Input_Check(lint.Git_Input{
-		Enabled: true,
-		Non_Merge_Commits: []lint.Git_Commit{
-			{Hash: "abc", Subject: "fixup! feat: thing"},
-		},
-	})
-	if !specification_diagnosed(diags, "fixup commit on branch") {
-		t.Fatal("a fixup commit must be flagged")
-	}
-}
-
-// Test_Commits_Merge_Commits verifies a non-subtree merge commit is flagged.
-func Test_Commits_Merge_Commits(t *testing.T) {
-	t.Parallel()
-	diags := lint.Git_Input_Check(lint.Git_Input{
-		Enabled: true,
-		Merge_Commits: []lint.Git_Commit{
-			{Hash: "abc", Subject: "Merge branch 'feature' into main"},
-		},
-	})
-	if !specification_diagnosed(diags, "merge commit on branch") {
-		t.Fatal("a merge commit must be flagged")
 	}
 }
 
@@ -816,7 +582,10 @@ func Test_Source_And_Test_Bans_Methods(t *testing.T) {
 	files := specification_one_file("package fixture\n\n// T is a fixture.\n" +
 		"type T struct {\n\t// X is a fixture.\n\tX int\n}\n\n// Compute does.\n" +
 		"func (t T) Compute() (n int) {\n\treturn t.X\n}\n")
-	if !specification_flags(t, files, "does not satisfy any stdlib interface") {
+	// Exempt the type-invariant rule: it is tier one and would otherwise suppress
+	// the tier-two method diagnostic this test isolates.
+	diags := invariant_exempt_self_diagnostics(t, files, []string{"pkg/**"})
+	if !specification_diagnosed(diags, "does not satisfy any stdlib interface") {
 		t.Fatal("a non-interface method must be flagged")
 	}
 }
@@ -889,7 +658,10 @@ func Test_Source_And_Test_Bans_Struct_Tags(t *testing.T) {
 	t.Parallel()
 	files := specification_one_file("package fixture\n\n// T is a fixture.\n" +
 		"type T struct {\n\t// X is a fixture.\n\tX int `yaml:\"x\"`\n}\n")
-	if !specification_flags(t, files, "is not stdlib") {
+	// Exempt the type-invariant rule: it is tier one and would otherwise suppress
+	// the tier-two struct-tag diagnostic this test isolates.
+	diags := invariant_exempt_self_diagnostics(t, files, []string{"pkg/**"})
+	if !specification_diagnosed(diags, "is not stdlib") {
 		t.Fatal("a non-stdlib struct tag must be flagged")
 	}
 }
@@ -994,18 +766,6 @@ func Test_Source_And_Test_Bans_Banned_Function_Words(t *testing.T) {
 		"package fixture\n\n// Helper helps.\nfunc Helper() (n int) {\n\treturn 0\n}\n")
 	if !specification_flags(t, files, "banned substring \"helper\"") {
 		t.Fatal("helper in a function name must be flagged")
-	}
-}
-
-// Test_Source_And_Test_Bans_Whitebox_Tests verifies a whitebox test package is flagged.
-func Test_Source_And_Test_Bans_Whitebox_Tests(t *testing.T) {
-	t.Parallel()
-	files := map[string][]byte{
-		"pkg/thing_test.go": []byte("package fixture\n\nimport \"testing\"\n\n" +
-			"// Test_X is a fixture.\nfunc Test_X(t *testing.T) { _ = t }\n"),
-	}
-	if !specification_flags(t, files, "test file must declare") {
-		t.Fatal("a whitebox test package must be flagged")
 	}
 }
 
@@ -1184,15 +944,32 @@ func Test_Source_And_Test_Requirements_Struct_Field_Documentation_Comments(t *te
 }
 
 // Test_Source_And_Test_Requirements_Name_Style verifies an exported identifier
-// not in Ada_Case is flagged. The rule governs identifier casing, not file
-// names; a hyphenated path is the Path Casing rule's domain, so a file-name
-// fixture would pass on that rule alone and never exercise this one.
+// not in Ada_Case is flagged, and that an exported top-level const is held to
+// SCREAMING_SNAKE_CASE instead — a separate diagnostic, not the general Ada_Case
+// one. The rule governs identifier casing, not file names; a hyphenated path is
+// the Path Casing rule's domain, so a file-name fixture would never exercise it.
 func Test_Source_And_Test_Requirements_Name_Style(t *testing.T) {
 	t.Parallel()
 	files := specification_one_file(
-		"package fixture\n\n// Bad_Name is a fixture.\nconst BadName = 0\n")
+		"package fixture\n\n// BadName is a fixture.\nfunc BadName() { println(0) }\n")
 	if !specification_flags(t, files, "BadName -> Bad_Name") {
 		t.Fatal("an exported identifier not in Ada_Case must be flagged")
+	}
+
+	constant_files := specification_one_file(
+		"package fixture\n\n// BadName is a fixture.\nconst BadName = 0\n")
+	diags := specification_self_diagnostics(t, constant_files)
+	if !specification_diagnosed(diags, "BadName -> BAD_NAME") {
+		t.Fatal("an exported const not in SCREAMING_SNAKE_CASE must be flagged")
+	}
+	if specification_diagnosed(diags, "BadName -> Bad_Name") {
+		t.Fatal("an exported const must not also receive the general Ada_Case suggestion")
+	}
+
+	clean_files := specification_one_file(
+		"package fixture\n\n// GOOD_NAME is a fixture.\nconst GOOD_NAME = 0\n")
+	if specification_diagnosed(specification_self_diagnostics(t, clean_files), "GOOD_NAME ->") {
+		t.Fatal("a SCREAMING_SNAKE_CASE exported const must not be flagged")
 	}
 }
 
@@ -1329,35 +1106,38 @@ func Test_Source_And_Test_Requirements_File_Count_Build_Tags(t *testing.T) {
 	}
 }
 
-// Test_Deterministic_Entry_Format verifies an entry names a module's top-level
-// directory and the tier auto-applies to the pure packages under it: a pure
-// package nested below the entry is held to the tier (its goroutine flagged),
-// while an impure default tier in the same subtree is excluded (its select not
-// flagged) — so a directory covers its pure packages without listing each.
+// Test_Deterministic_Entry_Format verifies an entry is an exact-path glob: a bare
+// package path releases that one package and not a child — the goroutine in pkg is
+// released while the select in the nested pkg/sub is still flagged — and a `**`
+// entry releases the whole subtree.
 func Test_Deterministic_Entry_Format(t *testing.T) {
 	t.Parallel()
 	files := map[string][]byte{
 		"go.mod": []byte("module fixture\n\ngo 1.25\n"),
-		"pkg/sub/p.go": []byte("// Package sub is a fixture.\n" +
-			"package sub\n\n" +
+		"pkg/p.go": []byte("// Package p is a fixture.\n" +
+			"package p\n\n" +
 			"// F is a fixture.\n" +
 			"func F() {\n\tgo done()\n}\n\n" +
 			"func done() {\n\treturn\n}\n"),
-		"pkg/sub/default/d.go": []byte("// Package sub is a fixture.\n" +
+		"pkg/sub/s.go": []byte("// Package sub is a fixture.\n" +
 			"package sub\n\n" +
 			"// G is a fixture.\n" +
 			"func G() {\n\tselect {}\n}\n"),
 	}
-	diags := deterministic_self_diagnostics(t, files, []string{"pkg"})
-	if !specification_diagnosed(diags, "must not start a goroutine") {
-		t.Fatal("a directory entry must cover a pure package nested below it")
+	exact := deterministic_self_diagnostics(t, files, []string{"pkg"})
+	if specification_diagnosed(exact, "must not start a goroutine") {
+		t.Fatal("an exact-path entry must release the named package")
 	}
-	if specification_diagnosed(diags, "must not use select") {
-		t.Fatal("an impure default tier under the entry must be excluded")
+	if !specification_diagnosed(exact, "must not use select") {
+		t.Fatal("an exact-path entry must not release a child package")
+	}
+	subtree := deterministic_self_diagnostics(t, files, []string{"pkg/**"})
+	if specification_diagnosed(subtree, "must not use select") {
+		t.Fatal("a ** entry must release the whole subtree")
 	}
 }
 
-// Test_Deterministic_Goroutines verifies a go statement in a listed package is flagged.
+// Test_Deterministic_Goroutines verifies a go statement in a pure package is flagged.
 func Test_Deterministic_Goroutines(t *testing.T) {
 	t.Parallel()
 	files := map[string][]byte{
@@ -1368,13 +1148,13 @@ func Test_Deterministic_Goroutines(t *testing.T) {
 			"func F() {\n\tgo done()\n}\n\n" +
 			"func done() {\n\treturn\n}\n"),
 	}
-	if !specification_diagnosed(deterministic_self_diagnostics(t, files, []string{"pkg"}),
+	if !specification_diagnosed(deterministic_self_diagnostics(t, files, nil),
 		"must not start a goroutine") {
 		t.Fatal("a go statement in a deterministic package must be flagged")
 	}
 }
 
-// Test_Deterministic_Channels verifies a channel in a listed package is flagged.
+// Test_Deterministic_Channels verifies a channel in a pure package is flagged.
 func Test_Deterministic_Channels(t *testing.T) {
 	t.Parallel()
 	files := map[string][]byte{
@@ -1384,13 +1164,13 @@ func Test_Deterministic_Channels(t *testing.T) {
 			"// F is a fixture.\n" +
 			"func F() {\n\tc := make(chan int)\n\tclose(c)\n}\n"),
 	}
-	if !specification_diagnosed(deterministic_self_diagnostics(t, files, []string{"pkg"}),
+	if !specification_diagnosed(deterministic_self_diagnostics(t, files, nil),
 		"must not use a channel") {
 		t.Fatal("a channel in a deterministic package must be flagged")
 	}
 }
 
-// Test_Deterministic_Select verifies a select in a listed package is flagged.
+// Test_Deterministic_Select verifies a select in a pure package is flagged.
 func Test_Deterministic_Select(t *testing.T) {
 	t.Parallel()
 	files := map[string][]byte{
@@ -1400,13 +1180,13 @@ func Test_Deterministic_Select(t *testing.T) {
 			"// F is a fixture.\n" +
 			"func F() {\n\tselect {}\n}\n"),
 	}
-	if !specification_diagnosed(deterministic_self_diagnostics(t, files, []string{"pkg"}),
+	if !specification_diagnosed(deterministic_self_diagnostics(t, files, nil),
 		"must not use select") {
 		t.Fatal("a select in a deterministic package must be flagged")
 	}
 }
 
-// Test_Deterministic_Floats verifies a float type in a listed package is flagged.
+// Test_Deterministic_Floats verifies a float type in a pure package is flagged.
 func Test_Deterministic_Floats(t *testing.T) {
 	t.Parallel()
 	files := map[string][]byte{
@@ -1416,13 +1196,13 @@ func Test_Deterministic_Floats(t *testing.T) {
 			"// F is a fixture.\n" +
 			"func F() (f float32) {\n\treturn 0\n}\n"),
 	}
-	if !specification_diagnosed(deterministic_self_diagnostics(t, files, []string{"pkg"}),
+	if !specification_diagnosed(deterministic_self_diagnostics(t, files, nil),
 		"must not use float") {
 		t.Fatal("a float in a deterministic package must be flagged")
 	}
 }
 
-// Test_Deterministic_Banned_Imports verifies a time import in a listed package is flagged.
+// Test_Deterministic_Banned_Imports verifies a time import in a pure package is flagged.
 func Test_Deterministic_Banned_Imports(t *testing.T) {
 	t.Parallel()
 	files := map[string][]byte{
@@ -1433,15 +1213,16 @@ func Test_Deterministic_Banned_Imports(t *testing.T) {
 			"// F is a fixture.\n" +
 			"func F() (d time.Duration) {\n\treturn 0\n}\n"),
 	}
-	if !specification_diagnosed(deterministic_self_diagnostics(t, files, []string{"pkg"}),
+	if !specification_diagnosed(deterministic_self_diagnostics(t, files, nil),
 		"must not import") {
 		t.Fatal("a time import in a deterministic package must be flagged")
 	}
 }
 
-// Test_Deterministic_Import_Induction verifies importing a non-deterministic
-// first-party package is flagged, while a package listed in instrumentation_packages
-// is exempt: instrumentation is a write-only side channel the induction does not reach.
+// Test_Deterministic_Import_Induction verifies a deterministic package importing a
+// pure_but_indeterministic_packages first-party package is flagged — that import is no longer
+// deterministic — while a package also listed in instrumentation_packages is exempt:
+// instrumentation is a write-only side channel the induction does not reach.
 func Test_Deterministic_Import_Induction(t *testing.T) {
 	t.Parallel()
 	files := map[string][]byte{
@@ -1456,9 +1237,9 @@ func Test_Deterministic_Import_Induction(t *testing.T) {
 			"// G is a fixture.\n" +
 			"func G() {\n\treturn\n}\n"),
 	}
-	if !specification_diagnosed(deterministic_self_diagnostics(t, files, []string{"pkg"}),
+	if !specification_diagnosed(deterministic_self_diagnostics(t, files, []string{"other"}),
 		"import only deterministic packages") {
-		t.Fatal("importing a non-deterministic first-party package must be flagged")
+		t.Fatal("importing an opted-out first-party package must be flagged")
 	}
 	fsys := fstest.MapFS{}
 	for name, content := range files {
@@ -1468,8 +1249,8 @@ func Test_Deterministic_Import_Induction(t *testing.T) {
 		Fsys:                     fsys,
 		Scope:                    "pkg",
 		Shared_Component:         doctrine_shared_component_directory,
-		Deterministic_Packages:   []string{"pkg"},
-		Instrumentation_Packages: []string{"other"},
+		Pure_But_Indeterministic: []string{"other"},
+		Instrumentation_Packages: []string{"other/**"},
 	})
 	if err != nil {
 		t.Fatalf("Check_File_System: %v", err)
@@ -1479,10 +1260,10 @@ func Test_Deterministic_Import_Induction(t *testing.T) {
 	}
 }
 
-// Test_Deterministic_Impurity verifies an entry that resolves to no pure package
-// — here an all-impure default tier — is reported as a coverage gap. Expansion
-// keeps pure packages only, so a directory holding nothing pure opts nothing into
-// the tier and must fail loudly rather than silently check nothing.
+// Test_Deterministic_Impurity verifies a pure_but_indeterministic_packages entry naming an
+// all-impure directory — here a default tier — matches no pure package and is
+// reported as a coverage gap. An impure package is never deterministic, so listing
+// it releases nothing; the dead entry must fail loudly rather than pass silently.
 func Test_Deterministic_Impurity(t *testing.T) {
 	t.Parallel()
 	files := map[string][]byte{
@@ -1491,13 +1272,13 @@ func Test_Deterministic_Impurity(t *testing.T) {
 			"package pkg\n"),
 	}
 	if !specification_diagnosed(
-		deterministic_self_diagnostics(t, files, []string{"./pkg/default/"}),
+		deterministic_self_diagnostics(t, files, []string{"pkg/default"}),
 		"no pure package found") {
-		t.Fatal("an entry covering no pure package must be reported")
+		t.Fatal("an entry matching no pure package must be reported")
 	}
 }
 
-// Test_Deterministic_Coverage verifies a deterministic_packages entry covering no
+// Test_Deterministic_Coverage verifies a pure_but_indeterministic_packages entry matching no
 // pure package is reported.
 func Test_Deterministic_Coverage(t *testing.T) {
 	t.Parallel()
@@ -1509,7 +1290,7 @@ func Test_Deterministic_Coverage(t *testing.T) {
 	if !specification_diagnosed(
 		deterministic_self_diagnostics(t, files, []string{"pkg/missing"}),
 		"no pure package found") {
-		t.Fatal("an entry covering no pure package must be reported")
+		t.Fatal("an entry matching no pure package must be reported")
 	}
 }
 
@@ -1535,13 +1316,13 @@ func Test_Deterministic_Coverage_Scope(t *testing.T) {
 		Fsys:             fsys,
 		Shared_Component: "shared",
 		Scope:            "mybinary",
-		Deterministic_Packages: []string{
-			"mybinary", "other", "mybinary/internal/nonexistent"},
+		Pure_But_Indeterministic: []string{
+			"mybinary/internal", "other/internal", "mybinary/internal/nonexistent"},
 	})
 	if err != nil {
 		t.Fatalf("Check_File_System: %v", err)
 	}
-	if specification_diagnosed(diags, "no pure package found at \"other\"") {
+	if specification_diagnosed(diags, "no pure package found at \"other/internal\"") {
 		t.Fatal("an out-of-scope module entry must not be reported as a coverage gap")
 	}
 	if !specification_diagnosed(diags,
@@ -1570,6 +1351,375 @@ func Test_Stdlib_Time(t *testing.T) {
 	}
 	if !specification_diagnosed(diags, "may be imported only by") {
 		t.Fatal("a non-gateway stdlib time import must be reported")
+	}
+}
+
+// Test_Event_Loop_Driver verifies a non-main, non-test package that calls an IO loop
+// constructor is flagged.
+func Test_Event_Loop_Driver(t *testing.T) {
+	t.Parallel()
+	files := specification_one_file("package fixture\n\n" +
+		"import io \"fixture/shared/io\"\n\n" +
+		"// Build makes a loop.\nfunc Build() (loop io.IO) {\n" +
+		"\tl, _ := io.Sim_To_IO(nil)\n\treturn l\n}\n")
+	if !specification_flags(t, files, "mints a loop driver") {
+		t.Fatal("a library call to an IO loop constructor must be flagged")
+	}
+}
+
+// Test_Event_Loop_Gateway verifies a non-gateway package that imports a raw IO stdlib
+// package is flagged.
+func Test_Event_Loop_Gateway(t *testing.T) {
+	t.Parallel()
+	files := specification_one_file("package fixture\n\nimport \"net\"\n\n" +
+		"// Dial does.\nfunc Dial() (connection net.Conn) {\n\treturn nil\n}\n")
+	if !specification_flags(t, files, "route IO through shared/io") {
+		t.Fatal("importing raw IO stdlib outside the gateway must be flagged")
+	}
+}
+
+// Test_Event_Loop_Seed verifies a New_Sim whose parameter carries outcomes, not a seed,
+// is flagged.
+func Test_Event_Loop_Seed(t *testing.T) {
+	t.Parallel()
+	files := specification_one_file("package fixture\n\n" +
+		"// New_Sim builds a sim.\nfunc New_Sim(payloads [][]byte) (count int) {\n" +
+		"\treturn len(payloads)\n}\n")
+	if !specification_flags(t, files, "New_Sim takes only the seed") {
+		t.Fatal("a New_Sim parameter that carries outcomes must be flagged")
+	}
+}
+
+// Test_Configuration_Directory_Slash verifies a wildcard-free lint.json entry that
+// names a directory must end in a slash, and one that names a file must not.
+func Test_Configuration_Directory_Slash(t *testing.T) {
+	t.Parallel()
+	fsys := fstest.MapFS{
+		"go.mod":   {Data: []byte(doctrine_root_go_module)},
+		"pkg/p.go": {Data: []byte("// Package p is a fixture.\npackage p\n")},
+	}
+	tracked := map[string]bool{"go.mod": true, "pkg/p.go": true}
+	run := func(entry string) (diags []lint.Diagnostic) {
+		diags, err := lint.Check_File_System(&lint.Check_File_System_Input{
+			Fsys: fsys, Tracked: tracked,
+			Shared_Component:         doctrine_shared_component_directory,
+			Pure_But_Indeterministic: []string{entry},
+		})
+		if err != nil {
+			t.Fatalf("Check_File_System: %v", err)
+		}
+		return diags
+	}
+	if !specification_diagnosed(run("pkg"), "names a directory") {
+		t.Fatal("a directory entry without a trailing slash must be flagged")
+	}
+	if specification_diagnosed(run("pkg/"), "names a directory") {
+		t.Fatal("a directory entry with a trailing slash must pass")
+	}
+	if !specification_diagnosed(run("pkg/p.go/"), "names a file") {
+		t.Fatal("a file entry with a trailing slash must be flagged")
+	}
+}
+
+// Test_Configuration_Packages_Only verifies an exact-file entry is flagged in every
+// lint.json glob list except ignore and opt_out_recursion_ban, and that a wildcard-free
+// entry matching neither a tracked file nor a directory is flagged as a coverage gap.
+func Test_Configuration_Packages_Only(t *testing.T) {
+	t.Parallel()
+	fsys := fstest.MapFS{
+		"go.mod":   {Data: []byte(doctrine_root_go_module)},
+		"pkg/p.go": {Data: []byte("// Package p is a fixture.\npackage p\n")},
+	}
+	tracked := map[string]bool{"go.mod": true, "pkg/p.go": true}
+	run := func(input *lint.Check_File_System_Input) (diags []lint.Diagnostic) {
+		input.Fsys = fsys
+		input.Tracked = tracked
+		input.Shared_Component = doctrine_shared_component_directory
+		diags, err := lint.Check_File_System(input)
+		if err != nil {
+			t.Fatalf("Check_File_System: %v", err)
+		}
+		return diags
+	}
+	if !specification_diagnosed(
+		run(&lint.Check_File_System_Input{Pure_But_Indeterministic: []string{"pkg/p.go"}}),
+		"may name a file") {
+		t.Fatal("an exact-file entry in pure_but_indeterministic_packages must be flagged")
+	}
+	if !specification_diagnosed(
+		run(&lint.Check_File_System_Input{Instrumentation_Packages: []string{"pkg/p.go"}}),
+		"may name a file") {
+		t.Fatal("an exact-file entry in instrumentation_packages must be flagged")
+	}
+	if !specification_diagnosed(
+		run(&lint.Check_File_System_Input{Invariant_Exempt_Packages: []string{"pkg/p.go"}}),
+		"may name a file") {
+		t.Fatal("an exact-file entry in opt_out_assertion_mandate_packages must be flagged")
+	}
+	if specification_diagnosed(
+		run(&lint.Check_File_System_Input{Ignore: []string{"pkg/p.go"}}),
+		"may name a file") {
+		t.Fatal("an exact-file ignore entry must be allowed")
+	}
+	if specification_diagnosed(
+		run(&lint.Check_File_System_Input{Recursion_Exempt: []string{"pkg/p.go"}}),
+		"may name a file") {
+		t.Fatal("an exact-file opt_out_recursion_ban entry must be allowed")
+	}
+	if !specification_diagnosed(
+		run(&lint.Check_File_System_Input{Ignore: []string{"pkg/missing"}}),
+		"matches no tracked file or directory") {
+		t.Fatal("an entry matching neither a file nor a directory must be a coverage gap")
+	}
+}
+
+// Test_Driver_Gateway_Main_Allowed verifies package main may construct a loop.
+func Test_Driver_Gateway_Main_Allowed(t *testing.T) {
+	t.Parallel()
+	files := map[string][]byte{
+		"pkg/main.go": []byte("// Package main is a fixture.\npackage main\n\n" +
+			"import io \"fixture/shared/io\"\n\n" +
+			"func main() {\n\tio.Sim_To_IO(nil)\n}\n"),
+	}
+	if specification_flags(t, files, "mints a loop driver") {
+		t.Fatal("package main must be allowed to construct a loop driver")
+	}
+}
+
+// Test_Driver_Gateway_Test_Allowed verifies a test may construct a loop.
+func Test_Driver_Gateway_Test_Allowed(t *testing.T) {
+	t.Parallel()
+	files := map[string][]byte{
+		"pkg/rule.go": []byte("// Package fixture is a fixture.\npackage fixture\n"),
+		"pkg/rule_test.go": []byte("package fixture_test\n\n" +
+			"import (\n\t\"testing\"\n\n" +
+			"\tiodefault \"fixture/shared/io/default\"\n)\n\n" +
+			"// Test_X is a fixture.\nfunc Test_X(t *testing.T) {\n" +
+			"\tiodefault.New_Operating_System_IO(nil)\n}\n"),
+	}
+	if specification_flags(t, files, "mints a loop driver") {
+		t.Fatal("a test may construct a loop driver")
+	}
+}
+
+// Test_Driver_Gateway_Logical_Clock_Allowed verifies constructing the virtual (logical)
+// clock is not gated: the clock is read-only, and its tick drives a loop only through a
+// Driver, which is gated separately.
+func Test_Driver_Gateway_Logical_Clock_Allowed(t *testing.T) {
+	t.Parallel()
+	files := specification_one_file("package fixture\n\n" +
+		"import time \"fixture/shared/time\"\n\n" +
+		"// Build makes a clock.\nfunc Build() (clock time.Clock) {\n" +
+		"\tc, _ := time.Virtual_Clock_To_Clock(time.Virtual_Clock{})\n\treturn c\n}\n")
+	if specification_flags(t, files, "mints a loop driver") {
+		t.Fatal("the read-only logical clock constructor must not be gated")
+	}
+}
+
+// Test_Driver_Gateway_Type_Flagged verifies a non-main package that names the io.Driver
+// type is flagged — internal takes io.IO, and only the harness holds the Driver.
+func Test_Driver_Gateway_Type_Flagged(t *testing.T) {
+	t.Parallel()
+	library := "// Package io is a fixture.\npackage io\n\n" +
+		"// Driver drives.\ntype Driver struct{}\n"
+	consumer := "// Package fixture is a fixture.\npackage fixture\n\n" +
+		"import io \"github.com/james-orcales/james-orcales/shared/io\"\n\n" +
+		"// Main drives.\nfunc Main(driver io.Driver) {}\n"
+	fsys := fstest.MapFS{
+		"go.mod":          &fstest.MapFile{Data: []byte(doctrine_root_go_module)},
+		"shared/io/io.go": &fstest.MapFile{Data: []byte(library)},
+		"pkg/rule.go":     &fstest.MapFile{Data: []byte(consumer)},
+	}
+	diags, err := lint.Check_File_System(&lint.Check_File_System_Input{
+		Fsys:             fsys,
+		Scope:            "pkg",
+		Shared_Component: doctrine_shared_component_directory,
+	})
+	if err != nil {
+		t.Fatalf("Check_File_System: %v", err)
+	}
+	if !specification_diagnosed(diags, "io.Driver may be held only") {
+		t.Fatal("naming io.Driver outside main or a test must be flagged")
+	}
+}
+
+// Test_Driver_Gateway_Type_Main_Allowed verifies package main may hold the io.Driver type.
+func Test_Driver_Gateway_Type_Main_Allowed(t *testing.T) {
+	t.Parallel()
+	library := "// Package io is a fixture.\npackage io\n\n" +
+		"// Driver drives.\ntype Driver struct{}\n"
+	consumer := "// Package main is a fixture.\npackage main\n\n" +
+		"import io \"github.com/james-orcales/james-orcales/shared/io\"\n\n" +
+		"// hold takes a driver.\nfunc hold(driver io.Driver) {}\n\nfunc main() {}\n"
+	fsys := fstest.MapFS{
+		"go.mod":          &fstest.MapFile{Data: []byte(doctrine_root_go_module)},
+		"shared/io/io.go": &fstest.MapFile{Data: []byte(library)},
+		"pkg/main.go":     &fstest.MapFile{Data: []byte(consumer)},
+	}
+	diags, err := lint.Check_File_System(&lint.Check_File_System_Input{
+		Fsys:             fsys,
+		Scope:            "pkg",
+		Shared_Component: doctrine_shared_component_directory,
+	})
+	if err != nil {
+		t.Fatalf("Check_File_System: %v", err)
+	}
+	if specification_diagnosed(diags, "io.Driver may be held only") {
+		t.Fatal("package main may hold io.Driver")
+	}
+}
+
+// Test_IO_Gateway_Call verifies an os file-operation call outside the gateway is flagged.
+func Test_IO_Gateway_Call(t *testing.T) {
+	t.Parallel()
+	files := specification_one_file("package fixture\n\nimport \"os\"\n\n" +
+		"// F opens.\nfunc F() (file *os.File, err error) {\n\treturn os.Open(\"x\")\n}\n")
+	if !specification_flags(t, files, "os.Open does raw IO") {
+		t.Fatal("os.Open outside the gateway must be flagged")
+	}
+}
+
+// Test_IO_Gateway_Process_Args verifies os.Args, not raw IO, is left alone.
+func Test_IO_Gateway_Process_Args(t *testing.T) {
+	t.Parallel()
+	files := specification_one_file("package fixture\n\nimport \"os\"\n\n" +
+		"// F counts args.\nfunc F() (count int) {\n\treturn len(os.Args)\n}\n")
+	if specification_flags(t, files, "does raw IO") {
+		t.Fatal("os.Args is not raw IO and must be allowed")
+	}
+}
+
+// Test_IO_Gateway_Test_Exempt verifies a test may import raw IO stdlib.
+func Test_IO_Gateway_Test_Exempt(t *testing.T) {
+	t.Parallel()
+	files := map[string][]byte{
+		"pkg/rule.go": []byte("// Package fixture is a fixture.\npackage fixture\n"),
+		"pkg/rule_test.go": []byte("package fixture_test\n\n" +
+			"import (\n\t\"net\"\n\t\"testing\"\n)\n\n// Test_X is a fixture.\n" +
+			"func Test_X(t *testing.T) {\n\tnet.ParseIP(\"\")\n}\n"),
+	}
+	if specification_flags(t, files, "route IO through shared/io") {
+		t.Fatal("a test may import raw IO stdlib")
+	}
+}
+
+// Test_IO_Gateway_Instrumentation_Exempt verifies an instrumentation package may do
+// raw IO — it is the diagnostics side channel.
+func Test_IO_Gateway_Instrumentation_Exempt(t *testing.T) {
+	t.Parallel()
+	fsys := fstest.MapFS{
+		"go.mod": &fstest.MapFile{Data: []byte(doctrine_root_go_module)},
+		"pkg/rule.go": &fstest.MapFile{Data: []byte(
+			"// Package fixture is a fixture.\npackage fixture\n\nimport \"net\"\n\n" +
+				"// Dial does.\nfunc Dial() (connection net.Conn) {\n" +
+				"\treturn nil\n}\n")},
+	}
+	diags, err := lint.Check_File_System(&lint.Check_File_System_Input{
+		Fsys:                     fsys,
+		Scope:                    "pkg",
+		Shared_Component:         doctrine_shared_component_directory,
+		Instrumentation_Packages: []string{"pkg/**"},
+	})
+	if err != nil {
+		t.Fatalf("Check_File_System: %v", err)
+	}
+	if specification_diagnosed(diags, "route IO through shared/io") {
+		t.Fatal("an instrumentation package may do raw IO")
+	}
+}
+
+// Test_IO_Gateway_Main_Exempt verifies package main may do raw IO — the un-simulated
+// wiring shell the framework never witnesses.
+func Test_IO_Gateway_Main_Exempt(t *testing.T) {
+	t.Parallel()
+	files := map[string][]byte{
+		"pkg/main.go": []byte("// Package main is a fixture.\npackage main\n\n" +
+			"import \"net\"\n\n" +
+			"// main dials.\nfunc main() {\n\tnet.ParseIP(\"\")\n}\n"),
+	}
+	if specification_flags(t, files, "route IO through shared/io") {
+		t.Fatal("package main may do raw IO")
+	}
+}
+
+// Test_IO_Gateway_Time_Exempt verifies the time/default clock gateway may import
+// syscall — the clock is the one capability the loop is built on, not IO it carries.
+func Test_IO_Gateway_Time_Exempt(t *testing.T) {
+	t.Parallel()
+	fsys := fstest.MapFS{
+		"go.mod": &fstest.MapFile{Data: []byte(doctrine_root_go_module)},
+		"shared/time/default/system.go": &fstest.MapFile{Data: []byte(
+			"// Package time is a fixture.\npackage time\n\nimport \"syscall\"\n\n" +
+				"// Now reads the clock.\nfunc Now() (n int64) {\n" +
+				"\tstamp := syscall.Timespec{}\n\treturn stamp.Sec\n}\n")},
+	}
+	diags, err := lint.Check_File_System(&lint.Check_File_System_Input{
+		Fsys:             fsys,
+		Scope:            "shared/time/default",
+		Shared_Component: doctrine_shared_component_directory,
+	})
+	if err != nil {
+		t.Fatalf("Check_File_System: %v", err)
+	}
+	if specification_diagnosed(diags, "route IO through shared/io") {
+		t.Fatal("the time/default clock gateway may import syscall")
+	}
+}
+
+// Test_Sim_Script_Seed_Allowed verifies New_Sim taking only a seed is not flagged.
+func Test_Sim_Script_Seed_Allowed(t *testing.T) {
+	t.Parallel()
+	files := specification_one_file("package fixture\n\n" +
+		"// New_Sim builds a sim.\nfunc New_Sim(seed uint64) (count int) { return 0 }\n")
+	if specification_flags(t, files, "New_Sim takes only the seed") {
+		t.Fatal("New_Sim taking only a seed must be allowed")
+	}
+}
+
+// Test_Sim_Script_Export_Flagged verifies an exported Sim_ function is flagged.
+func Test_Sim_Script_Export_Flagged(t *testing.T) {
+	t.Parallel()
+	files := specification_one_file("package fixture\n\n" +
+		"// New_Sim builds a sim.\nfunc New_Sim(seed uint64) (count int) { return 0 }\n\n" +
+		"// Sim_Raise scripts a signal.\nfunc Sim_Raise(signal int) {}\n")
+	if !specification_flags(t, files, "is a scripting entry") {
+		t.Fatal("an exported Sim_ function must be flagged")
+	}
+}
+
+// Test_Primitive_Field_Flagged verifies a raw slice struct field is flagged.
+func Test_Primitive_Field_Flagged(t *testing.T) {
+	t.Parallel()
+	files := specification_one_file("package fixture\n\n" +
+		"// Bag is a fixture.\ntype Bag struct {\n" +
+		"\t// Items is a fixture.\n\tItems []int\n}\n")
+	if !specification_flags(t, files, "raw slice field") {
+		t.Fatal("a raw slice field must be flagged")
+	}
+}
+
+// Test_Primitive_Defined_Type_Passes verifies a defined wrapper over a primitive
+// is allowed in a signature.
+func Test_Primitive_Defined_Type_Passes(t *testing.T) {
+	t.Parallel()
+	files := specification_one_file("package fixture\n\n" +
+		"// Name is a fixture.\ntype Name string\n\n" +
+		"// Greet does.\nfunc Greet(who Name) {\n}\n")
+	if specification_flags(t, files, "raw ") {
+		t.Fatal("a defined type wrapping a primitive must not be flagged")
+	}
+}
+
+// Test_Primitive_Stdlib_Method_Exempt verifies a method satisfying a stdlib
+// interface keeps its dictated primitive signature.
+func Test_Primitive_Stdlib_Method_Exempt(t *testing.T) {
+	t.Parallel()
+	files := specification_one_file("package fixture\n\n" +
+		"// Level is a fixture.\ntype Level int\n\n" +
+		"// String is a fixture.\n" +
+		"func (l Level) String() (name string) {\n\treturn \"\"\n}\n")
+	if specification_flags(t, files, "raw ") {
+		t.Fatal("a stdlib-interface method must keep its primitive signature")
 	}
 }
 
@@ -1714,12 +1864,35 @@ func specification_markdown_prepend(files map[string][]byte, text string) {
 	files["pkg/SPECIFICATION.md"] = append([]byte(text), files["pkg/SPECIFICATION.md"]...)
 }
 
-// Runs the linter over the fixture with the given package directories opted into
-// the deterministic tier, returning its diagnostics. Mirrors
-// specification_self_diagnostics but threads Deterministic_Packages, which
-// specification_flags does not carry.
-func deterministic_self_diagnostics(
-	t *testing.T, files map[string][]byte, listed []string,
+// Test_Source_And_Test_Bans_Recursion_Exempt verifies a recursive function in a
+// package listed in opt_out_recursion_ban is not flagged.
+func Test_Source_And_Test_Bans_Recursion_Exempt(t *testing.T) {
+	t.Parallel()
+	files := specification_one_file(
+		"package fixture\n\n// F loops.\nfunc F() {\n\tF()\n}\n")
+	diags := recursion_exempt_self_diagnostics(t, files, []string{"pkg/**"})
+	if specification_diagnosed(diags, "calls itself") {
+		t.Fatal("recursion in an exempt package must not be flagged")
+	}
+}
+
+// Test_Source_And_Test_Bans_Recursion_Exempt_File verifies a recursive function in a
+// file listed in opt_out_recursion_ban by its exact path is not flagged, proving the
+// exemption works at file granularity, not just package granularity.
+func Test_Source_And_Test_Bans_Recursion_Exempt_File(t *testing.T) {
+	t.Parallel()
+	files := specification_one_file(
+		"package fixture\n\n// F loops.\nfunc F() {\n\tF()\n}\n")
+	diags := recursion_exempt_self_diagnostics(t, files, []string{"pkg/rule.go"})
+	if specification_diagnosed(diags, "calls itself") {
+		t.Fatal("recursion in an exempt file must not be flagged")
+	}
+}
+
+// Mirrors specification_self_diagnostics but threads opt_out_recursion_ban, the
+// recursion ban's escape hatch for a recursive-descent parser package.
+func recursion_exempt_self_diagnostics(
+	t *testing.T, files map[string][]byte, exempt []string,
 ) (diags []lint.Diagnostic) {
 	t.Helper()
 	fsys := fstest.MapFS{}
@@ -1727,13 +1900,796 @@ func deterministic_self_diagnostics(
 		fsys[name] = &fstest.MapFile{Data: content}
 	}
 	diags, err := lint.Check_File_System(&lint.Check_File_System_Input{
-		Fsys:                   fsys,
-		Scope:                  "pkg",
-		Shared_Component:       doctrine_shared_component_directory,
-		Deterministic_Packages: listed,
+		Fsys:             fsys,
+		Scope:            "pkg",
+		Shared_Component: doctrine_shared_component_directory,
+		Recursion_Exempt: exempt,
 	})
 	if err != nil {
 		t.Fatalf("Check_File_System: %v", err)
 	}
 	return diags
+}
+
+// Runs the linter over the fixture with the given package directories opted into
+// the deterministic tier, returning its diagnostics. Mirrors
+// specification_self_diagnostics but threads Pure_But_Indeterministic (the
+// deterministic tier's opt-out list), which specification_flags does not carry.
+func deterministic_self_diagnostics(
+	t *testing.T, files map[string][]byte, exempt []string,
+) (diags []lint.Diagnostic) {
+	t.Helper()
+	fsys := fstest.MapFS{}
+	for name, content := range files {
+		fsys[name] = &fstest.MapFile{Data: content}
+	}
+	diags, err := lint.Check_File_System(&lint.Check_File_System_Input{
+		Fsys:                     fsys,
+		Scope:                    "pkg",
+		Shared_Component:         doctrine_shared_component_directory,
+		Pure_But_Indeterministic: exempt,
+	})
+	if err != nil {
+		t.Fatalf("Check_File_System: %v", err)
+	}
+	return diags
+}
+
+// Mirrors specification_self_diagnostics but threads opt_out_assertion_mandate_packages,
+// the type-invariant rule's opt-out.
+func invariant_exempt_self_diagnostics(
+	t *testing.T, files map[string][]byte, exempt []string,
+) (diags []lint.Diagnostic) {
+	t.Helper()
+	fsys := fstest.MapFS{}
+	for name, content := range files {
+		fsys[name] = &fstest.MapFile{Data: content}
+	}
+	diags, err := lint.Check_File_System(&lint.Check_File_System_Input{
+		Fsys:                      fsys,
+		Scope:                     "pkg",
+		Shared_Component:          doctrine_shared_component_directory,
+		Word_Replacements:         test_word_replacements(),
+		Invariant_Exempt_Packages: exempt,
+	})
+	if err != nil {
+		t.Fatalf("Check_File_System: %v", err)
+	}
+	return diags
+}
+
+// Test_Type_Invariant_Exempt_List_Skips_Package verifies a package listed in
+// opt_out_assertion_mandate_packages is skipped by the type-invariant rule.
+func Test_Type_Invariant_Exempt_List_Skips_Package(t *testing.T) {
+	t.Parallel()
+	files := specification_one_file("package fixture\n\n" +
+		"// Widget is a fixture.\ntype Widget struct {\n\t// X is a fixture.\n\tX int\n}\n")
+	diags := invariant_exempt_self_diagnostics(t, files, []string{"pkg/**"})
+	if specification_diagnosed(diags, "directly below Widget") {
+		t.Fatal("a type in an exempt package must not be flagged")
+	}
+}
+
+// Test_Type_Invariant_Clean_Pair_Passes verifies a type immediately followed by a
+// correctly-signed bundle is not flagged.
+func Test_Type_Invariant_Clean_Pair_Passes(t *testing.T) {
+	t.Parallel()
+	files := specification_one_file("package fixture\n\n" +
+		"import \"fixture/shared/invariant\"\n\n" +
+		"// Widget is a fixture.\ntype Widget struct {\n" +
+		"\t// X is a fixture.\n\tX int\n}\n\n" +
+		"// Widget_Invariants is a fixture.\n" +
+		"func Widget_Invariants(w Widget, namespace invariant.Namespace) {\n" +
+		"\tprintln(0)\n}\n")
+	if specification_flags(t, files, "directly below Widget") {
+		t.Fatal("a well-formed pair must not be flagged")
+	}
+	if specification_flags(t, files, "must take") {
+		t.Fatal("a well-formed signature must not be flagged")
+	}
+}
+
+// Test_Type_Invariant_Pointer_First_Parameter_Passes verifies a pointer-typed
+// first parameter satisfies the signature.
+func Test_Type_Invariant_Pointer_First_Parameter_Passes(t *testing.T) {
+	t.Parallel()
+	files := specification_one_file("package fixture\n\n" +
+		"import \"fixture/shared/invariant\"\n\n" +
+		"// Widget is a fixture.\ntype Widget struct {\n" +
+		"\t// X is a fixture.\n\tX int\n}\n\n" +
+		"// Widget_Invariants is a fixture.\n" +
+		"func Widget_Invariants(w *Widget, namespace invariant.Namespace) {\n" +
+		"\tprintln(0)\n}\n")
+	if specification_flags(t, files, "must take") {
+		t.Fatal("a pointer first parameter must satisfy the signature")
+	}
+}
+
+// Test_Type_Invariant_Generic_Passes verifies a generic type whose bundle's type
+// parameters match is not flagged.
+func Test_Type_Invariant_Generic_Passes(t *testing.T) {
+	t.Parallel()
+	files := specification_one_file("package fixture\n\n" +
+		"import \"fixture/shared/invariant\"\n\n" +
+		"// Box is a fixture.\ntype Box[T any] struct {\n" +
+		"\t// Item is a fixture.\n\tItem T\n}\n\n" +
+		"// Box_Invariants is a fixture.\n" +
+		"func Box_Invariants[T any](b Box[T], namespace invariant.Namespace) {\n" +
+		"\tprintln(0)\n}\n")
+	if specification_flags(t, files, "directly below Box") {
+		t.Fatal("a matching generic bundle must not be flagged")
+	}
+	if specification_flags(t, files, "must take") {
+		t.Fatal("a matching generic signature must not be flagged")
+	}
+}
+
+// Test_Type_Invariant_Exempt_Kinds_Pass verifies aliases, function types, and
+// empty structs need no bundle.
+func Test_Type_Invariant_Exempt_Kinds_Pass(t *testing.T) {
+	t.Parallel()
+	files := specification_one_file("package fixture\n\n" +
+		"// Alias is a fixture.\ntype Alias = int\n\n" +
+		"// Callback is a fixture.\ntype Callback func()\n\n" +
+		"// Marker is a fixture.\ntype Marker struct{}\n")
+	if specification_flags(t, files, "directly below") {
+		t.Fatal("aliases, function types, and empty structs are exempt")
+	}
+}
+
+// Test_Type_Invariant_Between_Input_Struct_And_Function verifies the amended
+// input-struct rule: a bundle may sit between an input struct and the function it
+// feeds, satisfying both the locality rule and the type-invariant rule.
+func Test_Type_Invariant_Between_Input_Struct_And_Function(t *testing.T) {
+	t.Parallel()
+	files := specification_one_file("package fixture\n\n" +
+		"import \"fixture/shared/invariant\"\n\n" +
+		"// Foo_Input is a fixture.\ntype Foo_Input struct {\n" +
+		"\t// A is a fixture.\n\tA int\n\t// B is a fixture.\n\tB int\n}\n\n" +
+		"// Foo_Input_Invariants is a fixture.\n" +
+		"func Foo_Input_Invariants(input Foo_Input, namespace invariant.Namespace) {\n" +
+		"\tprintln(0)\n}\n\n" +
+		"// Foo does.\nfunc Foo(input *Foo_Input) (n int) {\n" +
+		"\treturn input.A + input.B\n}\n")
+	if specification_flags(t, files, "directly above") {
+		t.Fatal("the input struct may be parted from its function by its invariant")
+	}
+	if specification_flags(t, files, "directly below Foo_Input") {
+		t.Fatal("the bundle directly below the input struct satisfies the rule")
+	}
+}
+
+// Test_Type_Invariant_Numeric_Signed_Passes verifies a complete signed numeric
+// bundle (const bounds, all six boundary claims) is not flagged.
+func Test_Type_Invariant_Numeric_Signed_Passes(t *testing.T) {
+	t.Parallel()
+	files := specification_one_file("package fixture\n\n" +
+		"import \"fixture/shared/invariant\"\n\n" +
+		"const Level_Max Level = 7\n\nconst Level_Min Level = -1\n\n" +
+		"// Level is a fixture.\ntype Level int8\n\n" +
+		"// Level_Invariants is a fixture.\n" +
+		"func Level_Invariants(v Level, namespace invariant.Namespace) {\n" +
+		"\tinvariant.Always(v <= Level_Max, \"max bound\")\n" +
+		"\tinvariant.Always(v >= Level_Min, \"min bound\")\n" +
+		"\tinvariant.Dot_Product(namespace,\n" +
+		"\t\tinvariant.Sometimes(v == Level_Max, \"max\"),\n" +
+		"\t\tinvariant.Sometimes(v == Level_Min, \"min\"),\n" +
+		"\t\tinvariant.Sometimes(v == 0, \"zero\"),\n" +
+		"\t\tinvariant.Sometimes(v == 1, \"one\"),\n" +
+		"\t\tinvariant.Sometimes(v == -1, \"neg one\"),\n" +
+		"\t\tinvariant.Sometimes(v == 2, \"two\"),\n" +
+		"\t)\n}\n")
+	if specification_flags(t, files, "must guard both ends") {
+		t.Fatal("a complete signed bundle must not be flagged for bounds")
+	}
+	if specification_flags(t, files, "must be a package-level constant") {
+		t.Fatal("named const bounds must not be flagged")
+	}
+	if specification_flags(t, files, "must claim") {
+		t.Fatal("a complete signed bundle must not be flagged for coverage")
+	}
+}
+
+// Test_Type_Invariant_Numeric_Unsigned_Passes verifies a complete unsigned bundle
+// (no -1 claim, MIN a named const) is not flagged.
+func Test_Type_Invariant_Numeric_Unsigned_Passes(t *testing.T) {
+	t.Parallel()
+	files := specification_one_file("package fixture\n\n" +
+		"import \"fixture/shared/invariant\"\n\n" +
+		"const Count_Max Count = 7\n\nconst Count_Min Count = 0\n\n" +
+		"// Count is a fixture.\ntype Count uint8\n\n" +
+		"// Count_Invariants is a fixture.\n" +
+		"func Count_Invariants(v Count, namespace invariant.Namespace) {\n" +
+		"\tinvariant.Always(v <= Count_Max, \"max bound\")\n" +
+		"\tinvariant.Always(v >= Count_Min, \"min bound\")\n" +
+		"\tinvariant.Dot_Product(namespace,\n" +
+		"\t\tinvariant.Sometimes(v == Count_Max, \"max\"),\n" +
+		"\t\tinvariant.Sometimes(v == Count_Min, \"min\"),\n" +
+		"\t\tinvariant.Sometimes(v == 0, \"zero\"),\n" +
+		"\t\tinvariant.Sometimes(v == 1, \"one\"),\n" +
+		"\t\tinvariant.Sometimes(v == 2, \"two\"),\n" +
+		"\t)\n}\n")
+	if specification_flags(t, files, "must claim") {
+		t.Fatal("a complete unsigned bundle (no -1) must not be flagged for coverage")
+	}
+	if specification_flags(t, files, "must guard both ends") {
+		t.Fatal("unsigned bounds must not be flagged")
+	}
+}
+
+// Test_Type_Invariant_Numeric_Float_Passes verifies a float bundle with NaN/+-Inf
+// claims and const Always bounds is not flagged.
+func Test_Type_Invariant_Numeric_Float_Passes(t *testing.T) {
+	t.Parallel()
+	files := specification_one_file("package fixture\n\n" +
+		"import \"fixture/shared/invariant\"\n\nimport \"math\"\n\n" +
+		"const Scale_Max Scale = 100\n\nconst Scale_Min Scale = -100\n\n" +
+		"// Scale is a fixture.\ntype Scale float64\n\n" +
+		"// Scale_Invariants is a fixture.\n" +
+		"func Scale_Invariants(v Scale, namespace invariant.Namespace) {\n" +
+		"\tinvariant.Always(v <= Scale_Max, \"max bound\")\n" +
+		"\tinvariant.Always(v >= Scale_Min, \"min bound\")\n" +
+		"\tinvariant.Dot_Product(namespace,\n" +
+		"\t\tinvariant.Sometimes(math.IsNaN(float64(v)), \"nan\"),\n" +
+		"\t\tinvariant.Sometimes(float64(v) == math.Inf(-1), \"neg inf\"),\n" +
+		"\t\tinvariant.Sometimes(float64(v) == math.Inf(1), \"pos inf\"),\n" +
+		"\t)\n}\n")
+	if specification_flags(t, files, "must claim") {
+		t.Fatal("a complete float bundle (NaN/+-Inf) must not be flagged for coverage")
+	}
+	if specification_flags(t, files, "must guard both ends") {
+		t.Fatal("float const bounds must not be flagged")
+	}
+}
+
+// Test_Type_Invariant_Count_String_Passes verifies a complete string length
+// bundle is not flagged.
+func Test_Type_Invariant_Count_String_Passes(t *testing.T) {
+	t.Parallel()
+	files := specification_one_file("package fixture\n\n" +
+		"import \"fixture/shared/invariant\"\n\n" +
+		"const Name_Max = 32\n\nconst Name_Min = 0\n\n" +
+		"// Name is a fixture.\ntype Name string\n\n" +
+		"// Name_Invariants is a fixture.\n" +
+		"func Name_Invariants(v Name, namespace invariant.Namespace) {\n" +
+		"\tinvariant.Always(len(v) <= Name_Max, \"max bound\")\n" +
+		"\tinvariant.Always(len(v) >= Name_Min, \"min bound\")\n" +
+		"\tinvariant.Dot_Product(namespace,\n" +
+		"\t\tinvariant.Sometimes(len(v) == Name_Max, \"max\"),\n" +
+		"\t\tinvariant.Sometimes(len(v) == Name_Min, \"min\"),\n" +
+		"\t\tinvariant.Sometimes(len(v) == 0, \"zero\"),\n" +
+		"\t\tinvariant.Sometimes(len(v) == 1, \"one\"),\n" +
+		"\t\tinvariant.Sometimes(len(v) == 2, \"two\"),\n" +
+		"\t)\n}\n")
+	if specification_flags(t, files, "must guard both ends") {
+		t.Fatal("a complete string length bundle must not be flagged for bounds")
+	}
+	if specification_flags(t, files, "must claim") {
+		t.Fatal("a complete string length bundle must not be flagged for coverage")
+	}
+}
+
+// Test_Type_Invariant_Count_Slice_Passes verifies a complete slice length bundle
+// is not flagged.
+func Test_Type_Invariant_Count_Slice_Passes(t *testing.T) {
+	t.Parallel()
+	files := specification_one_file("package fixture\n\n" +
+		"import \"fixture/shared/invariant\"\n\n" +
+		"const Buffer_Max = 64\n\nconst Buffer_Min = 0\n\n" +
+		"// Buffer is a fixture.\ntype Buffer []byte\n\n" +
+		"// Buffer_Invariants is a fixture.\n" +
+		"func Buffer_Invariants(v Buffer, namespace invariant.Namespace) {\n" +
+		"\tinvariant.Always(len(v) <= Buffer_Max, \"max bound\")\n" +
+		"\tinvariant.Always(len(v) >= Buffer_Min, \"min bound\")\n" +
+		"\tinvariant.Dot_Product(namespace,\n" +
+		"\t\tinvariant.Sometimes(len(v) == Buffer_Max, \"max\"),\n" +
+		"\t\tinvariant.Sometimes(len(v) == Buffer_Min, \"min\"),\n" +
+		"\t\tinvariant.Sometimes(len(v) == 0, \"zero\"),\n" +
+		"\t\tinvariant.Sometimes(len(v) == 1, \"one\"),\n" +
+		"\t\tinvariant.Sometimes(len(v) == 2, \"two\"),\n" +
+		"\t)\n}\n")
+	if specification_flags(t, files, "must guard both ends") {
+		t.Fatal("a complete slice length bundle must not be flagged for bounds")
+	}
+	if specification_flags(t, files, "must claim") {
+		t.Fatal("a complete slice length bundle must not be flagged for coverage")
+	}
+}
+
+// Test_Type_Invariant_Count_Bound_Not_Claimed verifies a length bundle whose
+// MAX/MIN appear only in the Always guards — with no boundary claim for them — is
+// not flagged: the guard is the bound, not a claimed value.
+func Test_Type_Invariant_Count_Bound_Not_Claimed(t *testing.T) {
+	t.Parallel()
+	files := specification_one_file("package fixture\n\n" +
+		"import \"fixture/shared/invariant\"\n\n" +
+		"const Buffer_Max = 64\n\nconst Buffer_Min = 0\n\n" +
+		"// Buffer is a fixture.\ntype Buffer []byte\n\n" +
+		"// Buffer_Invariants is a fixture.\n" +
+		"func Buffer_Invariants(v Buffer, namespace invariant.Namespace) {\n" +
+		"\tinvariant.Always(len(v) <= Buffer_Max, \"max bound\")\n" +
+		"\tinvariant.Always(len(v) >= Buffer_Min, \"min bound\")\n" +
+		"\tinvariant.Dot_Product(namespace,\n" +
+		"\t\tinvariant.Sometimes(len(v) == 0, \"zero\"),\n" +
+		"\t\tinvariant.Sometimes(len(v) == 1, \"one\"),\n" +
+		"\t\tinvariant.Sometimes(len(v) == 2, \"two\"),\n" +
+		"\t)\n}\n")
+	if specification_flags(t, files, "must claim") {
+		t.Fatal("a length bundle need not claim its MAX/MIN — the guard is the bound")
+	}
+}
+
+// Test_Type_Invariant_Count_Map_Passes verifies a complete map length bundle is
+// not flagged.
+func Test_Type_Invariant_Count_Map_Passes(t *testing.T) {
+	t.Parallel()
+	files := specification_one_file("package fixture\n\n" +
+		"import \"fixture/shared/invariant\"\n\n" +
+		"const Registry_Max = 16\n\nconst Registry_Min = 0\n\n" +
+		"// Registry is a fixture.\ntype Registry map[string]int\n\n" +
+		"// Registry_Invariants is a fixture.\n" +
+		"func Registry_Invariants(v Registry, namespace invariant.Namespace) {\n" +
+		"\tinvariant.Always(len(v) <= Registry_Max, \"max bound\")\n" +
+		"\tinvariant.Always(len(v) >= Registry_Min, \"min bound\")\n" +
+		"\tinvariant.Dot_Product(namespace,\n" +
+		"\t\tinvariant.Sometimes(len(v) == Registry_Max, \"max\"),\n" +
+		"\t\tinvariant.Sometimes(len(v) == Registry_Min, \"min\"),\n" +
+		"\t\tinvariant.Sometimes(len(v) == 0, \"zero\"),\n" +
+		"\t\tinvariant.Sometimes(len(v) == 1, \"one\"),\n" +
+		"\t\tinvariant.Sometimes(len(v) == 2, \"two\"),\n" +
+		"\t)\n}\n")
+	if specification_flags(t, files, "must guard both ends") {
+		t.Fatal("a complete map length bundle must not be flagged for bounds")
+	}
+	if specification_flags(t, files, "must claim") {
+		t.Fatal("a complete map length bundle must not be flagged for coverage")
+	}
+}
+
+// Test_Type_Invariant_Count_Generic_Passes verifies a complete generic-container
+// length bundle (a generic slice) is not flagged.
+func Test_Type_Invariant_Count_Generic_Passes(t *testing.T) {
+	t.Parallel()
+	files := specification_one_file("package fixture\n\n" +
+		"import \"fixture/shared/invariant\"\n\n" +
+		"const Stack_Max = 8\n\nconst Stack_Min = 0\n\n" +
+		"// Stack is a fixture.\ntype Stack[T any] []T\n\n" +
+		"// Stack_Invariants is a fixture.\n" +
+		"func Stack_Invariants[T any](v Stack[T], namespace invariant.Namespace) {\n" +
+		"\tinvariant.Always(len(v) <= Stack_Max, \"max bound\")\n" +
+		"\tinvariant.Always(len(v) >= Stack_Min, \"min bound\")\n" +
+		"\tinvariant.Dot_Product(namespace,\n" +
+		"\t\tinvariant.Sometimes(len(v) == Stack_Max, \"max\"),\n" +
+		"\t\tinvariant.Sometimes(len(v) == Stack_Min, \"min\"),\n" +
+		"\t\tinvariant.Sometimes(len(v) == 0, \"zero\"),\n" +
+		"\t\tinvariant.Sometimes(len(v) == 1, \"one\"),\n" +
+		"\t\tinvariant.Sometimes(len(v) == 2, \"two\"),\n" +
+		"\t)\n}\n")
+	if specification_flags(t, files, "must guard both ends") {
+		t.Fatal("a complete generic-container length bundle must not be flagged for bounds")
+	}
+	if specification_flags(t, files, "must claim") {
+		t.Fatal("a complete generic count bundle must not be flagged for coverage")
+	}
+}
+
+// Test_Type_Invariant_Struct_Composition_Passes verifies a struct that composes
+// every coverable field's invariant is not flagged.
+func Test_Type_Invariant_Struct_Composition_Passes(t *testing.T) {
+	t.Parallel()
+	files := specification_one_file("package fixture\n\n" +
+		"import \"fixture/shared/invariant\"\n\n" +
+		"// Token is a fixture.\ntype Token string\n\n" +
+		"// Token_Invariants is a fixture.\n" +
+		"func Token_Invariants(v Token, namespace invariant.Namespace) {\n" +
+		"\tinvariant.Dot_Product(namespace, " +
+		"invariant.Sometimes(len(v) == 0, \"x\"))\n}\n\n" +
+		"// Pair is a fixture.\ntype Pair struct {\n" +
+		"\t// Tok is a fixture.\n\tTok Token\n" +
+		"\t// Count is a fixture.\n\tCount int\n}\n\n" +
+		"// Pair_Invariants is a fixture.\n" +
+		"func Pair_Invariants(v Pair, namespace invariant.Namespace) {\n" +
+		"\tToken_Invariants(v.Tok, \"Pair.Tok\")\n" +
+		"\tinvariant.Int_Invariants(v.Count, \"Pair.Count\")\n" +
+		"\tinvariant.Dot_Product(namespace, invariant.Sometimes(true, \"x\"))\n}\n")
+	if specification_flags(t, files, "must call") {
+		t.Fatal("a struct composing all field invariants must not be flagged")
+	}
+}
+
+// Test_Type_Invariant_Struct_Mutex_Skipped verifies a struct with a sync.Mutex
+// field is skipped entirely.
+func Test_Type_Invariant_Struct_Mutex_Skipped(t *testing.T) {
+	t.Parallel()
+	files := specification_one_file("package fixture\n\n" +
+		"import \"fixture/shared/invariant\"\n\nimport \"sync\"\n\n" +
+		"// Guarded is a fixture.\ntype Guarded struct {\n" +
+		"\t// Mu is a fixture.\n\tMu sync.Mutex\n\t// N is a fixture.\n\tN int\n}\n\n" +
+		"// Guarded_Invariants is a fixture.\n" +
+		"func Guarded_Invariants(v Guarded, namespace invariant.Namespace) {\n" +
+		"\tinvariant.Dot_Product(namespace, invariant.Sometimes(true, \"x\"))\n}\n")
+	if specification_flags(t, files, "must call") {
+		t.Fatal("a struct with a sync.Mutex field must be skipped entirely")
+	}
+}
+
+// Test_Type_Invariant_Struct_Function_Fields_Exempt verifies a func-typed field,
+// which has no invariant, is exempt.
+func Test_Type_Invariant_Struct_Function_Fields_Exempt(t *testing.T) {
+	t.Parallel()
+	files := specification_one_file("package fixture\n\n" +
+		"import \"fixture/shared/invariant\"\n\n" +
+		"// Ops is a fixture.\ntype Ops struct {\n" +
+		"\t// Run is a fixture.\n\tRun func()\n}\n\n" +
+		"// Ops_Invariants is a fixture.\n" +
+		"func Ops_Invariants(v Ops, namespace invariant.Namespace) {\n" +
+		"\tinvariant.Dot_Product(namespace, invariant.Sometimes(true, \"x\"))\n}\n")
+	if specification_flags(t, files, "must call") {
+		t.Fatal("a func-typed field has no invariant and must be exempt")
+	}
+}
+
+// Test_Type_Invariant_Struct_Boolean_Field_Required verifies a bool field requires
+// the Boolean_Invariants preset.
+func Test_Type_Invariant_Struct_Boolean_Field_Required(t *testing.T) {
+	t.Parallel()
+	files := specification_one_file("package fixture\n\n" +
+		"import \"fixture/shared/invariant\"\n\n" +
+		"// Flag is a fixture.\ntype Flag struct {\n" +
+		"\t// On is a fixture.\n\tOn bool\n}\n\n" +
+		"// Flag_Invariants is a fixture.\n" +
+		"func Flag_Invariants(v Flag, namespace invariant.Namespace) {\n" +
+		"\tinvariant.Dot_Product(namespace, invariant.Sometimes(true, \"x\"))\n}\n")
+	if !specification_flags(t, files, "must call Boolean_Invariants(v.On") {
+		t.Fatal("a bool field must require the Boolean_Invariants preset")
+	}
+}
+
+// Test_Type_Invariant_Struct_Pointer_Field_Composed verifies a pointer field is
+// composed through its pointee: a bundle that omits its pointee invariant is
+// flagged, the same as a value field of that type.
+func Test_Type_Invariant_Struct_Pointer_Field_Composed(t *testing.T) {
+	t.Parallel()
+	files := specification_one_file("package fixture\n\n" +
+		"import \"fixture/shared/invariant\"\n\n" +
+		"// Token is a fixture.\ntype Token string\n\n" +
+		"// Token_Invariants is a fixture.\n" +
+		"func Token_Invariants(v Token, namespace invariant.Namespace) {\n" +
+		"\tinvariant.Dot_Product(namespace, " +
+		"invariant.Sometimes(len(v) == 0, \"x\"))\n}\n\n" +
+		"// Holder is a fixture.\ntype Holder struct {\n" +
+		"\t// Tok is a fixture.\n\tTok *Token\n}\n\n" +
+		"// Holder_Invariants is a fixture.\n" +
+		"func Holder_Invariants(v Holder, namespace invariant.Namespace) {\n" +
+		"\tinvariant.Dot_Product(namespace, invariant.Sometimes(true, \"x\"))\n}\n")
+	if !specification_flags(t, files, "must call Token_Invariants") {
+		t.Fatal("a pointer field whose pointee invariant is omitted must be flagged")
+	}
+}
+
+// Test_Function_Assertion_Complete_Passes verifies a function that asserts its
+// input after a first-statement output defer is not flagged.
+func Test_Function_Assertion_Complete_Passes(t *testing.T) {
+	t.Parallel()
+	files := specification_one_file("package fixture\n\n" +
+		"import \"fixture/shared/invariant\"\n\n" +
+		"// Token is a fixture.\ntype Token string\n\n" +
+		"// Token_Invariants is a fixture.\n" +
+		"func Token_Invariants(v Token, namespace invariant.Namespace) {\n" +
+		"\tinvariant.Dot_Product(namespace, " +
+		"invariant.Sometimes(len(v) == 0, \"x\"))\n}\n\n" +
+		"// Count is a fixture.\ntype Count int\n\n" +
+		"// Count_Invariants is a fixture.\n" +
+		"func Count_Invariants(v Count, namespace invariant.Namespace) {\n" +
+		"\tinvariant.Dot_Product(namespace, invariant.Sometimes(v == 0, \"x\"))\n}\n\n" +
+		"// Process does.\nfunc Process(tok Token) (n Count) {\n" +
+		"\tdefer func() {\n\t\tCount_Invariants(n, \"Process.n\")\n\t}()\n" +
+		"\tToken_Invariants(tok, \"Process.tok\")\n\treturn 0\n}\n")
+	if specification_flags(t, files, "must assert") {
+		t.Fatal("a fully-asserting function must not be flagged")
+	}
+}
+
+// Test_Function_Assertion_Exempt_Subjects verifies func/error params and returns,
+// which have no invariant, need no assertion.
+func Test_Function_Assertion_Exempt_Subjects(t *testing.T) {
+	t.Parallel()
+	files := specification_one_file("package fixture\n\n" +
+		"// Run does.\nfunc Run(action func(), failure error) (result error) {\n" +
+		"\tprintln(0)\n\treturn nil\n}\n")
+	if specification_flags(t, files, "must assert") {
+		t.Fatal("func/error subjects have no invariant and need no assertion")
+	}
+}
+
+// Test_Function_Assertion_Slice_Loop_Passes verifies a slice parameter asserted by
+// an element-wise range loop is not flagged.
+func Test_Function_Assertion_Slice_Loop_Passes(t *testing.T) {
+	t.Parallel()
+	files := specification_one_file("package fixture\n\n" +
+		"import \"fixture/shared/invariant\"\n\n" +
+		"// Token is a fixture.\ntype Token string\n\n" +
+		"// Token_Invariants is a fixture.\n" +
+		"func Token_Invariants(v Token, namespace invariant.Namespace) {\n" +
+		"\tinvariant.Dot_Product(namespace, " +
+		"invariant.Sometimes(len(v) == 0, \"x\"))\n}\n\n" +
+		"// Scan does.\nfunc Scan(toks []Token) {\n" +
+		"\tfor _, t := range toks {\n\t\tToken_Invariants(t, \"Scan.tok\")\n\t}\n" +
+		"\tprintln(0)\n}\n")
+	if specification_flags(t, files, "must assert") {
+		t.Fatal("a slice parameter asserted element-wise must not be flagged")
+	}
+}
+
+// Test_Function_Assertion_Bundle_Exempt verifies a _Invariants bundle is exempt
+// from the function-assertion rule (else it would assert its own value).
+func Test_Function_Assertion_Bundle_Exempt(t *testing.T) {
+	t.Parallel()
+	files := specification_one_file("package fixture\n\n" +
+		"import \"fixture/shared/invariant\"\n\n" +
+		"// Token is a fixture.\ntype Token string\n\n" +
+		"// Token_Invariants is a fixture.\n" +
+		"func Token_Invariants(v Token, namespace invariant.Namespace) {\n" +
+		"\tinvariant.Dot_Product(namespace, " +
+		"invariant.Sometimes(len(v) == 0, \"x\"))\n}\n")
+	if specification_flags(t, files, "must assert") {
+		t.Fatal("a _Invariants bundle is exempt from the function-assertion rule")
+	}
+}
+
+// One non-exempt fixture package: the shared source plus the given test file, so
+// the recorder rule has a real package to judge. A single string parameter keeps
+// it clear of the input-struct rule.
+func recorder_test_files(test string) (files map[string][]byte) {
+	return map[string][]byte{
+		"pkg/rule.go":      []byte(recorder_fixture_source),
+		"pkg/rule_test.go": []byte(test),
+	}
+}
+
+const recorder_fixture_source = "// Package fixture is a fixture.\npackage fixture\n"
+
+// Lints the recorder fixture with pkg treated as the shared library, since the
+// recorder rule now binds shared libraries only — a binary component's packages
+// are witnessed through its simulation instead, so pkg must be shared to be judged.
+func recorder_self_diagnostics(
+	t *testing.T, files map[string][]byte, exempt []string,
+) (diags []lint.Diagnostic) {
+	t.Helper()
+	fsys := fstest.MapFS{}
+	for name, content := range files {
+		fsys[name] = &fstest.MapFile{Data: content}
+	}
+	if _, present := fsys["go.mod"]; !present {
+		fsys["go.mod"] = &fstest.MapFile{Data: []byte(doctrine_root_go_module)}
+	}
+	diags, err := lint.Check_File_System(&lint.Check_File_System_Input{
+		Fsys: fsys, Scope: "pkg", Shared_Component: "pkg",
+		Word_Replacements:         test_word_replacements(),
+		Invariant_Exempt_Packages: exempt,
+	})
+	if err != nil {
+		t.Fatalf("Check_File_System: %v", err)
+	}
+	return diags
+}
+
+// Reports whether the recorder fixture produces a diagnostic containing fragment.
+func recorder_flags(t *testing.T, files map[string][]byte, fragment string) (found bool) {
+	t.Helper()
+	return specification_diagnosed(recorder_self_diagnostics(t, files, nil), fragment)
+}
+
+// Reports whether some diagnostic carries the given rule name — used where a
+// fragment match would be fooled by another rule mentioning the same word.
+func specification_named(diags []lint.Diagnostic, name string) (found bool) {
+	for _, diagnostic := range diags {
+		if diagnostic.Name == name {
+			return true
+		}
+	}
+	return false
+}
+
+// The binary-component fixture without its simulation package — a thin main and an
+// internal entry point — the base each simulation test builds on.
+func simulation_component_files() (files map[string][]byte) {
+	return map[string][]byte{
+		"pkg/main.go": []byte(
+			"// Package main is a fixture.\npackage main\n\nfunc main() {}\n"),
+		"pkg/internal/entry.go": []byte(
+			"// Package internal is a fixture.\npackage internal\n\n" +
+				"// Main is the entry point.\nfunc Main() {}\n"),
+	}
+}
+
+// The base fixture plus the given simulation package source, so the simulation rule
+// has a real component whose internal/simulation_test package it can judge.
+func simulation_test_files(sim string) (files map[string][]byte) {
+	files = simulation_component_files()
+	files["pkg/internal/simulation_test/sim_test.go"] = []byte(sim)
+	return files
+}
+
+// A simulation package source with the given TestMain call and any extra trailing
+// declarations, so each simulation test varies only the part it exercises.
+func simulation_fixture_source(call string, extra ...string) (source string) {
+	tail := ""
+	for _, piece := range extra {
+		tail += piece
+	}
+	return "package simulation_test\n\n" +
+		"import (\n\t\"testing\"\n\n\tinvariant \"fixture/shared/invariant\"\n)\n\n" +
+		"func TestMain(m *testing.M) {\n\t" + call + "\n}\n\n" +
+		"func Fuzz_Main(f *testing.F) {\n\t" +
+		"f.Fuzz(func(t *testing.T, data []byte) {})\n}\n" +
+		tail
+}
+
+// A simulation package source that imports pkg/internal and runs the given statement
+// in its fuzz body, for exercising the entry restriction to internal.Main.
+func simulation_entry_source(body string) (source string) {
+	return "package simulation_test\n\nimport (\n\t\"testing\"\n\n" +
+		"\t\"github.com/james-orcales/james-orcales/pkg/internal\"\n" +
+		"\tinvariant \"fixture/shared/invariant\"\n)\n\n" +
+		"func TestMain(m *testing.M) {\n\tinvariant.Run_Test_Main(m, \"../**\")\n}\n\n" +
+		"func Fuzz_Main(f *testing.F) {\n\t" + body + "\n}\n"
+}
+
+// Test_Simulation_Wired_Passes verifies a simulation package with the canonical
+// TestMain and a lone Fuzz function satisfies the rule.
+func Test_Simulation_Wired_Passes(t *testing.T) {
+	t.Parallel()
+	files := simulation_test_files(
+		simulation_fixture_source("invariant.Run_Test_Main(m, \"../**\")"))
+	if specification_named(specification_self_diagnostics(t, files), "simulation") {
+		t.Fatal("a canonical simulation package must not be flagged")
+	}
+}
+
+// Test_Simulation_Exempt_Passes verifies a binary component whose internal packages
+// are all exempt needs no simulation package.
+func Test_Simulation_Exempt_Passes(t *testing.T) {
+	t.Parallel()
+	files := simulation_component_files()
+	diags := invariant_exempt_self_diagnostics(t, files, []string{"pkg/internal/**"})
+	if specification_named(diags, "simulation") {
+		t.Fatal("a wholly exempt internal tree must not require a simulation package")
+	}
+}
+
+// Test_Simulation_Helpers_Allowed verifies a simulation package may declare helper
+// functions and types alongside its fuzz driver and TestMain.
+func Test_Simulation_Helpers_Allowed(t *testing.T) {
+	t.Parallel()
+	files := simulation_test_files(simulation_fixture_source(
+		"invariant.Run_Test_Main(m, \"../**\")",
+		"\n// Extra is a fixture.\nfunc extra() (n int) { return 0 }\n"))
+	if specification_named(specification_self_diagnostics(t, files), "simulation") {
+		t.Fatal("a helper declaration must not be flagged")
+	}
+}
+
+// Test_Simulation_Entry_Main_Allowed verifies a simulation that references only
+// internal.Main is not flagged.
+func Test_Simulation_Entry_Main_Allowed(t *testing.T) {
+	t.Parallel()
+	files := simulation_test_files(simulation_entry_source("internal.Main()"))
+	if specification_named(specification_self_diagnostics(t, files), "simulation") {
+		t.Fatal("referencing only internal.Main must not be flagged")
+	}
+}
+
+// Test_Simulation_No_Source verifies a source (non-test) file in the simulation
+// directory is flagged: the directory holds only the blackbox test package.
+func Test_Simulation_No_Source(t *testing.T) {
+	t.Parallel()
+	files := simulation_test_files(
+		simulation_fixture_source("invariant.Run_Test_Main(m, \"../**\")"))
+	files["pkg/internal/simulation_test/source.go"] =
+		[]byte("// Package simulation is a fixture.\npackage simulation\n")
+	if !specification_flags(t, files, "no source file") {
+		t.Fatal("a source file in the simulation directory must be flagged")
+	}
+}
+
+// Test_File_Count_Blackbox_Whitebox_Separate verifies external (foo_test) and
+// internal (foo) test files are counted as separate groups, not lumped together.
+func Test_File_Count_Blackbox_Whitebox_Separate(t *testing.T) {
+	t.Parallel()
+	files := map[string][]byte{
+		"pkg/fixture.go":    []byte("// Package fixture is a fixture.\npackage fixture\n"),
+		"pkg/white_test.go": []byte("package fixture\n"),
+		"pkg/black_test.go": []byte("package fixture_test\n"),
+	}
+	if specification_flags(t, files, "has 2 test files") {
+		t.Fatal("blackbox and whitebox test files must count as separate groups")
+	}
+}
+
+// Test_File_Count_Whitebox verifies whitebox (internal) test files carry their own
+// independent count, flagged when they exceed the per-file cap.
+func Test_File_Count_Whitebox(t *testing.T) {
+	t.Parallel()
+	files := map[string][]byte{
+		"pkg/fixture.go": []byte("// Package fixture is a fixture.\npackage fixture\n"),
+		"pkg/a_test.go":  []byte("package fixture\n"),
+		"pkg/b_test.go":  []byte("package fixture\n"),
+	}
+	if !specification_flags(t, files, "has 2 whitebox test files") {
+		t.Fatal("two whitebox test files must be flagged as their own group")
+	}
+}
+
+// Test_Recorder_Registration_No_Tests verifies a non-exempt package with no test
+// file at all is flagged: it can never verify its coverage.
+func Test_Recorder_Registration_No_Tests(t *testing.T) {
+	t.Parallel()
+	files := map[string][]byte{"pkg/rule.go": []byte(recorder_fixture_source)}
+	if !recorder_flags(t, files, "must wire invariant.Run_Test_Main") {
+		t.Fatal("a package with no test file must be flagged")
+	}
+}
+
+// Test_Recorder_Registration_Unwired verifies a hand-rolled TestMain that runs
+// the suite itself without Run_Test_Main is flagged.
+func Test_Recorder_Registration_Unwired(t *testing.T) {
+	t.Parallel()
+	files := recorder_test_files(
+		"package fixture_test\n\nimport (\n\t\"os\"\n\t\"testing\"\n)\n\n" +
+			"func TestMain(m *testing.M) {\n\tos.Exit(m.Run())\n}\n")
+	if !recorder_flags(t, files, "TestMain must be exactly") {
+		t.Fatal("a TestMain that never calls Run_Test_Main must be flagged")
+	}
+}
+
+// Test_Recorder_Registration_Extra_Statements verifies a TestMain carrying any
+// statement beyond the one canonical call is flagged: the body must be exactly it.
+func Test_Recorder_Registration_Extra_Statements(t *testing.T) {
+	t.Parallel()
+	files := recorder_test_files(
+		"package fixture_test\n\nimport (\n\t\"testing\"\n\n" +
+			"\tinvariant \"fixture/shared/invariant\"\n)\n\n" +
+			"func TestMain(m *testing.M) {\n\tinvariant.Run_Test_Main(m)\n" +
+			"\tinvariant.Run_Test_Main(m)\n}\n")
+	if !recorder_flags(t, files, "TestMain must be exactly") {
+		t.Fatal("a TestMain with extra statements must be flagged")
+	}
+}
+
+// Test_Recorder_Registration_Wired_Passes verifies the canonical TestMain wiring
+// satisfies the rule.
+func Test_Recorder_Registration_Wired_Passes(t *testing.T) {
+	t.Parallel()
+	files := recorder_test_files(
+		"package fixture_test\n\nimport (\n\t\"testing\"\n\n" +
+			"\tinvariant \"fixture/shared/invariant\"\n)\n\n" +
+			"func TestMain(m *testing.M) {\n\tinvariant.Run_Test_Main(m)\n}\n")
+	if recorder_flags(t, files, "Run_Test_Main") {
+		t.Fatal("a TestMain wiring Run_Test_Main must not be flagged")
+	}
+}
+
+// Test_Recorder_Registration_Main_Exempt verifies a main package, which holds no
+// testable invariant logic, is exempt even without tests.
+func Test_Recorder_Registration_Main_Exempt(t *testing.T) {
+	t.Parallel()
+	files := map[string][]byte{
+		"pkg/main.go": []byte("// Package main is a fixture.\npackage main\n\n" +
+			"func main() {}\n"),
+	}
+	if specification_flags(t, files, "Run_Test_Main") {
+		t.Fatal("a main package must be exempt from the recorder rule")
+	}
+}
+
+// Test_Recorder_Registration_Exempt_Passes verifies a package listed in
+// opt_out_assertion_mandate_packages is skipped even with no TestMain.
+func Test_Recorder_Registration_Exempt_Passes(t *testing.T) {
+	t.Parallel()
+	files := map[string][]byte{"pkg/rule.go": []byte(recorder_fixture_source)}
+	diags := recorder_self_diagnostics(t, files, []string{"pkg"})
+	if specification_diagnosed(diags, "Run_Test_Main") {
+		t.Fatal("an exempt package must not be flagged for missing wiring")
+	}
 }

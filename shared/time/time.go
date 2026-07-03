@@ -5,7 +5,7 @@
 // backend lives here because it is pure arithmetic with no operating-system call.
 package time
 
-import "github.com/james-orcales/james-orcales/shared/fixedpoint"
+import "local/james-orcales/shared/fixedpoint"
 
 // Moment is a clock reading in nanoseconds since an arbitrary, clock-specific epoch
 // (TigerBeetle's stdx.Instant). Only the difference between two Moments from the
@@ -16,33 +16,34 @@ type Moment int64
 // Duration is a span of nanoseconds (TigerBeetle's stdx.Duration).
 type Duration int64
 
-// Nanosecond is the unit a Duration counts in.
-const Nanosecond Duration = 1
+// NANOSECOND is the unit a Duration counts in.
+const NANOSECOND Duration = 1
 
-// Microsecond is a thousand nanoseconds.
-const Microsecond = Nanosecond * 1000
+// MICROSECOND is a thousand nanoseconds.
+const MICROSECOND = NANOSECOND * 1000
 
-// Millisecond is a thousand microseconds.
-const Millisecond = Microsecond * 1000
+// MILLISECOND is a thousand microseconds.
+const MILLISECOND = MICROSECOND * 1000
 
-// Second is a thousand milliseconds.
-const Second = Millisecond * 1000
+// SECOND is a thousand milliseconds.
+const SECOND = MILLISECOND * 1000
 
-// Minute is sixty seconds.
-const Minute = Second * 60
+// MINUTE is sixty seconds.
+const MINUTE = SECOND * 60
 
-// Hour is sixty minutes.
-const Hour = Minute * 60
+// HOUR is sixty minutes.
+const HOUR = MINUTE * 60
 
-// Day is twenty-four hours.
-const Day = Hour * 24
+// DAY is twenty-four hours.
+const DAY = HOUR * 24
 
-// Week is seven days.
-const Week = Day * 7
+// WEEK is seven days.
+const WEEK = DAY * 7
 
 // Clock is the injected time source — the Go translation of TigerBeetle's `Time`
-// vtable { monotonic, realtime, tick }, expressed as closures so the backend is
-// chosen by value.
+// vtable, expressed as closures so the backend is chosen by value. It is read-only:
+// advancing time is the driver's job (the tick returned beside the clock at
+// construction), so a holder can only read the current Moment, never move time.
 type Clock struct {
 	// Now_Monotonic reads the monotonic clock, which never regresses; use it to
 	// measure elapsed time, timeouts, and latency.
@@ -50,12 +51,6 @@ type Clock struct {
 	// Now_Realtime reads wall-clock time as nanoseconds since the Unix epoch; it can
 	// jump, so use it only for calendar timestamps, never for elapsed time.
 	Now_Realtime func() (moment Moment)
-	// Tick advances a virtual clock by one resolution; on a real clock it is a no-op.
-	Tick func()
-	// Sleep blocks until the duration elapses on this clock. A real clock waits real
-	// time; a virtual clock advances its own time instead of waiting, so a simulation
-	// never blocks.
-	Sleep func(duration Duration)
 }
 
 // Offset models how a simulated wall clock deviates from true elapsed time —
@@ -78,12 +73,14 @@ type Virtual_Clock struct {
 	Skew Offset
 }
 
-// Virtual_Clock_To_Clock returns a Clock backed by a deterministic, OS-free virtual
-// clock. The closures share one tick counter, so Tick advances what the next
-// Now_Monotonic reads.
-func Virtual_Clock_To_Clock(virtual Virtual_Clock) (clock Clock) {
+// Virtual_Clock_To_Clock returns a read-only Clock backed by a deterministic, OS-free
+// virtual clock, plus the tick that advances it. The clock's closures and tick share
+// one counter, so tick advances what the next Now_Monotonic reads. Only the driver —
+// package main or a test harness — holds tick; pure code holds only the Clock and so
+// can read time but never move it.
+func Virtual_Clock_To_Clock(virtual Virtual_Clock) (clock Clock, tick func()) {
 	ticks := int64(0)
-	return Clock{
+	clock = Clock{
 		Now_Monotonic: func() (moment Moment) {
 			return Moment(ticks * int64(virtual.Resolution))
 		},
@@ -94,26 +91,21 @@ func Virtual_Clock_To_Clock(virtual Virtual_Clock) (clock Clock) {
 			}
 			return now - Moment(virtual.Skew(ticks))
 		},
-		Tick: func() { ticks++ },
-		// Sleeping advances virtual time rather than waiting: a sleeper reaches a Moment
-		// the slept span later, in resolution grains, with no wall-clock wait.
-		Sleep: func(duration Duration) {
-			ticks += int64(duration) / int64(virtual.Resolution)
-		},
 	}
+	return clock, func() { ticks++ }
 }
 
-// Skew_Kind_Linear models constant drift: A nanoseconds of skew per tick plus an
+// SKEW_KIND_LINEAR models constant drift: A nanoseconds of skew per tick plus an
 // initial B (TimeSim OffsetType.linear, A*x + B).
-const Skew_Kind_Linear Skew_Kind = 0
+const SKEW_KIND_LINEAR Skew_Kind = 0
 
-// Skew_Kind_Periodic models a sinusoidal wobble of amplitude A over a period of B
+// SKEW_KIND_PERIODIC models a sinusoidal wobble of amplitude A over a period of B
 // ticks (TimeSim OffsetType.periodic, A*sin(x*2pi/B)).
-const Skew_Kind_Periodic Skew_Kind = 1
+const SKEW_KIND_PERIODIC Skew_Kind = 1
 
-// Skew_Kind_Step models a discontinuous jump of A after B ticks — an NTP correction
+// SKEW_KIND_STEP models a discontinuous jump of A after B ticks — an NTP correction
 // or operator clock change (TimeSim OffsetType.step).
-const Skew_Kind_Step Skew_Kind = 2
+const SKEW_KIND_STEP Skew_Kind = 2
 
 // Skew_Kind selects which clock-deviation model Skew builds.
 type Skew_Kind uint8
@@ -133,7 +125,7 @@ type Skew_Input struct {
 // Skew builds the Offset described by input.
 func Skew(input Skew_Input) (offset Offset) {
 	switch input.Kind {
-	case Skew_Kind_Periodic:
+	case SKEW_KIND_PERIODIC:
 		return func(ticks int64) (skew Duration) {
 			// A zero period is a degenerate sinusoid; report no skew rather than divide
 			// (or take a remainder) by zero.
@@ -153,7 +145,7 @@ func Skew(input Skew_Input) (offset Offset) {
 			})
 			return Duration(fixedpoint.Whole(wobble))
 		}
-	case Skew_Kind_Step:
+	case SKEW_KIND_STEP:
 		return func(ticks int64) (skew Duration) {
 			if ticks > input.B {
 				return input.A

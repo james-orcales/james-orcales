@@ -5,7 +5,7 @@
 // builder: a log line is one Logger_-prefixed call taking the logger, a message,
 // and a variadic list of Field values built by the  constructors.
 //
-//	logger := jlog.New(jlog.New_Input{Writer: os.Stderr, Floor: jlog.Level_Info})
+//	logger := jlog.New(jlog.New_Input{Writer: os.Stderr, Floor: jlog.LEVEL_INFO})
 //	jlog.Logger_Info(logger, "request done",
 //	    jlog.String("method", method),
 //	    jlog.Integer("status", status),
@@ -37,7 +37,7 @@ import (
 	"unicode/utf8"
 	"unsafe"
 
-	"github.com/james-orcales/james-orcales/shared/time"
+	"local/james-orcales/shared/time"
 )
 
 // A fresh line buffer holds a typical event without growing, so steady-state
@@ -161,7 +161,7 @@ type Logger_Configuration struct {
 	Caller_Field_Name string
 	// Stack_Field_Name is the key used by Err for the rendered stack.
 	Stack_Field_Name string
-	// Duration_Unit divides Duration values before rendering; defaults to Nanosecond.
+	// Duration_Unit divides Duration values before rendering; defaults to NANOSECOND.
 	Duration_Unit time.Duration
 	// Buffer_Pool recycles line buffers so emitting stays allocation-free.
 	Buffer_Pool *sync.Pool
@@ -207,7 +207,7 @@ type New_Input struct {
 	Caller_Field_Name string
 	// Stack_Field_Name overrides the stack key; empty uses the default.
 	Stack_Field_Name string
-	// Duration_Unit divides Duration values; zero uses Nanosecond.
+	// Duration_Unit divides Duration values; zero uses NANOSECOND.
 	Duration_Unit time.Duration
 	// Auto_Timestamp stamps every line automatically.
 	Auto_Timestamp bool
@@ -218,43 +218,43 @@ type New_Input struct {
 // Level is a log severity.
 type Level int8
 
-// Level_Trace is the most verbose level.
-const Level_Trace Level = -1
+// LEVEL_TRACE is the most verbose level.
+const LEVEL_TRACE Level = -1
 
-// Level_Debug is the debugging level.
-const Level_Debug Level = 0
+// LEVEL_DEBUG is the debugging level.
+const LEVEL_DEBUG Level = 0
 
-// Level_Info is the informational level.
-const Level_Info Level = 1
+// LEVEL_INFO is the informational level.
+const LEVEL_INFO Level = 1
 
-// Level_Warn is the warning level.
-const Level_Warn Level = 2
+// LEVEL_WARN is the warning level.
+const LEVEL_WARN Level = 2
 
-// Level_Error is the error level.
-const Level_Error Level = 3
+// LEVEL_ERROR is the error level.
+const LEVEL_ERROR Level = 3
 
-// Level_None is a line with no severity field, emitted by Logger_Log.
-const Level_None Level = 6
+// LEVEL_NONE is a line with no severity field, emitted by Logger_Log.
+const LEVEL_NONE Level = 6
 
-// Level_Disabled marks a logger that emits nothing.
-const Level_Disabled Level = 7
+// LEVEL_DISABLED marks a logger that emits nothing.
+const LEVEL_DISABLED Level = 7
 
-// String returns the wire name of the level, empty for Level_None.
+// String returns the wire name of the level, empty for LEVEL_NONE.
 func (level Level) String() (name string) {
 	switch level {
-	case Level_Trace:
+	case LEVEL_TRACE:
 		return "trace"
-	case Level_Debug:
+	case LEVEL_DEBUG:
 		return "debug"
-	case Level_Info:
+	case LEVEL_INFO:
 		return "info"
-	case Level_Warn:
+	case LEVEL_WARN:
 		return "warn"
-	case Level_Error:
+	case LEVEL_ERROR:
 		return "error"
-	case Level_Disabled:
+	case LEVEL_DISABLED:
 		return "disabled"
-	case Level_None:
+	case LEVEL_NONE:
 		return ""
 	}
 	return strconv.Itoa(int(level))
@@ -268,7 +268,7 @@ func New(input New_Input) (logger Logger) {
 	}
 	unit := input.Duration_Unit
 	if unit == 0 {
-		unit = time.Nanosecond
+		unit = time.NANOSECOND
 	}
 	assert(writer != nil, "jlog: writer must not be nil")
 	assert(unit > 0, "jlog: duration unit must be positive")
@@ -309,32 +309,32 @@ func new_buffer() (buffer any) {
 
 // Logger_Trace emits a trace-level line.
 func Logger_Trace(logger Logger, message string, fields ...Field) {
-	logger_emit(logger, Level_Trace, message, fields)
+	logger_emit(logger, LEVEL_TRACE, message, fields)
 }
 
 // Logger_Debug emits a debug-level line.
 func Logger_Debug(logger Logger, message string, fields ...Field) {
-	logger_emit(logger, Level_Debug, message, fields)
+	logger_emit(logger, LEVEL_DEBUG, message, fields)
 }
 
 // Logger_Info emits an info-level line.
 func Logger_Info(logger Logger, message string, fields ...Field) {
-	logger_emit(logger, Level_Info, message, fields)
+	logger_emit(logger, LEVEL_INFO, message, fields)
 }
 
 // Logger_Warn emits a warn-level line.
 func Logger_Warn(logger Logger, message string, fields ...Field) {
-	logger_emit(logger, Level_Warn, message, fields)
+	logger_emit(logger, LEVEL_WARN, message, fields)
 }
 
 // Logger_Error emits an error-level line.
 func Logger_Error(logger Logger, message string, fields ...Field) {
-	logger_emit(logger, Level_Error, message, fields)
+	logger_emit(logger, LEVEL_ERROR, message, fields)
 }
 
 // Logger_Log emits a line with no severity field.
 func Logger_Log(logger Logger, message string, fields ...Field) {
-	logger_emit(logger, Level_None, message, fields)
+	logger_emit(logger, LEVEL_NONE, message, fields)
 }
 
 // Logger_At_Level emits a line at the given level.
@@ -385,7 +385,7 @@ func logger_is_disabled(logger Logger) (disabled bool) {
 	if logger.Configuration == nil {
 		return true
 	}
-	if logger.Floor == Level_Disabled {
+	if logger.Floor == LEVEL_DISABLED {
 		return true
 	}
 	return false
@@ -983,7 +983,7 @@ func buffer_recycle(holder *Buffer, pool *sync.Pool, final Buffer) {
 func buffer_append_level(
 	destination Buffer, level Level, configuration *Logger_Configuration,
 ) (output Buffer) {
-	if level == Level_None {
+	if level == LEVEL_NONE {
 		return destination
 	}
 	if configuration.Level_Field_Name == "" {

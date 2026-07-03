@@ -2,7 +2,7 @@
 // the snap library to the real OS (filesystem, stderr, runtime.Callers) and
 // re-exports the surface so callers can write:
 //
-//	import snap "github.com/james-orcales/james-orcales/shared/snap/default"
+//	import snap "local/james-orcales/shared/snap/default"
 //
 // and use snap.Init / snap.Edit / snap.Expect / … as if no split had happened.
 package snap
@@ -13,7 +13,7 @@ import (
 	"runtime"
 	"testing"
 
-	"github.com/james-orcales/james-orcales/shared/snap"
+	"local/james-orcales/shared/snap"
 )
 
 // Snapper re-exports the library's Snapper so callers need only this import.

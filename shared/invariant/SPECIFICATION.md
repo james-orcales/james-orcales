@@ -113,6 +113,11 @@ A panic names every element it found violated on the call — each triggered `Im
 only the first. A false eager `Always` is not part of this; it
 panics at its own site, so consecutive `Always` guards short-circuit on the first failure.
 
+### Empty
+
+A `Dot_Product` with no elements panics: an empty grid asserts nothing, so it is always a mistake
+rather than a silent no-op.
+
 # Bundles
 
 A `_Invariants(v, namespace)` function self-emits its own `Dot_Product(namespace, …)` over a
@@ -174,6 +179,12 @@ from its own frame.
 A `_Invariants` body must be straight-line: a branching or looping statement (`if`, `switch`, `for`,
 `select`) fails registration, since it would make the axes it self-emits depend on runtime values.
 
+### Custom Types
+
+A bundle's subject is a custom, defined type. A primitive subject — a builtin, an unnamed slice,
+map, or composite — fails registration, except in the framework package that owns the presets.
+Cover a primitive inline, or wrap it in a custom type that carries its own bundle.
+
 # Analysis
 
 After the suite, every unexercised obligation is reported under its kind and the run
@@ -197,8 +208,15 @@ back to the events they stand for, so a bare coordinate is debuggable across nes
 
 ### Summary
 
-A clean run reports how many properties it tested, splitting individual from
-combination and counting the panic-able subset.
+A clean run reports the count as individual plus combination, of which a panic-able subset.
+Individual counts each Always once and each Sometimes twice — true and false are two obligations;
+combination is the surviving and carved cells; panic-able is the Always and the carved cells.
+
+### Tally
+
+An eager Always, keyed by its literal message, tallies once for the whole run. Anything inside a
+Dot_Product — each axis, grid cell, and carved cell — is keyed by the call-site namespace, so one
+shape under N namespaces tallies N times; a carve's glob counts every cell it spans.
 
 ### Summary Names Package
 
