@@ -1,6 +1,26 @@
-# The test-ROM corpus and its archive are large and freely re-downloadable, so they
-# stay out of version control.
-/test_roms/
+# Whitelist by license: ignore every test ROM by default, then re-include only the
+# permissively-licensed (MIT / X11 / Unlicense) suites that carry their LICENSE and may be
+# committed. Anything not re-included stays out — the unlicensed suites (blargg, mbc3-tester,
+# turtle-tests, little-things-gb), the GPL ones (gambatte, mooneye-test-suite-wilbertpol), and
+# any newly-added suite until its license is checked and it's added here. Fetch the rest with
+# `gameboy_rs fetch`. Failing closed this way means an unvetted suite is never committed by
+# default. README/CHANGELOG are c-sp's own MIT collection docs, so they're kept.
+/test_roms/*
+!/test_roms/README.md
+!/test_roms/CHANGELOG.md
+!/test_roms/age-test-roms/
+!/test_roms/bully/
+!/test_roms/cgb-acid-hell/
+!/test_roms/cgb-acid2/
+!/test_roms/dmg-acid2/
+!/test_roms/gbmicrotest/
+!/test_roms/mealybug-tearoom-tests/
+!/test_roms/mooneye-test-suite/
+!/test_roms/rtc3test/
+!/test_roms/same-suite/
+!/test_roms/scribbltests/
+!/test_roms/strikethrough/
+
 /game-boy-test-roms-v7.0.zip
 # Battery-backed cartridge saves the emulator may emit.
 *.gbsave
