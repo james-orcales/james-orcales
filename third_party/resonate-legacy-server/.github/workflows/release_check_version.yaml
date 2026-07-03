@@ -1,0 +1,41 @@
+name: Check Release Version
+
+on:
+  workflow_call:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  check-version:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: false
+
+      - name: Build resonate
+        run: |
+          go build -o resonate .
+
+      - name: Check version
+        env:
+          GITHUB_REF_VERSION: ${{ github.ref_name }}
+        run: |
+          # Extract resonate version
+          RESONATE_VERSION=$(./resonate -v | awk '{print $3}')
+          RESONATE_VERSION="v${RESONATE_VERSION}"
+
+          # Compare versions
+          if [ "$RESONATE_VERSION" != "$GITHUB_REF_VERSION" ]; then
+            echo "Version mismatch: resonate version ($RESONATE_VERSION) does not match GitHub ref ($GITHUB_REF_VERSION)"
+            exit 1
+          else
+            echo "Version match: resonate version ($RESONATE_VERSION) matches GitHub ref ($GITHUB_REF_VERSION)"
+          fi

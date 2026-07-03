@@ -11,7 +11,13 @@ members = ["lint_rs", "shared_rs", "sloc_rs"]
 # table of its own) gets pulled into this workspace and fails to build/vendor,
 # since it isn't a member. NOTE: cargo's workspace.exclude does not accept glob
 # patterns (unlike members), so each path is listed explicitly.
-exclude = ["third_party/fd", "third_party/fish-shell", "third_party/jj", "third_party/ripgrep"]
+exclude = [
+        "third_party/fd",
+        "third_party/fish-shell",
+        "third_party/jj",
+        "third_party/ripgrep",
+        "third_party/resonate",
+]
 
 # rustc's casing lints are redundant with (and contradict) the dialect's
 # Ada_Case rule, which `lint_rs` enforces. Silence all three once, here.

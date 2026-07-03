@@ -1,0 +1,691 @@
+package dst
+
+import (
+	"errors"
+	"fmt"
+	"log/slog"
+	"math"
+	"math/rand" // nosemgrep
+	"sort"
+	"strconv"
+	"strings"
+	"time"
+
+	"github.com/anishathalye/porcupine"
+	cmdUtil "github.com/resonatehq/resonate/cmd/util"
+	"github.com/resonatehq/resonate/internal/aio"
+	"github.com/resonatehq/resonate/internal/api"
+	"github.com/resonatehq/resonate/internal/kernel/bus"
+	"github.com/resonatehq/resonate/internal/kernel/system"
+	"github.com/resonatehq/resonate/internal/kernel/t_api"
+	"github.com/resonatehq/resonate/internal/util"
+	"github.com/resonatehq/resonate/pkg/promise"
+	"github.com/resonatehq/resonate/pkg/task"
+)
+
+type DST struct {
+	config      *Config
+	generator   *Generator
+	validator   *Validator
+	bcValidator *BcValidator
+	partitions  [][]porcupine.Operation // set by Partition in the porcupine model
+}
+
+type Config struct {
+	Ticks              int64
+	Timeout            time.Duration
+	VisualizationPath  string
+	Verbose            bool
+	PrintOps           bool
+	TimeElapsedPerTick int64
+	TimeoutTicks       int64
+	ReqsPerTick        func() int
+	MaxReqsPerTick     int64
+	Ids                int
+	Headers            int
+	Data               int
+	Tags               int
+	FaultInjection     bool
+	Backchannel        chan interface{}
+}
+
+type Kind int
+
+const (
+	Op Kind = iota
+	Bc
+)
+
+type Partition int
+
+type Req struct {
+	kind Kind
+	time int64
+	req  *t_api.Request
+	bc   *Backchannel
+}
+
+type Res struct {
+	kind Kind
+	time int64
+	res  *t_api.Response
+	err  error
+}
+
+type BcKind int
+
+const (
+	Task BcKind = iota
+	Notify
+)
+
+type Backchannel struct {
+	Task    *task.Task
+	Promise *promise.Promise
+}
+
+func New(r *rand.Rand, config *Config) *DST {
+	return &DST{
+		config:      config,
+		generator:   NewGenerator(r, config),
+		validator:   NewValidator(r, config),
+		bcValidator: NewBcValidator(r, config),
+	}
+}
+
+func (d *DST) Add(kind t_api.Kind, generator RequestGenerator, validator ResponseValidator) {
+	d.generator.AddGenerator(kind, generator)
+	d.validator.AddValidator(kind, validator)
+}
+
+func (d *DST) Run(r *rand.Rand, api api.API, aio aio.AIO, system *system.System) bool {
+	util.Assert(d.config.Backchannel != nil, "backchannel must be non nil")
+
+	// promises
+	d.Add(t_api.PromiseGet, d.generator.GenerateReadPromise, d.validator.ValidateReadPromise)
+	d.Add(t_api.PromiseCreate, d.generator.GenerateCreatePromise, d.validator.ValidateCreatePromise)
+	d.Add(t_api.TaskCreate, d.generator.GenerateCreatePromiseAndTask, d.validator.ValidateCreatePromiseAndTask)
+	d.Add(t_api.PromiseComplete, d.generator.GenerateCompletePromise, d.validator.ValidateCompletePromise)
+
+	// callbacks
+	d.Add(t_api.PromiseRegister, d.generator.GenerateCreateCallback, d.validator.ValidateCreateCallback)
+
+	// schedules
+	d.Add(t_api.ScheduleRead, d.generator.GenerateReadSchedule, d.validator.ValidateReadSchedule)
+	d.Add(t_api.ScheduleCreate, d.generator.GenerateCreateSchedule, d.validator.ValidateCreateSchedule)
+	d.Add(t_api.ScheduleDelete, d.generator.GenerateDeleteSchedule, d.validator.ValidateDeleteSchedule)
+
+	// tasks
+	d.Add(t_api.TaskAcquire, d.generator.GenerateClaimTask, d.validator.ValidateClaimTask)
+	d.Add(t_api.TaskComplete, d.generator.GenerateCompleteTask, d.validator.ValidateCompleteTask)
+	d.Add(t_api.TaskRelease, d.generator.GenerateDropTask, d.validator.ValidateDropTask)
+	d.Add(t_api.TaskHeartbeat, d.generator.GenerateHeartbeatTasks, d.validator.ValidateHeartbeatTasks)
+
+	// backchannel validators
+	d.bcValidator.AddBcValidator(ValidateTasksWithSameRootPromiseId)
+	d.bcValidator.AddBcValidator(ValidateNotify)
+	d.bcValidator.AddBcValidator(ValidateTaskExpiry)
+
+	// porcupine ops
+	var ops []porcupine.Operation
+
+	// run all requests through the server and collect responses
+	var t, i, j int64
+	for t = int64(0); t < d.config.Ticks; t++ {
+		time := d.Time(t)
+
+		for _, req := range d.generator.Generate(r, time, d.config.ReqsPerTick()) {
+			req := req
+			reqTime := time
+
+			if req.Head == nil {
+				req.Head = make(map[string]string)
+			}
+
+			req.Head["id"] = strconv.FormatInt(i, 10)
+			req.Head["name"] = req.Kind().String()
+
+			api.EnqueueSQE(&bus.SQE[t_api.Request, t_api.Response]{
+				Submission: req,
+				Callback: func(res *t_api.Response, err error) {
+					resTime := d.Time(t)
+					if reqTime != resTime {
+						resTime = resTime - 1 // subtract 1 to ensure tick timeframes don't overlap
+					}
+
+					if d.config.PrintOps {
+						// log
+						slog.Info("DST", "id", req.Head["id"], "t", fmt.Sprintf("%d|%d", reqTime, resTime), "req", req, "res", res, "err", err)
+					}
+
+					// add operation to porcupine
+					ops = append(ops, porcupine.Operation{
+						ClientId: int(j % d.config.MaxReqsPerTick),
+						Call:     reqTime,
+						Return:   resTime,
+						Input:    &Req{Op, reqTime, req, nil},
+						Output:   &Res{Op, resTime, res, err},
+					})
+					j++
+				},
+			})
+			i++
+		}
+
+		system.Tick(time)
+
+		// now read from the backchannel
+		for len(d.config.Backchannel) > 0 {
+			var bc *Backchannel
+			obj := <-d.config.Backchannel
+
+			switch obj := obj.(type) {
+			case *task.Task:
+				// skip scheduled promises, this is a little hacky but we know
+				// that scheduled promises start with an 's'
+				if strings.HasPrefix(obj.RootPromiseId, "s") {
+					continue
+				}
+
+				bc = &Backchannel{
+					Task: obj,
+				}
+
+				// randomly decrement the counter, we only decrement so that we
+				// know a successful claim task request can only occur after
+				// our model has been updated via the backchannel
+				counter := obj.Counter - r.Intn(2)
+
+				// The processId is always the taskId, which means each task
+				// is always claimed by a unique process. When heartbeating there
+				// will be most a single task.
+
+				// add claim req to generator
+				d.generator.AddRequest(&t_api.Request{
+					Head: map[string]string{"partitionId": obj.RootPromiseId},
+					Data: &t_api.TaskAcquireRequest{
+						Id:        obj.Id,
+						Counter:   counter,
+						ProcessId: obj.Id,
+						Ttl:       cmdUtil.Choose(r, 1000, 2000, 3000, 4000, 5000, int64(math.MaxInt64)),
+					},
+				})
+			case *promise.Promise:
+				// skip scheduled promises, this is a little hacky but we know
+				// that scheduled promises start with an 's'
+				if strings.HasPrefix(obj.Id, "s") {
+					continue
+				}
+
+				bc = &Backchannel{
+					Promise: obj,
+				}
+			default:
+				panic("invalid backchannel type")
+			}
+
+			// backchannel messages occur on the "last" tick
+			reqTime := d.Time(t - 1)
+			resTime := time - 1
+
+			// add backchannel op to porcupine
+			ops = append(ops, porcupine.Operation{
+				ClientId: int(j % d.config.MaxReqsPerTick),
+				Call:     reqTime,
+				Return:   resTime,
+				Input:    &Req{Bc, reqTime, nil, bc},
+				Output:   &Res{Bc, resTime, nil, nil},
+			})
+
+			j++
+		}
+	}
+
+	// shutdown the system
+	system.Shutdown()
+
+	// keep ticking until all submissions have been processed
+	for !system.Done() {
+		t++
+		system.Tick(d.Time(t))
+	}
+
+	if d.config.FaultInjection {
+		slog.Info("Skipping linearization check because DST was run with fault injections")
+		return true
+	}
+
+	model := d.Model()
+	result, history := porcupine.CheckOperationsVerbose(model, ops, d.config.Timeout)
+
+	if err := porcupine.VisualizePath(model, history, d.config.VisualizationPath); err != nil {
+		slog.Error("failed to create visualization", "err", err)
+		return false
+	}
+
+	switch result {
+	case porcupine.Ok:
+		slog.Info("DST is linearizable")
+	case porcupine.Illegal:
+		slog.Error("DST is non linearizable, run with -v flag for more information", "v", d.config.Verbose)
+		if d.config.Verbose {
+			d.logPossibleError(history)
+		}
+	case porcupine.Unknown:
+		slog.Error("DST timed out before linearizability could be determined")
+	}
+
+	return result == porcupine.Ok
+}
+
+func (d *DST) logPossibleError(history porcupine.LinearizationInfo) {
+	// Whats is printed here and whats is visualized in the dst.html diagram might not match.
+	// this is a best effort to preserve the possible validation that failed.
+	fmt.Println("====== Possible errors ======")
+
+	linearizationsPartitions := history.PartialLinearizationsOperations()
+
+	// check each parition individually
+	// partitions are in the order they were given to porcupine
+	for i, partiton := range d.partitions {
+		util.Assert(len(linearizationsPartitions[i]) > 0, "partition must have at least one linearization")
+
+		// take the first (and we assume, by empiric evidence, only linearization)
+		linearization := linearizationsPartitions[i][0]
+
+		// if the linearization includes all the operations in the partiton all good
+		if len(partiton) == len(linearization) {
+			continue
+		}
+
+		op := nextFailure(linearization, partiton)
+		d.logError(linearization, op)
+	}
+}
+
+func (d *DST) logError(partialLinearization []porcupine.Operation, lastOp porcupine.Operation) {
+	// create a new model
+	model := NewModel()
+
+	// re feed operations through model
+	for _, op := range partialLinearization {
+		req := op.Input.(*Req)
+		res := op.Output.(*Res)
+
+		var err error
+
+		// step through the model (again)
+		if req.kind == Op {
+			model, err = d.Step(model, req.time, res.time, req.req, res.res, res.err)
+		} else {
+			model, err = d.StepBc(model, req.time, res.time, req)
+		}
+		util.Assert(err == nil, "Only the last operation must result in error")
+	}
+
+	req := lastOp.Input.(*Req)
+	res := lastOp.Output.(*Res)
+	var err error
+	if req.kind == Op {
+		_, err = d.Step(model, req.time, res.time, req.req, res.res, res.err)
+		fmt.Printf("Op(id=%s, t=%d|%d), req=%v, res=%v\n", req.req.Head["id"], req.time, res.time, req.req, res.res)
+	} else {
+		_, err = d.StepBc(model, req.time, res.time, req)
+		var obj any
+		if req.bc.Task != nil {
+			obj = req.bc.Task
+		} else if req.bc.Promise != nil {
+			obj = req.bc.Promise
+		}
+		fmt.Printf("Op(id=backchannel, t=%d|%d), %v\n", req.time, res.time, obj)
+	}
+
+	fmt.Printf("err=%v\n\n", err)
+}
+
+func (d *DST) Model() porcupine.Model {
+	return porcupine.Model{
+		Init: func() interface{} {
+			return NewModel()
+		},
+		Partition: func(history []porcupine.Operation) [][]porcupine.Operation {
+			partitions := make(map[string][]porcupine.Operation)
+
+			for _, op := range history {
+				req := op.Input.(*Req)
+				partitionKey := partition(req)
+				partitions[partitionKey] = append(partitions[partitionKey], op)
+			}
+
+			// Get sorted keys to iterate over the partitions in a deterministic way
+			keys := make([]string, 0, len(partitions))
+			for k := range partitions {
+				keys = append(keys, k)
+			}
+			sort.Strings(keys)
+
+			var result [][]porcupine.Operation
+			for _, key := range keys {
+				result = append(result, partitions[key])
+			}
+
+			d.partitions = result
+			return result
+		},
+		Step: func(state, input, output interface{}) (bool, interface{}) {
+			model := state.(*Model)
+			req := input.(*Req)
+			res := output.(*Res)
+
+			util.Assert(req.kind == res.kind, "kinds must match")
+
+			switch req.kind {
+			case Op:
+				updatedModel, err := d.Step(model, req.time, res.time, req.req, res.res, res.err)
+				if err != nil {
+					return false, model
+				}
+				return true, updatedModel
+			case Bc:
+				updatedModel, err := d.StepBc(model, req.time, res.time, req)
+				if err != nil {
+					return false, model
+				}
+				return true, updatedModel
+			default:
+				panic(fmt.Sprintf("unknown request kind: %d", req.kind))
+			}
+		},
+		Equal: func(state1, state2 interface{}) bool {
+			model1 := state1.(*Model)
+			model2 := state2.(*Model)
+
+			return model1 == model2 || model1.Equals(model2)
+		},
+		DescribeOperation: func(input interface{}, output interface{}) string {
+			req := input.(*Req)
+			res := output.(*Res)
+
+			switch req.kind {
+			case Op:
+				var status int
+				if res.err != nil {
+					var err *t_api.Error
+					if errors.As(res.err, &err) {
+						status = int(err.Code())
+					}
+				} else {
+					status = int(res.res.Status)
+				}
+
+				return fmt.Sprintf("%s | %s → %d", req.req.Head["id"], req.req, status)
+			case Bc:
+				if req.bc.Task != nil {
+					return fmt.Sprintf("Backchannel | %s", req.bc.Task)
+				} else if req.bc.Promise != nil {
+					return fmt.Sprintf("Backchannel | %s", req.bc.Promise)
+				} else {
+					return "Backchannel | unknown(possible error)"
+				}
+			default:
+				panic(fmt.Sprintf("unknown request kind: %d", req.kind))
+			}
+		},
+		DescribeState: func(state interface{}) string {
+			model := state.(*Model)
+
+			switch {
+			case len(*model.promises) > 0 || len(*model.callbacks) > 0 || len(*model.tasks) > 0:
+				var promises string
+				for _, p := range *model.promises {
+					var completedOn string
+					if p.value.CompletedOn == nil {
+						completedOn = "--"
+					} else {
+						completedOn = fmt.Sprintf("%d", *p.value.CompletedOn)
+					}
+					promises = promises + fmt.Sprintf(`
+					<tr>
+						<td align="right">%s</td>
+						<td>%s</td>
+						<td align="right">%d</td>
+						<td align="right">%s</td>
+					</tr>
+				`, p.value.Id, p.value.State, p.value.Timeout, completedOn)
+				}
+
+				var callbacks string
+				for _, c := range *model.callbacks {
+					callbacks = callbacks + fmt.Sprintf(`
+					<tr>
+						<td align="right">%s</td>
+						<td align="right">%s</td>
+					</tr>
+				`, c.value.Id, c.value.PromiseId)
+				}
+
+				var tasks string
+				for _, t := range *model.tasks {
+					var completedOn string
+					if t.value.CompletedOn == nil {
+						completedOn = "--"
+					} else {
+						completedOn = fmt.Sprintf("%d", *t.value.CompletedOn)
+					}
+					tasks = tasks + fmt.Sprintf(`
+					<tr>
+						<td align="right">%s</td>
+						<td align="right">%s</td>
+						<td align="right">%s</td>
+						<td align="right">%d</td>
+						<td align="right">%d</td>
+						<td align="right">%d</td>
+						<td align="right">%s</td>
+					</tr>
+				`, t.value.Id, t.value.State, t.value.RootPromiseId, t.value.ExpiresAt, t.value.Timeout, *t.value.CreatedOn, completedOn)
+				}
+				return fmt.Sprintf(`
+					<table border="0" cellspacing="0" cellpadding="5" style="background-color: white;">
+						<!-- First Row: Promises-->
+						<tr>
+							<strong><br />Promises</strong>
+							<table border="1" cellspacing="0" cellpadding="5">
+								<thead>
+									<tr>
+										<td><b>id</b></td>
+										<td><b>state</b></td>
+										<td><b>timeout</b></td>
+										<td><b>completedOn</b></td>
+									</tr>
+								</thead>
+								<tbody>
+									%s
+								</tbody>
+							</table>
+						</tr>
+						<!-- Second Row: Tasks -->
+						<tr>
+							<strong><br />Tasks</strong>
+							<table border="1" cellspacing="0" cellpadding="5">
+								<thead>
+									<tr>
+										<td><b>id</b></td>
+										<td><b>state</b></td>
+										<td><b>rootPromiseId</b></td>
+										<td><b>expiresAt</b></td>
+										<td><b>timeout</b></td>
+										<td><b>createdOn</b></td>
+										<td><b>completedOn</b></td>
+									</tr>
+								</thead>
+								<tbody>
+									%s
+								</tbody>
+							</table>
+						</tr>
+						<!-- Third Row: Callbacks -->
+						<tr>
+							<strong><br />Callbacks</strong>
+							<table border="1" cellspacing="0" cellpadding="5">
+								<thead>
+									<tr>
+										<td><b>id</b></td>
+										<td><b>promiseId</b></td>
+									</tr>
+								</thead>
+								<tbody>
+									%s
+								</tbody>
+							</table>
+						</tr>
+					</table>
+				`, promises, tasks, callbacks)
+			case len(*model.schedules) > 0:
+				var schedules string
+				for _, s := range *model.schedules {
+					schedules = schedules + fmt.Sprintf(`
+					<tr>
+						<td align="right">%s</td>
+					</tr>
+				`, s.value.Id)
+				}
+
+				return fmt.Sprintf(`
+					<table border="0" cellspacing="0" cellpadding="5" style="background-color: white;">
+						<thead>
+							<tr>
+								<td><b>Schedules</b></td>
+							</tr>
+						</thead>
+						<tbody>
+							<tr>
+								<td valign="top">
+									<table border="1" cellspacing="0" cellpadding="5">
+										<thead>
+											<tr>
+												<td><b>id</b></td>
+											</tr>
+										</thead>
+										<tbody>
+											%s
+										</tbody>
+									</table>
+								</td>
+							</tr>
+						</tbody>
+					</table>
+				`, schedules)
+
+			default:
+				return ""
+			}
+		},
+	}
+}
+
+func (d *DST) Step(model *Model, reqTime int64, resTime int64, req *t_api.Request, res *t_api.Response, err error) (*Model, error) {
+	if err != nil {
+		var error *t_api.Error
+		if !errors.As(err, &error) {
+			return model, fmt.Errorf("unexpected error '%v'", err)
+		}
+
+		switch error.Code() {
+		case t_api.StatusAPISubmissionQueueFull:
+			return model, nil
+		case t_api.StatusAIOSubmissionQueueFull:
+			return model, nil
+		case t_api.StatusSchedulerQueueFull:
+			return model, nil
+		case t_api.StatusFieldValidationError:
+			if req.Kind() == t_api.PromiseRegister {
+				callbackReq := req.Data.(*t_api.PromiseRegisterRequest)
+				if callbackReq.Mesg.Type == "resume" && callbackReq.PromiseId == callbackReq.Mesg.Root {
+					// sometimes we generate create callback requests with the same root and
+					// leaf promise ids by chance
+					return model, nil
+				}
+			}
+			fallthrough
+		default:
+			return model, fmt.Errorf("unexpected resonate error '%v'", error)
+		}
+	}
+
+	if req.Kind() != res.Kind() {
+		return model, fmt.Errorf("unexpected response kind '%d' for request kind '%d'", res.Kind(), req.Kind())
+	}
+
+	return d.validator.Validate(model, reqTime, resTime, req, res)
+}
+
+func (d *DST) StepBc(model *Model, reqTime int64, resTime int64, req *Req) (*Model, error) {
+	util.Assert(req.kind == Bc, "Backchannel step can only be taken if req is of kind Bc")
+	if req.bc.Task == nil && req.bc.Promise == nil {
+		return model, nil
+	}
+
+	return d.bcValidator.Validate(model, reqTime, resTime, req)
+}
+
+func (d *DST) Time(t int64) int64 {
+	return t * d.config.TimeElapsedPerTick
+}
+
+func (d *DST) String() string {
+	return fmt.Sprintf(
+		"DST(ids=%d, headers=%d, data=%d, tags=%d, backchannel=%d)",
+		d.config.Ids,
+		d.config.Headers,
+		d.config.Data,
+		d.config.Tags,
+		cap(d.config.Backchannel),
+	)
+}
+
+// Helper functions
+
+func partition(req *Req) string {
+	switch req.kind {
+	case Op:
+		partition, ok := req.req.Head["partitionId"]
+		util.Assert(ok, "partition id must be set")
+		return partition
+	case Bc:
+		if req.bc.Task != nil {
+			return req.bc.Task.RootPromiseId
+		} else if req.bc.Promise != nil {
+			return req.bc.Promise.Id
+		} else {
+			panic("unknown backchannel type")
+		}
+	default:
+		panic(fmt.Sprintf("unknown request kind: %d", req.kind))
+	}
+}
+
+// Find the first Operation if any that is not part of a partial linearization
+// by comparing our partition with the linearization
+func nextFailure(linearizationOps []porcupine.Operation, partitionOps []porcupine.Operation) porcupine.Operation {
+	// convert to map for quick lookup
+	linearizableMap := map[*Req]bool{}
+	for _, op := range linearizationOps {
+		req := op.Input.(*Req)
+		linearizableMap[req] = true
+	}
+
+	for _, op := range partitionOps {
+		req := op.Input.(*Req)
+		// if req is part of the linearizable path, skip
+		if _, ok := linearizableMap[req]; ok {
+			continue
+		}
+
+		// ops are ordered by time, so the first op is not part of the
+		// linearizable path should break the model
+		return op
+	}
+
+	util.Assert(false, "There must be an operation not included in the linearization")
+	return porcupine.Operation{}
+}

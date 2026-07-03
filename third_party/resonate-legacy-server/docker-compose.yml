@@ -1,0 +1,44 @@
+services:
+  resonate:
+    build: .
+    container_name: resonate
+    command:
+      - serve
+      - --aio-store-postgres-enable
+      - "true"
+      - --aio-store-postgres-host
+      - postgres
+      - --aio-store-postgres-username
+      - username
+      - --aio-store-postgres-password
+      - password
+      - --aio-store-postgres-database
+      - resonate
+      - --aio-store-postgres-query
+      - sslmode=disable
+    volumes:
+      - ./resonate.yml:/root/resonate.yml
+    ports:
+      - "8001:8001"
+      - "8002:8002"
+      - "50051:50051"
+    depends_on:
+      - postgres
+  postgres:
+    image: postgres:15
+    container_name: postgres
+    environment:
+      POSTGRES_USER: username
+      POSTGRES_PASSWORD: password
+      POSTGRES_DB: resonate
+    ports:
+      - "5432:5432"
+    read_only: true
+    tmpfs: /var/run/postgresql:rw,nosuid,nodev,noexec,mode=1777
+    security_opt:
+      - no-new-privileges:true
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U username -d resonate"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
