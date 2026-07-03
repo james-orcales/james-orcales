@@ -1,0 +1,6 @@
+# The test-ROM corpus and its archive are large and freely re-downloadable, so they
+# stay out of version control.
+/test_roms/
+/game-boy-test-roms-v7.0.zip
+# Battery-backed cartridge saves the emulator may emit.
+*.gbsave

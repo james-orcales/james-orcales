@@ -5,7 +5,20 @@
 # and used via .cargo/config.toml — never crates.io at build time.
 [workspace]
 resolver = "3"
-members = ["lint_rs", "shared_rs", "sloc_rs"]
+members = ["lint_rs", "shared_rs", "sloc_rs", "gameboy_rs", "gameboy_diff"]
+# third_party/ holds whole vendored upstream tools, each its own crate/workspace
+# built in isolation. Without this, a single-crate tool like fd (no [workspace]
+# table of its own) gets pulled into this workspace and fails to build/vendor,
+# since it isn't a member. NOTE: cargo's workspace.exclude does not accept glob
+# patterns (unlike members), so each path is listed explicitly.
+exclude = [
+        "third_party/fd",
+        "third_party/fish-shell",
+        "third_party/jj",
+        "third_party/ripgrep",
+        "third_party/resonate",
+        "third_party/bombadil",
+]
 
 # rustc's casing lints are redundant with (and contradict) the dialect's
 # Ada_Case rule, which `lint_rs` enforces. Silence all three once, here.
