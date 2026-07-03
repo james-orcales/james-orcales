@@ -60,10 +60,12 @@ pub struct Gpu {
     pub vrambank: usize,
     pub cbgpal_inc: bool,
     pub cbgpal_ind: u8,
-    pub cbgpal: [[[u8; 3]; 4]; 8],
+    // Boxed so the per-cycle Gpu reconstruction moves an 8-byte pointer, not the 96
+    // inline palette bytes that only a palette-register write ever changes.
+    pub cbgpal: Box<[[[u8; 3]; 4]; 8]>,
     pub csprit_inc: bool,
     pub csprit_ind: u8,
-    pub csprit: [[[u8; 3]; 4]; 8],
+    pub csprit: Box<[[[u8; 3]; 4]; 8]>,
     pub data: region::Region,
     pub updated: bool,
     pub interrupt: u8,
@@ -107,10 +109,10 @@ pub fn new() -> Gpu {
         vrambank: 0,
         cbgpal_inc: false,
         cbgpal_ind: 0,
-        cbgpal: [[[0; 3]; 4]; 8],
+        cbgpal: Box::new([[[0; 3]; 4]; 8]),
         csprit_inc: false,
         csprit_ind: 0,
-        csprit: [[[0; 3]; 4]; 8],
+        csprit: Box::new([[[0; 3]; 4]; 8]),
         data: region::new(SCREEN_W * SCREEN_H * 3),
         updated: false,
         interrupt: 0,
@@ -359,7 +361,7 @@ fn write_register(gpu: Gpu, address: u16, value: u8) -> Gpu {
 // Writes the CGB background palette RAM at the current index, auto-incrementing it
 // when the auto-increment bit is set.
 fn write_cbgpal(gpu: Gpu, value: u8) -> Gpu {
-    let cbgpal = write_palette(gpu.cbgpal, gpu.cbgpal_ind, value);
+    let cbgpal = Box::new(write_palette(*gpu.cbgpal, gpu.cbgpal_ind, value));
     let cbgpal_ind = match gpu.cbgpal_inc {
         true => (gpu.cbgpal_ind + 1) & 0x3F,
         false => gpu.cbgpal_ind,
@@ -370,7 +372,7 @@ fn write_cbgpal(gpu: Gpu, value: u8) -> Gpu {
 // Writes the CGB sprite palette RAM at the current index, auto-incrementing it when
 // the auto-increment bit is set.
 fn write_csprit(gpu: Gpu, value: u8) -> Gpu {
-    let csprit = write_palette(gpu.csprit, gpu.csprit_ind, value);
+    let csprit = Box::new(write_palette(*gpu.csprit, gpu.csprit_ind, value));
     let csprit_ind = match gpu.csprit_inc {
         true => (gpu.csprit_ind + 1) & 0x3F,
         false => gpu.csprit_ind,

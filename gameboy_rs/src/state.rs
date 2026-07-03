@@ -564,7 +564,8 @@ fn decode_gpu_tail(b: &[u8], o: usize, head: gpu::Gpu) -> Option<(gpu::Gpu, usiz
     Some((
         gpu::Gpu {
             scy, scx, winy, winx, wy_trigger, wy_pos, palbr, pal0r, pal1r, palb, pal0, pal1, vram, voam, vrambank,
-            cbgpal_inc, cbgpal_ind, cbgpal, csprit_inc, csprit_ind, csprit, data: region::from_bytes(&data_bytes),
+            cbgpal_inc, cbgpal_ind, cbgpal: Box::new(cbgpal), csprit_inc, csprit_ind, csprit: Box::new(csprit),
+            data: region::from_bytes(&data_bytes),
             updated, interrupt, gbmode, hblanking, first_frame, ..head
         },
         o,
@@ -718,8 +719,8 @@ fn decode_mmu(b: &[u8], o: usize) -> Option<(mmu::Mmu, usize)> {
     let (regs, o) = d_arr3(b, o)?;
     Some((
         mmu::Mmu {
-            wram: region::from_bytes(&wram_bytes), zram, hdma, inte, intf, serial, timer, keypad, gpu, sound, hdma_status, hdma_src, hdma_dst,
-            hdma_len, wrambank, mbc, gbmode, gbspeed, speed_switch_req, undocumented_cgb_regs: regs,
+            wram: region::from_bytes(&wram_bytes), zram, hdma, inte, intf, serial, timer, keypad, gpu, sound: Box::new(sound), hdma_status, hdma_src, hdma_dst,
+            hdma_len, wrambank, mbc: Box::new(mbc), gbmode, gbspeed, speed_switch_req, undocumented_cgb_regs: regs,
         },
         o,
     ))

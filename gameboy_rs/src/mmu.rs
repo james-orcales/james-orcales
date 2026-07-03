@@ -42,13 +42,13 @@ pub struct Mmu {
     pub timer: timer::Timer,
     pub keypad: keypad::Keypad,
     pub gpu: gpu::Gpu,
-    pub sound: sound::Sound,
+    pub sound: Box<sound::Sound>,
     pub hdma_status: Dma_Type,
     pub hdma_src: u16,
     pub hdma_dst: u16,
     pub hdma_len: u8,
     pub wrambank: usize,
-    pub mbc: mbc::Mbc,
+    pub mbc: Box<mbc::Mbc>,
     pub gbmode: gbmode::Gb_Mode,
     pub gbspeed: gbmode::Gb_Speed,
     pub speed_switch_req: bool,
@@ -69,13 +69,13 @@ pub fn new(cart: mbc::Mbc, mode: gbmode::Gb_Mode) -> Result<Mmu, String> {
         timer: timer::new(),
         keypad: keypad::new(),
         gpu: gpu::Gpu { gbmode: mode, ..gpu::new() },
-        sound: sound::new_for(mode),
+        sound: Box::new(sound::new_for(mode)),
         hdma_status: Dma_Type::No_Dma,
         hdma_src: 0,
         hdma_dst: 0,
         hdma_len: 0xFF,
         wrambank: 1,
-        mbc: cart,
+        mbc: Box::new(cart),
         gbmode: mode,
         gbspeed: gbmode::Gb_Speed::Single,
         speed_switch_req: false,
@@ -87,7 +87,7 @@ pub fn new(cart: mbc::Mbc, mode: gbmode::Gb_Mode) -> Result<Mmu, String> {
             // The headless APU (rboy's too) is created after the boot register
             // writes and never sees them, so it is reset to fresh here to match.
             let initialized = set_initial(bus);
-            Ok(Mmu { sound: sound::new_for(mode), ..initialized })
+            Ok(Mmu { sound: Box::new(sound::new_for(mode)), ..initialized })
         }
     }
 }
@@ -178,9 +178,9 @@ pub fn read_wide(mmu: &Mmu, address: u16) -> u16 {
 
 pub fn write_byte(mmu: Mmu, address: u16, value: u8) -> Mmu {
     match address {
-        0x0000..=0x7FFF => Mmu { mbc: mbc::write_rom(mmu.mbc, address, value), ..mmu },
+        0x0000..=0x7FFF => Mmu { mbc: Box::new(mbc::write_rom(*mmu.mbc, address, value)), ..mmu },
         0x8000..=0x9FFF => Mmu { gpu: gpu::write_byte(mmu.gpu, address, value), ..mmu },
-        0xA000..=0xBFFF => Mmu { mbc: mbc::write_ram(mmu.mbc, address, value), ..mmu },
+        0xA000..=0xBFFF => Mmu { mbc: Box::new(mbc::write_ram(*mmu.mbc, address, value)), ..mmu },
         0xC000..=0xCFFF | 0xE000..=0xEFFF => {
             Mmu { wram: region::write(mmu.wram, address as usize & 0x0FFF, value), ..mmu }
         }
@@ -204,7 +204,7 @@ fn write_io(mmu: Mmu, address: u16, value: u8) -> Mmu {
         0xFF00 => Mmu { keypad: keypad::write_byte(mmu.keypad, value), ..mmu },
         0xFF01..=0xFF02 => Mmu { serial: serial::write_byte(mmu.serial, address, value), ..mmu },
         0xFF04..=0xFF07 => Mmu { timer: timer::write_byte(mmu.timer, address, value), ..mmu },
-        0xFF10..=0xFF3F => Mmu { sound: sound::write_byte(mmu.sound, address, value), ..mmu },
+        0xFF10..=0xFF3F => Mmu { sound: Box::new(sound::write_byte(*mmu.sound, address, value)), ..mmu },
         0xFF46 => oamdma(mmu, value),
         0xFF4D | 0xFF4F | 0xFF51..=0xFF55 | 0xFF6C | 0xFF70 | 0xFF76..=0xFF77
             if mmu.gbmode != gbmode::Gb_Mode::Color =>
@@ -241,7 +241,14 @@ pub fn do_cycle(mmu: Mmu, ticks: u32) -> (Mmu, u32) {
     let timed = tick_timer(dmad, cputicks);
     let keyed = collect_keypad(timed);
     let drawn = tick_gpu(keyed, gputicks);
-    let sounded = Mmu { sound: sound::do_cycle(drawn.sound, gputicks), ..drawn };
+    // When the APU is off, move the boxed Sound through untouched (byte-identical to
+    // sound::do_cycle's early return) rather than copying its 464 inline bytes every
+    // cycle; only an active APU pays the rebox.
+    let sound = match drawn.sound.on {
+        false => drawn.sound,
+        true => Box::new(sound::do_cycle(*drawn.sound, gputicks)),
+    };
+    let sounded = Mmu { sound, ..drawn };
     (collect_serial(sounded), gputicks)
 }
 
@@ -313,7 +320,7 @@ fn hdma_read(mmu: &Mmu, address: u16) -> u8 {
 /// Injects the current wall-clock time into the cartridge (for an MBC3 RTC); the
 /// composition root supplies it so the bus reads no clock itself.
 pub fn set_clock(mmu: Mmu, now: u64) -> Mmu {
-    Mmu { mbc: mbc::set_clock(mmu.mbc, now), ..mmu }
+    Mmu { mbc: Box::new(mbc::set_clock(*mmu.mbc, now)), ..mmu }
 }
 
 /// Connects the Game Boy Printer to the serial port, so a printing ROM's output is

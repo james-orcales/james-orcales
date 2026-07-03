@@ -244,9 +244,31 @@ This is a **distinct cost from the memory-write tax above.** That one is the buf
 itself (`concat`, O(1)→O(n)), internal to the one field and identical regardless of struct
 shape — fixed by `region.rs`'s paging. The core-loop cost here is the *by-value copy of large
 inline fields* during reconstruction — fixed by heap-indirecting them. Two costs, two
-representations, both orthogonal to how many fields the enclosing struct has. The spike was
-reverted; banking it — `Box`/handle the remaining large inline blocks — is a separate, now
-narrowly-scoped effort (not `with_mut`, not boxing hot fields, which would allocate every cycle).
+representations, both orthogonal to how many fields the enclosing struct has.
+
+## Banked: the large inline fields, heap-indirected
+
+The spike is now shipped for real. Exactly the large inline fields on the reconstruction path
+were `Box`ed — the two CGB palette arrays (`[[[u8;3];4];8]`, 96 B each), `Sound` (464 B), and the
+`Mbc` enum (112 B) — so `..old` moves a pointer, not the payload; each rebuilds only on its own
+event (a palette/sound-register or bank-switch write), and `Sound`'s box moves through untouched
+when the APU is off, reboxing only when it is actually running (a cheap fixed-size alloc/free, not
+a per-cycle copy). Four `Box` fields, no other change. Byte-exact across **241 ROMs**, `lint_rs` =
+0, zero `mut`/`unsafe`:
+
+| workload | paged | + 4 boxes | tax vs rboy |
+| ------------------ | ----- | --------- | ----------- |
+| cpu_instrs (CPU)   | 2.43s | **1.68s** (−31%) | 18.7× → **12.9×** |
+| dmg_sound (APU)    | 1.51s | **1.05s** (−31%) | → **13.1×** |
+| cgb-acid2 (CGB)    | 2.62s | **1.52s** (−42%) | 21.1× → **12.6×** |
+| synth:nop (core)   | 2.70s | **1.60s** (−41%) | 25.0× → **14.5×** |
+
+Four `Box`es cut the real-ROM tax from ~18–21× down to ~13×. That is the whole lever — "large
+inline field → heap-indirect," nothing about field count, call shape, or the already-pointer
+`Vec`/`Region` fields (their write cost is the separate `region.rs` axis). Not `with_mut`, and not
+boxing a genuinely-per-cycle field (that would allocate every cycle). The remaining ~13× is the
+irreducible interpreter work plus the still-inline hot scalars — a further hot/cold split of
+`Gpu`'s config could shave more, with diminishing returns.
 
 ## Reproduce
 
