@@ -1,3 +1,7 @@
+## Key Architecural Principle
+
+End-to-end Dependency Injection
+
 ## Test-Driven Development
 
 **STRICTLY WRITE THE FAILING TEST FIRST, THEN THE CODE TO MAKE IT PASS.**
