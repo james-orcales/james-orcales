@@ -1,10 +1,10 @@
-//! The headless composition root: the one place that binds real effects — reading
-//! the ROM and its battery save from the filesystem, injecting the wall clock, and
-//! writing the battery save back — around the pure, deterministic core. Every effect
-//! is injected here; the emulator itself reads no clock and touches no file. `fs::write`
-//! and `SystemTime` are dialect-legal (free functions, no `&mut`, not blacklisted), so
-//! the boundary stays in the linted crate; argument parsing uses the repo's
-//! `shared_rs::cli` (already a dependency via the `region` module's arena).
+//! The headless composition root: the one place that binds real effects. `run` reads the ROM
+//! and its battery save from the filesystem, injects the wall clock, emulates the pure core,
+//! and writes the battery save and save-state back; `fetch` shells out to curl/shasum/unzip to
+//! pull the license-restricted test-ROM suites. Every effect is bound here; the emulator core
+//! reads no clock and touches no file. `fs::write`, `SystemTime`, and `process::Command` are
+//! dialect-legal (free functions / method chains, no `&mut` tokens), so the boundary stays in
+//! the linted crate; argument parsing uses the repo's `shared_rs::cli`.
 
 use gameboy_rs::cpu;
 use gameboy_rs::device;
@@ -27,24 +27,60 @@ const MAIN_ROM_BYTES_MAX: u64 = 8 << 20;
 const MAIN_DEFAULT_CYCLES: u64 = 250_000_000;
 
 fn main() {
-    let program = cli::new_single(
-        "gameboy_rs",
-        "run a Game Boy ROM headless and print its serial, framebuffer, and audio fingerprints",
-        vec![cli::new_string_argument("rom", "path to the ROM image")],
-        vec![cli::new_int_flag("cycles", "T-cycles to run before reporting", MAIN_DEFAULT_CYCLES as i64)],
-    );
+    let program = program();
     let arguments: Vec<String> = env::args().collect();
+    // With no subcommand, cli would default to `run` and fail on the absent ROM; show help.
+    if arguments.len() < 2 {
+        eprint!("{}", cli::print_help(&program));
+        process::exit(2);
+    }
     match cli::program_parse(&program, &arguments) {
-        Ok(outcome) => {
-            let rom = cli::get_option(&outcome.command.arguments, "rom", string_value);
-            let cycles = cli::get_option(&outcome.command.flags, "cycles", int_value);
-            process::exit(run(&rom, cycles as u64));
-        }
+        Ok(outcome) => process::exit(dispatch(&outcome)),
         Err(error) => {
             eprintln!("{}", cli::parse_error_message(&error));
             eprint!("{}", cli::print_help(&program));
             process::exit(2);
         }
+    }
+}
+
+// The two subcommands: `run` emulates a ROM; `fetch` downloads the license-restricted suites.
+fn program() -> cli::Program {
+    cli::new(
+        "gameboy_rs",
+        "a headless Game Boy emulator with a test-ROM fetcher",
+        vec![
+            cli::Command {
+                label: "run".to_string(),
+                description: "run a ROM headless and print its serial, framebuffer, and audio fingerprints"
+                    .to_string(),
+                arguments: vec![cli::new_string_argument("rom", "path to the ROM image")],
+                flags: vec![cli::new_int_flag(
+                    "cycles",
+                    "T-cycles to run before reporting",
+                    MAIN_DEFAULT_CYCLES as i64,
+                )],
+            },
+            cli::Command {
+                label: "fetch".to_string(),
+                description: "download the license-restricted test-ROM suites into test_roms/".to_string(),
+                arguments: vec![],
+                flags: vec![],
+            },
+        ],
+        vec![],
+    )
+}
+
+// Runs the parsed subcommand and returns its process exit code.
+fn dispatch(outcome: &cli::Parse_Outcome) -> i32 {
+    match outcome.command.label.as_str() {
+        "run" => run(
+            &cli::get_option(&outcome.command.arguments, "rom", string_value),
+            cli::get_option(&outcome.command.flags, "cycles", int_value) as u64,
+        ),
+        "fetch" => fetch_test_roms(),
+        other => unreachable!("program_parse yielded an undeclared command {other:?}"),
     }
 }
 
@@ -61,6 +97,57 @@ fn int_value(parameter: &cli::Parameter) -> i64 {
     match parameter.value {
         cli::Parameter_Value::Int(number) => number,
         _ => 0,
+    }
+}
+
+// The pinned c-sp game-boy-test-roms v7.0 release and its zip's SHA-256. Fail-closed: if the
+// asset is ever re-cut, the checksum stops matching and `fetch` aborts until this is bumped.
+const FETCH_URL: &str = "https://github.com/c-sp/gameboy-test-roms/releases/download/v7.0/game-boy-test-roms-v7.0.zip";
+const FETCH_SHA256: &str = "b9a9d7a1075aa35a3d07c07c34974048672d8520dca9e07a50178f5860c3832c";
+
+// The six suites kept out of version control — blargg/mbc3-tester/turtle-tests/little-things-gb
+// carry no license, gambatte/mooneye-test-suite-wilbertpol are GPL — extracted into this dir.
+const FETCH_SUITES: &str = "blargg mbc3-tester turtle-tests little-things-gb gambatte mooneye-test-suite-wilbertpol";
+const FETCH_DEST: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/test_roms");
+
+// Download, verify, and extract the six suites. `$1..$4` arrive as argv (not interpolated) so no
+// shell quoting is needed; `set -e` plus the `shasum -c` gate abort before anything reaches
+// test_roms/, and the scratch dir is removed on every exit.
+const FETCH_SCRIPT: &str = "\
+set -e
+url=\"$1\"; sha=\"$2\"; dest=\"$3\"; suites=\"$4\"
+work=\"$(mktemp -d)\"; trap 'rm -rf \"$work\"' EXIT
+curl --proto '=https' --tlsv1.2 -fsSL -o \"$work/roms.zip\" \"$url\"
+echo \"$sha  $work/roms.zip\" | shasum -a 256 -c -
+unzip -q \"$work/roms.zip\" -d \"$work/extract\"
+for suite in $suites; do rm -rf \"$dest/$suite\"; cp -R \"$work/extract/$suite\" \"$dest/$suite\"; done
+";
+
+// Fetches the license-restricted test-ROM suites. Shells out because no HTTP/zip/hash crate is
+// vendored; the method-chained `Command` introduces no `mut` token (as linted `sloc_rs` does).
+fn fetch_test_roms() -> i32 {
+    let outcome = process::Command::new("sh")
+        .arg("-c")
+        .arg(FETCH_SCRIPT)
+        .arg("gameboy_rs-fetch")
+        .arg(FETCH_URL)
+        .arg(FETCH_SHA256)
+        .arg(FETCH_DEST)
+        .arg(FETCH_SUITES)
+        .status();
+    match outcome {
+        Ok(status) if status.success() => {
+            println!("fetched the restricted suites into {FETCH_DEST}");
+            0
+        }
+        Ok(status) => {
+            eprintln!("fetch failed (checksum mismatch, or missing curl/unzip/shasum)");
+            status.code().unwrap_or(1)
+        }
+        Err(error) => {
+            eprintln!("could not launch the fetch shell: {error}");
+            1
+        }
     }
 }
 
