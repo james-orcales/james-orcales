@@ -266,9 +266,21 @@ a per-cycle copy). Four `Box` fields, no other change. Byte-exact across **241 R
 Four `Box`es cut the real-ROM tax from ~18–21× down to ~13×. That is the whole lever — "large
 inline field → heap-indirect," nothing about field count, call shape, or the already-pointer
 `Vec`/`Region` fields (their write cost is the separate `region.rs` axis). Not `with_mut`, and not
-boxing a genuinely-per-cycle field (that would allocate every cycle). The remaining ~13× is the
-irreducible interpreter work plus the still-inline hot scalars — a further hot/cold split of
-`Gpu`'s config could shave more, with diminishing returns.
+boxing a genuinely-per-cycle field (that would allocate every cycle).
+
+**Then tick fusion.** `mmu::do_cycle` had threaded the whole `Mmu` through five sequential
+reconstructions (timer → keypad → gpu → sound → serial), each moving ~600 B of header. They touch
+disjoint fields and share only the commutative interrupt-OR, so they collapse into **one**
+reconstruction. Byte-exact across 253 ROMs; synth:nop 1.60→1.42s, cpu_instrs to **13.3×**.
+
+**How low it goes.** Past this the profile is *diffuse* — `mmu` tick ≈25%, `Gpu` logic ≈20%, CPU
+interpreter ≈21%, rendering ≈7% — no concentrated lever, because what remains is the genuine
+value-threaded work of reconstructing the machine value every cycle plus the fetch/decode/match
+dispatch. The dialect's match-over-enums + free-function + ≤70-line style makes that dispatch
+inherently heavier than rboy's inlined mutating giant-match, so it is a floor a byte-exact
+value-threaded interpreter can't cross. Further hot/cold splitting (`Gpu` config, the `Mmu` behind
+a `Cpu`-level arena handle, stack-array scanlines) would shave a few percent each toward ~9–10×,
+but ~5× is below the floor of this architecture. The high-leverage, clean wins are banked.
 
 ## Reproduce
 

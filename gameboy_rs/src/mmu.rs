@@ -238,45 +238,28 @@ pub fn do_cycle(mmu: Mmu, ticks: u32) -> (Mmu, u32) {
     let (dmad, vramticks) = perform_vramdma(mmu);
     let gputicks = ticks / cpudivider + vramticks;
     let cputicks = ticks + vramticks * cpudivider;
-    let timed = tick_timer(dmad, cputicks);
-    let keyed = collect_keypad(timed);
-    let drawn = tick_gpu(keyed, gputicks);
-    // When the APU is off, move the boxed Sound through untouched (byte-identical to
-    // sound::do_cycle's early return) rather than copying its 464 inline bytes every
-    // cycle; only an active APU pays the rebox.
-    let sound = match drawn.sound.on {
-        false => drawn.sound,
-        true => Box::new(sound::do_cycle(*drawn.sound, gputicks)),
-    };
-    let sounded = Mmu { sound, ..drawn };
-    (collect_serial(sounded), gputicks)
+    (tick_peripherals(dmad, cputicks, gputicks), gputicks)
 }
 
-// Ticks the timer and merges its overflow interrupt into IF.
-fn tick_timer(mmu: Mmu, cputicks: u32) -> Mmu {
+// Ticks every per-cycle peripheral and rebuilds the Mmu ONCE, rather than threading it
+// through five sequential reconstructions (each of which moved ~600 bytes of Mmu header).
+// The peripherals touch disjoint fields and share only the interrupt line — a commutative
+// OR — so collapsing the chain is byte-identical. The APU box moves through untouched when
+// it is off; only an active APU pays the rebox.
+fn tick_peripherals(mmu: Mmu, cputicks: u32, gputicks: u32) -> Mmu {
     let timer = timer::do_cycle(mmu.timer, cputicks);
-    Mmu { intf: mmu.intf | timer.interrupt, timer: timer::Timer { interrupt: 0, ..timer }, ..mmu }
-}
-
-// Merges any pending joypad interrupt into IF.
-fn collect_keypad(mmu: Mmu) -> Mmu {
-    Mmu {
-        intf: mmu.intf | mmu.keypad.interrupt,
-        keypad: keypad::Keypad { interrupt: 0, ..mmu.keypad },
-        ..mmu
-    }
-}
-
-// Ticks the PPU and merges its VBlank/STAT interrupts into IF.
-fn tick_gpu(mmu: Mmu, gputicks: u32) -> Mmu {
     let gpu = gpu::do_cycle(mmu.gpu, gputicks);
-    Mmu { intf: mmu.intf | gpu.interrupt, gpu: gpu::Gpu { interrupt: 0, ..gpu }, ..mmu }
-}
-
-// Merges any pending serial interrupt into IF.
-fn collect_serial(mmu: Mmu) -> Mmu {
+    let sound = match mmu.sound.on {
+        false => mmu.sound,
+        true => Box::new(sound::do_cycle(*mmu.sound, gputicks)),
+    };
+    let intf = mmu.intf | timer.interrupt | gpu.interrupt | mmu.keypad.interrupt | mmu.serial.interrupt;
     Mmu {
-        intf: mmu.intf | mmu.serial.interrupt,
+        intf,
+        timer: timer::Timer { interrupt: 0, ..timer },
+        gpu: gpu::Gpu { interrupt: 0, ..gpu },
+        sound,
+        keypad: keypad::Keypad { interrupt: 0, ..mmu.keypad },
         serial: serial::Serial { interrupt: 0, ..mmu.serial },
         ..mmu
     }
