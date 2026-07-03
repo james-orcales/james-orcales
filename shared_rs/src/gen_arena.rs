@@ -121,6 +121,26 @@ pub fn remove<T>(mut arena: Arena<T>, handle: Handle) -> (Arena<T>, Option<T>) {
     (arena, Some(value))
 }
 
+/// Overwrites the value behind `handle` in place, keeping the handle valid —
+/// unlike `remove` followed by `insert`, this does not bump the slot's
+/// generation, since the occupant is being replaced, not vacated. Returns
+/// `(arena, false)` unchanged if the handle is out of bounds, points at a
+/// freed slot, or has a stale generation.
+pub fn update<T>(mut arena: Arena<T>, handle: Handle, value: T) -> (Arena<T>, bool) {
+    let index = handle.index as usize;
+    let valid = match arena.slots.get(index) {
+        Some(slot) => {
+            slot.generation == handle.generation && matches!(slot.entry, Entry::Occupied(_))
+        }
+        None => false,
+    };
+    if !valid {
+        return (arena, false);
+    }
+    arena.slots[index].entry = Entry::Occupied(value);
+    (arena, true)
+}
+
 /// Read the value behind `handle`, handing the borrow to `reader` and returning
 /// its owned result. `None` when the slot is empty OR the generation does not
 /// match (the stale-handle protection). A visitor, not `-> &T`, because the

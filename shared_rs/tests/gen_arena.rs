@@ -42,3 +42,33 @@ fn len_decrements_on_remove() {
     assert_eq!(gen_arena::len(&store), 1);
     assert!(!gen_arena::is_empty(&store));
 }
+
+#[test]
+fn update_changes_the_value_read_back_through_the_same_handle() {
+    let store: gen_arena::Arena<&str> = gen_arena::new();
+    let (store, h) = gen_arena::insert(store, "old");
+    let (store, updated) = gen_arena::update(store, h, "new");
+    assert!(updated);
+    assert_eq!(gen_arena::with(&store, h, |value| *value), Some("new"));
+}
+
+#[test]
+fn update_on_a_stale_handle_is_a_no_op() {
+    let store: gen_arena::Arena<&str> = gen_arena::new();
+    let (store, stale) = gen_arena::insert(store, "old");
+    let (store, _removed) = gen_arena::remove(store, stale);
+    let (store, _fresh) = gen_arena::insert(store, "new");
+
+    let (store, updated) = gen_arena::update(store, stale, "clobber");
+    assert!(!updated);
+    assert_eq!(gen_arena::with(&store, stale, |value| *value), None);
+}
+
+#[test]
+fn update_on_an_out_of_bounds_handle_is_a_no_op() {
+    let store: gen_arena::Arena<i32> = gen_arena::new();
+    let far = gen_arena::Handle { index: 7, generation: 0 };
+    let (store, updated) = gen_arena::update(store, far, 1);
+    assert!(!updated);
+    assert!(gen_arena::is_empty(&store));
+}

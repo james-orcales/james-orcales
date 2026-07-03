@@ -317,8 +317,10 @@ fn violation(node: &impl syn::spanned::Spanned, message: String) -> Violation {
 // in the universe may write `mut`.
 const MUT_ALLOWED: &[(&str, &str)] = &[
     ("shared_rs/src/arena.rs", "insert"),
+    ("shared_rs/src/arena.rs", "update"),
     ("shared_rs/src/gen_arena.rs", "insert"),
     ("shared_rs/src/gen_arena.rs", "remove"),
+    ("shared_rs/src/gen_arena.rs", "update"),
 ];
 
 fn mut_allowed(path: &path::Path, ident: &syn::Ident) -> bool {
