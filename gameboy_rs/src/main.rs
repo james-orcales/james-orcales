@@ -3,7 +3,8 @@
 //! writing the battery save back — around the pure, deterministic core. Every effect
 //! is injected here; the emulator itself reads no clock and touches no file. `fs::write`
 //! and `SystemTime` are dialect-legal (free functions, no `&mut`, not blacklisted), so
-//! the boundary stays in the linted crate with no external dependency.
+//! the boundary stays in the linted crate; argument parsing uses the repo's
+//! `shared_rs::cli` (already a dependency via the `region` module's arena).
 
 use gameboy_rs::cpu;
 use gameboy_rs::device;
@@ -11,6 +12,7 @@ use gameboy_rs::gbmode;
 use gameboy_rs::hash;
 use gameboy_rs::mbc;
 use gameboy_rs::state;
+use shared_rs::cli;
 use std::env;
 use std::fs;
 use std::io;
@@ -25,19 +27,41 @@ const MAIN_ROM_BYTES_MAX: u64 = 8 << 20;
 const MAIN_DEFAULT_CYCLES: u64 = 250_000_000;
 
 fn main() {
+    let program = cli::new_single(
+        "gameboy_rs",
+        "run a Game Boy ROM headless and print its serial, framebuffer, and audio fingerprints",
+        vec![cli::new_string_argument("rom", "path to the ROM image")],
+        vec![cli::new_int_flag("cycles", "T-cycles to run before reporting", MAIN_DEFAULT_CYCLES as i64)],
+    );
     let arguments: Vec<String> = env::args().collect();
-    match arguments.get(1) {
-        None => {
-            eprintln!("usage: gameboy_rs <rom> [cycles]");
+    match cli::program_parse(&program, &arguments) {
+        Ok(outcome) => {
+            let rom = cli::get_option(&outcome.command.arguments, "rom", string_value);
+            let cycles = cli::get_option(&outcome.command.flags, "cycles", int_value);
+            process::exit(run(&rom, cycles as u64));
+        }
+        Err(error) => {
+            eprintln!("{}", cli::parse_error_message(&error));
+            eprint!("{}", cli::print_help(&program));
             process::exit(2);
         }
-        Some(path) => process::exit(run(path, cycles_argument(&arguments))),
     }
 }
 
-/// The cycle budget from the optional second argument, or the default.
-fn cycles_argument(arguments: &[String]) -> u64 {
-    arguments.get(2).and_then(|text| text.parse().ok()).unwrap_or(MAIN_DEFAULT_CYCLES)
+// Reads a string parameter's value out of `cli::get_option`'s visited parameter.
+fn string_value(parameter: &cli::Parameter) -> String {
+    match &parameter.value {
+        cli::Parameter_Value::Str(text) => text.clone(),
+        _ => String::new(),
+    }
+}
+
+// Reads an integer parameter's value out of `cli::get_option`'s visited parameter.
+fn int_value(parameter: &cli::Parameter) -> i64 {
+    match parameter.value {
+        cli::Parameter_Value::Int(number) => number,
+        _ => 0,
+    }
 }
 
 // The current wall-clock time in Unix seconds — the single impure read, done at the
