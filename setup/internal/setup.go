@@ -58,10 +58,12 @@ type Main_Input struct {
 	// so this library tier never executes anything; package main supplies the
 	// exec-backed runner used for the macos defaults.
 	Run_Command func(name string, arguments []string) (err error)
-	// Is_Ignored reports whether a source path is gitignored; it is threaded to
-	// Plan so the install tree under .local is not mirrored into home. Nil ignores
-	// nothing.
-	Is_Ignored func(relative_path string) (ignored bool)
+	// Is_Ignored classifies a batch of source paths, returning the set that is
+	// gitignored; it is threaded to Plan so the install tree under .local is not
+	// mirrored into home. Batched because the gitignore probe is a subprocess and one
+	// spawn per path made a large tree scan for seconds — one call classifies a whole
+	// tree level. Nil ignores nothing.
+	Is_Ignored func(relative_paths []string) (ignored map[string]bool)
 	// Stdout receives one line naming each file written.
 	Stdout io.Writer
 	// Stderr receives a diagnostic line when planning or a write fails.
@@ -245,44 +247,57 @@ type Plan_Input struct {
 	// Destination_Directory is the absolute home directory the relative source
 	// paths are mirrored under to form each write's Destination_Path.
 	Destination_Directory string
-	// Is_Ignored reports whether a source path, relative to the source root, is
-	// gitignored. An ignored file is not synced and an ignored directory is pruned,
-	// so the generated install tree under .local never reaches the home directory.
-	// Nil ignores nothing, the sync's behavior before the filter existed.
-	Is_Ignored func(relative_path string) (ignored bool)
-	// Progress receives one line naming each directory as the walk reads it. The walk
-	// spawns one gitignore probe per entry, so a large tree scans for seconds with no
-	// write to show for it; narrating each directory proves the scan is live, not hung.
-	// Nil is silent, so a direct caller that wants no narration pays nothing.
+	// Is_Ignored classifies a batch of source paths, each relative to the source root,
+	// returning the set that is gitignored. An ignored file is not synced and an ignored
+	// directory is pruned, so the generated install tree under .local never reaches the
+	// home directory. It takes a batch, not one path, because the gitignore probe is a
+	// subprocess: the walk hands it a whole tree level at once so the scan spawns a
+	// process per depth, not per entry. Nil ignores nothing, the sync's behavior before
+	// the filter existed.
+	Is_Ignored func(relative_paths []string) (ignored map[string]bool)
+	// Progress receives one line naming each directory as the walk reads it. A converged
+	// scan writes nothing, so without this the step looks hung while it walks; narrating
+	// each directory proves the scan is live. Nil is silent, so a direct caller that
+	// wants no narration pays nothing.
 	Progress io.Writer
+}
+
+// Plan_Entry is one child seen during the walk: its path relative to the source root and
+// whether it is a directory, the two facts the level walk needs to prune and recurse.
+type Plan_Entry struct {
+	// Relative is the child's path from the source root, the key Is_Ignored classifies it by.
+	Relative string
+	// Is_Directory reports whether the child is a directory, so the walk knows to descend.
+	Is_Directory bool
 }
 
 // Plan returns the writes that would bring the home directory in line with the source
 // dotfiles: every regular file under the source tree, each emitted only when the destination
-// is missing or its contents differ. It walks the tree iteratively through the loop's
-// Read_Directory, pruning an ignored directory so the install tree under .local is never read.
+// is missing or its contents differ. It walks the tree one level at a time through the loop's
+// Read_Directory, classifying each level's entries with a single Is_Ignored batch — so the
+// gitignore probe is one subprocess per depth, not per entry — and pruning an ignored
+// directory so the install tree under .local is never descended into.
 func Plan(input *Plan_Input) (writes []File_Write, err error) {
 	writes = []File_Write{}
-	worklist := []string{"."}
-	for len(worklist) > 0 {
-		directory := worklist[len(worklist)-1]
-		worklist = worklist[:len(worklist)-1]
-		plan_narrate(input.Progress, directory)
-		entries, read_err := input.File_System.Loop.Read_Directory(
-			filepath.Join(input.Source_Directory, directory))
+	level := []string{"."}
+	for len(level) > 0 {
+		entries, read_err := plan_read_level(input, level)
 		if read_err != nil {
 			return nil, read_err
 		}
+		// One probe classifies the whole level: the batch is what keeps a large tree from
+		// spawning a gitignore process per entry.
+		ignored := plan_ignored(input.Is_Ignored, entries)
+		next := []string{}
 		for _, entry := range entries {
-			relative := filepath.Join(directory, entry.Name)
-			if plan_is_ignored(input.Is_Ignored, relative) {
+			if ignored[entry.Relative] {
 				continue
 			}
 			if entry.Is_Directory {
-				worklist = append(worklist, relative)
+				next = append(next, entry.Relative)
 				continue
 			}
-			write, planned, plan_err := plan_file(input, relative)
+			write, planned, plan_err := plan_file(input, entry.Relative)
 			if plan_err != nil {
 				return nil, plan_err
 			}
@@ -290,8 +305,31 @@ func Plan(input *Plan_Input) (writes []File_Write, err error) {
 				writes = append(writes, write)
 			}
 		}
+		level = next
 	}
 	return writes, nil
+}
+
+// Reads every directory in one level of the walk, returning all their children as a single
+// batch of entries — the unit Is_Ignored classifies at once. Narrates each directory as it
+// reads it, so the scan shows progress even when it ultimately writes nothing.
+func plan_read_level(input *Plan_Input, level []string) (entries []Plan_Entry, err error) {
+	entries = []Plan_Entry{}
+	for _, directory := range level {
+		plan_narrate(input.Progress, directory)
+		read, read_err := input.File_System.Loop.Read_Directory(
+			filepath.Join(input.Source_Directory, directory))
+		if read_err != nil {
+			return nil, read_err
+		}
+		for _, child := range read {
+			entries = append(entries, Plan_Entry{
+				Relative:     filepath.Join(directory, child.Name),
+				Is_Directory: child.Is_Directory,
+			})
+		}
+	}
+	return entries, nil
 }
 
 // Announces the directory the walk is about to read, one line each, so a scan that
@@ -304,15 +342,23 @@ func plan_narrate(progress io.Writer, directory string) {
 	fmt.Fprintf(progress, "setup: dotfiles: scanning %s\n", directory)
 }
 
-// Reports whether the walk should skip source_path because it is gitignored. A
-// nil predicate ignores nothing, so the filter stays opt-in per Plan_Input.
-func plan_is_ignored(
-	is_ignored func(relative_path string) (ignored bool), source_path string,
-) (ignored bool) {
+// Returns the set of a level's entries that are gitignored, classifying them all in one
+// Is_Ignored call. A nil predicate — or an empty level — ignores nothing, so the filter
+// stays opt-in and an empty level spawns no probe.
+func plan_ignored(
+	is_ignored func(relative_paths []string) (ignored map[string]bool), entries []Plan_Entry,
+) (ignored map[string]bool) {
 	if is_ignored == nil {
-		return false
+		return nil
 	}
-	return is_ignored(source_path)
+	if len(entries) == 0 {
+		return nil
+	}
+	paths := make([]string, len(entries))
+	for index, entry := range entries {
+		paths[index] = entry.Relative
+	}
+	return is_ignored(paths)
 }
 
 // Decides whether the source file at relative needs syncing. planned is false when the

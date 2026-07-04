@@ -197,6 +197,46 @@ func Test_Main_Narrates_The_Scan(t *testing.T) {
 	}
 }
 
+// Test_Main_Probes_Ignore_In_One_Batch verifies the walk classifies a directory's
+// entries with a single Is_Ignored call carrying them all, not one call per entry —
+// the property that turns ~600 sequential git spawns into one probe per tree level.
+func Test_Main_Probes_Ignore_In_One_Batch(t *testing.T) {
+	t.Parallel()
+	loop, driver, _ := sysio.New_Sim(0)
+	// Three sibling directories under the root, so a batched probe of the root sees
+	// all three at once while a per-entry probe would see one at a time.
+	for _, dir := range []string{
+		test_source, test_source + "/a", test_source + "/b", test_source + "/c",
+	} {
+		if make_err := loop.Make_Directory(dir); make_err != nil {
+			t.Fatalf("make %s: %v", dir, make_err)
+		}
+	}
+	batches := [][]string{}
+	status := setup.Main(&setup.Main_Input{
+		File_System:           setup.File_System{Loop: loop, Run_Until: driver.Run_Until},
+		Source_Directory:      test_source,
+		Destination_Directory: test_home,
+		Operating_System:      "linux",
+		Run_Command:           func(name string, arguments []string) (err error) { return nil },
+		Is_Ignored: func(relative_paths []string) (ignored map[string]bool) {
+			batches = append(batches, append([]string{}, relative_paths...))
+			return nil
+		},
+		Stdout: io.Discard,
+		Stderr: io.Discard,
+	})
+	if status != 0 {
+		t.Fatalf("expected success, got status %d", status)
+	}
+	if len(batches) == 0 {
+		t.Fatal("expected the walk to probe ignores at least once")
+	}
+	if len(batches[0]) != 3 {
+		t.Fatalf("expected the root's three entries probed in one batch, got %v", batches)
+	}
+}
+
 // Test_Install_Neovim_Skips_Build_When_Installed_From_Checkout verifies that when
 // nvim resolves to a path inside the checkout and reports the wanted release, no
 // make runs.

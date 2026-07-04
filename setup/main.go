@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 
 	"local/james-orcales/setup/internal"
 	sysio "local/james-orcales/shared/io"
@@ -427,19 +428,44 @@ func run_command(spawn setup.Spawn) (run func(name string, arguments []string) (
 	}
 }
 
-// Returns a predicate reporting whether a path under directory is gitignored, backed by
-// `git check-ignore` run through the loop. A non-zero exit — not ignored, or a git error
-// such as no repository or git missing — reports not-ignored, so a file still syncs rather
-// than silently vanishing.
+// Returns a predicate classifying a batch of paths under directory by whether each is
+// gitignored, backed by one `git check-ignore --stdin` run through the loop. The paths are
+// fed on stdin — not as arguments — so a whole tree level fits without risking ARG_MAX, and
+// the single spawn replaces the per-path spawn that made a large scan crawl through hundreds
+// of sequential git processes. check-ignore prints each ignored path it was handed; anything
+// it does not print — including on a git error such as no repository or git missing, which
+// prints nothing — is treated as not ignored, so a file still syncs rather than silently
+// vanishing.
 func git_ignores(
 	spawn setup.Spawn, directory string,
-) (is_ignored func(relative_path string) (ignored bool)) {
-	return func(relative_path string) (ignored bool) {
-		target := filepath.Join(directory, relative_path)
+) (is_ignored func(relative_paths []string) (ignored map[string]bool)) {
+	return func(relative_paths []string) (ignored map[string]bool) {
+		ignored = map[string]bool{}
+		if len(relative_paths) == 0 {
+			return ignored
+		}
+		targets := make([]string, len(relative_paths))
+		for index, relative := range relative_paths {
+			targets[index] = filepath.Join(directory, relative)
+		}
 		result := spawn(sysio.Process_Request{
 			Path:      "git",
-			Arguments: []string{"-C", directory, "check-ignore", "--quiet", target},
+			Arguments: []string{"-C", directory, "check-ignore", "--stdin"},
+			Input:     []byte(strings.Join(targets, "\n") + "\n"),
 		})
-		return result.Exit == 0
+		// check-ignore echoes each ignored input path verbatim, one per line; map those back
+		// to the relative paths the caller asked about.
+		printed := map[string]bool{}
+		for _, line := range strings.Split(string(result.Output), "\n") {
+			if line != "" {
+				printed[line] = true
+			}
+		}
+		for index, target := range targets {
+			if printed[target] {
+				ignored[relative_paths[index]] = true
+			}
+		}
+		return ignored
 	}
 }
