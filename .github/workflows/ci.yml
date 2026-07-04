@@ -57,6 +57,6 @@ jobs:
 
       - name: Enforce the dialect
         run: |
-          for path in lint_rs/src shared_rs/src sloc_rs/src gameboy_rs/src gameboy_rs/tests; do
+          for path in lint_rs/src shared_rs/src sloc_rs/src gameboy_emulator/src gameboy_emulator/tests; do
             cargo run -q -p lint_rs --locked -- "${path}" || exit 1
           done

@@ -6,12 +6,12 @@
 //! dialect-legal (free functions / method chains, no `&mut` tokens), so the boundary stays in
 //! the linted crate; argument parsing uses the repo's `shared_rs::cli`.
 
-use gameboy_rs::cpu;
-use gameboy_rs::device;
-use gameboy_rs::gbmode;
-use gameboy_rs::hash;
-use gameboy_rs::mbc;
-use gameboy_rs::state;
+use gameboy_emulator::cpu;
+use gameboy_emulator::device;
+use gameboy_emulator::gbmode;
+use gameboy_emulator::hash;
+use gameboy_emulator::mbc;
+use gameboy_emulator::state;
 use shared_rs::cli;
 use std::env;
 use std::fs;
@@ -47,7 +47,7 @@ fn main() {
 // The two subcommands: `run` emulates a ROM; `fetch` downloads the license-restricted suites.
 fn program() -> cli::Program {
     cli::new(
-        "gameboy_rs",
+        "gameboy_emulator",
         "a headless Game Boy emulator with a test-ROM fetcher",
         vec![
             cli::Command {
@@ -129,7 +129,7 @@ fn fetch_test_roms() -> i32 {
     let outcome = process::Command::new("sh")
         .arg("-c")
         .arg(FETCH_SCRIPT)
-        .arg("gameboy_rs-fetch")
+        .arg("gameboy_emulator-fetch")
         .arg(FETCH_URL)
         .arg(FETCH_SHA256)
         .arg(FETCH_DEST)
