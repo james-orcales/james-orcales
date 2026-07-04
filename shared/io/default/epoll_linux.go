@@ -57,11 +57,16 @@ func poll_bit(writable bool) (bit uint32) {
 	return uint32(syscall.EPOLLIN)
 }
 
-// Blocks for up to timeout_ns and returns the ready descriptors, emitting a separate
-// entry per ready direction so both can be dispatched.
+// Blocks for up to timeout_ns — or until an event when timeout_ns is negative, the -1
+// EpollWait waits on unbounded — and returns the ready descriptors, emitting a separate entry
+// per ready direction so both can be dispatched.
 func poll_file_wait(poll poll_file, timeout_ns int64) (ready []poll_ready, err error) {
 	native := make([]syscall.EpollEvent, poll_events_max)
-	count, wait_err := syscall.EpollWait(poll.Descriptor, native, int(timeout_ns/1_000_000))
+	milliseconds := -1
+	if timeout_ns >= 0 {
+		milliseconds = int(timeout_ns / 1_000_000)
+	}
+	count, wait_err := syscall.EpollWait(poll.Descriptor, native, milliseconds)
 	if wait_err != nil {
 		return nil, wait_err
 	}

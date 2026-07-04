@@ -24,10 +24,10 @@ import (
 // syscalls without an unbounded buffer.
 const poll_events_max = 64
 
-// Operating_system_tick bounds each Run_Until pump step: the loop blocks at most this
-// long waiting for real events before re-checking done, so the pump neither spins nor
-// oversleeps.
-const operating_system_tick = 10 * time.MILLISECOND
+// Poll_forever, passed as an idle gap, blocks the readiness poll until an event arrives rather
+// than for a fixed span — the unbounded wait a run with no deadline needs, so the loop sleeps
+// exactly until there is work instead of waking on an interval.
+const poll_forever time.Moment = -1
 
 // Bounds one wake-pipe drain so a flood of pokes cannot spin the loop.
 const wake_drain_passes_max = 16
@@ -523,14 +523,39 @@ func operating_system_run_until(
 ) (completed bool) {
 	deadline := state.Host.Now_Monotonic() + time.Moment(timeout)
 	for !done() {
-		if timeout >= 0 {
-			if state.Host.Now_Monotonic() >= deadline {
-				return false
-			}
+		operating_system_signals(state)
+		operating_system_compute(state)
+		operating_system_expire(state)
+		operating_system_flush_completed(state)
+		// Re-check done after draining, before idling: an op that finished inline is done
+		// here, so it returns at once rather than sleeping out a poll it does not need.
+		if done() {
+			return true
 		}
-		operating_system_run_for(state, operating_system_tick)
+		if timeout < 0 {
+			operating_system_wait(state)
+			continue
+		}
+		now := state.Host.Now_Monotonic()
+		if now >= deadline {
+			return false
+		}
+		operating_system_idle(state, operating_system_wake(state, deadline)-now)
 	}
 	return true
+}
+
+// Blocks until the next event during an unbounded run: the nearest pending timeout, or the
+// readiness poll itself when only sockets are pending — the run sleeps exactly until there is
+// work, never on an interval. A signal watcher still caps the wait, since a delivered signal
+// lands on a channel that does not wake the poll.
+func operating_system_wait(state *operating_system) {
+	if len(state.Timeouts) > 0 {
+		operating_system_idle(state, state.Timeouts[0].Ready_At-state.Host.Now_Monotonic())
+		return
+	}
+	operating_system_poll_ensure(state)
+	operating_system_poll(state, int64(operating_system_signal_cap(state, poll_forever)))
 }
 
 // Runs pump as the top-level drive, panicking if a drive is already in progress so a Run*
@@ -598,6 +623,11 @@ func operating_system_signal_cap(
 		return gap
 	}
 	interval := time.Moment(signal_poll_interval)
+	// A negative (unbounded) gap must still be capped, or a delivered signal — which does not
+	// wake the poll — would go unseen until the next socket event.
+	if gap < 0 {
+		return interval
+	}
 	if gap > interval {
 		return interval
 	}

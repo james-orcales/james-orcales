@@ -47,12 +47,17 @@ func poll_filter(writable bool) (filter int16) {
 	return syscall.EVFILT_READ
 }
 
-// Blocks for up to timeout_ns and returns the ready descriptors, decoding each kqueue
-// event into a direction.
+// Blocks for up to timeout_ns — or until an event when timeout_ns is negative, a nil timespec
+// kqueue waits on unbounded — and returns the ready descriptors, decoding each kqueue event
+// into a direction.
 func poll_file_wait(poll poll_file, timeout_ns int64) (ready []poll_ready, err error) {
 	native := make([]syscall.Kevent_t, poll_events_max)
-	timeout := syscall.NsecToTimespec(timeout_ns)
-	count, wait_err := syscall.Kevent(int(poll), nil, native, &timeout)
+	deadline := (*syscall.Timespec)(nil)
+	if timeout_ns >= 0 {
+		span := syscall.NsecToTimespec(timeout_ns)
+		deadline = &span
+	}
+	count, wait_err := syscall.Kevent(int(poll), nil, native, deadline)
 	if wait_err != nil {
 		return nil, wait_err
 	}
