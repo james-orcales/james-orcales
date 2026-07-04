@@ -1,0 +1,8 @@
+User-agent: *
+Allow: /
+
+Sitemap: https://anta.design/sitemap-index.xml
+
+# LLM-friendly documentation
+# https://anta.design/llms.txt
+# https://anta.design/llms-full.txt

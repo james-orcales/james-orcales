@@ -1,0 +1,27 @@
+[package]
+name = "bombadil-terminal"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+antithesis_sdk.workspace = true
+anyhow.workspace = true
+boa_engine.workspace = true
+bombadil = { path = "../bombadil" }
+bombadil-schema = { path = "../bombadil-schema" }
+bytes.workspace = true
+hotpath.workspace = true
+libghostty-vt.workspace = true
+log.workspace = true
+owo-colors.workspace = true
+portable-pty.workspace = true
+rand.workspace = true
+serde = { workspace = true, features = ["derive"] }
+serde_json.workspace = true
+small-string = { path = "../small-string" }
+tokio = { workspace = true, features = ["full"] }
+
+[dev-dependencies]
+env_logger.workspace = true
+hegeltest.workspace = true
+tempfile.workspace = true

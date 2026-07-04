@@ -1,0 +1,172 @@
+name: Cleanup Cloudflare Pages previews
+
+# Cloudflare Pages keeps preview deployments around indefinitely —
+# no retention, no branch-aware cleanup — so they accumulate stale
+# deploys until the project deployment cap is hit.
+#
+# This workflow runs in two modes:
+#
+#  1. push (any non-main branch) → keep newest successful preview for
+#     the pushed branch, delete the rest. Same "newest-only" idea as
+#     the production-cleanup workflow, scoped to the pushed branch.
+#     The new Cloudflare deploy is usually still building when this
+#     runs, so the `status == "success"` filter skips it; the previous
+#     successful deploy stays kept and is reaped on the next push.
+#  2. delete (branch removed from GitHub) or workflow_dispatch with a
+#     branch input → delete every preview deployment for that branch.
+#     The branch is gone (or the user has explicitly asked), so there
+#     is nothing to keep.
+#
+# Pushes to main are ignored — production cleanup is the other
+# workflow's job. PR merges that leave the source branch in place do
+# not trigger the delete-mode cleanup; turn on "Automatically delete
+# head branches" in Settings → General → Pull Requests for that.
+on:
+  push:
+    branches-ignore: [main]
+  delete:
+  workflow_dispatch:
+    inputs:
+      branch:
+        description: Branch name whose preview deployments to delete
+        required: true
+        type: string
+
+permissions: {}
+
+jobs:
+  cleanup:
+    if: >-
+      github.event_name == 'push' ||
+      github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'delete' && github.event.ref_type == 'branch')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Cleanup branch's Cloudflare Pages preview deployments
+        env:
+          CF_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CF_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          PROJECT: anta
+          EVENT: ${{ github.event_name }}
+          # The branch name lands here from one of three sources
+          # depending on the trigger. The script picks the right one.
+          DELETE_REF: ${{ github.event.ref }}
+          DISPATCH_BRANCH: ${{ inputs.branch }}
+          PUSH_BRANCH: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+
+          case "${EVENT}" in
+            push)              BRANCH="${PUSH_BRANCH}"     ; MODE=newest_only ;;
+            delete)            BRANCH="${DELETE_REF}"      ; MODE=reap_all    ;;
+            workflow_dispatch) BRANCH="${DISPATCH_BRANCH}" ; MODE=reap_all    ;;
+            *)                 echo "Unknown event ${EVENT}; nothing to do." ; exit 0 ;;
+          esac
+
+          api="https://api.cloudflare.com/client/v4/accounts/${CF_ACCOUNT_ID}/pages/projects/${PROJECT}/deployments"
+
+          # Cloudflare's list-deployments endpoint caps per_page at 25
+          # and exposes no branch filter, so we paginate the whole
+          # preview-deployments list and match `deployment_trigger.
+          # metadata.branch` client-side. Pagination stops when a page
+          # returns fewer than 25 results (i.e. we've hit the tail).
+          PAGE_SIZE=25
+
+          echo "Mode: ${MODE}; branch: ${BRANCH}"
+
+          # Gather `<created_on>\t<status>\t<id>` rows for every
+          # preview deployment matching the branch.
+          rows=""
+          page=1
+          while :; do
+            res=$(curl -sS -H "Authorization: Bearer ${CF_API_TOKEN}" \
+              "${api}?env=preview&page=${page}&per_page=${PAGE_SIZE}")
+
+            success=$(echo "${res}" | jq -r '.success')
+            if [[ "${success}" != "true" ]]; then
+              echo "Cloudflare API error on page ${page}:"
+              echo "${res}" | jq '.errors // .'
+              exit 1
+            fi
+
+            page_rows=$(echo "${res}" | jq -r --arg b "${BRANCH}" '
+              .result[]
+              | select(.deployment_trigger.metadata.branch == $b)
+              | "\(.created_on)\t\(.latest_stage.status)\t\(.id)"
+            ')
+            if [[ -n "${page_rows}" ]]; then
+              rows+="${page_rows}"$'\n'
+            fi
+
+            page_count=$(echo "${res}" | jq -r '.result | length')
+            if [[ "${page_count}" -lt "${PAGE_SIZE}" ]]; then
+              break
+            fi
+            page=$((page + 1))
+          done
+
+          rows=$(printf '%s' "${rows}" | sed '/^$/d')
+
+          if [[ -z "${rows}" ]]; then
+            echo "No preview deployments found for ${BRANCH}. Nothing to do."
+            exit 0
+          fi
+
+          # Pick the IDs to delete based on mode.
+          case "${MODE}" in
+            reap_all)
+              ids=$(echo "${rows}" | cut -f3)
+              ;;
+            newest_only)
+              # Sort by created_on desc; keep the newest deployment
+              # whose latest_stage.status is success (the one the
+              # branch alias currently points to). Delete everything
+              # else. If no successful deploy exists yet (first build
+              # still in flight), keep all rows — nothing to prune.
+              sorted=$(echo "${rows}" | sort -r)
+              keep=$(echo "${sorted}" | awk -F'\t' '$2 == "success" {print $3; exit}')
+              if [[ -z "${keep}" ]]; then
+                echo "No successful deployment for ${BRANCH} yet. Nothing to prune."
+                exit 0
+              fi
+              echo "Keeping newest successful deployment: ${keep}"
+              # Delete every OTHER deployment — but only ones in a terminal
+              # state. An in-flight build (building / active / queued / idle)
+              # must be left alone: force-deleting the running deploy orphans
+              # it in Cloudflare and leaves its GitHub "Cloudflare Pages" check
+              # stuck on "Building" forever.
+              ids=$(echo "${sorted}" | awk -F'\t' -v k="${keep}" '
+                $3 != k && ($2 == "success" || $2 == "failure" || $2 == "canceled" || $2 == "skipped") { print $3 }')
+              ;;
+          esac
+
+          ids=$(printf '%s' "${ids}" | sed '/^$/d')
+
+          if [[ -z "${ids}" ]]; then
+            echo "Nothing to delete."
+            exit 0
+          fi
+
+          count=$(echo "${ids}" | wc -l | tr -d ' ')
+          echo "Deleting ${count} preview deployment(s):"
+
+          # `force=true` is required because Cloudflare refuses to
+          # delete the deployment that currently holds the branch's
+          # `<branch>.<project>.pages.dev` alias (error 8000035).
+          # For reap_all the branch is gone so the alias has no
+          # future use; for newest_only we've already excluded the
+          # kept deployment from the delete list.
+          while IFS= read -r id; do
+            echo "  ${id}"
+            res=$(curl -sS -X DELETE \
+              -H "Authorization: Bearer ${CF_API_TOKEN}" \
+              "${api}/${id}?force=true")
+            success=$(echo "${res}" | jq -r '.success')
+            if [[ "${success}" != "true" ]]; then
+              echo "  failed:"
+              echo "${res}" | jq '.errors // .'
+              exit 1
+            fi
+          done <<< "${ids}"
+
+          echo "Done."

@@ -1,0 +1,126 @@
+---
+// Static shell for the Colors page. Renders the tone tabs (plain links), the
+// Background / Text / Border section headings, descriptions and theme-row
+// layout — no hydration. The only interactive part is each swatch grid, which
+// is a small Preact island (<SwatchGrid client:load>) so the hex labels can be
+// read live from the rendered colours. One island per theme example.
+import s from './Swatches.module.css'
+import SwatchGrid from './SwatchGrid.tsx'
+
+type Tone = 'neutral' | 'brand' | 'info' | 'success' | 'critical' | 'warning'
+type Kind = 'bg' | 'text' | 'border'
+
+interface Props {
+  tone?: Tone
+}
+const { tone = 'neutral' } = Astro.props
+
+const TONES: { id: Tone; label: string }[] = [
+  { id: 'neutral', label: 'Neutral' },
+  { id: 'brand', label: 'Brand' },
+  { id: 'info', label: 'Info' },
+  { id: 'success', label: 'Success' },
+  { id: 'critical', label: 'Critical' },
+  { id: 'warning', label: 'Warning' },
+]
+
+const KINDS: Kind[] = ['bg', 'text', 'border']
+const TITLES: Record<Kind, string> = { bg: 'Background', text: 'Text', border: 'Border' }
+const INTROS: Record<Kind, string> = {
+  bg: 'These tokens help create visual hierarchy and guide the user’s attention.',
+  text: 'These tokens define how text is presented across the interface. They help establish hierarchy, readability, and consistent contrast.',
+  border: 'Border tokens are used to separate, group, and structure elements across the interface.',
+}
+
+const TEXT_LINES: { token: string; copy: string }[] = [
+  { token: 'text-1', copy: 'Primary text, for headings and key content.' },
+  { token: 'text-2', copy: 'Secondary text, for descriptions and supporting content.' },
+  { token: 'text-3', copy: 'Subdued text, for labels, statuses and secondary data.' },
+  { token: 'text-4', copy: 'Minor text, for timestamps, counters and metadata.' },
+  { token: 'text-5', copy: 'Placeholder text, for hints and non-critical information.' },
+]
+
+const toneHref = (t: Tone) => (t === 'neutral' ? '/colors/' : `/colors/${t}/`)
+const slug = (k: Kind) => TITLES[k].toLowerCase()
+---
+
+<div class:list={[s.page, 'full-bleed']}>
+  <div class={s.toneTabs} role="tablist">
+    {TONES.map((t) => (
+      <a
+        href={toneHref(t.id)}
+        role="tab"
+        aria-selected={t.id === tone ? 'true' : 'false'}
+        data-preserve-scroll
+        class:list={[s.toneTab, { [s.toneTabActive]: t.id === tone }]}
+      >
+        {t.label}
+      </a>
+    ))}
+  </div>
+
+  {KINDS.map((kind) => (
+    <section class={s.block}>
+      <div class={s.blockHeading}>
+        <h2 id={slug(kind)}>
+          <a href={`#${slug(kind)}`} class="header-anchor muted">{TITLES[kind]}</a>
+        </h2>
+        <p>{INTROS[kind]}</p>
+      </div>
+
+      <div class={s.themeRows}>
+        <div class:list={[s.themeRow, s.themeRowLight, 'light']}>
+          <div class={s.themeLabel}>
+            <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+              <circle cx="8" cy="8" r="3" stroke="currentColor" stroke-width="1.5" />
+              <path d="M8 1.5v1.5M8 13v1.5M1.5 8h1.5M13 8h1.5M3.4 3.4l1.06 1.06M11.54 11.54l1.06 1.06M3.4 12.6l1.06-1.06M11.54 4.46l1.06-1.06" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" />
+            </svg>
+            <span>Light theme</span>
+          </div>
+          <SwatchGrid kind={kind} tone={tone} client:load />
+        </div>
+
+        <div class:list={[s.themeRow, s.themeRowDark, 'dark']}>
+          <div class={s.themeLabel}>
+            <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+              <path d="M14 9.5A6 6 0 0 1 6.5 2c0-.4 0-.7.1-1A6 6 0 1 0 15 8.4l-1 .1Z" fill="currentColor" />
+              <circle cx="11.5" cy="3.5" r="0.7" fill="currentColor" />
+              <circle cx="13.5" cy="6" r="0.5" fill="currentColor" />
+            </svg>
+            <span>Dark theme</span>
+          </div>
+          <SwatchGrid kind={kind} tone={tone} client:load />
+        </div>
+      </div>
+
+      {kind === 'bg' && (
+        <div class={s.description}>
+          <p>The naming is intentionally unopinionated — it carries no role, just order and change of lightness suitable for backgrounds. If you want meaningful names in your own app, create semantic tokens and link them to Anta’s backgrounds in the way you prefer.</p>
+        </div>
+      )}
+
+      {kind === 'text' && (
+        <div class={s.description}>
+          {TEXT_LINES.map((l) => (
+            <p style={`color: var(--${l.token})`}>
+              <code>{l.token}</code> — {l.copy}
+            </p>
+          ))}
+        </div>
+      )}
+
+      {kind === 'border' && (
+        <div class={s.description}>
+          <p>Border colors are used depending on how much separation is needed and the background they appear on.</p>
+          <p><code>border-1</code> and <code>border-2</code> are used when a container needs to be clearly defined or when separating elements on stronger backgrounds such as <code>bg-4</code> and <code>bg-5</code>.</p>
+          <p><code>border-3</code> sits in the middle. It provides a moderate level of contrast, useful when a boundary should be visible but not dominant.</p>
+          <p><code>border-4</code> is used to separate <code>bg-2</code> and <code>bg-3</code>, providing a slightly stronger level of contrast.</p>
+          <p><code>border-5</code> is used on lighter surfaces. It works well between <code>bg-2</code> and <code>bg-1</code>, often appearing in spacing areas to subtly define boundaries.</p>
+
+          <h3 id="focus-ring"><a href="#focus-ring" class="header-anchor muted">Focus ring</a></h3>
+          <p>One global interaction-state token sits beside the role scales: <code>--focus-ring</code>, the keyboard-focus outline color shared across focusable components. It already pairs light and dark, so components use it directly rather than defining their own focus color — there's no per-component focus token to keep in sync.</p>
+        </div>
+      )}
+    </section>
+  ))}
+</div>

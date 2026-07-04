@@ -1,0 +1,35 @@
+codespell
+coverage
+django
+dpcontracts
+ipython
+lark
+libcst
+mypy
+numpy
+pelican[markdown]
+pip-tools
+pyright
+python-dateutil
+requests
+restructuredtext-lint
+ruff
+shed==2024.1.1
+sphinx
+sphinx-autobuild
+sphinx-codeautolink
+sphinx-jsonschema
+furo
+sphinx-selective-exclude
+tox
+twine
+types-click
+types-pytz
+types-redis
+typing-extensions
+watchdog # for typing
+build
+sortedcontainers-stubs # for typing
+attrs # for typing
+tomli # for update_pyproject_toml
+-r test.in

@@ -1,0 +1,10 @@
+/target
+lib/bombadil/target
+.direnv
+/result
+.envrc.local
+/.vscode
+.claude
+AGENTS.md
+CLAUDE.md
+/chrome 

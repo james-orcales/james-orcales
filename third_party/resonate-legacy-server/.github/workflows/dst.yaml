@@ -1,0 +1,196 @@
+name: DST
+
+on:
+  workflow_dispatch:
+    inputs:
+      seed:
+        description: "seed"
+        type: number
+      ticks:
+        description: "ticks"
+        type: number
+  schedule:
+    - cron: "*/20 * * * *" # every 20 mins
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: false
+
+      - name: Restore resonate from cache
+        uses: actions/cache/restore@v5
+        id: cache
+        with:
+          path: resonate
+          key: resonate-${{ github.sha }} # Cache key tied to the commit SHA
+
+      - name: Build resonate
+        if: steps.cache.outputs.cache-hit != 'true' # Only run if cache missed
+        run: |
+          go build -o resonate .
+
+      - name: Save resonate to cache
+        if: steps.cache.outputs.cache-hit != 'true' # Only save if cache was missed
+        uses: actions/cache/save@v5
+        with:
+          path: resonate
+          key: resonate-${{ github.sha }}
+
+  values:
+    runs-on: ubuntu-24.04
+    steps:
+      - id: seed
+        name: Set random seed
+        run: echo seed=$RANDOM >> $GITHUB_OUTPUT
+    outputs:
+      seed: ${{ inputs.seed || steps.seed.outputs.seed }}
+      ticks: ${{ inputs.ticks || 1000 }}
+
+  dst:
+    runs-on: ubuntu-24.04
+    needs: [build, values]
+    # DST runs every 20 minutes, if something takes more than 15 mins it is
+    # possible not going to finish anyway. The build can take about 5 mins
+    # give or take, so this time accounts for that.
+    timeout-minutes: 15
+
+    strategy:
+      fail-fast: false
+      matrix:
+        scenario: [default, fault, lazy]
+        store: [sqlite, postgres]
+        run: [1, 2]
+
+    env:
+      AIO_SUBSYSTEMS_STORE_POSTGRES_CONFIG_HOST: "localhost"
+      AIO_SUBSYSTEMS_STORE_POSTGRES_CONFIG_PORT: "5432"
+      AIO_SUBSYSTEMS_STORE_POSTGRES_CONFIG_USERNAME: "username"
+      AIO_SUBSYSTEMS_STORE_POSTGRES_CONFIG_PASSWORD: "password"
+      AIO_SUBSYSTEMS_STORE_POSTGRES_CONFIG_DATABASE: "resonate_dst"
+
+    services:
+      postgres:
+        # workaround to conditionally start the service
+        # an empty string will skip starting the service
+        # see: https://github.com/actions/runner/issues/822
+        image: ${{ matrix.store == 'postgres' && 'postgres:15' || '' }}
+        env:
+          POSTGRES_USER: ${{ env.AIO_SUBSYSTEMS_STORE_POSTGRES_CONFIG_USERNAME }}
+          POSTGRES_PASSWORD: ${{ env.AIO_SUBSYSTEMS_STORE_POSTGRES_CONFIG_PASSWORD }}
+          POSTGRES_DB: ${{ env.AIO_SUBSYSTEMS_STORE_POSTGRES_CONFIG_DATABASE }}
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 5432:5432
+
+    steps:
+      - name: Restore resonate
+        uses: actions/cache/restore@v5
+        with:
+          path: resonate
+          key: resonate-${{ github.sha }}
+          fail-on-cache-miss: true
+      - name: Run dst (seed=${{ needs.values.outputs.seed }}, ticks=${{ needs.values.outputs.ticks }}, scenario=${{ matrix.scenario }}, store=${{ matrix.store }})
+        run: |
+          ./resonate dst run \
+            --seed ${{ needs.values.outputs.seed }} \
+            --ticks ${{ needs.values.outputs.ticks }} \
+            --timeout 2h \
+            --scenario ${{ matrix.scenario }} \
+            --aio-store-${{ matrix.store }}-enable true \
+            > logs.txt 2>&1
+      - name: Create issue if dst failed
+        env:
+          GITHUB_TOKEN: ${{ secrets.github_token }}
+        if: ${{ failure() && matrix.run == 1 }}
+        run: |
+          ./resonate dst issue \
+            --seed ${{ needs.values.outputs.seed }} \
+            --ticks ${{ needs.values.outputs.ticks }} \
+            --scenario ${{ matrix.scenario }} \
+            --store ${{ matrix.store }} \
+            --reason "DST run failed for seed=${{ needs.values.outputs.seed }}, ticks=${{ needs.values.outputs.ticks }}, scenario=${{ matrix.scenario }}, store=${{ matrix.store }}." \
+            --file logs.txt \
+            --repo $GITHUB_REPOSITORY \
+            --commit $GITHUB_SHA \
+            --url $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID
+      - uses: actions/upload-artifact@v6
+        if: ${{ always() }}
+        with:
+          name: ${{ matrix.scenario }}-${{ matrix.store }}-${{ matrix.run }}-logs
+          path: logs.txt
+      - uses: actions/upload-artifact@v6
+        if: ${{ always() && matrix.scenario != 'fault' }}
+        with:
+          name: ${{ matrix.scenario }}-${{ matrix.store }}-${{ matrix.run }}-visualization
+          path: dst.html
+
+  diff:
+    runs-on: ubuntu-24.04
+    needs: [build, values, dst]
+
+    strategy:
+      fail-fast: false
+      matrix:
+        scenario: [default, fault, lazy]
+        store: [sqlite, postgres, sqlite/postgres]
+        include:
+          - store: sqlite
+            logs1: sqlite-1-logs
+            logs2: sqlite-2-logs
+          - store: postgres
+            logs1: postgres-1-logs
+            logs2: postgres-2-logs
+          - store: sqlite/postgres
+            logs1: sqlite-1-logs
+            logs2: postgres-1-logs
+
+    steps:
+      - name: Restore resonate
+        uses: actions/cache/restore@v5
+        with:
+          path: resonate
+          key: resonate-${{ github.sha }}
+          fail-on-cache-miss: true
+      - name: Download logs from run 1
+        uses: actions/download-artifact@v7
+        with:
+          name: ${{ matrix.scenario }}-${{ matrix.logs1 }}
+          path: logs-1.txt
+      - name: Download logs from run 2
+        uses: actions/download-artifact@v7
+        with:
+          name: ${{ matrix.scenario }}-${{ matrix.logs2 }}
+          path: logs-2.txt
+      - name: Diff
+        run: |
+          diff logs-1.txt logs-2.txt
+      - name: Create issue if diff
+        env:
+          GITHUB_TOKEN: ${{ secrets.github_token }}
+        if: ${{ failure() }}
+        run: |
+          ./resonate dst issue \
+            --seed ${{ needs.values.outputs.seed }} \
+            --ticks ${{ needs.values.outputs.ticks }} \
+            --scenario ${{ matrix.scenario }} \
+            --store ${{ matrix.store }} \
+            --reason "Two DST runs produced different results for seed=${{ needs.values.outputs.seed }}, ticks=${{ needs.values.outputs.ticks }}, scenario=${{ matrix.scenario }}, store=${{ matrix.store }}." \
+            --repo $GITHUB_REPOSITORY \
+            --commit $GITHUB_SHA \
+            --url $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID

@@ -1,0 +1,220 @@
+import contextlib
+import socket
+from collections import defaultdict, deque
+from typing import Any
+
+import cbor2
+from cbor2 import CBORTag
+
+from hegel.protocol.connection import HANDSHAKE_STRING
+from hegel.protocol.packet import (
+    CLOSE_STREAM_MESSAGE_ID,
+    CLOSE_STREAM_PAYLOAD,
+    Packet,
+    read_packet,
+    write_packet,
+)
+from hegel.protocol.utils import (
+    MessageId,
+    ProtocolError,
+    RequestError,
+    StreamId,
+)
+from hegel.schema import HEGEL_STRING_TAG
+
+
+def _decode_hook(_decoder: object, tag: CBORTag) -> object:
+    if tag.tag == HEGEL_STRING_TAG:
+        return tag.value.decode("utf-8", "surrogatepass")
+    return tag
+
+
+class ClientStream:
+    def __init__(
+        self,
+        connection: "ClientConnection",
+        stream_id: StreamId,
+    ) -> None:
+        self.connection = connection
+        self.stream_id = stream_id
+
+        self.requests: deque[Packet] = deque()
+        self.replies: dict[MessageId, Packet] = {}
+
+        self.next_message_id = MessageId(1)
+        self.closed = False
+
+    def close(self):
+        """Close this stream."""
+        if self.closed:
+            return
+
+        self.closed = True
+        if self.connection.running:
+            self.connection.write_packet(
+                Packet(
+                    payload=CLOSE_STREAM_PAYLOAD,
+                    message_id=CLOSE_STREAM_MESSAGE_ID,
+                    stream_id=self.stream_id,
+                    is_reply=False,
+                ),
+            )
+
+    def _receive_one(self) -> None:
+        """Read packets from the socket until one for this stream arrives."""
+        packet = self.connection.receive_packet_for_stream(self.stream_id)
+        if packet.is_reply:
+            assert packet.message_id not in self.replies
+            self.replies[packet.message_id] = packet
+        else:
+            self.requests.append(packet)
+
+    def send_request(self, payload: dict) -> Any:
+        """Send a CBOR request and block until reply arrives. Returns the result."""
+        packet = self.write_request(cbor2.dumps(payload))
+        reply = self.read_reply(packet.message_id)
+        result = cbor2.loads(reply.payload, tag_hook=_decode_hook)
+        if "error" in result:
+            raise RequestError(result["error"], error_type=result["type"])
+        return result["result"]
+
+    def write_request(self, payload: bytes) -> Packet:
+        """Write a request packet to the socket. Returns the packet."""
+        assert isinstance(payload, bytes)
+        packet = Packet(
+            payload=payload,
+            stream_id=self.stream_id,
+            is_reply=False,
+            message_id=self.next_message_id,
+        )
+        self.connection.write_packet(packet)
+        self.next_message_id = MessageId(self.next_message_id + 1)
+        return packet
+
+    def write_reply_bytes(self, message_id: MessageId, payload: bytes) -> None:
+        self.connection.write_packet(
+            Packet(
+                payload=payload,
+                stream_id=self.stream_id,
+                is_reply=True,
+                message_id=message_id,
+            ),
+        )
+
+    def write_reply(self, message_id: MessageId, value: Any) -> None:
+        self.write_reply_bytes(message_id, cbor2.dumps({"result": value}))
+
+    def write_reply_error(
+        self,
+        message_id: MessageId,
+        *,
+        error: str,
+        error_type: str,
+    ) -> None:
+        self.write_reply_bytes(
+            message_id, cbor2.dumps({"error": error, "type": error_type})
+        )
+
+    def read_reply(self, message_id: MessageId) -> Packet:
+        """Wait to receive a reply to ``message_id``, and return it."""
+        while message_id not in self.replies:
+            self._receive_one()
+        return self.replies.pop(message_id)
+
+    def read_request(self) -> Packet:
+        """Wait to receive a request, and return it."""
+        while not self.requests:
+            self._receive_one()
+        return self.requests.popleft()
+
+
+class ClientConnection:
+    """Client-side multiplexed socket connection to a Hegel server."""
+
+    def __init__(self, socket: socket.socket):
+        self.streams: dict[StreamId, ClientStream] = {}
+        self.running = True
+
+        self._pending_packets: defaultdict[StreamId, deque[Packet]] = defaultdict(deque)
+        self._socket = socket
+        self._next_stream_id = 1
+
+        # special stream for connection-level commands
+        self.control_stream = self._make_stream(StreamId(0))
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *args):
+        self.close()
+
+    def receive_packet_for_stream(self, stream_id: StreamId) -> Packet:
+        """Read packets from the socket until one for ``stream_id`` arrives.
+
+        Packets for other streams are stashed in per-stream pending queues.
+        Close-stream packets mark the target stream as closed.
+        """
+        # Check pending first
+        pending = self._pending_packets.get(stream_id)
+        if pending:
+            return pending.popleft()
+
+        # Read from socket until we get one for our stream
+        while True:
+            try:
+                packet = read_packet(self._socket)
+            except (OSError, ProtocolError, AssertionError):
+                self.running = False
+                raise ConnectionError("Connection closed") from None
+
+            if packet.payload == CLOSE_STREAM_PAYLOAD:
+                assert packet.message_id == CLOSE_STREAM_MESSAGE_ID
+                stream = self.streams[packet.stream_id]
+                stream.closed = True
+                continue
+
+            if packet.stream_id == stream_id:
+                return packet
+
+            # Stash for another stream
+            self._pending_packets[packet.stream_id].append(packet)
+
+    def write_packet(self, packet: Packet) -> None:
+        """Write a packet to the socket."""
+        write_packet(self._socket, packet)
+
+    def close(self) -> None:
+        """Close the connection."""
+        if not self.running:
+            return
+
+        self.running = False
+        with contextlib.suppress(OSError):
+            self._socket.shutdown(socket.SHUT_RDWR)
+        self._socket.close()
+
+    def send_handshake(self) -> str:
+        """Initiate handshake as a client. Returns the server protocol version."""
+        packet = self.control_stream.write_request(HANDSHAKE_STRING)
+        reply = self.control_stream.read_reply(packet.message_id)
+        payload = reply.payload.decode("utf-8")
+        assert payload.startswith("Hegel/")
+        return payload.removeprefix("Hegel/")
+
+    def _make_stream(self, stream_id: StreamId) -> ClientStream:
+        """Create and register a stream."""
+        stream = ClientStream(connection=self, stream_id=stream_id)
+        self.streams[stream.stream_id] = stream
+        return stream
+
+    def new_stream(self) -> ClientStream:
+        """Create a new logical stream on this connection (odd IDs for client)."""
+        stream_id = StreamId((self._next_stream_id << 1) | 1)
+        self._next_stream_id += 1
+        return self._make_stream(stream_id)
+
+    def connect_stream(self, stream_id: StreamId) -> ClientStream:
+        """Connect to a stream created by the server (even IDs)."""
+        assert stream_id not in self.streams
+        assert stream_id & 1 == 0  # server streams are even
+        return self._make_stream(stream_id)

@@ -563,7 +563,9 @@ type Configuration struct {
 	// names a package and its whole subtree. Names a package only — an entry naming
 	// one exact file is rejected; Ignore and Recursion_Exempt are the two lists that
 	// may name a file. A "!"-prefixed entry revokes instrumentation status from a
-	// package a broader entry granted it, regardless of either entry's position.
+	// package a broader entry granted it, regardless of either entry's position. An
+	// instrumentation package is also released from the deterministic tier, so it need
+	// not be repeated in pure_but_indeterministic_packages.
 	Instrumentation_Packages []string `json:"instrumentation_packages"`
 	// Pure_But_Indeterministic names the pure packages opted OUT of the deterministic
 	// tier. The tier — no goroutine, channel, select, or float; no time/context/sync
@@ -2093,6 +2095,15 @@ type configuration_glob_list struct {
 	Globs []string
 }
 
+// Reduces a lint.json entry to the path the slash rule classifies: strip the "!"
+// negation and the redundant leading slash (matching Parse_Glob_Pattern), and
+// report whether a trailing slash — the directory marker — remained.
+func configuration_entry_literal(entry string) (literal string, has_slash bool) {
+	normalized := strings.TrimPrefix(strings.TrimPrefix(entry, "!"), "/")
+	literal = strings.TrimSuffix(normalized, "/")
+	return literal, normalized != literal
+}
+
 // Requires a wildcard-free lint.json entry to end in a slash when it names a
 // directory and to omit one when it names a file, so the trailing slash alone tells
 // them apart under the one exact-path matcher. A wildcard entry (* ? [) is exempt —
@@ -2131,8 +2142,7 @@ func check_configuration_directory_slash(input *Check_File_System_Input) (diags 
 			if strings.Contains(entry, "*") {
 				continue
 			}
-			literal := strings.TrimSuffix(entry, "/")
-			has_slash := entry != literal
+			literal, has_slash := configuration_entry_literal(entry)
 			is_directory := directories[literal]
 			is_file := input.Tracked[literal]
 			// A path is a directory or a file, never both, so at most one arm fires.
@@ -8244,8 +8254,9 @@ type check_deterministic_input struct {
 // bans on the constructs whose result is decided outside the program — a
 // goroutine, a channel, a select, a float, a time/context/sync import — and may
 // import only other deterministic first-party packages. The tier is the default,
-// so purity alone opts a package in; a pure_but_indeterministic_packages entry opts one
-// back out, matched as an exact-path glob. Impure packages (the main package, a
+// so purity alone opts a package in; a pure_but_indeterministic_packages entry, or an
+// instrumentation_packages entry (a write-only side channel is never deterministic),
+// opts one back out, matched as an exact-path glob. Impure packages (the main package, a
 // default tier) are never deterministic and need no listing. The bans bind a
 // covered package's _test.go files too.
 func check_deterministic(input *check_deterministic_input) (diags []Diagnostic) {
@@ -8269,7 +8280,13 @@ func check_deterministic(input *check_deterministic_input) (diags []Diagnostic) 
 	}
 	matched := map[string]bool{}
 	negated := map[string]bool{}
-	for _, entry := range input.Exceptions {
+	// Instrumentation packages are write-only side channels, inherently
+	// nondeterministic, so they release from the tier alongside the explicit
+	// exceptions — no duplicate pure_but_indeterministic_packages entry needed. The
+	// coverage check below still validates Exceptions alone, so an instrumentation
+	// entry that releases nothing is not reported as a gap here.
+	released := append(append([]string{}, input.Exceptions...), input.Instrumentation...)
+	for _, entry := range released {
 		pattern := source.Parse_Glob_Pattern(entry)
 		for directory := range pure {
 			hit, _ := source.Glob_Match(

@@ -1,0 +1,53 @@
+{
+  "name": "anta-site",
+  "version": "0.0.0",
+  "private": true,
+  "scripts": {
+    "docs:api": "typedoc --json src/api.json --entryPoints ../src/index.ts --tsconfig ../src/tsconfig.json --sort source-order --plugin ./lib/union-source-order.mjs",
+    "docs:pages": "node scripts/gen-pages.mjs",
+    "docs:wasm": "node scripts/copy-esbuild-wasm.mjs",
+    "docs:iframe-runtime": "node scripts/build-iframe-runtime.mjs",
+    "docs": "pnpm run docs:api && pnpm run docs:pages && pnpm run docs:wasm && pnpm run docs:iframe-runtime",
+    "dev": "pnpm run docs && astro dev",
+    "build": "pnpm run docs && astro build",
+    "preview": "astro preview",
+    "lint:css": "stylelint \"src/**/*.{css,astro}\""
+  },
+  "dependencies": {
+    "@antadesign/anta": "workspace:*",
+    "@antadesign/stickers": "workspace:*",
+    "@astrojs/mdx": "4.3.14",
+    "@astrojs/preact": "4.1.3",
+    "@astrojs/sitemap": "^3.7.3",
+    "@monaco-editor/react": "4.7.0",
+    "@shikijs/monaco": "3.23.0",
+    "astro": "5.18.1",
+    "astro-expressive-code": "0.41.7",
+    "es-toolkit": "^1.47.0",
+    "esbuild-wasm": "0.25.12",
+    "marked": "^18.0.4",
+    "monaco-editor": "0.52.2",
+    "preact": "10.29.1",
+    "rehype-autolink-headings": "7.1.0",
+    "rehype-mathjax": "7.1.0",
+    "rehype-slug": "6.0.0",
+    "remark-attributes": "0.3.2",
+    "remark-definition-list": "2.0.0",
+    "remark-directive": "4.0.0",
+    "remark-gfm": "4.0.1",
+    "remark-math": "6.0.0",
+    "sharp": "0.34.5",
+    "shiki": "3.23.0"
+  },
+  "devDependencies": {
+    "interface-kit": "^0.1.3",
+    "pixelmatch": "7.1.1",
+    "playwright": "1.59.1",
+    "pngjs": "7.0.0",
+    "postcss-html": "^1.8.1",
+    "stylelint": "^17.13.0",
+    "stylelint-config-html": "^1.1.0",
+    "stylelint-config-standard": "^40.0.0",
+    "typedoc": "0.28.19"
+  }
+}

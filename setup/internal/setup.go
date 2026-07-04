@@ -815,79 +815,66 @@ func rust_link(input *rust_link_input) (linked bool) {
 const fish_version = "fish, version 4.7.1"
 
 // Install_Fish_Input carries the injected dependencies Install_Fish needs to build
-// the vendored fish with cargo and expose it on PATH.
+// the vendored fish with cargo and install it into the binary directory.
 type Install_Fish_Input struct {
 	// Fish_Directory is the vendored fish crate cargo builds with --path; its
 	// .cargo/config.toml points the offline build at the committed vendor tree.
 	Fish_Directory string
-	// Cargo_Directory is CARGO_HOME, where cargo install places the fish binary
-	// under bin/, the source the symlink points at.
-	Cargo_Directory string
-	// Link_Directory is the one directory on PATH fish is symlinked into.
-	Link_Directory string
-	// Shell runs the `fish --version` gate, the cargo build, and the ln call. cargo
-	// — linked onto PATH by the rust step — reads CARGO_HOME from the environment.
+	// Binary_Directory is where the fish binaries are installed and probed. cargo
+	// install writes into it via --root (its parent), the same directory the Go
+	// tools build into, so no symlink is needed.
+	Binary_Directory string
+	// Shell runs the `fish --version` gate and the cargo build. cargo — linked onto
+	// PATH by the rust step — reads CARGO_HOME from the environment.
 	Shell Shell
 }
 
-// Install_Fish builds fish from the vendored source with cargo and symlinks fish,
-// fish_indent, and fish_key_reader into the PATH directory. It is idempotent: when
-// the built fish already reports the wanted version, the build is skipped and only
-// the symlinks are refreshed, so a repeat bootstrap does no heavy work.
+// Install_Fish builds fish from the vendored source with cargo, installing fish,
+// fish_indent, and fish_key_reader straight into the binary directory. It is
+// idempotent: when the built fish already reports the wanted version the build is
+// skipped, so a repeat bootstrap does no heavy work.
 func Install_Fish(input *Install_Fish_Input) (status_code int) {
 	if input.Fish_Directory == "" {
 		return 0
 	}
-	if input.Cargo_Directory == "" {
+	if input.Binary_Directory == "" {
 		return 0
 	}
-	if input.Link_Directory == "" {
-		return 0
-	}
-	if fish_built(input.Shell, input.Cargo_Directory) {
+	if fish_built(input.Shell, input.Binary_Directory) {
 		fmt.Fprintln(input.Shell.Stdout, "setup: fish built")
-	} else {
-		fmt.Fprintln(input.Shell.Stdout, "setup: fish: building...")
-		if !run_spawn(input.Shell,
-			fish_install_invocation(input.Fish_Directory)...) {
-			fmt.Fprintln(input.Shell.Stderr, "setup: fish build failed")
-			return exit_failure
-		}
+		return 0
 	}
-	// Always (re)link, even when the build was skipped, so a missing symlink is
-	// restored without recompiling. ln -sf is idempotent. cargo install builds all
-	// three fish binaries, so link each.
-	for _, binary := range []string{"fish", "fish_indent", "fish_key_reader"} {
-		source := filepath.Join(input.Cargo_Directory, "bin", binary)
-		target := filepath.Join(input.Link_Directory, binary)
-		if !run_spawn(input.Shell, "ln", "-sf", source, target) {
-			fmt.Fprintln(input.Shell.Stderr, "setup: fish link failed")
-			return exit_failure
-		}
+	fmt.Fprintln(input.Shell.Stdout, "setup: fish: building...")
+	if !run_spawn(input.Shell,
+		fish_install_invocation(input)...) {
+		fmt.Fprintln(input.Shell.Stderr, "setup: fish build failed")
+		return exit_failure
 	}
 	return 0
 }
 
 // Returns the invocation that builds and installs fish from the vendored crate. cd
 // into the crate so its .cargo/config.toml maps every source to the committed
-// vendor tree; --offline/--locked then build with no network. RUSTFLAGS is fish's
-// documented static-crt build flag.
-func fish_install_invocation(fish_directory string) (arguments []string) {
+// vendor tree; --offline/--locked build with no network; --root installs the three
+// fish binaries into the binary directory (cargo writes to <root>/bin). RUSTFLAGS is
+// fish's documented static-crt build flag.
+func fish_install_invocation(input *Install_Fish_Input) (arguments []string) {
+	root := filepath.Dir(input.Binary_Directory)
 	return []string{
 		"sh", "-c",
-		"cd " + fish_directory + " && " +
+		"cd " + input.Fish_Directory + " && " +
 			"RUSTFLAGS='-C target-feature=+crt-static' " +
-			"cargo install --offline --locked --path .",
+			"cargo install --offline --locked --path . --root " + root,
 	}
 }
 
-// Reports whether the fish binary already installed under CARGO_HOME reports the
-// wanted version. Probing the exact path, not PATH, keeps a missing symlink from
-// triggering a needless multi-minute recompile of an existing build.
-func fish_built(shell Shell, cargo_directory string) (built bool) {
+// Reports whether the fish binary already installed in the binary directory reports
+// the wanted version. Probing the exact path, not PATH, keeps a build present at a
+// non-PATH location from being needlessly recompiled.
+func fish_built(shell Shell, binary_directory string) (built bool) {
 	return Installed(&Installed_Input{
 		Shell:      shell,
-		Executable: filepath.Join(cargo_directory, "bin", "fish"),
+		Executable: filepath.Join(binary_directory, "fish"),
 		Version:    fish_version,
 	})
 }
@@ -1011,50 +998,38 @@ func command_on_path(shell Shell, name string) (present bool) {
 const jj_version = "jj 0.42.0"
 
 // Install_Jj_Input carries the injected dependencies Install_Jj needs to build the
-// vendored jj with cargo and expose it on PATH.
+// vendored jj with cargo and install it into the binary directory.
 type Install_Jj_Input struct {
 	// Jj_Directory is the vendored jj workspace root cargo builds from; its
 	// .cargo/config.toml points the offline build at the committed vendor tree.
 	Jj_Directory string
-	// Cargo_Directory is CARGO_HOME, where cargo install places the jj binary under
-	// bin/, the source the symlink points at.
-	Cargo_Directory string
-	// Link_Directory is the one directory on PATH jj is symlinked into.
-	Link_Directory string
-	// Shell runs the `jj --version` gate, the cargo build, and the ln call.
+	// Binary_Directory is where the jj binary is installed and probed. cargo install
+	// writes into it via --root (its parent), the same directory the Go tools build
+	// into, so no symlink is needed.
+	Binary_Directory string
+	// Shell runs the `jj --version` gate and the cargo build.
 	Shell Shell
 }
 
-// Install_Jj builds jj from the vendored workspace with cargo and symlinks the
-// binary into the PATH directory. It is idempotent: when the built jj already
-// reports the wanted version, the build is skipped and only the symlink is
-// refreshed, so a repeat bootstrap does no heavy work.
+// Install_Jj builds jj from the vendored workspace with cargo, installing the binary
+// straight into the binary directory. It is idempotent: when the built jj already
+// reports the wanted version the build is skipped, so a repeat bootstrap does no
+// heavy work.
 func Install_Jj(input *Install_Jj_Input) (status_code int) {
 	if input.Jj_Directory == "" {
 		return 0
 	}
-	if input.Cargo_Directory == "" {
+	if input.Binary_Directory == "" {
 		return 0
 	}
-	if input.Link_Directory == "" {
-		return 0
-	}
-	if jj_built(input.Shell, input.Cargo_Directory) {
+	if jj_built(input.Shell, input.Binary_Directory) {
 		fmt.Fprintln(input.Shell.Stdout, "setup: jj built")
-	} else {
-		fmt.Fprintln(input.Shell.Stdout, "setup: jj: building...")
-		if !run_spawn(input.Shell,
-			jj_install_invocation(input.Jj_Directory)...) {
-			fmt.Fprintln(input.Shell.Stderr, "setup: jj build failed")
-			return exit_failure
-		}
+		return 0
 	}
-	// Always (re)link, even when the build was skipped, so a missing symlink is
-	// restored without recompiling. ln -sf is idempotent.
-	source := filepath.Join(input.Cargo_Directory, "bin", "jj")
-	target := filepath.Join(input.Link_Directory, "jj")
-	if !run_spawn(input.Shell, "ln", "-sf", source, target) {
-		fmt.Fprintln(input.Shell.Stderr, "setup: jj link failed")
+	fmt.Fprintln(input.Shell.Stdout, "setup: jj: building...")
+	if !run_spawn(input.Shell,
+		jj_install_invocation(input)...) {
+		fmt.Fprintln(input.Shell.Stderr, "setup: jj build failed")
 		return exit_failure
 	}
 	return 0
@@ -1062,23 +1037,25 @@ func Install_Jj(input *Install_Jj_Input) (status_code int) {
 
 // Returns the invocation that builds and installs jj from the vendored workspace.
 // cd into the workspace root so its .cargo/config.toml maps crates to the vendor
-// tree; --offline/--locked build with no network; --bin jj --path cli installs
-// only the jj binary from the jj-cli package, not its test helpers.
-func jj_install_invocation(jj_directory string) (arguments []string) {
+// tree; --offline/--locked build with no network; --bin jj --path cli installs only
+// the jj binary from the jj-cli package, not its test helpers; --root installs it
+// into the binary directory (cargo writes to <root>/bin).
+func jj_install_invocation(input *Install_Jj_Input) (arguments []string) {
+	root := filepath.Dir(input.Binary_Directory)
 	return []string{
 		"sh", "-c",
-		"cd " + jj_directory + " && " +
-			"cargo install --offline --locked --bin jj --path cli",
+		"cd " + input.Jj_Directory + " && " +
+			"cargo install --offline --locked --bin jj --path cli --root " + root,
 	}
 }
 
-// Reports whether the jj binary already installed under CARGO_HOME reports the
-// wanted version. Probing the exact path, not PATH, keeps a missing symlink from
-// triggering a needless multi-minute recompile of an existing build.
-func jj_built(shell Shell, cargo_directory string) (built bool) {
+// Reports whether the jj binary already installed in the binary directory reports
+// the wanted version. Probing the exact path, not PATH, keeps a build present at a
+// non-PATH location from being needlessly recompiled.
+func jj_built(shell Shell, binary_directory string) (built bool) {
 	return Installed(&Installed_Input{
 		Shell:      shell,
-		Executable: filepath.Join(cargo_directory, "bin", "jj"),
+		Executable: filepath.Join(binary_directory, "jj"),
 		Version:    jj_version,
 	})
 }
@@ -1089,50 +1066,38 @@ func jj_built(shell Shell, cargo_directory string) (built bool) {
 const ripgrep_version = "ripgrep 15.1.0"
 
 // Install_Ripgrep_Input carries the injected dependencies Install_Ripgrep needs to
-// build the vendored ripgrep with cargo and expose its rg binary on PATH.
+// build the vendored ripgrep with cargo and install its rg binary.
 type Install_Ripgrep_Input struct {
 	// Ripgrep_Directory is the vendored ripgrep crate cargo builds from; its
 	// .cargo/config.toml points the offline build at the committed vendor tree.
 	Ripgrep_Directory string
-	// Cargo_Directory is CARGO_HOME, where cargo install places the rg binary under
-	// bin/, the source the symlink points at.
-	Cargo_Directory string
-	// Link_Directory is the one directory on PATH rg is symlinked into.
-	Link_Directory string
-	// Shell runs the `rg --version` gate, the cargo build, and the ln call.
+	// Binary_Directory is where the rg binary is installed and probed. cargo install
+	// writes into it via --root (its parent), the same directory the Go tools build
+	// into, so no symlink is needed.
+	Binary_Directory string
+	// Shell runs the `rg --version` gate and the cargo build.
 	Shell Shell
 }
 
-// Install_Ripgrep builds ripgrep from the vendored crate with cargo and symlinks
-// the rg binary into the PATH directory. It is idempotent: when the built rg
-// already reports the wanted version, the build is skipped and only the symlink is
-// refreshed, so a repeat bootstrap does no heavy work.
+// Install_Ripgrep builds ripgrep from the vendored crate with cargo, installing the
+// rg binary straight into the binary directory. It is idempotent: when the built rg
+// already reports the wanted version the build is skipped, so a repeat bootstrap
+// does no heavy work.
 func Install_Ripgrep(input *Install_Ripgrep_Input) (status_code int) {
 	if input.Ripgrep_Directory == "" {
 		return 0
 	}
-	if input.Cargo_Directory == "" {
+	if input.Binary_Directory == "" {
 		return 0
 	}
-	if input.Link_Directory == "" {
-		return 0
-	}
-	if ripgrep_built(input.Shell, input.Cargo_Directory) {
+	if ripgrep_built(input.Shell, input.Binary_Directory) {
 		fmt.Fprintln(input.Shell.Stdout, "setup: ripgrep built")
-	} else {
-		fmt.Fprintln(input.Shell.Stdout, "setup: ripgrep: building...")
-		invocation := ripgrep_install_invocation(input.Ripgrep_Directory)
-		if !run_spawn(input.Shell, invocation...) {
-			fmt.Fprintln(input.Shell.Stderr, "setup: ripgrep build failed")
-			return exit_failure
-		}
+		return 0
 	}
-	// Always (re)link, even when the build was skipped, so a missing symlink is
-	// restored without recompiling. ln -sf is idempotent.
-	source := filepath.Join(input.Cargo_Directory, "bin", "rg")
-	target := filepath.Join(input.Link_Directory, "rg")
-	if !run_spawn(input.Shell, "ln", "-sf", source, target) {
-		fmt.Fprintln(input.Shell.Stderr, "setup: ripgrep link failed")
+	fmt.Fprintln(input.Shell.Stdout, "setup: ripgrep: building...")
+	invocation := ripgrep_install_invocation(input)
+	if !run_spawn(input.Shell, invocation...) {
+		fmt.Fprintln(input.Shell.Stderr, "setup: ripgrep build failed")
 		return exit_failure
 	}
 	return 0
@@ -1141,22 +1106,25 @@ func Install_Ripgrep(input *Install_Ripgrep_Input) (status_code int) {
 // Returns the invocation that builds and installs rg from the vendored crate. cd
 // into the crate so its .cargo/config.toml maps crates to the vendor tree;
 // --offline/--locked build with no network; --features pcre2 enables the
-// look-around/backreference engine, which is otherwise off by default.
-func ripgrep_install_invocation(ripgrep_directory string) (arguments []string) {
+// look-around/backreference engine, off by default; --root installs it into the
+// binary directory (cargo writes to <root>/bin).
+func ripgrep_install_invocation(input *Install_Ripgrep_Input) (arguments []string) {
+	root := filepath.Dir(input.Binary_Directory)
 	return []string{
 		"sh", "-c",
-		"cd " + ripgrep_directory + " && " +
-			"cargo install --offline --locked --features pcre2 --bin rg --path .",
+		"cd " + input.Ripgrep_Directory + " && " +
+			"cargo install --offline --locked --features pcre2 " +
+			"--bin rg --path . --root " + root,
 	}
 }
 
-// Reports whether the rg binary already installed under CARGO_HOME reports the
-// wanted version. Probing the exact path, not PATH, keeps a missing symlink from
-// triggering a needless multi-minute recompile of an existing build.
-func ripgrep_built(shell Shell, cargo_directory string) (built bool) {
+// Reports whether the rg binary already installed in the binary directory reports
+// the wanted version. Probing the exact path, not PATH, keeps a build present at a
+// non-PATH location from being needlessly recompiled.
+func ripgrep_built(shell Shell, binary_directory string) (built bool) {
 	return Installed(&Installed_Input{
 		Shell:      shell,
-		Executable: filepath.Join(cargo_directory, "bin", "rg"),
+		Executable: filepath.Join(binary_directory, "rg"),
 		Version:    ripgrep_version,
 	})
 }
@@ -1166,50 +1134,38 @@ func ripgrep_built(shell Shell, cargo_directory string) (built bool) {
 const fdcli_version = "fd 10.4.2"
 
 // Install_Fdcli_Input carries the injected dependencies Install_Fdcli needs to build the
-// vendored fd with cargo and expose it on PATH.
+// vendored fd with cargo and install it.
 type Install_Fdcli_Input struct {
 	// Fdcli_Directory is the vendored fd crate cargo builds from; its
 	// .cargo/config.toml points the offline build at the committed vendor tree.
 	Fdcli_Directory string
-	// Cargo_Directory is CARGO_HOME, where cargo install places the fd binary under
-	// bin/, the source the symlink points at.
-	Cargo_Directory string
-	// Link_Directory is the one directory on PATH fd is symlinked into.
-	Link_Directory string
-	// Shell runs the `fd --version` gate, the cargo build, and the ln call.
+	// Binary_Directory is where the fd binary is installed and probed. cargo install
+	// writes into it via --root (its parent), the same directory the Go tools build
+	// into, so no symlink is needed.
+	Binary_Directory string
+	// Shell runs the `fd --version` gate and the cargo build.
 	Shell Shell
 }
 
-// Install_Fdcli builds fd from the vendored crate with cargo and symlinks the binary
-// into the PATH directory. It is idempotent: when the built fd already reports the
-// wanted version, the build is skipped and only the symlink is refreshed, so a
-// repeat bootstrap does no heavy work.
+// Install_Fdcli builds fd from the vendored crate with cargo, installing the binary
+// straight into the binary directory. It is idempotent: when the built fd already
+// reports the wanted version the build is skipped, so a repeat bootstrap does no
+// heavy work.
 func Install_Fdcli(input *Install_Fdcli_Input) (status_code int) {
 	if input.Fdcli_Directory == "" {
 		return 0
 	}
-	if input.Cargo_Directory == "" {
+	if input.Binary_Directory == "" {
 		return 0
 	}
-	if input.Link_Directory == "" {
-		return 0
-	}
-	if fdcli_built(input.Shell, input.Cargo_Directory) {
+	if fdcli_built(input.Shell, input.Binary_Directory) {
 		fmt.Fprintln(input.Shell.Stdout, "setup: fd built")
-	} else {
-		fmt.Fprintln(input.Shell.Stdout, "setup: fd: building...")
-		invocation := fdcli_install_invocation(input.Fdcli_Directory)
-		if !run_spawn(input.Shell, invocation...) {
-			fmt.Fprintln(input.Shell.Stderr, "setup: fd build failed")
-			return exit_failure
-		}
+		return 0
 	}
-	// Always (re)link, even when the build was skipped, so a missing symlink is
-	// restored without recompiling. ln -sf is idempotent.
-	source := filepath.Join(input.Cargo_Directory, "bin", "fd")
-	target := filepath.Join(input.Link_Directory, "fd")
-	if !run_spawn(input.Shell, "ln", "-sf", source, target) {
-		fmt.Fprintln(input.Shell.Stderr, "setup: fd link failed")
+	fmt.Fprintln(input.Shell.Stdout, "setup: fd: building...")
+	invocation := fdcli_install_invocation(input)
+	if !run_spawn(input.Shell, invocation...) {
+		fmt.Fprintln(input.Shell.Stderr, "setup: fd build failed")
 		return exit_failure
 	}
 	return 0
@@ -1217,22 +1173,24 @@ func Install_Fdcli(input *Install_Fdcli_Input) (status_code int) {
 
 // Returns the invocation that builds and installs fd from the vendored crate. cd
 // into the crate so its .cargo/config.toml maps crates to the vendor tree;
-// --offline/--locked build with no network against the default features.
-func fdcli_install_invocation(fdcli_directory string) (arguments []string) {
+// --offline/--locked build with no network against the default features; --root
+// installs it into the binary directory (cargo writes to <root>/bin).
+func fdcli_install_invocation(input *Install_Fdcli_Input) (arguments []string) {
+	root := filepath.Dir(input.Binary_Directory)
 	return []string{
 		"sh", "-c",
-		"cd " + fdcli_directory + " && " +
-			"cargo install --offline --locked --bin fd --path .",
+		"cd " + input.Fdcli_Directory + " && " +
+			"cargo install --offline --locked --bin fd --path . --root " + root,
 	}
 }
 
-// Reports whether the fd binary already installed under CARGO_HOME reports the
-// wanted version. Probing the exact path, not PATH, keeps a missing symlink from
-// triggering a needless multi-minute recompile of an existing build.
-func fdcli_built(shell Shell, cargo_directory string) (built bool) {
+// Reports whether the fd binary already installed in the binary directory reports
+// the wanted version. Probing the exact path, not PATH, keeps a build present at a
+// non-PATH location from being needlessly recompiled.
+func fdcli_built(shell Shell, binary_directory string) (built bool) {
 	return Installed(&Installed_Input{
 		Shell:      shell,
-		Executable: filepath.Join(cargo_directory, "bin", "fd"),
+		Executable: filepath.Join(binary_directory, "fd"),
 		Version:    fdcli_version,
 	})
 }

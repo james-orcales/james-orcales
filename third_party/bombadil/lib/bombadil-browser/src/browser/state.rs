@@ -1,0 +1,398 @@
+use crate::instrumentation::js::{
+    EDGE_MAP_SIZE, EDGES_CURRENT, EDGES_PREVIOUS, NAMESPACE,
+};
+use anyhow::Result;
+use chromiumoxide::{
+    Page,
+    cdp::{
+        browser_protocol::{
+            page::{self, CaptureScreenshotFormat},
+            performance,
+        },
+        js_protocol::debugger::CallFrameId,
+    },
+};
+use serde::{Deserialize, Serialize, de::DeserializeOwned};
+use serde_json as json;
+use std::{sync::Arc, time::SystemTime};
+use url::Url;
+
+use crate::browser::evaluation::{
+    evaluate_expression_in_debugger, evaluate_function_call_in_debugger,
+};
+
+#[derive(Clone, Debug)]
+pub struct BrowserState {
+    page: Arc<Page>,
+    call_frame_id: CallFrameId,
+
+    pub timestamp: SystemTime,
+    pub url: Url,
+    pub title: String,
+    pub content_type: String,
+    pub console_entries: Vec<ConsoleEntry>,
+    pub navigation_history: NavigationHistory,
+    pub exceptions: Vec<Exception>,
+    pub transition_hash: Option<u64>,
+    pub coverage: Coverage,
+    pub screenshot: Screenshot,
+    pub resources: Resources,
+}
+
+pub type EdgeIndex = u32;
+pub type EdgeBucket = u8;
+
+#[derive(Clone, Debug)]
+pub struct Coverage {
+    pub edges_new: Vec<(EdgeIndex, EdgeBucket)>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct NavigationHistory {
+    pub back: Vec<NavigationEntry>,
+    pub current: NavigationEntry,
+    pub forward: Vec<NavigationEntry>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct NavigationEntry {
+    pub id: u32,
+    pub title: String,
+    pub url: Url,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct Exception {
+    pub exception_id: u32,
+    pub timestamp: SystemTime,
+    pub text: String,
+    pub line: u32,
+    pub column: u32,
+    pub url: Option<String>,
+    pub remote_object: Option<ExceptionRemoteObject>,
+    pub stacktrace: Option<Vec<CallFrame>>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct ExceptionRemoteObject {
+    pub type_name: String,
+    pub subtype: Option<String>,
+    pub class_name: Option<String>,
+    pub description: Option<String>,
+    pub value: Option<json::Value>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct CallFrame {
+    pub name: String,
+    pub line: u32,
+    pub column: u32,
+    pub url: String,
+}
+
+#[derive(Clone, Debug)]
+pub struct ConsoleEntry {
+    pub timestamp: SystemTime,
+    pub level: ConsoleEntryLevel,
+    pub args: Vec<json::Value>,
+}
+
+#[derive(Clone, Debug)]
+pub enum ConsoleEntryLevel {
+    Warning,
+    Error,
+}
+
+#[derive(Copy, Clone, Debug)]
+pub enum ScreenshotFormat {
+    Webp,
+    Png,
+    Jpeg,
+}
+
+impl ScreenshotFormat {
+    pub fn extension(&self) -> &str {
+        match self {
+            ScreenshotFormat::Webp => "webp",
+            ScreenshotFormat::Png => "png",
+            ScreenshotFormat::Jpeg => "jpeg",
+        }
+    }
+}
+
+impl From<ScreenshotFormat> for CaptureScreenshotFormat {
+    fn from(val: ScreenshotFormat) -> Self {
+        match val {
+            ScreenshotFormat::Webp => CaptureScreenshotFormat::Webp,
+            ScreenshotFormat::Png => CaptureScreenshotFormat::Png,
+            ScreenshotFormat::Jpeg => CaptureScreenshotFormat::Jpeg,
+        }
+    }
+}
+
+#[derive(Clone)]
+pub struct Screenshot {
+    pub format: ScreenshotFormat,
+    pub data: Vec<u8>,
+}
+
+impl std::fmt::Debug for Screenshot {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Screenshot")
+            .field("format", &self.format)
+            .field("data", &format_args!("[{} bytes]", self.data.len()))
+            .finish()
+    }
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct Resources {
+    pub js_heap_used: u64,
+    pub js_heap_total: u64,
+    pub dom_nodes: u64,
+    pub documents: u64,
+    pub js_event_listeners: u64,
+    pub layout_objects: u64,
+    pub timestamp: f64,
+    pub thread_time: f64,
+    pub task_duration: f64,
+    pub script_duration: f64,
+}
+
+impl Resources {
+    pub fn from_metrics(metrics: &[performance::Metric]) -> Self {
+        use std::collections::BTreeMap;
+        let map: BTreeMap<&str, f64> =
+            metrics.iter().map(|m| (m.name.as_str(), m.value)).collect();
+        let get = |name: &str| -> f64 { map.get(name).copied().unwrap_or(0.0) };
+        Self {
+            js_heap_used: get("JSHeapUsedSize") as u64,
+            js_heap_total: get("JSHeapTotalSize") as u64,
+            dom_nodes: get("Nodes") as u64,
+            documents: get("Documents") as u64,
+            js_event_listeners: get("JSEventListeners") as u64,
+            layout_objects: get("LayoutObjects") as u64,
+            timestamp: get("Timestamp"),
+            thread_time: get("ThreadTime"),
+            task_duration: get("TaskDuration"),
+            script_duration: get("ScriptDuration"),
+        }
+    }
+
+    /// Main-thread CPU utilization between two snapshots, as 0.0–1.0.
+    pub fn cpu_utilization(&self, previous: &Resources) -> f64 {
+        let wall = self.timestamp - previous.timestamp;
+        if wall <= 0.0 {
+            return 0.0;
+        }
+        let cpu = self.thread_time - previous.thread_time;
+        (cpu / wall).clamp(0.0, 1.0)
+    }
+}
+
+impl BrowserState {
+    pub(crate) async fn current(
+        page: Arc<Page>,
+        call_frame_id: &CallFrameId,
+        console_entries: Vec<ConsoleEntry>,
+        exceptions: Vec<Exception>,
+        screenshot: Screenshot,
+    ) -> Result<Self> {
+        log::trace!("BrowserState::current: evaluating url");
+        let url = Url::parse(
+            &evaluate_expression_in_debugger::<String>(
+                &page,
+                call_frame_id,
+                "window.location.href",
+            )
+            .await?,
+        )?;
+
+        log::trace!("BrowserState::current: evaluating title");
+        let title: String = evaluate_expression_in_debugger(
+            &page,
+            call_frame_id,
+            "document.title",
+        )
+        .await?;
+
+        log::trace!("BrowserState::current: evaluating content_type");
+        let content_type: String = evaluate_expression_in_debugger(
+            &page,
+            call_frame_id,
+            "document.contentType",
+        )
+        .await?;
+
+        log::trace!("BrowserState::current: getting navigation history");
+        let navigation_history_result = page
+            .execute(page::GetNavigationHistoryParams {})
+            .await?
+            .result;
+
+        let navigation_entries = navigation_history_result
+            .entries
+            .iter()
+            .map(|entry| NavigationEntry {
+                id: entry.id as u32,
+                title: entry.title.clone(),
+                url: Url::parse(&entry.url)
+                    .expect("url from getNavigationHistory doesn't parse"),
+            })
+            .collect::<Vec<_>>();
+        let index = navigation_history_result.current_index as usize;
+        let is_real_entry =
+            |entry: &&NavigationEntry| entry.url.as_str() != "about:blank";
+        let navigation_history = NavigationHistory {
+            back: navigation_entries[0..index]
+                .iter()
+                .filter(is_real_entry)
+                .cloned()
+                .collect(),
+            current: navigation_entries[index].clone(),
+            forward: navigation_entries[index + 1..]
+                .iter()
+                .filter(is_real_entry)
+                .cloned()
+                .collect(),
+        };
+
+        log::trace!("BrowserState::current: evaluating coverage");
+        let edges_new: Vec<(u32, u8)> = evaluate_expression_in_debugger(
+            &page,
+            call_frame_id,
+            format!("
+                (() => {{
+                    if (!window.{NAMESPACE}) return [];
+
+                    // Bucket current hits into [1,8], similar to AFL.
+                    function bucket(hits) {{
+                        if (hits <= 3) return hits;
+                        let msb = 0;
+                        let n = hits;
+                        while (n > 0) {{
+                            n = n >> 1;
+                            msb++;
+                        }}
+                        return Math.min(msb + 1, 8);
+                    }}
+                    for (let i = 0; i < window.{NAMESPACE}.{EDGES_CURRENT}.length; i++) {{
+                        window.{NAMESPACE}.{EDGES_CURRENT}[i] = bucket(window.{NAMESPACE}.{EDGES_CURRENT}[i]);
+                    }}
+
+                    // Compute differences.
+                    const differences = [];
+                    for (let i = 0; i < window.{NAMESPACE}.{EDGES_CURRENT}.length; i++) {{
+                        if (window.{NAMESPACE}.{EDGES_CURRENT}[i] !== window.{NAMESPACE}.{EDGES_PREVIOUS}[i]) {{
+                            differences.push([i, window.{NAMESPACE}.{EDGES_CURRENT}[i]]);
+                        }}
+                    }}
+
+                    // Shift the arrays.
+                    window.{NAMESPACE}.{EDGES_PREVIOUS} = window.{NAMESPACE}.{EDGES_CURRENT};
+                    window.{NAMESPACE}.{EDGES_CURRENT} = new Uint8Array({EDGE_MAP_SIZE});
+
+                    return differences;
+                }})()
+                "
+            ),
+        )
+        .await?;
+
+        log::trace!("BrowserState::current: evaluating transition hash");
+        let transition_hash_bigint: Option<String> =
+            evaluate_expression_in_debugger(
+                &page,
+                call_frame_id,
+                format!(
+                    "
+                (() => {{
+                    if (!window.{NAMESPACE}) return null;
+
+                    const SIMHASH_BITS = 64;
+
+                    // Stateless version of Splitmix64
+                    function hash64(x) {{
+                        const M = 0xffffffffffffffffn;
+                        let h = BigInt(x) + 0x9e3779b97f4a7c15n & M;
+                        h = (h ^ (h >> 30n)) * 0xbf58476d1ce4e5b9n & M;
+                        h = (h ^ (h >> 27n)) * 0x94d049bb133111ebn & M;
+                        return h ^ (h >> 31n);
+                    }}
+
+                    const acc = new Int32Array(SIMHASH_BITS);
+
+                    for (let i = 0; i < {EDGE_MAP_SIZE}; i++) {{
+                        const bucket = window.{NAMESPACE}.{EDGES_PREVIOUS}[i];
+                        if (bucket === 0) continue;
+
+                        const weight = Math.max(1, Math.min(3, Math.floor(Math.log2(bucket))));
+                        // const weight = bucket > 0 ? 1 : 0; // presence only
+                        let h = hash64(i);
+
+                        for (let b = 0; b < SIMHASH_BITS; b++) {{
+                            const bit = (h >> BigInt(b)) & 1n;
+                            acc[b] += bit === 1n ? weight : -weight;
+                        }}
+                    }}
+
+                    if (acc.every(b => b == 0)) return null;
+
+                    let out = 0n;
+                    for (let b = 0; b < SIMHASH_BITS; b++) {{
+                        if (acc[b] > 0) {{
+                            out |= 1n << BigInt(b);
+                        }}
+                    }}
+
+                    window.{NAMESPACE}.{EDGES_CURRENT}.fill(0);
+                    return out;
+                }})()
+            "
+                ),
+            )
+            .await?;
+
+        let transition_hash = match transition_hash_bigint {
+            Some(string) => Some(string.parse::<u64>()?),
+            None => None,
+        };
+
+        let performance_metrics = &page
+            .execute(performance::GetMetricsParams {})
+            .await?
+            .metrics;
+        let resources = Resources::from_metrics(performance_metrics);
+
+        log::trace!("BrowserState::current: done");
+        Ok(BrowserState {
+            timestamp: SystemTime::now(),
+            page: page.clone(),
+            call_frame_id: call_frame_id.clone(),
+            url,
+            title,
+            content_type,
+            console_entries,
+            navigation_history,
+            exceptions,
+            coverage: Coverage { edges_new },
+            transition_hash,
+            screenshot,
+            resources,
+        })
+    }
+
+    pub async fn evaluate_function_call<Output: DeserializeOwned>(
+        &self,
+        function_expression: impl Into<String>,
+        arguments: Vec<json::Value>,
+    ) -> Result<Output> {
+        evaluate_function_call_in_debugger(
+            &self.page,
+            &self.call_frame_id,
+            function_expression,
+            arguments,
+        )
+        .await
+    }
+}

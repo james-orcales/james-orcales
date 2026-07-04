@@ -1,0 +1,34 @@
+__pycache__/
+.hegel
+.pytest_cache/
+.hypothesis/
+.tox/
+.vscode/
+.venv/
+.direnv/
+result
+*.egg-info
+build/
+external
+.devcontainer
+devcontainer
+.claude-reliability
+.coverage
+.coverage.*
+htmlcov/
+error.log
+dist/
+
+# whitelist .claude files, rather than blacklist. Some local claude files
+# (skills, agents) have to live in .claude - as opposed to eg CLAUDE.local.md,
+# which we gitignore at the top level.
+.claude/*
+!.claude/CLAUDE.md
+!.claude/skills/
+.claude/skills/*
+!.claude/skills/changelog/
+!.claude/skills/writing-conformance-tests/
+
+CLAUDE.local.md
+
+.claude-reliability/

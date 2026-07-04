@@ -1,0 +1,822 @@
+import type { IconShape } from './elements/a-icon.shapes'
+
+/** Common props for JSX component wrappers. */
+export interface BaseProps {
+  /** CSS class name. Merged with any internal classes by the component. */
+  className?: string
+  /** Inline styles applied to the root element. */
+  style?: React.CSSProperties
+  /** Child elements. When provided, replaces the component's default label/content. */
+  children?: React.ReactNode
+  /** HTML `id` attribute. */
+  id?: string
+  /** HTML `title` attribute — native browser tooltip on hover. */
+  title?: string
+  /** Tab order. Set to `-1` to skip the element when tabbing. */
+  tabIndex?: number
+  /** Any `data-*` attribute is forwarded to the rendered element. */
+  [key: `data-${string}`]: unknown
+  /** Any `aria-*` attribute is forwarded to the rendered element. */
+  [key: `aria-${string}`]: unknown
+}
+
+/**
+ * Standard DOM event handlers Anta forwards to the rendered element. These are
+ * **enumerated on purpose** — rather than an open `on${string}` index signature
+ * — so a typo like `onClik` is a type error instead of silently accepted. They
+ * stay `(e: any) => void` to remain React/Preact-agnostic (we don't commit to
+ * either framework's event types). Standard events bubble/compose, so a handler
+ * on an `<a-*>` host fires for interactions inside its shadow DOM. Component-
+ * specific events (e.g. `oninput`/`onclearclick` on `<a-input>`) are declared on
+ * that element's own attributes. This enumerates the full standard (bubble-phase)
+ * DOM event set; add a `…Capture` variant here if one is ever needed.
+ */
+export interface DOMEventHandlers {
+  // Mouse / pointer
+  onClick?: (e: any) => void
+  onDoubleClick?: (e: any) => void
+  onAuxClick?: (e: any) => void
+  onContextMenu?: (e: any) => void
+  onMouseDown?: (e: any) => void
+  onMouseUp?: (e: any) => void
+  onMouseEnter?: (e: any) => void
+  onMouseLeave?: (e: any) => void
+  onMouseMove?: (e: any) => void
+  onMouseOver?: (e: any) => void
+  onMouseOut?: (e: any) => void
+  onPointerDown?: (e: any) => void
+  onPointerUp?: (e: any) => void
+  onPointerMove?: (e: any) => void
+  onPointerEnter?: (e: any) => void
+  onPointerLeave?: (e: any) => void
+  onPointerOver?: (e: any) => void
+  onPointerOut?: (e: any) => void
+  onPointerCancel?: (e: any) => void
+  onGotPointerCapture?: (e: any) => void
+  onLostPointerCapture?: (e: any) => void
+  // Touch
+  onTouchStart?: (e: any) => void
+  onTouchEnd?: (e: any) => void
+  onTouchMove?: (e: any) => void
+  onTouchCancel?: (e: any) => void
+  // Keyboard
+  onKeyDown?: (e: any) => void
+  onKeyUp?: (e: any) => void
+  // Focus
+  onFocus?: (e: any) => void
+  onBlur?: (e: any) => void
+  // Form
+  onChange?: (e: any) => void
+  onInput?: (e: any) => void
+  onBeforeInput?: (e: any) => void
+  onInvalid?: (e: any) => void
+  onReset?: (e: any) => void
+  onSubmit?: (e: any) => void
+  onSelect?: (e: any) => void
+  // Clipboard
+  onCopy?: (e: any) => void
+  onCut?: (e: any) => void
+  onPaste?: (e: any) => void
+  // Composition (IME)
+  onCompositionStart?: (e: any) => void
+  onCompositionUpdate?: (e: any) => void
+  onCompositionEnd?: (e: any) => void
+  // Drag & drop
+  onDrag?: (e: any) => void
+  onDragStart?: (e: any) => void
+  onDragEnd?: (e: any) => void
+  onDragEnter?: (e: any) => void
+  onDragLeave?: (e: any) => void
+  onDragOver?: (e: any) => void
+  onDrop?: (e: any) => void
+  // Scroll / wheel
+  onScroll?: (e: any) => void
+  onWheel?: (e: any) => void
+  // Animation / transition
+  onAnimationStart?: (e: any) => void
+  onAnimationEnd?: (e: any) => void
+  onAnimationIteration?: (e: any) => void
+  onTransitionEnd?: (e: any) => void
+  // Resource / state
+  onLoad?: (e: any) => void
+  onError?: (e: any) => void
+  onAbort?: (e: any) => void
+  onToggle?: (e: any) => void
+  onBeforeToggle?: (e: any) => void
+  // Media
+  onCanPlay?: (e: any) => void
+  onCanPlayThrough?: (e: any) => void
+  onDurationChange?: (e: any) => void
+  onEmptied?: (e: any) => void
+  onEnded?: (e: any) => void
+  onLoadedData?: (e: any) => void
+  onLoadedMetadata?: (e: any) => void
+  onLoadStart?: (e: any) => void
+  onPause?: (e: any) => void
+  onPlay?: (e: any) => void
+  onPlaying?: (e: any) => void
+  onProgress?: (e: any) => void
+  onRateChange?: (e: any) => void
+  onSeeked?: (e: any) => void
+  onSeeking?: (e: any) => void
+  onStalled?: (e: any) => void
+  onSuspend?: (e: any) => void
+  onTimeUpdate?: (e: any) => void
+  onVolumeChange?: (e: any) => void
+  onWaiting?: (e: any) => void
+}
+
+/** Attributes for intrinsic custom elements (`<a-*>` tags) in JSX. */
+export interface BaseAttributes extends DOMEventHandlers {
+  /** React/Preact reconciliation key when rendered inside a list. */
+  key?: string | number | null
+  /** HTML `id` attribute. */
+  id?: string
+  /** HTML `class` attribute (standard DOM). */
+  class?: string
+  /** React/Preact-style class name. Alias for `class`. */
+  className?: string
+  /** Inline styles applied to the element. */
+  style?: React.CSSProperties
+  children?: React.ReactNode
+  /** Assigns the element to a named `<slot>` (e.g. `slot="title"`). */
+  slot?: string
+  /** Tab order. Set to `0` to make the element keyboard-focusable. */
+  tabIndex?: number
+  /** ARIA role override. */
+  role?: string
+}
+
+/**
+ * Attributes for the `<a-progress>` custom element.
+ *
+ * These are the low-level web component attributes. For the JSX wrapper with
+ * typed props and computed labels, use `Progress` from `@antadesign/anta`.
+ */
+export interface AProgressAttributes extends BaseAttributes {
+  /** Current progress value. */
+  value?: number | string
+  /** Maximum value. Defaults to 100. */
+  max?: number | string
+  /** Colour variant, or any literal CSS colour for a custom tone (derived in
+   *  oklch). Named tones track light/dark automatically. */
+  tone?: 'neutral' | 'brand' | 'info' | 'success' | 'warning' | 'critical' | (string & {})
+  /** ARIA role — the JSX wrapper sets this to `'progressbar'`. */
+  role?: string
+  /** ARIA value-now (current). */
+  'aria-valuenow'?: number | string
+  /** ARIA value-max. */
+  'aria-valuemax'?: number | string
+  /** ARIA value-min (defaults to 0). */
+  'aria-valuemin'?: number | string
+  /** ARIA accessible name. */
+  'aria-label'?: string
+}
+
+/**
+ * Attributes for the `<a-text>` custom element.
+ *
+ * Low-level web component attributes; for the JSX wrapper use `Text`
+ * from `@antadesign/anta`.
+ */
+export interface ATextAttributes extends BaseAttributes {
+  /** Visual priority. Maps to text-1..text-5. */
+  priority?: 'primary' | 'secondary' | 'tertiary' | 'quaternary' | 'quinary'
+  /** Color tint. Applies the matching `--text-{N}-{tone}` palette. */
+  tone?: 'brand' | 'info' | 'success' | 'warning' | 'critical'
+  /** Type scale. `small` = 13/16, `medium` (default) = 15/20, `large` = 17/24. */
+  size?: 'small' | 'medium' | 'large'
+  /** Render as inline-block instead of the default block. */
+  inline?: boolean | ''
+  /** Truncate to N lines with a trailing ellipsis. The attribute value
+   *  carries the line count (e.g. `"1"`, `"3"`); the count is also
+   *  available via the `--line-clamp` CSS custom property set inline. */
+  truncate?: boolean | string | number
+  /** Marks the host as expandable when paired with `truncate`. Adds
+   *  the fade-out mask and the expand/collapse chevron button; the element
+   *  owns the click/keyboard expansion logic. Without `collapsible`,
+   *  expanding is one-way (the control is removed once expanded). */
+  expandable?: boolean | ''
+  /** Paired with `expandable`: the chevron becomes a two-way "Show more" /
+   *  "Show less" toggle that stays visible while expanded. Omit for one-way. */
+  collapsible?: boolean | ''
+  /** ARIA disclosure state, mirrors the JSX wrapper's `expanded` flag. */
+  'aria-expanded'?: boolean | 'true' | 'false'
+}
+
+/**
+ * Attributes for the `<a-title>` styled tag.
+ *
+ * `<a-title>` has no JS — it's a CSS-only styled element. Low-level
+ * attributes; for the JSX wrapper with typed `level` numbers and ARIA
+ * use `Title` from `@antadesign/anta`.
+ */
+export interface ATitleAttributes extends BaseAttributes {
+  /** Heading level as a string attribute, '1'-'6'. */
+  level?: string
+  /** Visual priority. Maps to text-1..text-5. */
+  priority?: 'primary' | 'secondary' | 'tertiary' | 'quaternary' | 'quinary'
+  /** Color tint. Applies the matching `--text-{N}-{tone}` palette. */
+  tone?: 'brand' | 'info' | 'success' | 'warning' | 'critical'
+  /** ARIA role — the JSX wrapper sets this to `'heading'`. */
+  role?: string
+  /** ARIA heading level — the JSX wrapper sets this to match `level`. */
+  'aria-level'?: number | string
+}
+
+/**
+ * Attributes for the `<a-tag>` styled tag.
+ *
+ * `<a-tag>` has no JS — it's a CSS-only styled element. Low-level
+ * attributes; for the JSX wrapper use `Tag` from `@antadesign/anta`.
+ */
+export interface ATagAttributes extends BaseAttributes {
+  /** Semantic tone, or any literal CSS color for a one-off custom tone.
+   *  Tones tint a per-tone hue; a custom color keeps its hue with
+   *  lightness/chroma pinned. `'neutral'` is the default gray (same as
+   *  omitting it). */
+  tone?: 'neutral' | 'brand' | 'info' | 'success' | 'warning' | 'critical' | (string & {})
+  /** Emphasis level. `secondary` (default) is the subtle alpha-tint fill;
+   *  `primary` is a solid fill with white text; `tertiary` is a transparent
+   *  outline. */
+  priority?: 'primary' | 'secondary' | 'tertiary'
+  /** Size variant. `small` = 16px tall, `medium` (default) = 20px,
+   *  `large` = 24px. */
+  size?: 'small' | 'medium' | 'large'
+  /** Render in normal case instead of the default uppercase.
+   *  Presence-based (`''` on, omit off). */
+  nocaps?: boolean | ''
+}
+
+/**
+ * Attributes for the `<a-expander>` collapsible disclosure.
+ *
+ * The element builds its own shadow DOM (no native `<details>`): a
+ * `<button>` summary carrying `aria-expanded` plus an animated content
+ * region. The title is projected via `slot="title"`; header actions
+ * (rendered next to the trigger, outside it) via `slot="actions"`; the
+ * body is the default slot. Low-level attributes; for the JSX wrapper
+ * use `Expander` from `@antadesign/anta`.
+ */
+export interface AExpanderAttributes extends BaseAttributes {
+  /** Controlled open state (`'open'` / `'closed'`). Present → controlled: the
+   *  attribute is the source of truth, clicks only dispatch the cancelable
+   *  `statechange` event, and the consumer answers by updating it. Absent →
+   *  uncontrolled (use `default-state`). See STATEFUL-COMPONENTS.md. */
+  state?: 'open' | 'closed'
+  /** Initial open state for the uncontrolled mode (`'open'` / `'closed'`);
+   *  read once when the element connects. */
+  'default-state'?: 'open' | 'closed'
+  /** Surface emphasis. `secondary` (default) is a subtle fill; `primary`
+   *  is a stronger raised fill; `tertiary` is transparent. */
+  priority?: 'primary' | 'secondary' | 'tertiary'
+  /** Outdent the chevron into the left gutter so the title + body sit
+   *  flush with surrounding content (the docs-header layout). Tertiary
+   *  only — a no-op on the filled priorities, where the container edge
+   *  has to bound the chevron. Presence-based. */
+  outdent?: boolean | ''
+  /** Disables the header: not clickable or focusable, hover affordance
+   *  off, text dimmed. The open state freezes as-is. Presence-based. */
+  disabled?: boolean | ''
+  /** Semantic tone, or any literal CSS color for a one-off custom tone.
+   *  Named tones re-point the text + filled surface palette; a custom
+   *  color keeps its hue with lightness/chroma pinned. `'neutral'` is the
+   *  default (same as omitting it). */
+  tone?: 'neutral' | 'brand' | 'info' | 'success' | 'warning' | 'critical' | (string & {})
+  /** Heading type scale for the summary, `'1'`–`'6'` (mirrors `<a-title>`
+   *  levels). Default (omitted) ≈ level 5. */
+  level?: '1' | '2' | '3' | '4' | '5' | '6'
+  /** Fires before the open state changes — the element dispatches a
+   *  `cancelable` `statechange` `CustomEvent` whose `detail` is
+   *  `{ next, prev }` in the `'open'|'closed'` vocabulary. Uncontrolled,
+   *  `preventDefault()` vetoes the transition. The all-lowercase spelling is
+   *  deliberate — it's the one form both renderers bind to the `statechange`
+   *  event (React 19 keeps the case after `on`, so `onStateChange` would
+   *  listen for "StateChange"; Preact lowercases). */
+  onstatechange?: (
+    e: CustomEvent<{ next: 'open' | 'closed'; prev: 'open' | 'closed' }>,
+  ) => void
+}
+
+/**
+ * Attributes for the `<a-icon>` custom element. `shape` is typed as
+ * `IconShape` (`keyof IconShapes`); the `IconShapes` interface is
+ * module-augmentable, so consumers who generate their own shape sets
+ * via `declare module '@antadesign/anta' { interface IconShapes { … } }`
+ * get those keys accepted automatically.
+ */
+export interface AIconAttributes extends BaseAttributes {
+  /** Which icon to render. */
+  shape?: IconShape
+  /** Width and height in pixels. Mapped to the `--icon-size` custom
+   *  property via the CSS Values 5 typed `attr()` function — Chrome
+   *  133+ and Safari 18.2+ only. Firefox hasn't shipped typed
+   *  `attr()` yet, so on raw `<a-icon size="N">` the attribute is
+   *  silently ignored there and the icon stays at the default 16 ×
+   *  16. For cross-browser sizing in pure-HTML usage, set the
+   *  variable inline: `<a-icon style="--icon-size: 24px">`. The JSX
+   *  `<Icon size={N}>` wrapper already does that under the hood and
+   *  is the recommended path. */
+  size?: number | string
+  /** ARIA role — the JSX wrapper sets `'img'` when a label is provided. */
+  role?: string
+  /** ARIA accessible name when the icon carries meaning. */
+  'aria-label'?: string
+  /** Hides decorative icons from screen readers. */
+  'aria-hidden'?: 'true' | 'false' | boolean
+}
+
+/**
+ * Attributes for the `<a-tooltip>` custom element. Placed as a child of the
+ * element it annotates (content as children). For the typed JSX wrapper use
+ * `Tooltip` from `@antadesign/anta`.
+ */
+export interface ATooltipAttributes extends BaseAttributes {
+  /** Show delay in milliseconds. Never use `0` — use ~`50`. Defaults to 250. */
+  delay?: number | string
+  /** Preferred side; auto-flips when there's no room. Defaults to `'bottom'`. */
+  placement?: 'top' | 'bottom'
+  /** Follow the cursor instead of pinning under the anchor (pinned is the
+   *  default). Presence-based (`''` on, omit off). */
+  follow?: boolean | ''
+  /** Make the bubble hoverable/clickable (pointer events on, stays open while
+   *  hovered). Always pinned. Presence-based (`''` on, omit off). */
+  interactive?: boolean | ''
+  /** Only show when the measured target is actually truncated/clipped (its text
+   *  overflows). UI-thread layout read, re-measured per show. Defaults to the
+   *  nearest Anta ellipsizing label part (`a-tab-label` / `a-button-label`) in the
+   *  anchor, then the anchor itself. Presence-based (`''` on, omit off). */
+  'truncated-only'?: boolean | ''
+  /** CSS selector (resolved within the anchor) for the element whose overflow a
+   *  `truncated-only` tooltip measures. */
+  'truncated-selector'?: string
+  /** HTML `id`. */
+  id?: string
+}
+
+/**
+ * Attributes for the `<a-checkbox>` custom element. `<a-checkbox>` is a light-DOM
+ * interactive element: its visual state lives on `ElementInternals` (styled via
+ * the `:state(checked)` / `:state(indeterminate)` pseudo-class, not host
+ * attributes), driven by the `state` attribute (controlled) or `default-state`
+ * (uncontrolled seed). It sets no ARIA itself — `role` / `aria-*` are the
+ * consumer's job (the wrapper supplies them). The label is its children.
+ * Low-level attributes — for the typed JSX wrapper use `Checkbox` from
+ * `@antadesign/anta`.
+ */
+export interface ACheckboxAttributes extends BaseAttributes {
+  /** Mark colour (checked fill + unselected box border), or any literal CSS color
+   *  for a one-off custom tone. Named tones track light/dark mode automatically via
+   *  the theme-aware role tokens. `'neutral'` is the default (same as omitting it).
+   *  The label + hint stay neutral — use `tone-text` for those. */
+  tone?: 'brand' | 'neutral' | 'info' | 'success' | 'warning' | 'critical' | (string & {})
+  /** Text colour (label + hint), independent of `tone`. A named tone or any literal
+   *  CSS color; named tones track light/dark via the `--text-*` role tokens. Omit
+   *  (or `'neutral'`) to leave the text neutral. */
+  'tone-text'?: 'brand' | 'neutral' | 'info' | 'success' | 'warning' | 'critical' | (string & {})
+  /** Size variant. `small` = 14px, `medium` (default) = 16px, `large` = 18px box. */
+  size?: 'small' | 'medium' | 'large'
+  /** Controlled state — the element reflects changes to this attribute. Use this
+   *  (driven from your store) for a controlled checkbox; use `default-state` for
+   *  an uncontrolled one. */
+  state?: 'checked' | 'unchecked' | 'indeterminate'
+  /** Uncontrolled initial state — read once at connect / form-reset, then the
+   *  element self-manages. */
+  'default-state'?: 'checked' | 'unchecked' | 'indeterminate'
+  /** Disabled state. Presence-based (`''` on, omit off). */
+  disabled?: boolean | ''
+  /** Form field name — the key this checkbox submits under inside a `<form>`. */
+  name?: string
+  /** Value submitted when checked. Defaults to `"on"`. */
+  value?: string
+  /** Fires before the element applies any change. The element dispatches a
+   *  cancelable `statechange` `CustomEvent` whose `detail` carries
+   *  `{ next, prev }` (the same string enum as `state`); a synchronous
+   *  `preventDefault()` vetoes the transition. The all-lowercase spelling is
+   *  deliberate — it's the one form both renderers bind to a custom event
+   *  (React 19 keeps the case of whatever follows `on`; Preact lowercases). */
+  onstatechange?: (
+    e: CustomEvent<{ next: 'checked' | 'unchecked' | 'indeterminate'; prev: 'checked' | 'unchecked' | 'indeterminate' }>,
+  ) => void
+  /** Native `change`, fired *after* a toggle applies (post-apply counterpart to
+   *  `onstatechange`). Lowercase so both renderers bind the native event. */
+  onchange?: (e: Event) => void
+  /** ARIA — set by the consumer / the `Checkbox` wrapper (the element never
+   *  touches these itself). */
+  'aria-checked'?: 'true' | 'false' | 'mixed'
+  'aria-disabled'?: 'true' | 'false'
+  'aria-label'?: string
+}
+
+/**
+ * Attributes for the `<a-input>` custom element — a form-associated text
+ * field whose real `<input>` / `<textarea>` lives in shadow DOM. For the
+ * typed JSX wrapper use `Input` from `@antadesign/anta`.
+ *
+ * Slots (light-DOM children): `label`, `leading`, `trailing`, `hint`.
+ * The element exposes `::part(field | input | label | leading | trailing | hint)`
+ * for styling, and `:state(filled)` / `:state(invalid)` as CSS hooks.
+ */
+export interface AInputAttributes extends BaseAttributes {
+  /** Controlled value (string). Reflected to the shadow control only when it
+   *  differs, so the caret survives re-renders. */
+  value?: string
+  /** Initial value for the uncontrolled case; read once on connect. */
+  defaultvalue?: string
+  /** Render a `<textarea>` rather than `<input>`. Presence-based. */
+  multiline?: boolean | ''
+  /** Fixed visible row count for a `<textarea>` (implies multiline). */
+  rows?: number | string
+  /** Cap autogrow height (rows) for a multiline field with no `rows`. */
+  maxrows?: number | string
+  /** Validation/feedback tone — colors the border + message and (via the
+   *  wrapper) the glyph. Only `critical` carries validity weight (`aria-invalid`
+   *  + `:state(invalid)`); the others are advisory. Omit for the neutral field. */
+  status?: 'neutral' | 'brand' | 'info' | 'success' | 'warning' | 'critical'
+  /** Custom accent colour (any literal CSS colour) — tints the resting + hover
+   *  border via an oklch derivation. `status` overrides it for validation. */
+  tone?: string
+  /** Disabled state. Presence-based. */
+  disabled?: boolean | ''
+  /** Read-only state. Presence-based. */
+  readonly?: boolean | ''
+  /** Required — drives native validity. Presence-based. */
+  required?: boolean | ''
+  /** Dim the leading/trailing adornments at rest (0.6); they brighten to full
+   *  when the field is hovered or focused. Presence-based. */
+  'dim-actions'?: boolean | ''
+  /** Size variant. small=24px, medium (default)=28px, large=32px. */
+  size?: 'small' | 'medium' | 'large'
+  /** Single-line input type (ignored when multiline). `search` is intentionally
+   *  unavailable — it triggers browser-injected clear/search affordances. */
+  type?: 'text' | 'email' | 'password' | 'tel' | 'url' | 'number'
+  /** Form field name — submitted via ElementInternals. */
+  name?: string
+  /** Placeholder shown when empty. */
+  placeholder?: string
+  autocomplete?: string
+  inputmode?: 'none' | 'text' | 'decimal' | 'numeric' | 'tel' | 'search' | 'email' | 'url'
+  maxlength?: number | string
+  minlength?: number | string
+  pattern?: string
+  min?: number | string
+  max?: number | string
+  step?: number | string
+  spellcheck?: 'true' | 'false' | boolean
+  /** Fires on every keystroke (`input` is composed — it reaches the host). */
+  oninput?: (e: any) => void
+  /** Fires on commit; the element re-dispatches the control's `change` on the
+   *  host (native `change` isn't composed). */
+  onchange?: (e: any) => void
+  /** Fires when the built-in clear button is clicked, before clearing
+   *  (cancelable, bubbling `clearclick` event — preventDefault keeps the
+   *  value). All-lowercase so it binds in React *and* Preact. */
+  onclearclick?: (e: any) => void
+  /** Fires after the field has been cleared (bubbling `clearinput` event).
+   *  All-lowercase so it binds in React *and* Preact. */
+  onclearinput?: (e: any) => void
+  'aria-invalid'?: 'true' | 'false' | boolean
+  'aria-label'?: string
+}
+
+/**
+ * Attributes for the `<a-menu>` custom element. Placed immediately after the
+ * trigger it anchors to (root menu), or nested inside an `<a-menu-item>`
+ * (submenu). For the typed JSX wrapper use `Menu` from `@antadesign/anta`.
+ */
+export interface AMenuAttributes extends BaseAttributes {
+  /** Preferred placement relative to the trigger; auto-flips / clamps.
+   *  Defaults to `'bottom-start'`. */
+  placement?: 'bottom-start' | 'bottom-end' | 'top-start' | 'top-end' | 'bottom' | 'top'
+  /** Open on right-click of the trigger region, positioned at the pointer.
+   *  Presence-based (`''` on, omit off). */
+  context?: boolean | ''
+  /** Open at the pointer coordinates instead of aligned to the trigger box.
+   *  Presence-based (`''` on, omit off). */
+  coord?: boolean | ''
+  /** Submenus only (an `<a-menu>` nested inside an `<a-menu-item>` — detected
+   *  from that structure; ignored on a root menu). Submenus open on hover by
+   *  default; this opts out, making the submenu click-only. Presence-based
+   *  (`''` on, omit off). */
+  nohover?: boolean | ''
+  /** Gap in pixels between the trigger and the menu. Defaults to 4. */
+  offset?: number | string
+  /** Controlled open state (`'open'` / `'closed'`). Omit for uncontrolled;
+   *  present → visibility follows this value, and the element never writes it
+   *  (the consumer owns it). Listen to `statechange` to keep it in sync. See
+   *  STATEFUL-COMPONENTS.md. */
+  state?: 'open' | 'closed'
+  /** State-change event — `cancelable`, fired before applying, with
+   *  `detail: { next, prev }` in the `'open'|'closed'` vocabulary (plus optional
+   *  `coord` / `originEvent`). All-lowercase so React/Preact bind it to the
+   *  element's `statechange` CustomEvent. The `Menu` wrapper exposes this as the
+   *  `onStateChange` prop. */
+  onstatechange?: (
+    e: CustomEvent<{ next: 'open' | 'closed'; prev: 'open' | 'closed' }>,
+  ) => void
+  /** ARIA role — the JSX wrapper sets this to `'menu'`. */
+  role?: string
+  'aria-orientation'?: 'vertical' | 'horizontal'
+}
+
+/**
+ * Attributes for the `<a-menu-item>` custom element. For the typed JSX
+ * wrapper use `MenuItem` from `@antadesign/anta`.
+ */
+export interface AMenuItemAttributes extends BaseAttributes {
+  /** Disabled state. Presence-based (`''` on, omit off). */
+  disabled?: boolean | ''
+  /** Semantic tone. Colors the label, icon, and hover tint. `'neutral'`
+   *  (the default) is the same as omitting it. */
+  tone?: 'neutral' | 'brand' | 'info' | 'success' | 'warning' | 'critical'
+  /** Keep the menu open after this item is chosen (toggles / multi-select),
+   *  instead of the default close-on-select. Presence-based (`''` on, omit
+   *  off). The universal form is `data-menu-open` (works on any element). */
+  'data-menu-open'?: boolean | ''
+  /** Marks this item as a submenu parent (renders a chevron, opens a nested
+   *  `<a-menu>`). Presence-based (`''` on, omit off). */
+  submenu?: boolean | ''
+  /** ARIA role — `'menuitem'`. */
+  role?: string
+  'aria-haspopup'?: 'menu' | 'true' | 'false' | boolean
+  /** Submenu-parent expanded state. Render `'false'` as the resting baseline;
+   *  the nested `<a-menu>` element reflects the live open state. */
+  'aria-expanded'?: 'true' | 'false' | boolean
+  'aria-disabled'?: 'true' | 'false' | boolean
+}
+
+/**
+ * Attributes for the `<a-menu-group>` styled element. For the typed JSX
+ * wrapper use `MenuGroup` from `@antadesign/anta`.
+ */
+export interface AMenuGroupAttributes extends BaseAttributes {
+  /** Keep the menu open after any item in this group is chosen. Presence-based
+   *  (`''` on, omit off). The universal form is `data-menu-open`. */
+  'data-menu-open'?: boolean | ''
+  role?: string
+  'aria-label'?: string
+}
+
+/**
+ * Attributes for the `<a-button>` custom element. For the typed JSX
+ * wrapper use `Button` from `@antadesign/anta`.
+ */
+export interface AButtonAttributes extends BaseAttributes {
+  /** Visual emphasis. */
+  priority?: 'primary' | 'secondary' | 'tertiary' | 'quaternary'
+  /** Semantic tone, or any literal CSS color for a one-off custom tone. */
+  tone?:
+    | 'neutral'
+    | 'brand'
+    | 'info'
+    | 'success'
+    | 'warning'
+    | 'critical'
+    | (string & {})
+  /** Underline style. Only renders on `priority="tertiary" | "quaternary"`. */
+  underline?: 'solid' | 'dashed' | 'dotted'
+  /** Size variant. small=22px, medium=26px, large=30px. */
+  size?: 'small' | 'medium' | 'large'
+  /** Drop outer padding to zero. Only takes effect on `priority="quaternary"`.
+   *  Presence-based: `''` (or any value) turns it on; omit to turn off. */
+  paddingless?: boolean | ''
+  /** Loading state. Presence-based (`''` on, omit off). */
+  loading?: boolean | ''
+  /** Disabled state. Presence-based (`''` on, omit off). */
+  disabled?: boolean | ''
+  /** Toggled-on / pressed state. Presence-based (`''` on, omit off). */
+  selected?: boolean | ''
+  /** Submit/reset semantics. */
+  type?: 'button' | 'submit' | 'reset'
+  /** Associate with a form by id when not nested inside it. */
+  form?: string
+  /** Custom event name dispatched (bubbling) on click. */
+  'data-custom-event'?: string
+  'aria-disabled'?: 'true' | 'false' | boolean
+  'aria-busy'?: 'true' | 'false' | boolean
+}
+
+/**
+ * Attributes for the `<a-radio>` custom element — one option in a radio set.
+ * Presentational: the parent `<a-radio-group>` owns selection, keyboard, and form
+ * value. The selected look comes from the element's `:state(selected)` (set by the
+ * group via the `selected` property), not a host attribute. There is no `Radio`
+ * JSX wrapper — `RadioGroup` renders these from its `options`, and hand-authors
+ * write `<a-radio>` directly inside an `<a-radio-group>`.
+ */
+export interface ARadioAttributes extends BaseAttributes {
+  /** This option's identity / submitted value. */
+  value?: string
+  /** Mark colour (selected ring fill + dot, unselected ring border), or any literal
+   *  CSS color for a one-off custom tone. Named tones track light/dark mode via the
+   *  theme-aware role tokens. `'neutral'` is the default. The label + hint stay
+   *  neutral — use `tone-text` for those. */
+  tone?: 'brand' | 'neutral' | 'info' | 'success' | 'warning' | 'critical' | (string & {})
+  /** Text colour (label + hint), independent of `tone`. A named tone or any literal
+   *  CSS color; named tones track light/dark via the `--text-*` role tokens. Omit
+   *  (or `'neutral'`) to leave the text neutral. */
+  'tone-text'?: 'brand' | 'neutral' | 'info' | 'success' | 'warning' | 'critical' | (string & {})
+  /** Size variant. small=14px, medium=16px, large=18px control. */
+  size?: 'small' | 'medium' | 'large'
+  /** Disabled state. Presence-based (`''` on, omit off). */
+  disabled?: boolean | ''
+  /** Selected state — connect-time seed for the standalone render path (no
+   *  group). In a group, the group drives `:state(selected)` directly and this
+   *  attribute is ignored. Presence-based. */
+  selected?: boolean | ''
+  /** ARIA — `role="radio"` is set by the consumer (`RadioGroup` on each option,
+   *  or a hand-author). `aria-checked` is published by the element through
+   *  `ElementInternals` (off the DOM), driven by the `selected` property the group
+   *  sets — not a DOM attribute. Roving `tabindex` (inherited from `BaseAttributes`)
+   *  is likewise set by `RadioGroup`, not the element. */
+  role?: 'radio'
+  'aria-disabled'?: 'true' | 'false'
+}
+
+/**
+ * Attributes for the `<a-radio-group>` custom element — the single-select
+ * coordinator. It is the form-associated element (submits one `name=value`).
+ * No shadow DOM: an optional group header (`<a-radio-group-label>` + an optional
+ * `<a-radio-group-hint>` description) sits above an `<a-radio-list>` wrapping the
+ * `<a-radio>` options — each option wraps its text in `<a-radio-label>` and an
+ * optional `<a-radio-hint>`. All plain light-DOM children, laid out by
+ * `a-radio-group.css`, so the arrangement is restylable with ordinary CSS
+ * (`a-radio-group a-radio-list { … }`). The group
+ * coordinates **off-DOM only** — it never writes the DOM: selection via each
+ * radio's `selected` property, focus via `internals.ariaActiveDescendantElement`,
+ * the form value via `setFormValue`. Roving `tabindex` (the JSX path) is rendered
+ * by the `RadioGroup` wrapper, not the element. The `RadioGroup` wrapper composes
+ * the label/list/hint from `label` / `hint`; hand-authors write them directly.
+ * For the typed JSX wrapper use `RadioGroup` from `@antadesign/anta`.
+ */
+export interface ARadioGroupAttributes extends BaseAttributes {
+  /** Controlled selected value (the chosen radio's `value`). Present → controlled:
+   *  the element reflects changes to this attribute and a pick only dispatches
+   *  `statechange`. Absent → uncontrolled (seed with `default-state`). */
+  state?: string
+  /** Uncontrolled initial selected value — read once on connect / form-reset. */
+  'default-state'?: string
+  /** Form field name — the group submits `name=value`. */
+  name?: string
+  /** Mark tone cascaded to children that don't set their own, or any literal CSS
+   *  color for a one-off custom tone. Inherits through CSS so every child
+   *  `<a-radio>` picks up the same fill curve. The option text stays neutral —
+   *  use `tone-text`. */
+  tone?: 'brand' | 'neutral' | 'info' | 'success' | 'warning' | 'critical' | (string & {})
+  /** Text tone cascaded to children's label + hint, independent of `tone`. A named
+   *  tone or any literal CSS color. Omit (or `'neutral'`) to leave the text neutral. */
+  'tone-text'?: 'brand' | 'neutral' | 'info' | 'success' | 'warning' | 'critical' | (string & {})
+  /** Size cascaded to children that don't set their own. */
+  size?: 'small' | 'medium' | 'large'
+  /** Validation/feedback tone for the group hint — same set as `<a-input>`'s
+   *  `status`. Recolours `<a-radio-group-hint>`; omit for the neutral default. */
+  status?: 'neutral' | 'brand' | 'info' | 'success' | 'warning' | 'critical'
+  /** Disable the whole group. Presence-based. */
+  disabled?: boolean | ''
+  /** Layout + arrow-key axis. `'vertical'` is the default. */
+  orientation?: 'vertical' | 'horizontal'
+  /** Fires whenever the selection changes. `detail` carries `{ next, prev, reason }`:
+   *  `next`/`prev` are the selected values (`null` = nothing selected), and `reason`
+   *  is `'user'` (a pick — the event is **cancelable**; a synchronous
+   *  `preventDefault()` vetoes it in uncontrolled mode), `'reset'` (a `<form>` reset),
+   *  or `'restore'` (bfcache / autofill restore) — the latter two are not cancelable.
+   *  All-lowercase to bind across both renderers (like `<a-checkbox>`). */
+  onstatechange?: (
+    e: CustomEvent<{
+      next: string | null
+      prev: string | null
+      reason: 'user' | 'reset' | 'restore'
+    }>,
+  ) => void
+  /** Native `change`, fired *after* a selection applies (post-apply counterpart to
+   *  `onstatechange`). Lowercase so both renderers bind the native event. */
+  onchange?: (e: Event) => void
+  /** Group focus enter / leave — wired from the bubbling `focusin` / `focusout`
+   *  (focus lands on an option, not the group). The `RadioGroup` wrapper maps its
+   *  `onFocus` / `onBlur` props here. */
+  onfocusin?: (e: FocusEvent) => void
+  onfocusout?: (e: FocusEvent) => void
+  /** ARIA — set by the `RadioGroup` wrapper (the element never touches these). */
+  role?: 'radiogroup'
+  'aria-disabled'?: 'true' | 'false'
+  'aria-label'?: string
+  'aria-labelledby'?: string
+}
+
+/**
+ * Attributes for the `<a-tab>` custom element — one tab in a tablist. Presentational,
+ * the sibling of `<a-radio>`: the parent `<a-tabs>` owns selection, keyboard, and
+ * scrolling. The selected look comes from the element's `:state(selected)` (set by the
+ * tablist via the `selected` property), not a host attribute. There is no `Tab` web
+ * component to render directly — `Tabs` renders these from its `<Tab>` children, and
+ * hand-authors write `<a-tab>` directly inside an `<a-tabs>`. Wrap the visible label in
+ * `<a-tab-label>` (as `Tabs` does) so it carries the optical baseline nudge, truncates
+ * with an ellipsis when constrained, and keeps a sibling `<a-icon>` centered — exactly
+ * like `<a-button-label>`.
+ */
+export interface ATabAttributes extends BaseAttributes {
+  /** This tab's identity / the value reported when it's selected. */
+  value?: string
+  /** Per-tab tone override (same vocabulary as `<a-tabs tone>`): colours this tab's
+   *  label + icons and, when selected, its indicator. Named tones tone the sliding
+   *  indicator too; a custom literal colour tones the indicator only in `noslide`.
+   *  Custom tones also set `--tabs-tone-source` on the tab (via the wrapper's style). */
+  tone?: 'neutral' | 'brand' | 'info' | 'success' | 'warning' | 'critical' | (string & {})
+  /** Selected state — connect-time seed for the standalone render path (no tablist).
+   *  In an `<a-tabs>`, the tablist drives `:state(selected)` directly and this
+   *  attribute is ignored. Presence-based (`''` on, omit off). */
+  selected?: boolean | ''
+  /** Disabled state. Presence-based (`''` on, omit off). */
+  disabled?: boolean | ''
+  /** ARIA — `role="tab"` is set by the consumer (`Tabs` on each tab, or a hand-author),
+   *  and `aria-controls` points at the paired panel. `aria-selected` is published by
+   *  the element through `ElementInternals` (off the DOM), driven by the `selected`
+   *  property the tablist sets — not a DOM attribute. `tabindex` (inherited from
+   *  `BaseAttributes`) is set by `Tabs` — every enabled tab is its own tab stop
+   *  (`tabindex="0"`) — not by the element. */
+  role?: 'tab'
+  'aria-controls'?: string
+  'aria-disabled'?: 'true' | 'false'
+}
+
+/**
+ * Attributes for the `<a-tabs>` custom element — the tablist + single-select
+ * coordinator. No shadow DOM: `<a-tab>` children are plain light-DOM, laid out by
+ * `a-tabs.css`, so the strip is restylable with ordinary CSS and usable hand-assembled.
+ * Unlike `<a-radio-group>` it is NOT form-associated (a tablist submits nothing), and
+ * the panels live outside it (siblings the `Tabs` wrapper shows/hides). The element
+ * coordinates **off-DOM only** — selection via each tab's `selected` property, focus via
+ * `internals.ariaActiveDescendantElement`, scroll via `scrollIntoView`. Roving
+ * `tabindex` (the JSX path) is rendered by the `Tabs` wrapper, not the element. For the
+ * typed JSX wrapper use `Tabs` from `@antadesign/anta`.
+ */
+export interface ATabsAttributes extends BaseAttributes {
+  /** Controlled selected value (the active tab's `value`). Present → controlled: the
+   *  element reflects changes to this attribute and a pick only dispatches
+   *  `statechange`. Absent → uncontrolled (seed with `default-state`). */
+  state?: string
+  /** Uncontrolled initial selected value — read once on connect. */
+  'default-state'?: string
+  /** Visual priority. `primary` (default) is the raised pill on a recessed track; `secondary`
+   *  keeps that sizing but drops the track (selected = subtle active background fill, no
+   *  border); `tertiary` is a bottom-underline under the selected tab only (no track, no rest
+   *  line). `tone` tints secondary + tertiary; primary stays neutral. */
+  priority?: 'primary' | 'secondary' | 'tertiary'
+  /** Tone applied to the selected indicator/label, or any literal CSS color for a
+   *  one-off custom tone (derived in oklch). `'neutral'` is the default. */
+  tone?: 'neutral' | 'brand' | 'info' | 'success' | 'warning' | 'critical' | (string & {})
+  /** Size variant. small=24px, medium (default)=28px, large=32px tall — matching Button's
+   *  scale (the label leading runs a touch tighter, offset by 1px more block padding per side). */
+  size?: 'small' | 'medium' | 'large'
+  /** Layout + arrow-key axis. `'horizontal'` (default) ellipsizes labels when tabs
+   *  overflow (scrolling is opt-in via CSS); `'vertical'` stacks them. */
+  orientation?: 'horizontal' | 'vertical'
+  /** Disable the sliding indicator. By default the selected-tab indicator is a single
+   *  rectangle that animates between tabs via CSS anchor positioning; with `noslide` the
+   *  highlight is painted on each tab and snaps with no movement (also the automatic
+   *  fallback where anchor positioning isn't supported). Presence-based (`''` on, omit off). */
+  noslide?: boolean | ''
+  /** Disable the whole strip. Presence-based (`''` on, omit off). */
+  disabled?: boolean | ''
+  /** Fires whenever the active tab changes. `detail` carries `{ next, prev }` (values;
+   *  `null` = none). Cancelable: a synchronous `preventDefault()` vetoes the pick in
+   *  uncontrolled mode. All-lowercase to bind across both renderers (like
+   *  `<a-radio-group>`). */
+  onstatechange?: (
+    e: CustomEvent<{ next: string | null; prev: string | null }>,
+  ) => void
+  /** Native `change`, fired *after* a selection applies (post-apply counterpart to
+   *  `onstatechange`). Lowercase so both renderers bind the native event. */
+  onchange?: (e: Event) => void
+  /** Strip focus enter / leave — wired from the bubbling `focusin` / `focusout` (focus
+   *  lands on a tab, not the tablist). The `Tabs` wrapper maps its `onFocus`/`onBlur`. */
+  onfocusin?: (e: FocusEvent) => void
+  onfocusout?: (e: FocusEvent) => void
+  /** ARIA — set by the `Tabs` wrapper (the element never touches these). */
+  role?: 'tablist'
+  'aria-orientation'?: 'horizontal' | 'vertical'
+  'aria-disabled'?: 'true' | 'false'
+  'aria-label'?: string
+}
+
+/**
+ * Attributes for the `<a-tabpanel>` styled tag.
+ *
+ * `<a-tabpanel>` has no JS — it's a CSS-only styled element. The `Tabs` wrapper renders
+ * it, pairs it to its tab via id, and toggles visibility declaratively: `hidden`
+ * (display:none) or `data-hide="visibility"` (keeps the layout box), plus `inert` while
+ * hidden. Low-level attributes; for the typed JSX wrapper use `TabPanel` (inside `Tabs`)
+ * from `@antadesign/anta`.
+ */
+export interface ATabpanelAttributes extends BaseAttributes {
+  /** Hidden via `display:none`. Presence-based (`''` on, omit off). */
+  hidden?: boolean | ''
+  /** Hidden via `visibility:hidden` (keeps the layout box). The `Tabs` wrapper sets
+   *  this for `mounting="visibility"`. */
+  'data-hide'?: 'visibility'
+  /** Removes the hidden panel from focus + the a11y tree. Presence-based. */
+  inert?: boolean | ''
+  /** ARIA — set by the `Tabs` wrapper. */
+  role?: 'tabpanel'
+  'aria-labelledby'?: string
+}

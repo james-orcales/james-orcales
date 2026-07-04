@@ -1,0 +1,224 @@
+---
+// A collapsible documentation section: a styled <details>/<summary>
+// whose header matches the visual scale of an `##` (h2) heading so a
+// `<Disclosure title="…">` reads like the section heading it replaces.
+// Used on the component pages to fold the Props and Component tokens
+// references away by default (the live demo stays the focus).
+//
+// The title is a real heading element (`h{level}`) carrying the `id`, so
+// it shows up in the page's table of contents (`<a-toc>` scans real
+// headings). The id lives on the heading — not the <details> — but existing
+// deep links — e.g. `#component-tokens` — keep resolving (the script below
+// opens the enclosing block when one is targeted).
+interface Props {
+  title: string
+  /** Start expanded. Defaults to collapsed. */
+  open?: boolean
+  /** Anchor id. Defaults to a slug of `title`. */
+  id?: string
+  /** Heading level for the title. Defaults to 2 (top-level section). */
+  level?: 2 | 3 | 4 | 5 | 6
+  /** When false, the title renders as a plain (non-heading, non-anchor)
+   *  label — kept out of the table of contents and not deep-linkable, while
+   *  the section stays expand/collapsible. Defaults to true. */
+  anchor?: boolean
+  /** Brand-tint the summary header (title text + chevron), matching how
+   *  `<Expander tone="brand">` colors its summary. Body internals stay
+   *  neutral. Used for the top-of-page Playground. Defaults to false. */
+  brand?: boolean
+}
+
+const { title, open = false, id, level = 2, anchor = true, brand = false } = Astro.props
+const slug = (id ?? title)
+  .toLowerCase()
+  .replace(/[^a-z0-9]+/g, '-')
+  .replace(/(^-|-$)/g, '')
+const Heading = `h${level}` as const
+---
+
+<details class:list={["disclosure", { plain: !anchor, brand }]} open={open}>
+  <summary class="summary">
+    <a-icon shape="chevron-right" class="chevron"></a-icon>
+    {/* A real heading carries the id so the TOC picks it up; the inner
+        anchor mirrors rehype-autolink-headings' `behavior: 'wrap'` output
+        (classes `header-anchor muted`) so the section deep-links and
+        hover-underlines like every other `##` heading. With `anchor={false}`
+        the title is a plain label instead — no heading, no id, no anchor — so
+        it stays out of the TOC and isn't deep-linkable, but still toggles. */}
+    {anchor ? (
+      <Heading id={slug} class="title">
+        <a class="header-anchor muted" href={`#${slug}`}>{title}</a>
+      </Heading>
+    ) : (
+      <span class="title plain">{title}</span>
+    )}
+  </summary>
+  <div class="body">
+    <slot />
+  </div>
+</details>
+
+<style>
+  .disclosure {
+    margin-block: 32px 0;
+  }
+
+  /* Plain (non-anchor) variant — e.g. the top-of-page Playground. Tighter
+     top margin since it isn't a full section heading. */
+  .disclosure.plain {
+    margin-block-start: 16px;
+  }
+
+  .summary {
+    display: flex;
+    align-items: center;
+    gap: 2px;
+    cursor: pointer;
+    user-select: none;
+    color: var(--text-1);
+    /* Hide the default disclosure triangle — the chevron replaces it. */
+    list-style: none;
+  }
+  .summary::-webkit-details-marker {
+    display: none;
+  }
+
+  /* The title is a real heading; its type scale comes from reset.css.
+     Just drop the heading's block margin so it sits inline with the
+     chevron in the summary row. */
+  .title {
+    margin: 0;
+  }
+
+  /* Plain (non-anchor) title — a label, not a heading. Sized close to h5. */
+  .title.plain {
+    font-size: 15px;
+    line-height: 20px;
+    font-weight: 584.62;
+    letter-spacing: 0;
+    color: var(--text-1);
+  }
+
+  .chevron {
+    color: var(--text-3);
+    flex-shrink: 0;
+    /* Hang the chevron in the left gutter (negative margin = chevron width
+       16px + gap 2px) so the title lands flush at the 960px prose edge —
+       aligned with regular `##` headings and the disclosure body — instead
+       of being pushed right by the chevron. The summary keeps its centering
+       (`margin-inline: auto` from base.css) untouched. At 18px the hang is
+       small enough that on mobile (16px content padding) only the chevron's
+       inset glyph whitespace overhangs, so no mobile special-casing needed. */
+    margin-left: -18px;
+    transition: transform 150ms ease-out, color 120ms ease-out;
+  }
+  .summary:hover .chevron {
+    color: var(--text-1);
+  }
+  .disclosure[open] > .summary .chevron {
+    transform: rotate(90deg);
+  }
+
+  /* Gap below the summary. Lives as padding (not margin) so it sits
+     inside the clipped grid item and collapses with the row during the
+     expand/collapse animation below. */
+  .body {
+    padding-top: 12px;
+  }
+
+  /* Animate expand / collapse. `::details-content` (Baseline) wraps the
+     content after <summary>; animate its grid row 0fr↔1fr (works in
+     Chrome/Firefox/Safari). Overflow is clipped while the row animates
+     and dropped once open + idle, so descendants (the playground corner
+     grip, Monaco popups, focus rings) aren't cut off when expanded. */
+  @media (prefers-reduced-motion: no-preference) {
+    .disclosure::details-content {
+      display: grid;
+      grid-template-rows: 0fr;
+      transition: grid-template-rows 240ms ease, content-visibility 240ms ease;
+      transition-behavior: allow-discrete;
+    }
+    .disclosure[open]::details-content {
+      grid-template-rows: 1fr;
+    }
+    /* The grid item collapses + clips while the row animates. `clip`
+       (not hidden) avoids creating a scroll container. */
+    .disclosure .body {
+      min-height: 0;
+      overflow: clip;
+    }
+    /* Drop the clip once open + idle: `overflow 0s 240ms` defers the
+       clip→visible flip to after the expand. On collapse the [open] rule
+       stops applying, so overflow snaps back to clip immediately and the
+       fold stays clipped throughout. */
+    .disclosure[open] .body {
+      overflow: visible;
+      transition: overflow 0s 240ms;
+      transition-behavior: allow-discrete; /* required for the delayed discrete flip */
+    }
+    /* Deep-link / anchor opens skip the animation (the script adds this
+       briefly) so the layout is final before we scroll to the target. */
+    .disclosure.no-anim::details-content,
+    .disclosure.no-anim .body {
+      transition: none;
+    }
+  }
+</style>
+
+<script>
+  // Make the disclosure headers behave like anchor-linked headings:
+  // clicking the header link always EXPANDS the section (never toggles
+  // it closed) and deep-links it, and arriving via a `#slug` URL opens
+  // the targeted section. Bundled once per page by Astro regardless of
+  // how many <Disclosure>s render, so it queries them all.
+  // Open the disclosure that contains the element with the given id —
+  // works for a block's own title heading AND for any heading nested in
+  // its body (so TOC entries inside a folded block expand it).
+  function openContaining(id: string): Element | null {
+    if (!id) return null
+    const target = document.getElementById(id)
+    const details = target?.closest('details.disclosure')
+    if (details instanceof HTMLDetailsElement && !details.open) {
+      // Deep-link / anchor open: expand instantly (no animation) so the
+      // page height is final before we scroll — otherwise the smooth
+      // scroll chases a moving target as the 0fr→1fr row grows. Re-enable
+      // the animation after the open commits so manual toggles still animate.
+      details.classList.add('no-anim')
+      details.open = true
+      requestAnimationFrame(() =>
+        requestAnimationFrame(() => details.classList.remove('no-anim')),
+      )
+    }
+    return target
+  }
+
+  // Deep links (shared URL, in-page nav): expand + scroll to the target.
+  function syncFromHash() {
+    const target = openContaining(decodeURIComponent(location.hash.slice(1)))
+    if (target) target.scrollIntoView({ block: 'start' })
+  }
+  syncFromHash()
+  window.addEventListener('hashchange', syncFromHash)
+
+  // Header-link click: own the interaction so the section opens rather
+  // than relying on the native <summary> toggle (which doesn't fire for
+  // a nested link). stopPropagation keeps it from toggling closed; the
+  // chevron / summary still toggles normally for collapsing.
+  for (const a of document.querySelectorAll<HTMLAnchorElement>(
+    'details.disclosure > summary :is(h2,h3,h4,h5,h6) > a.header-anchor',
+  )) {
+    a.addEventListener('click', (e) => {
+      e.preventDefault()
+      e.stopPropagation()
+      const headingId = a.closest('[id]')?.id
+      if (!headingId) return
+      // Open instantly (`openContaining` adds `.no-anim`) so the layout is
+      // final, update the URL without firing a scroll race, then scroll on
+      // the next frame. Doing this directly (not via `hashchange`) keeps the
+      // smooth scroll from being cancelled by the expand animation.
+      const target = openContaining(headingId)
+      history.replaceState(null, '', '#' + headingId)
+      if (target) target.scrollIntoView({ block: 'start' })
+    })
+  }
+</script>

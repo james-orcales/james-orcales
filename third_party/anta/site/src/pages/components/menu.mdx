@@ -1,0 +1,524 @@
+---
+layout: ../../layouts/DocsLayout.astro
+title: Menu
+---
+import Playground from '../../components/Playground'
+import Preview from '../../components/Preview.astro'
+import PropsTable from '../../components/PropsTable.astro'
+import Disclosure from '../../components/Disclosure.astro'
+import Columns from '../../components/Columns.astro'
+import Col from '../../components/Col.astro'
+import menuDemoCode from './menu.demo.ts'
+import MenuNestedDemo from '../../components/MenuNestedDemo'
+import { Menu, MenuItem, MenuSeparator, MenuGroup, Button } from '@antadesign/anta'
+
+# Menu
+
+A dropdown or context menu that anchors to any target and just works. Place
+`<Menu>` immediately after the trigger — a button, an icon, a whole region —
+and it opens on click, positions itself with room-aware flipping, and dismisses
+on outside-click, `Escape`, or scroll. Rows are dedicated **`MenuItem`s** (not
+buttons), with optional leading icons, trailing keyboard hints, separators,
+grouped sections, and nested submenus.
+
+Open state is uncontrolled by default — pass **`onStateChange`** (event-first:
+`(event, { next, prev })`, or listen for the raw **`statechange`** event) to
+observe it, or pass **`open`** to control it, applying `detail.next` to `open`
+from your `onStateChange` handler (submenus stay uncontrolled). `statechange` is
+**cancelable** and fires before the menu moves, so uncontrolled you can keep it
+open with `event.preventDefault()`. You can also grab a `ref` and call
+`.open()` / `.close()` / `.toggle()`.
+
+<Disclosure title="Playground" anchor={false} brand>
+
+<Playground
+  client:visible
+  component="Menu"
+  layout="side"
+  panelHeight={440}
+  initialCode={menuDemoCode}
+  initialCss={`html, body { height: 100%; }
+.preview { min-height: 100%; align-items: flex-start; justify-content: center; padding-top: 24px; }`}
+/>
+
+</Disclosure>
+
+## Dropdown from a button
+
+<Columns>
+<Col>
+
+Render `<Menu>` right after the trigger element. A `MenuItem` takes a leading
+`icon`, a `label` (or `children`), and a trailing `kbd` hint. Selecting an item
+closes the menu and fires its `onSelect(event, { value, label })`; `Escape` or an
+outside click dismisses without selecting. Give items a `value` to route a single
+handler — `onSelect` reports the chosen item's `value` and `label`, and never
+fires for a submenu parent (that opens the flyout) or a selection bubbling up
+from a nested submenu.
+
+</Col>
+<Col>
+
+<Preview>
+  <Button>Actions</Button>
+  <Menu>
+    <MenuItem icon="edit" label="Edit" kbd="⌘E" />
+    <MenuItem icon="copy" label="Duplicate" kbd="⌘D" />
+    <MenuItem icon="download" label="Export" />
+    <MenuSeparator />
+    <MenuItem tone="critical" icon="trash" label="Delete" kbd="⌘⌫" />
+  </Menu>
+</Preview>
+
+```tsx folded
+// One handler, keyed by each item's `value`.
+const onSelect = (e, { value }) => act(value)
+
+<Button>Actions</Button>
+<Menu>
+  <MenuItem icon="edit" label="Edit" kbd="⌘E" value="edit" onSelect={onSelect} />
+  <MenuItem icon="copy" label="Duplicate" kbd="⌘D" value="duplicate" onSelect={onSelect} />
+  <MenuItem icon="download" label="Export" value="export" onSelect={onSelect} />
+  <MenuSeparator />
+  <MenuItem tone="critical" icon="trash" label="Delete" kbd="⌘⌫" value="delete" onSelect={onSelect} />
+</Menu>
+```
+
+</Col>
+</Columns>
+
+## Tones
+
+<Columns>
+<Col>
+
+`tone` colors an item's label, icon, and hover tint with a semantic palette —
+`brand`, `info`, `success`, `warning`, or `critical` — tracking light and dark
+mode automatically. Omit it (or pass `neutral`) for the standard gray. `critical`
+is the conventional destructive action.
+
+</Col>
+<Col>
+
+<Preview>
+  <Button>Status</Button>
+  <Menu>
+    <MenuItem label="Neutral" />
+    <MenuItem tone="brand" icon="sparkles" label="Brand" />
+    <MenuItem tone="info" icon="info" label="Info" />
+    <MenuItem tone="success" icon="circle-check" label="Success" />
+    <MenuItem tone="warning" icon="warning-triangle" label="Warning" />
+    <MenuItem tone="critical" icon="trash" label="Critical" />
+  </Menu>
+</Preview>
+
+```tsx folded
+<Menu>
+  <MenuItem label="Neutral" />
+  <MenuItem tone="brand" icon="star" label="Brand" />
+  <MenuItem tone="info" icon="info" label="Info" />
+  <MenuItem tone="success" icon="circle-check" label="Success" />
+  <MenuItem tone="warning" icon="warning-triangle" label="Warning" />
+  <MenuItem tone="critical" icon="trash" label="Critical" />
+</Menu>
+```
+
+</Col>
+</Columns>
+
+## Placement
+
+<Columns>
+<Col>
+
+`placement` sets the preferred side and edge alignment: `bottom-start` (the
+default), `bottom-end`, `top-start`, or `top-end`. The `-start` / `-end` suffix
+aligns the menu's left or right edge to the trigger. The menu auto-flips
+vertically and clamps horizontally when there isn't room, so the placement is a
+preference, not a constraint.
+
+</Col>
+<Col>
+
+<Preview>
+  <Button>bottom-start</Button>
+  <Menu placement="bottom-start">
+    <MenuItem label="One" />
+    <MenuItem label="Two" />
+  </Menu>
+  <Button>bottom-end</Button>
+  <Menu placement="bottom-end">
+    <MenuItem label="One" />
+    <MenuItem label="Two" />
+  </Menu>
+  <Button>top-start</Button>
+  <Menu placement="top-start">
+    <MenuItem label="One" />
+    <MenuItem label="Two" />
+  </Menu>
+  <Button>top-end</Button>
+  <Menu placement="top-end">
+    <MenuItem label="One" />
+    <MenuItem label="Two" />
+  </Menu>
+</Preview>
+
+```tsx folded
+<Button>bottom-start</Button>
+<Menu placement="bottom-start">…</Menu>
+
+<Button>bottom-end</Button>
+<Menu placement="bottom-end">…</Menu>
+
+<Button>top-start</Button>
+<Menu placement="top-start">…</Menu>
+
+<Button>top-end</Button>
+<Menu placement="top-end">…</Menu>
+```
+
+</Col>
+</Columns>
+
+## Right-click & at-cursor
+
+<Columns>
+<Col>
+
+Pass `context` to open on right-click (the `contextmenu` event) of the region
+the menu follows, positioned at the pointer — ideal for content surfaces like a
+log viewer or canvas where secondary actions shouldn't clutter the UI. `coord`
+on its own opens a normal left-click menu at the cursor instead of aligned to
+the trigger box.
+
+</Col>
+<Col>
+
+<Preview>
+  <div style="display:grid;place-items:center;width:100%;height:120px;border:1px dashed var(--border-2);border-radius:8px;color:var(--text-4)">Right-click anywhere here</div>
+  <Menu context>
+    <MenuItem icon="link" label="Share log" />
+    <MenuItem icon="copy" label="Copy moment" />
+  </Menu>
+</Preview>
+
+```tsx folded
+<div class="canvas">Right-click anywhere here</div>
+<Menu context>
+  <MenuItem icon="link" label="Share log" onSelect={share} />
+  <MenuItem icon="copy" label="Copy moment" onSelect={copy} />
+</Menu>
+```
+
+</Col>
+</Columns>
+
+## Submenus
+
+<Columns>
+<Col>
+
+Mark a `MenuItem` with `submenu` and nest a `<Menu>` inside it to create a
+flyout (the nested menu detects it's a submenu from being inside the item). The
+parent item gets a chevron (override it per item with `iconTrailing`),
+`aria-haspopup="menu"`, and an `aria-expanded` that
+tracks the flyout's open state; the submenu opens
+to the side and flips when it nears the edge. Submenus open on **hover**
+(with intent timing, so a quick pass-through doesn't trigger them) as well as on
+click; add `nohover` to a submenu to make it click-only. Hover-intent is
+mouse-only regardless: on touch a submenu opens on tap and stays open until you
+dismiss it or open a sibling.
+
+For a top-level dropdown, add `aria-haspopup="menu"` to your own trigger element
+— it's a control you render, so the accessible name and popup hint live there.
+
+</Col>
+<Col>
+
+<Preview>
+  <MenuNestedDemo client:visible />
+  <style is:inline>{`
+    .menu-check-row {
+      display: flex;
+      align-items: center;
+      gap: 4px;
+      padding: 4px 8px 4px 6px;
+      /* the row itself isn't clickable — only the checkbox and the Only button
+         are, so don't inherit the surface's pointer cursor onto the dead slot */
+      cursor: default;
+    }
+    /* the checkbox fills the row up to the Only slot, so its clickable label area
+       grows long even for short labels; the pointer cursor stays on that area */
+    .menu-check { flex: 1; cursor: pointer; }
+    /* Only keeps its slot reserved (opacity, not display → no layout shift) and
+       reveals on row hover / keyboard focus; click-through while hidden so the
+       empty slot shows the default cursor and does nothing */
+    .menu-check-row a-button {
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity 0.12s ease-out;
+    }
+    .menu-check-row:hover a-button,
+    .menu-check-row a-button:focus-visible {
+      opacity: 1;
+      pointer-events: auto;
+    }
+  `}</style>
+</Preview>
+
+Submenus nest arbitrarily deep — here `View → Columns → Visible columns` is three
+flyouts in. The deepest one isn't `MenuItem`s but **custom content**: a checkbox
+list whose region carries `data-menu-open`, so ticking a box (or the **Select all**
+toggle, or a row's **Only** button — which leaves just that column on) updates state
+**without closing the menu**.
+
+```tsx folded
+const COLUMNS = ['Name', 'Status', 'Owner', 'Created', 'Modified']
+const [on, setOn] = useState(() => Object.fromEntries(COLUMNS.map((c) => [c, true])))
+const allOn = COLUMNS.every((c) => on[c])
+const someOn = COLUMNS.some((c) => on[c])
+const only = (c) => setOn(Object.fromEntries(COLUMNS.map((k) => [k, k === c])))
+// …toggle / toggleAll omitted
+
+<Button>More</Button>
+<Menu>
+  <MenuItem icon="edit" label="Rename" />
+  <MenuItem label="Move to" submenu>
+    <Menu>
+      <MenuItem icon="folder-open" label="Projects" />
+      <MenuItem icon="folder-open" label="Archive" />
+    </Menu>
+  </MenuItem>
+  <MenuItem label="View" submenu>
+    <Menu>
+      <MenuItem label="Columns" submenu>
+        <Menu>
+          <MenuItem label="Visible columns" submenu>
+            <Menu>
+              {/* custom content — never auto-closes thanks to data-menu-open */}
+              <div class="menu-check-row" data-menu-open>
+                {/* Checkbox takes 'indeterminate' directly — no ref poking */}
+                <Checkbox
+                  className="menu-check"
+                  label="Select all"
+                  checked={allOn ? true : someOn ? 'indeterminate' : false}
+                  onStateChange={toggleAll}
+                />
+              </div>
+              <MenuSeparator />
+              {COLUMNS.map((c) => (
+                <div class="menu-check-row" data-menu-open key={c}>
+                  <Checkbox className="menu-check" label={c} checked={on[c]} onStateChange={() => toggle(c)} />
+                  <Button priority="tertiary" size="small" onClick={() => only(c)}>Only</Button>
+                </div>
+              ))}
+            </Menu>
+          </MenuItem>
+        </Menu>
+      </MenuItem>
+    </Menu>
+  </MenuItem>
+</Menu>
+```
+
+</Col>
+</Columns>
+
+## Groups
+
+<Columns>
+<Col>
+
+Wrap related items in a `MenuGroup` with a `label` to add a titled section.
+Headings are skipped during keyboard navigation, which flattens all items into a
+single up/down sequence across group boundaries.
+
+</Col>
+<Col>
+
+<Preview>
+  <Button>View</Button>
+  <Menu>
+    <MenuGroup label="Sort by">
+      <MenuItem icon="check" label="Name" />
+      <MenuItem label="Date modified" />
+      <MenuItem label="Size" />
+    </MenuGroup>
+    <MenuSeparator />
+    <MenuGroup label="Show">
+      <MenuItem label="Hidden files" data-menu-open />
+    </MenuGroup>
+  </Menu>
+</Preview>
+
+```tsx folded
+<Menu>
+  <MenuGroup label="Sort by">
+    <MenuItem icon="check" label="Name" />
+    <MenuItem label="Date modified" />
+  </MenuGroup>
+  <MenuSeparator />
+  <MenuGroup label="Show">
+    <MenuItem label="Hidden files" data-menu-open />
+  </MenuGroup>
+</Menu>
+```
+
+</Col>
+</Columns>
+
+## Custom content & the close contract
+
+<Columns>
+<Col>
+
+The close decision is read straight from the DOM on click — never from whether a
+handler called `preventDefault` — so it's safe in runtimes where event handlers
+run off the UI thread. Walking out from the click, the nearest marker wins:
+
+- A **`MenuItem`** is a choice → selecting it **closes** the menu.
+- **Arbitrary content you inject never closes it** — drop a slider, an input, or
+  any control straight into a `<Menu>` and interacting leaves the menu open.
+- **`data-menu-open`** keeps the menu open past a click —
+  put it on an item, a `MenuGroup`, or any wrapping element (toggles, multi-select).
+- **`data-menu-close`** opts arbitrary content *into* closing — so a custom
+  element (or a "Done" button inside a `data-menu-open` region) can dismiss the
+  menu without being a `MenuItem`.
+
+For programmatic open/close from app state, drive the `open` prop (the `state`
+attribute, `"open"` / `"closed"`) and react via `onStateChange`, or grab a `ref`
+and call `.open()` / `.close()` / `.toggle()`.
+
+</Col>
+<Col>
+
+<Preview>
+  <Button>Settings</Button>
+  <Menu>
+    <MenuItem label="Profile" />
+    <MenuItem label="Notifications" data-menu-open />
+    <MenuSeparator />
+    <div data-menu-open style="padding:8px;display:flex;flex-direction:column;gap:6px;min-width:200px">
+      <label style="font-size:12px;color:var(--text-4)">Zoom</label>
+      <input type="range" />
+      <button data-menu-close style="align-self:flex-end;padding:2px 8px">Done</button>
+    </div>
+  </Menu>
+</Preview>
+
+```tsx folded
+<Menu>
+  <MenuItem label="Profile" onSelect={openProfile} />
+  {/* data-menu-open: a toggle that doesn't dismiss */}
+  <MenuItem label="Notifications" data-menu-open onSelect={toggleNotifs} />
+  <MenuSeparator />
+  {/* data-menu-open region: interacting with the slider keeps the menu open;
+      the Done button opts back into closing with data-menu-close */}
+  <div data-menu-open class="zoom">
+    <label>Zoom</label>
+    <input type="range" />
+    {/* a plain button, not a MenuItem — data-menu-close lets it dismiss */}
+    <button data-menu-close>Done</button>
+  </div>
+</Menu>
+```
+
+</Col>
+</Columns>
+
+## Keyboard
+
+While open, the menu keeps Tab focus contained. Open the trigger with `Enter` /
+`Space` to focus the first item.
+
+- **↑ / ↓** — move between items (wraps; skips separators, headings, and disabled items)
+- **Home / End** — first / last item
+- **Type-ahead** — type to jump to the next item whose label matches
+- **→ / Enter** — open a submenu (and focus its first item); **←** — close it, back to the parent
+- **Enter / Space** — activate the focused item
+- **Tab / Shift+Tab** — cycle through the focusables *inside* the menu — items **and** any nested controls (a slider, an input, a button) — wrapping at the ends so focus stays in the open menu. Arrow keys hand off to a nested control once it's focused
+- **Esc** — close the topmost menu and return focus to its parent item or trigger
+
+## Controlled vs Uncontrolled
+
+Open state follows Anta's shared **state contract**. By default the menu is
+*uncontrolled* — its triggers (click / right-click / `.open()`) own open/close,
+so there's no prop to set. Pass `open` to *control* it: visibility follows the
+prop, and a user dismiss only *requests* a change. The `<Menu>` wrapper takes a
+boolean; the `<a-menu>` element takes a `state` string enum:
+
+| | `<Menu>` (JSX) | `<a-menu>` (element) |
+|---|---|---|
+| **Uncontrolled** (default) — triggers own it | *(no prop)* | *(no `state` attribute)* |
+| **Controlled** — you own it | `open` + `onStateChange` | `state="open" \| "closed"` + `statechange` |
+| **Change event** | `onStateChange(event, { next, prev })` — `next` / `prev` are **booleans** | `statechange`, a `CustomEvent<{ next, prev }>` — `'open'` / `'closed'` (plus `coord` / `originEvent`) |
+
+`statechange` is **cancelable** and fires *before* the menu moves. Uncontrolled,
+call `event.preventDefault()` to keep the menu as-is (e.g. block a dismiss).
+Controlled, the menu never self-moves — apply `detail.next` to `open` to accept,
+or do nothing to reject. (Submenus are always uncontrolled, regardless of `open`.)
+
+<Disclosure title="Menu props">
+
+<PropsTable component="Menu" />
+
+</Disclosure>
+
+<Disclosure title="MenuItem props">
+
+<PropsTable component="MenuItem" />
+
+</Disclosure>
+
+<Disclosure title="Styling">
+
+The popover surface lives in shadow DOM and is exposed as a **part** — style its
+chrome (background, frost, border, radius, shadow, padding, min-width) with
+`::part(menu)`. Menu items are light DOM, so style `a-menu-item` (and its
+`a-icon` / `kbd` / `a-menu-item-label` children) directly. **Click the trigger** to
+open the styled menu; the `.fancy` class is just for the demo:
+
+<Preview>
+  <Button>Actions</Button>
+  <Menu className="fancy">
+    <MenuItem icon="edit" label="Edit" />
+    <MenuItem icon="copy" label="Duplicate" />
+    <MenuItem tone="critical" icon="trash" label="Delete" />
+  </Menu>
+  <style is:inline>{`
+    a-menu.fancy::part(menu) {
+      border-radius: 22px;
+      min-width: 240px;
+      padding: 8px;
+      background: light-dark(rgba(255,255,255,0.55), rgba(28,26,32,0.5));
+      backdrop-filter: blur(28px) saturate(180%);
+      -webkit-backdrop-filter: blur(28px) saturate(180%);
+    }
+    a-menu.fancy a-menu-item {
+      border-radius: 999px;
+      padding: 10px 16px;
+      font-size: 15px;
+      --icon-size: 18px;
+    }
+  `}</style>
+</Preview>
+
+```css folded
+/* a "liquid glass" menu — more transparent + a stronger blur, big radius, fully
+   rounded items with roomier padding and bigger icons / type. */
+a-menu.fancy::part(menu) {
+  border-radius: 22px;
+  min-width: 240px;
+  padding: 8px;
+  background: light-dark(rgba(255,255,255,0.55), rgba(28,26,32,0.5));
+  backdrop-filter: blur(28px) saturate(180%);
+}
+a-menu.fancy a-menu-item {     /* items are light DOM — style them directly */
+  border-radius: 999px;
+  padding: 10px 16px;
+  font-size: 15px;
+  --icon-size: 18px;           /* inherited by the item's <a-icon> */
+}
+```
+
+</Disclosure>

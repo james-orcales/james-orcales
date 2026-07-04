@@ -2070,9 +2070,10 @@ func Test_Ignore_Recursive(t *testing.T) {
 	}
 }
 
-// A slash-less entry is unanchored: it matches the basename at any depth, the
-// way gitignore floats a pattern that carries no slash.
-func Test_Ignore_Unanchored(t *testing.T) {
+// A slash-less entry is relative to the repo root: it drops the root-level file
+// and never the same basename under a subdirectory. Any-depth matching is spelled
+// with a leading **/.
+func Test_Ignore_Root_Relative(t *testing.T) {
 	t.Parallel()
 	fixture := func(ignore []string) (files map[string]string) {
 		return map[string]string{
@@ -2088,12 +2089,21 @@ func Test_Ignore_Unanchored(t *testing.T) {
 	if !strings.Contains(stdout, "weird-File.txt") {
 		t.Fatalf("control: want weird-File.txt flagged: %s", stdout)
 	}
+	// Root-relative: the root file is dropped, the nested one stays flagged.
 	code, stdout, stderr := run_lint_tracked(t, fixture([]string{"weird-File.txt"}))
+	if code != 1 {
+		t.Fatalf("root-relative: nested still flagged, got %d; %q", code, stderr)
+	}
+	if !strings.Contains(stdout, "a/weird-File.txt") {
+		t.Fatalf("a root-relative entry must not drop the nested file: %s", stdout)
+	}
+	// A leading **/ opts into any-depth matching, dropping both.
+	code, stdout, stderr = run_lint_tracked(t, fixture([]string{"**/weird-File.txt"}))
 	if code != 0 {
-		t.Fatalf("unanchored: want clean run, got %d; stderr %q", code, stderr)
+		t.Fatalf("**/: want clean run, got %d; stderr %q", code, stderr)
 	}
 	if strings.Contains(stdout, "weird-File") {
-		t.Fatalf("a slash-less entry must drop every depth: %s", stdout)
+		t.Fatalf("a leading **/ must drop every depth: %s", stdout)
 	}
 }
 
@@ -2118,7 +2128,8 @@ func Test_Ignore_Anchored(t *testing.T) {
 	}
 }
 
-// A single-segment glob (*.weird) matches that pattern at any depth.
+// A single-segment glob (*.weird) is root-relative: it drops matching names at the
+// repo root only. Any-depth matching is spelled **/*.weird.
 func Test_Ignore_Segment_Glob(t *testing.T) {
 	t.Parallel()
 	fixture := func(ignore []string) (files map[string]string) {
@@ -2135,12 +2146,21 @@ func Test_Ignore_Segment_Glob(t *testing.T) {
 	if !strings.Contains(stdout, ".weird") {
 		t.Fatalf("control: want *.weird names flagged: %s", stdout)
 	}
+	// Root-relative: *.weird drops the root name, the nested one stays flagged.
 	code, stdout, stderr := run_lint_tracked(t, fixture([]string{"*.weird"}))
+	if code != 1 {
+		t.Fatalf("*.weird: nested still flagged, got %d; %q", code, stderr)
+	}
+	if !strings.Contains(stdout, "a/Bad-Two.weird") {
+		t.Fatalf("*.weird must not drop the nested name: %s", stdout)
+	}
+	// **/*.weird opts into any-depth matching, dropping both.
+	code, stdout, stderr = run_lint_tracked(t, fixture([]string{"**/*.weird"}))
 	if code != 0 {
-		t.Fatalf("*.weird: want clean run, got %d; stderr %q", code, stderr)
+		t.Fatalf("**/*.weird: want clean run, got %d; stderr %q", code, stderr)
 	}
 	if strings.Contains(stdout, ".weird") {
-		t.Fatalf("*.weird must drop matching names at any depth: %s", stdout)
+		t.Fatalf("**/*.weird must drop matching names at any depth: %s", stdout)
 	}
 }
 
@@ -5903,5 +5923,37 @@ func Test_Deterministic_Sibling_Import(t *testing.T) {
 	}
 	if specification_diagnosed(diags, "import only deterministic packages") {
 		t.Fatal("importing a deterministic sibling must satisfy the induction")
+	}
+}
+
+// Test_Deterministic_Instrumentation_Auto_Released verifies an instrumentation
+// package is released from the deterministic tier with no duplicate
+// pure_but_indeterministic_packages entry: write-only instrumentation is inherently
+// nondeterministic, so listing it in instrumentation_packages implies the release.
+func Test_Deterministic_Instrumentation_Auto_Released(t *testing.T) {
+	t.Parallel()
+	files := map[string][]byte{
+		"go.mod": []byte("module fixture\n\ngo 1.25\n"),
+		"pkg/instr/instr.go": []byte("// Package instr is a fixture.\n" +
+			"package instr\n\n" +
+			"// F is a fixture.\n" +
+			"func F() {\n\tgo done()\n}\n\n" +
+			"func done() {\n\treturn\n}\n"),
+	}
+	fsys := fstest.MapFS{}
+	for name, content := range files {
+		fsys[name] = &fstest.MapFile{Data: content}
+	}
+	diags, err := lint.Check_File_System(&lint.Check_File_System_Input{
+		Fsys:                     fsys,
+		Scope:                    "pkg",
+		Shared_Component:         doctrine_shared_component_directory,
+		Instrumentation_Packages: []string{"pkg/instr/**"},
+	})
+	if err != nil {
+		t.Fatalf("Check_File_System: %v", err)
+	}
+	if specification_diagnosed(diags, "must not start a goroutine") {
+		t.Fatal("instrumentation package must auto-release from determinism")
 	}
 }

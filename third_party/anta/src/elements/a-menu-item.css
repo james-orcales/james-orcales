@@ -1,0 +1,123 @@
+@layer anta {
+  a-menu-item:not(:defined) {
+    display: none;
+  }
+
+  a-menu-item {
+    --menu-item-color: var(--text-2);
+    --menu-item-icon-color: var(--text-3);
+    --menu-item-hover: 5%;
+    --menu-item-active: 9%;
+    /* Hover eases in quickly and eases out slower; active is instant. */
+    --menu-item-timing-in: 60ms ease-in-out;
+    --menu-item-timing-out: 280ms ease-out;
+    --menu-item-padding-x: 8px;
+    --menu-item-padding-y: 6px;
+
+    display: flex;
+    flex-shrink: 0;
+    align-items: center;
+    gap: 0.6ch;
+    box-sizing: border-box;
+    width: 100%;
+    min-height: 28px;
+    padding-block: var(--menu-item-padding-y);
+    padding-inline: var(--menu-item-padding-x);
+    border-radius: var(--radius-sm, 4px);
+    color: var(--menu-item-color);
+    background: transparent;
+    /* Resting / hover-exit easing (the slower, ease-out direction). */
+    transition: background-color var(--menu-item-timing-out);
+    font: inherit;
+    font-size: 14px;
+    line-height: 16px;
+    text-align: left;
+    white-space: nowrap;
+    cursor: pointer;
+    user-select: none;
+    outline: none;
+  }
+
+  a-menu-item:hover,
+  a-menu-item:focus-visible {
+    background: color-mix(in oklch, currentColor var(--menu-item-hover), transparent);
+    /* Hover-enter easing (moderate, shorter). */
+    transition: background-color var(--menu-item-timing-in);
+  }
+  a-menu-item:active {
+    background: color-mix(in oklch, currentColor var(--menu-item-active), transparent);
+    /* Press is instant — no transition. */
+    transition: none;
+  }
+
+  a-menu-item:focus-visible {
+    outline: 1px solid var(--focus-ring);
+    outline-offset: 1px;
+  }
+
+  a-menu-item > a-menu-item-label {
+    flex: 1 1 auto;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  a-menu-item > a-icon {
+    flex: none;
+    --icon-size: 16px;
+    color: var(--menu-item-icon-color);
+  }
+
+  a-menu-item:has(> a-icon:first-child:not(:only-child)) {
+    padding-inline-start: max(0px, var(--menu-item-padding-x) - 2px);
+  }
+  a-menu-item:has(> a-icon:last-child:not(:only-child)) {
+    padding-inline-end: max(0px, var(--menu-item-padding-x) - 2px);
+  }
+
+  a-menu-item > kbd {
+    flex: none;
+    margin-left: auto;
+    padding-left: 12px;
+    color: var(--text-5);
+    font: inherit;
+    font-size: 1em;
+    letter-spacing: 0.1ch;
+    white-space: nowrap;
+  }
+
+  a-menu-item[submenu] > a-icon:last-of-type {
+    margin-left: auto;
+  }
+
+  a-menu-item[submenu] > a-icon:last-of-type,
+  a-menu-item > a-icon:last-child:not(:only-child) {
+    position: relative;
+    inset-inline-end: -2px;
+  }
+
+  a-menu-item[tone="brand"],
+  a-menu-item[tone="info"],
+  a-menu-item[tone="success"],
+  a-menu-item[tone="warning"],
+  a-menu-item[tone="critical"] {
+    --menu-item-icon-color: var(--menu-item-color);
+  }
+  a-menu-item[tone="brand"]    { --menu-item-color: var(--text-2-brand); }
+  a-menu-item[tone="info"]     { --menu-item-color: var(--text-2-info); }
+  a-menu-item[tone="success"]  { --menu-item-color: var(--text-2-success); }
+  a-menu-item[tone="warning"]  { --menu-item-color: var(--text-2-warning); }
+  a-menu-item[tone="critical"] { --menu-item-color: var(--text-2-critical); }
+
+  a-menu-item[disabled] {
+    --menu-item-color: var(--text-5);
+    --menu-item-icon-color: var(--text-5);
+    cursor: default;
+    pointer-events: none;
+  }
+
+  .dark a-menu-item {
+    --menu-item-hover: 10%;
+    --menu-item-active: 15%;
+  }
+}

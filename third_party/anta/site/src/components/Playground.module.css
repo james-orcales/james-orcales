@@ -1,0 +1,572 @@
+.root {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  /* Default to the 960px prose measure, centered — matches surrounding
+     content. (The astro-island wrapper is display:contents, so the
+     content lane's own `> *` cap can't reach this section; cap it here.)
+     The side layout overrides max-width inline so the corner grip can
+     widen the widget to the full track. */
+  max-width: 960px;
+  margin: 0 auto 32px;
+}
+
+.body {
+  display: flex;
+  flex-direction: column;
+  /* Stacked layout: Preview on top, panel below, fused into one unit by a
+     single shared seam (no gap). The touching corners are squared and the
+     panel's top border is dropped below so Preview's bottom border is the
+     lone divider (mirrors the `.preview:has(+ .expressive-code)` fuse in
+     base.css). Outer corners stay rounded. */
+  gap: 0;
+}
+
+/* Stacked-layout seam (the default for both `stacked` pages and `side`
+   pages below the grid threshold): square the touching corners + drop the
+   panel's top border so Preview's bottom border is the single divider, and
+   the two read as one box (mirrors the `.preview:has(+ .expressive-code)`
+   fuse in base.css). Outer corners stay rounded. The side-layout grid below
+   RESETS these and swaps in a horizontal seam. */
+.body > .preview {
+  border-bottom-left-radius: 0;
+  border-bottom-right-radius: 0;
+}
+.body > .panel {
+  border-top: 0;
+  border-top-left-radius: 0;
+  border-top-right-radius: 0;
+}
+
+/* Side layout: preview left, tabbed panel right. It activates only when
+   we're on desktop AND the content lane is actually wide enough to fit
+   `preview(min 80) + handle + panel` — otherwise the panel overflows and
+   the corner grip detaches. The query container is the disclosure body /
+   `.content` (both `container-type: inline-size`). Below the threshold
+   the body stays a stacked flex column, and the handle + corner grip are
+   hidden. */
+.resizeHandle,
+.cornerResize {
+  display: none;
+}
+
+@media (min-width: 901px) {
+  @container (min-width: 520px) {
+    .bodySide {
+      display: grid;
+      /* preview | panel — no separator column. The two share a single
+         seam border (Preview keeps its right border; the panel drops its
+         left one below) and the resize handle is overlaid absolutely on
+         the seam, so the columns meet flush. Preview floors at 80px. */
+      grid-template-columns: minmax(80px, 1fr) var(--demo-panel-w, 400px);
+      gap: 0;
+      align-items: stretch;
+      /* Anchor the bottom-right corner grip + the overlaid resize handle. */
+      position: relative;
+    }
+    /* Swap the stacked (vertical) seam for a horizontal one: restore the
+       bottom corners + the panel's top border that the column-mode rules
+       above zeroed, then square the LEFT/RIGHT touching corners and drop the
+       panel's LEFT border so Preview's right border is the single divider.
+       Outer corners stay rounded. */
+    .bodySide > .preview {
+      border-bottom-left-radius: 8px;
+      border-top-right-radius: 0;
+      border-bottom-right-radius: 0;
+    }
+    .bodySide > .panel {
+      border-top: 1px solid var(--border-4);
+      border-left: 0;
+      border-top-left-radius: 0;
+      border-bottom-left-radius: 0;
+      border-top-right-radius: 8px;
+    }
+    .resizeHandle {
+      display: block;
+    }
+    .cornerResize {
+      display: block;
+    }
+  }
+}
+
+/* Resize handle: an 8px-wide invisible hit area straddling the Preview/panel
+   seam (centred on the panel's left edge). Absolutely positioned so it sits
+   on the seam without occupying a grid column, keeping the two halves flush.
+   On hover / active a 1px rail overlays the seam (Preview's right border)
+   exactly — full height, no top/bottom gaps — so the separator just brightens.
+   `left` is computed from the panel width (set inline as `--demo-panel-w`). */
+.resizeHandle {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  /* Seam sits at (panel width) from the right edge; centre the 8px hit
+     area on it. */
+  right: calc(var(--demo-panel-w, 400px) - 4px);
+  width: 8px;
+  z-index: 1;
+  cursor: col-resize;
+  touch-action: none;
+  user-select: none;
+}
+
+.resizeHandle::after {
+  content: "";
+  position: absolute;
+  /* Edge to edge — match the full-height seam, no top/bottom gaps. */
+  top: 0;
+  bottom: 0;
+  /* The 8px handle is centred on the seam (local x=4); Preview's right border
+     is the 1px just left of it (local x=[3,4]). `right: 50%` lands the rail on
+     exactly that pixel so it overlays the separator instead of sitting 1px in. */
+  right: 50%;
+  width: 1px;
+  background: transparent;
+  transition: background 120ms ease-out;
+}
+
+.resizeHandle:hover::after,
+.resizeHandle:active::after {
+  background: var(--border-3);
+}
+
+/* Bottom-right corner grip — resizes the whole widget (width + height).
+   A 16×16 hit area whose 3px line echoes the panel's rounded corner. */
+.cornerResize {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  z-index: 2;
+  width: 16px;
+  height: 16px;
+  cursor: nwse-resize;
+  touch-action: none;
+  user-select: none;
+  border-right: 3px solid var(--border-3);
+  border-bottom: 3px solid var(--border-3);
+  border-bottom-right-radius: 8px;
+  transition: border-color 120ms ease-out;
+}
+.cornerResize:hover {
+  border-color: var(--text-3);
+}
+
+.preview {
+  border: 1px solid var(--border-4);
+  border-radius: 8px;
+  background: var(--bg-pane);
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+/* Static label that mirrors the panel's tab strip — keeps the two
+   halves visually symmetric. Uses text-2 (matches the active-tab
+   color) since it's just a single label. */
+.previewHeader {
+  padding: 7px 12px 6px;
+  border-bottom: 1px solid var(--border-4);
+  font-size: 12px;
+  font-weight: 500;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-2);
+}
+
+.previewFrame {
+  display: block;
+  width: 100%;
+  /* In stacked layout, height comes from the iframe's ResizeObserver
+     via inline style (content-driven). In side layout we flex it to
+     fill the grid row; the iframe body itself scrolls. */
+  flex: 1;
+  min-height: 64px;
+  border: none;
+  background: var(--bg-base);
+  /* Backstop: color-scheme on the iframe *element* (the canvas itself is fixed
+     by the srcdoc's inline theme script in Playground.tsx). Switched by the
+     docs `.dark` class so the element's own box matches the theme. */
+  color-scheme: light;
+  transition: height 200ms ease-out;
+}
+:global(.dark) .previewFrame {
+  color-scheme: dark;
+}
+
+.panel {
+  border: 1px solid var(--border-4);
+  border-radius: 8px;
+  background: var(--bg-pane);
+  display: flex;
+  flex-direction: column;
+  /* Fixed height (the `--demo-panel-h` inline var is set from the
+     panelHeight prop, default 400). Content that exceeds this height
+     scrolls internally — no special handling, just regular HTML
+     overflow rules. */
+  height: var(--demo-panel-h, 400px);
+  /* Clip Monaco's canvas to the rounded corners. Hover / suggestion
+     popups escape via `fixedOverflowWidgets` in the editor options. */
+  overflow: hidden;
+}
+
+/* Header row holding the Anta <Tabs> control (Props / Code / CSS) on
+   the left and the reset button on the right. The bottom border
+   matches `.previewHeader` so the two halves of the playground align.
+   The strip is bottom-aligned and pulled down 1px (see below) so its
+   per-tab underline overlaps the row border — the active tab's accent
+   reads as a thickening of that line. */
+.tabs {
+  display: flex;
+  align-items: flex-end;
+  border-bottom: 1px solid var(--border-4);
+}
+
+/* Match the tab labels to the PREVIEW header's static label — uppercase,
+   12px / 500 with the same letter-spacing — so the two panel headers read
+   as a matched pair. The tertiary tab states still drive the colour (muted
+   at rest, brightening when active); we only override the typography.
+   Unlayered, so it beats a-tab-label's @layer anta defaults. */
+.tabs a-tab-label {
+  font-size: 12px;
+  font-weight: 500;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  /* Full-width axis (a-tab defaults to the condensed "wdth" 88) so the labels
+     match the PREVIEW header's normal-width type. */
+  font-variation-settings: "wdth" 100, "slnt" 0, "ital" 0;
+}
+
+/* Roomier tabs — wider inline padding than the small default so the
+   uppercase labels get more breathing room and the tabs read as a
+   generous strip. */
+.tabs a-tab {
+  padding-inline: 12px;
+}
+
+/* Flush tabs (no gap). A -1px bottom margin pulls the strip down so its
+   per-tab underline sits over the row's bottom border rather than just above it. */
+.tabs a-tabs {
+  gap: 0;
+  margin-bottom: -1px;
+}
+
+/* Reset control — a quaternary <a-button> (no bg/border) holding the
+   rotate-ccw icon. Anta's button styling owns the colour/hover; we only
+   push it to the end of the header row, centre it against the strip,
+   and give it 8px inline padding. */
+.resetBtn {
+  margin-inline-start: auto;
+  align-self: center;
+  --button-padding-x: 8px;
+}
+
+/* Stacking container — both tab panels share the same grid cell so
+   the panel sizes to the taller of the two. Switching tabs never
+   shrinks the box. */
+.tabStack {
+  flex: 1;
+  display: grid;
+  /* `minmax(0, 1fr)` overrides the default `min-width: auto` so the
+     grid item can shrink below its content's intrinsic width — needed
+     for the form to fit when the user drags the resize handle in. */
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-areas: "stack";
+  min-height: 0;
+  min-width: 0;
+}
+
+.tabPanel {
+  grid-area: stack;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  min-width: 0;
+}
+
+/* The inactive panel still participates in layout so it contributes
+   to height; we just hide it visually and disable interaction. */
+.tabPanelHidden {
+  visibility: hidden;
+  pointer-events: none;
+}
+
+/* List of JSDoc-headed examples. Scrolls when there's more than the
+   panel can show; section dividers come from each example's
+   border-bottom. */
+.examplesList {
+  flex: 1;
+  min-height: 0;
+  min-width: 0;
+  overflow-y: auto;
+}
+
+.example {
+  border-bottom: 1px solid var(--border-4);
+}
+.example:last-child {
+  border-bottom: none;
+}
+
+/* Header is the whole clickable strip — chevron + label, takes the
+   full width so the hit area covers the row. Matches the tab strip's
+   visual rhythm (12px font, uppercase, 0.06em tracking). */
+.exampleHeader {
+  appearance: none;
+  border: none;
+  background: transparent;
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 10px 12px 10px 8px;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text-3);
+  cursor: pointer;
+  user-select: none;
+  -webkit-user-select: none;
+  text-align: left;
+  transition: color 120ms ease-out;
+}
+
+.exampleHeader:hover,
+.exampleHeader:focus-visible {
+  color: var(--text-1);
+  outline: none;
+}
+
+.exampleHeaderOpen {
+  color: var(--text-2);
+}
+
+/* Chevron shape is swapped between `chevron-right` (collapsed) and
+   `chevron-down` (expanded) by the JSX, so no rotation needed. */
+.exampleChevron {
+  flex-shrink: 0;
+}
+
+.exampleLabel {
+  flex: 1;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.exampleBody {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding-bottom: 4px;
+}
+
+.exampleDescription {
+  padding: 0 12px;
+  font-size: 12px;
+  color: var(--text-3);
+  white-space: pre-wrap;
+}
+
+.form {
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  flex: 1;
+  min-height: 0;
+  min-width: 0;
+  overflow-y: auto;
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.fieldLabel {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 13px;
+  color: var(--text-2);
+  font-weight: 450;
+  min-width: 0;
+}
+
+/* Inside the label, the prop name + description can be longer than
+   the panel when the user resizes narrow. Let it wrap. */
+.fieldLabel > span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.fieldHint {
+  font-size: 12px;
+  line-height: 1.2;
+  color: var(--text-4);
+}
+
+/* Inline layout for boolean fields: checkbox + label on one row so
+   the prop reads like a regular settings toggle. */
+.fieldBoolean {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  font-size: 13px;
+  cursor: pointer;
+  min-width: 0;
+}
+.fieldBoolean > span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.fieldBoolean input[type="checkbox"] {
+  flex-shrink: 0;
+  margin: 0.25em 0 0;
+}
+
+.fieldValueLabel {
+  font-family: var(--monospace);
+  letter-spacing: 0;
+  font-size: 12px;
+  color: var(--text-3);
+}
+
+/* Documentation row — read-only type for complex props (children,
+   style, ReactNode, …). Renders the type in monospace; no input. */
+.docType {
+  font-family: var(--monospace);
+  letter-spacing: 0;
+  font-size: 12px;
+  color: var(--text-3);
+}
+
+.fieldExpressionBadge {
+  font-size: 11px;
+  color: var(--text-4);
+  font-style: italic;
+}
+
+.slider {
+  width: 100%;
+  appearance: none;
+  background: transparent;
+  border: none;
+}
+
+.disabled {
+  opacity: 0.55;
+  pointer-events: none;
+}
+
+/* Enum / tone pickers are Anta <Tabs> (primary, small). Opt into horizontal
+   scrolling so a long option set (e.g. tone) scrolls rather than ellipsizing
+   its labels or widening the panel. */
+.segTabs {
+  max-width: 100%;
+  overflow-x: auto;
+  scrollbar-width: thin;
+}
+.segTabs a-tab {
+  flex: none;
+}
+
+/* Prop name — plain monospace value, not a copyable code pill. Inherits its
+   colour from the control's own label (Input / Checkbox) rather than forcing one. */
+.fieldName {
+  font-family: var(--monospace);
+  letter-spacing: 0;
+  font-size: 12px;
+}
+
+/* `children` / ReactNode fields hold JSX/markup — monospace, code-style value text.
+   The shadow <textarea> sets its own font, so reach it via ::part(input). Auto-grow
+   (multiline, unbounded height) comes from Anta <Input>'s `multiline` prop. */
+.codeField::part(input) {
+  font-family: var(--monospace);
+  letter-spacing: 0;
+  font-size: 12px;
+}
+
+/* Tone control: the named/Custom tab row plus, when Custom is active, a
+   color input + the current value beneath. */
+.toneControl {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+}
+.toneCustomRow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.toneColor {
+  inline-size: 28px;
+  block-size: 28px;
+  padding: 0;
+  border: 0.5px solid var(--border-4);
+  border-radius: 6px;
+  background: none;
+  cursor: pointer;
+}
+.toneCustomRow code {
+  font-size: 12px;
+  color: var(--text-3);
+}
+
+.editorHost {
+  flex: 1;
+  min-height: 0;
+  position: relative;
+}
+
+/* Monaco renders its own link-like elements (suggestion widget,
+   hover docs, peek view) and styles them itself. The docs site's
+   global `<a>` rules would otherwise repaint them as underlined
+   doc links. Neutralise just inside the editor. */
+.editorHost a,
+.editorHost a:link,
+.editorHost a:visited,
+.editorHost a:hover,
+.editorHost a:focus,
+.editorHost a:active {
+  color: inherit;
+  text-decoration: none;
+  text-decoration-color: transparent;
+  text-decoration-thickness: 0;
+  border: none;
+}
+
+.editorLoading {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-3);
+  font-size: 13px;
+}
+
+.error {
+  border: 1px solid var(--border-4-critical);
+  background: var(--bg-pane-critical);
+  color: var(--text-1-critical);
+  padding: 8px 12px;
+  border-radius: 6px;
+  font-family: var(--monospace);
+  letter-spacing: 0;
+  font-size: 12px;
+  white-space: pre-wrap;
+}
+
+.errorKind {
+  display: inline-block;
+  font-weight: 600;
+  margin-right: 8px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  font-size: 11px;
+}

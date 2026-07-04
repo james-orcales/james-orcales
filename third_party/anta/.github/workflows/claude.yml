@@ -1,0 +1,66 @@
+name: Claude Code
+
+# PARKED (2026-06-18): claude-code-action crashes at SDK init — the spawned
+# `claude` CLI exits 1 in ~150ms with $0 cost, before any API call. Confirmed
+# upstream, not our config (valid API key, correct wiring; fails identically on
+# OAuth/API-key auth, action v1.0.150/v1.0.151, with/without claude_args).
+# Tracking: github.com/anthropics/claude-code-action issues #914 #892 #947 #853.
+# Auto-triggers are disabled below so PRs/@claude don't keep failing; everything
+# else (auth, rubric, pins) is kept ready. To RE-ENABLE once upstream is fixed:
+# delete the `workflow_dispatch` line and uncomment the trigger block under it.
+on:
+  workflow_dispatch:
+  # issue_comment:
+  #   types: [created]
+  # pull_request_review_comment:
+  #   types: [created]
+  # issues:
+  #   types: [opened, assigned]
+  # pull_request_review:
+  #   types: [submitted]
+
+jobs:
+  claude:
+    if: |
+      (github.event_name == 'issue_comment' && contains(github.event.comment.body, '@claude')) ||
+      (github.event_name == 'pull_request_review_comment' && contains(github.event.comment.body, '@claude')) ||
+      (github.event_name == 'pull_request_review' && contains(github.event.review.body, '@claude')) ||
+      (github.event_name == 'issues' && (contains(github.event.issue.body, '@claude') || contains(github.event.issue.title, '@claude')))
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
+      issues: read
+      id-token: write
+      actions: read # Required for Claude to read CI results on PRs
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 1
+
+      - name: Run Claude Code
+        id: claude
+        # Pinned: @v1 floats to v1.0.151 (2026-06-17), whose only change was to
+        # the token-exchange path and which crashes every run at SDK auth init.
+        # v1.0.150 is the last good release. Revisit when a newer fix lands.
+        uses: anthropics/claude-code-action@v1.0.150
+        with:
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+
+          # This is an optional setting that allows Claude to read CI results on PRs
+          additional_permissions: |
+            actions: read
+
+          # Optional: Give a custom prompt to Claude. If this is not specified, Claude will perform the instructions specified in the comment that tagged it.
+          # prompt: 'Update the pull request description to include a summary of changes.'
+
+          # Optional: Add claude_args to customize behavior and configuration
+          # See https://github.com/anthropics/claude-code-action/blob/main/docs/usage.md
+          # or https://code.claude.com/docs/en/cli-reference for available options
+          # Load Anta's review rubric so an @claude mention follows the same
+          # checks as the auto-review. NOTE: do not add `--allowed-tools` here —
+          # passing it in claude_args breaks the action's OAuth token injection
+          # and the run crashes at SDK init (matches the working review config).
+          claude_args: '--append-system-prompt-file ./.github/anta-review.md'
+

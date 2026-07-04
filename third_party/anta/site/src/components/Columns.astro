@@ -1,0 +1,37 @@
+---
+// A multi-column section for docs prose. Spans the full content track
+// (escapes the 960px prose measure via `.columns` in base.css) and lays
+// its children out as equal columns when the available width is wide
+// enough (container query in base.css), stacking them otherwise.
+//
+// Any direct child is a column; children split equally by default. Use
+// <Col> for a column whose width / min / max you want to control.
+//
+// Gaps: `gap` is the shorthand for both axes. `colGap` is the horizontal
+// gap between columns (row mode); `rowGap` is the vertical gap between the
+// stacked rows (responsive mode). Provide just one of colGap / rowGap and
+// the other takes the same value, so the spacing stays symmetric unless you
+// deliberately split it (e.g. tight columns but roomier stacked rows).
+interface Props {
+  /** Shorthand for both column and row gap. @default 20px */
+  gap?: string
+  /** Horizontal gap between columns in row mode. Falls back to `gap`, then `rowGap`. */
+  colGap?: string
+  /** Vertical gap between rows when stacked. Falls back to `gap`, then `colGap`. */
+  rowGap?: string
+}
+const { gap, colGap, rowGap } = Astro.props
+
+// Each axis prefers its own value, then the shorthand, then the other axis —
+// so a lone colGap or rowGap applies to both. Unset → CSS default (20px).
+const col = colGap ?? gap ?? rowGap
+const row = rowGap ?? gap ?? colGap
+const style = [
+  col != null ? `--columns-col-gap: ${col}` : null,
+  row != null ? `--columns-row-gap: ${row}` : null,
+].filter(Boolean).join('; ') || undefined
+---
+
+<div class="columns" style={style}>
+  <slot />
+</div>

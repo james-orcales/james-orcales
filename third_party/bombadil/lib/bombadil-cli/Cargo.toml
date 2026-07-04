@@ -1,0 +1,42 @@
+[package]
+name = "bombadil-cli"
+version.workspace = true
+edition.workspace = true
+
+[[bin]]
+name = "bombadil"
+path = "src/main.rs"
+
+[dependencies]
+antithesis_sdk.workspace = true
+anyhow.workspace = true
+axum.workspace = true
+bombadil = { path = "../bombadil" }
+bombadil-browser = { path = "../bombadil-browser" }
+bombadil-ltl = { path = "../bombadil-ltl" }
+bombadil-browser-keys = { path = "../bombadil-browser-keys" }
+bombadil-schema = { path = "../bombadil-schema" }
+bombadil-terminal = { path = "../bombadil-terminal", optional = true }
+clap = { workspace = true, features = ["derive"] }
+env_logger.workspace = true
+hotpath.workspace = true
+include_dir.workspace = true
+log.workspace = true
+mime_guess.workspace = true
+open.workspace = true
+rand.workspace = true
+serde = { workspace = true, features = ["derive"] }
+serde_json.workspace = true
+tempfile.workspace = true
+tokio = { workspace = true, features = ["full"] }
+url = { workspace = true, features = ["serde"] }
+
+[dev-dependencies]
+hegeltest.workspace = true
+
+[features]
+default = ["terminal"]
+terminal = ["dep:bombadil-terminal"]
+hotpath = ["hotpath/hotpath"]
+hotpath-cpu = ["hotpath/hotpath-cpu"]
+hotpath-alloc = ["hotpath/hotpath-alloc"]

@@ -268,63 +268,56 @@ func rust_step(home string, spawn setup.Spawn) (run func() (status_code int)) {
 }
 
 // Returns the bootstrap step that builds fish from the vendored source with cargo
-// and symlinks it onto PATH. cargo installs into CARGO_HOME (from the .envrc
-// environment); fish and its tools, user-facing programs, are linked into
-// home/.local/bin alongside Neovim, not the repo .local/bin that holds dev tools.
+// and installs it into home/.local/bin — the user-facing layer alongside Neovim,
+// not the repo .local/bin that holds dev tools. cargo reads CARGO_HOME from the
+// .envrc environment and installs into the binary directory via --root.
 func fish_step(home string, spawn setup.Spawn) (run func() (status_code int)) {
 	repository := filepath.Join(home, repository_subpath)
 	return func() (status_code int) {
 		return setup.Install_Fish(&setup.Install_Fish_Input{
-			Fish_Directory:  filepath.Join(repository, "third_party", "fish-shell"),
-			Cargo_Directory: os.Getenv("CARGO_HOME"),
-			Link_Directory:  filepath.Join(repository, "home", ".local", "bin"),
-			Shell:           step_shell(spawn),
+			Fish_Directory:   filepath.Join(repository, "third_party", "fish-shell"),
+			Binary_Directory: filepath.Join(repository, "home", ".local", "bin"),
+			Shell:            step_shell(spawn),
 		})
 	}
 }
 
 // Returns the bootstrap step that builds jj from the vendored workspace with cargo
-// and symlinks it into home/.local/bin. cargo installs into CARGO_HOME (from the
-// .envrc environment); jj, a user-facing program, is linked alongside Neovim and
+// and installs it into home/.local/bin — a user-facing program alongside Neovim and
 // fish, not the repo .local/bin that holds the dev toolchain.
 func jj_step(home string, spawn setup.Spawn) (run func() (status_code int)) {
 	repository := filepath.Join(home, repository_subpath)
 	return func() (status_code int) {
 		return setup.Install_Jj(&setup.Install_Jj_Input{
-			Jj_Directory:    filepath.Join(repository, "third_party", "jj"),
-			Cargo_Directory: os.Getenv("CARGO_HOME"),
-			Link_Directory:  filepath.Join(repository, "home", ".local", "bin"),
-			Shell:           step_shell(spawn),
+			Jj_Directory:     filepath.Join(repository, "third_party", "jj"),
+			Binary_Directory: filepath.Join(repository, "home", ".local", "bin"),
+			Shell:            step_shell(spawn),
 		})
 	}
 }
 
 // Returns the bootstrap step that builds ripgrep (rg) from the vendored crate with
-// cargo and symlinks it into home/.local/bin alongside the other user-facing
-// tools. cargo installs into CARGO_HOME (from the .envrc environment).
+// cargo and installs it into home/.local/bin alongside the other user-facing tools.
 func ripgrep_step(home string, spawn setup.Spawn) (run func() (status_code int)) {
 	repository := filepath.Join(home, repository_subpath)
 	return func() (status_code int) {
 		return setup.Install_Ripgrep(&setup.Install_Ripgrep_Input{
 			Ripgrep_Directory: filepath.Join(repository, "third_party", "ripgrep"),
-			Cargo_Directory:   os.Getenv("CARGO_HOME"),
-			Link_Directory:    filepath.Join(repository, "home", ".local", "bin"),
+			Binary_Directory:  filepath.Join(repository, "home", ".local", "bin"),
 			Shell:             step_shell(spawn),
 		})
 	}
 }
 
 // Returns the bootstrap step that builds fd from the vendored crate with cargo and
-// symlinks it into home/.local/bin alongside the other user-facing tools. cargo
-// installs into CARGO_HOME (from the .envrc environment).
+// installs it into home/.local/bin alongside the other user-facing tools.
 func fdcli_step(home string, spawn setup.Spawn) (run func() (status_code int)) {
 	repository := filepath.Join(home, repository_subpath)
 	return func() (status_code int) {
 		return setup.Install_Fdcli(&setup.Install_Fdcli_Input{
-			Fdcli_Directory: filepath.Join(repository, "third_party", "fd"),
-			Cargo_Directory: os.Getenv("CARGO_HOME"),
-			Link_Directory:  filepath.Join(repository, "home", ".local", "bin"),
-			Shell:           step_shell(spawn),
+			Fdcli_Directory:  filepath.Join(repository, "third_party", "fd"),
+			Binary_Directory: filepath.Join(repository, "home", ".local", "bin"),
+			Shell:            step_shell(spawn),
 		})
 	}
 }

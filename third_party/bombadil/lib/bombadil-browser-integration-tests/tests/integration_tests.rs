@@ -1,0 +1,1102 @@
+use anyhow::anyhow;
+use axum::{
+    Router,
+    extract::Path,
+    http::{HeaderMap, StatusCode, header},
+    response::{IntoResponse, Response},
+    routing::get,
+};
+use bombadil_schema::{Time, markup};
+use rand::SeedableRng;
+use std::collections::HashMap;
+use std::io::Write;
+use std::{
+    fmt::Display,
+    sync::Once,
+    time::{Duration, SystemTime},
+};
+use tempfile::{NamedTempFile, TempDir};
+use tokio::sync::Semaphore;
+use tower_http::services::ServeDir;
+use url::Url;
+
+use bombadil::{specification::verifier::Specification, styled};
+use bombadil_browser::{
+    browser::{
+        Browser, BrowserOptions, DebuggerOptions, Emulation, LaunchOptions,
+        actions::BrowserAction,
+    },
+    convert::ToSchema,
+    runner,
+    strategy::{TestStrategy, TraceWriter},
+};
+
+/// These tests are pretty heavy, and running too many parallel risks one browser get stuck and
+/// causing a test to hang, so we limit parallelism.
+static TEST_SEMAPHORE: Semaphore = Semaphore::const_new(16);
+const TEST_TIMEOUT_SECONDS: u64 = 120;
+
+static INIT: Once = Once::new();
+
+fn setup() {
+    INIT.call_once(|| {
+        let env = env_logger::Env::default().default_filter_or("debug");
+        env_logger::Builder::from_env(env)
+            .format_timestamp_millis()
+            .format_target(true)
+            .is_test(true)
+            .filter_module("html5ever", log::LevelFilter::Warn)
+            // Until we hav a fix for https://github.com/mattsse/chromiumoxide/issues/287
+            .filter_module("chromiumoxide::browser", log::LevelFilter::Error)
+            .init();
+    });
+}
+
+enum Expect {
+    Error { substring: &'static str },
+    Success,
+}
+
+impl Display for Expect {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Expect::Error { substring } => {
+                write!(f, "expecting an error with substring {:?}", substring)
+            }
+            Expect::Success => write!(f, "expecting success"),
+        }
+    }
+}
+
+struct BrowserIntegrationTest<'a> {
+    seed: u64,
+    name: &'a str,
+    expect: Expect,
+    time_limit: Option<Duration>,
+    specification: Option<&'a str>,
+    grant_permissions: Vec<String>,
+    extra_headers: HashMap<String, String>,
+    cookies: Vec<(String, String)>,
+}
+
+impl<'a> BrowserIntegrationTest<'a> {
+    fn new(name: &'a str) -> Self {
+        Self {
+            seed: rand::random(),
+            name,
+            expect: Expect::Success,
+            time_limit: None,
+            specification: None,
+            grant_permissions: vec![],
+            extra_headers: HashMap::new(),
+            cookies: vec![],
+        }
+    }
+
+    #[allow(dead_code, reason = "can be overridden to reproduce failures")]
+    fn seed(mut self, seed: u64) -> Self {
+        self.seed = seed;
+        self
+    }
+
+    fn expect_error(mut self, substring: &'static str) -> Self {
+        self.expect = Expect::Error { substring };
+        self
+    }
+
+    fn time_limit(mut self, duration: Duration) -> Self {
+        self.time_limit = Some(duration);
+        self
+    }
+
+    fn specification(mut self, specification: &'a str) -> Self {
+        self.specification = Some(specification);
+        self
+    }
+
+    fn grant_permissions(mut self, permissions: Vec<String>) -> Self {
+        self.grant_permissions = permissions;
+        self
+    }
+
+    fn extra_headers(mut self, headers: HashMap<String, String>) -> Self {
+        self.extra_headers = headers;
+        self
+    }
+
+    fn cookies(mut self, cookies: Vec<(String, String)>) -> Self {
+        self.cookies = cookies;
+        self
+    }
+
+    /// Run a named browser test with a given expectation.
+    ///
+    /// Spins up two web servers: one on a random port P, and one on port P + 1, in order to
+    /// facitiliate multi-domain tests.
+    ///
+    /// The test starts at:
+    ///
+    ///     http://localhost:{P}/tests/{name}.
+    ///
+    /// Which means that every named test case directory should have an index.html file.
+    async fn run(self) {
+        let Self {
+            seed,
+            name,
+            expect,
+            time_limit,
+            specification,
+            grant_permissions,
+            extra_headers,
+            cookies,
+        } = self;
+        setup();
+        let _permit = TEST_SEMAPHORE.acquire().await.unwrap();
+        log::info!("starting browser test");
+        let test_dir = format!("{}/tests", env!("CARGO_MANIFEST_DIR"));
+
+        async fn download_testfile() -> Response {
+            let content = "test file contents";
+            (
+                StatusCode::OK,
+                [
+                    (
+                        header::CONTENT_DISPOSITION,
+                        "attachment; filename=\"test-file\"",
+                    ),
+                    (header::CONTENT_TYPE, "application/octet-stream"),
+                ],
+                content,
+            )
+                .into_response()
+        }
+
+        async fn secret_handler(
+            Path(path): Path<String>,
+            headers: HeaderMap,
+        ) -> Response {
+            let authorized = headers
+                .get(header::AUTHORIZATION)
+                .and_then(|v| v.to_str().ok())
+                == Some("Bearer bombadil");
+            if !authorized {
+                return StatusCode::UNAUTHORIZED.into_response();
+            }
+            match path.as_str() {
+                "app.js" => (
+                    StatusCode::OK,
+                    [(header::CONTENT_TYPE, "application/javascript")],
+                    "var el = document.createElement('div'); \
+                     el.id = 'secret-loaded'; \
+                     document.body.appendChild(el);",
+                )
+                    .into_response(),
+                _ => StatusCode::NOT_FOUND.into_response(),
+            }
+        }
+
+        let app = Router::new()
+            .route("/test-file", get(download_testfile))
+            .route("/secret/{*path}", get(secret_handler))
+            .fallback_service(ServeDir::new(&test_dir));
+        let app_other = app.clone();
+
+        let (listener, listener_other, port) = loop {
+            let listener =
+                tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let addr = listener.local_addr().unwrap();
+            let listener_other =
+                if let Ok(listener_other) = tokio::net::TcpListener::bind(
+                    format!("127.0.0.1:{}", addr.port() + 1),
+                )
+                .await
+                {
+                    listener_other
+                } else {
+                    continue;
+                };
+            break (listener, listener_other, addr.port());
+        };
+
+        tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+        tokio::spawn(async move {
+            axum::serve(listener_other, app_other).await.unwrap();
+        });
+
+        let origin =
+            Url::parse(&format!("http://localhost:{}/{}", port, name,))
+                .unwrap();
+        let user_data_directory = TempDir::new().unwrap();
+
+        let mut specification_file = NamedTempFile::with_suffix(".ts").unwrap();
+        let specification = match specification {
+            Some(source) => {
+                specification_file.write_all(source.as_bytes()).unwrap();
+                Specification {
+                    module_specifier: specification_file
+                        .path()
+                        .display()
+                        .to_string(),
+                }
+            }
+            None => Specification {
+                module_specifier: "@antithesishq/bombadil/browser/defaults"
+                    .to_string(),
+            },
+        };
+
+        let downloads_directory = TempDir::new().unwrap();
+        let browser_options = BrowserOptions {
+            create_target: true,
+            emulation: Emulation {
+                width: 800,
+                height: 600,
+                device_scale_factor: 1.0,
+            },
+            instrumentation: Default::default(),
+            downloads_directory: downloads_directory.path().to_path_buf(),
+            grant_permissions,
+            extra_headers,
+            cookies,
+        };
+        let debugger_options = DebuggerOptions::Managed {
+            launch_options: LaunchOptions {
+                headless: true,
+                no_sandbox: true,
+                user_data_directory: user_data_directory.path().to_path_buf(),
+            },
+        };
+
+        let test_start = SystemTime::now();
+        let deadline = time_limit.map(|d| test_start + d);
+
+        #[derive(Default)]
+        struct ViolationsCollectingWriter {
+            violations: Vec<bombadil::runner::PropertyViolation>,
+        }
+
+        impl TraceWriter for ViolationsCollectingWriter {
+            fn write(
+                &mut self,
+                _state: &bombadil_browser::browser::state::BrowserState,
+                _last_action: Option<&BrowserAction>,
+                _snapshots: &[bombadil::specification::domain::Snapshot],
+                violations: &[bombadil::runner::PropertyViolation],
+            ) -> anyhow::Result<()> {
+                self.violations.extend_from_slice(violations);
+                Ok(())
+            }
+        }
+
+        let output_path = TempDir::new().unwrap();
+        let output_path_buf = output_path.path().to_path_buf();
+        let writer = ViolationsCollectingWriter::default();
+
+        enum Outcome {
+            Success,
+            Error(anyhow::Error),
+        }
+
+        impl Display for Outcome {
+            fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                match self {
+                    Outcome::Success => write!(f, "success"),
+                    Outcome::Error(error) => {
+                        write!(f, "error: {}", error)
+                    }
+                }
+            }
+        }
+
+        log::info!("starting runner with infrastructure safety timeout");
+        // The driver and runner are synchronous (the browser runs on its own
+        // worker thread/runtime), so build and run them on a blocking thread.
+        let run_handle = tokio::task::spawn_blocking(move || {
+            let runner = runner::launch(
+                origin.clone(),
+                specification,
+                browser_options,
+                debugger_options,
+            )
+            .expect("run_test failed");
+
+            let mut strategy = TestStrategy {
+                rng: rand::prelude::StdRng::seed_from_u64(seed),
+                test_start: Some(Time::from_system_time(test_start)),
+                deadline,
+                mode: bombadil_browser::strategy::TestMode::RandomWalk,
+                writer,
+                exit_on_violation: true,
+                origin,
+                output_path: output_path_buf,
+                violations_count: 0,
+            };
+
+            match runner.run(&mut strategy) {
+                Err(error) => Outcome::Error(error),
+                Ok(_) if strategy.violations_count == 0 => Outcome::Success,
+                Ok(_) => {
+                    let violations: Vec<String> = strategy
+                        .writer
+                        .violations
+                        .iter()
+                        .map(|violation| {
+                            let markup = markup::render_violation(
+                                &violation.to_schema(),
+                            );
+                            let rendered = styled::markup_to_styled(
+                                &markup,
+                                Time::from_system_time(test_start),
+                            );
+                            format!("{}:\n{}\n\n", violation.name, rendered)
+                        })
+                        .collect();
+                    Outcome::Error(anyhow!(
+                        "violations:\n\n{}",
+                        violations.join("")
+                    ))
+                }
+            }
+        });
+
+        let outcome = match tokio::time::timeout(
+            Duration::from_secs(TEST_TIMEOUT_SECONDS),
+            run_handle,
+        )
+        .await
+        {
+            Ok(Ok(outcome)) => outcome,
+            Ok(Err(join_error)) => {
+                panic!("runner task panicked: {join_error}")
+            }
+            Err(_elapsed) => panic!(
+                "test infrastructure timeout — test hung for {}s",
+                TEST_TIMEOUT_SECONDS
+            ),
+        };
+
+        log::info!("checking outcome");
+        match (outcome, expect) {
+            (Outcome::Error(error), Expect::Error { substring }) => {
+                if !error.to_string().contains(substring) {
+                    panic!(
+                        "expected error message {:?} not found in:\n\n{}\n\ntry reproducing by adding .seed({})",
+                        substring, error, seed
+                    );
+                }
+            }
+            (Outcome::Success, Expect::Success) => {}
+            (outcome, expect) => {
+                panic!(
+                    "{} but got {}\n\ntry reproducing by adding .seed({})",
+                    expect, outcome, seed
+                );
+            }
+        }
+    }
+}
+
+#[tokio::test]
+async fn test_console_error() {
+    BrowserIntegrationTest::new("console-error")
+        .expect_error("oh no you pressed too much")
+        .run()
+        .await;
+}
+
+#[tokio::test]
+async fn test_links() {
+    BrowserIntegrationTest::new("links")
+        .expect_error("404")
+        .run()
+        .await;
+}
+
+#[tokio::test]
+async fn test_uncaught_exception() {
+    BrowserIntegrationTest::new("uncaught-exception")
+        .expect_error("oh no you pressed too much")
+        .run()
+        .await;
+}
+
+#[tokio::test]
+async fn test_unhandled_promise_rejection() {
+    BrowserIntegrationTest::new("unhandled-promise-rejection")
+        .expect_error("oh no you pressed too much")
+        .run()
+        .await;
+}
+
+#[tokio::test]
+async fn test_other_domain() {
+    BrowserIntegrationTest::new("other-domain")
+        .time_limit(Duration::from_secs(5))
+        .run()
+        .await;
+}
+
+#[tokio::test]
+async fn test_action_within_iframe() {
+    BrowserIntegrationTest::new("action-within-iframe")
+        .time_limit(Duration::from_secs(5))
+        .run()
+        .await;
+}
+
+#[tokio::test]
+async fn test_no_action_available() {
+    BrowserIntegrationTest::new("no-action-available")
+        .expect_error("no actions available")
+        .run()
+        .await;
+}
+
+#[tokio::test]
+async fn test_back_from_non_html() {
+    BrowserIntegrationTest::new("back-from-non-html")
+        .time_limit(Duration::from_secs(30))
+        .specification(
+            r#"
+import { now, next, eventually } from "@antithesishq/bombadil";
+import { extract } from "@antithesishq/bombadil/browser";
+export { clicks, back } from "@antithesishq/bombadil/browser/defaults/actions";
+
+const contentType = extract((state) => state.document.contentType);
+
+export const navigatesBackFromNonHtml = eventually(
+  now(() => contentType.current === "text/html")
+    .and(next(
+      now(() => contentType.current !== "text/html")
+        .and(next(
+          now(() => contentType.current === "text/html")
+        ))
+    ))
+).within(20, "seconds");
+"#,
+        )
+        .run()
+        .await;
+}
+
+#[tokio::test]
+async fn test_browser_lifecycle() {
+    setup();
+    let test_dir = format!("{}/tests", env!("CARGO_MANIFEST_DIR"));
+    let app = Router::new().fallback_service(ServeDir::new(&test_dir));
+
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let port = addr.port();
+    tokio::spawn(async move {
+        axum::serve(listener, app).await.unwrap();
+    });
+
+    let origin =
+        Url::parse(&format!("http://localhost:{}/console-error", port,))
+            .unwrap();
+    log::info!("running test server on {}", &origin);
+    let user_data_directory = TempDir::new().unwrap();
+
+    let downloads_directory = TempDir::new().unwrap();
+    let mut browser = Browser::new(
+        origin,
+        BrowserOptions {
+            create_target: true,
+            emulation: Emulation {
+                width: 800,
+                height: 600,
+                device_scale_factor: 1.0,
+            },
+            instrumentation: Default::default(),
+            downloads_directory: downloads_directory.path().to_path_buf(),
+            grant_permissions: vec![],
+            extra_headers: Default::default(),
+            cookies: vec![],
+        },
+        DebuggerOptions::Managed {
+            launch_options: LaunchOptions {
+                headless: true,
+                no_sandbox: true,
+                user_data_directory: user_data_directory.path().to_path_buf(),
+            },
+        },
+    )
+    .await
+    .unwrap();
+
+    browser.initiate().await.unwrap();
+
+    match browser.next_event().await.unwrap() {
+        bombadil_browser::browser::BrowserEvent::StateChanged(state) => {
+            assert_eq!(state.title, "Console Error");
+        }
+        bombadil_browser::browser::BrowserEvent::Error(error) => {
+            panic!("unexpected browser error: {}", error)
+        }
+    }
+
+    browser.apply(BrowserAction::Reload).unwrap();
+
+    match browser.next_event().await.unwrap() {
+        bombadil_browser::browser::BrowserEvent::StateChanged(state) => {
+            assert_eq!(state.title, "Console Error");
+        }
+        bombadil_browser::browser::BrowserEvent::Error(error) => {
+            panic!("unexpected browser error: {}", error)
+        }
+    }
+
+    log::info!("just changing for CI");
+    browser.terminate().await.unwrap();
+}
+
+#[tokio::test]
+async fn test_random_text_input() {
+    BrowserIntegrationTest::new("random-text-input")
+        .specification(
+            r#"
+import { now, eventually } from "@antithesishq/bombadil";
+import { extract } from "@antithesishq/bombadil/browser";
+export { clicks, inputs } from "@antithesishq/bombadil/browser/defaults/actions";
+
+const inputValue = extract((state) => {
+  const input = state.document.querySelector("\#text-input");
+  return input ? input.value : "";
+});
+
+export const inputEventuallyHasText = eventually(
+  () => inputValue.current.length > 0
+).within(10, "seconds");
+"#,
+        )
+        .run()
+        .await;
+}
+
+#[tokio::test]
+async fn test_textarea_backspace() {
+    BrowserIntegrationTest::new("textarea-backspace")
+        .specification(
+            r#"
+import { eventually } from "@antithesishq/bombadil";
+import { actions, extract } from "@antithesishq/bombadil/browser";
+
+export const backspaces = actions(() => [{ PressKey: { code: 8 } }]);
+
+const editorValue = extract((state) => {
+  const editor = state.document.querySelector("\#editor");
+  return editor ? editor.value : "";
+});
+
+export const editorEventuallyEmpty = eventually(
+  () => editorValue.current === ""
+).within(10, "seconds");
+"#,
+        )
+        .run()
+        .await;
+}
+
+#[tokio::test]
+async fn test_counter_state_machine() {
+    BrowserIntegrationTest::new("counter-state-machine")
+        .time_limit(Duration::from_secs(3))
+        .specification(
+            r#"
+import { now, next, always } from "@antithesishq/bombadil";
+import { extract } from "@antithesishq/bombadil/browser";
+export { clicks } from "@antithesishq/bombadil/browser/defaults/actions";
+
+const counterValue = extract((state) => {
+  const element = state.document.body.querySelector("\#counter");
+  return parseInt(element?.textContent ?? "0", 10);
+});
+
+const unchanged = now(() => {
+  const current = counterValue.current;
+  return next(() => counterValue.current === current);
+});
+
+const increment = now(() => {
+  const current = counterValue.current;
+  return next(() => counterValue.current === current + 1);
+});
+
+const decrement = now(() => {
+  const current = counterValue.current;
+  return next(() => counterValue.current === current - 1);
+});
+
+export const counterStateMachine = always(unchanged.or(increment).or(decrement));
+"#,
+        )
+        .run()
+        .await;
+}
+
+#[tokio::test]
+async fn test_extractor_exception_stack_trace() {
+    BrowserIntegrationTest::new("extractor-exception")
+        .expect_error("\n    at throwingFunction")
+        .specification(
+            r##"
+import { extract } from "@antithesishq/bombadil/browser";
+export { clicks } from "@antithesishq/bombadil/browser/defaults/actions";
+
+function throwingFunction() {
+  throw new Error("extractor stack trace test");
+}
+
+const bad = extract((state) => throwingFunction());
+"##,
+        )
+        .run()
+        .await;
+}
+
+#[tokio::test]
+async fn test_wait_action() {
+    BrowserIntegrationTest::new("wait-action")
+        .time_limit(Duration::from_secs(3))
+        .specification(
+            r#"
+import { always } from "@antithesishq/bombadil";
+import { actions, extract } from "@antithesishq/bombadil/browser";
+
+export const waits = actions(() => ["Wait"]);
+
+const counterValue = extract((state) => {
+  const element = state.document.body.querySelector("\#counter");
+  return parseInt(element?.textContent ?? "0", 10);
+});
+
+export const counterNeverChanges = always(() => counterValue.current === 0);
+"#,
+        )
+        .run()
+        .await;
+}
+
+#[tokio::test]
+async fn test_double_click() {
+    BrowserIntegrationTest::new("double-click")
+        .time_limit(Duration::from_secs(5))
+        .specification(
+            r#"
+import { eventually } from "@antithesishq/bombadil";
+import { actions, extract, getFingerprint } from "@antithesishq/bombadil/browser";
+
+const counterValue = extract((state) => {
+  const element = state.document.body.querySelector("\#counter");
+  return parseInt(element?.textContent ?? "0", 10);
+});
+
+const fingerprint = extract((state) => {
+  return getFingerprint(state.document.getElementById( "double-click-target"));
+});
+
+export const doubleClicks = actions(() => [
+  {
+    DoubleClick: {
+      fingerprint: fingerprint.current,
+      point: { x: 400, y: 300 },
+      delayMillis: 100,
+    },
+  },
+]);
+
+export const counterIncreases = eventually(() => counterValue.current > 0);
+"#,
+        )
+        .run()
+        .await;
+}
+
+#[tokio::test]
+async fn test_extractor_guard() {
+    BrowserIntegrationTest::new("extractor-guard")
+        .expect_error("Cannot access cell.current from within an extractor")
+        .specification(
+            r##"
+import { actions, extract } from "@antithesishq/bombadil/browser";
+export { clicks } from "@antithesishq/bombadil/browser/defaults/actions";
+
+// First extractor
+const foo = extract((state) => state.document.title);
+
+// Second extractor tries to access the first - this should fail
+const bar = extract((state) => foo.current);
+"##,
+        )
+        .run()
+        .await;
+}
+
+#[tokio::test]
+async fn test_module_script() {
+    BrowserIntegrationTest::new("module-script")
+        .time_limit(Duration::from_secs(5))
+        .specification(
+            r##"
+import { now } from "@antithesishq/bombadil";
+import { extract } from "@antithesishq/bombadil/browser";
+export { clicks } from "@antithesishq/bombadil/browser/defaults/actions";
+
+const outputText = extract((state) => {
+  const output = state.document.querySelector("#output");
+  return output ? output.textContent : "";
+});
+
+export const moduleLoaded = now(() => {
+  return outputText.current === "ES module loaded successfully";
+});
+"##,
+        )
+        .run()
+        .await;
+}
+
+#[tokio::test]
+async fn test_snapshot_references_in_violation() {
+    BrowserIntegrationTest::new("snapshot-references")
+        .expect_error("pageValue =")
+        .specification(
+            r#"
+import { always } from "@antithesishq/bombadil";
+import { extract } from "@antithesishq/bombadil/browser";
+export { clicks } from "@antithesishq/bombadil/browser/defaults/actions";
+
+const pageValue = extract((state) => {
+  return parseInt(
+    state.document.querySelector("\#value")?.textContent ?? "0", 10
+  );
+});
+
+export const valueShouldStayZero = always(
+  () => pageValue.current === 0
+);
+"#,
+        )
+        .run()
+        .await;
+}
+
+#[tokio::test]
+async fn test_module_script_external() {
+    BrowserIntegrationTest::new("module-script-external")
+        .time_limit(Duration::from_secs(5))
+        .specification(
+            r##"
+import { now } from "@antithesishq/bombadil";
+import { extract } from "@antithesishq/bombadil/browser";
+export { clicks } from "@antithesishq/bombadil/browser/defaults/actions";
+
+const outputText = extract((state) => {
+  const output = state.document.querySelector("#output");
+  return output ? output.textContent : "";
+});
+
+export const moduleLoaded = now(() => {
+  return outputText.current === "External ES module loaded successfully";
+});
+"##,
+        )
+        .run()
+        .await;
+}
+
+#[tokio::test]
+async fn test_time_limit() {
+    BrowserIntegrationTest::new("time-limit")
+        .time_limit(Duration::from_secs(5))
+        .specification(
+            r#"
+import { always } from "@antithesishq/bombadil";
+export { clicks } from "@antithesishq/bombadil/browser/defaults/actions";
+export const neverDone = always(() => true);
+"#,
+        )
+        .run()
+        .await;
+}
+
+#[tokio::test]
+async fn test_file_download() {
+    BrowserIntegrationTest::new("file-download")
+        .time_limit(Duration::from_secs(10))
+        .specification(
+            r#"
+import { eventually } from "@antithesishq/bombadil";
+import { extract } from "@antithesishq/bombadil/browser";
+export { clicks } from "@antithesishq/bombadil/browser/defaults/actions";
+
+const messageText = extract((state) => {
+  const message = state.document.querySelector("\#message");
+  return message ? message.textContent : "";
+});
+
+export const downloadCompletes = eventually(
+  () => messageText.current === "you have downloaded the file"
+);
+"#,
+        )
+        .run()
+        .await;
+}
+
+#[tokio::test]
+async fn test_file_picker() {
+    let test_file = NamedTempFile::new().unwrap();
+    std::fs::write(test_file.path(), b"test file content").unwrap();
+    let file_path = test_file.path().display();
+
+    let specification = format!(
+        r#"
+import {{ eventually }} from "@antithesishq/bombadil";
+import {{ actions, extract, weighted }} from "@antithesishq/bombadil/browser";
+export {{ clicks }} from "@antithesishq/bombadil/browser/defaults/actions";
+
+const statusText = extract((state) => {{
+  const status = state.document.querySelector("\#status");
+  return status ? status.textContent : "";
+}});
+
+const fileIsSet = extract((state) => {{
+  const input = state.document.querySelector("\#file-input");
+  return input && input.files && input.files.length > 0;
+}});
+
+export const fileActions = actions(() => {{
+  if (fileIsSet.current) return [];
+  return [
+    {{
+      SetFileInputFiles: {{
+        selector: "\#file-input",
+        files: ["{file_path}"],
+      }},
+    }},
+  ];
+}});
+
+export const fileUploaded = eventually(
+  () => statusText.current === "you have uploaded a file"
+).within(20, "seconds");
+"#,
+    );
+
+    BrowserIntegrationTest::new("file-picker")
+        .time_limit(Duration::from_secs(30))
+        .specification(&specification)
+        .run()
+        .await;
+}
+
+#[tokio::test]
+async fn test_granted_permissions() {
+    BrowserIntegrationTest::new("granted-permissions")
+        .time_limit(Duration::from_secs(5))
+        .specification(
+            r##"
+import { now } from "@antithesishq/bombadil";
+import { extract } from "@antithesishq/bombadil/browser";
+export { clicks } from "@antithesishq/bombadil/browser/defaults/actions";
+
+const notificationPermission = extract((state) => {
+  const element = state.document.querySelector("#notification-permission");
+  return element ? element.textContent : "";
+});
+
+const geolocationPermission = extract((state) => {
+  const element = state.document.querySelector("#geolocation-permission");
+  return element ? element.textContent : "";
+});
+
+export const notificationsGranted = now(() => {
+  return notificationPermission.current === "notifications: granted";
+});
+
+export const geolocationGranted = now(() => {
+  return geolocationPermission.current === "geolocation: granted";
+});
+"##,
+        )
+        .grant_permissions(vec![
+            "notifications".to_string(),
+            "geolocation".to_string(),
+        ])
+        .run()
+        .await;
+}
+
+#[tokio::test]
+async fn test_extra_headers() {
+    BrowserIntegrationTest::new("fetch-headers")
+        .extra_headers(HashMap::from([(
+            "Authorization".to_string(),
+            "Bearer bombadil".to_string(),
+        )]))
+        .time_limit(Duration::from_secs(15))
+        .specification(
+            r#"
+import { eventually } from "@antithesishq/bombadil";
+import { extract } from "@antithesishq/bombadil/browser";
+export { clicks } from "@antithesishq/bombadil/browser/defaults/actions";
+
+const loaded = extract((state) => {
+  return state.document.querySelector('#secret-loaded') !== null;
+});
+
+export const secretResourceLoaded = eventually(
+  () => loaded.current === true
+).within(10, "seconds");
+"#,
+        )
+        .run()
+        .await;
+}
+
+#[tokio::test]
+async fn test_cookies() {
+    BrowserIntegrationTest::new("fetch-headers")
+        .cookies(vec![("session".to_string(), "bombadil".to_string())])
+        .time_limit(Duration::from_secs(15))
+        .specification(
+            r#"
+import { eventually } from "@antithesishq/bombadil";
+import { extract } from "@antithesishq/bombadil/browser";
+export { clicks } from "@antithesishq/bombadil/browser/defaults/actions";
+
+const cookieSet = extract((state) => {
+  return state.document.cookie.includes("session=bombadil");
+});
+
+export const sessionCookiePresent = eventually(
+  () => cookieSet.current === true
+).within(10, "seconds");
+"#,
+        )
+        .run()
+        .await;
+}
+
+#[tokio::test]
+async fn test_confirm_dialog() {
+    BrowserIntegrationTest::new("confirm-dialog")
+        .time_limit(Duration::from_secs(5))
+        .specification(
+            r#"
+import { now } from "@antithesishq/bombadil";
+import { extract } from "@antithesishq/bombadil/browser";
+export { clicks } from "@antithesishq/bombadil/browser/defaults/actions";
+
+const message = extract((state) => {
+  const element = state.document.querySelector("\#message");
+  return element ? element.textContent : "";
+});
+
+export const dialogWasAccepted = now(
+  () => message.current === "dialog accepted"
+);
+"#,
+        )
+        .run()
+        .await;
+}
+
+#[tokio::test]
+async fn test_disabled_clicks() {
+    BrowserIntegrationTest::new("disabled-clicks")
+        .expect_error("no actions available")
+        .specification(
+            r#"
+import { always } from "@antithesishq/bombadil";
+export { clicks } from "@antithesishq/bombadil/browser/defaults/actions";
+
+export const keepRunning = always(() => true);
+"#,
+        )
+        .run()
+        .await;
+}
+
+#[tokio::test]
+async fn test_mouse_drag() {
+    BrowserIntegrationTest::new("mouse-drag")
+        .time_limit(Duration::from_secs(5))
+        .specification(
+            r##"
+import { eventually } from "@antithesishq/bombadil";
+import { actions, extract } from "@antithesishq/bombadil/browser";
+
+const status = extract((state) => {
+  const element = state.document.body.querySelector("#status");
+  return element?.textContent ?? "";
+});
+
+export const drag = actions(() => [
+  {
+    MouseDrag: {
+      from: { x: 100, y: 200 },
+      to: { x: 400, y: 200 },
+      steps: 5,
+      delayMillis: 10,
+    },
+  },
+]);
+
+export const wasDragged = eventually(() => status.current === "dragged");
+"##,
+        )
+        .run()
+        .await;
+}
+
+#[tokio::test]
+async fn test_set_viewport() {
+    BrowserIntegrationTest::new("set-viewport")
+        .time_limit(Duration::from_secs(5))
+        .specification(
+            r##"
+import { eventually } from "@antithesishq/bombadil";
+import { actions, extract } from "@antithesishq/bombadil/browser";
+
+const size = extract((state) => {
+  const element = state.document.body.querySelector("#size");
+  return element?.textContent ?? "";
+});
+
+export const resize = actions(() => [
+  { SetViewport: { width: 1024, height: 768 } },
+]);
+
+export const viewportApplied = eventually(() => size.current === "1024x768");
+"##,
+        )
+        .run()
+        .await;
+}
+
+#[tokio::test]
+async fn test_custom_element_slot() {
+    BrowserIntegrationTest::new("custom-element-slot")
+        .time_limit(Duration::from_secs(5))
+        .specification(
+            r##"
+import { eventually } from "@antithesishq/bombadil";
+import { actions, extract } from "@antithesishq/bombadil/browser";
+export { clicks } from "@antithesishq/bombadil/browser/defaults/actions";
+
+const isDone = extract((state) => {
+  const element = state.document.getElementById("result");
+  return element?.textContent === "Done";
+});
+
+export const eventuallyDone = eventually(() => isDone.current);
+"##,
+        )
+        .run()
+        .await;
+}

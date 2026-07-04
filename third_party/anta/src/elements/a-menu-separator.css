@@ -1,0 +1,13 @@
+@layer anta {
+  a-menu-separator:not(:defined) {
+    display: none;
+  }
+
+  a-menu-separator {
+    display: block;
+    flex-shrink: 0;
+    height: 1px;
+    margin: 2px 4px;
+    background: var(--border-5);
+  }
+}
