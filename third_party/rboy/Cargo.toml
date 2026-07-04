@@ -1,0 +1,22 @@
+[package]
+name = "rboy"
+version = "0.2.0"
+authors = [ "mvdnes <git@mathijs.vd-nes.nl>" ]
+edition = "2018"
+# The GUI binary (src/main.rs, clap/cpal/glium/winit) is not used: the differential
+# harness drives only the headless library API, so the bin is disabled and its
+# optional deps dropped to keep the vendored tree small.
+autobins = false
+
+[dependencies]
+blip_buf = ">=0.1.3"
+serde = { version = "1.0", features = ["derive"] }
+serde_arrays = "0.2.0"
+typetag = "0.2.20"
+ciborium = "0.2.2"
+
+[lib]
+path = "src/lib.rs"
+
+[profile.release]
+lto = true
