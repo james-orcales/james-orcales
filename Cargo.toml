@@ -5,7 +5,7 @@
 # and used via .cargo/config.toml — never crates.io at build time.
 [workspace]
 resolver = "3"
-members = ["lint_rs", "shared_rs", "sloc_rs", "gameboy_rs", "gameboy_diff"]
+members = ["lint_rs", "shared_rs", "sloc_rs", "gameboy_rs"]
 # third_party/ holds whole vendored upstream tools, each its own crate/workspace
 # built in isolation. Without this, a single-crate tool like fd (no [workspace]
 # table of its own) gets pulled into this workspace and fails to build/vendor,
