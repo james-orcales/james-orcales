@@ -116,7 +116,9 @@ func Test_Main_Applies_Macos_Defaults(t *testing.T) {
 	if !ran_contains(ran, []string{"killall", "Dock"}) {
 		t.Fatal("expected killall Dock to run")
 	}
-	if log.String() != "" {
+	// The 35 defaults commands must not each print a line; the dotfiles scan narrates
+	// itself, so assert the absence of per-command noise rather than an empty log.
+	if strings.Contains(log.String(), "defaults") {
 		t.Fatalf("expected no per-command logging, got %q", log.String())
 	}
 	clock := []string{
@@ -154,6 +156,44 @@ func Test_Main_Skips_Macos_Defaults_Off_Darwin(t *testing.T) {
 	}
 	if run_count != 0 {
 		t.Fatalf("expected no commands off darwin, got %d", run_count)
+	}
+}
+
+// Test_Main_Narrates_The_Scan verifies Main announces each source directory as the
+// walk reads it, so a long silent scan of a large tree — one gitignore probe per
+// entry — shows progress instead of looking hung, and reports an up-to-date tree
+// when it writes nothing.
+func Test_Main_Narrates_The_Scan(t *testing.T) {
+	t.Parallel()
+	loop, driver, _ := sysio.New_Sim(0)
+	// A nested directory, so the walk reads past the root and narrates more than one line.
+	if make_err := loop.Make_Directory(test_source); make_err != nil {
+		t.Fatalf("make source: %v", make_err)
+	}
+	if make_err := loop.Make_Directory(test_source + "/nested"); make_err != nil {
+		t.Fatalf("make nested: %v", make_err)
+	}
+	log := &bytes.Buffer{}
+	status := setup.Main(&setup.Main_Input{
+		File_System:           setup.File_System{Loop: loop, Run_Until: driver.Run_Until},
+		Source_Directory:      test_source,
+		Destination_Directory: test_home,
+		Operating_System:      "linux",
+		Run_Command:           func(name string, arguments []string) (err error) { return nil },
+		Stdout:                log,
+		Stderr:                io.Discard,
+	})
+	if status != 0 {
+		t.Fatalf("expected success, got status %d", status)
+	}
+	for _, want := range []string{
+		"setup: dotfiles: scanning .\n",
+		"setup: dotfiles: scanning nested\n",
+		"setup: dotfiles: already up to date\n",
+	} {
+		if !strings.Contains(log.String(), want) {
+			t.Fatalf("expected the scan to narrate %q, got %q", want, log.String())
+		}
 	}
 }
 

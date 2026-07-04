@@ -77,6 +77,7 @@ func Main(input *Main_Input) (status_code int) {
 		Source_Directory:      input.Source_Directory,
 		Destination_Directory: input.Destination_Directory,
 		Is_Ignored:            input.Is_Ignored,
+		Progress:              input.Stdout,
 	})
 	if plan_err != nil {
 		fmt.Fprintf(input.Stderr, "setup: %v\n", plan_err)
@@ -89,6 +90,11 @@ func Main(input *Main_Input) (status_code int) {
 			return exit_failure
 		}
 		fmt.Fprintf(input.Stdout, "setup: wrote %s\n", write.Destination_Path)
+	}
+	// A converged tree writes nothing, so without a closing line the step would look
+	// stuck after the last scan line; say it finished and had no work.
+	if len(writes) == 0 {
+		fmt.Fprintln(input.Stdout, "setup: dotfiles: already up to date")
 	}
 	// The macos defaults touch macOS-only preference domains, so they run there
 	// and nowhere else.
@@ -244,6 +250,11 @@ type Plan_Input struct {
 	// so the generated install tree under .local never reaches the home directory.
 	// Nil ignores nothing, the sync's behavior before the filter existed.
 	Is_Ignored func(relative_path string) (ignored bool)
+	// Progress receives one line naming each directory as the walk reads it. The walk
+	// spawns one gitignore probe per entry, so a large tree scans for seconds with no
+	// write to show for it; narrating each directory proves the scan is live, not hung.
+	// Nil is silent, so a direct caller that wants no narration pays nothing.
+	Progress io.Writer
 }
 
 // Plan returns the writes that would bring the home directory in line with the source
@@ -256,6 +267,7 @@ func Plan(input *Plan_Input) (writes []File_Write, err error) {
 	for len(worklist) > 0 {
 		directory := worklist[len(worklist)-1]
 		worklist = worklist[:len(worklist)-1]
+		plan_narrate(input.Progress, directory)
 		entries, read_err := input.File_System.Loop.Read_Directory(
 			filepath.Join(input.Source_Directory, directory))
 		if read_err != nil {
@@ -280,6 +292,16 @@ func Plan(input *Plan_Input) (writes []File_Write, err error) {
 		}
 	}
 	return writes, nil
+}
+
+// Announces the directory the walk is about to read, one line each, so a scan that
+// writes nothing still shows it is advancing. A nil sink is silent, so narration
+// stays opt-in per Plan_Input.
+func plan_narrate(progress io.Writer, directory string) {
+	if progress == nil {
+		return
+	}
+	fmt.Fprintf(progress, "setup: dotfiles: scanning %s\n", directory)
 }
 
 // Reports whether the walk should skip source_path because it is gitignored. A
