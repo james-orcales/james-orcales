@@ -1,23 +1,23 @@
 //! End-to-end regression net: replays every committed test ROM and checks its framebuffer,
 //! serial, and audio fingerprints against committed golden hashes. This preserves the coverage
 //! the rboy differential gave, without the dependency — the goldens were recorded while
-//! gameboy_rs was byte-verified against rboy across the whole corpus, so a mismatch here is a
+//! gameboy_emulator was byte-verified against rboy across the whole corpus, so a mismatch here is a
 //! regression from that validated behaviour. Each ROM runs only until its framebuffer and serial
 //! stop changing (then a few chunks more to confirm) — a microtest that settles in a few thousand
 //! cycles stops almost at once, a slow renderer runs longer — so the cost is proportional, with no
-//! flat budget. Run in release — `cargo test -p gameboy_rs --release`. Set `CORPUS_BLESS=1` to
+//! flat budget. Run in release — `cargo test -p gameboy_emulator --release`. Set `CORPUS_BLESS=1` to
 //! regenerate the golden.
 //!
 //! Written in the crate dialect like everything else here — no `mut`, iteration by fold, state
-//! threaded as values — and on the linter's CI path (`gameboy_rs/tests`), so it is enforced, not
+//! threaded as values — and on the linter's CI path (`gameboy_emulator/tests`), so it is enforced, not
 //! taken on trust.
 
-use gameboy_rs::cpu;
-use gameboy_rs::device;
-use gameboy_rs::gbmode;
-use gameboy_rs::hash;
-use gameboy_rs::mbc;
-use gameboy_rs::region;
+use gameboy_emulator::cpu;
+use gameboy_emulator::device;
+use gameboy_emulator::gbmode;
+use gameboy_emulator::hash;
+use gameboy_emulator::mbc;
+use gameboy_emulator::region;
 use std::collections;
 use std::env;
 use std::fs;

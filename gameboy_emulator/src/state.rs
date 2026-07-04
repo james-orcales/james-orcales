@@ -1,7 +1,7 @@
 //! Save states: a std-only serialization of the whole machine to bytes and back, so
 //! the composition root can persist and restore a snapshot without a serialization
 //! dependency in the core (rboy used serde + ciborium; here it is hand-rolled over
-//! std). The format is gameboy_rs's own — round-trippable, not cross-emulator. Each
+//! std). The format is gameboy_emulator's own — round-trippable, not cross-emulator. Each
 //! type encodes to a `Vec<u8>` composed by `concat` (never a byte-at-a-time push, to
 //! avoid an O(n^2) build); decoding threads a byte offset and fails to `None` on any
 //! truncation, so a short or corrupt blob is rejected rather than panicking.

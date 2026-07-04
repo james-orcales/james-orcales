@@ -1,6 +1,6 @@
-# gameboy_rs — the immutability tax
+# gameboy_emulator — the immutability tax
 
-`gameboy_rs` reimplements the mutation-heavy `rboy` Game Boy emulator in the
+`gameboy_emulator` reimplements the mutation-heavy `rboy` Game Boy emulator in the
 value-oriented, zero-`mut` / zero-`unsafe` dialect `lint_rs` enforces. It is
 byte-for-byte identical to rboy — 866 test ROMs match on framebuffer + serial + audio.
 This measures what banning in-place mutation costs at runtime.
@@ -13,7 +13,7 @@ the framebuffer hash. Identical work, identical output (the hash matches) — th
 difference is the emulator core, so the delta is the tax and nothing else. Measured
 with `maddox`, this repo's `poop`-style whole-process comparator (Apple-Silicon PMU
 counters via `proc_pid_rusage`). `rboy` is the reference (Benchmark 1); the `delta`
-column is gameboy_rs's overhead. Audio is synthesized and stored on both sides; rboy's
+column is gameboy_emulator's overhead. Audio is synthesized and stored on both sides; rboy's
 capture is lock-free (no `Arc`/`Mutex`) so the mutex the correctness harness uses does
 not tax it here. The timed path is pure emulation — no save-state / battery file I/O.
 
@@ -112,7 +112,7 @@ memory incessantly (every stack push/pop, every RAM/VRAM store, every PPU scanli
 every `blip_buf::add_delta`), so this one substitution dominates the whole run. This is
 the "immutability tax" the rewrite set out to measure, and it is large.
 
-**Instructions vs cycles.** gameboy_rs retires ~11–13× more instructions (the memcpy of
+**Instructions vs cycles.** gameboy_emulator retires ~11–13× more instructions (the memcpy of
 each rebuild) but burns ~18–22× more *cycles* — so its IPC is also worse. The gap is the
 cache cost: the whole-region copies are memory-bandwidth-bound and evict the working set
 from the M4's L1/L2, making each extra instruction more expensive than rboy's in-place
@@ -143,7 +143,7 @@ new primitive, no change to `lint_rs` or `shared_rs`**) lets a region instead be
 of fixed-size pages, each a slot inserted once at construction; a write rebuilds only
 the one page (O(page), not O(region)). Applied to the two write-heavy hot regions — the
 framebuffer (rebuilt per scanline) and WRAM — with `PAGE = 64`, this stays byte-exact
-across 241 ROMs and 100% lint-clean (every `mut` remains inside `shared_rs`; gameboy_rs
+across 241 ROMs and 100% lint-clean (every `mut` remains inside `shared_rs`; gameboy_emulator
 has zero `mut` tokens still):
 
 | ROM | R1 wall | paged wall | Δ wall | Δ instructions | Δ cycles | peak RSS |
@@ -307,7 +307,7 @@ framebuffer hash; the two engines print the same hash (the run is identical work
 
 | build            | source LOC | release binary | notes                                  |
 | ---------------- | ---------- | -------------- | -------------------------------------- |
-| `gameboy_rs`     | 6,033      | 530 KiB        | headless; `cargo build --release`      |
+| `gameboy_emulator`     | 6,033      | 530 KiB        | headless; `cargo build --release`      |
 | `rboy`           | 7,137      | —              | includes its SDL/winit GUI `main`      |
 
 Comparable source size — the tax is entirely at runtime, not in code volume.
