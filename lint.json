@@ -17,7 +17,9 @@
           "install_golang.sh",
           "build.go",
           "home/**",
-          "documentation/youtube/**"
+          "documentation/youtube/**",
+          "rust-toolchain.toml",
+          "gameboy_emulator/test_roms/**"
   ],
   "opt_out_recursion_ban": [],
   "opt_out_assertion_mandate_packages": [
@@ -153,7 +155,6 @@
     "img":       ["image"],
     "imp":       ["import", "implementation"],
     "impl":      ["implementation"],
-    "in":        ["input"],
     "inc":       ["include", "increment", "increase", "inclusion"],
     "ins":       ["insertion", "instance", "insert"],
     "inst":      ["instance", "instruction", "installation"],

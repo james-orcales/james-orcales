@@ -52,11 +52,11 @@ jobs:
       - name: Build, test, clippy
         run: |
           cargo build --workspace --locked
-          cargo test --workspace --locked
+          cargo test --workspace --release --locked
           cargo clippy --workspace --all-targets --locked -- -D warnings
 
       - name: Enforce the dialect
         run: |
-          for crate in lint_rs shared_rs sloc_rs; do
-            cargo run -q -p lint_rs --locked -- "${crate}/src" || exit 1
+          for path in lint_rs/src shared_rs/src sloc_rs/src gameboy_emulator/src gameboy_emulator/tests; do
+            cargo run -q -p lint_rs --locked -- "${path}" || exit 1
           done

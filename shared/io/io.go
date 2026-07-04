@@ -177,7 +177,7 @@ type IO struct {
 		completion *Completion, callback Callback, file File, buffer []byte, offset int64,
 	)
 	// Timeout fires callback after the duration on the clock, off the same queue the
-	// IO completions use (TigerBeetle IO.timeout).
+	// IO completions use (TigerBeetle IO.timeout). THIS IS THE EQUIVALENT TO `stdtime.Sleep`.
 	Timeout func(completion *Completion, callback Timeout_Callback, duration time.Duration)
 	// Listen binds and listens on host:port, returning the listening socket
 	// synchronously — bind never blocks, so it carries no Completion.

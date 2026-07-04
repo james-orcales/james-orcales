@@ -1,0 +1,8 @@
+# Pin the toolchain so CI does not silently drift onto a newer clippy that flags
+# previously-clean code (as happened when the runner's `stable` moved to 1.96.1).
+# Bump deliberately, and re-run `cargo clippy --workspace --all-targets -- -D warnings`
+# before doing so.
+[toolchain]
+channel = "1.96.0"
+components = ["clippy"]
+profile = "minimal"
