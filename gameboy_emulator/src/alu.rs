@@ -116,7 +116,7 @@ pub fn add16imm(reg: register::Registers, a: u16, b: u16) -> (register::Register
 
 /// Swaps the nibbles of `value`; Z from the result, all other flags clear.
 pub fn swap(reg: register::Registers, value: u8) -> (register::Registers, u8) {
-    let result = (value >> 4) | (value << 4);
+    let result = value.rotate_left(4);
     (flags(reg, value == 0, false, false, false), result)
 }
 
@@ -300,7 +300,7 @@ mod tests {
         // 0x45 + 0x38 = 0x7D; DAA corrects it to the BCD result 0x83.
         let reg = alu::daa(alu::add(state(0x45, 0), 0x38, false));
         assert_eq!(reg.a, 0x83);
-        assert_eq!(register::get_flag(reg, register::Cpu_Flag::C), false);
+        assert!(!register::get_flag(reg, register::Cpu_Flag::C));
     }
 
     #[test]

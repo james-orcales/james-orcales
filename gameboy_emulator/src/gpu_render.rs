@@ -176,8 +176,10 @@ fn sprite_row(gpu: &gpu::Gpu, row: Vec<([u8; 3], Prio_Type)>) -> Vec<([u8; 3], P
 }
 
 // The up-to-ten sprites on this line, in rboy's front-to-back draw order. The
-// BTreeMap key reproduces the DMG (X then index) or CGB (index only) sort without a
-// `&mut` in-place sort.
+// The sprite draw order: DMG sorts by X then OAM index, CGB by index only. Keyed so a BTreeMap
+// yields that order without a `&mut` in-place sort.
+type Sprite_Order = collections::BTreeMap<(cmp::Reverse<i32>, cmp::Reverse<usize>), (i32, i32, usize)>;
+
 fn collect_sprites(gpu: &gpu::Gpu) -> Vec<(i32, i32, usize)> {
     let line = gpu.line as i32;
     let size = gpu.sprite_size as i32;
@@ -189,7 +191,7 @@ fn collect_sprites(gpu: &gpu::Gpu) -> Vec<(i32, i32, usize)> {
             false => None,
         }
     });
-    let ordered: collections::BTreeMap<(cmp::Reverse<i32>, cmp::Reverse<usize>), (i32, i32, usize)> = visible
+    let ordered: Sprite_Order = visible
         .take(10)
         .map(|s| ((cmp::Reverse(if by_index { 0 } else { s.0 }), cmp::Reverse(s.2)), s))
         .collect();

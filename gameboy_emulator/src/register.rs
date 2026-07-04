@@ -157,11 +157,11 @@ mod tests {
         let masks =
             [register::Cpu_Flag::C, register::Cpu_Flag::H, register::Cpu_Flag::N, register::Cpu_Flag::Z];
         masks.iter().for_each(|&mask| {
-            assert_eq!(register::get_flag(reg, mask), false);
+            assert!(!register::get_flag(reg, mask));
             let set = register::set_flag(reg, mask, true);
-            assert_eq!(register::get_flag(set, mask), true);
+            assert!(register::get_flag(set, mask));
             let cleared = register::set_flag(set, mask, false);
-            assert_eq!(register::get_flag(cleared, mask), false);
+            assert!(!register::get_flag(cleared, mask));
         });
     }
 

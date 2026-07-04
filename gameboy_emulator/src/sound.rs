@@ -530,11 +530,11 @@ fn wave_walk(channel: Wave_Channel, time: u32, end: u32) -> Wave_Channel {
         true => {
             let shift = wave_volshift(channel.volume_shift);
             let wavebyte = channel.waveram[(channel.current_wave >> 1) as usize];
-            let sample = match channel.current_wave % 2 == 0 {
+            let sample = match channel.current_wave.is_multiple_of(2) {
                 true => wavebyte >> 4,
                 false => wavebyte & 0xF,
             };
-            let amp = (((sample as i32) << 2) >> shift) as i32;
+            let amp = ((sample as i32) << 2) >> shift;
             let next_time = time + channel.period;
             let next_wave = (channel.current_wave + 1) % 32;
             let recently = channel.sample_recently_accessed || time >= end.saturating_sub(2);
@@ -873,7 +873,7 @@ fn run_channels(sound: Sound, start: u32, end: u32) -> Sound {
 
 // One frame-sequencer tick: length on even steps, sweep on step%4==2, envelope on 7.
 fn step_sequencer(sound: Sound) -> Sound {
-    let lengthed = match sound.frame_step % 2 == 0 {
+    let lengthed = match sound.frame_step.is_multiple_of(2) {
         true => step_lengths(sound),
         false => sound,
     };

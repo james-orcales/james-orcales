@@ -214,7 +214,7 @@ fn mbc1_read_rom(cart: &Mbc1, address: u16) -> u8 {
         },
         false => cart.rombank,
     };
-    let index = bank * 0x4000 | ((address as usize) & 0x3FFF);
+    let index = (bank * 0x4000) | ((address as usize) & 0x3FFF);
     cart.rom.get(index).copied().unwrap_or(0xFF)
 }
 
@@ -300,7 +300,7 @@ fn mbc2_read_rom(cart: &Mbc2, address: u16) -> u8 {
         true => 0,
         false => cart.rombank,
     };
-    cart.rom.get(bank * 0x4000 | ((address as usize) & 0x3FFF)).copied().unwrap_or(0xFF)
+    cart.rom.get((bank * 0x4000) | ((address as usize) & 0x3FFF)).copied().unwrap_or(0xFF)
 }
 
 // MBC2 RAM is 4-bit, so the high nibble always reads as 1.
@@ -364,7 +364,7 @@ fn new_mbc5(data: Vec<u8>) -> Mbc5 {
 fn mbc5_read_rom(cart: &Mbc5, address: u16) -> u8 {
     let index = match address < 0x4000 {
         true => address as usize,
-        false => cart.rombank * 0x4000 | ((address as usize) & 0x3FFF),
+        false => (cart.rombank * 0x4000) | ((address as usize) & 0x3FFF),
     };
     cart.rom.get(index).copied().unwrap_or(0)
 }
@@ -372,7 +372,7 @@ fn mbc5_read_rom(cart: &Mbc5, address: u16) -> u8 {
 fn mbc5_read_ram(cart: &Mbc5, address: u16) -> u8 {
     match cart.ram_on {
         false => 0,
-        true => cart.ram[cart.rambank * 0x2000 | ((address as usize) & 0x1FFF)],
+        true => cart.ram[(cart.rambank * 0x2000) | ((address as usize) & 0x1FFF)],
     }
 }
 
@@ -394,7 +394,7 @@ fn mbc5_write_ram(cart: Mbc5, address: u16, value: u8) -> Mbc5 {
     match cart.ram_on {
         false => cart,
         true => Mbc5 {
-            ram: memory::write(&cart.ram, cart.rambank * 0x2000 | ((address as usize) & 0x1FFF), value),
+            ram: memory::write(&cart.ram, (cart.rambank * 0x2000) | ((address as usize) & 0x1FFF), value),
             ram_updated: true,
             ..cart
         },
@@ -433,7 +433,7 @@ fn new_mbc3(data: Vec<u8>) -> Mbc3 {
 fn mbc3_read_rom(cart: &Mbc3, address: u16) -> u8 {
     let index = match address < 0x4000 {
         true => address as usize,
-        false => cart.rombank * 0x4000 | ((address as usize) & 0x3FFF),
+        false => (cart.rombank * 0x4000) | ((address as usize) & 0x3FFF),
     };
     cart.rom.get(index).copied().unwrap_or(0xFF)
 }
@@ -443,7 +443,7 @@ fn mbc3_read_ram(cart: &Mbc3, address: u16) -> u8 {
     match cart.ram_on {
         false => 0xFF,
         true => match (!cart.selectrtc && cart.rambank < cart.rambanks, cart.selectrtc && cart.rambank < 5) {
-            (true, _) => cart.ram[cart.rambank * 0x2000 | ((address as usize) & 0x1FFF)],
+            (true, _) => cart.ram[(cart.rambank * 0x2000) | ((address as usize) & 0x1FFF)],
             (_, true) => cart.rtc_ram_latch[cart.rambank],
             _ => 0xFF,
         },
@@ -472,7 +472,7 @@ fn mbc3_write_ram(cart: Mbc3, address: u16, value: u8) -> Mbc3 {
         false => cart,
         true => match (!cart.selectrtc && cart.rambank < cart.rambanks, cart.selectrtc && cart.rambank < 5) {
             (true, _) => Mbc3 {
-                ram: memory::write(&cart.ram, cart.rambank * 0x2000 | ((address as usize) & 0x1FFF), value),
+                ram: memory::write(&cart.ram, (cart.rambank * 0x2000) | ((address as usize) & 0x1FFF), value),
                 ram_updated: true,
                 ..cart
             },
@@ -644,7 +644,7 @@ mod tests {
             mbc::Mbc::Mbc1(inner) => {
                 assert_eq!(inner.rombanks, 4);
                 assert_eq!(inner.rombank, 1);
-                assert_eq!(inner.ram_on, false);
+                assert!(!inner.ram_on);
             }
             _ => panic!("expected an MBC1 cartridge"),
         }
