@@ -2,6 +2,7 @@ home/.local/*
 home/.config/hcloud/*
 home/.config/jj/repos/*
 home/cache/*
+home/.config/jj/repos/*
 
 .local/*
 

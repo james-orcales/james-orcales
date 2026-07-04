@@ -1,0 +1,287 @@
+A bunch of things I find myself repeatedly referring to in various discussions!
+
+: Reflections on a decade of coding
+
+  <https://www.scattered-thoughts.net/writing/reflections-on-a-decade-of-coding/>
+
+: Two meanings of systems programming
+
+  <http://willcrichton.net/notes/systems-programming/>
+
+: Systems programmers can have nice things
+
+  <https://robert.ocallahan.org/2016/08/random-thoughts-on-rust-cratesio-and.html>
+
+: Goals and priorities for C++
+
+  <http://www.open-std.org/jtc1/sc22/wg21/docs/papers/2020/p2137r0.html>
+
+: Boundaries
+
+  <https://www.destroyallsoftware.com/talks/boundaries>
+
+: Plugin diagram
+
+  <https://www.tedinski.com/2018/01/30/the-one-ring-problem-abstraction-and-power.html>
+
+: Data, ADT, Object
+
+  <https://www.tedinski.com/2018/02/27/the-expression-problem.html>
+
+: John Carmack on inlined code
+
+  <http://number-none.com/blow/john_carmack_on_inlined_code.html>
+
+: A few billion lines of code later
+
+  <https://cacm.acm.org/magazines/2010/2/69354-a-few-billion-lines-of-code-later/abstract>
+
+: Simple testing can prevent most critical failures
+
+  <https://www.usenix.org/system/files/conference/osdi14/osdi14-paper-yuan.pdf>
+
+: The Error Model
+
+  <http://joeduffyblog.com/2016/02/07/the-error-model/>
+
+: Talks that changed the way I think about programming
+
+  <http://www.opowell.com/post/talks-that-changed-the-way-i-think-about-programming/>
+
+: Why rewriting hotspots in a faster language doesn't work
+
+  <https://code.visualstudio.com/blogs/2018/03/23/text-buffer-reimplementation>
+
+  > The right tool for the job is often the tool you are already using --- adding new tools has a higher cost than many people appreciate
+  >
+  > [John Carmack](https://twitter.com/id_aa_carmack/status/989951283900514304)
+
+: Programming people
+
+  <https://leftoversalad.com/c/015_programmingpeople/>
+
+: Python spends almost all of its time in the C runtime
+
+  <http://blog.kevmod.com/2016/07/why-is-python-slow/>
+
+: Rider architecture
+
+  <https://www.codemag.com/Article/1811091/Building-a-.NET-IDE-with-JetBrains-Rider>
+
+: System programming values
+
+  <https://www.youtube.com/watch?v=2wZ1pCpJUIM>
+
+: Midlayer mistake
+
+  <https://lwn.net/Articles/336262/>
+
+: Technology from the past come to save the future from itself
+
+  <http://venge.net/graydon/talks/>
+
+: Not Rocket Science Rule
+
+  <https://graydon2.dreamwidth.org/1597.html>
+
+: Why C++ Sails When the Vasa Sank
+
+  <https://www.youtube.com/watch?v=ltCgzYcpFUI>
+
+: Composition of Unsafe
+
+  <https://smallcultfollowing.com/babysteps/blog/2016/10/02/observational-equivalence-and-unsafe-code/>
+
+: In Rust, Ordinary Vectors are Values
+
+  <http://smallcultfollowing.com/babysteps/blog/2018/02/01/in-rust-ordinary-vectors-are-values/>
+
+: Implementing Swift Generics
+
+  <https://www.youtube.com/watch?v=ctS8FzqcRug>,\
+  <https://download.swift.org/docs/assets/generics.pdf>,\
+  <https://faultlore.com/blah/swift-abi/>
+
+: Generics Dilemma
+
+  <https://research.swtch.com/generic>
+
+: A Catalogue of Optimizing Transformations
+
+  <https://www.clear.rice.edu/comp512/Lectures/Papers/1971-allen-catalog.pdf>
+
+: Static Program Analysis
+
+  <https://cs.au.dk/~amoeller/spa/spa.pdf>
+
+: Accurate mental model for Rust's reference types
+
+  <https://docs.rs/dtolnay/0.0.9/dtolnay/macro._02__reference_types.html>
+
+: Don't write bugs
+
+  <https://www.teamten.com/lawrence/programming/dont-write-bugs.html>
+
+: Don't use `_` patterns
+
+  <https://youtu.be/-J8YyfrSwTk?t=1819>
+
+: What Is The Minimal Set Of Optimizations Needed For Zero-Cost Abstraction?
+
+  <https://robert.ocallahan.org/2020/08/what-is-minimal-set-of-optimizations.html>
+
+: Expect Tests
+
+  <https://blog.janestreet.com/using-ascii-waveforms-to-test-hardware-designs/>
+
+: What Every C Programmer Should Know About UB
+
+  <https://blog.llvm.org/2011/05/what-every-c-programmer-should-know.html>
+
+: Build a Mountain
+
+  <https://www.youtube.com/watch?v=443UNeGrFoM&t=6949s>
+
+: Precise Profiling via rdpmc
+
+  <https://hackmd.io/sH315lO2RuicY-SEt7ynGA?view>
+
+: JSONMutexDB
+
+  <https://tailscale.com/blog/an-unlikely-database-migration/>
+
+: Swift Is Undecidable
+
+  <https://forums.swift.org/t/swift-type-checking-is-undecidable/39024>
+
+: Don Syme of F# on typeclasses
+
+  <https://github.com/fsharp/fslang-suggestions/issues/243#issuecomment-916079347>
+
+: Outlined Containers
+
+  <https://github.com/rust-lang/rust/pull/60470#issuecomment-489136965>
+
+: Your ABI is Probably Wrong
+
+  <https://outerproduct.net/boring/2021-05-07_abi-wrong.html>
+
+: Limits to Growth
+
+  <https://graydon2.dreamwidth.org/263429.html>
+
+: Subprocess Gotchas
+
+  <https://github.com/oconnor663/duct.py/blob/0764961a8c799873a9375d4100ae9ddbee624594/gotchas.md>
+
+: The Unix process API is unreliable and unsafe
+
+  <https://catern.com/process.html>
+
+: Distributed Systems via remote syscalls
+
+  <http://www.catern.com/integration.html>
+
+: Latency Numbers
+
+  <https://github.com/sirupsen/napkin-math>
+
+: Moderation
+
+  <https://old.reddit.com/r/rust/comments/hnfnti/where_is_the_rust_community_allowed_to_talk_about/fxf65nf/>
+
+: Interfaces Belong With Users
+
+  <https://neugierig.org/software/blog/2019/11/interface-pattern.html>
+
+: Structured Concurrency
+
+  <https://vorpus.org/blog/notes-on-structured-concurrency-or-go-statement-considered-harmful/>
+
+: Typographic Size on The Web
+
+  <https://fonts.google.com/knowledge/using_type/the_complications_of_typographic_size>
+
+: Snapshot Testing
+
+  <https://ianthehenry.com/posts/my-kind-of-repl/>
+
+: Post IntelliJ
+
+  <https://martinfowler.com/bliki/PostIntelliJ.html>
+
+: SSA Book
+
+  <https://pfalcon.github.io/ssabook/latest/book-full.pdf>
+
+: SSA How To
+
+  <https://gist.github.com/pizlonator/cf1e72b8600b1437dda8153ea3fdb963>
+
+: Interdiff Review
+
+  <https://gist.github.com/thoughtpolice/9c45287550a56b2047c6311fbadebed2>
+
+: Java for Everything
+
+  <https://www.teamten.com/lawrence/writings/java-for-everything.html>
+
+: Don't clear the database
+
+  <https://calpaterson.com/against-database-teardown.html>
+
+: Compiler Shouldn't Be Able to Tell the Difference:
+
+  <https://lobste.rs/s/svhzj9/divorce_from_llvm#c_e5i0gw>
+
+: Futures are a Trap
+
+  <https://trio.discourse.group/t/structured-concurrency-in-rust/73/14#:~:text=trap%20here>
+
+: A Hole in Ada Type Safety
+
+  <https://www.enyo.de/fw/notes/ada-type-safety.html>
+
+: Unit of Testing
+
+  <https://web.archive.org/web/20150315073817/http://www.xprogramming.com/testfram.htm#:~:text=unit%20of%20testing>
+
+: Test Sizes
+
+  <https://testing.googleblog.com/2010/12/test-sizes.html>
+
+: Threads Cannot be Implemented as a Library
+
+  <https://courses.cs.washington.edu/courses/cse590p/05au/HPL-2004-209.pdf>
+
+: Comparison of Rust async and Linux thread context switch time and memory use
+
+  <https://github.com/jimblandy/context-switch>
+
+: Your code should be more flexible than your domain model
+
+  <https://www.seangoedecke.com/invalid-states/>
+
+: Modern CI is Too Complex and Misdirected
+
+  <https://gregoryszorc.com/blog/2021/04/07/modern-ci-is-too-complex-and-misdirected/>
+
+: Programmer migration patterns
+
+  <https://apenwarr.ca/log/20190318>
+
+: Is Parallel Programming Hard, And, If So, What Can You Do About It?
+
+  <https://www.kernel.org/pub/linux/kernel/people/paulmck/perfbook/perfbook.html>
+
+: Intellectual Control
+
+  <https://www.computer.org/csdl/magazine/so/2019/01/08611447/17D45WaTkcK>
+
+: Never write code like this
+
+  <https://lobste.rs/s/zbirtc/jit_header_only_cross_platform_jit#c_pvra3w>
+
+: C’s Biggest Mistake
+
+<https://digitalmars.com/articles/C-biggest-mistake.html>

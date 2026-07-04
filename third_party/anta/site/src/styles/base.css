@@ -1,0 +1,976 @@
+/* Site-only baseline. The reset itself (box-sizing, margin: 0,
+   replaced-element block + max-width, form-control font: inherit,
+   text-wrap defaults) lives in anta's reset.css (`@layer anta`); this
+   file does not duplicate it. */
+html, body {
+  line-height: 1.5;
+  letter-spacing: 0.02ch;
+  -webkit-tap-highlight-color: transparent;
+}
+
+/* Brand fonts (temporary Uploadcare hosting) */
+@font-face {
+  font-family: "Antithesis sans";
+  src: url("https://ucarecdn.com/af38fa86-199f-44f5-82d2-3ea2a690dd6c/") format("woff2");
+  font-style: normal;
+  font-weight: 100 900;
+  font-stretch: 75% 100%;
+  font-optical-sizing: auto;
+  text-rendering: geometricPrecision;
+  font-display: swap;
+}
+@font-face {
+  font-family: "Antithesis mono";
+  src: url("https://ucarecdn.com/61bd3320-3787-4a92-887e-a5ff7bd6e051/") format("woff2");
+  font-style: normal;
+  font-weight: 400 700;
+  text-rendering: optimizeLegibility;
+  font-display: swap;
+}
+@font-face {
+  font-family: "Antithesis mono";
+  src: url("https://ucarecdn.com/03e90df9-d945-4837-b177-cdc408e94bb4/") format("woff2");
+  font-style: italic;
+  font-weight: 400 700;
+  text-rendering: optimizeLegibility;
+  font-display: swap;
+}
+
+/* Brand variable overrides */
+:root {
+  --sans-serif: "Antithesis sans", sans-serif;
+  --monospace: "Antithesis mono", "Roboto Mono", monospace;
+  /* Distance from the top of the viewport to use when scrolling an
+     anchor target into view (e.g. clicking a heading link). On
+     desktop a small breathing room; on mobile, enough to clear the
+     sticky topbar (height set in the @media block at the bottom). */
+  --scroll-padding-top: 1em;
+}
+
+/* Semantic background aliases. Anta now ships an unopinionated numeric
+   background scale (--bg-1 … --bg-5); this site keeps using readable
+   semantic names by mapping them onto that scale — the exact pattern the
+   Colors page recommends to consumers. (--bg-1 / "canvas" is the deepest,
+   neutral-only surface; it has no tinted variant.)
+
+   The selector must include .light/.dark, not just :root: an alias like
+   `--bg-canvas: var(--bg-1)` is computed where it's declared and then
+   inherited, so a :root-only mapping would freeze it at the page's theme and
+   never recompute under a nested `.light`/`.dark` scope (e.g. the Colors
+   page renders both theme rows at once). Re-declaring under each theme class
+   lets `var(--bg-N)` resolve in that element's own context. */
+:root, .light, .dark {
+  --bg-canvas: var(--bg-1);
+  --bg-base:   var(--bg-2);
+  --bg-pane:   var(--bg-3);
+  --bg-block:  var(--bg-4);
+  --bg-spot:   var(--bg-5);
+
+  --bg-base-brand:  var(--bg-2-brand);
+  --bg-pane-brand:  var(--bg-3-brand);
+  --bg-block-brand: var(--bg-4-brand);
+  --bg-spot-brand:  var(--bg-5-brand);
+
+  --bg-base-info:  var(--bg-2-info);
+  --bg-pane-info:  var(--bg-3-info);
+  --bg-block-info: var(--bg-4-info);
+  --bg-spot-info:  var(--bg-5-info);
+
+  --bg-base-success:  var(--bg-2-success);
+  --bg-pane-success:  var(--bg-3-success);
+  --bg-block-success: var(--bg-4-success);
+  --bg-spot-success:  var(--bg-5-success);
+
+  --bg-base-critical:  var(--bg-2-critical);
+  --bg-pane-critical:  var(--bg-3-critical);
+  --bg-block-critical: var(--bg-4-critical);
+  --bg-spot-critical:  var(--bg-5-critical);
+
+  --bg-base-warning:  var(--bg-2-warning);
+  --bg-pane-warning:  var(--bg-3-warning);
+  --bg-block-warning: var(--bg-4-warning);
+  --bg-spot-warning:  var(--bg-5-warning);
+}
+
+/* Document defaults */
+html {
+  color: var(--text-2);
+  background: var(--bg-base);
+  scroll-padding-top: var(--scroll-padding-top);
+  /* Match native UI (form controls, scrollbars, overscroll/rubber-band
+     background) to the active theme. `.dark` is toggled on <html>. */
+  color-scheme: light;
+}
+html.dark {
+  color-scheme: dark;
+}
+
+/* Smooth-scroll anchor jumps (e.g. the "On this page" TOC), but respect
+   users who ask for reduced motion. */
+@media (prefers-reduced-motion: no-preference) {
+  html {
+    scroll-behavior: smooth;
+  }
+}
+
+html, body {
+  font-family: var(--sans-serif);
+  /* "Antithesis sans" has a `slnt` axis whose default inside the
+     file isn't 0. Chrome normalizes it when `font-style: normal` is
+     in effect; Safari leaves it at the file default, which renders
+     the entire body slanted. Pinning the axis explicitly forces
+     upright on every browser. */
+  font-variation-settings: "slnt" 0, "ital" 0;
+}
+/* Italic markup drives the slant axis manually, since the global
+   pin above would otherwise keep them upright too. `-10deg` is a
+   reasonable starting value; tune once the file's actual range is
+   known. `ital 1` is set defensively in case the file exposes that
+   axis as well. */
+:is(em, i, address) {
+  font-variation-settings: "slnt" -10, "ital" 1;
+}
+
+/* Anta's global stylesheet provides the `a` defaults (color, underline,
+   thickness, hover bump). Sidebar nav and header anchors below are the
+   only places that need to override the global to opt out. */
+
+summary { cursor: pointer; }
+
+/* Hide the native <details> disclosure triangle on every docs summary. Kept
+   global (not in a component's scoped <style>) so it can't be lost to CSS
+   bundling/hoisting — the scoped style on <Disclosure> is for layout only, and
+   PropsTable's "Inherited props" summary carries no scoped style at all.
+   `list-style: none` drops the standard marker; the -webkit pseudo covers
+   older Safari, which ignores `list-style` on <summary>. */
+summary { list-style: none; }
+summary::-webkit-details-marker { display: none; }
+
+/* Default disclosure chevron for a bare <summary> (one without its own
+   component-provided marker — e.g. PropsTable's "Inherited props"). Mirrors
+   <a-icon shape="chevron-right">: the same glyph via CSS mask, --text-3
+   (→ --text-1 on hover), rotating 90° when the <details> is open. <Disclosure>
+   renders its own <a-icon class="chevron"> (with the gutter-hang / marker
+   variants), so its `.summary` opts out here to avoid a double marker. */
+summary:not(.summary) {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+summary:not(.summary)::before {
+  content: "";
+  flex-shrink: 0;
+  width: 16px;
+  height: 16px;
+  background-color: var(--text-3);
+  -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='currentColor' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M6 4l4 4-4 4'/%3E%3C/svg%3E%0A") center / contain no-repeat;
+  mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='currentColor' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M6 4l4 4-4 4'/%3E%3C/svg%3E%0A") center / contain no-repeat;
+  transition: transform 150ms ease-out, background-color 120ms ease-out;
+}
+summary:not(.summary):hover::before {
+  background-color: var(--text-1);
+}
+details[open] > summary:not(.summary)::before {
+  transform: rotate(90deg);
+}
+
+/* Heading sizes / weight / margins live in anta's reset
+   (`src/reset.css`); the docs site no longer needs its own overrides. */
+
+/* Header anchor links wrap headings; opt them out of the global prose
+   link styling so headings keep their own color and aren't underlined
+   by default. Hover and active share the same dotted-underline state
+   so the underline doesn't jump when the user clicks. */
+.header-anchor,
+.header-anchor:link,
+.header-anchor:visited {
+  color: inherit;
+  text-decoration: none;
+}
+.header-anchor:hover,
+.header-anchor:active {
+  text-decoration: underline;
+  text-decoration-style: dotted;
+  text-decoration-color: color-mix(in srgb, currentColor 75%, transparent);
+  text-decoration-thickness: 1px;
+  text-underline-offset: 3px;
+}
+
+p, ul, ol, blockquote, dl { margin: 0 0 1em; }
+pre, figure, hr, .expressive-code { margin: 0 0 1.5em; }
+
+/* Proximity: a paragraph that introduces a <Preview> hugs it (caption-to-
+   figure), so the prose groups with the example it describes rather than the
+   block above — the symmetric complement to the Preview→code fusing below. */
+.content p:has(+ .preview) {
+  margin-bottom: 8px;
+}
+/* …and when a <Columns> example block is followed by such an intro paragraph
+   (a fresh example, not a code sample), separate it like other example
+   boundaries so the paragraph clearly belongs to its own preview below. */
+.content .columns:has(+ p) {
+  margin-block-end: 24px;
+}
+
+/* Code blocks in the main content use the `bg-pane` fill (a static
+   background — no hover change). Overrides the `--code-background` var the
+   EC `pre` reads (specificity-proof vs EC's own rule), and scoped to
+   `.content` so the playground's embedded editor is unaffected. */
+.content .expressive-code pre {
+  --code-background: var(--bg-pane);
+}
+
+/* Fuse a <Preview> with the code block that immediately follows it: drop
+   the gap, square the touching corners, and remove the code block's top
+   border so the two panels read as one (Preview's bottom border becomes
+   the single seam between them). */
+.content .preview:has(+ .expressive-code) {
+  margin-bottom: 0;
+  border-bottom-left-radius: 0;
+  border-bottom-right-radius: 0;
+}
+.content .preview + .expressive-code pre {
+  border-top: 0;
+  border-top-left-radius: 0;
+  border-top-right-radius: 0;
+}
+/* When the fused block is foldable, the header is the top panel (not the pre):
+   square the frame's clip and the header's top, and drop the header's top
+   border so the Preview's bottom border is the single seam (matching the
+   non-foldable `pre` rule above). The header still rounds its own bottom
+   corners when folded. */
+.content .preview + .expressive-code .frame.has-title:not(.is-terminal),
+.content .preview + .expressive-code .frame.is-terminal,
+.content .preview + .expressive-code .frame[data-foldable]:not(.has-title):not(.is-terminal) {
+  border-top-left-radius: 0;
+  border-top-right-radius: 0;
+}
+.content .preview + .expressive-code .frame.has-title:not(.is-terminal) .header,
+.content .preview + .expressive-code .frame.is-terminal .header,
+.content .preview + .expressive-code .frame[data-foldable]:not(.has-title):not(.is-terminal) .header {
+  border-top: 0;
+  border-top-left-radius: 0;
+  border-top-right-radius: 0;
+}
+
+/* Tone × priority demo on the Title docs page. Scrolls horizontally
+   when the columns don't fit; titles inside the grid drop their
+   per-level margins so cell heights are uniform. */
+.title-tone-grid {
+  overflow-x: auto;
+  overflow-y: hidden;
+  margin: 0 0 1em;
+}
+.title-tone-grid-inner {
+  display: grid;
+  grid-template-columns: repeat(5, max-content);
+  column-gap: 32px;
+  row-gap: 8px;
+  min-width: max-content;
+}
+.title-tone-grid a-title {
+  margin: 0;
+}
+
+code {
+  font-family: var(--monospace);
+  font-size: 0.933em;
+  color: inherit;
+  background: color-mix(in srgb, currentColor 6%, transparent);
+  border: none;
+  padding: 0.25em 0.4ch 0.2em;
+  border-radius: 3px;
+}
+
+
+pre code { background: none; padding: 0; }
+
+/* Font, size, line-height, weight and padding are set via Expressive Code's
+   styleOverrides (astro.config.mjs). letter-spacing has no EC setting, and EC's
+   `pre > code` rule uses `all: unset` (which resets letter-spacing too), so the
+   extra `.content` ancestor here out-specifies it. */
+.content .expressive-code pre > code { letter-spacing: 0; }
+
+:not(pre) > code {
+  cursor: copy;
+  position: relative;
+}
+
+/* Inline code pills read too faint at 6% on dark surfaces — bump the
+   tint to 10% in dark mode. Scoped to inline code so `pre code` (which
+   is background-less) is untouched. */
+.dark :not(pre) > code {
+  background: color-mix(in srgb, currentColor 10%, transparent);
+}
+
+.copyable {
+  cursor: copy;
+  position: relative;
+}
+
+/* `.copy` is the positioning box for the copy button (the button itself is a
+   quaternary icon button — see below). On a plain block it's a frosted corner
+   tab in the top-right over the code; framed (titled / terminal / foldable)
+   frames lift it into the header bar instead (rule further down). */
+.content .expressive-code .frame .copy {
+  inset-block-start: 1px;
+  inset-inline-end: 1px;
+}
+/* Plain (frameless) blocks: the frosted corner tab — a semi-transparent
+   code-bg fill with a slight backdrop blur over the code beneath, hugging the
+   block's rounded top-right corner with a rounded bottom-left "peel". (Framed
+   frames skip this — their header bar is the backdrop.) */
+.content .expressive-code .frame:not(.has-title):not(.is-terminal):not([data-foldable]) .copy {
+  background: color-mix(in oklch, var(--bg-pane) 60%, transparent);
+  backdrop-filter: blur(3px);
+  -webkit-backdrop-filter: blur(3px);
+  border-top-right-radius: 5px;
+  border-bottom-left-radius: 8px;
+}
+/* Anta neutral *quaternary* icon button: a fixed 24px square (EC sizes the
+   button in rems otherwise — ~2rem hover / 2.5rem touch), rounded, with NO
+   background fill in any state — only the icon darkens on hover/active (below).
+   EC's own opaque code-bg fill and its inner-`<div>` hover tint are both
+   suppressed (see above / below). Framed blocks resize this to fill the header
+   (above); plain blocks keep a frosted corner tab behind it (above). */
+.content .expressive-code .copy button {
+  inline-size: 28px;
+  block-size: 28px;
+  border-radius: 6px;
+  background: transparent;
+}
+.content .expressive-code .copy button > div {
+  display: none;
+}
+/* EC's empty `<div aria-live="polite">` live region adds width to the .copy
+   tab; the copy confirmation is our green-check icon swap, so it's not used —
+   drop it from layout. */
+.content .expressive-code .copy > div[aria-live] {
+  display: none;
+}
+/* Pin the icon glyph to a fixed 16px, centered. EC sizes the button larger
+   on touch (2.5rem vs the 2rem hover-capable size) and the icon's mask uses
+   `mask-size: auto`, which fills the button box — so a bigger button scaled
+   the glyph up too. Fixing the mask size decouples the icon from the button:
+   the button can grow for a bigger tap target while the icon stays 16px.
+   Applies to the green-check state too (it only swaps the mask image). */
+.content .expressive-code .copy button::after {
+  margin: 0;
+  /* Copy glyph defined here, NOT via EC's `copyIcon` (that pipeline mangles the
+     SVG's stroke-width). Lucide copy on the 24-grid; at the 16px mask below,
+     stroke-width 2.1 → 2.1 × 16/24 = 1.4px effective stroke. */
+  -webkit-mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-width='2.1' stroke-linecap='round' stroke-linejoin='round'%3E%3Crect width='14' height='14' x='8' y='8' rx='2' ry='2'/%3E%3Cpath d='M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2'/%3E%3C/svg%3E");
+  mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-width='2.1' stroke-linecap='round' stroke-linejoin='round'%3E%3Crect width='14' height='14' x='8' y='8' rx='2' ry='2'/%3E%3Cpath d='M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2'/%3E%3C/svg%3E");
+  -webkit-mask-size: 16px;
+  mask-size: 16px;
+  -webkit-mask-position: center;
+  mask-position: center;
+  /* Turn the copy glyph a quarter-turn. */
+  transform: rotate(90deg);
+  /* Faded to 82% alpha at rest; darkens to full on hover/active (below). The
+     green-check copied state keeps its own color (its rule below overrides). */
+  background-color: color-mix(in oklch, var(--ec-frm-inlBtnFg) 82%, transparent);
+  transition: background-color 120ms ease-out;
+}
+/* Icon darkens to full strength on hover/active — the quaternary affordance for
+   framed blocks, and a complement to the tertiary fill on plain blocks. Skipped
+   while copied so the green check keeps its color. */
+.content .expressive-code .copy button:hover:not([data-anta-copied])::after,
+.content .expressive-code .copy button:active:not([data-anta-copied])::after {
+  background-color: var(--ec-frm-inlBtnFg);
+}
+
+/* ── Code-block title bars + folding ───────────────────────────────────────
+   ONE shared treatment for the editor "titled" frame, the terminal frame, and
+   any block authored `folded` (lib/ec-foldable.mjs forces a header onto an
+   otherwise plain block so it can fold). EC draws different chrome per frame
+   type (an editor tab, terminal traffic-light dots); we collapse it into a
+   single plain bar — a bg-4 strip with a 1px border-5 outline, a chevron at the
+   left, then the label — and make the whole bar a fold toggle.
+
+   The chevron glyph is anta's `chevron-down`, delivered as a mask (no element
+   injection); it points down when expanded and rotates to point right when
+   folded. Folding collapses the body via a `grid-template-rows: 1fr → 0fr`
+   transition (the same technique as Disclosure.astro). `overflow: hidden` on
+   the figure lets its 5.5px border-radius clip the header's corners, so the
+   bar rounds all four corners as the body collapses — no radius animation. */
+
+.content .expressive-code {
+  --fold-chevron: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='%23000' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M4 6l4 4 4-4'/%3E%3C/svg%3E");
+  /* Fixed bar height — used for both the header `min-height` and the grid's
+     header track, so the header never resizes while the body animates. */
+  --fold-header-h: 2.25rem;
+}
+
+/* Figure → 2-row grid (header auto, body 1fr); .copy is absolute, out of flow.
+   Low specificity is fine — EC doesn't set grid-template-rows. */
+.content .expressive-code .frame.has-title,
+.content .expressive-code .frame.is-terminal,
+.content .expressive-code .frame[data-foldable] {
+  display: grid;
+  /* Clamp the single column to the figure width. Without this the implicit
+     `auto` column grows to the `<pre>`'s longest line (grid items default to
+     `min-width: auto`), and the `<figcaption>` header stretches to that
+     over-wide track — pushing its right border outside the `overflow: hidden`
+     figure (most visible when folded). `minmax(0, 1fr)` pins the column to the
+     container; wide code scrolls inside the `<pre>` (its own `overflow: auto`). */
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: var(--fold-header-h) 1fr;
+  overflow: hidden;
+}
+.content .expressive-code .frame.has-title > pre,
+.content .expressive-code .frame.is-terminal > pre,
+.content .expressive-code .frame[data-foldable] > pre {
+  min-height: 0;
+  /* Clipped by default so no scrollbar renders while the body collapses or
+     grows. Scrolling is restored only once expanded + settled (below). */
+  overflow: clip;
+}
+/* Expanded + settled → restore EC's scrollable body (wide code scrolls). The
+   flip back to `auto` is deferred until the expand animation finishes (overflow
+   is a discrete property), mirroring Disclosure's body; folding reverts to the
+   clipped base rule immediately. */
+.content .expressive-code .frame.has-title:not([data-folded]) > pre,
+.content .expressive-code .frame.is-terminal:not([data-folded]) > pre,
+.content .expressive-code .frame[data-foldable]:not([data-folded]) > pre {
+  overflow: auto;
+}
+/* A folded-authored PLAIN block is a frameless code block to EC, so it keeps a
+   rounded, fully-bordered top — square it off so the body meets the forced
+   header flush, like the titled/terminal frames do. */
+.content .expressive-code .frame[data-foldable]:not(.has-title):not(.is-terminal) > pre {
+  border-top: 0;
+  border-top-left-radius: 0;
+  border-top-right-radius: 0;
+}
+
+/* The bar. Editor needs `:not(.is-terminal)` so the `.content` prefix tips it
+   past EC's own `.has-title:not(.is-terminal)` rules; terminal/plain win via
+   `.content` alone. */
+.content .expressive-code .frame.has-title:not(.is-terminal) .header,
+.content .expressive-code .frame.is-terminal .header,
+.content .expressive-code .frame[data-foldable]:not(.has-title):not(.is-terminal) .header {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  /* Chevron → "Code"/title gap + left inset mirror <a-expander>'s header:
+     2px between the chevron and the label, chevron inset 6px from the edge
+     (the expander's `--expander-gutter` is 6px edge + 16px chevron + 2px gap),
+     so a folded code block and an Expander read with the same rhythm. */
+  gap: 2px;
+  /* Fixed bar height (≈ the original titled-header height) so it stays constant
+     in every state and matches across editor/terminal/plain frames. EC pads
+     these headers differently (the terminal header gets extra padding-block),
+     which made them different heights — zero that and pin the height here. */
+  min-height: var(--fold-header-h);
+  padding-block: 0;
+  padding-inline: 6px 4px;
+  border: 1px solid var(--border-5);
+  background: var(--bg-4);
+  cursor: pointer;
+}
+.content .expressive-code .frame .header:focus-visible {
+  outline: 2px solid var(--border-2);
+  outline-offset: -2px;
+}
+/* Bar tint — the chevron (currentColor) and label (inherit) follow this:
+   text-4 at rest → text-2 on hover → back to text-4 while pressed. */
+.content .expressive-code .frame .header { color: var(--text-4); }
+.content .expressive-code .frame .header:hover { color: var(--text-2); }
+.content .expressive-code .frame .header:active { color: var(--text-3); }
+
+/* Chevron — repurpose the ::before EC used for the tab outline / dots. */
+.content .expressive-code .frame.has-title:not(.is-terminal) .header::before,
+.content .expressive-code .frame.is-terminal .header::before,
+.content .expressive-code .frame[data-foldable]:not(.has-title):not(.is-terminal) .header::before {
+  content: "";
+  flex: none;
+  width: 1rem;
+  height: 1rem;
+  position: static;
+  inset: auto;
+  opacity: 1;
+  /* Follows the header's color (text-4 rest → text-2 hover → text-4 active). */
+  background: currentColor;
+  -webkit-mask: var(--fold-chevron) center / contain no-repeat;
+          mask: var(--fold-chevron) center / contain no-repeat;
+}
+
+/* Drop the rest of EC's chrome — editor tab connector + the terminal dots'
+   ::after half. (::before is the chevron; the label is .title or ::after.) */
+.content .expressive-code .frame.has-title:not(.is-terminal) .title::before,
+.content .expressive-code .frame.has-title:not(.is-terminal) .title::after,
+.content .expressive-code .frame.has-title:not(.is-terminal) .header::after,
+.content .expressive-code .frame.is-terminal .header::after {
+  display: none;
+}
+
+/* Label text (titled + terminal use the real .title span). */
+.content .expressive-code .frame.has-title:not(.is-terminal) .title,
+.content .expressive-code .frame.is-terminal .title {
+  background: none;
+  border: none;
+  padding: 0;
+  color: inherit;
+  font-weight: 450;
+}
+/* Terminal with no title → "Terminal". Folded-authored plain block → "Code". */
+.content .expressive-code .frame.is-terminal .title:empty::before {
+  content: "Terminal";
+}
+.content .expressive-code .frame[data-foldable]:not(.has-title):not(.is-terminal) .header::after {
+  content: "Code";
+  color: inherit;
+  font-weight: 450;
+}
+
+/* Folded: collapse the body (the header track is fixed, so only this row
+   animates — the bar never resizes), drop the body border, hide the copy chip,
+   round the header's bottom corners (EC leaves them square, which let the
+   clipped corner leak), and rotate the chevron. */
+.content .expressive-code .frame[data-folded] { grid-template-rows: var(--fold-header-h) 0fr; }
+.content .expressive-code .frame[data-folded] > pre { border: 0; }
+/* These frames carry a header bar at the top, so the copy button moves up into
+   it (top-right corner) rather than floating over the code, and stays visible
+   without hover. Higher specificity than the hover-reveal rule below, so it
+   wins. It's hidden entirely while folded (next line) — nothing to copy when
+   the body is collapsed. */
+.content .expressive-code .frame.has-title .copy,
+.content .expressive-code .frame.is-terminal .copy,
+.content .expressive-code .frame[data-foldable] .copy {
+  inset-block-start: 0;
+  inset-inline-end: 0;
+  /* Slightly dimmed at rest, full on hover. */
+  opacity: 0.8;
+  transition: opacity 120ms ease-out;
+}
+.content .expressive-code .frame.has-title .copy:hover,
+.content .expressive-code .frame.is-terminal .copy:hover,
+.content .expressive-code .frame[data-foldable] .copy:hover {
+  opacity: 1;
+}
+/* The button is a square that fills the full header height (the icon stays 16px,
+   centered) — a bigger, header-tall hit target than the plain-block 24px. */
+.content .expressive-code .frame.has-title .copy button,
+.content .expressive-code .frame.is-terminal .copy button,
+.content .expressive-code .frame[data-foldable] .copy button {
+  inline-size: var(--fold-header-h);
+  block-size: var(--fold-header-h);
+}
+.content .expressive-code .frame[data-folded] .copy { display: none; }
+.content .expressive-code .frame[data-folded] .header { border-radius: var(--header-border-radius); }
+/* Folded bar gets a slightly deeper surface. Higher specificity than the
+   expanded bar's bg-4 (but NOT touching border-radius, so the preview-fusion
+   top-square still wins). */
+.content .expressive-code .frame.has-title:not(.is-terminal)[data-folded] .header,
+.content .expressive-code .frame.is-terminal[data-folded] .header,
+.content .expressive-code .frame[data-foldable]:not(.has-title):not(.is-terminal)[data-folded] .header {
+  background: var(--bg-3);
+}
+.content .expressive-code .frame.has-title:not(.is-terminal)[data-folded] .header::before,
+.content .expressive-code .frame.is-terminal[data-folded] .header::before,
+.content .expressive-code .frame[data-foldable]:not(.has-title):not(.is-terminal)[data-folded] .header::before {
+  transform: rotate(-90deg);
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .content .expressive-code .frame.has-title,
+  .content .expressive-code .frame.is-terminal,
+  .content .expressive-code .frame[data-foldable] {
+    transition: grid-template-rows 240ms ease;
+    transition-behavior: allow-discrete;
+  }
+  .content .expressive-code .frame .header { transition: border-radius 240ms ease, background-color 240ms ease, color 120ms ease-out; }
+  .content .expressive-code .frame .header::before { transition: transform 150ms ease-out; }
+  /* Defer the body's overflow flip until the expand animation finishes, so the
+     scrollbar never flashes mid-animation (overflow is discrete). */
+  .content .expressive-code .frame.has-title:not([data-folded]) > pre,
+  .content .expressive-code .frame.is-terminal:not([data-folded]) > pre,
+  .content .expressive-code .frame[data-foldable]:not([data-folded]) > pre {
+    transition: overflow 0s 240ms;
+    transition-behavior: allow-discrete;
+  }
+}
+
+/* EC fades the copy *button* in on frame hover; move that reveal to the
+   whole `.copy` tab so the frosted chip isn't shown empty at rest. */
+@media (hover: hover) {
+  .content .expressive-code .frame .copy {
+    opacity: 0;
+    transition: opacity 150ms ease-out;
+  }
+  .content .expressive-code .frame:hover .copy,
+  .content .expressive-code .frame:focus-within .copy {
+    opacity: 1;
+  }
+  .content .expressive-code .copy button {
+    opacity: 1;
+  }
+}
+
+/* Replace expressive-code's "Copied!" tooltip with an icon swap: on a
+   successful copy our script (DocsLayout) sets [data-anta-copied] on the
+   button for a moment, turning the copy glyph into a green check. EC's
+   own tooltip bubble (the `.feedback` element + its ::before/::after) is
+   removed entirely — the icon swap is the only feedback. */
+.expressive-code .copy .feedback {
+  display: none;
+}
+
+.expressive-code .copy button[data-anta-copied]::after {
+  background-color: var(--text-4-success);
+  /* Cancel the copy glyph's quarter-turn — the check reads upright. */
+  transform: none;
+  /* stroke-width 2.1 on the 24-grid → 1.4px at the 16px mask size (matches the copy glyph). */
+  -webkit-mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-width='2.1' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M20 6 9 17l-5-5'/%3E%3C/svg%3E");
+  mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-width='2.1' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M20 6 9 17l-5-5'/%3E%3C/svg%3E");
+}
+
+/* Necessary for astro expressive code hover copy button */
+:is(code, .copyable, .demoCell)[data-copied]::after {
+  content: attr(data-copied);
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: -1;
+  pointer-events: none;
+  white-space: nowrap;
+
+  /* Clone the source's box decoration so the toast looks like an
+     exact copy of whatever element it's animating from. Color, font,
+     and text-align are inherited automatically; background/border/
+     padding/border-radius need the explicit `inherit` keyword.
+     `right: 0` stretches the toast to the source's full width so its
+     text aligns the same way the source's content does. */
+  background: inherit;
+  border: inherit;
+  padding: inherit;
+  border-radius: inherit;
+
+  animation: copy-toast 500ms ease-out forwards;
+}
+
+/* The code-pill toast: the pill's own background is now a translucent
+   `currentColor` wash, so `background: inherit` would leave the
+   floating copy nearly invisible against the page (and outright
+   invisible at z-index: -1 against the page background). Layer the
+   same 6% tint over the page's base color so the toast reads as an
+   opaque ghost of the original pill. */
+code[data-copied]::after {
+  background: color-mix(in srgb, currentColor 6%, var(--bg-base));
+}
+
+@keyframes copy-toast {
+  0%   { opacity: 1; transform: translate(0, 0); }
+  100% { opacity: 0; transform: translate(0, -24px); }
+}
+
+/* Sidebar / content padding tokens used by `.full-bleed`. Default
+   values match DocsLayout.astro's desktop sidebar (240px) and
+   .content's padding-inline (32px). The mobile @media block below
+   overrides them when the sidebar slides off-screen. */
+:root {
+  --page-sidebar-width: 240px;
+  --page-content-pad: 32px;
+}
+@media (max-width: 900px) {
+  :root {
+    --page-sidebar-width: 0px;
+    --page-content-pad: 16px;
+  }
+}
+
+/* Content lane: `.content` fills the whole track between the sidebars
+   (see DocsLayout), and the 960px readable prose measure is applied
+   per direct child, so wide blocks can opt out and use the full width.
+   An open <Disclosure> is itself a content lane: it spans the track but
+   keeps its header aligned with regular headings and its prose at 960,
+   while a `.full-bleed` child (e.g. the playground) breaks out. Prose
+   looks unchanged; only the opted-out blocks span the track. (`.columns`
+   stays within the 960 measure — it is no longer a breakout.) */
+.content > .disclosure {
+  max-width: none;
+}
+.disclosure > summary {
+  max-width: 960px;
+  margin-inline: auto;
+}
+.disclosure > .body {
+  /* Query container for any `.columns` placed inside a disclosure. */
+  container-type: inline-size;
+}
+
+/* Brand-tinted disclosure header (set via `<Disclosure brand>`). Colors
+   only the summary's title text + chevron, mirroring how `<Expander
+   tone="brand">` tints its summary: rest at `--text-2-brand`, hover at
+   `--text-1-brand`, with the chevron brand-tinted and strengthening on
+   hover. The body internals (Preview / panel) stay neutral. Specificity
+   (.disclosure.brand > summary …) clears the scoped `.summary` / `.chevron`
+   rules in Disclosure.astro. */
+.disclosure.brand > summary .title,
+.disclosure.brand > summary .title.plain,
+.disclosure.brand > summary .title .header-anchor {
+  color: var(--text-2-brand);
+}
+.disclosure.brand > summary .chevron {
+  color: var(--text-2-brand);
+}
+.disclosure.brand > summary:hover .title,
+.disclosure.brand > summary:hover .title.plain,
+.disclosure.brand > summary:hover .title .header-anchor,
+.disclosure.brand > summary:hover .chevron {
+  color: var(--text-1-brand);
+}
+
+.content > *,
+.disclosure > .body > * {
+  max-width: 960px;
+  margin-inline: auto;
+}
+.content > .full-bleed,
+.disclosure > .body > .full-bleed {
+  max-width: none;
+}
+/* Islands (`client:*` components) render inside an `<astro-island>` that's
+   `display: contents`, so the measure above can't reach their content and a
+   direct-content demo would spill past the 960 prose. Constrain the island's
+   content to the same measure; opt into full width with an inner `.full-bleed`.
+   (The playground island lives in a Disclosure and is intentionally left at
+   the wider track, so it isn't matched here.) */
+.content > astro-island > * {
+  max-width: 960px;
+  margin-inline: auto;
+}
+.content > astro-island > .full-bleed {
+  max-width: none;
+}
+
+/* Fill the content track (bounded by both sidebars). Used by widgets
+   that need real estate (the Playground playground, wide
+   visualisations). */
+.full-bleed {
+  max-width: none;
+}
+
+/* Multi-column section (<Columns> / <Col>). Stacked by default; switches
+   to equal side-by-side columns once the content track is wide enough.
+   Keyed to `.content`'s inline size (container query) — i.e. the
+   edge-to-edge width between the sidebars — not the viewport. */
+.columns {
+  display: flex;
+  flex-direction: column;
+  /* Gaps default to 20px each; either axis is overridable per-instance via
+     <Columns> (`gap` / `colGap` / `rowGap`). `row-gap` spaces the stacked
+     rows (this column-flex mode); `column-gap` spaces the columns in row
+     mode below. Setting both here keeps the gap authoritative in either
+     layout — see the trailing-margin reset just below. */
+  --columns-col-gap: 20px;
+  --columns-row-gap: 20px;
+  column-gap: var(--columns-col-gap);
+  row-gap: var(--columns-row-gap);
+  /* Block-level bottom margin so a following block (a code sample, a
+     paragraph) is separated from the column group consistently in both row and
+     stacked layouts — the column children end flush (trailing margins zeroed
+     below), so the group itself owns the gap to what follows. */
+  margin-block-end: 8px;
+}
+/* The gap owns the spacing between stacked rows, so a column's last flow
+   child must not add its own bottom margin on top of `row-gap`. Zeroing it
+   also evens out column heights in row mode (no dangling trailing margin).
+   Scoped under `.content` so it outweighs a child's own scoped margin (e.g.
+   <Preview>'s `margin-bottom: 4px`), which otherwise ties on specificity. */
+.content .columns > * > :last-child {
+  margin-bottom: 0;
+}
+@container (min-width: 900px) {
+  .columns {
+    flex-direction: row;
+    align-items: start;
+  }
+  /* Default: every child is an equal column with a sensible min width. */
+  .columns > * {
+    flex: 1;
+    min-width: 320px;
+  }
+  /* <Col>: width / min / max driven by inline custom props. */
+  .columns > .col {
+    flex-grow: var(--col-grow, 1);
+    flex-shrink: 1;
+    flex-basis: var(--col-basis, 0);
+    min-width: var(--col-min, 320px);
+    max-width: var(--col-max, none);
+  }
+}
+
+/* Wraps every <table> in MDX/markdown content (injected by the
+   site/lib/rehype-table-wrap.mjs plugin). When the inner table is
+   wider than `.content`'s max-width, the wrap scrolls horizontally
+   *inside* the column instead of the whole page picking up a
+   horizontal scrollbar. The table itself keeps default `display:
+   table` semantics. */
+/* Wraps stay within the 960px prose measure and centre by default (via
+   `.content > *`); to let a table use the full content track, wrap it in
+   a `.full-bleed` element. `overflow-x: auto` keeps a too-wide table
+   scrolling inside its column rather than the whole page. */
+.table-wrap {
+  overflow-x: auto;
+  scrollbar-width: thin;
+  margin: 0 auto 24px;
+}
+/* The wrap owns the bottom margin; zero it on the inner table so a
+   wrapped table doesn't stack its own `.content table` margin on top
+   of the wrap's (which doubled the gap). Scoped to `.content` so it
+   outranks the equal-specificity-but-later `.content table` rule below. */
+.content .table-wrap > table {
+  margin: 0;
+}
+
+/* Docs-site default: stretch every prose table to fill the column.
+   The package baseline leaves width alone (app tables shouldn't
+   automatically go full-bleed); the docs site overrides for the
+   rendered-MDX context where full-width is what you want. */
+.content table {
+  width: 100%;
+  /* `auto` inline margins so an un-wrapped table (raw `<table>` JSX, which
+     `rehype-table-wrap` doesn't wrap) still centers in the 960 measure like
+     the prose — without it the table left-aligns while paragraphs center. */
+  margin: 0 auto 24px;
+}
+/* The first column is an identifier (a token name, a part name, a prop) — keep
+   it on one line instead of letting the full-width table starve the column and
+   break the long `--component-token` names mid-word. `auto` table layout then
+   sizes the column to the widest identifier and lets the description wrap.
+   `<br>`-separated identifiers still break on the explicit break. */
+.content table th:first-child,
+.content table td:first-child {
+  white-space: nowrap;
+}
+
+/* Shared demo-island styles. Used by component demos (IconDemo,
+   TruncateDemo, ExpandableDemo, TextDemo). */
+
+.demoStack    { display: flex; flex-direction: column; gap: 32px; }
+.demoSection  { display: flex; flex-direction: column; gap: 12px; }
+.demoRow      { display: flex; flex-direction: column; gap: 4px; }
+
+.demoLabel {
+  font-size: 0.75rem;
+  font-family: var(--monospace);
+  letter-spacing: 0;
+  color: var(--text-4);
+}
+.demoLabel.upper {
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.demoBox {
+  max-width: 320px;
+  border: 1px dashed var(--border-4);
+  padding: 8px;
+}
+
+.demoGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+  gap: 8px;
+  margin: 16px 0;
+}
+
+.demoCell {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  gap: 4px;
+  padding: 8px 8px 4px;
+  /* Cell font-size is what the click-to-copy toast (`::after`) picks
+     up. Font family stays the inherited sans-serif. */
+  font-size: 0.75rem;
+  /* Cell color drives the icon color (via currentColor on a-icon).
+     The label inside has its own --text-4 color, more muted than the
+     icon. The toast `::after` inherits the cell color too — overridden
+     below so the animating ghost matches the label, not the icon. */
+  color: var(--text-2);
+}
+.demoCell .demoLabel {
+  /* Override `.demoLabel`'s default mono font for the icon gallery —
+     icon names read better in sans. Disable wrapping; the grid's
+     min cell width is sized to fit the longest shape name. */
+  font-family: var(--sans-serif);
+  white-space: nowrap;
+}
+.demoCell[data-copied]::after {
+  color: var(--text-4);
+  /* The label sits at the bottom of the cell (the icon is on top); pin
+     the toast there so it flies up from the label's actual position.
+     Width and centering inherit from the cell. */
+  top: auto;
+  bottom: 4px;
+}
+
+.iconFilter {
+  width: 100%;
+  padding: 8px 12px;
+  margin: 8px 0 16px;
+  font: inherit;
+  font-size: 0.9rem;
+  color: var(--text-1);
+  background: var(--bg-canvas);
+  border: 1px solid var(--border-2);
+  border-radius: 6px;
+  outline: none;
+  transition: border-color 150ms ease-out;
+}
+.iconFilter:focus {
+  border-color: var(--border-1);
+}
+
+/* Demo segmented tabs (e.g. the Sticker gallery's Static / Animated switch).
+   Mirrors the segmented controls used elsewhere on the site. */
+.demoSeg {
+  display: inline-flex;
+  flex-wrap: nowrap;
+  align-items: stretch;
+  gap: 3px;
+  padding: 3px;
+  background: var(--bg-block);
+  border: 0.5px solid var(--border-4);
+  border-radius: 6px;
+}
+.demoSegBtn {
+  appearance: none;
+  border: none;
+  background: transparent;
+  font: inherit;
+  font-size: 0.85rem;
+  line-height: 1.2;
+  color: var(--text-3);
+  padding: 4px 10px 5px;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: background 150ms ease-out, color 150ms ease-out;
+}
+.demoSegBtn:hover,
+.demoSegBtn:focus-visible {
+  color: var(--text-1);
+}
+.demoSegBtnActive,
+.demoSegBtnActive:hover,
+.demoSegBtnActive:focus-visible {
+  background: var(--bg-canvas);
+  color: var(--text-1);
+  box-shadow: 0 0 2px var(--border-3);
+  outline: none;
+}
+
+/* On mobile the sticky topbar is 44px tall, so anchor-scrolls need to
+   account for it — otherwise the target heading lands underneath the
+   topbar. The number is duplicated in DocsLayout.astro's `.topbar`
+   height; keep them in sync. */
+@media (max-width: 900px) {
+  :root {
+    --scroll-padding-top: calc(44px + 1em);
+  }
+}

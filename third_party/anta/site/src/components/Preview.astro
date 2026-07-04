@@ -1,0 +1,57 @@
+---
+/**
+ * Renders its children inside a bordered, padded panel so MDX code
+ * blocks can sit *below* a live preview of the same JSX. Pure SSR —
+ * no client hydration; relies on the host page's
+ * `@antadesign/anta/elements` registration to hydrate any `<a-*>`
+ * custom elements inside.
+ *
+ * `cols` switches the panel from the default wrap-flex to a centered
+ * grid of N equal-gap columns — handy when you want children to land
+ * on tidy rows (e.g. two rows of three) without flex line-break hacks.
+ */
+interface Props {
+  cols?: number
+  /** Gap between previewed items. Any CSS length; defaults to 12px. */
+  gap?: string
+  /** Panel background. Any CSS color; defaults to `--bg-canvas`. */
+  background?: string
+}
+const { cols, gap, background } = Astro.props
+const style = [
+  cols ? `--preview-cols: ${cols}` : '',
+  gap ? `gap: ${gap}` : '',
+  background ? `background: ${background}` : '',
+].filter(Boolean).join('; ') || undefined
+---
+<div class="preview" data-cols={cols} style={style}>
+  <slot />
+</div>
+
+<style>
+  .preview {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: center;
+    gap: 12px;
+    padding: 24px;
+    border: 1px solid var(--border-5);
+    border-radius: 6px;
+    background: var(--bg-canvas);
+    margin-bottom: 4px;
+  }
+
+  /* `cols` mode: a centered grid of N max-content columns. Same 12px
+     gap on both axes — no doubled row gap from flex line-break spacers. */
+  .preview[data-cols] {
+    display: grid;
+    grid-template-columns: repeat(var(--preview-cols), max-content);
+    justify-content: center;
+  }
+  /* Grid cells stretch each button to the column width; center the
+     button's own content so the label isn't left-aligned in the wider box. */
+  .preview[data-cols] :global(a-button) {
+    justify-content: center;
+  }
+</style>

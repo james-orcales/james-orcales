@@ -1,0 +1,22 @@
+---
+// Build-time markdown → HTML. Put markdown text as the children and it
+// renders to HTML inline (server-side, at build). General-purpose helper
+// for authored content; `inline` skips the wrapping <p> for inline
+// contexts. (Docs tables render their cells as inline markdown directly
+// — see PropsTable — rather than reaching for this.)
+//
+// The content is trusted (our own authored text), so `set:html` is safe;
+// don't pipe untrusted input through this.
+import { marked } from 'marked'
+
+interface Props {
+  /** Render inline — no wrapping <p>. */
+  inline?: boolean
+}
+
+const { inline = false } = Astro.props
+const source = await Astro.slots.render('default')
+const html = await (inline ? marked.parseInline(source) : marked.parse(source))
+---
+
+<Fragment set:html={html} />

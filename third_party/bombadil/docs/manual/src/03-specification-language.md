@@ -1,0 +1,613 @@
+# Specification language
+
+To extend Bombadil with domain-specific knowledge, you write specifications.
+These are plain TypeScript or JavaScript [modules](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Guide/Modules) that use the library provided by
+Bombadil to export *properties* and *action generators*.
+
+Here's how you run Bombadil with a custom specification:
+
+::: browser
+```bash
+bombadil browser test https://example.com example.ts
+```
+:::
+
+::: terminal
+```bash
+bombadil terminal test --specification=example.ts example-command
+```
+:::
+
+For a full listing of CLI options, see [the reference](#command-line-interface).
+
+## Structure
+
+A specification is a regular ES module. The following examples use TypeScript,
+but you may also write them in JavaScript. If you do use TypeScript, you'll
+want to install the types from [@antithesishq/bombadil](#typescript-support).
+
+Both properties and action generators are exposed to Bombadil as exports:
+
+```typescript
+export const myProperty = ...; 
+
+export const myAction = ...;
+```
+
+You may split up your specification into multiple modules and structure it the
+way you like, but the top-level specification you give to Bombadil must only
+export properties and action generators.
+
+## Importing modules and files
+
+You can split your specification up into multiple modules and import them from
+the top level specification module:
+
+```typescript
+import { thing } from "./lib/thing.ts";
+```
+
+If you install packages from NPM or similar, you may import those too:
+
+```typescript
+import equal from "deep-equal";
+```
+
+The runtime is limited, so many existing packages might not work, e.g. if they
+import NodeJS packages.
+
+### Non-code files
+
+You can import JSON, text, or binary data. This is useful for bootstrapping
+tests with reference data, dictionaries, configuration, etc. Use ES import
+attributes to specify the type of import:
+
+```typescript
+import data from "./fixtures/data.json" with { type: "json" };
+import contents from "./wordlist.txt" with { type: "text" };
+import raw from "./snapshot.dat" with { type: "binary" };
+```
+
+When using `"text"`  you get a `string`, and when using `"binary"` you get
+`Uint8Array`.
+
+For JSON data, you can also just use the file extension:
+
+```typescript
+import data from "./fixtures/data.json";
+```
+
+## Default properties and action generators
+
+::: browser
+Bombadil comes with a set of default properties and action generators that work
+for most web applications. You'll probably want to reexport all or at least
+most of these:
+
+```typescript
+export * from "@antithesishq/bombadil/browser/defaults";
+```
+:::
+
+::: terminal
+Bombadil comes with a set of default properties and action generators for
+terminal testing. You'll probably want to reexport all or at least most of
+these:
+
+```typescript
+export * from "@antithesishq/bombadil/terminal/defaults";
+```
+:::
+
+In fact, these defaults are exactly what are used when running tests without a custom
+specification file. If you want to selectively pick just a subset of these,
+replace the `*` with the relevant names:
+
+::: browser
+```typescript
+export { 
+    // Properties
+    noUncaughtExceptions,
+    // Actions
+    clicks, 
+    reload,
+} from "@antithesishq/bombadil/browser/defaults";
+```
+:::
+
+::: terminal
+```typescript
+export {
+    // Properties
+    exitSuccess,
+    noReplacementChars,
+    // Actions
+    typeBasicInput,
+} from "@antithesishq/bombadil/terminal/defaults";
+```
+:::
+
+You may freely combine defaults with your own properties and action generators.
+All properties and action generators exported by the top-level module are
+used by Bombadil.
+
+::: browser
+The browser defaults include properties checking for uncaught exceptions,
+unhandled promise rejections, error logs, HTTP 4xx and 5xx responses, and more.
+On the actions side, there are generators for general navigation and
+interaction with semantic HTML elements.
+:::
+
+::: terminal
+The terminal defaults are rather simple: things like expecting the
+program to terminate with exit code 0 and not print byte sequences that the
+terminal can't handle properly. You likely want to extend the defaults with a 
+custom specification.
+:::
+
+## Language features
+
+The specification language of Bombadil, embedded in TypeScript or JavaScript,
+has a small set of central concepts. This section describes them in detail.
+
+### Properties
+
+A property is a description of how the system under test should behave *in
+general*. This is different from example-based testing (e.g. [Playwright,
+Cypress, or Selenium]{.browser}[TUI snapshot testing]{.terminal}) where you
+describe how it behaves for *particular* cases.
+
+The most intuitive kind of property, which you might have come across before,
+is an *invariant*: a condition that should always be true. In Bombadil,
+invariants are expressed using the `always` temporal operator:
+
+```typescript
+always( 
+    // some condition that should always be true
+)
+```
+
+To instruct Bombadil to check your property, you must export it from your
+specification module. Its name is used in error reports, so give the
+export a meaningful name.
+
+```typescript
+export const hasTitle = always( 
+    // check that there's a title rendered somehow
+);
+```
+
+You may export multiple properties, including the
+[defaults](#default-properties-and-action-generators), and they'll all be
+checked independently. But how do you "check that there's a title
+somehow"? You need access to the [browser]{.browser}[terminal]{.terminal}, and for that, you use *extractors*.
+
+### Extractors
+
+In order to describe a condition about the web page you're testing, you first
+need to extract state. This is done with the `extract` function,
+[which runs inside the browser on every state that Bombadil decides to capture.]{.browser}
+[which runs on every state that Bombadil decides to capture.]{.terminal}
+
+```typescript
+extract(state => ...)
+```
+You give it a function that takes the current browser state as an argument, and
+returns JSON-serializable data. [The state object contains a bunch of things,
+but the most important are `document` and `window` --- the same ones you have access
+to in JavaScript running in a browser.]{.browser}[The state object exposes the rendered screen
+contents, the cursor position, and other observable signals.]{.terminal}
+
+::: browser
+To extract the title, you'd define this at the top level of your specification:
+
+```typescript
+const title = extract(state => state.document.title || "");
+```
+:::
+
+::: terminal
+To extract the title from the first row of the terminal grid, you'd define this 
+at the top level of your specification:
+
+```typescript
+const title = extract(state => state.grid.rowText(0).trim());
+```
+:::
+
+The `title` value is not a `string` though --- it's a `Cell<string>`, a
+stateful value that changes over time. For every new state captured by
+Bombadil, the extractor function gets run, and the cell is updated with its
+return value.
+
+Using the `title` cell, you can define the property:
+
+```typescript
+export const hasTitle = always(() => 
+    title.current !== ""
+);
+```
+
+Two things to note about this example:
+
+1. The expression passed to `always` is a function that takes no arguments ---
+   a *thunk*. This is because it needs to be evaluated in every state. It needs
+   to *always* be true, not just once, and that's why you need to supply the
+   thunk rather than a `boolean`.
+2. To get the `string` value out of the cell, you use `.current`.
+
+This is a custom property using the *temporal* operator called `always`.
+There are other temporal operators, described in [Formulas](#formulas) below.
+
+### Formulas
+
+Formulas and temporal operators may sound scary, but fear not --- they are
+essentially ways of expressing "conditions over time". Here are some quick
+facts about formulas and temporal operators:
+
+* Temporal operators return formulas. 
+* Every property in Bombadil is a formula (of the `Formula` type). 
+* A temporal operator is a function that takes some subformula and evaluates it
+  over time. 
+* Different temporal operators evaluate their subformulas in different ways.
+* Bombadil evaluates formulas against a sequence of states to check if they
+  *hold true*.
+
+Temporal operator types include `always`, as discussed in the example in [Extractors](#extractors) above, and also `eventually` and `next`. Here's an
+informal[^ltl] description of how they work:
+
+* `always(x)` holds if `x` holds in *this* and *every future* state
+* `next(x)` holds if `x` holds in *the next* state
+* `eventually(x)` holds if `x` holds in *this* or *any future* state
+
+They accept *subformulas* as arguments. You'll notice in the example with
+`always` above, the argument was a thunk. This still works, because the operators
+automatically convert thunks into formulas. In fact, there's an operator for doing that
+explicitly, called `now`:
+
+```typescript
+always(now(() => title.current !== ""))
+```
+
+You normally don't have to use the `now` operator, unless you want to use
+*logical connectives* at the formula level. They are defined as methods on
+formulas:
+
+* `x.and(y)` holds if `x` holds and `y` holds
+* `x.or(y)` holds if `x` holds or `y` holds
+* `x.implies(y)` holds if `x` doesn't hold or `y` holds
+
+There's also negation, both as a function and as a method on
+formulas, i.e. `not(x)` and `x.not()`.
+
+::: browser
+The `now` operator is useful when expressing single-state preconditions. The
+following property checks that pressing a button shows a spinner that is
+eventually hidden again:
+
+```typescript
+const buttonPressed = extract(() => ...);
+const spinnerVisible = extract(() => ...);
+
+now(() => buttonPressed.current).implies(
+    now(() => spinnerVisible.current)
+        .and(eventually(() => !spinnerVisible.current))
+)
+```
+:::
+
+::: terminal
+The `now` operator is useful when expressing single-state preconditions. The
+following property checks that submitting a command shows a loading indicator
+that is eventually hidden:
+
+```typescript
+const commandSubmitted = extract(() => ...);
+const loadingShown = extract(() => ...);
+
+now(() => commandSubmitted.current).implies(
+    now(() => loadingShown.current)
+        .and(eventually(() => !loadingShown.current))
+)
+```
+:::
+
+You can build more advanced formulas, and even include nested temporal operators, but
+the basics are often powerful enough. See the [examples](#examples) at the bottom for more
+inspiration.
+
+### Action generators
+
+In addition to exporting properties in a specification, you export action
+generators. A generator is an object with a `generate()` method. An action
+generator generates values of type `Tree<Action>`.
+
+Like with [default properties](#default-properties-and-action-generators),
+there are default actions provided by Bombadil. These will get you a long way,
+but there are times where you'll need to define your own action generators.
+
+For every state that Bombadil captures, all action generators are run,
+contributing to a tree structure of *possible* actions. These are called
+*action templates* and are parameterized by ranges of values. Bombadil then
+randomly picks one in that tree, and picks random values within the ranges for
+the parameters. Why a tree, though? It's because the branches are *weighted*
+--- equally, by default. But you can override this to control the probability
+of an action being picked.
+
+To define a custom action generator, you use the `actions` function, which
+takes a thunk that returns an array of actions:
+
+```typescript
+export const myAction = actions(() => {
+    return [
+        ...
+    ];
+});
+```
+
+In the returned array, each element is a value of the following `Action` type,
+provided by [the NPM package](#typescript-support).
+[See the [TypeScript source](https://github.com/antithesishq/bombadil/blob/v%version%/lib/bombadil/src/specification/browser/index.ts) for reference.]{.browser}
+[See the [TypeScript source](https://github.com/antithesishq/bombadil/blob/v%version%/lib/bombadil/src/specification/terminal/index.ts) for reference.]{.terminal}
+
+::: browser
+
+Here's a generator for clicks in the center of a `canvas` element:
+
+```typescript
+const canvas = extract((state) => {
+    const canvas = state.document.querySelector("#my-canvas");
+    if (!canvas) {
+        return null;
+    }
+    const rect = canvas.getBoundingClientRect();
+    if (rect.width > 0 && rect.height > 0) {
+        return {
+            fingerprint: getFingerprint(canvas),
+            point: {
+                x: rect.left + rect.width / 2,
+                y: rect.top + rect.height / 2,
+            }
+        };
+    }
+    return null;
+});
+
+
+export const clickCanvas = actions(() => {
+    return canvas.current ? [{ Click: canvasClick.current }] : [];
+});
+```
+
+For double-click actions, specify the delay between clicks in milliseconds (0-1000ms):
+
+```typescript
+export const doubleClickCanvas = actions(() => {
+    return canvas.current ? [{
+        DoubleClick: {
+            ...canvas,
+            delayMillis: 100,
+        }
+    }] : [];
+});
+```
+
+Most action parameters can also be specified as ranges, where Bombadil picks a
+random value within the range:
+
+
+```typescript
+export const doubleClickCanvas = actions(() => {
+    return canvas.current ? [{
+        DoubleClick: {
+            ...canvas,
+            delayMillis: [50, 500],
+        }
+    }] : [];
+});
+```
+
+:::
+
+::: terminal Here's a generator that sends either a `help` command or an `incr`
+command with an numeric argument:
+
+```typescript
+export const sendCommand = actions(() => {
+    return [
+        { TypeText: { Regexp: "help\n" } },
+        { TypeText: { Regexp: "incr \d{2,4}\n" } },
+    ];
+});
+```
+:::
+
+The actions you return must be possible to perform in the current state. Your
+action generators should therefore depend on [cells](#extractors) and validate
+your actions before returning them[, as done with `canvasCenter` in the previous
+example. Another example is the `back` action generator provided by Bombadil,
+which checks that there's a history entry to go back to, otherwise returning `[]`]{.browser}.
+
+To give actions different weights, use the `weighted` combinator and wrap each
+subgenerator in an array with the weight as the first element:
+
+::: browser
+```typescript
+export const navigation = weighted([
+    [10, back],
+    [1, forward],
+    [1, reload],
+]);
+```
+:::
+
+::: terminal
+```typescript
+export const inputs = weighted([
+  [10, typeFromSet(CharSets.UNICODE_SAFE)],
+  [1, typeFromSet(CharSets.CONTROL_COMMON)],
+]);
+```
+:::
+
+## Examples
+
+::: browser
+These are full, runnable examples of properties and action generators you might
+need in your own testing with Bombadil. Think of them as design patterns for
+properties. Each example is a self-contained specification file.
+
+### Invariant: max notification count
+
+This is a simple property checking that there are never more than five notifications
+shown.
+
+```typescript
+import { extract, always } from "@antithesishq/bombadil";
+export * from "@antithesishq/bombadil/browser/defaults";
+
+const notificationCount = extract((state) => 
+    state.document.body.querySelectorAll(".notification").length,
+);
+
+export const max_notifications_shown = always(() =>
+    notificationCount.current <= 5,
+);
+```
+
+### Sliding window: constant notification count
+
+This property checks that the notification count doesn't change --- that it is
+the same as in the first state. Note how this property evaluates
+`notificationCount.current` in the outer thunk, and then uses that in the
+inner thunk to compare against the current value.
+
+```typescript
+import { extract, always, now, time } from "@antithesishq/bombadil";
+export * from "@antithesishq/bombadil/browser/defaults";
+
+const notificationCount = extract((state) =>
+    state.document.body.querySelectorAll(".notification").length,
+);
+
+export const constantNotificationCount = now(() => {
+    const initial = notificationCount.current;
+    return always(() => 
+        notificationCount.current === initial,
+    );
+});
+```
+
+### Guarantee: error disappears
+
+A *guarantee property* checks that something good eventually happens, within
+some time bound. Here is a property that checks that error messages disappear
+within five seconds.
+
+```typescript
+import { extract, always, now, eventually } from "@antithesishq/bombadil";
+export * from "@antithesishq/bombadil/browser/defaults";
+
+const errorMessage = extract((state) => 
+    state.document.body.querySelector(".error")?.textContent ?? null,
+);
+
+export const errorDisappears = always(
+    now(() => errorMessage.current !== null).implies(
+        eventually(() => errorMessage.current === null)
+            .within(5, "seconds"),
+    ),
+);
+```
+
+### Contextful guarantee: notification includes past value
+
+This property checks that if there's a non-blank name entered, and
+it is submitted, then eventually there will be a notification that includes the
+name. This example uses an outer thunk to force a cell value (`nameEntered`) at every
+state, and then closes over that value with the inner thunk passed to
+`eventually`. 
+
+```typescript
+import { extract, always, now, next, eventually } from "@antithesishq/bombadil";
+export * from "@antithesishq/bombadil/browser/defaults";
+
+const name = extract((state) => {
+    const element = 
+        state.document.body.querySelector("#name-field");
+    return (element as HTMLInputElement | null)?.value ?? null;
+});
+
+const submitInProgress = extract((state) => 
+    state.document.body.querySelector("submit.progress")
+        !== null,
+);
+
+const notificationText = extract((state) =>
+    state.document.body.querySelector(".notification")?.textContent 
+        ?? null,
+);
+
+export const notificationIncludesMessage = always(() => {
+    const nameEntered = name.current?.trim() ?? "";
+
+    return now(() => nameEntered !== "")
+        .and(next(() => submitInProgress.current))
+        .implies(eventually(() => 
+            notificationText.current?.includes(nameEntered) 
+                ?? false,
+        ).within(5, "seconds"));
+});
+```
+
+### State machine: counter
+
+This property models a counter as a state machine, checking that the counter
+only transitions by staying the same, incrementing by 1, or decrementing by 1
+(no invalid jumps allowed).
+
+```typescript
+import { extract, always, now, next } from "@antithesishq/bombadil";
+export * from "@antithesishq/bombadil/browser/defaults";
+
+const counterValue = extract((state) => {
+    const element = state.document.body.querySelector("#counter");
+    return parseInt(element?.textContent ?? "0", 10);
+});
+
+const unchanged = now(() => {
+    const current = counterValue.current;
+    return next(() => counterValue.current === current);
+});
+
+const increment = now(() => {
+    const current = counterValue.current;
+    return next(() => counterValue.current === current + 1);
+});
+
+const decrement = now(() => {
+    const current = counterValue.current;
+    return next(() => counterValue.current === current - 1);
+});
+
+export const counterStateMachine = 
+    always(unchanged.or(increment).or(decrement));
+```
+
+If this specification exports the `reload` action, the `unchanged` property
+becomes relevant.[^stuttering] Unless this application stored the state of the counter
+somehow, reloading the page would clear the counter, which this property
+would catch as a violation.
+:::
+
+::: terminal
+The terminal driver is experimental, and the catalog of common patterns
+is not yet collected. For now, see the [default specification source](https://github.com/antithesishq/bombadil/blob/v%version%/lib/bombadil/src/specification/terminal/defaults.ts) 
+and the
+[examples](https://github.com/antithesishq/bombadil/tree/v%version%/examples).
+:::
+
+[^ltl]: Formally, the properties in Bombadil use a flavor of
+[Linear Temporal Logic](https://en.wikipedia.org/wiki/Linear_temporal_logic), if you're into
+dense theoretical stuff. 
+[^stuttering]: A state transition that allows for nothing to change is a way of making a property "stutter-invariant", as it's called in the literature.

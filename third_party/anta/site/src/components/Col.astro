@@ -1,0 +1,45 @@
+---
+// A single column inside <Columns>. Sizing attributes map to CSS custom
+// properties that base.css consumes ONLY in row mode (the container-query
+// branch), so a stacked column ignores them and stays full-width.
+//
+//   width  — a fraction (bare number / `2fr` → flex-grow, basis 0) or a
+//            length (`60%`, `200px`, `20rem` → flex-basis, no grow).
+//   min    — min column width (bare number → px, else raw CSS length).
+//   max    — max column width (same rule as min).
+//
+// With no attributes a <Col> behaves like any plain child: an equal share.
+interface Props {
+  width?: string | number
+  min?: string | number
+  max?: string | number
+}
+const { width, min, max } = Astro.props
+
+/** Bare numbers become px; anything else (%, px, rem, …) passes through. */
+const len = (v: string | number | undefined): string | null => {
+  if (v == null) return null
+  const s = String(v).trim()
+  return /^-?\d*\.?\d+$/.test(s) ? `${s}px` : s
+}
+
+const vars: string[] = []
+if (width != null) {
+  const s = String(width).trim()
+  const fr = s.match(/^(\d*\.?\d+)(fr)?$/) // "2" or "2fr" → fraction (flex-grow)
+  if (fr) {
+    vars.push(`--col-grow: ${fr[1]}`, `--col-basis: 0`)
+  } else {
+    vars.push(`--col-grow: 0`, `--col-basis: ${s}`) // a length: fixed basis
+  }
+}
+const minLen = len(min)
+const maxLen = len(max)
+if (minLen) vars.push(`--col-min: ${minLen}`)
+if (maxLen) vars.push(`--col-max: ${maxLen}`)
+const style = vars.length ? vars.join('; ') : undefined
+---
+
+<div class="col" style={style}>
+  <slot />
+</div>

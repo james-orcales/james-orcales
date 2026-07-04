@@ -1,0 +1,132 @@
+---
+layout: ../../layouts/DocsLayout.astro
+title: Progress
+---
+import Playground from '../../components/Playground'
+import PropsTable from '../../components/PropsTable.astro'
+import Disclosure from '../../components/Disclosure.astro'
+import Preview from '../../components/Preview.astro'
+import AnimatedProgress from '../../components/AnimatedProgress'
+import { Progress } from '@antadesign/anta'
+// The demo source lives in a sibling `.ts` file rather than inline
+// here because Astro's MDX pipeline trims leading whitespace from
+// JSX-attribute template literals, which scrambles the indentation
+// Monaco needs for folding ranges. A regular module import preserves
+// the template literal's bytes verbatim.
+import progressDemoCode from './progress.demo.ts'
+
+# Progress
+
+A progress indicator for displaying task completion. Consists of a track
+(background bar), an indicator (filled portion), and an optional label area.
+
+<Disclosure title="Playground" anchor={false} brand>
+
+<Playground
+  client:visible
+  component="Progress"
+  layout="side"
+  initialCode={progressDemoCode}
+/>
+
+</Disclosure>
+
+## Examples
+
+<Preview>
+  <div style={{ display: 'flex', flexDirection: 'column', gap: '20px', width: '100%' }}>
+    <Progress value={60} />
+    <Progress value={42} tone="brand" label="Uploading files…" hint="3 of 7" />
+    <Progress value={75} tone="info" label="Processing" />
+    <Progress value={60} tone="warning" label="Uploading" hint="3 of 5" style={{ borderBottomWidth: '1px' }} />
+    <AnimatedProgress client:visible speed={2} tone="critical" />
+  </div>
+</Preview>
+
+```tsx
+// Minimum invocation — just a value.
+<Progress value={60} />
+
+// Pair the value with a descriptive label and a right-aligned hint.
+<Progress value={42} tone="brand" label="Uploading files…" hint="3 of 7" />
+
+// A named tone re-tints every internal color via the --*-{tone} token cascade.
+<Progress value={75} tone="info" label="Processing" />
+
+// The host pre-declares border colour + style with width 0 — give it any
+// width to opt in; the colour auto-tracks the tone.
+<Progress value={60} tone="warning" label="Uploading" hint="3 of 5" style={{ borderBottomWidth: '1px' }} />
+
+// Animate by driving `value` over time.
+function AnimatedProgress({ speed = 1 }) {
+  const [v, setV] = useState(0)
+  useEffect(() => {
+    const id = setInterval(() => setV((x) => (x + speed) % 101), 50)
+    return () => clearInterval(id)
+  }, [speed])
+  return <Progress value={v} label="Animated" />
+}
+```
+
+<Disclosure title="Component props" open>
+
+<PropsTable component="Progress" />
+
+</Disclosure>
+
+<Disclosure title="Styling">
+
+Reach for **`tone`** first — a named tone (`brand` / `info` / `success` / `warning`
+/ `critical`) or any CSS colour for a custom tone (it derives the track, indicator,
+and text in oklch):
+
+```tsx folded
+<Progress value={60} tone="success" />
+<Progress value={60} tone="#e0457b" />
+```
+
+For one-offs, the **track** is the host (style `a-progress` directly) and the
+**indicator** (fill bar) is a shadow **part** — `::part(indicator)`. The `.fancy`
+class is just for the demo:
+
+<Preview>
+  <div style={{ width: '100%' }}>
+    <Progress className="fancy" value={62} label="Uploading" hint="62%" />
+  </div>
+  <style is:inline>{`
+    a-progress.fancy {
+      border-radius: 999px;
+      background: light-dark(var(--bg-5), #26232c);
+    }
+    a-progress.fancy::part(indicator) {
+      background: linear-gradient(90deg, light-dark(#6a5acd, #8b7cf0), light-dark(#d44ea3, #ec64bc) 55%, light-dark(#ff8a5b, #ffa477));
+      box-shadow: 0 0 12px rgba(212, 78, 163, 0.55);
+    }
+    /* the indicator's right edge has a soft fade by default — clear it for a crisp tip */
+    a-progress.fancy::part(indicator)::after { background: none; }
+    a-progress.fancy a-progress-number,
+    a-progress.fancy a-progress-text { color: #fff; }
+    a-progress.fancy a-progress-hint { color: var(--text-2); }
+  `}</style>
+</Preview>
+
+```css folded
+/* a fancy bar: rounded track (all sides), a multi-stop gradient fill with a glow,
+   and a crisp hard right edge (the default soft right-edge fade is cleared). */
+a-progress.fancy {
+  border-radius: 999px;
+  background: light-dark(var(--bg-5), #26232c);
+}
+a-progress.fancy::part(indicator) {
+  background: linear-gradient(90deg, #6a5acd, #d44ea3 55%, #ff8a5b);
+  box-shadow: 0 0 12px rgba(212, 78, 163, 0.55);   /* glow */
+}
+a-progress.fancy::part(indicator)::after { background: none; }   /* hard right edge */
+
+/* the percentage / label / hint are light-DOM children — recolour for the bar */
+a-progress.fancy a-progress-number,
+a-progress.fancy a-progress-text { color: #fff; }
+a-progress.fancy a-progress-hint { color: var(--text-2); }
+```
+
+</Disclosure>

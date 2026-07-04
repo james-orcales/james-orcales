@@ -1,0 +1,83 @@
+name: Verify Images and Artifacts
+
+on:
+  workflow_call:
+    inputs:
+      tag:
+        description: "The tag version to use for verification"
+        required: true
+        type: string
+
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "The tag version to use for verification"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  packages: read
+
+env:
+  DOCKERHUB_IMAGE_NAME: resonatehqio/resonate
+  GITHUB_IMAGE_NAME: ghcr.io/${{ github.repository }}
+
+jobs:
+  verify-dockerhub-image:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Download and test DockerHub image
+        env:
+          TAG: ${{ inputs.tag }}
+        run: |
+          # Pull the test image
+          docker pull ${{ env.DOCKERHUB_IMAGE_NAME }}:"${TAG}"
+
+          # Run the test image
+          docker run --rm ${{ env.DOCKERHUB_IMAGE_NAME }}:"${TAG}" dst run
+
+  verify-github-image:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Download and test GHCR image
+        env:
+          ACTOR: ${{ github.actor }}
+          TAG: ${{ inputs.tag }}
+        run: |
+          # Login to GHCR
+          echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u "${ACTOR}" --password-stdin
+
+          # Pull the test image
+          docker pull ${{ env.GITHUB_IMAGE_NAME }}:"${TAG}"
+
+          # Run the test image
+          docker run --rm ${{ env.GITHUB_IMAGE_NAME }}:"${TAG}" dst run
+
+  verify-github-release:
+    runs-on: ${{ matrix.systems.runner }}
+    strategy:
+      matrix:
+        systems:
+          - file: resonate_linux_x86_64.tar.gz
+            runner: ubuntu-24.04
+          - file: resonate_linux_aarch64.tar.gz
+            runner: ubuntu-24.04-arm
+          - file: resonate_darwin_x86_64.tar.gz
+            runner: macos-15-intel
+          - file: resonate_darwin_aarch64.tar.gz
+            runner: macos-15
+    steps:
+      - name: Download and test GH release
+        env:
+          REPO: ${{ github.repository }}
+          TAG: ${{ inputs.tag }}
+        run: |
+          # Download the release artifact
+          curl -o resonate.tar.gz -L -O "https://github.com/${REPO}/releases/download/${TAG}/${{ matrix.systems.file }}"
+
+          # Extract the artifact
+          tar -xzf resonate.tar.gz
+
+          # Run the extracted artifact
+          ./resonate dst run

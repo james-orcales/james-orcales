@@ -20,3 +20,10 @@ ripgrep*_source.tar.bz2
 # Cargo timings
 cargo-timing-*.html
 cargo-timing.html
+
+# vendor/ is pinned crate source; cargo's directory-source checksums verify every
+# file at build time. The dev-tree rules above also match paths inside vendored
+# crates -- `target` strips the cc crate's src/target/ module, `*.snap` strips
+# insta snapshots -- stripping them on commit and breaking the offline build.
+!vendor/**/target/
+!vendor/**/*.snap

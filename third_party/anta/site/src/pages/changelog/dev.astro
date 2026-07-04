@@ -1,0 +1,22 @@
+---
+/**
+ * /changelog/dev/ — Dev releases. Renders the prerelease stream of the
+ * repo-root CHANGELOG.md (full detail). The companion /changelog/ page
+ * renders the stable-release stream (summaries).
+ *
+ * Partial generated from CHANGELOG.md by scripts/gen-pages.mjs (docs:pages)
+ * — see src/generated/changelog-dev.md.
+ */
+import DocsLayout from '../../layouts/DocsLayout.astro'
+import ChangelogNav from '../../components/ChangelogNav.astro'
+import { Content as ChangelogHead } from '../../generated/changelog-head.md'
+import { Content } from '../../generated/changelog-dev.md'
+---
+
+<DocsLayout title="Changelog — dev releases">
+  <div class="changelog">
+    <ChangelogHead />
+    <ChangelogNav active="dev" />
+    <Content />
+  </div>
+</DocsLayout>

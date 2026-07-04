@@ -1,0 +1,119 @@
+@layer anta {
+  /* Token surface — all literal/role-pointed values live here so external CSS
+     can re-point a single instance or a whole theme. Text/bg/border point at
+     Anta's theme-aware role tokens (so dark mode is mostly free); the focus ring
+     uses the global `--focus-ring` token directly (it themes itself — no per-input
+     token, no `.dark` override needed); the error border is the one literal (no
+     role token matches it) and gets a `.dark` override below. Sizes set the field
+     height plus a per-size type scale (small 13/16 · medium 15/20 · large 17/24)
+     and icon size (14/16/18); the field min-height still anchors the box to the
+     same-size Button. */
+  a-input {
+    --input-bg: var(--bg-1);
+    --input-border: var(--border-2);
+    --input-border-hover: var(--border-1);
+
+    --input-text: var(--text-1);
+    --input-label: var(--text-3);
+    --input-placeholder: var(--text-4);
+    --input-adornment: var(--text-4);
+    --input-hint: var(--text-3);
+
+    /* `display` is owned by the shadow `:host` (a grid) so consumer CSS can
+       re-template it; we only set the box width here. */
+    width: 100%;
+  }
+
+  /* Custom tone — a literal CSS colour tints the resting + hover border (the focus
+     ring stays the global `--focus-ring`). Declared *before* `[status]` so a
+     validation status still wins the border on the specificity tie. FIRST-PASS
+     lightness values — review. */
+  a-input[tone]:not([tone=""]) {
+    /* Fallback is the default border (not transparent) so a non-colour value —
+       e.g. a stray `tone="brand"` (named tones live on `status`, not `tone`) —
+       degrades to the normal border instead of vanishing. */
+    --input-tone-source: attr(tone type(<color>), var(--border-2));
+
+    --input-border:       oklch(from var(--input-tone-source) 0.7 calc(c * 0.8) h);
+    --input-border-hover: oklch(from var(--input-tone-source) 0.6 c h);
+
+    .dark & {
+      --input-border:       oklch(from var(--input-tone-source) 0.5 calc(c * 0.8) h);
+      --input-border-hover: oklch(from var(--input-tone-source) 0.6 c h);
+    }
+  }
+
+  /* Status: the border + message (and the wrapper-slotted glyph, via
+     currentColor) take the matching tone's role tokens, so dark mode is free.
+     The 1px width bump and the glyph are handled in the shadow off the same
+     `[status]` host attribute; only `critical` also drives validity. The border
+     stops reacting to hover (hover == border, so pin it to the status color). */
+  a-input[status="critical"] {
+    --input-border: var(--border-1-critical);
+    --input-border-hover: var(--border-1-critical);
+    --input-hint: var(--text-2-critical);
+  }
+  a-input[status="warning"] {
+    --input-border: var(--border-1-warning);
+    --input-border-hover: var(--border-1-warning);
+    --input-hint: var(--text-2-warning);
+  }
+  a-input[status="success"] {
+    /* --border-1-success reads a touch hot in light mode (green is the brightest
+       hue at a given step), so deepen it toward the success text tone in oklch —
+       same hue, lower brightness — to sit alongside the critical/warning borders.
+       Dialing knob: raise the second percentage to deepen further. Dark mode
+       (below) keeps the muted role token as-is. */
+    --input-border: color-mix(in oklch, var(--border-1-success) 72%, var(--text-2-success));
+    --input-border-hover: color-mix(in oklch, var(--border-1-success) 72%, var(--text-2-success));
+    --input-hint: var(--text-2-success);
+  }
+  a-input[status="info"] {
+    --input-border: var(--border-1-info);
+    --input-border-hover: var(--border-1-info);
+    --input-hint: var(--text-2-info);
+  }
+  a-input[status="brand"] {
+    --input-border: var(--border-1-brand);
+    --input-border-hover: var(--border-1-brand);
+    --input-hint: var(--text-2-brand);
+  }
+
+  a-input:disabled {
+    --input-text: var(--text-4);
+    --input-label: var(--text-4);
+    --input-hint: var(--text-5);
+    cursor: not-allowed;
+  }
+
+  /* Icon size tracks the field size — small 14 / medium 16 (the a-icon default)
+     / large 18. Targets the slotted leading / trailing / clear icons (light-DOM
+     descendants); an explicit `<Icon size>` (inline `--icon-size`) still wins. */
+  a-input[size="small"] a-icon { --icon-size: 14px; }
+  a-input[size="large"] a-icon { --icon-size: 18px; }
+
+  /* Optical top-nudge so the status glyph aligns with the hint's first line —
+     scaled to the size's type scale (small 0.5 · medium 1 · large 1.5). The glyph
+     is the direct child of the `hint` slot wrapper (the message sits in a nested
+     span), so `> a-icon` won't catch an icon inside the message itself. */
+  a-input [slot="hint"] > a-icon { margin-block-start: 1px; }
+  a-input[size="small"] [slot="hint"] > a-icon { margin-block-start: 0.5px; }
+  a-input[size="large"] [slot="hint"] > a-icon { margin-block-start: 1.5px; }
+
+  /* `:not([status])` so this neutral dark border doesn't clobber a status
+     border — same specificity as the per-status rules above, but later in
+     source, so without the guard it would win in dark mode and the status color
+     would show only on hover. Status borders use tone role tokens, which carry
+     their own dark variants, so they need no dark override here. */
+  .dark a-input:not([status]) {
+    /* Dimmer than the light default (--border-2 reads too bright on the dark
+       surface); hover still lifts to --border-1. */
+    --input-border: var(--border-3);
+  }
+  /* The success border's light-mode deepening would read muddy against the dark
+     surface — fall back to the muted dark role token there. */
+  .dark a-input[status="success"] {
+    --input-border: var(--border-1-success);
+    --input-border-hover: var(--border-1-success);
+  }
+}

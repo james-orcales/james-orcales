@@ -1,0 +1,122 @@
+name: Trigger Cloudflare Pages deployment
+
+# Manual recovery for stuck or skipped Cloudflare Pages builds.
+# Run from the Actions UI: pick a branch, click "Run workflow".
+# The workflow cancels any in-flight deployment for that branch
+# (best-effort) and asks Cloudflare to start a fresh build at the
+# branch's current HEAD.
+#
+# This complements the automatic cleanup workflows — it doesn't run
+# on push, it only runs when explicitly invoked.
+on:
+  workflow_dispatch:
+    inputs:
+      branch:
+        description: Branch to redeploy (e.g. main, anta-button)
+        required: true
+        type: string
+
+permissions: {}
+
+jobs:
+  trigger:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Cancel in-flight deployments and trigger fresh build
+        env:
+          CF_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CF_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          PROJECT: anta
+          BRANCH: ${{ inputs.branch }}
+        run: |
+          set -euo pipefail
+
+          api="https://api.cloudflare.com/client/v4/accounts/${CF_ACCOUNT_ID}/pages/projects/${PROJECT}/deployments"
+
+          echo "Branch: ${BRANCH}"
+          echo
+
+          # Find any deployment for the branch that hasn't reached a
+          # terminal state. Cloudflare's `latest_stage.status` values
+          # we treat as terminal: success, failure, canceled, skipped.
+          # Anything else (idle, active, etc.) is in-flight.
+          echo "Scanning for in-flight deployments…"
+          PAGE_SIZE=25
+          stuck_ids=""
+          page=1
+          while :; do
+            res=$(curl -sS -H "Authorization: Bearer ${CF_API_TOKEN}" \
+              "${api}?page=${page}&per_page=${PAGE_SIZE}")
+            success=$(echo "${res}" | jq -r '.success')
+            if [[ "${success}" != "true" ]]; then
+              echo "List API error:"
+              echo "${res}" | jq '.errors // .'
+              exit 1
+            fi
+
+            page_ids=$(echo "${res}" | jq -r --arg b "${BRANCH}" '
+              .result[]
+              | select(.deployment_trigger.metadata.branch == $b)
+              | (.latest_stage.status // "unknown") as $s
+              | select($s != "success" and $s != "failure" and $s != "canceled" and $s != "skipped")
+              | .id
+            ')
+            if [[ -n "${page_ids}" ]]; then
+              stuck_ids+="${page_ids}"$'\n'
+            fi
+
+            page_count=$(echo "${res}" | jq -r '.result | length')
+            if [[ "${page_count}" -lt "${PAGE_SIZE}" ]]; then
+              break
+            fi
+            page=$((page + 1))
+          done
+
+          stuck_ids=$(printf '%s' "${stuck_ids}" | sed '/^$/d')
+          if [[ -n "${stuck_ids}" ]]; then
+            count=$(echo "${stuck_ids}" | wc -l | tr -d ' ')
+            echo "Cancelling ${count} in-flight deployment(s) (best-effort)…"
+            # Cloudflare's Pages API has no dedicated cancel endpoint;
+            # DELETE with force=true is the closest available. A genuinely
+            # mid-build deploy may still finish in the background — that's
+            # OK, the next scheduled cleanup will reap it.
+            while IFS= read -r id; do
+              echo "  ${id}"
+              res=$(curl -sS -X DELETE \
+                -H "Authorization: Bearer ${CF_API_TOKEN}" \
+                "${api}/${id}?force=true") || true
+              ok=$(echo "${res}" | jq -r '.success // false')
+              if [[ "${ok}" != "true" ]]; then
+                echo "    (delete returned non-success; continuing)"
+                echo "${res}" | jq -c '.errors // .' || true
+              fi
+            done <<< "${stuck_ids}"
+            echo
+          else
+            echo "No in-flight deployments for ${BRANCH}."
+            echo
+          fi
+
+          # Trigger a fresh deployment from the branch HEAD.
+          echo "Triggering new deployment for ${BRANCH}…"
+          res=$(curl -sS -X POST \
+            -H "Authorization: Bearer ${CF_API_TOKEN}" \
+            -F "branch=${BRANCH}" \
+            "${api}")
+
+          success=$(echo "${res}" | jq -r '.success')
+          if [[ "${success}" != "true" ]]; then
+            echo "Failed to trigger deployment:"
+            echo "${res}" | jq '.errors // .'
+            exit 1
+          fi
+
+          new_id=$(echo "${res}" | jq -r '.result.id')
+          new_url=$(echo "${res}" | jq -r '.result.url')
+          new_alias=$(echo "${res}" | jq -r '.result.aliases[0] // empty')
+
+          echo "✓ Deployment ${new_id} created"
+          echo "  Preview URL : ${new_url}"
+          if [[ -n "${new_alias}" ]]; then
+            echo "  Branch alias: ${new_alias}"
+          fi

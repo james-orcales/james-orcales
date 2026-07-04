@@ -1,0 +1,112 @@
+name: CICD
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+jobs:
+  lint:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: false
+
+      - name: Rum golangci-lint
+        uses: golangci/golangci-lint-action@v9
+        with:
+          version: v2.1
+
+  test:
+    runs-on: ubuntu-24.04
+    env:
+      TEST_AIO_SUBSYSTEMS_STORE_POSTGRES_CONFIG_HOST: "localhost"
+      TEST_AIO_SUBSYSTEMS_STORE_POSTGRES_CONFIG_PORT: "5432"
+      TEST_AIO_SUBSYSTEMS_STORE_POSTGRES_CONFIG_USERNAME: "username"
+      TEST_AIO_SUBSYSTEMS_STORE_POSTGRES_CONFIG_PASSWORD: "password"
+      TEST_AIO_SUBSYSTEMS_STORE_POSTGRES_CONFIG_DATABASE: "resonate_test"
+
+    services:
+      postgres:
+        image: postgres:15
+        env:
+          POSTGRES_USER: ${{ env.TEST_AIO_SUBSYSTEMS_STORE_POSTGRES_CONFIG_USERNAME }}
+          POSTGRES_PASSWORD: ${{ env.TEST_AIO_SUBSYSTEMS_STORE_POSTGRES_CONFIG_PASSWORD }}
+          POSTGRES_DB: ${{ env.TEST_AIO_SUBSYSTEMS_STORE_POSTGRES_CONFIG_DATABASE }}
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 5432:5432
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: false
+
+      - name: Run go test and generate coverage report
+        run: make test
+
+      - name: Upload coverage report to Codecov
+        uses: codecov/codecov-action@v5
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          codecov_yml_path: codecov.yml
+
+      - uses: actions/upload-artifact@v6
+        if: ${{ always() }}
+        with:
+          name: dst-results
+          path: test/dst/dst*.html
+
+  build:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: false
+
+      - name: Build resonate
+        run: |
+          go build -tags=all -o resonate .
+
+  scan:
+    runs-on: ubuntu-24.04
+    if: (github.actor != 'dependabot[bot]')
+    env:
+      SEMGREP_RULES: "auto semgrep.yml"
+
+    container:
+      image: semgrep/semgrep
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Run semgrep
+        run: |
+          semgrep ci

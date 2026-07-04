@@ -1,0 +1,459 @@
+---
+source: lib/bombadil/src/specification/bundler/mod.rs
+expression: bundle
+---
+(function() {
+  const modules = {};
+  const cache = {};
+
+  function require(path) {
+    if (cache[path]) {
+      return cache[path].exports;
+    }
+
+    const module = { exports: {} };
+    cache[path] = module;
+
+    if (!modules[path]) {
+      throw new Error("Module not found: " + path);
+    }
+
+    modules[path](module, module.exports, require);
+
+    // ESM interop: ensure .default exists for pure CommonJS modules
+    // Skip if module already has __esModule marker (transpiled ESM) or .default property
+    if (!module.exports.__esModule && typeof module.exports.default === 'undefined') {
+      module.exports.default = module.exports;
+    }
+
+    return module.exports;
+  }
+
+  globalThis.__bombadilRequire = require;
+
+  modules["./index.ts"] = function(module, exports, require) {
+    module.exports.__esModule=true;const { default: z, x, foo: bar } = __bombadilRequire("./other.ts");
+    const { incr } = __bombadilRequire("./subdirectory/shared.ts");
+    const { default: addFn, multiply, MAGIC_NUMBER } = __bombadilRequire("./node_modules/test-lib/index.js");
+    const { default: file } = __bombadilRequire("./file.txt");
+    const { default: data } = __bombadilRequire("./data.json");
+    const { default: nspell } = __bombadilRequire("./node_modules/nspell/index.js");
+    const y = incr(x + z + bar.bar);
+    const computed = multiply(addFn(1, 2), MAGIC_NUMBER);
+    Object.assign(module.exports, __bombadilRequire("./other.ts"));
+    const text = file;
+    const jsonx = data.x;
+    const spell = nspell;
+    module.exports.y = y;
+    module.exports.computed = computed;
+    module.exports.text = text;
+    module.exports.jsonx = jsonx;
+    module.exports.spell = spell;
+  };
+
+  modules["./data.json"] = function(module, exports, require) {
+    module.exports.__esModule=true;module.exports.default={"x":123};
+  };
+
+  modules["./file.txt"] = function(module, exports, require) {
+    module.exports.default = (new Uint8Array([116,104,105,115,32,105,115,32,97,32,102,105,108,101,10,])).buffer;
+  };
+
+  modules["./node_modules/nspell/index.js"] = function(module, exports, require) {
+    module.exports.__esModule=true;var isBuffer = __bombadilRequire("./node_modules/is-buffer/index.js");
+    module.exports = function nspell(value) {
+    	return isBuffer(value) ? "is a buffer" : "not a buffer";
+    };
+  };
+
+  modules["./node_modules/test-lib/index.js"] = function(module, exports, require) {
+    module.exports.__esModule=true;const { double, PI } = __bombadilRequire("./node_modules/utils-lib/index.js");
+    function multiply(a, b) {
+    	return a * b;
+    }
+    const MAGIC_NUMBER = double(21);
+    function getPi() {
+    	return PI;
+    }
+    module.exports.default = function add(a, b) {
+    	return a + b;
+    };
+    module.exports.multiply = multiply;
+    module.exports.MAGIC_NUMBER = MAGIC_NUMBER;
+    module.exports.getPi = getPi;
+  };
+
+  modules["./other.ts"] = function(module, exports, require) {
+    module.exports.__esModule=true;const { incr } = __bombadilRequire("./subdirectory/shared.ts");
+    __bombadilRequire("@antithesishq/bombadil");
+    const x = 10;
+    module.exports.default = incr(20);
+    const foo = { bar: 30 };
+    const { x: y } = { x: 123 };
+    const [z = 0] = [1];
+    const [{ a: b = 1 }] = [{}];
+    module.exports.x = x;
+    module.exports.foo = foo;
+    module.exports.y = y;
+    module.exports.z = z;
+    module.exports.b = b;
+  };
+
+  modules["./subdirectory/shared.ts"] = function(module, exports, require) {
+    module.exports.__esModule=true;const { x } = __bombadilRequire("./other.ts");
+    function incr(x) {
+    	return x + 1;
+    }
+    const cyclic = x + 10;
+    module.exports.incr = incr;
+    module.exports.cyclic = cyclic;
+  };
+
+  modules["./node_modules/is-buffer/index.js"] = function(module, exports, require) {
+    module.exports.__esModule=true;module.exports = function isBuffer(obj) {
+    	return obj != null && obj.constructor != null && typeof obj.constructor.isBuffer === "function" && obj.constructor.isBuffer(obj);
+    };
+  };
+
+  modules["./node_modules/utils-lib/index.js"] = function(module, exports, require) {
+    module.exports.__esModule=true;function double(n) {
+    	return n * 2;
+    }
+    function square(n) {
+    	return n * n;
+    }
+    const PI = 3.14159;
+    module.exports.double = double;
+    module.exports.square = square;
+    module.exports.PI = PI;
+  };
+
+  modules["@antithesishq/bombadil"] = function(module, exports, require) {
+    module.exports.__esModule=true;const { ExtractorCell, Runtime } = __bombadilRequire("@antithesishq/bombadil/internal");
+    __bombadilRequire("@antithesishq/bombadil/actions");
+    const bombadilActions = __bombadilRequire("@antithesishq/bombadil/actions");
+    const { ActionGenerator } = __bombadilRequire("@antithesishq/bombadil/actions");
+    const runtime = new Runtime();
+    function extract(query) {
+    	return new ExtractorCell(runtime, query);
+    }
+    function actions(generate) {
+    	return bombadilActions.actions(generate);
+    }
+    function weighted(value) {
+    	return bombadilActions.weighted(value);
+    }
+    class Formula {
+    	not() {
+    		return new Not(this);
+    	}
+    	and(that) {
+    		return new And(this, now(that));
+    	}
+    	or(that) {
+    		return new Or(this, now(that));
+    	}
+    	implies(that) {
+    		return new Implies(this, now(that));
+    	}
+    }
+    class Pure extends Formula {
+    	constructor(pretty, value) {
+    		super();
+    		this.pretty = pretty;
+    		this.value = value;
+    	}
+    	toString() {
+    		return this.pretty;
+    	}
+    }
+    class And extends Formula {
+    	constructor(left, right) {
+    		super();
+    		this.left = left;
+    		this.right = right;
+    	}
+    	toString() {
+    		return `(${this.left}) && (${this.right})`;
+    	}
+    }
+    class Or extends Formula {
+    	constructor(left, right) {
+    		super();
+    		this.left = left;
+    		this.right = right;
+    	}
+    }
+    class Implies extends Formula {
+    	constructor(left, right) {
+    		super();
+    		this.left = left;
+    		this.right = right;
+    	}
+    	toString() {
+    		return `${this.left}.implies(${this.right})`;
+    	}
+    }
+    class Not extends Formula {
+    	constructor(subformula) {
+    		super();
+    		this.subformula = subformula;
+    	}
+    	toString() {
+    		return `!(${this.subformula.toString()})`;
+    	}
+    }
+    class Next extends Formula {
+    	constructor(subformula) {
+    		super();
+    		this.subformula = subformula;
+    	}
+    	toString() {
+    		return `next(${this.subformula})`;
+    	}
+    }
+    class Always extends Formula {
+    	constructor(boundMillis, subformula) {
+    		super();
+    		this.boundMillis = boundMillis;
+    		this.subformula = subformula;
+    	}
+    	within(n, unit) {
+    		if (this.boundMillis !== null) {
+    			throw new Error("time bound is already set for `always`");
+    		}
+    		let durationMillis;
+    		switch (unit) {
+    			case "milliseconds":
+    				durationMillis = n;
+    				break;
+    			case "seconds":
+    				durationMillis = n * 1e3;
+    				break;
+    		}
+    		return new Always(durationMillis, this.subformula);
+    	}
+    	toString() {
+    		return this.boundMillis === null ? `always(${this.subformula})` : `always(${this.subformula}).within(${this.boundMillis}, "milliseconds")`;
+    	}
+    }
+    class Eventually extends Formula {
+    	constructor(boundMillis, subformula) {
+    		super();
+    		this.boundMillis = boundMillis;
+    		this.subformula = subformula;
+    	}
+    	within(n, unit) {
+    		if (this.boundMillis !== null) {
+    			throw new Error("time bound is already set for `eventually`");
+    		}
+    		let durationMillis;
+    		switch (unit) {
+    			case "milliseconds":
+    				durationMillis = n;
+    				break;
+    			case "seconds":
+    				durationMillis = n * 1e3;
+    				break;
+    		}
+    		return new Eventually(durationMillis, this.subformula);
+    	}
+    	toString() {
+    		return this.boundMillis === null ? `eventually(${this.subformula})` : `eventually(${this.subformula}).within(${this.boundMillis}, "milliseconds")`;
+    	}
+    }
+    class Thunk extends Formula {
+    	constructor(pretty, apply) {
+    		super();
+    		this.pretty = pretty;
+    		this.apply = apply;
+    	}
+    	toString() {
+    		return this.pretty;
+    	}
+    }
+    function not(value) {
+    	return new Not(now(value));
+    }
+    function now(x) {
+    	if (typeof x === "function") {
+    		const pretty = x.toString().replaceAll(/\t/g, "  ").replaceAll(/(\|\||&&)/g, (_, operator) => "\n  " + operator);
+    		function liftResult(result) {
+    			return typeof result === "boolean" ? new Pure(pretty, result) : result;
+    		}
+    		return new Thunk(pretty, () => liftResult(x()));
+    	}
+    	return x;
+    }
+    function next(x) {
+    	return new Next(now(x));
+    }
+    function always(x) {
+    	return new Always(null, now(x));
+    }
+    function eventually(x) {
+    	return new Eventually(null, now(x));
+    }
+    module.exports.ActionGenerator = ActionGenerator;
+    module.exports.runtime = runtime;
+    module.exports.extract = extract;
+    module.exports.actions = actions;
+    module.exports.weighted = weighted;
+    module.exports.Formula = Formula;
+    module.exports.Pure = Pure;
+    module.exports.And = And;
+    module.exports.Or = Or;
+    module.exports.Implies = Implies;
+    module.exports.Not = Not;
+    module.exports.Next = Next;
+    module.exports.Always = Always;
+    module.exports.Eventually = Eventually;
+    module.exports.Thunk = Thunk;
+    module.exports.not = not;
+    module.exports.now = now;
+    module.exports.next = next;
+    module.exports.always = always;
+    module.exports.eventually = eventually;
+  };
+
+  modules["@antithesishq/bombadil/actions"] = function(module, exports, require) {
+    module.exports.__esModule=true;function leaf(value) {
+    	return { value };
+    }
+    function branch(branches) {
+    	for (const [weight] of branches) {
+    		if (!Number.isInteger(weight) || weight < 0 || weight > 65535) {
+    			throw new RangeError(`invalid weight ${weight}, expected integer between 0 and 65535 inclusive`);
+    		}
+    	}
+    	return { branches };
+    }
+    class ActionGenerator {
+    	constructor(generate) {
+    		this.generate = generate;
+    	}
+    }
+    function actions(generate) {
+    	return new ActionGenerator(() => {
+    		const result = generate();
+    		if (Array.isArray(result)) {
+    			return branch(result.map((a) => [1, leaf(a)]));
+    		}
+    		return result;
+    	});
+    }
+    function weighted(value) {
+    	return new ActionGenerator(() => {
+    		return branch(value.map(([w, x]) => {
+    			if (x instanceof ActionGenerator) {
+    				return [w, x.generate()];
+    			}
+    			return [w, leaf(x)];
+    		}));
+    	});
+    }
+    let CharSet;
+    (function(_CharSet) {
+    	function fromRange(from, to) {
+    		return [{ Range: [from, to] }];
+    	}
+    	_CharSet.fromRange = fromRange;
+    	function fromLiterals(...literals) {
+    		return literals.map((literal) => ({ Literal: literal }));
+    	}
+    	_CharSet.fromLiterals = fromLiterals;
+    	function union(...sets) {
+    		// TODO: compute overlaps?
+    		return sets.flat(1);
+    	}
+    	_CharSet.union = union;
+    })(CharSet || (CharSet = {}));
+    module.exports.leaf = leaf;
+    module.exports.branch = branch;
+    module.exports.ActionGenerator = ActionGenerator;
+    module.exports.actions = actions;
+    module.exports.weighted = weighted;
+    module.exports.CharSet = CharSet;
+  };
+
+  modules["@antithesishq/bombadil/internal"] = function(module, exports, require) {
+    module.exports.__esModule=true;class ExtractorCell {
+    	name = null;
+    	index;
+    	snapshot;
+    	constructor(runtime, extract) {
+    		this.runtime = runtime;
+    		this.extract = extract;
+    		this.index = runtime.registerExtractor(this);
+    	}
+    	update(snapshot) {
+    		this.snapshot = snapshot;
+    	}
+    	get current() {
+    		this.runtime.checkNotExtracting();
+    		this.runtime.recordAccess(this.index);
+    		if (this.snapshot === undefined) {
+    			throw new Error(`snapshot ${this.name} is not set for current state (this is a bug in the runtime)`);
+    		} else {
+    			return this.snapshot;
+    		}
+    	}
+    	named(name) {
+    		this.name = name;
+    		return this;
+    	}
+    	run(state) {
+    		return this.extract(state);
+    	}
+    }
+    class Runtime {
+    	extractors = [];
+    	extractingDepth = 0;
+    	tracking = false;
+    	accesses = new Set();
+    	registerExtractor(cell) {
+    		const index = this.extractors.length;
+    		this.extractors.push(cell);
+    		return index;
+    	}
+    	startTracking() {
+    		this.tracking = true;
+    		this.accesses.clear();
+    	}
+    	stopTracking() {
+    		this.tracking = false;
+    		const result = Array.from(this.accesses);
+    		this.accesses.clear();
+    		return result;
+    	}
+    	recordAccess(index) {
+    		if (this.tracking) {
+    			this.accesses.add(index);
+    		}
+    	}
+    	runExtractors(state) {
+    		return this.extractors.map((extractor, index) => {
+    			this.extractingDepth++;
+    			try {
+    				return {
+    					index,
+    					name: extractor.name,
+    					value: extractor.run(state)
+    				};
+    			} finally {
+    				this.extractingDepth--;
+    			}
+    		});
+    	}
+    	checkNotExtracting() {
+    		if (this.extractingDepth > 0) {
+    			throw new Error("Cannot access cell.current from within an extractor. " + "Extractors must only depend on the 'state' parameter. " + "Use shared helper functions to avoid duplication.");
+    		}
+    	}
+    }
+    module.exports.ExtractorCell = ExtractorCell;
+    module.exports.Runtime = Runtime;
+  };
+
+  return require("./index.ts");
+})();

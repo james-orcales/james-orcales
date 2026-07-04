@@ -1,0 +1,20 @@
+@layer anta {
+  a-menu-group:not(:defined) {
+    display: none;
+  }
+
+  a-menu-group {
+    display: block;
+  }
+
+  a-menu-group-label {
+    display: block;
+    padding: 6px 8px 2px;
+    color: var(--text-5);
+    font-size: 0.75em;
+    font-weight: 600;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    user-select: none;
+  }
+}

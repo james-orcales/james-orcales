@@ -1,0 +1,236 @@
+@layer anta {
+  a-expander {
+    --expander-text: var(--text-2);
+    --expander-text-hover: var(--text-1);
+
+    --expander-bg-secondary: var(--bg-2);
+    --expander-border-secondary: var(--border-5);
+    --expander-bg-primary: var(--bg-4);
+    --expander-border-primary: var(--border-4);
+
+    --expander-bg: var(--expander-bg-secondary);
+    --expander-border: var(--expander-border-secondary);
+    /* Closed-only hover lightens the current surface in place: an oklch lightness
+       bump that keeps hue + chroma, so it works for every priority and tone, in
+       light and dark, with no precomputed targets (lighten = higher L in both
+       modes; a transparent surface keeps zero alpha). Tune the amount here. */
+    --expander-bg-hover-lift: 0.01;
+    --expander-bg-hover: oklch(from var(--expander-bg) calc(l + var(--expander-bg-hover-lift)) c h);
+
+    /* The single gutter that the title inset, the body inset, AND the chevron
+       position all derive from (see a-expander.ts). The chevron sits absolutely
+       in this gutter with its right edge 2px before the gutter, so there's a 2px
+       gap between the chevron and the title (it never pushes the title), and one
+       value keeps title + body aligned at every `level`. `outdent` just sets it
+       to 0 (title/body flush, chevron auto-hangs in the negative gutter).
+       24px = 6px edge + 16px chevron + 2px gap. (The docs site's foldable
+       code-block header mirrors this spacing.) */
+    --expander-gutter: 24px;
+
+    /* The chevron glyph, shared so the shadow `button::before` AND the
+       pre-upgrade light-DOM placeholder (the `:not(:defined)` rule below) paint
+       the same mask without duplicating the SVG. Used as a mask, so only its
+       alpha matters. */
+    --_expander-chevron: url("data:image/svg+xml,%3csvg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 24 24'%3e%3cpath stroke='currentColor' stroke-linecap='round' stroke-linejoin='round' stroke-width='2' d='m9 18 6-6-6-6'/%3e%3c/svg%3e");
+
+    display: block;
+    width: 100%;
+    box-sizing: border-box;
+    /* No host padding: the shadow header (the `<button>`) covers the full
+       width + height of the host so the hit area is maximal and consumers can
+       fully restyle `::part(summary)` edge-to-edge. */
+    border: 1px solid var(--expander-border);
+    border-radius: 4px;
+
+    color: var(--expander-text);
+    background: var(--expander-bg);
+    /* Smooth the closed-state hover/active surface change. */
+    transition: background-color 100ms ease;
+  }
+
+  /* FOUC guard for the gap before the custom element upgrades. Until `a-expander`
+     is `:defined`, there is no shadow DOM to collapse the region, so the light-DOM
+     body (`<a-expander-details>`, `display:block`) would paint fully open and then
+     snap shut on upgrade. Hide the body while not-defined; reveal it only when the
+     SSR markup already says open — controlled `state="open"` or uncontrolled
+     `default-state="open"` — so open-by-default expanders show immediately with no
+     flash, and everything else (the closed default carries neither attribute) stays
+     collapsed from first paint. Once the element upgrades, `:defined` drops this and
+     the shadow region owns visibility (with its open/close animation). */
+  a-expander:not(:defined) a-expander-details {
+    display: none;
+  }
+  a-expander:not(:defined)[state="open"] a-expander-details,
+  a-expander:not(:defined)[default-state="open"] a-expander-details {
+    display: block;
+  }
+
+  /* Pre-upgrade header match. Before the element upgrades there's no shadow
+     `<button>`, so the light-DOM `<a-expander-summary>` would sit flush at the
+     host edge with no chevron, then jump right + grow a chevron the instant the
+     shadow header takes over (a FOUC). Give the summary the same gutter padding
+     and a placeholder chevron here so the resting header looks identical before
+     and after upgrade. `:defined` drops this and the shadow `<button>` owns it. */
+  a-expander:not(:defined) a-expander-summary {
+    position: relative;
+    padding: 6px 4px 6px var(--expander-gutter);
+  }
+  a-expander:not(:defined) a-expander-summary::before {
+    content: "";
+    position: absolute;
+    left: calc(var(--expander-gutter) - 16px - 2px);
+    top: 50%;
+    width: 16px;
+    height: 16px;
+    transform: translateY(-50%);
+    background-color: currentColor;
+    -webkit-mask: var(--_expander-chevron) center / contain no-repeat;
+            mask: var(--_expander-chevron) center / contain no-repeat;
+    opacity: 0.6;
+  }
+
+  a-expander-summary {
+    display: block;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    /* No explicit color: the title inherits `color` from the shadow
+       `::part(summary)` button across the slot boundary. That's what lets the
+       built-in hover/active recolour (driven on the button) AND a consumer's
+       `::part(summary):hover { color }` both reach the title. A custom title
+       node with its own `color` opts out of the recolour by overriding it. */
+    text-decoration-line: var(--_summary-underline, none);
+    text-decoration-style: dotted;
+    text-decoration-color: color-mix(in oklch, currentColor 75%, transparent);
+    text-decoration-thickness: 1px;
+    text-underline-offset: 3px;
+    transition: color 150ms ease;
+  }
+  a-expander-details {
+    display: block;
+    /* Left padding = the same `--expander-gutter` the header uses, so the body
+       always lines up under the title (one value, no separate sync). Tighter
+       top (2px) to sit close under the header, a touch more (6px) at the
+       bottom. */
+    padding: 2px 4px 6px var(--expander-gutter);
+    /* Default the body to <Text>'s line-height (20px at the inherited 15px)
+       so plain text in the body doesn't inherit a roomy consumer body
+       line-height; a nested <Text> overrides it with the same value. */
+    line-height: 20px;
+  }
+
+  a-expander[priority="primary"] {
+    --expander-bg: var(--expander-bg-primary);
+    --expander-border: var(--expander-border-primary);
+  }
+  a-expander[priority="tertiary"] {
+    --expander-bg: transparent;
+    --expander-border: transparent;
+  }
+
+  /* Closed + enabled: lighten on hover, then snap back to the base surface while
+     pressed so the background is already correct as the region expands. Gated on
+     `:not(:state(open))` so an open expander has no surface hover. (A transparent
+     tertiary surface stays transparent — the oklch bump preserves zero alpha.) */
+  a-expander:not([disabled]):not(:state(open)):hover {
+    background: var(--expander-bg-hover);
+  }
+  a-expander:not([disabled]):not(:state(open)):active {
+    background: var(--expander-bg);
+  }
+
+  /* Outdent: zero the gutter so the title + body go flush with the surrounding
+     content, and the chevron auto-hangs in the negative gutter. The 1px
+     (transparent) border stays — it's what keeps tertiary content aligned with
+     the filled priorities — so the content is still inset 1px by the border-box;
+     the shadow cancels that with a -1px correction on the header + region (see
+     a-expander.ts) so the title/body land exactly on the surrounding content. */
+  a-expander[priority="tertiary"][outdent] {
+    --expander-gutter: 0px;
+  }
+
+  a-expander[tone="brand"] {
+    --expander-text: var(--text-2-brand);
+    --expander-text-hover: var(--text-1-brand);
+    --expander-bg-secondary: var(--bg-2-brand);
+    --expander-border-secondary: var(--border-5-brand);
+    --expander-bg-primary: var(--bg-4-brand);
+    --expander-border-primary: var(--border-4-brand);
+  }
+  a-expander[tone="info"] {
+    --expander-text: var(--text-2-info);
+    --expander-text-hover: var(--text-1-info);
+    --expander-bg-secondary: var(--bg-2-info);
+    --expander-border-secondary: var(--border-5-info);
+    --expander-bg-primary: var(--bg-4-info);
+    --expander-border-primary: var(--border-4-info);
+  }
+  a-expander[tone="success"] {
+    --expander-text: var(--text-2-success);
+    --expander-text-hover: var(--text-1-success);
+    --expander-bg-secondary: var(--bg-2-success);
+    --expander-border-secondary: var(--border-5-success);
+    --expander-bg-primary: var(--bg-4-success);
+    --expander-border-primary: var(--border-4-success);
+  }
+  a-expander[tone="warning"] {
+    --expander-text: var(--text-2-warning);
+    --expander-text-hover: var(--text-1-warning);
+    --expander-bg-secondary: var(--bg-2-warning);
+    --expander-border-secondary: var(--border-5-warning);
+    --expander-bg-primary: var(--bg-4-warning);
+    --expander-border-primary: var(--border-4-warning);
+  }
+  a-expander[tone="critical"] {
+    --expander-text: var(--text-2-critical);
+    --expander-text-hover: var(--text-1-critical);
+    --expander-bg-secondary: var(--bg-2-critical);
+    --expander-border-secondary: var(--border-5-critical);
+    --expander-bg-primary: var(--bg-4-critical);
+    --expander-border-primary: var(--border-4-critical);
+  }
+
+  a-expander[tone]:not(
+      [tone="neutral"],
+      [tone="brand"],
+      [tone="info"],
+      [tone="success"],
+      [tone="warning"],
+      [tone="critical"]
+    ) {
+    --expander-tone-source: attr(tone type(<color>), currentColor);
+
+    --expander-text:             oklch(from var(--expander-tone-source) 0.41 0.15 h);
+    --expander-text-hover:       oklch(from var(--expander-tone-source) 0.33 0.15 h);
+    --expander-bg-secondary:     oklch(from var(--expander-tone-source) 0.99 0.006 h);
+    --expander-border-secondary: oklch(from var(--expander-tone-source) 0.93 0.03 h);
+    --expander-bg-primary:       oklch(from var(--expander-tone-source) 0.955 0.02 h);
+    --expander-border-primary:   oklch(from var(--expander-tone-source) 0.895 0.045 h);
+  }
+
+  .dark a-expander[tone]:not(
+      [tone="neutral"],
+      [tone="brand"],
+      [tone="info"],
+      [tone="success"],
+      [tone="warning"],
+      [tone="critical"]
+    ) {
+    --expander-text:             oklch(from var(--expander-tone-source) 0.75 0.11 h);
+    --expander-text-hover:       oklch(from var(--expander-tone-source) 0.82 0.10 h);
+    --expander-bg-secondary:     oklch(from var(--expander-tone-source) 0.13 0.02 h);
+    --expander-border-secondary: oklch(from var(--expander-tone-source) 0.22 0.05 h);
+    --expander-bg-primary:       oklch(from var(--expander-tone-source) 0.19 0.04 h);
+    --expander-border-primary:   oklch(from var(--expander-tone-source) 0.26 0.07 h);
+  }
+
+  a-expander[disabled],
+  a-expander[disabled][tone] {
+    --expander-text: #afa9b1;
+  }
+  .dark a-expander[disabled],
+  .dark a-expander[disabled][tone] {
+    --expander-text: #635b65;
+  }
+}
