@@ -1,15 +1,15 @@
-KCX Qwerty - Keyboard-Centric Experience 
+KCX Qwerty - Keyboard-Centric Experience
 ========================================
 
 QWERTY variant for keyboard-centric desktop navigation with programming and vim motions in mind.
 
-- Streamlines keyboard shortcut usage with laptops, touch typists, 
+- Streamlines keyboard shortcut usage with laptops, touch typists,
 vim users, and terminal hobbits in mind.
 - Emulate vim motions ***everywhere***
-- Additional layouts are provided to take advantage of keyboard layout switching. 
+- Additional layouts are provided to take advantage of keyboard layout switching.
 
 > [!NOTE]
-> Check out my new layout, [Colejak][colejak]. It's better! 
+> Check out my new layout, [Colejak][colejak]. It's better!
 
 Layouts
 -------
@@ -75,7 +75,8 @@ swaymsg -t subscribe '["input"]' -m \
 
 ### GNOME
 
-1. Search for *KCX (Qwerty)* and *KCX (Homerow Symbols)* in `gnome-control-center > Keyboard > Input Sources`
+1. Search for *KCX (Qwerty)* and *KCX (Homerow Symbols)* in
+`gnome-control-center > Keyboard > Input Sources`
 2. Set the layout switch shortcut under `...Keyboard > View and Customize Shortcuts > Typing`
 with my recommended *Control + semicolon* keybind.
 3. Instead of using the full layout, you can toggle individual options in
@@ -86,9 +87,9 @@ FAQ
 
 ### Why QWERTY instead of this other superior layout?
 
-Qwerty is the standard. Learning an obscure layout for speed/ergonomics is unnecessary and inconvenient. 
-On average, I type 110-135wpm which is more than enough (i flexed on ya btw). My style of touch typing
-also maximizes ergonomics. *(I'll probably make a repo/wiki on this)*
+Qwerty is the standard. Learning an obscure layout for speed/ergonomics is unnecessary and
+inconvenient. On average, I type 110-135wpm which is more than enough (i flexed on ya btw). My style
+of touch typing also maximizes ergonomics. *(I'll probably make a repo/wiki on this)*
 
 ### Where's Right Shift?
 
@@ -96,32 +97,33 @@ I never used it so it went bye-bye.
 
 ### Where's Right Alt? I need AltGr for foreign characters.
 
-I do not use it so it was replaced with Escape. I suggest replacing Right Control with Right Alt instead
-of Caps Lock in QWERTY mode if it is essential.
+I do not use it so it was replaced with Escape. I suggest replacing Right Control with Right Alt
+instead of Caps Lock in QWERTY mode if it is essential.
 
 ### Do I need a special keyboard for this?
 
 Any standard keyboard will do. Flatter keyboards on laptops are better solely because it is easier
-to press the relocated Escape with the right thumb. I find that bulky spacebars often get in the way.
+to press the relocated Escape with the right thumb. I find that bulky spacebars often get in the
+way.
 
 ### Copy Pasting in shell is buggy when using Homerow Symbols.
 
-You might be doing `Control+RelocatedShift+{something}`. Instead, do 
+You might be doing `Control+RelocatedShift+{something}`. Instead, do
 `RelocatedShift+Control+{something}`. `Control+OriginalShift` and `OriginalShift+Control`
 should both work properly still.
 >
-In KCX (Homerow Symbols), S is replaced with *[ Shift_L ]*. Despite this, 
+In KCX (Homerow Symbols), S is replaced with *[ Shift_L ]*. Despite this,
 `Control+RelocatedShift` becomes `Control+S` which sends a XOFF signal, freezing
 the shell. `Control+q` will send XON and unfreeze the shell. There's probably a
 way to configure this properly to prevent such behavior but eh...
 >
-In the meantime, XOFF/XON can be disabled  entirely by adding `stty -ixon` to 
-`~/.bashrc` or `~/.zshrc`. To unfreeze the shell using any key, add `stty ixany` 
+In the meantime, XOFF/XON can be disabled  entirely by adding `stty -ixon` to
+`~/.bashrc` or `~/.zshrc`. To unfreeze the shell using any key, add `stty ixany`
 instead. [(source)][xoff/xon]
 
 ### Can I use a different base layout? (e.g. Dvorak, Colemak)
 
-Yes. The remaps target key codes (keyboard location), not the represented 
+Yes. The remaps target key codes (keyboard location), not the represented
 symbols. The base layout can be changed inside `$HOME/.config/xkb/symbols/kcx`:
 ```
 include "us(basic)" // replace this
@@ -158,7 +160,7 @@ Acknowledgement
 ---------------
 
 ### Keyboard Layout Pictures
-- Created with [keyboard-layout-editor.com][keyboard-layout-editor]. 
+- Created with [keyboard-layout-editor.com][keyboard-layout-editor].
 - JSON for all layouts are available in [assets][assets].
 
 [kcx-qwerty-pic]: https://github.com/jnz1g/kcx-qwerty/blob/main/assets/kcx-qwerty.png
