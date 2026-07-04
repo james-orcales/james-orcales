@@ -18,6 +18,7 @@
           "build.go",
           "home/**",
           "documentation/youtube/**",
+          "rust-toolchain.toml",
           "gameboy_emulator/test_roms/**"
   ],
   "opt_out_recursion_ban": [],
