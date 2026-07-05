@@ -166,6 +166,10 @@ type Completion struct {
 // IO is the injected async IO submit surface — TigerBeetle's `IO`. Code submits
 // operations with a Completion and callback and reacts to completions; it never drives
 // the loop — that is the Driver's job — so a holder can submit IO but not advance time.
+//
+// CRITICAL: ONLY PACKAGE MAIN OR A TEST MAY DRIVE, RUN, OR TICK THE EVENT LOOP. An IO
+// holder that wants to wait exposes doneness as state and lets the root pump; it never
+// receives a pump. See shared/io/README.md, THE CRITICAL GUARANTEE.
 type IO struct {
 	// Read reads len(buffer) bytes from file at offset; callback fires with the byte
 	// count or error once the operation completes (TigerBeetle IO.read).
@@ -261,17 +265,30 @@ type IO struct {
 }
 
 // Driver advances the loop — the only capability that moves time and delivers
-// completions. It is held solely by the composition root (package main) or a test
-// harness, never by pure code, so submitting IO and driving the loop stay separate: a
-// pure package holds an IO, the driver holds a Driver.
+// completions.
+//
+// ===========================================================================
+// ONLY PACKAGE MAIN OR A TEST MAY DRIVE, RUN, OR TICK THE EVENT LOOP.
+// NOT A LIBRARY. NOT A HELPER. NOT AN INJECTED FUNC VALUE. NOT ONCE.
+// A VIOLATION IS AN ARCHITECTURAL BUG EVEN IF EVERY TEST PASSES.
+// ===========================================================================
+//
+// Only the code that constructs a Driver may hold or call it: a binary's package main
+// in production, a test harness in simulation (the universe package is one). Handing
+// any of these funcs — or a bare func value of the same shape, which the lint cannot
+// see — to a library hands it the timeline: assembled into the universe package, that
+// library would advance every other application's events from inside its own call
+// stack. That it compiles and passes tests does not make it legal; the bug is invisible
+// where it is written and fatal where it composes.
 type Driver struct {
 	// Run drains every ready completion without blocking, then advances the clock one
-	// tick (TigerBeetle IO.run).
+	// tick (TigerBeetle IO.run). ROOT ONLY: never handed to, or called from, a library.
 	Run func()
 	// Run_For drives the loop until the duration has elapsed on the clock, delivering
 	// completions as they come due (TigerBeetle IO.run_for_ns). Here time is the GOAL: it
 	// advances exactly duration, draining as it goes, regardless of what completes — reach
 	// for it to let a span of time pass, not to wait for a particular op.
+	// ROOT ONLY: never handed to, or called from, a library.
 	Run_For func(duration time.Duration)
 	// Run_Until drives the loop until done reports true — the run-until-complete pump that
 	// lets straight-line code wait for its own op inline. Here completion is the GOAL and
@@ -285,6 +302,8 @@ type Driver struct {
 	// won: done (true) or the timeout (false).
 	//
 	// Top-level and single-loop only: never call it from within a completion callback.
+	// ROOT ONLY: never inject it — or a func value of its shape — into a library; a
+	// library that authors done predicates and timeouts is driving the loop.
 	Run_Until func(done func() (finished bool), timeout time.Duration) (completed bool)
 }
 
@@ -369,7 +388,8 @@ type sim struct {
 // surface to inject into the program under test, and the driver to run it. The sim
 // itself never escapes, and seed is the only input, so the run reproduces exactly and
 // nothing can be scripted into it — correctness is asserted by invariants, not by
-// hand-fed outcomes.
+// hand-fed outcomes. The driver stays in the harness: the program under test receives
+// loop and clock, NEVER a pump (see the Driver banner).
 func New_Sim(seed uint64) (loop IO, driver Driver, clock time.Clock) {
 	clock, tick := time.Virtual_Clock_To_Clock(time.Virtual_Clock{Resolution: time.NANOSECOND})
 	state := &sim{
