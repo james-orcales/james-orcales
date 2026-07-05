@@ -21,6 +21,11 @@ setopt HIST_IGNORE_ALL_DUPS
 setopt HIST_IGNORE_SPACE
 setopt HIST_REDUCE_BLANKS
 
+# --- directory history: fish-style `cd -`, `cd -2`, and `cd -<Tab>` menu ---
+setopt AUTO_PUSHD           # every cd pushes the old dir onto the stack
+setopt PUSHD_IGNORE_DUPS    # no duplicate entries in the stack
+setopt PUSHD_SILENT         # don't print the stack on every cd
+
 # --- completion: case-insensitive, colored, arrow-key menu ---
 autoload -Uz compinit
 _zcompdir="${XDG_CACHE_HOME:-$HOME/.cache}/zsh"
