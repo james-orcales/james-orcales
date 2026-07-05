@@ -336,6 +336,54 @@ invariants have to hold on every one of those timelines.
   granularity collapses to whatever the verbs expose, and the untested wrappers become
   the actual io layer. That is mock-DI, the thing this library exists to kill.
 
+### f. The flag smell — booleans sequencing io are a state machine in denial
+
+The shapes above each add a boolean or two: a `*_Queued` flag for the trampoline, an
+`Active` guard against overlap, a `Done`, a `Draining`. One is fine. But they
+accumulate, and every new one doubles the representable combinations: five booleans is
+thirty-two states, of which maybe six mean anything. Which combinations are valid, and
+which moves between them are legal, exists only in the author's head. The tell is
+always the same: correctness starts depending on the *order* the flags are checked —
+a rearm that must test `Closed` before `Receive_Queued` is a transition table written
+as an if-ladder, by accident.
+
+```go
+type mirror_state int
+const mirror_idle         mirror_state = 0
+const mirror_write_armed  mirror_state = 1
+const mirror_write_queued mirror_state = 2
+const mirror_done         mirror_state = 3
+
+func mirror_transition_legal(from, to mirror_state) (legal bool) {
+	if from == mirror_idle {
+		return to == mirror_write_armed
+	}
+	if from == mirror_write_armed {
+		if to == mirror_write_queued {
+			return true
+		}
+		return to == mirror_done
+	}
+	if from == mirror_write_queued {
+		if to == mirror_write_armed {
+			return true
+		}
+		return to == mirror_done
+	}
+	return false
+}
+
+func mirror_transition(state *mirror, from, to mirror_state) {
+	if state.State != from {
+		panic("mirror: transition from a state the caller did not expect")
+	}
+	if !mirror_transition_legal(from, to) {
+		panic("mirror: transition along an edge the machine does not have")
+	}
+	state.State = to
+}
+```
+
 ## 6. Rules of the loop
 
 Each of these fails loudly where the runtime can make it:
@@ -394,3 +442,4 @@ stop. That is the scripting API trying to come back.
   …) is allowed; the `io-gateway` lint rule keeps everyone else routing through
   `shared/io`.
 - **`shared/time/default`** — the clock gateway, the only importer of stdlib time.
+
