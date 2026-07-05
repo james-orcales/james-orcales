@@ -33,6 +33,16 @@ On darwin the macos defaults commands run through the injected runner after the 
 
 On any operating system other than darwin no defaults commands run.
 
+### Narrates The Scan
+
+Main names each source directory as the walk reads it, so a large silent tree scan shows it
+is advancing rather than looking hung, and reports an up-to-date tree when it writes nothing.
+
+### Probes Ignore In One Batch
+
+The walk classifies a directory's entries with one Is_Ignored call carrying them all, not a
+call per entry, so the gitignore probe is one subprocess per tree level rather than per file.
+
 # Install Neovim
 
 Install_Neovim builds the vendored Neovim from `third_party/neovim` and installs it under

@@ -262,15 +262,6 @@ type Plan_Input struct {
 	Progress io.Writer
 }
 
-// Plan_Entry is one child seen during the walk: its path relative to the source root and
-// whether it is a directory, the two facts the level walk needs to prune and recurse.
-type Plan_Entry struct {
-	// Relative is the child's path from the source root, the key Is_Ignored classifies it by.
-	Relative string
-	// Is_Directory reports whether the child is a directory, so the walk knows to descend.
-	Is_Directory bool
-}
-
 // Plan returns the writes that would bring the home directory in line with the source
 // dotfiles: every regular file under the source tree, each emitted only when the destination
 // is missing or its contents differ. It walks the tree one level at a time through the loop's
@@ -310,11 +301,20 @@ func Plan(input *Plan_Input) (writes []File_Write, err error) {
 	return writes, nil
 }
 
+// One child seen during the walk: its path relative to the source root and whether it is a
+// directory, the two facts the level walk needs to prune and recurse.
+type plan_entry struct {
+	// Relative is the child's path from the source root, the key Is_Ignored classifies it by.
+	Relative string
+	// Is_Directory reports whether the child is a directory, so the walk knows to descend.
+	Is_Directory bool
+}
+
 // Reads every directory in one level of the walk, returning all their children as a single
 // batch of entries — the unit Is_Ignored classifies at once. Narrates each directory as it
 // reads it, so the scan shows progress even when it ultimately writes nothing.
-func plan_read_level(input *Plan_Input, level []string) (entries []Plan_Entry, err error) {
-	entries = []Plan_Entry{}
+func plan_read_level(input *Plan_Input, level []string) (entries []plan_entry, err error) {
+	entries = []plan_entry{}
 	for _, directory := range level {
 		plan_narrate(input.Progress, directory)
 		read, read_err := input.File_System.Loop.Read_Directory(
@@ -323,7 +323,7 @@ func plan_read_level(input *Plan_Input, level []string) (entries []Plan_Entry, e
 			return nil, read_err
 		}
 		for _, child := range read {
-			entries = append(entries, Plan_Entry{
+			entries = append(entries, plan_entry{
 				Relative:     filepath.Join(directory, child.Name),
 				Is_Directory: child.Is_Directory,
 			})
@@ -346,7 +346,7 @@ func plan_narrate(progress io.Writer, directory string) {
 // Is_Ignored call. A nil predicate — or an empty level — ignores nothing, so the filter
 // stays opt-in and an empty level spawns no probe.
 func plan_ignored(
-	is_ignored func(relative_paths []string) (ignored map[string]bool), entries []Plan_Entry,
+	is_ignored func(relative_paths []string) (ignored map[string]bool), entries []plan_entry,
 ) (ignored map[string]bool) {
 	if is_ignored == nil {
 		return nil

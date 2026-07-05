@@ -453,8 +453,8 @@ func git_ignores(
 			Arguments: []string{"-C", directory, "check-ignore", "--stdin"},
 			Input:     []byte(strings.Join(targets, "\n") + "\n"),
 		})
-		// check-ignore echoes each ignored input path verbatim, one per line; map those back
-		// to the relative paths the caller asked about.
+		// The output echoes each ignored input path verbatim, one per line, so map those
+		// printed lines back to the relative paths the caller asked about.
 		printed := map[string]bool{}
 		for _, line := range strings.Split(string(result.Output), "\n") {
 			if line != "" {

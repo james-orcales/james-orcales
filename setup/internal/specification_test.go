@@ -179,9 +179,11 @@ func Test_Main_Narrates_The_Scan(t *testing.T) {
 		Source_Directory:      test_source,
 		Destination_Directory: test_home,
 		Operating_System:      "linux",
-		Run_Command:           func(name string, arguments []string) (err error) { return nil },
-		Stdout:                log,
-		Stderr:                io.Discard,
+		Run_Command: func(name string, arguments []string) (err error) {
+			return nil
+		},
+		Stdout: log,
+		Stderr: io.Discard,
 	})
 	if status != 0 {
 		t.Fatalf("expected success, got status %d", status)
@@ -205,11 +207,11 @@ func Test_Main_Probes_Ignore_In_One_Batch(t *testing.T) {
 	loop, driver, _ := sysio.New_Sim(0)
 	// Three sibling directories under the root, so a batched probe of the root sees
 	// all three at once while a per-entry probe would see one at a time.
-	for _, dir := range []string{
+	for _, directory := range []string{
 		test_source, test_source + "/a", test_source + "/b", test_source + "/c",
 	} {
-		if make_err := loop.Make_Directory(dir); make_err != nil {
-			t.Fatalf("make %s: %v", dir, make_err)
+		if make_err := loop.Make_Directory(directory); make_err != nil {
+			t.Fatalf("make %s: %v", directory, make_err)
 		}
 	}
 	batches := [][]string{}
@@ -218,7 +220,9 @@ func Test_Main_Probes_Ignore_In_One_Batch(t *testing.T) {
 		Source_Directory:      test_source,
 		Destination_Directory: test_home,
 		Operating_System:      "linux",
-		Run_Command:           func(name string, arguments []string) (err error) { return nil },
+		Run_Command: func(name string, arguments []string) (err error) {
+			return nil
+		},
 		Is_Ignored: func(relative_paths []string) (ignored map[string]bool) {
 			batches = append(batches, append([]string{}, relative_paths...))
 			return nil
