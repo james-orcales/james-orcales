@@ -35,6 +35,7 @@ zstyle ':completion:*' matcher-list 'm:{a-zA-Z}={A-Za-z}'
 zstyle ':completion:*' menu select
 zstyle ':completion:*' list-colors ${(s.:.)LS_COLORS}   # unquoted on purpose: the (s) flag word-splits
 zstyle ':completion:*:descriptions' format '%F{8}%d%f'
+source <(jj util completion zsh)
 
 # --- prompt: replicates fish_prompt.fish (two blank lines, cwd, git:(branch)) ---
 # Branch name, or short hash when detached — matches fish's _git_branch_name.
