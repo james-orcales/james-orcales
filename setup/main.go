@@ -65,7 +65,7 @@ func main() {
 	// One bootstrap, in order: install direnv (everything downstream is driven by
 	// it), sync the dotfiles, install fonts and Neovim, then the Go-toolchain builds
 	// (fzf and this repo's own commands — maddox, m2p, sloc), the cargo builds (rust,
-	// fish, jj, ripgrep, fd), and finally Ghostty — the one network download — last,
+	// jj, ripgrep, fd), and finally Ghostty — the one network download — last,
 	// so a cheaper earlier failure surfaces before heavy work.
 	os.Exit(setup.Bootstrap(&setup.Bootstrap_Input{
 		Stdout: os.Stdout,
@@ -79,7 +79,6 @@ func main() {
 			{Name: "m2p", Run: m2p_step(home, spawn)},
 			{Name: "sloc", Run: sloc_step(home, spawn)},
 			{Name: "rust", Run: rust_step(home, spawn)},
-			{Name: "fish", Run: fish_step(home, spawn)},
 			{Name: "jj", Run: jj_step(home, spawn)},
 			{Name: "ripgrep", Run: ripgrep_step(home, spawn)},
 			{Name: "fd", Run: fdcli_step(home, spawn)},
@@ -195,7 +194,7 @@ func neovim_step(home string, spawn setup.Spawn) (run func() (status_code int)) 
 // Returns the bootstrap step that builds fzf from the vendored source with the Go
 // toolchain straight into home/.local/bin. fzf is a Go binary, so the build output
 // is the install; it only needs the Go toolchain, not cargo, so it runs before the
-// rust and fish steps.
+// rust step.
 func fzf_step(home string, spawn setup.Spawn) (run func() (status_code int)) {
 	repository := filepath.Join(home, repository_subpath)
 	return func() (status_code int) {
@@ -268,24 +267,9 @@ func rust_step(home string, spawn setup.Spawn) (run func() (status_code int)) {
 	}
 }
 
-// Returns the bootstrap step that builds fish from the vendored source with cargo
-// and installs it into home/.local/bin — the user-facing layer alongside Neovim,
-// not the repo .local/bin that holds dev tools. cargo reads CARGO_HOME from the
-// .envrc environment and installs into the binary directory via --root.
-func fish_step(home string, spawn setup.Spawn) (run func() (status_code int)) {
-	repository := filepath.Join(home, repository_subpath)
-	return func() (status_code int) {
-		return setup.Install_Fish(&setup.Install_Fish_Input{
-			Fish_Directory:   filepath.Join(repository, "third_party", "fish-shell"),
-			Binary_Directory: filepath.Join(repository, "home", ".local", "bin"),
-			Shell:            step_shell(spawn),
-		})
-	}
-}
-
 // Returns the bootstrap step that builds jj from the vendored workspace with cargo
-// and installs it into home/.local/bin — a user-facing program alongside Neovim and
-// fish, not the repo .local/bin that holds the dev toolchain.
+// and installs it into home/.local/bin — a user-facing program alongside Neovim,
+// not the repo .local/bin that holds the dev toolchain.
 func jj_step(home string, spawn setup.Spawn) (run func() (status_code int)) {
 	repository := filepath.Join(home, repository_subpath)
 	return func() (status_code int) {

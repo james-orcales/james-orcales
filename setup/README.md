@@ -32,7 +32,7 @@ Edit a config, commit it, and every machine that syncs the repo has it.
 
 **The environment layers like Nix.** There is a *global* environment and a *repo-local*
 one stacked on top. The global layer is the dotfiles: `home/.zshenv` puts the
-user-facing tools (`home/.local/bin` — fish, nvim, jj, rg, fd, …) on `PATH` in every
+user-facing tools (`home/.local/bin` — nvim, jj, rg, fd, …) on `PATH` in every
 shell, everywhere. The repo-local layer is direnv: the root `.envrc` adds the language
 runtimes, `CARGO_HOME`, `RUSTUP_HOME`, and the repo's own `.local/bin` — and it only
 activates inside the repository, inheriting the global layer rather than replacing it.
@@ -60,7 +60,7 @@ Once the files are in place, opening a shell pulls the environment up by its boo
 go run ./setup
   └─ bootstrap (in order):
        direnv → dotfiles → fonts → neovim → fzf → maddox → m2p → sloc →
-       rust → fish → jj → ripgrep → fd → ghostty
+       rust → jj → ripgrep → fd → ghostty
        └─ direnv + dotfiles first: the shell config is the bootstrap
 
 new login shell
@@ -68,7 +68,7 @@ new login shell
   ├─ .zprofile  eval "$(direnv hook zsh)"
   │    └─ .envrc   language runtimes, CARGO_HOME, RUSTUP_HOME,         ── repo-local layer
   │                repo .local/bin   (inherits the global layer)
-  └─ .zshrc     exec fish
+  └─ .zshrc     interactive shell (zsh)
 ```
 
 direnv lands in the global `home/.local/bin`, so it's already on `PATH` by the time
@@ -88,7 +88,6 @@ all.
 | `m2p` | Markdown-to-PDF converter (`markdown_to_pdf`) | this repository, built with Go |
 | `sloc` | source line counter | this repository, built with Go |
 | `rust` | `cargo` / `rustc` / `rustup` toolchain | installed via `rustup` |
-| `fish` | interactive shell | vendored, built with `cargo` |
 | `jj` | version control (Jujutsu) | vendored, built with `cargo` |
 | `ripgrep` (`rg`) | search | vendored, built with `cargo` (pcre2) |
 | `fd` | file finder | vendored, built with `cargo` |

@@ -2,7 +2,7 @@
 # Order of Operations
 
 The setup binary runs one bootstrap in a fixed order — direnv, dotfiles, fonts, Neovim, fzf,
-maddox, m2p, sloc, Rust, fish, jj, ripgrep, fd, Ghostty — each announced by name, exiting on the
+maddox, m2p, sloc, Rust, jj, ripgrep, fd, Ghostty — each announced by name, exiting on the
 first failure. direnv is first; the Go builds precede the cargo steps; Ghostty downloads last.
 
 # Idempotency
@@ -133,25 +133,6 @@ into the link directory.
 ### Reports An Install Failure
 
 A failing install reports a non-zero exit code.
-
-# Install Fish
-
-Install_Fish builds fish from the vendored `third_party/fish-shell` with cargo, offline against its
-committed vendor tree, and installs fish, fish_indent, and fish_key_reader straight into the bin
-directory via cargo `--root`. It probes the built binary, so a present build is left alone.
-
-### Skips Build When Already Built
-
-When the fish binary in the bin directory already reports the wanted version, the build is skipped.
-
-### Builds When Absent
-
-When no fish at the wanted version is present, cargo builds and installs the three binaries into the
-bin directory.
-
-### Reports A Build Failure
-
-A failing build reports a non-zero exit code.
 
 # Install Fzf
 

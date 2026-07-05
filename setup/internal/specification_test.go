@@ -589,71 +589,6 @@ func Test_Install_Rust_Reports_An_Install_Failure(t *testing.T) {
 	}
 }
 
-// Test_Install_Fish_Skips_Build_When_Already_Built verifies that when the fish
-// binary in the bin directory already reports the wanted version, the build is
-// skipped — proving the gate probes the installed binary, so nothing recompiles.
-func Test_Install_Fish_Skips_Build_When_Already_Built(t *testing.T) {
-	t.Parallel()
-	commands := []sysio.Process_Request{}
-	status := setup.Install_Fish(&setup.Install_Fish_Input{
-		Fish_Directory:   test_fish_directory,
-		Binary_Directory: test_link_directory,
-		Shell: recording_shell(&commands, map[string]string{
-			test_link_directory + "/fish": "fish, version 4.7.1\n",
-		}, 0),
-	})
-	if status != 0 {
-		t.Fatalf("expected success, got status %d", status)
-	}
-	if builds := commands_named(commands, "sh"); len(builds) != 0 {
-		t.Fatalf("expected no build when already built, ran %v", builds)
-	}
-	if links := commands_named(commands, "ln"); len(links) != 0 {
-		t.Fatalf("expected no symlink; fish installs in place, ran %v", links)
-	}
-}
-
-// Test_Install_Fish_Builds_When_Absent verifies that when no fish at the wanted
-// version is present, cargo builds and installs it into the bin directory with
-// --root, and no symlink is created.
-func Test_Install_Fish_Builds_When_Absent(t *testing.T) {
-	t.Parallel()
-	commands := []sysio.Process_Request{}
-	status := setup.Install_Fish(&setup.Install_Fish_Input{
-		Fish_Directory:   test_fish_directory,
-		Binary_Directory: test_link_directory,
-		Shell:            recording_shell(&commands, nil, 0),
-	})
-	if status != 0 {
-		t.Fatalf("expected success, got status %d", status)
-	}
-	builds := commands_named(commands, "sh")
-	if len(builds) != 1 {
-		t.Fatalf("expected one build command, ran %d", len(builds))
-	}
-	if !strings.Contains(strings.Join(builds[0].Arguments, " "), "--root") {
-		t.Fatalf("expected cargo install --root, ran %v", builds[0].Arguments)
-	}
-	if links := commands_named(commands, "ln"); len(links) != 0 {
-		t.Fatalf("expected no symlink; fish installs in place, ran %v", links)
-	}
-}
-
-// Test_Install_Fish_Reports_A_Build_Failure verifies a failing build reports a
-// non-zero exit code.
-func Test_Install_Fish_Reports_A_Build_Failure(t *testing.T) {
-	t.Parallel()
-	commands := []sysio.Process_Request{}
-	status := setup.Install_Fish(&setup.Install_Fish_Input{
-		Fish_Directory:   test_fish_directory,
-		Binary_Directory: test_link_directory,
-		Shell:            recording_shell(&commands, nil, 1),
-	})
-	if status == 0 {
-		t.Fatal("expected a non-zero status on build failure")
-	}
-}
-
 // Test_Install_Fzf_Skips_Build_When_Already_Built verifies that when the fzf
 // binary in the bin directory already reports the wanted version, the build is
 // skipped — proving the gate probes the built binary.
@@ -1100,10 +1035,6 @@ const test_link_directory = "/link"
 // The fixed absolute direnv source directory the Install_Direnv tests build from; a
 // constant keeps the expected build paths deterministic.
 const test_direnv_directory = "/direnv-src"
-
-// The fixed absolute fish source directory the Install_Fish tests build from; a
-// constant keeps the expected build paths deterministic.
-const test_fish_directory = "/fish"
 
 // The fixed absolute fzf source directory the Install_Fzf tests build from; a
 // constant keeps the expected build paths deterministic.
