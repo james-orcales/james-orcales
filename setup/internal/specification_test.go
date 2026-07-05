@@ -11,6 +11,7 @@ import (
 
 	"local/james-orcales/setup/internal"
 	sysio "local/james-orcales/shared/io"
+	"local/james-orcales/shared/jlog"
 )
 
 // Each test drives Plan and Main with in-memory filesystems and a recording or
@@ -26,7 +27,7 @@ func Test_Order_Of_Operations(t *testing.T) {
 	order := []int{}
 	log := &bytes.Buffer{}
 	status := setup.Bootstrap(&setup.Bootstrap_Input{
-		Stdout: log,
+		Logger: buffer_logger(log),
 		Steps: []setup.Step{
 			{Name: "first", Run: func() (status_code int) {
 				order = append(order, 1)
@@ -48,7 +49,9 @@ func Test_Order_Of_Operations(t *testing.T) {
 	if !slices.Equal(order, []int{1, 2}) {
 		t.Fatalf("expected steps to run in order and stop at the failure, ran %v", order)
 	}
-	if log.String() != "setup: first\nsetup: second\n" {
+	want := "{\"level\":\"info\",\"name\":\"first\",\"message\":\"step\"}\n" +
+		"{\"level\":\"info\",\"name\":\"second\",\"message\":\"step\"}\n"
+	if log.String() != want {
 		t.Fatalf("expected each run step announced by name in order, got %q", log.String())
 	}
 }
@@ -107,8 +110,7 @@ func Test_Main_Applies_Macos_Defaults(t *testing.T) {
 			ran = append(ran, append([]string{name}, arguments...))
 			return nil
 		},
-		Stdout: log,
-		Stderr: io.Discard,
+		Logger: buffer_logger(log),
 	})
 	if status != 0 {
 		t.Fatalf("expected success, got status %d", status)
@@ -148,8 +150,6 @@ func Test_Main_Skips_Macos_Defaults_Off_Darwin(t *testing.T) {
 			run_count++
 			return nil
 		},
-		Stdout: io.Discard,
-		Stderr: io.Discard,
 	})
 	if status != 0 {
 		t.Fatalf("expected success, got status %d", status)
@@ -182,16 +182,15 @@ func Test_Main_Narrates_The_Scan(t *testing.T) {
 		Run_Command: func(name string, arguments []string) (err error) {
 			return nil
 		},
-		Stdout: log,
-		Stderr: io.Discard,
+		Logger: buffer_logger(log),
 	})
 	if status != 0 {
 		t.Fatalf("expected success, got status %d", status)
 	}
 	for _, want := range []string{
-		"setup: dotfiles: scanning .\n",
-		"setup: dotfiles: scanning nested\n",
-		"setup: dotfiles: already up to date\n",
+		"{\"level\":\"debug\",\"dir\":\".\",\"message\":\"scanning\"}\n",
+		"{\"level\":\"debug\",\"dir\":\"nested\",\"message\":\"scanning\"}\n",
+		"{\"level\":\"info\",\"message\":\"dotfiles up to date\"}\n",
 	} {
 		if !strings.Contains(log.String(), want) {
 			t.Fatalf("expected the scan to narrate %q, got %q", want, log.String())
@@ -227,8 +226,6 @@ func Test_Main_Probes_Ignore_In_One_Batch(t *testing.T) {
 			batches = append(batches, append([]string{}, relative_paths...))
 			return nil
 		},
-		Stdout: io.Discard,
-		Stderr: io.Discard,
 	})
 	if status != 0 {
 		t.Fatalf("expected success, got status %d", status)
@@ -292,7 +289,7 @@ func Test_Install_Neovim_Configures_Prefix_Then_Installs(t *testing.T) {
 	commands := []sysio.Process_Request{}
 	shell := recording_shell(&commands, nil, 0)
 	progress := &bytes.Buffer{}
-	shell.Stdout = progress
+	shell.Logger = buffer_logger(progress)
 	status := setup.Install_Neovim(&setup.Install_Neovim_Input{
 		Repository_Directory: test_repository,
 		Shell:                shell,
@@ -300,7 +297,8 @@ func Test_Install_Neovim_Configures_Prefix_Then_Installs(t *testing.T) {
 	if status != 0 {
 		t.Fatalf("expected success, got status %d", status)
 	}
-	want_progress := "setup: neovim: configuring prefix...\nsetup: neovim: installing...\n"
+	want_progress := "{\"level\":\"info\",\"message\":\"configuring neovim prefix\"}\n" +
+		"{\"level\":\"info\",\"message\":\"installing neovim\"}\n"
 	if progress.String() != want_progress {
 		t.Fatalf("expected each build phase announced in order, got %q", progress.String())
 	}
@@ -355,8 +353,6 @@ func Test_Install_Fonts_Skips_Without_A_Font_Directory(t *testing.T) {
 			return nil
 		},
 		Refresh: nil,
-		Stdout:  io.Discard,
-		Stderr:  io.Discard,
 	})
 	if status != 0 {
 		t.Fatalf("expected success, got status %d", status)
@@ -382,8 +378,7 @@ func Test_Install_Fonts_Copies_Only_Missing_Fonts(t *testing.T) {
 			return nil
 		},
 		Refresh: nil,
-		Stdout:  log,
-		Stderr:  io.Discard,
+		Logger:  buffer_logger(log),
 	})
 	if status != 0 {
 		t.Fatalf("expected success, got status %d", status)
@@ -394,10 +389,14 @@ func Test_Install_Fonts_Copies_Only_Missing_Fonts(t *testing.T) {
 	if slices.Contains(copied, "IosevkaNerdFontMono-Regular.ttf") {
 		t.Fatalf("expected the present face skipped, got %v", copied)
 	}
-	want_log := "setup: fonts: skipped IosevkaNerdFontMono-Regular.ttf (present)\n" +
-		"setup: fonts: copied IosevkaNerdFontMono-Bold.ttf\n" +
-		"setup: fonts: copied IosevkaNerdFontMono-Oblique.ttf\n" +
-		"setup: fonts: copied IosevkaNerdFontMono-BoldOblique.ttf\n"
+	want_log := "{\"level\":\"info\",\"file\":\"IosevkaNerdFontMono-Regular.ttf\"," +
+		"\"message\":\"font present, skipped\"}\n" +
+		"{\"level\":\"info\",\"file\":\"IosevkaNerdFontMono-Bold.ttf\"," +
+		"\"message\":\"copied font\"}\n" +
+		"{\"level\":\"info\",\"file\":\"IosevkaNerdFontMono-Oblique.ttf\"," +
+		"\"message\":\"copied font\"}\n" +
+		"{\"level\":\"info\",\"file\":\"IosevkaNerdFontMono-BoldOblique.ttf\"," +
+		"\"message\":\"copied font\"}\n"
 	if log.String() != want_log {
 		t.Fatalf("expected per-face copy and skip logging, got %q", log.String())
 	}
@@ -420,8 +419,6 @@ func Test_Install_Fonts_Skips_When_All_Present(t *testing.T) {
 			refreshed = true
 			return nil
 		},
-		Stdout: io.Discard,
-		Stderr: io.Discard,
 	})
 	if status != 0 {
 		t.Fatalf("expected success, got status %d", status)
@@ -447,8 +444,6 @@ func Test_Install_Fonts_Refreshes_Cache_After_Copies(t *testing.T) {
 			refreshed = true
 			return nil
 		},
-		Stdout: io.Discard,
-		Stderr: io.Discard,
 	})
 	if status != 0 {
 		t.Fatalf("expected success, got status %d", status)
@@ -467,8 +462,6 @@ func Test_Install_Fonts_Reports_A_Copy_Failure(t *testing.T) {
 		Font_Present:   func(file string) (present bool) { return false },
 		Copy_Font:      func(file string) (err error) { return errors.New("disk full") },
 		Refresh:        nil,
-		Stdout:         io.Discard,
-		Stderr:         io.Discard,
 	})
 	if status == 0 {
 		t.Fatal("expected a non-zero status on copy failure")
@@ -1069,6 +1062,12 @@ func ran_contains(ran [][]string, want []string) (found bool) {
 		}
 	}
 	return false
+}
+
+// Returns a logger writing flat JSON to buffer, floored at debug so the scan's debug lines
+// show, with no clock so its output is timestamp-free and byte-for-byte assertable.
+func buffer_logger(buffer *bytes.Buffer) (logger jlog.Logger) {
+	return jlog.New(jlog.New_Input{Writer: buffer, Floor: jlog.LEVEL_DEBUG})
 }
 
 // Returns a Shell whose Spawn records each request into record, replies to a probe

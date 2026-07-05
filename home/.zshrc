@@ -21,6 +21,11 @@ setopt HIST_IGNORE_ALL_DUPS
 setopt HIST_IGNORE_SPACE
 setopt HIST_REDUCE_BLANKS
 
+# --- directory history: fish-style `cd -`, `cd -2`, and `cd -<Tab>` menu ---
+setopt AUTO_PUSHD           # every cd pushes the old dir onto the stack
+setopt PUSHD_IGNORE_DUPS    # no duplicate entries in the stack
+setopt PUSHD_SILENT         # don't print the stack on every cd
+
 # --- completion: case-insensitive, colored, arrow-key menu ---
 autoload -Uz compinit
 _zcompdir="${XDG_CACHE_HOME:-$HOME/.cache}/zsh"
@@ -159,6 +164,20 @@ bindkey '^[[1~' beginning-of-line   # Home (vt220/linux)
 bindkey '^[[F'  end-of-line         # End
 bindkey '^[OF'  end-of-line         # End  (application mode)
 bindkey '^[[4~' end-of-line         # End  (vt220/linux)
+
+# Ctrl-C clears the current line in place instead of dropping to a fresh prompt.
+# Ctrl-C arrives as SIGINT, not a keystroke, so it can only be caught in a trap.
+# Guard on `zle`: only rewrite the buffer while editing at the prompt (via a
+# widget, since BUFFER is read-only from a bare trap). A running app, loop, or
+# script instead gets a normal interrupt (return 128+signo → abort the command).
+TRAPINT() {
+        if zle; then
+                zle kill-buffer
+                zle reset-prompt
+                return 0
+        fi
+        return $(( 128 + $1 ))
+}
 
 # --- autosuggestions: fish's grey (fish_color_autosuggestion 808080 = color 244) ---
 source "${plugin_dir:?💥}/zsh_autosuggestions.zsh"

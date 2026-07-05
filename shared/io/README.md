@@ -1,198 +1,396 @@
-# shared/io — working in the event-loop model
+# shared/io — the event-loop guide
 
-This package is a **single-threaded, completion-based async IO loop**, modeled on
-TigerBeetle's `io.zig`. It is deliberately *un-idiomatic* Go. If you write it the way Go
-teaches you to — a goroutine per connection, a blocking `n, err := conn.Read(buf)`,
-channels carrying results — you will fight it the whole way and lose.
-
-This document is not an API reference (read `io.go` and `SPECIFICATION.md` for the ops).
-It is the mental model and the list of ways people cut themselves.
+A **single-threaded, completion-based async IO loop**. Deliberately *un-idiomatic* Go: no
+goroutine-per-connection, no blocking reads, no channels. One thread runs everything;
+concurrency is many operations in flight at once, not many threads.
 
 ---
 
-## The whole idea in one paragraph
+## 1. What this library is for
 
-You are handed an `IO` — a **submit surface**. You hand it an operation, a caller-owned
-`Completion`, and a callback, and it returns immediately. **Nothing has happened yet.**
-The operation sits in a queue. Separately, whoever holds the `Driver` turns the crank
-(`Run` / `Run_For` / `Run_Until`). *Only while the crank turns* do operations complete and
-callbacks fire — one at a time, on the loop thread, in the order they come due. When the
-crank stops, everything freezes. That's the entire model.
+One vocabulary, each term built from the ones before it:
 
-> Idiomatic Go blocks a goroutine until IO finishes. Here, submitting and completing are
-> torn apart in time, and one thread runs everything. Retrain that instinct first.
+- An **event** — one crossing of the boundary between an application and the world: an
+  *emission* (an operation submitted: bytes to send, a file to write, a process to
+  start) or an *observation* (a completion delivered: the bytes received, the exit
+  code, the timer's expiry, the signal).
+- The **universe** — every application in the stack that emits or observes events:
+  services, daemons, cron jobs, scripts.
+- The **timeline** — the absolute order of all events in the universe.
+- A **`Completion`** — the caller-owned identity of one in-flight operation: submitting
+  it is the emission, its callback firing is the observation.
+- **`IO`** — the surface an application emits through and registers what it will
+  observe: its entire io vocabulary, held whole by every tier beneath the root. It
+  stays op-level so the simulator can sit under the program and fault it per
+  operation; coarser injected verbs would put an untested translation layer between
+  the two.
+- **`Driver`** — the crank (`Run` / `Run_For` / `Run_Until`): delivering observations
+  is advancing the timeline, so it is held **only by the code that constructed it**.
+- **`time.Clock`** — an application's local, read-only view of time; never a source
+  of order.
 
----
+**This framework makes the timeline an injected dependency.** This works because
+application code is deterministic between observations: given the same observations in
+the same order, it makes the same emissions in the same order. Control the order and
+outcome of every observation and you have controlled the entire run.
 
-## The four nouns — keep them straight
+In production nobody has that control. The applications run on separate boxes, each
+kernel schedules its own box's io, each box has its own clock, and no component ever
+sees the absolute order of events. The worst bugs are ordering bugs — the retry that
+lands after the failover, the poll that reads mid-deploy, two writers interleaving on
+one file — and when one happens in production you get one bad ordering, once, with no
+way to reproduce it. Hand-written mocks don't help: they replay only the orderings the
+test author thought of.
 
-| Noun | What it is | Who holds it |
-|------|-----------|--------------|
-| `IO` | the submit surface (a struct of closures) | pure/library code |
-| `Driver` | the crank: `Run` / `Run_For` / `Run_Until` | **only** `package main` or a test harness |
-| `Completion` | caller-owned storage for **one** in-flight op | the caller of an op |
-| `time.Clock` | read-only time source, *beneath* the loop | anyone (read-only) |
+The fix is to make the ordering come from somewhere controllable. Every binary is split
+into a pure entry point — an `internal.Main` that receives its `io.IO` and `time.Clock`
+as arguments and does io only through them — and a thin `main` that constructs the real
+pair. Two backends can then sit behind the same `io.IO`: the OS backend, where the
+kernel decides what completes when, and the simulator, where a seed decides. The
+application cannot tell the difference, and each seed produces one specific,
+reproducible ordering.
 
-You do not construct `IO`/`Driver` yourself except at a composition root. You are *handed*
-an `IO`. See "Getting one" below.
+The **universe package** applies this to the whole product at once: one composition
+root that imports every application's pure entry point and connects them all to one
+simulated loop. Every event across every application then happens in one process, in
+one order, decided by one seed — a fault can be injected between any two events, and
+any failure reproduces by re-running its seed. Each application still gets its own
+clock, because real boxes have separate, skewed clocks: a clock tells an application
+what time it thinks it is; the loop decides what actually happens, in what order.
 
----
+## 2. THE CRITICAL GUARANTEE
 
-## The capability split — why you can't "just run the loop"
+```
+=====================================================================================
+ ONLY PACKAGE MAIN OR A TEST MAY DRIVE, RUN, OR TICK THE EVENT LOOP.
 
-`IO` can submit but **cannot drive**. `Driver` drives. They are separate types on purpose,
-and the separation is enforced twice:
+ NOT A LIBRARY. NOT A SHARED PACKAGE. NOT A HELPER. NOT AN INJECTED FUNC VALUE.
+ NOT "JUST THIS ONCE". IF CODE OUTSIDE PACKAGE MAIN OR A TEST ADVANCES THE LOOP,
+ THAT IS AN ARCHITECTURAL BUG — EVEN IF IT WORKS, EVEN IF EVERY TEST PASSES.
+=====================================================================================
+```
 
-- **Compiler:** a package that only has an `IO` has no method that advances time.
-- **Linter:** the `driver-gateway` rules forbid *constructing* a loop or even *naming the
-  `io.Driver` type* outside `package main` and tests.
+Driving is any act that advances the timeline: calling `Run`, `Run_For`, or `Run_Until`,
+or invoking the clock tick. The only code allowed to do it is the code that constructed
+the driver — a binary's `package main` in production, a test harness in simulation (the
+universe package is one). Everything else emits and observes events; it never orders
+them.
 
-Why go to that trouble? Because the whole point of a simulated loop is that a **test
-harness controls time** — it decides when things complete and injects faults on the
-timeline. If library code could grab the crank and turn it, it would steal that control.
-So the rule is absolute: **`internal.Main` takes an `IO`; `main` and the fuzz harness hold
-the `Driver` and drive.** If you feel the urge to give a library the `Driver`, that urge is
-the bug.
+Why "even if every test passes": a library that pumps the loop works fine while its
+binary owns the whole process, so no test inside that binary will ever catch it. The bug
+detonates later, when the binary is assembled into the universe package and the loop it
+pumps is the whole product's — one library call site delivering every other
+application's completions from inside its own stack, destroying the one thing the
+assembly exists for: holding the absolute order. That is why a violation is an
+architectural bug and not a runtime bug: it is invisible where it is written and fatal
+where it composes.
 
----
+Three layers enforce it, none of them optional:
 
-## Getting one
+- **Construction**: `IO` has no time-advancing method; the tick lives on the driver
+  side, physically out of a library's reach.
+- **Lint**: constructing a backend — or even *naming* `io.Driver` — is confined to
+  `package main` and tests.
+- **Runtime**: driving from inside a callback panics; an unbounded pump with nothing in
+  flight panics.
 
-Two backends, chosen *by value* — the same `IO` surface, a different thing behind it.
+The lint cannot see every disguise — a bare func value with `Run_Until`'s shape slips
+through. That a violation compiles and passes does not make it legal. If you think you
+need an exception, you need a different shape instead — section 5 has all of them.
+
+**Corollary: there are no synchronous ops below the root.** "How does library code wait
+for its op" is a category error — it doesn't. Pure code submits against `io.IO`, returns,
+and exposes its progress as state; sequence is a completion chain; doneness is a
+predicate; the root pumps. Section 5 shows the shapes.
+
+## 3. Getting a loop
+
+Two backends behind the same surface, constructed only at a composition root:
 
 ```go
-// Real OS backend — package main only.
-clock, _   := timeos.New_Operating_System_Clock()
+// Real OS backend — a binary's package main.
+clock, tick := timeos.New_Operating_System_Clock()
 loop, driver := iodefault.New_Operating_System_IO(clock)
 
-// Deterministic simulator — main or a test. Seed is the ONLY input.
+// Deterministic simulator — a test harness. The seed is the ONLY input.
 loop, driver, clock := io.New_Sim(seed)
 ```
 
-`main` (or the harness) keeps `driver` and drives. It passes `loop` (the `IO`) down into
-the library. The library never sees `driver`.
+The constructor keeps `driver` and drives; it passes `loop` and the clock down. Library
+code cannot tell which backend is behind its `loop` — that is the point: the same entry
+point runs against the OS in production and inside a fabricated world under test. The
+universe package is this recipe at stack scale: one `New_Sim`, every application's
+entry point wired onto the one loop, per-application virtual clocks.
 
----
-
-## How you actually get work done
-
-### 1. Straight-line / sequential program — the synchronous pump
-
-If your program does one thing after another (like `setup`: build this, then that), wrap
-"submit + drive until it finishes" into an ordinary blocking call. This is the bridge from
-a synchronous world into the async loop:
+## 4. Driving — root code only
 
 ```go
-func run(loop io.IO, driver io.Driver, request io.Process_Request) (result io.Process_Result) {
-	var completion io.Completion
-	done := false
-	loop.Spawn(&completion, func(_ *io.Completion, r io.Process_Result, err error) {
-		result = r
-		done = true
-	}, request)
-	driver.Run_Until(func() (finished bool) { return done }) // crank until this op is done
-	return result
+driver.Run()                       // one pass: dispatch whatever is ready NOW, then return
+driver.Run_For(duration)           // crank for a duration of (real | virtual) time
+completed := driver.Run_Until(done, timeout)  // crank until done() — the root's pump
+```
+
+`Run_Until` semantics, exactly:
+
+- It pumps, re-checking `done()` after every drain, and **returns the moment `done()`
+  flips** — an op that completed inline returns immediately, and idle waits block until
+  the genuine next event (nearest timer, socket readiness, worker wake), never on a
+  polling interval.
+- `timeout` is a **guard, not a goal**: `completed` reports whether `done()` tripped
+  (`true`) or the deadline did (`false`). Use `Run_For` when elapsed time *is* the goal.
+- `io.FOREVER` (`-1`) never expires — for a program that runs until an event, not a clock.
+  If a `FOREVER` pump reaches a state where nothing in flight could ever flip `done()`,
+  the loop **panics** rather than hanging: awaiting the impossible is a deadlock.
+- `io.IMMEDIATE` (`0`) evaluates `done()` once without driving — a non-blocking poll.
+
+## 5. Program shapes
+
+### a. Linear chains — the next op is submitted inside the callback
+
+Submitting from a callback is the model working as intended (only *driving* from a
+callback is banned). A protocol step chains to the next:
+
+```go
+loop.Connect(&connect_completion, func(_ *io.Completion, socket io.File, err error) {
+	if err != nil { ... ; return }
+	loop.Send(&send_completion, func(_ *io.Completion, count int, err error) {
+		if err != nil { ... ; return }
+		receive_first(socket)   // submits the first Receive
+	}, socket, request)
+}, host, port)
+```
+
+Re-arming the same descriptor from within its own completion is supported: the loop
+retires a finished op *before* delivering its callback, so a newly armed op is not swept
+by the old one's cleanup.
+
+### b. Iteration — the trampoline
+
+A chain that loops back on itself — the next `Receive` submitted from the last one's
+completion, write *k+1* from write *k* — is a static call cycle, which the no-recursion
+lint rejects. The cure: the completion only **records** the continuation in state; a
+rearm function — called by the root, outside any callback — turns recorded state into
+submissions. Callback writes state, rearm submits, the call graph stays acyclic:
+
+```go
+// State replaces the call stack: the cursor is the program counter.
+type mirror struct {
+	Writes           []write
+	Index            int
+	Write_Queued     bool
+	Done             bool
+	Status           int
+	Write_Completion io.Completion
+	Close_Completion io.Completion
+}
+
+// Called by the root only. Reports whether it armed anything.
+func mirror_rearm(loop io.IO, state *mirror) (armed bool) {
+	if !state.Write_Queued {
+		return false
+	}
+	state.Write_Queued = false
+	if state.Index >= len(state.Writes) {
+		state.Done = true
+		return false
+	}
+	next := state.Writes[state.Index]
+	file, err := loop.Create(next.Path) // inline op: no completion, no timeline
+	if err != nil {
+		state.Status = 1
+		state.Done = true
+		return false
+	}
+	loop.Write(&state.Write_Completion, func(_ *io.Completion, _ int, write_err error) {
+		mirror_written(loop, state, file, write_err)
+	}, file, next.Contents, 0)
+	return true
+}
+
+// Completion: record progress and queue the continuation — never submit the next
+// iteration here; that is rearm's job, from the root.
+func mirror_written(loop io.IO, state *mirror, file io.File, err error) {
+	if err != nil {
+		state.Status = 1
+		state.Done = true
+		return
+	}
+	loop.Close(&state.Close_Completion, func(_ *io.Completion, _ error) {
+		state.Index++
+		state.Write_Queued = true
+	}, file)
 }
 ```
 
-The `Driver` stays in `main` (this pump lives in `main`); the library just calls `run`.
-This is safe **only** because a sequential program never enters the pump while already
-inside it (see pitfall #3).
+A "mostly synchronous" program is exactly this: sequential means one op in flight at a time — the
+degenerate state machine. Its planning, diffing, and parsing stay plain functions (pure computation
+and inline ops never touch the timeline); only the few truly async sites (content reads, the write
+loop, the spawn sequence) become chain links.
 
-### 2. Event-driven / concurrent program — submit many, react in callbacks
+### c. What an application exposes, and how the root runs it
 
-Submit several operations up front, let the harness drive `Run_For` / `Run_Until`, and do
-your sequencing *inside the callbacks*: when one op completes, its callback submits the
-next. Your program becomes a **state machine** whose transitions are completions. The
-harness owns the crank the whole time.
+An application never runs its own loop. Its entry point submits the standing work
+(listeners, signal watches, the first timer), then returns a handful of plain functions
+for the root to call:
 
----
+```go
+type Runner struct {
+	Cadence     func()                  // run periodic work whose interval has elapsed
+	Rearm       func() (armed bool)     // submit any continuations recorded by callbacks
+	Work_Queued func() (queued bool)    // is there a recorded continuation waiting?
+	Stopped     func() (finished bool)  // is the application finished?
+}
+```
 
-## The pitfalls — this is the part that bites
+Whoever holds the driver — the binary's `main` in production, the harness or the
+universe package in simulation — runs the same loop either way:
 
-**1. Nothing runs until you drive.** The single most common confusion. You submit an op,
-it "does nothing," and you assume it's broken. It isn't — you never turned the crank. A
-submitted op that never sees a `Run*` call just sits there forever. If something "hangs,"
-the first question is: *who was supposed to drive, and did they?*
+```go
+for !runner.Stopped() {
+	runner.Cadence()
+	for runner.Rearm() {   // keep arming until no continuation is waiting
+		driver.Run()
+	}
+	driver.Run_Until(func() (finished bool) {
+		return runner.Stopped() || runner.Work_Queued()
+	}, tick)               // sleep until a completion records new work, or the tick
+}
+```
 
-**2. Give each in-flight op its own `Completion`, and never copy it.** When you submit,
-you pass `&completion` — a *pointer*. The loop remembers that address, writes the result
-there later, and calls the callback from a `Run*`. Go's GC keeps the memory alive as long
-as the loop holds the pointer, so you do *not* have to worry about lifetime — a plain
-`var completion io.Completion` is fine even if the enclosing function returns before the
-loop is driven. What you must worry about is **identity**: the loop and you have to be
-looking at the same memory. Copying the value (`snapshot := completion`) or keeping
-completions in a `[]io.Completion` you `append` to (a grow moves the backing array, so the
-loop's pointers point at the abandoned copy) leaves the loop writing one place while you
-read another. Keep each op's `Completion` as its own value and pass its address; if you
-keep many, use `[]*io.Completion`, not `[]io.Completion`.
+This split is what makes the universe package possible: with twenty applications on one
+loop, the root simply calls each one's `Cadence` and `Rearm` in turn — no application
+can monopolize the loop, because none of them can run it.
 
-**3. One `Completion` backs one in-flight op — reuse panics.** Submitting a `Completion`
-that is still in flight trips a loud assertion (`Armed`) rather than silently corrupting
-the queue. Want two ops at once? Two `Completion`s. Reusing one is only fine *after* its
-callback has fired.
+`Work_Queued` must report exactly what `Rearm` would act on. If a continuation flag is
+checked by `Rearm` but missing from `Work_Queued`, the loop sleeps through it and that
+continuation waits out the full tick every time — slow, and silent. If `Work_Queued`
+reports something `Rearm` never acts on, the loop wakes, arms nothing, sleeps, wakes —
+a busy spin. Guard the pairing with an invariant in the fuzz harness: after `Rearm`
+returns false, `Work_Queued` must be false too.
 
-**4. Never drive from inside a callback.** `Run` / `Run_For` / `Run_Until` are top-level,
-single-loop only — **never** call one from within a completion callback. Doing so
-re-enters the driver and corrupts the loop's state. This is the sharpest edge in the whole
-model. If you're in a callback and need another op, *submit* it (and return); don't drive.
+A sequential program exposes the same functions, just fewer of them — `mirror_rearm`
+in section b *is* a `Rearm`, and its `Done` field *is* `Stopped`.
 
-**5. Never block the loop thread.** Callbacks run on the one thread that runs everything.
-A callback that makes a blocking syscall, sleeps, or spins stalls *every other operation*.
-Heavy CPU work → hand it to `Compute` (runs off-thread, completes back on the loop). A
-subprocess → `Spawn`. A raw blocking call in a callback → you've frozen the loop.
+### d. Graceful shutdown
 
-**6. Buffers must stay valid and untouched until the callback fires.** `Read` / `Write` /
-`Receive` / `Send` complete *later*. The buffer you passed is read or written by the loop
-in the meantime. Reusing, resizing, or freeing it before the callback is a data race with
-the loop. Same rule for `Compute`'s `work`: it may only touch memory the loop leaves alone
-until it completes.
+A signal is an event like any other: it arrives as a completion on the loop thread, not
+on some separate goroutine. There is no `signal.Notify` channel, no `os.Exit` from a
+handler, and nothing to synchronize — the signal callback runs between two other
+completions, touching the same state they do.
 
-**7. Some ops are synchronous — don't expect them to fault like async ones.** `Open`,
-`Create`, `Listen`, `Peer_Address` return immediately with no `Completion`, because
-opening/binding/getpeername don't block. The interesting, faultable, latency-bearing
-behavior lives on the *later* async op (the `Read` after the `Open`, the `Accept` after the
-`Listen`). Don't design around `Open` failing the way a `Read` can.
+Shutdown is therefore just another state transition. The application watches for the
+signals at startup, and the first one to arrive starts a bounded drain:
 
-**8. Every submission resolves — handle the error path.** Cancelling an op still fires its
-callback exactly once, with the `Cancelled` error instead of a result. Callbacks that
-assume success-only will mishandle a cancel. Always read the `err` / check `Cancelled`.
+```go
+// At startup — armed once, alongside the listeners and timers.
+loop.Watch_Signal(&state.Terminate_Completion,
+	func(_ *io.Completion, _ io.Signal) { drain_begin(state) }, io.SIGNAL_TERMINATE)
+loop.Watch_Signal(&state.Interrupt_Completion,
+	func(_ *io.Completion, _ io.Signal) { drain_begin(state) }, io.SIGNAL_INTERRUPT)
 
-**9. Don't reach for goroutines/channels for IO.** The loop *is* your concurrency. Adding a
-goroutine that touches loop state, or a channel to "await" a result, reintroduces exactly
-the multi-threading the single loop exists to avoid. The completion *is* the await.
+// The first signal starts the drain; a second one changes nothing.
+func drain_begin(state *daemon) {
+	if state.Draining {
+		return
+	}
+	state.Draining = true
+	state.Drain_Deadline = state.Clock.Now_Monotonic() + time.Moment(drain_timeout)
+}
 
----
+// Called from Cadence every pass: stop when the work is gone or time is up.
+func drain_tick(state *daemon) {
+	if !state.Draining {
+		return
+	}
+	if len(state.Connections) == 0 {
+		state.Stop = true
+		return
+	}
+	if state.Clock.Now_Monotonic() >= state.Drain_Deadline {
+		state.Stop = true
+	}
+}
+```
 
-## The simulator and the seed rule — read this before touching the Sim
+While draining, `Rearm` stops arming *new* work — no fresh accepts — but keeps servicing
+the continuations of work already in flight, so open connections run to completion. The
+deadline bounds a peer that never finishes. When `Stop` flips, `Stopped` reports it, the
+root's loop exits, and the process ends — the root, not the application, owns the exit.
 
-`New_Sim(seed)` is a **pure function of its seed.** Every outcome — how long an op takes,
-which connect fails, the bytes a receive delivers, the grain a signal lands on — is drawn
-from the seed. There is **no scripting API**, and `io.go` carries a long, angry comment
-explaining why you must never add one. The short version:
+This is also why shutdown is modeled as an event instead of a process kill: in the
+simulator the signal lands on a seed-drawn grain, so the seed sweep exercises shutdown
+arriving in the middle of everything — mid-connect, mid-drain, mid-write — and the drain
+invariants have to hold on every one of those timelines.
 
-- **You do not feed data into the sim.** No "make *this* connect fail," no "deliver *these*
-  bytes." If a test needs a different outcome, **change the seed** — never inject the
-  outcome. A scripted sim finds only the bugs the author imagined, stops reproducing from
-  its seed, and judges hand-picked inputs instead of the whole space.
-- **Correctness is asserted by invariants across a seed sweep**, not by pinning specific
-  outputs. Drive your program's entry point over many seeds and assert properties that must
-  hold for *any* run. (See `maddox/internal/simulation_test` for the shape.)
-- **The driver ticks one grain at a time and never jumps** to the next scheduled event,
-  even when the queue is idle until then — so a time-triggered fault (crash/partition a
-  quiescent node) can strike *any* grain, not just the ones where something was scheduled.
+### e. Banned shapes
 
-If you find yourself wanting to export the `sim` type, or add a `New_Sim` parameter that
-isn't the seed, stop. That is the scripting API trying to come back.
+- **Injecting `Run_Until` into a library** — as a field, a parameter, any func value. A
+  library authoring `done` predicates and timeouts decides when and how long time moves:
+  that is driving with the type name filed off; assembled into the universe package it
+  advances every other application's events from inside its own stack.
+- **Injecting root-built blocking wrappers** (`Spawn func(request) result`) — the same
+  crime by proxy: the closure is root code, but it pumps the shared timeline from under a
+  library call site.
+- **Replacing `io.IO` with injected domain verbs** (`Read_File func(path) ...`) — takes
+  the binary off the op-level surface. The simulator can no longer sit under it, fault
+  granularity collapses to whatever the verbs expose, and the untested wrappers become
+  the actual io layer. That is mock-DI, the thing this library exists to kill.
 
----
+## 6. Rules of the loop
 
-## Where the raw IO lives
+Each of these fails loudly where the runtime can make it:
 
-- **`shared/io`** — the `IO`/`Driver` surface and the deterministic simulator. No real
-  syscalls. This is what library code depends on.
-- **`shared/io/default`** — the real OS backend (kqueue/epoll, TLS goroutines, a worker
-  pool, a self-pipe wake). The **only** place raw IO stdlib (`net`, `syscall`, `os/exec`,
-  `crypto/tls`, …) is allowed. The `io-gateway` lint rule keeps it that way: everyone else
-  routes through `shared/io`, and `package main` is the exempt wiring shell that binds the
-  two together.
+1. **Nothing runs until the root drives.** A submitted op without a `Run*` call sits
+   forever. If something "hangs", ask first: who was supposed to drive, and did they?
+2. **Never drive from inside a callback** — re-entering the driver panics. In a callback,
+   *submit* and return.
+3. **One `Completion` per in-flight op** — resubmitting an armed completion panics. Two
+   ops at once means two completions. Reuse is fine after the callback fires.
+4. **Never copy a `Completion`** — the loop tracks the op by pointer; submitting a
+   by-value copy panics. Keep each as its own value and pass `&completion`; store many as
+   `[]*io.Completion`, never `[]io.Completion` (append moves the array under the loop).
+5. **Never block the loop thread.** A blocking call in a callback stalls every operation.
+   Blocking work → `Compute`; subprocesses → `Spawn`.
+6. **Buffers belong to the loop until the callback fires.** Reusing or resizing a
+   submitted buffer races the backend.
+7. **Every submission resolves exactly once** — including cancelled ops (`io.Cancelled`).
+   Callbacks must handle the error path.
+8. **No goroutines or channels around loop state.** The completion *is* the await; the
+   loop *is* the concurrency.
+
+## 7. The simulator and the seed rule
+
+`New_Sim(seed)` is a **pure function of its seed**. Every outcome — latency, which connect
+fails, delivered byte counts, which spawn exits non-zero, the grain a signal lands on — is
+drawn from the seed's PRNG. There is **no scripting API**, deliberately:
+
+- **Never inject an outcome.** No "make this connect fail", no "deliver these bytes". A
+  test needing a different outcome changes the seed. A scripted sim finds only the bugs
+  its author imagined and stops reproducing from its seed.
+- **Assert invariants over a seed sweep**, not pinned outputs. Drive the real entry point
+  over hundreds of seeds (`f.Fuzz` with a corpus loop) and assert properties that must
+  hold for *any* run: convergence, idempotency, no double-fire, cursor monotonicity.
+- **The test harness drives the same loop shape as `main`** — same canonical loop, same
+  `Runner`. If prod and test drive differently, the suite exercises a loop nobody ships,
+  and real-backend-only bugs hide in the gap.
+- The sim driver advances one grain per tick and never jumps to the next scheduled event —
+  the idle grains are exactly where a fault adversary crashes a box or drops a partition,
+  so every grain stays a decision point.
+
+The universe package is this recipe at full scale: every application's entry point on
+one sim loop, per-application clocks skewed by the seed, the product's timelines
+explored one seed at a time.
+
+If you want to export the `sim` type or add a `New_Sim` parameter that is not the seed:
+stop. That is the scripting API trying to come back.
+
+## 8. Layout
+
+- **`shared/io`** — the `IO`/`Driver` surface and the deterministic simulator. No
+  syscalls. This is what every binary's pure tier depends on.
+- **`shared/io/default`** — the real OS backend: kqueue/epoll readiness, inline file
+  syscalls, a compute worker pool with a self-pipe wake, TLS goroutines, process
+  spawning. The **only** place raw IO stdlib (`net`, `syscall`, `os/exec`, `crypto/tls`,
+  …) is allowed; the `io-gateway` lint rule keeps everyone else routing through
+  `shared/io`.
+- **`shared/time/default`** — the clock gateway, the only importer of stdlib time.

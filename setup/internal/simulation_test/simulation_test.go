@@ -6,7 +6,6 @@
 package simulation_test
 
 import (
-	"io"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -59,8 +58,6 @@ func drive(t *testing.T, seed uint64) {
 		Operating_System:      "linux",
 		Run_Command:           harness_run_command,
 		Is_Ignored:            harness_ignore,
-		Stdout:                io.Discard,
-		Stderr:                io.Discard,
 	}
 	// The first run must succeed for every well-formed seed — with no faults injected, Main
 	// fails only on a Plan or write error, neither reachable here. If that ever changes this

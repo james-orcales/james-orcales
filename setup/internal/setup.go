@@ -17,6 +17,7 @@ import (
 	"strings"
 
 	sysio "local/james-orcales/shared/io"
+	"local/james-orcales/shared/jlog"
 	systime "local/james-orcales/shared/time"
 )
 
@@ -64,10 +65,10 @@ type Main_Input struct {
 	// spawn per path made a large tree scan for seconds — one call classifies a whole
 	// tree level. Nil ignores nothing.
 	Is_Ignored func(relative_paths []string) (ignored map[string]bool)
-	// Stdout receives one line naming each file written.
-	Stdout io.Writer
-	// Stderr receives a diagnostic line when planning or a write fails.
-	Stderr io.Writer
+	// Logger records the sync's narration: one line per file written, the scan's
+	// progress, and a diagnostic when planning or a write fails. The zero Logger is a
+	// disabled no-op, so a caller wanting silence passes none.
+	Logger jlog.Logger
 }
 
 // Main syncs the source dotfiles into the home directory and, on darwin, applies
@@ -79,44 +80,44 @@ func Main(input *Main_Input) (status_code int) {
 		Source_Directory:      input.Source_Directory,
 		Destination_Directory: input.Destination_Directory,
 		Is_Ignored:            input.Is_Ignored,
-		Progress:              input.Stdout,
+		Logger:                input.Logger,
 	})
 	if plan_err != nil {
-		fmt.Fprintf(input.Stderr, "setup: %v\n", plan_err)
+		jlog.Logger_Error(input.Logger, "plan failed", jlog.Err(plan_err))
 		return exit_failure
 	}
 	for _, write := range writes {
 		write_err := write_file(&input.File_System, write.Destination_Path, write.Contents)
 		if write_err != nil {
-			fmt.Fprintf(input.Stderr, "setup: %v\n", write_err)
+			jlog.Logger_Error(input.Logger, "write failed", jlog.Err(write_err))
 			return exit_failure
 		}
-		fmt.Fprintf(input.Stdout, "setup: wrote %s\n", write.Destination_Path)
+		jlog.Logger_Info(input.Logger, "wrote", jlog.String("path", write.Destination_Path))
 	}
 	// A converged tree writes nothing, so without a closing line the step would look
 	// stuck after the last scan line; say it finished and had no work.
 	if len(writes) == 0 {
-		fmt.Fprintln(input.Stdout, "setup: dotfiles: already up to date")
+		jlog.Logger_Info(input.Logger, "dotfiles up to date")
 	}
 	// The macos defaults touch macOS-only preference domains, so they run there
 	// and nowhere else.
 	if input.Operating_System != "darwin" {
 		return 0
 	}
-	return apply_macos_defaults(input.Run_Command, input.Stderr)
+	return apply_macos_defaults(input.Run_Command, input.Logger)
 }
 
-// Takes just the runner and the error sink it uses, not the whole Main_Input: a
+// Takes just the runner and the logger it uses, not the whole Main_Input: a
 // function whose parameter is *Main_Input would be forced to be named Main. Runs
-// every macos defaults command, stopping at the first that fails. It prints
+// every macos defaults command, stopping at the first that fails. It logs
 // nothing per command — 35 lines of `defaults write` is noise, not progress.
 func apply_macos_defaults(
-	run func(name string, arguments []string) (err error), stderr io.Writer,
+	run func(name string, arguments []string) (err error), logger jlog.Logger,
 ) (status_code int) {
 	for _, command := range macos_commands() {
 		run_err := run(command.Name, command.Arguments)
 		if run_err != nil {
-			fmt.Fprintf(stderr, "setup: %v\n", run_err)
+			jlog.Logger_Error(logger, "macos defaults failed", jlog.Err(run_err))
 			return exit_failure
 		}
 	}
@@ -132,13 +133,14 @@ type Step struct {
 	Run func() (status_code int)
 }
 
-// Bootstrap_Input carries the ordered steps and the sink their progress is
+// Bootstrap_Input carries the ordered steps and the logger their progress is
 // announced to.
 type Bootstrap_Input struct {
 	// Steps run in slice order; the first to return non-zero stops the rest.
 	Steps []Step
-	// Stdout receives one line naming each step as it starts.
-	Stdout io.Writer
+	// Logger records one line naming each step as it starts. The zero Logger is a
+	// disabled no-op.
+	Logger jlog.Logger
 }
 
 // Bootstrap runs the setup steps in their fixed order of operations, announcing
@@ -147,7 +149,7 @@ type Bootstrap_Input struct {
 // Package main supplies the steps.
 func Bootstrap(input *Bootstrap_Input) (status_code int) {
 	for _, step := range input.Steps {
-		fmt.Fprintf(input.Stdout, "setup: %s\n", step.Name)
+		jlog.Logger_Info(input.Logger, "step", jlog.String("name", step.Name))
 		step_status := step.Run()
 		if step_status != 0 {
 			return step_status
@@ -255,11 +257,11 @@ type Plan_Input struct {
 	// process per depth, not per entry. Nil ignores nothing, the sync's behavior before
 	// the filter existed.
 	Is_Ignored func(relative_paths []string) (ignored map[string]bool)
-	// Progress receives one line naming each directory as the walk reads it. A converged
+	// Logger records one line naming each directory as the walk reads it. A converged
 	// scan writes nothing, so without this the step looks hung while it walks; narrating
-	// each directory proves the scan is live. Nil is silent, so a direct caller that
-	// wants no narration pays nothing.
-	Progress io.Writer
+	// each directory proves the scan is live. The zero Logger is a disabled no-op, so a
+	// direct caller that wants no narration pays nothing.
+	Logger jlog.Logger
 }
 
 // Plan returns the writes that would bring the home directory in line with the source
@@ -316,7 +318,7 @@ type plan_entry struct {
 func plan_read_level(input *Plan_Input, level []string) (entries []plan_entry, err error) {
 	entries = []plan_entry{}
 	for _, directory := range level {
-		plan_narrate(input.Progress, directory)
+		plan_narrate(input.Logger, directory)
 		read, read_err := input.File_System.Loop.Read_Directory(
 			filepath.Join(input.Source_Directory, directory))
 		if read_err != nil {
@@ -333,13 +335,10 @@ func plan_read_level(input *Plan_Input, level []string) (entries []plan_entry, e
 }
 
 // Announces the directory the walk is about to read, one line each, so a scan that
-// writes nothing still shows it is advancing. A nil sink is silent, so narration
-// stays opt-in per Plan_Input.
-func plan_narrate(progress io.Writer, directory string) {
-	if progress == nil {
-		return
-	}
-	fmt.Fprintf(progress, "setup: dotfiles: scanning %s\n", directory)
+// writes nothing still shows it is advancing. The scan is chatter — one line per
+// directory — so it logs at debug, below the progress the install steps report.
+func plan_narrate(logger jlog.Logger, directory string) {
+	jlog.Logger_Debug(logger, "scanning", jlog.String("dir", directory))
 }
 
 // Returns the set of a level's entries that are gitignored, classifying them all in one
@@ -482,16 +481,19 @@ func loop_close(system *File_System, file sysio.File) {
 type Spawn func(request sysio.Process_Request) (result sysio.Process_Result)
 
 // Shell is the injected subprocess capability the install steps run commands through: Spawn
-// executes one command through the loop, and the two sinks receive its streamed output and
-// setup's own narration. A thin carrier over the loop, not a revival of a shell package —
-// the library binds no process itself.
+// executes one command through the loop, the two sinks receive a build's streamed output, and
+// Logger records setup's own narration of the step. A thin carrier over the loop, not a revival
+// of a shell package — the library binds no process itself.
 type Shell struct {
 	// Spawn runs a command to completion and returns its outcome.
 	Spawn Spawn
-	// Stdout receives setup's narration and a build's streamed standard output.
+	// Stdout receives a build's streamed standard output.
 	Stdout io.Writer
-	// Stderr receives setup's diagnostics and a build's streamed standard error.
+	// Stderr receives a build's streamed standard error.
 	Stderr io.Writer
+	// Logger records setup's narration of the install step — the "building"/"installed"
+	// progress and a diagnostic on failure. The zero Logger is a disabled no-op.
+	Logger jlog.Logger
 }
 
 // Runs path with arguments and returns its captured standard output, trimmed — the version
@@ -579,28 +581,29 @@ func Install_Neovim(input *Install_Neovim_Input) (status_code int) {
 	// Building Neovim is the expensive step, so it is gated on the checkout's own
 	// nvim not already being installed: a bootstrap that has it does no work.
 	if neovim_already_installed(input.Shell, input.Repository_Directory) {
-		fmt.Fprintf(input.Shell.Stdout, "setup: nvim %s installed\n", neovim_version)
+		jlog.Logger_Info(input.Shell.Logger, "neovim already installed",
+			jlog.String("version", neovim_version))
 		return 0
 	}
 	for index, arguments := range neovim_make_invocations(input.Repository_Directory) {
-		fmt.Fprintf(input.Shell.Stdout, "setup: neovim: %s\n", neovim_make_phase(index))
+		jlog.Logger_Info(input.Shell.Logger, neovim_make_phase(index))
 		// The first argument is the executable; make's output streams to the sinks, so
 		// a generic line is all setup adds.
 		if !run_spawn(input.Shell, arguments...) {
-			fmt.Fprintln(input.Shell.Stderr, "setup: neovim build failed")
+			jlog.Logger_Error(input.Shell.Logger, "neovim build failed")
 			return exit_failure
 		}
 	}
 	return 0
 }
 
-// Returns the progress label for make invocation index: invocation 0 configures
+// Returns the progress message for make invocation index: invocation 0 configures
 // and builds against the prefix, invocation 1 installs.
 func neovim_make_phase(index int) (phase string) {
 	if index == 0 {
-		return "configuring prefix..."
+		return "configuring neovim prefix"
 	}
-	return "installing..."
+	return "installing neovim"
 }
 
 // Returns the two make invocations the build runs in order: configure-and-build,
@@ -678,10 +681,9 @@ type Install_Fonts_Input struct {
 	// Refresh rebuilds the font cache (Linux's fc-cache), run after the copies. Nil
 	// when the OS auto-detects fonts (macOS), so no cache step runs.
 	Refresh func() (err error)
-	// Stdout receives one line per face naming each copy and each skip.
-	Stdout io.Writer
-	// Stderr receives a diagnostic line when a copy or the refresh fails.
-	Stderr io.Writer
+	// Logger records one line per face naming each copy and each skip, and a diagnostic
+	// when a copy or the refresh fails. The zero Logger is a disabled no-op.
+	Logger jlog.Logger
 }
 
 // Install_Fonts places the vendored Iosevka faces into the per-OS user font
@@ -695,15 +697,16 @@ func Install_Fonts(input *Install_Fonts_Input) (status_code int) {
 	copied := false
 	for _, file := range iosevka_font_files() {
 		if input.Font_Present(file) {
-			fmt.Fprintf(input.Stdout, "setup: fonts: skipped %s (present)\n", file)
+			jlog.Logger_Info(input.Logger, "font present, skipped",
+				jlog.String("file", file))
 			continue
 		}
 		copy_err := input.Copy_Font(file)
 		if copy_err != nil {
-			fmt.Fprintf(input.Stderr, "setup: %v\n", copy_err)
+			jlog.Logger_Error(input.Logger, "font copy failed", jlog.Err(copy_err))
 			return exit_failure
 		}
-		fmt.Fprintf(input.Stdout, "setup: fonts: copied %s\n", file)
+		jlog.Logger_Info(input.Logger, "copied font", jlog.String("file", file))
 		copied = true
 	}
 	if !copied {
@@ -714,7 +717,7 @@ func Install_Fonts(input *Install_Fonts_Input) (status_code int) {
 	}
 	refresh_err := input.Refresh()
 	if refresh_err != nil {
-		fmt.Fprintf(input.Stderr, "setup: %v\n", refresh_err)
+		jlog.Logger_Error(input.Logger, "font cache refresh failed", jlog.Err(refresh_err))
 		return exit_failure
 	}
 	return 0
@@ -750,16 +753,16 @@ func Install_Direnv(input *Install_Direnv_Input) (status_code int) {
 		return 0
 	}
 	if direnv_built(input.Shell, input.Binary_Directory) {
-		fmt.Fprintln(input.Shell.Stdout, "setup: direnv installed")
+		jlog.Logger_Info(input.Shell.Logger, "direnv already installed")
 		return 0
 	}
-	fmt.Fprintln(input.Shell.Stdout, "setup: direnv: building...")
+	jlog.Logger_Info(input.Shell.Logger, "building direnv")
 	destination := filepath.Join(input.Binary_Directory, "direnv")
 	build := "cd " + input.Direnv_Directory +
 		" && CGO_ENABLED=0 go build -mod=vendor" +
 		" -o " + destination + " ."
 	if !run_spawn(input.Shell, "sh", "-c", build) {
-		fmt.Fprintln(input.Shell.Stderr, "setup: direnv build failed")
+		jlog.Logger_Error(input.Shell.Logger, "direnv build failed")
 		return exit_failure
 	}
 	return 0
@@ -809,11 +812,11 @@ func Install_Rust(input *Install_Rust_Input) (status_code int) {
 		return 0
 	}
 	if rust_installed(input.Shell, input.Cargo_Directory) {
-		fmt.Fprintln(input.Shell.Stdout, "setup: rust installed")
+		jlog.Logger_Info(input.Shell.Logger, "rust already installed")
 	} else {
-		fmt.Fprintln(input.Shell.Stdout, "setup: rust: installing...")
+		jlog.Logger_Info(input.Shell.Logger, "installing rust")
 		if !run_spawn(input.Shell, rust_install_invocation()...) {
-			fmt.Fprintln(input.Shell.Stderr, "setup: rust install failed")
+			jlog.Logger_Error(input.Shell.Logger, "rust install failed")
 			return exit_failure
 		}
 	}
@@ -824,7 +827,7 @@ func Install_Rust(input *Install_Rust_Input) (status_code int) {
 		Cargo_Directory: input.Cargo_Directory,
 		Link_Directory:  input.Link_Directory,
 	}) {
-		fmt.Fprintln(input.Shell.Stderr, "setup: rust link failed")
+		jlog.Logger_Error(input.Shell.Logger, "rust link failed")
 		return exit_failure
 	}
 	return 0
@@ -907,17 +910,17 @@ func Install_Fzf(input *Install_Fzf_Input) (status_code int) {
 		return 0
 	}
 	if fzf_built(input.Shell, input.Binary_Directory) {
-		fmt.Fprintln(input.Shell.Stdout, "setup: fzf installed")
+		jlog.Logger_Info(input.Shell.Logger, "fzf already installed")
 		return 0
 	}
-	fmt.Fprintln(input.Shell.Stdout, "setup: fzf: building...")
+	jlog.Logger_Info(input.Shell.Logger, "building fzf")
 	destination := filepath.Join(input.Binary_Directory, "fzf")
 	build := "cd " + input.Fzf_Directory +
 		" && go build -mod=vendor" +
 		" -ldflags '-s -w -X main.version=" + fzf_version + " -X main.revision='" +
 		" -o " + destination + " ."
 	if !run_spawn(input.Shell, "sh", "-c", build) {
-		fmt.Fprintln(input.Shell.Stderr, "setup: fzf build failed")
+		jlog.Logger_Error(input.Shell.Logger, "fzf build failed")
 		return exit_failure
 	}
 	return 0
@@ -968,15 +971,18 @@ func Install_Command(input *Install_Command_Input) (status_code int) {
 		return 0
 	}
 	if command_on_path(input.Shell, input.Binary_Name) {
-		fmt.Fprintf(input.Shell.Stdout, "setup: %s installed\n", input.Binary_Name)
+		jlog.Logger_Info(input.Shell.Logger, "command already installed",
+			jlog.String("command", input.Binary_Name))
 		return 0
 	}
-	fmt.Fprintf(input.Shell.Stdout, "setup: %s: building...\n", input.Binary_Name)
+	jlog.Logger_Info(input.Shell.Logger, "building command",
+		jlog.String("command", input.Binary_Name))
 	destination := filepath.Join(input.Binary_Directory, input.Binary_Name)
 	build := "cd " + input.Package_Directory +
 		" && go build -o " + destination + " ."
 	if !run_spawn(input.Shell, "sh", "-c", build) {
-		fmt.Fprintf(input.Shell.Stderr, "setup: %s build failed\n", input.Binary_Name)
+		jlog.Logger_Error(input.Shell.Logger, "command build failed",
+			jlog.String("command", input.Binary_Name))
 		return exit_failure
 	}
 	return 0
@@ -1021,13 +1027,13 @@ func Install_Jj(input *Install_Jj_Input) (status_code int) {
 		return 0
 	}
 	if jj_built(input.Shell, input.Binary_Directory) {
-		fmt.Fprintln(input.Shell.Stdout, "setup: jj built")
+		jlog.Logger_Info(input.Shell.Logger, "jj already built")
 		return 0
 	}
-	fmt.Fprintln(input.Shell.Stdout, "setup: jj: building...")
+	jlog.Logger_Info(input.Shell.Logger, "building jj")
 	if !run_spawn(input.Shell,
 		jj_install_invocation(input)...) {
-		fmt.Fprintln(input.Shell.Stderr, "setup: jj build failed")
+		jlog.Logger_Error(input.Shell.Logger, "jj build failed")
 		return exit_failure
 	}
 	return 0
@@ -1089,13 +1095,13 @@ func Install_Ripgrep(input *Install_Ripgrep_Input) (status_code int) {
 		return 0
 	}
 	if ripgrep_built(input.Shell, input.Binary_Directory) {
-		fmt.Fprintln(input.Shell.Stdout, "setup: ripgrep built")
+		jlog.Logger_Info(input.Shell.Logger, "ripgrep already built")
 		return 0
 	}
-	fmt.Fprintln(input.Shell.Stdout, "setup: ripgrep: building...")
+	jlog.Logger_Info(input.Shell.Logger, "building ripgrep")
 	invocation := ripgrep_install_invocation(input)
 	if !run_spawn(input.Shell, invocation...) {
-		fmt.Fprintln(input.Shell.Stderr, "setup: ripgrep build failed")
+		jlog.Logger_Error(input.Shell.Logger, "ripgrep build failed")
 		return exit_failure
 	}
 	return 0
@@ -1157,13 +1163,13 @@ func Install_Fdcli(input *Install_Fdcli_Input) (status_code int) {
 		return 0
 	}
 	if fdcli_built(input.Shell, input.Binary_Directory) {
-		fmt.Fprintln(input.Shell.Stdout, "setup: fd built")
+		jlog.Logger_Info(input.Shell.Logger, "fd already built")
 		return 0
 	}
-	fmt.Fprintln(input.Shell.Stdout, "setup: fd: building...")
+	jlog.Logger_Info(input.Shell.Logger, "building fd")
 	invocation := fdcli_install_invocation(input)
 	if !run_spawn(input.Shell, invocation...) {
-		fmt.Fprintln(input.Shell.Stderr, "setup: fd build failed")
+		jlog.Logger_Error(input.Shell.Logger, "fd build failed")
 		return exit_failure
 	}
 	return 0
@@ -1245,12 +1251,12 @@ func Install_Ghostty(input *Install_Ghostty_Input) (status_code int) {
 		return 0
 	}
 	if ghostty_installed(input.Shell, input.Applications_Directory) {
-		fmt.Fprintln(input.Shell.Stdout, "setup: ghostty installed")
+		jlog.Logger_Info(input.Shell.Logger, "ghostty already installed")
 	} else {
-		fmt.Fprintln(input.Shell.Stdout, "setup: ghostty: installing...")
+		jlog.Logger_Info(input.Shell.Logger, "installing ghostty")
 		invocation := ghostty_install_invocation(input.Applications_Directory)
 		if !run_spawn(input.Shell, invocation...) {
-			fmt.Fprintln(input.Shell.Stderr, "setup: ghostty install failed")
+			jlog.Logger_Error(input.Shell.Logger, "ghostty install failed")
 			return exit_failure
 		}
 	}
@@ -1259,7 +1265,7 @@ func Install_Ghostty(input *Install_Ghostty_Input) (status_code int) {
 	source := filepath.Join(input.Applications_Directory, ghostty_application_binary_subpath)
 	target := filepath.Join(input.Link_Directory, "ghostty")
 	if !run_spawn(input.Shell, "ln", "-sf", source, target) {
-		fmt.Fprintln(input.Shell.Stderr, "setup: ghostty link failed")
+		jlog.Logger_Error(input.Shell.Logger, "ghostty link failed")
 		return exit_failure
 	}
 	return 0
