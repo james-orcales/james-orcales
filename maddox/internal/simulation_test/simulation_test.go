@@ -29,9 +29,6 @@ func TestMain(m *testing.M) {
 // against, mirrored from the library.
 const sim_structure_max = 1 << 8
 
-// Sim_samples_max is the kept-run ceiling.
-const sim_samples_max = 10000
-
 // Sim_capture_max is the stderr-capture ceiling.
 const sim_capture_max = 1 << 16
 
@@ -160,9 +157,13 @@ func drive(s scenario) {
 				value += s.Deltas[run%len(s.Deltas)]
 			}
 			result.Sample = sample_from(value)
-			// Wall is this run's tight cost for the statistics; the completion stamp is
-			// the accrued virtual time for the budget stopwatch. A run costs its sleep.
-			result.Sample.Wall = time.Duration(s.Sleep)
+			// Wall is this run's tight cost, extracted as a Metric into the
+			// statistics, so it carries the same representable-ceiling contract as
+			// every other metric and passes through the same clamp. The completion
+			// stamp is the accrued virtual time for the budget stopwatch, which spans
+			// the arbitrary gaps between runs and so stays on the full, unclamped
+			// sleep. A run costs its sleep.
+			result.Sample.Wall = time.Duration(metric_clamp(s.Sleep))
 			elapsed_virtual += time.Duration(s.Sleep)
 			result.Completed_At = time.Moment(elapsed_virtual)
 			fail := false
@@ -227,17 +228,27 @@ func command_set(s scenario) (commands maddox.Commands) {
 	return commands
 }
 
+// Metric_clamp bounds a decoded value to the range a real sampler reports within:
+// non-negative and no larger than the representable ceiling. Every metric a sample carries
+// — the counters here and the wall time in drive — passes through it, so a full-range
+// decoded field reaches maddox as an in-contract metric rather than one the fixed-point
+// statistics cannot represent, which only an out-of-contract sampler would report.
+func metric_clamp(value int64) (clamped int64) {
+	if value < 0 {
+		return 0
+	}
+	if value > sim_metric_max {
+		return sim_metric_max
+	}
+	return value
+}
+
 // Sample_from builds a sample whose every metric is the given value, clamped to the valid
 // metric range. A real sampler reports valid metrics: non-negative and within the
 // representable ceiling, so the clamp keeps the simulated measurements in contract rather
 // than tripping the metric guard, which only an out-of-contract sampler would.
 func sample_from(value int64) (sample maddox.Sample) {
-	if value < 0 {
-		value = 0
-	}
-	if value > sim_metric_max {
-		value = sim_metric_max
-	}
+	value = metric_clamp(value)
 	sample.RSS_Bytes_Max = maddox.Metric(value)
 	sample.CPU_Cycles = maddox.Metric(value)
 	sample.Instructions = maddox.Metric(value)
@@ -298,7 +309,12 @@ func decode_scenario(data []byte) (s scenario) {
 	// A real invocation benchmarks a handful of short commands. Clamp the command and
 	// word counts, and budget the total argument bytes, so the rendered report stays
 	// under its ceiling — the structural maxima are not reachable through a real run.
-	s.Commands = min(int(cursor_u16(c)), 8)
+	// The command count is held to four: a real comparison is a small handful, and no
+	// caller runs several commands to the sample ceiling unbudgeted — that is hours of live
+	// execution — so exploring that product only spends the whole run past the fuzzer's
+	// per-input deadline for a shape the library already handles one command at a time. The
+	// library's own sample ceiling is untouched; this bounds only the blackbox's fan-out.
+	s.Commands = min(int(cursor_u16(c)), 4)
 	s.Words = max(1, min(int(cursor_u16(c)), 8))
 	budget := 32768 / (s.Commands*s.Words + 1)
 	s.Word_Bytes = min(min(int(cursor_u16(c)), sim_word_max), budget)
@@ -489,7 +505,58 @@ func seed_corpus() (seeds [][]byte) {
 	seeds = append(seeds, seeds_machine_values()...)
 	seeds = append(seeds, seeds_render()...)
 	seeds = append(seeds, seeds_progress()...)
+	seeds = append(seeds, seeds_overflow()...)
 	return seeds
+}
+
+// Seeds_overflow pins the fuzz-discovered inputs where a large but in-contract value overflowed
+// maddox's fixed-point math or a fixed column width — each once tripped a boundary guard deep in
+// the statistics or the renderer, and each is now handled. The metric magnitudes here sit near
+// the representable ceiling the narrow seed corpus never reaches.
+func seeds_overflow() (seeds [][]byte) {
+	return [][]byte{
+		// A distribution split between zero and the representable ceiling over
+		// enough runs to clear the strays ceiling: the interquartile range spans
+		// nearly the whole metric range, so the Tukey outlier fence (1.5*IQR lifted
+		// by the fixed-point scale) overflowed int64 and miscounted every run as an
+		// outlier past that ceiling. Base sits at the midpoint; the two-grain
+		// deviation drives each run to one extreme or the other.
+		with(func(s *scenario) {
+			s.Commands = 1
+			// Enough runs to clear the strays ceiling (half the sample cap), sized off
+			// the exported cap so it tracks it rather than a magic number.
+			s.Runs = maddox.SAMPLES_MAX/2 + 1
+			s.Base = 1 << 42
+			s.Deltas = []int64{1 << 42, -(1 << 42)}
+			s.Sleep = 0
+		}),
+		// A machine memory size high on the byte-size range, where lifting the
+		// raw count whole into the 2^20 fixed-point scale overflowed and rendered
+		// a garbage, over-width cell. Eight tebibytes renders "8TiB" once the
+		// scaling divides before it lifts.
+		with(func(s *scenario) {
+			full_machine(s)
+			s.Machine.RAM_Total_Bytes = 1 << 43
+		}),
+		// A ceiling-valued second command against a tiny reference: the percentage
+		// change runs past a trillion percent, thirteen digits, whose width overran
+		// the fixed delta column before the display clamp pinned it to the column's
+		// widest value.
+		with(func(s *scenario) {
+			s.Base = 500
+			s.Divergence = sim_metric_max
+			s.Deltas = []int64{0}
+			s.Runs = 3
+		}),
+		// Three runs each costing a three-kilosecond wall: the total sampling time sums
+		// past the fixed-point scale's ceiling, where lifting it whole to render the
+		// benchmark header overflowed and produced a garbage, over-width cell. Nine
+		// kiloseconds renders "9ks" once the scaling divides before it lifts.
+		with(func(s *scenario) {
+			s.Sleep = 3_000_000_000_000
+			s.Runs = 3
+		}),
+	}
 }
 
 // Seeds_progress exercises the progress counter with varied command shapes, so the
@@ -612,6 +679,12 @@ func seeds_render() (seeds [][]byte) {
 		with(func(s *scenario) {
 			s.Commands = 0
 			s.Machine = maddox.Machine_Specs{}
+		}),
+		// Three one-second runs, so the header's total sampling span renders "3s" — the
+		// two-byte, single-digit-seconds shape between the "0" floor and the wider forms.
+		with(func(s *scenario) {
+			s.Sleep = 1_000_000_000
+			s.Runs = 3
 		}),
 	}
 }
