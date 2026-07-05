@@ -31,8 +31,10 @@ narrow buys:
 
 - **Barebones.** Roughly 6× less code — ≈1.1k lines of Go source against zerolog's
   ≈6.5k — and zero third-party dependencies, only the standard library and
-  `shared/time`. No pretty console writer, hooks, sampling, or CBOR: just the encoder
-  and the diode.
+  `shared/time`. No hooks, sampling, or CBOR, and the zero-allocation core is just the
+  encoder and the diode. A pretty console writer does exist — `Console` in the
+  composition tier — but it is opt-in and reads *finished* JSON lines back through the
+  `io.Writer` seam, so the hot path never carries it.
 
 - **Faster, and faster under stress.** jlog wins most of the formatting benchmarks
   above, and its diode is ~2× quicker than zerolog's *and* allocation-free even while
@@ -50,9 +52,9 @@ narrow buys:
 
 - **Pure, separable core.** The library tier (`shared/jlog`, `shared/diode`) is pure —
   the clock, caller lookup, and sink all arrive as fields, so it is trivially testable
-  and holds no globals. The single ambient binding lives in the composition tier
-  (`shared/jlog/default`). zerolog wires `os.Stderr` and a package-global logger in
-  directly.
+  and holds no globals. The ambient bindings — the `os.Stderr` default logger and the
+  `os.Stdout` terminal logger — live in the composition tier (`shared/jlog/default`).
+  zerolog wires `os.Stderr` and a package-global logger in directly.
 
 ## Benchmarks
 
