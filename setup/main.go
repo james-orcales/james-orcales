@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 
 	"local/james-orcales/setup/internal"
 	sysio "local/james-orcales/shared/io"
@@ -64,7 +65,7 @@ func main() {
 	// One bootstrap, in order: install direnv (everything downstream is driven by
 	// it), sync the dotfiles, install fonts and Neovim, then the Go-toolchain builds
 	// (fzf and this repo's own commands — maddox, m2p, sloc), the cargo builds (rust,
-	// fish, jj, ripgrep, fd), and finally Ghostty — the one network download — last,
+	// jj, ripgrep, fd), and finally Ghostty — the one network download — last,
 	// so a cheaper earlier failure surfaces before heavy work.
 	os.Exit(setup.Bootstrap(&setup.Bootstrap_Input{
 		Stdout: os.Stdout,
@@ -78,7 +79,6 @@ func main() {
 			{Name: "m2p", Run: m2p_step(home, spawn)},
 			{Name: "sloc", Run: sloc_step(home, spawn)},
 			{Name: "rust", Run: rust_step(home, spawn)},
-			{Name: "fish", Run: fish_step(home, spawn)},
 			{Name: "jj", Run: jj_step(home, spawn)},
 			{Name: "ripgrep", Run: ripgrep_step(home, spawn)},
 			{Name: "fd", Run: fdcli_step(home, spawn)},
@@ -194,7 +194,7 @@ func neovim_step(home string, spawn setup.Spawn) (run func() (status_code int)) 
 // Returns the bootstrap step that builds fzf from the vendored source with the Go
 // toolchain straight into home/.local/bin. fzf is a Go binary, so the build output
 // is the install; it only needs the Go toolchain, not cargo, so it runs before the
-// rust and fish steps.
+// rust step.
 func fzf_step(home string, spawn setup.Spawn) (run func() (status_code int)) {
 	repository := filepath.Join(home, repository_subpath)
 	return func() (status_code int) {
@@ -267,24 +267,9 @@ func rust_step(home string, spawn setup.Spawn) (run func() (status_code int)) {
 	}
 }
 
-// Returns the bootstrap step that builds fish from the vendored source with cargo
-// and installs it into home/.local/bin — the user-facing layer alongside Neovim,
-// not the repo .local/bin that holds dev tools. cargo reads CARGO_HOME from the
-// .envrc environment and installs into the binary directory via --root.
-func fish_step(home string, spawn setup.Spawn) (run func() (status_code int)) {
-	repository := filepath.Join(home, repository_subpath)
-	return func() (status_code int) {
-		return setup.Install_Fish(&setup.Install_Fish_Input{
-			Fish_Directory:   filepath.Join(repository, "third_party", "fish-shell"),
-			Binary_Directory: filepath.Join(repository, "home", ".local", "bin"),
-			Shell:            step_shell(spawn),
-		})
-	}
-}
-
 // Returns the bootstrap step that builds jj from the vendored workspace with cargo
-// and installs it into home/.local/bin — a user-facing program alongside Neovim and
-// fish, not the repo .local/bin that holds the dev toolchain.
+// and installs it into home/.local/bin — a user-facing program alongside Neovim,
+// not the repo .local/bin that holds the dev toolchain.
 func jj_step(home string, spawn setup.Spawn) (run func() (status_code int)) {
 	repository := filepath.Join(home, repository_subpath)
 	return func() (status_code int) {
@@ -427,19 +412,44 @@ func run_command(spawn setup.Spawn) (run func(name string, arguments []string) (
 	}
 }
 
-// Returns a predicate reporting whether a path under directory is gitignored, backed by
-// `git check-ignore` run through the loop. A non-zero exit — not ignored, or a git error
-// such as no repository or git missing — reports not-ignored, so a file still syncs rather
-// than silently vanishing.
+// Returns a predicate classifying a batch of paths under directory by whether each is
+// gitignored, backed by one `git check-ignore --stdin` run through the loop. The paths are
+// fed on stdin — not as arguments — so a whole tree level fits without risking ARG_MAX, and
+// the single spawn replaces the per-path spawn that made a large scan crawl through hundreds
+// of sequential git processes. check-ignore prints each ignored path it was handed; anything
+// it does not print — including on a git error such as no repository or git missing, which
+// prints nothing — is treated as not ignored, so a file still syncs rather than silently
+// vanishing.
 func git_ignores(
 	spawn setup.Spawn, directory string,
-) (is_ignored func(relative_path string) (ignored bool)) {
-	return func(relative_path string) (ignored bool) {
-		target := filepath.Join(directory, relative_path)
+) (is_ignored func(relative_paths []string) (ignored map[string]bool)) {
+	return func(relative_paths []string) (ignored map[string]bool) {
+		ignored = map[string]bool{}
+		if len(relative_paths) == 0 {
+			return ignored
+		}
+		targets := make([]string, len(relative_paths))
+		for index, relative := range relative_paths {
+			targets[index] = filepath.Join(directory, relative)
+		}
 		result := spawn(sysio.Process_Request{
 			Path:      "git",
-			Arguments: []string{"-C", directory, "check-ignore", "--quiet", target},
+			Arguments: []string{"-C", directory, "check-ignore", "--stdin"},
+			Input:     []byte(strings.Join(targets, "\n") + "\n"),
 		})
-		return result.Exit == 0
+		// The output echoes each ignored input path verbatim, one per line, so map those
+		// printed lines back to the relative paths the caller asked about.
+		printed := map[string]bool{}
+		for _, line := range strings.Split(string(result.Output), "\n") {
+			if line != "" {
+				printed[line] = true
+			}
+		}
+		for index, target := range targets {
+			if printed[target] {
+				ignored[relative_paths[index]] = true
+			}
+		}
+		return ignored
 	}
 }

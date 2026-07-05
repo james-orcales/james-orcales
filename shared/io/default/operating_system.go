@@ -24,10 +24,10 @@ import (
 // syscalls without an unbounded buffer.
 const poll_events_max = 64
 
-// Operating_system_tick bounds each Run_Until pump step: the loop blocks at most this
-// long waiting for real events before re-checking done, so the pump neither spins nor
-// oversleeps.
-const operating_system_tick = 10 * time.MILLISECOND
+// Poll_forever, passed as an idle gap, blocks the readiness poll until an event arrives rather
+// than for a fixed span — the unbounded wait a run with no deadline needs, so the loop sleeps
+// exactly until there is work instead of waking on an interval.
+const poll_forever time.Moment = -1
 
 // Bounds one wake-pipe drain so a flood of pokes cannot spin the loop.
 const wake_drain_passes_max = 16
@@ -75,9 +75,11 @@ type poll_ready struct {
 type socket_operation struct {
 	// Completion is the caller-owned completion this operation belongs to.
 	Completion *io.Completion
-	// Perform runs the non-blocking syscall and fires the callback, returning false
-	// when the syscall reported EAGAIN so the operation stays armed.
-	Perform func() (done bool)
+	// Perform runs the non-blocking syscall. On EAGAIN it returns false with a nil deliver
+	// so the operation stays armed. On completion it returns true and a deliver closure the
+	// loop calls only after it has retired this waiter — so a callback that arms a new op on
+	// the same descriptor (a send inside a connect completion) is not deleted by the retire.
+	Perform func() (done bool, deliver func())
 }
 
 // Holds the host backend's state: the injected clock, the timeout and completion
@@ -521,14 +523,66 @@ func operating_system_run_until(
 ) (completed bool) {
 	deadline := state.Host.Now_Monotonic() + time.Moment(timeout)
 	for !done() {
-		if timeout >= 0 {
-			if state.Host.Now_Monotonic() >= deadline {
-				return false
-			}
+		operating_system_signals(state)
+		operating_system_compute(state)
+		operating_system_expire(state)
+		operating_system_flush_completed(state)
+		// Re-check done after draining, before idling: an op that finished inline is done
+		// here, so it returns at once rather than sleeping out a poll it does not need.
+		if done() {
+			return true
 		}
-		operating_system_run_for(state, operating_system_tick)
+		if timeout < 0 {
+			operating_system_wait(state)
+			continue
+		}
+		now := state.Host.Now_Monotonic()
+		if now >= deadline {
+			return false
+		}
+		operating_system_idle(state, operating_system_wake(state, deadline)-now)
 	}
 	return true
+}
+
+// Blocks until the next event during an unbounded run: the nearest pending timeout, or the
+// readiness poll itself when only sockets are pending — the run sleeps exactly until there is
+// work, never on an interval. A signal watcher still caps the wait, since a delivered signal
+// lands on a channel that does not wake the poll.
+func operating_system_wait(state *operating_system) {
+	// A callback during the drain may have queued an inline op: flush it before blocking, so
+	// the loop never sleeps while ready work is already waiting.
+	if len(state.Completed) > 0 {
+		return
+	}
+	if len(state.Timeouts) > 0 {
+		operating_system_idle(state, state.Timeouts[0].Ready_At-state.Host.Now_Monotonic())
+		return
+	}
+	// Nothing pending can ever flip done under an unbounded run: fail loud rather than block
+	// forever, since awaiting a predicate no event can satisfy is a deadlock, not a wait.
+	if !operating_system_in_flight(state) {
+		panic("io: Run_Until would block forever with no operation pending")
+	}
+	operating_system_poll_ensure(state)
+	operating_system_poll(state, int64(operating_system_signal_cap(state, poll_forever)))
+}
+
+// Reports whether an operation is in flight that could complete and flip an unbounded run's
+// predicate: a socket op armed on the poll, a signal watch, or the compute pool a worker pokes
+// the wake pipe from. The caller has already ruled out ready completions and pending timeouts.
+// It is conservative — a compute pool that has run stays counted, since a worker may still poke.
+func operating_system_in_flight(state *operating_system) (in_flight bool) {
+	if len(state.Read_Waiters) > 0 {
+		return true
+	}
+	if len(state.Write_Waiters) > 0 {
+		return true
+	}
+	if len(state.Signal_Waiters) > 0 {
+		return true
+	}
+	return state.Wake_Active
 }
 
 // Runs pump as the top-level drive, panicking if a drive is already in progress so a Run*
@@ -596,6 +650,11 @@ func operating_system_signal_cap(
 		return gap
 	}
 	interval := time.Moment(signal_poll_interval)
+	// A negative (unbounded) gap must still be capped, or a delivered signal — which does not
+	// wake the poll — would go unseen until the next socket event.
+	if gap < 0 {
+		return interval
+	}
 	if gap > interval {
 		return interval
 	}
@@ -646,8 +705,11 @@ func operating_system_poll(state *operating_system, timeout_ns int64) {
 	}
 }
 
-// Runs the operation waiting on descriptor in the given direction; on completion it
-// drops the waiter and disarms the poll, leaving it armed on EAGAIN.
+// Runs the operation waiting on descriptor in the given direction; on completion it drops
+// the waiter and disarms the poll, then delivers the callback, leaving it armed on EAGAIN.
+// Retiring the waiter before delivering is what lets a callback re-arm the same descriptor:
+// a send armed inside a connect completion survives because the connect waiter is already
+// gone by the time the callback runs (mirroring the sim, which dequeues before it delivers).
 func operating_system_dispatch(state *operating_system, descriptor int, writable bool) {
 	waiters := state.Read_Waiters
 	if writable {
@@ -657,11 +719,13 @@ func operating_system_dispatch(state *operating_system, descriptor int, writable
 	if operation == nil {
 		return
 	}
-	if !operation.Perform() {
+	done, deliver := operation.Perform()
+	if !done {
 		return
 	}
 	delete(waiters, descriptor)
 	poll_file_disarm(state.Poll, descriptor, writable)
+	deliver()
 }
 
 // Lazily creates the readiness poll on the first socket operation, so file-only and
@@ -702,13 +766,12 @@ func operating_system_accept(
 	completion.Callback = func() { callback(completion, 0, io.Cancelled) }
 	state.Read_Waiters[descriptor] = &socket_operation{
 		Completion: completion,
-		Perform: func() (done bool) {
+		Perform: func() (done bool, deliver func()) {
 			accepted, again, err := socket_accept(descriptor)
 			if again {
-				return false
+				return false, nil
 			}
-			callback(completion, io.File(accepted), err)
-			return true
+			return true, func() { callback(completion, io.File(accepted), err) }
 		},
 	}
 	poll_file_arm(state.Poll, descriptor, false)
@@ -730,9 +793,10 @@ func operating_system_connect(
 	completion.Callback = func() { callback(completion, 0, io.Cancelled) }
 	state.Write_Waiters[descriptor] = &socket_operation{
 		Completion: completion,
-		Perform: func() (done bool) {
-			callback(completion, io.File(descriptor), socket_connect_error(descriptor))
-			return true
+		Perform: func() (done bool, deliver func()) {
+			socket := io.File(descriptor)
+			err := socket_connect_error(descriptor)
+			return true, func() { callback(completion, socket, err) }
 		},
 	}
 	poll_file_arm(state.Poll, descriptor, true)
@@ -752,13 +816,12 @@ func operating_system_receive(
 	completion.Callback = func() { callback(completion, 0, io.Cancelled) }
 	state.Read_Waiters[descriptor] = &socket_operation{
 		Completion: completion,
-		Perform: func() (done bool) {
+		Perform: func() (done bool, deliver func()) {
 			count, again, err := socket_receive(descriptor, buffer)
 			if again {
-				return false
+				return false, nil
 			}
-			callback(completion, count, err)
-			return true
+			return true, func() { callback(completion, count, err) }
 		},
 	}
 	poll_file_arm(state.Poll, descriptor, false)
@@ -778,13 +841,12 @@ func operating_system_send(
 	completion.Callback = func() { callback(completion, 0, io.Cancelled) }
 	state.Write_Waiters[descriptor] = &socket_operation{
 		Completion: completion,
-		Perform: func() (done bool) {
+		Perform: func() (done bool, deliver func()) {
 			count, again, err := socket_send(descriptor, buffer)
 			if again {
-				return false
+				return false, nil
 			}
-			callback(completion, count, err)
-			return true
+			return true, func() { callback(completion, count, err) }
 		},
 	}
 	poll_file_arm(state.Poll, descriptor, true)
@@ -1115,14 +1177,15 @@ func operating_system_accept_secure(
 	completion.Callback = func() { callback(completion, 0, io.Cancelled) }
 	state.Read_Waiters[descriptor] = &socket_operation{
 		Completion: completion,
-		Perform: func() (done bool) {
+		Perform: func() (done bool, deliver func()) {
 			accepted, again, err := socket_accept(descriptor)
 			if again {
-				return false
+				return false, nil
 			}
-			operating_system_secure_accepted(
-				state, completion, callback, accepted, err, certificate)
-			return true
+			return true, func() {
+				operating_system_secure_accepted(
+					state, completion, callback, accepted, err, certificate)
+			}
 		},
 	}
 	poll_file_arm(state.Poll, descriptor, false)

@@ -53,6 +53,20 @@ func Test_Operating_System_IO_Read(t *testing.T) {
 	}
 }
 
+// Test_Operating_System_IO_Run_Until_Deadlock verifies an unbounded Run_Until with no operation
+// pending fails loud rather than blocking forever: a predicate no event can flip is a deadlock,
+// so the pump panics instead of hanging the caller.
+func Test_Operating_System_IO_Run_Until_Deadlock(t *testing.T) {
+	clock, _ := timeos.New_Operating_System_Clock()
+	_, driver := iodefault.New_Operating_System_IO(clock)
+	defer func() {
+		if recover() == nil {
+			t.Fatal("an unbounded Run_Until with nothing pending must panic")
+		}
+	}()
+	driver.Run_Until(func() (finished bool) { return false }, io.FOREVER)
+}
+
 // Test_Operating_System_IO_Timeout verifies a timeout fires once real time passes
 // its deadline.
 func Test_Operating_System_IO_Timeout(t *testing.T) {
@@ -153,6 +167,69 @@ func Test_Operating_System_IO_Socket(t *testing.T) {
 	}
 	if string(buffer[:4]) != "ping" {
 		t.Fatalf("received %q, want ping", buffer[:4])
+	}
+}
+
+// Test_Operating_System_IO_Send_In_Connect_Completion arms a send from inside the connect
+// completion — the send shares the connected descriptor's write-waiter slot with the connect
+// it is armed within. The loop must retire the connect waiter before delivering its callback,
+// or the send is deleted the instant it is armed and never fires (the ClickHouse-daemon bug).
+func Test_Operating_System_IO_Send_In_Connect_Completion(t *testing.T) {
+	port := free_port(t)
+	clock, _ := timeos.New_Operating_System_Clock()
+	loop, driver := iodefault.New_Operating_System_IO(clock)
+
+	listener, listen_err := loop.Listen("127.0.0.1", port)
+	if listen_err != nil {
+		t.Fatalf("listen: %v", listen_err)
+	}
+	accepted := io.File(-1)
+	var accept_completion io.Completion
+	loop.Accept(&accept_completion, func(_ *io.Completion, socket io.File, err error) {
+		if err != nil {
+			t.Errorf("accept: %v", err)
+		}
+		accepted = socket
+	}, listener)
+
+	sent := -1
+	var send_completion io.Completion
+	var connect_completion io.Completion
+	loop.Connect(&connect_completion, func(_ *io.Completion, socket io.File, err error) {
+		if err != nil {
+			t.Errorf("connect: %v", err)
+			return
+		}
+		// Arm the send inside the connect completion: same descriptor, same write slot.
+		loop.Send(&send_completion, func(_ *io.Completion, count int, send_err error) {
+			if send_err != nil {
+				t.Errorf("send: %v", send_err)
+			}
+			sent = count
+		}, socket, []byte("ping"))
+	}, "127.0.0.1", port)
+
+	driver.Run_Until(func() (finished bool) { return sent >= 0 }, real_deadline)
+	if sent != 4 {
+		t.Fatalf("send armed in the connect completion delivered %d bytes, want 4", sent)
+	}
+
+	driver.Run_Until(func() (finished bool) { return accepted > 0 }, real_deadline)
+	buffer := make([]byte, 16)
+	received := -1
+	var receive_completion io.Completion
+	loop.Receive(&receive_completion, func(_ *io.Completion, count int, receive_err error) {
+		if receive_err != nil {
+			t.Errorf("receive: %v", receive_err)
+		}
+		received = count
+	}, accepted, buffer)
+	driver.Run_Until(func() (finished bool) { return received >= 0 }, real_deadline)
+	if received != 4 {
+		t.Fatalf("peer received %d bytes, want 4", received)
+	}
+	if string(buffer[:4]) != "ping" {
+		t.Fatalf("peer received %q, want ping", buffer[:4])
 	}
 }
 

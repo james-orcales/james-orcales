@@ -116,7 +116,9 @@ func Test_Main_Applies_Macos_Defaults(t *testing.T) {
 	if !ran_contains(ran, []string{"killall", "Dock"}) {
 		t.Fatal("expected killall Dock to run")
 	}
-	if log.String() != "" {
+	// The 35 defaults commands must not each print a line; the dotfiles scan narrates
+	// itself, so assert the absence of per-command noise rather than an empty log.
+	if strings.Contains(log.String(), "defaults") {
 		t.Fatalf("expected no per-command logging, got %q", log.String())
 	}
 	clock := []string{
@@ -154,6 +156,88 @@ func Test_Main_Skips_Macos_Defaults_Off_Darwin(t *testing.T) {
 	}
 	if run_count != 0 {
 		t.Fatalf("expected no commands off darwin, got %d", run_count)
+	}
+}
+
+// Test_Main_Narrates_The_Scan verifies Main announces each source directory as the
+// walk reads it, so a long silent scan of a large tree — one gitignore probe per
+// entry — shows progress instead of looking hung, and reports an up-to-date tree
+// when it writes nothing.
+func Test_Main_Narrates_The_Scan(t *testing.T) {
+	t.Parallel()
+	loop, driver, _ := sysio.New_Sim(0)
+	// A nested directory, so the walk reads past the root and narrates more than one line.
+	if make_err := loop.Make_Directory(test_source); make_err != nil {
+		t.Fatalf("make source: %v", make_err)
+	}
+	if make_err := loop.Make_Directory(test_source + "/nested"); make_err != nil {
+		t.Fatalf("make nested: %v", make_err)
+	}
+	log := &bytes.Buffer{}
+	status := setup.Main(&setup.Main_Input{
+		File_System:           setup.File_System{Loop: loop, Run_Until: driver.Run_Until},
+		Source_Directory:      test_source,
+		Destination_Directory: test_home,
+		Operating_System:      "linux",
+		Run_Command: func(name string, arguments []string) (err error) {
+			return nil
+		},
+		Stdout: log,
+		Stderr: io.Discard,
+	})
+	if status != 0 {
+		t.Fatalf("expected success, got status %d", status)
+	}
+	for _, want := range []string{
+		"setup: dotfiles: scanning .\n",
+		"setup: dotfiles: scanning nested\n",
+		"setup: dotfiles: already up to date\n",
+	} {
+		if !strings.Contains(log.String(), want) {
+			t.Fatalf("expected the scan to narrate %q, got %q", want, log.String())
+		}
+	}
+}
+
+// Test_Main_Probes_Ignore_In_One_Batch verifies the walk classifies a directory's
+// entries with a single Is_Ignored call carrying them all, not one call per entry —
+// the property that turns ~600 sequential git spawns into one probe per tree level.
+func Test_Main_Probes_Ignore_In_One_Batch(t *testing.T) {
+	t.Parallel()
+	loop, driver, _ := sysio.New_Sim(0)
+	// Three sibling directories under the root, so a batched probe of the root sees
+	// all three at once while a per-entry probe would see one at a time.
+	for _, directory := range []string{
+		test_source, test_source + "/a", test_source + "/b", test_source + "/c",
+	} {
+		if make_err := loop.Make_Directory(directory); make_err != nil {
+			t.Fatalf("make %s: %v", directory, make_err)
+		}
+	}
+	batches := [][]string{}
+	status := setup.Main(&setup.Main_Input{
+		File_System:           setup.File_System{Loop: loop, Run_Until: driver.Run_Until},
+		Source_Directory:      test_source,
+		Destination_Directory: test_home,
+		Operating_System:      "linux",
+		Run_Command: func(name string, arguments []string) (err error) {
+			return nil
+		},
+		Is_Ignored: func(relative_paths []string) (ignored map[string]bool) {
+			batches = append(batches, append([]string{}, relative_paths...))
+			return nil
+		},
+		Stdout: io.Discard,
+		Stderr: io.Discard,
+	})
+	if status != 0 {
+		t.Fatalf("expected success, got status %d", status)
+	}
+	if len(batches) == 0 {
+		t.Fatal("expected the walk to probe ignores at least once")
+	}
+	if len(batches[0]) != 3 {
+		t.Fatalf("expected the root's three entries probed in one batch, got %v", batches)
 	}
 }
 
@@ -502,71 +586,6 @@ func Test_Install_Rust_Reports_An_Install_Failure(t *testing.T) {
 	})
 	if status == 0 {
 		t.Fatal("expected a non-zero status on install failure")
-	}
-}
-
-// Test_Install_Fish_Skips_Build_When_Already_Built verifies that when the fish
-// binary in the bin directory already reports the wanted version, the build is
-// skipped — proving the gate probes the installed binary, so nothing recompiles.
-func Test_Install_Fish_Skips_Build_When_Already_Built(t *testing.T) {
-	t.Parallel()
-	commands := []sysio.Process_Request{}
-	status := setup.Install_Fish(&setup.Install_Fish_Input{
-		Fish_Directory:   test_fish_directory,
-		Binary_Directory: test_link_directory,
-		Shell: recording_shell(&commands, map[string]string{
-			test_link_directory + "/fish": "fish, version 4.7.1\n",
-		}, 0),
-	})
-	if status != 0 {
-		t.Fatalf("expected success, got status %d", status)
-	}
-	if builds := commands_named(commands, "sh"); len(builds) != 0 {
-		t.Fatalf("expected no build when already built, ran %v", builds)
-	}
-	if links := commands_named(commands, "ln"); len(links) != 0 {
-		t.Fatalf("expected no symlink; fish installs in place, ran %v", links)
-	}
-}
-
-// Test_Install_Fish_Builds_When_Absent verifies that when no fish at the wanted
-// version is present, cargo builds and installs it into the bin directory with
-// --root, and no symlink is created.
-func Test_Install_Fish_Builds_When_Absent(t *testing.T) {
-	t.Parallel()
-	commands := []sysio.Process_Request{}
-	status := setup.Install_Fish(&setup.Install_Fish_Input{
-		Fish_Directory:   test_fish_directory,
-		Binary_Directory: test_link_directory,
-		Shell:            recording_shell(&commands, nil, 0),
-	})
-	if status != 0 {
-		t.Fatalf("expected success, got status %d", status)
-	}
-	builds := commands_named(commands, "sh")
-	if len(builds) != 1 {
-		t.Fatalf("expected one build command, ran %d", len(builds))
-	}
-	if !strings.Contains(strings.Join(builds[0].Arguments, " "), "--root") {
-		t.Fatalf("expected cargo install --root, ran %v", builds[0].Arguments)
-	}
-	if links := commands_named(commands, "ln"); len(links) != 0 {
-		t.Fatalf("expected no symlink; fish installs in place, ran %v", links)
-	}
-}
-
-// Test_Install_Fish_Reports_A_Build_Failure verifies a failing build reports a
-// non-zero exit code.
-func Test_Install_Fish_Reports_A_Build_Failure(t *testing.T) {
-	t.Parallel()
-	commands := []sysio.Process_Request{}
-	status := setup.Install_Fish(&setup.Install_Fish_Input{
-		Fish_Directory:   test_fish_directory,
-		Binary_Directory: test_link_directory,
-		Shell:            recording_shell(&commands, nil, 1),
-	})
-	if status == 0 {
-		t.Fatal("expected a non-zero status on build failure")
 	}
 }
 
@@ -1016,10 +1035,6 @@ const test_link_directory = "/link"
 // The fixed absolute direnv source directory the Install_Direnv tests build from; a
 // constant keeps the expected build paths deterministic.
 const test_direnv_directory = "/direnv-src"
-
-// The fixed absolute fish source directory the Install_Fish tests build from; a
-// constant keeps the expected build paths deterministic.
-const test_fish_directory = "/fish"
 
 // The fixed absolute fzf source directory the Install_Fzf tests build from; a
 // constant keeps the expected build paths deterministic.

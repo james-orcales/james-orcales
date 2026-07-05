@@ -94,9 +94,22 @@ func harness_run_command(name string, arguments []string) (err error) {
 	return nil
 }
 
-// Reports whether a source path is the destination root or the ignored subtree — pruned so
-// the mirror neither copies into itself nor syncs the ignored entry.
-func harness_ignore(relative string) (ignored bool) {
+// Classifies a batch of source paths, returning the set that is the destination root or the
+// ignored subtree — pruned so the mirror neither copies into itself nor syncs the ignored
+// entry. Batched to match the Is_Ignored seam the mirror now calls once per tree level.
+func harness_ignore(relatives []string) (ignored map[string]bool) {
+	ignored = map[string]bool{}
+	for _, relative := range relatives {
+		if harness_ignores_one(relative) {
+			ignored[relative] = true
+		}
+	}
+	return ignored
+}
+
+// Reports whether one source path is the destination root or the ignored subtree, the
+// per-path rule the harness's own walk shares with the batched predicate.
+func harness_ignores_one(relative string) (ignored bool) {
 	if relative == harness_destination {
 		return true
 	}
@@ -155,7 +168,7 @@ func harness_source_files(system *setup.File_System) (relatives []string) {
 		}
 		for _, entry := range entries {
 			relative := filepath.Join(directory, entry.Name)
-			if harness_ignore(relative) {
+			if harness_ignores_one(relative) {
 				continue
 			}
 			if entry.Is_Directory {
