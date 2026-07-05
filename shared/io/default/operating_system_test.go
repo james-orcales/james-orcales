@@ -53,6 +53,20 @@ func Test_Operating_System_IO_Read(t *testing.T) {
 	}
 }
 
+// Test_Operating_System_IO_Run_Until_Deadlock verifies an unbounded Run_Until with no operation
+// pending fails loud rather than blocking forever: a predicate no event can flip is a deadlock,
+// so the pump panics instead of hanging the caller.
+func Test_Operating_System_IO_Run_Until_Deadlock(t *testing.T) {
+	clock, _ := timeos.New_Operating_System_Clock()
+	_, driver := iodefault.New_Operating_System_IO(clock)
+	defer func() {
+		if recover() == nil {
+			t.Fatal("an unbounded Run_Until with nothing pending must panic")
+		}
+	}()
+	driver.Run_Until(func() (finished bool) { return false }, io.FOREVER)
+}
+
 // Test_Operating_System_IO_Timeout verifies a timeout fires once real time passes
 // its deadline.
 func Test_Operating_System_IO_Timeout(t *testing.T) {

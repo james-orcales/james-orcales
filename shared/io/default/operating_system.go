@@ -550,12 +550,39 @@ func operating_system_run_until(
 // work, never on an interval. A signal watcher still caps the wait, since a delivered signal
 // lands on a channel that does not wake the poll.
 func operating_system_wait(state *operating_system) {
+	// A callback during the drain may have queued an inline op: flush it before blocking, so
+	// the loop never sleeps while ready work is already waiting.
+	if len(state.Completed) > 0 {
+		return
+	}
 	if len(state.Timeouts) > 0 {
 		operating_system_idle(state, state.Timeouts[0].Ready_At-state.Host.Now_Monotonic())
 		return
 	}
+	// Nothing pending can ever flip done under an unbounded run: fail loud rather than block
+	// forever, since awaiting a predicate no event can satisfy is a deadlock, not a wait.
+	if !operating_system_in_flight(state) {
+		panic("io: Run_Until would block forever with no operation pending")
+	}
 	operating_system_poll_ensure(state)
 	operating_system_poll(state, int64(operating_system_signal_cap(state, poll_forever)))
+}
+
+// Reports whether an operation is in flight that could complete and flip an unbounded run's
+// predicate: a socket op armed on the poll, a signal watch, or the compute pool a worker pokes
+// the wake pipe from. The caller has already ruled out ready completions and pending timeouts.
+// It is conservative — a compute pool that has run stays counted, since a worker may still poke.
+func operating_system_in_flight(state *operating_system) (in_flight bool) {
+	if len(state.Read_Waiters) > 0 {
+		return true
+	}
+	if len(state.Write_Waiters) > 0 {
+		return true
+	}
+	if len(state.Signal_Waiters) > 0 {
+		return true
+	}
+	return state.Wake_Active
 }
 
 // Runs pump as the top-level drive, panicking if a drive is already in progress so a Run*
