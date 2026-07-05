@@ -110,12 +110,14 @@ type Directory_Entry struct {
 }
 
 // File_Status is what a stat reports: whether the path exists, and if so whether it is a
-// directory — metadata a mirror consults before it reads or writes.
+// directory and its byte length — metadata a mirror consults before it reads or writes.
 type File_Status struct {
 	// Exists reports whether the path is present; an absent path is not an error.
 	Exists bool
 	// Is_Directory reports whether an existing path is a directory rather than a file.
 	Is_Directory bool
+	// Size is the file's length in bytes, zero for a directory or an absent path.
+	Size int64
 }
 
 // Cancelled is the error a callback receives when its operation was cancelled before
@@ -294,8 +296,9 @@ type IO struct {
 	// the loop, so it carries no Completion; each entry names a child and whether it is
 	// itself a directory.
 	Read_Directory func(path string) (entries []Directory_Entry, err error)
-	// Status reports whether path exists and is a directory, synchronously; an absent path
-	// is Exists false with a nil error, so a caller branches on the status, not the error.
+	// Status reports whether path exists, whether it is a directory, and its byte size,
+	// synchronously; an absent path is Exists false with a nil error, so a caller branches on
+	// the status, not the error.
 	Status func(path string) (status File_Status, err error)
 	// Make_Directory creates path and any missing parents synchronously; an existing
 	// directory is not an error, so a repeated mkdir converges.
@@ -683,7 +686,11 @@ func sim_status(root *sim_node, path string) (status File_Status) {
 	if !found {
 		return File_Status{}
 	}
-	return File_Status{Exists: true, Is_Directory: node.Directory}
+	return File_Status{
+		Exists:       true,
+		Is_Directory: node.Directory,
+		Size:         int64(len(node.Contents)),
+	}
 }
 
 // Lists path's immediate children sorted by name — sorted so the order is deterministic

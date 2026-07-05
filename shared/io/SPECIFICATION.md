@@ -127,8 +127,9 @@ run reproduces, each entry naming a child and whether it is itself a directory.
 
 ### Status
 
-Status reports synchronously whether a path exists and, if so, whether it is a directory; an
-absent path is not-exists with a nil error, so a caller branches on the status, not an error.
+Status reports synchronously whether a path exists and, if so, whether it is a directory and
+its size in bytes; an absent path is not-exists with a nil error, so a caller branches on the
+status, not an error.
 
 ### Make Directory
 
