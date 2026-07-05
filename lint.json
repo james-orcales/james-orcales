@@ -23,12 +23,8 @@
   ],
   "opt_out_recursion_ban": [],
   "opt_out_assertion_mandate_packages": [
-          "disk_usage/**",
-          "lint/**",
-          "markdown_to_pdf/**",
-          "setup/**",
-          "sloc/**",
-          "shared/**"
+          "**",
+          "!maddox/**"
   ],
   "word_replacements": {
     "len":       [],
