@@ -494,6 +494,23 @@ func Test_Sim_Make_Directory(t *testing.T) {
 	}
 }
 
+// Test_Sim_Cancel_Window_Reuse verifies resubmitting a completion inside the cancel
+// window — after Cancel accepted, before the cancelled delivery fired — panics: the
+// pending delivery still owns the completion, so re-arming it is an edge the lifecycle
+// machine does not have.
+func Test_Sim_Cancel_Window_Reuse(t *testing.T) {
+	loop, _, _ := sim_loop(0)
+	var completion io.Completion
+	loop.Timeout(&completion, func(_ *io.Completion, err error) {}, time.MICROSECOND)
+	loop.Cancel(&completion)
+	defer func() {
+		if recover() == nil {
+			t.Fatal("resubmitting inside the cancel window must panic")
+		}
+	}()
+	loop.Timeout(&completion, func(_ *io.Completion, err error) {}, time.MICROSECOND)
+}
+
 // Builds a simulated loop, its driver, and the read-only clock, seeded by seed. A test
 // holds only the IO, the driver, and the clock — never the sim, which New_Sim keeps to
 // itself so the run stays a pure function of the seed.

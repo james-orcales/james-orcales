@@ -14,6 +14,7 @@ import (
 	"strconv"
 	"strings"
 
+	invariant "local/james-orcales/shared/invariant/default"
 	"local/james-orcales/shared/prng"
 	"local/james-orcales/shared/time"
 )
@@ -149,18 +150,117 @@ type Completion struct {
 	// Ready_At is the virtual Moment this operation completes, mirroring
 	// TigerBeetle's Storage.Read.ready_at.
 	Ready_At time.Moment
-	// Cancelled marks that Cancel reached this operation before it fired; the backend's
-	// Callback then delivers the Cancelled error instead of a result. Reset on submit.
+	// Cancelled is the delivery payload of the cancelled edge: which error the callback
+	// delivers. Set when Cancel accepts, cleared on submit, read by the delivery closure
+	// at fire time — the machine has already returned to COMPLETION_IDLE when the
+	// callback reads it, so this cannot live in State.
 	Cancelled bool
-	// Armed is set while this completion sits in the queue, cleared when it fires or is
-	// cancelled. sim_submit asserts it clear, so reusing one Completion for a second op
-	// before the first fires panics loudly instead of corrupting the queue.
-	Armed bool
+	// State is the completion's position in its lifecycle machine, mutated only through
+	// Completion_Transition. It is backend-owned: applications never read or write it —
+	// expose your own state, not the completion's.
+	State Completion_State
 	// Self is the completion's own address, stamped on its first submit and never cleared.
 	// The loop tracks an in-flight op by pointer, so a by-value copy carries this original
-	// address; submitting the copy trips sim_submit's assert instead of silently splitting
-	// the loop's view from the caller's. Only sim_submit touches it.
+	// address; submitting the copy trips the backend's assert instead of silently
+	// splitting the loop's view from the caller's. Only the backends touch it.
 	Self *Completion
+}
+
+// Completion_State is one position in a completion's lifecycle machine. The machine has
+// four legal edges — idle to armed on submit, armed to idle on delivery, armed to
+// cancelled on Cancel, cancelled to idle on the cancelled delivery — and every mutation
+// goes through Completion_Transition, so an illegal move panics instead of corrupting a
+// queue.
+type Completion_State int
+
+// COMPLETION_IDLE is the zero value: never submitted, or delivered and reusable. A
+// delivery resets to idle before the callback runs, so a callback may resubmit its own
+// completion — the repeating-timer pattern.
+const COMPLETION_IDLE Completion_State = 0
+
+// COMPLETION_ARMED marks an in-flight operation: submitted and owned by the loop until
+// its delivery or a Cancel.
+const COMPLETION_ARMED Completion_State = 1
+
+// COMPLETION_CANCELLED marks the cancel window: Cancel accepted, the delivery with the
+// Cancelled error still pending. Resubmitting inside the window is an illegal edge.
+const COMPLETION_CANCELLED Completion_State = 2
+
+// Input for Completion_Transition_Legal.
+type Completion_Transition_Legal_Input struct {
+	// From is the state the edge leaves.
+	From Completion_State
+	// To is the state the edge enters.
+	To Completion_State
+}
+
+// Completion_Transition_Legal is the machine's transition table: it reports whether the
+// edge from one state to another exists. A function rather than a table value because Go
+// has no const maps and a package var is banned; the flat one-clause-per-edge shape is
+// the point — the whole graph, readable in one place.
+func Completion_Transition_Legal(input *Completion_Transition_Legal_Input) (legal bool) {
+	if input.From == COMPLETION_IDLE {
+		return input.To == COMPLETION_ARMED
+	}
+	if input.From == COMPLETION_ARMED {
+		if input.To == COMPLETION_IDLE {
+			return true
+		}
+		return input.To == COMPLETION_CANCELLED
+	}
+	if input.From == COMPLETION_CANCELLED {
+		return input.To == COMPLETION_IDLE
+	}
+	return false
+}
+
+// Input for Completion_Transition.
+type Completion_Transition_Input struct {
+	// Completion is the completion being moved along an edge.
+	Completion *Completion
+	// From is the state the caller believes the completion is in.
+	From Completion_State
+	// To is the destination state.
+	To Completion_State
+}
+
+// Completion_Transition moves a completion along one edge of its lifecycle machine. It
+// panics on a caller whose belief about the current state is stale — a reused or
+// double-armed completion — and on an edge the machine does not have, so a lifecycle bug
+// fails at the mutation instead of corrupting the queue. Every transition then records
+// its edge on the io.completion.transition grid: this package's own suite registers the
+// grid through its TestMain, so an edge the sim suite never witnesses fails the run —
+// the graph is enforced by the panics and witnessed by the sweep. Backend code only;
+// applications never transition a completion.
+func Completion_Transition(input *Completion_Transition_Input) {
+	if input.Completion.State != input.From {
+		panic("io: completion transition from a state the caller did not expect")
+	}
+	legal := Completion_Transition_Legal(&Completion_Transition_Legal_Input{
+		From: input.From, To: input.To,
+	})
+	if !legal {
+		panic("io: completion transition along an edge the machine does not have")
+	}
+	input.Completion.State = input.To
+	// Three axes identify each legal edge as one grid cell; the Impossible carves remove
+	// exactly the from-to tuples the legality table forbids, so the demanded grid is the
+	// four legal edges and nothing else.
+	invariant.Dot_Product("io.completion.transition",
+		invariant.Sometimes(input.From == COMPLETION_IDLE, "the edge leaves idle"),
+		invariant.Sometimes(
+			input.From == COMPLETION_CANCELLED, "the edge leaves cancelled"),
+		invariant.Sometimes(input.To == COMPLETION_IDLE, "the edge enters idle"),
+		invariant.Impossible(
+			invariant.Event_True("the edge leaves idle"),
+			invariant.Event_True("the edge leaves cancelled")),
+		invariant.Impossible(
+			invariant.Event_True("the edge leaves idle"),
+			invariant.Event_True("the edge enters idle")),
+		invariant.Impossible(
+			invariant.Event_True("the edge leaves cancelled"),
+			invariant.Event_False("the edge enters idle")),
+	)
 }
 
 // IO is the injected async IO submit surface — TigerBeetle's `IO`. Code submits
@@ -936,14 +1036,15 @@ func sim_now(state *sim) (now time.Moment) {
 }
 
 // Schedules completion to fire at now plus latency and inserts it in Ready_At order.
-// Asserts the completion is its own original (not a by-value copy) and not already armed,
-// so a copied or reused Completion panics loudly. Clears any stale Cancelled mark so a
-// reused completion starts fresh.
+// Asserts the completion is its own original (not a by-value copy), then arms it through
+// the lifecycle machine — a reused in-flight completion panics as the armed-to-armed
+// edge. Clears any stale Cancelled payload so a reused completion starts fresh.
 func sim_submit(state *sim, completion *Completion, latency time.Duration, callback func()) {
 	assert(completion.Self == nil || completion.Self == completion)
-	assert(!completion.Armed)
 	completion.Self = completion
-	completion.Armed = true
+	Completion_Transition(&Completion_Transition_Input{
+		Completion: completion, From: COMPLETION_IDLE, To: COMPLETION_ARMED,
+	})
 	completion.Ready_At = sim_now(state) + time.Moment(latency)
 	completion.Callback = callback
 	completion.Cancelled = false
@@ -961,15 +1062,22 @@ func sim_enqueue(state *sim, completion *Completion) {
 	state.Queue[index] = completion
 }
 
-// Cancels an in-flight completion: if still queued, mark it Cancelled and make it due
-// now so the next drain delivers its callback with the Cancelled error. A completion
-// already fired or never queued is left untouched — cancel is then a harmless no-op.
+// Cancels an in-flight completion: if still armed and queued, move it to the cancelled
+// state and make it due now so the next drain delivers its callback with the Cancelled
+// error. A completion already fired, never queued, or already cancelled is left
+// untouched — cancel is then a harmless no-op.
 func sim_cancel(state *sim, completion *Completion) {
+	if completion.State != COMPLETION_ARMED {
+		return
+	}
 	for index := 0; index < len(state.Queue); index++ {
 		if state.Queue[index] != completion {
 			continue
 		}
 		state.Queue = append(state.Queue[:index], state.Queue[index+1:]...)
+		Completion_Transition(&Completion_Transition_Input{
+			Completion: completion, From: COMPLETION_ARMED, To: COMPLETION_CANCELLED,
+		})
 		completion.Cancelled = true
 		completion.Ready_At = sim_now(state)
 		sim_enqueue(state, completion)
@@ -988,7 +1096,17 @@ func sim_step(state *sim) (advanced bool) {
 	}
 	completion := state.Queue[0]
 	state.Queue = state.Queue[1:]
-	completion.Armed = false
+	// Return to idle before the callback runs — TigerBeetle's ordering — so a callback
+	// may legally resubmit its own completion, the repeating-timer pattern.
+	if completion.State == COMPLETION_CANCELLED {
+		Completion_Transition(&Completion_Transition_Input{
+			Completion: completion, From: COMPLETION_CANCELLED, To: COMPLETION_IDLE,
+		})
+	} else {
+		Completion_Transition(&Completion_Transition_Input{
+			Completion: completion, From: COMPLETION_ARMED, To: COMPLETION_IDLE,
+		})
+	}
 	completion.Callback()
 	return true
 }

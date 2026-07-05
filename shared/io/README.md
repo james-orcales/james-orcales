@@ -384,6 +384,10 @@ func mirror_transition(state *mirror, from, to mirror_state) {
 }
 ```
 
+The live exemplar is the `Completion` machine in `shared/io/io.go` — `Completion_State`,
+`Completion_Transition_Legal`, `Completion_Transition` — enforced identically by both
+backends.
+
 ## 6. Rules of the loop
 
 Each of these fails loudly where the runtime can make it:
