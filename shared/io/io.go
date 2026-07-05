@@ -224,24 +224,21 @@ type Completion_Transition_Input struct {
 	To Completion_State
 }
 
-// Completion_Transition moves a completion along one edge of its lifecycle machine. It
-// panics on a caller whose belief about the current state is stale — a reused or
-// double-armed completion — and on an edge the machine does not have, so a lifecycle bug
-// fails at the mutation instead of corrupting the queue. Every transition then records
-// its edge on the io.completion.transition grid: this package's own suite registers the
-// grid through its TestMain, so an edge the sim suite never witnesses fails the run —
-// the graph is enforced by the panics and witnessed by the sweep. Backend code only;
-// applications never transition a completion.
+// Completion_Transition moves a completion along one edge of its lifecycle machine. Its
+// two Always guards fail loudly on a caller whose belief about the current state is
+// stale — a reused or double-armed completion — and on an edge the machine does not
+// have, so a lifecycle bug dies at the mutation instead of corrupting a queue. Every
+// transition then records its edge on the io.completion.transition grid: this package's
+// own suite registers the grid through its TestMain, so an edge the sim suite never
+// witnesses fails the run — the graph is enforced by the guards and witnessed by the
+// sweep. Backend code only; applications never transition a completion.
 func Completion_Transition(input *Completion_Transition_Input) {
-	if input.Completion.State != input.From {
-		panic("io: completion transition from a state the caller did not expect")
-	}
+	invariant.Always(input.Completion.State == input.From,
+		"A completion transitions from the state its caller expects.")
 	legal := Completion_Transition_Legal(&Completion_Transition_Legal_Input{
 		From: input.From, To: input.To,
 	})
-	if !legal {
-		panic("io: completion transition along an edge the machine does not have")
-	}
+	invariant.Always(legal, "A completion transitions along an edge its machine has.")
 	input.Completion.State = input.To
 	// Three axes identify each legal edge as one grid cell; the Impossible carves remove
 	// exactly the from-to tuples the legality table forbids, so the demanded grid is the
@@ -641,12 +638,6 @@ func sim_spawn(
 
 // Panics on a violated invariant, fail-closed — a tripped assert is always a bug in
 // this package, so the simulation stops loudly instead of corrupting on.
-func assert(ok bool) {
-	if !ok {
-		panic("io: assertion failed")
-	}
-}
-
 // Hands out the next distinct synthetic descriptor.
 func sim_descriptor(state *sim) (file File) {
 	state.Next_File++
@@ -1024,7 +1015,8 @@ func sim_to_driver(state *sim) (driver Driver) {
 // internal per-tick functions call one another directly, not through here, so nested
 // ticking within one drive does not trip it.
 func sim_drive(state *sim, pump func()) {
-	assert(!state.Drive_Active)
+	invariant.Always(!state.Drive_Active,
+		"A drive begins at top level, never from within a completion callback.")
 	state.Drive_Active = true
 	defer func() { state.Drive_Active = false }()
 	pump()
@@ -1040,7 +1032,9 @@ func sim_now(state *sim) (now time.Moment) {
 // the lifecycle machine — a reused in-flight completion panics as the armed-to-armed
 // edge. Clears any stale Cancelled payload so a reused completion starts fresh.
 func sim_submit(state *sim, completion *Completion, latency time.Duration, callback func()) {
-	assert(completion.Self == nil || completion.Self == completion)
+	original := completion.Self == nil || completion.Self == completion
+	invariant.Always(original,
+		"A submitted completion is its own original, never a by-value copy.")
 	completion.Self = completion
 	Completion_Transition(&Completion_Transition_Input{
 		Completion: completion, From: COMPLETION_IDLE, To: COMPLETION_ARMED,

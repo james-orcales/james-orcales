@@ -16,6 +16,7 @@ import (
 	"sync"
 	"syscall"
 
+	invariant "local/james-orcales/shared/invariant/default"
 	"local/james-orcales/shared/io"
 	"local/james-orcales/shared/time"
 )
@@ -210,11 +211,9 @@ func New_Operating_System_IO(host time.Clock) (loop io.IO, driver io.Driver) {
 // and clears the stale Cancelled payload so a reused completion starts fresh. Every op
 // closure calls this first, so the guard cannot be skipped by a new op.
 func operating_system_submit(completion *io.Completion) {
-	if completion.Self != nil {
-		if completion.Self != completion {
-			panic("io: a by-value copy of a completion was submitted")
-		}
-	}
+	original := completion.Self == nil || completion.Self == completion
+	invariant.Always(original,
+		"A submitted completion is its own original, never a by-value copy.")
 	completion.Self = completion
 	io.Completion_Transition(&io.Completion_Transition_Input{
 		Completion: completion, From: io.COMPLETION_IDLE, To: io.COMPLETION_ARMED,
@@ -589,9 +588,8 @@ func operating_system_wait(state *operating_system) {
 	}
 	// Nothing pending can ever flip done under an unbounded run: fail loud rather than block
 	// forever, since awaiting a predicate no event can satisfy is a deadlock, not a wait.
-	if !operating_system_in_flight(state) {
-		panic("io: Run_Until would block forever with no operation pending")
-	}
+	invariant.Always(operating_system_in_flight(state),
+		"An unbounded run holds an operation in flight that can advance it.")
 	operating_system_poll_ensure(state)
 	operating_system_poll(state, int64(operating_system_signal_cap(state, poll_forever)))
 }
@@ -618,9 +616,8 @@ func operating_system_in_flight(state *operating_system) (in_flight bool) {
 // The internal run functions call one another directly, not through here, so a drive's own
 // iteration does not trip it.
 func operating_system_drive(state *operating_system, pump func()) {
-	if state.Drive_Active {
-		panic("io: Run called from within a callback")
-	}
+	invariant.Always(!state.Drive_Active,
+		"A drive begins at top level, never from within a completion callback.")
 	state.Drive_Active = true
 	defer func() { state.Drive_Active = false }()
 	pump()
