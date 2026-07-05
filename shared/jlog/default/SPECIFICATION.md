@@ -1,8 +1,13 @@
 
 # Header Renders Time Level Message
 
-A Console renders a flat jlog line as a header of the timestamp verbatim, the level, and
-the message, in that order, whatever order those keys arrived in on the wire.
+A Console renders a flat jlog line as a header of the timestamp, the level, and the message,
+in that order, whatever order those keys arrived in on the wire.
+
+# Timestamp Drops Fraction
+
+The header timestamp renders to the second: its fractional-second part is dropped, since a
+human reading the console needs no nanosecond granularity, while the JSON line keeps precision.
 
 # Level Is Three Letter Uppercase
 

@@ -770,8 +770,9 @@ func buffer_append_members(
 	destination Buffer, members []member, console Console,
 ) (output Buffer) {
 	// An absent header key and an empty one render the same — nothing — so a plain non-empty
-	// check covers both, and jlog never emits an empty timestamp, level, or message anyway.
-	time_text := member_text(members, console.Time_Field)
+	// check covers both, and jlog never emits an empty timestamp, level, or message anyway. The
+	// timestamp is coarsened to the second here; the tail keeps any Time field's precision.
+	time_text := timestamp_seconds(member_text(members, console.Time_Field))
 	level_text := member_text(members, console.Level_Field)
 	message_text := member_text(members, console.Message_Field)
 	wrote := false
@@ -836,10 +837,11 @@ func buffer_append_separated(destination Buffer, wrote bool) (output Buffer) {
 	return destination
 }
 
-// Appends one logfmt "key=value" pair: the key dimmed, the value logfmt-quoted, and — for the
-// error field — the value painted red so a failure stands out.
+// Appends one logfmt "key=value" pair: the key in cyan so it reads as a label yet stays legible
+// (unlike a dim gray), the value logfmt-quoted, and — for the error field — the value painted red
+// so a failure stands out.
 func buffer_append_field(destination Buffer, field member, console Console) (output Buffer) {
-	destination = buffer_paint(destination, ansi_faint, console.Color, field.Key)
+	destination = buffer_paint(destination, ansi_cyan, console.Color, field.Key)
 	destination = append(destination, '=')
 	value_color := ansi_code("")
 	if field.Key == console.Error_Field {
@@ -937,4 +939,22 @@ func level_color(wire string) (code ansi_code) {
 		return ansi_red
 	}
 	return ""
+}
+
+// Trims an RFC 3339 header timestamp to second precision by dropping its sub-second fraction and
+// keeping the trailing zone, so "…:20.123456789Z" becomes "…:20Z" — a human reading the console
+// needs no nanosecond granularity. A value with no fraction is returned unchanged; only the
+// console display coarsens, never the JSON line.
+func timestamp_seconds(value string) (seconds string) {
+	fraction_offset := strings.IndexByte(value, '.')
+	if fraction_offset < 0 {
+		return value
+	}
+	// The zone is searched absolutely, not relative to the fraction, so the two offsets are
+	// never added: an RFC 3339 UTC value carries exactly one 'Z', the terminal zone marker.
+	zone_offset := strings.IndexByte(value, 'Z')
+	if zone_offset < 0 {
+		return value[:fraction_offset]
+	}
+	return value[:fraction_offset] + value[zone_offset:]
 }

@@ -24,6 +24,15 @@ func Test_Header_Renders_Time_Level_Message(t *testing.T) {
 	assert_output(t, got, "2023-11-14T22:13:20Z INF request done\n")
 }
 
+// Test_Timestamp_Drops_Fraction covers the header timestamp rendering to the second, its
+// nanosecond fraction dropped, while the input line's own precision is untouched.
+func Test_Timestamp_Drops_Fraction(t *testing.T) {
+	got := render(t, false,
+		"{\"level\":\"info\",\"time\":\"2023-11-14T22:13:20.123456789Z\","+
+			"\"message\":\"m\"}\n")
+	assert_output(t, got, "2023-11-14T22:13:20Z INF m\n")
+}
+
 // Test_Level_Is_Three_Letter_Uppercase covers the level tag mapping and, feeding five lines in
 // one Write, the newline split.
 func Test_Level_Is_Three_Letter_Uppercase(t *testing.T) {
@@ -85,7 +94,7 @@ func Test_Error_Value_Is_Red_When_Colored(t *testing.T) {
 		"ERR db timeout error=\"context deadline exceeded\"\n")
 	assert_output(t, render(t, true, line),
 		"\x1b[31mERR\x1b[0m \x1b[1mdb timeout\x1b[0m "+
-			"\x1b[2merror\x1b[0m=\x1b[31m\"context deadline exceeded\"\x1b[0m\n")
+			"\x1b[36merror\x1b[0m=\x1b[31m\"context deadline exceeded\"\x1b[0m\n")
 }
 
 // Test_Message_Is_Bold_When_Colored covers the full colored header: dim timestamp, colored
@@ -96,7 +105,7 @@ func Test_Message_Is_Bold_When_Colored(t *testing.T) {
 			"\"message\":\"request done\",\"method\":\"GET\"}\n")
 	assert_output(t, got,
 		"\x1b[2m2023-11-14T22:13:20Z\x1b[0m \x1b[32mINF\x1b[0m "+
-			"\x1b[1mrequest done\x1b[0m \x1b[2mmethod\x1b[0m=GET\n")
+			"\x1b[1mrequest done\x1b[0m \x1b[36mmethod\x1b[0m=GET\n")
 }
 
 // Test_No_Color_When_Disabled covers a color-off Console emitting no ANSI escape byte.
