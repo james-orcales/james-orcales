@@ -1326,6 +1326,26 @@ func tls_server_certificate(
 	}
 }
 
+// Certificate_Input carries the PEM bytes Certificate assembles into a server certificate.
+type Certificate_Input struct {
+	// Chain is the PEM-encoded certificate chain.
+	Chain []byte
+	// Key is the PEM-encoded private key.
+	Key []byte
+}
+
+// Certificate assembles the opaque server certificate Accept_Secure consumes from a PEM
+// certificate chain and private key — the constructor for the *tls.Certificate behind the
+// any that tls_server_certificate asserts, so a caller builds its cert through this gateway
+// instead of importing crypto/tls itself.
+func Certificate(input *Certificate_Input) (value any, err error) {
+	pair, pair_err := tls.X509KeyPair(input.Chain, input.Key)
+	if pair_err != nil {
+		return nil, pair_err
+	}
+	return &pair, nil
+}
+
 // Handles one TLS request on the connection goroutine, posting the result; returns true
 // when the connection should close.
 func tls_handle(

@@ -8800,30 +8800,40 @@ func io_gateway_import_diagnostics(pf parsed_file) (diags []Diagnostic) {
 	return diags
 }
 
-// Reports whether an import path is raw IO stdlib banned outside the gateway.
+// Reports whether an import path is raw IO stdlib banned outside the gateway. net is not
+// here: it is call-banned by symbol instead, so its pure address helpers stay usable while
+// its dialing, listening, and resolving surface is flagged at the call site.
 func io_gateway_banned_import(import_path string) (banned bool) {
 	switch import_path {
-	case "net", "net/http", "syscall", "os/exec", "bufio", "crypto/tls", "os/signal":
+	case "net/http", "syscall", "os/exec", "bufio", "crypto/tls", "os/signal":
 		return true
 	}
 	return false
 }
 
-// Flags each os file-operation call in one file. Only os is call-banned: net/syscall/
-// os-exec/bufio are import-banned above, and the io helpers operate on injected
-// io.Reader/Writer interfaces (io.ReadFull/io.CopyN are the endorsed bounded reads),
-// not raw OS IO. os.Args/os.Exit/os.Getenv are left alone.
+// Flags each raw-IO call by symbol in one file. os and net are call-banned rather than
+// import-banned: os's file operations and net's dialing/listening/resolving surface are
+// flagged at the call site, while os process access (os.Args/os.Exit/os.Getenv) and net's
+// pure address helpers stay usable. The other stdlib IO packages are import-banned above,
+// and the io helpers operate on injected io.Reader/Writer interfaces (io.ReadFull/io.CopyN
+// are the endorsed bounded reads), not raw OS IO.
 func io_gateway_call_diagnostics(pf parsed_file) (diags []Diagnostic) {
 	operating_system_local := ""
+	network_local := ""
 	for _, implementation := range pf.File.Imports {
 		import_path := strings.Trim(implementation.Path.Value, `"`)
 		if import_path == "os" {
 			operating_system_local = source.Import_Local_Name(
 				implementation, import_path)
 		}
+		if import_path == "net" {
+			network_local = source.Import_Local_Name(implementation, import_path)
+		}
 	}
 	if operating_system_local == "" {
-		return nil
+		if network_local == "" {
+			return nil
+		}
 	}
 	ast.Inspect(pf.File, func(node ast.Node) (recurse bool) {
 		selector, is_selector := node.(*ast.SelectorExpr)
@@ -8834,13 +8844,17 @@ func io_gateway_call_diagnostics(pf parsed_file) (diags []Diagnostic) {
 		if !is_identifier {
 			return true
 		}
-		if identifier.Name != operating_system_local {
+		if identifier.Name == operating_system_local {
+			if io_gateway_banned_operating_system(selector.Sel.Name) {
+				diags = append(diags, io_gateway_call_diagnostic(pf, selector))
+			}
 			return true
 		}
-		if !io_gateway_banned_operating_system(selector.Sel.Name) {
-			return true
+		if identifier.Name == network_local {
+			if !io_gateway_network_pure(selector.Sel.Name) {
+				diags = append(diags, io_gateway_call_diagnostic(pf, selector))
+			}
 		}
-		diags = append(diags, io_gateway_call_diagnostic(pf, selector))
 		return true
 	})
 	return diags
@@ -8867,6 +8881,21 @@ func io_gateway_banned_operating_system(name string) (banned bool) {
 	case "Open", "Create", "ReadFile", "WriteFile",
 		"OpenFile", "Pipe", "DirFS", "NewFile",
 		"Stat", "Lstat", "Mkdir", "MkdirAll":
+		return true
+	}
+	return false
+}
+
+// Reports whether a net symbol is a pure, fd-free helper — address parsing, formatting, and
+// value types that touch no socket, syscall, or resolver. This is a fail-closed allow-list:
+// a symbol not named here is presumed impure and flagged, so net's dialing, listening,
+// resolving, and lookup surface stays banned and a new stdlib addition does not slip through.
+func io_gateway_network_pure(name string) (pure bool) {
+	switch name {
+	case "ParseIP", "ParseCIDR", "ParseMAC",
+		"SplitHostPort", "JoinHostPort", "CIDRMask",
+		"IPv4", "IPv4Mask",
+		"IP", "IPMask", "IPNet", "HardwareAddr":
 		return true
 	}
 	return false

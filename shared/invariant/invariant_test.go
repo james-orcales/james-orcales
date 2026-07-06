@@ -61,6 +61,116 @@ func Test_Dot_Product_Impossible_Combination_Absent_Passes(t *testing.T) {
 	}
 }
 
+// Enforcement memoizes a namespace's bundle SHAPE, never its per-call verdict: the same
+// namespace called first with the forbidden combination absent (no panic) and then with it
+// present must fail on the second call. A cache that stored "no violation" from the first
+// call would wrongly stay silent.
+func Test_Dot_Product_Enforcement_Verdict_Is_Not_Cached(t *testing.T) {
+	recorder := new_test_recorder()
+	forbidden := invariant.Impossible(
+		invariant.Event_True("a"),
+		invariant.Event_True("b"),
+	)
+	absent := recover_message(func() {
+		invariant.Recorder_Dot_Product(recorder, "check",
+			invariant.Recorder_Sometimes(recorder, true, "a"),
+			invariant.Recorder_Sometimes(recorder, false, "b"),
+			forbidden)
+	})
+	if absent != "" {
+		t.Fatalf("first call (combination absent) must not panic, got: %s", absent)
+	}
+	present := recover_message(func() {
+		invariant.Recorder_Dot_Product(recorder, "check",
+			invariant.Recorder_Sometimes(recorder, true, "a"),
+			invariant.Recorder_Sometimes(recorder, true, "b"),
+			forbidden)
+	})
+	if present == "" {
+		t.Fatal("second call (combination present) must panic after a clean first call")
+	}
+}
+
+// Enforcement fires on cached calls, not only the first: a namespace whose forbidden
+// combination is present on two successive calls must panic both times. A cache that enforced
+// only while building its handle would let the second call through.
+func Test_Dot_Product_Enforcement_Fires_On_Cached_Call(t *testing.T) {
+	recorder := new_test_recorder()
+	call := func() (message string) {
+		return recover_message(func() {
+			invariant.Recorder_Dot_Product(recorder, "check",
+				invariant.Recorder_Sometimes(recorder, true, "a"),
+				invariant.Recorder_Sometimes(recorder, true, "b"),
+				invariant.Impossible(
+					invariant.Event_True("a"),
+					invariant.Event_True("b"),
+				))
+		})
+	}
+	if call() == "" {
+		t.Fatal("first call must panic on the forbidden combination")
+	}
+	if call() == "" {
+		t.Fatal("second call must also panic — enforcement is not build-only")
+	}
+}
+
+// A reference naming a non-sibling axis is a typo that panics on EVERY call, not just the
+// first: a cache must never store a partial or invalid handle from a failed build, or a repeat
+// of the same bad bundle would silently pass.
+func Test_Dot_Product_Non_Sibling_Reference_Panics_Every_Call(t *testing.T) {
+	recorder := new_test_recorder()
+	call := func() (message string) {
+		return recover_message(func() {
+			invariant.Recorder_Dot_Product(recorder, "check",
+				invariant.Recorder_Sometimes(recorder, true, "a"),
+				invariant.Impossible(
+					invariant.Event_True("a"),
+					invariant.Event_True("typo"),
+				))
+		})
+	}
+	first := call()
+	if !strings.Contains(first, "typo") {
+		t.Fatalf("first call must panic naming the non-sibling reference, got: %s", first)
+	}
+	second := call()
+	if second != first {
+		t.Fatalf("the typo must panic identically on every call: first=%q second=%q",
+			first, second)
+	}
+}
+
+// A panic names every Impossible violated on the call, in bundle order, and its text is the
+// same whether the resolution is scanned or cached — two forbidden combinations both present
+// yield one panic naming both.
+func Test_Dot_Product_Enforcement_Names_All_Violations_In_Order(t *testing.T) {
+	recorder := new_test_recorder()
+	message := recover_message(func() {
+		invariant.Recorder_Dot_Product(recorder, "check",
+			invariant.Recorder_Sometimes(recorder, true, "a"),
+			invariant.Recorder_Sometimes(recorder, true, "b"),
+			invariant.Recorder_Sometimes(recorder, true, "c"),
+			invariant.Impossible(invariant.Event_True("a"), invariant.Event_True("b")),
+			invariant.Impossible(invariant.Event_True("a"), invariant.Event_True("c")),
+		)
+	})
+	if strings.Count(message, "forbidden combination occurred") != 2 {
+		t.Fatalf("panic must name every violated Impossible, not the first: %s", message)
+	}
+	first_offset := strings.Index(message, "\n  b  ")
+	second_offset := strings.Index(message, "\n  c  ")
+	if first_offset < 0 {
+		t.Fatalf("panic must name violated axis b: %s", message)
+	}
+	if second_offset < 0 {
+		t.Fatalf("panic must name violated axis c: %s", message)
+	}
+	if first_offset > second_offset {
+		t.Fatalf("violations must appear in bundle order (a,b before a,c): %s", message)
+	}
+}
+
 // An element's identity is the author-supplied message it carries — the identity
 // that static registration and the runtime rendezvous on, with no caller lookup.
 func Test_Element_Message_Is_Identity(t *testing.T) {
@@ -1350,5 +1460,96 @@ func Benchmark_Dot_Product_Recording(b *testing.B) {
 		invariant.Recorder_Dot_Product(recorder, "bench",
 			invariant.Recorder_Sometimes(recorder, true, "a"),
 			invariant.Recorder_Sometimes(recorder, false, "b"))
+	}
+}
+
+// Guards the shape a hot _Invariants function actually has — several Sometimes axes plus
+// the pairwise Impossible carves ruling out simultaneous truth — mirroring Metric_Invariants
+// (maddox/internal/maddox.go:3404): 5 Sometimes, 11 Impossible, including the zero/min pair
+// that only ever co-occur because metric_min is 0. Neither existing benchmark above uses an
+// Impossible, so neither exercises this shape; a Dot_Product call that violates nothing must
+// not allocate regardless of how many Impossibles it carries.
+func Test_Dot_Product_Allocates_Nothing_On_Success(t *testing.T) {
+	recorder := new_test_recorder()
+	const metric_min = 0
+	const metric_max = 100
+	value := 0
+	allocs := testing.AllocsPerRun(1000, func() {
+		invariant.Recorder_Dot_Product(recorder, "metric",
+			invariant.Recorder_Sometimes(recorder, value == 0, "zero"),
+			invariant.Recorder_Sometimes(recorder, value == 1, "one"),
+			invariant.Recorder_Sometimes(recorder, value == 2, "two"),
+			invariant.Recorder_Sometimes(recorder, value == metric_min, "min"),
+			invariant.Recorder_Sometimes(recorder, value == metric_max, "max"),
+			invariant.Impossible(
+				invariant.Event_True("zero"), invariant.Event_False("min")),
+			invariant.Impossible(
+				invariant.Event_False("zero"), invariant.Event_True("min")),
+			invariant.Impossible(
+				invariant.Event_True("zero"), invariant.Event_True("one")),
+			invariant.Impossible(
+				invariant.Event_True("zero"), invariant.Event_True("two")),
+			invariant.Impossible(
+				invariant.Event_True("zero"), invariant.Event_True("max")),
+			invariant.Impossible(
+				invariant.Event_True("min"), invariant.Event_True("one")),
+			invariant.Impossible(
+				invariant.Event_True("min"), invariant.Event_True("two")),
+			invariant.Impossible(
+				invariant.Event_True("min"), invariant.Event_True("max")),
+			invariant.Impossible(
+				invariant.Event_True("one"), invariant.Event_True("two")),
+			invariant.Impossible(
+				invariant.Event_True("one"), invariant.Event_True("max")),
+			invariant.Impossible(
+				invariant.Event_True("two"), invariant.Event_True("max")),
+		)
+	})
+	if allocs != 0 {
+		t.Fatalf("Recorder_Dot_Product allocated %v objects/call on success, want 0",
+			allocs)
+	}
+}
+
+// Benchmark_Dot_Product_Impossible_Heavy is the regression guard for
+// Test_Dot_Product_Allocates_Nothing_On_Success: same Metric_Invariants-shaped bundle, run
+// under both the enforcement-only and recording-on paths, so a reintroduced leak shows up in
+// -benchmem on whichever mode is being profiled.
+func Benchmark_Dot_Product_Impossible_Heavy(b *testing.B) {
+	recorder := &invariant.Recorder{}
+	const metric_min = 0
+	const metric_max = 100
+	value := 0
+	b.ReportAllocs()
+	for range b.N {
+		invariant.Recorder_Dot_Product(recorder, "bench",
+			invariant.Recorder_Sometimes(recorder, value == 0, "zero"),
+			invariant.Recorder_Sometimes(recorder, value == 1, "one"),
+			invariant.Recorder_Sometimes(recorder, value == 2, "two"),
+			invariant.Recorder_Sometimes(recorder, value == metric_min, "min"),
+			invariant.Recorder_Sometimes(recorder, value == metric_max, "max"),
+			invariant.Impossible(
+				invariant.Event_True("zero"), invariant.Event_False("min")),
+			invariant.Impossible(
+				invariant.Event_False("zero"), invariant.Event_True("min")),
+			invariant.Impossible(
+				invariant.Event_True("zero"), invariant.Event_True("one")),
+			invariant.Impossible(
+				invariant.Event_True("zero"), invariant.Event_True("two")),
+			invariant.Impossible(
+				invariant.Event_True("zero"), invariant.Event_True("max")),
+			invariant.Impossible(
+				invariant.Event_True("min"), invariant.Event_True("one")),
+			invariant.Impossible(
+				invariant.Event_True("min"), invariant.Event_True("two")),
+			invariant.Impossible(
+				invariant.Event_True("min"), invariant.Event_True("max")),
+			invariant.Impossible(
+				invariant.Event_True("one"), invariant.Event_True("two")),
+			invariant.Impossible(
+				invariant.Event_True("one"), invariant.Event_True("max")),
+			invariant.Impossible(
+				invariant.Event_True("two"), invariant.Event_True("max")),
+		)
 	}
 }

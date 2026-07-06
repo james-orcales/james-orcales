@@ -479,7 +479,7 @@ func Test_Operating_System_IO_TLS(t *testing.T) {
 			t.Errorf("accept secure: %v", err)
 		}
 		server = socket
-	}, listener, func() (value any) { return &certificate })
+	}, listener, func() (value any) { return certificate })
 
 	client := io.File(-1)
 	var connect_completion io.Completion
@@ -544,13 +544,35 @@ ZHsc1EszCqX/J7TUz5qt+EBqZnvDEEjmKA==
 -----END EC PRIVATE KEY-----
 `
 
-// Parses the static test certificate for the TLS loopback test.
-func self_signed(t *testing.T) (certificate tls.Certificate) {
-	pair, err := tls.X509KeyPair([]byte(tls_test_certificate), []byte(tls_test_certificate))
+// Parses the static test certificate for the TLS loopback test through the gateway's
+// own constructor, so the loopback test is also the end-to-end proof that Certificate's
+// output is the value Accept_Secure accepts.
+func self_signed(t *testing.T) (certificate any) {
+	pem := []byte(tls_test_certificate)
+	value, err := iodefault.Certificate(&iodefault.Certificate_Input{Chain: pem, Key: pem})
 	if err != nil {
 		t.Fatal(err)
 	}
-	return pair
+	return value
+}
+
+// Test_Certificate verifies Certificate assembles a *tls.Certificate from PEM chain and
+// key bytes, and reports an error for input that is not a valid key pair.
+func Test_Certificate(t *testing.T) {
+	pem := []byte(tls_test_certificate)
+	value, err := iodefault.Certificate(&iodefault.Certificate_Input{Chain: pem, Key: pem})
+	if err != nil {
+		t.Fatalf("certificate: %v", err)
+	}
+	if _, ok := value.(*tls.Certificate); !ok {
+		t.Fatalf("certificate value = %T, want *tls.Certificate", value)
+	}
+	garbage := []byte("not a pem")
+	_, garbage_err := iodefault.Certificate(
+		&iodefault.Certificate_Input{Chain: garbage, Key: garbage})
+	if garbage_err == nil {
+		t.Fatal("certificate from garbage bytes must error")
+	}
 }
 
 // Test_Operating_System_IO_Spawn runs real commands through the loop: a success with

@@ -94,6 +94,18 @@ type Recorder struct {
 	// and Loads happen once. A plain map (not sync.Map) keeps the read allocation-free.
 	Observe_Cache map[string]*observe_handle
 
+	// Enforce_Cache_Mu guards Enforce_Cache: the first-call build takes the write lock;
+	// the enforcement hot path reads under RLock. The sibling of Observe_Cache_Mu.
+	Enforce_Cache_Mu sync.RWMutex
+	// Enforce_Cache memoizes, per Dot_Product message, each Impossible's references resolved
+	// to sibling-axis positions plus its rendered violation message, so enforcement is
+	// integer-index and boolean compares — never the per-call O(Impossibles x refs x axes)
+	// string scan that resolving references from scratch would be. Enforcement runs in every
+	// mode, so this cache is read on every call, unlike Observe_Cache which only the recording
+	// modes touch. Built lazily; a plain map keyed by the existing message string reads
+	// allocation-free.
+	Enforce_Cache map[string]*enforce_handle
+
 	// Output receives the coverage-gap report and the orphan/bundle diagnostics.
 	Output io.Writer
 	// Exit ends the process with a status code; the composition tier wires it to os.Exit.
@@ -330,56 +342,111 @@ func Recorder_Dot_Product(recorder *Recorder, namespace Namespace, bundle ...Dot
 	if len(bundle) == 0 {
 		panic(ASSERTION_FAILURE_MESSAGE_PREFIX + "Dot_Product has no elements")
 	}
-	dot_product_check_references(bundle)
+	message := string(namespace)
+	handle := recorder_enforce_handle(recorder, message, bundle)
 	var violations []string
-	for _, dot_element := range bundle {
-		violation := dot_element_violation(dot_element, bundle)
-		if violation != "" {
-			violations = append(violations, violation)
+	for _, rule := range handle.Rules {
+		fired := true
+		for _, coordinate := range rule.Coordinates {
+			if bundle[coordinate.Index].Event != coordinate.Event {
+				fired = false
+				break
+			}
+		}
+		if fired {
+			violations = append(violations, rule.Message)
 		}
 	}
 	if len(violations) > 0 {
 		panic(ASSERTION_FAILURE_MESSAGE_PREFIX + strings.Join(violations, "\n"))
 	}
-	recorder_dot_product_observe(recorder, string(namespace), bundle)
+	recorder_dot_product_observe(recorder, message, bundle)
 }
 
-// Panics when an Impossible names a message that is not an axis of this Dot_Product — one of its
-// siblings. A reference can only carve a cell of this product's grid and can only fire against an
-// event observed on this same call, so naming a non-sibling is structurally meaningless; catching
-// it here, before any recording and on every call, surfaces a typo immediately rather than as an
-// unfillable gap — independent of whether the forbidden combination ever occurs. A bundle with no
-// Impossible costs nothing.
-func dot_product_check_references(bundle Bundle) {
-	has_impossible := false
-	for _, dot_element := range bundle {
-		if dot_element.Kind == DOT_ELEMENT_KIND_IMPOSSIBLE {
-			has_impossible = true
-			break
-		}
+// Returns the cached enforce_handle for message, building it on first use. The build resolves
+// every Impossible's references to bundle positions once (and panics on a non-sibling typo);
+// later calls read it under RLock and enforce with index and boolean compares, no string scan.
+// A plain map keyed by the existing message string reads allocation-free. The sibling of
+// recorder_observe_handle, but read in every mode — enforcement is not gated on Is_Test.
+func recorder_enforce_handle(
+	recorder *Recorder, message string, bundle Bundle,
+) (handle *enforce_handle) {
+	recorder.Enforce_Cache_Mu.RLock()
+	handle = recorder.Enforce_Cache[message]
+	recorder.Enforce_Cache_Mu.RUnlock()
+	if handle != nil {
+		return handle
 	}
-	if !has_impossible {
-		return
+	recorder.Enforce_Cache_Mu.Lock()
+	defer recorder.Enforce_Cache_Mu.Unlock()
+	if handle = recorder.Enforce_Cache[message]; handle != nil {
+		return handle
 	}
-	siblings := map[string]bool{}
-	for _, dot_element := range bundle {
-		if dot_element.Kind == DOT_ELEMENT_KIND_SOMETIMES {
-			siblings[dot_element.Message] = true
-		}
+	handle = recorder_enforce_handle_build(bundle)
+	if recorder.Enforce_Cache == nil {
+		recorder.Enforce_Cache = map[string]*enforce_handle{}
 	}
+	recorder.Enforce_Cache[message] = handle
+	return handle
+}
+
+// Builds an enforce_handle: one rule per Impossible that carries references, each reference
+// resolved to the bundle position of the sibling axis it names, and the violation message
+// pre-rendered. A reference naming no sibling is a typo and panics here — and since a failed build
+// stores nothing, the same bad bundle panics on every call, exactly as the old per-call reference
+// check did. A reference-less Impossible constrains nothing, so it yields no rule (it never fires,
+// matching dot_element_impossible_violated's empty-set case). The handle holds only positions
+// (ints) and freshly rendered strings — no pointers into bundle — so bundle stays non-escaping.
+func recorder_enforce_handle_build(bundle Bundle) (handle *enforce_handle) {
+	handle = &enforce_handle{}
 	for _, dot_element := range bundle {
 		if dot_element.Kind != DOT_ELEMENT_KIND_IMPOSSIBLE {
 			continue
 		}
+		if len(dot_element.Impossibles) == 0 {
+			continue
+		}
+		var coordinates []reference_coordinate
 		for _, reference := range dot_element.Impossibles {
-			if siblings[reference.Message] {
-				continue
+			index := dot_product_axis_index(bundle, reference.Message)
+			if index < 0 {
+				panic(ASSERTION_FAILURE_MESSAGE_PREFIX +
+					non_sibling_reference_message(reference))
 			}
-			panic(ASSERTION_FAILURE_MESSAGE_PREFIX +
-				"Impossible references " + strconv.Quote(reference.Message) +
-				", not an axis of this Dot_Product")
+			coordinates = append(coordinates,
+				reference_coordinate{Index: index, Event: reference.Event})
+		}
+		handle.Rules = append(handle.Rules, impossible_rule{
+			Coordinates: coordinates,
+			Message:     dot_element_impossible_message(dot_element),
+		})
+	}
+	return handle
+}
+
+// Returns the bundle position of the Sometimes axis carrying message, or -1 when none does — a
+// linear scan, since a bundle is a handful of elements. Resolves one Impossible reference to the
+// sibling it names, so enforcement compares that axis's event by index rather than by string.
+func dot_product_axis_index(bundle Bundle, message string) (index int) {
+	for position, dot_element := range bundle {
+		if dot_element.Kind != DOT_ELEMENT_KIND_SOMETIMES {
+			continue
+		}
+		if dot_element.Message == message {
+			return position
 		}
 	}
+	return -1
+}
+
+// Renders the typo panic a non-sibling reference triggers at plan-build time: an Impossible names
+// an axis message that no sibling Sometimes carries. A reference can only carve a cell of this
+// product's grid and can only fire against an axis observed on this same call, so naming a
+// non-sibling is structurally meaningless — caught at once rather than surfacing as an unfillable
+// gap.
+func non_sibling_reference_message(reference Dot_Element_Reference) (message string) {
+	return "Impossible references " + strconv.Quote(reference.Message) +
+		", not an axis of this Dot_Product"
 }
 
 // An observe_handle memoizes, for one Dot_Product message, what its bundle resolves to so the
@@ -401,6 +468,39 @@ type handle_entry struct {
 	Metadata *Assertion_Metadata
 	// Key is the tracker key, cached so Coverage_Sink can persist it without rebuilding it.
 	Key string
+}
+
+// An enforce_handle memoizes, for one Dot_Product message, its Impossible constraints resolved
+// against the bundle's shape so enforcement scans no strings per call: one rule per Impossible,
+// each carrying its references as bundle positions and its violation message pre-rendered.
+type enforce_handle struct {
+	// Rules holds one resolved Impossible per rule, in bundle order, so a multi-violation
+	// panic names them in the same order the from-scratch scan did. A reference-less Impossible
+	// constrains nothing and contributes no rule.
+	Rules []impossible_rule
+}
+
+// An impossible_rule is one Impossible resolved against the bundle: the forbidden combination as
+// bundle positions, plus the panic message it renders when that combination occurs. The message
+// is static (the referenced axes' messages and events are fixed), so it is built once here rather
+// than per firing.
+type impossible_rule struct {
+	// Coordinates are the referenced sibling axes' positions and the event each is forbidden
+	// at; the rule fires when every one currently holds its forbidden event.
+	Coordinates []reference_coordinate
+	// Message is the pre-rendered violation text, identical to dot_element_impossible_message.
+	Message string
+}
+
+// A reference_coordinate is one Impossible reference resolved to a bundle position: the index of
+// the sibling axis it names and the event it forbids there. Enforcement fires the rule when
+// bundle[Index].Event == Event for every coordinate — integer index and boolean compares, no
+// string matching.
+type reference_coordinate struct {
+	// Index is the position of the referenced sibling axis in the bundle.
+	Index int
+	// Event is the outcome the reference forbids: the rule needs this axis at this event.
+	Event bool
 }
 
 // Increments the seeded tracker entry for each observed element and the tuple entry for the
@@ -593,26 +693,11 @@ func Recorder_Merge_Fuzz_Coverage_From(recorder *Recorder, r io.Reader) {
 	}
 }
 
-// Returns the message describing how dot_element violates its invariant on this
-// call — an Impossible whose forbidden combination occurred — naming the offending axis by its
-// message. Returns "" when the element holds. Always is not an element and never reaches here; it
-// enforces eagerly.
-func dot_element_violation(
-	dot_element Dot_Element, bundle Bundle,
-) (violation string) {
-	if dot_element.Kind != DOT_ELEMENT_KIND_IMPOSSIBLE {
-		return ""
-	}
-	if dot_element_impossible_violated(dot_element, bundle) {
-		return dot_element_impossible_message(dot_element)
-	}
-	return ""
-}
-
 // Renders an Impossible violation: a header plus one line per co-occurring
 // coordinate, each naming the referenced axis by its message and the event observed.
 // The Impossible element's own message is empty, so its identity is this set of
-// coordinates rather than a single message.
+// coordinates rather than a single message. Called once per Impossible at plan-build time to
+// pre-render each rule's Message, so a firing rule carries its text with no per-call work.
 func dot_element_impossible_message(impossible Dot_Element) (message string) {
 	message = "Impossible — forbidden combination occurred:"
 	for _, reference := range impossible.Impossibles {
@@ -627,43 +712,6 @@ func event_boolean_text(event bool) (text string) {
 		return "true"
 	}
 	return "false"
-}
-
-// Reports whether every event the Impossible names was observed this call — the forbidden
-// combination occurred in full. An Impossible with no references constrains nothing, so it
-// never fires (rather than firing vacuously every call).
-func dot_element_impossible_violated(
-	impossible Dot_Element, bundle Bundle,
-) (violated bool) {
-	if len(impossible.Impossibles) == 0 {
-		return false
-	}
-	for _, reference := range impossible.Impossibles {
-		if !dot_element_reference_observed(reference, bundle) {
-			return false
-		}
-	}
-	return true
-}
-
-// Reports whether some Sometimes axis in the call carries the reference's Message and was seen
-// at the event the reference names. Impossible elements observe nothing and are skipped.
-func dot_element_reference_observed(
-	reference Dot_Element_Reference, bundle Bundle,
-) (observed bool) {
-	for _, dot_element := range bundle {
-		if dot_element.Kind != DOT_ELEMENT_KIND_SOMETIMES {
-			continue
-		}
-		if dot_element.Message != reference.Message {
-			continue
-		}
-		if dot_element.Event != reference.Event {
-			continue
-		}
-		return true
-	}
-	return false
 }
 
 // Recorder_Register_Packages_For_Analysis parses every non-test .go file under

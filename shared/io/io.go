@@ -352,10 +352,9 @@ type IO struct {
 	// so a buffered shutdown can drain before exit. In the simulator the signal arrives
 	// at a seed-drawn grain — the OS event modeled as a seed outcome, not scripted.
 	Watch_Signal func(completion *Completion, callback Signal_Callback, signal Signal)
-	// Compute parallelizes compute with goroutines — no more, no less: work runs on the
-	// OS backend's worker pool (inline in the simulator) and callback fires on the loop
-	// thread once it finishes. work must touch only memory the loop leaves alone until
-	// callback fires.
+	// ONLY FOR COMPUTE-INTENSIVE WORK THAT CAN BE HIGHLY PARALLELIZED — E.G. JSON
+	// PARSING, HIGH-TRAFFIC REQUEST PROCESSING. IT IS NOT AN ESCAPE HATCH FOR BLOCKING
+	// SYSCALLS OR IO; THOSE BELONG ON THE LOOP'S COMPLETION OPS.
 	Compute func(completion *Completion, callback Compute_Callback, work func())
 	// Spawn runs the command in request to completion off the loop thread, firing
 	// callback on the loop with its exit code, captured output, and resource usage — the

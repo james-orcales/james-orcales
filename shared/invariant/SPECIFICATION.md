@@ -118,6 +118,12 @@ panics at its own site, so consecutive `Always` guards short-circuit on the firs
 A `Dot_Product` with no elements panics: an empty grid asserts nothing, so it is always a mistake
 rather than a silent no-op.
 
+### Allocation
+
+A call that violates nothing allocates nothing: a bundle's shape is static per callsite, so only
+the `Event` bools genuinely vary at runtime, and the compiler proves the rest never escapes the
+call. A violation path may allocate freely — it is never the steady state a fuzz worker pays.
+
 # Bundles
 
 A `_Invariants(v, namespace)` function self-emits its own `Dot_Product(namespace, …)` over a
