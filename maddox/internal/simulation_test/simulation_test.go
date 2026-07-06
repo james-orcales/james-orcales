@@ -309,12 +309,7 @@ func decode_scenario(data []byte) (s scenario) {
 	// A real invocation benchmarks a handful of short commands. Clamp the command and
 	// word counts, and budget the total argument bytes, so the rendered report stays
 	// under its ceiling — the structural maxima are not reachable through a real run.
-	// The command count is held to four: a real comparison is a small handful, and no
-	// caller runs several commands to the sample ceiling unbudgeted — that is hours of live
-	// execution — so exploring that product only spends the whole run past the fuzzer's
-	// per-input deadline for a shape the library already handles one command at a time. The
-	// library's own sample ceiling is untouched; this bounds only the blackbox's fan-out.
-	s.Commands = min(int(cursor_u16(c)), 4)
+	s.Commands = min(int(cursor_u16(c)), 8)
 	s.Words = max(1, min(int(cursor_u16(c)), 8))
 	budget := 32768 / (s.Commands*s.Words + 1)
 	s.Word_Bytes = min(min(int(cursor_u16(c)), sim_word_max), budget)
