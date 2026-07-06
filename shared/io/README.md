@@ -403,7 +403,9 @@ Each of these fails loudly where the runtime can make it:
    `[]*io.Completion`, never `[]io.Completion` (append moves the array under the loop).
 5. **Never block the loop thread — or anywhere else.** Blocking io is an async op on
    the loop, a subprocess is `Spawn`, and `Compute` parallelizes compute with
-   goroutines — no more, no less; anything that waits on the world is an op.
+   goroutines — no more, no less; anything that waits on the world is an op. `Compute`
+   is **only** for compute-intensive work that parallelizes well — JSON parsing,
+   high-traffic request processing — never an escape hatch for blocking io.
 6. **Buffers belong to the loop until the callback fires.** Reusing or resizing a
    submitted buffer races the backend.
 7. **Every submission resolves exactly once** — including cancelled ops (`io.Cancelled`).
