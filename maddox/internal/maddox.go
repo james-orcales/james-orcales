@@ -34,9 +34,10 @@ const exit_failure exit_code = 1
 // still leaves a quorum for the statistics — poop's min_samples.
 const runs_min = 3
 
-// Samples_max caps the samples held for one command, bounding memory against a
-// command fast enough to run unboundedly within the budget — poop's MAX_SAMPLES.
-const samples_max = 10000
+// SAMPLES_MAX caps the samples held for one command, bounding memory against a
+// command fast enough to run unboundedly within the budget — poop's MAX_SAMPLES. Exported so
+// the blackbox simulation sizes its scenarios against the real ceiling rather than a duplicate.
+const SAMPLES_MAX = 10000
 
 // Main benchmarks each command in turn — the binary's one entry point — and writes
 // the JSON report to Output. The first command is the reference the rest report
@@ -270,7 +271,7 @@ func Run_Result_Invariants(result Run_Result, namespace invariant.Namespace) {
 
 // Collection_min is the empty count: the floor a failure or an empty input leaves a
 // sample or value collection at. Quorum_min and deviation_min are the non-empty floors
-// of a distribution and a deviation input; samples_max is the kept-run ceiling they share.
+// of a distribution and a deviation input; SAMPLES_MAX is the kept-run ceiling they share.
 const collection_min = 0
 const quorum_min = 3
 const deviation_min = 1
@@ -283,7 +284,7 @@ type Samples []Sample
 // Samples_Invariants bounds the collected count: the empty floor and the kept-run ceiling
 // are witnessed, the one- and two-run shapes claimed unreachable.
 func Samples_Invariants(samples Samples, namespace invariant.Namespace) {
-	invariant.Always(len(samples) <= samples_max, "A sample set is at most its max.")
+	invariant.Always(len(samples) <= SAMPLES_MAX, "A sample set is at most its max.")
 	invariant.Always(len(samples) >= collection_min, "A sample set is at least its min.")
 	invariant.Always(len(samples) != 1, "A sample set never has one.")
 	invariant.Always(len(samples) != 2, "A sample set never has two.")
@@ -308,7 +309,7 @@ type Distribution []Sample
 // Distribution_Invariants bounds the run count: the quorum floor and the kept-run ceiling
 // are witnessed, every short boundary claimed unreachable.
 func Distribution_Invariants(samples Distribution, namespace invariant.Namespace) {
-	invariant.Always(len(samples) <= samples_max, "A distribution is at most its max.")
+	invariant.Always(len(samples) <= SAMPLES_MAX, "A distribution is at most its max.")
 	invariant.Always(len(samples) >= quorum_min, "A distribution is at least its min.")
 	invariant.Always(len(samples) != 0, "A distribution is never empty.")
 	invariant.Always(len(samples) != 1, "A distribution never has one.")
@@ -326,7 +327,7 @@ type Values []int64
 // Values_Invariants bounds the value count: the empty min and the kept-run max are
 // witnessed alongside the one- and two-value shapes between.
 func Values_Invariants(values Values, namespace invariant.Namespace) {
-	invariant.Always(len(values) <= samples_max, "A value set is at most its max.")
+	invariant.Always(len(values) <= SAMPLES_MAX, "A value set is at most its max.")
 	invariant.Always(len(values) >= collection_min, "A value set is at least its min.")
 	// A metric's values are extracted from a kept distribution, which the 3-run quorum
 	// makes at least three — never empty, one, or two — so those counts are guarded, not
@@ -346,7 +347,7 @@ type Series []int64
 // Series_Invariants bounds the extracted count: it mirrors a distribution's quorum floor
 // and kept-run ceiling, claiming every short boundary unreachable.
 func Series_Invariants(values Series, namespace invariant.Namespace) {
-	invariant.Always(len(values) <= samples_max, "A series is at most its max.")
+	invariant.Always(len(values) <= SAMPLES_MAX, "A series is at most its max.")
 	invariant.Always(len(values) >= quorum_min, "A series is at least its min.")
 	invariant.Always(len(values) != 0, "A series is never empty.")
 	invariant.Always(len(values) != 1, "A series never has one.")
@@ -363,7 +364,7 @@ type Deviations []int64
 // Deviations_Invariants bounds the count: empty is claimed unreachable (the compute
 // returns early), while the single-value min, the two-value shape, and the max are witnessed.
 func Deviations_Invariants(values Deviations, namespace invariant.Namespace) {
-	invariant.Always(len(values) <= samples_max, "A deviation set is at most its max.")
+	invariant.Always(len(values) <= SAMPLES_MAX, "A deviation set is at most its max.")
 	invariant.Always(len(values) >= deviation_min, "A deviation set is at least its min.")
 	// The deviations are a kept distribution's, which the 3-run quorum makes at least three
 	// — never empty, one, or two — so those counts are guarded, not witnessed.
@@ -949,7 +950,7 @@ func main_input_collect_samples(
 	for warmups < input.Warmup_Count {
 		// Warming up past the kept-sample cap is pointless and would carry the warmup
 		// counter past a tally's range, so the cap bounds both.
-		if warmups >= samples_max {
+		if warmups >= SAMPLES_MAX {
 			break
 		}
 		warm := input.Sampler.Measure(command)
@@ -1036,7 +1037,7 @@ func sampling_should_continue(input *sampling_should_continue_input) (yes bool) 
 	if int(input.Count) < runs_min {
 		return true
 	}
-	if int(input.Count) >= samples_max {
+	if int(input.Count) >= SAMPLES_MAX {
 		return false
 	}
 	if input.Runs_Max > 0 {
@@ -1352,9 +1353,6 @@ func write_failure(input *write_failure_input) {
 	input.Stderr.Write(input.Child_Stderr)
 }
 
-// Tukey_fence_ratio is poop's 1.5*IQR outlier fence multiplier as a fixed ratio.
-const tukey_fence_ratio fixedpoint.Ratio = 3 * fixedpoint.SCALE / 2
-
 // Int64_max is the largest signed 64-bit value, used to test whether a 128-bit variance
 // still fits a word before the fixed-point square root.
 const int64_max = 1<<63 - 1
@@ -1386,13 +1384,16 @@ func Measurement_Compute(values Values, unit Unit) (measurement Measurement) {
 	mean_integer := total / int64(count)
 
 	// Quartiles by position, exactly as poop indexes them: q3 falls back to the
-	// maximum when there are too few points to take the upper quarter.
-	q1 := fixedpoint.From_Integer(sorted[count/4])
-	q3 := fixedpoint.From_Integer(sorted[count-1])
+	// maximum when there are too few points to take the upper quarter. The raw metric at
+	// each quartile is kept alongside its fixed-point lift: the outlier fences are computed
+	// from the raw integers, where 1.5*IQR cannot overflow the way the scaled form does.
+	low_quartile := sorted[count/4]
+	high_quartile := sorted[count-1]
 	if count >= 4 {
-		q3 = fixedpoint.From_Integer(sorted[count-count/4])
+		high_quartile = sorted[count-count/4]
 	}
-	margin := fixedpoint.Apply(q3-q1, tukey_fence_ratio)
+	q1 := fixedpoint.From_Integer(low_quartile)
+	q3 := fixedpoint.From_Integer(high_quartile)
 	mean := fixedpoint.From_Ratio(&fixedpoint.From_Ratio_Input{
 		Numerator: total, Denominator: int64(count),
 	})
@@ -1407,7 +1408,9 @@ func Measurement_Compute(values Values, unit Unit) (measurement Measurement) {
 		Q1:                 q1,
 		Q3:                 q3,
 		Outlier_Count: outlier_count(&outlier_count_input{
-			Sorted: points(sorted), Low_Fence: q1 - margin, High_Fence: q3 + margin,
+			Sorted:        points(sorted),
+			Low_Quartile:  Metric(low_quartile),
+			High_Quartile: Metric(high_quartile),
 		}),
 		Sample_Count: Kept(count),
 		Unit:         unit,
@@ -1511,33 +1514,45 @@ func root_of_quotient(input *root_of_quotient_input) (deviation fixedpoint.Numbe
 	}))
 }
 
-// Outlier_count_input bundles the sorted values with Tukey's fences.
+// Outlier_count_input bundles the sorted values with the raw quartiles the fences derive from.
 type outlier_count_input struct {
 	// Sorted is the ascending metric values.
 	Sorted points
-	// Low_Fence is q1 minus 1.5*IQR; a value below it is an outlier.
-	Low_Fence fixedpoint.Number
-	// High_Fence is q3 plus 1.5*IQR; a value above it is an outlier.
-	High_Fence fixedpoint.Number
+	// Low_Quartile is the metric at q1; a value below q1 minus 1.5*IQR is an outlier.
+	Low_Quartile Metric
+	// High_Quartile is the metric at q3; a value above q3 plus 1.5*IQR is an outlier.
+	High_Quartile Metric
 }
 
-// Outlier_count_input_invariants states the sorted values; the fences have no preset
-// of their own.
+// Outlier_count_input_invariants states the sorted values and the two quartiles they bracket.
 func outlier_count_input_invariants(input outlier_count_input, namespace invariant.Namespace) {
 	points_invariants(input.Sorted, "outlier_count_input.Sorted")
+	Metric_Invariants(input.Low_Quartile, "outlier_count_input.Low_Quartile")
+	Metric_Invariants(input.High_Quartile, "outlier_count_input.High_Quartile")
 }
 
-// Outlier_count counts the values beyond Tukey's fences.
+// Outlier_count counts the values beyond Tukey's fences — a point more than 1.5 interquartile
+// ranges past a quartile. The whole test runs in the raw metric domain, doubled so the 3/2 is
+// an integer 3 over a factored-out 2: a value is an outlier when 2*value falls outside
+// [2*q1 - 3*IQR, 2*q3 + 3*IQR]. Every term stays within int64 for metrics up to the
+// representable ceiling — 2*value and 2*q are at most 2^44, 3*IQR at most ~2^45 — where the
+// fixed-point form, each quartile first lifted by the 2^20 scale to near 2^63, overflowed on a
+// wide spread and produced garbage fences that miscounted the whole run as outliers.
 func outlier_count(input *outlier_count_input) (count Strays) {
 	defer func() { Strays_Invariants(count, "outlier_count.count") }()
 	outlier_count_input_invariants(*input, "outlier_count.input")
+	low_quartile := int64(input.Low_Quartile)
+	high_quartile := int64(input.High_Quartile)
+	inter_quartile := high_quartile - low_quartile
+	low_fence := 2*low_quartile - 3*inter_quartile
+	high_fence := 2*high_quartile + 3*inter_quartile
 	for _, value := range input.Sorted {
-		point := fixedpoint.From_Integer(value)
-		if point < input.Low_Fence {
+		doubled := 2 * int64(value)
+		if doubled < low_fence {
 			count++
 			continue
 		}
-		if point > input.High_Fence {
+		if doubled > high_fence {
 			count++
 		}
 	}
@@ -1929,12 +1944,105 @@ func format_hz(hz Hertz) (text frequency) {
 	return frequency(fixedpoint.Format(megahertz, 0) + " MHz")
 }
 
-// Format_bytes renders a byte count, drawn from the machine specs as an unsigned
-// integer, with the binary suffix ladder.
+// Format_bytes renders a byte count, drawn from the machine specs as an unsigned integer, with
+// the binary suffix ladder. The raw count is scaled down its rung and only then lifted into
+// fixed-point, dividing through a 128-bit ratio: lifting the whole value first would overflow
+// the 2^20 scale for a multi-petabyte size — the byte-size ceiling reaches 2^53 — and render a
+// garbage, over-width cell. Each rung's raw divisor is recovered from its fixed-point form; the
+// suffix is that rung's own, already witnessed by byte_ladder's invariants.
 func format_bytes(value Byte_Size) (text cell) {
 	defer func() { cell_invariants(text, "format_bytes.text") }()
 	Byte_Size_Invariants(value, "format_bytes.value")
-	return format_quantity(fixedpoint.From_Integer(int64(value)), "bytes")
+	raw := int64(value)
+	for _, step := range byte_ladder() {
+		rung := fixedpoint.Whole(step.Divisor)
+		if raw >= rung {
+			scaled := fixedpoint.From_Ratio(&fixedpoint.From_Ratio_Input{
+				Numerator: raw, Denominator: rung,
+			})
+			return cell(string(format_significant(scaled)) + string(step.Suffix))
+		}
+	}
+	return cell(string(format_significant(fixedpoint.From_Integer(raw))))
+}
+
+// Elapsed_display_max caps the total sampling time the table header renders. Kiloseconds is the
+// widest rung the time ladder reaches, and a span past this scales there to five digits, past the
+// header's glyph. The sum of ten thousand ceiling-valued run walls runs to years — the header
+// pins it to the widest renderable span while the JSON keeps the exact nanoseconds. The bound is
+// four kilosecond digits: 9999 trillion nanoseconds.
+const elapsed_display_max = 9999 * 1_000_000_000_000
+
+// Span_bytes_min is the shortest rendered span: the one-byte "0" for no elapsed time.
+const span_bytes_min = 1
+
+// Span_bytes_max bounds a rendered span's length: a four-byte glyph and a two-byte time suffix,
+// the widest the header's clamped duration reaches.
+const span_bytes_max = 6
+
+// Span is a rendered sampling duration in the benchmark header — "5ns", "9ks", "26.4ks". A
+// distinct type from a table cell: the time suffixes stop two bytes short of the seven-byte
+// byte-size cell, so a span carries its own, narrower length invariant.
+type span string
+
+// Span_invariants bounds a rendered span's length, witnessing the one-byte floor, the two-byte
+// single-digit-seconds shape, and the widest glyph-and-suffix form.
+func span_invariants(text span, namespace invariant.Namespace) {
+	invariant.Always(len(text) <= span_bytes_max, "A span is at most its max length.")
+	invariant.Always(len(text) >= span_bytes_min, "A span is at least its min length.")
+	invariant.Always(len(text) != 0, "A span is never empty.")
+	invariant.Dot_Product(namespace,
+		invariant.Sometimes(len(text) == 1, "A span is one byte."),
+		invariant.Sometimes(len(text) == 2, "A span is two bytes."),
+		invariant.Sometimes(len(text) == span_bytes_min, "A span is at min."),
+		invariant.Sometimes(len(text) == span_bytes_max, "A span is at max."),
+		// One byte is the min, so those two events coincide; two bytes and the six-byte max
+		// are each their own length, so no two boundary events ever share a span.
+		invariant.Impossible(
+			invariant.Event_True("A span is one byte."),
+			invariant.Event_False("A span is at min."),
+		),
+		invariant.Impossible(
+			invariant.Event_False("A span is one byte."),
+			invariant.Event_True("A span is at min."),
+		),
+		invariant.Impossible(
+			invariant.Event_True("A span is one byte."),
+			invariant.Event_True("A span is two bytes."),
+		),
+		invariant.Impossible(
+			invariant.Event_True("A span is one byte."),
+			invariant.Event_True("A span is at max."),
+		),
+		invariant.Impossible(
+			invariant.Event_True("A span is two bytes."),
+			invariant.Event_True("A span is at max."),
+		),
+	)
+}
+
+// Format_elapsed renders a total sampling duration for the benchmark header with the time
+// ladder. Like format_bytes it scales the raw nanoseconds down their rung before lifting into
+// fixed-point, so a duration past the 2^20 scale's ceiling — a sum of many large run walls —
+// reduces without overflow; and it caps the magnitude first, so an absurd multi-year span still
+// lands within the header's glyph rather than rendering a five-digit count. The suffix is the
+// rung's own, witnessed by time_ladder.
+func format_elapsed(elapsed time.Duration) (text span) {
+	defer func() { span_invariants(text, "format_elapsed.text") }()
+	raw := int64(elapsed)
+	if raw > elapsed_display_max {
+		raw = elapsed_display_max
+	}
+	for _, step := range time_ladder() {
+		rung := fixedpoint.Whole(step.Divisor)
+		if raw >= rung {
+			scaled := fixedpoint.From_Ratio(&fixedpoint.From_Ratio_Input{
+				Numerator: raw, Denominator: rung,
+			})
+			return span(string(format_significant(scaled)) + string(step.Suffix))
+		}
+	}
+	return span(string(format_significant(fixedpoint.From_Integer(raw))))
 }
 
 // Write_table renders the table and writes it to output, returning exit_failure if
@@ -1964,13 +2072,13 @@ func render_benchmark(builder *strings.Builder, index position, benchmark Benchm
 	position_invariants(index, "render_benchmark.index")
 	Benchmark_Invariants(benchmark, "render_benchmark.benchmark")
 	invariant.Boolean_Invariants(color, "render_benchmark.color")
-	elapsed := format_quantity(fixedpoint.From_Integer(int64(benchmark.Elapsed)), "nanoseconds")
+	elapsed := format_elapsed(benchmark.Elapsed)
 	words := make([]string, len(benchmark.Command))
 	for slot := range benchmark.Command {
 		words[slot] = string(benchmark.Command[slot])
 	}
 	header := fmt.Sprintf("Benchmark %d (%d runs, %s): %s",
-		int(index)+1, benchmark.Runs, string(elapsed), strings.Join(words, " "))
+		int(index)+1, benchmark.Runs, elapsed, strings.Join(words, " "))
 	builder.WriteString(header)
 	builder.WriteString("\n")
 
@@ -2633,7 +2741,7 @@ func extent_invariants(value extent, namespace invariant.Namespace) {
 const kept_min = quorum_min
 
 // Kept_max is the kept-run ceiling a distribution reaches.
-const kept_max = samples_max
+const kept_max = SAMPLES_MAX
 
 // Kept is the number of runs a computed distribution was reduced from — at least the
 // quorum, up to the run cap. A distinct type from a census: a reduced distribution always
@@ -2664,7 +2772,7 @@ const degree_min = 2*quorum_min - 2
 
 // Degree_max bounds a pooled degrees-of-freedom: two full kept runs less two, the most the
 // two-sample t-test reaches when both commands fill the run cap.
-const degree_max = 2*samples_max - 2
+const degree_max = 2*SAMPLES_MAX - 2
 
 // Degree is a Student-t pooled degrees-of-freedom — the two sample counts less two, each at
 // least the quorum, so it is at least four. A distinct type carrying that range; single
@@ -2691,7 +2799,7 @@ func degree_invariants(value degree, namespace invariant.Namespace) {
 const census_min = 1
 
 // Census_max bounds a sample or run count: the kept-run ceiling.
-const census_max = samples_max
+const census_max = SAMPLES_MAX
 
 // Census is a count of samples or runs — at least one, never zero or negative, up to the run
 // cap. A distinct type for the single-distribution count, separate from the pooled degree.
@@ -2732,7 +2840,7 @@ func census_invariants(value census, namespace invariant.Namespace) {
 const divisor_min = quorum_min - 1
 
 // Divisor_max bounds the sample-variance divisor: a full kept run less one.
-const divisor_max = samples_max - 1
+const divisor_max = SAMPLES_MAX - 1
 
 // Divisor is the count-less-one denominator of the sample variance — at least one, up to a
 // full run less one. A distinct type so the off-by-one ceiling is its own witnessed bound.
@@ -2755,7 +2863,7 @@ func divisor_invariants(value divisor, namespace invariant.Namespace) {
 const tally_min = 0
 
 // Tally_max bounds a tally: the kept-run ceiling a count can reach.
-const tally_max = samples_max
+const tally_max = SAMPLES_MAX
 
 // Tally is a non-negative count or index — runs kept, outliers found, a benchmark's
 // position. A distinct type bounding it to the non-negative range it lives in.
@@ -2808,7 +2916,7 @@ const strays_min = 0
 
 // Strays_max bounds the outlier count: the middle half of the sorted run pins the quartiles,
 // so at most the outer half less one point can fall beyond the fences.
-const strays_max = samples_max/2 - 1
+const strays_max = SAMPLES_MAX/2 - 1
 
 // Strays is the count of outliers a Tukey scan finds — non-negative, bounded by the outer
 // half of the run. A distinct type from a tally: an outlier count never fills the whole run.
@@ -3389,7 +3497,7 @@ const points_min = 1
 
 // Points_max bounds a sorted run's length: the per-command sample cap, since the run is the
 // kept samples sorted.
-const points_max = samples_max
+const points_max = SAMPLES_MAX
 
 // Points is a non-empty ascending run of metric values an outlier scan walks. A distinct
 // type: the distribution always has at least one sample, so its bundle claims the empty
@@ -3464,6 +3572,13 @@ func pad(text column, width extent, right bool) (result padded) {
 	return padded(string(text) + strings.Repeat(" ", space))
 }
 
+// Percent_display_max caps a rendered percentage's magnitude at the seven-digit ceiling the
+// delta column was sized against. Format at one decimal yields at most "9999999.0" — nine
+// bytes — so a sign, two such values, and the "% ± " and "%" glue land exactly at
+// delta_body_max; a larger percentage is pinned here rather than overrunning the fixed layout.
+// The bound is written as an integer times the scale so it stays a compile-time constant.
+const percent_display_max fixedpoint.Number = 9_999_999 * fixedpoint.SCALE
+
 // Delta_render formats one metric's change: a sign, the percentage, and its
 // confidence half-interval. A significant change is colored — red slower, green
 // faster — while an insignificant one stays faint.
@@ -3486,8 +3601,19 @@ func delta_render(delta Delta, color bool) (text delta_text) {
 	if difference < 0 {
 		difference = -difference
 	}
+	half_percent := delta.Half_Percent
+	// Pin both percentages to the column's widest value. A change past ten million percent —
+	// a candidate a hundred-thousand-fold off the reference — cannot fit the fixed delta
+	// layout the body invariant sizes for, and its exact magnitude past the bound is noise;
+	// without the clamp its digits overrun delta_body_max and trip the guard.
+	if difference > percent_display_max {
+		difference = percent_display_max
+	}
+	if half_percent > percent_display_max {
+		half_percent = percent_display_max
+	}
 	diff := pad(column(fixedpoint.Format(difference, 1)), 5, true)
-	half := pad(column(fixedpoint.Format(delta.Half_Percent, 1)), 4, true)
+	half := pad(column(fixedpoint.Format(half_percent, 1)), 4, true)
 	body := delta_body(sign + string(diff) + "% ± " + string(half) + "%")
 	return paint(body, code, color)
 }

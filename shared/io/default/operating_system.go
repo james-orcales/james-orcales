@@ -16,6 +16,7 @@ import (
 	"sync"
 	"syscall"
 
+	invariant "local/james-orcales/shared/invariant/default"
 	"local/james-orcales/shared/io"
 	"local/james-orcales/shared/time"
 )
@@ -204,6 +205,22 @@ func New_Operating_System_IO(host time.Clock) (loop io.IO, driver io.Driver) {
 	return loop, operating_system_to_driver(state)
 }
 
+// Arms a completion through the lifecycle machine at the moment it enters the backend:
+// asserts it is its own original (a by-value copy carries the original's address), moves
+// it idle to armed — a reused in-flight completion panics as the armed-to-armed edge —
+// and clears the stale Cancelled payload so a reused completion starts fresh. Every op
+// closure calls this first, so the guard cannot be skipped by a new op.
+func operating_system_submit(completion *io.Completion) {
+	original := completion.Self == nil || completion.Self == completion
+	invariant.Always(original,
+		"A submitted completion is its own original, never a by-value copy.")
+	completion.Self = completion
+	io.Completion_Transition(&io.Completion_Transition_Input{
+		Completion: completion, From: io.COMPLETION_IDLE, To: io.COMPLETION_ARMED,
+	})
+	completion.Cancelled = false
+}
+
 // Wires the TLS socket operations — accept-secure, connect-secure, connect-insecure —
 // onto loop.
 func operating_system_wire_secure(state *operating_system, loop *io.IO) {
@@ -211,12 +228,14 @@ func operating_system_wire_secure(state *operating_system, loop *io.IO) {
 		completion *io.Completion, callback io.Socket_Callback,
 		listener io.File, certificate func() (value any),
 	) {
+		operating_system_submit(completion)
 		operating_system_accept_secure(state, completion, callback, listener, certificate)
 	}
 	loop.Connect_Secure = func(
 		completion *io.Completion, callback io.Socket_Callback,
 		host_address string, port int, server_name string,
 	) {
+		operating_system_submit(completion)
 		operating_system_connect_secure(state, tls_target{
 			Host: host_address, Port: port, Server_Name: server_name,
 			Completion: completion, Callback: callback,
@@ -226,6 +245,7 @@ func operating_system_wire_secure(state *operating_system, loop *io.IO) {
 		completion *io.Completion, callback io.Socket_Callback,
 		host_address string, port int, server_name string,
 	) {
+		operating_system_submit(completion)
 		operating_system_connect_secure(state, tls_target{
 			Host: host_address, Port: port, Server_Name: server_name, Insecure: true,
 			Completion: completion, Callback: callback,
@@ -238,14 +258,17 @@ func operating_system_wire_effects(state *operating_system, loop *io.IO) {
 	loop.Watch_Signal = func(
 		completion *io.Completion, callback io.Signal_Callback, signal io.Signal,
 	) {
+		operating_system_submit(completion)
 		operating_system_watch_signal(state, completion, callback, signal)
 	}
 	loop.Compute = func(completion *io.Completion, callback io.Compute_Callback, work func()) {
+		operating_system_submit(completion)
 		operating_system_compute_submit(state, completion, callback, work)
 	}
 	loop.Spawn = func(
 		completion *io.Completion, callback io.Process_Callback, request io.Process_Request,
 	) {
+		operating_system_submit(completion)
 		operating_system_spawn(state, completion, callback, request)
 	}
 }
@@ -355,12 +378,14 @@ func operating_system_wire_file(state *operating_system, loop *io.IO) {
 		completion *io.Completion, callback io.Callback,
 		file io.File, buffer []byte, offset int64,
 	) {
+		operating_system_submit(completion)
 		operating_system_read(state, completion, callback, file, buffer, offset)
 	}
 	loop.Write = func(
 		completion *io.Completion, callback io.Callback,
 		file io.File, buffer []byte, offset int64,
 	) {
+		operating_system_submit(completion)
 		operating_system_write(state, completion, callback, file, buffer, offset)
 	}
 	loop.Open = func(path string) (file io.File, err error) {
@@ -393,9 +418,11 @@ func operating_system_wire_timer(state *operating_system, loop *io.IO) {
 	loop.Timeout = func(
 		completion *io.Completion, callback io.Timeout_Callback, duration time.Duration,
 	) {
+		operating_system_submit(completion)
 		operating_system_timeout(state, state.Host, completion, callback, duration)
 	}
 	loop.Close = func(completion *io.Completion, callback io.Timeout_Callback, file io.File) {
+		operating_system_submit(completion)
 		operating_system_close(state, completion, callback, file)
 	}
 	loop.Cancel = func(completion *io.Completion) {
@@ -413,22 +440,26 @@ func operating_system_wire_socket(state *operating_system, loop *io.IO) {
 	loop.Accept = func(
 		completion *io.Completion, callback io.Socket_Callback, listener io.File,
 	) {
+		operating_system_submit(completion)
 		operating_system_accept(state, completion, callback, listener)
 	}
 	loop.Connect = func(
 		completion *io.Completion, callback io.Socket_Callback,
 		host_address string, port int,
 	) {
+		operating_system_submit(completion)
 		operating_system_connect(state, completion, callback, host_address, port)
 	}
 	loop.Receive = func(
 		completion *io.Completion, callback io.Callback, socket io.File, buffer []byte,
 	) {
+		operating_system_submit(completion)
 		operating_system_receive(state, completion, callback, socket, buffer)
 	}
 	loop.Send = func(
 		completion *io.Completion, callback io.Callback, socket io.File, buffer []byte,
 	) {
+		operating_system_submit(completion)
 		operating_system_send(state, completion, callback, socket, buffer)
 	}
 	loop.Peer_Address = func(file io.File) (address string, err error) {
@@ -437,13 +468,11 @@ func operating_system_wire_socket(state *operating_system, loop *io.IO) {
 }
 
 // Queues a file read to run inside the loop, delivering the byte count — or the
-// Cancelled error if the completion was cancelled first. Clears any stale Cancelled
-// mark so a reused completion starts fresh.
+// Cancelled error if the completion was cancelled first.
 func operating_system_read(
 	state *operating_system, completion *io.Completion, callback io.Callback,
 	file io.File, buffer []byte, offset int64,
 ) {
-	completion.Cancelled = false
 	completion.Callback = func() {
 		if completion.Cancelled {
 			callback(completion, 0, io.Cancelled)
@@ -461,7 +490,6 @@ func operating_system_write(
 	state *operating_system, completion *io.Completion, callback io.Callback,
 	file io.File, buffer []byte, offset int64,
 ) {
-	completion.Cancelled = false
 	completion.Callback = func() {
 		if completion.Cancelled {
 			callback(completion, 0, io.Cancelled)
@@ -479,7 +507,6 @@ func operating_system_timeout(
 	state *operating_system, host time.Clock, completion *io.Completion,
 	callback io.Timeout_Callback, duration time.Duration,
 ) {
-	completion.Cancelled = false
 	completion.Ready_At = host.Now_Monotonic() + time.Moment(duration)
 	completion.Callback = func() {
 		if completion.Cancelled {
@@ -561,9 +588,8 @@ func operating_system_wait(state *operating_system) {
 	}
 	// Nothing pending can ever flip done under an unbounded run: fail loud rather than block
 	// forever, since awaiting a predicate no event can satisfy is a deadlock, not a wait.
-	if !operating_system_in_flight(state) {
-		panic("io: Run_Until would block forever with no operation pending")
-	}
+	invariant.Always(operating_system_in_flight(state),
+		"An unbounded run holds an operation in flight that can advance it.")
 	operating_system_poll_ensure(state)
 	operating_system_poll(state, int64(operating_system_signal_cap(state, poll_forever)))
 }
@@ -590,9 +616,8 @@ func operating_system_in_flight(state *operating_system) (in_flight bool) {
 // The internal run functions call one another directly, not through here, so a drive's own
 // iteration does not trip it.
 func operating_system_drive(state *operating_system, pump func()) {
-	if state.Drive_Active {
-		panic("io: Run called from within a callback")
-	}
+	invariant.Always(!state.Drive_Active,
+		"A drive begins at top level, never from within a completion callback.")
 	state.Drive_Active = true
 	defer func() { state.Drive_Active = false }()
 	pump()
@@ -671,12 +696,21 @@ func operating_system_expire(state *operating_system) {
 	}
 }
 
-// Runs and clears every ready completion callback.
+// Runs and clears every ready completion callback, returning each completion to idle
+// before its callback fires — so a callback may legally resubmit its own completion.
 func operating_system_flush_completed(state *operating_system) {
 	ready := state.Completed
 	state.Completed = nil
 	for index := 0; index < len(ready); index++ {
-		ready[index].Callback()
+		completion := ready[index]
+		from := io.COMPLETION_ARMED
+		if completion.State == io.COMPLETION_CANCELLED {
+			from = io.COMPLETION_CANCELLED
+		}
+		io.Completion_Transition(&io.Completion_Transition_Input{
+			Completion: completion, From: from, To: io.COMPLETION_IDLE,
+		})
+		completion.Callback()
 	}
 }
 
@@ -725,6 +759,11 @@ func operating_system_dispatch(state *operating_system, descriptor int, writable
 	}
 	delete(waiters, descriptor)
 	poll_file_disarm(state.Poll, descriptor, writable)
+	// A cancel removes a waiter before queueing its delivery, so a dispatched operation
+	// is always still armed here.
+	io.Completion_Transition(&io.Completion_Transition_Input{
+		Completion: operation.Completion, From: io.COMPLETION_ARMED, To: io.COMPLETION_IDLE,
+	})
 	deliver()
 }
 
@@ -860,7 +899,6 @@ func operating_system_close(
 	if operating_system_tls_close(state, completion, callback, file) {
 		return
 	}
-	completion.Cancelled = false
 	err := socket_close(int(file))
 	completion.Callback = func() {
 		if completion.Cancelled {
@@ -874,9 +912,16 @@ func operating_system_close(
 
 // Cancels an in-flight operation. A socket op armed on the poll is dropped, disarmed,
 // and queued so its cancel callback fires; a pending timeout is moved to the completed
-// queue, where its Cancelled-marked callback delivers the error; a file op already
-// queued fires cancelled the same way. An already-delivered completion is a no-op.
+// queue, where its cancel-marked callback delivers the error; a file op already
+// queued fires cancelled the same way. An already-delivered, never-submitted, or
+// already-cancelled completion is a no-op — cancel only acts on an armed one.
 func operating_system_cancel(state *operating_system, completion *io.Completion) {
+	if completion.State != io.COMPLETION_ARMED {
+		return
+	}
+	io.Completion_Transition(&io.Completion_Transition_Input{
+		Completion: completion, From: io.COMPLETION_ARMED, To: io.COMPLETION_CANCELLED,
+	})
 	completion.Cancelled = true
 	if operating_system_cancel_socket(state, completion) {
 		return
@@ -935,7 +980,6 @@ func operating_system_compute_submit(
 	state *operating_system, completion *io.Completion,
 	callback io.Compute_Callback, work func(),
 ) {
-	completion.Cancelled = false
 	operating_system_compute_ensure(state)
 	state.Jobs <- &compute_job{Completion: completion, Callback: callback, Work: work}
 }
@@ -1201,6 +1245,12 @@ func operating_system_secure_accepted(
 		callback(completion, io.File(-1), err)
 		return
 	}
+	// A secure accept is two phases on one completion: the raw accept just delivered
+	// (dispatch returned it to idle), and the handshake now re-arms it — the posted
+	// handshake result is the delivery the caller observes.
+	io.Completion_Transition(&io.Completion_Transition_Input{
+		Completion: completion, From: io.COMPLETION_IDLE, To: io.COMPLETION_ARMED,
+	})
 	file, connection := operating_system_tls_register(state)
 	go tls_accept_serve(state, completion, callback, accepted, file, connection, certificate)
 }

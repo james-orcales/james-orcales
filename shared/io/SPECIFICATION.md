@@ -52,14 +52,15 @@ step, so a straight-line caller can wait for its own operation inline.
 
 ### Cancel
 
-Cancelling an in-flight operation still fires its callback exactly once, with the
-Cancelled error rather than a result, so every submission resolves and nothing leaks.
+Cancelling an armed operation moves it to the cancelled state; its callback still fires
+exactly once, with the Cancelled error, so every submission resolves. Cancel on an idle
+or already-cancelled completion is a harmless no-op — it acts only on an armed one.
 
 ### Reuse
 
-Submitting a completion that is still in flight panics: one Completion backs at most one
-operation at a time, so reusing it before its callback fires fails loudly rather than
-corrupting the queue.
+Submitting a completion that is still armed panics as an illegal lifecycle transition:
+only an idle completion may be armed. Delivery returns it to idle before the callback
+runs, so reuse after — or from within — the callback is legal.
 
 ### Copy
 
@@ -126,8 +127,9 @@ run reproduces, each entry naming a child and whether it is itself a directory.
 
 ### Status
 
-Status reports synchronously whether a path exists and, if so, whether it is a directory; an
-absent path is not-exists with a nil error, so a caller branches on the status, not an error.
+Status reports synchronously whether a path exists and, if so, whether it is a directory and
+its size in bytes; an absent path is not-exists with a nil error, so a caller branches on the
+status, not an error.
 
 ### Make Directory
 

@@ -83,6 +83,22 @@ func Test_Operating_System_IO_Timeout(t *testing.T) {
 	}
 }
 
+// Test_Operating_System_IO_Reuse verifies resubmitting a completion that is still in
+// flight panics: one Completion backs one operation at a time, and the real backend must
+// fail as loudly as the sim instead of silently double-arming it.
+func Test_Operating_System_IO_Reuse(t *testing.T) {
+	clock, _ := timeos.New_Operating_System_Clock()
+	loop, _ := iodefault.New_Operating_System_IO(clock)
+	var completion io.Completion
+	loop.Timeout(&completion, func(_ *io.Completion, err error) {}, time.SECOND)
+	defer func() {
+		if recover() == nil {
+			t.Fatal("resubmitting an in-flight completion must panic")
+		}
+	}()
+	loop.Timeout(&completion, func(_ *io.Completion, err error) {}, time.SECOND)
+}
+
 // Test_Operating_System_IO_Reentrancy verifies driving the real loop from within a
 // completion callback panics, so a re-entrant Run* fails loudly rather than corrupting it.
 func Test_Operating_System_IO_Reentrancy(t *testing.T) {

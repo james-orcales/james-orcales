@@ -448,15 +448,25 @@ func Test_Sim_Read_Directory(t *testing.T) {
 	}
 }
 
-// Test_Sim_Status verifies Status reports a directory, a file, and an absent path.
+// Test_Sim_Status verifies Status reports a directory, a file with its byte Size, and an
+// absent path.
 func Test_Sim_Status(t *testing.T) {
-	loop, _, _ := sim_loop(0)
+	loop, driver, _ := sim_loop(0)
 	if make_err := loop.Make_Directory("/dir"); make_err != nil {
 		t.Fatalf("make directory: %v", make_err)
 	}
-	if _, create_err := loop.Create("/dir/file"); create_err != nil {
+	file, create_err := loop.Create("/dir/file")
+	if create_err != nil {
 		t.Fatalf("create: %v", create_err)
 	}
+	// Write known bytes so the file's Size has a known expected value.
+	content := []byte("hello world")
+	written := false
+	var write io.Completion
+	loop.Write(&write, func(_ *io.Completion, _ int, _ error) {
+		written = true
+	}, file, content, 0)
+	driver.Run_Until(func() (finished bool) { return written }, sim_deadline)
 	directory, _ := loop.Status("/dir")
 	if !directory.Exists {
 		t.Fatalf("dir status = %+v, want exists", directory)
@@ -464,9 +474,15 @@ func Test_Sim_Status(t *testing.T) {
 	if !directory.Is_Directory {
 		t.Fatalf("dir status = %+v, want a directory", directory)
 	}
+	if directory.Size != 0 {
+		t.Fatalf("dir status = %+v, want a zero Size", directory)
+	}
 	regular, _ := loop.Status("/dir/file")
 	if regular.Is_Directory {
 		t.Fatalf("file status = %+v, want a non-directory", regular)
+	}
+	if regular.Size != int64(len(content)) {
+		t.Fatalf("file status = %+v, want Size %d", regular, len(content))
 	}
 	absent, _ := loop.Status("/nope")
 	if absent.Exists {
@@ -492,6 +508,23 @@ func Test_Sim_Make_Directory(t *testing.T) {
 	if repeat_err := loop.Make_Directory("/x/y/z"); repeat_err != nil {
 		t.Fatalf("repeated make directory should converge, got %v", repeat_err)
 	}
+}
+
+// Test_Sim_Cancel_Window_Reuse verifies resubmitting a completion inside the cancel
+// window — after Cancel accepted, before the cancelled delivery fired — panics: the
+// pending delivery still owns the completion, so re-arming it is an edge the lifecycle
+// machine does not have.
+func Test_Sim_Cancel_Window_Reuse(t *testing.T) {
+	loop, _, _ := sim_loop(0)
+	var completion io.Completion
+	loop.Timeout(&completion, func(_ *io.Completion, err error) {}, time.MICROSECOND)
+	loop.Cancel(&completion)
+	defer func() {
+		if recover() == nil {
+			t.Fatal("resubmitting inside the cancel window must panic")
+		}
+	}()
+	loop.Timeout(&completion, func(_ *io.Completion, err error) {}, time.MICROSECOND)
 }
 
 // Builds a simulated loop, its driver, and the read-only clock, seeded by seed. A test

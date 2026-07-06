@@ -40,8 +40,9 @@ func file_create(path string) (descriptor int, err error) {
 	return syscall.Open(path, syscall.O_WRONLY|syscall.O_CREAT|syscall.O_TRUNC, 0o644)
 }
 
-// Reports whether path exists and is a directory via lstat. An absent path is Exists
-// false with a nil error, so a caller distinguishes "not there" from a real stat failure.
+// Reports whether path exists, whether it is a directory, and its byte size via lstat. An
+// absent path is Exists false with a nil error, so a caller distinguishes "not there" from a
+// real stat failure.
 func file_status(path string) (status io.File_Status, err error) {
 	metadata := syscall.Stat_t{}
 	stat_err := syscall.Lstat(path, &metadata)
@@ -54,6 +55,7 @@ func file_status(path string) (status io.File_Status, err error) {
 	return io.File_Status{
 		Exists:       true,
 		Is_Directory: metadata.Mode&syscall.S_IFMT == syscall.S_IFDIR,
+		Size:         metadata.Size,
 	}, nil
 }
 
