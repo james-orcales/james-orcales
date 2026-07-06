@@ -399,6 +399,23 @@ func Test_Dot_Product_Empty(t *testing.T) {
 	}
 }
 
+// Test_Dot_Product_Allocation: a call that violates nothing allocates nothing — the bundle's
+// shape is static per callsite, so only the Event bools vary at runtime.
+func Test_Dot_Product_Allocation(t *testing.T) {
+	recorder := new_test_recorder()
+	allocs := testing.AllocsPerRun(1000, func() {
+		invariant.Recorder_Dot_Product(recorder, "check",
+			invariant.Recorder_Sometimes(recorder, true, "a"),
+			invariant.Recorder_Sometimes(recorder, false, "b"),
+			invariant.Impossible(invariant.Event_True("a"), invariant.Event_True("b")),
+		)
+	})
+	if allocs != 0 {
+		t.Fatalf("a Dot_Product call that violates nothing must not allocate, got %v",
+			allocs)
+	}
+}
+
 // Test_Bundles_Template: a _Invariants is recognized by its name suffix and trailing namespace
 // parameter; the Dot_Product it self-emits under that parameter is a template — not a non-literal
 // failure, seeded only at the callsite's literal namespace, never under the bare parameter.

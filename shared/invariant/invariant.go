@@ -361,25 +361,46 @@ func dot_product_check_references(bundle Bundle) {
 	if !has_impossible {
 		return
 	}
-	siblings := map[string]bool{}
-	for _, dot_element := range bundle {
-		if dot_element.Kind == DOT_ELEMENT_KIND_SOMETIMES {
-			siblings[dot_element.Message] = true
-		}
-	}
 	for _, dot_element := range bundle {
 		if dot_element.Kind != DOT_ELEMENT_KIND_IMPOSSIBLE {
 			continue
 		}
 		for _, reference := range dot_element.Impossibles {
-			if siblings[reference.Message] {
+			if dot_product_has_sibling(bundle, reference.Message) {
 				continue
 			}
 			panic(ASSERTION_FAILURE_MESSAGE_PREFIX +
-				"Impossible references " + strconv.Quote(reference.Message) +
-				", not an axis of this Dot_Product")
+				non_sibling_reference_message(reference))
 		}
 	}
+}
+
+// Reports whether some Sometimes axis in bundle carries message — linear, not a map: a bundle
+// is a handful of elements, so the scan costs nothing, and (unlike a map keyed by a
+// bundle-derived string) it does not force bundle's content to escape. Mirrors
+// dot_element_reference_observed, which resolves the same question for the same reason.
+func dot_product_has_sibling(bundle Bundle, message string) (found bool) {
+	for _, dot_element := range bundle {
+		if dot_element.Kind != DOT_ELEMENT_KIND_SOMETIMES {
+			continue
+		}
+		if dot_element.Message == message {
+			return true
+		}
+	}
+	return false
+}
+
+// Renders the non-sibling-reference panic's message from reference alone, never bundle —
+// bundle-derived content reaching a heap-escaping sink (panic takes interface{}) poisons
+// escape analysis for the whole bundle parameter on every call, not just a violating one, since
+// Go's escape summary is per-function and branch-insensitive. Narrowing to reference (already a
+// copy from the range) is what lets Recorder_Dot_Product's bundle stay non-escaping in the
+// common case — mirrored by dot_element_impossible_message, which does the same for
+// dot_element_violation's bundle parameter.
+func non_sibling_reference_message(reference Dot_Element_Reference) (message string) {
+	return "Impossible references " + strconv.Quote(reference.Message) +
+		", not an axis of this Dot_Product"
 }
 
 // An observe_handle memoizes, for one Dot_Product message, what its bundle resolves to so the

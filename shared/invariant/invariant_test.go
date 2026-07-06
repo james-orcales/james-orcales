@@ -1352,3 +1352,94 @@ func Benchmark_Dot_Product_Recording(b *testing.B) {
 			invariant.Recorder_Sometimes(recorder, false, "b"))
 	}
 }
+
+// Guards the shape a hot _Invariants function actually has — several Sometimes axes plus
+// the pairwise Impossible carves ruling out simultaneous truth — mirroring Metric_Invariants
+// (maddox/internal/maddox.go:3404): 5 Sometimes, 11 Impossible, including the zero/min pair
+// that only ever co-occur because metric_min is 0. Neither existing benchmark above uses an
+// Impossible, so neither exercises this shape; a Dot_Product call that violates nothing must
+// not allocate regardless of how many Impossibles it carries.
+func Test_Dot_Product_Allocates_Nothing_On_Success(t *testing.T) {
+	recorder := new_test_recorder()
+	const metric_min = 0
+	const metric_max = 100
+	value := 0
+	allocs := testing.AllocsPerRun(1000, func() {
+		invariant.Recorder_Dot_Product(recorder, "metric",
+			invariant.Recorder_Sometimes(recorder, value == 0, "zero"),
+			invariant.Recorder_Sometimes(recorder, value == 1, "one"),
+			invariant.Recorder_Sometimes(recorder, value == 2, "two"),
+			invariant.Recorder_Sometimes(recorder, value == metric_min, "min"),
+			invariant.Recorder_Sometimes(recorder, value == metric_max, "max"),
+			invariant.Impossible(
+				invariant.Event_True("zero"), invariant.Event_False("min")),
+			invariant.Impossible(
+				invariant.Event_False("zero"), invariant.Event_True("min")),
+			invariant.Impossible(
+				invariant.Event_True("zero"), invariant.Event_True("one")),
+			invariant.Impossible(
+				invariant.Event_True("zero"), invariant.Event_True("two")),
+			invariant.Impossible(
+				invariant.Event_True("zero"), invariant.Event_True("max")),
+			invariant.Impossible(
+				invariant.Event_True("min"), invariant.Event_True("one")),
+			invariant.Impossible(
+				invariant.Event_True("min"), invariant.Event_True("two")),
+			invariant.Impossible(
+				invariant.Event_True("min"), invariant.Event_True("max")),
+			invariant.Impossible(
+				invariant.Event_True("one"), invariant.Event_True("two")),
+			invariant.Impossible(
+				invariant.Event_True("one"), invariant.Event_True("max")),
+			invariant.Impossible(
+				invariant.Event_True("two"), invariant.Event_True("max")),
+		)
+	})
+	if allocs != 0 {
+		t.Fatalf("Recorder_Dot_Product allocated %v objects/call on success, want 0",
+			allocs)
+	}
+}
+
+// Benchmark_Dot_Product_Impossible_Heavy is the regression guard for
+// Test_Dot_Product_Allocates_Nothing_On_Success: same Metric_Invariants-shaped bundle, run
+// under both the enforcement-only and recording-on paths, so a reintroduced leak shows up in
+// -benchmem on whichever mode is being profiled.
+func Benchmark_Dot_Product_Impossible_Heavy(b *testing.B) {
+	recorder := &invariant.Recorder{}
+	const metric_min = 0
+	const metric_max = 100
+	value := 0
+	b.ReportAllocs()
+	for range b.N {
+		invariant.Recorder_Dot_Product(recorder, "bench",
+			invariant.Recorder_Sometimes(recorder, value == 0, "zero"),
+			invariant.Recorder_Sometimes(recorder, value == 1, "one"),
+			invariant.Recorder_Sometimes(recorder, value == 2, "two"),
+			invariant.Recorder_Sometimes(recorder, value == metric_min, "min"),
+			invariant.Recorder_Sometimes(recorder, value == metric_max, "max"),
+			invariant.Impossible(
+				invariant.Event_True("zero"), invariant.Event_False("min")),
+			invariant.Impossible(
+				invariant.Event_False("zero"), invariant.Event_True("min")),
+			invariant.Impossible(
+				invariant.Event_True("zero"), invariant.Event_True("one")),
+			invariant.Impossible(
+				invariant.Event_True("zero"), invariant.Event_True("two")),
+			invariant.Impossible(
+				invariant.Event_True("zero"), invariant.Event_True("max")),
+			invariant.Impossible(
+				invariant.Event_True("min"), invariant.Event_True("one")),
+			invariant.Impossible(
+				invariant.Event_True("min"), invariant.Event_True("two")),
+			invariant.Impossible(
+				invariant.Event_True("min"), invariant.Event_True("max")),
+			invariant.Impossible(
+				invariant.Event_True("one"), invariant.Event_True("two")),
+			invariant.Impossible(
+				invariant.Event_True("one"), invariant.Event_True("max")),
+			invariant.Impossible(
+				invariant.Event_True("two"), invariant.Event_True("max")),
+		)
+	}
+}
