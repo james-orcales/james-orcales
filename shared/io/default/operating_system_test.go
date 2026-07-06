@@ -275,6 +275,41 @@ func Test_Operating_System_IO_Cancel(t *testing.T) {
 	}
 }
 
+// Test_Operating_System_IO_Reuse_After_Cancel pins the reuse-after-cancel contract a consumer must
+// respect: a cancelled completion stays in the cancel window until its cancellation is delivered,
+// so re-arming it before then is the illegal CANCELLED→ARMED edge and must panic. Only after a
+// drive delivers the cancellation is the completion idle and legally re-armable. This is the exact
+// backend behavior the deterministic simulator cannot model (it drains to empty, closing the
+// window in the same tick), so a consumer that cancels-then-reuses must gate the reuse on the
+// cancellation callback having fired — a gap that panics only against this real backend.
+func Test_Operating_System_IO_Reuse_After_Cancel(t *testing.T) {
+	clock, _ := timeos.New_Operating_System_Clock()
+	loop, driver := iodefault.New_Operating_System_IO(clock)
+
+	var early io.Completion
+	loop.Timeout(&early, func(_ *io.Completion, _ error) {}, time.SECOND)
+	loop.Cancel(&early)
+	func() {
+		defer func() {
+			if recover() == nil {
+				t.Fatal("re-arm before the cancel drains must panic")
+			}
+		}()
+		loop.Timeout(&early, func(_ *io.Completion, _ error) {}, time.SECOND)
+	}()
+
+	fired := 0
+	var reusable io.Completion
+	loop.Timeout(&reusable, func(_ *io.Completion, _ error) { fired++ }, time.MILLISECOND)
+	loop.Cancel(&reusable)
+	driver.Run_For(10 * time.MILLISECOND)
+	loop.Timeout(&reusable, func(_ *io.Completion, _ error) { fired++ }, time.MILLISECOND)
+	driver.Run_For(10 * time.MILLISECOND)
+	if fired != 2 {
+		t.Fatalf("cancelled, drained, then re-armed timeout fired %d times, want 2", fired)
+	}
+}
+
 // Test_Operating_System_IO_Cancel_Accept verifies cancelling a socket operation armed
 // on the poll drops the waiter and delivers the Cancelled error exactly once.
 func Test_Operating_System_IO_Cancel_Accept(t *testing.T) {
