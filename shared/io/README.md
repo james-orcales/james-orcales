@@ -401,8 +401,9 @@ Each of these fails loudly where the runtime can make it:
 4. **Never copy a `Completion`** — the loop tracks the op by pointer; submitting a
    by-value copy panics. Keep each as its own value and pass `&completion`; store many as
    `[]*io.Completion`, never `[]io.Completion` (append moves the array under the loop).
-5. **Never block the loop thread.** A blocking call in a callback stalls every operation.
-   Blocking work → `Compute`; subprocesses → `Spawn`.
+5. **Never block the loop thread — or anywhere else.** Blocking io is an async op on
+   the loop, a subprocess is `Spawn`, and `Compute` parallelizes compute with
+   goroutines — no more, no less; anything that waits on the world is an op.
 6. **Buffers belong to the loop until the callback fires.** Reusing or resizing a
    submitted buffer races the backend.
 7. **Every submission resolves exactly once** — including cancelled ops (`io.Cancelled`).
