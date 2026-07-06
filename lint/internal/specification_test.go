@@ -1371,8 +1371,9 @@ func Test_Event_Loop_Driver(t *testing.T) {
 // package is flagged.
 func Test_Event_Loop_Gateway(t *testing.T) {
 	t.Parallel()
-	files := specification_one_file("package fixture\n\nimport \"net\"\n\n" +
-		"// Dial does.\nfunc Dial() (connection net.Conn) {\n\treturn nil\n}\n")
+	files := specification_one_file("package fixture\n\nimport \"syscall\"\n\n" +
+		"// Read does.\nfunc Read() (n int, err error) {\n" +
+		"\treturn syscall.Read(0, nil)\n}\n")
 	if !specification_flags(t, files, "route IO through shared/io") {
 		t.Fatal("importing raw IO stdlib outside the gateway must be flagged")
 	}
@@ -1586,6 +1587,29 @@ func Test_IO_Gateway_Process_Args(t *testing.T) {
 		"// F counts args.\nfunc F() (count int) {\n\treturn len(os.Args)\n}\n")
 	if specification_flags(t, files, "does raw IO") {
 		t.Fatal("os.Args is not raw IO and must be allowed")
+	}
+}
+
+// Test_IO_Gateway_Network_Pure verifies net.ParseIP, a pure fd-free address helper, is
+// left alone outside the gateway.
+func Test_IO_Gateway_Network_Pure(t *testing.T) {
+	t.Parallel()
+	files := specification_one_file("package fixture\n\nimport \"net\"\n\n" +
+		"// F parses.\nfunc F() (address net.IP) {\n" +
+		"\treturn net.ParseIP(\"127.0.0.1\")\n}\n")
+	if specification_flags(t, files, "route IO through shared/io") {
+		t.Fatal("net.ParseIP is a pure address helper and must be allowed")
+	}
+}
+
+// Test_IO_Gateway_Network_Call verifies a net dialing call outside the gateway is flagged.
+func Test_IO_Gateway_Network_Call(t *testing.T) {
+	t.Parallel()
+	files := specification_one_file("package fixture\n\nimport \"net\"\n\n" +
+		"// F dials.\nfunc F() (connection net.Conn, err error) {\n" +
+		"\treturn net.Dial(\"\", \"\")\n}\n")
+	if !specification_flags(t, files, "net.Dial does raw IO") {
+		t.Fatal("net.Dial outside the gateway must be flagged")
 	}
 }
 
