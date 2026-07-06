@@ -36,6 +36,10 @@ const wake_drain_passes_max = 16
 // Buffers a few pending signals so a burst is not lost between drains.
 const signal_queue_depth = 8
 
+// Buffers receive requests handed to a TLS connection's reader goroutine; a consumer arms one
+// receive at a time, so this only needs slack, not depth.
+const tls_receive_queue = 4
+
 // Caps the idle gap while a signal watcher exists, since a signal does not wake the poll;
 // the loop re-checks the signal channel at least this often.
 const signal_poll_interval = 10 * time.MILLISECOND
@@ -1181,11 +1185,7 @@ func tls_serve(
 	operating_system_post(state, target.Completion, func() {
 		target.Callback(target.Completion, file, nil)
 	})
-	for request := range connection.Requests {
-		if tls_handle(state, secure, request) {
-			return
-		}
-	}
+	tls_service(state, secure, connection)
 }
 
 // Dials host:port and completes the client TLS handshake, verifying against Server_Name
@@ -1282,11 +1282,7 @@ func tls_accept_serve(
 	operating_system_post(state, completion, func() {
 		callback(completion, file, nil)
 	})
-	for request := range connection.Requests {
-		if tls_handle(state, secure, request) {
-			return
-		}
-	}
+	tls_service(state, secure, connection)
 }
 
 // Wraps an accepted raw descriptor in a server tls.Conn and completes the handshake.
@@ -1346,30 +1342,41 @@ func Certificate(input *Certificate_Input) (value any, err error) {
 	return &pair, nil
 }
 
-// Handles one TLS request on the connection goroutine, posting the result; returns true
-// when the connection should close.
-func tls_handle(
-	state *operating_system, secure *tls.Conn, request tls_request,
-) (closed bool) {
-	if request.Kind == tls_close {
-		close_err := secure.Close()
+// Services a TLS connection's requests until it closes. Receives run on a dedicated reader
+// goroutine so a blocking Read never starves a concurrent send: tls.Conn permits one reader and one
+// writer at once, and a loop-native protocol like SPOE must write a response (the ACK) while a Read
+// for the next request is still outstanding. The request loop performs the sends and the close in
+// order, so there is exactly one writer; the reader goroutine services receives one at a time, so
+// there is exactly one reader. Without this split the single goroutine blocked in Read could not
+// write the ACK until more inbound data arrived, delaying it past HAProxy's timeout — the churn.
+func tls_service(state *operating_system, secure *tls.Conn, connection *tls_connection) {
+	receives := make(chan tls_request, tls_receive_queue)
+	go func() {
+		for request := range receives {
+			count, err := secure.Read(request.Buffer)
+			operating_system_post(state, request.Completion, func() {
+				request.Byte_Callback(request.Completion, count, err)
+			})
+		}
+	}()
+	defer close(receives)
+	for request := range connection.Requests {
+		if request.Kind == tls_receive {
+			receives <- request
+			continue
+		}
+		if request.Kind == tls_close {
+			close_err := secure.Close()
+			operating_system_post(state, request.Completion, func() {
+				request.Close_Callback(request.Completion, close_err)
+			})
+			return
+		}
+		written, err := secure.Write(request.Buffer)
 		operating_system_post(state, request.Completion, func() {
-			request.Close_Callback(request.Completion, close_err)
+			request.Byte_Callback(request.Completion, written, err)
 		})
-		return true
 	}
-	if request.Kind == tls_receive {
-		count, err := secure.Read(request.Buffer)
-		operating_system_post(state, request.Completion, func() {
-			request.Byte_Callback(request.Completion, count, err)
-		})
-		return false
-	}
-	count, err := secure.Write(request.Buffer)
-	operating_system_post(state, request.Completion, func() {
-		request.Byte_Callback(request.Completion, count, err)
-	})
-	return false
 }
 
 // Routes a receive to its TLS connection goroutine when socket is a TLS descriptor,

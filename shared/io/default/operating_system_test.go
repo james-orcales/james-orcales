@@ -498,42 +498,7 @@ func Test_Operating_System_IO_Watch_Signal(t *testing.T) {
 // Test_Operating_System_IO_TLS runs a TLS loopback: a client connects (skipping
 // verification) to a secure listener and exchanges plaintext through the tunnel.
 func Test_Operating_System_IO_TLS(t *testing.T) {
-	port := free_port(t)
-	certificate := self_signed(t)
-	clock, _ := timeos.New_Operating_System_Clock()
-	loop, driver := iodefault.New_Operating_System_IO(clock)
-	listener, listen_err := loop.Listen("127.0.0.1", port)
-	if listen_err != nil {
-		t.Fatalf("listen: %v", listen_err)
-	}
-
-	server := io.File(-1)
-	var accept_completion io.Completion
-	loop.Accept_Secure(&accept_completion, func(_ *io.Completion, socket io.File, err error) {
-		if err != nil {
-			t.Errorf("accept secure: %v", err)
-		}
-		server = socket
-	}, listener, func() (value any) { return certificate })
-
-	client := io.File(-1)
-	var connect_completion io.Completion
-	loop.Connect_Insecure(&connect_completion,
-		func(_ *io.Completion, socket io.File, err error) {
-			if err != nil {
-				t.Errorf("connect insecure: %v", err)
-			}
-			client = socket
-		}, "127.0.0.1", port, "localhost")
-
-	driver.Run_Until(func() (finished bool) { return server > 0 }, real_deadline)
-	driver.Run_Until(func() (finished bool) { return client > 0 }, real_deadline)
-	if server <= 0 {
-		t.Fatalf("secure accept did not complete, got %d", server)
-	}
-	if client <= 0 {
-		t.Fatalf("insecure connect did not complete, got %d", client)
-	}
+	loop, driver, client, server := tls_loopback(t)
 
 	var send_completion io.Completion
 	loop.Send(&send_completion, func(_ *io.Completion, count int, err error) {
@@ -557,6 +522,101 @@ func Test_Operating_System_IO_TLS(t *testing.T) {
 	}
 	if string(buffer[:4]) != "ping" {
 		t.Fatalf("received %q, want ping", buffer[:4])
+	}
+}
+
+// Establishes a TLS loopback on the real backend and returns the loop, its driver, and the
+// connected client and server sockets, driving the accept and connect to completion so a test
+// exercises the tunnel without repeating the handshake.
+func tls_loopback(
+	t *testing.T,
+) (loop io.IO, driver io.Driver, client io.File, server io.File) {
+	port := free_port(t)
+	certificate := self_signed(t)
+	clock, _ := timeos.New_Operating_System_Clock()
+	loop, driver = iodefault.New_Operating_System_IO(clock)
+	listener, listen_err := loop.Listen("127.0.0.1", port)
+	if listen_err != nil {
+		t.Fatalf("listen: %v", listen_err)
+	}
+	server = io.File(-1)
+	var accept_completion io.Completion
+	loop.Accept_Secure(&accept_completion, func(_ *io.Completion, socket io.File, err error) {
+		if err != nil {
+			t.Errorf("accept secure: %v", err)
+		}
+		server = socket
+	}, listener, func() (value any) { return certificate })
+	client = io.File(-1)
+	var connect_completion io.Completion
+	loop.Connect_Insecure(&connect_completion,
+		func(_ *io.Completion, socket io.File, err error) {
+			if err != nil {
+				t.Errorf("connect insecure: %v", err)
+			}
+			client = socket
+		}, "127.0.0.1", port, "localhost")
+	driver.Run_Until(func() (finished bool) { return server > 0 }, real_deadline)
+	driver.Run_Until(func() (finished bool) { return client > 0 }, real_deadline)
+	if server <= 0 {
+		t.Fatalf("secure accept did not complete, got %d", server)
+	}
+	if client <= 0 {
+		t.Fatalf("insecure connect did not complete, got %d", client)
+	}
+	return loop, driver, client, server
+}
+
+// Test_Operating_System_IO_TLS_Concurrent_Read_Write verifies a send is not starved behind a
+// blocked receive on one TLS connection. A receive is armed on the client that no peer will ever
+// feed, so the connection's reader stays blocked; a send on that same client must still reach the
+// server. The single-goroutine backend deadlocked here — the write sat in the request queue behind
+// the blocking Read — so this pins the reader/writer split that lets the two directions proceed at
+// once. The client receive is asserted still pending, proving the send went out past a live read.
+func Test_Operating_System_IO_TLS_Concurrent_Read_Write(t *testing.T) {
+	loop, driver, client, server := tls_loopback(t)
+
+	blocked := make([]byte, 16)
+	client_received := -1
+	var client_receive io.Completion
+	loop.Receive(&client_receive, func(_ *io.Completion, count int, _ error) {
+		client_received = count
+	}, client, blocked)
+
+	sent := -1
+	var send_completion io.Completion
+	loop.Send(&send_completion, func(_ *io.Completion, count int, err error) {
+		if err != nil {
+			t.Errorf("send: %v", err)
+		}
+		sent = count
+	}, client, []byte("ping"))
+
+	buffer := make([]byte, 16)
+	server_received := -1
+	var server_receive io.Completion
+	loop.Receive(&server_receive, func(_ *io.Completion, count int, err error) {
+		if err != nil {
+			t.Errorf("server receive: %v", err)
+		}
+		server_received = count
+	}, server, buffer)
+
+	driver.Run_Until(func() (finished bool) {
+		return sent >= 0 && server_received >= 0
+	}, real_deadline)
+
+	if sent != 4 {
+		t.Fatalf("send behind a blocked receive delivered %d bytes, want 4", sent)
+	}
+	if server_received != 4 {
+		t.Fatalf("server received %d bytes, want 4", server_received)
+	}
+	if string(buffer[:4]) != "ping" {
+		t.Fatalf("server received %q, want ping", buffer[:4])
+	}
+	if client_received >= 0 {
+		t.Fatal("the client receive should stay pending — no peer fed it")
 	}
 }
 
