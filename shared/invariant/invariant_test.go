@@ -61,6 +61,116 @@ func Test_Dot_Product_Impossible_Combination_Absent_Passes(t *testing.T) {
 	}
 }
 
+// Enforcement memoizes a namespace's bundle SHAPE, never its per-call verdict: the same
+// namespace called first with the forbidden combination absent (no panic) and then with it
+// present must fail on the second call. A cache that stored "no violation" from the first
+// call would wrongly stay silent.
+func Test_Dot_Product_Enforcement_Verdict_Is_Not_Cached(t *testing.T) {
+	recorder := new_test_recorder()
+	forbidden := invariant.Impossible(
+		invariant.Event_True("a"),
+		invariant.Event_True("b"),
+	)
+	absent := recover_message(func() {
+		invariant.Recorder_Dot_Product(recorder, "check",
+			invariant.Recorder_Sometimes(recorder, true, "a"),
+			invariant.Recorder_Sometimes(recorder, false, "b"),
+			forbidden)
+	})
+	if absent != "" {
+		t.Fatalf("first call (combination absent) must not panic, got: %s", absent)
+	}
+	present := recover_message(func() {
+		invariant.Recorder_Dot_Product(recorder, "check",
+			invariant.Recorder_Sometimes(recorder, true, "a"),
+			invariant.Recorder_Sometimes(recorder, true, "b"),
+			forbidden)
+	})
+	if present == "" {
+		t.Fatal("second call (combination present) must panic after a clean first call")
+	}
+}
+
+// Enforcement fires on cached calls, not only the first: a namespace whose forbidden
+// combination is present on two successive calls must panic both times. A cache that enforced
+// only while building its handle would let the second call through.
+func Test_Dot_Product_Enforcement_Fires_On_Cached_Call(t *testing.T) {
+	recorder := new_test_recorder()
+	call := func() (message string) {
+		return recover_message(func() {
+			invariant.Recorder_Dot_Product(recorder, "check",
+				invariant.Recorder_Sometimes(recorder, true, "a"),
+				invariant.Recorder_Sometimes(recorder, true, "b"),
+				invariant.Impossible(
+					invariant.Event_True("a"),
+					invariant.Event_True("b"),
+				))
+		})
+	}
+	if call() == "" {
+		t.Fatal("first call must panic on the forbidden combination")
+	}
+	if call() == "" {
+		t.Fatal("second call must also panic — enforcement is not build-only")
+	}
+}
+
+// A reference naming a non-sibling axis is a typo that panics on EVERY call, not just the
+// first: a cache must never store a partial or invalid handle from a failed build, or a repeat
+// of the same bad bundle would silently pass.
+func Test_Dot_Product_Non_Sibling_Reference_Panics_Every_Call(t *testing.T) {
+	recorder := new_test_recorder()
+	call := func() (message string) {
+		return recover_message(func() {
+			invariant.Recorder_Dot_Product(recorder, "check",
+				invariant.Recorder_Sometimes(recorder, true, "a"),
+				invariant.Impossible(
+					invariant.Event_True("a"),
+					invariant.Event_True("typo"),
+				))
+		})
+	}
+	first := call()
+	if !strings.Contains(first, "typo") {
+		t.Fatalf("first call must panic naming the non-sibling reference, got: %s", first)
+	}
+	second := call()
+	if second != first {
+		t.Fatalf("the typo must panic identically on every call: first=%q second=%q",
+			first, second)
+	}
+}
+
+// A panic names every Impossible violated on the call, in bundle order, and its text is the
+// same whether the resolution is scanned or cached — two forbidden combinations both present
+// yield one panic naming both.
+func Test_Dot_Product_Enforcement_Names_All_Violations_In_Order(t *testing.T) {
+	recorder := new_test_recorder()
+	message := recover_message(func() {
+		invariant.Recorder_Dot_Product(recorder, "check",
+			invariant.Recorder_Sometimes(recorder, true, "a"),
+			invariant.Recorder_Sometimes(recorder, true, "b"),
+			invariant.Recorder_Sometimes(recorder, true, "c"),
+			invariant.Impossible(invariant.Event_True("a"), invariant.Event_True("b")),
+			invariant.Impossible(invariant.Event_True("a"), invariant.Event_True("c")),
+		)
+	})
+	if strings.Count(message, "forbidden combination occurred") != 2 {
+		t.Fatalf("panic must name every violated Impossible, not the first: %s", message)
+	}
+	first_offset := strings.Index(message, "\n  b  ")
+	second_offset := strings.Index(message, "\n  c  ")
+	if first_offset < 0 {
+		t.Fatalf("panic must name violated axis b: %s", message)
+	}
+	if second_offset < 0 {
+		t.Fatalf("panic must name violated axis c: %s", message)
+	}
+	if first_offset > second_offset {
+		t.Fatalf("violations must appear in bundle order (a,b before a,c): %s", message)
+	}
+}
+
 // An element's identity is the author-supplied message it carries — the identity
 // that static registration and the runtime rendezvous on, with no caller lookup.
 func Test_Element_Message_Is_Identity(t *testing.T) {
