@@ -3,9 +3,13 @@ package io_test
 import (
 	"bytes"
 	"crypto/tls"
+	"errors"
 	"net"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"strconv"
+	"strings"
 	"syscall"
 	"testing"
 
@@ -183,6 +187,27 @@ func Test_Operating_System_IO_Socket(t *testing.T) {
 	}
 	if string(buffer[:4]) != "ping" {
 		t.Fatalf("received %q, want ping", buffer[:4])
+	}
+}
+
+// Test_Operating_System_IO_Reuseport confirms SO_REUSEPORT: two independent loops bind the same
+// host:port at once, the thread-per-core shape where N single-threaded loops share one listening
+// port and the kernel load-balances connections across them. Without it the second Listen would
+// fail EADDRINUSE.
+func Test_Operating_System_IO_Reuseport(t *testing.T) {
+	port := free_port(t)
+	clock, _ := timeos.New_Operating_System_Clock()
+
+	loop_one, _ := iodefault.New_Operating_System_IO(clock)
+	_, first_err := loop_one.Listen("127.0.0.1", port)
+	if first_err != nil {
+		t.Fatalf("first listen: %v", first_err)
+	}
+
+	loop_two, _ := iodefault.New_Operating_System_IO(clock)
+	_, second_err := loop_two.Listen("127.0.0.1", port)
+	if second_err != nil {
+		t.Fatalf("second listen on the same port (SO_REUSEPORT missing?): %v", second_err)
 	}
 }
 
@@ -816,4 +841,245 @@ func free_port(t *testing.T) (port int) {
 		t.Fatal(close_err)
 	}
 	return port
+}
+
+// How many rapid dials span the self-exec transition; every one must connect, none refused.
+const self_exec_dials = 100
+
+// How many dials to confirm the re-exec'd phase-2 server answers, generous against boot latency.
+const self_exec_confirm_dials = 50
+
+// How many attempts to wait for the child's initial bind before giving up.
+const self_exec_wait_attempts = 200
+
+// The gap each wait/confirm retry rests on the loop, so retries do not spin.
+const self_exec_retry_pause = 20 * time.MILLISECOND
+
+// Caps the phase-2 accept loop so it is bounded rather than an unbounded for{}; far more than the
+// outer test's dial count, which kills the child long before this.
+const self_exec_serve_max = 1 << 20
+
+// Test_Operating_System_IO_Self_Exec is the real-execve proof of the zero-gap listener handoff: a
+// child binds a listener, self-execs preserving that descriptor, and the re-exec'd image serves
+// from the inherited socket. Across the whole transition an outer dialer must never see
+// connection-refused — the bind never lapses — and it must ultimately reach the phase-2 server,
+// proving the descriptor actually crossed the exec. The simulator cannot model a real process-image
+// replacement, so this lives in the real backend, dialing through the loop like the other real-OS
+// tests, driven through a helper process in Go's standard helper-process idiom.
+func Test_Operating_System_IO_Self_Exec(t *testing.T) {
+	port := free_port(t)
+	child := exec.Command(os.Args[0], "-test.run=Test_Self_Exec_Child")
+	child.Env = append(os.Environ(),
+		"GO_SELF_EXEC_HELPER=1",
+		"SELF_EXEC_PORT="+strconv.Itoa(port))
+	if start_err := child.Start(); start_err != nil {
+		t.Fatalf("start helper: %v", start_err)
+	}
+	defer func() {
+		kill_err := child.Process.Kill()
+		if kill_err != nil {
+			t.Logf("kill helper: %v", kill_err)
+		}
+		wait_err := child.Wait()
+		if wait_err != nil {
+			t.Logf("wait helper: %v", wait_err)
+		}
+	}()
+
+	clock, _ := timeos.New_Operating_System_Clock()
+	loop, driver := iodefault.New_Operating_System_IO(clock)
+	if !self_exec_wait_up(loop, driver, port) {
+		t.Fatal("helper never bound the port; phase-1 bind failed")
+	}
+	refused := 0
+	for attempt_index := 0; attempt_index < self_exec_dials; attempt_index++ {
+		socket, was_refused := self_exec_dial(loop, driver, port)
+		if was_refused {
+			refused++
+		}
+		if socket > 0 {
+			self_exec_close(loop, driver, socket)
+		}
+	}
+	if refused != 0 {
+		t.Fatalf("refused %d times across the self-exec; the bind gapped", refused)
+	}
+	if !self_exec_saw_sentinel(loop, driver, port) {
+		t.Fatal("never reached the re-exec'd phase-2 server; the descriptor handoff failed")
+	}
+}
+
+// Test_Operating_System_IO_Self_Exec_Failure_Preserves_Process pins the marks-not-closes contract:
+// a self-exec to a missing binary must fail synchronously and leave the process — and its
+// listener — fully intact, so the caller can fall back to another restart path. It runs in-process
+// because the exec is guaranteed to fail; a successful one would replace the test binary.
+func Test_Operating_System_IO_Self_Exec_Failure_Preserves_Process(t *testing.T) {
+	port := free_port(t)
+	clock, _ := timeos.New_Operating_System_Clock()
+	loop, driver := iodefault.New_Operating_System_IO(clock)
+	listener, listen_err := loop.Listen("127.0.0.1", port)
+	if listen_err != nil {
+		t.Fatalf("listen: %v", listen_err)
+	}
+
+	absent := filepath.Join(t.TempDir(), "nonexistent-binary")
+	exec_err := loop.Self_Exec(absent, []string{absent}, nil, []io.File{listener})
+	if exec_err == nil {
+		t.Fatal("self-exec to a missing binary must fail, not replace the process")
+	}
+
+	accepted := io.File(-1)
+	var accept_completion io.Completion
+	loop.Accept(&accept_completion, func(_ *io.Completion, socket io.File, accept_err error) {
+		if accept_err != nil {
+			t.Errorf("accept: %v", accept_err)
+		}
+		accepted = socket
+	}, listener)
+	connected := io.File(-1)
+	var connect_completion io.Completion
+	loop.Connect(
+		&connect_completion,
+		func(_ *io.Completion, socket io.File, connect_err error) {
+			if connect_err != nil {
+				t.Errorf("connect: %v", connect_err)
+			}
+			connected = socket
+		}, "127.0.0.1", port)
+	driver.Run_Until(func() (finished bool) { return accepted > 0 }, real_deadline)
+	driver.Run_Until(func() (finished bool) { return connected > 0 }, real_deadline)
+	if accepted <= 0 {
+		t.Fatal("the preserved listener could not accept after a failed self-exec")
+	}
+}
+
+// Connects to the port once through the loop, reporting the connected socket (or -1) and whether
+// the attempt was refused because nothing listened. The caller owns closing a returned socket.
+func self_exec_dial(loop io.IO, driver io.Driver, port int) (socket io.File, refused bool) {
+	socket = io.File(-1)
+	done := false
+	var completion io.Completion
+	loop.Connect(&completion, func(_ *io.Completion, connected io.File, err error) {
+		done = true
+		if err != nil {
+			refused = errors.Is(err, syscall.ECONNREFUSED)
+			return
+		}
+		socket = connected
+	}, "127.0.0.1", port)
+	driver.Run_Until(func() (finished bool) { return done }, real_deadline)
+	return socket, refused
+}
+
+// Closes a socket through the loop, driving the close to completion.
+func self_exec_close(loop io.IO, driver io.Driver, socket io.File) {
+	closed := false
+	var completion io.Completion
+	loop.Close(&completion, func(_ *io.Completion, _ error) { closed = true }, socket)
+	driver.Run_Until(func() (finished bool) { return closed }, real_deadline)
+}
+
+// Reads once from a connected socket through the loop, returning the bytes received.
+func self_exec_receive(loop io.IO, driver io.Driver, socket io.File) (reply []byte) {
+	buffer := make([]byte, 8)
+	count := -1
+	var completion io.Completion
+	loop.Receive(&completion, func(_ *io.Completion, received int, _ error) {
+		count = received
+	}, socket, buffer)
+	driver.Run_Until(func() (finished bool) { return count >= 0 }, real_deadline)
+	if count > 0 {
+		return buffer[:count]
+	}
+	return nil
+}
+
+// Dials until the helper's listener answers, so the zero-gap measurement starts only once the child
+// is up — a startup refusal is not the bind gap the test is about.
+func self_exec_wait_up(loop io.IO, driver io.Driver, port int) (up bool) {
+	for attempt_index := 0; attempt_index < self_exec_wait_attempts; attempt_index++ {
+		socket, _ := self_exec_dial(loop, driver, port)
+		if socket > 0 {
+			self_exec_close(loop, driver, socket)
+			return true
+		}
+		driver.Run_For(self_exec_retry_pause)
+	}
+	return false
+}
+
+// Dials until one connection reads the phase-2 sentinel, confirming the re-exec'd server —
+// reachable only through the inherited descriptor — actually came up and served.
+func self_exec_saw_sentinel(loop io.IO, driver io.Driver, port int) (seen bool) {
+	for attempt_index := 0; attempt_index < self_exec_confirm_dials; attempt_index++ {
+		socket, _ := self_exec_dial(loop, driver, port)
+		if socket <= 0 {
+			driver.Run_For(self_exec_retry_pause)
+			continue
+		}
+		reply := self_exec_receive(loop, driver, socket)
+		self_exec_close(loop, driver, socket)
+		if strings.HasPrefix(string(reply), "ok") {
+			return true
+		}
+		driver.Run_For(self_exec_retry_pause)
+	}
+	return false
+}
+
+// Test_Self_Exec_Child is the child the self-exec test drives, not a test of its own: it returns
+// at once on a normal run and only acts when GO_SELF_EXEC_HELPER marks it the helper. Phase 1 (no
+// SELF_EXEC_FD yet) binds the listener and self-execs, handing the descriptor down; phase 2 (the
+// re-exec'd image, SELF_EXEC_FD set) serves the sentinel from that inherited socket. The two phases
+// are distinguished by the presence of the brand-new SELF_EXEC_FD variable, so no environment key
+// collides across the exec.
+func Test_Self_Exec_Child(t *testing.T) {
+	if os.Getenv("GO_SELF_EXEC_HELPER") == "" {
+		return
+	}
+	descriptor_value := os.Getenv("SELF_EXEC_FD")
+	if descriptor_value != "" {
+		self_exec_child_serve(descriptor_value)
+		return
+	}
+	self_exec_child_bind()
+}
+
+// The helper's phase 1: bind the listener on the real backend, then self-exec the test binary back
+// into phase 2, preserving the listener descriptor and naming it in SELF_EXEC_FD. On a successful
+// exec this never returns; a non-zero exit marks a bind or exec failure the outer test sees as a
+// never-bound port.
+func self_exec_child_bind() {
+	port, _ := strconv.Atoi(os.Getenv("SELF_EXEC_PORT"))
+	clock, _ := timeos.New_Operating_System_Clock()
+	loop, _ := iodefault.New_Operating_System_IO(clock)
+	listener, listen_err := loop.Listen("127.0.0.1", port)
+	if listen_err != nil {
+		os.Exit(11)
+	}
+	environment := []string{"SELF_EXEC_FD=" + strconv.Itoa(int(listener))}
+	argv := []string{os.Args[0], "-test.run=Test_Self_Exec_Child"}
+	loop.Self_Exec(os.Args[0], argv, environment, []io.File{listener})
+	os.Exit(12)
+}
+
+// The helper's phase 2: reconstruct the listener from the inherited descriptor and serve the
+// sentinel to every connection until the outer test kills the process. That the inherited
+// descriptor is a live, accept-able listening socket is the whole proof the handoff works.
+func self_exec_child_serve(descriptor_value string) {
+	descriptor, _ := strconv.Atoi(descriptor_value)
+	file := os.NewFile(uintptr(descriptor), "self-exec-listener")
+	listener, listener_err := net.FileListener(file)
+	if listener_err != nil {
+		os.Exit(13)
+	}
+	for served_index := 0; served_index < self_exec_serve_max; served_index++ {
+		connection, accept_err := listener.Accept()
+		if accept_err != nil {
+			os.Exit(0)
+		}
+		connection.Write([]byte("ok\n"))
+		connection.Close()
+	}
+	os.Exit(0)
 }

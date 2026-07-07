@@ -131,6 +131,12 @@ type operating_system struct {
 	TLS map[io.File]*tls_connection
 	// Next_TLS is the synthetic TLS descriptor counter, based at tls_file_base.
 	Next_TLS io.File
+	// Raw_Open records every raw, non-close-on-exec descriptor this backend holds open — the
+	// listeners, plainly-accepted connections, plain outbound connects, and the wake pipe. It
+	// is the exact set Self_Exec must mark close-on-exec (minus the preserved listeners) so no
+	// stale descriptor leaks into the re-exec'd image. TLS-borne sockets never appear here:
+	// they ride net.FileConn/net.Dial, which Go marks close-on-exec already.
+	Raw_Open map[int]bool
 }
 
 // One registered signal watcher: the OS signal it awaits, its backend-independent kind,
@@ -200,7 +206,7 @@ type tls_target struct {
 // and Run_For blocks real time bounded by the nearest deadline or socket event —
 // the same deadline-bounded wait TigerBeetle performs in kevent/io_uring.
 func New_Operating_System_IO(host time.Clock) (loop io.IO, driver io.Driver) {
-	state := &operating_system{Host: host}
+	state := &operating_system{Host: host, Raw_Open: map[int]bool{}}
 	operating_system_wire_file(state, &loop)
 	operating_system_wire_timer(state, &loop)
 	operating_system_wire_socket(state, &loop)
@@ -274,6 +280,28 @@ func operating_system_wire_effects(state *operating_system, loop *io.IO) {
 	) {
 		operating_system_submit(completion)
 		operating_system_spawn(state, completion, callback, request)
+	}
+	// Replaces this process's image with path/argv via execve, keeping the preserved
+	// descriptors live across the transition while marking every other raw descriptor
+	// close-on-exec so the kernel drops it atomically on a successful exec. It marks — never
+	// closes — so a synchronous exec failure (a bad path, a permission error) leaves the
+	// still-running process and all its descriptors intact for the caller to fall back on;
+	// the close-on-exec flag is harmless on a process that keeps running. On success execve
+	// never returns. Inlined like Listen, the other synchronous descriptor-level op.
+	loop.Self_Exec = func(
+		path string, argv []string, extra_environment []string, preserve []io.File,
+	) (err error) {
+		keep := map[int]bool{}
+		for _, file := range preserve {
+			keep[int(file)] = true
+		}
+		for descriptor := range state.Raw_Open {
+			if keep[descriptor] {
+				continue
+			}
+			syscall.CloseOnExec(descriptor)
+		}
+		return syscall.Exec(path, argv, append(os.Environ(), extra_environment...))
 	}
 }
 
@@ -439,7 +467,11 @@ func operating_system_wire_timer(state *operating_system, loop *io.IO) {
 func operating_system_wire_socket(state *operating_system, loop *io.IO) {
 	loop.Listen = func(host_address string, port int) (listener io.File, err error) {
 		descriptor, listen_err := socket_listen(host_address, port)
-		return io.File(descriptor), listen_err
+		if listen_err != nil {
+			return io.File(descriptor), listen_err
+		}
+		state.Raw_Open[descriptor] = true
+		return io.File(descriptor), nil
 	}
 	loop.Accept = func(
 		completion *io.Completion, callback io.Socket_Callback, listener io.File,
@@ -814,6 +846,9 @@ func operating_system_accept(
 			if again {
 				return false, nil
 			}
+			if err == nil {
+				state.Raw_Open[accepted] = true
+			}
 			return true, func() { callback(completion, io.File(accepted), err) }
 		},
 	}
@@ -833,6 +868,7 @@ func operating_system_connect(
 		state.Completed = append(state.Completed, completion)
 		return
 	}
+	state.Raw_Open[descriptor] = true
 	completion.Callback = func() { callback(completion, 0, io.Cancelled) }
 	state.Write_Waiters[descriptor] = &socket_operation{
 		Completion: completion,
@@ -903,6 +939,7 @@ func operating_system_close(
 	if operating_system_tls_close(state, completion, callback, file) {
 		return
 	}
+	delete(state.Raw_Open, int(file))
 	err := socket_close(int(file))
 	completion.Callback = func() {
 		if completion.Cancelled {
@@ -1037,6 +1074,8 @@ func operating_system_wake_ensure(state *operating_system) {
 	state.Wake_Read = read
 	state.Wake_Write = write
 	state.Wake_Active = true
+	state.Raw_Open[read] = true
+	state.Raw_Open[write] = true
 	poll_file_arm(state.Poll, read, false)
 }
 

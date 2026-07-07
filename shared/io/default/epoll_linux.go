@@ -4,6 +4,10 @@ package io
 
 import "syscall"
 
+// SO_REUSEPORT socket option, hand-written because the stdlib syscall package omits it on Linux
+// (unlike Darwin) and pulling in golang.org/x/sys/unix for one constant is not worth it.
+const socket_reuseport = 0xf
+
 // The epoll descriptor plus the per-descriptor interest mask epoll needs to combine
 // read and write directions on one entry.
 type poll_file struct {

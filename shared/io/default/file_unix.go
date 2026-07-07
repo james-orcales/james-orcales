@@ -141,6 +141,12 @@ func socket_listen(host string, port int) (descriptor int, err error) {
 		return -1, err
 	}
 	socket_prepare(descriptor)
+	// SO_REUSEPORT lets N loops in one process each bind this same host:port; the kernel then
+	// load-balances connections across their listening sockets (thread-per-core). It is
+	// listener-only: client sockets skip it. The option never fails on a fresh socket, so its
+	// error is ignored, like SO_REUSEADDR's. socket_reuseport is a per-OS constant because the
+	// stdlib syscall package defines SO_REUSEPORT on Darwin but not on Linux.
+	syscall.SetsockoptInt(descriptor, syscall.SOL_SOCKET, socket_reuseport, 1)
 	bind_err := syscall.Bind(descriptor, &address)
 	if bind_err != nil {
 		syscall.Close(descriptor)

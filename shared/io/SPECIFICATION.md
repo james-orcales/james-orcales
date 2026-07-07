@@ -120,6 +120,12 @@ A spawn completes after the drawn latency with a seed-drawn exit code and no cap
 output — the seed decides success or failure, since scripted output is disallowed. A live
 Stdout or Stderr sink instead streams that output on the real backend, uncaptured.
 
+### Self Exec
+
+Self_Exec replaces the process image in place, preserving the listed descriptors so a listening
+socket's bind survives; it returns only on failure. The simulator cannot replace its own test
+process, so it always returns an error — the honest outcome a caller's fallback path rides.
+
 ### Read Directory
 
 Read_Directory lists a directory's immediate children synchronously, sorted by name so the

@@ -361,6 +361,19 @@ type IO struct {
 	// subprocess counterpart of the other completion ops. The simulator draws the exit
 	// code from the seed and returns no output, since scripted output is disallowed.
 	Spawn func(completion *Completion, callback Process_Callback, request Process_Request)
+	// Self_Exec replaces this process's image with path/argv (an execve — same PID, the
+	// virtual memory replaced), layering extra_environment onto the current environment.
+	// Every descriptor the backend opened is marked close-on-exec first except preserve,
+	// which survives into the new image at the same descriptor numbers — the mechanism that
+	// lets a listening socket's bind live across a binary update with no unbind gap. On
+	// success it never returns; on failure it returns an error with the process and every
+	// descriptor undisturbed, so the caller may fall back to another restart path. It
+	// carries no Completion because neither outcome — vanishing or returning at once — is a
+	// deferred delivery. The simulator cannot replace its own test process, so it always
+	// returns an error.
+	Self_Exec func(
+		path string, argv []string, extra_environment []string, preserve []File,
+	) (err error)
 }
 
 // Driver advances the loop — the only capability that moves time and delivers
@@ -617,7 +630,18 @@ func sim_wire_effects(state *sim, loop *IO) {
 	) {
 		sim_spawn(state, completion, callback, request)
 	}
+	loop.Self_Exec = func(
+		path string, argv []string, extra_environment []string, preserve []File,
+	) (err error) {
+		return sim_self_exec_unsupported
+	}
 }
+
+// The error every simulated Self_Exec returns: the simulator cannot replace its own test
+// process, so it reports the failure rather than pretending to succeed (which would destroy
+// the run). A caller's real-backend success path never returns, so its fallback branch is
+// exactly what the simulator exercises.
+var sim_self_exec_unsupported = errors.New("io: self-exec is not supported by the simulator")
 
 // Delivers a subprocess result drawn from the seed: the exit code varies (usually zero,
 // occasionally non-zero for fault coverage) with no captured output — scripted output is
