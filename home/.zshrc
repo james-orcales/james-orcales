@@ -184,6 +184,7 @@ TRAPINT() {
 source "${plugin_dir:?💥}/zsh_autosuggestions.zsh"
 ZSH_AUTOSUGGEST_STRATEGY=(history completion)
 ZSH_AUTOSUGGEST_HIGHLIGHT_STYLE='fg=244'
+ZSH_AUTOSUGGEST_MAX_LENGTH=100  # skip suggestions for buffers longer than this
 # Accept with → (or Ctrl-F / End). Accept one word: Ctrl-→.
 
 # --- up/down: search history by what you've already typed (substring) ---
