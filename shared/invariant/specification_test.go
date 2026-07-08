@@ -173,7 +173,7 @@ func Test_Impossible_Absent(t *testing.T) {
 // Test_Impossible_Glob: naming a subset of axes carves every cell matching the named
 // events across all values of the unnamed axes.
 func Test_Impossible_Glob(t *testing.T) {
-	const source = `package fixture
+	const SOURCE = `package fixture
 
 func check(n int) {
 	invariant.Dot_Product("check",
@@ -186,7 +186,7 @@ func check(n int) {
 `
 	recorder := &invariant.Recorder{
 		File_System: fstest.MapFS{
-			"fixture/check.go": &fstest.MapFile{Data: []byte(source)},
+			"fixture/check.go": &fstest.MapFile{Data: []byte(SOURCE)},
 		},
 	}
 	invariant.Recorder_Register_Packages_For_Analysis(recorder, "/fixture")
@@ -259,7 +259,7 @@ func Test_Imply_Gated(t *testing.T) {
 // Test_Imply_Excluded: a gated Imply axis is per-axis coverage only — seeded as its own entry but
 // joining no tuple of the grid, since the message-less prerequisite is no axis to cross.
 func Test_Imply_Excluded(t *testing.T) {
-	const source = `package fixture
+	const SOURCE = `package fixture
 
 func check(n int, p *int) {
 	invariant.Dot_Product("check",
@@ -270,7 +270,7 @@ func check(n int, p *int) {
 `
 	recorder := &invariant.Recorder{
 		File_System: fstest.MapFS{
-			"fixture/check.go": &fstest.MapFile{Data: []byte(source)},
+			"fixture/check.go": &fstest.MapFile{Data: []byte(SOURCE)},
 		},
 	}
 	invariant.Recorder_Register_Packages_For_Analysis(recorder, "/fixture")
@@ -339,7 +339,7 @@ func Test_Dot_Product_Identity(t *testing.T) {
 // grid is over the varying Sometimes axes alone; the bare Always is not an element and
 // occupies no coordinate — it seeds only its own reachability entry under its message.
 func Test_Dot_Product_Grid(t *testing.T) {
-	const source = `package fixture
+	const SOURCE = `package fixture
 
 func check(n int) {
 	invariant.Always(n >= 0, "non-negative")
@@ -352,7 +352,7 @@ func check(n int) {
 `
 	recorder := &invariant.Recorder{
 		File_System: fstest.MapFS{
-			"fixture/check.go": &fstest.MapFile{Data: []byte(source)},
+			"fixture/check.go": &fstest.MapFile{Data: []byte(SOURCE)},
 		},
 	}
 	invariant.Recorder_Register_Packages_For_Analysis(recorder, "/fixture")
@@ -420,7 +420,7 @@ func Test_Dot_Product_Allocation(t *testing.T) {
 // parameter; the Dot_Product it self-emits under that parameter is a template — not a non-literal
 // failure, seeded only at the callsite's literal namespace, never under the bare parameter.
 func Test_Bundles_Template(t *testing.T) {
-	const source = `package fixture
+	const SOURCE = `package fixture
 
 type Pair int
 
@@ -436,7 +436,7 @@ func check(n int) {
 	exit_code := -1
 	recorder := &invariant.Recorder{
 		File_System: fstest.MapFS{
-			"fixture/pair.go": &fstest.MapFile{Data: []byte(source)},
+			"fixture/pair.go": &fstest.MapFile{Data: []byte(SOURCE)},
 		},
 		Output: &output,
 		Exit:   func(code int) { exit_code = code },
@@ -460,7 +460,7 @@ func check(n int) {
 // Test_Bundles_Descent: registration follows a _Invariants(v, "lit") call and seeds the grid its
 // body self-emits, keyed by the callsite namespace.
 func Test_Bundles_Descent(t *testing.T) {
-	const source = `package fixture
+	const SOURCE = `package fixture
 
 type Pair int
 
@@ -474,7 +474,7 @@ func check(n int) {
 `
 	recorder := &invariant.Recorder{
 		File_System: fstest.MapFS{
-			"fixture/pair.go": &fstest.MapFile{Data: []byte(source)},
+			"fixture/pair.go": &fstest.MapFile{Data: []byte(SOURCE)},
 		},
 	}
 	invariant.Recorder_Register_Packages_For_Analysis(recorder, "/fixture")
@@ -489,7 +489,7 @@ func check(n int) {
 // sub-namespace; the nested type registers its own self-contained grid, never flattened into the
 // parent.
 func Test_Bundles_Composition(t *testing.T) {
-	const source = `package fixture
+	const SOURCE = `package fixture
 
 type Inner int
 
@@ -510,7 +510,7 @@ func check(n int) {
 `
 	recorder := &invariant.Recorder{
 		File_System: fstest.MapFS{
-			"fixture/nested.go": &fstest.MapFile{Data: []byte(source)},
+			"fixture/nested.go": &fstest.MapFile{Data: []byte(SOURCE)},
 		},
 	}
 	invariant.Recorder_Register_Packages_For_Analysis(recorder, "/fixture")
@@ -528,7 +528,7 @@ func check(n int) {
 // Test_Bundles_Casing: a snake_case _invariants bundle is recognized like the
 // Ada_Case _Invariants form.
 func Test_Bundles_Casing(t *testing.T) {
-	const source = `package fixture
+	const SOURCE = `package fixture
 
 type pair int
 
@@ -542,7 +542,7 @@ func check(n int) {
 `
 	recorder := &invariant.Recorder{
 		File_System: fstest.MapFS{
-			"fixture/lower.go": &fstest.MapFile{Data: []byte(source)},
+			"fixture/lower.go": &fstest.MapFile{Data: []byte(SOURCE)},
 		},
 	}
 	invariant.Recorder_Register_Packages_For_Analysis(recorder, "/fixture")
@@ -558,7 +558,7 @@ func check(n int) {
 // same fixture without Sugar_Package treats the bare call as the caller's own function and
 // seeds nothing.
 func Test_Bundles_Sugar(t *testing.T) {
-	const sugar = `package sugar
+	const SUGAR = `package sugar
 
 type Pair int
 
@@ -566,7 +566,7 @@ func Pair_Invariants(n Pair, namespace string) {
 	Dot_Product(namespace, Sometimes(n < 0, "lo"))
 }
 `
-	const application = `package app
+	const APPLICATION = `package app
 
 import (
 	_ "example.com/m/invariant"
@@ -579,8 +579,8 @@ func check(n int) {
 `
 	files := fstest.MapFS{
 		"m/go.mod":         &fstest.MapFile{Data: []byte("module example.com/m\n")},
-		"m/sugar/sugar.go": &fstest.MapFile{Data: []byte(sugar)},
-		"m/app/app.go":     &fstest.MapFile{Data: []byte(application)},
+		"m/sugar/sugar.go": &fstest.MapFile{Data: []byte(SUGAR)},
+		"m/app/app.go":     &fstest.MapFile{Data: []byte(APPLICATION)},
 	}
 	key := "field" + invariant.ELEMENT_MESSAGE_SEPARATOR + "lo"
 
@@ -600,7 +600,7 @@ func check(n int) {
 // Test_Bundles_Cross_Package: a bundle in a sibling package of the same module is
 // resolved through the module path.
 func Test_Bundles_Cross_Package(t *testing.T) {
-	const package_a = `package a
+	const PACKAGE_A = `package a
 
 import invariant "example.com/m/invariant"
 
@@ -610,7 +610,7 @@ func Pair_Invariants(n Pair, namespace string) {
 	invariant.Dot_Product(namespace, invariant.Sometimes(n < 0, "lo"))
 }
 `
-	const package_b = `package b
+	const PACKAGE_B = `package b
 
 import (
 	_ "example.com/m/invariant"
@@ -624,8 +624,8 @@ func check(n int) {
 	recorder := &invariant.Recorder{
 		File_System: fstest.MapFS{
 			"m/go.mod": &fstest.MapFile{Data: []byte("module example.com/m\n")},
-			"m/a/a.go": &fstest.MapFile{Data: []byte(package_a)},
-			"m/b/b.go": &fstest.MapFile{Data: []byte(package_b)},
+			"m/a/a.go": &fstest.MapFile{Data: []byte(PACKAGE_A)},
+			"m/b/b.go": &fstest.MapFile{Data: []byte(PACKAGE_B)},
 		},
 	}
 	invariant.Recorder_Register_Packages_For_Analysis(recorder, "/m/b")
@@ -640,7 +640,7 @@ func check(n int) {
 // ("a" and "b") yields independent coverage entries — the per-namespace prefix keeps them
 // apart — reusing one namespace is instead a fatal duplicate.
 func Test_Bundles_Callsite(t *testing.T) {
-	const source = `package fixture
+	const SOURCE = `package fixture
 
 type Pair int
 
@@ -658,7 +658,7 @@ func check_b(n int) {
 `
 	recorder := &invariant.Recorder{
 		File_System: fstest.MapFS{
-			"fixture/two.go": &fstest.MapFile{Data: []byte(source)},
+			"fixture/two.go": &fstest.MapFile{Data: []byte(SOURCE)},
 		},
 	}
 	invariant.Recorder_Register_Packages_For_Analysis(recorder, "/fixture")
@@ -679,7 +679,7 @@ func check_b(n int) {
 // it fires when the bundle is built, and its reachability gap is named by its own bare
 // message ("positive"), never a prefixed key.
 func Test_Bundles_Gap_Location(t *testing.T) {
-	const source = `package fixture
+	const SOURCE = `package fixture
 
 type Inner int
 
@@ -700,7 +700,7 @@ func check(n int) {
 	var output bytes.Buffer
 	recorder := &invariant.Recorder{
 		File_System: fstest.MapFS{
-			"fixture/compose.go": &fstest.MapFile{Data: []byte(source)},
+			"fixture/compose.go": &fstest.MapFile{Data: []byte(SOURCE)},
 		},
 		Is_Test: true, Output: &output, Exit: func(code int) {},
 	}
@@ -743,7 +743,7 @@ local/james-orcales/shared/invariant_test.dot_product_callsite (specification_te
 // Test_Bundles_Static: a _Invariants body with a branching or looping statement fails
 // registration — the axes it self-emits must not depend on runtime values the scan cannot read.
 func Test_Bundles_Static(t *testing.T) {
-	const source = `package fixture
+	const SOURCE = `package fixture
 
 type Pair int
 
@@ -757,7 +757,7 @@ func Pair_Invariants(n Pair, namespace string) {
 	exit_code := -1
 	recorder := &invariant.Recorder{
 		File_System: fstest.MapFS{
-			"fixture/p.go": &fstest.MapFile{Data: []byte(source)},
+			"fixture/p.go": &fstest.MapFile{Data: []byte(SOURCE)},
 		},
 		Output: &output,
 		Exit:   func(code int) { exit_code = code },
@@ -799,14 +799,14 @@ func Test_Bundles_Custom_Types(t *testing.T) {
 	if code == 1 {
 		t.Error("a bundle on a custom defined type must not be flagged")
 	}
-	sugar := "package sugar\n\n" +
+	SUGAR := "package sugar\n\n" +
 		"func Token_Invariants(s string, namespace string) {\n" +
 		"\tDot_Product(namespace, Sometimes(len(s) == 0, \"e\"))\n}\n"
 	code, _ = bundle_subject_register(bundle_subject_case{
 		Directory: "/m/sugar", Sugar: "example.com/m/sugar",
 		Files: fstest.MapFS{
 			"m/go.mod":         &fstest.MapFile{Data: []byte("module example.com/m\n")},
-			"m/sugar/sugar.go": &fstest.MapFile{Data: []byte(sugar)},
+			"m/sugar/sugar.go": &fstest.MapFile{Data: []byte(SUGAR)},
 		},
 	})
 	if code == 1 {
@@ -884,7 +884,7 @@ func Test_Analysis_Combination(t *testing.T) {
 // "(1)" gives no way to learn which axis the position is or what bucket 1 means there. The
 // constant Always is absent from the coordinate; its coverage is its reachability gap alone.
 func Test_Analysis_Legend(t *testing.T) {
-	const source = `package fixture
+	const SOURCE = `package fixture
 
 type Inner int
 
@@ -906,7 +906,7 @@ func check(n int) {
 	var output bytes.Buffer
 	recorder := &invariant.Recorder{
 		File_System: fstest.MapFS{
-			"fixture/nested.go": &fstest.MapFile{Data: []byte(source)},
+			"fixture/nested.go": &fstest.MapFile{Data: []byte(SOURCE)},
 		},
 		Is_Test: true, Output: &output, Exit: func(code int) {},
 	}
@@ -955,7 +955,7 @@ func Test_Analysis_Summary(t *testing.T) {
 // Dot_Product is keyed by its call-site namespace — so the same three-axis shape under two
 // namespaces tallies twice, the glob carve (a,b over c) counting two cells per namespace.
 func Test_Analysis_Tally(t *testing.T) {
-	const source = `package fixture
+	const SOURCE = `package fixture
 
 func check(n int) {
 	invariant.Always(n >= 0, "non-negative")
@@ -975,7 +975,7 @@ func check(n int) {
 `
 	recorder := &invariant.Recorder{
 		File_System: fstest.MapFS{
-			"fixture/check.go": &fstest.MapFile{Data: []byte(source)},
+			"fixture/check.go": &fstest.MapFile{Data: []byte(SOURCE)},
 		},
 	}
 	invariant.Recorder_Register_Packages_For_Analysis(recorder, "/fixture")
@@ -1127,7 +1127,7 @@ func Test_Coverage_Enforcement(t *testing.T) {
 // Test_Coverage_Uniqueness: two Dot_Products sharing a message fail registration — a
 // duplicate would silently merge two obligations and mask a gap.
 func Test_Coverage_Uniqueness(t *testing.T) {
-	const source = `package fixture
+	const SOURCE = `package fixture
 
 func check_a(n int) {
 	invariant.Dot_Product("field", invariant.Sometimes(n < 0, "lo"))
@@ -1141,7 +1141,7 @@ func check_b(n int) {
 	exit_code := -1
 	recorder := &invariant.Recorder{
 		File_System: fstest.MapFS{
-			"fixture/check.go": &fstest.MapFile{Data: []byte(source)},
+			"fixture/check.go": &fstest.MapFile{Data: []byte(SOURCE)},
 		},
 		Output: &output,
 		Exit:   func(code int) { exit_code = code },
@@ -1159,7 +1159,7 @@ func check_b(n int) {
 // Test_Coverage_Literal: a non-literal message fails registration — the static side cannot
 // key it, so the coverage would vanish if it were allowed through.
 func Test_Coverage_Literal(t *testing.T) {
-	const source = `package fixture
+	const SOURCE = `package fixture
 
 func check(n int) {
 	msg := "zero"
@@ -1170,7 +1170,7 @@ func check(n int) {
 	exit_code := -1
 	recorder := &invariant.Recorder{
 		File_System: fstest.MapFS{
-			"fixture/check.go": &fstest.MapFile{Data: []byte(source)},
+			"fixture/check.go": &fstest.MapFile{Data: []byte(SOURCE)},
 		},
 		Output: &output,
 		Exit:   func(code int) { exit_code = code },
@@ -1188,7 +1188,7 @@ func check(n int) {
 // Test_Coverage_Unresolved: a bundle the analyzer cannot resolve is fatal, never
 // silently skipped.
 func Test_Coverage_Unresolved(t *testing.T) {
-	const source = `package b
+	const SOURCE = `package b
 
 import (
 	_ "example.com/m/invariant"
@@ -1204,7 +1204,7 @@ func check(n int) {
 	recorder := &invariant.Recorder{
 		File_System: fstest.MapFS{
 			"m/go.mod": &fstest.MapFile{Data: []byte("module example.com/m\n")},
-			"m/b/b.go": &fstest.MapFile{Data: []byte(source)},
+			"m/b/b.go": &fstest.MapFile{Data: []byte(SOURCE)},
 		},
 		Output: &output,
 		Exit:   func(code int) { exit_code = code },
@@ -1223,7 +1223,7 @@ func check(n int) {
 // like every message — a non-literal reference fails registration, since the static side cannot
 // match it to a sibling axis to carve.
 func Test_Coverage_Literal_Reference(t *testing.T) {
-	const source = `package fixture
+	const SOURCE = `package fixture
 
 func check(n int) {
 	a := invariant.Sometimes(n == 0, "a")
@@ -1237,7 +1237,7 @@ func check(n int) {
 	exit_code := -1
 	recorder := &invariant.Recorder{
 		File_System: fstest.MapFS{
-			"fixture/check.go": &fstest.MapFile{Data: []byte(source)},
+			"fixture/check.go": &fstest.MapFile{Data: []byte(SOURCE)},
 		},
 		Output: &output,
 		Exit:   func(code int) { exit_code = code },

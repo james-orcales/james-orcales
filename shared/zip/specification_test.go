@@ -13,9 +13,9 @@ import (
 // caller's limit and rejects a missing entry.
 func Test_Bounded_Entry(t *testing.T) {
 	t.Parallel()
-	const want = "hello bounded zip world"
+	const WANT = "hello bounded zip world"
 	archive_path := write_archive(t, &write_archive_input{
-		Entry_Name: "data.txt", Content: want,
+		Entry_Name: "data.txt", Content: WANT,
 	})
 	source, open_err := os.Open(archive_path)
 	if open_err != nil {
@@ -32,12 +32,12 @@ func Test_Bounded_Entry(t *testing.T) {
 	if err != nil {
 		t.Fatalf("New_Reader: %v", err)
 	}
-	decoded := make([]byte, len(want))
+	decoded := make([]byte, len(WANT))
 	if _, read_err := io.ReadFull(reader, decoded); read_err != nil {
 		t.Fatalf("ReadFull: %v", read_err)
 	}
-	if string(decoded) != want {
-		t.Fatalf("decoded = %q, want %q", decoded, want)
+	if string(decoded) != WANT {
+		t.Fatalf("decoded = %q, want %q", decoded, WANT)
 	}
 	if _, missing_err := zip.New_Reader(&zip.New_Reader_Input{
 		Source: source, Size: info.Size(), Entry_Suffix: "absent.txt", Bytes_Max: 1024,

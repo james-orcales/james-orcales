@@ -15,51 +15,51 @@ import (
 )
 
 // The successful process exit code.
-const exit_success = 0
+const EXIT_SUCCESS = 0
 
 // The usage-error exit code, for a bad invocation.
-const exit_usage = 2
+const EXIT_USAGE = 2
 
 // The runtime-failure exit code.
-const exit_failure = 1
+const EXIT_FAILURE = 1
 
 // Value_Kind tags which variant a Value holds.
 type Value_Kind int
 
 // The null kind marks the absence of a value.
-const value_kind_null Value_Kind = 0
+const VALUE_KIND_NULL Value_Kind = 0
 
 // The boolean kind holds a true or false value.
-const value_kind_boolean Value_Kind = 1
+const VALUE_KIND_BOOLEAN Value_Kind = 1
 
 // The number kind holds a number as its exact source text, so no float64 is
 // needed and the package stays deterministic.
-const value_kind_number Value_Kind = 2
+const VALUE_KIND_NUMBER Value_Kind = 2
 
 // The string kind holds a text value.
-const value_kind_string Value_Kind = 3
+const VALUE_KIND_STRING Value_Kind = 3
 
 // The list kind holds an ordered sequence of values.
-const value_kind_list Value_Kind = 4
+const VALUE_KIND_LIST Value_Kind = 4
 
 // The record kind holds an ordered set of named fields; a list of records is a
 // table.
-const value_kind_record Value_Kind = 5
+const VALUE_KIND_RECORD Value_Kind = 5
 
 // Value is one typed cell flowing through the pipeline. Every stage reads and
 // writes it; a table is simply a list of records with aligned keys.
 type Value struct {
 	// Kind selects which of the fields below carries the payload.
 	Kind Value_Kind
-	// Boolean carries a value_kind_boolean.
+	// Boolean carries a VALUE_KIND_BOOLEAN.
 	Boolean bool
-	// Number carries a value_kind_number as its exact source text.
+	// Number carries a VALUE_KIND_NUMBER as its exact source text.
 	Number string
-	// Text carries a value_kind_string.
+	// Text carries a VALUE_KIND_STRING.
 	Text string
-	// Items carries a value_kind_list.
+	// Items carries a VALUE_KIND_LIST.
 	Items []Value
-	// Fields carries a value_kind_record in insertion order.
+	// Fields carries a VALUE_KIND_RECORD in insertion order.
 	Fields []Field
 }
 
@@ -96,7 +96,7 @@ type Main_Input struct {
 func Main(input *Main_Input) (status_code int) {
 	if len(input.Arguments) == 0 {
 		fmt.Fprintf(input.Error_Output, "shell_sdk: no verb name\n")
-		return exit_usage
+		return EXIT_USAGE
 	}
 	destination, is_install := install_target(input.Arguments)
 	if is_install {
@@ -104,13 +104,13 @@ func Main(input *Main_Input) (status_code int) {
 	}
 	if wants_help(input.Arguments) {
 		print_help(input.Output)
-		return exit_success
+		return EXIT_SUCCESS
 	}
 	verb := path.Base(input.Arguments[0])
 	kind, known := verb_kind(verb)
 	if !known {
 		print_help(input.Error_Output)
-		return exit_usage
+		return EXIT_USAGE
 	}
 	positional, mode := resolve_output_mode(input.Arguments[1:], input.Stdout_Is_Terminal)
 	return run_and_write(input, kind, positional, mode)
@@ -120,37 +120,37 @@ func Main(input *Main_Input) (status_code int) {
 type Verb_Kind int
 
 // The load verb reads a file into the garden.
-const verb_kind_load Verb_Kind = 0
+const VERB_KIND_LOAD Verb_Kind = 0
 
 // The get verb navigates a cell path.
-const verb_kind_get Verb_Kind = 1
+const VERB_KIND_GET Verb_Kind = 1
 
 // The pick verb projects named fields.
-const verb_kind_pick Verb_Kind = 2
+const VERB_KIND_PICK Verb_Kind = 2
 
 // The filter verb keeps matching rows.
-const verb_kind_filter Verb_Kind = 3
+const VERB_KIND_FILTER Verb_Kind = 3
 
 // The first verb takes leading elements.
-const verb_kind_first Verb_Kind = 4
+const VERB_KIND_FIRST Verb_Kind = 4
 
 // The from verb parses a foreign format from stdin.
-const verb_kind_from Verb_Kind = 5
+const VERB_KIND_FROM Verb_Kind = 5
 
 // The to verb serializes out of the garden.
-const verb_kind_to Verb_Kind = 6
+const VERB_KIND_TO Verb_Kind = 6
 
 // Output_Mode selects how a verb presents its result.
 type Output_Mode int
 
 // The wire mode emits the binary format for the next sibling.
-const output_mode_wire Output_Mode = 0
+const OUTPUT_MODE_WIRE Output_Mode = 0
 
 // The JSON mode emits text, leaving the garden.
-const output_mode_json Output_Mode = 1
+const OUTPUT_MODE_JSON Output_Mode = 1
 
 // The table mode renders an aligned table for a terminal.
-const output_mode_table Output_Mode = 2
+const OUTPUT_MODE_TABLE Output_Mode = 2
 
 // Runs one verb and writes its output, or reports the error and fails.
 func run_and_write(
@@ -159,34 +159,34 @@ func run_and_write(
 	output, run_err := run_verb(input, kind, arguments, mode)
 	if run_err != nil {
 		fmt.Fprintf(input.Error_Output, "shell_sdk: %v\n", run_err)
-		return exit_failure
+		return EXIT_FAILURE
 	}
 	_, write_err := input.Output.Write(output)
 	if write_err != nil {
-		return exit_failure
+		return EXIT_FAILURE
 	}
-	return exit_success
+	return EXIT_SUCCESS
 }
 
 // Resolves a verb name to its kind. The names avoid shell keywords and commands.
 func verb_kind(name string) (kind Verb_Kind, known bool) {
 	switch name {
 	case "load":
-		return verb_kind_load, true
+		return VERB_KIND_LOAD, true
 	case "get":
-		return verb_kind_get, true
+		return VERB_KIND_GET, true
 	case "pick":
-		return verb_kind_pick, true
+		return VERB_KIND_PICK, true
 	case "filter":
-		return verb_kind_filter, true
+		return VERB_KIND_FILTER, true
 	case "first":
-		return verb_kind_first, true
+		return VERB_KIND_FIRST, true
 	case "from":
-		return verb_kind_from, true
+		return VERB_KIND_FROM, true
 	case "to":
-		return verb_kind_to, true
+		return VERB_KIND_TO, true
 	}
-	return verb_kind_load, false
+	return VERB_KIND_LOAD, false
 }
 
 // The verb names, for -install to fan the binary out; kept in step with
@@ -222,11 +222,11 @@ func wants_help(arguments []string) (wants bool) {
 // Writes the usage help: the verbs, filter operators, output flags, and the
 // install syntax.
 func print_help(output io.Writer) {
-	fmt.Fprint(output, help_text)
+	fmt.Fprint(output, HELP_TEXT)
 }
 
 // The usage help text.
-const help_text = `shell_sdk: a structured-data toolkit, one binary symlinked to verb names,
+const HELP_TEXT = `shell_sdk: a structured-data toolkit, one binary symlinked to verb names,
 passing typed values through pipes.
 
 Invoke via a verb-named link, for example:
@@ -254,11 +254,11 @@ func run_install(input *Main_Input, destination string) (status_code int) {
 		link_err := input.Link(destination + "/" + names[name_index])
 		if link_err != nil {
 			fmt.Fprintf(input.Error_Output, "shell_sdk: install: %v\n", link_err)
-			return exit_failure
+			return EXIT_FAILURE
 		}
 	}
 	fmt.Fprintf(input.Output, "linked %d verbs into %s\n", len(names), destination)
-	return exit_success
+	return EXIT_SUCCESS
 }
 
 // Splits the output-mode flags out of the arguments and resolves the mode: a
@@ -266,18 +266,18 @@ func run_install(input *Main_Input, destination string) (status_code int) {
 func resolve_output_mode(
 	arguments []string, stdout_is_terminal bool,
 ) (positional []string, mode Output_Mode) {
-	forced := output_mode_wire
+	forced := OUTPUT_MODE_WIRE
 	forced_set := false
 	positional = []string{}
 	for argument_index := 0; argument_index < len(arguments); argument_index++ {
 		argument := arguments[argument_index]
 		if argument == "--json" {
-			forced = output_mode_json
+			forced = OUTPUT_MODE_JSON
 			forced_set = true
 			continue
 		}
 		if argument == "--table" {
-			forced = output_mode_table
+			forced = OUTPUT_MODE_TABLE
 			forced_set = true
 			continue
 		}
@@ -287,46 +287,46 @@ func resolve_output_mode(
 		return positional, forced
 	}
 	if stdout_is_terminal {
-		return positional, output_mode_table
+		return positional, OUTPUT_MODE_TABLE
 	}
-	return positional, output_mode_wire
+	return positional, OUTPUT_MODE_WIRE
 }
 
 // Null_Value builds the null value.
 func Null_Value() (value Value) {
-	return Value{Kind: value_kind_null}
+	return Value{Kind: VALUE_KIND_NULL}
 }
 
 // Boolean_Value builds a boolean value.
 func Boolean_Value(flag bool) (value Value) {
-	return Value{Kind: value_kind_boolean, Boolean: flag}
+	return Value{Kind: VALUE_KIND_BOOLEAN, Boolean: flag}
 }
 
 // Number_Value builds a number from its exact source text.
 func Number_Value(text string) (value Value) {
-	return Value{Kind: value_kind_number, Number: text}
+	return Value{Kind: VALUE_KIND_NUMBER, Number: text}
 }
 
 // String_Value builds a text value.
 func String_Value(text string) (value Value) {
-	return Value{Kind: value_kind_string, Text: text}
+	return Value{Kind: VALUE_KIND_STRING, Text: text}
 }
 
 // List_Value builds a list from its items.
 func List_Value(items []Value) (value Value) {
-	return Value{Kind: value_kind_list, Items: items}
+	return Value{Kind: VALUE_KIND_LIST, Items: items}
 }
 
 // Record_Value builds a record from its fields.
 func Record_Value(fields []Field) (value Value) {
-	return Value{Kind: value_kind_record, Fields: fields}
+	return Value{Kind: VALUE_KIND_RECORD, Fields: fields}
 }
 
 // The magic that marks a stream as shell_sdk's own binary format.
-const wire_magic = "SSDK"
+const WIRE_MAGIC = "SSDK"
 
 // The framing version, bumped on any incompatible change.
-const wire_version = 1
+const WIRE_VERSION = 1
 
 // One item on the encoder's stack: a value to emit, or a literal run of bytes
 // such as an already-encoded field name.
@@ -359,8 +359,8 @@ type wire_read struct {
 // Wire_Encode serializes a value to a complete wire stream. The walk is
 // iterative over an explicit stack, since recursion is banned.
 func Wire_Encode(value Value) (encoded []byte) {
-	output := []byte(wire_magic)
-	output = append(output, wire_version)
+	output := []byte(WIRE_MAGIC)
+	output = append(output, WIRE_VERSION)
 	stack := []wire_work{{Is_Value: true, Value: value}}
 	for len(stack) > 0 {
 		top := stack[len(stack)-1]
@@ -381,16 +381,16 @@ func Wire_Encode(value Value) (encoded []byte) {
 func wire_emit(value Value) (header []byte, children []wire_work) {
 	header = append(header, byte(value.Kind))
 	switch value.Kind {
-	case value_kind_boolean:
+	case VALUE_KIND_BOOLEAN:
 		header = append(header, wire_boolean_byte(value.Boolean))
-	case value_kind_number:
+	case VALUE_KIND_NUMBER:
 		header = wire_append_bytes(header, value.Number)
-	case value_kind_string:
+	case VALUE_KIND_STRING:
 		header = wire_append_bytes(header, value.Text)
-	case value_kind_list:
+	case VALUE_KIND_LIST:
 		header = wire_append_count(header, len(value.Items))
 		children = wire_items_work(value.Items)
-	case value_kind_record:
+	case VALUE_KIND_RECORD:
 		header = wire_append_count(header, len(value.Fields))
 		children = wire_fields_work(value.Fields)
 	}
@@ -471,16 +471,16 @@ func Wire_Decode(data []byte) (value Value, err error) {
 
 // Validates the magic and version, returning the payload offset.
 func wire_header(data []byte) (at int, err error) {
-	if len(data) < len(wire_magic)+1 {
+	if len(data) < len(WIRE_MAGIC)+1 {
 		return 0, fmt.Errorf("wire: stream too short")
 	}
-	if string(data[:len(wire_magic)]) != wire_magic {
+	if string(data[:len(WIRE_MAGIC)]) != WIRE_MAGIC {
 		return 0, fmt.Errorf("wire: not a shell_sdk stream")
 	}
-	if data[len(wire_magic)] != wire_version {
+	if data[len(WIRE_MAGIC)] != WIRE_VERSION {
 		return 0, fmt.Errorf("wire: unsupported version")
 	}
-	return len(wire_magic) + 1, nil
+	return len(WIRE_MAGIC) + 1, nil
 }
 
 // Reports whether the open record wants a field name next.
@@ -489,7 +489,7 @@ func wire_needs_name(frames []wire_frame) (needs bool) {
 		return false
 	}
 	top := frames[len(frames)-1]
-	if top.Kind != value_kind_record {
+	if top.Kind != VALUE_KIND_RECORD {
 		return false
 	}
 	if top.Remaining_Count == 0 {
@@ -515,18 +515,18 @@ func wire_read_value(data []byte, at int) (read wire_read, next int, err error) 
 	kind := Value_Kind(data[at])
 	body := at + 1
 	switch kind {
-	case value_kind_null:
+	case VALUE_KIND_NULL:
 		return wire_read{Is_Scalar: true, Value: Null_Value()}, body, nil
-	case value_kind_boolean:
+	case VALUE_KIND_BOOLEAN:
 		return wire_read_boolean(data, body)
-	case value_kind_number:
-		return wire_read_text(data, body, value_kind_number)
-	case value_kind_string:
-		return wire_read_text(data, body, value_kind_string)
-	case value_kind_list:
-		return wire_read_container(data, body, value_kind_list)
-	case value_kind_record:
-		return wire_read_container(data, body, value_kind_record)
+	case VALUE_KIND_NUMBER:
+		return wire_read_text(data, body, VALUE_KIND_NUMBER)
+	case VALUE_KIND_STRING:
+		return wire_read_text(data, body, VALUE_KIND_STRING)
+	case VALUE_KIND_LIST:
+		return wire_read_container(data, body, VALUE_KIND_LIST)
+	case VALUE_KIND_RECORD:
+		return wire_read_container(data, body, VALUE_KIND_RECORD)
 	}
 	return wire_read{}, at, fmt.Errorf("wire: unknown tag %d", data[at])
 }
@@ -547,7 +547,7 @@ func wire_read_text(data []byte, at int, kind Value_Kind) (read wire_read, next 
 		return wire_read{}, at, blob_err
 	}
 	built := Number_Value(text)
-	if kind == value_kind_string {
+	if kind == VALUE_KIND_STRING {
 		built = String_Value(text)
 	}
 	return wire_read{Is_Scalar: true, Value: built}, after, nil
@@ -570,7 +570,7 @@ func wire_read_container(
 
 // Builds an empty container value.
 func wire_empty(kind Value_Kind) (value Value) {
-	if kind == value_kind_list {
+	if kind == VALUE_KIND_LIST {
 		return List_Value([]Value{})
 	}
 	return Record_Value([]Field{})
@@ -624,7 +624,7 @@ func wire_deliver(frames []wire_frame, value Value) (updated []wire_frame, root 
 
 // Adds a value to a list or record frame and decrements its count.
 func wire_attach(frame wire_frame, value Value) (updated wire_frame) {
-	if frame.Kind == value_kind_list {
+	if frame.Kind == VALUE_KIND_LIST {
 		frame.Items = append(frame.Items, value)
 		frame.Remaining_Count--
 		return frame
@@ -637,43 +637,43 @@ func wire_attach(frame wire_frame, value Value) (updated wire_frame) {
 
 // Builds the finished container value from a completed frame.
 func wire_frame_value(frame wire_frame) (value Value) {
-	if frame.Kind == value_kind_list {
-		return Value{Kind: value_kind_list, Items: frame.Items}
+	if frame.Kind == VALUE_KIND_LIST {
+		return Value{Kind: VALUE_KIND_LIST, Items: frame.Items}
 	}
-	return Value{Kind: value_kind_record, Fields: frame.Fields}
+	return Value{Kind: VALUE_KIND_RECORD, Fields: frame.Fields}
 }
 
 // The input kinds a reader classifies stdin into.
-const input_kind_wire = 0
+const INPUT_KIND_WIRE = 0
 
 // A JSON stream from a foreign producer.
-const input_kind_json = 1
+const INPUT_KIND_JSON = 1
 
 // Raw, non-structured text.
-const input_kind_raw = 2
+const INPUT_KIND_RAW = 2
 
 // Sniff classifies input: our magic means a sibling wrote it, a leading brace,
 // bracket, or quote means foreign JSON, and anything else is raw text.
 func Sniff(data []byte) (kind int) {
 	if wire_has_magic(data) {
-		return input_kind_wire
+		return INPUT_KIND_WIRE
 	}
 	position := json_skip_space(data, 0)
 	if position >= len(data) {
-		return input_kind_raw
+		return INPUT_KIND_RAW
 	}
 	if json_opens_structure(data[position]) {
-		return input_kind_json
+		return INPUT_KIND_JSON
 	}
-	return input_kind_raw
+	return INPUT_KIND_RAW
 }
 
 // Reports whether the data begins with the wire magic.
 func wire_has_magic(data []byte) (has bool) {
-	if len(data) < len(wire_magic) {
+	if len(data) < len(WIRE_MAGIC) {
 		return false
 	}
-	return string(data[:len(wire_magic)]) == wire_magic
+	return string(data[:len(WIRE_MAGIC)]) == WIRE_MAGIC
 }
 
 // Reports whether a byte opens a JSON value we recognize while sniffing.
@@ -686,40 +686,40 @@ func json_opens_structure(first byte) (opens bool) {
 }
 
 // The end-of-input marker the lexer returns past the last token.
-const json_token_end = 0
+const JSON_TOKEN_END = 0
 
 // An opening brace.
-const json_token_object_open = 1
+const JSON_TOKEN_OBJECT_OPEN = 1
 
 // A closing brace.
-const json_token_object_close = 2
+const JSON_TOKEN_OBJECT_CLOSE = 2
 
 // An opening bracket.
-const json_token_array_open = 3
+const JSON_TOKEN_ARRAY_OPEN = 3
 
 // A closing bracket.
-const json_token_array_close = 4
+const JSON_TOKEN_ARRAY_CLOSE = 4
 
 // A value separator.
-const json_token_comma = 5
+const JSON_TOKEN_COMMA = 5
 
 // A key/value separator.
-const json_token_colon = 6
+const JSON_TOKEN_COLON = 6
 
 // A string token; its text is already unescaped.
-const json_token_string = 7
+const JSON_TOKEN_STRING = 7
 
 // A number token; its text is the exact source.
-const json_token_number = 8
+const JSON_TOKEN_NUMBER = 8
 
 // The true literal.
-const json_token_true = 9
+const JSON_TOKEN_TRUE = 9
 
 // The false literal.
-const json_token_false = 10
+const JSON_TOKEN_FALSE = 10
 
 // The null literal.
-const json_token_null = 11
+const JSON_TOKEN_NULL = 11
 
 // One container the JSON parser is filling from the token stream.
 type json_frame struct {
@@ -742,7 +742,7 @@ func Json_Parse(data []byte) (value Value, err error) {
 			return Value{}, token_err
 		}
 		at = next
-		if kind == json_token_end {
+		if kind == JSON_TOKEN_END {
 			return Value{}, fmt.Errorf("json: no complete value")
 		}
 		updated, root, done, apply_err := json_apply(frames, kind, text)
@@ -762,13 +762,13 @@ func json_apply(
 	frames []json_frame, kind int, text string,
 ) (updated []json_frame, root Value, done bool, err error) {
 	switch kind {
-	case json_token_colon, json_token_comma:
+	case JSON_TOKEN_COLON, JSON_TOKEN_COMMA:
 		return frames, Value{}, false, nil
-	case json_token_object_open:
+	case JSON_TOKEN_OBJECT_OPEN:
 		return append(frames, json_frame{Is_Array: false}), Value{}, false, nil
-	case json_token_array_open:
+	case JSON_TOKEN_ARRAY_OPEN:
 		return append(frames, json_frame{Is_Array: true}), Value{}, false, nil
-	case json_token_object_close, json_token_array_close:
+	case JSON_TOKEN_OBJECT_CLOSE, JSON_TOKEN_ARRAY_CLOSE:
 		closed, closed_root, closed_done := json_close(frames)
 		return closed, closed_root, closed_done, nil
 	}
@@ -785,7 +785,7 @@ func json_apply(
 
 // Reports whether the next string token names a field key rather than a value.
 func json_is_key(frames []json_frame, kind int) (is_key bool) {
-	if kind != json_token_string {
+	if kind != JSON_TOKEN_STRING {
 		return false
 	}
 	if len(frames) == 0 {
@@ -842,15 +842,15 @@ func json_frame_value(frame json_frame) (value Value) {
 // Builds a scalar value from a value token.
 func json_scalar(kind int, text string) (value Value, err error) {
 	switch kind {
-	case json_token_string:
+	case JSON_TOKEN_STRING:
 		return String_Value(text), nil
-	case json_token_number:
+	case JSON_TOKEN_NUMBER:
 		return Number_Value(text), nil
-	case json_token_true:
+	case JSON_TOKEN_TRUE:
 		return Boolean_Value(true), nil
-	case json_token_false:
+	case JSON_TOKEN_FALSE:
 		return Boolean_Value(false), nil
-	case json_token_null:
+	case JSON_TOKEN_NULL:
 		return Null_Value(), nil
 	}
 	return Value{}, fmt.Errorf("json: unexpected token")
@@ -860,34 +860,34 @@ func json_scalar(kind int, text string) (value Value, err error) {
 func json_next_token(data []byte, at int) (kind int, text string, next int, err error) {
 	position := json_skip_space(data, at)
 	if position >= len(data) {
-		return json_token_end, "", position, nil
+		return JSON_TOKEN_END, "", position, nil
 	}
 	switch data[position] {
 	case '{':
-		return json_token_object_open, "", position + 1, nil
+		return JSON_TOKEN_OBJECT_OPEN, "", position + 1, nil
 	case '}':
-		return json_token_object_close, "", position + 1, nil
+		return JSON_TOKEN_OBJECT_CLOSE, "", position + 1, nil
 	case '[':
-		return json_token_array_open, "", position + 1, nil
+		return JSON_TOKEN_ARRAY_OPEN, "", position + 1, nil
 	case ']':
-		return json_token_array_close, "", position + 1, nil
+		return JSON_TOKEN_ARRAY_CLOSE, "", position + 1, nil
 	case ',':
-		return json_token_comma, "", position + 1, nil
+		return JSON_TOKEN_COMMA, "", position + 1, nil
 	case ':':
-		return json_token_colon, "", position + 1, nil
+		return JSON_TOKEN_COLON, "", position + 1, nil
 	case '"':
 		return json_read_string_token(data, position)
 	case 't':
 		return json_read_literal(&json_read_literal_input{
-			Data: data, At: position, Word: "true", Kind: json_token_true,
+			Data: data, At: position, Word: "true", Kind: JSON_TOKEN_TRUE,
 		})
 	case 'f':
 		return json_read_literal(&json_read_literal_input{
-			Data: data, At: position, Word: "false", Kind: json_token_false,
+			Data: data, At: position, Word: "false", Kind: JSON_TOKEN_FALSE,
 		})
 	case 'n':
 		return json_read_literal(&json_read_literal_input{
-			Data: data, At: position, Word: "null", Kind: json_token_null,
+			Data: data, At: position, Word: "null", Kind: JSON_TOKEN_NULL,
 		})
 	}
 	return json_read_number_token(data, position)
@@ -928,10 +928,10 @@ func json_read_literal(
 ) (token int, text string, next int, err error) {
 	end := input.At + len(input.Word)
 	if end > len(input.Data) {
-		return json_token_end, "", input.At, fmt.Errorf("json: truncated literal")
+		return JSON_TOKEN_END, "", input.At, fmt.Errorf("json: truncated literal")
 	}
 	if string(input.Data[input.At:end]) != input.Word {
-		return json_token_end, "", input.At, fmt.Errorf("json: invalid literal")
+		return JSON_TOKEN_END, "", input.At, fmt.Errorf("json: invalid literal")
 	}
 	return input.Kind, "", end, nil
 }
@@ -940,14 +940,14 @@ func json_read_literal(
 func json_read_string_token(data []byte, at int) (kind int, text string, next int, err error) {
 	end, end_err := json_string_end(data, at)
 	if end_err != nil {
-		return json_token_end, "", at, end_err
+		return JSON_TOKEN_END, "", at, end_err
 	}
 	decoded := ""
 	decode_err := json.Unmarshal(data[at:end], &decoded)
 	if decode_err != nil {
-		return json_token_end, "", at, decode_err
+		return JSON_TOKEN_END, "", at, decode_err
 	}
-	return json_token_string, decoded, end, nil
+	return JSON_TOKEN_STRING, decoded, end, nil
 }
 
 // Returns the offset just past a string's closing quote, skipping escapes.
@@ -976,9 +976,9 @@ func json_read_number_token(data []byte, at int) (kind int, text string, next in
 		end++
 	}
 	if end == at {
-		return json_token_end, "", at, fmt.Errorf("json: unexpected byte")
+		return JSON_TOKEN_END, "", at, fmt.Errorf("json: unexpected byte")
 	}
-	return json_token_number, string(data[at:end]), end, nil
+	return JSON_TOKEN_NUMBER, string(data[at:end]), end, nil
 }
 
 // Reports whether a byte can appear in a JSON number token.
@@ -1021,15 +1021,15 @@ func Json_Emit(value Value) (text string) {
 // Breaks one value into the emit pieces that render it.
 func json_emit_pieces(value Value) (pieces []json_emit_work) {
 	switch value.Kind {
-	case value_kind_boolean:
+	case VALUE_KIND_BOOLEAN:
 		return json_literal_piece(json_boolean_text(value.Boolean))
-	case value_kind_number:
+	case VALUE_KIND_NUMBER:
 		return json_literal_piece(value.Number)
-	case value_kind_string:
+	case VALUE_KIND_STRING:
 		return json_literal_piece(json_quote(value.Text))
-	case value_kind_list:
+	case VALUE_KIND_LIST:
 		return json_list_pieces(value.Items)
-	case value_kind_record:
+	case VALUE_KIND_RECORD:
 		return json_record_pieces(value.Fields)
 	}
 	return json_literal_piece("null")
@@ -1092,11 +1092,11 @@ func run_verb(
 	input *Main_Input, kind Verb_Kind, arguments []string, mode Output_Mode,
 ) (output []byte, err error) {
 	switch kind {
-	case verb_kind_load:
+	case VERB_KIND_LOAD:
 		return run_load(input, arguments, mode)
-	case verb_kind_from:
+	case VERB_KIND_FROM:
 		return run_from(input, arguments, mode)
-	case verb_kind_to:
+	case VERB_KIND_TO:
 		return run_to(input, arguments)
 	}
 	value, decode_err := decode_input(input.Read_Stdin())
@@ -1161,13 +1161,13 @@ func run_to(input *Main_Input, arguments []string) (output []byte, err error) {
 // Applies a transforming verb to a decoded value.
 func apply_transform(kind Verb_Kind, arguments []string, value Value) (result Value, err error) {
 	switch kind {
-	case verb_kind_get:
+	case VERB_KIND_GET:
 		return verb_get(arguments, value)
-	case verb_kind_pick:
+	case VERB_KIND_PICK:
 		return verb_pick(arguments, value)
-	case verb_kind_filter:
+	case VERB_KIND_FILTER:
 		return verb_filter(arguments, value)
-	case verb_kind_first:
+	case VERB_KIND_FIRST:
 		return verb_first(arguments, value)
 	}
 	return value, nil
@@ -1176,9 +1176,9 @@ func apply_transform(kind Verb_Kind, arguments []string, value Value) (result Va
 // Decodes stdin by sniffing: a sibling's wire, foreign JSON, or raw text.
 func decode_input(data []byte) (value Value, err error) {
 	switch Sniff(data) {
-	case input_kind_wire:
+	case INPUT_KIND_WIRE:
 		return Wire_Decode(data)
-	case input_kind_json:
+	case INPUT_KIND_JSON:
 		return Json_Parse(data)
 	}
 	return String_Value(string(data)), nil
@@ -1187,9 +1187,9 @@ func decode_input(data []byte) (value Value, err error) {
 // Encodes a result for the chosen output mode.
 func encode_output(value Value, mode Output_Mode) (output []byte) {
 	switch mode {
-	case output_mode_json:
+	case OUTPUT_MODE_JSON:
 		return []byte(Json_Emit(value))
-	case output_mode_table:
+	case OUTPUT_MODE_TABLE:
 		return []byte(render(value) + "\n")
 	}
 	return Wire_Encode(value)
@@ -1213,10 +1213,10 @@ func verb_pick(arguments []string, value Value) (result Value, err error) {
 
 // Projects the named fields, mapping across a list of records.
 func pick_value(value Value, names []string) (result Value) {
-	if value.Kind == value_kind_record {
+	if value.Kind == VALUE_KIND_RECORD {
 		return Record_Value(pick_fields(value.Fields, names))
 	}
-	if value.Kind == value_kind_list {
+	if value.Kind == VALUE_KIND_LIST {
 		picked := []Value{}
 		for item_index := 0; item_index < len(value.Items); item_index++ {
 			picked = append(picked, pick_one(value.Items[item_index], names))
@@ -1228,7 +1228,7 @@ func pick_value(value Value, names []string) (result Value) {
 
 // Projects the named fields of a single value, leaving non-records unchanged.
 func pick_one(value Value, names []string) (result Value) {
-	if value.Kind == value_kind_record {
+	if value.Kind == VALUE_KIND_RECORD {
 		return Record_Value(pick_fields(value.Fields, names))
 	}
 	return value
@@ -1260,7 +1260,7 @@ func verb_filter(arguments []string, value Value) (result Value, err error) {
 	if !operator_is_known(operator) {
 		return Value{}, fmt.Errorf("unknown operator: %s", operator)
 	}
-	if value.Kind != value_kind_list {
+	if value.Kind != VALUE_KIND_LIST {
 		return value, nil
 	}
 	field := arguments[0]
@@ -1314,7 +1314,7 @@ func operator_satisfied(operator string, order int) (satisfied bool) {
 
 // Runs the first verb: the first element, or the first n as a list.
 func verb_first(arguments []string, value Value) (result Value, err error) {
-	if value.Kind != value_kind_list {
+	if value.Kind != VALUE_KIND_LIST {
 		return value, nil
 	}
 	if len(arguments) == 0 {
@@ -1361,10 +1361,10 @@ func get_path(value Value, route string) (result Value) {
 
 // Takes one path step against a value.
 func path_step(value Value, segment string) (result Value) {
-	if value.Kind == value_kind_record {
+	if value.Kind == VALUE_KIND_RECORD {
 		return field_value(value.Fields, segment)
 	}
-	if value.Kind == value_kind_list {
+	if value.Kind == VALUE_KIND_LIST {
 		return list_step(value.Items, segment)
 	}
 	return Null_Value()
@@ -1389,7 +1389,7 @@ func list_step(items []Value, segment string) (result Value) {
 
 // Extracts one field from a value, or null when it is not a record.
 func path_field(value Value, name string) (result Value) {
-	if value.Kind == value_kind_record {
+	if value.Kind == VALUE_KIND_RECORD {
 		return field_value(value.Fields, name)
 	}
 	return Null_Value()
@@ -1452,13 +1452,13 @@ func compare_values(pair value_pair) (order int, comparable bool) {
 	if left.Kind != right.Kind {
 		return 0, false
 	}
-	if left.Kind == value_kind_number {
+	if left.Kind == VALUE_KIND_NUMBER {
 		return compare_numbers(number_pair{Left: left.Number, Right: right.Number})
 	}
-	if left.Kind == value_kind_string {
+	if left.Kind == VALUE_KIND_STRING {
 		return strings.Compare(left.Text, right.Text), true
 	}
-	if left.Kind == value_kind_boolean {
+	if left.Kind == VALUE_KIND_BOOLEAN {
 		if left.Boolean == right.Boolean {
 			return 0, true
 		}
@@ -1492,10 +1492,10 @@ func compare_numbers(pair number_pair) (order int, comparable bool) {
 // Renders a value for a human at a terminal: a list of records becomes an
 // aligned table, a lone record a key/value table, a scalar list one per line.
 func render(value Value) (text string) {
-	if value.Kind == value_kind_record {
+	if value.Kind == VALUE_KIND_RECORD {
 		return render_record(value.Fields)
 	}
-	if value.Kind != value_kind_list {
+	if value.Kind != VALUE_KIND_LIST {
 		return cell_text(value)
 	}
 	if all_records(value.Items) {
@@ -1510,7 +1510,7 @@ func all_records(items []Value) (all bool) {
 		return false
 	}
 	for item_index := 0; item_index < len(items); item_index++ {
-		if items[item_index].Kind != value_kind_record {
+		if items[item_index].Kind != VALUE_KIND_RECORD {
 			return false
 		}
 	}
@@ -1654,15 +1654,15 @@ func separator_row(widths []int) (line string) {
 // One scalar's cell text; containers show a short summary, null shows empty.
 func cell_text(value Value) (text string) {
 	switch value.Kind {
-	case value_kind_boolean:
+	case VALUE_KIND_BOOLEAN:
 		return json_boolean_text(value.Boolean)
-	case value_kind_number:
+	case VALUE_KIND_NUMBER:
 		return value.Number
-	case value_kind_string:
+	case VALUE_KIND_STRING:
 		return value.Text
-	case value_kind_list:
+	case VALUE_KIND_LIST:
 		return fmt.Sprintf("[list %d items]", len(value.Items))
-	case value_kind_record:
+	case VALUE_KIND_RECORD:
 		return fmt.Sprintf("[record %d fields]", len(value.Fields))
 	}
 	return ""

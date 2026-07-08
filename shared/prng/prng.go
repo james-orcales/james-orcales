@@ -24,13 +24,13 @@ import (
 )
 
 // The splitmix64 increment, derived from the golden ratio, strides the seed state.
-const split_mix_increment = 0x9e3779b97f4a7c15
+const SPLIT_MIX_INCREMENT = 0x9e3779b97f4a7c15
 
 // The first splitmix64 multiplier that avalanches the strided state.
-const split_mix_multiplier_first = 0xbf58476d1ce4e5b9
+const SPLIT_MIX_MULTIPLIER_FIRST = 0xbf58476d1ce4e5b9
 
 // The second splitmix64 multiplier that avalanches the strided state.
-const split_mix_multiplier_second = 0x94d049bb133111eb
+const SPLIT_MIX_MULTIPLIER_SECOND = 0x94d049bb133111eb
 
 // Generator is the state of a xoshiro256++ pseudo-random generator. Construct it with New; the zero
 // value is degenerate, since an all-zero xoshiro state emits only zeros.
@@ -229,9 +229,9 @@ func generator_below_unsigned(generator *Generator, bound uint64) (value uint64)
 // Advances a splitmix64 state and returns the next value. New uses it to expand one seed into the
 // four words of xoshiro256++ state, matching the seeding TigerBeetle's stdx.PRNG uses.
 func split_mix_64(state *uint64) (value uint64) {
-	*state += split_mix_increment
+	*state += SPLIT_MIX_INCREMENT
 	value = *state
-	value = (value ^ (value >> 30)) * split_mix_multiplier_first
-	value = (value ^ (value >> 27)) * split_mix_multiplier_second
+	value = (value ^ (value >> 30)) * SPLIT_MIX_MULTIPLIER_FIRST
+	value = (value ^ (value >> 27)) * SPLIT_MIX_MULTIPLIER_SECOND
 	return value ^ (value >> 31)
 }

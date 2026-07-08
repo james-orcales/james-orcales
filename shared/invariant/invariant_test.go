@@ -255,7 +255,7 @@ func Test_Dot_Product_Increments_Seeded_Tuple(t *testing.T) {
 // each element key and the tuple keys; the Impossible forbids the (true, true) cell
 // = tuple (1,1).
 func Test_Register_Inline_Dot_Product_Seeds_Grid_Minus_Carves(t *testing.T) {
-	const source = `package fixture
+	const SOURCE = `package fixture
 
 func check(n int) {
 	invariant.Dot_Product("check",
@@ -267,7 +267,7 @@ func check(n int) {
 `
 	recorder := &invariant.Recorder{
 		File_System: fstest.MapFS{
-			"fixture/check.go": &fstest.MapFile{Data: []byte(source)},
+			"fixture/check.go": &fstest.MapFile{Data: []byte(SOURCE)},
 		},
 	}
 	invariant.Recorder_Register_Packages_For_Analysis(recorder, "/fixture")
@@ -287,13 +287,13 @@ func check(n int) {
 // A `**` directory pattern registers a package and every package beneath it, so one
 // glob covers a whole subtree instead of naming each directory.
 func Test_Register_Double_Star_Seeds_Whole_Subtree(t *testing.T) {
-	const top = `package fixture
+	const TOP = `package fixture
 
 func check_top(n int) {
 	invariant.Dot_Product("top", invariant.Sometimes(n == 0, "top zero"))
 }
 `
-	const deep = `package deep
+	const DEEP = `package deep
 
 func check_deep(n int) {
 	invariant.Dot_Product("deep", invariant.Sometimes(n == 0, "deep zero"))
@@ -301,8 +301,8 @@ func check_deep(n int) {
 `
 	recorder := &invariant.Recorder{
 		File_System: fstest.MapFS{
-			"fixture/top.go":       &fstest.MapFile{Data: []byte(top)},
-			"fixture/deep/deep.go": &fstest.MapFile{Data: []byte(deep)},
+			"fixture/top.go":       &fstest.MapFile{Data: []byte(TOP)},
+			"fixture/deep/deep.go": &fstest.MapFile{Data: []byte(DEEP)},
 		},
 	}
 	invariant.Recorder_Register_Packages_For_Analysis(recorder, "/fixture/**")
@@ -320,19 +320,19 @@ func check_deep(n int) {
 // A `*` directory pattern registers each immediate child package but neither the
 // parent package nor a grandchild.
 func Test_Register_Single_Star_Seeds_Only_Immediate_Children(t *testing.T) {
-	const parent = `package fixture
+	const PARENT = `package fixture
 
 func check_parent(n int) {
 	invariant.Dot_Product("parent", invariant.Sometimes(n == 0, "parent zero"))
 }
 `
-	const child = `package child
+	const CHILD = `package child
 
 func check_child(n int) {
 	invariant.Dot_Product("child", invariant.Sometimes(n == 0, "child zero"))
 }
 `
-	const grand = `package grand
+	const GRAND = `package grand
 
 func check_grand(n int) {
 	invariant.Dot_Product("grand", invariant.Sometimes(n == 0, "grand zero"))
@@ -340,9 +340,9 @@ func check_grand(n int) {
 `
 	recorder := &invariant.Recorder{
 		File_System: fstest.MapFS{
-			"fixture/parent.go":            &fstest.MapFile{Data: []byte(parent)},
-			"fixture/child/child.go":       &fstest.MapFile{Data: []byte(child)},
-			"fixture/child/grand/grand.go": &fstest.MapFile{Data: []byte(grand)},
+			"fixture/parent.go":            &fstest.MapFile{Data: []byte(PARENT)},
+			"fixture/child/child.go":       &fstest.MapFile{Data: []byte(CHILD)},
+			"fixture/child/grand/grand.go": &fstest.MapFile{Data: []byte(GRAND)},
 		},
 	}
 	invariant.Recorder_Register_Packages_For_Analysis(recorder, "/fixture/*")
@@ -366,7 +366,7 @@ func check_grand(n int) {
 // per-element key is the prefix joined to the local message by the separator ("p␀zero").
 // This is the identity the runtime rebuilds, so registration and runtime rendezvous on it.
 func Test_Register_Prefix_Composes_Into_Element_Keys(t *testing.T) {
-	const source = `package fixture
+	const SOURCE = `package fixture
 
 func check(n int) {
 	invariant.Dot_Product("p", invariant.Sometimes(n == 0, "zero"))
@@ -374,7 +374,7 @@ func check(n int) {
 `
 	recorder := &invariant.Recorder{
 		File_System: fstest.MapFS{
-			"fixture/check.go": &fstest.MapFile{Data: []byte(source)},
+			"fixture/check.go": &fstest.MapFile{Data: []byte(SOURCE)},
 		},
 	}
 	invariant.Recorder_Register_Packages_For_Analysis(recorder, "/fixture")
@@ -393,7 +393,7 @@ func check(n int) {
 // masks the other's gap. (Reusing one prefix across two Dot_Products is instead a fatal
 // duplicate, covered by Test_Register_Fatal_On_Duplicate_Message.
 func Test_Register_Two_Distinct_Prefixes_Keep_Independent_Entries(t *testing.T) {
-	const source = `package fixture
+	const SOURCE = `package fixture
 
 func check_a(n int) {
 	invariant.Dot_Product("a", invariant.Sometimes(n == 0, "zero"))
@@ -405,7 +405,7 @@ func check_b(n int) {
 `
 	recorder := &invariant.Recorder{
 		File_System: fstest.MapFS{
-			"fixture/check.go": &fstest.MapFile{Data: []byte(source)},
+			"fixture/check.go": &fstest.MapFile{Data: []byte(SOURCE)},
 		},
 	}
 	invariant.Recorder_Register_Packages_For_Analysis(recorder, "/fixture")
@@ -425,7 +425,7 @@ func check_b(n int) {
 // Here two Dot_Products share the prefix "dup"; registration prints the duplicate banner
 // and exits 1.
 func Test_Register_Fatal_On_Duplicate_Message(t *testing.T) {
-	const source = `package fixture
+	const SOURCE = `package fixture
 
 func check_a(n int) {
 	invariant.Dot_Product("dup", invariant.Sometimes(n == 0, "zero"))
@@ -439,7 +439,7 @@ func check_b(n int) {
 	exit_code := -1
 	recorder := &invariant.Recorder{
 		File_System: fstest.MapFS{
-			"fixture/check.go": &fstest.MapFile{Data: []byte(source)},
+			"fixture/check.go": &fstest.MapFile{Data: []byte(SOURCE)},
 		},
 		Output: &output,
 		Exit:   func(code int) { exit_code = code },
@@ -459,7 +459,7 @@ func check_b(n int) {
 // vanish. Registration refuses it: it prints the non-literal banner and exits 1. Here the
 // Dot_Product prefix is a variable rather than a literal.
 func Test_Register_Fatal_On_Non_Literal_Message(t *testing.T) {
-	const source = `package fixture
+	const SOURCE = `package fixture
 
 func check(n int, prefix string) {
 	invariant.Dot_Product(prefix, invariant.Sometimes(n == 0, "zero"))
@@ -469,7 +469,7 @@ func check(n int, prefix string) {
 	exit_code := -1
 	recorder := &invariant.Recorder{
 		File_System: fstest.MapFS{
-			"fixture/check.go": &fstest.MapFile{Data: []byte(source)},
+			"fixture/check.go": &fstest.MapFile{Data: []byte(SOURCE)},
 		},
 		Output: &output,
 		Exit:   func(code int) { exit_code = code },
@@ -490,7 +490,7 @@ func check(n int, prefix string) {
 // is keyed by the prefix ("field"), and the bundle's Impossible carves the (true,
 // true) tuple (1,1).
 func Test_Register_Descends_Bundle(t *testing.T) {
-	const source = `package fixture
+	const SOURCE = `package fixture
 
 type Pair int
 
@@ -508,7 +508,7 @@ func check(n int) {
 `
 	recorder := &invariant.Recorder{
 		File_System: fstest.MapFS{
-			"fixture/pair.go": &fstest.MapFile{Data: []byte(source)},
+			"fixture/pair.go": &fstest.MapFile{Data: []byte(SOURCE)},
 		},
 	}
 	invariant.Recorder_Register_Packages_For_Analysis(recorder, "/fixture")
@@ -533,7 +533,7 @@ func check(n int) {
 // into the parent. Outer's axis keys under "field"; Inner's keys under the "field.inner"
 // sub-namespace, not under "field". There is no joint cross-product across the two types.
 func Test_Register_Nested_Invariants_Register_Separate_Grids(t *testing.T) {
-	const source = `package fixture
+	const SOURCE = `package fixture
 
 type Inner int
 
@@ -554,7 +554,7 @@ func check(n int) {
 `
 	recorder := &invariant.Recorder{
 		File_System: fstest.MapFS{
-			"fixture/nested.go": &fstest.MapFile{Data: []byte(source)},
+			"fixture/nested.go": &fstest.MapFile{Data: []byte(SOURCE)},
 		},
 	}
 	invariant.Recorder_Register_Packages_For_Analysis(recorder, "/fixture")
@@ -578,7 +578,7 @@ func check(n int) {
 // sibling that covered only the false branch. The lone Sometimes ("lo") yields "a␀lo" and "b␀lo",
 // and no shared bare entry.
 func Test_Register_Two_Namespaces_Of_One_Invariants_Yield_Distinct_Entries(t *testing.T) {
-	const source = `package fixture
+	const SOURCE = `package fixture
 
 type Pair int
 
@@ -596,7 +596,7 @@ func check_b(n int) {
 `
 	recorder := &invariant.Recorder{
 		File_System: fstest.MapFS{
-			"fixture/two.go": &fstest.MapFile{Data: []byte(source)},
+			"fixture/two.go": &fstest.MapFile{Data: []byte(SOURCE)},
 		},
 	}
 	invariant.Recorder_Register_Packages_For_Analysis(recorder, "/fixture")
@@ -761,7 +761,7 @@ func Test_Assertion_Summary_Counts_Properties(t *testing.T) {
 // fatally — so the summary tallies all of them, glob included. Impossible(a, b)
 // over a third axis c forbids two cells, (1,1,0) and (1,1,1).
 func Test_Assertion_Summary_Counts_Forbidden(t *testing.T) {
-	const source = `package fixture
+	const SOURCE = `package fixture
 
 func check(n int) {
 	invariant.Dot_Product("check",
@@ -774,7 +774,7 @@ func check(n int) {
 `
 	recorder := &invariant.Recorder{
 		File_System: fstest.MapFS{
-			"fixture/check.go": &fstest.MapFile{Data: []byte(source)},
+			"fixture/check.go": &fstest.MapFile{Data: []byte(SOURCE)},
 		},
 	}
 	invariant.Recorder_Register_Packages_For_Analysis(recorder, "/fixture")
@@ -794,7 +794,7 @@ func check(n int) {
 // go.mod maps the import path "example.com/m/a" to its directory so the bundle's
 // declaration (in a.go) is found, descended, and its grid seeded.
 func Test_Register_Resolves_Cross_Package_Bundle(t *testing.T) {
-	const package_a = `package a
+	const PACKAGE_A = `package a
 
 import invariant "example.com/m/invariant"
 
@@ -807,7 +807,7 @@ func Pair_Invariants(n Pair, namespace string) {
 		invariant.Impossible(invariant.Event_True("lo"), invariant.Event_True("hi")))
 }
 `
-	const package_b = `package b
+	const PACKAGE_B = `package b
 
 import (
 	invariant "example.com/m/invariant"
@@ -821,8 +821,8 @@ func check(n int) {
 	recorder := &invariant.Recorder{
 		File_System: fstest.MapFS{
 			"m/go.mod": &fstest.MapFile{Data: []byte("module example.com/m\n")},
-			"m/a/a.go": &fstest.MapFile{Data: []byte(package_a)},
-			"m/b/b.go": &fstest.MapFile{Data: []byte(package_b)},
+			"m/a/a.go": &fstest.MapFile{Data: []byte(PACKAGE_A)},
+			"m/b/b.go": &fstest.MapFile{Data: []byte(PACKAGE_B)},
 		},
 	}
 	invariant.Recorder_Register_Packages_For_Analysis(recorder, "/m/b")
@@ -885,7 +885,7 @@ func snapshot_registered(recorder *invariant.Recorder) (snapshot string) {
 // prefix · own-message) plus the full 2^3 tuple grid (no Impossible carves), every entry
 // attributed to the caller's single Dot_Product prefix "field".
 func Test_Register_Snapshots_Whole_Number_Invariants(t *testing.T) {
-	const package_a = `package a
+	const PACKAGE_A = `package a
 
 import invariant "example.com/m/invariant"
 
@@ -897,7 +897,7 @@ func Whole_Number_Invariants[I ~int | ~int64](n I, namespace string) {
 	)
 }
 `
-	const package_b = `package b
+	const PACKAGE_B = `package b
 
 import (
 	invariant "example.com/m/invariant"
@@ -911,8 +911,8 @@ func check(n int) {
 	recorder := &invariant.Recorder{
 		File_System: fstest.MapFS{
 			"m/go.mod": &fstest.MapFile{Data: []byte("module example.com/m\n")},
-			"m/a/a.go": &fstest.MapFile{Data: []byte(package_a)},
-			"m/b/b.go": &fstest.MapFile{Data: []byte(package_b)},
+			"m/a/a.go": &fstest.MapFile{Data: []byte(PACKAGE_A)},
+			"m/b/b.go": &fstest.MapFile{Data: []byte(PACKAGE_B)},
 		},
 	}
 	invariant.Recorder_Register_Packages_For_Analysis(recorder, "/m/b")
@@ -937,7 +937,7 @@ Tuple field:tuple=(1,1,1) [1 1 1]`), snapshot_registered(recorder))
 // tuples the three mutual-exclusions leave standing — every co-true pair is carved, so of
 // the 2^3 grid just the four with at most one axis true survive.
 func Test_Register_Snapshots_Float_Invariants(t *testing.T) {
-	const sugar = `package sugar
+	const SUGAR = `package sugar
 
 func Float_Invariants[F ~float32 | ~float64](f F, namespace string) {
 	value := float64(f)
@@ -951,7 +951,7 @@ func Float_Invariants[F ~float32 | ~float64](f F, namespace string) {
 	)
 }
 `
-	const application = `package app
+	const APPLICATION = `package app
 
 import (
 	invariant "example.com/m/invariant"
@@ -965,8 +965,8 @@ func check(f float64) {
 	recorder := &invariant.Recorder{
 		File_System: fstest.MapFS{
 			"m/go.mod":         &fstest.MapFile{Data: []byte("module example.com/m\n")},
-			"m/sugar/sugar.go": &fstest.MapFile{Data: []byte(sugar)},
-			"m/app/app.go":     &fstest.MapFile{Data: []byte(application)},
+			"m/sugar/sugar.go": &fstest.MapFile{Data: []byte(SUGAR)},
+			"m/app/app.go":     &fstest.MapFile{Data: []byte(APPLICATION)},
 		},
 		Output:        &bytes.Buffer{},
 		Sugar_Package: "example.com/m/sugar",
@@ -984,7 +984,7 @@ Tuple field:tuple=(1,0,0) [1 0 0]`), snapshot_registered(recorder))
 
 // The String_Invariants footprint is hoisted out of its test so the test body stays
 // within the function-length budget; the 8 axes x 9 carves leave 81 of the 2^8 cells.
-const string_invariants = `Sometimes field · The value has a NUL byte. string_has_nul(s)
+const STRING_INVARIANTS = `Sometimes field · The value has a NUL byte. string_has_nul(s)
 Sometimes field · The value has a control character. string_has_control(s)
 Sometimes field · The value has a line break. string_has_line_break(s)
 Sometimes field · The value has a multi-byte rune. string_has_multibyte_rune(s)
@@ -1080,7 +1080,7 @@ Tuple field:tuple=(1,0,0,0,0,0,0,0) [1 0 0 0 0 0 0 0]`
 // carves — empty excludes every content axis (so with empty true only the all-false-content
 // cell stands), and a NUL or a line break is itself a control character.
 func Test_Register_Snapshots_String_Invariants(t *testing.T) {
-	const sugar = `package sugar
+	const SUGAR = `package sugar
 
 func String_Invariants(s string, namespace string) {
 	Dot_Product(namespace,
@@ -1104,7 +1104,7 @@ func String_Invariants(s string, namespace string) {
 	)
 }
 `
-	const application = `package app
+	const APPLICATION = `package app
 
 import (
 	invariant "example.com/m/invariant"
@@ -1118,15 +1118,15 @@ func check(s string) {
 	recorder := &invariant.Recorder{
 		File_System: fstest.MapFS{
 			"m/go.mod":         &fstest.MapFile{Data: []byte("module example.com/m\n")},
-			"m/sugar/sugar.go": &fstest.MapFile{Data: []byte(sugar)},
-			"m/app/app.go":     &fstest.MapFile{Data: []byte(application)},
+			"m/sugar/sugar.go": &fstest.MapFile{Data: []byte(SUGAR)},
+			"m/app/app.go":     &fstest.MapFile{Data: []byte(APPLICATION)},
 		},
 		Output:        &bytes.Buffer{},
 		Sugar_Package: "example.com/m/sugar",
 	}
 	invariant.Recorder_Register_Packages_For_Analysis(recorder, "/m/app")
 
-	snap.Expect(t, snap.Init(string_invariants), snapshot_registered(recorder))
+	snap.Expect(t, snap.Init(STRING_INVARIANTS), snapshot_registered(recorder))
 }
 
 // Registration descends a user-defined bundle on a user-defined type exactly as it does a
@@ -1136,7 +1136,7 @@ func check(s string) {
 // Sugar_Package is set. Two Sometimes axes over an Account with an Impossible forbidding
 // overdrawn-and-empty leave three of the four tuples.
 func Test_Register_Snapshots_User_Defined_Bundle(t *testing.T) {
-	const source = `package fixture
+	const SOURCE = `package fixture
 
 type Account struct {
 	Balance int
@@ -1156,7 +1156,7 @@ func check(a Account) {
 `
 	recorder := &invariant.Recorder{
 		File_System: fstest.MapFS{
-			"fixture/account.go": &fstest.MapFile{Data: []byte(source)},
+			"fixture/account.go": &fstest.MapFile{Data: []byte(SOURCE)},
 		},
 	}
 	invariant.Recorder_Register_Packages_For_Analysis(recorder, "/fixture")
@@ -1174,7 +1174,7 @@ Tuple account:tuple=(1,0) [1 0]`), snapshot_registered(recorder))
 // independent one-axis grids under "transfer.amount", "transfer.amount.sign", "transfer.memo" — not
 // one joint cross-product. Transfer itself has no direct axes, so it seeds no grid of its own.
 func Test_Register_Snapshots_Composed_Bundle(t *testing.T) {
-	const source = `package fixture
+	const SOURCE = `package fixture
 
 type Transfer struct {
 	Amount int
@@ -1211,7 +1211,7 @@ func check(x Transfer) {
 `
 	recorder := &invariant.Recorder{
 		File_System: fstest.MapFS{
-			"fixture/transfer.go": &fstest.MapFile{Data: []byte(source)},
+			"fixture/transfer.go": &fstest.MapFile{Data: []byte(SOURCE)},
 		},
 	}
 	invariant.Recorder_Register_Packages_For_Analysis(recorder, "/fixture")
@@ -1232,7 +1232,7 @@ Tuple transfer.memo:tuple=(1) [1]`), snapshot_registered(recorder))
 // coverage, so registration must fail rather than drop them silently: it reports the bundle by site
 // and exits non-zero, and nothing is seeded.
 func Test_Register_Fatal_On_Unresolvable_Cross_Module_Bundle(t *testing.T) {
-	const package_b = `package b
+	const PACKAGE_B = `package b
 
 import (
 	_ "example.com/m/invariant"
@@ -1248,7 +1248,7 @@ func check(n int) {
 	recorder := &invariant.Recorder{
 		File_System: fstest.MapFS{
 			"m/go.mod": &fstest.MapFile{Data: []byte("module example.com/m\n")},
-			"m/b/b.go": &fstest.MapFile{Data: []byte(package_b)},
+			"m/b/b.go": &fstest.MapFile{Data: []byte(PACKAGE_B)},
 		},
 		Output: &output,
 		Exit:   func(code int) { exit_code = code },
@@ -1276,7 +1276,7 @@ func check(n int) {
 // that package's import path, the descent recognizes those bare calls, so the
 // preset's axes seed and its Impossible carves the (1,1) tuple.
 func Test_Register_Recognizes_Unqualified_Sugar(t *testing.T) {
-	const sugar = `package sugar
+	const SUGAR = `package sugar
 
 type Pair int
 
@@ -1287,7 +1287,7 @@ func Pair_Invariants(n Pair, namespace string) {
 		Impossible(Event_True("lo"), Event_True("hi")))
 }
 `
-	const application = `package app
+	const APPLICATION = `package app
 
 import (
 	_ "example.com/m/invariant"
@@ -1301,8 +1301,8 @@ func check(n int) {
 	recorder := &invariant.Recorder{
 		File_System: fstest.MapFS{
 			"m/go.mod":         &fstest.MapFile{Data: []byte("module example.com/m\n")},
-			"m/sugar/sugar.go": &fstest.MapFile{Data: []byte(sugar)},
-			"m/app/app.go":     &fstest.MapFile{Data: []byte(application)},
+			"m/sugar/sugar.go": &fstest.MapFile{Data: []byte(SUGAR)},
+			"m/app/app.go":     &fstest.MapFile{Data: []byte(APPLICATION)},
 		},
 		Output:        &bytes.Buffer{},
 		Sugar_Package: "example.com/m/sugar",
@@ -1328,7 +1328,7 @@ func check(n int) {
 // NOT the invariant primitives (they could be the user's own functions), so the
 // bundle registers nothing — guarding the recognition against false positives.
 func Test_Register_Unqualified_Sugar_Ignored_Outside_Sugar_Package(t *testing.T) {
-	const sugar = `package sugar
+	const SUGAR = `package sugar
 
 type Pair int
 
@@ -1339,7 +1339,7 @@ func Pair_Invariants(n Pair, namespace string) {
 		Impossible(Event_True("lo"), Event_True("hi")))
 }
 `
-	const application = `package app
+	const APPLICATION = `package app
 
 import (
 	_ "example.com/m/invariant"
@@ -1353,8 +1353,8 @@ func check(n int) {
 	recorder := &invariant.Recorder{
 		File_System: fstest.MapFS{
 			"m/go.mod":         &fstest.MapFile{Data: []byte("module example.com/m\n")},
-			"m/sugar/sugar.go": &fstest.MapFile{Data: []byte(sugar)},
-			"m/app/app.go":     &fstest.MapFile{Data: []byte(application)},
+			"m/sugar/sugar.go": &fstest.MapFile{Data: []byte(SUGAR)},
+			"m/app/app.go":     &fstest.MapFile{Data: []byte(APPLICATION)},
 		},
 		Output: &bytes.Buffer{},
 	}
@@ -1378,7 +1378,7 @@ func check(n int) {
 // the element's own message (field␀lo), and honors its Impossible carve of the
 // (true, true) tuple.
 func Test_Register_Recognizes_Lowercase_Invariants_Bundle(t *testing.T) {
-	const source = `package fixture
+	const SOURCE = `package fixture
 
 type pair int
 
@@ -1395,7 +1395,7 @@ func check(n int) {
 `
 	recorder := &invariant.Recorder{
 		File_System: fstest.MapFS{
-			"fixture/lower.go": &fstest.MapFile{Data: []byte(source)},
+			"fixture/lower.go": &fstest.MapFile{Data: []byte(SOURCE)},
 		},
 		Output: &bytes.Buffer{},
 		Exit:   func(code int) {},
@@ -1466,21 +1466,21 @@ func Benchmark_Dot_Product_Recording(b *testing.B) {
 // Guards the shape a hot _Invariants function actually has — several Sometimes axes plus
 // the pairwise Impossible carves ruling out simultaneous truth — mirroring Metric_Invariants
 // (maddox/internal/maddox.go:3404): 5 Sometimes, 11 Impossible, including the zero/min pair
-// that only ever co-occur because metric_min is 0. Neither existing benchmark above uses an
+// that only ever co-occur because METRIC_MIN is 0. Neither existing benchmark above uses an
 // Impossible, so neither exercises this shape; a Dot_Product call that violates nothing must
 // not allocate regardless of how many Impossibles it carries.
 func Test_Dot_Product_Allocates_Nothing_On_Success(t *testing.T) {
 	recorder := new_test_recorder()
-	const metric_min = 0
-	const metric_max = 100
+	const METRIC_MIN = 0
+	const METRIC_MAX = 100
 	value := 0
 	allocs := testing.AllocsPerRun(1000, func() {
 		invariant.Recorder_Dot_Product(recorder, "metric",
 			invariant.Recorder_Sometimes(recorder, value == 0, "zero"),
 			invariant.Recorder_Sometimes(recorder, value == 1, "one"),
 			invariant.Recorder_Sometimes(recorder, value == 2, "two"),
-			invariant.Recorder_Sometimes(recorder, value == metric_min, "min"),
-			invariant.Recorder_Sometimes(recorder, value == metric_max, "max"),
+			invariant.Recorder_Sometimes(recorder, value == METRIC_MIN, "min"),
+			invariant.Recorder_Sometimes(recorder, value == METRIC_MAX, "max"),
 			invariant.Impossible(
 				invariant.Event_True("zero"), invariant.Event_False("min")),
 			invariant.Impossible(
@@ -1517,8 +1517,8 @@ func Test_Dot_Product_Allocates_Nothing_On_Success(t *testing.T) {
 // -benchmem on whichever mode is being profiled.
 func Benchmark_Dot_Product_Impossible_Heavy(b *testing.B) {
 	recorder := &invariant.Recorder{}
-	const metric_min = 0
-	const metric_max = 100
+	const METRIC_MIN = 0
+	const METRIC_MAX = 100
 	value := 0
 	b.ReportAllocs()
 	for range b.N {
@@ -1526,8 +1526,8 @@ func Benchmark_Dot_Product_Impossible_Heavy(b *testing.B) {
 			invariant.Recorder_Sometimes(recorder, value == 0, "zero"),
 			invariant.Recorder_Sometimes(recorder, value == 1, "one"),
 			invariant.Recorder_Sometimes(recorder, value == 2, "two"),
-			invariant.Recorder_Sometimes(recorder, value == metric_min, "min"),
-			invariant.Recorder_Sometimes(recorder, value == metric_max, "max"),
+			invariant.Recorder_Sometimes(recorder, value == METRIC_MIN, "min"),
+			invariant.Recorder_Sometimes(recorder, value == METRIC_MAX, "max"),
 			invariant.Impossible(
 				invariant.Event_True("zero"), invariant.Event_False("min")),
 			invariant.Impossible(

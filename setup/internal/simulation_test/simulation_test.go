@@ -18,25 +18,25 @@ import (
 
 // The Run_Until cap for the harness's own writes, in virtual time: the write and close
 // finish in a few grains, so this ample bound only bites a bug that stalls one.
-const harness_deadline = systime.MICROSECOND
+const HARNESS_DEADLINE = systime.MICROSECOND
 
 // The destination directory, relative to the source root, pruned from the source walk so the
 // mirror never copies its own output back into itself.
-const harness_destination = "dest"
+const HARNESS_DESTINATION = "dest"
 
 // A top-level entry marked ignored, so the harness can prove the mirror prunes it.
-const harness_ignored = "e0"
+const HARNESS_IGNORED = "e0"
 
 // Content written over a destination file to force a difference no random source file
 // realistically matches, so a later run rewrites exactly the mutated files.
-const harness_poison = "harness-poison-differs-from-any-generated-file"
+const HARNESS_POISON = "harness-poison-differs-from-any-generated-file"
 
 // The number of seeds the corpus adds, so `go test` alone sweeps a range before `-fuzz`.
-const harness_corpus = 256
+const HARNESS_CORPUS = 256
 
 // Fuzz_Main drives the mirror over the filesystem New_Sim draws from each seed.
 func Fuzz_Main(f *testing.F) {
-	for seed := uint64(0); seed < harness_corpus; seed++ {
+	for seed := uint64(0); seed < HARNESS_CORPUS; seed++ {
 		f.Add(seed)
 	}
 	f.Fuzz(func(t *testing.T, seed uint64) {
@@ -54,7 +54,7 @@ func drive(t *testing.T, seed uint64) {
 	input := &setup.Main_Input{
 		File_System:           system,
 		Source_Directory:      "/",
-		Destination_Directory: filepath.Join("/", harness_destination),
+		Destination_Directory: filepath.Join("/", HARNESS_DESTINATION),
 		Operating_System:      "linux",
 		Run_Command:           harness_run_command,
 		Is_Ignored:            harness_ignore,
@@ -107,16 +107,16 @@ func harness_ignore(relatives []string) (ignored map[string]bool) {
 // Reports whether one source path is the destination root or the ignored subtree, the
 // per-path rule the harness's own walk shares with the batched predicate.
 func harness_ignores_one(relative string) (ignored bool) {
-	if relative == harness_destination {
+	if relative == HARNESS_DESTINATION {
 		return true
 	}
-	if strings.HasPrefix(relative, harness_destination+"/") {
+	if strings.HasPrefix(relative, HARNESS_DESTINATION+"/") {
 		return true
 	}
-	if relative == harness_ignored {
+	if relative == HARNESS_IGNORED {
 		return true
 	}
-	return strings.HasPrefix(relative, harness_ignored+"/")
+	return strings.HasPrefix(relative, HARNESS_IGNORED+"/")
 }
 
 // Wraps the loop's Create to count the files a mirror run writes, returning the live count.
@@ -132,9 +132,9 @@ func harness_count_writes(system *setup.File_System) (writes *int) {
 
 // Asserts the ignored subtree never reached the destination.
 func harness_assert_pruned(t *testing.T, system *setup.File_System) {
-	status, _ := system.Loop.Status(filepath.Join("/", harness_destination, harness_ignored))
+	status, _ := system.Loop.Status(filepath.Join("/", HARNESS_DESTINATION, HARNESS_IGNORED))
 	if status.Exists {
-		t.Fatalf("the ignored subtree %q was synced to the destination", harness_ignored)
+		t.Fatalf("the ignored subtree %q was synced to the destination", HARNESS_IGNORED)
 	}
 }
 
@@ -146,7 +146,7 @@ func harness_mutate(system *setup.File_System, seed uint64) (count int) {
 		if prng.Generator_Boolean(&generator) {
 			continue
 		}
-		harness_overwrite(system, filepath.Join("/", harness_destination, relative))
+		harness_overwrite(system, filepath.Join("/", HARNESS_DESTINATION, relative))
 		count++
 	}
 	return count
@@ -189,12 +189,12 @@ func harness_overwrite(system *setup.File_System, path string) {
 	written := false
 	system.Loop.Write(&write_completion, func(_ *sysio.Completion, _ int, _ error) {
 		written = true
-	}, file, []byte(harness_poison), 0)
-	system.Run_Until(func() (finished bool) { return written }, harness_deadline)
+	}, file, []byte(HARNESS_POISON), 0)
+	system.Run_Until(func() (finished bool) { return written }, HARNESS_DEADLINE)
 	var close_completion sysio.Completion
 	closed := false
 	system.Loop.Close(&close_completion, func(_ *sysio.Completion, _ error) {
 		closed = true
 	}, file)
-	system.Run_Until(func() (finished bool) { return closed }, harness_deadline)
+	system.Run_Until(func() (finished bool) { return closed }, HARNESS_DEADLINE)
 }

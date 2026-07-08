@@ -39,11 +39,11 @@ const ELEMENT_MESSAGE_SEPARATOR = "\x00"
 // bundle graph finishes far below this. The cap only stops a pathological (e.g.
 // self-referential) *_Invariants graph from making the work depend unboundedly
 // on input — TigerStyle forbids that.
-const bundle_expansion_steps_max = 4096
+const BUNDLE_EXPANSION_STEPS_MAX = 4096
 
 // Bounds the walk up the directory tree searching for a go.mod, so module
 // discovery can't loop unboundedly on a pathological path.
-const module_search_depth_max = 256
+const MODULE_SEARCH_DEPTH_MAX = 256
 
 // Dot_Element_Kind value 0 is intentionally unassigned: Always left the element algebra
 // (it is now an eager guard, see Recorder_Always), and leaving the gap means a zero-value
@@ -791,31 +791,31 @@ func recorder_has_entry(recorder *Recorder, name string) (exists bool) {
 
 // Walks up from start_directory for a go.mod, returning the module path it
 // declares and the absolute directory containing it. Both are "" when none is
-// found within module_search_depth_max — cross-package resolution then degrades
+// found within MODULE_SEARCH_DEPTH_MAX — cross-package resolution then degrades
 // to same-package bundles only.
 func recorder_module(
 	recorder *Recorder, start_directory string,
 ) (module_path string, module_root string) {
 	directory := start_directory
-	for range module_search_depth_max {
+	for range MODULE_SEARCH_DEPTH_MAX {
 		relative := path.Join(strings.TrimPrefix(directory, "/"), "go.mod")
-		source, read_error := fs.ReadFile(recorder.File_System, relative)
+		SOURCE, read_error := fs.ReadFile(recorder.File_System, relative)
 		if read_error == nil {
-			return parse_module_path(source), directory
+			return parse_module_path(SOURCE), directory
 		}
-		parent := path.Dir(directory)
-		if parent == directory {
+		PARENT := path.Dir(directory)
+		if PARENT == directory {
 			break
 		}
-		directory = parent
+		directory = PARENT
 	}
 	return "", ""
 }
 
 // Returns the module path declared by a go.mod's `module` directive, or "" when
 // absent — a line scan, no golang.org/x/mod dependency.
-func parse_module_path(source []byte) (module_path string) {
-	for _, line := range strings.Split(string(source), "\n") {
+func parse_module_path(SOURCE []byte) (module_path string) {
+	for _, line := range strings.Split(string(SOURCE), "\n") {
 		fields := strings.Fields(line)
 		if len(fields) < 2 {
 			continue
@@ -860,13 +860,13 @@ func recorder_parse_directory(input *recorder_parse_directory_input) (files []*a
 		if strings.HasSuffix(file_path, "_test.go") {
 			return nil
 		}
-		source, read_error := fs.ReadFile(input.File_System, file_path)
+		SOURCE, read_error := fs.ReadFile(input.File_System, file_path)
 		if read_error != nil {
 			return nil
 		}
 		name := "/" + file_path
 		file, parse_error := parser.ParseFile(
-			input.File_Set, name, source, parser.SkipObjectResolution,
+			input.File_Set, name, SOURCE, parser.SkipObjectResolution,
 		)
 		if parse_error == nil {
 			files = append(files, file)
@@ -926,18 +926,18 @@ func recorder_glob_step(
 	if segment == "**" {
 		next = append(next, recorder_glob_state{
 			Directory: current.Directory, Index: current.Index + 1})
-		for _, child := range children {
+		for _, CHILD := range children {
 			next = append(next,
-				recorder_glob_state{Directory: child, Index: current.Index})
+				recorder_glob_state{Directory: CHILD, Index: current.Index})
 		}
 		return next
 	}
-	for _, child := range children {
-		matched, _ := path.Match(segment, path.Base(child))
+	for _, CHILD := range children {
+		matched, _ := path.Match(segment, path.Base(CHILD))
 		if !matched {
 			continue
 		}
-		next = append(next, recorder_glob_state{Directory: child, Index: current.Index + 1})
+		next = append(next, recorder_glob_state{Directory: CHILD, Index: current.Index + 1})
 	}
 	return next
 }
@@ -952,11 +952,11 @@ func recorder_child_directories(file_system fs.FS, directory string) (children [
 		if !entry.IsDir() {
 			continue
 		}
-		child := entry.Name()
+		CHILD := entry.Name()
 		if directory != "." {
-			child = directory + "/" + entry.Name()
+			CHILD = directory + "/" + entry.Name()
 		}
-		children = append(children, child)
+		children = append(children, CHILD)
 	}
 	return children
 }

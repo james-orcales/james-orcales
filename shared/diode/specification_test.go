@@ -358,7 +358,7 @@ func decimal(index int) (text string) {
 
 // Matches the realistic message length used across the repo's logging benchmarks so
 // diode numbers compare against jlog's.
-const benchmark_line = "Test logging, but use a somewhat realistic message length."
+const BENCHMARK_LINE = "Test logging, but use a somewhat realistic message length."
 
 // Benchmark_Write measures the producer cost with a roomy ring the drain can keep up
 // with, so it reflects the steady-state, no-drop path.
@@ -366,7 +366,7 @@ func Benchmark_Write(b *testing.B) {
 	writer := diode.New(diode.New_Input{
 		Writer: io.Discard, Clock: instant_clock(), Sleep: no_sleep(), Count: 1024,
 	})
-	line := []byte(benchmark_line)
+	line := []byte(BENCHMARK_LINE)
 	b.ReportAllocs()
 	b.ResetTimer()
 	b.RunParallel(func(pb *testing.PB) {
@@ -384,7 +384,7 @@ func Benchmark_Write_Serial(b *testing.B) {
 	writer := diode.New(diode.New_Input{
 		Writer: io.Discard, Clock: instant_clock(), Sleep: no_sleep(), Count: 1024,
 	})
-	line := []byte(benchmark_line)
+	line := []byte(BENCHMARK_LINE)
 	b.ReportAllocs()
 	b.ResetTimer()
 	for index := 0; index < b.N; index++ {
@@ -400,7 +400,7 @@ func Benchmark_Write_Full_Ring(b *testing.B) {
 	writer := diode.New(diode.New_Input{
 		Writer: io.Discard, Clock: instant_clock(), Sleep: no_sleep(), Count: 8,
 	})
-	line := []byte(benchmark_line)
+	line := []byte(BENCHMARK_LINE)
 	b.ReportAllocs()
 	b.ResetTimer()
 	b.RunParallel(func(pb *testing.PB) {

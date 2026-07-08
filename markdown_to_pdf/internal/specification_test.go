@@ -25,7 +25,7 @@ func Test_Render_Headings(t *testing.T) {
 		t.Fatal("heading is not set in the 24pt bold font")
 	}
 	// A lone heading still carries a blank line above it, so it never sits flush
-	// at the top margin (page_height - page_margin = 786).
+	// at the top margin (PAGE_HEIGHT - PAGE_MARGIN = 786).
 	if strings.Contains(document, "1 0 0 1 56 786 Tm") {
 		t.Fatal("heading has no line break above it")
 	}

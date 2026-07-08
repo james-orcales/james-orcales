@@ -1107,7 +1107,7 @@ func replica_start_epoch_messages(
 // How many heartbeats the new epoch's primary re-drives the reconfiguration commit to the old epoch
 // (§7.1.1), so a member that missed the one-shot commit catches up rather than stranding recovery
 // (simulator_bugs.md, Bug 19).
-const handoff_commit_redrive = 16
+const HANDOFF_COMMIT_REDRIVE = 16
 
 // The view-change timeout backs off by the number of views a replica has spent without returning to
 // normal, capped at this multiplier. A cluster that cannot settle (the view's primary is down, or
@@ -1115,7 +1115,7 @@ const handoff_commit_redrive = 16
 // one view change completes. This is the growing-timeout livelock break VSR and Raft both use. The
 // per-replica base timeout differs (jitter), so the backed-off windows diverge and one replica's
 // view change finishes inside another's wait.
-const view_change_backoff_cap = 2
+const VIEW_CHANGE_BACKOFF_CAP = 2
 
 // Applies a replica's role in the new epoch after the reconfiguration executed (§7.1.1, §7.1.2). It
 // advances the epoch and resets to view 0 (the new epoch must start in view 0, §8.3, so Start_Epoch
@@ -1159,7 +1159,7 @@ func replica_enter_new_epoch(
 		// old group the reconfiguration committed, in case the commit was lost (Bug 19).
 		replica.Old_Configuration = nil
 		replica.Status = STATUS_NORMAL
-		replica.Handoff_Commit_Redrive = handoff_commit_redrive
+		replica.Handoff_Commit_Redrive = HANDOFF_COMMIT_REDRIVE
 		// Capture the handoff commit (the reconfiguration op) so the re-drive advertises a
 		// fixed point, never the live commit that grows as the new epoch commits.
 		replica.Handoff_Commit = replica.Commit
@@ -3553,8 +3553,8 @@ func replica_arm_timer(replica *Replica, now time.Moment) (timer Timer_Reset) {
 		// Back off by views passed without returning to normal, so a cluster that cannot
 		// settle lengthens its view-change window until one completes (livelock break).
 		attempts := uint64(replica.View - replica.Last_Normal_View)
-		if attempts > view_change_backoff_cap {
-			attempts = view_change_backoff_cap
+		if attempts > VIEW_CHANGE_BACKOFF_CAP {
+			attempts = VIEW_CHANGE_BACKOFF_CAP
 		}
 		interval = replica.Timeout * time.Duration(1+attempts)
 	case replica.Identifier == replica_primary_identifier(replica):

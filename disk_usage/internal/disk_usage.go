@@ -19,12 +19,16 @@ import (
 )
 
 // The process exit codes.
-const exit_success = 0
-const exit_usage = 2
-const exit_failure = 1
+const EXIT_SUCCESS = 0
+
+// EXIT_USAGE is 2 by shell convention, keeping a command-line misuse distinct from a run failure.
+const EXIT_USAGE = 2
+
+// EXIT_FAILURE is the catch-all nonzero for a run that started but could not finish.
+const EXIT_FAILURE = 1
 
 // Depth_Max sentinel: render every entry, however deep.
-const depth_unlimited = -1
+const DEPTH_UNLIMITED = -1
 
 // Entry is one path in the tree with its cumulative byte size: for a file, its own
 // bytes; for a directory, the sum of every file beneath it.
@@ -96,7 +100,7 @@ func Main(input *Main_Input) (status_code int) {
 	if parse_err != nil {
 		fmt.Fprintf(input.Error_Output, "disk_usage: %v\n\n", parse_err)
 		cli.Print_Help(input.Error_Output, program)
-		return exit_usage
+		return EXIT_USAGE
 	}
 
 	directory_only := cli.Get_Option(command.Flags, "dir-only").Value.(bool)
@@ -107,7 +111,7 @@ func Main(input *Main_Input) (status_code int) {
 		if files_only {
 			fmt.Fprintf(input.Error_Output,
 				"disk_usage: -dir-only and -files-only are mutually exclusive\n")
-			return exit_usage
+			return EXIT_USAGE
 		}
 	}
 
@@ -115,7 +119,7 @@ func Main(input *Main_Input) (status_code int) {
 	minimum, minimum_err := parse_bytes(minimum_text)
 	if minimum_err != nil {
 		fmt.Fprintf(input.Error_Output, "disk_usage: %v\n", minimum_err)
-		return exit_usage
+		return EXIT_USAGE
 	}
 
 	root := cli.Get_Option(command.Arguments, "dir").Value.(string)
@@ -126,7 +130,7 @@ func Main(input *Main_Input) (status_code int) {
 	})
 	if analyze_err != nil {
 		fmt.Fprintf(input.Error_Output, "disk_usage: %v\n", analyze_err)
-		return exit_failure
+		return EXIT_FAILURE
 	}
 
 	render_input := Render_Input{
@@ -140,12 +144,12 @@ func Main(input *Main_Input) (status_code int) {
 		json_err := Render_Json(input.Output, render_input)
 		if json_err != nil {
 			fmt.Fprintf(input.Error_Output, "disk_usage: %v\n", json_err)
-			return exit_failure
+			return EXIT_FAILURE
 		}
-		return exit_success
+		return EXIT_SUCCESS
 	}
 	Render(input.Output, render_input)
-	return exit_success
+	return EXIT_SUCCESS
 }
 
 // Declares the disk_usage command line: a commandless program taking one directory and
@@ -296,7 +300,7 @@ func path_depth(name string) (depth int) {
 type Render_Input struct {
 	// Report is the analyzed tree.
 	Report Report
-	// Depth_Max is the deepest level to print; depth_unlimited (-1) prints everything.
+	// Depth_Max is the deepest level to print; DEPTH_UNLIMITED (-1) prints everything.
 	Depth_Max int
 	// Minimum is the smallest size that prints; an entry below it is hidden, trimming the
 	// long tail of small entries. Zero keeps every non-empty entry.
@@ -391,7 +395,7 @@ func render_keeps(input Render_Input, entry Entry) (keep bool) {
 	if entry.Bytes < input.Minimum {
 		return false
 	}
-	if input.Depth_Max != depth_unlimited {
+	if input.Depth_Max != DEPTH_UNLIMITED {
 		if entry.Depth > input.Depth_Max {
 			return false
 		}
@@ -453,20 +457,20 @@ func parse_bytes(text string) (bytes int64, err error) {
 // Maps a lowercased unit suffix to its byte count, treating the SI-style and bare-letter
 // spellings as the same binary unit the tool prints. An empty suffix is plain bytes.
 func size_unit_bytes(unit string) (multiplier int64, known bool) {
-	const kibibyte = 1024
+	const KIBIBYTE = 1024
 	switch unit {
 	case "", "b":
 		return 1, true
 	case "k", "kb", "kib":
-		return kibibyte, true
+		return KIBIBYTE, true
 	case "m", "mb", "mib":
-		return kibibyte * kibibyte, true
+		return KIBIBYTE * KIBIBYTE, true
 	case "g", "gb", "gib":
-		return kibibyte * kibibyte * kibibyte, true
+		return KIBIBYTE * KIBIBYTE * KIBIBYTE, true
 	case "t", "tb", "tib":
-		return kibibyte * kibibyte * kibibyte * kibibyte, true
+		return KIBIBYTE * KIBIBYTE * KIBIBYTE * KIBIBYTE, true
 	case "p", "pb", "pib":
-		return kibibyte * kibibyte * kibibyte * kibibyte * kibibyte, true
+		return KIBIBYTE * KIBIBYTE * KIBIBYTE * KIBIBYTE * KIBIBYTE, true
 	}
 	return 0, false
 }

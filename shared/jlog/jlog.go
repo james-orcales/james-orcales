@@ -42,37 +42,55 @@ import (
 
 // A fresh line buffer holds a typical event without growing, so steady-state
 // logging never reallocates.
-const default_buffer_capacity = 500
+const DEFAULT_BUFFER_CAPACITY = 500
 
 // Buffers grown past this are dropped from the pool rather than pinning 64KiB per
 // slot forever.
-const pooled_buffer_capacity_max = 1 << 16
+const POOLED_BUFFER_CAPACITY_MAX = 1 << 16
 
-const decimal_base = 10
+// DECIMAL_BASE renders integers in base 10 so JSON consumers read them as plain decimals.
+const DECIMAL_BASE = 10
 
-const default_caller_skip = 0
+// DEFAULT_CALLER_SKIP passes zero frames because the injected Caller owns its own skip offset.
+const DEFAULT_CALLER_SKIP = 0
 
-const float_precision_shortest = -1
+// FLOAT_PRECISION_SHORTEST asks strconv for the fewest digits that round-trip exactly.
+const FLOAT_PRECISION_SHORTEST = -1
 
-const float_bits_32 = 32
+// FLOAT_BITS_32 formats a Float32 at 32-bit precision so it round-trips as a float32.
+const FLOAT_BITS_32 = 32
 
-const float_bits_64 = 64
+// FLOAT_BITS_64 formats a Float64 at full 64-bit precision, the widest JSON numbers carry.
+const FLOAT_BITS_64 = 64
 
 // A float of this magnitude or beyond renders in exponent form, matching the
 // cutoffs JSON encoders use.
-const float_exponent_low = 1e-6
-const float_exponent_high = 1e21
+const FLOAT_EXPONENT_LOW = 1e-6
+
+// FLOAT_EXPONENT_HIGH is the upper cutoff; at or above it, magnitudes render in exponent form.
+const FLOAT_EXPONENT_HIGH = 1e21
 
 // A configuration default is a distinct type so string_or's two parameters never
 // repeat a type, which the input-struct rule would otherwise force into a struct.
 type default_string string
 
-const default_timestamp_field_name default_string = "time"
-const default_level_field_name default_string = "level"
-const default_message_field_name default_string = "message"
-const default_error_field_name default_string = "error"
-const default_caller_field_name default_string = "caller"
-const default_stack_field_name default_string = "stack"
+// DEFAULT_TIMESTAMP_FIELD_NAME keys the timestamp; "time" is the common structured-log key.
+const DEFAULT_TIMESTAMP_FIELD_NAME default_string = "time"
+
+// DEFAULT_LEVEL_FIELD_NAME keys the severity; "level" is the name log tooling greps for.
+const DEFAULT_LEVEL_FIELD_NAME default_string = "level"
+
+// DEFAULT_MESSAGE_FIELD_NAME keys the free-text human message; "message" is the widely used name.
+const DEFAULT_MESSAGE_FIELD_NAME default_string = "message"
+
+// DEFAULT_ERROR_FIELD_NAME keys the string Err emits; "error" is the conventional error key.
+const DEFAULT_ERROR_FIELD_NAME default_string = "error"
+
+// DEFAULT_CALLER_FIELD_NAME keys the "file:line" location Caller and Auto_Caller emit.
+const DEFAULT_CALLER_FIELD_NAME default_string = "caller"
+
+// DEFAULT_STACK_FIELD_NAME keys the rendered stack trace Err writes beside the error.
+const DEFAULT_STACK_FIELD_NAME default_string = "stack"
 
 // Buffer is the byte accumulator the encoders append into. It is a named slice so
 // the encoder helpers' (Buffer, []byte) signatures present two distinct types and
@@ -91,29 +109,71 @@ type Field_Kind uint8
 // The value kinds (those whose key is field.Key) occupy the low range and the
 // config-keyed kinds (error/timestamp/caller, whose key comes from the config)
 // occupy the top, so buffer_encode_field tells them apart with one comparison
-// against kind_error rather than a switch on the hot value path.
-const kind_string Field_Kind = 0
-const kind_integer Field_Kind = 1
-const kind_unsigned Field_Kind = 2
-const kind_float32 Field_Kind = 3
-const kind_float64 Field_Kind = 4
-const kind_boolean Field_Kind = 5
-const kind_bytes Field_Kind = 6
-const kind_hexadecimal Field_Kind = 7
-const kind_raw_json Field_Kind = 8
-const kind_time Field_Kind = 9
-const kind_duration Field_Kind = 10
-const kind_ip Field_Kind = 11
-const kind_mac Field_Kind = 12
-const kind_any Field_Kind = 13
-const kind_strings Field_Kind = 14
-const kind_integers Field_Kind = 15
-const kind_floats Field_Kind = 16
-const kind_booleans Field_Kind = 17
-const kind_durations Field_Kind = 18
-const kind_error Field_Kind = 19
-const kind_timestamp Field_Kind = 20
-const kind_caller Field_Kind = 21
+// against KIND_ERROR rather than a switch on the hot value path.
+const KIND_STRING Field_Kind = 0
+
+// KIND_INTEGER tags a signed integer stored in Number and emitted as a JSON number.
+const KIND_INTEGER Field_Kind = 1
+
+// KIND_UNSIGNED tags an unsigned integer stored in Number and emitted as a JSON number.
+const KIND_UNSIGNED Field_Kind = 2
+
+// KIND_FLOAT32 tags a float held as bits in Number, rendered at float32 precision.
+const KIND_FLOAT32 Field_Kind = 3
+
+// KIND_FLOAT64 tags a float held as bits in Number, rendered at full float64 precision.
+const KIND_FLOAT64 Field_Kind = 4
+
+// KIND_BOOLEAN tags a bool packed into Number and emitted as JSON true or false.
+const KIND_BOOLEAN Field_Kind = 5
+
+// KIND_BYTES tags a []byte behind Data, emitted as a JSON string with escaping.
+const KIND_BYTES Field_Kind = 6
+
+// KIND_HEXADECIMAL tags a []byte behind Data, emitted as a hex-encoded JSON string.
+const KIND_HEXADECIMAL Field_Kind = 7
+
+// KIND_RAW_JSON tags a pre-encoded []byte behind Data, copied verbatim into the line.
+const KIND_RAW_JSON Field_Kind = 8
+
+// KIND_TIME tags a Moment in Number, rendered as an RFC 3339 UTC timestamp string.
+const KIND_TIME Field_Kind = 9
+
+// KIND_DURATION tags a Duration in Number, divided by the config unit before rendering.
+const KIND_DURATION Field_Kind = 10
+
+// KIND_IP tags a net.IP behind Data, emitted as its dotted or colon string form.
+const KIND_IP Field_Kind = 11
+
+// KIND_MAC tags a net.HardwareAddr behind Data, emitted as its colon-separated string.
+const KIND_MAC Field_Kind = 12
+
+// KIND_ANY tags a value in Boxed marshaled by encoding/json; this path may allocate.
+const KIND_ANY Field_Kind = 13
+
+// KIND_STRINGS tags a []string behind Data, emitted as a JSON array of strings.
+const KIND_STRINGS Field_Kind = 14
+
+// KIND_INTEGERS tags a []int behind Data, emitted as a JSON array of numbers.
+const KIND_INTEGERS Field_Kind = 15
+
+// KIND_FLOATS tags a []float64 behind Data, emitted as a JSON array of numbers.
+const KIND_FLOATS Field_Kind = 16
+
+// KIND_BOOLEANS tags a []bool behind Data, emitted as a JSON array of booleans.
+const KIND_BOOLEANS Field_Kind = 17
+
+// KIND_DURATIONS tags a []Duration behind Data, each divided by the config unit.
+const KIND_DURATIONS Field_Kind = 18
+
+// KIND_ERROR keys from config, not field.Key; it emits the boxed error and optional stack.
+const KIND_ERROR Field_Kind = 19
+
+// KIND_TIMESTAMP keys from config; it stamps the realtime clock, carrying no value of its own.
+const KIND_TIMESTAMP Field_Kind = 20
+
+// KIND_CALLER keys from config; Number holds the frame skip for the injected Caller lookup.
+const KIND_CALLER Field_Kind = 21
 
 // Field is one structured key/value pair, built by a  constructor and consumed
 // by an emit function. It is a compact 56-byte value (no per-type slots) so a
@@ -278,13 +338,13 @@ func New(input New_Input) (logger Logger) {
 		Caller:          input.Caller,
 		Stack_Marshaler: input.Stack_Marshaler,
 		Timestamp_Field_Name: string_or(
-			input.Timestamp_Field_Name, default_timestamp_field_name),
-		Level_Field_Name: string_or(input.Level_Field_Name, default_level_field_name),
+			input.Timestamp_Field_Name, DEFAULT_TIMESTAMP_FIELD_NAME),
+		Level_Field_Name: string_or(input.Level_Field_Name, DEFAULT_LEVEL_FIELD_NAME),
 		Message_Field_Name: string_or(
-			input.Message_Field_Name, default_message_field_name),
-		Error_Field_Name:  string_or(input.Error_Field_Name, default_error_field_name),
-		Caller_Field_Name: string_or(input.Caller_Field_Name, default_caller_field_name),
-		Stack_Field_Name:  string_or(input.Stack_Field_Name, default_stack_field_name),
+			input.Message_Field_Name, DEFAULT_MESSAGE_FIELD_NAME),
+		Error_Field_Name:  string_or(input.Error_Field_Name, DEFAULT_ERROR_FIELD_NAME),
+		Caller_Field_Name: string_or(input.Caller_Field_Name, DEFAULT_CALLER_FIELD_NAME),
+		Stack_Field_Name:  string_or(input.Stack_Field_Name, DEFAULT_STACK_FIELD_NAME),
 		Duration_Unit:     unit,
 		Buffer_Pool:       &sync.Pool{New: new_buffer},
 	}
@@ -303,7 +363,7 @@ func string_or(value string, fallback default_string) (chosen string) {
 
 // A *Buffer is pooled rather than a Buffer so Put boxes a pointer, not a header.
 func new_buffer() (buffer any) {
-	created := make(Buffer, 0, default_buffer_capacity)
+	created := make(Buffer, 0, DEFAULT_BUFFER_CAPACITY)
 	return &created
 }
 
@@ -359,7 +419,7 @@ func logger_emit(logger Logger, level Level, message string, fields []Field) {
 		buffer = buffer_append_realtime(buffer, configuration)
 	}
 	if logger.Auto_Caller {
-		seed := Field{Kind: kind_caller, Number: default_caller_skip}
+		seed := Field{Kind: KIND_CALLER, Number: DEFAULT_CALLER_SKIP}
 		buffer = buffer_append_caller(buffer, &seed, configuration)
 	}
 	if len(logger.Prefix) > 1 {
@@ -394,7 +454,7 @@ func logger_is_disabled(logger Logger) (disabled bool) {
 // Logger_With returns a child logger carrying fields as a fixed prefix on every line.
 func Logger_With(logger Logger, fields ...Field) (child Logger) {
 	child = logger
-	prefix := make(Buffer, 0, default_buffer_capacity)
+	prefix := make(Buffer, 0, DEFAULT_BUFFER_CAPACITY)
 	if len(logger.Prefix) > 0 {
 		prefix = append(prefix, logger.Prefix...)
 	} else {
@@ -429,7 +489,7 @@ func String[T ~string](key Key, value T) (field Field) {
 	s := string(value)
 	return Field{
 		Key:    key,
-		Kind:   kind_string,
+		Kind:   KIND_STRING,
 		Data:   unsafe.Pointer(unsafe.StringData(s)),
 		Number: int64(len(s)),
 	}
@@ -437,79 +497,79 @@ func String[T ~string](key Key, value T) (field Field) {
 
 // Integer builds a signed-integer field.
 func Integer[T ~int](key Key, value T) (field Field) {
-	return Field{Key: key, Kind: kind_integer, Number: int64(value)}
+	return Field{Key: key, Kind: KIND_INTEGER, Number: int64(value)}
 }
 
 // Int8 builds an 8-bit signed-integer field.
 func Int8[T ~int8](key Key, value T) (field Field) {
-	return Field{Key: key, Kind: kind_integer, Number: int64(value)}
+	return Field{Key: key, Kind: KIND_INTEGER, Number: int64(value)}
 }
 
 // Int16 builds a 16-bit signed-integer field.
 func Int16[T ~int16](key Key, value T) (field Field) {
-	return Field{Key: key, Kind: kind_integer, Number: int64(value)}
+	return Field{Key: key, Kind: KIND_INTEGER, Number: int64(value)}
 }
 
 // Int32 builds a 32-bit signed-integer field.
 func Int32[T ~int32](key Key, value T) (field Field) {
-	return Field{Key: key, Kind: kind_integer, Number: int64(value)}
+	return Field{Key: key, Kind: KIND_INTEGER, Number: int64(value)}
 }
 
 // Int64 builds a 64-bit signed-integer field.
 func Int64[T ~int64](key Key, value T) (field Field) {
-	return Field{Key: key, Kind: kind_integer, Number: int64(value)}
+	return Field{Key: key, Kind: KIND_INTEGER, Number: int64(value)}
 }
 
 // Uint builds an unsigned-integer field.
 func Uint[T ~uint](key Key, value T) (field Field) {
-	return Field{Key: key, Kind: kind_unsigned, Number: int64(value)}
+	return Field{Key: key, Kind: KIND_UNSIGNED, Number: int64(value)}
 }
 
 // Uint8 builds an 8-bit unsigned-integer field.
 func Uint8[T ~uint8](key Key, value T) (field Field) {
-	return Field{Key: key, Kind: kind_unsigned, Number: int64(value)}
+	return Field{Key: key, Kind: KIND_UNSIGNED, Number: int64(value)}
 }
 
 // Uint16 builds a 16-bit unsigned-integer field.
 func Uint16[T ~uint16](key Key, value T) (field Field) {
-	return Field{Key: key, Kind: kind_unsigned, Number: int64(value)}
+	return Field{Key: key, Kind: KIND_UNSIGNED, Number: int64(value)}
 }
 
 // Uint32 builds a 32-bit unsigned-integer field.
 func Uint32[T ~uint32](key Key, value T) (field Field) {
-	return Field{Key: key, Kind: kind_unsigned, Number: int64(value)}
+	return Field{Key: key, Kind: KIND_UNSIGNED, Number: int64(value)}
 }
 
 // Uint64 builds a 64-bit unsigned-integer field.
 func Uint64[T ~uint64](key Key, value T) (field Field) {
-	return Field{Key: key, Kind: kind_unsigned, Number: int64(value)}
+	return Field{Key: key, Kind: KIND_UNSIGNED, Number: int64(value)}
 }
 
 // Uintptr builds an unsigned-pointer-sized integer field.
 func Uintptr[T ~uintptr](key Key, value T) (field Field) {
-	return Field{Key: key, Kind: kind_unsigned, Number: int64(value)}
+	return Field{Key: key, Kind: KIND_UNSIGNED, Number: int64(value)}
 }
 
 // Float32 builds a float field rendered at float32 precision.
 func Float32[T ~float32](key Key, value T) (field Field) {
-	return Field{Key: key, Kind: kind_float32, Number: int64(math.Float64bits(float64(value)))}
+	return Field{Key: key, Kind: KIND_FLOAT32, Number: int64(math.Float64bits(float64(value)))}
 }
 
 // Float64 builds a float field rendered at float64 precision.
 func Float64[T ~float64](key Key, value T) (field Field) {
-	return Field{Key: key, Kind: kind_float64, Number: int64(math.Float64bits(float64(value)))}
+	return Field{Key: key, Kind: KIND_FLOAT64, Number: int64(math.Float64bits(float64(value)))}
 }
 
 // Boolean builds a boolean field.
 func Boolean[T ~bool](key Key, value T) (field Field) {
-	return Field{Key: key, Kind: kind_boolean, Number: boolean_to_int64(bool(value))}
+	return Field{Key: key, Kind: KIND_BOOLEAN, Number: boolean_to_int64(bool(value))}
 }
 
 // Bytes builds a field whose []byte value is rendered as a JSON string.
 func Bytes(key Key, value []byte) (field Field) {
 	return Field{
 		Key:    key,
-		Kind:   kind_bytes,
+		Kind:   KIND_BYTES,
 		Data:   unsafe.Pointer(unsafe.SliceData(value)),
 		Number: int64(len(value)),
 	}
@@ -519,7 +579,7 @@ func Bytes(key Key, value []byte) (field Field) {
 func Hexadecimal(key Key, value []byte) (field Field) {
 	return Field{
 		Key:    key,
-		Kind:   kind_hexadecimal,
+		Kind:   KIND_HEXADECIMAL,
 		Data:   unsafe.Pointer(unsafe.SliceData(value)),
 		Number: int64(len(value)),
 	}
@@ -529,7 +589,7 @@ func Hexadecimal(key Key, value []byte) (field Field) {
 func Raw_JSON(key Key, value []byte) (field Field) {
 	return Field{
 		Key:    key,
-		Kind:   kind_raw_json,
+		Kind:   KIND_RAW_JSON,
 		Data:   unsafe.Pointer(unsafe.SliceData(value)),
 		Number: int64(len(value)),
 	}
@@ -537,19 +597,19 @@ func Raw_JSON(key Key, value []byte) (field Field) {
 
 // Time builds a field rendering a Moment as an RFC 3339 UTC timestamp string.
 func Time(key Key, value time.Moment) (field Field) {
-	return Field{Key: key, Kind: kind_time, Number: int64(value)}
+	return Field{Key: key, Kind: KIND_TIME, Number: int64(value)}
 }
 
 // Duration builds a field rendering a Duration as an integer in the logger unit.
 func Duration(key Key, value time.Duration) (field Field) {
-	return Field{Key: key, Kind: kind_duration, Number: int64(value)}
+	return Field{Key: key, Kind: KIND_DURATION, Number: int64(value)}
 }
 
 // IP_Address builds a field rendering a net.IP as its string form.
 func IP_Address(key Key, value net.IP) (field Field) {
 	return Field{
 		Key:    key,
-		Kind:   kind_ip,
+		Kind:   KIND_IP,
 		Data:   unsafe.Pointer(unsafe.SliceData(value)),
 		Number: int64(len(value)),
 	}
@@ -559,7 +619,7 @@ func IP_Address(key Key, value net.IP) (field Field) {
 func MAC_Address(key Key, value net.HardwareAddr) (field Field) {
 	return Field{
 		Key:    key,
-		Kind:   kind_mac,
+		Kind:   KIND_MAC,
 		Data:   unsafe.Pointer(unsafe.SliceData(value)),
 		Number: int64(len(value)),
 	}
@@ -567,29 +627,29 @@ func MAC_Address(key Key, value net.HardwareAddr) (field Field) {
 
 // Any builds a field whose value is marshaled by encoding/json; it may allocate.
 func Any(key Key, value any) (field Field) {
-	return Field{Key: key, Kind: kind_any, Boxed: value}
+	return Field{Key: key, Kind: KIND_ANY, Boxed: value}
 }
 
 // Err builds the error field; its key, and an optional stack, come from the config.
 func Err(value error) (field Field) {
-	return Field{Kind: kind_error, Boxed: value}
+	return Field{Kind: KIND_ERROR, Boxed: value}
 }
 
 // Timestamp builds a field stamping the realtime clock under the configured key.
 func Timestamp() (field Field) {
-	return Field{Kind: kind_timestamp}
+	return Field{Kind: KIND_TIMESTAMP}
 }
 
 // Caller builds a field adding the injected caller location under the configured key.
 func Caller() (field Field) {
-	return Field{Kind: kind_caller, Number: default_caller_skip}
+	return Field{Kind: KIND_CALLER, Number: DEFAULT_CALLER_SKIP}
 }
 
 // Strings builds a field rendering a []string as a JSON array.
 func Strings(key Key, value []string) (field Field) {
 	return Field{
 		Key:    key,
-		Kind:   kind_strings,
+		Kind:   KIND_STRINGS,
 		Data:   unsafe.Pointer(unsafe.SliceData(value)),
 		Number: int64(len(value)),
 	}
@@ -599,7 +659,7 @@ func Strings(key Key, value []string) (field Field) {
 func Integers(key Key, value []int) (field Field) {
 	return Field{
 		Key:    key,
-		Kind:   kind_integers,
+		Kind:   KIND_INTEGERS,
 		Data:   unsafe.Pointer(unsafe.SliceData(value)),
 		Number: int64(len(value)),
 	}
@@ -609,7 +669,7 @@ func Integers(key Key, value []int) (field Field) {
 func Floats64(key Key, value []float64) (field Field) {
 	return Field{
 		Key:    key,
-		Kind:   kind_floats,
+		Kind:   KIND_FLOATS,
 		Data:   unsafe.Pointer(unsafe.SliceData(value)),
 		Number: int64(len(value)),
 	}
@@ -619,7 +679,7 @@ func Floats64(key Key, value []float64) (field Field) {
 func Booleans(key Key, value []bool) (field Field) {
 	return Field{
 		Key:    key,
-		Kind:   kind_booleans,
+		Kind:   KIND_BOOLEANS,
 		Data:   unsafe.Pointer(unsafe.SliceData(value)),
 		Number: int64(len(value)),
 	}
@@ -629,7 +689,7 @@ func Booleans(key Key, value []bool) (field Field) {
 func Durations(key Key, value []time.Duration) (field Field) {
 	return Field{
 		Key:    key,
-		Kind:   kind_durations,
+		Kind:   KIND_DURATIONS,
 		Data:   unsafe.Pointer(unsafe.SliceData(value)),
 		Number: int64(len(value)),
 	}
@@ -647,13 +707,13 @@ func boolean_to_int64(value bool) (number int64) {
 func buffer_encode_field(
 	destination Buffer, field *Field, configuration *Logger_Configuration,
 ) (output Buffer) {
-	if field.Kind >= kind_error {
+	if field.Kind >= KIND_ERROR {
 		switch field.Kind {
-		case kind_error:
+		case KIND_ERROR:
 			return buffer_append_error(destination, field, configuration)
-		case kind_timestamp:
+		case KIND_TIMESTAMP:
 			return buffer_append_realtime(destination, configuration)
-		case kind_caller:
+		case KIND_CALLER:
 			return buffer_append_caller(destination, field, configuration)
 		}
 		return destination
@@ -661,51 +721,51 @@ func buffer_encode_field(
 	destination = buffer_append_key(destination, field.Key)
 	count := int(field.Number)
 	switch field.Kind {
-	case kind_string:
+	case KIND_STRING:
 		return buffer_append_string(destination, unsafe.String((*byte)(field.Data), count))
-	case kind_integer:
+	case KIND_INTEGER:
 		return buffer_append_int64(destination, field.Number)
-	case kind_unsigned:
+	case KIND_UNSIGNED:
 		return buffer_append_uint64(destination, uint64(field.Number))
-	case kind_float32:
+	case KIND_FLOAT32:
 		bits := math.Float64frombits(uint64(field.Number))
-		return buffer_append_float(destination, bits, float_bits_32)
-	case kind_float64:
+		return buffer_append_float(destination, bits, FLOAT_BITS_32)
+	case KIND_FLOAT64:
 		bits := math.Float64frombits(uint64(field.Number))
-		return buffer_append_float(destination, bits, float_bits_64)
-	case kind_boolean:
+		return buffer_append_float(destination, bits, FLOAT_BITS_64)
+	case KIND_BOOLEAN:
 		return buffer_append_boolean(destination, field.Number == 1)
-	case kind_bytes:
+	case KIND_BYTES:
 		return buffer_append_bytes(destination, unsafe.Slice((*byte)(field.Data), count))
-	case kind_hexadecimal:
+	case KIND_HEXADECIMAL:
 		raw := unsafe.Slice((*byte)(field.Data), count)
 		return buffer_append_hexadecimal(destination, raw)
-	case kind_raw_json:
+	case KIND_RAW_JSON:
 		return append(destination, unsafe.Slice((*byte)(field.Data), count)...)
-	case kind_time:
+	case KIND_TIME:
 		return buffer_append_rfc3339(destination, field.Number)
-	case kind_duration:
+	case KIND_DURATION:
 		divided := field.Number / int64(configuration.Duration_Unit)
 		return buffer_append_int64(destination, divided)
-	case kind_ip:
+	case KIND_IP:
 		address := net.IP(unsafe.Slice((*byte)(field.Data), count))
 		return buffer_append_string(destination, address.String())
-	case kind_mac:
+	case KIND_MAC:
 		address := net.HardwareAddr(unsafe.Slice((*byte)(field.Data), count))
 		return buffer_append_string(destination, address.String())
-	case kind_any:
+	case KIND_ANY:
 		return buffer_append_any(destination, field.Boxed)
-	case kind_strings:
+	case KIND_STRINGS:
 		values := unsafe.Slice((*string)(field.Data), count)
 		return buffer_append_strings(destination, values)
-	case kind_integers:
+	case KIND_INTEGERS:
 		return buffer_append_integers(destination, unsafe.Slice((*int)(field.Data), count))
-	case kind_floats:
+	case KIND_FLOATS:
 		values := unsafe.Slice((*float64)(field.Data), count)
 		return buffer_append_floats(destination, values)
-	case kind_booleans:
+	case KIND_BOOLEANS:
 		return buffer_append_booleans(destination, unsafe.Slice((*bool)(field.Data), count))
-	case kind_durations:
+	case KIND_DURATIONS:
 		values := unsafe.Slice((*time.Duration)(field.Data), count)
 		return buffer_append_durations(destination, values, configuration.Duration_Unit)
 	}
@@ -787,7 +847,7 @@ func buffer_append_floats(destination Buffer, values []float64) (output Buffer) 
 		if index > 0 {
 			destination = append(destination, ',')
 		}
-		destination = buffer_append_float(destination, values[index], float_bits_64)
+		destination = buffer_append_float(destination, values[index], FLOAT_BITS_64)
 	}
 	return append(destination, ']')
 }
@@ -862,11 +922,11 @@ func buffer_append_object_data(destination Buffer, prefix []byte) (output Buffer
 }
 
 func buffer_append_int64(destination Buffer, value int64) (output Buffer) {
-	return strconv.AppendInt(destination, value, decimal_base)
+	return strconv.AppendInt(destination, value, DECIMAL_BASE)
 }
 
 func buffer_append_uint64(destination Buffer, value uint64) (output Buffer) {
-	return strconv.AppendUint(destination, value, decimal_base)
+	return strconv.AppendUint(destination, value, DECIMAL_BASE)
 }
 
 func buffer_append_boolean(destination Buffer, value bool) (output Buffer) {
@@ -879,27 +939,27 @@ func buffer_append_boolean(destination Buffer, value bool) (output Buffer) {
 // when the sub-second nanoseconds are nonzero. See the package doc's referenced
 // article ("Don't Use Very Large Numbers").
 func buffer_append_rfc3339(destination Buffer, nanos int64) (output Buffer) {
-	const ns_per_second = 1_000_000_000
-	const seconds_per_day = 86400
-	const seconds_per_hour = 3600
-	const seconds_per_minute = 60
-	seconds := nanos / ns_per_second
-	fraction := nanos % ns_per_second
+	const NS_PER_SECOND = 1_000_000_000
+	const SECONDS_PER_DAY = 86400
+	const SECONDS_PER_HOUR = 3600
+	const SECONDS_PER_MINUTE = 60
+	seconds := nanos / NS_PER_SECOND
+	fraction := nanos % NS_PER_SECOND
 	if fraction < 0 {
-		fraction += ns_per_second
+		fraction += NS_PER_SECOND
 		seconds--
 	}
-	days := seconds / seconds_per_day
-	day_seconds := seconds % seconds_per_day
+	days := seconds / SECONDS_PER_DAY
+	day_seconds := seconds % SECONDS_PER_DAY
 	if day_seconds < 0 {
-		day_seconds += seconds_per_day
+		day_seconds += SECONDS_PER_DAY
 		days--
 	}
-	assert(day_seconds >= 0 && day_seconds < seconds_per_day, "jlog: bad day seconds")
+	assert(day_seconds >= 0 && day_seconds < SECONDS_PER_DAY, "jlog: bad day seconds")
 	year, month, day := civil_from_days(days)
 	assert(month >= 1 && month <= 12, "jlog: civil month out of range")
 	assert(day >= 1 && day <= 31, "jlog: civil day out of range")
-	within_hour := day_seconds % seconds_per_hour
+	within_hour := day_seconds % SECONDS_PER_HOUR
 	destination = append(destination, '"')
 	destination = buffer_append_four_digits(destination, year)
 	destination = append(destination, '-')
@@ -907,11 +967,11 @@ func buffer_append_rfc3339(destination Buffer, nanos int64) (output Buffer) {
 	destination = append(destination, '-')
 	destination = buffer_append_two_digits(destination, int64(day))
 	destination = append(destination, 'T')
-	destination = buffer_append_two_digits(destination, day_seconds/seconds_per_hour)
+	destination = buffer_append_two_digits(destination, day_seconds/SECONDS_PER_HOUR)
 	destination = append(destination, ':')
-	destination = buffer_append_two_digits(destination, within_hour/seconds_per_minute)
+	destination = buffer_append_two_digits(destination, within_hour/SECONDS_PER_MINUTE)
 	destination = append(destination, ':')
-	destination = buffer_append_two_digits(destination, within_hour%seconds_per_minute)
+	destination = buffer_append_two_digits(destination, within_hour%SECONDS_PER_MINUTE)
 	if fraction != 0 {
 		destination = append(destination, '.')
 		destination = buffer_append_nanoseconds(destination, fraction)
@@ -948,15 +1008,15 @@ func buffer_append_nanoseconds(destination Buffer, value int64) (output Buffer) 
 // Howard Hinnant's days-from-civil inverse: maps days since 1970-01-01 to the
 // proleptic Gregorian calendar date, exact for any int64 day count.
 func civil_from_days(days int64) (year int64, month int, day int) {
-	const days_shift = 719468
-	const days_per_era = 146097
-	z := days + days_shift
+	const DAYS_SHIFT = 719468
+	const DAYS_PER_ERA = 146097
+	z := days + DAYS_SHIFT
 	era := z
 	if era < 0 {
-		era -= days_per_era - 1
+		era -= DAYS_PER_ERA - 1
 	}
-	era /= days_per_era
-	day_of_era := z - era*days_per_era
+	era /= DAYS_PER_ERA
+	day_of_era := z - era*DAYS_PER_ERA
 	year_of_era := (day_of_era - day_of_era/1460 + day_of_era/36524 - day_of_era/146096) / 365
 	computed_year := year_of_era + era*400
 	day_of_year := day_of_era - (365*year_of_era + year_of_era/4 - year_of_era/100)
@@ -973,7 +1033,7 @@ func civil_from_days(days int64) (year int64, month int, day int) {
 }
 
 func buffer_recycle(holder *Buffer, pool *sync.Pool, final Buffer) {
-	if cap(final) > pooled_buffer_capacity_max {
+	if cap(final) > POOLED_BUFFER_CAPACITY_MAX {
 		return
 	}
 	*holder = final[:0]
@@ -1010,7 +1070,7 @@ func buffer_append_float(destination Buffer, value float64, bit_size int) (outpu
 		format = 'e'
 	}
 	destination = strconv.AppendFloat(
-		destination, value, format, float_precision_shortest, bit_size)
+		destination, value, format, FLOAT_PRECISION_SHORTEST, bit_size)
 	if format == 'e' {
 		destination = buffer_clean_exponent(destination)
 	}
@@ -1022,19 +1082,19 @@ func float_needs_exponent(value float64, bit_size int) (needs bool) {
 	if magnitude == 0 {
 		return false
 	}
-	if bit_size == float_bits_64 {
-		if magnitude < float_exponent_low {
+	if bit_size == FLOAT_BITS_64 {
+		if magnitude < FLOAT_EXPONENT_LOW {
 			return true
 		}
-		if magnitude >= float_exponent_high {
+		if magnitude >= FLOAT_EXPONENT_HIGH {
 			return true
 		}
 		return false
 	}
-	if float32(magnitude) < float_exponent_low {
+	if float32(magnitude) < FLOAT_EXPONENT_LOW {
 		return true
 	}
-	if float32(magnitude) >= float_exponent_high {
+	if float32(magnitude) >= FLOAT_EXPONENT_HIGH {
 		return true
 	}
 	return false
@@ -1192,14 +1252,14 @@ func buffer_append_replacement(destination Buffer) (output Buffer) {
 // lookup with no package-level var and no init: bits 0x20..0x7e are set except the
 // quote (0x22) and backslash (0x5c).
 func byte_is_plain(value byte) (plain bool) {
-	const table = "\x00\x00\x00\x00\xfb\xff\xff\xff\xff\xff\xff\xef\xff\xff\xff\x7f" +
+	const TABLE = "\x00\x00\x00\x00\xfb\xff\xff\xff\xff\xff\xff\xef\xff\xff\xff\x7f" +
 		"\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00"
-	return table[value>>3]&(byte(1)<<(value&7)) != 0
+	return TABLE[value>>3]&(byte(1)<<(value&7)) != 0
 }
 
 func hexadecimal_digit(nibble byte) (digit byte) {
-	const hexadecimal_digits = "0123456789abcdef"
-	return hexadecimal_digits[nibble]
+	const HEXADECIMAL_DIGITS = "0123456789abcdef"
+	return HEXADECIMAL_DIGITS[nibble]
 }
 
 // Panics with message when condition is false. A cheap always-on invariant check: it

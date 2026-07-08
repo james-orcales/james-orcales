@@ -81,8 +81,8 @@ func TestMain(m *testing.M) { return }
 	}
 }
 
-// Test_Line_Character_Count_Tabs verifies that tabs count as tab_width chars (not 1)
-// when measuring line length against the line_chars_max limit.
+// Test_Line_Character_Count_Tabs verifies that tabs count as TAB_WIDTH chars (not 1)
+// when measuring line length against the LINE_CHARS_MAX limit.
 func Test_Line_Character_Count_Tabs(t *testing.T) {
 	t.Parallel()
 	// 18 tabs * 8 = 144 column width; far under the 140 limit if tabs count
@@ -107,7 +107,7 @@ func Test_Line_Character_Count_Tabs(t *testing.T) {
 }
 
 // Test_Line_Character_Count_Import_Exempt verifies that an import line wider than
-// line_chars_max is not flagged: import paths are unbreakable, so a long module
+// LINE_CHARS_MAX is not flagged: import paths are unbreakable, so a long module
 // path must never force a lint failure.
 func Test_Line_Character_Count_Import_Exempt(t *testing.T) {
 	t.Parallel()
@@ -531,14 +531,14 @@ func Test_Shared_Component_Configurable(t *testing.T) {
 		"lib/foo/foo.go":                  fixture_package("foo"),
 		"lib/foo/internal/helper/help.go": fixture_package("helper"),
 	}
-	const forbid = "shared library forbids internal/"
+	const FORBID = "shared library forbids internal/"
 	as_shared := run_shared_component_output(t, files, "lib")
-	if !strings.Contains(as_shared, forbid) {
+	if !strings.Contains(as_shared, FORBID) {
 		t.Fatalf("with lib/ as the shared module, internal/ must be "+
 			"flagged; got: %s", as_shared)
 	}
 	as_binary := run_shared_component_output(t, files, "other")
-	if strings.Contains(as_binary, forbid) {
+	if strings.Contains(as_binary, FORBID) {
 		t.Fatalf("with a different shared module, the shared-library internal/ rule "+
 			"must not fire; got: %s", as_binary)
 	}
@@ -690,7 +690,7 @@ func main() { return }
 // gofmt_must would choke on non-Go content.
 func Test_Banned_Scripting_Files(t *testing.T) {
 	t.Parallel()
-	clean_go := []byte(fixture_clean_go)
+	clean_go := []byte(FIXTURE_CLEAN_GO)
 	test_banned_scripting_files_run(t, []struct {
 		Name      string
 		Files     map[string][]byte
@@ -756,7 +756,7 @@ func Test_Banned_Scripting_Files(t *testing.T) {
 // Additional cases, split to keep each function within the length limit.
 func Test_Banned_Scripting_Files_Part2(t *testing.T) {
 	t.Parallel()
-	clean_go := []byte(fixture_clean_go)
+	clean_go := []byte(FIXTURE_CLEAN_GO)
 	test_banned_scripting_files_run(t, []struct {
 		Name      string
 		Files     map[string][]byte
@@ -919,7 +919,7 @@ type snapshot_case struct {
 // the source file without racing each other.
 func run_snapshot_cases(t *testing.T, cases []snapshot_case) {
 	t.Helper()
-	run_snapshot_cases_shared(t, doctrine_shared_component_directory, cases)
+	run_snapshot_cases_shared(t, DOCTRINE_SHARED_COMPONENT_DIRECTORY, cases)
 }
 
 // Like run_snapshot_cases but with an explicit shared-component directory, so a
@@ -957,12 +957,12 @@ func snapshot_package(body string) (files map[string]string) {
 // Builds the spec-fixture package around a SPECIFICATION.md body. Coverage is
 // satisfied (the file and its test exist), so the only diagnostic is the
 // structural one the mutated markdown introduces.
-func snapshot_specification(markdown string) (files map[string]string) {
+func snapshot_specification(MARKDOWN string) (files map[string]string) {
 	return map[string]string{
-		"go.mod":                    doctrine_shared_library_go_module,
+		"go.mod":                    DOCTRINE_SHARED_LIBRARY_GO_MODULE,
 		"pkg/fixture.go":            "// Package fixture is a fixture.\npackage fixture\n",
-		"pkg/SPECIFICATION.md":      markdown,
-		"pkg/specification_test.go": snapshot_specification_test,
+		"pkg/SPECIFICATION.md":      MARKDOWN,
+		"pkg/specification_test.go": SNAPSHOT_SPECIFICATION_TEST,
 	}
 }
 
@@ -971,16 +971,16 @@ func snapshot_specification(markdown string) (files map[string]string) {
 // single spec diagnostic fires; a new leaf would also lack a test.
 func Test_Snapshot_Specification(t *testing.T) {
 	run_snapshot_cases_shared(t, "pkg", []snapshot_case{
-		{Snapshot: snap.Init(`pkg/SPECIFICATION.md:1: pkg/SPECIFICATION.md:1 content precedes the first heading`), Files: snapshot_specification("Stray prose.\n" + snapshot_specification_markdown)},
+		{Snapshot: snap.Init(`pkg/SPECIFICATION.md:1: pkg/SPECIFICATION.md:1 content precedes the first heading`), Files: snapshot_specification("Stray prose.\n" + SNAPSHOT_SPECIFICATION_MARKDOWN)},
 		{Snapshot: snap.Init(`pkg/SPECIFICATION.md:1: pkg/SPECIFICATION.md:1 heading "Sole Rule" is not preceded by a blank line`), Files: snapshot_specification("# Sole Rule\n\nThe sole rule.\n")},
 		{Snapshot: snap.Init(`pkg/SPECIFICATION.md:2: pkg/SPECIFICATION.md:2 section "Sole Rule" has no body line`), Files: snapshot_specification("\n# Sole Rule\n")},
 		{Snapshot: snap.Init(`pkg/SPECIFICATION.md:7: pkg/SPECIFICATION.md:7 section "Sole Rule" exceeds three lines`), Files: snapshot_specification(
 			"\n# Sole Rule\n\none\ntwo\nthree\nfour\n")},
 		{Snapshot: snap.Init(`pkg/SPECIFICATION.md:6: pkg/SPECIFICATION.md:6 section "Sole Rule" has a blank line between body lines`), Files: snapshot_specification("\n# Sole Rule\n\none\n\ntwo\n")},
 		{Snapshot: snap.Init(`pkg/SPECIFICATION.md:6: pkg/SPECIFICATION.md:6 uses a heading that is not level # or ###`), Files: snapshot_specification(
-			snapshot_specification_markdown + "\n## Mid Level\n\nLevel two.\n")},
+			SNAPSHOT_SPECIFICATION_MARKDOWN + "\n## Mid Level\n\nLevel two.\n")},
 		{Snapshot: snap.Init(`pkg/specification_test.go: pkg/specification_test.go:2 needs Test_Phantom for leaf "Phantom" (in order, at top)`), Files: snapshot_specification(
-			snapshot_specification_markdown + "\n# Phantom\n\nIt has no test.\n")},
+			SNAPSHOT_SPECIFICATION_MARKDOWN + "\n# Phantom\n\nIt has no test.\n")},
 	})
 }
 
@@ -989,18 +989,18 @@ func Test_Snapshot_Specification(t *testing.T) {
 func Test_Snapshot_Specification_Coverage(t *testing.T) {
 	run_snapshot_cases_shared(t, "pkg", []snapshot_case{
 		{Snapshot: snap.Init(`pkg/SPECIFICATION.md: package "pkg" is missing SPECIFICATION.md`), Drop: "specification_test.go", Files: map[string]string{
-			"go.mod":         doctrine_shared_library_go_module,
+			"go.mod":         DOCTRINE_SHARED_LIBRARY_GO_MODULE,
 			"pkg/fixture.go": "// Package fixture is a fixture.\npackage fixture\n"}},
 		{Snapshot: snap.Init(`pkg/specification_test.go: package "pkg" is missing specification_test.go`), Drop: "needs Test_", Files: map[string]string{
-			"go.mod": doctrine_shared_library_go_module,
+			"go.mod": DOCTRINE_SHARED_LIBRARY_GO_MODULE,
 			"pkg/fixture.go": "// Package fixture is a fixture.\n" +
 				"package fixture\n",
-			"pkg/SPECIFICATION.md": snapshot_specification_markdown}},
+			"pkg/SPECIFICATION.md": SNAPSHOT_SPECIFICATION_MARKDOWN}},
 		{Snapshot: snap.Init(`pkg/specification_test.go: pkg/specification_test.go:1 needs Test_Sole_Rule for leaf "Sole_Rule" (in order, at top)`), Files: map[string]string{
-			"go.mod": doctrine_shared_library_go_module,
+			"go.mod": DOCTRINE_SHARED_LIBRARY_GO_MODULE,
 			"pkg/fixture.go": "// Package fixture is a fixture.\n" +
 				"package fixture\n",
-			"pkg/SPECIFICATION.md": snapshot_specification_markdown,
+			"pkg/SPECIFICATION.md": SNAPSHOT_SPECIFICATION_MARKDOWN,
 			"pkg/specification_test.go": `package fixture_test
 
 import "testing"
@@ -1009,7 +1009,7 @@ import "testing"
 func Test_Wrong(t *testing.T) { t.Parallel() }
 `}},
 		{Snapshot: snap.Init(`pkg/specification_test.go: pkg/specification_test.go:2 needs Test_Extra_Child for leaf "Extra_Child" (in order, at top)`), Files: snapshot_specification(
-			snapshot_specification_markdown +
+			SNAPSHOT_SPECIFICATION_MARKDOWN +
 				"\n# Extra\n\n### Child\n\nA child leaf.\n")},
 		{Snapshot: snap.Init(`pkg/SPECIFICATION.md:2: pkg/SPECIFICATION.md:2 heading "Sole-Rule" must use only letters and digits`), Drop: "needs Test_", Files: snapshot_specification(
 			"\n# Sole-Rule\n\nThe rule.\n")},
@@ -1022,9 +1022,9 @@ func Test_Snapshot_Specification_Headings(t *testing.T) {
 	run_snapshot_cases_shared(t, "pkg", []snapshot_case{
 		{Snapshot: snap.Init(`pkg/SPECIFICATION.md:2: pkg/SPECIFICATION.md:2 heading "Sole Rule" is not followed by a blank line`), Files: snapshot_specification("\n# Sole Rule\nThe sole rule.\n")},
 		{Snapshot: snap.Init(`pkg/SPECIFICATION.md:6: pkg/SPECIFICATION.md:6 heading "Sole Rule" is duplicated`), Drop: "needs Test_", Files: snapshot_specification(
-			snapshot_specification_markdown + "\n# Sole Rule\n\nAgain.\n")},
+			SNAPSHOT_SPECIFICATION_MARKDOWN + "\n# Sole Rule\n\nAgain.\n")},
 		{Snapshot: snap.Init(`pkg/SPECIFICATION.md:2: pkg/SPECIFICATION.md:2 ### "Orphan" has no parent #`), Drop: "needs Test_", Files: snapshot_specification(
-			"\n### Orphan\n\nNo parent.\n" + snapshot_specification_markdown)},
+			"\n### Orphan\n\nNo parent.\n" + SNAPSHOT_SPECIFICATION_MARKDOWN)},
 	})
 }
 
@@ -1326,11 +1326,11 @@ func Test_Snapshot_Stream_Markdown(t *testing.T) {
 func Test_Snapshot_Module_Layout(t *testing.T) {
 	run_snapshot_cases(t, []snapshot_case{
 		{Snapshot: snap.Init(`app/feature/feature.go:1:1: move feature -> app/internal/feature`), Drop: "SPECIFICATION.md", Files: map[string]string{
-			"app/internal/entry.go": doctrine_binary_internal_main,
+			"app/internal/entry.go": DOCTRINE_BINARY_INTERNAL_MAIN,
 			"app/feature/feature.go": "// Package feature is a fixture.\n" +
 				"package feature\n"}},
 		{Snapshot: snap.Init(`app/cmd/app/main.go:1:1: binary component "github.com/james-orcales/james-orcales/app" places its main package at "cmd/app"; the main package must sit at the component root, no cmd/ directory`), Drop: "SPECIFICATION.md", Files: map[string]string{
-			"app/internal/entry.go": doctrine_binary_internal_main,
+			"app/internal/entry.go": DOCTRINE_BINARY_INTERNAL_MAIN,
 			"app/cmd/app/main.go": "package main\n\n" +
 				"func main() {\n\tprintln(0)\n}\n"}},
 		{Snapshot: snap.Init(`shared/internal/x/x.go:1:1: shared library forbids internal/ directories; remove "shared/internal"`), Drop: "SPECIFICATION.md", Files: map[string]string{
@@ -1365,14 +1365,14 @@ func Test_Snapshot_Single_Module(t *testing.T) {
 func Test_Snapshot_Purity(t *testing.T) {
 	run_snapshot_cases_shared(t, "lib", []snapshot_case{
 		{Snapshot: snap.Init(`lib/library.go:4:8: impure stdlib import "os": see lint/README.md for resolutions`), Drop: "SPECIFICATION.md", Files: map[string]string{
-			"go.mod": doctrine_shared_library_go_module,
+			"go.mod": DOCTRINE_SHARED_LIBRARY_GO_MODULE,
 			"lib/library.go": `// Package library x.
 package library
 
 import "os"
 `}},
 		{Snapshot: snap.Init(`lib/library.go:8:2: impure stdlib call fmt.Println: see lint/README.md for resolutions`), Drop: "SPECIFICATION.md", Files: map[string]string{
-			"go.mod": doctrine_shared_library_go_module,
+			"go.mod": DOCTRINE_SHARED_LIBRARY_GO_MODULE,
 			"lib/library.go": `// Package library x.
 package library
 
@@ -1620,10 +1620,10 @@ func F() {
 					"  - uses: actions/checkout@v4\n"}},
 	}
 	for _, entry := range cases {
-		got := run_snapshot(t, entry.Files, doctrine_shared_component_at_root)
+		got := run_snapshot(t, entry.Files, DOCTRINE_SHARED_COMPONENT_AT_ROOT)
 		if entry.Verbatim {
 			got = run_snapshot_verbatim(
-				t, entry.Files, doctrine_shared_component_at_root)
+				t, entry.Files, DOCTRINE_SHARED_COMPONENT_AT_ROOT)
 		}
 		if entry.Drop != "" {
 			var builder strings.Builder
@@ -2032,7 +2032,7 @@ func run_lint_tracked(t *testing.T, files map[string]string) (code int, stdout, 
 	// The single-module check needs a tracked root go.mod; inject one so the
 	// ignore fixtures (which carry no go.mod) lint to a clean run.
 	if _, present := fsys["go.mod"]; !present {
-		fsys["go.mod"] = &fstest.MapFile{Data: []byte(doctrine_root_go_module)}
+		fsys["go.mod"] = &fstest.MapFile{Data: []byte(DOCTRINE_ROOT_GO_MODULE)}
 	}
 	tracked["go.mod"] = true
 	stdout_buffer := &bytes.Buffer{}
@@ -2485,7 +2485,7 @@ func Test_Git_Conventional_Commits(t *testing.T) {
 }
 
 // Commit subjects longer than 100 chars must be flagged. Matches the
-// line_chars_max cap the file-tier check enforces on source lines — same
+// LINE_CHARS_MAX cap the file-tier check enforces on source lines — same
 // reasoning (visual scan limit in code-review UIs and terminals).
 func Test_Git_Commit_Subject_Chars(t *testing.T) {
 	t.Parallel()
@@ -3064,7 +3064,7 @@ func Test_No_Impure_Stdlib_Composition_Tier(t *testing.T) {
 		{
 			Name: "library tier impure import still flagged",
 			Files: map[string]string{
-				"shared/go.mod": doctrine_shared_library_go_module,
+				"shared/go.mod": DOCTRINE_SHARED_LIBRARY_GO_MODULE,
 				"shared/foo/foo.go": `package foo
 
 import "os"
@@ -3078,7 +3078,7 @@ func Read() (name string) { return os.Getenv("X") }
 		{
 			Name: "composition tier impure import allowed",
 			Files: map[string]string{
-				"shared/go.mod":     doctrine_shared_library_go_module,
+				"shared/go.mod":     DOCTRINE_SHARED_LIBRARY_GO_MODULE,
 				"shared/foo/foo.go": fixture_package("foo"),
 				"shared/foo/foo_default/" +
 					"foo_default.go": `// Package foo_default is a fixture.
@@ -3119,7 +3119,7 @@ func Test_No_Impure_Stdlib_Composition_Tier_Part2(t *testing.T) {
 		{
 			Name: "composition tier under versioned library allowed",
 			Files: map[string]string{
-				"shared/go.mod":          doctrine_shared_library_go_module,
+				"shared/go.mod":          DOCTRINE_SHARED_LIBRARY_GO_MODULE,
 				"shared/snap/v2/snap.go": fixture_package("snap"),
 				"shared/snap/v2/snap_default/" +
 					"snap_default.go": `// Package snap_default is a fixture.
@@ -3163,7 +3163,7 @@ func Test_No_Impure_Stdlib_Composition_Tier_Extra(t *testing.T) {
 		{
 			Name: "impure call (fmt.Println) at composition tier allowed",
 			Files: map[string]string{
-				"shared/go.mod":     doctrine_shared_library_go_module,
+				"shared/go.mod":     DOCTRINE_SHARED_LIBRARY_GO_MODULE,
 				"shared/foo/foo.go": fixture_package("foo"),
 				"shared/foo/foo_default/" +
 					"foo_default.go": `// Package foo_default is a fixture.
@@ -3181,10 +3181,10 @@ func Stamp() { fmt.Println("stamped") }
 			Name: "binary module composition tier " +
 				"(one level under library tier) allowed",
 			Files: map[string]string{
-				"mybinary/go.mod": doctrine_binary_go_module,
+				"mybinary/go.mod": DOCTRINE_BINARY_GO_MODULE,
 				"mybinary/main.go": "package main\n\n" +
 					"func main() { return }\n",
-				"mybinary/internal/entry.go":       doctrine_binary_internal_main,
+				"mybinary/internal/entry.go":       DOCTRINE_BINARY_INTERNAL_MAIN,
 				"mybinary/internal/lib/library.go": fixture_package("library"),
 				"mybinary/internal/lib/lib_default/" +
 					"library_default.go": `// Package library_default is a fixture.
@@ -3325,9 +3325,7 @@ func main() {
 			Files: map[string]string{
 				"a.go": `package main
 
-` + fixture_invariant_import + `
-// FIXTURE_HI is a fixture.
-const FIXTURE_HI = 100
+` + FIXTURE_INVARIANT_IMPORT + `
 
 func main() {
 	for range invariant.Game_Loop() {
@@ -3385,16 +3383,16 @@ func Test_Binary_Module_Layout(t *testing.T) {
 		{
 			Name: "binary with package main at root is clean",
 			Files: map[string]string{
-				"mybinary/go.mod": doctrine_binary_go_module,
+				"mybinary/go.mod": DOCTRINE_BINARY_GO_MODULE,
 				"mybinary/main.go": "package main\n\n" +
 					"func main() { return }\n",
-				"mybinary/internal/entry.go": doctrine_binary_internal_main,
+				"mybinary/internal/entry.go": DOCTRINE_BINARY_INTERNAL_MAIN,
 			},
 		},
 		{
 			Name: "binary with non-main package outside internal flagged",
 			Files: map[string]string{
-				"mybinary/go.mod": doctrine_binary_go_module,
+				"mybinary/go.mod": DOCTRINE_BINARY_GO_MODULE,
 				"mybinary/main.go": "package main\n\n" +
 					"func main() { return }\n",
 				"mybinary/helpers/h.go": fixture_package("helpers"),
@@ -3404,17 +3402,17 @@ func Test_Binary_Module_Layout(t *testing.T) {
 		{
 			Name: "binary with package under internal is clean",
 			Files: map[string]string{
-				"mybinary/go.mod": doctrine_binary_go_module,
+				"mybinary/go.mod": DOCTRINE_BINARY_GO_MODULE,
 				"mybinary/main.go": "package main\n\n" +
 					"func main() { return }\n",
-				"mybinary/internal/entry.go":       doctrine_binary_internal_main,
+				"mybinary/internal/entry.go":       DOCTRINE_BINARY_INTERNAL_MAIN,
 				"mybinary/internal/lib/library.go": fixture_package("library"),
 			},
 		},
 		{
 			Name: "binary with non-main package at module root flagged",
 			Files: map[string]string{
-				"mybinary/go.mod":     doctrine_binary_go_module,
+				"mybinary/go.mod":     DOCTRINE_BINARY_GO_MODULE,
 				"mybinary/library.go": fixture_package("mybinary"),
 			},
 			Want_Diags: []string{"move . -> mybinary/internal"},
@@ -3422,14 +3420,14 @@ func Test_Binary_Module_Layout(t *testing.T) {
 		{
 			Name: "shared library with non-main package at depth 1 is exempt",
 			Files: map[string]string{
-				"shared/go.mod":     doctrine_shared_library_go_module,
+				"shared/go.mod":     DOCTRINE_SHARED_LIBRARY_GO_MODULE,
 				"shared/foo/foo.go": fixture_package("foo"),
 			},
 		},
 		{
 			Name: "second main package under cmd flagged",
 			Files: map[string]string{
-				"mybinary/go.mod": doctrine_binary_go_module,
+				"mybinary/go.mod": DOCTRINE_BINARY_GO_MODULE,
 				"mybinary/main.go": "package main\n\n" +
 					"func main() { return }\n",
 				"mybinary/cmd/extra/extra.go": "package main\n\n" +
@@ -3460,16 +3458,16 @@ func Test_Binary_Module_Internal_Main(t *testing.T) {
 		{
 			Name: "binary with func Main in internal is clean",
 			Files: map[string]string{
-				"mybinary/go.mod": doctrine_binary_go_module,
+				"mybinary/go.mod": DOCTRINE_BINARY_GO_MODULE,
 				"mybinary/main.go": "package main\n\n" +
 					"func main() { return }\n",
-				"mybinary/internal/entry.go": doctrine_binary_internal_main,
+				"mybinary/internal/entry.go": DOCTRINE_BINARY_INTERNAL_MAIN,
 			},
 		},
 		{
 			Name: "non-standard signature still satisfies the rule",
 			Files: map[string]string{
-				"mybinary/go.mod": doctrine_binary_go_module,
+				"mybinary/go.mod": DOCTRINE_BINARY_GO_MODULE,
 				"mybinary/main.go": "package main\n\n" +
 					"func main() { return }\n",
 				"mybinary/internal/entry.go": "// Package entry is a fixture.\n" +
@@ -3491,10 +3489,10 @@ func Test_Binary_Module_Internal_Main(t *testing.T) {
 		{
 			Name: "func Main below top-level internal does not satisfy the rule",
 			Files: map[string]string{
-				"mybinary/go.mod": doctrine_binary_go_module,
+				"mybinary/go.mod": DOCTRINE_BINARY_GO_MODULE,
 				"mybinary/main.go": "package main\n\n" +
 					"func main() { return }\n",
-				"mybinary/internal/cmd/entry.go": doctrine_binary_internal_main,
+				"mybinary/internal/cmd/entry.go": DOCTRINE_BINARY_INTERNAL_MAIN,
 			},
 			Want_Diags: []string{"declares no func Main in internal/"},
 		},
@@ -3516,7 +3514,7 @@ func Test_Binary_Module_Internal_Main_Part2(t *testing.T) {
 		{
 			Name: "method named Main does not satisfy the rule",
 			Files: map[string]string{
-				"mybinary/go.mod": doctrine_binary_go_module,
+				"mybinary/go.mod": DOCTRINE_BINARY_GO_MODULE,
 				"mybinary/main.go": "package main\n\n" +
 					"func main() { return }\n",
 				"mybinary/internal/entry.go": "// Package entry is a fixture.\n" +
@@ -3528,7 +3526,7 @@ func Test_Binary_Module_Internal_Main_Part2(t *testing.T) {
 		{
 			Name: "func Main only in a test file does not satisfy the rule",
 			Files: map[string]string{
-				"mybinary/go.mod": doctrine_binary_go_module,
+				"mybinary/go.mod": DOCTRINE_BINARY_GO_MODULE,
 				"mybinary/main.go": "package main\n\n" +
 					"func main() { return }\n",
 				"mybinary/internal/entry_test.go": "package entry\n\n" +
@@ -3539,10 +3537,10 @@ func Test_Binary_Module_Internal_Main_Part2(t *testing.T) {
 		{
 			Name: "two func Main across internal files flagged as multiple",
 			Files: map[string]string{
-				"mybinary/go.mod": doctrine_binary_go_module,
+				"mybinary/go.mod": DOCTRINE_BINARY_GO_MODULE,
 				"mybinary/main.go": "package main\n\n" +
 					"func main() { return }\n",
-				"mybinary/internal/a.go": doctrine_binary_internal_main,
+				"mybinary/internal/a.go": DOCTRINE_BINARY_INTERNAL_MAIN,
 				"mybinary/internal/b.go": "package entry\n\n" +
 					"// Main is a fixture.\nfunc Main() { return }\n",
 			},
@@ -3551,14 +3549,14 @@ func Test_Binary_Module_Internal_Main_Part2(t *testing.T) {
 		{
 			Name: "shared library without internal func Main is exempt",
 			Files: map[string]string{
-				"shared/go.mod":     doctrine_shared_library_go_module,
+				"shared/go.mod":     DOCTRINE_SHARED_LIBRARY_GO_MODULE,
 				"shared/foo/foo.go": fixture_package("foo"),
 			},
 		},
 		{
 			Name: "shared library may expose func Main as an embeddable",
 			Files: map[string]string{
-				"shared/go.mod": doctrine_shared_library_go_module,
+				"shared/go.mod": DOCTRINE_SHARED_LIBRARY_GO_MODULE,
 				"shared/foo/foo.go": "// Package foo is a fixture.\n" +
 					"package foo\n\n// Main is an embeddable entry point.\n" +
 					"func Main() { return }\n",
@@ -3581,7 +3579,7 @@ func Test_Shared_Library_No_Internal(t *testing.T) {
 		{
 			Name: "shared library with internal directory flagged",
 			Files: map[string]string{
-				"shared/go.mod":     doctrine_shared_library_go_module,
+				"shared/go.mod":     DOCTRINE_SHARED_LIBRARY_GO_MODULE,
 				"shared/foo/foo.go": fixture_package("foo"),
 				"shared/foo/internal/helper/" +
 					"help.go": fixture_package("helper"),
@@ -3593,7 +3591,7 @@ func Test_Shared_Library_No_Internal(t *testing.T) {
 		{
 			Name: "shared library with package main flagged",
 			Files: map[string]string{
-				"shared/go.mod":     doctrine_shared_library_go_module,
+				"shared/go.mod":     DOCTRINE_SHARED_LIBRARY_GO_MODULE,
 				"shared/foo/foo.go": fixture_package("foo"),
 				"shared/run/main.go": "package main\n\n" +
 					"func main() { return }\n",
@@ -3603,17 +3601,17 @@ func Test_Shared_Library_No_Internal(t *testing.T) {
 		{
 			Name: "shared library without internal is clean",
 			Files: map[string]string{
-				"shared/go.mod":     doctrine_shared_library_go_module,
+				"shared/go.mod":     DOCTRINE_SHARED_LIBRARY_GO_MODULE,
 				"shared/foo/foo.go": fixture_package("foo"),
 			},
 		},
 		{
 			Name: "binary with internal directory is unaffected by this rule",
 			Files: map[string]string{
-				"mybinary/go.mod": doctrine_binary_go_module,
+				"mybinary/go.mod": DOCTRINE_BINARY_GO_MODULE,
 				"mybinary/main.go": "package main\n\n" +
 					"func main() { return }\n",
-				"mybinary/internal/entry.go":       doctrine_binary_internal_main,
+				"mybinary/internal/entry.go":       DOCTRINE_BINARY_INTERNAL_MAIN,
 				"mybinary/internal/lib/library.go": fixture_package("library"),
 			},
 			Forbid: []string{"shared library forbids"},
@@ -3638,7 +3636,7 @@ func Test_Library_Tier_Depth(t *testing.T) {
 			Name: "two-deep nesting flagged",
 			Files: map[string]string{
 				"shared/" +
-					"go.mod": doctrine_shared_library_go_module,
+					"go.mod": DOCTRINE_SHARED_LIBRARY_GO_MODULE,
 				"shared/foo/foo.go":         fixture_package("foo"),
 				"shared/foo/bar/bar.go":     fixture_package("bar"),
 				"shared/foo/bar/baz/baz.go": fixture_package("baz"),
@@ -3648,7 +3646,7 @@ func Test_Library_Tier_Depth(t *testing.T) {
 		{
 			Name: "library plus composition tier is clean",
 			Files: map[string]string{
-				"shared/go.mod":         doctrine_shared_library_go_module,
+				"shared/go.mod":         DOCTRINE_SHARED_LIBRARY_GO_MODULE,
 				"shared/foo/foo.go":     fixture_package("foo"),
 				"shared/foo/bar/bar.go": fixture_package("bar"),
 			},
@@ -3658,7 +3656,7 @@ func Test_Library_Tier_Depth(t *testing.T) {
 			Name: "v2 version directory does not count as ancestor",
 			Files: map[string]string{
 				"shared/" +
-					"go.mod": doctrine_shared_library_go_module,
+					"go.mod": DOCTRINE_SHARED_LIBRARY_GO_MODULE,
 				"shared/snap/snap.go":         fixture_package("snap"),
 				"shared/snap/v2/snap.go":      fixture_package("snap"),
 				"shared/snap/v2/sub/child.go": fixture_package("child"),
@@ -3668,7 +3666,7 @@ func Test_Library_Tier_Depth(t *testing.T) {
 		{
 			Name: "non-Go intermediate directory does not count as ancestor",
 			Files: map[string]string{
-				"shared/go.mod":     doctrine_shared_library_go_module,
+				"shared/go.mod":     DOCTRINE_SHARED_LIBRARY_GO_MODULE,
 				"shared/foo/foo.go": fixture_package("foo"),
 				"shared/foo/examples/sample/" +
 					"example.go": fixture_package("example"),
@@ -3678,10 +3676,10 @@ func Test_Library_Tier_Depth(t *testing.T) {
 		{
 			Name: "binary composition tier one level under internal is clean",
 			Files: map[string]string{
-				"mybinary/go.mod": doctrine_binary_go_module,
+				"mybinary/go.mod": DOCTRINE_BINARY_GO_MODULE,
 				"mybinary/main.go": "package main\n\n" +
 					"func main() { return }\n",
-				"mybinary/internal/entry.go":   doctrine_binary_internal_main,
+				"mybinary/internal/entry.go":   DOCTRINE_BINARY_INTERNAL_MAIN,
 				"mybinary/internal/foo/foo.go": fixture_package("foo"),
 			},
 			Forbid: []string{"exceeds library tier"},
@@ -3706,10 +3704,10 @@ func Test_Library_Tier_Depth_Internal_Anchor(t *testing.T) {
 		{
 			Name: "library package and default composition under internal is clean",
 			Files: map[string]string{
-				"bin/go.mod": doctrine_binary_go_module,
+				"bin/go.mod": DOCTRINE_BINARY_GO_MODULE,
 				"bin/main.go": "package main\n\n" +
 					"func main() { return }\n",
-				"bin/internal/entry.go":            doctrine_binary_internal_main,
+				"bin/internal/entry.go":            DOCTRINE_BINARY_INTERNAL_MAIN,
 				"bin/internal/foo/foo.go":          fixture_package("foo"),
 				"bin/internal/foo/default/wire.go": fixture_package("foo"),
 			},
@@ -3718,10 +3716,10 @@ func Test_Library_Tier_Depth_Internal_Anchor(t *testing.T) {
 		{
 			Name: "nesting beyond the composition tier under internal flagged",
 			Files: map[string]string{
-				"bin/go.mod": doctrine_binary_go_module,
+				"bin/go.mod": DOCTRINE_BINARY_GO_MODULE,
 				"bin/main.go": "package main\n\n" +
 					"func main() { return }\n",
-				"bin/internal/entry.go":           doctrine_binary_internal_main,
+				"bin/internal/entry.go":           DOCTRINE_BINARY_INTERNAL_MAIN,
 				"bin/internal/foo/foo.go":         fixture_package("foo"),
 				"bin/internal/foo/bar/bar.go":     fixture_package("bar"),
 				"bin/internal/foo/bar/baz/baz.go": fixture_package("baz"),
@@ -4131,16 +4129,16 @@ func Test_Coverage_Backfill(t *testing.T) {
 // to fire its Hi bucket. Production tests never hit this saturation point.
 func Test_Coverage_Backfill_Large_Package(t *testing.T) {
 	t.Parallel()
-	const file_count = 50
+	const FILE_COUNT = 50
 	fsys := fstest.MapFS{
 		"go.mod": &fstest.MapFile{
 			Data: []byte("module example.com/big\n")},
 	}
-	for i_index := 0; i_index < file_count; i_index++ {
+	for i_index := 0; i_index < FILE_COUNT; i_index++ {
 		name := "f" + strings.Repeat("x", i_index+1) + ".go"
 		// Each file declares a unique constant to avoid redeclaration errors,
 		// then pads with blank lines to push total lines past
-		// lines_per_file_max, so files_max climbs past 1 and the Boundary's
+		// LINES_PER_FILE_MAX, so files_max climbs past 1 and the Boundary's
 		// Hi bucket fires (X == Hi == files_max > Lo == 1).
 		var body strings.Builder
 		body.WriteString("// Package big is a fixture.\n")
@@ -4203,8 +4201,8 @@ func Test_Coverage_Backfill_Main_Cpu_Count_Hi(t *testing.T) {
 func Test_Coverage_Backfill_Module_Index_Hi_Index(t *testing.T) {
 	t.Parallel()
 	fsys := fstest.MapFS{}
-	const module_count = 1025
-	for i_index := 0; i_index < module_count; i_index++ {
+	const MODULE_COUNT = 1025
+	for i_index := 0; i_index < MODULE_COUNT; i_index++ {
 		// Module / package names stay short (numbered suffix) so the
 		// generated identifiers fit within IDENTIFIER_CHARS_MAX; the
 		// COUNT of modules is what drives module_index_resolve to its
@@ -4258,12 +4256,12 @@ func Test_Coverage_Backfill_Package_Group_Endpoints(t *testing.T) {
 	}
 	// Test-package variant of Large_Package — drives the (Hi-lines, Lo-files)
 	// tuple with key.Is_Test=true.
-	const file_count = 50
+	const FILE_COUNT = 50
 	fsys := fstest.MapFS{
 		"go.mod": &fstest.MapFile{
 			Data: []byte("module example.com/bigt\n")},
 	}
-	for i_index := 0; i_index < file_count; i_index++ {
+	for i_index := 0; i_index < FILE_COUNT; i_index++ {
 		name := "f" + strings.Repeat("x", i_index+1) + "_test.go"
 		var body strings.Builder
 		body.WriteString("// Package bigt_test is a fixture.\n")
@@ -4605,7 +4603,7 @@ func Test_Coverage_Backfill_Exposes_Private_Alias_Edges(t *testing.T) {
 // Test_Coverage_Backfill_Recursion_Visitor_Single_Function_File drives
 // build_file_call_graph with files that have exactly one function declaration
 // so the recursion visitor's Targets map has exactly one entry (Lo bucket of
-// V.Targets boundary, Lo=non_empty_min). Two shapes exercise both Lo (1-char)
+// V.Targets boundary, Lo=NON_EMPTY_MIN). Two shapes exercise both Lo (1-char)
 // and Hi (128-char) Caller buckets at Visit entry, where Scopes/Edges/
 // Push_History are all empty (Lo for each).
 func Test_Coverage_Backfill_Recursion_Visitor_Single_Function_File(t *testing.T) {
@@ -5054,9 +5052,9 @@ func specification_clean_files() (files map[string]string) {
 		// A go.mod gives greet an owning module; the coverage mandate no-ops on
 		// module-less directories, so without it the missing-file rule never fires.
 		"go.mod":                      "module fixture\n\ngo 1.25\n",
-		"greet/greet.go":              specification_clean_source,
-		"greet/specification_test.go": specification_clean_test,
-		"greet/SPECIFICATION.md":      specification_clean_md,
+		"greet/greet.go":              SPECIFICATION_CLEAN_SOURCE,
+		"greet/specification_test.go": SPECIFICATION_CLEAN_TEST,
+		"greet/SPECIFICATION.md":      SPECIFICATION_CLEAN_MD,
 	}
 }
 
@@ -5181,11 +5179,11 @@ func Test_Specification_Coverage_Respects_Package_Argument(t *testing.T) {
 	files := fstest.MapFS{
 		"go.mod": &fstest.MapFile{Data: []byte("module fixture\n\ngo 1.25\n")},
 		"greet/greet.go": &fstest.MapFile{
-			Data: gofmt_must(t, specification_clean_source)},
+			Data: gofmt_must(t, SPECIFICATION_CLEAN_SOURCE)},
 		"greet/specification_test.go": &fstest.MapFile{
-			Data: gofmt_must(t, specification_clean_test)},
+			Data: gofmt_must(t, SPECIFICATION_CLEAN_TEST)},
 		"greet/SPECIFICATION.md": &fstest.MapFile{
-			Data: []byte(specification_clean_md)},
+			Data: []byte(SPECIFICATION_CLEAN_MD)},
 		"other/other.go": &fstest.MapFile{Data: gofmt_must(t, other)},
 	}
 	input_greet := &bytes.Buffer{}
@@ -5345,11 +5343,11 @@ func Test_Specification_File_Name_Exact_Case(t *testing.T) {
 	t.Parallel()
 	inner := fstest.MapFS{
 		"go.mod":         {Data: []byte("module fixture\n\ngo 1.25\n")},
-		"greet/greet.go": {Data: gofmt_must(t, specification_clean_source)},
+		"greet/greet.go": {Data: gofmt_must(t, SPECIFICATION_CLEAN_SOURCE)},
 		"greet/specification_test.go": {
-			Data: gofmt_must(t, specification_clean_test)},
+			Data: gofmt_must(t, SPECIFICATION_CLEAN_TEST)},
 		// Wrong-case name; a case-insensitive FS resolves it for ReadFile.
-		"greet/specification.md": {Data: []byte(specification_clean_md)},
+		"greet/specification.md": {Data: []byte(SPECIFICATION_CLEAN_MD)},
 	}
 	all, err := lint.Check_File_System(&lint.Check_File_System_Input{
 		Fsys: case_insensitive_file_system{Inner: inner}, Scope: "greet"})
@@ -5367,10 +5365,10 @@ func Test_Specification_Test_File_Name_Exact_Case(t *testing.T) {
 	t.Parallel()
 	inner := fstest.MapFS{
 		"go.mod":                 {Data: []byte("module fixture\n\ngo 1.25\n")},
-		"greet/greet.go":         {Data: gofmt_must(t, specification_clean_source)},
-		"greet/SPECIFICATION.md": {Data: []byte(specification_clean_md)},
+		"greet/greet.go":         {Data: gofmt_must(t, SPECIFICATION_CLEAN_SOURCE)},
+		"greet/SPECIFICATION.md": {Data: []byte(SPECIFICATION_CLEAN_MD)},
 		// Wrong-case name, still a _test.go so it parses as the test package.
-		"greet/Specification_test.go": {Data: gofmt_must(t, specification_clean_test)},
+		"greet/Specification_test.go": {Data: gofmt_must(t, SPECIFICATION_CLEAN_TEST)},
 	}
 	all, err := lint.Check_File_System(&lint.Check_File_System_Input{
 		Fsys: case_insensitive_file_system{Inner: inner}, Scope: "greet"})
@@ -5956,7 +5954,7 @@ func Test_Deterministic_Instrumentation_Auto_Released(t *testing.T) {
 	diags, err := lint.Check_File_System(&lint.Check_File_System_Input{
 		Fsys:                     fsys,
 		Scope:                    "pkg",
-		Shared_Component:         doctrine_shared_component_directory,
+		Shared_Component:         DOCTRINE_SHARED_COMPONENT_DIRECTORY,
 		Instrumentation_Packages: []string{"pkg/instr/**"},
 	})
 	if err != nil {

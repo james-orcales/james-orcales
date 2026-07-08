@@ -13,7 +13,7 @@ import (
 
 // A stat block is 512 bytes on every Unix — the unit st_blocks counts and du divides by —
 // so a file's disk usage is its block count times this.
-const main_block_bytes = 512
+const MAIN_BLOCK_BYTES = 512
 
 func main() {
 	os.Exit(disk_usage.Main(&disk_usage.Main_Input{
@@ -35,7 +35,7 @@ func main_disk_usage(info fs.FileInfo) (bytes int64, identifier disk_usage.File_
 	if !ok {
 		return info.Size(), disk_usage.File_Identifier{}
 	}
-	return stat.Blocks * main_block_bytes, disk_usage.File_Identifier{
+	return stat.Blocks * MAIN_BLOCK_BYTES, disk_usage.File_Identifier{
 		Device: int64(stat.Dev),
 		Inode:  stat.Ino,
 	}

@@ -290,7 +290,7 @@ func Test_Markdown_Agent_Documentation_Pairing(t *testing.T) {
 func Test_Component_Layout_Single_Module(t *testing.T) {
 	t.Parallel()
 	files := map[string][]byte{
-		"go.mod":     []byte(doctrine_root_go_module),
+		"go.mod":     []byte(DOCTRINE_ROOT_GO_MODULE),
 		"pkg/go.mod": []byte("module example.com/nested\n\ngo 1.25\n"),
 	}
 	if !specification_flags(t, files, "nested go.mod") {
@@ -403,10 +403,10 @@ func Test_Component_Layout_Impure_Calls(t *testing.T) {
 // impure `default` package is flagged.
 func Test_Component_Layout_Transitive_Purity(t *testing.T) {
 	t.Parallel()
-	const module = "github.com/james-orcales/james-orcales/shared"
+	const MODULE = "github.com/james-orcales/james-orcales/shared"
 	files := map[string][]byte{
 		"shared/lib/library.go": []byte("// Package library x.\npackage library\n\n" +
-			"import \"" + module + "/widget/default\"\n\n" +
+			"import \"" + MODULE + "/widget/default\"\n\n" +
 			"// F uses the default.\nfunc F() (s string) {\n" +
 			"\treturn widget.Name()\n}\n"),
 		"shared/widget/default/wire.go": []byte(
@@ -1249,7 +1249,7 @@ func Test_Deterministic_Import_Induction(t *testing.T) {
 	exempt, err := lint.Check_File_System(&lint.Check_File_System_Input{
 		Fsys:                     fsys,
 		Scope:                    "pkg",
-		Shared_Component:         doctrine_shared_component_directory,
+		Shared_Component:         DOCTRINE_SHARED_COMPONENT_DIRECTORY,
 		Pure_But_Indeterministic: []string{"other"},
 		Instrumentation_Packages: []string{"other/**"},
 	})
@@ -1397,14 +1397,14 @@ func Test_Event_Loop_Seed(t *testing.T) {
 func Test_Configuration_Directory_Slash(t *testing.T) {
 	t.Parallel()
 	fsys := fstest.MapFS{
-		"go.mod":   {Data: []byte(doctrine_root_go_module)},
+		"go.mod":   {Data: []byte(DOCTRINE_ROOT_GO_MODULE)},
 		"pkg/p.go": {Data: []byte("// Package p is a fixture.\npackage p\n")},
 	}
 	tracked := map[string]bool{"go.mod": true, "pkg/p.go": true}
 	run := func(entry string) (diags []lint.Diagnostic) {
 		diags, err := lint.Check_File_System(&lint.Check_File_System_Input{
 			Fsys: fsys, Tracked: tracked,
-			Shared_Component:         doctrine_shared_component_directory,
+			Shared_Component:         DOCTRINE_SHARED_COMPONENT_DIRECTORY,
 			Pure_But_Indeterministic: []string{entry},
 		})
 		if err != nil {
@@ -1429,14 +1429,14 @@ func Test_Configuration_Directory_Slash(t *testing.T) {
 func Test_Configuration_Packages_Only(t *testing.T) {
 	t.Parallel()
 	fsys := fstest.MapFS{
-		"go.mod":   {Data: []byte(doctrine_root_go_module)},
+		"go.mod":   {Data: []byte(DOCTRINE_ROOT_GO_MODULE)},
 		"pkg/p.go": {Data: []byte("// Package p is a fixture.\npackage p\n")},
 	}
 	tracked := map[string]bool{"go.mod": true, "pkg/p.go": true}
 	run := func(input *lint.Check_File_System_Input) (diags []lint.Diagnostic) {
 		input.Fsys = fsys
 		input.Tracked = tracked
-		input.Shared_Component = doctrine_shared_component_directory
+		input.Shared_Component = DOCTRINE_SHARED_COMPONENT_DIRECTORY
 		diags, err := lint.Check_File_System(input)
 		if err != nil {
 			t.Fatalf("Check_File_System: %v", err)
@@ -1528,14 +1528,14 @@ func Test_Driver_Gateway_Type_Flagged(t *testing.T) {
 		"import io \"github.com/james-orcales/james-orcales/shared/io\"\n\n" +
 		"// Main drives.\nfunc Main(driver io.Driver) {}\n"
 	fsys := fstest.MapFS{
-		"go.mod":          &fstest.MapFile{Data: []byte(doctrine_root_go_module)},
+		"go.mod":          &fstest.MapFile{Data: []byte(DOCTRINE_ROOT_GO_MODULE)},
 		"shared/io/io.go": &fstest.MapFile{Data: []byte(library)},
 		"pkg/rule.go":     &fstest.MapFile{Data: []byte(consumer)},
 	}
 	diags, err := lint.Check_File_System(&lint.Check_File_System_Input{
 		Fsys:             fsys,
 		Scope:            "pkg",
-		Shared_Component: doctrine_shared_component_directory,
+		Shared_Component: DOCTRINE_SHARED_COMPONENT_DIRECTORY,
 	})
 	if err != nil {
 		t.Fatalf("Check_File_System: %v", err)
@@ -1554,14 +1554,14 @@ func Test_Driver_Gateway_Type_Main_Allowed(t *testing.T) {
 		"import io \"github.com/james-orcales/james-orcales/shared/io\"\n\n" +
 		"// hold takes a driver.\nfunc hold(driver io.Driver) {}\n\nfunc main() {}\n"
 	fsys := fstest.MapFS{
-		"go.mod":          &fstest.MapFile{Data: []byte(doctrine_root_go_module)},
+		"go.mod":          &fstest.MapFile{Data: []byte(DOCTRINE_ROOT_GO_MODULE)},
 		"shared/io/io.go": &fstest.MapFile{Data: []byte(library)},
 		"pkg/main.go":     &fstest.MapFile{Data: []byte(consumer)},
 	}
 	diags, err := lint.Check_File_System(&lint.Check_File_System_Input{
 		Fsys:             fsys,
 		Scope:            "pkg",
-		Shared_Component: doctrine_shared_component_directory,
+		Shared_Component: DOCTRINE_SHARED_COMPONENT_DIRECTORY,
 	})
 	if err != nil {
 		t.Fatalf("Check_File_System: %v", err)
@@ -1633,7 +1633,7 @@ func Test_IO_Gateway_Test_Exempt(t *testing.T) {
 func Test_IO_Gateway_Instrumentation_Exempt(t *testing.T) {
 	t.Parallel()
 	fsys := fstest.MapFS{
-		"go.mod": &fstest.MapFile{Data: []byte(doctrine_root_go_module)},
+		"go.mod": &fstest.MapFile{Data: []byte(DOCTRINE_ROOT_GO_MODULE)},
 		"pkg/rule.go": &fstest.MapFile{Data: []byte(
 			"// Package fixture is a fixture.\npackage fixture\n\nimport \"net\"\n\n" +
 				"// Dial does.\nfunc Dial() (connection net.Conn) {\n" +
@@ -1642,7 +1642,7 @@ func Test_IO_Gateway_Instrumentation_Exempt(t *testing.T) {
 	diags, err := lint.Check_File_System(&lint.Check_File_System_Input{
 		Fsys:                     fsys,
 		Scope:                    "pkg",
-		Shared_Component:         doctrine_shared_component_directory,
+		Shared_Component:         DOCTRINE_SHARED_COMPONENT_DIRECTORY,
 		Instrumentation_Packages: []string{"pkg/**"},
 	})
 	if err != nil {
@@ -1672,7 +1672,7 @@ func Test_IO_Gateway_Main_Exempt(t *testing.T) {
 func Test_IO_Gateway_Time_Exempt(t *testing.T) {
 	t.Parallel()
 	fsys := fstest.MapFS{
-		"go.mod": &fstest.MapFile{Data: []byte(doctrine_root_go_module)},
+		"go.mod": &fstest.MapFile{Data: []byte(DOCTRINE_ROOT_GO_MODULE)},
 		"shared/time/default/system.go": &fstest.MapFile{Data: []byte(
 			"// Package time is a fixture.\npackage time\n\nimport \"syscall\"\n\n" +
 				"// Now reads the clock.\nfunc Now() (n int64) {\n" +
@@ -1681,7 +1681,7 @@ func Test_IO_Gateway_Time_Exempt(t *testing.T) {
 	diags, err := lint.Check_File_System(&lint.Check_File_System_Input{
 		Fsys:             fsys,
 		Scope:            "shared/time/default",
-		Shared_Component: doctrine_shared_component_directory,
+		Shared_Component: DOCTRINE_SHARED_COMPONENT_DIRECTORY,
 	})
 	if err != nil {
 		t.Fatalf("Check_File_System: %v", err)
@@ -1797,8 +1797,8 @@ func specification_baseline(t *testing.T) (files map[string][]byte) {
 	// the tool catch it. The leading blank line satisfies the blank-before-heading
 	// rule for the first heading. A two-word leaf keeps the name-normalization
 	// test honest (Sole Rule -> Sole_Rule -> Test_Sole_Rule).
-	const markdown = "\n# Sole Rule\n\nThe sole rule.\n"
-	const test_source = "package fixture_test\n\n" +
+	const MARKDOWN = "\n# Sole Rule\n\nThe sole rule.\n"
+	const TEST_SOURCE = "package fixture_test\n\n" +
 		"import \"testing\"\n\n" +
 		"// Test_Sole_Rule checks the sole rule.\n" +
 		"func Test_Sole_Rule(t *testing.T) {\n\tt.Parallel()\n}\n"
@@ -1806,8 +1806,8 @@ func specification_baseline(t *testing.T) (files map[string][]byte) {
 		"go.mod": []byte("module fixture\n\ngo 1.25\n"),
 		"pkg/fixture.go": []byte("// Package fixture is a fixture.\n" +
 			"package fixture\n"),
-		"pkg/SPECIFICATION.md":      []byte(markdown),
-		"pkg/specification_test.go": []byte(test_source),
+		"pkg/SPECIFICATION.md":      []byte(MARKDOWN),
+		"pkg/specification_test.go": []byte(TEST_SOURCE),
 	}
 }
 
@@ -1822,10 +1822,10 @@ func specification_self_diagnostics(
 		fsys[name] = &fstest.MapFile{Data: content}
 	}
 	if _, present := fsys["go.mod"]; !present {
-		fsys["go.mod"] = &fstest.MapFile{Data: []byte(doctrine_root_go_module)}
+		fsys["go.mod"] = &fstest.MapFile{Data: []byte(DOCTRINE_ROOT_GO_MODULE)}
 	}
 	diags, err := lint.Check_File_System(&lint.Check_File_System_Input{
-		Fsys: fsys, Scope: "pkg", Shared_Component: doctrine_shared_component_directory,
+		Fsys: fsys, Scope: "pkg", Shared_Component: DOCTRINE_SHARED_COMPONENT_DIRECTORY,
 		Word_Replacements: test_word_replacements()})
 	if err != nil {
 		t.Fatalf("Check_File_System: %v", err)
@@ -1866,7 +1866,7 @@ func repository_flags(
 		fsys[name] = &fstest.MapFile{Data: content}
 	}
 	diags, err := lint.Check_File_System(&lint.Check_File_System_Input{
-		Fsys: fsys, Shared_Component: doctrine_shared_component_directory,
+		Fsys: fsys, Shared_Component: DOCTRINE_SHARED_COMPONENT_DIRECTORY,
 		Word_Replacements: test_word_replacements()})
 	if err != nil {
 		t.Fatalf("Check_File_System: %v", err)
@@ -1927,7 +1927,7 @@ func recursion_exempt_self_diagnostics(
 	diags, err := lint.Check_File_System(&lint.Check_File_System_Input{
 		Fsys:             fsys,
 		Scope:            "pkg",
-		Shared_Component: doctrine_shared_component_directory,
+		Shared_Component: DOCTRINE_SHARED_COMPONENT_DIRECTORY,
 		Recursion_Exempt: exempt,
 	})
 	if err != nil {
@@ -1951,7 +1951,7 @@ func deterministic_self_diagnostics(
 	diags, err := lint.Check_File_System(&lint.Check_File_System_Input{
 		Fsys:                     fsys,
 		Scope:                    "pkg",
-		Shared_Component:         doctrine_shared_component_directory,
+		Shared_Component:         DOCTRINE_SHARED_COMPONENT_DIRECTORY,
 		Pure_But_Indeterministic: exempt,
 	})
 	if err != nil {
@@ -1973,7 +1973,7 @@ func invariant_exempt_self_diagnostics(
 	diags, err := lint.Check_File_System(&lint.Check_File_System_Input{
 		Fsys:                      fsys,
 		Scope:                     "pkg",
-		Shared_Component:          doctrine_shared_component_directory,
+		Shared_Component:          DOCTRINE_SHARED_COMPONENT_DIRECTORY,
 		Word_Replacements:         test_word_replacements(),
 		Invariant_Exempt_Packages: exempt,
 	})
@@ -2467,12 +2467,12 @@ func Test_Function_Assertion_Bundle_Exempt(t *testing.T) {
 // it clear of the input-struct rule.
 func recorder_test_files(test string) (files map[string][]byte) {
 	return map[string][]byte{
-		"pkg/rule.go":      []byte(recorder_fixture_source),
+		"pkg/rule.go":      []byte(RECORDER_FIXTURE_SOURCE),
 		"pkg/rule_test.go": []byte(test),
 	}
 }
 
-const recorder_fixture_source = "// Package fixture is a fixture.\npackage fixture\n"
+const RECORDER_FIXTURE_SOURCE = "// Package fixture is a fixture.\npackage fixture\n"
 
 // Lints the recorder fixture with pkg treated as the shared library, since the
 // recorder rule now binds shared libraries only — a binary component's packages
@@ -2486,7 +2486,7 @@ func recorder_self_diagnostics(
 		fsys[name] = &fstest.MapFile{Data: content}
 	}
 	if _, present := fsys["go.mod"]; !present {
-		fsys["go.mod"] = &fstest.MapFile{Data: []byte(doctrine_root_go_module)}
+		fsys["go.mod"] = &fstest.MapFile{Data: []byte(DOCTRINE_ROOT_GO_MODULE)}
 	}
 	diags, err := lint.Check_File_System(&lint.Check_File_System_Input{
 		Fsys: fsys, Scope: "pkg", Shared_Component: "pkg",
@@ -2650,7 +2650,7 @@ func Test_File_Count_Whitebox(t *testing.T) {
 // file at all is flagged: it can never verify its coverage.
 func Test_Recorder_Registration_No_Tests(t *testing.T) {
 	t.Parallel()
-	files := map[string][]byte{"pkg/rule.go": []byte(recorder_fixture_source)}
+	files := map[string][]byte{"pkg/rule.go": []byte(RECORDER_FIXTURE_SOURCE)}
 	if !recorder_flags(t, files, "must wire invariant.Run_Test_Main") {
 		t.Fatal("a package with no test file must be flagged")
 	}
@@ -2712,7 +2712,7 @@ func Test_Recorder_Registration_Main_Exempt(t *testing.T) {
 // opt_out_assertion_mandate_packages is skipped even with no TestMain.
 func Test_Recorder_Registration_Exempt_Passes(t *testing.T) {
 	t.Parallel()
-	files := map[string][]byte{"pkg/rule.go": []byte(recorder_fixture_source)}
+	files := map[string][]byte{"pkg/rule.go": []byte(RECORDER_FIXTURE_SOURCE)}
 	diags := recorder_self_diagnostics(t, files, []string{"pkg"})
 	if specification_diagnosed(diags, "Run_Test_Main") {
 		t.Fatal("an exempt package must not be flagged for missing wiring")

@@ -35,8 +35,11 @@ import (
 	"local/james-orcales/lint/internal/vcs"
 )
 
-const line_chars_max = 100
-const tab_width = 8
+// LINE_CHARS_MAX is the display-column budget the line-length check enforces per source line.
+const LINE_CHARS_MAX = 100
+
+// TAB_WIDTH is the display-column advance the line-length check charges for each tab.
+const TAB_WIDTH = 8
 
 // Hi bounds for Distinct_Boundary axes on string lengths. Each constant
 // encodes the realistic upper bound for the semantic domain that the
@@ -46,503 +49,547 @@ const tab_width = 8
 // domain so reading the assertion at a call site makes the bound obvious.
 
 // IDENTIFIER_CHARS_MAX caps Go identifier lengths the linter processes.
-// 128 chars is wider than any identifier representable on a line_chars_max
+// 128 chars is wider than any identifier representable on a LINE_CHARS_MAX
 // (140) source line after the surrounding syntax; the repo's longest
 // production identifier is 83 chars.
 const IDENTIFIER_CHARS_MAX = 128
 
-// Invariant_helper_name_chars_max caps the longest invariant.X helper name
+// INVARIANT_HELPER_NAME_CHARS_MAX caps the longest invariant.X helper name
 // the linter recognises; "Recorder_Is_Distinct_Boundary" is the longest
 // (29 chars). The constant ALSO serves as a sanity bound on helper_name
 // strings passed between extractor helpers, all of which receive non-
 // empty names (callers gate on `helper_name == "" return` so the boundary
 // is paired with `Always(helper_name != "", ...)`).
-const invariant_helper_name_chars_max = 29
+const INVARIANT_HELPER_NAME_CHARS_MAX = 29
 
-// Invariant_helper_name_chars_min is the shortest recognised invariant.X
+// INVARIANT_HELPER_NAME_CHARS_MIN is the shortest recognised invariant.X
 // helper name: "Always" (6 chars). Paired with the max as the Lo/Hi of
 // helper_name Distinct_Boundary axes in extract_nil_comparison_path /
 // extract_eq_nil_path / nil_predicate_index / nil_allows_neq.
-const invariant_helper_name_chars_min = 6
+const INVARIANT_HELPER_NAME_CHARS_MIN = 6
 
-// Credit_kind_chars_min / credit_kind_chars_max cap the bare_composable_
+// CREDIT_KIND_CHARS_MIN / CREDIT_KIND_CHARS_MAX cap the bare_composable_
 // table values: "bool" (4) and "boundary_float" (14). Tightening to the
 // exact table range makes both endpoints reachable by tests that exercise
 // any Distinct_Boundary or Always/Sometimes credit shape.
-const credit_kind_chars_min = 4
-const credit_kind_chars_max = 14
+const CREDIT_KIND_CHARS_MIN = 4
 
-// Diagnostic_source_chars_min / diagnostic_source_chars_max cap the
+// CREDIT_KIND_CHARS_MAX is the Hi end: "boundary_float", the longest bare_composable kind.
+const CREDIT_KIND_CHARS_MAX = 14
+
+// DIAGNOSTIC_SOURCE_CHARS_MIN / DIAGNOSTIC_SOURCE_CHARS_MAX cap the
 // `source` string in the diagnostic-builder helpers: "param" (5),
 // "param_defer" (11), or "named_return" (12). The literal values come from
 // the requirement emit branches in collect_requirements and the validate
 // loop.
-const diagnostic_source_chars_min = 5
-const diagnostic_source_chars_max = 12
+const DIAGNOSTIC_SOURCE_CHARS_MIN = 5
 
-// Function_label_chars_min caps the shortest function_label string: a
+// DIAGNOSTIC_SOURCE_CHARS_MAX is the Hi end: "named_return", the longest source label.
+const DIAGNOSTIC_SOURCE_CHARS_MAX = 12
+
+// FUNCTION_LABEL_CHARS_MIN caps the shortest function_label string: a
 // single-character function name like `f`. Paired with
 // IDENTIFIER_CHARS_MAX as Hi.
-const function_label_chars_min = 1
+const FUNCTION_LABEL_CHARS_MIN = 1
 
-// Non_empty_min is the universal Lo for length axes on inputs the caller
+// NON_EMPTY_MIN is the universal Lo for length axes on inputs the caller
 // guarantees non-empty (validated by a callsite check or an Always(s != "")
 // invariant). Distinct_Boundary requires Lo < Hi, so empty inputs need their
 // own pre-gate; this constant anchors the "≥1 character" bucket for
 // non-empty-string and non-empty-slice axes.
-const non_empty_min = 1
+const NON_EMPTY_MIN = 1
 
-// Split_suggestion_chars_min caps the shortest non-trivial split suggestion
+// SPLIT_SUGGESTION_CHARS_MIN caps the shortest non-trivial split suggestion
 // returned by suggest. The shortest case is a 2-char Ada_Case input ("aB")
 // split into "a_B" — three characters including the inserted underscore.
-const split_suggestion_chars_min = 3
+const SPLIT_SUGGESTION_CHARS_MIN = 3
 
-// Naming_style_chars_min / naming_style_chars_max bound the length of the
+// NAMING_STYLE_CHARS_MIN / NAMING_STYLE_CHARS_MAX bound the length of the
 // `Want` field on suggest_input. Callers pass exactly one of "Ada_Case" (8),
 // "snake_case" (10), or "SCREAMING_SNAKE_CASE" (20) — the three style words
 // the casing checks know.
-const naming_style_chars_min = 8
-const naming_style_chars_max = 20
+const NAMING_STYLE_CHARS_MIN = 8
 
-// Stream_check_name_chars_min / stream_check_name_chars_max bound the
+// NAMING_STYLE_CHARS_MAX is the Hi end: "SCREAMING_SNAKE_CASE", the longest style word.
+const NAMING_STYLE_CHARS_MAX = 20
+
+// STREAM_CHECK_NAME_CHARS_MIN / STREAM_CHECK_NAME_CHARS_MAX bound the
 // `Name` field on check_function_stream constructors. Shortest is "symlink"
 // (7); longest is "markdown-line-length" (20).
-const stream_check_name_chars_min = 7
-const stream_check_name_chars_max = 20
+const STREAM_CHECK_NAME_CHARS_MIN = 7
 
-// Stack_with_body_frame_min is the Lo for walker stacks that the function
+// STREAM_CHECK_NAME_CHARS_MAX is the Hi end: "markdown-line-length", the longest check Name.
+const STREAM_CHECK_NAME_CHARS_MAX = 20
+
+// STACK_WITH_BODY_FRAME_MIN is the Lo for walker stacks that the function
 // guarantees have appended at least one body frame on top of the input
 // stack (so the post-condition stack length is the input stack length
 // plus one, minimum two when the input was non-empty).
-const stack_with_body_frame_min = 2
+const STACK_WITH_BODY_FRAME_MIN = 2
 
-// Pair_min caps Lo for numeric axes whose minimum is two — used by callers
+// PAIR_MIN caps Lo for numeric axes whose minimum is two — used by callers
 // where the value is "≥2 of something" without a more specific domain
 // constant fitting. Where a domain-specific name is clearer, prefer that.
-const pair_min = 2
+const PAIR_MIN = 2
 
-// Package_lines_test_max is the Hi bound on the per-package source-line
+// PACKAGE_LINES_TEST_MAX is the Hi bound on the per-package source-line
 // accumulator in the package-fragmentation check. The endpoint is anchored
 // by the fragmentation test fixtures (each package ≤ ~12k lines).
-const package_lines_test_max = 12750
+const PACKAGE_LINES_TEST_MAX = 12750
 
-// Test_package_files_max is the Hi bound on the caller-supplied package
+// TEST_PACKAGE_FILES_MAX is the Hi bound on the caller-supplied package
 // file-count cap. The fragmentation tests exercise both endpoints (1 file
 // allowed; 2 files as the caller-imposed ceiling).
-const test_package_files_max = 2
+const TEST_PACKAGE_FILES_MAX = 2
 
-// Build_constraint_key_chars_max caps the normalized build-constraint AST
+// BUILD_CONSTRAINT_KEY_CHARS_MAX caps the normalized build-constraint AST
 // string used as a fragmentation grouping key. Sized for the typical
 // multi-OS multi-arch expression length seen in practice.
-const build_constraint_key_chars_max = 125
+const BUILD_CONSTRAINT_KEY_CHARS_MAX = 125
 
-// Count_one anchors "exactly one of something" sentinel checks (e.g. a
+// COUNT_ONE anchors "exactly one of something" sentinel checks (e.g. a
 // Sometimes(len(xs) == 1) on a single-element group). Value-identical to
-// non_empty_min but read at the call site with different intent.
-const count_one = 1
+// NON_EMPTY_MIN but read at the call site with different intent.
+const COUNT_ONE = 1
 
-// Obligation_identifiers_max caps the number of identifiers in a single
+// OBLIGATION_IDENTIFIERS_MAX caps the number of identifiers in a single
 // declaration-from-call obligation. Go allows arbitrary multi-LHS, but
 // 3-LHS is the widest shape observed in lint.go's own source; setting the
 // Hi bucket here gates the Distinct_Boundary axis on obligation.Identifiers
 // to a reachable endpoint.
-const obligation_identifiers_max = 3
+const OBLIGATION_IDENTIFIERS_MAX = 3
 
-// Successor_statements_max caps obligation.Successor_Statements via the
+// SUCCESSOR_STATEMENTS_MAX caps obligation.Successor_Statements via the
 // generated many-successor fixture; lint.go's own scan stays under because
 // every := decl is followed by ≤30 statements in the same block.
-const successor_statements_max = 30
+const SUCCESSOR_STATEMENTS_MAX = 30
 
-// Leaf_requirements_per_dispatch_max caps the number of requirement records
+// LEAF_REQUIREMENTS_PER_DISPATCH_MAX caps the number of requirement records
 // leaf_dispatch returns: channel leaves emit 3 (pointer + boundary_int +
 // zero_int), slice/map leaves emit 2 (boundary_int + zero_slice/zero_map),
 // non-container/non-channel types emit 0.
-const leaf_requirements_per_dispatch_max = 3
+const LEAF_REQUIREMENTS_PER_DISPATCH_MAX = 3
 
-// Component_index_not_found anchors the -1 sentinel returned when no component
-// matches a path lookup. Paired with components_max as the Hi
+// COMPONENT_INDEX_NOT_FOUND anchors the -1 sentinel returned when no component
+// matches a path lookup. Paired with COMPONENTS_MAX as the Hi
 // bound on the index domain.
-const component_index_not_found = -1
+const COMPONENT_INDEX_NOT_FOUND = -1
 
-// Components_max caps the discovered component count. The monorepo has a
+// COMPONENTS_MAX caps the discovered component count. The monorepo has a
 // handful of top-level components; 1024 leaves headroom for several orders of
 // magnitude of growth without admitting absurd values.
-const components_max = 1024
+const COMPONENTS_MAX = 1024
 
-// Path_root is the path.Dir result for top-level entries: a single dot
+// PATH_ROOT is the path.Dir result for top-level entries: a single dot
 // meaning "current directory". Used as the sentinel comparison value when
 // detecting root-level paths.
-const path_root = "."
+const PATH_ROOT = "."
 
 // Declaration_diagnostic_name is the constant Name field on a Diagnostic
 // emitted by build_declaration_diagnostic. Pulled out as a file-level const
 // so the diag.Name invariant can bind it as a named bound.
 
 // Inside_if_diagnostic_name is the fixed Name for inside-if-only diagnostics.
-// Inside_if_diagnostic_name_chars must equal its length: the builder asserts
-// `Always(len(diag.Name) == inside_if_diagnostic_name_chars)` to satisfy the
+// INSIDE_IF_DIAGNOSTIC_NAME_CHARS must equal its length: the builder asserts
+// `Always(len(diag.Name) == INSIDE_IF_DIAGNOSTIC_NAME_CHARS)` to satisfy the
 // boundary_int requirement on a Name whose value is invariant (a constant
 // length can't reach a Distinct_Boundary's two endpoints). The runtime
 // assertion catches any drift between the string and the count.
-const inside_if_diagnostic_name_chars = 34
+const INSIDE_IF_DIAGNOSTIC_NAME_CHARS = 34
 
-// Inside_if_diagnostic_want_chars is the byte length of the inside-if-only
+// INSIDE_IF_DIAGNOSTIC_WANT_CHARS is the byte length of the inside-if-only
 // Want hint (the inline literal in the builder; the `—` em-dash is 3 bytes).
 // The runtime Always(len(diag.Want) == it) catches any drift.
-const inside_if_diagnostic_want_chars = 164
+const INSIDE_IF_DIAGNOSTIC_WANT_CHARS = 164
 
 // Missing_diagnostic_name is the fixed Name for missing-axis diagnostics;
-// missing_diagnostic_name_chars must equal its length (see inside_if note).
-const missing_diagnostic_name_chars = 27
+// MISSING_DIAGNOSTIC_NAME_CHARS must equal its length (see inside_if note).
+const MISSING_DIAGNOSTIC_NAME_CHARS = 27
 
-// Declaration_diagnostic_name_chars is the length of declaration_diagnostic_name
+// DECLARATION_DIAGNOSTIC_NAME_CHARS is the length of declaration_diagnostic_name
 // assert len(diag.Name) == it to bound a Name whose value is invariant.
-const declaration_diagnostic_name_chars = 45
+const DECLARATION_DIAGNOSTIC_NAME_CHARS = 45
 
-// Pointer_requirement_kind is the fixed Kind for pointer requirements;
-// pointer_requirement_kind_chars must equal its length.
-const pointer_requirement_kind = "pointer"
-const pointer_requirement_kind_chars = 7
+// POINTER_REQUIREMENT_KIND is the fixed Kind for pointer requirements;
+// POINTER_REQUIREMENT_KIND_CHARS must equal its length.
+const POINTER_REQUIREMENT_KIND = "pointer"
 
-// Stream_checker_count is the fixed number of stream-tier checks; the builder
+// POINTER_REQUIREMENT_KIND_CHARS is len("pointer"); the defer asserts Kind's width equals it.
+const POINTER_REQUIREMENT_KIND_CHARS = 7
+
+// STREAM_CHECKER_COUNT is the fixed number of stream-tier checks; the builder
 // asserts len(checks) == it (a Distinct_Boundary can't bound a constant count).
-const stream_checker_count = 9
+const STREAM_CHECKER_COUNT = 9
 
 // Fixed Name strings for the stream-check closures, each paired with its
 // length so the checker's defer bounds c.Name (a value invariant per closure).
-const agents_pair_check_name = "agents-claude-pair"
-const agents_pair_check_name_chars = 18
+const AGENTS_PAIR_CHECK_NAME = "agents-claude-pair"
 
-// Recursion_message_chars_min / recursion_message_chars_max cap the
+// AGENTS_PAIR_CHECK_NAME_CHARS is len("agents-claude-pair"); the defer bounds the closure Name.
+const AGENTS_PAIR_CHECK_NAME_CHARS = 18
+
+// RECURSION_MESSAGE_CHARS_MIN / RECURSION_MESSAGE_CHARS_MAX cap the
 // "recursion: <node> calls itself" diagnostic message. Lo = 25 chars for
 // the 1-char node case; Hi = 152 chars for a max-length 128-char node.
-const recursion_message_chars_min = 25
-const recursion_message_chars_max = 152
+const RECURSION_MESSAGE_CHARS_MIN = 25
 
-// Defer_position_name_chars_min / defer_position_name_chars_max bound the
+// RECURSION_MESSAGE_CHARS_MAX is the Hi end: a max-length 128-char node yields 152 chars.
+const RECURSION_MESSAGE_CHARS_MAX = 152
+
+// DEFER_POSITION_NAME_CHARS_MIN / DEFER_POSITION_NAME_CHARS_MAX bound the
 // `Name` field on diagnostics built by
 // check_invariant_assertions_validate_defer_position. Names are one of two
 // fixed labels: `assertion_defer_missing` (23) or
 // `assertion_defer_not_at_body_zero` (32).
-const defer_position_name_chars_min = 23
-const defer_position_name_chars_max = 32
+const DEFER_POSITION_NAME_CHARS_MIN = 23
 
-// Defer_position_message_chars_min is the provable floor on the Sprintf'd
+// DEFER_POSITION_NAME_CHARS_MAX is the Hi end: the longer label assertion_defer_not_at_body_zero.
+const DEFER_POSITION_NAME_CHARS_MAX = 32
+
+// DEFER_POSITION_MESSAGE_CHARS_MIN is the provable floor on the Sprintf'd
 // defer-position diagnostic message: the shortest function label (1 char) plus
 // the shortest of the three message bodies (102 chars). No label is shorter
 // than one character and no body is shorter than 102, so a message can never
 // fall below this — making it a panic-safe Lo for the message boundary.
-const defer_position_message_chars_min = 103
+const DEFER_POSITION_MESSAGE_CHARS_MIN = 103
 
-// Defer_position_want_chars_min / defer_position_want_chars_max bound the
+// DEFER_POSITION_WANT_CHARS_MIN / DEFER_POSITION_WANT_CHARS_MAX bound the
 // `Want` field on diagnostics built by validate_defer_position. Want strings
 // are three fixed remediation hints: `add an assertion defer ...` (71),
 // `move the assertion defer ...` (76), and `place the assertion defer ...`
 // (103). Test corpus exercises the shortest (`add`) and longest (`place`).
-const defer_position_want_chars_min = 71
-const defer_position_want_chars_max = 103
+const DEFER_POSITION_WANT_CHARS_MIN = 71
 
-// Declaration_diagnostic_want_chars_min / declaration_diagnostic_want_chars_max
+// DEFER_POSITION_WANT_CHARS_MAX is the Hi end: the longest "place the assertion defer ..." hint.
+const DEFER_POSITION_WANT_CHARS_MAX = 103
+
+// DECLARATION_DIAGNOSTIC_WANT_CHARS_MIN / DECLARATION_DIAGNOSTIC_WANT_CHARS_MAX
 // bound the `Want` field on diagnostics built by
 // check_invariant_assertions_build_declaration_diagnostic. Want strings come
 // in two shapes: a short single-LHS suggestion (`add an invariant assertion
 // ... covering: <list>`) and a long multi-LHS suggestion (`use
 // invariant.Cross_Product ... covering: <list>`).
-const declaration_diagnostic_want_chars_min = 65
-const declaration_diagnostic_want_chars_max = 133
+const DECLARATION_DIAGNOSTIC_WANT_CHARS_MIN = 65
 
-// Declaration_diagnostic_message_chars_min is the shortest declaration-obligation
+// DECLARATION_DIAGNOSTIC_WANT_CHARS_MAX is the Hi end: long multi-LHS Cross_Product suggestion.
+const DECLARATION_DIAGNOSTIC_WANT_CHARS_MAX = 133
+
+// DECLARATION_DIAGNOSTIC_MESSAGE_CHARS_MIN is the shortest declaration-obligation
 // message: a single-LHS `<f>: declaration via function call must be followed by
 // an invariant assertion covering: <x>` with a 1-char function label and a
-// 1-char identifier. The Hi end is the budget ceiling (diagnostic_message_chars_max,
+// 1-char identifier. The Hi end is the budget ceiling (DIAGNOSTIC_MESSAGE_CHARS_MAX,
 // which no message — bounded by label + identifier-list + the fixed clause —
 // reaches), so the boundary masks Hi and observes only the single-LHS Lo.
-const declaration_diagnostic_message_chars_min = 87
+const DECLARATION_DIAGNOSTIC_MESSAGE_CHARS_MIN = 87
 
-// Diagnostic_message_chars_max caps the upper bound for a diagnostic
+// DIAGNOSTIC_MESSAGE_CHARS_MAX caps the upper bound for a diagnostic
 // Message string. Longest observed messages embed a 128-char function label
 // plus 257-char field_description plus suggestion text; round to 1024.
-const diagnostic_message_chars_max = 1024
+const DIAGNOSTIC_MESSAGE_CHARS_MAX = 1024
 
-// Banned_lists_per_check_max caps the static list-of-lists count for the
+// BANNED_LISTS_PER_CHECK_MAX caps the static list-of-lists count for the
 // banned-segment check (universal, function-only, file-only, package-only).
-const banned_lists_per_check_max = 4
+const BANNED_LISTS_PER_CHECK_MAX = 4
 
-// Suggested_sig_chars_min caps the shortest suggested function signature.
+// SUGGESTED_SIG_CHARS_MIN caps the shortest suggested function signature.
 // In practice the shortest fixture-observed signature is the 21-char
 // `f(*f_Input) (result T)` template with a single-letter funcname and a
 // minimal result type.
-const suggested_sig_chars_min = 21
+const SUGGESTED_SIG_CHARS_MIN = 21
 
-// Convert_to_message_chars_min / convert_to_message_chars_max bound the
+// CONVERT_TO_MESSAGE_CHARS_MIN / CONVERT_TO_MESSAGE_CHARS_MAX bound the
 // `convert to <sig>` diagnostic message constructed by
 // check_input_struct_validate. The 11-character "convert to " prefix is
 // added to the suggested signature's length bounds.
-const convert_to_message_chars_min = suggested_sig_chars_min + 11
-const convert_to_message_chars_max = suggested_sig_chars_max + 11
+const CONVERT_TO_MESSAGE_CHARS_MIN = SUGGESTED_SIG_CHARS_MIN + 11
 
-// Stdlib_term_chars_max caps the stdlib-allowlist terminology suffix
+// CONVERT_TO_MESSAGE_CHARS_MAX is the Hi end: longest signature plus the "convert to " prefix.
+const CONVERT_TO_MESSAGE_CHARS_MAX = SUGGESTED_SIG_CHARS_MAX + 11
+
+// STDLIB_TERM_CHARS_MAX caps the stdlib-allowlist terminology suffix
 // string. Longest entry is `offset` (6 chars).
-const stdlib_term_chars_max = 6
+const STDLIB_TERM_CHARS_MAX = 6
 
-// Stdlib_term_chars_min is the shortest term in the arithmetic-result
-// vocabulary: `size` (4 chars). Paired with stdlib_term_chars_max as Hi
+// STDLIB_TERM_CHARS_MIN is the shortest term in the arithmetic-result
+// vocabulary: `size` (4 chars). Paired with STDLIB_TERM_CHARS_MAX as Hi
 // for axes over Left/Right operand-term strings.
-const stdlib_term_chars_min = 4
+const STDLIB_TERM_CHARS_MIN = 4
 
-// Method_params_test_corpus_max matches the Params string the
+// METHOD_PARAMS_TEST_CORPUS_MAX matches the Params string the
 // Test_Coverage_Backfill_Method_Render_Type fixture produces for its Bar
 // method: a 1-char type `A` joined to a 128-char type via `,` totals 130.
 // Bounded axes over input.Params in check_unnecessary_method_matches_stdlib
 // use this as Hi so Bar's call observes the Hi bucket.
-const method_params_test_corpus_max = IDENTIFIER_CHARS_MAX + 2
+const METHOD_PARAMS_TEST_CORPUS_MAX = IDENTIFIER_CHARS_MAX + 2
 
-// Qualified_ident_chars_min caps `pkg.Func` shapes at their minimum: a
+// QUALIFIED_IDENT_CHARS_MIN caps `pkg.Func` shapes at their minimum: a
 // single-letter package, dot, single-letter func — three characters.
-const qualified_ident_chars_min = 3
+const QUALIFIED_IDENT_CHARS_MIN = 3
 
-// Rename_suggestion_chars_min caps the shortest `<name>_<term>` rename
+// RENAME_SUGGESTION_CHARS_MIN caps the shortest `<name>_<term>` rename
 // suggestion; the smallest single-word replacement ("count") is 5 chars.
-const rename_suggestion_chars_min = 5
+const RENAME_SUGGESTION_CHARS_MIN = 5
 
-// Ing_word_chars_min is the smallest word that can carry the `-ing` participle
+// ING_WORD_CHARS_MIN is the smallest word that can carry the `-ing` participle
 // suffix: three characters (the suffix itself plus a one-letter prefix would
 // not actually be a valid English word, but the linter only inspects shape).
-const ing_word_chars_min = 3
+const ING_WORD_CHARS_MIN = 3
 
-// Source_with_comment_bytes_min is the smallest source file that carries a
+// SOURCE_WITH_COMMENT_BYTES_MIN is the smallest source file that carries a
 // comment after the package clause: "package x\n\n// c\n" is 16 bytes.
-const source_with_comment_bytes_min = 16
+const SOURCE_WITH_COMMENT_BYTES_MIN = 16
 
-// Field_description_chars_min caps the shortest `<name> <type>` description:
+// FIELD_DESCRIPTION_CHARS_MIN caps the shortest `<name> <type>` description:
 // one-char name + space + one-char type = 3 chars.
-const field_description_chars_min = 3
+const FIELD_DESCRIPTION_CHARS_MIN = 3
 
-// Requirement_field_description_chars_min is the smallest field_description
+// REQUIREMENT_FIELD_DESCRIPTION_CHARS_MIN is the smallest field_description
 // length that survives the keyword_kinds filter and reaches a requirement.
 // "a *T" (4 chars: 1-char name + " " + "*T" pointer) is the shortest such
 // shape — bare `a T` for a user-defined Ident gets dropped because kinds
 // is nil at the leaf path.
-const requirement_field_description_chars_min = 4
+const REQUIREMENT_FIELD_DESCRIPTION_CHARS_MIN = 4
 
-// Cross_product_helper_chars / recorder_cross_product_helper_chars are the
+// CROSS_PRODUCT_HELPER_CHARS / RECORDER_CROSS_PRODUCT_HELPER_CHARS are the
 // string lengths of the two Cross_Product helper-name shapes. Paired as
 // Lo / Hi on the helper_name length axis in call_covered_pairs_cross_product.
-const cross_product_helper_chars = 13
-const recorder_cross_product_helper_chars = 22
+const CROSS_PRODUCT_HELPER_CHARS = 13
 
-// Bare_credit_kind_chars_max caps the bare-composable kind strings used in
-// the bare_table: `bool` (4) is the Lo via credit_kind_chars_min, and
+// RECORDER_CROSS_PRODUCT_HELPER_CHARS is the Hi: the longer Recorder_-prefixed helper-name shape.
+const RECORDER_CROSS_PRODUCT_HELPER_CHARS = 22
+
+// BARE_CREDIT_KIND_CHARS_MAX caps the bare-composable kind strings used in
+// the bare_table: `bool` (4) is the Lo via CREDIT_KIND_CHARS_MIN, and
 // `boundary_int` (12) is the Hi for the bare-credit family.
-const bare_credit_kind_chars_max = 12
+const BARE_CREDIT_KIND_CHARS_MAX = 12
 
-// Helper_family_index_unknown / helper_family_index_recorder anchor the
+// HELPER_FAMILY_INDEX_UNKNOWN / HELPER_FAMILY_INDEX_RECORDER anchor the
 // three-valued helper-family discriminator: -1 = unknown / not an invariant
 // helper, 0 = naked Always/Sometimes (resolved by middle case), 1 =
 // Recorder_-prefixed variant.
-const helper_family_index_unknown = -1
-const helper_family_index_recorder = 1
+const HELPER_FAMILY_INDEX_UNKNOWN = -1
 
-// Always_family_chars_max caps the longest helper name in the
+// HELPER_FAMILY_INDEX_RECORDER is the discriminator for the Recorder_-prefixed helper family.
+const HELPER_FAMILY_INDEX_RECORDER = 1
+
+// ALWAYS_FAMILY_CHARS_MAX caps the longest helper name in the
 // Always/Sometimes nil-eq family: `Recorder_Always` (15).
-const always_family_chars_max = 15
+const ALWAYS_FAMILY_CHARS_MAX = 15
 
-// Sign_negative / sign_positive anchor the three-valued sign domain
+// SIGN_NEGATIVE / SIGN_POSITIVE anchor the three-valued sign domain
 // returned by expression_sign: -1 for negative, 0 for zero (interior), +1
 // for positive.
-const sign_negative = -1
-const sign_positive = 1
+const SIGN_NEGATIVE = -1
 
-// Invariant_suggestion_chars_min / invariant_suggestion_chars_max cap the
+// SIGN_POSITIVE is the expression_sign result for a positive expression.
+const SIGN_POSITIVE = 1
+
+// INVARIANT_SUGGESTION_CHARS_MIN / INVARIANT_SUGGESTION_CHARS_MAX cap the
 // `use invariant.X(...)` remediation string rendered into assertion-coverage
 // diagnostics. Sized empirically from the shortest (`pointer` shape) and
 // longest (`boundary_float` shape) wrappers around the axis call.
-const invariant_suggestion_chars_min = 167
-const invariant_suggestion_chars_max = 373
+const INVARIANT_SUGGESTION_CHARS_MIN = 167
 
-// Composable_helper_chars_min / composable_helper_chars_max cap the
+// INVARIANT_SUGGESTION_CHARS_MAX is the Hi end: the longest wrapper, the boundary_float shape.
+const INVARIANT_SUGGESTION_CHARS_MAX = 373
+
+// COMPOSABLE_HELPER_CHARS_MIN / COMPOSABLE_HELPER_CHARS_MAX cap the
 // helper-name string for composable axis builders: `Always` (6) is the
 // shortest, `Distinct_Boundary` (17) the longest.
-const composable_helper_chars_min = 6
-const composable_helper_chars_max = 17
+const COMPOSABLE_HELPER_CHARS_MIN = 6
 
-// Suggested_axis_call_chars_min / suggested_axis_call_chars_max cap the
+// COMPOSABLE_HELPER_CHARS_MAX is the Hi end: "Distinct_Boundary", the longest helper name.
+const COMPOSABLE_HELPER_CHARS_MAX = 17
+
+// SUGGESTED_AXIS_CALL_CHARS_MIN / SUGGESTED_AXIS_CALL_CHARS_MAX cap the
 // rendered axis-builder template string for one assertion requirement.
 // Sized empirically from the shortest pointer-shape and longest
 // Distinct_Boundary-shape templates.
-const suggested_axis_call_chars_min = 22
-const suggested_axis_call_chars_max = 228
+const SUGGESTED_AXIS_CALL_CHARS_MIN = 22
 
-// Invariant_selector_chars_max caps the longest selector_name string in the
+// SUGGESTED_AXIS_CALL_CHARS_MAX is the Hi end: the longest Distinct_Boundary-shape template.
+const SUGGESTED_AXIS_CALL_CHARS_MAX = 228
+
+// INVARIANT_SELECTOR_CHARS_MAX caps the longest selector_name string in the
 // full invariant-call family: `Recorder_Distinct_Boundary` (26).
-const invariant_selector_chars_max = 26
+const INVARIANT_SELECTOR_CHARS_MAX = 26
 
-// If_init_identifier_chars_max caps identifier strings appearing in
+// IF_INIT_IDENTIFIER_CHARS_MAX caps identifier strings appearing in
 // if/for/switch init lines: a tighter bound than IDENTIFIER_CHARS_MAX to
 // reflect what fits in a single statement line within the line-length budget.
-const if_init_identifier_chars_max = 55
+const IF_INIT_IDENTIFIER_CHARS_MAX = 55
 
-// Tier_2_checks_count / tier_1_checks_count anchor the static tier-list
+// TIER_2_CHECKS_COUNT / TIER_1_CHECKS_COUNT anchor the static tier-list
 // length axis. Updated whenever a check is added or removed from the
 // dispatcher in Check_File.
-const tier_2_checks_count = 6
-const tier_1_checks_count = 30
+const TIER_2_CHECKS_COUNT = 6
 
-// Go_filename_chars_min is the shortest Go filename: a single-letter package
+// TIER_1_CHECKS_COUNT is the tier-1 dispatch-list length, bumped as checks are added/removed.
+const TIER_1_CHECKS_COUNT = 30
+
+// GO_FILENAME_CHARS_MIN is the shortest Go filename: a single-letter package
 // name followed by the .go extension, e.g. `a.go`. Used as the Lo bound on
 // filename axes in Check_Source / Check_File_System.
-const go_filename_chars_min = 4
+const GO_FILENAME_CHARS_MIN = 4
 
 // The requirement-position label passed to the validate helper is always one of
 // "param" (5), "param_defer" (11), or "named_return" (12). Both endpoints are
 // always observed (every analyzed function runs the param and named_return
 // passes), so the boundary needs no masking.
-const validate_position_chars_min = 5
-const validate_position_chars_max = 12
+const VALIDATE_POSITION_CHARS_MIN = 5
+
+// VALIDATE_POSITION_CHARS_MAX is the Hi end: "named_return", the longest position label.
+const VALIDATE_POSITION_CHARS_MAX = 12
 
 // Inside-if-only diagnostics carry a requirement.Kind assertion-kind label.
 // The non-nillable leaves that reach this path are integer leaves, whose kinds
 // are "zero_int" (8) and "boundary_int" (12) — both observed from a single
 // `(result int)` named return, so the boundary needs no masking.
-const inside_if_kind_chars_min = 8
-const inside_if_kind_chars_max = 12
+const INSIDE_IF_KIND_CHARS_MIN = 8
+
+// INSIDE_IF_KIND_CHARS_MAX is the Hi end: "boundary_int", the longer integer-leaf kind.
+const INSIDE_IF_KIND_CHARS_MAX = 12
 
 // The smallest source a parsed file can carry is the shortest valid Go file,
 // "package a\n" (10 bytes) — the package keyword, a one-char name, and the
 // gofmt-mandated trailing newline. Nothing is shorter, so this is the panic-safe
 // Lo for pf.Source byte-length boundaries; a pinned fixture observes it.
-const go_source_bytes_min = 10
+const GO_SOURCE_BYTES_MIN = 10
 
 // Package-group diagnostics carry empty Name and Want (the group-level message
 // lives in Message). len == 0 is the constant width; Always(len == this) credits
 // boundary_int via the numeric-credit path without a Lo<Hi Distinct_Boundary.
-const package_group_diag_chars = 0
+const PACKAGE_GROUP_DIAG_CHARS = 0
 
 // Field_Description for an inside-if leaf is "<name> <type>". The shortest
 // reachable is a one-char-named integer leaf, "x int" (5) — names are never
 // empty and "int" is the shortest non-nillable type, so 5 is the floor. The
-// budget cap (field_description_chars_max) is never reached, so Hi is masked.
-const inside_if_field_chars_min = 5
+// budget cap (FIELD_DESCRIPTION_CHARS_MAX) is never reached, so Hi is masked.
+const INSIDE_IF_FIELD_CHARS_MIN = 5
 
-// Inside_if_message_chars_min is the shortest inside-if-only diagnostic message:
+// INSIDE_IF_MESSAGE_CHARS_MIN is the shortest inside-if-only diagnostic message:
 // a 1-char function label, the shortest `param` prefix, and a min-length field
 // description, plus the fixed `... must be asserted outside any if ... != nil
-// ...` clause. Hi is the budget ceiling (diagnostic_message_chars_max), never
+// ...` clause. Hi is the budget ceiling (DIAGNOSTIC_MESSAGE_CHARS_MAX), never
 // reached, so the boundary masks Hi and observes only this Lo.
-const inside_if_message_chars_min = 113
+const INSIDE_IF_MESSAGE_CHARS_MIN = 113
 
-// Want_name_chars_min / want_name_chars_max cap the input-struct
+// WANT_NAME_CHARS_MIN / WANT_NAME_CHARS_MAX cap the input-struct
 // expected name (e.g. "f_Input" for function `f`). The "_Input" suffix
 // is 6 chars; combined with the shortest (1-char) function name the
 // minimum is 7. Max is IDENTIFIER_CHARS_MAX + 6 = 134.
-const want_name_chars_min = 7
-const want_name_chars_max = IDENTIFIER_CHARS_MAX + 6
+const WANT_NAME_CHARS_MIN = 7
 
-// Filesystem_path_chars_max caps filesystem path strings the linter
+// WANT_NAME_CHARS_MAX is the Hi end: the longest identifier plus the 6-char "_Input" suffix.
+const WANT_NAME_CHARS_MAX = IDENTIFIER_CHARS_MAX + 6
+
+// FILESYSTEM_PATH_CHARS_MAX caps filesystem path strings the linter
 // processes. POSIX PATH_MAX is 4096 on Linux; the linter inherits this
 // as the hard bound for file paths and is exercised by the long-path
 // backfill test which constructs a 4096-char filename.
-const filesystem_path_chars_max = 4096
+const FILESYSTEM_PATH_CHARS_MAX = 4096
 
-// Filesystem_directory_chars_max caps directory strings (path.Dir of a
-// file path). The directory consumes at most filesystem_path_chars_max
+// FILESYSTEM_DIRECTORY_CHARS_MAX caps directory strings (path.Dir of a
+// file path). The directory consumes at most FILESYSTEM_PATH_CHARS_MAX
 // minus the shortest basename `/a.go` (5 chars).
-const filesystem_directory_chars_max = filesystem_path_chars_max - 5
+const FILESYSTEM_DIRECTORY_CHARS_MAX = FILESYSTEM_PATH_CHARS_MAX - 5
 
-// Inferred_field_kind_chars_max caps the strings returned by
+// INFERRED_FIELD_KIND_CHARS_MAX caps the strings returned by
 // check_invariant_assertions_infer_field_kind: "int" (3), "bool" (4),
 // "pointer" (7), or "" (0). Longest entry is "pointer" at 7 chars.
-const inferred_field_kind_chars_max = 7
+const INFERRED_FIELD_KIND_CHARS_MAX = 7
 
-// Field_description_chars_max caps `<name> <type_str>` descriptions:
+// FIELD_DESCRIPTION_CHARS_MAX caps `<name> <type_str>` descriptions:
 // at most one identifier plus a space plus a type expression that itself
 // is bounded by identifier length, yielding 2*identifier + 1.
-const field_description_chars_max = 2*IDENTIFIER_CHARS_MAX + 1
+const FIELD_DESCRIPTION_CHARS_MAX = 2*IDENTIFIER_CHARS_MAX + 1
 
-// Suggested_sig_chars_max caps suggested function-signature strings of the
+// SUGGESTED_SIG_CHARS_MAX caps suggested function-signature strings of the
 // form `<funcname>(*<funcname>_Input) (result <type>)`. The funcname
 // appears twice (raw plus inside `_Input`), plus the wrapping syntax and
 // a result clause; budget is 2*identifier + 6 (`_Input`) + ~16 (result).
-const suggested_sig_chars_max = 2*IDENTIFIER_CHARS_MAX + 22
+const SUGGESTED_SIG_CHARS_MAX = 2*IDENTIFIER_CHARS_MAX + 22
 
-// Comment_text_chars_max caps raw comment text. comment_body strips the
+// COMMENT_TEXT_CHARS_MAX caps raw comment text. comment_body strips the
 // leading `//` and any whitespace, so the text bound is the body budget
 // (4096 chars) plus the 2-char `//` prefix the scanner preserves.
-const comment_text_chars_max = filesystem_path_chars_max + 2
+const COMMENT_TEXT_CHARS_MAX = FILESYSTEM_PATH_CHARS_MAX + 2
 
-// Banned_segment_chars_max caps the longest banned-segment word in the
+// BANNED_SEGMENT_CHARS_MAX caps the longest banned-segment word in the
 // banned_segments_universal list: "utilities" at 9 chars.
-const banned_segment_chars_max = 9
+const BANNED_SEGMENT_CHARS_MAX = 9
 
-const function_lines_max = 70
+// FUNCTION_LINES_MAX is the brace-to-brace line span past which the function-length check fatals.
+const FUNCTION_LINES_MAX = 70
 
 // Git's full SHA-1 width — the maximum a `%H` format will produce. Used
 // as the hard bound for hash-shaped inputs when git is in SHA-1 mode.
-const git_full_hash_chars = 40
+const GIT_FULL_HASH_CHARS = 40
 
 // Git's SHA-256 hash width — git's optional SHA-256 object format. Used
 // as the hard bound for hash-shaped inputs, which must accept either format.
-const git_full_hash_chars_sha_256 = 64
+const GIT_FULL_HASH_CHARS_SHA_256 = 64
 
-const lines_per_file_max = 10000
+// LINES_PER_FILE_MAX is the per-file line budget the fragmentation check wants one file to hold.
+const LINES_PER_FILE_MAX = 10000
 
-// Diagnostics_per_call_max caps the slice length of `diags []Diagnostic`
+// DIAGNOSTICS_PER_CALL_MAX caps the slice length of `diags []Diagnostic`
 // returns. A single check may emit one diagnostic per source line at worst,
-// so the budget tracks lines_per_file_max with headroom for declarations
+// so the budget tracks LINES_PER_FILE_MAX with headroom for declarations
 // that emit multiple diagnostics each.
-const diagnostics_per_call_max = lines_per_file_max * 4
+const DIAGNOSTICS_PER_CALL_MAX = LINES_PER_FILE_MAX * 4
 
-// Parsed_files_per_call_max caps the slice length of `parsed_files
+// PARSED_FILES_PER_CALL_MAX caps the slice length of `parsed_files
 // []parsed_file` and similar package-level slices. A package typically holds
 // dozens of files; the cap leaves ample headroom for the worst-case monorepo
 // flat-directory layout without admitting absurd values.
-const parsed_files_per_call_max = 32768
+const PARSED_FILES_PER_CALL_MAX = 32768
 
-// Ast_nodes_per_call_max caps generic []ast.Expr / []ast.Stmt / []*ast.Ident
+// AST_NODES_PER_CALL_MAX caps generic []ast.Expr / []ast.Stmt / []*ast.Ident
 // slices passed between helpers. Each AST list is bounded by the source file
-// it derives from; lines_per_file_max is a generous upper bound.
-const ast_nodes_per_call_max = lines_per_file_max
+// it derives from; LINES_PER_FILE_MAX is a generous upper bound.
+const AST_NODES_PER_CALL_MAX = LINES_PER_FILE_MAX
 
-// String_slice_per_call_max caps generic []string slices used for path
+// STRING_SLICE_PER_CALL_MAX caps generic []string slices used for path
 // lists, candidate sets, identifier chains, and similar identifier-bag
 // collections.
-const string_slice_per_call_max = lines_per_file_max
+const STRING_SLICE_PER_CALL_MAX = LINES_PER_FILE_MAX
 
-// Coverage_pairs_per_call_max caps invariant-assertion coverage-pair slices.
+// COVERAGE_PAIRS_PER_CALL_MAX caps invariant-assertion coverage-pair slices.
 // One call may produce one pair per (path, kind) tuple — bounded by the
 // number of tracked identifiers in any one function, which is well below
-// IDENTIFIER_CHARS_MAX × credit_kind_chars_max in practice.
-const coverage_pairs_per_call_max = lines_per_file_max
+// IDENTIFIER_CHARS_MAX × CREDIT_KIND_CHARS_MAX in practice.
+const COVERAGE_PAIRS_PER_CALL_MAX = LINES_PER_FILE_MAX
 
 // Caps the three agent-facing docs at 100 lines. These files are loaded into
 // every agent invocation, so each extra line is a per-call tax on context and
 // attention. Skills that outgrow the budget should be split; CLAUDE.md/AGENTS.md
 // that outgrow it usually mean a repo-level instruction belongs in a
 // sub-package's pair instead.
-const agent_documentation_lines_max = 100
+const AGENT_DOCUMENTATION_LINES_MAX = 100
 
 // Visual width cap for markdown lines. The 100-rune limit makes prose readable
 // in narrow editor splits and side-by-side diffs.
-const markdown_line_max = 100
+const MARKDOWN_LINE_MAX = 100
 
-// Exit_code_max is the Hi bound on Main's return code: 0 = clean, 1 =
+// EXIT_CODE_MAX is the Hi bound on Main's return code: 0 = clean, 1 =
 // diagnostics. Code 2 (hard error) is unreachable per upstream Excluding on
 // the stream/read/components error branches.
-const exit_code_max = 1
+const EXIT_CODE_MAX = 1
 
-// Cpu_count_max caps input.CPU_Count to a sane per-process worker budget.
+// CPU_COUNT_MAX caps input.CPU_Count to a sane per-process worker budget.
 // Servers with more than 1024 CPUs are unreachable in this codebase and the
 // linter's fork-join pools would not benefit from going wider.
-const cpu_count_max = 1024
+const CPU_COUNT_MAX = 1024
 
-// NEVER ADD A THIRD TIER. NEVER ADD A ZERO TIER. tier_max is the Hi bound on
+// NEVER ADD A THIRD TIER. NEVER ADD A ZERO TIER. TIER_MAX is the Hi bound on
 // Diagnostic.Tier and stays 2: there are exactly two tiers. Tier 1 always prints
 // and its presence suppresses tier 2 everywhere in scope; tier 2 prints only
 // when no tier 1 fired anywhere in scope. That two-state gate is the whole output
 // path — a third gating state would rot it. The Tier field's zero value is not a
 // tier: never lean on it, never label it "tier 0," and give every new diagnostic
 // an explicit tier 1 or tier 2.
-const tier_max = 2
+const TIER_MAX = 2
 
 // Configuration is the decoded form of the workspace's lint.json, which sits
 // beside the root go.mod. It carries the per-workspace policy that would
@@ -763,10 +810,10 @@ func report_diagnostics(
 	return 0
 }
 
-// Lint_json_bytes_max caps the bounded read of lint.json. A workspace config is
+// LINT_JSON_BYTES_MAX caps the bounded read of lint.json. A workspace config is
 // a handful of lines plus the word-replacements table; the cap only bounds a
 // pathological or accidental huge file so the read never allocates without limit.
-const lint_json_bytes_max = 1 << 20
+const LINT_JSON_BYTES_MAX = 1 << 20
 
 // Reads and decodes lint.json from the root of fsys. The read
 // is bounded — fs.ReadFile is unbounded and banned for the same reason os.ReadFile
@@ -781,8 +828,8 @@ func read_configuration(fsys fs.FS) (configuration *Configuration, err error) {
 			"and word_replacements: %w", open_err)
 	}
 	defer file.Close()
-	buffer := make([]byte, lint_json_bytes_max)
-	n, read_err := io.ReadFull(io.LimitReader(file, lint_json_bytes_max), buffer)
+	buffer := make([]byte, LINT_JSON_BYTES_MAX)
+	n, read_err := io.ReadFull(io.LimitReader(file, LINT_JSON_BYTES_MAX), buffer)
 	// ReadFull returns ErrUnexpectedEOF for a file shorter than the buffer (the
 	// normal case for a small config) and EOF for an empty file; neither is a read
 	// failure. Any other error is a real I/O fault and is fatal.
@@ -1780,16 +1827,16 @@ func check_line_character_count(
 			Position: token.Position{
 				Filename: filename,
 				Line:     line_number,
-				Column:   line_chars_max + 1,
+				Column:   LINE_CHARS_MAX + 1,
 			},
-			Message: fmt.Sprintf("line is %d chars (max %d)", n, line_chars_max),
+			Message: fmt.Sprintf("line is %d chars (max %d)", n, LINE_CHARS_MAX),
 		})
 	}
 	for len(source) > 0 {
 		r, size := utf8.DecodeRune(source)
 		source = source[size:]
 		if r == '\n' {
-			if column > line_chars_max {
+			if column > LINE_CHARS_MAX {
 				emit(column)
 			}
 			line_number++
@@ -1797,12 +1844,12 @@ func check_line_character_count(
 			continue
 		}
 		if r == '\t' {
-			column += tab_width
+			column += TAB_WIDTH
 			continue
 		}
 		column++
 	}
-	if column > line_chars_max {
+	if column > LINE_CHARS_MAX {
 		emit(column)
 	}
 	return diags
@@ -1898,12 +1945,12 @@ func check_function_line_count(
 		start := lbrace_position.Line
 		end := rbrace_position.Line
 		line_count := end - start + 1
-		if line_count > function_lines_max {
+		if line_count > FUNCTION_LINES_MAX {
 			diags = append(diags, Diagnostic{
 				Position: position,
 				Message: fmt.Sprintf(
 					"%s is %d lines (max %d)",
-					label, line_count, function_lines_max),
+					label, line_count, FUNCTION_LINES_MAX),
 			})
 		}
 	}
@@ -2356,7 +2403,7 @@ func Git_Input_Check(input Git_Input) (diags []Diagnostic) {
 // File-fragmentation check. Splitting code across many tiny files makes a
 // package harder to read top-to-bottom and forces readers to chase symbols
 // across the filesystem. The rule: per package, expected_max files =
-// ceil(total_lines / lines_per_file_max). Source files, test files,
+// ceil(total_lines / LINES_PER_FILE_MAX). Source files, test files,
 // specification_test.go, and each distinct build-tag constraint form
 // independent groups (a Linux-only file and a generic file genuinely have
 // to live separately). SLOC is total lines per the user's directive —
@@ -2416,7 +2463,7 @@ func check_file_system_package_split(parsed_files []parsed_file) (diags []Diagno
 	})
 	for _, key := range keys {
 		st := groups[key]
-		files_max := (st.Lines + lines_per_file_max - 1) / lines_per_file_max
+		files_max := (st.Lines + LINES_PER_FILE_MAX - 1) / LINES_PER_FILE_MAX
 		if files_max < 1 {
 			files_max = 1
 		}
@@ -2454,7 +2501,7 @@ func package_group_key_diag(
 			"package %s in %s has %d %s files%s totaling %d lines; "+
 				"want %d (one file per %d lines)",
 			first.File.Name.Name, key.Directory, len(st.Files), label, build_suffix,
-			st.Lines, files_max, lines_per_file_max,
+			st.Lines, files_max, LINES_PER_FILE_MAX,
 		),
 	}
 }
@@ -2649,8 +2696,8 @@ func discover_components(
 				Import_Path:       import_path,
 				Directory_Package: make(map[string]string),
 			})
-			if len(components) > components_max {
-				return fmt.Errorf("more than %d components", components_max)
+			if len(components) > COMPONENTS_MAX {
+				return fmt.Errorf("more than %d components", COMPONENTS_MAX)
 			}
 			return nil
 		})
@@ -2817,7 +2864,7 @@ func check_binary_component_layout(
 			continue
 		}
 		seen[key] = true
-		message := binary_component_layout_message(&binary_component_layout_message_input{
+		MESSAGE := binary_component_layout_message(&binary_component_layout_message_input{
 			Root:      m.Root,
 			Directory: directory,
 		})
@@ -2825,7 +2872,7 @@ func check_binary_component_layout(
 			Position: token.Position{Filename: pf.Path, Line: 1, Column: 1},
 			Name:     "binary-component-layout",
 			Want:     fmt.Sprintf("non-main packages live under %s/internal/", m.Root),
-			Message:  message,
+			Message:  MESSAGE,
 		})
 	}
 	return diags
@@ -2838,7 +2885,7 @@ type binary_component_layout_message_input struct {
 
 func binary_component_layout_message(
 	input *binary_component_layout_message_input,
-) (message string) {
+) (MESSAGE string) {
 	destination := path.Join(input.Root+"/internal", input.Directory)
 	if input.Root == "." {
 		destination = "./" + destination
@@ -3793,13 +3840,13 @@ func check_no_recursion_find_cycles(
 	adj map[string][]call_edge,
 ) (diags []Diagnostic) {
 	const (
-		white = 0
-		gray  = 1
-		black = 2
+		WHITE = 0
+		GRAY  = 1
+		BLACK = 2
 	)
 	color := map[string]int{}
 	for _, start := range callers {
-		if color[start] != white {
+		if color[start] != WHITE {
 			continue
 		}
 		diags = append(diags,
@@ -3815,9 +3862,9 @@ func check_no_recursion_find_cycles_dfs(
 ) (diags []Diagnostic) {
 
 	const (
-		white = 0
-		gray  = 1
-		black = 2
+		WHITE = 0
+		GRAY  = 1
+		BLACK = 2
 	)
 	type dfs_frame struct {
 		Node string
@@ -3825,13 +3872,13 @@ func check_no_recursion_find_cycles_dfs(
 	}
 	path := []string{start}
 	on_path := map[string]int{start: 0}
-	color[start] = gray
+	color[start] = GRAY
 	stack := []dfs_frame{{Node: start}}
 	for len(stack) > 0 {
 		top := &stack[len(stack)-1]
 		edges := adj[top.Node]
 		if top.Iter >= len(edges) {
-			color[top.Node] = black
+			color[top.Node] = BLACK
 			delete(on_path, top.Node)
 			path = path[:len(path)-1]
 			stack = stack[:len(stack)-1]
@@ -3840,12 +3887,12 @@ func check_no_recursion_find_cycles_dfs(
 		e := edges[top.Iter]
 		top.Iter++
 		switch color[e.Callee] {
-		case white:
-			color[e.Callee] = gray
+		case WHITE:
+			color[e.Callee] = GRAY
 			on_path[e.Callee] = len(path)
 			path = append(path, e.Callee)
 			stack = append(stack, dfs_frame{Node: e.Callee})
-		case gray:
+		case GRAY:
 			cycle_start := on_path[e.Callee]
 			cycle_nodes := append([]string{}, path[cycle_start:]...)
 			diags = append(diags,
@@ -3865,7 +3912,7 @@ func check_no_recursion_find_cycles_dfs_diag(
 	}
 }
 
-func check_no_recursion_find_cycles_dfs_diag_message(cycle_nodes []string) (message string) {
+func check_no_recursion_find_cycles_dfs_diag_message(cycle_nodes []string) (MESSAGE string) {
 
 	if len(cycle_nodes) == 1 {
 		return fmt.Sprintf("recursion: %s calls itself", cycle_nodes[0])
@@ -3923,14 +3970,14 @@ func check_main_first(file_set *token.FileSet, file *ast.File, _ []byte) (diags 
 // compile-time interface-satisfaction assertion, not a value discard.
 func check_no_discard(file_set *token.FileSet, file *ast.File, _ []byte) (diags []Diagnostic) {
 
-	const message = "discard: _ = ... hides the value; name it or drop the assignment"
+	const MESSAGE = "discard: _ = ... hides the value; name it or drop the assignment"
 	ast.Inspect(file, func(n ast.Node) (descend bool) {
 		switch x := n.(type) {
 		case *ast.AssignStmt:
 			if check_no_discard_all_blank_exprs(x.Lhs) {
 				diags = append(diags, Diagnostic{
 					Position: file_set.Position(x.Pos()),
-					Message:  message,
+					Message:  MESSAGE,
 				})
 			}
 		case *ast.GenDecl:
@@ -3953,7 +4000,7 @@ func check_no_discard(file_set *token.FileSet, file *ast.File, _ []byte) (diags 
 				}
 				diags = append(diags, Diagnostic{
 					Position: file_set.Position(vs.Pos()),
-					Message:  message,
+					Message:  MESSAGE,
 				})
 			}
 		}
@@ -4921,11 +4968,11 @@ func check_names_vocabulary_at(
 		if candidates == nil {
 			continue
 		}
-		message := check_names_vocabulary_message(&check_names_vocabulary_message_input{
+		MESSAGE := check_names_vocabulary_message(&check_names_vocabulary_message_input{
 			Name: name, Word: lower, Words: words,
 			Word_Index: word_index, Candidates: candidates, Style: style,
 		})
-		diags = append(diags, Diagnostic{Position: position, Message: message})
+		diags = append(diags, Diagnostic{Position: position, Message: MESSAGE})
 	}
 	return diags
 }
@@ -4944,7 +4991,7 @@ type check_names_vocabulary_message_input struct {
 // `rename x -> [a, b, c]`. Each candidate is substituted into the offending
 // word slot so the author sees a drop-in replacement, not just the bare word —
 // e.g. `foo_id` produces `foo_identifier`, not `id -> identifier`.
-func check_names_vocabulary_message(input *check_names_vocabulary_message_input) (message string) {
+func check_names_vocabulary_message(input *check_names_vocabulary_message_input) (MESSAGE string) {
 
 	if len(input.Candidates) == 0 {
 		return fmt.Sprintf(
@@ -5381,9 +5428,9 @@ func check_no_package_vars(
 	file_set *token.FileSet, file *ast.File, instrumentation []string,
 ) (diags []Diagnostic) {
 
-	const base_message = "package-level var is banned" +
+	const BASE_MESSAGE = "package-level var is banned" +
 		" (except for regexp.MustCompile and errors.New)"
-	const switch_hint = ", or use a switch for lookup tables"
+	const SWITCH_HINT = ", or use a switch for lookup tables"
 	for _, declaration := range file.Decls {
 		generic_declaration, is_generic_declaration := declaration.(*ast.GenDecl)
 		if !is_generic_declaration {
@@ -5408,13 +5455,13 @@ func check_no_package_vars(
 			if check_no_package_vars_all_allowed(vs) {
 				continue
 			}
-			message := base_message
+			MESSAGE := BASE_MESSAGE
 			if check_no_package_vars_is_map_or_slice_literal(vs) {
-				message += switch_hint
+				MESSAGE += SWITCH_HINT
 			}
 			diags = append(diags, Diagnostic{
 				Position: file_set.Position(vs.Pos()),
-				Message:  message,
+				Message:  MESSAGE,
 			})
 		}
 	}
@@ -5551,7 +5598,7 @@ func check_unnecessary_method(
 		if match {
 			continue
 		}
-		message := fmt.Sprintf(
+		MESSAGE := fmt.Sprintf(
 			"method %s does not satisfy any stdlib interface; "+
 				"convert to a free function with the receiver as the first "+
 				"parameter",
@@ -5559,7 +5606,7 @@ func check_unnecessary_method(
 		)
 		diags = append(diags, Diagnostic{
 			Position: file_set.Position(function_declaration.Name.Pos()),
-			Message:  message,
+			Message:  MESSAGE,
 		})
 	}
 	return diags
@@ -6826,7 +6873,7 @@ func check_file_system_stream(
 ) (diags []Diagnostic, go_paths []string, err error) {
 	// Only the symlinks checker needs configuration — the tracked sets and the OS
 	// Readlink seam; the rest are stateless visitors.
-	checks := [stream_checker_count]check_function_stream{
+	checks := [STREAM_CHECKER_COUNT]check_function_stream{
 		{Name: "conflict-markers", Visit: check_stream_conflict_markers},
 		{Name: "github-actions-uses", Visit: check_stream_github_actions_uses},
 		{Name: "banned-scripts", Visit: check_stream_banned_scripts},
@@ -6872,7 +6919,7 @@ func check_file_system_stream(
 func check_file_system_stream_walk(
 	p string, d fs.DirEntry, walk_err error,
 	input *check_file_system_stream_input,
-	checks [stream_checker_count]check_function_stream,
+	checks [STREAM_CHECKER_COUNT]check_function_stream,
 	per_check [][]Diagnostic, go_paths *[]string,
 ) (output error) {
 	if walk_err != nil {
@@ -7125,24 +7172,24 @@ func check_stream_agent_documentation_lines_max(
 			lines_count++
 		}
 	}
-	if lines_count > agent_documentation_lines_max {
-		message := fmt.Sprintf(
+	if lines_count > AGENT_DOCUMENTATION_LINES_MAX {
+		MESSAGE := fmt.Sprintf(
 			"%s has %d lines; split or trim it under %d",
-			information.Name(), lines_count, agent_documentation_lines_max,
+			information.Name(), lines_count, AGENT_DOCUMENTATION_LINES_MAX,
 		)
 		// A skill that outgrows the budget should shed prose, not just shrink:
 		// the cure is to move steps into a script the agent runs, so SKILL.md
 		// earns its own directive rather than the generic split-or-trim line.
 		if information.Name() == "SKILL.md" {
-			message = fmt.Sprintf(
+			MESSAGE = fmt.Sprintf(
 				"SKILL.md is capped at %d lines. "+
 					"Prefer procedural scripting over prose.",
-				agent_documentation_lines_max,
+				AGENT_DOCUMENTATION_LINES_MAX,
 			)
 		}
 		*output = append(*output, Diagnostic{
 			Position: token.Position{Filename: p, Line: 1, Column: 1},
-			Message:  message,
+			Message:  MESSAGE,
 		})
 	}
 }
@@ -7480,12 +7527,12 @@ func check_stream_markdown_line_max(
 			}
 		}
 		columns := display_width(string(line))
-		if columns > markdown_line_max {
+		if columns > MARKDOWN_LINE_MAX {
 			*output = append(*output, Diagnostic{
 				Position: token.Position{Filename: p, Line: line_number, Column: 1},
 				Message: fmt.Sprintf(
 					"markdown line is %d columns; visual limit is %d",
-					columns, markdown_line_max),
+					columns, MARKDOWN_LINE_MAX),
 			})
 		}
 	}
@@ -7546,7 +7593,7 @@ func check_file_system_stream_checks_stream_agents_claude_pair_checker() (c chec
 
 	pairs := map[string]*agents_claude_pair{}
 	return check_function_stream{
-		Name: agents_pair_check_name,
+		Name: AGENTS_PAIR_CHECK_NAME,
 		Visit: func(
 			p string,
 			info fs.FileInfo,
@@ -7670,8 +7717,8 @@ func check_no_impure_stdlib_per_file(
 	file_set *token.FileSet, file *ast.File,
 ) (diags []Diagnostic) {
 
-	const import_message = "impure stdlib import %q: see lint/README.md for resolutions"
-	const call_message = "impure stdlib call %s.%s: see lint/README.md for resolutions"
+	const IMPORT_MESSAGE = "impure stdlib import %q: see lint/README.md for resolutions"
+	const CALL_MESSAGE = "impure stdlib call %s.%s: see lint/README.md for resolutions"
 	for _, implementation := range file.Imports {
 		path := strings.Trim(implementation.Path.Value, `"`)
 		if !is_impure_hard_import(path) {
@@ -7679,7 +7726,7 @@ func check_no_impure_stdlib_per_file(
 		}
 		diags = append(diags, Diagnostic{
 			Position: file_set.Position(implementation.Pos()),
-			Message:  fmt.Sprintf(import_message, path),
+			Message:  fmt.Sprintf(IMPORT_MESSAGE, path),
 		})
 	}
 	local_to_path := make(map[string]string, len(file.Imports))
@@ -7720,7 +7767,7 @@ func check_no_impure_stdlib_per_file(
 		}
 		diags = append(diags, Diagnostic{
 			Position: file_set.Position(selection.Pos()),
-			Message:  fmt.Sprintf(call_message, path, selection.Sel.Name),
+			Message:  fmt.Sprintf(CALL_MESSAGE, path, selection.Sel.Name),
 		})
 		return true
 	})
@@ -7809,8 +7856,8 @@ func check_transitive_purity_per_file(
 	instrumentation []string,
 ) (diags []Diagnostic) {
 
-	const import_message = "impure dependency %q: a pure package imports only pure packages"
-	const call_message = "impure transitive call %s.%s: a pure package calls only pure APIs"
+	const IMPORT_MESSAGE = "impure dependency %q: a pure package imports only pure packages"
+	const CALL_MESSAGE = "impure transitive call %s.%s: a pure package calls only pure APIs"
 	local_to_path := make(map[string]string, len(file.Imports))
 	for _, implementation := range file.Imports {
 		import_path := strings.Trim(implementation.Path.Value, `"`)
@@ -7821,7 +7868,7 @@ func check_transitive_purity_per_file(
 					Position: file_set.Position(implementation.Pos()),
 					Name:     "transitive-purity",
 					Want:     "import only pure first-party packages",
-					Message:  fmt.Sprintf(import_message, import_path),
+					Message:  fmt.Sprintf(IMPORT_MESSAGE, import_path),
 				})
 			}
 		}
@@ -7862,7 +7909,7 @@ func check_transitive_purity_per_file(
 			Position: file_set.Position(selection.Pos()),
 			Name:     "transitive-purity",
 			Want:     "call only pure stdlib APIs",
-			Message:  fmt.Sprintf(call_message, import_path, selection.Sel.Name),
+			Message:  fmt.Sprintf(CALL_MESSAGE, import_path, selection.Sel.Name),
 		})
 		return true
 	})
@@ -7927,7 +7974,7 @@ func is_transitive_stdlib_ident(input *is_transitive_stdlib_ident_input) (yes bo
 // not caught here — choosing a different syntactic form *is* the assertion
 // that the loop is unbounded on purpose.
 func check_no_bare_for(file_set *token.FileSet, file *ast.File, _ []byte) (diags []Diagnostic) {
-	const message = "bare `for {}` is banned" +
+	const MESSAGE = "bare `for {}` is banned" +
 		" if the loop is intentionally unbounded"
 	ast.Inspect(file, func(n ast.Node) (descend bool) {
 		f, is_for := n.(*ast.ForStmt)
@@ -7945,7 +7992,7 @@ func check_no_bare_for(file_set *token.FileSet, file *ast.File, _ []byte) (diags
 		}
 		diags = append(diags, Diagnostic{
 			Position: file_set.Position(f.Pos()),
-			Message:  message,
+			Message:  MESSAGE,
 		})
 		return true
 	})
@@ -9038,12 +9085,12 @@ func sim_script_seed_type(expression ast.Expr) (seed bool) {
 }
 
 // One sim-scripting diagnostic anchored at node.
-func sim_script_diagnostic(pf parsed_file, node ast.Node, message string) (diag Diagnostic) {
+func sim_script_diagnostic(pf parsed_file, node ast.Node, MESSAGE string) (diag Diagnostic) {
 	return Diagnostic{
 		Position: pf.File_Set.Position(node.Pos()),
 		Name:     "sim-script",
 		Want:     "drive the sim only by its seed",
-		Message:  message,
+		Message:  MESSAGE,
 		Tier:     1,
 	}
 }

@@ -20,13 +20,13 @@ import (
 )
 
 // Caps the go.mod read; real module files are far smaller.
-const module_file_bytes_max = 1048576
+const MODULE_FILE_BYTES_MAX = 1048576
 
 // Caps a single directory read, bounding memory against a pathological directory.
-const directory_entries_max = 65536
+const DIRECTORY_ENTRIES_MAX = 65536
 
 // Caps how far up the tree the workspace search walks.
-const workspace_search_depth_max = 64
+const WORKSPACE_SEARCH_DEPTH_MAX = 64
 
 func main() {
 	os.Exit(callgraph.Main(&callgraph.Main_Input{
@@ -68,7 +68,7 @@ func find_workspace() (root string, module string) {
 	if getwd_err != nil {
 		return ".", ""
 	}
-	for range workspace_search_depth_max {
+	for range WORKSPACE_SEARCH_DEPTH_MAX {
 		found := module_path(directory)
 		if found != "" {
 			return directory, found
@@ -84,7 +84,7 @@ func find_workspace() (root string, module string) {
 
 // Reads the module path from the workspace go.mod.
 func module_path(root string) (path string) {
-	content := read_file_bounded(filepath.Join(root, "go.mod"), module_file_bytes_max)
+	content := read_file_bounded(filepath.Join(root, "go.mod"), MODULE_FILE_BYTES_MAX)
 	for _, line := range strings.Split(string(content), "\n") {
 		if strings.HasPrefix(line, "module ") {
 			return strings.TrimSpace(strings.TrimPrefix(line, "module "))
@@ -270,7 +270,7 @@ func skip_directory(name string) (skip bool) {
 
 // Parses every non-test Go file in a directory, dropping any that fail to parse.
 func parse_directory(file_set *token.FileSet, directory string) (files []*ast.File) {
-	for _, entry := range read_directory_bounded(directory, directory_entries_max) {
+	for _, entry := range read_directory_bounded(directory, DIRECTORY_ENTRIES_MAX) {
 		if entry.IsDir() {
 			continue
 		}

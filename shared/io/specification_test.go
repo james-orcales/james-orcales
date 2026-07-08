@@ -45,7 +45,7 @@ func Test_Sim_Read(t *testing.T) {
 		}
 		wrote = true
 	}, writer, []byte("hello"), 0)
-	driver.Run_Until(func() (finished bool) { return wrote }, sim_deadline)
+	driver.Run_Until(func() (finished bool) { return wrote }, SIM_DEADLINE)
 
 	reader, open_err := loop.Open("file")
 	if open_err != nil {
@@ -57,7 +57,7 @@ func Test_Sim_Read(t *testing.T) {
 	loop.Read(&read_completion, func(_ *io.Completion, bytes int, _ error) {
 		count = bytes
 	}, reader, buffer, 0)
-	driver.Run_Until(func() (finished bool) { return count >= 0 }, sim_deadline)
+	driver.Run_Until(func() (finished bool) { return count >= 0 }, SIM_DEADLINE)
 
 	if count != 5 {
 		t.Fatalf("read reported %d bytes, want 5", count)
@@ -191,14 +191,14 @@ func Test_Sim_Run_Until(t *testing.T) {
 		done = true
 	}, io.File(0), make([]byte, 8), 0)
 
-	if !driver.Run_Until(func() (finished bool) { return done }, sim_deadline) {
+	if !driver.Run_Until(func() (finished bool) { return done }, SIM_DEADLINE) {
 		t.Fatal("Run_Until reported the read did not complete")
 	}
 	if !done {
 		t.Fatal("Run_Until returned before the read completed")
 	}
 
-	if driver.Run_Until(func() (finished bool) { return false }, sim_deadline) {
+	if driver.Run_Until(func() (finished bool) { return false }, SIM_DEADLINE) {
 		t.Fatal("Run_Until reported completion for a predicate that never trips")
 	}
 }
@@ -476,7 +476,7 @@ func Test_Sim_Status(t *testing.T) {
 	loop.Write(&write, func(_ *io.Completion, _ int, _ error) {
 		written = true
 	}, file, content, 0)
-	driver.Run_Until(func() (finished bool) { return written }, sim_deadline)
+	driver.Run_Until(func() (finished bool) { return written }, SIM_DEADLINE)
 	directory, _ := loop.Status("/dir")
 	if !directory.Exists {
 		t.Fatalf("dir status = %+v, want exists", directory)
@@ -547,4 +547,4 @@ func sim_loop(seed uint64) (loop io.IO, driver io.Driver, clock time.Clock) {
 // The Run_Until cap for the sim tests, in virtual time: ample for ops that finish in a
 // handful of grains, while a never-satisfied predicate fails after this many cheap grains
 // instead of spinning the sim forever.
-const sim_deadline = time.MICROSECOND
+const SIM_DEADLINE = time.MICROSECOND

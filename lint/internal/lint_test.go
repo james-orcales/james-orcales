@@ -16,74 +16,74 @@ import (
 // gofmt-clean. Required because check_gofmt runs as part of the tier-1
 // pipeline against every test source. TestGofmt builds MapFS inline so it
 // can submit deliberately un-formatted sources.
-const doctrine_shared_library_module_path = "github.com/james-orcales/" +
+const DOCTRINE_SHARED_LIBRARY_MODULE_PATH = "github.com/james-orcales/" +
 	"james-orcales/shared"
-const doctrine_shared_library_go_module = "module " +
-	doctrine_shared_library_module_path + "\n"
-const doctrine_binary_go_module = "module example.com/mybinary\n"
+const DOCTRINE_SHARED_LIBRARY_GO_MODULE = "module " +
+	DOCTRINE_SHARED_LIBRARY_MODULE_PATH + "\n"
+const DOCTRINE_BINARY_GO_MODULE = "module example.com/mybinary\n"
 
 // The repo is one module now, so every fixture needs a single root go.mod or the
 // single-module check fires. lint_main injects this when a fixture omits one. Its
 // path is the repo's, so a top-level component dir resolves to this path joined
 // with the dir — e.g. a "shared" dir is github.com/james-orcales/james-orcales/shared.
-const doctrine_root_go_module = "module github.com/james-orcales/james-orcales\n"
+const DOCTRINE_ROOT_GO_MODULE = "module github.com/james-orcales/james-orcales\n"
 
 // The shared module is identified by its workspace-root-relative directory, not
 // its import path. Doctrine-table fixtures put the shared library's go.mod at
 // shared/go.mod, so its Root — and the value Shared_Component must carry —
 // is "shared".
-const doctrine_shared_component_directory = "shared"
+const DOCTRINE_SHARED_COMPONENT_DIRECTORY = "shared"
 
 // Snapshot fixtures instead put the shared library's go.mod at the MapFS root,
 // so there its Root is ".". Binary modules in those fixtures live in named
 // subdirectories, so "." selects only the shared library.
-const doctrine_shared_component_at_root = "."
+const DOCTRINE_SHARED_COMPONENT_AT_ROOT = "."
 
 // Satisfies the rule that every binary module declares exactly one free func
 // Main in its top-level internal/ package. Injected into binary-module fixtures
 // that exist to exercise other rules so the entry-point check doesn't bleed an
 // extra diagnostic into them.
-const doctrine_binary_internal_main = "// Package entry is a fixture.\n" +
+const DOCTRINE_BINARY_INTERNAL_MAIN = "// Package entry is a fixture.\n" +
 	"package entry\n\n// Main is a fixture entry point.\nfunc Main() { return }\n"
 
-const fixture_invariant_import_path = "github.com/james-orcales/james-orcales/" +
+const FIXTURE_INVARIANT_IMPORT_PATH = "github.com/james-orcales/james-orcales/" +
 	"shared/invariant/v2/invariant_default"
-const fixture_invariant_import = "import invariant \"" + fixture_invariant_import_path + "\"\n"
+const FIXTURE_INVARIANT_IMPORT = "import invariant \"" + FIXTURE_INVARIANT_IMPORT_PATH + "\"\n"
 
 // A package whose SPECIFICATION.md, source, and specification_test.go all
 // satisfy the doctrine. Variant tests swap one artifact for a violating one so
 // each assertion isolates a single rule.
-const specification_clean_source = "// Package greet is a fixture.\n" +
+const SPECIFICATION_CLEAN_SOURCE = "// Package greet is a fixture.\n" +
 	"package greet\n\n" +
 	"// Greet greets.\nfunc Greet() { return }\n"
-const specification_clean_test = "package greet_test\n\n" +
+const SPECIFICATION_CLEAN_TEST = "package greet_test\n\n" +
 	"import \"testing\"\n\n" +
 	"// Test_Greeting is a fixture.\n" +
 	"func Test_Greeting(t *testing.T) { _ = t }\n"
-const specification_clean_md = "\n# Greeting\n\nIt greets the caller.\n"
+const SPECIFICATION_CLEAN_MD = "\n# Greeting\n\nIt greets the caller.\n"
 
 // The baseline SPECIFICATION.md + test pair a spec snapshot mutates: one clean
 // leaf and its matching test, so a single mutation isolates one spec diagnostic.
-const snapshot_specification_markdown = "\n# Sole Rule\n\nThe sole rule.\n"
-const snapshot_specification_test = "package fixture_test\n\nimport \"testing\"\n\n" +
+const SNAPSHOT_SPECIFICATION_MARKDOWN = "\n# Sole Rule\n\nThe sole rule.\n"
+const SNAPSHOT_SPECIFICATION_TEST = "package fixture_test\n\nimport \"testing\"\n\n" +
 	"// Test_Sole_Rule checks the sole rule.\n" +
 	"func Test_Sole_Rule(t *testing.T) {\n\tt.Parallel()\n}\n"
 
 // Fixture_const_hi declares a file-scope upper bound used by Distinct_Boundary
 // Hi positions in test fixtures so the new assertion-bound-named-constant
 // rule is satisfied. Append to the import block, before any non-import decl.
-const fixture_constant_hi = "\nconst FIXTURE_HI = 100\n"
+const FIXTURE_CONSTANT_HI = "\nconst FIXTURE_HI = 100\n"
 
-// Fixture_declaration_callee defines a parameterless g() returning a non-nil
+// FIXTURE_DECLARATION_CALLEE defines a parameterless g() returning a non-nil
 // pointer, used by declaration-coverage fixtures so the test cases focus on
 // the call-site shape rather than re-deriving a valid callee each time.
-const fixture_declaration_callee = "func g() (out *int) {\n" +
+const FIXTURE_DECLARATION_CALLEE = "func g() (out *int) {\n" +
 	"\treturn nil\n" +
 	"}\n\n"
 
-// Fixture_declaration_callee_pair is the two-return analogue of g(), used by
+// FIXTURE_DECLARATION_CALLEE_PAIR is the two-return analogue of g(), used by
 // fixtures exercising multi-LHS declarations.
-const fixture_declaration_callee_pair = "func g() (a *int, b *int) {\n" +
+const FIXTURE_DECLARATION_CALLEE_PAIR = "func g() (a *int, b *int) {\n" +
 	"\tdefer func() {\n" +
 	"a != nil, \"a is non-nil\"),\n" +
 	"b != nil, \"b is non-nil\"),\n" +
@@ -92,9 +92,9 @@ const fixture_declaration_callee_pair = "func g() (a *int, b *int) {\n" +
 	"\treturn nil, nil\n" +
 	"}\n\n"
 
-// Fixture_clean_go is the canonical valid-Go fixture used by tests that
+// FIXTURE_CLEAN_GO is the canonical valid-Go fixture used by tests that
 // need an accompanying .go file but don't care about its specific shape.
-const fixture_clean_go = "package main\n\n" +
+const FIXTURE_CLEAN_GO = "package main\n\n" +
 	"import invariant \"github.com/james-orcales/james-orcales/" +
 	"shared/invariant/v2\"\n\n" +
 	"const FIXTURE_HI = 100\n\n" +
@@ -113,11 +113,11 @@ const fixture_clean_go = "package main\n\n" +
 
 // TestMain wires Recorder_Run_Test_Main: registers source files for coverage,
 // runs the test suite, then reports any never-fired assertion sites.
-const prelude_single = "package fixture\n\n" +
-	fixture_invariant_import + fixture_declaration_callee
-const prelude_pair = "package fixture\n\n" +
-	fixture_invariant_import + fixture_declaration_callee_pair
-const prelude_with_h = prelude_single +
+const PRELUDE_SINGLE = "package fixture\n\n" +
+	FIXTURE_INVARIANT_IMPORT + FIXTURE_DECLARATION_CALLEE
+const PRELUDE_PAIR = "package fixture\n\n" +
+	FIXTURE_INVARIANT_IMPORT + FIXTURE_DECLARATION_CALLEE_PAIR
+const PRELUDE_WITH_H = PRELUDE_SINGLE +
 	"func h(p *int) (out int) {\n" +
 	"\tdefer func() {\n" +
 	"\t\tinvariant.Cross_Product(\n" +
@@ -447,7 +447,7 @@ func Test_No_Discard_Part2(t *testing.T) {
 		{Name: "mixed lhs short decl only",
 			Files: map[string]string{"test.go": `package main
 
-` + fixture_invariant_import + `
+` + FIXTURE_INVARIANT_IMPORT + `
 // FIXTURE_HI is a fixture.
 const FIXTURE_HI = 100
 
@@ -804,7 +804,7 @@ func Test_No_Naked_Return_Part2(t *testing.T) {
 		{Name: "explicit return allowed",
 			Files: map[string]string{"test.go": `package main
 
-` + fixture_invariant_import + `
+` + FIXTURE_INVARIANT_IMPORT + `
 // FIXTURE_HI is a fixture.
 const FIXTURE_HI = 100
 
@@ -818,7 +818,7 @@ func f() (x int) {
 		{Name: "void closure inside value-returning func allowed",
 			Files: map[string]string{"test.go": `package main
 
-` + fixture_invariant_import + `
+` + FIXTURE_INVARIANT_IMPORT + `
 // FIXTURE_HI is a fixture.
 const FIXTURE_HI = 100
 
@@ -1366,7 +1366,7 @@ func Test_Keyed_Struct_Init_Allowed(t *testing.T) {
 			Files: map[string]string{
 				"test.go": `package main
 
-` + fixture_invariant_import + `
+` + FIXTURE_INVARIANT_IMPORT + `
 // FIXTURE_HI is a fixture.
 const FIXTURE_HI = 100
 
@@ -1392,7 +1392,7 @@ func make_v() (result Foo) {
 			Files: map[string]string{
 				"test.go": `package main
 
-` + fixture_invariant_import + `
+` + FIXTURE_INVARIANT_IMPORT + `
 // FIXTURE_HI is a fixture.
 const FIXTURE_HI = 100
 
@@ -1422,7 +1422,7 @@ func Test_Keyed_Struct_Init_Allowed_Part2(t *testing.T) {
 			Files: map[string]string{
 				"test.go": `package main
 
-` + fixture_invariant_import + `
+` + FIXTURE_INVARIANT_IMPORT + `
 // FIXTURE_HI is a fixture.
 const FIXTURE_HI = 100
 
@@ -1640,7 +1640,7 @@ func lint_main(t *testing.T, input *lint.Main_Input) (code int) {
 			fsys["lint.json"] = &fstest.MapFile{Data: test_lint_json(t, "", nil)}
 		}
 		if _, present := fsys["go.mod"]; !present {
-			fsys["go.mod"] = &fstest.MapFile{Data: []byte(doctrine_root_go_module)}
+			fsys["go.mod"] = &fstest.MapFile{Data: []byte(DOCTRINE_ROOT_GO_MODULE)}
 		}
 	}
 	return lint.Main(input)
@@ -1796,10 +1796,10 @@ func lint_output_minus(
 ) (code int, output string) {
 	t.Helper()
 	if _, present := fsys["go.mod"]; !present {
-		fsys["go.mod"] = &fstest.MapFile{Data: []byte(doctrine_root_go_module)}
+		fsys["go.mod"] = &fstest.MapFile{Data: []byte(DOCTRINE_ROOT_GO_MODULE)}
 	}
 	all, err := lint.Check_File_System(&lint.Check_File_System_Input{
-		Fsys: fsys, Shared_Component: doctrine_shared_component_directory,
+		Fsys: fsys, Shared_Component: DOCTRINE_SHARED_COMPONENT_DIRECTORY,
 		// The doctrine table targets other rules; the invariant rules (which fire
 		// on every typed field/param/return) and the deterministic tier (which now
 		// binds every pure package) are exercised by their own tests, so disable
@@ -2040,7 +2040,7 @@ func Test_Banned_Declaration_Sites_Builtin_Exempt(t *testing.T) {
 			Files: map[string]string{
 				"test.go": `package main
 
-` + fixture_invariant_import + `
+` + FIXTURE_INVARIANT_IMPORT + `
 // FIXTURE_HI is a fixture.
 const FIXTURE_HI = 100
 
@@ -2070,7 +2070,7 @@ func Test_Banned_Declaration_Sites_Builtin_Exempt_Part2(t *testing.T) {
 			Files: map[string]string{
 				"test.go": `package main
 
-` + fixture_invariant_import + `
+` + FIXTURE_INVARIANT_IMPORT + `
 // FIXTURE_HI is a fixture.
 const FIXTURE_HI = 100
 
@@ -2101,7 +2101,7 @@ func Test_Banned_Declaration_Sites_Local_Vars_Clean(t *testing.T) {
 			Files: map[string]string{
 				"test.go": `package main
 
-` + fixture_invariant_import + `
+` + FIXTURE_INVARIANT_IMPORT + `
 // FIXTURE_HI is a fixture.
 const FIXTURE_HI = 100
 
@@ -2178,7 +2178,7 @@ func Test_Banned_Declaration_Sites_Signatures_Part2(t *testing.T) {
 			Files: map[string]string{
 				"test.go": `package main
 
-` + fixture_invariant_import + `
+` + FIXTURE_INVARIANT_IMPORT + `
 // FIXTURE_HI is a fixture.
 const FIXTURE_HI = 100
 
@@ -2227,7 +2227,7 @@ func F(n int) (result int) {
 			Files: map[string]string{
 				"test.go": `package main
 
-` + fixture_invariant_import + `
+` + FIXTURE_INVARIANT_IMPORT + `
 // FIXTURE_HI is a fixture.
 const FIXTURE_HI = 100
 
@@ -2260,7 +2260,7 @@ func Test_Naming_For_Loop_Part2(t *testing.T) {
 			Files: map[string]string{
 				"test.go": `package main
 
-` + fixture_invariant_import + `
+` + FIXTURE_INVARIANT_IMPORT + `
 // FIXTURE_HI is a fixture.
 const FIXTURE_HI = 100
 
@@ -2348,7 +2348,7 @@ func Test_Naming_Make_Part2(t *testing.T) {
 			Files: map[string]string{
 				"test.go": `package main
 
-` + fixture_invariant_import + `
+` + FIXTURE_INVARIANT_IMPORT + `
 // FIXTURE_HI is a fixture.
 const FIXTURE_HI = 100
 
@@ -2479,7 +2479,7 @@ func Test_Naming_Element_Count_Result_Part2(t *testing.T) {
 			Files: map[string]string{
 				"test.go": `package main
 
-` + fixture_invariant_import + `
+` + FIXTURE_INVARIANT_IMPORT + `
 // FIXTURE_HI is a fixture.
 const FIXTURE_HI = 100
 
@@ -2510,7 +2510,7 @@ func Test_Naming_Element_Count_Result_Part3(t *testing.T) {
 			Files: map[string]string{
 				"test.go": `package main
 
-` + fixture_invariant_import + `
+` + FIXTURE_INVARIANT_IMPORT + `
 // FIXTURE_HI is a fixture.
 const FIXTURE_HI = 100
 
@@ -2703,7 +2703,7 @@ func Test_Naming_Arithmetic_Clean(t *testing.T) {
 			Files: map[string]string{
 				"test.go": `package main
 
-` + fixture_invariant_import + `
+` + FIXTURE_INVARIANT_IMPORT + `
 // FIXTURE_HI is a fixture.
 const FIXTURE_HI = 100
 
@@ -2725,7 +2725,7 @@ func F() (result int) {
 			Files: map[string]string{
 				"test.go": `package main
 
-` + fixture_invariant_import + `
+` + FIXTURE_INVARIANT_IMPORT + `
 // FIXTURE_HI is a fixture.
 const FIXTURE_HI = 100
 
@@ -2758,7 +2758,7 @@ func Test_Naming_Arithmetic_Clean_Part2(t *testing.T) {
 			Files: map[string]string{
 				"test.go": `package main
 
-` + fixture_invariant_import + `
+` + FIXTURE_INVARIANT_IMPORT + `
 // FIXTURE_HI is a fixture.
 const FIXTURE_HI = 100
 
@@ -2784,7 +2784,7 @@ func Test_Naming_Arithmetic_Size_Plus_Offset(t *testing.T) {
 	t.Parallel()
 	source := `package main
 
-` + fixture_invariant_import + `
+` + FIXTURE_INVARIANT_IMPORT + `
 // FIXTURE_HI is a fixture.
 const FIXTURE_HI = 100
 
@@ -2960,7 +2960,7 @@ func Test_Naming_Abbreviations_Exempt_Part2(t *testing.T) {
 			Files: map[string]string{
 				"test.go": `package main
 
-` + fixture_invariant_import + `
+` + FIXTURE_INVARIANT_IMPORT + `
 // FIXTURE_HI is a fixture.
 const FIXTURE_HI = 100
 
@@ -2993,7 +2993,7 @@ func Test_Naming_Abbreviations_Exempt_Part3(t *testing.T) {
 			Files: map[string]string{
 				"test.go": `package main
 
-` + fixture_invariant_import + `
+` + FIXTURE_INVARIANT_IMPORT + `
 // FIXTURE_HI is a fixture.
 const FIXTURE_HI = 100
 
@@ -3243,7 +3243,7 @@ func Test_Naming_Participles_Exempt(t *testing.T) {
 			Files: map[string]string{
 				"test.go": `package main
 
-` + fixture_invariant_import + `
+` + FIXTURE_INVARIANT_IMPORT + `
 // FIXTURE_HI is a fixture.
 const FIXTURE_HI = 100
 
@@ -3263,7 +3263,7 @@ func (c Color) String() (result string) {
 			Files: map[string]string{
 				"test.go": `package main
 
-` + fixture_invariant_import + `
+` + FIXTURE_INVARIANT_IMPORT + `
 // FIXTURE_HI is a fixture.
 const FIXTURE_HI = 100
 
@@ -3421,7 +3421,7 @@ func Test_Package_Split_Threshold(t *testing.T) {
 }
 
 // Test_Package_Split_Threshold_Part2 covers the undersized direction: a
-// single file whose line count exceeds lines_per_file_max must be split.
+// single file whose line count exceeds LINES_PER_FILE_MAX must be split.
 // gofmt_must strips trailing blank lines, so this test bypasses run_diag_table
 // and feeds raw bytes to lint.Main directly.
 func Test_Package_Split_Threshold_Part2(t *testing.T) {
@@ -3600,7 +3600,7 @@ func F(a, b int) (result int) { return a + b }
 			Files: map[string]string{
 				"test.go": `package main
 
-` + fixture_invariant_import + `
+` + FIXTURE_INVARIANT_IMPORT + `
 // FIXTURE_HI is a fixture.
 const FIXTURE_HI = 100
 
@@ -3671,7 +3671,7 @@ func Test_Input_Struct_Snake_Case(t *testing.T) {
 			Files: map[string]string{
 				"test.go": `package main
 
-` + fixture_invariant_import + `
+` + FIXTURE_INVARIANT_IMPORT + `
 // FIXTURE_HI is a fixture.
 const FIXTURE_HI = 100
 
@@ -3709,7 +3709,7 @@ func Test_Input_Struct_Skip_Shapes(t *testing.T) {
 			Files: map[string]string{
 				"test.go": `package main
 
-` + fixture_invariant_import + `
+` + FIXTURE_INVARIANT_IMPORT + `
 // FIXTURE_HI is a fixture.
 const FIXTURE_HI = 100
 
@@ -3739,7 +3739,7 @@ func Test_Input_Struct_Skip_Shapes_Part2(t *testing.T) {
 			Files: map[string]string{
 				"test.go": `package main
 
-` + fixture_invariant_import + `
+` + FIXTURE_INVARIANT_IMPORT + `
 // FIXTURE_HI is a fixture.
 const FIXTURE_HI = 100
 
@@ -3769,7 +3769,7 @@ func Test_Input_Struct_Skip_Shapes_Part3(t *testing.T) {
 			Files: map[string]string{
 				"test.go": `package main
 
-` + fixture_invariant_import + `
+` + FIXTURE_INVARIANT_IMPORT + `
 // FIXTURE_HI is a fixture.
 const FIXTURE_HI = 100
 
@@ -3802,7 +3802,7 @@ func Test_Input_Struct_Declaration_Location(t *testing.T) {
 			Files: map[string]string{
 				"test.go": `package main
 
-` + fixture_invariant_import + `
+` + FIXTURE_INVARIANT_IMPORT + `
 // FIXTURE_HI is a fixture.
 const FIXTURE_HI = 100
 
@@ -3841,7 +3841,7 @@ func Test_Input_Struct_Declaration_Location_Part2(t *testing.T) {
 			Files: map[string]string{
 				"test.go": `package main
 
-` + fixture_invariant_import + `
+` + FIXTURE_INVARIANT_IMPORT + `
 // FIXTURE_HI is a fixture.
 const FIXTURE_HI = 100
 
@@ -3886,7 +3886,7 @@ func Test_Input_Struct_Declaration_Location_Skip(t *testing.T) {
 			Files: map[string]string{
 				"test.go": `package main
 
-` + fixture_invariant_import + `
+` + FIXTURE_INVARIANT_IMPORT + `
 type fixture_thing struct {
 	// A is a fixture.
 	A int
@@ -3975,7 +3975,7 @@ func Test_No_Interfaces(t *testing.T) {
 			Files: map[string]string{
 				"test.go": `package main
 
-` + fixture_invariant_import + `
+` + FIXTURE_INVARIANT_IMPORT + `
 // FIXTURE_HI is a fixture.
 const FIXTURE_HI = 100
 
@@ -3998,7 +3998,7 @@ type Iface interface {
 			Files: map[string]string{
 				"test.go": `package main
 
-` + fixture_invariant_import + `
+` + FIXTURE_INVARIANT_IMPORT + `
 // FIXTURE_HI is a fixture.
 const FIXTURE_HI = 100
 
@@ -4058,7 +4058,7 @@ func Test_No_Interfaces_Allowed(t *testing.T) {
 			Files: map[string]string{
 				"test.go": `package main
 
-` + fixture_invariant_import + `
+` + FIXTURE_INVARIANT_IMPORT + `
 // FIXTURE_HI is a fixture.
 const FIXTURE_HI = 100
 
@@ -4094,7 +4094,7 @@ func Test_No_Interfaces_Allowed_Part2(t *testing.T) {
 			Files: map[string]string{
 				"test.go": `package main
 
-` + fixture_invariant_import + `
+` + FIXTURE_INVARIANT_IMPORT + `
 // FIXTURE_HI is a fixture.
 const FIXTURE_HI = 100
 
@@ -4140,7 +4140,7 @@ func Test_Unnecessary_Method_Allowed(t *testing.T) {
 			Files: map[string]string{
 				"test.go": `package main
 
-` + fixture_invariant_import + `
+` + FIXTURE_INVARIANT_IMPORT + `
 // FIXTURE_HI is a fixture.
 const FIXTURE_HI = 100
 
@@ -4181,7 +4181,7 @@ func Test_Unnecessary_Method_Allowed_Part2(t *testing.T) {
 			Files: map[string]string{
 				"test.go": `package main
 
-` + fixture_invariant_import + `
+` + FIXTURE_INVARIANT_IMPORT + `
 // FIXTURE_HI is a fixture.
 const FIXTURE_HI = 100
 
@@ -4222,7 +4222,7 @@ func Test_Unnecessary_Method_Allowed_Read(t *testing.T) {
 			Files: map[string]string{
 				"test.go": `package main
 
-` + fixture_invariant_import + `
+` + FIXTURE_INVARIANT_IMPORT + `
 // FIXTURE_HI is a fixture.
 const FIXTURE_HI = 100
 
@@ -4266,7 +4266,7 @@ func Test_Unnecessary_Method_Allowed_Extra(t *testing.T) {
 			Files: map[string]string{
 				"test.go": `package main
 
-` + fixture_invariant_import + `
+` + FIXTURE_INVARIANT_IMPORT + `
 // FIXTURE_HI is a fixture.
 const FIXTURE_HI = 100
 
@@ -4305,7 +4305,7 @@ func Test_Unnecessary_Method_Allowed_Extra_Part2(t *testing.T) {
 			Files: map[string]string{
 				"test.go": `package main
 
-` + fixture_invariant_import + `
+` + FIXTURE_INVARIANT_IMPORT + `
 // FIXTURE_HI is a fixture.
 const FIXTURE_HI = 100
 
@@ -4343,7 +4343,7 @@ func Test_Unnecessary_Method_Flagged(t *testing.T) {
 			Files: map[string]string{
 				"test.go": `package main
 
-` + fixture_invariant_import + `
+` + FIXTURE_INVARIANT_IMPORT + `
 // FIXTURE_HI is a fixture.
 const FIXTURE_HI = 100
 
@@ -4382,7 +4382,7 @@ func Test_Unnecessary_Method_Flagged_Part2(t *testing.T) {
 			Files: map[string]string{
 				"test.go": `package main
 
-` + fixture_invariant_import + `
+` + FIXTURE_INVARIANT_IMPORT + `
 // FIXTURE_HI is a fixture.
 const FIXTURE_HI = 100
 
@@ -4423,7 +4423,7 @@ func Test_Test_Package_Part2(t *testing.T) {
 			Files: map[string]string{
 				"foo.go": `package main
 
-` + fixture_invariant_import + `
+` + FIXTURE_INVARIANT_IMPORT + `
 // FIXTURE_HI is a fixture.
 const FIXTURE_HI = 100
 

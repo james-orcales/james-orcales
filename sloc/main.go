@@ -18,14 +18,14 @@ import (
 
 // Caps a single explicitly-named file read, bounding memory on a pathologically large
 // file.
-const main_file_bytes_max = 64 << 20
+const MAIN_FILE_BYTES_MAX = 64 << 20
 
 // The counting workers spend most of their time blocked reading files rather than on
 // the CPU, so the pool is oversubscribed past the core count: while some workers wait
 // on a read, the rest keep the cores busy classifying. Four per core is past the knee —
 // on a large tree it matches the wall time of GOMAXPROCS=4×cores without disturbing the
 // scheduler, and more workers do not help.
-const main_workers_per_core = 4
+const MAIN_WORKERS_PER_CORE = 4
 
 func main() {
 	os.Exit(sloc.Main(&sloc.Main_Input{
@@ -36,7 +36,7 @@ func main() {
 		Path_Is_Directory: main_is_directory,
 		Read_File:         main_read_file,
 		Ignore_For:        main_git_ignore,
-		Concurrency:       runtime.GOMAXPROCS(0) * main_workers_per_core,
+		Concurrency:       runtime.GOMAXPROCS(0) * MAIN_WORKERS_PER_CORE,
 	}))
 }
 
@@ -49,7 +49,7 @@ func main_is_directory(name string) (is_directory bool, err error) {
 	return information.IsDir(), nil
 }
 
-// Reads up to main_file_bytes_max bytes of a file — the bounded read the directory
+// Reads up to MAIN_FILE_BYTES_MAX bytes of a file — the bounded read the directory
 // walk performs through the file system — capping memory on a huge file.
 func main_read_file(name string) (content []byte, err error) {
 	file, open_err := os.Open(name)
@@ -62,8 +62,8 @@ func main_read_file(name string) (content []byte, err error) {
 		return nil, stat_err
 	}
 	byte_size := information.Size()
-	if byte_size > main_file_bytes_max {
-		byte_size = main_file_bytes_max
+	if byte_size > MAIN_FILE_BYTES_MAX {
+		byte_size = MAIN_FILE_BYTES_MAX
 	}
 	buffer := make([]byte, byte_size)
 	_, read_err := io.ReadFull(io.LimitReader(file, byte_size), buffer)

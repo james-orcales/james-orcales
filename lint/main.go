@@ -16,47 +16,47 @@ import (
 	"local/james-orcales/lint/internal"
 )
 
-// Filesystem_path_chars_max caps any filesystem path or path fragment the
+// FILESYSTEM_PATH_CHARS_MAX caps any filesystem path or path fragment the
 // resolver handles: POSIX PATH_MAX is 4096 on Linux. Mirrors the bound used
 // by the internal library tier.
-const filesystem_path_chars_max = 4096
+const FILESYSTEM_PATH_CHARS_MAX = 4096
 
-// Non_empty_min anchors the Lo bucket of "string is non-empty" axes.
+// NON_EMPTY_MIN anchors the Lo bucket of "string is non-empty" axes.
 // Distinct_Boundary requires Lo < Hi, so a Lo of 1 captures the smallest
 // observable non-empty length.
-const non_empty_min = 1
+const NON_EMPTY_MIN = 1
 
-// Git_output_chars_max caps the stdout of any git invocation we shell out
+// GIT_OUTPUT_CHARS_MAX caps the stdout of any git invocation we shell out
 // to. Keeps memory bounded against pathological repositories without
 // truncating realistic outputs.
-const git_output_chars_max = 16777216
+const GIT_OUTPUT_CHARS_MAX = 16777216
 
-// Git_args_max caps the variadic args slice passed to a `git` subcommand
+// GIT_ARGS_MAX caps the variadic args slice passed to a `git` subcommand
 // invocation — long subcommand lines are bounded by a reasonable budget.
-const git_args_max = 64
+const GIT_ARGS_MAX = 64
 
-// Exit_code_hard_error is the os.Exit value used when the resolver hits a
+// EXIT_CODE_HARD_ERROR is the os.Exit value used when the resolver hits a
 // non-recoverable filesystem or git failure that the rest of the linter
 // cannot proceed past.
-const exit_code_hard_error = 2
+const EXIT_CODE_HARD_ERROR = 2
 
-// Tracked_paths_max caps the per-repository tracked-files set returned by
+// TRACKED_PATHS_MAX caps the per-repository tracked-files set returned by
 // git ls-files. Sized to bound memory against pathological monorepos.
-const tracked_paths_max = 1048576
+const TRACKED_PATHS_MAX = 1048576
 
 // Commit_list_chars_max caps the per-commit-list buffer accumulated from
 // git log output; one commit per line, sized for git-log budget.
-const commit_list_max = 1048576
+const COMMIT_LIST_MAX = 1048576
 
 // Tabs_per_thousand renders the comma separator for thousands-formatted
 // numbers; the small string value is hoisted so the magic three-digit
 // grouping value lives at the file top.
-const thousands_group_size = 3
+const THOUSANDS_GROUP_SIZE = 3
 
-// Non_negative_int64_max caps the input to the non-negative-int64 axis. The
+// NON_NEGATIVE_INT64_MAX caps the input to the non-negative-int64 axis. The
 // value is math.MaxInt64 / 2 to leave headroom for downstream arithmetic
 // without overflow when callers add multipliers.
-const non_negative_int64_max = 4_611_686_018_427_387_904
+const NON_NEGATIVE_INT64_MAX = 4_611_686_018_427_387_904
 
 func main() {
 	request := "."

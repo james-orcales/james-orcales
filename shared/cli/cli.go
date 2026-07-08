@@ -749,7 +749,7 @@ func Print_Help(output io.Writer, program Program) {
 	fmt.Fprintf(output,
 		"Usage:\n    %s <command> <arguments> [-flags[=value]]\n", program.Label)
 	if program_has_arguments(program) {
-		fmt.Fprintln(output, named_argument_legend)
+		fmt.Fprintln(output, NAMED_ARGUMENT_LEGEND)
 	}
 	fmt.Fprintln(output, "")
 
@@ -795,7 +795,7 @@ func print_help_single(output io.Writer, program Program) {
 	}
 	fmt.Fprintf(output, "Usage:\n    %s %s[-flags[=value]]\n", program.Label, signature)
 	if len(command.Arguments) > 0 {
-		fmt.Fprintln(output, named_argument_legend)
+		fmt.Fprintln(output, NAMED_ARGUMENT_LEGEND)
 	}
 	if len(command.Flags) > 0 {
 		fmt.Fprintln(output, "")
@@ -825,7 +825,7 @@ func option_format_signature(argument Option) (signature string) {
 
 // The note printed under the usage line when a program has at least one positional
 // argument: each may also be supplied by name, not only by position.
-const named_argument_legend = "    Positional arguments may also be supplied via -key=val syntax."
+const NAMED_ARGUMENT_LEGEND = "    Positional arguments may also be supplied via -key=val syntax."
 
 // Reports whether any of the program's commands declares a positional argument, the
 // condition under which the named-argument legend is worth printing.

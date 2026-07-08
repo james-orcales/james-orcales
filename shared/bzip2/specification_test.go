@@ -19,17 +19,17 @@ func Test_Bounded_Decompression(t *testing.T) {
 		52, 252, 181, 54, 74, 86, 190, 46, 228, 138, 112, 161, 33, 88, 4, 230,
 		194,
 	}
-	const want = "hello bounded bzip2 world\n"
+	const WANT = "hello bounded bzip2 world\n"
 	full := bzip2.New_Reader(bytes.NewReader(compressed), 1024)
-	decoded := make([]byte, len(want))
+	decoded := make([]byte, len(WANT))
 	if _, read_err := io.ReadFull(full, decoded); read_err != nil {
 		t.Fatalf("ReadFull: %v", read_err)
 	}
-	if string(decoded) != want {
-		t.Fatalf("decoded = %q, want %q", decoded, want)
+	if string(decoded) != WANT {
+		t.Fatalf("decoded = %q, want %q", decoded, WANT)
 	}
 	capped := bzip2.New_Reader(bytes.NewReader(compressed), 5)
-	overflow := make([]byte, len(want))
+	overflow := make([]byte, len(WANT))
 	count, _ := io.ReadFull(capped, overflow)
 	if count != 5 {
 		t.Fatalf("capped read = %d bytes, want 5", count)

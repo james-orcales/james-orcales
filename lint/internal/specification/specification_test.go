@@ -161,7 +161,7 @@ func Test_Tests_Per_Heading(t *testing.T) {
 func Test_Tests_Name_Normalization(t *testing.T) {
 	t.Parallel()
 	target := baseline(t)
-	target.Test = parse_test(t, strings.Replace(baseline_markdown_test,
+	target.Test = parse_test(t, strings.Replace(BASELINE_MARKDOWN_TEST,
 		"func Test_Sole_Rule(", "func Test_Misnamed(", 1))
 	if !flagged(target, "needs Test_Sole_Rule") {
 		t.Fatal("a misnamed heading test must be flagged")
@@ -182,13 +182,13 @@ func Test_Tests_Order(t *testing.T) {
 // its single matching test, clean under every rule. The leading blank satisfies
 // the blank-before-heading rule for the first heading, and a two-word leaf keeps
 // the name-normalization test honest (Sole Rule -> Sole_Rule -> Test_Sole_Rule).
-const baseline_markdown = `
+const BASELINE_MARKDOWN = `
 # Sole Rule
 
 The sole rule.
 `
 
-const baseline_markdown_test = `package fixture_test
+const BASELINE_MARKDOWN_TEST = `package fixture_test
 
 import "testing"
 
@@ -217,7 +217,7 @@ func baseline(t *testing.T) (target specification.Package) {
 	t.Helper()
 	return specification.Package{
 		Path: "pkg", Has_Module: true, Impure: false,
-		Markdown: []byte(baseline_markdown), Test: parse_test(t, baseline_markdown_test),
+		Markdown: []byte(BASELINE_MARKDOWN), Test: parse_test(t, BASELINE_MARKDOWN_TEST),
 	}
 }
 

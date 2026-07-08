@@ -98,13 +98,13 @@ func Test_Main_Applies_Macos_Defaults(t *testing.T) {
 	ran := [][]string{}
 	log := &bytes.Buffer{}
 	loop, driver, _ := sysio.New_Sim(0)
-	if make_err := loop.Make_Directory(test_source); make_err != nil {
+	if make_err := loop.Make_Directory(TEST_SOURCE); make_err != nil {
 		t.Fatalf("make source: %v", make_err)
 	}
 	status := setup.Main(&setup.Main_Input{
 		File_System:           setup.File_System{Loop: loop, Run_Until: driver.Run_Until},
-		Source_Directory:      test_source,
-		Destination_Directory: test_home,
+		Source_Directory:      TEST_SOURCE,
+		Destination_Directory: TEST_HOME,
 		Operating_System:      "darwin",
 		Run_Command: func(name string, arguments []string) (err error) {
 			ran = append(ran, append([]string{name}, arguments...))
@@ -138,13 +138,13 @@ func Test_Main_Skips_Macos_Defaults_Off_Darwin(t *testing.T) {
 	t.Parallel()
 	run_count := 0
 	loop, driver, _ := sysio.New_Sim(0)
-	if make_err := loop.Make_Directory(test_source); make_err != nil {
+	if make_err := loop.Make_Directory(TEST_SOURCE); make_err != nil {
 		t.Fatalf("make source: %v", make_err)
 	}
 	status := setup.Main(&setup.Main_Input{
 		File_System:           setup.File_System{Loop: loop, Run_Until: driver.Run_Until},
-		Source_Directory:      test_source,
-		Destination_Directory: test_home,
+		Source_Directory:      TEST_SOURCE,
+		Destination_Directory: TEST_HOME,
 		Operating_System:      "linux",
 		Run_Command: func(name string, arguments []string) (err error) {
 			run_count++
@@ -167,17 +167,17 @@ func Test_Main_Narrates_The_Scan(t *testing.T) {
 	t.Parallel()
 	loop, driver, _ := sysio.New_Sim(0)
 	// A nested directory, so the walk reads past the root and narrates more than one line.
-	if make_err := loop.Make_Directory(test_source); make_err != nil {
+	if make_err := loop.Make_Directory(TEST_SOURCE); make_err != nil {
 		t.Fatalf("make source: %v", make_err)
 	}
-	if make_err := loop.Make_Directory(test_source + "/nested"); make_err != nil {
+	if make_err := loop.Make_Directory(TEST_SOURCE + "/nested"); make_err != nil {
 		t.Fatalf("make nested: %v", make_err)
 	}
 	log := &bytes.Buffer{}
 	status := setup.Main(&setup.Main_Input{
 		File_System:           setup.File_System{Loop: loop, Run_Until: driver.Run_Until},
-		Source_Directory:      test_source,
-		Destination_Directory: test_home,
+		Source_Directory:      TEST_SOURCE,
+		Destination_Directory: TEST_HOME,
 		Operating_System:      "linux",
 		Run_Command: func(name string, arguments []string) (err error) {
 			return nil
@@ -207,7 +207,7 @@ func Test_Main_Probes_Ignore_In_One_Batch(t *testing.T) {
 	// Three sibling directories under the root, so a batched probe of the root sees
 	// all three at once while a per-entry probe would see one at a time.
 	for _, directory := range []string{
-		test_source, test_source + "/a", test_source + "/b", test_source + "/c",
+		TEST_SOURCE, TEST_SOURCE + "/a", TEST_SOURCE + "/b", TEST_SOURCE + "/c",
 	} {
 		if make_err := loop.Make_Directory(directory); make_err != nil {
 			t.Fatalf("make %s: %v", directory, make_err)
@@ -216,8 +216,8 @@ func Test_Main_Probes_Ignore_In_One_Batch(t *testing.T) {
 	batches := [][]string{}
 	status := setup.Main(&setup.Main_Input{
 		File_System:           setup.File_System{Loop: loop, Run_Until: driver.Run_Until},
-		Source_Directory:      test_source,
-		Destination_Directory: test_home,
+		Source_Directory:      TEST_SOURCE,
+		Destination_Directory: TEST_HOME,
 		Operating_System:      "linux",
 		Run_Command: func(name string, arguments []string) (err error) {
 			return nil
@@ -244,9 +244,9 @@ func Test_Main_Probes_Ignore_In_One_Batch(t *testing.T) {
 func Test_Install_Neovim_Skips_Build_When_Installed_From_Checkout(t *testing.T) {
 	t.Parallel()
 	commands := []sysio.Process_Request{}
-	executable := test_repository + "/home/.local/bin/nvim"
+	executable := TEST_REPOSITORY + "/home/.local/bin/nvim"
 	status := setup.Install_Neovim(&setup.Install_Neovim_Input{
-		Repository_Directory: test_repository,
+		Repository_Directory: TEST_REPOSITORY,
 		Shell: recording_shell(&commands, map[string]string{
 			"which":    executable + "\n",
 			executable: "NVIM v0.12.3\n",
@@ -267,7 +267,7 @@ func Test_Install_Neovim_Builds_When_The_Match_Is_Outside_Repository(t *testing.
 	t.Parallel()
 	commands := []sysio.Process_Request{}
 	status := setup.Install_Neovim(&setup.Install_Neovim_Input{
-		Repository_Directory: test_repository,
+		Repository_Directory: TEST_REPOSITORY,
 		Shell: recording_shell(&commands, map[string]string{
 			"which": "/opt/homebrew/bin/nvim\n",
 		}, 0),
@@ -291,7 +291,7 @@ func Test_Install_Neovim_Configures_Prefix_Then_Installs(t *testing.T) {
 	progress := &bytes.Buffer{}
 	shell.Logger = buffer_logger(progress)
 	status := setup.Install_Neovim(&setup.Install_Neovim_Input{
-		Repository_Directory: test_repository,
+		Repository_Directory: TEST_REPOSITORY,
 		Shell:                shell,
 	})
 	if status != 0 {
@@ -306,8 +306,8 @@ func Test_Install_Neovim_Configures_Prefix_Then_Installs(t *testing.T) {
 	if len(builds) != 2 {
 		t.Fatalf("expected two make commands, got %d: %v", len(builds), builds)
 	}
-	source := filepath.Join(test_repository, "third_party/neovim")
-	prefix := "CMAKE_INSTALL_PREFIX=" + filepath.Join(test_repository, "home/.local")
+	source := filepath.Join(TEST_REPOSITORY, "third_party/neovim")
+	prefix := "CMAKE_INSTALL_PREFIX=" + filepath.Join(TEST_REPOSITORY, "home/.local")
 	for index, command := range builds {
 		for _, want := range []string{"-C", source, prefix} {
 			if !slices.Contains(command.Arguments, want) {
@@ -329,7 +329,7 @@ func Test_Install_Neovim_Reports_Build_Failure(t *testing.T) {
 	t.Parallel()
 	commands := []sysio.Process_Request{}
 	status := setup.Install_Neovim(&setup.Install_Neovim_Input{
-		Repository_Directory: test_repository,
+		Repository_Directory: TEST_REPOSITORY,
 		Shell:                recording_shell(&commands, nil, 1),
 	})
 	if status == 0 {
@@ -369,7 +369,7 @@ func Test_Install_Fonts_Copies_Only_Missing_Fonts(t *testing.T) {
 	copied := []string{}
 	log := &bytes.Buffer{}
 	status := setup.Install_Fonts(&setup.Install_Fonts_Input{
-		Font_Directory: test_font_directory,
+		Font_Directory: TEST_FONT_DIRECTORY,
 		Font_Present: func(file string) (present bool) {
 			return file == "IosevkaNerdFontMono-Regular.ttf"
 		},
@@ -409,7 +409,7 @@ func Test_Install_Fonts_Skips_When_All_Present(t *testing.T) {
 	copies := 0
 	refreshed := false
 	status := setup.Install_Fonts(&setup.Install_Fonts_Input{
-		Font_Directory: test_font_directory,
+		Font_Directory: TEST_FONT_DIRECTORY,
 		Font_Present:   func(file string) (present bool) { return true },
 		Copy_Font: func(file string) (err error) {
 			copies++
@@ -437,7 +437,7 @@ func Test_Install_Fonts_Refreshes_Cache_After_Copies(t *testing.T) {
 	t.Parallel()
 	refreshed := false
 	status := setup.Install_Fonts(&setup.Install_Fonts_Input{
-		Font_Directory: test_font_directory,
+		Font_Directory: TEST_FONT_DIRECTORY,
 		Font_Present:   func(file string) (present bool) { return false },
 		Copy_Font:      func(file string) (err error) { return nil },
 		Refresh: func() (err error) {
@@ -458,7 +458,7 @@ func Test_Install_Fonts_Refreshes_Cache_After_Copies(t *testing.T) {
 func Test_Install_Fonts_Reports_A_Copy_Failure(t *testing.T) {
 	t.Parallel()
 	status := setup.Install_Fonts(&setup.Install_Fonts_Input{
-		Font_Directory: test_font_directory,
+		Font_Directory: TEST_FONT_DIRECTORY,
 		Font_Present:   func(file string) (present bool) { return false },
 		Copy_Font:      func(file string) (err error) { return errors.New("disk full") },
 		Refresh:        nil,
@@ -475,10 +475,10 @@ func Test_Install_Direnv_Skips_Build_When_Already_Built(t *testing.T) {
 	t.Parallel()
 	commands := []sysio.Process_Request{}
 	status := setup.Install_Direnv(&setup.Install_Direnv_Input{
-		Direnv_Directory: test_direnv_directory,
-		Binary_Directory: test_link_directory,
+		Direnv_Directory: TEST_DIRENV_DIRECTORY,
+		Binary_Directory: TEST_LINK_DIRECTORY,
 		Shell: recording_shell(&commands, map[string]string{
-			test_link_directory + "/direnv": "2.37.1\n",
+			TEST_LINK_DIRECTORY + "/direnv": "2.37.1\n",
 		}, 0),
 	})
 	if status != 0 {
@@ -495,8 +495,8 @@ func Test_Install_Direnv_Builds_When_Absent(t *testing.T) {
 	t.Parallel()
 	commands := []sysio.Process_Request{}
 	status := setup.Install_Direnv(&setup.Install_Direnv_Input{
-		Direnv_Directory: test_direnv_directory,
-		Binary_Directory: test_link_directory,
+		Direnv_Directory: TEST_DIRENV_DIRECTORY,
+		Binary_Directory: TEST_LINK_DIRECTORY,
 		Shell:            recording_shell(&commands, nil, 0),
 	})
 	if status != 0 {
@@ -513,8 +513,8 @@ func Test_Install_Direnv_Reports_A_Build_Failure(t *testing.T) {
 	t.Parallel()
 	commands := []sysio.Process_Request{}
 	status := setup.Install_Direnv(&setup.Install_Direnv_Input{
-		Direnv_Directory: test_direnv_directory,
-		Binary_Directory: test_link_directory,
+		Direnv_Directory: TEST_DIRENV_DIRECTORY,
+		Binary_Directory: TEST_LINK_DIRECTORY,
 		Shell:            recording_shell(&commands, nil, 1),
 	})
 	if status == 0 {
@@ -529,10 +529,10 @@ func Test_Install_Rust_Skips_Install_When_Already_Installed(t *testing.T) {
 	t.Parallel()
 	commands := []sysio.Process_Request{}
 	status := setup.Install_Rust(&setup.Install_Rust_Input{
-		Cargo_Directory: test_cargo_directory,
-		Link_Directory:  test_link_directory,
+		Cargo_Directory: TEST_CARGO_DIRECTORY,
+		Link_Directory:  TEST_LINK_DIRECTORY,
 		Shell: recording_shell(&commands, map[string]string{
-			test_cargo_directory + "/bin/rustc": "rustc 1.96.0 (abc 2026-05-25)\n",
+			TEST_CARGO_DIRECTORY + "/bin/rustc": "rustc 1.96.0 (abc 2026-05-25)\n",
 		}, 0),
 	})
 	if status != 0 {
@@ -552,8 +552,8 @@ func Test_Install_Rust_Installs_Then_Links_When_Absent(t *testing.T) {
 	t.Parallel()
 	commands := []sysio.Process_Request{}
 	status := setup.Install_Rust(&setup.Install_Rust_Input{
-		Cargo_Directory: test_cargo_directory,
-		Link_Directory:  test_link_directory,
+		Cargo_Directory: TEST_CARGO_DIRECTORY,
+		Link_Directory:  TEST_LINK_DIRECTORY,
 		Shell:           recording_shell(&commands, nil, 0),
 	})
 	if status != 0 {
@@ -573,8 +573,8 @@ func Test_Install_Rust_Reports_An_Install_Failure(t *testing.T) {
 	t.Parallel()
 	commands := []sysio.Process_Request{}
 	status := setup.Install_Rust(&setup.Install_Rust_Input{
-		Cargo_Directory: test_cargo_directory,
-		Link_Directory:  test_link_directory,
+		Cargo_Directory: TEST_CARGO_DIRECTORY,
+		Link_Directory:  TEST_LINK_DIRECTORY,
 		Shell:           recording_shell(&commands, nil, 1),
 	})
 	if status == 0 {
@@ -589,10 +589,10 @@ func Test_Install_Fzf_Skips_Build_When_Already_Built(t *testing.T) {
 	t.Parallel()
 	commands := []sysio.Process_Request{}
 	status := setup.Install_Fzf(&setup.Install_Fzf_Input{
-		Fzf_Directory:    test_fzf_directory,
-		Binary_Directory: test_link_directory,
+		Fzf_Directory:    TEST_FZF_DIRECTORY,
+		Binary_Directory: TEST_LINK_DIRECTORY,
 		Shell: recording_shell(&commands, map[string]string{
-			test_link_directory + "/fzf": "0.73.1\n",
+			TEST_LINK_DIRECTORY + "/fzf": "0.73.1\n",
 		}, 0),
 	})
 	if status != 0 {
@@ -609,8 +609,8 @@ func Test_Install_Fzf_Builds_When_Absent(t *testing.T) {
 	t.Parallel()
 	commands := []sysio.Process_Request{}
 	status := setup.Install_Fzf(&setup.Install_Fzf_Input{
-		Fzf_Directory:    test_fzf_directory,
-		Binary_Directory: test_link_directory,
+		Fzf_Directory:    TEST_FZF_DIRECTORY,
+		Binary_Directory: TEST_LINK_DIRECTORY,
 		Shell:            recording_shell(&commands, nil, 0),
 	})
 	if status != 0 {
@@ -627,8 +627,8 @@ func Test_Install_Fzf_Reports_A_Build_Failure(t *testing.T) {
 	t.Parallel()
 	commands := []sysio.Process_Request{}
 	status := setup.Install_Fzf(&setup.Install_Fzf_Input{
-		Fzf_Directory:    test_fzf_directory,
-		Binary_Directory: test_link_directory,
+		Fzf_Directory:    TEST_FZF_DIRECTORY,
+		Binary_Directory: TEST_LINK_DIRECTORY,
 		Shell:            recording_shell(&commands, nil, 1),
 	})
 	if status == 0 {
@@ -643,11 +643,11 @@ func Test_Install_Command_Skips_Build_When_Already_On_Path(t *testing.T) {
 	t.Parallel()
 	commands := []sysio.Process_Request{}
 	status := setup.Install_Command(&setup.Install_Command_Input{
-		Package_Directory: test_command_directory,
-		Binary_Directory:  test_link_directory,
+		Package_Directory: TEST_COMMAND_DIRECTORY,
+		Binary_Directory:  TEST_LINK_DIRECTORY,
 		Binary_Name:       "maddox",
 		Shell: recording_shell(&commands, map[string]string{
-			"which": test_link_directory + "/maddox\n",
+			"which": TEST_LINK_DIRECTORY + "/maddox\n",
 		}, 0),
 	})
 	if status != 0 {
@@ -664,8 +664,8 @@ func Test_Install_Command_Builds_When_Absent(t *testing.T) {
 	t.Parallel()
 	commands := []sysio.Process_Request{}
 	status := setup.Install_Command(&setup.Install_Command_Input{
-		Package_Directory: test_command_directory,
-		Binary_Directory:  test_link_directory,
+		Package_Directory: TEST_COMMAND_DIRECTORY,
+		Binary_Directory:  TEST_LINK_DIRECTORY,
 		Binary_Name:       "m2p",
 		Shell:             recording_shell(&commands, nil, 0),
 	})
@@ -683,8 +683,8 @@ func Test_Install_Command_Reports_A_Build_Failure(t *testing.T) {
 	t.Parallel()
 	commands := []sysio.Process_Request{}
 	status := setup.Install_Command(&setup.Install_Command_Input{
-		Package_Directory: test_command_directory,
-		Binary_Directory:  test_link_directory,
+		Package_Directory: TEST_COMMAND_DIRECTORY,
+		Binary_Directory:  TEST_LINK_DIRECTORY,
 		Binary_Name:       "sloc",
 		Shell:             recording_shell(&commands, nil, 1),
 	})
@@ -700,10 +700,10 @@ func Test_Install_Jj_Skips_Build_When_Already_Built(t *testing.T) {
 	t.Parallel()
 	commands := []sysio.Process_Request{}
 	status := setup.Install_Jj(&setup.Install_Jj_Input{
-		Jj_Directory:     test_jj_directory,
-		Binary_Directory: test_link_directory,
+		Jj_Directory:     TEST_JJ_DIRECTORY,
+		Binary_Directory: TEST_LINK_DIRECTORY,
 		Shell: recording_shell(&commands, map[string]string{
-			test_link_directory + "/jj": "jj 0.42.0-abc123\n",
+			TEST_LINK_DIRECTORY + "/jj": "jj 0.42.0-abc123\n",
 		}, 0),
 	})
 	if status != 0 {
@@ -724,8 +724,8 @@ func Test_Install_Jj_Builds_When_Absent(t *testing.T) {
 	t.Parallel()
 	commands := []sysio.Process_Request{}
 	status := setup.Install_Jj(&setup.Install_Jj_Input{
-		Jj_Directory:     test_jj_directory,
-		Binary_Directory: test_link_directory,
+		Jj_Directory:     TEST_JJ_DIRECTORY,
+		Binary_Directory: TEST_LINK_DIRECTORY,
 		Shell:            recording_shell(&commands, nil, 0),
 	})
 	if status != 0 {
@@ -749,8 +749,8 @@ func Test_Install_Jj_Reports_A_Build_Failure(t *testing.T) {
 	t.Parallel()
 	commands := []sysio.Process_Request{}
 	status := setup.Install_Jj(&setup.Install_Jj_Input{
-		Jj_Directory:     test_jj_directory,
-		Binary_Directory: test_link_directory,
+		Jj_Directory:     TEST_JJ_DIRECTORY,
+		Binary_Directory: TEST_LINK_DIRECTORY,
 		Shell:            recording_shell(&commands, nil, 1),
 	})
 	if status == 0 {
@@ -765,10 +765,10 @@ func Test_Install_Ripgrep_Skips_Build_When_Already_Built(t *testing.T) {
 	t.Parallel()
 	commands := []sysio.Process_Request{}
 	status := setup.Install_Ripgrep(&setup.Install_Ripgrep_Input{
-		Ripgrep_Directory: test_ripgrep_directory,
-		Binary_Directory:  test_link_directory,
+		Ripgrep_Directory: TEST_RIPGREP_DIRECTORY,
+		Binary_Directory:  TEST_LINK_DIRECTORY,
 		Shell: recording_shell(&commands, map[string]string{
-			test_link_directory + "/rg": "ripgrep 15.1.0 (rev abc123)\n",
+			TEST_LINK_DIRECTORY + "/rg": "ripgrep 15.1.0 (rev abc123)\n",
 		}, 0),
 	})
 	if status != 0 {
@@ -789,8 +789,8 @@ func Test_Install_Ripgrep_Builds_When_Absent(t *testing.T) {
 	t.Parallel()
 	commands := []sysio.Process_Request{}
 	status := setup.Install_Ripgrep(&setup.Install_Ripgrep_Input{
-		Ripgrep_Directory: test_ripgrep_directory,
-		Binary_Directory:  test_link_directory,
+		Ripgrep_Directory: TEST_RIPGREP_DIRECTORY,
+		Binary_Directory:  TEST_LINK_DIRECTORY,
 		Shell:             recording_shell(&commands, nil, 0),
 	})
 	if status != 0 {
@@ -814,8 +814,8 @@ func Test_Install_Ripgrep_Reports_A_Build_Failure(t *testing.T) {
 	t.Parallel()
 	commands := []sysio.Process_Request{}
 	status := setup.Install_Ripgrep(&setup.Install_Ripgrep_Input{
-		Ripgrep_Directory: test_ripgrep_directory,
-		Binary_Directory:  test_link_directory,
+		Ripgrep_Directory: TEST_RIPGREP_DIRECTORY,
+		Binary_Directory:  TEST_LINK_DIRECTORY,
 		Shell:             recording_shell(&commands, nil, 1),
 	})
 	if status == 0 {
@@ -830,10 +830,10 @@ func Test_Install_Fdcli_Skips_Build_When_Already_Built(t *testing.T) {
 	t.Parallel()
 	commands := []sysio.Process_Request{}
 	status := setup.Install_Fdcli(&setup.Install_Fdcli_Input{
-		Fdcli_Directory:  test_fdcli_directory,
-		Binary_Directory: test_link_directory,
+		Fdcli_Directory:  TEST_FDCLI_DIRECTORY,
+		Binary_Directory: TEST_LINK_DIRECTORY,
 		Shell: recording_shell(&commands, map[string]string{
-			test_link_directory + "/fd": "fd 10.4.2\n",
+			TEST_LINK_DIRECTORY + "/fd": "fd 10.4.2\n",
 		}, 0),
 	})
 	if status != 0 {
@@ -854,8 +854,8 @@ func Test_Install_Fdcli_Builds_When_Absent(t *testing.T) {
 	t.Parallel()
 	commands := []sysio.Process_Request{}
 	status := setup.Install_Fdcli(&setup.Install_Fdcli_Input{
-		Fdcli_Directory:  test_fdcli_directory,
-		Binary_Directory: test_link_directory,
+		Fdcli_Directory:  TEST_FDCLI_DIRECTORY,
+		Binary_Directory: TEST_LINK_DIRECTORY,
 		Shell:            recording_shell(&commands, nil, 0),
 	})
 	if status != 0 {
@@ -879,8 +879,8 @@ func Test_Install_Fdcli_Reports_A_Build_Failure(t *testing.T) {
 	t.Parallel()
 	commands := []sysio.Process_Request{}
 	status := setup.Install_Fdcli(&setup.Install_Fdcli_Input{
-		Fdcli_Directory:  test_fdcli_directory,
-		Binary_Directory: test_link_directory,
+		Fdcli_Directory:  TEST_FDCLI_DIRECTORY,
+		Binary_Directory: TEST_LINK_DIRECTORY,
 		Shell:            recording_shell(&commands, nil, 1),
 	})
 	if status == 0 {
@@ -894,10 +894,10 @@ func Test_Install_Fdcli_Reports_A_Build_Failure(t *testing.T) {
 func Test_Install_Ghostty_Skips_Install_When_Already_Installed(t *testing.T) {
 	t.Parallel()
 	commands := []sysio.Process_Request{}
-	binary := test_applications_directory + "/Ghostty.app/Contents/MacOS/ghostty"
+	binary := TEST_APPLICATIONS_DIRECTORY + "/Ghostty.app/Contents/MacOS/ghostty"
 	status := setup.Install_Ghostty(&setup.Install_Ghostty_Input{
-		Applications_Directory: test_applications_directory,
-		Link_Directory:         test_link_directory,
+		Applications_Directory: TEST_APPLICATIONS_DIRECTORY,
+		Link_Directory:         TEST_LINK_DIRECTORY,
 		Shell: recording_shell(&commands, map[string]string{
 			binary: "Ghostty 1.3.1\n",
 		}, 0),
@@ -919,10 +919,10 @@ func Test_Install_Ghostty_Skips_Install_When_Already_Installed(t *testing.T) {
 func Test_Install_Ghostty_Reinstalls_When_Signature_Is_Invalid(t *testing.T) {
 	t.Parallel()
 	commands := []sysio.Process_Request{}
-	binary := test_applications_directory + "/Ghostty.app/Contents/MacOS/ghostty"
+	binary := TEST_APPLICATIONS_DIRECTORY + "/Ghostty.app/Contents/MacOS/ghostty"
 	status := setup.Install_Ghostty(&setup.Install_Ghostty_Input{
-		Applications_Directory: test_applications_directory,
-		Link_Directory:         test_link_directory,
+		Applications_Directory: TEST_APPLICATIONS_DIRECTORY,
+		Link_Directory:         TEST_LINK_DIRECTORY,
 		Shell: recording_shell_exits(&commands, map[string]string{
 			binary: "Ghostty 1.3.1\n",
 		}, map[string]int{"codesign": 1}),
@@ -944,10 +944,10 @@ func Test_Install_Ghostty_Reinstalls_When_Signature_Is_Invalid(t *testing.T) {
 func Test_Install_Ghostty_Pins_The_Signing_Team(t *testing.T) {
 	t.Parallel()
 	commands := []sysio.Process_Request{}
-	binary := test_applications_directory + "/Ghostty.app/Contents/MacOS/ghostty"
+	binary := TEST_APPLICATIONS_DIRECTORY + "/Ghostty.app/Contents/MacOS/ghostty"
 	setup.Install_Ghostty(&setup.Install_Ghostty_Input{
-		Applications_Directory: test_applications_directory,
-		Link_Directory:         test_link_directory,
+		Applications_Directory: TEST_APPLICATIONS_DIRECTORY,
+		Link_Directory:         TEST_LINK_DIRECTORY,
 		Shell: recording_shell(&commands, map[string]string{
 			binary: "Ghostty 1.3.1\n",
 		}, 0),
@@ -968,8 +968,8 @@ func Test_Install_Ghostty_Installs_Then_Links_When_Absent(t *testing.T) {
 	t.Parallel()
 	commands := []sysio.Process_Request{}
 	status := setup.Install_Ghostty(&setup.Install_Ghostty_Input{
-		Applications_Directory: test_applications_directory,
-		Link_Directory:         test_link_directory,
+		Applications_Directory: TEST_APPLICATIONS_DIRECTORY,
+		Link_Directory:         TEST_LINK_DIRECTORY,
 		Shell:                  recording_shell(&commands, nil, 0),
 	})
 	if status != 0 {
@@ -989,8 +989,8 @@ func Test_Install_Ghostty_Reports_An_Install_Failure(t *testing.T) {
 	t.Parallel()
 	commands := []sysio.Process_Request{}
 	status := setup.Install_Ghostty(&setup.Install_Ghostty_Input{
-		Applications_Directory: test_applications_directory,
-		Link_Directory:         test_link_directory,
+		Applications_Directory: TEST_APPLICATIONS_DIRECTORY,
+		Link_Directory:         TEST_LINK_DIRECTORY,
 		Shell:                  recording_shell(&commands, nil, 1),
 	})
 	if status == 0 {
@@ -1003,55 +1003,55 @@ func Test_Install_Ghostty_Reports_An_Install_Failure(t *testing.T) {
 
 // The fixed absolute home directory the planned writes are built against; a
 // constant keeps the expected destination paths deterministic.
-const test_home = "/home/user"
+const TEST_HOME = "/home/user"
 
 // The fixed absolute source directory the macos-defaults tests walk — created empty so the
 // sync writes nothing and only the injected runner's behavior is under test.
-const test_source = "/source"
+const TEST_SOURCE = "/source"
 
 // The fixed absolute checkout root the Neovim build subpaths are joined onto; a
 // constant keeps the expected make and link paths deterministic.
-const test_repository = "/repo"
+const TEST_REPOSITORY = "/repo"
 
 // The fixed absolute font directory the Install_Fonts tests copy into; a constant
 // keeps the expected destinations deterministic.
-const test_font_directory = "/fonts"
+const TEST_FONT_DIRECTORY = "/fonts"
 
 // The fixed absolute CARGO_HOME the Install_Rust tests gate against; a constant
 // keeps the expected toolchain paths deterministic.
-const test_cargo_directory = "/cargo"
+const TEST_CARGO_DIRECTORY = "/cargo"
 
 // The fixed absolute PATH directory the Install_Rust tests symlink into; a
 // constant keeps the expected link paths deterministic.
-const test_link_directory = "/link"
+const TEST_LINK_DIRECTORY = "/link"
 
 // The fixed absolute direnv source directory the Install_Direnv tests build from; a
 // constant keeps the expected build paths deterministic.
-const test_direnv_directory = "/direnv-src"
+const TEST_DIRENV_DIRECTORY = "/direnv-src"
 
 // The fixed absolute fzf source directory the Install_Fzf tests build from; a
 // constant keeps the expected build paths deterministic.
-const test_fzf_directory = "/fzf"
+const TEST_FZF_DIRECTORY = "/fzf"
 
 // The fixed absolute package directory the Install_Command tests build from; a
 // constant keeps the expected build paths deterministic.
-const test_command_directory = "/command-src"
+const TEST_COMMAND_DIRECTORY = "/command-src"
 
 // The fixed absolute jj source directory the Install_Jj tests build from; a
 // constant keeps the expected build paths deterministic.
-const test_jj_directory = "/jj"
+const TEST_JJ_DIRECTORY = "/jj"
 
 // The fixed absolute ripgrep source directory the Install_Ripgrep tests build
 // from; a constant keeps the expected build paths deterministic.
-const test_ripgrep_directory = "/ripgrep"
+const TEST_RIPGREP_DIRECTORY = "/ripgrep"
 
 // The fixed absolute fd source directory the Install_Fdcli tests build from; a
 // constant keeps the expected build paths deterministic.
-const test_fdcli_directory = "/fd-src"
+const TEST_FDCLI_DIRECTORY = "/fd-src"
 
 // The fixed absolute macOS applications directory the Install_Ghostty tests gate
 // against; a constant keeps the expected app and probe paths deterministic.
-const test_applications_directory = "/apps"
+const TEST_APPLICATIONS_DIRECTORY = "/apps"
 
 // Reports whether ran holds a command exactly equal to want — name and arguments
 // together — so a test can assert one specific invocation happened.
