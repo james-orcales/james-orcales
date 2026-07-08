@@ -4,6 +4,10 @@ package io
 
 import "syscall"
 
+// SO_REUSEPORT socket option; on Darwin the stdlib syscall package does define it (as 0x200), but
+// it is pinned here as a constant so file_unix.go stays platform-agnostic.
+const socket_reuseport = 0x200
+
 // The kqueue descriptor backing the readiness loop on Darwin.
 type poll_file int
 

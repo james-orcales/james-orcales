@@ -3569,10 +3569,16 @@ func make_check_no_recursion(exempt []string) (check check_function) {
 	}
 }
 
-// TigerStyle: recursion makes stack depth depend on input, which is
-// adversarially unbounded. Detects direct AND mutual recursion via a per-file
-// call graph: nodes are top-level FuncDecls, edges are name-based calls. Any
-// cycle in the graph (self-loop or longer) is reported as one diagnostic.
+// The call graph must be a directed acyclic graph. Functions form strict layers, so a
+// function is understood from its callees and they never loop back to it; a cyclic call graph
+// cannot be layered or reasoned about locally. This is a structural invariant, not a
+// stack-safety one: a cycle is banned even when its edge runs on a fresh stack — a completion
+// callback the loop invokes later, or a `go` statement — because it is still a cycle in
+// who-names-whom. An inherently cyclic process, a state machine, therefore expresses its loop
+// as data (an explicit state a linear driver advances), never as a ring of functions calling
+// one another. Detects direct AND mutual recursion via a per-file call graph: nodes are
+// top-level FuncDecls, edges are name-based calls including those inside closures and go
+// statements. Any cycle in the graph (self-loop or longer) is reported as one diagnostic.
 //
 // Limitations (will not detect):
 //   - Method calls (`x.foo()`) — SelectorExpr, not Ident.

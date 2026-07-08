@@ -36,6 +36,10 @@ const wake_drain_passes_max = 16
 // Buffers a few pending signals so a burst is not lost between drains.
 const signal_queue_depth = 8
 
+// Buffers receive requests handed to a TLS connection's reader goroutine; a consumer arms one
+// receive at a time, so this only needs slack, not depth.
+const tls_receive_queue = 4
+
 // Caps the idle gap while a signal watcher exists, since a signal does not wake the poll;
 // the loop re-checks the signal channel at least this often.
 const signal_poll_interval = 10 * time.MILLISECOND
@@ -127,6 +131,12 @@ type operating_system struct {
 	TLS map[io.File]*tls_connection
 	// Next_TLS is the synthetic TLS descriptor counter, based at tls_file_base.
 	Next_TLS io.File
+	// Raw_Open records every raw, non-close-on-exec descriptor this backend holds open — the
+	// listeners, plainly-accepted connections, plain outbound connects, and the wake pipe. It
+	// is the exact set Self_Exec must mark close-on-exec (minus the preserved listeners) so no
+	// stale descriptor leaks into the re-exec'd image. TLS-borne sockets never appear here:
+	// they ride net.FileConn/net.Dial, which Go marks close-on-exec already.
+	Raw_Open map[int]bool
 }
 
 // One registered signal watcher: the OS signal it awaits, its backend-independent kind,
@@ -196,7 +206,7 @@ type tls_target struct {
 // and Run_For blocks real time bounded by the nearest deadline or socket event —
 // the same deadline-bounded wait TigerBeetle performs in kevent/io_uring.
 func New_Operating_System_IO(host time.Clock) (loop io.IO, driver io.Driver) {
-	state := &operating_system{Host: host}
+	state := &operating_system{Host: host, Raw_Open: map[int]bool{}}
 	operating_system_wire_file(state, &loop)
 	operating_system_wire_timer(state, &loop)
 	operating_system_wire_socket(state, &loop)
@@ -270,6 +280,28 @@ func operating_system_wire_effects(state *operating_system, loop *io.IO) {
 	) {
 		operating_system_submit(completion)
 		operating_system_spawn(state, completion, callback, request)
+	}
+	// Replaces this process's image with path/argv via execve, keeping the preserved
+	// descriptors live across the transition while marking every other raw descriptor
+	// close-on-exec so the kernel drops it atomically on a successful exec. It marks — never
+	// closes — so a synchronous exec failure (a bad path, a permission error) leaves the
+	// still-running process and all its descriptors intact for the caller to fall back on;
+	// the close-on-exec flag is harmless on a process that keeps running. On success execve
+	// never returns. Inlined like Listen, the other synchronous descriptor-level op.
+	loop.Self_Exec = func(
+		path string, argv []string, extra_environment []string, preserve []io.File,
+	) (err error) {
+		keep := map[int]bool{}
+		for _, file := range preserve {
+			keep[int(file)] = true
+		}
+		for descriptor := range state.Raw_Open {
+			if keep[descriptor] {
+				continue
+			}
+			syscall.CloseOnExec(descriptor)
+		}
+		return syscall.Exec(path, argv, append(os.Environ(), extra_environment...))
 	}
 }
 
@@ -435,7 +467,11 @@ func operating_system_wire_timer(state *operating_system, loop *io.IO) {
 func operating_system_wire_socket(state *operating_system, loop *io.IO) {
 	loop.Listen = func(host_address string, port int) (listener io.File, err error) {
 		descriptor, listen_err := socket_listen(host_address, port)
-		return io.File(descriptor), listen_err
+		if listen_err != nil {
+			return io.File(descriptor), listen_err
+		}
+		state.Raw_Open[descriptor] = true
+		return io.File(descriptor), nil
 	}
 	loop.Accept = func(
 		completion *io.Completion, callback io.Socket_Callback, listener io.File,
@@ -810,6 +846,9 @@ func operating_system_accept(
 			if again {
 				return false, nil
 			}
+			if err == nil {
+				state.Raw_Open[accepted] = true
+			}
 			return true, func() { callback(completion, io.File(accepted), err) }
 		},
 	}
@@ -829,6 +868,7 @@ func operating_system_connect(
 		state.Completed = append(state.Completed, completion)
 		return
 	}
+	state.Raw_Open[descriptor] = true
 	completion.Callback = func() { callback(completion, 0, io.Cancelled) }
 	state.Write_Waiters[descriptor] = &socket_operation{
 		Completion: completion,
@@ -899,6 +939,7 @@ func operating_system_close(
 	if operating_system_tls_close(state, completion, callback, file) {
 		return
 	}
+	delete(state.Raw_Open, int(file))
 	err := socket_close(int(file))
 	completion.Callback = func() {
 		if completion.Cancelled {
@@ -1033,6 +1074,8 @@ func operating_system_wake_ensure(state *operating_system) {
 	state.Wake_Read = read
 	state.Wake_Write = write
 	state.Wake_Active = true
+	state.Raw_Open[read] = true
+	state.Raw_Open[write] = true
 	poll_file_arm(state.Poll, read, false)
 }
 
@@ -1181,11 +1224,7 @@ func tls_serve(
 	operating_system_post(state, target.Completion, func() {
 		target.Callback(target.Completion, file, nil)
 	})
-	for request := range connection.Requests {
-		if tls_handle(state, secure, request) {
-			return
-		}
-	}
+	tls_service(state, secure, connection)
 }
 
 // Dials host:port and completes the client TLS handshake, verifying against Server_Name
@@ -1282,11 +1321,7 @@ func tls_accept_serve(
 	operating_system_post(state, completion, func() {
 		callback(completion, file, nil)
 	})
-	for request := range connection.Requests {
-		if tls_handle(state, secure, request) {
-			return
-		}
-	}
+	tls_service(state, secure, connection)
 }
 
 // Wraps an accepted raw descriptor in a server tls.Conn and completes the handshake.
@@ -1346,30 +1381,41 @@ func Certificate(input *Certificate_Input) (value any, err error) {
 	return &pair, nil
 }
 
-// Handles one TLS request on the connection goroutine, posting the result; returns true
-// when the connection should close.
-func tls_handle(
-	state *operating_system, secure *tls.Conn, request tls_request,
-) (closed bool) {
-	if request.Kind == tls_close {
-		close_err := secure.Close()
+// Services a TLS connection's requests until it closes. Receives run on a dedicated reader
+// goroutine so a blocking Read never starves a concurrent send: tls.Conn permits one reader and one
+// writer at once, and a loop-native protocol like SPOE must write a response (the ACK) while a Read
+// for the next request is still outstanding. The request loop performs the sends and the close in
+// order, so there is exactly one writer; the reader goroutine services receives one at a time, so
+// there is exactly one reader. Without this split the single goroutine blocked in Read could not
+// write the ACK until more inbound data arrived, delaying it past HAProxy's timeout — the churn.
+func tls_service(state *operating_system, secure *tls.Conn, connection *tls_connection) {
+	receives := make(chan tls_request, tls_receive_queue)
+	go func() {
+		for request := range receives {
+			count, err := secure.Read(request.Buffer)
+			operating_system_post(state, request.Completion, func() {
+				request.Byte_Callback(request.Completion, count, err)
+			})
+		}
+	}()
+	defer close(receives)
+	for request := range connection.Requests {
+		if request.Kind == tls_receive {
+			receives <- request
+			continue
+		}
+		if request.Kind == tls_close {
+			close_err := secure.Close()
+			operating_system_post(state, request.Completion, func() {
+				request.Close_Callback(request.Completion, close_err)
+			})
+			return
+		}
+		written, err := secure.Write(request.Buffer)
 		operating_system_post(state, request.Completion, func() {
-			request.Close_Callback(request.Completion, close_err)
+			request.Byte_Callback(request.Completion, written, err)
 		})
-		return true
 	}
-	if request.Kind == tls_receive {
-		count, err := secure.Read(request.Buffer)
-		operating_system_post(state, request.Completion, func() {
-			request.Byte_Callback(request.Completion, count, err)
-		})
-		return false
-	}
-	count, err := secure.Write(request.Buffer)
-	operating_system_post(state, request.Completion, func() {
-		request.Byte_Callback(request.Completion, count, err)
-	})
-	return false
 }
 
 // Routes a receive to its TLS connection goroutine when socket is a TLS descriptor,

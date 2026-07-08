@@ -166,6 +166,23 @@ func Test_Terminal_Logger_Emits_Through_Console(t *testing.T) {
 	}
 }
 
+// Test_Default_Floor_Is_Info covers New_Default_Logger building with an Info floor, so trace and
+// debug noise stays out of the stderr diode unless a caller raises verbosity explicitly.
+func Test_Default_Floor_Is_Info(t *testing.T) {
+	if got := jlog.New_Default_Logger().Floor; got != jlog.LEVEL_INFO {
+		t.Fatalf("New_Default_Logger Floor = %v, want LEVEL_INFO", got)
+	}
+}
+
+// Test_Terminal_Floor_Is_Debug covers New_Terminal_Logger building with a Debug floor, a step
+// more verbose than the stderr default, since a developer watching a terminal wants debug lines
+// without asking for trace-level noise too.
+func Test_Terminal_Floor_Is_Debug(t *testing.T) {
+	if got := jlog.New_Terminal_Logger().Floor; got != jlog.LEVEL_DEBUG {
+		t.Fatalf("New_Terminal_Logger Floor = %v, want LEVEL_DEBUG", got)
+	}
+}
+
 // Renders line through a Console with the given color setting and returns what the Console wrote,
 // so a behaviour test is a single byte-for-byte comparison.
 func render(t *testing.T, color bool, line string) (rendered *bytes.Buffer) {

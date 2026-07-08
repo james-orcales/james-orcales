@@ -116,7 +116,7 @@ func New_Default_Logger() (logger Logger) {
 	return jlog.New(jlog.New_Input{
 		Writer:         writer,
 		Clock:          clock,
-		Floor:          jlog.LEVEL_TRACE,
+		Floor:          jlog.LEVEL_INFO,
 		Auto_Timestamp: true,
 		Caller:         operating_system_caller,
 	})
@@ -521,7 +521,7 @@ func New_Terminal_Logger() (logger Logger) {
 	return jlog.New(jlog.New_Input{
 		Writer:         console,
 		Clock:          clock,
-		Floor:          jlog.LEVEL_TRACE,
+		Floor:          jlog.LEVEL_DEBUG,
 		Auto_Timestamp: true,
 		Caller:         operating_system_caller,
 	})

@@ -64,3 +64,14 @@ output is never lost or mangled.
 
 New_Terminal_Logger returns a logger whose lines reach standard output in the Console's
 human-readable form.
+
+# Default Floor Is Info
+
+New_Default_Logger builds with an Info floor, so trace and debug noise stays out of the
+stderr diode unless a caller raises verbosity explicitly.
+
+# Terminal Floor Is Debug
+
+New_Terminal_Logger builds with a Debug floor, a step more verbose than the stderr
+default, since a developer watching a terminal wants debug lines without asking for
+trace-level noise too.
