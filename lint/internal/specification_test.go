@@ -944,10 +944,11 @@ func Test_Source_And_Test_Requirements_Struct_Field_Documentation_Comments(t *te
 }
 
 // Test_Source_And_Test_Requirements_Name_Style verifies an exported identifier
-// not in Ada_Case is flagged, and that an exported top-level const is held to
-// SCREAMING_SNAKE_CASE instead — a separate diagnostic, not the general Ada_Case
-// one. The rule governs identifier casing, not file names; a hyphenated path is
-// the Path Casing rule's domain, so a file-name fixture would never exercise it.
+// not in Ada_Case is flagged, and that a const is held to SCREAMING_SNAKE_CASE
+// instead — a separate diagnostic, not the general Ada_Case one — whatever its
+// scope or export status. The rule governs identifier casing, not file names; a
+// hyphenated path is the Path Casing rule's domain, so a file-name fixture would
+// never exercise it.
 func Test_Source_And_Test_Requirements_Name_Style(t *testing.T) {
 	t.Parallel()
 	files := specification_one_file(

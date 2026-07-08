@@ -72,7 +72,7 @@ const snapshot_specification_test = "package fixture_test\n\nimport \"testing\"\
 // Fixture_const_hi declares a file-scope upper bound used by Distinct_Boundary
 // Hi positions in test fixtures so the new assertion-bound-named-constant
 // rule is satisfied. Append to the import block, before any non-import decl.
-const fixture_constant_hi = "\nconst fixture_hi = 100\n"
+const fixture_constant_hi = "\nconst FIXTURE_HI = 100\n"
 
 // Fixture_declaration_callee defines a parameterless g() returning a non-nil
 // pointer, used by declaration-coverage fixtures so the test cases focus on
@@ -97,13 +97,13 @@ const fixture_declaration_callee_pair = "func g() (a *int, b *int) {\n" +
 const fixture_clean_go = "package main\n\n" +
 	"import invariant \"github.com/james-orcales/james-orcales/" +
 	"shared/invariant/v2\"\n\n" +
-	"const fixture_hi = 100\n\n" +
+	"const FIXTURE_HI = 100\n\n" +
 	"func f() (result int) {\n" +
 	"\tdefer func() {\n" +
 	"\t\tinvariant.Cross_Product(\n" +
 	"\t\t\tinvariant.Distinct_Boundary(" +
 	"&invariant.Boundary_Input[int]{\n" +
-	"\t\t\t\tX: result, Lo: 0, Hi: fixture_hi}),\n" +
+	"\t\t\t\tX: result, Lo: 0, Hi: FIXTURE_HI}),\n" +
 	"\t\t\tinvariant.Always(" +
 	"result == 0, \"result is zero\"),\n" +
 	"\t\t)\n" +
@@ -448,7 +448,8 @@ func Test_No_Discard_Part2(t *testing.T) {
 			Files: map[string]string{"test.go": `package main
 
 ` + fixture_invariant_import + `
-const fixture_hi = 100
+// FIXTURE_HI is a fixture.
+const FIXTURE_HI = 100
 
 func f() (result int) {
 	defer func() {
@@ -804,7 +805,8 @@ func Test_No_Naked_Return_Part2(t *testing.T) {
 			Files: map[string]string{"test.go": `package main
 
 ` + fixture_invariant_import + `
-const fixture_hi = 100
+// FIXTURE_HI is a fixture.
+const FIXTURE_HI = 100
 
 func f() (x int) {
 	defer func() {
@@ -817,7 +819,8 @@ func f() (x int) {
 			Files: map[string]string{"test.go": `package main
 
 ` + fixture_invariant_import + `
-const fixture_hi = 100
+// FIXTURE_HI is a fixture.
+const FIXTURE_HI = 100
 
 func f() (output int) {
 	defer func() {
@@ -1023,8 +1026,8 @@ func Test_No_Grouped_Declaration_Allowed(t *testing.T) {
 			Files: map[string]string{
 				"test.go": `package main
 
-const foo = "foo"
-const bar = "bar"
+const FOO = "foo"
+const BAR = "bar"
 `,
 			},
 			Want_Diag: "",
@@ -1034,7 +1037,7 @@ const bar = "bar"
 			Files: map[string]string{
 				"test.go": `package main
 
-const a, b = 1, 2
+const A, B = 1, 2
 `,
 			},
 			Want_Diag: "",
@@ -1364,7 +1367,8 @@ func Test_Keyed_Struct_Init_Allowed(t *testing.T) {
 				"test.go": `package main
 
 ` + fixture_invariant_import + `
-const fixture_hi = 100
+// FIXTURE_HI is a fixture.
+const FIXTURE_HI = 100
 
 type Foo struct {
 	// A is a fixture.
@@ -1389,7 +1393,8 @@ func make_v() (result Foo) {
 				"test.go": `package main
 
 ` + fixture_invariant_import + `
-const fixture_hi = 100
+// FIXTURE_HI is a fixture.
+const FIXTURE_HI = 100
 
 func make_v() (result []int) {
 	defer func() {
@@ -1418,7 +1423,8 @@ func Test_Keyed_Struct_Init_Allowed_Part2(t *testing.T) {
 				"test.go": `package main
 
 ` + fixture_invariant_import + `
-const fixture_hi = 100
+// FIXTURE_HI is a fixture.
+const FIXTURE_HI = 100
 
 type Foo struct{}
 
@@ -1457,13 +1463,13 @@ func Test_Gofmt(t *testing.T) {
 					"import invariant \"" +
 					"github.com/james-orcales/james-orcales/" +
 					"shared/invariant/v2\"\n\n" +
-					"const fixture_hi = 100\n\n" +
+					"const FIXTURE_HI = 100\n\n" +
 					"func f() (result int) {\n" +
 					"\tdefer func() {\n" +
 					"\t\tinvariant.Cross_Product(\n" +
 					"\t\t\tinvariant.Distinct_Boundary(" +
 					"&invariant.Boundary_Input[int]{\n" +
-					"\t\t\t\tX: result, Lo: 0, Hi: fixture_hi,\n" +
+					"\t\t\t\tX: result, Lo: 0, Hi: FIXTURE_HI,\n" +
 					"\t\t\t}),\n" +
 					"\t\t\tinvariant.Always(" +
 					"result == 0, \"result is zero\"),\n" +
@@ -2035,7 +2041,8 @@ func Test_Banned_Declaration_Sites_Builtin_Exempt(t *testing.T) {
 				"test.go": `package main
 
 ` + fixture_invariant_import + `
-const fixture_hi = 100
+// FIXTURE_HI is a fixture.
+const FIXTURE_HI = 100
 
 func F(xs []int) (result int) {
 	defer func() {
@@ -2064,7 +2071,8 @@ func Test_Banned_Declaration_Sites_Builtin_Exempt_Part2(t *testing.T) {
 				"test.go": `package main
 
 ` + fixture_invariant_import + `
-const fixture_hi = 100
+// FIXTURE_HI is a fixture.
+const FIXTURE_HI = 100
 
 func F(xs []int) (result int) {
 	defer func() {
@@ -2094,7 +2102,8 @@ func Test_Banned_Declaration_Sites_Local_Vars_Clean(t *testing.T) {
 				"test.go": `package main
 
 ` + fixture_invariant_import + `
-const fixture_hi = 100
+// FIXTURE_HI is a fixture.
+const FIXTURE_HI = 100
 
 func F(buffer []byte) (result int) {
 	defer func() {
@@ -2170,7 +2179,8 @@ func Test_Banned_Declaration_Sites_Signatures_Part2(t *testing.T) {
 				"test.go": `package main
 
 ` + fixture_invariant_import + `
-const fixture_hi = 100
+// FIXTURE_HI is a fixture.
+const FIXTURE_HI = 100
 
 type S struct{}
 
@@ -2218,7 +2228,8 @@ func F(n int) (result int) {
 				"test.go": `package main
 
 ` + fixture_invariant_import + `
-const fixture_hi = 100
+// FIXTURE_HI is a fixture.
+const FIXTURE_HI = 100
 
 func F(n int) (result int) {
 	defer func() {
@@ -2250,7 +2261,8 @@ func Test_Naming_For_Loop_Part2(t *testing.T) {
 				"test.go": `package main
 
 ` + fixture_invariant_import + `
-const fixture_hi = 100
+// FIXTURE_HI is a fixture.
+const FIXTURE_HI = 100
 
 func F() (result int) {
 	defer func() {
@@ -2337,7 +2349,8 @@ func Test_Naming_Make_Part2(t *testing.T) {
 				"test.go": `package main
 
 ` + fixture_invariant_import + `
-const fixture_hi = 100
+// FIXTURE_HI is a fixture.
+const FIXTURE_HI = 100
 
 func F(n_count int) (result []int) {
 	defer func() {
@@ -2467,7 +2480,8 @@ func Test_Naming_Element_Count_Result_Part2(t *testing.T) {
 				"test.go": `package main
 
 ` + fixture_invariant_import + `
-const fixture_hi = 100
+// FIXTURE_HI is a fixture.
+const FIXTURE_HI = 100
 
 func F(xs []int) (result int) {
 	defer func() {
@@ -2497,7 +2511,8 @@ func Test_Naming_Element_Count_Result_Part3(t *testing.T) {
 				"test.go": `package main
 
 ` + fixture_invariant_import + `
-const fixture_hi = 100
+// FIXTURE_HI is a fixture.
+const FIXTURE_HI = 100
 
 func F(buffer []byte) (result int) {
 	defer func() {
@@ -2559,11 +2574,12 @@ func F(N int) (result int) {
 }
 
 // Test_Naming_Constant_Casing verifies the const-specific carve-out of the Name
-// Style rule: an exported top-level const must be SCREAMING_SNAKE_CASE, not the
-// general Ada_Case every other exported identifier takes — including a name that
-// already happens to satisfy ada_case_re's acronym leniency (Retry_Count_Max),
-// which must still fail since it isn't fully uppercase. Unexported and
-// function-local consts are unaffected regressions.
+// Style rule: every const must be SCREAMING_SNAKE_CASE, not the general Ada_Case
+// or snake_case its export status would otherwise dictate — including a name
+// that already happens to satisfy ada_case_re's acronym leniency
+// (Retry_Count_Max), which must still fail since it isn't fully uppercase. The
+// rule reaches past package-level exported consts to unexported and
+// function-local consts alike.
 func Test_Naming_Constant_Casing(t *testing.T) {
 	t.Parallel()
 	run_diag_table(t, []struct {
@@ -2602,17 +2618,17 @@ const RETRY_COUNT_MAX = 3
 			Want_Diag: "",
 		},
 		{
-			Name: "unexported const is unaffected",
+			Name: "unexported const is flagged",
 			Files: map[string]string{
 				"test.go": `package main
 
 const retry_count_max = 3
 `,
 			},
-			Want_Diag: "",
+			Want_Diag: "retry_count_max -> RETRY_COUNT_MAX",
 		},
 		{
-			Name: "function-local const is unaffected",
+			Name: "function-local const is flagged",
 			Files: map[string]string{
 				"test.go": `package main
 
@@ -2622,7 +2638,7 @@ func F() {
 }
 `,
 			},
-			Want_Diag: "",
+			Want_Diag: "Local_Thing -> LOCAL_THING",
 		},
 	})
 }
@@ -2688,7 +2704,8 @@ func Test_Naming_Arithmetic_Clean(t *testing.T) {
 				"test.go": `package main
 
 ` + fixture_invariant_import + `
-const fixture_hi = 100
+// FIXTURE_HI is a fixture.
+const FIXTURE_HI = 100
 
 func F() (result int) {
 	defer func() {
@@ -2709,7 +2726,8 @@ func F() (result int) {
 				"test.go": `package main
 
 ` + fixture_invariant_import + `
-const fixture_hi = 100
+// FIXTURE_HI is a fixture.
+const FIXTURE_HI = 100
 
 func F() (result int) {
 	defer func() {
@@ -2741,7 +2759,8 @@ func Test_Naming_Arithmetic_Clean_Part2(t *testing.T) {
 				"test.go": `package main
 
 ` + fixture_invariant_import + `
-const fixture_hi = 100
+// FIXTURE_HI is a fixture.
+const FIXTURE_HI = 100
 
 func F() (result int) {
 	defer func() {
@@ -2766,7 +2785,8 @@ func Test_Naming_Arithmetic_Size_Plus_Offset(t *testing.T) {
 	source := `package main
 
 ` + fixture_invariant_import + `
-const fixture_hi = 100
+// FIXTURE_HI is a fixture.
+const FIXTURE_HI = 100
 
 func F() (result int) {
 	defer func() {
@@ -2907,7 +2927,8 @@ import (
 
 )
 
-const fixture_hi = 100
+// FIXTURE_HI is a fixture.
+const FIXTURE_HI = 100
 
 func F() (x int) {
 	defer func() {
@@ -2940,7 +2961,8 @@ func Test_Naming_Abbreviations_Exempt_Part2(t *testing.T) {
 				"test.go": `package main
 
 ` + fixture_invariant_import + `
-const fixture_hi = 100
+// FIXTURE_HI is a fixture.
+const FIXTURE_HI = 100
 
 func F(n int) (x int) {
 	defer func() {
@@ -2972,7 +2994,8 @@ func Test_Naming_Abbreviations_Exempt_Part3(t *testing.T) {
 				"test.go": `package main
 
 ` + fixture_invariant_import + `
-const fixture_hi = 100
+// FIXTURE_HI is a fixture.
+const FIXTURE_HI = 100
 
 func Compute(value int) (result int) {
 	defer func() {
@@ -3221,7 +3244,8 @@ func Test_Naming_Participles_Exempt(t *testing.T) {
 				"test.go": `package main
 
 ` + fixture_invariant_import + `
-const fixture_hi = 100
+// FIXTURE_HI is a fixture.
+const FIXTURE_HI = 100
 
 type Color int
 
@@ -3240,7 +3264,8 @@ func (c Color) String() (result string) {
 				"test.go": `package main
 
 ` + fixture_invariant_import + `
-const fixture_hi = 100
+// FIXTURE_HI is a fixture.
+const FIXTURE_HI = 100
 
 func Compute(value int) (result int) {
 	defer func() {
@@ -3464,12 +3489,12 @@ func Test_Snap_Backtick(t *testing.T) {
 					"\tinvariant \"github.com/james-orcales/james-orcales/" +
 					"shared/invariant/v2\"\n" +
 					")\n\n" +
-					"const fixture_hi = 100\n\n" +
+					"const FIXTURE_HI = 100\n\n" +
 					"func f(s string) {\n" +
 					"\tinvariant.Cross_Product(\n" +
 					"\t\tinvariant.Distinct_Boundary(" +
 					"&invariant.Boundary_Input[int]{\n" +
-					"\t\t\tX: len(s), Lo: 0, Hi: fixture_hi, " +
+					"\t\t\tX: len(s), Lo: 0, Hi: FIXTURE_HI, " +
 					"Message: \"len in range\",\n" +
 					"\t\t}),\n" +
 					"\t\tinvariant.Always(" +
@@ -3576,7 +3601,8 @@ func F(a, b int) (result int) { return a + b }
 				"test.go": `package main
 
 ` + fixture_invariant_import + `
-const fixture_hi = 100
+// FIXTURE_HI is a fixture.
+const FIXTURE_HI = 100
 
 type F_Input struct {
 	// A is a fixture.
@@ -3646,7 +3672,8 @@ func Test_Input_Struct_Snake_Case(t *testing.T) {
 				"test.go": `package main
 
 ` + fixture_invariant_import + `
-const fixture_hi = 100
+// FIXTURE_HI is a fixture.
+const FIXTURE_HI = 100
 
 type f_input struct {
 	A int
@@ -3683,7 +3710,8 @@ func Test_Input_Struct_Skip_Shapes(t *testing.T) {
 				"test.go": `package main
 
 ` + fixture_invariant_import + `
-const fixture_hi = 100
+// FIXTURE_HI is a fixture.
+const FIXTURE_HI = 100
 
 func F(args ...int) (result int) {
 	defer func() {
@@ -3712,7 +3740,8 @@ func Test_Input_Struct_Skip_Shapes_Part2(t *testing.T) {
 				"test.go": `package main
 
 ` + fixture_invariant_import + `
-const fixture_hi = 100
+// FIXTURE_HI is a fixture.
+const FIXTURE_HI = 100
 
 func F(a int, b string) (result int) {
 	defer func() {
@@ -3741,7 +3770,8 @@ func Test_Input_Struct_Skip_Shapes_Part3(t *testing.T) {
 				"test.go": `package main
 
 ` + fixture_invariant_import + `
-const fixture_hi = 100
+// FIXTURE_HI is a fixture.
+const FIXTURE_HI = 100
 
 func F(a int) (result int) {
 	defer func() {
@@ -3773,7 +3803,8 @@ func Test_Input_Struct_Declaration_Location(t *testing.T) {
 				"test.go": `package main
 
 ` + fixture_invariant_import + `
-const fixture_hi = 100
+// FIXTURE_HI is a fixture.
+const FIXTURE_HI = 100
 
 func F(input *F_Input) (result int) {
 	defer func() {
@@ -3811,7 +3842,8 @@ func Test_Input_Struct_Declaration_Location_Part2(t *testing.T) {
 				"test.go": `package main
 
 ` + fixture_invariant_import + `
-const fixture_hi = 100
+// FIXTURE_HI is a fixture.
+const FIXTURE_HI = 100
 
 type F_Input struct {
 	// A is a fixture.
@@ -3862,7 +3894,8 @@ type fixture_thing struct {
 	B int
 }
 
-const fixture_hi = 100
+// FIXTURE_HI is a fixture.
+const FIXTURE_HI = 100
 
 func F(thing *fixture_thing) (result int) {
 	defer func() {
@@ -3943,7 +3976,8 @@ func Test_No_Interfaces(t *testing.T) {
 				"test.go": `package main
 
 ` + fixture_invariant_import + `
-const fixture_hi = 100
+// FIXTURE_HI is a fixture.
+const FIXTURE_HI = 100
 
 func main() (result int) {
 	defer func() {
@@ -3965,7 +3999,8 @@ type Iface interface {
 				"test.go": `package main
 
 ` + fixture_invariant_import + `
-const fixture_hi = 100
+// FIXTURE_HI is a fixture.
+const FIXTURE_HI = 100
 
 func main() (result int) {
 	defer func() {
@@ -4024,7 +4059,8 @@ func Test_No_Interfaces_Allowed(t *testing.T) {
 				"test.go": `package main
 
 ` + fixture_invariant_import + `
-const fixture_hi = 100
+// FIXTURE_HI is a fixture.
+const FIXTURE_HI = 100
 
 func main() (result int) {
 	defer func() {
@@ -4059,7 +4095,8 @@ func Test_No_Interfaces_Allowed_Part2(t *testing.T) {
 				"test.go": `package main
 
 ` + fixture_invariant_import + `
-const fixture_hi = 100
+// FIXTURE_HI is a fixture.
+const FIXTURE_HI = 100
 
 func main() (result int) {
 	defer func() {
@@ -4104,7 +4141,8 @@ func Test_Unnecessary_Method_Allowed(t *testing.T) {
 				"test.go": `package main
 
 ` + fixture_invariant_import + `
-const fixture_hi = 100
+// FIXTURE_HI is a fixture.
+const FIXTURE_HI = 100
 
 func main() (result int) {
 	defer func() {
@@ -4144,7 +4182,8 @@ func Test_Unnecessary_Method_Allowed_Part2(t *testing.T) {
 				"test.go": `package main
 
 ` + fixture_invariant_import + `
-const fixture_hi = 100
+// FIXTURE_HI is a fixture.
+const FIXTURE_HI = 100
 
 func main() (result int) {
 	defer func() {
@@ -4184,7 +4223,8 @@ func Test_Unnecessary_Method_Allowed_Read(t *testing.T) {
 				"test.go": `package main
 
 ` + fixture_invariant_import + `
-const fixture_hi = 100
+// FIXTURE_HI is a fixture.
+const FIXTURE_HI = 100
 
 func main() (result int) {
 	defer func() {
@@ -4227,7 +4267,8 @@ func Test_Unnecessary_Method_Allowed_Extra(t *testing.T) {
 				"test.go": `package main
 
 ` + fixture_invariant_import + `
-const fixture_hi = 100
+// FIXTURE_HI is a fixture.
+const FIXTURE_HI = 100
 
 func main() (result int) {
 	defer func() {
@@ -4265,7 +4306,8 @@ func Test_Unnecessary_Method_Allowed_Extra_Part2(t *testing.T) {
 				"test.go": `package main
 
 ` + fixture_invariant_import + `
-const fixture_hi = 100
+// FIXTURE_HI is a fixture.
+const FIXTURE_HI = 100
 
 func main() (result int) {
 	defer func() {
@@ -4302,7 +4344,8 @@ func Test_Unnecessary_Method_Flagged(t *testing.T) {
 				"test.go": `package main
 
 ` + fixture_invariant_import + `
-const fixture_hi = 100
+// FIXTURE_HI is a fixture.
+const FIXTURE_HI = 100
 
 func main() (result int) {
 	defer func() {
@@ -4340,7 +4383,8 @@ func Test_Unnecessary_Method_Flagged_Part2(t *testing.T) {
 				"test.go": `package main
 
 ` + fixture_invariant_import + `
-const fixture_hi = 100
+// FIXTURE_HI is a fixture.
+const FIXTURE_HI = 100
 
 func main() (result int) {
 	defer func() {
@@ -4380,7 +4424,8 @@ func Test_Test_Package_Part2(t *testing.T) {
 				"foo.go": `package main
 
 ` + fixture_invariant_import + `
-const fixture_hi = 100
+// FIXTURE_HI is a fixture.
+const FIXTURE_HI = 100
 
 func f() (result int) {
 	defer func() {
@@ -5081,7 +5126,7 @@ func b() { return }`}, Want_Diag: ""},
 
 		{Name: "decls before main: still OK",
 			Files: map[string]string{"test.go": `package main
-const x = 1
+const X = 1
 type T int
 func main() { return }`}, Want_Diag: ""},
 	} {

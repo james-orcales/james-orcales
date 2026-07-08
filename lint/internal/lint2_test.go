@@ -310,13 +310,13 @@ func Test_Comments_Inline_Exempt(t *testing.T) {
 	source := "package main\n\n" +
 		"import invariant \"github.com/james-orcales/james-orcales/" +
 		"shared/invariant/v2\"\n\n" +
-		"const fixture_hi = 100\n\n" +
+		"const FIXTURE_HI = 100\n\n" +
 		"func f() (result int) { // some inline note\n" +
 		"\tdefer func() {\n" +
 		"\t\tinvariant.Cross_Product(\n" +
 		"\t\t\tinvariant.Distinct_Boundary(" +
 		"&invariant.Boundary_Input[int]{\n" +
-		"\t\t\t\tX: result, Lo: 0, Hi: fixture_hi,\n" +
+		"\t\t\t\tX: result, Lo: 0, Hi: FIXTURE_HI,\n" +
 		"\t\t\t}),\n" +
 		"\t\t\tinvariant.Always(" +
 		"result == 0, \"result is zero\"),\n" +
@@ -1042,7 +1042,7 @@ func Test_Snapshot_Bans_Declarations(t *testing.T) {
 	run_snapshot_cases(t, []snapshot_case{
 		{Snapshot: snap.Init(`a.go:5:11: iota is banned`),
 			Files: snapshot_package("// X is a fixture.\nconst X = iota\n")},
-		{Snapshot: snap.Init(`a.go:4:1: grouped declaration banned; split into one per line`), Files: snapshot_package("const (\n\ta = 1\n\tb = 2\n)\n")},
+		{Snapshot: snap.Init(`a.go:4:1: grouped declaration banned; split into one per line`), Files: snapshot_package("var (\n\ta = 1\n\tb = 2\n)\n")},
 		{Snapshot: snap.Init(`a.go:5:1: func F has an empty body`),
 			Files: snapshot_package("// F does.\nfunc F() {}\n")},
 	})
@@ -1529,8 +1529,11 @@ func F() (n int) {
 	return n
 }
 `)},
-		{Snapshot: snap.Init(`a.go:5:7: rename max_count -> count_max`), Files: snapshot_package(`// Max count.
-const max_count = 1
+		{Snapshot: snap.Init(`a.go:6:2: rename max_count -> count_max`), Files: snapshot_package(`// F does.
+func F() (n int) {
+	max_count := 1
+	return max_count
+}
 `)},
 	})
 }
@@ -2631,7 +2634,8 @@ import (
 
 )
 
-const fixture_hi = 100
+// FIXTURE_HI is a fixture.
+const FIXTURE_HI = 100
 
 // F is a fixture.
 func F(r *rand.Rand) (n int) {
@@ -3012,7 +3016,8 @@ func Test_No_Impure_Stdlib_Exemptions_Part2(t *testing.T) {
 package library
 
 
-const fixture_hi = 100
+// FIXTURE_HI is a fixture.
+const FIXTURE_HI = 100
 
 // F is a fixture.
 func F() (n int) {
@@ -3084,7 +3089,8 @@ import (
 
 )
 
-const fixture_hi = 100
+// FIXTURE_HI is a fixture.
+const FIXTURE_HI = 100
 
 // Read is a fixture.
 func Read() (name string) {
@@ -3124,7 +3130,8 @@ import (
 
 )
 
-const fixture_hi = 100
+// FIXTURE_HI is a fixture.
+const FIXTURE_HI = 100
 
 // Read is a fixture.
 func Read() (name string) {
@@ -3188,7 +3195,8 @@ import (
 
 )
 
-const fixture_hi = 100
+// FIXTURE_HI is a fixture.
+const FIXTURE_HI = 100
 
 // Read is a fixture.
 func Read() (name string) {
@@ -3318,7 +3326,8 @@ func main() {
 				"a.go": `package main
 
 ` + fixture_invariant_import + `
-const fixture_hi = 100
+// FIXTURE_HI is a fixture.
+const FIXTURE_HI = 100
 
 func main() {
 	for range invariant.Game_Loop() {
@@ -4307,7 +4316,7 @@ func Test_Coverage_Backfill_String_Bounded_Mixed_Invariant_Calls(t *testing.T) {
 	t.Parallel()
 	mixed_calls_source := "package fixture\n\n" +
 		"\tfoo.Bar()\n" +
-		"X: x, Lo: 0, Hi: fixture_hi})\n" +
+		"X: x, Lo: 0, Hi: FIXTURE_HI})\n" +
 		"}\n"
 	diags, err := lint.Check_Source("test.go", mixed_calls_source)
 	t.Logf("mixed diags=%d err=%v", len(diags), err)
@@ -4316,16 +4325,16 @@ func Test_Coverage_Backfill_String_Bounded_Mixed_Invariant_Calls(t *testing.T) {
 		"type Bar struct {\n\tA int\n\tB bool\n\tC string\n}\n\n" +
 		"func Quux(input *Bar, s string, n int, b bool, p *int) (result int) {\n" +
 		"\tdefer func() {\n" +
-		"\t\t\t\tX: result, Lo: 0, Hi: fixture_hi,\n" +
+		"\t\t\t\tX: result, Lo: 0, Hi: FIXTURE_HI,\n" +
 		"\t\t\t}),\n" +
 		"\t\t)\n" +
 		"\t}()\n" +
 		"input != nil, \"input is non-nil\"),\n" +
 		"p != nil, \"p is non-nil\"),\n" +
 		"b, \"b is sometimes true\"),\n" +
-		"\t\t\tX: n, Lo: 0, Hi: fixture_hi,\n" +
+		"\t\t\tX: n, Lo: 0, Hi: FIXTURE_HI,\n" +
 		"\t\t}),\n" +
-		"\t\t\tX: len(s), Lo: 0, Hi: fixture_hi,\n" +
+		"\t\t\tX: len(s), Lo: 0, Hi: FIXTURE_HI,\n" +
 		"\t\t}),\n" +
 		"s == \"\", \"s is empty\"),\n" +
 		"\t)\n" +

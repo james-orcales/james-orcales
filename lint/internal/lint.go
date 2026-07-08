@@ -1553,10 +1553,10 @@ func check_casing_ident(file_set *token.FileSet, identifier *ast.Ident, diags *[
 func check_casing(file_set *token.FileSet, file *ast.File, _ []byte) (diags []Diagnostic) {
 
 	// Held to screaming_snake_case_re by check_constant_casing instead of this
-	// function's Ada_Case rule; keyed by ident pointer (not name) so a local
-	// variable shadowing an exported const's name is never accidentally skipped.
+	// function's Ada_Case/snake_case rule; keyed by ident pointer (not name) so a
+	// variable sharing a const's name is never accidentally skipped.
 	screaming_case_constants := map[*ast.Ident]bool{}
-	for _, identifier := range check_casing_exported_constant_idents(file) {
+	for _, identifier := range check_casing_constant_idents(file) {
 		screaming_case_constants[identifier] = true
 	}
 
@@ -1615,19 +1615,19 @@ func check_casing(file_set *token.FileSet, file *ast.File, _ []byte) (diags []Di
 	return diags
 }
 
-// Check_casing_exported_constant_idents walks only file.Decls — never a
-// function body — so "exported" falls out of the package-level-only walk for
-// free: Go's actual export semantics, not check_casing's scope-blind
-// first-letter check. An exported top-level const is held to
-// screaming_snake_case_re instead of the general Ada_Case rule.
-func check_casing_exported_constant_idents(file *ast.File) (idents []*ast.Ident) {
-	for _, declaration := range file.Decls {
-		generic_declaration, ok := declaration.(*ast.GenDecl)
+// Check_casing_constant_idents walks the whole file — function bodies
+// included — so it reaches every const: package-level exported, package-level
+// unexported, and function-local alike. Export status and scope are
+// irrelevant; a const is held to screaming_snake_case_re instead of the
+// general Ada_Case/snake_case rule check_casing would otherwise apply.
+func check_casing_constant_idents(file *ast.File) (idents []*ast.Ident) {
+	ast.Inspect(file, func(n ast.Node) (descend bool) {
+		generic_declaration, ok := n.(*ast.GenDecl)
 		if !ok {
-			continue
+			return true
 		}
 		if generic_declaration.Tok != token.CONST {
-			continue
+			return true
 		}
 		for _, specification := range generic_declaration.Specs {
 			value_specification, is_value_specification :=
@@ -1635,18 +1635,15 @@ func check_casing_exported_constant_idents(file *ast.File) (idents []*ast.Ident)
 			if !is_value_specification {
 				continue
 			}
-			for _, name := range value_specification.Names {
-				if ast.IsExported(name.Name) {
-					idents = append(idents, name)
-				}
-			}
+			idents = append(idents, value_specification.Names...)
 		}
-	}
+		return true
+	})
 	return idents
 }
 
 func check_constant_casing(file_set *token.FileSet, file *ast.File, _ []byte) (diags []Diagnostic) {
-	for _, identifier := range check_casing_exported_constant_idents(file) {
+	for _, identifier := range check_casing_constant_idents(file) {
 		if screaming_snake_case_re.MatchString(identifier.Name) {
 			continue
 		}
