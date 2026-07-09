@@ -45,6 +45,13 @@ the last argument is rejected at construction.
 A flag assigns its value by type; a double-dash flag or a non-boolean flag without a
 value returns an error.
 
+### Enum
+
+An enum option restricts its value to a fixed set. A flag enum carries a default that
+must be a member; an argument enum is required and has none, set by position or by name
+like any argument. A value outside the set returns an error that suggests the closest
+member for a string enum and otherwise lists the whole set.
+
 # Trim Quotes
 
 A quoted flag value is unquoted during parsing when it is wrapped in a matching
@@ -70,4 +77,6 @@ New validates a program's configuration and panics when it is malformed.
 ### Validation
 
 A command without a label panics; so does an argument label that is not flag-safe or
-that collides with another option's name.
+that collides with another option's name. An enum with an empty set, an element type
+that does not match its value, or — for a flag — a default outside the set, panics; a
+variadic option may not be an enum.

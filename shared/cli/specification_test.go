@@ -392,6 +392,168 @@ func Test_New_Validation(t *testing.T) {
 			},
 		})
 	})
+	// An enum flag's default must be one of its permitted values.
+	assert_panics(t, "enum flag default outside its set", func() {
+		cli.New_Single(cli.New_Single_Input{
+			Label: "prog",
+			Flags: []cli.Option{
+				cli.New_Enum_Flag(cli.New_Enum_Flag_Input[string]{
+					Label: "color", Enum: []string{"auto", "never"}, Value: "rainbow",
+				}),
+			},
+		})
+	})
+	// An enum with no permitted values is malformed.
+	assert_panics(t, "empty enum set", func() {
+		cli.New_Single(cli.New_Single_Input{
+			Label: "prog",
+			Arguments: []cli.Option{
+				cli.New_Enum_Argument(cli.New_Enum_Argument_Input[string]{
+					Label: "format", Enum: []string{},
+				}),
+			},
+		})
+	})
+	// The enum's element type must match the option's value type.
+	assert_panics(t, "enum element type mismatch", func() {
+		cli.New_Single(cli.New_Single_Input{
+			Label:     "prog",
+			Arguments: []cli.Option{{Label: "format", Value: "", Enum: []int{1, 2}}},
+		})
+	})
+	// A variadic argument cannot also carry an enum: enums are single-valued.
+	assert_panics(t, "enum on a variadic argument", func() {
+		cli.New_Single(cli.New_Single_Input{
+			Label:     "prog",
+			Arguments: []cli.Option{{Label: "path", Value: []string{}, Enum: []string{"a", "b"}}},
+		})
+	})
+}
+
+// Test_Parse_Enum verifies a flag-form enum: a permitted value is accepted, an omitted
+// enum falls back to its default, and an out-of-set value is rejected — with a
+// levenshtein suggestion for a near miss and the full allowed list otherwise. The int
+// instantiation rejects a non-member with the same allowed-list message.
+func Test_Parse_Enum(t *testing.T) {
+	program := cli.New_Single(cli.New_Single_Input{
+		Label: "prog", Description: "enum flags",
+		Flags: []cli.Option{
+			cli.New_Enum_Flag(cli.New_Enum_Flag_Input[string]{
+				Label: "color", Enum: []string{"auto", "never", "always"},
+				Value: "auto", Description: "when to colorize",
+			}),
+			cli.New_Enum_Flag(cli.New_Enum_Flag_Input[int]{
+				Label: "level", Enum: []int{1, 2, 4, 8}, Value: 1,
+				Description: "compression level",
+			}),
+		},
+	})
+
+	// A permitted value is accepted.
+	command, err := cli.Program_Parse(&program, []string{"prog", "-color=never"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if cli.Get_Option(command.Flags, "color").Value.(string) != "never" {
+		t.Errorf("expected never, got %q", cli.Get_Option(command.Flags, "color").Value)
+	}
+
+	// An omitted enum keeps its default.
+	command, err = cli.Program_Parse(&program, []string{"prog"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if cli.Get_Option(command.Flags, "color").Value.(string) != "auto" {
+		t.Errorf("expected default auto, got %q",
+			cli.Get_Option(command.Flags, "color").Value)
+	}
+
+	// A near miss suggests the closest member.
+	_, err = cli.Program_Parse(&program, []string{"prog", "-color=nevr"})
+	if err == nil {
+		t.Fatal("expected an error for an out-of-set value")
+	}
+	if !strings.Contains(err.Error(), `did you mean "never"`) {
+		t.Errorf("expected a suggestion of never, got %v", err)
+	}
+
+	// A wild miss lists the whole set instead of guessing.
+	_, err = cli.Program_Parse(&program, []string{"prog", "-color=purple"})
+	if err == nil {
+		t.Fatal("expected an error for an out-of-set value")
+	}
+	if !strings.Contains(err.Error(), "allowed: auto, never, always") {
+		t.Errorf("expected the allowed list, got %v", err)
+	}
+
+	// An int enum accepts a member and rejects a non-member with the allowed list.
+	command, err = cli.Program_Parse(&program, []string{"prog", "-level=4"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if cli.Get_Option(command.Flags, "level").Value.(int) != 4 {
+		t.Errorf("expected 4, got %v", cli.Get_Option(command.Flags, "level").Value)
+	}
+	_, err = cli.Program_Parse(&program, []string{"prog", "-level=3"})
+	if err == nil {
+		t.Fatal("expected an error for an out-of-set int value")
+	}
+	if !strings.Contains(err.Error(), "allowed: 1, 2, 4, 8") {
+		t.Errorf("expected the allowed int list, got %v", err)
+	}
+}
+
+// Test_Parse_Enum_Argument verifies an argument-form enum: it is settable by position
+// and by name, an omitted value yields the existing missing-required error, and an
+// out-of-set value is rejected with the allowed list.
+func Test_Parse_Enum_Argument(t *testing.T) {
+	program := cli.New_Single(cli.New_Single_Input{
+		Label: "prog", Description: "enum argument",
+		Arguments: []cli.Option{
+			cli.New_Enum_Argument(cli.New_Enum_Argument_Input[string]{
+				Label: "format", Enum: []string{"json", "yaml", "toml"},
+				Description: "output format",
+			}),
+		},
+	})
+
+	// Accepted by position.
+	command, err := cli.Program_Parse(&program, []string{"prog", "yaml"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if cli.Get_Option(command.Arguments, "format").Value.(string) != "yaml" {
+		t.Errorf("expected yaml, got %q",
+			cli.Get_Option(command.Arguments, "format").Value)
+	}
+
+	// Accepted by name.
+	command, err = cli.Program_Parse(&program, []string{"prog", "-format=toml"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if cli.Get_Option(command.Arguments, "format").Value.(string) != "toml" {
+		t.Errorf("expected toml, got %q",
+			cli.Get_Option(command.Arguments, "format").Value)
+	}
+
+	// Omitted → the existing missing-required-argument error.
+	_, err = cli.Program_Parse(&program, []string{"prog"})
+	if err == nil {
+		t.Fatal("expected an error for a missing required enum argument")
+	}
+	if !strings.Contains(err.Error(), "missing required argument") {
+		t.Errorf("expected the missing-required message, got %v", err)
+	}
+
+	// A non-member is rejected with the allowed list.
+	_, err = cli.Program_Parse(&program, []string{"prog", "xml"})
+	if err == nil {
+		t.Fatal("expected an error for an out-of-set argument")
+	}
+	if !strings.Contains(err.Error(), "allowed: json, yaml, toml") {
+		t.Errorf("expected the allowed list, got %v", err)
+	}
 }
 
 // Parses arguments against a copy of the program and asserts the named variadic

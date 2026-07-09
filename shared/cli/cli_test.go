@@ -404,6 +404,51 @@ func Test_Variadic_Help(t *testing.T) {
 	}
 }
 
+// Test_Enum_Flag_Help verifies an enum flag renders its permitted set in place of the
+// bare type annotation, keeping its default.
+func Test_Enum_Flag_Help(t *testing.T) {
+	program := cli.New_Single(cli.New_Single_Input{
+		Label: "prog", Description: "enum flag help",
+		Flags: []cli.Option{
+			cli.New_Enum_Flag(cli.New_Enum_Flag_Input[string]{
+				Label: "color", Enum: []string{"auto", "never", "always"},
+				Value: "auto", Description: "when to colorize",
+			}),
+		},
+	})
+	output := bytes.Buffer{}
+	cli.Print_Help(&output, program)
+	help := output.String()
+	// The label is ANSI-colored in flag rows, so assert on the uncolored value part —
+	// the enum set — rather than the "-color" prefix.
+	if !strings.Contains(help, "=(auto|never|always)") {
+		t.Errorf("expected the enum set in the flag row, got:\n%s", help)
+	}
+	if !strings.Contains(help, "default: auto") {
+		t.Errorf("expected the default, got:\n%s", help)
+	}
+}
+
+// Test_Enum_Argument_Help verifies an enum positional shows its permitted set in the
+// usage signature instead of the bare type.
+func Test_Enum_Argument_Help(t *testing.T) {
+	program := cli.New_Single(cli.New_Single_Input{
+		Label: "prog", Description: "enum argument help",
+		Arguments: []cli.Option{
+			cli.New_Enum_Argument(cli.New_Enum_Argument_Input[int]{
+				Label: "level", Enum: []int{1, 2, 4, 8},
+				Description: "compression level",
+			}),
+		},
+	})
+	output := bytes.Buffer{}
+	cli.Print_Help(&output, program)
+	help := output.String()
+	if !strings.Contains(help, "<level: (1|2|4|8)>") {
+		t.Errorf("expected the enum set in the signature, got:\n%s", help)
+	}
+}
+
 // Builds a single-command program: one positional path and one flag, no selector.
 func new_single_fixture() (program cli.Program) {
 	return cli.New_Single(cli.New_Single_Input{

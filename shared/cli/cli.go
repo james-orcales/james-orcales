@@ -29,6 +29,9 @@
 //
 // A command's last argument may be variadic (New_Variadic), collecting zero or more
 // trailing positionals into a slice, as in `sloc ./a ./b ./c`.
+//
+// An argument or flag may be an enum (New_Enum_Argument, New_Enum_Flag), restricting its
+// value to a fixed set; parsing rejects anything outside it.
 package cli
 
 import (
@@ -89,6 +92,10 @@ type Option struct {
 	Description string
 	// Value holds the default before parsing and the user value after.
 	Value any
+	// Enum, when non-nil, restricts Value to a permitted set; it holds a []string or
+	// []int whose element type matches Value. New_Enum_Flag and New_Enum_Argument set
+	// it, and parsing rejects any value outside it.
+	Enum any
 	// Is_Flag distinguishes a flag from a positional argument.
 	Is_Flag bool
 }
@@ -155,6 +162,57 @@ func New_Flag[T string | int | bool](input New_Flag_Input[T]) (option Option) {
 		Description: input.Description,
 		Value:       input.Value,
 		Is_Flag:     true,
+	}
+}
+
+// New_Enum_Flag_Input is the input for New_Enum_Flag.
+type New_Enum_Flag_Input[T string | int] struct {
+	// Label is the flag name.
+	Label string
+	// Enum is the set of permitted values. It may not be empty, and Value must be one
+	// of its members.
+	Enum []T
+	// Value is the flag's default value.
+	Value T
+	// Description is the one-line summary shown in help output.
+	Description string
+}
+
+// New_Enum_Flag creates an optional flag whose value must be one of Enum, defaulting to
+// Value. New panics when Enum is empty or Value is not a member. Type parameter T must
+// be string or int; bool is excluded because a bool already enumerates its two values.
+func New_Enum_Flag[T string | int](input New_Enum_Flag_Input[T]) (option Option) {
+	return Option{
+		Label:       input.Label,
+		Description: input.Description,
+		Value:       input.Value,
+		Enum:        input.Enum,
+		Is_Flag:     true,
+	}
+}
+
+// New_Enum_Argument_Input is the input for New_Enum_Argument.
+type New_Enum_Argument_Input[T string | int] struct {
+	// Label is the argument name.
+	Label string
+	// Enum is the set of permitted values. It may not be empty.
+	Enum []T
+	// Description is the one-line summary shown in help output.
+	Description string
+}
+
+// New_Enum_Argument creates a required positional argument whose value must be one of
+// Enum. Like New_Argument it has no default; the required check enforces that it is
+// supplied, and the enum check enforces membership. New panics when Enum is empty. Type
+// parameter T must be string or int.
+func New_Enum_Argument[T string | int](input New_Enum_Argument_Input[T]) (option Option) {
+	var zero_value T
+	return Option{
+		Label:       input.Label,
+		Description: input.Description,
+		Value:       zero_value,
+		Enum:        input.Enum,
+		Is_Flag:     false,
 	}
 }
 
@@ -287,6 +345,9 @@ func command_validate_options(command Command, global_flags []Option) {
 				argument.Label, argument.Value)
 		case string, int, []string, []int:
 		}
+		validate_enum(
+			fmt.Sprintf("Argument %q for command %q", argument.Label, command.Label),
+			argument)
 		panic_when(seen[argument.Label],
 			"Command %q has argument %q that collides with another option.",
 			command.Label, argument.Label)
@@ -331,6 +392,38 @@ func validate_flag_label(context string, flag Option) {
 	default:
 		panic_when(true, "Flag %q has unsupported type: %T", flag.Label, flag.Value)
 	case string, bool, int:
+	}
+	validate_enum(context, flag)
+}
+
+// Panics when an option carries a malformed enum: an Enum whose element type is not
+// []string/[]int or does not match Value's type, an empty Enum, an enum on a variadic
+// option, or — for a flag, which has a real default — a default Value outside the set.
+// A non-enum option (Enum nil) is left untouched. An argument's default is its zero
+// value, deliberately not checked for membership: the required check enforces that the
+// argument is supplied, and the parse-time enum check enforces membership then.
+func validate_enum(context string, option Option) {
+	if option.Enum == nil {
+		return
+	}
+	// A variadic collects many values; an enum constrains one. Combining them has no
+	// defined meaning, so it is rejected rather than silently ignoring one.
+	panic_when(option_is_slice(option), "%s is variadic and cannot be an enum.", context)
+	switch enum := option.Enum.(type) {
+	default:
+		panic_when(true, "%s has an unsupported enum type: %T", context, option.Enum)
+	case []string:
+		_, matches := option.Value.(string)
+		panic_when(!matches, "%s has a []string enum but a %T value.", context, option.Value)
+		panic_when(len(enum) == 0, "%s has an empty enum.", context)
+		panic_when(option.Is_Flag && !slices.Contains(enum, option.Value.(string)),
+			"%s default %q is not one of its enum values.", context, option.Value)
+	case []int:
+		_, matches := option.Value.(int)
+		panic_when(!matches, "%s has a []int enum but a %T value.", context, option.Value)
+		panic_when(len(enum) == 0, "%s has an empty enum.", context)
+		panic_when(option.Is_Flag && !slices.Contains(enum, option.Value.(int)),
+			"%s default %d is not one of its enum values.", context, option.Value)
 	}
 }
 
@@ -683,7 +776,7 @@ func option_set_positional(argument *Option, value string) (err error) {
 		}
 		argument.Value = number
 	}
-	return nil
+	return option_check_enum(argument, argument.Label)
 }
 
 // Builds the slice option's value from its contributions, already sorted into
@@ -752,7 +845,61 @@ func option_set_value(input option_set_value_input) (err error) {
 		}
 		input.Option.Value = number
 	}
+	return option_check_enum(input.Option, "-"+input.Name)
+}
+
+// Returns an error when a parsed value falls outside an enum option's permitted set, and
+// nil when the option is not an enum or the value is a member. For a string enum it
+// suggests the closest member on a near miss, mirroring the did-you-mean the parser
+// already gives for unknown options; otherwise, and for an int enum, it lists the whole
+// set. display_name is the option as the user wrote it — a -flag or a bare argument
+// label — for the message.
+func option_check_enum(option *Option, display_name string) (err error) {
+	switch enum := option.Enum.(type) {
+	case nil:
+		return nil
+	case []string:
+		value := option.Value.(string)
+		if slices.Contains(enum, value) {
+			return nil
+		}
+		match, ok := levenshtein.Closest(levenshtein.Closest_Input{
+			Target: value, Candidates: enum,
+		})
+		if ok {
+			return fmt.Errorf("invalid value %q for %s, did you mean %q?",
+				value, display_name, match)
+		}
+		allowed, _ := enum_values_text(*option, ", ")
+		return fmt.Errorf("invalid value %q for %s; allowed: %s",
+			value, display_name, allowed)
+	case []int:
+		value := option.Value.(int)
+		if slices.Contains(enum, value) {
+			return nil
+		}
+		allowed, _ := enum_values_text(*option, ", ")
+		return fmt.Errorf("invalid value %d for %s; allowed: %s",
+			value, display_name, allowed)
+	}
+	panic_when(true, "unreachable enum type %T", option.Enum)
 	return nil
+}
+
+// Formats an enum option's permitted values joined by separator, e.g. "auto|never" for
+// help or "auto, never" for an error. is_enum is false when the option carries no enum.
+func enum_values_text(option Option, separator string) (text string, is_enum bool) {
+	switch enum := option.Enum.(type) {
+	case []string:
+		return strings.Join(enum, separator), true
+	case []int:
+		parts := make([]string, len(enum))
+		for index, number := range enum {
+			parts[index] = strconv.Itoa(number)
+		}
+		return strings.Join(parts, separator), true
+	}
+	return "", false
 }
 
 // Removes a matching pair of surrounding double or single quotes from a string
@@ -865,6 +1012,11 @@ func option_format_signature(argument Option) (signature string) {
 		}
 		return fmt.Sprintf("<%s: %s...>", argument.Label, element)
 	}
+	// An enum argument shows its permitted set in place of the bare type, so a usage
+	// line reads <format: (json|yaml|toml)> rather than <format: string>.
+	if choices, is_enum := enum_values_text(argument, "|"); is_enum {
+		return fmt.Sprintf("<%s: (%s)>", argument.Label, choices)
+	}
 	return fmt.Sprintf("<%s: %T>", argument.Label, argument.Value)
 }
 
@@ -896,6 +1048,10 @@ func print_help_flag(writer io.Writer, flag Option, indent string, color bool) {
 	is_boolean := false
 	if _, is := flag.Value.(bool); is {
 		is_boolean = true
+	} else if choices, is_enum := enum_values_text(flag, "|"); is_enum {
+		// An enum flag shows its permitted set in place of the bare type, so the reader
+		// sees -color=(auto|never|always) rather than an unhelpful -color=string.
+		value_type = "=(" + choices + ")"
 	} else {
 		value_type = fmt.Sprintf("=%T", flag.Value)
 	}
