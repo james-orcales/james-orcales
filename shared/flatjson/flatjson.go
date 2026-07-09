@@ -35,7 +35,7 @@ import (
 )
 
 // The path-segment joiner: Addr.City becomes "addr_city".
-const key_separator = "_"
+const KEY_SEPARATOR = "_"
 
 // One node of the explicit DFS stack that stands in for recursion through the struct tree.
 type frame struct {
@@ -189,7 +189,7 @@ func flatten_struct(
 			child_null = child_null || current.Null
 			is_struct := child.Kind() == reflect.Struct
 			invariant.Always(is_struct, "Marshal only descends into struct values.")
-			nested := prefix + name + key_separator
+			nested := prefix + name + KEY_SEPARATOR
 			next := frame{Structure: child, Index: 0, Prefix: nested, Null: child_null}
 			stack = append(stack, next)
 			continue

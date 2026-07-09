@@ -25,33 +25,33 @@ func TestMain(m *testing.M) {
 	invariant.Run_Test_Main(m, "../**")
 }
 
-// Sim_structure_max is the command-set and command-line ceiling the driver decodes
+// SIM_STRUCTURE_MAX is the command-set and command-line ceiling the driver decodes
 // against, mirrored from the library.
-const sim_structure_max = 1 << 8
+const SIM_STRUCTURE_MAX = 1 << 8
 
-// Sim_capture_max is the stderr-capture ceiling.
-const sim_capture_max = 1 << 16
+// SIM_CAPTURE_MAX is the stderr-capture ceiling.
+const SIM_CAPTURE_MAX = 1 << 16
 
-// Sim_host_max is the host-text field ceiling.
-const sim_host_max = 1 << 8
+// SIM_HOST_MAX is the host-text field ceiling.
+const SIM_HOST_MAX = 1 << 8
 
-// Sim_word_max is the command-word byte ceiling.
-const sim_word_max = 1 << 12
+// SIM_WORD_MAX is the command-word byte ceiling.
+const SIM_WORD_MAX = 1 << 12
 
-// Sim_metric_max is the representable metric ceiling a real sampler stays within.
-const sim_metric_max = 1<<43 - 1
+// SIM_METRIC_MAX is the representable metric ceiling a real sampler stays within.
+const SIM_METRIC_MAX = 1<<43 - 1
 
-// Sim_deltas_max is the per-sample deviation pattern length.
-const sim_deltas_max = 16
+// SIM_DELTAS_MAX is the per-sample deviation pattern length.
+const SIM_DELTAS_MAX = 16
 
-// Sim_cores_max mirrors the render-safe core-count ceiling.
-const sim_cores_max = 1023
+// SIM_CORES_MAX mirrors the render-safe core-count ceiling.
+const SIM_CORES_MAX = 1023
 
-// Sim_hertz_max mirrors the render-safe frequency ceiling.
-const sim_hertz_max = 8_000_000_000
+// SIM_HERTZ_MAX mirrors the render-safe frequency ceiling.
+const SIM_HERTZ_MAX = 8_000_000_000
 
-// Sim_byte_size_max mirrors the render-safe hardware byte-size ceiling.
-const sim_byte_size_max = 1 << 53
+// SIM_BYTE_SIZE_MAX mirrors the render-safe hardware byte-size ceiling.
+const SIM_BYTE_SIZE_MAX = 1 << 53
 
 // Fuzz_Main is the sole witness. It decodes the fuzz bytes into a benchmark
 // scenario and drives internal.Main; the seed corpus is a battery of honest
@@ -69,11 +69,11 @@ func Fuzz_Main(f *testing.F) {
 // limits, and the per-sample values the injected Sampler will report. Every
 // field is decoded totally from the fuzz bytes so any input is a valid run.
 type scenario struct {
-	// Commands is the command count, 0..sim_structure_max.
+	// Commands is the command count, 0..SIM_STRUCTURE_MAX.
 	Commands int
-	// Words is the word count in each command line, 1..sim_structure_max.
+	// Words is the word count in each command line, 1..SIM_STRUCTURE_MAX.
 	Words int
-	// Word_Bytes is the byte length of each argument word, 0..sim_word_max.
+	// Word_Bytes is the byte length of each argument word, 0..SIM_WORD_MAX.
 	Word_Bytes int
 	// Path_Bytes, for a single-command run, sets the executable's byte length, so the
 	// progress label reaches its short shapes; 0 keeps the default distinct path.
@@ -237,8 +237,8 @@ func metric_clamp(value int64) (clamped int64) {
 	if value < 0 {
 		return 0
 	}
-	if value > sim_metric_max {
-		return sim_metric_max
+	if value > SIM_METRIC_MAX {
+		return SIM_METRIC_MAX
 	}
 	return value
 }
@@ -312,15 +312,15 @@ func decode_scenario(data []byte) (s scenario) {
 	s.Commands = min(int(cursor_u16(c)), 8)
 	s.Words = max(1, min(int(cursor_u16(c)), 8))
 	budget := 32768 / (s.Commands*s.Words + 1)
-	s.Word_Bytes = min(min(int(cursor_u16(c)), sim_word_max), budget)
-	s.Path_Bytes = min(int(cursor_u16(c)), sim_word_max)
+	s.Word_Bytes = min(min(int(cursor_u16(c)), SIM_WORD_MAX), budget)
+	s.Path_Bytes = min(int(cursor_u16(c)), SIM_WORD_MAX)
 	// Runs_Max and Warmup_Count take the full int range: a caller may set any value
 	// (Main caps kept runs at samples_max and treats a non-positive limit as disabled).
 	s.Runs = int(cursor_i64(c))
 	s.Warmup = int(cursor_i64(c))
 	s.Duration = int64(cursor_u16(c))
 	s.Base = cursor_i64(c)
-	deltas := min(int(cursor_u8(c)), sim_deltas_max)
+	deltas := min(int(cursor_u8(c)), SIM_DELTAS_MAX)
 	for index := 0; index < deltas; index++ {
 		s.Deltas = append(s.Deltas, cursor_i64(c))
 	}
@@ -329,7 +329,7 @@ func decode_scenario(data []byte) (s scenario) {
 	s.Fail_Every = int(cursor_u8(c))
 	s.Fail_Command = int(cursor_u8(c))
 	s.Divergence = cursor_i64(c)
-	s.Stderr_Bytes = min(int(cursor_u32(c)), sim_capture_max)
+	s.Stderr_Bytes = min(int(cursor_u32(c)), SIM_CAPTURE_MAX)
 	s.Machine = decode_machine(c)
 	return s
 }
@@ -346,23 +346,23 @@ func decode_machine(c *cursor) (m maddox.Machine_Specs) {
 	// A real acquire_machine_specs reports realistic, render-safe values; clamp to the
 	// domain ceilings so the simulated host honors that contract rather than tripping the
 	// table's render guards, which only an out-of-contract probe would.
-	m.Physical_Cores = maddox.Cores(min(int(cursor_u16(c)), sim_cores_max))
-	m.Logical_Cores = maddox.Cores(min(int(cursor_u16(c)), sim_cores_max))
-	m.Performance_Cores = maddox.Cores(min(int(cursor_u16(c)), sim_cores_max))
-	m.Efficiency_Cores = maddox.Cores(min(int(cursor_u16(c)), sim_cores_max))
-	m.CPU_Frequency_Hz_Max = maddox.Hertz(min(cursor_u64(c), sim_hertz_max))
-	m.Cache_L1_Bytes = maddox.Byte_Size(min(cursor_u64(c), sim_byte_size_max))
-	m.Cache_L2_Bytes = maddox.Byte_Size(min(cursor_u64(c), sim_byte_size_max))
-	m.Cache_L3_Bytes = maddox.Byte_Size(min(cursor_u64(c), sim_byte_size_max))
-	m.RAM_Total_Bytes = maddox.Byte_Size(min(cursor_u64(c), sim_byte_size_max))
-	m.Storage_Total_Bytes = maddox.Byte_Size(min(cursor_u64(c), sim_byte_size_max))
+	m.Physical_Cores = maddox.Cores(min(int(cursor_u16(c)), SIM_CORES_MAX))
+	m.Logical_Cores = maddox.Cores(min(int(cursor_u16(c)), SIM_CORES_MAX))
+	m.Performance_Cores = maddox.Cores(min(int(cursor_u16(c)), SIM_CORES_MAX))
+	m.Efficiency_Cores = maddox.Cores(min(int(cursor_u16(c)), SIM_CORES_MAX))
+	m.CPU_Frequency_Hz_Max = maddox.Hertz(min(cursor_u64(c), SIM_HERTZ_MAX))
+	m.Cache_L1_Bytes = maddox.Byte_Size(min(cursor_u64(c), SIM_BYTE_SIZE_MAX))
+	m.Cache_L2_Bytes = maddox.Byte_Size(min(cursor_u64(c), SIM_BYTE_SIZE_MAX))
+	m.Cache_L3_Bytes = maddox.Byte_Size(min(cursor_u64(c), SIM_BYTE_SIZE_MAX))
+	m.RAM_Total_Bytes = maddox.Byte_Size(min(cursor_u64(c), SIM_BYTE_SIZE_MAX))
+	m.Storage_Total_Bytes = maddox.Byte_Size(min(cursor_u64(c), SIM_BYTE_SIZE_MAX))
 	return m
 }
 
 // Host_text is a run of 'x' of the decoded length, clamped to the host-field
 // ceiling — the invariants witness the field's length, not its bytes.
 func host_text(c *cursor) (text maddox.Host_Text) {
-	return maddox.Host_Text(strings.Repeat("x", min(int(cursor_u16(c)), sim_host_max)))
+	return maddox.Host_Text(strings.Repeat("x", min(int(cursor_u16(c)), SIM_HOST_MAX)))
 }
 
 // Writer is the cursor's inverse: it lays down the same big-endian fields a seed
@@ -539,7 +539,7 @@ func seeds_overflow() (seeds [][]byte) {
 		// widest value.
 		with(func(s *scenario) {
 			s.Base = 500
-			s.Divergence = sim_metric_max
+			s.Divergence = SIM_METRIC_MAX
 			s.Deltas = []int64{0}
 			s.Runs = 3
 		}),
@@ -580,7 +580,7 @@ func seeds_progress() (seeds [][]byte) {
 		progress(func(s *scenario) { s.Words = 3 }),
 		progress(func(s *scenario) { s.Word_Bytes = 0 }),
 		progress(func(s *scenario) { s.Word_Bytes = 2 }),
-		progress(func(s *scenario) { s.Word_Bytes = sim_word_max }),
+		progress(func(s *scenario) { s.Word_Bytes = SIM_WORD_MAX }),
 		total(1), total(-1), total(math.MinInt64), total(math.MaxInt64),
 		// Progress labels at their one- and two-byte shapes: a single short-path command.
 		with(func(s *scenario) {
@@ -614,13 +614,13 @@ func seeds_machine_values() (seeds [][]byte) {
 		return func(s *scenario) { full_machine(s); s.Machine.CPU_Frequency_Hz_Max = value }
 	}
 	return [][]byte{
-		with(cores(0)), with(cores(1)), with(cores(2)), with(cores(sim_cores_max)),
-		with(size(0)), with(size(1)), with(size(2)), with(size(sim_byte_size_max)),
+		with(cores(0)), with(cores(1)), with(cores(2)), with(cores(SIM_CORES_MAX)),
+		with(size(0)), with(size(1)), with(size(2)), with(size(SIM_BYTE_SIZE_MAX)),
 		// 1023 GiB renders "1023GiB" — a full seven-byte cell, within the representable
 		// range the fixed-point render can lift without overflow.
 		with(size(1023 * (1 << 30))),
 		with(frequency(0)), with(frequency(1)), with(frequency(2)),
-		with(frequency(sim_hertz_max)),
+		with(frequency(SIM_HERTZ_MAX)),
 	}
 }
 
@@ -705,7 +705,7 @@ func seeds_shape() (seeds [][]byte) {
 		with(func(s *scenario) { s.Words = 3 }),
 		with(func(s *scenario) { s.Word_Bytes = 0 }),
 		with(func(s *scenario) { s.Word_Bytes = 2 }),
-		with(func(s *scenario) { s.Word_Bytes = sim_word_max }),
+		with(func(s *scenario) { s.Word_Bytes = SIM_WORD_MAX }),
 		with(func(s *scenario) { s.Runs = 3 }),
 	}
 }
@@ -719,10 +719,10 @@ func seeds_variance() (seeds [][]byte) {
 		with(func(s *scenario) { s.Base = 0; s.Deltas = []int64{0} }),
 		with(func(s *scenario) { s.Base = 1; s.Deltas = []int64{0} }),
 		with(func(s *scenario) { s.Base = 2; s.Deltas = []int64{0} }),
-		with(func(s *scenario) { s.Base = sim_metric_max; s.Deltas = []int64{0} }),
+		with(func(s *scenario) { s.Base = SIM_METRIC_MAX; s.Deltas = []int64{0} }),
 		with(func(s *scenario) { s.Sleep = 0 }),
 		with(func(s *scenario) { s.Sleep = 2 }),
-		with(func(s *scenario) { s.Sleep = sim_metric_max; s.Runs = 3 }),
+		with(func(s *scenario) { s.Sleep = SIM_METRIC_MAX; s.Runs = 3 }),
 		// Large symmetric deviations sized so the sum of squares lands its high 64-bit word
 		// on one and two: four runs of a 2^31 gap give a sum of exactly 2^64, eight give
 		// 2^65. JSON output carries these without a render guard rejecting the magnitudes.
@@ -787,7 +787,7 @@ func seeds_failure() (seeds [][]byte) {
 		with(fail(0)),
 		with(fail(1)),
 		with(fail(2)),
-		with(fail(sim_capture_max)),
+		with(fail(SIM_CAPTURE_MAX)),
 		with(func(s *scenario) { s.Exit = 2; s.Fail_Every = 1; s.Stderr_Bytes = 1 }),
 		with(func(s *scenario) { s.Exit = 255; s.Fail_Every = 1; s.Stderr_Bytes = 1 }),
 		// A mid-range exit code — the command status is an ordinary value, not a boundary.
@@ -840,7 +840,7 @@ func seeds_machine() (seeds [][]byte) {
 	}
 	return [][]byte{
 		with(host(0)), with(host(1)), with(host(2)), with(host(3)),
-		with(host(sim_host_max)),
+		with(host(SIM_HOST_MAX)),
 	}
 }
 

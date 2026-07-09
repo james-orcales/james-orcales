@@ -20,31 +20,31 @@ import (
 	timeos "local/james-orcales/shared/time/default"
 )
 
-// Exit_usage marks a home directory that cannot be resolved, kept distinct from
+// EXIT_USAGE marks a home directory that cannot be resolved, kept distinct from
 // a sync failure so a caller can tell setup from the work it was asked to do.
-const exit_usage = 2
+const EXIT_USAGE = 2
 
-// Repository_subpath locates this checkout relative to the home directory, the
+// REPOSITORY_SUBPATH locates this checkout relative to the home directory, the
 // fixed clone location this machine setup assumes.
-const repository_subpath = "code/james-orcales"
+const REPOSITORY_SUBPATH = "code/james-orcales"
 
-// Dotfiles_subpath locates the dotfiles tree — the repo's `home/` directory,
+// DOTFILES_SUBPATH locates the dotfiles tree — the repo's `home/` directory,
 // mirrored into the home directory — derived from the checkout so the two never
 // drift apart.
-const dotfiles_subpath = repository_subpath + "/home"
+const DOTFILES_SUBPATH = REPOSITORY_SUBPATH + "/home"
 
-// Iosevka_subpath locates the vendored Iosevka TTFs relative to the home
+// IOSEVKA_SUBPATH locates the vendored Iosevka TTFs relative to the home
 // directory, the source Install_Fonts copies from.
-const iosevka_subpath = repository_subpath + "/third_party/iosevka_nerd_font_mono"
+const IOSEVKA_SUBPATH = REPOSITORY_SUBPATH + "/third_party/iosevka_nerd_font_mono"
 
-// Directory_permissions is applied to parent directories write_file creates:
+// DIRECTORY_PERMISSIONS is applied to parent directories write_file creates:
 // owner-writable, world-readable.
-const directory_permissions = 0o755
+const DIRECTORY_PERMISSIONS = 0o755
 
-// Root_refusal is logged when setup is invoked as root: os.UserHomeDir would then
+// ROOT_REFUSAL is logged when setup is invoked as root: os.UserHomeDir would then
 // resolve to root's home, so the bootstrap would build and write everything in the
 // wrong place and leave root-owned files behind.
-const root_refusal = "run as your normal user, not root"
+const ROOT_REFUSAL = "run as your normal user, not root"
 
 func main() {
 	// The logger is built first, so the root and home checks below report through it. Its
@@ -63,13 +63,13 @@ func main() {
 		Auto_Timestamp: true,
 	})
 	if os.Geteuid() == 0 {
-		jlog.Logger_Error(logger, root_refusal)
-		os.Exit(exit_usage)
+		jlog.Logger_Error(logger, ROOT_REFUSAL)
+		os.Exit(EXIT_USAGE)
 	}
 	home, home_err := os.UserHomeDir()
 	if home_err != nil {
 		jlog.Logger_Error(logger, "cannot resolve home directory", jlog.Err(home_err))
-		os.Exit(exit_usage)
+		os.Exit(EXIT_USAGE)
 	}
 	// The install steps spawn every subprocess through one shared io loop, ticked only
 	// here. setup runs its commands sequentially, so a single loop driven by successive
@@ -141,7 +141,7 @@ func spawn_command(loop sysio.IO, driver sysio.Driver) (spawn setup.Spawn) {
 // Go toolchain straight into home/.local/bin. It runs first because the shell hook
 // and every .envrc depend on direnv being on PATH.
 func direnv_step(home string, shell setup.Shell) (run func() (status_code int)) {
-	repository := filepath.Join(home, repository_subpath)
+	repository := filepath.Join(home, REPOSITORY_SUBPATH)
 	return func() (status_code int) {
 		return setup.Install_Direnv(&setup.Install_Direnv_Input{
 			Direnv_Directory: filepath.Join(repository, "third_party", "direnv"),
@@ -156,7 +156,7 @@ func direnv_step(home string, shell setup.Shell) (run func() (status_code int)) 
 func dotfiles_step(
 	home string, system setup.File_System, shell setup.Shell,
 ) (run func() (status_code int)) {
-	dotfiles_directory := filepath.Join(home, dotfiles_subpath)
+	dotfiles_directory := filepath.Join(home, DOTFILES_SUBPATH)
 	return func() (status_code int) {
 		return setup.Main(&setup.Main_Input{
 			File_System:           system,
@@ -174,7 +174,7 @@ func dotfiles_step(
 // per-OS font directory, refreshing the cache where the OS needs it.
 func fonts_step(home string, shell setup.Shell) (run func() (status_code int)) {
 	font_directory, refresh_cache := font_destination(home)
-	font_source := filepath.Join(home, iosevka_subpath)
+	font_source := filepath.Join(home, IOSEVKA_SUBPATH)
 	var refresh func() (err error)
 	if refresh_cache {
 		runner := run_command(shell.Spawn)
@@ -205,7 +205,7 @@ func fonts_step(home string, shell setup.Shell) (run func() (status_code int)) {
 func neovim_step(home string, shell setup.Shell) (run func() (status_code int)) {
 	return func() (status_code int) {
 		return setup.Install_Neovim(&setup.Install_Neovim_Input{
-			Repository_Directory: filepath.Join(home, repository_subpath),
+			Repository_Directory: filepath.Join(home, REPOSITORY_SUBPATH),
 			Shell:                shell,
 		})
 	}
@@ -216,7 +216,7 @@ func neovim_step(home string, shell setup.Shell) (run func() (status_code int)) 
 // is the install; it only needs the Go toolchain, not cargo, so it runs before the
 // rust step.
 func fzf_step(home string, shell setup.Shell) (run func() (status_code int)) {
-	repository := filepath.Join(home, repository_subpath)
+	repository := filepath.Join(home, REPOSITORY_SUBPATH)
 	return func() (status_code int) {
 		return setup.Install_Fzf(&setup.Install_Fzf_Input{
 			Fzf_Directory:    filepath.Join(repository, "third_party", "fzf"),
@@ -231,7 +231,7 @@ func fzf_step(home string, shell setup.Shell) (run func() (status_code int)) {
 // so — unlike the vendored builds — its only idempotency check is whether maddox
 // already resolves on PATH; an absent one is rebuilt.
 func maddox_step(home string, shell setup.Shell) (run func() (status_code int)) {
-	repository := filepath.Join(home, repository_subpath)
+	repository := filepath.Join(home, REPOSITORY_SUBPATH)
 	return func() (status_code int) {
 		return setup.Install_Command(&setup.Install_Command_Input{
 			Package_Directory: filepath.Join(repository, "maddox"),
@@ -247,7 +247,7 @@ func maddox_step(home string, shell setup.Shell) (run func() (status_code int)) 
 // directory and the binary name differ. Its only idempotency check is whether m2p
 // already resolves on PATH.
 func m2p_step(home string, shell setup.Shell) (run func() (status_code int)) {
-	repository := filepath.Join(home, repository_subpath)
+	repository := filepath.Join(home, REPOSITORY_SUBPATH)
 	return func() (status_code int) {
 		return setup.Install_Command(&setup.Install_Command_Input{
 			Package_Directory: filepath.Join(repository, "markdown_to_pdf"),
@@ -262,7 +262,7 @@ func m2p_step(home string, shell setup.Shell) (run func() (status_code int)) {
 // home/.local/bin with the Go toolchain. Its only idempotency check is whether sloc
 // already resolves on PATH.
 func sloc_step(home string, shell setup.Shell) (run func() (status_code int)) {
-	repository := filepath.Join(home, repository_subpath)
+	repository := filepath.Join(home, REPOSITORY_SUBPATH)
 	return func() (status_code int) {
 		return setup.Install_Command(&setup.Install_Command_Input{
 			Package_Directory: filepath.Join(repository, "sloc"),
@@ -281,7 +281,7 @@ func rust_step(home string, shell setup.Shell) (run func() (status_code int)) {
 	return func() (status_code int) {
 		return setup.Install_Rust(&setup.Install_Rust_Input{
 			Cargo_Directory: os.Getenv("CARGO_HOME"),
-			Link_Directory:  filepath.Join(home, repository_subpath, ".local", "bin"),
+			Link_Directory:  filepath.Join(home, REPOSITORY_SUBPATH, ".local", "bin"),
 			Shell:           shell,
 		})
 	}
@@ -291,7 +291,7 @@ func rust_step(home string, shell setup.Shell) (run func() (status_code int)) {
 // and installs it into home/.local/bin — a user-facing program alongside Neovim,
 // not the repo .local/bin that holds the dev toolchain.
 func jj_step(home string, shell setup.Shell) (run func() (status_code int)) {
-	repository := filepath.Join(home, repository_subpath)
+	repository := filepath.Join(home, REPOSITORY_SUBPATH)
 	return func() (status_code int) {
 		return setup.Install_Jj(&setup.Install_Jj_Input{
 			Jj_Directory:     filepath.Join(repository, "third_party", "jj"),
@@ -304,7 +304,7 @@ func jj_step(home string, shell setup.Shell) (run func() (status_code int)) {
 // Returns the bootstrap step that builds ripgrep (rg) from the vendored crate with
 // cargo and installs it into home/.local/bin alongside the other user-facing tools.
 func ripgrep_step(home string, shell setup.Shell) (run func() (status_code int)) {
-	repository := filepath.Join(home, repository_subpath)
+	repository := filepath.Join(home, REPOSITORY_SUBPATH)
 	return func() (status_code int) {
 		return setup.Install_Ripgrep(&setup.Install_Ripgrep_Input{
 			Ripgrep_Directory: filepath.Join(repository, "third_party", "ripgrep"),
@@ -317,7 +317,7 @@ func ripgrep_step(home string, shell setup.Shell) (run func() (status_code int))
 // Returns the bootstrap step that builds fd from the vendored crate with cargo and
 // installs it into home/.local/bin alongside the other user-facing tools.
 func fdcli_step(home string, shell setup.Shell) (run func() (status_code int)) {
-	repository := filepath.Join(home, repository_subpath)
+	repository := filepath.Join(home, REPOSITORY_SUBPATH)
 	return func() (status_code int) {
 		return setup.Install_Fdcli(&setup.Install_Fdcli_Input{
 			Fdcli_Directory:  filepath.Join(repository, "third_party", "fd"),
@@ -332,7 +332,7 @@ func fdcli_step(home string, shell setup.Shell) (run func() (status_code int)) {
 // alongside the other user-facing tools. It runs last because it is the one network
 // download, after every vendored build; off darwin it does nothing.
 func ghostty_step(home string, shell setup.Shell) (run func() (status_code int)) {
-	repository := filepath.Join(home, repository_subpath)
+	repository := filepath.Join(home, REPOSITORY_SUBPATH)
 	return func() (status_code int) {
 		return setup.Install_Ghostty(&setup.Install_Ghostty_Input{
 			Applications_Directory: ghostty_applications_directory(),
@@ -372,10 +372,10 @@ func font_destination(home string) (directory string, refresh_cache bool) {
 
 // Copy_file_input names the source and destination copy_file moves between,
 // bundled so the repeated-string-param rule is satisfied.
-// Copy_bytes_max bounds a single streamed copy. 64 MiB dwarfs an Iosevka face
+// COPY_BYTES_MAX bounds a single streamed copy. 64 MiB dwarfs an Iosevka face
 // (~13 MiB) or the direnv binary yet caps the read, satisfying the linter's
 // unbounded-read ban.
-const copy_bytes_max = 67108864
+const COPY_BYTES_MAX = 67108864
 
 type copy_file_input struct {
 	Source      string
@@ -383,7 +383,7 @@ type copy_file_input struct {
 }
 
 // Streams Source to Destination, creating Destination's parent directory first
-// and capping the copy at copy_bytes_max. It is the real filesystem binding the
+// and capping the copy at COPY_BYTES_MAX. It is the real filesystem binding the
 // library tier copies through, so it never shells out for a plain file copy.
 func copy_file(input *copy_file_input) (err error) {
 	source, open_err := os.Open(input.Source)
@@ -391,7 +391,7 @@ func copy_file(input *copy_file_input) (err error) {
 		return open_err
 	}
 	defer source.Close()
-	mkdir_err := os.MkdirAll(filepath.Dir(input.Destination), directory_permissions)
+	mkdir_err := os.MkdirAll(filepath.Dir(input.Destination), DIRECTORY_PERMISSIONS)
 	if mkdir_err != nil {
 		return mkdir_err
 	}
@@ -401,7 +401,7 @@ func copy_file(input *copy_file_input) (err error) {
 	}
 	// CopyN reports io.EOF once the source — shorter than the cap — is fully
 	// copied; a nil error means the file filled the cap, so it is too large.
-	_, copy_err := io.CopyN(destination, source, copy_bytes_max)
+	_, copy_err := io.CopyN(destination, source, COPY_BYTES_MAX)
 	if copy_err == nil {
 		destination.Close()
 		return errors.New("source exceeds the maximum copy size")

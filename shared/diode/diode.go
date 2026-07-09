@@ -28,14 +28,14 @@ import (
 
 // Ring slot count used when New_Input.Count is unset; 1000 lines of slack absorbs
 // typical bursts before the drain has to drop anything.
-const default_count = 1000
+const DEFAULT_COUNT = 1000
 
 // How long the drain sleeps on an empty ring when New_Input.Poll_Interval is unset.
-const default_poll_interval = 100 * time.MILLISECOND
+const DEFAULT_POLL_INTERVAL = 100 * time.MILLISECOND
 
 // Caps the capacity of a line buffer returned to the pool, so one giant line cannot
 // bloat every pooled entry (see Go issue 23199).
-const maximum_pooled_buffer = 1 << 16
+const MAXIMUM_POOLED_BUFFER = 1 << 16
 
 // Drop_Cause distinguishes why a line never reached the sink.
 type Drop_Cause int
@@ -106,7 +106,7 @@ type New_Input struct {
 	Clock time.Clock
 	// Sleep parks the drain on an empty ring; required (the drain panics without it).
 	Sleep func(duration time.Duration)
-	// Count is the ring slot count; zero or negative uses default_count.
+	// Count is the ring slot count; zero or negative uses DEFAULT_COUNT.
 	Count int
 	// Poll_Interval is the empty-ring sleep; zero or negative uses one hundred milliseconds.
 	Poll_Interval time.Duration
@@ -138,11 +138,11 @@ func New(input New_Input) (writer *Writer) {
 	}
 	count := input.Count
 	if count <= 0 {
-		count = default_count
+		count = DEFAULT_COUNT
 	}
 	interval := input.Poll_Interval
 	if interval <= 0 {
-		interval = default_poll_interval
+		interval = DEFAULT_POLL_INTERVAL
 	}
 	alerter := input.Alerter
 	if alerter == nil {
@@ -238,7 +238,7 @@ func recycle_overwritten(writer *Writer, previous unsafe.Pointer) {
 		return
 	}
 	dropped := (*bucket)(previous)
-	if cap(dropped.Data) > maximum_pooled_buffer {
+	if cap(dropped.Data) > MAXIMUM_POOLED_BUFFER {
 		return
 	}
 	dropped.Data = dropped.Data[:0]
@@ -325,7 +325,7 @@ func forward(writer *Writer, item *bucket) {
 		// One Write per line, exactly as a synchronous wrapped writer would have seen.
 		writer.Writer.Write(item.Data)
 	}
-	if cap(item.Data) > maximum_pooled_buffer {
+	if cap(item.Data) > MAXIMUM_POOLED_BUFFER {
 		return
 	}
 	item.Data = item.Data[:0]

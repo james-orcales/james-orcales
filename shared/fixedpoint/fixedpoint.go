@@ -12,14 +12,14 @@ import (
 	"strings"
 )
 
-// Fractional_bits is how many of a Number's low bits hold the fraction; the rest hold the
+// FRACTIONAL_BITS is how many of a Number's low bits hold the fraction; the rest hold the
 // integer part. Twenty bits gives ~9.5e-7 precision over a ±8.8e12 range, matching the
 // magnitudes the deterministic callers work in.
-const fractional_bits = 20
+const FRACTIONAL_BITS = 20
 
-// SCALE is the count of fixed-point units in one whole — two raised to fractional_bits.
+// SCALE is the count of fixed-point units in one whole — two raised to FRACTIONAL_BITS.
 // A Number's real value is its stored integer divided by SCALE.
-const SCALE = 1 << fractional_bits
+const SCALE = 1 << FRACTIONAL_BITS
 
 // Number is a base-two fixed-point value. Addition, subtraction, negation, and the
 // ordering comparisons are the native int64 operators, the shared SCALE aligning them;
@@ -251,12 +251,12 @@ type multiply_shifted_input struct {
 }
 
 // Returns left*right rescaled by the scale: the high and low words of the 128-bit product
-// shifted down by fractional_bits — a shift where a base-ten scale would need a divide.
+// shifted down by FRACTIONAL_BITS — a shift where a base-ten scale would need a divide.
 // Callers pass factors whose true product fits int64, so the shifted-away high bits are
 // zero.
 func multiply_shifted(input *multiply_shifted_input) (magnitude uint64) {
 	high, low := bits.Mul64(input.Left, input.Right)
-	return (high << (64 - fractional_bits)) | (low >> fractional_bits)
+	return (high << (64 - FRACTIONAL_BITS)) | (low >> FRACTIONAL_BITS)
 }
 
 // Holds the unsigned operands of shift_divide.
@@ -267,13 +267,13 @@ type shift_divide_input struct {
 	Denominator uint64
 }
 
-// Returns (numerator << fractional_bits) / denominator through a 128-bit intermediate, so
+// Returns (numerator << FRACTIONAL_BITS) / denominator through a 128-bit intermediate, so
 // the scaled-up numerator keeps full precision without overflowing. The divide is the one
 // the runtime divisor forces; only the scale-up is a shift. Callers pass a nonzero
 // denominator and a result that fits int64, so the high word stays below the denominator.
 func shift_divide(input *shift_divide_input) (quotient uint64) {
-	high := input.Numerator >> (64 - fractional_bits)
-	low := input.Numerator << fractional_bits
+	high := input.Numerator >> (64 - FRACTIONAL_BITS)
+	low := input.Numerator << FRACTIONAL_BITS
 	quotient, _ = bits.Div64(high, low, input.Denominator)
 	return quotient
 }
@@ -344,9 +344,9 @@ func square_root_uint64(value uint64) (root uint64) {
 // and a shift.
 func decimal_scaled(magnitude uint64, digits int) (scaled uint64) {
 	high, low := bits.Mul64(magnitude, uint64(power_of_ten(digits)))
-	low, carry := bits.Add64(low, 1<<(fractional_bits-1), 0)
+	low, carry := bits.Add64(low, 1<<(FRACTIONAL_BITS-1), 0)
 	high += carry
-	return (high << (64 - fractional_bits)) | (low >> fractional_bits)
+	return (high << (64 - FRACTIONAL_BITS)) | (low >> FRACTIONAL_BITS)
 }
 
 // Returns ten raised to a small non-negative exponent.
@@ -400,5 +400,5 @@ func fraction_to_units(fraction_text string) (units int64) {
 		return 0
 	}
 	power := power_of_ten(len(digits))
-	return (parsed<<fractional_bits + power/2) / power
+	return (parsed<<FRACTIONAL_BITS + power/2) / power
 }

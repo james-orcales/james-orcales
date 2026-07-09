@@ -10,30 +10,30 @@ import (
 	"local/james-orcales/shared/io"
 )
 
-// Stderr_bytes_max bounds how much of a failing command's stderr is read back, so
+// STDERR_BYTES_MAX bounds how much of a failing command's stderr is read back, so
 // the read into a fixed buffer satisfies the unbounded-read ban and a runaway
 // command cannot exhaust memory.
-const stderr_bytes_max = 65536
+const STDERR_BYTES_MAX = 65536
 
-// Spawn_failure_exit is the exit code reported when the child could not be spawned at
+// SPAWN_FAILURE_EXIT is the exit code reported when the child could not be spawned at
 // all — distinct from any code the child itself could return.
-const spawn_failure_exit = 127
+const SPAWN_FAILURE_EXIT = 127
 
 // Argv is a command flattened to the argv a spawn hands to execve.
 type Argv []string
 
 // Argv_Invariants bounds the argv word count.
 func Argv_Invariants(argv Argv, namespace invariant.Namespace) {
-	invariant.Always(len(argv) <= bound_max, "An argv is at most its max.")
-	invariant.Always(len(argv) >= bound_min, "An argv is at least its min.")
-	invariant.Always(len(argv) != bound_min, "An argv never reaches its min.")
-	invariant.Always(len(argv) != bound_max, "An argv is below its max.")
+	invariant.Always(len(argv) <= BOUND_MAX, "An argv is at most its max.")
+	invariant.Always(len(argv) >= BOUND_MIN, "An argv is at least its min.")
+	invariant.Always(len(argv) != BOUND_MIN, "An argv never reaches its min.")
+	invariant.Always(len(argv) != BOUND_MAX, "An argv is below its max.")
 	invariant.Dot_Product(namespace,
 		invariant.Sometimes(len(argv) == 0, "An argv is empty."),
 		invariant.Sometimes(len(argv) == 1, "An argv has one."),
 		invariant.Sometimes(len(argv) == 2, "An argv has two."),
-		invariant.Sometimes(len(argv) == bound_min, "An argv is at its min."),
-		invariant.Sometimes(len(argv) == bound_max, "An argv is at its max."),
+		invariant.Sometimes(len(argv) == BOUND_MIN, "An argv is at its min."),
+		invariant.Sometimes(len(argv) == BOUND_MAX, "An argv is at its max."),
 		invariant.Impossible(
 			invariant.Event_True("An argv is empty."),
 			invariant.Event_True("An argv has one."),
@@ -66,7 +66,7 @@ func read_captured(capture *os.File) (stderr maddox.Captured_Output) {
 	if seek_err != nil {
 		return nil
 	}
-	buffer := make([]byte, stderr_bytes_max)
+	buffer := make([]byte, STDERR_BYTES_MAX)
 	total := 0
 	for total < len(buffer) {
 		n, read_err := capture.Read(buffer[total:])

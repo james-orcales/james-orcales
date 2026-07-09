@@ -417,3 +417,36 @@ func new_single_fixture() (program cli.Program) {
 		},
 	})
 }
+
+// Test_Command_Help verifies Print_Command renders one command's own usage line and
+// flags, the per-verb help a multicall binary shows for the invoked name.
+func Test_Command_Help(t *testing.T) {
+	program := new_multicall_fixture()
+	command, err := cli.Program_Parse(&program, []string{"add", "milk"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	output := bytes.Buffer{}
+	cli.Print_Command(&output, program, command)
+	help := output.String()
+	if !strings.Contains(help, "add <task: string>") {
+		t.Errorf("expected the command signature, got:\n%s", help)
+	}
+	if !strings.Contains(help, "priority") {
+		t.Errorf("expected the command's flags, got:\n%s", help)
+	}
+}
+
+// Builds a multicall program: each command is selected by the binary name in argv[0],
+// as a busybox-style symlinked binary is.
+func new_multicall_fixture() (program cli.Program) {
+	return cli.New_Multicall(cli.New_Multicall_Input{
+		Label:       "toolbox",
+		Description: "a multicall binary",
+		Commands: []cli.Command{
+			todoctl_add_command(),
+			todoctl_list_command(),
+			todoctl_delete_command(),
+		},
+	})
+}

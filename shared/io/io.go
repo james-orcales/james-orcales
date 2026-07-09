@@ -136,11 +136,11 @@ const IMMEDIATE time.Duration = 0
 
 // The number of virtual grains a simulated operation may take to complete, drawn from
 // the seed so the completion order varies per run while staying reproducible.
-const sim_latency_grains = 8
+const SIM_LATENCY_GRAINS = 8
 
 // One in this many simulated spawns exits non-zero, so a seed sweep exercises both the
 // success and the failure path without a scripted outcome.
-const sim_spawn_fail_grains = 4
+const SIM_SPAWN_FAIL_GRAINS = 4
 
 // Completion is the caller-owned storage for one in-flight operation —
 // TigerBeetle's IO.Completion. The caller allocates it, so the loop never does, and
@@ -650,7 +650,7 @@ func sim_spawn(
 	state *sim, completion *Completion, callback Process_Callback, request Process_Request,
 ) {
 	exit := 0
-	if prng.Generator_Below(&state.Generator, sim_spawn_fail_grains) == 0 {
+	if prng.Generator_Below(&state.Generator, SIM_SPAWN_FAIL_GRAINS) == 0 {
 		exit = 1
 	}
 	sim_submit(state, completion, sim_latency(state), func() {
@@ -867,11 +867,19 @@ func sim_node_write(node *sim_node, buffer []byte, offset int64) {
 // The file-size percentiles the generated contents are sampled from: most files are a
 // handful of bytes, a few reach hundreds, and the top one percent the largest — a
 // heavy-tailed spread (prng.Percentile_Distribution) so a sweep meets many scales at once.
-const sim_size_p50 = 4
-const sim_size_p75 = 16
-const sim_size_p95 = 64
-const sim_size_p99 = 256
-const sim_size_p100 = 1024
+const SIM_SIZE_P50 = 4
+
+// SIM_SIZE_P75 is 16, a 4x step past P50 that keeps the body of files a handful of bytes.
+const SIM_SIZE_P75 = 16
+
+// SIM_SIZE_P95 is 64, another 4x step marking where the common sizes end.
+const SIM_SIZE_P95 = 64
+
+// SIM_SIZE_P99 is 256, the hundreds-scale files only the last percent reach.
+const SIM_SIZE_P99 = 256
+
+// SIM_SIZE_P100 is 1024, the heavy tail's largest sample capping the sweep.
+const SIM_SIZE_P100 = 1024
 
 // Returns how often the generator adds another sibling — a 3-in-4 Chance, so a directory's
 // breadth is geometric and any width is reachable rather than capped at a fixed count.
@@ -892,11 +900,11 @@ func sim_subdirectory_chance() (chance prng.Ratio) {
 func sim_generate(generator *prng.Generator) (root *sim_node) {
 	sizes := prng.Percentile_Distribution(&prng.Percentile_Distribution_Input{
 		P25:  0,
-		P50:  sim_size_p50,
-		P75:  sim_size_p75,
-		P95:  sim_size_p95,
-		P99:  sim_size_p99,
-		P100: sim_size_p100,
+		P50:  SIM_SIZE_P50,
+		P75:  SIM_SIZE_P75,
+		P95:  SIM_SIZE_P95,
+		P99:  SIM_SIZE_P99,
+		P100: SIM_SIZE_P100,
 	})
 	root = sim_new_directory()
 	directories := []*sim_node{root}
@@ -935,7 +943,7 @@ func sim_generate_bytes(
 // Draws the next operation's completion delay from the seed, so completion order
 // varies per run yet reproduces exactly.
 func sim_latency(state *sim) (latency time.Duration) {
-	return time.Duration(prng.Generator_Below(&state.Generator, sim_latency_grains))
+	return time.Duration(prng.Generator_Below(&state.Generator, SIM_LATENCY_GRAINS))
 }
 
 // Wraps a byte-count delivery so a cancelled completion reports Cancelled instead.

@@ -1765,13 +1765,13 @@ func recorder_group_diagnostics(group *recorder_group) (diags []Diagnostic) {
 	return nil
 }
 
-// Simulation_directory names the test-only package under a binary component's
+// SIMULATION_DIRECTORY names the test-only package under a binary component's
 // internal/ whose fuzz test drives internal.Main.
-const simulation_directory = "simulation_test"
+const SIMULATION_DIRECTORY = "simulation_test"
 
-// Simulation_glob is the sole TestMain directory argument: the internal package and
+// SIMULATION_GLOB is the sole TestMain directory argument: the internal package and
 // every package beneath it, registered in one pattern since the recorder recurses on **.
-const simulation_glob = "../**"
+const SIMULATION_GLOB = "../**"
 
 // A binary component's invariants are witnessed only by a simulation package that
 // drives internal.Main through a fuzz test, never by a per-package Run_Test_Main.
@@ -1809,12 +1809,12 @@ func simulation_component_diagnostics(
 		return nil
 	}
 	position := token.Position{Filename: internal_root, Line: 1, Column: 1}
-	sim_directory := internal_root + "/" + simulation_directory
+	sim_directory := internal_root + "/" + SIMULATION_DIRECTORY
 	sim_files := simulation_package_files(parsed_files, sim_directory)
 	if len(sim_files) == 0 {
 		return simulation_diagnostic(position, "binary component "+
 			strconv.Quote(component.Import_Path)+" must declare an internal/"+
-			simulation_directory+" package driving internal.Main")
+			SIMULATION_DIRECTORY+" package driving internal.Main")
 	}
 	diags = append(diags, simulation_package_diagnostics(sim_files, position)...)
 	diags = append(diags, simulation_contents_diagnostics(sim_files, position)...)
@@ -1832,7 +1832,7 @@ func simulation_internal_dirs(
 	parsed_files []parsed_file, components *component_index,
 	component_index_number int, exempt []string, internal_root string,
 ) (dirs []string) {
-	sim_directory := internal_root + "/" + simulation_directory
+	sim_directory := internal_root + "/" + SIMULATION_DIRECTORY
 	seen := map[string]bool{}
 	for _, pf := range parsed_files {
 		if strings.HasSuffix(pf.Path, "_test.go") {
@@ -2077,7 +2077,7 @@ func simulation_test_main_diagnostics(
 	}
 	return simulation_diagnostic(position,
 		"simulation TestMain must be exactly: invariant.Run_Test_Main(m, "+
-			strconv.Quote(simulation_glob)+")")
+			strconv.Quote(SIMULATION_GLOB)+")")
 }
 
 // Reports whether the TestMain body is exactly invariant.Run_Test_Main(m, "../**").
@@ -2089,7 +2089,7 @@ func simulation_test_main_canonical(function *ast.FuncDecl) (canonical bool) {
 	if len(directories) != 1 {
 		return false
 	}
-	return directories[0] == simulation_glob
+	return directories[0] == SIMULATION_GLOB
 }
 
 // The first TestMain with a *testing.M parameter among the simulation files.

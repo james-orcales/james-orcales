@@ -109,10 +109,10 @@ func Run_Test_Main(m *testing.M, directories ...string) {
 	invariant.Recorder_Run_Test_Main(Default, m, directories...)
 }
 
-// Fuzz_coverage_file_environment names the env var a fuzz coordinator sets to the shared
+// FUZZ_COVERAGE_FILE_ENVIRONMENT names the env var a fuzz coordinator sets to the shared
 // coverage file path. The -test.fuzzworker subprocesses it spawns inherit the env (Go captures
 // os.Environ() when starting workers), so they find the same file.
-const fuzz_coverage_file_environment = "INVARIANT_FUZZ_COVERAGE_FILE"
+const FUZZ_COVERAGE_FILE_ENVIRONMENT = "INVARIANT_FUZZ_COVERAGE_FILE"
 
 // Fuzz_coverage_setup wires the cross-process coverage seams for a fuzzing run. Under -fuzz
 // the coordinator never executes the fuzzed body — that happens in worker subprocesses — so
@@ -121,7 +121,7 @@ const fuzz_coverage_file_environment = "INVARIANT_FUZZ_COVERAGE_FILE"
 // benchmark wires nothing.
 func fuzz_coverage_setup(recorder *invariant.Recorder) {
 	if recorder.Is_Fuzz_Worker {
-		path := os.Getenv(fuzz_coverage_file_environment)
+		path := os.Getenv(FUZZ_COVERAGE_FILE_ENVIRONMENT)
 		if path == "" {
 			return
 		}
@@ -148,7 +148,7 @@ func fuzz_coverage_setup(recorder *invariant.Recorder) {
 	}
 	path := file.Name()
 	file.Close()
-	os.Setenv(fuzz_coverage_file_environment, path)
+	os.Setenv(FUZZ_COVERAGE_FILE_ENVIRONMENT, path)
 	recorder.Merge_Fuzz_Coverage = func() {
 		opened, open_error := os.Open(path)
 		if open_error == nil {
@@ -223,7 +223,7 @@ func Dot_Product(namespace Namespace, dot_elements ...invariant.Dot_Element) {
 // math.MaxInt is smaller than math.MaxInt64 and their difference is negative, which a uint cannot
 // represent. An int and a uint always share a width, so this guards the unsigned presets that name
 // math.MaxUint as well.
-const _ = uint(math.MaxInt - math.MaxInt64)
+const INT_IS_64_BITS_WIDE = uint(math.MaxInt - math.MaxInt64)
 
 // Int_Invariants is the preset coverage for an int. The suite must witness the value one, negative
 // one, the type's minimum, and the type's maximum, plus an ordinary value that is none of these.

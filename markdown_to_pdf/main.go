@@ -15,34 +15,34 @@ import (
 	"local/james-orcales/shared/cli"
 )
 
-// Markdown_bytes_max caps the input the command reads into its fixed buffer.
+// MARKDOWN_BYTES_MAX caps the input the command reads into its fixed buffer.
 // 16 MiB dwarfs any hand-written document yet bounds memory against an
 // accidental or hostile huge file, satisfying the unbounded-read ban.
-const markdown_bytes_max = 16777216
+const MARKDOWN_BYTES_MAX = 16777216
 
-// Exit_usage marks a malformed command line, kept distinct from a run failure
+// EXIT_USAGE marks a malformed command line, kept distinct from a run failure
 // so a caller can tell "you invoked me wrong" from "the work itself failed".
-const exit_usage = 2
+const EXIT_USAGE = 2
 
-// Exit_failure marks a read, render, or write failure during an otherwise
+// EXIT_FAILURE marks a read, render, or write failure during an otherwise
 // well-formed invocation.
-const exit_failure = 1
+const EXIT_FAILURE = 1
 
-// Exit_exists marks the refusal to clobber: no -out was given and the path
+// EXIT_EXISTS marks the refusal to clobber: no -out was given and the path
 // derived beside the input already holds a file, so nothing is written.
-const exit_exists = 3
+const EXIT_EXISTS = 3
 
 func main() {
 	program := main_program()
 	if len(os.Args) < 2 {
 		cli.Print_Help(os.Stderr, program)
-		os.Exit(exit_usage)
+		os.Exit(EXIT_USAGE)
 	}
 	command, parse_err := cli.Program_Parse(&program, os.Args)
 	if parse_err != nil {
 		fmt.Fprintln(os.Stderr, parse_err)
 		cli.Print_Help(os.Stderr, program)
-		os.Exit(exit_usage)
+		os.Exit(EXIT_USAGE)
 	}
 	if command.Label == "golden" {
 		os.Exit(main_golden())
@@ -96,14 +96,14 @@ func main_render_command(command cli.Command) (status_code int) {
 	})
 	markdown, read_ok := main_read_file(input_path)
 	if !read_ok {
-		return exit_failure
+		return EXIT_FAILURE
 	}
 	return main_render(markdown, output_path)
 }
 
 // Renders the built-in showcase to the OS temp directory and opens it.
 func main_golden() (status_code int) {
-	return main_render_then_open([]byte(golden_showcase), golden_path())
+	return main_render_then_open([]byte(GOLDEN_SHOWCASE), golden_path())
 }
 
 // Evaluated at call time so the process's $TMPDIR is always respected.
@@ -117,7 +117,7 @@ func main_preview(command cli.Command) (status_code int) {
 	input_path := cli.Get_Option(command.Arguments, "input").Value.(string)
 	markdown, read_ok := main_read_file(input_path)
 	if !read_ok {
-		return exit_failure
+		return EXIT_FAILURE
 	}
 	return main_render_then_open(markdown, main_preview_path(input_path))
 }
@@ -159,7 +159,7 @@ func main_render(markdown []byte, output_path string) (status_code int) {
 	output, create_err := os.Create(output_path)
 	if create_err != nil {
 		fmt.Fprintf(os.Stderr, "markdown_to_pdf: %v\n", create_err)
-		return exit_failure
+		return EXIT_FAILURE
 	}
 	status := markdown_to_pdf.Main(&markdown_to_pdf.Main_Input{
 		Markdown: markdown,
@@ -169,7 +169,7 @@ func main_render(markdown []byte, output_path string) (status_code int) {
 	close_err := output.Close()
 	if close_err != nil {
 		fmt.Fprintf(os.Stderr, "markdown_to_pdf: %v\n", close_err)
-		return exit_failure
+		return EXIT_FAILURE
 	}
 	return status
 }
@@ -191,12 +191,12 @@ func main_output_path(input *main_output_path_input) (output_path string) {
 	_, stat_err := os.Stat(derived)
 	if stat_err == nil {
 		fmt.Fprintf(os.Stderr, "markdown_to_pdf: %s already exists\n", derived)
-		os.Exit(exit_exists)
+		os.Exit(EXIT_EXISTS)
 	}
 	return derived
 }
 
-// Reads the named file into one fixed buffer, bounded by markdown_bytes_max so
+// Reads the named file into one fixed buffer, bounded by MARKDOWN_BYTES_MAX so
 // no single input can exhaust memory. ok is false, with a stderr message, when
 // the file cannot be opened, overflows the cap, or errors mid-read.
 func main_read_file(name string) (contents []byte, ok bool) {
@@ -206,7 +206,7 @@ func main_read_file(name string) (contents []byte, ok bool) {
 		return nil, false
 	}
 	defer file.Close()
-	buffer := make([]byte, markdown_bytes_max)
+	buffer := make([]byte, MARKDOWN_BYTES_MAX)
 	read_total := 0
 	for read_total < len(buffer) {
 		n, read_err := file.Read(buffer[read_total:])
@@ -227,7 +227,7 @@ func main_read_file(name string) (contents []byte, ok bool) {
 // One Markdown document exercising every feature the converter renders — from
 // smart punctuation and box-drawing diagrams to wrapping table cells — long
 // enough to spill onto a second page so pagination shows too.
-const golden_showcase = "# markdown_to_pdf showcase\n" +
+const GOLDEN_SHOWCASE = "# markdown_to_pdf showcase\n" +
 	"\n" +
 	"A minimal, zero-dependency Markdown to PDF converter. Every section below\n" +
 	"exercises one of its features, rendered straight from Markdown with no\n" +

@@ -125,10 +125,10 @@ type Chain struct {
 }
 
 // The exit code for a clean run.
-const exit_success = 0
+const EXIT_SUCCESS = 0
 
 // The exit code for a malformed command line.
-const exit_usage = 2
+const EXIT_USAGE = 2
 
 // Main_Input is the input for Main.
 type Main_Input struct {
@@ -152,7 +152,7 @@ func Main(input *Main_Input) (code int) {
 	if parse_err != nil {
 		fmt.Fprintf(input.Error_Output, "callgraph: %v\n\n", parse_err)
 		cli.Print_Help(input.Error_Output, program)
-		return exit_usage
+		return EXIT_USAGE
 	}
 	filter := ""
 	filters := cli.Get_Option(command.Arguments, "filter").Value.([]string)
@@ -166,7 +166,7 @@ func Main(input *Main_Input) (code int) {
 	}
 	graph := Extract(packages)
 	fmt.Fprint(input.Output, Render(&Render_Input{Graph: graph, Filter: filter, Strip: prefix}))
-	return exit_success
+	return EXIT_SUCCESS
 }
 
 // Declares the callgraph command line: a commandless program whose one optional

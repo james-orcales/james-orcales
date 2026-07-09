@@ -6,7 +6,7 @@ import "syscall"
 
 // SO_REUSEPORT socket option, hand-written because the stdlib syscall package omits it on Linux
 // (unlike Darwin) and pulling in golang.org/x/sys/unix for one constant is not worth it.
-const socket_reuseport = 0xf
+const SOCKET_REUSEPORT = 0xf
 
 // The epoll descriptor plus the per-descriptor interest mask epoll needs to combine
 // read and write directions on one entry.
@@ -65,7 +65,7 @@ func poll_bit(writable bool) (bit uint32) {
 // EpollWait waits on unbounded — and returns the ready descriptors, emitting a separate entry
 // per ready direction so both can be dispatched.
 func poll_file_wait(poll poll_file, timeout_ns int64) (ready []poll_ready, err error) {
-	native := make([]syscall.EpollEvent, poll_events_max)
+	native := make([]syscall.EpollEvent, POLL_EVENTS_MAX)
 	milliseconds := -1
 	if timeout_ns >= 0 {
 		milliseconds = int(timeout_ns / 1_000_000)

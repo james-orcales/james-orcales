@@ -212,9 +212,9 @@ func Test_Hot_Path_Is_Zero_Allocation(t *testing.T) {
 	}
 }
 
-// A clock whose realtime reading is always fixed_moment.
+// A clock whose realtime reading is always FIXED_MOMENT.
 func frozen_clock() (clock time.Clock) {
-	return time.Clock{Now_Realtime: func() (moment time.Moment) { return fixed_moment }}
+	return time.Clock{Now_Realtime: func() (moment time.Moment) { return FIXED_MOMENT }}
 }
 
 // A logger writing JSON lines to buffer with the frozen clock and the lowest level
@@ -238,11 +238,11 @@ func assert_output(t *testing.T, buffer *bytes.Buffer, want string) {
 
 // Every test clock returns this fixed reading so timestamp output is deterministic
 // and assertable byte-for-byte.
-const fixed_moment time.Moment = 1700000000000000000
+const FIXED_MOMENT time.Moment = 1700000000000000000
 
 // The exact benchmark message zerolog uses, so the benchmarks below are a 1:1
 // workload comparison against zerolog's same-named benchmarks.
-const fake_message = "Test logging, but use a somewhat realistic message length."
+const FAKE_MESSAGE = "Test logging, but use a somewhat realistic message length."
 
 // A logger discarding output with the frozen clock, for benchmarks.
 func discard_logger() (logger jlog.Logger) {
@@ -272,7 +272,7 @@ func Benchmark_Info(b *testing.B) {
 	b.ResetTimer()
 	b.RunParallel(func(pb *testing.PB) {
 		for pb.Next() {
-			jlog.Logger_Info(logger, fake_message)
+			jlog.Logger_Info(logger, FAKE_MESSAGE)
 		}
 	})
 }
@@ -288,7 +288,7 @@ func Benchmark_Disabled(b *testing.B) {
 	b.ResetTimer()
 	b.RunParallel(func(pb *testing.PB) {
 		for pb.Next() {
-			jlog.Logger_Info(logger, fake_message)
+			jlog.Logger_Info(logger, FAKE_MESSAGE)
 		}
 	})
 }
@@ -301,9 +301,9 @@ func Benchmark_Log_Fields(b *testing.B) {
 	b.ResetTimer()
 	b.RunParallel(func(pb *testing.PB) {
 		for pb.Next() {
-			jlog.Logger_Info(logger, fake_message,
+			jlog.Logger_Info(logger, FAKE_MESSAGE,
 				jlog.String("string", "four!"),
-				jlog.Time("time", fixed_moment),
+				jlog.Time("time", FIXED_MOMENT),
 				jlog.Integer("int", 123),
 				jlog.Float32("float", float32(-2.203230293249593)),
 			)
@@ -315,7 +315,7 @@ func Benchmark_Log_Fields(b *testing.B) {
 func Benchmark_Context_Fields(b *testing.B) {
 	logger := jlog.Logger_With(discard_logger(),
 		jlog.String("string", "four!"),
-		jlog.Time("time", fixed_moment),
+		jlog.Time("time", FIXED_MOMENT),
 		jlog.Integer("int", 123),
 		jlog.Float32("float", float32(-2.203230293249593)),
 	)
@@ -323,7 +323,7 @@ func Benchmark_Context_Fields(b *testing.B) {
 	b.ResetTimer()
 	b.RunParallel(func(pb *testing.PB) {
 		for pb.Next() {
-			jlog.Logger_Info(logger, fake_message)
+			jlog.Logger_Info(logger, FAKE_MESSAGE)
 		}
 	})
 }

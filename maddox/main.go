@@ -19,22 +19,22 @@ import (
 	"local/james-orcales/shared/time"
 )
 
-// Exit_usage marks a malformed command line, kept distinct from a benchmark
+// EXIT_USAGE marks a malformed command line, kept distinct from a benchmark
 // failure so a caller can tell "you invoked me wrong" from "a command failed".
-const exit_usage = 2
+const EXIT_USAGE = 2
 
-// Duration_seconds_default is the default per-command time budget: sample each
+// DURATION_SECONDS_DEFAULT is the default per-command time budget: sample each
 // command for up to five seconds, or until the run cap, whichever comes first.
-const duration_seconds_default = 30
+const DURATION_SECONDS_DEFAULT = 30
 
-// Runs_default is the default per-command run cap: thirty samples, the
+// RUNS_DEFAULT is the default per-command run cap: thirty samples, the
 // central-limit-theorem rule-of-thumb where the t-test is well-behaved, so a fast
 // command stops there rather than burning the whole time budget.
-const runs_default = 1000
+const RUNS_DEFAULT = 1000
 
-// Warmup_default is the default number of discarded warmup runs: three, to prime
+// WARMUP_DEFAULT is the default number of discarded warmup runs: three, to prime
 // caches and the filesystem so the measured runs reflect warm steady state.
-const warmup_default = 5
+const WARMUP_DEFAULT = 5
 
 func main() {
 	program := main_program()
@@ -42,17 +42,17 @@ func main() {
 	if parse_err != nil {
 		fmt.Fprintln(os.Stderr, parse_err)
 		cli.Print_Help(os.Stderr, program)
-		os.Exit(exit_usage)
+		os.Exit(EXIT_USAGE)
 	}
 	command_strings := cli.Get_Option(command.Arguments, "command").Value.([]string)
 	if len(command_strings) == 0 {
 		cli.Print_Help(os.Stderr, program)
-		os.Exit(exit_usage)
+		os.Exit(EXIT_USAGE)
 	}
 	commands, build_err := commands_from_strings(command_strings)
 	if build_err != nil {
 		fmt.Fprintln(os.Stderr, "maddox: "+build_err.Error())
-		os.Exit(exit_usage)
+		os.Exit(EXIT_USAGE)
 	}
 
 	format := maddox.OUTPUT_FORMAT_TABLE
@@ -98,17 +98,17 @@ func main_program() (program cli.Program) {
 		Flags: []cli.Option{
 			cli.New_Flag[int](cli.New_Flag_Input[int]{
 				Label:       "duration",
-				Value:       duration_seconds_default,
+				Value:       DURATION_SECONDS_DEFAULT,
 				Description: "per-command time budget in seconds",
 			}),
 			cli.New_Flag[int](cli.New_Flag_Input[int]{
 				Label:       "runs",
-				Value:       runs_default,
+				Value:       RUNS_DEFAULT,
 				Description: "stop after this many runs (0 = only -duration)",
 			}),
 			cli.New_Flag[int](cli.New_Flag_Input[int]{
 				Label:       "warmup",
-				Value:       warmup_default,
+				Value:       WARMUP_DEFAULT,
 				Description: "runs to discard before sampling",
 			}),
 			cli.New_Flag[bool](cli.New_Flag_Input[bool]{
@@ -135,10 +135,10 @@ func main_program() (program cli.Program) {
 	})
 }
 
-// Bound_min and bound_max bound the command-tier defined types' lengths; min is vacuous
+// BOUND_MIN and BOUND_MAX bound the command-tier defined types' lengths; min is vacuous
 // and max is eager, so the bounds hold for any real command line without observation.
-const bound_min = -1
-const bound_max = 1 << 16
+const BOUND_MIN = -1
+const BOUND_MAX = 1 << 16
 
 // Cli_commands is the raw command strings from the command line, each one a command to
 // benchmark before it is parsed into words.
@@ -146,16 +146,16 @@ type cli_commands []string
 
 // Cli_commands_invariants bounds the command-string count.
 func cli_commands_invariants(commands cli_commands, namespace invariant.Namespace) {
-	invariant.Always(len(commands) <= bound_max, "A command list is at most its max.")
-	invariant.Always(len(commands) >= bound_min, "A command list is at least its min.")
-	invariant.Always(len(commands) != bound_min, "A command list never reaches its min.")
-	invariant.Always(len(commands) != bound_max, "A command list is below its max.")
+	invariant.Always(len(commands) <= BOUND_MAX, "A command list is at most its max.")
+	invariant.Always(len(commands) >= BOUND_MIN, "A command list is at least its min.")
+	invariant.Always(len(commands) != BOUND_MIN, "A command list never reaches its min.")
+	invariant.Always(len(commands) != BOUND_MAX, "A command list is below its max.")
 	invariant.Dot_Product(namespace,
 		invariant.Sometimes(len(commands) == 0, "A command list is empty."),
 		invariant.Sometimes(len(commands) == 1, "A command list has one."),
 		invariant.Sometimes(len(commands) == 2, "A command list has two."),
-		invariant.Sometimes(len(commands) == bound_min, "A command list is at its min."),
-		invariant.Sometimes(len(commands) == bound_max, "A command list is at its max."),
+		invariant.Sometimes(len(commands) == BOUND_MIN, "A command list is at its min."),
+		invariant.Sometimes(len(commands) == BOUND_MAX, "A command list is at its max."),
 		invariant.Impossible(
 			invariant.Event_True("A command list is empty."),
 			invariant.Event_True("A command list has one."),
@@ -176,16 +176,16 @@ type stream_mode string
 
 // Stream_mode_invariants bounds the mode word's length.
 func stream_mode_invariants(mode stream_mode, namespace invariant.Namespace) {
-	invariant.Always(len(mode) <= bound_max, "A stream mode is at most its max.")
-	invariant.Always(len(mode) >= bound_min, "A stream mode is at least its min.")
-	invariant.Always(len(mode) != bound_min, "A stream mode never reaches its min.")
-	invariant.Always(len(mode) != bound_max, "A stream mode is below its max.")
+	invariant.Always(len(mode) <= BOUND_MAX, "A stream mode is at most its max.")
+	invariant.Always(len(mode) >= BOUND_MIN, "A stream mode is at least its min.")
+	invariant.Always(len(mode) != BOUND_MIN, "A stream mode never reaches its min.")
+	invariant.Always(len(mode) != BOUND_MAX, "A stream mode is below its max.")
 	invariant.Dot_Product(namespace,
 		invariant.Sometimes(len(mode) == 0, "A stream mode is empty."),
 		invariant.Sometimes(len(mode) == 1, "A stream mode is one byte."),
 		invariant.Sometimes(len(mode) == 2, "A stream mode is two bytes."),
-		invariant.Sometimes(len(mode) == bound_min, "A stream mode is at its min."),
-		invariant.Sometimes(len(mode) == bound_max, "A stream mode is at its max."),
+		invariant.Sometimes(len(mode) == BOUND_MIN, "A stream mode is at its min."),
+		invariant.Sometimes(len(mode) == BOUND_MAX, "A stream mode is at its max."),
 		invariant.Impossible(
 			invariant.Event_True("A stream mode is empty."),
 			invariant.Event_True("A stream mode is one byte."),

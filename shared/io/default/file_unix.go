@@ -13,11 +13,11 @@ import (
 
 // Bounds one readdir pass into a fixed buffer, so a large directory is read in repeated
 // passes rather than one unbounded allocation.
-const directory_read_bytes = 8192
+const DIRECTORY_READ_BYTES = 8192
 
 // Caps the number of readdir passes so a pathological directory errors rather than looping
-// unbounded; 4096 passes of directory_read_bytes cover hundreds of thousands of entries.
-const directory_read_passes_max = 4096
+// unbounded; 4096 passes of DIRECTORY_READ_BYTES cover hundreds of thousands of entries.
+const DIRECTORY_READ_PASSES_MAX = 4096
 
 // Reads up to len(buffer) bytes from file at offset via the pread syscall — the raw
 // positioned read TigerBeetle's posix backend uses.
@@ -68,8 +68,8 @@ func file_read_directory(path string) (entries []io.Directory_Entry, err error) 
 		return nil, open_err
 	}
 	defer syscall.Close(descriptor)
-	buffer := make([]byte, directory_read_bytes)
-	for pass_index := 0; pass_index < directory_read_passes_max; pass_index++ {
+	buffer := make([]byte, DIRECTORY_READ_BYTES)
+	for pass_index := 0; pass_index < DIRECTORY_READ_PASSES_MAX; pass_index++ {
 		count, read_err := syscall.ReadDirent(descriptor, buffer)
 		if read_err != nil {
 			return nil, read_err
@@ -144,9 +144,9 @@ func socket_listen(host string, port int) (descriptor int, err error) {
 	// SO_REUSEPORT lets N loops in one process each bind this same host:port; the kernel then
 	// load-balances connections across their listening sockets (thread-per-core). It is
 	// listener-only: client sockets skip it. The option never fails on a fresh socket, so its
-	// error is ignored, like SO_REUSEADDR's. socket_reuseport is a per-OS constant because the
+	// error is ignored, like SO_REUSEADDR's. SOCKET_REUSEPORT is a per-OS constant because the
 	// stdlib syscall package defines SO_REUSEPORT on Darwin but not on Linux.
-	syscall.SetsockoptInt(descriptor, syscall.SOL_SOCKET, socket_reuseport, 1)
+	syscall.SetsockoptInt(descriptor, syscall.SOL_SOCKET, SOCKET_REUSEPORT, 1)
 	bind_err := syscall.Bind(descriptor, &address)
 	if bind_err != nil {
 		syscall.Close(descriptor)
@@ -269,7 +269,7 @@ func wake_poke(write int) {
 // Drains the wake pipe's pending bytes, bounded so a flood cannot spin the loop.
 func wake_drain(read int) {
 	scratch := make([]byte, 4096)
-	for pass_index := 0; pass_index < wake_drain_passes_max; pass_index++ {
+	for pass_index := 0; pass_index < WAKE_DRAIN_PASSES_MAX; pass_index++ {
 		count, err := syscall.Read(read, scratch)
 		if err != nil {
 			return

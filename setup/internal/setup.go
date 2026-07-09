@@ -21,14 +21,14 @@ import (
 	systime "local/james-orcales/shared/time"
 )
 
-// Dotfile_bytes_max bounds a single dotfile read into one fixed buffer. 1 MiB
+// DOTFILE_BYTES_MAX bounds a single dotfile read into one fixed buffer. 1 MiB
 // dwarfs any real configuration file yet caps memory against a pathological
 // input, satisfying the linter's unbounded-read ban.
-const dotfile_bytes_max = 1048576
+const DOTFILE_BYTES_MAX = 1048576
 
-// Exit_failure is the process exit code for a planning or write failure during
+// EXIT_FAILURE is the process exit code for a planning or write failure during
 // an otherwise well-formed run.
-const exit_failure = 1
+const EXIT_FAILURE = 1
 
 // File_System is the injected filesystem capability the sync runs on: the shared/io loop it
 // submits reads, writes, and traversal to, and the Run_Until pump that drives each submitted
@@ -84,13 +84,13 @@ func Main(input *Main_Input) (status_code int) {
 	})
 	if plan_err != nil {
 		jlog.Logger_Error(input.Logger, "plan failed", jlog.Err(plan_err))
-		return exit_failure
+		return EXIT_FAILURE
 	}
 	for _, write := range writes {
 		write_err := write_file(&input.File_System, write.Destination_Path, write.Contents)
 		if write_err != nil {
 			jlog.Logger_Error(input.Logger, "write failed", jlog.Err(write_err))
-			return exit_failure
+			return EXIT_FAILURE
 		}
 		jlog.Logger_Info(input.Logger, "wrote", jlog.String("path", write.Destination_Path))
 	}
@@ -118,7 +118,7 @@ func apply_macos_defaults(
 		run_err := run(command.Name, command.Arguments)
 		if run_err != nil {
 			jlog.Logger_Error(logger, "macos defaults failed", jlog.Err(run_err))
-			return exit_failure
+			return EXIT_FAILURE
 		}
 	}
 	return 0
@@ -158,11 +158,11 @@ func Bootstrap(input *Bootstrap_Input) (status_code int) {
 	return 0
 }
 
-// Macos_defaults_script lists the `defaults write` and `killall` commands that
+// MACOS_DEFAULTS_SCRIPT lists the `defaults write` and `killall` commands that
 // configure macOS, one per line, parsed into commands at run time. The clock
 // date format is appended separately by macos_commands because its value holds
 // spaces that whitespace-splitting a line would break apart.
-const macos_defaults_script = `
+const MACOS_DEFAULTS_SCRIPT = `
 defaults write com.apple.dock autohide -bool true
 defaults write com.apple.dock autohide-delay -float 0
 defaults write com.apple.dock autohide-time-modifier -int 0
@@ -200,17 +200,17 @@ defaults write NSGlobalDomain NSAutomaticQuoteSubstitutionEnabled -bool false
 defaults write NSGlobalDomain NSAutomaticSpellingCorrectionEnabled -bool false
 `
 
-// One external program invocation parsed from macos_defaults_script.
+// One external program invocation parsed from MACOS_DEFAULTS_SCRIPT.
 type macos_command struct {
 	Name      string
 	Arguments []string
 }
 
-// Parses macos_defaults_script into one command per non-blank line and appends
+// Parses MACOS_DEFAULTS_SCRIPT into one command per non-blank line and appends
 // the clock date format command, whose spaced value cannot share the line format.
 func macos_commands() (commands []macos_command) {
 	commands = []macos_command{}
-	for line := range strings.Lines(macos_defaults_script) {
+	for line := range strings.Lines(MACOS_DEFAULTS_SCRIPT) {
 		fields := strings.Fields(line)
 		if len(fields) == 0 {
 			continue
@@ -394,7 +394,7 @@ func destination_matches(
 	return bytes.Equal(source_contents, destination_contents)
 }
 
-// Reads the file at path in full through the loop, bounded by dotfile_bytes_max into one
+// Reads the file at path in full through the loop, bounded by DOTFILE_BYTES_MAX into one
 // fixed buffer. found is false when the path is absent — the caller treats that as a
 // mismatch — and a file overflowing the cap errors, so a truncated dotfile never passes.
 func read_bounded(system *File_System, path string) (contents []byte, found bool, err error) {
@@ -402,7 +402,7 @@ func read_bounded(system *File_System, path string) (contents []byte, found bool
 	if open_err != nil {
 		return nil, false, nil
 	}
-	buffer := make([]byte, dotfile_bytes_max)
+	buffer := make([]byte, DOTFILE_BYTES_MAX)
 	total := 0
 	for total < len(buffer) {
 		count, read_err := loop_read(system, file, buffer[total:], int64(total))
@@ -537,31 +537,31 @@ func Installed(input *Installed_Input) (yes bool) {
 	return strings.HasPrefix(version, input.Version)
 }
 
-// Neovim_source_subpath locates the vendored Neovim source relative to the
+// NEOVIM_SOURCE_SUBPATH locates the vendored Neovim source relative to the
 // checkout root. make is pointed at it with -C, so the build needs no
 // working-directory plumbing through the injected runner.
-const neovim_source_subpath = "third_party/neovim"
+const NEOVIM_SOURCE_SUBPATH = "third_party/neovim"
 
-// Neovim_prefix_subpath is the install prefix relative to the checkout root.
+// NEOVIM_PREFIX_SUBPATH is the install prefix relative to the checkout root.
 // Neovim installs to <prefix>/bin/nvim and derives its runtime as
 // <prefix>/share/nvim/runtime by stripping the binary's name and its parent
 // "bin" component from the resolved path. home/.local mirrors ~/.local, so nvim
 // lands at home/.local/bin/nvim — on PATH — and finds its own runtime, no symlink.
-const neovim_prefix_subpath = "home/.local"
+const NEOVIM_PREFIX_SUBPATH = "home/.local"
 
-// Neovim_build_type is the CMAKE_BUILD_TYPE the bootstrap compiles: optimized,
+// NEOVIM_BUILD_TYPE is the CMAKE_BUILD_TYPE the bootstrap compiles: optimized,
 // but with enough debug info to recover a backtrace if Neovim ever crashes.
-const neovim_build_type = "RelWithDebInfo"
+const NEOVIM_BUILD_TYPE = "RelWithDebInfo"
 
-// Neovim_install_goal is the second make goal, run after the configure-build
+// NEOVIM_INSTALL_GOAL is the second make goal, run after the configure-build
 // pass to copy the binary, runtime, and parsers under the prefix.
-const neovim_install_goal = "install"
+const NEOVIM_INSTALL_GOAL = "install"
 
-// Neovim_version is the release the bootstrap wants, tracking the vendored
+// NEOVIM_VERSION is the release the bootstrap wants, tracking the vendored
 // source's NVIM_VERSION_* in third_party/neovim/CMakeLists.txt. The build is
 // skipped when an nvim already on PATH reports it, so a bootstrap that already
 // has the wanted nvim does no work. Bump it with the vendored source.
-const neovim_version = "v0.12.3"
+const NEOVIM_VERSION = "v0.12.3"
 
 // Install_Neovim_Input carries the injected dependencies Install_Neovim needs to
 // build and install the vendored Neovim.
@@ -582,7 +582,7 @@ func Install_Neovim(input *Install_Neovim_Input) (status_code int) {
 	// nvim not already being installed: a bootstrap that has it does no work.
 	if neovim_already_installed(input.Shell, input.Repository_Directory) {
 		jlog.Logger_Info(input.Shell.Logger, "neovim already installed",
-			jlog.String("version", neovim_version))
+			jlog.String("version", NEOVIM_VERSION))
 		return 0
 	}
 	for index, arguments := range neovim_make_invocations(input.Repository_Directory) {
@@ -591,7 +591,7 @@ func Install_Neovim(input *Install_Neovim_Input) (status_code int) {
 		// a generic line is all setup adds.
 		if !run_spawn(input.Shell, arguments...) {
 			jlog.Logger_Error(input.Shell.Logger, "neovim build failed")
-			return exit_failure
+			return EXIT_FAILURE
 		}
 	}
 	return 0
@@ -613,19 +613,19 @@ func neovim_make_phase(index int) (phase string) {
 // differs only by the appended install goal. -C aims make at the vendored source
 // without disturbing the caller's working directory.
 func neovim_make_invocations(repository_directory string) (invocations [][]string) {
-	source := filepath.Join(repository_directory, neovim_source_subpath)
-	prefix := filepath.Join(repository_directory, neovim_prefix_subpath)
+	source := filepath.Join(repository_directory, NEOVIM_SOURCE_SUBPATH)
+	prefix := filepath.Join(repository_directory, NEOVIM_PREFIX_SUBPATH)
 	build := []string{
 		"make", "-C", source,
-		"CMAKE_BUILD_TYPE=" + neovim_build_type,
+		"CMAKE_BUILD_TYPE=" + NEOVIM_BUILD_TYPE,
 		"CMAKE_INSTALL_PREFIX=" + prefix,
 	}
-	install := append(slices.Clone(build), neovim_install_goal)
+	install := append(slices.Clone(build), NEOVIM_INSTALL_GOAL)
 	return [][]string{build, install}
 }
 
 // Reports whether version_output — the text `nvim --version` prints — names the
-// wanted release neovim_version. Only the leading vMAJOR.MINOR.PATCH token is
+// wanted release NEOVIM_VERSION. Only the leading vMAJOR.MINOR.PATCH token is
 // compared, so a build's -dev or +commit suffix does not matter. Empty output,
 // from no nvim on PATH, is not the release, so the build runs.
 func neovim_version_present(version_output string) (present bool) {
@@ -635,7 +635,7 @@ func neovim_version_present(version_output string) (present bool) {
 			continue
 		}
 		base, _, _ := strings.Cut(field, "-")
-		return base == neovim_version
+		return base == NEOVIM_VERSION
 	}
 	return false
 }
@@ -704,7 +704,7 @@ func Install_Fonts(input *Install_Fonts_Input) (status_code int) {
 		copy_err := input.Copy_Font(file)
 		if copy_err != nil {
 			jlog.Logger_Error(input.Logger, "font copy failed", jlog.Err(copy_err))
-			return exit_failure
+			return EXIT_FAILURE
 		}
 		jlog.Logger_Info(input.Logger, "copied font", jlog.String("file", file))
 		copied = true
@@ -718,15 +718,15 @@ func Install_Fonts(input *Install_Fonts_Input) (status_code int) {
 	refresh_err := input.Refresh()
 	if refresh_err != nil {
 		jlog.Logger_Error(input.Logger, "font cache refresh failed", jlog.Err(refresh_err))
-		return exit_failure
+		return EXIT_FAILURE
 	}
 	return 0
 }
 
-// Direnv_version is the release the bootstrap wants — the prefix of `direnv
+// DIRENV_VERSION is the release the bootstrap wants — the prefix of `direnv
 // --version`. direnv embeds version.txt, so a plain build self-reports it; tracks
 // the vendored third_party/direnv source, bump it with the source.
-const direnv_version = "2.37.1"
+const DIRENV_VERSION = "2.37.1"
 
 // Install_Direnv_Input carries the injected dependencies Install_Direnv needs to
 // build the vendored direnv with the Go toolchain and place it on PATH.
@@ -763,7 +763,7 @@ func Install_Direnv(input *Install_Direnv_Input) (status_code int) {
 		" -o " + destination + " ."
 	if !run_spawn(input.Shell, "sh", "-c", build) {
 		jlog.Logger_Error(input.Shell.Logger, "direnv build failed")
-		return exit_failure
+		return EXIT_FAILURE
 	}
 	return 0
 }
@@ -774,14 +774,14 @@ func direnv_built(shell Shell, binary_directory string) (built bool) {
 	return Installed(&Installed_Input{
 		Shell:      shell,
 		Executable: filepath.Join(binary_directory, "direnv"),
-		Version:    direnv_version,
+		Version:    DIRENV_VERSION,
 	})
 }
 
-// Rust_version is the toolchain rustup installs and the gate checks. Pinned, not
+// RUST_VERSION is the toolchain rustup installs and the gate checks. Pinned, not
 // "stable", so the idempotency check has a fixed version to match; bump it
 // deliberately. `rustc --version` prints "rustc <version> (<commit> <date>)".
-const rust_version = "1.96.0"
+const RUST_VERSION = "1.96.0"
 
 // Install_Rust_Input carries the injected dependencies Install_Rust needs to
 // install the Rust toolchain and expose it on PATH.
@@ -817,7 +817,7 @@ func Install_Rust(input *Install_Rust_Input) (status_code int) {
 		jlog.Logger_Info(input.Shell.Logger, "installing rust")
 		if !run_spawn(input.Shell, rust_install_invocation()...) {
 			jlog.Logger_Error(input.Shell.Logger, "rust install failed")
-			return exit_failure
+			return EXIT_FAILURE
 		}
 	}
 	// Always (re)link, even when the install was skipped, so a stale or missing
@@ -828,7 +828,7 @@ func Install_Rust(input *Install_Rust_Input) (status_code int) {
 		Link_Directory:  input.Link_Directory,
 	}) {
 		jlog.Logger_Error(input.Shell.Logger, "rust link failed")
-		return exit_failure
+		return EXIT_FAILURE
 	}
 	return 0
 }
@@ -843,7 +843,7 @@ func rust_install_invocation() (arguments []string) {
 		"sh", "-c",
 		"curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | " +
 			"RUSTUP_INIT_SKIP_PATH_CHECK=yes sh -s -- " +
-			"-y --no-modify-path --default-toolchain " + rust_version,
+			"-y --no-modify-path --default-toolchain " + RUST_VERSION,
 	}
 }
 
@@ -855,7 +855,7 @@ func rust_installed(shell Shell, cargo_directory string) (installed bool) {
 	return Installed(&Installed_Input{
 		Shell:      shell,
 		Executable: filepath.Join(cargo_directory, "bin", "rustc"),
-		Version:    "rustc " + rust_version,
+		Version:    "rustc " + RUST_VERSION,
 	})
 }
 
@@ -880,10 +880,10 @@ func rust_link(input *rust_link_input) (linked bool) {
 	return true
 }
 
-// Fzf_version is the release the bootstrap wants, the exact line `fzf --version`
+// FZF_VERSION is the release the bootstrap wants, the exact line `fzf --version`
 // prints. It tracks the vendored third_party/fzf source; bump it with the source.
 // The build injects it via ldflags so the binary self-reports this string.
-const fzf_version = "0.73.1"
+const FZF_VERSION = "0.73.1"
 
 // Install_Fzf_Input carries the injected dependencies Install_Fzf needs to build
 // the vendored fzf with the Go toolchain and place it on PATH.
@@ -917,11 +917,11 @@ func Install_Fzf(input *Install_Fzf_Input) (status_code int) {
 	destination := filepath.Join(input.Binary_Directory, "fzf")
 	build := "cd " + input.Fzf_Directory +
 		" && go build -mod=vendor" +
-		" -ldflags '-s -w -X main.version=" + fzf_version + " -X main.revision='" +
+		" -ldflags '-s -w -X main.version=" + FZF_VERSION + " -X main.revision='" +
 		" -o " + destination + " ."
 	if !run_spawn(input.Shell, "sh", "-c", build) {
 		jlog.Logger_Error(input.Shell.Logger, "fzf build failed")
-		return exit_failure
+		return EXIT_FAILURE
 	}
 	return 0
 }
@@ -932,7 +932,7 @@ func fzf_built(shell Shell, binary_directory string) (built bool) {
 	return Installed(&Installed_Input{
 		Shell:      shell,
 		Executable: filepath.Join(binary_directory, "fzf"),
-		Version:    fzf_version,
+		Version:    FZF_VERSION,
 	})
 }
 
@@ -983,7 +983,7 @@ func Install_Command(input *Install_Command_Input) (status_code int) {
 	if !run_spawn(input.Shell, "sh", "-c", build) {
 		jlog.Logger_Error(input.Shell.Logger, "command build failed",
 			jlog.String("command", input.Binary_Name))
-		return exit_failure
+		return EXIT_FAILURE
 	}
 	return 0
 }
@@ -996,10 +996,10 @@ func command_on_path(shell Shell, name string) (present bool) {
 	return run_pipe(shell, "which", name) != ""
 }
 
-// Jj_version is the release the bootstrap wants — the prefix of `jj --version`.
+// JJ_VERSION is the release the bootstrap wants — the prefix of `jj --version`.
 // jj's build.rs appends a commit hash, so the gate prefix-matches; tracks the
 // vendored third_party/jj workspace version, bump it with the source.
-const jj_version = "jj 0.42.0"
+const JJ_VERSION = "jj 0.42.0"
 
 // Install_Jj_Input carries the injected dependencies Install_Jj needs to build the
 // vendored jj with cargo and install it into the binary directory.
@@ -1034,7 +1034,7 @@ func Install_Jj(input *Install_Jj_Input) (status_code int) {
 	if !run_spawn(input.Shell,
 		jj_install_invocation(input)...) {
 		jlog.Logger_Error(input.Shell.Logger, "jj build failed")
-		return exit_failure
+		return EXIT_FAILURE
 	}
 	return 0
 }
@@ -1060,14 +1060,14 @@ func jj_built(shell Shell, binary_directory string) (built bool) {
 	return Installed(&Installed_Input{
 		Shell:      shell,
 		Executable: filepath.Join(binary_directory, "jj"),
-		Version:    jj_version,
+		Version:    JJ_VERSION,
 	})
 }
 
-// Ripgrep_version is the release the bootstrap wants — the prefix of `rg
+// RIPGREP_VERSION is the release the bootstrap wants — the prefix of `rg
 // --version`. ripgrep's build.rs appends a git rev, so the gate prefix-matches;
 // tracks the vendored third_party/ripgrep Cargo.toml version, bump with it.
-const ripgrep_version = "ripgrep 15.1.0"
+const RIPGREP_VERSION = "ripgrep 15.1.0"
 
 // Install_Ripgrep_Input carries the injected dependencies Install_Ripgrep needs to
 // build the vendored ripgrep with cargo and install its rg binary.
@@ -1102,7 +1102,7 @@ func Install_Ripgrep(input *Install_Ripgrep_Input) (status_code int) {
 	invocation := ripgrep_install_invocation(input)
 	if !run_spawn(input.Shell, invocation...) {
 		jlog.Logger_Error(input.Shell.Logger, "ripgrep build failed")
-		return exit_failure
+		return EXIT_FAILURE
 	}
 	return 0
 }
@@ -1129,13 +1129,13 @@ func ripgrep_built(shell Shell, binary_directory string) (built bool) {
 	return Installed(&Installed_Input{
 		Shell:      shell,
 		Executable: filepath.Join(binary_directory, "rg"),
-		Version:    ripgrep_version,
+		Version:    RIPGREP_VERSION,
 	})
 }
 
 // Fd_version is the release the bootstrap wants — the prefix of `fd --version`.
 // Tracks the vendored third_party/fd Cargo.toml version, bump it with the source.
-const fdcli_version = "fd 10.4.2"
+const FDCLI_VERSION = "fd 10.4.2"
 
 // Install_Fdcli_Input carries the injected dependencies Install_Fdcli needs to build the
 // vendored fd with cargo and install it.
@@ -1170,7 +1170,7 @@ func Install_Fdcli(input *Install_Fdcli_Input) (status_code int) {
 	invocation := fdcli_install_invocation(input)
 	if !run_spawn(input.Shell, invocation...) {
 		jlog.Logger_Error(input.Shell.Logger, "fd build failed")
-		return exit_failure
+		return EXIT_FAILURE
 	}
 	return 0
 }
@@ -1195,34 +1195,34 @@ func fdcli_built(shell Shell, binary_directory string) (built bool) {
 	return Installed(&Installed_Input{
 		Shell:      shell,
 		Executable: filepath.Join(binary_directory, "fd"),
-		Version:    fdcli_version,
+		Version:    FDCLI_VERSION,
 	})
 }
 
-// Ghostty_version is the release the bootstrap wants — the prefix of `ghostty
+// GHOSTTY_VERSION is the release the bootstrap wants — the prefix of `ghostty
 // --version`, whose first line reads "Ghostty <version>". Tracks the pinned DMG
 // below; bump it, the url, and the SHA256 together.
-const ghostty_version = "Ghostty 1.3.1"
+const GHOSTTY_VERSION = "Ghostty 1.3.1"
 
-// Ghostty_dmg_url is the pinned macOS DMG the install downloads. Ghostty is a
+// GHOSTTY_DMG_URL is the pinned macOS DMG the install downloads. Ghostty is a
 // notarized app bundle, not buildable source, so it is fetched rather than vendored
 // and built; the version lives in the path, so the url always serves that build.
-const ghostty_dmg_url = "https://release.files.ghostty.org/1.3.1/Ghostty.dmg"
+const GHOSTTY_DMG_URL = "https://release.files.ghostty.org/1.3.1/Ghostty.dmg"
 
-// Ghostty_dmg_sha256 is the SHA256 the download is verified against, so a corrupt
+// GHOSTTY_DMG_SHA256 is the SHA256 the download is verified against, so a corrupt
 // or tampered DMG aborts the install instead of placing bad bytes in the
 // applications directory. The published hash for the 1.3.1 DMG; bump it with the url.
-const ghostty_dmg_sha256 = "18cff2b0a6cee90eead9c7d3064e808a252a40baf214aa752c1ecb793b8f5f69"
+const GHOSTTY_DMG_SHA256 = "18cff2b0a6cee90eead9c7d3064e808a252a40baf214aa752c1ecb793b8f5f69"
 
-// Ghostty_team_identifier is the Apple Developer Team ID Ghostty is signed under,
+// GHOSTTY_TEAM_IDENTIFIER is the Apple Developer Team ID Ghostty is signed under,
 // pinned in the signature gate so an app signed by anyone else is rejected. Tied to
 // the developer's account and stable for years; bump it only if that identity changes.
-const ghostty_team_identifier = "24VZTF6M5V"
+const GHOSTTY_TEAM_IDENTIFIER = "24VZTF6M5V"
 
-// Ghostty_application_binary_subpath locates the app's command-line binary inside
+// GHOSTTY_APPLICATION_BINARY_SUBPATH locates the app's command-line binary inside
 // the bundle, relative to the applications directory. It is both the gate's probe
 // target and the source the PATH symlink points at.
-const ghostty_application_binary_subpath = "Ghostty.app/Contents/MacOS/ghostty"
+const GHOSTTY_APPLICATION_BINARY_SUBPATH = "Ghostty.app/Contents/MacOS/ghostty"
 
 // Install_Ghostty_Input carries the injected dependencies Install_Ghostty needs to
 // download the pinned Ghostty DMG, install the app, and expose its CLI on PATH.
@@ -1257,26 +1257,26 @@ func Install_Ghostty(input *Install_Ghostty_Input) (status_code int) {
 		invocation := ghostty_install_invocation(input.Applications_Directory)
 		if !run_spawn(input.Shell, invocation...) {
 			jlog.Logger_Error(input.Shell.Logger, "ghostty install failed")
-			return exit_failure
+			return EXIT_FAILURE
 		}
 	}
 	// Always (re)link, even when the install was skipped, so a missing symlink is
 	// restored without re-downloading. ln -sf is idempotent.
-	source := filepath.Join(input.Applications_Directory, ghostty_application_binary_subpath)
+	source := filepath.Join(input.Applications_Directory, GHOSTTY_APPLICATION_BINARY_SUBPATH)
 	target := filepath.Join(input.Link_Directory, "ghostty")
 	if !run_spawn(input.Shell, "ln", "-sf", source, target) {
 		jlog.Logger_Error(input.Shell.Logger, "ghostty link failed")
-		return exit_failure
+		return EXIT_FAILURE
 	}
 	return 0
 }
 
-// Ghostty_install_script downloads the pinned DMG, verifies its SHA256, mounts it,
+// GHOSTTY_INSTALL_SCRIPT downloads the pinned DMG, verifies its SHA256, mounts it,
 // and replaces the app bundle. %[1]s is the url, %[2]s the SHA256, %[3]s the
 // applications directory. set -e aborts on the first failure — a SHA256 mismatch
 // included — so a tampered or truncated download never reaches the applications
 // directory; the trap detaches the volume and clears the scratch dir on every exit.
-const ghostty_install_script = `set -e
+const GHOSTTY_INSTALL_SCRIPT = `set -e
 work=$(mktemp -d)
 trap 'hdiutil detach -quiet "$work/mnt" 2>/dev/null; rm -rf "$work"' EXIT
 curl --proto '=https' --tlsv1.2 -fsSL -o "$work/Ghostty.dmg" %[1]s
@@ -1290,9 +1290,9 @@ cp -R "$work/mnt/Ghostty.app" %[3]s/
 // through sh so the dynamic mount point and the cleanup trap have a shell.
 func ghostty_install_invocation(applications_directory string) (arguments []string) {
 	script := fmt.Sprintf(
-		ghostty_install_script,
-		ghostty_dmg_url,
-		ghostty_dmg_sha256,
+		GHOSTTY_INSTALL_SCRIPT,
+		GHOSTTY_DMG_URL,
+		GHOSTTY_DMG_SHA256,
 		applications_directory,
 	)
 	return []string{"sh", "-c", script}
@@ -1302,11 +1302,11 @@ func ghostty_install_invocation(applications_directory string) (arguments []stri
 // a verifying code signature. Probing the app's own binary, not PATH, keeps a
 // missing symlink from forcing a needless re-download of an app already in place.
 func ghostty_installed(shell Shell, applications_directory string) (installed bool) {
-	binary := filepath.Join(applications_directory, ghostty_application_binary_subpath)
+	binary := filepath.Join(applications_directory, GHOSTTY_APPLICATION_BINARY_SUBPATH)
 	version_present := Installed(&Installed_Input{
 		Shell:      shell,
 		Executable: binary,
-		Version:    ghostty_version,
+		Version:    GHOSTTY_VERSION,
 	})
 	if !version_present {
 		return false
@@ -1324,7 +1324,7 @@ func ghostty_installed(shell Shell, applications_directory string) (installed bo
 // fails. The -R requirement's leading = marks it as requirement text, not a file.
 func ghostty_codesign_invocation(application string) (arguments []string) {
 	requirement := `=anchor apple generic and certificate leaf[subject.OU] = "` +
-		ghostty_team_identifier + `"`
+		GHOSTTY_TEAM_IDENTIFIER + `"`
 	return []string{
 		"codesign", "--verify", "--deep", "--strict", "-R", requirement, application,
 	}

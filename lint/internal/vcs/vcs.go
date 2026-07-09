@@ -15,11 +15,11 @@ import (
 )
 
 // Git's default short-hash width, used to shorten a hash in a diagnostic filename.
-const short_hash_chars = 10
+const SHORT_HASH_CHARS = 10
 
 // The subject cap: code-review UIs truncate around 72–100 chars and a longer
 // subject forces horizontal scroll.
-const subject_chars_max = 100
+const SUBJECT_CHARS_MAX = 100
 
 // Conventional Commits subject: lowercase type, optional (scope), optional `!`
 // breaking-change marker, `: `, non-empty description. Scope contents are not
@@ -72,14 +72,14 @@ func merge_diagnostics(commits []Commit) (diags []diagnostic.Diagnostic) {
 			continue
 		}
 		filename := "<git:" + short_hash(c.Hash) + ">"
-		if len(c.Subject) > subject_chars_max {
+		if len(c.Subject) > SUBJECT_CHARS_MAX {
 			diags = append(diags, diagnostic.Diagnostic{
 				Position: token.Position{Filename: filename},
 				Name:     "commit-subject-length",
-				Want:     fmt.Sprintf("subject ≤ %d chars", subject_chars_max),
+				Want:     fmt.Sprintf("subject ≤ %d chars", SUBJECT_CHARS_MAX),
 				Message: fmt.Sprintf(
 					"commit subject is %d chars (max %d)",
-					len(c.Subject), subject_chars_max),
+					len(c.Subject), SUBJECT_CHARS_MAX),
 			})
 			// The subtree-merge check assumes a bounded subject; the length entry
 			// above fully diagnoses an over-limit one, so short-circuit here.
@@ -110,15 +110,15 @@ func non_merge_diagnostics(commits []Commit) (diags []diagnostic.Diagnostic) {
 		if github_synthetic_merge_re.MatchString(c.Subject) {
 			continue
 		}
-		if len(c.Subject) > subject_chars_max {
+		if len(c.Subject) > SUBJECT_CHARS_MAX {
 			filename := "<git:" + short_hash(c.Hash) + ">"
 			diags = append(diags, diagnostic.Diagnostic{
 				Position: token.Position{Filename: filename},
 				Name:     "commit-subject-length",
-				Want:     fmt.Sprintf("subject ≤ %d chars", subject_chars_max),
+				Want:     fmt.Sprintf("subject ≤ %d chars", SUBJECT_CHARS_MAX),
 				Message: fmt.Sprintf(
 					"commit subject is %d chars (max %d)",
-					len(c.Subject), subject_chars_max),
+					len(c.Subject), SUBJECT_CHARS_MAX),
 			})
 			continue
 		}
@@ -213,11 +213,11 @@ func is_fixup_subject(subject string) (yes bool) {
 	return false
 }
 
-// Truncates a git hash to short_hash_chars. Pass-through for an already-short or
+// Truncates a git hash to SHORT_HASH_CHARS. Pass-through for an already-short or
 // malformed input so a test fixture need not supply a full 40-char hash.
 func short_hash(h string) (s string) {
-	if len(h) > short_hash_chars {
-		return h[:short_hash_chars]
+	if len(h) > SHORT_HASH_CHARS {
+		return h[:SHORT_HASH_CHARS]
 	}
 	return h
 }

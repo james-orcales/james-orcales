@@ -22,7 +22,7 @@ import (
 // The Run_Until cap for the real-backend tests: generous, since a completion returns the
 // pump the instant it fires — this bound only bites a genuine hang, failing the test
 // instead of blocking until the package timeout.
-const real_deadline = 5 * time.SECOND
+const REAL_DEADLINE = 5 * time.SECOND
 
 // Test_Operating_System_IO_Read writes a temp file and reads it back through the
 // real backend, confirming the read runs in the loop and reports the bytes.
@@ -81,7 +81,7 @@ func Test_Operating_System_IO_Timeout(t *testing.T) {
 	loop.Timeout(&completion, func(_ *io.Completion, err error) {
 		fired = true
 	}, time.MILLISECOND)
-	driver.Run_Until(func() (finished bool) { return fired }, real_deadline)
+	driver.Run_Until(func() (finished bool) { return fired }, REAL_DEADLINE)
 	if !fired {
 		t.Fatal("timeout did not fire")
 	}
@@ -155,8 +155,8 @@ func Test_Operating_System_IO_Socket(t *testing.T) {
 		"127.0.0.1", port,
 	)
 
-	driver.Run_Until(func() (finished bool) { return accepted > 0 }, real_deadline)
-	driver.Run_Until(func() (finished bool) { return connected > 0 }, real_deadline)
+	driver.Run_Until(func() (finished bool) { return accepted > 0 }, REAL_DEADLINE)
+	driver.Run_Until(func() (finished bool) { return connected > 0 }, REAL_DEADLINE)
 	if accepted <= 0 {
 		t.Fatalf("accept did not complete, got %d", accepted)
 	}
@@ -181,7 +181,7 @@ func Test_Operating_System_IO_Socket(t *testing.T) {
 		received = count
 	}, accepted, buffer)
 
-	driver.Run_Until(func() (finished bool) { return received >= 0 }, real_deadline)
+	driver.Run_Until(func() (finished bool) { return received >= 0 }, REAL_DEADLINE)
 	if received != 4 {
 		t.Fatalf("received %d bytes, want 4", received)
 	}
@@ -250,12 +250,12 @@ func Test_Operating_System_IO_Send_In_Connect_Completion(t *testing.T) {
 		}, socket, []byte("ping"))
 	}, "127.0.0.1", port)
 
-	driver.Run_Until(func() (finished bool) { return sent >= 0 }, real_deadline)
+	driver.Run_Until(func() (finished bool) { return sent >= 0 }, REAL_DEADLINE)
 	if sent != 4 {
 		t.Fatalf("send armed in the connect completion delivered %d bytes, want 4", sent)
 	}
 
-	driver.Run_Until(func() (finished bool) { return accepted > 0 }, real_deadline)
+	driver.Run_Until(func() (finished bool) { return accepted > 0 }, REAL_DEADLINE)
 	buffer := make([]byte, 16)
 	received := -1
 	var receive_completion io.Completion
@@ -265,7 +265,7 @@ func Test_Operating_System_IO_Send_In_Connect_Completion(t *testing.T) {
 		}
 		received = count
 	}, accepted, buffer)
-	driver.Run_Until(func() (finished bool) { return received >= 0 }, real_deadline)
+	driver.Run_Until(func() (finished bool) { return received >= 0 }, REAL_DEADLINE)
 	if received != 4 {
 		t.Fatalf("peer received %d bytes, want 4", received)
 	}
@@ -462,7 +462,7 @@ func Test_Operating_System_IO_Peer_Address(t *testing.T) {
 		func(_ *io.Completion, socket io.File, err error) {},
 		"127.0.0.1", port,
 	)
-	driver.Run_Until(func() (finished bool) { return accepted > 0 }, real_deadline)
+	driver.Run_Until(func() (finished bool) { return accepted > 0 }, REAL_DEADLINE)
 
 	if accepted <= 0 {
 		t.Fatalf("accept did not complete, got %d", accepted)
@@ -486,7 +486,7 @@ func Test_Operating_System_IO_Compute(t *testing.T) {
 	loop.Compute(&completion, func(_ *io.Completion) {
 		fired = true
 	}, func() { ran = true })
-	driver.Run_Until(func() (finished bool) { return fired }, real_deadline)
+	driver.Run_Until(func() (finished bool) { return fired }, REAL_DEADLINE)
 
 	if !ran {
 		t.Fatal("compute work did not run")
@@ -510,7 +510,7 @@ func Test_Operating_System_IO_Watch_Signal(t *testing.T) {
 	if kill_err := syscall.Kill(os.Getpid(), syscall.SIGTERM); kill_err != nil {
 		t.Fatalf("kill: %v", kill_err)
 	}
-	driver.Run_Until(func() (finished bool) { return fired > 0 }, real_deadline)
+	driver.Run_Until(func() (finished bool) { return fired > 0 }, REAL_DEADLINE)
 
 	if fired != 1 {
 		t.Fatalf("signal callback fired %d times, want 1", fired)
@@ -540,7 +540,7 @@ func Test_Operating_System_IO_TLS(t *testing.T) {
 		}
 		received = count
 	}, server, buffer)
-	driver.Run_Until(func() (finished bool) { return received >= 0 }, real_deadline)
+	driver.Run_Until(func() (finished bool) { return received >= 0 }, REAL_DEADLINE)
 
 	if received != 4 {
 		t.Fatalf("received %d bytes, want 4", received)
@@ -581,8 +581,8 @@ func tls_loopback(
 			}
 			client = socket
 		}, "127.0.0.1", port, "localhost")
-	driver.Run_Until(func() (finished bool) { return server > 0 }, real_deadline)
-	driver.Run_Until(func() (finished bool) { return client > 0 }, real_deadline)
+	driver.Run_Until(func() (finished bool) { return server > 0 }, REAL_DEADLINE)
+	driver.Run_Until(func() (finished bool) { return client > 0 }, REAL_DEADLINE)
 	if server <= 0 {
 		t.Fatalf("secure accept did not complete, got %d", server)
 	}
@@ -629,7 +629,7 @@ func Test_Operating_System_IO_TLS_Concurrent_Read_Write(t *testing.T) {
 
 	driver.Run_Until(func() (finished bool) {
 		return sent >= 0 && server_received >= 0
-	}, real_deadline)
+	}, REAL_DEADLINE)
 
 	if sent != 4 {
 		t.Fatalf("send behind a blocked receive delivered %d bytes, want 4", sent)
@@ -648,7 +648,7 @@ func Test_Operating_System_IO_TLS_Concurrent_Read_Write(t *testing.T) {
 // The static self-signed certificate the TLS loopback test presents. Connect_Insecure
 // skips verification, so its fixed identity and far-future expiry are all it needs, and
 // baking it in keeps the test off stdlib time (the time/default gateway's alone).
-const tls_test_certificate = `-----BEGIN CERTIFICATE-----
+const TLS_TEST_CERTIFICATE = `-----BEGIN CERTIFICATE-----
 MIIBKzCB0qADAgECAgEBMAoGCCqGSM49BAMCMBQxEjAQBgNVBAMTCWxvY2FsaG9z
 dDAgFw03MDAxMDEwMDAwMDBaGA8zMDAwMDEwMTAwMDAwMFowFDESMBAGA1UEAxMJ
 bG9jYWxob3N0MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEZiPPVV+KvWqtXWUV
@@ -668,7 +668,7 @@ ZHsc1EszCqX/J7TUz5qt+EBqZnvDEEjmKA==
 // own constructor, so the loopback test is also the end-to-end proof that Certificate's
 // output is the value Accept_Secure accepts.
 func self_signed(t *testing.T) (certificate any) {
-	pem := []byte(tls_test_certificate)
+	pem := []byte(TLS_TEST_CERTIFICATE)
 	value, err := iodefault.Certificate(&iodefault.Certificate_Input{Chain: pem, Key: pem})
 	if err != nil {
 		t.Fatal(err)
@@ -679,7 +679,7 @@ func self_signed(t *testing.T) (certificate any) {
 // Test_Certificate verifies Certificate assembles a *tls.Certificate from PEM chain and
 // key bytes, and reports an error for input that is not a valid key pair.
 func Test_Certificate(t *testing.T) {
-	pem := []byte(tls_test_certificate)
+	pem := []byte(TLS_TEST_CERTIFICATE)
 	value, err := iodefault.Certificate(&iodefault.Certificate_Input{Chain: pem, Key: pem})
 	if err != nil {
 		t.Fatalf("certificate: %v", err)
@@ -711,7 +711,7 @@ func Test_Operating_System_IO_Spawn(t *testing.T) {
 		echo = result
 		echoed = true
 	}, io.Process_Request{Path: "/bin/echo", Arguments: []string{"hi"}})
-	driver.Run_Until(func() (finished bool) { return echoed }, real_deadline)
+	driver.Run_Until(func() (finished bool) { return echoed }, REAL_DEADLINE)
 
 	if !echoed {
 		t.Fatal("echo did not complete")
@@ -733,7 +733,7 @@ func Test_Operating_System_IO_Spawn(t *testing.T) {
 		fail = result
 		failed = true
 	}, io.Process_Request{Path: "/bin/sh", Arguments: []string{"-c", "exit 1"}})
-	driver.Run_Until(func() (finished bool) { return failed }, real_deadline)
+	driver.Run_Until(func() (finished bool) { return failed }, REAL_DEADLINE)
 
 	if !failed {
 		t.Fatal("false did not complete")
@@ -761,7 +761,7 @@ func Test_Operating_System_IO_Spawn_Streams_To_Sink(t *testing.T) {
 		result = spawned
 		done = true
 	}, io.Process_Request{Path: "/bin/echo", Arguments: []string{"hi"}, Stdout: &streamed})
-	driver.Run_Until(func() (finished bool) { return done }, real_deadline)
+	driver.Run_Until(func() (finished bool) { return done }, REAL_DEADLINE)
 
 	if !done {
 		t.Fatal("echo did not complete")
@@ -844,20 +844,20 @@ func free_port(t *testing.T) (port int) {
 }
 
 // How many rapid dials span the self-exec transition; every one must connect, none refused.
-const self_exec_dials = 100
+const SELF_EXEC_DIALS = 100
 
 // How many dials to confirm the re-exec'd phase-2 server answers, generous against boot latency.
-const self_exec_confirm_dials = 50
+const SELF_EXEC_CONFIRM_DIALS = 50
 
 // How many attempts to wait for the child's initial bind before giving up.
-const self_exec_wait_attempts = 200
+const SELF_EXEC_WAIT_ATTEMPTS = 200
 
 // The gap each wait/confirm retry rests on the loop, so retries do not spin.
-const self_exec_retry_pause = 20 * time.MILLISECOND
+const SELF_EXEC_RETRY_PAUSE = 20 * time.MILLISECOND
 
 // Caps the phase-2 accept loop so it is bounded rather than an unbounded for{}; far more than the
 // outer test's dial count, which kills the child long before this.
-const self_exec_serve_max = 1 << 20
+const SELF_EXEC_SERVE_MAX = 1 << 20
 
 // Test_Operating_System_IO_Self_Exec is the real-execve proof of the zero-gap listener handoff: a
 // child binds a listener, self-execs preserving that descriptor, and the re-exec'd image serves
@@ -892,7 +892,7 @@ func Test_Operating_System_IO_Self_Exec(t *testing.T) {
 		t.Fatal("helper never bound the port; phase-1 bind failed")
 	}
 	refused := 0
-	for attempt_index := 0; attempt_index < self_exec_dials; attempt_index++ {
+	for attempt_index := 0; attempt_index < SELF_EXEC_DIALS; attempt_index++ {
 		socket, was_refused := self_exec_dial(loop, driver, port)
 		if was_refused {
 			refused++
@@ -946,8 +946,8 @@ func Test_Operating_System_IO_Self_Exec_Failure_Preserves_Process(t *testing.T) 
 			}
 			connected = socket
 		}, "127.0.0.1", port)
-	driver.Run_Until(func() (finished bool) { return accepted > 0 }, real_deadline)
-	driver.Run_Until(func() (finished bool) { return connected > 0 }, real_deadline)
+	driver.Run_Until(func() (finished bool) { return accepted > 0 }, REAL_DEADLINE)
+	driver.Run_Until(func() (finished bool) { return connected > 0 }, REAL_DEADLINE)
 	if accepted <= 0 {
 		t.Fatal("the preserved listener could not accept after a failed self-exec")
 	}
@@ -967,7 +967,7 @@ func self_exec_dial(loop io.IO, driver io.Driver, port int) (socket io.File, ref
 		}
 		socket = connected
 	}, "127.0.0.1", port)
-	driver.Run_Until(func() (finished bool) { return done }, real_deadline)
+	driver.Run_Until(func() (finished bool) { return done }, REAL_DEADLINE)
 	return socket, refused
 }
 
@@ -976,7 +976,7 @@ func self_exec_close(loop io.IO, driver io.Driver, socket io.File) {
 	closed := false
 	var completion io.Completion
 	loop.Close(&completion, func(_ *io.Completion, _ error) { closed = true }, socket)
-	driver.Run_Until(func() (finished bool) { return closed }, real_deadline)
+	driver.Run_Until(func() (finished bool) { return closed }, REAL_DEADLINE)
 }
 
 // Reads once from a connected socket through the loop, returning the bytes received.
@@ -987,7 +987,7 @@ func self_exec_receive(loop io.IO, driver io.Driver, socket io.File) (reply []by
 	loop.Receive(&completion, func(_ *io.Completion, received int, _ error) {
 		count = received
 	}, socket, buffer)
-	driver.Run_Until(func() (finished bool) { return count >= 0 }, real_deadline)
+	driver.Run_Until(func() (finished bool) { return count >= 0 }, REAL_DEADLINE)
 	if count > 0 {
 		return buffer[:count]
 	}
@@ -997,13 +997,13 @@ func self_exec_receive(loop io.IO, driver io.Driver, socket io.File) (reply []by
 // Dials until the helper's listener answers, so the zero-gap measurement starts only once the child
 // is up — a startup refusal is not the bind gap the test is about.
 func self_exec_wait_up(loop io.IO, driver io.Driver, port int) (up bool) {
-	for attempt_index := 0; attempt_index < self_exec_wait_attempts; attempt_index++ {
+	for attempt_index := 0; attempt_index < SELF_EXEC_WAIT_ATTEMPTS; attempt_index++ {
 		socket, _ := self_exec_dial(loop, driver, port)
 		if socket > 0 {
 			self_exec_close(loop, driver, socket)
 			return true
 		}
-		driver.Run_For(self_exec_retry_pause)
+		driver.Run_For(SELF_EXEC_RETRY_PAUSE)
 	}
 	return false
 }
@@ -1011,10 +1011,10 @@ func self_exec_wait_up(loop io.IO, driver io.Driver, port int) (up bool) {
 // Dials until one connection reads the phase-2 sentinel, confirming the re-exec'd server —
 // reachable only through the inherited descriptor — actually came up and served.
 func self_exec_saw_sentinel(loop io.IO, driver io.Driver, port int) (seen bool) {
-	for attempt_index := 0; attempt_index < self_exec_confirm_dials; attempt_index++ {
+	for attempt_index := 0; attempt_index < SELF_EXEC_CONFIRM_DIALS; attempt_index++ {
 		socket, _ := self_exec_dial(loop, driver, port)
 		if socket <= 0 {
-			driver.Run_For(self_exec_retry_pause)
+			driver.Run_For(SELF_EXEC_RETRY_PAUSE)
 			continue
 		}
 		reply := self_exec_receive(loop, driver, socket)
@@ -1022,7 +1022,7 @@ func self_exec_saw_sentinel(loop io.IO, driver io.Driver, port int) (seen bool) 
 		if strings.HasPrefix(string(reply), "ok") {
 			return true
 		}
-		driver.Run_For(self_exec_retry_pause)
+		driver.Run_For(SELF_EXEC_RETRY_PAUSE)
 	}
 	return false
 }
@@ -1073,7 +1073,7 @@ func self_exec_child_serve(descriptor_value string) {
 	if listener_err != nil {
 		os.Exit(13)
 	}
-	for served_index := 0; served_index < self_exec_serve_max; served_index++ {
+	for served_index := 0; served_index < SELF_EXEC_SERVE_MAX; served_index++ {
 		connection, accept_err := listener.Accept()
 		if accept_err != nil {
 			os.Exit(0)

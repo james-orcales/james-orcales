@@ -25,7 +25,7 @@ import (
 
 // Keys the diff colors so readers can map - / + to red / green without
 // consulting docs. Embedded in every Snapshot mismatch header.
-const mismatch_legend = "\033[31mexpected\033[0m vs \033[32mactual\033[0m"
+const MISMATCH_LEGEND = "\033[31mexpected\033[0m vs \033[32mactual\033[0m"
 
 // Snapshot represents an expected output value captured at a specific source location.
 // Snapshots are compared against actual test output to verify correctness.
@@ -384,7 +384,7 @@ func Snapshot_Is_Equal(snapshot Snapshot, actual string) (equal bool) {
 	} else if !is_equal {
 		d := myers.New(myers.New_Input{Old: snapshot.Expected_Output, New: actual})
 		fmt.Fprintf(s.Output, "Snapshot mismatch %s:%d  (%s)\n",
-			snapshot.File_Path, snapshot.Line, mismatch_legend)
+			snapshot.File_Path, snapshot.Line, MISMATCH_LEGEND)
 		for line := range strings.SplitSeq(myers.Differ_Line_Diff(d), "\n") {
 			if len(line) == 0 {
 				continue

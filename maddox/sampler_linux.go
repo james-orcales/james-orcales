@@ -171,7 +171,7 @@ func measure_command(command io.Process_Request) (result maddox.Run_Result) {
 	clock, _ := time_default.New_Operating_System_Clock()
 	path, lookup_err := exec.LookPath(command.Path)
 	if lookup_err != nil {
-		result.Exit = spawn_failure_exit
+		result.Exit = SPAWN_FAILURE_EXIT
 		result.Stderr = []byte("maddox: cannot find " + command.Path + "\n")
 		return result
 	}
@@ -186,7 +186,7 @@ func measure_command(command io.Process_Request) (result maddox.Run_Result) {
 
 	capture, create_err := os.CreateTemp("", "maddox-stderr-*")
 	if create_err != nil {
-		result.Exit = spawn_failure_exit
+		result.Exit = SPAWN_FAILURE_EXIT
 		result.Stderr = []byte("maddox: cannot capture stderr\n")
 		return result
 	}
@@ -200,7 +200,7 @@ func measure_command(command io.Process_Request) (result maddox.Run_Result) {
 	// The completion stamp drives the budget stopwatch, spanning the gaps between runs.
 	result.Completed_At = after
 	if counters.spawn_errno != 0 {
-		result.Exit = spawn_failure_exit
+		result.Exit = SPAWN_FAILURE_EXIT
 		result.Stderr = []byte("maddox: cannot spawn " + command.Path + "\n")
 		return result
 	}
@@ -276,30 +276,30 @@ func acquire_machine_specs() (specs maddox.Machine_Specs) {
 	return specs
 }
 
-// Proc_file_bytes_max bounds how much of a /proc or /sys file is read into the
+// PROC_FILE_BYTES_MAX bounds how much of a /proc or /sys file is read into the
 // fixed buffer, since the unbounded-read ban forbids os.ReadFile and these
 // pseudo-files are small (a busy /proc/cpuinfo on a 256-thread box stays well under).
-const proc_file_bytes_max = 1 << 20
+const PROC_FILE_BYTES_MAX = 1 << 20
 
-// Proc_content_max sits above proc_file_bytes_max, so the read's own cap, not this
+// PROC_CONTENT_MAX sits above PROC_FILE_BYTES_MAX, so the read's own cap, not this
 // bound, is what a content length reaches; the bound stays eager.
-const proc_content_max = 1 << 21
+const PROC_CONTENT_MAX = 1 << 21
 
 // Proc_path is the path of a /proc or /sys pseudo-file.
 type proc_path string
 
 // Proc_path_invariants bounds the path's length.
 func proc_path_invariants(path proc_path, namespace invariant.Namespace) {
-	invariant.Always(len(path) <= bound_max, "A proc path is at most its max.")
-	invariant.Always(len(path) >= bound_min, "A proc path is at least its min.")
-	invariant.Always(len(path) != bound_min, "A proc path never reaches its min.")
-	invariant.Always(len(path) != bound_max, "A proc path is below its max.")
+	invariant.Always(len(path) <= BOUND_MAX, "A proc path is at most its max.")
+	invariant.Always(len(path) >= BOUND_MIN, "A proc path is at least its min.")
+	invariant.Always(len(path) != BOUND_MIN, "A proc path never reaches its min.")
+	invariant.Always(len(path) != BOUND_MAX, "A proc path is below its max.")
 	invariant.Dot_Product(namespace,
 		invariant.Sometimes(len(path) == 0, "A proc path is empty."),
 		invariant.Sometimes(len(path) == 1, "A proc path is one byte."),
 		invariant.Sometimes(len(path) == 2, "A proc path is two bytes."),
-		invariant.Sometimes(len(path) == bound_min, "A proc path is at its min."),
-		invariant.Sometimes(len(path) == bound_max, "A proc path is at its max."),
+		invariant.Sometimes(len(path) == BOUND_MIN, "A proc path is at its min."),
+		invariant.Sometimes(len(path) == BOUND_MAX, "A proc path is at its max."),
 		invariant.Impossible(
 			invariant.Event_True("A proc path is empty."),
 			invariant.Event_True("A proc path is one byte."),
@@ -320,16 +320,16 @@ type proc_content string
 
 // Proc_content_invariants bounds the content's length.
 func proc_content_invariants(content proc_content, namespace invariant.Namespace) {
-	invariant.Always(len(content) <= proc_content_max, "Proc content is at most its max.")
-	invariant.Always(len(content) >= bound_min, "Proc content is at least its min.")
-	invariant.Always(len(content) != bound_min, "Proc content never reaches its min.")
-	invariant.Always(len(content) != proc_content_max, "Proc content is below its max.")
+	invariant.Always(len(content) <= PROC_CONTENT_MAX, "Proc content is at most its max.")
+	invariant.Always(len(content) >= BOUND_MIN, "Proc content is at least its min.")
+	invariant.Always(len(content) != BOUND_MIN, "Proc content never reaches its min.")
+	invariant.Always(len(content) != PROC_CONTENT_MAX, "Proc content is below its max.")
 	invariant.Dot_Product(namespace,
 		invariant.Sometimes(len(content) == 0, "Proc content is empty."),
 		invariant.Sometimes(len(content) == 1, "Proc content is one byte."),
 		invariant.Sometimes(len(content) == 2, "Proc content is two bytes."),
-		invariant.Sometimes(len(content) == bound_min, "Proc content is at its min."),
-		invariant.Sometimes(len(content) == proc_content_max, "Proc content at max."),
+		invariant.Sometimes(len(content) == BOUND_MIN, "Proc content is at its min."),
+		invariant.Sometimes(len(content) == PROC_CONTENT_MAX, "Proc content at max."),
 		invariant.Impossible(
 			invariant.Event_True("Proc content is empty."),
 			invariant.Event_True("Proc content is one byte."),
@@ -345,7 +345,7 @@ func proc_content_invariants(content proc_content, namespace invariant.Namespace
 	)
 }
 
-// Read_proc_file reads up to proc_file_bytes_max bytes of a pseudo-file into a fixed
+// Read_proc_file reads up to PROC_FILE_BYTES_MAX bytes of a pseudo-file into a fixed
 // buffer, the bounded-read pattern read_captured uses. A missing or unreadable file
 // reads empty, so every caller treats absence as "field unknown".
 func read_proc_file(path proc_path) (content proc_content) {
@@ -356,7 +356,7 @@ func read_proc_file(path proc_path) (content proc_content) {
 		return ""
 	}
 	defer file.Close()
-	buffer := make([]byte, proc_file_bytes_max)
+	buffer := make([]byte, PROC_FILE_BYTES_MAX)
 	total := 0
 	for total < len(buffer) {
 		n, read_err := file.Read(buffer[total:])
@@ -515,16 +515,16 @@ type utsname_field[T int8 | uint8] []T
 func utsname_field_invariants[T int8 | uint8](
 	field utsname_field[T], namespace invariant.Namespace,
 ) {
-	invariant.Always(len(field) <= bound_max, "A utsname field is at most its max.")
-	invariant.Always(len(field) >= bound_min, "A utsname field is at least its min.")
-	invariant.Always(len(field) != bound_min, "A utsname field never reaches its min.")
-	invariant.Always(len(field) != bound_max, "A utsname field is below its max.")
+	invariant.Always(len(field) <= BOUND_MAX, "A utsname field is at most its max.")
+	invariant.Always(len(field) >= BOUND_MIN, "A utsname field is at least its min.")
+	invariant.Always(len(field) != BOUND_MIN, "A utsname field never reaches its min.")
+	invariant.Always(len(field) != BOUND_MAX, "A utsname field is below its max.")
 	invariant.Dot_Product(namespace,
 		invariant.Sometimes(len(field) == 0, "A utsname field is empty."),
 		invariant.Sometimes(len(field) == 1, "A utsname field has one."),
 		invariant.Sometimes(len(field) == 2, "A utsname field has two."),
-		invariant.Sometimes(len(field) == bound_min, "A utsname field is at its min."),
-		invariant.Sometimes(len(field) == bound_max, "A utsname field is at its max."),
+		invariant.Sometimes(len(field) == BOUND_MIN, "A utsname field is at its min."),
+		invariant.Sometimes(len(field) == BOUND_MAX, "A utsname field is at its max."),
 		invariant.Impossible(
 			invariant.Event_True("A utsname field is empty."),
 			invariant.Event_True("A utsname field has one."),

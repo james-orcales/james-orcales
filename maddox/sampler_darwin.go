@@ -124,7 +124,7 @@ func measure_command(command io.Process_Request) (result maddox.Run_Result) {
 
 	capture, create_err := os.CreateTemp("", "maddox-stderr-*")
 	if create_err != nil {
-		result.Exit = spawn_failure_exit
+		result.Exit = SPAWN_FAILURE_EXIT
 		result.Stderr = []byte("maddox: cannot capture stderr\n")
 		return result
 	}
@@ -138,7 +138,7 @@ func measure_command(command io.Process_Request) (result maddox.Run_Result) {
 	// The completion stamp drives the budget stopwatch, spanning the gaps between runs.
 	result.Completed_At = after
 	if counters.spawn_errno != 0 {
-		result.Exit = spawn_failure_exit
+		result.Exit = SPAWN_FAILURE_EXIT
 		result.Stderr = []byte("maddox: cannot spawn " + command.Path + "\n")
 		return result
 	}
@@ -230,16 +230,16 @@ type sysctl_key string
 
 // Sysctl_key_invariants bounds the key's length.
 func sysctl_key_invariants(name sysctl_key, namespace invariant.Namespace) {
-	invariant.Always(len(name) <= bound_max, "A sysctl key is at most its max.")
-	invariant.Always(len(name) >= bound_min, "A sysctl key is at least its min.")
-	invariant.Always(len(name) != bound_min, "A sysctl key never reaches its min.")
-	invariant.Always(len(name) != bound_max, "A sysctl key is below its max.")
+	invariant.Always(len(name) <= BOUND_MAX, "A sysctl key is at most its max.")
+	invariant.Always(len(name) >= BOUND_MIN, "A sysctl key is at least its min.")
+	invariant.Always(len(name) != BOUND_MIN, "A sysctl key never reaches its min.")
+	invariant.Always(len(name) != BOUND_MAX, "A sysctl key is below its max.")
 	invariant.Dot_Product(namespace,
 		invariant.Sometimes(len(name) == 0, "A sysctl key is empty."),
 		invariant.Sometimes(len(name) == 1, "A sysctl key is one byte."),
 		invariant.Sometimes(len(name) == 2, "A sysctl key is two bytes."),
-		invariant.Sometimes(len(name) == bound_min, "A sysctl key is at its min."),
-		invariant.Sometimes(len(name) == bound_max, "A sysctl key is at its max."),
+		invariant.Sometimes(len(name) == BOUND_MIN, "A sysctl key is at its min."),
+		invariant.Sometimes(len(name) == BOUND_MAX, "A sysctl key is at its max."),
 		invariant.Impossible(
 			invariant.Event_True("A sysctl key is empty."),
 			invariant.Event_True("A sysctl key is one byte."),

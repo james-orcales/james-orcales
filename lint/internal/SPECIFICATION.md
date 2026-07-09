@@ -364,8 +364,8 @@ Every struct field of an exported package-level struct carries a doc comment.
 
 ### Name Style
 
-Exported identifiers use Ada_Case, unexported use snake_case, TestMain aside; an exported
-top-level const uses SCREAMING_SNAKE_CASE instead of Ada_Case.
+Exported identifiers use Ada_Case, unexported use snake_case, TestMain aside; every const uses
+SCREAMING_SNAKE_CASE instead, whatever its scope or export status.
 
 ### Full Words
 

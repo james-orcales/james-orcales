@@ -34,6 +34,7 @@ package cli
 import (
 	"fmt"
 	"io"
+	"path"
 	"slices"
 	"strconv"
 	"strings"
@@ -57,6 +58,9 @@ type Program struct {
 	// program name is the first positional argument, not a command name. New_Single
 	// sets it; New leaves it false.
 	Single bool
+	// Multicall marks a program whose command is selected by the binary name in
+	// argv[0], as a busybox-style symlinked binary is. New_Multicall sets it.
+	Multicall bool
 }
 
 // Command represents a single command within a program.
@@ -228,6 +232,34 @@ func New_Single(input New_Single_Input) (program Program) {
 		Commands:    []Command{command},
 		Single:      true,
 	}
+}
+
+// New_Multicall_Input is the input for New_Multicall.
+type New_Multicall_Input struct {
+	// Label is the program name shown in help output.
+	Label string
+	// Description is the one-line program summary.
+	Description string
+	// Global_Flags are flags accepted by every command.
+	Global_Flags []Option
+	// Commands are the program's commands, each selected by its label matching the
+	// binary name in argv[0].
+	Commands []Command
+}
+
+// New_Multicall creates a program whose command is selected by the binary name in
+// argv[0], not a token in slot 1 — the model of a busybox-style binary symlinked to
+// each of its command names. It validates commands and global flags exactly as New
+// does, panicking when validation fails.
+func New_Multicall(input New_Multicall_Input) (program Program) {
+	program = New(New_Input{
+		Label:        input.Label,
+		Description:  input.Description,
+		Global_Flags: input.Global_Flags,
+		Commands:     input.Commands,
+	})
+	program.Multicall = true
+	return program
 }
 
 // Panics when any of a command's options is malformed: a label that is empty, not
@@ -503,29 +535,17 @@ func program_resolve_command(
 ) (active_command Command, arguments_start int, err error) {
 	command_index := 0
 	arguments_start = 2
-	if program.Single {
+	if program.Multicall {
+		arguments_start = 1
+		name := path.Base(operating_system_args[0])
+		command_index, err = program_select_command(program, name)
+	} else if program.Single {
 		arguments_start = 1
 	} else if len(operating_system_args) > 1 {
-		found := false
-		for index, command := range program.Commands {
-			if command.Label == operating_system_args[1] {
-				command_index = index
-				found = true
-				break
-			}
-		}
-		if !found {
-			name := operating_system_args[1]
-			match, ok := levenshtein.Closest(levenshtein.Closest_Input{
-				Target: name, Candidates: program_command_labels(program),
-			})
-			if ok {
-				return program.Commands[0], arguments_start, fmt.Errorf(
-					"unknown command %q, did you mean %q?", name, match)
-			}
-			return program.Commands[0], arguments_start,
-				fmt.Errorf("unknown command %q", name)
-		}
+		command_index, err = program_select_command(program, operating_system_args[1])
+	}
+	if err != nil {
+		return program.Commands[0], arguments_start, err
 	}
 
 	source := program.Commands[command_index]
@@ -535,6 +555,24 @@ func program_resolve_command(
 	active_command.Flags = make([]Option, len(source.Flags))
 	copy(active_command.Flags, source.Flags)
 	return active_command, arguments_start, nil
+}
+
+// Resolves a command name to its index, suggesting the closest command when the name
+// is an unrecognized near-miss. Shared by multicall selection (the argv[0] basename)
+// and multi-command selection (the slot-1 token).
+func program_select_command(program *Program, name string) (index int, err error) {
+	for candidate_index, command := range program.Commands {
+		if command.Label == name {
+			return candidate_index, nil
+		}
+	}
+	match, ok := levenshtein.Closest(levenshtein.Closest_Input{
+		Target: name, Candidates: program_command_labels(program),
+	})
+	if ok {
+		return 0, fmt.Errorf("unknown command %q, did you mean %q?", name, match)
+	}
+	return 0, fmt.Errorf("unknown command %q", name)
 }
 
 // Input for command_assign_positionals.
@@ -743,13 +781,13 @@ func trim_quotes(text string) (output string) {
 func Print_Help(output io.Writer, program Program) {
 	fmt.Fprintf(output, "%s %s\n\n", program.Label, program.Description)
 	if program.Single {
-		print_help_single(output, program)
+		Print_Command(output, program, program.Commands[0])
 		return
 	}
 	fmt.Fprintf(output,
 		"Usage:\n    %s <command> <arguments> [-flags[=value]]\n", program.Label)
 	if program_has_arguments(program) {
-		fmt.Fprintln(output, named_argument_legend)
+		fmt.Fprintln(output, NAMED_ARGUMENT_LEGEND)
 	}
 	fmt.Fprintln(output, "")
 
@@ -784,28 +822,35 @@ func Print_Help(output io.Writer, program Program) {
 	}
 }
 
-// Renders help for a single-command program: a usage line carrying the program's
-// own positional arguments — there is no command selector to choose — followed by
-// its flags.
-func print_help_single(output io.Writer, program Program) {
-	command := program.Commands[0]
+// Print_Command writes help for a single command: a usage line carrying the command's
+// own name and positional arguments, then its flags and the program's global flags. It
+// is the per-verb help a multicall binary shows for the name in argv[0], and the body
+// of a single-command program's help.
+func Print_Command(output io.Writer, program Program, command Command) {
 	signature := ""
 	for _, argument := range command.Arguments {
 		signature += option_format_signature(argument) + " "
 	}
-	fmt.Fprintf(output, "Usage:\n    %s %s[-flags[=value]]\n", program.Label, signature)
+	fmt.Fprintf(output, "Usage:\n    %s %s[-flags[=value]]\n", command.Label, signature)
 	if len(command.Arguments) > 0 {
-		fmt.Fprintln(output, named_argument_legend)
+		fmt.Fprintln(output, NAMED_ARGUMENT_LEGEND)
 	}
-	if len(command.Flags) > 0 {
-		fmt.Fprintln(output, "")
-		fmt.Fprintln(output, "Flags:")
-		writer := tabwriter.NewWriter(output, 0, 8, 0, ' ', 0)
-		for _, flag := range command.Flags {
-			print_help_flag(writer, flag, "    ", true)
-		}
-		writer.Flush()
+	print_help_flag_section(output, "Flags:", command.Flags)
+	print_help_flag_section(output, "Global Flags:", program.Global_Flags)
+}
+
+// Writes a titled section of flag rows, or nothing when there are no flags.
+func print_help_flag_section(output io.Writer, title string, flags []Option) {
+	if len(flags) == 0 {
+		return
 	}
+	fmt.Fprintln(output, "")
+	fmt.Fprintln(output, title)
+	writer := tabwriter.NewWriter(output, 0, 8, 0, ' ', 0)
+	for _, flag := range flags {
+		print_help_flag(writer, flag, "    ", true)
+	}
+	writer.Flush()
 }
 
 // Formats a positional argument for a usage line: <label: type>, with a trailing
@@ -825,7 +870,7 @@ func option_format_signature(argument Option) (signature string) {
 
 // The note printed under the usage line when a program has at least one positional
 // argument: each may also be supplied by name, not only by position.
-const named_argument_legend = "    Positional arguments may also be supplied via -key=val syntax."
+const NAMED_ARGUMENT_LEGEND = "    Positional arguments may also be supplied via -key=val syntax."
 
 // Reports whether any of the program's commands declares a positional argument, the
 // condition under which the named-argument legend is worth printing.

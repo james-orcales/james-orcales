@@ -78,14 +78,14 @@ const LEVEL_DISABLED = jlog.LEVEL_DISABLED
 // package-level convenience function's call site. Tuned for the global helpers
 // (Info, Error, ...); explicit Logger_* calls sit one frame shallower, so
 // their Caller location is off by one.
-const caller_base_frames = 6
+const CALLER_BASE_FRAMES = 6
 
 // The default diode ring capacity: how many finished lines can queue ahead of a slow
 // stderr before the oldest are dropped. Line buffers are pooled, so memory tracks
 // occupancy: an idle logger (or one whose sink keeps up) holds just the ~800 KB slot
 // array, and it tops out near 55 MB (~512 B per line plus its bucket) only if the ring
 // ever completely fills.
-const default_diode_count = 100_000
+const DEFAULT_DIODE_COUNT = 100_000
 
 // Default is the OS-bound logger the package-level convenience functions write to.
 // It writes JSON lines to stderr through a non-blocking diode, stamps every line from
@@ -109,7 +109,7 @@ func New_Default_Logger() (logger Logger) {
 		Writer:        os.Stderr,
 		Clock:         clock,
 		Sleep:         system_time.Sleep,
-		Count:         default_diode_count,
+		Count:         DEFAULT_DIODE_COUNT,
 		Poll_Interval: 100 * time.MILLISECOND,
 		Alerter:       report_dropped,
 	})
@@ -135,7 +135,7 @@ func report_dropped(missed int, cause diode.Drop_Cause) {
 // Resolves a frame-skip count to a "file:line" location via runtime.Caller, the
 // composition tier's one sanctioned reach into the runtime.
 func operating_system_caller(skip int) (location string) {
-	_, file, line, ok := runtime.Caller(skip + caller_base_frames)
+	_, file, line, ok := runtime.Caller(skip + CALLER_BASE_FRAMES)
 	if !ok {
 		return ""
 	}
@@ -397,13 +397,26 @@ func Caller() (field Field) {
 // plain-text argument under the same-type-parameter rule, mirroring maddox's ansi_code.
 type ansi_code string
 
-const ansi_reset ansi_code = "\x1b[0m"
-const ansi_faint ansi_code = "\x1b[2m"
-const ansi_bold ansi_code = "\x1b[1m"
-const ansi_red ansi_code = "\x1b[31m"
-const ansi_green ansi_code = "\x1b[32m"
-const ansi_yellow ansi_code = "\x1b[33m"
-const ansi_cyan ansi_code = "\x1b[36m"
+// ANSI_RESET closes every painted span so a color never bleeds past the part it marks.
+const ANSI_RESET ansi_code = "\x1b[0m"
+
+// ANSI_FAINT dims the timestamp and trace lines so they recede behind the message.
+const ANSI_FAINT ansi_code = "\x1b[2m"
+
+// ANSI_BOLD lifts the message, the part a human scans for first.
+const ANSI_BOLD ansi_code = "\x1b[1m"
+
+// ANSI_RED marks an error value and the error level, so a failure stands out.
+const ANSI_RED ansi_code = "\x1b[31m"
+
+// ANSI_GREEN tags the info level.
+const ANSI_GREEN ansi_code = "\x1b[32m"
+
+// ANSI_YELLOW tags the warn level.
+const ANSI_YELLOW ansi_code = "\x1b[33m"
+
+// ANSI_CYAN labels logfmt keys and the debug level, legible where a dim gray would not be.
+const ANSI_CYAN ansi_code = "\x1b[36m"
 
 // A field-name default is a distinct type so string_or's two parameters never repeat a type,
 // which the input-struct rule would otherwise force into a struct — the trick jlog.go uses.
@@ -411,10 +424,16 @@ type default_field_name string
 
 // These mirror jlog.go's default field names, which are unexported there and so cannot be
 // referenced; a Console built with no overrides must match a logger built with no overrides.
-const default_level_field_name default_field_name = "level"
-const default_message_field_name default_field_name = "message"
-const default_timestamp_field_name default_field_name = "time"
-const default_error_field_name default_field_name = "error"
+const DEFAULT_LEVEL_FIELD_NAME default_field_name = "level"
+
+// DEFAULT_MESSAGE_FIELD_NAME is the key a Console reads the bold message from.
+const DEFAULT_MESSAGE_FIELD_NAME default_field_name = "message"
+
+// DEFAULT_TIMESTAMP_FIELD_NAME is the key a Console reads the header timestamp from.
+const DEFAULT_TIMESTAMP_FIELD_NAME default_field_name = "time"
+
+// DEFAULT_ERROR_FIELD_NAME is the key a Console paints red to flag a failure.
+const DEFAULT_ERROR_FIELD_NAME default_field_name = "error"
 
 // New_Console_Input configures New_Console. Empty field names take jlog's defaults, so a Console
 // matches a default logger. Only the keys a Console treats specially are configurable: the
@@ -462,10 +481,10 @@ func New_Console(input New_Console_Input) (console Console) {
 	}
 	console.Writer = writer
 	console.Color = input.Color
-	console.Level_Field = string_or(input.Level_Field_Name, default_level_field_name)
-	console.Message_Field = string_or(input.Message_Field_Name, default_message_field_name)
-	console.Time_Field = string_or(input.Timestamp_Field_Name, default_timestamp_field_name)
-	console.Error_Field = string_or(input.Error_Field_Name, default_error_field_name)
+	console.Level_Field = string_or(input.Level_Field_Name, DEFAULT_LEVEL_FIELD_NAME)
+	console.Message_Field = string_or(input.Message_Field_Name, DEFAULT_MESSAGE_FIELD_NAME)
+	console.Time_Field = string_or(input.Timestamp_Field_Name, DEFAULT_TIMESTAMP_FIELD_NAME)
+	console.Error_Field = string_or(input.Error_Field_Name, DEFAULT_ERROR_FIELD_NAME)
 	invariant.Always(console.Level_Field != "", "jlog: level field name is non-empty")
 	invariant.Always(console.Message_Field != "", "jlog: message field name is non-empty")
 	invariant.Always(console.Time_Field != "", "jlog: time field name is non-empty")
@@ -542,9 +561,14 @@ func file_is_terminal(file *os.File) (terminal bool) {
 // compound (array/object) is copied as compacted JSON so it stays one flat token.
 type value_kind uint8
 
-const value_is_string value_kind = 0
-const value_is_literal value_kind = 1
-const value_is_compound value_kind = 2
+// VALUE_IS_STRING tags a value rendered unquoted, logfmt-requoted only when needed.
+const VALUE_IS_STRING value_kind = 0
+
+// VALUE_IS_LITERAL tags a number/bool/null copied verbatim so its exact digits survive.
+const VALUE_IS_LITERAL value_kind = 1
+
+// VALUE_IS_COMPOUND tags an array/object copied as one compact JSON token.
+const VALUE_IS_COMPOUND value_kind = 2
 
 // One key/value member of a rendered line, holding the value already reduced to its display text
 // and kind so rendering never re-parses.
@@ -680,14 +704,14 @@ func scan_string(line []byte, start int) (value string, next int, ok bool) {
 // literal whose digits are kept exactly.
 func scan_value(line []byte, start int) (text string, kind value_kind, next int, ok bool) {
 	if start >= len(line) {
-		return "", value_is_literal, start, false
+		return "", VALUE_IS_LITERAL, start, false
 	}
 	if line[start] == '"' {
 		value, value_next, value_ok := scan_string(line, start)
 		if !value_ok {
-			return "", value_is_literal, start, false
+			return "", VALUE_IS_LITERAL, start, false
 		}
-		return value, value_is_string, value_next, true
+		return value, VALUE_IS_STRING, value_next, true
 	}
 	if line[start] == '{' {
 		return scan_compound(line, start)
@@ -715,7 +739,7 @@ func scan_compound(line []byte, start int) (text string, kind value_kind, next i
 		if line[index] == '"' {
 			_, string_next, string_ok := scan_string(line, index)
 			if !string_ok {
-				return "", value_is_compound, start, false
+				return "", VALUE_IS_COMPOUND, start, false
 			}
 			index = string_next
 			continue
@@ -729,13 +753,13 @@ func scan_compound(line []byte, start int) (text string, kind value_kind, next i
 			depth--
 			index++
 			if depth == 0 {
-				return string(line[start:index]), value_is_compound, index, true
+				return string(line[start:index]), VALUE_IS_COMPOUND, index, true
 			}
 			continue
 		}
 		index++
 	}
-	return "", value_is_compound, start, false
+	return "", VALUE_IS_COMPOUND, start, false
 }
 
 // Reads a scalar literal (number, true, false, or null) beginning at start, ending it at the first
@@ -749,9 +773,9 @@ func scan_literal(line []byte, start int) (text string, kind value_kind, next in
 		index++
 	}
 	if index == start {
-		return "", value_is_literal, start, false
+		return "", VALUE_IS_LITERAL, start, false
 	}
-	return string(line[start:index]), value_is_literal, index, true
+	return string(line[start:index]), VALUE_IS_LITERAL, index, true
 }
 
 // Reports whether value terminates a scalar literal: a member separator, a container close, or
@@ -778,7 +802,7 @@ func buffer_append_members(
 	wrote := false
 	if time_text != "" {
 		destination = buffer_append_separated(destination, wrote)
-		destination = buffer_paint(destination, ansi_faint, console.Color, time_text)
+		destination = buffer_paint(destination, ANSI_FAINT, console.Color, time_text)
 		wrote = true
 	}
 	if level_text != "" {
@@ -788,7 +812,7 @@ func buffer_append_members(
 	}
 	if message_text != "" {
 		destination = buffer_append_separated(destination, wrote)
-		destination = buffer_paint(destination, ansi_bold, console.Color, message_text)
+		destination = buffer_paint(destination, ANSI_BOLD, console.Color, message_text)
 		wrote = true
 	}
 	for index := 0; index < len(members); index++ {
@@ -841,11 +865,11 @@ func buffer_append_separated(destination Buffer, wrote bool) (output Buffer) {
 // (unlike a dim gray), the value logfmt-quoted, and — for the error field — the value painted red
 // so a failure stands out.
 func buffer_append_field(destination Buffer, field member, console Console) (output Buffer) {
-	destination = buffer_paint(destination, ansi_cyan, console.Color, field.Key)
+	destination = buffer_paint(destination, ANSI_CYAN, console.Color, field.Key)
 	destination = append(destination, '=')
 	value_color := ansi_code("")
 	if field.Key == console.Error_Field {
-		value_color = ansi_red
+		value_color = ANSI_RED
 	}
 	return buffer_paint(destination, value_color, console.Color, logfmt_token(field))
 }
@@ -867,13 +891,13 @@ func buffer_paint(destination Buffer, code ansi_code, color bool, text string) (
 	}
 	destination = append(destination, code...)
 	destination = append(destination, text...)
-	return append(destination, ansi_reset...)
+	return append(destination, ANSI_RESET...)
 }
 
 // Returns the display token for a field value: a string is bare unless logfmt requires quoting; a
 // literal or compound value is already a safe bare token.
 func logfmt_token(field member) (token string) {
-	if field.Kind != value_is_string {
+	if field.Kind != VALUE_IS_STRING {
 		return field.Text
 	}
 	if logfmt_needs_quote(field.Text) {
@@ -928,15 +952,15 @@ func level_label(wire string) (label string) {
 func level_color(wire string) (code ansi_code) {
 	switch wire {
 	case "trace":
-		return ansi_faint
+		return ANSI_FAINT
 	case "debug":
-		return ansi_cyan
+		return ANSI_CYAN
 	case "info":
-		return ansi_green
+		return ANSI_GREEN
 	case "warn":
-		return ansi_yellow
+		return ANSI_YELLOW
 	case "error":
-		return ansi_red
+		return ANSI_RED
 	}
 	return ""
 }

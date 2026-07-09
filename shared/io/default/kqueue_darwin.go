@@ -6,7 +6,7 @@ import "syscall"
 
 // SO_REUSEPORT socket option; on Darwin the stdlib syscall package does define it (as 0x200), but
 // it is pinned here as a constant so file_unix.go stays platform-agnostic.
-const socket_reuseport = 0x200
+const SOCKET_REUSEPORT = 0x200
 
 // The kqueue descriptor backing the readiness loop on Darwin.
 type poll_file int
@@ -55,7 +55,7 @@ func poll_filter(writable bool) (filter int16) {
 // kqueue waits on unbounded — and returns the ready descriptors, decoding each kqueue event
 // into a direction.
 func poll_file_wait(poll poll_file, timeout_ns int64) (ready []poll_ready, err error) {
-	native := make([]syscall.Kevent_t, poll_events_max)
+	native := make([]syscall.Kevent_t, POLL_EVENTS_MAX)
 	deadline := (*syscall.Timespec)(nil)
 	if timeout_ns >= 0 {
 		span := syscall.NsecToTimespec(timeout_ns)

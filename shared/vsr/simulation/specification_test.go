@@ -48,13 +48,13 @@ func Test_Cluster_Agreement(t *testing.T) {
 // seed writes its own slot, and the totals are checked in a cleanup once the subtests finish.
 func Test_Cluster_Liveness(t *testing.T) {
 	t.Parallel()
-	const first = 80
-	const limit = 120
-	results := make([]simulation_result, limit-first)
-	for seed := int64(first); seed < limit; seed++ {
+	const FIRST = 80
+	const LIMIT = 120
+	results := make([]simulation_result, LIMIT-FIRST)
+	for seed := int64(FIRST); seed < LIMIT; seed++ {
 		t.Run(fmt.Sprintf("seed_%d", seed), func(t *testing.T) {
 			t.Parallel()
-			results[seed-first] = run_simulation(t, seed)
+			results[seed-FIRST] = run_simulation(t, seed)
 		})
 	}
 	t.Cleanup(func() {
@@ -88,13 +88,13 @@ func Test_Cluster_Liveness(t *testing.T) {
 // than per-seed because an adversarial schedule can legitimately stall one 3-node seed.
 func Test_Cluster_Exactly_Once(t *testing.T) {
 	t.Parallel()
-	const first = 120
-	const limit = 160
-	results := make([]simulation_result, limit-first)
-	for seed := int64(first); seed < limit; seed++ {
+	const FIRST = 120
+	const LIMIT = 160
+	results := make([]simulation_result, LIMIT-FIRST)
+	for seed := int64(FIRST); seed < LIMIT; seed++ {
 		t.Run(fmt.Sprintf("seed_%d", seed), func(t *testing.T) {
 			t.Parallel()
-			results[seed-first] = run_simulation(t, seed)
+			results[seed-FIRST] = run_simulation(t, seed)
 		})
 	}
 	t.Cleanup(func() {
@@ -126,13 +126,13 @@ func Test_Cluster_Exactly_Once(t *testing.T) {
 // inside run_simulation; the cleanup confirms clients did receive results across the sweep.
 func Test_Cluster_Linearizability(t *testing.T) {
 	t.Parallel()
-	const first = 160
-	const limit = 200
-	results := make([]simulation_result, limit-first)
-	for seed := int64(first); seed < limit; seed++ {
+	const FIRST = 160
+	const LIMIT = 200
+	results := make([]simulation_result, LIMIT-FIRST)
+	for seed := int64(FIRST); seed < LIMIT; seed++ {
 		t.Run(fmt.Sprintf("seed_%d", seed), func(t *testing.T) {
 			t.Parallel()
-			results[seed-first] = run_simulation(t, seed)
+			results[seed-FIRST] = run_simulation(t, seed)
 		})
 	}
 	t.Cleanup(func() {

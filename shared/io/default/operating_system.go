@@ -23,48 +23,48 @@ import (
 
 // Caps the ready set one poll_file_wait returns; sized to drain a busy loop in few
 // syscalls without an unbounded buffer.
-const poll_events_max = 64
+const POLL_EVENTS_MAX = 64
 
-// Poll_forever, passed as an idle gap, blocks the readiness poll until an event arrives rather
+// POLL_FOREVER, passed as an idle gap, blocks the readiness poll until an event arrives rather
 // than for a fixed span — the unbounded wait a run with no deadline needs, so the loop sleeps
 // exactly until there is work instead of waking on an interval.
-const poll_forever time.Moment = -1
+const POLL_FOREVER time.Moment = -1
 
 // Bounds one wake-pipe drain so a flood of pokes cannot spin the loop.
-const wake_drain_passes_max = 16
+const WAKE_DRAIN_PASSES_MAX = 16
 
 // Buffers a few pending signals so a burst is not lost between drains.
-const signal_queue_depth = 8
+const SIGNAL_QUEUE_DEPTH = 8
 
 // Buffers receive requests handed to a TLS connection's reader goroutine; a consumer arms one
 // receive at a time, so this only needs slack, not depth.
-const tls_receive_queue = 4
+const TLS_RECEIVE_QUEUE = 4
 
 // Caps the idle gap while a signal watcher exists, since a signal does not wake the poll;
 // the loop re-checks the signal channel at least this often.
-const signal_poll_interval = 10 * time.MILLISECOND
+const SIGNAL_POLL_INTERVAL = 10 * time.MILLISECOND
 
 // Buffers submitted compute jobs so bursts do not block the loop thread.
-const compute_queue_depth = 1024
+const COMPUTE_QUEUE_DEPTH = 1024
 
 // Buffers a TLS connection's in-flight requests.
-const tls_request_depth = 4
+const TLS_REQUEST_DEPTH = 4
 
 // The synthetic-descriptor base for TLS connections, above any real file descriptor, so
 // Receive/Send/Close can route a TLS socket to its goroutine by the descriptor alone.
-const tls_file_base io.File = 1 << 30
+const TLS_FILE_BASE io.File = 1 << 30
 
 // The tls_kind type names the request a TLS connection goroutine handles.
 type tls_kind int
 
-// The tls_send kind writes plaintext through the TLS connection.
-const tls_send tls_kind = 0
+// The TLS_SEND kind writes plaintext through the TLS connection.
+const TLS_SEND tls_kind = 0
 
-// The tls_receive kind reads plaintext from the TLS connection.
-const tls_receive tls_kind = 1
+// The TLS_RECEIVE kind reads plaintext from the TLS connection.
+const TLS_RECEIVE tls_kind = 1
 
-// The tls_close kind shuts the TLS connection down.
-const tls_close tls_kind = 2
+// The TLS_CLOSE kind shuts the TLS connection down.
+const TLS_CLOSE tls_kind = 2
 
 // One ready descriptor the poll reports, decoded from the platform's native event
 // into a direction the dispatch understands.
@@ -129,7 +129,7 @@ type operating_system struct {
 	Drive_Active bool
 	// TLS maps a synthetic descriptor to its connection goroutine's request channel.
 	TLS map[io.File]*tls_connection
-	// Next_TLS is the synthetic TLS descriptor counter, based at tls_file_base.
+	// Next_TLS is the synthetic TLS descriptor counter, based at TLS_FILE_BASE.
 	Next_TLS io.File
 	// Raw_Open records every raw, non-close-on-exec descriptor this backend holds open — the
 	// listeners, plainly-accepted connections, plain outbound connects, and the wake pipe. It
@@ -627,7 +627,7 @@ func operating_system_wait(state *operating_system) {
 	invariant.Always(operating_system_in_flight(state),
 		"An unbounded run holds an operation in flight that can advance it.")
 	operating_system_poll_ensure(state)
-	operating_system_poll(state, int64(operating_system_signal_cap(state, poll_forever)))
+	operating_system_poll(state, int64(operating_system_signal_cap(state, POLL_FOREVER)))
 }
 
 // Reports whether an operation is in flight that could complete and flip an unbounded run's
@@ -710,7 +710,7 @@ func operating_system_signal_cap(
 	if len(state.Signal_Waiters) == 0 {
 		return gap
 	}
-	interval := time.Moment(signal_poll_interval)
+	interval := time.Moment(SIGNAL_POLL_INTERVAL)
 	// A negative (unbounded) gap must still be capped, or a delivered signal — which does not
 	// wake the poll — would go unseen until the next socket event.
 	if gap < 0 {
@@ -1031,7 +1031,7 @@ func operating_system_compute_ensure(state *operating_system) {
 		return
 	}
 	operating_system_wake_ensure(state)
-	state.Jobs = make(chan *compute_job, compute_queue_depth)
+	state.Jobs = make(chan *compute_job, COMPUTE_QUEUE_DEPTH)
 	state.Compute_Active = true
 	workers := compute_worker_count()
 	for index := 0; index < workers; index++ {
@@ -1124,7 +1124,7 @@ func operating_system_signal_ensure(state *operating_system) {
 	if state.Signals != nil {
 		return
 	}
-	state.Signals = make(chan os.Signal, signal_queue_depth)
+	state.Signals = make(chan os.Signal, SIGNAL_QUEUE_DEPTH)
 }
 
 // Maps a backend-independent signal to its OS signal.
@@ -1137,7 +1137,7 @@ func signal_to_operating_system(kind io.Signal) (system os.Signal) {
 
 // Drains delivered signals without blocking, firing matching watchers.
 func operating_system_signals(state *operating_system) {
-	for index := 0; index < signal_queue_depth; index++ {
+	for index := 0; index < SIGNAL_QUEUE_DEPTH; index++ {
 		select {
 		case received := <-state.Signals:
 			operating_system_signal_deliver(state, received)
@@ -1179,7 +1179,7 @@ func operating_system_connect_secure(state *operating_system, target tls_target)
 		return
 	}
 	file := operating_system_next_tls(state)
-	connection := &tls_connection{Requests: make(chan tls_request, tls_request_depth)}
+	connection := &tls_connection{Requests: make(chan tls_request, TLS_REQUEST_DEPTH)}
 	state.TLS[file] = connection
 	go tls_serve(state, target, file, connection)
 }
@@ -1189,8 +1189,8 @@ func operating_system_next_tls(state *operating_system) (file io.File) {
 	if state.TLS == nil {
 		state.TLS = make(map[io.File]*tls_connection)
 	}
-	if state.Next_TLS < tls_file_base {
-		state.Next_TLS = tls_file_base
+	if state.Next_TLS < TLS_FILE_BASE {
+		state.Next_TLS = TLS_FILE_BASE
 	}
 	state.Next_TLS++
 	return state.Next_TLS
@@ -1299,7 +1299,7 @@ func operating_system_tls_register(
 	state *operating_system,
 ) (file io.File, connection *tls_connection) {
 	file = operating_system_next_tls(state)
-	connection = &tls_connection{Requests: make(chan tls_request, tls_request_depth)}
+	connection = &tls_connection{Requests: make(chan tls_request, TLS_REQUEST_DEPTH)}
 	state.TLS[file] = connection
 	return file, connection
 }
@@ -1389,7 +1389,7 @@ func Certificate(input *Certificate_Input) (value any, err error) {
 // there is exactly one reader. Without this split the single goroutine blocked in Read could not
 // write the ACK until more inbound data arrived, delaying it past HAProxy's timeout — the churn.
 func tls_service(state *operating_system, secure *tls.Conn, connection *tls_connection) {
-	receives := make(chan tls_request, tls_receive_queue)
+	receives := make(chan tls_request, TLS_RECEIVE_QUEUE)
 	go func() {
 		for request := range receives {
 			count, err := secure.Read(request.Buffer)
@@ -1400,11 +1400,11 @@ func tls_service(state *operating_system, secure *tls.Conn, connection *tls_conn
 	}()
 	defer close(receives)
 	for request := range connection.Requests {
-		if request.Kind == tls_receive {
+		if request.Kind == TLS_RECEIVE {
 			receives <- request
 			continue
 		}
-		if request.Kind == tls_close {
+		if request.Kind == TLS_CLOSE {
 			close_err := secure.Close()
 			operating_system_post(state, request.Completion, func() {
 				request.Close_Callback(request.Completion, close_err)
@@ -1429,7 +1429,7 @@ func operating_system_tls_receive(
 		return false
 	}
 	connection.Requests <- tls_request{
-		Kind: tls_receive, Completion: completion, Buffer: buffer, Byte_Callback: callback,
+		Kind: TLS_RECEIVE, Completion: completion, Buffer: buffer, Byte_Callback: callback,
 	}
 	return true
 }
@@ -1445,7 +1445,7 @@ func operating_system_tls_send(
 		return false
 	}
 	connection.Requests <- tls_request{
-		Kind: tls_send, Completion: completion, Buffer: buffer, Byte_Callback: callback,
+		Kind: TLS_SEND, Completion: completion, Buffer: buffer, Byte_Callback: callback,
 	}
 	return true
 }
@@ -1462,7 +1462,7 @@ func operating_system_tls_close(
 	}
 	delete(state.TLS, file)
 	connection.Requests <- tls_request{
-		Kind: tls_close, Completion: completion, Close_Callback: callback,
+		Kind: TLS_CLOSE, Completion: completion, Close_Callback: callback,
 	}
 	return true
 }

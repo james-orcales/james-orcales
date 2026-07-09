@@ -19,9 +19,13 @@ import (
 )
 
 // The process exit codes.
-const exit_success = 0
-const exit_usage = 2
-const exit_failure = 1
+const EXIT_SUCCESS = 0
+
+// EXIT_USAGE is 2 by shell convention, keeping a command-line misuse distinct from a run failure.
+const EXIT_USAGE = 2
+
+// EXIT_FAILURE is the catch-all nonzero for a run that started but could not finish.
+const EXIT_FAILURE = 1
 
 // The resolved scope and override flags of one run.
 type main_scope struct {
@@ -63,7 +67,7 @@ func Main(input *Main_Input) (status_code int) {
 	if parse_err != nil {
 		fmt.Fprintf(input.Error_Output, "sloc: %v\n\n", parse_err)
 		cli.Print_Help(input.Error_Output, program)
-		return exit_usage
+		return EXIT_USAGE
 	}
 	paths := cli.Get_Option(command.Arguments, "path").Value.([]string)
 	// No path given counts the current directory, the obvious default for a tool run
@@ -78,21 +82,21 @@ func Main(input *Main_Input) (status_code int) {
 	})
 	if count_err != nil {
 		fmt.Fprintf(input.Error_Output, "sloc: %v\n", count_err)
-		return exit_failure
+		return EXIT_FAILURE
 	}
 	if cli.Get_Option(command.Flags, "json").Value.(bool) {
 		json_err := Render_Json(input.Output, report)
 		if json_err != nil {
 			fmt.Fprintf(input.Error_Output, "sloc: %v\n", json_err)
-			return exit_failure
+			return EXIT_FAILURE
 		}
-		return exit_success
+		return EXIT_SUCCESS
 	}
 	Render(input.Output, Render_Input{
 		Report:     report,
 		Show_Files: cli.Get_Option(command.Flags, "files").Value.(bool),
 	})
-	return exit_success
+	return EXIT_SUCCESS
 }
 
 // Declares the sloc command line: a commandless program whose positional arguments
@@ -1456,11 +1460,11 @@ func Classify_File(input Classify_File_Input) (counts Counts) {
 // Adds one line's verdict to the running partition.
 func counts_tally(counts *Counts, kind line_kind) {
 	switch kind {
-	case line_kind_code:
+	case LINE_KIND_CODE:
 		counts.Code++
-	case line_kind_comment:
+	case LINE_KIND_COMMENT:
 		counts.Comment++
-	case line_kind_blank:
+	case LINE_KIND_BLANK:
 		counts.Blank++
 	}
 }
@@ -1469,9 +1473,13 @@ func counts_tally(counts *Counts, kind line_kind) {
 type line_kind int
 
 // The line partitions.
-const line_kind_blank line_kind = 0
-const line_kind_code line_kind = 1
-const line_kind_comment line_kind = 2
+const LINE_KIND_BLANK line_kind = 0
+
+// LINE_KIND_CODE tags a line carrying at least one code token, comments aside.
+const LINE_KIND_CODE line_kind = 1
+
+// LINE_KIND_COMMENT tags a line whose only content is a comment.
+const LINE_KIND_COMMENT line_kind = 2
 
 // The scanner state that crosses line boundaries. Normal strings and
 // character literals never cross a line, so they are not carried.
@@ -1543,7 +1551,7 @@ func classify_line(
 	// A whitespace-only line is blank regardless of carried state, and neither opens
 	// nor closes anything, so the carry passes through unchanged.
 	if line_is_blank(line) {
-		return line_kind_blank, carry
+		return LINE_KIND_BLANK, carry
 	}
 	if carry.Heredoc_Terminator != "" {
 		return classify_heredoc_line(line, carry)
@@ -1564,7 +1572,7 @@ func classify_heredoc_line(
 	if strings.TrimSpace(string(line)) == carry.Heredoc_Terminator {
 		carry.Heredoc_Terminator = ""
 	}
-	return line_kind_code, carry
+	return LINE_KIND_CODE, carry
 }
 
 // Consumes the token at the cursor, updating the scan, and returns the next cursor. The
@@ -1865,12 +1873,12 @@ func line_scan_block_open(
 // with a comment, then a comment, else blank.
 func line_scan_verdict(scan *line_scan) (kind line_kind) {
 	if scan.Has_Code {
-		return line_kind_code
+		return LINE_KIND_CODE
 	}
 	if scan.Has_Comment {
-		return line_kind_comment
+		return LINE_KIND_COMMENT
 	}
-	return line_kind_blank
+	return LINE_KIND_BLANK
 }
 
 // Reports whether a verbatim string begins at the cursor and, if so, its terminator
@@ -2315,14 +2323,14 @@ func path_has_test_directory(file_path string) (found bool) {
 }
 
 // Bounds how far content_is_binary scans for a NUL byte.
-const binary_sniff_bytes = 8192
+const BINARY_SNIFF_BYTES = 8192
 
 // Reports whether content holds a NUL byte in its first chunk, the cheap heuristic
 // for "not text" that also guards against a no-newline blob.
 func content_is_binary(content []byte) (binary bool) {
 	limit_count := len(content)
-	if limit_count > binary_sniff_bytes {
-		limit_count = binary_sniff_bytes
+	if limit_count > BINARY_SNIFF_BYTES {
+		limit_count = BINARY_SNIFF_BYTES
 	}
 	for index := 0; index < limit_count; index++ {
 		if content[index] == 0 {

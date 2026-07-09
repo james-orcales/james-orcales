@@ -32,7 +32,7 @@ func Main(input *Main_Input) (status_code int) {
 	_, write_err := input.Output.Write(document)
 	if write_err != nil {
 		fmt.Fprintf(input.Stderr, "markdown_to_pdf: %v\n", write_err)
-		return exit_write_failure
+		return EXIT_WRITE_FAILURE
 	}
 	return 0
 }
@@ -58,100 +58,198 @@ func Render(markdown []byte) (document []byte) {
 // The header's second line is a comment of bytes above 0x7f, the conventional
 // marker telling tools the file carries binary data and must not be munged as
 // text by a transport that rewrites line endings.
-const pdf_header = "%PDF-1.7\n%\xE2\xE3\xCF\xD3\n"
+const PDF_HEADER = "%PDF-1.7\n%\xE2\xE3\xCF\xD3\n"
 
-const page_width fixedpoint.Number = 595 * fixedpoint.SCALE
-const page_height fixedpoint.Number = 842 * fixedpoint.SCALE
-const page_margin fixedpoint.Number = 56 * fixedpoint.SCALE
+// PAGE_WIDTH is A4's 210mm portrait width in points; every media box spans it.
+const PAGE_WIDTH fixedpoint.Number = 595 * fixedpoint.SCALE
 
-const body_size fixedpoint.Number = 11 * fixedpoint.SCALE
+// PAGE_HEIGHT is A4's 297mm portrait height in points; the cursor descends from its top.
+const PAGE_HEIGHT fixedpoint.Number = 842 * fixedpoint.SCALE
+
+// PAGE_MARGIN is the whitespace frame; text lands inside it on all four sides.
+const PAGE_MARGIN fixedpoint.Number = 56 * fixedpoint.SCALE
+
+// BODY_SIZE is the point size of ordinary prose, the baseline the body ratios scale from.
+const BODY_SIZE fixedpoint.Number = 11 * fixedpoint.SCALE
 
 // The largest whole point size at which a 100-column Courier line fits the A4
 // text column: 100 glyphs * 0.6 * 8pt = 480pt within the 483pt margin span.
-const code_size fixedpoint.Number = 8 * fixedpoint.SCALE
-const heading_size_1 fixedpoint.Number = 24 * fixedpoint.SCALE
-const heading_size_2 fixedpoint.Number = 20 * fixedpoint.SCALE
-const heading_size_3 fixedpoint.Number = 16 * fixedpoint.SCALE
-const heading_size_4 fixedpoint.Number = 14 * fixedpoint.SCALE
-const heading_size_5 fixedpoint.Number = 12 * fixedpoint.SCALE
-const heading_size_6 fixedpoint.Number = 11 * fixedpoint.SCALE
+const CODE_SIZE fixedpoint.Number = 8 * fixedpoint.SCALE
 
-const line_leading_ratio fixedpoint.Ratio = 13 * fixedpoint.SCALE / 10
-const paragraph_gap_ratio fixedpoint.Ratio = 3 * fixedpoint.SCALE / 5
-const heading_gap_ratio fixedpoint.Ratio = 2 * fixedpoint.SCALE / 5
-const heading_rule_level_max = 2
-const heading_rule_gap_ratio fixedpoint.Ratio = fixedpoint.SCALE / 2
-const table_row_ratio fixedpoint.Ratio = 2 * fixedpoint.SCALE
+// HEADING_SIZE_1 is the point size of a top-level (#) heading, the largest on a page.
+const HEADING_SIZE_1 fixedpoint.Number = 24 * fixedpoint.SCALE
+
+// HEADING_SIZE_2 is the point size of a level-2 (##) heading.
+const HEADING_SIZE_2 fixedpoint.Number = 20 * fixedpoint.SCALE
+
+// HEADING_SIZE_3 is the point size of a level-3 (###) heading.
+const HEADING_SIZE_3 fixedpoint.Number = 16 * fixedpoint.SCALE
+
+// HEADING_SIZE_4 is the point size of a level-4 (####) heading.
+const HEADING_SIZE_4 fixedpoint.Number = 14 * fixedpoint.SCALE
+
+// HEADING_SIZE_5 is the point size of a level-5 (#####) heading.
+const HEADING_SIZE_5 fixedpoint.Number = 12 * fixedpoint.SCALE
+
+// HEADING_SIZE_6 is the point size of a level-6 (######) heading, matching body size.
+const HEADING_SIZE_6 fixedpoint.Number = 11 * fixedpoint.SCALE
+
+// LINE_LEADING_RATIO is line height as a multiple of font size; 1.3 gives legible leading.
+const LINE_LEADING_RATIO fixedpoint.Ratio = 13 * fixedpoint.SCALE / 10
+
+// PARAGRAPH_GAP_RATIO is the blank space after a paragraph, as a fraction of body size.
+const PARAGRAPH_GAP_RATIO fixedpoint.Ratio = 3 * fixedpoint.SCALE / 5
+
+// HEADING_GAP_RATIO is the space below a heading before its body, per heading size.
+const HEADING_GAP_RATIO fixedpoint.Ratio = 2 * fixedpoint.SCALE / 5
+
+// HEADING_RULE_LEVEL_MAX is the deepest heading level drawn with an underline rule.
+const HEADING_RULE_LEVEL_MAX = 2
+
+// HEADING_RULE_GAP_RATIO lifts the heading rule into the gap below its baseline, per size.
+const HEADING_RULE_GAP_RATIO fixedpoint.Ratio = fixedpoint.SCALE / 2
+
+// TABLE_ROW_RATIO is a single-line table row's height as a multiple of body size.
+const TABLE_ROW_RATIO fixedpoint.Ratio = 2 * fixedpoint.SCALE
 
 // Courier is monospaced at 600 units per 1000-em, so each of its glyphs
 // advances exactly 0.6 of the point size.
-const courier_advance_ratio fixedpoint.Ratio = 3 * fixedpoint.SCALE / 5
+const COURIER_ADVANCE_RATIO fixedpoint.Ratio = 3 * fixedpoint.SCALE / 5
 
-const list_indent fixedpoint.Number = 18 * fixedpoint.SCALE
-const quote_indent fixedpoint.Number = 18 * fixedpoint.SCALE
-const quote_bar_width fixedpoint.Number = 3 * fixedpoint.SCALE
-const quote_bar_rise_ratio fixedpoint.Ratio = 4 * fixedpoint.SCALE / 5
-const quote_bar_drop_ratio fixedpoint.Ratio = fixedpoint.SCALE / 4
-const quote_vertical_inset fixedpoint.Number = 8 * fixedpoint.SCALE
+// LIST_INDENT is the left offset of a list item's text column from the page margin.
+const LIST_INDENT fixedpoint.Number = 18 * fixedpoint.SCALE
+
+// QUOTE_INDENT is the left offset of quote text from the margin, clearing the bar.
+const QUOTE_INDENT fixedpoint.Number = 18 * fixedpoint.SCALE
+
+// QUOTE_BAR_WIDTH is the width of the bar drawn down a block quote's left edge.
+const QUOTE_BAR_WIDTH fixedpoint.Number = 3 * fixedpoint.SCALE
+
+// QUOTE_BAR_RISE_RATIO is the ascent above baseline sizing the quote box and first line.
+const QUOTE_BAR_RISE_RATIO fixedpoint.Ratio = 4 * fixedpoint.SCALE / 5
+
+// QUOTE_BAR_DROP_RATIO is the descent below the last baseline inside the quote box.
+const QUOTE_BAR_DROP_RATIO fixedpoint.Ratio = fixedpoint.SCALE / 4
+
+// QUOTE_VERTICAL_INSET is the top and bottom padding between the quote box and its text.
+const QUOTE_VERTICAL_INSET fixedpoint.Number = 8 * fixedpoint.SCALE
 
 // A block quote sits on a light gray background with a darker left bar and gray
 // body text.
-const quote_back_fill = "0.95 0.95 0.95 rg"
-const quote_bar_fill = "0.75 0.75 0.75 rg"
-const quote_text_fill = "0.4 0.4 0.4 rg"
-const table_padding fixedpoint.Number = 4 * fixedpoint.SCALE
-const table_top_baseline_ratio fixedpoint.Ratio = 63 * fixedpoint.SCALE / 50
+const QUOTE_BACK_FILL = "0.95 0.95 0.95 rg"
+
+// QUOTE_BAR_FILL is the PDF fill operator for the bar down the quote's left edge.
+const QUOTE_BAR_FILL = "0.75 0.75 0.75 rg"
+
+// QUOTE_TEXT_FILL is the PDF fill operator for a quote's muted gray body text.
+const QUOTE_TEXT_FILL = "0.4 0.4 0.4 rg"
+
+// TABLE_PADDING is the inset between a table cell's border and its text, on every side.
+const TABLE_PADDING fixedpoint.Number = 4 * fixedpoint.SCALE
+
+// TABLE_TOP_BASELINE_RATIO drops the first cell baseline below the row top, per body size.
+const TABLE_TOP_BASELINE_RATIO fixedpoint.Ratio = 63 * fixedpoint.SCALE / 50
 
 // A quote or table ends at a drawn box edge, not at a dropped text baseline
 // like a paragraph, so its trailing gap must also clear the next line's ascent —
-// hence larger than paragraph_gap_ratio, or following prose laps the edge.
-const box_gap_ratio fixedpoint.Ratio = 9 * fixedpoint.SCALE / 5
+// hence larger than PARAGRAPH_GAP_RATIO, or following prose laps the edge.
+const BOX_GAP_RATIO fixedpoint.Ratio = 9 * fixedpoint.SCALE / 5
 
 // A GitHub table draws a soft gray cell grid and shades alternate rows.
-const table_border_stroke = "0.82 0.82 0.82 RG"
-const table_shade_fill = "0.97 0.97 0.97 rg"
-const underline_drop fixedpoint.Number = 2 * fixedpoint.SCALE
+const TABLE_BORDER_STROKE = "0.82 0.82 0.82 RG"
+
+// TABLE_SHADE_FILL is the PDF fill operator shading alternate table rows faint gray.
+const TABLE_SHADE_FILL = "0.97 0.97 0.97 rg"
+
+// UNDERLINE_DROP is how far below the baseline a link underline is stroked.
+const UNDERLINE_DROP fixedpoint.Number = 2 * fixedpoint.SCALE
 
 // Code renders as white glyphs on a JetBrains Darcula gray panel (#2B2B2B);
 // these are the PDF fill-color operators for the panel, the code text, and
 // ordinary text.
-const code_panel_fill = "0.17 0.17 0.17 rg"
-const code_text_fill = "1 1 1 rg"
-const normal_text_fill = "0 0 0 rg"
+const CODE_PANEL_FILL = "0.17 0.17 0.17 rg"
+
+// CODE_TEXT_FILL is the PDF fill operator for white code glyphs on the dark panel.
+const CODE_TEXT_FILL = "1 1 1 rg"
+
+// NORMAL_TEXT_FILL is the PDF fill operator for ordinary black body text.
+const NORMAL_TEXT_FILL = "0 0 0 rg"
 
 // A link is the browser blue, both as the text fill and the underline stroke;
 // the normal stroke restores black for rules and table borders afterward.
-const link_fill = "0 0 0.93 rg"
-const link_stroke = "0 0 0.93 RG"
-const normal_stroke = "0 0 0 RG"
-const link_ascent_ratio fixedpoint.Ratio = 4 * fixedpoint.SCALE / 5
-const link_descent_ratio fixedpoint.Ratio = fixedpoint.SCALE / 4
+const LINK_FILL = "0 0 0.93 rg"
 
-const code_panel_inset fixedpoint.Number = 3 * fixedpoint.SCALE / 2
-const code_inline_descent_ratio fixedpoint.Ratio = fixedpoint.SCALE / 4
-const code_inline_height_ratio fixedpoint.Ratio = 6 * fixedpoint.SCALE / 5
-const code_band_descent_ratio fixedpoint.Ratio = 3 * fixedpoint.SCALE / 10
+// LINK_STROKE is the PDF stroke operator painting a link's blue underline.
+const LINK_STROKE = "0 0 0.93 RG"
 
-const heading_level_max = 6
+// NORMAL_STROKE is the PDF stroke operator restoring black after a colored stroke.
+const NORMAL_STROKE = "0 0 0 RG"
 
-const bullet_glyph = "•"
-const fence_marker = "```"
+// LINK_ASCENT_RATIO sets the clickable rectangle's top above the baseline, per size.
+const LINK_ASCENT_RATIO fixedpoint.Ratio = 4 * fixedpoint.SCALE / 5
 
-const font_regular = 0
-const font_bold = 1
-const font_italic = 2
-const font_bold_italic = 3
-const font_code = 4
+// LINK_DESCENT_RATIO sets the clickable rectangle's bottom below the baseline, per size.
+const LINK_DESCENT_RATIO fixedpoint.Ratio = fixedpoint.SCALE / 4
 
-const block_heading = 1
-const block_paragraph = 2
-const block_list_item = 3
-const block_code = 4
-const block_quote = 5
-const block_rule = 6
-const block_table = 7
+// CODE_PANEL_INSET pads an inline code panel out past its glyphs on the left and right.
+const CODE_PANEL_INSET fixedpoint.Number = 3 * fixedpoint.SCALE / 2
 
-const exit_write_failure = 1
+// CODE_INLINE_DESCENT_RATIO drops an inline code panel below the baseline, per font size.
+const CODE_INLINE_DESCENT_RATIO fixedpoint.Ratio = fixedpoint.SCALE / 4
+
+// CODE_INLINE_HEIGHT_RATIO is an inline code panel's height as a multiple of font size.
+const CODE_INLINE_HEIGHT_RATIO fixedpoint.Ratio = 6 * fixedpoint.SCALE / 5
+
+// CODE_BAND_DESCENT_RATIO drops a fenced code line's band below the baseline, per code size.
+const CODE_BAND_DESCENT_RATIO fixedpoint.Ratio = 3 * fixedpoint.SCALE / 10
+
+// HEADING_LEVEL_MAX is the deepest heading (######) parsed; more hashes read as body text.
+const HEADING_LEVEL_MAX = 6
+
+// BULLET_GLYPH is the marker rendered for an unordered list item.
+const BULLET_GLYPH = "•"
+
+// FENCE_MARKER is the triple backtick that opens and closes a fenced code block.
+const FENCE_MARKER = "```"
+
+// FONT_REGULAR indexes the Helvetica face; ids match the /F0../F4 page resources.
+const FONT_REGULAR = 0
+
+// FONT_BOLD indexes the Helvetica-Bold face.
+const FONT_BOLD = 1
+
+// FONT_ITALIC indexes the Helvetica-Oblique face.
+const FONT_ITALIC = 2
+
+// FONT_BOLD_ITALIC indexes the Helvetica-BoldOblique face.
+const FONT_BOLD_ITALIC = 3
+
+// FONT_CODE indexes the Courier face used for code spans and fenced blocks.
+const FONT_CODE = 4
+
+// BLOCK_HEADING tags a heading block; the kind routes layout_block to its handler.
+const BLOCK_HEADING = 1
+
+// BLOCK_PARAGRAPH tags a paragraph block.
+const BLOCK_PARAGRAPH = 2
+
+// BLOCK_LIST_ITEM tags a list-item block.
+const BLOCK_LIST_ITEM = 3
+
+// BLOCK_CODE tags a fenced-code block.
+const BLOCK_CODE = 4
+
+// BLOCK_QUOTE tags a block-quote block.
+const BLOCK_QUOTE = 5
+
+// BLOCK_RULE tags a horizontal-rule block.
+const BLOCK_RULE = 6
+
+// BLOCK_TABLE tags a table block.
+const BLOCK_TABLE = 7
+
+// EXIT_WRITE_FAILURE is the exit code Main returns when writing the PDF to Output fails.
+const EXIT_WRITE_FAILURE = 1
 
 type text_run struct {
 	Text string
@@ -219,7 +317,7 @@ func parse_blocks(markdown []byte) (blocks []block) {
 			continue
 		}
 		if is_rule_line(line) {
-			blocks = append(blocks, block{Kind: block_rule})
+			blocks = append(blocks, block{Kind: BLOCK_RULE})
 			index++
 			continue
 		}
@@ -262,7 +360,7 @@ func is_blank(line string) (blank bool) {
 }
 
 func is_fence(line string) (fence bool) {
-	return strings.HasPrefix(strings.TrimSpace(line), fence_marker)
+	return strings.HasPrefix(strings.TrimSpace(line), FENCE_MARKER)
 }
 
 func is_heading(line string) (heading bool) {
@@ -276,7 +374,7 @@ func is_heading(line string) (heading bool) {
 	if hash_index == 0 {
 		return false
 	}
-	if hash_index > heading_level_max {
+	if hash_index > HEADING_LEVEL_MAX {
 		return false
 	}
 	if hash_index == len(line) {
@@ -405,7 +503,7 @@ func parse_heading(line string) (heading block) {
 		level_index++
 	}
 	rest := strings.TrimLeft(line[level_index:], " ")
-	return block{Kind: block_heading, Level: level_index, Runs: parse_inline(rest)}
+	return block{Kind: BLOCK_HEADING, Level: level_index, Runs: parse_inline(rest)}
 }
 
 func parse_code(lines []string, index int) (code block, next int) {
@@ -419,7 +517,7 @@ func parse_code(lines []string, index int) (code block, next int) {
 		collected = append(collected, lines[cursor])
 		cursor++
 	}
-	return block{Kind: block_code, Lines: collected}, cursor
+	return block{Kind: BLOCK_CODE, Lines: collected}, cursor
 }
 
 func parse_quote(lines []string, index int) (quote block, next int) {
@@ -435,7 +533,7 @@ func parse_quote(lines []string, index int) (quote block, next int) {
 		joined.WriteString(strip_quote_marker(lines[cursor]))
 		cursor++
 	}
-	return block{Kind: block_quote, Runs: parse_inline(joined.String())}, cursor
+	return block{Kind: BLOCK_QUOTE, Runs: parse_inline(joined.String())}, cursor
 }
 
 func strip_quote_marker(line string) (stripped string) {
@@ -446,10 +544,10 @@ func strip_quote_marker(line string) (stripped string) {
 func parse_list_item(line string) (item block) {
 	if is_unordered_marker(line) {
 		text := strings.TrimSpace(line[2:])
-		return block{Kind: block_list_item, Runs: parse_inline(text)}
+		return block{Kind: BLOCK_LIST_ITEM, Runs: parse_inline(text)}
 	}
 	number, rest := split_ordered_marker(line)
-	return block{Kind: block_list_item, Ordered: true, Number: number, Runs: parse_inline(rest)}
+	return block{Kind: BLOCK_LIST_ITEM, Ordered: true, Number: number, Runs: parse_inline(rest)}
 }
 
 func split_ordered_marker(line string) (number int, rest string) {
@@ -478,7 +576,7 @@ func parse_paragraph(lines []string, index int) (paragraph block, next int) {
 		joined.WriteString(strings.TrimSpace(lines[cursor]))
 		cursor++
 	}
-	return block{Kind: block_paragraph, Runs: parse_inline(joined.String())}, cursor
+	return block{Kind: BLOCK_PARAGRAPH, Runs: parse_inline(joined.String())}, cursor
 }
 
 func is_paragraph_break(lines []string, index int) (split bool) {
@@ -517,7 +615,7 @@ func parse_table(lines []string, index int) (table block, next int) {
 		rows = append(rows, split_table_row(lines[cursor]))
 		cursor++
 	}
-	return block{Kind: block_table, Cells: rows}, cursor
+	return block{Kind: BLOCK_TABLE, Cells: rows}, cursor
 }
 
 func split_table_row(line string) (cells []string) {
@@ -590,7 +688,7 @@ func inline_state_code(state *inline_state, text string, index int) (next int) {
 	content := text[index+1 : close_index]
 	state.Runs = append(state.Runs, text_run{
 		Text: content,
-		Font: font_code,
+		Font: FONT_CODE,
 		Link: state.Link,
 	})
 	return close_index + 1
@@ -650,46 +748,46 @@ func inline_state_flush(state *inline_state) {
 func inline_state_font(state *inline_state) (font int) {
 	if state.Bold {
 		if state.Italic {
-			return font_bold_italic
+			return FONT_BOLD_ITALIC
 		}
-		return font_bold
+		return FONT_BOLD
 	}
 	if state.Italic {
-		return font_italic
+		return FONT_ITALIC
 	}
-	return font_regular
+	return FONT_REGULAR
 }
 
 func layout_new() (state *layout) {
-	return &layout{Stream: &strings.Builder{}, Cursor: page_height - page_margin}
+	return &layout{Stream: &strings.Builder{}, Cursor: PAGE_HEIGHT - PAGE_MARGIN}
 }
 
 func layout_block(state *layout, current *block) {
-	if current.Kind == block_heading {
+	if current.Kind == BLOCK_HEADING {
 		layout_heading(state, current)
 		return
 	}
-	if current.Kind == block_paragraph {
+	if current.Kind == BLOCK_PARAGRAPH {
 		layout_paragraph(state, current)
 		return
 	}
-	if current.Kind == block_list_item {
+	if current.Kind == BLOCK_LIST_ITEM {
 		layout_list_item(state, current)
 		return
 	}
-	if current.Kind == block_code {
+	if current.Kind == BLOCK_CODE {
 		layout_code(state, current)
 		return
 	}
-	if current.Kind == block_quote {
+	if current.Kind == BLOCK_QUOTE {
 		layout_quote(state, current)
 		return
 	}
-	if current.Kind == block_rule {
+	if current.Kind == BLOCK_RULE {
 		layout_rule(state)
 		return
 	}
-	if current.Kind == block_table {
+	if current.Kind == BLOCK_TABLE {
 		layout_table(state, current)
 	}
 }
@@ -699,76 +797,76 @@ func layout_heading(state *layout, current *block) {
 	for _, run := range current.Runs {
 		runs = append(runs, text_run{
 			Text: run.Text,
-			Font: font_bold,
+			Font: FONT_BOLD,
 			Link: run.Link,
 		})
 	}
 	size := heading_size(current.Level)
 	// A heading opens with a blank line above it, setting it apart from the
 	// content it follows.
-	state.Cursor -= fixedpoint.Apply(size, line_leading_ratio)
+	state.Cursor -= fixedpoint.Apply(size, LINE_LEADING_RATIO)
 	layout_prose(state, &layout_prose_input{
 		Runs:        runs,
 		Size:        size,
-		Line_Height: fixedpoint.Apply(size, line_leading_ratio),
+		Line_Height: fixedpoint.Apply(size, LINE_LEADING_RATIO),
 	})
-	if current.Level <= heading_rule_level_max {
+	if current.Level <= HEADING_RULE_LEVEL_MAX {
 		// The rule sits in the gap below the last baseline, a touch under the
 		// descent, like GitHub's heading border.
-		rule_y := state.Cursor + fixedpoint.Apply(size, line_leading_ratio) -
-			fixedpoint.Apply(size, heading_rule_gap_ratio)
+		rule_y := state.Cursor + fixedpoint.Apply(size, LINE_LEADING_RATIO) -
+			fixedpoint.Apply(size, HEADING_RULE_GAP_RATIO)
 		emit_heading_rule(state.Stream, rule_y)
 	}
-	state.Cursor -= fixedpoint.Apply(size, heading_gap_ratio)
+	state.Cursor -= fixedpoint.Apply(size, HEADING_GAP_RATIO)
 }
 
 // A heading rule is drawn like a horizontal rule: a plain stroke across the
 // column beneath the top heading levels.
 func emit_heading_rule(stream *strings.Builder, y fixedpoint.Number) {
 	emit_stroke(stream, &emit_stroke_input{
-		X1: page_margin,
+		X1: PAGE_MARGIN,
 		Y1: y,
-		X2: page_width - page_margin,
+		X2: PAGE_WIDTH - PAGE_MARGIN,
 		Y2: y,
 	})
 }
 
 func heading_size(level int) (size fixedpoint.Number) {
 	if level <= 1 {
-		return heading_size_1
+		return HEADING_SIZE_1
 	}
 	if level == 2 {
-		return heading_size_2
+		return HEADING_SIZE_2
 	}
 	if level == 3 {
-		return heading_size_3
+		return HEADING_SIZE_3
 	}
 	if level == 4 {
-		return heading_size_4
+		return HEADING_SIZE_4
 	}
 	if level == 5 {
-		return heading_size_5
+		return HEADING_SIZE_5
 	}
-	return heading_size_6
+	return HEADING_SIZE_6
 }
 
 func layout_paragraph(state *layout, current *block) {
 	layout_prose(state, &layout_prose_input{
 		Runs:        current.Runs,
-		Size:        body_size,
-		Line_Height: fixedpoint.Apply(body_size, line_leading_ratio),
+		Size:        BODY_SIZE,
+		Line_Height: fixedpoint.Apply(BODY_SIZE, LINE_LEADING_RATIO),
 	})
-	state.Cursor -= fixedpoint.Apply(body_size, paragraph_gap_ratio)
+	state.Cursor -= fixedpoint.Apply(BODY_SIZE, PARAGRAPH_GAP_RATIO)
 }
 
 func layout_list_item(state *layout, current *block) {
-	marker := text_run{Text: list_marker(current.Ordered, current.Number), Font: font_regular}
+	marker := text_run{Text: list_marker(current.Ordered, current.Number), Font: FONT_REGULAR}
 	combined := append([]text_run{marker}, current.Runs...)
 	layout_prose(state, &layout_prose_input{
 		Runs:        combined,
-		Size:        body_size,
-		Indent:      list_indent,
-		Line_Height: fixedpoint.Apply(body_size, line_leading_ratio),
+		Size:        BODY_SIZE,
+		Indent:      LIST_INDENT,
+		Line_Height: fixedpoint.Apply(BODY_SIZE, LINE_LEADING_RATIO),
 	})
 }
 
@@ -776,35 +874,35 @@ func list_marker(ordered bool, number int) (marker string) {
 	if ordered {
 		return strconv.Itoa(number) + "."
 	}
-	return bullet_glyph
+	return BULLET_GLYPH
 }
 
 func layout_code(state *layout, current *block) {
 	for _, code_line := range current.Lines {
-		layout_need(state, fixedpoint.Apply(code_size, line_leading_ratio))
+		layout_need(state, fixedpoint.Apply(CODE_SIZE, LINE_LEADING_RATIO))
 		emit_code_band(state.Stream, state.Cursor)
 		emit_glyphs(state.Stream, &emit_glyphs_input{
 			Text: code_line,
-			Font: font_code,
-			Size: code_size,
-			X:    page_margin,
+			Font: FONT_CODE,
+			Size: CODE_SIZE,
+			X:    PAGE_MARGIN,
 			Y:    state.Cursor,
 		})
-		state.Cursor -= fixedpoint.Apply(code_size, line_leading_ratio)
+		state.Cursor -= fixedpoint.Apply(CODE_SIZE, LINE_LEADING_RATIO)
 	}
-	state.Cursor -= fixedpoint.Apply(body_size, paragraph_gap_ratio)
+	state.Cursor -= fixedpoint.Apply(BODY_SIZE, PARAGRAPH_GAP_RATIO)
 }
 
 func layout_quote(state *layout, current *block) {
-	line_height := fixedpoint.Apply(body_size, line_leading_ratio)
+	line_height := fixedpoint.Apply(BODY_SIZE, LINE_LEADING_RATIO)
 	lines := wrap_pieces(&wrap_pieces_input{
 		Runs:      current.Runs,
-		Size:      body_size,
-		Width_Max: page_width - 2*page_margin - quote_indent,
+		Size:      BODY_SIZE,
+		Width_Max: PAGE_WIDTH - 2*PAGE_MARGIN - QUOTE_INDENT,
 	})
-	ascent := fixedpoint.Apply(body_size, quote_bar_rise_ratio)
-	descent := fixedpoint.Apply(body_size, quote_bar_drop_ratio)
-	box_height := 2*quote_vertical_inset + ascent + descent
+	ascent := fixedpoint.Apply(BODY_SIZE, QUOTE_BAR_RISE_RATIO)
+	descent := fixedpoint.Apply(BODY_SIZE, QUOTE_BAR_DROP_RATIO)
+	box_height := 2*QUOTE_VERTICAL_INSET + ascent + descent
 	box_height += fixedpoint.Number(len(lines)-1) * line_height
 	// Keep the padded box on one page so its background is not split by a break
 	// the text would cross; the panels are drawn before the text lands on them.
@@ -812,44 +910,44 @@ func layout_quote(state *layout, current *block) {
 	box_top := state.Cursor
 	box_bottom := box_top - box_height
 	emit_panel(state.Stream, &emit_panel_input{
-		Fill:   quote_back_fill,
-		X:      page_margin,
+		Fill:   QUOTE_BACK_FILL,
+		X:      PAGE_MARGIN,
 		Y:      box_bottom,
-		Width:  page_width - 2*page_margin,
+		Width:  PAGE_WIDTH - 2*PAGE_MARGIN,
 		Height: box_height,
 	})
 	emit_panel(state.Stream, &emit_panel_input{
-		Fill:   quote_bar_fill,
-		X:      page_margin,
+		Fill:   QUOTE_BAR_FILL,
+		X:      PAGE_MARGIN,
 		Y:      box_bottom,
-		Width:  quote_bar_width,
+		Width:  QUOTE_BAR_WIDTH,
 		Height: box_height,
 	})
 	// The first baseline sits one inset plus an ascent below the box top, so the
 	// glyph caps clear the padding.
-	state.Cursor = box_top - quote_vertical_inset - ascent
+	state.Cursor = box_top - QUOTE_VERTICAL_INSET - ascent
 	for _, visual_line := range lines {
 		layout_line(state, &layout_line_input{
 			Pieces:      visual_line,
-			Size:        body_size,
-			Indent:      quote_indent,
+			Size:        BODY_SIZE,
+			Indent:      QUOTE_INDENT,
 			Line_Height: line_height,
-			Color:       quote_text_fill,
+			Color:       QUOTE_TEXT_FILL,
 		})
 	}
-	state.Cursor = box_bottom - fixedpoint.Apply(body_size, box_gap_ratio)
+	state.Cursor = box_bottom - fixedpoint.Apply(BODY_SIZE, BOX_GAP_RATIO)
 }
 
 func layout_rule(state *layout) {
-	layout_need(state, body_size)
-	state.Cursor -= fixedpoint.Apply(body_size, paragraph_gap_ratio)
+	layout_need(state, BODY_SIZE)
+	state.Cursor -= fixedpoint.Apply(BODY_SIZE, PARAGRAPH_GAP_RATIO)
 	emit_stroke(state.Stream, &emit_stroke_input{
-		X1: page_margin,
+		X1: PAGE_MARGIN,
 		Y1: state.Cursor,
-		X2: page_width - page_margin,
+		X2: PAGE_WIDTH - PAGE_MARGIN,
 		Y2: state.Cursor,
 	})
-	state.Cursor -= fixedpoint.Apply(body_size, paragraph_gap_ratio)
+	state.Cursor -= fixedpoint.Apply(BODY_SIZE, PARAGRAPH_GAP_RATIO)
 }
 
 func layout_table(state *layout, current *block) {
@@ -857,7 +955,7 @@ func layout_table(state *layout, current *block) {
 	if columns == 0 {
 		return
 	}
-	column_width := (page_width - 2*page_margin) / fixedpoint.Number(columns)
+	column_width := (PAGE_WIDTH - 2*PAGE_MARGIN) / fixedpoint.Number(columns)
 	row_index := 0
 	for row_index < len(current.Cells) {
 		layout_table_row(state, &layout_table_row_input{
@@ -869,7 +967,7 @@ func layout_table(state *layout, current *block) {
 		})
 		row_index++
 	}
-	state.Cursor -= fixedpoint.Apply(body_size, box_gap_ratio)
+	state.Cursor -= fixedpoint.Apply(BODY_SIZE, BOX_GAP_RATIO)
 }
 
 func table_column_count(rows [][]string) (columns int) {
@@ -890,8 +988,8 @@ type layout_table_row_input struct {
 }
 
 func layout_table_row(state *layout, input *layout_table_row_input) {
-	line_height := fixedpoint.Apply(body_size, line_leading_ratio)
-	cell_width_max := input.Column_Width - 2*table_padding
+	line_height := fixedpoint.Apply(BODY_SIZE, LINE_LEADING_RATIO)
+	cell_width_max := input.Column_Width - 2*TABLE_PADDING
 	var cell_lines [][][]word_piece
 	line_count_max := 1
 	cell_index := 0
@@ -899,7 +997,7 @@ func layout_table_row(state *layout, input *layout_table_row_input) {
 		runs := table_cell_runs(table_cell_text(input.Cells, cell_index), input.Header)
 		lines := wrap_pieces(&wrap_pieces_input{
 			Runs:      runs,
-			Size:      body_size,
+			Size:      BODY_SIZE,
 			Width_Max: cell_width_max,
 		})
 		cell_lines = append(cell_lines, lines)
@@ -909,17 +1007,17 @@ func layout_table_row(state *layout, input *layout_table_row_input) {
 		}
 		cell_index++
 	}
-	row_height := fixedpoint.Apply(body_size, table_row_ratio) +
+	row_height := fixedpoint.Apply(BODY_SIZE, TABLE_ROW_RATIO) +
 		fixedpoint.Number(line_count_max-1)*line_height
 	layout_need(state, row_height)
 	row_top := state.Cursor
 	row_bottom := row_top - row_height
 	if input.Shaded {
 		emit_panel(state.Stream, &emit_panel_input{
-			Fill:   table_shade_fill,
-			X:      page_margin,
+			Fill:   TABLE_SHADE_FILL,
+			X:      PAGE_MARGIN,
 			Y:      row_bottom,
-			Width:  page_width - 2*page_margin,
+			Width:  PAGE_WIDTH - 2*PAGE_MARGIN,
 			Height: row_height,
 		})
 	}
@@ -929,11 +1027,11 @@ func layout_table_row(state *layout, input *layout_table_row_input) {
 		Column_Width: input.Column_Width,
 		Columns:      input.Columns,
 	})
-	top_baseline := row_top - fixedpoint.Apply(body_size, table_top_baseline_ratio)
+	top_baseline := row_top - fixedpoint.Apply(BODY_SIZE, TABLE_TOP_BASELINE_RATIO)
 	cell_index = 0
 	for cell_index < input.Columns {
-		cell_x := page_margin +
-			fixedpoint.Number(cell_index)*input.Column_Width + table_padding
+		cell_x := PAGE_MARGIN +
+			fixedpoint.Number(cell_index)*input.Column_Width + TABLE_PADDING
 		layout_table_cell(state, &layout_table_cell_input{
 			Lines:        cell_lines[cell_index],
 			X:            cell_x,
@@ -959,7 +1057,7 @@ func layout_table_cell(state *layout, input *layout_table_cell_input) {
 	for line_index < len(input.Lines) {
 		links := emit_text_line(state.Stream, &emit_text_line_input{
 			Pieces: input.Lines[line_index],
-			Size:   body_size,
+			Size:   BODY_SIZE,
 			X:      input.X,
 			Y: input.Top_Baseline -
 				fixedpoint.Number(line_index)*input.Line_Height,
@@ -978,11 +1076,11 @@ func table_cell_runs(cell_text string, header bool) (runs []text_run) {
 	}
 	for _, run := range cell_runs {
 		font := run.Font
-		if font == font_regular {
-			font = font_bold
+		if font == FONT_REGULAR {
+			font = FONT_BOLD
 		}
-		if font == font_italic {
-			font = font_bold_italic
+		if font == FONT_ITALIC {
+			font = FONT_BOLD_ITALIC
 		}
 		runs = append(runs, text_run{Text: run.Text, Font: font, Link: run.Link})
 	}
@@ -999,23 +1097,23 @@ type emit_table_grid_input struct {
 }
 
 func emit_table_grid(stream *strings.Builder, input *emit_table_grid_input) {
-	stream.WriteString(table_border_stroke)
+	stream.WriteString(TABLE_BORDER_STROKE)
 	stream.WriteByte('\n')
 	emit_stroke(stream, &emit_stroke_input{
-		X1: page_margin,
+		X1: PAGE_MARGIN,
 		Y1: input.Top,
-		X2: page_width - page_margin,
+		X2: PAGE_WIDTH - PAGE_MARGIN,
 		Y2: input.Top,
 	})
 	emit_stroke(stream, &emit_stroke_input{
-		X1: page_margin,
+		X1: PAGE_MARGIN,
 		Y1: input.Bottom,
-		X2: page_width - page_margin,
+		X2: PAGE_WIDTH - PAGE_MARGIN,
 		Y2: input.Bottom,
 	})
 	line_index := 0
 	for line_index <= input.Columns {
-		column_x := page_margin + fixedpoint.Number(line_index)*input.Column_Width
+		column_x := PAGE_MARGIN + fixedpoint.Number(line_index)*input.Column_Width
 		emit_stroke(stream, &emit_stroke_input{
 			X1: column_x,
 			Y1: input.Top,
@@ -1024,7 +1122,7 @@ func emit_table_grid(stream *strings.Builder, input *emit_table_grid_input) {
 		})
 		line_index++
 	}
-	stream.WriteString(normal_stroke)
+	stream.WriteString(NORMAL_STROKE)
 	stream.WriteByte('\n')
 }
 
@@ -1044,7 +1142,7 @@ type layout_prose_input struct {
 }
 
 func layout_prose(state *layout, input *layout_prose_input) {
-	available_width := page_width - 2*page_margin - input.Indent
+	available_width := PAGE_WIDTH - 2*PAGE_MARGIN - input.Indent
 	lines := wrap_pieces(&wrap_pieces_input{
 		Runs:      input.Runs,
 		Size:      input.Size,
@@ -1073,7 +1171,7 @@ func wrap_pieces(input *wrap_pieces_input) (lines [][]word_piece) {
 		// A code span stays one piece so its panel is unbroken at normal
 		// widths; prose splits into words. Either is broken at character
 		// boundaries below only when a single piece cannot fit the column.
-		if run.Font == font_code {
+		if run.Font == FONT_CODE {
 			pieces = append(pieces, word_piece{
 				Text: run.Text,
 				Font: run.Font,
@@ -1091,7 +1189,7 @@ func wrap_pieces(input *wrap_pieces_input) (lines [][]word_piece) {
 	}
 	var current []word_piece
 	used_width := fixedpoint.Number(0)
-	space_width := text_width(" ", font_regular, input.Size)
+	space_width := text_width(" ", FONT_REGULAR, input.Size)
 	for _, piece := range pieces {
 		piece_width := text_width(piece.Text, piece.Font, input.Size)
 		if piece_width > input.Width_Max {
@@ -1180,7 +1278,7 @@ func layout_line(state *layout, input *layout_line_input) {
 	links := emit_text_line(state.Stream, &emit_text_line_input{
 		Pieces: input.Pieces,
 		Size:   input.Size,
-		X:      page_margin + input.Indent,
+		X:      PAGE_MARGIN + input.Indent,
 		Y:      state.Cursor,
 		Color:  input.Color,
 	})
@@ -1189,7 +1287,7 @@ func layout_line(state *layout, input *layout_line_input) {
 }
 
 func layout_need(state *layout, height fixedpoint.Number) {
-	if state.Cursor-height >= page_margin {
+	if state.Cursor-height >= PAGE_MARGIN {
 		return
 	}
 	layout_break(state)
@@ -1202,16 +1300,16 @@ func layout_break(state *layout) {
 	})
 	state.Stream.Reset()
 	state.Links = nil
-	state.Cursor = page_height - page_margin
+	state.Cursor = PAGE_HEIGHT - PAGE_MARGIN
 }
 
 // Courier measures by glyph count; Helvetica weights measure off their own
 // metric face via glyph_advance. These widths place the panels and underlines,
 // so they must match the advances the viewer draws with, bold included.
 func text_width(text string, font int, size fixedpoint.Number) (width fixedpoint.Number) {
-	if font == font_code {
+	if font == FONT_CODE {
 		return fixedpoint.Apply(
-			fixedpoint.Number(len([]rune(text)))*size, courier_advance_ratio)
+			fixedpoint.Number(len([]rune(text)))*size, COURIER_ADVANCE_RATIO)
 	}
 	advance_units := 0
 	for _, glyph := range text {
@@ -1224,10 +1322,10 @@ func text_width(text string, font int, size fixedpoint.Number) (width fixedpoint
 // Routes to the metric face for the font: the bold weights off Helvetica-Bold,
 // regular and oblique off Helvetica, whose widths the oblique face shares.
 func glyph_advance(font int, code byte) (advance int) {
-	if font == font_bold {
+	if font == FONT_BOLD {
 		return helvetica_bold_advance(code)
 	}
-	if font == font_bold_italic {
+	if font == FONT_BOLD_ITALIC {
 		return helvetica_bold_advance(code)
 	}
 	return helvetica_advance(code)
@@ -1532,22 +1630,22 @@ type emit_link_run_input struct {
 }
 
 func emit_link_run(stream *strings.Builder, input *emit_link_run_input) (box link_box) {
-	stream.WriteString(link_stroke)
+	stream.WriteString(LINK_STROKE)
 	stream.WriteByte('\n')
 	emit_stroke(stream, &emit_stroke_input{
 		X1: input.Start,
-		Y1: input.Y - underline_drop,
+		Y1: input.Y - UNDERLINE_DROP,
 		X2: input.End,
-		Y2: input.Y - underline_drop,
+		Y2: input.Y - UNDERLINE_DROP,
 	})
-	stream.WriteString(normal_stroke)
+	stream.WriteString(NORMAL_STROKE)
 	stream.WriteByte('\n')
 	return link_box{
 		Target: input.Target,
 		X1:     input.Start,
-		Y1:     input.Y - fixedpoint.Apply(input.Size, link_descent_ratio),
+		Y1:     input.Y - fixedpoint.Apply(input.Size, LINK_DESCENT_RATIO),
 		X2:     input.End,
-		Y2:     input.Y + fixedpoint.Apply(input.Size, link_ascent_ratio),
+		Y2:     input.Y + fixedpoint.Apply(input.Size, LINK_ASCENT_RATIO),
 	}
 }
 
@@ -1560,15 +1658,15 @@ type emit_code_panel_input struct {
 }
 
 func emit_code_panel(stream *strings.Builder, input *emit_code_panel_input) {
-	if input.Piece.Font != font_code {
+	if input.Piece.Font != FONT_CODE {
 		return
 	}
 	emit_panel(stream, &emit_panel_input{
-		Fill:   code_panel_fill,
-		X:      input.Start - code_panel_inset,
-		Y:      input.Y - fixedpoint.Apply(input.Size, code_inline_descent_ratio),
-		Width:  input.End - input.Start + 2*code_panel_inset,
-		Height: fixedpoint.Apply(input.Size, code_inline_height_ratio),
+		Fill:   CODE_PANEL_FILL,
+		X:      input.Start - CODE_PANEL_INSET,
+		Y:      input.Y - fixedpoint.Apply(input.Size, CODE_INLINE_DESCENT_RATIO),
+		Width:  input.End - input.Start + 2*CODE_PANEL_INSET,
+		Height: fixedpoint.Apply(input.Size, CODE_INLINE_HEIGHT_RATIO),
 	})
 }
 
@@ -1605,11 +1703,11 @@ func emit_panel(stream *strings.Builder, input *emit_panel_input) {
 // one continuous band; the descent offset keeps each line's glyphs inside it.
 func emit_code_band(stream *strings.Builder, baseline fixedpoint.Number) {
 	emit_panel(stream, &emit_panel_input{
-		Fill:   code_panel_fill,
-		X:      page_margin,
-		Y:      baseline - fixedpoint.Apply(code_size, code_band_descent_ratio),
-		Width:  page_width - 2*page_margin,
-		Height: fixedpoint.Apply(code_size, line_leading_ratio),
+		Fill:   CODE_PANEL_FILL,
+		X:      PAGE_MARGIN,
+		Y:      baseline - fixedpoint.Apply(CODE_SIZE, CODE_BAND_DESCENT_RATIO),
+		Width:  PAGE_WIDTH - 2*PAGE_MARGIN,
+		Height: fixedpoint.Apply(CODE_SIZE, LINE_LEADING_RATIO),
 	})
 }
 
@@ -1617,18 +1715,18 @@ func emit_code_band(stream *strings.Builder, baseline fixedpoint.Number) {
 // panel, blue for a link, else the line's base color or black. Every text show
 // sets its own color, so a panel or link fill never bleeds onto later glyphs.
 func emit_text_color(stream *strings.Builder, font int, is_link bool, base_color string) {
-	if font == font_code {
-		stream.WriteString(code_text_fill)
+	if font == FONT_CODE {
+		stream.WriteString(CODE_TEXT_FILL)
 		stream.WriteByte('\n')
 		return
 	}
 	if is_link {
-		stream.WriteString(link_fill)
+		stream.WriteString(LINK_FILL)
 		stream.WriteByte('\n')
 		return
 	}
 	if base_color == "" {
-		stream.WriteString(normal_text_fill)
+		stream.WriteString(NORMAL_TEXT_FILL)
 		stream.WriteByte('\n')
 		return
 	}
@@ -1667,11 +1765,11 @@ func assemble_document(pages []page_content) (document []byte) {
 	objects = append(objects, font_object("Courier"))
 	// After the fonts come every page object, then every content stream, then
 	// every link annotation, so each block's object numbers are predictable.
-	annot_number := first_dynamic_object + 2*len(pages)
+	annot_number := FIRST_DYNAMIC_OBJECT + 2*len(pages)
 	page_index := 0
 	for page_index < len(pages) {
 		objects = append(objects, page_object(&page_object_input{
-			Content:     first_dynamic_object + len(pages) + page_index,
+			Content:     FIRST_DYNAMIC_OBJECT + len(pages) + page_index,
 			Annot_First: annot_number,
 			Annot_Count: len(pages[page_index].Links),
 		}))
@@ -1699,7 +1797,7 @@ func assemble_document(pages []page_content) (document []byte) {
 // The first per-page object is number eight: one catalog, one page tree, and
 // five fonts precede it. Page objects come first, then content streams, then
 // link annotations.
-const first_dynamic_object = 8
+const FIRST_DYNAMIC_OBJECT = 8
 
 func pages_object(count int) (body string) {
 	var kids strings.Builder
@@ -1708,7 +1806,7 @@ func pages_object(count int) (body string) {
 		if page_index > 0 {
 			kids.WriteByte(' ')
 		}
-		fmt.Fprintf(&kids, "%d 0 R", first_dynamic_object+page_index)
+		fmt.Fprintf(&kids, "%d 0 R", FIRST_DYNAMIC_OBJECT+page_index)
 		page_index++
 	}
 	return fmt.Sprintf("<< /Type /Pages /Kids [%s] /Count %d >>", kids.String(), count)
@@ -1729,7 +1827,7 @@ func page_object(input *page_object_input) (body string) {
 	return fmt.Sprintf(
 		"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 %s %s] "+
 			"/Resources %s%s /Contents %d 0 R >>",
-		format_number(page_width), format_number(page_height),
+		format_number(PAGE_WIDTH), format_number(PAGE_HEIGHT),
 		resources, annots, input.Content)
 }
 
@@ -1774,7 +1872,7 @@ func font_object(base_font string) (body string) {
 
 func serialize_pdf(objects []string) (document []byte) {
 	var output strings.Builder
-	output.WriteString(pdf_header)
+	output.WriteString(PDF_HEADER)
 	offsets := make([]int, len(objects))
 	object_index := 0
 	for object_index < len(objects) {

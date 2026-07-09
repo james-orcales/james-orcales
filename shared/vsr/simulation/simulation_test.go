@@ -22,32 +22,32 @@ func TestMain(m *testing.M) {
 }
 
 // How many virtual ticks one simulated run spans.
-const sim_total_ticks = 1500
+const SIM_TOTAL_TICKS = 1500
 
 // How many virtual ticks the fault-free tail runs before declaring the cluster wedged. Generous: a
 // view change, a recovery, and a few client retries must all complete once faults cease.
-const sim_tail_ticks = 800
+const SIM_TAIL_TICKS = 800
 
 // The superset of replicas pre-allocated for a run (§7): membership grows, shrinks, and swaps
 // within it as reconfigurations move the group, so the array must hold the largest group plus the
 // fresh nodes a swap or grow brings in. Indices beyond the initial group start dormant and join
 // only when a reconfiguration adds them.
-const sim_superset = 7
+const SIM_SUPERSET = 7
 
 // How often the administrator issues a reconfiguration, in ticks. Spaced so a reconfiguration has
 // room to complete — the new group catching up, the old group shutting down — before the next, yet
 // frequent enough that several epochs pass in a run.
-const sim_reconfigure_every = 320
+const SIM_RECONFIGURE_EVERY = 320
 
 // How many clients issue requests against the cluster.
-const sim_client_count = 3
+const SIM_CLIENT_COUNT = 3
 
 // How many ticks a client waits for a reply before re-sending the same request to every replica.
-const sim_client_timeout = 60
+const SIM_CLIENT_TIMEOUT = 60
 
 // The percent chance, each tick, that an idle client forgets its request-number knowledge and
 // recovers it from the cluster's cached reply — modeling §4.5 client recovery.
-const sim_client_recover_percent = 2
+const SIM_CLIENT_RECOVER_PERCENT = 2
 
 // State_machine_apply_input is the command and its predetermined prediction the application folds.
 type state_machine_apply_input struct {
@@ -103,28 +103,28 @@ type client struct {
 }
 
 // The tick interval between crash-restarts.
-const sim_crash_every = 220
+const SIM_CRASH_EVERY = 220
 
 // The tick interval between partition onsets.
-const sim_isolate_every = 180
+const SIM_ISOLATE_EVERY = 180
 
 // How many millisecond grains a partition lasts.
-const sim_isolate_window = 150
+const SIM_ISOLATE_WINDOW = 150
 
 // The tick interval between transient clock-fault onsets, under the clock-skew sweep.
-const sim_clock_fault_every = 200
+const SIM_CLOCK_FAULT_EVERY = 200
 
 // How many millisecond grains a transient clock fault lasts before it heals.
-const sim_clock_fault_window = 120
+const SIM_CLOCK_FAULT_WINDOW = 120
 
 // The largest message delay, in millisecond grains.
-const sim_delay_max = 3
+const SIM_DELAY_MAX = 3
 
 // The percent chance a message is dropped by the network.
-const sim_drop_percent = 8
+const SIM_DROP_PERCENT = 8
 
 // The percent chance a message is duplicated by the network.
-const sim_duplicate_percent = 4
+const SIM_DUPLICATE_PERCENT = 4
 
 // Simulation_result aggregates the liveness outcomes of one run.
 type simulation_result struct {
@@ -297,16 +297,16 @@ type simulator struct {
 
 // How many committed ops pass between checkpoints in the simulated cluster — small, so compaction
 // and the §5.2 gap path fire constantly across a run.
-const sim_checkpoint_interval = 4
+const SIM_CHECKPOINT_INTERVAL = 4
 
 // How many ops of suffix each replica retains past a checkpoint; small, so a behind replica often
 // needs a prefix a peer has already garbage-collected, exercising the gap response.
-const sim_log_retain = 4
+const SIM_LOG_RETAIN = 4
 
 // The most ops a busy primary batches into one Prepare (§6.2). Above one, so a primary loaded by
 // the clients' concurrent requests collects several into a batch, exercising the multi-entry
 // Prepare and the per-op acknowledgement of a batch.
-const sim_batch_max = 3
+const SIM_BATCH_MAX = 3
 
 // Identifies one client request for the exactly-once map.
 type outcome_key struct {
@@ -411,23 +411,23 @@ func new_simulator(t *testing.T, seed int64, clock_skew bool) (state *simulator)
 		Generator:      prng.New(uint64(seed)),
 		Clock:          clock,
 		Tick:           tick,
-		Replica_Clocks: make([]time.Clock, sim_superset),
-		Replica_Ticks:  make([]func(), sim_superset),
+		Replica_Clocks: make([]time.Clock, SIM_SUPERSET),
+		Replica_Ticks:  make([]func(), SIM_SUPERSET),
 		// Clock stream seeded apart from Generator so per-replica clocks draw without
 		// shifting the main fault schedule the regression seeds reproduce.
 		Clock_Generator:    prng.New(uint64(seed) ^ 0xc10cc10cc10cc10c),
 		Clock_Skew:         clock_skew,
-		Clock_Fault_Until:  make([]time.Moment, sim_superset),
-		Clock_Fault_Offset: make([]time.Duration, sim_superset),
+		Clock_Fault_Until:  make([]time.Moment, SIM_SUPERSET),
+		Clock_Fault_Offset: make([]time.Duration, SIM_SUPERSET),
 		Cluster_Count:      cluster_count,
-		Replicas:           make([]vsr.Replica, sim_superset),
-		Previous_Status:    make([]vsr.Status, sim_superset),
-		Isolated_Until:     make([]time.Moment, sim_superset),
-		Active:             make([]bool, sim_superset),
+		Replicas:           make([]vsr.Replica, SIM_SUPERSET),
+		Previous_Status:    make([]vsr.Status, SIM_SUPERSET),
+		Isolated_Until:     make([]time.Moment, SIM_SUPERSET),
+		Active:             make([]bool, SIM_SUPERSET),
 		Next_Nonce:         vsr.Nonce(1),
-		Executed:           make([]map[string]bool, sim_superset),
-		Executed_Result:    make([]map[string][]byte, sim_superset),
-		Accumulator:        make([]uint64, sim_superset),
+		Executed:           make([]map[string]bool, SIM_SUPERSET),
+		Executed_Result:    make([]map[string][]byte, SIM_SUPERSET),
+		Accumulator:        make([]uint64, SIM_SUPERSET),
 		Reference: reference_model{
 			Result_Of_Op:          map[vsr.Op][]byte{},
 			Request_Of_Op:         map[vsr.Op]outcome_key{},
@@ -440,7 +440,7 @@ func new_simulator(t *testing.T, seed int64, clock_skew bool) (state *simulator)
 		// the replica identifiers, so none aliases another.
 		Admin:             client{Identifier: vsr.Client_Identifier(2000)},
 		Next_Fresh:        cluster_count,
-		Reconfigure_After: sim_reconfigure_every,
+		Reconfigure_After: SIM_RECONFIGURE_EVERY,
 	}
 	simulator_allocate(state, cluster_count)
 	if trace_enabled(seed) {
@@ -461,7 +461,7 @@ func new_simulator(t *testing.T, seed int64, clock_skew bool) (state *simulator)
 // loss/reorder/duplication on a virtual clock, asserting safety after every delivery and recording
 // the coverage axes.
 func simulator_run_main(state *simulator) {
-	for tick_index := 0; tick_index < sim_total_ticks; tick_index++ {
+	for tick_index := 0; tick_index < SIM_TOTAL_TICKS; tick_index++ {
 		state.Tick()
 		// Advance every replica's own clock with the true clock; a drifting clock falls
 		// behind or races ahead within the same wall-clock tick.
@@ -480,12 +480,12 @@ func simulator_run_main(state *simulator) {
 }
 
 // Runs the fault-free tail: it stops new faults and new client requests, lets timers and delivery
-// drain the cluster, and returns whether it converged within sim_tail_ticks. The caller heals
+// drain the cluster, and returns whether it converged within SIM_TAIL_TICKS. The caller heals
 // partitions and clock faults first; a caller that leaves a fault in place (the negative test)
 // watches it fail to converge, proving the liveness check is not vacuous.
 func simulator_run_tail(state *simulator) (converged bool) {
 	state.Faultless = true
-	for tick_index := 0; tick_index < sim_tail_ticks; tick_index++ {
+	for tick_index := 0; tick_index < SIM_TAIL_TICKS; tick_index++ {
 		state.Tick()
 		for index := range state.Replica_Clocks {
 			state.Replica_Ticks[index]()
@@ -552,14 +552,14 @@ func simulator_allocate(state *simulator, cluster_count int) {
 			Heartbeat:           10 * time.MILLISECOND,
 			Timeout:             jitter * time.MILLISECOND,
 			State_Machine:       simulator_state_machine(state, index),
-			Checkpoint_Interval: sim_checkpoint_interval,
-			Log_Retain:          sim_log_retain,
-			Batch_Max:           sim_batch_max,
+			Checkpoint_Interval: SIM_CHECKPOINT_INTERVAL,
+			Log_Retain:          SIM_LOG_RETAIN,
+			Batch_Max:           SIM_BATCH_MAX,
 			Now:                 state.Replica_Clocks[index].Now_Realtime(),
 		})
 		state.Previous_Status[index] = state.Replicas[index].Status
 	}
-	state.Clients = make([]client, sim_client_count)
+	state.Clients = make([]client, SIM_CLIENT_COUNT)
 	for index := range state.Clients {
 		// Client identifiers start above any replica identifier so they never alias.
 		state.Clients[index] = client{Identifier: vsr.Client_Identifier(1000 + index)}
@@ -590,8 +590,8 @@ func simulator_replica_clock(state *simulator) (clock time.Clock, tick func()) {
 func dormant_configuration(index int) (configuration vsr.Configuration) {
 	return vsr.Configuration{
 		vsr.Replica_Identifier(index),
-		vsr.Replica_Identifier((index + 1) % sim_superset),
-		vsr.Replica_Identifier((index + 2) % sim_superset),
+		vsr.Replica_Identifier((index + 1) % SIM_SUPERSET),
+		vsr.Replica_Identifier((index + 2) % SIM_SUPERSET),
 	}
 }
 
@@ -701,14 +701,14 @@ func bytes_to_uint64(encoded []byte) (value uint64) {
 // injection is no longer here — explicit clients drive it from simulator_tick_clients so
 // exactly-once is exercised by real retries.
 func simulator_inject_faults(state *simulator, tick_index int, now time.Moment) {
-	if tick_index%sim_crash_every == 0 {
+	if tick_index%SIM_CRASH_EVERY == 0 {
 		simulator_inject_crash(state, now)
 	}
-	if tick_index%sim_isolate_every == 0 {
+	if tick_index%SIM_ISOLATE_EVERY == 0 {
 		simulator_inject_isolation(state, now)
 	}
 	if state.Clock_Skew {
-		if tick_index%sim_clock_fault_every == 0 {
+		if tick_index%SIM_CLOCK_FAULT_EVERY == 0 {
 			simulator_inject_clock_fault(state, now)
 		}
 	}
@@ -729,7 +729,7 @@ func simulator_inject_clock_fault(state *simulator, now time.Moment) {
 		time.Duration(time.MILLISECOND)
 	state.Clock_Fault_Offset[victim] = jump
 	state.Clock_Fault_Until[victim] = now +
-		time.Moment(sim_clock_fault_window)*time.Moment(time.MILLISECOND)
+		time.Moment(SIM_CLOCK_FAULT_WINDOW)*time.Moment(time.MILLISECOND)
 }
 
 // Partitions one active replica for a window. A voting replica is partitioned only when the group
@@ -747,7 +747,7 @@ func simulator_inject_isolation(state *simulator, now time.Moment) {
 			return
 		}
 	}
-	window := time.Moment(sim_isolate_window) * time.Moment(time.MILLISECOND)
+	window := time.Moment(SIM_ISOLATE_WINDOW) * time.Moment(time.MILLISECOND)
 	state.Isolated_Until[victim] = now + window
 	jlog.Logger_Info(state.Trace, "fault",
 		jlog.Int64("t", now),
@@ -832,7 +832,7 @@ func simulator_inject_reconfiguration(state *simulator, tick_index int, now time
 		return
 	}
 	state.Admin.Request_Number++
-	state.Reconfigure_After = tick_index + sim_reconfigure_every
+	state.Reconfigure_After = tick_index + SIM_RECONFIGURE_EVERY
 	primary := simulator_believed_primary(state)
 	jlog.Logger_Info(state.Trace, "fault",
 		jlog.Int64("t", now),
@@ -891,13 +891,13 @@ func simulator_next_configuration(state *simulator) (target vsr.Configuration, o
 	case 0:
 		// Grow: add the next two DISTINCT pristine nodes (the second searched past the
 		// first, so neither re-adds a current member — a duplicate breaks quorum math).
-		first := simulator_next_fresh_from(state, 0)
-		second := simulator_next_fresh_from(state, first+1)
-		if second >= sim_superset {
+		FIRST := simulator_next_fresh_from(state, 0)
+		second := simulator_next_fresh_from(state, FIRST+1)
+		if second >= SIM_SUPERSET {
 			return target, false
 		}
 		target = append(current,
-			vsr.Replica_Identifier(first), vsr.Replica_Identifier(second))
+			vsr.Replica_Identifier(FIRST), vsr.Replica_Identifier(second))
 	case 1:
 		// Shrink: drop the last two members if that keeps at least three.
 		if len(current) < 5 {
@@ -906,7 +906,7 @@ func simulator_next_configuration(state *simulator) (target vsr.Configuration, o
 		target = current[:len(current)-2]
 	default:
 		// Swap: replace the last member with the next fresh node.
-		if state.Next_Fresh >= sim_superset {
+		if state.Next_Fresh >= SIM_SUPERSET {
 			return target, false
 		}
 		target = append(current[:len(current)-1],
@@ -1015,7 +1015,7 @@ func simulator_next_fresh(state *simulator) (index int) {
 // any current member (the duplicate-member config a naive Next_Fresh+1 produced, which broke quorum
 // math and tripped the commit-not-past-op assertion).
 func simulator_next_fresh_from(state *simulator, start int) (index int) {
-	for index = start; index < sim_superset; index++ {
+	for index = start; index < SIM_SUPERSET; index++ {
 		if configuration_contains(state.Configuration, vsr.Replica_Identifier(index)) {
 			continue
 		}
@@ -1027,7 +1027,7 @@ func simulator_next_fresh_from(state *simulator, start int) (index int) {
 		}
 		return index
 	}
-	return sim_superset
+	return SIM_SUPERSET
 }
 
 // Issues each idle client's next request to the believed primary, re-sends a timed-out request to
@@ -1035,7 +1035,7 @@ func simulator_next_fresh_from(state *simulator, start int) (index int) {
 // client's request-number to model §4.5 client recovery.
 func simulator_tick_clients(state *simulator, now time.Moment) {
 	primary := simulator_believed_primary(state)
-	timeout := time.Moment(sim_client_timeout) * time.Moment(time.MILLISECOND)
+	timeout := time.Moment(SIM_CLIENT_TIMEOUT) * time.Moment(time.MILLISECOND)
 	for index := range state.Clients {
 		this := &state.Clients[index]
 		if this.Unanswered {
@@ -1048,7 +1048,7 @@ func simulator_tick_clients(state *simulator, now time.Moment) {
 		if state.Faultless {
 			continue // The tail drains open requests; it issues no new ones.
 		}
-		recover := prng.Generator_Below(&state.Generator, 100) < sim_client_recover_percent
+		recover := prng.Generator_Below(&state.Generator, 100) < SIM_CLIENT_RECOVER_PERCENT
 		if recover {
 			// Forget the request-number and re-send the last command to relearn the
 			// number from the cached reply, the §4.5 recovery path. A client with no
@@ -1496,16 +1496,16 @@ func simulator_send(state *simulator, messages []vsr.Message, now time.Moment) {
 		}
 		if !state.Faultless {
 			// The fault-free tail delivers everything; only the faulty phase drops.
-			if prng.Generator_Below(&state.Generator, 100) < sim_drop_percent {
+			if prng.Generator_Below(&state.Generator, 100) < SIM_DROP_PERCENT {
 				continue
 			}
 		}
 		copies := 1
-		if prng.Generator_Below(&state.Generator, 100) < sim_duplicate_percent {
+		if prng.Generator_Below(&state.Generator, 100) < SIM_DUPLICATE_PERCENT {
 			copies = 2
 		}
 		for copy_index := 0; copy_index < copies; copy_index++ {
-			grains := prng.Generator_Below(&state.Generator, sim_delay_max+1)
+			grains := prng.Generator_Below(&state.Generator, SIM_DELAY_MAX+1)
 			delay := time.Moment(grains) * time.Moment(time.MILLISECOND)
 			state.Network = append(state.Network, scheduled_message{
 				Message: message, Deliver_At: now + delay,
@@ -2049,17 +2049,17 @@ type simulator_check_agreement_pair_input struct {
 // Asserts two active replicas hold identical commands at every op both committed and both retain.
 func simulator_check_agreement_pair(input *simulator_check_agreement_pair_input) {
 	a, b := input.A, input.B
-	limit := a.Commit
-	if b.Commit < limit {
-		limit = b.Commit
+	LIMIT := a.Commit
+	if b.Commit < LIMIT {
+		LIMIT = b.Commit
 	}
 	// Start above the higher of the two Log_Starts: an op at or below either is compacted out
 	// of that replica's log, so only the retained suffix both hold is comparable.
-	first := a.Log_Start
-	if b.Log_Start > first {
-		first = b.Log_Start
+	FIRST := a.Log_Start
+	if b.Log_Start > FIRST {
+		FIRST = b.Log_Start
 	}
-	for op := vsr.Commit(first) + 1; op <= limit; op++ {
+	for op := vsr.Commit(FIRST) + 1; op <= LIMIT; op++ {
 		ai := op - vsr.Commit(a.Log_Start) - 1
 		bi := op - vsr.Commit(b.Log_Start) - 1
 		if string(a.Log[ai].Command) != string(b.Log[bi].Command) {

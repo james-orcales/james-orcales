@@ -90,6 +90,35 @@ func Test_Parse_Single_Command(t *testing.T) {
 	}
 }
 
+// Test_Parse_Multicall verifies a multicall program selects its command from the
+// binary name in argv[0], not a token in slot 1, so a symlinked verb dispatches on
+// its own name and everything after argv[0] is that command's arguments.
+func Test_Parse_Multicall(t *testing.T) {
+	program := new_multicall_fixture()
+
+	// The command is the basename of argv[0]; the rest of argv is its arguments.
+	command, err := cli.Program_Parse(&program, []string{"/usr/local/bin/add", "milk"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if command.Label != "add" {
+		t.Errorf("expected add, got %q", command.Label)
+	}
+	if cli.Get_Option(command.Arguments, "task").Value.(string) != "milk" {
+		t.Errorf("expected task milk, got %v",
+			cli.Get_Option(command.Arguments, "task").Value)
+	}
+
+	// An unknown binary name suggests the closest command.
+	_, err = cli.Program_Parse(&program, []string{"ad"})
+	if err == nil {
+		t.Fatal("expected an error for the unknown multicall name ad")
+	}
+	if !strings.Contains(err.Error(), `did you mean "add"`) {
+		t.Errorf("expected a suggestion of add, got %v", err)
+	}
+}
+
 // Test_Parse_Arguments verifies the argument count and integer conversion.
 func Test_Parse_Arguments(t *testing.T) {
 	fixture := new_cli_fixture()
