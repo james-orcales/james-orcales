@@ -6,6 +6,11 @@
 An unrecognized invoking-link name writes a usage error and returns the usage
 exit code.
 
+### Help
+
+A verb invoked with -help writes that verb's own usage and returns success, even
+when its required arguments are absent.
+
 # Wire
 
 ### Round Trip
@@ -27,6 +32,18 @@ text, preserving object key order.
 Parsing CSV and emitting the result reproduces the same text; the header row
 names the columns and each later row becomes a record.
 
+# Input
+
+### Empty
+
+Empty standard input decodes to a null value, so a verb given nothing flows a
+null through rather than failing.
+
+### Limit
+
+When the injected reader reports input past its bound, the verb writes a runtime
+error and returns the failure exit code, never a truncated value.
+
 # Verbs
 
 ### Sort By
@@ -47,3 +64,8 @@ equality.
 ### Count
 
 count returns the number of list items or record fields as a number.
+
+### Shape
+
+A verb that requires a list, given a scalar, writes a verb-prefixed runtime error
+naming the shape it got.

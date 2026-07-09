@@ -5,6 +5,7 @@ package main
 
 import (
 	"errors"
+	"fmt"
 	"io"
 	"os"
 
@@ -42,21 +43,26 @@ func main_is_terminal() (is_terminal bool) {
 	return information.Mode()&os.ModeCharDevice != 0
 }
 
-// Reads standard input in bounded chunks, never holding more than the byte cap.
-// The low-level Read is the bounded primitive; io.ReadAll is banned.
-func main_read_stdin() (data []byte) {
+// Reads standard input in bounded chunks, erroring when it exceeds the byte cap so a
+// truncated value never parses silently downstream. The low-level Read is the bounded
+// primitive; io.ReadAll is banned. Reading one chunk past the cap is what lets the
+// overflow be detected rather than silently dropped.
+func main_read_stdin() (data []byte, err error) {
 	data = []byte{}
 	chunk := make([]byte, MAIN_STDIN_CHUNK)
-	for len(data) < MAIN_STDIN_BYTES_MAX {
+	for len(data) <= MAIN_STDIN_BYTES_MAX {
 		count, read_err := os.Stdin.Read(chunk)
 		if count > 0 {
 			data = append(data, chunk[:count]...)
 		}
 		if read_err != nil {
-			return data
+			break
 		}
 	}
-	return data
+	if len(data) > MAIN_STDIN_BYTES_MAX {
+		return nil, fmt.Errorf("input exceeds %d bytes", MAIN_STDIN_BYTES_MAX)
+	}
+	return data, nil
 }
 
 // Reads up to MAIN_FILE_BYTES_MAX bytes of a file, capping memory on a huge one.
@@ -72,7 +78,7 @@ func main_read_file(name string) (content []byte, err error) {
 	}
 	byte_size := information.Size()
 	if byte_size > MAIN_FILE_BYTES_MAX {
-		byte_size = MAIN_FILE_BYTES_MAX
+		return nil, fmt.Errorf("file exceeds %d bytes", MAIN_FILE_BYTES_MAX)
 	}
 	buffer := make([]byte, byte_size)
 	_, read_err := io.ReadFull(io.LimitReader(file, byte_size), buffer)

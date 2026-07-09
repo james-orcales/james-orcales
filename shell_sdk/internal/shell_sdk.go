@@ -12,6 +12,8 @@ import (
 	"path"
 	"strconv"
 	"strings"
+
+	"local/james-orcales/shared/cli"
 )
 
 // The successful process exit code.
@@ -81,8 +83,9 @@ type Main_Input struct {
 	Output io.Writer
 	// Error_Output is where errors are written.
 	Error_Output io.Writer
-	// Read_Stdin returns the bounded contents of standard input.
-	Read_Stdin func() (data []byte)
+	// Read_Stdin returns the bounded contents of standard input, or an error when
+	// the input exceeds the bound, so a truncated value never parses silently.
+	Read_Stdin func() (data []byte, err error)
 	// Read_File returns a file's bounded contents, or an error.
 	Read_File func(name string) (data []byte, err error)
 	// Stdout_Is_Terminal reports whether output goes to a terminal.
@@ -102,18 +105,19 @@ func Main(input *Main_Input) (status_code int) {
 	if is_install {
 		return run_install(input, destination)
 	}
+	program := verb_program()
 	if wants_help(input.Arguments) {
-		print_help(input.Output)
-		return EXIT_SUCCESS
+		return print_verb_help(input, &program)
 	}
-	verb := path.Base(input.Arguments[0])
-	kind, known := verb_kind(verb)
-	if !known {
-		print_help(input.Error_Output)
+	command, parse_err := cli.Program_Parse(&program, input.Arguments)
+	if parse_err != nil {
+		fmt.Fprintf(input.Error_Output, "shell_sdk: %v\n\n", parse_err)
+		cli.Print_Help(input.Error_Output, program)
 		return EXIT_USAGE
 	}
-	positional, mode := resolve_output_mode(input.Arguments[1:], input.Stdout_Is_Terminal)
-	return run_and_write(input, kind, positional, mode)
+	mode := resolve_output_mode(&program, input.Stdout_Is_Terminal)
+	kind, _ := verb_kind_of(command.Label)
+	return run_and_write(input, kind, command, mode)
 }
 
 // Verb_Kind identifies one of the walled-garden verbs.
@@ -188,13 +192,14 @@ const OUTPUT_MODE_JSON Output_Mode = 1
 // The table mode renders an aligned table for a terminal.
 const OUTPUT_MODE_TABLE Output_Mode = 2
 
-// Runs one verb and writes its output, or reports the error and fails.
+// Runs one verb and writes its output, or reports a verb-prefixed runtime error and
+// fails. A parse error is caught earlier, in Main, as a usage error.
 func run_and_write(
-	input *Main_Input, kind Verb_Kind, arguments []string, mode Output_Mode,
+	input *Main_Input, kind Verb_Kind, command cli.Command, mode Output_Mode,
 ) (status_code int) {
-	output, run_err := run_verb(input, kind, arguments, mode)
+	output, run_err := run_verb(input, kind, command, mode)
 	if run_err != nil {
-		fmt.Fprintf(input.Error_Output, "shell_sdk: %v\n", run_err)
+		fmt.Fprintf(input.Error_Output, "shell_sdk: %s: %v\n", command.Label, run_err)
 		return EXIT_FAILURE
 	}
 	_, write_err := input.Output.Write(output)
@@ -204,65 +209,122 @@ func run_and_write(
 	return EXIT_SUCCESS
 }
 
-// Resolves a verb name to its kind. The names avoid shell keywords and commands.
-func verb_kind(name string) (kind Verb_Kind, known bool) {
-	switch name {
-	case "load":
-		return VERB_KIND_LOAD, true
-	case "get":
-		return VERB_KIND_GET, true
-	case "pick":
-		return VERB_KIND_PICK, true
-	case "filter":
-		return VERB_KIND_FILTER, true
-	case "first":
-		return VERB_KIND_FIRST, true
-	case "from":
-		return VERB_KIND_FROM, true
-	case "to":
-		return VERB_KIND_TO, true
-	}
-	return verb_kind_more(name)
+// A verb's definition: its link name, help summary, the cli shape that parses its
+// command line, and the transform kind it dispatches to. The verb table built from
+// these is the single source of truth for dispatch, the install fan-out, and help.
+type verb_descriptor struct {
+	Kind      Verb_Kind
+	Label     string
+	Summary   string
+	Arguments []cli.Option
+	Flags     []cli.Option
 }
 
-// Resolves the second half of the verb names, keeping verb_kind within the
-// per-function line budget.
-func verb_kind_more(name string) (kind Verb_Kind, known bool) {
-	switch name {
-	case "sort-by":
-		return VERB_KIND_SORT_BY, true
-	case "group-by":
-		return VERB_KIND_GROUP_BY, true
-	case "distinct":
-		return VERB_KIND_DISTINCT, true
-	case "reverse":
-		return VERB_KIND_REVERSE, true
-	case "final":
-		return VERB_KIND_FINAL, true
-	case "columns":
-		return VERB_KIND_COLUMNS, true
-	case "reject":
-		return VERB_KIND_REJECT, true
-	case "relabel":
-		return VERB_KIND_RELABEL, true
-	case "count":
-		return VERB_KIND_COUNT, true
-	case "wrap":
-		return VERB_KIND_WRAP, true
-	case "flatten":
-		return VERB_KIND_FLATTEN, true
+// The verb table: the one place a verb's name, shape, and transform are declared.
+func verb_table() (verbs []verb_descriptor) {
+	return []verb_descriptor{
+		{Kind: VERB_KIND_LOAD, Label: "load", Summary: "read a file into the garden",
+			Arguments: string_arguments("file")},
+		{Kind: VERB_KIND_FROM, Label: "from", Summary: "parse stdin as json or csv",
+			Arguments: string_arguments("format")},
+		{Kind: VERB_KIND_TO, Label: "to", Summary: "serialize to json or csv",
+			Arguments: string_arguments("format")},
+		{Kind: VERB_KIND_GET, Label: "get", Summary: "navigate a dotted cell path",
+			Arguments: string_arguments("path")},
+		{Kind: VERB_KIND_PICK, Label: "pick", Summary: "keep only the named fields",
+			Arguments: variadic_argument("field")},
+		{Kind: VERB_KIND_FILTER, Label: "filter", Summary: "keep matching rows",
+			Arguments: string_arguments("field", "operator", "value")},
+		{Kind: VERB_KIND_FIRST, Label: "first", Summary: "first element, or -count",
+			Flags: count_flag()},
+		{Kind: VERB_KIND_SORT_BY, Label: "sort-by", Summary: "order records by a field",
+			Arguments: string_arguments("field")},
+		{Kind: VERB_KIND_GROUP_BY, Label: "group-by", Summary: "bucket records by a field",
+			Arguments: string_arguments("field")},
+		{Kind: VERB_KIND_DISTINCT, Label: "distinct", Summary: "drop duplicate elements"},
+		{Kind: VERB_KIND_REVERSE, Label: "reverse", Summary: "reverse a list"},
+		{Kind: VERB_KIND_FINAL, Label: "final", Summary: "last element, or -count",
+			Flags: count_flag()},
+		{Kind: VERB_KIND_COLUMNS, Label: "columns", Summary: "the record keys as a list"},
+		{Kind: VERB_KIND_REJECT, Label: "reject", Summary: "drop the named fields",
+			Arguments: variadic_argument("field")},
+		{Kind: VERB_KIND_RELABEL, Label: "relabel", Summary: "rename a field",
+			Arguments: string_arguments("old", "new")},
+		{Kind: VERB_KIND_COUNT, Label: "count", Summary: "the number of items or fields"},
+		{Kind: VERB_KIND_WRAP, Label: "wrap", Summary: "wrap the value in a record",
+			Arguments: string_arguments("name")},
+		{Kind: VERB_KIND_FLATTEN, Label: "flatten", Summary: "flatten one level of lists"},
+	}
+}
+
+// Builds the required string positional arguments with the given labels.
+func string_arguments(names ...string) (arguments []cli.Option) {
+	for name_index := 0; name_index < len(names); name_index++ {
+		arguments = append(arguments, cli.New_Argument[string](
+			cli.New_Argument_Input{Label: names[name_index]}))
+	}
+	return arguments
+}
+
+// Builds a single variadic string argument that collects the trailing positionals.
+func variadic_argument(name string) (arguments []cli.Option) {
+	return []cli.Option{cli.New_Variadic[string](cli.New_Variadic_Input{Label: name})}
+}
+
+// Builds the -count flag that first and final read for their element count.
+func count_flag() (flags []cli.Option) {
+	return []cli.Option{cli.New_Flag(cli.New_Flag_Input[int]{
+		Label: "count", Description: "how many elements",
+	})}
+}
+
+// Builds the cli program: every verb is a multicall command selected by its link
+// name, with -json and -table as global output-mode flags.
+func verb_program() (program cli.Program) {
+	table := verb_table()
+	commands := []cli.Command{}
+	for verb_index := 0; verb_index < len(table); verb_index++ {
+		descriptor := table[verb_index]
+		commands = append(commands, cli.Command{
+			Label: descriptor.Label, Description: descriptor.Summary,
+			Arguments: descriptor.Arguments, Flags: descriptor.Flags,
+		})
+	}
+	return cli.New_Multicall(cli.New_Multicall_Input{
+		Label: "shell_sdk", Description: "a structured-data toolkit",
+		Global_Flags: output_flags(), Commands: commands,
+	})
+}
+
+// The global output-mode flags: -json and -table force a rendering; the default is a
+// table at a terminal, else the binary wire format between sibling verbs.
+func output_flags() (flags []cli.Option) {
+	return []cli.Option{
+		cli.New_Flag(cli.New_Flag_Input[bool]{Label: "json", Description: "emit JSON"}),
+		cli.New_Flag(cli.New_Flag_Input[bool]{
+			Label: "table", Description: "render a table",
+		}),
+	}
+}
+
+// Resolves a verb link name to its transform kind, from the verb table.
+func verb_kind_of(label string) (kind Verb_Kind, known bool) {
+	table := verb_table()
+	for verb_index := 0; verb_index < len(table); verb_index++ {
+		if table[verb_index].Label == label {
+			return table[verb_index].Kind, true
+		}
 	}
 	return VERB_KIND_LOAD, false
 }
 
-// The verb names, for -install to fan the binary out; kept in step with
-// verb_kind above.
+// The verb link names, for -install to fan the binary out, from the verb table.
 func verb_names() (names []string) {
-	return []string{
-		"load", "get", "pick", "filter", "first", "from", "to",
-		"sort-by", "group-by", "distinct", "reverse", "final", "columns",
-		"reject", "relabel", "count", "wrap", "flatten",
+	table := verb_table()
+	for verb_index := 0; verb_index < len(table); verb_index++ {
+		names = append(names, table[verb_index].Label)
 	}
+	return names
 }
 
 // Pulls the -install=<path> destination out of the arguments, if present.
@@ -282,40 +344,38 @@ func wants_help(arguments []string) (wants bool) {
 		if arguments[argument_index] == "-h" {
 			return true
 		}
-		if arguments[argument_index] == "--help" {
+		if arguments[argument_index] == "-help" {
 			return true
 		}
 	}
 	return false
 }
 
-// Writes the usage help: the verbs, filter operators, output flags, and the
-// install syntax.
-func print_help(output io.Writer) {
-	fmt.Fprint(output, HELP_TEXT)
+// Prints per-verb help for the invoked link, or the whole catalog when the link is
+// not a known verb. Help short-circuits cli parsing so it works despite missing
+// required arguments.
+func print_verb_help(input *Main_Input, program *cli.Program) (status_code int) {
+	label := path.Base(input.Arguments[0])
+	command, found := find_command(program, label)
+	if found {
+		cli.Print_Command(input.Output, *program, command)
+		return EXIT_SUCCESS
+	}
+	cli.Print_Help(input.Output, *program)
+	return EXIT_SUCCESS
 }
 
-// The usage help text.
-const HELP_TEXT = `shell_sdk: a structured-data toolkit, one binary symlinked to verb names,
-passing typed values through pipes.
-
-Invoke via a verb-named link, for example:
-  load data.json | get users | filter age gt 30 | to json
-
-Verbs:
-  load <file>                  read a file into the garden
-  from <format>                parse stdin as a foreign format (json)
-  to <format>                  serialize out of the garden (json)
-  get <path>                   navigate a dotted cell path
-  pick <field>...              keep only the named fields
-  filter <field> <op> <value>  keep rows where the cell compares
-  first [count]                take the first element, or the first count
-
-Filter operators: eq ne lt le gt ge
-Output flags:     --json  --table   (default: table at a terminal, else binary)
-
-Install: shell_sdk -install=<dir>   (symlinks every verb into <dir>; add to PATH)
-`
+// Returns the program's command with the given label.
+func find_command(
+	program *cli.Program, label string,
+) (command cli.Command, found bool) {
+	for command_index := 0; command_index < len(program.Commands); command_index++ {
+		if program.Commands[command_index].Label == label {
+			return program.Commands[command_index], true
+		}
+	}
+	return cli.Command{}, false
+}
 
 // Fans the binary out into one verb-named link per verb under the destination.
 func run_install(input *Main_Input, destination string) (status_code int) {
@@ -331,40 +391,45 @@ func run_install(input *Main_Input, destination string) (status_code int) {
 	return EXIT_SUCCESS
 }
 
-// Splits the output-mode flags out of the arguments and resolves the mode: a
-// forcing flag wins, then a table at a terminal, else the binary wire format.
+// Resolves the output mode from the parsed global flags: a forcing flag wins, then a
+// table at a terminal, else the binary wire format between sibling verbs.
 func resolve_output_mode(
-	arguments []string, stdout_is_terminal bool,
-) (positional []string, mode Output_Mode) {
-	forced := OUTPUT_MODE_WIRE
-	forced_set := false
-	positional = []string{}
-	for argument_index := 0; argument_index < len(arguments); argument_index++ {
-		argument := arguments[argument_index]
-		if argument == "--json" {
-			forced = OUTPUT_MODE_JSON
-			forced_set = true
-			continue
-		}
-		if argument == "--table" {
-			forced = OUTPUT_MODE_TABLE
-			forced_set = true
-			continue
-		}
-		positional = append(positional, argument)
+	program *cli.Program, stdout_is_terminal bool,
+) (mode Output_Mode) {
+	if cli.Get_Option(program.Global_Flags, "json").Value.(bool) {
+		return OUTPUT_MODE_JSON
 	}
-	if forced_set {
-		return positional, forced
+	if cli.Get_Option(program.Global_Flags, "table").Value.(bool) {
+		return OUTPUT_MODE_TABLE
 	}
 	if stdout_is_terminal {
-		return positional, OUTPUT_MODE_TABLE
+		return OUTPUT_MODE_TABLE
 	}
-	return positional, OUTPUT_MODE_WIRE
+	return OUTPUT_MODE_WIRE
 }
 
 // Null_Value builds the null value.
 func Null_Value() (value Value) {
 	return Value{Kind: VALUE_KIND_NULL}
+}
+
+// The lowercase name of a value kind, for a wrong-shape error message.
+func kind_name(kind Value_Kind) (name string) {
+	switch kind {
+	case VALUE_KIND_NULL:
+		return "null"
+	case VALUE_KIND_BOOLEAN:
+		return "boolean"
+	case VALUE_KIND_NUMBER:
+		return "number"
+	case VALUE_KIND_STRING:
+		return "string"
+	case VALUE_KIND_LIST:
+		return "list"
+	case VALUE_KIND_RECORD:
+		return "record"
+	}
+	return "value"
 }
 
 // Boolean_Value builds a boolean value.
@@ -1159,33 +1224,84 @@ func json_quote(text string) (quoted string) {
 // Runs one verb against injected IO, returning the bytes to write. The source
 // verbs read a file or stdin; the rest read stdin, transform, and re-encode.
 func run_verb(
-	input *Main_Input, kind Verb_Kind, arguments []string, mode Output_Mode,
+	input *Main_Input, kind Verb_Kind, command cli.Command, mode Output_Mode,
 ) (output []byte, err error) {
+	positionals := command_positionals(command)
 	switch kind {
 	case VERB_KIND_LOAD:
-		return run_load(input, arguments, mode)
+		return run_load(input, positionals, mode)
 	case VERB_KIND_FROM:
-		return run_from(input, arguments, mode)
+		return run_from(input, positionals, mode)
 	case VERB_KIND_TO:
-		return run_to(input, arguments)
+		return run_to(input, positionals)
 	}
-	value, decode_err := decode_input(input.Read_Stdin())
+	data, read_err := input.Read_Stdin()
+	if read_err != nil {
+		return nil, read_err
+	}
+	value, decode_err := decode_input(data)
 	if decode_err != nil {
 		return nil, decode_err
 	}
-	transformed, transform_err := apply_transform(kind, arguments, value)
+	transformed, transform_err := apply_transform(&transform_input{
+		Kind:        kind,
+		Positionals: positionals,
+		Count:       verb_count_flag(command, kind),
+		Value:       value,
+	})
 	if transform_err != nil {
 		return nil, transform_err
 	}
 	return encode_output(transformed, mode), nil
 }
 
-// Runs the load verb: read a file, decode by sniffing, re-encode for the mode.
-func run_load(input *Main_Input, arguments []string, mode Output_Mode) (output []byte, err error) {
-	if len(arguments) == 0 {
-		return nil, fmt.Errorf("load needs a file")
+// The inputs a transforming verb needs: the positional arguments, the -count flag
+// (for first and final), and the decoded value to transform.
+type transform_input struct {
+	Kind        Verb_Kind
+	Positionals []string
+	Count       int
+	Value       Value
+}
+
+// The positional argument values of a parsed command, flattened in declaration
+// order: each scalar string, then each element of a trailing variadic.
+func command_positionals(command cli.Command) (positionals []string) {
+	positionals = []string{}
+	for argument_index := 0; argument_index < len(command.Arguments); argument_index++ {
+		values := option_strings(command.Arguments[argument_index])
+		positionals = append(positionals, values...)
 	}
-	name := arguments[0]
+	return positionals
+}
+
+// The string values an option carries: one for a scalar, each element for a slice.
+func option_strings(option cli.Option) (values []string) {
+	text, is_string := option.Value.(string)
+	if is_string {
+		return []string{text}
+	}
+	slice, is_slice := option.Value.([]string)
+	if is_slice {
+		return slice
+	}
+	return []string{}
+}
+
+// The -count flag for first and final; zero for every other verb, which has none.
+func verb_count_flag(command cli.Command, kind Verb_Kind) (count int) {
+	switch kind {
+	case VERB_KIND_FIRST, VERB_KIND_FINAL:
+		return cli.Get_Option(command.Flags, "count").Value.(int)
+	}
+	return 0
+}
+
+// Runs the load verb: read a file, decode by sniffing, re-encode for the mode.
+func run_load(
+	input *Main_Input, positionals []string, mode Output_Mode,
+) (output []byte, err error) {
+	name := positionals[0]
 	data, read_err := input.Read_File(name)
 	if read_err != nil {
 		return nil, fmt.Errorf("cannot read %s", name)
@@ -1209,13 +1325,15 @@ func load_decode(name string, data []byte) (value Value, err error) {
 	return decode_input(data)
 }
 
-// Runs the from verb: parse stdin as an explicit foreign format.
-func run_from(input *Main_Input, arguments []string, mode Output_Mode) (output []byte, err error) {
-	format := "json"
-	if len(arguments) > 0 {
-		format = arguments[0]
+// Runs the from verb: parse stdin as the explicit foreign format.
+func run_from(
+	input *Main_Input, positionals []string, mode Output_Mode,
+) (output []byte, err error) {
+	data, read_err := input.Read_Stdin()
+	if read_err != nil {
+		return nil, read_err
 	}
-	value, parse_err := parse_format(format, input.Read_Stdin())
+	value, parse_err := parse_format(positionals[0], data)
 	if parse_err != nil {
 		return nil, parse_err
 	}
@@ -1223,16 +1341,16 @@ func run_from(input *Main_Input, arguments []string, mode Output_Mode) (output [
 }
 
 // Runs the to verb: decode stdin and serialize out of the garden.
-func run_to(input *Main_Input, arguments []string) (output []byte, err error) {
-	format := "json"
-	if len(arguments) > 0 {
-		format = arguments[0]
+func run_to(input *Main_Input, positionals []string) (output []byte, err error) {
+	data, read_err := input.Read_Stdin()
+	if read_err != nil {
+		return nil, read_err
 	}
-	value, decode_err := decode_input(input.Read_Stdin())
+	value, decode_err := decode_input(data)
 	if decode_err != nil {
 		return nil, decode_err
 	}
-	text, emit_err := emit_format(format, value)
+	text, emit_err := emit_format(positionals[0], value)
 	if emit_err != nil {
 		return nil, emit_err
 	}
@@ -1262,53 +1380,55 @@ func emit_format(format string, value Value) (text string, err error) {
 }
 
 // Applies a transforming verb to a decoded value.
-func apply_transform(kind Verb_Kind, arguments []string, value Value) (result Value, err error) {
-	switch kind {
+func apply_transform(input *transform_input) (result Value, err error) {
+	switch input.Kind {
 	case VERB_KIND_GET:
-		return verb_get(arguments, value)
+		return verb_get(input.Positionals, input.Value)
 	case VERB_KIND_PICK:
-		return verb_pick(arguments, value)
+		return verb_pick(input.Positionals, input.Value)
 	case VERB_KIND_FILTER:
-		return verb_filter(arguments, value)
+		return verb_filter(input.Positionals, input.Value)
 	case VERB_KIND_FIRST:
-		return verb_first(arguments, value)
+		return verb_first(input.Count, input.Value)
 	}
-	return apply_transform_more(kind, arguments, value)
+	return apply_transform_more(input)
 }
 
 // Applies the second half of the transforming verbs.
-func apply_transform_more(
-	kind Verb_Kind, arguments []string, value Value,
-) (result Value, err error) {
-	switch kind {
+func apply_transform_more(input *transform_input) (result Value, err error) {
+	switch input.Kind {
 	case VERB_KIND_SORT_BY:
-		return verb_sort_by(arguments, value)
+		return verb_sort_by(input.Positionals, input.Value)
 	case VERB_KIND_GROUP_BY:
-		return verb_group_by(arguments, value)
+		return verb_group_by(input.Positionals, input.Value)
 	case VERB_KIND_DISTINCT:
-		return verb_distinct(arguments, value)
+		return verb_distinct(input.Positionals, input.Value)
 	case VERB_KIND_REVERSE:
-		return verb_reverse(arguments, value)
+		return verb_reverse(input.Positionals, input.Value)
 	case VERB_KIND_FINAL:
-		return verb_final(arguments, value)
+		return verb_final(input.Count, input.Value)
 	case VERB_KIND_COLUMNS:
-		return verb_columns(arguments, value)
+		return verb_columns(input.Positionals, input.Value)
 	case VERB_KIND_REJECT:
-		return verb_reject(arguments, value)
+		return verb_reject(input.Positionals, input.Value)
 	case VERB_KIND_RELABEL:
-		return verb_relabel(arguments, value)
+		return verb_relabel(input.Positionals, input.Value)
 	case VERB_KIND_COUNT:
-		return verb_count(arguments, value)
+		return verb_count(input.Positionals, input.Value)
 	case VERB_KIND_WRAP:
-		return verb_wrap(arguments, value)
+		return verb_wrap(input.Positionals, input.Value)
 	case VERB_KIND_FLATTEN:
-		return verb_flatten(arguments, value)
+		return verb_flatten(input.Positionals, input.Value)
 	}
-	return value, nil
+	return input.Value, nil
 }
 
-// Decodes stdin by sniffing: a sibling's wire, foreign JSON, or raw text.
+// Decodes stdin by sniffing: empty input is a null value, then a sibling's wire,
+// foreign JSON, or raw text.
 func decode_input(data []byte) (value Value, err error) {
+	if len(data) == 0 {
+		return Null_Value(), nil
+	}
 	switch Sniff(data) {
 	case INPUT_KIND_WIRE:
 		return Wire_Decode(data)
@@ -1329,18 +1449,16 @@ func encode_output(value Value, mode Output_Mode) (output []byte) {
 	return Wire_Encode(value)
 }
 
-// Runs the get verb: navigate a dotted cell path.
+// Runs the get verb: navigate a dotted cell path. cli guarantees the path argument.
 func verb_get(arguments []string, value Value) (result Value, err error) {
-	if len(arguments) == 0 {
-		return Value{}, fmt.Errorf("get needs a path")
-	}
 	return get_path(value, arguments[0]), nil
 }
 
-// Runs the pick verb: keep only the named fields of each record.
+// Runs the pick verb: keep only the named fields of each record. The field list is
+// variadic, so cli permits zero of them and the verb rejects that itself.
 func verb_pick(arguments []string, value Value) (result Value, err error) {
 	if len(arguments) == 0 {
-		return Value{}, fmt.Errorf("pick needs field names")
+		return Value{}, fmt.Errorf("needs at least one field")
 	}
 	return pick_value(value, arguments), nil
 }
@@ -1385,11 +1503,9 @@ type filter_test struct {
 	Target   Value
 }
 
-// Runs the filter verb: keep list rows whose cell satisfies the word operator.
+// Runs the filter verb: keep list rows whose cell satisfies the word operator. cli
+// guarantees the field, operator, and value arguments.
 func verb_filter(arguments []string, value Value) (result Value, err error) {
-	if len(arguments) < 3 {
-		return Value{}, fmt.Errorf("filter needs: field op value")
-	}
 	operator := arguments[1]
 	if !operator_is_known(operator) {
 		return Value{}, fmt.Errorf("unknown operator: %s", operator)
@@ -1446,17 +1562,13 @@ func operator_satisfied(operator string, order int) (satisfied bool) {
 	return order >= 0
 }
 
-// Runs the first verb: the first element, or the first n as a list.
-func verb_first(arguments []string, value Value) (result Value, err error) {
+// Runs the first verb: the first element, or the first count as a list.
+func verb_first(count int, value Value) (result Value, err error) {
 	if value.Kind != VALUE_KIND_LIST {
 		return value, nil
 	}
-	if len(arguments) == 0 {
+	if count == 0 {
 		return first_element(value.Items), nil
-	}
-	count, count_err := strconv.Atoi(arguments[0])
-	if count_err != nil {
-		return Value{}, fmt.Errorf("first needs a count")
 	}
 	return List_Value(first_n(value.Items, count)), nil
 }
@@ -1806,11 +1918,8 @@ func cell_text(value Value) (text string) {
 // insertion sort keeps it stable and deterministic; sort.Interface is unusable
 // here because Len holds a banned word and Less/Swap have repeating parameters.
 func verb_sort_by(arguments []string, value Value) (result Value, err error) {
-	if len(arguments) == 0 {
-		return Value{}, fmt.Errorf("sort-by needs a field")
-	}
 	if value.Kind != VALUE_KIND_LIST {
-		return value, nil
+		return Value{}, fmt.Errorf("expected a list, got %s", kind_name(value.Kind))
 	}
 	return List_Value(sort_records(value.Items, arguments[0])), nil
 }
@@ -1852,11 +1961,8 @@ func insert_position(sorted []Value, item Value, field string) (position int) {
 
 // Runs the group-by verb: bucket records by a field value, first-seen order.
 func verb_group_by(arguments []string, value Value) (result Value, err error) {
-	if len(arguments) == 0 {
-		return Value{}, fmt.Errorf("group-by needs a field")
-	}
 	if value.Kind != VALUE_KIND_LIST {
-		return value, nil
+		return Value{}, fmt.Errorf("expected a list, got %s", kind_name(value.Kind))
 	}
 	field := arguments[0]
 	groups := []Field{}
@@ -1883,7 +1989,7 @@ func group_append(groups []Field, key string, item Value) (updated []Field) {
 // Runs the distinct verb: drop duplicate list elements by value equality.
 func verb_distinct(arguments []string, value Value) (result Value, err error) {
 	if value.Kind != VALUE_KIND_LIST {
-		return value, nil
+		return Value{}, fmt.Errorf("expected a list, got %s", kind_name(value.Kind))
 	}
 	seen := map[string]bool{}
 	kept := []Value{}
@@ -1902,7 +2008,7 @@ func verb_distinct(arguments []string, value Value) (result Value, err error) {
 // Runs the reverse verb: reverse a list.
 func verb_reverse(arguments []string, value Value) (result Value, err error) {
 	if value.Kind != VALUE_KIND_LIST {
-		return value, nil
+		return Value{}, fmt.Errorf("expected a list, got %s", kind_name(value.Kind))
 	}
 	reversed := []Value{}
 	for item_index := len(value.Items) - 1; item_index >= 0; item_index-- {
@@ -1911,17 +2017,13 @@ func verb_reverse(arguments []string, value Value) (result Value, err error) {
 	return List_Value(reversed), nil
 }
 
-// Runs the final verb: the last element, or the last n as a list.
-func verb_final(arguments []string, value Value) (result Value, err error) {
+// Runs the final verb: the last element, or the last count as a list.
+func verb_final(count int, value Value) (result Value, err error) {
 	if value.Kind != VALUE_KIND_LIST {
 		return value, nil
 	}
-	if len(arguments) == 0 {
+	if count == 0 {
 		return last_element(value.Items), nil
-	}
-	count, count_err := strconv.Atoi(arguments[0])
-	if count_err != nil {
-		return Value{}, fmt.Errorf("final needs a count")
 	}
 	return List_Value(last_n(value.Items, count)), nil
 }
@@ -1956,10 +2058,11 @@ func verb_columns(arguments []string, value Value) (result Value, err error) {
 	return List_Value(items), nil
 }
 
-// Runs the reject verb: drop the named fields of each record.
+// Runs the reject verb: drop the named fields of each record. The field list is
+// variadic, so cli permits zero of them and the verb rejects that itself.
 func verb_reject(arguments []string, value Value) (result Value, err error) {
 	if len(arguments) == 0 {
-		return Value{}, fmt.Errorf("reject needs field names")
+		return Value{}, fmt.Errorf("needs at least one field")
 	}
 	return reject_value(value, arguments), nil
 }
@@ -2014,11 +2117,9 @@ type relabel_input struct {
 	New string
 }
 
-// Runs the relabel verb: rename a field across records.
+// Runs the relabel verb: rename a field across records. cli guarantees the old and
+// new arguments.
 func verb_relabel(arguments []string, value Value) (result Value, err error) {
-	if len(arguments) < 2 {
-		return Value{}, fmt.Errorf("relabel needs: old new")
-	}
 	return relabel_value(value, relabel_input{Old: arguments[0], New: arguments[1]}), nil
 }
 
@@ -2068,11 +2169,9 @@ func verb_count(arguments []string, value Value) (result Value, err error) {
 	return Number_Value("1"), nil
 }
 
-// Runs the wrap verb: wrap the value in a single-field record.
+// Runs the wrap verb: wrap the value in a single-field record. cli guarantees the
+// name argument.
 func verb_wrap(arguments []string, value Value) (result Value, err error) {
-	if len(arguments) == 0 {
-		return Value{}, fmt.Errorf("wrap needs a field name")
-	}
 	return Record_Value([]Field{{Name: arguments[0], Value: value}}), nil
 }
 
@@ -2214,7 +2313,7 @@ func csv_flush(rows [][]string, fields []string, field []byte) (flushed [][]stri
 // need it. A non-table value is an error.
 func Csv_Emit(value Value) (text string, err error) {
 	if value.Kind != VALUE_KIND_LIST {
-		return "", fmt.Errorf("to csv needs a list of records")
+		return "", fmt.Errorf("needs a list of records, got %s", kind_name(value.Kind))
 	}
 	columns := table_columns(value.Items)
 	lines := []string{csv_line(columns)}
