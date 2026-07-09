@@ -193,3 +193,41 @@ func Test_Unknown_Flag_Suggests(t *testing.T) {
 		t.Fatalf("expected a suggestion, got %q", problems.String())
 	}
 }
+
+// Test_From_Rejects_Unknown_Format checks that an out-of-set format is a usage error
+// (exit 2) rejected at parse time, not a runtime failure (exit 1).
+func Test_From_Rejects_Unknown_Format(t *testing.T) {
+	_, code := drive_verb("from", []string{"xml"}, []byte("{}"))
+	if code != 2 {
+		t.Fatalf("an unknown format should exit 2, got %d", code)
+	}
+}
+
+// Test_Filter_Rejects_Unknown_Operator checks that an out-of-set operator is a usage
+// error (exit 2) rejected at parse time, not a runtime failure (exit 1).
+func Test_Filter_Rejects_Unknown_Operator(t *testing.T) {
+	stdin := []byte(`[{"age":36}]`)
+	_, code := drive_verb("filter", []string{"age", "bogus", "30"}, stdin)
+	if code != 2 {
+		t.Fatalf("an unknown operator should exit 2, got %d", code)
+	}
+}
+
+// Test_From_Format_Enum_Message checks the enum error lists the permitted formats.
+func Test_From_Format_Enum_Message(t *testing.T) {
+	output := strings.Builder{}
+	problems := strings.Builder{}
+	code := shell_sdk.Main(&shell_sdk.Main_Input{
+		Arguments:    []string{"from", "xml"},
+		Output:       &output,
+		Error_Output: &problems,
+		Read_Stdin:   func() (data []byte, err error) { return nil, nil },
+		Read_File:    func(name string) (data []byte, err error) { return nil, nil },
+	})
+	if code != 2 {
+		t.Fatalf("expected exit 2, got %d", code)
+	}
+	if !strings.Contains(problems.String(), "allowed: json, csv") {
+		t.Fatalf("expected the allowed formats, got %q", problems.String())
+	}
+}

@@ -11,6 +11,12 @@ exit code.
 A verb invoked with -help writes that verb's own usage and returns success, even
 when its required arguments are absent.
 
+### Enum Argument
+
+A verb argument confined to a fixed set — from and to's format (json, csv) and
+filter's operator (eq, ne, lt, le, gt, ge) — rejects an out-of-set value at parse
+time with a usage error and the usage exit code, listing the permitted values.
+
 # Wire
 
 ### Round Trip

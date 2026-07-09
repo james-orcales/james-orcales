@@ -121,15 +121,17 @@ func main_program() (program cli.Program) {
 				Value:       false,
 				Description: "emit JSON instead of the table",
 			}),
-			cli.New_Flag[string](cli.New_Flag_Input[string]{
+			cli.New_Enum_Flag(cli.New_Enum_Flag_Input[string]{
 				Label:       "color",
+				Enum:        []string{"auto", "never", "always"},
 				Value:       "auto",
-				Description: "auto, never, or always",
+				Description: "colorize the table",
 			}),
-			cli.New_Flag[string](cli.New_Flag_Input[string]{
+			cli.New_Enum_Flag(cli.New_Enum_Flag_Input[string]{
 				Label:       "progress",
+				Enum:        []string{"auto", "never", "always"},
 				Value:       "auto",
-				Description: "live progress on stderr: auto, never, or always",
+				Description: "live progress on stderr",
 			}),
 		},
 	})

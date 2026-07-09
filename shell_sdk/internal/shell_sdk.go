@@ -14,6 +14,7 @@ import (
 	"strings"
 
 	"local/james-orcales/shared/cli"
+	invariant "local/james-orcales/shared/invariant/default"
 )
 
 // The successful process exit code.
@@ -226,15 +227,15 @@ func verb_table() (verbs []verb_descriptor) {
 		{Kind: VERB_KIND_LOAD, Label: "load", Summary: "read a file into the garden",
 			Arguments: string_arguments("file")},
 		{Kind: VERB_KIND_FROM, Label: "from", Summary: "parse stdin as json or csv",
-			Arguments: string_arguments("format")},
+			Arguments: format_argument()},
 		{Kind: VERB_KIND_TO, Label: "to", Summary: "serialize to json or csv",
-			Arguments: string_arguments("format")},
+			Arguments: format_argument()},
 		{Kind: VERB_KIND_GET, Label: "get", Summary: "navigate a dotted cell path",
 			Arguments: string_arguments("path")},
 		{Kind: VERB_KIND_PICK, Label: "pick", Summary: "keep only the named fields",
 			Arguments: variadic_argument("field")},
 		{Kind: VERB_KIND_FILTER, Label: "filter", Summary: "keep matching rows",
-			Arguments: string_arguments("field", "operator", "value")},
+			Arguments: filter_arguments()},
 		{Kind: VERB_KIND_FIRST, Label: "first", Summary: "first element, or -count",
 			Flags: count_flag()},
 		{Kind: VERB_KIND_SORT_BY, Label: "sort-by", Summary: "order records by a field",
@@ -269,6 +270,29 @@ func string_arguments(names ...string) (arguments []cli.Option) {
 // Builds a single variadic string argument that collects the trailing positionals.
 func variadic_argument(name string) (arguments []cli.Option) {
 	return []cli.Option{cli.New_Variadic[string](cli.New_Variadic_Input{Label: name})}
+}
+
+// Builds the foreign-format argument shared by the from and to verbs, constrained to the
+// formats shell_sdk can parse and emit. cli rejects anything else at parse time, so
+// parse_format and emit_format never see an unknown format.
+func format_argument() (arguments []cli.Option) {
+	return []cli.Option{cli.New_Enum_Argument(cli.New_Enum_Argument_Input[string]{
+		Label: "format", Enum: []string{"json", "csv"}, Description: "the foreign format",
+	})}
+}
+
+// Builds the filter verb's arguments: a field path, a word operator constrained to the
+// supported comparisons, and a target value. cli rejects an unknown operator at parse
+// time, so verb_filter is reached only with a known one.
+func filter_arguments() (arguments []cli.Option) {
+	return []cli.Option{
+		cli.New_Argument[string](cli.New_Argument_Input{Label: "field"}),
+		cli.New_Enum_Argument(cli.New_Enum_Argument_Input[string]{
+			Label: "operator", Enum: []string{"eq", "ne", "lt", "le", "gt", "ge"},
+			Description: "comparison",
+		}),
+		cli.New_Argument[string](cli.New_Argument_Input{Label: "value"}),
+	}
 }
 
 // Builds the -count flag that first and final read for their element count.
@@ -1357,7 +1381,8 @@ func run_to(input *Main_Input, positionals []string) (output []byte, err error) 
 	return []byte(text), nil
 }
 
-// Parses a named foreign format into a value.
+// Parses a named foreign format into a value. The format enum guarantees a known name,
+// so the switch is total.
 func parse_format(format string, data []byte) (value Value, err error) {
 	switch format {
 	case "json":
@@ -1365,10 +1390,12 @@ func parse_format(format string, data []byte) (value Value, err error) {
 	case "csv":
 		return Csv_Parse(data)
 	}
-	return Value{}, fmt.Errorf("unknown format %s", format)
+	invariant.Always(false, "the format enum guarantees json or csv")
+	return Value{}, nil
 }
 
-// Serializes a value to a named foreign format, ending in a newline.
+// Serializes a value to a named foreign format, ending in a newline. The format enum
+// guarantees a known name, so the switch is total.
 func emit_format(format string, value Value) (text string, err error) {
 	switch format {
 	case "json":
@@ -1376,7 +1403,8 @@ func emit_format(format string, value Value) (text string, err error) {
 	case "csv":
 		return Csv_Emit(value)
 	}
-	return "", fmt.Errorf("unknown format %s", format)
+	invariant.Always(false, "the format enum guarantees json or csv")
+	return "", nil
 }
 
 // Applies a transforming verb to a decoded value.
@@ -1507,9 +1535,6 @@ type filter_test struct {
 // guarantees the field, operator, and value arguments.
 func verb_filter(arguments []string, value Value) (result Value, err error) {
 	operator := arguments[1]
-	if !operator_is_known(operator) {
-		return Value{}, fmt.Errorf("unknown operator: %s", operator)
-	}
 	if value.Kind != VALUE_KIND_LIST {
 		return value, nil
 	}
@@ -1534,15 +1559,6 @@ func filter_keeps(test filter_test) (keep bool) {
 		return false
 	}
 	return operator_satisfied(test.Operator, order)
-}
-
-// Reports whether an operator is one of the supported word operators.
-func operator_is_known(operator string) (known bool) {
-	switch operator {
-	case "eq", "ne", "lt", "le", "gt", "ge":
-		return true
-	}
-	return false
 }
 
 // Maps a word operator and an ordering to a keep decision.
