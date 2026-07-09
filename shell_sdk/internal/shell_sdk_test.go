@@ -88,3 +88,88 @@ func Test_Unknown_Verb_Fails(t *testing.T) {
 		t.Fatalf("unknown verb should exit 2, got %d", code)
 	}
 }
+
+// Test_From_Csv checks parsing CSV stdin into records with inferred numbers.
+func Test_From_Csv(t *testing.T) {
+	stdin := []byte("name,age\nada,36\nbob,19\n")
+	output, _ := drive_verb("from", []string{"csv", "--json"}, stdin)
+	want := `[{"name":"ada","age":36},{"name":"bob","age":19}]`
+	if output != want {
+		t.Fatalf("got %s", output)
+	}
+}
+
+// Test_To_Csv checks a table decoded from stdin serializing out to CSV text.
+func Test_To_Csv(t *testing.T) {
+	stdin := []byte(`[{"name":"ada","age":36},{"name":"bob","age":19}]`)
+	output, _ := drive_verb("to", []string{"csv"}, stdin)
+	want := "name,age\nada,36\nbob,19\n"
+	if output != want {
+		t.Fatalf("got %q", output)
+	}
+}
+
+// Test_Csv_Quotes_Commas checks a cell with a comma round-trips through quoting.
+func Test_Csv_Quotes_Commas(t *testing.T) {
+	stdin := []byte(`[{"city":"Paris, FR"}]`)
+	output, _ := drive_verb("to", []string{"csv"}, stdin)
+	want := "city\n\"Paris, FR\"\n"
+	if output != want {
+		t.Fatalf("got %q", output)
+	}
+}
+
+// Test_Reject_Drops_Field checks reject removing a named field from records.
+func Test_Reject_Drops_Field(t *testing.T) {
+	stdin := []byte(`[{"name":"ada","age":36}]`)
+	output, _ := drive_verb("reject", []string{"age", "--json"}, stdin)
+	if output != `[{"name":"ada"}]` {
+		t.Fatalf("got %s", output)
+	}
+}
+
+// Test_Relabel_Field checks relabel renaming a field across records.
+func Test_Relabel_Field(t *testing.T) {
+	stdin := []byte(`[{"name":"ada"}]`)
+	output, _ := drive_verb("relabel", []string{"name", "who", "--json"}, stdin)
+	if output != `[{"who":"ada"}]` {
+		t.Fatalf("got %s", output)
+	}
+}
+
+// Test_Reverse_List checks reverse flipping list order.
+func Test_Reverse_List(t *testing.T) {
+	output, _ := drive_verb("reverse", []string{"--json"}, []byte(`[1,2,3]`))
+	if output != `[3,2,1]` {
+		t.Fatalf("got %s", output)
+	}
+}
+
+// Test_Final_Tail checks final taking the last n as a list.
+func Test_Final_Tail(t *testing.T) {
+	output, _ := drive_verb("final", []string{"2", "--json"}, []byte(`[1,2,3,4]`))
+	if output != `[3,4]` {
+		t.Fatalf("got %s", output)
+	}
+}
+
+// Test_Columns_Keys checks columns listing a table's field names.
+func Test_Columns_Keys(t *testing.T) {
+	stdin := []byte(`[{"name":"ada","age":36}]`)
+	output, _ := drive_verb("columns", []string{"--json"}, stdin)
+	if output != `["name","age"]` {
+		t.Fatalf("got %s", output)
+	}
+}
+
+// Test_Wrap_And_Flatten checks wrap boxing a value and flatten unnesting a level.
+func Test_Wrap_And_Flatten(t *testing.T) {
+	wrapped, _ := drive_verb("wrap", []string{"items", "--json"}, []byte(`[1,2]`))
+	if wrapped != `{"items":[1,2]}` {
+		t.Fatalf("wrap got %s", wrapped)
+	}
+	flat, _ := drive_verb("flatten", []string{"--json"}, []byte(`[[1,2],[3]]`))
+	if flat != `[1,2,3]` {
+		t.Fatalf("flatten got %s", flat)
+	}
+}

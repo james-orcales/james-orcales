@@ -140,6 +140,42 @@ const VERB_KIND_FROM Verb_Kind = 5
 // The to verb serializes out of the garden.
 const VERB_KIND_TO Verb_Kind = 6
 
+// The sort-by verb orders a list of records by a field.
+const VERB_KIND_SORT_BY Verb_Kind = 7
+
+// The group-by verb buckets records by a field value.
+const VERB_KIND_GROUP_BY Verb_Kind = 8
+
+// The distinct verb drops duplicate elements. Named distinct, not uniq, to
+// avoid shadowing the system uniq binary once symlinked into a path.
+const VERB_KIND_DISTINCT Verb_Kind = 9
+
+// The reverse verb reverses a list.
+const VERB_KIND_REVERSE Verb_Kind = 10
+
+// The final verb takes trailing elements. Named final, not last, to avoid
+// shadowing the system last binary once symlinked into a path.
+const VERB_KIND_FINAL Verb_Kind = 11
+
+// The columns verb lists a table's keys.
+const VERB_KIND_COLUMNS Verb_Kind = 12
+
+// The reject verb drops named fields.
+const VERB_KIND_REJECT Verb_Kind = 13
+
+// The relabel verb renames a field. Named relabel, not rename, to avoid
+// shadowing the system rename binary once symlinked into a path.
+const VERB_KIND_RELABEL Verb_Kind = 14
+
+// The count verb counts elements or fields.
+const VERB_KIND_COUNT Verb_Kind = 15
+
+// The wrap verb wraps a value in a record.
+const VERB_KIND_WRAP Verb_Kind = 16
+
+// The flatten verb flattens one level of nested lists.
+const VERB_KIND_FLATTEN Verb_Kind = 17
+
 // Output_Mode selects how a verb presents its result.
 type Output_Mode int
 
@@ -186,13 +222,47 @@ func verb_kind(name string) (kind Verb_Kind, known bool) {
 	case "to":
 		return VERB_KIND_TO, true
 	}
+	return verb_kind_more(name)
+}
+
+// Resolves the second half of the verb names, keeping verb_kind within the
+// per-function line budget.
+func verb_kind_more(name string) (kind Verb_Kind, known bool) {
+	switch name {
+	case "sort-by":
+		return VERB_KIND_SORT_BY, true
+	case "group-by":
+		return VERB_KIND_GROUP_BY, true
+	case "distinct":
+		return VERB_KIND_DISTINCT, true
+	case "reverse":
+		return VERB_KIND_REVERSE, true
+	case "final":
+		return VERB_KIND_FINAL, true
+	case "columns":
+		return VERB_KIND_COLUMNS, true
+	case "reject":
+		return VERB_KIND_REJECT, true
+	case "relabel":
+		return VERB_KIND_RELABEL, true
+	case "count":
+		return VERB_KIND_COUNT, true
+	case "wrap":
+		return VERB_KIND_WRAP, true
+	case "flatten":
+		return VERB_KIND_FLATTEN, true
+	}
 	return VERB_KIND_LOAD, false
 }
 
 // The verb names, for -install to fan the binary out; kept in step with
 // verb_kind above.
 func verb_names() (names []string) {
-	return []string{"load", "get", "pick", "filter", "first", "from", "to"}
+	return []string{
+		"load", "get", "pick", "filter", "first", "from", "to",
+		"sort-by", "group-by", "distinct", "reverse", "final", "columns",
+		"reject", "relabel", "count", "wrap", "flatten",
+	}
 }
 
 // Pulls the -install=<path> destination out of the arguments, if present.
@@ -1115,47 +1185,80 @@ func run_load(input *Main_Input, arguments []string, mode Output_Mode) (output [
 	if len(arguments) == 0 {
 		return nil, fmt.Errorf("load needs a file")
 	}
-	data, read_err := input.Read_File(arguments[0])
+	name := arguments[0]
+	data, read_err := input.Read_File(name)
 	if read_err != nil {
-		return nil, fmt.Errorf("cannot read %s", arguments[0])
+		return nil, fmt.Errorf("cannot read %s", name)
 	}
-	value, decode_err := decode_input(data)
+	value, decode_err := load_decode(name, data)
 	if decode_err != nil {
 		return nil, decode_err
 	}
 	return encode_output(value, mode), nil
 }
 
-// Runs the from verb: parse stdin as an explicit foreign format (json for now).
+// Decodes a loaded file: a .csv or .json extension picks the parser, otherwise
+// the content is sniffed as wire, JSON, or raw text.
+func load_decode(name string, data []byte) (value Value, err error) {
+	if strings.HasSuffix(name, ".csv") {
+		return Csv_Parse(data)
+	}
+	if strings.HasSuffix(name, ".json") {
+		return Json_Parse(data)
+	}
+	return decode_input(data)
+}
+
+// Runs the from verb: parse stdin as an explicit foreign format.
 func run_from(input *Main_Input, arguments []string, mode Output_Mode) (output []byte, err error) {
 	format := "json"
 	if len(arguments) > 0 {
 		format = arguments[0]
 	}
-	if format != "json" {
-		return nil, fmt.Errorf("from: unknown format %s", format)
-	}
-	value, parse_err := Json_Parse(input.Read_Stdin())
+	value, parse_err := parse_format(format, input.Read_Stdin())
 	if parse_err != nil {
 		return nil, parse_err
 	}
 	return encode_output(value, mode), nil
 }
 
-// Runs the to verb: decode stdin and serialize out of the garden (json for now).
+// Runs the to verb: decode stdin and serialize out of the garden.
 func run_to(input *Main_Input, arguments []string) (output []byte, err error) {
 	format := "json"
 	if len(arguments) > 0 {
 		format = arguments[0]
 	}
-	if format != "json" {
-		return nil, fmt.Errorf("to: unknown format %s", format)
-	}
 	value, decode_err := decode_input(input.Read_Stdin())
 	if decode_err != nil {
 		return nil, decode_err
 	}
-	return []byte(Json_Emit(value) + "\n"), nil
+	text, emit_err := emit_format(format, value)
+	if emit_err != nil {
+		return nil, emit_err
+	}
+	return []byte(text), nil
+}
+
+// Parses a named foreign format into a value.
+func parse_format(format string, data []byte) (value Value, err error) {
+	switch format {
+	case "json":
+		return Json_Parse(data)
+	case "csv":
+		return Csv_Parse(data)
+	}
+	return Value{}, fmt.Errorf("unknown format %s", format)
+}
+
+// Serializes a value to a named foreign format, ending in a newline.
+func emit_format(format string, value Value) (text string, err error) {
+	switch format {
+	case "json":
+		return Json_Emit(value) + "\n", nil
+	case "csv":
+		return Csv_Emit(value)
+	}
+	return "", fmt.Errorf("unknown format %s", format)
 }
 
 // Applies a transforming verb to a decoded value.
@@ -1169,6 +1272,37 @@ func apply_transform(kind Verb_Kind, arguments []string, value Value) (result Va
 		return verb_filter(arguments, value)
 	case VERB_KIND_FIRST:
 		return verb_first(arguments, value)
+	}
+	return apply_transform_more(kind, arguments, value)
+}
+
+// Applies the second half of the transforming verbs.
+func apply_transform_more(
+	kind Verb_Kind, arguments []string, value Value,
+) (result Value, err error) {
+	switch kind {
+	case VERB_KIND_SORT_BY:
+		return verb_sort_by(arguments, value)
+	case VERB_KIND_GROUP_BY:
+		return verb_group_by(arguments, value)
+	case VERB_KIND_DISTINCT:
+		return verb_distinct(arguments, value)
+	case VERB_KIND_REVERSE:
+		return verb_reverse(arguments, value)
+	case VERB_KIND_FINAL:
+		return verb_final(arguments, value)
+	case VERB_KIND_COLUMNS:
+		return verb_columns(arguments, value)
+	case VERB_KIND_REJECT:
+		return verb_reject(arguments, value)
+	case VERB_KIND_RELABEL:
+		return verb_relabel(arguments, value)
+	case VERB_KIND_COUNT:
+		return verb_count(arguments, value)
+	case VERB_KIND_WRAP:
+		return verb_wrap(arguments, value)
+	case VERB_KIND_FLATTEN:
+		return verb_flatten(arguments, value)
 	}
 	return value, nil
 }
@@ -1666,4 +1800,457 @@ func cell_text(value Value) (text string) {
 		return fmt.Sprintf("[record %d fields]", len(value.Fields))
 	}
 	return ""
+}
+
+// Runs the sort-by verb: stable-sort a list of records by a field. An iterative
+// insertion sort keeps it stable and deterministic; sort.Interface is unusable
+// here because Len holds a banned word and Less/Swap have repeating parameters.
+func verb_sort_by(arguments []string, value Value) (result Value, err error) {
+	if len(arguments) == 0 {
+		return Value{}, fmt.Errorf("sort-by needs a field")
+	}
+	if value.Kind != VALUE_KIND_LIST {
+		return value, nil
+	}
+	return List_Value(sort_records(value.Items, arguments[0])), nil
+}
+
+// Stable-sorts records by a field via insertion into a growing sorted list.
+func sort_records(items []Value, field string) (sorted []Value) {
+	sorted = []Value{}
+	for item_index := 0; item_index < len(items); item_index++ {
+		sorted = insert_sorted(sorted, items[item_index], field)
+	}
+	return sorted
+}
+
+// Inserts an item into the sorted list at its ordered position.
+func insert_sorted(sorted []Value, item Value, field string) (updated []Value) {
+	position := insert_position(sorted, item, field)
+	updated = append(updated, sorted[:position]...)
+	updated = append(updated, item)
+	updated = append(updated, sorted[position:]...)
+	return updated
+}
+
+// Finds the first position whose field is strictly greater than the item's, so
+// equal keys keep their original order.
+func insert_position(sorted []Value, item Value, field string) (position int) {
+	item_key := get_path(item, field)
+	for sorted_index := 0; sorted_index < len(sorted); sorted_index++ {
+		existing_key := get_path(sorted[sorted_index], field)
+		order, comparable := compare_values(value_pair{Left: item_key, Right: existing_key})
+		if !comparable {
+			continue
+		}
+		if order < 0 {
+			return sorted_index
+		}
+	}
+	return len(sorted)
+}
+
+// Runs the group-by verb: bucket records by a field value, first-seen order.
+func verb_group_by(arguments []string, value Value) (result Value, err error) {
+	if len(arguments) == 0 {
+		return Value{}, fmt.Errorf("group-by needs a field")
+	}
+	if value.Kind != VALUE_KIND_LIST {
+		return value, nil
+	}
+	field := arguments[0]
+	groups := []Field{}
+	for item_index := 0; item_index < len(value.Items); item_index++ {
+		item := value.Items[item_index]
+		groups = group_append(groups, cell_text(get_path(item, field)), item)
+	}
+	return Record_Value(groups), nil
+}
+
+// Appends an item to its group, creating the group in first-seen order.
+func group_append(groups []Field, key string, item Value) (updated []Field) {
+	for group_index := 0; group_index < len(groups); group_index++ {
+		if groups[group_index].Name != key {
+			continue
+		}
+		bucket := append(groups[group_index].Value.Items, item)
+		groups[group_index].Value = List_Value(bucket)
+		return groups
+	}
+	return append(groups, Field{Name: key, Value: List_Value([]Value{item})})
+}
+
+// Runs the distinct verb: drop duplicate list elements by value equality.
+func verb_distinct(arguments []string, value Value) (result Value, err error) {
+	if value.Kind != VALUE_KIND_LIST {
+		return value, nil
+	}
+	seen := map[string]bool{}
+	kept := []Value{}
+	for item_index := 0; item_index < len(value.Items); item_index++ {
+		item := value.Items[item_index]
+		key := string(Wire_Encode(item))
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
+		kept = append(kept, item)
+	}
+	return List_Value(kept), nil
+}
+
+// Runs the reverse verb: reverse a list.
+func verb_reverse(arguments []string, value Value) (result Value, err error) {
+	if value.Kind != VALUE_KIND_LIST {
+		return value, nil
+	}
+	reversed := []Value{}
+	for item_index := len(value.Items) - 1; item_index >= 0; item_index-- {
+		reversed = append(reversed, value.Items[item_index])
+	}
+	return List_Value(reversed), nil
+}
+
+// Runs the final verb: the last element, or the last n as a list.
+func verb_final(arguments []string, value Value) (result Value, err error) {
+	if value.Kind != VALUE_KIND_LIST {
+		return value, nil
+	}
+	if len(arguments) == 0 {
+		return last_element(value.Items), nil
+	}
+	count, count_err := strconv.Atoi(arguments[0])
+	if count_err != nil {
+		return Value{}, fmt.Errorf("final needs a count")
+	}
+	return List_Value(last_n(value.Items, count)), nil
+}
+
+// Returns the last element, or null when the list is empty.
+func last_element(items []Value) (result Value) {
+	if len(items) == 0 {
+		return Null_Value()
+	}
+	return items[len(items)-1]
+}
+
+// Returns the last count elements, bounded by the list length.
+func last_n(items []Value, count int) (taken []Value) {
+	start := len(items) - count
+	if start < 0 {
+		start = 0
+	}
+	return items[start:]
+}
+
+// Runs the columns verb: the union of record keys as a list of strings.
+func verb_columns(arguments []string, value Value) (result Value, err error) {
+	if value.Kind != VALUE_KIND_LIST {
+		return value, nil
+	}
+	names := table_columns(value.Items)
+	items := []Value{}
+	for name_index := 0; name_index < len(names); name_index++ {
+		items = append(items, String_Value(names[name_index]))
+	}
+	return List_Value(items), nil
+}
+
+// Runs the reject verb: drop the named fields of each record.
+func verb_reject(arguments []string, value Value) (result Value, err error) {
+	if len(arguments) == 0 {
+		return Value{}, fmt.Errorf("reject needs field names")
+	}
+	return reject_value(value, arguments), nil
+}
+
+// Drops the named fields, mapping across a list of records.
+func reject_value(value Value, names []string) (result Value) {
+	if value.Kind == VALUE_KIND_RECORD {
+		return Record_Value(reject_fields(value.Fields, names))
+	}
+	if value.Kind == VALUE_KIND_LIST {
+		kept := []Value{}
+		for item_index := 0; item_index < len(value.Items); item_index++ {
+			kept = append(kept, reject_one(value.Items[item_index], names))
+		}
+		return List_Value(kept)
+	}
+	return value
+}
+
+// Drops the named fields of a single value, leaving non-records unchanged.
+func reject_one(value Value, names []string) (result Value) {
+	if value.Kind == VALUE_KIND_RECORD {
+		return Record_Value(reject_fields(value.Fields, names))
+	}
+	return value
+}
+
+// Keeps only the fields whose names are not in the reject set.
+func reject_fields(fields []Field, names []string) (kept []Field) {
+	for field_index := 0; field_index < len(fields); field_index++ {
+		if name_in(names, fields[field_index].Name) {
+			continue
+		}
+		kept = append(kept, fields[field_index])
+	}
+	return kept
+}
+
+// Reports whether a name is present in a list of names.
+func name_in(names []string, name string) (present bool) {
+	for name_index := 0; name_index < len(names); name_index++ {
+		if names[name_index] == name {
+			return true
+		}
+	}
+	return false
+}
+
+// The two field names a relabel carries, bundled because the types repeat.
+type relabel_input struct {
+	Old string
+	New string
+}
+
+// Runs the relabel verb: rename a field across records.
+func verb_relabel(arguments []string, value Value) (result Value, err error) {
+	if len(arguments) < 2 {
+		return Value{}, fmt.Errorf("relabel needs: old new")
+	}
+	return relabel_value(value, relabel_input{Old: arguments[0], New: arguments[1]}), nil
+}
+
+// Renames a field, mapping across a list of records.
+func relabel_value(value Value, names relabel_input) (result Value) {
+	if value.Kind == VALUE_KIND_RECORD {
+		return Record_Value(relabel_fields(value.Fields, names))
+	}
+	if value.Kind == VALUE_KIND_LIST {
+		renamed := []Value{}
+		for item_index := 0; item_index < len(value.Items); item_index++ {
+			renamed = append(renamed, relabel_one(value.Items[item_index], names))
+		}
+		return List_Value(renamed)
+	}
+	return value
+}
+
+// Renames a field of a single value, leaving non-records unchanged.
+func relabel_one(value Value, names relabel_input) (result Value) {
+	if value.Kind == VALUE_KIND_RECORD {
+		return Record_Value(relabel_fields(value.Fields, names))
+	}
+	return value
+}
+
+// Renames the matching field of a record's fields.
+func relabel_fields(fields []Field, names relabel_input) (renamed []Field) {
+	for field_index := 0; field_index < len(fields); field_index++ {
+		field := fields[field_index]
+		if field.Name == names.Old {
+			field.Name = names.New
+		}
+		renamed = append(renamed, field)
+	}
+	return renamed
+}
+
+// Runs the count verb: the number of list items or record fields, as a number.
+func verb_count(arguments []string, value Value) (result Value, err error) {
+	if value.Kind == VALUE_KIND_LIST {
+		return Number_Value(strconv.Itoa(len(value.Items))), nil
+	}
+	if value.Kind == VALUE_KIND_RECORD {
+		return Number_Value(strconv.Itoa(len(value.Fields))), nil
+	}
+	return Number_Value("1"), nil
+}
+
+// Runs the wrap verb: wrap the value in a single-field record.
+func verb_wrap(arguments []string, value Value) (result Value, err error) {
+	if len(arguments) == 0 {
+		return Value{}, fmt.Errorf("wrap needs a field name")
+	}
+	return Record_Value([]Field{{Name: arguments[0], Value: value}}), nil
+}
+
+// Runs the flatten verb: flatten one level of nested lists.
+func verb_flatten(arguments []string, value Value) (result Value, err error) {
+	if value.Kind != VALUE_KIND_LIST {
+		return value, nil
+	}
+	flat := []Value{}
+	for item_index := 0; item_index < len(value.Items); item_index++ {
+		flat = flatten_append(flat, value.Items[item_index])
+	}
+	return List_Value(flat), nil
+}
+
+// Appends an item, splicing in a nested list's elements one level deep.
+func flatten_append(flat []Value, item Value) (updated []Value) {
+	if item.Kind != VALUE_KIND_LIST {
+		return append(flat, item)
+	}
+	for inner_index := 0; inner_index < len(item.Items); inner_index++ {
+		flat = append(flat, item.Items[inner_index])
+	}
+	return flat
+}
+
+// Csv_Parse parses CSV into a table: the first row names the columns, each later
+// row is a record whose cells are inferred (numbers, booleans, else strings) so
+// a numeric filter works downstream.
+func Csv_Parse(data []byte) (value Value, err error) {
+	rows := csv_rows(data)
+	if len(rows) == 0 {
+		return List_Value([]Value{}), nil
+	}
+	header := rows[0]
+	records := []Value{}
+	for row_index := 1; row_index < len(rows); row_index++ {
+		record := csv_record(&csv_record_input{Header: header, Row: rows[row_index]})
+		records = append(records, record)
+	}
+	return List_Value(records), nil
+}
+
+// The header and one row a CSV record is built from, bundled because the types
+// repeat.
+type csv_record_input struct {
+	Header []string
+	Row    []string
+}
+
+// Builds one record from a header and a row, inferring each cell's type.
+func csv_record(input *csv_record_input) (value Value) {
+	fields := []Field{}
+	for column_index := 0; column_index < len(input.Header); column_index++ {
+		cell := ""
+		if column_index < len(input.Row) {
+			cell = input.Row[column_index]
+		}
+		name := input.Header[column_index]
+		fields = append(fields, Field{Name: name, Value: parse_argument_value(cell)})
+	}
+	return Record_Value(fields)
+}
+
+// Splits CSV bytes into rows of string fields, honoring quoted fields with
+// embedded commas, newlines, and doubled-quote escapes. Iterative state machine.
+func csv_rows(data []byte) (rows [][]string) {
+	rows = [][]string{}
+	fields := []string{}
+	field := []byte{}
+	in_quote := false
+	position := 0
+	for position < len(data) {
+		character := data[position]
+		if in_quote {
+			if character != '"' {
+				field = append(field, character)
+				position++
+				continue
+			}
+			if csv_is_escaped_quote(data, position) {
+				field = append(field, '"')
+				position += 2
+				continue
+			}
+			in_quote = false
+			position++
+			continue
+		}
+		if character == '"' {
+			in_quote = true
+			position++
+			continue
+		}
+		if character == ',' {
+			fields = append(fields, string(field))
+			field = []byte{}
+			position++
+			continue
+		}
+		if character == '\n' {
+			fields = append(fields, string(field))
+			rows = append(rows, fields)
+			fields = []string{}
+			field = []byte{}
+			position++
+			continue
+		}
+		if character == '\r' {
+			position++
+			continue
+		}
+		field = append(field, character)
+		position++
+	}
+	return csv_flush(rows, fields, field)
+}
+
+// Reports whether a quote inside a quoted field is a doubled-quote escape.
+func csv_is_escaped_quote(data []byte, position int) (escaped bool) {
+	if position+1 >= len(data) {
+		return false
+	}
+	return data[position+1] == '"'
+}
+
+// Flushes any pending field and row left when the input ends without a newline.
+func csv_flush(rows [][]string, fields []string, field []byte) (flushed [][]string) {
+	if len(fields) == 0 {
+		if len(field) == 0 {
+			return rows
+		}
+	}
+	fields = append(fields, string(field))
+	return append(rows, fields)
+}
+
+// Csv_Emit serializes a table (a list of records) to CSV, quoting fields that
+// need it. A non-table value is an error.
+func Csv_Emit(value Value) (text string, err error) {
+	if value.Kind != VALUE_KIND_LIST {
+		return "", fmt.Errorf("to csv needs a list of records")
+	}
+	columns := table_columns(value.Items)
+	lines := []string{csv_line(columns)}
+	for item_index := 0; item_index < len(value.Items); item_index++ {
+		lines = append(lines, csv_line(csv_cells(value.Items[item_index], columns)))
+	}
+	return strings.Join(lines, "\n") + "\n", nil
+}
+
+// The CSV cells of one record, one per column (a missing field is empty).
+func csv_cells(value Value, columns []string) (cells []string) {
+	cells = []string{}
+	for column_index := 0; column_index < len(columns); column_index++ {
+		cells = append(cells, cell_text(field_value(value.Fields, columns[column_index])))
+	}
+	return cells
+}
+
+// Joins fields into a CSV line, quoting each as needed.
+func csv_line(fields []string) (line string) {
+	quoted := []string{}
+	for field_index := 0; field_index < len(fields); field_index++ {
+		quoted = append(quoted, csv_quote(fields[field_index]))
+	}
+	return strings.Join(quoted, ",")
+}
+
+// Quotes a field if it contains a comma, quote, or newline; doubles inner quotes.
+func csv_quote(field string) (quoted string) {
+	if !csv_needs_quote(field) {
+		return field
+	}
+	return "\"" + strings.ReplaceAll(field, "\"", "\"\"") + "\""
+}
+
+// Reports whether a field needs CSV quoting.
+func csv_needs_quote(field string) (needs bool) {
+	return strings.ContainsAny(field, ",\"\n\r")
 }

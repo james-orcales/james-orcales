@@ -55,3 +55,55 @@ func Test_Json_Round_Trip(t *testing.T) {
 		t.Fatalf("emit changed the text: %s", emitted)
 	}
 }
+
+// Test_Csv_Round_Trip checks that parsing CSV then emitting reproduces the text,
+// with the header naming the columns.
+func Test_Csv_Round_Trip(t *testing.T) {
+	input := "name,age\nada,36\nbob,19\n"
+	parsed, parse_err := shell_sdk.Csv_Parse([]byte(input))
+	if parse_err != nil {
+		t.Fatalf("parse: %v", parse_err)
+	}
+	emitted, emit_err := shell_sdk.Csv_Emit(parsed)
+	if emit_err != nil {
+		t.Fatalf("emit: %v", emit_err)
+	}
+	if emitted != input {
+		t.Fatalf("emit changed the text: %q", emitted)
+	}
+}
+
+// Test_Verbs_Sort_By checks that sort-by orders records by a numeric field.
+func Test_Verbs_Sort_By(t *testing.T) {
+	stdin := []byte(`[{"v":3},{"v":1},{"v":2}]`)
+	output, _ := drive_verb("sort-by", []string{"v", "--json"}, stdin)
+	if output != `[{"v":1},{"v":2},{"v":3}]` {
+		t.Fatalf("got %s", output)
+	}
+}
+
+// Test_Verbs_Group_By checks that group-by buckets records in first-seen order.
+func Test_Verbs_Group_By(t *testing.T) {
+	stdin := []byte(`[{"d":"x","n":1},{"d":"y","n":2},{"d":"x","n":3}]`)
+	output, _ := drive_verb("group-by", []string{"d", "--json"}, stdin)
+	want := `{"x":[{"d":"x","n":1},{"d":"x","n":3}],"y":[{"d":"y","n":2}]}`
+	if output != want {
+		t.Fatalf("got %s", output)
+	}
+}
+
+// Test_Verbs_Distinct checks that distinct keeps the first of each equal element.
+func Test_Verbs_Distinct(t *testing.T) {
+	output, _ := drive_verb("distinct", []string{"--json"}, []byte(`[1,2,2,3,1]`))
+	if output != `[1,2,3]` {
+		t.Fatalf("got %s", output)
+	}
+}
+
+// Test_Verbs_Count checks that count returns the number of list items.
+func Test_Verbs_Count(t *testing.T) {
+	output, _ := drive_verb("count", []string{"--json"}, []byte(`[10,20,30]`))
+	if output != "3" {
+		t.Fatalf("got %s", output)
+	}
+}
