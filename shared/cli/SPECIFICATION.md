@@ -17,6 +17,12 @@ A program built with New_Single has no command selector: the first token is the
 first positional argument, so a name that would select a sibling command is read as
 a positional. Help drops the selector and shows the program's own positionals.
 
+### Multicall
+
+A multicall program selects its command from the binary name in argv[0], as a
+busybox-style symlinked binary does; every token after it is that command's
+argument. An unknown name suggests the closest command.
+
 ### Arguments
 
 Positionals fill the command's arguments in declaration order, skipping any already
