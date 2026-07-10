@@ -560,6 +560,11 @@ func program_help_context(program *Program, operating_system_args []string) (con
 	if program.Multicall {
 		name := path.Base(operating_system_args[0])
 		index, err := program_select_command(program, name)
+		// A self-invoked multicall binary (run by its own name) names the verb in the
+		// first token, so -help there resolves that verb, not the root.
+		if err != nil && len(operating_system_args) > 1 {
+			index, err = program_select_command(program, operating_system_args[1])
+		}
 		if err != nil {
 			return Command{}
 		}
@@ -723,6 +728,14 @@ func program_resolve_command(
 		arguments_start = 1
 		name := path.Base(operating_system_args[0])
 		command_index, err = program_select_command(program, name)
+		// Busybox self-invocation: run by its own name rather than a verb link, the
+		// binary takes the command from the first token (as `busybox ls` does), so a
+		// bootstrap verb can run before the links exist. The error from the slot-1 token
+		// replaces the argv[0] one, naming what the user actually typed as the command.
+		if err != nil && len(operating_system_args) > 1 {
+			arguments_start = 2
+			command_index, err = program_select_command(program, operating_system_args[1])
+		}
 	} else if program.Single {
 		arguments_start = 1
 	} else if len(operating_system_args) > 1 {
@@ -977,20 +990,31 @@ func option_check_enum(option *Option, display_name string) (err error) {
 	return nil
 }
 
+// Returns an enum option's permitted values as strings (ints formatted in base 10), or
+// is_enum false when the option carries no enum. The single source of an enum's members
+// for help, error messages, and completion.
+func option_enum_members(option Option) (members []string, is_enum bool) {
+	switch enum := option.Enum.(type) {
+	case []string:
+		return enum, true
+	case []int:
+		members = make([]string, len(enum))
+		for index, number := range enum {
+			members[index] = strconv.Itoa(number)
+		}
+		return members, true
+	}
+	return nil, false
+}
+
 // Formats an enum option's permitted values joined by separator, e.g. "auto|never" for
 // help or "auto, never" for an error. is_enum is false when the option carries no enum.
 func enum_values_text(option Option, separator string) (text string, is_enum bool) {
-	switch enum := option.Enum.(type) {
-	case []string:
-		return strings.Join(enum, separator), true
-	case []int:
-		parts := make([]string, len(enum))
-		for index, number := range enum {
-			parts[index] = strconv.Itoa(number)
-		}
-		return strings.Join(parts, separator), true
+	members, is_enum := option_enum_members(option)
+	if !is_enum {
+		return "", false
 	}
-	return "", false
+	return strings.Join(members, separator), true
 }
 
 // Removes a matching pair of surrounding double or single quotes from a string

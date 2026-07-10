@@ -50,6 +50,24 @@ func Test_Parse_Commands(t *testing.T) {
 	}
 }
 
+// Test_Parse_Multicall_Self_Invocation verifies that a multicall binary run by its own
+// name — not a verb link — selects the command from the first token, as `busybox ls`
+// does. This is what lets a bootstrap verb run before the links exist.
+func Test_Parse_Multicall_Self_Invocation(t *testing.T) {
+	program := new_multicall_fixture()
+	command, err := cli.Program_Parse(&program, []string{"toolbox", "add", "milk"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if command.Label != "add" {
+		t.Errorf("expected add, got %q", command.Label)
+	}
+	if cli.Get_Option(command.Arguments, "task").Value.(string) != "milk" {
+		t.Errorf("expected task milk, got %v",
+			cli.Get_Option(command.Arguments, "task").Value)
+	}
+}
+
 // Test_Parse_Single_Command verifies a single-command program reads its positionals
 // and flags directly after the program name, with no command selector in slot 1.
 func Test_Parse_Single_Command(t *testing.T) {

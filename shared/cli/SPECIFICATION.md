@@ -21,7 +21,10 @@ a positional. Help drops the selector and shows the program's own positionals.
 
 A multicall program selects its command from the binary name in argv[0], as a
 busybox-style symlinked binary does; every token after it is that command's
-argument. An unknown name suggests the closest command.
+argument. When argv[0] is not a known command — the binary run by its own name rather
+than a verb link — the first token selects the command instead, as `busybox ls` does, so
+a bootstrap command works before the links exist. An unknown name suggests the closest
+command.
 
 ### Arguments
 
@@ -52,6 +55,24 @@ must be a member; an argument enum is required and has none, set by position or 
 like any argument. A value outside the set returns an error that suggests the closest
 member for a string enum and otherwise lists the whole set.
 
+### Help
+
+Every program carries an auto-injected -help flag, shown under its global flags. When the
+token appears anywhere, parsing short-circuits before any assignment — so help works even
+with a missing required argument — and returns the Help_Requested sentinel alongside the
+command context: the selected command, or the empty-label root. Print_Requested_Help
+renders the whole program for the root and one command's usage otherwise.
+
+# Completion
+
+Complete returns shell-completion candidates for a partially typed command line, read
+from the live program: command names, then flag and named-argument labels for a leading
+dash, an enum option's members after -label=, and an enum positional's members;
+everything else is empty, leaving file completion to the shell. Completion_Script emits a
+bash, zsh, or fish script that calls back into `__complete` (one registration per verb for
+a multicall program); an unsupported shell errors. Handle_Completion serves the reserved
+`completion` and `__complete` invocations before parsing.
+
 # Trim Quotes
 
 A quoted flag value is unquoted during parsing when it is wrapped in a matching
@@ -79,4 +100,5 @@ New validates a program's configuration and panics when it is malformed.
 A command without a label panics; so does an argument label that is not flag-safe or
 that collides with another option's name. An enum with an empty set, an element type
 that does not match its value, or — for a flag — a default outside the set, panics; a
-variadic option may not be an enum.
+variadic option may not be an enum. The label "help" is reserved for the auto-injected
+-help flag, so a user option claiming it panics.
