@@ -217,6 +217,10 @@ Usage:
     todoctl <command> <arguments> [-flags[=value]]
     Positional arguments may also be supplied via -key=val syntax.
 
+Global Flags:
+    -[34mhelp[0m  show this help
+
+
 Available Commands:
     [34mhelp[0m print help message
 
@@ -304,6 +308,10 @@ todoctl is a todo list manager
 Usage:
     todoctl <command> <arguments> [-flags[=value]]
     Positional arguments may also be supplied via -key=val syntax.
+
+Global Flags:
+    -[34mhelp[0m  show this help
+
 
 Available Commands:
     [34mhelp[0m print help message
@@ -446,6 +454,27 @@ func Test_Enum_Argument_Help(t *testing.T) {
 	help := output.String()
 	if !strings.Contains(help, "<level: (1|2|4|8)>") {
 		t.Errorf("expected the enum set in the signature, got:\n%s", help)
+	}
+}
+
+// Test_Print_Requested_Help verifies the render helper picks catalog help for the root
+// context (empty-label command) and per-command help for a selected command.
+func Test_Print_Requested_Help(t *testing.T) {
+	fixture := new_cli_fixture()
+	root := bytes.Buffer{}
+	cli.Print_Requested_Help(&root, fixture.Program, cli.Command{})
+	if !strings.Contains(root.String(), "Available Commands") {
+		t.Errorf("root help should list commands, got:\n%s", root.String())
+	}
+
+	command, _ := cli.Program_Parse(&fixture.Program, []string{"todoctl", "list", "-help"})
+	one := bytes.Buffer{}
+	cli.Print_Requested_Help(&one, fixture.Program, command)
+	if !strings.Contains(one.String(), "list") {
+		t.Errorf("command help should name the command, got:\n%s", one.String())
+	}
+	if strings.Contains(one.String(), "Available Commands") {
+		t.Errorf("command help should not list every command, got:\n%s", one.String())
 	}
 }
 

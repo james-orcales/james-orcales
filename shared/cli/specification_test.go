@@ -1,6 +1,7 @@
 package cli_test
 
 import (
+	"errors"
 	"slices"
 	"strings"
 	"testing"
@@ -428,6 +429,51 @@ func Test_New_Validation(t *testing.T) {
 			Arguments: []cli.Option{{Label: "path", Value: []string{}, Enum: []string{"a", "b"}}},
 		})
 	})
+	// "help" is reserved for the auto-injected -help flag; a user option using it panics.
+	assert_panics(t, "user option named help", func() {
+		cli.New_Single(cli.New_Single_Input{
+			Label: "tool",
+			Flags: []cli.Option{{Label: "help", Value: false}},
+		})
+	})
+}
+
+// Test_Help_Flag verifies -help short-circuits parsing: it returns the Help_Requested
+// sentinel even when a required argument is absent, and resolves the command context so
+// the caller can render the right help. Every program gets -help automatically.
+func Test_Help_Flag(t *testing.T) {
+	// A single-command program with a REQUIRED argument: -help must not trip the
+	// missing-required check.
+	single := cli.New_Single(cli.New_Single_Input{
+		Label: "tool", Description: "does a thing",
+		Arguments: []cli.Option{
+			cli.New_Argument[string](cli.New_Argument_Input{Label: "target"}),
+		},
+	})
+	_, err := cli.Program_Parse(&single, []string{"tool", "-help"})
+	if !errors.Is(err, cli.Help_Requested) {
+		t.Fatalf("expected Help_Requested, got %v", err)
+	}
+
+	// Multi-command: a command then -help resolves that command as the context.
+	fixture := new_cli_fixture()
+	command, err := cli.Program_Parse(&fixture.Program, []string{"todoctl", "list", "-help"})
+	if !errors.Is(err, cli.Help_Requested) {
+		t.Fatalf("expected Help_Requested, got %v", err)
+	}
+	if command.Label != "list" {
+		t.Errorf("expected list context, got %q", command.Label)
+	}
+
+	// Multi-command with -help but no command selected → root context (empty label).
+	fixture = new_cli_fixture()
+	command, err = cli.Program_Parse(&fixture.Program, []string{"todoctl", "-help"})
+	if !errors.Is(err, cli.Help_Requested) {
+		t.Fatalf("expected Help_Requested, got %v", err)
+	}
+	if command.Label != "" {
+		t.Errorf("expected root context (empty label), got %q", command.Label)
+	}
 }
 
 // Test_Parse_Enum verifies a flag-form enum: a permitted value is accepted, an omitted

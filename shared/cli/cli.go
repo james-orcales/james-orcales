@@ -35,6 +35,7 @@
 package cli
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"path"
@@ -46,6 +47,16 @@ import (
 	invariant "local/james-orcales/shared/invariant/default"
 	"local/james-orcales/shared/levenshtein"
 )
+
+// Help_Requested is returned by Program_Parse when the command line carries the
+// auto-injected -help flag. It short-circuits parsing — even a missing required argument
+// does not preempt it — so the caller renders help and exits successfully. Match it with
+// errors.Is, then call Print_Requested_Help with the returned command.
+var Help_Requested = errors.New("help requested")
+
+// HELP_LABEL is the reserved option label for the auto-injected help flag, so -help works
+// on every program without being declared. A user option may not claim it.
+const HELP_LABEL = "help"
 
 // Program represents a command-line application with one or more commands.
 type Program struct {
@@ -234,7 +245,13 @@ type New_Input struct {
 func New(input New_Input) (program Program) {
 	panic_when(len(input.Commands) == 0, "Program has zero commands specified.")
 
-	for index, flag := range input.Global_Flags {
+	// -help is auto-injected as a global flag so every command carries it in help output
+	// and its label is reserved; the injection precedes validation so a colliding user
+	// option is caught, and reserve_help_label reports it with a clearer message first.
+	reserve_help_label(input.Commands, input.Global_Flags)
+	global_flags := append([]Option{help_flag()}, input.Global_Flags...)
+
+	for index, flag := range global_flags {
 		panic_when(!flag.Is_Flag, "Global flags must be created with New_Flag.")
 		validate_flag_label(fmt.Sprintf("Global flag #%d", index), flag)
 	}
@@ -243,12 +260,12 @@ func New(input New_Input) (program Program) {
 		Label:        input.Label,
 		Description:  input.Description,
 		Commands:     input.Commands,
-		Global_Flags: input.Global_Flags,
+		Global_Flags: global_flags,
 	}
 
 	for index, command := range program.Commands {
 		panic_when(command.Label == "", "Program.Commands[%d].Label is unset.", index)
-		command_validate_options(command, input.Global_Flags)
+		command_validate_options(command, global_flags)
 	}
 	return program
 }
@@ -283,12 +300,42 @@ func New_Single(input New_Single_Input) (program Program) {
 		Arguments:   input.Arguments,
 		Flags:       input.Flags,
 	}
-	command_validate_options(command, nil)
+	// A single-command program still gets the auto-injected -help global flag.
+	reserve_help_label([]Command{command}, nil)
+	global_flags := []Option{help_flag()}
+	command_validate_options(command, global_flags)
 	return Program{
-		Label:       input.Label,
-		Description: input.Description,
-		Commands:    []Command{command},
-		Single:      true,
+		Label:        input.Label,
+		Description:  input.Description,
+		Commands:     []Command{command},
+		Global_Flags: global_flags,
+		Single:       true,
+	}
+}
+
+// help_flag is the bool flag auto-injected into every program's Global_Flags: it
+// documents -help in help output and reserves the label. The parser recognizes the token
+// directly (see program_wants_help), so this flag's value is never read.
+func help_flag() (option Option) {
+	return New_Flag(New_Flag_Input[bool]{Label: HELP_LABEL, Description: "show this help"})
+}
+
+// Panics when a user option claims the reserved HELP_LABEL, so the auto-injected -help
+// flag never collides with or shadows a real option.
+func reserve_help_label(commands []Command, global_flags []Option) {
+	for _, flag := range global_flags {
+		panic_when(flag.Label == HELP_LABEL,
+			"%q is reserved for the auto-injected -help flag", HELP_LABEL)
+	}
+	for _, command := range commands {
+		for _, argument := range command.Arguments {
+			panic_when(argument.Label == HELP_LABEL,
+				"%q is reserved for the auto-injected -help flag", HELP_LABEL)
+		}
+		for _, flag := range command.Flags {
+			panic_when(flag.Label == HELP_LABEL,
+				"%q is reserved for the auto-injected -help flag", HELP_LABEL)
+		}
 	}
 }
 
@@ -454,6 +501,13 @@ func Program_Parse(
 		)
 	}()
 
+	// -help short-circuits before command resolution, so it works even when the command
+	// slot holds -help itself or a required argument is missing. The caller renders the
+	// resolved context with Print_Requested_Help and exits successfully.
+	if program_wants_help(operating_system_args[1:]) {
+		return program_help_context(program, operating_system_args), Help_Requested
+	}
+
 	active_command, arguments_start, err := program_resolve_command(
 		program, operating_system_args)
 	if err != nil {
@@ -485,6 +539,43 @@ func Program_Parse(
 		return active_command, err
 	}
 	return active_command, nil
+}
+
+// Reports whether the arguments carry the auto-injected -help flag. Help is detected
+// before command resolution so it works despite a missing or malformed command line.
+func program_wants_help(tokens []string) (wants bool) {
+	for _, token := range tokens {
+		if token == "-"+HELP_LABEL {
+			return true
+		}
+	}
+	return false
+}
+
+// Resolves the command a -help request refers to, for Print_Requested_Help. A multicall
+// program uses the argv[0] verb; a multi-command program uses the slot-1 command when it
+// names one. Anything else — a single-command program, an unknown or absent command —
+// yields the zero-value root context (empty Label), which renders the whole program.
+func program_help_context(program *Program, operating_system_args []string) (context Command) {
+	if program.Multicall {
+		name := path.Base(operating_system_args[0])
+		index, err := program_select_command(program, name)
+		if err != nil {
+			return Command{}
+		}
+		return program.Commands[index]
+	}
+	if program.Single {
+		return Command{}
+	}
+	if len(operating_system_args) > 1 {
+		index, err := program_select_command(program, operating_system_args[1])
+		if err != nil {
+			return Command{}
+		}
+		return program.Commands[index]
+	}
+	return Command{}
 }
 
 // One command-line token paired with its position, so a slice argument can reassemble
@@ -967,6 +1058,18 @@ func Print_Help(output io.Writer, program Program) {
 		writer.Flush()
 		fmt.Fprintln(output, "")
 	}
+}
+
+// Print_Requested_Help renders the help a Help_Requested parse asks for: the whole
+// program — its command catalog, or a single-command program's own usage — when command
+// is the zero-value root context, or one command's usage when a command was selected. It
+// is the turnkey response to errors.Is(err, cli.Help_Requested).
+func Print_Requested_Help(output io.Writer, program Program, command Command) {
+	if command.Label == "" {
+		Print_Help(output, program)
+		return
+	}
+	Print_Command(output, program, command)
 }
 
 // Print_Command writes help for a single command: a usage line carrying the command's
