@@ -38,7 +38,14 @@ const WARMUP_DEFAULT = 5
 
 func main() {
 	program := main_program()
+	if cli.Handle_Completion(program, os.Args, os.Stdout) {
+		os.Exit(0)
+	}
 	command, parse_err := cli.Program_Parse(&program, os.Args)
+	if errors.Is(parse_err, cli.Help_Requested) {
+		cli.Print_Requested_Help(os.Stdout, program, command)
+		os.Exit(0)
+	}
 	if parse_err != nil {
 		fmt.Fprintln(os.Stderr, parse_err)
 		cli.Print_Help(os.Stderr, program)

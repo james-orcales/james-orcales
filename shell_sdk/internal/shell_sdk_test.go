@@ -194,6 +194,41 @@ func Test_Unknown_Flag_Suggests(t *testing.T) {
 	}
 }
 
+// Test_Install_Links verifies the install verb, self-dispatched on the bare binary,
+// symlinks every data verb into the destination — but not install itself, which would
+// shadow the system install(1).
+func Test_Install_Links(t *testing.T) {
+	output := strings.Builder{}
+	problems := strings.Builder{}
+	links := []string{}
+	code := shell_sdk.Main(&shell_sdk.Main_Input{
+		Arguments:    []string{"shell_sdk", "install", "/opt/bin"},
+		Output:       &output,
+		Error_Output: &problems,
+		Read_Stdin:   func() (data []byte, err error) { return nil, nil },
+		Read_File:    func(name string) (data []byte, err error) { return nil, nil },
+		Link: func(destination string) (err error) {
+			links = append(links, destination)
+			return nil
+		},
+	})
+	if code != 0 {
+		t.Fatalf("install should exit 0, got %d (%s)", code, problems.String())
+	}
+	found_data_verb := false
+	for _, link := range links {
+		if strings.HasSuffix(link, "/install") {
+			t.Errorf("install must not link itself: %q", link)
+		}
+		if strings.HasSuffix(link, "/from") {
+			found_data_verb = true
+		}
+	}
+	if !found_data_verb {
+		t.Errorf("expected a data verb like /opt/bin/from among %v", links)
+	}
+}
+
 // Test_From_Rejects_Unknown_Format checks that an out-of-set format is a usage error
 // (exit 2) rejected at parse time, not a runtime failure (exit 1).
 func Test_From_Rejects_Unknown_Format(t *testing.T) {

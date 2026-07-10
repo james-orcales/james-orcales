@@ -36,6 +36,15 @@ func Test_Dispatch_Help(t *testing.T) {
 	}
 }
 
+// Test_Dispatch_Enum_Argument checks a verb argument confined to a fixed set rejects an
+// out-of-set value as a usage error.
+func Test_Dispatch_Enum_Argument(t *testing.T) {
+	_, code := drive_verb("from", []string{"bogus"}, nil)
+	if code != 2 {
+		t.Fatalf("an out-of-set format should exit 2, got %d", code)
+	}
+}
+
 // Test_Wire_Round_Trip checks that decoding an encoded value reproduces it, by
 // re-encoding the decode and comparing the bytes.
 func Test_Wire_Round_Trip(t *testing.T) {
