@@ -90,6 +90,15 @@ type Command struct {
 	Arguments []Option
 	// Flags are optional and unordered.
 	Flags []Option
+	// Hidden omits the command from help and completion; it still resolves when named.
+	Hidden bool
+	// Deprecated, when non-empty, is the guidance shown when the command is used. A
+	// deprecated command is hidden like a hidden one and warns on use.
+	Deprecated string
+	// Deprecation_Warnings is filled by Program_Parse on the returned command: one
+	// ready-to-print message per deprecated command or flag the invocation actually
+	// used. It is empty on a command held as a definition.
+	Deprecation_Warnings []string
 }
 
 // Option represents either an argument or a flag for a command.
@@ -109,6 +118,12 @@ type Option struct {
 	Enum any
 	// Is_Flag distinguishes a flag from a positional argument.
 	Is_Flag bool
+	// Hidden omits the flag from help and completion; it still parses when named.
+	// Meaningful for flags, not positional arguments, which always appear in usage.
+	Hidden bool
+	// Deprecated, when non-empty, is the guidance shown when the flag is used. A
+	// deprecated flag is hidden like a hidden one and warns on use.
+	Deprecated string
 }
 
 // New_Argument_Input is the input for New_Argument.
@@ -163,6 +178,10 @@ type New_Flag_Input[T string | int | bool] struct {
 	Value T
 	// Description is the one-line summary shown in help output.
 	Description string
+	// Hidden omits the flag from help and completion; it still parses when named.
+	Hidden bool
+	// Deprecated, when non-empty, is the guidance shown when the flag is used.
+	Deprecated string
 }
 
 // New_Flag creates an optional flag with a default value.
@@ -173,6 +192,8 @@ func New_Flag[T string | int | bool](input New_Flag_Input[T]) (option Option) {
 		Description: input.Description,
 		Value:       input.Value,
 		Is_Flag:     true,
+		Hidden:      input.Hidden,
+		Deprecated:  input.Deprecated,
 	}
 }
 
@@ -187,6 +208,10 @@ type New_Enum_Flag_Input[T string | int] struct {
 	Value T
 	// Description is the one-line summary shown in help output.
 	Description string
+	// Hidden omits the flag from help and completion; it still parses when named.
+	Hidden bool
+	// Deprecated, when non-empty, is the guidance shown when the flag is used.
+	Deprecated string
 }
 
 // New_Enum_Flag creates an optional flag whose value must be one of Enum, defaulting to
@@ -199,6 +224,8 @@ func New_Enum_Flag[T string | int](input New_Enum_Flag_Input[T]) (option Option)
 		Value:       input.Value,
 		Enum:        input.Enum,
 		Is_Flag:     true,
+		Hidden:      input.Hidden,
+		Deprecated:  input.Deprecated,
 	}
 }
 
@@ -313,9 +340,9 @@ func New_Single(input New_Single_Input) (program Program) {
 	}
 }
 
-// help_flag is the bool flag auto-injected into every program's Global_Flags: it
-// documents -help in help output and reserves the label. The parser recognizes the token
-// directly (see program_wants_help), so this flag's value is never read.
+// The bool flag auto-injected into every program's Global_Flags: it documents -help
+// in help output and reserves the label. The parser recognizes the token directly
+// (see program_wants_help), so this flag's value is never read.
 func help_flag() (option Option) {
 	return New_Flag(New_Flag_Input[bool]{Label: HELP_LABEL, Description: "show this help"})
 }
@@ -461,7 +488,8 @@ func validate_enum(context string, option Option) {
 		panic_when(true, "%s has an unsupported enum type: %T", context, option.Enum)
 	case []string:
 		_, matches := option.Value.(string)
-		panic_when(!matches, "%s has a []string enum but a %T value.", context, option.Value)
+		panic_when(!matches,
+			"%s has a []string enum but a %T value.", context, option.Value)
 		panic_when(len(enum) == 0, "%s has an empty enum.", context)
 		panic_when(option.Is_Flag && !slices.Contains(enum, option.Value.(string)),
 			"%s default %q is not one of its enum values.", context, option.Value)
@@ -538,7 +566,42 @@ func Program_Parse(
 	if err != nil {
 		return active_command, err
 	}
+	active_command.Deprecation_Warnings = collect_deprecations(program, active_command, filled)
 	return active_command, nil
+}
+
+// Gathers a warning for each deprecated command or flag the invocation used: the
+// resolved command when it is itself deprecated (invoking it is using it), and every
+// deprecated command flag or global flag that was set by name (present in filled).
+func collect_deprecations(
+	program *Program, command Command, filled map[string]bool,
+) (warnings []string) {
+	warnings = []string{}
+	if command.Deprecated != "" {
+		message := fmt.Sprintf("command %q is deprecated: %s",
+			command.Label, command.Deprecated)
+		warnings = append(warnings, message)
+	}
+	warnings = append(warnings, deprecated_flags_used(command.Flags, filled)...)
+	warnings = append(warnings, deprecated_flags_used(program.Global_Flags, filled)...)
+	return warnings
+}
+
+// Gathers a warning for each deprecated flag that was set by name.
+func deprecated_flags_used(flags []Option, filled map[string]bool) (warnings []string) {
+	warnings = []string{}
+	for index := range flags {
+		flag := flags[index]
+		if flag.Deprecated == "" {
+			continue
+		}
+		if !filled[flag.Label] {
+			continue
+		}
+		warnings = append(warnings,
+			fmt.Sprintf("-%s is deprecated: %s", flag.Label, flag.Deprecated))
+	}
+	return warnings
 }
 
 // Reports whether the arguments carry the auto-injected -help flag. Help is detected
@@ -562,8 +625,11 @@ func program_help_context(program *Program, operating_system_args []string) (con
 		index, err := program_select_command(program, name)
 		// A self-invoked multicall binary (run by its own name) names the verb in the
 		// first token, so -help there resolves that verb, not the root.
-		if err != nil && len(operating_system_args) > 1 {
-			index, err = program_select_command(program, operating_system_args[1])
+		if err != nil {
+			if len(operating_system_args) > 1 {
+				token := operating_system_args[1]
+				index, err = program_select_command(program, token)
+			}
 		}
 		if err != nil {
 			return Command{}
@@ -688,28 +754,53 @@ func program_find_option(program *Program, command Command, label string) (
 	return nil, false, fmt.Errorf("unknown option -%s", label)
 }
 
-// Returns the program's command labels, the candidate set for a did-you-mean
-// suggestion when a command name is not recognized.
+// Reports whether an option appears in help and completion. A hidden or deprecated
+// flag still parses; it is only kept out of what the tool advertises.
+func option_shown(option Option) (shown bool) {
+	if option.Hidden {
+		return false
+	}
+	return option.Deprecated == ""
+}
+
+// Reports whether a command appears in help and completion. A hidden or deprecated
+// command still resolves; it is only kept out of what the tool advertises.
+func command_shown(command Command) (shown bool) {
+	if command.Hidden {
+		return false
+	}
+	return command.Deprecated == ""
+}
+
+// Returns the shown commands' labels, the candidate set for a did-you-mean suggestion
+// and for completion. Hidden and deprecated commands are omitted, so neither surface
+// advertises them; they still resolve by exact name in program_select_command.
 func program_command_labels(program *Program) (labels []string) {
-	labels = make([]string, len(program.Commands))
-	for index, command := range program.Commands {
-		labels[index] = command.Label
+	labels = []string{}
+	for index := range program.Commands {
+		if command_shown(program.Commands[index]) {
+			labels = append(labels, program.Commands[index].Label)
+		}
 	}
 	return labels
 }
 
-// Returns every option label reachable by name — the command's arguments and flags
-// plus the global flags — the candidate set for a did-you-mean suggestion when an
-// option name is not recognized.
+// Returns the option labels reachable by name — the command's arguments and its shown
+// flags plus the shown global flags — the candidate set for a did-you-mean suggestion
+// and for completion. Hidden and deprecated flags are omitted; arguments always show.
 func program_option_labels(program *Program, command Command) (labels []string) {
 	for index := range command.Arguments {
 		labels = append(labels, command.Arguments[index].Label)
 	}
 	for index := range command.Flags {
-		labels = append(labels, command.Flags[index].Label)
+		if option_shown(command.Flags[index]) {
+			labels = append(labels, command.Flags[index].Label)
+		}
 	}
 	for index := range program.Global_Flags {
-		labels = append(labels, program.Global_Flags[index].Label)
+		if option_shown(program.Global_Flags[index]) {
+			labels = append(labels, program.Global_Flags[index].Label)
+		}
 	}
 	return labels
 }
@@ -732,9 +823,12 @@ func program_resolve_command(
 		// binary takes the command from the first token (as `busybox ls` does), so a
 		// bootstrap verb can run before the links exist. The error from the slot-1 token
 		// replaces the argv[0] one, naming what the user actually typed as the command.
-		if err != nil && len(operating_system_args) > 1 {
-			arguments_start = 2
-			command_index, err = program_select_command(program, operating_system_args[1])
+		if err != nil {
+			if len(operating_system_args) > 1 {
+				arguments_start = 2
+				token := operating_system_args[1]
+				command_index, err = program_select_command(program, token)
+			}
 		}
 	} else if program.Single {
 		arguments_start = 1
@@ -1053,10 +1147,11 @@ func Print_Help(output io.Writer, program Program) {
 	}
 	fmt.Fprintln(output, "")
 
-	if len(program.Global_Flags) > 0 {
+	global_flags := shown_options(program.Global_Flags)
+	if len(global_flags) > 0 {
 		fmt.Fprintln(output, "Global Flags:")
 		writer := tabwriter.NewWriter(output, 0, 8, 0, ' ', 0)
-		for _, flag := range program.Global_Flags {
+		for _, flag := range global_flags {
 			print_help_flag(writer, flag, "    ", true)
 			fmt.Fprintf(writer, "\n")
 		}
@@ -1066,6 +1161,9 @@ func Print_Help(output io.Writer, program Program) {
 
 	fmt.Fprintln(output, "Available Commands:")
 	for _, command := range program.Commands {
+		if !command_shown(command) {
+			continue
+		}
 		// A tabwriter per command avoids tab alignment bleeding across commands.
 		writer := tabwriter.NewWriter(output, 0, 8, 0, ' ', 0)
 		signature := "\033[34m" + command.Label + "\033[0m" + " "
@@ -1073,9 +1171,10 @@ func Print_Help(output io.Writer, program Program) {
 			signature += option_format_signature(argument) + " "
 		}
 		fmt.Fprintf(writer, "    %s\t%s\n", signature, command.Description)
-		if len(command.Flags) > 0 {
+		command_flags := shown_options(command.Flags)
+		if len(command_flags) > 0 {
 			fmt.Fprintln(writer, "")
-			for _, flag := range command.Flags {
+			for _, flag := range command_flags {
 				print_help_flag(writer, flag, "        ", false)
 			}
 		}
@@ -1113,15 +1212,37 @@ func Print_Command(output io.Writer, program Program, command Command) {
 	print_help_flag_section(output, "Global Flags:", program.Global_Flags)
 }
 
-// Writes a titled section of flag rows, or nothing when there are no flags.
+// Print_Deprecations writes a warning line for each deprecated command or flag the
+// parse used, gathered by Program_Parse into command.Deprecation_Warnings. A binary
+// calls it after a successful parse, before running, so the user is nudged off a
+// deprecated option without the option ceasing to work.
+func Print_Deprecations(output io.Writer, command Command) {
+	for _, warning := range command.Deprecation_Warnings {
+		fmt.Fprintf(output, "warning: %s\n", warning)
+	}
+}
+
+// The options that appear in help and completion, dropping hidden and deprecated ones.
+func shown_options(options []Option) (shown []Option) {
+	shown = []Option{}
+	for index := range options {
+		if option_shown(options[index]) {
+			shown = append(shown, options[index])
+		}
+	}
+	return shown
+}
+
+// Writes a titled section of flag rows, or nothing when no flag in it is shown.
 func print_help_flag_section(output io.Writer, title string, flags []Option) {
-	if len(flags) == 0 {
+	shown := shown_options(flags)
+	if len(shown) == 0 {
 		return
 	}
 	fmt.Fprintln(output, "")
 	fmt.Fprintln(output, title)
 	writer := tabwriter.NewWriter(output, 0, 8, 0, ' ', 0)
-	for _, flag := range flags {
+	for _, flag := range shown {
 		print_help_flag(writer, flag, "    ", true)
 	}
 	writer.Flush()
@@ -1215,4 +1336,239 @@ func panic_when(condition bool, message string, data ...any) {
 	if condition {
 		panic(fmt.Sprintf(message, data...))
 	}
+}
+
+// Complete returns the shell-completion candidates for a partially typed command line.
+// words mirrors the argv being completed — words[0] is the program (or, for a multicall
+// link, the verb) and the final element is the word under the cursor, possibly empty. It
+// reads the live Program, so candidates track command, flag, and enum definitions with no
+// separate registration. An empty result means "no cli candidate" — the shell falls back
+// to file completion.
+func Complete(program Program, words []string) (candidates []string) {
+	if len(words) == 0 {
+		return nil
+	}
+	current := words[len(words)-1]
+
+	if program.Single {
+		return complete_in_command(&program, program.Commands[0], words, 1, current)
+	}
+	if program.Multicall {
+		index, err := program_select_command(&program, path.Base(words[0]))
+		if err == nil {
+			return complete_in_command(
+				&program, program.Commands[index], words, 1, current)
+		}
+		// A non-verb argv[0] falls through to self-invocation, where slot 1 selects
+		// the command, exactly like a multi-command program.
+	}
+	// Multi-command (or a self-invoked multicall binary): slot 1 selects the command.
+	// While it is still being typed, the candidates are the command names themselves.
+	if len(words) <= 2 {
+		return filter_prefix(program_command_labels(&program), current)
+	}
+	index, err := program_select_command(&program, words[1])
+	if err != nil {
+		return nil
+	}
+	return complete_in_command(&program, program.Commands[index], words, 2, current)
+}
+
+// Completes the word under the cursor within a resolved command: an enum option's members
+// after -label=, then flag and named-argument labels for a leading dash, then an enum
+// positional's members. Anything else yields nil so the shell completes files.
+func complete_in_command(
+	program *Program, command Command, words []string, args_start int, current string,
+) (candidates []string) {
+	if strings.HasPrefix(current, "-") {
+		if strings.Contains(current, "=") {
+			return complete_enum_value(program, command, current)
+		}
+		labels := program_option_labels(program, command)
+		dashed := make([]string, 0, len(labels))
+		for _, label := range labels {
+			dashed = append(dashed, "-"+label)
+		}
+		return filter_prefix(dashed, current)
+	}
+	position := positional_index(command, words, args_start)
+	if position < 0 {
+		return nil
+	}
+	if position >= len(command.Arguments) {
+		return nil
+	}
+	if members, is_enum := option_enum_members(command.Arguments[position]); is_enum {
+		return filter_prefix(members, current)
+	}
+	return nil
+}
+
+// Completes a -label=value token to that option's enum members, when label names an
+// enum in scope. A non-enum or unknown label yields nil (the shell completes files).
+func complete_enum_value(
+	program *Program, command Command, current string,
+) (candidates []string) {
+	equals_offset := strings.Index(current, "=")
+	label := current[1:equals_offset]
+	partial := current[equals_offset+1:]
+	option, found := command_scope_option(program, command, label)
+	if !found {
+		return nil
+	}
+	members, is_enum := option_enum_members(*option)
+	if !is_enum {
+		return nil
+	}
+	output := []string{}
+	for _, member := range members {
+		if strings.HasPrefix(member, partial) {
+			output = append(output, "-"+label+"="+member)
+		}
+	}
+	return output
+}
+
+// Reports the positional slot the cursor sits in: the count of bare (non-flag) words
+// already typed after args_start, excluding the word under the cursor. A named argument
+// (-label=value) is not counted, matching how completion offers members for the next bare
+// slot.
+func positional_index(command Command, words []string, args_start int) (position int) {
+	for index := args_start; index < len(words)-1; index++ {
+		if !strings.HasPrefix(words[index], "-") {
+			position++
+		}
+	}
+	return position
+}
+
+// Finds an option by label across a command's arguments, its flags, and the program's
+// global flags — the same scope program_find_option searches, but read-only and without
+// a did-you-mean.
+func command_scope_option(
+	program *Program, command Command, label string,
+) (option *Option, found bool) {
+	for index := range command.Arguments {
+		if command.Arguments[index].Label == label {
+			return &command.Arguments[index], true
+		}
+	}
+	for index := range command.Flags {
+		if command.Flags[index].Label == label {
+			return &command.Flags[index], true
+		}
+	}
+	for index := range program.Global_Flags {
+		if program.Global_Flags[index].Label == label {
+			return &program.Global_Flags[index], true
+		}
+	}
+	return nil, false
+}
+
+// Returns the candidates that start with prefix, preserving order. Always non-nil so the
+// caller can compare lengths.
+func filter_prefix(candidates []string, prefix string) (matches []string) {
+	matches = []string{}
+	for _, candidate := range candidates {
+		if strings.HasPrefix(candidate, prefix) {
+			matches = append(matches, candidate)
+		}
+	}
+	return matches
+}
+
+// Handle_Completion is the pre-parse gate a binary calls before Program_Parse: it serves
+// the reserved `completion <shell>` (prints the shell script) and `__complete <words...>`
+// (prints candidates, one per line) invocations, returning true when it handled one. It
+// runs before parsing so it works for a single-command program, whose first token is
+// otherwise a positional. IO goes to output, like Print_Help.
+func Handle_Completion(program Program, args []string, output io.Writer) (handled bool) {
+	if len(args) < 2 {
+		return false
+	}
+	switch args[1] {
+	case "__complete":
+		for _, candidate := range Complete(program, args[2:]) {
+			fmt.Fprintln(output, candidate)
+		}
+		return true
+	case "completion":
+		shell := ""
+		if len(args) > 2 {
+			shell = args[2]
+		}
+		script, err := Completion_Script(program, shell)
+		if err != nil {
+			fmt.Fprintln(output, err)
+			return true
+		}
+		fmt.Fprint(output, script)
+		return true
+	}
+	return false
+}
+
+// Completion_Script returns a bash, zsh, or fish script that wires the shell's completion
+// to call back into `<name> __complete`, so candidates always come from the live Program.
+// The script is tiny and static; all knowledge lives in the binary. A multicall program
+// emits one registration per verb link. An unsupported shell is an error.
+func Completion_Script(program Program, shell string) (script string, err error) {
+	names := completion_target_names(program)
+	builder := strings.Builder{}
+	for _, name := range names {
+		block, block_err := completion_block(
+			&completion_block_input{Name: name, Shell: shell})
+		if block_err != nil {
+			return "", block_err
+		}
+		builder.WriteString(block)
+	}
+	return builder.String(), nil
+}
+
+// The command names the completion script registers: for a multicall program, the
+// program's own name (so self-invocation completes verb names) plus each verb link;
+// otherwise just the program.
+func completion_target_names(program Program) (names []string) {
+	if program.Multicall {
+		return append([]string{program.Label}, program_command_labels(&program)...)
+	}
+	return []string{program.Label}
+}
+
+// The command name and shell a completion registration is built for, bundled because
+// the parameter types repeat.
+type completion_block_input struct {
+	Name  string
+	Shell string
+}
+
+// Builds one shell's completion registration for a single command name.
+func completion_block(input *completion_block_input) (block string, err error) {
+	switch input.Shell {
+	case "bash":
+		return fmt.Sprintf(""+
+			"_%[1]s_complete() {\n"+
+			"    local IFS=$'\\n'\n"+
+			"    COMPREPLY=($(%[1]s __complete \"${COMP_WORDS[@]}\"))\n"+
+			"}\n"+
+			"complete -o default -F _%[1]s_complete %[1]s\n", input.Name), nil
+	case "zsh":
+		return fmt.Sprintf(""+
+			"#compdef %[1]s\n"+
+			"_%[1]s_complete() {\n"+
+			"    local -a completions\n"+
+			"    completions=(\"${(@f)$(%[1]s __complete \"${words[@]}\")}\")\n"+
+			"    compadd -- $completions\n"+
+			"}\n"+
+			"compdef _%[1]s_complete %[1]s\n", input.Name), nil
+	case "fish":
+		return fmt.Sprintf(""+
+			"function _%[1]s_complete\n"+
+			"    %[1]s __complete (commandline -opc) (commandline -ct)\n"+
+			"end\n"+
+			"complete -c %[1]s -f -a '(_%[1]s_complete)'\n", input.Name), nil
+	}
+	return "", fmt.Errorf("unsupported shell %q; use bash, zsh, or fish", input.Shell)
 }

@@ -19,12 +19,9 @@ a positional. Help drops the selector and shows the program's own positionals.
 
 ### Multicall
 
-A multicall program selects its command from the binary name in argv[0], as a
-busybox-style symlinked binary does; every token after it is that command's
-argument. When argv[0] is not a known command — the binary run by its own name rather
-than a verb link — the first token selects the command instead, as `busybox ls` does, so
-a bootstrap command works before the links exist. An unknown name suggests the closest
-command.
+A multicall program selects its command from the binary name in argv[0], as a busybox-
+style symlinked binary does; every token after it is that command's argument. Run by its
+own name rather than a link, the first token selects the command, as `busybox ls` does.
 
 ### Arguments
 
@@ -50,28 +47,35 @@ value returns an error.
 
 ### Enum
 
-An enum option restricts its value to a fixed set. A flag enum carries a default that
-must be a member; an argument enum is required and has none, set by position or by name
-like any argument. A value outside the set returns an error that suggests the closest
-member for a string enum and otherwise lists the whole set.
+An enum option restricts its value to a fixed set: a flag enum defaults to a member, an
+argument enum is required. A value outside the set errors, suggesting the closest member
+for a string enum and otherwise listing the whole set.
 
 ### Help
 
-Every program carries an auto-injected -help flag, shown under its global flags. When the
-token appears anywhere, parsing short-circuits before any assignment — so help works even
-with a missing required argument — and returns the Help_Requested sentinel alongside the
-command context: the selected command, or the empty-label root. Print_Requested_Help
-renders the whole program for the root and one command's usage otherwise.
+Every program carries an auto-injected -help flag. When the token appears anywhere,
+parsing short-circuits and returns the Help_Requested sentinel with the command context
+— the selected command or the empty-label root — which Print_Requested_Help renders.
 
 # Completion
 
-Complete returns shell-completion candidates for a partially typed command line, read
-from the live program: command names, then flag and named-argument labels for a leading
-dash, an enum option's members after -label=, and an enum positional's members;
-everything else is empty, leaving file completion to the shell. Completion_Script emits a
-bash, zsh, or fish script that calls back into `__complete` (one registration per verb for
-a multicall program); an unsupported shell errors. Handle_Completion serves the reserved
-`completion` and `__complete` invocations before parsing.
+Complete returns shell-completion candidates read from the live program: command names,
+dashed option labels, and enum members. Completion_Script emits a bash, zsh, or fish
+script that calls back into `__complete`, which Handle_Completion serves before parsing.
+
+# Visibility
+
+### Hidden
+
+A hidden flag or command still parses and resolves, but appears in neither the help
+output nor the completion candidates, so an internal or bootstrap option stays usable
+without being advertised.
+
+### Deprecated
+
+A deprecated flag or command still parses but is hidden the same way, and using it
+records a warning naming its guidance; Program_Parse gathers those warnings onto the
+returned command and Print_Deprecations emits them.
 
 # Trim Quotes
 
@@ -97,8 +101,6 @@ New validates a program's configuration and panics when it is malformed.
 
 ### Validation
 
-A command without a label panics; so does an argument label that is not flag-safe or
-that collides with another option's name. An enum with an empty set, an element type
-that does not match its value, or — for a flag — a default outside the set, panics; a
-variadic option may not be an enum. The label "help" is reserved for the auto-injected
--help flag, so a user option claiming it panics.
+A label that is empty, not flag-safe, or colliding panics, as does a non-terminal slice
+argument. An enum that is empty, type-mismatched, defaulted outside its set, or on a
+variadic panics; the reserved "help" label claimed by a user option panics too.
