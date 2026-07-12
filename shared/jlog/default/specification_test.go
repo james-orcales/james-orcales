@@ -134,35 +134,16 @@ func Test_Malformed_Line_Passes_Through(t *testing.T) {
 // Test_Terminal_Logger_Emits_Through_Console covers New_Terminal_Logger writing a line to
 // standard output in the Console's form; a pipe is not a terminal, so color is off.
 func Test_Terminal_Logger_Emits_Through_Console(t *testing.T) {
-	original := os.Stdout
-	reader, writer, err := os.Pipe()
-	if err != nil {
-		t.Fatal(err)
+	_, console, _ := capture_terminal(t, func(logger jlog.Logger) {
+		jlog.Logger_Info(logger, "up", jlog.Integer("port", 8080))
+	})
+	// The OS clock's timestamp is not predictable, so only the fixed tail is asserted; the init
+	// announcement precedes it, so the up line is still the console's last line.
+	if !strings.HasSuffix(console, " INF up port=8080\n") {
+		t.Fatalf("got %q, want suffix %q", console, " INF up port=8080\n")
 	}
-	// New_Terminal_Logger binds os.Stdout at construction, so it must be redirected first.
-	os.Stdout = writer
-	logger := jlog.New_Terminal_Logger()
-	jlog.Logger_Info(logger, "up", jlog.Integer("port", 8080))
-	if close_err := writer.Close(); close_err != nil {
-		t.Fatal(close_err)
-	}
-	os.Stdout = original
-
-	// One bounded read captures the short line; io.ReadAll is banned as unbounded.
-	output := make([]byte, 256)
-	count, read_err := reader.Read(output)
-	if read_err != nil {
-		if read_err != io.EOF {
-			t.Fatal(read_err)
-		}
-	}
-	got := string(output[:count])
-	// The OS clock's timestamp is not predictable, so only the fixed tail is asserted.
-	if !strings.HasSuffix(got, " INF up port=8080\n") {
-		t.Fatalf("got %q, want suffix %q", got, " INF up port=8080\n")
-	}
-	if strings.Contains(got, "\x1b[") {
-		t.Fatalf("a pipe is not a terminal; color must be off: %q", got)
+	if strings.Contains(console, "\x1b[") {
+		t.Fatalf("a pipe is not a terminal; color must be off: %q", console)
 	}
 }
 
@@ -174,13 +155,146 @@ func Test_Default_Floor_Is_Info(t *testing.T) {
 	}
 }
 
-// Test_Terminal_Floor_Is_Debug covers New_Terminal_Logger building with a Debug floor, a step
-// more verbose than the stderr default, since a developer watching a terminal wants debug lines
-// without asking for trace-level noise too.
-func Test_Terminal_Floor_Is_Debug(t *testing.T) {
-	if got := jlog.New_Terminal_Logger().Floor; got != jlog.LEVEL_DEBUG {
-		t.Fatalf("New_Terminal_Logger Floor = %v, want LEVEL_DEBUG", got)
+// Test_Terminal_Floor_Is_Trace covers New_Terminal_Logger building with a Trace floor, so every
+// line reaches its writers and the temporary file can capture all levels; the console's Info
+// cutoff lives on the console branch, not on this floor.
+func Test_Terminal_Floor_Is_Trace(t *testing.T) {
+	logger, _, _ := capture_terminal(t, nil)
+	if logger.Floor != jlog.LEVEL_TRACE {
+		t.Fatalf("New_Terminal_Logger Floor = %v, want LEVEL_TRACE", logger.Floor)
 	}
+}
+
+// Test_Level_Filter_Drops_Below_Floor covers a Level_Filter forwarding lines at or above its floor
+// and dropping the rest, so one logger can feed a verbose sink and a quiet one at once.
+func Test_Level_Filter_Drops_Below_Floor(t *testing.T) {
+	got := filter(t, jlog.LEVEL_INFO,
+		"{\"level\":\"trace\",\"message\":\"a\"}\n"+
+			"{\"level\":\"debug\",\"message\":\"b\"}\n"+
+			"{\"level\":\"info\",\"message\":\"c\"}\n"+
+			"{\"level\":\"warn\",\"message\":\"d\"}\n"+
+			"{\"level\":\"error\",\"message\":\"e\"}\n")
+	assert_output(t, got,
+		"{\"level\":\"info\",\"message\":\"c\"}\n"+
+			"{\"level\":\"warn\",\"message\":\"d\"}\n"+
+			"{\"level\":\"error\",\"message\":\"e\"}\n")
+}
+
+// Test_Level_Filter_Passes_Level_Less_And_Non_JSON covers a Level_Filter passing a line with no
+// level field (as Logger_Log writes) and a non-JSON line even at a high floor, since it
+// suppresses by level alone and never swallows output it cannot classify.
+func Test_Level_Filter_Passes_Level_Less_And_Non_JSON(t *testing.T) {
+	got := filter(t, jlog.LEVEL_ERROR, "{\"message\":\"note\"}\nnot json\n")
+	assert_output(t, got, "{\"message\":\"note\"}\nnot json\n")
+}
+
+// Test_Terminal_Logger_Tees_All_Levels_To_Temporary_File covers the terminal logger writing every
+// level to its $TMPDIR file while the console shows only info and up, and announcing the path.
+func Test_Terminal_Logger_Tees_All_Levels_To_Temporary_File(t *testing.T) {
+	_, console, path := capture_terminal(t, func(logger jlog.Logger) {
+		jlog.Logger_Trace(logger, "trace line")
+		jlog.Logger_Info(logger, "info line")
+	})
+	if !strings.Contains(console, "INF info line") {
+		t.Fatalf("console must show the info line: %q", console)
+	}
+	if strings.Contains(console, "trace line") {
+		t.Fatalf("console must not show the trace line: %q", console)
+	}
+	contents := read_file(t, path)
+	// The file keeps every level, including the trace line the console dropped.
+	if !strings.Contains(contents, "\"message\":\"trace line\"") {
+		t.Fatalf("temporary file must capture the trace line: %q", contents)
+	}
+	if !strings.Contains(contents, "\"message\":\"info line\"") {
+		t.Fatalf("temporary file must capture the info line: %q", contents)
+	}
+}
+
+// Runs line through a Level_Filter at floor and returns what passed, so a behaviour test is a
+// single byte comparison. The inner writer is a plain buffer, so the test sees exactly which lines
+// cleared the floor, unrendered.
+func filter(t *testing.T, floor jlog.Level, line string) (passed *bytes.Buffer) {
+	t.Helper()
+	passed = &bytes.Buffer{}
+	writer := jlog.New_Level_Filter(jlog.New_Level_Filter_Input{Writer: passed, Floor: floor})
+	if _, err := writer.Write([]byte(line)); err != nil {
+		t.Fatalf("level filter write: %v", err)
+	}
+	return passed
+}
+
+// Redirects os.Stdout to a pipe, builds a terminal logger, runs drive (which may be nil) to emit
+// lines through it, then restores os.Stdout and returns the logger, everything the console
+// received, and the temporary file's path, registering the file's removal. New_Terminal_Logger
+// binds os.Stdout at construction, so the redirect must happen first.
+func capture_terminal(
+	t *testing.T, drive func(logger jlog.Logger),
+) (logger jlog.Logger, console string, path string) {
+	t.Helper()
+	original := os.Stdout
+	reader, writer, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	os.Stdout = writer
+	logger = jlog.New_Terminal_Logger()
+	if drive != nil {
+		drive(logger)
+	}
+	if close_err := writer.Close(); close_err != nil {
+		t.Fatal(close_err)
+	}
+	os.Stdout = original
+
+	// One bounded read drains the pipe's buffered lines; io.ReadAll is banned as unbounded.
+	buffer := make([]byte, 8192)
+	count, read_err := reader.Read(buffer)
+	if read_err != nil {
+		if read_err != io.EOF {
+			t.Fatal(read_err)
+		}
+	}
+	console = string(buffer[:count])
+	path = temporary_path_from_console(t, console)
+	t.Cleanup(func() { os.Remove(path) })
+	return logger, console, path
+}
+
+// Recovers the temporary file's path from the init announcement's file= field. The path carries
+// no space, so it renders as a bare logfmt token that ends at the next space or newline.
+func temporary_path_from_console(t *testing.T, console string) (path string) {
+	t.Helper()
+	const MARKER = "file="
+	start_offset := strings.Index(console, MARKER)
+	if start_offset < 0 {
+		t.Fatalf("console has no file= announcement: %q", console)
+	}
+	rest := console[start_offset+len(MARKER):]
+	end_offset := strings.IndexAny(rest, " \n")
+	if end_offset < 0 {
+		end_offset = len(rest)
+	}
+	return rest[:end_offset]
+}
+
+// Returns path's contents via one bounded read; the temporary log holds a few short lines, and
+// io.ReadAll is banned as unbounded.
+func read_file(t *testing.T, path string) (contents string) {
+	t.Helper()
+	file, err := os.Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer file.Close()
+	buffer := make([]byte, 8192)
+	count, read_err := file.Read(buffer)
+	if read_err != nil {
+		if read_err != io.EOF {
+			t.Fatal(read_err)
+		}
+	}
+	return string(buffer[:count])
 }
 
 // Renders line through a Console with the given color setting and returns what the Console wrote,

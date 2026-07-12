@@ -527,23 +527,147 @@ func (console Console) Write(payload []byte) (written int, err error) {
 	return len(payload), nil
 }
 
-// New_Terminal_Logger returns a jlog.Logger whose lines are rendered by a Console to os.Stdout,
-// with color enabled only when os.Stdout is a terminal. It is synchronous (no diode): a terminal
-// dev logger values losing nothing at exit over never blocking, and a human watching a terminal
-// is not a hot path. Binding os.Stdout here is composition-tier wiring, so it is allowed.
+// Level_Filter is an io.Writer that forwards only the jlog lines whose level is at or above
+// its Floor and drops the rest — a floor at the writer seam, not at the emit gate. The terminal
+// logger emits every level so its temporary file keeps all of them; a Level_Filter is what
+// still holds trace and debug off the console. It is a drop-in jlog writer that composes under
+// io.MultiWriter. It is passed by value; New_Level_Filter sets its fields and nothing mutates
+// them, so a copy is a faithful, independent filter.
+type Level_Filter struct {
+	// Writer receives the lines that clear the floor.
+	Writer io.Writer
+	// Floor is the lowest level forwarded; a line below it is dropped.
+	Floor Level
+	// Level_Field is the key whose value names each line's level.
+	Level_Field string
+}
+
+// New_Level_Filter_Input configures New_Level_Filter.
+type New_Level_Filter_Input struct {
+	// Writer receives the lines that clear the floor; nil becomes io.Discard.
+	Writer io.Writer
+	// Floor is the lowest level forwarded; a line below it is dropped.
+	Floor Level
+	// Level_Field_Name overrides the level key; empty uses the default.
+	Level_Field_Name string
+}
+
+// New_Level_Filter builds a Level_Filter from input, resolving an empty level field name to jlog's
+// default so it matches a default logger.
+func New_Level_Filter(input New_Level_Filter_Input) (filter Level_Filter) {
+	writer := input.Writer
+	if writer == nil {
+		writer = io.Discard
+	}
+	filter.Writer = writer
+	filter.Floor = input.Floor
+	filter.Level_Field = string_or(input.Level_Field_Name, DEFAULT_LEVEL_FIELD_NAME)
+	invariant.Always(filter.Level_Field != "", "jlog: level field name is non-empty")
+	return filter
+}
+
+// Write forwards each newline-terminated line in payload whose level clears the Floor and drops the
+// rest, writing the survivors to the destination in one Write. It reports len(payload) consumed on
+// success — like Console, a filtering writer emits a different byte count than it takes — so both
+// jlog's own length check and io.MultiWriter's short-write check are satisfied.
+func (filter Level_Filter) Write(payload []byte) (written int, err error) {
+	kept := make(Buffer, 0, len(payload))
+	line_start := 0
+	for index := 0; index < len(payload); index++ {
+		if payload[index] != '\n' {
+			continue
+		}
+		if filter_admits(filter, payload[line_start:index+1]) {
+			kept = append(kept, payload[line_start:index+1]...)
+		}
+		line_start = index + 1
+	}
+	// A trailing chunk with no newline is not something jlog produces (every line ends in \n),
+	// but a filter on a raw pipe might see one; classify it the same, rather than dropping it.
+	if line_start < len(payload) {
+		if filter_admits(filter, payload[line_start:]) {
+			kept = append(kept, payload[line_start:]...)
+		}
+	}
+	if len(kept) > 0 {
+		if _, write_err := filter.Writer.Write(kept); write_err != nil {
+			return 0, write_err
+		}
+	}
+	return len(payload), nil
+}
+
+// Reports whether line clears the filter's floor. A line that is not a JSON object, or one with
+// no level field, is admitted: the filter suppresses by level and never swallows output it
+// cannot classify.
+func filter_admits(filter Level_Filter, line []byte) (admit bool) {
+	members, parsed := scan_object(line)
+	if !parsed {
+		return true
+	}
+	return level_from_wire(member_text(members, filter.Level_Field)) >= filter.Floor
+}
+
+// Maps a level's wire name back to its Level, the inverse of Level.String, so a writer can
+// compare a rendered line's level to a floor. An unrecognized or absent name maps to LEVEL_NONE,
+// which clears any real floor, so a level-less or custom line is never taken for noise.
+func level_from_wire(wire string) (level Level) {
+	switch wire {
+	case "trace":
+		return LEVEL_TRACE
+	case "debug":
+		return LEVEL_DEBUG
+	case "info":
+		return LEVEL_INFO
+	case "warn":
+		return LEVEL_WARN
+	case "error":
+		return LEVEL_ERROR
+	}
+	return LEVEL_NONE
+}
+
+// New_Terminal_Logger returns a jlog.Logger for a developer watching a terminal. Its floor is
+// Trace, the most verbose, so every line reaches its writers: the floor is the library's one
+// gate and runs before any writer, so only a Trace floor lets the full stream survive to a
+// writer at all. It then fans that stream two ways — a $TMPDIR file keeps every level as raw
+// JSON, while a Level_Filter holds the console (os.Stdout, colored only when os.Stdout is a
+// terminal) at an Info floor, so trace and debug stay off the terminal yet persist in the file.
+// It is synchronous (no diode): a terminal dev logger values losing nothing at exit over never
+// blocking, and a human watching a terminal is not a hot path. Binding os.Stdout and reaching
+// $TMPDIR here is composition-tier wiring, so it is allowed. On init it logs the file's path so
+// the developer can find the full log; if the file cannot be created it degrades to console-only
+// and says so, since a dev convenience must not crash a program.
 func New_Terminal_Logger() (logger Logger) {
 	clock, _ := system_time.New_Operating_System_Clock()
-	console := New_Console(New_Console_Input{
-		Writer: os.Stdout,
-		Color:  file_is_terminal(os.Stdout),
+	console := New_Level_Filter(New_Level_Filter_Input{
+		Floor: jlog.LEVEL_INFO,
+		Writer: New_Console(New_Console_Input{
+			Writer: os.Stdout,
+			Color:  file_is_terminal(os.Stdout),
+		}),
 	})
-	return jlog.New(jlog.New_Input{
-		Writer:         console,
+	// An empty directory argument routes CreateTemp through os.TempDir, which honors $TMPDIR.
+	file, file_err := os.CreateTemp("", "jlog-terminal-*.log")
+	var writer io.Writer = console
+	if file_err == nil {
+		// The file precedes the console, so a line is kept even if the console drops it.
+		writer = io.MultiWriter(file, console)
+	}
+	logger = jlog.New(jlog.New_Input{
+		Writer:         writer,
 		Clock:          clock,
-		Floor:          jlog.LEVEL_DEBUG,
+		Floor:          jlog.LEVEL_TRACE,
 		Auto_Timestamp: true,
 		Caller:         operating_system_caller,
 	})
+	if file_err != nil {
+		Logger_Warn(logger, "terminal logger: temporary log file unavailable, console only",
+			Err(file_err))
+		return logger
+	}
+	Logger_Info(logger, "terminal logger: capturing all levels", String("file", file.Name()))
+	return logger
 }
 
 // Reports whether file is a terminal by its character-device bit — the same stdlib-only check

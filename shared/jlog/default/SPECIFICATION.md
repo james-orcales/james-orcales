@@ -70,8 +70,23 @@ human-readable form.
 New_Default_Logger builds with an Info floor, so trace and debug noise stays out of the
 stderr diode unless a caller raises verbosity explicitly.
 
-# Terminal Floor Is Debug
+# Terminal Floor Is Trace
 
-New_Terminal_Logger builds with a Debug floor, a step more verbose than the stderr
-default, since a developer watching a terminal wants debug lines without asking for
-trace-level noise too.
+New_Terminal_Logger builds with a Trace floor, the one gate the library applies and it runs
+before any writer, so only a Trace floor lets every level reach the temporary file. The
+console's own Info cutoff is re-applied on the console branch, not on this floor.
+
+# Level Filter Drops Below Floor
+
+A Level_Filter forwards only the lines whose level is at or above its floor and drops the rest,
+so one logger can feed a verbose sink and a quiet one at once.
+
+# Level Filter Passes Level Less And Non JSON
+
+A Level_Filter passes a line with no level field, as Logger_Log writes, and a line that is not
+a JSON object, since it suppresses by level alone and never swallows output it cannot classify.
+
+# Terminal Logger Tees All Levels To Temporary File
+
+New_Terminal_Logger writes every level to a file under $TMPDIR while the console shows only info
+and up, and on initialization it announces the file's path so a developer can find the full log.
