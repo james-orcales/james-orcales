@@ -33,6 +33,7 @@ import (
 	"math"
 	"net"
 	"strconv"
+	"strings"
 	"sync"
 	"unicode/utf8"
 	"unsafe"
@@ -1270,4 +1271,648 @@ func assert(condition bool, message string) {
 	if !condition {
 		panic(message)
 	}
+}
+
+// The rest of this file is the pretty printer: the human-facing inverse of the encoder above. jlog
+// emits flat JSON for machines; a Console reads those lines back and renders them for a human at a
+// terminal. It plugs into the encoder only through the io.Writer seam (each emit writes one whole
+// flat-JSON object per Write), so the zero-allocation hot path is never touched. Being off the hot
+// path, it may allocate freely. It is pure — it reaches for no OS, clock, or global state; every
+// dependency arrives through a Console field — so it belongs here, not in the composition tier.
+
+// An ANSI SGR sequence. A distinct type so buffer_paint takes it without colliding with its
+// plain-text argument under the same-type-parameter rule, mirroring maddox's ansi_code.
+type ansi_code string
+
+// ANSI_RESET closes every painted span so a color never bleeds past the part it marks.
+const ANSI_RESET ansi_code = "\x1b[0m"
+
+// ANSI_FAINT dims the timestamp and trace lines so they recede behind the message.
+const ANSI_FAINT ansi_code = "\x1b[2m"
+
+// ANSI_BOLD lifts the message, the part a human scans for first.
+const ANSI_BOLD ansi_code = "\x1b[1m"
+
+// ANSI_RED marks an error value and the error level, so a failure stands out.
+const ANSI_RED ansi_code = "\x1b[31m"
+
+// ANSI_GREEN tags the info level.
+const ANSI_GREEN ansi_code = "\x1b[32m"
+
+// ANSI_YELLOW tags the warn level.
+const ANSI_YELLOW ansi_code = "\x1b[33m"
+
+// ANSI_CYAN labels logfmt keys and the debug level, legible where a dim gray would not be.
+const ANSI_CYAN ansi_code = "\x1b[36m"
+
+// Console is an io.Writer that renders each flat-JSON jlog line as a human-readable console line.
+// It reads jlog's default field names (time, level, message, error); a logger built with custom
+// field names is not matched, which no caller needs. It is passed by value and never mutated, so a
+// copy is a faithful, independent Console. Build one directly with a struct literal.
+type Console struct {
+	// Writer receives the rendered text; a caller must set it (a zero Console writes nowhere).
+	Writer io.Writer
+	// Color enables ANSI color in the rendered output.
+	Color bool
+}
+
+// Write renders the newline-terminated JSON lines in payload and writes the human-readable form
+// to the destination in one Write. It satisfies io.Writer — the one method the house style
+// permits — so a Console is a drop-in jlog writer. It reports len(payload) consumed on success (a
+// transforming writer emits a different byte count than it takes), so jlog's own length check is
+// satisfied.
+func (console Console) Write(payload []byte) (written int, err error) {
+	rendered := make(Buffer, 0, len(payload)*2)
+	line_start := 0
+	for index := 0; index < len(payload); index++ {
+		if payload[index] != '\n' {
+			continue
+		}
+		rendered = buffer_append_pretty_line(rendered, payload[line_start:index], console)
+		rendered = append(rendered, '\n')
+		line_start = index + 1
+	}
+	// A trailing chunk with no newline is not something jlog produces (every line ends in \n),
+	// but a Console used on a raw pipe might see one; render it without inventing a newline.
+	if line_start < len(payload) {
+		rendered = buffer_append_pretty_line(rendered, payload[line_start:], console)
+	}
+	_, write_err := console.Writer.Write(rendered)
+	if write_err != nil {
+		return 0, write_err
+	}
+	return len(payload), nil
+}
+
+// How a JSON value is displayed: a string is unquoted (and logfmt-requoted only if needed), a
+// literal (number/bool/null) is copied verbatim so a large integer keeps its exact digits, and a
+// compound (array/object) is copied as compacted JSON so it stays one flat token.
+type value_kind uint8
+
+// VALUE_IS_STRING tags a value rendered unquoted, logfmt-requoted only when needed.
+const VALUE_IS_STRING value_kind = 0
+
+// VALUE_IS_LITERAL tags a number/bool/null copied verbatim so its exact digits survive.
+const VALUE_IS_LITERAL value_kind = 1
+
+// VALUE_IS_COMPOUND tags an array/object copied as one compact JSON token.
+const VALUE_IS_COMPOUND value_kind = 2
+
+// One key/value member of a rendered line, holding the value already reduced to its display text
+// and kind so rendering never re-parses.
+type member struct {
+	// Key is the JSON object key.
+	Key string
+	// Text is the value's display form, already unescaped or compacted.
+	Text string
+	// Kind selects how Text is quoted when rendered.
+	Kind value_kind
+}
+
+// Appends line rendered as one console line (no trailing newline; Write adds that). A line that is
+// not a JSON object is appended verbatim, so interleaved non-JSON output is never lost.
+func buffer_append_pretty_line(
+	destination Buffer, line []byte, console Console,
+) (output Buffer) {
+	members, parsed := scan_object(line)
+	if !parsed {
+		return append(destination, line...)
+	}
+	return buffer_append_members(destination, members, console)
+}
+
+// Scans one flat-JSON object into its members in wire order. It is hand-rolled rather than built
+// on json.NewDecoder because the house style bans that unbounded streaming API, and json.Unmarshal
+// into a map would scramble jlog's deliberate field order and round a large uint64 through float64.
+// Each value's exact source bytes are captured (numbers stay exact, an embedded Raw_JSON blob
+// survives). Any deviation from a lone, well-formed object returns parsed=false, and the caller
+// passes the line through untouched.
+func scan_object(line []byte) (members []member, parsed bool) {
+	index := scan_space(line, 0)
+	if index >= len(line) {
+		return nil, false
+	}
+	if line[index] != '{' {
+		return nil, false
+	}
+	index = scan_space(line, index+1)
+	if index < len(line) {
+		if line[index] == '}' {
+			return nil, scan_space(line, index+1) == len(line)
+		}
+	}
+	// Each member is at least one byte, so len(line) bounds the count and keeps the loop
+	// bounded; a well-formed object returns through '}' before that ceiling is reached.
+	for guard_index := 0; guard_index < len(line); guard_index++ {
+		key, key_next, key_ok := scan_string(line, index)
+		if !key_ok {
+			return nil, false
+		}
+		index = scan_space(line, key_next)
+		if index >= len(line) {
+			return nil, false
+		}
+		if line[index] != ':' {
+			return nil, false
+		}
+		index = scan_space(line, index+1)
+		text, kind, value_next, value_ok := scan_value(line, index)
+		if !value_ok {
+			return nil, false
+		}
+		members = append(members, member{Key: key, Text: text, Kind: kind})
+		index = scan_space(line, value_next)
+		if index >= len(line) {
+			return nil, false
+		}
+		if line[index] == ',' {
+			index = scan_space(line, index+1)
+			continue
+		}
+		if line[index] == '}' {
+			return members, scan_space(line, index+1) == len(line)
+		}
+		return nil, false
+	}
+	return nil, false
+}
+
+// Skips JSON insignificant whitespace from start and returns the next index. jlog output carries
+// none, but a Console fed a hand-formatted line still parses.
+func scan_space(line []byte, start int) (next int) {
+	index := start
+	for index < len(line) {
+		if !byte_is_space(line[index]) {
+			return index
+		}
+		index++
+	}
+	return index
+}
+
+func byte_is_space(value byte) (space bool) {
+	switch value {
+	case ' ', '\t', '\n', '\r':
+		return true
+	}
+	return false
+}
+
+// Reads a JSON string beginning at start, returning its unescaped value and the index past the
+// closing quote. The raw span (quotes included) is handed to json.Unmarshal — a bounded []byte, the
+// API the house style prefers — so escapes decode exactly; the scan only has to find the real close
+// quote, which means skipping a backslash-escaped byte so an escaped quote does not end it early.
+func scan_string(line []byte, start int) (value string, next int, ok bool) {
+	if start >= len(line) {
+		return "", start, false
+	}
+	if line[start] != '"' {
+		return "", start, false
+	}
+	index := start + 1
+	for index < len(line) {
+		if line[index] == '\\' {
+			index += 2
+			continue
+		}
+		if line[index] == '"' {
+			var decoded string
+			if err := json.Unmarshal(line[start:index+1], &decoded); err != nil {
+				return "", start, false
+			}
+			return decoded, index + 1, true
+		}
+		index++
+	}
+	return "", start, false
+}
+
+// Reads one JSON value beginning at start, classifying it: a string is unescaped, an array or
+// object is captured as its verbatim (already-compact) source bytes, and anything else is a scalar
+// literal whose digits are kept exactly.
+func scan_value(line []byte, start int) (text string, kind value_kind, next int, ok bool) {
+	if start >= len(line) {
+		return "", VALUE_IS_LITERAL, start, false
+	}
+	if line[start] == '"' {
+		value, value_next, value_ok := scan_string(line, start)
+		if !value_ok {
+			return "", VALUE_IS_LITERAL, start, false
+		}
+		return value, VALUE_IS_STRING, value_next, true
+	}
+	if line[start] == '{' {
+		return scan_compound(line, start)
+	}
+	if line[start] == '[' {
+		return scan_compound(line, start)
+	}
+	return scan_literal(line, start)
+}
+
+// Reads a brace- or bracket-delimited value beginning at start, returning its verbatim source
+// bytes. A depth counter over the matching delimiter finds the close; strings are skipped whole so
+// a delimiter inside a string does not miscount. Cross-type nesting (an array inside an object) is
+// transparent — the other delimiter is an ordinary byte — and any real imbalance surfaces as a
+// parse failure at the enclosing object, which passes the line through.
+func scan_compound(line []byte, start int) (text string, kind value_kind, next int, ok bool) {
+	opener := line[start]
+	closer := byte('}')
+	if opener == '[' {
+		closer = ']'
+	}
+	depth := 0
+	index := start
+	for index < len(line) {
+		if line[index] == '"' {
+			_, string_next, string_ok := scan_string(line, index)
+			if !string_ok {
+				return "", VALUE_IS_COMPOUND, start, false
+			}
+			index = string_next
+			continue
+		}
+		if line[index] == opener {
+			depth++
+			index++
+			continue
+		}
+		if line[index] == closer {
+			depth--
+			index++
+			if depth == 0 {
+				return string(line[start:index]), VALUE_IS_COMPOUND, index, true
+			}
+			continue
+		}
+		index++
+	}
+	return "", VALUE_IS_COMPOUND, start, false
+}
+
+// Reads a scalar literal (number, true, false, or null) beginning at start, ending it at the first
+// value terminator so its exact source digits are captured.
+func scan_literal(line []byte, start int) (text string, kind value_kind, next int, ok bool) {
+	index := start
+	for index < len(line) {
+		if byte_ends_literal(line[index]) {
+			break
+		}
+		index++
+	}
+	if index == start {
+		return "", VALUE_IS_LITERAL, start, false
+	}
+	return string(line[start:index]), VALUE_IS_LITERAL, index, true
+}
+
+// Reports whether value terminates a scalar literal: a member separator, a container close, or
+// whitespace.
+func byte_ends_literal(value byte) (ends bool) {
+	switch value {
+	case ',', '}', ']', ' ', '\t', '\n', '\r':
+		return true
+	}
+	return false
+}
+
+// Renders the header (timestamp, level, message — in that order, whatever their wire order) then
+// every remaining member as a logfmt pair, each part separated from the last by a single space.
+func buffer_append_members(
+	destination Buffer, members []member, console Console,
+) (output Buffer) {
+	// An absent header key and an empty one render the same — nothing — so a plain non-empty
+	// check covers both, and jlog never emits an empty timestamp, level, or message anyway. The
+	// timestamp is coarsened to the second here; the tail keeps any Time field's precision.
+	time_text := timestamp_seconds(member_text(members, string(DEFAULT_TIMESTAMP_FIELD_NAME)))
+	level_text := member_text(members, string(DEFAULT_LEVEL_FIELD_NAME))
+	message_text := member_text(members, string(DEFAULT_MESSAGE_FIELD_NAME))
+	wrote := false
+	if time_text != "" {
+		destination = buffer_append_separated(destination, wrote)
+		destination = buffer_paint(destination, ANSI_FAINT, console.Color, time_text)
+		wrote = true
+	}
+	if level_text != "" {
+		destination = buffer_append_separated(destination, wrote)
+		destination = buffer_append_level_tag(destination, level_text, console.Color)
+		wrote = true
+	}
+	if message_text != "" {
+		destination = buffer_append_separated(destination, wrote)
+		destination = buffer_paint(destination, ANSI_BOLD, console.Color, message_text)
+		wrote = true
+	}
+	for index := 0; index < len(members); index++ {
+		current := members[index]
+		if member_is_header(current.Key) {
+			continue
+		}
+		destination = buffer_append_separated(destination, wrote)
+		destination = buffer_append_field(destination, current, console)
+		wrote = true
+	}
+	return destination
+}
+
+// Reports whether key is one of the three header keys, which render in the header rather than
+// repeat in the logfmt tail.
+func member_is_header(key string) (header bool) {
+	if key == string(DEFAULT_TIMESTAMP_FIELD_NAME) {
+		return true
+	}
+	if key == string(DEFAULT_LEVEL_FIELD_NAME) {
+		return true
+	}
+	if key == string(DEFAULT_MESSAGE_FIELD_NAME) {
+		return true
+	}
+	return false
+}
+
+// Returns the display text of the first member with key, or "" when no member has it.
+func member_text(members []member, key string) (text string) {
+	for index := 0; index < len(members); index++ {
+		if members[index].Key == key {
+			return members[index].Text
+		}
+	}
+	return ""
+}
+
+// Appends a single space before a part when a previous part was already written, so the line
+// never opens with or doubles a separator.
+func buffer_append_separated(destination Buffer, wrote bool) (output Buffer) {
+	if wrote {
+		return append(destination, ' ')
+	}
+	return destination
+}
+
+// Appends one logfmt "key=value" pair: the key in cyan so it reads as a label yet stays legible
+// (unlike a dim gray), the value logfmt-quoted, and — for the error field — the value painted red
+// so a failure stands out.
+func buffer_append_field(destination Buffer, field member, console Console) (output Buffer) {
+	destination = buffer_paint(destination, ANSI_CYAN, console.Color, field.Key)
+	destination = append(destination, '=')
+	value_color := ansi_code("")
+	if field.Key == string(DEFAULT_ERROR_FIELD_NAME) {
+		value_color = ANSI_RED
+	}
+	return buffer_paint(destination, value_color, console.Color, logfmt_token(field))
+}
+
+// Appends the level as its three-letter tag, painted by severity. Named apart from the encoder's
+// buffer_append_level (which writes the level as a JSON field) since both share this package.
+func buffer_append_level_tag(destination Buffer, wire string, color bool) (output Buffer) {
+	return buffer_paint(destination, level_color(wire), color, level_label(wire))
+}
+
+// Appends text wrapped in code and a reset when color is on and code is a real color; otherwise
+// appends text bare. An empty code means "no color for this part", so an unknown level or a
+// non-error value stays uncolored even under color.
+func buffer_paint(destination Buffer, code ansi_code, color bool, text string) (output Buffer) {
+	if !color {
+		return append(destination, text...)
+	}
+	if code == "" {
+		return append(destination, text...)
+	}
+	destination = append(destination, code...)
+	destination = append(destination, text...)
+	return append(destination, ANSI_RESET...)
+}
+
+// Returns the display token for a field value: a string is bare unless logfmt requires quoting; a
+// literal or compound value is already a safe bare token.
+func logfmt_token(field member) (token string) {
+	if field.Kind != VALUE_IS_STRING {
+		return field.Text
+	}
+	if logfmt_needs_quote(field.Text) {
+		return strconv.Quote(field.Text)
+	}
+	return field.Text
+}
+
+// Reports whether a logfmt value must be double-quoted: an empty value, or one carrying a space,
+// an equals, a quote, or a control byte, is ambiguous or unreadable bare.
+func logfmt_needs_quote(value string) (needs bool) {
+	if value == "" {
+		return true
+	}
+	for index := 0; index < len(value); index++ {
+		current := value[index]
+		switch current {
+		case ' ', '=', '"':
+			return true
+		}
+		if current < 0x20 {
+			return true
+		}
+	}
+	return false
+}
+
+// Maps a level's wire name to its three-letter tag. An unknown level (a custom numeric level, or
+// "disabled") falls back to its first three characters uppercased, so nothing renders blank.
+func level_label(wire string) (label string) {
+	switch wire {
+	case "trace":
+		return "TRC"
+	case "debug":
+		return "DBG"
+	case "info":
+		return "INF"
+	case "warn":
+		return "WRN"
+	case "error":
+		return "ERR"
+	}
+	upper := strings.ToUpper(wire)
+	if len(upper) > 3 {
+		return upper[:3]
+	}
+	return upper
+}
+
+// Maps a level's wire name to its color; an unknown level returns the empty code, meaning no
+// color, so buffer_paint leaves it plain.
+func level_color(wire string) (code ansi_code) {
+	switch wire {
+	case "trace":
+		return ANSI_FAINT
+	case "debug":
+		return ANSI_CYAN
+	case "info":
+		return ANSI_GREEN
+	case "warn":
+		return ANSI_YELLOW
+	case "error":
+		return ANSI_RED
+	}
+	return ""
+}
+
+// Trims an RFC 3339 header timestamp to second precision by dropping its sub-second fraction and
+// keeping the trailing zone, so "…:20.123456789Z" becomes "…:20Z" — a human reading the console
+// needs no nanosecond granularity. A value with no fraction is returned unchanged; only the
+// console display coarsens, never the JSON line.
+func timestamp_seconds(value string) (seconds string) {
+	fraction_offset := strings.IndexByte(value, '.')
+	if fraction_offset < 0 {
+		return value
+	}
+	// The zone is searched absolutely, not relative to the fraction, so the two offsets are
+	// never added: an RFC 3339 UTC value carries exactly one 'Z', the terminal zone marker.
+	zone_offset := strings.IndexByte(value, 'Z')
+	if zone_offset < 0 {
+		return value[:fraction_offset]
+	}
+	return value[:fraction_offset] + value[zone_offset:]
+}
+
+// Level_Filter is an io.Writer that forwards only the jlog lines whose level is at or above
+// its Floor and drops the rest — a floor at the writer seam, not at the emit gate. A terminal
+// logger emits every level so a file sink keeps all of them; a Level_Filter is what still holds
+// trace and debug off the console. It is a drop-in jlog writer that composes under io.MultiWriter.
+// It is passed by value; New_Level_Filter sets its fields and nothing mutates them, so a copy is a
+// faithful, independent filter.
+type Level_Filter struct {
+	// Writer receives the lines that clear the floor.
+	Writer io.Writer
+	// Floor is the lowest level forwarded; a line below it is dropped.
+	Floor Level
+	// Level_Field is the key whose value names each line's level.
+	Level_Field string
+}
+
+// New_Level_Filter_Input configures New_Level_Filter.
+type New_Level_Filter_Input struct {
+	// Writer receives the lines that clear the floor; nil becomes io.Discard.
+	Writer io.Writer
+	// Floor is the lowest level forwarded; a line below it is dropped.
+	Floor Level
+	// Level_Field_Name overrides the level key; empty uses the default.
+	Level_Field_Name string
+}
+
+// New_Level_Filter builds a Level_Filter from input, resolving an empty level field name to jlog's
+// default so it matches a default logger.
+func New_Level_Filter(input New_Level_Filter_Input) (filter Level_Filter) {
+	writer := input.Writer
+	if writer == nil {
+		writer = io.Discard
+	}
+	filter.Writer = writer
+	filter.Floor = input.Floor
+	filter.Level_Field = string_or(input.Level_Field_Name, DEFAULT_LEVEL_FIELD_NAME)
+	assert(filter.Level_Field != "", "jlog: level field name is non-empty")
+	return filter
+}
+
+// Write forwards each newline-terminated line in payload whose level clears the Floor and drops the
+// rest, writing the survivors to the destination in one Write. It reports len(payload) consumed on
+// success — like Console, a filtering writer emits a different byte count than it takes — so both
+// jlog's own length check and io.MultiWriter's short-write check are satisfied.
+func (filter Level_Filter) Write(payload []byte) (written int, err error) {
+	kept := make(Buffer, 0, len(payload))
+	line_start := 0
+	for index := 0; index < len(payload); index++ {
+		if payload[index] != '\n' {
+			continue
+		}
+		if filter_admits(filter, payload[line_start:index+1]) {
+			kept = append(kept, payload[line_start:index+1]...)
+		}
+		line_start = index + 1
+	}
+	// A trailing chunk with no newline is not something jlog produces (every line ends in \n),
+	// but a filter on a raw pipe might see one; classify it the same, rather than dropping it.
+	if line_start < len(payload) {
+		if filter_admits(filter, payload[line_start:]) {
+			kept = append(kept, payload[line_start:]...)
+		}
+	}
+	if len(kept) > 0 {
+		if _, write_err := filter.Writer.Write(kept); write_err != nil {
+			return 0, write_err
+		}
+	}
+	return len(payload), nil
+}
+
+// Reports whether line clears the filter's floor. A line that is not a JSON object, or one with
+// no level field, is admitted: the filter suppresses by level and never swallows output it
+// cannot classify.
+func filter_admits(filter Level_Filter, line []byte) (admit bool) {
+	members, parsed := scan_object(line)
+	if !parsed {
+		return true
+	}
+	return level_from_wire(member_text(members, filter.Level_Field)) >= filter.Floor
+}
+
+// Maps a level's wire name back to its Level, the inverse of Level.String, so a writer can
+// compare a rendered line's level to a floor. An unrecognized or absent name maps to LEVEL_NONE,
+// which clears any real floor, so a level-less or custom line is never taken for noise.
+func level_from_wire(wire string) (level Level) {
+	switch wire {
+	case "trace":
+		return LEVEL_TRACE
+	case "debug":
+		return LEVEL_DEBUG
+	case "info":
+		return LEVEL_INFO
+	case "warn":
+		return LEVEL_WARN
+	case "error":
+		return LEVEL_ERROR
+	}
+	return LEVEL_NONE
+}
+
+// New_Console_Logger_Input configures New_Console_Logger.
+type New_Console_Logger_Input struct {
+	// Console receives the rendered lines at Floor and above; nil becomes io.Discard.
+	Console io.Writer
+	// Capture receives every level as raw JSON, whatever the Floor; nil disables capture.
+	Capture io.Writer
+	// Color enables ANSI color on the console.
+	Color bool
+	// Floor is the console's lowest shown level; Capture keeps every level regardless.
+	Floor Level
+	// Clock stamps each line.
+	Clock time.Clock
+	// Caller resolves the Caller() field's location.
+	Caller func(skip int) (location string)
+}
+
+// New_Console_Logger builds a console logger. It renders human-readable lines to the Console sink
+// at Floor and above and, when Capture is set, tees every level as raw JSON to Capture, so one
+// logger drives a quiet console and a full capture at once. It is pure: the console sink, the
+// capture sink, the clock, and the caller lookup are all injected, so the composition root decides
+// what they bind to. The logger's own floor is Trace: the one gate runs before any writer, so only
+// a Trace floor lets every level reach Capture; the console Floor gates its branch alone.
+func New_Console_Logger(input New_Console_Logger_Input) (logger Logger) {
+	console_writer := input.Console
+	if console_writer == nil {
+		console_writer = io.Discard
+	}
+	console := New_Level_Filter(New_Level_Filter_Input{
+		Floor:  input.Floor,
+		Writer: Console{Writer: console_writer, Color: input.Color},
+	})
+	var writer io.Writer = console
+	if input.Capture != nil {
+		// Capture precedes the console, so a line is kept even if the console drops it.
+		writer = io.MultiWriter(input.Capture, console)
+	}
+	return New(New_Input{
+		Writer:         writer,
+		Clock:          input.Clock,
+		Floor:          LEVEL_TRACE,
+		Auto_Timestamp: true,
+		Caller:         input.Caller,
+	})
 }
