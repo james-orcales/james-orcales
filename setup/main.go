@@ -16,6 +16,7 @@ import (
 	"local/james-orcales/setup/internal"
 	sysio "local/james-orcales/shared/io"
 	iodefault "local/james-orcales/shared/io/default"
+	jlogcore "local/james-orcales/shared/jlog"
 	jlog "local/james-orcales/shared/jlog/default"
 	timeos "local/james-orcales/shared/time/default"
 )
@@ -53,14 +54,11 @@ func main() {
 	// colored only when stderr is a terminal — at debug and below, so the dotfiles scan's
 	// per-directory chatter shows and every line is stamped from the clock.
 	clock, _ := timeos.New_Operating_System_Clock()
-	logger := jlog.New(jlog.New_Input{
-		Writer: jlog.New_Console(jlog.New_Console_Input{
-			Writer: os.Stderr,
-			Color:  is_terminal(os.Stderr),
-		}),
-		Clock:          clock,
-		Floor:          jlog.LEVEL_DEBUG,
-		Auto_Timestamp: true,
+	logger := jlogcore.New_Console_Logger(jlogcore.New_Console_Logger_Input{
+		Console: os.Stderr,
+		Color:   is_terminal(os.Stderr),
+		Floor:   jlogcore.LEVEL_DEBUG,
+		Clock:   clock,
 	})
 	if os.Geteuid() == 0 {
 		jlog.Logger_Error(logger, ROOT_REFUSAL)
