@@ -22,10 +22,10 @@ Read fills the whole of its buffer, reports the full byte count, and never error
 sizes that stay within one refill, exactly fill it, and cross into the next; the bytes it
 delivers are real keystream, never a silent run of zeros. It satisfies io.Reader.
 
-# Uint64 Is Uniform
+# Bytes Are Uniform
 
-Uint64 sets close to half of all its bits over a large sample, the balance a fair keystream
-holds.
+A filled buffer sets close to half of all its bits over a large sample, the balance a fair
+keystream holds.
 
 # Below Is Bounded
 
@@ -41,4 +41,5 @@ or the output that refill already produced.
 
 # Hot Path Is Zero Allocation
 
-A steady-state Uint64 draw performs no heap allocation.
+A steady-state Read performs no heap allocation, even with the draw path's invariant assertions
+active under coverage recording.
