@@ -24,7 +24,8 @@
   "opt_out_recursion_ban": [],
   "opt_out_assertion_mandate_packages": [
           "**",
-          "!maddox/**"
+          "!maddox/**",
+          "!shared/csprng/**"
   ],
   "word_replacements": {
     "len":       [],
