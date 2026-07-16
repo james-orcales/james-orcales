@@ -5,6 +5,7 @@ package sloc
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"io/fs"
@@ -63,7 +64,14 @@ type Main_Input struct {
 // process exit code.
 func Main(input *Main_Input) (status_code int) {
 	program := main_program()
+	if cli.Handle_Completion(program, input.Arguments, input.Output) {
+		return EXIT_SUCCESS
+	}
 	command, parse_err := cli.Program_Parse(&program, input.Arguments)
+	if errors.Is(parse_err, cli.Help_Requested) {
+		cli.Print_Requested_Help(input.Output, program, command)
+		return EXIT_SUCCESS
+	}
 	if parse_err != nil {
 		fmt.Fprintf(input.Error_Output, "sloc: %v\n\n", parse_err)
 		cli.Print_Help(input.Error_Output, program)

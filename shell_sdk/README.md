@@ -22,11 +22,12 @@ from csv < people.csv | filter age gt 30 | sort-by age | to json
 
 ## Install
 
-The binary dispatches on the name it is invoked as (argv[0]), busybox-style. One
-`-install` fans it out into a verb-named symlink per verb:
+The binary dispatches on the name it is invoked as (argv[0]), busybox-style, and run by
+its own name it takes the verb from the first token. The `install` verb fans it out into
+a verb-named symlink per verb:
 
 ```
-shell_sdk -install=~/.local/bin      # add that directory to your PATH
+shell_sdk install ~/.local/bin       # add that directory to your PATH
 ```
 
 Every verb is now its own command: `filter`, `sort-by`, `to`, and so on.

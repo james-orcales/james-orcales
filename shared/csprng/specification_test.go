@@ -1,10 +1,12 @@
-// Whitebox suite (package csprng): most checks are black-box, but the reference-vector test below
+// Whitebox suite (package csprng): most checks are black-box, but the reference-vector test
 // reaches the unexported chacha20_block to match RFC 8439's vectors before fast-key-erasure hides
-// the raw keystream. Every spec-mapped test lives in this file, in heading order.
+// the raw keystream, and the erasure test reads the key. Every spec-mapped test is in this file, in
+// heading order.
 package csprng
 
 import (
 	"bytes"
+	"encoding/binary"
 	"encoding/hex"
 	"io"
 	"math/bits"
@@ -17,12 +19,18 @@ import (
 func Test_Seed_Expands_To_State(t *testing.T) {
 	first := New([32]byte{1})
 	again := New([32]byte{1})
-	if Generator_Uint64(&first) != Generator_Uint64(&again) {
+	var first_draw, again_draw [8]byte
+	first.Read(first_draw[:])
+	again.Read(again_draw[:])
+	if first_draw != again_draw {
 		t.Fatalf("same seed produced different streams")
 	}
 	other := New([32]byte{2})
 	repeat := New([32]byte{1})
-	if Generator_Uint64(&other) == Generator_Uint64(&repeat) {
+	var other_draw, repeat_draw [8]byte
+	other.Read(other_draw[:])
+	repeat.Read(repeat_draw[:])
+	if other_draw == repeat_draw {
 		t.Fatalf("distinct seeds produced the same first draw")
 	}
 }
@@ -33,7 +41,7 @@ func Test_Block_Matches_Reference_Vectors(t *testing.T) {
 	cases := []struct {
 		Name    string
 		Key     string
-		Counter uint32
+		Counter Block_Counter
 		Nonce   string
 		Want    string
 	}{
@@ -83,10 +91,10 @@ func Test_Block_Matches_Reference_Vectors(t *testing.T) {
 // Test_Known_Sequence locks the output stream for a fixed seed.
 func Test_Known_Sequence(t *testing.T) {
 	generator := New([32]byte{})
-	// Frozen from this implementation: ChaCha20 under fast-key-erasure from an all-zero seed.
-	// It does not equal the raw RFC keystream, because the first 32 bytes of every block reseed
-	// the key; the block itself is checked against the RFC above. The contract is per-version
-	// reproducibility.
+	// Frozen from this implementation: ChaCha20 under fast-key-erasure from an all-zero seed,
+	// read eight bytes at a time and assembled little-endian. It is not the raw RFC keystream,
+	// since the first 32 bytes of each block reseed the key; the block is checked against the
+	// RFC above. The contract is per-version reproducibility.
 	want := []uint64{
 		10180482965161198042,
 		3984235106219861111,
@@ -98,26 +106,24 @@ func Test_Known_Sequence(t *testing.T) {
 		17112251633709073938,
 	}
 	for index := 0; index < len(want); index++ {
-		value := Generator_Uint64(&generator)
+		var octet [8]byte
+		generator.Read(octet[:])
+		value := binary.LittleEndian.Uint64(octet[:])
 		if value != want[index] {
 			t.Fatalf("draw %d was %d, want %d", index, value, want[index])
 		}
 	}
 }
 
-// Test_Read_Fills_Fully checks Read fills all of p, reports the full count, never errors, and
-// yields real keystream — across sizes within one buffer, exactly filling it, crossing a refill.
+// Test_Read_Fills_Fully checks Read fills all of p, reports the full count, and never errors. The
+// byte-granular reads also walk the cursor and sink lengths through 0, 1, 2 so those invariant
+// boundaries are witnessed; the larger reads cross a refill and prove real keystream.
 func Test_Read_Fills_Fully(t *testing.T) {
 	generator := New([32]byte{9})
-	// Read through an io.Reader value, proving *Generator satisfies the interface (it would
-	// not compile otherwise) — the reason Read is a method and not a free function.
-	var reader io.Reader = &generator
-	// The internal buffer is 224 bytes, so 224, 225, and 1000 exercise the exact boundary and a
-	// multi-refill drain.
-	sizes := []int{1, 7, 224, 225, 1000}
+	sizes := []int{0, 1, 1, 1, 2, 7, 224, 225, 1000}
 	for _, size := range sizes {
 		destination := make([]byte, size)
-		count, read_error := reader.Read(destination)
+		count, read_error := generator.Read(destination)
 		if read_error != nil {
 			t.Fatalf("Read(%d) errored: %v", size, read_error)
 		}
@@ -130,8 +136,6 @@ func Test_Read_Fills_Fully(t *testing.T) {
 				all_zero = false
 			}
 		}
-		// An all-zero fill would pass the count check while giving nothing; reject a wide
-		// read that came back all zero, which a real keystream essentially never does.
 		if all_zero {
 			if size >= 8 {
 				t.Fatalf("Read(%d) produced all zero bytes", size)
@@ -140,15 +144,16 @@ func Test_Read_Fills_Fully(t *testing.T) {
 	}
 }
 
-// Test_Uint64_Is_Uniform checks the keystream sets close to half its bits over a large sample.
-func Test_Uint64_Is_Uniform(t *testing.T) {
+// Test_Bytes_Are_Uniform checks a filled buffer sets close to half of all its bits.
+func Test_Bytes_Are_Uniform(t *testing.T) {
 	generator := New([32]byte{3})
-	sample_count := 100000
+	buffer := make([]byte, 100000)
+	generator.Read(buffer)
 	set_bits := 0
-	for draw_index := 0; draw_index < sample_count; draw_index++ {
-		set_bits += bits.OnesCount64(Generator_Uint64(&generator))
+	for _, octet := range buffer {
+		set_bits += bits.OnesCount8(octet)
 	}
-	total_bits := sample_count * 64
+	total_bits := len(buffer) * 8
 	if set_bits < total_bits*49/100 {
 		t.Fatalf("set %d of %d bits, below band", set_bits, total_bits)
 	}
@@ -157,26 +162,23 @@ func Test_Uint64_Is_Uniform(t *testing.T) {
 	}
 }
 
-// Test_Below_Is_Bounded checks Below stays within zero and bound and rejects a non-positive bound.
+// Test_Below_Is_Bounded checks Below stays within zero and bound and rejects a zero bound.
 func Test_Below_Is_Bounded(t *testing.T) {
 	generator := New([32]byte{4})
 	bounds := []int{1, 2, 7, 1000, 1 << 40}
 	for _, bound := range bounds {
 		for draw_index := 0; draw_index < 10000; draw_index++ {
-			value := Generator_Below(&generator, bound)
-			if value < 0 {
-				t.Fatalf("Below(%d) returned negative %d", bound, value)
-			}
-			if value >= bound {
-				t.Fatalf("Below(%d) returned %d, out of range", bound, value)
+			index := Generator_Below(&generator, Bound(bound))
+			if index >= Index(bound) {
+				t.Fatalf("Below(%d) returned %d, out of range", bound, index)
 			}
 		}
 	}
 	died := did_die(func() {
-		Generator_Below(&generator, 0)
+		Generator_Below(&generator, Bound(0))
 	})
 	if !died {
-		t.Fatalf("Below with a non-positive bound did not exit")
+		t.Fatalf("Below with a zero bound did not exit")
 	}
 }
 
@@ -193,14 +195,16 @@ func Test_Seed_Is_Erased_After_Construction(t *testing.T) {
 	}
 }
 
-// Test_Hot_Path_Is_Zero_Allocation checks a steady-state Uint64 draw does not allocate.
+// Test_Hot_Path_Is_Zero_Allocation checks a steady-state Read does not allocate, even with the
+// invariant assertions on the draw path — measured under recording, not just in benchmark mode.
 func Test_Hot_Path_Is_Zero_Allocation(t *testing.T) {
 	generator := New([32]byte{8})
+	buffer := make([]byte, 8)
 	allocations := testing.AllocsPerRun(1000, func() {
-		Generator_Uint64(&generator)
+		generator.Read(buffer)
 	})
 	if allocations != 0 {
-		t.Fatalf("Generator_Uint64 allocated %.1f times per call, want zero", allocations)
+		t.Fatalf("Read allocated %.1f times per call, want zero", allocations)
 	}
 }
 

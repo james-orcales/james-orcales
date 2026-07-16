@@ -7,6 +7,7 @@ import (
 	"io"
 	"math"
 	"net"
+	"strings"
 	"testing"
 
 	"local/james-orcales/shared/jlog"
@@ -212,6 +213,174 @@ func Test_Hot_Path_Is_Zero_Allocation(t *testing.T) {
 	}
 }
 
+// Test_Header_Renders_Time_Level_Message covers the header order — timestamp, level, message —
+// whatever order those keys arrived in on the wire (jlog emits level first, message last).
+func Test_Header_Renders_Time_Level_Message(t *testing.T) {
+	got := render(t, false,
+		"{\"level\":\"info\",\"time\":\"2023-11-14T22:13:20Z\","+
+			"\"message\":\"request done\"}\n")
+	assert_output(t, got, "2023-11-14T22:13:20Z INF request done\n")
+}
+
+// Test_Timestamp_Drops_Fraction covers the header timestamp rendering to the second, its
+// nanosecond fraction dropped, while the input line's own precision is untouched.
+func Test_Timestamp_Drops_Fraction(t *testing.T) {
+	got := render(t, false,
+		"{\"level\":\"info\",\"time\":\"2023-11-14T22:13:20.123456789Z\","+
+			"\"message\":\"m\"}\n")
+	assert_output(t, got, "2023-11-14T22:13:20Z INF m\n")
+}
+
+// Test_Level_Is_Three_Letter_Uppercase covers the level tag mapping and, feeding five lines in
+// one Write, the newline split.
+func Test_Level_Is_Three_Letter_Uppercase(t *testing.T) {
+	got := render(t, false,
+		"{\"level\":\"trace\",\"message\":\"m\"}\n"+
+			"{\"level\":\"debug\",\"message\":\"m\"}\n"+
+			"{\"level\":\"info\",\"message\":\"m\"}\n"+
+			"{\"level\":\"warn\",\"message\":\"m\"}\n"+
+			"{\"level\":\"error\",\"message\":\"m\"}\n")
+	assert_output(t, got, "TRC m\nDBG m\nINF m\nWRN m\nERR m\n")
+}
+
+// Test_Fields_Render_As_Logfmt_Pairs covers non-special keys rendering after the message in
+// emission order.
+func Test_Fields_Render_As_Logfmt_Pairs(t *testing.T) {
+	got := render(t, false,
+		"{\"level\":\"info\",\"method\":\"GET\",\"status\":200,\"message\":\"done\"}\n")
+	assert_output(t, got, "INF done method=GET status=200\n")
+}
+
+// Test_String_Value_Is_Quoted_Only_When_Needed covers logfmt quoting: bare for a simple token,
+// quoted when empty or carrying a space, an equals, or a quote.
+func Test_String_Value_Is_Quoted_Only_When_Needed(t *testing.T) {
+	got := render(t, false,
+		"{\"level\":\"info\",\"a\":\"simple\",\"b\":\"two words\","+
+			"\"c\":\"\",\"d\":\"a=b\"}\n")
+	assert_output(t, got, "INF a=simple b=\"two words\" c=\"\" d=\"a=b\"\n")
+}
+
+// Test_Number_Value_Is_Exact covers a uint64 past the float64 safe range rendering its exact
+// digits rather than a rounded float.
+func Test_Number_Value_Is_Exact(t *testing.T) {
+	got := render(t, false, "{\"level\":\"info\",\"big\":18446744073709551615}\n")
+	assert_output(t, got, "INF big=18446744073709551615\n")
+}
+
+// Test_Compound_Value_Renders_Compact covers a scalar array and an embedded object (a Raw_JSON
+// blob) each rendering as one compacted-JSON token.
+func Test_Compound_Value_Renders_Compact(t *testing.T) {
+	got := render(t, false,
+		"{\"level\":\"info\",\"tags\":[\"a\",\"b\"],\"ids\":[1,2,3],\"obj\":{\"x\":1}}\n")
+	assert_output(t, got, "INF tags=[\"a\",\"b\"] ids=[1,2,3] obj={\"x\":1}\n")
+}
+
+// Test_Caller_Renders_Inline covers the caller location rendering among the fields, not in the
+// header.
+func Test_Caller_Renders_Inline(t *testing.T) {
+	got := render(t, false,
+		"{\"level\":\"info\",\"caller\":\"api.go:42\",\"message\":\"done\"}\n")
+	assert_output(t, got, "INF done caller=api.go:42\n")
+}
+
+// Test_Error_Value_Is_Red_When_Colored covers the error field: plain when color is off, its
+// value painted red when on.
+func Test_Error_Value_Is_Red_When_Colored(t *testing.T) {
+	line := "{\"level\":\"error\",\"error\":\"context deadline exceeded\"," +
+		"\"message\":\"db timeout\"}\n"
+	assert_output(t, render(t, false, line),
+		"ERR db timeout error=\"context deadline exceeded\"\n")
+	assert_output(t, render(t, true, line),
+		"\x1b[31mERR\x1b[0m \x1b[1mdb timeout\x1b[0m "+
+			"\x1b[36merror\x1b[0m=\x1b[31m\"context deadline exceeded\"\x1b[0m\n")
+}
+
+// Test_Message_Is_Bold_When_Colored covers the full colored header: dim timestamp, colored
+// level, bold message, dim key.
+func Test_Message_Is_Bold_When_Colored(t *testing.T) {
+	got := render(t, true,
+		"{\"level\":\"info\",\"time\":\"2023-11-14T22:13:20Z\","+
+			"\"message\":\"request done\",\"method\":\"GET\"}\n")
+	assert_output(t, got,
+		"\x1b[2m2023-11-14T22:13:20Z\x1b[0m \x1b[32mINF\x1b[0m "+
+			"\x1b[1mrequest done\x1b[0m \x1b[36mmethod\x1b[0m=GET\n")
+}
+
+// Test_No_Color_When_Disabled covers a color-off Console emitting no ANSI escape byte.
+func Test_No_Color_When_Disabled(t *testing.T) {
+	got := render(t, false, "{\"level\":\"error\",\"error\":\"boom\",\"message\":\"m\"}\n")
+	if strings.Contains(got.String(), "\x1b[") {
+		t.Fatalf("plain output must carry no ANSI escape: %q", got.String())
+	}
+}
+
+// Test_Level_None_Omits_Level covers a line with no level field (as Logger_Log writes) rendering
+// no level tag, and a bare empty object rendering just a newline.
+func Test_Level_None_Omits_Level(t *testing.T) {
+	got := render(t, false, "{\"a\":\"1\",\"message\":\"note\"}\n{}\n")
+	assert_output(t, got, "note a=1\n\n")
+}
+
+// Test_Malformed_Line_Passes_Through covers non-object lines (plain text, a broken object, a
+// top-level array) being written through byte for byte.
+func Test_Malformed_Line_Passes_Through(t *testing.T) {
+	in := "not json at all\n{broken\n[1,2]\n"
+	got := render(t, false, in)
+	assert_output(t, got, in)
+}
+
+// Test_Level_Filter_Drops_Below_Floor covers a Level_Filter forwarding lines at or above its floor
+// and dropping the rest, so one logger can feed a verbose sink and a quiet one at once.
+func Test_Level_Filter_Drops_Below_Floor(t *testing.T) {
+	got := filter(t, jlog.LEVEL_INFO,
+		"{\"level\":\"trace\",\"message\":\"a\"}\n"+
+			"{\"level\":\"debug\",\"message\":\"b\"}\n"+
+			"{\"level\":\"info\",\"message\":\"c\"}\n"+
+			"{\"level\":\"warn\",\"message\":\"d\"}\n"+
+			"{\"level\":\"error\",\"message\":\"e\"}\n")
+	assert_output(t, got,
+		"{\"level\":\"info\",\"message\":\"c\"}\n"+
+			"{\"level\":\"warn\",\"message\":\"d\"}\n"+
+			"{\"level\":\"error\",\"message\":\"e\"}\n")
+}
+
+// Test_Level_Filter_Passes_Level_Less_And_Non_JSON covers a Level_Filter passing a line with no
+// level field (as Logger_Log writes) and a non-JSON line even at a high floor, since it
+// suppresses by level alone and never swallows output it cannot classify.
+func Test_Level_Filter_Passes_Level_Less_And_Non_JSON(t *testing.T) {
+	got := filter(t, jlog.LEVEL_ERROR, "{\"message\":\"note\"}\nnot json\n")
+	assert_output(t, got, "{\"message\":\"note\"}\nnot json\n")
+}
+
+// Test_Console_Logger_Tees_To_Capture covers New_Console_Logger rendering info and up to the
+// console sink while teeing every level as raw JSON to the capture sink — the print-to-file,
+// pure and driven by injected writers, with no OS in sight.
+func Test_Console_Logger_Tees_To_Capture(t *testing.T) {
+	var console, capture bytes.Buffer
+	logger := jlog.New_Console_Logger(jlog.New_Console_Logger_Input{
+		Console: &console,
+		Capture: &capture,
+		Floor:   jlog.LEVEL_INFO,
+		Clock:   frozen_clock(),
+	})
+	jlog.Logger_Trace(logger, "quiet")
+	jlog.Logger_Info(logger, "loud")
+	// The console shows info and up, never the trace line.
+	if strings.Contains(console.String(), "quiet") {
+		t.Fatalf("console must drop the trace line: %q", console.String())
+	}
+	if !strings.Contains(console.String(), "INF loud") {
+		t.Fatalf("console must show the info line: %q", console.String())
+	}
+	// The capture keeps every level as raw JSON, including the trace line the console dropped.
+	if !strings.Contains(capture.String(), "\"message\":\"quiet\"") {
+		t.Fatalf("capture must keep the trace line: %q", capture.String())
+	}
+	if !strings.Contains(capture.String(), "\"message\":\"loud\"") {
+		t.Fatalf("capture must keep the info line: %q", capture.String())
+	}
+}
+
 // A clock whose realtime reading is always FIXED_MOMENT.
 func frozen_clock() (clock time.Clock) {
 	return time.Clock{Now_Realtime: func() (moment time.Moment) { return FIXED_MOMENT }}
@@ -234,6 +403,31 @@ func assert_output(t *testing.T, buffer *bytes.Buffer, want string) {
 	if got != want {
 		t.Fatalf("got  %q\nwant %q", got, want)
 	}
+}
+
+// Renders line through a Console with the given color setting and returns what the Console wrote,
+// so a behaviour test is a single byte-for-byte comparison.
+func render(t *testing.T, color bool, line string) (rendered *bytes.Buffer) {
+	t.Helper()
+	rendered = &bytes.Buffer{}
+	console := jlog.Console{Writer: rendered, Color: color}
+	if _, err := console.Write([]byte(line)); err != nil {
+		t.Fatalf("console write: %v", err)
+	}
+	return rendered
+}
+
+// Runs line through a Level_Filter at floor and returns what passed, so a behaviour test is a
+// single byte comparison. The inner writer is a plain buffer, so the test sees exactly which lines
+// cleared the floor, unrendered.
+func filter(t *testing.T, floor jlog.Level, line string) (passed *bytes.Buffer) {
+	t.Helper()
+	passed = &bytes.Buffer{}
+	writer := jlog.New_Level_Filter(jlog.New_Level_Filter_Input{Writer: passed, Floor: floor})
+	if _, err := writer.Write([]byte(line)); err != nil {
+		t.Fatalf("level filter write: %v", err)
+	}
+	return passed
 }
 
 // Every test clock returns this fixed reading so timestamp output is deterministic

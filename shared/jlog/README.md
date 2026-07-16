@@ -52,9 +52,10 @@ narrow buys:
 
 - **Pure, separable core.** The library tier (`shared/jlog`, `shared/diode`) is pure —
   the clock, caller lookup, and sink all arrive as fields, so it is trivially testable
-  and holds no globals. The ambient bindings — the `os.Stderr` default logger and the
-  `os.Stdout` terminal logger — live in the composition tier (`shared/jlog/default`).
-  zerolog wires `os.Stderr` and a package-global logger in directly.
+  and holds no globals. The one ambient binding — the `os.Stderr` default logger — lives
+  in the composition tier (`shared/jlog/default`); a console logger takes whatever sink it
+  is given, and conventionally that is `os.Stderr` too, so stdout stays clean for program
+  output. zerolog wires `os.Stderr` and a package-global logger in directly.
 
 ## Benchmarks
 

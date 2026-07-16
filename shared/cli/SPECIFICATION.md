@@ -19,9 +19,9 @@ a positional. Help drops the selector and shows the program's own positionals.
 
 ### Multicall
 
-A multicall program selects its command from the binary name in argv[0], as a
-busybox-style symlinked binary does; every token after it is that command's
-argument. An unknown name suggests the closest command.
+A multicall program selects its command from the binary name in argv[0], as a busybox-
+style symlinked binary does; every token after it is that command's argument. Run by its
+own name rather than a link, the first token selects the command, as `busybox ls` does.
 
 ### Arguments
 
@@ -44,6 +44,38 @@ the last argument is rejected at construction.
 
 A flag assigns its value by type; a double-dash flag or a non-boolean flag without a
 value returns an error.
+
+### Enum
+
+An enum option restricts its value to a fixed set: a flag enum defaults to a member, an
+argument enum is required. A value outside the set errors, suggesting the closest member
+for a string enum and otherwise listing the whole set.
+
+### Help
+
+Every program carries an auto-injected -help flag. When the token appears anywhere,
+parsing short-circuits and returns the Help_Requested sentinel with the command context
+— the selected command or the empty-label root — which Print_Requested_Help renders.
+
+# Completion
+
+Complete returns shell-completion candidates read from the live program: command names,
+dashed option labels, and enum members. Completion_Script emits a bash, zsh, or fish
+script that calls back into `__complete`, which Handle_Completion serves before parsing.
+
+# Visibility
+
+### Hidden
+
+A hidden flag or command still parses and resolves, but appears in neither the help
+output nor the completion candidates, so an internal or bootstrap option stays usable
+without being advertised.
+
+### Deprecated
+
+A deprecated flag or command still parses but is hidden the same way, and using it
+records a warning naming its guidance; Program_Parse gathers those warnings onto the
+returned command and Print_Deprecations emits them.
 
 # Trim Quotes
 
@@ -69,5 +101,6 @@ New validates a program's configuration and panics when it is malformed.
 
 ### Validation
 
-A command without a label panics; so does an argument label that is not flag-safe or
-that collides with another option's name.
+A label that is empty, not flag-safe, or colliding panics, as does a non-terminal slice
+argument. An enum that is empty, type-mismatched, defaulted outside its set, or on a
+variadic panics; the reserved "help" label claimed by a user option panics too.

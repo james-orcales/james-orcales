@@ -17,6 +17,9 @@ import (
 // its buffer fully or crashes the process, so OS entropy is infallible and there is no error to
 // return; the assertion documents that contract and trips loudly if a future runtime breaks it.
 func New_Operating_System_Generator() (generator csprng.Generator) {
+	defer func() {
+		csprng.Generator_Invariants(generator, "new_operating_system_generator.generator")
+	}()
 	var seed [32]byte
 	_, read_error := rand.Read(seed[:])
 	invariant.Always(read_error == nil, "operating system entropy read succeeds")

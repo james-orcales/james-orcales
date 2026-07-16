@@ -166,6 +166,15 @@ bindkey '^[[F'  end-of-line         # End
 bindkey '^[OF'  end-of-line         # End  (application mode)
 bindkey '^[[4~' end-of-line         # End  (vt220/linux)
 
+# Option-e opens the current command line in $EDITOR (nvim) instead of
+# editing in-place. macOS terminals default Option to a dead-key for
+# diacritics (Option-e then a vowel makes é), which swallows the keystroke
+# before zsh ever sees it — Option/Left-Option must be set to "Esc+" (Meta)
+# in the terminal's key settings for '\ee' below to fire at all.
+autoload -Uz edit-command-line
+zle -N edit-command-line
+bindkey '\ee' edit-command-line
+
 # Ctrl-C clears the current line in place instead of dropping to a fresh prompt.
 # Ctrl-C arrives as SIGINT, not a keystroke, so it can only be caught in a trap.
 # Guard on `zle`: only rewrite the buffer while editing at the prompt (via a

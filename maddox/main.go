@@ -38,7 +38,14 @@ const WARMUP_DEFAULT = 5
 
 func main() {
 	program := main_program()
+	if cli.Handle_Completion(program, os.Args, os.Stdout) {
+		os.Exit(0)
+	}
 	command, parse_err := cli.Program_Parse(&program, os.Args)
+	if errors.Is(parse_err, cli.Help_Requested) {
+		cli.Print_Requested_Help(os.Stdout, program, command)
+		os.Exit(0)
+	}
 	if parse_err != nil {
 		fmt.Fprintln(os.Stderr, parse_err)
 		cli.Print_Help(os.Stderr, program)
@@ -121,15 +128,17 @@ func main_program() (program cli.Program) {
 				Value:       false,
 				Description: "emit JSON instead of the table",
 			}),
-			cli.New_Flag[string](cli.New_Flag_Input[string]{
+			cli.New_Enum_Flag(cli.New_Enum_Flag_Input[string]{
 				Label:       "color",
+				Enum:        []string{"auto", "never", "always"},
 				Value:       "auto",
-				Description: "auto, never, or always",
+				Description: "colorize the table",
 			}),
-			cli.New_Flag[string](cli.New_Flag_Input[string]{
+			cli.New_Enum_Flag(cli.New_Enum_Flag_Input[string]{
 				Label:       "progress",
+				Enum:        []string{"auto", "never", "always"},
 				Value:       "auto",
-				Description: "live progress on stderr: auto, never, or always",
+				Description: "live progress on stderr",
 			}),
 		},
 	})

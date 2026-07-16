@@ -6,14 +6,15 @@ package shell_sdk
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"math/big"
-	"path"
 	"strconv"
 	"strings"
 
 	"local/james-orcales/shared/cli"
+	invariant "local/james-orcales/shared/invariant/default"
 )
 
 // The successful process exit code.
@@ -101,19 +102,26 @@ func Main(input *Main_Input) (status_code int) {
 		fmt.Fprintf(input.Error_Output, "shell_sdk: no verb name\n")
 		return EXIT_USAGE
 	}
-	destination, is_install := install_target(input.Arguments)
-	if is_install {
-		return run_install(input, destination)
-	}
 	program := verb_program()
-	if wants_help(input.Arguments) {
-		return print_verb_help(input, &program)
+	if cli.Handle_Completion(program, input.Arguments, input.Output) {
+		return EXIT_SUCCESS
 	}
 	command, parse_err := cli.Program_Parse(&program, input.Arguments)
+	if errors.Is(parse_err, cli.Help_Requested) {
+		// -help short-circuits parsing in cli, so per-verb usage works even when a
+		// required argument is absent — the guarantee shell_sdk used to hand-roll.
+		cli.Print_Requested_Help(input.Output, program, command)
+		return EXIT_SUCCESS
+	}
 	if parse_err != nil {
 		fmt.Fprintf(input.Error_Output, "shell_sdk: %v\n\n", parse_err)
 		cli.Print_Help(input.Error_Output, program)
 		return EXIT_USAGE
+	}
+	// The install verb is the bootstrap: it is not a data transform, so it runs on the
+	// bare binary (via cli's busybox self-dispatch) instead of the wire pipeline.
+	if command.Label == "install" {
+		return run_install(input, cli.Get_Option(command.Arguments, "dir").Value.(string))
 	}
 	mode := resolve_output_mode(&program, input.Stdout_Is_Terminal)
 	kind, _ := verb_kind_of(command.Label)
@@ -180,6 +188,10 @@ const VERB_KIND_WRAP Verb_Kind = 16
 // The flatten verb flattens one level of nested lists.
 const VERB_KIND_FLATTEN Verb_Kind = 17
 
+// The install verb symlinks the data verbs into a directory. It is the bootstrap verb,
+// run on the bare binary before the links exist, not a data transform.
+const VERB_KIND_INSTALL Verb_Kind = 18
+
 // Output_Mode selects how a verb presents its result.
 type Output_Mode int
 
@@ -223,18 +235,21 @@ type verb_descriptor struct {
 // The verb table: the one place a verb's name, shape, and transform are declared.
 func verb_table() (verbs []verb_descriptor) {
 	return []verb_descriptor{
+		{Kind: VERB_KIND_INSTALL, Label: "install",
+			Summary:   "symlink the verbs into a directory",
+			Arguments: string_arguments("dir")},
 		{Kind: VERB_KIND_LOAD, Label: "load", Summary: "read a file into the garden",
 			Arguments: string_arguments("file")},
 		{Kind: VERB_KIND_FROM, Label: "from", Summary: "parse stdin as json or csv",
-			Arguments: string_arguments("format")},
+			Arguments: format_argument()},
 		{Kind: VERB_KIND_TO, Label: "to", Summary: "serialize to json or csv",
-			Arguments: string_arguments("format")},
+			Arguments: format_argument()},
 		{Kind: VERB_KIND_GET, Label: "get", Summary: "navigate a dotted cell path",
 			Arguments: string_arguments("path")},
 		{Kind: VERB_KIND_PICK, Label: "pick", Summary: "keep only the named fields",
 			Arguments: variadic_argument("field")},
 		{Kind: VERB_KIND_FILTER, Label: "filter", Summary: "keep matching rows",
-			Arguments: string_arguments("field", "operator", "value")},
+			Arguments: filter_arguments()},
 		{Kind: VERB_KIND_FIRST, Label: "first", Summary: "first element, or -count",
 			Flags: count_flag()},
 		{Kind: VERB_KIND_SORT_BY, Label: "sort-by", Summary: "order records by a field",
@@ -269,6 +284,29 @@ func string_arguments(names ...string) (arguments []cli.Option) {
 // Builds a single variadic string argument that collects the trailing positionals.
 func variadic_argument(name string) (arguments []cli.Option) {
 	return []cli.Option{cli.New_Variadic[string](cli.New_Variadic_Input{Label: name})}
+}
+
+// Builds the foreign-format argument shared by the from and to verbs, constrained to the
+// formats shell_sdk can parse and emit. cli rejects anything else at parse time, so
+// parse_format and emit_format never see an unknown format.
+func format_argument() (arguments []cli.Option) {
+	return []cli.Option{cli.New_Enum_Argument(cli.New_Enum_Argument_Input[string]{
+		Label: "format", Enum: []string{"json", "csv"}, Description: "the foreign format",
+	})}
+}
+
+// Builds the filter verb's arguments: a field path, a word operator constrained to the
+// supported comparisons, and a target value. cli rejects an unknown operator at parse
+// time, so verb_filter is reached only with a known one.
+func filter_arguments() (arguments []cli.Option) {
+	return []cli.Option{
+		cli.New_Argument[string](cli.New_Argument_Input{Label: "field"}),
+		cli.New_Enum_Argument(cli.New_Enum_Argument_Input[string]{
+			Label: "operator", Enum: []string{"eq", "ne", "lt", "le", "gt", "ge"},
+			Description: "comparison",
+		}),
+		cli.New_Argument[string](cli.New_Argument_Input{Label: "value"}),
+	}
 }
 
 // Builds the -count flag that first and final read for their element count.
@@ -318,63 +356,18 @@ func verb_kind_of(label string) (kind Verb_Kind, known bool) {
 	return VERB_KIND_LOAD, false
 }
 
-// The verb link names, for -install to fan the binary out, from the verb table.
+// The verb link names install fans the binary out into, from the verb table. install
+// itself is excluded: it is the bootstrap verb, run on the bare binary, and a link named
+// "install" on PATH would shadow the system install(1).
 func verb_names() (names []string) {
 	table := verb_table()
 	for verb_index := 0; verb_index < len(table); verb_index++ {
+		if table[verb_index].Label == "install" {
+			continue
+		}
 		names = append(names, table[verb_index].Label)
 	}
 	return names
-}
-
-// Pulls the -install=<path> destination out of the arguments, if present.
-func install_target(arguments []string) (destination string, is_install bool) {
-	for argument_index := 0; argument_index < len(arguments); argument_index++ {
-		suffix, found := strings.CutPrefix(arguments[argument_index], "-install=")
-		if found {
-			return suffix, true
-		}
-	}
-	return "", false
-}
-
-// Reports whether the arguments ask for help.
-func wants_help(arguments []string) (wants bool) {
-	for argument_index := 0; argument_index < len(arguments); argument_index++ {
-		if arguments[argument_index] == "-h" {
-			return true
-		}
-		if arguments[argument_index] == "-help" {
-			return true
-		}
-	}
-	return false
-}
-
-// Prints per-verb help for the invoked link, or the whole catalog when the link is
-// not a known verb. Help short-circuits cli parsing so it works despite missing
-// required arguments.
-func print_verb_help(input *Main_Input, program *cli.Program) (status_code int) {
-	label := path.Base(input.Arguments[0])
-	command, found := find_command(program, label)
-	if found {
-		cli.Print_Command(input.Output, *program, command)
-		return EXIT_SUCCESS
-	}
-	cli.Print_Help(input.Output, *program)
-	return EXIT_SUCCESS
-}
-
-// Returns the program's command with the given label.
-func find_command(
-	program *cli.Program, label string,
-) (command cli.Command, found bool) {
-	for command_index := 0; command_index < len(program.Commands); command_index++ {
-		if program.Commands[command_index].Label == label {
-			return program.Commands[command_index], true
-		}
-	}
-	return cli.Command{}, false
 }
 
 // Fans the binary out into one verb-named link per verb under the destination.
@@ -1357,7 +1350,8 @@ func run_to(input *Main_Input, positionals []string) (output []byte, err error) 
 	return []byte(text), nil
 }
 
-// Parses a named foreign format into a value.
+// Parses a named foreign format into a value. The format enum guarantees a known name,
+// so the switch is total.
 func parse_format(format string, data []byte) (value Value, err error) {
 	switch format {
 	case "json":
@@ -1365,10 +1359,12 @@ func parse_format(format string, data []byte) (value Value, err error) {
 	case "csv":
 		return Csv_Parse(data)
 	}
-	return Value{}, fmt.Errorf("unknown format %s", format)
+	invariant.Always(false, "the format enum guarantees json or csv")
+	return Value{}, nil
 }
 
-// Serializes a value to a named foreign format, ending in a newline.
+// Serializes a value to a named foreign format, ending in a newline. The format enum
+// guarantees a known name, so the switch is total.
 func emit_format(format string, value Value) (text string, err error) {
 	switch format {
 	case "json":
@@ -1376,7 +1372,8 @@ func emit_format(format string, value Value) (text string, err error) {
 	case "csv":
 		return Csv_Emit(value)
 	}
-	return "", fmt.Errorf("unknown format %s", format)
+	invariant.Always(false, "the format enum guarantees json or csv")
+	return "", nil
 }
 
 // Applies a transforming verb to a decoded value.
@@ -1507,9 +1504,6 @@ type filter_test struct {
 // guarantees the field, operator, and value arguments.
 func verb_filter(arguments []string, value Value) (result Value, err error) {
 	operator := arguments[1]
-	if !operator_is_known(operator) {
-		return Value{}, fmt.Errorf("unknown operator: %s", operator)
-	}
 	if value.Kind != VALUE_KIND_LIST {
 		return value, nil
 	}
@@ -1534,15 +1528,6 @@ func filter_keeps(test filter_test) (keep bool) {
 		return false
 	}
 	return operator_satisfied(test.Operator, order)
-}
-
-// Reports whether an operator is one of the supported word operators.
-func operator_is_known(operator string) (known bool) {
-	switch operator {
-	case "eq", "ne", "lt", "le", "gt", "ge":
-		return true
-	}
-	return false
 }
 
 // Maps a word operator and an ordering to a keep decision.
