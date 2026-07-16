@@ -346,26 +346,30 @@ func Render(output io.Writer, input Render_Input) {
 	writer.Flush()
 }
 
-// A json_entry is one rendered row in serialized form: a flat record flatjson can emit
+// A Json_Entry is one rendered row in serialized form: a flat record flatjson can emit
 // as one object in a top-level array. Path is the display label, not the relative path,
 // so the JSON names the same full path the table prints.
-type json_entry struct {
-	Path         string `json:"path"`
-	Bytes        int64  `json:"bytes"`
-	Is_Directory bool   `json:"is_directory"`
-	Depth        int    `json:"depth"`
+type Json_Entry struct {
+	// Path is the row's display label, the full path the table prints.
+	Path string `json:"path"`
+	// Bytes is the row's total size in bytes.
+	Bytes int64 `json:"bytes"`
+	// Is_Directory marks a directory row rather than a file.
+	Is_Directory bool `json:"is_directory"`
+	// Depth is the row's nesting depth beneath the scan root.
+	Depth int `json:"depth"`
 }
 
 // Render_Json writes the kept entries as a top-level JSON array of flat objects, one per
 // row. It applies the same filters as Render, so -json reflects exactly the rows the
 // table would show, only as machine-readable output instead of a grouped table.
 func Render_Json(output io.Writer, input Render_Input) (err error) {
-	entries := []json_entry{}
+	entries := []Json_Entry{}
 	for _, entry := range input.Report.Entries {
 		if !render_keeps(input, entry) {
 			continue
 		}
-		entries = append(entries, json_entry{
+		entries = append(entries, Json_Entry{
 			Path:         render_label(input.Report, entry),
 			Bytes:        entry.Bytes,
 			Is_Directory: entry.Is_Directory,

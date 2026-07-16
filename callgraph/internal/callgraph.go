@@ -616,16 +616,16 @@ func extract_call(graph *Graph, checked *Package, from string, node ast.Node) {
 	graph.Calls = append(graph.Calls, Call{From: from, To: callee})
 }
 
-// A renderer carries the graph and module prefix shared by every tree helper.
-type renderer struct {
+// A Renderer carries the graph and module prefix shared by every tree helper.
+type Renderer struct {
 	// Graph is the graph being drawn.
 	Graph *Graph
 	// Strip is the module prefix removed from keys, also the first-party marker.
 	Strip string
 }
 
-// A frame is a pending tree node on the render stack.
-type frame struct {
+// A Frame is a pending tree node on the render stack.
+type Frame struct {
 	// Key is the function the node renders.
 	Key string
 	// Prefix is the indentation printed before the node's connector.
@@ -650,7 +650,7 @@ type Render_Input struct {
 // callee already drawn elsewhere is shown once and marked "(shown above)" — it
 // is a shared callee, not necessarily a cycle. Filter keeps matching trees.
 func Render(input *Render_Input) (output string) {
-	drawer := &renderer{Graph: input.Graph, Strip: input.Strip}
+	drawer := &Renderer{Graph: input.Graph, Strip: input.Strip}
 	var builder strings.Builder
 	for _, root := range entry_points(input.Graph) {
 		tree := render_tree(drawer, root)
@@ -695,7 +695,7 @@ func is_entry_point(key string) (entry bool) {
 // Draws the transitive first-party call tree under root, walking iteratively so
 // no function recurses by name. A visited set stops a cycle and collapses a
 // callee already drawn elsewhere to a single "(shown above)" line.
-func render_tree(drawer *renderer, root string) (text string) {
+func render_tree(drawer *Renderer, root string) (text string) {
 	var builder strings.Builder
 	visited := map[string]bool{root: true}
 	builder.WriteString(render_short(drawer, root) + render_annotations(drawer, root) + "\n")
@@ -725,9 +725,9 @@ func render_tree(drawer *renderer, root string) (text string) {
 
 // Wraps callee keys as stack frames in reverse, so a LIFO pop yields display
 // order; the last key is tagged for its └─ connector.
-func frames_for(keys []string, prefix string) (frames []*frame) {
+func frames_for(keys []string, prefix string) (frames []*Frame) {
 	for child_index := len(keys) - 1; child_index >= 0; child_index-- {
-		frames = append(frames, &frame{
+		frames = append(frames, &Frame{
 			Key:    keys[child_index],
 			Prefix: prefix,
 			Last:   child_index == len(keys)-1,
@@ -737,7 +737,7 @@ func frames_for(keys []string, prefix string) (frames []*frame) {
 }
 
 // Returns parent's sorted, deduplicated first-party callees — the tree's edges.
-func render_callees(drawer *renderer, parent string) (callees []string) {
+func render_callees(drawer *Renderer, parent string) (callees []string) {
 	if drawer.Strip == "" {
 		return callees
 	}
@@ -761,7 +761,7 @@ func render_callees(drawer *renderer, parent string) (callees []string) {
 
 // Returns a function's injected-field annotations: for each field it invokes,
 // the field and what it was wired to.
-func render_annotations(drawer *renderer, from string) (text string) {
+func render_annotations(drawer *Renderer, from string) (text string) {
 	seen := map[string]bool{}
 	for _, invoke := range drawer.Graph.Invokes {
 		if invoke.From != from {
@@ -779,7 +779,7 @@ func render_annotations(drawer *renderer, from string) (text string) {
 
 // Returns what a field was wired to: a callable's short key, the enclosing
 // function for a closure, or "unwired" when nothing binds it.
-func render_origin(drawer *renderer, field string) (origin string) {
+func render_origin(drawer *Renderer, field string) (origin string) {
 	wire, found := graph_wire_for(drawer.Graph, field)
 	if !found {
 		return "unwired"
@@ -794,6 +794,6 @@ func render_origin(drawer *renderer, field string) (origin string) {
 
 // Removes the module prefix from a key so it reads short; a stdlib key, lacking
 // the prefix, passes through unchanged.
-func render_short(drawer *renderer, key string) (name string) {
+func render_short(drawer *Renderer, key string) (name string) {
 	return strings.TrimPrefix(key, drawer.Strip)
 }

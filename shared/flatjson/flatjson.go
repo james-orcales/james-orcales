@@ -38,7 +38,7 @@ import (
 const KEY_SEPARATOR = "_"
 
 // One node of the explicit DFS stack that stands in for recursion through the struct tree.
-type frame struct {
+type Frame struct {
 	// Structure is the struct value whose fields this frame is walking.
 	Structure reflect.Value
 	// Index is the next field to visit; advancing it before descending into a child
@@ -158,7 +158,7 @@ func marshal_flat_value(destination []byte, value reflect.Value) (output []byte,
 func flatten_struct(
 	destination []byte, root reflect.Value, seen map[string]struct{},
 ) (output []byte, err error) {
-	stack := []frame{{Structure: root, Index: 0, Prefix: "", Null: false}}
+	stack := []Frame{{Structure: root, Index: 0, Prefix: "", Null: false}}
 	for len(stack) > 0 {
 		depth := len(stack) - 1
 		current := stack[depth]
@@ -180,7 +180,7 @@ func flatten_struct(
 		if is_embedded_struct(field) {
 			child, child_null := deref_struct(value)
 			child_null = child_null || current.Null
-			next := frame{Structure: child, Index: 0, Prefix: prefix, Null: child_null}
+			next := Frame{Structure: child, Index: 0, Prefix: prefix, Null: child_null}
 			stack = append(stack, next)
 			continue
 		}
@@ -190,7 +190,7 @@ func flatten_struct(
 			is_struct := child.Kind() == reflect.Struct
 			invariant.Always(is_struct, "Marshal only descends into struct values.")
 			nested := prefix + name + KEY_SEPARATOR
-			next := frame{Structure: child, Index: 0, Prefix: nested, Null: child_null}
+			next := Frame{Structure: child, Index: 0, Prefix: nested, Null: child_null}
 			stack = append(stack, next)
 			continue
 		}

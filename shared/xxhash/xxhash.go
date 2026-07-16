@@ -33,10 +33,10 @@ const PRIME64_5 = 0x27D4EB2F165667C5
 // STRIPE_BYTES is the block XXH64 consumes at a time: four 8-byte lanes, one per accumulator.
 const STRIPE_BYTES = 32
 
-// A lane is a 64-bit word read little-endian from the input — the unit a round folds into an
+// A Lane is a 64-bit word read little-endian from the input — the unit a round folds into an
 // accumulator. It is its own type so the round and merge helpers' two operands do not share a type
 // (the house input-struct rule), naming the input word for what it is, distinct from state.
-type lane uint64
+type Lane uint64
 
 // Digest is the streaming XXH64 state. Construct it with New_Digest; the zero value is usable only
 // after a Digest_Reset. Fields are transparent, like prng.Generator's State.
@@ -81,10 +81,10 @@ func Hash(data []byte, seed uint64) (hash uint64) {
 			bits.RotateLeft64(accumulator_2, 7) +
 			bits.RotateLeft64(accumulator_3, 12) +
 			bits.RotateLeft64(accumulator_4, 18)
-		accumulator = xxhash_merge_accumulator(accumulator, lane(accumulator_1))
-		accumulator = xxhash_merge_accumulator(accumulator, lane(accumulator_2))
-		accumulator = xxhash_merge_accumulator(accumulator, lane(accumulator_3))
-		accumulator = xxhash_merge_accumulator(accumulator, lane(accumulator_4))
+		accumulator = xxhash_merge_accumulator(accumulator, Lane(accumulator_1))
+		accumulator = xxhash_merge_accumulator(accumulator, Lane(accumulator_2))
+		accumulator = xxhash_merge_accumulator(accumulator, Lane(accumulator_3))
+		accumulator = xxhash_merge_accumulator(accumulator, Lane(accumulator_4))
 	} else {
 		accumulator = seed + PRIME64_5
 	}
@@ -151,10 +151,10 @@ func Digest_Sum64(digest *Digest) (hash uint64) {
 			bits.RotateLeft64(digest.Accumulator2, 7) +
 			bits.RotateLeft64(digest.Accumulator3, 12) +
 			bits.RotateLeft64(digest.Accumulator4, 18)
-		accumulator = xxhash_merge_accumulator(accumulator, lane(digest.Accumulator1))
-		accumulator = xxhash_merge_accumulator(accumulator, lane(digest.Accumulator2))
-		accumulator = xxhash_merge_accumulator(accumulator, lane(digest.Accumulator3))
-		accumulator = xxhash_merge_accumulator(accumulator, lane(digest.Accumulator4))
+		accumulator = xxhash_merge_accumulator(accumulator, Lane(digest.Accumulator1))
+		accumulator = xxhash_merge_accumulator(accumulator, Lane(digest.Accumulator2))
+		accumulator = xxhash_merge_accumulator(accumulator, Lane(digest.Accumulator3))
+		accumulator = xxhash_merge_accumulator(accumulator, Lane(digest.Accumulator4))
 	} else {
 		accumulator = digest.Seed + PRIME64_5
 	}
@@ -182,19 +182,19 @@ func digest_process_stripe(digest *Digest, stripe []byte) {
 }
 
 // Reads eight bytes as a little-endian lane.
-func read_lane(data []byte) (word lane) {
-	return lane(binary.LittleEndian.Uint64(data))
+func read_lane(data []byte) (word Lane) {
+	return Lane(binary.LittleEndian.Uint64(data))
 }
 
 // Folds one lane into an accumulator: scale by PRIME64_2, rotate left 31, multiply by PRIME64_1.
-func xxhash_round(accumulator uint64, word lane) (mixed uint64) {
+func xxhash_round(accumulator uint64, word Lane) (mixed uint64) {
 	accumulator += uint64(word) * PRIME64_2
 	accumulator = bits.RotateLeft64(accumulator, 31)
 	return accumulator * PRIME64_1
 }
 
 // Merges one converged accumulator (passed as a lane) into the running hash during finalization.
-func xxhash_merge_accumulator(accumulator uint64, word lane) (merged uint64) {
+func xxhash_merge_accumulator(accumulator uint64, word Lane) (merged uint64) {
 	accumulator ^= xxhash_round(0, word)
 	accumulator *= PRIME64_1
 	return accumulator + PRIME64_4

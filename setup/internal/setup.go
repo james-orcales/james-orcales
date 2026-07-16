@@ -201,26 +201,28 @@ defaults write NSGlobalDomain NSAutomaticSpellingCorrectionEnabled -bool false
 `
 
 // One external program invocation parsed from MACOS_DEFAULTS_SCRIPT.
-type macos_command struct {
-	Name      string
+type Macos_Command struct {
+	// Name is the external program to invoke.
+	Name string
+	// Arguments are the program's arguments, in invocation order.
 	Arguments []string
 }
 
 // Parses MACOS_DEFAULTS_SCRIPT into one command per non-blank line and appends
 // the clock date format command, whose spaced value cannot share the line format.
-func macos_commands() (commands []macos_command) {
-	commands = []macos_command{}
+func macos_commands() (commands []Macos_Command) {
+	commands = []Macos_Command{}
 	for line := range strings.Lines(MACOS_DEFAULTS_SCRIPT) {
 		fields := strings.Fields(line)
 		if len(fields) == 0 {
 			continue
 		}
-		commands = append(commands, macos_command{
+		commands = append(commands, Macos_Command{
 			Name:      fields[0],
 			Arguments: fields[1:],
 		})
 	}
-	return append(commands, macos_command{
+	return append(commands, Macos_Command{
 		Name: "defaults",
 		Arguments: []string{
 			"write", "com.apple.menuextra.clock", "DateFormat",
@@ -305,7 +307,7 @@ func Plan(input *Plan_Input) (writes []File_Write, err error) {
 
 // One child seen during the walk: its path relative to the source root and whether it is a
 // directory, the two facts the level walk needs to prune and recurse.
-type plan_entry struct {
+type Plan_Entry struct {
 	// Relative is the child's path from the source root, the key Is_Ignored classifies it by.
 	Relative string
 	// Is_Directory reports whether the child is a directory, so the walk knows to descend.
@@ -315,8 +317,8 @@ type plan_entry struct {
 // Reads every directory in one level of the walk, returning all their children as a single
 // batch of entries — the unit Is_Ignored classifies at once. Narrates each directory as it
 // reads it, so the scan shows progress even when it ultimately writes nothing.
-func plan_read_level(input *Plan_Input, level []string) (entries []plan_entry, err error) {
-	entries = []plan_entry{}
+func plan_read_level(input *Plan_Input, level []string) (entries []Plan_Entry, err error) {
+	entries = []Plan_Entry{}
 	for _, directory := range level {
 		plan_narrate(input.Logger, directory)
 		read, read_err := input.File_System.Loop.Read_Directory(
@@ -325,7 +327,7 @@ func plan_read_level(input *Plan_Input, level []string) (entries []plan_entry, e
 			return nil, read_err
 		}
 		for _, child := range read {
-			entries = append(entries, plan_entry{
+			entries = append(entries, Plan_Entry{
 				Relative:     filepath.Join(directory, child.Name),
 				Is_Directory: child.Is_Directory,
 			})
@@ -345,7 +347,7 @@ func plan_narrate(logger jlog.Logger, directory string) {
 // Is_Ignored call. A nil predicate — or an empty level — ignores nothing, so the filter
 // stays opt-in and an empty level spawns no probe.
 func plan_ignored(
-	is_ignored func(relative_paths []string) (ignored map[string]bool), entries []plan_entry,
+	is_ignored func(relative_paths []string) (ignored map[string]bool), entries []Plan_Entry,
 ) (ignored map[string]bool) {
 	if is_ignored == nil {
 		return nil
@@ -822,7 +824,7 @@ func Install_Rust(input *Install_Rust_Input) (status_code int) {
 	}
 	// Always (re)link, even when the install was skipped, so a stale or missing
 	// symlink is repointed at the current CARGO_HOME without reinstalling.
-	if !rust_link(&rust_link_input{
+	if !rust_link(&Rust_Link_Input{
 		Shell:           input.Shell,
 		Cargo_Directory: input.Cargo_Directory,
 		Link_Directory:  input.Link_Directory,
@@ -860,16 +862,19 @@ func rust_installed(shell Shell, cargo_directory string) (installed bool) {
 }
 
 // Carries the arguments for symlinking the rust toolchain onto PATH.
-type rust_link_input struct {
-	Shell           Shell
+type Rust_Link_Input struct {
+	// Shell is the command runner the symlinks are created through.
+	Shell Shell
+	// Cargo_Directory is the CARGO_HOME whose bin holds the toolchain to link from.
 	Cargo_Directory string
-	Link_Directory  string
+	// Link_Directory is the PATH entry the toolchain is symlinked into.
+	Link_Directory string
 }
 
 // Symlinks cargo, rustup, and rustc from CARGO_HOME/bin into the link directory
 // with ln -sf, so the managed toolchain is reachable from the one PATH entry and
 // any stale link there is overwritten. Reports whether every link succeeded.
-func rust_link(input *rust_link_input) (linked bool) {
+func rust_link(input *Rust_Link_Input) (linked bool) {
 	for _, tool := range []string{"cargo", "rustup", "rustc"} {
 		source := filepath.Join(input.Cargo_Directory, "bin", tool)
 		target := filepath.Join(input.Link_Directory, tool)

@@ -84,7 +84,7 @@ func differ_assert_only_edits_mutated(d *Differ) (check func()) {
 
 // Holds the Old and New text reconstructed from a Differ's edits, used by the
 // reconstruction invariants.
-type differ_rebuilt_text struct {
+type Differ_Rebuilt_Text struct {
 	// Old is the source text rebuilt from retain and delete edits.
 	Old string
 	// New is the target text rebuilt from retain and insert edits.
@@ -92,7 +92,7 @@ type differ_rebuilt_text struct {
 }
 
 // Replays the edit script to recover the two texts it encodes.
-func differ_rebuild_string_from_edits(d *Differ) (text differ_rebuilt_text) {
+func differ_rebuild_string_from_edits(d *Differ) (text Differ_Rebuilt_Text) {
 	var old strings.Builder
 	var new strings.Builder
 	for _, edit := range d.Edits {
@@ -111,12 +111,12 @@ func differ_rebuild_string_from_edits(d *Differ) (text differ_rebuilt_text) {
 			}
 		}
 	}
-	return differ_rebuilt_text{Old: old.String(), New: new.String()}
+	return Differ_Rebuilt_Text{Old: old.String(), New: new.String()}
 }
 
 // Line-to-rune encoding of a Differ's texts: each distinct line becomes a
 // single rune so line diffing reduces to rune diffing.
-type differ_line_codes struct {
+type Differ_Line_Codes struct {
 	// Old is Old_String with each line replaced by its code rune.
 	Old string
 	// New is New_String with each line replaced by its code rune.
@@ -127,7 +127,7 @@ type differ_line_codes struct {
 
 // Maps each distinct line in the Differ's texts to a unique rune, returning the
 // rune-encoded texts and the reverse mapping.
-func differ_encode_lines(d *Differ) (codes differ_line_codes) {
+func differ_encode_lines(d *Differ) (codes Differ_Line_Codes) {
 	n_count := strings.Count(d.Old_String, "\n")
 	var old strings.Builder
 	var new strings.Builder
@@ -153,7 +153,7 @@ func differ_encode_lines(d *Differ) (codes differ_line_codes) {
 		}
 		new.WriteRune(line_to_rune[line])
 	}
-	return differ_line_codes{Old: old.String(), New: new.String(), Rune_To_Line: rune_to_line}
+	return Differ_Line_Codes{Old: old.String(), New: new.String(), Rune_To_Line: rune_to_line}
 }
 
 // Differ_Line_Diff renders a line-granularity diff: each output line is an
@@ -334,7 +334,7 @@ func differ_merge(d *Differ) {
 		has_insert := len(to_insert) > 0
 		if has_delete {
 			if has_insert {
-				lifted := differ_merge_lift_affixes(result, differ_affix{
+				lifted := differ_merge_lift_affixes(result, Differ_Affix{
 					Current_Edit: current_edit,
 					To_Delete:    to_delete,
 					To_Insert:    to_insert,
@@ -362,7 +362,7 @@ func differ_merge(d *Differ) {
 
 // Carries the merge state mutated when an adjacent insert and delete share an
 // affix run.
-type differ_affix struct {
+type Differ_Affix struct {
 	// Current_Edit is the bounding retain, possibly extended by a shared suffix.
 	Current_Edit Edit
 	// To_Delete is the pending deletion remainder after lifting.
@@ -373,7 +373,7 @@ type differ_affix struct {
 
 // Lifts the run shared at the front of the pending insert and delete into the
 // previous retain, and the run shared at the back into the bounding retain.
-func differ_merge_lift_affixes(result []Edit, state differ_affix) (lifted differ_affix) {
+func differ_merge_lift_affixes(result []Edit, state Differ_Affix) (lifted Differ_Affix) {
 	prefix := Find_Common_Prefix(
 		Find_Common_Prefix_Input{A: state.To_Insert, B: state.To_Delete},
 	)
@@ -487,11 +487,11 @@ func Differ_Optimized_Diff(d *Differ) {
 	old = old[:len(old)-len(suffix)]
 	new = new[:len(new)-len(suffix)]
 
-	differ_optimized_core(differ_optimized_core_input{D: d, Old: old, New: new})
+	differ_optimized_core(Differ_Optimized_Core_Input{D: d, Old: old, New: new})
 }
 
 // Carries the trimmed texts into the optimized core.
-type differ_optimized_core_input struct {
+type Differ_Optimized_Core_Input struct {
 	// D is the Differ whose Edits are extended.
 	D *Differ
 	// Old is the source remainder after affix peeling.
@@ -502,7 +502,7 @@ type differ_optimized_core_input struct {
 
 // Handles simple inserts, deletes, and one-sided sandwiches, delegating the
 // genuinely mixed case to a common-run split.
-func differ_optimized_core(input differ_optimized_core_input) {
+func differ_optimized_core(input Differ_Optimized_Core_Input) {
 	d, old, new := input.D, input.Old, input.New
 	is_simple_delete := len(old) > 0 && len(new) == 0
 	is_simple_insert := len(old) == 0 && len(new) > 0
@@ -515,8 +515,8 @@ func differ_optimized_core(input differ_optimized_core_input) {
 		return
 	}
 
-	x := runes_index(runes_index_input{Haystack: old, Needle: new})
-	y := runes_index(runes_index_input{Haystack: new, Needle: old})
+	x := runes_index(Runes_Index_Input{Haystack: old, Needle: new})
+	y := runes_index(Runes_Index_Input{Haystack: new, Needle: old})
 	is_delete_sandwich := x > 0
 	if is_delete_sandwich {
 		d.Edits = append(d.Edits, Edit{Kind: EDIT_DELETE, Data: old[:x]})
@@ -554,8 +554,8 @@ func differ_optimized_split(d *Differ) {
 			Differ_Algorithm_Diff(diff)
 			return
 		}
-		new_run_start := runes_index(runes_index_input{Haystack: new_runes, Needle: run})
-		old_run_start := runes_index(runes_index_input{Haystack: old_runes, Needle: run})
+		new_run_start := runes_index(Runes_Index_Input{Haystack: new_runes, Needle: run})
+		old_run_start := runes_index(Runes_Index_Input{Haystack: old_runes, Needle: run})
 		{
 			clone := Differ{
 				Edits:      diff.Edits,
@@ -637,16 +637,16 @@ func Differ_Algorithm_Diff(d *Differ) {
 	old, new := d.Old, d.New
 	before_count := len(d.Edits)
 	trace := differ_algorithm_forward_trace(
-		differ_algorithm_forward_trace_input{Old: old, New: new},
+		Differ_Algorithm_Forward_Trace_Input{Old: old, New: new},
 	)
-	d.Edits = append(d.Edits, differ_algorithm_backtrack(differ_algorithm_backtrack_input{
+	d.Edits = append(d.Edits, differ_algorithm_backtrack(Differ_Algorithm_Backtrack_Input{
 		Trace: trace, Old: old, New: new,
 	})...)
 	slices.Reverse(d.Edits[before_count:])
 }
 
 // Carries the texts into the forward trace.
-type differ_algorithm_forward_trace_input struct {
+type Differ_Algorithm_Forward_Trace_Input struct {
 	// Old is the source text as runes.
 	Old []rune
 	// New is the target text as runes.
@@ -655,7 +655,7 @@ type differ_algorithm_forward_trace_input struct {
 
 // Runs Myers' forward pass, returning the furthest-reaching X snapshot recorded
 // at each edit depth.
-func differ_algorithm_forward_trace(input differ_algorithm_forward_trace_input) (trace [][]int) {
+func differ_algorithm_forward_trace(input Differ_Algorithm_Forward_Trace_Input) (trace [][]int) {
 	old, new := input.Old, input.New
 	edits_max := len(old) + len(new)
 	trace = make([][]int, 0, edits_max+1)
@@ -663,7 +663,7 @@ func differ_algorithm_forward_trace(input differ_algorithm_forward_trace_input) 
 
 	for depth := range edits_max + 1 {
 		previous_tracker := slices.Clone(tracker)
-		more := differ_forward_step(differ_forward_step_input{
+		more := differ_forward_step(Differ_Forward_Step_Input{
 			Depth:            depth,
 			Tracker:          tracker,
 			Previous_Tracker: previous_tracker,
@@ -680,7 +680,7 @@ func differ_algorithm_forward_trace(input differ_algorithm_forward_trace_input) 
 }
 
 // Carries one forward-pass depth into differ_forward_step.
-type differ_forward_step_input struct {
+type Differ_Forward_Step_Input struct {
 	// Depth is the current edit depth.
 	Depth int
 	// Tracker is the furthest-reaching X per diagonal, mutated in place.
@@ -697,7 +697,7 @@ type differ_forward_step_input struct {
 
 // Advances every diagonal of one Myers forward-pass depth, updating Tracker and
 // reporting whether the far corner has not yet been reached.
-func differ_forward_step(input differ_forward_step_input) (more bool) {
+func differ_forward_step(input Differ_Forward_Step_Input) (more bool) {
 	depth, tracker, previous_tracker := input.Depth, input.Tracker, input.Previous_Tracker
 	edits_max, old, new := input.Edits_Max, input.Old, input.New
 	for k := -depth; k <= depth; k += 2 {
@@ -758,7 +758,7 @@ func differ_forward_step(input differ_forward_step_input) (more bool) {
 }
 
 // Carries the forward trace and texts into the backtrack pass.
-type differ_algorithm_backtrack_input struct {
+type Differ_Algorithm_Backtrack_Input struct {
 	// Trace is the per-depth furthest-reaching X snapshots from the forward pass.
 	Trace [][]int
 	// Old is the source text as runes.
@@ -769,7 +769,7 @@ type differ_algorithm_backtrack_input struct {
 
 // Walks the forward trace from the end, emitting the retains, deletes, and
 // inserts of the minimal script in reverse order.
-func differ_algorithm_backtrack(input differ_algorithm_backtrack_input) (edits []Edit) {
+func differ_algorithm_backtrack(input Differ_Algorithm_Backtrack_Input) (edits []Edit) {
 	trace, old, new := input.Trace, input.Old, input.New
 	edits_max := len(old) + len(new)
 	x, y := len(old), len(new)
@@ -970,7 +970,7 @@ func Runes_Have_Suffix(input Runes_Have_Suffix_Input) (ok bool) {
 }
 
 // Input for runes_index.
-type runes_index_input struct {
+type Runes_Index_Input struct {
 	// Haystack is the slice searched.
 	Haystack []rune
 	// Needle is the slice sought.
@@ -978,7 +978,7 @@ type runes_index_input struct {
 }
 
 // Returns the first index at which Needle occurs in Haystack, or -1.
-func runes_index(input runes_index_input) (index int) {
+func runes_index(input Runes_Index_Input) (index int) {
 	if len(input.Needle) == 0 {
 		return -1
 	}

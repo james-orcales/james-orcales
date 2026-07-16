@@ -81,8 +81,8 @@ func main() {
 		Warmup_Count:   warmup,
 		Allow_Failures: allow_failures,
 		Format:         format,
-		Color:          resolve_stream(stream_mode(color_mode), os.Stdout),
-		Progress:       resolve_stream(stream_mode(progress_mode), os.Stderr),
+		Color:          resolve_stream(Stream_Mode(color_mode), os.Stdout),
+		Progress:       resolve_stream(Stream_Mode(progress_mode), os.Stderr),
 		Output:         os.Stdout,
 		Stderr:         os.Stderr,
 		Machine:        acquire_machine_specs(),
@@ -149,12 +149,12 @@ func main_program() (program cli.Program) {
 const BOUND_MIN = -1
 const BOUND_MAX = 1 << 16
 
-// Cli_commands is the raw command strings from the command line, each one a command to
+// Cli_Commands is the raw command strings from the command line, each one a command to
 // benchmark before it is parsed into words.
-type cli_commands []string
+type Cli_Commands []string
 
-// Cli_commands_invariants bounds the command-string count.
-func cli_commands_invariants(commands cli_commands, namespace invariant.Namespace) {
+// Cli_Commands_Invariants bounds the command-string count.
+func Cli_Commands_Invariants(commands Cli_Commands, namespace invariant.Namespace) {
 	invariant.Always(len(commands) <= BOUND_MAX, "A command list is at most its max.")
 	invariant.Always(len(commands) >= BOUND_MIN, "A command list is at least its min.")
 	invariant.Always(len(commands) != BOUND_MIN, "A command list never reaches its min.")
@@ -180,11 +180,11 @@ func cli_commands_invariants(commands cli_commands, namespace invariant.Namespac
 	)
 }
 
-// Stream_mode is a color/progress toggle from the command line: never, always, or auto.
-type stream_mode string
+// Stream_Mode is a color/progress toggle from the command line: never, always, or auto.
+type Stream_Mode string
 
-// Stream_mode_invariants bounds the mode word's length.
-func stream_mode_invariants(mode stream_mode, namespace invariant.Namespace) {
+// Stream_Mode_Invariants bounds the mode word's length.
+func Stream_Mode_Invariants(mode Stream_Mode, namespace invariant.Namespace) {
 	invariant.Always(len(mode) <= BOUND_MAX, "A stream mode is at most its max.")
 	invariant.Always(len(mode) >= BOUND_MIN, "A stream mode is at least its min.")
 	invariant.Always(len(mode) != BOUND_MIN, "A stream mode never reaches its min.")
@@ -213,9 +213,9 @@ func stream_mode_invariants(mode stream_mode, namespace invariant.Namespace) {
 // Commands_from_strings turns each command string into an io.Process_Request,
 // splitting it on whitespace and partitioning leading KEY=VALUE assignments off as the
 // process environment. It errors on a string with no executable.
-func commands_from_strings(command_strings cli_commands) (commands maddox.Commands, err error) {
+func commands_from_strings(command_strings Cli_Commands) (commands maddox.Commands, err error) {
 	defer func() { maddox.Commands_Invariants(commands, "commands_from_strings.commands") }()
-	cli_commands_invariants(command_strings, "commands_from_strings.command_strings")
+	Cli_Commands_Invariants(command_strings, "commands_from_strings.command_strings")
 	commands = make(maddox.Commands, 0, len(command_strings))
 	for _, text := range command_strings {
 		fields := strings.Fields(text)
@@ -249,9 +249,9 @@ func commands_from_strings(command_strings cli_commands) (commands maddox.Comman
 
 // Resolve_stream turns an auto/never/always mode into a decision: always or never as
 // named, auto when the stream is a terminal.
-func resolve_stream(mode stream_mode, file *os.File) (enabled bool) {
+func resolve_stream(mode Stream_Mode, file *os.File) (enabled bool) {
 	defer func() { invariant.Boolean_Invariants(enabled, "resolve_stream.enabled") }()
-	stream_mode_invariants(mode, "resolve_stream.mode")
+	Stream_Mode_Invariants(mode, "resolve_stream.mode")
 	if mode == "always" {
 		return true
 	}

@@ -43,10 +43,10 @@ func load() (packages []*callgraph.Package, module string) {
 	root, module := find_workspace()
 	file_set := token.NewFileSet()
 	resolver := importer.ForCompiler(file_set, "gc", export_lookup(export_data(root)))
-	discovered := discover_packages(&discover_packages_input{Root: root, Module: module})
+	discovered := discover_packages(&Discover_Packages_Input{Root: root, Module: module})
 	slices.Sort(discovered)
 	for _, path := range discovered {
-		checked := load_package(&load_package_input{
+		checked := load_package(&Load_Package_Input{
 			Path:     path,
 			Root:     root,
 			Module:   module,
@@ -94,7 +94,7 @@ func module_path(root string) (path string) {
 }
 
 // The input for discover_packages.
-type discover_packages_input struct {
+type Discover_Packages_Input struct {
 	// Root is the workspace root directory to walk.
 	Root string
 	// Module is the module path prefixing first-party import paths.
@@ -103,7 +103,7 @@ type discover_packages_input struct {
 
 // Walks the root for directories holding first-party Go source, returning their
 // import paths; vendored, temporary, and hidden trees are skipped.
-func discover_packages(input *discover_packages_input) (paths []string) {
+func discover_packages(input *Discover_Packages_Input) (paths []string) {
 	seen := map[string]bool{}
 	walk := func(path string, entry fs.DirEntry, walk_err error) (next error) {
 		if walk_err != nil {
@@ -118,7 +118,7 @@ func discover_packages(input *discover_packages_input) (paths []string) {
 			}
 			return nil
 		}
-		import_path, is_source := package_import_path(&package_import_path_input{
+		import_path, is_source := package_import_path(&Package_Import_Path_Input{
 			Root: input.Root, Module: input.Module, Path: path,
 		})
 		if !is_source {
@@ -136,7 +136,7 @@ func discover_packages(input *discover_packages_input) (paths []string) {
 }
 
 // The input for package_import_path.
-type package_import_path_input struct {
+type Package_Import_Path_Input struct {
 	// Root is the workspace root the path is relative to.
 	Root string
 	// Module is the module path prefixing first-party import paths.
@@ -147,7 +147,7 @@ type package_import_path_input struct {
 
 // Returns the import path of the package holding a Go source file, or false when
 // the file is not first-party source.
-func package_import_path(input *package_import_path_input) (import_path string, source bool) {
+func package_import_path(input *Package_Import_Path_Input) (import_path string, source bool) {
 	name := filepath.Base(input.Path)
 	if !strings.HasSuffix(name, ".go") {
 		return "", false
@@ -214,7 +214,7 @@ func export_lookup(
 }
 
 // The input for load_package.
-type load_package_input struct {
+type Load_Package_Input struct {
 	// Path is the package's import path.
 	Path string
 	// Root is the workspace root directory.
@@ -231,7 +231,7 @@ type load_package_input struct {
 // extractable form, or nil when the directory holds no parseable source. Type
 // errors are swallowed so a package with unresolved imports still yields the
 // facts its resolvable code supports.
-func load_package(input *load_package_input) (checked *callgraph.Package) {
+func load_package(input *Load_Package_Input) (checked *callgraph.Package) {
 	relative := strings.TrimPrefix(strings.TrimPrefix(input.Path, input.Module), "/")
 	directory := filepath.Join(input.Root, relative)
 	files := parse_directory(input.File_Set, directory)

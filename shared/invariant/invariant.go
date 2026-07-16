@@ -92,7 +92,7 @@ type Recorder struct {
 	// tracker keys its elements and grid cells resolve to, so the recording hot path
 	// increments by pointer with no per-call key construction. Built lazily — the keys
 	// and Loads happen once. A plain map (not sync.Map) keeps the read allocation-free.
-	Observe_Cache map[string]*observe_handle
+	Observe_Cache map[string]*Observe_Handle
 
 	// Enforce_Cache_Mu guards Enforce_Cache: the first-call build takes the write lock;
 	// the enforcement hot path reads under RLock. The sibling of Observe_Cache_Mu.
@@ -104,7 +104,7 @@ type Recorder struct {
 	// mode, so this cache is read on every call, unlike Observe_Cache which only the recording
 	// modes touch. Built lazily; a plain map keyed by the existing message string reads
 	// allocation-free.
-	Enforce_Cache map[string]*enforce_handle
+	Enforce_Cache map[string]*Enforce_Handle
 
 	// Output receives the coverage-gap report and the orphan/bundle diagnostics.
 	Output io.Writer
@@ -363,14 +363,14 @@ func Recorder_Dot_Product(recorder *Recorder, namespace Namespace, bundle ...Dot
 	recorder_dot_product_observe(recorder, message, bundle)
 }
 
-// Returns the cached enforce_handle for message, building it on first use. The build resolves
+// Returns the cached Enforce_Handle for message, building it on first use. The build resolves
 // every Impossible's references to bundle positions once (and panics on a non-sibling typo);
 // later calls read it under RLock and enforce with index and boolean compares, no string scan.
 // A plain map keyed by the existing message string reads allocation-free. The sibling of
 // recorder_observe_handle, but read in every mode — enforcement is not gated on Is_Test.
 func recorder_enforce_handle(
 	recorder *Recorder, message string, bundle Bundle,
-) (handle *enforce_handle) {
+) (handle *Enforce_Handle) {
 	recorder.Enforce_Cache_Mu.RLock()
 	handle = recorder.Enforce_Cache[message]
 	recorder.Enforce_Cache_Mu.RUnlock()
@@ -384,21 +384,21 @@ func recorder_enforce_handle(
 	}
 	handle = recorder_enforce_handle_build(bundle)
 	if recorder.Enforce_Cache == nil {
-		recorder.Enforce_Cache = map[string]*enforce_handle{}
+		recorder.Enforce_Cache = map[string]*Enforce_Handle{}
 	}
 	recorder.Enforce_Cache[message] = handle
 	return handle
 }
 
-// Builds an enforce_handle: one rule per Impossible that carries references, each reference
+// Builds an Enforce_Handle: one rule per Impossible that carries references, each reference
 // resolved to the bundle position of the sibling axis it names, and the violation message
 // pre-rendered. A reference naming no sibling is a typo and panics here — and since a failed build
 // stores nothing, the same bad bundle panics on every call, exactly as the old per-call reference
 // check did. A reference-less Impossible constrains nothing, so it yields no rule (it never fires,
 // matching dot_element_impossible_violated's empty-set case). The handle holds only positions
 // (ints) and freshly rendered strings — no pointers into bundle — so bundle stays non-escaping.
-func recorder_enforce_handle_build(bundle Bundle) (handle *enforce_handle) {
-	handle = &enforce_handle{}
+func recorder_enforce_handle_build(bundle Bundle) (handle *Enforce_Handle) {
+	handle = &Enforce_Handle{}
 	for _, dot_element := range bundle {
 		if dot_element.Kind != DOT_ELEMENT_KIND_IMPOSSIBLE {
 			continue
@@ -406,7 +406,7 @@ func recorder_enforce_handle_build(bundle Bundle) (handle *enforce_handle) {
 		if len(dot_element.Impossibles) == 0 {
 			continue
 		}
-		var coordinates []reference_coordinate
+		var coordinates []Reference_Coordinate
 		for _, reference := range dot_element.Impossibles {
 			index := dot_product_axis_index(bundle, reference.Message)
 			if index < 0 {
@@ -414,9 +414,9 @@ func recorder_enforce_handle_build(bundle Bundle) (handle *enforce_handle) {
 					non_sibling_reference_message(reference))
 			}
 			coordinates = append(coordinates,
-				reference_coordinate{Index: index, Event: reference.Event})
+				Reference_Coordinate{Index: index, Event: reference.Event})
 		}
-		handle.Rules = append(handle.Rules, impossible_rule{
+		handle.Rules = append(handle.Rules, Impossible_Rule{
 			Coordinates: coordinates,
 			Message:     dot_element_impossible_message(dot_element),
 		})
@@ -449,54 +449,54 @@ func non_sibling_reference_message(reference Dot_Element_Reference) (message str
 		", not an axis of this Dot_Product"
 }
 
-// An observe_handle memoizes, for one Dot_Product message, what its bundle resolves to so the
+// An Observe_Handle memoizes, for one Dot_Product message, what its bundle resolves to so the
 // recording hot path builds no key per call: the metadata + tracker key for each non-Impossible
 // element (in bundle order) and for each grid cell (indexed by the packed bucket tuple).
-type observe_handle struct {
+type Observe_Handle struct {
 	// Elements holds one entry per non-Impossible element, in bundle order.
-	Elements []handle_entry
+	Elements []Handle_Entry
 	// Tuples is indexed by the observed tuple packed big-endian — element 0 is the
 	// most significant bit, one per axis (a Sometimes has two buckets), size
 	// 1<<len(Elements). A nil-metadata entry is a cell an Impossible carved or never seeded.
-	Tuples []handle_entry
+	Tuples []Handle_Entry
 }
 
-// A handle_entry is a resolved tracker slot: the seeded metadata and the tracker key, cached so
+// A Handle_Entry is a resolved tracker slot: the seeded metadata and the tracker key, cached so
 // Coverage_Sink can persist it without rebuilding the string.
-type handle_entry struct {
+type Handle_Entry struct {
 	// Metadata is the seeded tracker entry, nil when registration seeded none.
 	Metadata *Assertion_Metadata
 	// Key is the tracker key, cached so Coverage_Sink can persist it without rebuilding it.
 	Key string
 }
 
-// An enforce_handle memoizes, for one Dot_Product message, its Impossible constraints resolved
+// An Enforce_Handle memoizes, for one Dot_Product message, its Impossible constraints resolved
 // against the bundle's shape so enforcement scans no strings per call: one rule per Impossible,
 // each carrying its references as bundle positions and its violation message pre-rendered.
-type enforce_handle struct {
+type Enforce_Handle struct {
 	// Rules holds one resolved Impossible per rule, in bundle order, so a multi-violation
 	// panic names them in the same order the from-scratch scan did. A reference-less Impossible
 	// constrains nothing and contributes no rule.
-	Rules []impossible_rule
+	Rules []Impossible_Rule
 }
 
-// An impossible_rule is one Impossible resolved against the bundle: the forbidden combination as
+// An Impossible_Rule is one Impossible resolved against the bundle: the forbidden combination as
 // bundle positions, plus the panic message it renders when that combination occurs. The message
 // is static (the referenced axes' messages and events are fixed), so it is built once here rather
 // than per firing.
-type impossible_rule struct {
+type Impossible_Rule struct {
 	// Coordinates are the referenced sibling axes' positions and the event each is forbidden
 	// at; the rule fires when every one currently holds its forbidden event.
-	Coordinates []reference_coordinate
+	Coordinates []Reference_Coordinate
 	// Message is the pre-rendered violation text, identical to dot_element_impossible_message.
 	Message string
 }
 
-// A reference_coordinate is one Impossible reference resolved to a bundle position: the index of
+// A Reference_Coordinate is one Impossible reference resolved to a bundle position: the index of
 // the sibling axis it names and the event it forbids there. Enforcement fires the rule when
 // bundle[Index].Event == Event for every coordinate — integer index and boolean compares, no
 // string matching.
-type reference_coordinate struct {
+type Reference_Coordinate struct {
 	// Index is the position of the referenced sibling axis in the bundle.
 	Index int
 	// Event is the outcome the reference forbids: the rule needs this axis at this event.
@@ -504,7 +504,7 @@ type reference_coordinate struct {
 }
 
 // Increments the seeded tracker entry for each observed element and the tuple entry for the
-// observed combination, through the per-message observe_handle so the steady state allocates
+// observed combination, through the per-message Observe_Handle so the steady state allocates
 // nothing. Records under a plain test, the fuzz coordinator, and a fuzz worker (all carry
 // Is_Test); a no-op in a benchmark or a non-test binary, which only enforce.
 func recorder_dot_product_observe(
@@ -542,12 +542,12 @@ func recorder_dot_product_observe(
 	recorder_increment_entry(recorder, handle.Tuples[packed], true)
 }
 
-// Returns the cached observe_handle for message, building it on first use. The build resolves
+// Returns the cached Observe_Handle for message, building it on first use. The build resolves
 // every element and grid-cell key against the seeded tracker once; later calls read it under
 // RLock with no allocation (a plain map keyed by the existing message string boxes nothing).
 func recorder_observe_handle(
 	recorder *Recorder, message string, bundle Bundle,
-) (handle *observe_handle) {
+) (handle *Observe_Handle) {
 	recorder.Observe_Cache_Mu.RLock()
 	handle = recorder.Observe_Cache[message]
 	recorder.Observe_Cache_Mu.RUnlock()
@@ -561,20 +561,20 @@ func recorder_observe_handle(
 	}
 	handle = recorder_observe_handle_build(recorder, message, bundle)
 	if recorder.Observe_Cache == nil {
-		recorder.Observe_Cache = map[string]*observe_handle{}
+		recorder.Observe_Cache = map[string]*Observe_Handle{}
 	}
 	recorder.Observe_Cache[message] = handle
 	return handle
 }
 
-// Builds an observe_handle: one element entry per non-Impossible element (keyed prefix +
+// Builds an Observe_Handle: one element entry per non-Impossible element (keyed prefix +
 // separator + own message) and one tuple entry per grid cell, keyed by the projected coordinate
 // exactly as registration seeded it. A cell or element registration never seeded resolves to a
 // nil-metadata entry, so the runtime skips it.
 func recorder_observe_handle_build(
 	recorder *Recorder, message string, bundle Bundle,
-) (handle *observe_handle) {
-	handle = &observe_handle{}
+) (handle *Observe_Handle) {
+	handle = &Observe_Handle{}
 	ungated_count := 0
 	for _, dot_element := range bundle {
 		if dot_element.Kind != DOT_ELEMENT_KIND_SOMETIMES {
@@ -586,7 +586,7 @@ func recorder_observe_handle_build(
 			ungated_count++
 		}
 	}
-	handle.Tuples = make([]handle_entry, 1<<ungated_count)
+	handle.Tuples = make([]Handle_Entry, 1<<ungated_count)
 	for packed := range handle.Tuples {
 		tuple := make([]int, ungated_count)
 		for i := range tuple {
@@ -600,7 +600,7 @@ func recorder_observe_handle_build(
 
 // Resolves key to its seeded tracker metadata (nil when none was seeded), pairing it with the
 // key so Coverage_Sink can persist it on first coverage.
-func recorder_handle_entry(recorder *Recorder, key string) (entry handle_entry) {
+func recorder_handle_entry(recorder *Recorder, key string) (entry Handle_Entry) {
 	entry.Key = key
 	if value, ok := recorder.Events.Load(key); ok {
 		entry.Metadata = value.(*Assertion_Metadata)
@@ -613,7 +613,7 @@ func recorder_handle_entry(recorder *Recorder, key string) (entry handle_entry) 
 // branch (its first coverage) it fires Coverage_Sink with the entry's cached key, so a fuzz
 // worker persists the cell; atomic Add returns the post-increment value, so the sink fires once
 // per branch.
-func recorder_increment_entry(recorder *Recorder, entry handle_entry, fired_true bool) {
+func recorder_increment_entry(recorder *Recorder, entry Handle_Entry, fired_true bool) {
 	if entry.Metadata == nil {
 		return
 	}
@@ -640,7 +640,7 @@ func recorder_increment(recorder *Recorder, key string, fired_true bool) {
 		return
 	}
 	recorder_increment_entry(
-		recorder, handle_entry{Metadata: value.(*Assertion_Metadata), Key: key}, fired_true)
+		recorder, Handle_Entry{Metadata: value.(*Assertion_Metadata), Key: key}, fired_true)
 }
 
 // Fuzz_Coverage_Line encodes one covered (key, branch) as the line a fuzz worker appends to
@@ -755,7 +755,7 @@ func Recorder_Register_Packages_For_Analysis(recorder *Recorder, directories ...
 					}
 				}
 			}
-			parsed := recorder_parse_directory(&recorder_parse_directory_input{
+			parsed := recorder_parse_directory(&Recorder_Parse_Directory_Input{
 				File_System: recorder.File_System,
 				File_Set:    file_set,
 				Directory:   expanded,
@@ -763,16 +763,16 @@ func Recorder_Register_Packages_For_Analysis(recorder *Recorder, directories ...
 			files = append(files, parsed...)
 		}
 	}
-	index := &bundle_index{
+	index := &Bundle_Index{
 		File_System:   recorder.File_System,
 		File_Set:      file_set,
 		Module_Path:   module_path,
 		Module_Root:   module_root,
 		Sugar_Package: recorder.Sugar_Package,
 		Same_Set:      ast_index_functions(files),
-		Loaded:        map[string]map[string]indexed_function{},
+		Loaded:        map[string]map[string]Indexed_Function{},
 	}
-	reg := &registration{Seen_Prefix: map[string]bool{}}
+	reg := &Registration{Seen_Prefix: map[string]bool{}}
 	for _, file := range files {
 		recorder_register_file(recorder, file_set, file, index, reg)
 	}
@@ -829,10 +829,13 @@ func parse_module_path(SOURCE []byte) (module_path string) {
 }
 
 // Input for recorder_parse_directory.
-type recorder_parse_directory_input struct {
+type Recorder_Parse_Directory_Input struct {
+	// File_System is the filesystem, rooted at "/", the source files are read from.
 	File_System fs.FS
-	File_Set    *token.FileSet
-	Directory   string
+	// File_Set is the token file set the parsed positions are recorded in.
+	File_Set *token.FileSet
+	// Directory is the absolute directory whose non-test .go files are parsed.
+	Directory string
 }
 
 // Parses the non-test .go files directly under the absolute Directory into AST
@@ -840,7 +843,7 @@ type recorder_parse_directory_input struct {
 // it; the parsed file's name is the absolute path, used only for diagnostics now
 // (identity is the message, not the position). Subdirectories are skipped — one
 // directory is one package.
-func recorder_parse_directory(input *recorder_parse_directory_input) (files []*ast.File) {
+func recorder_parse_directory(input *Recorder_Parse_Directory_Input) (files []*ast.File) {
 	root := strings.TrimPrefix(input.Directory, "/")
 	fs.WalkDir(input.File_System, root, func(
 		file_path string, entry fs.DirEntry, walk_error error,
@@ -878,9 +881,11 @@ func recorder_parse_directory(input *recorder_parse_directory_input) (files []*a
 
 // One frontier entry of the directory-glob walk: a directory reached so far and the
 // index of the next pattern segment to match against its children.
-type recorder_glob_state struct {
+type Recorder_Glob_State struct {
+	// Directory is a directory reached so far in the glob walk.
 	Directory string
-	Index     int
+	// Index is the next pattern segment to match against this directory's children.
+	Index int
 }
 
 // Expands a directory pattern against the file system into concrete directories. A
@@ -893,7 +898,7 @@ func recorder_expand_directories(file_system fs.FS, pattern string) (directories
 	}
 	rooted := strings.HasPrefix(pattern, "/")
 	segments := strings.Split(strings.TrimPrefix(pattern, "/"), "/")
-	frontier := []recorder_glob_state{{Directory: ".", Index: 0}}
+	frontier := []Recorder_Glob_State{{Directory: ".", Index: 0}}
 	matched := map[string]bool{}
 	for len(frontier) > 0 {
 		current := frontier[len(frontier)-1]
@@ -920,15 +925,15 @@ func recorder_expand_directories(file_system fs.FS, pattern string) (directories
 // children. A `**` also matches in place (zero elements) and stays in play as it
 // descends, so it spans any depth.
 func recorder_glob_step(
-	file_system fs.FS, current recorder_glob_state, segment string,
-) (next []recorder_glob_state) {
+	file_system fs.FS, current Recorder_Glob_State, segment string,
+) (next []Recorder_Glob_State) {
 	children := recorder_child_directories(file_system, current.Directory)
 	if segment == "**" {
-		next = append(next, recorder_glob_state{
+		next = append(next, Recorder_Glob_State{
 			Directory: current.Directory, Index: current.Index + 1})
 		for _, CHILD := range children {
 			next = append(next,
-				recorder_glob_state{Directory: CHILD, Index: current.Index})
+				Recorder_Glob_State{Directory: CHILD, Index: current.Index})
 		}
 		return next
 	}
@@ -937,7 +942,7 @@ func recorder_glob_step(
 		if !matched {
 			continue
 		}
-		next = append(next, recorder_glob_state{Directory: CHILD, Index: current.Index + 1})
+		next = append(next, Recorder_Glob_State{Directory: CHILD, Index: current.Index + 1})
 	}
 	return next
 }
@@ -961,35 +966,45 @@ func recorder_child_directories(file_system fs.FS, directory string) (children [
 	return children
 }
 
-// An indexed_function is a discovered FuncDecl paired with the local-name →
+// An Indexed_Function is a discovered FuncDecl paired with the local-name →
 // import-path map of the file it lives in (so the bundle's own qualified
 // sub-calls resolve) and whether it lives in the sugar package (so the descent
 // recognises its unqualified primitive calls).
-type indexed_function struct {
+type Indexed_Function struct {
+	// Declaration is the discovered function declaration.
 	Declaration *ast.FuncDecl
-	Imports     map[string]string
-	Is_Sugar    bool
+	// Imports maps the file's local names to import paths, so qualified sub-calls resolve.
+	Imports map[string]string
+	// Is_Sugar reports whether the function lives in the sugar package.
+	Is_Sugar bool
 }
 
-// A bundle_index resolves a *_Invariants bundle call to its declaration. Same_Set
+// A Bundle_Index resolves a *_Invariants bundle call to its declaration. Same_Set
 // holds the analyzed packages' functions by bare name (same-package bundles); a
 // qualified call resolves cross-package within the module via Module_Path /
 // Module_Root, lazily parsing and caching each package in Loaded. A bundle outside
 // this module is unresolvable.
-type bundle_index struct {
-	File_System   fs.FS
-	File_Set      *token.FileSet
-	Module_Path   string
-	Module_Root   string
+type Bundle_Index struct {
+	// File_System is the filesystem the module's packages are parsed from.
+	File_System fs.FS
+	// File_Set is the token file set cross-package parses are recorded in.
+	File_Set *token.FileSet
+	// Module_Path is the module's import-path prefix, used to detect in-module qualified calls.
+	Module_Path string
+	// Module_Root is the module's absolute root directory on File_System.
+	Module_Root string
+	// Sugar_Package is the import path of the sugar package.
 	Sugar_Package string
-	Same_Set      map[string]indexed_function
-	Loaded        map[string]map[string]indexed_function
+	// Same_Set holds the analyzed packages' functions by bare name (same-package bundles).
+	Same_Set map[string]Indexed_Function
+	// Loaded caches lazily parsed cross-package functions, keyed by import path then bare name.
+	Loaded map[string]map[string]Indexed_Function
 }
 
 // Maps each function name to its declaration and its file's imports, for
 // descending *_Invariants bundles. A later definition wins on a name collision.
-func ast_index_functions(files []*ast.File) (functions map[string]indexed_function) {
-	functions = map[string]indexed_function{}
+func ast_index_functions(files []*ast.File) (functions map[string]Indexed_Function) {
+	functions = map[string]Indexed_Function{}
 	for _, file := range files {
 		imports := ast_file_imports(file)
 		for _, declaration := range file.Decls {
@@ -997,7 +1012,7 @@ func ast_index_functions(files []*ast.File) (functions map[string]indexed_functi
 			if !is_function {
 				continue
 			}
-			functions[function.Name.Name] = indexed_function{
+			functions[function.Name.Name] = Indexed_Function{
 				Declaration: function,
 				Imports:     imports,
 			}
@@ -1009,8 +1024,8 @@ func ast_index_functions(files []*ast.File) (functions map[string]indexed_functi
 // Registers every invariant.Dot_Product call in one parsed file. The file's
 // import map is threaded down so a qualified cross-package bundle resolves.
 func recorder_register_file(
-	recorder *Recorder, file_set *token.FileSet, file *ast.File, index *bundle_index,
-	reg *registration,
+	recorder *Recorder, file_set *token.FileSet, file *ast.File, index *Bundle_Index,
+	reg *Registration,
 ) {
 	imports := ast_file_imports(file)
 	for _, declaration := range file.Decls {
@@ -1031,7 +1046,7 @@ func recorder_register_file(
 // the called template's grid under "lit"; any other call may be a bare eager Always.
 func recorder_register_function(
 	recorder *Recorder, file_set *token.FileSet, function *ast.FuncDecl,
-	imports map[string]string, index *bundle_index, reg *registration,
+	imports map[string]string, index *Bundle_Index, reg *Registration,
 ) {
 	namespace_parameter := ""
 	if ast_is_invariants_name(function.Name.Name) {
@@ -1099,7 +1114,7 @@ func ast_is_namespace_type(expression ast.Expr) (is_namespace bool) {
 // nothing: a bare element records nothing and is the caller's responsibility to consume.
 // A duplicate Always message is a fatal collision.
 func recorder_register_eager_always(
-	recorder *Recorder, file_set *token.FileSet, call *ast.CallExpr, reg *registration,
+	recorder *Recorder, file_set *token.FileSet, call *ast.CallExpr, reg *Registration,
 ) {
 	axis, is_axis := recorder_axis_of(file_set, call, false, reg)
 	if !is_axis {
@@ -1222,7 +1237,7 @@ func recorder_check_bundle_control_flow(
 // primitive inline or wraps it in a custom type. The Sugar_Package, which owns the
 // presets, is exempt.
 func recorder_check_primitive_bundles(
-	recorder *Recorder, file_set *token.FileSet, files []*ast.File, index *bundle_index,
+	recorder *Recorder, file_set *token.FileSet, files []*ast.File, index *Bundle_Index,
 ) {
 	var offenders []string
 	for _, file := range files {
@@ -1350,7 +1365,7 @@ func recorder_is_builtin_type_name(name string) (yes bool) {
 // Returns the import path of file's package, derived from its absolute path against
 // the index's module root and path. "" when no module was found.
 func recorder_file_package(
-	file_set *token.FileSet, file *ast.File, index *bundle_index,
+	file_set *token.FileSet, file *ast.File, index *Bundle_Index,
 ) (import_path string) {
 	if index.Module_Path == "" {
 		return ""
@@ -1374,25 +1389,31 @@ func ast_is_control_flow(node ast.Node) (is_control_flow bool) {
 	return false
 }
 
-// A registration_axis is one Always/Sometimes element discovered statically:
+// A Registration_Axis is one Always/Sometimes element discovered statically:
 // its Message (the element's own literal), the source text of its condition, its kind,
 // and how many buckets it contributes to the tuple grid (Always=1 true; Sometimes=2).
 // The consuming Dot_Product's message is prefixed onto Message to form the coverage key,
 // uniformly for inline and bundle-descended axes alike.
-type registration_axis struct {
-	Message      string
-	Condition    string
-	Kind         Assertion_Kind
+type Registration_Axis struct {
+	// Message is the element's own literal; the Dot_Product prefix forms the coverage key.
+	Message string
+	// Condition is the source text of the asserted condition.
+	Condition string
+	// Kind is whether the element is an Always or a Sometimes.
+	Kind Assertion_Kind
+	// Bucket_Count is how many buckets the axis adds to the tuple grid (Always=1, Sometimes=2).
 	Bucket_Count int
 	// Gated marks an Imply axis — seeded per-axis but excluded from the tuple grid.
 	Gated bool
 }
 
-// A registration_cell is one coordinate of an Impossible carve: a Dot_Product
+// A Registration_Cell is one coordinate of an Impossible carve: a Dot_Product
 // axis position pinned to a bucket index.
-type registration_cell struct {
+type Registration_Cell struct {
+	// Position is the Dot_Product axis position this cell pins.
 	Position int
-	Bucket   int
+	// Bucket is the bucket index the position is pinned to.
+	Bucket int
 }
 
 // Registration accumulates the diagnostics a registration pass gathers before deciding
@@ -1400,10 +1421,14 @@ type registration_cell struct {
 // string literals, and message collisions. Each is fatal on its own (see the
 // recorder_check_* reporters). Seen_Prefix tracks Dot_Product messages so two grids
 // cannot share one — the global-uniqueness guarantee for prefixes.
-type registration struct {
-	Unresolved  []string
+type Registration struct {
+	// Unresolved holds bundles recognised by name but not resolvable to a declaration.
+	Unresolved []string
+	// Non_Literal holds messages that are not string literals, which cannot be keyed.
 	Non_Literal []string
-	Collision   []string
+	// Collision holds Dot_Product messages that collided with an already-seen prefix.
+	Collision []string
+	// Seen_Prefix tracks Dot_Product messages so two grids cannot share one prefix.
 	Seen_Prefix map[string]bool
 }
 
@@ -1434,7 +1459,7 @@ func ast_string_literal(call *ast.CallExpr, index int) (value string, ok bool) {
 // _Invariants' callsites, not here. Any other non-literal prefix is fatal.
 func recorder_register_dot_product(
 	recorder *Recorder, file_set *token.FileSet, call *ast.CallExpr, namespace_parameter string,
-	imports map[string]string, index *bundle_index, reg *registration,
+	imports map[string]string, index *Bundle_Index, reg *Registration,
 ) {
 	prefix, literal := ast_string_literal(call, 0)
 	if !literal {
@@ -1473,7 +1498,7 @@ func ast_is_template_prefix(call *ast.CallExpr, namespace_parameter string) (is_
 // global walk, never flattened into this grid.
 func recorder_register_invariants_callsite(
 	recorder *Recorder, file_set *token.FileSet, call *ast.CallExpr,
-	imports map[string]string, index *bundle_index, reg *registration,
+	imports map[string]string, index *Bundle_Index, reg *Registration,
 ) {
 	if len(call.Args) < 2 {
 		return
@@ -1538,7 +1563,7 @@ func recorder_template_dot_product(
 // message within the grid is a duplicate collision.
 func recorder_seed_grid(
 	recorder *Recorder, file_set *token.FileSet, position ast.Node, prefix string,
-	axes []registration_axis, carves [][]registration_cell, reg *registration,
+	axes []Registration_Axis, carves [][]Registration_Cell, reg *Registration,
 ) {
 	if reg.Seen_Prefix[prefix] {
 		reg.Collision = append(reg.Collision,
@@ -1561,7 +1586,7 @@ func recorder_seed_grid(
 					" / "+strconv.Quote(axis.Message))
 		}
 	}
-	ungated := make([]registration_axis, 0, len(axes))
+	ungated := make([]Registration_Axis, 0, len(axes))
 	for _, axis := range axes {
 		if !axis.Gated {
 			ungated = append(ungated, axis)
@@ -1575,8 +1600,8 @@ func recorder_seed_grid(
 // calls, not spreads — so there is no bundle descent. Each Impossible carve resolves its two
 // references against the ungated axis positions; the grid excludes gated Imply axes.
 func recorder_collect_inline(
-	file_set *token.FileSet, arguments []ast.Expr, allow_unqualified bool, reg *registration,
-) (axes []registration_axis, carves [][]registration_cell) {
+	file_set *token.FileSet, arguments []ast.Expr, allow_unqualified bool, reg *Registration,
+) (axes []Registration_Axis, carves [][]Registration_Cell) {
 	var carve_calls []*ast.CallExpr
 	for _, argument := range arguments {
 		call, is_call := argument.(*ast.CallExpr)
@@ -1624,8 +1649,8 @@ func recorder_unresolved_line(file_set *token.FileSet, call *ast.CallExpr) (line
 // found is false for an unresolvable bundle (cross-module, missing go.mod, an
 // unknown qualifier, or an absent declaration).
 func bundle_index_lookup(
-	index *bundle_index, imports map[string]string, bundle *ast.CallExpr,
-) (function indexed_function, found bool) {
+	index *Bundle_Index, imports map[string]string, bundle *ast.CallExpr,
+) (function Indexed_Function, found bool) {
 	qualifier, name := ast_bundle_qualifier(bundle)
 	if qualifier == "" {
 		same_package, present := index.Same_Set[name]
@@ -1633,7 +1658,7 @@ func bundle_index_lookup(
 	}
 	import_path, imported := imports[qualifier]
 	if !imported {
-		return indexed_function{}, false
+		return Indexed_Function{}, false
 	}
 	cross_package, present := bundle_index_load(index, import_path)[name]
 	return cross_package, present
@@ -1645,7 +1670,7 @@ func bundle_index_lookup(
 // this module (an external dependency). This is pure string-prefix matching — the module path need
 // not be a URL, so `module local` resolves `local/shared/foo` to <root>/shared/foo all the same.
 func bundle_index_module_root(
-	index *bundle_index, import_path string,
+	index *Bundle_Index, import_path string,
 ) (directory string, resolved bool) {
 	if index.Module_Path == "" {
 		return "", false
@@ -1664,18 +1689,18 @@ func bundle_index_module_root(
 // resolves to the empty map rather than looping. Returns an empty map for a path
 // outside this module (see bundle_index_module_root).
 func bundle_index_load(
-	index *bundle_index, import_path string,
-) (functions map[string]indexed_function) {
+	index *Bundle_Index, import_path string,
+) (functions map[string]Indexed_Function) {
 	if cached, done := index.Loaded[import_path]; done {
 		return cached
 	}
-	functions = map[string]indexed_function{}
+	functions = map[string]Indexed_Function{}
 	index.Loaded[import_path] = functions
 	directory, resolved := bundle_index_module_root(index, import_path)
 	if !resolved {
 		return functions
 	}
-	files := recorder_parse_directory(&recorder_parse_directory_input{
+	files := recorder_parse_directory(&Recorder_Parse_Directory_Input{
 		File_System: index.File_System,
 		File_Set:    index.File_Set,
 		Directory:   directory,
@@ -1763,8 +1788,8 @@ func ast_axis_signature(
 // the explicit Recorder_* form; is_axis is false for any other call (Impossible, a bundle, a
 // non-invariant call).
 func recorder_axis_of(
-	file_set *token.FileSet, call *ast.CallExpr, allow_unqualified bool, reg *registration,
-) (axis registration_axis, is_axis bool) {
+	file_set *token.FileSet, call *ast.CallExpr, allow_unqualified bool, reg *Registration,
+) (axis Registration_Axis, is_axis bool) {
 	selector := ast_selector(call, allow_unqualified)
 	if kind, condition_index, gated, ok := ast_axis_signature(selector); ok {
 		condition := ast_condition_text(file_set, call, condition_index)
@@ -1780,7 +1805,7 @@ func recorder_axis_of(
 				recorder_position(file_set, call)+
 					"  "+selector+" message is not a string literal")
 		}
-		return registration_axis{
+		return Registration_Axis{
 			Message:      message,
 			Condition:    condition,
 			Kind:         kind,
@@ -1788,7 +1813,7 @@ func recorder_axis_of(
 			Gated:        gated,
 		}, true
 	}
-	return registration_axis{}, false
+	return Registration_Axis{}, false
 }
 
 // Returns the X in a literal `invariant.X(...)` selector call, or "" otherwise.
@@ -1852,8 +1877,8 @@ func ast_is_invariants_name(name string) (is_bundle bool) {
 // registration error) or is non-literal (recorded as a fatal diagnostic).
 func ast_resolve_carve(
 	file_set *token.FileSet, impossible *ast.CallExpr, position_of map[string]int,
-	allow_unqualified bool, reg *registration,
-) (cells []registration_cell, ok bool) {
+	allow_unqualified bool, reg *Registration,
+) (cells []Registration_Cell, ok bool) {
 	if len(impossible.Args) == 0 {
 		return nil, false
 	}
@@ -1877,7 +1902,7 @@ func ast_resolve_carve(
 		if bucket < 0 {
 			return nil, false
 		}
-		cells = append(cells, registration_cell{Position: position, Bucket: bucket})
+		cells = append(cells, Registration_Cell{Position: position, Bucket: bucket})
 	}
 	return cells, true
 }
@@ -1927,7 +1952,7 @@ func ast_expression_text(file_set *token.FileSet, expression ast.Expr) (text str
 // dropped Always keeps its coverage in its own per-element reachability entry. An all-Always
 // Dot_Product therefore seeds nothing: there is no combination to cover.
 func recorder_register_tuples(
-	recorder *Recorder, prefix string, axes []registration_axis, carves [][]registration_cell,
+	recorder *Recorder, prefix string, axes []Registration_Axis, carves [][]Registration_Cell,
 ) {
 	if len(axes) == 0 {
 		return
@@ -1979,7 +2004,7 @@ func recorder_register_tuples(
 
 // Advances tuple like an odometer over the axes' bucket counts; more is false
 // once it wraps past the final combination.
-func recorder_tuple_increment(tuple []int, axes []registration_axis) (more bool) {
+func recorder_tuple_increment(tuple []int, axes []Registration_Axis) (more bool) {
 	for i := len(tuple) - 1; i >= 0; i-- {
 		tuple[i]++
 		if tuple[i] < axes[i].Bucket_Count {
@@ -1992,7 +2017,7 @@ func recorder_tuple_increment(tuple []int, axes []registration_axis) (more bool)
 
 // Reports whether some carve forbids tuple: a carve matches when tuple equals the
 // carve's bucket at every cell position.
-func recorder_tuple_carved(tuple []int, carves [][]registration_cell) (carved bool) {
+func recorder_tuple_carved(tuple []int, carves [][]Registration_Cell) (carved bool) {
 	for _, carve := range carves {
 		if recorder_carve_matches(tuple, carve) {
 			return true
@@ -2002,7 +2027,7 @@ func recorder_tuple_carved(tuple []int, carves [][]registration_cell) (carved bo
 }
 
 // Reports whether tuple matches every cell of a single carve.
-func recorder_carve_matches(tuple []int, carve []registration_cell) (matches bool) {
+func recorder_carve_matches(tuple []int, carve []Registration_Cell) (matches bool) {
 	for _, cell := range carve {
 		if tuple[cell.Position] != cell.Bucket {
 			return false
@@ -2026,11 +2051,13 @@ func recorder_tuple_indices_text(tuple []int) (text string) {
 	return "(" + strings.Join(parts, ",") + ")"
 }
 
-// A coverage_gap is one seeded assertion that the run failed to exercise, paired
+// A Coverage_Gap is one seeded assertion that the run failed to exercise, paired
 // with the reason it counts as a gap (which branch or combination went unseen).
-type coverage_gap struct {
+type Coverage_Gap struct {
+	// Metadata is the seeded assertion that went unexercised.
 	Metadata *Assertion_Metadata
-	Reason   string
+	// Reason names why it counts as a gap: which branch or combination went unseen.
+	Reason string
 }
 
 // Recorder_Analyze_Assertion_Frequency reports every pre-registered assertion
@@ -2057,7 +2084,7 @@ func Recorder_Analyze_Assertion_Frequency(recorder *Recorder) {
 }
 
 // Walks the tracker and returns every coverage gap across all seeded assertions.
-func recorder_collect_gaps(recorder *Recorder) (gaps []coverage_gap) {
+func recorder_collect_gaps(recorder *Recorder) (gaps []Coverage_Gap) {
 	recorder.Events.Range(func(key, value any) (continue_iteration bool) {
 		metadata := value.(*Assertion_Metadata)
 		gaps = append(gaps, assertion_metadata_gaps(metadata)...)
@@ -2069,15 +2096,15 @@ func recorder_collect_gaps(recorder *Recorder) (gaps []coverage_gap) {
 // Returns the coverage gaps one assertion exhibits. A Sometimes contributes a gap
 // per branch it never observed (true and/or false); an Always or Tuple that never
 // fired is a single gap; a fully exercised assertion contributes none.
-func assertion_metadata_gaps(metadata *Assertion_Metadata) (gaps []coverage_gap) {
+func assertion_metadata_gaps(metadata *Assertion_Metadata) (gaps []Coverage_Gap) {
 	if metadata.Kind == ASSERTION_KIND_SOMETIMES {
 		if metadata.Frequency.Load() == 0 {
-			gaps = append(gaps, coverage_gap{
+			gaps = append(gaps, Coverage_Gap{
 				Metadata: metadata, Reason: "true branch never observed",
 			})
 		}
 		if metadata.False_Frequency.Load() == 0 {
-			gaps = append(gaps, coverage_gap{
+			gaps = append(gaps, Coverage_Gap{
 				Metadata: metadata, Reason: "false branch never observed",
 			})
 		}
@@ -2087,23 +2114,23 @@ func assertion_metadata_gaps(metadata *Assertion_Metadata) (gaps []coverage_gap)
 		return gaps
 	}
 	if metadata.Kind == ASSERTION_KIND_TUPLE {
-		return append(gaps, coverage_gap{Metadata: metadata, Reason: "never observed"})
+		return append(gaps, Coverage_Gap{Metadata: metadata, Reason: "never observed"})
 	}
-	return append(gaps, coverage_gap{Metadata: metadata, Reason: "never reached"})
+	return append(gaps, Coverage_Gap{Metadata: metadata, Reason: "never reached"})
 }
 
 // Prints the gaps to recorder.Output in v2's three sections — cross-product,
 // branch, reachability — each sorted by site. A banner carrying the gap count
 // brackets the report so the verdict survives a top-down or bottom-up skim.
-func recorder_report_gaps(recorder *Recorder, gaps []coverage_gap) {
+func recorder_report_gaps(recorder *Recorder, gaps []Coverage_Gap) {
 	banner := "🚨 " + strconv.Itoa(len(gaps)) + " coverage gaps 🚨"
 	fmt.Fprintln(recorder.Output, banner)
 	recorder_report_cross_product(recorder.Output, gaps)
-	recorder_report_section(&recorder_report_section_input{
+	recorder_report_section(&Recorder_Report_Section_Input{
 		Output: recorder.Output, Title: "Branch gaps", Gaps: gaps,
 		Kind: ASSERTION_KIND_SOMETIMES,
 	})
-	recorder_report_section(&recorder_report_section_input{
+	recorder_report_section(&Recorder_Report_Section_Input{
 		Output: recorder.Output, Title: "Reachability gaps", Gaps: gaps,
 		Kind: ASSERTION_KIND_ALWAYS,
 	})
@@ -2111,18 +2138,22 @@ func recorder_report_gaps(recorder *Recorder, gaps []coverage_gap) {
 }
 
 // Input for recorder_report_section.
-type recorder_report_section_input struct {
+type Recorder_Report_Section_Input struct {
+	// Output is the writer the section is printed to.
 	Output io.Writer
-	Title  string
-	Gaps   []coverage_gap
-	Kind   Assertion_Kind
+	// Title is the markdown heading the section is printed under.
+	Title string
+	// Gaps is the full gap set; only those matching Kind are printed.
+	Gaps []Coverage_Gap
+	// Kind selects which assertion kind's gaps this section reports.
+	Kind Assertion_Kind
 }
 
 // Prints, under a markdown heading, the gaps whose assertion is of the given
 // kind, sorted by message. Emits nothing when no gap matches, so empty sections
 // stay silent.
-func recorder_report_section(input *recorder_report_section_input) {
-	selected := make([]coverage_gap, 0, len(input.Gaps))
+func recorder_report_section(input *Recorder_Report_Section_Input) {
+	selected := make([]Coverage_Gap, 0, len(input.Gaps))
 	for _, gap := range input.Gaps {
 		if gap.Metadata.Kind == input.Kind {
 			selected = append(selected, gap)
@@ -2154,8 +2185,8 @@ func recorder_report_section(input *recorder_report_section_input) {
 // legend is what maps a position back to the axis it came from. Prefixes sort, and cells
 // within a grid sort by their coordinate, so the report is deterministic despite the
 // tracker's unordered iteration.
-func recorder_report_cross_product(output io.Writer, gaps []coverage_gap) {
-	by_prefix := map[string][]coverage_gap{}
+func recorder_report_cross_product(output io.Writer, gaps []Coverage_Gap) {
+	by_prefix := map[string][]Coverage_Gap{}
 	var prefixes []string
 	for _, gap := range gaps {
 		if gap.Metadata.Kind != ASSERTION_KIND_TUPLE {
@@ -2211,7 +2242,7 @@ func recorder_report_grid_legend(output io.Writer, prefix string, axes []Tuple_A
 // Renders one never-observed cell: the bare bucket coordinate, then — when the legend is
 // present — each position decoded back to its axis's event, so the coordinate reads as
 // the combination it stands for rather than a tuple of indices.
-func coverage_gap_cell(cell coverage_gap) (line string) {
+func coverage_gap_cell(cell Coverage_Gap) (line string) {
 	metadata := cell.Metadata
 	line = metadata.Message + "  tuple " +
 		recorder_tuple_indices_text(metadata.Tuple_Indices) + " " + cell.Reason
@@ -2242,7 +2273,7 @@ func assertion_kind_bucket_text(kind Assertion_Kind, index int) (text string) {
 // Renders one branch or reachability gap as a report line, naming its kind,
 // reason, and condition source. Tuple gaps are rendered by recorder_report_cross_product,
 // which carries the per-grid legend this line cannot.
-func coverage_gap_line(gap coverage_gap) (line string) {
+func coverage_gap_line(gap Coverage_Gap) (line string) {
 	metadata := gap.Metadata
 	return message_display(metadata.Message) + "  " + assertion_kind_name(metadata.Kind) +
 		" — " + gap.Reason + ": " + strconv.Quote(metadata.Condition)

@@ -285,11 +285,11 @@ const PROC_FILE_BYTES_MAX = 1 << 20
 // bound, is what a content length reaches; the bound stays eager.
 const PROC_CONTENT_MAX = 1 << 21
 
-// Proc_path is the path of a /proc or /sys pseudo-file.
-type proc_path string
+// Proc_Path is the path of a /proc or /sys pseudo-file.
+type Proc_Path string
 
-// Proc_path_invariants bounds the path's length.
-func proc_path_invariants(path proc_path, namespace invariant.Namespace) {
+// Proc_Path_Invariants bounds the path's length.
+func Proc_Path_Invariants(path Proc_Path, namespace invariant.Namespace) {
 	invariant.Always(len(path) <= BOUND_MAX, "A proc path is at most its max.")
 	invariant.Always(len(path) >= BOUND_MIN, "A proc path is at least its min.")
 	invariant.Always(len(path) != BOUND_MIN, "A proc path never reaches its min.")
@@ -315,11 +315,11 @@ func proc_path_invariants(path proc_path, namespace invariant.Namespace) {
 	)
 }
 
-// Proc_content is the bytes read back from a pseudo-file.
-type proc_content string
+// Proc_Content is the bytes read back from a pseudo-file.
+type Proc_Content string
 
-// Proc_content_invariants bounds the content's length.
-func proc_content_invariants(content proc_content, namespace invariant.Namespace) {
+// Proc_Content_Invariants bounds the content's length.
+func Proc_Content_Invariants(content Proc_Content, namespace invariant.Namespace) {
 	invariant.Always(len(content) <= PROC_CONTENT_MAX, "Proc content is at most its max.")
 	invariant.Always(len(content) >= BOUND_MIN, "Proc content is at least its min.")
 	invariant.Always(len(content) != BOUND_MIN, "Proc content never reaches its min.")
@@ -348,9 +348,9 @@ func proc_content_invariants(content proc_content, namespace invariant.Namespace
 // Read_proc_file reads up to PROC_FILE_BYTES_MAX bytes of a pseudo-file into a fixed
 // buffer, the bounded-read pattern read_captured uses. A missing or unreadable file
 // reads empty, so every caller treats absence as "field unknown".
-func read_proc_file(path proc_path) (content proc_content) {
-	defer func() { proc_content_invariants(content, "read_proc_file.content") }()
-	proc_path_invariants(path, "read_proc_file.path")
+func read_proc_file(path Proc_Path) (content Proc_Content) {
+	defer func() { Proc_Content_Invariants(content, "read_proc_file.content") }()
+	Proc_Path_Invariants(path, "read_proc_file.path")
 	file, open_err := os.Open(string(path))
 	if open_err != nil {
 		return ""
@@ -365,7 +365,7 @@ func read_proc_file(path proc_path) (content proc_content) {
 			break
 		}
 	}
-	return proc_content(buffer[:total])
+	return Proc_Content(buffer[:total])
 }
 
 // Boot_volume_bytes is the root filesystem's total capacity, taken from statfs. It
@@ -438,17 +438,17 @@ func read_cache_size(level int) (size uint64) {
 	invariant.Int_Invariants(level, "read_cache_size.level")
 	path := "/sys/devices/system/cpu/cpu0/cache/index" +
 		strconv.Itoa(level-1) + "/size"
-	text := strings.TrimSpace(string(read_proc_file(proc_path(path))))
+	text := strings.TrimSpace(string(read_proc_file(Proc_Path(path))))
 	if len(text) == 0 {
 		return 0
 	}
-	suffix := text[len(text)-1]
+	Suffix := text[len(text)-1]
 	digits := text[:len(text)-1]
 	value, parse_err := strconv.ParseUint(digits, 10, 64)
 	if parse_err != nil {
 		return 0
 	}
-	switch suffix {
+	switch Suffix {
 	case 'K':
 		return value * 1024
 	case 'M':
@@ -507,13 +507,13 @@ func read_operating_system_release() (name maddox.Host_Text, version maddox.Host
 	return name, version
 }
 
-// Utsname_field is a fixed Utsname character array sliced for conversion; the element
+// Utsname_Field is a fixed Utsname character array sliced for conversion; the element
 // type differs by platform (int8 vs uint8).
-type utsname_field[T int8 | uint8] []T
+type Utsname_Field[T int8 | uint8] []T
 
-// Utsname_field_invariants bounds the field's length.
-func utsname_field_invariants[T int8 | uint8](
-	field utsname_field[T], namespace invariant.Namespace,
+// Utsname_Field_Invariants bounds the field's length.
+func Utsname_Field_Invariants[T int8 | uint8](
+	field Utsname_Field[T], namespace invariant.Namespace,
 ) {
 	invariant.Always(len(field) <= BOUND_MAX, "A utsname field is at most its max.")
 	invariant.Always(len(field) >= BOUND_MIN, "A utsname field is at least its min.")
@@ -542,9 +542,9 @@ func utsname_field_invariants[T int8 | uint8](
 
 // Utsname_string converts a fixed-size Utsname field to a Go string, stopping at
 // the first zero byte. The element type differs by platform (int8 vs uint8).
-func utsname_string[T int8 | uint8](field utsname_field[T]) (text maddox.Host_Text) {
+func utsname_string[T int8 | uint8](field Utsname_Field[T]) (text maddox.Host_Text) {
 	defer func() { maddox.Host_Text_Invariants(text, "utsname_string.text") }()
-	utsname_field_invariants(field, "utsname_string.field")
+	Utsname_Field_Invariants(field, "utsname_string.field")
 	builder := strings.Builder{}
 	for _, b := range field {
 		if b == 0 {

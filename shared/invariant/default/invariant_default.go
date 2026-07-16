@@ -40,7 +40,7 @@ type Dot_Element_Reference = invariant.Dot_Element_Reference
 // Init_Default_Recorder can hand the static registration this package's path
 // (derived, not hardcoded) to recognise the unqualified primitive calls inside
 // the presets defined here.
-type sugar_package_marker struct{}
+type Sugar_Package_Marker struct{}
 
 // Default is the OS-bound Recorder backing the package-level sugar. Tests that
 // need to redirect I/O construct their own Recorder via the pure invariant
@@ -73,7 +73,7 @@ func Init_Default_Recorder() (recorder *invariant.Recorder) {
 		Is_Benchmark:        is_benchmark,
 		Packages_To_Analyze: []string{"."},
 		Working_Directory:   working_directory,
-		Sugar_Package:       reflect.TypeOf(sugar_package_marker{}).PkgPath(),
+		Sugar_Package:       reflect.TypeOf(Sugar_Package_Marker{}).PkgPath(),
 	}
 }
 

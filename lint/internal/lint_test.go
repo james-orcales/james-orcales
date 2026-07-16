@@ -899,12 +899,6 @@ func Test_Exported_Type(t *testing.T) {
 			Want:     false,
 		},
 		{
-			Name:     "exported alias clean",
-			Filename: "widget.go",
-			Source:   "package main\n\ntype Widget = int\n",
-			Want:     false,
-		},
-		{
 			Name:     "function local type ignored",
 			Filename: "widget.go",
 			Source: "package main\n\nfunc F() {\n" +

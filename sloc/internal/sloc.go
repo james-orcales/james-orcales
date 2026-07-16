@@ -29,7 +29,7 @@ const EXIT_USAGE = 2
 const EXIT_FAILURE = 1
 
 // The resolved scope and override flags of one run.
-type main_scope struct {
+type Main_Scope struct {
 	// Paths is the list of files or directories to count.
 	Paths []string
 	// No_Ignore counts gitignored files too.
@@ -83,7 +83,7 @@ func Main(input *Main_Input) (status_code int) {
 	if len(paths) == 0 {
 		paths = []string{"."}
 	}
-	report, count_err := main_input_collect(input, main_scope{
+	report, count_err := main_input_collect(input, Main_Scope{
 		Paths:          paths,
 		No_Ignore:      cli.Get_Option(command.Flags, "no-ignore").Value.(bool),
 		Include_Hidden: cli.Get_Option(command.Flags, "hidden").Value.(bool),
@@ -145,7 +145,7 @@ func main_program() (program cli.Program) {
 }
 
 // Counts every path and merges the results into one report.
-func main_input_collect(input *Main_Input, scope main_scope) (report Report, err error) {
+func main_input_collect(input *Main_Input, scope Main_Scope) (report Report, err error) {
 	for _, root := range scope.Paths {
 		trimmed := strings.TrimSpace(root)
 		if trimmed == "" {
@@ -161,7 +161,7 @@ func main_input_collect(input *Main_Input, scope main_scope) (report Report, err
 }
 
 // Counts a single path: a directory is walked, a file is classified directly.
-func main_input_one(input *Main_Input, root string, scope main_scope) (report Report, err error) {
+func main_input_one(input *Main_Input, root string, scope Main_Scope) (report Report, err error) {
 	directory, stat_err := input.Path_Is_Directory(root)
 	if stat_err != nil {
 		return Report{}, stat_err
@@ -182,7 +182,7 @@ func main_input_one(input *Main_Input, root string, scope main_scope) (report Re
 // Walks one directory, prefixing each file path with the root so files from different
 // roots stay distinguishable.
 func main_input_directory(
-	input *Main_Input, root string, scope main_scope,
+	input *Main_Input, root string, scope Main_Scope,
 ) (report Report, err error) {
 	directory_report, count_err := Count(Count_Input{
 		File_System:    input.Open(root),
@@ -1442,12 +1442,12 @@ type Classify_File_Input struct {
 // blank counts. Each line is counted once, so the three sum to the line count.
 func Classify_File(input Classify_File_Input) (counts Counts) {
 	prepared := language_scanner(&input.Language)
-	carry := scan_carry{}
+	carry := Scan_Carry{}
 	source := input.Source
 	// Lines are walked in place rather than materialized into a slice: one classifier
 	// pass over millions of lines should not also allocate a slice header per line.
 	start := 0
-	var kind line_kind
+	var kind Line_Kind
 	for index := 0; index < len(source); index++ {
 		if source[index] != '\n' {
 			continue
@@ -1466,7 +1466,7 @@ func Classify_File(input Classify_File_Input) (counts Counts) {
 }
 
 // Adds one line's verdict to the running partition.
-func counts_tally(counts *Counts, kind line_kind) {
+func counts_tally(counts *Counts, kind Line_Kind) {
 	switch kind {
 	case LINE_KIND_CODE:
 		counts.Code++
@@ -1478,20 +1478,20 @@ func counts_tally(counts *Counts, kind line_kind) {
 }
 
 // The partition a single physical line falls into.
-type line_kind int
+type Line_Kind int
 
 // The line partitions.
-const LINE_KIND_BLANK line_kind = 0
+const LINE_KIND_BLANK Line_Kind = 0
 
 // LINE_KIND_CODE tags a line carrying at least one code token, comments aside.
-const LINE_KIND_CODE line_kind = 1
+const LINE_KIND_CODE Line_Kind = 1
 
 // LINE_KIND_COMMENT tags a line whose only content is a comment.
-const LINE_KIND_COMMENT line_kind = 2
+const LINE_KIND_COMMENT Line_Kind = 2
 
 // The scanner state that crosses line boundaries. Normal strings and
 // character literals never cross a line, so they are not carried.
-type scan_carry struct {
+type Scan_Carry struct {
 	// Block_Comment_Depth is the depth of nested block comments, zero outside one.
 	Block_Comment_Depth int
 	// Raw_String_Close is the terminator an open verbatim string needs, or "" when
@@ -1505,9 +1505,9 @@ type scan_carry struct {
 }
 
 // Accumulates one line's verdict as the scanner walks it.
-type line_scan struct {
+type Line_Scan struct {
 	// State is the carried scanner state, updated as openers and closers are met.
-	State scan_carry
+	State Scan_Carry
 	// Has_Code records that the line bears code.
 	Has_Code bool
 	// Has_Comment records that the line bears a comment.
@@ -1517,7 +1517,7 @@ type line_scan struct {
 // A scanner is one language prepared for scanning: its configuration plus a table of
 // the bytes that can begin something the scan must inspect, so a run of ordinary code
 // bytes is skipped in bulk instead of re-dispatched through every opener check.
-type scanner struct {
+type Scanner struct {
 	// Language is the configuration the scan reads against.
 	Language *Language
 	// Trigger[b] is true when byte b can begin a comment or string opener, a heredoc, or
@@ -1529,7 +1529,7 @@ type scanner struct {
 // Prepares a scanner for a language. The trigger table is the union of the first byte
 // of every opener the language defines, taken from its fields alone so no language is
 // special-cased: miss a field and a real opener would be skipped as if it were code.
-func language_scanner(language *Language) (prepared scanner) {
+func language_scanner(language *Language) (prepared Scanner) {
 	prepared.Language = language
 	for _, token := range language.Line_Comment {
 		prepared.Trigger[token[0]] = true
@@ -1554,8 +1554,8 @@ func language_scanner(language *Language) (prepared scanner) {
 
 // Returns the partition of one line and the carry for the next.
 func classify_line(
-	line []byte, carry scan_carry, scan_with *scanner,
-) (kind line_kind, carry_after scan_carry) {
+	line []byte, carry Scan_Carry, scan_with *Scanner,
+) (kind Line_Kind, carry_after Scan_Carry) {
 	// A whitespace-only line is blank regardless of carried state, and neither opens
 	// nor closes anything, so the carry passes through unchanged.
 	if line_is_blank(line) {
@@ -1564,7 +1564,7 @@ func classify_line(
 	if carry.Heredoc_Terminator != "" {
 		return classify_heredoc_line(line, carry)
 	}
-	scan := line_scan{State: carry}
+	scan := Line_Scan{State: carry}
 	cursor := 0
 	for cursor < len(line) {
 		cursor = line_scan_step(&scan, line, cursor, scan_with)
@@ -1575,8 +1575,8 @@ func classify_line(
 // Reads a line inside a heredoc body: the line is code, and a line equal to the
 // terminator ends the heredoc.
 func classify_heredoc_line(
-	line []byte, carry scan_carry,
-) (kind line_kind, carry_after scan_carry) {
+	line []byte, carry Scan_Carry,
+) (kind Line_Kind, carry_after Scan_Carry) {
 	if strings.TrimSpace(string(line)) == carry.Heredoc_Terminator {
 		carry.Heredoc_Terminator = ""
 	}
@@ -1586,7 +1586,7 @@ func classify_heredoc_line(
 // Consumes the token at the cursor, updating the scan, and returns the next cursor. The
 // carried-state branches are checked before the fresh dispatch, so the fresh path's
 // bulk skip can never run inside a comment, raw string, or long bracket.
-func line_scan_step(scan *line_scan, line []byte, cursor int, scan_with *scanner) (next int) {
+func line_scan_step(scan *Line_Scan, line []byte, cursor int, scan_with *Scanner) (next int) {
 	if scan.State.Comment_Close != "" {
 		return line_scan_long_comment_body(scan, line, cursor)
 	}
@@ -1601,7 +1601,7 @@ func line_scan_step(scan *line_scan, line []byte, cursor int, scan_with *scanner
 
 // Advances inside a verbatim string, where every byte is code and only the matching
 // close ends it.
-func line_scan_raw(scan *line_scan, line []byte, cursor int) (next int) {
+func line_scan_raw(scan *Line_Scan, line []byte, cursor int) (next int) {
 	scan.Has_Code = true
 	if has_prefix_at(line, cursor, scan.State.Raw_String_Close) {
 		next = cursor + len(scan.State.Raw_String_Close)
@@ -1613,7 +1613,7 @@ func line_scan_raw(scan *line_scan, line []byte, cursor int) (next int) {
 
 // Advances inside a block comment, where every byte is comment and only an open (when
 // nesting) or a close moves the depth.
-func line_scan_block(scan *line_scan, line []byte, cursor int, language *Language) (next int) {
+func line_scan_block(scan *Line_Scan, line []byte, cursor int, language *Language) (next int) {
 	scan.Has_Comment = true
 	if language.Block_Comment_Nests {
 		if has_prefix_at(line, cursor, language.Block_Comment_Open) {
@@ -1630,7 +1630,7 @@ func line_scan_block(scan *line_scan, line []byte, cursor int, language *Languag
 
 // Advances inside a long-bracket comment, where every byte is comment and only the
 // matching leveled closer ends it.
-func line_scan_long_comment_body(scan *line_scan, line []byte, cursor int) (next int) {
+func line_scan_long_comment_body(scan *Line_Scan, line []byte, cursor int) (next int) {
 	scan.Has_Comment = true
 	if has_prefix_at(line, cursor, scan.State.Comment_Close) {
 		next = cursor + len(scan.State.Comment_Close)
@@ -1643,7 +1643,7 @@ func line_scan_long_comment_body(scan *line_scan, line []byte, cursor int) (next
 // Reports whether a long-bracket comment — a line-comment token then a long bracket,
 // like --[[ or --[=[ — opens at the cursor, recording the comment and its closer.
 func line_scan_long_comment(
-	scan *line_scan, line []byte, cursor int, language *Language,
+	scan *Line_Scan, line []byte, cursor int, language *Language,
 ) (next int, opened bool) {
 	if !language.Long_Bracket {
 		return 0, false
@@ -1666,7 +1666,7 @@ func line_scan_long_comment(
 // Reports whether a long-bracket string — like [[ or [=[ — opens at the cursor,
 // recording its leveled closer.
 func line_scan_long_string(
-	scan *line_scan, line []byte, cursor int, language *Language,
+	scan *Line_Scan, line []byte, cursor int, language *Language,
 ) (next int, opened bool) {
 	if !language.Long_Bracket {
 		return 0, false
@@ -1707,7 +1707,7 @@ func long_bracket_open(line []byte, cursor int) (closer string, opener_size int,
 
 // Dispatches the token at the cursor when not inside a comment or string: whitespace,
 // a line comment, a block-comment open, a string, or code.
-func line_scan_fresh(scan *line_scan, line []byte, cursor int, scan_with *scanner) (next int) {
+func line_scan_fresh(scan *Line_Scan, line []byte, cursor int, scan_with *Scanner) (next int) {
 	// A non-trigger byte cannot begin any opener, so it is either insignificant
 	// whitespace or plain code — never something to dispatch on. The first such code
 	// byte makes the line code, after which the run of ordinary bytes and the spaces
@@ -1764,7 +1764,7 @@ func line_scan_fresh(scan *line_scan, line []byte, cursor int, scan_with *scanne
 // Reports whether a heredoc opens at the cursor, and if so records its terminator so
 // the following lines are read as code until the terminator line.
 func line_scan_heredoc(
-	scan *line_scan, line []byte, cursor int, language *Language,
+	scan *Line_Scan, line []byte, cursor int, language *Language,
 ) (next int, opened bool) {
 	if !language.Heredoc {
 		return 0, false
@@ -1864,7 +1864,7 @@ func heredoc_word_start(character byte) (start bool) {
 // Reports whether a block comment opens at the cursor and, when it does, records the
 // comment and the new depth.
 func line_scan_block_open(
-	scan *line_scan, line []byte, cursor int, language *Language,
+	scan *Line_Scan, line []byte, cursor int, language *Language,
 ) (opened bool) {
 	if language.Block_Comment_Open == "" {
 		return false
@@ -1879,7 +1879,7 @@ func line_scan_block_open(
 
 // Reads the line's partition from the accumulated scan: code wins a line it shares
 // with a comment, then a comment, else blank.
-func line_scan_verdict(scan *line_scan) (kind line_kind) {
+func line_scan_verdict(scan *Line_Scan) (kind Line_Kind) {
 	if scan.Has_Code {
 		return LINE_KIND_CODE
 	}
@@ -2155,7 +2155,7 @@ func Count(input Count_Input) (report Report, err error) {
 }
 
 // A file the walk selected for counting and the language to read it as.
-type candidate struct {
+type Candidate struct {
 	// Path is the file's path relative to the walked root.
 	Path string
 	// Language is the language the file's extension resolved to.
@@ -2166,7 +2166,7 @@ type candidate struct {
 // ignored directories so their contents are never read.
 func count_candidates(
 	file_system fs.FS, is_ignored Ignore_Predicate, include_hidden bool,
-) (candidates []candidate, err error) {
+) (candidates []Candidate, err error) {
 	walk_err := fs.WalkDir(file_system, ".",
 		func(file_path string, entry fs.DirEntry, step_err error) (result error) {
 			return count_visit(
@@ -2180,7 +2180,7 @@ func count_candidates(
 
 // Decides one walked entry: prune it, skip it, or append it as a candidate.
 func count_visit(
-	candidates *[]candidate, file_path string, entry fs.DirEntry, step_err error,
+	candidates *[]Candidate, file_path string, entry fs.DirEntry, step_err error,
 	is_ignored Ignore_Predicate, include_hidden bool,
 ) (result error) {
 	if step_err != nil {
@@ -2199,7 +2199,7 @@ func count_visit(
 	if !recognized {
 		return nil
 	}
-	*candidates = append(*candidates, candidate{Path: file_path, Language: language})
+	*candidates = append(*candidates, Candidate{Path: file_path, Language: language})
 	return nil
 }
 
@@ -2236,7 +2236,7 @@ func count_skip_ignored(
 // Reads and classifies each candidate concurrently, dropping any unreadable or binary
 // file, and returns the results in candidate order.
 func count_classify(
-	file_system fs.FS, candidates []candidate, concurrency int,
+	file_system fs.FS, candidates []Candidate, concurrency int,
 ) (files []File_Count) {
 	// Each worker writes its own slot, so candidate order is preserved without locking
 	// the result slice; a dropped file leaves a nil slot.
@@ -2270,7 +2270,7 @@ func count_classify(
 // Drains the job channel, classifying each candidate into its slot.
 func count_worker(
 	group *sync.WaitGroup, jobs <-chan int, results []*File_Count,
-	file_system fs.FS, candidates []candidate,
+	file_system fs.FS, candidates []Candidate,
 ) {
 	defer group.Done()
 	for index := range jobs {
@@ -2280,7 +2280,7 @@ func count_worker(
 
 // Reads and classifies a single candidate, returning nil to drop a file that is
 // unreadable or binary.
-func count_one(file_system fs.FS, one candidate) (file *File_Count) {
+func count_one(file_system fs.FS, one Candidate) (file *File_Count) {
 	content, read_err := fs.ReadFile(file_system, one.Path)
 	if read_err != nil {
 		return nil
@@ -2394,34 +2394,48 @@ func render_write(output io.Writer, line string) {
 }
 
 // A line partition with its file count, as serialized.
-type json_counts struct {
-	Files    int `json:"files"`
-	Code     int `json:"code"`
+type Json_Counts struct {
+	// Files is the number of files in the partition.
+	Files int `json:"files"`
+	// Code is the code-line count.
+	Code int `json:"code"`
+	// Comments is the comment-line count.
 	Comments int `json:"comments"`
-	Blanks   int `json:"blanks"`
+	// Blanks is the blank-line count.
+	Blanks int `json:"blanks"`
 }
 
 // One language's serialized counts, or the total when name and category are omitted.
-type json_language struct {
-	Name     string      `json:"name,omitempty"`
-	Category string      `json:"category,omitempty"`
-	Files    int         `json:"files"`
-	Code     int         `json:"code"`
-	Comments int         `json:"comments"`
-	Blanks   int         `json:"blanks"`
-	Source   json_counts `json:"source"`
-	Tests    json_counts `json:"tests"`
+type Json_Language struct {
+	// Name is the language's display name, omitted on the total.
+	Name string `json:"name,omitempty"`
+	// Category is the language's taxonomy bucket, omitted on the total.
+	Category string `json:"category,omitempty"`
+	// Files is the number of files counted.
+	Files int `json:"files"`
+	// Code is the code-line count.
+	Code int `json:"code"`
+	// Comments is the comment-line count.
+	Comments int `json:"comments"`
+	// Blanks is the blank-line count.
+	Blanks int `json:"blanks"`
+	// Source is the non-test partition.
+	Source Json_Counts `json:"source"`
+	// Tests is the test partition.
+	Tests Json_Counts `json:"tests"`
 }
 
 // The serialized report: the languages and the total.
-type json_report struct {
-	Languages []json_language `json:"languages"`
-	Total     json_language   `json:"total"`
+type Json_Report struct {
+	// Languages holds each language's counts in name order.
+	Languages []Json_Language `json:"languages"`
+	// Total is the summed counts across all languages.
+	Total Json_Language `json:"total"`
 }
 
 // Builds a serialized partition from a file count and a partition.
-func json_partition(files int, counts Counts) (partition json_counts) {
-	return json_counts{
+func json_partition(files int, counts Counts) (partition Json_Counts) {
+	return Json_Counts{
 		Files:    files,
 		Code:     counts.Code,
 		Comments: counts.Comment,
@@ -2432,9 +2446,9 @@ func json_partition(files int, counts Counts) (partition json_counts) {
 // Render_Json writes the report as indented JSON: a name-sorted languages array, each
 // with its category and source/test split, and a total.
 func Render_Json(output io.Writer, report Report) (err error) {
-	document := json_report{Languages: []json_language{}}
+	document := Json_Report{Languages: []Json_Language{}}
 	for _, group := range report_groups(report) {
-		document.Languages = append(document.Languages, json_language{
+		document.Languages = append(document.Languages, Json_Language{
 			Name:     group.Name,
 			Category: group.Category,
 			Files:    group.Files,
@@ -2452,7 +2466,7 @@ func Render_Json(output io.Writer, report Report) (err error) {
 }
 
 // Accumulates a language group into the JSON total.
-func json_language_add(total *json_language, group language_group) {
+func json_language_add(total *Json_Language, group Language_Group) {
 	total.Files += group.Files
 	total.Code += group.Counts.Code
 	total.Comments += group.Counts.Comment
@@ -2469,7 +2483,7 @@ func json_language_add(total *json_language, group language_group) {
 
 // One printable table row; every cell is already a string so the header
 // and the numeric rows share one width and formatting path.
-type render_row struct {
+type Render_Row struct {
 	// Name is the language name, or an indented file path.
 	Name string
 	// Files is the file count, empty on a per-file row.
@@ -2487,15 +2501,15 @@ type render_row struct {
 }
 
 // Returns the table's column header row.
-func render_header_row() (header render_row) {
-	return render_row{
+func render_header_row() (header Render_Row) {
+	return Render_Row{
 		Name: "Language", Files: "Files", Lines: "Lines",
 		Code: "Code", Comments: "Comments", Blanks: "Blanks", Percent: "%Code",
 	}
 }
 
 // One language's files and their summed partition.
-type language_group struct {
+type Language_Group struct {
 	// Name is the language's display name.
 	Name string
 	// Category is the language's taxonomy bucket.
@@ -2525,14 +2539,14 @@ func counts_add(into *Counts, more Counts) {
 
 // Folds a report's files into per-language groups sorted by name, splitting each
 // group's partition into source and test and preserving its files in report order.
-func report_groups(report Report) (groups []language_group) {
+func report_groups(report Report) (groups []Language_Group) {
 	position_of := map[string]int{}
 	for _, file := range report.Files {
 		position, seen := position_of[file.Language]
 		if !seen {
 			position = len(groups)
 			position_of[file.Language] = position
-			groups = append(groups, language_group{
+			groups = append(groups, Language_Group{
 				Name:     file.Language,
 				Category: language_category(file.Language),
 			})
@@ -2549,7 +2563,7 @@ func report_groups(report Report) (groups []language_group) {
 		}
 		group.Members = append(group.Members, file)
 	}
-	slices.SortFunc(groups, func(a language_group, b language_group) (order int) {
+	slices.SortFunc(groups, func(a Language_Group, b Language_Group) (order int) {
 		return strings.Compare(a.Name, b.Name)
 	})
 	return groups
@@ -2595,19 +2609,19 @@ func category_order() (order []string) {
 }
 
 // A category and the language groups it holds, in name order.
-type category_group struct {
+type Category_Group struct {
 	// Name is the category's display name.
 	Name string
 	// Languages are the category's language groups in name order.
-	Languages []language_group
+	Languages []Language_Group
 }
 
 // Buckets the name-sorted language groups into categories in the fixed display order.
-func report_categories(groups []language_group) (categories []category_group) {
+func report_categories(groups []Language_Group) (categories []Category_Group) {
 	position_of := map[string]int{}
 	for _, name := range category_order() {
 		position_of[name] = len(categories)
-		categories = append(categories, category_group{Name: name})
+		categories = append(categories, Category_Group{Name: name})
 	}
 	for _, group := range groups {
 		position := position_of[group.Category]
@@ -2618,13 +2632,13 @@ func report_categories(groups []language_group) (categories []category_group) {
 
 // Builds the header, then each non-empty category: a label row followed by its
 // languages, each with its files (show_files) or its source/test split.
-func report_rows(categories []category_group, show_files bool) (rows []render_row) {
-	rows = []render_row{render_header_row()}
+func report_rows(categories []Category_Group, show_files bool) (rows []Render_Row) {
+	rows = []Render_Row{render_header_row()}
 	for _, category := range categories {
 		if len(category.Languages) == 0 {
 			continue
 		}
-		rows = append(rows, render_row{Name: category.Name})
+		rows = append(rows, Render_Row{Name: category.Name})
 		for _, group := range category.Languages {
 			rows = report_language_rows(rows, group, show_files)
 		}
@@ -2635,9 +2649,9 @@ func report_rows(categories []category_group, show_files bool) (rows []render_ro
 // Appends a language's indented row, then its files (with show_files) or its source and
 // test sub-rows.
 func report_language_rows(
-	rows []render_row, group language_group, show_files bool,
-) (output []render_row) {
-	output = append(rows, counts_row(&counts_row_input{
+	rows []Render_Row, group Language_Group, show_files bool,
+) (output []Render_Row) {
+	output = append(rows, counts_row(&Counts_Row_Input{
 		Name:   "  " + group.Name,
 		Files:  group.Files,
 		Counts: group.Counts,
@@ -2648,7 +2662,7 @@ func report_language_rows(
 		}
 		return output
 	}
-	return split_rows(&split_rows_input{
+	return split_rows(&Split_Rows_Input{
 		Indent:       "    ",
 		Rows:         output,
 		Source_Files: group.Source_Files,
@@ -2659,11 +2673,11 @@ func report_language_rows(
 }
 
 // Carries split_rows's accumulator and the source and test partitions.
-type split_rows_input struct {
+type Split_Rows_Input struct {
 	// Indent is the leading whitespace for the source and test sub-rows.
 	Indent string
 	// Rows is the accumulator the sub-rows are appended to.
-	Rows []render_row
+	Rows []Render_Row
 	// Source_Files is the non-test file count.
 	Source_Files int
 	// Source is the non-test partition.
@@ -2678,19 +2692,19 @@ type split_rows_input struct {
 // language without tests shows just its single total row. The %Code on a sub-row is its
 // share of the group's own code, so source and tests sum to 100% independent of how
 // large the group is relative to the whole.
-func split_rows(input *split_rows_input) (split []render_row) {
+func split_rows(input *Split_Rows_Input) (split []Render_Row) {
 	split = input.Rows
 	if input.Test_Files == 0 {
 		return split
 	}
 	own_code := input.Source.Code + input.Test.Code
-	split = append(split, counts_row(&counts_row_input{
+	split = append(split, counts_row(&Counts_Row_Input{
 		Name:       input.Indent + "source",
 		Files:      input.Source_Files,
 		Counts:     input.Source,
 		Total_Code: own_code,
 	}))
-	split = append(split, counts_row(&counts_row_input{
+	split = append(split, counts_row(&Counts_Row_Input{
 		Name:       input.Indent + "tests",
 		Files:      input.Test_Files,
 		Counts:     input.Test,
@@ -2700,7 +2714,7 @@ func split_rows(input *split_rows_input) (split []render_row) {
 }
 
 // Sums every group into the Total row and its source and test sub-rows.
-func report_total(groups []language_group) (totals []render_row) {
+func report_total(groups []Language_Group) (totals []Render_Row) {
 	combined := Counts{}
 	source := Counts{}
 	test := Counts{}
@@ -2715,12 +2729,12 @@ func report_total(groups []language_group) (totals []render_row) {
 		source_files += group.Source_Files
 		test_files += group.Test_Files
 	}
-	totals = []render_row{counts_row(&counts_row_input{
+	totals = []Render_Row{counts_row(&Counts_Row_Input{
 		Name:   "Total",
 		Files:  files,
 		Counts: combined,
 	})}
-	return split_rows(&split_rows_input{
+	return split_rows(&Split_Rows_Input{
 		Indent:       "  ",
 		Rows:         totals,
 		Source_Files: source_files,
@@ -2732,7 +2746,7 @@ func report_total(groups []language_group) (totals []render_row) {
 
 // Carries counts_row's data: a name, a file count, the partition, and the code total
 // the row's code is a share of.
-type counts_row_input struct {
+type Counts_Row_Input struct {
 	// Name is the row's label.
 	Name string
 	// Files is the row's file count.
@@ -2746,13 +2760,13 @@ type counts_row_input struct {
 
 // Builds an aggregate row: a name, a file count, the partition, and the code's share
 // of the given code total — blank when that total is zero.
-func counts_row(input *counts_row_input) (row render_row) {
+func counts_row(input *Counts_Row_Input) (row Render_Row) {
 	percent := ""
 	if input.Total_Code > 0 {
 		share := float64(input.Counts.Code) / float64(input.Total_Code) * 100
 		percent = fmt.Sprintf("%.1f%%", share)
 	}
-	return render_row{
+	return Render_Row{
 		Name:     input.Name,
 		Files:    with_thousands_separators(input.Files),
 		Lines:    with_thousands_separators(counts_lines(input.Counts)),
@@ -2765,14 +2779,14 @@ func counts_row(input *counts_row_input) (row render_row) {
 
 // Builds a per-file row: like an aggregate row but without a file count, since the
 // row is itself one file, and without a percentage, which is a per-language fact.
-func file_row(name string, counts Counts) (row render_row) {
-	row = counts_row(&counts_row_input{Name: name, Counts: counts})
+func file_row(name string, counts Counts) (row Render_Row) {
+	row = counts_row(&Counts_Row_Input{Name: name, Counts: counts})
 	row.Files = ""
 	return row
 }
 
 // The printed width of each table column.
-type render_column_widths struct {
+type Render_Column_Widths struct {
 	// Name is the width of the language and file-path column.
 	Name int
 	// Files is the width of the file-count column.
@@ -2790,7 +2804,7 @@ type render_column_widths struct {
 }
 
 // Sizes each column to its widest cell across all rows.
-func render_widths(rows []render_row) (widths render_column_widths) {
+func render_widths(rows []Render_Row) (widths Render_Column_Widths) {
 	for _, row := range rows {
 		widths.Name = max(widths.Name, len(row.Name))
 		widths.Files = max(widths.Files, len(row.Files))
@@ -2805,7 +2819,7 @@ func render_widths(rows []render_row) (widths render_column_widths) {
 
 // Returns the printed character width of any row, which the rules match. Every cell
 // is ASCII, so character width equals byte length.
-func render_column_widths_total(widths render_column_widths) (width int) {
+func render_column_widths_total(widths Render_Column_Widths) (width int) {
 	return 1 + widths.Name +
 		2 + widths.Files +
 		2 + widths.Lines +
@@ -2817,7 +2831,7 @@ func render_column_widths_total(widths render_column_widths) (width int) {
 
 // Lays out one row: a leading space, the left-justified name, then each
 // right-justified numeric column behind a two-space gap.
-func render_row_format(row render_row, widths render_column_widths) (line string) {
+func render_row_format(row Render_Row, widths Render_Column_Widths) (line string) {
 	return " " + pad_right(row.Name, widths.Name) +
 		"  " + pad_left(row.Files, widths.Files) +
 		"  " + pad_left(row.Lines, widths.Lines) +

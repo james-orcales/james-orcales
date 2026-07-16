@@ -117,7 +117,7 @@ type New_Input struct {
 }
 
 // One queued line, stored behind an unsafe.Pointer in a ring slot.
-type bucket struct {
+type Bucket struct {
 	// Data is the copied line bytes; it owns its backing array so the pool reuses the
 	// bucket and the array together.
 	Data []byte
@@ -179,14 +179,14 @@ func New(input New_Input) (writer *Writer) {
 
 // Builds a fresh bucket for the pool, with a small starting backing array.
 func new_bucket() (item any) {
-	return &bucket{Data: make([]byte, 0, 512)}
+	return &Bucket{Data: make([]byte, 0, 512)}
 }
 
 // Write copies p into the ring and returns at once; it never touches the sink, so a
 // slow sink never blocks the caller. The copy is mandatory: callers (jlog) reuse p
 // the moment Write returns.
 func (writer *Writer) Write(p []byte) (n int, err error) {
-	item := writer.Buffer_Pool.Get().(*bucket)
+	item := writer.Buffer_Pool.Get().(*Bucket)
 	item.Data = append(item.Data[:0], p...)
 	assert(len(item.Data) == len(p), "diode: write copy length mismatch")
 	ring_set(writer, item)
@@ -207,7 +207,7 @@ func (writer *Writer) Close() (err error) {
 
 // Stores item in the next ring slot, advancing the shared write cursor atomically so
 // concurrent producers never share a slot.
-func ring_set(writer *Writer, item *bucket) {
+func ring_set(writer *Writer, item *Bucket) {
 	stored := false
 	for !stored {
 		index := writer.Write_Index.Add(1)
@@ -237,7 +237,7 @@ func recycle_overwritten(writer *Writer, previous unsafe.Pointer) {
 	if previous == nil {
 		return
 	}
-	dropped := (*bucket)(previous)
+	dropped := (*Bucket)(previous)
 	if cap(dropped.Data) > MAXIMUM_POOLED_BUFFER {
 		return
 	}
@@ -251,7 +251,7 @@ func ring_collides(previous unsafe.Pointer, index uint64, count int) (collides b
 	if previous == nil {
 		return false
 	}
-	occupant := (*bucket)(previous)
+	occupant := (*Bucket)(previous)
 	if occupant.Sequence.Load() > index-uint64(count) {
 		return true
 	}
@@ -260,9 +260,9 @@ func ring_collides(previous unsafe.Pointer, index uint64, count int) (collides b
 
 // Takes the next entry for the drain, reporting drops when the writer has lapped the
 // read cursor. ok is false when nothing fresh is available.
-func ring_try_next(writer *Writer) (item *bucket, ok bool) {
+func ring_try_next(writer *Writer) (item *Bucket, ok bool) {
 	slot := writer.Read_Index % uint64(len(writer.Slots))
-	taken := (*bucket)(atomic.SwapPointer(&writer.Slots[slot], nil))
+	taken := (*Bucket)(atomic.SwapPointer(&writer.Slots[slot], nil))
 	if taken == nil {
 		return nil, false
 	}
@@ -317,7 +317,7 @@ func drain_remainder(writer *Writer) {
 }
 
 // Writes one line to the sink and returns its bucket to the pool.
-func forward(writer *Writer, item *bucket) {
+func forward(writer *Writer, item *Bucket) {
 	assert(item != nil, "diode: forward got a nil bucket")
 	if rate_limit_sheds(writer, len(item.Data)) {
 		writer.Alerter(1, DROP_RATE_LIMIT)

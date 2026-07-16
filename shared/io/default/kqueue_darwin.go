@@ -9,20 +9,20 @@ import "syscall"
 const SOCKET_REUSEPORT = 0x200
 
 // The kqueue descriptor backing the readiness loop on Darwin.
-type poll_file int
+type Poll_File int
 
 // Opens a fresh kqueue.
-func poll_create() (poll poll_file, err error) {
+func poll_create() (poll Poll_File, err error) {
 	descriptor, create_err := syscall.Kqueue()
 	if create_err != nil {
 		return 0, create_err
 	}
-	return poll_file(descriptor), nil
+	return Poll_File(descriptor), nil
 }
 
 // Registers read or write interest in descriptor on poll, level-triggered so the
 // readiness re-reports until the operation disarms it.
-func poll_file_arm(poll poll_file, descriptor int, writable bool) (err error) {
+func poll_file_arm(poll Poll_File, descriptor int, writable bool) (err error) {
 	change := syscall.Kevent_t{
 		Ident:  uint64(descriptor),
 		Filter: poll_filter(writable),
@@ -33,7 +33,7 @@ func poll_file_arm(poll poll_file, descriptor int, writable bool) (err error) {
 }
 
 // Removes read or write interest in descriptor from poll.
-func poll_file_disarm(poll poll_file, descriptor int, writable bool) (err error) {
+func poll_file_disarm(poll Poll_File, descriptor int, writable bool) (err error) {
 	change := syscall.Kevent_t{
 		Ident:  uint64(descriptor),
 		Filter: poll_filter(writable),
@@ -54,7 +54,7 @@ func poll_filter(writable bool) (filter int16) {
 // Blocks for up to timeout_ns — or until an event when timeout_ns is negative, a nil timespec
 // kqueue waits on unbounded — and returns the ready descriptors, decoding each kqueue event
 // into a direction.
-func poll_file_wait(poll poll_file, timeout_ns int64) (ready []poll_ready, err error) {
+func poll_file_wait(poll Poll_File, timeout_ns int64) (ready []Poll_Ready, err error) {
 	native := make([]syscall.Kevent_t, POLL_EVENTS_MAX)
 	deadline := (*syscall.Timespec)(nil)
 	if timeout_ns >= 0 {
@@ -66,7 +66,7 @@ func poll_file_wait(poll poll_file, timeout_ns int64) (ready []poll_ready, err e
 		return nil, wait_err
 	}
 	for index := 0; index < count; index++ {
-		ready = append(ready, poll_ready{
+		ready = append(ready, Poll_Ready{
 			Descriptor: int(native[index].Ident),
 			Writable:   native[index].Filter == syscall.EVFILT_WRITE,
 		})

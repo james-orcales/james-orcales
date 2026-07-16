@@ -4502,18 +4502,18 @@ func check_type_declaration_exported(
 			if !is_type {
 				continue
 			}
-			if ast.IsExported(type_specification.Name.Name) {
+			type_name := type_specification.Name.Name
+			if ast.IsExported(type_name) {
 				continue
 			}
+			suggestion := suggest(&suggest_input{Name: type_name, Want: "Ada_Case"})
+			message := fmt.Sprintf(
+				"type %s must be exported; rename to %s", type_name, suggestion)
 			diags = append(diags, Diagnostic{
 				Position: file_set.Position(type_specification.Name.Pos()),
 				Name:     "exported-type",
 				Want:     "exported type name",
-				Message: fmt.Sprintf(
-					"type %s must be exported; rename to %s",
-					type_specification.Name.Name,
-					suggest(&suggest_input{
-						Name: type_specification.Name.Name, Want: "Ada_Case"})),
+				Message:  message,
 			})
 		}
 	}

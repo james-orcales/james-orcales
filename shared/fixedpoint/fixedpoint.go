@@ -52,7 +52,7 @@ func From_Ratio(input *From_Ratio_Input) (number Number) {
 		return 0
 	}
 	negative := (input.Numerator < 0) != (input.Denominator < 0)
-	magnitude := shift_divide(&shift_divide_input{
+	magnitude := shift_divide(&Shift_Divide_Input{
 		Numerator:   absolute(Number(input.Numerator)),
 		Denominator: absolute(Number(input.Denominator)),
 	})
@@ -81,7 +81,7 @@ type Multiply_Input struct {
 // back down by the scale, so no divide and no premature overflow.
 func Multiply(input *Multiply_Input) (product Number) {
 	negative := (input.A < 0) != (input.B < 0)
-	magnitude := multiply_shifted(&multiply_shifted_input{
+	magnitude := multiply_shifted(&Multiply_Shifted_Input{
 		Left: absolute(input.A), Right: absolute(input.B),
 	})
 	return signed(magnitude, negative)
@@ -102,7 +102,7 @@ func Divide(input *Divide_Input) (quotient Number) {
 		return 0
 	}
 	negative := (input.Dividend < 0) != (input.Divisor < 0)
-	magnitude := shift_divide(&shift_divide_input{
+	magnitude := shift_divide(&Shift_Divide_Input{
 		Numerator:   absolute(input.Dividend),
 		Denominator: absolute(input.Divisor),
 	})
@@ -112,7 +112,7 @@ func Divide(input *Divide_Input) (quotient Number) {
 // Apply scales a value by a dimensionless ratio.
 func Apply(value Number, ratio Ratio) (scaled Number) {
 	negative := (value < 0) != (ratio < 0)
-	magnitude := multiply_shifted(&multiply_shifted_input{
+	magnitude := multiply_shifted(&Multiply_Shifted_Input{
 		Left: absolute(value), Right: absolute(Number(ratio)),
 	})
 	return signed(magnitude, negative)
@@ -243,7 +243,7 @@ func (number *Number) UnmarshalJSON(data []byte) (err error) {
 }
 
 // Holds the unsigned factors of multiply_shifted.
-type multiply_shifted_input struct {
+type Multiply_Shifted_Input struct {
 	// Left is the first factor.
 	Left uint64
 	// Right is the second factor.
@@ -254,13 +254,13 @@ type multiply_shifted_input struct {
 // shifted down by FRACTIONAL_BITS — a shift where a base-ten scale would need a divide.
 // Callers pass factors whose true product fits int64, so the shifted-away high bits are
 // zero.
-func multiply_shifted(input *multiply_shifted_input) (magnitude uint64) {
+func multiply_shifted(input *Multiply_Shifted_Input) (magnitude uint64) {
 	high, low := bits.Mul64(input.Left, input.Right)
 	return (high << (64 - FRACTIONAL_BITS)) | (low >> FRACTIONAL_BITS)
 }
 
 // Holds the unsigned operands of shift_divide.
-type shift_divide_input struct {
+type Shift_Divide_Input struct {
 	// Numerator is the value being divided, before the scale-up shift.
 	Numerator uint64
 	// Denominator is the value it is divided by.
@@ -271,7 +271,7 @@ type shift_divide_input struct {
 // the scaled-up numerator keeps full precision without overflowing. The divide is the one
 // the runtime divisor forces; only the scale-up is a shift. Callers pass a nonzero
 // denominator and a result that fits int64, so the high word stays below the denominator.
-func shift_divide(input *shift_divide_input) (quotient uint64) {
+func shift_divide(input *Shift_Divide_Input) (quotient uint64) {
 	high := input.Numerator >> (64 - FRACTIONAL_BITS)
 	low := input.Numerator << FRACTIONAL_BITS
 	quotient, _ = bits.Div64(high, low, input.Denominator)

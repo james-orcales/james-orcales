@@ -98,7 +98,7 @@ func main_program() (program cli.Program) {
 // renders the input into it.
 func main_render_command(command cli.Command) (status_code int) {
 	input_path := cli.Get_Option(command.Arguments, "input").Value.(string)
-	output_path := main_output_path(&main_output_path_input{
+	output_path := main_output_path(&Main_Output_Path_Input{
 		Input:  input_path,
 		Output: cli.Get_Option(command.Flags, "out").Value.(string),
 	})
@@ -182,8 +182,10 @@ func main_render(markdown []byte, output_path string) (status_code int) {
 	return status
 }
 
-type main_output_path_input struct {
-	Input  string
+type Main_Output_Path_Input struct {
+	// Input is the source Markdown path.
+	Input string
+	// Output is the explicit -out path, or empty to derive from Input.
 	Output string
 }
 
@@ -191,7 +193,7 @@ type main_output_path_input struct {
 // extension swapped for .pdf, so a bare render writes beside its source. A
 // derived path that already exists aborts the run rather than overwrite a file
 // the caller never named.
-func main_output_path(input *main_output_path_input) (output_path string) {
+func main_output_path(input *Main_Output_Path_Input) (output_path string) {
 	if input.Output != "" {
 		return input.Output
 	}
