@@ -682,10 +682,15 @@ type Node struct {
 // unexported parents, aliases to exported types, and _test.go exemption.
 func Test_Exported_Type_Exposes_Private_Allows_Part2(t *testing.T) {
 	t.Parallel()
-	tests := []struct {
-		Name      string
-		Files     map[string]string
-		Want_Diag string
+	// Every case asserts the exposes-private rule stays silent (Forbid). The
+	// cases whose fixture declares an unexported package-level type in non-test
+	// source now also earn the exported-type diagnostic, so they expect a nonzero
+	// exit with "must be exported"; the exported and _test.go cases stay clean.
+	run_doctrine_diag_table(t, []struct {
+		Name       string
+		Files      map[string]string
+		Want_Diags []string
+		Forbid     []string
 	}{
 		{Name: "mutual recursion allowed",
 			Files: map[string]string{"test.go": `package main
@@ -697,7 +702,7 @@ type B struct {
 	// A is a fixture.
 	A *A
 }
-`}, Want_Diag: ""},
+`}, Want_Diags: nil, Forbid: []string{"contains private"}},
 		{Name: "slice of unexported allowed",
 			Files: map[string]string{"test.go": `package main
 type Foo struct {
@@ -705,29 +710,28 @@ type Foo struct {
 	Xs []bar
 }
 type bar int
-`}, Want_Diag: ""},
+`}, Want_Diags: []string{"must be exported"}, Forbid: []string{"contains private"}},
 		{Name: "unexported parent allowed",
 			Files: map[string]string{"test.go": `package main
 type foo struct { X bar }
 type bar int
-`}, Want_Diag: ""},
+`}, Want_Diags: []string{"must be exported"}, Forbid: []string{"contains private"}},
 		{Name: "alias to exported allowed",
 			Files: map[string]string{"test.go": `package main
 type Foo = Bar
 type Bar int
-`}, Want_Diag: ""},
+`}, Want_Diags: nil, Forbid: []string{"contains private"}},
 		{Name: "pointer alias to exported allowed",
 			Files: map[string]string{"test.go": `package main
 type Foo = *Bar
 type Bar int
-`}, Want_Diag: ""},
+`}, Want_Diags: nil, Forbid: []string{"contains private"}},
 		{Name: "_test.go file skipped",
 			Files: map[string]string{"foo_test.go": `package foo_test
 type Foo struct { F bar }
 type bar int
-`}, Want_Diag: ""},
-	}
-	run_diag_table(t, tests)
+`}, Want_Diags: nil, Forbid: []string{"contains private"}},
+	})
 }
 
 // Test_No_Naked_Return verifies that a bare `return` statement inside a
@@ -863,6 +867,81 @@ const X = 0
 		},
 	}
 	run_diag_table(t, tests)
+}
+
+// Test_Exported_Type verifies that an unexported package-level type declaration
+// or alias is flagged, while exported types, function-local types, _test.go
+// files, and the temporarily-exempt ./lint tree are left clean.
+func Test_Exported_Type(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		Name     string
+		Filename string
+		Source   string
+		Want     bool
+	}{
+		{
+			Name:     "unexported struct type flagged",
+			Filename: "widget.go",
+			Source:   "package fixture\n\ntype widget struct{ X int }\n",
+			Want:     true,
+		},
+		{
+			Name:     "unexported alias flagged",
+			Filename: "widget.go",
+			Source:   "package fixture\n\ntype widget = int\n",
+			Want:     true,
+		},
+		{
+			Name:     "exported type clean",
+			Filename: "widget.go",
+			Source:   "package main\n\ntype Widget int\n",
+			Want:     false,
+		},
+		{
+			Name:     "exported alias clean",
+			Filename: "widget.go",
+			Source:   "package main\n\ntype Widget = int\n",
+			Want:     false,
+		},
+		{
+			Name:     "function local type ignored",
+			Filename: "widget.go",
+			Source: "package main\n\nfunc F() {\n" +
+				"\ttype key int\n\tvar value key\n\tvalue += 1\n}\n",
+			Want: false,
+		},
+		{
+			Name:     "test file exempt",
+			Filename: "widget_test.go",
+			Source:   "package fixture\n\ntype widget struct{ X int }\n",
+			Want:     false,
+		},
+		{
+			Name:     "lint tree temporarily exempt",
+			Filename: "lint/internal/widget.go",
+			Source:   "package fixture\n\ntype widget struct{ X int }\n",
+			Want:     false,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.Name, func(t *testing.T) {
+			diags, err := lint.Check_Source(tt.Filename, tt.Source)
+			if err != nil {
+				t.Fatalf("Check_Source: %v", err)
+			}
+			found := false
+			for _, d := range diags {
+				if strings.Contains(d.Message, "must be exported") {
+					found = true
+				}
+			}
+			if found != tt.Want {
+				t.Fatalf("exported-type fired=%v, want=%v; diags=%v",
+					found, tt.Want, diags)
+			}
+		})
+	}
 }
 
 // Test_No_Fallthrough verifies a switch-case fallthrough is flagged.
@@ -3661,10 +3740,15 @@ func F(a, b int, extra ...string) (result int) { return a + b + len(extra) }
 // accepts a snake-case function paired with a snake-case input type.
 func Test_Input_Struct_Snake_Case(t *testing.T) {
 	t.Parallel()
-	tests := []struct {
-		Name      string
-		Files     map[string]string
-		Want_Diag string
+	// The snake_case input struct f_input is unexported by the input-struct
+	// convention, so the exported-type rule now also flags it. Assert the
+	// input-struct rule stays silent on the correct pairing (Forbid) while
+	// tolerating the exported-type diagnostic the same fixture now earns.
+	run_doctrine_diag_table(t, []struct {
+		Name       string
+		Files      map[string]string
+		Want_Diags []string
+		Forbid     []string
 	}{
 		{
 			Name: "snake case function snake case input",
@@ -3687,10 +3771,10 @@ func f(input *f_input) (result int) {
 }
 `,
 			},
-			Want_Diag: "",
+			Want_Diags: []string{"must be exported"},
+			Forbid:     []string{"directly above"},
 		},
-	}
-	run_diag_table(t, tests)
+	})
 }
 
 // Test_Input_Struct_Skip_Shapes covers signatures that should NOT trigger
@@ -3887,7 +3971,7 @@ func Test_Input_Struct_Declaration_Location_Skip(t *testing.T) {
 				"test.go": `package main
 
 ` + FIXTURE_INVARIANT_IMPORT + `
-type fixture_thing struct {
+type Fixture_Thing struct {
 	// A is a fixture.
 	A int
 	// B is a fixture.
@@ -3897,7 +3981,7 @@ type fixture_thing struct {
 // FIXTURE_HI is a fixture.
 const FIXTURE_HI = 100
 
-func F(thing *fixture_thing) (result int) {
+func F(thing *Fixture_Thing) (result int) {
 	defer func() {
 	}()
 	return thing.A + thing.B
@@ -4104,11 +4188,11 @@ func main() (result int) {
 	return F(0)
 }
 
-type _Number interface {
+type Number interface {
 	~int | ~int64
 }
 
-func F[T _Number](x T) (result int) {
+func F[T Number](x T) (result int) {
 	defer func() {
 	}()
 	return 0

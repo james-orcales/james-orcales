@@ -859,6 +859,17 @@ func Test_Source_And_Test_Requirements_Exported_Struct_Fields(t *testing.T) {
 	}
 }
 
+// Test_Source_And_Test_Requirements_Exported_Types verifies an unexported
+// package-level type declaration is flagged.
+func Test_Source_And_Test_Requirements_Exported_Types(t *testing.T) {
+	t.Parallel()
+	files := specification_one_file("package fixture\n\n// widget is a fixture.\n" +
+		"type widget struct{ X int }\n")
+	if !specification_flags(t, files, "must be exported") {
+		t.Fatal("an unexported package-level type must be flagged")
+	}
+}
+
 // Test_Source_And_Test_Requirements_Struct_Field_Public_Identifier verifies a
 // lowercase struct field is flagged.
 func Test_Source_And_Test_Requirements_Struct_Field_Public_Identifier(t *testing.T) {

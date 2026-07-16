@@ -1515,6 +1515,7 @@ func Check_File(input *Check_File_Input) (diags []Diagnostic) {
 		check_public_struct_fields,
 		check_struct_field_documentation_comment,
 		check_exported_type_exposes_private,
+		check_type_declaration_exported,
 		check_no_iota,
 		check_no_fallthrough,
 		check_no_blank_import,
@@ -4464,6 +4465,61 @@ func check_exported_type_exposes_private_type_params(
 // the const block; reordering rows changes meaning without changing any
 // expression. Spelling each value out makes order an editorial choice instead
 // of a semantic one.
+// Go's capitalization is a package's only visibility control, and every named
+// type is part of a package's vocabulary: a type declared for one caller today is
+// named by a second caller tomorrow, and an unexported name forces that caller to
+// duplicate it or reach across the package boundary. So every package-level type
+// declaration and alias must be exported. Function-local types (Go cannot export
+// them) and _test.go files (which model violations) are exempt.
+func check_type_declaration_exported(
+	file_set *token.FileSet, file *ast.File, _ []byte,
+) (diags []Diagnostic) {
+
+	tok_file := file_set.File(file.Pos())
+	if tok_file == nil {
+		return nil
+	}
+	name := tok_file.Name()
+	if strings.HasSuffix(name, "_test.go") {
+		return nil
+	}
+	// TEMPORARY: exempt the linter's own not-yet-migrated sources so it passes on
+	// itself. Remove once ./lint uses exported types. Deliberately hardcoded here,
+	// not a lint.json opt-out, so the exemption cannot outlive the migration.
+	if strings.HasPrefix(name, "lint/") {
+		return nil
+	}
+	for _, declaration := range file.Decls {
+		generic_declaration, is_generic := declaration.(*ast.GenDecl)
+		if !is_generic {
+			continue
+		}
+		if generic_declaration.Tok != token.TYPE {
+			continue
+		}
+		for _, specification := range generic_declaration.Specs {
+			type_specification, is_type := specification.(*ast.TypeSpec)
+			if !is_type {
+				continue
+			}
+			if ast.IsExported(type_specification.Name.Name) {
+				continue
+			}
+			diags = append(diags, Diagnostic{
+				Position: file_set.Position(type_specification.Name.Pos()),
+				Name:     "exported-type",
+				Want:     "exported type name",
+				Message: fmt.Sprintf(
+					"type %s must be exported; rename to %s",
+					type_specification.Name.Name,
+					suggest(&suggest_input{
+						Name: type_specification.Name.Name, Want: "Ada_Case"})),
+			})
+		}
+	}
+	return diags
+}
+
 func check_no_iota(file_set *token.FileSet, file *ast.File, _ []byte) (diags []Diagnostic) {
 
 	ast.Inspect(file, func(n ast.Node) (descend bool) {
