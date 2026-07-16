@@ -911,12 +911,6 @@ func Test_Exported_Type(t *testing.T) {
 			Source:   "package fixture\n\ntype widget struct{ X int }\n",
 			Want:     false,
 		},
-		{
-			Name:     "lint tree temporarily exempt",
-			Filename: "lint/internal/widget.go",
-			Source:   "package fixture\n\ntype widget struct{ X int }\n",
-			Want:     false,
-		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.Name, func(t *testing.T) {

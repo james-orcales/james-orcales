@@ -19,11 +19,17 @@ import (
 	"local/james-orcales/lint/internal/source"
 )
 
-// Unexported aliases so the moved rule bodies name these types unqualified, as
-// they did in package lint.
-type parsed_file = source.Parsed_File
-type component_index = source.Component_Index
-type component_information = source.Component
+// Parsed_File aliases the source package's type so the moved rule bodies name it
+// unqualified, as they did in package lint.
+type Parsed_File = source.Parsed_File
+
+// Component_Index aliases the source package's component graph so the moved rule
+// bodies name it unqualified.
+type Component_Index = source.Component_Index
+
+// Component_Information aliases the source package's Component so the moved rule
+// bodies name it unqualified.
+type Component_Information = source.Component
 
 // Diagnostic aliases the diagnostic package's type so the moved rule bodies name
 // it unqualified.
@@ -79,7 +85,7 @@ func Check_Type(
 // type-invariant rule's opt-out and skips test files, and fires only when the
 // bundle exists — absence is the presence rule's job.
 func check_numeric_invariants(
-	parsed_files []parsed_file, exempt []string,
+	parsed_files []Parsed_File, exempt []string,
 ) (diags []Diagnostic) {
 
 	constants := numeric_package_constants(parsed_files)
@@ -99,7 +105,7 @@ func check_numeric_invariants(
 // Maps each package directory to the set of top-level const names declared in its
 // non-test files — the names a numeric bound may legitimately reference.
 func numeric_package_constants(
-	parsed_files []parsed_file,
+	parsed_files []Parsed_File,
 ) (constants map[string]map[string]bool) {
 
 	constants = map[string]map[string]bool{}
@@ -140,7 +146,7 @@ func numeric_collect_constants(file *ast.File, into map[string]bool) {
 
 // Checks every numeric defined type + value-parameter bundle pair in one file.
 func numeric_file_diagnostics(
-	file parsed_file, constants map[string]bool,
+	file Parsed_File, constants map[string]bool,
 ) (diags []Diagnostic) {
 
 	invariant_names := type_invariants_import_names(file.File)
@@ -160,7 +166,7 @@ func numeric_file_diagnostics(
 		if kind == "" {
 			continue
 		}
-		diags = append(diags, numeric_type_diagnostics(&numeric_type_input{
+		diags = append(diags, numeric_type_diagnostics(&Numeric_Type_Input{
 			File: file, Index: index, Type: type_specification, Kind: kind,
 			Count: count, Constants: constants, Invariant_Names: invariant_names,
 		})...)
@@ -170,19 +176,26 @@ func numeric_file_diagnostics(
 
 // Groups one numeric type with the context its bundle check needs: it carries two
 // maps, which loose parameters may not repeat.
-type numeric_type_input struct {
-	File            parsed_file
-	Index           int
-	Type            *ast.TypeSpec
-	Kind            string
-	Count           bool
-	Constants       map[string]bool
+type Numeric_Type_Input struct {
+	// File is the parsed file the type is declared in.
+	File Parsed_File
+	// Index is the type's position in the file's declaration list.
+	Index int
+	// Type is the numeric defined type's declaration.
+	Type *ast.TypeSpec
+	// Kind is the type's underlying numeric kind.
+	Kind string
+	// Count is true when the invariant bounds the value's count, not the value.
+	Count bool
+	// Constants is the set of constant names declared in the file.
+	Constants map[string]bool
+	// Invariant_Names is the set of imported invariant helper names.
 	Invariant_Names map[string]bool
 }
 
 // Checks the bundle directly below one numeric type, or nothing when the type has
 // no value-parameter bundle (a pointer-parameter or absent bundle is skipped).
-func numeric_type_diagnostics(input *numeric_type_input) (diags []Diagnostic) {
+func numeric_type_diagnostics(input *Numeric_Type_Input) (diags []Diagnostic) {
 	candidate := type_invariants_following_function(input.File.File, input.Index)
 	if candidate == nil {
 		return nil
@@ -194,7 +207,7 @@ func numeric_type_diagnostics(input *numeric_type_input) (diags []Diagnostic) {
 	if value == "" {
 		return nil
 	}
-	return numeric_bundle_diagnostics(&numeric_bundle_input{
+	return numeric_bundle_diagnostics(&Numeric_Bundle_Input{
 		File_Set: input.File.File_Set, Bundle: candidate, Value: value,
 		Count: input.Count, Kind: input.Kind, Constants: input.Constants,
 		Invariant_Names: input.Invariant_Names,
@@ -265,7 +278,7 @@ func numeric_is_count_type(type_specification *ast.TypeSpec) (yes bool) {
 }
 
 // Renders the asserted subject for diagnostics: the value, or len(value).
-func numeric_subject_text(input *numeric_bundle_input) (text string) {
+func numeric_subject_text(input *Numeric_Bundle_Input) (text string) {
 	if input.Count {
 		return "len(" + input.Value + ")"
 	}
@@ -311,22 +324,33 @@ func numeric_type_base_name(expression ast.Expr) (name string) {
 
 // Carries the bundle and the facts its checks read: two maps keep it off loose
 // parameters.
-type numeric_bundle_input struct {
-	File_Set        *token.FileSet
-	Bundle          *ast.FuncDecl
-	Value           string
-	Count           bool
-	Kind            string
-	Constants       map[string]bool
+type Numeric_Bundle_Input struct {
+	// File_Set resolves bundle positions to source locations.
+	File_Set *token.FileSet
+	// Bundle is the value-parameter bundle function being checked.
+	Bundle *ast.FuncDecl
+	// Value is the name of the asserted value parameter.
+	Value string
+	// Count is true when the invariant bounds the value's count, not the value.
+	Count bool
+	// Kind is the value's underlying numeric kind.
+	Kind string
+	// Constants is the set of constant names declared in the file.
+	Constants map[string]bool
+	// Invariant_Names is the set of imported invariant helper names.
 	Invariant_Names map[string]bool
 }
 
 // The body summary one bundle yields: which bounds it guards, the named operands
 // of those guards, and which boundary values it claims.
-type numeric_facts struct {
-	Has_Upper  bool
-	Has_Lower  bool
+type Numeric_Facts struct {
+	// Has_Upper records whether the bundle guards an upper bound.
+	Has_Upper bool
+	// Has_Lower records whether the bundle guards a lower bound.
+	Has_Lower bool
+	// Upper_Name is the operand named in the upper-bound guard.
 	Upper_Name string
+	// Lower_Name is the operand named in the lower-bound guard.
 	Lower_Name string
 	// Claimed_Values holds every boundary value the bundle names in any equality or
 	// inequality claim, by either Always or Sometimes.
@@ -334,7 +358,7 @@ type numeric_facts struct {
 }
 
 // Collects bound and coverage diagnostics for one numeric bundle.
-func numeric_bundle_diagnostics(input *numeric_bundle_input) (diags []Diagnostic) {
+func numeric_bundle_diagnostics(input *Numeric_Bundle_Input) (diags []Diagnostic) {
 	facts := numeric_collect_facts(input)
 	diags = append(diags, numeric_bound_diagnostics(facts, input)...)
 	diags = append(diags, numeric_coverage_diagnostics(facts, input)...)
@@ -342,7 +366,7 @@ func numeric_bundle_diagnostics(input *numeric_bundle_input) (diags []Diagnostic
 }
 
 // Walks the bundle body, summarizing every Always/Sometimes condition into facts.
-func numeric_collect_facts(input *numeric_bundle_input) (facts numeric_facts) {
+func numeric_collect_facts(input *Numeric_Bundle_Input) (facts Numeric_Facts) {
 	facts.Claimed_Values = map[string]bool{}
 	is_subject := numeric_subject_matcher(input)
 	ast.Inspect(input.Bundle.Body, func(node ast.Node) (recurse bool) {
@@ -361,11 +385,11 @@ func numeric_collect_facts(input *numeric_bundle_input) (facts numeric_facts) {
 }
 
 // Reports whether an expression is the asserted subject — the value, or its count.
-type numeric_subject func(expression ast.Expr) (matches bool)
+type Numeric_Subject func(expression ast.Expr) (matches bool)
 
 // Builds the predicate that recognizes the asserted subject: the value itself, or
 // its count when the type is a string, slice, or map.
-func numeric_subject_matcher(input *numeric_bundle_input) (match numeric_subject) {
+func numeric_subject_matcher(input *Numeric_Bundle_Input) (match Numeric_Subject) {
 	if input.Count {
 		return func(expression ast.Expr) (matches bool) {
 			return numeric_is_count(expression, input.Value)
@@ -427,8 +451,8 @@ func numeric_invariant_call(
 // Folds one condition into facts: bounds come only from Always; claims (equality,
 // inequality, NaN, infinities) from either Always or Sometimes.
 func numeric_classify_condition(
-	condition ast.Expr, is_subject numeric_subject, is_always bool,
-	facts *numeric_facts,
+	condition ast.Expr, is_subject Numeric_Subject, is_always bool,
+	facts *Numeric_Facts,
 ) {
 	if numeric_nan_call(condition) {
 		facts.Claimed_Values["NaN"] = true
@@ -458,8 +482,8 @@ func numeric_classify_condition(
 
 // Records an Always(v <= C) upper bound guard and its operand name.
 func numeric_record_upper(
-	binary *ast.BinaryExpr, is_subject numeric_subject, is_always bool,
-	facts *numeric_facts,
+	binary *ast.BinaryExpr, is_subject Numeric_Subject, is_always bool,
+	facts *Numeric_Facts,
 ) {
 	if !is_always {
 		return
@@ -473,8 +497,8 @@ func numeric_record_upper(
 
 // Records an Always(v >= C) lower bound guard and its operand name.
 func numeric_record_lower(
-	binary *ast.BinaryExpr, is_subject numeric_subject, is_always bool,
-	facts *numeric_facts,
+	binary *ast.BinaryExpr, is_subject Numeric_Subject, is_always bool,
+	facts *Numeric_Facts,
 ) {
 	if !is_always {
 		return
@@ -488,7 +512,7 @@ func numeric_record_lower(
 
 // Records a boundary claim: an infinity (float) or an integer/const equality.
 func numeric_record_claim(
-	binary *ast.BinaryExpr, is_subject numeric_subject, facts *numeric_facts,
+	binary *ast.BinaryExpr, is_subject Numeric_Subject, facts *Numeric_Facts,
 ) {
 	sign := numeric_infinity_sign(binary.X)
 	if sign == 0 {
@@ -515,7 +539,7 @@ func numeric_record_claim(
 
 // Reports the bounds and bound-constant diagnostics for one bundle.
 func numeric_bound_diagnostics(
-	facts numeric_facts, input *numeric_bundle_input,
+	facts Numeric_Facts, input *Numeric_Bundle_Input,
 ) (diags []Diagnostic) {
 
 	position := input.File_Set.Position(input.Bundle.Name.Pos())
@@ -554,7 +578,7 @@ func numeric_bound_diagnostics(
 // Always(!= bound) is a loophole and witnessing it as Sometimes(== bound) forces
 // allocating the max, so neither is required here.
 func numeric_coverage_diagnostics(
-	facts numeric_facts, input *numeric_bundle_input,
+	facts Numeric_Facts, input *Numeric_Bundle_Input,
 ) (diags []Diagnostic) {
 
 	for _, label := range numeric_required_labels(input.Kind) {
@@ -567,7 +591,7 @@ func numeric_coverage_diagnostics(
 }
 
 // Builds the diagnostic for a boundary value the bundle never claims.
-func numeric_missing_claim(label string, input *numeric_bundle_input) (diag Diagnostic) {
+func numeric_missing_claim(label string, input *Numeric_Bundle_Input) (diag Diagnostic) {
 	subject := numeric_subject_text(input)
 	return Diagnostic{
 		Position: input.File_Set.Position(input.Bundle.Name.Pos()),
@@ -617,7 +641,7 @@ func numeric_operand_name(operand ast.Expr) (name string) {
 
 // Returns the comparison operand that is not the subject, or nil when neither is.
 func numeric_other_operand(
-	binary *ast.BinaryExpr, is_subject numeric_subject,
+	binary *ast.BinaryExpr, is_subject Numeric_Subject,
 ) (operand ast.Expr) {
 	if is_subject(binary.X) {
 		return binary.Y
@@ -732,7 +756,7 @@ func numeric_math_member(function ast.Expr) (member string) {
 // type exists in the module (presets always do), so adding one later auto-enables
 // the field. A struct with an immediate sync.Mutex/RWMutex field is skipped whole.
 // Cross-file because the bundle index spans the whole module.
-func check_struct_invariants(parsed_files []parsed_file, exempt []string) (diags []Diagnostic) {
+func check_struct_invariants(parsed_files []Parsed_File, exempt []string) (diags []Diagnostic) {
 	defined := struct_bundle_index(parsed_files)
 	for _, pf := range parsed_files {
 		if strings.HasSuffix(pf.Path, "_test.go") {
@@ -748,7 +772,7 @@ func check_struct_invariants(parsed_files []parsed_file, exempt []string) (diags
 
 // Collects the base names of every bundle defined in the module's non-test files,
 // so a field whose type has gained one is recognized without cross-package resolution.
-func struct_bundle_index(parsed_files []parsed_file) (defined map[string]bool) {
+func struct_bundle_index(parsed_files []Parsed_File) (defined map[string]bool) {
 	defined = map[string]bool{}
 	for _, pf := range parsed_files {
 		if strings.HasSuffix(pf.Path, "_test.go") {
@@ -771,7 +795,7 @@ func struct_bundle_index(parsed_files []parsed_file) (defined map[string]bool) {
 }
 
 // Checks every struct type + value/pointer-parameter bundle pair in one file.
-func struct_file_diagnostics(file parsed_file, defined map[string]bool) (diags []Diagnostic) {
+func struct_file_diagnostics(file Parsed_File, defined map[string]bool) (diags []Diagnostic) {
 	for index, declaration := range file.File.Decls {
 		general, is_general := declaration.(*ast.GenDecl)
 		if !is_general {
@@ -794,7 +818,7 @@ func struct_file_diagnostics(file parsed_file, defined map[string]bool) (diags [
 		if struct_has_mutex(struct_type) {
 			continue
 		}
-		diags = append(diags, struct_type_diagnostics(&struct_type_input{
+		diags = append(diags, struct_type_diagnostics(&Struct_Type_Input{
 			File: file, Index: index, Type: type_specification,
 			Struct: struct_type, Defined: defined,
 		})...)
@@ -804,16 +828,21 @@ func struct_file_diagnostics(file parsed_file, defined map[string]bool) (diags [
 
 // Carries one struct and the module bundle index; the parsed file and the map
 // keep it off loose parameters.
-type struct_type_input struct {
-	File    parsed_file
-	Index   int
-	Type    *ast.TypeSpec
-	Struct  *ast.StructType
+type Struct_Type_Input struct {
+	// File is the parsed file the struct is declared in.
+	File Parsed_File
+	// Index is the struct's position in the file's declaration list.
+	Index int
+	// Type is the struct type's declaration.
+	Type *ast.TypeSpec
+	// Struct is the struct's field list.
+	Struct *ast.StructType
+	// Defined is the set of type names with an invariant bundle in the module.
 	Defined map[string]bool
 }
 
 // Checks that one struct's bundle composes every coverable field.
-func struct_type_diagnostics(input *struct_type_input) (diags []Diagnostic) {
+func struct_type_diagnostics(input *Struct_Type_Input) (diags []Diagnostic) {
 	bundle := type_invariants_following_function(input.File.File, input.Index)
 	if bundle == nil {
 		return nil
@@ -827,7 +856,7 @@ func struct_type_diagnostics(input *struct_type_input) (diags []Diagnostic) {
 	}
 	present := struct_present_calls(bundle, parameter)
 	for _, field := range input.Struct.Fields.List {
-		diags = append(diags, struct_field_diagnostics(&struct_field_input{
+		diags = append(diags, struct_field_diagnostics(&Struct_Field_Input{
 			Field:           field,
 			Type_Parameters: struct_type_parameter_set(input.Type),
 			Defined:         input.Defined,
@@ -842,18 +871,25 @@ func struct_type_diagnostics(input *struct_type_input) (diags []Diagnostic) {
 
 // Carries one field and everything its check reads; three maps keep it off loose
 // parameters.
-type struct_field_input struct {
-	Field           *ast.Field
+type Struct_Field_Input struct {
+	// Field is the struct field being checked.
+	Field *ast.Field
+	// Type_Parameters is the set of the struct's type-parameter names.
 	Type_Parameters map[string]bool
-	Defined         map[string]bool
-	Present         map[string]bool
-	Parameter       string
-	Bundle          string
-	Position        token.Position
+	// Defined is the set of type names with an invariant bundle in the module.
+	Defined map[string]bool
+	// Present is the set of composition calls the bundle already makes.
+	Present map[string]bool
+	// Parameter is the bundle's struct-value parameter name.
+	Parameter string
+	// Bundle is the bundle function's name.
+	Bundle string
+	// Position is the bundle name's source position, for diagnostics.
+	Position token.Position
 }
 
 // Reports the missing composition call for one field, per declared name.
-func struct_field_diagnostics(input *struct_field_input) (diags []Diagnostic) {
+func struct_field_diagnostics(input *Struct_Field_Input) (diags []Diagnostic) {
 	if len(input.Field.Names) == 0 {
 		return nil
 	}
@@ -1140,7 +1176,7 @@ func struct_is_builtin(name string) (yes bool) {
 // (existence-driven, like the struct rule); named returns are asserted in a
 // first-statement defer, inputs in the leading block right after it. Cross-file
 // because the bundle index spans the whole module.
-func check_function_invariants(parsed_files []parsed_file, exempt []string) (diags []Diagnostic) {
+func check_function_invariants(parsed_files []Parsed_File, exempt []string) (diags []Diagnostic) {
 	defined := struct_bundle_index(parsed_files)
 	for _, pf := range parsed_files {
 		if strings.HasSuffix(pf.Path, "_test.go") {
@@ -1155,7 +1191,7 @@ func check_function_invariants(parsed_files []parsed_file, exempt []string) (dia
 }
 
 // Checks every named free function in one file.
-func function_file_diagnostics(file parsed_file, defined map[string]bool) (diags []Diagnostic) {
+func function_file_diagnostics(file Parsed_File, defined map[string]bool) (diags []Diagnostic) {
 	for _, declaration := range file.File.Decls {
 		function, is_function := declaration.(*ast.FuncDecl)
 		if !is_function {
@@ -1173,7 +1209,7 @@ func function_file_diagnostics(file parsed_file, defined map[string]bool) (diags
 		if type_invariants_is_bundle_name(function.Name.Name) {
 			continue
 		}
-		diags = append(diags, function_diagnostics(&function_input{
+		diags = append(diags, function_diagnostics(&Function_Input{
 			File: file, Function: function, Defined: defined,
 		})...)
 	}
@@ -1181,30 +1217,38 @@ func function_file_diagnostics(file parsed_file, defined map[string]bool) (diags
 }
 
 // Carries one function and the module bundle index.
-type function_input struct {
-	File     parsed_file
+type Function_Input struct {
+	// File is the parsed file the function is declared in.
+	File Parsed_File
+	// Function is the function declaration being checked.
 	Function *ast.FuncDecl
-	Defined  map[string]bool
+	// Defined is the set of type names with an invariant bundle in the module.
+	Defined map[string]bool
 }
 
 // Carries the two name maps a requirement derivation reads, so they stay off
 // loose parameters.
-type function_scope struct {
+type Function_Scope struct {
+	// Type_Parameters is the set of the function's type-parameter names.
 	Type_Parameters map[string]bool
-	Defined         map[string]bool
+	// Defined is the set of type names with an invariant bundle in the module.
+	Defined map[string]bool
 }
 
 // One subject (param or named return) and the assertion it must carry: a flat
 // call, or an element-wise range loop for a slice.
-type assertion_requirement struct {
-	Subject  string
+type Assertion_Requirement struct {
+	// Subject is the parameter or named-return name that must be asserted.
+	Subject string
+	// Expected is the invariant the subject must carry.
 	Expected string
-	Loop     bool
+	// Loop is true when the assertion must be an element-wise range loop.
+	Loop bool
 }
 
 // Collects the assertion gaps for one function's inputs and outputs.
-func function_diagnostics(input *function_input) (diags []Diagnostic) {
-	scope := &function_scope{
+func function_diagnostics(input *Function_Input) (diags []Diagnostic) {
+	scope := &Function_Scope{
 		Type_Parameters: function_type_parameter_set(input.Function),
 		Defined:         input.Defined,
 	}
@@ -1259,8 +1303,8 @@ func function_type_parameter_set(function *ast.FuncDecl) (parameters map[string]
 // Builds the assertion requirements for a parameter or result list, skipping
 // blank and exempt subjects.
 func function_requirements(
-	fields *ast.FieldList, scope *function_scope,
-) (requirements []assertion_requirement) {
+	fields *ast.FieldList, scope *Function_Scope,
+) (requirements []Assertion_Requirement) {
 
 	if fields == nil {
 		return nil
@@ -1274,7 +1318,7 @@ func function_requirements(
 			if name.Name == "_" {
 				continue
 			}
-			requirements = append(requirements, assertion_requirement{
+			requirements = append(requirements, Assertion_Requirement{
 				Subject: name.Name, Expected: expected, Loop: loop,
 			})
 		}
@@ -1286,7 +1330,7 @@ func function_requirements(
 // call. A raw slice, variadic, or map is banned by check_primitive_types rather
 // than asserted here, so it carries no requirement.
 func function_requirement(
-	field_type ast.Expr, scope *function_scope,
+	field_type ast.Expr, scope *Function_Scope,
 ) (expected string, loop bool, required bool) {
 
 	core := field_type
@@ -1310,7 +1354,7 @@ func function_requirement(
 // Maps a named type expression (ident, selector, pointer, or generic
 // instantiation) to its _Invariants name and whether one exists.
 func function_named_invariant(
-	type_expression ast.Expr, scope *function_scope,
+	type_expression ast.Expr, scope *Function_Scope,
 ) (expected string, required bool) {
 
 	core := type_expression
@@ -1426,7 +1470,7 @@ func function_is_invariant_call(statement ast.Stmt) (yes bool) {
 
 // Reports whether the statements satisfy one requirement.
 func function_requirement_met(
-	statements []ast.Stmt, requirement assertion_requirement,
+	statements []ast.Stmt, requirement Assertion_Requirement,
 ) (met bool) {
 
 	if requirement.Loop {
@@ -1437,7 +1481,7 @@ func function_requirement_met(
 
 // Reports whether some statement is a flat Expected(subject, …) call.
 func function_flat_asserts(
-	statements []ast.Stmt, requirement assertion_requirement,
+	statements []ast.Stmt, requirement Assertion_Requirement,
 ) (met bool) {
 
 	for _, statement := range statements {
@@ -1466,7 +1510,7 @@ func function_flat_asserts(
 // Reports whether some statement is a `range subject` loop asserting each element
 // with Expected.
 func function_loop_asserts(
-	statements []ast.Stmt, requirement assertion_requirement,
+	statements []ast.Stmt, requirement Assertion_Requirement,
 ) (met bool) {
 
 	for _, statement := range statements {
@@ -1495,7 +1539,7 @@ func function_loop_asserts(
 // Reports whether a range body calls the requirement's expected invariant on the
 // loop's value identifier.
 func function_block_asserts(
-	block *ast.BlockStmt, requirement assertion_requirement, value string,
+	block *ast.BlockStmt, requirement Assertion_Requirement, value string,
 ) (yes bool) {
 
 	for _, statement := range block.List {
@@ -1537,7 +1581,7 @@ func function_first_argument_name(call *ast.CallExpr) (name string) {
 }
 
 // Renders the expected assertion form for a diagnostic.
-func function_form(requirement assertion_requirement) (form string) {
+func function_form(requirement Assertion_Requirement) (form string) {
 	if requirement.Loop {
 		return "for _, x := range " + requirement.Subject + " { " +
 			requirement.Expected + "(x, ...) }"
@@ -1553,7 +1597,7 @@ func function_form(requirement assertion_requirement) (form string) {
 // directory's test files, so the whole directory is judged together. Shares the
 // type-invariant rule's opt-out.
 func check_recorder_test_main(
-	parsed_files []parsed_file, components *component_index, exempt []string,
+	parsed_files []Parsed_File, components *Component_Index, exempt []string,
 ) (diags []Diagnostic) {
 	for _, group := range recorder_test_main_groups(parsed_files) {
 		if source.Path_Matches_Glob(group.Directory, exempt) {
@@ -1579,27 +1623,36 @@ func check_recorder_test_main(
 }
 
 // One directory's recorder-relevant facts, gathered across all its files.
-type recorder_group struct {
-	Directory           string
-	Any_Path            string
-	Is_Main             bool
-	Has_Test            bool
-	Source_Anchor       token.Position
-	Test_Anchor         token.Position
-	Test_Main_Found     bool
+type Recorder_Group struct {
+	// Directory is the package directory these facts describe.
+	Directory string
+	// Any_Path is one source path in the directory, for diagnostics.
+	Any_Path string
+	// Is_Main records whether the package is package main.
+	Is_Main bool
+	// Has_Test records whether the directory has a test file.
+	Has_Test bool
+	// Source_Anchor is a position in the package's non-test source.
+	Source_Anchor token.Position
+	// Test_Anchor is a position in the package's test source.
+	Test_Anchor token.Position
+	// Test_Main_Found records whether a TestMain was found.
+	Test_Main_Found bool
+	// Test_Main_Canonical records whether the TestMain matches the required form.
 	Test_Main_Canonical bool
-	Test_Main_Position  token.Position
+	// Test_Main_Position is the TestMain's source position.
+	Test_Main_Position token.Position
 }
 
 // Buckets parsed files by directory, preserving first-seen order (parsed_files is
 // path-sorted) so diagnostics are deterministic without a separate sort.
-func recorder_test_main_groups(parsed_files []parsed_file) (groups []*recorder_group) {
-	index := map[string]*recorder_group{}
+func recorder_test_main_groups(parsed_files []Parsed_File) (groups []*Recorder_Group) {
+	index := map[string]*Recorder_Group{}
 	for _, pf := range parsed_files {
 		directory := path.Dir(pf.Path)
 		group := index[directory]
 		if group == nil {
-			group = &recorder_group{Directory: directory}
+			group = &Recorder_Group{Directory: directory}
 			index[directory] = group
 			groups = append(groups, group)
 		}
@@ -1610,7 +1663,7 @@ func recorder_test_main_groups(parsed_files []parsed_file) (groups []*recorder_g
 
 // Folds one file's facts into its directory group: a test file may carry the
 // TestMain and is the preferred anchor; a source file marks the main package.
-func recorder_group_absorb(group *recorder_group, file parsed_file) {
+func recorder_group_absorb(group *Recorder_Group, file Parsed_File) {
 	if group.Any_Path == "" {
 		group.Any_Path = file.Path
 	}
@@ -1633,7 +1686,7 @@ func recorder_group_absorb(group *recorder_group, file parsed_file) {
 
 // Records the directory's first real TestMain — name TestMain with a *testing.M
 // parameter — and whether it is the exact canonical shape.
-func recorder_group_scan_test_main(group *recorder_group, file parsed_file) {
+func recorder_group_scan_test_main(group *Recorder_Group, file Parsed_File) {
 	if group.Test_Main_Found {
 		return
 	}
@@ -1744,7 +1797,7 @@ func recorder_canonical_call(call *ast.CallExpr) (canonical bool) {
 
 // Emits the one diagnostic a non-exempt package's wiring gap warrants: a missing
 // TestMain, or a TestMain that is not the one allowed shape.
-func recorder_group_diagnostics(group *recorder_group) (diags []Diagnostic) {
+func recorder_group_diagnostics(group *Recorder_Group) (diags []Diagnostic) {
 	if !group.Test_Main_Found {
 		anchor := group.Source_Anchor
 		if group.Has_Test {
@@ -1779,7 +1832,7 @@ const SIMULATION_GLOB = "../**"
 // fuzz driver and its TestMain, and registers every non-exempt internal package
 // for coverage. Every diagnostic is tier two, so a tier-one issue suppresses it.
 func check_simulation(
-	parsed_files []parsed_file, components *component_index, exempt []string,
+	parsed_files []Parsed_File, components *Component_Index, exempt []string,
 ) (diags []Diagnostic) {
 	for i := range components.Components {
 		if components.Components[i].Is_Shared_Library {
@@ -1798,7 +1851,7 @@ func check_simulation(
 // carries no non-exempt package (nothing to witness), else the presence, contents,
 // and TestMain checks against the package at internal/simulation_test.
 func simulation_component_diagnostics(
-	parsed_files []parsed_file, components *component_index,
+	parsed_files []Parsed_File, components *Component_Index,
 	component_index_number int, exempt []string,
 ) (diags []Diagnostic) {
 	component := components.Components[component_index_number]
@@ -1829,7 +1882,7 @@ func simulation_component_diagnostics(
 // the simulation package itself — the packages the TestMain must register so their
 // invariants seed and judge in the simulation's isolated test binary.
 func simulation_internal_dirs(
-	parsed_files []parsed_file, components *component_index,
+	parsed_files []Parsed_File, components *Component_Index,
 	component_index_number int, exempt []string, internal_root string,
 ) (dirs []string) {
 	sim_directory := internal_root + "/" + SIMULATION_DIRECTORY
@@ -1870,8 +1923,8 @@ func simulation_internal_dirs(
 
 // The parsed test files that make up the simulation package at sim_directory.
 func simulation_package_files(
-	parsed_files []parsed_file, sim_directory string,
-) (files []parsed_file) {
+	parsed_files []Parsed_File, sim_directory string,
+) (files []Parsed_File) {
 	for _, pf := range parsed_files {
 		if path.Dir(pf.Path) != sim_directory {
 			continue
@@ -1885,7 +1938,7 @@ func simulation_package_files(
 // every file is a _test.go whose clause ends in _test. A source file would compile
 // into the same tree the fuzz drives, a back door around the isolated test binary.
 func simulation_package_diagnostics(
-	sim_files []parsed_file, position token.Position,
+	sim_files []Parsed_File, position token.Position,
 ) (diags []Diagnostic) {
 	for _, pf := range sim_files {
 		if !strings.HasSuffix(pf.Path, "_test.go") {
@@ -1904,7 +1957,7 @@ func simulation_package_diagnostics(
 // witness for the component's invariants. Any other declaration is allowed; the fuzz
 // driver just has to be present.
 func simulation_contents_diagnostics(
-	files []parsed_file, position token.Position,
+	files []Parsed_File, position token.Position,
 ) (diags []Diagnostic) {
 	for _, pf := range files {
 		for _, declaration := range pf.File.Decls {
@@ -1936,7 +1989,7 @@ func simulation_is_fuzz(declaration ast.Decl) (fuzz bool) {
 // internal tree — the functions the simulation is forbidden to reference, since
 // each is a second entry point that could witness an invariant without driving Main.
 func simulation_internal_functions(
-	parsed_files []parsed_file, components *component_index,
+	parsed_files []Parsed_File, components *Component_Index,
 	component_index_number int, internal_root string,
 ) (functions map[string]bool) {
 	functions = map[string]bool{}
@@ -1999,7 +2052,7 @@ func simulation_internal_import_locals(
 // other exported internal function it names is a second entry point that could
 // fabricate a witness without driving Main. Types, constants, and vars stay free.
 func simulation_entry_diagnostics(
-	sim_files []parsed_file, internal_functions map[string]bool,
+	sim_files []Parsed_File, internal_functions map[string]bool,
 	internal_import_path string, position token.Position,
 ) (diags []Diagnostic) {
 	for _, pf := range sim_files {
@@ -2065,7 +2118,7 @@ func simulation_fuzz_parameter(function *ast.FuncDecl) (name string) {
 // that one glob registers the internal package and every package beneath it, so the
 // isolated simulation binary seeds and judges them all without enumerating each.
 func simulation_test_main_diagnostics(
-	files []parsed_file, position token.Position,
+	files []Parsed_File, position token.Position,
 ) (diags []Diagnostic) {
 	function := simulation_find_test_main(files)
 	if function == nil {
@@ -2093,7 +2146,7 @@ func simulation_test_main_canonical(function *ast.FuncDecl) (canonical bool) {
 }
 
 // The first TestMain with a *testing.M parameter among the simulation files.
-func simulation_find_test_main(files []parsed_file) (function *ast.FuncDecl) {
+func simulation_find_test_main(files []Parsed_File) (function *ast.FuncDecl) {
 	for _, pf := range files {
 		for _, declaration := range pf.File.Decls {
 			candidate, is_function := declaration.(*ast.FuncDecl)
@@ -2203,7 +2256,7 @@ func simulation_diagnostic(position token.Position, message string) (diags []Dia
 // or as a struct field. Such a type has no preset and cannot carry its own bundle;
 // a defined wrapper gives it well-defined coverage. A method satisfying a stdlib
 // interface keeps its dictated signature. Shares the type-invariant opt-out.
-func check_primitive_types(parsed_files []parsed_file, exempt []string) (diags []Diagnostic) {
+func check_primitive_types(parsed_files []Parsed_File, exempt []string) (diags []Diagnostic) {
 	for _, pf := range parsed_files {
 		if strings.HasSuffix(pf.Path, "_test.go") {
 			continue
@@ -2217,7 +2270,7 @@ func check_primitive_types(parsed_files []parsed_file, exempt []string) (diags [
 }
 
 // Checks every function signature and struct field in one file.
-func primitive_file_diagnostics(file parsed_file) (diags []Diagnostic) {
+func primitive_file_diagnostics(file Parsed_File) (diags []Diagnostic) {
 	for _, declaration := range file.File.Decls {
 		switch typed := declaration.(type) {
 		case *ast.FuncDecl:
@@ -2231,18 +2284,18 @@ func primitive_file_diagnostics(file parsed_file) (diags []Diagnostic) {
 
 // Flags a non-stdlib function's raw string/slice/map parameters and results.
 func primitive_function_diagnostics(
-	file parsed_file, function *ast.FuncDecl,
+	file Parsed_File, function *ast.FuncDecl,
 ) (diags []Diagnostic) {
 
 	if source.Method_Satisfies_Stdlib(function) {
 		return nil
 	}
 	position := file.File_Set.Position(function.Name.Pos())
-	diags = append(diags, primitive_field_diagnostics(&primitive_field_input{
+	diags = append(diags, primitive_field_diagnostics(&Primitive_Field_Input{
 		Fields: function.Type.Params, Role: "parameter",
 		Owner: function.Name.Name, Position: position,
 	})...)
-	diags = append(diags, primitive_field_diagnostics(&primitive_field_input{
+	diags = append(diags, primitive_field_diagnostics(&Primitive_Field_Input{
 		Fields: function.Type.Results, Role: "result",
 		Owner: function.Name.Name, Position: position,
 	})...)
@@ -2250,7 +2303,7 @@ func primitive_function_diagnostics(
 }
 
 // Flags each struct type's raw string/slice/map fields.
-func primitive_struct_diagnostics(file parsed_file, general *ast.GenDecl) (diags []Diagnostic) {
+func primitive_struct_diagnostics(file Parsed_File, general *ast.GenDecl) (diags []Diagnostic) {
 	if general.Tok != token.TYPE {
 		return nil
 	}
@@ -2263,7 +2316,7 @@ func primitive_struct_diagnostics(file parsed_file, general *ast.GenDecl) (diags
 		if !is_struct {
 			continue
 		}
-		diags = append(diags, primitive_field_diagnostics(&primitive_field_input{
+		diags = append(diags, primitive_field_diagnostics(&Primitive_Field_Input{
 			Fields: struct_type.Fields, Role: "field",
 			Owner:    type_specification.Name.Name,
 			Position: file.File_Set.Position(type_specification.Name.Pos()),
@@ -2274,15 +2327,19 @@ func primitive_struct_diagnostics(file parsed_file, general *ast.GenDecl) (diags
 
 // Carries one field list and how to name its diagnostics; a struct keeps the role
 // and owner off loose string parameters.
-type primitive_field_input struct {
-	Fields   *ast.FieldList
-	Role     string
-	Owner    string
+type Primitive_Field_Input struct {
+	// Fields is the field list being checked.
+	Fields *ast.FieldList
+	// Role names the field list's role in diagnostics.
+	Role string
+	// Owner is the declaring type or function name, for diagnostics.
+	Owner string
+	// Position is the source position for diagnostics.
 	Position token.Position
 }
 
 // Flags each field in the list whose type is a raw string, slice, or map.
-func primitive_field_diagnostics(input *primitive_field_input) (diags []Diagnostic) {
+func primitive_field_diagnostics(input *Primitive_Field_Input) (diags []Diagnostic) {
 	if input.Fields == nil {
 		return nil
 	}

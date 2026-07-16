@@ -108,11 +108,15 @@ func check_format(
 
 // One heading found in a SPECIFICATION.md: its level (1 or 3), 1-based source
 // line, the raw text after the marker, and its Ada_Case form.
-type heading struct {
+type Heading struct {
+	// Level is the heading level: 1 or 3.
 	Level int
-	Line  int
-	Raw   string
-	Ada   string
+	// Line is the 1-based source line the heading sits on.
+	Line int
+	// Raw is the heading text following the marker.
+	Raw string
+	// Ada is the heading's Ada_Case form.
+	Ada string
 }
 
 func position_at(path string, line int) (position token.Position) {
@@ -135,7 +139,7 @@ func heading_parse(line string) (level int, raw string) {
 // blank-line fencing, and non-letter/digit heading words.
 func scan_headings(
 	markdown_path string, lines []string,
-) (headings []heading, diags []diagnostic.Diagnostic) {
+) (headings []Heading, diags []diagnostic.Diagnostic) {
 	seen_heading := false
 	for i, line := range lines {
 		position := position_at(markdown_path, i+1)
@@ -153,7 +157,7 @@ func scan_headings(
 			}
 			continue
 		}
-		headings = append(headings, heading{
+		headings = append(headings, Heading{
 			Level: level, Line: i + 1, Raw: raw, Ada: ada_case(raw)})
 		diags = append(diags, heading_line_diags(position, lines, i, raw)...)
 		seen_heading = true
@@ -175,22 +179,29 @@ func heading_line_diags(
 // State for the walk that determines leaves: a # with no ### child is a leaf
 // named Ada(#); each ### is a leaf named Ada(#)_Ada(###). # names are unique
 // file-wide; ### names are unique within their parent #.
-type tree struct {
-	Path       string
-	Seen_H2    map[string]bool
-	Seen_H3    map[string]bool
-	Parent     heading
-	Has_Child  bool
+type Tree struct {
+	// Path is the SPECIFICATION.md path being walked.
+	Path string
+	// Seen_H2 records the # names seen file-wide, for uniqueness.
+	Seen_H2 map[string]bool
+	// Seen_H3 records the ### names seen within the current #.
+	Seen_H3 map[string]bool
+	// Parent is the currently open # heading.
+	Parent Heading
+	// Has_Child records whether the open # has a ### child.
+	Has_Child bool
+	// Leaf_Lines maps each leaf heading's line to true.
 	Leaf_Lines map[int]bool
-	Names      []string
+	// Names is the ordered list of leaf test-name bases.
+	Names []string
 }
 
 // Pass two: walk the headings into the tree, returning the lines that open a
 // leaf section, the ordered leaf test-name bases, and the uniqueness diagnostics.
 func scan_leaves(
-	markdown_path string, headings []heading,
+	markdown_path string, headings []Heading,
 ) (leaf_lines map[int]bool, names []string, diags []diagnostic.Diagnostic) {
-	state := &tree{
+	state := &Tree{
 		Path: markdown_path, Seen_H2: map[string]bool{},
 		Seen_H3: map[string]bool{}, Leaf_Lines: map[int]bool{},
 	}
@@ -201,7 +212,7 @@ func scan_leaves(
 	return state.Leaf_Lines, state.Names, diags
 }
 
-func tree_add(state *tree, entry heading) (diags []diagnostic.Diagnostic) {
+func tree_add(state *Tree, entry Heading) (diags []diagnostic.Diagnostic) {
 	if entry.Level == 3 {
 		return tree_child(state, entry)
 	}
@@ -216,7 +227,7 @@ func tree_add(state *tree, entry heading) (diags []diagnostic.Diagnostic) {
 	return diags
 }
 
-func tree_child(state *tree, entry heading) (diags []diagnostic.Diagnostic) {
+func tree_child(state *Tree, entry Heading) (diags []diagnostic.Diagnostic) {
 	position := position_at(state.Path, entry.Line)
 	if state.Parent.Line == 0 {
 		return []diagnostic.Diagnostic{orphan_diag(position, entry.Raw)}
@@ -232,7 +243,7 @@ func tree_child(state *tree, entry heading) (diags []diagnostic.Diagnostic) {
 }
 
 // Records the just-finished # as a leaf when it gained no ### child.
-func tree_close(state *tree) {
+func tree_close(state *Tree) {
 	if state.Parent.Line == 0 {
 		return
 	}
@@ -243,32 +254,37 @@ func tree_close(state *tree) {
 	state.Names = append(state.Names, state.Parent.Ada)
 }
 
-func tree_duplicate(state *tree, entry heading) (diag diagnostic.Diagnostic) {
+func tree_duplicate(state *Tree, entry Heading) (diag diagnostic.Diagnostic) {
 	position := position_at(state.Path, entry.Line)
 	return heading_duplicate_diag(position, entry.Raw)
 }
 
 // State for the body pass: the currently open section, its accumulated body line
 // count, and whether a blank line has already interrupted that body.
-type body struct {
-	Path       string
+type Body struct {
+	// Path is the SPECIFICATION.md path being walked.
+	Path string
+	// Leaf_Lines maps each leaf heading's line to true.
 	Leaf_Lines map[int]bool
-	Open       heading
-	Body       int
-	Blank      bool
+	// Open is the currently open section's heading.
+	Open Heading
+	// Body is the accumulated body-line count for the open section.
+	Body int
+	// Blank records whether a blank line has interrupted the body.
+	Blank bool
 }
 
 // Pass three: attribute body lines to their opening heading, flagging oversized
 // sections, gaps in a section body, and leaf sections with no body. A branch #
 // intro is size- and gap-checked but, not being a leaf, may be empty.
 func scan_bodies(
-	markdown_path string, lines []string, headings []heading, leaf_lines map[int]bool,
+	markdown_path string, lines []string, headings []Heading, leaf_lines map[int]bool,
 ) (diags []diagnostic.Diagnostic) {
-	at := map[int]heading{}
+	at := map[int]Heading{}
 	for _, entry := range headings {
 		at[entry.Line] = entry
 	}
-	state := &body{Path: markdown_path, Leaf_Lines: leaf_lines}
+	state := &Body{Path: markdown_path, Leaf_Lines: leaf_lines}
 	for i, line := range lines {
 		entry, is_heading := at[i+1]
 		if is_heading {
@@ -280,7 +296,7 @@ func scan_bodies(
 		}
 		if strings.HasPrefix(line, "#") {
 			diags = append(diags, body_close(state)...)
-			state.Open = heading{}
+			state.Open = Heading{}
 			state.Body = 0
 			state.Blank = false
 			continue
@@ -299,7 +315,7 @@ func scan_bodies(
 	return append(diags, body_close(state)...)
 }
 
-func body_line(state *body, line int) (diags []diagnostic.Diagnostic) {
+func body_line(state *Body, line int) (diags []diagnostic.Diagnostic) {
 	position := position_at(state.Path, line)
 	raw := state.Open.Raw
 	if state.Blank {
@@ -314,7 +330,7 @@ func body_line(state *body, line int) (diags []diagnostic.Diagnostic) {
 }
 
 // Emits the body-required diagnostic when a leaf section closed with no body.
-func body_close(state *body) (diags []diagnostic.Diagnostic) {
+func body_close(state *Body) (diags []diagnostic.Diagnostic) {
 	if state.Open.Line == 0 {
 		return nil
 	}
