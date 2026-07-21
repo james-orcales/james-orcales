@@ -7,7 +7,7 @@ package csprng
 import (
 	"crypto/rand"
 
-	"local/james-orcales/shared/csprng"
+	"local/james-orcales/shared/random/csprng"
 
 	invariant "local/james-orcales/shared/invariant/default"
 )

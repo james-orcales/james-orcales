@@ -5,7 +5,7 @@ import (
 	"reflect"
 	"testing"
 
-	"local/james-orcales/shared/prng"
+	"local/james-orcales/shared/random/prng"
 
 	invariant "local/james-orcales/shared/invariant/default"
 )

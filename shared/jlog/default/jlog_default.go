@@ -19,7 +19,7 @@ import (
 	"runtime"
 	"strconv"
 
-	"local/james-orcales/shared/diode"
+	"local/james-orcales/shared/sync/diode"
 	"local/james-orcales/shared/jlog"
 	"local/james-orcales/shared/time"
 	system_time "local/james-orcales/shared/time/default"

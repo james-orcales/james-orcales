@@ -3,7 +3,7 @@ package csprng_test
 import (
 	"testing"
 
-	"local/james-orcales/shared/csprng"
+	"local/james-orcales/shared/random/csprng"
 )
 
 // Benchmark_Read measures filling a 32-byte buffer through io.Reader.

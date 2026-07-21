@@ -7,7 +7,7 @@ import (
 	"os"
 	"testing"
 
-	"local/james-orcales/shared/diode"
+	"local/james-orcales/shared/sync/diode"
 	jlog "local/james-orcales/shared/jlog/default"
 	"local/james-orcales/shared/time"
 	system_time "local/james-orcales/shared/time/default"

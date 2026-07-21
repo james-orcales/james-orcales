@@ -3,7 +3,7 @@ package levenshtein_test
 import (
 	"testing"
 
-	"local/james-orcales/shared/levenshtein"
+	"local/james-orcales/shared/diff/levenshtein"
 )
 
 // Test_Distance_Cases verifies the edit distance for equality, empties, the three

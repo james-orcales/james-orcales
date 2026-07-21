@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"local/james-orcales/shared/myers"
+	"local/james-orcales/shared/diff/myers"
 	"local/james-orcales/shared/snap/default"
 )
 

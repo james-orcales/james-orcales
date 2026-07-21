@@ -5,7 +5,7 @@ import (
 	"math/bits"
 	"testing"
 
-	"local/james-orcales/shared/fixedpoint"
+	"local/james-orcales/shared/math/fixedpoint"
 )
 
 // Test_Conversion verifies the lift to fixed-point, the truncating round trip, and the

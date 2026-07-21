@@ -3,7 +3,7 @@ package csprng_test
 import (
 	"testing"
 
-	os_csprng "local/james-orcales/shared/csprng/default"
+	os_csprng "local/james-orcales/shared/random/csprng/default"
 	invariant "local/james-orcales/shared/invariant/default"
 )
 

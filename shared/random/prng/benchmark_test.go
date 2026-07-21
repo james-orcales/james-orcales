@@ -3,7 +3,7 @@ package prng_test
 import (
 	"testing"
 
-	"local/james-orcales/shared/prng"
+	"local/james-orcales/shared/random/prng"
 )
 
 // Benchmark_Next measures the raw draw, the hot path that must not allocate.

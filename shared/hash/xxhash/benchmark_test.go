@@ -3,7 +3,7 @@ package xxhash_test
 import (
 	"testing"
 
-	"local/james-orcales/shared/xxhash"
+	"local/james-orcales/shared/hash/xxhash"
 )
 
 // Benchmark_Hash measures the one-shot hash over a mid-sized buffer — the throughput headline.

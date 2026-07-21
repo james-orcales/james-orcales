@@ -5,7 +5,7 @@ import (
 	"io"
 	"testing"
 
-	"local/james-orcales/shared/bzip2"
+	"local/james-orcales/shared/compress/bzip2"
 )
 
 // Test_Bounded_Decompression verifies New_Reader decompresses a bzip2 stream and

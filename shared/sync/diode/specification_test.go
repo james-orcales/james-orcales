@@ -7,7 +7,7 @@ import (
 	"sync"
 	"testing"
 
-	"local/james-orcales/shared/diode"
+	"local/james-orcales/shared/sync/diode"
 	"local/james-orcales/shared/time"
 )
 
