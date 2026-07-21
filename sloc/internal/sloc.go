@@ -4,7 +4,6 @@
 package sloc
 
 import (
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -17,6 +16,7 @@ import (
 	"unicode/utf8"
 
 	"local/james-orcales/shared/cli"
+	"local/james-orcales/shared/flatjson"
 )
 
 // The process exit codes.
@@ -2405,32 +2405,19 @@ type Json_Counts struct {
 	Blanks int `json:"blanks"`
 }
 
-// One language's serialized counts, or the total when name and category are omitted.
+// One serialized row: a language's source/test split, or the total when Is_Total is set.
+// flatjson flattens Source and Tests into source_* and tests_* keys.
 type Json_Language struct {
-	// Name is the language's display name, omitted on the total.
-	Name string `json:"name,omitempty"`
-	// Category is the language's taxonomy bucket, omitted on the total.
-	Category string `json:"category,omitempty"`
-	// Files is the number of files counted.
-	Files int `json:"files"`
-	// Code is the code-line count.
-	Code int `json:"code"`
-	// Comments is the comment-line count.
-	Comments int `json:"comments"`
-	// Blanks is the blank-line count.
-	Blanks int `json:"blanks"`
+	// Name is the language's display name, empty on the total.
+	Name string `json:"name"`
+	// Category is the language's taxonomy bucket, empty on the total.
+	Category string `json:"category"`
+	// Is_Total marks the total row so a consumer need not special-case name or position.
+	Is_Total bool `json:"is_total"`
 	// Source is the non-test partition.
 	Source Json_Counts `json:"source"`
 	// Tests is the test partition.
 	Tests Json_Counts `json:"tests"`
-}
-
-// The serialized report: the languages and the total.
-type Json_Report struct {
-	// Languages holds each language's counts in name order.
-	Languages []Json_Language `json:"languages"`
-	// Total is the summed counts across all languages.
-	Total Json_Language `json:"total"`
 }
 
 // Builds a serialized partition from a file count and a partition.
@@ -2443,34 +2430,27 @@ func json_partition(files int, counts Counts) (partition Json_Counts) {
 	}
 }
 
-// Render_Json writes the report as indented JSON: a name-sorted languages array, each
-// with its category and source/test split, and a total.
+// Render_Json writes the report as compact flat JSON: a name-sorted array of per-language
+// rows, each with its category and source/test split, with the total appended last and
+// flagged by is_total.
 func Render_Json(output io.Writer, report Report) (err error) {
-	document := Json_Report{Languages: []Json_Language{}}
+	languages := []Json_Language{}
+	total := Json_Language{Is_Total: true}
 	for _, group := range report_groups(report) {
-		document.Languages = append(document.Languages, Json_Language{
+		languages = append(languages, Json_Language{
 			Name:     group.Name,
 			Category: group.Category,
-			Files:    group.Files,
-			Code:     group.Counts.Code,
-			Comments: group.Counts.Comment,
-			Blanks:   group.Counts.Blank,
 			Source:   json_partition(group.Source_Files, group.Source),
 			Tests:    json_partition(group.Test_Files, group.Test),
 		})
-		json_language_add(&document.Total, group)
+		json_language_add(&total, group)
 	}
-	encoder := json.NewEncoder(output)
-	encoder.SetIndent("", "  ")
-	return encoder.Encode(document)
+	languages = append(languages, total)
+	return flatjson.Marshal_Write(output, languages)
 }
 
 // Accumulates a language group into the JSON total.
 func json_language_add(total *Json_Language, group Language_Group) {
-	total.Files += group.Files
-	total.Code += group.Counts.Code
-	total.Comments += group.Counts.Comment
-	total.Blanks += group.Counts.Blank
 	total.Source.Files += group.Source_Files
 	total.Source.Code += group.Source.Code
 	total.Source.Comments += group.Source.Comment

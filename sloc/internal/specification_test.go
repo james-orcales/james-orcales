@@ -522,8 +522,9 @@ func Test_Render_Tests(t *testing.T) {
 	}
 }
 
-// Test_Render_JSON verifies the JSON output: a languages array carrying each language's
-// category and source/test split, and a total.
+// Test_Render_JSON verifies the JSON output: a compact top-level array of flat language rows,
+// each carrying its category and source/test split, with the total appended last and marked by
+// is_total.
 func Test_Render_JSON(t *testing.T) {
 	files := []sloc.File_Count{
 		{Path: "a.go", Language: "Go", Counts: sloc.Counts{Code: 10, Comment: 2, Blank: 3}},
@@ -534,49 +535,7 @@ func Test_Render_JSON(t *testing.T) {
 	if err := sloc.Render_Json(&output, sloc.Report{Files: files}); err != nil {
 		t.Fatal(err)
 	}
-	want := `{
-  "languages": [
-    {
-      "name": "Go",
-      "category": "Managed",
-      "files": 2,
-      "code": 14,
-      "comments": 3,
-      "blanks": 4,
-      "source": {
-        "files": 1,
-        "code": 10,
-        "comments": 2,
-        "blanks": 3
-      },
-      "tests": {
-        "files": 1,
-        "code": 4,
-        "comments": 1,
-        "blanks": 1
-      }
-    }
-  ],
-  "total": {
-    "files": 2,
-    "code": 14,
-    "comments": 3,
-    "blanks": 4,
-    "source": {
-      "files": 1,
-      "code": 10,
-      "comments": 2,
-      "blanks": 3
-    },
-    "tests": {
-      "files": 1,
-      "code": 4,
-      "comments": 1,
-      "blanks": 1
-    }
-  }
-}
-`
+	want := `[{"name":"Go","category":"Managed","is_total":false,"source_files":1,"source_code":10,"source_comments":2,"source_blanks":3,"tests_files":1,"tests_code":4,"tests_comments":1,"tests_blanks":1},{"name":"","category":"","is_total":true,"source_files":1,"source_code":10,"source_comments":2,"source_blanks":3,"tests_files":1,"tests_code":4,"tests_comments":1,"tests_blanks":1}]`
 	if output.String() != want {
 		t.Errorf("json mismatch:\n got=%q\nwant=%q", output.String(), want)
 	}

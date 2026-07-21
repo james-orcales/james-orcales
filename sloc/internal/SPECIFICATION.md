@@ -109,8 +109,9 @@ Total splits the same way; a language without tests shows only its single row.
 
 ### JSON
 
-Render_Json emits the report as JSON instead of a table: a name-sorted languages array,
-each with its category and source and test counts, and a total.
+Render_Json emits the report as compact flat JSON (via shared/flatjson) instead of a table:
+a name-sorted array of per-language rows, each with its category and source/test counts
+flattened to source_* and tests_* keys; the total is the last row, flagged by is_total.
 
 # Limitations
 
