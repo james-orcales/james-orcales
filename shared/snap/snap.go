@@ -19,8 +19,8 @@ import (
 	"sync"
 	"testing"
 
-	invariant "local/james-orcales/shared/invariant/default"
 	"local/james-orcales/shared/diff/myers"
+	invariant "local/james-orcales/shared/invariant/default"
 )
 
 // Keys the diff colors so readers can map - / + to red / green without

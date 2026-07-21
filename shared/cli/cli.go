@@ -44,8 +44,8 @@ import (
 	"strings"
 	"text/tabwriter"
 
-	invariant "local/james-orcales/shared/invariant/default"
 	"local/james-orcales/shared/diff/levenshtein"
+	invariant "local/james-orcales/shared/invariant/default"
 )
 
 // Help_Requested is returned by Program_Parse when the command line carries the

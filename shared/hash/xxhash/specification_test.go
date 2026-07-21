@@ -5,8 +5,8 @@ import (
 	"io"
 	"testing"
 
-	"local/james-orcales/shared/random/prng"
 	"local/james-orcales/shared/hash/xxhash"
+	"local/james-orcales/shared/random/prng"
 )
 
 // Test_Hash_Matches_Reference_Vectors checks the one-shot Hash against the published XXH64 vectors.

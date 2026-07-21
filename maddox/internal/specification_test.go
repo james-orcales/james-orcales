@@ -7,8 +7,8 @@ import (
 	"testing"
 
 	maddox "local/james-orcales/maddox/internal"
-	"local/james-orcales/shared/fixedpoint"
 	"local/james-orcales/shared/io"
+	"local/james-orcales/shared/math/fixedpoint"
 	"local/james-orcales/shared/time"
 )
 

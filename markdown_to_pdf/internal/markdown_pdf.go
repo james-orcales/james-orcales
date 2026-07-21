@@ -10,7 +10,7 @@ import (
 	"strconv"
 	"strings"
 
-	"local/james-orcales/shared/fixedpoint"
+	"local/james-orcales/shared/math/fixedpoint"
 )
 
 // Main_Input carries the injected dependencies Main needs.

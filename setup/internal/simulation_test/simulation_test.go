@@ -12,7 +12,7 @@ import (
 
 	setup "local/james-orcales/setup/internal"
 	sysio "local/james-orcales/shared/io"
-	"local/james-orcales/shared/prng"
+	"local/james-orcales/shared/random/prng"
 	systime "local/james-orcales/shared/time"
 )
 

@@ -3,8 +3,8 @@ package csprng_test
 import (
 	"testing"
 
-	os_csprng "local/james-orcales/shared/random/csprng/default"
 	invariant "local/james-orcales/shared/invariant/default"
+	os_csprng "local/james-orcales/shared/random/csprng/default"
 )
 
 // TestMain registers this package's assertions with the invariant coverage recorder and reports any

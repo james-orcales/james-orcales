@@ -16,9 +16,9 @@ import (
 	"strings"
 	"unicode/utf8"
 
-	"local/james-orcales/shared/fixedpoint"
 	invariant "local/james-orcales/shared/invariant/default"
 	sysio "local/james-orcales/shared/io"
+	"local/james-orcales/shared/math/fixedpoint"
 	"local/james-orcales/shared/time"
 )
 
