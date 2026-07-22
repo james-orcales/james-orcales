@@ -28,6 +28,7 @@
   "opt_out_assertion_mandate_packages": [
           "**",
           "!maddox/**",
+          "!sloc/**",
           "!shared/csprng/**"
   ],
   "word_replacements": {
