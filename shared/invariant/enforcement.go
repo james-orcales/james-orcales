@@ -13,7 +13,10 @@
 
 package invariant
 
-import "strings"
+import (
+	"strings"
+	"unsafe"
+)
 
 // Recorder_Always stays outside Product because an eager guard has no second branch to widen a
 // demanded grid. It panics immediately when condition is false in every run mode; under a plain
@@ -40,12 +43,38 @@ func Recorder_Always[T ~bool](recorder *Recorder, condition T, message string) {
 // shape-discovery miss path: a NUL namespace never publishes a shape, so every offending call
 // re-enters discovery and re-panics there, while the warmed root performs no scan at all.
 func Recorder_Dot_Product(recorder *Recorder, namespace Namespace) (product Product) {
-	// The identity probe answers directly so a warmed root pays one call, not a chain of
-	// them; only a probe miss walks the content-keyed resolution.
-	shape := recorder_chain_shape_probe(recorder, namespace)
-	if shape == nil {
-		shape = recorder_chain_shape(recorder, namespace)
+	// The identity probe lives in this body rather than behind a call: the root runs once
+	// per chain across the whole program, so even one spare call frame is a measurable tax.
+	// A hit derives shape and lane from the slot alone; a recording recorder re-derives its
+	// lane because test and fuzz flags are live recorder state, not frozen shape state.
+	cache := recorder.Chain_Shape_Identities.Load()
+	if cache != nil {
+		data := unsafe.StringData(string(namespace))
+		mask := uint64(len(cache.Slots)) - 1
+		slot_index := (chain_identity_hash(data, len(namespace)) >> 32) & mask
+		for probe_index := 0; probe_index < len(cache.Slots); probe_index++ {
+			slot := &cache.Slots[slot_index]
+			if slot.Data == nil {
+				break
+			}
+			if slot.Data == unsafe.Pointer(data) {
+				if slot.Size == len(namespace) {
+					lane := slot.Lane
+					if recorder.Is_Test {
+						lane = recorder_chain_tier(recorder, slot.Shape)
+					}
+					return Product{
+						Recorder:  recorder,
+						Shape:     slot.Shape,
+						Namespace: namespace,
+						Tier:      lane,
+					}
+				}
+			}
+			slot_index = (slot_index + 1) & mask
+		}
 	}
+	shape := recorder_chain_shape(recorder, namespace)
 	return Product{
 		Recorder:  recorder,
 		Shape:     shape,
@@ -59,7 +88,7 @@ func Recorder_Dot_Product(recorder *Recorder, namespace Namespace) (product Prod
 // latch nothing, so the head must stay under the inliner's budget — the call boundary itself is
 // most of what a dense trusted chain pays.
 func (product Product) Sometimes(condition bool, message string) (next Product) {
-	if product.Tier == TIER_TRUSTED {
+	if product.Tier >= TIER_TRUSTED {
 		return product
 	}
 	return product.sometimes_observe(condition, message)
@@ -150,11 +179,9 @@ func (product Product) Range_Int(
 	value int, minimum int, maximum int, excluded ...int,
 ) (next Product) {
 	if product.Tier == TIER_TRUSTED {
-		if len(excluded) == 0 {
-			if value >= minimum {
-				if value <= maximum {
-					return product
-				}
+		if value >= minimum {
+			if value <= maximum {
+				return product
 			}
 		}
 	}
@@ -166,11 +193,9 @@ func (product Product) Range_Int8(
 	value int8, minimum int8, maximum int8, excluded ...int8,
 ) (next Product) {
 	if product.Tier == TIER_TRUSTED {
-		if len(excluded) == 0 {
-			if value >= minimum {
-				if value <= maximum {
-					return product
-				}
+		if value >= minimum {
+			if value <= maximum {
+				return product
 			}
 		}
 	}
@@ -182,11 +207,9 @@ func (product Product) Range_Int16(
 	value int16, minimum int16, maximum int16, excluded ...int16,
 ) (next Product) {
 	if product.Tier == TIER_TRUSTED {
-		if len(excluded) == 0 {
-			if value >= minimum {
-				if value <= maximum {
-					return product
-				}
+		if value >= minimum {
+			if value <= maximum {
+				return product
 			}
 		}
 	}
@@ -198,11 +221,9 @@ func (product Product) Range_Int32(
 	value int32, minimum int32, maximum int32, excluded ...int32,
 ) (next Product) {
 	if product.Tier == TIER_TRUSTED {
-		if len(excluded) == 0 {
-			if value >= minimum {
-				if value <= maximum {
-					return product
-				}
+		if value >= minimum {
+			if value <= maximum {
+				return product
 			}
 		}
 	}
@@ -214,11 +235,9 @@ func (product Product) Range_Int64(
 	value int64, minimum int64, maximum int64, excluded ...int64,
 ) (next Product) {
 	if product.Tier == TIER_TRUSTED {
-		if len(excluded) == 0 {
-			if value >= minimum {
-				if value <= maximum {
-					return product
-				}
+		if value >= minimum {
+			if value <= maximum {
+				return product
 			}
 		}
 	}
@@ -230,11 +249,9 @@ func (product Product) Range_Uint(
 	value uint, minimum uint, maximum uint, excluded ...uint,
 ) (next Product) {
 	if product.Tier == TIER_TRUSTED {
-		if len(excluded) == 0 {
-			if value >= minimum {
-				if value <= maximum {
-					return product
-				}
+		if value >= minimum {
+			if value <= maximum {
+				return product
 			}
 		}
 	}
@@ -246,11 +263,9 @@ func (product Product) Range_Uint8(
 	value uint8, minimum uint8, maximum uint8, excluded ...uint8,
 ) (next Product) {
 	if product.Tier == TIER_TRUSTED {
-		if len(excluded) == 0 {
-			if value >= minimum {
-				if value <= maximum {
-					return product
-				}
+		if value >= minimum {
+			if value <= maximum {
+				return product
 			}
 		}
 	}
@@ -262,11 +277,9 @@ func (product Product) Range_Uint16(
 	value uint16, minimum uint16, maximum uint16, excluded ...uint16,
 ) (next Product) {
 	if product.Tier == TIER_TRUSTED {
-		if len(excluded) == 0 {
-			if value >= minimum {
-				if value <= maximum {
-					return product
-				}
+		if value >= minimum {
+			if value <= maximum {
+				return product
 			}
 		}
 	}
@@ -278,11 +291,9 @@ func (product Product) Range_Uint32(
 	value uint32, minimum uint32, maximum uint32, excluded ...uint32,
 ) (next Product) {
 	if product.Tier == TIER_TRUSTED {
-		if len(excluded) == 0 {
-			if value >= minimum {
-				if value <= maximum {
-					return product
-				}
+		if value >= minimum {
+			if value <= maximum {
+				return product
 			}
 		}
 	}
@@ -294,11 +305,9 @@ func (product Product) Range_Uint64(
 	value uint64, minimum uint64, maximum uint64, excluded ...uint64,
 ) (next Product) {
 	if product.Tier == TIER_TRUSTED {
-		if len(excluded) == 0 {
-			if value >= minimum {
-				if value <= maximum {
-					return product
-				}
+		if value >= minimum {
+			if value <= maximum {
+				return product
 			}
 		}
 	}
@@ -409,7 +418,7 @@ func (product Product) Enum_Uint64(value uint64, members ...uint64) (next Produc
 // head inlines the one outcome a dense trusted chain reaches — nothing latched, nothing to do —
 // and every other lane or latched failure takes the cold body.
 func (product Product) Ensure() {
-	if product.Tier == TIER_TRUSTED {
+	if product.Tier >= TIER_TRUSTED {
 		if product.Failure == 0 {
 			if product.Preset_Failure == 0 {
 				return
@@ -423,7 +432,7 @@ func (product Product) Ensure() {
 // this one because its crediting must stay bit-identical to a plain test run — it differs only
 // in walking the user carves instead of re-proving the preset tautologies.
 func (product Product) ensure_slow() {
-	if product.Tier == TIER_TRUSTED {
+	if product.Tier >= TIER_TRUSTED {
 		product.ensure_trusted()
 		return
 	}

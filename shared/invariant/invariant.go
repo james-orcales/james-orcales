@@ -336,6 +336,10 @@ type Chain_Shape struct {
 	// non-recording lane enforces exactly this subset. Derived before the shape freezes and
 	// read only through chain_replays' acquire, never re-derived per call.
 	User_Rules []Chain_Rule
+	// Warmed_Tier is the lane a warmed non-recording root takes, frozen with the shape so
+	// the hot root reads one byte instead of re-deriving carve and hole possession from
+	// slices on other cache lines.
+	Warmed_Tier uint8
 }
 
 // Chain_Shape_Cache resolves a namespace to its published shape by the identity of the string's
@@ -361,6 +365,11 @@ type Chain_Shape_Slot struct {
 	Size int
 	// Shape is the published resolution this identity proves.
 	Shape *Chain_Shape
+	// Lane snapshots the shape's warmed tier so a probe hit derives the production lane
+	// without touching the shape at all. Only warmed shapes are remembered, and a warmed
+	// shape's tier is frozen, so the snapshot can never go stale; recording runs ignore it
+	// because their lane depends on live recorder flags.
+	Lane uint8
 }
 
 // Chain_Guard is one preset bound obligation, excluded from tuple coordinates.
@@ -524,9 +533,16 @@ const TIER_FUZZ uint8 = 1
 // the carve walk and nothing else runs.
 const TIER_OBSERVATION uint8 = 2
 
-// The trusted lane is a warmed non-recording chain with no user carves: the typed verdicts are
-// the only property still enforceable at runtime, so only they run.
+// The trusted lane is a warmed non-recording chain with no user carves and no declared holes:
+// the bound compares are the only property still enforceable at runtime, so the link heads run
+// them inline and nothing else. Both trusted lanes sit at the top of the ordering so a head
+// admits either with a single >= compare while the hole-free Range head demands equality.
 const TIER_TRUSTED uint8 = 3
+
+// The holed trusted lane is a warmed non-recording chain whose presets declare exclusions or
+// members: identical to trusted except the typed links must keep their full verdict, values
+// scan included, so the hole-free Range head's equality compare deliberately excludes it.
+const TIER_TRUSTED_HOLES uint8 = 4
 
 // Event_True references the axis carrying message at its true outcome, for use in Impossible. The
 // message names a sibling axis of the consuming Dot_Product (matched by value, like the axis's own
@@ -573,9 +589,9 @@ func product_range[
 	product Product, integer_kind Chain_Integer_Kind,
 	value Value, minimum Value, maximum Value, excluded []Value,
 ) (next Product) {
-	// The trusted lane goes straight to the verdict: hole-in-range validation is chain
+	// Both trusted lanes go straight to the verdict: hole-in-range validation is chain
 	// malformedness detection, and a trusted chain proved its holes when it was discovered.
-	if product.Tier == TIER_TRUSTED {
+	if product.Tier >= TIER_TRUSTED {
 		return product_range_verdict(
 			product, product.Ordinal, value, minimum, maximum, excluded)
 	}
@@ -626,7 +642,7 @@ func product_preset[
 	if product.Failure != 0 {
 		return product
 	}
-	if product.Tier == TIER_TRUSTED {
+	if product.Tier >= TIER_TRUSTED {
 		return product_preset_trusted(product, kind, value, minimum, maximum, values)
 	}
 	if product.Tier != TIER_FULL {
@@ -1239,6 +1255,15 @@ func (shape *Chain_Shape) chain_freeze_derived() {
 			shape.User_Rules = append(shape.User_Rules, shape.Rules[link.Rule_Index])
 		}
 	}
+	shape.Warmed_Tier = TIER_TRUSTED
+	for preset_index := range shape.Presets {
+		if len(shape.Presets[preset_index].Values) != 0 {
+			shape.Warmed_Tier = TIER_TRUSTED_HOLES
+		}
+	}
+	if len(shape.User_Rules) != 0 {
+		shape.Warmed_Tier = TIER_OBSERVATION
+	}
 }
 
 func (shape *Chain_Shape) chain_link_in_preset(ordinal uint8) (inside bool) {
@@ -1391,11 +1416,14 @@ func chain_identity_hash(data *byte, size int) (hash uint64) {
 
 // The probe is the warmed root's entire resolution cost: one atomic load, one multiply, and a
 // short scan of immutable slots. Equal identity implies equal content because string bytes
-// never mutate; equal content at a different address simply misses to the map.
-func recorder_chain_shape_probe(recorder *Recorder, namespace Namespace) (shape *Chain_Shape) {
+// never mutate; equal content at a different address simply misses to the map. The lane rides
+// along so a production hit never dereferences the shape.
+func recorder_chain_shape_probe(
+	recorder *Recorder, namespace Namespace,
+) (shape *Chain_Shape, lane uint8) {
 	cache := recorder.Chain_Shape_Identities.Load()
 	if cache == nil {
-		return nil
+		return nil, TIER_FULL
 	}
 	data := unsafe.StringData(string(namespace))
 	mask := uint64(len(cache.Slots)) - 1
@@ -1405,16 +1433,16 @@ func recorder_chain_shape_probe(recorder *Recorder, namespace Namespace) (shape 
 	for probe_index := 0; probe_index < len(cache.Slots); probe_index++ {
 		slot := &cache.Slots[slot_index]
 		if slot.Data == nil {
-			return nil
+			return nil, TIER_FULL
 		}
 		if slot.Data == unsafe.Pointer(data) {
 			if slot.Size == len(namespace) {
-				return slot.Shape
+				return slot.Shape, slot.Lane
 			}
 		}
 		slot_index = (slot_index + 1) & mask
 	}
-	return nil
+	return nil, TIER_FULL
 }
 
 // Insertion is copy-on-write under the publication mutex, like the map itself, so readers see
@@ -1427,11 +1455,16 @@ func recorder_chain_shape_remember(
 	if len(namespace) == 0 {
 		return
 	}
+	// Only a warmed shape is remembered: its tier is frozen, so the slot's lane snapshot
+	// stays valid for the slot's whole life. A still-discovering shape keeps the map path.
+	if !shape.chain_replays() {
+		return
+	}
 	if !recorder.Chain_Shapes_Mu.TryLock() {
 		return
 	}
 	defer recorder.Chain_Shapes_Mu.Unlock()
-	if recorder_chain_shape_probe(recorder, namespace) != nil {
+	if extant_shape, _ := recorder_chain_shape_probe(recorder, namespace); extant_shape != nil {
 		return
 	}
 	extant := recorder.Chain_Shape_Identities.Load()
@@ -1457,7 +1490,7 @@ func recorder_chain_shape_remember(
 	}
 	chain_cache_insert(next, Chain_Shape_Slot{
 		Data: unsafe.Pointer(unsafe.StringData(string(namespace))),
-		Size: len(namespace), Shape: shape,
+		Size: len(namespace), Shape: shape, Lane: shape.Warmed_Tier,
 	})
 	recorder.Chain_Shape_Identities.Store(next)
 }
@@ -1477,7 +1510,7 @@ func chain_cache_insert(cache *Chain_Shape_Cache, slot Chain_Shape_Slot) {
 }
 
 func recorder_chain_shape(recorder *Recorder, namespace Namespace) (shape *Chain_Shape) {
-	shape = recorder_chain_shape_probe(recorder, namespace)
+	shape, _ = recorder_chain_shape_probe(recorder, namespace)
 	if shape != nil {
 		return shape
 	}
@@ -1545,10 +1578,7 @@ func recorder_chain_tier(recorder *Recorder, shape *Chain_Shape) (tier uint8) {
 		}
 		return TIER_FULL
 	}
-	if len(shape.User_Rules) == 0 {
-		return TIER_TRUSTED
-	}
-	return TIER_OBSERVATION
+	return shape.Warmed_Tier
 }
 
 // Two separators distinguish an axis key from every flat tuple and Always key during fuzz merge.

@@ -1889,6 +1889,20 @@ func Test_Namespace_Overflow_Beyond_Cache_Capacity_Still_Enforces(t *testing.T) 
 	}
 }
 
+// Test_Warmed_Range_With_Holes_Still_Panics_On_Excluded_Value pins the verdict a hole-carrying
+// range can never shed: splitting the trusted lane by hole-freedom must leave the exclusion
+// scan on every chain that declared one.
+func Test_Warmed_Range_With_Holes_Still_Panics_On_Excluded_Value(t *testing.T) {
+	recorder := &invariant.Recorder{}
+	invariant.Recorder_Dot_Product(recorder, "holed").Range_Int(5, 0, 50, 13).Ensure()
+	message := panic_text(func() {
+		invariant.Recorder_Dot_Product(recorder, "holed").Range_Int(13, 0, 50, 13).Ensure()
+	})
+	if !strings.Contains(message, "value is excluded") {
+		t.Fatalf("warmed hole panic = %q, want the exclusion enforced", message)
+	}
+}
+
 // Test_Warmed_Carve_On_Preset_Axis_Still_Fires pins the one observation a warmed rule-bearing
 // chain can never skip: a user carve may reference a preset's boundary axis by message, so the
 // typed link must keep setting preset-axis bits even when every other obligation is gone.

@@ -517,9 +517,13 @@ func Float32_Invariants(f float32, namespace Namespace) {
 
 // Boolean_Invariants is the preset coverage for a bool: the suite must witness the
 // value both true and false. A single axis carries it — its true branch is the
-// value, its false branch the negation — so one Sometimes demands both.
+// value, its false branch the negation — so one Sometimes demands both. A trusted
+// chain can latch nothing here — Sometimes is identity and Ensure reads only latched
+// failures — so it collapses to the root resolution and the whole helper inlines.
 func Boolean_Invariants(b bool, namespace Namespace) {
-	Dot_Product(namespace).
-		Sometimes(b, "The value is true.").
-		Ensure()
+	product := Dot_Product(namespace)
+	if product.Tier >= invariant.TIER_TRUSTED {
+		return
+	}
+	product.Sometimes(b, "The value is true.").Ensure()
 }
