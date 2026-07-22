@@ -31,9 +31,22 @@ const ASSERTION_FAILURE_MESSAGE_PREFIX = "🚨 Assertion Failure 🚨: "
 // rejects it in every message.
 const ELEMENT_MESSAGE_SEPARATOR = "\x00"
 
-// Bounds registration's backwards walks over fluent receivers. A valid chain stops at its root
-// far below this because the independently enforced ordinal space has only 255 links; the larger
-// bound keeps malformed syntax from making analysis depend unboundedly on source depth.
+// The boundary witnesses a Range seeds per root. One pair of texts serves static seeding and
+// runtime crediting, so both sides rendezvous on identical keys.
+const RANGE_MESSAGE_MINIMUM = "The value equals the minimum."
+
+// RANGE_MESSAGE_MAXIMUM is RANGE_MESSAGE_MINIMUM's twin for the upper bound.
+const RANGE_MESSAGE_MAXIMUM = "The value equals the maximum."
+
+// Enum_Member_Message names one member's witness. Static seeding formats the resolved constant
+// with strconv.FormatInt and runtime crediting with integer_text; both are exact, so the texts
+// are byte-equal for every representable member.
+func Enum_Member_Message(member_text string) (message string) {
+	return "The value equals member " + member_text + "."
+}
+
+// Bounds the bundle descent's recursion so a pathological composition cannot make registration
+// depend unboundedly on source depth; a forwarding cycle is refused long before this.
 const BUNDLE_EXPANSION_STEPS_MAX = 4096
 
 // Bounds the walk up the directory tree searching for a go.mod, so module
@@ -45,6 +58,24 @@ const ASSERTION_KIND_ALWAYS Assertion_Kind = 0
 
 // ASSERTION_KIND_SOMETIMES classifies a per-element tracker entry for a Sometimes.
 const ASSERTION_KIND_SOMETIMES Assertion_Kind = 1
+
+// PRIMITIVE_KIND_* discriminate the registration walk's dispatch over the four primitives —
+// distinct from Assertion_Kind because Range and Enum seed SOMETIMES-kind witnesses of their
+// own rather than entries of a fifth kind.
+const PRIMITIVE_KIND_ALWAYS Primitive_Kind = 0
+
+// PRIMITIVE_KIND_SOMETIMES classifies the bare observation.
+const PRIMITIVE_KIND_SOMETIMES Primitive_Kind = 1
+
+// PRIMITIVE_KIND_RANGE classifies the bounds guard.
+const PRIMITIVE_KIND_RANGE Primitive_Kind = 2
+
+// PRIMITIVE_KIND_ENUM classifies the membership guard.
+const PRIMITIVE_KIND_ENUM Primitive_Kind = 3
+
+// Bounds the resolver's total work so a constant-reference cycle (`const A = B; const B = A`)
+// cannot loop it; a legal bound expression resolves in far fewer steps.
+const CONSTANT_RESOLUTION_STEPS_MAX = 4096
 
 // Recorder accumulates assertion observations for one run and identifies each
 // element by its caller Site.
@@ -131,6 +162,9 @@ type Integer interface {
 
 // Assertion_Kind discriminates a coverage tracker entry: a per-element Always or Sometimes.
 type Assertion_Kind uint8
+
+// Primitive_Kind discriminates the registration walk's dispatch over the four primitives.
+type Primitive_Kind uint8
 
 // Assertion_Metadata is one coverage tracker entry: how often an element's event was observed
 // across the run. Seeded at registration, incremented at runtime, scanned by the never-fired
@@ -310,24 +344,27 @@ func Recorder_Register_Packages_For_Analysis(recorder *Recorder, directories ...
 		Sugar_Package: recorder.Sugar_Package,
 		Same_Set:      ast_index_functions(files),
 		Loaded:        map[string]map[string]Indexed_Function{},
+		Constants:     ast_index_constants(files),
 	}
-	reg := &Registration{Seen_Prefix: map[string]bool{}}
+	reg := &Registration{
+		Planned_Keys:    map[string]bool{},
+		Seen_Identifier: map[string]bool{},
+		Validated:       map[*ast.FuncDecl]bool{},
+	}
 	for _, file := range files {
 		recorder_register_file(recorder, file_set, file, index, reg)
 	}
-	recorder_check_bundle_control_flow(recorder, file_set, files)
-	recorder_check_primitive_bundles(recorder, file_set, files, index)
-	recorder_check_unresolved(recorder, reg.Unresolved)
-	recorder_check_non_literal_messages(recorder, reg.Non_Literal)
-	recorder_check_duplicate_messages(recorder, reg.Collision)
-	recorder_check_unresolved_bounds(recorder, reg.Unresolved_Bound)
-	recorder_check_invalid_chains(recorder, reg.Invalid_Chain)
-}
-
-// Reports whether name exists in recorder.File_System.
-func recorder_has_entry(recorder *Recorder, name string) (exists bool) {
-	_, stat_error := fs.Stat(recorder.File_System, name)
-	return stat_error == nil
+	recorder_check_bundle_control_flow(recorder, file_set, files, reg)
+	recorder_check_bundle_parameters(recorder, file_set, files, reg)
+	recorder_check_primitive_bundles(recorder, file_set, files, index, reg)
+	recorder_check_unresolved(recorder, reg)
+	recorder_check_bundle_cycles(recorder, reg)
+	recorder_check_invalid_identifiers(recorder, reg)
+	recorder_check_non_literal_messages(recorder, reg)
+	recorder_check_duplicate_messages(recorder, reg)
+	recorder_check_unresolved_bounds(recorder, reg)
+	recorder_check_invalid_bounds(recorder, reg)
+	recorder_commit_planned(recorder, reg)
 }
 
 // Walks up from start_directory for a go.mod, returning the module path it
@@ -577,13 +614,36 @@ func recorder_register_file(
 		if function.Body == nil {
 			continue
 		}
+		if allow_unqualified {
+			// The sugar package's non-bundle tier forwards parameters into the library
+			// — wrappers, not assertions — so only its bundle declarations register.
+			if !ast_is_invariants_name(function.Name.Name) {
+				continue
+			}
+		}
 		recorder_register_function(
 			recorder, file_set, function, imports, index, reg, allow_unqualified)
 	}
 }
 
-// Registers each invariant call in the function: any call may be a bare eager Always.
+// Registers one function's calls. A bundle declaration is walked for its eager Always calls and
+// validated once; everything else is a plain function whose primitive calls must be roots.
 func recorder_register_function(
+	recorder *Recorder, file_set *token.FileSet, function *ast.FuncDecl,
+	imports map[string]string, index *Bundle_Index, reg *Registration, allow_unqualified bool,
+) {
+	if ast_is_invariants_name(function.Name.Name) {
+		recorder_register_bundle_declaration(
+			recorder, file_set, function, imports, index, reg, allow_unqualified)
+		return
+	}
+	recorder_register_plain_function(
+		recorder, file_set, function, imports, index, reg, allow_unqualified)
+}
+
+// A plain function's primitive calls are roots: the identifier argument must be a bare string
+// literal, claimed globally, and the call's assertions seed under it.
+func recorder_register_plain_function(
 	recorder *Recorder, file_set *token.FileSet, function *ast.FuncDecl,
 	imports map[string]string, index *Bundle_Index, reg *Registration, allow_unqualified bool,
 ) {
@@ -592,17 +652,276 @@ func recorder_register_function(
 		if !is_call {
 			return true
 		}
-		// This walk is the only registration that sees a bare eager Always — keyed by its
-		// own message like any other.
-		recorder_register_eager_always(recorder, file_set, call, reg)
+		recorder_register_eager_always(
+			recorder, file_set, call, reg, allow_unqualified)
+		recorder_register_root(
+			recorder, file_set, call, imports, index, reg, allow_unqualified)
 		return true
 	})
 }
 
-// Returns the name of a _Invariants function's trailing namespace parameter — the grid identity
-// its self-emitted Dot_Product is prefixed by, typed string or Namespace. "" when there is no
-// such parameter.
-func ast_namespace_parameter(function *ast.FuncDecl) (name string) {
+// A bundle declaration's bare eager Always calls are planned here, once per declaration, so a
+// bundle rooted from several sites cannot double-plan them. The body is validated here too —
+// forwarding, message literals, static bounds — while its identifier-scoped assertions seed
+// only through a root's descent.
+func recorder_register_bundle_declaration(
+	recorder *Recorder, file_set *token.FileSet, function *ast.FuncDecl,
+	imports map[string]string, index *Bundle_Index, reg *Registration, allow_unqualified bool,
+) {
+	if allow_unqualified {
+		// The bare-name index predates the per-file package resolution, so the sugar
+		// mark lands here where both facts are in hand.
+		entry := index.Same_Set[function.Name.Name]
+		entry.Is_Sugar = true
+		index.Same_Set[function.Name.Name] = entry
+	}
+	recorder_validate_bundle_body(recorder, file_set, Indexed_Function{
+		Declaration: function,
+		Imports:     imports,
+		Is_Sugar:    allow_unqualified,
+	}, index, reg)
+	ast.Inspect(function.Body, func(node ast.Node) (descend bool) {
+		call, is_call := node.(*ast.CallExpr)
+		if !is_call {
+			return true
+		}
+		recorder_register_eager_always(
+			recorder, file_set, call, reg, allow_unqualified)
+		return true
+	})
+}
+
+// Classifies one call in a plain function. An identifier-carrying primitive is a root: its
+// identifier is claimed and its statically read arguments seed under it. A bundle call is a
+// root that descends. Always is the eager walk's business, and a non-primitive, non-bundle
+// call is not the analyzer's.
+func recorder_register_root(
+	recorder *Recorder, file_set *token.FileSet, call *ast.CallExpr,
+	imports map[string]string, index *Bundle_Index, reg *Registration, allow_unqualified bool,
+) {
+	selector := ast_selector(call, allow_unqualified)
+	primitive, base, is_primitive := ast_primitive_signature(selector)
+	if !is_primitive {
+		recorder_register_root_bundle(recorder, file_set, call, imports, index, reg)
+		return
+	}
+	if primitive == PRIMITIVE_KIND_ALWAYS {
+		return
+	}
+	identifier, ok := recorder_claim_identifier(file_set, call, base, reg)
+	if !ok {
+		return
+	}
+	recorder_seed_primitive(file_set, call, primitive, base, identifier, index, reg, true)
+}
+
+// A bundle call in a plain function is a root: the analyzer claims its literal identifier and
+// seeds the whole composition under it via the call graph.
+func recorder_register_root_bundle(
+	recorder *Recorder, file_set *token.FileSet, call *ast.CallExpr,
+	imports map[string]string, index *Bundle_Index, reg *Registration,
+) {
+	_, name := ast_bundle_qualifier(call)
+	if !ast_is_invariants_name(name) {
+		return
+	}
+	identifier, ok := recorder_claim_identifier(file_set, call, 0, reg)
+	if !ok {
+		return
+	}
+	callee, found := bundle_index_lookup(index, imports, call)
+	if !found {
+		reg.Unresolved = append(reg.Unresolved, recorder_unresolved_line(file_set, call))
+		return
+	}
+	recorder_descend(recorder, file_set, callee, identifier, index, reg, name)
+}
+
+// Descent_Frame is one work item of the iterative descent: a resolved bundle declaration and
+// the name path that reached it.
+type Descent_Frame struct {
+	// Function is the resolved bundle declaration to walk.
+	Function Indexed_Function
+	// Path holds the bundle names from the root to here, for cycle refusal alone.
+	Path []string
+}
+
+// Seeds every assertion a rooted bundle reaches — its own and, transitively, its nested
+// bundles' — under the ROOT identifier alone. The worklist replaces recursion; the path exists
+// only to refuse cycles and bound pathological depth, and it never enters a key.
+func recorder_descend(
+	recorder *Recorder, file_set *token.FileSet, root Indexed_Function,
+	identifier string, index *Bundle_Index, reg *Registration, name string,
+) {
+	frames := []Descent_Frame{{Function: root, Path: []string{name}}}
+	for len(frames) != 0 {
+		frame := frames[len(frames)-1]
+		frames = frames[:len(frames)-1]
+		recorder_validate_bundle_body(recorder, file_set, frame.Function, index, reg)
+		if frame.Function.Declaration.Body == nil {
+			continue
+		}
+		ast.Inspect(frame.Function.Declaration.Body,
+			func(node ast.Node) (descend bool) {
+				call, is_call := node.(*ast.CallExpr)
+				if !is_call {
+					return true
+				}
+				frames = recorder_descend_call(
+					file_set, call, frame, identifier, index, reg, frames)
+				return true
+			})
+	}
+}
+
+// One call inside a descended bundle: a primitive seeds silently under the root identifier —
+// validation already spoke once per declaration — and a nested bundle joins the worklist.
+func recorder_descend_call(
+	file_set *token.FileSet, call *ast.CallExpr, frame Descent_Frame, identifier string,
+	index *Bundle_Index, reg *Registration, frames []Descent_Frame,
+) (next_frames []Descent_Frame) {
+	selector := ast_selector(call, frame.Function.Is_Sugar)
+	primitive, base, is_primitive := ast_primitive_signature(selector)
+	if is_primitive {
+		if primitive != PRIMITIVE_KIND_ALWAYS {
+			recorder_seed_primitive(
+				file_set, call, primitive, base, identifier, index, reg, false)
+		}
+		return frames
+	}
+	_, name := ast_bundle_qualifier(call)
+	if !ast_is_invariants_name(name) {
+		return frames
+	}
+	for _, ancestor := range frame.Path {
+		if ancestor == name {
+			reg.Cycle = append(reg.Cycle, recorder_position(file_set, call)+
+				"  bundle cycle: "+strings.Join(frame.Path, " -> ")+" -> "+name)
+			return frames
+		}
+	}
+	if len(frame.Path) >= BUNDLE_EXPANSION_STEPS_MAX {
+		return frames
+	}
+	callee, found := bundle_index_lookup(index, frame.Function.Imports, call)
+	if !found {
+		reg.Unresolved = append(reg.Unresolved, recorder_unresolved_line(file_set, call))
+		return frames
+	}
+	// A fresh copy per child: siblings must not alias one backing array.
+	path := append(append([]string{}, frame.Path...), name)
+	return append(frames, Descent_Frame{Function: callee, Path: path})
+}
+
+// Validates a bundle body once per declaration: every primitive call's identifier argument and
+// every nested bundle call's leading argument must forward the declaration's own identifier
+// parameter verbatim. Per-call static validation — messages, bounds, members — happens here
+// too, so a bundle rooted from several sites is diagnosed exactly once.
+func recorder_validate_bundle_body(
+	recorder *Recorder, file_set *token.FileSet, function Indexed_Function,
+	index *Bundle_Index, reg *Registration,
+) {
+	if reg.Validated[function.Declaration] {
+		return
+	}
+	reg.Validated[function.Declaration] = true
+	if function.Declaration.Body == nil {
+		return
+	}
+	parameter := ast_identifier_parameter(function.Declaration)
+	ast.Inspect(function.Declaration.Body, func(node ast.Node) (descend bool) {
+		call, is_call := node.(*ast.CallExpr)
+		if !is_call {
+			return true
+		}
+		recorder_validate_bundle_call(file_set, call, function, parameter, index, reg)
+		return true
+	})
+}
+
+func recorder_validate_bundle_call(
+	file_set *token.FileSet, call *ast.CallExpr, function Indexed_Function,
+	parameter string, index *Bundle_Index, reg *Registration,
+) {
+	selector := ast_selector(call, function.Is_Sugar)
+	primitive, base, is_primitive := ast_primitive_signature(selector)
+	if is_primitive {
+		if primitive == PRIMITIVE_KIND_ALWAYS {
+			return
+		}
+		if !ast_forwards_identifier(call, base, parameter) {
+			reg.Invalid_Identifier = append(reg.Invalid_Identifier,
+				recorder_position(file_set, call)+
+					"  a bundle must forward its identifier parameter verbatim")
+			return
+		}
+		recorder_validate_scoped_arguments(file_set, call, primitive, base, index, reg)
+		return
+	}
+	_, name := ast_bundle_qualifier(call)
+	if !ast_is_invariants_name(name) {
+		return
+	}
+	if !ast_forwards_identifier(call, 0, parameter) {
+		reg.Invalid_Identifier = append(reg.Invalid_Identifier,
+			recorder_position(file_set, call)+
+				"  a bundle must forward its identifier parameter verbatim")
+	}
+}
+
+// The declaration-time half of seeding: the same message/bound/member rules the seeders apply,
+// with diagnostics on — the descent then seeds silently.
+func recorder_validate_scoped_arguments(
+	file_set *token.FileSet, call *ast.CallExpr, primitive Primitive_Kind, base int,
+	index *Bundle_Index, reg *Registration,
+) {
+	switch primitive {
+	case PRIMITIVE_KIND_SOMETIMES:
+		recorder_sometimes_message(file_set, call, base, reg, true)
+	case PRIMITIVE_KIND_RANGE:
+		recorder_range_witnesses(file_set, call, base, index, reg, true)
+	case PRIMITIVE_KIND_ENUM:
+		recorder_enum_members(file_set, call, base, index, reg, true)
+	}
+}
+
+// A root's identifier gate: it must be a bare string literal (a constant or variable is a
+// runtime value the static side cannot key), non-empty, NUL-free, and globally unclaimed — an
+// identifier names one composition the way a package name names one package.
+func recorder_claim_identifier(
+	file_set *token.FileSet, call *ast.CallExpr, base int, reg *Registration,
+) (identifier string, ok bool) {
+	literal, is_literal := ast_string_literal(call, base)
+	if !is_literal {
+		reg.Invalid_Identifier = append(reg.Invalid_Identifier,
+			recorder_position(file_set, call)+
+				"  identifier at a root is not a bare string literal")
+		return "", false
+	}
+	if literal == "" {
+		reg.Invalid_Identifier = append(reg.Invalid_Identifier,
+			recorder_position(file_set, call)+"  identifier is empty")
+		return "", false
+	}
+	if strings.Contains(literal, ELEMENT_MESSAGE_SEPARATOR) {
+		reg.Invalid_Identifier = append(reg.Invalid_Identifier,
+			recorder_position(file_set, call)+"  identifier contains NUL")
+		return "", false
+	}
+	if reg.Seen_Identifier[literal] {
+		reg.Collision = append(reg.Collision,
+			recorder_position(file_set, call)+
+				"  duplicate identifier: "+strconv.Quote(literal))
+		return "", false
+	}
+	reg.Seen_Identifier[literal] = true
+	return literal, true
+}
+
+// Returns the name of a bundle's leading identifier parameter: the first parameter field, a
+// single name, typed bare `string`. "" when the declaration has no such shape — the bundle
+// parameter doctrine owns refusing it.
+func ast_identifier_parameter(function *ast.FuncDecl) (name string) {
 	if function.Type.Params == nil {
 		return ""
 	}
@@ -610,54 +929,417 @@ func ast_namespace_parameter(function *ast.FuncDecl) (name string) {
 	if len(fields) == 0 {
 		return ""
 	}
-	last := fields[len(fields)-1]
-	if !ast_is_namespace_type(last.Type) {
+	first := fields[0]
+	if len(first.Names) != 1 {
 		return ""
 	}
-	if len(last.Names) == 0 {
+	identifier, is_identifier := first.Type.(*ast.Ident)
+	if !is_identifier {
 		return ""
 	}
-	return last.Names[len(last.Names)-1].Name
+	if identifier.Name != "string" {
+		return ""
+	}
+	return first.Names[0].Name
 }
 
-// Reports whether expression is a namespace parameter's type: the bare `string`, the `Namespace`
-// defined type (bare in this package), or a qualified `pkg.Namespace` (the type re-exported).
-func ast_is_namespace_type(expression ast.Expr) (is_namespace bool) {
-	if identifier, ok := expression.(*ast.Ident); ok {
-		return identifier.Name == "string" || identifier.Name == "Namespace"
+// Reports whether the identifier argument at index is the verbatim forwarded parameter — the
+// only legal identifier inside a bundle. A literal would declare a root inside a bundle, and
+// any other expression would smuggle namespacing layers past the one the identifier provides.
+func ast_forwards_identifier(call *ast.CallExpr, index int, parameter string) (forwards bool) {
+	if parameter == "" {
+		return false
 	}
-	if selector, ok := expression.(*ast.SelectorExpr); ok {
-		return selector.Sel.Name == "Namespace"
+	argument := ast_argument(call, index)
+	identifier, is_identifier := argument.(*ast.Ident)
+	if !is_identifier {
+		return false
 	}
-	return false
+	return identifier.Name == parameter
 }
 
-// Seeds a reachability entry for a bare eager Always call — invariant.Always or
-// Recorder_Always — keyed by its own message. Without this a
-// never-reached Always could not be reported, since it never flows through a Dot_Product.
-// Calls of any other kind (a Sometimes, a plain function) seed
-// nothing: a bare element records nothing and is the caller's responsibility to consume.
-// A duplicate Always message is a fatal collision.
+// Plans a reachability entry for a bare eager Always call — invariant.Always or Recorder_Always
+// — keyed by its own message. Without this a never-reached Always could not be reported. The
+// descent never plans an Always: this walk owns them, once per declaration.
 func recorder_register_eager_always(
 	recorder *Recorder, file_set *token.FileSet, call *ast.CallExpr, reg *Registration,
+	allow_unqualified bool,
 ) {
-	axis, is_axis := recorder_axis_of(file_set, call, false, reg)
+	axis, is_axis := recorder_axis_of(file_set, call, allow_unqualified, reg)
 	if !is_axis {
 		return
 	}
-	if axis.Kind != ASSERTION_KIND_ALWAYS {
+	recorder_plan_seed(
+		file_set, call, reg, axis.Message, ASSERTION_KIND_ALWAYS, axis.Condition)
+}
+
+// The one gate into the plan: a key already planned is a fatal collision — two assertions
+// sharing a key would silently merge and mask a gap.
+func recorder_plan_seed(
+	file_set *token.FileSet, node ast.Node, reg *Registration, key string,
+	kind Assertion_Kind, condition string,
+) {
+	if reg.Planned_Keys[key] {
+		reg.Collision = append(reg.Collision,
+			recorder_position(file_set, node)+
+				"  duplicate message: "+strconv.Quote(key))
 		return
 	}
-	_, loaded := recorder.Events.LoadOrStore(axis.Message, &Assertion_Metadata{
-		Kind:      ASSERTION_KIND_ALWAYS,
-		Message:   axis.Message,
-		Condition: axis.Condition,
-	})
-	if loaded {
-		reg.Collision = append(reg.Collision,
-			recorder_position(file_set, call)+
-				"  duplicate message: "+strconv.Quote(axis.Message))
+	reg.Planned_Keys[key] = true
+	reg.Planned = append(reg.Planned,
+		Planned_Seed{Key: key, Kind: kind, Condition: condition})
+}
+
+// The all-or-nothing commit: a failed registration leaves Events empty, so a partially seeded
+// tracker can never masquerade as a registered run. Metadata.Message holds the full key so the
+// gap report, the fuzz merge, and Coverage_Sink all rendezvous on the same string.
+func recorder_commit_planned(recorder *Recorder, reg *Registration) {
+	if reg.Failed {
+		return
 	}
+	for _, seed := range reg.Planned {
+		recorder.Events.Store(seed.Key, &Assertion_Metadata{
+			Kind:      seed.Kind,
+			Message:   seed.Key,
+			Condition: seed.Condition,
+		})
+	}
+}
+
+// Seeds one identifier-scoped primitive under identifier. diagnose distinguishes a root (which
+// reports structural problems in place) from a descent (silent, because the bundle's own
+// validation already reported once per declaration).
+func recorder_seed_primitive(
+	file_set *token.FileSet, call *ast.CallExpr, primitive Primitive_Kind, base int,
+	identifier string, index *Bundle_Index, reg *Registration, diagnose bool,
+) {
+	switch primitive {
+	case PRIMITIVE_KIND_SOMETIMES:
+		recorder_seed_sometimes(file_set, call, base, identifier, reg, diagnose)
+	case PRIMITIVE_KIND_RANGE:
+		recorder_seed_range(file_set, call, base, identifier, index, reg, diagnose)
+	case PRIMITIVE_KIND_ENUM:
+		recorder_seed_enum(file_set, call, base, identifier, index, reg, diagnose)
+	}
+}
+
+func recorder_seed_sometimes(
+	file_set *token.FileSet, call *ast.CallExpr, base int, identifier string,
+	reg *Registration, diagnose bool,
+) {
+	message, ok := recorder_sometimes_message(file_set, call, base, reg, diagnose)
+	if !ok {
+		return
+	}
+	recorder_plan_seed(file_set, call, reg,
+		identifier+ELEMENT_MESSAGE_SEPARATOR+message,
+		ASSERTION_KIND_SOMETIMES, ast_condition_text(file_set, call, base+1))
+}
+
+// The message rules mirror the Always walk's: a literal, NUL-free message or the assertion
+// cannot be keyed.
+func recorder_sometimes_message(
+	file_set *token.FileSet, call *ast.CallExpr, base int, reg *Registration, diagnose bool,
+) (message string, ok bool) {
+	message, literal := ast_string_literal(call, base+2)
+	if !literal {
+		if diagnose {
+			reg.Non_Literal = append(reg.Non_Literal,
+				recorder_position(file_set, call)+
+					"  Sometimes message is not a string literal")
+		}
+		return "", false
+	}
+	if strings.Contains(message, ELEMENT_MESSAGE_SEPARATOR) {
+		if diagnose {
+			reg.Non_Literal = append(reg.Non_Literal,
+				recorder_position(file_set, call)+
+					"  Sometimes message contains NUL")
+		}
+		return "", false
+	}
+	return message, true
+}
+
+func recorder_seed_range(
+	file_set *token.FileSet, call *ast.CallExpr, base int, identifier string,
+	index *Bundle_Index, reg *Registration, diagnose bool,
+) {
+	if !recorder_range_witnesses(file_set, call, base, index, reg, diagnose) {
+		return
+	}
+	condition := ast_condition_text(file_set, call, base+1)
+	recorder_plan_seed(file_set, call, reg,
+		identifier+ELEMENT_MESSAGE_SEPARATOR+RANGE_MESSAGE_MINIMUM,
+		ASSERTION_KIND_SOMETIMES, condition)
+	recorder_plan_seed(file_set, call, reg,
+		identifier+ELEMENT_MESSAGE_SEPARATOR+RANGE_MESSAGE_MAXIMUM,
+		ASSERTION_KIND_SOMETIMES, condition)
+}
+
+// A Range's bounds and exclusions must resolve statically so the walk can refuse a malformed
+// guard before the runtime fires it on every call; the boundary witnesses carry no values, but
+// an unresolvable bound means the guard's domain is unknowable to analysis.
+func recorder_range_witnesses(
+	file_set *token.FileSet, call *ast.CallExpr, base int, index *Bundle_Index,
+	reg *Registration, diagnose bool,
+) (ok bool) {
+	bounds, resolved := range_resolved_arguments(call, base, index)
+	if !resolved {
+		if diagnose {
+			reg.Unresolved_Bound = append(reg.Unresolved_Bound,
+				recorder_position(file_set, call)+
+					"  Range bounds are not statically resolvable")
+		}
+		return false
+	}
+	for _, hole := range bounds.Excluded {
+		inside := hole > bounds.Minimum
+		if hole >= bounds.Maximum {
+			inside = false
+		}
+		if !inside {
+			if diagnose {
+				reg.Invalid_Bound = append(reg.Invalid_Bound,
+					recorder_position(file_set, call)+
+						"  Range exclusion "+strconv.FormatInt(hole, 10)+
+						" is not strictly inside the interval")
+			}
+			return false
+		}
+	}
+	return true
+}
+
+// Range_Bounds is a Range call's statically resolved domain.
+type Range_Bounds struct {
+	// Minimum is the interval's resolved lower bound.
+	Minimum int64
+	// Maximum is the interval's resolved upper bound.
+	Maximum int64
+	// Excluded holds the resolved holes.
+	Excluded []int64
+}
+
+func range_resolved_arguments(
+	call *ast.CallExpr, base int, index *Bundle_Index,
+) (bounds Range_Bounds, resolved bool) {
+	minimum, minimum_ok := constant_resolve(index.Constants, ast_argument(call, base+2))
+	if !minimum_ok {
+		return Range_Bounds{}, false
+	}
+	maximum, maximum_ok := constant_resolve(index.Constants, ast_argument(call, base+3))
+	if !maximum_ok {
+		return Range_Bounds{}, false
+	}
+	bounds = Range_Bounds{Minimum: minimum, Maximum: maximum}
+	for argument_index := base + 4; argument_index < len(call.Args); argument_index++ {
+		hole, hole_ok := constant_resolve(index.Constants, call.Args[argument_index])
+		if !hole_ok {
+			return Range_Bounds{}, false
+		}
+		bounds.Excluded = append(bounds.Excluded, hole)
+	}
+	return bounds, true
+}
+
+// An Enum seeds one witness per distinct member; the distinct set is the static mirror of
+// enum_credit's first-occurrence rule, so seeding and crediting agree entry for entry.
+func recorder_seed_enum(
+	file_set *token.FileSet, call *ast.CallExpr, base int, identifier string,
+	index *Bundle_Index, reg *Registration, diagnose bool,
+) {
+	distinct, ok := recorder_enum_members(file_set, call, base, index, reg, diagnose)
+	if !ok {
+		return
+	}
+	condition := ast_condition_text(file_set, call, base+1)
+	for _, member := range distinct {
+		recorder_plan_seed(file_set, call, reg,
+			identifier+ELEMENT_MESSAGE_SEPARATOR+
+				Enum_Member_Message(strconv.FormatInt(member, 10)),
+			ASSERTION_KIND_SOMETIMES, condition)
+	}
+}
+
+func recorder_enum_members(
+	file_set *token.FileSet, call *ast.CallExpr, base int, index *Bundle_Index,
+	reg *Registration, diagnose bool,
+) (distinct []int64, ok bool) {
+	for argument_index := base + 2; argument_index < len(call.Args); argument_index++ {
+		member, resolved := constant_resolve(index.Constants, call.Args[argument_index])
+		if !resolved {
+			if diagnose {
+				reg.Unresolved_Bound = append(reg.Unresolved_Bound,
+					recorder_position(file_set, call)+
+						"  Enum members are not statically resolvable")
+			}
+			return nil, false
+		}
+		duplicate := false
+		for _, earlier := range distinct {
+			if earlier == member {
+				duplicate = true
+			}
+		}
+		if !duplicate {
+			distinct = append(distinct, member)
+		}
+	}
+	if len(distinct) < 2 {
+		if diagnose {
+			reg.Invalid_Bound = append(reg.Invalid_Bound,
+				recorder_position(file_set, call)+
+					"  Enum needs at least two distinct members")
+		}
+		return nil, false
+	}
+	return distinct, true
+}
+
+func ast_argument(call *ast.CallExpr, index int) (argument ast.Expr) {
+	if len(call.Args) <= index {
+		return nil
+	}
+	return call.Args[index]
+}
+
+// Indexes the analyzed files' single-name, explicit-value constant declarations by bare name.
+// Multi-name and implicit (iota-carrying) specs are deliberately absent: their values depend on
+// positional context the flat index cannot carry, so a reference to one is unresolvable and
+// fails registration rather than resolving wrongly.
+func ast_index_constants(files []*ast.File) (constants map[string]ast.Expr) {
+	constants = map[string]ast.Expr{}
+	for _, file := range files {
+		for _, declaration := range file.Decls {
+			generic, is_generic := declaration.(*ast.GenDecl)
+			if !is_generic {
+				continue
+			}
+			if generic.Tok != token.CONST {
+				continue
+			}
+			for _, specification := range generic.Specs {
+				value_specification, is_value := specification.(*ast.ValueSpec)
+				if !is_value {
+					continue
+				}
+				if len(value_specification.Names) != 1 {
+					continue
+				}
+				if len(value_specification.Values) != 1 {
+					continue
+				}
+				name := value_specification.Names[0].Name
+				constants[name] = value_specification.Values[0]
+			}
+		}
+	}
+	return constants
+}
+
+// Constant_Frame is one work item of the iterative resolver: an expression to resolve, and
+// whether its operands have already been resolved (an operator node is revisited once).
+type Constant_Frame struct {
+	// Expression is the node this frame resolves.
+	Expression ast.Expr
+	// Visited marks an operator frame's second pass, when its operand values are on the stack.
+	Visited bool
+}
+
+// Resolves expression to an integer using the analyzed packages' constant index. The grammar is
+// deliberately small — int literals, parens, unary minus, + - * /, and named constants — because
+// a bound is either an obvious compile-time quantity or the guard's domain is unknowable to
+// analysis and registration refuses it. The evaluator is an explicit two-stack machine — the
+// step cap, not recursion depth, is what refuses a constant-reference cycle.
+func constant_resolve(
+	constants map[string]ast.Expr, expression ast.Expr,
+) (value int64, ok bool) {
+	frames := []Constant_Frame{{Expression: expression}}
+	var values []int64
+	for steps := 0; len(frames) != 0; steps++ {
+		if steps > CONSTANT_RESOLUTION_STEPS_MAX {
+			return 0, false
+		}
+		frame := frames[len(frames)-1]
+		frames = frames[:len(frames)-1]
+		frames, values, ok = constant_resolve_frame(constants, frame, frames, values)
+		if !ok {
+			return 0, false
+		}
+	}
+	if len(values) != 1 {
+		return 0, false
+	}
+	return values[0], true
+}
+
+func constant_resolve_frame(
+	constants map[string]ast.Expr, frame Constant_Frame, frames []Constant_Frame,
+	values []int64,
+) (next_frames []Constant_Frame, next_values []int64, ok bool) {
+	switch concrete := frame.Expression.(type) {
+	case *ast.ParenExpr:
+		return append(frames, Constant_Frame{Expression: concrete.X}), values, true
+	case *ast.BasicLit:
+		if concrete.Kind != token.INT {
+			return nil, nil, false
+		}
+		parsed, parse_error := strconv.ParseInt(concrete.Value, 0, 64)
+		if parse_error != nil {
+			return nil, nil, false
+		}
+		return frames, append(values, parsed), true
+	case *ast.Ident:
+		declaration, declared := constants[concrete.Name]
+		if !declared {
+			return nil, nil, false
+		}
+		return append(frames, Constant_Frame{Expression: declaration}), values, true
+	case *ast.UnaryExpr:
+		if concrete.Op != token.SUB {
+			return nil, nil, false
+		}
+		if !frame.Visited {
+			revisit := Constant_Frame{Expression: frame.Expression, Visited: true}
+			frames = append(frames, revisit)
+			return append(frames, Constant_Frame{Expression: concrete.X}), values, true
+		}
+		values[len(values)-1] = -values[len(values)-1]
+		return frames, values, true
+	case *ast.BinaryExpr:
+		return constant_resolve_binary(frame, concrete, frames, values)
+	}
+	return nil, nil, false
+}
+
+func constant_resolve_binary(
+	frame Constant_Frame, binary *ast.BinaryExpr, frames []Constant_Frame, values []int64,
+) (next_frames []Constant_Frame, next_values []int64, ok bool) {
+	if !frame.Visited {
+		revisit := Constant_Frame{Expression: frame.Expression, Visited: true}
+		frames = append(frames, revisit)
+		frames = append(frames, Constant_Frame{Expression: binary.Y})
+		return append(frames, Constant_Frame{Expression: binary.X}), values, true
+	}
+	right := values[len(values)-1]
+	left := values[len(values)-2]
+	values = values[:len(values)-2]
+	switch binary.Op {
+	case token.ADD:
+		return frames, append(values, left+right), true
+	case token.SUB:
+		return frames, append(values, left-right), true
+	case token.MUL:
+		return frames, append(values, left*right), true
+	case token.QUO:
+		// Division by zero is unresolvable, not a registration panic.
+		if right == 0 {
+			return nil, nil, false
+		}
+		return frames, append(values, left/right), true
+	}
+	return nil, nil, false
 }
 
 // Reports every bundle the analyzer recognised by name but could not resolve to a
@@ -665,79 +1347,69 @@ func recorder_register_eager_always(
 // its elements while the runtime still enforces them, so its coverage obligations
 // would vanish unnoticed; failing keeps coverage from being silently dropped — the
 // analyzer descends a bundle or refuses it.
-func recorder_check_unresolved(recorder *Recorder, unresolved []string) {
-	if len(unresolved) == 0 {
-		return
-	}
-	banner := "🚨 " + strconv.Itoa(len(unresolved)) + " unresolved bundles 🚨"
-	fmt.Fprintln(recorder.Output, banner)
-	for _, line := range unresolved {
-		fmt.Fprintln(recorder.Output, line)
-	}
-	fmt.Fprintln(recorder.Output, banner)
-	recorder.Exit(1)
+func recorder_check_unresolved(recorder *Recorder, reg *Registration) {
+	recorder_report_registration_failure(
+		recorder, reg, "unresolved bundles", reg.Unresolved)
 }
 
-// Reports every typed preset whose bound the evaluator could not resolve, then exits.
-// A recognised-but-unevaluable bound leaves the grid unseeded while the runtime still enforces the
-// range, so its coverage obligations would vanish unnoticed; failing keeps coverage from being
-// silently dropped — the analyzer seeds a Range grid or refuses it.
-func recorder_check_unresolved_bounds(recorder *Recorder, unresolved []string) {
-	if len(unresolved) == 0 {
-		return
-	}
-	banner := "🚨 " + strconv.Itoa(len(unresolved)) + " unresolved preset bounds 🚨"
-	fmt.Fprintln(recorder.Output, banner)
-	for _, line := range unresolved {
-		fmt.Fprintln(recorder.Output, line)
-	}
-	fmt.Fprintln(recorder.Output, banner)
-	recorder.Exit(1)
+// Reports every Range/Enum whose bounds or members the resolver could not read. A
+// recognised-but-unevaluable argument leaves the witnesses unseeded while the runtime still
+// enforces the guard, so its coverage obligations would vanish unnoticed; failing keeps
+// coverage from being silently dropped — the analyzer seeds a guard or refuses it.
+func recorder_check_unresolved_bounds(recorder *Recorder, reg *Registration) {
+	recorder_report_registration_failure(
+		recorder, reg, "unresolved preset bounds", reg.Unresolved_Bound)
 }
 
-// Reports every assertion whose message is not a string literal, then exits. The runtime
-// stamps whatever the message expression evaluates to, but the static side cannot key a
-// non-literal — so its coverage would never be credited and its gap would vanish. Refuse
-// it: a message is a compile-time literal or registration fails.
-func recorder_check_non_literal_messages(recorder *Recorder, non_literal []string) {
-	if len(non_literal) == 0 {
-		return
-	}
-	banner := "🚨 " + strconv.Itoa(len(non_literal)) + " non-literal messages 🚨"
-	fmt.Fprintln(recorder.Output, banner)
-	for _, line := range non_literal {
-		fmt.Fprintln(recorder.Output, line)
-	}
-	fmt.Fprintln(recorder.Output, banner)
-	recorder.Exit(1)
+// Reports every assertion whose message is not a keyable literal. The runtime stamps whatever
+// the message expression evaluates to, but the static side cannot key a non-literal — so its
+// coverage would never be credited and its gap would vanish. Refuse it: a message is a
+// compile-time literal or registration fails.
+func recorder_check_non_literal_messages(recorder *Recorder, reg *Registration) {
+	recorder_report_registration_failure(
+		recorder, reg, "non-literal messages", reg.Non_Literal)
 }
 
-// Reports every message collision, then exits. Two distinct assertions claiming one
-// message — two Dot_Products sharing a prefix, a repeated axis message within one
-// Dot_Product, or two Always sharing a message — would silently merge into one entry and
-// mask a gap. A duplicate is fatal, never merged.
-func recorder_check_duplicate_messages(recorder *Recorder, collisions []string) {
-	if len(collisions) == 0 {
-		return
-	}
-	banner := "🚨 " + strconv.Itoa(len(collisions)) + " duplicate messages 🚨"
-	fmt.Fprintln(recorder.Output, banner)
-	for _, line := range collisions {
-		fmt.Fprintln(recorder.Output, line)
-	}
-	fmt.Fprintln(recorder.Output, banner)
-	recorder.Exit(1)
+// Reports every collision. Two assertions sharing a key, or two roots sharing an identifier,
+// would silently merge into one entry and mask a gap. A duplicate is fatal, never merged.
+func recorder_check_duplicate_messages(recorder *Recorder, reg *Registration) {
+	recorder_report_registration_failure(
+		recorder, reg, "duplicate messages", reg.Collision)
 }
 
-// A malformed chain cannot be partially registered because every omitted axis or carve would
-// weaken the demanded product; registration reports every structural refusal before exiting.
-func recorder_check_invalid_chains(recorder *Recorder, invalid []string) {
-	if len(invalid) == 0 {
+// A root identifier is a composition's whole identity; a malformed one would silently orphan
+// every assertion under it.
+func recorder_check_invalid_identifiers(recorder *Recorder, reg *Registration) {
+	recorder_report_registration_failure(
+		recorder, reg, "invalid identifiers", reg.Invalid_Identifier)
+}
+
+// A structurally refused guard — an exclusion outside its interval, an enum without two
+// distinct members — panics at runtime on every call, so registration refuses to seed it.
+func recorder_check_invalid_bounds(recorder *Recorder, reg *Registration) {
+	recorder_report_registration_failure(
+		recorder, reg, "invalid preset bounds", reg.Invalid_Bound)
+}
+
+// A bundle composition that recurses into itself would forward its identifier forever at
+// runtime; the descent refuses the cycle statically.
+func recorder_check_bundle_cycles(recorder *Recorder, reg *Registration) {
+	recorder_report_registration_failure(recorder, reg, "bundle cycles", reg.Cycle)
+}
+
+// One failed doctrine poisons the commit. The flag — not Exit — is the gate because an injected
+// Exit returns in tests; every reporter after a failed one still runs, so a multi-failure run
+// reports everything before dying.
+func recorder_report_registration_failure(
+	recorder *Recorder, reg *Registration, label string, lines []string,
+) {
+	if len(lines) == 0 {
 		return
 	}
-	banner := "🚨 " + strconv.Itoa(len(invalid)) + " invalid Dot_Product chains 🚨"
+	reg.Failed = true
+	banner := "🚨 " + strconv.Itoa(len(lines)) + " " + label + " 🚨"
 	fmt.Fprintln(recorder.Output, banner)
-	for _, line := range invalid {
+	for _, line := range lines {
 		fmt.Fprintln(recorder.Output, line)
 	}
 	fmt.Fprintln(recorder.Output, banner)
@@ -750,7 +1422,7 @@ func recorder_check_invalid_chains(recorder *Recorder, invalid []string) {
 // cannot read, silently under-registering coverage. A bundle body must be straight-line.
 // Reports every violation under one banner and exits 1.
 func recorder_check_bundle_control_flow(
-	recorder *Recorder, file_set *token.FileSet, files []*ast.File,
+	recorder *Recorder, file_set *token.FileSet, files []*ast.File, reg *Registration,
 ) {
 	var violations []string
 	for _, file := range files {
@@ -776,16 +1448,35 @@ func recorder_check_bundle_control_flow(
 			})
 		}
 	}
-	if len(violations) == 0 {
-		return
+	recorder_report_registration_failure(
+		recorder, reg, "bundle control-flow statements", violations)
+}
+
+// A bundle's identity travels through its leading parameter; a bundle without the exact
+// `identifier string` lead cannot forward, so the descent could never key its assertions.
+func recorder_check_bundle_parameters(
+	recorder *Recorder, file_set *token.FileSet, files []*ast.File, reg *Registration,
+) {
+	var violations []string
+	for _, file := range files {
+		for _, declaration := range file.Decls {
+			function, is_function := declaration.(*ast.FuncDecl)
+			if !is_function {
+				continue
+			}
+			if !ast_is_invariants_name(function.Name.Name) {
+				continue
+			}
+			if ast_identifier_parameter(function) == "identifier" {
+				continue
+			}
+			violations = append(violations, recorder_position(file_set, function)+
+				"  bundle "+function.Name.Name+
+				" must lead with `identifier string`")
+		}
 	}
-	banner := "🚨 " + strconv.Itoa(len(violations)) + " bundle control-flow statements 🚨"
-	fmt.Fprintln(recorder.Output, banner)
-	for _, violation := range violations {
-		fmt.Fprintln(recorder.Output, violation)
-	}
-	fmt.Fprintln(recorder.Output, banner)
-	recorder.Exit(1)
+	recorder_report_registration_failure(
+		recorder, reg, "invalid bundle parameters", violations)
 }
 
 // Fails registration when a bundle outside the framework's own package takes a
@@ -795,6 +1486,7 @@ func recorder_check_bundle_control_flow(
 // presets, is exempt.
 func recorder_check_primitive_bundles(
 	recorder *Recorder, file_set *token.FileSet, files []*ast.File, index *Bundle_Index,
+	reg *Registration,
 ) {
 	var offenders []string
 	for _, file := range files {
@@ -806,16 +1498,7 @@ func recorder_check_primitive_bundles(
 		offenders = append(offenders,
 			recorder_file_primitive_bundles(file_set, file)...)
 	}
-	if len(offenders) == 0 {
-		return
-	}
-	banner := "🚨 " + strconv.Itoa(len(offenders)) + " primitive bundles 🚨"
-	fmt.Fprintln(recorder.Output, banner)
-	for _, line := range offenders {
-		fmt.Fprintln(recorder.Output, line)
-	}
-	fmt.Fprintln(recorder.Output, banner)
-	recorder.Exit(1)
+	recorder_report_registration_failure(recorder, reg, "primitive bundles", offenders)
 }
 
 // Collects every primitive-subject bundle declared in one file.
@@ -830,7 +1513,7 @@ func recorder_file_primitive_bundles(
 		if !ast_is_invariants_name(function.Name.Name) {
 			continue
 		}
-		if ast_namespace_parameter(function) == "" {
+		if ast_identifier_parameter(function) == "" {
 			continue
 		}
 		subject := recorder_bundle_subject(function)
@@ -846,16 +1529,16 @@ func recorder_file_primitive_bundles(
 	return offenders
 }
 
-// Returns a bundle's subject type — its first parameter's type — or nil when the
-// function declares no parameters.
+// Returns a bundle's subject type — its second parameter's type, past the leading identifier —
+// or nil when the declaration is too short.
 func recorder_bundle_subject(function *ast.FuncDecl) (subject ast.Expr) {
 	if function.Type.Params == nil {
 		return nil
 	}
-	if len(function.Type.Params.List) == 0 {
+	if len(function.Type.Params.List) < 2 {
 		return nil
 	}
-	return function.Type.Params.List[0].Type
+	return function.Type.Params.List[1].Type
 }
 
 // Returns the bundle's own type-parameter names; a subject naming one of them is a
@@ -946,43 +1629,60 @@ func ast_is_control_flow(node ast.Node) (is_control_flow bool) {
 	return false
 }
 
-// Registration_Axis is the analyzer's complete description of one tuple coordinate. Keeping the
-// source condition beside registration-owned identity lets analysis explain a missing coordinate
-// without making runtime retain source text.
+// Registration_Axis is the analyzer's description of one bare eager Always.
 type Registration_Axis struct {
-	// Ordinal keeps repeated chain messages distinct.
-	Ordinal uint8
-	// Tuple_Position is registration's authoritative packed-mask position.
-	Tuple_Position uint8
-	// Message is the element's own literal; the Dot_Product prefix forms the coverage key.
+	// Message is the literal the entry is keyed by.
 	Message string
 	// Condition is the source text of the asserted condition.
 	Condition string
-	// Kind is whether the element is an Always or a Sometimes.
-	Kind Assertion_Kind
-	// Bucket_Count is how many buckets the axis adds to the tuple grid (Always=1, Sometimes=2).
-	Bucket_Count int
 }
 
-// Registration accumulates the diagnostics a registration pass gathers before deciding
-// whether to fail: bundles recognised by name but unresolvable, messages that are not
-// string literals, and message collisions. Each is fatal on its own (see the
-// recorder_check_* reporters). Seen_Prefix tracks Dot_Product messages so two grids
-// cannot share one — the global-uniqueness guarantee for prefixes.
+// Planned_Seed is one Events entry a registration pass intends to create; planning defers the
+// stores so a failed registration leaves the tracker empty instead of partially seeded.
+type Planned_Seed struct {
+	// Key is the full tracker key — a bare message for an Always, identifier + NUL + message
+	// for an identifier-scoped assertion.
+	Key string
+	// Kind is the entry's assertion kind.
+	Kind Assertion_Kind
+	// Condition is the source text of the asserted expression, for the gap report.
+	Condition string
+}
+
+// Registration accumulates everything a registration pass gathers before deciding whether to
+// fail: the planned seeds and the diagnostics. Each diagnostic bucket is fatal on its own (see
+// the recorder_check_* reporters); the commit runs only when none fired, so Events is
+// all-or-nothing.
 type Registration struct {
 	// Unresolved holds bundles recognised by name but not resolvable to a declaration.
 	Unresolved []string
-	// Non_Literal holds messages that are not string literals, which cannot be keyed.
+	// Non_Literal holds messages that are not string literals or carry the key separator —
+	// either way the static side cannot key them.
 	Non_Literal []string
-	// Collision holds Dot_Product messages that collided with an already-seen prefix.
+	// Collision holds duplicate keys and duplicate root identifiers.
 	Collision []string
-	// Unresolved_Bound holds typed preset links whose bounds the constant evaluator could not
-	// resolve, so their grid could not be seeded.
+	// Unresolved_Bound holds Range/Enum arguments the constant resolver could not resolve.
 	Unresolved_Bound []string
-	// Invalid_Chain holds structural chain errors that would otherwise drop demanded coverage.
-	Invalid_Chain []string
-	// Seen_Prefix tracks Dot_Product messages so two grids cannot share one prefix.
-	Seen_Prefix map[string]bool
+	// Invalid_Identifier holds identifier arguments illegal at their position: a non-literal
+	// at a root, an empty or NUL-carrying literal, or a non-forwarded identifier in a bundle.
+	Invalid_Identifier []string
+	// Invalid_Bound holds structurally refused Range exclusions and Enum member sets.
+	Invalid_Bound []string
+	// Cycle holds bundle compositions that recurse back into themselves.
+	Cycle []string
+	// Planned holds the Events entries to create when no diagnostic fired.
+	Planned []Planned_Seed
+	// Planned_Keys detects key collisions across the whole plan.
+	Planned_Keys map[string]bool
+	// Seen_Identifier tracks root identifiers so two roots cannot share one — the
+	// global-uniqueness guarantee for the namespace layer.
+	Seen_Identifier map[string]bool
+	// Validated marks bundle declarations whose bodies have been checked, so a bundle rooted
+	// from several sites is validated — and diagnosed — exactly once.
+	Validated map[*ast.FuncDecl]bool
+	// Failed poisons the commit; it is the gate rather than Exit because an injected Exit
+	// returns in tests.
+	Failed bool
 }
 
 // Returns the unquoted Go string value of the argument at index when it is a string
@@ -1050,7 +1750,9 @@ func bundle_index_module_root(
 		return index.Module_Root, true
 	}
 	if strings.HasPrefix(import_path, index.Module_Path+"/") {
-		return index.Module_Root + strings.TrimPrefix(import_path, index.Module_Path), true
+		// Clean collapses the double slash a module rooted at "/" would otherwise produce.
+		remainder := strings.TrimPrefix(import_path, index.Module_Path)
+		return path.Clean(index.Module_Root + remainder), true
 	}
 	return "", false
 }
@@ -1127,60 +1829,63 @@ func ast_file_imports(file *ast.File) (imports map[string]string) {
 	return imports
 }
 
-// Maps an axis constructor selector to its assertion kind and the index of its
-// condition-bearing argument. The bare sugar forms (Always / Sometimes) carry the condition
-// first; the explicit Recorder_* forms lead with the recorder, so the condition rides the
-// second argument. is_axis is false for any other selector.
-func ast_axis_signature(
+// The one argument-index table for the four primitives: the bare sugar forms start their
+// arguments at 0 while the explicit Recorder_* forms lead with the recorder, shifting every
+// argument by one. The identifier rides base for the identifier-carrying primitives; Always
+// carries none, so base is its condition. Sometimes: condition base+1, message base+2. Range:
+// value base+1, minimum base+2, maximum base+3, exclusions base+4 onward. Enum: value base+1,
+// members base+2 onward.
+func ast_primitive_signature(
 	selector string,
-) (kind Assertion_Kind, condition_index int, is_axis bool) {
+) (primitive Primitive_Kind, base int, is_primitive bool) {
 	switch selector {
 	case "Always":
-		return ASSERTION_KIND_ALWAYS, 0, true
+		return PRIMITIVE_KIND_ALWAYS, 0, true
 	case "Sometimes":
-		return ASSERTION_KIND_SOMETIMES, 0, true
+		return PRIMITIVE_KIND_SOMETIMES, 0, true
+	case "Range":
+		return PRIMITIVE_KIND_RANGE, 0, true
+	case "Enum":
+		return PRIMITIVE_KIND_ENUM, 0, true
 	case "Recorder_Always":
-		return ASSERTION_KIND_ALWAYS, 1, true
+		return PRIMITIVE_KIND_ALWAYS, 1, true
 	case "Recorder_Sometimes":
-		return ASSERTION_KIND_SOMETIMES, 1, true
+		return PRIMITIVE_KIND_SOMETIMES, 1, true
+	case "Recorder_Range":
+		return PRIMITIVE_KIND_RANGE, 1, true
+	case "Recorder_Enum":
+		return PRIMITIVE_KIND_ENUM, 1, true
 	}
 	return 0, 0, false
 }
 
-// Returns the axis for an Always/Sometimes constructor call, in either the bare sugar form or
-// the explicit Recorder_* form; is_axis is false for any other call (Impossible, a bundle, a
-// non-invariant call).
+// Returns the axis of a bare eager Always call, in either the sugar or the Recorder_ form; a
+// non-literal or NUL-carrying message is diagnosed here because the eager walk owns Always
+// messages. is_axis is false for every other call.
 func recorder_axis_of(
 	file_set *token.FileSet, call *ast.CallExpr, allow_unqualified bool, reg *Registration,
 ) (axis Registration_Axis, is_axis bool) {
 	selector := ast_selector(call, allow_unqualified)
-	if kind, condition_index, ok := ast_axis_signature(selector); ok {
-		condition := ast_condition_text(file_set, call, condition_index)
-		bucket_count := 2
-		if kind == ASSERTION_KIND_ALWAYS {
-			bucket_count = 1
-		}
-		// The message is the argument past the condition; the runtime stamps the same
-		// literal. A non-literal cannot be keyed, so it is reported and fails registration.
-		message, literal := ast_string_literal(call, condition_index+1)
-		if !literal {
-			reg.Non_Literal = append(reg.Non_Literal,
-				recorder_position(file_set, call)+
-					"  "+selector+" message is not a string literal")
-		}
-		return Registration_Axis{
-			Message:      message,
-			Condition:    condition,
-			Kind:         kind,
-			Bucket_Count: bucket_count,
-		}, true
+	primitive, base, is_primitive := ast_primitive_signature(selector)
+	if !is_primitive {
+		return Registration_Axis{}, false
 	}
-	return Registration_Axis{}, false
-}
-
-// Returns the X in a literal `invariant.X(...)` selector call, or "" otherwise.
-func ast_invariant_selector(call *ast.CallExpr) (name string) {
-	return ast_selector(call, false)
+	if primitive != PRIMITIVE_KIND_ALWAYS {
+		return Registration_Axis{}, false
+	}
+	condition := ast_condition_text(file_set, call, base)
+	message, literal := ast_string_literal(call, base+1)
+	if !literal {
+		reg.Non_Literal = append(reg.Non_Literal,
+			recorder_position(file_set, call)+
+				"  "+selector+" message is not a string literal")
+	}
+	if strings.Contains(message, ELEMENT_MESSAGE_SEPARATOR) {
+		reg.Non_Literal = append(reg.Non_Literal,
+			recorder_position(file_set, call)+
+				"  "+selector+" message contains NUL")
+	}
+	return Registration_Axis{Message: message, Condition: condition}, true
 }
 
 // Returns the invariant primitive a call names: the X of a qualified
@@ -1364,19 +2069,6 @@ func recorder_report_section(
 	for _, gap := range selected {
 		fmt.Fprintln(output, coverage_gap_line(gap))
 	}
-}
-
-// Decodes a bucket index for an axis of the given kind into the event it stands for: a
-// Sometimes 0/1 into false/true, an Always into held (its one bucket means the condition held,
-// the only outcome an Always records).
-func assertion_kind_bucket_text(kind Assertion_Kind, index int) (text string) {
-	if kind == ASSERTION_KIND_ALWAYS {
-		return "held"
-	}
-	if index == 1 {
-		return "true"
-	}
-	return "false"
 }
 
 // Renders one branch or reachability gap as a report line, naming its kind,
