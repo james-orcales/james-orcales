@@ -14,6 +14,7 @@ import (
 	"go/token"
 	"io"
 	"io/fs"
+	"math/big"
 	"path"
 	"path/filepath"
 	"sort"
@@ -28,15 +29,13 @@ import (
 const ASSERTION_FAILURE_MESSAGE_PREFIX = "🚨 Assertion Failure 🚨: "
 
 // ELEMENT_MESSAGE_SEPARATOR makes structural axis keys unambiguous because registration rejects
-// it in every namespace and message. Chain axes use two separators around the ordinal; the private
-// Range and Enum engine retains its single-separator flat keys.
+// it in every namespace and message. Two separators distinguish chain handles from the flat tuple
+// and eager-Always keys that fuzz persistence also carries.
 const ELEMENT_MESSAGE_SEPARATOR = "\x00"
 
-// Bounds the bundle-flattening loop in recorder_collect_elements: each step
-// either advances one argument cursor or pops a finished scope, so an acyclic
-// bundle graph finishes far below this. The cap only stops a pathological (e.g.
-// self-referential) *_Invariants graph from making the work depend unboundedly
-// on input — TigerStyle forbids that.
+// Bounds registration's backwards walks over fluent receivers. A valid chain stops at its root
+// far below this because the independently enforced ordinal space has only 255 links; the larger
+// bound keeps malformed syntax from making analysis depend unboundedly on source depth.
 const BUNDLE_EXPANSION_STEPS_MAX = 4096
 
 // A uint8 ordinal represents the 255 valid link positions without widening Product.
@@ -61,6 +60,21 @@ const PRODUCT_FAILURE_REFERENCE = uint8(4)
 // PRODUCT_FAILURE_DUPLICATE_RULE keeps duplicate named constraints fatal without eager panic.
 const PRODUCT_FAILURE_DUPLICATE_RULE = uint8(5)
 
+// PRODUCT_FAILURE_PRESET_UPPER defers a typed upper-bound violation until Ensure.
+const PRODUCT_FAILURE_PRESET_UPPER = uint8(6)
+
+// PRODUCT_FAILURE_PRESET_LOWER defers a typed lower-bound violation until Ensure.
+const PRODUCT_FAILURE_PRESET_LOWER = uint8(7)
+
+// PRODUCT_FAILURE_PRESET_EXCLUDED defers a Range exclusion until Ensure.
+const PRODUCT_FAILURE_PRESET_EXCLUDED = uint8(8)
+
+// PRODUCT_FAILURE_PRESET_MEMBER defers an Enum membership violation until Ensure.
+const PRODUCT_FAILURE_PRESET_MEMBER = uint8(9)
+
+// PRODUCT_FAILURE_ENUM_DOMAIN prevents an invalid member set from acquiring a runtime shape.
+const PRODUCT_FAILURE_ENUM_DOMAIN = uint8(10)
+
 // Bounds the walk up the directory tree searching for a go.mod, so module
 // discovery can't loop unboundedly on a pathological path.
 const MODULE_SEARCH_DEPTH_MAX = 256
@@ -77,6 +91,45 @@ const DOT_ELEMENT_KIND_SOMETIMES Engine_Element_Kind = 1
 // DOT_ELEMENT_KIND_IMPOSSIBLE tags a declaration that a set of element events
 // must never co-occur.
 const DOT_ELEMENT_KIND_IMPOSSIBLE Engine_Element_Kind = 2
+
+// DOT_ELEMENT_KIND_GUARD distinguishes a preset's one-bucket reachability link from tuple axes.
+const DOT_ELEMENT_KIND_GUARD Engine_Element_Kind = 3
+
+// CHAIN_PRESET_KIND_RANGE identifies a bounded interval expansion.
+const CHAIN_PRESET_KIND_RANGE Chain_Preset_Kind = 1
+
+// CHAIN_PRESET_KIND_ENUM identifies a discrete member-set expansion.
+const CHAIN_PRESET_KIND_ENUM Chain_Preset_Kind = 2
+
+// CHAIN_INTEGER_KIND_INT identifies the platform int method, which this repository pins to 64 bits.
+const CHAIN_INTEGER_KIND_INT Chain_Integer_Kind = 1
+
+// CHAIN_INTEGER_KIND_INT8 identifies the int8 method.
+const CHAIN_INTEGER_KIND_INT8 Chain_Integer_Kind = 2
+
+// CHAIN_INTEGER_KIND_INT16 identifies the int16 method.
+const CHAIN_INTEGER_KIND_INT16 Chain_Integer_Kind = 3
+
+// CHAIN_INTEGER_KIND_INT32 identifies the int32 method.
+const CHAIN_INTEGER_KIND_INT32 Chain_Integer_Kind = 4
+
+// CHAIN_INTEGER_KIND_INT64 identifies the int64 method.
+const CHAIN_INTEGER_KIND_INT64 Chain_Integer_Kind = 5
+
+// CHAIN_INTEGER_KIND_UINT identifies the platform uint method.
+const CHAIN_INTEGER_KIND_UINT Chain_Integer_Kind = 6
+
+// CHAIN_INTEGER_KIND_UINT8 identifies the uint8 method.
+const CHAIN_INTEGER_KIND_UINT8 Chain_Integer_Kind = 7
+
+// CHAIN_INTEGER_KIND_UINT16 identifies the uint16 method.
+const CHAIN_INTEGER_KIND_UINT16 Chain_Integer_Kind = 8
+
+// CHAIN_INTEGER_KIND_UINT32 identifies the uint32 method.
+const CHAIN_INTEGER_KIND_UINT32 Chain_Integer_Kind = 9
+
+// CHAIN_INTEGER_KIND_UINT64 identifies the uint64 method.
+const CHAIN_INTEGER_KIND_UINT64 Chain_Integer_Kind = 10
 
 // ASSERTION_KIND_ALWAYS classifies a per-element tracker entry for an Always.
 const ASSERTION_KIND_ALWAYS Assertion_Kind = 0
@@ -104,27 +157,6 @@ type Recorder struct {
 	// fatally — so the clean-run summary counts it. Seeded per call-site namespace,
 	// one entry per cell the carve's glob expands to.
 	Forbidden sync.Map
-
-	// Observe_Cache_Mu guards Observe_Cache: the first-observe build takes the
-	// write lock; the recording hot path reads under RLock.
-	Observe_Cache_Mu sync.RWMutex
-	// Observe_Cache memoizes, per Dot_Product message, the metadata pointers and
-	// tracker keys its elements and grid cells resolve to, so the recording hot path
-	// increments by pointer with no per-call key construction. Built lazily — the keys
-	// and Loads happen once. A plain map (not sync.Map) keeps the read allocation-free.
-	Observe_Cache map[string]*Observe_Handle
-
-	// Enforce_Cache_Mu guards Enforce_Cache: the first-call build takes the write lock;
-	// the enforcement hot path reads under RLock. The sibling of Observe_Cache_Mu.
-	Enforce_Cache_Mu sync.RWMutex
-	// Enforce_Cache memoizes, per Dot_Product message, each Impossible's references resolved
-	// to sibling-axis positions plus its rendered violation message, so enforcement is
-	// integer-index and boolean compares — never the per-call O(Impossibles x refs x axes)
-	// string scan that resolving references from scratch would be. Enforcement runs in every
-	// mode, so this cache is read on every call, unlike Observe_Cache which only the recording
-	// modes touch. Built lazily; a plain map keyed by the existing message string reads
-	// allocation-free.
-	Enforce_Cache map[string]*Enforce_Handle
 
 	// Chain_Shapes_Mu guards discovery because foreign chains have no registration phase to
 	// publish an immutable shape before concurrent execution.
@@ -164,11 +196,9 @@ type Recorder struct {
 	// empty leaves a relative entry relative.
 	Working_Directory string
 
-	// Sugar_Package is the import path of the recorder-less sugar tier (the
-	// package defining Always / Sometimes / … as bare functions). When a bundle
-	// resolved from that package is descended, its unqualified calls to those
-	// primitives are recognised; empty disables that — bare calls elsewhere are
-	// not the invariant primitives and must stay unrecognised.
+	// Sugar_Package is the import path of the recorder-less sugar tier. When a template
+	// resolved from that package is descended, its unqualified invariant calls are recognized;
+	// empty keeps identically named calls elsewhere from becoming assertions.
 	Sugar_Package string
 
 	// Package_Label is the package's path relative to the module root, derived by
@@ -230,30 +260,7 @@ type Tuple_Axis struct {
 	Message string
 }
 
-// Engine_Element survives only because Range and Enum share the original allocation-free grid
-// engine; keeping that adapter separate prevents its representation from leaking into Product.
-type Engine_Element struct {
-	// Kind selects which fields carry meaning: a Sometimes axis or an Impossible declaration.
-	Kind Engine_Element_Kind
-	// Event is the observed outcome of a Sometimes axis: true when its condition held.
-	Event bool
-	// Gated marks a Sometimes whose recording is conditional on Prerequisite (an Imply).
-	Gated bool
-	// Prerequisite is the gate value of a Gated Sometimes: it records only when this holds,
-	// and is don't-care otherwise.
-	Prerequisite bool
-	// Message is the axis's own message — joined to the consuming Dot_Product's prefix to
-	// form the coverage key.
-	Message string
-
-	// Impossibles are the forbidden event coordinates an Impossible declares.
-	Impossibles []Dot_Element_Reference
-}
-
-// Engine_Bundle keeps the legacy engine slice allocation-compatible with its preset builders.
-type Engine_Bundle = []Engine_Element
-
-// Engine_Element_Kind keeps the preset adapter's zero value invalid.
+// Engine_Element_Kind keeps a chain link's zero value invalid.
 type Engine_Element_Kind uint8
 
 // Dot_Element_Reference names one element's event by its Message — a coordinate an
@@ -269,6 +276,20 @@ type Dot_Element_Reference struct {
 // Arrays remain comparable, so registered tuple resolution is a direct allocation-free map read.
 type Chain_Mask [CHAIN_MASK_WORDS]uint64
 
+// Chain_Preset_Kind distinguishes the two typed preset expansions.
+type Chain_Preset_Kind uint8
+
+// Chain_Integer_Kind pins the exact primitive method used at the analyzed callsite.
+type Chain_Integer_Kind uint8
+
+// Chain_Integer_Value is an exact allocation-free mathematical integer representation.
+type Chain_Integer_Value struct {
+	// Magnitude carries the absolute value, including every uint64 value.
+	Magnitude uint64
+	// Negative distinguishes signed negative values without sacrificing uint64 range.
+	Negative bool
+}
+
 // Chain_Shape is the immutable execution plan for one registered namespace. A foreign chain builds
 // the same plan under Mu on its first execution so shape and enforcement errors behave identically
 // even though its coverage entries remain nil.
@@ -281,6 +302,10 @@ type Chain_Shape struct {
 	Links []Chain_Link
 	// Rules holds every polar carve in declaration order.
 	Rules []Chain_Rule
+	// Guards holds preset bound reachability handles in fluent order.
+	Guards []Chain_Guard
+	// Presets holds registration's complete typed expansion plan.
+	Presets []Chain_Preset
 	// Tuples resolves a packed mask directly to its pre-seeded coverage entry.
 	// The map prevents a dense array from imposing a width smaller than the chain ordinal.
 	Tuples map[Chain_Mask]Handle_Entry
@@ -288,6 +313,16 @@ type Chain_Shape struct {
 	Registered bool
 	// Ensured prevents a discovered shape from growing after its first complete execution.
 	Ensured atomic.Bool
+}
+
+// Chain_Guard is one preset bound obligation, excluded from tuple coordinates.
+type Chain_Guard struct {
+	// Ordinal selects the guard result captured by the typed method.
+	Ordinal uint8
+	// Message names the bound obligation and violation.
+	Message string
+	// Entry is registration's exact reachability handle.
+	Entry Handle_Entry
 }
 
 // Chain_Axis is registration's complete execution plan for one Sometimes link.
@@ -300,6 +335,60 @@ type Chain_Axis struct {
 	Message string
 	// Entry is the exact registration-seeded coverage handle Ensure credits.
 	Entry Handle_Entry
+}
+
+// Chain_Preset is registration's authoritative expansion for one typed method call.
+type Chain_Preset struct {
+	// Kind distinguishes bounded intervals from member sets.
+	Kind Chain_Preset_Kind
+	// Integer_Kind pins the concrete exported method.
+	Integer_Kind Chain_Integer_Kind
+	// Ordinal is the first generated guard link.
+	Ordinal uint8
+	// Link_Count advances the surrounding fluent chain past the complete expansion.
+	Link_Count uint8
+	// Axis_Start indexes the first generated axis in Chain_Shape.Axes.
+	Axis_Start uint8
+	// Axis_Count is the number of generated tuple axes.
+	Axis_Count uint8
+	// Minimum is the compiled inclusive lower bound.
+	Minimum Chain_Integer_Value
+	// Maximum is the compiled inclusive upper bound.
+	Maximum Chain_Integer_Value
+	// Values are exclusions for Range and members for Enum.
+	Values []Chain_Integer_Value
+	// Axis_Values align positionally with the generated axes.
+	Axis_Values []Chain_Integer_Value
+}
+
+// Chain_Preset_Axis is one equality axis generated by a typed preset.
+type Chain_Preset_Axis struct {
+	// Ordinal is the generated Sometimes link position.
+	Ordinal uint8
+	// Tuple_Position is the axis's coordinate in the surrounding product.
+	Tuple_Position uint8
+	// Message is the public sibling vocabulary for the generated axis.
+	Message string
+	// Value is the exact integer whose equality makes the axis true.
+	Value Chain_Integer_Value
+}
+
+// Chain_Preset_Expansion is the one canonical description registration and discovery publish.
+type Chain_Preset_Expansion struct {
+	// Valid is false when the expansion would exceed the shared ordinal space.
+	Valid bool
+	// Preset advances runtime through this complete expansion.
+	Preset Chain_Preset
+	// Guards are excluded from tuple coordinates but retain reachability.
+	Guards []Chain_Guard
+	// Axes become ordinary siblings in the surrounding product.
+	Axes []Chain_Preset_Axis
+	// Links pin every generated guard, axis, and constraint ordinal.
+	Links []Chain_Link
+	// Rules are the generated mutual-exclusion and saturation carves.
+	Rules []Chain_Rule
+	// Carves seed the demanded grid minus generated impossible cells.
+	Carves [][]Registration_Cell
 }
 
 // Chain_Link pins the structural identity of one fluent link. References are retained only for an
@@ -321,6 +410,8 @@ type Chain_Link struct {
 	Reference_Count uint8
 	// Rule_Index resolves an Impossible directly to registration's compiled rule.
 	Rule_Index uint8
+	// Preset_Index resolves the first generated guard directly to its compiled preset.
+	Preset_Index uint8
 }
 
 // Chain_Rule is one Impossible compiled to the packed-mask predicate mask&Mask == Want.
@@ -353,6 +444,10 @@ type Product struct {
 	Failure uint8
 	// Mismatch retains structural divergence so only Ensure exposes it.
 	Mismatch bool
+	// Preset_Failure retains the first typed guard violation for Ensure.
+	Preset_Failure uint8
+	// Preset_Failure_Ordinal identifies the preset that supplied the violation.
+	Preset_Failure_Ordinal uint8
 }
 
 // Recorder_Always stays outside Product because an eager guard has no second branch to widen a
@@ -363,7 +458,7 @@ func Recorder_Always[T ~bool](recorder *Recorder, condition T, message string) {
 		panic(ASSERTION_FAILURE_MESSAGE_PREFIX + message + "  Always — condition was false")
 	}
 	// Enforcement (the panic above) runs in every mode; coverage is credited under a test run
-	// or the fuzz coordinator (not a worker), mirroring recorder_dot_product_observe. The
+	// or the fuzz coordinator (not a worker), matching Ensure's recording policy. The
 	// reachability entry is seeded statically by recorder_register_eager_always;
 	// recorder_increment no-ops when the bare Always was never registered (an Always in a
 	// non-analyzed package).
@@ -374,33 +469,6 @@ func Recorder_Always[T ~bool](recorder *Recorder, condition T, message string) {
 		return
 	}
 	recorder_increment(recorder, message, true)
-}
-
-// Recorder_Sometimes builds an element asserting condition is observed both true
-// and false across the run. Like every element producer it never panics on its
-// own — coverage is enforced only when the element is consumed by
-// Recorder_Dot_Product; a bare Sometimes tracks nothing. message is the element's
-// own identity, prefixed by the consuming Dot_Product's message.
-func recorder_sometimes[T ~bool](
-	recorder *Recorder, condition T, message string,
-) (element Engine_Element) {
-	return Engine_Element{
-		Kind:    DOT_ELEMENT_KIND_SOMETIMES,
-		Event:   bool(condition),
-		Message: message,
-	}
-}
-
-// Impossible declares that the referenced axis events must never all co-occur on the same call.
-// Build references with Event_True / Event_False, naming sibling axes of the same Dot_Product.
-//
-// It globs over the axes you do not name: the carve holds only the axes you pass, and the
-// analyzer treats every unnamed axis as a wildcard — it forbids, and prunes from the demanded
-// grid, every tuple matching the named events across all values of the other axes (see
-// recorder_carve_matches). So Impossible(Event_True("a"), Event_True("b")) excludes "a and b
-// both true" across every combination of the remaining axes.
-func impossible(impossibles ...Dot_Element_Reference) (element Engine_Element) {
-	return Engine_Element{Kind: DOT_ELEMENT_KIND_IMPOSSIBLE, Impossibles: impossibles}
 }
 
 // Event_True references the axis carrying message at its true outcome, for use in Impossible. The
@@ -451,9 +519,7 @@ func (product Product) Sometimes(condition bool, message string) (next Product) 
 	if strings.Contains(message, ELEMENT_MESSAGE_SEPARATOR) {
 		return product.chain_defer_failure(PRODUCT_FAILURE_SOMETIMES)
 	}
-	mismatch := product.Shape.chain_axis(&Chain_Axis_Input{
-		Ordinal: product.Ordinal, Axis_Count: product.Axis_Count, Message: message,
-	})
+	mismatch := product.Shape.chain_axis(product.Ordinal, product.Axis_Count, message)
 	if condition {
 		product.Observations = chain_mask_with(product.Observations, product.Ordinal)
 	}
@@ -483,10 +549,7 @@ func (product Product) Impossible(
 	}
 	if product.Shape.chain_replays() {
 		rule, mismatch, failure := product.Shape.chain_rule_replay(
-			&Chain_Rule_Replay_Input{
-				Ordinal: product.Ordinal, Axis_Count: product.Axis_Count,
-				Message: message, References: references,
-			})
+			product.Ordinal, product.Axis_Count, message, references)
 		if failure != 0 {
 			product = product.chain_defer_failure(failure)
 		}
@@ -501,6 +564,689 @@ func (product Product) Impossible(
 		product = product.chain_defer_failure(failure)
 	}
 	return product.impossible_advance(rule, mismatch)
+}
+
+// Range_Int expands the int bounded preset inside this product.
+func (product Product) Range_Int(
+	value int, minimum int, maximum int, excluded ...int,
+) (next Product) {
+	return product_range(product, CHAIN_INTEGER_KIND_INT, value, minimum, maximum, excluded)
+}
+
+// Range_Int8 expands the int8 bounded preset inside this product.
+func (product Product) Range_Int8(
+	value int8, minimum int8, maximum int8, excluded ...int8,
+) (next Product) {
+	return product_range(product, CHAIN_INTEGER_KIND_INT8, value, minimum, maximum, excluded)
+}
+
+// Range_Int16 expands the int16 bounded preset inside this product.
+func (product Product) Range_Int16(
+	value int16, minimum int16, maximum int16, excluded ...int16,
+) (next Product) {
+	return product_range(product, CHAIN_INTEGER_KIND_INT16, value, minimum, maximum, excluded)
+}
+
+// Range_Int32 expands the int32 bounded preset inside this product.
+func (product Product) Range_Int32(
+	value int32, minimum int32, maximum int32, excluded ...int32,
+) (next Product) {
+	return product_range(product, CHAIN_INTEGER_KIND_INT32, value, minimum, maximum, excluded)
+}
+
+// Range_Int64 expands the int64 bounded preset inside this product.
+func (product Product) Range_Int64(
+	value int64, minimum int64, maximum int64, excluded ...int64,
+) (next Product) {
+	return product_range(product, CHAIN_INTEGER_KIND_INT64, value, minimum, maximum, excluded)
+}
+
+// Range_Uint expands the uint bounded preset inside this product.
+func (product Product) Range_Uint(
+	value uint, minimum uint, maximum uint, excluded ...uint,
+) (next Product) {
+	return product_range(product, CHAIN_INTEGER_KIND_UINT, value, minimum, maximum, excluded)
+}
+
+// Range_Uint8 expands the uint8 bounded preset inside this product.
+func (product Product) Range_Uint8(
+	value uint8, minimum uint8, maximum uint8, excluded ...uint8,
+) (next Product) {
+	return product_range(product, CHAIN_INTEGER_KIND_UINT8, value, minimum, maximum, excluded)
+}
+
+// Range_Uint16 expands the uint16 bounded preset inside this product.
+func (product Product) Range_Uint16(
+	value uint16, minimum uint16, maximum uint16, excluded ...uint16,
+) (next Product) {
+	return product_range(product, CHAIN_INTEGER_KIND_UINT16, value, minimum, maximum, excluded)
+}
+
+// Range_Uint32 expands the uint32 bounded preset inside this product.
+func (product Product) Range_Uint32(
+	value uint32, minimum uint32, maximum uint32, excluded ...uint32,
+) (next Product) {
+	return product_range(product, CHAIN_INTEGER_KIND_UINT32, value, minimum, maximum, excluded)
+}
+
+// Range_Uint64 expands the uint64 bounded preset inside this product.
+func (product Product) Range_Uint64(
+	value uint64, minimum uint64, maximum uint64, excluded ...uint64,
+) (next Product) {
+	return product_range(product, CHAIN_INTEGER_KIND_UINT64, value, minimum, maximum, excluded)
+}
+
+// Enum_Int expands the int member-set preset inside this product.
+func (product Product) Enum_Int(value int, members ...int) (next Product) {
+	if !chain_enum_domain_valid(members) {
+		return product.chain_defer_failure(PRODUCT_FAILURE_ENUM_DOMAIN)
+	}
+	minimum, maximum := chain_integer_bounds(members)
+	return product_preset(product, CHAIN_PRESET_KIND_ENUM, CHAIN_INTEGER_KIND_INT,
+		value, minimum, maximum, members)
+}
+
+// Enum_Int8 expands the int8 member-set preset inside this product.
+func (product Product) Enum_Int8(value int8, members ...int8) (next Product) {
+	if !chain_enum_domain_valid(members) {
+		return product.chain_defer_failure(PRODUCT_FAILURE_ENUM_DOMAIN)
+	}
+	minimum, maximum := chain_integer_bounds(members)
+	return product_preset(product, CHAIN_PRESET_KIND_ENUM, CHAIN_INTEGER_KIND_INT8,
+		value, minimum, maximum, members)
+}
+
+// Enum_Int16 expands the int16 member-set preset inside this product.
+func (product Product) Enum_Int16(value int16, members ...int16) (next Product) {
+	if !chain_enum_domain_valid(members) {
+		return product.chain_defer_failure(PRODUCT_FAILURE_ENUM_DOMAIN)
+	}
+	minimum, maximum := chain_integer_bounds(members)
+	return product_preset(product, CHAIN_PRESET_KIND_ENUM, CHAIN_INTEGER_KIND_INT16,
+		value, minimum, maximum, members)
+}
+
+// Enum_Int32 expands the int32 member-set preset inside this product.
+func (product Product) Enum_Int32(value int32, members ...int32) (next Product) {
+	if !chain_enum_domain_valid(members) {
+		return product.chain_defer_failure(PRODUCT_FAILURE_ENUM_DOMAIN)
+	}
+	minimum, maximum := chain_integer_bounds(members)
+	return product_preset(product, CHAIN_PRESET_KIND_ENUM, CHAIN_INTEGER_KIND_INT32,
+		value, minimum, maximum, members)
+}
+
+// Enum_Int64 expands the int64 member-set preset inside this product.
+func (product Product) Enum_Int64(value int64, members ...int64) (next Product) {
+	if !chain_enum_domain_valid(members) {
+		return product.chain_defer_failure(PRODUCT_FAILURE_ENUM_DOMAIN)
+	}
+	minimum, maximum := chain_integer_bounds(members)
+	return product_preset(product, CHAIN_PRESET_KIND_ENUM, CHAIN_INTEGER_KIND_INT64,
+		value, minimum, maximum, members)
+}
+
+// Enum_Uint expands the uint member-set preset inside this product.
+func (product Product) Enum_Uint(value uint, members ...uint) (next Product) {
+	if !chain_enum_domain_valid(members) {
+		return product.chain_defer_failure(PRODUCT_FAILURE_ENUM_DOMAIN)
+	}
+	minimum, maximum := chain_integer_bounds(members)
+	return product_preset(product, CHAIN_PRESET_KIND_ENUM, CHAIN_INTEGER_KIND_UINT,
+		value, minimum, maximum, members)
+}
+
+// Enum_Uint8 expands the uint8 member-set preset inside this product.
+func (product Product) Enum_Uint8(value uint8, members ...uint8) (next Product) {
+	if !chain_enum_domain_valid(members) {
+		return product.chain_defer_failure(PRODUCT_FAILURE_ENUM_DOMAIN)
+	}
+	minimum, maximum := chain_integer_bounds(members)
+	return product_preset(product, CHAIN_PRESET_KIND_ENUM, CHAIN_INTEGER_KIND_UINT8,
+		value, minimum, maximum, members)
+}
+
+// Enum_Uint16 expands the uint16 member-set preset inside this product.
+func (product Product) Enum_Uint16(value uint16, members ...uint16) (next Product) {
+	if !chain_enum_domain_valid(members) {
+		return product.chain_defer_failure(PRODUCT_FAILURE_ENUM_DOMAIN)
+	}
+	minimum, maximum := chain_integer_bounds(members)
+	return product_preset(product, CHAIN_PRESET_KIND_ENUM, CHAIN_INTEGER_KIND_UINT16,
+		value, minimum, maximum, members)
+}
+
+// Enum_Uint32 expands the uint32 member-set preset inside this product.
+func (product Product) Enum_Uint32(value uint32, members ...uint32) (next Product) {
+	if !chain_enum_domain_valid(members) {
+		return product.chain_defer_failure(PRODUCT_FAILURE_ENUM_DOMAIN)
+	}
+	minimum, maximum := chain_integer_bounds(members)
+	return product_preset(product, CHAIN_PRESET_KIND_ENUM, CHAIN_INTEGER_KIND_UINT32,
+		value, minimum, maximum, members)
+}
+
+// Enum_Uint64 expands the uint64 member-set preset inside this product.
+func (product Product) Enum_Uint64(value uint64, members ...uint64) (next Product) {
+	if !chain_enum_domain_valid(members) {
+		return product.chain_defer_failure(PRODUCT_FAILURE_ENUM_DOMAIN)
+	}
+	minimum, maximum := chain_integer_bounds(members)
+	return product_preset(product, CHAIN_PRESET_KIND_ENUM, CHAIN_INTEGER_KIND_UINT64,
+		value, minimum, maximum, members)
+}
+
+func chain_enum_domain_valid[Value comparable](members []Value) (valid bool) {
+	if len(members) < 2 {
+		return false
+	}
+	first := members[0]
+	for _, member := range members[1:] {
+		if member != first {
+			return true
+		}
+	}
+	return false
+}
+
+func product_range[
+	Value ~int | ~int8 | ~int16 | ~int32 | ~int64 |
+		~uint | ~uint8 | ~uint16 | ~uint32 | ~uint64,
+](
+	product Product, integer_kind Chain_Integer_Kind,
+	value Value, minimum Value, maximum Value, excluded []Value,
+) (next Product) {
+	return product_preset(
+		product, CHAIN_PRESET_KIND_RANGE, integer_kind,
+		value, minimum, maximum, excluded)
+}
+
+func chain_integer_bounds[
+	Value ~int | ~int8 | ~int16 | ~int32 | ~int64 |
+		~uint | ~uint8 | ~uint16 | ~uint32 | ~uint64,
+](members []Value) (minimum Value, maximum Value) {
+	if len(members) > 0 {
+		minimum, maximum = members[0], members[0]
+	}
+	for _, member := range members {
+		if member < minimum {
+			minimum = member
+		}
+		if member > maximum {
+			maximum = member
+		}
+	}
+	return minimum, maximum
+}
+
+// The public methods are concrete, while this free generic helper is monomorphized for direct
+// comparisons and keeps the twenty wrappers on one execution path without interface conversion.
+func product_preset[
+	Value ~int | ~int8 | ~int16 | ~int32 | ~int64 |
+		~uint | ~uint8 | ~uint16 | ~uint32 | ~uint64,
+](
+	product Product, kind Chain_Preset_Kind, integer_kind Chain_Integer_Kind,
+	value Value, minimum Value, maximum Value, values []Value,
+) (next Product) {
+	if product.Failure != 0 {
+		return product
+	}
+	preset, mismatch := chain_preset_resolve(
+		product.Shape, kind, integer_kind, product.Ordinal,
+		product.Axis_Count, minimum, maximum, values)
+	if preset == nil {
+		return product.chain_defer_failure(PRODUCT_FAILURE_LINKS)
+	}
+	if mismatch {
+		product.Mismatch = true
+	}
+	product = product_preset_observe(product, preset, value, minimum, maximum, values)
+	product.Ordinal += preset.Link_Count
+	product.Axis_Count += preset.Axis_Count
+	return product
+}
+
+func product_preset_observe[
+	Value ~int | ~int8 | ~int16 | ~int32 | ~int64 |
+		~uint | ~uint8 | ~uint16 | ~uint32 | ~uint64,
+](
+	product Product, preset *Chain_Preset,
+	value Value, minimum Value, maximum Value, values []Value,
+) (next Product) {
+	if preset.Kind == CHAIN_PRESET_KIND_RANGE {
+		product = product_range_verdict(
+			product, preset.Ordinal, value, minimum, maximum, values)
+	} else if !chain_integer_slice_contains(values, value) {
+		product = product.chain_defer_preset_failure(
+			PRODUCT_FAILURE_PRESET_MEMBER, preset.Ordinal)
+	}
+	if product.Preset_Failure == 0 {
+		product.Observations = chain_mask_with(product.Observations, preset.Ordinal)
+		product.Observations = chain_mask_with(product.Observations, preset.Ordinal+1)
+	}
+	value_integer := chain_integer_value(value)
+	for axis_index := uint8(0); axis_index < preset.Axis_Count; axis_index++ {
+		if preset.Axis_Values[axis_index] != value_integer {
+			continue
+		}
+		axis := product.Shape.Axes[preset.Axis_Start+axis_index]
+		product.Observations = chain_mask_with(product.Observations, axis.Ordinal)
+	}
+	return product
+}
+
+func product_range_verdict[
+	Value ~int | ~int8 | ~int16 | ~int32 | ~int64 |
+		~uint | ~uint8 | ~uint16 | ~uint32 | ~uint64,
+](
+	product Product, ordinal uint8, value Value, minimum Value, maximum Value, excluded []Value,
+) (next Product) {
+	if value > maximum {
+		return product.chain_defer_preset_failure(PRODUCT_FAILURE_PRESET_UPPER, ordinal)
+	}
+	if value < minimum {
+		return product.chain_defer_preset_failure(PRODUCT_FAILURE_PRESET_LOWER, ordinal)
+	}
+	if chain_integer_slice_contains(excluded, value) {
+		return product.chain_defer_preset_failure(PRODUCT_FAILURE_PRESET_EXCLUDED, ordinal)
+	}
+	return product
+}
+
+func chain_integer_slice_contains[Value comparable](values []Value, value Value) (has bool) {
+	for _, candidate := range values {
+		if candidate == value {
+			return true
+		}
+	}
+	return false
+}
+
+func (product Product) chain_defer_preset_failure(failure uint8, ordinal uint8) (next Product) {
+	if product.Preset_Failure == 0 {
+		product.Preset_Failure = failure
+		product.Preset_Failure_Ordinal = ordinal
+	}
+	return product
+}
+
+func chain_integer_value[
+	Value ~int | ~int8 | ~int16 | ~int32 | ~int64 |
+		~uint | ~uint8 | ~uint16 | ~uint32 | ~uint64,
+](value Value) (integer Chain_Integer_Value) {
+	if value < Value(0) {
+		signed := int64(value)
+		integer.Negative = true
+		integer.Magnitude = uint64(-(signed + 1)) + 1
+		return integer
+	}
+	integer.Magnitude = uint64(value)
+	return integer
+}
+
+func chain_integer_compare(first Chain_Integer_Value, second Chain_Integer_Value) (order int) {
+	if first.Negative != second.Negative {
+		if first.Negative {
+			return -1
+		}
+		return 1
+	}
+	if first.Magnitude == second.Magnitude {
+		return 0
+	}
+	if first.Negative {
+		if first.Magnitude > second.Magnitude {
+			return -1
+		}
+		return 1
+	}
+	if first.Magnitude < second.Magnitude {
+		return -1
+	}
+	return 1
+}
+
+func chain_integer_between(
+	minimum Chain_Integer_Value, candidate Chain_Integer_Value, maximum Chain_Integer_Value,
+) (inside bool) {
+	return chain_integer_compare(minimum, candidate) < 0 &&
+		chain_integer_compare(candidate, maximum) < 0
+}
+
+func chain_integer_values_contains(
+	values []Chain_Integer_Value, value Chain_Integer_Value,
+) (has bool) {
+	for _, candidate := range values {
+		if candidate == value {
+			return true
+		}
+	}
+	return false
+}
+
+func chain_preset_resolve[
+	Value ~int | ~int8 | ~int16 | ~int32 | ~int64 |
+		~uint | ~uint8 | ~uint16 | ~uint32 | ~uint64,
+](
+	shape *Chain_Shape, kind Chain_Preset_Kind, integer_kind Chain_Integer_Kind,
+	ordinal uint8, axis_count uint8, minimum Value, maximum Value, values []Value,
+) (preset *Chain_Preset, mismatch bool) {
+	if shape.chain_replays() {
+		return chain_preset_replay(
+			shape, kind, integer_kind, ordinal, axis_count, minimum, maximum, values)
+	}
+	return chain_preset_discover(
+		shape, kind, integer_kind, ordinal, axis_count, minimum, maximum, values)
+}
+
+func chain_preset_replay[
+	Value ~int | ~int8 | ~int16 | ~int32 | ~int64 |
+		~uint | ~uint8 | ~uint16 | ~uint32 | ~uint64,
+](
+	shape *Chain_Shape, kind Chain_Preset_Kind, integer_kind Chain_Integer_Kind,
+	ordinal uint8, axis_count uint8, minimum Value, maximum Value, values []Value,
+) (preset *Chain_Preset, mismatch bool) {
+	if int(ordinal) >= len(shape.Links) {
+		return nil, true
+	}
+	link := shape.Links[ordinal]
+	if link.Kind != DOT_ELEMENT_KIND_GUARD {
+		return nil, true
+	}
+	if int(link.Preset_Index) >= len(shape.Presets) {
+		return nil, true
+	}
+	preset = &shape.Presets[link.Preset_Index]
+	if preset.Kind != kind {
+		mismatch = true
+	}
+	if preset.Integer_Kind != integer_kind {
+		mismatch = true
+	}
+	if preset.Ordinal != ordinal {
+		mismatch = true
+	}
+	if preset.Axis_Start != axis_count {
+		mismatch = true
+	}
+	if preset.Minimum != chain_integer_value(minimum) {
+		mismatch = true
+	}
+	if preset.Maximum != chain_integer_value(maximum) {
+		mismatch = true
+	}
+	if len(preset.Values) != len(values) {
+		return preset, true
+	}
+	for value_index, value := range values {
+		if preset.Values[value_index] != chain_integer_value(value) {
+			mismatch = true
+		}
+	}
+	return preset, mismatch
+}
+
+// Foreign discovery copies variadic domain values once because the caller's stack-backed slice
+// cannot outlive the method; registered replay never takes this path or performs the copy.
+func chain_preset_discover[
+	Value ~int | ~int8 | ~int16 | ~int32 | ~int64 |
+		~uint | ~uint8 | ~uint16 | ~uint32 | ~uint64,
+](
+	shape *Chain_Shape, kind Chain_Preset_Kind, integer_kind Chain_Integer_Kind,
+	ordinal uint8, axis_count uint8, minimum Value, maximum Value, values []Value,
+) (preset *Chain_Preset, mismatch bool) {
+	shape.Mu.Lock()
+	defer shape.Mu.Unlock()
+	if int(ordinal) < len(shape.Links) {
+		return chain_preset_replay(
+			shape, kind, integer_kind, ordinal, axis_count, minimum, maximum, values)
+	}
+	integer_values := make([]Chain_Integer_Value, len(values))
+	for value_index, value := range values {
+		integer_values[value_index] = chain_integer_value(value)
+	}
+	expansion := chain_preset_expand(Chain_Preset{
+		Kind: kind, Integer_Kind: integer_kind,
+		Ordinal: ordinal, Axis_Start: axis_count,
+		Minimum: chain_integer_value(minimum), Maximum: chain_integer_value(maximum),
+		Values: integer_values,
+	}, uint8(len(shape.Rules)))
+	if !expansion.Valid {
+		return nil, true
+	}
+	preset_index := uint8(len(shape.Presets))
+	expansion.Links[0].Preset_Index = preset_index
+	shape.Presets = append(shape.Presets, expansion.Preset)
+	shape.Guards = append(shape.Guards, expansion.Guards...)
+	for _, axis := range expansion.Axes {
+		shape.Axes = append(shape.Axes, Chain_Axis{
+			Ordinal: axis.Ordinal, Tuple_Position: axis.Tuple_Position,
+			Message: axis.Message,
+		})
+	}
+	shape.Links = append(shape.Links, expansion.Links...)
+	shape.Rules = append(shape.Rules, expansion.Rules...)
+	return &shape.Presets[preset_index], false
+}
+
+func chain_preset_expand(
+	preset Chain_Preset, rule_start uint8,
+) (expansion Chain_Preset_Expansion) {
+	axes := chain_preset_axes(preset)
+	saturated := chain_preset_saturated(preset, axes)
+	generated_rule_count := len(axes) * (len(axes) - 1) / 2
+	if saturated {
+		generated_rule_count++
+	}
+	link_count := 2 + len(axes) + generated_rule_count
+	if int(preset.Ordinal)+link_count > CHAIN_LINKS_MAX {
+		return expansion
+	}
+	expansion.Valid = true
+	preset.Link_Count = uint8(link_count)
+	preset.Axis_Count = uint8(len(axes))
+	preset.Axis_Values = make([]Chain_Integer_Value, len(axes))
+	expansion.Preset = preset
+	expansion.Guards = []Chain_Guard{
+		{Ordinal: preset.Ordinal, Message: RANGE_GUARD_UPPER},
+		{Ordinal: preset.Ordinal + 1, Message: RANGE_GUARD_LOWER},
+	}
+	expansion.Links = []Chain_Link{
+		{
+			Kind:    DOT_ELEMENT_KIND_GUARD,
+			Ordinal: preset.Ordinal, Axis_Count: preset.Axis_Start,
+		},
+		{
+			Kind:    DOT_ELEMENT_KIND_GUARD,
+			Ordinal: preset.Ordinal + 1, Axis_Count: preset.Axis_Start,
+		},
+	}
+	for axis_index, axis := range axes {
+		expansion.Preset.Axis_Values[axis_index] = axis.Value
+		expansion.Axes = append(expansion.Axes, axis)
+		expansion.Links = append(expansion.Links, Chain_Link{
+			Kind: DOT_ELEMENT_KIND_SOMETIMES, Ordinal: axis.Ordinal,
+			Axis_Count: preset.Axis_Start + uint8(axis_index), Message: axis.Message,
+		})
+	}
+	chain_preset_append_pairwise(preset, rule_start, axes, &expansion)
+	if saturated {
+		chain_preset_append_saturation(preset, rule_start, axes, &expansion)
+	}
+	return expansion
+}
+
+func chain_preset_axes(preset Chain_Preset) (axes []Chain_Preset_Axis) {
+	values := []struct {
+		Integer Chain_Integer_Value
+		Message string
+	}{
+		{Integer: Chain_Integer_Value{}, Message: RANGE_MESSAGE_ZERO},
+		{Integer: Chain_Integer_Value{Magnitude: 1}, Message: RANGE_MESSAGE_ONE},
+		{Integer: Chain_Integer_Value{Magnitude: 2}, Message: RANGE_MESSAGE_TWO},
+		{Integer: Chain_Integer_Value{Magnitude: 1, Negative: true},
+			Message: RANGE_MESSAGE_NEGATIVE_ONE},
+	}
+	if chain_integer_compare(preset.Minimum, preset.Maximum) < 0 {
+		axes = chain_preset_append_axis(preset, axes, preset.Minimum, RANGE_MESSAGE_MINIMUM)
+		axes = chain_preset_append_axis(preset, axes, preset.Maximum, RANGE_MESSAGE_MAXIMUM)
+	}
+	for value_index, value := range values {
+		if value_index == 3 {
+			if !chain_integer_kind_signed(preset.Integer_Kind) {
+				continue
+			}
+		}
+		if !chain_integer_between(preset.Minimum, value.Integer, preset.Maximum) {
+			continue
+		}
+		member := chain_integer_values_contains(preset.Values, value.Integer)
+		if preset.Kind == CHAIN_PRESET_KIND_RANGE {
+			if member {
+				continue
+			}
+		}
+		if preset.Kind == CHAIN_PRESET_KIND_ENUM {
+			if !member {
+				continue
+			}
+		}
+		axes = chain_preset_append_axis(preset, axes, value.Integer, value.Message)
+	}
+	return axes
+}
+
+func chain_preset_append_axis(
+	preset Chain_Preset, axes []Chain_Preset_Axis,
+	value Chain_Integer_Value, message string,
+) (expanded []Chain_Preset_Axis) {
+	return append(axes, Chain_Preset_Axis{
+		Ordinal:        preset.Ordinal + 2 + uint8(len(axes)),
+		Tuple_Position: preset.Axis_Start + uint8(len(axes)),
+		Message:        message, Value: value,
+	})
+}
+
+func chain_integer_kind_signed(kind Chain_Integer_Kind) (signed bool) {
+	return kind >= CHAIN_INTEGER_KIND_INT && kind <= CHAIN_INTEGER_KIND_INT64
+}
+
+func chain_preset_saturated(
+	preset Chain_Preset, axes []Chain_Preset_Axis,
+) (saturated bool) {
+	if len(axes) == 0 {
+		return false
+	}
+	if preset.Kind == CHAIN_PRESET_KIND_ENUM {
+		for _, member := range preset.Values {
+			if !chain_preset_axes_contains(axes, member) {
+				return false
+			}
+		}
+		return true
+	}
+	current := preset.Minimum
+	for step := 0; step <= len(axes)+len(preset.Values); step++ {
+		excluded := chain_integer_values_contains(preset.Values, current)
+		witnessed := chain_preset_axes_contains(axes, current)
+		if !excluded {
+			if !witnessed {
+				return false
+			}
+		}
+		if current == preset.Maximum {
+			return true
+		}
+		next, exists := chain_integer_successor(current)
+		if !exists {
+			return false
+		}
+		current = next
+	}
+	return false
+}
+
+func chain_preset_axes_contains(axes []Chain_Preset_Axis, value Chain_Integer_Value) (has bool) {
+	for _, axis := range axes {
+		if axis.Value == value {
+			return true
+		}
+	}
+	return false
+}
+
+func chain_integer_successor(
+	value Chain_Integer_Value,
+) (next Chain_Integer_Value, exists bool) {
+	if value.Negative {
+		if value.Magnitude == 1 {
+			return Chain_Integer_Value{}, true
+		}
+		value.Magnitude--
+		return value, true
+	}
+	if value.Magnitude == ^uint64(0) {
+		return next, false
+	}
+	value.Magnitude++
+	return value, true
+}
+
+func chain_preset_append_pairwise(
+	preset Chain_Preset, rule_start uint8, axes []Chain_Preset_Axis,
+	expansion *Chain_Preset_Expansion,
+) {
+	for first_index := range axes {
+		for second_index := first_index + 1; second_index < len(axes); second_index++ {
+			cells := []Registration_Cell{
+				{Position: int(axes[first_index].Tuple_Position), Bucket: 1},
+				{Position: int(axes[second_index].Tuple_Position), Bucket: 1},
+			}
+			chain_preset_append_rule(preset, rule_start, cells, true, expansion)
+		}
+	}
+}
+
+func chain_preset_append_saturation(
+	preset Chain_Preset, rule_start uint8, axes []Chain_Preset_Axis,
+	expansion *Chain_Preset_Expansion,
+) {
+	cells := make([]Registration_Cell, len(axes))
+	for axis_index, axis := range axes {
+		cells[axis_index] = Registration_Cell{Position: int(axis.Tuple_Position), Bucket: 0}
+	}
+	chain_preset_append_rule(preset, rule_start, cells, false, expansion)
+}
+
+func chain_preset_append_rule(
+	preset Chain_Preset, rule_start uint8, cells []Registration_Cell, true_events bool,
+	expansion *Chain_Preset_Expansion,
+) {
+	ordinal := preset.Ordinal + uint8(len(expansion.Links))
+	rule_index := rule_start + uint8(len(expansion.Rules))
+	message := "Typed preset constraint at link " + strconv.Itoa(int(ordinal)) + "."
+	link := Chain_Link{
+		Kind: DOT_ELEMENT_KIND_IMPOSSIBLE, Ordinal: ordinal,
+		Axis_Count: preset.Axis_Start + uint8(len(expansion.Axes)),
+		Message:    message, Reference_Count: uint8(len(cells)), Rule_Index: rule_index,
+	}
+	var mask Chain_Mask
+	var want Chain_Mask
+	for cell_index, cell := range cells {
+		position := uint8(cell.Position)
+		link.References[cell_index] = position
+		mask = chain_mask_with(mask, position)
+		if true_events {
+			link.Reference_Events = chain_mask_with(
+				link.Reference_Events, uint8(cell_index))
+			want = chain_mask_with(want, position)
+		}
+	}
+	expansion.Links = append(expansion.Links, link)
+	expansion.Rules = append(expansion.Rules, Chain_Rule{
+		Mask: mask, Want: want, Message: message,
+	})
+	expansion.Carves = append(expansion.Carves, cells)
 }
 
 // Keeping advancement outside both resolution branches lets the warmed branch's input stay on the
@@ -538,8 +1284,28 @@ func (product Product) chain_failure_message() (message string) {
 		return "Impossible reference does not name one unique preceding axis"
 	case PRODUCT_FAILURE_DUPLICATE_RULE:
 		return "duplicate Impossible message"
+	case PRODUCT_FAILURE_ENUM_DOMAIN:
+		return "Enum requires at least two distinct members"
 	}
 	return ""
+}
+
+func (product Product) chain_preset_failure_message() (message string) {
+	if product.Preset_Failure == 0 {
+		return ""
+	}
+	prefix := string(product.Namespace) + ELEMENT_MESSAGE_SEPARATOR
+	switch product.Preset_Failure {
+	case PRODUCT_FAILURE_PRESET_UPPER:
+		return prefix + RANGE_GUARD_UPPER + "  value exceeds max"
+	case PRODUCT_FAILURE_PRESET_LOWER:
+		return prefix + RANGE_GUARD_LOWER + "  value below min"
+	case PRODUCT_FAILURE_PRESET_EXCLUDED:
+		return prefix + RANGE_GUARD_EXCLUDED + "  value is excluded"
+	case PRODUCT_FAILURE_PRESET_MEMBER:
+		return prefix + RANGE_GUARD_EXCLUDED + "  not a member"
+	}
+	return "typed preset failed"
 }
 
 // Registration and a completed foreign discovery both make the shape immutable; checking the
@@ -553,26 +1319,8 @@ func (shape *Chain_Shape) chain_replays() (replays bool) {
 
 // Ensure validates the complete shape, enforces every carve, and credits the packed tuple.
 func (product Product) Ensure() {
-	if failure := product.chain_failure_message(); failure != "" {
-		panic(ASSERTION_FAILURE_MESSAGE_PREFIX + failure)
-	}
+	product.ensure_shape()
 	axis_count := product.Axis_Count
-	if axis_count == 0 {
-		panic(ASSERTION_FAILURE_MESSAGE_PREFIX + "Dot_Product has no axes")
-	}
-	if product.Mismatch {
-		message := "Dot_Product shape differs for namespace " +
-			strconv.Quote(string(product.Namespace))
-		if product.Shape.Registered {
-			message = "registered Dot_Product credited unknown axis or shape differs"
-		}
-		panic(ASSERTION_FAILURE_MESSAGE_PREFIX + message)
-	}
-	if !product.Shape.chain_ensure(product) {
-		panic(ASSERTION_FAILURE_MESSAGE_PREFIX +
-			"Dot_Product shape differs for namespace " +
-			strconv.Quote(string(product.Namespace)))
-	}
 	records := recorder_chain_records(product.Recorder)
 	if !product.Shape.Registered {
 		records = false
@@ -603,20 +1351,61 @@ func (product Product) Ensure() {
 		return
 	}
 	tuple := product.chain_handle(tuple_mask)
-	if tuple.Metadata == nil {
-		panic(ASSERTION_FAILURE_MESSAGE_PREFIX +
-			"registered Dot_Product credited unknown tuple")
+	if axis_count > 0 {
+		if tuple.Metadata == nil {
+			panic(ASSERTION_FAILURE_MESSAGE_PREFIX +
+				"registered Dot_Product credited unknown tuple")
+		}
+	}
+	for _, guard := range product.Shape.Guards {
+		recorder_increment_entry(product.Recorder, guard.Entry, true)
 	}
 	for i_index := uint8(0); i_index < axis_count; i_index++ {
 		axis := product.Shape.Axes[i_index]
 		condition := chain_mask_has(product.Observations, axis.Ordinal)
 		recorder_increment_entry(product.Recorder, axis.Entry, condition)
 	}
-	recorder_increment_entry(product.Recorder, tuple, true)
+	if axis_count > 0 {
+		recorder_increment_entry(product.Recorder, tuple, true)
+	}
+}
+
+func (product Product) ensure_shape() {
+	if failure := product.chain_failure_message(); failure != "" {
+		panic(ASSERTION_FAILURE_MESSAGE_PREFIX + failure)
+	}
+	if product.Axis_Count == 0 {
+		if len(product.Shape.Guards) == 0 {
+			panic(ASSERTION_FAILURE_MESSAGE_PREFIX + "Dot_Product has no axes")
+		}
+	}
+	if product.Mismatch {
+		message := "Dot_Product shape differs for namespace " +
+			strconv.Quote(string(product.Namespace))
+		if product.Shape.Registered {
+			message = "registered Dot_Product credited unknown axis or shape differs"
+		}
+		panic(ASSERTION_FAILURE_MESSAGE_PREFIX + message)
+	}
+	if !product.Shape.chain_ensure(product) {
+		panic(ASSERTION_FAILURE_MESSAGE_PREFIX +
+			"Dot_Product shape differs for namespace " +
+			strconv.Quote(string(product.Namespace)))
+	}
+	if failure := product.chain_preset_failure_message(); failure != "" {
+		panic(ASSERTION_FAILURE_MESSAGE_PREFIX + failure)
+	}
 }
 
 // Resolving every handle before crediting keeps an unknown key from partially crediting the call.
 func (product Product) chain_handle(tuple_mask Chain_Mask) (tuple Handle_Entry) {
+	for _, guard := range product.Shape.Guards {
+		if guard.Entry.Metadata == nil {
+			message := "registered Dot_Product credited unknown guard " +
+				strconv.Quote(guard.Message)
+			panic(ASSERTION_FAILURE_MESSAGE_PREFIX + message)
+		}
+	}
 	for _, axis := range product.Shape.Axes {
 		if axis.Entry.Metadata == nil {
 			message := "registered Dot_Product credited unknown axis " +
@@ -687,23 +1476,11 @@ func chain_axis_key(namespace Namespace, ordinal uint8, message string) (value s
 		strconv.Itoa(int(ordinal)) + ELEMENT_MESSAGE_SEPARATOR + message
 }
 
-// Chain_Axis_Input keeps exact shape capture possible without widening Product to retain messages.
-type Chain_Axis_Input struct {
-	// Ordinal separates fluent position from registration's independently assigned
-	// tuple position.
-	Ordinal uint8
-	// Axis_Count limits sibling resolution to axes preceding this link.
-	Axis_Count uint8
-	// Message is available only during the call, so shape capture must consume it here.
-	Message string
-}
-
 // Registered shapes are immutable and can use direct reads without synchronization; only
 // first-executed foreign shapes pay the mutex needed to discover their link sequence.
-func (shape *Chain_Shape) chain_axis(input *Chain_Axis_Input) (mismatch bool) {
-	ordinal := input.Ordinal
-	axis_count := input.Axis_Count
-	message := input.Message
+func (shape *Chain_Shape) chain_axis(
+	ordinal uint8, axis_count uint8, message string,
+) (mismatch bool) {
 	if shape.chain_replays() {
 		if int(ordinal) >= len(shape.Links) {
 			return true
@@ -862,10 +1639,8 @@ func (shape *Chain_Shape) chain_rule(
 	link Chain_Link, references []Dot_Element_Reference,
 ) (rule Chain_Rule, mismatch bool, failure uint8) {
 	if shape.chain_replays() {
-		return shape.chain_rule_replay(&Chain_Rule_Replay_Input{
-			Ordinal: link.Ordinal, Axis_Count: link.Axis_Count,
-			Message: link.Message, References: references,
-		})
+		return shape.chain_rule_replay(
+			link.Ordinal, link.Axis_Count, link.Message, references)
 	}
 	if strings.Contains(link.Message, ELEMENT_MESSAGE_SEPARATOR) {
 		return rule, false, PRODUCT_FAILURE_IMPOSSIBLE
@@ -910,43 +1685,31 @@ func (shape *Chain_Shape) chain_rule(
 	return rule, mismatch, 0
 }
 
-// Chain_Rule_Replay_Input keeps warmed validation stack-backed without constructing Chain_Link.
-type Chain_Rule_Replay_Input struct {
-	// Ordinal directly indexes the registered link plan.
-	Ordinal uint8
-	// Axis_Count detects a chain that inserts or removes a preceding Sometimes.
-	Axis_Count uint8
-	// Message pins the exact named constraint without rebuilding its rule.
-	Message string
-	// References are compared positionally to registration's resolved siblings and polarity.
-	References []Dot_Element_Reference
-}
-
 // Registration already proved sibling uniqueness and compiled masks, so warmed replay compares
 // only the exact source-level facts whose runtime values could diverge.
 func (shape *Chain_Shape) chain_rule_replay(
-	input *Chain_Rule_Replay_Input,
+	ordinal uint8, axis_count uint8, message string, references []Dot_Element_Reference,
 ) (rule Chain_Rule, mismatch bool, failure uint8) {
-	if int(input.Ordinal) >= len(shape.Links) {
+	if int(ordinal) >= len(shape.Links) {
 		return rule, true, 0
 	}
-	link := &shape.Links[input.Ordinal]
+	link := &shape.Links[ordinal]
 	if link.Kind != DOT_ELEMENT_KIND_IMPOSSIBLE {
 		mismatch = true
 	}
-	if link.Axis_Count != input.Axis_Count {
+	if link.Axis_Count != axis_count {
 		mismatch = true
 	}
-	if link.Message != input.Message {
-		if strings.Contains(input.Message, ELEMENT_MESSAGE_SEPARATOR) {
+	if link.Message != message {
+		if strings.Contains(message, ELEMENT_MESSAGE_SEPARATOR) {
 			return rule, false, PRODUCT_FAILURE_IMPOSSIBLE
 		}
 		mismatch = true
 	}
-	if int(link.Reference_Count) != len(input.References) {
+	if int(link.Reference_Count) != len(references) {
 		return rule, true, 0
 	}
-	for reference_index, reference := range input.References {
+	for reference_index, reference := range references {
 		axis_position := link.References[reference_index]
 		if int(axis_position) >= len(shape.Axes) {
 			return rule, true, 0
@@ -992,6 +1755,9 @@ func (first Chain_Link) chain_equal(second Chain_Link) (equal bool) {
 	if first.Rule_Index != second.Rule_Index {
 		return false
 	}
+	if first.Preset_Index != second.Preset_Index {
+		return false
+	}
 	for i_index := uint8(0); i_index < first.Reference_Count; i_index++ {
 		if first.References[i_index] != second.References[i_index] {
 			return false
@@ -1023,46 +1789,6 @@ func (shape *Chain_Shape) chain_ensure(product Product) (matches bool) {
 		shape.Ensured.Store(true)
 	}
 	return matches
-}
-
-// Recorder_dot_product remains private so Range and Enum can retain their compact engine without
-// exposing a second product API. Every axis
-// violated on the call is named in one panic, not just the first, so a single run surfaces
-// them all. namespace is the grid's identity and is prefixed onto each held axis's own message
-// to form that axis's coverage key.
-func recorder_dot_product(recorder *Recorder, namespace Namespace, bundle ...Engine_Element) {
-	// A Dot_Product with no elements asserts nothing — a no-op grid is always a
-	// mistake, so it fails immediately rather than silently recording nothing.
-	if len(bundle) == 0 {
-		panic(ASSERTION_FAILURE_MESSAGE_PREFIX + "Dot_Product has no elements")
-	}
-	message := string(namespace)
-	handle := recorder_enforce_handle(recorder, message, bundle)
-	var violations []string
-	for _, rule := range handle.Rules {
-		fired := true
-		for _, coordinate := range rule.Coordinates {
-			if bundle[coordinate.Index].Event != coordinate.Event {
-				fired = false
-				break
-			}
-		}
-		if fired {
-			violations = append(violations, rule.Message)
-		}
-	}
-	if len(violations) > 0 {
-		panic(ASSERTION_FAILURE_MESSAGE_PREFIX + strings.Join(violations, "\n"))
-	}
-	recorder_dot_product_observe(recorder, message, bundle)
-}
-
-// Integer constrains a Range value to the integer kinds — the bounded-newtype family whose guard
-// preamble Range collapses. Floats are excluded: their boundary claims are NaN and the infinities,
-// not the integer units, so they stay with Float64_Invariants.
-type Integer interface {
-	~int | ~int8 | ~int16 | ~int32 | ~int64 |
-		~uint | ~uint8 | ~uint16 | ~uint32 | ~uint64 | ~uintptr
 }
 
 // RANGE_MESSAGE_ZERO is Range's coverage message for the zero boundary. It is exported so the
@@ -1097,332 +1823,6 @@ const RANGE_GUARD_LOWER = "at least min"
 // value never occurs — the guard a holed interval or an enum adds beyond its two bounds.
 const RANGE_GUARD_EXCLUDED = "excluded"
 
-// Recorder_Range is the bounded-integer preset: it enforces value ∈ [minimum, maximum] as two
-// eager bound guards and self-emits, under namespace, the coverage grid for whichever of
-// {0, 1, 2, -1} the interval admits. It collapses the mandated bound preamble and boundary claims
-// into one call, keyed by the per-callsite namespace so it reuses across every bounded newtype.
-//
-// The three magnitudes take their own type parameters, so a caller passes them all positionally
-// without the repeated-type ban firing; at a real callsite they are one type, so the conversions
-// to Value are identities.
-//
-// A boundary unit outside the interval is dropped, not witnessed — the guard already forbids it,
-// so a Sometimes on it would be an unfillable gap; -1 is dropped for an unsigned value. When the
-// interval admits none of the four, no grid is emitted and only the two guards register.
-//
-// An excluded value is an in-range value the caller declares unreachable — a hole in the interval.
-// Each is enforced (reaching it panics like a bound violation) and drops its sentinel axis, and
-// once every reachable value is a witnessed axis the all-false cell is carved. The variadic is only
-// ranged over, never retained, so the empty and holed calls alike allocate nothing beyond the grid.
-func Recorder_Range[Value Integer, Minimum Integer, Maximum Integer](
-	recorder *Recorder, value Value, minimum Minimum, maximum Maximum, namespace Namespace,
-	excluded ...Value,
-) {
-	bounds := [2]Value{Value(minimum), Value(maximum)}
-	// Enforcement runs in every mode, like Recorder_Always — a bound violation is fatal on the
-	// spot, naming the guard it breached under the callsite namespace.
-	if value > bounds[1] {
-		panic(ASSERTION_FAILURE_MESSAGE_PREFIX + string(namespace) +
-			ELEMENT_MESSAGE_SEPARATOR + RANGE_GUARD_UPPER + "  value exceeds max")
-	}
-	if value < bounds[0] {
-		panic(ASSERTION_FAILURE_MESSAGE_PREFIX + string(namespace) +
-			ELEMENT_MESSAGE_SEPARATOR + RANGE_GUARD_LOWER + "  value below min")
-	}
-	for _, hole := range excluded {
-		if value != hole {
-			continue
-		}
-		panic(ASSERTION_FAILURE_MESSAGE_PREFIX + string(namespace) +
-			ELEMENT_MESSAGE_SEPARATOR + RANGE_GUARD_EXCLUDED + "  value is excluded")
-	}
-	recorder_range_credit_guards(recorder, namespace)
-	bundle, axis_count := recorder_range_bundle(recorder, value, bounds, excluded)
-	// An interval admitting none of the four boundary units has no cell to witness — an empty
-	// Dot_Product would panic. The guards alone carry the reachability obligation in that case.
-	if axis_count == 0 {
-		return
-	}
-	recorder_dot_product(recorder, namespace, bundle...)
-}
-
-// Credits both bound guards' reachability under the recording-mode gate, mirroring Recorder_Always:
-// enforcement is unconditional, but coverage is tracked only under a test run.
-func recorder_range_credit_guards(recorder *Recorder, namespace Namespace) {
-	if !recorder.Is_Test {
-		return
-	}
-	if recorder.Is_Benchmark {
-		return
-	}
-	recorder_increment(recorder,
-		string(namespace)+ELEMENT_MESSAGE_SEPARATOR+RANGE_GUARD_UPPER, true)
-	recorder_increment(recorder,
-		string(namespace)+ELEMENT_MESSAGE_SEPARATOR+RANGE_GUARD_LOWER, true)
-}
-
-// Builds Recorder_Range's grid: a Sometimes axis for each interval edge (min and max — the whole
-// point of a bounded type) and for each of {0, 1, 2, -1} strictly inside the interval, all mutually
-// exclusive. A single-value interval (min == max) has no edge axis and no interior, so it seeds an
-// empty grid and only the guards carry it. -1 is derived as 0-1 and admitted only for a signed
-// value, so an unsigned value's wrap of 0-1 to its maximum can never masquerade as -1.
-func recorder_range_bundle[Value Integer](
-	recorder *Recorder, value Value, bounds [2]Value, excluded []Value,
-) (bundle []Engine_Element, axis_count int) {
-	elements, messages := recorder_range_axes(recorder, value, bounds, excluded, false)
-	if recorder_range_saturated(bounds, len(messages), excluded) {
-		elements = append(elements, recorder_range_all_false(messages))
-	}
-	return elements, len(messages)
-}
-
-// Builds the axes Range and Enum share: a Sometimes for each interval edge and for each of
-// {0,1,2,-1} strictly inside, all mutually exclusive. A sentinel is admitted by its membership in
-// `set`: for a range `set` is the excluded holes and an in-set sentinel is dropped; for an enum
-// `set` is the members and an out-of-set sentinel drops — `recorder_range_holed(c, set) != enum`.
-// The all-false carve is the caller's, which alone knows how its reachable count meets the axes.
-func recorder_range_axes[Value Integer](
-	recorder *Recorder, value Value, bounds [2]Value, set []Value, enum bool,
-) (bundle []Engine_Element, messages []string) {
-	if bounds[0] < bounds[1] {
-		edge := recorder_sometimes(recorder, value == bounds[0], RANGE_MESSAGE_MINIMUM)
-		bundle = append(bundle, edge)
-		messages = append(messages, RANGE_MESSAGE_MINIMUM)
-		edge = recorder_sometimes(recorder, value == bounds[1], RANGE_MESSAGE_MAXIMUM)
-		bundle = append(bundle, edge)
-		messages = append(messages, RANGE_MESSAGE_MAXIMUM)
-	}
-	negative_one := Value(0) - Value(1)
-	signed := negative_one < Value(0)
-	candidates := [4]Value{Value(0), Value(1), Value(2), negative_one}
-	interior := [4]bool{
-		recorder_range_interior(bounds, candidates[0]),
-		recorder_range_interior(bounds, candidates[1]),
-		recorder_range_interior(bounds, candidates[2]),
-		signed && recorder_range_interior(bounds, candidates[3]),
-	}
-	units := recorder_range_units()
-	for i := range units {
-		if !interior[i] {
-			continue
-		}
-		if recorder_range_holed(candidates[i], set) != enum {
-			continue
-		}
-		axis := recorder_sometimes(recorder, value == candidates[i], units[i].Message)
-		bundle = append(bundle, axis)
-		messages = append(messages, units[i].Message)
-	}
-	bundle = append(bundle, recorder_range_carves(messages)...)
-	return bundle, messages
-}
-
-// Recorder_Enum is the discrete-set preset: the reachable values are exactly `members`. It is
-// Recorder_Range over the span [min(members), max(members)] with every in-span non-member a hole —
-// each member witnessed as that range would, every non-member enforced, and the all-false cell
-// carved once every member is an axis. The variadic is only ranged over, so nothing escapes.
-func Recorder_Enum[Value Integer](
-	recorder *Recorder, value Value, namespace Namespace, members ...Value,
-) {
-	bounds := recorder_enum_bounds(members)
-	member := false
-	for _, candidate := range members {
-		if value == candidate {
-			member = true
-		}
-	}
-	if !member {
-		panic(ASSERTION_FAILURE_MESSAGE_PREFIX + string(namespace) +
-			ELEMENT_MESSAGE_SEPARATOR + RANGE_GUARD_EXCLUDED + "  not a member")
-	}
-	recorder_range_credit_guards(recorder, namespace)
-	elements, messages := recorder_range_axes(recorder, value, bounds, members, true)
-	// Every member is a witnessed axis exactly when the axis count matches the member count, so
-	// a reachable value witnessing none can never occur and the all-false cell is carved.
-	if len(members) <= len(messages) {
-		elements = append(elements, recorder_range_all_false(messages))
-	}
-	if len(messages) == 0 {
-		return
-	}
-	recorder_dot_product(recorder, namespace, elements...)
-}
-
-// Computes the enum's span — the least and greatest member. An empty member set yields a zero span
-// that Recorder_Enum's membership loop rejects for every value.
-func recorder_enum_bounds[Value Integer](members []Value) (bounds [2]Value) {
-	for i, member := range members {
-		if i == 0 {
-			bounds = [2]Value{member, member}
-			continue
-		}
-		if member < bounds[0] {
-			bounds[0] = member
-		}
-		if member > bounds[1] {
-			bounds[1] = member
-		}
-	}
-	return bounds
-}
-
-// Reports whether candidate is one of the excluded holes. Ranges the variadic without retaining it.
-func recorder_range_holed[Value Integer](candidate Value, excluded []Value) (holed bool) {
-	for _, hole := range excluded {
-		if candidate == hole {
-			return true
-		}
-	}
-	return false
-}
-
-// Reports whether the witnessed axes exhaust the reachable interval — every value in [min,max] that
-// is not an excluded hole is a witnessed axis — so the all-false cell (a reachable value matching
-// none) can never occur and must be carved. With no holes this is `width < axis_count`.
-func recorder_range_saturated[Value Integer](
-	bounds [2]Value, axis_count int, excluded []Value,
-) (saturated bool) {
-	interior_holes := 0
-	for _, hole := range excluded {
-		if hole <= bounds[0] {
-			continue
-		}
-		if hole >= bounds[1] {
-			continue
-		}
-		interior_holes++
-	}
-	return bounds[1]-bounds[0]-Value(interior_holes) < Value(axis_count)
-}
-
-// Builds the Impossible carving the all-false cell: in a saturated interval no value is none of the
-// witnessed axes, so that combination must never be demanded.
-func recorder_range_all_false(messages []string) (carve Engine_Element) {
-	references := make([]Dot_Element_Reference, 0, len(messages))
-	for _, message := range messages {
-		references = append(references, Event_False(message))
-	}
-	return impossible(references...)
-}
-
-// Reports whether candidate lies strictly inside the interval bounds, so a sentinel never coincides
-// with an edge the min/max axes already witness — the strict test both the runtime grid and the
-// static registration apply, so they admit the same axes.
-func recorder_range_interior[Value Integer](
-	bounds [2]Value, candidate Value,
-) (interior bool) {
-	return bounds[0] < candidate && candidate < bounds[1]
-}
-
-// Builds a mutual-exclusion Impossible over every pair of admitted axis messages: a value is at
-// most one boundary unit, so no two of them are ever true together.
-func recorder_range_carves(messages []string) (carves []Engine_Element) {
-	for i := range messages {
-		for j := i + 1; j < len(messages); j++ {
-			carves = append(carves,
-				impossible(Event_True(messages[i]), Event_True(messages[j])))
-		}
-	}
-	return carves
-}
-
-// Returns the cached Enforce_Handle for message, building it on first use. The build resolves
-// every Impossible's references to bundle positions once (and panics on a non-sibling typo);
-// later calls read it under RLock and enforce with index and boolean compares, no string scan.
-// A plain map keyed by the existing message string reads allocation-free. The sibling of
-// recorder_observe_handle, but read in every mode — enforcement is not gated on Is_Test.
-func recorder_enforce_handle(
-	recorder *Recorder, message string, bundle Engine_Bundle) (handle *Enforce_Handle) {
-	recorder.Enforce_Cache_Mu.RLock()
-	handle = recorder.Enforce_Cache[message]
-	recorder.Enforce_Cache_Mu.RUnlock()
-	if handle != nil {
-		return handle
-	}
-	recorder.Enforce_Cache_Mu.Lock()
-	defer recorder.Enforce_Cache_Mu.Unlock()
-	if handle = recorder.Enforce_Cache[message]; handle != nil {
-		return handle
-	}
-	handle = recorder_enforce_handle_build(bundle)
-	if recorder.Enforce_Cache == nil {
-		recorder.Enforce_Cache = map[string]*Enforce_Handle{}
-	}
-	recorder.Enforce_Cache[message] = handle
-	return handle
-}
-
-// Builds an Enforce_Handle: one rule per Impossible that carries references, each reference
-// resolved to the bundle position of the sibling axis it names, and the violation message
-// pre-rendered. A reference naming no sibling is a typo and panics here — and since a failed build
-// stores nothing, the same bad bundle panics on every call, exactly as the old per-call reference
-// check did. A reference-less Impossible constrains nothing, so it yields no rule (it never fires,
-// matching dot_element_impossible_violated's empty-set case). The handle holds only positions
-// (ints) and freshly rendered strings — no pointers into bundle — so bundle stays non-escaping.
-func recorder_enforce_handle_build(bundle Engine_Bundle) (handle *Enforce_Handle) {
-	handle = &Enforce_Handle{}
-	for _, element := range bundle {
-		if element.Kind != DOT_ELEMENT_KIND_IMPOSSIBLE {
-			continue
-		}
-		if len(element.Impossibles) == 0 {
-			continue
-		}
-		var coordinates []Reference_Coordinate
-		for _, reference := range element.Impossibles {
-			index := dot_product_axis_index(bundle, reference.Message)
-			if index < 0 {
-				panic(ASSERTION_FAILURE_MESSAGE_PREFIX +
-					non_sibling_reference_message(reference))
-			}
-			coordinates = append(coordinates,
-				Reference_Coordinate{Index: index, Event: reference.Event})
-		}
-		handle.Rules = append(handle.Rules, Impossible_Rule{
-			Coordinates: coordinates,
-			Message:     dot_element_impossible_message(element),
-		})
-	}
-	return handle
-}
-
-// Returns the bundle position of the Sometimes axis carrying message, or -1 when none does — a
-// linear scan, since a bundle is a handful of elements. Resolves one Impossible reference to the
-// sibling it names, so enforcement compares that axis's event by index rather than by string.
-func dot_product_axis_index(bundle Engine_Bundle, message string) (index int) {
-	for position, element := range bundle {
-		if element.Kind != DOT_ELEMENT_KIND_SOMETIMES {
-			continue
-		}
-		if element.Message == message {
-			return position
-		}
-	}
-	return -1
-}
-
-// Renders the typo panic a non-sibling reference triggers at plan-build time: an Impossible names
-// an axis message that no sibling Sometimes carries. A reference can only carve a cell of this
-// product's grid and can only fire against an axis observed on this same call, so naming a
-// non-sibling is structurally meaningless — caught at once rather than surfacing as an unfillable
-// gap.
-func non_sibling_reference_message(reference Dot_Element_Reference) (message string) {
-	return "Impossible references " + strconv.Quote(reference.Message) +
-		", not an axis of this Dot_Product"
-}
-
-// An Observe_Handle memoizes, for one Dot_Product message, what its bundle resolves to so the
-// recording hot path builds no key per call: the metadata + tracker key for each non-Impossible
-// element (in bundle order) and for each grid cell (indexed by the packed bucket tuple).
-type Observe_Handle struct {
-	// Elements holds one entry per non-Impossible element, in bundle order.
-	Elements []Handle_Entry
-	// Tuples is indexed by the observed tuple packed big-endian — element 0 is the
-	// most significant bit, one per axis (a Sometimes has two buckets), size
-	// 1<<len(Elements). A nil-metadata entry is a cell an Impossible carved or never seeded.
-	Tuples []Handle_Entry
-}
-
 // A Handle_Entry is a resolved tracker slot: the seeded metadata and the tracker key, cached so
 // Coverage_Sink can persist it without rebuilding the string.
 type Handle_Entry struct {
@@ -1430,141 +1830,6 @@ type Handle_Entry struct {
 	Metadata *Assertion_Metadata
 	// Key is the tracker key, cached so Coverage_Sink can persist it without rebuilding it.
 	Key string
-}
-
-// An Enforce_Handle memoizes, for one Dot_Product message, its Impossible constraints resolved
-// against the bundle's shape so enforcement scans no strings per call: one rule per Impossible,
-// each carrying its references as bundle positions and its violation message pre-rendered.
-type Enforce_Handle struct {
-	// Rules holds one resolved Impossible per rule, in bundle order, so a multi-violation
-	// panic names them in the same order the from-scratch scan did. A reference-less Impossible
-	// constrains nothing and contributes no rule.
-	Rules []Impossible_Rule
-}
-
-// An Impossible_Rule is one Impossible resolved against the bundle: the forbidden combination as
-// bundle positions, plus the panic message it renders when that combination occurs. The message
-// is static (the referenced axes' messages and events are fixed), so it is built once here rather
-// than per firing.
-type Impossible_Rule struct {
-	// Coordinates are the referenced sibling axes' positions and the event each is forbidden
-	// at; the rule fires when every one currently holds its forbidden event.
-	Coordinates []Reference_Coordinate
-	// Message is the pre-rendered violation text, identical to dot_element_impossible_message.
-	Message string
-}
-
-// A Reference_Coordinate is one Impossible reference resolved to a bundle position: the index of
-// the sibling axis it names and the event it forbids there. Enforcement fires the rule when
-// bundle[Index].Event == Event for every coordinate — integer index and boolean compares, no
-// string matching.
-type Reference_Coordinate struct {
-	// Index is the position of the referenced sibling axis in the bundle.
-	Index int
-	// Event is the outcome the reference forbids: the rule needs this axis at this event.
-	Event bool
-}
-
-// Increments the seeded tracker entry for each observed element and the tuple entry for the
-// observed combination, through the per-message Observe_Handle so the steady state allocates
-// nothing. Records under a plain test, the fuzz coordinator, and a fuzz worker (all carry
-// Is_Test); a no-op in a benchmark or a non-test binary, which only enforce.
-func recorder_dot_product_observe(
-	recorder *Recorder, message string, bundle Engine_Bundle) {
-	if !recorder.Is_Test {
-		return
-	}
-	if recorder.Is_Benchmark {
-		return
-	}
-	handle := recorder_observe_handle(recorder, message, bundle)
-	axis_index := 0
-	packed := 0
-	for _, element := range bundle {
-		if element.Kind != DOT_ELEMENT_KIND_SOMETIMES {
-			continue
-		}
-		entry := handle.Elements[axis_index]
-		axis_index++
-		if element.Gated {
-			// A gated axis records only when its prerequisite holds — else don't-care —
-			// and joins no tuple (an Imply is excluded from the grid).
-			if element.Prerequisite {
-				recorder_increment_entry(recorder, entry, element.Event)
-			}
-			continue
-		}
-		packed <<= 1
-		if element.Event {
-			packed |= 1
-		}
-		recorder_increment_entry(recorder, entry, element.Event)
-	}
-	recorder_increment_entry(recorder, handle.Tuples[packed], true)
-}
-
-// Returns the cached Observe_Handle for message, building it on first use. The build resolves
-// every element and grid-cell key against the seeded tracker once; later calls read it under
-// RLock with no allocation (a plain map keyed by the existing message string boxes nothing).
-func recorder_observe_handle(
-	recorder *Recorder, message string, bundle Engine_Bundle) (handle *Observe_Handle) {
-	recorder.Observe_Cache_Mu.RLock()
-	handle = recorder.Observe_Cache[message]
-	recorder.Observe_Cache_Mu.RUnlock()
-	if handle != nil {
-		return handle
-	}
-	recorder.Observe_Cache_Mu.Lock()
-	defer recorder.Observe_Cache_Mu.Unlock()
-	if handle = recorder.Observe_Cache[message]; handle != nil {
-		return handle
-	}
-	handle = recorder_observe_handle_build(recorder, message, bundle)
-	if recorder.Observe_Cache == nil {
-		recorder.Observe_Cache = map[string]*Observe_Handle{}
-	}
-	recorder.Observe_Cache[message] = handle
-	return handle
-}
-
-// Builds an Observe_Handle: one element entry per non-Impossible element (keyed prefix +
-// separator + own message) and one tuple entry per grid cell, keyed by the projected coordinate
-// exactly as registration seeded it. A cell or element registration never seeded resolves to a
-// nil-metadata entry, so the runtime skips it.
-func recorder_observe_handle_build(
-	recorder *Recorder, message string, bundle Engine_Bundle) (handle *Observe_Handle) {
-	handle = &Observe_Handle{}
-	ungated_count := 0
-	for _, element := range bundle {
-		if element.Kind != DOT_ELEMENT_KIND_SOMETIMES {
-			continue
-		}
-		key := message + ELEMENT_MESSAGE_SEPARATOR + element.Message
-		handle.Elements = append(handle.Elements, recorder_handle_entry(recorder, key))
-		if !element.Gated {
-			ungated_count++
-		}
-	}
-	handle.Tuples = make([]Handle_Entry, 1<<ungated_count)
-	for packed := range handle.Tuples {
-		tuple := make([]int, ungated_count)
-		for i := range tuple {
-			tuple[i] = packed >> (ungated_count - 1 - i) & 1
-		}
-		tuple_key := recorder_tuple_key(message, tuple)
-		handle.Tuples[packed] = recorder_handle_entry(recorder, tuple_key)
-	}
-	return handle
-}
-
-// Resolves key to its seeded tracker metadata (nil when none was seeded), pairing it with the
-// key so Coverage_Sink can persist it on first coverage.
-func recorder_handle_entry(recorder *Recorder, key string) (entry Handle_Entry) {
-	entry.Key = key
-	if value, ok := recorder.Events.Load(key); ok {
-		entry.Metadata = value.(*Assertion_Metadata)
-	}
-	return entry
 }
 
 // Bumps entry's metadata: Frequency on a true event, False_Frequency on false. A nil-metadata
@@ -1667,27 +1932,6 @@ func Recorder_Merge_Fuzz_Coverage_From(recorder *Recorder, r io.Reader) {
 	}
 }
 
-// Renders an Impossible violation: a header plus one line per co-occurring
-// coordinate, each naming the referenced axis by its message and the event observed.
-// The Impossible element's own message is empty, so its identity is this set of
-// coordinates rather than a single message. Called once per Impossible at plan-build time to
-// pre-render each rule's Message, so a firing rule carries its text with no per-call work.
-func dot_element_impossible_message(impossible Engine_Element) (message string) {
-	message = "Impossible — forbidden combination occurred:"
-	for _, reference := range impossible.Impossibles {
-		message += "\n  " + reference.Message + "  " + event_boolean_text(reference.Event)
-	}
-	return message
-}
-
-// Renders an Impossible reference's event as the boolean word it carries.
-func event_boolean_text(event bool) (text string) {
-	if event {
-		return "true"
-	}
-	return "false"
-}
-
 // Recorder_Register_Packages_For_Analysis parses every non-test .go file under
 // the given directories and seeds recorder.Events with one entry per element
 // bucket and one per non-carved tuple of each invariant.Dot_Product call. That
@@ -1729,11 +1973,7 @@ func Recorder_Register_Packages_For_Analysis(recorder *Recorder, directories ...
 					}
 				}
 			}
-			parsed := recorder_parse_directory(&Recorder_Parse_Directory_Input{
-				File_System: recorder.File_System,
-				File_Set:    file_set,
-				Directory:   expanded,
-			})
+			parsed := recorder_parse_directory(recorder.File_System, file_set, expanded)
 			files = append(files, parsed...)
 		}
 	}
@@ -1805,24 +2045,16 @@ func parse_module_path(SOURCE []byte) (module_path string) {
 	return ""
 }
 
-// Input for recorder_parse_directory.
-type Recorder_Parse_Directory_Input struct {
-	// File_System is the filesystem, rooted at "/", the source files are read from.
-	File_System fs.FS
-	// File_Set is the token file set the parsed positions are recorded in.
-	File_Set *token.FileSet
-	// Directory is the absolute directory whose non-test .go files are parsed.
-	Directory string
-}
-
 // Parses the non-test .go files directly under the absolute Directory into AST
 // files. File_System is rooted at "/", so the leading "/" is stripped to address
 // it; the parsed file's name is the absolute path, used only for diagnostics now
 // (identity is the message, not the position). Subdirectories are skipped — one
 // directory is one package.
-func recorder_parse_directory(input *Recorder_Parse_Directory_Input) (files []*ast.File) {
-	root := strings.TrimPrefix(input.Directory, "/")
-	fs.WalkDir(input.File_System, root, func(
+func recorder_parse_directory(
+	file_system fs.FS, file_set *token.FileSet, directory string,
+) (files []*ast.File) {
+	root := strings.TrimPrefix(directory, "/")
+	fs.WalkDir(file_system, root, func(
 		file_path string, entry fs.DirEntry, walk_error error,
 	) (err error) {
 		if walk_error != nil {
@@ -1840,13 +2072,13 @@ func recorder_parse_directory(input *Recorder_Parse_Directory_Input) (files []*a
 		if strings.HasSuffix(file_path, "_test.go") {
 			return nil
 		}
-		SOURCE, read_error := fs.ReadFile(input.File_System, file_path)
+		SOURCE, read_error := fs.ReadFile(file_system, file_path)
 		if read_error != nil {
 			return nil
 		}
 		name := "/" + file_path
 		file, parse_error := parser.ParseFile(
-			input.File_Set, name, SOURCE, parser.SkipObjectResolution,
+			file_set, name, SOURCE, parser.SkipObjectResolution,
 		)
 		if parse_error == nil {
 			files = append(files, file)
@@ -1976,10 +2208,8 @@ type Bundle_Index struct {
 	Same_Set map[string]Indexed_Function
 	// Loaded caches lazily parsed cross-package functions, keyed by import path then bare name.
 	Loaded map[string]map[string]Indexed_Function
-	// Constants maps each analyzed package-level const's name to its value expression, so a
-	// Range_Invariants callsite's MIN/MAX arguments can be evaluated to decide which boundary
-	// units its interval admits. A flat index by bare name, like Same_Set — one analysis run
-	// covers one package tree, so cross-tree name collisions do not arise.
+	// Constants maps package constants to their value expressions. A flat bare-name index, like
+	// Same_Set, is sufficient because one analysis covers one package tree.
 	Constants map[string]ast.Expr
 }
 
@@ -2068,21 +2298,6 @@ func recorder_register_function(
 			}
 			recorder_register_dot_product(
 				recorder, file_set, call, namespace_parameter, imports, index, reg)
-			return true
-		}
-		// Range_Invariants ends in _Invariants but is not a descendable bundle: its grid
-		// is built at runtime from the callsite's MIN/MAX, so it is specialised here from
-		// the evaluated bounds, not a fixed template body. A Range under this function's
-		// own namespace parameter is a grid template, deferred to its callsites.
-		if ast_invariant_selector(call) == "Range_Invariants" {
-			recorder_register_range(
-				recorder, file_set, call, namespace_parameter, index, reg)
-			return true
-		}
-		// Enum_Invariants, like Range_Invariants, ends in _Invariants but is specialised
-		// here from its member constants rather than descended into as a bundle body.
-		if ast_invariant_selector(call) == "Enum_Invariants" {
-			recorder_register_enum(recorder, file_set, call, index, reg)
 			return true
 		}
 		if ast_is_invariants_name(ast_callee_name(call)) {
@@ -2218,7 +2433,7 @@ func recorder_check_unresolved(recorder *Recorder, unresolved []string) {
 	recorder.Exit(1)
 }
 
-// Reports every Range_Invariants callsite whose bound the evaluator could not resolve, then exits.
+// Reports every typed preset whose bound the evaluator could not resolve, then exits.
 // A recognised-but-unevaluable bound leaves the grid unseeded while the runtime still enforces the
 // range, so its coverage obligations would vanish unnoticed; failing keeps coverage from being
 // silently dropped — the analyzer seeds a Range grid or refuses it.
@@ -2226,7 +2441,7 @@ func recorder_check_unresolved_bounds(recorder *Recorder, unresolved []string) {
 	if len(unresolved) == 0 {
 		return
 	}
-	banner := "🚨 " + strconv.Itoa(len(unresolved)) + " unresolved Range bounds 🚨"
+	banner := "🚨 " + strconv.Itoa(len(unresolved)) + " unresolved preset bounds 🚨"
 	fmt.Fprintln(recorder.Output, banner)
 	for _, line := range unresolved {
 		fmt.Fprintln(recorder.Output, line)
@@ -2486,15 +2701,13 @@ func ast_is_control_flow(node ast.Node) (is_control_flow bool) {
 	return false
 }
 
-// A Registration_Axis is one Always/Sometimes element discovered statically:
-// its Message (the element's own literal), the source text of its condition, its kind,
-// and how many buckets it contributes to the tuple grid (Always=1 true; Sometimes=2).
-// The consuming Dot_Product's message is prefixed onto Message to form the coverage key,
-// uniformly for inline and bundle-descended axes alike.
+// Registration_Axis is the analyzer's complete description of one tuple coordinate. Keeping the
+// source condition beside registration-owned identity lets analysis explain a missing coordinate
+// without making runtime retain source text.
 type Registration_Axis struct {
-	// Ordinal keeps repeated chain messages distinct; the legacy engine needs no ordinal.
+	// Ordinal keeps repeated chain messages distinct.
 	Ordinal uint8
-	// Tuple_Position is assigned only by chain registration; legacy engine axes ignore it.
+	// Tuple_Position is registration's authoritative packed-mask position.
 	Tuple_Position uint8
 	// Message is the element's own literal; the Dot_Product prefix forms the coverage key.
 	Message string
@@ -2506,6 +2719,16 @@ type Registration_Axis struct {
 	Bucket_Count int
 	// Gated marks an Imply axis — seeded per-axis but excluded from the tuple grid.
 	Gated bool
+}
+
+// Registration_Guard is one preset reachability link seeded outside tuple coordinates.
+type Registration_Guard struct {
+	// Ordinal keeps same-named guards from composed presets distinct.
+	Ordinal uint8
+	// Message is the fixed bound vocabulary.
+	Message string
+	// Condition is the bound expression shown for a gap.
+	Condition string
 }
 
 // A Registration_Cell is one coordinate of an Impossible carve: a Dot_Product
@@ -2529,8 +2752,8 @@ type Registration struct {
 	Non_Literal []string
 	// Collision holds Dot_Product messages that collided with an already-seen prefix.
 	Collision []string
-	// Unresolved_Bound holds Range_Invariants callsites whose MIN or MAX argument the constant
-	// evaluator could not resolve, so their grid could not be seeded.
+	// Unresolved_Bound holds typed preset links whose bounds the constant evaluator could not
+	// resolve, so their grid could not be seeded.
 	Unresolved_Bound []string
 	// Invalid_Chain holds structural chain errors that would otherwise drop demanded coverage.
 	Invalid_Chain []string
@@ -2578,6 +2801,51 @@ func ast_chain_method(call *ast.CallExpr) (name string) {
 	return selector.Sel.Name
 }
 
+func ast_typed_preset_method(
+	name string,
+) (kind Chain_Preset_Kind, integer_kind Chain_Integer_Kind, matched bool) {
+	prefix := ""
+	if strings.HasPrefix(name, "Range_") {
+		kind = CHAIN_PRESET_KIND_RANGE
+		prefix = "Range_"
+	}
+	if strings.HasPrefix(name, "Enum_") {
+		kind = CHAIN_PRESET_KIND_ENUM
+		prefix = "Enum_"
+	}
+	if prefix == "" {
+		return kind, integer_kind, false
+	}
+	integer_kind, matched = ast_chain_integer_kind(strings.TrimPrefix(name, prefix))
+	return kind, integer_kind, matched
+}
+
+func ast_chain_integer_kind(name string) (kind Chain_Integer_Kind, matched bool) {
+	switch name {
+	case "Int":
+		return CHAIN_INTEGER_KIND_INT, true
+	case "Int8":
+		return CHAIN_INTEGER_KIND_INT8, true
+	case "Int16":
+		return CHAIN_INTEGER_KIND_INT16, true
+	case "Int32":
+		return CHAIN_INTEGER_KIND_INT32, true
+	case "Int64":
+		return CHAIN_INTEGER_KIND_INT64, true
+	case "Uint":
+		return CHAIN_INTEGER_KIND_UINT, true
+	case "Uint8":
+		return CHAIN_INTEGER_KIND_UINT8, true
+	case "Uint16":
+		return CHAIN_INTEGER_KIND_UINT16, true
+	case "Uint32":
+		return CHAIN_INTEGER_KIND_UINT32, true
+	case "Uint64":
+		return CHAIN_INTEGER_KIND_UINT64, true
+	}
+	return kind, false
+}
+
 // A chain is syntactically one nest. Walking receiver calls backward makes split Product variables
 // impossible to mis-register as a complete demanded grid.
 func ast_chain_from_ensure(ensure *ast.CallExpr) (chain Registration_Chain, ok bool) {
@@ -2591,11 +2859,9 @@ func ast_chain_from_ensure(ensure *ast.CallExpr) (chain Registration_Chain, ok b
 	var reversed []*ast.CallExpr
 	for step_index := 0; step_index < BUNDLE_EXPANSION_STEPS_MAX; step_index++ {
 		method := ast_chain_method(current)
-		if method != "Sometimes" {
-			if method != "Impossible" {
-				chain.Root = current
-				break
-			}
+		if !ast_chain_link_method(method) {
+			chain.Root = current
+			break
 		}
 		reversed = append(reversed, current)
 		current, has_receiver = ast_chain_receiver(current)
@@ -2611,6 +2877,15 @@ func ast_chain_from_ensure(ensure *ast.CallExpr) (chain Registration_Chain, ok b
 		chain.Links[i] = reversed[len(reversed)-1-i]
 	}
 	return chain, true
+}
+
+func ast_chain_link_method(method string) (link bool) {
+	switch method {
+	case "Sometimes", "Impossible":
+		return true
+	}
+	_, _, link = ast_typed_preset_method(method)
+	return link
 }
 
 func ast_chain_receiver(call *ast.CallExpr) (receiver *ast.CallExpr, ok bool) {
@@ -2665,7 +2940,7 @@ func recorder_register_chain(
 		return
 	}
 	recorder_seed_registration_chain(
-		recorder, file_set, ensure, namespace, chain.Links, reg, allow_unqualified)
+		recorder, file_set, ensure, namespace, chain.Links, index, reg, allow_unqualified)
 }
 
 // Constructor expansion is implemented with the same function index used by _Invariants. A direct
@@ -2721,10 +2996,8 @@ func recorder_product_constructor_chain(
 		var reversed []*ast.CallExpr
 		for step_index := 0; step_index < BUNDLE_EXPANSION_STEPS_MAX; step_index++ {
 			method := ast_chain_method(call)
-			if method != "Sometimes" {
-				if method != "Impossible" {
-					break
-				}
+			if !ast_chain_link_method(method) {
+				break
 			}
 			reversed = append(reversed, call)
 			call, is_call = ast_chain_receiver(call)
@@ -2750,38 +3023,74 @@ func recorder_product_constructor_chain(
 // cannot leave a partial grid that later analysis would mistake for the complete demand.
 func recorder_seed_registration_chain(
 	recorder *Recorder, file_set *token.FileSet, position ast.Node, namespace string,
-	link_calls []*ast.CallExpr, reg *Registration, allow_unqualified bool,
+	link_calls []*ast.CallExpr, index *Bundle_Index,
+	reg *Registration, allow_unqualified bool,
 ) {
 	if len(link_calls) > CHAIN_LINKS_MAX {
 		reg.Invalid_Chain = append(reg.Invalid_Chain,
 			recorder_position(file_set, position)+"  Dot_Product exceeds 255 links")
 		return
 	}
-	axes, carves, links, rules, valid := recorder_collect_chain(
-		file_set, link_calls, reg, allow_unqualified)
+	axes, guards, carves, links, rules, presets, valid := recorder_collect_chain(
+		file_set, link_calls, index, reg, allow_unqualified)
 	if !valid {
 		return
 	}
 	if len(axes) == 0 {
-		reg.Invalid_Chain = append(reg.Invalid_Chain,
-			recorder_position(file_set, position)+"  Dot_Product has no axes")
-		return
+		if len(guards) == 0 {
+			reg.Invalid_Chain = append(reg.Invalid_Chain,
+				recorder_position(file_set, position)+"  Dot_Product has no axes")
+			return
+		}
 	}
 	recorder_seed_chain(
-		recorder, file_set, position, namespace, axes, carves, links, rules, reg)
+		recorder, file_set, position, namespace,
+		axes, guards, carves, links, rules, presets, reg)
 }
 
 func recorder_collect_chain(
-	file_set *token.FileSet, calls []*ast.CallExpr, reg *Registration, allow_unqualified bool,
+	file_set *token.FileSet, calls []*ast.CallExpr, index *Bundle_Index,
+	reg *Registration, allow_unqualified bool,
 ) (
-	axes []Registration_Axis, carves [][]Registration_Cell,
-	links []Chain_Link, rules []Chain_Rule, valid bool,
+	axes []Registration_Axis, guards []Registration_Guard,
+	carves [][]Registration_Cell, links []Chain_Link,
+	rules []Chain_Rule, presets []Chain_Preset, valid bool,
 ) {
 	valid = true
 	positions := map[string][]int{}
 	rule_messages := map[string]bool{}
-	for ordinal, call := range calls {
+	ordinal := 0
+	for _, call := range calls {
 		method := ast_chain_method(call)
+		preset_kind, integer_kind, preset_method := ast_typed_preset_method(method)
+		if preset_method {
+			expansion, ok := recorder_collect_chain_preset(
+				file_set, call, preset_kind, integer_kind,
+				uint8(ordinal), uint8(len(axes)), uint8(len(rules)), index, reg)
+			valid = valid && ok
+			if !ok {
+				continue
+			}
+			expansion.Links[0].Preset_Index = uint8(len(presets))
+			guards = append(guards, recorder_registration_guards(expansion.Guards)...)
+			preset_axes := recorder_registration_axes(expansion.Axes)
+			for _, axis := range preset_axes {
+				positions[axis.Message] = append(positions[axis.Message], len(axes))
+			}
+			axes = append(axes, preset_axes...)
+			carves = append(carves, expansion.Carves...)
+			links = append(links, expansion.Links...)
+			rules = append(rules, expansion.Rules...)
+			presets = append(presets, expansion.Preset)
+			ordinal += int(expansion.Preset.Link_Count)
+			continue
+		}
+		if ordinal >= CHAIN_LINKS_MAX {
+			reg.Invalid_Chain = append(reg.Invalid_Chain,
+				recorder_position(file_set, call)+"  Dot_Product exceeds 255 links")
+			valid = false
+			continue
+		}
 		if method == "Sometimes" {
 			axis, ok := recorder_collect_chain_axis(file_set, call, uint8(ordinal), reg)
 			valid = valid && ok
@@ -2795,6 +3104,7 @@ func recorder_collect_chain(
 				Kind: DOT_ELEMENT_KIND_SOMETIMES, Ordinal: uint8(ordinal),
 				Axis_Count: uint8(len(axes) - 1), Message: axis.Message,
 			})
+			ordinal++
 			continue
 		}
 		cells, link, rule, ok := recorder_collect_chain_rule(
@@ -2808,8 +3118,166 @@ func recorder_collect_chain(
 		carves = append(carves, cells)
 		links = append(links, link)
 		rules = append(rules, rule)
+		ordinal++
 	}
-	return axes, carves, links, rules, valid
+	return axes, guards, carves, links, rules, presets, valid
+}
+
+func recorder_registration_guards(guards []Chain_Guard) (registration []Registration_Guard) {
+	for _, guard := range guards {
+		registration = append(registration, Registration_Guard{
+			Ordinal: guard.Ordinal, Message: guard.Message,
+			Condition: recorder_preset_guard_condition(guard.Message),
+		})
+	}
+	return registration
+}
+
+func recorder_registration_axes(axes []Chain_Preset_Axis) (registration []Registration_Axis) {
+	for _, axis := range axes {
+		registration = append(registration, Registration_Axis{
+			Ordinal: axis.Ordinal, Tuple_Position: axis.Tuple_Position,
+			Message: axis.Message, Condition: axis.Message,
+			Kind: ASSERTION_KIND_SOMETIMES, Bucket_Count: 2,
+		})
+	}
+	return registration
+}
+
+func recorder_collect_chain_preset(
+	file_set *token.FileSet, call *ast.CallExpr,
+	kind Chain_Preset_Kind, integer_kind Chain_Integer_Kind,
+	ordinal uint8, axis_count uint8, rule_count uint8,
+	index *Bundle_Index, reg *Registration,
+) (expansion Chain_Preset_Expansion, valid bool) {
+	minimum, maximum, values, resolved := recorder_collect_preset_domain(
+		call, kind, integer_kind, index)
+	if !resolved {
+		recorder_preset_unresolved(file_set, call, reg)
+		return expansion, false
+	}
+	if kind == CHAIN_PRESET_KIND_ENUM {
+		if !chain_enum_domain_valid(values) {
+			reg.Invalid_Chain = append(reg.Invalid_Chain,
+				recorder_position(file_set, call)+
+					"  Enum requires at least two distinct members")
+			return expansion, false
+		}
+	}
+	expansion = chain_preset_expand(Chain_Preset{
+		Kind: kind, Integer_Kind: integer_kind,
+		Ordinal: ordinal, Axis_Start: axis_count,
+		Minimum: minimum, Maximum: maximum, Values: values,
+	}, rule_count)
+	if !expansion.Valid {
+		reg.Invalid_Chain = append(reg.Invalid_Chain,
+			recorder_position(file_set, call)+
+				"  Dot_Product exceeds 255 expanded links")
+		return expansion, false
+	}
+	return expansion, true
+}
+
+func recorder_collect_preset_domain(
+	call *ast.CallExpr, kind Chain_Preset_Kind, integer_kind Chain_Integer_Kind,
+	index *Bundle_Index,
+) (
+	minimum Chain_Integer_Value, maximum Chain_Integer_Value,
+	values []Chain_Integer_Value, resolved bool,
+) {
+	if kind == CHAIN_PRESET_KIND_RANGE {
+		if len(call.Args) < 3 {
+			return minimum, maximum, values, false
+		}
+		minimum, resolved = recorder_eval_chain_integer(index, call.Args[1], integer_kind)
+		if !resolved {
+			return minimum, maximum, values, false
+		}
+		maximum, resolved = recorder_eval_chain_integer(index, call.Args[2], integer_kind)
+		if !resolved {
+			return minimum, maximum, values, false
+		}
+		values, resolved = recorder_eval_chain_integers(index, call.Args[3:], integer_kind)
+		return minimum, maximum, values, resolved
+	}
+	values, resolved = recorder_eval_chain_integers(index, call.Args[1:], integer_kind)
+	if !resolved {
+		return minimum, maximum, values, false
+	}
+	minimum, maximum = chain_integer_span(values)
+	return minimum, maximum, values, true
+}
+
+func recorder_eval_chain_integers(
+	index *Bundle_Index, expressions []ast.Expr, integer_kind Chain_Integer_Kind,
+) (values []Chain_Integer_Value, resolved bool) {
+	for _, expression := range expressions {
+		value, ok := recorder_eval_chain_integer(index, expression, integer_kind)
+		if !ok {
+			return nil, false
+		}
+		values = append(values, value)
+	}
+	return values, true
+}
+
+func recorder_eval_chain_integer(
+	index *Bundle_Index, expression ast.Expr, integer_kind Chain_Integer_Kind,
+) (integer Chain_Integer_Value, resolved bool) {
+	value, ok := recorder_eval_constant(index, expression)
+	if !ok {
+		return integer, false
+	}
+	// Go constant division stays rational. The chain domain accepts only integers, so normalize
+	// exact results before extraction; otherwise valid arithmetic is rejected and the integer
+	// extractors panic.
+	value = constant.ToInt(value)
+	if value.Kind() != constant.Int {
+		return integer, false
+	}
+	if constant.Sign(value) < 0 {
+		if !chain_integer_kind_signed(integer_kind) {
+			return integer, false
+		}
+		signed, exact := constant.Int64Val(value)
+		if !exact {
+			return integer, false
+		}
+		integer.Negative = true
+		integer.Magnitude = uint64(-(signed + 1)) + 1
+		return integer, true
+	}
+	magnitude, exact := constant.Uint64Val(value)
+	if !exact {
+		return integer, false
+	}
+	integer.Magnitude = magnitude
+	return integer, true
+}
+
+func chain_integer_span(
+	values []Chain_Integer_Value,
+) (minimum Chain_Integer_Value, maximum Chain_Integer_Value) {
+	if len(values) == 0 {
+		return minimum, maximum
+	}
+	minimum, maximum = values[0], values[0]
+	for _, value := range values {
+		if chain_integer_compare(value, minimum) < 0 {
+			minimum = value
+		}
+		if chain_integer_compare(value, maximum) > 0 {
+			maximum = value
+		}
+	}
+	return minimum, maximum
+}
+
+func recorder_preset_guard_condition(message string) (condition string) {
+	if message == RANGE_GUARD_UPPER {
+		return "value <= max"
+	}
+	return "value >= min"
 }
 
 func recorder_collect_chain_axis(
@@ -2962,8 +3430,9 @@ func recorder_collect_chain_reference(
 
 func recorder_seed_chain(
 	recorder *Recorder, file_set *token.FileSet, position ast.Node, namespace string,
-	axes []Registration_Axis, carves [][]Registration_Cell,
-	links []Chain_Link, rules []Chain_Rule, reg *Registration,
+	axes []Registration_Axis, guards []Registration_Guard,
+	carves [][]Registration_Cell, links []Chain_Link,
+	rules []Chain_Rule, presets []Chain_Preset, reg *Registration,
 ) {
 	if reg.Seen_Prefix[namespace] {
 		reg.Collision = append(reg.Collision,
@@ -2974,11 +3443,23 @@ func recorder_seed_chain(
 	reg.Seen_Prefix[namespace] = true
 	shape := &Chain_Shape{
 		Axes: make([]Chain_Axis, len(axes)), Links: links, Rules: rules,
+		Guards: make([]Chain_Guard, len(guards)), Presets: presets,
 		Tuples: map[Chain_Mask]Handle_Entry{}, Registered: true,
 	}
 	shape.Ensured.Store(true)
 	if recorder.Chain_Entries == nil {
 		recorder.Chain_Entries = map[string]*Assertion_Metadata{}
+	}
+	for guard_index, guard := range guards {
+		text := chain_axis_key(Namespace(namespace), guard.Ordinal, guard.Message)
+		metadata := &Assertion_Metadata{
+			Kind: ASSERTION_KIND_ALWAYS, Message: text, Condition: guard.Condition}
+		recorder.Events.Store(text, metadata)
+		recorder.Chain_Entries[text] = metadata
+		shape.Guards[guard_index] = Chain_Guard{
+			Ordinal: guard.Ordinal, Message: guard.Message,
+			Entry: Handle_Entry{Metadata: metadata, Key: text},
+		}
 	}
 	for i, axis := range axes {
 		text := chain_axis_key(Namespace(namespace), axis.Ordinal, axis.Message)
@@ -3083,7 +3564,7 @@ func recorder_register_invariants_callsite(
 			}
 			recorder_seed_registration_chain(
 				recorder, file_set, call, namespace,
-				chain.Links, reg, function.Is_Sugar)
+				chain.Links, index, reg, function.Is_Sugar)
 		}
 		return
 	}
@@ -3093,14 +3574,6 @@ func recorder_register_invariants_callsite(
 			file_set, dot_product.Args[1:], function.Is_Sugar, reg)
 		recorder_seed_grid(recorder, file_set, call, namespace, axes, carves, reg)
 		return
-	}
-	// A template whose body is a Range_Invariants under its namespace parameter seeds its
-	// bound grid here, under the callsite's literal namespace, from the template's MIN/MAX
-	// expressions — the Range mirror of the Dot_Product descent above.
-	if range_call, is_range := recorder_template_range(function.Declaration); is_range {
-		recorder_seed_range(recorder, file_set, call, namespace,
-			[2]ast.Expr{range_call.Args[1], range_call.Args[2]}, range_call.Args[4:],
-			index, reg)
 	}
 }
 
@@ -3137,321 +3610,26 @@ func recorder_template_chains(function *ast.FuncDecl) (ensures []*ast.CallExpr) 
 // acyclic and finishes far below this.
 const CONSTANT_EVAL_STEPS_MAX = 256
 
-// A Range_Unit is one boundary value Recorder_Range may claim: its integer value, the axis message
-// it seeds when in range, and the source label its condition renders with.
-type Range_Unit struct {
-	// Value is the boundary integer (0, 1, 2, or -1).
-	Value int64
-	// Message is the axis's own message, joined to the namespace to form its coverage key.
-	Message string
-	// Label is how the value reads in the axis condition text of the gap report.
-	Label string
-}
-
-// The boundary units Recorder_Range claims, in the exact order its runtime grid emits them, so the
-// scan's projected tuple coordinates line up with what the run records.
-func recorder_range_units() (units []Range_Unit) {
-	return []Range_Unit{
-		{Value: 0, Message: RANGE_MESSAGE_ZERO, Label: "0"},
-		{Value: 1, Message: RANGE_MESSAGE_ONE, Label: "1"},
-		{Value: 2, Message: RANGE_MESSAGE_TWO, Label: "2"},
-		{Value: -1, Message: RANGE_MESSAGE_NEGATIVE_ONE, Label: "-1"},
-	}
-}
-
-// Registers a Range_Invariants callsite. It evaluates the MIN and MAX arguments, seeds the two
-// bound guards as namespaced Always reachability entries, and seeds a Sometimes axis for each
-// interval edge (min and max) and each of {0, 1, 2, -1} strictly inside — mutually exclusive, so
-// only the singleton and all-clear cells survive. The tests mirror Recorder_Range's runtime
-// decision, so the scan demands exactly what the run credits. A non-literal namespace, or a bound
-// the evaluator cannot resolve, is fatal: the grid could not otherwise be keyed while the runtime
-// still enforces it.
-func recorder_register_range(
-	recorder *Recorder, file_set *token.FileSet, call *ast.CallExpr,
-	namespace_parameter string, index *Bundle_Index, reg *Registration,
-) {
-	// Args are value, MIN, MAX, namespace; the value on Args[0] is not needed to seed the grid.
-	if len(call.Args) < 4 {
-		return
-	}
-	namespace, literal := ast_string_literal(call, 3)
-	if !literal {
-		// A Range under the enclosing bundle's namespace parameter is a grid template —
-		// its grid is seeded at each _Invariants callsite's literal namespace, never
-		// under the bare parameter, exactly as a self-emitting Dot_Product template is.
-		// Any other non-literal namespace is fatal: its coverage could not be keyed.
-		if ast_is_range_template(call, namespace_parameter) {
-			return
-		}
-		reg.Non_Literal = append(reg.Non_Literal, recorder_position(file_set, call)+
-			"  Range_Invariants namespace is not a string literal")
-		return
-	}
-	recorder_seed_range(recorder, file_set, call, namespace,
-		[2]ast.Expr{call.Args[1], call.Args[2]}, call.Args[4:], index, reg)
-}
-
-// Reports whether a Range_Invariants call's namespace argument is the enclosing function's
-// namespace parameter — the shape of a grid template, registered at the _Invariants' callsites
-// rather than here, mirroring ast_is_template_prefix for a Dot_Product's leading prefix.
-func ast_is_range_template(call *ast.CallExpr, namespace_parameter string) (is_template bool) {
-	if namespace_parameter == "" {
-		return false
-	}
-	if len(call.Args) < 4 {
-		return false
-	}
-	identifier, is_identifier := call.Args[3].(*ast.Ident)
-	if !is_identifier {
-		return false
-	}
-	return identifier.Name == namespace_parameter
-}
-
-// Seeds a Range grid under namespace: it evaluates the MIN and MAX bound expressions, seeds the two
-// bound guards as namespaced Always reachability entries, and seeds a Sometimes axis for each
-// interval edge (min and max) and each of {0, 1, 2, -1} strictly inside — mutually exclusive. A
-// direct Range callsite passes its own literal namespace; a Range template passes each _Invariants
-// callsite's literal namespace with the template's bound expressions. A bound the evaluator cannot
-// resolve is fatal, since the grid could not be keyed while the runtime still enforces it.
-func recorder_seed_range(
-	recorder *Recorder, file_set *token.FileSet, position ast.Node, namespace string,
-	expressions [2]ast.Expr, exclusions []ast.Expr, index *Bundle_Index, reg *Registration,
-) {
-	value_min, ok_min := recorder_eval_constant(index, expressions[0])
-	value_max, ok_max := recorder_eval_constant(index, expressions[1])
-	if !ok_min {
-		recorder_range_unresolved(file_set, position, reg)
-		return
-	}
-	if !ok_max {
-		recorder_range_unresolved(file_set, position, reg)
-		return
-	}
-	excluded, resolved := recorder_seed_constants(index, exclusions)
-	if !resolved {
-		recorder_range_unresolved(file_set, position, reg)
-		return
-	}
-	bounds := [2]constant.Value{value_min, value_max}
-	axes := recorder_seed_axes(bounds, excluded, false)
-	carves := recorder_range_carve_cells(axes)
-	if recorder_constant_saturated(bounds, recorder_range_sometimes_count(axes), excluded) {
-		carves = append(carves, recorder_range_all_false_cells(axes))
-	}
-	recorder_seed_grid(recorder, file_set, position, namespace, axes, carves, reg)
-}
-
-// Builds the static mirror of recorder_range_axes: the two bound guards, the min/max edges (unless
-// the interval is a point), and each of {0,1,2,-1} strictly inside admitted by its membership in
-// `set` — for a range `set` is the excluded holes (dropped), for an enum the members (kept).
-func recorder_seed_axes(
-	bounds [2]constant.Value, set []constant.Value, enum bool,
-) (axes []Registration_Axis) {
-	axes = []Registration_Axis{
-		{Message: RANGE_GUARD_UPPER, Condition: "value <= max",
-			Kind: ASSERTION_KIND_ALWAYS, Bucket_Count: 1},
-		{Message: RANGE_GUARD_LOWER, Condition: "value >= min",
-			Kind: ASSERTION_KIND_ALWAYS, Bucket_Count: 1},
-	}
-	if constant.Compare(bounds[0], token.LSS, bounds[1]) {
-		axes = append(axes, recorder_range_axis(RANGE_MESSAGE_MINIMUM))
-		axes = append(axes, recorder_range_axis(RANGE_MESSAGE_MAXIMUM))
-	}
-	for _, unit := range recorder_range_units() {
-		if !recorder_constant_interior(bounds, unit.Value) {
-			continue
-		}
-		if recorder_constant_holed(unit.Value, set) != enum {
-			continue
-		}
-		axes = append(axes, recorder_range_axis(unit.Message))
-	}
-	return axes
-}
-
-// Evaluates a list of constant expressions (Range exclusions or Enum members). Any expression the
-// evaluator cannot resolve makes the whole set unresolved, so the caller fails registration.
-func recorder_seed_constants(
-	index *Bundle_Index, expressions []ast.Expr,
-) (values []constant.Value, resolved bool) {
-	for _, expression := range expressions {
-		value, ok := recorder_eval_constant(index, expression)
-		if !ok {
-			return nil, false
-		}
-		values = append(values, value)
-	}
-	return values, true
-}
-
-// Reports whether candidate equals a value in the set — the static mirror of recorder_range_holed.
-func recorder_constant_holed(candidate int64, set []constant.Value) (holed bool) {
-	target := constant.MakeInt64(candidate)
-	for _, value := range set {
-		if constant.Compare(target, token.EQL, value) {
-			return true
-		}
-	}
-	return false
-}
-
-// Reports whether the reachable interval is saturated — every in-range value that is not an
-// excluded hole is a witnessed axis, so the all-false cell can never occur. Mirrors the runtime.
-func recorder_constant_saturated(
-	bounds [2]constant.Value, axis_count int, excluded []constant.Value,
-) (saturated bool) {
-	width := constant.BinaryOp(bounds[1], token.SUB, bounds[0])
-	holes := 0
-	for _, value := range excluded {
-		if constant.Compare(value, token.LEQ, bounds[0]) {
-			continue
-		}
-		if constant.Compare(value, token.GEQ, bounds[1]) {
-			continue
-		}
-		holes++
-	}
-	width = constant.BinaryOp(width, token.SUB, constant.MakeInt64(int64(holes)))
-	return constant.Compare(width, token.LSS, constant.MakeInt64(int64(axis_count)))
-}
-
-// Registers a direct Enum_Invariants callsite: Args are value, namespace, members. It seeds the
-// grid for the discrete member set under the literal namespace. A non-literal namespace is fatal —
-// enum templates (a member set under a namespace parameter) are not yet supported.
-func recorder_register_enum(
-	recorder *Recorder, file_set *token.FileSet, call *ast.CallExpr,
-	index *Bundle_Index, reg *Registration,
-) {
-	if len(call.Args) < 3 {
-		return
-	}
-	namespace, literal := ast_string_literal(call, 1)
-	if !literal {
-		reg.Non_Literal = append(reg.Non_Literal, recorder_position(file_set, call)+
-			"  Enum_Invariants namespace is not a string literal")
-		return
-	}
-	recorder_seed_enum(recorder, file_set, call, namespace, call.Args[2:], index, reg)
-}
-
-// Seeds an Enum grid: it evaluates the member constants, spans them into [min, max], and admits the
-// same axes a range would while dropping every non-member sentinel. The all-false cell is carved
-// once every member is a witnessed axis, so a reachable value witnessing none can never occur.
-func recorder_seed_enum(
-	recorder *Recorder, file_set *token.FileSet, position ast.Node, namespace string,
-	members []ast.Expr, index *Bundle_Index, reg *Registration,
-) {
-	values, resolved := recorder_seed_constants(index, members)
-	if !resolved {
-		recorder_range_unresolved(file_set, position, reg)
-		return
-	}
-	bounds := recorder_constant_span(values)
-	axes := recorder_seed_axes(bounds, values, true)
-	carves := recorder_range_carve_cells(axes)
-	if len(values) <= recorder_range_sometimes_count(axes) {
-		carves = append(carves, recorder_range_all_false_cells(axes))
-	}
-	recorder_seed_grid(recorder, file_set, position, namespace, axes, carves, reg)
-}
-
-// Spans a member set into its least and greatest value — the static mirror of recorder_enum_bounds.
-func recorder_constant_span(values []constant.Value) (bounds [2]constant.Value) {
-	for i, value := range values {
-		if i == 0 {
-			bounds = [2]constant.Value{value, value}
-			continue
-		}
-		if constant.Compare(value, token.LSS, bounds[0]) {
-			bounds[0] = value
-		}
-		if constant.Compare(value, token.GTR, bounds[1]) {
-			bounds[1] = value
-		}
-	}
-	return bounds
-}
-
-// Counts the Sometimes (coverage) axes of a Range grid — every axis past the two leading guards.
-func recorder_range_sometimes_count(axes []Registration_Axis) (count int) {
-	for i := range axes {
-		if axes[i].Bucket_Count >= 2 {
-			count++
-		}
-	}
-	return count
-}
-
-// Builds the carve cell pinning every Sometimes axis false — the all-false combination a saturated
-// interval can never witness.
-func recorder_range_all_false_cells(axes []Registration_Axis) (cells []Registration_Cell) {
-	for i := range axes {
-		if axes[i].Bucket_Count < 2 {
-			continue
-		}
-		cells = append(cells, Registration_Cell{Position: i, Bucket: 0})
-	}
-	return cells
-}
-
-// Builds one Sometimes coverage axis of a Range grid — an edge or an interior sentinel. The axis's
-// own message doubles as its condition text, since the message already reads as the claim.
-func recorder_range_axis(message string) (axis Registration_Axis) {
-	return Registration_Axis{
-		Message: message, Condition: message,
-		Kind: ASSERTION_KIND_SOMETIMES, Bucket_Count: 2,
-	}
-}
-
-// Builds the mutual-exclusion carves over a Range grid's Sometimes axes — every axis past the two
-// leading guards, pinned true pairwise, since a value equals at most one edge or sentinel.
-func recorder_range_carve_cells(axes []Registration_Axis) (carves [][]Registration_Cell) {
-	var positions []int
-	for position_index := 2; position_index < len(axes); position_index++ {
-		positions = append(positions, position_index)
-	}
-	for i := range positions {
-		for j := i + 1; j < len(positions); j++ {
-			carves = append(carves, []Registration_Cell{
-				{Position: positions[i], Bucket: 1},
-				{Position: positions[j], Bucket: 1},
-			})
-		}
-	}
-	return carves
-}
-
-// Records a Range_Invariants callsite whose bound the evaluator could not resolve, so registration
+// Records a typed preset callsite whose bound the evaluator could not resolve, so registration
 // fails rather than seeding an incomplete grid the runtime would still enforce.
-func recorder_range_unresolved(
+func recorder_preset_unresolved(
 	file_set *token.FileSet, position ast.Node, reg *Registration,
 ) {
 	reg.Unresolved_Bound = append(reg.Unresolved_Bound,
 		recorder_position(file_set, position)+
-			"  Range_Invariants bound is not a resolvable constant")
+			"  typed preset bound is not a resolvable constant")
 }
 
-// Reports whether the integer n lies strictly inside the interval bounds, comparing in arbitrary
-// precision so a bound beyond int64 (a uint64 near its ceiling) and a negative n are both handled.
-// -1 falls out for an unsigned type whose lower bound is zero without any signedness test.
-func recorder_constant_interior(bounds [2]constant.Value, n int64) (interior bool) {
-	target := constant.MakeInt64(n)
-	return constant.Compare(bounds[0], token.LSS, target) &&
-		constant.Compare(target, token.LSS, bounds[1])
-}
-
-// A Range_Eval_Frame is one node of the constant-evaluation work stack: an expression to evaluate,
-// and whether its operands were already pushed — an operator is visited twice, once to expand its
-// children and once to combine their now-evaluated values.
-type Range_Eval_Frame struct {
+// Constant_Eval_Frame is one node of the constant-evaluation work stack. Expanded distinguishes
+// the first visit that schedules operands from the second visit that combines their values.
+type Constant_Eval_Frame struct {
 	// Expression is the AST node this frame evaluates.
 	Expression ast.Expr
 	// Expanded reports whether this operator already pushed its operands for evaluation.
 	Expanded bool
 }
 
-// Evaluates a Range_Invariants bound expression to an integer constant: an integer literal, a
+// Evaluates a typed preset bound expression to an integer constant: an integer literal, a
 // reference to a sibling package const, a parenthesised expression, a unary +/-/^, or a binary
 // arithmetic/bitwise/shift op over those. ok is false for anything else (a variable, an imported
 // selector, a float, a call), which the caller treats as a fatal unresolved bound. No iota.
@@ -3462,7 +3640,7 @@ type Range_Eval_Frame struct {
 func recorder_eval_constant(
 	index *Bundle_Index, expression ast.Expr,
 ) (value constant.Value, ok bool) {
-	work := []Range_Eval_Frame{{Expression: expression}}
+	work := []Constant_Eval_Frame{{Expression: expression}}
 	var values []constant.Value
 	for step := 0; len(work) > 0; step++ {
 		if step > CONSTANT_EVAL_STEPS_MAX {
@@ -3482,9 +3660,14 @@ func recorder_eval_constant(
 			if !defined {
 				return nil, false
 			}
-			work = append(work, Range_Eval_Frame{Expression: reference})
+			work = append(work, Constant_Eval_Frame{Expression: reference})
 		case *ast.ParenExpr:
-			work = append(work, Range_Eval_Frame{Expression: node.X})
+			work = append(work, Constant_Eval_Frame{Expression: node.X})
+		case *ast.CallExpr:
+			if !ast_integer_conversion(node) {
+				return nil, false
+			}
+			work = append(work, Constant_Eval_Frame{Expression: node.Args[0]})
 		case *ast.UnaryExpr:
 			if !frame.Expanded {
 				work = recorder_eval_expand(work, node, node.X)
@@ -3520,6 +3703,22 @@ func recorder_eval_constant(
 	return values[0], true
 }
 
+func ast_integer_conversion(call *ast.CallExpr) (conversion bool) {
+	if len(call.Args) != 1 {
+		return false
+	}
+	identifier, is_identifier := call.Fun.(*ast.Ident)
+	if !is_identifier {
+		return false
+	}
+	switch identifier.Name {
+	case "int", "int8", "int16", "int32", "int64",
+		"uint", "uint8", "uint16", "uint32", "uint64":
+		return true
+	}
+	return false
+}
+
 // Evaluates an integer literal; ok is false for a non-integer or unparseable literal.
 func recorder_eval_literal(literal *ast.BasicLit) (value constant.Value, ok bool) {
 	if literal.Kind != token.INT {
@@ -3532,11 +3731,11 @@ func recorder_eval_literal(literal *ast.BasicLit) (value constant.Value, ok bool
 // Re-pushes an operator marked Expanded, then its operands in reverse, so each operand evaluates
 // before the operator combines them and the first-listed operand ends up first on the value stack.
 func recorder_eval_expand(
-	work []Range_Eval_Frame, operator ast.Expr, operands ...ast.Expr,
-) (expanded []Range_Eval_Frame) {
-	work = append(work, Range_Eval_Frame{Expression: operator, Expanded: true})
+	work []Constant_Eval_Frame, operator ast.Expr, operands ...ast.Expr,
+) (expanded []Constant_Eval_Frame) {
+	work = append(work, Constant_Eval_Frame{Expression: operator, Expanded: true})
 	for i := len(operands) - 1; i >= 0; i-- {
-		work = append(work, Range_Eval_Frame{Expression: operands[i]})
+		work = append(work, Constant_Eval_Frame{Expression: operands[i]})
 	}
 	return work
 }
@@ -3562,23 +3761,58 @@ func recorder_constant_binary(
 	left := operands[0]
 	right := operands[1]
 	if recorder_constant_is_shift(op) {
-		count, exact := constant.Uint64Val(right)
+		integer_count := constant.ToInt(right)
+		if integer_count.Kind() != constant.Int {
+			return nil, false
+		}
+		count, exact := constant.Uint64Val(integer_count)
 		if !exact {
 			return nil, false
 		}
 		result := constant.Shift(left, op, uint(count))
 		return result, result.Kind() != constant.Unknown
 	}
+	if recorder_constant_divides(op) {
+		left_integer, left_ok := recorder_constant_big_integer(left)
+		right_integer, right_ok := recorder_constant_big_integer(right)
+		if !left_ok {
+			return nil, false
+		}
+		if !right_ok {
+			return nil, false
+		}
+		if right_integer.Sign() == 0 {
+			return nil, false
+		}
+		result := new(big.Int)
+		if op == token.QUO {
+			result.Quo(left_integer, right_integer)
+		} else {
+			result.Rem(left_integer, right_integer)
+		}
+		return constant.Make(result), true
+	}
 	if !recorder_constant_is_arithmetic(op) {
 		return nil, false
 	}
-	if recorder_constant_divides(op) {
-		if constant.Sign(right) == 0 {
-			return nil, false
-		}
-	}
 	result := constant.BinaryOp(left, op, right)
 	return result, result.Kind() != constant.Unknown
+}
+
+// Extracting the integer before quotient or remainder preserves Go's truncation semantics while
+// retaining arbitrary precision for bounds whose intermediate products exceed uint64.
+func recorder_constant_big_integer(value constant.Value) (integer *big.Int, ok bool) {
+	value = constant.ToInt(value)
+	if value.Kind() != constant.Int {
+		return nil, false
+	}
+	switch concrete := constant.Val(value).(type) {
+	case int64:
+		return big.NewInt(concrete), true
+	case *big.Int:
+		return new(big.Int).Set(concrete), true
+	}
+	return nil, false
 }
 
 // Reports whether op is a shift operator, whose right operand is a bit count rather than a value.
@@ -3601,8 +3835,8 @@ func recorder_constant_is_arithmetic(op token.Token) (yes bool) {
 	return false
 }
 
-// Maps each package-level const's name to its value expression, for evaluating Range_Invariants
-// bounds. Only a spec that supplies its own value is indexed; an inherited-value spec (no iota in
+// Maps each package-level const's name to its value expression, for evaluating typed preset bounds.
+// Only a spec that supplies its own value is indexed; an inherited-value spec (no iota in
 // this codebase) is skipped, so a bound built on one stays unresolved rather than silently
 // miskeyed. A later definition wins on a name collision, matching ast_index_functions.
 func ast_index_constants(files []*ast.File) (constants map[string]ast.Expr) {
@@ -3654,37 +3888,6 @@ func recorder_template_dot_product(
 			return true
 		}
 		if !ast_is_template_prefix(candidate, namespace_parameter) {
-			return true
-		}
-		call = candidate
-		has = true
-		return false
-	})
-	return call, has
-}
-
-// Finds the self-emitted Range_Invariants of a grid template — the call whose namespace argument is
-// the function's trailing namespace parameter, so its bound grid is seeded at the _Invariants
-// callsites. The Range mirror of recorder_template_dot_product.
-func recorder_template_range(
-	function *ast.FuncDecl,
-) (call *ast.CallExpr, has bool) {
-	namespace_parameter := ast_namespace_parameter(function)
-	if namespace_parameter == "" {
-		return nil, false
-	}
-	ast.Inspect(function.Body, func(node ast.Node) (descend bool) {
-		if has {
-			return false
-		}
-		candidate, is_call := node.(*ast.CallExpr)
-		if !is_call {
-			return true
-		}
-		if ast_selector(candidate, true) != "Range_Invariants" {
-			return true
-		}
-		if !ast_is_range_template(candidate, namespace_parameter) {
 			return true
 		}
 		call = candidate
@@ -3836,11 +4039,7 @@ func bundle_index_load(
 	if !resolved {
 		return functions
 	}
-	files := recorder_parse_directory(&Recorder_Parse_Directory_Input{
-		File_System: index.File_System,
-		File_Set:    index.File_Set,
-		Directory:   directory,
-	})
+	files := recorder_parse_directory(index.File_System, index.File_Set, directory)
 	is_sugar := import_path == index.Sugar_Package
 	for name, function := range ast_index_functions(files) {
 		function.Is_Sugar = is_sugar
@@ -4288,36 +4487,22 @@ func recorder_report_gaps(recorder *Recorder, gaps []Coverage_Gap) {
 	banner := "🚨 " + strconv.Itoa(len(gaps)) + " coverage gaps 🚨"
 	fmt.Fprintln(recorder.Output, banner)
 	recorder_report_cross_product(recorder.Output, gaps)
-	recorder_report_section(&Recorder_Report_Section_Input{
-		Output: recorder.Output, Title: "Branch gaps", Gaps: gaps,
-		Kind: ASSERTION_KIND_SOMETIMES,
-	})
-	recorder_report_section(&Recorder_Report_Section_Input{
-		Output: recorder.Output, Title: "Reachability gaps", Gaps: gaps,
-		Kind: ASSERTION_KIND_ALWAYS,
-	})
+	recorder_report_section(
+		recorder.Output, "Branch gaps", gaps, ASSERTION_KIND_SOMETIMES)
+	recorder_report_section(
+		recorder.Output, "Reachability gaps", gaps, ASSERTION_KIND_ALWAYS)
 	fmt.Fprintln(recorder.Output, banner)
-}
-
-// Input for recorder_report_section.
-type Recorder_Report_Section_Input struct {
-	// Output is the writer the section is printed to.
-	Output io.Writer
-	// Title is the markdown heading the section is printed under.
-	Title string
-	// Gaps is the full gap set; only those matching Kind are printed.
-	Gaps []Coverage_Gap
-	// Kind selects which assertion kind's gaps this section reports.
-	Kind Assertion_Kind
 }
 
 // Prints, under a markdown heading, the gaps whose assertion is of the given
 // kind, sorted by message. Emits nothing when no gap matches, so empty sections
 // stay silent.
-func recorder_report_section(input *Recorder_Report_Section_Input) {
-	selected := make([]Coverage_Gap, 0, len(input.Gaps))
-	for _, gap := range input.Gaps {
-		if gap.Metadata.Kind == input.Kind {
+func recorder_report_section(
+	output io.Writer, title string, gaps []Coverage_Gap, kind Assertion_Kind,
+) {
+	selected := make([]Coverage_Gap, 0, len(gaps))
+	for _, gap := range gaps {
+		if gap.Metadata.Kind == kind {
 			selected = append(selected, gap)
 		}
 	}
@@ -4333,10 +4518,10 @@ func recorder_report_section(input *Recorder_Report_Section_Input) {
 		}
 		return selected[i].Reason < selected[j].Reason
 	})
-	fmt.Fprintln(input.Output)
-	fmt.Fprintln(input.Output, "# "+input.Title)
+	fmt.Fprintln(output)
+	fmt.Fprintln(output, "# "+title)
 	for _, gap := range selected {
-		fmt.Fprintln(input.Output, coverage_gap_line(gap))
+		fmt.Fprintln(output, coverage_gap_line(gap))
 	}
 }
 

@@ -46,10 +46,8 @@ func Test_Sometimes_Coverage(t *testing.T) {
 		Sometimes(true, "zero").
 		Sometimes(false, "one").
 		Impossible("exclusive", invariant.Event_True("zero"), invariant.Event_True("one"))
-	metadata := chain_metadata(&chain_metadata_input{
-		Test: t, Recorder: recorder,
-		Key: chain_metadata_key{Namespace: "check", Ordinal: 0, Message: "zero"},
-	})
+	metadata := chain_metadata(
+		t, recorder, chain_metadata_key{Namespace: "check", Ordinal: 0, Message: "zero"})
 	if metadata.Frequency.Load() != 0 {
 		t.Fatal("Sometimes recorded before Ensure")
 	}
@@ -90,10 +88,10 @@ func check(a bool, b bool) {
 }
 `
 	recorder, _, _ := registered_fixture(SOURCE)
-	chain_metadata(&chain_metadata_input{Test: t, Recorder: recorder,
-		Key: chain_metadata_key{Namespace: "check", Ordinal: 0, Message: "same"}})
-	chain_metadata(&chain_metadata_input{Test: t, Recorder: recorder,
-		Key: chain_metadata_key{Namespace: "check", Ordinal: 1, Message: "same"}})
+	chain_metadata(t, recorder,
+		chain_metadata_key{Namespace: "check", Ordinal: 0, Message: "same"})
+	chain_metadata(t, recorder,
+		chain_metadata_key{Namespace: "check", Ordinal: 1, Message: "same"})
 }
 
 // Test_Dot_Product_Constraint prevents its specification contract from regressing.
@@ -109,10 +107,8 @@ func Test_Dot_Product_Constraint(t *testing.T) {
 		t.Fatalf("panic = %q, want rule message", message)
 	}
 	recorder, _, _ = registered_chain_fixture()
-	axis := chain_metadata(&chain_metadata_input{
-		Test: t, Recorder: recorder,
-		Key: chain_metadata_key{Namespace: "check", Ordinal: 0, Message: "zero"},
-	})
+	axis := chain_metadata(
+		t, recorder, chain_metadata_key{Namespace: "check", Ordinal: 0, Message: "zero"})
 	message = panic_text(func() {
 		invariant.Recorder_Dot_Product(recorder, "check").
 			Sometimes(true, "zero").Sometimes(true, "one").
@@ -212,10 +208,8 @@ func Test_Dot_Product_Shared(t *testing.T) {
 // Test_Dot_Product_Unknown prevents its specification contract from regressing.
 func Test_Dot_Product_Unknown(t *testing.T) {
 	recorder, _, _ := registered_chain_fixture()
-	zero := chain_metadata(&chain_metadata_input{
-		Test: t, Recorder: recorder,
-		Key: chain_metadata_key{Namespace: "check", Ordinal: 0, Message: "zero"},
-	})
+	zero := chain_metadata(
+		t, recorder, chain_metadata_key{Namespace: "check", Ordinal: 0, Message: "zero"})
 	var product invariant.Product
 	message := panic_text(func() {
 		product = invariant.Recorder_Dot_Product(recorder, "check").
@@ -292,10 +286,8 @@ func Test_Dot_Product_Persistence(t *testing.T) {
 	}
 	key := "check" + invariant.ELEMENT_MESSAGE_SEPARATOR + "0" +
 		invariant.ELEMENT_MESSAGE_SEPARATOR + "zero"
-	axis := chain_metadata(&chain_metadata_input{
-		Test: t, Recorder: recorder,
-		Key: chain_metadata_key{Namespace: "check", Ordinal: 0, Message: "zero"},
-	})
+	axis := chain_metadata(
+		t, recorder, chain_metadata_key{Namespace: "check", Ordinal: 0, Message: "zero"})
 	if recorder.Chain_Entries[key] != axis {
 		t.Fatal("registration did not publish the exact persisted axis key")
 	}
@@ -406,12 +398,12 @@ func check(n int) {
 }
 `
 	recorder, _, _ := registered_fixture(SOURCE)
-	chain_metadata(&chain_metadata_input{Test: t, Recorder: recorder,
-		Key: chain_metadata_key{Namespace: "number", Ordinal: 0, Message: "zero"}})
-	chain_metadata(&chain_metadata_input{Test: t, Recorder: recorder,
-		Key: chain_metadata_key{Namespace: "prefix", Ordinal: 0, Message: "negative"}})
-	chain_metadata(&chain_metadata_input{Test: t, Recorder: recorder,
-		Key: chain_metadata_key{Namespace: "prefix", Ordinal: 1, Message: "positive"}})
+	chain_metadata(t, recorder,
+		chain_metadata_key{Namespace: "number", Ordinal: 0, Message: "zero"})
+	chain_metadata(t, recorder,
+		chain_metadata_key{Namespace: "prefix", Ordinal: 0, Message: "negative"})
+	chain_metadata(t, recorder,
+		chain_metadata_key{Namespace: "prefix", Ordinal: 1, Message: "positive"})
 }
 
 // Test_Dot_Product_Registration_Ensured prevents its specification contract from regressing.
@@ -556,8 +548,8 @@ func Number_Invariants(n int, namespace invariant.Namespace) {
 func check(n int) { Number_Invariants(n, "number") }
 `
 	recorder, _, _ := registered_fixture(SOURCE)
-	chain_metadata(&chain_metadata_input{Test: t, Recorder: recorder,
-		Key: chain_metadata_key{Namespace: "number", Ordinal: 0, Message: "zero"}})
+	chain_metadata(t, recorder,
+		chain_metadata_key{Namespace: "number", Ordinal: 0, Message: "zero"})
 }
 
 // Test_Bundles_Range_Template prevents its specification contract from regressing.
@@ -567,7 +559,8 @@ const MIN = -2
 const MAX = 2
 type Number int
 func Number_Invariants(n Number, namespace invariant.Namespace) {
-	invariant.Range_Invariants(n, MIN, MAX, namespace)
+	invariant.Dot_Product(namespace).
+		Range_Int(int(n), int(MIN), int(MAX)).Ensure()
 }
 func check(n Number) { Number_Invariants(n, "number") }
 `
@@ -596,10 +589,10 @@ func Pair_Invariants(n Number, namespace invariant.Namespace) {
 func check(n Number) { Pair_Invariants(n, "pair") }
 `
 	recorder, _, _ := registered_fixture(SOURCE)
-	chain_metadata(&chain_metadata_input{Test: t, Recorder: recorder,
-		Key: chain_metadata_key{Namespace: "pair", Ordinal: 0, Message: "one"}})
-	chain_metadata(&chain_metadata_input{Test: t, Recorder: recorder,
-		Key: chain_metadata_key{Namespace: "pair.number", Ordinal: 0, Message: "zero"}})
+	chain_metadata(t, recorder,
+		chain_metadata_key{Namespace: "pair", Ordinal: 0, Message: "one"})
+	chain_metadata(t, recorder,
+		chain_metadata_key{Namespace: "pair.number", Ordinal: 0, Message: "zero"})
 }
 
 // Test_Bundles_Casing prevents its specification contract from regressing.
@@ -612,8 +605,8 @@ func number_invariants(n number, namespace invariant.Namespace) {
 func check(n number) { number_invariants(n, "number") }
 `
 	recorder, _, _ := registered_fixture(SOURCE)
-	chain_metadata(&chain_metadata_input{Test: t, Recorder: recorder,
-		Key: chain_metadata_key{Namespace: "number", Ordinal: 0, Message: "zero"}})
+	chain_metadata(t, recorder,
+		chain_metadata_key{Namespace: "number", Ordinal: 0, Message: "zero"})
 }
 
 // Test_Bundles_Sugar prevents its specification contract from regressing.
@@ -625,8 +618,8 @@ func Number_Invariants(n int, namespace Namespace) {
 func check(n int) { Number_Invariants(n, "number") }
 `
 	recorder, _, _ := registered_fixture_with_sugar(SOURCE)
-	chain_metadata(&chain_metadata_input{Test: t, Recorder: recorder,
-		Key: chain_metadata_key{Namespace: "number", Ordinal: 0, Message: "zero"}})
+	chain_metadata(t, recorder,
+		chain_metadata_key{Namespace: "number", Ordinal: 0, Message: "zero"})
 }
 
 // Test_Bundles_Cross_Package prevents its specification contract from regressing.
@@ -638,8 +631,8 @@ func Number_Invariants(n int, namespace invariant.Namespace) {
 func check(n int) { Number_Invariants(n, "number") }
 `
 	recorder, _, _ := registered_fixture(SOURCE)
-	chain_metadata(&chain_metadata_input{Test: t, Recorder: recorder,
-		Key: chain_metadata_key{Namespace: "number", Ordinal: 0, Message: "zero"}})
+	chain_metadata(t, recorder,
+		chain_metadata_key{Namespace: "number", Ordinal: 0, Message: "zero"})
 }
 
 // Test_Bundles_Callsite prevents its specification contract from regressing.
@@ -652,10 +645,10 @@ func first(n int) { Number_Invariants(n, "first") }
 func second(n int) { Number_Invariants(n, "second") }
 `
 	recorder, _, _ := registered_fixture(SOURCE)
-	chain_metadata(&chain_metadata_input{Test: t, Recorder: recorder,
-		Key: chain_metadata_key{Namespace: "first", Ordinal: 0, Message: "zero"}})
-	chain_metadata(&chain_metadata_input{Test: t, Recorder: recorder,
-		Key: chain_metadata_key{Namespace: "second", Ordinal: 0, Message: "zero"}})
+	chain_metadata(t, recorder,
+		chain_metadata_key{Namespace: "first", Ordinal: 0, Message: "zero"})
+	chain_metadata(t, recorder,
+		chain_metadata_key{Namespace: "second", Ordinal: 0, Message: "zero"})
 }
 
 // Test_Bundles_Gap_Location prevents its specification contract from regressing.
@@ -793,8 +786,8 @@ func Test_Coverage_Modes(t *testing.T) {
 		Sometimes(false, "one").
 		Impossible("exclusive", invariant.Event_True("zero"), invariant.Event_True("one")).
 		Ensure()
-	metadata := chain_metadata(&chain_metadata_input{Test: t, Recorder: recorder,
-		Key: chain_metadata_key{Namespace: "check", Ordinal: 0, Message: "zero"}})
+	metadata := chain_metadata(t, recorder,
+		chain_metadata_key{Namespace: "check", Ordinal: 0, Message: "zero"})
 	if metadata.Frequency.Load() != 0 {
 		t.Fatal("benchmarks must not record")
 	}
@@ -864,7 +857,9 @@ func check(v bool) { Missing(v, "check").Sometimes(v, "value").Ensure() }
 // Test_Range_Guard prevents its specification contract from regressing.
 func Test_Range_Guard(t *testing.T) {
 	recorder := &invariant.Recorder{}
-	if panic_text(func() { invariant.Recorder_Range(recorder, 3, 0, 2, "range") }) == "" {
+	product := invariant.Recorder_Dot_Product(recorder, "range").
+		Range_Int(3, 0, 2)
+	if panic_text(product.Ensure) == "" {
 		t.Fatal("out-of-range value must panic")
 	}
 }
@@ -872,7 +867,9 @@ func Test_Range_Guard(t *testing.T) {
 // Test_Range_Coverage prevents its specification contract from regressing.
 func Test_Range_Coverage(t *testing.T) {
 	recorder, _, _ := registered_fixture(`package fixture
-func check(v int) { invariant.Range_Invariants(v, -2, 2, "range") }
+func check(v int) {
+	invariant.Dot_Product("range").Range_Int(v, -2, 2).Ensure()
+}
 `)
 	if event_count(&recorder.Events) == 0 {
 		t.Fatal("Range must seed its boundaries and tuples")
@@ -882,7 +879,9 @@ func check(v int) { invariant.Range_Invariants(v, -2, 2, "range") }
 // Test_Range_Saturation prevents its specification contract from regressing.
 func Test_Range_Saturation(t *testing.T) {
 	recorder, _, _ := registered_fixture(`package fixture
-func check(v int) { invariant.Range_Invariants(v, 0, 1, "range") }
+func check(v int) {
+	invariant.Dot_Product("range").Range_Int(v, 0, 1).Ensure()
+}
 `)
 	if _, exists := recorder.Events.Load("range:tuple=(0,0)"); exists {
 		t.Fatal("saturated all-false tuple must be carved")
@@ -892,16 +891,52 @@ func check(v int) { invariant.Range_Invariants(v, 0, 1, "range") }
 // Test_Range_Exclusions prevents its specification contract from regressing.
 func Test_Range_Exclusions(t *testing.T) {
 	recorder := &invariant.Recorder{}
-	if panic_text(func() { invariant.Recorder_Range(recorder, 1, 0, 2, "range", 1) }) == "" {
+	product := invariant.Recorder_Dot_Product(recorder, "range").
+		Range_Int(1, 0, 2, 1)
+	if panic_text(product.Ensure) == "" {
 		t.Fatal("excluded value must panic")
 	}
 }
 
 // Test_Range_Enum prevents its specification contract from regressing.
 func Test_Range_Enum(t *testing.T) {
-	recorder := &invariant.Recorder{}
-	if panic_text(func() { invariant.Recorder_Enum(recorder, 2, "enum", 0, 1) }) == "" {
+	product := invariant.Recorder_Dot_Product(&invariant.Recorder{}, "enum").
+		Enum_Int(2, 0, 1)
+	if message := panic_text(product.Ensure); message == "" {
 		t.Fatal("non-member must panic")
+	}
+	modes := []*invariant.Recorder{
+		{}, {Is_Test: true}, {Is_Benchmark: true},
+		{Is_Fuzz: true}, {Is_Fuzz_Worker: true},
+	}
+	for mode_index, recorder := range modes {
+		for _, members := range [][]int{nil, {1}, {1, 1}} {
+			var invalid invariant.Product
+			message := panic_text(func() {
+				invalid = invariant.Recorder_Dot_Product(recorder, "invalid").
+					Enum_Int(1, members...)
+			})
+			if message != "" {
+				t.Fatalf(
+					"mode %d Enum link panicked before Ensure: %q",
+					mode_index,
+					message,
+				)
+			}
+			message = panic_text(invalid.Ensure)
+			if !strings.Contains(message, "at least two distinct members") {
+				t.Fatalf(
+					"mode %d invalid Enum Ensure panic = %q",
+					mode_index,
+					message,
+				)
+			}
+		}
+	}
+	valid := invariant.Recorder_Dot_Product(&invariant.Recorder{}, "duplicates").
+		Enum_Int(1, 0, 0, 1)
+	if message := panic_text(valid.Ensure); message != "" {
+		t.Fatalf("two distinct members with repetition panicked: %q", message)
 	}
 }
 
@@ -910,10 +945,54 @@ func Test_Range_Registration(t *testing.T) {
 	recorder, _, _ := registered_fixture(`package fixture
 const MIN = -2
 const MAX = 2
-func check(v int) { invariant.Range_Invariants(v, MIN, MAX, "range") }
+func check(v int) {
+	invariant.Dot_Product("range").Range_Int(v, MIN, MAX).Ensure()
+}
 `)
 	if event_count(&recorder.Events) == 0 {
 		t.Fatal("constant Range bounds must register")
+	}
+	arithmetic, arithmetic_output, arithmetic_code := registered_fixture(`package fixture
+const Maximum = 10/3 - 1
+func check(v int) {
+	invariant.Dot_Product("arithmetic").Range_Int(v, 0, Maximum).Ensure()
+}
+`)
+	if arithmetic_code != -1 {
+		t.Fatalf(
+			"arithmetic Range exit = %d; output=%q",
+			arithmetic_code,
+			arithmetic_output.String(),
+		)
+	}
+	if event_count(&arithmetic.Events) == 0 {
+		t.Fatal("integer-valued constant arithmetic must register")
+	}
+	for _, call := range []string{"Enum_Int(v)", "Enum_Int(v, 1)", "Enum_Int(v, 1, 1)"} {
+		source := "package fixture\nfunc check(v int) {\n" +
+			"invariant.Dot_Product(\"enum\").Sometimes(true, \"before\")." +
+			call + ".Ensure()\n}\n"
+		invalid, output, code := registered_fixture(source)
+		if code != 1 {
+			t.Fatalf("%s exit = %d, want 1; output=%q", call, code, output.String())
+		}
+		if !strings.Contains(output.String(), "at least two distinct members") {
+			t.Fatalf("%s diagnostic = %q", call, output.String())
+		}
+		if count := event_count(&invalid.Events); count != 0 {
+			t.Fatalf("%s partially seeded %d events", call, count)
+		}
+	}
+	valid, output, code := registered_fixture(`package fixture
+func check(v int) {
+	invariant.Dot_Product("enum").Enum_Int(v, 0, 0, 1).Ensure()
+}
+`)
+	if code != -1 {
+		t.Fatalf("repeated valid Enum exit = %d; output=%q", code, output.String())
+	}
+	if event_count(&valid.Events) == 0 {
+		t.Fatal("a repeated Enum with two distinct members must register")
 	}
 }
 
@@ -934,23 +1013,16 @@ func check(n int) {
 func registered_fixture(source string) (
 	recorder *invariant.Recorder, output *bytes.Buffer, code int,
 ) {
-	return registered_fixture_options(&registered_fixture_options_input{Source: source})
+	return registered_fixture_options(source, "")
 }
 
 func registered_fixture_with_sugar(source string) (
 	recorder *invariant.Recorder, output *bytes.Buffer, code int,
 ) {
-	return registered_fixture_options(&registered_fixture_options_input{
-		Source: source, Sugar: "fixture/fixture",
-	})
+	return registered_fixture_options(source, "fixture/fixture")
 }
 
-type registered_fixture_options_input struct {
-	Source string
-	Sugar  string
-}
-
-func registered_fixture_options(input *registered_fixture_options_input) (
+func registered_fixture_options(source string, sugar string) (
 	recorder *invariant.Recorder, output *bytes.Buffer, code int,
 ) {
 	output = &bytes.Buffer{}
@@ -959,14 +1031,14 @@ func registered_fixture_options(input *registered_fixture_options_input) (
 	recorder = &invariant.Recorder{
 		File_System: fstest.MapFS{
 			"go.mod":           &fstest.MapFile{Data: []byte("module fixture\n")},
-			"fixture/check.go": &fstest.MapFile{Data: []byte(input.Source)},
+			"fixture/check.go": &fstest.MapFile{Data: []byte(source)},
 		},
 		Packages_To_Analyze: []string{"/fixture"},
 		Output:              output,
 		Tty:                 tty,
 		Exit:                func(status int) { code = status },
 		Is_Test:             true,
-		Sugar_Package:       input.Sugar,
+		Sugar_Package:       sugar,
 	}
 	invariant.Recorder_Register_Packages_For_Analysis(recorder)
 	return recorder, output, code
@@ -978,20 +1050,16 @@ type chain_metadata_key struct {
 	Message   string
 }
 
-type chain_metadata_input struct {
-	Test     *testing.T
-	Recorder *invariant.Recorder
-	Key      chain_metadata_key
-}
-
-func chain_metadata(input *chain_metadata_input) (metadata *invariant.Assertion_Metadata) {
-	input.Test.Helper()
-	key := string(input.Key.Namespace) + invariant.ELEMENT_MESSAGE_SEPARATOR
-	key += fmt.Sprint(input.Key.Ordinal) + invariant.ELEMENT_MESSAGE_SEPARATOR
-	key += input.Key.Message
-	value, exists := input.Recorder.Events.Load(key)
+func chain_metadata(
+	t *testing.T, recorder *invariant.Recorder, metadata_key chain_metadata_key,
+) (metadata *invariant.Assertion_Metadata) {
+	t.Helper()
+	key := string(metadata_key.Namespace) + invariant.ELEMENT_MESSAGE_SEPARATOR
+	key += fmt.Sprint(metadata_key.Ordinal) + invariant.ELEMENT_MESSAGE_SEPARATOR
+	key += metadata_key.Message
+	value, exists := recorder.Events.Load(key)
 	if !exists {
-		input.Test.Fatalf("missing chain key %q", key)
+		t.Fatalf("missing chain key %q", key)
 	}
 	return value.(*invariant.Assertion_Metadata)
 }

@@ -39,9 +39,9 @@ uses the default recorder. The links return advanced copies and `Ensure` termina
 
 ### Links
 
-The only links are `Sometimes(condition, message)` and `Impossible(message, references...)`.
-They retain only the facts needed for deferred shape checks; `Ensure` alone exposes validation,
-enforces constraints, and credits coverage. References use `Event_True` and `Event_False` polarity.
+Links are `Sometimes`, `Impossible`, and the concrete `Range_TYPE` / `Enum_TYPE` presets. Each
+preset expands into ordinary guards, axes, and constraints; `Ensure` alone exposes failures and
+credits coverage. References retain `Event_True` and `Event_False` polarity.
 
 ### Identity
 
@@ -104,8 +104,8 @@ only exemption; split local-variable chains are unsupported rather than silently
 
 ### Depth
 
-An invariant bundle owns one self-contained product. Registration rejects a chain bundle calling a
-chain bundle, preventing recursive or flattened cross-products.
+One call nest owns one product. Typed presets expand inside that product and freely cross with its
+ordinary links and other presets; calling a separate chain bundle remains depth-one composition.
 
 ### Reference
 
@@ -114,8 +114,9 @@ Duplicate namespaces or constraint messages and references to no unique precedin
 
 ### Caps
 
-A chain admits all 255 links representable by its ordinal, including 255 `Sometimes` axes; there is
-no smaller grid-policy axis cap. Registration and runtime reject only a 256th link at `Ensure`.
+A chain admits all 255 expanded links representable by its ordinal, including 255 `Sometimes`
+axes; there is no smaller axis cap. Preset-generated guards, axes, and constraints occupy that same
+ordinal space, and only a 256th expanded link is rejected at `Ensure`.
 
 # Bundles
 
@@ -129,9 +130,9 @@ A `_Invariants` is recognized by its `_Invariants` or `_invariants` name and tra
 
 ### Range Template
 
-A `_Invariants` whose body is a single `Range_Invariants(v, MIN, MAX, namespace)` under its own
-namespace parameter is a bound-grid template, not a direct callsite. Its grid is seeded from `MIN`
-and `MAX` at each `_Invariants` callsite's literal namespace, never under the bare parameter.
+A `_Invariants` chain rooted at its trailing namespace may contain typed `Range_TYPE` and
+`Enum_TYPE` links. Registration expands their constants with the rest of the chain at each literal
+callsite namespace, never under the bare parameter.
 
 ### Descent
 
@@ -240,8 +241,8 @@ coordinator unions that file before analysis. Enforcement fires in every mode.
 
 ### Enforcement
 
-`Ensure` enforces every `Impossible` in every run mode even when coverage recording is disabled.
-`Always` enforces independently and eagerly in those same modes.
+`Ensure` enforces every chain constraint and preset guard in every run mode even when coverage is
+disabled. Bare `Always` remains independent and eager.
 
 ### Uniqueness
 
@@ -260,14 +261,15 @@ unresolved chain template is fatal, never skipped.
 
 # Range
 
-`Recorder_Range` is the bounded-integer preset. It collapses a bounded newtype's mandated bound
-guards and its `0/1/2/-1` boundary claims into one call, keyed by the callsite namespace.
+`Product.Range_TYPE(value, minimum, maximum, holes...)` is the bounded-integer preset, with one
+method for every signed and unsigned primitive width except `uintptr`. Defined integers convert
+explicitly at the call; no preset uses `any`, reflection, runtime dispatch, or local declarations.
 
 ### Guard
 
-`Range` enforces `value ∈ [min, max]` as two eager bound guards, each a reachability obligation
-keyed by the callsite namespace so it never collides across callers. A violation panics in every
-mode; reaching a guard credits it under a test run.
+`Range_TYPE` contributes two Always-kind bound guards. Each is keyed by namespace, expanded link
+ordinal, and message so composed presets remain distinct; violations and reachability credit occur
+only at `Ensure`, in every enforcement mode.
 
 ### Coverage
 
@@ -283,18 +285,18 @@ unreachable value forever; over `[0, 1]` every value is `min` or `max`, so "neit
 
 ### Exclusions
 
-A callsite declares in-range values unreachable — `Range_Invariants(v, MIN, MAX, ns, holes…)`. Each
-hole is enforced (reaching it panics) and drops its sentinel axis; the all-false cell is carved once
-every reachable value is a witnessed axis — Saturation is that carve with no holes.
+A callsite declares in-range values unreachable as trailing, concretely typed arguments after the
+maximum. Each hole is enforced at `Ensure` and drops its sentinel axis; the all-false cell is carved
+once every reachable value is a witnessed axis.
 
 ### Enum
 
-`Enum_Invariants(v, ns, members…)` is the sugar for a discrete set: the span is `[min…max]` of the
-members, every in-span non-member is an excluded hole, and reaching a non-member panics. A member
-strictly inside the span fills the all-false cell; a two-member set carves it.
+`Product.Enum_TYPE(value, members…)` requires at least two distinct typed members and spans them.
+Non-members and invalid domains panic only at `Ensure`; a singleton uses bare `Always` instead.
+Repeated members do not change the set or its saturation.
 
 ### Registration
 
-The scan specialises a `Range_Invariants` callsite from its `MIN`/`MAX` arguments, evaluated as
-integer constants — literals, sibling-const references, and constant arithmetic or shifts (no
-`iota`). A non-literal namespace or an unevaluable bound is fatal.
+Registration expands each preset into the guards, axes, rules, positions, and handles runtime uses.
+An Enum with fewer than two distinct members is rejected before anything is seeded. Converted
+constants and their arithmetic or shifts resolve; an unevaluable value is fatal.

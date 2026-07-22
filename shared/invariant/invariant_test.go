@@ -3,6 +3,9 @@ package invariant_test
 import (
 	"bytes"
 	"fmt"
+	"go/ast"
+	"go/parser"
+	"go/token"
 	"sort"
 	"strings"
 	"testing"
@@ -11,6 +14,47 @@ import (
 	"local/james-orcales/shared/invariant"
 	"local/james-orcales/shared/snap/default"
 )
+
+// The typed Product methods replace the old free API; keeping either surface would let callers
+// bypass composition and preserve the registration path this change removes.
+func Test_Range_Legacy_Public_Surface_Is_Absent(t *testing.T) {
+	assert_declarations_absent(t, ".", "Integer", "Recorder_Range", "Recorder_Enum")
+	assert_declarations_absent(t, "default", "Range_Invariants", "Enum_Invariants")
+}
+
+func assert_declarations_absent(t *testing.T, directory string, names ...string) {
+	t.Helper()
+	packages, parse_error := parser.ParseDir(token.NewFileSet(), directory, nil, 0)
+	if parse_error != nil {
+		t.Fatalf("parse %s: %v", directory, parse_error)
+	}
+	production := packages["invariant"]
+	if production == nil {
+		t.Fatalf("package invariant is missing from %s", directory)
+	}
+	declarations := map[string]bool{}
+	for _, file := range production.Files {
+		for _, declaration := range file.Decls {
+			if function, is_function := declaration.(*ast.FuncDecl); is_function {
+				declarations[function.Name.Name] = true
+			}
+			general, is_general := declaration.(*ast.GenDecl)
+			if !is_general {
+				continue
+			}
+			for _, specification := range general.Specs {
+				if typed, is_type := specification.(*ast.TypeSpec); is_type {
+					declarations[typed.Name.Name] = true
+				}
+			}
+		}
+	}
+	for _, name := range names {
+		if declarations[name] {
+			t.Errorf("legacy declaration %s remains in %s", name, directory)
+		}
+	}
+}
 
 // Enforcement evaluates current conditions on every Ensure; a clean first call cannot cache away a
 // later forbidden combination under the same namespace.
@@ -64,10 +108,8 @@ func Test_Dot_Product_Increments_Seeded_Axis_And_Tuple(t *testing.T) {
 		Sometimes(true, "zero").Sometimes(false, "one").
 		Impossible("exclusive", invariant.Event_True("zero"), invariant.Event_True("one")).
 		Ensure()
-	axis := chain_metadata(&chain_metadata_input{
-		Test: t, Recorder: recorder,
-		Key: chain_metadata_key{Namespace: "check", Ordinal: 0, Message: "zero"},
-	})
+	axis := chain_metadata(
+		t, recorder, chain_metadata_key{Namespace: "check", Ordinal: 0, Message: "zero"})
 	if axis.Frequency.Load() != 1 {
 		t.Fatalf("axis frequency = %d, want 1", axis.Frequency.Load())
 	}
@@ -107,6 +149,170 @@ func check(a bool, b bool) {
 	if strings.Contains(message, "a must be true") {
 		t.Fatalf("panic = %q, non-matching first rule fired", message)
 	}
+}
+
+// Typed presets are real Product methods for every supported primitive integer kind; named types
+// deliberately cross the API through an explicit primitive conversion rather than interface boxing.
+func Test_Dot_Product_Typed_Presets_Cover_Every_Integer_Kind(t *testing.T) {
+	recorder := &invariant.Recorder{}
+	typed_range_methods(recorder)
+	typed_enum_methods(recorder)
+	typed_enum_domain_failures(t, recorder)
+	type Number int
+	invariant.Recorder_Dot_Product(recorder, "range named").
+		Range_Int(int(Number(0)), int(Number(-1)), int(Number(1))).Ensure()
+}
+
+func typed_range_methods(recorder *invariant.Recorder) {
+	invariant.Recorder_Dot_Product(recorder, "range int").
+		Range_Int(0, -1, 1).Ensure()
+	invariant.Recorder_Dot_Product(recorder, "range int8").
+		Range_Int8(0, -1, 1).Ensure()
+	invariant.Recorder_Dot_Product(recorder, "range int16").
+		Range_Int16(0, -1, 1).Ensure()
+	invariant.Recorder_Dot_Product(recorder, "range int32").
+		Range_Int32(0, -1, 1).Ensure()
+	invariant.Recorder_Dot_Product(recorder, "range int64").
+		Range_Int64(0, -1, 1).Ensure()
+	invariant.Recorder_Dot_Product(recorder, "range uint").
+		Range_Uint(0, 0, 1).Ensure()
+	invariant.Recorder_Dot_Product(recorder, "range uint8").
+		Range_Uint8(0, 0, 1).Ensure()
+	invariant.Recorder_Dot_Product(recorder, "range uint16").
+		Range_Uint16(0, 0, 1).Ensure()
+	invariant.Recorder_Dot_Product(recorder, "range uint32").
+		Range_Uint32(0, 0, 1).Ensure()
+	invariant.Recorder_Dot_Product(recorder, "range uint64").
+		Range_Uint64(0, 0, 1).Ensure()
+}
+
+func typed_enum_methods(recorder *invariant.Recorder) {
+	invariant.Recorder_Dot_Product(recorder, "enum int").Enum_Int(0, 0, 1).Ensure()
+	invariant.Recorder_Dot_Product(recorder, "enum int8").Enum_Int8(0, 0, 1).Ensure()
+	invariant.Recorder_Dot_Product(recorder, "enum int16").Enum_Int16(0, 0, 1).Ensure()
+	invariant.Recorder_Dot_Product(recorder, "enum int32").Enum_Int32(0, 0, 1).Ensure()
+	invariant.Recorder_Dot_Product(recorder, "enum int64").Enum_Int64(0, 0, 1).Ensure()
+	invariant.Recorder_Dot_Product(recorder, "enum uint").Enum_Uint(0, 0, 1).Ensure()
+	invariant.Recorder_Dot_Product(recorder, "enum uint8").Enum_Uint8(0, 0, 1).Ensure()
+	invariant.Recorder_Dot_Product(recorder, "enum uint16").Enum_Uint16(0, 0, 1).Ensure()
+	invariant.Recorder_Dot_Product(recorder, "enum uint32").Enum_Uint32(0, 0, 1).Ensure()
+	invariant.Recorder_Dot_Product(recorder, "enum uint64").Enum_Uint64(0, 0, 1).Ensure()
+}
+
+func typed_enum_domain_failures(t *testing.T, recorder *invariant.Recorder) {
+	t.Helper()
+	products := []invariant.Product{
+		invariant.Recorder_Dot_Product(recorder, "bad enum int").Enum_Int(0),
+		invariant.Recorder_Dot_Product(recorder, "bad enum int8").Enum_Int8(0),
+		invariant.Recorder_Dot_Product(recorder, "bad enum int16").Enum_Int16(0),
+		invariant.Recorder_Dot_Product(recorder, "bad enum int32").Enum_Int32(0),
+		invariant.Recorder_Dot_Product(recorder, "bad enum int64").Enum_Int64(0),
+		invariant.Recorder_Dot_Product(recorder, "bad enum uint").Enum_Uint(0),
+		invariant.Recorder_Dot_Product(recorder, "bad enum uint8").Enum_Uint8(0),
+		invariant.Recorder_Dot_Product(recorder, "bad enum uint16").Enum_Uint16(0),
+		invariant.Recorder_Dot_Product(recorder, "bad enum uint32").Enum_Uint32(0),
+		invariant.Recorder_Dot_Product(recorder, "bad enum uint64").Enum_Uint64(0),
+	}
+	for index, product := range products {
+		message := panic_text(product.Ensure)
+		if !strings.Contains(message, "two distinct members") {
+			t.Fatalf("invalid Enum method %d panic = %q", index, message)
+		}
+	}
+}
+
+// Preset expansion occupies the same ordinal stream and tuple grid as handwritten links. For the
+// saturated range [0,1], two guards, two axes, and two generated rules place the following axis
+// at 6.
+func Test_Dot_Product_Typed_Preset_Composes_In_One_Grid(t *testing.T) {
+	const SOURCE = `package fixture
+const MIN = 0
+const MAX = 1
+func check(v int, other bool) {
+	invariant.Dot_Product("compose").Range_Int(v, MIN, MAX).
+		Sometimes(other, "other").Ensure()
+}
+`
+	recorder, output, code := registered_fixture(SOURCE)
+	if code != -1 {
+		t.Fatalf("typed preset chain must register: %s", output.String())
+	}
+	keys := []string{
+		chain_test_key("compose", 0, invariant.RANGE_GUARD_UPPER),
+		chain_test_key("compose", 1, invariant.RANGE_GUARD_LOWER),
+		chain_test_key("compose", 2, invariant.RANGE_MESSAGE_MINIMUM),
+		chain_test_key("compose", 3, invariant.RANGE_MESSAGE_MAXIMUM),
+		chain_test_key("compose", 6, "other"),
+	}
+	for _, key := range keys {
+		if _, exists := recorder.Events.Load(key); !exists {
+			t.Errorf("expanded chain entry %q is missing", key)
+		}
+	}
+	tuple_keys := []string{
+		"compose:tuple=(1,0,0)", "compose:tuple=(1,0,1)",
+		"compose:tuple=(0,1,0)", "compose:tuple=(0,1,1)",
+	}
+	for _, key := range tuple_keys {
+		if _, exists := recorder.Events.Load(key); !exists {
+			t.Errorf("composed tuple %q is missing", key)
+		}
+	}
+	if _, exists := recorder.Events.Load("compose:tuple=(0,0,0)"); exists {
+		t.Fatal("the preset saturation carve must glob over the ordinary axis")
+	}
+}
+
+// Generated axes are ordinary siblings, so a later polar carve can name one without a second API.
+func Test_Dot_Product_Typed_Preset_Axis_Is_Referenceable(t *testing.T) {
+	const SOURCE = `package fixture
+const MIN = -2
+const MAX = 2
+func check(v int) {
+	invariant.Dot_Product("reference").Range_Int(v, MIN, MAX).
+		Impossible("minimum is forbidden",
+			invariant.Event_True("The value is the minimum.")).Ensure()
+}
+`
+	recorder, output, code := registered_fixture(SOURCE)
+	if code != -1 {
+		t.Fatalf(
+			"a generated axis must resolve as a preceding sibling: %s", output.String())
+	}
+	message := panic_text(func() {
+		invariant.Recorder_Dot_Product(recorder, "reference").
+			Range_Int(-2, -2, 2).
+			Impossible("minimum is forbidden",
+				invariant.Event_True("The value is the minimum.")).Ensure()
+	})
+	if !strings.Contains(message, "minimum is forbidden") {
+		t.Fatalf("panic = %q, want the downstream carve", message)
+	}
+}
+
+// Enum's non-empty variadic is load-bearing: unlike an empty Range exclusion list, it exposes any
+// escape through discovery-capable helpers even after registration warmed the execution plan.
+func Test_Dot_Product_Typed_Enum_Allocation(t *testing.T) {
+	const SOURCE = `package fixture
+const ZERO = 0
+const ONE = 1
+const TWO = 2
+func check(v int) { invariant.Dot_Product("enum allocation").Enum_Int(v, ZERO, ONE, TWO).Ensure() }
+`
+	recorder, _, _ := registered_fixture(SOURCE)
+	call := func() {
+		invariant.Recorder_Dot_Product(recorder, "enum allocation").
+			Enum_Int(1, 0, 1, 2).Ensure()
+	}
+	call()
+	if allocations := testing.AllocsPerRun(100, call); allocations != 0 {
+		t.Fatalf("Enum allocations = %v, want 0", allocations)
+	}
+}
+
+func chain_test_key(namespace string, ordinal int, message string) (key string) {
+	return namespace + invariant.ELEMENT_MESSAGE_SEPARATOR + fmt.Sprint(ordinal) +
+		invariant.ELEMENT_MESSAGE_SEPARATOR + message
 }
 
 // Registration parses an invariant.Dot_Product over inline elements and seeds
@@ -1380,6 +1586,47 @@ func Benchmark_Dot_Product_Impossible_Heavy(b *testing.B) {
 	b.ReportAllocs()
 	for range b.N {
 		metric_chain(recorder, 0)
+	}
+}
+
+func Benchmark_Range_Int_Recording(b *testing.B) {
+	const SOURCE = `package fixture
+const MIN = -100
+const MAX = 100
+func check(v int) { invariant.Dot_Product("range benchmark").Range_Int(v, MIN, MAX).Ensure() }
+`
+	recorder, _, _ := registered_fixture(SOURCE)
+	call := func() {
+		invariant.Recorder_Dot_Product(recorder, "range benchmark").
+			Range_Int(0, -100, 100).Ensure()
+	}
+	call()
+	b.ReportAllocs()
+	b.ResetTimer()
+	for range b.N {
+		call()
+	}
+}
+
+func Benchmark_Enum_Int_Recording(b *testing.B) {
+	const SOURCE = `package fixture
+const ZERO = 0
+const ONE = 1
+const TWO = 2
+func check(v int) {
+	invariant.Dot_Product("enum benchmark").Enum_Int(v, ZERO, ONE, TWO).Ensure()
+}
+`
+	recorder, _, _ := registered_fixture(SOURCE)
+	call := func() {
+		invariant.Recorder_Dot_Product(recorder, "enum benchmark").
+			Enum_Int(1, 0, 1, 2).Ensure()
+	}
+	call()
+	b.ReportAllocs()
+	b.ResetTimer()
+	for range b.N {
+		call()
 	}
 }
 
