@@ -43,8 +43,14 @@ never an inline literal nor an imported selector.
 ### Numeric Coverage
 
 The bundle claims 0, 1, 2, and -1 for signed by Sometimes(v == V) or Always(v ==/!= V); a float
-claims NaN and both infinities instead. The bound itself is the Always(v <= MAX)/Always(v >= MIN)
-guard, not a boundary claim.
+claims NaN and both infinities instead. Both bound edges are always in range, so each must be
+witnessed — Sometimes(v == MIN) and Sometimes(v == MAX), never merely guarded.
+
+### Numeric Range Preset
+
+A single invariant.Range_Invariants(v, MIN, MAX, namespace) call satisfies the Numeric Bounds and
+Numeric Coverage rules at once, provided MIN and MAX are each a package-level constant (the Numeric
+Bound Constant rule still applies to them).
 
 ### Count Bounds
 
@@ -58,8 +64,9 @@ selector.
 
 ### Count Coverage
 
-The bundle claims 0, 1, and 2 by Sometimes(len(v) == V) or Always(len(v) ==/!= V). The length
-bound itself is the Always(len(v) <= MAX)/Always(len(v) >= MIN) guard, not a boundary claim.
+The bundle claims 0, 1, and 2 by Sometimes(len(v) == V) or Always(len(v) ==/!= V), and witnesses
+both length edges — Sometimes(len(v) == MIN) and Sometimes(len(v) == MAX), never merely guarding
+them.
 
 ### Field Composition
 

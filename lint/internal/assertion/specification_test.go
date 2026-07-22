@@ -130,25 +130,78 @@ func Test_Invariants_Numeric_Bound_Constant(t *testing.T) {
 // -1 boundary claim is flagged.
 func Test_Invariants_Numeric_Coverage(t *testing.T) {
 	t.Parallel()
-	pf := parse(t, &parse_input{
-		Path: "pkg/rule.go",
-		Source_Text: "package fixture\n\n" +
-			"import \"fixture/shared/invariant\"\n\n" +
-			"const Sig_Max Sig = 7\n\nconst Sig_Min Sig = -8\n\n" +
-			"// Sig is a fixture.\ntype Sig int8\n\n" +
-			"// Sig_Invariants is a fixture.\n" +
-			"func Sig_Invariants(v Sig, namespace invariant.Namespace) {\n" +
-			"\tinvariant.Always(v <= Sig_Max, \"max bound\")\n" +
-			"\tinvariant.Always(v >= Sig_Min, \"min bound\")\n" +
-			"\tinvariant.Dot_Product(namespace,\n" +
-			"\t\tinvariant.Sometimes(v == Sig_Max, \"max\"),\n" +
-			"\t\tinvariant.Sometimes(v == Sig_Min, \"min\"),\n" +
-			"\t\tinvariant.Sometimes(v == 0, \"zero\"),\n" +
-			"\t\tinvariant.Sometimes(v == 1, \"one\"),\n" +
-			"\t\tinvariant.Sometimes(v == 2, \"two\"),\n" +
-			"\t)\n}\n"})
-	if !diagnosed(check_source(pf), "must claim -1") {
+	// A signed bundle missing the -1 boundary claim is flagged.
+	missing_claim := check_source(parse(t, &parse_input{Path: "pkg/rule.go",
+		Source_Text: sig_bundle_source(
+			"\tinvariant.Always(v <= Sig_Max, \"max\")\n" +
+				"\tinvariant.Always(v >= Sig_Min, \"min\")\n" +
+				"\tinvariant.Dot_Product(namespace,\n" +
+				"\t\tinvariant.Sometimes(v == Sig_Max, \"max\"),\n" +
+				"\t\tinvariant.Sometimes(v == Sig_Min, \"min\"),\n" +
+				"\t\tinvariant.Sometimes(v == 0, \"zero\"),\n" +
+				"\t\tinvariant.Sometimes(v == 1, \"one\"),\n" +
+				"\t\tinvariant.Sometimes(v == 2, \"two\"))")}))
+	if !diagnosed(missing_claim, "must claim -1") {
 		t.Fatal("a signed numeric bundle missing the -1 claim must be flagged")
+	}
+	// A bundle that claims every sentinel and witnesses its minimum but never its maximum
+	// is flagged: both bound edges must be witnessed.
+	missing_max := check_source(parse(t, &parse_input{Path: "pkg/rule.go",
+		Source_Text: sig_bundle_source(
+			"\tinvariant.Always(v <= Sig_Max, \"max\")\n" +
+				"\tinvariant.Always(v >= Sig_Min, \"min\")\n" +
+				"\tinvariant.Dot_Product(namespace,\n" +
+				"\t\tinvariant.Sometimes(v == Sig_Min, \"min\"),\n" +
+				"\t\tinvariant.Sometimes(v == 0, \"zero\"),\n" +
+				"\t\tinvariant.Sometimes(v == 1, \"one\"),\n" +
+				"\t\tinvariant.Sometimes(v == 2, \"two\"),\n" +
+				"\t\tinvariant.Sometimes(v == -1, \"neg\"))")}))
+	if !diagnosed(missing_max, "must witness its maximum") {
+		t.Fatal("a numeric bundle that never witnesses its maximum must be flagged")
+	}
+}
+
+// Test_Invariants_Numeric_Range_Preset verifies a bundle whose body is one Range_Invariants call
+// satisfies the bound and coverage rules, while an inline-literal bound to it is still flagged.
+func Test_Invariants_Numeric_Range_Preset(t *testing.T) {
+	t.Parallel()
+	preset := check_source(parse(t, &parse_input{Path: "pkg/rule.go",
+		Source_Text: sig_bundle_source(
+			"\tinvariant.Range_Invariants(v, Sig_Min, Sig_Max, namespace)")}))
+	verbose := check_source(parse(t, &parse_input{Path: "pkg/rule.go",
+		Source_Text: sig_bundle_source(
+			"\tinvariant.Always(v <= Sig_Max, \"max\")\n" +
+				"\tinvariant.Always(v >= Sig_Min, \"min\")\n" +
+				"\tinvariant.Dot_Product(namespace,\n" +
+				"\t\tinvariant.Sometimes(v == Sig_Min, \"min\"),\n" +
+				"\t\tinvariant.Sometimes(v == Sig_Max, \"max\"),\n" +
+				"\t\tinvariant.Sometimes(v == 0, \"zero\"),\n" +
+				"\t\tinvariant.Sometimes(v == 1, \"one\"),\n" +
+				"\t\tinvariant.Sometimes(v == 2, \"two\"),\n" +
+				"\t\tinvariant.Sometimes(v == -1, \"neg\"))")}))
+	// Either form satisfies the bound and coverage mandate — neither is flagged.
+	clean := func(form string, diags []diagnostic.Diagnostic) {
+		if diagnosed(diags, "must guard both ends") {
+			t.Errorf("%s form must not be flagged for its bounds", form)
+		}
+		if diagnosed(diags, "must claim") {
+			t.Errorf("%s form must not be flagged for its coverage", form)
+		}
+		if diagnosed(diags, "must witness") {
+			t.Errorf("%s form must not be flagged for its edges", form)
+		}
+		if diagnosed(diags, "must be a package-level constant") {
+			t.Errorf("%s form must not be flagged for its constants", form)
+		}
+	}
+	clean("preset", preset)
+	clean("verbose", verbose)
+	// The Numeric Bound Constant rule still holds: an inline bound to the preset is flagged.
+	inline := check_source(parse(t, &parse_input{Path: "pkg/rule.go",
+		Source_Text: sig_bundle_source(
+			"\tinvariant.Range_Invariants(v, Sig_Min, 7, namespace)")}))
+	if !diagnosed(inline, "must be a package-level constant") {
+		t.Fatal("an inline-literal preset bound must be flagged")
 	}
 }
 
@@ -210,6 +263,25 @@ func Test_Invariants_Count_Coverage(t *testing.T) {
 			"\t)\n}\n"})
 	if !diagnosed(check_source(pf), "must claim 2") {
 		t.Fatal("a length bundle missing the 2 claim must be flagged")
+	}
+	// A count bundle whose body is one Range_Invariants over len(v) is accepted.
+	preset_source := "package fixture\n\n" +
+		"import \"fixture/shared/invariant\"\n\n" +
+		"const Name_Max = 32\n\nconst Name_Min = 0\n\n" +
+		"// Name is a fixture.\ntype Name string\n\n" +
+		"// Name_Invariants is a fixture.\n" +
+		"func Name_Invariants(v Name, namespace invariant.Namespace) {\n" +
+		"\tinvariant.Range_Invariants(len(v), Name_Min, Name_Max, namespace)\n}\n"
+	preset := check_source(parse(t, &parse_input{
+		Path: "pkg/rule.go", Source_Text: preset_source}))
+	if diagnosed(preset, "must guard") {
+		t.Error("a count len-preset bundle must not be flagged for bounds")
+	}
+	if diagnosed(preset, "must claim") {
+		t.Error("a count len-preset bundle must not be flagged for coverage")
+	}
+	if diagnosed(preset, "must witness") {
+		t.Error("a count len-preset bundle must not be flagged for edges")
 	}
 }
 
@@ -531,4 +603,15 @@ func simulation_fixture_source(call string) (code string) {
 		"func TestMain(m *testing.M) {\n\t" + call + "\n}\n\n" +
 		"func Fuzz_Main(f *testing.F) {\n\t" +
 		"f.Fuzz(func(t *testing.T, data []byte) {})\n}\n"
+}
+
+// Wraps a Sig bundle body (a signed int8 with bounds Sig_Min = -8 and Sig_Max = 7) in the fixture
+// boilerplate, so a numeric-mandate test varies only the body.
+func sig_bundle_source(body string) (source string) {
+	return "package fixture\n\n" +
+		"import \"fixture/shared/invariant\"\n\n" +
+		"const Sig_Max Sig = 7\n\nconst Sig_Min Sig = -8\n\n" +
+		"// Sig is a fixture.\ntype Sig int8\n\n" +
+		"// Sig_Invariants is a fixture.\n" +
+		"func Sig_Invariants(v Sig, namespace invariant.Namespace) {\n" + body + "\n}\n"
 }

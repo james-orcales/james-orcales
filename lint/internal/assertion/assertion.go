@@ -351,6 +351,10 @@ type Numeric_Facts struct {
 	// Claimed_Values holds every boundary value the bundle names in any equality or
 	// inequality claim, by either Always or Sometimes.
 	Claimed_Values map[string]bool
+	// Witnessed_Values holds every value the bundle claims positively (an == claim, by
+	// Sometimes or Always) — the value can occur, as opposed to an != exclusion. The bound
+	// edges must be witnessed this way, never merely excluded.
+	Witnessed_Values map[string]bool
 }
 
 // Collects bound and coverage diagnostics for one numeric bundle.
@@ -364,10 +368,16 @@ func numeric_bundle_diagnostics(input *Numeric_Bundle_Input) (diags []Diagnostic
 // Walks the bundle body, summarizing every Always/Sometimes condition into facts.
 func numeric_collect_facts(input *Numeric_Bundle_Input) (facts Numeric_Facts) {
 	facts.Claimed_Values = map[string]bool{}
+	facts.Witnessed_Values = map[string]bool{}
 	is_subject := numeric_subject_matcher(input)
 	ast.Inspect(input.Bundle.Body, func(node ast.Node) (recurse bool) {
 		call, is_call := node.(*ast.CallExpr)
 		if !is_call {
+			return true
+		}
+		// A Range_Invariants preset call guards both bounds and claims every boundary value
+		// in one shorthand, so it stands in for the whole hand-written block below.
+		if numeric_record_range_preset(call, input, &facts) {
 			return true
 		}
 		is_always, matched := numeric_invariant_call(call, input.Invariant_Names)
@@ -378,6 +388,53 @@ func numeric_collect_facts(input *Numeric_Bundle_Input) (facts Numeric_Facts) {
 		return true
 	})
 	return facts
+}
+
+// Folds a Range_Invariants(value, MIN, MAX, namespace) preset call into facts: it guards the lower
+// bound (MIN, on Args[1]) and the upper bound (MAX, on Args[2]) and claims every required boundary
+// value, so a bundle whose body is the preset satisfies the numeric bound and coverage rules.
+// matched is false for any other call. The MIN/MAX operand names still flow into facts, so the
+// Numeric Bound Constant rule (each must be a package-level constant) survives the shorthand.
+func numeric_record_range_preset(
+	call *ast.CallExpr, input *Numeric_Bundle_Input, facts *Numeric_Facts,
+) (matched bool) {
+	if !numeric_is_range_call(call, input.Invariant_Names) {
+		return false
+	}
+	if len(call.Args) < 4 {
+		return false
+	}
+	// The first argument is the subject: the value itself, or len(value) for a count bundle.
+	if !numeric_subject_matcher(input)(call.Args[0]) {
+		return false
+	}
+	facts.Has_Lower = true
+	facts.Lower_Name = numeric_operand_name(call.Args[1])
+	facts.Has_Upper = true
+	facts.Upper_Name = numeric_operand_name(call.Args[2])
+	for _, label := range numeric_required_labels(input.Kind) {
+		facts.Claimed_Values[label] = true
+	}
+	// The preset witnesses both edges, so its MIN/MAX names satisfy the edge-witness rule.
+	facts.Witnessed_Values[facts.Lower_Name] = true
+	facts.Witnessed_Values[facts.Upper_Name] = true
+	return true
+}
+
+// Reports whether call is <invariant>.Range_Invariants(...), by the local import name.
+func numeric_is_range_call(call *ast.CallExpr, invariant_names map[string]bool) (matched bool) {
+	selector, is_selector := call.Fun.(*ast.SelectorExpr)
+	if !is_selector {
+		return false
+	}
+	qualifier, is_identifier := selector.X.(*ast.Ident)
+	if !is_identifier {
+		return false
+	}
+	if !invariant_names[qualifier.Name] {
+		return false
+	}
+	return selector.Sel.Name == "Range_Invariants"
 }
 
 // Reports whether an expression is the asserted subject — the value, or its count.
@@ -531,6 +588,10 @@ func numeric_record_claim(
 		return
 	}
 	facts.Claimed_Values[label] = true
+	// An == claim is a positive witness that the value can occur; an != exclusion is not.
+	if binary.Op == token.EQL {
+		facts.Witnessed_Values[label] = true
+	}
 }
 
 // Reports the bounds and bound-constant diagnostics for one bundle.
@@ -583,7 +644,29 @@ func numeric_coverage_diagnostics(
 		}
 		diags = append(diags, numeric_missing_claim(label, input))
 	}
+	// The bound edges are always in range, so each must be positively witnessed, never merely
+	// guarded — the guard proves nothing was observed at the extreme.
+	if facts.Has_Lower {
+		if !facts.Witnessed_Values[facts.Lower_Name] {
+			diags = append(diags, numeric_missing_edge("minimum", input))
+		}
+	}
+	if facts.Has_Upper {
+		if !facts.Witnessed_Values[facts.Upper_Name] {
+			diags = append(diags, numeric_missing_edge("maximum", input))
+		}
+	}
 	return diags
+}
+
+// Builds the diagnostic for a bound edge the bundle never positively witnesses.
+func numeric_missing_edge(edge string, input *Numeric_Bundle_Input) (diag Diagnostic) {
+	subject := numeric_subject_text(input)
+	return Diagnostic{
+		Position: input.File_Set.Position(input.Bundle.Name.Pos()),
+		Message: input.Bundle.Name.Name + " must witness its " + edge +
+			" via Sometimes(" + subject + " == the bound)",
+	}
 }
 
 // Builds the diagnostic for a boundary value the bundle never claims.
