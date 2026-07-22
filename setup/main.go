@@ -80,7 +80,7 @@ func main() {
 	shell := setup.Shell{Spawn: spawn, Stdout: os.Stdout, Stderr: os.Stderr, Logger: logger}
 	// One bootstrap, in order: install direnv (everything downstream is driven by
 	// it), sync the dotfiles, install fonts and Neovim, then the Go-toolchain builds
-	// (fzf and this repo's own commands — maddox, m2p, sloc), the cargo builds (rust,
+	// (fzf and this repo's own commands — maddox, m2p, sloc, timeout), the cargo builds (rust,
 	// jj, ripgrep, fd), and finally Ghostty — the one network download — last,
 	// so a cheaper earlier failure surfaces before heavy work.
 	os.Exit(setup.Bootstrap(&setup.Bootstrap_Input{
@@ -94,6 +94,7 @@ func main() {
 			{Name: "maddox", Run: maddox_step(home, shell)},
 			{Name: "m2p", Run: m2p_step(home, shell)},
 			{Name: "sloc", Run: sloc_step(home, shell)},
+			{Name: "timeout", Run: timeout_step(home, shell)},
 			{Name: "rust", Run: rust_step(home, shell)},
 			{Name: "jj", Run: jj_step(home, shell)},
 			{Name: "ripgrep", Run: ripgrep_step(home, shell)},
@@ -266,6 +267,22 @@ func sloc_step(home string, shell setup.Shell) (run func() (status_code int)) {
 			Package_Directory: filepath.Join(repository, "sloc"),
 			Binary_Directory:  filepath.Join(repository, "home", ".local", "bin"),
 			Binary_Name:       "sloc",
+			Shell:             shell,
+		})
+	}
+}
+
+// Returns the bootstrap step that builds this repository's timeout command into
+// home/.local/bin with the Go toolchain. Its only idempotency check is whether timeout
+// already resolves on PATH — on macOS nothing provides the name, so the gate is really
+// asking whether a previous bootstrap ran.
+func timeout_step(home string, shell setup.Shell) (run func() (status_code int)) {
+	repository := filepath.Join(home, REPOSITORY_SUBPATH)
+	return func() (status_code int) {
+		return setup.Install_Command(&setup.Install_Command_Input{
+			Package_Directory: filepath.Join(repository, "timeout"),
+			Binary_Directory:  filepath.Join(repository, "home", ".local", "bin"),
+			Binary_Name:       "timeout",
 			Shell:             shell,
 		})
 	}
