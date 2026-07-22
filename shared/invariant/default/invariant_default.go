@@ -12,6 +12,7 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"unsafe"
 
 	invariant "local/james-orcales/shared/invariant"
 )
@@ -162,126 +163,60 @@ func Always[T ~bool](condition T, message string) {
 }
 
 // Sometimes is the bare observation on Default: it records the branch its condition took and
-// never panics, because both polarities are legal by definition.
-func Sometimes[T ~bool](condition T, message string) {
-	invariant.Recorder_Sometimes(Default, condition, message)
+// never panics, because both polarities are legal by definition. The identifier scopes the
+// recording to the boundary observing it.
+func Sometimes[T ~bool](identifier string, condition T, message string) {
+	invariant.Recorder_Sometimes(Default, identifier, condition, message)
 }
 
-// Range is the bare bounds guard on Default: eager like Always, panicking with the value and the
-// violated bound. Trailing exclusions are holes inside the interval the value must also avoid.
-func Range[T invariant.Integer](value T, minimum T, maximum T, excluded ...T) {
-	invariant.Recorder_Range(Default, value, minimum, maximum, excluded...)
+// Range is the bare bounds guard on Default: eager like Always, panicking with the identifier,
+// the value, and the violated bound. Trailing exclusions are holes inside the interval the value
+// must also avoid.
+func Range[T invariant.Integer](identifier string, value T, minimum T, maximum T, excluded ...T) {
+	invariant.Recorder_Range(Default, identifier, value, minimum, maximum, excluded...)
 }
 
-// Enum is the bare membership guard on Default: the value must equal one of members.
-func Enum[T invariant.Integer](value T, members ...T) {
-	invariant.Recorder_Enum(Default, value, members...)
+// Enum is the bare membership guard on Default: the value must equal one of members. The panic
+// names the identifier and the member set.
+func Enum[T invariant.Integer](identifier string, value T, members ...T) {
+	invariant.Recorder_Enum(Default, identifier, value, members...)
 }
 
-// An int is assumed to be 64 bits wide, so that the minimum and maximum axes below are exactly an
-// int's bounds. This conversion fails to compile on a platform where int is narrower, because there
-// math.MaxInt is smaller than math.MaxInt64 and their difference is negative, which a uint cannot
-// represent. An int and a uint always share a width, so this guards the unsigned presets that name
-// math.MaxUint as well.
-const INT_IS_64_BITS_WIDE = uint(math.MaxInt - math.MaxInt64)
-
-// Int_Invariants is the preset coverage for an int. The suite must witness the value one, negative
-// one, the type's minimum, and the type's maximum.
-func Int_Invariants(n int) {
-	Sometimes(n == 1, "The value is one.")
-	Sometimes(n == -1, "The value is negative one.")
-	Sometimes(n == math.MinInt64, "The value is the minimum int.")
-	Sometimes(n == math.MaxInt64, "The value is the maximum int.")
+// Signed_Invariants is the preset coverage for a signed integer. The suite must witness the value
+// one, negative one, the type's minimum, and the type's maximum.
+func Signed_Invariants[T invariant.Signed](identifier string, n T) {
+	// The sign bit alone is the type's minimum and its complement the maximum; Sizeof keeps
+	// the shift width-exact for every instantiation.
+	minimum := T(1) << (unsafe.Sizeof(n)*8 - 1)
+	maximum := ^minimum
+	Sometimes(identifier, n == 1, "The value is one.")
+	Sometimes(identifier, n == -1, "The value is negative one.")
+	Sometimes(identifier, n == minimum, "The value is the type's minimum.")
+	Sometimes(identifier, n == maximum, "The value is the type's maximum.")
 }
 
-// Int8_Invariants is Int_Invariants for an int8, whose bounds are MinInt8 and MaxInt8.
-func Int8_Invariants(n int8) {
-	Sometimes(n == 1, "The value is one.")
-	Sometimes(n == -1, "The value is negative one.")
-	Sometimes(n == math.MinInt8, "The value is the minimum int8.")
-	Sometimes(n == math.MaxInt8, "The value is the maximum int8.")
+// Unsigned_Invariants is the preset coverage for an unsigned integer. The suite must witness the
+// value zero, one, and the type's maximum. An unsigned value has no sign, so zero stands in for
+// the sign axis and the minimum is zero itself.
+func Unsigned_Invariants[T invariant.Unsigned](identifier string, n T) {
+	Sometimes(identifier, n == 0, "The value is zero.")
+	Sometimes(identifier, n == 1, "The value is one.")
+	Sometimes(identifier, n == ^T(0), "The value is the type's maximum.")
 }
 
-// Int16_Invariants is Int_Invariants for an int16, whose bounds are MinInt16 and MaxInt16.
-func Int16_Invariants(n int16) {
-	Sometimes(n == 1, "The value is one.")
-	Sometimes(n == -1, "The value is negative one.")
-	Sometimes(n == math.MinInt16, "The value is the minimum int16.")
-	Sometimes(n == math.MaxInt16, "The value is the maximum int16.")
-}
-
-// Int32_Invariants is Int_Invariants for an int32, whose bounds are MinInt32 and MaxInt32.
-func Int32_Invariants(n int32) {
-	Sometimes(n == 1, "The value is one.")
-	Sometimes(n == -1, "The value is negative one.")
-	Sometimes(n == math.MinInt32, "The value is the minimum int32.")
-	Sometimes(n == math.MaxInt32, "The value is the maximum int32.")
-}
-
-// Int64_Invariants is Int_Invariants for an int64, whose bounds are MinInt64 and MaxInt64.
-func Int64_Invariants(n int64) {
-	Sometimes(n == 1, "The value is one.")
-	Sometimes(n == -1, "The value is negative one.")
-	Sometimes(n == math.MinInt64, "The value is the minimum int64.")
-	Sometimes(n == math.MaxInt64, "The value is the maximum int64.")
-}
-
-// Uint_Invariants is the preset coverage for a uint. The suite must witness the value zero, one,
-// and the type's maximum. An unsigned value has no sign, so zero stands in for the sign axis and
-// the minimum is zero itself.
-func Uint_Invariants(n uint) {
-	Sometimes(n == 0, "The value is zero.")
-	Sometimes(n == 1, "The value is one.")
-	Sometimes(n == math.MaxUint64, "The value is the maximum uint.")
-}
-
-// Uint8_Invariants is Uint_Invariants for a uint8, whose maximum is MaxUint8.
-func Uint8_Invariants(n uint8) {
-	Sometimes(n == 0, "The value is zero.")
-	Sometimes(n == 1, "The value is one.")
-	Sometimes(n == math.MaxUint8, "The value is the maximum uint8.")
-}
-
-// Uint16_Invariants is Uint_Invariants for a uint16, whose maximum is MaxUint16.
-func Uint16_Invariants(n uint16) {
-	Sometimes(n == 0, "The value is zero.")
-	Sometimes(n == 1, "The value is one.")
-	Sometimes(n == math.MaxUint16, "The value is the maximum uint16.")
-}
-
-// Uint32_Invariants is Uint_Invariants for a uint32, whose maximum is MaxUint32.
-func Uint32_Invariants(n uint32) {
-	Sometimes(n == 0, "The value is zero.")
-	Sometimes(n == 1, "The value is one.")
-	Sometimes(n == math.MaxUint32, "The value is the maximum uint32.")
-}
-
-// Uint64_Invariants is Uint_Invariants for a uint64, whose maximum is MaxUint64.
-func Uint64_Invariants(n uint64) {
-	Sometimes(n == 0, "The value is zero.")
-	Sometimes(n == 1, "The value is one.")
-	Sometimes(n == math.MaxUint64, "The value is the maximum uint64.")
-}
-
-// Float64_Invariants is the preset coverage for a float64. The suite must witness NaN, negative
-// infinity, and positive infinity; an ordinary value holds none of them.
-func Float64_Invariants(f float64) {
-	Sometimes(math.IsNaN(f), "The value is NaN.")
-	Sometimes(f == math.Inf(-1), "The value is negative infinity.")
-	Sometimes(f == math.Inf(1), "The value is positive infinity.")
-}
-
-// Float32_Invariants is Float64_Invariants for a float32, widened to float64 for the comparisons.
-func Float32_Invariants(f float32) {
+// Float_Invariants is the preset coverage for a float. The suite must witness NaN, negative
+// infinity, and positive infinity; an ordinary value holds none of them. The widening to float64
+// is exact for both widths.
+func Float_Invariants[T invariant.Float](identifier string, f T) {
 	value := float64(f)
-	Sometimes(math.IsNaN(value), "The value is NaN.")
-	Sometimes(value == math.Inf(-1), "The value is negative infinity.")
-	Sometimes(value == math.Inf(1), "The value is positive infinity.")
+	Sometimes(identifier, math.IsNaN(value), "The value is NaN.")
+	Sometimes(identifier, value == math.Inf(-1), "The value is negative infinity.")
+	Sometimes(identifier, value == math.Inf(1), "The value is positive infinity.")
 }
 
 // Boolean_Invariants is the preset coverage for a bool: the suite must witness the value both
 // true and false. Its one Sometimes carries both branches — the true branch is the value, the
 // false branch its negation.
-func Boolean_Invariants(b bool) {
-	Sometimes(b, "The value is true.")
+func Boolean_Invariants[T ~bool](identifier string, b T) {
+	Sometimes(identifier, b, "The value is true.")
 }

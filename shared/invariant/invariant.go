@@ -108,10 +108,25 @@ type Recorder struct {
 	Merge_Fuzz_Coverage func()
 }
 
-// Integer spans the primitive integer widths the bare guards accept. uintptr is excluded — it
-// carries an address, not a quantity, so numeric bounds on it assert nothing about the domain.
+// Signed spans the primitive signed integer widths.
+type Signed interface {
+	~int | ~int8 | ~int16 | ~int32 | ~int64
+}
+
+// Unsigned spans the primitive unsigned integer widths. uintptr is excluded — it carries an
+// address, not a quantity, so numeric bounds on it assert nothing about the domain.
+type Unsigned interface {
+	~uint | ~uint8 | ~uint16 | ~uint32 | ~uint64
+}
+
+// Float spans both floating-point widths.
+type Float interface {
+	~float32 | ~float64
+}
+
+// Integer spans the primitive integer widths the bare guards accept.
 type Integer interface {
-	~int | ~int8 | ~int16 | ~int32 | ~int64 | ~uint | ~uint8 | ~uint16 | ~uint32 | ~uint64
+	Signed | Unsigned
 }
 
 // Assertion_Kind discriminates a coverage tracker entry: a per-element Always or Sometimes.
