@@ -19,7 +19,8 @@
           "home/**",
           "documentation/youtube/**",
           "rust-toolchain.toml",
-          "gameboy_emulator/test_roms/**"
+          "gameboy_emulator/test_roms/**",
+          "shared_lua/**"
   ],
   "opt_out_recursion_ban": [],
   "opt_out_assertion_mandate_packages": [

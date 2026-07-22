@@ -60,3 +60,18 @@ jobs:
           for path in lint_rs/src shared_rs/src sloc_rs/src gameboy_emulator/src gameboy_emulator/tests; do
             cargo run -q -p lint_rs --locked -- "${path}" || exit 1
           done
+
+  lua:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          git clone --filter=blob:none --depth=200 "https://x-access-token:${GH_TOKEN}@github.com/${{ github.repository }}" .
+          git checkout "${{ github.sha }}"
+
+      - name: Build Lua 5.1 and run shared_lua tests
+        run: |
+          make -C third_party/lua-5.1.5 posix
+          third_party/lua-5.1.5/src/lua shared_lua/test.lua
