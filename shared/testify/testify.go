@@ -5,9 +5,9 @@
 // shared/snap and shared/lru do.
 //
 // Every deviation from upstream is deliberate:
-//   - There is one flat package, not assert plus require. Every assertion soft-fails
-//     through t.Errorf and returns a bool, so a test surfaces every failure in one run.
-//     Fail-fast is the caller's to choose with the returned bool and t.FailNow.
+//   - There is one flat package, not assert plus require. Every assertion reports through
+//     t.Errorf and then terminates the test with t.FailNow, so a failure cannot leave the
+//     test in a state that later checks might mistake for valid.
 //   - Assertions take a concrete testing handle, not testify's TestingT interface, which
 //     the linter bans. The pure decisions (Objects_Are_Equal, Is_Nil, Is_Empty,
 //     Same_Pointers, Contains_Element, Diff_Lists) are factored out so they take no handle
@@ -71,8 +71,8 @@ func assert(condition bool, message string) {
 	}
 }
 
-// Fail reports failure_message, plus any trailing caller message, through t and returns
-// false, so an assertion can return Fail on the failing path.
+// Fail reports failure_message, plus any trailing caller message, and terminates the test.
+// Its bool result remains for source compatibility with existing assertion call sites.
 func Fail(t *testing.T, failure_message string, message_and_args ...any) (passed bool) {
 	t.Helper()
 	message := failure_message
@@ -81,16 +81,13 @@ func Fail(t *testing.T, failure_message string, message_and_args ...any) (passed
 		message = message + "\nMessages: " + extra
 	}
 	t.Errorf("%s", message)
+	t.FailNow()
 	return false
 }
 
-// Fail_Now reports failure_message through t and aborts the test with t.FailNow. It never
-// returns; the bool result exists only to match the other assertions' shape.
+// Fail_Now remains an explicit spelling for Fail, which already aborts the test.
 func Fail_Now(t *testing.T, failure_message string, message_and_args ...any) (passed bool) {
-	t.Helper()
-	Fail(t, failure_message, message_and_args...)
-	t.FailNow()
-	return false
+	return Fail(t, failure_message, message_and_args...)
 }
 
 // Renders testify's trailing message tail: a lone string is the message, a lone non-string

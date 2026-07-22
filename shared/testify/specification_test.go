@@ -3,7 +3,10 @@ package testify_test
 import (
 	"errors"
 	"fmt"
+	"os"
+	"os/exec"
 	"regexp"
+	"strings"
 	"testing"
 	"testing/fstest"
 
@@ -246,6 +249,25 @@ func Test_Control(t *testing.T) {
 	t.Parallel()
 	if !testify.Condition(t, func() (satisfied bool) { return true }) {
 		t.Errorf("Condition should pass when the predicate holds")
+	}
+}
+
+// Test_Hard_Failures runs a failing assertion in a child test process because FailNow
+// terminates the calling test goroutine before it can make an in-process observation.
+func Test_Hard_Failures(t *testing.T) {
+	if os.Getenv("TESTIFY_HARD_FAILURE") == "1" {
+		testify.Equal(t, 1, 2)
+		t.Fatal("a failing assertion returned")
+	}
+
+	command := exec.Command(os.Args[0], "-test.run=^Test_Hard_Failures$")
+	command.Env = append(os.Environ(), "TESTIFY_HARD_FAILURE=1")
+	output, err := command.CombinedOutput()
+	if err == nil {
+		t.Fatal("a failing assertion should fail the child test")
+	}
+	if strings.Contains(string(output), "a failing assertion returned") {
+		t.Fatal("a failing assertion should terminate the child test before returning")
 	}
 }
 

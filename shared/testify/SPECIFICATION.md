@@ -55,8 +55,8 @@ whether two JSON documents are semantically equal.
 
 # Control
 
-Condition reports the result of a caller predicate. Fail reports a failure and
-returns false; Fail_Now additionally aborts the test.
+Condition reports the result of a caller predicate. Every failed assertion, including
+Fail and Fail_Now, reports the failure and aborts the test.
 
 # Predicates
 
