@@ -285,9 +285,9 @@ unreachable value forever; over `[0, 1]` every value is `min` or `max`, so "neit
 
 ### Exclusions
 
-A callsite declares in-range values unreachable as trailing, concretely typed arguments after the
-maximum. Each hole is enforced at `Ensure` and drops its sentinel axis; the all-false cell is carved
-once every reachable value is a witnessed axis.
+Trailing exclusions may name only values strictly inside the boundaries. A boundary or out-of-range
+exclusion is rejected before registration seeds anything and panics only at `Ensure` during runtime.
+Each valid hole is enforced, drops its sentinel axis, and participates in saturation carving.
 
 ### Enum
 

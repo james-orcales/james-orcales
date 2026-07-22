@@ -896,6 +896,55 @@ func Test_Range_Exclusions(t *testing.T) {
 	if panic_text(product.Ensure) == "" {
 		t.Fatal("excluded value must panic")
 	}
+	modes := []*invariant.Recorder{
+		{}, {Is_Test: true}, {Is_Benchmark: true},
+		{Is_Fuzz: true}, {Is_Fuzz_Worker: true},
+	}
+	for mode_index, mode := range modes {
+		for _, excluded := range []int{-1, 0, 2, 3} {
+			var invalid invariant.Product
+			message := panic_text(func() {
+				invalid = invariant.Recorder_Dot_Product(mode, "invalid range").
+					Range_Int(1, 0, 2, excluded)
+			})
+			if message != "" {
+				t.Fatalf(
+					"mode %d Range link panicked before Ensure: %q",
+					mode_index,
+					message,
+				)
+			}
+			message = panic_text(invalid.Ensure)
+			if !strings.Contains(message, "strictly inside") {
+				t.Fatalf(
+					"mode %d exclusion %d Ensure panic = %q",
+					mode_index,
+					excluded,
+					message,
+				)
+			}
+		}
+	}
+	for _, excluded := range []string{"-1", "0", "2", "3"} {
+		source := "package fixture\nfunc check(v int) {\n" +
+			"invariant.Dot_Product(\"range\")." +
+			"Range_Int(v, 0, 2, " + excluded + ").Ensure()\n}\n"
+		invalid, output, code := registered_fixture(source)
+		if code != 1 {
+			t.Fatalf(
+				"exclusion %s exit = %d, want 1; output=%q",
+				excluded,
+				code,
+				output.String(),
+			)
+		}
+		if !strings.Contains(output.String(), "strictly inside") {
+			t.Fatalf("exclusion %s diagnostic = %q", excluded, output.String())
+		}
+		if count := event_count(&invalid.Events); count != 0 {
+			t.Fatalf("exclusion %s partially seeded %d events", excluded, count)
+		}
+	}
 }
 
 // Test_Range_Enum prevents its specification contract from regressing.

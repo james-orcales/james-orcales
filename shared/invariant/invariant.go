@@ -75,6 +75,13 @@ const PRODUCT_FAILURE_PRESET_MEMBER = uint8(9)
 // PRODUCT_FAILURE_ENUM_DOMAIN prevents an invalid member set from acquiring a runtime shape.
 const PRODUCT_FAILURE_ENUM_DOMAIN = uint8(10)
 
+// PRODUCT_FAILURE_RANGE_EXCLUSION prevents a hole from contradicting a demanded boundary axis.
+const PRODUCT_FAILURE_RANGE_EXCLUSION = uint8(11)
+
+// One message keeps registration and deferred runtime rejection on the same contract.
+const PRODUCT_FAILURE_RANGE_EXCLUSION_MESSAGE = "Range exclusions must be " +
+	"strictly inside its boundaries"
+
 // Bounds the walk up the directory tree searching for a go.mod, so module
 // discovery can't loop unboundedly on a pathological path.
 const MODULE_SEARCH_DEPTH_MAX = 256
@@ -756,6 +763,14 @@ func product_range[
 	product Product, integer_kind Chain_Integer_Kind,
 	value Value, minimum Value, maximum Value, excluded []Value,
 ) (next Product) {
+	minimum_integer := chain_integer_value(minimum)
+	maximum_integer := chain_integer_value(maximum)
+	for _, hole := range excluded {
+		if !chain_integer_between(
+			minimum_integer, chain_integer_value(hole), maximum_integer) {
+			return product.chain_defer_failure(PRODUCT_FAILURE_RANGE_EXCLUSION)
+		}
+	}
 	return product_preset(
 		product, CHAIN_PRESET_KIND_RANGE, integer_kind,
 		value, minimum, maximum, excluded)
@@ -1286,6 +1301,8 @@ func (product Product) chain_failure_message() (message string) {
 		return "duplicate Impossible message"
 	case PRODUCT_FAILURE_ENUM_DOMAIN:
 		return "Enum requires at least two distinct members"
+	case PRODUCT_FAILURE_RANGE_EXCLUSION:
+		return PRODUCT_FAILURE_RANGE_EXCLUSION_MESSAGE
 	}
 	return ""
 }
@@ -3162,6 +3179,16 @@ func recorder_collect_chain_preset(
 				recorder_position(file_set, call)+
 					"  Enum requires at least two distinct members")
 			return expansion, false
+		}
+	}
+	if kind == CHAIN_PRESET_KIND_RANGE {
+		for _, hole := range values {
+			if !chain_integer_between(minimum, hole, maximum) {
+				reg.Invalid_Chain = append(reg.Invalid_Chain,
+					recorder_position(file_set, call)+
+						"  "+PRODUCT_FAILURE_RANGE_EXCLUSION_MESSAGE)
+				return expansion, false
+			}
 		}
 	}
 	expansion = chain_preset_expand(Chain_Preset{
