@@ -24,6 +24,11 @@
 --   * a types.* value — a combinator: array_of, map_of, tuple, shape, union, optional, enum,
 --                       literal, variadic. Combinators nest, and the location of a deep mismatch is
 --                       carried in the fault's path (rendered by types.format as "value.a[2].b").
+--
+-- Checking is FAIL-FAST: every combinator returns on the first violation, so a fault names one
+-- mismatch, not all of them — this is a type-assertion system, not a form validator that collects
+-- every error. Resolution is EAGER: resolve() and shape() resolve their inner types at construction
+-- time, so a self-referential (recursive) type cannot be expressed.
 
 -- unpack moved to table.unpack in Lua 5.2; alias it so the module runs on 5.1/LuaJIT and 5.3/5.4.
 local unpack = table.unpack or unpack
@@ -271,10 +276,11 @@ types.tuple = function(...)
                 elements[i] = resolve((select(i, ...)))
                 names[i] = elements[i].name
         end
-        local name = "tuple(" .. table.concat(names, ", ") .. ")"
+        -- Length lives in the name (like array_of) so it is stated once; the fault reuses the name.
+        local name = "tuple(" .. table.concat(names, ", ") .. ") of length " .. #elements
         return new_type(name, function(value)
                 if not is_sequence(value) or #value ~= #elements then
-                        return false, fault(name .. " of length " .. #elements, value)
+                        return false, fault(name, value)
                 end
                 for i = 1, #elements do
                         local ok, f = elements[i].check(value[i])
@@ -292,6 +298,9 @@ types.shape = function(fields)
         for key, spec in pairs(fields) do
                 resolved[key] = resolve(spec)
         end
+        -- An OPEN record: only declared fields are checked, so extra keys pass (structural subtyping).
+        -- There is deliberately no exact/no-extra-keys mode; a missing required field is caught as its
+        -- declared type seeing nil.
         return new_type("shape", function(value)
                 if type(value) ~= "table" then
                         return false, fault("shape (table)", value)
@@ -311,6 +320,15 @@ types.enum = function(...)
         local allowed, labels = {}, {}
         for i = 1, select("#", ...) do
                 local value = select(i, ...)
+                -- nil and NaN cannot be table keys, and nil could never satisfy the `value ~= nil` gate
+                -- in the check below anyway; reject them here with a located message instead of the
+                -- opaque "table index is nil/NaN" that `allowed[value] = true` would raise below.
+                if value == nil then
+                        error("enum: member #" .. i .. " must not be nil", 2)
+                end
+                if value ~= value then
+                        error("enum: member #" .. i .. " must not be NaN", 2)
+                end
                 allowed[value] = true
                 labels[i] = display(value)
         end
@@ -365,6 +383,14 @@ types.format = function(f, root)
         return render_path(root or "value", f.path) .. " expected " .. f.expected .. ", got " .. got
 end
 
+-- Signature checking is on by default. def() reads this flag once at decoration time (not per call),
+-- so an enabled function keeps zero per-call cost; toggle it before requiring the modules whose
+-- signatures you want raw. A module-local flag (not a global) keeps types.lua's no-globals contract.
+local signatures_disabled = false
+types.disable_signatures = function(disabled)
+        signatures_disabled = disabled and true or false
+end
+
 -- def() is the function-signature face of the type system: it wraps a function so its argument and
 -- return types are checked on every call. Types take any of the three forms above. Optionality is
 -- per slot: an optional input may be absent and an optional return may be nil. A violation raises a
@@ -378,7 +404,7 @@ end
 --      atoi("69")   --> 69
 --      atoi({})     --> error: def: argument #1 expected string, got table table: 0x...
 --
--- Set the global LUA_DISABLE_FUNCTION_SIGNATURE_ASSERTIONS truthy to return the raw function.
+-- Call types.disable_signatures(true) to make def return the raw, unchecked function.
 types.def = function(...)
         local slot_count = select("#", ...)
         local slots = { ... }
@@ -386,7 +412,7 @@ types.def = function(...)
         if type(callback) ~= "function" then
                 error("def: last argument must be the function, got " .. type(callback), 2)
         end
-        if LUA_DISABLE_FUNCTION_SIGNATURE_ASSERTIONS then
+        if signatures_disabled then
                 return callback
         end
 
@@ -405,6 +431,19 @@ types.def = function(...)
         end
         if #inputs == 0 and #outputs == 0 then
                 error("def: declare at least one input or output type", 2)
+        end
+
+        -- A variadic marker is only meaningful as the last input, where the loop below expands it.
+        -- Anywhere else it would silently degrade to a plain single-value check, so reject it loudly.
+        for i = 1, #inputs - 1 do
+                if inputs[i].variadic then
+                        error("def: a variadic type may only be the last input, got one at input #" .. i, 2)
+                end
+        end
+        for i = 1, #outputs do
+                if outputs[i].variadic then
+                        error("def: a variadic type may only be the last input, not an output #" .. i, 2)
+                end
         end
 
         -- A variadic marker may only be the last input; it validates every trailing argument.
@@ -432,6 +471,9 @@ types.def = function(...)
                                         error("def: " .. types.format(f, "argument #" .. i), 2)
                                 end
                         end
+                -- No variadic tail: an explicit trailing nil still counts toward argc (select("#")
+                -- preserves it), so it trips this. Deliberate — optional slots express absence by being
+                -- OMITTED, and a forwarded ... carrying stray trailing nils is likelier a bug than intent.
                 elseif argc > #inputs then
                         error(string.format("def: expected at most %d argument(s), got %d", #inputs, argc), 2)
                 end
