@@ -25,33 +25,11 @@ func TestMain(m *testing.M) {
 	invariant.Run_Test_Main(m, "../**")
 }
 
-// SIM_STRUCTURE_MAX is the command-set and command-line ceiling the driver decodes
-// against, mirrored from the library.
-const SIM_STRUCTURE_MAX = 1 << 8
-
-// SIM_CAPTURE_MAX is the stderr-capture ceiling.
-const SIM_CAPTURE_MAX = 1 << 16
-
-// SIM_HOST_MAX is the host-text field ceiling.
-const SIM_HOST_MAX = 1 << 8
-
-// SIM_WORD_MAX is the command-word byte ceiling.
-const SIM_WORD_MAX = 1 << 12
-
-// SIM_METRIC_MAX is the representable metric ceiling a real sampler stays within.
-const SIM_METRIC_MAX = 1<<43 - 1
-
-// SIM_DELTAS_MAX is the per-sample deviation pattern length.
+// SIM_DELTAS_MAX is the per-sample deviation pattern length — a driver construct, not a
+// maddox bound, so it is the one ceiling defined here rather than imported from the library.
+// Every other structural ceiling is maddox's own exported const, so the driver cannot drift
+// from the bounds it is meant to exercise.
 const SIM_DELTAS_MAX = 16
-
-// SIM_CORES_MAX mirrors the render-safe core-count ceiling.
-const SIM_CORES_MAX = 1023
-
-// SIM_HERTZ_MAX mirrors the render-safe frequency ceiling.
-const SIM_HERTZ_MAX = 8_000_000_000
-
-// SIM_BYTE_SIZE_MAX mirrors the render-safe hardware byte-size ceiling.
-const SIM_BYTE_SIZE_MAX = 1 << 53
 
 // Fuzz_Main is the sole witness. It decodes the fuzz bytes into a benchmark
 // scenario and drives internal.Main; the seed corpus is a battery of honest
@@ -69,11 +47,11 @@ func Fuzz_Main(f *testing.F) {
 // limits, and the per-sample values the injected Sampler will report. Every
 // field is decoded totally from the fuzz bytes so any input is a valid run.
 type scenario struct {
-	// Commands is the command count, 0..SIM_STRUCTURE_MAX.
+	// Commands is the command count, 0..COMMAND_SET_MAX.
 	Commands int
-	// Words is the word count in each command line, 1..SIM_STRUCTURE_MAX.
+	// Words is the word count in each command line, WORD_MIN..COMMAND_WORDS_MAX.
 	Words int
-	// Word_Bytes is the byte length of each argument word, 0..SIM_WORD_MAX.
+	// Word_Bytes is the byte length of each argument word, 0..COMMAND_WORD_BYTES_MAX.
 	Word_Bytes int
 	// Path_Bytes, for a single-command run, sets the executable's byte length, so the
 	// progress label reaches its short shapes; 0 keeps the default distinct path.
@@ -88,6 +66,9 @@ type scenario struct {
 	Base int64
 	// Deltas is the repeating deviation pattern added to Base.
 	Deltas []int64
+	// Center_Count pins the first N runs to Base exactly — the tight median cluster whose zero
+	// interquartile range turns every remaining spread sample into a Tukey outlier.
+	Center_Count int
 	// Sleep is the clock grains each run advances — the wall time.
 	Sleep int64
 	// Exit is the exit code the sampler reports.
@@ -112,6 +93,11 @@ type scenario struct {
 	Progress bool
 	// Broken_Output makes the report writer fail, driving the render failure exit.
 	Broken_Output bool
+	// Path_Wide makes a single command's executable four-byte runes, so the progress label
+	// reaches its byte ceiling — the rune cap times four bytes.
+	Path_Wide bool
+	// Path_Empty makes a single command's executable empty, so the progress label is empty.
+	Path_Empty bool
 	// Machine is the injected host snapshot.
 	Machine maddox.Machine_Specs
 }
@@ -152,11 +138,8 @@ func drive(s scenario) {
 				command_index++
 				run = 0
 			}
-			value := s.Base + int64(command_index)*s.Divergence
-			if len(s.Deltas) > 0 {
-				value += s.Deltas[run%len(s.Deltas)]
-			}
-			result.Sample = sample_from(value)
+			center := s.Base + int64(command_index)*s.Divergence
+			result.Sample = sample_from(sample_value(s, center, run))
 			// Wall is this run's tight cost, extracted as a Metric into the
 			// statistics, so it carries the same representable-ceiling contract as
 			// every other metric and passes through the same clamp. The completion
@@ -203,6 +186,19 @@ func drive(s scenario) {
 	})
 }
 
+// Sample_value is run's metric value about a given center: the center itself for the first
+// Center_Count runs — a tight, zero-IQR median cluster — then the center plus the deviation
+// pattern, so every later spread sample falls outside the collapsed Tukey fence as an outlier.
+func sample_value(s scenario, center int64, run int) (value int64) {
+	value = center
+	if run >= s.Center_Count {
+		if len(s.Deltas) > 0 {
+			value += s.Deltas[run%len(s.Deltas)]
+		}
+	}
+	return value
+}
+
 // Command_set is the scenario's commands, each an executable plus Words-1 argument
 // words of Word_Bytes bytes, so the command and command-word length invariants see
 // the empty, one-, two-, and full-length shapes.
@@ -215,9 +211,7 @@ func command_set(s scenario) (commands maddox.Commands) {
 		// executable so the progress label reaches its short shapes.
 		path := "cmd" + strconv.Itoa(index)
 		if s.Commands == 1 {
-			if s.Path_Bytes > 0 {
-				path = strings.Repeat("z", s.Path_Bytes)
-			}
+			path = single_command_path(s)
 		}
 		command := sysio.Process_Request{Path: path}
 		for word_index := 1; word_index < s.Words; word_index++ {
@@ -226,6 +220,22 @@ func command_set(s scenario) (commands maddox.Commands) {
 		commands[index] = command
 	}
 	return commands
+}
+
+// Single_command_path is a lone command's executable: empty when Path_Empty, a run of four-byte
+// runes when Path_Wide (so the progress label reaches its byte ceiling), a run of 'z' when
+// Path_Bytes is set, else the default short name.
+func single_command_path(s scenario) (path string) {
+	if s.Path_Empty {
+		return ""
+	}
+	if s.Path_Wide {
+		return strings.Repeat("𝕫", s.Path_Bytes)
+	}
+	if s.Path_Bytes > 0 {
+		return strings.Repeat("z", s.Path_Bytes)
+	}
+	return "cmd0"
 }
 
 // Metric_clamp bounds a decoded value to the range a real sampler reports within:
@@ -237,8 +247,8 @@ func metric_clamp(value int64) (clamped int64) {
 	if value < 0 {
 		return 0
 	}
-	if value > SIM_METRIC_MAX {
-		return SIM_METRIC_MAX
+	if value > maddox.METRIC_MAX {
+		return maddox.METRIC_MAX
 	}
 	return value
 }
@@ -306,14 +316,17 @@ func decode_scenario(data []byte) (s scenario) {
 	s.Progress = flags&4 != 0
 	s.Allow_Fail = flags&8 != 0
 	s.Broken_Output = flags&16 != 0
-	// A real invocation benchmarks a handful of short commands. Clamp the command and
-	// word counts, and budget the total argument bytes, so the rendered report stays
-	// under its ceiling — the structural maxima are not reachable through a real run.
-	s.Commands = min(int(cursor_u16(c)), 8)
-	s.Words = max(1, min(int(cursor_u16(c)), 8))
+	s.Path_Wide = flags&32 != 0
+	s.Path_Empty = flags&64 != 0
+	// Clamp the command and word counts to maddox's own structural ceilings, and budget the
+	// total argument bytes so the rendered report stays under its width ceiling. Importing the
+	// library bounds lets the driver reach the real maxima (COMMAND_SET_MAX, COMMAND_WORDS_MAX)
+	// instead of an arbitrary decode limit.
+	s.Commands = min(int(cursor_u16(c)), maddox.COMMAND_SET_MAX)
+	s.Words = max(maddox.WORD_MIN, min(int(cursor_u16(c)), maddox.COMMAND_WORDS_MAX))
 	budget := 32768 / (s.Commands*s.Words + 1)
-	s.Word_Bytes = min(min(int(cursor_u16(c)), SIM_WORD_MAX), budget)
-	s.Path_Bytes = min(int(cursor_u16(c)), SIM_WORD_MAX)
+	s.Word_Bytes = min(min(int(cursor_u16(c)), maddox.COMMAND_WORD_BYTES_MAX), budget)
+	s.Path_Bytes = min(int(cursor_u16(c)), maddox.COMMAND_WORD_BYTES_MAX)
 	// Runs_Max and Warmup_Count take the full int range: a caller may set any value
 	// (Main caps kept runs at samples_max and treats a non-positive limit as disabled).
 	s.Runs = int(cursor_i64(c))
@@ -324,12 +337,13 @@ func decode_scenario(data []byte) (s scenario) {
 	for index := 0; index < deltas; index++ {
 		s.Deltas = append(s.Deltas, cursor_i64(c))
 	}
+	s.Center_Count = min(int(cursor_u16(c)), maddox.SAMPLES_MAX)
 	s.Sleep = cursor_i64(c)
 	s.Exit = int(cursor_u8(c))
 	s.Fail_Every = int(cursor_u8(c))
 	s.Fail_Command = int(cursor_u8(c))
 	s.Divergence = cursor_i64(c)
-	s.Stderr_Bytes = min(int(cursor_u32(c)), SIM_CAPTURE_MAX)
+	s.Stderr_Bytes = min(int(cursor_u32(c)), maddox.CAPTURE_BYTES_MAX)
 	s.Machine = decode_machine(c)
 	return s
 }
@@ -346,23 +360,24 @@ func decode_machine(c *cursor) (m maddox.Machine_Specs) {
 	// A real acquire_machine_specs reports realistic, render-safe values; clamp to the
 	// domain ceilings so the simulated host honors that contract rather than tripping the
 	// table's render guards, which only an out-of-contract probe would.
-	m.Physical_Cores = maddox.Cores(min(int(cursor_u16(c)), SIM_CORES_MAX))
-	m.Logical_Cores = maddox.Cores(min(int(cursor_u16(c)), SIM_CORES_MAX))
-	m.Performance_Cores = maddox.Cores(min(int(cursor_u16(c)), SIM_CORES_MAX))
-	m.Efficiency_Cores = maddox.Cores(min(int(cursor_u16(c)), SIM_CORES_MAX))
-	m.CPU_Frequency_Hz_Max = maddox.Hertz(min(cursor_u64(c), SIM_HERTZ_MAX))
-	m.Cache_L1_Bytes = maddox.Byte_Size(min(cursor_u64(c), SIM_BYTE_SIZE_MAX))
-	m.Cache_L2_Bytes = maddox.Byte_Size(min(cursor_u64(c), SIM_BYTE_SIZE_MAX))
-	m.Cache_L3_Bytes = maddox.Byte_Size(min(cursor_u64(c), SIM_BYTE_SIZE_MAX))
-	m.RAM_Total_Bytes = maddox.Byte_Size(min(cursor_u64(c), SIM_BYTE_SIZE_MAX))
-	m.Storage_Total_Bytes = maddox.Byte_Size(min(cursor_u64(c), SIM_BYTE_SIZE_MAX))
+	m.Physical_Cores = maddox.Cores(min(int(cursor_u16(c)), maddox.CORES_COUNT_MAX))
+	m.Logical_Cores = maddox.Cores(min(int(cursor_u16(c)), maddox.CORES_COUNT_MAX))
+	m.Performance_Cores = maddox.Cores(min(int(cursor_u16(c)), maddox.CORES_COUNT_MAX))
+	m.Efficiency_Cores = maddox.Cores(min(int(cursor_u16(c)), maddox.CORES_COUNT_MAX))
+	m.CPU_Frequency_Hz_Max = maddox.Hertz(min(cursor_u64(c), maddox.HERTZ_MAX))
+	m.Cache_L1_Bytes = maddox.Byte_Size(min(cursor_u64(c), maddox.BYTE_SIZE_MAX))
+	m.Cache_L2_Bytes = maddox.Byte_Size(min(cursor_u64(c), maddox.BYTE_SIZE_MAX))
+	m.Cache_L3_Bytes = maddox.Byte_Size(min(cursor_u64(c), maddox.BYTE_SIZE_MAX))
+	m.RAM_Total_Bytes = maddox.Byte_Size(min(cursor_u64(c), maddox.BYTE_SIZE_MAX))
+	m.Storage_Total_Bytes = maddox.Byte_Size(min(cursor_u64(c), maddox.BYTE_SIZE_MAX))
 	return m
 }
 
 // Host_text is a run of 'x' of the decoded length, clamped to the host-field
 // ceiling — the invariants witness the field's length, not its bytes.
 func host_text(c *cursor) (text maddox.Host_Text) {
-	return maddox.Host_Text(strings.Repeat("x", min(int(cursor_u16(c)), SIM_HOST_MAX)))
+	count := min(int(cursor_u16(c)), maddox.HOST_TEXT_BYTES_MAX)
+	return maddox.Host_Text(strings.Repeat("x", count))
 }
 
 // Writer is the cursor's inverse: it lays down the same big-endian fields a seed
@@ -410,6 +425,12 @@ func build(s scenario) (data []byte) {
 	if s.Broken_Output {
 		flags |= 16
 	}
+	if s.Path_Wide {
+		flags |= 32
+	}
+	if s.Path_Empty {
+		flags |= 64
+	}
 	writer_u8(w, flags)
 	writer_u16(w, uint16(s.Commands))
 	writer_u16(w, uint16(s.Words))
@@ -423,6 +444,7 @@ func build(s scenario) (data []byte) {
 	for _, delta := range s.Deltas {
 		writer_i64(w, delta)
 	}
+	writer_u16(w, uint16(s.Center_Count))
 	writer_i64(w, s.Sleep)
 	writer_u8(w, uint8(s.Exit))
 	writer_u8(w, uint8(s.Fail_Every))
@@ -501,7 +523,116 @@ func seed_corpus() (seeds [][]byte) {
 	seeds = append(seeds, seeds_render()...)
 	seeds = append(seeds, seeds_progress()...)
 	seeds = append(seeds, seeds_overflow()...)
+	seeds = append(seeds, seeds_saturation()...)
+	seeds = append(seeds, seeds_width()...)
 	return seeds
+}
+
+// Seeds_width drives the rendered cells to their width ceilings: ceiling-scale, sharply
+// divergent metrics with color and a full machine render the metric name, mean, deviation, and
+// delta columns each at their widest, so the full row, bare row, delta text, delta body, and
+// padded cell reach their length maxima that a modest run never approaches.
+func seeds_width() (seeds [][]byte) {
+	return [][]byte{
+		with(func(s *scenario) {
+			s.Commands = 2
+			s.Base = maddox.METRIC_MAX / 2
+			s.Divergence = maddox.METRIC_MAX / 4
+			s.Deltas = []int64{0, 1 << 30, -(1 << 30)}
+			s.Color = true
+			full_machine(s)
+		}),
+		with(func(s *scenario) {
+			s.Commands = 2
+			s.Base = maddox.METRIC_MAX / 2
+			s.Divergence = -(maddox.METRIC_MAX / 4)
+			s.Deltas = []int64{0, 1 << 30, -(1 << 30)}
+			full_machine(s)
+		}),
+		// A near-zero reference of maximal coefficient of variation — a lone ceiling
+		// spike among zeros — against a ceiling-scale candidate: the change overruns the
+		// display cap and the widest confidence half-interval a bounded t-test reaches
+		// widen the delta body and its colored text to their maxima.
+		with(func(s *scenario) {
+			s.Commands = 2
+			s.Runs = maddox.SAMPLES_MAX
+			s.Sleep = 0
+			s.Center_Count = maddox.SAMPLES_MAX - 1
+			s.Base = 0
+			s.Deltas = []int64{maddox.METRIC_MAX}
+			s.Divergence = maddox.METRIC_MAX
+			s.Color = true
+		}),
+	}
+}
+
+// Seeds_saturation drives the pipeline to the structural ceilings a narrow corpus never reaches:
+// a full two-command run at the sample cap — an instant clock and no time budget keep exactly
+// SAMPLES_MAX samples per command — so the sample-count, distribution, series, and
+// degrees-of-freedom invariants witness their maxima (two n=SAMPLES_MAX distributions give a
+// t-test degrees-of-freedom of 2*(SAMPLES_MAX-1)); a full command set, so the benchmark
+// collection reaches its size ceiling and the per-benchmark index its last position; and a
+// full command line, so the command-line word count reaches COMMAND_WORDS_MAX in both the
+// plain and the progress-rendered paths.
+func seeds_saturation() (seeds [][]byte) {
+	return [][]byte{
+		with(func(s *scenario) { s.Commands = 8 }),
+		with(func(s *scenario) {
+			s.Words = maddox.COMMAND_WORDS_MAX
+			s.Progress = true
+			s.Warmup = 1
+		}),
+		// A full two-command run whose middle half is pinned to a ceiling-scale center and
+		// whose other half splits just above and below it: the IQR collapses to zero, so
+		// every spread sample is an outlier and the outlier count reaches its ceiling
+		// (SAMPLES_MAX/2 - 1). Ceiling values, a sharp divergence, and color make one row
+		// carry the widest name, cells, outlier tally, and delta at once, so the assembled
+		// rows and their columns reach their true maxima.
+		with(func(s *scenario) {
+			s.Commands = 2
+			s.Runs = maddox.SAMPLES_MAX
+			s.Sleep = 0
+			s.Center_Count = maddox.SAMPLES_MAX/2 + 1
+			s.Base = maddox.METRIC_MAX / 2
+			s.Deltas = []int64{100, -100}
+			s.Divergence = maddox.METRIC_MAX / 4
+			s.Color = true
+		}),
+		// A full single-command bimodal distribution — half at zero, half at the metric
+		// ceiling — maximizes the sum of squared deviations, so the accumulator's high word
+		// reaches its largest value; the progress counter is on, so the progress render's
+		// running count reaches the sample ceiling in the same run.
+		with(func(s *scenario) {
+			s.Commands = 1
+			s.Runs = maddox.SAMPLES_MAX
+			s.Sleep = 0
+			s.Base = maddox.METRIC_MAX / 2
+			s.Deltas = []int64{maddox.METRIC_MAX / 2, -(maddox.METRIC_MAX / 2)}
+			s.Progress = true
+			s.Warmup = 1
+		}),
+		low_word_congruence_seed(),
+	}
+}
+
+// Low_word_congruence_seed is a crafted single-command distribution — seven symmetric pairs
+// about a mid-range center plus a lone +1 spike — whose sum of squared deviations
+// (2*sum(d^2) + 1) is congruent to 2^64-1 modulo 2^64, so the 128-bit accumulator's low word
+// reaches its full-width ceiling. The deltas were found by a 2-adic square-root search for that
+// congruence; no benchmark distribution reaches the modular ceiling by chance.
+func low_word_congruence_seed() (seed []byte) {
+	return with(func(s *scenario) {
+		s.Commands = 1
+		s.Runs = 15
+		s.Sleep = 0
+		s.Base = maddox.METRIC_MAX / 2
+		s.Deltas = []int64{
+			826094412318, -826094412318, 3456986167502, -3456986167502,
+			3426655266655, -3426655266655, 779384028002, -779384028002,
+			990395852196, -990395852196, 1437896511053, -1437896511053,
+			512601834219, -512601834219, 1,
+		}
+	})
 }
 
 // Seeds_overflow pins the fuzz-discovered inputs where a large but in-contract value overflowed
@@ -539,7 +670,7 @@ func seeds_overflow() (seeds [][]byte) {
 		// widest value.
 		with(func(s *scenario) {
 			s.Base = 500
-			s.Divergence = SIM_METRIC_MAX
+			s.Divergence = maddox.METRIC_MAX
 			s.Deltas = []int64{0}
 			s.Runs = 3
 		}),
@@ -580,7 +711,7 @@ func seeds_progress() (seeds [][]byte) {
 		progress(func(s *scenario) { s.Words = 3 }),
 		progress(func(s *scenario) { s.Word_Bytes = 0 }),
 		progress(func(s *scenario) { s.Word_Bytes = 2 }),
-		progress(func(s *scenario) { s.Word_Bytes = SIM_WORD_MAX }),
+		progress(func(s *scenario) { s.Word_Bytes = maddox.COMMAND_WORD_BYTES_MAX }),
 		total(1), total(-1), total(math.MinInt64), total(math.MaxInt64),
 		// Progress labels at their one- and two-byte shapes: a single short-path command.
 		with(func(s *scenario) {
@@ -594,6 +725,22 @@ func seeds_progress() (seeds [][]byte) {
 			s.Commands = 1
 			s.Words = 1
 			s.Path_Bytes = 2
+		}),
+		// A single command with a rune-cap-long four-byte-per-rune executable and no
+		// arguments: the progress label is the untruncated path at its byte ceiling.
+		with(func(s *scenario) {
+			s.Progress = true
+			s.Commands = 1
+			s.Words = 1
+			s.Path_Wide = true
+			s.Path_Bytes = maddox.PROGRESS_LABEL_RUNES_MAX
+		}),
+		// A single command with an empty executable and no arguments: the label is empty.
+		with(func(s *scenario) {
+			s.Progress = true
+			s.Commands = 1
+			s.Words = 1
+			s.Path_Empty = true
 		}),
 	}
 }
@@ -614,13 +761,13 @@ func seeds_machine_values() (seeds [][]byte) {
 		return func(s *scenario) { full_machine(s); s.Machine.CPU_Frequency_Hz_Max = value }
 	}
 	return [][]byte{
-		with(cores(0)), with(cores(1)), with(cores(2)), with(cores(SIM_CORES_MAX)),
-		with(size(0)), with(size(1)), with(size(2)), with(size(SIM_BYTE_SIZE_MAX)),
+		with(cores(0)), with(cores(1)), with(cores(2)), with(cores(maddox.CORES_COUNT_MAX)),
+		with(size(0)), with(size(1)), with(size(2)), with(size(maddox.BYTE_SIZE_MAX)),
 		// 1023 GiB renders "1023GiB" — a full seven-byte cell, within the representable
 		// range the fixed-point render can lift without overflow.
 		with(size(1023 * (1 << 30))),
 		with(frequency(0)), with(frequency(1)), with(frequency(2)),
-		with(frequency(SIM_HERTZ_MAX)),
+		with(frequency(maddox.HERTZ_MAX)),
 	}
 }
 
@@ -705,7 +852,7 @@ func seeds_shape() (seeds [][]byte) {
 		with(func(s *scenario) { s.Words = 3 }),
 		with(func(s *scenario) { s.Word_Bytes = 0 }),
 		with(func(s *scenario) { s.Word_Bytes = 2 }),
-		with(func(s *scenario) { s.Word_Bytes = SIM_WORD_MAX }),
+		with(func(s *scenario) { s.Word_Bytes = maddox.COMMAND_WORD_BYTES_MAX }),
 		with(func(s *scenario) { s.Runs = 3 }),
 	}
 }
@@ -719,10 +866,10 @@ func seeds_variance() (seeds [][]byte) {
 		with(func(s *scenario) { s.Base = 0; s.Deltas = []int64{0} }),
 		with(func(s *scenario) { s.Base = 1; s.Deltas = []int64{0} }),
 		with(func(s *scenario) { s.Base = 2; s.Deltas = []int64{0} }),
-		with(func(s *scenario) { s.Base = SIM_METRIC_MAX; s.Deltas = []int64{0} }),
+		with(func(s *scenario) { s.Base = maddox.METRIC_MAX; s.Deltas = []int64{0} }),
 		with(func(s *scenario) { s.Sleep = 0 }),
 		with(func(s *scenario) { s.Sleep = 2 }),
-		with(func(s *scenario) { s.Sleep = SIM_METRIC_MAX; s.Runs = 3 }),
+		with(func(s *scenario) { s.Sleep = maddox.METRIC_MAX; s.Runs = 3 }),
 		// Large symmetric deviations sized so the sum of squares lands its high 64-bit word
 		// on one and two: four runs of a 2^31 gap give a sum of exactly 2^64, eight give
 		// 2^65. JSON output carries these without a render guard rejecting the magnitudes.
@@ -787,7 +934,7 @@ func seeds_failure() (seeds [][]byte) {
 		with(fail(0)),
 		with(fail(1)),
 		with(fail(2)),
-		with(fail(SIM_CAPTURE_MAX)),
+		with(fail(maddox.CAPTURE_BYTES_MAX)),
 		with(func(s *scenario) { s.Exit = 2; s.Fail_Every = 1; s.Stderr_Bytes = 1 }),
 		with(func(s *scenario) { s.Exit = 255; s.Fail_Every = 1; s.Stderr_Bytes = 1 }),
 		// A mid-range exit code — the command status is an ordinary value, not a boundary.
@@ -809,6 +956,14 @@ func seeds_failure() (seeds [][]byte) {
 		with(func(s *scenario) {
 			s.Commands = 4
 			s.Fail_Command = 3
+			s.Exit = 1
+			s.Stderr_Bytes = 1
+		}),
+		// A failure at the eighth benchmark of a full command set: the first seven succeed,
+		// so the write-failure diagnostic sees the last benchmark position.
+		with(func(s *scenario) {
+			s.Commands = 8
+			s.Fail_Command = 8
 			s.Exit = 1
 			s.Stderr_Bytes = 1
 		}),
@@ -840,7 +995,7 @@ func seeds_machine() (seeds [][]byte) {
 	}
 	return [][]byte{
 		with(host(0)), with(host(1)), with(host(2)), with(host(3)),
-		with(host(SIM_HOST_MAX)),
+		with(host(maddox.HOST_TEXT_BYTES_MAX)),
 	}
 }
 

@@ -100,41 +100,7 @@ type Output_Format uint8
 // Output_Format_Invariants bounds an Output_Format to its declared rendering modes
 // and claims each boundary of that range.
 func Output_Format_Invariants(format Output_Format, namespace invariant.Namespace) {
-	invariant.Always(format <= OUTPUT_FORMAT_JSON, "An Output_Format is at most Json.")
-	invariant.Always(format >= OUTPUT_FORMAT_TABLE, "An Output_Format is at least Table.")
-	invariant.Always(format != 2, "An Output_Format is never two.")
-	invariant.Dot_Product(namespace,
-		invariant.Sometimes(format == 0, "An Output_Format is zero."),
-		invariant.Sometimes(format == 1, "An Output_Format is one."),
-		invariant.Sometimes(format == OUTPUT_FORMAT_TABLE, "An Output_Format is Table."),
-		invariant.Sometimes(format == OUTPUT_FORMAT_JSON, "An Output_Format is Json."),
-		// Table is zero and Json is one, so those axes are pinned to the literals; a
-		// format is one of the two, so it is never both and never neither.
-		invariant.Impossible(
-			invariant.Event_True("An Output_Format is zero."),
-			invariant.Event_False("An Output_Format is Table."),
-		),
-		invariant.Impossible(
-			invariant.Event_False("An Output_Format is zero."),
-			invariant.Event_True("An Output_Format is Table."),
-		),
-		invariant.Impossible(
-			invariant.Event_True("An Output_Format is one."),
-			invariant.Event_False("An Output_Format is Json."),
-		),
-		invariant.Impossible(
-			invariant.Event_False("An Output_Format is one."),
-			invariant.Event_True("An Output_Format is Json."),
-		),
-		invariant.Impossible(
-			invariant.Event_True("An Output_Format is zero."),
-			invariant.Event_True("An Output_Format is one."),
-		),
-		invariant.Impossible(
-			invariant.Event_False("An Output_Format is zero."),
-			invariant.Event_False("An Output_Format is one."),
-		),
-	)
+	invariant.Range_Invariants(format, OUTPUT_FORMAT_TABLE, OUTPUT_FORMAT_JSON, namespace)
 }
 
 // OUTPUT_FORMAT_TABLE renders the human-readable comparison table; the default.
@@ -191,59 +157,7 @@ type Captured_Output []byte
 // Captured_Output_Invariants bounds the captured stderr and witnesses its boundaries: the
 // empty min, the full-buffer max, and the one- and two-byte shapes between.
 func Captured_Output_Invariants(output Captured_Output, namespace invariant.Namespace) {
-	invariant.Always(len(output) <= CAPTURE_BYTES_MAX, "Captured output is at most its max.")
-	invariant.Always(len(output) >= CAPTURE_BYTES_MIN, "Captured output is at least its min.")
-	invariant.Dot_Product(namespace,
-		invariant.Sometimes(len(output) == 0, "Captured output is empty."),
-		invariant.Sometimes(len(output) == 1, "Captured output is one byte."),
-		invariant.Sometimes(len(output) == 2, "Captured output is two bytes."),
-		invariant.Sometimes(len(output) == CAPTURE_BYTES_MIN, "Captured output is at min."),
-		invariant.Sometimes(len(output) == CAPTURE_BYTES_MAX, "Captured output is full."),
-		invariant.Impossible(
-			invariant.Event_True("Captured output is empty."),
-			invariant.Event_False("Captured output is at min."),
-		),
-		invariant.Impossible(
-			invariant.Event_False("Captured output is empty."),
-			invariant.Event_True("Captured output is at min."),
-		),
-		invariant.Impossible(
-			invariant.Event_True("Captured output is empty."),
-			invariant.Event_True("Captured output is one byte."),
-		),
-		invariant.Impossible(
-			invariant.Event_True("Captured output is empty."),
-			invariant.Event_True("Captured output is two bytes."),
-		),
-		invariant.Impossible(
-			invariant.Event_True("Captured output is empty."),
-			invariant.Event_True("Captured output is full."),
-		),
-		invariant.Impossible(
-			invariant.Event_True("Captured output is at min."),
-			invariant.Event_True("Captured output is one byte."),
-		),
-		invariant.Impossible(
-			invariant.Event_True("Captured output is at min."),
-			invariant.Event_True("Captured output is two bytes."),
-		),
-		invariant.Impossible(
-			invariant.Event_True("Captured output is at min."),
-			invariant.Event_True("Captured output is full."),
-		),
-		invariant.Impossible(
-			invariant.Event_True("Captured output is one byte."),
-			invariant.Event_True("Captured output is two bytes."),
-		),
-		invariant.Impossible(
-			invariant.Event_True("Captured output is one byte."),
-			invariant.Event_True("Captured output is full."),
-		),
-		invariant.Impossible(
-			invariant.Event_True("Captured output is two bytes."),
-			invariant.Event_True("Captured output is full."),
-		),
-	)
+	invariant.Range_Invariants(len(output), CAPTURE_BYTES_MIN, CAPTURE_BYTES_MAX, namespace)
 }
 
 // Run_Result is everything one measured run reports: its Sample, the exit code,
@@ -270,23 +184,23 @@ func Run_Result_Invariants(result Run_Result, namespace invariant.Namespace) {
 }
 
 // COLLECTION_MIN is the empty count: the floor a failure or an empty input leaves a
-// sample or value collection at. QUORUM_MIN and DEVIATION_MIN are the non-empty floors
-// of a distribution and a deviation input; SAMPLES_MAX is the kept-run ceiling they share.
+// sample or value collection at. QUORUM_MIN is the non-empty floor of a distribution;
+// SAMPLES_MAX is the kept-run ceiling they share.
 const COLLECTION_MIN = 0
 
 // QUORUM_MIN is 3, the floor below which a distribution is too thin to trust.
 const QUORUM_MIN = 3
-
-// DEVIATION_MIN is 1, since a deviation is defined only once there is a value to spread.
-const DEVIATION_MIN = 1
 
 // Samples is what one command's collection yields: empty when the first run fails before
 // the minimum, or a full distribution. The one- and two-run counts between never occur,
 // since the 3-run minimum is reached in one uninterrupted stretch or not at all.
 type Samples []Sample
 
-// Samples_Invariants bounds the collected count: the empty floor and the kept-run ceiling
-// are witnessed, the one- and two-run shapes claimed unreachable.
+// Samples_Invariants states the collected count. The count is {0} ∪ [3,MAX] — empty on an
+// early failure or a full distribution, never one or two, since the 3-run minimum is reached
+// in one uninterrupted stretch or not at all. That hole makes it not a range: the bundle
+// witnesses the empty floor and the kept-run ceiling, guards the one- and two-run counts as
+// unreachable, and leaves the ordinary quorum-and-up counts to the all-clear cell.
 func Samples_Invariants(samples Samples, namespace invariant.Namespace) {
 	invariant.Always(len(samples) <= SAMPLES_MAX, "A sample set is at most its max.")
 	invariant.Always(len(samples) >= COLLECTION_MIN, "A sample set is at least its min.")
@@ -294,14 +208,23 @@ func Samples_Invariants(samples Samples, namespace invariant.Namespace) {
 	invariant.Always(len(samples) != 2, "A sample set never has two.")
 	invariant.Dot_Product(namespace,
 		invariant.Sometimes(len(samples) == 0, "A sample set is empty."),
-		invariant.Sometimes(len(samples) == COLLECTION_MIN, "A sample set at min."),
+		invariant.Sometimes(len(samples) == COLLECTION_MIN, "A sample set is at min."),
+		invariant.Sometimes(len(samples) == SAMPLES_MAX, "A sample set is at max."),
 		invariant.Impossible(
 			invariant.Event_True("A sample set is empty."),
-			invariant.Event_False("A sample set at min."),
+			invariant.Event_False("A sample set is at min."),
 		),
 		invariant.Impossible(
 			invariant.Event_False("A sample set is empty."),
-			invariant.Event_True("A sample set at min."),
+			invariant.Event_True("A sample set is at min."),
+		),
+		invariant.Impossible(
+			invariant.Event_True("A sample set is empty."),
+			invariant.Event_True("A sample set is at max."),
+		),
+		invariant.Impossible(
+			invariant.Event_True("A sample set is at min."),
+			invariant.Event_True("A sample set is at max."),
 		),
 	)
 }
@@ -313,35 +236,17 @@ type Distribution []Sample
 // Distribution_Invariants bounds the run count: the quorum floor and the kept-run ceiling
 // are witnessed, every short boundary claimed unreachable.
 func Distribution_Invariants(samples Distribution, namespace invariant.Namespace) {
-	invariant.Always(len(samples) <= SAMPLES_MAX, "A distribution is at most its max.")
-	invariant.Always(len(samples) >= QUORUM_MIN, "A distribution is at least its min.")
-	invariant.Always(len(samples) != 0, "A distribution is never empty.")
-	invariant.Always(len(samples) != 1, "A distribution never has one.")
-	invariant.Always(len(samples) != 2, "A distribution never has two.")
-	// The ceiling is the arbitrary sample cap, reached only by grinding a full run — the
-	// Always guard holds it, so only the quorum floor is witnessed.
-	invariant.Dot_Product(namespace,
-		invariant.Sometimes(len(samples) == QUORUM_MIN, "A distribution is at min."),
-	)
+	invariant.Range_Invariants(len(samples), QUORUM_MIN, SAMPLES_MAX, namespace)
 }
 
 // Values is one metric's value pulled from every sample, the int64 the statistics work in.
 type Values []int64
 
-// Values_Invariants bounds the value count: the empty min and the kept-run max are
-// witnessed alongside the one- and two-value shapes between.
+// Values_Invariants bounds the value count. The values are pulled from a kept distribution,
+// floored at the 3-run quorum, so the quorum floor and the kept-run ceiling are the witnessed
+// shapes; the empty, one, and two counts a quorum never holds fall below the range and are guarded.
 func Values_Invariants(values Values, namespace invariant.Namespace) {
-	invariant.Always(len(values) <= SAMPLES_MAX, "A value set is at most its max.")
-	invariant.Always(len(values) >= COLLECTION_MIN, "A value set is at least its min.")
-	// A metric's values are extracted from a kept distribution, which the 3-run quorum
-	// makes at least three — never empty, one, or two — so those counts are guarded, not
-	// witnessed. Reducing a distribution to statistics is only ever asked of a quorum.
-	invariant.Always(len(values) != 0, "A value set is never empty.")
-	invariant.Always(len(values) != 1, "A value set never has one.")
-	invariant.Always(len(values) != 2, "A value set never has two.")
-	invariant.Dot_Product(namespace,
-		invariant.Sometimes(len(values) == QUORUM_MIN, "A value set is at its quorum."),
-	)
+	invariant.Range_Invariants(len(values), QUORUM_MIN, SAMPLES_MAX, namespace)
 }
 
 // Series is one metric pulled from a distribution — always the quorum's worth, never the
@@ -351,42 +256,28 @@ type Series []int64
 // Series_Invariants bounds the extracted count: it mirrors a distribution's quorum floor
 // and kept-run ceiling, claiming every short boundary unreachable.
 func Series_Invariants(values Series, namespace invariant.Namespace) {
-	invariant.Always(len(values) <= SAMPLES_MAX, "A series is at most its max.")
-	invariant.Always(len(values) >= QUORUM_MIN, "A series is at least its min.")
-	invariant.Always(len(values) != 0, "A series is never empty.")
-	invariant.Always(len(values) != 1, "A series never has one.")
-	invariant.Always(len(values) != 2, "A series never has two.")
-	invariant.Dot_Product(namespace,
-		invariant.Sometimes(len(values) == QUORUM_MIN, "A series is at min."),
-	)
+	invariant.Range_Invariants(len(values), QUORUM_MIN, SAMPLES_MAX, namespace)
 }
 
-// Deviations is the sorted values the standard deviation reduces; the compute guards the
-// empty case, so it is never empty, but the one- and two-value sets do reach it.
+// Deviations is the sorted values the standard deviation reduces — a kept distribution's, so
+// always at least the 3-run quorum, never the empty, one, or two counts below it.
 type Deviations []int64
 
-// Deviations_Invariants bounds the count: empty is claimed unreachable (the compute
-// returns early), while the single-value min, the two-value shape, and the max are witnessed.
+// Deviations_Invariants bounds the count. The deviations are a kept distribution's, floored at
+// the 3-run quorum, so the quorum floor and the kept-run ceiling are witnessed and the shorter
+// counts are guarded out.
 func Deviations_Invariants(values Deviations, namespace invariant.Namespace) {
-	invariant.Always(len(values) <= SAMPLES_MAX, "A deviation set is at most its max.")
-	invariant.Always(len(values) >= DEVIATION_MIN, "A deviation set is at least its min.")
-	// The deviations are a kept distribution's, which the 3-run quorum makes at least three
-	// — never empty, one, or two — so those counts are guarded, not witnessed.
-	invariant.Always(len(values) != 0, "A deviation set is never empty.")
-	invariant.Always(len(values) != 1, "A deviation set never has one.")
-	invariant.Always(len(values) != 2, "A deviation set never has two.")
-	invariant.Dot_Product(namespace,
-		invariant.Sometimes(len(values) == QUORUM_MIN, "A deviation set is at its quorum."),
-	)
+	invariant.Range_Invariants(len(values), QUORUM_MIN, SAMPLES_MAX, namespace)
 }
 
-// WORD_MIN is the lone executable a command line always carries; STRUCTURE_MAX is the
-// ceiling the small structural collections — command lines, command sets, benchmark
-// sets — share, generous enough to never be reached by a real invocation.
+// WORD_MIN is the lone executable a command line always carries.
 const WORD_MIN = 1
 
-// STRUCTURE_MAX is 1<<8, headroom no real command structure reaches yet bounds the checks.
-const STRUCTURE_MAX = 1 << 8
+// COMMAND_WORDS_MAX bounds a command line's token count (executable + env + arguments).
+const COMMAND_WORDS_MAX = 32
+
+// COMMAND_SET_MAX bounds how many commands/benchmarks one run compares.
+const COMMAND_SET_MAX = 8
 
 // Command_Line is one command flattened to its words — the executable and its arguments.
 type Command_Line []Command_Word
@@ -394,30 +285,7 @@ type Command_Line []Command_Word
 // Command_Line_Invariants bounds the word count; a command always has its executable, so
 // the empty count is unreachable while the one-word min, two-word shape, and max are witnessed.
 func Command_Line_Invariants(words Command_Line, namespace invariant.Namespace) {
-	invariant.Always(len(words) <= STRUCTURE_MAX, "A command line is at most its max.")
-	invariant.Always(len(words) >= WORD_MIN, "A command line is at least its min.")
-	invariant.Always(len(words) != 0, "A command line is never empty.")
-	invariant.Dot_Product(namespace,
-		invariant.Sometimes(len(words) == 1, "A command line has one word."),
-		invariant.Sometimes(len(words) == 2, "A command line has two words."),
-		invariant.Sometimes(len(words) == WORD_MIN, "A command line is at min."),
-		invariant.Impossible(
-			invariant.Event_True("A command line has one word."),
-			invariant.Event_False("A command line is at min."),
-		),
-		invariant.Impossible(
-			invariant.Event_False("A command line has one word."),
-			invariant.Event_True("A command line is at min."),
-		),
-		invariant.Impossible(
-			invariant.Event_True("A command line has one word."),
-			invariant.Event_True("A command line has two words."),
-		),
-		invariant.Impossible(
-			invariant.Event_True("A command line has two words."),
-			invariant.Event_True("A command line is at min."),
-		),
-	)
+	invariant.Range_Invariants(len(words), WORD_MIN, COMMAND_WORDS_MAX, namespace)
 }
 
 // Commands is the set of commands a run benchmarks, in invocation order.
@@ -426,42 +294,7 @@ type Commands []sysio.Process_Request
 // Commands_Invariants bounds the command count: the empty min, the one- and two-command
 // shapes, and the max are witnessed.
 func Commands_Invariants(commands Commands, namespace invariant.Namespace) {
-	invariant.Always(len(commands) <= STRUCTURE_MAX, "A command set is at most its max.")
-	invariant.Always(len(commands) >= COLLECTION_MIN, "A command set is at least its min.")
-	invariant.Dot_Product(namespace,
-		invariant.Sometimes(len(commands) == 0, "A command set is empty."),
-		invariant.Sometimes(len(commands) == 1, "A command set has one."),
-		invariant.Sometimes(len(commands) == 2, "A command set has two."),
-		invariant.Sometimes(len(commands) == COLLECTION_MIN, "A command set at min."),
-		invariant.Impossible(
-			invariant.Event_True("A command set is empty."),
-			invariant.Event_False("A command set at min."),
-		),
-		invariant.Impossible(
-			invariant.Event_False("A command set is empty."),
-			invariant.Event_True("A command set at min."),
-		),
-		invariant.Impossible(
-			invariant.Event_True("A command set is empty."),
-			invariant.Event_True("A command set has one."),
-		),
-		invariant.Impossible(
-			invariant.Event_True("A command set is empty."),
-			invariant.Event_True("A command set has two."),
-		),
-		invariant.Impossible(
-			invariant.Event_True("A command set at min."),
-			invariant.Event_True("A command set has one."),
-		),
-		invariant.Impossible(
-			invariant.Event_True("A command set at min."),
-			invariant.Event_True("A command set has two."),
-		),
-		invariant.Impossible(
-			invariant.Event_True("A command set has one."),
-			invariant.Event_True("A command set has two."),
-		),
-	)
+	invariant.Range_Invariants(len(commands), COLLECTION_MIN, COMMAND_SET_MAX, namespace)
 }
 
 // Benchmarks is one entry per benchmarked command, in invocation order.
@@ -470,47 +303,13 @@ type Benchmarks []Benchmark
 // Benchmarks_Invariants bounds the entry count: the empty min, the one- and two-entry
 // shapes, and the max are witnessed.
 func Benchmarks_Invariants(benchmarks Benchmarks, namespace invariant.Namespace) {
-	invariant.Always(len(benchmarks) <= STRUCTURE_MAX, "A benchmark set is at most its max.")
-	invariant.Always(len(benchmarks) >= COLLECTION_MIN, "A benchmark set is at least its min.")
-	invariant.Dot_Product(namespace,
-		invariant.Sometimes(len(benchmarks) == 0, "A benchmark set is empty."),
-		invariant.Sometimes(len(benchmarks) == 1, "A benchmark set has one."),
-		invariant.Sometimes(len(benchmarks) == 2, "A benchmark set has two."),
-		invariant.Sometimes(len(benchmarks) == COLLECTION_MIN, "A benchmark set at min."),
-		invariant.Impossible(
-			invariant.Event_True("A benchmark set is empty."),
-			invariant.Event_False("A benchmark set at min."),
-		),
-		invariant.Impossible(
-			invariant.Event_False("A benchmark set is empty."),
-			invariant.Event_True("A benchmark set at min."),
-		),
-		invariant.Impossible(
-			invariant.Event_True("A benchmark set is empty."),
-			invariant.Event_True("A benchmark set has one."),
-		),
-		invariant.Impossible(
-			invariant.Event_True("A benchmark set is empty."),
-			invariant.Event_True("A benchmark set has two."),
-		),
-		invariant.Impossible(
-			invariant.Event_True("A benchmark set at min."),
-			invariant.Event_True("A benchmark set has one."),
-		),
-		invariant.Impossible(
-			invariant.Event_True("A benchmark set at min."),
-			invariant.Event_True("A benchmark set has two."),
-		),
-		invariant.Impossible(
-			invariant.Event_True("A benchmark set has one."),
-			invariant.Event_True("A benchmark set has two."),
-		),
-	)
+	invariant.Range_Invariants(len(benchmarks), COLLECTION_MIN, COMMAND_SET_MAX, namespace)
 }
 
-// REPORT_MAX bounds the rendered bytes — a ceiling a real document's render stays well
-// under, witnessed directly at its full length.
-const REPORT_MAX = 1 << 16
+// REPORT_MAX bounds the rendered bytes at the widest document the pipeline produces: a full
+// command set of ceiling-scale, outlier-saturated benchmarks, colored, under a full machine
+// header. Every field is at its own ceiling, so no document renders wider.
+const REPORT_MAX = 9925
 
 // Report is the rendered output of a document — the table or the JSON bytes.
 type Report []byte
@@ -525,6 +324,7 @@ func Report_Invariants(report Report, namespace invariant.Namespace) {
 	invariant.Dot_Product(namespace,
 		invariant.Sometimes(len(report) == 0, "A report is empty."),
 		invariant.Sometimes(len(report) == COLLECTION_MIN, "A report is at min."),
+		invariant.Sometimes(len(report) == REPORT_MAX, "A report is at max."),
 		invariant.Impossible(
 			invariant.Event_True("A report is empty."),
 			invariant.Event_False("A report is at min."),
@@ -532,6 +332,10 @@ func Report_Invariants(report Report, namespace invariant.Namespace) {
 		invariant.Impossible(
 			invariant.Event_False("A report is empty."),
 			invariant.Event_True("A report is at min."),
+		),
+		invariant.Impossible(
+			invariant.Event_True("A report is at min."),
+			invariant.Event_True("A report is at max."),
 		),
 	)
 }
@@ -578,59 +382,7 @@ type Host_Text string
 // Host_Text_Invariants bounds a host spec field's length, witnessing the empty min, the
 // capped max, and the one- and two-byte shapes between.
 func Host_Text_Invariants(text Host_Text, namespace invariant.Namespace) {
-	invariant.Always(len(text) <= HOST_TEXT_BYTES_MAX, "A host field is at most its max.")
-	invariant.Always(len(text) >= HOST_TEXT_BYTES_MIN, "A host field is at least its min.")
-	invariant.Dot_Product(namespace,
-		invariant.Sometimes(len(text) == 0, "A host field is empty."),
-		invariant.Sometimes(len(text) == 1, "A host field is one byte."),
-		invariant.Sometimes(len(text) == 2, "A host field is two bytes."),
-		invariant.Sometimes(len(text) == HOST_TEXT_BYTES_MIN, "A host field is at min."),
-		invariant.Sometimes(len(text) == HOST_TEXT_BYTES_MAX, "A host field is at max."),
-		invariant.Impossible(
-			invariant.Event_True("A host field is empty."),
-			invariant.Event_False("A host field is at min."),
-		),
-		invariant.Impossible(
-			invariant.Event_False("A host field is empty."),
-			invariant.Event_True("A host field is at min."),
-		),
-		invariant.Impossible(
-			invariant.Event_True("A host field is empty."),
-			invariant.Event_True("A host field is one byte."),
-		),
-		invariant.Impossible(
-			invariant.Event_True("A host field is empty."),
-			invariant.Event_True("A host field is two bytes."),
-		),
-		invariant.Impossible(
-			invariant.Event_True("A host field is empty."),
-			invariant.Event_True("A host field is at max."),
-		),
-		invariant.Impossible(
-			invariant.Event_True("A host field is at min."),
-			invariant.Event_True("A host field is one byte."),
-		),
-		invariant.Impossible(
-			invariant.Event_True("A host field is at min."),
-			invariant.Event_True("A host field is two bytes."),
-		),
-		invariant.Impossible(
-			invariant.Event_True("A host field is at min."),
-			invariant.Event_True("A host field is at max."),
-		),
-		invariant.Impossible(
-			invariant.Event_True("A host field is one byte."),
-			invariant.Event_True("A host field is two bytes."),
-		),
-		invariant.Impossible(
-			invariant.Event_True("A host field is one byte."),
-			invariant.Event_True("A host field is at max."),
-		),
-		invariant.Impossible(
-			invariant.Event_True("A host field is two bytes."),
-			invariant.Event_True("A host field is at max."),
-		),
-	)
+	invariant.Range_Invariants(len(text), HOST_TEXT_BYTES_MIN, HOST_TEXT_BYTES_MAX, namespace)
 }
 
 // Machine_Specs is a snapshot of the host hardware and OS taken once at startup,
@@ -695,30 +447,40 @@ func Machine_Specs_Invariants(specs Machine_Specs, namespace invariant.Namespace
 	Host_Text_Invariants(specs.Kernel_Version, "Machine_Specs.Kernel_Version")
 }
 
-// UNIT_BYTES_MIN is the empty unit: the zero value a unitless Measurement carries.
-const UNIT_BYTES_MIN = 0
+// UNIT_BYTES_MIN is the shortest unit in the vocabulary — "count" and "bytes", five bytes
+// each. Every rendered unit is one of the closed vocabulary, so no shorter width ever occurs.
+const UNIT_BYTES_MIN = 5
 
 // UNIT_BYTES_MAX is the longest unit in the vocabulary — "nanoseconds", eleven bytes.
 // Units are a closed set, so a longer value is a malformed probe to reject.
 const UNIT_BYTES_MAX = 11
 
-// Unit names the dimension a Measurement's raw values are in — a short word from a fixed
-// vocabulary, or empty when the distribution carries no unit (a zero-value Measurement).
+// Unit names the dimension a Measurement's raw values are in — a word from a closed vocabulary
+// of exactly two widths: the five-byte "count"/"bytes" and the eleven-byte "nanoseconds".
 type Unit string
 
-// Unit_Invariants bounds a unit's length: the empty min and the longest-word max are
-// witnessed, and the one- and two-byte shapes between are claimed unreachable.
+// Unit_Invariants states a unit's length. The vocabulary is closed to two widths, so this is
+// not a range but a two-point set: the bundle witnesses both — the five-byte floor and the
+// eleven-byte ceiling — carves every width between as unreachable, and guards the closed span,
+// since a length outside it is a malformed probe. Range_Invariants cannot express a set with a
+// hole, so this stays a hand-written bundle.
 func Unit_Invariants(name Unit, namespace invariant.Namespace) {
 	invariant.Always(len(name) <= UNIT_BYTES_MAX, "A unit is at most its max.")
 	invariant.Always(len(name) >= UNIT_BYTES_MIN, "A unit is at least its min.")
-	// A rendered unit is always one of the fixed vocabulary — "count", "bytes",
-	// "nanoseconds" — never empty, one, or two bytes, so those lengths are guarded. The
-	// longest word is the max; the shorter words leave it unwitnessed.
-	invariant.Always(len(name) != 0, "A unit is never unset.")
+	invariant.Always(len(name) != 0, "A unit is never empty.")
 	invariant.Always(len(name) != 1, "A unit is never one byte.")
 	invariant.Always(len(name) != 2, "A unit is never two bytes.")
 	invariant.Dot_Product(namespace,
+		invariant.Sometimes(len(name) == UNIT_BYTES_MIN, "A unit is at min."),
 		invariant.Sometimes(len(name) == UNIT_BYTES_MAX, "A unit is at max."),
+		invariant.Impossible(
+			invariant.Event_True("A unit is at min."),
+			invariant.Event_True("A unit is at max."),
+		),
+		invariant.Impossible(
+			invariant.Event_False("A unit is at min."),
+			invariant.Event_False("A unit is at max."),
+		),
 	)
 }
 
@@ -1246,59 +1008,8 @@ type Command_Word string
 // Command_Word_Invariants bounds a command word's length, witnessing the empty min, the
 // capped max, and the one- and two-byte shapes between.
 func Command_Word_Invariants(word Command_Word, namespace invariant.Namespace) {
-	invariant.Always(len(word) <= COMMAND_WORD_BYTES_MAX, "A word is at most its max.")
-	invariant.Always(len(word) >= COMMAND_WORD_BYTES_MIN, "A word is at least its min.")
-	invariant.Dot_Product(namespace,
-		invariant.Sometimes(len(word) == 0, "A word is empty."),
-		invariant.Sometimes(len(word) == 1, "A word is one byte."),
-		invariant.Sometimes(len(word) == 2, "A word is two bytes."),
-		invariant.Sometimes(len(word) == COMMAND_WORD_BYTES_MIN, "A word is at min."),
-		invariant.Sometimes(len(word) == COMMAND_WORD_BYTES_MAX, "A word is at max."),
-		invariant.Impossible(
-			invariant.Event_True("A word is empty."),
-			invariant.Event_False("A word is at min."),
-		),
-		invariant.Impossible(
-			invariant.Event_False("A word is empty."),
-			invariant.Event_True("A word is at min."),
-		),
-		invariant.Impossible(
-			invariant.Event_True("A word is empty."),
-			invariant.Event_True("A word is one byte."),
-		),
-		invariant.Impossible(
-			invariant.Event_True("A word is empty."),
-			invariant.Event_True("A word is two bytes."),
-		),
-		invariant.Impossible(
-			invariant.Event_True("A word is empty."),
-			invariant.Event_True("A word is at max."),
-		),
-		invariant.Impossible(
-			invariant.Event_True("A word is at min."),
-			invariant.Event_True("A word is one byte."),
-		),
-		invariant.Impossible(
-			invariant.Event_True("A word is at min."),
-			invariant.Event_True("A word is two bytes."),
-		),
-		invariant.Impossible(
-			invariant.Event_True("A word is at min."),
-			invariant.Event_True("A word is at max."),
-		),
-		invariant.Impossible(
-			invariant.Event_True("A word is one byte."),
-			invariant.Event_True("A word is two bytes."),
-		),
-		invariant.Impossible(
-			invariant.Event_True("A word is one byte."),
-			invariant.Event_True("A word is at max."),
-		),
-		invariant.Impossible(
-			invariant.Event_True("A word is two bytes."),
-			invariant.Event_True("A word is at max."),
-		),
-	)
+	invariant.Range_Invariants(
+		len(word), COMMAND_WORD_BYTES_MIN, COMMAND_WORD_BYTES_MAX, namespace)
 }
 
 // Command_words flattens a command back to the words a reader recognizes:
@@ -1437,15 +1148,15 @@ func Measurement_Compute(values Values, unit Unit) (measurement Measurement) {
 // Wide is a 128-bit unsigned accumulator, for a sum of squares that overflows int64.
 type Wide struct {
 	// High is the upper 64 bits.
-	High Accumulator
+	High Accumulator_High
 	// Low is the lower 64 bits.
-	Low Accumulator
+	Low Accumulator_Low
 }
 
 // Wide_Invariants states the two halves of the 128-bit accumulator.
 func Wide_Invariants(value Wide, namespace invariant.Namespace) {
-	Accumulator_Invariants(value.High, "Wide.High")
-	Accumulator_Invariants(value.Low, "Wide.Low")
+	Accumulator_High_Invariants(value.High, "Wide.High")
+	Accumulator_Low_Invariants(value.Low, "Wide.Low")
 }
 
 // Wide_add_square adds value squared into a 128-bit accumulator.
@@ -1456,7 +1167,7 @@ func wide_add_square(subtotal Wide, value Gap) (sum Wide) {
 	product_high, product_low := bits.Mul64(uint64(value), uint64(value))
 	low, carry := bits.Add64(uint64(subtotal.Low), product_low, 0)
 	high, _ := bits.Add64(uint64(subtotal.High), product_high, carry)
-	return Wide{High: Accumulator(high), Low: Accumulator(low)}
+	return Wide{High: Accumulator_High(high), Low: Accumulator_Low(low)}
 }
 
 // Standard_deviation is the sample standard deviation with an n-1 denominator. The sum
@@ -1488,9 +1199,9 @@ func standard_deviation(
 // sample count less one — that divides it before the root.
 type Root_Of_Quotient_Input struct {
 	// High is the numerator's upper 64 bits.
-	High Accumulator
+	High Accumulator_High
 	// Low is the numerator's lower 64 bits.
-	Low Accumulator
+	Low Accumulator_Low
 	// Denominator is the sample count less one, the Bessel correction.
 	Denominator Divisor
 }
@@ -1499,8 +1210,8 @@ type Root_Of_Quotient_Input struct {
 func Root_Of_Quotient_Input_Invariants(
 	input Root_Of_Quotient_Input, namespace invariant.Namespace,
 ) {
-	Accumulator_Invariants(input.High, "Root_Of_Quotient_Input.High")
-	Accumulator_Invariants(input.Low, "Root_Of_Quotient_Input.Low")
+	Accumulator_High_Invariants(input.High, "Root_Of_Quotient_Input.High")
+	Accumulator_Low_Invariants(input.Low, "Root_Of_Quotient_Input.Low")
 	Divisor_Invariants(input.Denominator, "Root_Of_Quotient_Input.Denominator")
 }
 
@@ -1786,23 +1497,7 @@ type Ansi_Code string
 // An SGR code is always four or five bytes, so the empty and one/two-byte boundaries
 // are claimed as never reached rather than as observed.
 func Ansi_Code_Invariants(code Ansi_Code, namespace invariant.Namespace) {
-	invariant.Always(len(code) <= ANSI_CODE_BYTES_MAX, "ansi_code within max length.")
-	invariant.Always(len(code) >= ANSI_CODE_BYTES_MIN, "ansi_code within min length.")
-	invariant.Always(len(code) != 0, "ansi_code is never empty.")
-	invariant.Always(len(code) != 1, "ansi_code is never one byte.")
-	invariant.Always(len(code) != 2, "ansi_code is never two bytes.")
-	invariant.Dot_Product(namespace,
-		invariant.Sometimes(len(code) == ANSI_CODE_BYTES_MIN, "ansi_code length is min."),
-		invariant.Sometimes(len(code) == ANSI_CODE_BYTES_MAX, "ansi_code length is max."),
-		invariant.Impossible(
-			invariant.Event_True("ansi_code length is min."),
-			invariant.Event_True("ansi_code length is max."),
-		),
-		invariant.Impossible(
-			invariant.Event_False("ansi_code length is min."),
-			invariant.Event_False("ansi_code length is max."),
-		),
-	)
+	invariant.Range_Invariants(len(code), ANSI_CODE_BYTES_MIN, ANSI_CODE_BYTES_MAX, namespace)
 }
 
 // ANSI_RESET clears all set attributes.
@@ -1889,9 +1584,9 @@ func render_machine_header(builder *strings.Builder, m Machine_Specs) {
 // CORES_MIN is the single-digit core count a layout floors at, like "0".
 const CORES_MIN = 1
 
-// CORES_MAX bounds the core-layout string: the widest hybrid form with the largest counts
-// the int fields hold in practice.
-const CORES_MAX = 48
+// CORES_MAX bounds the core-layout string: the widest hybrid form "1023 P + 1023 E = 1023
+// logical" with every count at the render-safe core ceiling, thirty bytes.
+const CORES_MAX = 30
 
 // Cores_Line is the rendered core-layout line — "8", "4 P + 4 E = 8 logical". A distinct type
 // from a cell: it is wider than a formatted value, so it carries its own length range.
@@ -1900,30 +1595,7 @@ type Cores_Line string
 // Cores_Line_Invariants bounds the core-layout length; it is never empty, with the single-digit
 // min, the widest hybrid max, and the one- and two-byte shapes between witnessed.
 func Cores_Line_Invariants(text Cores_Line, namespace invariant.Namespace) {
-	invariant.Always(len(text) <= CORES_MAX, "A cores line is at most its max.")
-	invariant.Always(len(text) >= CORES_MIN, "A cores line is at least its min.")
-	invariant.Always(len(text) != 0, "A cores line is never empty.")
-	invariant.Dot_Product(namespace,
-		invariant.Sometimes(len(text) == 1, "A cores line is one byte."),
-		invariant.Sometimes(len(text) == 2, "A cores line is two bytes."),
-		invariant.Sometimes(len(text) == CORES_MIN, "A cores line is at min."),
-		invariant.Impossible(
-			invariant.Event_True("A cores line is one byte."),
-			invariant.Event_False("A cores line is at min."),
-		),
-		invariant.Impossible(
-			invariant.Event_False("A cores line is one byte."),
-			invariant.Event_True("A cores line is at min."),
-		),
-		invariant.Impossible(
-			invariant.Event_True("A cores line is one byte."),
-			invariant.Event_True("A cores line is two bytes."),
-		),
-		invariant.Impossible(
-			invariant.Event_True("A cores line is two bytes."),
-			invariant.Event_True("A cores line is at min."),
-		),
-	)
+	invariant.Range_Invariants(len(text), CORES_MIN, CORES_MAX, namespace)
 }
 
 // Machine_specs_cores renders the CPU core layout, naming performance and efficiency cores on
@@ -2006,37 +1678,7 @@ type Span string
 // Span_Invariants bounds a rendered span's length, witnessing the one-byte floor, the two-byte
 // single-digit-seconds shape, and the widest glyph-and-suffix form.
 func Span_Invariants(text Span, namespace invariant.Namespace) {
-	invariant.Always(len(text) <= SPAN_BYTES_MAX, "A span is at most its max length.")
-	invariant.Always(len(text) >= SPAN_BYTES_MIN, "A span is at least its min length.")
-	invariant.Always(len(text) != 0, "A span is never empty.")
-	invariant.Dot_Product(namespace,
-		invariant.Sometimes(len(text) == 1, "A span is one byte."),
-		invariant.Sometimes(len(text) == 2, "A span is two bytes."),
-		invariant.Sometimes(len(text) == SPAN_BYTES_MIN, "A span is at min."),
-		invariant.Sometimes(len(text) == SPAN_BYTES_MAX, "A span is at max."),
-		// One byte is the min, so those two events coincide; two bytes and the six-byte max
-		// are each their own length, so no two boundary events ever share a span.
-		invariant.Impossible(
-			invariant.Event_True("A span is one byte."),
-			invariant.Event_False("A span is at min."),
-		),
-		invariant.Impossible(
-			invariant.Event_False("A span is one byte."),
-			invariant.Event_True("A span is at min."),
-		),
-		invariant.Impossible(
-			invariant.Event_True("A span is one byte."),
-			invariant.Event_True("A span is two bytes."),
-		),
-		invariant.Impossible(
-			invariant.Event_True("A span is one byte."),
-			invariant.Event_True("A span is at max."),
-		),
-		invariant.Impossible(
-			invariant.Event_True("A span is two bytes."),
-			invariant.Event_True("A span is at max."),
-		),
-	)
+	invariant.Range_Invariants(len(text), SPAN_BYTES_MIN, SPAN_BYTES_MAX, namespace)
 }
 
 // Format_elapsed renders a total sampling duration for the benchmark header with the time
@@ -2273,43 +1915,7 @@ type Cell string
 // Cell_Invariants bounds a cell's length: never empty, the single-byte min and the widest
 // max witnessed alongside the two-byte shape.
 func Cell_Invariants(text Cell, namespace invariant.Namespace) {
-	invariant.Always(len(text) <= CELL_BYTES_MAX, "A cell is at most its max length.")
-	invariant.Always(len(text) >= CELL_BYTES_MIN, "A cell is at least its min length.")
-	invariant.Always(len(text) != 0, "A cell is never empty.")
-	invariant.Dot_Product(namespace,
-		invariant.Sometimes(len(text) == 1, "A cell is one byte."),
-		invariant.Sometimes(len(text) == 2, "A cell is two bytes."),
-		invariant.Sometimes(len(text) == CELL_BYTES_MIN, "A cell is at min."),
-		invariant.Sometimes(len(text) == CELL_BYTES_MAX, "A cell is at max."),
-		invariant.Impossible(
-			invariant.Event_True("A cell is one byte."),
-			invariant.Event_False("A cell is at min."),
-		),
-		invariant.Impossible(
-			invariant.Event_False("A cell is one byte."),
-			invariant.Event_True("A cell is at min."),
-		),
-		invariant.Impossible(
-			invariant.Event_True("A cell is one byte."),
-			invariant.Event_True("A cell is two bytes."),
-		),
-		invariant.Impossible(
-			invariant.Event_True("A cell is one byte."),
-			invariant.Event_True("A cell is at max."),
-		),
-		invariant.Impossible(
-			invariant.Event_True("A cell is two bytes."),
-			invariant.Event_True("A cell is at min."),
-		),
-		invariant.Impossible(
-			invariant.Event_True("A cell is two bytes."),
-			invariant.Event_True("A cell is at max."),
-		),
-		invariant.Impossible(
-			invariant.Event_True("A cell is at min."),
-			invariant.Event_True("A cell is at max."),
-		),
-	)
+	invariant.Range_Invariants(len(text), CELL_BYTES_MIN, CELL_BYTES_MAX, namespace)
 }
 
 // GLYPH_MIN is the single digit a formatted figure floors at, like "0".
@@ -2326,51 +1932,15 @@ type Glyph string
 // Glyph_Invariants bounds the figure length; never empty, with the single-digit min, the
 // widest figure max, and the one- and two-byte shapes between witnessed.
 func Glyph_Invariants(text Glyph, namespace invariant.Namespace) {
-	invariant.Always(len(text) <= GLYPH_MAX, "A glyph is at most its max.")
-	invariant.Always(len(text) >= GLYPH_MIN, "A glyph is at least its min.")
-	invariant.Always(len(text) != 0, "A glyph is never empty.")
-	invariant.Dot_Product(namespace,
-		invariant.Sometimes(len(text) == 1, "A glyph is one byte."),
-		invariant.Sometimes(len(text) == 2, "A glyph is two bytes."),
-		invariant.Sometimes(len(text) == GLYPH_MIN, "A glyph is at min."),
-		invariant.Sometimes(len(text) == GLYPH_MAX, "A glyph is at max."),
-		invariant.Impossible(
-			invariant.Event_True("A glyph is one byte."),
-			invariant.Event_False("A glyph is at min."),
-		),
-		invariant.Impossible(
-			invariant.Event_False("A glyph is one byte."),
-			invariant.Event_True("A glyph is at min."),
-		),
-		invariant.Impossible(
-			invariant.Event_True("A glyph is one byte."),
-			invariant.Event_True("A glyph is two bytes."),
-		),
-		invariant.Impossible(
-			invariant.Event_True("A glyph is one byte."),
-			invariant.Event_True("A glyph is at max."),
-		),
-		invariant.Impossible(
-			invariant.Event_True("A glyph is two bytes."),
-			invariant.Event_True("A glyph is at min."),
-		),
-		invariant.Impossible(
-			invariant.Event_True("A glyph is two bytes."),
-			invariant.Event_True("A glyph is at max."),
-		),
-		invariant.Impossible(
-			invariant.Event_True("A glyph is at min."),
-			invariant.Event_True("A glyph is at max."),
-		),
-	)
+	invariant.Range_Invariants(len(text), GLYPH_MIN, GLYPH_MAX, namespace)
 }
 
 // COLUMN_MIN is the single byte a padded column floors at before alignment.
 const COLUMN_MIN = 1
 
 // COLUMN_MAX bounds the unpadded text a column pads: a metric name, an outlier tally, or a
-// scaled value, the widest of which is the longest metric name with its delta.
-const COLUMN_MAX = 25
+// scaled value, the widest of which is the sixteen-byte longest metric name.
+const COLUMN_MAX = 16
 
 // Column is the text handed to the padder for one table column — a value, a name, or an
 // outlier count, before it is widened to the column. A distinct type covering that union,
@@ -2380,30 +1950,7 @@ type Column string
 // Column_Invariants bounds the column-text length; never empty, with the single-byte min,
 // the widest text max, and the one- and two-byte shapes between witnessed.
 func Column_Invariants(text Column, namespace invariant.Namespace) {
-	invariant.Always(len(text) <= COLUMN_MAX, "A column is at most its max.")
-	invariant.Always(len(text) >= COLUMN_MIN, "A column is at least its min.")
-	invariant.Always(len(text) != 0, "A column is never empty.")
-	invariant.Dot_Product(namespace,
-		invariant.Sometimes(len(text) == 1, "A column is one byte."),
-		invariant.Sometimes(len(text) == 2, "A column is two bytes."),
-		invariant.Sometimes(len(text) == COLUMN_MIN, "A column is at min."),
-		invariant.Impossible(
-			invariant.Event_True("A column is one byte."),
-			invariant.Event_False("A column is at min."),
-		),
-		invariant.Impossible(
-			invariant.Event_False("A column is one byte."),
-			invariant.Event_True("A column is at min."),
-		),
-		invariant.Impossible(
-			invariant.Event_True("A column is one byte."),
-			invariant.Event_True("A column is two bytes."),
-		),
-		invariant.Impossible(
-			invariant.Event_True("A column is two bytes."),
-			invariant.Event_True("A column is at min."),
-		),
-	)
+	invariant.Range_Invariants(len(text), COLUMN_MIN, COLUMN_MAX, namespace)
 }
 
 // CAPTION_MIN is the shortest metric or column name, like "peak_rss".
@@ -2419,26 +1966,15 @@ type Caption string
 // Caption_Invariants bounds a caption's length; always several bytes, so the empty, one, and
 // two-byte boundaries are unreachable while the min and max are witnessed.
 func Caption_Invariants(text Caption, namespace invariant.Namespace) {
-	invariant.Always(len(text) <= CAPTION_MAX, "A caption is at most its max.")
-	invariant.Always(len(text) >= CAPTION_MIN, "A caption is at least its min.")
-	invariant.Always(len(text) != 0, "A caption is never empty.")
-	invariant.Always(len(text) != 1, "A caption is never one byte.")
-	invariant.Always(len(text) != 2, "A caption is never two bytes.")
-	invariant.Dot_Product(namespace,
-		invariant.Sometimes(len(text) == CAPTION_MIN, "A caption is at min."),
-		invariant.Sometimes(len(text) == CAPTION_MAX, "A caption is at max."),
-		invariant.Impossible(
-			invariant.Event_True("A caption is at min."),
-			invariant.Event_True("A caption is at max."),
-		),
-	)
+	invariant.Range_Invariants(len(text), CAPTION_MIN, CAPTION_MAX, namespace)
 }
 
 // OUTLIERS_MIN is the shortest outlier tally, the six-byte "0 (0%)".
 const OUTLIERS_MIN = 6
 
-// OUTLIERS_MAX bounds the outlier tally, the widest a large count over a tiny sample reaches.
-const OUTLIERS_MAX = 25
+// OUTLIERS_MAX bounds the outlier tally: the four-digit strays ceiling with its two-digit
+// percentage, "4999 (49%)", ten bytes — an outlier count never exceeds half its samples.
+const OUTLIERS_MAX = 10
 
 // Outliers is the rendered outlier count with its percentage — "0 (0%)", "3 (10%)". A
 // distinct type from a line: a tally is always several bytes, never the full row a line is.
@@ -2447,21 +1983,15 @@ type Outliers string
 // Outliers_Invariants bounds the tally's length; always several bytes, so the empty, one, and
 // two-byte boundaries are unreachable while the min and max are witnessed.
 func Outliers_Invariants(text Outliers, namespace invariant.Namespace) {
-	invariant.Always(len(text) <= OUTLIERS_MAX, "An outliers tally is at most its max.")
-	invariant.Always(len(text) >= OUTLIERS_MIN, "An outliers tally is at least its min.")
-	invariant.Always(len(text) != 0, "An outliers tally is never empty.")
-	invariant.Always(len(text) != 1, "An outliers tally is never one byte.")
-	invariant.Always(len(text) != 2, "An outliers tally is never two bytes.")
-	invariant.Dot_Product(namespace,
-		invariant.Sometimes(len(text) == OUTLIERS_MIN, "An outliers tally is at min."),
-	)
+	invariant.Range_Invariants(len(text), OUTLIERS_MIN, OUTLIERS_MAX, namespace)
 }
 
 // PADDED_MIN is the narrowest padded column, the four-wide delta interval.
 const PADDED_MIN = 4
 
-// PADDED_MAX bounds a padded column: the widest unpadded text a column ever holds.
-const PADDED_MAX = 25
+// PADDED_MAX bounds a padded column: the widest unpadded text a column ever holds, the
+// sixteen-byte longest metric name, which already exceeds every column's pad width.
+const PADDED_MAX = 16
 
 // Padded is one column widened to its alignment width — the padder's output, between the
 // narrowest delta column and the widest value. A distinct type from a whole row.
@@ -2470,24 +2000,15 @@ type Padded string
 // Padded_Invariants bounds a padded column's length; always several bytes, so the empty, one,
 // and two-byte boundaries are unreachable while the min and max are witnessed.
 func Padded_Invariants(text Padded, namespace invariant.Namespace) {
-	invariant.Always(len(text) <= PADDED_MAX, "A padded column is at most its max.")
-	invariant.Always(len(text) >= PADDED_MIN, "A padded column is at least its min.")
-	invariant.Always(len(text) != 0, "A padded column is never empty.")
-	invariant.Always(len(text) != 1, "A padded column is never one byte.")
-	invariant.Always(len(text) != 2, "A padded column is never two bytes.")
-	// The maximum is the widest a column could theoretically hold — every component at its
-	// own max at once — which no real row reaches: names, value cells, and outlier tallies
-	// never peak together. So it is the Always guard, not a witnessed extreme.
-	invariant.Dot_Product(namespace,
-		invariant.Sometimes(len(text) == PADDED_MIN, "A padded column is at min."),
-	)
+	invariant.Range_Invariants(len(text), PADDED_MIN, PADDED_MAX, namespace)
 }
 
 // BARE_ROW_MIN is the narrowest assembled data row, all columns at their minimum.
 const BARE_ROW_MIN = 69
 
-// BARE_ROW_MAX bounds an assembled data row before any delta column is appended.
-const BARE_ROW_MAX = 89
+// BARE_ROW_MAX bounds an assembled data row before any delta column is appended: the widest
+// name, four widest value cells, and the widest outlier tally, aligned and joined.
+const BARE_ROW_MAX = 74
 
 // Bare_Row is one assembled, aligned table row without its delta — the fixed columns joined.
 // A distinct type from the full row, which carries the delta and so runs wider.
@@ -2496,21 +2017,16 @@ type Bare_Row string
 // Bare_Row_Invariants bounds an assembled row's length; always many bytes, so the empty, one,
 // and two-byte boundaries are unreachable while the min and max are witnessed.
 func Bare_Row_Invariants(text Bare_Row, namespace invariant.Namespace) {
-	invariant.Always(len(text) <= BARE_ROW_MAX, "A bare row is at most its max.")
-	invariant.Always(len(text) >= BARE_ROW_MIN, "A bare row is at least its min.")
-	invariant.Always(len(text) != 0, "A bare row is never empty.")
-	invariant.Always(len(text) != 1, "A bare row is never one byte.")
-	invariant.Always(len(text) != 2, "A bare row is never two bytes.")
-	invariant.Dot_Product(namespace,
-		invariant.Sometimes(len(text) == BARE_ROW_MIN, "A bare row is at min."),
-	)
+	invariant.Range_Invariants(len(text), BARE_ROW_MIN, BARE_ROW_MAX, namespace)
 }
 
 // FULL_ROW_MIN is the narrowest complete metric row, the reference's bare row with no delta.
 const FULL_ROW_MIN = 69
 
-// FULL_ROW_MAX bounds a complete metric row, the widest data row plus its delta column.
-const FULL_ROW_MAX = 116
+// FULL_ROW_MAX bounds a complete metric row: the widest data row, two spacer bytes, and the
+// widest colored delta text. The widest tally and widest delta come from different runs, so the
+// maximum is a near-ceiling-scale change with color rather than the two summed.
+const FULL_ROW_MAX = 104
 
 // Full_Row is one complete metric row as written to the report — an assembled row plus its
 // delta column when the benchmark is a candidate. A distinct type, wider than the bare row.
@@ -2519,21 +2035,17 @@ type Full_Row string
 // Full_Row_Invariants bounds a complete row's length; always many bytes, so the empty, one,
 // and two-byte boundaries are unreachable while the min and max are witnessed.
 func Full_Row_Invariants(text Full_Row, namespace invariant.Namespace) {
-	invariant.Always(len(text) <= FULL_ROW_MAX, "A full row is at most its max.")
-	invariant.Always(len(text) >= FULL_ROW_MIN, "A full row is at least its min.")
-	invariant.Always(len(text) != 0, "A full row is never empty.")
-	invariant.Always(len(text) != 1, "A full row is never one byte.")
-	invariant.Always(len(text) != 2, "A full row is never two bytes.")
-	invariant.Dot_Product(namespace,
-		invariant.Sometimes(len(text) == FULL_ROW_MIN, "A full row is at min."),
-	)
+	invariant.Range_Invariants(len(text), FULL_ROW_MIN, FULL_ROW_MAX, namespace)
 }
 
 // DELTA_BODY_MIN is the narrowest delta body, a sign over two padded percentages.
 const DELTA_BODY_MIN = 16
 
-// DELTA_BODY_MAX bounds the unpainted delta body, both percentages at their widest.
-const DELTA_BODY_MAX = 25
+// DELTA_BODY_MAX bounds the unpainted delta body: the change percentage pinned to the display
+// cap ("9999999.0") with the widest confidence half-interval a bounded t-test reaches, which is
+// only a few hundred percent — the pooled deviation relative to the mean caps the interval well
+// below the display clamp, so the second percentage never widens to the first's.
+const DELTA_BODY_MAX = 20
 
 // Delta_Body is the uncolored delta text — a sign, a percentage, its confidence interval —
 // before any ANSI color wraps it. A distinct type from the painted form, which runs wider.
@@ -2542,22 +2054,15 @@ type Delta_Body string
 // Delta_Body_Invariants bounds the body's length; always many bytes, so the empty, one, and
 // two-byte boundaries are unreachable while the min and max are witnessed.
 func Delta_Body_Invariants(text Delta_Body, namespace invariant.Namespace) {
-	invariant.Always(len(text) <= DELTA_BODY_MAX, "A delta body is at most its max.")
-	invariant.Always(len(text) >= DELTA_BODY_MIN, "A delta body is at least its min.")
-	invariant.Always(len(text) != 0, "A delta body is never empty.")
-	invariant.Always(len(text) != 1, "A delta body is never one byte.")
-	invariant.Always(len(text) != 2, "A delta body is never two bytes.")
-	invariant.Dot_Product(namespace,
-		invariant.Sometimes(len(text) == DELTA_BODY_MIN, "A delta body is at min."),
-	)
+	invariant.Range_Invariants(len(text), DELTA_BODY_MIN, DELTA_BODY_MAX, namespace)
 }
 
 // DELTA_TEXT_MIN is the narrowest rendered delta, an uncolored body.
 const DELTA_TEXT_MIN = 16
 
 // DELTA_TEXT_MAX bounds the rendered delta: the widest body wrapped in a color code and its
-// reset.
-const DELTA_TEXT_MAX = 34
+// reset — the body's max plus the nine bytes of the color escape and reset sequence.
+const DELTA_TEXT_MAX = 29
 
 // Delta_Text is the rendered delta column as written — the body, optionally wrapped in an ANSI
 // color and its reset. A distinct type, wider than the bare body by the escape sequences.
@@ -2566,14 +2071,7 @@ type Delta_Text string
 // Delta_Text_Invariants bounds the rendered delta's length; always many bytes, so the empty,
 // one, and two-byte boundaries are unreachable while the min and max are witnessed.
 func Delta_Text_Invariants(text Delta_Text, namespace invariant.Namespace) {
-	invariant.Always(len(text) <= DELTA_TEXT_MAX, "A delta text is at most its max.")
-	invariant.Always(len(text) >= DELTA_TEXT_MIN, "A delta text is at least its min.")
-	invariant.Always(len(text) != 0, "A delta text is never empty.")
-	invariant.Always(len(text) != 1, "A delta text is never one byte.")
-	invariant.Always(len(text) != 2, "A delta text is never two bytes.")
-	invariant.Dot_Product(namespace,
-		invariant.Sometimes(len(text) == DELTA_TEXT_MIN, "A delta text is at min."),
-	)
+	invariant.Range_Invariants(len(text), DELTA_TEXT_MIN, DELTA_TEXT_MAX, namespace)
 }
 
 // FREQUENCY_BYTES_MIN is the shortest rendered frequency: the one-byte "?" placeholder.
@@ -2586,28 +2084,26 @@ const FREQUENCY_BYTES_MAX = 1 << 3
 // a frequency is one byte or at least five, never two, so it carries its own invariant.
 type Frequency string
 
-// Frequency_Invariants bounds a frequency's length; a frequency is "?" or a number with
-// a unit, so the empty and two-byte boundaries are unreachable while the min and max witness.
+// Frequency_Invariants states a frequency's length. A frequency is the one-byte "?" or a number
+// with a unit at least five bytes, so a two-byte width never occurs: the bundle witnesses the
+// one-byte min and the eight-byte max, guards the two-byte width as unreachable, and leaves the
+// five-to-seven-byte forms to the all-clear cell. Range_Invariants cannot carve that hole.
 func Frequency_Invariants(text Frequency, namespace invariant.Namespace) {
-	invariant.Always(len(text) <= FREQUENCY_BYTES_MAX, "A frequency is within its max length.")
-	invariant.Always(len(text) >= FREQUENCY_BYTES_MIN, "A frequency clears its min length.")
+	invariant.Always(len(text) <= FREQUENCY_BYTES_MAX, "A frequency is at most its max.")
+	invariant.Always(len(text) >= FREQUENCY_BYTES_MIN, "A frequency is at least its min.")
 	invariant.Always(len(text) != 0, "A frequency is never empty.")
 	invariant.Always(len(text) != 2, "A frequency is never two bytes.")
 	invariant.Dot_Product(namespace,
-		invariant.Sometimes(len(text) == 1, "A frequency is one byte."),
+		invariant.Sometimes(len(text) == 1, "A frequency is the placeholder."),
 		invariant.Sometimes(len(text) == FREQUENCY_BYTES_MIN, "A frequency is at min."),
 		invariant.Sometimes(len(text) == FREQUENCY_BYTES_MAX, "A frequency is at max."),
 		invariant.Impossible(
-			invariant.Event_True("A frequency is one byte."),
+			invariant.Event_True("A frequency is the placeholder."),
 			invariant.Event_False("A frequency is at min."),
 		),
 		invariant.Impossible(
-			invariant.Event_False("A frequency is one byte."),
+			invariant.Event_False("A frequency is the placeholder."),
 			invariant.Event_True("A frequency is at min."),
-		),
-		invariant.Impossible(
-			invariant.Event_True("A frequency is one byte."),
-			invariant.Event_True("A frequency is at max."),
 		),
 		invariant.Impossible(
 			invariant.Event_True("A frequency is at min."),
@@ -2629,65 +2125,7 @@ type Suffix string
 // Suffix_Invariants bounds a suffix's length and witnesses each boundary; a suffix spans
 // the empty base unit through the three-byte binary suffixes.
 func Suffix_Invariants(unit Suffix, namespace invariant.Namespace) {
-	invariant.Always(len(unit) <= SUFFIX_BYTES_MAX, "A suffix is at most its max length.")
-	invariant.Always(len(unit) >= SUFFIX_BYTES_MIN, "A suffix is at least its min length.")
-	invariant.Dot_Product(namespace,
-		invariant.Sometimes(len(unit) == 0, "A suffix is empty."),
-		invariant.Sometimes(len(unit) == 1, "A suffix is one byte."),
-		invariant.Sometimes(len(unit) == 2, "A suffix is two bytes."),
-		invariant.Sometimes(len(unit) == SUFFIX_BYTES_MAX, "A suffix is max bytes."),
-		invariant.Sometimes(len(unit) == SUFFIX_BYTES_MIN, "A suffix is at min."),
-		invariant.Impossible(
-			invariant.Event_True("A suffix is empty."),
-			invariant.Event_False("A suffix is at min."),
-		),
-		invariant.Impossible(
-			invariant.Event_False("A suffix is empty."),
-			invariant.Event_True("A suffix is at min."),
-		),
-		invariant.Impossible(
-			invariant.Event_True("A suffix is at min."),
-			invariant.Event_True("A suffix is one byte."),
-		),
-		invariant.Impossible(
-			invariant.Event_True("A suffix is at min."),
-			invariant.Event_True("A suffix is two bytes."),
-		),
-		invariant.Impossible(
-			invariant.Event_True("A suffix is at min."),
-			invariant.Event_True("A suffix is max bytes."),
-		),
-		invariant.Impossible(
-			invariant.Event_True("A suffix is empty."),
-			invariant.Event_True("A suffix is one byte."),
-		),
-		invariant.Impossible(
-			invariant.Event_True("A suffix is empty."),
-			invariant.Event_True("A suffix is two bytes."),
-		),
-		invariant.Impossible(
-			invariant.Event_True("A suffix is empty."),
-			invariant.Event_True("A suffix is max bytes."),
-		),
-		invariant.Impossible(
-			invariant.Event_True("A suffix is one byte."),
-			invariant.Event_True("A suffix is two bytes."),
-		),
-		invariant.Impossible(
-			invariant.Event_True("A suffix is one byte."),
-			invariant.Event_True("A suffix is max bytes."),
-		),
-		invariant.Impossible(
-			invariant.Event_True("A suffix is two bytes."),
-			invariant.Event_True("A suffix is max bytes."),
-		),
-		invariant.Impossible(
-			invariant.Event_False("A suffix is empty."),
-			invariant.Event_False("A suffix is one byte."),
-			invariant.Event_False("A suffix is two bytes."),
-			invariant.Event_False("A suffix is max bytes."),
-		),
-	)
+	invariant.Range_Invariants(len(unit), SUFFIX_BYTES_MIN, SUFFIX_BYTES_MAX, namespace)
 }
 
 // PHASE_BYTES_MIN is the empty sampling phase a phase word floors at.
@@ -2700,17 +2138,19 @@ const PHASE_BYTES_MAX = 6
 // distinct type so the phase word carries a length invariant.
 type Phase string
 
-// Phase_Invariants bounds a phase's length; a phase is empty or six bytes, so the one-
-// and two-byte boundaries are unreachable while the empty min and the max are witnessed.
+// Phase_Invariants states a phase's length. A phase is exactly "" or "warmup", so the length
+// is the two-point set {0, 6}, not a range: the bundle witnesses the empty min and the six-byte
+// max, guards the one- and two-byte widths as unreachable, and carves the all-clear cell, since
+// no phase of three-to-five bytes exists. Range_Invariants cannot express a set with a hole.
 func Phase_Invariants(name Phase, namespace invariant.Namespace) {
-	invariant.Always(len(name) <= PHASE_BYTES_MAX, "A phase is at most its max length.")
-	invariant.Always(len(name) >= PHASE_BYTES_MIN, "A phase is at least its min length.")
+	invariant.Always(len(name) <= PHASE_BYTES_MAX, "A phase is at most its max.")
+	invariant.Always(len(name) >= PHASE_BYTES_MIN, "A phase is at least its min.")
 	invariant.Always(len(name) != 1, "A phase is never one byte.")
 	invariant.Always(len(name) != 2, "A phase is never two bytes.")
 	invariant.Dot_Product(namespace,
 		invariant.Sometimes(len(name) == 0, "A phase is empty."),
-		invariant.Sometimes(len(name) == PHASE_BYTES_MAX, "A phase is max bytes."),
 		invariant.Sometimes(len(name) == PHASE_BYTES_MIN, "A phase is at min."),
+		invariant.Sometimes(len(name) == PHASE_BYTES_MAX, "A phase is at max."),
 		invariant.Impossible(
 			invariant.Event_True("A phase is empty."),
 			invariant.Event_False("A phase is at min."),
@@ -2721,15 +2161,11 @@ func Phase_Invariants(name Phase, namespace invariant.Namespace) {
 		),
 		invariant.Impossible(
 			invariant.Event_True("A phase is at min."),
-			invariant.Event_True("A phase is max bytes."),
+			invariant.Event_True("A phase is at max."),
 		),
 		invariant.Impossible(
-			invariant.Event_True("A phase is empty."),
-			invariant.Event_True("A phase is max bytes."),
-		),
-		invariant.Impossible(
-			invariant.Event_False("A phase is empty."),
-			invariant.Event_False("A phase is max bytes."),
+			invariant.Event_False("A phase is at min."),
+			invariant.Event_False("A phase is at max."),
 		),
 	)
 }
@@ -2750,20 +2186,7 @@ type Extent int
 // Extent_Invariants bounds an extent; a column width is always at least three, so the
 // zero, one, two, and negative boundaries are unreachable while the min and max witness.
 func Extent_Invariants(value Extent, namespace invariant.Namespace) {
-	invariant.Always(value <= EXTENT_MAX, "An extent is at most its max.")
-	invariant.Always(value >= EXTENT_MIN, "An extent is at least its min.")
-	invariant.Always(value != 0, "An extent is never zero.")
-	invariant.Always(value != 1, "An extent is never one.")
-	invariant.Always(value != 2, "An extent is never two.")
-	invariant.Always(value != -1, "An extent is never negative one.")
-	invariant.Dot_Product(namespace,
-		invariant.Sometimes(value == EXTENT_MIN, "An extent is at min."),
-		invariant.Sometimes(value == EXTENT_MAX, "An extent is at max."),
-		invariant.Impossible(
-			invariant.Event_True("An extent is at min."),
-			invariant.Event_True("An extent is at max."),
-		),
-	)
+	invariant.Range_Invariants(value, EXTENT_MIN, EXTENT_MAX, namespace)
 }
 
 // KEPT_MIN is the quorum a kept distribution carries at least: the 3-run minimum.
@@ -2780,18 +2203,7 @@ type Kept int
 // Kept_Invariants bounds a kept-run count to the quorum range; the below-quorum counts are
 // guarded away, and the quorum floor and the run-cap ceiling are witnessed.
 func Kept_Invariants(value Kept, namespace invariant.Namespace) {
-	invariant.Always(value <= KEPT_MAX, "A kept count is at most its max.")
-	invariant.Always(value >= KEPT_MIN, "A kept count is at least its min.")
-	invariant.Always(value != -1, "A kept count is never negative one.")
-	invariant.Always(value != 0, "A kept count is never zero.")
-	invariant.Always(value != 1, "A kept count is never one.")
-	invariant.Always(value != 2, "A kept count is never two.")
-	// The max is the sampling ceiling — reachable only by running the full ten thousand
-	// samples, an arbitrary safety cap, not a meaningful count to witness. It is the
-	// Always guard above, not a demanded extreme, so the quorum alone is witnessed.
-	invariant.Dot_Product(namespace,
-		invariant.Sometimes(value == KEPT_MIN, "A kept count is at its quorum."),
-	)
+	invariant.Range_Invariants(value, KEPT_MIN, KEPT_MAX, namespace)
 }
 
 // DEGREE_MIN is the smallest pooled degrees-of-freedom a real comparison reaches: two
@@ -2811,17 +2223,7 @@ type Degree int
 // Degree_Invariants bounds a degree; a degree is at least one, so the zero and negative
 // boundaries are unreachable while the one min, the two shape, and the max are witnessed.
 func Degree_Invariants(value Degree, namespace invariant.Namespace) {
-	invariant.Always(value <= DEGREE_MAX, "A degree is at most its max.")
-	invariant.Always(value >= DEGREE_MIN, "A degree is at least its min.")
-	invariant.Always(value != 0, "A degree is never zero.")
-	invariant.Always(value != -1, "A degree is never negative one.")
-	invariant.Always(value != 1, "A degree is never one.")
-	invariant.Always(value != 2, "A degree is never two.")
-	// The max degree comes only from a full ten-thousand-sample run — the arbitrary cap,
-	// guarded by the Always above, not a meaningful degree to witness.
-	invariant.Dot_Product(namespace,
-		invariant.Sometimes(value == DEGREE_MIN, "A degree is at min."),
-	)
+	invariant.Range_Invariants(value, DEGREE_MIN, DEGREE_MAX, namespace)
 }
 
 // CENSUS_MIN is the single sample a reduced distribution carries at least.
@@ -2837,31 +2239,7 @@ type Census int
 // Census_Invariants bounds a census; it is at least one, so the zero and negative boundaries
 // are unreachable while the one min, the two shape, and the cap max are witnessed.
 func Census_Invariants(value Census, namespace invariant.Namespace) {
-	invariant.Always(value <= CENSUS_MAX, "A census is at most its max.")
-	invariant.Always(value >= CENSUS_MIN, "A census is at least its min.")
-	invariant.Always(value != 0, "A census is never zero.")
-	invariant.Always(value != -1, "A census is never negative one.")
-	invariant.Dot_Product(namespace,
-		invariant.Sometimes(value == 1, "A census is one."),
-		invariant.Sometimes(value == 2, "A census is two."),
-		invariant.Sometimes(value == CENSUS_MIN, "A census is at min."),
-		invariant.Impossible(
-			invariant.Event_True("A census is one."),
-			invariant.Event_False("A census is at min."),
-		),
-		invariant.Impossible(
-			invariant.Event_False("A census is one."),
-			invariant.Event_True("A census is at min."),
-		),
-		invariant.Impossible(
-			invariant.Event_True("A census is one."),
-			invariant.Event_True("A census is two."),
-		),
-		invariant.Impossible(
-			invariant.Event_True("A census is two."),
-			invariant.Event_True("A census is at min."),
-		),
-	)
+	invariant.Range_Invariants(value, CENSUS_MIN, CENSUS_MAX, namespace)
 }
 
 // DIVISOR_MIN is the Bessel divisor a quorum floors at: the 3-run minimum less one. A
@@ -2878,14 +2256,7 @@ type Divisor int
 // Divisor_Invariants bounds a divisor; it is at least one, so the zero and negative
 // boundaries are unreachable while the one min, the two shape, and the max are witnessed.
 func Divisor_Invariants(value Divisor, namespace invariant.Namespace) {
-	invariant.Always(value <= DIVISOR_MAX, "A divisor is at most its max.")
-	invariant.Always(value >= DIVISOR_MIN, "A divisor is at least its min.")
-	invariant.Always(value != 0, "A divisor is never zero.")
-	invariant.Always(value != -1, "A divisor is never negative one.")
-	invariant.Always(value != 1, "A divisor is never one.")
-	invariant.Dot_Product(namespace,
-		invariant.Sometimes(value == 2, "A divisor is two."),
-	)
+	invariant.Range_Invariants(value, DIVISOR_MIN, DIVISOR_MAX, namespace)
 }
 
 // TALLY_MIN is the empty count or first index a tally floors at: zero.
@@ -2901,43 +2272,7 @@ type Tally int
 // Tally_Invariants bounds a tally; it is never negative, with the zero min, the kept-run
 // max, and the one- and two-count shapes between witnessed.
 func Tally_Invariants(value Tally, namespace invariant.Namespace) {
-	invariant.Always(value <= TALLY_MAX, "A tally is at most its max.")
-	invariant.Always(value >= TALLY_MIN, "A tally is at least its min.")
-	invariant.Always(value != -1, "A tally is never negative one.")
-	invariant.Dot_Product(namespace,
-		invariant.Sometimes(value == 0, "A tally is zero."),
-		invariant.Sometimes(value == 1, "A tally is one."),
-		invariant.Sometimes(value == 2, "A tally is two."),
-		invariant.Sometimes(value == TALLY_MIN, "A tally is at min."),
-		invariant.Impossible(
-			invariant.Event_True("A tally is zero."),
-			invariant.Event_False("A tally is at min."),
-		),
-		invariant.Impossible(
-			invariant.Event_False("A tally is zero."),
-			invariant.Event_True("A tally is at min."),
-		),
-		invariant.Impossible(
-			invariant.Event_True("A tally is zero."),
-			invariant.Event_True("A tally is one."),
-		),
-		invariant.Impossible(
-			invariant.Event_True("A tally is zero."),
-			invariant.Event_True("A tally is two."),
-		),
-		invariant.Impossible(
-			invariant.Event_True("A tally is at min."),
-			invariant.Event_True("A tally is one."),
-		),
-		invariant.Impossible(
-			invariant.Event_True("A tally is at min."),
-			invariant.Event_True("A tally is two."),
-		),
-		invariant.Impossible(
-			invariant.Event_True("A tally is one."),
-			invariant.Event_True("A tally is two."),
-		),
-	)
+	invariant.Range_Invariants(value, TALLY_MIN, TALLY_MAX, namespace)
 }
 
 // STRAYS_MIN is the empty outlier count a clean distribution floors at: zero.
@@ -2954,37 +2289,15 @@ type Strays int
 // Strays_Invariants bounds the outlier count; never negative, with the zero min, the outer-half
 // max, and the one- and two-count shapes between witnessed.
 func Strays_Invariants(value Strays, namespace invariant.Namespace) {
-	invariant.Always(value <= STRAYS_MAX, "A strays count is at most its max.")
-	invariant.Always(value >= STRAYS_MIN, "A strays count is at least its min.")
-	invariant.Always(value != -1, "A strays count is never negative one.")
-	// The outer-half maximum is a theoretical ceiling — reaching it needs a distribution
-	// whose spikes stay beyond fences the same spikes would widen — so it is the Always
-	// guard, not a witnessed extreme. A real run's outlier count is small.
-	invariant.Dot_Product(namespace,
-		invariant.Sometimes(value == 0, "A strays count is zero."),
-		invariant.Sometimes(value == 1, "A strays count is one."),
-		invariant.Sometimes(value == 2, "A strays count is two."),
-		invariant.Impossible(
-			invariant.Event_True("A strays count is zero."),
-			invariant.Event_True("A strays count is one."),
-		),
-		invariant.Impossible(
-			invariant.Event_True("A strays count is zero."),
-			invariant.Event_True("A strays count is two."),
-		),
-		invariant.Impossible(
-			invariant.Event_True("A strays count is one."),
-			invariant.Event_True("A strays count is two."),
-		),
-	)
+	invariant.Range_Invariants(value, STRAYS_MIN, STRAYS_MAX, namespace)
 }
 
 // Index_min is the first position a zero-based index floors at: zero.
 const POSITION_MIN = 0
 
 // Index_max bounds a benchmark or command index: the last position in a full report, one
-// less than the structural cap.
-const POSITION_MAX = STRUCTURE_MAX - 1
+// less than the command-set cap.
+const POSITION_MAX = COMMAND_SET_MAX - 1
 
 // Position is a zero-based index into the benchmarks or commands — a distinct type from a
 // tally, bounded by the structural cap rather than the run cap.
@@ -2993,29 +2306,7 @@ type Position int
 // Position_Invariants bounds a position; it is never negative, with the zero min, the last
 // slot max, and the one- and two-position shapes between witnessed.
 func Position_Invariants(value Position, namespace invariant.Namespace) {
-	invariant.Always(value <= POSITION_MAX, "An index is at most its max.")
-	invariant.Always(value >= POSITION_MIN, "An index is at least its min.")
-	invariant.Always(value != -1, "An index is never negative one.")
-	// The last-slot maximum needs a full report — more benchmarks than fit under the
-	// render ceiling, or more metrics than exist — so it is the Always guard, not a
-	// witnessed extreme. A real index is small: a handful of benchmarks, nine metrics.
-	invariant.Dot_Product(namespace,
-		invariant.Sometimes(value == 0, "An index is zero."),
-		invariant.Sometimes(value == 1, "An index is one."),
-		invariant.Sometimes(value == 2, "An index is two."),
-		invariant.Impossible(
-			invariant.Event_True("An index is zero."),
-			invariant.Event_True("An index is one."),
-		),
-		invariant.Impossible(
-			invariant.Event_True("An index is zero."),
-			invariant.Event_True("An index is two."),
-		),
-		invariant.Impossible(
-			invariant.Event_True("An index is one."),
-			invariant.Event_True("An index is two."),
-		),
-	)
+	invariant.Range_Invariants(value, POSITION_MIN, POSITION_MAX, namespace)
 }
 
 // EXIT_CODE_MIN is the success code zero a code floors at.
@@ -3032,40 +2323,7 @@ type Exit_Code int
 // Exit_Code_Invariants bounds an exit code to success or failure; the higher and negative
 // codes are unreachable, and the success min and failure max are witnessed.
 func Exit_Code_Invariants(value Exit_Code, namespace invariant.Namespace) {
-	invariant.Always(value <= EXIT_CODE_MAX, "An exit code is at most its max.")
-	invariant.Always(value >= EXIT_CODE_MIN, "An exit code is at least its min.")
-	invariant.Always(value != 2, "An exit code is never two.")
-	invariant.Always(value != -1, "An exit code is never negative one.")
-	invariant.Dot_Product(namespace,
-		invariant.Sometimes(value == 0, "An exit code is success."),
-		invariant.Sometimes(value == 1, "An exit code is failure."),
-		invariant.Sometimes(value == EXIT_CODE_MIN, "An exit code is at min."),
-		invariant.Sometimes(value == EXIT_CODE_MAX, "An exit code is at max."),
-		invariant.Impossible(
-			invariant.Event_True("An exit code is success."),
-			invariant.Event_False("An exit code is at min."),
-		),
-		invariant.Impossible(
-			invariant.Event_False("An exit code is success."),
-			invariant.Event_True("An exit code is at min."),
-		),
-		invariant.Impossible(
-			invariant.Event_True("An exit code is failure."),
-			invariant.Event_False("An exit code is at max."),
-		),
-		invariant.Impossible(
-			invariant.Event_False("An exit code is failure."),
-			invariant.Event_True("An exit code is at max."),
-		),
-		invariant.Impossible(
-			invariant.Event_True("An exit code is success."),
-			invariant.Event_True("An exit code is failure."),
-		),
-		invariant.Impossible(
-			invariant.Event_False("An exit code is success."),
-			invariant.Event_False("An exit code is failure."),
-		),
-	)
+	invariant.Range_Invariants(value, EXIT_CODE_MIN, EXIT_CODE_MAX, namespace)
 }
 
 // EXIT_STATUS_MIN is the success code a command's exit floors at: zero.
@@ -3083,60 +2341,7 @@ type Exit_Status int
 // Exit_Status_Invariants bounds a command's exit to the byte range and witnesses the small
 // codes and the extremes; a negative code is guarded away, never a child's real status.
 func Exit_Status_Invariants(value Exit_Status, namespace invariant.Namespace) {
-	invariant.Always(value <= EXIT_STATUS_MAX, "A command status is at most its max.")
-	invariant.Always(value >= EXIT_STATUS_MIN, "A command status is at least its min.")
-	invariant.Always(value != -1, "A command status is never negative one.")
-	invariant.Dot_Product(namespace,
-		invariant.Sometimes(value == 0, "A command status is zero."),
-		invariant.Sometimes(value == 1, "A command status is one."),
-		invariant.Sometimes(value == 2, "A command status is two."),
-		invariant.Sometimes(value == EXIT_STATUS_MIN, "A command status is at min."),
-		invariant.Sometimes(value == EXIT_STATUS_MAX, "A command status is at max."),
-		invariant.Impossible(
-			invariant.Event_True("A command status is zero."),
-			invariant.Event_False("A command status is at min."),
-		),
-		invariant.Impossible(
-			invariant.Event_False("A command status is zero."),
-			invariant.Event_True("A command status is at min."),
-		),
-		invariant.Impossible(
-			invariant.Event_True("A command status is zero."),
-			invariant.Event_True("A command status is one."),
-		),
-		invariant.Impossible(
-			invariant.Event_True("A command status is zero."),
-			invariant.Event_True("A command status is two."),
-		),
-		invariant.Impossible(
-			invariant.Event_True("A command status is zero."),
-			invariant.Event_True("A command status is at max."),
-		),
-		invariant.Impossible(
-			invariant.Event_True("A command status is at min."),
-			invariant.Event_True("A command status is one."),
-		),
-		invariant.Impossible(
-			invariant.Event_True("A command status is at min."),
-			invariant.Event_True("A command status is two."),
-		),
-		invariant.Impossible(
-			invariant.Event_True("A command status is at min."),
-			invariant.Event_True("A command status is at max."),
-		),
-		invariant.Impossible(
-			invariant.Event_True("A command status is one."),
-			invariant.Event_True("A command status is two."),
-		),
-		invariant.Impossible(
-			invariant.Event_True("A command status is one."),
-			invariant.Event_True("A command status is at max."),
-		),
-		invariant.Impossible(
-			invariant.Event_True("A command status is two."),
-			invariant.Event_True("A command status is at max."),
-		),
-	)
+	invariant.Range_Invariants(value, EXIT_STATUS_MIN, EXIT_STATUS_MAX, namespace)
 }
 
 // FAILURE_STATUS_MIN is the smallest a failing command's exit is: one. A failure is
@@ -3154,27 +2359,7 @@ type Failure_Status int
 // Failure_Status_Invariants bounds a failing command's exit to the non-zero byte range and
 // witnesses the small codes and the ceiling; success and negatives are guarded away.
 func Failure_Status_Invariants(value Failure_Status, namespace invariant.Namespace) {
-	invariant.Always(value <= FAILURE_STATUS_MAX, "A failure status is at most its max.")
-	invariant.Always(value >= FAILURE_STATUS_MIN, "A failure status is at least its min.")
-	invariant.Always(value != 0, "A failure status is never zero.")
-	invariant.Always(value != -1, "A failure status is never negative one.")
-	invariant.Dot_Product(namespace,
-		invariant.Sometimes(value == 1, "A failure status is one."),
-		invariant.Sometimes(value == 2, "A failure status is two."),
-		invariant.Sometimes(value == FAILURE_STATUS_MAX, "A failure status is at max."),
-		invariant.Impossible(
-			invariant.Event_True("A failure status is one."),
-			invariant.Event_True("A failure status is two."),
-		),
-		invariant.Impossible(
-			invariant.Event_True("A failure status is one."),
-			invariant.Event_True("A failure status is at max."),
-		),
-		invariant.Impossible(
-			invariant.Event_True("A failure status is two."),
-			invariant.Event_True("A failure status is at max."),
-		),
-	)
+	invariant.Range_Invariants(value, FAILURE_STATUS_MIN, FAILURE_STATUS_MAX, namespace)
 }
 
 // CORES_COUNT_MIN is the zero a core count floors at: a CPU without a hybrid split
@@ -3193,39 +2378,7 @@ type Cores int
 // Cores_Invariants bounds a core count to the realistic range; never negative, with the
 // zero, one, two, and ceiling shapes witnessed.
 func Cores_Invariants(value Cores, namespace invariant.Namespace) {
-	invariant.Always(value <= CORES_COUNT_MAX, "A core count is at most its max.")
-	invariant.Always(value >= CORES_COUNT_MIN, "A core count is at least its min.")
-	invariant.Always(value != -1, "A core count is never negative one.")
-	invariant.Dot_Product(namespace,
-		invariant.Sometimes(value == 0, "A core count is zero."),
-		invariant.Sometimes(value == 1, "A core count is one."),
-		invariant.Sometimes(value == 2, "A core count is two."),
-		invariant.Sometimes(value == CORES_COUNT_MAX, "A core count is at max."),
-		invariant.Impossible(
-			invariant.Event_True("A core count is zero."),
-			invariant.Event_True("A core count is one."),
-		),
-		invariant.Impossible(
-			invariant.Event_True("A core count is zero."),
-			invariant.Event_True("A core count is two."),
-		),
-		invariant.Impossible(
-			invariant.Event_True("A core count is zero."),
-			invariant.Event_True("A core count is at max."),
-		),
-		invariant.Impossible(
-			invariant.Event_True("A core count is one."),
-			invariant.Event_True("A core count is two."),
-		),
-		invariant.Impossible(
-			invariant.Event_True("A core count is one."),
-			invariant.Event_True("A core count is at max."),
-		),
-		invariant.Impossible(
-			invariant.Event_True("A core count is two."),
-			invariant.Event_True("A core count is at max."),
-		),
-	)
+	invariant.Range_Invariants(value, CORES_COUNT_MIN, CORES_COUNT_MAX, namespace)
 }
 
 // HERTZ_MIN is the zero an unknown frequency reports: the kernel exposed no maximum.
@@ -3243,38 +2396,7 @@ type Hertz uint64
 // Hertz_Invariants bounds a frequency to the realistic range; the zero (unknown), the one
 // and two shapes, and the ceiling are witnessed.
 func Hertz_Invariants(value Hertz, namespace invariant.Namespace) {
-	invariant.Always(value <= HERTZ_MAX, "A frequency value is at most its max.")
-	invariant.Always(value >= HERTZ_MIN, "A frequency value is at least its min.")
-	invariant.Dot_Product(namespace,
-		invariant.Sometimes(value == 0, "A frequency value is zero."),
-		invariant.Sometimes(value == 1, "A frequency value is one."),
-		invariant.Sometimes(value == 2, "A frequency value is two."),
-		invariant.Sometimes(value == HERTZ_MAX, "A frequency value is at max."),
-		invariant.Impossible(
-			invariant.Event_True("A frequency value is zero."),
-			invariant.Event_True("A frequency value is one."),
-		),
-		invariant.Impossible(
-			invariant.Event_True("A frequency value is zero."),
-			invariant.Event_True("A frequency value is two."),
-		),
-		invariant.Impossible(
-			invariant.Event_True("A frequency value is zero."),
-			invariant.Event_True("A frequency value is at max."),
-		),
-		invariant.Impossible(
-			invariant.Event_True("A frequency value is one."),
-			invariant.Event_True("A frequency value is two."),
-		),
-		invariant.Impossible(
-			invariant.Event_True("A frequency value is one."),
-			invariant.Event_True("A frequency value is at max."),
-		),
-		invariant.Impossible(
-			invariant.Event_True("A frequency value is two."),
-			invariant.Event_True("A frequency value is at max."),
-		),
-	)
+	invariant.Range_Invariants(value, HERTZ_MIN, HERTZ_MAX, namespace)
 }
 
 // BYTE_SIZE_MIN is the zero a byte size floors at: a cache or store the kernel did not
@@ -3293,120 +2415,63 @@ type Byte_Size uint64
 // Byte_Size_Invariants bounds a byte size to the realistic range; the zero, one, two, and
 // ceiling shapes are witnessed.
 func Byte_Size_Invariants(value Byte_Size, namespace invariant.Namespace) {
-	invariant.Always(value <= BYTE_SIZE_MAX, "A byte size is at most its max.")
-	invariant.Always(value >= BYTE_SIZE_MIN, "A byte size is at least its min.")
-	invariant.Dot_Product(namespace,
-		invariant.Sometimes(value == 0, "A byte size is zero."),
-		invariant.Sometimes(value == 1, "A byte size is one."),
-		invariant.Sometimes(value == 2, "A byte size is two."),
-		invariant.Sometimes(value == BYTE_SIZE_MAX, "A byte size is at max."),
-		invariant.Impossible(
-			invariant.Event_True("A byte size is zero."),
-			invariant.Event_True("A byte size is one."),
-		),
-		invariant.Impossible(
-			invariant.Event_True("A byte size is zero."),
-			invariant.Event_True("A byte size is two."),
-		),
-		invariant.Impossible(
-			invariant.Event_True("A byte size is zero."),
-			invariant.Event_True("A byte size is at max."),
-		),
-		invariant.Impossible(
-			invariant.Event_True("A byte size is one."),
-			invariant.Event_True("A byte size is two."),
-		),
-		invariant.Impossible(
-			invariant.Event_True("A byte size is one."),
-			invariant.Event_True("A byte size is at max."),
-		),
-		invariant.Impossible(
-			invariant.Event_True("A byte size is two."),
-			invariant.Event_True("A byte size is at max."),
-		),
-	)
+	invariant.Range_Invariants(value, BYTE_SIZE_MIN, BYTE_SIZE_MAX, namespace)
 }
 
 // GAP_MIN is the smallest a deviation magnitude is: zero, when a value equals the mean.
 const GAP_MIN = 0
 
-// GAP_MAX bounds a deviation magnitude to the representable metric ceiling: a gap is the
-// distance between a value and the mean, both non-negative metrics below 2^43, so it fits
-// well inside a signed word. It is only the Always guard, not a witnessed extreme — the
-// exact maximum is never reached (a value at the ceiling pulls the mean up with it), so
-// demanding it would force a crafted distribution rather than a benchmark.
-const GAP_MAX = 1<<43 - 1
+// GAP_MAX is the largest deviation magnitude a distribution reaches: a lone ceiling value among
+// SAMPLES_MAX otherwise-zero samples pulls the mean only to METRIC_MAX/SAMPLES_MAX, so that
+// value's distance from the mean is METRIC_MAX less that quotient. It is the maximum over every
+// valid distribution — attained exactly at the sample ceiling — and a safe guard, since a
+// shorter run lifts the subtracted mean further and so falls below it.
+const GAP_MAX = METRIC_MAX - METRIC_MAX/SAMPLES_MAX
 
 // Gap is the magnitude of one value's deviation from the mean, the unsigned the 128-bit
-// accumulator squares. Bounded by the representable metric span, so its bundle witnesses the
-// small shapes a real distribution drives it through, not the word ceiling.
+// accumulator squares. Bounded by the largest deviation a ceiling-valued sample reaches, so its
+// bundle witnesses the small shapes and that attained extreme alike.
 type Gap uint64
 
-// Gap_Invariants bounds a gap to the representable range and witnesses the small shapes; the
-// ceiling and the zero floor are the Always guards, not Sometimes claims to allocate.
+// Gap_Invariants bounds a gap. The zero floor and the ceiling — a lone extreme value's distance
+// from the mean it barely shifts — are both reached, so it is an ordinary bounded range.
 func Gap_Invariants(value Gap, namespace invariant.Namespace) {
-	invariant.Always(value <= GAP_MAX, "A gap is at most its max.")
-	invariant.Always(value >= GAP_MIN, "A gap is at least its min.")
-	invariant.Dot_Product(namespace,
-		invariant.Sometimes(value == 0, "A gap is zero."),
-		invariant.Sometimes(value == 1, "A gap is one."),
-		invariant.Sometimes(value == 2, "A gap is two."),
-		invariant.Impossible(
-			invariant.Event_True("A gap is zero."),
-			invariant.Event_True("A gap is one."),
-		),
-		invariant.Impossible(
-			invariant.Event_True("A gap is zero."),
-			invariant.Event_True("A gap is two."),
-		),
-		invariant.Impossible(
-			invariant.Event_True("A gap is one."),
-			invariant.Event_True("A gap is two."),
-		),
-	)
+	invariant.Range_Invariants(value, GAP_MIN, GAP_MAX, namespace)
 }
 
 // ACCUMULATOR_MIN is the smallest a 128-bit accumulator word is: zero, an empty sum.
 const ACCUMULATOR_MIN = 0
 
-// ACCUMULATOR_MAX is the width ceiling of a 128-bit accumulator word — the all-ones
-// uint64. It is only the Always guard's safety bound, never a value to witness: the sum
-// of squared deviations, bounded by maddox's sample count and per-value gap, never
-// saturates a word (the high half uses a few dozen bits), and the low half is a modular
-// residue whose all-ones value only a crafted congruence would hit. Neither is a domain
-// boundary, so the bundle witnesses the small shapes a real sum reaches, not the ceiling.
-const ACCUMULATOR_MAX = 1<<64 - 1
+// ACCUMULATOR_HIGH_MAX is the largest the high word reaches: the high half of the greatest sum
+// of squared deviations. That sum is a ceiling-scale bimodal distribution — half the sample cap
+// at zero, half at the metric ceiling — so every deviation is half the ceiling; a shorter or
+// less-spread run yields a smaller sum, making this both the attained maximum and a safe guard.
+const ACCUMULATOR_HIGH_MAX uint64 = SAMPLES_MAX / 2 *
+	((METRIC_MAX-METRIC_MAX/2)*(METRIC_MAX-METRIC_MAX/2) + METRIC_MAX/2*(METRIC_MAX/2)) /
+	(1 << 64)
 
-// Accumulator is one 64-bit half of the 128-bit sum-of-squares accumulator. A distinct
-// type so its bundle witnesses only the shapes a real distribution drives the register
-// through — zero (an all-equal sample set), one, two — and leaves the word ceiling as an
-// unwitnessed Always guard, since a computational register has no domain maximum.
-type Accumulator uint64
+// Accumulator_High is the upper 64-bit half of the 128-bit sum-of-squares accumulator — a small
+// register value, bounded by the high half of the greatest sum a distribution reaches.
+type Accumulator_High uint64
 
-// Accumulator_Invariants bounds an accumulator word to the word width and witnesses the
-// small shapes a real sum reaches. The ceiling and floor are the Always guards, not
-// Sometimes claims: an internal register is not a domain quantity with a boundary to
-// allocate, and demanding the all-ones word forces a crafted congruence, not a benchmark.
-func Accumulator_Invariants(value Accumulator, namespace invariant.Namespace) {
-	invariant.Always(value <= ACCUMULATOR_MAX, "An accumulator is at most its max.")
-	invariant.Always(value >= ACCUMULATOR_MIN, "An accumulator is at least its min.")
-	invariant.Dot_Product(namespace,
-		invariant.Sometimes(value == 0, "An accumulator is zero."),
-		invariant.Sometimes(value == 1, "An accumulator is one."),
-		invariant.Sometimes(value == 2, "An accumulator is two."),
-		invariant.Impossible(
-			invariant.Event_True("An accumulator is zero."),
-			invariant.Event_True("An accumulator is one."),
-		),
-		invariant.Impossible(
-			invariant.Event_True("An accumulator is zero."),
-			invariant.Event_True("An accumulator is two."),
-		),
-		invariant.Impossible(
-			invariant.Event_True("An accumulator is one."),
-			invariant.Event_True("An accumulator is two."),
-		),
-	)
+// Accumulator_High_Invariants bounds the high word to the high half of the greatest sum of
+// squared deviations a distribution reaches.
+func Accumulator_High_Invariants(value Accumulator_High, namespace invariant.Namespace) {
+	invariant.Range_Invariants(value, ACCUMULATOR_MIN, ACCUMULATOR_HIGH_MAX, namespace)
+}
+
+// ACCUMULATOR_LOW_MAX is the low word's ceiling: the full word width. The low half is a modular
+// residue of the running sum, so as the sum grows past 2^64 it ranges across the whole word.
+const ACCUMULATOR_LOW_MAX uint64 = 1<<64 - 1
+
+// Accumulator_Low is the lower 64-bit half of the 128-bit sum-of-squares accumulator — a
+// full-width modular residue of the running sum.
+type Accumulator_Low uint64
+
+// Accumulator_Low_Invariants bounds the low word to the full word width it spans as a modular
+// residue of the running sum.
+func Accumulator_Low_Invariants(value Accumulator_Low, namespace invariant.Namespace) {
+	invariant.Range_Invariants(value, ACCUMULATOR_MIN, ACCUMULATOR_LOW_MAX, namespace)
 }
 
 // METRIC_MIN is the zero floor a measured metric sits at: a count or a monotonic span is
@@ -3431,60 +2496,7 @@ type Metric int64
 // boundary is guarded away, with the zero min, the representable max, and the one and two
 // shapes witnessed.
 func Metric_Invariants(value Metric, namespace invariant.Namespace) {
-	invariant.Always(value <= METRIC_MAX, "A metric is at most its max.")
-	invariant.Always(value >= METRIC_MIN, "A metric is at least its min.")
-	invariant.Always(value != -1, "A metric is never negative one.")
-	invariant.Dot_Product(namespace,
-		invariant.Sometimes(value == 0, "A metric is zero."),
-		invariant.Sometimes(value == 1, "A metric is one."),
-		invariant.Sometimes(value == 2, "A metric is two."),
-		invariant.Sometimes(value == METRIC_MIN, "A metric is its min."),
-		invariant.Sometimes(value == METRIC_MAX, "A metric is its max."),
-		invariant.Impossible(
-			invariant.Event_True("A metric is zero."),
-			invariant.Event_False("A metric is its min."),
-		),
-		invariant.Impossible(
-			invariant.Event_False("A metric is zero."),
-			invariant.Event_True("A metric is its min."),
-		),
-		invariant.Impossible(
-			invariant.Event_True("A metric is zero."),
-			invariant.Event_True("A metric is one."),
-		),
-		invariant.Impossible(
-			invariant.Event_True("A metric is zero."),
-			invariant.Event_True("A metric is two."),
-		),
-		invariant.Impossible(
-			invariant.Event_True("A metric is zero."),
-			invariant.Event_True("A metric is its max."),
-		),
-		invariant.Impossible(
-			invariant.Event_True("A metric is its min."),
-			invariant.Event_True("A metric is one."),
-		),
-		invariant.Impossible(
-			invariant.Event_True("A metric is its min."),
-			invariant.Event_True("A metric is two."),
-		),
-		invariant.Impossible(
-			invariant.Event_True("A metric is its min."),
-			invariant.Event_True("A metric is its max."),
-		),
-		invariant.Impossible(
-			invariant.Event_True("A metric is one."),
-			invariant.Event_True("A metric is two."),
-		),
-		invariant.Impossible(
-			invariant.Event_True("A metric is one."),
-			invariant.Event_True("A metric is its max."),
-		),
-		invariant.Impossible(
-			invariant.Event_True("A metric is two."),
-			invariant.Event_True("A metric is its max."),
-		),
-	)
+	invariant.Range_Invariants(value, METRIC_MIN, METRIC_MAX, namespace)
 }
 
 // AVERAGE_MIN is the zero floor an integer mean sits at: the metrics it averages are
@@ -3504,51 +2516,22 @@ type Average int64
 // witnesses the small values and the representable ceiling; the negative boundaries are
 // guarded away, since a mean of non-negative metrics never goes below zero.
 func Average_Invariants(value Average, namespace invariant.Namespace) {
-	invariant.Always(value <= AVERAGE_MAX, "An average is at most its max.")
-	invariant.Always(value >= AVERAGE_MIN, "An average is at least its min.")
-	invariant.Always(value != -1, "An average is never negative one.")
-	invariant.Dot_Product(namespace,
-		invariant.Sometimes(value == 0, "zero"),
-		invariant.Sometimes(value == 1, "one"),
-		invariant.Sometimes(value == 2, "two"),
-		invariant.Sometimes(value == AVERAGE_MAX, "max"),
-		invariant.Impossible(invariant.Event_True("zero"), invariant.Event_True("one")),
-		invariant.Impossible(invariant.Event_True("zero"), invariant.Event_True("two")),
-		invariant.Impossible(invariant.Event_True("zero"), invariant.Event_True("max")),
-		invariant.Impossible(invariant.Event_True("one"), invariant.Event_True("two")),
-		invariant.Impossible(invariant.Event_True("one"), invariant.Event_True("max")),
-		invariant.Impossible(invariant.Event_True("two"), invariant.Event_True("max")),
-	)
+	invariant.Range_Invariants(value, AVERAGE_MIN, AVERAGE_MAX, namespace)
 }
-
-// POINTS_MIN is the single-element run the distribution floors at — at least one sample.
-const POINTS_MIN = 1
 
 // POINTS_MAX bounds a sorted run's length: the per-command sample cap, since the run is the
 // kept samples sorted.
 const POINTS_MAX = SAMPLES_MAX
 
-// Points is a non-empty ascending run of metric values an outlier scan walks. A distinct
-// type: the distribution always has at least one sample, so its bundle claims the empty
-// run as never reached rather than the nil-or-empty distinction the slice preset demands.
+// Points is an ascending run of metric values an outlier scan walks — the kept samples sorted,
+// so always at least the 3-run quorum, never the empty, one, or two counts below it.
 type Points []int64
 
-// Points_Invariants bounds a sorted run's length; the run is never empty, with the
-// single-element min, the cap max, and the two-element shape witnessed.
+// Points_Invariants bounds a sorted run's length. The run is a kept distribution's samples,
+// floored at the 3-run quorum, so the quorum floor and the cap max are witnessed and the
+// shorter counts are guarded out.
 func Points_Invariants(values Points, namespace invariant.Namespace) {
-	invariant.Always(len(values) <= POINTS_MAX, "A points run is at most its max length.")
-	invariant.Always(len(values) >= POINTS_MIN, "A points run is at least its min length.")
-	// The run is a kept distribution's sorted samples, which the 3-run quorum makes at
-	// least three — never empty, one, or two — so those lengths are guarded, not witnessed.
-	invariant.Always(len(values) != 0, "A points run is never empty.")
-	invariant.Always(len(values) != 1, "A points run is never one element.")
-	invariant.Always(len(values) != 2, "A points run is never two elements.")
-	// The max length is the sampling ceiling — ten thousand kept samples, an arbitrary
-	// safety cap reached only by grinding a full run, not a meaningful length to witness.
-	// The Always guard holds it; only the quorum length is witnessed.
-	invariant.Dot_Product(namespace,
-		invariant.Sometimes(len(values) == QUORUM_MIN, "A points run is at its quorum."),
-	)
+	invariant.Range_Invariants(len(values), QUORUM_MIN, POINTS_MAX, namespace)
 }
 
 // LABEL_BYTES_MIN is the empty command label a progress line floors at.
@@ -3566,20 +2549,7 @@ type Label string
 // Label_Invariants bounds a label's byte length: the empty min, the truncation max, and
 // the one- and two-byte shapes between are witnessed.
 func Label_Invariants(text Label, namespace invariant.Namespace) {
-	invariant.Always(len(text) <= LABEL_BYTES_MAX, "A label is at most its max length.")
-	invariant.Always(len(text) >= LABEL_BYTES_MIN, "A label is at least its min length.")
-	// The label names the command being benchmarked, so it always carries an executable
-	// — never empty. The multibyte ceiling (fifty four-byte runes) is a guard, not a
-	// witnessed extreme; a real command's words are short.
-	invariant.Always(len(text) != 0, "A label is never empty.")
-	invariant.Dot_Product(namespace,
-		invariant.Sometimes(len(text) == 1, "A label is one byte."),
-		invariant.Sometimes(len(text) == 2, "A label is two bytes."),
-		invariant.Impossible(
-			invariant.Event_True("A label is one byte."),
-			invariant.Event_True("A label is two bytes."),
-		),
-	)
+	invariant.Range_Invariants(len(text), LABEL_BYTES_MIN, LABEL_BYTES_MAX, namespace)
 }
 
 // Pad aligns text to a visible width with spaces — on the left when right is set, so the

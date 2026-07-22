@@ -155,29 +155,7 @@ type Cli_Commands []string
 
 // Cli_Commands_Invariants bounds the command-string count.
 func Cli_Commands_Invariants(commands Cli_Commands, namespace invariant.Namespace) {
-	invariant.Always(len(commands) <= BOUND_MAX, "A command list is at most its max.")
-	invariant.Always(len(commands) >= BOUND_MIN, "A command list is at least its min.")
-	invariant.Always(len(commands) != BOUND_MIN, "A command list never reaches its min.")
-	invariant.Always(len(commands) != BOUND_MAX, "A command list is below its max.")
-	invariant.Dot_Product(namespace,
-		invariant.Sometimes(len(commands) == 0, "A command list is empty."),
-		invariant.Sometimes(len(commands) == 1, "A command list has one."),
-		invariant.Sometimes(len(commands) == 2, "A command list has two."),
-		invariant.Sometimes(len(commands) == BOUND_MIN, "A command list is at its min."),
-		invariant.Sometimes(len(commands) == BOUND_MAX, "A command list is at its max."),
-		invariant.Impossible(
-			invariant.Event_True("A command list is empty."),
-			invariant.Event_True("A command list has one."),
-		),
-		invariant.Impossible(
-			invariant.Event_True("A command list is empty."),
-			invariant.Event_True("A command list has two."),
-		),
-		invariant.Impossible(
-			invariant.Event_True("A command list has one."),
-			invariant.Event_True("A command list has two."),
-		),
-	)
+	invariant.Range_Invariants(len(commands), BOUND_MIN, BOUND_MAX, namespace)
 }
 
 // Stream_Mode is a color/progress toggle from the command line: never, always, or auto.
@@ -185,29 +163,7 @@ type Stream_Mode string
 
 // Stream_Mode_Invariants bounds the mode word's length.
 func Stream_Mode_Invariants(mode Stream_Mode, namespace invariant.Namespace) {
-	invariant.Always(len(mode) <= BOUND_MAX, "A stream mode is at most its max.")
-	invariant.Always(len(mode) >= BOUND_MIN, "A stream mode is at least its min.")
-	invariant.Always(len(mode) != BOUND_MIN, "A stream mode never reaches its min.")
-	invariant.Always(len(mode) != BOUND_MAX, "A stream mode is below its max.")
-	invariant.Dot_Product(namespace,
-		invariant.Sometimes(len(mode) == 0, "A stream mode is empty."),
-		invariant.Sometimes(len(mode) == 1, "A stream mode is one byte."),
-		invariant.Sometimes(len(mode) == 2, "A stream mode is two bytes."),
-		invariant.Sometimes(len(mode) == BOUND_MIN, "A stream mode is at its min."),
-		invariant.Sometimes(len(mode) == BOUND_MAX, "A stream mode is at its max."),
-		invariant.Impossible(
-			invariant.Event_True("A stream mode is empty."),
-			invariant.Event_True("A stream mode is one byte."),
-		),
-		invariant.Impossible(
-			invariant.Event_True("A stream mode is empty."),
-			invariant.Event_True("A stream mode is two bytes."),
-		),
-		invariant.Impossible(
-			invariant.Event_True("A stream mode is one byte."),
-			invariant.Event_True("A stream mode is two bytes."),
-		),
-	)
+	invariant.Range_Invariants(len(mode), BOUND_MIN, BOUND_MAX, namespace)
 }
 
 // Commands_from_strings turns each command string into an io.Process_Request,

@@ -24,29 +24,7 @@ type Argv []string
 
 // Argv_Invariants bounds the argv word count.
 func Argv_Invariants(argv Argv, namespace invariant.Namespace) {
-	invariant.Always(len(argv) <= BOUND_MAX, "An argv is at most its max.")
-	invariant.Always(len(argv) >= BOUND_MIN, "An argv is at least its min.")
-	invariant.Always(len(argv) != BOUND_MIN, "An argv never reaches its min.")
-	invariant.Always(len(argv) != BOUND_MAX, "An argv is below its max.")
-	invariant.Dot_Product(namespace,
-		invariant.Sometimes(len(argv) == 0, "An argv is empty."),
-		invariant.Sometimes(len(argv) == 1, "An argv has one."),
-		invariant.Sometimes(len(argv) == 2, "An argv has two."),
-		invariant.Sometimes(len(argv) == BOUND_MIN, "An argv is at its min."),
-		invariant.Sometimes(len(argv) == BOUND_MAX, "An argv is at its max."),
-		invariant.Impossible(
-			invariant.Event_True("An argv is empty."),
-			invariant.Event_True("An argv has one."),
-		),
-		invariant.Impossible(
-			invariant.Event_True("An argv is empty."),
-			invariant.Event_True("An argv has two."),
-		),
-		invariant.Impossible(
-			invariant.Event_True("An argv has one."),
-			invariant.Event_True("An argv has two."),
-		),
-	)
+	invariant.Range_Invariants(len(argv), BOUND_MIN, BOUND_MAX, namespace)
 }
 
 // Command_argv flattens a command to argv: the executable followed by its arguments.

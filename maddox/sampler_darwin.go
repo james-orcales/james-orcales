@@ -230,29 +230,7 @@ type Sysctl_Key string
 
 // Sysctl_Key_Invariants bounds the key's length.
 func Sysctl_Key_Invariants(name Sysctl_Key, namespace invariant.Namespace) {
-	invariant.Always(len(name) <= BOUND_MAX, "A sysctl key is at most its max.")
-	invariant.Always(len(name) >= BOUND_MIN, "A sysctl key is at least its min.")
-	invariant.Always(len(name) != BOUND_MIN, "A sysctl key never reaches its min.")
-	invariant.Always(len(name) != BOUND_MAX, "A sysctl key is below its max.")
-	invariant.Dot_Product(namespace,
-		invariant.Sometimes(len(name) == 0, "A sysctl key is empty."),
-		invariant.Sometimes(len(name) == 1, "A sysctl key is one byte."),
-		invariant.Sometimes(len(name) == 2, "A sysctl key is two bytes."),
-		invariant.Sometimes(len(name) == BOUND_MIN, "A sysctl key is at its min."),
-		invariant.Sometimes(len(name) == BOUND_MAX, "A sysctl key is at its max."),
-		invariant.Impossible(
-			invariant.Event_True("A sysctl key is empty."),
-			invariant.Event_True("A sysctl key is one byte."),
-		),
-		invariant.Impossible(
-			invariant.Event_True("A sysctl key is empty."),
-			invariant.Event_True("A sysctl key is two bytes."),
-		),
-		invariant.Impossible(
-			invariant.Event_True("A sysctl key is one byte."),
-			invariant.Event_True("A sysctl key is two bytes."),
-		),
-	)
+	invariant.Range_Invariants(len(name), BOUND_MIN, BOUND_MAX, namespace)
 }
 
 // Sysctl_uint64 reads a 64-bit sysctl by name, marshaling the Go string across the

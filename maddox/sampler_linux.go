@@ -290,29 +290,7 @@ type Proc_Path string
 
 // Proc_Path_Invariants bounds the path's length.
 func Proc_Path_Invariants(path Proc_Path, namespace invariant.Namespace) {
-	invariant.Always(len(path) <= BOUND_MAX, "A proc path is at most its max.")
-	invariant.Always(len(path) >= BOUND_MIN, "A proc path is at least its min.")
-	invariant.Always(len(path) != BOUND_MIN, "A proc path never reaches its min.")
-	invariant.Always(len(path) != BOUND_MAX, "A proc path is below its max.")
-	invariant.Dot_Product(namespace,
-		invariant.Sometimes(len(path) == 0, "A proc path is empty."),
-		invariant.Sometimes(len(path) == 1, "A proc path is one byte."),
-		invariant.Sometimes(len(path) == 2, "A proc path is two bytes."),
-		invariant.Sometimes(len(path) == BOUND_MIN, "A proc path is at its min."),
-		invariant.Sometimes(len(path) == BOUND_MAX, "A proc path is at its max."),
-		invariant.Impossible(
-			invariant.Event_True("A proc path is empty."),
-			invariant.Event_True("A proc path is one byte."),
-		),
-		invariant.Impossible(
-			invariant.Event_True("A proc path is empty."),
-			invariant.Event_True("A proc path is two bytes."),
-		),
-		invariant.Impossible(
-			invariant.Event_True("A proc path is one byte."),
-			invariant.Event_True("A proc path is two bytes."),
-		),
-	)
+	invariant.Range_Invariants(len(path), BOUND_MIN, BOUND_MAX, namespace)
 }
 
 // Proc_Content is the bytes read back from a pseudo-file.
@@ -320,29 +298,7 @@ type Proc_Content string
 
 // Proc_Content_Invariants bounds the content's length.
 func Proc_Content_Invariants(content Proc_Content, namespace invariant.Namespace) {
-	invariant.Always(len(content) <= PROC_CONTENT_MAX, "Proc content is at most its max.")
-	invariant.Always(len(content) >= BOUND_MIN, "Proc content is at least its min.")
-	invariant.Always(len(content) != BOUND_MIN, "Proc content never reaches its min.")
-	invariant.Always(len(content) != PROC_CONTENT_MAX, "Proc content is below its max.")
-	invariant.Dot_Product(namespace,
-		invariant.Sometimes(len(content) == 0, "Proc content is empty."),
-		invariant.Sometimes(len(content) == 1, "Proc content is one byte."),
-		invariant.Sometimes(len(content) == 2, "Proc content is two bytes."),
-		invariant.Sometimes(len(content) == BOUND_MIN, "Proc content is at its min."),
-		invariant.Sometimes(len(content) == PROC_CONTENT_MAX, "Proc content at max."),
-		invariant.Impossible(
-			invariant.Event_True("Proc content is empty."),
-			invariant.Event_True("Proc content is one byte."),
-		),
-		invariant.Impossible(
-			invariant.Event_True("Proc content is empty."),
-			invariant.Event_True("Proc content is two bytes."),
-		),
-		invariant.Impossible(
-			invariant.Event_True("Proc content is one byte."),
-			invariant.Event_True("Proc content is two bytes."),
-		),
-	)
+	invariant.Range_Invariants(len(content), BOUND_MIN, PROC_CONTENT_MAX, namespace)
 }
 
 // Read_proc_file reads up to PROC_FILE_BYTES_MAX bytes of a pseudo-file into a fixed
@@ -515,29 +471,7 @@ type Utsname_Field[T int8 | uint8] []T
 func Utsname_Field_Invariants[T int8 | uint8](
 	field Utsname_Field[T], namespace invariant.Namespace,
 ) {
-	invariant.Always(len(field) <= BOUND_MAX, "A utsname field is at most its max.")
-	invariant.Always(len(field) >= BOUND_MIN, "A utsname field is at least its min.")
-	invariant.Always(len(field) != BOUND_MIN, "A utsname field never reaches its min.")
-	invariant.Always(len(field) != BOUND_MAX, "A utsname field is below its max.")
-	invariant.Dot_Product(namespace,
-		invariant.Sometimes(len(field) == 0, "A utsname field is empty."),
-		invariant.Sometimes(len(field) == 1, "A utsname field has one."),
-		invariant.Sometimes(len(field) == 2, "A utsname field has two."),
-		invariant.Sometimes(len(field) == BOUND_MIN, "A utsname field is at its min."),
-		invariant.Sometimes(len(field) == BOUND_MAX, "A utsname field is at its max."),
-		invariant.Impossible(
-			invariant.Event_True("A utsname field is empty."),
-			invariant.Event_True("A utsname field has one."),
-		),
-		invariant.Impossible(
-			invariant.Event_True("A utsname field is empty."),
-			invariant.Event_True("A utsname field has two."),
-		),
-		invariant.Impossible(
-			invariant.Event_True("A utsname field has one."),
-			invariant.Event_True("A utsname field has two."),
-		),
-	)
+	invariant.Range_Invariants(len(field), BOUND_MIN, BOUND_MAX, namespace)
 }
 
 // Utsname_string converts a fixed-size Utsname field to a Go string, stopping at
