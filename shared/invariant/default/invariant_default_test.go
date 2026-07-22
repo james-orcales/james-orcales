@@ -53,7 +53,7 @@ func seed_preset_axes(namespace string, messages ...string) {
 // Renders, as a compact "T"/"F" signature, which of the named axes recorded a true event under
 // namespace — read from Default's tracker after a single self-emitting preset call.
 func recorded_signature(namespace string, messages ...string) (signature string) {
-	shape := invariant.Default.Chain_Shapes[core.Namespace(namespace)]
+	shape := (*invariant.Default.Chain_Shapes.Load())[core.Namespace(namespace)]
 	for _, message := range messages {
 		fired := false
 		for _, axis := range shape.Axes {
@@ -321,7 +321,7 @@ func Test_Range_Method_Credits_Namespaced_Bound_Guards(t *testing.T) {
 	namespace := "test.range.guards"
 	seed_range_int(namespace, 0, 100)
 	invariant.Dot_Product(invariant.Namespace(namespace)).Range_Int(5, 0, 100).Ensure()
-	shape := invariant.Default.Chain_Shapes[core.Namespace(namespace)]
+	shape := (*invariant.Default.Chain_Shapes.Load())[core.Namespace(namespace)]
 	for _, guard := range shape.Guards {
 		if guard.Entry.Metadata.Frequency.Load() == 0 {
 			t.Errorf("bound guard %q was not credited", guard.Message)

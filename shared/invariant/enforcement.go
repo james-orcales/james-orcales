@@ -36,11 +36,10 @@ func Recorder_Always[T ~bool](recorder *Recorder, condition T, message string) {
 	recorder_increment(recorder, message, true)
 }
 
-// Recorder_Dot_Product starts one demanded chain under namespace.
+// Recorder_Dot_Product starts one demanded chain under namespace. NUL rejection lives in the
+// shape-discovery miss path: a NUL namespace never publishes a shape, so every offending call
+// re-enters discovery and re-panics there, while the warmed root performs no scan at all.
 func Recorder_Dot_Product(recorder *Recorder, namespace Namespace) (product Product) {
-	if strings.Contains(string(namespace), ELEMENT_MESSAGE_SEPARATOR) {
-		panic(ASSERTION_FAILURE_MESSAGE_PREFIX + "Dot_Product namespace contains NUL")
-	}
 	return Product{
 		Recorder:  recorder,
 		Shape:     recorder_chain_shape(recorder, namespace),
@@ -48,7 +47,8 @@ func Recorder_Dot_Product(recorder *Recorder, namespace Namespace) (product Prod
 	}
 }
 
-// Sometimes only advances the builder; Ensure owns validation and coverage mutation.
+// Sometimes only advances the builder; Ensure owns validation and coverage mutation. The NUL
+// message scan lives inside chain_axis, off the warmed match path, mirroring chain_rule_replay.
 func (product Product) Sometimes(condition bool, message string) (next Product) {
 	if product.Failure != 0 {
 		return product
@@ -56,10 +56,10 @@ func (product Product) Sometimes(condition bool, message string) (next Product) 
 	if product.Ordinal == CHAIN_LINKS_MAX {
 		return product.chain_defer_failure(PRODUCT_FAILURE_LINKS)
 	}
-	if strings.Contains(message, ELEMENT_MESSAGE_SEPARATOR) {
-		return product.chain_defer_failure(PRODUCT_FAILURE_SOMETIMES)
+	mismatch, failure := product.Shape.chain_axis(product.Ordinal, product.Axis_Count, message)
+	if failure != 0 {
+		return product.chain_defer_failure(failure)
 	}
-	mismatch := product.Shape.chain_axis(product.Ordinal, product.Axis_Count, message)
 	if condition {
 		product.Observations = chain_mask_with(product.Observations, product.Ordinal)
 	}

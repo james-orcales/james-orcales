@@ -1167,6 +1167,12 @@ func recorder_chain_shape(recorder *Recorder, namespace Namespace) (shape *Chain
 	if shape != nil {
 		return shape
 	}
+	// A NUL namespace would make the serialized axis key ambiguous. Rejecting it here, before
+	// publication, keeps the warmed root scan-free without weakening the guarantee: the shape
+	// is never published, so every offending call re-enters this miss path and re-panics.
+	if strings.Contains(string(namespace), ELEMENT_MESSAGE_SEPARATOR) {
+		panic(ASSERTION_FAILURE_MESSAGE_PREFIX + "Dot_Product namespace contains NUL")
+	}
 	shape = &Chain_Shape{}
 	recorder_chain_shape_publish(recorder, namespace, shape)
 	return shape
@@ -1201,21 +1207,26 @@ func chain_axis_key(namespace Namespace, ordinal uint8, message string) (value s
 }
 
 // Registered shapes are immutable and can use direct reads without synchronization; only
-// first-executed foreign shapes pay the mutex needed to discover their link sequence.
+// first-executed foreign shapes pay the mutex needed to discover their link sequence. Stored
+// messages are NUL-free by discovery and registration, so a warmed match proves the incoming
+// message clean without a scan; only the mismatch branch and discovery still pay one.
 func (shape *Chain_Shape) chain_axis(
 	ordinal uint8, axis_count uint8, message string,
-) (mismatch bool) {
+) (mismatch bool, failure uint8) {
 	if shape.chain_replays() {
 		if int(ordinal) >= len(shape.Links) {
-			return true
+			return true, 0
 		}
 		link := shape.Links[ordinal]
 		mismatch = link.Kind != DOT_ELEMENT_KIND_SOMETIMES
 		if link.Message != message {
+			if strings.Contains(message, ELEMENT_MESSAGE_SEPARATOR) {
+				return false, PRODUCT_FAILURE_SOMETIMES
+			}
 			mismatch = true
 		}
 		if int(axis_count) >= len(shape.Axes) {
-			return true
+			return true, 0
 		}
 		axis := shape.Axes[axis_count]
 		if axis.Ordinal != ordinal {
@@ -1224,7 +1235,10 @@ func (shape *Chain_Shape) chain_axis(
 		if axis.Message != message {
 			mismatch = true
 		}
-		return mismatch
+		return mismatch, 0
+	}
+	if strings.Contains(message, ELEMENT_MESSAGE_SEPARATOR) {
+		return false, PRODUCT_FAILURE_SOMETIMES
 	}
 	shape.Mu.Lock()
 	defer shape.Mu.Unlock()
@@ -1264,7 +1278,7 @@ func (shape *Chain_Shape) chain_axis(
 	} else {
 		mismatch = true
 	}
-	return mismatch
+	return mismatch, 0
 }
 
 // Entry is registration-owned output, not part of the structure a foreign execution replays.

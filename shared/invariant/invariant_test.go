@@ -1666,6 +1666,42 @@ func metric_chain(recorder *invariant.Recorder, value int) {
 		Ensure()
 }
 
+// Test_Dot_Product_NUL_Namespace_Panics_On_Every_Call pins the eager namespace rejection while
+// the scan moves off the warmed path: a NUL namespace never publishes a shape, so each root call
+// re-enters discovery and re-panics rather than warming past the check.
+func Test_Dot_Product_NUL_Namespace_Panics_On_Every_Call(t *testing.T) {
+	recorder := &invariant.Recorder{}
+	for attempt_index := 0; attempt_index < 2; attempt_index++ {
+		message := panic_text(func() {
+			invariant.Recorder_Dot_Product(recorder, "bad\x00namespace")
+		})
+		if !strings.Contains(message, "contains NUL") {
+			t.Fatalf("attempt %d panic = %q, want NUL rejection",
+				attempt_index, message)
+		}
+	}
+}
+
+// Test_Sometimes_NUL_Message_Is_Invalid_Link_Fresh_And_Warmed pins the diagnostic category while
+// the scan moves to the mismatch branch: a NUL axis message is a malformed link on a fresh chain
+// and on a warmed one, never a mere shape divergence.
+func Test_Sometimes_NUL_Message_Is_Invalid_Link_Fresh_And_Warmed(t *testing.T) {
+	recorder := &invariant.Recorder{}
+	message := panic_text(func() {
+		invariant.Recorder_Dot_Product(recorder, "fresh").Sometimes(true, "a\x00b").Ensure()
+	})
+	if !strings.Contains(message, "Sometimes link is invalid") {
+		t.Fatalf("fresh panic = %q, want invalid link", message)
+	}
+	invariant.Recorder_Dot_Product(recorder, "warm").Sometimes(true, "axis").Ensure()
+	message = panic_text(func() {
+		invariant.Recorder_Dot_Product(recorder, "warm").Sometimes(true, "a\x00b").Ensure()
+	})
+	if !strings.Contains(message, "Sometimes link is invalid") {
+		t.Fatalf("warmed panic = %q, want invalid link", message)
+	}
+}
+
 // Test_Warmed_Chain_Shape_Resolution_Takes_No_Recorder_Lock resolves a warmed namespace while
 // holding the recorder's shape-publication lock; a hot path that locks deadlocks here. Even a
 // read-lock is a write to one shared word, which ping-pongs its cache line across every worker —
