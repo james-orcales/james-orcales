@@ -1166,11 +1166,6 @@ const Length = 0
 			// to the rule this case pins; drop that diagnostic rather than pin it too.
 			Drop: "Length -> LENGTH",
 		},
-		{Snapshot: snap.Init(`a.go:5:6: identifier "Helper" contains banned substring "helper"`), Files: snapshot_package(`// Helper helps.
-func Helper() (n int) {
-	return 0
-}
-`)},
 	})
 }
 

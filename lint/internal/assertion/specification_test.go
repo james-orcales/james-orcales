@@ -1,6 +1,7 @@
 package assertion_test
 
 import (
+	"go/ast"
 	"go/parser"
 	"go/token"
 	"strings"
@@ -87,233 +88,151 @@ func Test_Invariants_Scope(t *testing.T) {
 	if !diagnosed(diags, "directly below Count") {
 		t.Fatal("a defined scalar type is in scope")
 	}
-}
-
-// Test_Invariants_Numeric_Bounds verifies a numeric bundle lacking the Always
-// upper/lower bound guards is flagged.
-func Test_Invariants_Numeric_Bounds(t *testing.T) {
-	t.Parallel()
-	pf := parse(t, &parse_input{
-		Path: "pkg/rule.go",
-		Source_Text: "package fixture\n\n" +
-			"import \"fixture/shared/invariant\"\n\n" +
-			"// Tiny is a fixture.\ntype Tiny uint8\n\n" +
-			"// Tiny_Invariants is a fixture.\n" +
-			"func Tiny_Invariants(v Tiny, namespace invariant.Namespace) {\n" +
-			"\tinvariant.Dot_Product(namespace)." +
-			"Sometimes(v == 0, \"zero\").Ensure()\n}\n"})
-	if !diagnosed(check_source(pf), "must guard both ends") {
-		t.Fatal("a numeric bundle without Always bounds must be flagged")
+	if name := assertion_input_struct(t); name != "" {
+		t.Fatalf("argument-bundling struct remains: %s", name)
 	}
 }
 
-// Test_Invariants_Numeric_Bound_Constant verifies an inline-literal bound is flagged.
-func Test_Invariants_Numeric_Bound_Constant(t *testing.T) {
+// Test_Invariants_Scalar_Helper verifies raw assertions cannot replace the canonical primitive,
+// Range, or Enum helper required by a defined scalar.
+func Test_Invariants_Scalar_Helper(t *testing.T) {
 	t.Parallel()
-	pf := parse(t, &parse_input{
-		Path: "pkg/rule.go",
-		Source_Text: "package fixture\n\n" +
-			"import \"fixture/shared/invariant\"\n\n" +
-			"// Tiny is a fixture.\ntype Tiny uint8\n\n" +
-			"// Tiny_Invariants is a fixture.\n" +
-			"func Tiny_Invariants(v Tiny, namespace invariant.Namespace) {\n" +
-			"\tinvariant.Always(v <= 7, \"max\")\n" +
-			"\tinvariant.Always(v >= 0, \"min\")\n" +
-			"\tinvariant.Dot_Product(namespace)." +
-			"Sometimes(v == 0, \"zero\").Ensure()\n}\n"})
-	if !diagnosed(check_source(pf), "must be a package-level constant") {
-		t.Fatal("an inline-literal numeric bound must be flagged")
+	raw := integer_helper_source("\tinvariant.Always(value >= Value_Min, \"min\")\n" +
+		"\tinvariant.Always(value <= Value_Max, \"max\")\n" +
+		"\tinvariant.Dot_Product(namespace).Sometimes(value == Value_Min, \"min\")." +
+		"Sometimes(value == Value_Max, \"max\").Ensure()")
+	if !diagnosed(check_fixture(t, raw), "must call a canonical helper") {
+		t.Fatal("individual scalar assertions must not satisfy the helper mandate")
+	}
+	range_body := "\tinvariant.Dot_Product(namespace)." +
+		"Range_Int(int(value), int(Value_Min), int(Value_Max)).Ensure()"
+	if diagnosed(check_fixture(t, integer_helper_source(range_body)),
+		"must call a canonical helper") {
+		t.Fatal("the exact Range helper must satisfy the scalar mandate")
+	}
+	enum_body := "\tinvariant.Dot_Product(namespace)." +
+		"Enum_Int(int(value), int(Value_Min), int(Value_Max)).Ensure()"
+	if diagnosed(check_fixture(t, integer_helper_source(enum_body)),
+		"must call a canonical helper") {
+		t.Fatal("the exact Enum helper must satisfy the scalar mandate")
+	}
+	preset := "\tinvariant.Int_Invariants(int(value), namespace)"
+	if diagnosed(check_fixture(t, integer_helper_source(preset)),
+		"must call a canonical helper") {
+		t.Fatal("the exact primitive preset must satisfy the scalar mandate")
+	}
+	float_preset := "\tinvariant.Float64_Invariants(float64(value), namespace)"
+	if diagnosed(check_fixture(t, float_helper_source(float_preset)),
+		"must call a canonical helper") {
+		t.Fatal("the exact float preset must satisfy the scalar mandate")
+	}
+	boolean := "\tinvariant.Boolean_Invariants(bool(value), namespace)"
+	if diagnosed(check_fixture(t, boolean_helper_source(boolean)),
+		"must call a canonical helper") {
+		t.Fatal("the Boolean helper must satisfy the scalar mandate")
 	}
 }
 
-// Test_Invariants_Numeric_Coverage verifies a signed numeric bundle missing the
-// -1 boundary claim is flagged.
-func Test_Invariants_Numeric_Coverage(t *testing.T) {
+// Test_Invariants_Count_Helper verifies a counted type requires an ensured Range_Int or Enum_Int
+// over its own length, regardless of equivalent individual assertions.
+func Test_Invariants_Count_Helper(t *testing.T) {
 	t.Parallel()
-	// A signed bundle missing the -1 boundary claim is flagged.
-	missing_claim := check_source(parse(t, &parse_input{Path: "pkg/rule.go",
-		Source_Text: sig_bundle_source(
-			"\tinvariant.Always(v <= Sig_Max, \"max\")\n" +
-				"\tinvariant.Always(v >= Sig_Min, \"min\")\n" +
-				"\tinvariant.Dot_Product(namespace).\n" +
-				"\t\tSometimes(v == Sig_Max, \"max\").\n" +
-				"\t\tSometimes(v == Sig_Min, \"min\").\n" +
-				"\t\tSometimes(v == 0, \"zero\").\n" +
-				"\t\tSometimes(v == 1, \"one\").\n" +
-				"\t\tSometimes(v == 2, \"two\").Ensure()")}))
-	if !diagnosed(missing_claim, "must claim -1") {
-		t.Fatal("a signed numeric bundle missing the -1 claim must be flagged")
+	raw := "\tinvariant.Always(len(value) >= Value_Min, \"min\")\n" +
+		"\tinvariant.Always(len(value) <= Value_Max, \"max\")\n" +
+		"\tinvariant.Dot_Product(namespace).Sometimes(len(value) == Value_Min, \"min\")." +
+		"Sometimes(len(value) == Value_Max, \"max\").Ensure()"
+	if !diagnosed(check_fixture(t, count_helper_source(raw)),
+		"must call Range_Int or Enum_Int") {
+		t.Fatal("individual count assertions must not satisfy the helper mandate")
 	}
-	// A bundle that claims every sentinel and witnesses its minimum but never its maximum
-	// is flagged: both bound edges must be witnessed.
-	missing_max := check_source(parse(t, &parse_input{Path: "pkg/rule.go",
-		Source_Text: sig_bundle_source(
-			"\tinvariant.Always(v <= Sig_Max, \"max\")\n" +
-				"\tinvariant.Always(v >= Sig_Min, \"min\")\n" +
-				"\tinvariant.Dot_Product(namespace).\n" +
-				"\t\tSometimes(v == Sig_Min, \"min\").\n" +
-				"\t\tSometimes(v == 0, \"zero\").\n" +
-				"\t\tSometimes(v == 1, \"one\").\n" +
-				"\t\tSometimes(v == 2, \"two\").\n" +
-				"\t\tSometimes(v == -1, \"neg\").Ensure()")}))
-	if !diagnosed(missing_max, "must witness its maximum") {
-		t.Fatal("a numeric bundle that never witnesses its maximum must be flagged")
+	valid := "\tinvariant.Dot_Product(namespace)." +
+		"Range_Int(len(value), Value_Min, Value_Max, 1, 2).Ensure()"
+	if diagnosed(check_fixture(t, count_helper_source(valid)),
+		"must call Range_Int or Enum_Int") {
+		t.Fatal("Range_Int over the counted value must satisfy the mandate")
+	}
+	wrong_suffix := "\tinvariant.Dot_Product(namespace)." +
+		"Range_Int64(int64(len(value)), int64(Value_Min), int64(Value_Max)).Ensure()"
+	if !diagnosed(check_fixture(t, count_helper_source(wrong_suffix)),
+		"must call Range_Int or Enum_Int") {
+		t.Fatal("a differently typed Range helper must not substitute")
+	}
+	split := "\tproduct := invariant.Dot_Product(namespace)\n" +
+		"\tproduct.Range_Int(len(value), Value_Min, Value_Max).Ensure()"
+	if !diagnosed(check_fixture(t, count_helper_source(split)),
+		"must call Range_Int or Enum_Int") {
+		t.Fatal("a split chain must not satisfy the helper mandate")
 	}
 }
 
-// Test_Invariants_Numeric_Range_Preset verifies a typed Range link satisfies the bound and coverage
-// rules while the required defined-type conversions do not hide an inline-literal bound.
-func Test_Invariants_Numeric_Range_Preset(t *testing.T) {
+// Test_Invariants_Helper_Constants verifies canonical helpers retain package-level constant
+// identity for Range edges and Enum members.
+func Test_Invariants_Helper_Constants(t *testing.T) {
 	t.Parallel()
-	preset := check_source(parse(t, &parse_input{Path: "pkg/rule.go",
-		Source_Text: sig_bundle_source(
-			"\tinvariant.Dot_Product(namespace).\n" +
-				"\t\tRange_Int(int(v), int(Sig_Min), int(Sig_Max)).Ensure()")}))
-	verbose := check_source(parse(t, &parse_input{Path: "pkg/rule.go",
-		Source_Text: sig_bundle_source(
-			"\tinvariant.Always(v <= Sig_Max, \"max\")\n" +
-				"\tinvariant.Always(v >= Sig_Min, \"min\")\n" +
-				"\tinvariant.Dot_Product(namespace).\n" +
-				"\t\tSometimes(v == Sig_Min, \"min\").\n" +
-				"\t\tSometimes(v == Sig_Max, \"max\").\n" +
-				"\t\tSometimes(v == 0, \"zero\").\n" +
-				"\t\tSometimes(v == 1, \"one\").\n" +
-				"\t\tSometimes(v == 2, \"two\").\n" +
-				"\t\tSometimes(v == -1, \"neg\").Ensure()")}))
-	// Either form satisfies the bound and coverage mandate — neither is flagged.
-	clean := func(form string, diags []diagnostic.Diagnostic) {
-		if diagnosed(diags, "must guard both ends") {
-			t.Errorf("%s form must not be flagged for its bounds", form)
-		}
-		if diagnosed(diags, "must claim") {
-			t.Errorf("%s form must not be flagged for its coverage", form)
-		}
-		if diagnosed(diags, "must witness") {
-			t.Errorf("%s form must not be flagged for its edges", form)
-		}
-		if diagnosed(diags, "must be a package-level constant") {
-			t.Errorf("%s form must not be flagged for its constants", form)
-		}
+	inline_range := "\tinvariant.Dot_Product(namespace)." +
+		"Range_Int(int(value), int(Value_Min), int(7)).Ensure()"
+	if !diagnosed(check_fixture(t, integer_helper_source(inline_range)),
+		"arguments must be package-level constants") {
+		t.Fatal("an inline Range edge must not satisfy the helper mandate")
 	}
-	clean("preset", preset)
-	clean("verbose", verbose)
-	// The Numeric Bound Constant rule still holds: an inline bound to the preset is flagged.
-	inline := check_source(parse(t, &parse_input{Path: "pkg/rule.go",
-		Source_Text: sig_bundle_source(
-			"\tinvariant.Dot_Product(namespace).\n" +
-				"\t\tRange_Int(int(v), int(Sig_Min), int(7)).Ensure()")}))
-	if !diagnosed(inline, "must be a package-level constant") {
-		t.Fatal("an inline-literal preset bound must be flagged")
+	inline_enum := "\tinvariant.Dot_Product(namespace)." +
+		"Enum_Int(int(value), int(Value_Min), int(7)).Ensure()"
+	if !diagnosed(check_fixture(t, integer_helper_source(inline_enum)),
+		"arguments must be package-level constants") {
+		t.Fatal("an inline Enum member must not satisfy the helper mandate")
+	}
+	converted := "\tinvariant.Dot_Product(namespace)." +
+		"Range_Int(int(value), int(Value_Min), int(Value_Max), 1, 2).Ensure()"
+	if diagnosed(check_fixture(t, integer_helper_source(converted)),
+		"arguments must be package-level constants") {
+		t.Fatal("exactly converted package constants must satisfy the mandate")
+	}
+	shadowed := "\tValue_Min := 0\n" +
+		"\tinvariant.Dot_Product(namespace)." +
+		"Range_Int(int(value), Value_Min, Value_Max).Ensure()"
+	if !diagnosed(check_fixture(t, integer_helper_source(shadowed)),
+		"arguments must be package-level constants") {
+		t.Fatal("a local shadow of a package constant must not satisfy the mandate")
 	}
 }
 
-// Test_Invariants_Numeric_Enum_Preset verifies a typed Enum link satisfies the bound and coverage
-// mandate while converted members remain held to the package-level-constant rule.
-func Test_Invariants_Numeric_Enum_Preset(t *testing.T) {
+// Test_Invariants_Helper_Identity verifies only a direct chain rooted at the actual invariant
+// package and the helper's namespace parameter satisfies the body mandate.
+func Test_Invariants_Helper_Identity(t *testing.T) {
 	t.Parallel()
-	preset := check_source(parse(t, &parse_input{Path: "pkg/rule.go",
-		Source_Text: sig_bundle_source(
-			"\tinvariant.Dot_Product(namespace).\n" +
-				"\t\tEnum_Int(int(v), int(Sig_Min), int(Sig_Max)).Ensure()")}))
-	if diagnosed(preset, "must guard both ends") {
-		t.Error("an enum preset must not be flagged for its bounds")
+	literal := "\tinvariant.Dot_Product(\"manual\")." +
+		"Range_Int(int(value), int(Value_Min), int(Value_Max)).Ensure()"
+	if !diagnosed(check_fixture(t, integer_helper_source(literal)),
+		"must call a canonical helper") {
+		t.Fatal("a literal namespace must not satisfy a helper template")
 	}
-	if diagnosed(preset, "must claim") {
-		t.Error("an enum preset must not be flagged for its coverage")
+	nested := "\tif true {\n\t\tinvariant.Dot_Product(namespace)." +
+		"Range_Int(int(value), int(Value_Min), int(Value_Max)).Ensure()\n\t}"
+	if !diagnosed(check_fixture(t, integer_helper_source(nested)),
+		"must call a canonical helper") {
+		t.Fatal("a nested chain must not satisfy the direct helper mandate")
 	}
-	if diagnosed(preset, "must witness") {
-		t.Error("an enum preset must not be flagged for its edges")
+	foreign := foreign_scalar_helper_source()
+	if !diagnosed(check_fixture(t, foreign), "must call a canonical helper") {
+		t.Fatal("a foreign Dot_Product lookalike must not satisfy the mandate")
 	}
-	if diagnosed(preset, "must be a package-level constant") {
-		t.Error("an all-constant enum preset must not be flagged for its members")
+	aliased := aliased_scalar_helper_source()
+	if diagnosed(check_fixture(t, aliased), "must call a canonical helper") {
+		t.Fatal("an aliased import of the real invariant package must satisfy the mandate")
 	}
-	// The Numeric Bound Constant rule still holds: an inline-literal member is flagged.
-	inline := check_source(parse(t, &parse_input{Path: "pkg/rule.go",
-		Source_Text: sig_bundle_source(
-			"\tinvariant.Dot_Product(namespace).\n" +
-				"\t\tEnum_Int(int(v), int(Sig_Min), int(7)).Ensure()")}))
-	if !diagnosed(inline, "must be a package-level constant") {
-		t.Fatal("an inline-literal enum member must be flagged")
+	conversion := "\tint := func(Value) int { return 0 }\n" +
+		"\tinvariant.Dot_Product(namespace)." +
+		"Range_Int(int(value), Value_Min, Value_Max).Ensure()"
+	if !diagnosed(check_fixture(t, integer_helper_source(conversion)),
+		"must call a canonical helper") {
+		t.Fatal("a local function shadowing the primitive conversion must not substitute")
 	}
-}
-
-// Test_Invariants_Count_Bounds verifies a string/slice/map bundle lacking the
-// Always len bounds is flagged.
-func Test_Invariants_Count_Bounds(t *testing.T) {
-	t.Parallel()
-	pf := parse(t, &parse_input{
-		Path: "pkg/rule.go",
-		Source_Text: "package fixture\n\n" +
-			"import \"fixture/shared/invariant\"\n\n" +
-			"// Name is a fixture.\ntype Name string\n\n" +
-			"// Name_Invariants is a fixture.\n" +
-			"func Name_Invariants(v Name, namespace invariant.Namespace) {\n" +
-			"\tinvariant.Dot_Product(namespace)." +
-			"Sometimes(len(v) == 0, \"empty\").Ensure()\n}\n"})
-	if !diagnosed(check_source(pf), "Always(len(v) <= MAX)") {
-		t.Fatal("a length bundle without Always len bounds must be flagged")
-	}
-}
-
-// Test_Invariants_Count_Bound_Constant verifies an inline-literal len bound is flagged.
-func Test_Invariants_Count_Bound_Constant(t *testing.T) {
-	t.Parallel()
-	pf := parse(t, &parse_input{
-		Path: "pkg/rule.go",
-		Source_Text: "package fixture\n\n" +
-			"import \"fixture/shared/invariant\"\n\n" +
-			"// Name is a fixture.\ntype Name string\n\n" +
-			"// Name_Invariants is a fixture.\n" +
-			"func Name_Invariants(v Name, namespace invariant.Namespace) {\n" +
-			"\tinvariant.Always(len(v) <= 32, \"max\")\n" +
-			"\tinvariant.Always(len(v) >= 0, \"min\")\n" +
-			"\tinvariant.Dot_Product(namespace)." +
-			"Sometimes(len(v) == 0, \"empty\").Ensure()\n}\n"})
-	if !diagnosed(check_source(pf), "must be a package-level constant") {
-		t.Fatal("an inline-literal len bound must be flagged")
-	}
-}
-
-// Test_Invariants_Count_Coverage verifies a length bundle missing the 2 claim is flagged.
-func Test_Invariants_Count_Coverage(t *testing.T) {
-	t.Parallel()
-	pf := parse(t, &parse_input{
-		Path: "pkg/rule.go",
-		Source_Text: "package fixture\n\n" +
-			"import \"fixture/shared/invariant\"\n\n" +
-			"const Name_Max = 32\n\nconst Name_Min = 0\n\n" +
-			"// Name is a fixture.\ntype Name string\n\n" +
-			"// Name_Invariants is a fixture.\n" +
-			"func Name_Invariants(v Name, namespace invariant.Namespace) {\n" +
-			"\tinvariant.Always(len(v) <= Name_Max, \"max bound\")\n" +
-			"\tinvariant.Always(len(v) >= Name_Min, \"min bound\")\n" +
-			"\tinvariant.Dot_Product(namespace).\n" +
-			"\t\tSometimes(len(v) == Name_Max, \"max\").\n" +
-			"\t\tSometimes(len(v) == Name_Min, \"min\").\n" +
-			"\t\tSometimes(len(v) == 0, \"zero\").\n" +
-			"\t\tSometimes(len(v) == 1, \"one\").Ensure()\n}\n"})
-	if !diagnosed(check_source(pf), "must claim 2") {
-		t.Fatal("a length bundle missing the 2 claim must be flagged")
-	}
-	// A count bundle whose body is one typed Range chain over len(v) is accepted.
-	preset_source := "package fixture\n\n" +
-		"import \"fixture/shared/invariant\"\n\n" +
-		"const Name_Max = 32\n\nconst Name_Min = 0\n\n" +
-		"// Name is a fixture.\ntype Name string\n\n" +
-		"// Name_Invariants is a fixture.\n" +
-		"func Name_Invariants(v Name, namespace invariant.Namespace) {\n" +
-		"\tinvariant.Dot_Product(namespace).\n" +
-		"\t\tRange_Int(len(v), Name_Min, Name_Max).Ensure()\n}\n"
-	preset := check_source(parse(t, &parse_input{
-		Path: "pkg/rule.go", Source_Text: preset_source}))
-	if diagnosed(preset, "must guard") {
-		t.Error("a count len-preset bundle must not be flagged for bounds")
-	}
-	if diagnosed(preset, "must claim") {
-		t.Error("a count len-preset bundle must not be flagged for coverage")
-	}
-	if diagnosed(preset, "must witness") {
-		t.Error("a count len-preset bundle must not be flagged for edges")
+	count := "\tlen := func(Value) int { return 0 }\n" +
+		"\tinvariant.Dot_Product(namespace)." +
+		"Range_Int(len(value), Value_Min, Value_Max).Ensure()"
+	if !diagnosed(check_fixture(t, count_helper_source(count)),
+		"must call Range_Int or Enum_Int") {
+		t.Fatal("a local function shadowing len must not substitute")
 	}
 }
 
@@ -324,16 +243,22 @@ func Test_Invariants_Field_Composition(t *testing.T) {
 	pf := parse(t, &parse_input{
 		Path: "pkg/rule.go",
 		Source_Text: "package fixture\n\n" +
-			"import \"fixture/shared/invariant\"\n\n" +
+			"import (\n\tinvariant \"fixture/shared/invariant/default\"\n" +
+			"\tforeign \"fixture/foreign\"\n)\n\n" +
+			"const Token_Min = 0\n\nconst Token_Max = 8\n\n" +
 			"// Token is a fixture.\ntype Token string\n\n" +
 			"// Token_Invariants is a fixture.\n" +
 			"func Token_Invariants(v Token, namespace invariant.Namespace) {\n" +
 			"\tinvariant.Dot_Product(namespace)." +
-			"Sometimes(len(v) == 0, \"x\").Ensure()\n}\n\n" +
+			"Range_Int(len(v), Token_Min, Token_Max).Ensure()\n}\n\n" +
 			"// Lexeme is a fixture.\ntype Lexeme struct {\n" +
 			"\t// Tok is a fixture.\n\tTok Token\n}\n\n" +
 			"// Lexeme_Invariants is a fixture.\n" +
 			"func Lexeme_Invariants(v Lexeme, namespace invariant.Namespace) {\n" +
+			"\tforeign.Token_Invariants(v.Tok, \"wrong\")\n" +
+			"\tif false { Token_Invariants(v.Tok, \"nested\") }\n" +
+			"\tToken_Invariants := func(Token, invariant.Namespace) {}\n" +
+			"\tToken_Invariants(v.Tok, namespace)\n" +
 			"\tinvariant.Dot_Product(namespace)." +
 			"Sometimes(true, \"x\").Ensure()\n}\n\n" +
 			"// Phrase is a fixture.\ntype Phrase struct {\n" +
@@ -351,43 +276,101 @@ func Test_Invariants_Field_Composition(t *testing.T) {
 	if !diagnosed(diags, "Phrase_Invariants must call Token_Invariants") {
 		t.Fatal("a struct that does not compose a pointer field's pointee must be flagged")
 	}
-}
-
-// Test_Invariants_Parameter_Assertion verifies a function that does not assert an
-// input parameter is flagged.
-func Test_Invariants_Parameter_Assertion(t *testing.T) {
-	t.Parallel()
-	pf := parse(t, &parse_input{
-		Path: "pkg/rule.go",
-		Source_Text: "package fixture\n\n" +
-			"import \"fixture/shared/invariant\"\n\n" +
+	external := parse(t, &parse_input{
+		Path: "other/token.go",
+		Source_Text: "package other\n\n" +
+			"import invariant \"fixture/shared/invariant/default\"\n\n" +
+			"const Token_Min = 0\n\nconst Token_Max = 8\n\n" +
 			"// Token is a fixture.\ntype Token string\n\n" +
 			"// Token_Invariants is a fixture.\n" +
 			"func Token_Invariants(v Token, namespace invariant.Namespace) {\n" +
 			"\tinvariant.Dot_Product(namespace)." +
-			"Sometimes(len(v) == 0, \"x\").Ensure()\n}\n\n" +
-			"// Consume does.\nfunc Consume(tok Token) {\n\tprintln(0)\n}\n"})
-	if !diagnosed(check_source(pf), "must assert tok") {
-		t.Fatal("a function that does not assert an input parameter must be flagged")
+			"Range_Int(len(v), Token_Min, Token_Max).Ensure()\n}\n"})
+	composed := parse(t, &parse_input{
+		Path: "pkg/composed.go",
+		Source_Text: "package fixture\n\n" +
+			"import (\n\tinvariant \"fixture/shared/invariant/default\"\n" +
+			"\texternal \"fixture/other\"\n)\n\n" +
+			"// Holder is a fixture.\ntype Holder struct {\n" +
+			"\t// Token is external.\n\tToken external.Token\n" +
+			"\t// Count is primitive.\n\tCount int\n}\n\n" +
+			"// Holder_Invariants is a fixture.\n" +
+			"func Holder_Invariants(v Holder, namespace invariant.Namespace) {\n" +
+			"\texternal.Token_Invariants(v.Token, \"token\")\n" +
+			"\tinvariant.Int_Invariants(v.Count, \"count\")\n}\n"})
+	if diagnosed(check_sources([]source.Parsed_File{external, composed}), "must call") {
+		t.Fatal("aliased exact cross-package and primitive helpers must compose")
 	}
 }
 
-// Test_Invariants_Output_Assertion verifies a function that does not assert a
-// named return in a first-statement defer is flagged.
-func Test_Invariants_Output_Assertion(t *testing.T) {
+// Test_Invariants_Parameter_Helper verifies only the input type's exact helper
+// satisfies the leading helper requirement.
+func Test_Invariants_Parameter_Helper(t *testing.T) {
 	t.Parallel()
 	pf := parse(t, &parse_input{
 		Path: "pkg/rule.go",
 		Source_Text: "package fixture\n\n" +
-			"import \"fixture/shared/invariant\"\n\n" +
+			"import (\n\tinvariant \"fixture/shared/invariant/default\"\n" +
+			"\tforeign \"fixture/foreign\"\n)\n\n" +
+			"const Token_Min = 0\n\nconst Token_Max = 8\n\n" +
 			"// Token is a fixture.\ntype Token string\n\n" +
 			"// Token_Invariants is a fixture.\n" +
 			"func Token_Invariants(v Token, namespace invariant.Namespace) {\n" +
 			"\tinvariant.Dot_Product(namespace)." +
-			"Sometimes(len(v) == 0, \"x\").Ensure()\n}\n\n" +
-			"// Make does.\nfunc Make() (tok Token) {\n\treturn \"\"\n}\n"})
-	if !diagnosed(check_source(pf), "must assert tok in a first-statement defer") {
-		t.Fatal("a function that does not assert its return in a defer must be flagged")
+			"Range_Int(len(v), Token_Min, Token_Max).Ensure()\n}\n\n" +
+			"// Consume does.\nfunc Consume(tok Token) {\n" +
+			"\tforeign.Token_Invariants(tok, \"wrong\")\n" +
+			"\tinvariant.Always(true, \"raw guard\")\n" +
+			"\tinvariant.Dot_Product(\"raw chain\")." +
+			"Sometimes(true, \"raw axis\").Ensure()\n" +
+			"\tprintln(0)\n}\n"})
+	if !diagnosed(check_source(pf), "must call helper for tok") {
+		t.Fatal("foreign and direct assertions must not satisfy the input helper")
+	}
+	parameter_helper_correct(t)
+	parameter_helper_shadowed(t)
+	parameter_helper_external(t)
+}
+
+// Test_Invariants_Output_Helper verifies only the return type's exact helper
+// satisfies the first-statement output defer.
+func Test_Invariants_Output_Helper(t *testing.T) {
+	t.Parallel()
+	pf := parse(t, &parse_input{
+		Path: "pkg/rule.go",
+		Source_Text: "package fixture\n\n" +
+			"import (\n\tinvariant \"fixture/shared/invariant/default\"\n" +
+			"\tforeign \"fixture/foreign\"\n)\n\n" +
+			"const Token_Min = 0\n\nconst Token_Max = 8\n\n" +
+			"// Token is a fixture.\ntype Token string\n\n" +
+			"// Token_Invariants is a fixture.\n" +
+			"func Token_Invariants(v Token, namespace invariant.Namespace) {\n" +
+			"\tinvariant.Dot_Product(namespace)." +
+			"Range_Int(len(v), Token_Min, Token_Max).Ensure()\n}\n\n" +
+			"// Make does.\nfunc Make() (tok Token) {\n\tdefer func() {\n" +
+			"\t\tforeign.Token_Invariants(tok, \"wrong\")\n" +
+			"\t\tif false { Token_Invariants(tok, \"nested\") }\n" +
+			"\t\tToken_Invariants := func(Token, invariant.Namespace) {}\n" +
+			"\t\tToken_Invariants(tok, \"shadowed\")\n" +
+			"\t\tinvariant.Always(true, \"raw guard\")\n\t}()\n\treturn \"\"\n}\n"})
+	if !diagnosed(check_source(pf), "must call helper for tok in the output defer") {
+		t.Fatal("foreign and direct assertions must not satisfy the output helper")
+	}
+	correct := parse(t, &parse_input{
+		Path: "pkg/correct_output.go",
+		Source_Text: "package fixture\n\n" +
+			"import invariant \"fixture/shared/invariant/default\"\n\n" +
+			"const Token_Min = 0\n\nconst Token_Max = 8\n\n" +
+			"// Token is a fixture.\ntype Token string\n\n" +
+			"// Token_Invariants is a fixture.\n" +
+			"func Token_Invariants(v Token, namespace invariant.Namespace) {\n" +
+			"\tinvariant.Dot_Product(namespace)." +
+			"Range_Int(len(v), Token_Min, Token_Max).Ensure()\n}\n\n" +
+			"// Make uses the exact output helper.\nfunc Make() (tok Token) {\n" +
+			"\tdefer func() {\n\t\tToken_Invariants(tok, \"token\")\n" +
+			"\t}()\n\treturn \"\"\n}\n"})
+	if diagnosed(check_source(correct), "must call helper") {
+		t.Fatal("the exact helper in the first output defer must satisfy the mandate")
 	}
 }
 
@@ -513,6 +496,102 @@ func Test_Simulation_Blackbox(t *testing.T) {
 	}
 }
 
+// The passing case stays outside the leaf so each topology remains independently legible while
+// the specification leaf retains one mandate and the linter's bounded-function contract.
+func parameter_helper_correct(t *testing.T) {
+	t.Helper()
+	correct := parse(t, &parse_input{
+		Path: "pkg/correct.go",
+		Source_Text: "package fixture\n\n" +
+			"import invariant \"fixture/shared/invariant/default\"\n\n" +
+			"const Token_Min = 0\n\nconst Token_Max = 8\n\n" +
+			"// Token is a fixture.\ntype Token string\n\n" +
+			"// Token_Invariants is a fixture.\n" +
+			"func Token_Invariants(v Token, namespace invariant.Namespace) {\n" +
+			"\tinvariant.Dot_Product(namespace)." +
+			"Range_Int(len(v), Token_Min, Token_Max).Ensure()\n}\n\n" +
+			"// Consume uses exact helpers.\nfunc Consume(tok Token, count int) {\n" +
+			"\tToken_Invariants(tok, \"token\")\n" +
+			"\tinvariant.Int_Invariants(count, \"count\")\n}\n"})
+	if diagnosed(check_source(correct), "must call helper") {
+		t.Fatal("exact local and primitive input helpers must satisfy the mandate")
+	}
+}
+
+// A same-named parameter must not become an escape hatch from exact helper identity.
+func parameter_helper_shadowed(t *testing.T) {
+	t.Helper()
+	shadowed := parse(t, &parse_input{
+		Path: "pkg/shadowed.go",
+		Source_Text: "package fixture\n\n" +
+			"import invariant \"fixture/shared/invariant/default\"\n\n" +
+			"const Token_Min = 0\n\nconst Token_Max = 8\n\n" +
+			"// Token is a fixture.\ntype Token string\n\n" +
+			"// Token_Invariants is a fixture.\n" +
+			"func Token_Invariants(v Token, namespace invariant.Namespace) {\n" +
+			"\tinvariant.Dot_Product(namespace)." +
+			"Range_Int(len(v), Token_Min, Token_Max).Ensure()\n}\n\n" +
+			"// Consume shadows the helper.\n" +
+			"func Consume(tok Token, Token_Invariants " +
+			"func(Token, invariant.Namespace)) {\n" +
+			"\tToken_Invariants(tok, \"shadowed\")\n}\n"})
+	if !diagnosed(check_source(shadowed), "must call helper for tok") {
+		t.Fatal("a parameter shadowing the exact helper must not satisfy the mandate")
+	}
+}
+
+// Cross-package identity is proved separately because aliases change spelling without changing
+// the helper that owns the external type.
+func parameter_helper_external(t *testing.T) {
+	t.Helper()
+	external := parse(t, &parse_input{
+		Path: "other/input.go",
+		Source_Text: "package other\n\n" +
+			"import invariant \"fixture/shared/invariant/default\"\n\n" +
+			"const Input_Min = -4\n\nconst Input_Max = 4\n\n" +
+			"// Input is a fixture.\ntype Input int\n\n" +
+			"// Input_Invariants is a fixture.\n" +
+			"func Input_Invariants(v Input, namespace invariant.Namespace) {\n" +
+			"\tinvariant.Dot_Product(namespace).Range_Int(" +
+			"int(v), int(Input_Min), int(Input_Max)).Ensure()\n}\n"})
+	consumer := parse(t, &parse_input{
+		Path: "pkg/external.go",
+		Source_Text: "package fixture\n\n" +
+			"import external \"fixture/other\"\n\n" +
+			"// Consume uses an aliased external helper.\n" +
+			"func Consume(input external.Input) {\n" +
+			"\texternal.Input_Invariants(input, \"input\")\n}\n"})
+	if diagnosed(check_sources([]source.Parsed_File{external, consumer}), "must call helper") {
+		t.Fatal("an aliased exact cross-package input helper must satisfy the mandate")
+	}
+}
+
+// Reading the analyzer itself pins the deliberately flat API without coupling the production
+// package to a self-reflection mechanism needed only by this regression.
+func assertion_input_struct(t *testing.T) (name string) {
+	t.Helper()
+	file, parse_error := parser.ParseFile(token.NewFileSet(), "assertion.go", nil, 0)
+	if parse_error != nil {
+		t.Fatal(parse_error)
+	}
+	for _, declaration := range file.Decls {
+		general, is_general := declaration.(*ast.GenDecl)
+		if !is_general {
+			continue
+		}
+		for _, specification := range general.Specs {
+			type_specification, is_type := specification.(*ast.TypeSpec)
+			if !is_type {
+				continue
+			}
+			if strings.HasSuffix(type_specification.Name.Name, "_Input") {
+				return type_specification.Name.Name
+			}
+		}
+	}
+	return ""
+}
+
 // The fixture a parse turns into a Parsed_File.
 type parse_input struct {
 	// Path is the repo-relative path the fixture stands in for.
@@ -548,17 +627,111 @@ func diagnosed(diags []diagnostic.Diagnostic, fragment string) (found bool) {
 	return false
 }
 
-// Runs the cross-file checks over a single source fixture. The component graph maps
-// the file to no component (-1) so the recorder and simulation checks Check also runs
-// stay inert rather than dereferencing an absent graph and panicking.
+// Parses and checks one body-mandate fixture at the package path used by the component index.
+func check_fixture(t *testing.T, code string) (diags []diagnostic.Diagnostic) {
+	t.Helper()
+	return check_source(parse(t, &parse_input{Path: "pkg/rule.go", Source_Text: code}))
+}
+
+// Keeping the underlying type fixed makes each integer fixture vary only the helper shape under
+// judgment, without introducing an argument bundle merely to share fixture text.
+func integer_helper_source(body string) (code string) {
+	return "package fixture\n\n" +
+		"import invariant \"fixture/shared/invariant/default\"\n\n" +
+		"const Value_Min = -4\n\nconst Value_Max = 4\n\n" +
+		"// Value is a fixture.\ntype Value int\n\n" +
+		"// Value_Invariants is a fixture.\n" +
+		"func Value_Invariants(value Value, namespace invariant.Namespace) {\n" +
+		body + "\n}\n"
+}
+
+// The float fixture is intentionally separate because type text is test data, not a runtime
+// input whose bundling would improve the API.
+func float_helper_source(body string) (code string) {
+	return "package fixture\n\n" +
+		"import invariant \"fixture/shared/invariant/default\"\n\n" +
+		"const Value_Min = -4\n\nconst Value_Max = 4\n\n" +
+		"// Value is a fixture.\ntype Value float64\n\n" +
+		"// Value_Invariants is a fixture.\n" +
+		"func Value_Invariants(value Value, namespace invariant.Namespace) {\n" +
+		body + "\n}\n"
+}
+
+// The Boolean fixture remains explicit so no generic fixture input structure can conceal which
+// primitive preset the leaf is proving.
+func boolean_helper_source(body string) (code string) {
+	return "package fixture\n\n" +
+		"import invariant \"fixture/shared/invariant/default\"\n\n" +
+		"const Value_Min = -4\n\nconst Value_Max = 4\n\n" +
+		"// Value is a fixture.\ntype Value bool\n\n" +
+		"// Value_Invariants is a fixture.\n" +
+		"func Value_Invariants(value Value, namespace invariant.Namespace) {\n" +
+		body + "\n}\n"
+}
+
+// Builds a defined byte-slice helper, the same counted shape as Report_Invariants.
+func count_helper_source(body string) (code string) {
+	return "package fixture\n\n" +
+		"import invariant \"fixture/shared/invariant/default\"\n\n" +
+		"const Value_Min = 0\n\nconst Value_Max = 32\n\n" +
+		"// Value is a fixture.\ntype Value []byte\n\n" +
+		"// Value_Invariants is a fixture.\n" +
+		"func Value_Invariants(value Value, namespace invariant.Namespace) {\n" +
+		body + "\n}\n"
+}
+
+// A same-shaped fluent chain owned by another package cannot impersonate invariant.Dot_Product.
+func foreign_scalar_helper_source() (code string) {
+	return "package fixture\n\n" +
+		"import (\n\tinvariant \"fixture/shared/invariant/default\"\n" +
+		"\tforeign \"fixture/other\"\n)\n\n" +
+		"const Value_Min = -4\n\nconst Value_Max = 4\n\n" +
+		"// Value is a fixture.\ntype Value int\n\n" +
+		"// Value_Invariants is a fixture.\n" +
+		"func Value_Invariants(value Value, namespace invariant.Namespace) {\n" +
+		"\tforeign.Dot_Product(namespace)." +
+		"Range_Int(int(value), int(Value_Min), int(Value_Max)).Ensure()\n}\n"
+}
+
+// Import aliases change spelling, not the identity of the canonical invariant package.
+func aliased_scalar_helper_source() (code string) {
+	return "package fixture\n\n" +
+		"import contract \"fixture/shared/invariant/default\"\n\n" +
+		"const Value_Min = -4\n\nconst Value_Max = 4\n\n" +
+		"// Value is a fixture.\ntype Value int\n\n" +
+		"// Value_Invariants is a fixture.\n" +
+		"func Value_Invariants(value Value, namespace contract.Namespace) {\n" +
+		"\tcontract.Dot_Product(namespace)." +
+		"Range_Int(int(value), int(Value_Min), int(Value_Max)).Ensure()\n}\n"
+}
+
+// Runs the cross-file checks over one package plus the framework component. Exact helper identity
+// needs both import roots; the package remains a binary so recorder checks stay inert.
 func check_source(pf source.Parsed_File) (diags []diagnostic.Diagnostic) {
-	return assertion.Check(&assertion.Check_Input{
-		Parsed_Files: []source.Parsed_File{pf},
-		Components: &source.Component_Index{
-			File_To_Component: map[string]int{pf.Path: -1},
+	return check_sources([]source.Parsed_File{pf})
+}
+
+func check_sources(files []source.Parsed_File) (diags []diagnostic.Diagnostic) {
+	file_to_component := map[string]int{}
+	for _, file := range files {
+		component := 0
+		if strings.HasPrefix(file.Path, "other/") {
+			component = 1
+		}
+		file_to_component[file.Path] = component
+	}
+	components := &source.Component_Index{
+		Components: []source.Component{
+			{Root: "pkg", Import_Path: "fixture/pkg"},
+			{Root: "other", Import_Path: "fixture/other"},
+			{
+				Root: "shared", Import_Path: "fixture/shared",
+				Is_Shared_Library: true,
+			},
 		},
-		Exempt: nil,
-	})
+		File_To_Component: file_to_component,
+	}
+	return assertion.Check(files, components, nil)
 }
 
 // Runs Check with the fixture treated as one shared-library component, the only tier
@@ -568,16 +741,13 @@ func recorder_diagnostics(files []source.Parsed_File) (diags []diagnostic.Diagno
 	for _, pf := range files {
 		mapping[pf.Path] = 0
 	}
-	return assertion.Check(&assertion.Check_Input{
-		Parsed_Files: files,
-		Components: &source.Component_Index{
-			Components: []source.Component{{
-				Root: "pkg", Import_Path: "fixture/pkg", Is_Shared_Library: true,
-			}},
-			File_To_Component: mapping,
-		},
-		Exempt: nil,
-	})
+	components := &source.Component_Index{
+		Components: []source.Component{{
+			Root: "pkg", Import_Path: "fixture/pkg", Is_Shared_Library: true,
+		}},
+		File_To_Component: mapping,
+	}
+	return assertion.Check(files, components, nil)
 }
 
 // Runs Check with the fixture treated as one binary component rooted at pkg, so the
@@ -588,17 +758,14 @@ func simulation_diagnostics(files []source.Parsed_File) (diags []diagnostic.Diag
 	for _, pf := range files {
 		mapping[pf.Path] = 0
 	}
-	return assertion.Check(&assertion.Check_Input{
-		Parsed_Files: files,
-		Components: &source.Component_Index{
-			Components: []source.Component{{
-				Root:        "pkg",
-				Import_Path: "github.com/james-orcales/james-orcales/pkg",
-			}},
-			File_To_Component: mapping,
-		},
-		Exempt: nil,
-	})
+	components := &source.Component_Index{
+		Components: []source.Component{{
+			Root:        "pkg",
+			Import_Path: "github.com/james-orcales/james-orcales/pkg",
+		}},
+		File_To_Component: mapping,
+	}
+	return assertion.Check(files, components, nil)
 }
 
 // The binary-component fixture without a simulation package — a thin main and an
@@ -635,15 +802,4 @@ func simulation_fixture_source(call string) (code string) {
 		"func TestMain(m *testing.M) {\n\t" + call + "\n}\n\n" +
 		"func Fuzz_Main(f *testing.F) {\n\t" +
 		"f.Fuzz(func(t *testing.T, data []byte) {})\n}\n"
-}
-
-// Wraps a Sig bundle body (a signed int8 with bounds Sig_Min = -8 and Sig_Max = 7) in the fixture
-// boilerplate, so a numeric-mandate test varies only the body.
-func sig_bundle_source(body string) (source string) {
-	return "package fixture\n\n" +
-		"import \"fixture/shared/invariant\"\n\n" +
-		"const Sig_Max Sig = 7\n\nconst Sig_Min Sig = -8\n\n" +
-		"// Sig is a fixture.\ntype Sig int8\n\n" +
-		"// Sig_Invariants is a fixture.\n" +
-		"func Sig_Invariants(v Sig, namespace invariant.Namespace) {\n" + body + "\n}\n"
 }

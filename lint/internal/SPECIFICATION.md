@@ -290,11 +290,6 @@ A package, file, or declared identifier splits into words; no word, ignoring cas
 listed in lint.json's `word_replacements` with an empty candidate list (util, utils, utility,
 utilities, len, length). Use sites go unchecked, so the len and cap builtins stay legal.
 
-### Banned Function Words
-
-A function name's words include no helper, ignoring case; other identifiers may. The narrow ban
-keeps helper from hiding what the function does.
-
 # Source And Test Requirements
 
 These forms are required in source and test files alike.

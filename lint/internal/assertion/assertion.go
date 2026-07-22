@@ -1,6 +1,6 @@
 // Package assertion enforces the _Invariants doctrine — every in-scope type
-// states its properties in a companion bundle function beside it, and every named
-// function asserts its typed inputs and outputs — and the sibling simulation
+// states its properties in a companion helper beside it, and every named
+// function calls the helpers for its typed inputs and outputs — and the sibling simulation
 // doctrine that witnesses those invariants. The caller hands over the
 // already-parsed files and the component graph, so this package reads and parses
 // nothing: it is a pure, deterministic function of its input.
@@ -19,9 +19,9 @@ import (
 	"local/james-orcales/lint/internal/source"
 )
 
-// NUMERIC_CHAIN_LINKS_MAX matches Product's ordinal width so the lint walk is bounded without
-// rejecting a chain shape the runtime accepts.
-const NUMERIC_CHAIN_LINKS_MAX = 255
+// The body walk must accept every chain the runtime's uint8 ordinal accepts; a smaller lint-only
+// ceiling would make a valid Product an escape from the mandate at precisely the largest shape.
+const INVARIANT_CHAIN_LINKS_MAX = 255
 
 // Parsed_File aliases the source package's type so the moved rule bodies name it
 // unqualified, as they did in package lint.
@@ -35,28 +35,546 @@ type Component_Index = source.Component_Index
 // it unqualified.
 type Diagnostic = diagnostic.Diagnostic
 
-// Check_Input carries the parsed set, the component graph, and the exempt list.
-type Check_Input struct {
-	// Parsed_Files is the whole parsed tree.
-	Parsed_Files []source.Parsed_File
-	// Components is the workspace's component graph; recorder and simulation need it.
-	Components *source.Component_Index
-	// Exempt is lint.json's opt_out_assertion_mandate_packages.
-	Exempt []string
-}
-
 // Check runs the cross-file invariant and simulation checks over the parsed set,
 // in the order the doctrine aggregator ran them.
-func Check(input *Check_Input) (diags []diagnostic.Diagnostic) {
-	diags = append(diags, check_numeric_invariants(input.Parsed_Files, input.Exempt)...)
-	diags = append(diags, check_struct_invariants(input.Parsed_Files, input.Exempt)...)
-	diags = append(diags, check_function_invariants(input.Parsed_Files, input.Exempt)...)
+func Check(
+	parsed_files []source.Parsed_File,
+	components *source.Component_Index,
+	exempt []string,
+) (diags []diagnostic.Diagnostic) {
 	diags = append(diags,
-		check_recorder_test_main(input.Parsed_Files, input.Components, input.Exempt)...)
-	diags = append(diags, check_primitive_types(input.Parsed_Files, input.Exempt)...)
+		check_value_invariants(parsed_files, components, exempt)...)
 	diags = append(diags,
-		check_simulation(input.Parsed_Files, input.Components, input.Exempt)...)
+		check_struct_invariants(parsed_files, components, exempt)...)
+	diags = append(diags,
+		check_function_invariants(parsed_files, components, exempt)...)
+	diags = append(diags,
+		check_recorder_test_main(parsed_files, components, exempt)...)
+	diags = append(diags, check_primitive_types(parsed_files, exempt)...)
+	diags = append(diags,
+		check_simulation(parsed_files, components, exempt)...)
 	return diags
+}
+
+// Canonical helpers, rather than a second interpretation of their individual assertions, are the
+// stable contract the linter can mandate across invariant implementation changes.
+func check_value_invariants(
+	parsed_files []Parsed_File, components *Component_Index, exempt []string,
+) (diags []Diagnostic) {
+	constants := invariant_package_constants(parsed_files)
+	for _, file := range parsed_files {
+		if strings.HasSuffix(file.Path, "_test.go") {
+			continue
+		}
+		if source.Path_Matches_Glob(file.Path, exempt) {
+			continue
+		}
+		directory := path.Dir(file.Path)
+		diags = append(diags, invariant_file_diagnostics(
+			file, components, constants[directory])...)
+	}
+	return diags
+}
+
+// Constants are indexed per package because an argument in one package must not borrow a
+// same-named declaration from another package to satisfy the deliberate-boundary rule.
+func invariant_package_constants(
+	parsed_files []Parsed_File,
+) (constants map[string]map[string]bool) {
+	constants = map[string]map[string]bool{}
+	for _, file := range parsed_files {
+		if strings.HasSuffix(file.Path, "_test.go") {
+			continue
+		}
+		directory := path.Dir(file.Path)
+		if constants[directory] == nil {
+			constants[directory] = map[string]bool{}
+		}
+		invariant_collect_constants(file.File, constants[directory])
+	}
+	return constants
+}
+
+func invariant_collect_constants(file *ast.File, constants map[string]bool) {
+	for _, declaration := range file.Decls {
+		general, is_general := declaration.(*ast.GenDecl)
+		if !is_general {
+			continue
+		}
+		if general.Tok != token.CONST {
+			continue
+		}
+		for _, specification := range general.Specs {
+			value, is_value := specification.(*ast.ValueSpec)
+			if !is_value {
+				continue
+			}
+			for _, name := range value.Names {
+				constants[name.Name] = true
+			}
+		}
+	}
+}
+
+func invariant_file_diagnostics(
+	file Parsed_File, components *Component_Index, constants map[string]bool,
+) (diags []Diagnostic) {
+	for index, declaration := range file.File.Decls {
+		general, is_general := declaration.(*ast.GenDecl)
+		if !is_general {
+			continue
+		}
+		if general.Tok != token.TYPE {
+			continue
+		}
+		type_specification, is_type := general.Specs[0].(*ast.TypeSpec)
+		if !is_type {
+			continue
+		}
+		suffix, _, _ := invariant_type_kind(type_specification)
+		if suffix == "" {
+			continue
+		}
+		diags = append(diags, invariant_type_diagnostics(
+			file, components, constants, index)...)
+	}
+	return diags
+}
+
+func invariant_type_diagnostics(
+	file Parsed_File, components *Component_Index, constants map[string]bool,
+	index int,
+) (diags []Diagnostic) {
+	general := file.File.Decls[index].(*ast.GenDecl)
+	type_specification := general.Specs[0].(*ast.TypeSpec)
+	helper := type_invariants_following_function(file.File, index)
+	if helper == nil {
+		return nil
+	}
+	if helper.Name.Name != source.Invariant_Name(type_specification.Name.Name) {
+		return nil
+	}
+	value, _ := invariant_value_parameter(helper, type_specification.Name.Name)
+	if value == "" {
+		return nil
+	}
+	namespace := invariant_namespace_parameter(helper)
+	if namespace == "" {
+		return nil
+	}
+	imports := helper_import_paths(file.File)
+	scope := &Invariant_Scope{
+		Current_Package: helper_package_path(file, components),
+		Imports:         imports,
+		Default_Package: helper_default_package(components, imports),
+		Shadowed:        function_value_names(helper),
+		Constants:       constants,
+	}
+	found, constant := invariant_body_helper(helper, type_specification, scope)
+	if found {
+		if constant {
+			return nil
+		}
+		return invariant_constant_diagnostic(file, helper)
+	}
+	return invariant_missing_helper_diagnostic(file, helper, type_specification)
+}
+
+// Direct underlying types determine the concrete helper without go/types; aliases and uintptr
+// have no Product preset and therefore remain outside this body-shape mandate.
+func invariant_type_kind(
+	type_specification *ast.TypeSpec,
+) (suffix string, primitive string, count bool) {
+	if type_specification.Assign.IsValid() {
+		return "", "", false
+	}
+	switch typed := type_specification.Type.(type) {
+	case *ast.ArrayType:
+		if typed.Len == nil {
+			return "Int", "int", true
+		}
+	case *ast.MapType:
+		return "Int", "int", true
+	case *ast.Ident:
+		return invariant_identifier_kind(typed.Name)
+	}
+	return "", "", false
+}
+
+func invariant_identifier_kind(name string) (suffix string, primitive string, count bool) {
+	switch name {
+	case "string":
+		return "Int", "int", true
+	case "int", "int8", "int16", "int32", "int64":
+		return strings.ToUpper(name[:1]) + name[1:], name, false
+	case "uint", "uint8", "uint16", "uint32", "uint64":
+		return strings.ToUpper(name[:1]) + name[1:], name, false
+	case "byte":
+		return "Uint8", "uint8", false
+	case "rune":
+		return "Int32", "int32", false
+	case "float32", "float64":
+		return strings.ToUpper(name[:1]) + name[1:], name, false
+	case "bool":
+		return "Boolean", "bool", false
+	}
+	return "", "", false
+}
+
+func invariant_value_parameter(
+	helper *ast.FuncDecl, type_name string,
+) (name string, pointer bool) {
+	if helper.Type.Params == nil {
+		return "", false
+	}
+	if len(helper.Type.Params.List) == 0 {
+		return "", false
+	}
+	first := helper.Type.Params.List[0]
+	expression := first.Type
+	star, is_star := expression.(*ast.StarExpr)
+	if is_star {
+		expression = star.X
+		pointer = true
+	}
+	if type_base_name(expression) != type_name {
+		return "", false
+	}
+	if len(first.Names) == 0 {
+		return "", false
+	}
+	return first.Names[0].Name, pointer
+}
+
+func invariant_namespace_parameter(helper *ast.FuncDecl) (name string) {
+	if helper.Type.Params == nil {
+		return ""
+	}
+	parameters := helper.Type.Params.List
+	if len(parameters) == 0 {
+		return ""
+	}
+	last := parameters[len(parameters)-1]
+	if len(last.Names) == 0 {
+		return ""
+	}
+	return last.Names[0].Name
+}
+
+func invariant_body_helper(
+	helper *ast.FuncDecl, type_specification *ast.TypeSpec, scope *Invariant_Scope,
+) (found bool, constant bool) {
+	shadowed := function_shadow_copy(scope.Shadowed)
+	for _, statement := range helper.Body.List {
+		call := statement_call(statement)
+		if call != nil {
+			statement_scope := *scope
+			statement_scope.Shadowed = shadowed
+			if invariant_direct_preset(
+				call, helper, type_specification, &statement_scope) {
+				return true, true
+			}
+			matched, valid := invariant_chain_preset(
+				call, helper, type_specification, &statement_scope)
+			if matched {
+				if valid {
+					return true, true
+				}
+				found = true
+			}
+		}
+		function_statement_shadows(statement, shadowed)
+	}
+	return found, false
+}
+
+func invariant_direct_preset(
+	call *ast.CallExpr, helper *ast.FuncDecl,
+	type_specification *ast.TypeSpec, scope *Invariant_Scope,
+) (matched bool) {
+	suffix, _, count := invariant_type_kind(type_specification)
+	if count {
+		return false
+	}
+	want := scope.Default_Package + "\x00" + suffix + "_Invariants"
+	identity := helper_callee_identity(
+		call.Fun, scope.Current_Package, scope.Imports, scope.Shadowed)
+	if identity != want {
+		return false
+	}
+	if len(call.Args) != 2 {
+		return false
+	}
+	if !invariant_subject(call.Args[0], helper, type_specification, scope) {
+		return false
+	}
+	namespace := invariant_namespace_parameter(helper)
+	return invariant_identifier(call.Args[1], namespace)
+}
+
+func invariant_chain_preset(
+	ensure *ast.CallExpr, helper *ast.FuncDecl,
+	type_specification *ast.TypeSpec, scope *Invariant_Scope,
+) (matched bool, constant bool) {
+	current, ensured := invariant_ensure_receiver(ensure)
+	if !ensured {
+		return false, false
+	}
+	valid := false
+	for step_index := 0; step_index < INVARIANT_CHAIN_LINKS_MAX; step_index++ {
+		_, receiver, chained := invariant_chain_method(current)
+		if !chained {
+			break
+		}
+		preset, arguments_valid := invariant_chain_link(
+			current, helper, type_specification, scope)
+		if preset {
+			matched = true
+			if arguments_valid {
+				valid = true
+			}
+		}
+		current = receiver
+	}
+	if !invariant_chain_root(current, helper, scope) {
+		return false, false
+	}
+	return matched, valid
+}
+
+func invariant_ensure_receiver(
+	ensure *ast.CallExpr,
+) (receiver *ast.CallExpr, matched bool) {
+	selector, is_selector := ensure.Fun.(*ast.SelectorExpr)
+	if !is_selector {
+		return nil, false
+	}
+	if selector.Sel.Name != "Ensure" {
+		return nil, false
+	}
+	if len(ensure.Args) != 0 {
+		return nil, false
+	}
+	receiver, matched = selector.X.(*ast.CallExpr)
+	return receiver, matched
+}
+
+func invariant_chain_method(
+	call *ast.CallExpr,
+) (method string, receiver *ast.CallExpr, matched bool) {
+	selector, is_selector := call.Fun.(*ast.SelectorExpr)
+	if !is_selector {
+		return "", nil, false
+	}
+	receiver, matched = selector.X.(*ast.CallExpr)
+	return selector.Sel.Name, receiver, matched
+}
+
+func invariant_chain_link(
+	call *ast.CallExpr, helper *ast.FuncDecl,
+	type_specification *ast.TypeSpec, scope *Invariant_Scope,
+) (matched bool, constant bool) {
+	method, _, _ := invariant_chain_method(call)
+	suffix, primitive, _ := invariant_type_kind(type_specification)
+	range_name := "Range_" + suffix
+	enum_name := "Enum_" + suffix
+	if method == range_name {
+		if len(call.Args) < 3 {
+			return false, false
+		}
+		if !invariant_subject(call.Args[0], helper, type_specification, scope) {
+			return false, false
+		}
+		return true, invariant_arguments_constant(
+			call.Args[1:3], primitive, scope)
+	}
+	if method != enum_name {
+		return false, false
+	}
+	if len(call.Args) < 3 {
+		return false, false
+	}
+	if !invariant_subject(call.Args[0], helper, type_specification, scope) {
+		return false, false
+	}
+	return true, invariant_arguments_constant(call.Args[1:], primitive, scope)
+}
+
+func invariant_chain_root(
+	call *ast.CallExpr, helper *ast.FuncDecl, scope *Invariant_Scope,
+) (matched bool) {
+	if len(call.Args) != 1 {
+		return false
+	}
+	if !invariant_identifier(call.Args[0], invariant_namespace_parameter(helper)) {
+		return false
+	}
+	selector, is_selector := call.Fun.(*ast.SelectorExpr)
+	if !is_selector {
+		return false
+	}
+	if selector.Sel.Name != "Dot_Product" {
+		return false
+	}
+	qualifier, is_qualifier := selector.X.(*ast.Ident)
+	if !is_qualifier {
+		return false
+	}
+	if scope.Shadowed[qualifier.Name] {
+		return false
+	}
+	package_path := scope.Imports[qualifier.Name]
+	if package_path == scope.Default_Package {
+		return true
+	}
+	return package_path == strings.TrimSuffix(scope.Default_Package, "/default")
+}
+
+func invariant_subject(
+	expression ast.Expr, helper *ast.FuncDecl, type_specification *ast.TypeSpec,
+	scope *Invariant_Scope,
+) (matched bool) {
+	_, primitive, count := invariant_type_kind(type_specification)
+	value, pointer := invariant_value_parameter(helper, type_specification.Name.Name)
+	expression = invariant_unparen(expression)
+	if count {
+		call, is_call := expression.(*ast.CallExpr)
+		if !is_call {
+			return false
+		}
+		identifier, is_identifier := call.Fun.(*ast.Ident)
+		if !is_identifier {
+			return false
+		}
+		if identifier.Name != "len" {
+			return false
+		}
+		if scope.Shadowed[identifier.Name] {
+			return false
+		}
+		if len(call.Args) != 1 {
+			return false
+		}
+		return invariant_value(call.Args[0], value, pointer)
+	}
+	call, is_call := expression.(*ast.CallExpr)
+	if !is_call {
+		return false
+	}
+	conversion, is_conversion := call.Fun.(*ast.Ident)
+	if !is_conversion {
+		return false
+	}
+	if conversion.Name != primitive {
+		return false
+	}
+	if scope.Shadowed[conversion.Name] {
+		return false
+	}
+	if len(call.Args) != 1 {
+		return false
+	}
+	return invariant_value(call.Args[0], value, pointer)
+}
+
+func invariant_value(expression ast.Expr, value string, pointer bool) (matched bool) {
+	expression = invariant_unparen(expression)
+	if pointer {
+		star, is_star := expression.(*ast.StarExpr)
+		if !is_star {
+			return false
+		}
+		expression = invariant_unparen(star.X)
+	}
+	return invariant_identifier(expression, value)
+}
+
+func invariant_identifier(expression ast.Expr, name string) (matched bool) {
+	expression = invariant_unparen(expression)
+	identifier, is_identifier := expression.(*ast.Ident)
+	if !is_identifier {
+		return false
+	}
+	return identifier.Name == name
+}
+
+func invariant_unparen(expression ast.Expr) (unwrapped ast.Expr) {
+	for depth_index := 0; depth_index < INVARIANT_CHAIN_LINKS_MAX; depth_index++ {
+		parenthesized, is_parenthesized := expression.(*ast.ParenExpr)
+		if !is_parenthesized {
+			return expression
+		}
+		expression = parenthesized.X
+	}
+	return expression
+}
+
+func invariant_arguments_constant(
+	arguments []ast.Expr, primitive string, scope *Invariant_Scope,
+) (valid bool) {
+	for _, argument := range arguments {
+		if !invariant_argument_constant(argument, primitive, scope) {
+			return false
+		}
+	}
+	return true
+}
+
+func invariant_argument_constant(
+	expression ast.Expr, primitive string, scope *Invariant_Scope,
+) (valid bool) {
+	expression = invariant_unparen(expression)
+	call, is_call := expression.(*ast.CallExpr)
+	if is_call {
+		if len(call.Args) != 1 {
+			return false
+		}
+		conversion, is_conversion := call.Fun.(*ast.Ident)
+		if !is_conversion {
+			return false
+		}
+		if conversion.Name != primitive {
+			return false
+		}
+		if scope.Shadowed[conversion.Name] {
+			return false
+		}
+		expression = invariant_unparen(call.Args[0])
+	}
+	identifier, is_identifier := expression.(*ast.Ident)
+	if !is_identifier {
+		return false
+	}
+	if scope.Shadowed[identifier.Name] {
+		return false
+	}
+	return scope.Constants[identifier.Name]
+}
+
+func invariant_constant_diagnostic(
+	file Parsed_File, helper *ast.FuncDecl,
+) (diags []Diagnostic) {
+	return []Diagnostic{{
+		Position: file.File_Set.Position(helper.Name.Pos()),
+		Message: helper.Name.Name +
+			" canonical helper arguments must be package-level constants",
+	}}
+}
+
+func invariant_missing_helper_diagnostic(
+	file Parsed_File, helper *ast.FuncDecl, type_specification *ast.TypeSpec,
+) (diags []Diagnostic) {
+	suffix, _, count := invariant_type_kind(type_specification)
+	value, _ := invariant_value_parameter(helper, type_specification.Name.Name)
+	message := helper.Name.Name + " must call a canonical helper for " + value +
+		": " + suffix + "_Invariants, Range_" + suffix + ", or Enum_" + suffix
+	if count {
+		message = helper.Name.Name + " must call Range_Int or Enum_Int for len(" + value +
+			") in an ensured invariant.Dot_Product(namespace) chain"
+	}
+	return []Diagnostic{{
+		Position: file.File_Set.Position(helper.Name.Pos()), Message: message,
+	}}
 }
 
 // Check_Type enforces the per-file type-invariant rules (Presence, Casing,
@@ -79,967 +597,156 @@ func Check_Type(
 	return append(diags, check_type_invariants_orphan(file_set, file)...)
 }
 
-// Flags numeric defined types whose bundle omits a required bound guard, bound
-// constant, or boundary claim. Cross-file because a bound's constant may live in
-// a sibling file, so the package's const set is gathered first. Shares the
-// type-invariant rule's opt-out and skips test files, and fires only when the
-// bundle exists — absence is the presence rule's job.
-func check_numeric_invariants(
-	parsed_files []Parsed_File, exempt []string,
-) (diags []Diagnostic) {
-
-	constants := numeric_package_constants(parsed_files)
-	for _, pf := range parsed_files {
-		if strings.HasSuffix(pf.Path, "_test.go") {
-			continue
-		}
-		if source.Path_Matches_Glob(pf.Path, exempt) {
-			continue
-		}
-		diags = append(diags,
-			numeric_file_diagnostics(pf, constants[path.Dir(pf.Path)])...)
+// Returns the declared base name beneath pointers and generic instantiations because companion
+// helper identity follows the named type rather than its spelling at one use site.
+func type_base_name(expression ast.Expr) (name string) {
+	star, is_star := expression.(*ast.StarExpr)
+	if is_star {
+		expression = star.X
 	}
-	return diags
-}
-
-// Maps each package directory to the set of top-level const names declared in its
-// non-test files — the names a numeric bound may legitimately reference.
-func numeric_package_constants(
-	parsed_files []Parsed_File,
-) (constants map[string]map[string]bool) {
-
-	constants = map[string]map[string]bool{}
-	for _, pf := range parsed_files {
-		if strings.HasSuffix(pf.Path, "_test.go") {
-			continue
-		}
-		directory := path.Dir(pf.Path)
-		if constants[directory] == nil {
-			constants[directory] = map[string]bool{}
-		}
-		numeric_collect_constants(pf.File, constants[directory])
+	index, is_index := expression.(*ast.IndexExpr)
+	if is_index {
+		expression = index.X
 	}
-	return constants
-}
-
-// Adds every top-level const name in file to the set.
-func numeric_collect_constants(file *ast.File, into map[string]bool) {
-	for _, declaration := range file.Decls {
-		general, is_general := declaration.(*ast.GenDecl)
-		if !is_general {
-			continue
-		}
-		if general.Tok != token.CONST {
-			continue
-		}
-		for _, specification := range general.Specs {
-			value_specification, is_value := specification.(*ast.ValueSpec)
-			if !is_value {
-				continue
-			}
-			for _, name := range value_specification.Names {
-				into[name.Name] = true
-			}
-		}
+	index_list, is_index_list := expression.(*ast.IndexListExpr)
+	if is_index_list {
+		expression = index_list.X
 	}
-}
-
-// Checks every numeric defined type + value-parameter bundle pair in one file.
-func numeric_file_diagnostics(
-	file Parsed_File, constants map[string]bool,
-) (diags []Diagnostic) {
-
-	invariant_names := type_invariants_import_names(file.File)
-	for index, declaration := range file.File.Decls {
-		general, is_general := declaration.(*ast.GenDecl)
-		if !is_general {
-			continue
-		}
-		if general.Tok != token.TYPE {
-			continue
-		}
-		type_specification, is_type := general.Specs[0].(*ast.TypeSpec)
-		if !is_type {
-			continue
-		}
-		kind, count := numeric_subject_kind(type_specification)
-		if kind == "" {
-			continue
-		}
-		diags = append(diags, numeric_type_diagnostics(&Numeric_Type_Input{
-			File: file, Index: index, Type: type_specification, Kind: kind,
-			Count: count, Constants: constants, Invariant_Names: invariant_names,
-		})...)
-	}
-	return diags
-}
-
-// Groups one numeric type with the context its bundle check needs: it carries two
-// maps, which loose parameters may not repeat.
-type Numeric_Type_Input struct {
-	// File is the parsed file the type is declared in.
-	File Parsed_File
-	// Index is the type's position in the file's declaration list.
-	Index int
-	// Type is the numeric defined type's declaration.
-	Type *ast.TypeSpec
-	// Kind is the type's underlying numeric kind.
-	Kind string
-	// Count is true when the invariant bounds the value's count, not the value.
-	Count bool
-	// Constants is the set of constant names declared in the file.
-	Constants map[string]bool
-	// Invariant_Names is the set of imported invariant helper names.
-	Invariant_Names map[string]bool
-}
-
-// Checks the bundle directly below one numeric type, or nothing when the type has
-// no value-parameter bundle (a pointer-parameter or absent bundle is skipped).
-func numeric_type_diagnostics(input *Numeric_Type_Input) (diags []Diagnostic) {
-	candidate := type_invariants_following_function(input.File.File, input.Index)
-	if candidate == nil {
-		return nil
-	}
-	if candidate.Name.Name != source.Invariant_Name(input.Type.Name.Name) {
-		return nil
-	}
-	value := numeric_value_parameter_name(candidate, input.Type.Name.Name)
-	if value == "" {
-		return nil
-	}
-	return numeric_bundle_diagnostics(&Numeric_Bundle_Input{
-		File_Set: input.File.File_Set, Bundle: candidate, Value: value,
-		Count: input.Count, Kind: input.Kind, Constants: input.Constants,
-		Invariant_Names: input.Invariant_Names,
-	})
-}
-
-// Classifies a type declaration's numeric kind ("signed", "unsigned", "float"),
-// or "" when it is not a defined type over a direct builtin numeric.
-func numeric_type_kind(type_specification *ast.TypeSpec) (kind string) {
-	if type_specification.Assign.IsValid() {
-		return ""
-	}
-	if type_specification.TypeParams != nil {
-		return ""
-	}
-	base, is_identifier := type_specification.Type.(*ast.Ident)
-	if !is_identifier {
-		return ""
-	}
-	return numeric_kind(base.Name)
-}
-
-// Maps a builtin numeric type name to its signedness class, or "" for non-numeric.
-func numeric_kind(name string) (kind string) {
-	switch name {
-	case "int", "int8", "int16", "int32", "int64", "rune":
-		return "signed"
-	case "uint", "uint8", "uint16", "uint32", "uint64", "uintptr", "byte":
-		return "unsigned"
-	case "float32", "float64":
-		return "float"
-	default:
-		return ""
-	}
-}
-
-// Returns the boundary-coverage kind and whether it applies to the value's
-// count. A numeric defined type yields its signedness and false; a string,
-// slice, or map type yields "unsigned" and true; anything else "".
-func numeric_subject_kind(type_specification *ast.TypeSpec) (kind string, count bool) {
-	kind = numeric_type_kind(type_specification)
-	if kind != "" {
-		return kind, false
-	}
-	if numeric_is_count_type(type_specification) {
-		return "unsigned", true
-	}
-	return "", false
-}
-
-// Reports whether the type is a defined string, slice, or map — a container whose
-// count carries the boundary discipline. Generics are in scope; an alias, a
-// fixed array, or a channel is not.
-func numeric_is_count_type(type_specification *ast.TypeSpec) (yes bool) {
-	if type_specification.Assign.IsValid() {
-		return false
-	}
-	switch base := type_specification.Type.(type) {
-	case *ast.MapType:
-		return true
-	case *ast.ArrayType:
-		return base.Len == nil
-	case *ast.Ident:
-		return base.Name == "string"
-	default:
-		return false
-	}
-}
-
-// Renders the asserted subject for diagnostics: the value, or len(value).
-func numeric_subject_text(input *Numeric_Bundle_Input) (text string) {
-	if input.Count {
-		return "len(" + input.Value + ")"
-	}
-	return input.Value
-}
-
-// Returns the bundle's first parameter name when it is the type by value, or ""
-// when there is no parameter or it is a pointer. The value may be a generic
-// instantiation (v Stack[T]), so the base name is compared.
-func numeric_value_parameter_name(
-	bundle *ast.FuncDecl, type_name string,
-) (name string) {
-
-	if bundle.Type.Params == nil {
-		return ""
-	}
-	if len(bundle.Type.Params.List) == 0 {
-		return ""
-	}
-	first := bundle.Type.Params.List[0]
-	if numeric_type_base_name(first.Type) != type_name {
-		return ""
-	}
-	if len(first.Names) == 0 {
-		return ""
-	}
-	return first.Names[0].Name
-}
-
-// Returns the base type name of a value parameter: a bare identifier, or the base
-// of a generic instantiation Name[...]; "" for a pointer or anything else.
-func numeric_type_base_name(expression ast.Expr) (name string) {
 	identifier, is_identifier := expression.(*ast.Ident)
-	if is_identifier {
-		return identifier.Name
-	}
-	base, _ := type_invariants_instantiation(expression)
-	if base == nil {
-		return ""
-	}
-	return base.Name
-}
-
-// Carries the bundle and the facts its checks read: two maps keep it off loose
-// parameters.
-type Numeric_Bundle_Input struct {
-	// File_Set resolves bundle positions to source locations.
-	File_Set *token.FileSet
-	// Bundle is the value-parameter bundle function being checked.
-	Bundle *ast.FuncDecl
-	// Value is the name of the asserted value parameter.
-	Value string
-	// Count is true when the invariant bounds the value's count, not the value.
-	Count bool
-	// Kind is the value's underlying numeric kind.
-	Kind string
-	// Constants is the set of constant names declared in the file.
-	Constants map[string]bool
-	// Invariant_Names is the set of imported invariant helper names.
-	Invariant_Names map[string]bool
-}
-
-// The body summary one bundle yields: which bounds it guards, the named operands
-// of those guards, and which boundary values it claims.
-type Numeric_Facts struct {
-	// Has_Upper records whether the bundle guards an upper bound.
-	Has_Upper bool
-	// Has_Lower records whether the bundle guards a lower bound.
-	Has_Lower bool
-	// Upper_Name is the operand named in the upper-bound guard.
-	Upper_Name string
-	// Lower_Name is the operand named in the lower-bound guard.
-	Lower_Name string
-	// Claimed_Values holds every boundary value the bundle names in any equality or
-	// inequality claim, by either Always or Sometimes.
-	Claimed_Values map[string]bool
-	// Witnessed_Values holds every value the bundle claims positively (an == claim, by
-	// Sometimes or Always) — the value can occur, as opposed to an != exclusion. The bound
-	// edges must be witnessed this way, never merely excluded.
-	Witnessed_Values map[string]bool
-	// Enum_Members holds the operands of a typed Enum link, or nil when there is no enum.
-	// Non-nil switches the bound and coverage checks to the enum path,
-	// where the members carry the bound-constant obligation and membership witnesses the edges.
-	Enum_Members []ast.Expr
-}
-
-// Collects bound and coverage diagnostics for one numeric bundle.
-func numeric_bundle_diagnostics(input *Numeric_Bundle_Input) (diags []Diagnostic) {
-	facts := numeric_collect_facts(input)
-	diags = append(diags, numeric_bound_diagnostics(facts, input)...)
-	diags = append(diags, numeric_coverage_diagnostics(facts, input)...)
-	return diags
-}
-
-// Walks the bundle body, summarizing every Always/Sometimes condition into facts.
-func numeric_collect_facts(input *Numeric_Bundle_Input) (facts Numeric_Facts) {
-	facts.Claimed_Values = map[string]bool{}
-	facts.Witnessed_Values = map[string]bool{}
-	is_subject := numeric_subject_matcher(input)
-	ast.Inspect(input.Bundle.Body, func(node ast.Node) (recurse bool) {
-		call, is_call := node.(*ast.CallExpr)
-		if !is_call {
-			return true
-		}
-		numeric_record_ensured_presets(call, input, &facts)
-		is_always, matched := numeric_invariant_call(call, input.Invariant_Names)
-		if !matched {
-			return true
-		}
-		numeric_classify_condition(call.Args[0], is_subject, is_always, &facts)
-		return true
-	})
-	return facts
-}
-
-// Only a preset nested beneath Ensure satisfies the mandate; recognizing a loose method call would
-// certify conditions whose enforcement and coverage are deliberately deferred to the terminator.
-func numeric_record_ensured_presets(
-	ensure *ast.CallExpr, input *Numeric_Bundle_Input, facts *Numeric_Facts,
-) (matched bool) {
-	selector, is_selector := ensure.Fun.(*ast.SelectorExpr)
-	if !is_selector {
-		return false
-	}
-	if selector.Sel.Name != "Ensure" {
-		return false
-	}
-	if len(ensure.Args) != 0 {
-		return false
-	}
-	current, is_call := selector.X.(*ast.CallExpr)
-	if !is_call {
-		return false
-	}
-	var presets []*ast.CallExpr
-	for step_index := 0; step_index < NUMERIC_CHAIN_LINKS_MAX; step_index++ {
-		method, receiver, chained := numeric_chain_method(current)
-		if !chained {
-			break
-		}
-		if numeric_typed_range_name(method) {
-			presets = append(presets, current)
-		}
-		if numeric_typed_enum_name(method) {
-			presets = append(presets, current)
-		}
-		current = receiver
-	}
-	if !numeric_dot_product_root(current, input.Invariant_Names) {
-		return false
-	}
-	for _, preset := range presets {
-		if numeric_record_range_preset(preset, input, facts) {
-			matched = true
-		}
-		if numeric_record_enum_preset(preset, input, facts) {
-			matched = true
-		}
-	}
-	return matched
-}
-
-func numeric_chain_method(
-	call *ast.CallExpr,
-) (method string, receiver *ast.CallExpr, chained bool) {
-	selector, is_selector := call.Fun.(*ast.SelectorExpr)
-	if !is_selector {
-		return method, receiver, false
-	}
-	receiver, is_call := selector.X.(*ast.CallExpr)
-	return selector.Sel.Name, receiver, is_call
-}
-
-func numeric_dot_product_root(call *ast.CallExpr, invariant_names map[string]bool) (root bool) {
-	selector, is_selector := call.Fun.(*ast.SelectorExpr)
-	if !is_selector {
-		return false
-	}
-	if selector.Sel.Name != "Dot_Product" {
-		return false
-	}
-	qualifier, is_identifier := selector.X.(*ast.Ident)
-	if !is_identifier {
-		return false
-	}
-	return invariant_names[qualifier.Name]
-}
-
-func numeric_typed_range_name(name string) (matched bool) {
-	if !strings.HasPrefix(name, "Range_") {
-		return false
-	}
-	return numeric_typed_preset_suffix(strings.TrimPrefix(name, "Range_"))
-}
-
-func numeric_typed_enum_name(name string) (matched bool) {
-	if !strings.HasPrefix(name, "Enum_") {
-		return false
-	}
-	return numeric_typed_preset_suffix(strings.TrimPrefix(name, "Enum_"))
-}
-
-func numeric_typed_preset_suffix(suffix string) (matched bool) {
-	switch suffix {
-	case "Int", "Int8", "Int16", "Int32", "Int64",
-		"Uint", "Uint8", "Uint16", "Uint32", "Uint64":
-		return true
-	}
-	return false
-}
-
-// Folds a typed Range(value, MIN, MAX) link into facts: it guards the lower bound (MIN, on Args[1])
-// and upper bound (MAX, on Args[2]) and claims every required boundary value.
-// matched is false for any other call. The MIN/MAX operand names still flow into facts, so the
-// Numeric Bound Constant rule (each must be a package-level constant) survives the shorthand.
-func numeric_record_range_preset(
-	call *ast.CallExpr, input *Numeric_Bundle_Input, facts *Numeric_Facts,
-) (matched bool) {
-	if !numeric_is_range_call(call) {
-		return false
-	}
-	if len(call.Args) < 3 {
-		return false
-	}
-	// The first argument is the subject: the value itself, or len(value) for a count bundle.
-	if !numeric_subject_matcher(input)(call.Args[0]) {
-		return false
-	}
-	facts.Has_Lower = true
-	facts.Lower_Name = numeric_operand_name(call.Args[1])
-	facts.Has_Upper = true
-	facts.Upper_Name = numeric_operand_name(call.Args[2])
-	for _, label := range numeric_required_labels(input.Kind) {
-		facts.Claimed_Values[label] = true
-	}
-	// The preset witnesses both edges, so its MIN/MAX names satisfy the edge-witness rule.
-	facts.Witnessed_Values[facts.Lower_Name] = true
-	facts.Witnessed_Values[facts.Upper_Name] = true
-	return true
-}
-
-// Reports whether call is one of Product's exact concrete Range methods.
-func numeric_is_range_call(call *ast.CallExpr) (matched bool) {
-	selector, is_selector := call.Fun.(*ast.SelectorExpr)
-	if !is_selector {
-		return false
-	}
-	return numeric_typed_range_name(selector.Sel.Name)
-}
-
-// Folds a typed Enum(value, members…) link into facts. Members remain on Enum_Members so the
-// bound-constant rule still applies to every converted operand.
-func numeric_record_enum_preset(
-	call *ast.CallExpr, input *Numeric_Bundle_Input, facts *Numeric_Facts,
-) (matched bool) {
-	if !numeric_is_enum_call(call) {
-		return false
-	}
-	// A value and at least one member.
-	if len(call.Args) < 2 {
-		return false
-	}
-	if !numeric_subject_matcher(input)(call.Args[0]) {
-		return false
-	}
-	facts.Has_Lower = true
-	facts.Has_Upper = true
-	facts.Enum_Members = call.Args[1:]
-	for _, label := range numeric_required_labels(input.Kind) {
-		facts.Claimed_Values[label] = true
-	}
-	return true
-}
-
-// Reports whether call is one of Product's exact concrete Enum methods.
-func numeric_is_enum_call(call *ast.CallExpr) (matched bool) {
-	selector, is_selector := call.Fun.(*ast.SelectorExpr)
-	if !is_selector {
-		return false
-	}
-	return numeric_typed_enum_name(selector.Sel.Name)
-}
-
-// Reports whether an expression is the asserted subject — the value, or its count.
-type Numeric_Subject func(expression ast.Expr) (matches bool)
-
-// Builds the predicate that recognizes the asserted subject: the value itself, or
-// its count when the type is a string, slice, or map.
-func numeric_subject_matcher(input *Numeric_Bundle_Input) (match Numeric_Subject) {
-	if input.Count {
-		return func(expression ast.Expr) (matches bool) {
-			return numeric_is_count(expression, input.Value)
-		}
-	}
-	return func(expression ast.Expr) (matches bool) {
-		return numeric_is_value(expression, input.Value)
-	}
-}
-
-// Reports whether expression is len(value).
-func numeric_is_count(expression ast.Expr, value string) (yes bool) {
-	expression = numeric_unwrap_integer_conversion(expression)
-	call, is_call := expression.(*ast.CallExpr)
-	if !is_call {
-		return false
-	}
-	identifier, is_identifier := call.Fun.(*ast.Ident)
-	if !is_identifier {
-		return false
-	}
-	if identifier.Name != "len" {
-		return false
-	}
-	if len(call.Args) != 1 {
-		return false
-	}
-	return numeric_is_value(call.Args[0], value)
-}
-
-// Reports whether call is invariant.Always or a Dot_Product Sometimes link and which;
-// matched is false for a bare Sometimes or any call without a condition.
-func numeric_invariant_call(
-	call *ast.CallExpr, invariant_names map[string]bool,
-) (is_always bool, matched bool) {
-
-	if len(call.Args) == 0 {
-		return false, false
-	}
-	selector, is_selector := call.Fun.(*ast.SelectorExpr)
-	if !is_selector {
-		return false, false
-	}
-	if selector.Sel.Name == "Always" {
-		qualifier, is_identifier := selector.X.(*ast.Ident)
-		if !is_identifier {
-			return false, false
-		}
-		return true, invariant_names[qualifier.Name]
-	}
-	if selector.Sel.Name == "Sometimes" {
-		return false, numeric_chain_receiver(selector.X, invariant_names)
-	}
-	return false, false
-}
-
-func numeric_chain_receiver(expression ast.Expr, invariant_names map[string]bool) (matched bool) {
-	current, is_call := expression.(*ast.CallExpr)
-	if !is_call {
-		return false
-	}
-	for step_index := 0; step_index < NUMERIC_CHAIN_LINKS_MAX; step_index++ {
-		selector, is_selector := current.Fun.(*ast.SelectorExpr)
-		if !is_selector {
-			return false
-		}
-		if selector.Sel.Name == "Dot_Product" {
-			return numeric_chain_root(current, invariant_names)
-		}
-		if selector.Sel.Name != "Sometimes" {
-			if selector.Sel.Name != "Impossible" {
-				return false
-			}
-		}
-		current, is_call = selector.X.(*ast.CallExpr)
-		if !is_call {
-			return false
-		}
-	}
-	return false
-}
-
-func numeric_chain_root(
-	call *ast.CallExpr, invariant_names map[string]bool,
-) (matched bool) {
-	if len(call.Args) != 1 {
-		return false
-	}
-	selector := call.Fun.(*ast.SelectorExpr)
-	qualifier, is_identifier := selector.X.(*ast.Ident)
-	if !is_identifier {
-		return false
-	}
-	return invariant_names[qualifier.Name]
-}
-
-// Folds one condition into facts: bounds come only from Always; claims (equality,
-// inequality, NaN, infinities) from either Always or Sometimes.
-func numeric_classify_condition(
-	condition ast.Expr, is_subject Numeric_Subject, is_always bool,
-	facts *Numeric_Facts,
-) {
-	if numeric_nan_call(condition) {
-		facts.Claimed_Values["NaN"] = true
-		return
-	}
-	binary, is_binary := condition.(*ast.BinaryExpr)
-	if !is_binary {
-		return
-	}
-	if binary.Op == token.LEQ {
-		numeric_record_upper(binary, is_subject, is_always, facts)
-		return
-	}
-	if binary.Op == token.GEQ {
-		numeric_record_lower(binary, is_subject, is_always, facts)
-		return
-	}
-	if binary.Op == token.EQL {
-		numeric_record_claim(binary, is_subject, facts)
-		return
-	}
-	if binary.Op == token.NEQ {
-		numeric_record_claim(binary, is_subject, facts)
-		return
-	}
-}
-
-// Records an Always(v <= C) upper bound guard and its operand name.
-func numeric_record_upper(
-	binary *ast.BinaryExpr, is_subject Numeric_Subject, is_always bool,
-	facts *Numeric_Facts,
-) {
-	if !is_always {
-		return
-	}
-	if !is_subject(binary.X) {
-		return
-	}
-	facts.Has_Upper = true
-	facts.Upper_Name = numeric_operand_name(binary.Y)
-}
-
-// Records an Always(v >= C) lower bound guard and its operand name.
-func numeric_record_lower(
-	binary *ast.BinaryExpr, is_subject Numeric_Subject, is_always bool,
-	facts *Numeric_Facts,
-) {
-	if !is_always {
-		return
-	}
-	if !is_subject(binary.X) {
-		return
-	}
-	facts.Has_Lower = true
-	facts.Lower_Name = numeric_operand_name(binary.Y)
-}
-
-// Records a boundary claim: an infinity (float) or an integer/const equality.
-func numeric_record_claim(
-	binary *ast.BinaryExpr, is_subject Numeric_Subject, facts *Numeric_Facts,
-) {
-	sign := numeric_infinity_sign(binary.X)
-	if sign == 0 {
-		sign = numeric_infinity_sign(binary.Y)
-	}
-	if sign < 0 {
-		facts.Claimed_Values["-Inf"] = true
-		return
-	}
-	if sign > 0 {
-		facts.Claimed_Values["+Inf"] = true
-		return
-	}
-	operand := numeric_other_operand(binary, is_subject)
-	if operand == nil {
-		return
-	}
-	label := numeric_value_label(operand)
-	if label == "" {
-		return
-	}
-	facts.Claimed_Values[label] = true
-	// An == claim is a positive witness that the value can occur; an != exclusion is not.
-	if binary.Op == token.EQL {
-		facts.Witnessed_Values[label] = true
-	}
-}
-
-// Reports the bounds and bound-constant diagnostics for one bundle.
-func numeric_bound_diagnostics(
-	facts Numeric_Facts, input *Numeric_Bundle_Input,
-) (diags []Diagnostic) {
-
-	position := input.File_Set.Position(input.Bundle.Name.Pos())
-	name := input.Bundle.Name.Name
-	subject := numeric_subject_text(input)
-	incomplete := false
-	if !facts.Has_Upper {
-		incomplete = true
-	}
-	if !facts.Has_Lower {
-		incomplete = true
-	}
-	if incomplete {
-		diags = append(diags, Diagnostic{Position: position,
-			Message: name + " must guard both ends: Always(" + subject +
-				" <= MAX) and Always(" + subject + " >= MIN)"})
-	}
-	// An enum's members are the bounds of its discrete domain, so each is held to the same
-	// package-level-constant rule as a MIN/MAX bound, in place of the Lower/Upper check.
-	if facts.Enum_Members != nil {
-		for _, member := range facts.Enum_Members {
-			member_name := numeric_operand_name(member)
-			if numeric_is_package_constant(member_name, input.Constants) {
-				continue
-			}
-			diags = append(diags, Diagnostic{Position: position,
-				Message: name + " enum member must be a package-level constant"})
-		}
-		return diags
-	}
-	if facts.Has_Upper {
-		if !numeric_is_package_constant(facts.Upper_Name, input.Constants) {
-			diags = append(diags, Diagnostic{Position: position,
-				Message: name + " upper bound must be a package-level constant"})
-		}
-	}
-	if facts.Has_Lower {
-		if !numeric_is_package_constant(facts.Lower_Name, input.Constants) {
-			diags = append(diags, Diagnostic{Position: position,
-				Message: name + " lower bound must be a package-level constant"})
-		}
-	}
-	return diags
-}
-
-// Reports the boundary-coverage diagnostics for one bundle: a claim for each
-// required interior value. The MAX/MIN bound itself is the Always(<=)/Always(>=)
-// guard (see numeric_bound_diagnostics), not a boundary claim — claiming it as
-// Always(!= bound) is a loophole and witnessing it as Sometimes(== bound) forces
-// allocating the max, so neither is required here.
-func numeric_coverage_diagnostics(
-	facts Numeric_Facts, input *Numeric_Bundle_Input,
-) (diags []Diagnostic) {
-
-	for _, label := range numeric_required_labels(input.Kind) {
-		if facts.Claimed_Values[label] {
-			continue
-		}
-		diags = append(diags, numeric_missing_claim(label, input))
-	}
-	// A typed Enum expansion witnesses its minimum and maximum members by construction, so the
-	// name-keyed edge-witness check below does not apply to it.
-	if facts.Enum_Members != nil {
-		return diags
-	}
-	// The bound edges are always in range, so each must be positively witnessed, never merely
-	// guarded — the guard proves nothing was observed at the extreme.
-	if facts.Has_Lower {
-		if !facts.Witnessed_Values[facts.Lower_Name] {
-			diags = append(diags, numeric_missing_edge("minimum", input))
-		}
-	}
-	if facts.Has_Upper {
-		if !facts.Witnessed_Values[facts.Upper_Name] {
-			diags = append(diags, numeric_missing_edge("maximum", input))
-		}
-	}
-	return diags
-}
-
-// Builds the diagnostic for a bound edge the bundle never positively witnesses.
-func numeric_missing_edge(edge string, input *Numeric_Bundle_Input) (diag Diagnostic) {
-	subject := numeric_subject_text(input)
-	return Diagnostic{
-		Position: input.File_Set.Position(input.Bundle.Name.Pos()),
-		Message: input.Bundle.Name.Name + " must witness its " + edge +
-			" via Sometimes(" + subject + " == the bound)",
-	}
-}
-
-// Builds the diagnostic for a boundary value the bundle never claims.
-func numeric_missing_claim(label string, input *Numeric_Bundle_Input) (diag Diagnostic) {
-	subject := numeric_subject_text(input)
-	return Diagnostic{
-		Position: input.File_Set.Position(input.Bundle.Name.Pos()),
-		Message: input.Bundle.Name.Name + " must claim " + label +
-			" via Sometimes(" + subject + " == " + label + ") or Always(" +
-			subject + " ==/!= " + label + ")",
-	}
-}
-
-// Returns the boundary values a bundle of the given kind must claim.
-func numeric_required_labels(kind string) (labels []string) {
-	if kind == "float" {
-		return []string{"NaN", "-Inf", "+Inf"}
-	}
-	if kind == "signed" {
-		return []string{"0", "1", "-1", "2"}
-	}
-	return []string{"0", "1", "2"}
-}
-
-// Reports whether name is a known package-level constant.
-func numeric_is_package_constant(name string, constants map[string]bool) (yes bool) {
-	if name == "" {
-		return false
-	}
-	return constants[name]
-}
-
-// Reports whether operand is the value identifier.
-func numeric_is_value(operand ast.Expr, value string) (yes bool) {
-	operand = numeric_unwrap_integer_conversion(operand)
-	identifier, is_identifier := operand.(*ast.Ident)
-	if !is_identifier {
-		return false
-	}
-	return identifier.Name == value
-}
-
-// Returns operand's identifier name, or "" when it is not a bare identifier (a
-// literal or selector is therefore never accepted as a bound constant).
-func numeric_operand_name(operand ast.Expr) (name string) {
-	operand = numeric_unwrap_integer_conversion(operand)
-	identifier, is_identifier := operand.(*ast.Ident)
 	if !is_identifier {
 		return ""
 	}
 	return identifier.Name
 }
 
-func numeric_unwrap_integer_conversion(expression ast.Expr) (unwrapped ast.Expr) {
-	call, is_call := expression.(*ast.CallExpr)
-	if !is_call {
-		return expression
+func helper_identity_name(identity string) (name string) {
+	separator := strings.LastIndexByte(identity, '\x00')
+	if separator < 0 {
+		return identity
 	}
-	if len(call.Args) != 1 {
-		return expression
-	}
-	identifier, is_identifier := call.Fun.(*ast.Ident)
-	if !is_identifier {
-		return expression
-	}
-	switch identifier.Name {
-	case "int", "int8", "int16", "int32", "int64",
-		"uint", "uint8", "uint16", "uint32", "uint64":
-		return call.Args[0]
-	}
-	return expression
+	return identity[separator+1:]
 }
 
-// Returns the comparison operand that is not the subject, or nil when neither is.
-func numeric_other_operand(
-	binary *ast.BinaryExpr, is_subject Numeric_Subject,
-) (operand ast.Expr) {
-	if is_subject(binary.X) {
-		return binary.Y
+// The component root carries the import prefix while the file directory supplies the package
+// suffix. The path fallback preserves exact same-directory identity for isolated lint fixtures.
+func helper_package_path(file Parsed_File, components *Component_Index) (import_path string) {
+	if components != nil {
+		component_index_number, mapped := components.File_To_Component[file.Path]
+		if mapped {
+			if component_index_number < 0 {
+				return path.Dir(file.Path)
+			}
+			if component_index_number >= len(components.Components) {
+				return path.Dir(file.Path)
+			}
+			component := components.Components[component_index_number]
+			directory := path.Dir(file.Path)
+			if directory == component.Root {
+				return component.Import_Path
+			}
+			relative := strings.TrimPrefix(directory, component.Root+"/")
+			if relative == directory {
+				return path.Dir(file.Path)
+			}
+			if relative == "." {
+				return path.Dir(file.Path)
+			}
+			return component.Import_Path + "/" + relative
+		}
 	}
-	if is_subject(binary.Y) {
-		return binary.X
-	}
-	return nil
+	return path.Dir(file.Path)
 }
 
-// Maps a claimed operand to its canonical label: 0/1/2 literals, -1, or a bare
-// identifier's own name (a const claim); "" for anything else.
-func numeric_value_label(operand ast.Expr) (label string) {
-	basic, is_basic := operand.(*ast.BasicLit)
-	if is_basic {
-		return numeric_basic_label(basic)
+func helper_import_paths(file *ast.File) (imports map[string]string) {
+	imports = map[string]string{}
+	for _, specification := range file.Imports {
+		import_path, unquote_error := strconv.Unquote(specification.Path.Value)
+		if unquote_error != nil {
+			continue
+		}
+		local := source.Import_Local_Name(specification, import_path)
+		if local == "." {
+			continue
+		}
+		if local == "_" {
+			continue
+		}
+		imports[local] = import_path
 	}
-	unary, is_unary := operand.(*ast.UnaryExpr)
-	if is_unary {
-		return numeric_unary_label(unary)
+	return imports
+}
+
+func helper_default_package(
+	components *Component_Index, imports map[string]string,
+) (import_path string) {
+	shared := source.Shared_Import(components)
+	if shared != "" {
+		return shared + "/invariant/default"
 	}
-	identifier, is_identifier := operand.(*ast.Ident)
+	for _, candidate := range imports {
+		if strings.HasSuffix(candidate, "/invariant/default") {
+			return candidate
+		}
+		if strings.HasSuffix(candidate, "/invariant") {
+			import_path = candidate + "/default"
+		}
+	}
+	if import_path != "" {
+		return import_path
+	}
+	return "<invariant/default>"
+}
+
+// A selector resolves only through the file's import table. A method whose receiver happens to
+// share an import alias or helper suffix therefore cannot impersonate a package helper.
+func helper_callee_identity(
+	callee ast.Expr,
+	current_package string,
+	imports map[string]string,
+	shadowed map[string]bool,
+) (identity string) {
+	index, is_index := callee.(*ast.IndexExpr)
+	if is_index {
+		callee = index.X
+	}
+	index_list, is_index_list := callee.(*ast.IndexListExpr)
+	if is_index_list {
+		callee = index_list.X
+	}
+	identifier, is_identifier := callee.(*ast.Ident)
 	if is_identifier {
-		return identifier.Name
+		if shadowed[identifier.Name] {
+			return ""
+		}
+		return current_package + "\x00" + identifier.Name
 	}
-	return ""
-}
-
-// Maps an integer literal 0, 1, or 2 to its label; "" otherwise.
-func numeric_basic_label(basic *ast.BasicLit) (label string) {
-	if basic.Kind != token.INT {
-		return ""
-	}
-	switch basic.Value {
-	case "0":
-		return "0"
-	case "1":
-		return "1"
-	case "2":
-		return "2"
-	default:
-		return ""
-	}
-}
-
-// Maps the literal -1 (a unary minus over 1) to its label; "" otherwise.
-func numeric_unary_label(unary *ast.UnaryExpr) (label string) {
-	if unary.Op != token.SUB {
-		return ""
-	}
-	basic, is_basic := unary.X.(*ast.BasicLit)
-	if !is_basic {
-		return ""
-	}
-	if basic.Kind != token.INT {
-		return ""
-	}
-	if basic.Value != "1" {
-		return ""
-	}
-	return "-1"
-}
-
-// Returns -1 for math.Inf(-1), +1 for math.Inf(1), 0 for anything else.
-func numeric_infinity_sign(operand ast.Expr) (sign int) {
-	call, is_call := operand.(*ast.CallExpr)
-	if !is_call {
-		return 0
-	}
-	if numeric_math_member(call.Fun) != "Inf" {
-		return 0
-	}
-	if len(call.Args) != 1 {
-		return 0
-	}
-	if numeric_value_label(call.Args[0]) == "-1" {
-		return -1
-	}
-	if numeric_value_label(call.Args[0]) == "1" {
-		return 1
-	}
-	return 0
-}
-
-// Reports whether condition is a math.IsNaN(...) call.
-func numeric_nan_call(condition ast.Expr) (yes bool) {
-	call, is_call := condition.(*ast.CallExpr)
-	if !is_call {
-		return false
-	}
-	return numeric_math_member(call.Fun) == "IsNaN"
-}
-
-// Returns the member name when fun is a math.<Member> selector; "" otherwise.
-func numeric_math_member(function ast.Expr) (member string) {
-	selector, is_selector := function.(*ast.SelectorExpr)
+	selector, is_selector := callee.(*ast.SelectorExpr)
 	if !is_selector {
 		return ""
 	}
-	identifier, is_identifier := selector.X.(*ast.Ident)
-	if !is_identifier {
+	qualifier, is_qualifier := selector.X.(*ast.Ident)
+	if !is_qualifier {
 		return ""
 	}
-	if identifier.Name != "math" {
+	if shadowed[qualifier.Name] {
 		return ""
 	}
-	return selector.Sel.Name
+	import_path := imports[qualifier.Name]
+	if import_path == "" {
+		return ""
+	}
+	return import_path + "\x00" + selector.Sel.Name
 }
 
-// Flags a struct bundle that fails to call the _Invariants of a field whose type
+// Flags a struct helper that fails to call the exact _Invariants helper of a field whose type
 // has one. Existence-driven: a field is required only when an _Invariants for its
 // type exists in the module (presets always do), so adding one later auto-enables
 // the field. A struct with an immediate sync.Mutex/RWMutex field is skipped whole.
 // Cross-file because the bundle index spans the whole module.
-func check_struct_invariants(parsed_files []Parsed_File, exempt []string) (diags []Diagnostic) {
-	defined := struct_bundle_index(parsed_files)
+func check_struct_invariants(
+	parsed_files []Parsed_File, components *Component_Index, exempt []string,
+) (diags []Diagnostic) {
+	defined := struct_helper_index(parsed_files, components)
 	for _, pf := range parsed_files {
 		if strings.HasSuffix(pf.Path, "_test.go") {
 			continue
@@ -1047,14 +754,16 @@ func check_struct_invariants(parsed_files []Parsed_File, exempt []string) (diags
 		if source.Path_Matches_Glob(pf.Path, exempt) {
 			continue
 		}
-		diags = append(diags, struct_file_diagnostics(pf, defined)...)
+		diags = append(diags, struct_file_diagnostics(pf, defined, components)...)
 	}
 	return diags
 }
 
-// Collects the base names of every bundle defined in the module's non-test files,
-// so a field whose type has gained one is recognized without cross-package resolution.
-func struct_bundle_index(parsed_files []Parsed_File) (defined map[string]bool) {
+// Package-qualified keys ensure adding Foo_Invariants in one package cannot silently impose or
+// satisfy a helper requirement for an unrelated Foo in another package.
+func struct_helper_index(
+	parsed_files []Parsed_File, components *Component_Index,
+) (defined map[string]bool) {
 	defined = map[string]bool{}
 	for _, pf := range parsed_files {
 		if strings.HasSuffix(pf.Path, "_test.go") {
@@ -1069,7 +778,9 @@ func struct_bundle_index(parsed_files []Parsed_File) (defined map[string]bool) {
 				continue
 			}
 			if type_invariants_is_bundle_name(function.Name.Name) {
-				defined[function.Name.Name] = true
+				identity := helper_package_path(pf, components) +
+					"\x00" + function.Name.Name
+				defined[identity] = true
 			}
 		}
 	}
@@ -1077,7 +788,9 @@ func struct_bundle_index(parsed_files []Parsed_File) (defined map[string]bool) {
 }
 
 // Checks every struct type + value/pointer-parameter bundle pair in one file.
-func struct_file_diagnostics(file Parsed_File, defined map[string]bool) (diags []Diagnostic) {
+func struct_file_diagnostics(
+	file Parsed_File, defined map[string]bool, components *Component_Index,
+) (diags []Diagnostic) {
 	for index, declaration := range file.File.Decls {
 		general, is_general := declaration.(*ast.GenDecl)
 		if !is_general {
@@ -1100,101 +813,89 @@ func struct_file_diagnostics(file Parsed_File, defined map[string]bool) (diags [
 		if struct_has_mutex(struct_type) {
 			continue
 		}
-		diags = append(diags, struct_type_diagnostics(&Struct_Type_Input{
-			File: file, Index: index, Type: type_specification,
-			Struct: struct_type, Defined: defined,
-		})...)
+		diags = append(diags, struct_type_diagnostics(
+			file,
+			index,
+			type_specification,
+			struct_type,
+			defined,
+			components,
+		)...)
 	}
 	return diags
-}
-
-// Carries one struct and the module bundle index; the parsed file and the map
-// keep it off loose parameters.
-type Struct_Type_Input struct {
-	// File is the parsed file the struct is declared in.
-	File Parsed_File
-	// Index is the struct's position in the file's declaration list.
-	Index int
-	// Type is the struct type's declaration.
-	Type *ast.TypeSpec
-	// Struct is the struct's field list.
-	Struct *ast.StructType
-	// Defined is the set of type names with an invariant bundle in the module.
-	Defined map[string]bool
 }
 
 // Checks that one struct's bundle composes every coverable field.
-func struct_type_diagnostics(input *Struct_Type_Input) (diags []Diagnostic) {
-	bundle := type_invariants_following_function(input.File.File, input.Index)
+func struct_type_diagnostics(
+	file Parsed_File,
+	index int,
+	type_specification *ast.TypeSpec,
+	struct_type *ast.StructType,
+	defined map[string]bool,
+	components *Component_Index,
+) (diags []Diagnostic) {
+	bundle := type_invariants_following_function(file.File, index)
 	if bundle == nil {
 		return nil
 	}
-	if bundle.Name.Name != source.Invariant_Name(input.Type.Name.Name) {
+	if bundle.Name.Name != source.Invariant_Name(type_specification.Name.Name) {
 		return nil
 	}
-	parameter := struct_parameter_name(bundle, input.Type.Name.Name)
+	parameter := struct_parameter_name(bundle, type_specification.Name.Name)
 	if parameter == "" {
 		return nil
 	}
-	present := struct_present_calls(bundle, parameter)
-	for _, field := range input.Struct.Fields.List {
-		diags = append(diags, struct_field_diagnostics(&Struct_Field_Input{
-			Field:           field,
-			Type_Parameters: struct_type_parameter_set(input.Type),
-			Defined:         input.Defined,
-			Present:         present,
-			Parameter:       parameter,
-			Bundle:          bundle.Name.Name,
-			Position:        input.File.File_Set.Position(bundle.Name.Pos()),
-		})...)
+	current_package := helper_package_path(file, components)
+	imports := helper_import_paths(file.File)
+	scope := &Invariant_Scope{
+		Type_Parameters: struct_type_parameter_set(type_specification),
+		Defined:         defined,
+		Current_Package: current_package,
+		Imports:         imports,
+		Default_Package: helper_default_package(components, imports),
+		Shadowed:        function_value_names(bundle),
+	}
+	present := struct_present_calls(bundle, parameter, scope)
+	position := file.File_Set.Position(bundle.Name.Pos())
+	for _, field := range struct_type.Fields.List {
+		for _, call := range struct_field_missing_calls(field, scope, present, parameter) {
+			diags = append(diags, Diagnostic{
+				Position: position,
+				Message:  bundle.Name.Name + " must call " + call,
+			})
+		}
 	}
 	return diags
 }
 
-// Carries one field and everything its check reads; three maps keep it off loose
-// parameters.
-type Struct_Field_Input struct {
-	// Field is the struct field being checked.
-	Field *ast.Field
-	// Type_Parameters is the set of the struct's type-parameter names.
-	Type_Parameters map[string]bool
-	// Defined is the set of type names with an invariant bundle in the module.
-	Defined map[string]bool
-	// Present is the set of composition calls the bundle already makes.
-	Present map[string]bool
-	// Parameter is the bundle's struct-value parameter name.
-	Parameter string
-	// Bundle is the bundle function's name.
-	Bundle string
-	// Position is the bundle name's source position, for diagnostics.
-	Position token.Position
-}
-
-// Reports the missing composition call for one field, per declared name.
-func struct_field_diagnostics(input *Struct_Field_Input) (diags []Diagnostic) {
-	if len(input.Field.Names) == 0 {
+// Separating field discovery from diagnostic ownership keeps bundle identity and position out of
+// an argument-bundling struct.
+func struct_field_missing_calls(
+	field *ast.Field,
+	scope *Invariant_Scope,
+	present map[string]bool,
+	parameter string,
+) (calls []string) {
+	if len(field.Names) == 0 {
 		return nil
 	}
-	expected, preset := struct_field_invariant(input.Field.Type, input.Type_Parameters)
+	expected, preset := struct_field_invariant(field.Type, scope)
 	if expected == "" {
 		return nil
 	}
 	if !preset {
-		if !input.Defined[expected] {
+		if !scope.Defined[expected] {
 			return nil
 		}
 	}
-	for _, name := range input.Field.Names {
-		if input.Present[expected+"\x00"+name.Name] {
+	for _, name := range field.Names {
+		if present[expected+"\x00"+name.Name] {
 			continue
 		}
-		diags = append(diags, Diagnostic{
-			Position: input.Position,
-			Message: input.Bundle + " must call " + expected + "(" +
-				input.Parameter + "." + name.Name + ", ...)",
-		})
+		calls = append(calls, helper_identity_name(expected)+"("+
+			parameter+"."+name.Name+", ...)")
 	}
-	return diags
+	return calls
 }
 
 // Reports whether an immediate field is a sync.Mutex or sync.RWMutex.
@@ -1241,7 +942,7 @@ func struct_parameter_name(bundle *ast.FuncDecl, type_name string) (name string)
 	if is_star {
 		parameter_type = star.X
 	}
-	if numeric_type_base_name(parameter_type) != type_name {
+	if type_base_name(parameter_type) != type_name {
 		return ""
 	}
 	if len(first.Names) == 0 {
@@ -1266,24 +967,25 @@ func struct_type_parameter_set(type_specification *ast.TypeSpec) (parameters map
 
 // Collects "callee\x00field" for every call in the bundle whose first argument is
 // the parameter's field (value or deref), so a composition call can be looked up.
-func struct_present_calls(bundle *ast.FuncDecl, parameter string) (present map[string]bool) {
+func struct_present_calls(
+	bundle *ast.FuncDecl, parameter string, scope *Invariant_Scope,
+) (present map[string]bool) {
 	present = map[string]bool{}
-	ast.Inspect(bundle.Body, func(node ast.Node) (recurse bool) {
-		call, is_call := node.(*ast.CallExpr)
-		if !is_call {
-			return true
+	shadowed := function_shadow_copy(scope.Shadowed)
+	for _, statement := range bundle.Body.List {
+		call := statement_call(statement)
+		if call != nil {
+			callee := helper_callee_identity(
+				call.Fun, scope.Current_Package, scope.Imports, shadowed)
+			field := struct_first_argument_field(call, parameter)
+			if callee != "" {
+				if field != "" {
+					present[callee+"\x00"+field] = true
+				}
+			}
 		}
-		callee := struct_callee_name(call.Fun)
-		if callee == "" {
-			return true
-		}
-		field := struct_first_argument_field(call, parameter)
-		if field == "" {
-			return true
-		}
-		present[callee+"\x00"+field] = true
-		return true
-	})
+		function_statement_shadows(statement, shadowed)
+	}
 	return present
 }
 
@@ -1337,8 +1039,8 @@ func struct_first_argument_field(call *ast.CallExpr, parameter string) (field st
 // Returns the _Invariants name a field of the given type must call and whether it
 // is a preset (always available), or "" when the field is exempt.
 func struct_field_invariant(
-	field_type ast.Expr, type_parameters map[string]bool,
-) (name string, preset bool) {
+	field_type ast.Expr, scope *Invariant_Scope,
+) (identity string, preset bool) {
 
 	// A pointer field composes its pointee: *Token requires Token_Invariants, the
 	// same as a Token field. The bundle passes the field, or its dereference, as the
@@ -1355,13 +1057,17 @@ func struct_field_invariant(
 		// A raw map field is banned by check_primitive_types, not composed here.
 		return "", false
 	case *ast.SelectorExpr:
-		return typed.Sel.Name + "_Invariants", false
+		package_path := struct_selector_package(typed, scope.Imports)
+		if package_path == "" {
+			return "", false
+		}
+		return package_path + "\x00" + typed.Sel.Name + "_Invariants", false
 	case *ast.IndexExpr:
-		return struct_named_invariant(typed.X, type_parameters)
+		return struct_named_invariant(typed.X, scope)
 	case *ast.IndexListExpr:
-		return struct_named_invariant(typed.X, type_parameters)
+		return struct_named_invariant(typed.X, scope)
 	case *ast.Ident:
-		return struct_field_ident_invariant(typed.Name, type_parameters)
+		return struct_field_ident_invariant(typed.Name, scope)
 	default:
 		return "", false
 	}
@@ -1370,28 +1076,42 @@ func struct_field_invariant(
 // Returns the bundle name for a generic instantiation's base (an ident or a
 // cross-package selector), or "" otherwise.
 func struct_named_invariant(
-	base ast.Expr, type_parameters map[string]bool,
-) (name string, preset bool) {
+	base ast.Expr, scope *Invariant_Scope,
+) (identity string, preset bool) {
 
 	selector, is_selector := base.(*ast.SelectorExpr)
 	if is_selector {
-		return selector.Sel.Name + "_Invariants", false
+		package_path := struct_selector_package(selector, scope.Imports)
+		if package_path == "" {
+			return "", false
+		}
+		return package_path + "\x00" + selector.Sel.Name + "_Invariants", false
 	}
 	identifier, is_identifier := base.(*ast.Ident)
 	if is_identifier {
-		return struct_field_ident_invariant(identifier.Name, type_parameters)
+		return struct_field_ident_invariant(identifier.Name, scope)
 	}
 	return "", false
+}
+
+func struct_selector_package(
+	selector *ast.SelectorExpr, imports map[string]string,
+) (package_path string) {
+	qualifier, is_qualifier := selector.X.(*ast.Ident)
+	if !is_qualifier {
+		return ""
+	}
+	return imports[qualifier.Name]
 }
 
 // Maps a field ident to its expected bundle: a struct type param is exempt, a
 // primitive maps to its preset, a no-preset builtin is exempt, else it is a
 // defined type whose own bundle (by casing) is expected.
 func struct_field_ident_invariant(
-	name string, type_parameters map[string]bool,
-) (invariant_name string, preset bool) {
+	name string, scope *Invariant_Scope,
+) (identity string, preset bool) {
 
-	if type_parameters[name] {
+	if scope.Type_Parameters[name] {
 		return "", false
 	}
 	if name == "string" {
@@ -1400,12 +1120,12 @@ func struct_field_ident_invariant(
 	}
 	mapped := struct_primitive_preset(name)
 	if mapped != "" {
-		return mapped, true
+		return scope.Default_Package + "\x00" + mapped, true
 	}
 	if struct_is_builtin(name) {
 		return "", false
 	}
-	return source.Invariant_Name(name), false
+	return scope.Current_Package + "\x00" + source.Invariant_Name(name), false
 }
 
 // Maps a builtin primitive to its framework preset name, or "" when none.
@@ -1453,13 +1173,12 @@ func struct_is_builtin(name string) (yes bool) {
 	}
 }
 
-// Flags an ordinary function that fails to assert an input parameter or a named
-// return value. Each subject must have its type's _Invariants called on it
-// (existence-driven, like the struct rule); named returns are asserted in a
-// first-statement defer, inputs in the leading block right after it. Cross-file
-// because the bundle index spans the whole module.
-func check_function_invariants(parsed_files []Parsed_File, exempt []string) (diags []Diagnostic) {
-	defined := struct_bundle_index(parsed_files)
+// Flags an ordinary function that omits the exact helper for an input or named return. Output
+// helpers stay deferred and input helpers stay leading so every function has one visible boundary.
+func check_function_invariants(
+	parsed_files []Parsed_File, components *Component_Index, exempt []string,
+) (diags []Diagnostic) {
+	defined := struct_helper_index(parsed_files, components)
 	for _, pf := range parsed_files {
 		if strings.HasSuffix(pf.Path, "_test.go") {
 			continue
@@ -1467,13 +1186,15 @@ func check_function_invariants(parsed_files []Parsed_File, exempt []string) (dia
 		if source.Path_Matches_Glob(pf.Path, exempt) {
 			continue
 		}
-		diags = append(diags, function_file_diagnostics(pf, defined)...)
+		diags = append(diags, function_file_diagnostics(pf, defined, components)...)
 	}
 	return diags
 }
 
 // Checks every named free function in one file.
-func function_file_diagnostics(file Parsed_File, defined map[string]bool) (diags []Diagnostic) {
+func function_file_diagnostics(
+	file Parsed_File, defined map[string]bool, components *Component_Index,
+) (diags []Diagnostic) {
 	for _, declaration := range file.File.Decls {
 		function, is_function := declaration.(*ast.FuncDecl)
 		if !is_function {
@@ -1491,78 +1212,88 @@ func function_file_diagnostics(file Parsed_File, defined map[string]bool) (diags
 		if type_invariants_is_bundle_name(function.Name.Name) {
 			continue
 		}
-		diags = append(diags, function_diagnostics(&Function_Input{
-			File: file, Function: function, Defined: defined,
-		})...)
+		diags = append(diags, function_diagnostics(
+			file,
+			function,
+			defined,
+			components,
+		)...)
 	}
 	return diags
 }
 
-// Carries one function and the module bundle index.
-type Function_Input struct {
-	// File is the parsed file the function is declared in.
-	File Parsed_File
-	// Function is the function declaration being checked.
-	Function *ast.FuncDecl
-	// Defined is the set of type names with an invariant bundle in the module.
-	Defined map[string]bool
-}
-
-// Carries the two name maps a requirement derivation reads, so they stay off
-// loose parameters.
-type Function_Scope struct {
+// Identity resolution must travel together; separating any map from this lexical scope lets
+// shadowing or a same-spelled declaration satisfy only one side of the mandate.
+type Invariant_Scope struct {
 	// Type_Parameters is the set of the function's type-parameter names.
 	Type_Parameters map[string]bool
 	// Defined is the set of type names with an invariant bundle in the module.
 	Defined map[string]bool
+	// Current_Package qualifies bare helper calls.
+	Current_Package string
+	// Imports resolves selector types and calls.
+	Imports map[string]string
+	// Default_Package owns every primitive preset helper.
+	Default_Package string
+	// Shadowed prevents a local value from impersonating a package or helper identifier.
+	Shadowed map[string]bool
+	// Constants pins Range boundaries and Enum members to declarations in the type's package.
+	Constants map[string]bool
 }
 
-// One subject (param or named return) and the assertion it must carry: a flat
-// call, or an element-wise range loop for a slice.
-type Assertion_Requirement struct {
-	// Subject is the parameter or named-return name that must be asserted.
+// One subject and the exact package-qualified helper it must carry.
+type Helper_Requirement struct {
+	// Subject is the parameter or named-return name that needs its helper.
 	Subject string
-	// Expected is the invariant the subject must carry.
+	// Expected is the exact helper identity.
 	Expected string
-	// Loop is true when the assertion must be an element-wise range loop.
-	Loop bool
 }
 
-// Collects the assertion gaps for one function's inputs and outputs.
-func function_diagnostics(input *Function_Input) (diags []Diagnostic) {
-	scope := &Function_Scope{
-		Type_Parameters: function_type_parameter_set(input.Function),
-		Defined:         input.Defined,
+// Collects the helper gaps for one function's inputs and outputs.
+func function_diagnostics(
+	file Parsed_File,
+	function *ast.FuncDecl,
+	defined map[string]bool,
+	components *Component_Index,
+) (diags []Diagnostic) {
+	imports := helper_import_paths(file.File)
+	scope := &Invariant_Scope{
+		Type_Parameters: function_type_parameter_set(function),
+		Defined:         defined,
+		Current_Package: helper_package_path(file, components),
+		Imports:         imports,
+		Default_Package: helper_default_package(components, imports),
+		Shadowed:        function_value_names(function),
 	}
-	inputs := function_requirements(input.Function.Type.Params, scope)
-	outputs := function_requirements(input.Function.Type.Results, scope)
+	inputs := function_requirements(function.Type.Params, scope)
+	outputs := function_requirements(function.Type.Results, scope)
 	if len(inputs) == 0 {
 		if len(outputs) == 0 {
 			return nil
 		}
 	}
-	position := input.File.File_Set.Position(input.Function.Name.Pos())
-	name := input.Function.Name.Name
-	lead, defer_body, has_defer := function_lead_and_defer(input.Function.Body.List)
+	position := file.File_Set.Position(function.Name.Pos())
+	name := function.Name.Name
+	lead, defer_body, has_defer := function_lead_and_defer(function.Body.List)
 	for _, requirement := range outputs {
 		if !has_defer {
 			diags = append(diags, Diagnostic{Position: position,
-				Message: name + " must assert " + requirement.Subject +
+				Message: name + " must call helper for " + requirement.Subject +
 					" in a first-statement defer"})
 			continue
 		}
-		if !function_requirement_met(defer_body, requirement) {
+		if !function_requirement_met(defer_body, requirement, scope) {
 			diags = append(diags, Diagnostic{Position: position,
-				Message: name + " must assert " + requirement.Subject +
+				Message: name + " must call helper for " + requirement.Subject +
 					" in the output defer"})
 		}
 	}
 	for _, requirement := range inputs {
-		if function_requirement_met(lead, requirement) {
+		if function_requirement_met(lead, requirement, scope) {
 			continue
 		}
 		diags = append(diags, Diagnostic{Position: position,
-			Message: name + " must assert " + requirement.Subject + " via " +
+			Message: name + " must call helper for " + requirement.Subject + " via " +
 				function_form(requirement)})
 	}
 	return diags
@@ -1582,17 +1313,81 @@ func function_type_parameter_set(function *ast.FuncDecl) (parameters map[string]
 	return parameters
 }
 
-// Builds the assertion requirements for a parameter or result list, skipping
+// Package identifiers and package-level helpers stop denoting those declarations when a function
+// parameter or named result shadows them for the whole body.
+func function_value_names(function *ast.FuncDecl) (names map[string]bool) {
+	names = map[string]bool{}
+	function_add_field_names(function.Type.Params, names)
+	function_add_field_names(function.Type.Results, names)
+	return names
+}
+
+func function_add_field_names(fields *ast.FieldList, names map[string]bool) {
+	if fields == nil {
+		return
+	}
+	for _, field := range fields.List {
+		for _, name := range field.Names {
+			names[name.Name] = true
+		}
+	}
+}
+
+func function_shadow_copy(names map[string]bool) (copy map[string]bool) {
+	copy = map[string]bool{}
+	for name := range names {
+		copy[name] = true
+	}
+	return copy
+}
+
+// A declaration begins shadowing after its own statement, so callers resolve the statement first
+// and extend this set second.
+func function_statement_shadows(statement ast.Stmt, names map[string]bool) {
+	assignment, is_assignment := statement.(*ast.AssignStmt)
+	if is_assignment {
+		if assignment.Tok != token.DEFINE {
+			return
+		}
+		for _, expression := range assignment.Lhs {
+			identifier, is_identifier := expression.(*ast.Ident)
+			if is_identifier {
+				names[identifier.Name] = true
+			}
+		}
+		return
+	}
+	declaration, is_declaration := statement.(*ast.DeclStmt)
+	if !is_declaration {
+		return
+	}
+	general, is_general := declaration.Decl.(*ast.GenDecl)
+	if !is_general {
+		return
+	}
+	for _, specification := range general.Specs {
+		switch typed := specification.(type) {
+		case *ast.ValueSpec:
+			for _, name := range typed.Names {
+				names[name.Name] = true
+			}
+		case *ast.TypeSpec:
+			names[typed.Name.Name] = true
+		}
+	}
+}
+
+// Builds the helper requirements for a parameter or result list, skipping
 // blank and exempt subjects.
 func function_requirements(
-	fields *ast.FieldList, scope *Function_Scope,
-) (requirements []Assertion_Requirement) {
+	fields *ast.FieldList, scope *Invariant_Scope,
+) (requirements []Helper_Requirement) {
 
 	if fields == nil {
 		return nil
 	}
 	for _, field := range fields.List {
-		expected, loop, required := function_requirement(field.Type, scope)
+		expected, required := function_requirement(field.Type, scope)
 		if !required {
 			continue
 		}
@@ -1600,8 +1395,8 @@ func function_requirements(
 			if name.Name == "_" {
 				continue
 			}
-			requirements = append(requirements, Assertion_Requirement{
-				Subject: name.Name, Expected: expected, Loop: loop,
+			requirements = append(requirements, Helper_Requirement{
+				Subject: name.Name, Expected: expected,
 			})
 		}
 	}
@@ -1612,8 +1407,8 @@ func function_requirements(
 // call. A raw slice, variadic, or map is banned by check_primitive_types rather
 // than asserted here, so it carries no requirement.
 func function_requirement(
-	field_type ast.Expr, scope *Function_Scope,
-) (expected string, loop bool, required bool) {
+	field_type ast.Expr, scope *Invariant_Scope,
+) (expected string, required bool) {
 
 	core := field_type
 	star, is_star := core.(*ast.StarExpr)
@@ -1621,22 +1416,21 @@ func function_requirement(
 		core = star.X
 	}
 	if _, is_array := core.(*ast.ArrayType); is_array {
-		return "", false, false
+		return "", false
 	}
 	if _, is_ellipsis := core.(*ast.Ellipsis); is_ellipsis {
-		return "", false, false
+		return "", false
 	}
 	if _, is_map := core.(*ast.MapType); is_map {
-		return "", false, false
+		return "", false
 	}
-	flat, flat_required := function_named_invariant(core, scope)
-	return flat, false, flat_required
+	return function_named_invariant(core, scope)
 }
 
 // Maps a named type expression (ident, selector, pointer, or generic
 // instantiation) to its _Invariants name and whether one exists.
 func function_named_invariant(
-	type_expression ast.Expr, scope *Function_Scope,
+	type_expression ast.Expr, scope *Invariant_Scope,
 ) (expected string, required bool) {
 
 	core := type_expression
@@ -1654,8 +1448,12 @@ func function_named_invariant(
 	}
 	selector, is_selector := core.(*ast.SelectorExpr)
 	if is_selector {
-		name := selector.Sel.Name + "_Invariants"
-		return name, scope.Defined[name]
+		package_path := struct_selector_package(selector, scope.Imports)
+		if package_path == "" {
+			return "", false
+		}
+		identity := package_path + "\x00" + selector.Sel.Name + "_Invariants"
+		return identity, scope.Defined[identity]
 	}
 	identifier, is_identifier := core.(*ast.Ident)
 	if !is_identifier {
@@ -1670,16 +1468,16 @@ func function_named_invariant(
 	}
 	preset := struct_primitive_preset(identifier.Name)
 	if preset != "" {
-		return preset, true
+		return scope.Default_Package + "\x00" + preset, true
 	}
 	if struct_is_builtin(identifier.Name) {
 		return "", false
 	}
-	name := source.Invariant_Name(identifier.Name)
-	return name, scope.Defined[name]
+	identity := scope.Current_Package + "\x00" + source.Invariant_Name(identifier.Name)
+	return identity, scope.Defined[identity]
 }
 
-// Splits a body into the leading assertion block and the first-statement defer's
+// Splits a body into the leading helper block and the first-statement defer's
 // body (when the first statement is a defer of a func literal).
 func function_lead_and_defer(
 	body []ast.Stmt,
@@ -1695,7 +1493,7 @@ func function_lead_and_defer(
 		}
 	}
 	for _, statement := range body[start:] {
-		if !function_is_assertion_statement(statement) {
+		if !function_is_helper_statement(statement) {
 			break
 		}
 		lead = append(lead, statement)
@@ -1716,9 +1514,9 @@ func function_defer_literal(statement ast.Stmt) (literal *ast.FuncLit) {
 	return function_literal
 }
 
-// Reports whether a statement is an assertion: an _Invariants call, or a range
+// Reports whether a statement is a helper call, or a range
 // loop whose body is only _Invariants calls.
-func function_is_assertion_statement(statement ast.Stmt) (yes bool) {
+func function_is_helper_statement(statement ast.Stmt) (yes bool) {
 	if function_is_invariant_call(statement) {
 		return true
 	}
@@ -1739,107 +1537,49 @@ func function_is_assertion_statement(statement ast.Stmt) (yes bool) {
 
 // Reports whether a statement is a bare `X_Invariants(...)` call.
 func function_is_invariant_call(statement ast.Stmt) (yes bool) {
-	expression_statement, is_expression := statement.(*ast.ExprStmt)
-	if !is_expression {
-		return false
-	}
-	call, is_call := expression_statement.X.(*ast.CallExpr)
-	if !is_call {
+	call := statement_call(statement)
+	if call == nil {
 		return false
 	}
 	return type_invariants_is_bundle_name(struct_callee_name(call.Fun))
 }
 
+// Restricting helper recognition to a call that is itself the statement prevents a nested or
+// dead-code call from satisfying a topology mandate.
+func statement_call(statement ast.Stmt) (call *ast.CallExpr) {
+	expression_statement, is_expression := statement.(*ast.ExprStmt)
+	if !is_expression {
+		return nil
+	}
+	call, _ = expression_statement.X.(*ast.CallExpr)
+	return call
+}
+
 // Reports whether the statements satisfy one requirement.
 func function_requirement_met(
-	statements []ast.Stmt, requirement Assertion_Requirement,
+	statements []ast.Stmt, requirement Helper_Requirement, scope *Invariant_Scope,
 ) (met bool) {
-
-	if requirement.Loop {
-		return function_loop_asserts(statements, requirement)
-	}
-	return function_flat_asserts(statements, requirement)
+	return function_calls_helper(statements, requirement, scope)
 }
 
-// Reports whether some statement is a flat Expected(subject, …) call.
-func function_flat_asserts(
-	statements []ast.Stmt, requirement Assertion_Requirement,
+// Reports whether some statement calls the exact expected helper on the subject.
+func function_calls_helper(
+	statements []ast.Stmt, requirement Helper_Requirement, scope *Invariant_Scope,
 ) (met bool) {
 
+	shadowed := function_shadow_copy(scope.Shadowed)
 	for _, statement := range statements {
-		found := false
-		ast.Inspect(statement, func(node ast.Node) (recurse bool) {
-			call, is_call := node.(*ast.CallExpr)
-			if !is_call {
-				return true
+		call := statement_call(statement)
+		if call != nil {
+			identity := helper_callee_identity(
+				call.Fun, scope.Current_Package, scope.Imports, shadowed)
+			if identity == requirement.Expected {
+				if function_first_argument_name(call) == requirement.Subject {
+					return true
+				}
 			}
-			if struct_callee_name(call.Fun) != requirement.Expected {
-				return true
-			}
-			if function_first_argument_name(call) != requirement.Subject {
-				return true
-			}
-			found = true
-			return false
-		})
-		if found {
-			return true
 		}
-	}
-	return false
-}
-
-// Reports whether some statement is a `range subject` loop asserting each element
-// with Expected.
-func function_loop_asserts(
-	statements []ast.Stmt, requirement Assertion_Requirement,
-) (met bool) {
-
-	for _, statement := range statements {
-		range_statement, is_range := statement.(*ast.RangeStmt)
-		if !is_range {
-			continue
-		}
-		subject, is_subject := range_statement.X.(*ast.Ident)
-		if !is_subject {
-			continue
-		}
-		if subject.Name != requirement.Subject {
-			continue
-		}
-		value, is_value := range_statement.Value.(*ast.Ident)
-		if !is_value {
-			continue
-		}
-		if function_block_asserts(range_statement.Body, requirement, value.Name) {
-			return true
-		}
-	}
-	return false
-}
-
-// Reports whether a range body calls the requirement's expected invariant on the
-// loop's value identifier.
-func function_block_asserts(
-	block *ast.BlockStmt, requirement Assertion_Requirement, value string,
-) (yes bool) {
-
-	for _, statement := range block.List {
-		expression_statement, is_expression := statement.(*ast.ExprStmt)
-		if !is_expression {
-			continue
-		}
-		call, is_call := expression_statement.X.(*ast.CallExpr)
-		if !is_call {
-			continue
-		}
-		if struct_callee_name(call.Fun) != requirement.Expected {
-			continue
-		}
-		if function_first_argument_name(call) != value {
-			continue
-		}
-		return true
+		function_statement_shadows(statement, shadowed)
 	}
 	return false
 }
@@ -1862,13 +1602,9 @@ func function_first_argument_name(call *ast.CallExpr) (name string) {
 	return identifier.Name
 }
 
-// Renders the expected assertion form for a diagnostic.
-func function_form(requirement Assertion_Requirement) (form string) {
-	if requirement.Loop {
-		return "for _, x := range " + requirement.Subject + " { " +
-			requirement.Expected + "(x, ...) }"
-	}
-	return requirement.Expected + "(" + requirement.Subject + ", ...)"
+// Renders the expected helper form for a diagnostic without exposing the identity separator.
+func function_form(requirement Helper_Requirement) (form string) {
+	return helper_identity_name(requirement.Expected) + "(" + requirement.Subject + ", ...)"
 }
 
 // Flags every non-exempt, non-main package whose test binary fails to wire the
@@ -2573,14 +2309,12 @@ func primitive_function_diagnostics(
 		return nil
 	}
 	position := file.File_Set.Position(function.Name.Pos())
-	diags = append(diags, primitive_field_diagnostics(&Primitive_Field_Input{
-		Fields: function.Type.Params, Role: "parameter",
-		Owner: function.Name.Name, Position: position,
-	})...)
-	diags = append(diags, primitive_field_diagnostics(&Primitive_Field_Input{
-		Fields: function.Type.Results, Role: "result",
-		Owner: function.Name.Name, Position: position,
-	})...)
+	parameter_gaps := primitive_field_gaps(function.Type.Params, "parameter")
+	diags = append(diags,
+		primitive_owner_diagnostics(parameter_gaps, function.Name.Name, position)...)
+	result_gaps := primitive_field_gaps(function.Type.Results, "result")
+	diags = append(diags,
+		primitive_owner_diagnostics(result_gaps, function.Name.Name, position)...)
 	return diags
 }
 
@@ -2598,45 +2332,44 @@ func primitive_struct_diagnostics(file Parsed_File, general *ast.GenDecl) (diags
 		if !is_struct {
 			continue
 		}
-		diags = append(diags, primitive_field_diagnostics(&Primitive_Field_Input{
-			Fields: struct_type.Fields, Role: "field",
-			Owner:    type_specification.Name.Name,
-			Position: file.File_Set.Position(type_specification.Name.Pos()),
-		})...)
+		gaps := primitive_field_gaps(struct_type.Fields, "field")
+		position := file.File_Set.Position(type_specification.Name.Pos())
+		diags = append(diags,
+			primitive_owner_diagnostics(
+				gaps, type_specification.Name.Name, position)...)
 	}
 	return diags
 }
 
-// Carries one field list and how to name its diagnostics; a struct keeps the role
-// and owner off loose string parameters.
-type Primitive_Field_Input struct {
-	// Fields is the field list being checked.
-	Fields *ast.FieldList
-	// Role names the field list's role in diagnostics.
-	Role string
-	// Owner is the declaring type or function name, for diagnostics.
-	Owner string
-	// Position is the source position for diagnostics.
-	Position token.Position
-}
-
-// Flags each field in the list whose type is a raw string, slice, or map.
-func primitive_field_diagnostics(input *Primitive_Field_Input) (diags []Diagnostic) {
-	if input.Fields == nil {
+// Separating raw-field discovery from declaration ownership keeps role, owner, and position out
+// of an argument-bundling struct.
+func primitive_field_gaps(fields *ast.FieldList, role string) (gaps []string) {
+	if fields == nil {
 		return nil
 	}
-	for _, field := range input.Fields.List {
+	for _, field := range fields.List {
 		kind := numeric_raw_primitive_kind(field.Type)
 		if kind == "" {
 			continue
 		}
 		for _, identifier := range primitive_field_names(field) {
-			diags = append(diags, Diagnostic{
-				Position: input.Position,
-				Message: input.Owner + ": raw " + kind + " " + input.Role + " " +
-					identifier + "; wrap it in a defined type",
-			})
+			gaps = append(gaps, "raw "+kind+" "+role+" "+identifier+
+				"; wrap it in a defined type")
 		}
+	}
+	return gaps
+}
+
+// Adds the declaration identity and position only after the field scan, keeping scan inputs
+// direct and diagnostics uniform between function and struct subjects.
+func primitive_owner_diagnostics(
+	gaps []string, owner string, position token.Position,
+) (diags []Diagnostic) {
+	for _, gap := range gaps {
+		diags = append(diags, Diagnostic{
+			Position: position,
+			Message:  owner + ": " + gap,
+		})
 	}
 	return diags
 }

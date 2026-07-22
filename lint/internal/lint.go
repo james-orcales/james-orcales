@@ -2347,11 +2347,11 @@ func check_file_system_doctrine(
 	output = append(output,
 		check_io_gateway(parsed_files, components, input.Instrumentation_Packages)...)
 	output = append(output, check_package_documentation_comment(parsed_files)...)
-	output = append(output, assertion.Check(&assertion.Check_Input{
-		Parsed_Files: parsed_files,
-		Components:   components,
-		Exempt:       input.Invariant_Exempt_Packages,
-	})...)
+	output = append(output, assertion.Check(
+		parsed_files,
+		components,
+		input.Invariant_Exempt_Packages,
+	)...)
 	return append(output,
 		check_specification(input.Fsys, parsed_files, components, input.Scope)...)
 }
@@ -5023,8 +5023,7 @@ func check_default_package_name(
 // Use sites are not visited, so the `len(xs)` and `cap(xs)` builtins are exempt.
 // Func-type signature names and closure parameters are deliberately not walked:
 // those names are documentation-only and idiomatic abbreviations there (e.g.
-// `info fs.FileInfo`) are not the target. "helper" is banned only in function
-// names — see check_names_vocabulary_function_ban.
+// `info fs.FileInfo`) are not the target.
 func check_names_vocabulary(
 	file_set *token.FileSet, file *ast.File, table map[string][]string,
 ) (diags []Diagnostic) {
@@ -5033,7 +5032,6 @@ func check_names_vocabulary(
 		check_names_vocabulary_at(
 			file_set.Position(file.Name.Pos()), file.Name.Name, table)...)
 	diags = append(diags, check_names_vocabulary_file_name(file_set, file, table)...)
-	diags = append(diags, check_names_vocabulary_function_ban(file_set, file)...)
 	check_names_walk_decls(file, func(identifier *ast.Ident) {
 		position := file_set.Position(identifier.Pos())
 		diags = append(diags,
@@ -5050,35 +5048,6 @@ func make_check_names_vocabulary(table map[string][]string) (checker Check_Funct
 	return func(file_set *token.FileSet, file *ast.File, _ []byte) (diags []Diagnostic) {
 		return check_names_vocabulary(file_set, file, table)
 	}
-}
-
-// Flags "helper" in a function name. The ban is function-name-only — a file or
-// package named helper is a weaker smell than a function whose name hides what
-// it does — so it rides outside the universal word_replacements table,
-// which applies at every declaration site.
-func check_names_vocabulary_function_ban(
-	file_set *token.FileSet, file *ast.File,
-) (diags []Diagnostic) {
-
-	ast.Inspect(file, func(n ast.Node) (descend bool) {
-		function, ok := n.(*ast.FuncDecl)
-		if !ok {
-			return true
-		}
-		for _, word := range suggest_split_words(function.Name.Name) {
-			if strings.EqualFold(word, "helper") {
-				diags = append(diags, Diagnostic{
-					Position: file_set.Position(function.Name.Pos()),
-					Message: fmt.Sprintf(
-						`identifier %q contains banned substring "helper"`,
-						function.Name.Name),
-				})
-				return true
-			}
-		}
-		return true
-	})
-	return diags
 }
 
 // Resolves the file's basename to the stem used for word-splitting: the .go

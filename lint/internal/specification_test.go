@@ -765,17 +765,6 @@ func Test_Source_And_Test_Bans_Banned_Words(t *testing.T) {
 	}
 }
 
-// Test_Source_And_Test_Bans_Banned_Function_Words verifies the function-name-only
-// word ban: helper in a function name is flagged, the word other identifiers may carry.
-func Test_Source_And_Test_Bans_Banned_Function_Words(t *testing.T) {
-	t.Parallel()
-	files := specification_one_file(
-		"package fixture\n\n// Helper helps.\nfunc Helper() (n int) {\n\treturn 0\n}\n")
-	if !specification_flags(t, files, "banned substring \"helper\"") {
-		t.Fatal("helper in a function name must be flagged")
-	}
-}
-
 // Test_Source_And_Test_Requirements_Goimports verifies non-goimports formatting is flagged.
 func Test_Source_And_Test_Requirements_Goimports(t *testing.T) {
 	t.Parallel()
@@ -2030,7 +2019,7 @@ func Test_Type_Invariant_Exempt_List_Skips_Package(t *testing.T) {
 func Test_Type_Invariant_Clean_Pair_Passes(t *testing.T) {
 	t.Parallel()
 	files := specification_one_file("package fixture\n\n" +
-		"import \"fixture/shared/invariant\"\n\n" +
+		"import invariant \"fixture/shared/invariant/default\"\n\n" +
 		"// Widget is a fixture.\ntype Widget struct {\n" +
 		"\t// X is a fixture.\n\tX int\n}\n\n" +
 		"// Widget_Invariants is a fixture.\n" +
@@ -2114,209 +2103,17 @@ func Test_Type_Invariant_Between_Input_Struct_And_Function(t *testing.T) {
 	}
 }
 
-// Test_Type_Invariant_Numeric_Signed_Passes verifies a complete signed numeric
-// bundle (const bounds, all six boundary claims) is not flagged.
-func Test_Type_Invariant_Numeric_Signed_Passes(t *testing.T) {
+// Test_Type_Invariant_Helper_Body_Mandate verifies a correctly declared helper cannot evade the
+// canonical helper contract merely by existing with an empty body.
+func Test_Type_Invariant_Helper_Body_Mandate(t *testing.T) {
 	t.Parallel()
 	files := specification_one_file("package fixture\n\n" +
-		"import \"fixture/shared/invariant\"\n\n" +
-		"const Level_Max Level = 7\n\nconst Level_Min Level = -1\n\n" +
+		"import invariant \"fixture/shared/invariant/default\"\n\n" +
 		"// Level is a fixture.\ntype Level int8\n\n" +
-		"// Level_Invariants is a fixture.\n" +
-		"func Level_Invariants(v Level, namespace invariant.Namespace) {\n" +
-		"\tinvariant.Always(v <= Level_Max, \"max bound\")\n" +
-		"\tinvariant.Always(v >= Level_Min, \"min bound\")\n" +
-		"\tinvariant.Dot_Product(namespace).\n" +
-		"\t\tSometimes(v == Level_Max, \"max\").\n" +
-		"\t\tSometimes(v == Level_Min, \"min\").\n" +
-		"\t\tSometimes(v == 0, \"zero\").\n" +
-		"\t\tSometimes(v == 1, \"one\").\n" +
-		"\t\tSometimes(v == -1, \"neg one\").\n" +
-		"\t\tSometimes(v == 2, \"two\").Ensure()\n}\n")
-	if specification_flags(t, files, "must guard both ends") {
-		t.Fatal("a complete signed bundle must not be flagged for bounds")
-	}
-	if specification_flags(t, files, "must be a package-level constant") {
-		t.Fatal("named const bounds must not be flagged")
-	}
-	if specification_flags(t, files, "must claim") {
-		t.Fatal("a complete signed bundle must not be flagged for coverage")
-	}
-}
-
-// Test_Type_Invariant_Numeric_Unsigned_Passes verifies a complete unsigned bundle
-// (no -1 claim, MIN a named const) is not flagged.
-func Test_Type_Invariant_Numeric_Unsigned_Passes(t *testing.T) {
-	t.Parallel()
-	files := specification_one_file("package fixture\n\n" +
-		"import \"fixture/shared/invariant\"\n\n" +
-		"const Count_Max Count = 7\n\nconst Count_Min Count = 0\n\n" +
-		"// Count is a fixture.\ntype Count uint8\n\n" +
-		"// Count_Invariants is a fixture.\n" +
-		"func Count_Invariants(v Count, namespace invariant.Namespace) {\n" +
-		"\tinvariant.Always(v <= Count_Max, \"max bound\")\n" +
-		"\tinvariant.Always(v >= Count_Min, \"min bound\")\n" +
-		"\tinvariant.Dot_Product(namespace).\n" +
-		"\t\tSometimes(v == Count_Max, \"max\").\n" +
-		"\t\tSometimes(v == Count_Min, \"min\").\n" +
-		"\t\tSometimes(v == 0, \"zero\").\n" +
-		"\t\tSometimes(v == 1, \"one\").\n" +
-		"\t\tSometimes(v == 2, \"two\").Ensure()\n}\n")
-	if specification_flags(t, files, "must claim") {
-		t.Fatal("a complete unsigned bundle (no -1) must not be flagged for coverage")
-	}
-	if specification_flags(t, files, "must guard both ends") {
-		t.Fatal("unsigned bounds must not be flagged")
-	}
-}
-
-// Test_Type_Invariant_Numeric_Float_Passes verifies a float bundle with NaN/+-Inf
-// claims and const Always bounds is not flagged.
-func Test_Type_Invariant_Numeric_Float_Passes(t *testing.T) {
-	t.Parallel()
-	files := specification_one_file("package fixture\n\n" +
-		"import \"fixture/shared/invariant\"\n\nimport \"math\"\n\n" +
-		"const Scale_Max Scale = 100\n\nconst Scale_Min Scale = -100\n\n" +
-		"// Scale is a fixture.\ntype Scale float64\n\n" +
-		"// Scale_Invariants is a fixture.\n" +
-		"func Scale_Invariants(v Scale, namespace invariant.Namespace) {\n" +
-		"\tinvariant.Always(v <= Scale_Max, \"max bound\")\n" +
-		"\tinvariant.Always(v >= Scale_Min, \"min bound\")\n" +
-		"\tinvariant.Dot_Product(namespace).\n" +
-		"\t\tSometimes(math.IsNaN(float64(v)), \"nan\").\n" +
-		"\t\tSometimes(float64(v) == math.Inf(-1), \"neg inf\").\n" +
-		"\t\tSometimes(float64(v) == math.Inf(1), \"pos inf\").Ensure()\n}\n")
-	if specification_flags(t, files, "must claim") {
-		t.Fatal("a complete float bundle (NaN/+-Inf) must not be flagged for coverage")
-	}
-	if specification_flags(t, files, "must guard both ends") {
-		t.Fatal("float const bounds must not be flagged")
-	}
-}
-
-// Test_Type_Invariant_Count_String_Passes verifies a complete string length
-// bundle is not flagged.
-func Test_Type_Invariant_Count_String_Passes(t *testing.T) {
-	t.Parallel()
-	files := specification_one_file("package fixture\n\n" +
-		"import \"fixture/shared/invariant\"\n\n" +
-		"const Name_Max = 32\n\nconst Name_Min = 0\n\n" +
-		"// Name is a fixture.\ntype Name string\n\n" +
-		"// Name_Invariants is a fixture.\n" +
-		"func Name_Invariants(v Name, namespace invariant.Namespace) {\n" +
-		"\tinvariant.Always(len(v) <= Name_Max, \"max bound\")\n" +
-		"\tinvariant.Always(len(v) >= Name_Min, \"min bound\")\n" +
-		"\tinvariant.Dot_Product(namespace).\n" +
-		"\t\tSometimes(len(v) == Name_Max, \"max\").\n" +
-		"\t\tSometimes(len(v) == Name_Min, \"min\").\n" +
-		"\t\tSometimes(len(v) == 0, \"zero\").\n" +
-		"\t\tSometimes(len(v) == 1, \"one\").\n" +
-		"\t\tSometimes(len(v) == 2, \"two\").Ensure()\n}\n")
-	if specification_flags(t, files, "must guard both ends") {
-		t.Fatal("a complete string length bundle must not be flagged for bounds")
-	}
-	if specification_flags(t, files, "must claim") {
-		t.Fatal("a complete string length bundle must not be flagged for coverage")
-	}
-}
-
-// Test_Type_Invariant_Count_Slice_Passes verifies a complete slice length bundle
-// is not flagged.
-func Test_Type_Invariant_Count_Slice_Passes(t *testing.T) {
-	t.Parallel()
-	files := specification_one_file("package fixture\n\n" +
-		"import \"fixture/shared/invariant\"\n\n" +
-		"const Buffer_Max = 64\n\nconst Buffer_Min = 0\n\n" +
-		"// Buffer is a fixture.\ntype Buffer []byte\n\n" +
-		"// Buffer_Invariants is a fixture.\n" +
-		"func Buffer_Invariants(v Buffer, namespace invariant.Namespace) {\n" +
-		"\tinvariant.Always(len(v) <= Buffer_Max, \"max bound\")\n" +
-		"\tinvariant.Always(len(v) >= Buffer_Min, \"min bound\")\n" +
-		"\tinvariant.Dot_Product(namespace).\n" +
-		"\t\tSometimes(len(v) == Buffer_Max, \"max\").\n" +
-		"\t\tSometimes(len(v) == Buffer_Min, \"min\").\n" +
-		"\t\tSometimes(len(v) == 0, \"zero\").\n" +
-		"\t\tSometimes(len(v) == 1, \"one\").\n" +
-		"\t\tSometimes(len(v) == 2, \"two\").Ensure()\n}\n")
-	if specification_flags(t, files, "must guard both ends") {
-		t.Fatal("a complete slice length bundle must not be flagged for bounds")
-	}
-	if specification_flags(t, files, "must claim") {
-		t.Fatal("a complete slice length bundle must not be flagged for coverage")
-	}
-}
-
-// Test_Type_Invariant_Count_Bound_Not_Claimed verifies a length bundle whose
-// MAX/MIN appear only in the Always guards — with no boundary claim for them — is
-// not flagged: the guard is the bound, not a claimed value.
-func Test_Type_Invariant_Count_Bound_Not_Claimed(t *testing.T) {
-	t.Parallel()
-	files := specification_one_file("package fixture\n\n" +
-		"import \"fixture/shared/invariant\"\n\n" +
-		"const Buffer_Max = 64\n\nconst Buffer_Min = 0\n\n" +
-		"// Buffer is a fixture.\ntype Buffer []byte\n\n" +
-		"// Buffer_Invariants is a fixture.\n" +
-		"func Buffer_Invariants(v Buffer, namespace invariant.Namespace) {\n" +
-		"\tinvariant.Always(len(v) <= Buffer_Max, \"max bound\")\n" +
-		"\tinvariant.Always(len(v) >= Buffer_Min, \"min bound\")\n" +
-		"\tinvariant.Dot_Product(namespace).\n" +
-		"\t\tSometimes(len(v) == 0, \"zero\").\n" +
-		"\t\tSometimes(len(v) == 1, \"one\").\n" +
-		"\t\tSometimes(len(v) == 2, \"two\").Ensure()\n}\n")
-	if specification_flags(t, files, "must claim") {
-		t.Fatal("a length bundle need not claim its MAX/MIN — the guard is the bound")
-	}
-}
-
-// Test_Type_Invariant_Count_Map_Passes verifies a complete map length bundle is
-// not flagged.
-func Test_Type_Invariant_Count_Map_Passes(t *testing.T) {
-	t.Parallel()
-	files := specification_one_file("package fixture\n\n" +
-		"import \"fixture/shared/invariant\"\n\n" +
-		"const Registry_Max = 16\n\nconst Registry_Min = 0\n\n" +
-		"// Registry is a fixture.\ntype Registry map[string]int\n\n" +
-		"// Registry_Invariants is a fixture.\n" +
-		"func Registry_Invariants(v Registry, namespace invariant.Namespace) {\n" +
-		"\tinvariant.Always(len(v) <= Registry_Max, \"max bound\")\n" +
-		"\tinvariant.Always(len(v) >= Registry_Min, \"min bound\")\n" +
-		"\tinvariant.Dot_Product(namespace).\n" +
-		"\t\tSometimes(len(v) == Registry_Max, \"max\").\n" +
-		"\t\tSometimes(len(v) == Registry_Min, \"min\").\n" +
-		"\t\tSometimes(len(v) == 0, \"zero\").\n" +
-		"\t\tSometimes(len(v) == 1, \"one\").\n" +
-		"\t\tSometimes(len(v) == 2, \"two\").Ensure()\n}\n")
-	if specification_flags(t, files, "must guard both ends") {
-		t.Fatal("a complete map length bundle must not be flagged for bounds")
-	}
-	if specification_flags(t, files, "must claim") {
-		t.Fatal("a complete map length bundle must not be flagged for coverage")
-	}
-}
-
-// Test_Type_Invariant_Count_Generic_Passes verifies a complete generic-container
-// length bundle (a generic slice) is not flagged.
-func Test_Type_Invariant_Count_Generic_Passes(t *testing.T) {
-	t.Parallel()
-	files := specification_one_file("package fixture\n\n" +
-		"import \"fixture/shared/invariant\"\n\n" +
-		"const Stack_Max = 8\n\nconst Stack_Min = 0\n\n" +
-		"// Stack is a fixture.\ntype Stack[T any] []T\n\n" +
-		"// Stack_Invariants is a fixture.\n" +
-		"func Stack_Invariants[T any](v Stack[T], namespace invariant.Namespace) {\n" +
-		"\tinvariant.Always(len(v) <= Stack_Max, \"max bound\")\n" +
-		"\tinvariant.Always(len(v) >= Stack_Min, \"min bound\")\n" +
-		"\tinvariant.Dot_Product(namespace).\n" +
-		"\t\tSometimes(len(v) == Stack_Max, \"max\").\n" +
-		"\t\tSometimes(len(v) == Stack_Min, \"min\").\n" +
-		"\t\tSometimes(len(v) == 0, \"zero\").\n" +
-		"\t\tSometimes(len(v) == 1, \"one\").\n" +
-		"\t\tSometimes(len(v) == 2, \"two\").Ensure()\n}\n")
-	if specification_flags(t, files, "must guard both ends") {
-		t.Fatal("a complete generic-container length bundle must not be flagged for bounds")
-	}
-	if specification_flags(t, files, "must claim") {
-		t.Fatal("a complete generic count bundle must not be flagged for coverage")
+		"// Level_Invariants is deliberately empty.\n" +
+		"func Level_Invariants(v Level, namespace invariant.Namespace) {}\n")
+	if !specification_flags(t, files, "must call a canonical helper") {
+		t.Fatal("an empty scalar helper must not evade the canonical helper mandate")
 	}
 }
 
@@ -2325,12 +2122,13 @@ func Test_Type_Invariant_Count_Generic_Passes(t *testing.T) {
 func Test_Type_Invariant_Struct_Composition_Passes(t *testing.T) {
 	t.Parallel()
 	files := specification_one_file("package fixture\n\n" +
-		"import \"fixture/shared/invariant\"\n\n" +
+		"import invariant \"fixture/shared/invariant/default\"\n\n" +
+		"const Token_Min = 0\n\nconst Token_Max = 8\n\n" +
 		"// Token is a fixture.\ntype Token string\n\n" +
 		"// Token_Invariants is a fixture.\n" +
 		"func Token_Invariants(v Token, namespace invariant.Namespace) {\n" +
 		"\tinvariant.Dot_Product(namespace)." +
-		"Sometimes(len(v) == 0, \"x\").Ensure()\n}\n\n" +
+		"Range_Int(len(v), Token_Min, Token_Max).Ensure()\n}\n\n" +
 		"// Pair is a fixture.\ntype Pair struct {\n" +
 		"\t// Tok is a fixture.\n\tTok Token\n" +
 		"\t// Count is a fixture.\n\tCount int\n}\n\n" +
@@ -2414,9 +2212,9 @@ func Test_Type_Invariant_Struct_Pointer_Field_Composed(t *testing.T) {
 	}
 }
 
-// Test_Function_Assertion_Complete_Passes verifies a function that asserts its
-// input after a first-statement output defer is not flagged.
-func Test_Function_Assertion_Complete_Passes(t *testing.T) {
+// Test_Function_Helper_Complete_Passes verifies exact input and output helpers in their boundary
+// positions satisfy the mandate.
+func Test_Function_Helper_Complete_Passes(t *testing.T) {
 	t.Parallel()
 	files := specification_one_file("package fixture\n\n" +
 		"import \"fixture/shared/invariant\"\n\n" +
@@ -2432,26 +2230,26 @@ func Test_Function_Assertion_Complete_Passes(t *testing.T) {
 		"// Process does.\nfunc Process(tok Token) (n Count) {\n" +
 		"\tdefer func() {\n\t\tCount_Invariants(n, \"Process.n\")\n\t}()\n" +
 		"\tToken_Invariants(tok, \"Process.tok\")\n\treturn 0\n}\n")
-	if specification_flags(t, files, "must assert") {
-		t.Fatal("a fully-asserting function must not be flagged")
+	if specification_flags(t, files, "must call helper") {
+		t.Fatal("a function carrying every exact helper must not be flagged")
 	}
 }
 
-// Test_Function_Assertion_Exempt_Subjects verifies func/error params and returns,
-// which have no invariant, need no assertion.
-func Test_Function_Assertion_Exempt_Subjects(t *testing.T) {
+// Test_Function_Helper_Exempt_Subjects verifies func/error params and returns,
+// which have no invariant, need no helper.
+func Test_Function_Helper_Exempt_Subjects(t *testing.T) {
 	t.Parallel()
 	files := specification_one_file("package fixture\n\n" +
 		"// Run does.\nfunc Run(action func(), failure error) (result error) {\n" +
 		"\tprintln(0)\n\treturn nil\n}\n")
-	if specification_flags(t, files, "must assert") {
-		t.Fatal("func/error subjects have no invariant and need no assertion")
+	if specification_flags(t, files, "must call helper") {
+		t.Fatal("func/error subjects have no invariant and need no helper")
 	}
 }
 
-// Test_Function_Assertion_Slice_Loop_Passes verifies a slice parameter asserted by
-// an element-wise range loop is not flagged.
-func Test_Function_Assertion_Slice_Loop_Passes(t *testing.T) {
+// Test_Function_Helper_Raw_Slice_Exempt verifies raw container rejection remains the primitive
+// rule's responsibility rather than inventing element-wise helper semantics.
+func Test_Function_Helper_Raw_Slice_Exempt(t *testing.T) {
 	t.Parallel()
 	files := specification_one_file("package fixture\n\n" +
 		"import \"fixture/shared/invariant\"\n\n" +
@@ -2463,14 +2261,14 @@ func Test_Function_Assertion_Slice_Loop_Passes(t *testing.T) {
 		"// Scan does.\nfunc Scan(toks []Token) {\n" +
 		"\tfor _, t := range toks {\n\t\tToken_Invariants(t, \"Scan.tok\")\n\t}\n" +
 		"\tprintln(0)\n}\n")
-	if specification_flags(t, files, "must assert") {
-		t.Fatal("a slice parameter asserted element-wise must not be flagged")
+	if specification_flags(t, files, "must call helper") {
+		t.Fatal("the helper mandate must not prescribe a raw slice's body")
 	}
 }
 
-// Test_Function_Assertion_Bundle_Exempt verifies a _Invariants bundle is exempt
-// from the function-assertion rule (else it would assert its own value).
-func Test_Function_Assertion_Bundle_Exempt(t *testing.T) {
+// Test_Function_Helper_Companion_Exempt verifies a companion helper is exempt
+// from calling itself recursively.
+func Test_Function_Helper_Companion_Exempt(t *testing.T) {
 	t.Parallel()
 	files := specification_one_file("package fixture\n\n" +
 		"import \"fixture/shared/invariant\"\n\n" +
@@ -2479,8 +2277,8 @@ func Test_Function_Assertion_Bundle_Exempt(t *testing.T) {
 		"func Token_Invariants(v Token, namespace invariant.Namespace) {\n" +
 		"\tinvariant.Dot_Product(namespace)." +
 		"Sometimes(len(v) == 0, \"x\").Ensure()\n}\n")
-	if specification_flags(t, files, "must assert") {
-		t.Fatal("a _Invariants bundle is exempt from the function-assertion rule")
+	if specification_flags(t, files, "must call helper") {
+		t.Fatal("a companion helper must not be required to call itself")
 	}
 }
 

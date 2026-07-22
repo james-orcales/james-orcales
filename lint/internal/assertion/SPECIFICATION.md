@@ -26,70 +26,51 @@ matching type, never adrift.
 
 ### Scope
 
-Structs with fields, defined non-alias types, and generic types are in scope. Aliases, function
-and interface types, empty structs, function-local types, _test.go files, and the packages in
-lint.json's opt_out_assertion_mandate_packages are exempt.
+Structs with fields, defined non-alias types, and generic types are in scope; their helper bodies
+carry the mandate and the pass defines no argument-bundling _Input structs. Aliases, function and
+interface types, empty structs, local types, tests, and opted-out packages are exempt.
 
-### Numeric Bounds
+### Scalar Helper
 
-A numeric type's value-parameter bundle guards both ends with the value on the left:
-Always(v <= MAX) and Always(v >= MIN).
+A defined integer helper calls its exact primitive preset or ensures a Dot_Product(namespace) chain
+containing its exact Range_TYPE or Enum_TYPE over the converted value. Floats and booleans call
+their exact primitive presets; individual Always or Sometimes assertions never substitute.
 
-### Numeric Bound Constant
+### Count Helper
 
-MAX and MIN are each a package-level constant, named so the bound reads as a deliberate limit —
-never an inline literal nor an imported selector.
+A defined string, slice, or map helper ensures a Dot_Product(namespace) chain containing Range_Int
+or Enum_Int over len(value). Individual assertions, another subject, another suffix, an
+unterminated or split chain, and an unrelated Dot_Product never substitute.
 
-### Numeric Coverage
+### Helper Constants
 
-The bundle claims 0, 1, 2, and -1 for signed by a Dot_Product chain's Sometimes(v == V) or by
-Always(v ==/!= V); a float claims NaN and both infinities instead. Both bound edges are always in
-range, so each must be witnessed by chain links, never merely guarded.
+Each Range boundary and Enum member is a package-level constant in the type's package, optionally
+wrapped in its exact primitive conversion. Inline literals, computed call operands, imported
+selectors, and conversion to another primitive never satisfy the helper mandate.
 
-### Numeric Range Preset
+### Helper Identity
 
-A terminated `Range_TYPE(value, minimum, maximum, holes...).Ensure()` chain satisfies Numeric Bounds
-and Numeric Coverage at once. A defined integer explicitly converts each argument to TYPE;
-conversion never relaxes the bound-constant rule or requires a local declaration.
-
-### Numeric Enum Preset
-
-A terminated `invariant.Dot_Product(namespace).Enum_TYPE(v, members…).Ensure()` chain satisfies the
-same rules for a discrete domain. Every member, including one under its exact TYPE conversion, must
-remain a package-level constant rather than an inline value.
-
-### Count Bounds
-
-A string, slice, or map type's bundle guards its length with the length on the left:
-Always(len(v) <= MAX) and Always(len(v) >= MIN).
-
-### Count Bound Constant
-
-MAX and MIN for a length are each a package-level constant, never an inline literal nor an imported
-selector.
-
-### Count Coverage
-
-The bundle claims 0, 1, and 2 by a Dot_Product chain's Sometimes(len(v) == V) or by
-Always(len(v) ==/!= V), and witnesses both length edges with chain links, never merely guarding
-them.
+The preset call or ensured chain is a direct helper-body statement and resolves to the actual
+invariant package without parameter, local, or import shadowing. The chain root uses that helper's
+trailing namespace parameter; foreign lookalikes and literal namespaces never substitute.
 
 ### Field Composition
 
-A struct type's bundle calls the _Invariants of every field whose type has one — a preset for a
-primitive, the type's own bundle otherwise. A pointer field composes its pointee. An immediate
-sync.Mutex or sync.RWMutex field is exempt.
+A struct type's helper directly calls the exact package-qualified _Invariants helper of every field
+whose type has one — a preset for a primitive, the type's own helper otherwise. Foreign, nested, or
+shadowed calls never substitute. A pointer field composes its pointee; an immediate mutex is exempt.
 
-### Parameter Assertion
+### Parameter Helper
 
-A named free function asserts every input parameter whose type has an _Invariants, in the leading
-block right after the output defer: a flat call, or a range loop over a slice's elements. A bundle
-or a method is exempt.
+A named free function calls the exact helper for every input parameter whose type has one, in the
+leading block right after the output defer. Direct Always or Sometimes assertions and same-named
+foreign or shadowed functions never substitute. A helper or method is exempt.
 
-### Output Assertion
+### Output Helper
 
-A named free function whose return values include one with an _Invariants asserts each in a defer
-that is the first statement of the body.
+A named free function whose return values include one with an _Invariants directly calls each exact
+helper in a defer that is the first statement of the body. Nested, shadowed, and assertion calls
+never substitute.
 
 ### Recorder Registration
 

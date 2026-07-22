@@ -1913,10 +1913,9 @@ func lint_output_minus(
 	return 0, builder.String()
 }
 
-// Test_Banned_Identifiers verifies that function names containing banned
-// segments (helper, util*) are flagged, with case-insensitive segment matching
-// and no false positives on substrings like "helpme".
-func Test_Banned_Identifiers(t *testing.T) {
+// Test_Helper_Function_Names_Allowed verifies helper is ordinary vocabulary now that the invariant
+// doctrine uses it as the precise name for companion functions.
+func Test_Helper_Function_Names_Allowed(t *testing.T) {
 	t.Parallel()
 	run_diag_table(t, []struct {
 		Name      string
@@ -1925,47 +1924,47 @@ func Test_Banned_Identifiers(t *testing.T) {
 	}{
 
 		{
-			Name: "bare helper flagged",
+			Name: "bare helper allowed",
 			Files: map[string]string{
 				"test.go": `package main
 
 func helper() { return }
 `,
 			},
-			Want_Diag: `banned substring "helper"`,
+			Want_Diag: "",
 		},
 
 		{
-			Name: "suffix helper flagged",
+			Name: "suffix helper allowed",
 			Files: map[string]string{
 				"test.go": `package main
 
 func read_helper() { return }
 `,
 			},
-			Want_Diag: `banned substring "helper"`,
+			Want_Diag: "",
 		},
 
 		{
-			Name: "capitalized Helper flagged",
+			Name: "capitalized Helper allowed",
 			Files: map[string]string{
 				"test.go": `package main
 
 func Helper_Func() { return }
 `,
 			},
-			Want_Diag: `banned substring "helper"`,
+			Want_Diag: "",
 		},
 
 		{
-			Name: "helper as middle segment flagged",
+			Name: "helper as middle segment allowed",
 			Files: map[string]string{
 				"test.go": `package main
 
 func read_helper_thing() { return }
 `,
 			},
-			Want_Diag: `banned substring "helper"`,
+			Want_Diag: "",
 		},
 
 		{
