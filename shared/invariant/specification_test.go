@@ -48,7 +48,7 @@ func Test_Sometimes_Coverage(t *testing.T) {
 		Impossible("exclusive", invariant.Event_True("zero"), invariant.Event_True("one"))
 	metadata := chain_metadata(&chain_metadata_input{
 		Test: t, Recorder: recorder,
-		Key: invariant.Chain_Key{Namespace: "check", Ordinal: 0, Message: "zero"},
+		Key: chain_metadata_key{Namespace: "check", Ordinal: 0, Message: "zero"},
 	})
 	if metadata.Frequency.Load() != 0 {
 		t.Fatal("Sometimes recorded before Ensure")
@@ -91,9 +91,9 @@ func check(a bool, b bool) {
 `
 	recorder, _, _ := registered_fixture(SOURCE)
 	chain_metadata(&chain_metadata_input{Test: t, Recorder: recorder,
-		Key: invariant.Chain_Key{Namespace: "check", Ordinal: 0, Message: "same"}})
+		Key: chain_metadata_key{Namespace: "check", Ordinal: 0, Message: "same"}})
 	chain_metadata(&chain_metadata_input{Test: t, Recorder: recorder,
-		Key: invariant.Chain_Key{Namespace: "check", Ordinal: 1, Message: "same"}})
+		Key: chain_metadata_key{Namespace: "check", Ordinal: 1, Message: "same"}})
 }
 
 // Test_Dot_Product_Constraint prevents its specification contract from regressing.
@@ -111,7 +111,7 @@ func Test_Dot_Product_Constraint(t *testing.T) {
 	recorder, _, _ = registered_chain_fixture()
 	axis := chain_metadata(&chain_metadata_input{
 		Test: t, Recorder: recorder,
-		Key: invariant.Chain_Key{Namespace: "check", Ordinal: 0, Message: "zero"},
+		Key: chain_metadata_key{Namespace: "check", Ordinal: 0, Message: "zero"},
 	})
 	message = panic_text(func() {
 		invariant.Recorder_Dot_Product(recorder, "check").
@@ -125,6 +125,26 @@ func Test_Dot_Product_Constraint(t *testing.T) {
 	}
 	if axis.Frequency.Load() != 0 {
 		t.Fatal("a rejected Ensure partially credited an axis")
+	}
+	const PLAN_SOURCE = `package fixture
+func check(a bool, b bool) {
+	invariant.Dot_Product("plan").Sometimes(a, "a").Sometimes(b, "b").
+		Impossible("a and not b", invariant.Event_True("a"), invariant.Event_False("b")).Ensure()
+}
+`
+	recorder, _, _ = registered_fixture(PLAN_SOURCE)
+	shape := recorder.Chain_Shapes["plan"]
+	shape.Axes[0].Tuple_Position = 1
+	shape.Axes[1].Tuple_Position = 0
+	shape.Rules[0].Want = invariant.Chain_Mask{2}
+	message = panic_text(func() {
+		invariant.Recorder_Dot_Product(recorder, "plan").
+			Sometimes(true, "a").Sometimes(false, "b").
+			Impossible("a and not b",
+				invariant.Event_True("a"), invariant.Event_False("b")).Ensure()
+	})
+	if !strings.Contains(message, "a and not b") {
+		t.Fatalf("registered tuple plan did not control its carve: %q", message)
 	}
 }
 
@@ -192,6 +212,10 @@ func Test_Dot_Product_Shared(t *testing.T) {
 // Test_Dot_Product_Unknown prevents its specification contract from regressing.
 func Test_Dot_Product_Unknown(t *testing.T) {
 	recorder, _, _ := registered_chain_fixture()
+	zero := chain_metadata(&chain_metadata_input{
+		Test: t, Recorder: recorder,
+		Key: chain_metadata_key{Namespace: "check", Ordinal: 0, Message: "zero"},
+	})
 	var product invariant.Product
 	message := panic_text(func() {
 		product = invariant.Recorder_Dot_Product(recorder, "check").
@@ -205,6 +229,22 @@ func Test_Dot_Product_Unknown(t *testing.T) {
 		t.Fatalf("panic = %q, want unknown axis", message)
 	}
 	shape := recorder.Chain_Shapes["check"]
+	one_entry := shape.Axes[1].Entry
+	shape.Axes[1].Entry = invariant.Handle_Entry{}
+	message = panic_text(func() {
+		invariant.Recorder_Dot_Product(recorder, "check").
+			Sometimes(true, "zero").Sometimes(false, "one").
+			Impossible("exclusive",
+				invariant.Event_True("zero"), invariant.Event_True("one")).
+			Ensure()
+	})
+	if !strings.Contains(message, "unknown axis") {
+		t.Fatalf("missing planned axis panic = %q", message)
+	}
+	if zero.Frequency.Load() != 0 {
+		t.Fatal("an unresolved plan partially credited an earlier axis")
+	}
+	shape.Axes[1].Entry = one_entry
 	shape.Tuples[invariant.Chain_Mask{1}] = invariant.Handle_Entry{}
 	message = panic_text(func() {
 		invariant.Recorder_Dot_Product(recorder, "check").
@@ -254,14 +294,38 @@ func Test_Dot_Product_Persistence(t *testing.T) {
 		invariant.ELEMENT_MESSAGE_SEPARATOR + "zero"
 	axis := chain_metadata(&chain_metadata_input{
 		Test: t, Recorder: recorder,
-		Key: invariant.Chain_Key{Namespace: "check", Ordinal: 0, Message: "zero"},
+		Key: chain_metadata_key{Namespace: "check", Ordinal: 0, Message: "zero"},
 	})
+	if recorder.Chain_Entries[key] != axis {
+		t.Fatal("registration did not publish the exact persisted axis key")
+	}
 	axis.Frequency.Store(0)
 	recorder.Events.Delete(key)
 	line := invariant.Fuzz_Coverage_Line(key, true)
 	invariant.Recorder_Merge_Fuzz_Coverage_From(recorder, strings.NewReader(line))
 	if axis.Frequency.Load() != 1 {
-		t.Fatal("a serialized chain axis must merge through its structural key")
+		t.Fatal("a serialized chain axis must merge through its exact registered key")
+	}
+	axis.False_Frequency.Store(0)
+	line = invariant.Fuzz_Coverage_Line(key, false)
+	invariant.Recorder_Merge_Fuzz_Coverage_From(recorder, strings.NewReader(line))
+	if axis.False_Frequency.Load() != 1 {
+		t.Fatal("the exact registered key must preserve its false branch")
+	}
+	unknown_key := key + " missing"
+	line = invariant.Fuzz_Coverage_Line(unknown_key, true)
+	invariant.Recorder_Merge_Fuzz_Coverage_From(recorder, strings.NewReader(line))
+	if axis.Frequency.Load() != 1 {
+		t.Fatal("an unknown persisted key credited a registered axis")
+	}
+	axis.Frequency.Store(0)
+	recorder.Chain_Entries = nil
+	invariant.Recorder_Dot_Product(recorder, "check").
+		Sometimes(true, "zero").Sometimes(false, "one").
+		Impossible("exclusive", invariant.Event_True("zero"), invariant.Event_True("one")).
+		Ensure()
+	if axis.Frequency.Load() != 1 {
+		t.Fatal("runtime recording must use the axis plan handle, not the fuzz merge map")
 	}
 }
 
@@ -290,6 +354,41 @@ func check(a bool, b bool, c bool) {
 	if _, exists := recorder.Events.Load("glob:tuple=(1,1,0)"); !exists {
 		t.Fatal("opposite b polarity must remain demanded")
 	}
+	const ORDINAL_SOURCE = `package fixture
+func check(a bool, b bool) {
+	invariant.Dot_Product("ordinal").Sometimes(a, "a").
+		Impossible("a is required", invariant.Event_False("a")).Sometimes(b, "b").Ensure()
+}
+`
+	recorder, _, _ = registered_fixture(ORDINAL_SOURCE)
+	invariant.Recorder_Dot_Product(recorder, "ordinal").Sometimes(true, "a").
+		Impossible("a is required", invariant.Event_False("a")).
+		Sometimes(true, "b").Ensure()
+	ordinal_tuple := recorder_event(t, recorder, "ordinal:tuple=(1,1)")
+	if ordinal_tuple.Frequency.Load() != 1 {
+		t.Fatal("Ensure compressed raw link ordinals into independent axis order")
+	}
+	const PLAN_SOURCE = `package fixture
+func check(a bool, b bool) {
+	invariant.Dot_Product("plan").Sometimes(a, "a").Sometimes(b, "b").Ensure()
+}
+`
+	recorder, _, _ = registered_fixture(PLAN_SOURCE)
+	shape := recorder.Chain_Shapes["plan"]
+	shape.Axes[0].Tuple_Position = 1
+	shape.Axes[1].Tuple_Position = 0
+	shape.Tuples[invariant.Chain_Mask{1}], shape.Tuples[invariant.Chain_Mask{2}] =
+		shape.Tuples[invariant.Chain_Mask{2}], shape.Tuples[invariant.Chain_Mask{1}]
+	invariant.Recorder_Dot_Product(recorder, "plan").
+		Sometimes(true, "a").Sometimes(false, "b").Ensure()
+	true_false := recorder_event(t, recorder, "plan:tuple=(1,0)")
+	false_true := recorder_event(t, recorder, "plan:tuple=(0,1)")
+	if true_false.Frequency.Load() != 1 {
+		t.Fatal("Ensure ignored registration's tuple-position plan")
+	}
+	if false_true.Frequency.Load() != 0 {
+		t.Fatal("runtime axis order independently selected the tuple")
+	}
 }
 
 // Test_Dot_Product_Registration_Template prevents its specification contract from regressing.
@@ -308,11 +407,11 @@ func check(n int) {
 `
 	recorder, _, _ := registered_fixture(SOURCE)
 	chain_metadata(&chain_metadata_input{Test: t, Recorder: recorder,
-		Key: invariant.Chain_Key{Namespace: "number", Ordinal: 0, Message: "zero"}})
+		Key: chain_metadata_key{Namespace: "number", Ordinal: 0, Message: "zero"}})
 	chain_metadata(&chain_metadata_input{Test: t, Recorder: recorder,
-		Key: invariant.Chain_Key{Namespace: "prefix", Ordinal: 0, Message: "negative"}})
+		Key: chain_metadata_key{Namespace: "prefix", Ordinal: 0, Message: "negative"}})
 	chain_metadata(&chain_metadata_input{Test: t, Recorder: recorder,
-		Key: invariant.Chain_Key{Namespace: "prefix", Ordinal: 1, Message: "positive"}})
+		Key: chain_metadata_key{Namespace: "prefix", Ordinal: 1, Message: "positive"}})
 }
 
 // Test_Dot_Product_Registration_Ensured prevents its specification contract from regressing.
@@ -458,7 +557,7 @@ func check(n int) { Number_Invariants(n, "number") }
 `
 	recorder, _, _ := registered_fixture(SOURCE)
 	chain_metadata(&chain_metadata_input{Test: t, Recorder: recorder,
-		Key: invariant.Chain_Key{Namespace: "number", Ordinal: 0, Message: "zero"}})
+		Key: chain_metadata_key{Namespace: "number", Ordinal: 0, Message: "zero"}})
 }
 
 // Test_Bundles_Range_Template prevents its specification contract from regressing.
@@ -498,9 +597,9 @@ func check(n Number) { Pair_Invariants(n, "pair") }
 `
 	recorder, _, _ := registered_fixture(SOURCE)
 	chain_metadata(&chain_metadata_input{Test: t, Recorder: recorder,
-		Key: invariant.Chain_Key{Namespace: "pair", Ordinal: 0, Message: "one"}})
+		Key: chain_metadata_key{Namespace: "pair", Ordinal: 0, Message: "one"}})
 	chain_metadata(&chain_metadata_input{Test: t, Recorder: recorder,
-		Key: invariant.Chain_Key{Namespace: "pair.number", Ordinal: 0, Message: "zero"}})
+		Key: chain_metadata_key{Namespace: "pair.number", Ordinal: 0, Message: "zero"}})
 }
 
 // Test_Bundles_Casing prevents its specification contract from regressing.
@@ -514,7 +613,7 @@ func check(n number) { number_invariants(n, "number") }
 `
 	recorder, _, _ := registered_fixture(SOURCE)
 	chain_metadata(&chain_metadata_input{Test: t, Recorder: recorder,
-		Key: invariant.Chain_Key{Namespace: "number", Ordinal: 0, Message: "zero"}})
+		Key: chain_metadata_key{Namespace: "number", Ordinal: 0, Message: "zero"}})
 }
 
 // Test_Bundles_Sugar prevents its specification contract from regressing.
@@ -527,7 +626,7 @@ func check(n int) { Number_Invariants(n, "number") }
 `
 	recorder, _, _ := registered_fixture_with_sugar(SOURCE)
 	chain_metadata(&chain_metadata_input{Test: t, Recorder: recorder,
-		Key: invariant.Chain_Key{Namespace: "number", Ordinal: 0, Message: "zero"}})
+		Key: chain_metadata_key{Namespace: "number", Ordinal: 0, Message: "zero"}})
 }
 
 // Test_Bundles_Cross_Package prevents its specification contract from regressing.
@@ -540,7 +639,7 @@ func check(n int) { Number_Invariants(n, "number") }
 `
 	recorder, _, _ := registered_fixture(SOURCE)
 	chain_metadata(&chain_metadata_input{Test: t, Recorder: recorder,
-		Key: invariant.Chain_Key{Namespace: "number", Ordinal: 0, Message: "zero"}})
+		Key: chain_metadata_key{Namespace: "number", Ordinal: 0, Message: "zero"}})
 }
 
 // Test_Bundles_Callsite prevents its specification contract from regressing.
@@ -554,9 +653,9 @@ func second(n int) { Number_Invariants(n, "second") }
 `
 	recorder, _, _ := registered_fixture(SOURCE)
 	chain_metadata(&chain_metadata_input{Test: t, Recorder: recorder,
-		Key: invariant.Chain_Key{Namespace: "first", Ordinal: 0, Message: "zero"}})
+		Key: chain_metadata_key{Namespace: "first", Ordinal: 0, Message: "zero"}})
 	chain_metadata(&chain_metadata_input{Test: t, Recorder: recorder,
-		Key: invariant.Chain_Key{Namespace: "second", Ordinal: 0, Message: "zero"}})
+		Key: chain_metadata_key{Namespace: "second", Ordinal: 0, Message: "zero"}})
 }
 
 // Test_Bundles_Gap_Location prevents its specification contract from regressing.
@@ -695,7 +794,7 @@ func Test_Coverage_Modes(t *testing.T) {
 		Impossible("exclusive", invariant.Event_True("zero"), invariant.Event_True("one")).
 		Ensure()
 	metadata := chain_metadata(&chain_metadata_input{Test: t, Recorder: recorder,
-		Key: invariant.Chain_Key{Namespace: "check", Ordinal: 0, Message: "zero"}})
+		Key: chain_metadata_key{Namespace: "check", Ordinal: 0, Message: "zero"}})
 	if metadata.Frequency.Load() != 0 {
 		t.Fatal("benchmarks must not record")
 	}
@@ -873,10 +972,16 @@ func registered_fixture_options(input *registered_fixture_options_input) (
 	return recorder, output, code
 }
 
+type chain_metadata_key struct {
+	Namespace invariant.Namespace
+	Ordinal   uint8
+	Message   string
+}
+
 type chain_metadata_input struct {
 	Test     *testing.T
 	Recorder *invariant.Recorder
-	Key      invariant.Chain_Key
+	Key      chain_metadata_key
 }
 
 func chain_metadata(input *chain_metadata_input) (metadata *invariant.Assertion_Metadata) {
@@ -887,6 +992,17 @@ func chain_metadata(input *chain_metadata_input) (metadata *invariant.Assertion_
 	value, exists := input.Recorder.Events.Load(key)
 	if !exists {
 		input.Test.Fatalf("missing chain key %q", key)
+	}
+	return value.(*invariant.Assertion_Metadata)
+}
+
+func recorder_event(
+	t *testing.T, recorder *invariant.Recorder, key string,
+) (metadata *invariant.Assertion_Metadata) {
+	t.Helper()
+	value, exists := recorder.Events.Load(key)
+	if !exists {
+		t.Fatalf("missing event %q", key)
 	}
 	return value.(*invariant.Assertion_Metadata)
 }

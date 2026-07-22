@@ -24,8 +24,9 @@ both true and false; there is no bare form and no caller-supplied global identit
 
 ### Coverage
 
-A link only advances the immutable builder. `Ensure` credits every observed branch under its chain
-key; the link ordinal keeps repeated messages on distinct links as separate axes.
+A link only captures its observed branch by fluent ordinal. `Ensure` projects that raw observation
+through registration's axis plan and credits its pre-resolved handle; repeated messages remain
+distinct because link ordinal is part of the registered identity.
 
 ### Gap
 
@@ -39,13 +40,13 @@ uses the default recorder. The links return advanced copies and `Ensure` termina
 ### Links
 
 The only links are `Sometimes(condition, message)` and `Impossible(message, references...)`.
-They perform no validation, enforcement, or coverage work; `Ensure` does all three. `Event_True` and
-`Event_False` supply the polarity vocabulary for constraint references.
+They retain only the facts needed for deferred shape checks; `Ensure` alone exposes validation,
+enforces constraints, and credits coverage. References use `Event_True` and `Event_False` polarity.
 
 ### Identity
 
 One literal namespace identifies one chain. An axis is keyed by namespace, link ordinal, and its
-literal message; source locations and manually-global messages are not identity.
+literal message; registration constructs that identity and its coverage handle exactly once.
 
 ### Constraint
 
@@ -64,28 +65,31 @@ Executions sharing a namespace must traverse the same links, messages, reference
 
 ### Unknown
 
-A registered chain's `Ensure` panics when any link or packed tuple is unseeded. A chain outside
-analyzed packages enforces and validates at `Ensure` but credits nothing.
+A registered chain's `Ensure` resolves every planned axis and tuple before crediting, then panics
+if any handle is unseeded. A chain outside analyzed packages validates and enforces but credits
+nothing.
 
 ### Allocation
 
 The warmed recording and enforcement paths allocate nothing. `Product` is a small value carrying
-only recorder/shape references, namespace, counters, and its packed tuple mask; it never escapes.
+only recorder/shape references, namespace, counters, and packed link observations; it never escapes.
 
 ### Persistence
 
-Fuzz coverage serializes an axis as `namespace NUL ordinal NUL message`; tuple keys retain their
-flat form. Merge dispatches by separator count, and sinks render a string only on first coverage.
+Registration serializes an axis as `namespace NUL ordinal NUL message`; tuple keys retain their
+flat form. Handles emit those exact strings, and fuzz merge resolves axes through registration's
+exact-key map rather than decoding and reconstructing their identity.
 
 # Dot Product Registration
 
 Registration recognizes a product as one call nest ending in `Ensure`, walks backward to its root,
-and uses the same axis-bit order and carve machinery as runtime.
+and publishes the identities, coverage handles, tuple positions, and carve masks runtime consumes.
 
 ### Walk
 
-The walk seeds two obligations per `Sometimes` axis, then the full `2^axes` tuple grid minus every
-globbed carve. Runtime axis `i` is bit `i`; tuple entries remain keyed `namespace:tuple=(...)`.
+The walk assigns each `Sometimes` its tuple position, seeds both branch obligations, then the full
+`2^axes` grid minus every globbed carve. Runtime retains outcomes by fluent ordinal and
+`Ensure` projects them through this plan; tuple entries stay keyed `namespace:tuple=(...)`.
 
 ### Template
 

@@ -57,8 +57,7 @@ func Test_Dot_Product_Enforcement_Names_All_Violations_In_Order(t *testing.T) {
 	}
 }
 
-// Axis and tuple credits rendezvous with the entries prebuilt by registration, including the
-// little-endian packed mask where axis i is bit i.
+// Axis and tuple credits rendezvous with the exact handles and coordinate plan registration built.
 func Test_Dot_Product_Increments_Seeded_Axis_And_Tuple(t *testing.T) {
 	recorder, _, _ := registered_chain_fixture()
 	invariant.Recorder_Dot_Product(recorder, "check").
@@ -67,7 +66,7 @@ func Test_Dot_Product_Increments_Seeded_Axis_And_Tuple(t *testing.T) {
 		Ensure()
 	axis := chain_metadata(&chain_metadata_input{
 		Test: t, Recorder: recorder,
-		Key: invariant.Chain_Key{Namespace: "check", Ordinal: 0, Message: "zero"},
+		Key: chain_metadata_key{Namespace: "check", Ordinal: 0, Message: "zero"},
 	})
 	if axis.Frequency.Load() != 1 {
 		t.Fatalf("axis frequency = %d, want 1", axis.Frequency.Load())

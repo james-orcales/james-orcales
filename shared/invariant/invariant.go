@@ -132,6 +132,9 @@ type Recorder struct {
 	// Chain_Shapes is keyed by namespace because one namespace names exactly one chain.
 	// Product retains the resolved pointer so fluent links do not repeat the map lookup.
 	Chain_Shapes map[Namespace]*Chain_Shape
+	// Chain_Entries resolves the exact serialized axis keys fuzz workers persist. Registration
+	// publishes it before the suite, so merge needs no inverse identity algorithm.
+	Chain_Entries map[string]*Assertion_Metadata
 
 	// Output receives the coverage-gap report and the orphan/bundle diagnostics.
 	Output io.Writer
@@ -262,17 +265,6 @@ type Dot_Element_Reference struct {
 	Event bool
 }
 
-// Chain_Key is one chain axis's complete identity. Ordinal is the fluent link position, not merely
-// the axis position, so inserting a constraint cannot silently alias an older registered shape.
-type Chain_Key struct {
-	// Namespace identifies the one chain that owns the axis.
-	Namespace Namespace
-	// Ordinal distinguishes repeated messages by their actual fluent position.
-	Ordinal uint8
-	// Message is the human-readable axis claim.
-	Message string
-}
-
 // Chain_Mask is the packed tuple and rule representation for every axis a chain can contain.
 // Arrays remain comparable, so registered tuple resolution is a direct allocation-free map read.
 type Chain_Mask [CHAIN_MASK_WORDS]uint64
@@ -292,20 +284,22 @@ type Chain_Shape struct {
 	// Tuples resolves a packed mask directly to its pre-seeded coverage entry.
 	// The map prevents a dense array from imposing a width smaller than the chain ordinal.
 	Tuples map[Chain_Mask]Handle_Entry
-	// Entries keeps Ensure's axis-credit pass allocation-free by structural key.
-	Entries map[Chain_Key]*Assertion_Metadata
 	// Registered distinguishes analyzed chains from enforcement-only foreign chains.
 	Registered bool
 	// Ensured prevents a discovered shape from growing after its first complete execution.
 	Ensured bool
 }
 
-// Chain_Axis lets Ensure map each packed condition bit back to its registered identity.
+// Chain_Axis is registration's complete execution plan for one Sometimes link.
 type Chain_Axis struct {
-	// Ordinal is the axis's position among all links.
+	// Ordinal selects the raw condition captured at this fluent link.
 	Ordinal uint8
+	// Tuple_Position is registration's exclusive assignment of this axis to the packed grid.
+	Tuple_Position uint8
 	// Message is retained for runtime sibling-reference resolution.
 	Message string
+	// Entry is the exact registration-seeded coverage handle Ensure credits.
+	Entry Handle_Entry
 }
 
 // Chain_Link pins the structural identity of one fluent link. References are retained only for an
@@ -350,10 +344,11 @@ type Product struct {
 	Namespace Namespace
 	// Ordinal is the next fluent link position.
 	Ordinal uint8
-	// Axis_Count is the next packed bit.
+	// Axis_Count counts Sometimes links for sibling-reference validation.
 	Axis_Count uint8
-	// Mask is the observed tuple in axis-i-is-bit-i form.
-	Mask Chain_Mask
+	// Observations retains outcomes by fluent ordinal before registration projects them onto
+	// its tuple positions at Ensure.
+	Observations Chain_Mask
 	// Failure retains the first malformed link so only Ensure exposes it.
 	Failure uint8
 	// Mismatch retains structural divergence so only Ensure exposes it.
@@ -456,10 +451,11 @@ func (product Product) Sometimes(condition bool, message string) (next Product) 
 	if strings.Contains(message, ELEMENT_MESSAGE_SEPARATOR) {
 		return product.chain_defer_failure(PRODUCT_FAILURE_SOMETIMES)
 	}
-	key := Chain_Key{Namespace: product.Namespace, Ordinal: product.Ordinal, Message: message}
-	mismatch := product.Shape.chain_axis(key, product.Axis_Count)
+	mismatch := product.Shape.chain_axis(&Chain_Axis_Input{
+		Ordinal: product.Ordinal, Axis_Count: product.Axis_Count, Message: message,
+	})
 	if condition {
-		product.Mask = chain_mask_with(product.Mask, product.Axis_Count)
+		product.Observations = chain_mask_with(product.Observations, product.Ordinal)
 	}
 	product.Ordinal++
 	product.Axis_Count++
@@ -579,11 +575,21 @@ func (product Product) Ensure() {
 			"Dot_Product shape differs for namespace " +
 			strconv.Quote(string(product.Namespace)))
 	}
+	records := recorder_chain_records(product.Recorder)
+	if !product.Shape.Registered {
+		records = false
+	}
+	if len(product.Shape.Rules) == 0 {
+		if !records {
+			return
+		}
+	}
+	tuple_mask := product.Shape.chain_tuple(product.Observations)
 	var violations []string
 	for _, rule := range product.Shape.Rules {
 		matches := true
-		for i_index := range product.Mask {
-			if product.Mask[i_index]&rule.Mask[i_index] != rule.Want[i_index] {
+		for i_index := range tuple_mask {
+			if tuple_mask[i_index]&rule.Mask[i_index] != rule.Want[i_index] {
 				matches = false
 				break
 			}
@@ -595,44 +601,42 @@ func (product Product) Ensure() {
 	if len(violations) > 0 {
 		panic(ASSERTION_FAILURE_MESSAGE_PREFIX + strings.Join(violations, "\n"))
 	}
-	if !recorder_chain_records(product.Recorder) {
+	if !records {
 		return
 	}
-	if !product.Shape.Registered {
-		return
-	}
-	tuple := product.chain_handle()
+	tuple := product.chain_handle(tuple_mask)
 	if tuple.Metadata == nil {
 		panic(ASSERTION_FAILURE_MESSAGE_PREFIX +
 			"registered Dot_Product credited unknown tuple")
 	}
 	for i_index := uint8(0); i_index < axis_count; i_index++ {
 		axis := product.Shape.Axes[i_index]
-		key := Chain_Key{
-			Namespace: product.Namespace, Ordinal: axis.Ordinal, Message: axis.Message,
-		}
-		metadata := product.Shape.Entries[key]
-		condition := chain_mask_has(product.Mask, i_index)
-		recorder_increment_entry(product.Recorder,
-			Handle_Entry{Metadata: metadata, Key: metadata.Message}, condition)
+		condition := chain_mask_has(product.Observations, axis.Ordinal)
+		recorder_increment_entry(product.Recorder, axis.Entry, condition)
 	}
 	recorder_increment_entry(product.Recorder, tuple, true)
 }
 
 // Resolving every handle before crediting keeps an unknown key from partially crediting the call.
-func (product Product) chain_handle() (tuple Handle_Entry) {
+func (product Product) chain_handle(tuple_mask Chain_Mask) (tuple Handle_Entry) {
 	for _, axis := range product.Shape.Axes {
-		key := Chain_Key{
-			Namespace: product.Namespace, Ordinal: axis.Ordinal, Message: axis.Message,
-		}
-		metadata := product.Shape.Entries[key]
-		if metadata == nil {
-			panic(ASSERTION_FAILURE_MESSAGE_PREFIX +
-				"registered Dot_Product credited unknown axis " +
-				strconv.Quote(chain_key_string(key)))
+		if axis.Entry.Metadata == nil {
+			message := "registered Dot_Product credited unknown axis " +
+				strconv.Quote(axis.Message)
+			panic(ASSERTION_FAILURE_MESSAGE_PREFIX + message)
 		}
 	}
-	tuple = product.Shape.Tuples[product.Mask]
+	tuple = product.Shape.Tuples[tuple_mask]
+	return tuple
+}
+
+// Registration alone assigns tuple positions; runtime carries only link-ordinal observations.
+func (shape *Chain_Shape) chain_tuple(observations Chain_Mask) (tuple Chain_Mask) {
+	for _, axis := range shape.Axes {
+		if chain_mask_has(observations, axis.Ordinal) {
+			tuple = chain_mask_with(tuple, axis.Tuple_Position)
+		}
+	}
 	return tuple
 }
 
@@ -663,7 +667,7 @@ func recorder_chain_shape(recorder *Recorder, namespace Namespace) (shape *Chain
 	if shape = recorder.Chain_Shapes[namespace]; shape != nil {
 		return shape
 	}
-	shape = &Chain_Shape{Entries: map[Chain_Key]*Assertion_Metadata{}}
+	shape = &Chain_Shape{}
 	if recorder.Chain_Shapes == nil {
 		recorder.Chain_Shapes = map[Namespace]*Chain_Shape{}
 	}
@@ -680,33 +684,45 @@ func recorder_chain_records(recorder *Recorder) (records bool) {
 }
 
 // Two separators distinguish an axis key from every flat tuple and Always key during fuzz merge.
-func chain_key_string(key Chain_Key) (value string) {
-	return string(key.Namespace) + ELEMENT_MESSAGE_SEPARATOR +
-		strconv.Itoa(int(key.Ordinal)) + ELEMENT_MESSAGE_SEPARATOR + key.Message
+func chain_axis_key(namespace Namespace, ordinal uint8, message string) (value string) {
+	return string(namespace) + ELEMENT_MESSAGE_SEPARATOR +
+		strconv.Itoa(int(ordinal)) + ELEMENT_MESSAGE_SEPARATOR + message
 }
 
-// Registered shapes are immutable and can use the plain map without synchronization or boxing;
-// only first-executed foreign shapes pay the mutex needed to discover their link sequence.
-func (shape *Chain_Shape) chain_axis(
-	key Chain_Key, axis_count uint8,
-) (mismatch bool) {
+// Chain_Axis_Input keeps exact shape capture possible without widening Product to retain messages.
+type Chain_Axis_Input struct {
+	// Ordinal separates fluent position from registration's independently assigned
+	// tuple position.
+	Ordinal uint8
+	// Axis_Count limits sibling resolution to axes preceding this link.
+	Axis_Count uint8
+	// Message is available only during the call, so shape capture must consume it here.
+	Message string
+}
+
+// Registered shapes are immutable and can use direct reads without synchronization; only
+// first-executed foreign shapes pay the mutex needed to discover their link sequence.
+func (shape *Chain_Shape) chain_axis(input *Chain_Axis_Input) (mismatch bool) {
+	ordinal := input.Ordinal
+	axis_count := input.Axis_Count
+	message := input.Message
 	if shape.Registered {
-		if int(key.Ordinal) >= len(shape.Links) {
+		if int(ordinal) >= len(shape.Links) {
 			return true
 		}
-		link := shape.Links[key.Ordinal]
+		link := shape.Links[ordinal]
 		mismatch = link.Kind != DOT_ELEMENT_KIND_SOMETIMES
-		if link.Message != key.Message {
+		if link.Message != message {
 			mismatch = true
 		}
 		if int(axis_count) >= len(shape.Axes) {
 			return true
 		}
 		axis := shape.Axes[axis_count]
-		if axis.Ordinal != key.Ordinal {
+		if axis.Ordinal != ordinal {
 			mismatch = true
 		}
-		if axis.Message != key.Message {
+		if axis.Message != message {
 			mismatch = true
 		}
 		return mismatch
@@ -714,17 +730,17 @@ func (shape *Chain_Shape) chain_axis(
 	shape.Mu.Lock()
 	defer shape.Mu.Unlock()
 	link := Chain_Link{
-		Kind: DOT_ELEMENT_KIND_SOMETIMES, Ordinal: key.Ordinal,
-		Axis_Count: axis_count, Message: key.Message,
+		Kind: DOT_ELEMENT_KIND_SOMETIMES, Ordinal: ordinal,
+		Axis_Count: axis_count, Message: message,
 	}
-	if int(key.Ordinal) < len(shape.Links) {
-		expected := shape.Links[key.Ordinal]
+	if int(ordinal) < len(shape.Links) {
+		expected := shape.Links[ordinal]
 		mismatch = expected.Kind != link.Kind
 		if expected.Message != link.Message {
 			mismatch = true
 		}
 	} else if !shape.Ensured {
-		if int(key.Ordinal) == len(shape.Links) {
+		if int(ordinal) == len(shape.Links) {
 			shape.Links = append(shape.Links, link)
 		} else {
 			mismatch = true
@@ -732,10 +748,12 @@ func (shape *Chain_Shape) chain_axis(
 	} else {
 		mismatch = true
 	}
-	axis := Chain_Axis{Ordinal: key.Ordinal, Message: key.Message}
+	axis := Chain_Axis{
+		Ordinal: ordinal, Tuple_Position: axis_count, Message: message,
+	}
 	if int(axis_count) < len(shape.Axes) {
 		expected := shape.Axes[axis_count]
-		if expected != axis {
+		if !expected.chain_equal(axis) {
 			mismatch = true
 		}
 	} else if !shape.Ensured {
@@ -750,22 +768,33 @@ func (shape *Chain_Shape) chain_axis(
 	return mismatch
 }
 
+// Entry is registration-owned output, not part of the structure a foreign execution replays.
+func (first Chain_Axis) chain_equal(second Chain_Axis) (equal bool) {
+	if first.Ordinal != second.Ordinal {
+		return false
+	}
+	if first.Tuple_Position != second.Tuple_Position {
+		return false
+	}
+	return first.Message == second.Message
+}
+
 // A reference has no ordinal in the public vocabulary, so repeated messages are safe until a rule
 // tries to name them; requiring one unique preceding match prevents a carve from changing meaning.
-func (shape *Chain_Shape) chain_reference_mask(
+func (shape *Chain_Shape) chain_references(
 	axis_count uint8, references []Dot_Element_Reference,
 ) (
-	mask Chain_Mask, want Chain_Mask, positions [CHAIN_LINKS_MAX]uint8,
-	events Chain_Mask, failure uint8,
+	positions [CHAIN_LINKS_MAX]uint8, events Chain_Mask, failure uint8,
 ) {
 	if int(axis_count) > len(shape.Axes) {
 		failure = PRODUCT_FAILURE_REFERENCE
-		return mask, want, positions, events, failure
+		return positions, events, failure
 	}
+	var referenced Chain_Mask
 	for reference_index, reference := range references {
 		if strings.Contains(reference.Message, ELEMENT_MESSAGE_SEPARATOR) {
 			failure = PRODUCT_FAILURE_REFERENCE
-			return mask, want, positions, events, failure
+			return positions, events, failure
 		}
 		matches := 0
 		position := 0
@@ -778,34 +807,51 @@ func (shape *Chain_Shape) chain_reference_mask(
 		}
 		if matches != 1 {
 			failure = PRODUCT_FAILURE_REFERENCE
-			return mask, want, positions, events, failure
+			return positions, events, failure
 		}
 		axis_position := uint8(position)
-		if chain_mask_has(mask, axis_position) {
+		if chain_mask_has(referenced, axis_position) {
 			failure = PRODUCT_FAILURE_REFERENCE
-			return mask, want, positions, events, failure
+			return positions, events, failure
 		}
-		mask = chain_mask_with(mask, axis_position)
+		referenced = chain_mask_with(referenced, axis_position)
 		positions[reference_index] = axis_position
 		if reference.Event {
-			want = chain_mask_with(want, axis_position)
 			events = chain_mask_with(events, uint8(reference_index))
 		}
 	}
-	return mask, want, positions, events, 0
+	return positions, events, 0
+}
+
+func (shape *Chain_Shape) chain_resolve_link(
+	link Chain_Link, references []Dot_Element_Reference,
+) (resolved Chain_Link, failure uint8) {
+	positions, events, failure := shape.chain_references(link.Axis_Count, references)
+	if failure != 0 {
+		return link, failure
+	}
+	link.References = positions
+	link.Reference_Events = events
+	link.Reference_Count = uint8(len(references))
+	return link, 0
 }
 
 func (shape *Chain_Shape) chain_resolve_rule(
 	link Chain_Link, references []Dot_Element_Reference,
 ) (resolved Chain_Link, rule Chain_Rule, failure uint8) {
-	mask, want, positions, events, failure :=
-		shape.chain_reference_mask(link.Axis_Count, references)
+	link, failure = shape.chain_resolve_link(link, references)
 	if failure != 0 {
 		return link, rule, failure
 	}
-	link.References = positions
-	link.Reference_Events = events
-	link.Reference_Count = uint8(len(references))
+	var mask Chain_Mask
+	var want Chain_Mask
+	for reference_index := uint8(0); reference_index < link.Reference_Count; reference_index++ {
+		axis := shape.Axes[link.References[reference_index]]
+		mask = chain_mask_with(mask, axis.Tuple_Position)
+		if chain_mask_has(link.Reference_Events, reference_index) {
+			want = chain_mask_with(want, axis.Tuple_Position)
+		}
+	}
 	rule = Chain_Rule{
 		Mask: mask, Want: want, Message: link.Message, Ordinal: link.Ordinal,
 	}
@@ -861,7 +907,7 @@ func (shape *Chain_Shape) chain_rule(
 func (shape *Chain_Shape) chain_rule_registered(
 	link Chain_Link, references []Dot_Element_Reference,
 ) (rule Chain_Rule, mismatch bool, failure uint8) {
-	link, rule, failure = shape.chain_resolve_rule(link, references)
+	link, failure = shape.chain_resolve_link(link, references)
 	if failure != 0 {
 		return rule, false, failure
 	}
@@ -871,12 +917,6 @@ func (shape *Chain_Shape) chain_rule_registered(
 	mismatch = !shape.Links[link.Ordinal].chain_equal(link)
 	for _, extant := range shape.Rules {
 		if extant.Ordinal == link.Ordinal {
-			if extant.Mask != rule.Mask {
-				mismatch = true
-			}
-			if extant.Want != rule.Want {
-				mismatch = true
-			}
 			return extant, mismatch, 0
 		}
 	}
@@ -1534,41 +1574,14 @@ func recorder_merge_process_line(recorder *Recorder, line string) {
 	recorder_merge_increment(recorder, string(key), line[tab_offset+1:] == "T")
 }
 
-// Two separators are reserved for structural chain axes, while every legacy flat key has at most
-// one; dispatching here lets fuzz workers persist the same identity the allocation-free hot path
-// reads from Chain_Shape.Entries.
+// Two separators are reserved for chain axes. Registration owns their exact persisted identity, so
+// merge resolves the emitted string directly instead of maintaining an inverse identity algorithm.
 func recorder_merge_increment(recorder *Recorder, key string, fired_true bool) {
 	if strings.Count(key, ELEMENT_MESSAGE_SEPARATOR) != 2 {
 		recorder_increment(recorder, key, fired_true)
 		return
 	}
-	first_separator_offset := strings.Index(key, ELEMENT_MESSAGE_SEPARATOR)
-	suffix := key[first_separator_offset+len(ELEMENT_MESSAGE_SEPARATOR):]
-	second_separator_offset := strings.Index(suffix, ELEMENT_MESSAGE_SEPARATOR)
-	ordinal, ordinal_error := strconv.Atoi(suffix[:second_separator_offset])
-	if ordinal_error != nil {
-		return
-	}
-	if ordinal < 0 {
-		return
-	}
-	if ordinal > CHAIN_LINKS_MAX {
-		return
-	}
-	chain_key := Chain_Key{
-		Namespace: Namespace(key[:first_separator_offset]), Ordinal: uint8(ordinal),
-		Message: suffix[second_separator_offset+len(ELEMENT_MESSAGE_SEPARATOR):],
-	}
-	recorder.Chain_Shapes_Mu.RLock()
-	shape := recorder.Chain_Shapes[chain_key.Namespace]
-	recorder.Chain_Shapes_Mu.RUnlock()
-	if shape == nil {
-		return
-	}
-	if !shape.Registered {
-		return
-	}
-	metadata := shape.Entries[chain_key]
+	metadata := recorder.Chain_Entries[key]
 	if metadata == nil {
 		return
 	}
@@ -2428,6 +2441,8 @@ func ast_is_control_flow(node ast.Node) (is_control_flow bool) {
 type Registration_Axis struct {
 	// Ordinal keeps repeated chain messages distinct; the legacy engine needs no ordinal.
 	Ordinal uint8
+	// Tuple_Position is assigned only by chain registration; legacy engine axes ignore it.
+	Tuple_Position uint8
 	// Message is the element's own literal; the Dot_Product prefix forms the coverage key.
 	Message string
 	// Condition is the source text of the asserted condition.
@@ -2720,6 +2735,7 @@ func recorder_collect_chain(
 			if !ok {
 				continue
 			}
+			axis.Tuple_Position = uint8(len(axes))
 			positions[axis.Message] = append(positions[axis.Message], len(axes))
 			axes = append(axes, axis)
 			links = append(links, Chain_Link{
@@ -2729,7 +2745,7 @@ func recorder_collect_chain(
 			continue
 		}
 		cells, link, rule, ok := recorder_collect_chain_rule(
-			file_set, call, uint8(ordinal), positions, rule_messages,
+			file_set, call, uint8(ordinal), axes, positions, rule_messages,
 			reg, allow_unqualified)
 		valid = valid && ok
 		if !ok {
@@ -2769,7 +2785,7 @@ func recorder_collect_chain_axis(
 }
 
 func recorder_collect_chain_rule(
-	file_set *token.FileSet, call *ast.CallExpr, ordinal uint8,
+	file_set *token.FileSet, call *ast.CallExpr, ordinal uint8, axes []Registration_Axis,
 	positions map[string][]int, rule_messages map[string]bool,
 	reg *Registration, allow_unqualified bool,
 ) (cells []Registration_Cell, link Chain_Link, rule Chain_Rule, valid bool) {
@@ -2819,10 +2835,10 @@ func recorder_collect_chain_rule(
 	var want Chain_Mask
 	var events Chain_Mask
 	for reference_index, cell := range cells {
-		position := uint8(cell.Position)
-		mask = chain_mask_with(mask, position)
+		tuple_position := axes[cell.Position].Tuple_Position
+		mask = chain_mask_with(mask, tuple_position)
 		if cell.Bucket == 1 {
-			want = chain_mask_with(want, position)
+			want = chain_mask_with(want, tuple_position)
 			events = chain_mask_with(events, uint8(reference_index))
 		}
 	}
@@ -2904,20 +2920,21 @@ func recorder_seed_chain(
 	reg.Seen_Prefix[namespace] = true
 	shape := &Chain_Shape{
 		Axes: make([]Chain_Axis, len(axes)), Links: links, Rules: rules,
-		Tuples:  map[Chain_Mask]Handle_Entry{},
-		Entries: map[Chain_Key]*Assertion_Metadata{}, Registered: true, Ensured: true,
+		Tuples: map[Chain_Mask]Handle_Entry{}, Registered: true, Ensured: true,
+	}
+	if recorder.Chain_Entries == nil {
+		recorder.Chain_Entries = map[string]*Assertion_Metadata{}
 	}
 	for i, axis := range axes {
-		key := Chain_Key{
-			Namespace: Namespace(namespace), Ordinal: axis.Ordinal,
-			Message: axis.Message,
-		}
-		text := chain_key_string(key)
+		text := chain_axis_key(Namespace(namespace), axis.Ordinal, axis.Message)
 		metadata := &Assertion_Metadata{
 			Kind: axis.Kind, Message: text, Condition: axis.Condition}
 		recorder.Events.Store(text, metadata)
-		shape.Entries[key] = metadata
-		shape.Axes[i] = Chain_Axis{Ordinal: axis.Ordinal, Message: axis.Message}
+		recorder.Chain_Entries[text] = metadata
+		shape.Axes[i] = Chain_Axis{
+			Ordinal: axis.Ordinal, Tuple_Position: axis.Tuple_Position,
+			Message: axis.Message, Entry: Handle_Entry{Metadata: metadata, Key: text},
+		}
 	}
 	recorder_register_tuples(recorder, namespace, axes, carves, shape.Tuples)
 	recorder.Chain_Shapes_Mu.Lock()
@@ -4035,10 +4052,17 @@ func recorder_register_tuples(
 	// varying axis the projected coordinate's position j stands for, so the report can name
 	// a bare coordinate's positions without the runtime carrying any of this.
 	legend := make([]Tuple_Axis, len(coordinate_positions))
+	var coordinate_axes []Registration_Axis
+	if chain_tuples != nil {
+		coordinate_axes = make([]Registration_Axis, len(coordinate_positions))
+	}
 	for j, position := range coordinate_positions {
 		axis := axes[position]
 		legend[j] = Tuple_Axis{
 			Kind: axis.Kind, Condition: axis.Condition, Message: axis.Message}
+		if chain_tuples != nil {
+			coordinate_axes[j] = axis
+		}
 	}
 	// The odometer still runs the full axis list so an Impossible's carve positions, which
 	// index that full list, stay valid; each surviving tuple is then projected onto the
@@ -4065,17 +4089,21 @@ func recorder_register_tuples(
 		}
 		value, _ := recorder.Events.LoadOrStore(key, metadata)
 		if chain_tuples != nil {
-			chain_tuples[chain_mask_from_tuple(projected)] = Handle_Entry{
+			mask := chain_mask_from_tuple(projected, coordinate_axes)
+			chain_tuples[mask] = Handle_Entry{
 				Metadata: value.(*Assertion_Metadata), Key: key,
 			}
 		}
 	}
 }
 
-func chain_mask_from_tuple(tuple []int) (mask Chain_Mask) {
+func chain_mask_from_tuple(
+	tuple []int, coordinate_axes []Registration_Axis,
+) (mask Chain_Mask) {
 	for i_index, bucket := range tuple {
 		if bucket == 1 {
-			mask = chain_mask_with(mask, uint8(i_index))
+			axis := coordinate_axes[i_index]
+			mask = chain_mask_with(mask, axis.Tuple_Position)
 		}
 	}
 	return mask
