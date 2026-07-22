@@ -297,6 +297,18 @@ When the interval's width is below its witnessed-axis count every value is a wit
 all-false cell (a value matching none) can never occur and is carved — else the grid would demand an
 unreachable value forever; over `[0, 1]` every value is `min` or `max`, so "neither" is impossible.
 
+### Exclusions
+
+A callsite declares in-range values unreachable — `Range_Invariants(v, MIN, MAX, ns, holes…)`. Each
+hole is enforced (reaching it panics) and drops its sentinel axis; the all-false cell is carved once
+every reachable value is a witnessed axis — Saturation is that carve with no holes.
+
+### Enum
+
+`Enum_Invariants(v, ns, members…)` is the sugar for a discrete set: the span is `[min…max]` of the
+members, every in-span non-member is an excluded hole, and reaching a non-member panics. A member
+strictly inside the span fills the all-false cell; a two-member set carves it.
+
 ### Registration
 
 The scan specialises a `Range_Invariants` callsite from its `MIN`/`MAX` arguments, evaluated as

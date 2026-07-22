@@ -400,6 +400,10 @@ const RANGE_GUARD_UPPER = "at most max"
 // RANGE_GUARD_LOWER labels Range's lower-bound guard; keyed by namespace like RANGE_GUARD_UPPER.
 const RANGE_GUARD_LOWER = "at least min"
 
+// RANGE_GUARD_EXCLUDED labels the enforcement that an excluded (declared-unreachable) in-range
+// value never occurs — the guard a holed interval or an enum adds beyond its two bounds.
+const RANGE_GUARD_EXCLUDED = "excluded"
+
 // Recorder_Range is the bounded-integer preset: it enforces value ∈ [minimum, maximum] as two
 // eager bound guards and self-emits, under namespace, the coverage grid for whichever of
 // {0, 1, 2, -1} the interval admits. It collapses the mandated bound preamble and boundary claims
@@ -412,8 +416,14 @@ const RANGE_GUARD_LOWER = "at least min"
 // A boundary unit outside the interval is dropped, not witnessed — the guard already forbids it,
 // so a Sometimes on it would be an unfillable gap; -1 is dropped for an unsigned value. When the
 // interval admits none of the four, no grid is emitted and only the two guards register.
+//
+// An excluded value is an in-range value the caller declares unreachable — a hole in the interval.
+// Each is enforced (reaching it panics like a bound violation) and drops its sentinel axis, and
+// once every reachable value is a witnessed axis the all-false cell is carved. The variadic is only
+// ranged over, never retained, so the empty and holed calls alike allocate nothing beyond the grid.
 func Recorder_Range[Value Integer, Minimum Integer, Maximum Integer](
 	recorder *Recorder, value Value, minimum Minimum, maximum Maximum, namespace Namespace,
+	excluded ...Value,
 ) {
 	bounds := [2]Value{Value(minimum), Value(maximum)}
 	// Enforcement runs in every mode, like Recorder_Always — a bound violation is fatal on the
@@ -426,8 +436,15 @@ func Recorder_Range[Value Integer, Minimum Integer, Maximum Integer](
 		panic(ASSERTION_FAILURE_MESSAGE_PREFIX + string(namespace) +
 			ELEMENT_MESSAGE_SEPARATOR + RANGE_GUARD_LOWER + "  value below min")
 	}
+	for _, hole := range excluded {
+		if value != hole {
+			continue
+		}
+		panic(ASSERTION_FAILURE_MESSAGE_PREFIX + string(namespace) +
+			ELEMENT_MESSAGE_SEPARATOR + RANGE_GUARD_EXCLUDED + "  value is excluded")
+	}
 	recorder_range_credit_guards(recorder, namespace)
-	bundle, axis_count := recorder_range_bundle(recorder, value, bounds)
+	bundle, axis_count := recorder_range_bundle(recorder, value, bounds, excluded)
 	// An interval admitting none of the four boundary units has no cell to witness — an empty
 	// Dot_Product would panic. The guards alone carry the reachability obligation in that case.
 	if axis_count == 0 {
@@ -457,9 +474,23 @@ func recorder_range_credit_guards(recorder *Recorder, namespace Namespace) {
 // empty grid and only the guards carry it. -1 is derived as 0-1 and admitted only for a signed
 // value, so an unsigned value's wrap of 0-1 to its maximum can never masquerade as -1.
 func recorder_range_bundle[Value Integer](
-	recorder *Recorder, value Value, bounds [2]Value,
+	recorder *Recorder, value Value, bounds [2]Value, excluded []Value,
 ) (bundle []Dot_Element, axis_count int) {
-	var messages []string
+	elements, messages := recorder_range_axes(recorder, value, bounds, excluded, false)
+	if recorder_range_saturated(bounds, len(messages), excluded) {
+		elements = append(elements, recorder_range_all_false(messages))
+	}
+	return elements, len(messages)
+}
+
+// Builds the axes Range and Enum share: a Sometimes for each interval edge and for each of
+// {0,1,2,-1} strictly inside, all mutually exclusive. A sentinel is admitted by its membership in
+// `set`: for a range `set` is the excluded holes and an in-set sentinel is dropped; for an enum
+// `set` is the members and an out-of-set sentinel drops — `recorder_range_holed(c, set) != enum`.
+// The all-false carve is the caller's, which alone knows how its reachable count meets the axes.
+func recorder_range_axes[Value Integer](
+	recorder *Recorder, value Value, bounds [2]Value, set []Value, enum bool,
+) (bundle []Dot_Element, messages []string) {
 	if bounds[0] < bounds[1] {
 		edge := Recorder_Sometimes(recorder, value == bounds[0], RANGE_MESSAGE_MINIMUM)
 		bundle = append(bundle, edge)
@@ -482,21 +513,93 @@ func recorder_range_bundle[Value Integer](
 		if !interior[i] {
 			continue
 		}
+		if recorder_range_holed(candidates[i], set) != enum {
+			continue
+		}
 		axis := Recorder_Sometimes(recorder, value == candidates[i], units[i].Message)
 		bundle = append(bundle, axis)
 		messages = append(messages, units[i].Message)
 	}
 	bundle = append(bundle, recorder_range_carves(messages)...)
-	if recorder_range_saturated(bounds, len(messages)) {
-		bundle = append(bundle, recorder_range_all_false(messages))
-	}
-	return bundle, len(messages)
+	return bundle, messages
 }
 
-// Reports whether the witnessed axes exhaust the interval — every value in [min,max] is one of
-// them — so the all-false cell (a value that is none of them) can never occur and must be carved.
-func recorder_range_saturated[Value Integer](bounds [2]Value, axis_count int) (saturated bool) {
-	return bounds[1]-bounds[0] < Value(axis_count)
+// Recorder_Enum is the discrete-set preset: the reachable values are exactly `members`. It is
+// Recorder_Range over the span [min(members), max(members)] with every in-span non-member a hole —
+// each member witnessed as that range would, every non-member enforced, and the all-false cell
+// carved once every member is an axis. The variadic is only ranged over, so nothing escapes.
+func Recorder_Enum[Value Integer](
+	recorder *Recorder, value Value, namespace Namespace, members ...Value,
+) {
+	bounds := recorder_enum_bounds(members)
+	member := false
+	for _, candidate := range members {
+		if value == candidate {
+			member = true
+		}
+	}
+	if !member {
+		panic(ASSERTION_FAILURE_MESSAGE_PREFIX + string(namespace) +
+			ELEMENT_MESSAGE_SEPARATOR + RANGE_GUARD_EXCLUDED + "  not a member")
+	}
+	recorder_range_credit_guards(recorder, namespace)
+	elements, messages := recorder_range_axes(recorder, value, bounds, members, true)
+	// Every member is a witnessed axis exactly when the axis count matches the member count, so
+	// a reachable value witnessing none can never occur and the all-false cell is carved.
+	if len(members) <= len(messages) {
+		elements = append(elements, recorder_range_all_false(messages))
+	}
+	if len(messages) == 0 {
+		return
+	}
+	Recorder_Dot_Product(recorder, namespace, elements...)
+}
+
+// Computes the enum's span — the least and greatest member. An empty member set yields a zero span
+// that Recorder_Enum's membership loop rejects for every value.
+func recorder_enum_bounds[Value Integer](members []Value) (bounds [2]Value) {
+	for i, member := range members {
+		if i == 0 {
+			bounds = [2]Value{member, member}
+			continue
+		}
+		if member < bounds[0] {
+			bounds[0] = member
+		}
+		if member > bounds[1] {
+			bounds[1] = member
+		}
+	}
+	return bounds
+}
+
+// Reports whether candidate is one of the excluded holes. Ranges the variadic without retaining it.
+func recorder_range_holed[Value Integer](candidate Value, excluded []Value) (holed bool) {
+	for _, hole := range excluded {
+		if candidate == hole {
+			return true
+		}
+	}
+	return false
+}
+
+// Reports whether the witnessed axes exhaust the reachable interval — every value in [min,max] that
+// is not an excluded hole is a witnessed axis — so the all-false cell (a reachable value matching
+// none) can never occur and must be carved. With no holes this is `width < axis_count`.
+func recorder_range_saturated[Value Integer](
+	bounds [2]Value, axis_count int, excluded []Value,
+) (saturated bool) {
+	interior_holes := 0
+	for _, hole := range excluded {
+		if hole <= bounds[0] {
+			continue
+		}
+		if hole >= bounds[1] {
+			continue
+		}
+		interior_holes++
+	}
+	return bounds[1]-bounds[0]-Value(interior_holes) < Value(axis_count)
 }
 
 // Builds the Impossible carving the all-false cell: in a saturated interval no value is none of the
@@ -1245,6 +1348,12 @@ func recorder_register_function(
 				recorder, file_set, call, namespace_parameter, index, reg)
 			return true
 		}
+		// Enum_Invariants, like Range_Invariants, ends in _Invariants but is specialised
+		// here from its member constants rather than descended into as a bundle body.
+		if ast_invariant_selector(call) == "Enum_Invariants" {
+			recorder_register_enum(recorder, file_set, call, index, reg)
+			return true
+		}
 		if ast_is_invariants_name(ast_callee_name(call)) {
 			recorder_register_invariants_callsite(
 				recorder, file_set, call, imports, index, reg)
@@ -1734,7 +1843,8 @@ func recorder_register_invariants_callsite(
 	// expressions — the Range mirror of the Dot_Product descent above.
 	if range_call, is_range := recorder_template_range(function.Declaration); is_range {
 		recorder_seed_range(recorder, file_set, call, namespace,
-			[2]ast.Expr{range_call.Args[1], range_call.Args[2]}, index, reg)
+			[2]ast.Expr{range_call.Args[1], range_call.Args[2]}, range_call.Args[4:],
+			index, reg)
 	}
 }
 
@@ -1794,7 +1904,7 @@ func recorder_register_range(
 		return
 	}
 	recorder_seed_range(recorder, file_set, call, namespace,
-		[2]ast.Expr{call.Args[1], call.Args[2]}, index, reg)
+		[2]ast.Expr{call.Args[1], call.Args[2]}, call.Args[4:], index, reg)
 }
 
 // Reports whether a Range_Invariants call's namespace argument is the enclosing function's
@@ -1822,7 +1932,7 @@ func ast_is_range_template(call *ast.CallExpr, namespace_parameter string) (is_t
 // resolve is fatal, since the grid could not be keyed while the runtime still enforces it.
 func recorder_seed_range(
 	recorder *Recorder, file_set *token.FileSet, position ast.Node, namespace string,
-	expressions [2]ast.Expr, index *Bundle_Index, reg *Registration,
+	expressions [2]ast.Expr, exclusions []ast.Expr, index *Bundle_Index, reg *Registration,
 ) {
 	value_min, ok_min := recorder_eval_constant(index, expressions[0])
 	value_max, ok_max := recorder_eval_constant(index, expressions[1])
@@ -1834,14 +1944,33 @@ func recorder_seed_range(
 		recorder_range_unresolved(file_set, position, reg)
 		return
 	}
+	excluded, resolved := recorder_seed_constants(index, exclusions)
+	if !resolved {
+		recorder_range_unresolved(file_set, position, reg)
+		return
+	}
 	bounds := [2]constant.Value{value_min, value_max}
-	axes := []Registration_Axis{
+	axes := recorder_seed_axes(bounds, excluded, false)
+	carves := recorder_range_carve_cells(axes)
+	if recorder_constant_saturated(bounds, recorder_range_sometimes_count(axes), excluded) {
+		carves = append(carves, recorder_range_all_false_cells(axes))
+	}
+	recorder_seed_grid(recorder, file_set, position, namespace, axes, carves, reg)
+}
+
+// Builds the static mirror of recorder_range_axes: the two bound guards, the min/max edges (unless
+// the interval is a point), and each of {0,1,2,-1} strictly inside admitted by its membership in
+// `set` — for a range `set` is the excluded holes (dropped), for an enum the members (kept).
+func recorder_seed_axes(
+	bounds [2]constant.Value, set []constant.Value, enum bool,
+) (axes []Registration_Axis) {
+	axes = []Registration_Axis{
 		{Message: RANGE_GUARD_UPPER, Condition: "value <= max",
 			Kind: ASSERTION_KIND_ALWAYS, Bucket_Count: 1},
 		{Message: RANGE_GUARD_LOWER, Condition: "value >= min",
 			Kind: ASSERTION_KIND_ALWAYS, Bucket_Count: 1},
 	}
-	if constant.Compare(value_min, token.LSS, value_max) {
+	if constant.Compare(bounds[0], token.LSS, bounds[1]) {
 		axes = append(axes, recorder_range_axis(RANGE_MESSAGE_MINIMUM))
 		axes = append(axes, recorder_range_axis(RANGE_MESSAGE_MAXIMUM))
 	}
@@ -1849,20 +1978,115 @@ func recorder_seed_range(
 		if !recorder_constant_interior(bounds, unit.Value) {
 			continue
 		}
+		if recorder_constant_holed(unit.Value, set) != enum {
+			continue
+		}
 		axes = append(axes, recorder_range_axis(unit.Message))
 	}
+	return axes
+}
+
+// Evaluates a list of constant expressions (Range exclusions or Enum members). Any expression the
+// evaluator cannot resolve makes the whole set unresolved, so the caller fails registration.
+func recorder_seed_constants(
+	index *Bundle_Index, expressions []ast.Expr,
+) (values []constant.Value, resolved bool) {
+	for _, expression := range expressions {
+		value, ok := recorder_eval_constant(index, expression)
+		if !ok {
+			return nil, false
+		}
+		values = append(values, value)
+	}
+	return values, true
+}
+
+// Reports whether candidate equals a value in the set — the static mirror of recorder_range_holed.
+func recorder_constant_holed(candidate int64, set []constant.Value) (holed bool) {
+	target := constant.MakeInt64(candidate)
+	for _, value := range set {
+		if constant.Compare(target, token.EQL, value) {
+			return true
+		}
+	}
+	return false
+}
+
+// Reports whether the reachable interval is saturated — every in-range value that is not an
+// excluded hole is a witnessed axis, so the all-false cell can never occur. Mirrors the runtime.
+func recorder_constant_saturated(
+	bounds [2]constant.Value, axis_count int, excluded []constant.Value,
+) (saturated bool) {
+	width := constant.BinaryOp(bounds[1], token.SUB, bounds[0])
+	holes := 0
+	for _, value := range excluded {
+		if constant.Compare(value, token.LEQ, bounds[0]) {
+			continue
+		}
+		if constant.Compare(value, token.GEQ, bounds[1]) {
+			continue
+		}
+		holes++
+	}
+	width = constant.BinaryOp(width, token.SUB, constant.MakeInt64(int64(holes)))
+	return constant.Compare(width, token.LSS, constant.MakeInt64(int64(axis_count)))
+}
+
+// Registers a direct Enum_Invariants callsite: Args are value, namespace, members. It seeds the
+// grid for the discrete member set under the literal namespace. A non-literal namespace is fatal —
+// enum templates (a member set under a namespace parameter) are not yet supported.
+func recorder_register_enum(
+	recorder *Recorder, file_set *token.FileSet, call *ast.CallExpr,
+	index *Bundle_Index, reg *Registration,
+) {
+	if len(call.Args) < 3 {
+		return
+	}
+	namespace, literal := ast_string_literal(call, 1)
+	if !literal {
+		reg.Non_Literal = append(reg.Non_Literal, recorder_position(file_set, call)+
+			"  Enum_Invariants namespace is not a string literal")
+		return
+	}
+	recorder_seed_enum(recorder, file_set, call, namespace, call.Args[2:], index, reg)
+}
+
+// Seeds an Enum grid: it evaluates the member constants, spans them into [min, max], and admits the
+// same axes a range would while dropping every non-member sentinel. The all-false cell is carved
+// once every member is a witnessed axis, so a reachable value witnessing none can never occur.
+func recorder_seed_enum(
+	recorder *Recorder, file_set *token.FileSet, position ast.Node, namespace string,
+	members []ast.Expr, index *Bundle_Index, reg *Registration,
+) {
+	values, resolved := recorder_seed_constants(index, members)
+	if !resolved {
+		recorder_range_unresolved(file_set, position, reg)
+		return
+	}
+	bounds := recorder_constant_span(values)
+	axes := recorder_seed_axes(bounds, values, true)
 	carves := recorder_range_carve_cells(axes)
-	if recorder_constant_saturated(bounds, recorder_range_sometimes_count(axes)) {
+	if len(values) <= recorder_range_sometimes_count(axes) {
 		carves = append(carves, recorder_range_all_false_cells(axes))
 	}
 	recorder_seed_grid(recorder, file_set, position, namespace, axes, carves, reg)
 }
 
-// Reports whether the interval is saturated — its width is below the witnessed-axis count, so
-// every value is a witnessed axis and the all-false cell can never occur, mirroring the runtime.
-func recorder_constant_saturated(bounds [2]constant.Value, axis_count int) (saturated bool) {
-	width := constant.BinaryOp(bounds[1], token.SUB, bounds[0])
-	return constant.Compare(width, token.LSS, constant.MakeInt64(int64(axis_count)))
+// Spans a member set into its least and greatest value — the static mirror of recorder_enum_bounds.
+func recorder_constant_span(values []constant.Value) (bounds [2]constant.Value) {
+	for i, value := range values {
+		if i == 0 {
+			bounds = [2]constant.Value{value, value}
+			continue
+		}
+		if constant.Compare(value, token.LSS, bounds[0]) {
+			bounds[0] = value
+		}
+		if constant.Compare(value, token.GTR, bounds[1]) {
+			bounds[1] = value
+		}
+	}
+	return bounds
 }
 
 // Counts the Sometimes (coverage) axes of a Range grid — every axis past the two leading guards.

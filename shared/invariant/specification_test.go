@@ -1346,6 +1346,84 @@ func Test_Range_Saturation(t *testing.T) {
 	}
 }
 
+// Test_Range_Exclusions: declaring in-range values unreachable drops their sentinel axes and
+// enforces them, so a holed interval witnesses only its reachable shapes; when every interior value
+// is excluded the interval is a two-point set and the all-false cell is carved.
+func Test_Range_Exclusions(t *testing.T) {
+	separator := invariant.ELEMENT_MESSAGE_SEPARATOR
+	// [1,8] excluding {2,3,4}: reachable {1,5,6,7,8}; the interior sentinel 2 drops its axis
+	// while 5,6,7 keep the all-false cell fillable.
+	holed := registered(t, "func check(f int) {\n"+
+		"\tinvariant.Range_Invariants(f, 1, 8, \"foo\", 2, 3, 4)\n}\n")
+	if _, ok := holed.Events.Load("foo" + separator + invariant.RANGE_MESSAGE_TWO); ok {
+		t.Error("an excluded sentinel must not seed a witness axis")
+	}
+	if _, ok := holed.Events.Load("foo" + separator + invariant.RANGE_MESSAGE_MINIMUM); !ok {
+		t.Error("the minimum edge must still be witnessed")
+	}
+	for _, v := range []int{1, 8, 6} {
+		invariant.Recorder_Range(holed, v, 1, 8, invariant.Namespace("foo"), 2, 3, 4)
+	}
+	if !range_analyzes_clean(holed) {
+		t.Error("a holed interval driven through its reachable values must analyze clean")
+	}
+	// [5,11] with all interior values excluded is a two-point set: all-false is carved.
+	two_point := registered(t, "func check(f int) {\n"+
+		"\tinvariant.Range_Invariants(f, 5, 11, \"foo\", 6, 7, 8, 9, 10)\n}\n")
+	if _, ok := two_point.Events.Load("foo:tuple=(0,0)"); ok {
+		t.Error("an all-excluded interval must carve the all-false cell")
+	}
+	for _, v := range []int{5, 11} {
+		invariant.Recorder_Range(
+			two_point, v, 5, 11, invariant.Namespace("foo"), 6, 7, 8, 9, 10)
+	}
+	if !range_analyzes_clean(two_point) {
+		t.Error("a two-point interval driven at both ends must analyze clean")
+	}
+	// Zero-allocation contract: excluding a non-sentinel (50) leaves the grid identical to a
+	// plain [1,100] range: the only difference is the variadic, which must stay stack-bound.
+	free := &invariant.Recorder{}
+	plain := testing.AllocsPerRun(500, func() {
+		invariant.Recorder_Range(free, 50, 1, 100, invariant.Namespace("bar"))
+	})
+	exclusion_allocs := testing.AllocsPerRun(500, func() {
+		invariant.Recorder_Range(free, 60, 1, 100, invariant.Namespace("bar"), 50)
+	})
+	if exclusion_allocs > plain {
+		t.Errorf("exclusions allocate over plain: %v > %v", exclusion_allocs, plain)
+	}
+	// An excluded value is enforced: reaching it panics.
+	defer func() {
+		if recover() == nil {
+			t.Error("driving an excluded value must panic")
+		}
+	}()
+	invariant.Recorder_Range(holed, 3, 1, 8, invariant.Namespace("foo"), 2, 3, 4)
+}
+
+// Test_Range_Enum: an enum witnesses each member and rejects every non-member. A two-member enum is
+// a saturated span whose all-false cell is carved; a member strictly inside the span fills it.
+func Test_Range_Enum(t *testing.T) {
+	two_point := registered(t, "func check(f int) {\n"+
+		"\tinvariant.Enum_Invariants(f, \"foo\", 5, 11)\n}\n")
+	if _, ok := two_point.Events.Load("foo:tuple=(0,0)"); ok {
+		t.Error("a two-member enum must carve the all-false cell")
+	}
+	for _, v := range []int{5, 11} {
+		invariant.Recorder_Enum(two_point, v, invariant.Namespace("foo"), 5, 11)
+	}
+	if !range_analyzes_clean(two_point) {
+		t.Error("a two-member enum driven at both members must analyze clean")
+	}
+	// A non-member is rejected.
+	defer func() {
+		if recover() == nil {
+			t.Error("an enum must panic on a non-member")
+		}
+	}()
+	invariant.Recorder_Enum(two_point, 7, invariant.Namespace("foo"), 5, 11)
+}
+
 // Test_Range_Registration: the scan evaluates each bound as an integer constant — literals,
 // sibling-const references, and constant arithmetic — to decide which axes to seed, and a bound it
 // cannot resolve to a constant fails registration rather than dropping coverage.
@@ -1634,4 +1712,15 @@ func range_analyzes_clean(recorder *invariant.Recorder) (clean bool) {
 	recorder.Exit = func(code int) { exited = true }
 	invariant.Recorder_Analyze_Assertion_Frequency(recorder)
 	return !exited
+}
+
+// Registers a fixture from its body — the declarations after the package clause — and returns the
+// recorder, so a test varying the callsite shape (exclusions, enum members) writes only its body.
+func registered(t *testing.T, body string) (recorder *invariant.Recorder) {
+	t.Helper()
+	source := "package fixture\n\n" + body
+	files := fstest.MapFS{"fixture/check.go": &fstest.MapFile{Data: []byte(source)}}
+	recorder = &invariant.Recorder{Is_Test: true, File_System: files}
+	invariant.Recorder_Register_Packages_For_Analysis(recorder, "/fixture")
+	return recorder
 }
