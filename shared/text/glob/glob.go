@@ -55,6 +55,15 @@ type Pattern struct {
 	// is exported only because the house linter forbids unexported struct fields;
 	// callers should treat it as opaque and go through Match.
 	Matcher *Matcher
+	// Evaluate is the root matcher's kind-specific evaluator, resolved once at
+	// compile time. Match calls it directly, so a whole-pattern terminal matcher
+	// (Text, Prefix, …) dispatches through one indirect call rather than the
+	// Kind switch of matcher_matches — the switch loads Kind and branches on every
+	// call, which is pure overhead once the kind is already known. Recursion inside
+	// a composite still goes through matcher_matches, whose switch stays the fast
+	// path there. Both fields are exported only because the linter forbids
+	// unexported struct fields.
+	Evaluate func(matcher *Matcher, text string) (matched bool)
 }
 
 // Compile parses pattern and compiles it into a Pattern. The optional separators
@@ -70,7 +79,7 @@ func Compile(pattern string, separators ...rune) (compiled Pattern, err error) {
 	if err != nil {
 		return Pattern{}, err
 	}
-	return Pattern{Matcher: &matcher}, nil
+	return Pattern{Matcher: &matcher, Evaluate: select_evaluator(matcher.Kind)}, nil
 }
 
 // Must_Compile is Compile without the error return: it panics when Compile would
@@ -85,7 +94,7 @@ func Must_Compile(pattern string, separators ...rune) (compiled Pattern) {
 
 // Match reports whether text satisfies the compiled pattern.
 func Match(compiled Pattern, text string) (matched bool) {
-	return matcher_matches(compiled.Matcher, text)
+	return compiled.Evaluate(compiled.Matcher, text)
 }
 
 // Quote_Meta returns text with every glob metacharacter backslash-escaped, so the
@@ -1977,37 +1986,126 @@ func New_Suffix_Any(suffix string, separators []rune) (matcher Matcher) {
 }
 
 // Reports whether text is matched in full by matcher, the whole-string test.
+// The terminal kinds whose match logic was inline in the switch are their own
+// functions so a whole-pattern matcher of that kind can be dispatched straight to
+// one via Pattern.Evaluate, skipping the switch. matcher_matches delegates to the
+// same functions, so each kind's logic lives in exactly one place.
+
+func match_any(matcher *Matcher, text string) (matched bool) {
+	return Index_Any_Runes(text, matcher.Separators) == -1
+}
+
+func match_super(matcher *Matcher, text string) (matched bool) {
+	return true
+}
+
+func match_empty(matcher *Matcher, text string) (matched bool) {
+	return text == ""
+}
+
+func match_text(matcher *Matcher, text string) (matched bool) {
+	return matcher.Literal == text
+}
+
+func match_prefix(matcher *Matcher, text string) (matched bool) {
+	return strings.HasPrefix(text, matcher.Prefix)
+}
+
+func match_suffix(matcher *Matcher, text string) (matched bool) {
+	return strings.HasSuffix(text, matcher.Suffix)
+}
+
+func match_prefix_suffix(matcher *Matcher, text string) (matched bool) {
+	return strings.HasPrefix(text, matcher.Prefix) &&
+		strings.HasSuffix(text, matcher.Suffix)
+}
+
+func match_contains(matcher *Matcher, text string) (matched bool) {
+	return strings.Contains(text, matcher.Needle) != matcher.Negated
+}
+
+func match_row(matcher *Matcher, text string) (matched bool) {
+	return row_rune_width_ok(matcher, text) && row_match_all(matcher, text)
+}
+
+// Maps a matcher's kind to the function that evaluates it, resolved once by
+// Compile so Match can call it directly without re-inspecting Kind.
+func select_evaluator(
+	kind Matcher_Kind,
+) (evaluate func(matcher *Matcher, text string) (matched bool)) {
+	switch kind {
+	case MATCHER_KIND_ANY:
+		return match_any
+	case MATCHER_KIND_SUPER:
+		return match_super
+	case MATCHER_KIND_SINGLE:
+		return match_single
+	case MATCHER_KIND_EMPTY:
+		return match_empty
+	case MATCHER_KIND_TEXT:
+		return match_text
+	case MATCHER_KIND_MAX:
+		return match_max
+	case MATCHER_KIND_MIN:
+		return match_min
+	case MATCHER_KIND_PREFIX:
+		return match_prefix
+	case MATCHER_KIND_SUFFIX:
+		return match_suffix
+	case MATCHER_KIND_PREFIX_SUFFIX:
+		return match_prefix_suffix
+	case MATCHER_KIND_CONTAINS:
+		return match_contains
+	case MATCHER_KIND_RANGE:
+		return match_range
+	case MATCHER_KIND_LIST:
+		return match_list
+	case MATCHER_KIND_ROW:
+		return match_row
+	case MATCHER_KIND_ANY_OF:
+		return match_any_of
+	case MATCHER_KIND_EVERY_OF:
+		return match_every_of
+	case MATCHER_KIND_BTREE:
+		return match_btree
+	case MATCHER_KIND_PREFIX_ANY:
+		return match_prefix_any
+	case MATCHER_KIND_SUFFIX_ANY:
+		return match_suffix_any
+	}
+	return matcher_matches
+}
+
 func matcher_matches(matcher *Matcher, text string) (matched bool) {
 	switch matcher.Kind {
 	case MATCHER_KIND_ANY:
-		return Index_Any_Runes(text, matcher.Separators) == -1
+		return match_any(matcher, text)
 	case MATCHER_KIND_SUPER:
-		return true
+		return match_super(matcher, text)
 	case MATCHER_KIND_SINGLE:
 		return match_single(matcher, text)
 	case MATCHER_KIND_EMPTY:
-		return text == ""
+		return match_empty(matcher, text)
 	case MATCHER_KIND_TEXT:
-		return matcher.Literal == text
+		return match_text(matcher, text)
 	case MATCHER_KIND_MAX:
 		return match_max(matcher, text)
 	case MATCHER_KIND_MIN:
 		return match_min(matcher, text)
 	case MATCHER_KIND_PREFIX:
-		return strings.HasPrefix(text, matcher.Prefix)
+		return match_prefix(matcher, text)
 	case MATCHER_KIND_SUFFIX:
-		return strings.HasSuffix(text, matcher.Suffix)
+		return match_suffix(matcher, text)
 	case MATCHER_KIND_PREFIX_SUFFIX:
-		return strings.HasPrefix(text, matcher.Prefix) &&
-			strings.HasSuffix(text, matcher.Suffix)
+		return match_prefix_suffix(matcher, text)
 	case MATCHER_KIND_CONTAINS:
-		return strings.Contains(text, matcher.Needle) != matcher.Negated
+		return match_contains(matcher, text)
 	case MATCHER_KIND_RANGE:
 		return match_range(matcher, text)
 	case MATCHER_KIND_LIST:
 		return match_list(matcher, text)
 	case MATCHER_KIND_ROW:
-		return row_rune_width_ok(matcher, text) && row_match_all(matcher, text)
+		return match_row(matcher, text)
 	case MATCHER_KIND_ANY_OF:
 		return match_any_of(matcher, text)
 	case MATCHER_KIND_EVERY_OF:
