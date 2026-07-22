@@ -686,13 +686,17 @@ func Test_Expirable_With_Purge_Expiry(t *testing.T) {
 // leaves live entries in place, and Purge clears the cache and fires the callback for each.
 func Test_Expirable_Purge_Fires_Callback(t *testing.T) {
 	loop, _, clock := new_expirable_loop()
-	var evicted []string
+	evicted := make(map[string]string)
+	eviction_count := 0
 	c := lru.New_Expirable[string, string](lru.Expirable_Input[string, string]{
 		Capacity: 10,
 		TTL:      time.HOUR,
 		Clock:    clock,
 		IO:       &loop,
-		On_Evict: func(key string, value string) { evicted = append(evicted, key, value) },
+		On_Evict: func(key string, value string) {
+			eviction_count++
+			evicted[key] = value
+		},
 	})
 	lru.Expirable_Add(c, "key1", "val1")
 	lru.Expirable_Add(c, "key2", "val2")
@@ -703,7 +707,10 @@ func Test_Expirable_Purge_Fires_Callback(t *testing.T) {
 	if lru.Expirable_Count(c) != 0 {
 		t.Fatalf("count differs from expected")
 	}
-	if !reflect.DeepEqual(evicted, []string{"key1", "val1", "key2", "val2"}) {
+	if eviction_count != 2 {
+		t.Fatalf("eviction count differs from expected: %d", eviction_count)
+	}
+	if !reflect.DeepEqual(evicted, map[string]string{"key1": "val1", "key2": "val2"}) {
 		t.Fatalf("evicted differs from expected: %v", evicted)
 	}
 }
