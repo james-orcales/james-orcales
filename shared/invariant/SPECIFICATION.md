@@ -1,139 +1,126 @@
 
 # Always
 
-`Recorder_Always` is an eager guard whose condition must hold on every call. Unlike the
-element kinds it is not a `Dot_Element` and never flows through a `Dot_Product`: it
-returns nothing and enforces on the spot.
+`Recorder_Always` is an eager, bare guard whose condition must hold on every call. It remains
+message-keyed reachability and is neither a chain link nor part of a demanded grid.
 
 ### Violation
 
-A false `Always` panics at its own call site, in every run mode, naming itself by its
-message. There is no deferred phase — see Eager.
+A false `Always` panics at its own callsite in every run mode, naming itself by its message.
 
 ### Eager
 
-Constructing a false `Always` panics immediately; an `Always` is never inert and never
-consumed. Contrast the element kinds, which stay inert until a `Dot_Product` (see Dot
-Product / Inert).
+`Always` enforces and credits when called; it is never deferred until a `Dot_Product.Ensure`.
 
 ### Reachability
 
-An `Always` the suite never reaches is reported as a coverage gap, named by its message. A
-bare `Always` is discovered by the same source scan that registers `Dot_Product` calls,
-so its reachability is tracked without being consumed.
+An `Always` the suite never reaches is a coverage gap. Registration discovers the bare call and
+seeds its literal message without requiring a product namespace.
 
 # Sometimes
 
-`Recorder_Sometimes` builds an axis claiming the run observes its condition both
-true and false; alone it never panics.
+`Sometimes` exists only as a `Product` chain link. Each link claims that its condition is witnessed
+both true and false; there is no bare form and no caller-supplied global identity.
 
 ### Coverage
 
-A consumed `Sometimes` credits its true branch on a true event and its false
-branch on a false event.
+A link only advances the immutable builder. `Ensure` credits every observed branch under its chain
+key; the link ordinal keeps repeated messages on distinct links as separate axes.
 
 ### Gap
 
-A `Sometimes` observed only one way, true without false or false without true, is
-reported as a coverage gap.
-
-# Impossible
-
-`Impossible` declares element events that must never all occur together on one
-call, naming each by the message of a sibling axis — `Event_True("m")` /
-`Event_False("m")` — not by holding the axis value.
-
-### Violation
-
-When every named event is observed on the same call, the `Dot_Product` panics,
-naming each co-occurring axis by its message and observed event.
-
-### Absent
-
-When the forbidden combination is not fully present, the `Dot_Product` does not
-panic.
-
-### Glob
-
-An `Impossible` need not name every axis; the unnamed axes are wildcards, so it
-carves every cell matching the named events across all their values.
-
-### Sibling
-
-A reference names an axis of its own `Dot_Product`. Naming a non-sibling panics at the `Dot_Product`
-on every call — a structural precondition checked before recording — so a typo is caught at once,
-not as an unfillable gap.
-
-# Imply
-
-`Imply` builds a gated `Sometimes`: an axis recorded only on a call where its prerequisite holds.
-The message-less prerequisite is no axis. The condition is evaluated eagerly, so one safe only under
-the prerequisite must self-guard (`p != nil && p.x`) — the prerequisite gates recording, not eval.
-
-### Gated
-
-A gated axis credits a branch only on a call where the prerequisite held; a call where it
-failed credits neither branch, so a failing prerequisite never stands in for the gated false event.
-
-### Excluded
-
-A gated axis is per-axis coverage only — it joins no tuple of the grid, since the message-less
-prerequisite is not an axis to cross with.
-
-### Conjunction
-
-An axis meaningful only under several prerequisites gates on their conjunction: it records only on a
-call where every one holds.
+An axis observed only true or only false is reported under its chain key as a coverage gap.
 
 # Dot Product
 
-`Recorder_Dot_Product` is the only consumer: an element enforces and records
-nothing until it is passed here.
+`Recorder_Dot_Product(recorder, namespace)` returns a value `Product`; `Dot_Product(namespace)`
+uses the default recorder. The links return advanced copies and `Ensure` terminates.
 
-### Inert
+### Links
 
-Constructing a `Sometimes` enforces and records nothing until a `Dot_Product` consumes it.
-An `Always`, by contrast, is eager (see Always / Eager).
+The only links are `Sometimes(condition, message)` and `Impossible(message, references...)`.
+They perform no validation, enforcement, or coverage work; `Ensure` does all three. `Event_True` and
+`Event_False` supply the polarity vocabulary for constraint references.
 
 ### Identity
 
-Identity is the message, not a source location. A `Dot_Product` prefixes its message onto each
-axis, keying it prefix + own message. The prefix is a literal: the `Dot_Product`'s own argument,
-or the literal namespace at each `_Invariants` callsite when it self-emits under its parameter.
+One literal namespace identifies one chain. An axis is keyed by namespace, link ordinal, and its
+literal message; source locations and manually-global messages are not identity.
 
-### Grid
+### Constraint
 
-Registration seeds one tuple per surviving combination of the ungated axes' buckets, dropping
-cells an `Impossible` carves. The grid is over ungated `Sometimes` axes only — an `Always` is not an
-element and a gated `Imply` axis is excluded (see Imply / Excluded). The grid is the prefix.
+`Impossible` carves every grid cell matching its referenced polarities and globs over unnamed axes.
+At runtime `Ensure` panics for every matching rule from the first call in every mode, in link order.
 
-### Attribution
+### Sibling
 
-A panic names every element it found violated on the call — each triggered `Impossible`, not
-only the first. A false eager `Always` is not part of this; it
-panics at its own site, so consecutive `Always` guards short-circuit on the first failure.
+Each reference must resolve to exactly one preceding axis in the same chain. Missing references,
+ambiguous repeated-message references, repeated references, and empty rules panic only at `Ensure`.
 
-### Empty
+### Shared
 
-A `Dot_Product` with no elements panics: an empty grid asserts nothing, so it is always a mistake
-rather than a silent no-op.
+Executions sharing a namespace must traverse the same links, messages, references, and order.
+`Ensure` panics on a different shape so one namespace can never combine unrelated coverage.
+
+### Unknown
+
+A registered chain's `Ensure` panics when any link or packed tuple is unseeded. A chain outside
+analyzed packages enforces and validates at `Ensure` but credits nothing.
 
 ### Allocation
 
-A call that violates nothing allocates nothing: a bundle's shape is static per callsite, so only
-the `Event` bools genuinely vary at runtime, and the compiler proves the rest never escapes the
-call. A violation path may allocate freely — it is never the steady state a fuzz worker pays.
+The warmed recording and enforcement paths allocate nothing. `Product` is a small value carrying
+only recorder/shape references, namespace, counters, and its packed tuple mask; it never escapes.
 
-# Bundles
+### Persistence
 
-A `_Invariants(v, namespace)` function self-emits its own `Dot_Product(namespace, …)` over a
-type's axes, so a type's properties travel and compose with it.
+Fuzz coverage serializes an axis as `namespace NUL ordinal NUL message`; tuple keys retain their
+flat form. Merge dispatches by separator count, and sinks render a string only on first coverage.
+
+# Dot Product Registration
+
+Registration recognizes a product as one call nest ending in `Ensure`, walks backward to its root,
+and uses the same axis-bit order and carve machinery as runtime.
+
+### Walk
+
+The walk seeds two obligations per `Sometimes` axis, then the full `2^axes` tuple grid minus every
+globbed carve. Runtime axis `i` is bit `i`; tuple entries remain keyed `namespace:tuple=(...)`.
 
 ### Template
 
-A `_Invariants` is recognized by its `_Invariants` or `_invariants` name together with a trailing
-`string` or `Namespace` parameter. The `Dot_Product` it self-emits under that parameter is a
-template, seeded not at the definition but at each callsite under its literal namespace.
+A root using its function's trailing `Namespace` parameter is expanded at each literal
+`_Invariants` callsite. A `Product`-returning function resolves the same way as a reusable prefix.
+
+### Ensured
+
+A chain root not terminated by `Ensure` is fatal. Product-returning constructor definitions are the
+only exemption; split local-variable chains are unsupported rather than silently unregistered.
+
+### Depth
+
+An invariant bundle owns one self-contained product. Registration rejects a chain bundle calling a
+chain bundle, preventing recursive or flattened cross-products.
+
+### Reference
+
+Namespaces, axis messages, constraint messages, and references must be string literals without NUL.
+Duplicate namespaces or constraint messages and references to no unique preceding axis are fatal.
+
+### Caps
+
+A chain admits all 255 links representable by its ordinal, including 255 `Sometimes` axes; there is
+no smaller grid-policy axis cap. Registration and runtime reject only a 256th link at `Ensure`.
+
+# Bundles
+
+A `_Invariants(v, namespace)` function ensures one product over a type's axes, so the complete
+demanded grid travels with the type without returning elements or asking callers to spread a bundle.
+
+### Template
+
+A `_Invariants` is recognized by its `_Invariants` or `_invariants` name and trailing `string` or
+`Namespace` parameter; its chain is seeded at each callsite under that callsite's literal namespace.
 
 ### Range Template
 
@@ -143,14 +130,13 @@ and `MAX` at each `_Invariants` callsite's literal namespace, never under the ba
 
 ### Descent
 
-Registration follows a `_Invariants(v, "lit")` call, resolves the function, and seeds the grid its
-body self-emits — keyed by the callsite's literal namespace prefixed onto each axis's own message.
+Registration follows `_Invariants(v, "lit")`, resolves its ensured chain, and seeds the axes and
+grid under the callsite's namespace rather than the template parameter.
 
 ### Composition
 
-A `_Invariants` that calls other `_Invariants` registers each as its own self-contained grid under
-its own namespace, never flattened into the parent — there is no joint cross-product. One with no
-`Dot_Product` of its own (pure composition, or only an eager `Always`) seeds no grid of its own.
+A `_Invariants` calling other `_Invariants` registers each ensured chain independently under its own
+namespace. Products are never flattened into a joint cross-product.
 
 ### Casing
 
@@ -171,20 +157,18 @@ local` works too; a `_Invariants` in a module outside this `go.mod` is unresolva
 
 ### Callsite
 
-Calling one `_Invariants` at two callsites with distinct namespaces yields independent grids — the
-per-namespace prefix keeps them apart, so neither masks the other's gap. Reusing one namespace is a
-duplicate and fails registration.
+Calling one `_Invariants` at distinct literal namespaces yields independent demanded grids. Reusing
+one namespace for another chain is fatal even when the axes happen to match.
 
 ### Gap Location
 
-A bundle axis's gap is named by the callsite namespace prefixed onto the axis's own message. An
-eager `Always` in a bundle body is not an axis; its gap names its own bare message.
+A bundle axis gap names its callsite namespace, ordinal, and own message. An eager `Always` in the
+body remains bare and names only its own message.
 
 ### Failure Location
 
-A carve's violation names the co-occurring axes by their own message, never the namespace prefix —
-yet the panic's stack still unwinds through the `Dot_Product`, carrying it. An eager `Always` panics
-from its own frame.
+A constraint violation uses the `Impossible` link's descriptive message and matching references;
+the stack unwinds through `Ensure`. An eager `Always` still panics from its own frame.
 
 ### Static
 
@@ -199,13 +183,13 @@ Cover a primitive inline, or wrap it in a custom type that carries its own bundl
 
 # Analysis
 
-After the suite, every unexercised obligation is reported under its kind and the run
-exits non-zero.
+After the suite, every unexercised axis branch and surviving tuple obligation is reported under its
+existing kind, and the run exits non-zero.
 
 ### Gaps
 
-A never-fired obligation is named by its message and condition, while a fully exercised
-one is left unreported.
+A never-fired obligation is named by its chain key and condition; a fully exercised obligation is
+left unreported.
 
 ### Combination
 
@@ -226,9 +210,8 @@ combination is the surviving and carved cells; panic-able is the Always and the 
 
 ### Tally
 
-An eager Always, keyed by its literal message, tallies once for the whole run. Anything inside a
-Dot_Product — each axis, grid cell, and carved cell — is keyed by the call-site namespace, so one
-shape under N namespaces tallies N times; a carve's glob counts every cell it spans.
+An eager Always tallies once by literal message. Chain axes, surviving cells, and carved cells tally
+per namespace; a carve's glob counts every cell it spans.
 
 ### Summary Names Package
 
@@ -241,9 +224,8 @@ With every obligation exercised, the analysis reports nothing and does not exit.
 
 # Coverage
 
-Coverage of a consumed construct is never silently dropped: the analyzer either accounts for
-it or fails on it. A bare `Sometimes` never passed to a `Dot_Product` records nothing and is
-not flagged — consuming an element is the author's responsibility.
+Coverage is never silently dropped: every registered chain link resolves to a pre-seeded entry or
+panics. `Sometimes` cannot exist outside a chain.
 
 ### Modes
 
@@ -253,26 +235,23 @@ coordinator unions that file before analysis. Enforcement fires in every mode.
 
 ### Enforcement
 
-A `Dot_Product` enforces its `Impossible` assertions on every call,
-in every run, even when no coverage is being recorded. An eager `Always` enforces
-independently of any `Dot_Product`, also on every call in every run.
+`Ensure` enforces every `Impossible` in every run mode even when coverage recording is disabled.
+`Always` enforces independently and eagerly in those same modes.
 
 ### Uniqueness
 
-Every assertion message is a global identity; registration fails when two distinct assertions
-claim the same one — two `Dot_Product`s sharing a message, a repeated axis, or two `Always`
-sharing a message. A duplicate would mask a gap, so it is fatal, not merged.
+Bare `Always` messages remain globally unique. Chain namespaces are globally unique, while axis
+messages may repeat because ordinal is part of their identity.
 
 ### Literal
 
-A message must be a compile-time string literal, so registration seeds it under the key the runtime
-emits; a non-literal one (a variable, a concatenation, an `Impossible` reference) fails. The lone
-exception is a `_Invariants`'s namespace parameter, a template prefix (see Bundles / Template).
+Every registered namespace, link message, and reference must be a compile-time string literal. The
+only namespace exception is the trailing template parameter resolved at literal callsites.
 
 ### Unresolved
 
-A bundle consumed by a `Dot_Product` that the analyzer cannot resolve is fatal, not
-skipped.
+A `_Invariants` or Product-returning constructor used by a registered chain must resolve; an
+unresolved chain template is fatal, never skipped.
 
 # Range
 

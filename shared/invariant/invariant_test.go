@@ -12,240 +12,72 @@ import (
 	"local/james-orcales/shared/snap/default"
 )
 
-// When an Impossible declares a combination of element events and that exact
-// combination occurs in the call, Recorder_Dot_Product must fail.
-func Test_Dot_Product_Impossible_Combination_Fails(t *testing.T) {
-	recorder := new_test_recorder()
-	a := invariant.Recorder_Sometimes(recorder, true, "a")
-	b := invariant.Recorder_Sometimes(recorder, true, "b")
-	forbidden := invariant.Impossible(
-		invariant.Event_True("a"),
-		invariant.Event_True("b"),
-	)
-	failed := false
-	func() {
-		defer func() {
-			if recover() != nil {
-				failed = true
-			}
-		}()
-		invariant.Recorder_Dot_Product(recorder, "check", a, b, forbidden)
-	}()
-	if !failed {
-		t.Fatal("Recorder_Dot_Product must fail when an Impossible combination occurs")
-	}
-}
-
-// When the combination an Impossible forbids does NOT occur (one referenced
-// event differs from what was observed), Recorder_Dot_Product must not fail.
-func Test_Dot_Product_Impossible_Combination_Absent_Passes(t *testing.T) {
-	recorder := new_test_recorder()
-	a := invariant.Recorder_Sometimes(recorder, true, "a")
-	b := invariant.Recorder_Sometimes(recorder, false, "b")
-	forbidden := invariant.Impossible(
-		invariant.Event_True("a"),
-		invariant.Event_True("b"),
-	)
-	failed := false
-	func() {
-		defer func() {
-			if recover() != nil {
-				failed = true
-			}
-		}()
-		invariant.Recorder_Dot_Product(recorder, "check", a, b, forbidden)
-	}()
-	if failed {
-		t.Fatal("Recorder_Dot_Product must not fail when the " +
-			"Impossible combination is absent")
-	}
-}
-
-// Enforcement memoizes a namespace's bundle SHAPE, never its per-call verdict: the same
-// namespace called first with the forbidden combination absent (no panic) and then with it
-// present must fail on the second call. A cache that stored "no violation" from the first
-// call would wrongly stay silent.
+// Enforcement evaluates current conditions on every Ensure; a clean first call cannot cache away a
+// later forbidden combination under the same namespace.
 func Test_Dot_Product_Enforcement_Verdict_Is_Not_Cached(t *testing.T) {
 	recorder := new_test_recorder()
-	forbidden := invariant.Impossible(
-		invariant.Event_True("a"),
-		invariant.Event_True("b"),
-	)
-	absent := recover_message(func() {
-		invariant.Recorder_Dot_Product(recorder, "check",
-			invariant.Recorder_Sometimes(recorder, true, "a"),
-			invariant.Recorder_Sometimes(recorder, false, "b"),
-			forbidden)
-	})
-	if absent != "" {
-		t.Fatalf("first call (combination absent) must not panic, got: %s", absent)
-	}
-	present := recover_message(func() {
-		invariant.Recorder_Dot_Product(recorder, "check",
-			invariant.Recorder_Sometimes(recorder, true, "a"),
-			invariant.Recorder_Sometimes(recorder, true, "b"),
-			forbidden)
-	})
-	if present == "" {
-		t.Fatal("second call (combination present) must panic after a clean first call")
-	}
-}
-
-// Enforcement fires on cached calls, not only the first: a namespace whose forbidden
-// combination is present on two successive calls must panic both times. A cache that enforced
-// only while building its handle would let the second call through.
-func Test_Dot_Product_Enforcement_Fires_On_Cached_Call(t *testing.T) {
-	recorder := new_test_recorder()
-	call := func() (message string) {
-		return recover_message(func() {
-			invariant.Recorder_Dot_Product(recorder, "check",
-				invariant.Recorder_Sometimes(recorder, true, "a"),
-				invariant.Recorder_Sometimes(recorder, true, "b"),
-				invariant.Impossible(
-					invariant.Event_True("a"),
-					invariant.Event_True("b"),
-				))
+	call := func(second bool) (message string) {
+		return panic_text(func() {
+			invariant.Recorder_Dot_Product(recorder, "check").
+				Sometimes(true, "a").
+				Sometimes(second, "b").
+				Impossible("a and b are exclusive",
+					invariant.Event_True("a"), invariant.Event_True("b")).
+				Ensure()
 		})
 	}
-	if call() == "" {
-		t.Fatal("first call must panic on the forbidden combination")
+	if message := call(false); message != "" {
+		t.Fatalf("absent combination panicked: %s", message)
 	}
-	if call() == "" {
-		t.Fatal("second call must also panic — enforcement is not build-only")
-	}
-}
-
-// A reference naming a non-sibling axis is a typo that panics on EVERY call, not just the
-// first: a cache must never store a partial or invalid handle from a failed build, or a repeat
-// of the same bad bundle would silently pass.
-func Test_Dot_Product_Non_Sibling_Reference_Panics_Every_Call(t *testing.T) {
-	recorder := new_test_recorder()
-	call := func() (message string) {
-		return recover_message(func() {
-			invariant.Recorder_Dot_Product(recorder, "check",
-				invariant.Recorder_Sometimes(recorder, true, "a"),
-				invariant.Impossible(
-					invariant.Event_True("a"),
-					invariant.Event_True("typo"),
-				))
-		})
-	}
-	first := call()
-	if !strings.Contains(first, "typo") {
-		t.Fatalf("first call must panic naming the non-sibling reference, got: %s", first)
-	}
-	second := call()
-	if second != first {
-		t.Fatalf("the typo must panic identically on every call: first=%q second=%q",
-			first, second)
+	if message := call(true); message == "" {
+		t.Fatal("present combination must panic after a clean call")
 	}
 }
 
-// A panic names every Impossible violated on the call, in bundle order, and its text is the
-// same whether the resolution is scanned or cached — two forbidden combinations both present
-// yield one panic naming both.
+// Every matching rule is reported in declaration order, so one execution exposes all independent
+// invalid combinations rather than hiding everything after the first.
 func Test_Dot_Product_Enforcement_Names_All_Violations_In_Order(t *testing.T) {
 	recorder := new_test_recorder()
-	message := recover_message(func() {
-		invariant.Recorder_Dot_Product(recorder, "check",
-			invariant.Recorder_Sometimes(recorder, true, "a"),
-			invariant.Recorder_Sometimes(recorder, true, "b"),
-			invariant.Recorder_Sometimes(recorder, true, "c"),
-			invariant.Impossible(invariant.Event_True("a"), invariant.Event_True("b")),
-			invariant.Impossible(invariant.Event_True("a"), invariant.Event_True("c")),
-		)
+	message := panic_text(func() {
+		invariant.Recorder_Dot_Product(recorder, "check").
+			Sometimes(true, "a").Sometimes(true, "b").Sometimes(true, "c").
+			Impossible("a with b",
+				invariant.Event_True("a"), invariant.Event_True("b")).
+			Impossible("a with c",
+				invariant.Event_True("a"), invariant.Event_True("c")).
+			Ensure()
 	})
-	if strings.Count(message, "forbidden combination occurred") != 2 {
-		t.Fatalf("panic must name every violated Impossible, not the first: %s", message)
-	}
-	first_offset := strings.Index(message, "\n  b  ")
-	second_offset := strings.Index(message, "\n  c  ")
+	first_offset := strings.Index(message, "a with b")
+	second_offset := strings.Index(message, "a with c")
 	if first_offset < 0 {
-		t.Fatalf("panic must name violated axis b: %s", message)
+		t.Fatalf("panic must name first rule: %s", message)
 	}
-	if second_offset < 0 {
-		t.Fatalf("panic must name violated axis c: %s", message)
-	}
-	if first_offset > second_offset {
-		t.Fatalf("violations must appear in bundle order (a,b before a,c): %s", message)
+	if second_offset <= first_offset {
+		t.Fatalf("panic must preserve rule order: %s", message)
 	}
 }
 
-// An element's identity is the author-supplied message it carries — the identity
-// that static registration and the runtime rendezvous on, with no caller lookup.
-func Test_Element_Message_Is_Identity(t *testing.T) {
-	recorder := new_test_recorder()
-	element := invariant.Recorder_Sometimes(recorder, true, "balance positive")
-	if element.Message != "balance positive" {
-		t.Fatalf("element Message = %q, want \"balance positive\"", element.Message)
+// Axis and tuple credits rendezvous with the entries prebuilt by registration, including the
+// little-endian packed mask where axis i is bit i.
+func Test_Dot_Product_Increments_Seeded_Axis_And_Tuple(t *testing.T) {
+	recorder, _, _ := registered_chain_fixture()
+	invariant.Recorder_Dot_Product(recorder, "check").
+		Sometimes(true, "zero").Sometimes(false, "one").
+		Impossible("exclusive", invariant.Event_True("zero"), invariant.Event_True("one")).
+		Ensure()
+	axis := chain_metadata(&chain_metadata_input{
+		Test: t, Recorder: recorder,
+		Key: invariant.Chain_Key{Namespace: "check", Ordinal: 0, Message: "zero"},
+	})
+	if axis.Frequency.Load() != 1 {
+		t.Fatalf("axis frequency = %d, want 1", axis.Frequency.Load())
 	}
-}
-
-// Recorder_Dot_Product increments the seeded tracker entry for each observed
-// element: Frequency on a true event, False_Frequency on false.
-func Test_Dot_Product_Increments_Seeded_Element(t *testing.T) {
-	recorder := new_test_recorder()
-	recorder.Is_Test = true
-	element := invariant.Recorder_Sometimes(recorder, true, "zero")
-	key := "check" + invariant.ELEMENT_MESSAGE_SEPARATOR + element.Message
-	metadata := &invariant.Assertion_Metadata{
-		Kind: invariant.ASSERTION_KIND_SOMETIMES, Message: key,
+	value, exists := recorder.Events.Load("check:tuple=(1,0)")
+	if !exists {
+		t.Fatal("registered tuple (1,0) is missing")
 	}
-	recorder.Events.Store(key, metadata)
-	invariant.Recorder_Dot_Product(recorder, "check", element)
-	if metadata.Frequency.Load() != 1 {
-		t.Fatalf("Frequency = %d, want 1", metadata.Frequency.Load())
-	}
-	if metadata.False_Frequency.Load() != 0 {
-		t.Fatalf("False_Frequency = %d, want 0", metadata.False_Frequency.Load())
-	}
-}
-
-// An element consumed by a Dot_Product is credited under the compound key the
-// prefix forms with the element's own message (prefix + separator + message), not
-// under the bare message. The element names itself "zero"; consumed by the "check"
-// Dot_Product its runtime key is "check␀zero", so the prefixed entry is credited and
-// the bare "zero" entry — a different grid's identity — is left untouched.
-func Test_Dot_Product_Credits_Element_Via_Prefixed_Key(t *testing.T) {
-	recorder := new_test_recorder()
-	recorder.Is_Test = true
-	element := invariant.Recorder_Sometimes(recorder, true, "zero")
-	prefixed_key := "check" + invariant.ELEMENT_MESSAGE_SEPARATOR + element.Message
-	prefixed := &invariant.Assertion_Metadata{
-		Kind: invariant.ASSERTION_KIND_SOMETIMES, Message: prefixed_key,
-	}
-	bare := &invariant.Assertion_Metadata{
-		Kind: invariant.ASSERTION_KIND_SOMETIMES, Message: "zero",
-	}
-	recorder.Events.Store(prefixed_key, prefixed)
-	recorder.Events.Store("zero", bare)
-	invariant.Recorder_Dot_Product(recorder, "check", element)
-	if prefixed.Frequency.Load() != 1 {
-		t.Fatalf("prefixed Frequency = %d, want 1", prefixed.Frequency.Load())
-	}
-	if bare.Frequency.Load() != 0 {
-		t.Fatalf("bare Frequency = %d, want 0 (the prefix namespaces the key)",
-			bare.Frequency.Load())
-	}
-}
-
-// Recorder_Dot_Product increments the seeded tuple entry for the observed
-// combination of element events, keyed by the Dot_Product's message prefix. Both
-// Sometimes elements fire true, so the observed tuple is (1, 1) under prefix "check".
-func Test_Dot_Product_Increments_Seeded_Tuple(t *testing.T) {
-	recorder := new_test_recorder()
-	recorder.Is_Test = true
-	a := invariant.Recorder_Sometimes(recorder, true, "a")
-	b := invariant.Recorder_Sometimes(recorder, true, "b")
-	tuple := &invariant.Assertion_Metadata{
-		Kind:          invariant.ASSERTION_KIND_TUPLE,
-		Message:       "check",
-		Tuple_Indices: []int{1, 1},
-	}
-	recorder.Events.Store("check:tuple=(1,1)", tuple)
-	invariant.Recorder_Dot_Product(recorder, "check", a, b)
-	if tuple.Frequency.Load() != 1 {
-		t.Fatalf("tuple Frequency = %d, want 1", tuple.Frequency.Load())
+	if value.(*invariant.Assertion_Metadata).Frequency.Load() != 1 {
+		t.Fatal("tuple (1,0) was not credited")
 	}
 }
 
@@ -281,6 +113,42 @@ func check(n int) {
 	}
 	if _, ok := recorder.Events.Load("check:tuple=(1,1)"); ok {
 		t.Error("tuple (1,1) is carved by the Impossible; it must not be seeded")
+	}
+}
+
+// Registration must treat one ensured call nest as one demanded product. The two axes seed four
+// branch obligations through two metadata entries and the full four-cell tuple grid, minus the
+// one cell carved by the polar Impossible link.
+func Test_Register_Chain_Seeds_Grid_Minus_Carves(t *testing.T) {
+	const SOURCE = `package fixture
+
+func check(n int) {
+	invariant.Dot_Product("check").
+		Sometimes(n == 0, "zero").
+		Sometimes(n == 1, "one").
+		Impossible("zero and one are exclusive",
+			invariant.Event_True("zero"),
+			invariant.Event_True("one")).
+		Ensure()
+}
+`
+	recorder := &invariant.Recorder{
+		File_System: fstest.MapFS{
+			"fixture/check.go": &fstest.MapFile{Data: []byte(SOURCE)},
+		},
+	}
+	invariant.Recorder_Register_Packages_For_Analysis(recorder, "/fixture")
+
+	zero_key := "check" + invariant.ELEMENT_MESSAGE_SEPARATOR + "0" +
+		invariant.ELEMENT_MESSAGE_SEPARATOR + "zero"
+	if _, ok := recorder.Events.Load(zero_key); !ok {
+		t.Error("expected namespace, ordinal, and message to key the first chain axis")
+	}
+	if _, ok := recorder.Events.Load("check:tuple=(0,0)"); !ok {
+		t.Error("expected the surviving tuple (0,0) to remain demanded")
+	}
+	if _, ok := recorder.Events.Load("check:tuple=(1,1)"); ok {
+		t.Error("the Impossible link must carve tuple (1,1)")
 	}
 }
 
@@ -1426,11 +1294,14 @@ func new_test_recorder() (recorder *invariant.Recorder) {
 // a production binary pays on every assertion and must not allocate.
 func Benchmark_Dot_Product_Enforcement(b *testing.B) {
 	recorder := &invariant.Recorder{}
+	call := func() {
+		invariant.Recorder_Dot_Product(recorder, "bench").
+			Sometimes(true, "a").Sometimes(false, "b").Ensure()
+	}
+	call()
 	b.ReportAllocs()
 	for range b.N {
-		invariant.Recorder_Dot_Product(recorder, "bench",
-			invariant.Recorder_Sometimes(recorder, true, "a"),
-			invariant.Recorder_Sometimes(recorder, false, "b"))
+		call()
 	}
 }
 
@@ -1439,27 +1310,19 @@ func Benchmark_Dot_Product_Enforcement(b *testing.B) {
 // handle cache is warmed first, so the loop measures steady state — the cost a fuzz worker pays per
 // input — which must not allocate.
 func Benchmark_Dot_Product_Recording(b *testing.B) {
-	recorder := &invariant.Recorder{Is_Test: true}
-	for _, key := range []string{
-		"bench" + invariant.ELEMENT_MESSAGE_SEPARATOR + "a",
-		"bench" + invariant.ELEMENT_MESSAGE_SEPARATOR + "b",
-		"bench:tuple=(1,0)",
-	} {
-		recorder.Events.Store(key, &invariant.Assertion_Metadata{
-			Kind: invariant.ASSERTION_KIND_SOMETIMES, Message: key,
-		})
+	recorder, _, _ := registered_chain_fixture()
+	call := func() {
+		invariant.Recorder_Dot_Product(recorder, "check").
+			Sometimes(true, "zero").Sometimes(false, "one").
+			Impossible("exclusive",
+				invariant.Event_True("zero"), invariant.Event_True("one")).
+			Ensure()
 	}
-	// Warm the per-callsite handle cache so the loop measures steady state, not the
-	// one-time key construction the first call pays.
-	invariant.Recorder_Dot_Product(recorder, "bench",
-		invariant.Recorder_Sometimes(recorder, true, "a"),
-		invariant.Recorder_Sometimes(recorder, false, "b"))
+	call()
 	b.ReportAllocs()
 	b.ResetTimer()
 	for range b.N {
-		invariant.Recorder_Dot_Product(recorder, "bench",
-			invariant.Recorder_Sometimes(recorder, true, "a"),
-			invariant.Recorder_Sometimes(recorder, false, "b"))
+		call()
 	}
 }
 
@@ -1471,40 +1334,8 @@ func Benchmark_Dot_Product_Recording(b *testing.B) {
 // not allocate regardless of how many Impossibles it carries.
 func Test_Dot_Product_Allocates_Nothing_On_Success(t *testing.T) {
 	recorder := new_test_recorder()
-	const METRIC_MIN = 0
-	const METRIC_MAX = 100
-	value := 0
-	allocs := testing.AllocsPerRun(1000, func() {
-		invariant.Recorder_Dot_Product(recorder, "metric",
-			invariant.Recorder_Sometimes(recorder, value == 0, "zero"),
-			invariant.Recorder_Sometimes(recorder, value == 1, "one"),
-			invariant.Recorder_Sometimes(recorder, value == 2, "two"),
-			invariant.Recorder_Sometimes(recorder, value == METRIC_MIN, "min"),
-			invariant.Recorder_Sometimes(recorder, value == METRIC_MAX, "max"),
-			invariant.Impossible(
-				invariant.Event_True("zero"), invariant.Event_False("min")),
-			invariant.Impossible(
-				invariant.Event_False("zero"), invariant.Event_True("min")),
-			invariant.Impossible(
-				invariant.Event_True("zero"), invariant.Event_True("one")),
-			invariant.Impossible(
-				invariant.Event_True("zero"), invariant.Event_True("two")),
-			invariant.Impossible(
-				invariant.Event_True("zero"), invariant.Event_True("max")),
-			invariant.Impossible(
-				invariant.Event_True("min"), invariant.Event_True("one")),
-			invariant.Impossible(
-				invariant.Event_True("min"), invariant.Event_True("two")),
-			invariant.Impossible(
-				invariant.Event_True("min"), invariant.Event_True("max")),
-			invariant.Impossible(
-				invariant.Event_True("one"), invariant.Event_True("two")),
-			invariant.Impossible(
-				invariant.Event_True("one"), invariant.Event_True("max")),
-			invariant.Impossible(
-				invariant.Event_True("two"), invariant.Event_True("max")),
-		)
-	})
+	metric_chain(recorder, 0)
+	allocs := testing.AllocsPerRun(1000, func() { metric_chain(recorder, 0) })
 	if allocs != 0 {
 		t.Fatalf("Recorder_Dot_Product allocated %v objects/call on success, want 0",
 			allocs)
@@ -1517,39 +1348,45 @@ func Test_Dot_Product_Allocates_Nothing_On_Success(t *testing.T) {
 // -benchmem on whichever mode is being profiled.
 func Benchmark_Dot_Product_Impossible_Heavy(b *testing.B) {
 	recorder := &invariant.Recorder{}
-	const METRIC_MIN = 0
-	const METRIC_MAX = 100
-	value := 0
+	metric_chain(recorder, 0)
 	b.ReportAllocs()
 	for range b.N {
-		invariant.Recorder_Dot_Product(recorder, "bench",
-			invariant.Recorder_Sometimes(recorder, value == 0, "zero"),
-			invariant.Recorder_Sometimes(recorder, value == 1, "one"),
-			invariant.Recorder_Sometimes(recorder, value == 2, "two"),
-			invariant.Recorder_Sometimes(recorder, value == METRIC_MIN, "min"),
-			invariant.Recorder_Sometimes(recorder, value == METRIC_MAX, "max"),
-			invariant.Impossible(
-				invariant.Event_True("zero"), invariant.Event_False("min")),
-			invariant.Impossible(
-				invariant.Event_False("zero"), invariant.Event_True("min")),
-			invariant.Impossible(
-				invariant.Event_True("zero"), invariant.Event_True("one")),
-			invariant.Impossible(
-				invariant.Event_True("zero"), invariant.Event_True("two")),
-			invariant.Impossible(
-				invariant.Event_True("zero"), invariant.Event_True("max")),
-			invariant.Impossible(
-				invariant.Event_True("min"), invariant.Event_True("one")),
-			invariant.Impossible(
-				invariant.Event_True("min"), invariant.Event_True("two")),
-			invariant.Impossible(
-				invariant.Event_True("min"), invariant.Event_True("max")),
-			invariant.Impossible(
-				invariant.Event_True("one"), invariant.Event_True("two")),
-			invariant.Impossible(
-				invariant.Event_True("one"), invariant.Event_True("max")),
-			invariant.Impossible(
-				invariant.Event_True("two"), invariant.Event_True("max")),
-		)
+		metric_chain(recorder, 0)
 	}
+}
+
+// The zero/min polarity rules are load-bearing: METRIC_MIN is zero, so the two axes must agree,
+// while every distinct boundary pair must never both be true.
+func metric_chain(recorder *invariant.Recorder, value int) {
+	const METRIC_MIN = 0
+	const METRIC_MAX = 100
+	invariant.Recorder_Dot_Product(recorder, "metric").
+		Sometimes(value == 0, "zero").
+		Sometimes(value == 1, "one").
+		Sometimes(value == 2, "two").
+		Sometimes(value == METRIC_MIN, "min").
+		Sometimes(value == METRIC_MAX, "max").
+		Impossible("zero implies min",
+			invariant.Event_True("zero"), invariant.Event_False("min")).
+		Impossible("min implies zero",
+			invariant.Event_False("zero"), invariant.Event_True("min")).
+		Impossible("zero and one are exclusive",
+			invariant.Event_True("zero"), invariant.Event_True("one")).
+		Impossible("zero and two are exclusive",
+			invariant.Event_True("zero"), invariant.Event_True("two")).
+		Impossible("zero and max are exclusive",
+			invariant.Event_True("zero"), invariant.Event_True("max")).
+		Impossible("min and one are exclusive",
+			invariant.Event_True("min"), invariant.Event_True("one")).
+		Impossible("min and two are exclusive",
+			invariant.Event_True("min"), invariant.Event_True("two")).
+		Impossible("min and max are exclusive",
+			invariant.Event_True("min"), invariant.Event_True("max")).
+		Impossible("one and two are exclusive",
+			invariant.Event_True("one"), invariant.Event_True("two")).
+		Impossible("one and max are exclusive",
+			invariant.Event_True("one"), invariant.Event_True("max")).
+		Impossible("two and max are exclusive",
+			invariant.Event_True("two"), invariant.Event_True("max")).
+		Ensure()
 }

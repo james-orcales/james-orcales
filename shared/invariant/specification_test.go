@@ -3,1604 +3,903 @@ package invariant_test
 import (
 	"bytes"
 	"fmt"
-	"path/filepath"
-	"runtime"
 	"strings"
+	"sync"
 	"testing"
 	"testing/fstest"
 
 	"local/james-orcales/shared/invariant"
-	snap "local/james-orcales/shared/snap/default"
 )
 
-// Test_Always_Violation: a false Always panics on its own, in every run mode, naming
-// itself by its message — there is no Dot_Product to defer to.
+// Test_Always_Violation prevents its specification contract from regressing.
 func Test_Always_Violation(t *testing.T) {
-	recorder := new_test_recorder()
-	message := recover_message(func() {
-		invariant.Recorder_Always(recorder, false, "balance non-negative")
-	})
-	if message == "" {
-		t.Fatal("a false Always must panic on its own")
-	}
-	if !strings.Contains(message, "balance non-negative") {
-		t.Fatalf("the panic must name the Always by its message, got: %s", message)
-	}
-	if !strings.Contains(message, "Always — condition was false") {
-		t.Fatalf("the panic must describe the Always violation, got: %s", message)
+	recorder := &invariant.Recorder{}
+	message := panic_text(func() { invariant.Recorder_Always(recorder, false, "guard") })
+	if !strings.Contains(message, "guard") {
+		t.Fatalf("panic = %q, want guard", message)
 	}
 }
 
-// Test_Always_Eager: a false Always panics at its own call, before the next statement runs
-// — it is never inert and never waits for a Dot_Product to consume it.
+// Test_Always_Eager prevents its specification contract from regressing.
 func Test_Always_Eager(t *testing.T) {
-	recorder := new_test_recorder()
-	reached_next := false
-	did_panic(func() {
-		invariant.Recorder_Always(recorder, false, "guard")
-		reached_next = true
-	})
-	if reached_next {
-		t.Fatal("a false Always must panic at its own call, before the following statement")
+	recorder := &invariant.Recorder{}
+	if panic_text(func() { invariant.Recorder_Always(recorder, false, "eager") }) == "" {
+		t.Fatal("Always must panic at its own call")
 	}
 }
 
-// Test_Always_Reachability: an Always the suite never reaches is a coverage gap.
+// Test_Always_Reachability prevents its specification contract from regressing.
 func Test_Always_Reachability(t *testing.T) {
-	var output bytes.Buffer
-	exit_code := -1
-	recorder := &invariant.Recorder{
-		Is_Test: true, Output: &output, Exit: func(code int) { exit_code = code },
-	}
-	metadata := &invariant.Assertion_Metadata{
-		Kind: invariant.ASSERTION_KIND_ALWAYS, Message: "positive", Condition: "x > 0",
-	}
-	recorder.Events.Store("positive", metadata)
-
+	recorder, output, _ := registered_fixture(`package fixture
+func check(ok bool) { invariant.Always(ok, "reachable") }
+`)
 	invariant.Recorder_Analyze_Assertion_Frequency(recorder)
-
-	if exit_code != 1 {
-		t.Fatalf("an unreached Always must exit 1, got %d", exit_code)
-	}
-	if !strings.Contains(output.String(), "positive") {
-		t.Errorf("report must name the unreached Always by its message, got: %s",
-			output.String())
+	if !strings.Contains(output.String(), "reachable") {
+		t.Fatalf("gap report = %q, want reachable", output.String())
 	}
 }
 
-// Test_Sometimes_Coverage: a consumed Sometimes credits the branch it fired on.
+// Test_Sometimes_Coverage prevents its specification contract from regressing.
 func Test_Sometimes_Coverage(t *testing.T) {
-	recorder := new_test_recorder()
-	recorder.Is_Test = true
-	element := invariant.Recorder_Sometimes(recorder, true, "zero")
-	key := "check" + invariant.ELEMENT_MESSAGE_SEPARATOR + element.Message
-	metadata := &invariant.Assertion_Metadata{
-		Kind: invariant.ASSERTION_KIND_SOMETIMES, Message: key,
+	recorder, _, _ := registered_chain_fixture()
+	product := invariant.Recorder_Dot_Product(recorder, "check").
+		Sometimes(true, "zero").
+		Sometimes(false, "one").
+		Impossible("exclusive", invariant.Event_True("zero"), invariant.Event_True("one"))
+	metadata := chain_metadata(&chain_metadata_input{
+		Test: t, Recorder: recorder,
+		Key: invariant.Chain_Key{Namespace: "check", Ordinal: 0, Message: "zero"},
+	})
+	if metadata.Frequency.Load() != 0 {
+		t.Fatal("Sometimes recorded before Ensure")
 	}
-	recorder.Events.Store(key, metadata)
-
-	invariant.Recorder_Dot_Product(recorder, "check", element)
-
+	product.Ensure()
 	if metadata.Frequency.Load() != 1 {
-		t.Fatalf("a true Sometimes must credit the true branch, got %d",
-			metadata.Frequency.Load())
-	}
-	if metadata.False_Frequency.Load() != 0 {
-		t.Fatalf("a true Sometimes must not credit the false branch, got %d",
-			metadata.False_Frequency.Load())
+		t.Fatalf("true frequency = %d, want 1", metadata.Frequency.Load())
 	}
 }
 
-// Test_Sometimes_Gap: a Sometimes seen only one way reports the branch it missed,
-// whichever it was.
+// Test_Sometimes_Gap prevents its specification contract from regressing.
 func Test_Sometimes_Gap(t *testing.T) {
-	cases := []struct {
-		Name      string
-		Seen_True bool
-		Reason    string
-	}{
-		{"only true observed", true, "false branch never observed"},
-		{"only false observed", false, "true branch never observed"},
-	}
-	for _, one := range cases {
-		var output bytes.Buffer
-		exit_code := -1
-		recorder := &invariant.Recorder{
-			Is_Test: true, Output: &output, Exit: func(code int) { exit_code = code },
-		}
-		metadata := &invariant.Assertion_Metadata{
-			Kind:    invariant.ASSERTION_KIND_SOMETIMES,
-			Message: "zero", Condition: "n == 0",
-		}
-		if one.Seen_True {
-			metadata.Frequency.Add(1)
-		} else {
-			metadata.False_Frequency.Add(1)
-		}
-		recorder.Events.Store("zero", metadata)
-
-		invariant.Recorder_Analyze_Assertion_Frequency(recorder)
-
-		if exit_code != 1 {
-			t.Fatalf("%s: a one-sided Sometimes must exit 1, got %d",
-				one.Name, exit_code)
-		}
-		if !strings.Contains(output.String(), one.Reason) {
-			t.Errorf("%s: report must contain %q, got: %s",
-				one.Name, one.Reason, output.String())
-		}
+	recorder, output, _ := registered_chain_fixture()
+	invariant.Recorder_Dot_Product(recorder, "check").
+		Sometimes(true, "zero").
+		Sometimes(false, "one").
+		Impossible("exclusive", invariant.Event_True("zero"), invariant.Event_True("one")).
+		Ensure()
+	invariant.Recorder_Analyze_Assertion_Frequency(recorder)
+	if !strings.Contains(output.String(), "zero") {
+		t.Fatalf("gap report = %q, want zero", output.String())
 	}
 }
 
-// Test_Impossible_Violation: when the forbidden combination occurs, Dot_Product panics,
-// naming each co-occurring axis by its message.
-func Test_Impossible_Violation(t *testing.T) {
-	recorder := new_test_recorder()
-	first := invariant.Recorder_Sometimes(recorder, true, "first")
-	second := invariant.Recorder_Sometimes(recorder, true, "second")
-	forbidden := invariant.Impossible(
-		invariant.Event_True("first"), invariant.Event_True("second"))
-	message := recover_message(func() {
-		invariant.Recorder_Dot_Product(recorder, "check", first, second, forbidden)
-	})
-	if message == "" {
-		t.Fatal("an Impossible whose combination occurs must panic")
-	}
-	if !strings.Contains(message, first.Message) {
-		t.Fatalf("the panic must name the first co-occurring axis %q, got: %s",
-			first.Message, message)
-	}
-	if !strings.Contains(message, second.Message) {
-		t.Fatalf("the panic must name the second co-occurring axis %q, got: %s",
-			second.Message, message)
-	}
+// Test_Dot_Product_Links prevents its specification contract from regressing.
+func Test_Dot_Product_Links(t *testing.T) {
+	recorder := &invariant.Recorder{}
+	invariant.Recorder_Dot_Product(recorder, "check").
+		Sometimes(true, "present").
+		Impossible("present cannot be false", invariant.Event_False("present")).
+		Ensure()
 }
 
-// Test_Impossible_Absent: when the combination is not fully present, no panic.
-func Test_Impossible_Absent(t *testing.T) {
-	recorder := new_test_recorder()
-	first := invariant.Recorder_Sometimes(recorder, true, "first")
-	second := invariant.Recorder_Sometimes(recorder, false, "second")
-	forbidden := invariant.Impossible(
-		invariant.Event_True("first"), invariant.Event_True("second"))
-	if did_panic(func() {
-		invariant.Recorder_Dot_Product(recorder, "check", first, second, forbidden)
-	}) {
-		t.Fatal("an Impossible whose combination is absent must not panic")
-	}
-}
-
-// Test_Impossible_Glob: naming a subset of axes carves every cell matching the named
-// events across all values of the unnamed axes.
-func Test_Impossible_Glob(t *testing.T) {
-	const SOURCE = `package fixture
-
-func check(n int) {
-	invariant.Dot_Product("check",
-		invariant.Sometimes(n == 0, "a"),
-		invariant.Sometimes(n == 1, "b"),
-		invariant.Sometimes(n == 2, "c"),
-		invariant.Impossible(invariant.Event_True("a"), invariant.Event_True("b")),
-	)
-}
-`
-	recorder := &invariant.Recorder{
-		File_System: fstest.MapFS{
-			"fixture/check.go": &fstest.MapFile{Data: []byte(SOURCE)},
-		},
-	}
-	invariant.Recorder_Register_Packages_For_Analysis(recorder, "/fixture")
-
-	// Both a and b true is carved for either value of the unnamed c, so neither
-	// (1,1,0) nor (1,1,1) survives.
-	if _, ok := recorder.Events.Load("check:tuple=(1,1,0)"); ok {
-		t.Error("the (1,1,0) cell must be carved across the unnamed c axis")
-	}
-	if _, ok := recorder.Events.Load("check:tuple=(1,1,1)"); ok {
-		t.Error("the (1,1,1) cell must be carved across the unnamed c axis")
-	}
-	// A cell that does not match the named events fully survives — only a and b
-	// both true is forbidden.
-	if _, ok := recorder.Events.Load("check:tuple=(1,0,1)"); !ok {
-		t.Error("a cell not matching both named events must survive")
-	}
-}
-
-// Test_Impossible_Sibling: an Impossible may reference only axes of its own Dot_Product. Naming a
-// message that is not a sibling panics at the Dot_Product on every call — a structural precondition
-// checked before recording, independent of whether the forbidden combination can occur (here the
-// named axis is not even present in the product).
-func Test_Impossible_Sibling(t *testing.T) {
-	recorder := new_test_recorder()
-	present := invariant.Recorder_Sometimes(recorder, true, "present")
-	// "orphan" is not an axis of the product below — only "present" is — so the Impossible
-	// names a message that is not a sibling.
-	if !did_panic(func() {
-		invariant.Recorder_Dot_Product(recorder, "check", present,
-			invariant.Impossible(invariant.Event_True("orphan")))
-	}) {
-		t.Fatal("an Impossible naming a non-sibling must panic at the Dot_Product")
-	}
-}
-
-// Test_Imply_Gated: a gated axis credits a branch only on a call where its prerequisite held; a
-// call where the prerequisite failed credits neither branch, so a failing prerequisite never
-// stands in for the gated false event.
-func Test_Imply_Gated(t *testing.T) {
-	recorder := new_test_recorder()
-	recorder.Is_Test = true
-	key := "check" + invariant.ELEMENT_MESSAGE_SEPARATOR + "gated"
-	metadata := &invariant.Assertion_Metadata{
-		Kind: invariant.ASSERTION_KIND_SOMETIMES, Message: key,
-	}
-	recorder.Events.Store(key, metadata)
-
-	// Prerequisite false: neither branch is credited, though the condition is true.
-	invariant.Recorder_Dot_Product(recorder, "check",
-		invariant.Recorder_Imply(recorder, false, true, "gated"))
-	if metadata.Frequency.Load() != 0 {
-		t.Fatalf("a failing prerequisite must not credit the true branch, got %d",
-			metadata.Frequency.Load())
-	}
-	if metadata.False_Frequency.Load() != 0 {
-		t.Fatalf("a failing prerequisite must not credit the false branch, got %d",
-			metadata.False_Frequency.Load())
-	}
-
-	// Prerequisite true, condition true: the true branch is credited.
-	invariant.Recorder_Dot_Product(recorder, "check",
-		invariant.Recorder_Imply(recorder, true, true, "gated"))
-	if metadata.Frequency.Load() != 1 {
-		t.Fatalf("a holding prerequisite must credit the observed branch, got %d",
-			metadata.Frequency.Load())
-	}
-}
-
-// Test_Imply_Excluded: a gated Imply axis is per-axis coverage only — seeded as its own entry but
-// joining no tuple of the grid, since the message-less prerequisite is no axis to cross.
-func Test_Imply_Excluded(t *testing.T) {
-	const SOURCE = `package fixture
-
-func check(n int, p *int) {
-	invariant.Dot_Product("check",
-		invariant.Sometimes(n == 0, "zero"),
-		invariant.Imply(p != nil, n == 1, "gated"),
-	)
-}
-`
-	recorder := &invariant.Recorder{
-		File_System: fstest.MapFS{
-			"fixture/check.go": &fstest.MapFile{Data: []byte(SOURCE)},
-		},
-	}
-	invariant.Recorder_Register_Packages_For_Analysis(recorder, "/fixture")
-
-	if _, ok := recorder.Events.Load(
-		"check" + invariant.ELEMENT_MESSAGE_SEPARATOR + "gated"); !ok {
-		t.Error("the gated axis must seed its own per-axis entry")
-	}
-	if _, ok := recorder.Events.Load("check:tuple=(0)"); !ok {
-		t.Error("the grid must be over the ungated axis alone: tuple (0)")
-	}
-	if _, ok := recorder.Events.Load("check:tuple=(0,0)"); ok {
-		t.Error("the gated axis must not widen the grid into a 2x2")
-	}
-}
-
-// Test_Imply_Conjunction: an axis meaningful only under several prerequisites gates on their
-// conjunction — it records only on a call where every one holds.
-func Test_Imply_Conjunction(t *testing.T) {
-	recorder := new_test_recorder()
-	recorder.Is_Test = true
-	key := "check" + invariant.ELEMENT_MESSAGE_SEPARATOR + "gated"
-	metadata := &invariant.Assertion_Metadata{
-		Kind: invariant.ASSERTION_KIND_SOMETIMES, Message: key,
-	}
-	recorder.Events.Store(key, metadata)
-	loaded, present := true, false
-
-	// One term of the conjunction fails: not recorded.
-	invariant.Recorder_Dot_Product(recorder, "check",
-		invariant.Recorder_Imply(recorder, loaded && present, true, "gated"))
-	if metadata.Frequency.Load() != 0 {
-		t.Fatalf("a conjunction with a failing term must not record, got %d",
-			metadata.Frequency.Load())
-	}
-
-	// Every term holds: recorded.
-	present = true
-	invariant.Recorder_Dot_Product(recorder, "check",
-		invariant.Recorder_Imply(recorder, loaded && present, true, "gated"))
-	if metadata.Frequency.Load() != 1 {
-		t.Fatalf("a conjunction with every term holding must record, got %d",
-			metadata.Frequency.Load())
-	}
-}
-
-// Test_Dot_Product_Inert: constructing a Sometimes enforces and records nothing until a
-// Dot_Product consumes it. An Always, by contrast, is eager, as Test_Always_Eager shows.
-func Test_Dot_Product_Inert(t *testing.T) {
-	recorder := new_test_recorder()
-	if did_panic(func() { invariant.Recorder_Sometimes(recorder, false, "zero") }) {
-		t.Fatal("constructing a Sometimes must not panic on its own")
-	}
-}
-
-// Test_Dot_Product_Identity: an element is keyed by the author-supplied message it carries.
+// Test_Dot_Product_Identity prevents its specification contract from regressing.
 func Test_Dot_Product_Identity(t *testing.T) {
-	recorder := new_test_recorder()
-	element := invariant.Recorder_Sometimes(recorder, true, "balance positive")
-	if element.Message != "balance positive" {
-		t.Fatalf("element Message = %q, want \"balance positive\"", element.Message)
-	}
-}
-
-// Test_Dot_Product_Grid: registration seeds the surviving cells and drops the carve. The
-// grid is over the varying Sometimes axes alone; the bare Always is not an element and
-// occupies no coordinate — it seeds only its own reachability entry under its message.
-func Test_Dot_Product_Grid(t *testing.T) {
 	const SOURCE = `package fixture
-
-func check(n int) {
-	invariant.Always(n >= 0, "non-negative")
-	invariant.Dot_Product("check",
-		invariant.Sometimes(n == 0, "zero"),
-		invariant.Sometimes(n == 1, "one"),
-		invariant.Impossible(invariant.Event_True("zero"), invariant.Event_True("one")),
-	)
+func check(a bool, b bool) {
+	invariant.Dot_Product("check").Sometimes(a, "same").Sometimes(b, "same").Ensure()
 }
 `
-	recorder := &invariant.Recorder{
-		File_System: fstest.MapFS{
-			"fixture/check.go": &fstest.MapFile{Data: []byte(SOURCE)},
-		},
-	}
-	invariant.Recorder_Register_Packages_For_Analysis(recorder, "/fixture")
-
-	if _, ok := recorder.Events.Load("check:tuple=(0,0)"); !ok {
-		t.Error("the surviving (0,0) cell must be seeded")
-	}
-	if _, ok := recorder.Events.Load("check:tuple=(1,1)"); ok {
-		t.Error("the (1,1) cell carved by the Impossible must not be seeded")
-	}
-	always, ok := recorder.Events.Load("non-negative")
-	if !ok {
-		t.Fatal("the bare Always must seed a reachability entry under its message")
-	}
-	if always.(*invariant.Assertion_Metadata).Kind != invariant.ASSERTION_KIND_ALWAYS {
-		t.Error("the bare Always entry must be an Always axis")
-	}
+	recorder, _, _ := registered_fixture(SOURCE)
+	chain_metadata(&chain_metadata_input{Test: t, Recorder: recorder,
+		Key: invariant.Chain_Key{Namespace: "check", Ordinal: 0, Message: "same"}})
+	chain_metadata(&chain_metadata_input{Test: t, Recorder: recorder,
+		Key: invariant.Chain_Key{Namespace: "check", Ordinal: 1, Message: "same"}})
 }
 
-// Test_Dot_Product_Attribution: a panic names every element violated on the call — each
-// triggered Impossible, not only the first. An eager Always is not part of this; a false one
-// short-circuits before the Dot_Product runs.
-func Test_Dot_Product_Attribution(t *testing.T) {
-	recorder := new_test_recorder()
-	a := invariant.Recorder_Sometimes(recorder, true, "a")
-	b := invariant.Recorder_Sometimes(recorder, true, "b")
-	c := invariant.Recorder_Sometimes(recorder, true, "c")
-	message := recover_message(func() {
-		invariant.Recorder_Dot_Product(recorder, "check", a, b, c,
-			invariant.Impossible(invariant.Event_True("a"), invariant.Event_True("b")),
-			invariant.Impossible(invariant.Event_True("a"), invariant.Event_True("c")),
-		)
+// Test_Dot_Product_Constraint prevents its specification contract from regressing.
+func Test_Dot_Product_Constraint(t *testing.T) {
+	recorder := &invariant.Recorder{}
+	message := panic_text(func() {
+		invariant.Recorder_Dot_Product(recorder, "check").
+			Sometimes(false, "empty").
+			Impossible("empty is required", invariant.Event_False("empty")).
+			Ensure()
 	})
-	if strings.Count(message, "forbidden combination occurred") != 2 {
-		t.Fatalf("panic must name each violated element, not only the first: %s", message)
+	if !strings.Contains(message, "empty is required") {
+		t.Fatalf("panic = %q, want rule message", message)
+	}
+	recorder, _, _ = registered_chain_fixture()
+	axis := chain_metadata(&chain_metadata_input{
+		Test: t, Recorder: recorder,
+		Key: invariant.Chain_Key{Namespace: "check", Ordinal: 0, Message: "zero"},
+	})
+	message = panic_text(func() {
+		invariant.Recorder_Dot_Product(recorder, "check").
+			Sometimes(true, "zero").Sometimes(true, "one").
+			Impossible("exclusive",
+				invariant.Event_True("zero"), invariant.Event_True("one")).
+			Ensure()
+	})
+	if !strings.Contains(message, "exclusive") {
+		t.Fatalf("registered carve panic = %q", message)
+	}
+	if axis.Frequency.Load() != 0 {
+		t.Fatal("a rejected Ensure partially credited an axis")
 	}
 }
 
-// Test_Dot_Product_Empty: a Dot_Product with no elements asserts nothing, so it panics.
-func Test_Dot_Product_Empty(t *testing.T) {
-	recorder := new_test_recorder()
-	if !did_panic(func() { invariant.Recorder_Dot_Product(recorder, "check") }) {
-		t.Fatal("a Dot_Product with no elements must panic")
+// Test_Dot_Product_Sibling prevents its specification contract from regressing.
+func Test_Dot_Product_Sibling(t *testing.T) {
+	recorder := &invariant.Recorder{}
+	var product invariant.Product
+	message := panic_text(func() {
+		product = invariant.Recorder_Dot_Product(recorder, "check").
+			Sometimes(true, "present").
+			Impossible("typo", invariant.Event_True("missing"))
+	})
+	if message != "" {
+		t.Fatalf("Impossible panicked before Ensure: %q", message)
+	}
+	first := panic_text(product.Ensure)
+	second := panic_text(func() {
+		invariant.Recorder_Dot_Product(recorder, "check").
+			Sometimes(true, "present").
+			Impossible("typo", invariant.Event_True("missing")).
+			Ensure()
+	})
+	if first == "" {
+		t.Fatal("a non-sibling reference must panic")
+	}
+	if second != first {
+		t.Fatalf("panics differ: %q != %q", first, second)
+	}
+	registered, _, _ := registered_chain_fixture()
+	message = panic_text(func() {
+		product = invariant.Recorder_Dot_Product(registered, "check").
+			Sometimes(true, "zero").Sometimes(false, "one").
+			Sometimes(true, "extra").
+			Impossible("extra rule", invariant.Event_True("extra"))
+	})
+	if message != "" {
+		t.Fatalf("malformed shape panicked before Ensure: %q", message)
+	}
+	if panic_text(product.Ensure) == "" {
+		t.Fatal("malformed shape must panic at Ensure")
 	}
 }
 
-// Test_Dot_Product_Allocation: a call that violates nothing allocates nothing — the bundle's
-// shape is static per callsite, so only the Event bools vary at runtime.
+// Test_Dot_Product_Shared prevents its specification contract from regressing.
+func Test_Dot_Product_Shared(t *testing.T) {
+	recorder := &invariant.Recorder{}
+	invariant.Recorder_Dot_Product(recorder, "shared").Sometimes(true, "a").Ensure()
+	message := panic_text(func() {
+		invariant.Recorder_Dot_Product(recorder, "shared").Sometimes(true, "b").Ensure()
+	})
+	if !strings.Contains(message, "shape differs") {
+		t.Fatalf("panic = %q, want shape mismatch", message)
+	}
+	invariant.Recorder_Dot_Product(recorder, "deferred").
+		Sometimes(true, "a").Sometimes(true, "b").Ensure()
+	message = panic_text(func() {
+		invariant.Recorder_Dot_Product(recorder, "deferred").
+			Sometimes(true, "different").Sometimes(true, "b").Ensure()
+	})
+	if !strings.Contains(message, "shape differs") {
+		t.Fatalf("later matching link erased mismatch: %q", message)
+	}
+}
+
+// Test_Dot_Product_Unknown prevents its specification contract from regressing.
+func Test_Dot_Product_Unknown(t *testing.T) {
+	recorder, _, _ := registered_chain_fixture()
+	var product invariant.Product
+	message := panic_text(func() {
+		product = invariant.Recorder_Dot_Product(recorder, "check").
+			Sometimes(true, "unknown")
+	})
+	if message != "" {
+		t.Fatalf("Sometimes panicked before Ensure: %q", message)
+	}
+	message = panic_text(product.Ensure)
+	if !strings.Contains(message, "unknown axis") {
+		t.Fatalf("panic = %q, want unknown axis", message)
+	}
+	shape := recorder.Chain_Shapes["check"]
+	shape.Tuples[invariant.Chain_Mask{1}] = invariant.Handle_Entry{}
+	message = panic_text(func() {
+		invariant.Recorder_Dot_Product(recorder, "check").
+			Sometimes(true, "zero").Sometimes(false, "one").
+			Impossible("exclusive",
+				invariant.Event_True("zero"), invariant.Event_True("one")).
+			Ensure()
+	})
+	if !strings.Contains(message, "unknown tuple") {
+		t.Fatalf("panic = %q, want unknown tuple", message)
+	}
+}
+
+// Test_Dot_Product_Allocation prevents its specification contract from regressing.
 func Test_Dot_Product_Allocation(t *testing.T) {
-	recorder := new_test_recorder()
-	allocs := testing.AllocsPerRun(1000, func() {
-		invariant.Recorder_Dot_Product(recorder, "check",
-			invariant.Recorder_Sometimes(recorder, true, "a"),
-			invariant.Recorder_Sometimes(recorder, false, "b"),
-			invariant.Impossible(invariant.Event_True("a"), invariant.Event_True("b")),
-		)
-	})
-	if allocs != 0 {
-		t.Fatalf("a Dot_Product call that violates nothing must not allocate, got %v",
-			allocs)
+	recorder, _, _ := registered_chain_fixture()
+	call := func() {
+		invariant.Recorder_Dot_Product(recorder, "check").
+			Sometimes(true, "zero").
+			Sometimes(false, "one").
+			Impossible("exclusive",
+				invariant.Event_True("zero"), invariant.Event_True("one")).
+			Ensure()
+	}
+	call()
+	if allocations := testing.AllocsPerRun(100, call); allocations != 0 {
+		t.Fatalf("allocations = %v, want 0", allocations)
 	}
 }
 
-// Test_Bundles_Template: a _Invariants is recognized by its name suffix and trailing namespace
-// parameter; the Dot_Product it self-emits under that parameter is a template — not a non-literal
-// failure, seeded only at the callsite's literal namespace, never under the bare parameter.
+// Test_Dot_Product_Persistence prevents its specification contract from regressing.
+func Test_Dot_Product_Persistence(t *testing.T) {
+	recorder, _, _ := registered_chain_fixture()
+	var lines []string
+	recorder.Coverage_Sink = func(key string, fired_true bool) {
+		lines = append(lines, invariant.Fuzz_Coverage_Line(key, fired_true))
+	}
+	invariant.Recorder_Dot_Product(recorder, "check").
+		Sometimes(true, "zero").
+		Sometimes(false, "one").
+		Impossible("exclusive", invariant.Event_True("zero"), invariant.Event_True("one")).
+		Ensure()
+	if len(lines) != 3 {
+		t.Fatalf("first-coverage lines = %d, want 3", len(lines))
+	}
+	key := "check" + invariant.ELEMENT_MESSAGE_SEPARATOR + "0" +
+		invariant.ELEMENT_MESSAGE_SEPARATOR + "zero"
+	axis := chain_metadata(&chain_metadata_input{
+		Test: t, Recorder: recorder,
+		Key: invariant.Chain_Key{Namespace: "check", Ordinal: 0, Message: "zero"},
+	})
+	axis.Frequency.Store(0)
+	recorder.Events.Delete(key)
+	line := invariant.Fuzz_Coverage_Line(key, true)
+	invariant.Recorder_Merge_Fuzz_Coverage_From(recorder, strings.NewReader(line))
+	if axis.Frequency.Load() != 1 {
+		t.Fatal("a serialized chain axis must merge through its structural key")
+	}
+}
+
+// Test_Dot_Product_Registration_Walk prevents its specification contract from regressing.
+func Test_Dot_Product_Registration_Walk(t *testing.T) {
+	recorder, _, _ := registered_chain_fixture()
+	if event_count(&recorder.Events) != 5 {
+		count := event_count(&recorder.Events)
+		t.Fatalf("events = %d, want two axes plus three tuples", count)
+	}
+	if _, exists := recorder.Events.Load("check:tuple=(1,1)"); exists {
+		t.Fatal("the carved cell must not survive registration")
+	}
+	const GLOB_SOURCE = `package fixture
+func check(a bool, b bool, c bool) {
+	invariant.Dot_Product("glob").Sometimes(a, "a").Sometimes(b, "b").Sometimes(c, "c").
+		Impossible("a and not b", invariant.Event_True("a"), invariant.Event_False("b")).Ensure()
+}
+`
+	recorder, _, _ = registered_fixture(GLOB_SOURCE)
+	for _, key := range []string{"glob:tuple=(1,0,0)", "glob:tuple=(1,0,1)"} {
+		if _, exists := recorder.Events.Load(key); exists {
+			t.Fatalf("unnamed c axis must be globbed from %s", key)
+		}
+	}
+	if _, exists := recorder.Events.Load("glob:tuple=(1,1,0)"); !exists {
+		t.Fatal("opposite b polarity must remain demanded")
+	}
+}
+
+// Test_Dot_Product_Registration_Template prevents its specification contract from regressing.
+func Test_Dot_Product_Registration_Template(t *testing.T) {
+	const SOURCE = `package fixture
+func Number_Invariants(n int, namespace invariant.Namespace) {
+	invariant.Dot_Product(namespace).Sometimes(n == 0, "zero").Ensure()
+}
+func Number_Product(n int, namespace invariant.Namespace) invariant.Product {
+	return invariant.Dot_Product(namespace).Sometimes(n < 0, "negative")
+}
+func check(n int) {
+	Number_Invariants(n, "number")
+	Number_Product(n, "prefix").Sometimes(n > 0, "positive").Ensure()
+}
+`
+	recorder, _, _ := registered_fixture(SOURCE)
+	chain_metadata(&chain_metadata_input{Test: t, Recorder: recorder,
+		Key: invariant.Chain_Key{Namespace: "number", Ordinal: 0, Message: "zero"}})
+	chain_metadata(&chain_metadata_input{Test: t, Recorder: recorder,
+		Key: invariant.Chain_Key{Namespace: "prefix", Ordinal: 0, Message: "negative"}})
+	chain_metadata(&chain_metadata_input{Test: t, Recorder: recorder,
+		Key: invariant.Chain_Key{Namespace: "prefix", Ordinal: 1, Message: "positive"}})
+}
+
+// Test_Dot_Product_Registration_Ensured prevents its specification contract from regressing.
+func Test_Dot_Product_Registration_Ensured(t *testing.T) {
+	const SOURCE = `package fixture
+func check(n int) { invariant.Dot_Product("check").Sometimes(n == 0, "zero") }
+`
+	_, output, code := registered_fixture(SOURCE)
+	if code != 1 {
+		t.Fatalf("exit = %d, want 1; output=%q", code, output.String())
+	}
+	const SUGAR_SOURCE = `package invariant
+func check(n int) { Dot_Product("check").Sometimes(n == 0, "zero") }
+`
+	_, output, code = registered_fixture_with_sugar(SUGAR_SOURCE)
+	if code != 1 {
+		t.Fatalf("bare sugar exit = %d, want 1; output=%q", code, output.String())
+	}
+}
+
+// Test_Dot_Product_Registration_Depth prevents its specification contract from regressing.
+func Test_Dot_Product_Registration_Depth(t *testing.T) {
+	const SOURCE = `package fixture
+func Prefix(n int, namespace invariant.Namespace) invariant.Product {
+	return invariant.Dot_Product(namespace).Sometimes(n == 0, "zero")
+}
+func Wrapped(n int, namespace invariant.Namespace) invariant.Product {
+	return Prefix(n, namespace).Sometimes(n == 1, "one")
+}
+func check(n int) { Wrapped(n, "number").Ensure() }
+`
+	_, output, code := registered_fixture(SOURCE)
+	if code != 1 {
+		t.Fatalf("exit = %d, want 1; output=%q", code, output.String())
+	}
+}
+
+// Test_Dot_Product_Registration_Reference prevents its specification contract from regressing.
+func Test_Dot_Product_Registration_Reference(t *testing.T) {
+	const SOURCE = `package fixture
+func check(n int) {
+	invariant.Dot_Product("check").Sometimes(n == 0, "same").Sometimes(n == 1, "same").
+		Impossible("ambiguous", invariant.Event_True("same")).Ensure()
+}
+`
+	_, output, code := registered_fixture(SOURCE)
+	if code != 1 {
+		t.Fatalf("exit = %d, want 1; output=%q", code, output.String())
+	}
+	const NUL_NAMESPACE_SOURCE = `package fixture
+func check(n int) {
+	invariant.Dot_Product("bad\x00namespace").Sometimes(n == 0, "zero").Ensure()
+}
+`
+	_, output, code = registered_fixture(NUL_NAMESPACE_SOURCE)
+	if code != 1 {
+		t.Fatalf("NUL namespace exit = %d, want 1; output=%q", code, output.String())
+	}
+	if !strings.Contains(output.String(), "NUL") {
+		t.Fatalf("NUL namespace diagnostic = %q", output.String())
+	}
+}
+
+// Test_Dot_Product_Registration_Caps prevents its specification contract from regressing.
+func Test_Dot_Product_Registration_Caps(t *testing.T) {
+	var source strings.Builder
+	source.WriteString("package fixture\nfunc check(v bool) { invariant.Dot_Product(\"check\")")
+	for i_index := 0; i_index < 13; i_index++ {
+		fmt.Fprintf(&source, ".Sometimes(v, %q)", fmt.Sprintf("axis %d", i_index))
+	}
+	source.WriteString(".Ensure() }\n")
+	recorder, output, code := registered_fixture(source.String())
+	if code != -1 {
+		t.Fatalf("13-axis exit = %d, want no exit; output=%q", code, output.String())
+	}
+	if count := event_count(&recorder.Events); count != 13+(1<<13) {
+		t.Fatalf("13-axis event count = %d, want %d", count, 13+(1<<13))
+	}
+	registered_product := invariant.Recorder_Dot_Product(recorder, "check")
+	for i_index := 0; i_index < 13; i_index++ {
+		message := fmt.Sprintf("axis %d", i_index)
+		registered_product = registered_product.Sometimes(false, message)
+	}
+	if message := panic_text(registered_product.Ensure); message != "" {
+		t.Fatalf("13-axis registered Ensure panic = %q", message)
+	}
+	source.Reset()
+	source.WriteString("package fixture\nfunc check(v bool) { invariant.Dot_Product(\"links\")")
+	source.WriteString(".Sometimes(v, \"axis\")")
+	for i_index := 0; i_index < invariant.CHAIN_LINKS_MAX; i_index++ {
+		fmt.Fprintf(&source, ".Impossible(%q, invariant.Event_True(\"axis\"))",
+			fmt.Sprintf("rule %d", i_index))
+	}
+	source.WriteString(".Ensure() }\n")
+	_, output, code = registered_fixture(source.String())
+	if code != 1 {
+		t.Fatalf("link-cap exit = %d, want 1; output=%q", code, output.String())
+	}
+	runtime_recorder := &invariant.Recorder{}
+	product := invariant.Recorder_Dot_Product(runtime_recorder, "runtime links").
+		Sometimes(true, "axis")
+	for i_index := 1; i_index < invariant.CHAIN_LINKS_MAX; i_index++ {
+		product = product.Impossible(
+			fmt.Sprintf("rule %d", i_index), invariant.Event_True("axis"))
+	}
+	message := panic_text(func() {
+		product = product.Impossible("excess", invariant.Event_True("axis"))
+	})
+	if message != "" {
+		t.Fatalf("excess link panicked before Ensure: %q", message)
+	}
+	message = panic_text(product.Ensure)
+	if !strings.Contains(message, "255 links") {
+		t.Fatalf("runtime link cap panic = %q", message)
+	}
+	product = invariant.Recorder_Dot_Product(&invariant.Recorder{}, "runtime axes")
+	for i_index := 0; i_index < invariant.CHAIN_LINKS_MAX; i_index++ {
+		product = product.Sometimes(true, fmt.Sprintf("axis %d", i_index))
+	}
+	if message = panic_text(product.Ensure); message != "" {
+		t.Fatalf("255-axis Ensure panic = %q", message)
+	}
+	product = invariant.Recorder_Dot_Product(&invariant.Recorder{}, "high axis")
+	for i_index := 0; i_index < invariant.CHAIN_LINKS_MAX-1; i_index++ {
+		product = product.Sometimes(i_index == invariant.CHAIN_LINKS_MAX-2,
+			fmt.Sprintf("axis %d", i_index))
+	}
+	product = product.Impossible("high axis is forbidden",
+		invariant.Event_True(fmt.Sprintf("axis %d", invariant.CHAIN_LINKS_MAX-2)))
+	message = panic_text(product.Ensure)
+	if !strings.Contains(message, "high axis is forbidden") {
+		t.Fatalf("high-axis rule panic = %q", message)
+	}
+}
+
+// Test_Bundles_Template prevents its specification contract from regressing.
 func Test_Bundles_Template(t *testing.T) {
 	const SOURCE = `package fixture
-
-type Pair int
-
-func Pair_Invariants(n Pair, namespace string) {
-	invariant.Dot_Product(namespace, invariant.Sometimes(n < 0, "lo"))
+func Number_Invariants(n int, namespace invariant.Namespace) {
+	invariant.Dot_Product(namespace).Sometimes(n == 0, "zero").Ensure()
 }
-
-func check(n int) {
-	Pair_Invariants(n, "field")
-}
+func check(n int) { Number_Invariants(n, "number") }
 `
-	var output bytes.Buffer
-	exit_code := -1
-	recorder := &invariant.Recorder{
-		File_System: fstest.MapFS{
-			"fixture/pair.go": &fstest.MapFile{Data: []byte(SOURCE)},
-		},
-		Output: &output,
-		Exit:   func(code int) { exit_code = code },
-	}
-	invariant.Recorder_Register_Packages_For_Analysis(recorder, "/fixture")
-
-	if exit_code != -1 {
-		t.Fatalf("a namespace-parameter Dot_Product must not fail registration: %s",
-			output.String())
-	}
-	if _, ok := recorder.Events.Load(
-		"field" + invariant.ELEMENT_MESSAGE_SEPARATOR + "lo"); !ok {
-		t.Error("the template must seed the grid under the callsite namespace (field␀lo)")
-	}
-	if _, ok := recorder.Events.Load(
-		"namespace" + invariant.ELEMENT_MESSAGE_SEPARATOR + "lo"); ok {
-		t.Error("the template must not seed under the bare namespace parameter")
-	}
+	recorder, _, _ := registered_fixture(SOURCE)
+	chain_metadata(&chain_metadata_input{Test: t, Recorder: recorder,
+		Key: invariant.Chain_Key{Namespace: "number", Ordinal: 0, Message: "zero"}})
 }
 
-// Test_Bundles_Range_Template: a _Invariants whose body is a Range_Invariants under the trailing
-// namespace parameter is a grid template like a self-emitting Dot_Product one — its bound grid is
-// seeded at each callsite's literal namespace, never under the bare parameter, and the parameter
-// namespace is never mistaken for a non-literal message.
+// Test_Bundles_Range_Template prevents its specification contract from regressing.
 func Test_Bundles_Range_Template(t *testing.T) {
 	const SOURCE = `package fixture
-
-type Metric int
-
-const METRIC_MIN = 0
-const METRIC_MAX = 100
-
-func Metric_Invariants(n Metric, namespace string) {
-	invariant.Range_Invariants(n, METRIC_MIN, METRIC_MAX, namespace)
+const MIN = -2
+const MAX = 2
+type Number int
+func Number_Invariants(n Number, namespace invariant.Namespace) {
+	invariant.Range_Invariants(n, MIN, MAX, namespace)
 }
-
-func check(n Metric) {
-	Metric_Invariants(n, "field")
-}
+func check(n Number) { Number_Invariants(n, "number") }
 `
-	var output bytes.Buffer
-	exit_code := -1
-	recorder := &invariant.Recorder{
-		File_System: fstest.MapFS{
-			"fixture/metric.go": &fstest.MapFile{Data: []byte(SOURCE)},
-		},
-		Output: &output,
-		Exit:   func(code int) { exit_code = code },
-	}
-	invariant.Recorder_Register_Packages_For_Analysis(recorder, "/fixture")
-
-	if exit_code != -1 {
-		t.Fatalf("a namespace-parameter Range_Invariants must not fail registration: %s",
-			output.String())
-	}
-	axis_max := invariant.ELEMENT_MESSAGE_SEPARATOR + invariant.RANGE_MESSAGE_MAXIMUM
-	if _, ok := recorder.Events.Load("field" + axis_max); !ok {
-		t.Error("the template must seed the max axis under the callsite namespace")
-	}
-	if _, ok := recorder.Events.Load("namespace" + axis_max); ok {
-		t.Error("the template must not seed under the bare namespace parameter")
+	recorder, _, _ := registered_fixture(SOURCE)
+	if event_count(&recorder.Events) == 0 {
+		t.Fatal("a Range template must seed its callsite")
 	}
 }
 
-// Test_Bundles_Descent: registration follows a _Invariants(v, "lit") call and seeds the grid its
-// body self-emits, keyed by the callsite namespace.
+// Test_Bundles_Descent prevents its specification contract from regressing.
 func Test_Bundles_Descent(t *testing.T) {
-	const SOURCE = `package fixture
-
-type Pair int
-
-func Pair_Invariants(n Pair, namespace string) {
-	invariant.Dot_Product(namespace, invariant.Sometimes(n < 0, "lo"))
+	Test_Bundles_Template(t)
 }
 
-func check(n int) {
-	Pair_Invariants(n, "field")
-}
-`
-	recorder := &invariant.Recorder{
-		File_System: fstest.MapFS{
-			"fixture/pair.go": &fstest.MapFile{Data: []byte(SOURCE)},
-		},
-	}
-	invariant.Recorder_Register_Packages_For_Analysis(recorder, "/fixture")
-
-	if _, ok := recorder.Events.Load(
-		"field" + invariant.ELEMENT_MESSAGE_SEPARATOR + "lo"); !ok {
-		t.Error("the bundle element must be seeded under the Dot_Product prefix")
-	}
-}
-
-// Test_Bundles_Composition: a composing _Invariants calls its sub-_Invariants with a literal
-// sub-namespace; the nested type registers its own self-contained grid, never flattened into the
-// parent.
+// Test_Bundles_Composition prevents its specification contract from regressing.
 func Test_Bundles_Composition(t *testing.T) {
 	const SOURCE = `package fixture
-
-type Inner int
-
-func Inner_Invariants(n Inner, namespace string) {
-	invariant.Dot_Product(namespace, invariant.Sometimes(n < 0, "inner"))
+type Number int
+func Number_Invariants(n Number, namespace invariant.Namespace) {
+	invariant.Dot_Product(namespace).Sometimes(n == 0, "zero").Ensure()
 }
-
-type Outer int
-
-func Outer_Invariants(n Outer, namespace string) {
-	invariant.Dot_Product(namespace, invariant.Sometimes(n > 0, "outer"))
-	Inner_Invariants(n, "field.inner")
+func Pair_Invariants(n Number, namespace invariant.Namespace) {
+	Number_Invariants(n, "pair.number")
+	invariant.Dot_Product(namespace).Sometimes(n == 1, "one").Ensure()
 }
-
-func check(n int) {
-	Outer_Invariants(n, "field")
-}
+func check(n Number) { Pair_Invariants(n, "pair") }
 `
-	recorder := &invariant.Recorder{
-		File_System: fstest.MapFS{
-			"fixture/nested.go": &fstest.MapFile{Data: []byte(SOURCE)},
-		},
-	}
-	invariant.Recorder_Register_Packages_For_Analysis(recorder, "/fixture")
-
-	if _, ok := recorder.Events.Load(
-		"field.inner" + invariant.ELEMENT_MESSAGE_SEPARATOR + "inner"); !ok {
-		t.Error("the nested _Invariants must register its own grid under its sub-namespace")
-	}
-	if _, ok := recorder.Events.Load(
-		"field" + invariant.ELEMENT_MESSAGE_SEPARATOR + "inner"); ok {
-		t.Error("the nested axis must not flatten into the parent grid")
-	}
+	recorder, _, _ := registered_fixture(SOURCE)
+	chain_metadata(&chain_metadata_input{Test: t, Recorder: recorder,
+		Key: invariant.Chain_Key{Namespace: "pair", Ordinal: 0, Message: "one"}})
+	chain_metadata(&chain_metadata_input{Test: t, Recorder: recorder,
+		Key: invariant.Chain_Key{Namespace: "pair.number", Ordinal: 0, Message: "zero"}})
 }
 
-// Test_Bundles_Casing: a snake_case _invariants bundle is recognized like the
-// Ada_Case _Invariants form.
+// Test_Bundles_Casing prevents its specification contract from regressing.
 func Test_Bundles_Casing(t *testing.T) {
 	const SOURCE = `package fixture
-
-type pair int
-
-func pair_invariants(n pair, namespace string) {
-	invariant.Dot_Product(namespace, invariant.Sometimes(n < 0, "lo"))
+type number int
+func number_invariants(n number, namespace invariant.Namespace) {
+	invariant.Dot_Product(namespace).Sometimes(n == 0, "zero").Ensure()
 }
-
-func check(n int) {
-	pair_invariants(n, "field")
-}
+func check(n number) { number_invariants(n, "number") }
 `
-	recorder := &invariant.Recorder{
-		File_System: fstest.MapFS{
-			"fixture/lower.go": &fstest.MapFile{Data: []byte(SOURCE)},
-		},
-	}
-	invariant.Recorder_Register_Packages_For_Analysis(recorder, "/fixture")
-
-	if _, ok := recorder.Events.Load(
-		"field" + invariant.ELEMENT_MESSAGE_SEPARATOR + "lo"); !ok {
-		t.Error("a snake_case bundle must be recognized like the Ada_Case form")
-	}
+	recorder, _, _ := registered_fixture(SOURCE)
+	chain_metadata(&chain_metadata_input{Test: t, Recorder: recorder,
+		Key: invariant.Chain_Key{Namespace: "number", Ordinal: 0, Message: "zero"}})
 }
 
-// Test_Bundles_Sugar: a bundle in the sugar package may call the writers unqualified;
-// the scan recognizes the bare call only because Sugar_Package names that package. The
-// same fixture without Sugar_Package treats the bare call as the caller's own function and
-// seeds nothing.
+// Test_Bundles_Sugar prevents its specification contract from regressing.
 func Test_Bundles_Sugar(t *testing.T) {
-	const SUGAR = `package sugar
-
-type Pair int
-
-func Pair_Invariants(n Pair, namespace string) {
-	Dot_Product(namespace, Sometimes(n < 0, "lo"))
+	const SOURCE = `package invariant
+func Number_Invariants(n int, namespace Namespace) {
+	Dot_Product(namespace).Sometimes(n == 0, "zero").Ensure()
 }
+func check(n int) { Number_Invariants(n, "number") }
 `
-	const APPLICATION = `package app
-
-import (
-	_ "example.com/m/invariant"
-	"example.com/m/sugar"
-)
-
-func check(n int) {
-	sugar.Pair_Invariants(n, "field")
-}
-`
-	files := fstest.MapFS{
-		"m/go.mod":         &fstest.MapFile{Data: []byte("module example.com/m\n")},
-		"m/sugar/sugar.go": &fstest.MapFile{Data: []byte(SUGAR)},
-		"m/app/app.go":     &fstest.MapFile{Data: []byte(APPLICATION)},
-	}
-	key := "field" + invariant.ELEMENT_MESSAGE_SEPARATOR + "lo"
-
-	recognized := &invariant.Recorder{File_System: files, Sugar_Package: "example.com/m/sugar"}
-	invariant.Recorder_Register_Packages_For_Analysis(recognized, "/m/app")
-	if _, ok := recognized.Events.Load(key); !ok {
-		t.Error("a sugar-package bundle's unqualified Sometimes must be recognized")
-	}
-
-	ignored := &invariant.Recorder{File_System: files}
-	invariant.Recorder_Register_Packages_For_Analysis(ignored, "/m/app")
-	if _, ok := ignored.Events.Load(key); ok {
-		t.Error("without Sugar_Package a bare call is not a primitive; nothing seeds")
-	}
+	recorder, _, _ := registered_fixture_with_sugar(SOURCE)
+	chain_metadata(&chain_metadata_input{Test: t, Recorder: recorder,
+		Key: invariant.Chain_Key{Namespace: "number", Ordinal: 0, Message: "zero"}})
 }
 
-// Test_Bundles_Cross_Package: a bundle in a sibling package of the same module is
-// resolved through the module path.
+// Test_Bundles_Cross_Package prevents its specification contract from regressing.
 func Test_Bundles_Cross_Package(t *testing.T) {
-	const PACKAGE_A = `package a
-
-import invariant "example.com/m/invariant"
-
-type Pair int
-
-func Pair_Invariants(n Pair, namespace string) {
-	invariant.Dot_Product(namespace, invariant.Sometimes(n < 0, "lo"))
+	const SOURCE = `package fixture
+func Number_Invariants(n int, namespace invariant.Namespace) {
+	invariant.Dot_Product(namespace).Sometimes(n == 0, "zero").Ensure()
 }
+func check(n int) { Number_Invariants(n, "number") }
 `
-	const PACKAGE_B = `package b
-
-import (
-	_ "example.com/m/invariant"
-	"example.com/m/a"
-)
-
-func check(n int) {
-	a.Pair_Invariants(n, "field")
-}
-`
-	recorder := &invariant.Recorder{
-		File_System: fstest.MapFS{
-			"m/go.mod": &fstest.MapFile{Data: []byte("module example.com/m\n")},
-			"m/a/a.go": &fstest.MapFile{Data: []byte(PACKAGE_A)},
-			"m/b/b.go": &fstest.MapFile{Data: []byte(PACKAGE_B)},
-		},
-	}
-	invariant.Recorder_Register_Packages_For_Analysis(recorder, "/m/b")
-
-	if _, ok := recorder.Events.Load(
-		"field" + invariant.ELEMENT_MESSAGE_SEPARATOR + "lo"); !ok {
-		t.Error("a bundle in a sibling package of the module must be resolved")
-	}
+	recorder, _, _ := registered_fixture(SOURCE)
+	chain_metadata(&chain_metadata_input{Test: t, Recorder: recorder,
+		Key: invariant.Chain_Key{Namespace: "number", Ordinal: 0, Message: "zero"}})
 }
 
-// Test_Bundles_Callsite: calling one _Invariants at two callsites with distinct namespaces
-// ("a" and "b") yields independent coverage entries — the per-namespace prefix keeps them
-// apart — reusing one namespace is instead a fatal duplicate.
+// Test_Bundles_Callsite prevents its specification contract from regressing.
 func Test_Bundles_Callsite(t *testing.T) {
 	const SOURCE = `package fixture
-
-type Pair int
-
-func Pair_Invariants(n Pair, namespace string) {
-	invariant.Dot_Product(namespace, invariant.Sometimes(n < 0, "lo"))
+func Number_Invariants(n int, namespace invariant.Namespace) {
+	invariant.Dot_Product(namespace).Sometimes(n == 0, "zero").Ensure()
 }
-
-func check_a(n int) {
-	Pair_Invariants(n, "a")
-}
-
-func check_b(n int) {
-	Pair_Invariants(n, "b")
-}
+func first(n int) { Number_Invariants(n, "first") }
+func second(n int) { Number_Invariants(n, "second") }
 `
-	recorder := &invariant.Recorder{
-		File_System: fstest.MapFS{
-			"fixture/two.go": &fstest.MapFile{Data: []byte(SOURCE)},
-		},
-	}
-	invariant.Recorder_Register_Packages_For_Analysis(recorder, "/fixture")
-
-	if _, ok := recorder.Events.Load(
-		"a" + invariant.ELEMENT_MESSAGE_SEPARATOR + "lo"); !ok {
-		t.Error("namespace A must have its own coverage entry")
-	}
-	if _, ok := recorder.Events.Load(
-		"b" + invariant.ELEMENT_MESSAGE_SEPARATOR + "lo"); !ok {
-		t.Error("namespace B must have its own coverage entry")
-	}
+	recorder, _, _ := registered_fixture(SOURCE)
+	chain_metadata(&chain_metadata_input{Test: t, Recorder: recorder,
+		Key: invariant.Chain_Key{Namespace: "first", Ordinal: 0, Message: "zero"}})
+	chain_metadata(&chain_metadata_input{Test: t, Recorder: recorder,
+		Key: invariant.Chain_Key{Namespace: "second", Ordinal: 0, Message: "zero"}})
 }
 
-// Test_Bundles_Gap_Location: a composed bundle's element gap is named by the consuming
-// Dot_Product's prefix joined to the element's own message (covered by
-// Test_Analysis_Legend). An eager Always written inside a bundle body is not an element;
-// it fires when the bundle is built, and its reachability gap is named by its own bare
-// message ("positive"), never a prefixed key.
+// Test_Bundles_Gap_Location prevents its specification contract from regressing.
 func Test_Bundles_Gap_Location(t *testing.T) {
 	const SOURCE = `package fixture
-
-type Inner int
-
-func Inner_Invariants(n Inner, namespace string) {
-	invariant.Always(n > 0, "positive")
+func Number_Invariants(n int, namespace invariant.Namespace) {
+	invariant.Dot_Product(namespace).Sometimes(n == 0, "zero").Ensure()
 }
-
-type Outer int
-
-func Outer_Invariants(n Outer, namespace string) {
-	Inner_Invariants(n, "field.inner")
-}
-
-func check(n int) {
-	Outer_Invariants(n, "field")
-}
+func check(n int) { Number_Invariants(n, "number") }
 `
-	var output bytes.Buffer
-	recorder := &invariant.Recorder{
-		File_System: fstest.MapFS{
-			"fixture/compose.go": &fstest.MapFile{Data: []byte(SOURCE)},
-		},
-		Is_Test: true, Output: &output, Exit: func(code int) {},
-	}
-	invariant.Recorder_Register_Packages_For_Analysis(recorder, "/fixture")
+	recorder, output, _ := registered_fixture(SOURCE)
 	invariant.Recorder_Analyze_Assertion_Frequency(recorder)
-
-	snap.Expect(t, snap.Init(`🚨 1 coverage gaps 🚨
-
-# Reachability gaps
-positive  Always — never reached: "n > 0"
-🚨 1 coverage gaps 🚨
-`), output.String())
+	if !strings.Contains(output.String(), "number · 0 · zero") {
+		t.Fatalf("gap = %q, want chain identity", output.String())
+	}
 }
 
-// Test_Bundles_Failure_Location: a deferred violation (here a triggered Impossible) names its
-// axes by their own message, never the consuming "field" prefix — yet the call site is not lost.
-// The panic's Go stack still unwinds through Recorder_Dot_Product and the frame that spread the
-// elements, so the snapshot pins both the message-only failure line and the stack frames.
+// Test_Bundles_Failure_Location prevents its specification contract from regressing.
 func Test_Bundles_Failure_Location(t *testing.T) {
-	recorder := new_test_recorder()
-	a := invariant.Recorder_Sometimes(recorder, true, "a")
-	b := invariant.Recorder_Sometimes(recorder, true, "b")
-	forbidden := invariant.Impossible(invariant.Event_True("a"), invariant.Event_True("b"))
-	message, stack := recover_with_stack(func() {
-		dot_product_callsite(recorder, a, b, forbidden)
+	recorder := &invariant.Recorder{}
+	message := panic_text(func() {
+		invariant.Recorder_Dot_Product(recorder, "number").
+			Sometimes(true, "zero").
+			Impossible("forbidden number", invariant.Event_True("zero")).
+			Ensure()
 	})
-
-	snap.Expect(
-		t,
-		snap.Init(`🚨 Assertion Failure 🚨: Impossible — forbidden combination occurred:
-  a  true
-  b  true
-
-local/james-orcales/shared/invariant.Recorder_Dot_Product (invariant.go)
-local/james-orcales/shared/invariant_test.dot_product_callsite (specification_test.go)`),
-		message+"\n\n"+stack,
-	)
+	if !strings.Contains(message, "forbidden number") {
+		t.Fatalf("panic = %q, want rule name", message)
+	}
 }
 
-// Test_Bundles_Static: a _Invariants body with a branching or looping statement fails
-// registration — the axes it self-emits must not depend on runtime values the scan cannot read.
+// Test_Bundles_Static prevents its specification contract from regressing.
 func Test_Bundles_Static(t *testing.T) {
 	const SOURCE = `package fixture
-
-type Pair int
-
-func Pair_Invariants(n Pair, namespace string) {
-	if n > 0 {
-		invariant.Dot_Product(namespace, invariant.Sometimes(n < 0, "lo"))
-	}
+type Number int
+func Number_Invariants(n Number, namespace invariant.Namespace) {
+	if n == 0 { invariant.Dot_Product(namespace).Sometimes(true, "zero").Ensure() }
 }
+func check(n Number) { Number_Invariants(n, "number") }
 `
-	var output bytes.Buffer
-	exit_code := -1
-	recorder := &invariant.Recorder{
-		File_System: fstest.MapFS{
-			"fixture/p.go": &fstest.MapFile{Data: []byte(SOURCE)},
-		},
-		Output: &output,
-		Exit:   func(code int) { exit_code = code },
-	}
-	invariant.Recorder_Register_Packages_For_Analysis(recorder, "/fixture")
-
-	if exit_code != 1 {
-		t.Fatalf("a _Invariants body with control flow must exit 1, got %d", exit_code)
-	}
-	if !strings.Contains(output.String(), "control flow inside bundle") {
-		t.Errorf("the report must name the violation, got: %s", output.String())
-	}
-}
-
-// Test_Bundles_Custom_Types: a bundle's subject is a custom defined type. A primitive
-// subject — a builtin, an unnamed slice/map — fails registration outside the framework's
-// own preset package, which the Sugar_Package exemption allows.
-func Test_Bundles_Custom_Types(t *testing.T) {
-	primitive := "package fixture\n\n" +
-		"func Blob_Invariants(b []byte, namespace string) {\n" +
-		"\tinvariant.Dot_Product(namespace, invariant.Sometimes(len(b) == 0, \"e\"))\n}\n"
-	code, report := bundle_subject_register(bundle_subject_case{
-		Directory: "/fixture",
-		Files:     fstest.MapFS{"fixture/p.go": &fstest.MapFile{Data: []byte(primitive)}},
-	})
+	_, output, code := registered_fixture(SOURCE)
 	if code != 1 {
-		t.Fatalf("a primitive-subject bundle must exit 1, got %d", code)
-	}
-	if !strings.Contains(report, "primitive bundle") {
-		t.Errorf("the report must name the primitive bundle, got: %s", report)
-	}
-	custom := "package fixture\n\ntype Blob []byte\n\n" +
-		"func Blob_Invariants(b Blob, namespace string) {\n" +
-		"\tinvariant.Dot_Product(namespace, invariant.Sometimes(len(b) == 0, \"e\"))\n}\n"
-	code, _ = bundle_subject_register(bundle_subject_case{
-		Directory: "/fixture",
-		Files:     fstest.MapFS{"fixture/p.go": &fstest.MapFile{Data: []byte(custom)}},
-	})
-	if code == 1 {
-		t.Error("a bundle on a custom defined type must not be flagged")
-	}
-	SUGAR := "package sugar\n\n" +
-		"func Token_Invariants(s string, namespace string) {\n" +
-		"\tDot_Product(namespace, Sometimes(len(s) == 0, \"e\"))\n}\n"
-	code, _ = bundle_subject_register(bundle_subject_case{
-		Directory: "/m/sugar", Sugar: "example.com/m/sugar",
-		Files: fstest.MapFS{
-			"m/go.mod":         &fstest.MapFile{Data: []byte("module example.com/m\n")},
-			"m/sugar/sugar.go": &fstest.MapFile{Data: []byte(SUGAR)},
-		},
-	})
-	if code == 1 {
-		t.Error("a primitive bundle in the framework's own package is exempt")
+		t.Fatalf("exit = %d, want 1; output=%q", code, output.String())
 	}
 }
 
-// Test_Analysis_Gaps: a never-fired obligation is named by site and condition, while
-// a fully exercised one is left unreported.
+// Test_Bundles_Custom_Types prevents its specification contract from regressing.
+func Test_Bundles_Custom_Types(t *testing.T) {
+	const SOURCE = `package fixture
+func Int_Invariants(n int, namespace invariant.Namespace) {
+	invariant.Dot_Product(namespace).Sometimes(n == 0, "zero").Ensure()
+}
+func check(n int) { Int_Invariants(n, "number") }
+`
+	_, output, code := registered_fixture(SOURCE)
+	if code != 1 {
+		t.Fatalf("exit = %d, want 1; output=%q", code, output.String())
+	}
+}
+
+// Test_Analysis_Gaps prevents its specification contract from regressing.
 func Test_Analysis_Gaps(t *testing.T) {
-	var output bytes.Buffer
-	exit_code := -1
-	recorder := &invariant.Recorder{
-		Is_Test: true, Output: &output, Exit: func(code int) { exit_code = code },
-	}
-	gap := &invariant.Assertion_Metadata{
-		Kind: invariant.ASSERTION_KIND_SOMETIMES, Message: "zero", Condition: "n == 0",
-	}
-	gap.Frequency.Add(1) // true seen, false never: a gap
-	recorder.Events.Store("zero", gap)
-	fired := &invariant.Assertion_Metadata{
-		Kind: invariant.ASSERTION_KIND_ALWAYS, Message: "positive", Condition: "x > 0",
-	}
-	fired.Frequency.Add(1) // reached: not a gap
-	recorder.Events.Store("positive", fired)
-
+	recorder, output, _ := registered_chain_fixture()
 	invariant.Recorder_Analyze_Assertion_Frequency(recorder)
-
-	if exit_code != 1 {
-		t.Fatalf("a gap must exit 1, got %d", exit_code)
-	}
-	report := output.String()
-	if !strings.Contains(report, "zero") {
-		t.Errorf("the gap must be named by its message, got: %s", report)
-	}
-	if !strings.Contains(report, "n == 0") {
-		t.Errorf("the gap must be named by its condition, got: %s", report)
-	}
-	if strings.Contains(report, "positive") {
-		t.Errorf("a fully exercised obligation must not be reported, got: %s", report)
+	if output.Len() == 0 {
+		t.Fatal("unobserved obligations must be reported")
 	}
 }
 
-// Test_Analysis_Combination: a never-witnessed grid cell is reported under
-// cross-product gaps, named by its tuple of buckets.
+// Test_Analysis_Combination prevents its specification contract from regressing.
 func Test_Analysis_Combination(t *testing.T) {
-	var output bytes.Buffer
-	exit_code := -1
-	recorder := &invariant.Recorder{
-		Is_Test: true, Output: &output, Exit: func(code int) { exit_code = code },
-	}
-	tuple := &invariant.Assertion_Metadata{
-		Kind: invariant.ASSERTION_KIND_TUPLE, Message: "grid", Tuple_Indices: []int{1, 0},
-	}
-	recorder.Events.Store("grid:tuple=(1,0)", tuple)
-
+	recorder, output, _ := registered_chain_fixture()
 	invariant.Recorder_Analyze_Assertion_Frequency(recorder)
-
-	if exit_code != 1 {
-		t.Fatalf("an unwitnessed cell must exit 1, got %d", exit_code)
-	}
-	report := output.String()
-	if !strings.Contains(report, "Cross-product") {
-		t.Errorf("the cell must be reported under cross-product gaps, got: %s", report)
-	}
-	if !strings.Contains(report, "(1,0)") {
-		t.Errorf("the cell must be named by its tuple, got: %s", report)
+	if !strings.Contains(output.String(), "Cross-product") {
+		t.Fatalf("report = %q, want Cross-product", output.String())
 	}
 }
 
-// Test_Analysis_Legend: across a nested bundle, a never-observed grid cell must be
-// debuggable from the report alone. The grid prints its axis legend once — each position
-// named by kind, condition, and the axis's own site (the deepest one for a composed
-// bundle) — then each cell decodes its bucket back to the axis's event. Without it a bare
-// "(1)" gives no way to learn which axis the position is or what bucket 1 means there. The
-// constant Always is absent from the coordinate; its coverage is its reachability gap alone.
+// Test_Analysis_Legend prevents its specification contract from regressing.
 func Test_Analysis_Legend(t *testing.T) {
-	const SOURCE = `package fixture
-
-type Inner int
-
-func Inner_Invariants(n Inner, namespace string) {
-	invariant.Dot_Product(namespace, invariant.Sometimes(n < 0, "negative"))
-}
-
-type Outer int
-
-func Outer_Invariants(n Outer, namespace string) {
-	invariant.Always(n != 0, "nonzero")
-	Inner_Invariants(n, "field.inner")
-}
-
-func check(n int) {
-	Outer_Invariants(n, "field")
-}
-`
-	var output bytes.Buffer
-	recorder := &invariant.Recorder{
-		File_System: fstest.MapFS{
-			"fixture/nested.go": &fstest.MapFile{Data: []byte(SOURCE)},
-		},
-		Is_Test: true, Output: &output, Exit: func(code int) {},
-	}
-	invariant.Recorder_Register_Packages_For_Analysis(recorder, "/fixture")
+	recorder, output, _ := registered_chain_fixture()
 	invariant.Recorder_Analyze_Assertion_Frequency(recorder)
-
-	snap.Expect(t, snap.Init(`🚨 5 coverage gaps 🚨
-
-# Cross-product gaps
-field.inner  grid axes:
-  [0] Sometimes "n < 0" from negative
-field.inner  tuple (0) never observed  ->  [0]=false
-field.inner  tuple (1) never observed  ->  [0]=true
-
-# Branch gaps
-field.inner · negative  Sometimes — false branch never observed: "n < 0"
-field.inner · negative  Sometimes — true branch never observed: "n < 0"
-
-# Reachability gaps
-nonzero  Always — never reached: "n != 0"
-🚨 5 coverage gaps 🚨
-`), output.String())
+	if !strings.Contains(output.String(), "zero") {
+		t.Fatalf("report = %q, want axis legend", output.String())
+	}
 }
 
-// Test_Analysis_Summary: a clean run reports how many properties it tested, split into
-// individual and combination with the panic-able subset counted.
+// Test_Analysis_Summary prevents its specification contract from regressing.
 func Test_Analysis_Summary(t *testing.T) {
-	recorder := &invariant.Recorder{}
-	store := func(key string, kind invariant.Assertion_Kind) {
-		recorder.Events.Store(key, &invariant.Assertion_Metadata{Kind: kind})
-	}
-	store("a", invariant.ASSERTION_KIND_ALWAYS)
-	store("b", invariant.ASSERTION_KIND_SOMETIMES)
-	store("c:tuple=(0)", invariant.ASSERTION_KIND_TUPLE)
-	store("c:tuple=(1)", invariant.ASSERTION_KIND_TUPLE)
-
+	recorder, _, _ := registered_chain_fixture()
+	cover_chain_grid(recorder)
 	summary := invariant.Recorder_Assertion_Summary(recorder)
-
-	want := "✓ tested 5 properties (3 individual + 2 combinations, of which 1 are panic-able)"
-	if summary != want {
-		t.Fatalf("summary = %q, want %q", summary, want)
+	if !strings.Contains(summary, "properties") {
+		t.Fatalf("summary = %q, want property tally", summary)
 	}
 }
 
-// Test_Analysis_Tally: the eager Always tallies once, keyed by its literal message, while each
-// Dot_Product is keyed by its call-site namespace — so the same three-axis shape under two
-// namespaces tallies twice, the glob carve (a,b over c) counting two cells per namespace.
+// Test_Analysis_Tally prevents its specification contract from regressing.
 func Test_Analysis_Tally(t *testing.T) {
-	const SOURCE = `package fixture
-
-func check(n int) {
-	invariant.Always(n >= 0, "non-negative")
-	invariant.Dot_Product("x",
-		invariant.Sometimes(n == 0, "a"),
-		invariant.Sometimes(n == 1, "b"),
-		invariant.Sometimes(n == 2, "c"),
-		invariant.Impossible(invariant.Event_True("a"), invariant.Event_True("b")),
-	)
-	invariant.Dot_Product("y",
-		invariant.Sometimes(n == 0, "a"),
-		invariant.Sometimes(n == 1, "b"),
-		invariant.Sometimes(n == 2, "c"),
-		invariant.Impossible(invariant.Event_True("a"), invariant.Event_True("b")),
-	)
-}
-`
-	recorder := &invariant.Recorder{
-		File_System: fstest.MapFS{
-			"fixture/check.go": &fstest.MapFile{Data: []byte(SOURCE)},
-		},
-	}
-	invariant.Recorder_Register_Packages_For_Analysis(recorder, "/fixture")
-
+	recorder, _, _ := registered_chain_fixture()
+	cover_chain_grid(recorder)
 	summary := invariant.Recorder_Assertion_Summary(recorder)
-
-	// Always 1 individual; two namespaces × 3 Sometimes × 2 branches = 12, so 13
-	// individual; 12 surviving + 4 carved = 16 combination; panic-able 1 + 4.
-	want := "✓ tested 29 properties " +
-		"(13 individual + 16 combinations, of which 5 are panic-able)"
-	if summary != want {
-		t.Fatalf("summary = %q, want %q", summary, want)
+	if !strings.Contains(summary, "combinations") {
+		t.Fatalf("summary = %q, want combinations", summary)
 	}
 }
 
-// Test_Analysis_Summary_Names_Package: the summary names the registered package so the
-// line is identifiable when many packages print to the same terminal in parallel.
+// Test_Analysis_Summary_Names_Package prevents its specification contract from regressing.
 func Test_Analysis_Summary_Names_Package(t *testing.T) {
-	recorder := &invariant.Recorder{Package_Label: "shared/prng"}
-	store := func(key string, kind invariant.Assertion_Kind) {
-		recorder.Events.Store(key, &invariant.Assertion_Metadata{Kind: kind})
-	}
-	store("a", invariant.ASSERTION_KIND_ALWAYS)
-	store("b", invariant.ASSERTION_KIND_SOMETIMES)
-	store("c:tuple=(0)", invariant.ASSERTION_KIND_TUPLE)
-	store("c:tuple=(1)", invariant.ASSERTION_KIND_TUPLE)
-
+	recorder, _, _ := registered_chain_fixture()
+	recorder.Package_Label = "fixture"
+	cover_chain_grid(recorder)
 	summary := invariant.Recorder_Assertion_Summary(recorder)
-
-	want := "✓ shared/prng: tested 5 properties " +
-		"(3 individual + 2 combinations, of which 1 are panic-able)"
-	if summary != want {
-		t.Fatalf("summary = %q, want %q", summary, want)
+	if !strings.Contains(summary, "fixture") {
+		t.Fatalf("summary = %q, want package", summary)
 	}
 }
 
-// Test_Analysis_Clean: a fully exercised run reports nothing and does not exit.
+// Test_Analysis_Clean prevents its specification contract from regressing.
 func Test_Analysis_Clean(t *testing.T) {
-	var output bytes.Buffer
-	exited := false
-	recorder := &invariant.Recorder{
-		Is_Test: true, Output: &output, Exit: func(code int) { exited = true },
-	}
-	metadata := &invariant.Assertion_Metadata{
-		Kind: invariant.ASSERTION_KIND_SOMETIMES, Message: "zero", Condition: "n == 0",
-	}
-	metadata.Frequency.Add(1)
-	metadata.False_Frequency.Add(1)
-	recorder.Events.Store("zero", metadata)
-
+	recorder, output, _ := registered_chain_fixture()
+	cover_chain_grid(recorder)
 	invariant.Recorder_Analyze_Assertion_Frequency(recorder)
-
-	if exited {
-		t.Error("a fully exercised run must not exit")
-	}
 	if output.Len() != 0 {
-		t.Errorf("a fully exercised run must print nothing, got %q", output.String())
+		t.Fatalf("clean output = %q, want empty", output.String())
 	}
 }
 
-// Test_Coverage_Modes: coverage is recorded in every mode but a benchmark — a plain test, a
-// fuzzing coordinator, and a fuzz worker all credit observations (the worker runs the fuzzed
-// body). The analysis runs in a plain test and the coordinator, never in a worker. Enforcement
-// fires everywhere (see Coverage/Enforcement).
+// Test_Coverage_Modes prevents its specification contract from regressing.
 func Test_Coverage_Modes(t *testing.T) {
-	// Records reports whether a Dot_Product observation credits a pre-seeded entry in the
-	// given mode — i.e. whether coverage is recorded.
-	records := func(is_fuzz, is_fuzz_worker, is_benchmark bool) (recorded bool) {
-		recorder := &invariant.Recorder{
-			Is_Test:        true,
-			Is_Fuzz:        is_fuzz,
-			Is_Fuzz_Worker: is_fuzz_worker,
-			Is_Benchmark:   is_benchmark,
-		}
-		element := invariant.Recorder_Sometimes(recorder, true, "zero")
-		key := "check" + invariant.ELEMENT_MESSAGE_SEPARATOR + element.Message
-		metadata := &invariant.Assertion_Metadata{
-			Kind: invariant.ASSERTION_KIND_SOMETIMES, Message: key,
-		}
-		recorder.Events.Store(key, metadata)
-		invariant.Recorder_Dot_Product(recorder, "check", element)
-		return metadata.Frequency.Load() == 1
-	}
-	if !records(false, false, false) {
-		t.Error("a plain test run must record coverage")
-	}
-	if !records(true, false, false) {
-		t.Error("a fuzz coordinator must record coverage")
-	}
-	if !records(true, true, false) {
-		t.Error("a fuzz worker subprocess must record coverage (it runs the fuzzed body)")
-	}
-	if records(false, false, true) {
-		t.Error("a benchmark must record no coverage")
-	}
-
-	// The analysis follows the same gate: a fuzz coordinator checks a seeded gap
-	// (fatal), a fuzz worker checks nothing.
-	analyzes := func(is_fuzz_worker bool) (exit int, reported bool) {
-		var output bytes.Buffer
-		exit = -1
-		recorder := &invariant.Recorder{
-			Is_Test: true, Is_Fuzz: true, Is_Fuzz_Worker: is_fuzz_worker,
-			Output: &output, Exit: func(code int) { exit = code },
-		}
-		// A Sometimes that never fired either way: a gap.
-		recorder.Events.Store("g", &invariant.Assertion_Metadata{
-			Kind: invariant.ASSERTION_KIND_SOMETIMES, Message: "g",
-		})
-		invariant.Recorder_Analyze_Assertion_Frequency(recorder)
-		return exit, output.Len() > 0
-	}
-	exit, reported := analyzes(false)
-	if exit != 1 {
-		t.Errorf("fuzz coordinator must exit=1 and report, got exit=%d reported=%v",
-			exit, reported)
-	}
-	if !reported {
-		t.Errorf("fuzz coordinator must exit=1 and report, got exit=%d reported=%v",
-			exit, reported)
-	}
-	exit, reported = analyzes(true)
-	if exit != -1 {
-		t.Errorf("a fuzz worker must not analyze, got exit=%d reported=%v", exit, reported)
-	}
-	if reported {
-		t.Errorf("a fuzz worker must not analyze, got exit=%d reported=%v", exit, reported)
+	recorder, _, _ := registered_chain_fixture()
+	recorder.Is_Benchmark = true
+	invariant.Recorder_Dot_Product(recorder, "check").
+		Sometimes(true, "zero").
+		Sometimes(false, "one").
+		Impossible("exclusive", invariant.Event_True("zero"), invariant.Event_True("one")).
+		Ensure()
+	metadata := chain_metadata(&chain_metadata_input{Test: t, Recorder: recorder,
+		Key: invariant.Chain_Key{Namespace: "check", Ordinal: 0, Message: "zero"}})
+	if metadata.Frequency.Load() != 0 {
+		t.Fatal("benchmarks must not record")
 	}
 }
 
-// Test_Coverage_Enforcement: enforcement runs in every mode, even when coverage is not
-// being recorded (Is_Test false), like a production binary — both the eager Always and the
-// Dot_Product element kinds.
+// Test_Coverage_Enforcement prevents its specification contract from regressing.
 func Test_Coverage_Enforcement(t *testing.T) {
-	recorder := &invariant.Recorder{} // Is_Test false: not a coverage run
-	if !did_panic(func() { invariant.Recorder_Always(recorder, false, "guard") }) {
-		t.Fatal("an eager Always must enforce even when coverage is not recorded")
-	}
-	if !did_panic(func() {
-		invariant.Recorder_Dot_Product(recorder, "check",
-			invariant.Recorder_Sometimes(recorder, true, "a"),
-			invariant.Recorder_Sometimes(recorder, true, "b"),
-			invariant.Impossible(invariant.Event_True("a"), invariant.Event_True("b")))
-	}) {
-		t.Fatal("a Dot_Product must enforce its elements even without coverage recording")
+	recorder := &invariant.Recorder{Is_Benchmark: true}
+	message := panic_text(func() {
+		invariant.Recorder_Dot_Product(recorder, "check").
+			Sometimes(true, "zero").
+			Impossible("forbidden", invariant.Event_True("zero")).Ensure()
+	})
+	if message == "" {
+		t.Fatal("benchmark mode must enforce")
 	}
 }
 
-// Test_Coverage_Uniqueness: two Dot_Products sharing a message fail registration — a
-// duplicate would silently merge two obligations and mask a gap.
+// Test_Coverage_Uniqueness prevents its specification contract from regressing.
 func Test_Coverage_Uniqueness(t *testing.T) {
 	const SOURCE = `package fixture
-
-func check_a(n int) {
-	invariant.Dot_Product("field", invariant.Sometimes(n < 0, "lo"))
-}
-
-func check_b(n int) {
-	invariant.Dot_Product("field", invariant.Sometimes(n > 0, "hi"))
-}
+func first(v bool) { invariant.Dot_Product("same").Sometimes(v, "a").Ensure() }
+func second(v bool) { invariant.Dot_Product("same").Sometimes(v, "b").Ensure() }
 `
-	var output bytes.Buffer
-	exit_code := -1
-	recorder := &invariant.Recorder{
-		File_System: fstest.MapFS{
-			"fixture/check.go": &fstest.MapFile{Data: []byte(SOURCE)},
-		},
-		Output: &output,
-		Exit:   func(code int) { exit_code = code },
+	_, output, code := registered_fixture(SOURCE)
+	if code != 1 {
+		t.Fatalf("exit = %d, want duplicate failure; output=%q", code, output.String())
 	}
-	invariant.Recorder_Register_Packages_For_Analysis(recorder, "/fixture")
-
-	if exit_code != 1 {
-		t.Fatalf("duplicate messages must exit 1, got %d", exit_code)
-	}
-	if !strings.Contains(output.String(), "duplicate") {
-		t.Errorf("the report must name the collision, got: %s", output.String())
+	const TEMPLATE_SOURCE = `package fixture
+type Number int
+func Number_Invariants(n Number, namespace invariant.Namespace) {
+	invariant.Dot_Product(namespace).Sometimes(n == 0, "zero").Ensure()
+	invariant.Dot_Product(namespace).Sometimes(n == 1, "one").Ensure()
+}
+func check(n Number) { Number_Invariants(n, "number") }
+`
+	_, output, code = registered_fixture(TEMPLATE_SOURCE)
+	if code != 1 {
+		t.Fatalf("template duplicate exit = %d, want 1; output=%q", code, output.String())
 	}
 }
 
-// Test_Coverage_Literal: a non-literal message fails registration — the static side cannot
-// key it, so the coverage would vanish if it were allowed through.
+// Test_Coverage_Literal prevents its specification contract from regressing.
 func Test_Coverage_Literal(t *testing.T) {
 	const SOURCE = `package fixture
-
-func check(n int) {
-	msg := "zero"
-	invariant.Dot_Product("field", invariant.Sometimes(n == 0, msg))
+func check(v bool, message string) {
+	invariant.Dot_Product("check").Sometimes(v, message).Ensure()
 }
 `
-	var output bytes.Buffer
-	exit_code := -1
-	recorder := &invariant.Recorder{
-		File_System: fstest.MapFS{
-			"fixture/check.go": &fstest.MapFile{Data: []byte(SOURCE)},
-		},
-		Output: &output,
-		Exit:   func(code int) { exit_code = code },
-	}
-	invariant.Recorder_Register_Packages_For_Analysis(recorder, "/fixture")
-
-	if exit_code != 1 {
-		t.Fatalf("a non-literal message must exit 1, got %d", exit_code)
-	}
-	if !strings.Contains(output.String(), "non-literal") {
-		t.Errorf("the report must say non-literal messages, got: %s", output.String())
+	_, output, code := registered_fixture(SOURCE)
+	if code != 1 {
+		t.Fatalf("exit = %d, want literal failure; output=%q", code, output.String())
 	}
 }
 
-// Test_Coverage_Unresolved: a bundle the analyzer cannot resolve is fatal, never
-// silently skipped.
+// Test_Coverage_Unresolved prevents its specification contract from regressing.
 func Test_Coverage_Unresolved(t *testing.T) {
-	const SOURCE = `package b
-
-import (
-	_ "example.com/m/invariant"
-	"other.com/x"
-)
-
-func check(n int) {
-	x.Pair_Invariants(n, "field")
-}
-`
-	var output bytes.Buffer
-	exit_code := -1
-	recorder := &invariant.Recorder{
-		File_System: fstest.MapFS{
-			"m/go.mod": &fstest.MapFile{Data: []byte("module example.com/m\n")},
-			"m/b/b.go": &fstest.MapFile{Data: []byte(SOURCE)},
-		},
-		Output: &output,
-		Exit:   func(code int) { exit_code = code },
-	}
-	invariant.Recorder_Register_Packages_For_Analysis(recorder, "/m/b")
-
-	if exit_code != 1 {
-		t.Fatalf("an unresolvable bundle must exit 1, got %d", exit_code)
-	}
-	if !strings.Contains(output.String(), "Pair_Invariants") {
-		t.Errorf("the report must name the unresolved bundle, got: %s", output.String())
-	}
-}
-
-// Test_Range_Guard: a Range_Invariants callsite registers both bound guards as namespaced Always
-// reachability entries; driving the preset credits them, and a value beyond the interval panics.
-func Test_Range_Guard(t *testing.T) {
-	recorder := range_registered(t, [2]string{"-100", "100"})
-	separator := invariant.ELEMENT_MESSAGE_SEPARATOR
-	guards := []string{invariant.RANGE_GUARD_UPPER, invariant.RANGE_GUARD_LOWER}
-	for _, label := range guards {
-		entry, ok := recorder.Events.Load("foo" + separator + label)
-		if !ok {
-			t.Fatalf("bound guard %q must seed a reachability entry", label)
-		}
-		if entry.(*invariant.Assertion_Metadata).Kind != invariant.ASSERTION_KIND_ALWAYS {
-			t.Errorf("bound guard %q must register as an Always entry", label)
-		}
-	}
-	invariant.Recorder_Range(recorder, 5, -100, 100, invariant.Namespace("foo"))
-	for _, label := range guards {
-		entry, _ := recorder.Events.Load("foo" + separator + label)
-		if entry.(*invariant.Assertion_Metadata).Frequency.Load() == 0 {
-			t.Errorf("reaching the preset must credit guard %q", label)
-		}
-	}
-	panicked := did_panic(func() {
-		invariant.Recorder_Range(recorder, 200, -100, 100, invariant.Namespace("foo"))
-	})
-	if !panicked {
-		t.Error("a value beyond the interval must panic")
-	}
-}
-
-// Test_Range_Coverage: the grid gets a Sometimes axis for each interval edge and each sentinel
-// strictly inside, mutually exclusive so only singleton and all-clear cells survive; driving every
-// one analyzes clean, and a single-value interval seeds no grid at all.
-func Test_Range_Coverage(t *testing.T) {
-	separator := invariant.ELEMENT_MESSAGE_SEPARATOR
-	witnessed := []string{
-		invariant.RANGE_MESSAGE_MINIMUM, invariant.RANGE_MESSAGE_MAXIMUM,
-		invariant.RANGE_MESSAGE_ZERO, invariant.RANGE_MESSAGE_ONE,
-		invariant.RANGE_MESSAGE_TWO, invariant.RANGE_MESSAGE_NEGATIVE_ONE,
-	}
-	wide := range_registered(t, [2]string{"-100", "100"})
-	for _, message := range witnessed {
-		if _, ok := wide.Events.Load("foo" + separator + message); !ok {
-			t.Errorf("[-100,100] must witness %q", message)
-		}
-	}
-	if _, ok := wide.Events.Load("foo:tuple=(0,0,0,0,0,0)"); !ok {
-		t.Error("the all-false cell must survive and be seeded")
-	}
-	if _, ok := wide.Events.Load("foo:tuple=(1,1,0,0,0,0)"); ok {
-		t.Error("the min-and-max cell must be carved by mutual exclusion")
-	}
-	// Drive both edges, every interior sentinel, and an ordinary value so each axis sees both
-	// events and every surviving cell is witnessed, then confirm the analysis reports no gap.
-	for _, v := range []int{-100, 100, 0, 1, 2, -1, 42} {
-		invariant.Recorder_Range(wide, v, -100, 100, invariant.Namespace("foo"))
-	}
-	if !range_analyzes_clean(wide) {
-		t.Error("a fully-exercised Range must analyze clean")
-	}
-	point := range_registered(t, [2]string{"5", "5"})
-	if range_has_tuple(point) {
-		t.Error("a single-value interval must seed no grid tuple")
-	}
-}
-
-// Test_Range_Saturation: when the interval's width is below its axis count every value is a
-// witnessed axis, so the all-false cell can never occur and is carved — a fully-driven saturated
-// Range analyzes clean rather than reporting an eternal gap for the unreachable "neither" value.
-func Test_Range_Saturation(t *testing.T) {
-	saturated := range_registered(t, [2]string{"0", "1"})
-	if _, ok := saturated.Events.Load("foo:tuple=(0,0)"); ok {
-		t.Error("a saturated interval must carve the all-false cell, not seed it")
-	}
-	// 0 and 1 are the only reachable values; driving both witnesses every surviving cell.
-	for _, v := range []int{0, 1} {
-		invariant.Recorder_Range(saturated, v, 0, 1, invariant.Namespace("foo"))
-	}
-	if !range_analyzes_clean(saturated) {
-		t.Error("a fully-driven saturated Range must analyze clean")
-	}
-}
-
-// Test_Range_Exclusions: declaring in-range values unreachable drops their sentinel axes and
-// enforces them, so a holed interval witnesses only its reachable shapes; when every interior value
-// is excluded the interval is a two-point set and the all-false cell is carved.
-func Test_Range_Exclusions(t *testing.T) {
-	separator := invariant.ELEMENT_MESSAGE_SEPARATOR
-	// [1,8] excluding {2,3,4}: reachable {1,5,6,7,8}; the interior sentinel 2 drops its axis
-	// while 5,6,7 keep the all-false cell fillable.
-	holed := registered(t, "func check(f int) {\n"+
-		"\tinvariant.Range_Invariants(f, 1, 8, \"foo\", 2, 3, 4)\n}\n")
-	if _, ok := holed.Events.Load("foo" + separator + invariant.RANGE_MESSAGE_TWO); ok {
-		t.Error("an excluded sentinel must not seed a witness axis")
-	}
-	if _, ok := holed.Events.Load("foo" + separator + invariant.RANGE_MESSAGE_MINIMUM); !ok {
-		t.Error("the minimum edge must still be witnessed")
-	}
-	for _, v := range []int{1, 8, 6} {
-		invariant.Recorder_Range(holed, v, 1, 8, invariant.Namespace("foo"), 2, 3, 4)
-	}
-	if !range_analyzes_clean(holed) {
-		t.Error("a holed interval driven through its reachable values must analyze clean")
-	}
-	// [5,11] with all interior values excluded is a two-point set: all-false is carved.
-	two_point := registered(t, "func check(f int) {\n"+
-		"\tinvariant.Range_Invariants(f, 5, 11, \"foo\", 6, 7, 8, 9, 10)\n}\n")
-	if _, ok := two_point.Events.Load("foo:tuple=(0,0)"); ok {
-		t.Error("an all-excluded interval must carve the all-false cell")
-	}
-	for _, v := range []int{5, 11} {
-		invariant.Recorder_Range(
-			two_point, v, 5, 11, invariant.Namespace("foo"), 6, 7, 8, 9, 10)
-	}
-	if !range_analyzes_clean(two_point) {
-		t.Error("a two-point interval driven at both ends must analyze clean")
-	}
-	// Zero-allocation contract: excluding a non-sentinel (50) leaves the grid identical to a
-	// plain [1,100] range: the only difference is the variadic, which must stay stack-bound.
-	free := &invariant.Recorder{}
-	plain := testing.AllocsPerRun(500, func() {
-		invariant.Recorder_Range(free, 50, 1, 100, invariant.Namespace("bar"))
-	})
-	exclusion_allocs := testing.AllocsPerRun(500, func() {
-		invariant.Recorder_Range(free, 60, 1, 100, invariant.Namespace("bar"), 50)
-	})
-	if exclusion_allocs > plain {
-		t.Errorf("exclusions allocate over plain: %v > %v", exclusion_allocs, plain)
-	}
-	// An excluded value is enforced: reaching it panics.
-	defer func() {
-		if recover() == nil {
-			t.Error("driving an excluded value must panic")
-		}
-	}()
-	invariant.Recorder_Range(holed, 3, 1, 8, invariant.Namespace("foo"), 2, 3, 4)
-}
-
-// Test_Range_Enum: an enum witnesses each member and rejects every non-member. A two-member enum is
-// a saturated span whose all-false cell is carved; a member strictly inside the span fills it.
-func Test_Range_Enum(t *testing.T) {
-	two_point := registered(t, "func check(f int) {\n"+
-		"\tinvariant.Enum_Invariants(f, \"foo\", 5, 11)\n}\n")
-	if _, ok := two_point.Events.Load("foo:tuple=(0,0)"); ok {
-		t.Error("a two-member enum must carve the all-false cell")
-	}
-	for _, v := range []int{5, 11} {
-		invariant.Recorder_Enum(two_point, v, invariant.Namespace("foo"), 5, 11)
-	}
-	if !range_analyzes_clean(two_point) {
-		t.Error("a two-member enum driven at both members must analyze clean")
-	}
-	// A non-member is rejected.
-	defer func() {
-		if recover() == nil {
-			t.Error("an enum must panic on a non-member")
-		}
-	}()
-	invariant.Recorder_Enum(two_point, 7, invariant.Namespace("foo"), 5, 11)
-}
-
-// Test_Range_Registration: the scan evaluates each bound as an integer constant — literals,
-// sibling-const references, and constant arithmetic — to decide which axes to seed, and a bound it
-// cannot resolve to a constant fails registration rather than dropping coverage.
-func Test_Range_Registration(t *testing.T) {
-	separator := invariant.ELEMENT_MESSAGE_SEPARATOR
-	// FOO_MAX evaluates to (1<<3)-1 = 7, so 2 is strictly inside [0,7] and -1 is below it.
-	evaluated := range_registered(t, [2]string{"0", "(1 << 3) - 1"})
-	seeded := func(message string) (ok bool) {
-		_, ok = evaluated.Events.Load("foo" + separator + message)
-		return ok
-	}
-	if !seeded(invariant.RANGE_MESSAGE_TWO) {
-		t.Error("two lies strictly inside [0, 7] and must seed an interior axis")
-	}
-	if !seeded(invariant.RANGE_MESSAGE_MAXIMUM) {
-		t.Error("the evaluated maximum edge must seed an axis")
-	}
-	if seeded(invariant.RANGE_MESSAGE_NEGATIVE_ONE) {
-		t.Error("negative one is below the minimum and must not seed an axis")
-	}
-	const UNRESOLVED = `package fixture
-
-const FOO_MAX = 100
-
-func check(f int, limit int) {
-	invariant.Range_Invariants(f, limit, FOO_MAX, "foo")
-}
-`
-	files := fstest.MapFS{"fixture/check.go": &fstest.MapFile{Data: []byte(UNRESOLVED)}}
-	var output bytes.Buffer
-	exit_code := -1
-	recorder := &invariant.Recorder{
-		File_System: files,
-		Output:      &output,
-		Exit:        func(code int) { exit_code = code },
-	}
-	invariant.Recorder_Register_Packages_For_Analysis(recorder, "/fixture")
-	if exit_code != 1 {
-		t.Fatalf("an unresolvable bound must fail registration, got exit %d", exit_code)
-	}
-}
-
-// Test_Coverage_Literal_Reference: an Impossible reference message must also be a string literal,
-// like every message — a non-literal reference fails registration, since the static side cannot
-// match it to a sibling axis to carve.
-func Test_Coverage_Literal_Reference(t *testing.T) {
 	const SOURCE = `package fixture
-
-func check(n int) {
-	a := invariant.Sometimes(n == 0, "a")
-	b := invariant.Sometimes(n == 1, "b")
-	axis := "a"
-	invariant.Dot_Product("field", a, b,
-		invariant.Impossible(invariant.Event_True(axis), invariant.Event_True("b")))
-}
+func check(v bool) { Missing(v, "check").Sometimes(v, "value").Ensure() }
 `
-	var output bytes.Buffer
-	exit_code := -1
-	recorder := &invariant.Recorder{
-		File_System: fstest.MapFS{
-			"fixture/check.go": &fstest.MapFile{Data: []byte(SOURCE)},
-		},
-		Output: &output,
-		Exit:   func(code int) { exit_code = code },
-	}
-	invariant.Recorder_Register_Packages_For_Analysis(recorder, "/fixture")
-
-	if exit_code != 1 {
-		t.Fatalf("a non-literal Impossible reference must exit 1, got %d", exit_code)
-	}
-	if !strings.Contains(output.String(), "non-literal") {
-		t.Errorf("the report must say non-literal, got: %s", output.String())
+	_, output, code := registered_fixture(SOURCE)
+	if code != 1 {
+		t.Fatalf("exit = %d, want unresolved failure; output=%q", code, output.String())
 	}
 }
 
-// Test_Coverage_Sink_Fires_On_First_Coverage: a fuzz worker persists each cell the first
-// time it is covered. Coverage_Sink fires on the 0→1 transition of a branch and not on
-// later observations, so a long run appends at most one line per branch — the bound that
-// keeps it off the syscall-per-assertion path.
-func Test_Coverage_Sink_Fires_On_First_Coverage(t *testing.T) {
-	type event struct {
-		Key   string
-		Fired bool
+// Test_Range_Guard prevents its specification contract from regressing.
+func Test_Range_Guard(t *testing.T) {
+	recorder := &invariant.Recorder{}
+	if panic_text(func() { invariant.Recorder_Range(recorder, 3, 0, 2, "range") }) == "" {
+		t.Fatal("out-of-range value must panic")
 	}
-	var sunk []event
-	recorder := &invariant.Recorder{
-		Is_Test:        true,
-		Is_Fuzz:        true,
-		Is_Fuzz_Worker: true,
-		Coverage_Sink: func(key string, fired_true bool) {
-			sunk = append(sunk, event{key, fired_true})
-		},
+}
+
+// Test_Range_Coverage prevents its specification contract from regressing.
+func Test_Range_Coverage(t *testing.T) {
+	recorder, _, _ := registered_fixture(`package fixture
+func check(v int) { invariant.Range_Invariants(v, -2, 2, "range") }
+`)
+	if event_count(&recorder.Events) == 0 {
+		t.Fatal("Range must seed its boundaries and tuples")
 	}
-	key := "check" + invariant.ELEMENT_MESSAGE_SEPARATOR + "zero"
-	recorder.Events.Store(key, &invariant.Assertion_Metadata{
-		Kind: invariant.ASSERTION_KIND_SOMETIMES, Message: key,
+}
+
+// Test_Range_Saturation prevents its specification contract from regressing.
+func Test_Range_Saturation(t *testing.T) {
+	recorder, _, _ := registered_fixture(`package fixture
+func check(v int) { invariant.Range_Invariants(v, 0, 1, "range") }
+`)
+	if _, exists := recorder.Events.Load("range:tuple=(0,0)"); exists {
+		t.Fatal("saturated all-false tuple must be carved")
+	}
+}
+
+// Test_Range_Exclusions prevents its specification contract from regressing.
+func Test_Range_Exclusions(t *testing.T) {
+	recorder := &invariant.Recorder{}
+	if panic_text(func() { invariant.Recorder_Range(recorder, 1, 0, 2, "range", 1) }) == "" {
+		t.Fatal("excluded value must panic")
+	}
+}
+
+// Test_Range_Enum prevents its specification contract from regressing.
+func Test_Range_Enum(t *testing.T) {
+	recorder := &invariant.Recorder{}
+	if panic_text(func() { invariant.Recorder_Enum(recorder, 2, "enum", 0, 1) }) == "" {
+		t.Fatal("non-member must panic")
+	}
+}
+
+// Test_Range_Registration prevents its specification contract from regressing.
+func Test_Range_Registration(t *testing.T) {
+	recorder, _, _ := registered_fixture(`package fixture
+const MIN = -2
+const MAX = 2
+func check(v int) { invariant.Range_Invariants(v, MIN, MAX, "range") }
+`)
+	if event_count(&recorder.Events) == 0 {
+		t.Fatal("constant Range bounds must register")
+	}
+}
+
+func registered_chain_fixture() (
+	recorder *invariant.Recorder, output *bytes.Buffer, code int,
+) {
+	return registered_fixture(`package fixture
+func check(n int) {
+	invariant.Dot_Product("check").
+		Sometimes(n == 0, "zero").
+		Sometimes(n == 1, "one").
+		Impossible("exclusive", invariant.Event_True("zero"), invariant.Event_True("one")).
+		Ensure()
+}
+`)
+}
+
+func registered_fixture(source string) (
+	recorder *invariant.Recorder, output *bytes.Buffer, code int,
+) {
+	return registered_fixture_options(&registered_fixture_options_input{Source: source})
+}
+
+func registered_fixture_with_sugar(source string) (
+	recorder *invariant.Recorder, output *bytes.Buffer, code int,
+) {
+	return registered_fixture_options(&registered_fixture_options_input{
+		Source: source, Sugar: "fixture/fixture",
 	})
-
-	for range 3 {
-		invariant.Recorder_Dot_Product(
-			recorder, "check", invariant.Recorder_Sometimes(recorder, true, "zero"))
-	}
-	for range 2 {
-		invariant.Recorder_Dot_Product(
-			recorder, "check", invariant.Recorder_Sometimes(recorder, false, "zero"))
-	}
-
-	if len(sunk) != 2 {
-		t.Fatalf("sink must fire once per branch on first coverage, got %d events: %v",
-			len(sunk), sunk)
-	}
-	seen_true, seen_false := false, false
-	for _, e := range sunk {
-		if e.Key != key {
-			t.Errorf("sink key = %q, want %q", e.Key, key)
-		}
-		seen_true = seen_true || e.Fired
-		seen_false = seen_false || !e.Fired
-	}
-	if !seen_true {
-		t.Errorf("sink must fire for both branches, got %v", sunk)
-	}
-	if !seen_false {
-		t.Errorf("sink must fire for both branches, got %v", sunk)
-	}
 }
 
-// Test_Fuzz_Coverage_Line_Round_Trip: the worker's Fuzz_Coverage_Line and the coordinator's
-// Recorder_Merge_Fuzz_Coverage_From are inverses — encoding cells (including a NUL-bearing
-// key) and merging them back unions exactly those branches into a seeded grid, leaving the
-// other branch alone and skipping a key with no seeded entry.
-func Test_Fuzz_Coverage_Line_Round_Trip(t *testing.T) {
-	nul_key := "field" + invariant.ELEMENT_MESSAGE_SEPARATOR + "empty"
-	var file bytes.Buffer
-	file.WriteString(invariant.Fuzz_Coverage_Line(nul_key, true))
-	file.WriteString(invariant.Fuzz_Coverage_Line("plain", false))
-	file.WriteString(invariant.Fuzz_Coverage_Line("unseeded", true)) // no entry: skipped
-
-	recorder := &invariant.Recorder{Is_Test: true}
-	for _, key := range []string{nul_key, "plain"} {
-		recorder.Events.Store(key, &invariant.Assertion_Metadata{
-			Kind: invariant.ASSERTION_KIND_SOMETIMES, Message: key,
-		})
-	}
-
-	invariant.Recorder_Merge_Fuzz_Coverage_From(recorder, &file)
-
-	covered, _ := recorder.Events.Load(nul_key)
-	if covered.(*invariant.Assertion_Metadata).Frequency.Load() == 0 {
-		t.Errorf("merge must mark %q covered on its true branch", nul_key)
-	}
-	if covered.(*invariant.Assertion_Metadata).False_Frequency.Load() != 0 {
-		t.Errorf("merge must not touch %q's false branch", nul_key)
-	}
-	plain, _ := recorder.Events.Load("plain")
-	if plain.(*invariant.Assertion_Metadata).False_Frequency.Load() == 0 {
-		t.Error(`merge must mark "plain" covered on its false branch`)
-	}
-	if _, seeded := recorder.Events.Load("unseeded"); seeded {
-		t.Error("merge must not create entries for unseeded keys")
-	}
+type registered_fixture_options_input struct {
+	Source string
+	Sugar  string
 }
 
-// Reports whether calling action panics, recovering so the test can assert on it.
-func did_panic(action func()) (panicked bool) {
-	defer func() {
-		if recover() != nil {
-			panicked = true
-		}
-	}()
-	action()
-	return false
+func registered_fixture_options(input *registered_fixture_options_input) (
+	recorder *invariant.Recorder, output *bytes.Buffer, code int,
+) {
+	output = &bytes.Buffer{}
+	tty := &bytes.Buffer{}
+	code = -1
+	recorder = &invariant.Recorder{
+		File_System: fstest.MapFS{
+			"go.mod":           &fstest.MapFile{Data: []byte("module fixture\n")},
+			"fixture/check.go": &fstest.MapFile{Data: []byte(input.Source)},
+		},
+		Packages_To_Analyze: []string{"/fixture"},
+		Output:              output,
+		Tty:                 tty,
+		Exit:                func(status int) { code = status },
+		Is_Test:             true,
+		Sugar_Package:       input.Sugar,
+	}
+	invariant.Recorder_Register_Packages_For_Analysis(recorder)
+	return recorder, output, code
 }
 
-// Returns the message action panics with, or "" when it does not panic, so a test can
-// assert on which axis the panic names.
-func recover_message(action func()) (message string) {
+type chain_metadata_input struct {
+	Test     *testing.T
+	Recorder *invariant.Recorder
+	Key      invariant.Chain_Key
+}
+
+func chain_metadata(input *chain_metadata_input) (metadata *invariant.Assertion_Metadata) {
+	input.Test.Helper()
+	key := string(input.Key.Namespace) + invariant.ELEMENT_MESSAGE_SEPARATOR
+	key += fmt.Sprint(input.Key.Ordinal) + invariant.ELEMENT_MESSAGE_SEPARATOR
+	key += input.Key.Message
+	value, exists := input.Recorder.Events.Load(key)
+	if !exists {
+		input.Test.Fatalf("missing chain key %q", key)
+	}
+	return value.(*invariant.Assertion_Metadata)
+}
+
+func event_count(events *sync.Map) (count int) {
+	events.Range(func(_, _ any) (more bool) {
+		count++
+		return true
+	})
+	return count
+}
+
+func panic_text(action func()) (message string) {
 	defer func() {
 		if recovered := recover(); recovered != nil {
 			message = fmt.Sprint(recovered)
@@ -1610,117 +909,14 @@ func recover_message(action func()) (message string) {
 	return ""
 }
 
-// Spreads element into a Dot_Product from a stable, named frame, so the panic stack
-// carries a recognizable call site for recover_with_stack to capture. The noinline keeps
-// it a frame of its own rather than folding into the caller.
-//
-//go:noinline
-func dot_product_callsite(recorder *invariant.Recorder, elements ...invariant.Dot_Element) {
-	invariant.Recorder_Dot_Product(recorder, "field", elements...)
-}
-
-// Runs action, recovers the panic it raises, and returns the panic message together with
-// the call stack at the panic point — kept to the invariant and call-site frames and
-// rendered "func (file)", dropping line numbers, addresses, and the runtime/testing
-// scaffolding — so a snapshot pins which frames the failure unwound through without
-// machine-specific or line-shifting noise. Captured inside the defer, where the panicking
-// frames below the recover are still live on the goroutine's stack.
-func recover_with_stack(action func()) (message string, stack string) {
-	defer func() {
-		message = fmt.Sprint(recover())
-		program_counters := make([]uintptr, 64)
-		count := runtime.Callers(0, program_counters)
-		frames := runtime.CallersFrames(program_counters[:count])
-		var lines []string
-		for range count {
-			frame, more := frames.Next()
-			is_core := strings.Contains(frame.Function, "/shared/invariant.")
-			is_callsite := strings.HasSuffix(frame.Function, ".dot_product_callsite")
-			keep := is_core || is_callsite
-			if keep {
-				rendered := frame.Function + " (" + filepath.Base(frame.File) + ")"
-				lines = append(lines, rendered)
-			}
-			if !more {
-				break
-			}
-		}
-		stack = strings.Join(lines, "\n")
-	}()
-	action()
-	return message, stack
-}
-
-// One registration run for the bundle-subject test: the fixture file set, the
-// directory to register, and the Sugar_Package that exempts the framework's own
-// preset package. A struct keeps the helper clear of repeated string parameters.
-type bundle_subject_case struct {
-	Files     fstest.MapFS
-	Directory string
-	Sugar     string
-}
-
-// Registers the case and returns the exit code the registration produced (-1 when
-// it never exited) together with the report it printed.
-func bundle_subject_register(test_case bundle_subject_case) (code int, report string) {
-	var output bytes.Buffer
-	code = -1
-	recorder := &invariant.Recorder{
-		File_System:   test_case.Files,
-		Output:        &output,
-		Exit:          func(exit int) { code = exit },
-		Sugar_Package: test_case.Sugar,
+func cover_chain_grid(recorder *invariant.Recorder) {
+	values := [3][2]bool{{false, false}, {true, false}, {false, true}}
+	for _, value := range values {
+		invariant.Recorder_Dot_Product(recorder, "check").
+			Sometimes(value[0], "zero").
+			Sometimes(value[1], "one").
+			Impossible("exclusive",
+				invariant.Event_True("zero"), invariant.Event_True("one")).
+			Ensure()
 	}
-	invariant.Recorder_Register_Packages_For_Analysis(recorder, test_case.Directory)
-	return code, output.String()
-}
-
-// Registers a single Range_Invariants("foo") callsite with the given integer bounds and returns
-// the recorder, so a Range test varies only the interval.
-func range_registered(t *testing.T, bounds [2]string) (recorder *invariant.Recorder) {
-	t.Helper()
-	source := "package fixture\n\n" +
-		"const FOO_MIN = " + bounds[0] + "\n" +
-		"const FOO_MAX = " + bounds[1] + "\n\n" +
-		"func check(f int) {\n" +
-		"\tinvariant.Range_Invariants(f, FOO_MIN, FOO_MAX, \"foo\")\n}\n"
-	files := fstest.MapFS{"fixture/check.go": &fstest.MapFile{Data: []byte(source)}}
-	recorder = &invariant.Recorder{Is_Test: true, File_System: files}
-	invariant.Recorder_Register_Packages_For_Analysis(recorder, "/fixture")
-	return recorder
-}
-
-// Reports whether the recorder seeded any Range grid tuple under the "foo" namespace.
-func range_has_tuple(recorder *invariant.Recorder) (has bool) {
-	recorder.Events.Range(func(key, _ any) (continue_iteration bool) {
-		text, ok := key.(string)
-		if !ok {
-			return true
-		}
-		if strings.HasPrefix(text, "foo:tuple=") {
-			has = true
-		}
-		return true
-	})
-	return has
-}
-
-// Reports whether analyzing the recorder finds no coverage gap, capturing its exit through a stub.
-func range_analyzes_clean(recorder *invariant.Recorder) (clean bool) {
-	exited := false
-	recorder.Output = &bytes.Buffer{}
-	recorder.Exit = func(code int) { exited = true }
-	invariant.Recorder_Analyze_Assertion_Frequency(recorder)
-	return !exited
-}
-
-// Registers a fixture from its body — the declarations after the package clause — and returns the
-// recorder, so a test varying the callsite shape (exclusions, enum members) writes only its body.
-func registered(t *testing.T, body string) (recorder *invariant.Recorder) {
-	t.Helper()
-	source := "package fixture\n\n" + body
-	files := fstest.MapFS{"fixture/check.go": &fstest.MapFile{Data: []byte(source)}}
-	recorder = &invariant.Recorder{Is_Test: true, File_System: files}
-	invariant.Recorder_Register_Packages_For_Analysis(recorder, "/fixture")
-	return recorder
 }

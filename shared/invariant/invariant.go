@@ -1,7 +1,6 @@
-// Package invariant records Always and Sometimes assertions and checks, across a
-// run, that every event combination they can produce is actually observed.
-// Recorder_Dot_Product groups the elements of one assertion site; Impossible
-// declares event combinations that must never occur.
+// Package invariant exposes eager Always guards and demanded Dot_Product chains.
+// Each chain requires the suite to witness every surviving combination of its
+// Sometimes axes; Impossible carves and rejects combinations that cannot occur.
 package invariant
 
 import (
@@ -28,11 +27,9 @@ import (
 // ASSERTION_FAILURE_MESSAGE_PREFIX opens every assertion-failure message.
 const ASSERTION_FAILURE_MESSAGE_PREFIX = "🚨 Assertion Failure 🚨: "
 
-// ELEMENT_MESSAGE_SEPARATOR joins a Dot_Product's message prefix to a held axis's own
-// message to form that axis's coverage key. NUL cannot appear in Go source text or a
-// sane message, so it can never occur inside either half — the join is unambiguous, the
-// way "::from=" was for the old file:line scheme. recorder_check_non_literal_messages keeps
-// messages literal; nothing else reserves NUL.
+// ELEMENT_MESSAGE_SEPARATOR makes structural axis keys unambiguous because registration rejects
+// it in every namespace and message. Chain axes use two separators around the ordinal; the private
+// Range and Enum engine retains its single-separator flat keys.
 const ELEMENT_MESSAGE_SEPARATOR = "\x00"
 
 // Bounds the bundle-flattening loop in recorder_collect_elements: each step
@@ -41,6 +38,28 @@ const ELEMENT_MESSAGE_SEPARATOR = "\x00"
 // self-referential) *_Invariants graph from making the work depend unboundedly
 // on input — TigerStyle forbids that.
 const BUNDLE_EXPANSION_STEPS_MAX = 4096
+
+// A uint8 ordinal represents the 255 valid link positions without widening Product.
+const CHAIN_LINKS_MAX = 255
+
+// Four uint64 words carry every axis representable by the chain's uint8 ordinal. The unused final
+// bit is intentional: 255 is the number of valid link positions, not a smaller grid policy.
+const CHAIN_MASK_WORDS = 4
+
+// PRODUCT_FAILURE_LINKS preserves the distinct 255-link cap diagnostic until Ensure.
+const PRODUCT_FAILURE_LINKS = uint8(1)
+
+// PRODUCT_FAILURE_SOMETIMES distinguishes a malformed axis link from other builder failures.
+const PRODUCT_FAILURE_SOMETIMES = uint8(2)
+
+// PRODUCT_FAILURE_IMPOSSIBLE distinguishes a malformed constraint link at Ensure.
+const PRODUCT_FAILURE_IMPOSSIBLE = uint8(3)
+
+// PRODUCT_FAILURE_REFERENCE defers every malformed sibling reference to Ensure.
+const PRODUCT_FAILURE_REFERENCE = uint8(4)
+
+// PRODUCT_FAILURE_DUPLICATE_RULE keeps duplicate named constraints fatal without eager panic.
+const PRODUCT_FAILURE_DUPLICATE_RULE = uint8(5)
 
 // Bounds the walk up the directory tree searching for a go.mod, so module
 // discovery can't loop unboundedly on a pathological path.
@@ -53,11 +72,11 @@ const MODULE_SEARCH_DEPTH_MAX = 256
 
 // DOT_ELEMENT_KIND_SOMETIMES tags an element whose condition must be observed
 // both true and false across the run.
-const DOT_ELEMENT_KIND_SOMETIMES Dot_Element_Kind = 1
+const DOT_ELEMENT_KIND_SOMETIMES Engine_Element_Kind = 1
 
 // DOT_ELEMENT_KIND_IMPOSSIBLE tags a declaration that a set of element events
 // must never co-occur.
-const DOT_ELEMENT_KIND_IMPOSSIBLE Dot_Element_Kind = 2
+const DOT_ELEMENT_KIND_IMPOSSIBLE Engine_Element_Kind = 2
 
 // ASSERTION_KIND_ALWAYS classifies a per-element tracker entry for an Always.
 const ASSERTION_KIND_ALWAYS Assertion_Kind = 0
@@ -106,6 +125,13 @@ type Recorder struct {
 	// modes touch. Built lazily; a plain map keyed by the existing message string reads
 	// allocation-free.
 	Enforce_Cache map[string]*Enforce_Handle
+
+	// Chain_Shapes_Mu guards discovery because foreign chains have no registration phase to
+	// publish an immutable shape before concurrent execution.
+	Chain_Shapes_Mu sync.RWMutex
+	// Chain_Shapes is keyed by namespace because one namespace names exactly one chain.
+	// Product retains the resolved pointer so fluent links do not repeat the map lookup.
+	Chain_Shapes map[Namespace]*Chain_Shape
 
 	// Output receives the coverage-gap report and the orphan/bundle diagnostics.
 	Output io.Writer
@@ -201,12 +227,11 @@ type Tuple_Axis struct {
 	Message string
 }
 
-// Dot_Element is a discriminated union: a Sometimes axis (gated or not), or an Impossible
-// declaration. Kind selects which fields carry meaning. An Imply is a gated Sometimes — the
-// same kind with Gated set — not a kind of its own.
-type Dot_Element struct {
+// Engine_Element survives only because Range and Enum share the original allocation-free grid
+// engine; keeping that adapter separate prevents its representation from leaking into Product.
+type Engine_Element struct {
 	// Kind selects which fields carry meaning: a Sometimes axis or an Impossible declaration.
-	Kind Dot_Element_Kind
+	Kind Engine_Element_Kind
 	// Event is the observed outcome of a Sometimes axis: true when its condition held.
 	Event bool
 	// Gated marks a Sometimes whose recording is conditional on Prerequisite (an Imply).
@@ -222,12 +247,11 @@ type Dot_Element struct {
 	Impossibles []Dot_Element_Reference
 }
 
-// Bundle is a slice of Dot_Element — what a _Invariants function returns for a caller to
-// spread into a Dot_Product. An alias, so it stays interchangeable with []Dot_Element.
-type Bundle = []Dot_Element
+// Engine_Bundle keeps the legacy engine slice allocation-compatible with its preset builders.
+type Engine_Bundle = []Engine_Element
 
-// Dot_Element_Kind discriminates a Dot_Element: Always, Sometimes, or Impossible.
-type Dot_Element_Kind uint8
+// Engine_Element_Kind keeps the preset adapter's zero value invalid.
+type Engine_Element_Kind uint8
 
 // Dot_Element_Reference names one element's event by its Message — a coordinate an
 // Impossible declares forbidden.
@@ -238,12 +262,107 @@ type Dot_Element_Reference struct {
 	Event bool
 }
 
-// Recorder_Always is an eager guard: it panics immediately when condition is false,
-// naming itself by message, in every run mode. Unlike the element producers it is not a
-// Dot_Element and is never consumed by Recorder_Dot_Product — there is no inert phase, so
-// a constant axis does not masquerade as a cross-product element. Under a plain test run
-// it also credits its reachability entry, so an Always the suite never reaches surfaces as
-// a coverage gap.
+// Chain_Key is one chain axis's complete identity. Ordinal is the fluent link position, not merely
+// the axis position, so inserting a constraint cannot silently alias an older registered shape.
+type Chain_Key struct {
+	// Namespace identifies the one chain that owns the axis.
+	Namespace Namespace
+	// Ordinal distinguishes repeated messages by their actual fluent position.
+	Ordinal uint8
+	// Message is the human-readable axis claim.
+	Message string
+}
+
+// Chain_Mask is the packed tuple and rule representation for every axis a chain can contain.
+// Arrays remain comparable, so registered tuple resolution is a direct allocation-free map read.
+type Chain_Mask [CHAIN_MASK_WORDS]uint64
+
+// Chain_Shape is the immutable execution plan for one registered namespace. A foreign chain builds
+// the same plan under Mu on its first execution so shape and enforcement errors behave identically
+// even though its coverage entries remain nil.
+type Chain_Shape struct {
+	// Mu protects discovery of an unregistered, enforcement-only shape.
+	Mu sync.Mutex
+	// Axes resolves packed mask positions to fluent identities.
+	Axes []Chain_Axis
+	// Links pins the complete structural sequence shared by a namespace.
+	Links []Chain_Link
+	// Rules holds every polar carve in declaration order.
+	Rules []Chain_Rule
+	// Tuples resolves a packed mask directly to its pre-seeded coverage entry.
+	// The map prevents a dense array from imposing a width smaller than the chain ordinal.
+	Tuples map[Chain_Mask]Handle_Entry
+	// Entries keeps Ensure's axis-credit pass allocation-free by structural key.
+	Entries map[Chain_Key]*Assertion_Metadata
+	// Registered distinguishes analyzed chains from enforcement-only foreign chains.
+	Registered bool
+	// Ensured prevents a discovered shape from growing after its first complete execution.
+	Ensured bool
+}
+
+// Chain_Axis lets Ensure map each packed condition bit back to its registered identity.
+type Chain_Axis struct {
+	// Ordinal is the axis's position among all links.
+	Ordinal uint8
+	// Message is retained for runtime sibling-reference resolution.
+	Message string
+}
+
+// Chain_Link pins the structural identity of one fluent link. References are retained only for an
+// Impossible because polarity and declaration order are part of a namespace's shape.
+type Chain_Link struct {
+	// Kind distinguishes axis and constraint links.
+	Kind Engine_Element_Kind
+	// Ordinal prevents a fluent reorder from replaying against an older shape.
+	Ordinal uint8
+	// Axis_Count resolves references against only the siblings preceding this link.
+	Axis_Count uint8
+	// Message is either the axis claim or named constraint.
+	Message string
+	// References retains referenced axis positions in argument order without retaining strings.
+	References [CHAIN_LINKS_MAX]uint8
+	// Reference_Events packs each argument's polarity by argument position.
+	Reference_Events Chain_Mask
+	// Reference_Count distinguishes unused fixed-array cells from real coordinates.
+	Reference_Count uint8
+}
+
+// Chain_Rule is one Impossible compiled to the packed-mask predicate mask&Mask == Want.
+type Chain_Rule struct {
+	// Mask selects every named axis and globs over all others.
+	Mask Chain_Mask
+	// Want contains the selected axes' forbidden polarities.
+	Want Chain_Mask
+	// Message names the constraint when it fires.
+	Message string
+	// Ordinal maps the compiled rule back to its fluent link.
+	Ordinal uint8
+}
+
+// Product is the register-sized fluent value for one Dot_Product execution. Value receivers return
+// advanced copies; no method takes its address, making an escaping chain unrepresentable by shape.
+type Product struct {
+	// Recorder receives the complete call only after Ensure accepts it.
+	Recorder *Recorder
+	// Shape is resolved once at the root and replayed by every value copy.
+	Shape *Chain_Shape
+	// Namespace is carried because it is part of every axis identity.
+	Namespace Namespace
+	// Ordinal is the next fluent link position.
+	Ordinal uint8
+	// Axis_Count is the next packed bit.
+	Axis_Count uint8
+	// Mask is the observed tuple in axis-i-is-bit-i form.
+	Mask Chain_Mask
+	// Failure retains the first malformed link so only Ensure exposes it.
+	Failure uint8
+	// Mismatch retains structural divergence so only Ensure exposes it.
+	Mismatch bool
+}
+
+// Recorder_Always stays outside Product because an eager guard has no second branch to widen a
+// demanded grid. It panics immediately when condition is false in every run mode; under a plain
+// test run it also credits reachability so an uncalled guard remains visible as a gap.
 func Recorder_Always[T ~bool](recorder *Recorder, condition T, message string) {
 	if !condition {
 		panic(ASSERTION_FAILURE_MESSAGE_PREFIX + message + "  Always — condition was false")
@@ -267,31 +386,13 @@ func Recorder_Always[T ~bool](recorder *Recorder, condition T, message string) {
 // own — coverage is enforced only when the element is consumed by
 // Recorder_Dot_Product; a bare Sometimes tracks nothing. message is the element's
 // own identity, prefixed by the consuming Dot_Product's message.
-func Recorder_Sometimes[T ~bool](
+func recorder_sometimes[T ~bool](
 	recorder *Recorder, condition T, message string,
-) (dot_element Dot_Element) {
-	return Dot_Element{
+) (element Engine_Element) {
+	return Engine_Element{
 		Kind:    DOT_ELEMENT_KIND_SOMETIMES,
 		Event:   bool(condition),
 		Message: message,
-	}
-}
-
-// Recorder_Imply builds a gated Sometimes: an axis recorded only on a call where prerequisite
-// holds, and don't-care otherwise — a failing prerequisite credits neither branch, so it never
-// stands in for the gated false event. The axis is excluded from the grid (the message-less
-// prerequisite is not an axis to cross with). condition is evaluated eagerly, before this runs,
-// so a condition safe only under the prerequisite must still guard itself (p != nil && p.x):
-// the prerequisite gates recording, not evaluation. To gate on several prerequisites, AND them.
-func Recorder_Imply[P ~bool, C ~bool](
-	recorder *Recorder, prerequisite P, condition C, message string,
-) (dot_element Dot_Element) {
-	return Dot_Element{
-		Kind:         DOT_ELEMENT_KIND_SOMETIMES,
-		Event:        bool(condition),
-		Gated:        true,
-		Prerequisite: bool(prerequisite),
-		Message:      message,
 	}
 }
 
@@ -303,8 +404,8 @@ func Recorder_Imply[P ~bool, C ~bool](
 // grid, every tuple matching the named events across all values of the other axes (see
 // recorder_carve_matches). So Impossible(Event_True("a"), Event_True("b")) excludes "a and b
 // both true" across every combination of the remaining axes.
-func Impossible(impossibles ...Dot_Element_Reference) (dot_element Dot_Element) {
-	return Dot_Element{Kind: DOT_ELEMENT_KIND_IMPOSSIBLE, Impossibles: impossibles}
+func impossible(impossibles ...Dot_Element_Reference) (element Engine_Element) {
+	return Engine_Element{Kind: DOT_ELEMENT_KIND_IMPOSSIBLE, Impossibles: impossibles}
 }
 
 // Event_True references the axis carrying message at its true outcome, for use in Impossible. The
@@ -332,12 +433,511 @@ func Event_False(message string) (reference Dot_Element_Reference) {
 // as an inline string literal, which converts to Namespace without ceremony.
 type Namespace string
 
-// Recorder_Dot_Product enforces the call's elements: an Impossible whose referenced events
-// all occurred fails. Every axis
+// Recorder_Dot_Product starts one demanded chain under namespace.
+func Recorder_Dot_Product(recorder *Recorder, namespace Namespace) (product Product) {
+	if strings.Contains(string(namespace), ELEMENT_MESSAGE_SEPARATOR) {
+		panic(ASSERTION_FAILURE_MESSAGE_PREFIX + "Dot_Product namespace contains NUL")
+	}
+	return Product{
+		Recorder:  recorder,
+		Shape:     recorder_chain_shape(recorder, namespace),
+		Namespace: namespace,
+	}
+}
+
+// Sometimes only advances the builder; Ensure owns validation and coverage mutation.
+func (product Product) Sometimes(condition bool, message string) (next Product) {
+	if product.Failure != 0 {
+		return product
+	}
+	if product.Ordinal == CHAIN_LINKS_MAX {
+		return product.chain_defer_failure(PRODUCT_FAILURE_LINKS)
+	}
+	if strings.Contains(message, ELEMENT_MESSAGE_SEPARATOR) {
+		return product.chain_defer_failure(PRODUCT_FAILURE_SOMETIMES)
+	}
+	key := Chain_Key{Namespace: product.Namespace, Ordinal: product.Ordinal, Message: message}
+	mismatch := product.Shape.chain_axis(key, product.Axis_Count)
+	if condition {
+		product.Mask = chain_mask_with(product.Mask, product.Axis_Count)
+	}
+	product.Ordinal++
+	product.Axis_Count++
+	if mismatch {
+		product.Mismatch = true
+	}
+	return product
+}
+
+// Impossible only advances the builder; Ensure owns validation and enforcement.
+func (product Product) Impossible(
+	message string, references ...Dot_Element_Reference,
+) (next Product) {
+	if product.Failure != 0 {
+		return product
+	}
+	if product.Ordinal == CHAIN_LINKS_MAX {
+		return product.chain_defer_failure(PRODUCT_FAILURE_LINKS)
+	}
+	if strings.Contains(message, ELEMENT_MESSAGE_SEPARATOR) {
+		return product.chain_defer_failure(PRODUCT_FAILURE_IMPOSSIBLE)
+	}
+	if len(references) == 0 {
+		return product.chain_defer_failure(PRODUCT_FAILURE_IMPOSSIBLE)
+	}
+	if len(references) > CHAIN_LINKS_MAX {
+		return product.chain_defer_failure(PRODUCT_FAILURE_IMPOSSIBLE)
+	}
+	link := Chain_Link{
+		Kind: DOT_ELEMENT_KIND_IMPOSSIBLE, Ordinal: product.Ordinal,
+		Axis_Count: product.Axis_Count, Message: message,
+	}
+	if product.Shape.chain_replays() {
+		rule, mismatch, failure := product.Shape.chain_rule_registered(link, references)
+		if failure != 0 {
+			product = product.chain_defer_failure(failure)
+		}
+		return product.impossible_advance(rule, mismatch)
+	}
+	rule, mismatch, failure := product.Shape.chain_rule(link, references)
+	if failure != 0 {
+		product = product.chain_defer_failure(failure)
+	}
+	return product.impossible_advance(rule, mismatch)
+}
+
+// Keeping advancement outside both resolution branches lets the warmed branch's input stay on the
+// stack even though first-execution discovery must retain a copy of its references.
+func (product Product) impossible_advance(
+	rule Chain_Rule, mismatch bool,
+) (next Product) {
+	if chain_mask_empty(rule.Mask) {
+		product = product.chain_defer_failure(PRODUCT_FAILURE_REFERENCE)
+	}
+	product.Ordinal++
+	if mismatch {
+		product.Mismatch = true
+	}
+	return product
+}
+
+// Retaining only the category keeps malformed links inert until Ensure owns the diagnostic.
+func (product Product) chain_defer_failure(failure uint8) (next Product) {
+	if product.Failure == 0 {
+		product.Failure = failure
+	}
+	return product
+}
+
+func (product Product) chain_failure_message() (message string) {
+	switch product.Failure {
+	case PRODUCT_FAILURE_LINKS:
+		return "Dot_Product exceeds 255 links"
+	case PRODUCT_FAILURE_SOMETIMES:
+		return "Sometimes link is invalid"
+	case PRODUCT_FAILURE_IMPOSSIBLE:
+		return "Impossible link is invalid"
+	case PRODUCT_FAILURE_REFERENCE:
+		return "Impossible reference does not name one unique preceding axis"
+	case PRODUCT_FAILURE_DUPLICATE_RULE:
+		return "duplicate Impossible message"
+	}
+	return ""
+}
+
+// Registration and a completed foreign discovery both make the shape immutable; checking the
+// latter under its mutex avoids racing two first executions while keeping every replay read-only.
+func (shape *Chain_Shape) chain_replays() (replays bool) {
+	if shape.Registered {
+		return true
+	}
+	shape.Mu.Lock()
+	replays = shape.Ensured
+	shape.Mu.Unlock()
+	return replays
+}
+
+// Ensure validates the complete shape, enforces every carve, and credits the packed tuple.
+func (product Product) Ensure() {
+	if failure := product.chain_failure_message(); failure != "" {
+		panic(ASSERTION_FAILURE_MESSAGE_PREFIX + failure)
+	}
+	axis_count := product.Axis_Count
+	if axis_count == 0 {
+		panic(ASSERTION_FAILURE_MESSAGE_PREFIX + "Dot_Product has no axes")
+	}
+	if product.Mismatch {
+		message := "Dot_Product shape differs for namespace " +
+			strconv.Quote(string(product.Namespace))
+		if product.Shape.Registered {
+			message = "registered Dot_Product credited unknown axis or shape differs"
+		}
+		panic(ASSERTION_FAILURE_MESSAGE_PREFIX + message)
+	}
+	if !product.Shape.chain_ensure(product) {
+		panic(ASSERTION_FAILURE_MESSAGE_PREFIX +
+			"Dot_Product shape differs for namespace " +
+			strconv.Quote(string(product.Namespace)))
+	}
+	var violations []string
+	for _, rule := range product.Shape.Rules {
+		matches := true
+		for i_index := range product.Mask {
+			if product.Mask[i_index]&rule.Mask[i_index] != rule.Want[i_index] {
+				matches = false
+				break
+			}
+		}
+		if matches {
+			violations = append(violations, rule.Message)
+		}
+	}
+	if len(violations) > 0 {
+		panic(ASSERTION_FAILURE_MESSAGE_PREFIX + strings.Join(violations, "\n"))
+	}
+	if !recorder_chain_records(product.Recorder) {
+		return
+	}
+	if !product.Shape.Registered {
+		return
+	}
+	tuple := product.chain_handle()
+	if tuple.Metadata == nil {
+		panic(ASSERTION_FAILURE_MESSAGE_PREFIX +
+			"registered Dot_Product credited unknown tuple")
+	}
+	for i_index := uint8(0); i_index < axis_count; i_index++ {
+		axis := product.Shape.Axes[i_index]
+		key := Chain_Key{
+			Namespace: product.Namespace, Ordinal: axis.Ordinal, Message: axis.Message,
+		}
+		metadata := product.Shape.Entries[key]
+		condition := chain_mask_has(product.Mask, i_index)
+		recorder_increment_entry(product.Recorder,
+			Handle_Entry{Metadata: metadata, Key: metadata.Message}, condition)
+	}
+	recorder_increment_entry(product.Recorder, tuple, true)
+}
+
+// Resolving every handle before crediting keeps an unknown key from partially crediting the call.
+func (product Product) chain_handle() (tuple Handle_Entry) {
+	for _, axis := range product.Shape.Axes {
+		key := Chain_Key{
+			Namespace: product.Namespace, Ordinal: axis.Ordinal, Message: axis.Message,
+		}
+		metadata := product.Shape.Entries[key]
+		if metadata == nil {
+			panic(ASSERTION_FAILURE_MESSAGE_PREFIX +
+				"registered Dot_Product credited unknown axis " +
+				strconv.Quote(chain_key_string(key)))
+		}
+	}
+	tuple = product.Shape.Tuples[product.Mask]
+	return tuple
+}
+
+func chain_mask_with(mask Chain_Mask, position uint8) (next Chain_Mask) {
+	mask[position/64] |= uint64(1) << (position % 64)
+	return mask
+}
+
+func chain_mask_has(mask Chain_Mask, position uint8) (has bool) {
+	return mask[position/64]&(uint64(1)<<(position%64)) != 0
+}
+
+func chain_mask_empty(mask Chain_Mask) (empty bool) {
+	return mask == Chain_Mask{}
+}
+
+// Registration publishes shapes before execution, while foreign packages still need the same
+// structural enforcement; a per-recorder cache makes both paths converge on one immutable plan.
+func recorder_chain_shape(recorder *Recorder, namespace Namespace) (shape *Chain_Shape) {
+	recorder.Chain_Shapes_Mu.RLock()
+	shape = recorder.Chain_Shapes[namespace]
+	recorder.Chain_Shapes_Mu.RUnlock()
+	if shape != nil {
+		return shape
+	}
+	recorder.Chain_Shapes_Mu.Lock()
+	defer recorder.Chain_Shapes_Mu.Unlock()
+	if shape = recorder.Chain_Shapes[namespace]; shape != nil {
+		return shape
+	}
+	shape = &Chain_Shape{Entries: map[Chain_Key]*Assertion_Metadata{}}
+	if recorder.Chain_Shapes == nil {
+		recorder.Chain_Shapes = map[Namespace]*Chain_Shape{}
+	}
+	recorder.Chain_Shapes[namespace] = shape
+	return shape
+}
+
+// Coverage is deliberately absent in benchmarks and non-test binaries, but enforcement never is.
+func recorder_chain_records(recorder *Recorder) (records bool) {
+	if !recorder.Is_Test {
+		return false
+	}
+	return !recorder.Is_Benchmark
+}
+
+// Two separators distinguish an axis key from every flat tuple and Always key during fuzz merge.
+func chain_key_string(key Chain_Key) (value string) {
+	return string(key.Namespace) + ELEMENT_MESSAGE_SEPARATOR +
+		strconv.Itoa(int(key.Ordinal)) + ELEMENT_MESSAGE_SEPARATOR + key.Message
+}
+
+// Registered shapes are immutable and can use the plain map without synchronization or boxing;
+// only first-executed foreign shapes pay the mutex needed to discover their link sequence.
+func (shape *Chain_Shape) chain_axis(
+	key Chain_Key, axis_count uint8,
+) (mismatch bool) {
+	if shape.Registered {
+		if int(key.Ordinal) >= len(shape.Links) {
+			return true
+		}
+		link := shape.Links[key.Ordinal]
+		mismatch = link.Kind != DOT_ELEMENT_KIND_SOMETIMES
+		if link.Message != key.Message {
+			mismatch = true
+		}
+		if int(axis_count) >= len(shape.Axes) {
+			return true
+		}
+		axis := shape.Axes[axis_count]
+		if axis.Ordinal != key.Ordinal {
+			mismatch = true
+		}
+		if axis.Message != key.Message {
+			mismatch = true
+		}
+		return mismatch
+	}
+	shape.Mu.Lock()
+	defer shape.Mu.Unlock()
+	link := Chain_Link{
+		Kind: DOT_ELEMENT_KIND_SOMETIMES, Ordinal: key.Ordinal,
+		Axis_Count: axis_count, Message: key.Message,
+	}
+	if int(key.Ordinal) < len(shape.Links) {
+		expected := shape.Links[key.Ordinal]
+		mismatch = expected.Kind != link.Kind
+		if expected.Message != link.Message {
+			mismatch = true
+		}
+	} else if !shape.Ensured {
+		if int(key.Ordinal) == len(shape.Links) {
+			shape.Links = append(shape.Links, link)
+		} else {
+			mismatch = true
+		}
+	} else {
+		mismatch = true
+	}
+	axis := Chain_Axis{Ordinal: key.Ordinal, Message: key.Message}
+	if int(axis_count) < len(shape.Axes) {
+		expected := shape.Axes[axis_count]
+		if expected != axis {
+			mismatch = true
+		}
+	} else if !shape.Ensured {
+		if int(axis_count) == len(shape.Axes) {
+			shape.Axes = append(shape.Axes, axis)
+		} else {
+			mismatch = true
+		}
+	} else {
+		mismatch = true
+	}
+	return mismatch
+}
+
+// A reference has no ordinal in the public vocabulary, so repeated messages are safe until a rule
+// tries to name them; requiring one unique preceding match prevents a carve from changing meaning.
+func (shape *Chain_Shape) chain_reference_mask(
+	axis_count uint8, references []Dot_Element_Reference,
+) (
+	mask Chain_Mask, want Chain_Mask, positions [CHAIN_LINKS_MAX]uint8,
+	events Chain_Mask, failure uint8,
+) {
+	if int(axis_count) > len(shape.Axes) {
+		failure = PRODUCT_FAILURE_REFERENCE
+		return mask, want, positions, events, failure
+	}
+	for reference_index, reference := range references {
+		if strings.Contains(reference.Message, ELEMENT_MESSAGE_SEPARATOR) {
+			failure = PRODUCT_FAILURE_REFERENCE
+			return mask, want, positions, events, failure
+		}
+		matches := 0
+		position := 0
+		for i_index := 0; i_index < int(axis_count); i_index++ {
+			if shape.Axes[i_index].Message != reference.Message {
+				continue
+			}
+			matches++
+			position = i_index
+		}
+		if matches != 1 {
+			failure = PRODUCT_FAILURE_REFERENCE
+			return mask, want, positions, events, failure
+		}
+		axis_position := uint8(position)
+		if chain_mask_has(mask, axis_position) {
+			failure = PRODUCT_FAILURE_REFERENCE
+			return mask, want, positions, events, failure
+		}
+		mask = chain_mask_with(mask, axis_position)
+		positions[reference_index] = axis_position
+		if reference.Event {
+			want = chain_mask_with(want, axis_position)
+			events = chain_mask_with(events, uint8(reference_index))
+		}
+	}
+	return mask, want, positions, events, 0
+}
+
+func (shape *Chain_Shape) chain_resolve_rule(
+	link Chain_Link, references []Dot_Element_Reference,
+) (resolved Chain_Link, rule Chain_Rule, failure uint8) {
+	mask, want, positions, events, failure :=
+		shape.chain_reference_mask(link.Axis_Count, references)
+	if failure != 0 {
+		return link, rule, failure
+	}
+	link.References = positions
+	link.Reference_Events = events
+	link.Reference_Count = uint8(len(references))
+	rule = Chain_Rule{
+		Mask: mask, Want: want, Message: link.Message, Ordinal: link.Ordinal,
+	}
+	return link, rule, 0
+}
+
+// Constraints are resolved while the fluent value still carries the number of preceding axes;
+// this makes a forward or non-sibling reference fail before it can erase a demanded obligation.
+func (shape *Chain_Shape) chain_rule(
+	link Chain_Link, references []Dot_Element_Reference,
+) (rule Chain_Rule, mismatch bool, failure uint8) {
+	if shape.Registered {
+		return shape.chain_rule_registered(link, references)
+	}
+	shape.Mu.Lock()
+	defer shape.Mu.Unlock()
+	link, rule, failure = shape.chain_resolve_rule(link, references)
+	if failure != 0 {
+		return rule, false, failure
+	}
+	for _, extant := range shape.Rules {
+		if extant.Ordinal >= link.Ordinal {
+			continue
+		}
+		if extant.Message == link.Message {
+			return rule, false, PRODUCT_FAILURE_DUPLICATE_RULE
+		}
+	}
+	if int(link.Ordinal) < len(shape.Links) {
+		mismatch = !shape.Links[link.Ordinal].chain_equal(link)
+		for _, extant := range shape.Rules {
+			if extant.Ordinal == link.Ordinal {
+				return extant, mismatch, 0
+			}
+		}
+		return rule, true, 0
+	}
+	if !shape.Ensured {
+		if int(link.Ordinal) == len(shape.Links) {
+			shape.Links = append(shape.Links, link)
+			shape.Rules = append(shape.Rules, rule)
+		} else {
+			mismatch = true
+		}
+	} else {
+		mismatch = true
+	}
+	return rule, mismatch, 0
+}
+
+// The registered path compares the call's stack-backed references to prebuilt values and never
+// retains or boxes them, keeping enforcement allocation-free.
+func (shape *Chain_Shape) chain_rule_registered(
+	link Chain_Link, references []Dot_Element_Reference,
+) (rule Chain_Rule, mismatch bool, failure uint8) {
+	link, rule, failure = shape.chain_resolve_rule(link, references)
+	if failure != 0 {
+		return rule, false, failure
+	}
+	if int(link.Ordinal) >= len(shape.Links) {
+		return rule, true, 0
+	}
+	mismatch = !shape.Links[link.Ordinal].chain_equal(link)
+	for _, extant := range shape.Rules {
+		if extant.Ordinal == link.Ordinal {
+			if extant.Mask != rule.Mask {
+				mismatch = true
+			}
+			if extant.Want != rule.Want {
+				mismatch = true
+			}
+			return extant, mismatch, 0
+		}
+	}
+	return rule, true, 0
+}
+
+func (first Chain_Link) chain_equal(second Chain_Link) (equal bool) {
+	if first.Kind != second.Kind {
+		return false
+	}
+	if first.Ordinal != second.Ordinal {
+		return false
+	}
+	if first.Axis_Count != second.Axis_Count {
+		return false
+	}
+	if first.Message != second.Message {
+		return false
+	}
+	if first.Reference_Count != second.Reference_Count {
+		return false
+	}
+	for i_index := uint8(0); i_index < first.Reference_Count; i_index++ {
+		if first.References[i_index] != second.References[i_index] {
+			return false
+		}
+		if chain_mask_has(first.Reference_Events, i_index) !=
+			chain_mask_has(second.Reference_Events, i_index) {
+			return false
+		}
+	}
+	return true
+}
+
+// Ensuring freezes a discovered shape so a shared namespace cannot merge two products.
+func (shape *Chain_Shape) chain_ensure(product Product) (matches bool) {
+	axis_count := product.Axis_Count
+	if shape.Registered {
+		if len(shape.Links) != int(product.Ordinal) {
+			return false
+		}
+		return len(shape.Axes) == int(axis_count)
+	}
+	shape.Mu.Lock()
+	defer shape.Mu.Unlock()
+	matches = len(shape.Links) == int(product.Ordinal)
+	if len(shape.Axes) != int(axis_count) {
+		matches = false
+	}
+	if matches {
+		shape.Ensured = true
+	}
+	return matches
+}
+
+// Recorder_dot_product remains private so Range and Enum can retain their compact engine without
+// exposing a second product API. Every axis
 // violated on the call is named in one panic, not just the first, so a single run surfaces
 // them all. namespace is the grid's identity and is prefixed onto each held axis's own message
 // to form that axis's coverage key.
-func Recorder_Dot_Product(recorder *Recorder, namespace Namespace, bundle ...Dot_Element) {
+func recorder_dot_product(recorder *Recorder, namespace Namespace, bundle ...Engine_Element) {
 	// A Dot_Product with no elements asserts nothing — a no-op grid is always a
 	// mistake, so it fails immediately rather than silently recording nothing.
 	if len(bundle) == 0 {
@@ -450,7 +1050,7 @@ func Recorder_Range[Value Integer, Minimum Integer, Maximum Integer](
 	if axis_count == 0 {
 		return
 	}
-	Recorder_Dot_Product(recorder, namespace, bundle...)
+	recorder_dot_product(recorder, namespace, bundle...)
 }
 
 // Credits both bound guards' reachability under the recording-mode gate, mirroring Recorder_Always:
@@ -475,7 +1075,7 @@ func recorder_range_credit_guards(recorder *Recorder, namespace Namespace) {
 // value, so an unsigned value's wrap of 0-1 to its maximum can never masquerade as -1.
 func recorder_range_bundle[Value Integer](
 	recorder *Recorder, value Value, bounds [2]Value, excluded []Value,
-) (bundle []Dot_Element, axis_count int) {
+) (bundle []Engine_Element, axis_count int) {
 	elements, messages := recorder_range_axes(recorder, value, bounds, excluded, false)
 	if recorder_range_saturated(bounds, len(messages), excluded) {
 		elements = append(elements, recorder_range_all_false(messages))
@@ -490,12 +1090,12 @@ func recorder_range_bundle[Value Integer](
 // The all-false carve is the caller's, which alone knows how its reachable count meets the axes.
 func recorder_range_axes[Value Integer](
 	recorder *Recorder, value Value, bounds [2]Value, set []Value, enum bool,
-) (bundle []Dot_Element, messages []string) {
+) (bundle []Engine_Element, messages []string) {
 	if bounds[0] < bounds[1] {
-		edge := Recorder_Sometimes(recorder, value == bounds[0], RANGE_MESSAGE_MINIMUM)
+		edge := recorder_sometimes(recorder, value == bounds[0], RANGE_MESSAGE_MINIMUM)
 		bundle = append(bundle, edge)
 		messages = append(messages, RANGE_MESSAGE_MINIMUM)
-		edge = Recorder_Sometimes(recorder, value == bounds[1], RANGE_MESSAGE_MAXIMUM)
+		edge = recorder_sometimes(recorder, value == bounds[1], RANGE_MESSAGE_MAXIMUM)
 		bundle = append(bundle, edge)
 		messages = append(messages, RANGE_MESSAGE_MAXIMUM)
 	}
@@ -516,7 +1116,7 @@ func recorder_range_axes[Value Integer](
 		if recorder_range_holed(candidates[i], set) != enum {
 			continue
 		}
-		axis := Recorder_Sometimes(recorder, value == candidates[i], units[i].Message)
+		axis := recorder_sometimes(recorder, value == candidates[i], units[i].Message)
 		bundle = append(bundle, axis)
 		messages = append(messages, units[i].Message)
 	}
@@ -552,7 +1152,7 @@ func Recorder_Enum[Value Integer](
 	if len(messages) == 0 {
 		return
 	}
-	Recorder_Dot_Product(recorder, namespace, elements...)
+	recorder_dot_product(recorder, namespace, elements...)
 }
 
 // Computes the enum's span — the least and greatest member. An empty member set yields a zero span
@@ -604,12 +1204,12 @@ func recorder_range_saturated[Value Integer](
 
 // Builds the Impossible carving the all-false cell: in a saturated interval no value is none of the
 // witnessed axes, so that combination must never be demanded.
-func recorder_range_all_false(messages []string) (carve Dot_Element) {
+func recorder_range_all_false(messages []string) (carve Engine_Element) {
 	references := make([]Dot_Element_Reference, 0, len(messages))
 	for _, message := range messages {
 		references = append(references, Event_False(message))
 	}
-	return Impossible(references...)
+	return impossible(references...)
 }
 
 // Reports whether candidate lies strictly inside the interval bounds, so a sentinel never coincides
@@ -623,11 +1223,11 @@ func recorder_range_interior[Value Integer](
 
 // Builds a mutual-exclusion Impossible over every pair of admitted axis messages: a value is at
 // most one boundary unit, so no two of them are ever true together.
-func recorder_range_carves(messages []string) (carves []Dot_Element) {
+func recorder_range_carves(messages []string) (carves []Engine_Element) {
 	for i := range messages {
 		for j := i + 1; j < len(messages); j++ {
 			carves = append(carves,
-				Impossible(Event_True(messages[i]), Event_True(messages[j])))
+				impossible(Event_True(messages[i]), Event_True(messages[j])))
 		}
 	}
 	return carves
@@ -639,8 +1239,7 @@ func recorder_range_carves(messages []string) (carves []Dot_Element) {
 // A plain map keyed by the existing message string reads allocation-free. The sibling of
 // recorder_observe_handle, but read in every mode — enforcement is not gated on Is_Test.
 func recorder_enforce_handle(
-	recorder *Recorder, message string, bundle Bundle,
-) (handle *Enforce_Handle) {
+	recorder *Recorder, message string, bundle Engine_Bundle) (handle *Enforce_Handle) {
 	recorder.Enforce_Cache_Mu.RLock()
 	handle = recorder.Enforce_Cache[message]
 	recorder.Enforce_Cache_Mu.RUnlock()
@@ -667,17 +1266,17 @@ func recorder_enforce_handle(
 // check did. A reference-less Impossible constrains nothing, so it yields no rule (it never fires,
 // matching dot_element_impossible_violated's empty-set case). The handle holds only positions
 // (ints) and freshly rendered strings — no pointers into bundle — so bundle stays non-escaping.
-func recorder_enforce_handle_build(bundle Bundle) (handle *Enforce_Handle) {
+func recorder_enforce_handle_build(bundle Engine_Bundle) (handle *Enforce_Handle) {
 	handle = &Enforce_Handle{}
-	for _, dot_element := range bundle {
-		if dot_element.Kind != DOT_ELEMENT_KIND_IMPOSSIBLE {
+	for _, element := range bundle {
+		if element.Kind != DOT_ELEMENT_KIND_IMPOSSIBLE {
 			continue
 		}
-		if len(dot_element.Impossibles) == 0 {
+		if len(element.Impossibles) == 0 {
 			continue
 		}
 		var coordinates []Reference_Coordinate
-		for _, reference := range dot_element.Impossibles {
+		for _, reference := range element.Impossibles {
 			index := dot_product_axis_index(bundle, reference.Message)
 			if index < 0 {
 				panic(ASSERTION_FAILURE_MESSAGE_PREFIX +
@@ -688,7 +1287,7 @@ func recorder_enforce_handle_build(bundle Bundle) (handle *Enforce_Handle) {
 		}
 		handle.Rules = append(handle.Rules, Impossible_Rule{
 			Coordinates: coordinates,
-			Message:     dot_element_impossible_message(dot_element),
+			Message:     dot_element_impossible_message(element),
 		})
 	}
 	return handle
@@ -697,12 +1296,12 @@ func recorder_enforce_handle_build(bundle Bundle) (handle *Enforce_Handle) {
 // Returns the bundle position of the Sometimes axis carrying message, or -1 when none does — a
 // linear scan, since a bundle is a handful of elements. Resolves one Impossible reference to the
 // sibling it names, so enforcement compares that axis's event by index rather than by string.
-func dot_product_axis_index(bundle Bundle, message string) (index int) {
-	for position, dot_element := range bundle {
-		if dot_element.Kind != DOT_ELEMENT_KIND_SOMETIMES {
+func dot_product_axis_index(bundle Engine_Bundle, message string) (index int) {
+	for position, element := range bundle {
+		if element.Kind != DOT_ELEMENT_KIND_SOMETIMES {
 			continue
 		}
-		if dot_element.Message == message {
+		if element.Message == message {
 			return position
 		}
 	}
@@ -778,8 +1377,7 @@ type Reference_Coordinate struct {
 // nothing. Records under a plain test, the fuzz coordinator, and a fuzz worker (all carry
 // Is_Test); a no-op in a benchmark or a non-test binary, which only enforce.
 func recorder_dot_product_observe(
-	recorder *Recorder, message string, bundle Bundle,
-) {
+	recorder *Recorder, message string, bundle Engine_Bundle) {
 	if !recorder.Is_Test {
 		return
 	}
@@ -789,25 +1387,25 @@ func recorder_dot_product_observe(
 	handle := recorder_observe_handle(recorder, message, bundle)
 	axis_index := 0
 	packed := 0
-	for _, dot_element := range bundle {
-		if dot_element.Kind != DOT_ELEMENT_KIND_SOMETIMES {
+	for _, element := range bundle {
+		if element.Kind != DOT_ELEMENT_KIND_SOMETIMES {
 			continue
 		}
 		entry := handle.Elements[axis_index]
 		axis_index++
-		if dot_element.Gated {
+		if element.Gated {
 			// A gated axis records only when its prerequisite holds — else don't-care —
 			// and joins no tuple (an Imply is excluded from the grid).
-			if dot_element.Prerequisite {
-				recorder_increment_entry(recorder, entry, dot_element.Event)
+			if element.Prerequisite {
+				recorder_increment_entry(recorder, entry, element.Event)
 			}
 			continue
 		}
 		packed <<= 1
-		if dot_element.Event {
+		if element.Event {
 			packed |= 1
 		}
-		recorder_increment_entry(recorder, entry, dot_element.Event)
+		recorder_increment_entry(recorder, entry, element.Event)
 	}
 	recorder_increment_entry(recorder, handle.Tuples[packed], true)
 }
@@ -816,8 +1414,7 @@ func recorder_dot_product_observe(
 // every element and grid-cell key against the seeded tracker once; later calls read it under
 // RLock with no allocation (a plain map keyed by the existing message string boxes nothing).
 func recorder_observe_handle(
-	recorder *Recorder, message string, bundle Bundle,
-) (handle *Observe_Handle) {
+	recorder *Recorder, message string, bundle Engine_Bundle) (handle *Observe_Handle) {
 	recorder.Observe_Cache_Mu.RLock()
 	handle = recorder.Observe_Cache[message]
 	recorder.Observe_Cache_Mu.RUnlock()
@@ -842,17 +1439,16 @@ func recorder_observe_handle(
 // exactly as registration seeded it. A cell or element registration never seeded resolves to a
 // nil-metadata entry, so the runtime skips it.
 func recorder_observe_handle_build(
-	recorder *Recorder, message string, bundle Bundle,
-) (handle *Observe_Handle) {
+	recorder *Recorder, message string, bundle Engine_Bundle) (handle *Observe_Handle) {
 	handle = &Observe_Handle{}
 	ungated_count := 0
-	for _, dot_element := range bundle {
-		if dot_element.Kind != DOT_ELEMENT_KIND_SOMETIMES {
+	for _, element := range bundle {
+		if element.Kind != DOT_ELEMENT_KIND_SOMETIMES {
 			continue
 		}
-		key := message + ELEMENT_MESSAGE_SEPARATOR + dot_element.Message
+		key := message + ELEMENT_MESSAGE_SEPARATOR + element.Message
 		handle.Elements = append(handle.Elements, recorder_handle_entry(recorder, key))
-		if !dot_element.Gated {
+		if !element.Gated {
 			ungated_count++
 		}
 	}
@@ -935,7 +1531,49 @@ func recorder_merge_process_line(recorder *Recorder, line string) {
 	if decode_error != nil {
 		return
 	}
-	recorder_increment(recorder, string(key), line[tab_offset+1:] == "T")
+	recorder_merge_increment(recorder, string(key), line[tab_offset+1:] == "T")
+}
+
+// Two separators are reserved for structural chain axes, while every legacy flat key has at most
+// one; dispatching here lets fuzz workers persist the same identity the allocation-free hot path
+// reads from Chain_Shape.Entries.
+func recorder_merge_increment(recorder *Recorder, key string, fired_true bool) {
+	if strings.Count(key, ELEMENT_MESSAGE_SEPARATOR) != 2 {
+		recorder_increment(recorder, key, fired_true)
+		return
+	}
+	first_separator_offset := strings.Index(key, ELEMENT_MESSAGE_SEPARATOR)
+	suffix := key[first_separator_offset+len(ELEMENT_MESSAGE_SEPARATOR):]
+	second_separator_offset := strings.Index(suffix, ELEMENT_MESSAGE_SEPARATOR)
+	ordinal, ordinal_error := strconv.Atoi(suffix[:second_separator_offset])
+	if ordinal_error != nil {
+		return
+	}
+	if ordinal < 0 {
+		return
+	}
+	if ordinal > CHAIN_LINKS_MAX {
+		return
+	}
+	chain_key := Chain_Key{
+		Namespace: Namespace(key[:first_separator_offset]), Ordinal: uint8(ordinal),
+		Message: suffix[second_separator_offset+len(ELEMENT_MESSAGE_SEPARATOR):],
+	}
+	recorder.Chain_Shapes_Mu.RLock()
+	shape := recorder.Chain_Shapes[chain_key.Namespace]
+	recorder.Chain_Shapes_Mu.RUnlock()
+	if shape == nil {
+		return
+	}
+	if !shape.Registered {
+		return
+	}
+	metadata := shape.Entries[chain_key]
+	if metadata == nil {
+		return
+	}
+	recorder_increment_entry(
+		recorder, Handle_Entry{Metadata: metadata, Key: key}, fired_true)
 }
 
 // Recorder_Merge_Fuzz_Coverage_From unions the coverage a fuzz coordinator reads from r
@@ -968,7 +1606,7 @@ func Recorder_Merge_Fuzz_Coverage_From(recorder *Recorder, r io.Reader) {
 // The Impossible element's own message is empty, so its identity is this set of
 // coordinates rather than a single message. Called once per Impossible at plan-build time to
 // pre-render each rule's Message, so a firing rule carries its text with no per-call work.
-func dot_element_impossible_message(impossible Dot_Element) (message string) {
+func dot_element_impossible_message(impossible Engine_Element) (message string) {
 	message = "Impossible — forbidden combination occurred:"
 	for _, reference := range impossible.Impossibles {
 		message += "\n  " + reference.Message + "  " + event_boolean_text(reference.Event)
@@ -1053,6 +1691,7 @@ func Recorder_Register_Packages_For_Analysis(recorder *Recorder, directories ...
 	recorder_check_non_literal_messages(recorder, reg.Non_Literal)
 	recorder_check_duplicate_messages(recorder, reg.Collision)
 	recorder_check_unresolved_bounds(recorder, reg.Unresolved_Bound)
+	recorder_check_invalid_chains(recorder, reg.Invalid_Chain)
 }
 
 // Reports whether name exists in recorder.File_System.
@@ -1305,6 +1944,11 @@ func recorder_register_file(
 	reg *Registration,
 ) {
 	imports := ast_file_imports(file)
+	allow_unqualified := false
+	if index.Sugar_Package != "" {
+		file_package := recorder_file_package(file_set, file, index)
+		allow_unqualified = file_package == index.Sugar_Package
+	}
 	for _, declaration := range file.Decls {
 		function, is_function := declaration.(*ast.FuncDecl)
 		if !is_function {
@@ -1313,7 +1957,8 @@ func recorder_register_file(
 		if function.Body == nil {
 			continue
 		}
-		recorder_register_function(recorder, file_set, function, imports, index, reg)
+		recorder_register_function(
+			recorder, file_set, function, imports, index, reg, allow_unqualified)
 	}
 }
 
@@ -1323,18 +1968,38 @@ func recorder_register_file(
 // the called template's grid under "lit"; any other call may be a bare eager Always.
 func recorder_register_function(
 	recorder *Recorder, file_set *token.FileSet, function *ast.FuncDecl,
-	imports map[string]string, index *Bundle_Index, reg *Registration,
+	imports map[string]string, index *Bundle_Index, reg *Registration, allow_unqualified bool,
 ) {
 	namespace_parameter := ""
 	if ast_is_invariants_name(function.Name.Name) {
 		namespace_parameter = ast_namespace_parameter(function)
 	}
+	ensured_roots := ast_ensured_chain_roots(function)
+	constructor := ast_function_returns_product(function)
 	ast.Inspect(function.Body, func(node ast.Node) (descend bool) {
 		call, is_call := node.(*ast.CallExpr)
 		if !is_call {
 			return true
 		}
-		if ast_invariant_selector(call) == "Dot_Product" {
+		if ast_chain_method(call) == "Ensure" {
+			recorder_register_chain(
+				recorder, file_set, call, namespace_parameter,
+				imports, index, reg, allow_unqualified)
+			return true
+		}
+		if ast_selector(call, allow_unqualified) == "Dot_Product" {
+			if len(call.Args) == 1 {
+				if ensured_roots[call.Pos()] {
+					return true
+				}
+				if constructor {
+					return true
+				}
+				reg.Invalid_Chain = append(reg.Invalid_Chain,
+					recorder_position(file_set, call)+
+						"  Dot_Product chain is not terminated by Ensure")
+				return true
+			}
 			recorder_register_dot_product(
 				recorder, file_set, call, namespace_parameter, imports, index, reg)
 			return true
@@ -1364,6 +2029,48 @@ func recorder_register_function(
 		recorder_register_eager_always(recorder, file_set, call, reg)
 		return true
 	})
+}
+
+// The root set distinguishes a complete nested chain from the same root left dangling in an
+// expression statement; source positions are stable within the one registration file set.
+func ast_ensured_chain_roots(function *ast.FuncDecl) (roots map[token.Pos]bool) {
+	roots = map[token.Pos]bool{}
+	ast.Inspect(function.Body, func(node ast.Node) (descend bool) {
+		call, is_call := node.(*ast.CallExpr)
+		if !is_call {
+			return true
+		}
+		if ast_chain_method(call) != "Ensure" {
+			return true
+		}
+		chain, parsed := ast_chain_from_ensure(call)
+		if parsed {
+			roots[chain.Root.Pos()] = true
+		}
+		return true
+	})
+	return roots
+}
+
+// Product-returning functions intentionally expose an unensured reusable prefix; every other
+// function must terminate its root locally so registration can see the complete demand.
+func ast_function_returns_product(function *ast.FuncDecl) (returns bool) {
+	if function.Type.Results == nil {
+		return false
+	}
+	for _, result := range function.Type.Results.List {
+		if identifier, is_identifier := result.Type.(*ast.Ident); is_identifier {
+			if identifier.Name == "Product" {
+				return true
+			}
+		}
+		if selector, is_selector := result.Type.(*ast.SelectorExpr); is_selector {
+			if selector.Sel.Name == "Product" {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // Returns the name of a _Invariants function's trailing namespace parameter — the grid identity
@@ -1490,6 +2197,21 @@ func recorder_check_duplicate_messages(recorder *Recorder, collisions []string) 
 	banner := "🚨 " + strconv.Itoa(len(collisions)) + " duplicate messages 🚨"
 	fmt.Fprintln(recorder.Output, banner)
 	for _, line := range collisions {
+		fmt.Fprintln(recorder.Output, line)
+	}
+	fmt.Fprintln(recorder.Output, banner)
+	recorder.Exit(1)
+}
+
+// A malformed chain cannot be partially registered because every omitted axis or carve would
+// weaken the demanded product; registration reports every structural refusal before exiting.
+func recorder_check_invalid_chains(recorder *Recorder, invalid []string) {
+	if len(invalid) == 0 {
+		return
+	}
+	banner := "🚨 " + strconv.Itoa(len(invalid)) + " invalid Dot_Product chains 🚨"
+	fmt.Fprintln(recorder.Output, banner)
+	for _, line := range invalid {
 		fmt.Fprintln(recorder.Output, line)
 	}
 	fmt.Fprintln(recorder.Output, banner)
@@ -1704,6 +2426,8 @@ func ast_is_control_flow(node ast.Node) (is_control_flow bool) {
 // The consuming Dot_Product's message is prefixed onto Message to form the coverage key,
 // uniformly for inline and bundle-descended axes alike.
 type Registration_Axis struct {
+	// Ordinal keeps repeated chain messages distinct; the legacy engine needs no ordinal.
+	Ordinal uint8
 	// Message is the element's own literal; the Dot_Product prefix forms the coverage key.
 	Message string
 	// Condition is the source text of the asserted condition.
@@ -1740,6 +2464,8 @@ type Registration struct {
 	// Unresolved_Bound holds Range_Invariants callsites whose MIN or MAX argument the constant
 	// evaluator could not resolve, so their grid could not be seeded.
 	Unresolved_Bound []string
+	// Invalid_Chain holds structural chain errors that would otherwise drop demanded coverage.
+	Invalid_Chain []string
 	// Seen_Prefix tracks Dot_Product messages so two grids cannot share one prefix.
 	Seen_Prefix map[string]bool
 }
@@ -1764,6 +2490,442 @@ func ast_string_literal(call *ast.CallExpr, index int) (value string, ok bool) {
 		return "", false
 	}
 	return unquoted, true
+}
+
+// Registration_Chain holds the already-linearized call nest so seeding never needs variable
+// tracking and runtime bit positions follow exactly the source link order.
+type Registration_Chain struct {
+	// Root identifies where namespace ownership starts.
+	Root *ast.CallExpr
+	// Links is source ordered so ordinal and mask packing cannot diverge.
+	Links []*ast.CallExpr
+}
+
+// AST chain selection must accept call receivers while the primitive selector rejects them.
+func ast_chain_method(call *ast.CallExpr) (name string) {
+	selector, is_selector := call.Fun.(*ast.SelectorExpr)
+	if !is_selector {
+		return ""
+	}
+	return selector.Sel.Name
+}
+
+// A chain is syntactically one nest. Walking receiver calls backward makes split Product variables
+// impossible to mis-register as a complete demanded grid.
+func ast_chain_from_ensure(ensure *ast.CallExpr) (chain Registration_Chain, ok bool) {
+	if ast_chain_method(ensure) != "Ensure" {
+		return chain, false
+	}
+	current, has_receiver := ast_chain_receiver(ensure)
+	if !has_receiver {
+		return chain, false
+	}
+	var reversed []*ast.CallExpr
+	for step_index := 0; step_index < BUNDLE_EXPANSION_STEPS_MAX; step_index++ {
+		method := ast_chain_method(current)
+		if method != "Sometimes" {
+			if method != "Impossible" {
+				chain.Root = current
+				break
+			}
+		}
+		reversed = append(reversed, current)
+		current, has_receiver = ast_chain_receiver(current)
+		if !has_receiver {
+			return Registration_Chain{}, false
+		}
+	}
+	if chain.Root == nil {
+		return Registration_Chain{}, false
+	}
+	chain.Links = make([]*ast.CallExpr, len(reversed))
+	for i := range reversed {
+		chain.Links[i] = reversed[len(reversed)-1-i]
+	}
+	return chain, true
+}
+
+func ast_chain_receiver(call *ast.CallExpr) (receiver *ast.CallExpr, ok bool) {
+	selector, is_selector := call.Fun.(*ast.SelectorExpr)
+	if !is_selector {
+		return nil, false
+	}
+	receiver, is_call := selector.X.(*ast.CallExpr)
+	return receiver, is_call
+}
+
+// Recorder_register_chain defers template namespaces because only their callsites own identity.
+func recorder_register_chain(
+	recorder *Recorder, file_set *token.FileSet, ensure *ast.CallExpr,
+	namespace_parameter string, imports map[string]string,
+	index *Bundle_Index, reg *Registration, allow_unqualified bool,
+) {
+	chain, parsed := ast_chain_from_ensure(ensure)
+	if !parsed {
+		reg.Invalid_Chain = append(reg.Invalid_Chain,
+			recorder_position(file_set, ensure)+
+				"  Ensure does not terminate one call nest")
+		return
+	}
+	if ast_selector(chain.Root, allow_unqualified) != "Dot_Product" {
+		chain, parsed = recorder_expand_chain_constructor(
+			file_set, chain, imports, index, reg)
+		if !parsed {
+			return
+		}
+	}
+	if len(chain.Root.Args) != 1 {
+		reg.Invalid_Chain = append(reg.Invalid_Chain,
+			recorder_position(file_set, chain.Root)+
+				"  chain Dot_Product root must have one argument")
+		return
+	}
+	namespace, literal := ast_string_literal(chain.Root, 0)
+	if !literal {
+		if ast_is_template_prefix(chain.Root, namespace_parameter) {
+			return
+		}
+		reg.Non_Literal = append(reg.Non_Literal,
+			recorder_position(file_set, chain.Root)+
+				"  Dot_Product namespace is not a string literal")
+		return
+	}
+	if strings.Contains(namespace, ELEMENT_MESSAGE_SEPARATOR) {
+		reg.Non_Literal = append(reg.Non_Literal,
+			recorder_position(file_set, chain.Root)+
+				"  Dot_Product namespace is not a NUL-free literal")
+		return
+	}
+	recorder_seed_registration_chain(
+		recorder, file_set, ensure, namespace, chain.Links, reg, allow_unqualified)
+}
+
+// Constructor expansion is implemented with the same function index used by _Invariants. A direct
+// Dot_Product root needs no expansion; unresolved Product roots are fatal instead of losing axes.
+func recorder_expand_chain_constructor(
+	file_set *token.FileSet, chain Registration_Chain, imports map[string]string,
+	index *Bundle_Index, reg *Registration,
+) (expanded Registration_Chain, ok bool) {
+	constructor, found := bundle_index_lookup(index, imports, chain.Root)
+	if !found {
+		line := recorder_unresolved_line(file_set, chain.Root)
+		reg.Unresolved = append(reg.Unresolved, line)
+		return Registration_Chain{}, false
+	}
+	root, links, found := recorder_product_constructor_chain(constructor.Declaration)
+	if !found {
+		reg.Invalid_Chain = append(reg.Invalid_Chain,
+			recorder_position(file_set, chain.Root)+
+				"  Product constructor has no returned chain")
+		return Registration_Chain{}, false
+	}
+	if len(chain.Root.Args) == 0 {
+		reg.Non_Literal = append(reg.Non_Literal,
+			recorder_position(file_set, chain.Root)+
+				"  Product constructor has no namespace argument")
+		return Registration_Chain{}, false
+	}
+	namespace := chain.Root.Args[len(chain.Root.Args)-1]
+	root.Args[0] = namespace
+	expanded = Registration_Chain{Root: root, Links: append(links, chain.Links...)}
+	return expanded, true
+}
+
+// A shallow clone keeps namespace substitution from mutating the shared function index.
+func recorder_product_constructor_chain(
+	function *ast.FuncDecl,
+) (root *ast.CallExpr, links []*ast.CallExpr, found bool) {
+	if function.Body == nil {
+		return nil, nil, false
+	}
+	for _, statement := range function.Body.List {
+		result, is_return := statement.(*ast.ReturnStmt)
+		if !is_return {
+			continue
+		}
+		if len(result.Results) != 1 {
+			continue
+		}
+		call, is_call := result.Results[0].(*ast.CallExpr)
+		if !is_call {
+			continue
+		}
+		var reversed []*ast.CallExpr
+		for step_index := 0; step_index < BUNDLE_EXPANSION_STEPS_MAX; step_index++ {
+			method := ast_chain_method(call)
+			if method != "Sometimes" {
+				if method != "Impossible" {
+					break
+				}
+			}
+			reversed = append(reversed, call)
+			call, is_call = ast_chain_receiver(call)
+			if !is_call {
+				return nil, nil, false
+			}
+		}
+		if ast_selector(call, true) != "Dot_Product" {
+			return nil, nil, false
+		}
+		copy_root := *call
+		copy_root.Args = append([]ast.Expr(nil), call.Args...)
+		links = make([]*ast.CallExpr, len(reversed))
+		for i := range reversed {
+			links[i] = reversed[len(reversed)-1-i]
+		}
+		return &copy_root, links, true
+	}
+	return nil, nil, false
+}
+
+// The collector validates every literal and reference before seeding anything, so a fatal chain
+// cannot leave a partial grid that later analysis would mistake for the complete demand.
+func recorder_seed_registration_chain(
+	recorder *Recorder, file_set *token.FileSet, position ast.Node, namespace string,
+	link_calls []*ast.CallExpr, reg *Registration, allow_unqualified bool,
+) {
+	if len(link_calls) > CHAIN_LINKS_MAX {
+		reg.Invalid_Chain = append(reg.Invalid_Chain,
+			recorder_position(file_set, position)+"  Dot_Product exceeds 255 links")
+		return
+	}
+	axes, carves, links, rules, valid := recorder_collect_chain(
+		file_set, link_calls, reg, allow_unqualified)
+	if !valid {
+		return
+	}
+	if len(axes) == 0 {
+		reg.Invalid_Chain = append(reg.Invalid_Chain,
+			recorder_position(file_set, position)+"  Dot_Product has no axes")
+		return
+	}
+	recorder_seed_chain(
+		recorder, file_set, position, namespace, axes, carves, links, rules, reg)
+}
+
+func recorder_collect_chain(
+	file_set *token.FileSet, calls []*ast.CallExpr, reg *Registration, allow_unqualified bool,
+) (
+	axes []Registration_Axis, carves [][]Registration_Cell,
+	links []Chain_Link, rules []Chain_Rule, valid bool,
+) {
+	valid = true
+	positions := map[string][]int{}
+	rule_messages := map[string]bool{}
+	for ordinal, call := range calls {
+		method := ast_chain_method(call)
+		if method == "Sometimes" {
+			axis, ok := recorder_collect_chain_axis(file_set, call, uint8(ordinal), reg)
+			valid = valid && ok
+			if !ok {
+				continue
+			}
+			positions[axis.Message] = append(positions[axis.Message], len(axes))
+			axes = append(axes, axis)
+			links = append(links, Chain_Link{
+				Kind: DOT_ELEMENT_KIND_SOMETIMES, Ordinal: uint8(ordinal),
+				Axis_Count: uint8(len(axes) - 1), Message: axis.Message,
+			})
+			continue
+		}
+		cells, link, rule, ok := recorder_collect_chain_rule(
+			file_set, call, uint8(ordinal), positions, rule_messages,
+			reg, allow_unqualified)
+		valid = valid && ok
+		if !ok {
+			continue
+		}
+		carves = append(carves, cells)
+		links = append(links, link)
+		rules = append(rules, rule)
+	}
+	return axes, carves, links, rules, valid
+}
+
+func recorder_collect_chain_axis(
+	file_set *token.FileSet, call *ast.CallExpr, ordinal uint8, reg *Registration,
+) (axis Registration_Axis, valid bool) {
+	if len(call.Args) != 2 {
+		reg.Invalid_Chain = append(reg.Invalid_Chain,
+			recorder_position(file_set, call)+
+				"  Sometimes link must have two arguments")
+		return axis, false
+	}
+	message, literal := ast_string_literal(call, 1)
+	if strings.Contains(message, ELEMENT_MESSAGE_SEPARATOR) {
+		literal = false
+	}
+	if !literal {
+		reg.Non_Literal = append(reg.Non_Literal,
+			recorder_position(file_set, call)+
+				"  Sometimes message is not a NUL-free literal")
+		return axis, false
+	}
+	return Registration_Axis{
+		Ordinal: ordinal, Message: message,
+		Condition: ast_condition_text(file_set, call, 0),
+		Kind:      ASSERTION_KIND_SOMETIMES, Bucket_Count: 2,
+	}, true
+}
+
+func recorder_collect_chain_rule(
+	file_set *token.FileSet, call *ast.CallExpr, ordinal uint8,
+	positions map[string][]int, rule_messages map[string]bool,
+	reg *Registration, allow_unqualified bool,
+) (cells []Registration_Cell, link Chain_Link, rule Chain_Rule, valid bool) {
+	if len(call.Args) < 2 {
+		reg.Invalid_Chain = append(reg.Invalid_Chain,
+			recorder_position(file_set, call)+
+				"  Impossible link must name a rule and references")
+		return cells, link, rule, false
+	}
+	if len(call.Args)-1 > CHAIN_LINKS_MAX {
+		reg.Invalid_Chain = append(reg.Invalid_Chain,
+			recorder_position(file_set, call)+
+				"  Impossible link has more than 255 references")
+		return cells, link, rule, false
+	}
+	message, literal := ast_string_literal(call, 0)
+	if strings.Contains(message, ELEMENT_MESSAGE_SEPARATOR) {
+		literal = false
+	}
+	if !literal {
+		reg.Non_Literal = append(reg.Non_Literal,
+			recorder_position(file_set, call)+
+				"  Impossible message is not a NUL-free literal")
+		return cells, link, rule, false
+	}
+	if rule_messages[message] {
+		reg.Collision = append(reg.Collision,
+			recorder_position(file_set, call)+
+				"  duplicate Impossible message: "+strconv.Quote(message))
+		return cells, link, rule, false
+	}
+	rule_messages[message] = true
+	axis_count := 0
+	for _, matches := range positions {
+		axis_count += len(matches)
+	}
+	referenced := make([]bool, axis_count)
+	for _, expression := range call.Args[1:] {
+		cell, _, ok := recorder_collect_chain_reference(
+			file_set, expression, positions, referenced, reg, allow_unqualified)
+		if !ok {
+			return cells, link, rule, false
+		}
+		cells = append(cells, cell)
+	}
+	var mask Chain_Mask
+	var want Chain_Mask
+	var events Chain_Mask
+	for reference_index, cell := range cells {
+		position := uint8(cell.Position)
+		mask = chain_mask_with(mask, position)
+		if cell.Bucket == 1 {
+			want = chain_mask_with(want, position)
+			events = chain_mask_with(events, uint8(reference_index))
+		}
+	}
+	link.Kind = DOT_ELEMENT_KIND_IMPOSSIBLE
+	link.Ordinal = ordinal
+	link.Axis_Count = uint8(axis_count)
+	link.Message = message
+	link.Reference_Count = uint8(len(cells))
+	link.Reference_Events = events
+	for reference_index, cell := range cells {
+		link.References[reference_index] = uint8(cell.Position)
+	}
+	rule = Chain_Rule{
+		Mask: mask, Want: want, Message: message, Ordinal: ordinal}
+	return cells, link, rule, true
+}
+
+func recorder_collect_chain_reference(
+	file_set *token.FileSet, expression ast.Expr, positions map[string][]int,
+	referenced []bool, reg *Registration, allow_unqualified bool,
+) (cell Registration_Cell, reference Dot_Element_Reference, valid bool) {
+	reference_call, is_call := expression.(*ast.CallExpr)
+	if !is_call {
+		reg.Non_Literal = append(reg.Non_Literal,
+			recorder_position(file_set, expression)+
+				"  Impossible reference is not literal")
+		return cell, reference, false
+	}
+	message, literal := ast_string_literal(reference_call, 0)
+	if strings.Contains(message, ELEMENT_MESSAGE_SEPARATOR) {
+		literal = false
+	}
+	if !literal {
+		reg.Non_Literal = append(reg.Non_Literal,
+			recorder_position(file_set, reference_call)+
+				"  Impossible reference is not a NUL-free literal")
+		return cell, reference, false
+	}
+	matches := positions[message]
+	if len(matches) != 1 {
+		reg.Invalid_Chain = append(reg.Invalid_Chain,
+			recorder_position(file_set, reference_call)+
+				"  Impossible reference does not name one preceding axis")
+		return cell, reference, false
+	}
+	position := matches[0]
+	if len(referenced) > position {
+		if referenced[position] {
+			reg.Invalid_Chain = append(reg.Invalid_Chain,
+				recorder_position(file_set, reference_call)+
+					"  Impossible repeats an axis reference")
+			return cell, reference, false
+		}
+	}
+	referenced[position] = true
+	bucket := ast_event_bucket(ast_selector(reference_call, allow_unqualified))
+	if bucket < 0 {
+		reg.Invalid_Chain = append(reg.Invalid_Chain,
+			recorder_position(file_set, reference_call)+
+				"  invalid Impossible polarity")
+		return cell, reference, false
+	}
+	cell = Registration_Cell{Position: position, Bucket: bucket}
+	reference = Dot_Element_Reference{Message: message, Event: bucket == 1}
+	return cell, reference, true
+}
+
+func recorder_seed_chain(
+	recorder *Recorder, file_set *token.FileSet, position ast.Node, namespace string,
+	axes []Registration_Axis, carves [][]Registration_Cell,
+	links []Chain_Link, rules []Chain_Rule, reg *Registration,
+) {
+	if reg.Seen_Prefix[namespace] {
+		reg.Collision = append(reg.Collision,
+			recorder_position(file_set, position)+
+				"  duplicate Dot_Product namespace: "+strconv.Quote(namespace))
+		return
+	}
+	reg.Seen_Prefix[namespace] = true
+	shape := &Chain_Shape{
+		Axes: make([]Chain_Axis, len(axes)), Links: links, Rules: rules,
+		Tuples:  map[Chain_Mask]Handle_Entry{},
+		Entries: map[Chain_Key]*Assertion_Metadata{}, Registered: true, Ensured: true,
+	}
+	for i, axis := range axes {
+		key := Chain_Key{
+			Namespace: Namespace(namespace), Ordinal: axis.Ordinal,
+			Message: axis.Message,
+		}
+		text := chain_key_string(key)
+		metadata := &Assertion_Metadata{
+			Kind: axis.Kind, Message: text, Condition: axis.Condition}
+		recorder.Events.Store(text, metadata)
+		shape.Entries[key] = metadata
+		shape.Axes[i] = Chain_Axis{Ordinal: axis.Ordinal, Message: axis.Message}
+	}
+	recorder_register_tuples(recorder, namespace, axes, carves, shape.Tuples)
+	recorder.Chain_Shapes_Mu.Lock()
+	if recorder.Chain_Shapes == nil {
+		recorder.Chain_Shapes = map[Namespace]*Chain_Shape{}
+	}
+	recorder.Chain_Shapes[Namespace(namespace)] = shape
+	recorder.Chain_Shapes_Mu.Unlock()
 }
 
 // Registers a Dot_Product call. A literal prefix seeds a grid from the call's inline axes. A
@@ -1822,6 +2984,12 @@ func recorder_register_invariants_callsite(
 				"  _Invariants namespace is not a string literal")
 		return
 	}
+	if strings.Contains(namespace, ELEMENT_MESSAGE_SEPARATOR) {
+		reg.Non_Literal = append(reg.Non_Literal,
+			recorder_position(file_set, call)+
+				"  _Invariants namespace is not a NUL-free literal")
+		return
+	}
 	function, found := bundle_index_lookup(index, imports, call)
 	if !found {
 		reg.Unresolved = append(reg.Unresolved, recorder_unresolved_line(file_set, call))
@@ -1829,6 +2997,22 @@ func recorder_register_invariants_callsite(
 	}
 	if function.Declaration.Body == nil {
 		reg.Unresolved = append(reg.Unresolved, recorder_unresolved_line(file_set, call))
+		return
+	}
+	template_chains := recorder_template_chains(function.Declaration)
+	if len(template_chains) > 0 {
+		for _, ensure := range template_chains {
+			chain, parsed := ast_chain_from_ensure(ensure)
+			if !parsed {
+				reg.Invalid_Chain = append(reg.Invalid_Chain,
+					recorder_position(file_set, ensure)+
+						"  template Ensure is not one call nest")
+				continue
+			}
+			recorder_seed_registration_chain(
+				recorder, file_set, call, namespace,
+				chain.Links, reg, function.Is_Sugar)
+		}
 		return
 	}
 	dot_product, has := recorder_template_dot_product(function.Declaration)
@@ -1846,6 +3030,34 @@ func recorder_register_invariants_callsite(
 			[2]ast.Expr{range_call.Args[1], range_call.Args[2]}, range_call.Args[4:],
 			index, reg)
 	}
+}
+
+// A chain template is the ensured product rooted at the function's trailing namespace parameter;
+// its definition carries shape while each callsite supplies the actual coverage identity.
+func recorder_template_chains(function *ast.FuncDecl) (ensures []*ast.CallExpr) {
+	namespace_parameter := ast_namespace_parameter(function)
+	if namespace_parameter == "" {
+		return nil
+	}
+	ast.Inspect(function.Body, func(node ast.Node) (descend bool) {
+		candidate, is_call := node.(*ast.CallExpr)
+		if !is_call {
+			return true
+		}
+		if ast_chain_method(candidate) != "Ensure" {
+			return true
+		}
+		chain, parsed := ast_chain_from_ensure(candidate)
+		if !parsed {
+			return true
+		}
+		if !ast_is_template_prefix(chain.Root, namespace_parameter) {
+			return true
+		}
+		ensures = append(ensures, candidate)
+		return true
+	})
+	return ensures
 }
 
 // Bounds the constant-evaluator's stack steps, so a pathological const cycle (a const whose value
@@ -2444,7 +3656,7 @@ func recorder_seed_grid(
 			ungated = append(ungated, axis)
 		}
 	}
-	recorder_register_tuples(recorder, prefix, ungated, carves)
+	recorder_register_tuples(recorder, prefix, ungated, carves, nil)
 }
 
 // Reads a Dot_Product's inline element arguments into axes and carves. A self-emitting
@@ -2805,6 +4017,7 @@ func ast_expression_text(file_set *token.FileSet, expression ast.Expr) (text str
 // Dot_Product therefore seeds nothing: there is no combination to cover.
 func recorder_register_tuples(
 	recorder *Recorder, prefix string, axes []Registration_Axis, carves [][]Registration_Cell,
+	chain_tuples map[Chain_Mask]Handle_Entry,
 ) {
 	if len(axes) == 0 {
 		return
@@ -2850,8 +4063,22 @@ func recorder_register_tuples(
 			Tuple_Indices: projected,
 			Axes:          legend,
 		}
-		recorder.Events.LoadOrStore(key, metadata)
+		value, _ := recorder.Events.LoadOrStore(key, metadata)
+		if chain_tuples != nil {
+			chain_tuples[chain_mask_from_tuple(projected)] = Handle_Entry{
+				Metadata: value.(*Assertion_Metadata), Key: key,
+			}
+		}
 	}
+}
+
+func chain_mask_from_tuple(tuple []int) (mask Chain_Mask) {
+	for i_index, bucket := range tuple {
+		if bucket == 1 {
+			mask = chain_mask_with(mask, uint8(i_index))
+		}
+	}
+	return mask
 }
 
 // Advances tuple like an odometer over the axes' bucket counts; more is false

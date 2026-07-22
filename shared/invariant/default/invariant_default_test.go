@@ -1,8 +1,12 @@
 package invariant_test
 
 import (
+	"fmt"
+	"io"
 	"math"
+	"strings"
 	"testing"
+	"testing/fstest"
 
 	core "local/james-orcales/shared/invariant"
 	"local/james-orcales/shared/invariant/default"
@@ -11,6 +15,33 @@ import (
 // Seeds Default's tracker with the named axes under namespace, so a subsequent self-emitting
 // preset call records into resolvable entries (the static scan seeds these in a real run).
 func seed_preset_axes(namespace string, messages ...string) {
+	var source strings.Builder
+	source.WriteString("package fixture\nfunc check() { invariant.Dot_Product(")
+	fmt.Fprintf(&source, "%q)", namespace)
+	for _, message := range messages {
+		fmt.Fprintf(&source, ".Sometimes(false, %q)", message)
+	}
+	rule := 0
+	for first := range messages {
+		for second := first + 1; second < len(messages); second++ {
+			rule++
+			fmt.Fprintf(&source, ".Impossible(%q, invariant.Event_True(%q), "+
+				"invariant.Event_True(%q))",
+				fmt.Sprintf("Boundary events are mutually exclusive (%d).", rule),
+				messages[first], messages[second])
+		}
+	}
+	source.WriteString(".Ensure() }\n")
+	recorder := &core.Recorder{
+		File_System: fstest.MapFS{
+			"fixture/check.go": &fstest.MapFile{Data: []byte(source.String())},
+		},
+		Output:  io.Discard,
+		Exit:    func(code int) { panic(fmt.Sprintf("registration exit %d", code)) },
+		Is_Test: true,
+	}
+	core.Recorder_Register_Packages_For_Analysis(recorder, "/fixture")
+	invariant.Default = recorder
 	for _, message := range messages {
 		key := namespace + core.ELEMENT_MESSAGE_SEPARATOR + message
 		invariant.Default.Events.Store(key, &core.Assertion_Metadata{
@@ -22,14 +53,20 @@ func seed_preset_axes(namespace string, messages ...string) {
 // Renders, as a compact "T"/"F" signature, which of the named axes recorded a true event under
 // namespace — read from Default's tracker after a single self-emitting preset call.
 func recorded_signature(namespace string, messages ...string) (signature string) {
-	for _, message := range messages {
-		key := namespace + core.ELEMENT_MESSAGE_SEPARATOR + message
+	for ordinal, message := range messages {
+		key := namespace + core.ELEMENT_MESSAGE_SEPARATOR + fmt.Sprint(ordinal) +
+			core.ELEMENT_MESSAGE_SEPARATOR + message
 		value, loaded := invariant.Default.Events.Load(key)
-		if !loaded {
-			signature += "F"
-			continue
+		fired := false
+		if loaded {
+			fired = value.(*core.Assertion_Metadata).Frequency.Load() > 0
 		}
-		if value.(*core.Assertion_Metadata).Frequency.Load() > 0 {
+		key = namespace + core.ELEMENT_MESSAGE_SEPARATOR + message
+		value, loaded = invariant.Default.Events.Load(key)
+		if loaded {
+			fired = fired || value.(*core.Assertion_Metadata).Frequency.Load() > 0
+		}
+		if fired {
 			signature += "T"
 			continue
 		}

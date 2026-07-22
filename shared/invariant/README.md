@@ -33,34 +33,34 @@ design.
 single false observation panics. Its coverage obligation is only that it be *reached*: an `Always`
 the suite never exercises is reported as a gap.
 
-`Sometimes(condition, message)` asserts nothing about any single call — it never panics. It is a
-claim about the *run*: across the whole suite the condition must be observed both true and false. A
-`Sometimes` seen only true means the suite never drove it false; that missing branch is a coverage
-gap reported at the end. So `Always` catches a value that should never occur, and `Sometimes`
-catches a case the tests forgot to cover — a panic versus a silent blind spot.
+`Sometimes(condition, message)` is a `Dot_Product` chain link. It is a claim about the *run*: across
+the whole suite the condition must be observed both true and false. A link seen only true means the
+suite never drove it false; that missing branch is a coverage gap reported at the end. `Always`
+catches a value that should never occur, while `Sometimes` catches a case the tests forgot to cover.
+
+Chain links only build the product value. They neither record nor panic while the expression is
+being assembled; terminal `Ensure` validates, enforces, and records the complete call atomically.
 
 `Always` and `Sometimes` are the only true atoms; everything else is sugar over them. The sugar tier
 adds the `*_Invariants` presets purely to cut boilerplate — each expanding into `Always` /
 `Sometimes` checks over a value.
 
-A `Sometimes` is inert alone: constructing one records nothing and enforces nothing; it is only when
-it is handed to a `Dot_Product` that it is enforced and its coverage tracked. `Always` is the
-exception — it is eager, enforcing the moment it is called, and is never handed to a `Dot_Product`.
+There is no bare `Sometimes`. It exists only after a namespaced `Dot_Product` root, which gives
+every axis a callsite-local identity. `Always` stays bare and eager, enforcing when called.
 
 ### Axes compose into a grid
 
 A `Sometimes` is a two-outcome axis: the suite must witness it both true and false. An `Always`
-is a guard, not an axis — it has one legal outcome, so it never widens the grid; it is eager and
-enforced at its own call, outside the `Dot_Product`. `Dot_Product` takes the cartesian product of
-the axes and demands every cell be witnessed. Its first argument is a `Namespace` — a literal that
-identifies the grid and prefixes every axis's message into a coverage key:
+is a guard, not an axis — it has one legal outcome, so it never widens the grid. `Dot_Product`
+takes the cartesian product of its chain axes and demands every cell be witnessed. Its namespace is
+a literal that identifies the grid; each link's ordinal keeps repeated messages distinct:
 
 ```go
 invariant.Always(p, "p holds") // eager guard: enforced right here, on every call
-invariant.Dot_Product("widget",
-    invariant.Sometimes(q, "q"), // axis
-    invariant.Sometimes(r, "r"), // axis
-)
+invariant.Dot_Product("widget").
+    Sometimes(q, "q").
+    Sometimes(r, "r").
+    Ensure()
 ```
 
 The two `Sometimes` axes generate a 2×2 grid. Every cell must be reached by the suite, while
@@ -75,23 +75,17 @@ The two `Sometimes` axes generate a 2×2 grid. Every cell must be reached by the
 
 Two axes → 2² cells, three → 2³, n → 2ⁿ. The grid is the whole point and also the whole danger:
 it grows exponentially. `Impossible` is the pressure valve — it deletes cells that cannot occur, so
-the suite is never asked to witness the impossible. It names sibling axes by their message and globs
-over the axes it does not name:
+the suite is never asked to witness the impossible. Its chain link names preceding sibling axes by
+message and polarity, and globs over axes it does not name:
 
 ```go
-invariant.Impossible(invariant.Event_True("q"), invariant.Event_True("r")) // carves cell (q=1, r=1)
-```
-
-### Imply gates an axis
-
-Some axes are meaningful only under a precondition — a field is checked only when a pointer is
-non-nil. `Imply(prerequisite, condition, message)` is a gated `Sometimes`: it is recorded only on a
-call where the prerequisite holds, don't-care otherwise, and it joins no tuple of the grid (the
-message-less prerequisite is no axis to cross). The condition is evaluated eagerly, so one safe only
-under the prerequisite must still self-guard:
-
-```go
-invariant.Imply(p != nil, p != nil && p.Ready, "ready when present")
+invariant.Dot_Product("widget").
+    Sometimes(q, "q").
+    Sometimes(r, "r").
+    Impossible("q and r are exclusive",
+        invariant.Event_True("q"),
+        invariant.Event_True("r")).
+    Ensure()
 ```
 
 ## Composition across types
@@ -106,12 +100,12 @@ and the caller supplies the per-callsite identity as an inline literal.
 type Token string
 
 func Token_Invariants(token Token, namespace invariant.Namespace) {
-    // Eager guards fire right here; only the Sometimes axes form the grid.
+    // Eager guards fire right here; only the Sometimes links form the grid.
     invariant.Always(token != "", "non-empty")
     invariant.Always(strings.TrimSpace(string(token)) == string(token), "no edge whitespace")
-    invariant.Dot_Product(namespace,
-        invariant.Sometimes(strings.Contains(string(token), "_"), "has underscore"),
-    )
+    invariant.Dot_Product(namespace).
+        Sometimes(strings.Contains(string(token), "_"), "has underscore").
+        Ensure()
 }
 
 // A Span is a half-open byte range into the source. A zero-width span (Lo == Hi)
@@ -120,9 +114,9 @@ type Span struct{ Lo, Hi int }
 
 func Span_Invariants(span Span, namespace invariant.Namespace) {
     invariant.Always(span.Lo <= span.Hi, "ordered")
-    invariant.Dot_Product(namespace,
-        invariant.Sometimes(span.Lo == span.Hi, "zero width"),
-    )
+    invariant.Dot_Product(namespace).
+        Sometimes(span.Lo == span.Hi, "zero width").
+        Ensure()
 }
 ```
 
@@ -140,9 +134,9 @@ func Lexeme_Invariants(lexeme Lexeme, namespace invariant.Namespace) {
     // The cross-field property relates the parts — an eager guard, not an axis.
     invariant.Always(lexeme.Span.Hi-lexeme.Span.Lo == len(lexeme.Token), "span matches token")
     // The composite's own axis: a coverage case only it can state.
-    invariant.Dot_Product(namespace,
-        invariant.Sometimes(lexeme.Span.Lo == lexeme.Span.Hi, "eof lexeme"),
-    )
+    invariant.Dot_Product(namespace).
+        Sometimes(lexeme.Span.Lo == lexeme.Span.Hi, "eof lexeme").
+        Ensure()
     // Composition: each part self-emits its grid under its own literal namespace.
     Token_Invariants(lexeme.Token, "Lexeme.Token")
     Span_Invariants(lexeme.Span, "Lexeme.Span")
@@ -177,10 +171,10 @@ static scan cannot read.
 ## Static registration
 
 Before the suite runs, a source scan walks every `_Invariants(v, "literal")` callsite, resolves the
-function, and registers the grid its body self-emits — keyed by the literal namespace. A
-never-witnessed cell, an unobserved `Sometimes` branch, or an unreached `Always` is reported at the
-end and fails the run. The runtime and the static side rendezvous on the same key (namespace
-prefixed onto each axis's own message), so what the scan demands is exactly what the run credits.
+function, and registers the ensured chain its body self-emits — keyed by the literal namespace. A
+never-witnessed cell, an unobserved axis branch, or an unreached `Always` is reported at the end and
+fails the run. Runtime and registration rendezvous on namespace, link ordinal, and message, so what
+the scan demands is exactly what the run credits.
 
 ## NOTES
 
