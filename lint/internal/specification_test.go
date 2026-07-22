@@ -588,6 +588,13 @@ func Test_Source_And_Test_Bans_Methods(t *testing.T) {
 	if !specification_diagnosed(diags, "does not satisfy any stdlib interface") {
 		t.Fatal("a non-interface method must be flagged")
 	}
+	files = specification_one_file("package invariant\n\n// T is a fixture.\n" +
+		"type T struct {\n\t// X is a fixture.\n\tX int\n}\n\n// Compute does.\n" +
+		"func (t T) Compute() (n int) {\n\treturn t.X\n}\n")
+	diags = invariant_exempt_self_diagnostics(t, files, []string{"pkg/**"})
+	if specification_diagnosed(diags, "does not satisfy any stdlib interface") {
+		t.Fatal("a package named invariant may declare methods")
+	}
 }
 
 // Test_Source_And_Test_Bans_Self_Recursion verifies a function that calls

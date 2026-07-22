@@ -214,9 +214,9 @@ A function body holds at least one statement; an empty body is banned.
 
 ### Methods
 
-A method is banned unless its exact signature satisfies a stdlib interface — error, fmt.Stringer,
-io.Reader/Writer/Closer/Seeker, sort.Interface, json/text/binary marshalers, fs.FS and kin;
-otherwise make it a free function taking the receiver as its first parameter.
+A package named invariant may declare methods. Elsewhere, a method is banned unless its exact
+signature satisfies a stdlib interface — error, fmt.Stringer, io.Reader/Writer/Closer/Seeker,
+sort.Interface, marshalers, fs.FS and kin; otherwise make it a free function with the receiver.
 
 ### Self Recursion
 

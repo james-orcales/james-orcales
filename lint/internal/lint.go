@@ -5746,6 +5746,9 @@ func check_no_package_vars_all_allowed(vs *ast.ValueSpec) (yes bool) {
 func check_unnecessary_method(
 	file_set *token.FileSet, file *ast.File, _ []byte,
 ) (diags []Diagnostic) {
+	if file.Name.Name == "invariant" {
+		return nil
+	}
 
 	for _, declaration := range file.Decls {
 		function_declaration, ok := declaration.(*ast.FuncDecl)
