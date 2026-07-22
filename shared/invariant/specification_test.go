@@ -184,9 +184,10 @@ func Test_Dot_Product_Sibling(t *testing.T) {
 	}
 }
 
-// Test_Dot_Product_Shared prevents its specification contract from regressing.
+// Test_Dot_Product_Shared prevents its specification contract from regressing: a plain test run
+// panics on a divergent shape, while a warmed run elsewhere trusts the shape it proved.
 func Test_Dot_Product_Shared(t *testing.T) {
-	recorder := &invariant.Recorder{}
+	recorder := &invariant.Recorder{Is_Test: true}
 	invariant.Recorder_Dot_Product(recorder, "shared").Sometimes(true, "a").Ensure()
 	message := panic_text(func() {
 		invariant.Recorder_Dot_Product(recorder, "shared").Sometimes(true, "b").Ensure()
@@ -202,6 +203,23 @@ func Test_Dot_Product_Shared(t *testing.T) {
 	})
 	if !strings.Contains(message, "shape differs") {
 		t.Fatalf("later matching link erased mismatch: %q", message)
+	}
+	trust_recorder := &invariant.Recorder{}
+	invariant.Recorder_Dot_Product(trust_recorder, "shared").
+		Range_Int(5, 0, 50).Ensure()
+	message = panic_text(func() {
+		invariant.Recorder_Dot_Product(trust_recorder, "shared").
+			Sometimes(true, "divergent").Ensure()
+	})
+	if message != "" {
+		t.Fatalf("warmed run panicked %q, want the shape trusted", message)
+	}
+	message = panic_text(func() {
+		invariant.Recorder_Dot_Product(trust_recorder, "shared").
+			Range_Int(75, 0, 50).Ensure()
+	})
+	if !strings.Contains(message, "value exceeds max") {
+		t.Fatalf("panic = %q, want the verdict still enforced", message)
 	}
 }
 

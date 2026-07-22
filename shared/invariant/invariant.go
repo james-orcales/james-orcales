@@ -23,6 +23,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"unsafe"
 )
 
 // ASSERTION_FAILURE_MESSAGE_PREFIX opens every assertion-failure message.
@@ -169,6 +170,13 @@ type Recorder struct {
 	// because even a read-lock is a write to one shared word, and that word's cache line
 	// ping-pongs across every worker on every Dot_Product root.
 	Chain_Shapes_Mu sync.Mutex
+	// Chain_Shape_Identities resolves a root namespace by the identity of its backing
+	// array before the content-keyed map hashes a byte: every namespace in checked code is
+	// a literal, so its identity is stable for the process lifetime, and the map hash was
+	// the single largest cost a warmed root paid. Copy-on-write under Chain_Shapes_Mu;
+	// publication drops it wholesale so a republished namespace is never resolved through
+	// a stale identity.
+	Chain_Shape_Identities atomic.Pointer[Chain_Shape_Cache]
 	// Chain_Shapes publishes the namespace-to-shape map copy-on-write behind an atomic
 	// pointer so a warmed root reaches its shape through a plain load. It is keyed by
 	// namespace because one namespace names exactly one chain; Product retains the resolved
@@ -323,6 +331,36 @@ type Chain_Shape struct {
 	Registered bool
 	// Ensured prevents a discovered shape from growing after its first complete execution.
 	Ensured atomic.Bool
+	// User_Rules holds only the carves a user wrote. Preset-expanded rules are tautologies
+	// whenever their verdict passes, and a failed verdict panics before any walk, so a
+	// non-recording lane enforces exactly this subset. Derived before the shape freezes and
+	// read only through chain_replays' acquire, never re-derived per call.
+	User_Rules []Chain_Rule
+}
+
+// Chain_Shape_Cache resolves a namespace to its published shape by the identity of the string's
+// backing array instead of its content: every root namespace in checked code is a literal, so
+// its identity is stable for the process lifetime and costs no per-byte hash. A dynamic
+// namespace misses here and falls back to the content-keyed map, so aliasing can only cost
+// time, never correctness.
+type Chain_Shape_Cache struct {
+	// Slots is open-addressed with linear probing; a power-of-two length keeps the probe
+	// mask a subtraction, and at most half the slots are full so probes terminate quickly.
+	Slots []Chain_Shape_Slot
+	// Count bounds growth: at the cap, insertion stops and misses stay on the map path.
+	Count int
+}
+
+// Chain_Shape_Slot pins one namespace identity to its shape.
+type Chain_Shape_Slot struct {
+	// Data is an unsafe.Pointer, never a uintptr, so the garbage collector keeps a dynamic
+	// namespace's backing array alive while the slot lives; string bytes are immutable, so
+	// a live identity denotes the same content forever.
+	Data unsafe.Pointer
+	// Size completes the identity in bytes — one backing array can ground many prefixes.
+	Size int
+	// Shape is the published resolution this identity proves.
+	Shape *Chain_Shape
 }
 
 // Chain_Guard is one preset bound obligation, excluded from tuple coordinates.
@@ -436,29 +474,59 @@ type Chain_Rule struct {
 
 // Product is the register-sized fluent value for one Dot_Product execution. Value receivers return
 // advanced copies; no method takes its address, making an escaping chain unrepresentable by shape.
+// Field order is hot-first: a trusted link reads only Tier and the latched failure bytes, so
+// they lead the struct alongside the two pointers and every per-link copy touches its first
+// bytes before anything else. The wide, cold fields — Namespace for diagnostics, Observations
+// for the recording lanes — trail.
 type Product struct {
-	// Recorder receives the complete call only after Ensure accepts it.
-	Recorder *Recorder
 	// Shape is resolved once at the root and replayed by every value copy.
 	Shape *Chain_Shape
-	// Namespace is carried because it is part of every axis identity.
-	Namespace Namespace
-	// Ordinal is the next fluent link position.
-	Ordinal uint8
-	// Axis_Count counts Sometimes links for sibling-reference validation.
-	Axis_Count uint8
-	// Observations retains outcomes by fluent ordinal before registration projects them onto
-	// its tuple positions at Ensure.
-	Observations Chain_Mask
+	// Recorder receives the complete call only after Ensure accepts it.
+	Recorder *Recorder
+	// Tier is the execution lane resolved once at the root; every input to that decision is
+	// immutable for the life of the chain, so no link re-derives it. The zero value is the
+	// full machinery, keeping any Product built outside the root safe by default.
+	Tier uint8
 	// Failure retains the first malformed link so only Ensure exposes it.
 	Failure uint8
-	// Mismatch retains structural divergence so only Ensure exposes it.
-	Mismatch bool
 	// Preset_Failure retains the first typed guard violation for Ensure.
 	Preset_Failure uint8
 	// Preset_Failure_Ordinal identifies the preset that supplied the violation.
 	Preset_Failure_Ordinal uint8
+	// Ordinal is the next fluent link position.
+	Ordinal uint8
+	// Axis_Count counts Sometimes links for sibling-reference validation.
+	Axis_Count uint8
+	// Mismatch retains structural divergence so only Ensure exposes it.
+	Mismatch bool
+	// Namespace is carried because it is part of every axis identity.
+	Namespace Namespace
+	// Observations retains outcomes by fluent ordinal before registration projects them onto
+	// its tuple positions at Ensure.
+	Observations Chain_Mask
 }
+
+// The lanes below exist because a replaying shape was already proven — by `go test` for a
+// registered one, by its own first execution for a foreign one — so most per-call work re-proves
+// a theorem. Each lane keeps exactly the work that can still change an outcome.
+
+// The full lane discovers, validates, enforces, and credits: every plain test run, and any chain
+// whose shape has not replayed yet. It is the zero value so a Product built anywhere else
+// validates by default.
+const TIER_FULL uint8 = 0
+
+// The fuzz lane records against a replaying shape without revalidating it: the registered shape
+// mirrors the very source the fuzz executes, so per-input compares buy nothing, while
+// observation and crediting stay bit-identical — coverage is why the fuzz runs.
+const TIER_FUZZ uint8 = 1
+
+// The observation lane is a warmed non-recording chain with user carves: observation bits feed
+// the carve walk and nothing else runs.
+const TIER_OBSERVATION uint8 = 2
+
+// The trusted lane is a warmed non-recording chain with no user carves: the typed verdicts are
+// the only property still enforceable at runtime, so only they run.
+const TIER_TRUSTED uint8 = 3
 
 // Event_True references the axis carrying message at its true outcome, for use in Impossible. The
 // message names a sibling axis of the consuming Dot_Product (matched by value, like the axis's own
@@ -505,12 +573,22 @@ func product_range[
 	product Product, integer_kind Chain_Integer_Kind,
 	value Value, minimum Value, maximum Value, excluded []Value,
 ) (next Product) {
-	minimum_integer := chain_integer_value(minimum)
-	maximum_integer := chain_integer_value(maximum)
-	for _, hole := range excluded {
-		if !chain_integer_between(
-			minimum_integer, chain_integer_value(hole), maximum_integer) {
-			return product.chain_defer_failure(PRODUCT_FAILURE_RANGE_EXCLUSION)
+	// The trusted lane goes straight to the verdict: hole-in-range validation is chain
+	// malformedness detection, and a trusted chain proved its holes when it was discovered.
+	if product.Tier == TIER_TRUSTED {
+		return product_range_verdict(
+			product, product.Ordinal, value, minimum, maximum, excluded)
+	}
+	// The bound conversions exist only to place holes inside the interval, so a hole-free
+	// range skips them.
+	if len(excluded) != 0 {
+		minimum_integer := chain_integer_value(minimum)
+		maximum_integer := chain_integer_value(maximum)
+		for _, hole := range excluded {
+			if !chain_integer_between(
+				minimum_integer, chain_integer_value(hole), maximum_integer) {
+				return product.chain_defer_failure(PRODUCT_FAILURE_RANGE_EXCLUSION)
+			}
 		}
 	}
 	return product_preset(
@@ -548,6 +626,12 @@ func product_preset[
 	if product.Failure != 0 {
 		return product
 	}
+	if product.Tier == TIER_TRUSTED {
+		return product_preset_trusted(product, kind, value, minimum, maximum, values)
+	}
+	if product.Tier != TIER_FULL {
+		return product_preset_replay(product, value, minimum, maximum, values)
+	}
 	preset, mismatch := chain_preset_resolve(
 		product.Shape, kind, integer_kind, product.Ordinal,
 		product.Axis_Count, minimum, maximum, values)
@@ -556,6 +640,50 @@ func product_preset[
 	}
 	if mismatch {
 		product.Mismatch = true
+	}
+	product = product_preset_observe(product, preset, value, minimum, maximum, values)
+	product.Ordinal += preset.Link_Count
+	product.Axis_Count += preset.Axis_Count
+	return product
+}
+
+// The caller's own arguments carry the entire enforceable property — lint pins every bound to a
+// package constant, so the arguments equal what discovery proved — which is why the trusted
+// lane touches no shape state at all. Ordinals stay behind too: trusted Ensure reads only the
+// latched failures.
+func product_preset_trusted[
+	Value ~int | ~int8 | ~int16 | ~int32 | ~int64 |
+		~uint | ~uint8 | ~uint16 | ~uint32 | ~uint64,
+](
+	product Product, kind Chain_Preset_Kind,
+	value Value, minimum Value, maximum Value, values []Value,
+) (next Product) {
+	if kind == CHAIN_PRESET_KIND_RANGE {
+		return product_range_verdict(
+			product, product.Ordinal, value, minimum, maximum, values)
+	}
+	if !chain_integer_slice_contains(values, value) {
+		return product.chain_defer_preset_failure(
+			PRODUCT_FAILURE_PRESET_MEMBER, product.Ordinal)
+	}
+	return product
+}
+
+// The fuzz and observing lanes still need the shape's expansion plan — observation bits and
+// advancement have to land on the proven grid for the carve walk and crediting to mean anything
+// — but they fetch it wholesale instead of re-proving it. A fetch miss is a structurally
+// divergent call: advancing one link lets the recording lane's length check report it while a
+// non-recording lane sails past, both without touching unproven state.
+func product_preset_replay[
+	Value ~int | ~int8 | ~int16 | ~int32 | ~int64 |
+		~uint | ~uint8 | ~uint16 | ~uint32 | ~uint64,
+](
+	product Product, value Value, minimum Value, maximum Value, values []Value,
+) (next Product) {
+	preset, fetched := product.Shape.chain_preset_fetch(product.Ordinal)
+	if !fetched {
+		product.Ordinal++
+		return product
 	}
 	product = product_preset_observe(product, preset, value, minimum, maximum, values)
 	product.Ordinal += preset.Link_Count
@@ -694,6 +822,23 @@ func chain_preset_resolve[
 	}
 	return chain_preset_discover(
 		shape, kind, integer_kind, ordinal, axis_count, minimum, maximum, values)
+}
+
+// A replaying shape's preset is fetched wholesale: the kind and index checks only keep a
+// structurally divergent call from indexing out of bounds, never re-prove the bounds or member
+// set — a replaying lane has already extended that trust to the whole shape.
+func (shape *Chain_Shape) chain_preset_fetch(ordinal uint8) (preset *Chain_Preset, fetched bool) {
+	if int(ordinal) >= len(shape.Links) {
+		return nil, false
+	}
+	link := &shape.Links[ordinal]
+	if link.Kind != DOT_ELEMENT_KIND_GUARD {
+		return nil, false
+	}
+	if int(link.Preset_Index) >= len(shape.Presets) {
+		return nil, false
+	}
+	return &shape.Presets[link.Preset_Index], true
 }
 
 func chain_preset_replay[
@@ -1076,6 +1221,38 @@ func (shape *Chain_Shape) chain_replays() (replays bool) {
 	return shape.Ensured.Load()
 }
 
+// Derivation runs once, before the shape becomes visible as replaying, because it walks
+// unsynchronized slices: registration derives before publication, discovery derives under Mu
+// before Ensured stores true, and every later reader is gated by one of those two acquires. A
+// user carve is any Impossible link outside every preset's expansion window — the windows are
+// contiguous from each preset's guard, so membership needs no per-rule marker.
+func (shape *Chain_Shape) chain_freeze_derived() {
+	shape.User_Rules = nil
+	for _, link := range shape.Links {
+		if link.Kind != DOT_ELEMENT_KIND_IMPOSSIBLE {
+			continue
+		}
+		if shape.chain_link_in_preset(link.Ordinal) {
+			continue
+		}
+		if int(link.Rule_Index) < len(shape.Rules) {
+			shape.User_Rules = append(shape.User_Rules, shape.Rules[link.Rule_Index])
+		}
+	}
+}
+
+func (shape *Chain_Shape) chain_link_in_preset(ordinal uint8) (inside bool) {
+	for preset_index := range shape.Presets {
+		preset := &shape.Presets[preset_index]
+		if ordinal >= preset.Ordinal {
+			if ordinal-preset.Ordinal < preset.Link_Count {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 func (product Product) ensure_shape() {
 	if failure := product.chain_failure_message(); failure != "" {
 		panic(ASSERTION_FAILURE_MESSAGE_PREFIX + failure)
@@ -1133,6 +1310,53 @@ func (shape *Chain_Shape) chain_tuple(observations Chain_Mask) (tuple Chain_Mask
 	return tuple
 }
 
+func chain_rule_violations(rules []Chain_Rule, tuple_mask Chain_Mask) (violations []string) {
+	for _, rule := range rules {
+		matches := true
+		for i_index := range tuple_mask {
+			if tuple_mask[i_index]&rule.Mask[i_index] != rule.Want[i_index] {
+				matches = false
+				break
+			}
+		}
+		if matches {
+			violations = append(violations, rule.Message)
+		}
+	}
+	return violations
+}
+
+// Trust removes revalidation, not enforcement: a latched malformed link or failed verdict still
+// panics with its full diagnostic, resolved only on this cold path.
+func (product Product) ensure_trusted() {
+	if failure := product.chain_failure_message(); failure != "" {
+		panic(ASSERTION_FAILURE_MESSAGE_PREFIX + failure)
+	}
+	if failure := product.chain_preset_failure_message(); failure != "" {
+		panic(ASSERTION_FAILURE_MESSAGE_PREFIX + failure)
+	}
+}
+
+// A user carve is a runtime property, so the observing lane walks it even though every other
+// obligation is gone. A structurally divergent call cannot be projected onto the proven grid;
+// firing a carve from misaligned bits would be a false alarm, so divergence skips the walk —
+// the same trust the lane extends to the shape itself.
+func (product Product) ensure_observation() {
+	product.ensure_trusted()
+	shape := product.Shape
+	if len(shape.Links) != int(product.Ordinal) {
+		return
+	}
+	if len(shape.Axes) != int(product.Axis_Count) {
+		return
+	}
+	violations := chain_rule_violations(
+		shape.User_Rules, shape.chain_tuple(product.Observations))
+	if len(violations) > 0 {
+		panic(ASSERTION_FAILURE_MESSAGE_PREFIX + strings.Join(violations, "\n"))
+	}
+}
+
 func chain_mask_with(mask Chain_Mask, position uint8) (next Chain_Mask) {
 	mask[position/64] |= uint64(1) << (position % 64)
 	return mask
@@ -1150,12 +1374,119 @@ func chain_mask_empty(mask Chain_Mask) (empty bool) {
 // structural enforcement; a per-recorder cache makes both paths converge on one immutable plan.
 // The warmed lookup is a plain load of a copy-on-write map: discovery pays a full copy per new
 // namespace so the per-call path writes nothing shared.
+// CHAIN_IDENTITY_SLOTS_MIN starts the identity cache large enough that a typical component's
+// namespace population never rebuilds.
+const CHAIN_IDENTITY_SLOTS_MIN = 512
+
+// CHAIN_IDENTITY_ENTRIES_MAX bounds retention: dynamic namespaces mint unbounded identities, so
+// past the cap they fall back to the content-keyed map — degrading to the status quo, never
+// below it.
+const CHAIN_IDENTITY_ENTRIES_MAX = 4096
+
+func chain_identity_hash(data *byte, size int) (hash uint64) {
+	// Fibonacci multiplication spreads aligned pointers across the high bits; the probe
+	// reads bits 32 and up, where the multiplier mixes hardest.
+	return (uint64(uintptr(unsafe.Pointer(data))) ^ uint64(size)) * 0x9E3779B97F4A7C15
+}
+
+// The probe is the warmed root's entire resolution cost: one atomic load, one multiply, and a
+// short scan of immutable slots. Equal identity implies equal content because string bytes
+// never mutate; equal content at a different address simply misses to the map.
+func recorder_chain_shape_probe(recorder *Recorder, namespace Namespace) (shape *Chain_Shape) {
+	cache := recorder.Chain_Shape_Identities.Load()
+	if cache == nil {
+		return nil
+	}
+	data := unsafe.StringData(string(namespace))
+	mask := uint64(len(cache.Slots)) - 1
+	slot_index := (chain_identity_hash(data, len(namespace)) >> 32) & mask
+	// Half-full capacity guarantees an empty slot ends the scan; the count bound only keeps
+	// the loop total even if that invariant is ever broken.
+	for probe_index := 0; probe_index < len(cache.Slots); probe_index++ {
+		slot := &cache.Slots[slot_index]
+		if slot.Data == nil {
+			return nil
+		}
+		if slot.Data == unsafe.Pointer(data) {
+			if slot.Size == len(namespace) {
+				return slot.Shape
+			}
+		}
+		slot_index = (slot_index + 1) & mask
+	}
+	return nil
+}
+
+// Insertion is copy-on-write under the publication mutex, like the map itself, so readers see
+// the old immutable slots or the new ones, never a partial write. TryLock keeps the remember
+// path from ever blocking a root: a contended or held mutex just defers the insert to a later
+// call. At the cap the identity stays unremembered and its callers keep the map path.
+func recorder_chain_shape_remember(
+	recorder *Recorder, namespace Namespace, shape *Chain_Shape,
+) {
+	if len(namespace) == 0 {
+		return
+	}
+	if !recorder.Chain_Shapes_Mu.TryLock() {
+		return
+	}
+	defer recorder.Chain_Shapes_Mu.Unlock()
+	if recorder_chain_shape_probe(recorder, namespace) != nil {
+		return
+	}
+	extant := recorder.Chain_Shape_Identities.Load()
+	count := 0
+	slots_count := CHAIN_IDENTITY_SLOTS_MIN
+	if extant != nil {
+		count = extant.Count
+		slots_count = len(extant.Slots)
+	}
+	if count == CHAIN_IDENTITY_ENTRIES_MAX {
+		return
+	}
+	if (count+1)*2 > slots_count {
+		slots_count *= 2
+	}
+	next := &Chain_Shape_Cache{Slots: make([]Chain_Shape_Slot, slots_count), Count: count + 1}
+	if extant != nil {
+		for _, slot := range extant.Slots {
+			if slot.Data != nil {
+				chain_cache_insert(next, slot)
+			}
+		}
+	}
+	chain_cache_insert(next, Chain_Shape_Slot{
+		Data: unsafe.Pointer(unsafe.StringData(string(namespace))),
+		Size: len(namespace), Shape: shape,
+	})
+	recorder.Chain_Shape_Identities.Store(next)
+}
+
+func chain_cache_insert(cache *Chain_Shape_Cache, slot Chain_Shape_Slot) {
+	mask := uint64(len(cache.Slots)) - 1
+	slot_index := (chain_identity_hash((*byte)(slot.Data), slot.Size) >> 32) & mask
+	// Half-full capacity guarantees an empty slot ends the scan; the count bound only keeps
+	// the loop total even if that invariant is ever broken.
+	for probe_index := 0; probe_index < len(cache.Slots); probe_index++ {
+		if cache.Slots[slot_index].Data == nil {
+			cache.Slots[slot_index] = slot
+			return
+		}
+		slot_index = (slot_index + 1) & mask
+	}
+}
+
 func recorder_chain_shape(recorder *Recorder, namespace Namespace) (shape *Chain_Shape) {
+	shape = recorder_chain_shape_probe(recorder, namespace)
+	if shape != nil {
+		return shape
+	}
 	shapes := recorder.Chain_Shapes.Load()
 	if shapes != nil {
 		shape = (*shapes)[namespace]
 	}
 	if shape != nil {
+		recorder_chain_shape_remember(recorder, namespace, shape)
 		return shape
 	}
 	recorder.Chain_Shapes_Mu.Lock()
@@ -1190,6 +1521,10 @@ func recorder_chain_shape_publish(recorder *Recorder, namespace Namespace, shape
 	}
 	next[namespace] = shape
 	recorder.Chain_Shapes.Store(&next)
+	// The identity cache is dropped wholesale: registration may republish a namespace a
+	// foreign execution already warmed, and resolving the stale shape through a surviving
+	// identity would silently drop crediting. Identities repopulate lazily from map hits.
+	recorder.Chain_Shape_Identities.Store(nil)
 }
 
 // Coverage is deliberately absent in benchmarks and non-test binaries, but enforcement never is.
@@ -1198,6 +1533,22 @@ func recorder_chain_records(recorder *Recorder) (records bool) {
 		return false
 	}
 	return !recorder.Is_Benchmark
+}
+
+func recorder_chain_tier(recorder *Recorder, shape *Chain_Shape) (tier uint8) {
+	if !shape.chain_replays() {
+		return TIER_FULL
+	}
+	if recorder_chain_records(recorder) {
+		if recorder.Is_Fuzz {
+			return TIER_FUZZ
+		}
+		return TIER_FULL
+	}
+	if len(shape.User_Rules) == 0 {
+		return TIER_TRUSTED
+	}
+	return TIER_OBSERVATION
 }
 
 // Two separators distinguish an axis key from every flat tuple and Always key during fuzz merge.
@@ -1524,6 +1875,7 @@ func (shape *Chain_Shape) chain_ensure(product Product) (matches bool) {
 		matches = false
 	}
 	if matches {
+		shape.chain_freeze_derived()
 		shape.Ensured.Store(true)
 	}
 	return matches
@@ -1579,12 +1931,21 @@ func recorder_increment_entry(recorder *Recorder, entry Handle_Entry, fired_true
 	if entry.Metadata == nil {
 		return
 	}
+	// Seen-ness is the entire signal — the gap report reads zero versus nonzero — so after
+	// the first hit an add would only ping-pong the entry's cache line across workers. The
+	// plain load may race another first hit; the add below still elects exactly one sink call.
 	if fired_true {
+		if entry.Metadata.Frequency.Load() != 0 {
+			return
+		}
 		if entry.Metadata.Frequency.Add(1) == 1 {
 			if recorder.Coverage_Sink != nil {
 				recorder.Coverage_Sink(entry.Key, true)
 			}
 		}
+		return
+	}
+	if entry.Metadata.False_Frequency.Load() != 0 {
 		return
 	}
 	if entry.Metadata.False_Frequency.Add(1) == 1 {
@@ -3194,6 +3555,7 @@ func recorder_seed_chain(
 		Guards: make([]Chain_Guard, len(guards)), Presets: presets,
 		Tuples: map[Chain_Mask]Handle_Entry{}, Registered: true,
 	}
+	shape.chain_freeze_derived()
 	shape.Ensured.Store(true)
 	if recorder.Chain_Entries == nil {
 		recorder.Chain_Entries = map[string]*Assertion_Metadata{}

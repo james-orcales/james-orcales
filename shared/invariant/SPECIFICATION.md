@@ -62,7 +62,8 @@ ambiguous repeated-message references, repeated references, and empty rules pani
 ### Shared
 
 Executions sharing a namespace must traverse the same links, messages, references, and order.
-`Ensure` panics on a different shape so one namespace can never combine unrelated coverage.
+Under a plain test run, or while a shape is discovered, `Ensure` panics on divergence so one
+namespace never merges coverage; fuzz records without revalidating; a warmed run trusts the shape.
 
 ### Unknown
 

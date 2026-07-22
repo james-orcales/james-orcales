@@ -6,6 +6,7 @@ import (
 	"go/ast"
 	"go/parser"
 	"go/token"
+	"runtime"
 	"sort"
 	"strings"
 	"testing"
@@ -1684,9 +1685,11 @@ func Test_Dot_Product_NUL_Namespace_Panics_On_Every_Call(t *testing.T) {
 
 // Test_Sometimes_NUL_Message_Is_Invalid_Link_Fresh_And_Warmed pins the diagnostic category while
 // the scan moves to the mismatch branch: a NUL axis message is a malformed link on a fresh chain
-// and on a warmed one, never a mere shape divergence.
+// and on a warmed validating chain, never a mere shape divergence. The validating recorder is
+// deliberate — a warmed non-test chain skips message validation wholesale, NUL included, because
+// no key is ever serialized outside a recording run.
 func Test_Sometimes_NUL_Message_Is_Invalid_Link_Fresh_And_Warmed(t *testing.T) {
-	recorder := &invariant.Recorder{}
+	recorder := &invariant.Recorder{Is_Test: true}
 	message := panic_text(func() {
 		invariant.Recorder_Dot_Product(recorder, "fresh").Sometimes(true, "a\x00b").Ensure()
 	})
@@ -1713,4 +1716,232 @@ func Test_Warmed_Chain_Shape_Resolution_Takes_No_Recorder_Lock(t *testing.T) {
 	recorder.Chain_Shapes_Mu.Lock()
 	defer recorder.Chain_Shapes_Mu.Unlock()
 	invariant.Recorder_Dot_Product(recorder, "warmed").Sometimes(true, "axis").Ensure()
+}
+
+// Test_Warmed_Chain_Outside_Tests_Trusts_Shape_Divergence pins the trusted tier: outside a test
+// run, an established shape is trusted rather than revalidated, because every well-formed program
+// already proved the shape under `go test` and the per-call compares are what make dense
+// assertions unaffordable in a shipped binary.
+func Test_Warmed_Chain_Outside_Tests_Trusts_Shape_Divergence(t *testing.T) {
+	recorder := &invariant.Recorder{}
+	invariant.Recorder_Dot_Product(recorder, "trusted").Sometimes(true, "axis").Ensure()
+	message := panic_text(func() {
+		invariant.Recorder_Dot_Product(recorder, "trusted").
+			Sometimes(true, "different").Ensure()
+	})
+	if message != "" {
+		t.Fatalf("warmed divergent chain panicked %q, want trust", message)
+	}
+}
+
+// Test_Warmed_Range_Outside_Tests_Panics_On_Bound_Violation guards the boundary the trusted tier
+// must never cross: trust removes shape revalidation, not enforcement, so a violated bound still
+// panics on the warmed path of a shipped binary.
+func Test_Warmed_Range_Outside_Tests_Panics_On_Bound_Violation(t *testing.T) {
+	recorder := &invariant.Recorder{}
+	invariant.Recorder_Dot_Product(recorder, "bounded").Range_Int(5, 0, 50).Ensure()
+	message := panic_text(func() {
+		invariant.Recorder_Dot_Product(recorder, "bounded").Range_Int(75, 0, 50).Ensure()
+	})
+	if !strings.Contains(message, "value exceeds max") {
+		t.Fatalf("warmed out-of-bounds panic = %q, want bound violation", message)
+	}
+}
+
+// Test_Warmed_Chain_Outside_Tests_Enforces_User_Impossible guards the other enforcement boundary:
+// a user-written carve is a runtime property, not a coverage artifact, so a warmed chain must
+// still panic when the forbidden combination occurs even though shape revalidation is gone.
+func Test_Warmed_Chain_Outside_Tests_Enforces_User_Impossible(t *testing.T) {
+	recorder := &invariant.Recorder{}
+	run := func(left bool, right bool) {
+		invariant.Recorder_Dot_Product(recorder, "carved").
+			Sometimes(left, "left").
+			Sometimes(right, "right").
+			Impossible("left and right are exclusive",
+				invariant.Event_True("left"), invariant.Event_True("right")).
+			Ensure()
+	}
+	run(true, false)
+	run(false, true)
+	message := panic_text(func() { run(true, true) })
+	if !strings.Contains(message, "left and right are exclusive") {
+		t.Fatalf("warmed carve panic = %q, want the user rule", message)
+	}
+}
+
+// Test_Fuzz_Run_Credits_While_Skipping_Shape_Validation pins the fuzz tier: a registered shape
+// mirrors the same source the fuzz executes, so revalidating it on every input is pure waste,
+// while the observation and crediting side must stay bit-identical — a fuzz run exists to
+// discover coverage.
+func Test_Fuzz_Run_Credits_While_Skipping_Shape_Validation(t *testing.T) {
+	recorder, _, _ := registered_chain_fixture()
+	recorder.Is_Fuzz = true
+	run := func(zero_message string) {
+		invariant.Recorder_Dot_Product(recorder, "check").
+			Sometimes(false, zero_message).
+			Sometimes(true, "one").
+			Impossible("exclusive",
+				invariant.Event_True("zero"), invariant.Event_True("one")).
+			Ensure()
+	}
+	run("zero")
+	message := panic_text(func() { run("divergent") })
+	if message != "" {
+		t.Fatalf("fuzz divergent chain panicked %q, want validation skipped", message)
+	}
+	metadata := chain_metadata(t, recorder, chain_metadata_key{
+		Namespace: "check", Ordinal: 1, Message: "one"})
+	if metadata.Frequency.Load() == 0 {
+		t.Fatalf("fuzz run credited nothing, want the axis observed")
+	}
+}
+
+// Test_Dynamic_Namespaces_Share_One_Shape pins the aliasing contract any identity-keyed root
+// resolution must honor: two namespaces with equal content but distinct backing arrays are the
+// same namespace, resolved to the same shape through the content-keyed map.
+func Test_Dynamic_Namespaces_Share_One_Shape(t *testing.T) {
+	recorder := &invariant.Recorder{}
+	first := invariant.Namespace(string([]byte("dynamic namespace")))
+	second := invariant.Namespace(string([]byte("dynamic namespace")))
+	invariant.Recorder_Dot_Product(recorder, first).Sometimes(true, "axis").Ensure()
+	invariant.Recorder_Dot_Product(recorder, second).Sometimes(true, "axis").Ensure()
+	if count := len(*recorder.Chain_Shapes.Load()); count != 1 {
+		t.Fatalf("published %d shapes for one namespace content, want 1", count)
+	}
+}
+
+// Test_Namespace_Resolution_Survives_Garbage_Collection pins the lifetime contract: a dynamic
+// namespace's backing array may be collected between calls, so no resolution path may key on an
+// address it does not also keep alive. Enforcement must hold across collections.
+func Test_Namespace_Resolution_Survives_Garbage_Collection(t *testing.T) {
+	recorder := &invariant.Recorder{}
+	for attempt_index := 0; attempt_index < 3; attempt_index++ {
+		namespace := invariant.Namespace(string([]byte("collected namespace")))
+		invariant.Recorder_Dot_Product(recorder, namespace).Range_Int(5, 0, 50).Ensure()
+		runtime.GC()
+	}
+	fresh := invariant.Namespace(string([]byte("collected namespace")))
+	message := panic_text(func() {
+		invariant.Recorder_Dot_Product(recorder, fresh).Range_Int(75, 0, 50).Ensure()
+	})
+	if !strings.Contains(message, "value exceeds max") {
+		t.Fatalf("post-collection panic = %q, want the verdict enforced", message)
+	}
+}
+
+// Test_Registration_After_Execution_Replaces_The_Foreign_Shape pins the republication contract:
+// registration may publish over a namespace a foreign execution already warmed, and every later
+// resolution must reach the registered shape — resolving a stale foreign shape would silently
+// drop crediting.
+func Test_Registration_After_Execution_Replaces_The_Foreign_Shape(t *testing.T) {
+	recorder := &invariant.Recorder{
+		File_System: fstest.MapFS{
+			"go.mod": &fstest.MapFile{Data: []byte("module fixture\n")},
+			"fixture/check.go": &fstest.MapFile{Data: []byte(`package fixture
+func check(n int) {
+	invariant.Dot_Product("check").
+		Sometimes(n == 0, "zero").
+		Sometimes(n == 1, "one").
+		Impossible("exclusive", invariant.Event_True("zero"), invariant.Event_True("one")).
+		Ensure()
+}
+`)},
+		},
+		Packages_To_Analyze: []string{"/fixture"},
+		Output:              &bytes.Buffer{},
+		Tty:                 &bytes.Buffer{},
+		Exit:                func(code int) {},
+		Is_Test:             true,
+	}
+	run := func() {
+		invariant.Recorder_Dot_Product(recorder, "check").
+			Sometimes(true, "zero").
+			Sometimes(false, "one").
+			Impossible("exclusive",
+				invariant.Event_True("zero"), invariant.Event_True("one")).
+			Ensure()
+	}
+	run()
+	invariant.Recorder_Register_Packages_For_Analysis(recorder)
+	run()
+	metadata := chain_metadata(t, recorder, chain_metadata_key{
+		Namespace: "check", Ordinal: 0, Message: "zero"})
+	if metadata.Frequency.Load() == 0 {
+		t.Fatalf("registered shape credited nothing, want the stale foreign shape replaced")
+	}
+}
+
+// Test_Namespace_Overflow_Beyond_Cache_Capacity_Still_Enforces pins graceful degradation: any
+// bounded identity index must keep resolving and enforcing through the content-keyed map once
+// it is full, because dynamic namespaces can mint unbounded identities.
+func Test_Namespace_Overflow_Beyond_Cache_Capacity_Still_Enforces(t *testing.T) {
+	recorder := &invariant.Recorder{}
+	for namespace_index := 0; namespace_index < 4200; namespace_index++ {
+		namespace := invariant.Namespace(fmt.Sprintf("overflow %d", namespace_index))
+		invariant.Recorder_Dot_Product(recorder, namespace).Range_Int(1, 0, 10).Ensure()
+	}
+	message := panic_text(func() {
+		invariant.Recorder_Dot_Product(recorder, "overflow 4199").
+			Range_Int(50, 0, 10).Ensure()
+	})
+	if !strings.Contains(message, "value exceeds max") {
+		t.Fatalf("overflow panic = %q, want the verdict enforced", message)
+	}
+}
+
+// Test_Warmed_Carve_On_Preset_Axis_Still_Fires pins the one observation a warmed rule-bearing
+// chain can never skip: a user carve may reference a preset's boundary axis by message, so the
+// typed link must keep setting preset-axis bits even when every other obligation is gone.
+func Test_Warmed_Carve_On_Preset_Axis_Still_Fires(t *testing.T) {
+	recorder := &invariant.Recorder{}
+	run := func(value int) {
+		invariant.Recorder_Dot_Product(recorder, "preset carved").
+			Range_Int(value, 0, 50).
+			Sometimes(value > 10, "large").
+			Impossible("nonzero small values stay small",
+				invariant.Event_False("The value is the minimum."),
+				invariant.Event_True("large")).
+			Ensure()
+	}
+	message := panic_text(func() { run(0) })
+	if message != "" {
+		t.Fatalf("discovery run panicked %q, want a clean freeze", message)
+	}
+	message = panic_text(func() { run(20) })
+	if !strings.Contains(message, "nonzero small values stay small") {
+		t.Fatalf("warmed carve panic = %q, want the preset-axis rule fired", message)
+	}
+}
+
+// Test_Crediting_Saturates_After_First_Hit pins the crediting counters as seen-ness flags: the
+// gap report reads only zero versus nonzero, so the second and every later hit buys no coverage
+// while its atomic add ping-pongs the entry's cache line across every worker.
+func Test_Crediting_Saturates_After_First_Hit(t *testing.T) {
+	recorder, _, _ := registered_chain_fixture()
+	sink_hits := 0
+	recorder.Coverage_Sink = func(key string, event bool) {
+		if strings.Contains(key, "one") {
+			if event {
+				sink_hits++
+			}
+		}
+	}
+	run := func() {
+		invariant.Recorder_Dot_Product(recorder, "check").
+			Sometimes(false, "zero").
+			Sometimes(true, "one").
+			Impossible("exclusive",
+				invariant.Event_True("zero"), invariant.Event_True("one")).
+			Ensure()
+	}
+	run()
+	run()
+	metadata := chain_metadata(t, recorder, chain_metadata_key{
+		Namespace: "check", Ordinal: 1, Message: "one"})
+	if frequency := metadata.Frequency.Load(); frequency != 1 {
+		t.Fatalf("axis frequency = %d after two hits, want saturation at 1", frequency)
+	}
+	if sink_hits != 1 {
+		t.Fatalf("coverage sink fired %d times, want exactly once", sink_hits)
+	}
 }
