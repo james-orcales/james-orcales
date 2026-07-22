@@ -51,7 +51,8 @@ literal message; registration constructs that identity and its coverage handle e
 ### Constraint
 
 `Impossible` carves every grid cell matching its referenced polarities and globs over unnamed axes.
-At runtime `Ensure` panics for every matching rule from the first call in every mode, in link order.
+Registration binds each link directly to its compiled rule and resolved siblings; warmed replay uses
+those positions without rebuilding masks or scanning axes. `Ensure` panics for every match in order.
 
 ### Sibling
 

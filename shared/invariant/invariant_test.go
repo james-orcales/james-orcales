@@ -80,6 +80,35 @@ func Test_Dot_Product_Increments_Seeded_Axis_And_Tuple(t *testing.T) {
 	}
 }
 
+// Test_Dot_Product_Replays_Precompiled_Rule_Index prevents warmed enforcement from reconstructing
+// the registration plan it is supposed to consume directly.
+func Test_Dot_Product_Replays_Precompiled_Rule_Index(t *testing.T) {
+	const SOURCE = `package fixture
+func check(a bool, b bool) {
+	invariant.Dot_Product("rule plan").Sometimes(a, "a").Sometimes(b, "b").
+		Impossible("a must be true", invariant.Event_False("a")).
+		Impossible("b must be false", invariant.Event_True("b")).Ensure()
+}
+`
+	recorder, _, _ := registered_fixture(SOURCE)
+	shape := recorder.Chain_Shapes["rule plan"]
+	shape.Rules[0], shape.Rules[1] = shape.Rules[1], shape.Rules[0]
+	shape.Links[2].Rule_Index = 1
+	shape.Links[3].Rule_Index = 0
+	message := panic_text(func() {
+		invariant.Recorder_Dot_Product(recorder, "rule plan").
+			Sometimes(true, "a").Sometimes(true, "b").
+			Impossible("a must be true", invariant.Event_False("a")).
+			Impossible("b must be false", invariant.Event_True("b")).Ensure()
+	})
+	if !strings.Contains(message, "b must be false") {
+		t.Fatalf("panic = %q, want pre-resolved second rule", message)
+	}
+	if strings.Contains(message, "a must be true") {
+		t.Fatalf("panic = %q, non-matching first rule fired", message)
+	}
+}
+
 // Registration parses an invariant.Dot_Product over inline elements and seeds
 // one entry per element plus the full bucket grid minus the tuples an Impossible
 // carves out. zero and one are Sometimes; the Dot_Product's prefix "check" forms

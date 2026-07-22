@@ -287,7 +287,7 @@ type Chain_Shape struct {
 	// Registered distinguishes analyzed chains from enforcement-only foreign chains.
 	Registered bool
 	// Ensured prevents a discovered shape from growing after its first complete execution.
-	Ensured bool
+	Ensured atomic.Bool
 }
 
 // Chain_Axis is registration's complete execution plan for one Sometimes link.
@@ -319,6 +319,8 @@ type Chain_Link struct {
 	Reference_Events Chain_Mask
 	// Reference_Count distinguishes unused fixed-array cells from real coordinates.
 	Reference_Count uint8
+	// Rule_Index resolves an Impossible directly to registration's compiled rule.
+	Rule_Index uint8
 }
 
 // Chain_Rule is one Impossible compiled to the packed-mask predicate mask&Mask == Want.
@@ -329,8 +331,6 @@ type Chain_Rule struct {
 	Want Chain_Mask
 	// Message names the constraint when it fires.
 	Message string
-	// Ordinal maps the compiled rule back to its fluent link.
-	Ordinal uint8
 }
 
 // Product is the register-sized fluent value for one Dot_Product execution. Value receivers return
@@ -475,25 +475,26 @@ func (product Product) Impossible(
 	if product.Ordinal == CHAIN_LINKS_MAX {
 		return product.chain_defer_failure(PRODUCT_FAILURE_LINKS)
 	}
-	if strings.Contains(message, ELEMENT_MESSAGE_SEPARATOR) {
-		return product.chain_defer_failure(PRODUCT_FAILURE_IMPOSSIBLE)
-	}
 	if len(references) == 0 {
 		return product.chain_defer_failure(PRODUCT_FAILURE_IMPOSSIBLE)
 	}
 	if len(references) > CHAIN_LINKS_MAX {
 		return product.chain_defer_failure(PRODUCT_FAILURE_IMPOSSIBLE)
 	}
-	link := Chain_Link{
-		Kind: DOT_ELEMENT_KIND_IMPOSSIBLE, Ordinal: product.Ordinal,
-		Axis_Count: product.Axis_Count, Message: message,
-	}
 	if product.Shape.chain_replays() {
-		rule, mismatch, failure := product.Shape.chain_rule_registered(link, references)
+		rule, mismatch, failure := product.Shape.chain_rule_replay(
+			&Chain_Rule_Replay_Input{
+				Ordinal: product.Ordinal, Axis_Count: product.Axis_Count,
+				Message: message, References: references,
+			})
 		if failure != 0 {
 			product = product.chain_defer_failure(failure)
 		}
 		return product.impossible_advance(rule, mismatch)
+	}
+	link := Chain_Link{
+		Kind: DOT_ELEMENT_KIND_IMPOSSIBLE, Ordinal: product.Ordinal,
+		Axis_Count: product.Axis_Count, Message: message,
 	}
 	rule, mismatch, failure := product.Shape.chain_rule(link, references)
 	if failure != 0 {
@@ -547,10 +548,7 @@ func (shape *Chain_Shape) chain_replays() (replays bool) {
 	if shape.Registered {
 		return true
 	}
-	shape.Mu.Lock()
-	replays = shape.Ensured
-	shape.Mu.Unlock()
-	return replays
+	return shape.Ensured.Load()
 }
 
 // Ensure validates the complete shape, enforces every carve, and credits the packed tuple.
@@ -706,7 +704,7 @@ func (shape *Chain_Shape) chain_axis(input *Chain_Axis_Input) (mismatch bool) {
 	ordinal := input.Ordinal
 	axis_count := input.Axis_Count
 	message := input.Message
-	if shape.Registered {
+	if shape.chain_replays() {
 		if int(ordinal) >= len(shape.Links) {
 			return true
 		}
@@ -739,7 +737,7 @@ func (shape *Chain_Shape) chain_axis(input *Chain_Axis_Input) (mismatch bool) {
 		if expected.Message != link.Message {
 			mismatch = true
 		}
-	} else if !shape.Ensured {
+	} else if !shape.Ensured.Load() {
 		if int(ordinal) == len(shape.Links) {
 			shape.Links = append(shape.Links, link)
 		} else {
@@ -756,7 +754,7 @@ func (shape *Chain_Shape) chain_axis(input *Chain_Axis_Input) (mismatch bool) {
 		if !expected.chain_equal(axis) {
 			mismatch = true
 		}
-	} else if !shape.Ensured {
+	} else if !shape.Ensured.Load() {
 		if int(axis_count) == len(shape.Axes) {
 			shape.Axes = append(shape.Axes, axis)
 		} else {
@@ -853,7 +851,7 @@ func (shape *Chain_Shape) chain_resolve_rule(
 		}
 	}
 	rule = Chain_Rule{
-		Mask: mask, Want: want, Message: link.Message, Ordinal: link.Ordinal,
+		Mask: mask, Want: want, Message: link.Message,
 	}
 	return link, rule, 0
 }
@@ -863,8 +861,14 @@ func (shape *Chain_Shape) chain_resolve_rule(
 func (shape *Chain_Shape) chain_rule(
 	link Chain_Link, references []Dot_Element_Reference,
 ) (rule Chain_Rule, mismatch bool, failure uint8) {
-	if shape.Registered {
-		return shape.chain_rule_registered(link, references)
+	if shape.chain_replays() {
+		return shape.chain_rule_replay(&Chain_Rule_Replay_Input{
+			Ordinal: link.Ordinal, Axis_Count: link.Axis_Count,
+			Message: link.Message, References: references,
+		})
+	}
+	if strings.Contains(link.Message, ELEMENT_MESSAGE_SEPARATOR) {
+		return rule, false, PRODUCT_FAILURE_IMPOSSIBLE
 	}
 	shape.Mu.Lock()
 	defer shape.Mu.Unlock()
@@ -872,8 +876,11 @@ func (shape *Chain_Shape) chain_rule(
 	if failure != 0 {
 		return rule, false, failure
 	}
-	for _, extant := range shape.Rules {
+	for _, extant := range shape.Links {
 		if extant.Ordinal >= link.Ordinal {
+			continue
+		}
+		if extant.Kind != DOT_ELEMENT_KIND_IMPOSSIBLE {
 			continue
 		}
 		if extant.Message == link.Message {
@@ -881,16 +888,17 @@ func (shape *Chain_Shape) chain_rule(
 		}
 	}
 	if int(link.Ordinal) < len(shape.Links) {
-		mismatch = !shape.Links[link.Ordinal].chain_equal(link)
-		for _, extant := range shape.Rules {
-			if extant.Ordinal == link.Ordinal {
-				return extant, mismatch, 0
-			}
+		expected := shape.Links[link.Ordinal]
+		link.Rule_Index = expected.Rule_Index
+		mismatch = !expected.chain_equal(link)
+		if int(expected.Rule_Index) >= len(shape.Rules) {
+			return rule, true, 0
 		}
-		return rule, true, 0
+		return shape.Rules[expected.Rule_Index], mismatch, 0
 	}
-	if !shape.Ensured {
+	if !shape.Ensured.Load() {
 		if int(link.Ordinal) == len(shape.Links) {
+			link.Rule_Index = uint8(len(shape.Rules))
 			shape.Links = append(shape.Links, link)
 			shape.Rules = append(shape.Rules, rule)
 		} else {
@@ -902,25 +910,67 @@ func (shape *Chain_Shape) chain_rule(
 	return rule, mismatch, 0
 }
 
-// The registered path compares the call's stack-backed references to prebuilt values and never
-// retains or boxes them, keeping enforcement allocation-free.
-func (shape *Chain_Shape) chain_rule_registered(
-	link Chain_Link, references []Dot_Element_Reference,
+// Chain_Rule_Replay_Input keeps warmed validation stack-backed without constructing Chain_Link.
+type Chain_Rule_Replay_Input struct {
+	// Ordinal directly indexes the registered link plan.
+	Ordinal uint8
+	// Axis_Count detects a chain that inserts or removes a preceding Sometimes.
+	Axis_Count uint8
+	// Message pins the exact named constraint without rebuilding its rule.
+	Message string
+	// References are compared positionally to registration's resolved siblings and polarity.
+	References []Dot_Element_Reference
+}
+
+// Registration already proved sibling uniqueness and compiled masks, so warmed replay compares
+// only the exact source-level facts whose runtime values could diverge.
+func (shape *Chain_Shape) chain_rule_replay(
+	input *Chain_Rule_Replay_Input,
 ) (rule Chain_Rule, mismatch bool, failure uint8) {
-	link, failure = shape.chain_resolve_link(link, references)
-	if failure != 0 {
-		return rule, false, failure
-	}
-	if int(link.Ordinal) >= len(shape.Links) {
+	if int(input.Ordinal) >= len(shape.Links) {
 		return rule, true, 0
 	}
-	mismatch = !shape.Links[link.Ordinal].chain_equal(link)
-	for _, extant := range shape.Rules {
-		if extant.Ordinal == link.Ordinal {
-			return extant, mismatch, 0
+	link := &shape.Links[input.Ordinal]
+	if link.Kind != DOT_ELEMENT_KIND_IMPOSSIBLE {
+		mismatch = true
+	}
+	if link.Axis_Count != input.Axis_Count {
+		mismatch = true
+	}
+	if link.Message != input.Message {
+		if strings.Contains(input.Message, ELEMENT_MESSAGE_SEPARATOR) {
+			return rule, false, PRODUCT_FAILURE_IMPOSSIBLE
+		}
+		mismatch = true
+	}
+	if int(link.Reference_Count) != len(input.References) {
+		return rule, true, 0
+	}
+	for reference_index, reference := range input.References {
+		axis_position := link.References[reference_index]
+		if int(axis_position) >= len(shape.Axes) {
+			return rule, true, 0
+		}
+		expected_message := shape.Axes[axis_position].Message
+		if reference.Message != expected_message {
+			if strings.Contains(reference.Message, ELEMENT_MESSAGE_SEPARATOR) {
+				return rule, false, PRODUCT_FAILURE_REFERENCE
+			}
+			mismatch = true
+		}
+		expected_event := chain_mask_has(link.Reference_Events, uint8(reference_index))
+		if reference.Event != expected_event {
+			mismatch = true
 		}
 	}
-	return rule, true, 0
+	if int(link.Rule_Index) >= len(shape.Rules) {
+		return rule, true, 0
+	}
+	rule = shape.Rules[link.Rule_Index]
+	if rule.Message != link.Message {
+		mismatch = true
+	}
+	return rule, mismatch, 0
 }
 
 func (first Chain_Link) chain_equal(second Chain_Link) (equal bool) {
@@ -937,6 +987,9 @@ func (first Chain_Link) chain_equal(second Chain_Link) (equal bool) {
 		return false
 	}
 	if first.Reference_Count != second.Reference_Count {
+		return false
+	}
+	if first.Rule_Index != second.Rule_Index {
 		return false
 	}
 	for i_index := uint8(0); i_index < first.Reference_Count; i_index++ {
@@ -967,7 +1020,7 @@ func (shape *Chain_Shape) chain_ensure(product Product) (matches bool) {
 		matches = false
 	}
 	if matches {
-		shape.Ensured = true
+		shape.Ensured.Store(true)
 	}
 	return matches
 }
@@ -2751,6 +2804,7 @@ func recorder_collect_chain(
 		if !ok {
 			continue
 		}
+		link.Rule_Index = uint8(len(rules))
 		carves = append(carves, cells)
 		links = append(links, link)
 		rules = append(rules, rule)
@@ -2852,7 +2906,7 @@ func recorder_collect_chain_rule(
 		link.References[reference_index] = uint8(cell.Position)
 	}
 	rule = Chain_Rule{
-		Mask: mask, Want: want, Message: message, Ordinal: ordinal}
+		Mask: mask, Want: want, Message: message}
 	return cells, link, rule, true
 }
 
@@ -2920,8 +2974,9 @@ func recorder_seed_chain(
 	reg.Seen_Prefix[namespace] = true
 	shape := &Chain_Shape{
 		Axes: make([]Chain_Axis, len(axes)), Links: links, Rules: rules,
-		Tuples: map[Chain_Mask]Handle_Entry{}, Registered: true, Ensured: true,
+		Tuples: map[Chain_Mask]Handle_Entry{}, Registered: true,
 	}
+	shape.Ensured.Store(true)
 	if recorder.Chain_Entries == nil {
 		recorder.Chain_Entries = map[string]*Assertion_Metadata{}
 	}
