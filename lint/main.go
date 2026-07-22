@@ -224,10 +224,10 @@ func main_load_git(root string) (input lint.Git_Input) {
 	tip := main_load_git_resolve_pr_tip(root)
 	return lint.Git_Input{
 		Enabled: true,
-		Merge_Commits: main_load_git_read_commits(&main_load_git_read_commits_input{
+		Merge_Commits: main_load_git_read_commits(&Main_Load_Git_Read_Commits_Input{
 			Root: root, Flag: "--merges", Range: main_reference + ".." + tip,
 		}),
-		Non_Merge_Commits: main_load_git_read_commits(&main_load_git_read_commits_input{
+		Non_Merge_Commits: main_load_git_read_commits(&Main_Load_Git_Read_Commits_Input{
 			Root: root, Flag: "--no-merges", Range: main_reference + "..HEAD",
 		}),
 	}
@@ -256,9 +256,14 @@ func main_load_git_resolve_pr_tip(root string) (tip string) {
 	return "HEAD^2"
 }
 
-type main_load_git_read_commits_input struct {
-	Root  string
-	Flag  string
+// Main_Load_Git_Read_Commits_Input carries the arguments for reading a commit
+// list from git log.
+type Main_Load_Git_Read_Commits_Input struct {
+	// Root is the repository root the git command runs in.
+	Root string
+	// Flag is the extra git-log flag selecting which commits to enumerate.
+	Flag string
+	// Range is the commit range argument passed to git log.
 	Range string
 }
 
@@ -268,7 +273,7 @@ type main_load_git_read_commits_input struct {
 // new commits. Without this, `git subtree add` floods the range with the
 // imported repo's entire history.
 func main_load_git_read_commits(
-	input *main_load_git_read_commits_input) (output []lint.Git_Commit) {
+	input *Main_Load_Git_Read_Commits_Input) (output []lint.Git_Commit) {
 	stdout, ok := main_git(
 		input.Root, "log", "--first-parent", input.Flag, "--format=%H|%s", input.Range)
 	if !ok {

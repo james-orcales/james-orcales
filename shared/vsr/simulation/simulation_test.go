@@ -9,7 +9,7 @@ import (
 
 	invariant "local/james-orcales/shared/invariant/default"
 	"local/james-orcales/shared/jlog"
-	"local/james-orcales/shared/prng"
+	"local/james-orcales/shared/random/prng"
 	"local/james-orcales/shared/time"
 	"local/james-orcales/shared/vsr"
 )

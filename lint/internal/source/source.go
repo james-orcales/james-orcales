@@ -292,7 +292,7 @@ func For_Import_Path(import_path string, components *Component_Index) (index int
 		if m.Import_Path == "" {
 			continue
 		}
-		under := &import_path_under_component_input{
+		under := &Import_Path_Under_Component_Input{
 			Import_Path: import_path, Component_Path: m.Import_Path}
 		if !import_path_under_component(under) {
 			continue
@@ -308,7 +308,9 @@ func For_Import_Path(import_path string, components *Component_Index) (index int
 	return index
 }
 
-type import_path_under_component_input struct {
+// Import_Path_Under_Component_Input pairs a candidate import path with a
+// component's declared import prefix, for the containment test.
+type Import_Path_Under_Component_Input struct {
 	// Import_Path is the candidate package path under test.
 	Import_Path string
 	// Component_Path is the component's declared import prefix.
@@ -316,7 +318,7 @@ type import_path_under_component_input struct {
 }
 
 // True iff the import path names the component itself or a package within it.
-func import_path_under_component(input *import_path_under_component_input) (yes bool) {
+func import_path_under_component(input *Import_Path_Under_Component_Input) (yes bool) {
 
 	if input.Import_Path == input.Component_Path {
 		return true
@@ -375,20 +377,25 @@ func Method_Satisfies_Stdlib(function_declaration *ast.FuncDecl) (yes bool) {
 	}
 	params := method_field_types(function_declaration.Type.Params)
 	results := method_field_types(function_declaration.Type.Results)
-	return method_signature_matches(&method_signature{
+	return method_signature_matches(&Method_Signature{
 		Name:    function_declaration.Name.Name,
 		Params:  strings.Join(params, ","),
 		Results: strings.Join(results, ","),
 	})
 }
 
-type method_signature struct {
-	Name    string
-	Params  string
+// Method_Signature is a method's name and its parameter and result lists as
+// source text, for matching against known interface signatures.
+type Method_Signature struct {
+	// Name is the method name.
+	Name string
+	// Params is the parameter list as source text.
+	Params string
+	// Results is the result list as source text.
 	Results string
 }
 
-func method_signature_matches(input *method_signature) (yes bool) {
+func method_signature_matches(input *Method_Signature) (yes bool) {
 	switch input.Name {
 	case "Error", "String", "GoString":
 		return input.Params == "" && input.Results == "string"
@@ -602,15 +609,19 @@ type Glob_Match_Input struct {
 // single-segment meaning (none crosses a slash) and a malformed segment surfaces
 // as path.Match's ErrBadPattern.
 func Glob_Match(input *Glob_Match_Input) (matched bool, err error) {
-	return glob_match_segments(&glob_match_segments_input{
+	return glob_match_segments(&Glob_Match_Segments_Input{
 		Pattern: strings.Split(input.Pattern, "/"),
 		Name:    strings.Split(input.Path, "/"),
 	})
 }
 
-type glob_match_segments_input struct {
+// Glob_Match_Segments_Input holds a glob pattern and a candidate path, each
+// already split into path segments, for the segment-level match.
+type Glob_Match_Segments_Input struct {
+	// Pattern is the glob split into path segments.
 	Pattern []string
-	Name    []string
+	// Name is the candidate path split into segments.
+	Name []string
 }
 
 // Matches the Pattern segments against the Name segments with a two-pointer scan
@@ -619,7 +630,7 @@ type glob_match_segments_input struct {
 // on a later mismatch the scan returns to it and lets the ** swallow one more
 // name segment, which is how a single ** spans an unknown depth. Trailing **s
 // match the empty remainder, which is why dir/** also matches dir itself.
-func glob_match_segments(input *glob_match_segments_input) (matched bool, err error) {
+func glob_match_segments(input *Glob_Match_Segments_Input) (matched bool, err error) {
 	pattern := input.Pattern
 	name := input.Name
 	pattern_index := 0

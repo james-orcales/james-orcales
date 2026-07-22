@@ -5,7 +5,7 @@ import (
 	"testing"
 
 	"local/james-orcales/shared/backoff"
-	"local/james-orcales/shared/prng"
+	"local/james-orcales/shared/random/prng"
 	"local/james-orcales/shared/time"
 )
 

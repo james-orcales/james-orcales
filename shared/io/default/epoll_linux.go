@@ -10,7 +10,7 @@ const SOCKET_REUSEPORT = 0xf
 
 // The epoll descriptor plus the per-descriptor interest mask epoll needs to combine
 // read and write directions on one entry.
-type poll_file struct {
+type Poll_File struct {
 	// Descriptor is the epoll instance.
 	Descriptor int
 	// Interest tracks the current event mask armed for each socket descriptor.
@@ -18,17 +18,17 @@ type poll_file struct {
 }
 
 // Opens a fresh epoll instance.
-func poll_create() (poll poll_file, err error) {
+func poll_create() (poll Poll_File, err error) {
 	descriptor, create_err := syscall.EpollCreate1(syscall.EPOLL_CLOEXEC)
 	if create_err != nil {
 		return poll, create_err
 	}
-	return poll_file{Descriptor: descriptor, Interest: make(map[int]uint32)}, nil
+	return Poll_File{Descriptor: descriptor, Interest: make(map[int]uint32)}, nil
 }
 
 // Adds read or write interest in descriptor, level-triggered, merging it into any
 // direction already armed on the same descriptor.
-func poll_file_arm(poll poll_file, descriptor int, writable bool) (err error) {
+func poll_file_arm(poll Poll_File, descriptor int, writable bool) (err error) {
 	mask := poll.Interest[descriptor]
 	operation := syscall.EPOLL_CTL_MOD
 	if mask == 0 {
@@ -42,7 +42,7 @@ func poll_file_arm(poll poll_file, descriptor int, writable bool) (err error) {
 
 // Clears read or write interest in descriptor, removing the entry once no direction
 // remains.
-func poll_file_disarm(poll poll_file, descriptor int, writable bool) (err error) {
+func poll_file_disarm(poll Poll_File, descriptor int, writable bool) (err error) {
 	mask := poll.Interest[descriptor] &^ poll_bit(writable)
 	if mask == 0 {
 		delete(poll.Interest, descriptor)
@@ -64,7 +64,7 @@ func poll_bit(writable bool) (bit uint32) {
 // Blocks for up to timeout_ns — or until an event when timeout_ns is negative, the -1
 // EpollWait waits on unbounded — and returns the ready descriptors, emitting a separate entry
 // per ready direction so both can be dispatched.
-func poll_file_wait(poll poll_file, timeout_ns int64) (ready []poll_ready, err error) {
+func poll_file_wait(poll Poll_File, timeout_ns int64) (ready []Poll_Ready, err error) {
 	native := make([]syscall.EpollEvent, POLL_EVENTS_MAX)
 	milliseconds := -1
 	if timeout_ns >= 0 {
@@ -77,10 +77,10 @@ func poll_file_wait(poll poll_file, timeout_ns int64) (ready []poll_ready, err e
 	for index := 0; index < count; index++ {
 		descriptor := int(native[index].Fd)
 		if native[index].Events&poll_bit(false) != 0 {
-			ready = append(ready, poll_ready{Descriptor: descriptor, Writable: false})
+			ready = append(ready, Poll_Ready{Descriptor: descriptor, Writable: false})
 		}
 		if native[index].Events&poll_bit(true) != 0 {
-			ready = append(ready, poll_ready{Descriptor: descriptor, Writable: true})
+			ready = append(ready, Poll_Ready{Descriptor: descriptor, Writable: true})
 		}
 	}
 	return ready, nil

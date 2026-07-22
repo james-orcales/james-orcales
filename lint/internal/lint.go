@@ -105,7 +105,7 @@ const NON_EMPTY_MIN = 1
 const SPLIT_SUGGESTION_CHARS_MIN = 3
 
 // NAMING_STYLE_CHARS_MIN / NAMING_STYLE_CHARS_MAX bound the length of the
-// `Want` field on suggest_input. Callers pass exactly one of "Ada_Case" (8),
+// `Want` field on Suggest_Input. Callers pass exactly one of "Ada_Case" (8),
 // "snake_case" (10), or "SCREAMING_SNAKE_CASE" (20) — the three style words
 // the casing checks know.
 const NAMING_STYLE_CHARS_MIN = 8
@@ -992,7 +992,7 @@ type Diagnostic = diagnostic.Diagnostic
 // Parsed_File, aliased from the source package so the core keeps naming it
 // parsed_file while the type lives in a deterministic leaf a rule subpackage can
 // import without reaching back into this impure package.
-type parsed_file = source.Parsed_File
+type Parsed_File = source.Parsed_File
 
 var snake_case_re = regexp.MustCompile(`^[a-z][a-z0-9]*(_[a-z0-9]+)*$`)
 
@@ -1044,12 +1044,15 @@ func suggest_split_words(name string) (words []string) {
 	return words
 }
 
-type suggest_input struct {
+// Suggest_Input carries an identifier and the case style to rewrite it into.
+type Suggest_Input struct {
+	// Name is the identifier to rewrite.
 	Name string
+	// Want is the target case style: snake_case, SCREAMING_SNAKE_CASE, or Ada_Case.
 	Want string
 }
 
-func suggest(input *suggest_input) (output string) {
+func suggest(input *Suggest_Input) (output string) {
 
 	words := suggest_split_words(input.Name)
 	if len(words) == 0 {
@@ -1093,7 +1096,9 @@ func suggest_is_all_upper(s string) (ok bool) {
 	return has_letter
 }
 
-type check_function = func(
+// Check_Function is the signature of a per-file check: it reads one parsed file
+// and returns its diagnostics.
+type Check_Function = func(
 	file_set *token.FileSet, file *ast.File, source []byte,
 ) (diags []Diagnostic)
 
@@ -1119,9 +1124,12 @@ type check_function = func(
 
 // Tier 1: independent checks that can run on any well-formed Go file.
 
-type scope struct {
-	Parent *scope
-	Names  map[string]bool
+// Scope is a lexical scope in the shadowing walk: a name set and its parent.
+type Scope struct {
+	// Parent is the enclosing scope, or nil at the global scope.
+	Parent *Scope
+	// Names is the set of identifiers declared directly in this scope.
+	Names map[string]bool
 }
 
 func check_shadows(file_set *token.FileSet, file *ast.File, _ []byte) (diags []Diagnostic) {
@@ -1144,7 +1152,7 @@ func check_shadows(file_set *token.FileSet, file *ast.File, _ []byte) (diags []D
 		}
 	}
 
-	global_scope := &scope{Names: global_names}
+	global_scope := &Scope{Names: global_names}
 
 	for _, declaration := range file.Decls {
 		if function, ok := declaration.(*ast.FuncDecl); ok {
@@ -1156,10 +1164,10 @@ func check_shadows(file_set *token.FileSet, file *ast.File, _ []byte) (diags []D
 }
 
 func check_shadows_function_body(
-	file_set *token.FileSet, global_scope *scope, function *ast.FuncDecl, diags *[]Diagnostic,
+	file_set *token.FileSet, global_scope *Scope, function *ast.FuncDecl, diags *[]Diagnostic,
 ) {
 
-	function_scope := &scope{Parent: global_scope, Names: make(map[string]bool)}
+	function_scope := &Scope{Parent: global_scope, Names: make(map[string]bool)}
 	if function.Type.Params != nil {
 		for _, f := range function.Type.Params.List {
 			for _, nm := range f.Names {
@@ -1192,9 +1200,9 @@ func check_shadows_function_body(
 // scopes (if/else-if/else) are pushed together and processed LIFO, which is
 // fine because they don't share state.
 func check_shadows_function_body_walk_body(
-	file_set *token.FileSet, root_scope *scope, root_statements []ast.Stmt, diags *[]Diagnostic,
+	file_set *token.FileSet, root_scope *Scope, root_statements []ast.Stmt, diags *[]Diagnostic,
 ) {
-	stack := []walk_frame{{Scope: root_scope, Statements: root_statements}}
+	stack := []Walk_Frame{{Scope: root_scope, Statements: root_statements}}
 	for len(stack) > 0 {
 		top := &stack[len(stack)-1]
 		if top.I >= len(top.Statements) {
@@ -1209,23 +1217,27 @@ func check_shadows_function_body_walk_body(
 	}
 }
 
-type walk_frame struct {
-	Scope      *scope
+// Walk_Frame is one nested scope on the iterative shadowing walk's stack.
+type Walk_Frame struct {
+	// Scope is the frame's lexical scope.
+	Scope *Scope
+	// Statements is the statement sequence the frame walks.
 	Statements []ast.Stmt
-	I          int
+	// I is the index of the next statement to visit.
+	I int
 }
 
 func check_shadows_function_body_walk_body_walk_statement(
 	file_set *token.FileSet,
-	scope_value *scope,
+	scope_value *Scope,
 	statement ast.Stmt,
-	stack []walk_frame,
+	stack []Walk_Frame,
 	diags *[]Diagnostic,
-) (output []walk_frame) {
+) (output []Walk_Frame) {
 	switch x := statement.(type) {
 	case *ast.BlockStmt:
 		if x != nil {
-			stack = append(stack, walk_frame{
+			stack = append(stack, Walk_Frame{
 				Scope:      scope_new_block(scope_value),
 				Statements: x.List,
 			})
@@ -1239,7 +1251,7 @@ func check_shadows_function_body_walk_body_walk_statement(
 			check_assign_define(file_set, for_scope, x.Init, diags)
 		}
 		if x.Body != nil {
-			stack = append(stack, walk_frame{Scope: for_scope, Statements: x.Body.List})
+			stack = append(stack, Walk_Frame{Scope: for_scope, Statements: x.Body.List})
 		}
 	case *ast.RangeStmt:
 		stack = check_shadows_function_body_walk_body_walk_statement_push_range_statement(
@@ -1255,21 +1267,25 @@ func check_shadows_function_body_walk_body_walk_statement(
 }
 
 // Bundles walk_statement's exit-assertion operands: the incoming stack and the
-// returned output share the []walk_frame element type, so positional parameters
+// returned output share the []Walk_Frame element type, so positional parameters
 // would trip the same-type-parameter bundling rule.
-type check_shadows_function_body_walk_body_walk_statement_assert_exit_input struct {
-	Stack       []walk_frame
-	Output      []walk_frame
-	Diags       *[]Diagnostic
-	Scope_Value *scope
+type Check_Shadows_Function_Body_Walk_Body_Walk_Statement_Assert_Exit_Input struct {
+	// Stack is the incoming frame stack.
+	Stack []Walk_Frame
+	// Output is the returned frame stack.
+	Output []Walk_Frame
+	// Diags accumulates the walk's diagnostics.
+	Diags *[]Diagnostic
+	// Scope_Value is the scope the statement is walked in.
+	Scope_Value *Scope
 }
 
 // |output-stack| ≤ 1 per call (single push or pop); (Hi,Hi) is the
 // AST safety cap, not a coverage gap.
 
-func scope_new_block(parent *scope) (new_scope *scope) {
+func scope_new_block(parent *Scope) (new_scope *Scope) {
 
-	return &scope{Parent: parent, Names: make(map[string]bool)}
+	return &Scope{Parent: parent, Names: make(map[string]bool)}
 }
 
 // New_scope.Parent is the constructor's `parent`; the entry asserts
@@ -1281,11 +1297,11 @@ func scope_new_block(parent *scope) (new_scope *scope) {
 
 func check_shadows_function_body_walk_body_walk_statement_push_if_chain(
 	file_set *token.FileSet,
-	scope_value *scope,
+	scope_value *Scope,
 	root *ast.IfStmt,
-	stack []walk_frame,
+	stack []Walk_Frame,
 	diags *[]Diagnostic,
-) (output []walk_frame) {
+) (output []Walk_Frame) {
 	current := root
 	for current != nil {
 		if_scope := scope_new_block(scope_value)
@@ -1293,7 +1309,7 @@ func check_shadows_function_body_walk_body_walk_statement_push_if_chain(
 			check_assign_define(file_set, if_scope, current.Init, diags)
 		}
 		if current.Body != nil {
-			stack = append(stack, walk_frame{
+			stack = append(stack, Walk_Frame{
 				Scope:      if_scope,
 				Statements: current.Body.List,
 			})
@@ -1306,7 +1322,7 @@ func check_shadows_function_body_walk_body_walk_statement_push_if_chain(
 			continue
 		}
 		if bs, is_block := current.Else.(*ast.BlockStmt); is_block {
-			stack = append(stack, walk_frame{
+			stack = append(stack, Walk_Frame{
 				Scope:      scope_new_block(scope_value),
 				Statements: bs.List,
 			})
@@ -1323,26 +1339,31 @@ func check_shadows_function_body_walk_body_walk_statement_push_if_chain(
 
 func check_shadows_function_body_walk_body_walk_statement_push_range_statement(
 	file_set *token.FileSet,
-	scope_value *scope,
+	scope_value *Scope,
 	x *ast.RangeStmt,
-	stack []walk_frame,
+	stack []Walk_Frame,
 	diags *[]Diagnostic,
-) (output []walk_frame) {
+) (output []Walk_Frame) {
 	range_scope := scope_new_block(scope_value)
 	check_shadows_function_body_walk_body_walk_statement_push_range_statement_add_variable(
 		file_set, range_scope, x.Key, diags)
 	check_shadows_function_body_walk_body_walk_statement_push_range_statement_add_variable(
 		file_set, range_scope, x.Value, diags)
 	if x.Body != nil {
-		stack = append(stack, walk_frame{Scope: range_scope, Statements: x.Body.List})
+		stack = append(stack, Walk_Frame{Scope: range_scope, Statements: x.Body.List})
 	}
 	return stack
 }
 
-type push_range_assert_exit_input struct {
-	Stack  []walk_frame
-	Output []walk_frame
-	Diags  *[]Diagnostic
+// Push_Range_Assert_Exit_Input bundles the range-push exit-assertion operands,
+// whose stacks share the Walk_Frame element type.
+type Push_Range_Assert_Exit_Input struct {
+	// Stack is the incoming frame stack.
+	Stack []Walk_Frame
+	// Output is the returned frame stack.
+	Output []Walk_Frame
+	// Diags accumulates the walk's diagnostics.
+	Diags *[]Diagnostic
 }
 
 // Range body always appends one frame so output == stack+1 modulo
@@ -1350,7 +1371,7 @@ type push_range_assert_exit_input struct {
 
 func check_shadows_function_body_walk_body_walk_statement_push_range_statement_add_variable(
 	file_set *token.FileSet,
-	scope_value *scope,
+	scope_value *Scope,
 	e ast.Expr,
 	diags *[]Diagnostic,
 ) {
@@ -1375,7 +1396,7 @@ func check_shadows_function_body_walk_body_walk_statement_push_range_statement_a
 
 func check_shadows_function_body_walk_body_walk_statement_assign_statement(
 	file_set *token.FileSet,
-	scope_value *scope,
+	scope_value *Scope,
 	x *ast.AssignStmt,
 	diags *[]Diagnostic,
 ) {
@@ -1396,7 +1417,7 @@ func check_shadows_function_body_walk_body_walk_statement_assign_statement(
 
 func check_shadows_function_body_walk_body_walk_statement_declaration_statement(
 	file_set *token.FileSet,
-	scope_value *scope,
+	scope_value *Scope,
 	x *ast.DeclStmt,
 	diags *[]Diagnostic,
 ) {
@@ -1423,7 +1444,7 @@ func check_shadows_function_body_walk_body_walk_statement_declaration_statement(
 }
 
 func check_assign_define(
-	file_set *token.FileSet, scope_value *scope, statement ast.Stmt, diags *[]Diagnostic,
+	file_set *token.FileSet, scope_value *Scope, statement ast.Stmt, diags *[]Diagnostic,
 ) {
 	// Scope_value here is an if/for/range init scope produced by
 	// scope_new_block, whose entry assertion guarantees parent.Parent !=
@@ -1450,7 +1471,7 @@ func check_assign_define(
 
 func check_shadow(
 	file_set *token.FileSet,
-	scope_value *scope,
+	scope_value *Scope,
 	name string,
 	identifier *ast.Ident,
 	diags *[]Diagnostic,
@@ -1499,7 +1520,7 @@ type Check_File_Input struct {
 // origin tier so the printer can gate tier-2 output globally on the
 // presence of any tier-1 diagnostic.
 func Check_File(input *Check_File_Input) (diags []Diagnostic) {
-	diags = check_file_run_tier([]check_function{
+	diags = check_file_run_tier([]Check_Function{
 		make_check_type_invariants(input.Invariant_Exempt),
 		check_casing,
 		check_constant_casing,
@@ -1515,6 +1536,7 @@ func Check_File(input *Check_File_Input) (diags []Diagnostic) {
 		check_public_struct_fields,
 		check_struct_field_documentation_comment,
 		check_exported_type_exposes_private,
+		check_type_declaration_exported,
 		check_no_iota,
 		check_no_fallthrough,
 		check_no_blank_import,
@@ -1540,7 +1562,7 @@ func Check_File(input *Check_File_Input) (diags []Diagnostic) {
 		}
 		return diags
 	}
-	diags = check_file_run_tier([]check_function{
+	diags = check_file_run_tier([]Check_Function{
 		check_no_unbounded_apis, make_check_no_recursion(input.Recursion_Exempt),
 		check_no_function_init, make_check_no_package_vars(input.Instrumentation),
 		check_unnecessary_method,
@@ -1553,13 +1575,13 @@ func Check_File(input *Check_File_Input) (diags []Diagnostic) {
 }
 
 func check_file_run_tier(
-	checks []check_function, file_set *token.FileSet, file *ast.File, source []byte,
+	checks []Check_Function, file_set *token.FileSet, file *ast.File, source []byte,
 ) (diags []Diagnostic) {
 	per_check := make([][]Diagnostic, len(checks))
 	var wg sync.WaitGroup
 	for i, c := range checks {
 		wg.Add(1)
-		go func(i int, c check_function) {
+		go func(i int, c Check_Function) {
 			defer wg.Done()
 			per_check[i] = c(file_set, file, source)
 		}(i, c)
@@ -1587,7 +1609,7 @@ func check_casing_ident(file_set *token.FileSet, identifier *ast.Ident, diags *[
 		ok = ada_case_re.MatchString(identifier.Name)
 	}
 	if !ok {
-		suggestion := suggest(&suggest_input{Name: identifier.Name, Want: want})
+		suggestion := suggest(&Suggest_Input{Name: identifier.Name, Want: want})
 		*diags = append(*diags, Diagnostic{
 			Position: file_set.Position(identifier.Pos()),
 			Name:     identifier.Name,
@@ -1694,7 +1716,7 @@ func check_constant_casing(file_set *token.FileSet, file *ast.File, _ []byte) (d
 		if screaming_snake_case_re.MatchString(identifier.Name) {
 			continue
 		}
-		suggestion := suggest(&suggest_input{
+		suggestion := suggest(&Suggest_Input{
 			Name: identifier.Name, Want: "SCREAMING_SNAKE_CASE"})
 		diags = append(diags, Diagnostic{
 			Position: file_set.Position(identifier.Pos()),
@@ -2082,7 +2104,7 @@ func Check_File_System(input *Check_File_System_Input) (diags []Diagnostic, err 
 	if err != nil {
 		return nil, err
 	}
-	scan_prefixes := resolve_parse_prefixes(&resolve_parse_prefixes_input{
+	scan_prefixes := resolve_parse_prefixes(&Resolve_Parse_Prefixes_Input{
 		Components:       component_roots,
 		Scope:            input.Scope,
 		Shared_Component: input.Shared_Component,
@@ -2092,7 +2114,7 @@ func Check_File_System(input *Check_File_System_Input) (diags []Diagnostic, err 
 	// diagnostics. Scan_Prefixes bounds both: the stream walk skips out-of-scope
 	// directories, so the go-path list it returns — and the parse and AST tiers
 	// fed from it, where the run spends its time and memory — covers only scope.
-	stream_diags, paths, err := check_file_system_stream(&check_file_system_stream_input{
+	stream_diags, paths, err := check_file_system_stream(&Check_File_System_Stream_Input{
 		Fsys:                  input.Fsys,
 		Root:                  root,
 		Root_Directory:        input.Root_Directory,
@@ -2111,7 +2133,7 @@ func Check_File_System(input *Check_File_System_Input) (diags []Diagnostic, err 
 	parsed_files, parse_diags := check_file_system_parse_files(paths, sources, cpu_count)
 	components := source.Build_Component_Index(
 		component_roots, parsed_files, input.Shared_Component)
-	return append(check_file_system_doctrine(&check_file_system_doctrine_input{
+	return append(check_file_system_doctrine(&Check_File_System_Doctrine_Input{
 		Fsys:                      input.Fsys,
 		Tracked:                   tracked,
 		Directory_Has_Tracked:     directory_has_tracked,
@@ -2132,7 +2154,7 @@ func Check_File_System(input *Check_File_System_Input) (diags []Diagnostic, err 
 
 // A configuration_glob_list is a lint.json glob list paired with its key, so a
 // cross-list check names the offending key in its diagnostic.
-type configuration_glob_list struct {
+type Configuration_Glob_List struct {
 	// Name is the lint.json key.
 	Name string
 	// Globs is the key's raw entries.
@@ -2164,7 +2186,7 @@ func check_configuration_directory_slash(input *Check_File_System_Input) (diags 
 		return nil
 	}
 	directories := check_file_system_directory_index(input.Tracked)
-	lists := []configuration_glob_list{
+	lists := []Configuration_Glob_List{
 		{Name: "ignore", Globs: input.Ignore},
 		{Name: "pure_but_indeterministic_packages", Globs: input.Pure_But_Indeterministic},
 		{Name: "instrumentation_packages", Globs: input.Instrumentation_Packages},
@@ -2229,19 +2251,34 @@ func check_configuration_directory_slash(input *Check_File_System_Input) (diags 
 	return diags
 }
 
-type check_file_system_doctrine_input struct {
-	Fsys                     fs.FS
-	Tracked                  map[string]bool
-	Directory_Has_Tracked    map[string]bool
-	Parsed_Files             []parsed_file
-	Components               *component_index
-	CPU_Count                int
-	Stream_Diags             []Diagnostic
-	Parse_Diags              []Diagnostic
+// Check_File_System_Doctrine_Input carries everything the module-level doctrine
+// tiers read: the filesystem, the parsed set, the component graph, and the run's
+// scope and exemptions.
+type Check_File_System_Doctrine_Input struct {
+	// Fsys is the filesystem the workspace is read from.
+	Fsys fs.FS
+	// Tracked is the set of version-controlled file paths.
+	Tracked map[string]bool
+	// Directory_Has_Tracked marks directories that hold a tracked file.
+	Directory_Has_Tracked map[string]bool
+	// Parsed_Files is the parsed set in view for this run.
+	Parsed_Files []Parsed_File
+	// Components is the workspace's component graph.
+	Components *Component_Index
+	// CPU_Count bounds the check's parallelism.
+	CPU_Count int
+	// Stream_Diags are the diagnostics already gathered by the streaming walk.
+	Stream_Diags []Diagnostic
+	// Parse_Diags are the diagnostics from parsing the set.
+	Parse_Diags []Diagnostic
+	// Instrumentation_Packages lists packages exempt as instrumentation.
 	Instrumentation_Packages []string
-	Word_Replacements        map[string][]string
+	// Word_Replacements is the configured terminology substitution table.
+	Word_Replacements map[string][]string
+	// Pure_But_Indeterministic lists functions exempt from the determinism check.
 	Pure_But_Indeterministic []string
-	Scope                    string
+	// Scope is the package argument the run was pointed at.
+	Scope string
 	// Scan_Prefixes is the scope-narrowed parse set (resolve_parse_prefixes): the
 	// directory subtrees this run actually parsed, or nil for a whole-workspace
 	// run. The deterministic coverage check needs it to tell an out-of-scope entry
@@ -2261,7 +2298,7 @@ type check_file_system_doctrine_input struct {
 // is already scope-narrowed, while Tracked and Components still span the workspace
 // for the path-casing and import-resolution checks that need the full view.
 func check_file_system_doctrine(
-	input *check_file_system_doctrine_input,
+	input *Check_File_System_Doctrine_Input,
 ) (output []Diagnostic) {
 
 	parsed_files := input.Parsed_Files
@@ -2270,7 +2307,7 @@ func check_file_system_doctrine(
 	output = append(output, input.Parse_Diags...)
 	output = append(output, check_path_casing(input.Fsys, input.Tracked)...)
 	output = append(output,
-		check_file_system_run_checks(&check_file_system_run_checks_input{
+		check_file_system_run_checks(&Check_File_System_Run_Checks_Input{
 			Parsed_Files:      parsed_files,
 			CPU_Count:         input.CPU_Count,
 			Instrumentation:   input.Instrumentation_Packages,
@@ -2287,7 +2324,7 @@ func check_file_system_doctrine(
 	output = append(output, check_shared_component_no_main_package(parsed_files, components)...)
 	output = append(output, check_component_tier_depth(parsed_files, components)...)
 	output = append(output,
-		check_single_module(&check_single_module_input{
+		check_single_module(&Check_Single_Module_Input{
 			Fsys:                  input.Fsys,
 			Tracked:               input.Tracked,
 			Directory_Has_Tracked: input.Directory_Has_Tracked,
@@ -2296,7 +2333,7 @@ func check_file_system_doctrine(
 	output = append(output,
 		check_transitive_purity(
 			parsed_files, components, input.Instrumentation_Packages)...)
-	output = append(output, check_deterministic(&check_deterministic_input{
+	output = append(output, check_deterministic(&Check_Deterministic_Input{
 		Parsed_Files:    parsed_files,
 		Components:      components,
 		Exceptions:      input.Pure_But_Indeterministic,
@@ -2408,24 +2445,32 @@ func Git_Input_Check(input Git_Input) (diags []Diagnostic) {
 // independent groups (a Linux-only file and a generic file genuinely have
 // to live separately). SLOC is total lines per the user's directive —
 // comments and blanks count.
-type package_group_key struct {
-	Directory             string
-	Is_Test               bool
+type Package_Group_Key struct {
+	// Directory is the package directory.
+	Directory string
+	// Is_Test marks a test-file group.
+	Is_Test bool
+	// Is_Specification_Test marks the specification_test.go group.
 	Is_Specification_Test bool
-	Test_Is_External      bool
-	Build                 string
+	// Test_Is_External marks an external (package X_test) test group.
+	Test_Is_External bool
+	// Build is the file's build-tag constraint, which splits groups.
+	Build string
 }
 
-type package_group_state struct {
-	Files []parsed_file
+// Package_Group_State accumulates one group's files and running line total.
+type Package_Group_State struct {
+	// Files are the group's parsed files.
+	Files []Parsed_File
+	// Lines is the group's running total line count.
 	Lines int
 }
 
-func check_file_system_package_split(parsed_files []parsed_file) (diags []Diagnostic) {
-	groups := map[package_group_key]*package_group_state{}
+func check_file_system_package_split(parsed_files []Parsed_File) (diags []Diagnostic) {
+	groups := map[Package_Group_Key]*Package_Group_State{}
 	for _, pf := range parsed_files {
 		is_test := strings.HasSuffix(pf.Path, "_test.go")
-		key := package_group_key{
+		key := Package_Group_Key{
 			Directory:             path.Dir(pf.Path),
 			Is_Test:               is_test,
 			Is_Specification_Test: path.Base(pf.Path) == "specification_test.go",
@@ -2436,7 +2481,7 @@ func check_file_system_package_split(parsed_files []parsed_file) (diags []Diagno
 		}
 		st := groups[key]
 		if st == nil {
-			st = &package_group_state{}
+			st = &Package_Group_State{}
 			groups[key] = st
 		}
 		st.Files = append(st.Files, pf)
@@ -2445,7 +2490,7 @@ func check_file_system_package_split(parsed_files []parsed_file) (diags []Diagno
 			st.Lines += tok.LineCount()
 		}
 	}
-	keys := make([]package_group_key, 0, len(groups))
+	keys := make([]Package_Group_Key, 0, len(groups))
 	for k := range groups {
 		keys = append(keys, k)
 	}
@@ -2476,8 +2521,8 @@ func check_file_system_package_split(parsed_files []parsed_file) (diags []Diagno
 }
 
 func package_group_key_diag(
-	key package_group_key,
-	st *package_group_state,
+	key Package_Group_Key,
+	st *Package_Group_State,
 	files_max int,
 ) (diag Diagnostic) {
 
@@ -2564,9 +2609,9 @@ func check_file_system_read_files(fsys fs.FS, paths []string) (sources [][]byte,
 // files that did parse.
 func check_file_system_parse_files(
 	paths []string, sources [][]byte, cpu_count int,
-) (parsed_files []parsed_file, parse_diags []Diagnostic) {
+) (parsed_files []Parsed_File, parse_diags []Diagnostic) {
 
-	results := make([]parsed_file, len(paths))
+	results := make([]Parsed_File, len(paths))
 	diags := make([]Diagnostic, len(paths))
 	had_err := make([]bool, len(paths))
 	sem := make(chan struct{}, cpu_count)
@@ -2589,7 +2634,7 @@ func check_file_system_parse_files(
 				had_err[i] = true
 				return
 			}
-			results[i] = parsed_file{
+			results[i] = Parsed_File{
 				Path: p, File_Set: file_set, File: file, Source: source,
 			}
 		}(i, p, sources[i])
@@ -2624,10 +2669,10 @@ func check_file_system_parse_files(
 // signals misconfigured input rather than a meaningful state.
 
 // Aliased from the source package, like parsed_file above.
-type component_information = source.Component
+type Component_Information = source.Component
 
 // Aliased from the source package, like parsed_file above.
-type component_index = source.Component_Index
+type Component_Index = source.Component_Index
 
 var component_index_module_re = regexp.MustCompile(`(?m)^module\s+(\S+)`)
 
@@ -2646,7 +2691,7 @@ var component_index_module_re = regexp.MustCompile(`(?m)^module\s+(\S+)`)
 // index (the non-git fallback) prunes nothing, matching every other filter.
 func discover_components(
 	fsys fs.FS, directory_has_tracked map[string]bool,
-) (components []component_information, err error) {
+) (components []Component_Information, err error) {
 
 	root_module_path := discover_root_module_path(fsys)
 	seen := map[string]bool{}
@@ -2691,7 +2736,7 @@ func discover_components(
 			if root_module_path != "" {
 				import_path = root_module_path + "/" + top
 			}
-			components = append(components, component_information{
+			components = append(components, Component_Information{
 				Root:              top,
 				Import_Path:       import_path,
 				Directory_Package: make(map[string]string),
@@ -2731,7 +2776,7 @@ func discover_root_module_path(fsys fs.FS) (module_path string) {
 // module when one exists (it owns everything), else to the scope subtree itself —
 // files owned by no module resolve to -1 and the module-level checks no-op on
 // them. An empty scope (the whole-workspace run) parses the root.
-func resolve_scan_root(components []component_information, scope string) (root string) {
+func resolve_scan_root(components []Component_Information, scope string) (root string) {
 
 	if scope == "" {
 		return "."
@@ -2763,9 +2808,14 @@ func resolve_scan_root(components []component_information, scope string) (root s
 	return scope
 }
 
-type resolve_parse_prefixes_input struct {
-	Components       []component_information
-	Scope            string
+// Resolve_Parse_Prefixes_Input carries the inputs for resolving which directory
+// subtrees a scoped run must parse.
+type Resolve_Parse_Prefixes_Input struct {
+	// Components is the workspace's component list.
+	Components []Component_Information
+	// Scope is the package argument the run was pointed at.
+	Scope string
+	// Shared_Component is the shared library's import prefix.
 	Shared_Component string
 }
 
@@ -2776,7 +2826,7 @@ type resolve_parse_prefixes_input struct {
 // would fail open, the one regression this list exists to bar. A nil result means
 // "parse everything" (the whole-workspace run). Prefixes are sorted so the walk
 // order is deterministic.
-func resolve_parse_prefixes(input *resolve_parse_prefixes_input) (prefixes []string) {
+func resolve_parse_prefixes(input *Resolve_Parse_Prefixes_Input) (prefixes []string) {
 
 	if input.Scope == "" {
 		return nil
@@ -2835,7 +2885,7 @@ func scan_prefixes_reach(prefixes []string, directory string) (reachable bool) {
 // importable by design) and `package main` files (which can sit at any
 // depth because Go itself bars importing them).
 func check_binary_component_layout(
-	parsed_files []parsed_file, components *component_index,
+	parsed_files []Parsed_File, components *Component_Index,
 ) (diags []Diagnostic) {
 
 	seen := make(map[string]bool)
@@ -2864,7 +2914,7 @@ func check_binary_component_layout(
 			continue
 		}
 		seen[key] = true
-		MESSAGE := binary_component_layout_message(&binary_component_layout_message_input{
+		MESSAGE := binary_component_layout_message(&Binary_Component_Layout_Message_Input{
 			Root:      m.Root,
 			Directory: directory,
 		})
@@ -2878,13 +2928,17 @@ func check_binary_component_layout(
 	return diags
 }
 
-type binary_component_layout_message_input struct {
-	Root      string
+// Binary_Component_Layout_Message_Input carries the paths for the
+// binary-component layout diagnostic message.
+type Binary_Component_Layout_Message_Input struct {
+	// Root is the component's root directory.
+	Root string
+	// Directory is the offending directory.
 	Directory string
 }
 
 func binary_component_layout_message(
-	input *binary_component_layout_message_input,
+	input *Binary_Component_Layout_Message_Input,
 ) (MESSAGE string) {
 	destination := path.Join(input.Root+"/internal", input.Directory)
 	if input.Root == "." {
@@ -2913,7 +2967,7 @@ func check_binary_component_layout_is_legal(directory string) (legal bool) {
 // anywhere but the root is reported; since a directory holds one package,
 // pinning every main to the root also caps the module at one.
 func check_binary_component_main_package(
-	parsed_files []parsed_file, components *component_index,
+	parsed_files []Parsed_File, components *Component_Index,
 ) (diags []Diagnostic) {
 
 	seen := make(map[string]bool)
@@ -2967,7 +3021,7 @@ func check_binary_component_main_package(
 // to -1 and are skipped, matching the other module-level checks; third_party/
 // is pruned before discovery, so vendored trees never enter the index at all.
 func check_binary_component_internal_main(
-	parsed_files []parsed_file, components *component_index,
+	parsed_files []Parsed_File, components *Component_Index,
 ) (diags []Diagnostic) {
 
 	counts := make([]int, len(components.Components))
@@ -3050,7 +3104,7 @@ func check_binary_component_internal_main_count(file *ast.File) (count int) {
 // found in any file's path), attributed to the earliest-seen file
 // inside that directory so the diagnostic has a real location.
 func check_shared_component_no_internal(
-	parsed_files []parsed_file, components *component_index,
+	parsed_files []Parsed_File, components *Component_Index,
 ) (diags []Diagnostic) {
 
 	seen := make(map[string]bool)
@@ -3093,7 +3147,7 @@ func check_shared_component_no_internal(
 // dead weight the layout forbids outright. Reported once per offending
 // directory.
 func check_shared_component_no_main_package(
-	parsed_files []parsed_file, components *component_index,
+	parsed_files []Parsed_File, components *Component_Index,
 ) (diags []Diagnostic) {
 
 	seen := make(map[string]bool)
@@ -3134,7 +3188,7 @@ func check_shared_component_no_main_package(
 // composition tier — the only place where impure-stdlib binding is
 // permitted.
 func check_component_tier_depth(
-	parsed_files []parsed_file, components *component_index,
+	parsed_files []Parsed_File, components *Component_Index,
 ) (diags []Diagnostic) {
 
 	seen := make(map[string]bool)
@@ -3180,7 +3234,9 @@ func check_component_tier_depth(
 	return diags
 }
 
-type check_single_module_input struct {
+// Check_Single_Module_Input carries the tree and tracked-file filters for the
+// single-module layout check.
+type Check_Single_Module_Input struct {
 	// Fsys is the workspace tree to walk for module and workspace files.
 	Fsys fs.FS
 	// Tracked, when non-nil, limits the check to first-party files.
@@ -3196,7 +3252,7 @@ type check_single_module_input struct {
 // anchor. third_party/ and untracked trees (vendored modules, the tmp build
 // sandboxes) are pruned before the walk, so only first-party module files reach
 // here. Each violation anchors at the offending file.
-func check_single_module(input *check_single_module_input) (diags []Diagnostic) {
+func check_single_module(input *Check_Single_Module_Input) (diags []Diagnostic) {
 
 	root_module_present := false
 	walk_err := fs.WalkDir(input.Fsys, ".",
@@ -3230,7 +3286,7 @@ func check_single_module(input *check_single_module_input) (diags []Diagnostic) 
 		return diags
 	}
 	if !root_module_present {
-		diags = append(diags, single_module_diagnostic(&single_module_diagnostic_input{
+		diags = append(diags, single_module_diagnostic(&Single_Module_Diagnostic_Input{
 			Path: "go.mod",
 			Want: "one module: a single root go.mod at the repository root",
 			Message: "no go.mod at the repository root; the linter needs " +
@@ -3261,7 +3317,7 @@ func single_module_file(
 		}
 	}
 	if workspace_file {
-		return []Diagnostic{single_module_diagnostic(&single_module_diagnostic_input{
+		return []Diagnostic{single_module_diagnostic(&Single_Module_Diagnostic_Input{
 			Path: p,
 			Want: "one module: a single root go.mod, no go.work",
 			Message: fmt.Sprintf(
@@ -3271,7 +3327,7 @@ func single_module_file(
 	if p == "go.mod" {
 		return nil, true
 	}
-	return []Diagnostic{single_module_diagnostic(&single_module_diagnostic_input{
+	return []Diagnostic{single_module_diagnostic(&Single_Module_Diagnostic_Input{
 		Path: p,
 		Want: "one module: a single root go.mod, no nested go.mod",
 		Message: fmt.Sprintf(
@@ -3279,7 +3335,9 @@ func single_module_file(
 	})}, false
 }
 
-type single_module_diagnostic_input struct {
+// Single_Module_Diagnostic_Input carries the fields of one single-module layout
+// diagnostic.
+type Single_Module_Diagnostic_Input struct {
 	// Path is the offending file the diagnostic anchors at.
 	Path string
 	// Want is the rule's one-line expectation.
@@ -3290,7 +3348,7 @@ type single_module_diagnostic_input struct {
 
 // Builds a single-module diagnostic anchored at the offending file.
 func single_module_diagnostic(
-	input *single_module_diagnostic_input,
+	input *Single_Module_Diagnostic_Input,
 ) (diagnostic Diagnostic) {
 
 	return Diagnostic{
@@ -3315,14 +3373,14 @@ func single_module_diagnostic(
 // package main is exempt — it has no doc surface — as are `<X>_test`
 // packages, which exist only to host the external test binary.
 func check_package_documentation_comment(
-	parsed_files []parsed_file,
+	parsed_files []Parsed_File,
 ) (diags []Diagnostic) {
 	type key struct {
 		Directory string
 		Package   string
 	}
 	type state struct {
-		Files             []parsed_file
+		Files             []Parsed_File
 		Has_Documentation bool
 	}
 	groups := map[key]*state{}
@@ -3381,7 +3439,7 @@ func check_package_documentation_comment(
 // that package reads and parses nothing. Diagnostics attach under the package
 // directory so Main's scope filter limits the mandate to the package argument.
 func check_specification(
-	fsys fs.FS, parsed_files []parsed_file, index *component_index, scope string,
+	fsys fs.FS, parsed_files []Parsed_File, index *Component_Index, scope string,
 ) (diags []Diagnostic) {
 	directories := map[string]bool{}
 	has_module := map[string]bool{}
@@ -3456,19 +3514,25 @@ func specification_directory_has_exact(
 
 // Carries the parsed set, the parallelism cap, and the lint.json lists the
 // per-file checks consult.
-type check_file_system_run_checks_input struct {
-	Parsed_Files      []parsed_file
-	CPU_Count         int
-	Instrumentation   []string
+type Check_File_System_Run_Checks_Input struct {
+	// Parsed_Files is the parsed set to check.
+	Parsed_Files []Parsed_File
+	// CPU_Count bounds the parallelism.
+	CPU_Count int
+	// Instrumentation lists packages exempt as instrumentation.
+	Instrumentation []string
+	// Word_Replacements is the configured terminology substitution table.
 	Word_Replacements map[string][]string
-	Invariant_Exempt  []string
-	Recursion_Exempt  []string
+	// Invariant_Exempt lists packages exempt from the assertion mandate.
+	Invariant_Exempt []string
+	// Recursion_Exempt lists directories exempt from the recursion ban.
+	Recursion_Exempt []string
 }
 
 // Runs checks per file in parallel — CPU bound, capped at the injected
 // CPU_Count (typically runtime.NumCPU from main.go).
 func check_file_system_run_checks(
-	input *check_file_system_run_checks_input,
+	input *Check_File_System_Run_Checks_Input,
 ) (diags []Diagnostic) {
 
 	per_file_diags := make([][]Diagnostic, len(input.Parsed_Files))
@@ -3477,7 +3541,7 @@ func check_file_system_run_checks(
 	for i, pf := range input.Parsed_Files {
 		wg.Add(1)
 		sem <- struct{}{}
-		go func(i int, pf parsed_file) {
+		go func(i int, pf Parsed_File) {
 			defer wg.Done()
 			defer func() { <-sem }()
 			per_file_diags[i] = Check_File(&Check_File_Input{
@@ -3601,7 +3665,7 @@ func check_comments_group_has_space_after_slashes(text string) (ok bool) {
 // Wraps the recursion ban with the opt_out_recursion_ban exemption: a file
 // matching one of its exact-path globs — a hand-written recursive-descent parser,
 // where recursion is intentional — is skipped. An empty list exempts nothing.
-func make_check_no_recursion(exempt []string) (check check_function) {
+func make_check_no_recursion(exempt []string) (check Check_Function) {
 	return func(
 		file_set *token.FileSet, file *ast.File, source_bytes []byte,
 	) (diags []Diagnostic) {
@@ -3639,23 +3703,28 @@ func make_check_no_recursion(exempt []string) (check check_function) {
 func check_no_recursion(file_set *token.FileSet, file *ast.File, _ []byte) (diags []Diagnostic) {
 
 	graph := build_file_call_graph(file_set, file)
-	adj := map[string][]call_edge{}
+	adj := map[string][]Call_Edge{}
 	for _, e := range graph.Edges {
 		adj[e.Caller] = append(adj[e.Caller], e)
 	}
 	return check_no_recursion_find_cycles(graph.Caller_Order, adj)
 }
 
-type file_call_graph struct {
+// File_Call_Graph is one file's intra-file call graph: its functions and the
+// calls between them.
+type File_Call_Graph struct {
+	// Caller_Order lists the file's functions in declaration order.
 	Caller_Order []string
-	Decls        map[string]*ast.FuncDecl
-	Edges        []call_edge
+	// Decls maps each function name to its declaration.
+	Decls map[string]*ast.FuncDecl
+	// Edges are the intra-file calls, caller to callee.
+	Edges []Call_Edge
 }
 
 func build_file_call_graph(
 	file_set *token.FileSet,
 	file *ast.File,
-) (graph file_call_graph) {
+) (graph File_Call_Graph) {
 
 	function_names := map[string]bool{}
 	graph.Decls = map[string]*ast.FuncDecl{}
@@ -3679,7 +3748,7 @@ func build_file_call_graph(
 		if function_declaration.Body == nil {
 			continue
 		}
-		v := &recursion_visitor{
+		v := &Recursion_Visitor{
 			File_Set: file_set,
 			Caller:   function_declaration.Name.Name,
 			Targets:  function_names,
@@ -3690,18 +3759,29 @@ func build_file_call_graph(
 	return graph
 }
 
-type call_edge struct {
-	Caller   string
-	Callee   string
+// Call_Edge is one same-package call from Caller to Callee.
+type Call_Edge struct {
+	// Caller is the calling function's name.
+	Caller string
+	// Callee is the called function's name.
+	Callee string
+	// Position is the call site's source position.
 	Position token.Position
+	// Shadowed is true when a local binding shadowed the callee name at the call.
 	Shadowed bool
 }
 
-type recursion_visitor struct {
+// Recursion_Visitor walks a function body, recording same-package call edges and
+// tracking lexical scopes to spot callees shadowed by a local binding.
+type Recursion_Visitor struct {
+	// File_Set resolves call positions to source locations.
 	File_Set *token.FileSet
-	Caller   string
-	Targets  map[string]bool
-	Edges    *[]call_edge
+	// Caller is the name of the function being walked.
+	Caller string
+	// Targets is the set of names a call to which counts as an edge.
+	Targets map[string]bool
+	// Edges accumulates the call edges found.
+	Edges *[]Call_Edge
 	// Scopes[i] holds names defined in scope level i. Pushed on entering
 	// scope-introducing nodes (BlockStmt, IfStmt, ForStmt, RangeStmt, FuncLit)
 	// and popped on exit.
@@ -3714,7 +3794,7 @@ type recursion_visitor struct {
 // Visit is the ast.Visitor entry point: pushes a fresh scope frame
 // when n introduces one (Block, If, For, Range, FuncLit) and records
 // any same-package call edge encountered.
-func (v *recursion_visitor) Visit(n ast.Node) (next ast.Visitor) {
+func (v *Recursion_Visitor) Visit(n ast.Node) (next ast.Visitor) {
 
 	if n == nil {
 		k := v.Push_History[len(v.Push_History)-1]
@@ -3727,7 +3807,7 @@ func (v *recursion_visitor) Visit(n ast.Node) (next ast.Visitor) {
 	return v
 }
 
-func recursion_visitor_enter(v *recursion_visitor, n ast.Node) (pushed int) {
+func recursion_visitor_enter(v *Recursion_Visitor, n ast.Node) (pushed int) {
 
 	switch x := n.(type) {
 	case *ast.BlockStmt:
@@ -3763,7 +3843,7 @@ func recursion_visitor_enter(v *recursion_visitor, n ast.Node) (pushed int) {
 	return 0
 }
 
-func recursion_visitor_enter_define_statement(v *recursion_visitor, s ast.Stmt) {
+func recursion_visitor_enter_define_statement(v *Recursion_Visitor, s ast.Stmt) {
 
 	as, is_assign := s.(*ast.AssignStmt)
 	if !is_assign {
@@ -3777,7 +3857,7 @@ func recursion_visitor_enter_define_statement(v *recursion_visitor, s ast.Stmt) 
 	}
 }
 
-func recursion_visitor_define_ident(v *recursion_visitor, e ast.Expr) {
+func recursion_visitor_define_ident(v *Recursion_Visitor, e ast.Expr) {
 
 	identifier, is_ident := e.(*ast.Ident)
 	if !is_ident {
@@ -3799,7 +3879,7 @@ func recursion_visitor_call_function_is_ident(call *ast.CallExpr) (yes bool) {
 	return is_ident
 }
 
-func recursion_visitor_enter_record_call_edge(v *recursion_visitor, call *ast.CallExpr) {
+func recursion_visitor_enter_record_call_edge(v *Recursion_Visitor, call *ast.CallExpr) {
 
 	identifier, is_ident := call.Fun.(*ast.Ident)
 	if !is_ident {
@@ -3815,7 +3895,7 @@ func recursion_visitor_enter_record_call_edge(v *recursion_visitor, call *ast.Ca
 			break
 		}
 	}
-	*v.Edges = append(*v.Edges, call_edge{
+	*v.Edges = append(*v.Edges, Call_Edge{
 		Caller:   v.Caller,
 		Callee:   identifier.Name,
 		Position: v.File_Set.Position(call.Pos()),
@@ -3837,7 +3917,7 @@ func recursion_visitor_enter_record_call_edge(v *recursion_visitor, call *ast.Ca
 // multiple diagnostics, one per cycle).
 func check_no_recursion_find_cycles(
 	callers []string,
-	adj map[string][]call_edge,
+	adj map[string][]Call_Edge,
 ) (diags []Diagnostic) {
 	const (
 		WHITE = 0
@@ -3858,7 +3938,7 @@ func check_no_recursion_find_cycles(
 func check_no_recursion_find_cycles_dfs(
 	start string,
 	color map[string]int,
-	adj map[string][]call_edge,
+	adj map[string][]Call_Edge,
 ) (diags []Diagnostic) {
 
 	const (
@@ -3904,7 +3984,7 @@ func check_no_recursion_find_cycles_dfs(
 
 func check_no_recursion_find_cycles_dfs_diag(
 	cycle_nodes []string,
-	back_edge call_edge,
+	back_edge Call_Edge,
 ) (diag Diagnostic) {
 	return Diagnostic{
 		Position: back_edge.Position,
@@ -4168,7 +4248,7 @@ func check_struct_field_documentation_comment(
 				continue
 			}
 			check_struct_field_documentation_comment_fields(
-				&check_struct_field_documentation_comment_fields_input{
+				&Check_Struct_Field_Documentation_Comment_Fields_Input{
 					File_Set:    file_set,
 					Struct_Name: type_specification.Name.Name,
 					Struct_Type: struct_type,
@@ -4179,15 +4259,21 @@ func check_struct_field_documentation_comment(
 	return diags
 }
 
-type check_struct_field_documentation_comment_fields_input struct {
-	File_Set    *token.FileSet
+// Check_Struct_Field_Documentation_Comment_Fields_Input carries one struct's
+// fields for the field-doc-comment check.
+type Check_Struct_Field_Documentation_Comment_Fields_Input struct {
+	// File_Set resolves field positions to source locations.
+	File_Set *token.FileSet
+	// Struct_Name is the enclosing struct's name, for diagnostics.
 	Struct_Name string
+	// Struct_Type is the struct's field list.
 	Struct_Type *ast.StructType
-	Diags       *[]Diagnostic
+	// Diags accumulates the missing-doc diagnostics.
+	Diags *[]Diagnostic
 }
 
 func check_struct_field_documentation_comment_fields(
-	input *check_struct_field_documentation_comment_fields_input,
+	input *Check_Struct_Field_Documentation_Comment_Fields_Input,
 ) {
 
 	if input.Struct_Type.Fields == nil {
@@ -4254,7 +4340,7 @@ func check_exported_type_exposes_private(
 		entry_name := type_specification.Name.Name
 		if type_specification.Assign != token.NoPos {
 			check_exported_type_exposes_private_check(
-				&check_exported_type_exposes_private_check_input{
+				&Check_Exported_Type_Exposes_Private_Check_Input{
 					File_Set:    file_set,
 					Entry_Name:  entry_name,
 					Expression:  type_specification.Type,
@@ -4268,7 +4354,7 @@ func check_exported_type_exposes_private(
 			continue
 		}
 		check_exported_type_exposes_private_walk(
-			&check_exported_type_exposes_private_walk_input{
+			&Check_Exported_Type_Exposes_Private_Walk_Input{
 				File_Set:         file_set,
 				Entry_Name:       entry_name,
 				Root_Struct:      struct_type,
@@ -4304,13 +4390,21 @@ func check_exported_type_exposes_private_collect_types(
 	return same_file_types
 }
 
-type check_exported_type_exposes_private_walk_input struct {
-	File_Set         *token.FileSet
-	Entry_Name       string
-	Root_Struct      *ast.StructType
+// Check_Exported_Type_Exposes_Private_Walk_Input carries the roots and
+// accumulators for the exported-type exposure walk.
+type Check_Exported_Type_Exposes_Private_Walk_Input struct {
+	// File_Set resolves field positions to source locations.
+	File_Set *token.FileSet
+	// Entry_Name is the exported type the walk started from.
+	Entry_Name string
+	// Root_Struct is the exported struct being walked.
+	Root_Struct *ast.StructType
+	// Root_Type_Params is the set of the root type's type-parameter names.
 	Root_Type_Params map[string]bool
-	Same_File_Types  map[string]*ast.TypeSpec
-	Diags            *[]Diagnostic
+	// Same_File_Types maps same-file type names to their declarations.
+	Same_File_Types map[string]*ast.TypeSpec
+	// Diags accumulates the exposure diagnostics.
+	Diags *[]Diagnostic
 }
 
 // Iterative DFS over an exported struct type's transitive same-file struct
@@ -4318,11 +4412,11 @@ type check_exported_type_exposes_private_walk_input struct {
 // walk pushes frames onto an explicit stack. Visited targets are tracked
 // by type-spec name; cycle-safe by construction.
 func check_exported_type_exposes_private_walk(
-	input *check_exported_type_exposes_private_walk_input,
+	input *Check_Exported_Type_Exposes_Private_Walk_Input,
 ) {
 
 	visited := map[string]bool{input.Entry_Name: true}
-	stack := []exposed_type_frame{{input.Root_Struct, input.Root_Type_Params}}
+	stack := []Exposed_Type_Frame{{input.Root_Struct, input.Root_Type_Params}}
 	for len(stack) > 0 {
 		top := len(stack) - 1
 		current := stack[top]
@@ -4377,31 +4471,41 @@ func check_exported_type_exposes_private_walk(
 			// bare Ident.
 			// The walk only recurses on bare-Ident targets, so target.TypeParams
 			// is unreachable here.
-			stack = append(stack, exposed_type_frame{
+			stack = append(stack, Exposed_Type_Frame{
 				Struct_Type: target_struct, Type_Params: current.Type_Params,
 			})
 		}
 	}
 }
 
-type exposed_type_frame struct {
+// Exposed_Type_Frame is one struct on the exposure walk's explicit stack.
+type Exposed_Type_Frame struct {
+	// Struct_Type is the struct at this frame.
 	Struct_Type *ast.StructType
+	// Type_Params is the set of type-parameter names in scope at this frame.
 	Type_Params map[string]bool
 }
 
-type check_exported_type_exposes_private_check_input struct {
-	File_Set    *token.FileSet
-	Entry_Name  string
-	Expression  ast.Expr
+// Check_Exported_Type_Exposes_Private_Check_Input carries one type expression to
+// test for exposing a private type.
+type Check_Exported_Type_Exposes_Private_Check_Input struct {
+	// File_Set resolves the expression's position to a source location.
+	File_Set *token.FileSet
+	// Entry_Name is the exported type the expression is reached from.
+	Entry_Name string
+	// Expression is the type expression being tested.
+	Expression ast.Expr
+	// Type_Params is the set of type-parameter names in scope.
 	Type_Params map[string]bool
-	Diags       *[]Diagnostic
+	// Diags accumulates the exposure diagnostics.
+	Diags *[]Diagnostic
 }
 
 // Alias check: `type Foo = bar` reveals bar through Foo's exported name even
 // though no struct field is involved. Pointer-wrapped aliases (`type Foo = *bar`)
 // are unwrapped the same way as field positions.
 func check_exported_type_exposes_private_check(
-	input *check_exported_type_exposes_private_check_input,
+	input *Check_Exported_Type_Exposes_Private_Check_Input,
 ) {
 
 	base := check_exported_type_exposes_private_unwrap_pointer(input.Expression)
@@ -4464,6 +4568,55 @@ func check_exported_type_exposes_private_type_params(
 // the const block; reordering rows changes meaning without changing any
 // expression. Spelling each value out makes order an editorial choice instead
 // of a semantic one.
+// Go's capitalization is a package's only visibility control, and every named
+// type is part of a package's vocabulary: a type declared for one caller today is
+// named by a second caller tomorrow, and an unexported name forces that caller to
+// duplicate it or reach across the package boundary. So every package-level type
+// declaration and alias must be exported. Function-local types (Go cannot export
+// them) and _test.go files (which model violations) are exempt.
+func check_type_declaration_exported(
+	file_set *token.FileSet, file *ast.File, _ []byte,
+) (diags []Diagnostic) {
+
+	tok_file := file_set.File(file.Pos())
+	if tok_file == nil {
+		return nil
+	}
+	name := tok_file.Name()
+	if strings.HasSuffix(name, "_test.go") {
+		return nil
+	}
+	for _, declaration := range file.Decls {
+		generic_declaration, is_generic := declaration.(*ast.GenDecl)
+		if !is_generic {
+			continue
+		}
+		if generic_declaration.Tok != token.TYPE {
+			continue
+		}
+		for _, specification := range generic_declaration.Specs {
+			type_specification, is_type := specification.(*ast.TypeSpec)
+			if !is_type {
+				continue
+			}
+			type_name := type_specification.Name.Name
+			if ast.IsExported(type_name) {
+				continue
+			}
+			suggestion := suggest(&Suggest_Input{Name: type_name, Want: "Ada_Case"})
+			message := fmt.Sprintf(
+				"type %s must be exported; rename to %s", type_name, suggestion)
+			diags = append(diags, Diagnostic{
+				Position: file_set.Position(type_specification.Name.Pos()),
+				Name:     "exported-type",
+				Want:     "exported type name",
+				Message:  message,
+			})
+		}
+	}
+	return diags
+}
+
 func check_no_iota(file_set *token.FileSet, file *ast.File, _ []byte) (diags []Diagnostic) {
 
 	ast.Inspect(file, func(n ast.Node) (descend bool) {
@@ -4893,7 +5046,7 @@ func check_names_vocabulary(
 // into a check_function, mirroring
 // make_check_no_package_vars. Threading the table rather than reaching for a
 // package global keeps the check pure and lets tests drive it from a fixture.
-func make_check_names_vocabulary(table map[string][]string) (checker check_function) {
+func make_check_names_vocabulary(table map[string][]string) (checker Check_Function) {
 	return func(file_set *token.FileSet, file *ast.File, _ []byte) (diags []Diagnostic) {
 		return check_names_vocabulary(file_set, file, table)
 	}
@@ -4968,7 +5121,7 @@ func check_names_vocabulary_at(
 		if candidates == nil {
 			continue
 		}
-		MESSAGE := check_names_vocabulary_message(&check_names_vocabulary_message_input{
+		MESSAGE := check_names_vocabulary_message(&Check_Names_Vocabulary_Message_Input{
 			Name: name, Word: lower, Words: words,
 			Word_Index: word_index, Candidates: candidates, Style: style,
 		})
@@ -4977,13 +5130,21 @@ func check_names_vocabulary_at(
 	return diags
 }
 
-type check_names_vocabulary_message_input struct {
-	Name       string
-	Word       string
-	Words      []string
+// Check_Names_Vocabulary_Message_Input carries the operands for rendering a
+// vocabulary rename diagnostic.
+type Check_Names_Vocabulary_Message_Input struct {
+	// Name is the identifier the word appears in.
+	Name string
+	// Word is the offending word.
+	Word string
+	// Words is the identifier split into words.
+	Words []string
+	// Word_Index is the offending word's position in Words.
 	Word_Index int
+	// Candidates are the suggested replacement words.
 	Candidates []string
-	Style      string
+	// Style is the identifier's case style, for rendering the suggestion.
+	Style string
 }
 
 // Renders the diagnostic text. No candidates means the word is banned outright.
@@ -4991,7 +5152,7 @@ type check_names_vocabulary_message_input struct {
 // `rename x -> [a, b, c]`. Each candidate is substituted into the offending
 // word slot so the author sees a drop-in replacement, not just the bare word —
 // e.g. `foo_id` produces `foo_identifier`, not `id -> identifier`.
-func check_names_vocabulary_message(input *check_names_vocabulary_message_input) (MESSAGE string) {
+func check_names_vocabulary_message(input *Check_Names_Vocabulary_Message_Input) (MESSAGE string) {
 
 	if len(input.Candidates) == 0 {
 		return fmt.Sprintf(
@@ -5001,7 +5162,7 @@ func check_names_vocabulary_message(input *check_names_vocabulary_message_input)
 	for candidate_index, candidate := range input.Candidates {
 		substituted := append([]string{}, input.Words...)
 		substituted[input.Word_Index] = candidate
-		renames[candidate_index] = suggest(&suggest_input{
+		renames[candidate_index] = suggest(&Suggest_Input{
 			Name: strings.Join(substituted, "_"), Want: input.Style})
 	}
 	if len(renames) == 1 {
@@ -5148,7 +5309,7 @@ func check_input_struct_declaration_is_invariant(
 // AST-only and per-file: a type and its bundle are adjacent declarations in one
 // file, so no cross-file or type resolution is needed. Test files are exempt, as
 // is any file matching an opt_out_assertion_mandate_packages glob.
-func make_check_type_invariants(invariant_exempt []string) (check check_function) {
+func make_check_type_invariants(invariant_exempt []string) (check Check_Function) {
 	return func(
 		file_set *token.FileSet, file *ast.File, _ []byte,
 	) (diags []Diagnostic) {
@@ -5382,7 +5543,7 @@ func check_no_interfaces(file_set *token.FileSet, file *ast.File, _ []byte) (dia
 // feed impurity or nondeterminism back into the importer — so pure and
 // deterministic packages may import it despite the import bans.
 func import_path_is_instrumentation(
-	import_path string, components *component_index, packages []string,
+	import_path string, components *Component_Index, packages []string,
 ) (yes bool) {
 	if is_stdlib_instrumentation(import_path) {
 		return true
@@ -5412,7 +5573,7 @@ func is_stdlib_instrumentation(import_path string) (yes bool) {
 // Binds the instrumentation list into the package-var check. The check_function
 // signature carries no config of its own, so the list (needed by the var-Default
 // exemption) is captured in a closure built per run.
-func make_check_no_package_vars(instrumentation []string) (checker check_function) {
+func make_check_no_package_vars(instrumentation []string) (checker Check_Function) {
 	return func(file_set *token.FileSet, file *ast.File, _ []byte) (diags []Diagnostic) {
 		return check_no_package_vars(file_set, file, instrumentation)
 	}
@@ -5873,7 +6034,7 @@ func comment_group_documents(group *ast.CommentGroup) (yes bool) {
 // file:line:column: message lines.
 func check_names(file_set *token.FileSet, file *ast.File, _ []byte) (diags []Diagnostic) {
 
-	var violations []name_violation
+	var violations []Name_Violation
 	violations = append(violations, check_names_terminology(file)...)
 	violations = append(violations, check_names_arithmetic(file)...)
 	violations = append(violations, check_names_participles(file)...)
@@ -5894,9 +6055,11 @@ func check_names(file_set *token.FileSet, file *ast.File, _ []byte) (diags []Dia
 // One violation against a name-rule, attached to the source position of
 // the offending construct (usually the declaring ident; for arithmetic
 // invariants, the BinaryExpr itself).
-type name_violation struct {
+type Name_Violation struct {
+	// Position is where the violation is reported.
 	Position token.Pos
-	Message  string
+	// Message is the violation text.
+	Message string
 }
 
 // Stdlib allowlist: callee → required suffix. Curated; missing entries
@@ -5934,7 +6097,7 @@ func check_names_terminology_attach_callee_term_stdlib_required(qualified string
 // is wrong. Without go/types we can't distinguish the two, so the rule
 // would over-trigger on every map iteration and lookup. Leaving these
 // unchecked is the conservative call — a soundness-over-coverage tradeoff.
-func check_names_terminology(file *ast.File) (violations []name_violation) {
+func check_names_terminology(file *ast.File) (violations []Name_Violation) {
 
 	for _, declaration := range file.Decls {
 		function_declaration, ok := declaration.(*ast.FuncDecl)
@@ -5957,7 +6120,7 @@ func check_names_terminology(file *ast.File) (violations []name_violation) {
 			requirements[identifier][term] = true
 		}
 		ast.Inspect(function_declaration.Body, func(n ast.Node) (descend bool) {
-			check_names_terminology_attach(&check_names_terminology_attach_input{
+			check_names_terminology_attach(&Check_Names_Terminology_Attach_Input{
 				Node: n, Declarations: declarations_map, Require: require,
 			})
 			return true
@@ -6033,10 +6196,15 @@ func check_names_terminology_function_declarations(
 	return declarations
 }
 
-type check_names_terminology_attach_input struct {
-	Node         ast.Node
+// Check_Names_Terminology_Attach_Input carries the AST node and accumulators for
+// attaching terminology requirements to declaring idents.
+type Check_Names_Terminology_Attach_Input struct {
+	// Node is the AST node whose pattern is inspected for evidence.
+	Node ast.Node
+	// Declarations maps names to the identifiers that declare them.
 	Declarations map[string]*ast.Ident
-	Require      func(identifier *ast.Ident, term string)
+	// Require records that identifier must carry the given terminology term.
+	Require func(identifier *ast.Ident, term string)
 }
 
 // Attaches term requirements to declaring idents based on the AST pattern
@@ -6048,7 +6216,7 @@ type check_names_terminology_attach_input struct {
 //     allowlisted stdlib symbol (→ per table) → suffix on LHS
 //   - CallExpr to make(<sliceType>/<mapType>/<chanType>, n[, m]) → suffix
 //     on n,m (byte element type → _size, otherwise _count).
-func check_names_terminology_attach(input *check_names_terminology_attach_input) {
+func check_names_terminology_attach(input *Check_Names_Terminology_Attach_Input) {
 
 	switch x := input.Node.(type) {
 	case *ast.ForStmt:
@@ -6247,7 +6415,7 @@ func check_names_terminology_attach_callee_term(function_expression ast.Expr) (t
 // sorted by declaring ident position for stable output.
 func check_names_terminology_emit(
 	requirements map[*ast.Ident]map[string]bool,
-) (violations []name_violation) {
+) (violations []Name_Violation) {
 	type entry struct {
 		Name     string
 		Terms    []string
@@ -6284,10 +6452,10 @@ func check_names_terminology_emit(
 		category := strings.Join(e.Terms, " or ")
 		preferred := e.Terms[0]
 		suggestion := check_names_terminology_emit_rename(
-			&check_names_terminology_emit_rename_input{
+			&Check_Names_Terminology_Emit_Rename_Input{
 				Name: e.Name, Term: preferred,
 			})
-		violations = append(violations, name_violation{
+		violations = append(violations, Name_Violation{
 			Position: e.Position,
 			Message: fmt.Sprintf(
 				"naming convention: %s (used as %s) → rename to %s",
@@ -6299,8 +6467,12 @@ func check_names_terminology_emit(
 	return violations
 }
 
-type check_names_terminology_emit_rename_input struct {
+// Check_Names_Terminology_Emit_Rename_Input carries an identifier and the
+// terminology word its rename must carry.
+type Check_Names_Terminology_Emit_Rename_Input struct {
+	// Name is the identifier to rename.
 	Name string
+	// Term is the terminology word the rename must include.
 	Term string
 }
 
@@ -6310,7 +6482,7 @@ type check_names_terminology_emit_rename_input struct {
 // in-place; otherwise the term is appended. Casing is preserved via the
 // existing snake_case/Ada_Case detection in suggest.
 func check_names_terminology_emit_rename(
-	input *check_names_terminology_emit_rename_input,
+	input *Check_Names_Terminology_Emit_Rename_Input,
 ) (output_string string) {
 
 	style := "snake_case"
@@ -6334,7 +6506,7 @@ func check_names_terminology_emit_rename(
 	if !replaced {
 		words = append(words, input.Term)
 	}
-	return suggest(&suggest_input{Name: strings.Join(words, "_"), Want: style})
+	return suggest(&Suggest_Input{Name: strings.Join(words, "_"), Want: style})
 }
 
 // Returns the lowercased trailing segment of name if it matches one of the
@@ -6364,7 +6536,7 @@ func check_names_suffix_of(name string) (suffix string) {
 // Conservative: only fires when *both* operands carry recognized
 // suffixes. Mixed (one suffixed, one bare) is silently accepted —
 // otherwise the rule would fire on every `len(x) + 1` style expression.
-func check_names_arithmetic(file *ast.File) (violations []name_violation) {
+func check_names_arithmetic(file *ast.File) (violations []Name_Violation) {
 
 	rhs_of := check_names_arithmetic_rhs_map(file)
 	ast.Inspect(file, func(n ast.Node) (descend bool) {
@@ -6379,7 +6551,7 @@ func check_names_arithmetic(file *ast.File) (violations []name_violation) {
 		}
 		violations = append(violations,
 			check_names_arithmetic_check_binary(
-				&check_names_arithmetic_check_binary_input{
+				&Check_Names_Arithmetic_Check_Binary_Input{
 					Binary_Expression: binary_expression,
 					Lhs:               rhs_of[binary_expression],
 				})...)
@@ -6426,9 +6598,13 @@ func check_names_arithmetic_rhs_map(file *ast.File) (m map[*ast.BinaryExpr]*ast.
 	return m
 }
 
-type check_names_arithmetic_check_binary_input struct {
+// Check_Names_Arithmetic_Check_Binary_Input carries one ADD/SUB binary site to
+// validate.
+type Check_Names_Arithmetic_Check_Binary_Input struct {
+	// Binary_Expression is the ADD/SUB site being checked.
 	Binary_Expression *ast.BinaryExpr
-	Lhs               *ast.Ident
+	// Lhs is the assignment target the result flows into, or nil.
+	Lhs *ast.Ident
 }
 
 // Validates one BinaryExpr ADD/SUB site. Returns 0–2 violations:
@@ -6436,8 +6612,8 @@ type check_names_arithmetic_check_binary_input struct {
 // mismatch (the latter only if the operand combo is coherent and Lhs is
 // non-nil). Skips silently when either operand is unsuffixed.
 func check_names_arithmetic_check_binary(
-	input *check_names_arithmetic_check_binary_input,
-) (violations []name_violation) {
+	input *Check_Names_Arithmetic_Check_Binary_Input,
+) (violations []Name_Violation) {
 
 	left, is_ident := input.Binary_Expression.X.(*ast.Ident)
 	if !is_ident {
@@ -6460,11 +6636,11 @@ func check_names_arithmetic_check_binary(
 		op_string = "-"
 	}
 	result := check_names_arithmetic_check_binary_result(
-		&check_names_arithmetic_check_binary_result_input{
+		&Check_Names_Arithmetic_Check_Binary_Result_Input{
 			Left: left_suffix, Op: input.Binary_Expression.Op, Right: right_suffix,
 		})
 	if result == "" {
-		violations = append(violations, name_violation{
+		violations = append(violations, Name_Violation{
 			Position: input.Binary_Expression.Pos(),
 			Message: fmt.Sprintf(
 				"arithmetic: _%s %s _%s is incoherent",
@@ -6481,7 +6657,7 @@ func check_names_arithmetic_check_binary(
 	if lhs_suffix == result {
 		return nil
 	}
-	violations = append(violations, name_violation{
+	violations = append(violations, Name_Violation{
 		Position: input.Lhs.Pos(),
 		Message: fmt.Sprintf(
 			"arithmetic: %s = _%s %s _%s; must end in _%s",
@@ -6491,9 +6667,14 @@ func check_names_arithmetic_check_binary(
 	return violations
 }
 
-type check_names_arithmetic_check_binary_result_input struct {
-	Left  string
-	Op    token.Token
+// Check_Names_Arithmetic_Check_Binary_Result_Input carries a binary op and its
+// operand suffixes for the result-type lookup.
+type Check_Names_Arithmetic_Check_Binary_Result_Input struct {
+	// Left is the left operand's terminology suffix.
+	Left string
+	// Op is the binary operator.
+	Op token.Token
+	// Right is the right operand's terminology suffix.
 	Right string
 }
 
@@ -6502,7 +6683,7 @@ type check_names_arithmetic_check_binary_result_input struct {
 // incoherent (caller flags it). ADD is treated as commutative, so
 // `_offset + _size` and `_size + _offset` both produce `_offset`.
 func check_names_arithmetic_check_binary_result(
-	input *check_names_arithmetic_check_binary_result_input,
+	input *Check_Names_Arithmetic_Check_Binary_Result_Input,
 ) (result string) {
 
 	if input.Op == token.SUB {
@@ -6753,7 +6934,7 @@ func check_names_walk_declarations_generic(gd *ast.GenDecl, emit func(identifier
 // word (lowercased) ends in "ing" and is not in is_allowed_ing_noun.
 // The Stringer interface's String() method is implicitly allowed
 // because "string" is in the noun allowlist.
-func check_names_participles(file *ast.File) (violations []name_violation) {
+func check_names_participles(file *ast.File) (violations []Name_Violation) {
 
 	check_names_walk_decls(file, func(identifier *ast.Ident) {
 		words := suggest_split_words(identifier.Name)
@@ -6767,7 +6948,7 @@ func check_names_participles(file *ast.File) (violations []name_violation) {
 		if is_allowed_ing_noun(last) {
 			return
 		}
-		violations = append(violations, name_violation{
+		violations = append(violations, Name_Violation{
 			Position: identifier.Pos(),
 			Message: fmt.Sprintf(
 				"present participle %q → rename to a noun form", last),
@@ -6780,7 +6961,7 @@ func check_names_participles(file *ast.File) (violations []name_violation) {
 // anywhere but the final position. Extrema read as suffixes (line_max,
 // retry_min); a leading or interior max/min is banned. Rides inside check_names
 // beside the abbreviation and participle passes.
-func check_names_extremum(file *ast.File) (violations []name_violation) {
+func check_names_extremum(file *ast.File) (violations []Name_Violation) {
 
 	check_names_walk_decls(file, func(identifier *ast.Ident) {
 		words := suggest_split_words(identifier.Name)
@@ -6801,10 +6982,10 @@ func check_names_extremum(file *ast.File) (violations []name_violation) {
 			reordered := append([]string{}, words[:word_index]...)
 			reordered = append(reordered, words[word_index+1:]...)
 			reordered = append(reordered, w)
-			violations = append(violations, name_violation{
+			violations = append(violations, Name_Violation{
 				Position: identifier.Pos(),
 				Message: fmt.Sprintf("rename %s -> %s", identifier.Name,
-					suggest(&suggest_input{
+					suggest(&Suggest_Input{
 						Name: strings.Join(reordered, "_"), Want: style})),
 			})
 		}
@@ -6844,43 +7025,54 @@ func check_comments_group_is_inline(
 // every stream diagnostic is reported and the AST tier is suppressed —
 // otherwise a conflict marker in a Go file surfaces as an opaque parse
 // error instead of the actual problem.
-type check_function_stream struct {
-	Name  string
+type Check_Function_Stream struct {
+	// Name is the check's name, used in its diagnostics.
+	Name string
+	// Visit runs the check against one walked file, appending its diagnostics.
 	Visit func(
 		p string,
 		info fs.FileInfo,
 		load func() (data []byte, err error),
 		output *[]Diagnostic)
+	// Finalize runs once after the walk, appending any deferred diagnostics.
 	Finalize func(out *[]Diagnostic)
 }
 
-type check_file_system_stream_input struct {
-	Fsys                  fs.FS
-	Root                  string
-	Root_Directory        string
-	Tracked               map[string]bool
+// Check_File_System_Stream_Input carries the tree, scope, and seams for the
+// single-pass streaming file-system walk.
+type Check_File_System_Stream_Input struct {
+	// Fsys is the filesystem the walk reads.
+	Fsys fs.FS
+	// Root is the workspace root path.
+	Root string
+	// Root_Directory is the root directory the walk starts at.
+	Root_Directory string
+	// Tracked is the set of version-controlled file paths.
+	Tracked map[string]bool
+	// Directory_Has_Tracked marks directories that hold a tracked file.
 	Directory_Has_Tracked map[string]bool
 	// Scan_Prefixes bounds the walk to the module subtrees a scoped run examines;
 	// nil walks the whole tree. Every stream check positions its diagnostic at the
 	// visited path, so an out-of-scope finding is dropped by the scope filter at
 	// print time regardless — pruning the directory just skips the wasted reads.
 	Scan_Prefixes []string
-	Readlink      func(name string) (target string, err error)
+	// Readlink resolves a symlink to its target; the injected OS seam.
+	Readlink func(name string) (target string, err error)
 }
 
 func check_file_system_stream(
-	input *check_file_system_stream_input,
+	input *Check_File_System_Stream_Input,
 ) (diags []Diagnostic, go_paths []string, err error) {
 	// Only the symlinks checker needs configuration — the tracked sets and the OS
 	// Readlink seam; the rest are stateless visitors.
-	checks := [STREAM_CHECKER_COUNT]check_function_stream{
+	checks := [STREAM_CHECKER_COUNT]Check_Function_Stream{
 		{Name: "conflict-markers", Visit: check_stream_conflict_markers},
 		{Name: "github-actions-uses", Visit: check_stream_github_actions_uses},
 		{Name: "banned-scripts", Visit: check_stream_banned_scripts},
 		{Name: "banned-archives", Visit: check_stream_banned_archives},
 		{Name: "agent-doc-max-lines", Visit: check_stream_agent_documentation_lines_max},
 		check_file_system_stream_checks_stream_symlinks_checker(
-			&check_file_system_stream_checks_stream_symlinks_checker_input{
+			&Check_File_System_Stream_Checks_Stream_Symlinks_Checker_Input{
 				Root_Directory:        input.Root_Directory,
 				Tracked:               input.Tracked,
 				Directory_Has_Tracked: input.Directory_Has_Tracked,
@@ -6918,8 +7110,8 @@ func check_file_system_stream(
 // tracked files (each checker reads source lazily through the shared loader).
 func check_file_system_stream_walk(
 	p string, d fs.DirEntry, walk_err error,
-	input *check_file_system_stream_input,
-	checks [STREAM_CHECKER_COUNT]check_function_stream,
+	input *Check_File_System_Stream_Input,
+	checks [STREAM_CHECKER_COUNT]Check_Function_Stream,
 	per_check [][]Diagnostic, go_paths *[]string,
 ) (output error) {
 	if walk_err != nil {
@@ -7298,7 +7490,7 @@ func path_casing_suggest(seg string) (output string) {
 		if unicode.IsUpper(rune(c[0])) {
 			style = "Ada_Case"
 		}
-		components[i] = suggest(&suggest_input{
+		components[i] = suggest(&Suggest_Input{
 			Name: strings.ReplaceAll(c, "-", "_"),
 			Want: style,
 		})
@@ -7340,11 +7532,17 @@ func check_path_casing_paths(fsys fs.FS, tracked map[string]bool) (paths []strin
 	return paths
 }
 
-type check_file_system_stream_checks_stream_symlinks_checker_input struct {
-	Root_Directory        string
-	Tracked               map[string]bool
+// Check_File_System_Stream_Checks_Stream_Symlinks_Checker_Input carries the
+// tracked sets and the Readlink seam the symlink checker needs.
+type Check_File_System_Stream_Checks_Stream_Symlinks_Checker_Input struct {
+	// Root_Directory is the root directory symlink targets resolve against.
+	Root_Directory string
+	// Tracked is the set of version-controlled file paths.
+	Tracked map[string]bool
+	// Directory_Has_Tracked marks directories that hold a tracked file.
 	Directory_Has_Tracked map[string]bool
-	Readlink              func(name string) (target string, err error)
+	// Readlink resolves a symlink to its target; the injected OS seam.
+	Readlink func(name string) (target string, err error)
 }
 
 // Reports a tracked symlink that does not resolve to a tracked target. The walk
@@ -7357,13 +7555,13 @@ type check_file_system_stream_checks_stream_symlinks_checker_input struct {
 // has no symlink primitive. A nil Tracked set (the non-git fallback), an empty
 // Root_Directory, or a nil Readlink self-disables the check.
 func check_file_system_stream_checks_stream_symlinks_checker(
-	input *check_file_system_stream_checks_stream_symlinks_checker_input,
-) (c check_function_stream) {
+	input *Check_File_System_Stream_Checks_Stream_Symlinks_Checker_Input,
+) (c Check_Function_Stream) {
 	root_directory := input.Root_Directory
 	tracked := input.Tracked
 	directory_has_tracked := input.Directory_Has_Tracked
 	readlink := input.Readlink
-	return check_function_stream{
+	return Check_Function_Stream{
 		Name: "symlink",
 		Visit: func(
 			p string,
@@ -7589,10 +7787,10 @@ func check_stream_markdown_trailing_whitespace(
 //
 // Scope: root + one level deep. Anything deeper is per-package context that
 // doesn't need a paired sibling.
-func check_file_system_stream_checks_stream_agents_claude_pair_checker() (c check_function_stream) {
+func check_file_system_stream_checks_stream_agents_claude_pair_checker() (c Check_Function_Stream) {
 
-	pairs := map[string]*agents_claude_pair{}
-	return check_function_stream{
+	pairs := map[string]*Agents_Claude_Pair{}
+	return Check_Function_Stream{
 		Name: AGENTS_PAIR_CHECK_NAME,
 		Visit: func(
 			p string,
@@ -7607,15 +7805,21 @@ func check_file_system_stream_checks_stream_agents_claude_pair_checker() (c chec
 	}
 }
 
-type agents_claude_pair struct {
-	Agents     []byte
-	Claude     []byte
+// Agents_Claude_Pair holds one directory's AGENTS.md and CLAUDE.md contents, for
+// the check that the two stay in sync.
+type Agents_Claude_Pair struct {
+	// Agents is the AGENTS.md file's contents.
+	Agents []byte
+	// Claude is the CLAUDE.md file's contents.
+	Claude []byte
+	// Has_Agents records whether an AGENTS.md was found.
 	Has_Agents bool
+	// Has_Claude records whether a CLAUDE.md was found.
 	Has_Claude bool
 }
 
 func agents_claude_pair_visit(
-	pairs map[string]*agents_claude_pair,
+	pairs map[string]*Agents_Claude_Pair,
 	p string,
 	information fs.FileInfo,
 	load func() (data []byte, err error),
@@ -7636,7 +7840,7 @@ func agents_claude_pair_visit(
 	directory := path.Dir(p)
 	pp, ok := pairs[directory]
 	if !ok {
-		pp = &agents_claude_pair{}
+		pp = &Agents_Claude_Pair{}
 		pairs[directory] = pp
 	}
 	if name == "AGENTS.md" {
@@ -7649,7 +7853,7 @@ func agents_claude_pair_visit(
 }
 
 func agents_claude_pair_finalize(
-	pairs map[string]*agents_claude_pair, output *[]Diagnostic,
+	pairs map[string]*Agents_Claude_Pair, output *[]Diagnostic,
 ) {
 	dirs := make([]string, 0, len(pairs))
 	for d := range pairs {
@@ -7695,7 +7899,7 @@ func agents_claude_pair_finalize(
 // somewhere, and the doctrine reserves exactly this position for it.
 
 func check_no_impure_stdlib(
-	parsed_files []parsed_file, components *component_index,
+	parsed_files []Parsed_File, components *Component_Index,
 ) (diags []Diagnostic) {
 
 	for _, pf := range parsed_files {
@@ -7761,7 +7965,7 @@ func check_no_impure_stdlib_per_file(
 		if !has {
 			return true
 		}
-		soft_input := &is_impure_soft_ident_input{Package: path, Name: selection.Sel.Name}
+		soft_input := &Is_Impure_Soft_Ident_Input{Package: path, Name: selection.Sel.Name}
 		if !is_impure_soft_ident(soft_input) {
 			return true
 		}
@@ -7784,12 +7988,16 @@ func is_impure_hard_import(path string) (yes bool) {
 	return false
 }
 
-type is_impure_soft_ident_input struct {
+// Is_Impure_Soft_Ident_Input names a package-qualified identifier to test against
+// the soft-impure set.
+type Is_Impure_Soft_Ident_Input struct {
+	// Package is the imported package the selector reads from.
 	Package string
-	Name    string
+	// Name is the selected identifier called on that package.
+	Name string
 }
 
-func is_impure_soft_ident(input *is_impure_soft_ident_input) (yes bool) {
+func is_impure_soft_ident(input *Is_Impure_Soft_Ident_Input) (yes bool) {
 
 	switch input.Package {
 	case "time":
@@ -7833,7 +8041,7 @@ func is_impure_soft_ident(input *is_impure_soft_ident_input) (yes bool) {
 // Impure Stdlib, the ban binds the pure package's _test.go files too; direct
 // leaf use (os.Getenv, time.Now) in tests remains a matter for Impure Stdlib.
 func check_transitive_purity(
-	parsed_files []parsed_file, components *component_index, instrumentation []string,
+	parsed_files []Parsed_File, components *Component_Index, instrumentation []string,
 ) (diags []Diagnostic) {
 
 	for _, pf := range parsed_files {
@@ -7852,7 +8060,7 @@ func check_transitive_purity(
 func check_transitive_purity_per_file(
 	file_set *token.FileSet,
 	file *ast.File,
-	components *component_index,
+	components *Component_Index,
 	instrumentation []string,
 ) (diags []Diagnostic) {
 
@@ -7900,7 +8108,7 @@ func check_transitive_purity_per_file(
 		if import_path_is_instrumentation(import_path, components, instrumentation) {
 			return true
 		}
-		curated := &is_transitive_stdlib_ident_input{
+		curated := &Is_Transitive_Stdlib_Ident_Input{
 			Package: import_path, Name: selection.Sel.Name}
 		if !is_transitive_stdlib_ident(curated) {
 			return true
@@ -7916,7 +8124,9 @@ func check_transitive_purity_per_file(
 	return diags
 }
 
-type is_transitive_stdlib_ident_input struct {
+// Is_Transitive_Stdlib_Ident_Input names a stdlib selector to test against the
+// transitively-impure set.
+type Is_Transitive_Stdlib_Ident_Input struct {
 	// Package is the imported stdlib path the selector reads from.
 	Package string
 	// Name is the selected identifier called on that package.
@@ -7930,7 +8140,7 @@ type is_transitive_stdlib_ident_input struct {
 // process, the wall clock, the filesystem, the OS trust store, or the network.
 // Pure siblings (filepath.Join, context.WithCancel) are deliberately absent, as
 // are the observability writes (log.Print) the doctrine exempts.
-func is_transitive_stdlib_ident(input *is_transitive_stdlib_ident_input) (yes bool) {
+func is_transitive_stdlib_ident(input *Is_Transitive_Stdlib_Ident_Input) (yes bool) {
 
 	switch input.Package {
 	case "log":
@@ -8283,11 +8493,11 @@ func check_no_unbounded_apis_is_generated(file *ast.File) (yes bool) {
 // Bundles check_deterministic's two string-slice lists — the deterministic packages
 // and the instrumentation exemptions — which would otherwise repeat a parameter
 // type.
-type check_deterministic_input struct {
+type Check_Deterministic_Input struct {
 	// Parsed_Files is every parsed file in the workspace.
-	Parsed_Files []parsed_file
+	Parsed_Files []Parsed_File
 	// Components is the resolved module index.
-	Components *component_index
+	Components *Component_Index
 	// Exceptions is lint.json's pure_but_indeterministic_packages: the pure packages opted
 	// out of the tier, each an exact-path glob (* spans one segment, ** many).
 	Exceptions []string
@@ -8309,7 +8519,7 @@ type check_deterministic_input struct {
 // opts one back out, matched as an exact-path glob. Impure packages (the main package, a
 // default tier) are never deterministic and need no listing. The bans bind a
 // covered package's _test.go files too.
-func check_deterministic(input *check_deterministic_input) (diags []Diagnostic) {
+func check_deterministic(input *Check_Deterministic_Input) (diags []Diagnostic) {
 
 	pure := deterministic_pure_directories(input.Parsed_Files, input.Components)
 
@@ -8364,7 +8574,7 @@ func check_deterministic(input *check_deterministic_input) (diags []Diagnostic) 
 		diags = append(diags, check_deterministic_imports(
 			pf.File_Set, pf.File, input.Components, covered, input.Instrumentation)...)
 	}
-	return append(diags, check_deterministic_coverage(&check_deterministic_coverage_input{
+	return append(diags, check_deterministic_coverage(&Check_Deterministic_Coverage_Input{
 		Exceptions:    input.Exceptions,
 		Matched:       matched,
 		Scan_Prefixes: input.Scan_Prefixes,
@@ -8377,7 +8587,7 @@ func check_deterministic(input *check_deterministic_input) (diags []Diagnostic) 
 // (main, a default tier, or a package below the library tier), so the pure set is
 // every package directory minus those.
 func deterministic_pure_directories(
-	parsed_files []parsed_file, components *component_index,
+	parsed_files []Parsed_File, components *Component_Index,
 ) (pure map[string]bool) {
 
 	impure := map[string]bool{}
@@ -8401,7 +8611,7 @@ func deterministic_pure_directories(
 
 // Bundles check_deterministic_coverage's inputs: the entry list and the scan
 // prefixes both being string slices repeat a type, which the input-struct rule folds.
-type check_deterministic_coverage_input struct {
+type Check_Deterministic_Coverage_Input struct {
 	// Exceptions is lint.json's pure_but_indeterministic_packages, reported verbatim on a gap.
 	Exceptions []string
 	// Matched marks, by raw entry, which entries matched a pure package.
@@ -8418,7 +8628,7 @@ type check_deterministic_coverage_input struct {
 // skipped: a scoped run never parsed its module, so its emptiness is an artifact of
 // scope, and a full run (nil prefixes) judges it.
 func check_deterministic_coverage(
-	input *check_deterministic_coverage_input,
+	input *Check_Deterministic_Coverage_Input,
 ) (diags []Diagnostic) {
 
 	for _, entry := range input.Exceptions {
@@ -8542,7 +8752,7 @@ func check_deterministic_floats(
 // instrumentation package is exempt, as it is for transitive purity — a
 // write-only side channel feeds no nondeterminism back into the importer.
 func check_deterministic_imports(
-	file_set *token.FileSet, file *ast.File, components *component_index, set map[string]bool,
+	file_set *token.FileSet, file *ast.File, components *Component_Index, set map[string]bool,
 	instrumentation []string,
 ) (diags []Diagnostic) {
 
@@ -8593,7 +8803,7 @@ func is_nondeterministic_import(path string) (yes bool) {
 // so it is never flagged here — stdlib is policed by is_nondeterministic_import,
 // third-party is out of scope, the same blind spot transitive purity carries.
 func import_path_is_nondeterministic_first_party(
-	import_path string, components *component_index, set map[string]bool,
+	import_path string, components *Component_Index, set map[string]bool,
 ) (yes bool) {
 
 	component_index_number := source.For_Import_Path(import_path, components)
@@ -8609,7 +8819,7 @@ func import_path_is_nondeterministic_first_party(
 // subpath, then re-root it under the module's workspace directory, mirroring the
 // form path.Dir gives a parsed file so set membership matches.
 func import_path_workspace_directory(
-	import_path string, m component_information,
+	import_path string, m Component_Information,
 ) (directory string) {
 
 	relative := strings.TrimPrefix(import_path, m.Import_Path)
@@ -8632,7 +8842,7 @@ func import_path_workspace_directory(
 // "time" is allowed only in the time/default gateway; every other package injects
 // a Clock. Binary components are out of scope — separate tools with their own needs.
 func check_time_import_gateway(
-	parsed_files []parsed_file, components *component_index,
+	parsed_files []Parsed_File, components *Component_Index,
 ) (diags []Diagnostic) {
 
 	gateway := source.Time_Gateway(components)
@@ -8672,7 +8882,7 @@ func check_time_import_gateway(
 // submit IO and read the clock but never mint the loop Driver. This flags a call to an
 // IO loop constructor (Sim_To_IO, New_Operating_System_IO) outside main and _test.go.
 // The read-only clock constructors mint no Driver, so they are not gated.
-func check_driver_gateway(parsed_files []parsed_file) (diags []Diagnostic) {
+func check_driver_gateway(parsed_files []Parsed_File) (diags []Diagnostic) {
 	for _, pf := range parsed_files {
 		if strings.HasSuffix(pf.Path, "_test.go") {
 			continue
@@ -8687,7 +8897,7 @@ func check_driver_gateway(parsed_files []parsed_file) (diags []Diagnostic) {
 
 // The IO loop-constructor calls in one file. Both names are unique to shared/io, so a
 // selector match needs no import resolution.
-func driver_gateway_file_diagnostics(pf parsed_file) (diags []Diagnostic) {
+func driver_gateway_file_diagnostics(pf Parsed_File) (diags []Diagnostic) {
 	ast.Inspect(pf.File, func(node ast.Node) (recurse bool) {
 		call, is_call := node.(*ast.CallExpr)
 		if !is_call {
@@ -8727,7 +8937,7 @@ func driver_gateway_constructor(name string) (constructor bool) {
 // (a param, field, var, or return) outside main, tests, and the io backend that returns
 // it — the construction ban stops minting one, this stops receiving one.
 func check_driver_type(
-	parsed_files []parsed_file, components *component_index,
+	parsed_files []Parsed_File, components *Component_Index,
 ) (diags []Diagnostic) {
 	shared := source.Shared_Import(components)
 	if shared == "" {
@@ -8754,7 +8964,7 @@ func check_driver_type(
 
 // The io.Driver references in one file, resolved through the shared/io import's local
 // name so a same-named Driver from another package is not caught.
-func driver_type_file_diagnostics(pf parsed_file, driver_path string) (diags []Diagnostic) {
+func driver_type_file_diagnostics(pf Parsed_File, driver_path string) (diags []Diagnostic) {
 	local := ""
 	for _, implementation := range pf.File.Imports {
 		if strings.Trim(implementation.Path.Value, `"`) == driver_path {
@@ -8797,7 +9007,7 @@ func driver_type_file_diagnostics(pf parsed_file, driver_path string) (diags []D
 // gateways (time is the clock the loop is built on, not IO the loop carries), the
 // instrumentation packages (a diagnostics side channel), tests, and package main.
 func check_io_gateway(
-	parsed_files []parsed_file, components *component_index, instrumentation []string,
+	parsed_files []Parsed_File, components *Component_Index, instrumentation []string,
 ) (diags []Diagnostic) {
 	gateway := source.IO_Gateway(components)
 	time_gateway := source.Time_Gateway(components)
@@ -8831,7 +9041,7 @@ func check_io_gateway(
 }
 
 // Flags each raw-IO stdlib import in one file.
-func io_gateway_import_diagnostics(pf parsed_file) (diags []Diagnostic) {
+func io_gateway_import_diagnostics(pf Parsed_File) (diags []Diagnostic) {
 	for _, implementation := range pf.File.Imports {
 		import_path := strings.Trim(implementation.Path.Value, `"`)
 		if !io_gateway_banned_import(import_path) {
@@ -8867,7 +9077,7 @@ func io_gateway_banned_import(import_path string) (banned bool) {
 // pure address helpers stay usable. The other stdlib IO packages are import-banned above,
 // and the io helpers operate on injected io.Reader/Writer interfaces (io.ReadFull/io.CopyN
 // are the endorsed bounded reads), not raw OS IO.
-func io_gateway_call_diagnostics(pf parsed_file) (diags []Diagnostic) {
+func io_gateway_call_diagnostics(pf Parsed_File) (diags []Diagnostic) {
 	operating_system_local := ""
 	network_local := ""
 	for _, implementation := range pf.File.Imports {
@@ -8911,7 +9121,7 @@ func io_gateway_call_diagnostics(pf parsed_file) (diags []Diagnostic) {
 }
 
 // One io-gateway diagnostic for a raw-IO call at selector.
-func io_gateway_call_diagnostic(pf parsed_file, selector *ast.SelectorExpr) (diag Diagnostic) {
+func io_gateway_call_diagnostic(pf Parsed_File, selector *ast.SelectorExpr) (diag Diagnostic) {
 	identifier := selector.X.(*ast.Ident)
 	return Diagnostic{
 		Position: pf.File_Set.Position(selector.Pos()),
@@ -8956,7 +9166,7 @@ func io_gateway_network_pure(name string) (pure bool) {
 // outcomes. This flags the scripting API trying to return — an exported Sim type or Sim_*
 // function, or a New_Sim parameter that is not the seed — in the package defining New_Sim,
 // so a run stays a pure function of its seed and the fuzzer explores the whole space.
-func check_sim_script(parsed_files []parsed_file) (diags []Diagnostic) {
+func check_sim_script(parsed_files []Parsed_File) (diags []Diagnostic) {
 	directory := sim_script_directory(parsed_files)
 	if directory == "" {
 		return nil
@@ -8977,7 +9187,7 @@ func check_sim_script(parsed_files []parsed_file) (diags []Diagnostic) {
 }
 
 // Returns the directory of the package defining New_Sim, or "" when none does.
-func sim_script_directory(parsed_files []parsed_file) (directory string) {
+func sim_script_directory(parsed_files []Parsed_File) (directory string) {
 	for _, pf := range parsed_files {
 		for _, declaration := range pf.File.Decls {
 			function, is_function := declaration.(*ast.FuncDecl)
@@ -8998,7 +9208,7 @@ func sim_script_directory(parsed_files []parsed_file) (directory string) {
 
 // Flags one declaration that reopens the scripting surface: an exported Sim type or Sim_*
 // function, or a New_Sim whose parameter is not the seed.
-func sim_script_declaration_diagnostics(pf parsed_file, declaration ast.Decl) (diags []Diagnostic) {
+func sim_script_declaration_diagnostics(pf Parsed_File, declaration ast.Decl) (diags []Diagnostic) {
 	function, is_function := declaration.(*ast.FuncDecl)
 	if is_function {
 		return sim_script_function_diagnostics(pf, function)
@@ -9012,7 +9222,7 @@ func sim_script_declaration_diagnostics(pf parsed_file, declaration ast.Decl) (d
 
 // Flags New_Sim carrying a non-seed parameter, or any exported Sim_* helper function.
 func sim_script_function_diagnostics(
-	pf parsed_file, function *ast.FuncDecl,
+	pf Parsed_File, function *ast.FuncDecl,
 ) (diags []Diagnostic) {
 	if function.Recv != nil {
 		return nil
@@ -9029,7 +9239,7 @@ func sim_script_function_diagnostics(
 
 // Flags New_Sim unless it takes exactly one integer seed and nothing else.
 func sim_script_constructor_diagnostics(
-	pf parsed_file, function *ast.FuncDecl,
+	pf Parsed_File, function *ast.FuncDecl,
 ) (diags []Diagnostic) {
 	params := function.Type.Params
 	count := 0
@@ -9048,7 +9258,7 @@ func sim_script_constructor_diagnostics(
 }
 
 // Flags an exported Sim type, which would hand a caller the handle to script.
-func sim_script_type_diagnostics(pf parsed_file, generic *ast.GenDecl) (diags []Diagnostic) {
+func sim_script_type_diagnostics(pf Parsed_File, generic *ast.GenDecl) (diags []Diagnostic) {
 	for _, specification := range generic.Specs {
 		type_specification, is_type := specification.(*ast.TypeSpec)
 		if !is_type {
@@ -9085,7 +9295,7 @@ func sim_script_seed_type(expression ast.Expr) (seed bool) {
 }
 
 // One sim-scripting diagnostic anchored at node.
-func sim_script_diagnostic(pf parsed_file, node ast.Node, MESSAGE string) (diag Diagnostic) {
+func sim_script_diagnostic(pf Parsed_File, node ast.Node, MESSAGE string) (diag Diagnostic) {
 	return Diagnostic{
 		Position: pf.File_Set.Position(node.Pos()),
 		Name:     "sim-script",

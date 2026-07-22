@@ -19,8 +19,8 @@ import (
 	"sync"
 	"testing"
 
+	"local/james-orcales/shared/diff/myers"
 	invariant "local/james-orcales/shared/invariant/default"
-	"local/james-orcales/shared/myers"
 )
 
 // Keys the diff colors so readers can map - / + to red / green without
@@ -287,7 +287,7 @@ func snapper_is_equal_edit(
 }
 
 // Byte range of one source line, half-open as [Start, End).
-type snapper_line_bounds struct {
+type Snapper_Line_Bounds struct {
 	// Start is the byte offset of the first character on the line.
 	Start int
 	// End is the byte offset of the line's terminating newline.
@@ -295,7 +295,7 @@ type snapper_line_bounds struct {
 }
 
 // Locates the byte range of the 1-based line in content.
-func snapper_find_line(content []byte, line int) (bounds snapper_line_bounds) {
+func snapper_find_line(content []byte, line int) (bounds Snapper_Line_Bounds) {
 	line_count := 1
 	bounds.Start, bounds.End = -1, -1
 	for i, b := range content {
@@ -315,7 +315,7 @@ func snapper_find_line(content []byte, line int) (bounds snapper_line_bounds) {
 }
 
 // Byte offsets of the backticks delimiting an edit-mode snapshot's raw string.
-type snapper_edit_span struct {
+type Snapper_Edit_Span struct {
 	// Open is the offset of the opening backtick.
 	Open int
 	// Close is the offset of the closing backtick.
@@ -326,7 +326,7 @@ type snapper_edit_span struct {
 
 // Finds the backtick span of the snap.Edit literal on the snapshot's line,
 // printing a diagnostic and reporting Found=false when the call is malformed.
-func snapper_locate_edit(s *Snapper, snapshot Snapshot, content []byte) (span snapper_edit_span) {
+func snapper_locate_edit(s *Snapper, snapshot Snapshot, content []byte) (span Snapper_Edit_Span) {
 	bounds := snapper_find_line(content, snapshot.Line)
 	// Sequential, not one Dot_Product: each guard must hold before the next line's
 	// content[...] index is evaluated, or an eager out-of-range read would panic first.

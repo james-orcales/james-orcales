@@ -188,7 +188,7 @@ func fonts_step(home string, shell setup.Shell) (run func() (status_code int)) {
 				return stat_err == nil
 			},
 			Copy_Font: func(file string) (err error) {
-				return copy_file(&copy_file_input{
+				return copy_file(&Copy_File_Input{
 					Source:      filepath.Join(font_source, file),
 					Destination: filepath.Join(font_directory, file),
 				})
@@ -375,15 +375,17 @@ func font_destination(home string) (directory string, refresh_cache bool) {
 // unbounded-read ban.
 const COPY_BYTES_MAX = 67108864
 
-type copy_file_input struct {
-	Source      string
+type Copy_File_Input struct {
+	// Source is the path of the file to copy from.
+	Source string
+	// Destination is the path the file is copied to.
 	Destination string
 }
 
 // Streams Source to Destination, creating Destination's parent directory first
 // and capping the copy at COPY_BYTES_MAX. It is the real filesystem binding the
 // library tier copies through, so it never shells out for a plain file copy.
-func copy_file(input *copy_file_input) (err error) {
+func copy_file(input *Copy_File_Input) (err error) {
 	source, open_err := os.Open(input.Source)
 	if open_err != nil {
 		return open_err

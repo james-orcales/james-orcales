@@ -1277,9 +1277,11 @@ func TestMain(m *testing.M) {
 // Test_Snapshot_Requirements_Struct pins the struct-shape requirement checks.
 func Test_Snapshot_Requirements_Struct(t *testing.T) {
 	run_snapshot_cases(t, []snapshot_case{
-		{Snapshot: snap.Init(`a.go:4:21: rename count -> Count`), Files: snapshot_package(`type widget struct{ count int }
+		{Snapshot: snap.Init(`a.go:4:21: rename count -> Count
+a.go:4:6: type widget must be exported; rename to Widget`), Files: snapshot_package(`type widget struct{ count int }
 `)},
-		{Snapshot: snap.Init(`a.go:9:8: public type Widget contains private type hidden`), Files: snapshot_package(`type hidden struct{ X int }
+		{Snapshot: snap.Init(`a.go:9:8: public type Widget contains private type hidden
+a.go:4:6: type hidden must be exported; rename to Hidden`), Files: snapshot_package(`type hidden struct{ X int }
 
 // Widget is a fixture.
 type Widget struct {
@@ -1563,7 +1565,8 @@ func F() (s string) { return strings.TrimSpace("x") }
 // Test_Snapshot_Miscellaneous pins the remaining per-file checks.
 func Test_Snapshot_Miscellaneous(t *testing.T) {
 	run_snapshot_cases_shared(t, "foo", []snapshot_case{
-		{Snapshot: snap.Init(`a.go:7:12: snap.Init must use a backticked raw string literal`), Files: snapshot_package(`// F does.
+		{Snapshot: snap.Init(`a.go:10:6: type snapper must be exported; rename to Snapper
+a.go:7:12: snap.Init must use a backticked raw string literal`), Files: snapshot_package(`// F does.
 func F() {
 	var snap snapper
 	snap.Init("plain")

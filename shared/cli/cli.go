@@ -44,8 +44,8 @@ import (
 	"strings"
 	"text/tabwriter"
 
+	"local/james-orcales/shared/diff/levenshtein"
 	invariant "local/james-orcales/shared/invariant/default"
-	"local/james-orcales/shared/levenshtein"
 )
 
 // Help_Requested is returned by Program_Parse when the command line carries the
@@ -553,7 +553,7 @@ func Program_Parse(
 	if err != nil {
 		return active_command, err
 	}
-	err = command_assign_positionals(&command_assign_positionals_input{
+	err = command_assign_positionals(&Command_Assign_Positionals_Input{
 		Command:     active_command,
 		Positionals: positionals,
 		Slice_Named: slice_named,
@@ -651,8 +651,10 @@ func program_help_context(program *Program, operating_system_args []string) (con
 
 // One command-line token paired with its position, so a slice argument can reassemble
 // its positional and -label=value contributions in the order they were written.
-type indexed_token struct {
+type Indexed_Token struct {
+	// Index is the token's position in the original argument list.
 	Index int
+	// Value is the token's text as written on the command line.
 	Value string
 }
 
@@ -686,12 +688,12 @@ func parse_named_token(token string) (
 // options set by name: a scalar named twice is an error, and a named scalar argument
 // is skipped by the positional pass.
 func program_assign_named(program *Program, command Command, tokens []string) (
-	filled map[string]bool, positionals []indexed_token, slice_named []indexed_token, err error,
+	filled map[string]bool, positionals []Indexed_Token, slice_named []Indexed_Token, err error,
 ) {
 	filled = map[string]bool{}
 	for index, token := range tokens {
 		if !is_named_token(token) {
-			positionals = append(positionals, indexed_token{Index: index, Value: token})
+			positionals = append(positionals, Indexed_Token{Index: index, Value: token})
 			continue
 		}
 		label, value, value_was_set, format_err := parse_named_token(token)
@@ -703,14 +705,14 @@ func program_assign_named(program *Program, command Command, tokens []string) (
 			return filled, positionals, slice_named, find_err
 		}
 		if is_slice_argument {
-			slice_named = append(slice_named, indexed_token{Index: index, Value: value})
+			slice_named = append(slice_named, Indexed_Token{Index: index, Value: value})
 			continue
 		}
 		if filled[label] {
 			return filled, positionals, slice_named,
 				fmt.Errorf("-%s may only be given once", label)
 		}
-		set_err := option_set_value(option_set_value_input{
+		set_err := option_set_value(Option_Set_Value_Input{
 			Option: option, Value: value, Value_Was_Set: value_was_set, Name: label,
 		})
 		if set_err != nil {
@@ -867,14 +869,14 @@ func program_select_command(program *Program, name string) (index int, err error
 }
 
 // Input for command_assign_positionals.
-type command_assign_positionals_input struct {
+type Command_Assign_Positionals_Input struct {
 	// Command is the active command whose arguments are filled in place.
 	Command Command
 	// Positionals are the bare tokens, each tagged with its command-line position.
-	Positionals []indexed_token
+	Positionals []Indexed_Token
 	// Slice_Named are the trailing slice argument's -label=value contributions, tagged
 	// with position so they merge with the positionals in order.
-	Slice_Named []indexed_token
+	Slice_Named []Indexed_Token
 	// Filled records the scalar arguments already set by name; it gains those set here.
 	Filled map[string]bool
 }
@@ -884,7 +886,7 @@ type command_assign_positionals_input struct {
 // slice argument together with its named contributions, in command-line order. Errors
 // when a positional has no argument to fill. Filled gains every scalar argument set
 // here so the required check can see it.
-func command_assign_positionals(input *command_assign_positionals_input) (err error) {
+func command_assign_positionals(input *Command_Assign_Positionals_Input) (err error) {
 	command := input.Command
 	fill_targets := []int{}
 	for index := range command.Arguments {
@@ -899,7 +901,7 @@ func command_assign_positionals(input *command_assign_positionals_input) (err er
 	}
 
 	slice_index := command_slice_argument_index(command)
-	slice_contributions := append([]indexed_token{}, input.Slice_Named...)
+	slice_contributions := append([]Indexed_Token{}, input.Slice_Named...)
 	cursor := 0
 	for _, positional := range input.Positionals {
 		if cursor < len(fill_targets) {
@@ -921,7 +923,7 @@ func command_assign_positionals(input *command_assign_positionals_input) (err er
 	if slice_index < 0 {
 		return nil
 	}
-	slices.SortFunc(slice_contributions, func(left, right indexed_token) (order int) {
+	slices.SortFunc(slice_contributions, func(left, right Indexed_Token) (order int) {
 		return left.Index - right.Index
 	})
 	return option_set_slice(&command.Arguments[slice_index], slice_contributions)
@@ -979,7 +981,7 @@ func option_set_positional(argument *Option, value string) (err error) {
 
 // Builds the slice option's value from its contributions, already sorted into
 // command-line order, converting each element to the slice's element type.
-func option_set_slice(option *Option, contributions []indexed_token) (err error) {
+func option_set_slice(option *Option, contributions []Indexed_Token) (err error) {
 	switch option.Value.(type) {
 	default:
 		panic_when(true, "unreachable")
@@ -1005,7 +1007,7 @@ func option_set_slice(option *Option, contributions []indexed_token) (err error)
 }
 
 // Input for option_set_value.
-type option_set_value_input struct {
+type Option_Set_Value_Input struct {
 	// Option is the flag whose Value is assigned in place.
 	Option *Option
 	// Value is the raw value text following '='.
@@ -1018,7 +1020,7 @@ type option_set_value_input struct {
 
 // Validates and assigns a parsed flag value by the option's declared type.
 // Non-boolean flags require a non-empty value.
-func option_set_value(input option_set_value_input) (err error) {
+func option_set_value(input Option_Set_Value_Input) (err error) {
 	_, is_boolean := input.Option.Value.(bool)
 	if !is_boolean {
 		absent := !input.Value_Was_Set
@@ -1518,7 +1520,7 @@ func Completion_Script(program Program, shell string) (script string, err error)
 	builder := strings.Builder{}
 	for _, name := range names {
 		block, block_err := completion_block(
-			&completion_block_input{Name: name, Shell: shell})
+			&Completion_Block_Input{Name: name, Shell: shell})
 		if block_err != nil {
 			return "", block_err
 		}
@@ -1539,13 +1541,15 @@ func completion_target_names(program Program) (names []string) {
 
 // The command name and shell a completion registration is built for, bundled because
 // the parameter types repeat.
-type completion_block_input struct {
-	Name  string
+type Completion_Block_Input struct {
+	// Name is the command name the completion registration is built for.
+	Name string
+	// Shell is the target shell whose completion syntax is emitted.
 	Shell string
 }
 
 // Builds one shell's completion registration for a single command name.
-func completion_block(input *completion_block_input) (block string, err error) {
+func completion_block(input *Completion_Block_Input) (block string, err error) {
 	switch input.Shell {
 	case "bash":
 		return fmt.Sprintf(""+

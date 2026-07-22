@@ -225,11 +225,11 @@ func acquire_machine_specs() (specs maddox.Machine_Specs) {
 	return specs
 }
 
-// Sysctl_key is the name of a sysctl reading, e.g. "hw.memsize".
-type sysctl_key string
+// Sysctl_Key is the name of a sysctl reading, e.g. "hw.memsize".
+type Sysctl_Key string
 
-// Sysctl_key_invariants bounds the key's length.
-func sysctl_key_invariants(name sysctl_key, namespace invariant.Namespace) {
+// Sysctl_Key_Invariants bounds the key's length.
+func Sysctl_Key_Invariants(name Sysctl_Key, namespace invariant.Namespace) {
 	invariant.Always(len(name) <= BOUND_MAX, "A sysctl key is at most its max.")
 	invariant.Always(len(name) >= BOUND_MIN, "A sysctl key is at least its min.")
 	invariant.Always(len(name) != BOUND_MIN, "A sysctl key never reaches its min.")
@@ -257,9 +257,9 @@ func sysctl_key_invariants(name sysctl_key, namespace invariant.Namespace) {
 
 // Sysctl_uint64 reads a 64-bit sysctl by name, marshaling the Go string across the
 // cgo boundary and freeing the C copy after the call.
-func sysctl_uint64(name sysctl_key) (value uint64) {
+func sysctl_uint64(name Sysctl_Key) (value uint64) {
 	defer func() { invariant.Uint64_Invariants(value, "sysctl_uint64.value") }()
-	sysctl_key_invariants(name, "sysctl_uint64.name")
+	Sysctl_Key_Invariants(name, "sysctl_uint64.name")
 	cname := C.CString(string(name))
 	defer C.free(unsafe.Pointer(cname))
 	return uint64(C.maddox_sysctl_uint64(cname))

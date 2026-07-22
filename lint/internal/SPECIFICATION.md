@@ -334,6 +334,11 @@ A struct literal names each field, as in Coordinate{X: 0, Y: 1}.
 
 An exported struct exposes no field of an unexported type.
 
+### Exported Types
+
+A package-level type declaration or alias is exported. Function-local types and _test.go files
+are exempt.
+
 ### Struct Field Public Identifier
 
 Every struct field name begins with a capital letter; an unexported field is banned.

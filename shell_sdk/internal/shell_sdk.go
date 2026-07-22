@@ -224,17 +224,22 @@ func run_and_write(
 // A verb's definition: its link name, help summary, the cli shape that parses its
 // command line, and the transform kind it dispatches to. The verb table built from
 // these is the single source of truth for dispatch, the install fan-out, and help.
-type verb_descriptor struct {
-	Kind      Verb_Kind
-	Label     string
-	Summary   string
+type Verb_Descriptor struct {
+	// Kind is the transform this verb dispatches to.
+	Kind Verb_Kind
+	// Label is the verb's link name.
+	Label string
+	// Summary is the one-line help description.
+	Summary string
+	// Arguments is the cli positional shape that parses the command line.
 	Arguments []cli.Option
-	Flags     []cli.Option
+	// Flags is the cli flag shape this verb accepts.
+	Flags []cli.Option
 }
 
 // The verb table: the one place a verb's name, shape, and transform are declared.
-func verb_table() (verbs []verb_descriptor) {
-	return []verb_descriptor{
+func verb_table() (verbs []Verb_Descriptor) {
+	return []Verb_Descriptor{
 		{Kind: VERB_KIND_INSTALL, Label: "install",
 			Summary:   "symlink the verbs into a directory",
 			Arguments: string_arguments("dir")},
@@ -458,30 +463,44 @@ const WIRE_VERSION = 1
 
 // One item on the encoder's stack: a value to emit, or a literal run of bytes
 // such as an already-encoded field name.
-type wire_work struct {
+type Wire_Work struct {
+	// Is_Value selects Value over Bytes as this item's payload.
 	Is_Value bool
-	Value    Value
-	Bytes    []byte
+	// Value is the value to emit, when Is_Value.
+	Value Value
+	// Bytes is a literal run to append, such as an encoded field name.
+	Bytes []byte
 }
 
 // One container the decoder is filling in from the byte stream.
-type wire_frame struct {
-	Kind            Value_Kind
+type Wire_Frame struct {
+	// Kind is the container kind being filled: list or record.
+	Kind Value_Kind
+	// Remaining_Count is how many elements are still to read before it closes.
 	Remaining_Count int
-	Items           []Value
-	Fields          []Field
-	Pending_Name    string
-	Has_Name        bool
+	// Items holds the list elements gathered so far.
+	Items []Value
+	// Fields holds the record fields gathered so far.
+	Fields []Field
+	// Pending_Name is the field name awaiting its value.
+	Pending_Name string
+	// Has_Name reports whether Pending_Name is set.
+	Has_Name bool
 }
 
 // One step read from the stream: a finished scalar or empty container, or a
 // non-empty container that opens a new frame.
-type wire_read struct {
+type Wire_Read struct {
+	// Is_Scalar reports that the step finished a scalar or empty container.
 	Is_Scalar bool
-	Value     Value
-	Is_Open   bool
-	Kind      Value_Kind
-	Count     int
+	// Value is the finished value, when Is_Scalar.
+	Value Value
+	// Is_Open reports that the step opens a new container frame.
+	Is_Open bool
+	// Kind is the opened container's kind, when Is_Open.
+	Kind Value_Kind
+	// Count is the opened container's element count, when Is_Open.
+	Count int
 }
 
 // Wire_Encode serializes a value to a complete wire stream. The walk is
@@ -489,7 +508,7 @@ type wire_read struct {
 func Wire_Encode(value Value) (encoded []byte) {
 	output := []byte(WIRE_MAGIC)
 	output = append(output, WIRE_VERSION)
-	stack := []wire_work{{Is_Value: true, Value: value}}
+	stack := []Wire_Work{{Is_Value: true, Value: value}}
 	for len(stack) > 0 {
 		top := stack[len(stack)-1]
 		stack = stack[:len(stack)-1]
@@ -506,7 +525,7 @@ func Wire_Encode(value Value) (encoded []byte) {
 
 // Returns one value's header bytes and the child work to push, reversed so a
 // LIFO pop yields the children in order.
-func wire_emit(value Value) (header []byte, children []wire_work) {
+func wire_emit(value Value) (header []byte, children []Wire_Work) {
 	header = append(header, byte(value.Kind))
 	switch value.Kind {
 	case VALUE_KIND_BOOLEAN:
@@ -526,21 +545,21 @@ func wire_emit(value Value) (header []byte, children []wire_work) {
 }
 
 // Builds the child work for a list, reversed for LIFO order.
-func wire_items_work(items []Value) (work []wire_work) {
+func wire_items_work(items []Value) (work []Wire_Work) {
 	for item_index := len(items) - 1; item_index >= 0; item_index-- {
-		work = append(work, wire_work{Is_Value: true, Value: items[item_index]})
+		work = append(work, Wire_Work{Is_Value: true, Value: items[item_index]})
 	}
 	return work
 }
 
 // Builds the child work for a record: a literal name run then the field value,
 // reversed for LIFO order.
-func wire_fields_work(fields []Field) (work []wire_work) {
+func wire_fields_work(fields []Field) (work []Wire_Work) {
 	for field_index := len(fields) - 1; field_index >= 0; field_index-- {
 		field := fields[field_index]
-		work = append(work, wire_work{Is_Value: true, Value: field.Value})
+		work = append(work, Wire_Work{Is_Value: true, Value: field.Value})
 		name := wire_append_bytes(nil, field.Name)
-		work = append(work, wire_work{Is_Value: false, Bytes: name})
+		work = append(work, Wire_Work{Is_Value: false, Bytes: name})
 	}
 	return work
 }
@@ -572,7 +591,7 @@ func Wire_Decode(data []byte) (value Value, err error) {
 	if header_err != nil {
 		return Value{}, header_err
 	}
-	frames := []wire_frame{}
+	frames := []Wire_Frame{}
 	for at < len(data) {
 		if wire_needs_name(frames) {
 			name, after, name_err := wire_read_blob(data, at)
@@ -612,7 +631,7 @@ func wire_header(data []byte) (at int, err error) {
 }
 
 // Reports whether the open record wants a field name next.
-func wire_needs_name(frames []wire_frame) (needs bool) {
+func wire_needs_name(frames []Wire_Frame) (needs bool) {
 	if len(frames) == 0 {
 		return false
 	}
@@ -627,7 +646,7 @@ func wire_needs_name(frames []wire_frame) (needs bool) {
 }
 
 // Records the pending field name on the open record frame.
-func wire_set_name(frames []wire_frame, name string) (updated []wire_frame) {
+func wire_set_name(frames []Wire_Frame, name string) (updated []Wire_Frame) {
 	top := frames[len(frames)-1]
 	top.Pending_Name = name
 	top.Has_Name = true
@@ -636,15 +655,15 @@ func wire_set_name(frames []wire_frame, name string) (updated []wire_frame) {
 }
 
 // Reads one value head: a finished scalar, or an opening container.
-func wire_read_value(data []byte, at int) (read wire_read, next int, err error) {
+func wire_read_value(data []byte, at int) (read Wire_Read, next int, err error) {
 	if at >= len(data) {
-		return wire_read{}, at, fmt.Errorf("wire: truncated value")
+		return Wire_Read{}, at, fmt.Errorf("wire: truncated value")
 	}
 	kind := Value_Kind(data[at])
 	body := at + 1
 	switch kind {
 	case VALUE_KIND_NULL:
-		return wire_read{Is_Scalar: true, Value: Null_Value()}, body, nil
+		return Wire_Read{Is_Scalar: true, Value: Null_Value()}, body, nil
 	case VALUE_KIND_BOOLEAN:
 		return wire_read_boolean(data, body)
 	case VALUE_KIND_NUMBER:
@@ -656,44 +675,44 @@ func wire_read_value(data []byte, at int) (read wire_read, next int, err error) 
 	case VALUE_KIND_RECORD:
 		return wire_read_container(data, body, VALUE_KIND_RECORD)
 	}
-	return wire_read{}, at, fmt.Errorf("wire: unknown tag %d", data[at])
+	return Wire_Read{}, at, fmt.Errorf("wire: unknown tag %d", data[at])
 }
 
 // Reads a one-byte boolean.
-func wire_read_boolean(data []byte, at int) (read wire_read, next int, err error) {
+func wire_read_boolean(data []byte, at int) (read Wire_Read, next int, err error) {
 	if at >= len(data) {
-		return wire_read{}, at, fmt.Errorf("wire: truncated boolean")
+		return Wire_Read{}, at, fmt.Errorf("wire: truncated boolean")
 	}
 	built := Boolean_Value(data[at] != 0)
-	return wire_read{Is_Scalar: true, Value: built}, at + 1, nil
+	return Wire_Read{Is_Scalar: true, Value: built}, at + 1, nil
 }
 
 // Reads a length-prefixed number or string.
-func wire_read_text(data []byte, at int, kind Value_Kind) (read wire_read, next int, err error) {
+func wire_read_text(data []byte, at int, kind Value_Kind) (read Wire_Read, next int, err error) {
 	text, after, blob_err := wire_read_blob(data, at)
 	if blob_err != nil {
-		return wire_read{}, at, blob_err
+		return Wire_Read{}, at, blob_err
 	}
 	built := Number_Value(text)
 	if kind == VALUE_KIND_STRING {
 		built = String_Value(text)
 	}
-	return wire_read{Is_Scalar: true, Value: built}, after, nil
+	return Wire_Read{Is_Scalar: true, Value: built}, after, nil
 }
 
 // Reads a container head: an empty one finishes as a scalar, a non-empty one
 // opens a frame.
 func wire_read_container(
 	data []byte, at int, kind Value_Kind,
-) (read wire_read, next int, err error) {
+) (read Wire_Read, next int, err error) {
 	count, after, count_err := wire_read_count(data, at)
 	if count_err != nil {
-		return wire_read{}, at, count_err
+		return Wire_Read{}, at, count_err
 	}
 	if count == 0 {
-		return wire_read{Is_Scalar: true, Value: wire_empty(kind)}, after, nil
+		return Wire_Read{Is_Scalar: true, Value: wire_empty(kind)}, after, nil
 	}
-	return wire_read{Is_Open: true, Kind: kind, Count: count}, after, nil
+	return Wire_Read{Is_Open: true, Kind: kind, Count: count}, after, nil
 }
 
 // Builds an empty container value.
@@ -726,9 +745,9 @@ func wire_read_count(data []byte, at int) (count int, next int, err error) {
 }
 
 // Opens a new container frame, or delivers a finished value.
-func wire_place(frames []wire_frame, read wire_read) (updated []wire_frame, root Value, done bool) {
+func wire_place(frames []Wire_Frame, read Wire_Read) (updated []Wire_Frame, root Value, done bool) {
 	if read.Is_Open {
-		opened := wire_frame{Kind: read.Kind, Remaining_Count: read.Count}
+		opened := Wire_Frame{Kind: read.Kind, Remaining_Count: read.Count}
 		return append(frames, opened), Value{}, false
 	}
 	return wire_deliver(frames, read.Value)
@@ -736,7 +755,7 @@ func wire_place(frames []wire_frame, read wire_read) (updated []wire_frame, root
 
 // Attaches a finished value to the open frame, popping and cascading any frames
 // that complete until one stays open or the root is reached.
-func wire_deliver(frames []wire_frame, value Value) (updated []wire_frame, root Value, done bool) {
+func wire_deliver(frames []Wire_Frame, value Value) (updated []Wire_Frame, root Value, done bool) {
 	current := value
 	for len(frames) > 0 {
 		attached := wire_attach(frames[len(frames)-1], current)
@@ -751,7 +770,7 @@ func wire_deliver(frames []wire_frame, value Value) (updated []wire_frame, root 
 }
 
 // Adds a value to a list or record frame and decrements its count.
-func wire_attach(frame wire_frame, value Value) (updated wire_frame) {
+func wire_attach(frame Wire_Frame, value Value) (updated Wire_Frame) {
 	if frame.Kind == VALUE_KIND_LIST {
 		frame.Items = append(frame.Items, value)
 		frame.Remaining_Count--
@@ -764,7 +783,7 @@ func wire_attach(frame wire_frame, value Value) (updated wire_frame) {
 }
 
 // Builds the finished container value from a completed frame.
-func wire_frame_value(frame wire_frame) (value Value) {
+func wire_frame_value(frame Wire_Frame) (value Value) {
 	if frame.Kind == VALUE_KIND_LIST {
 		return Value{Kind: VALUE_KIND_LIST, Items: frame.Items}
 	}
@@ -850,19 +869,24 @@ const JSON_TOKEN_FALSE = 10
 const JSON_TOKEN_NULL = 11
 
 // One container the JSON parser is filling from the token stream.
-type json_frame struct {
-	Is_Array    bool
-	Items       []Value
-	Fields      []Field
+type Json_Frame struct {
+	// Is_Array marks an array frame; otherwise it is an object frame.
+	Is_Array bool
+	// Items holds the array elements gathered so far.
+	Items []Value
+	// Fields holds the object fields gathered so far.
+	Fields []Field
+	// Pending_Key is the object key awaiting its value.
 	Pending_Key string
-	Has_Key     bool
+	// Has_Key reports whether Pending_Key is set.
+	Has_Key bool
 }
 
 // Json_Parse parses a JSON document into a value, preserving object key order
 // and keeping numbers as their exact text. The walk is iterative over a frame
 // stack, and numbers never become float64, so the package stays deterministic.
 func Json_Parse(data []byte) (value Value, err error) {
-	frames := []json_frame{}
+	frames := []Json_Frame{}
 	at := 0
 	for at <= len(data) {
 		kind, text, next, token_err := json_next_token(data, at)
@@ -887,15 +911,15 @@ func Json_Parse(data []byte) (value Value, err error) {
 
 // Applies one token to the parser state, returning the root when it completes.
 func json_apply(
-	frames []json_frame, kind int, text string,
-) (updated []json_frame, root Value, done bool, err error) {
+	frames []Json_Frame, kind int, text string,
+) (updated []Json_Frame, root Value, done bool, err error) {
 	switch kind {
 	case JSON_TOKEN_COLON, JSON_TOKEN_COMMA:
 		return frames, Value{}, false, nil
 	case JSON_TOKEN_OBJECT_OPEN:
-		return append(frames, json_frame{Is_Array: false}), Value{}, false, nil
+		return append(frames, Json_Frame{Is_Array: false}), Value{}, false, nil
 	case JSON_TOKEN_ARRAY_OPEN:
-		return append(frames, json_frame{Is_Array: true}), Value{}, false, nil
+		return append(frames, Json_Frame{Is_Array: true}), Value{}, false, nil
 	case JSON_TOKEN_OBJECT_CLOSE, JSON_TOKEN_ARRAY_CLOSE:
 		closed, closed_root, closed_done := json_close(frames)
 		return closed, closed_root, closed_done, nil
@@ -912,7 +936,7 @@ func json_apply(
 }
 
 // Reports whether the next string token names a field key rather than a value.
-func json_is_key(frames []json_frame, kind int) (is_key bool) {
+func json_is_key(frames []Json_Frame, kind int) (is_key bool) {
 	if kind != JSON_TOKEN_STRING {
 		return false
 	}
@@ -927,7 +951,7 @@ func json_is_key(frames []json_frame, kind int) (is_key bool) {
 }
 
 // Records the pending field key on the open object frame.
-func json_set_key(frames []json_frame, key string) (updated []json_frame) {
+func json_set_key(frames []Json_Frame, key string) (updated []Json_Frame) {
 	top := frames[len(frames)-1]
 	top.Pending_Key = key
 	top.Has_Key = true
@@ -936,7 +960,7 @@ func json_set_key(frames []json_frame, key string) (updated []json_frame) {
 }
 
 // Places a finished value into the open frame, or returns it as the root.
-func json_place(frames []json_frame, value Value) (updated []json_frame, root Value, done bool) {
+func json_place(frames []Json_Frame, value Value) (updated []Json_Frame, root Value, done bool) {
 	if len(frames) == 0 {
 		return frames, value, true
 	}
@@ -953,14 +977,14 @@ func json_place(frames []json_frame, value Value) (updated []json_frame, root Va
 }
 
 // Closes the open container, builds its value, and places it in the parent.
-func json_close(frames []json_frame) (updated []json_frame, root Value, done bool) {
+func json_close(frames []Json_Frame) (updated []Json_Frame, root Value, done bool) {
 	top := frames[len(frames)-1]
 	frames = frames[:len(frames)-1]
 	return json_place(frames, json_frame_value(top))
 }
 
 // Builds the finished container value from a completed frame.
-func json_frame_value(frame json_frame) (value Value) {
+func json_frame_value(frame Json_Frame) (value Value) {
 	if frame.Is_Array {
 		return List_Value(frame.Items)
 	}
@@ -1006,15 +1030,15 @@ func json_next_token(data []byte, at int) (kind int, text string, next int, err 
 	case '"':
 		return json_read_string_token(data, position)
 	case 't':
-		return json_read_literal(&json_read_literal_input{
+		return json_read_literal(&Json_Read_Literal_Input{
 			Data: data, At: position, Word: "true", Kind: JSON_TOKEN_TRUE,
 		})
 	case 'f':
-		return json_read_literal(&json_read_literal_input{
+		return json_read_literal(&Json_Read_Literal_Input{
 			Data: data, At: position, Word: "false", Kind: JSON_TOKEN_FALSE,
 		})
 	case 'n':
-		return json_read_literal(&json_read_literal_input{
+		return json_read_literal(&Json_Read_Literal_Input{
 			Data: data, At: position, Word: "null", Kind: JSON_TOKEN_NULL,
 		})
 	}
@@ -1043,16 +1067,20 @@ func json_is_space(character byte) (space bool) {
 }
 
 // The inputs to json_read_literal, bundled because its parameter types repeat.
-type json_read_literal_input struct {
+type Json_Read_Literal_Input struct {
+	// Data is the input being scanned.
 	Data []byte
-	At   int
+	// At is the offset the literal starts at.
+	At int
+	// Word is the exact keyword expected: true, false, or null.
 	Word string
+	// Kind is the token kind to return on a match.
 	Kind int
 }
 
 // Reads a fixed keyword literal such as true, false, or null.
 func json_read_literal(
-	input *json_read_literal_input,
+	input *Json_Read_Literal_Input,
 ) (token int, text string, next int, err error) {
 	end := input.At + len(input.Word)
 	if end > len(input.Data) {
@@ -1120,17 +1148,20 @@ func json_is_number_byte(character byte) (numeric bool) {
 
 // One item on the JSON emitter's stack: a value to emit, or a literal run of
 // output text such as a brace, comma, or quoted key.
-type json_emit_work struct {
+type Json_Emit_Work struct {
+	// Is_Value selects Value over Text as this item's payload.
 	Is_Value bool
-	Value    Value
-	Text     string
+	// Value is the value to emit, when Is_Value.
+	Value Value
+	// Text is a literal run of output such as a brace, comma, or quoted key.
+	Text string
 }
 
 // Json_Emit serializes a value to compact JSON, preserving record key order. The
 // walk is iterative over an explicit stack, since recursion is banned.
 func Json_Emit(value Value) (text string) {
 	output := []byte{}
-	stack := []json_emit_work{{Is_Value: true, Value: value}}
+	stack := []Json_Emit_Work{{Is_Value: true, Value: value}}
 	for len(stack) > 0 {
 		top := stack[len(stack)-1]
 		stack = stack[:len(stack)-1]
@@ -1147,7 +1178,7 @@ func Json_Emit(value Value) (text string) {
 }
 
 // Breaks one value into the emit pieces that render it.
-func json_emit_pieces(value Value) (pieces []json_emit_work) {
+func json_emit_pieces(value Value) (pieces []Json_Emit_Work) {
 	switch value.Kind {
 	case VALUE_KIND_BOOLEAN:
 		return json_literal_piece(json_boolean_text(value.Boolean))
@@ -1164,8 +1195,8 @@ func json_emit_pieces(value Value) (pieces []json_emit_work) {
 }
 
 // Wraps one literal run of text as a single emit piece.
-func json_literal_piece(text string) (pieces []json_emit_work) {
-	return []json_emit_work{{Is_Value: false, Text: text}}
+func json_literal_piece(text string) (pieces []Json_Emit_Work) {
+	return []Json_Emit_Work{{Is_Value: false, Text: text}}
 }
 
 // Renders true or false.
@@ -1177,31 +1208,31 @@ func json_boolean_text(flag bool) (text string) {
 }
 
 // Breaks a list into bracketed, comma-separated element pieces.
-func json_list_pieces(items []Value) (pieces []json_emit_work) {
-	pieces = append(pieces, json_emit_work{Is_Value: false, Text: "["})
+func json_list_pieces(items []Value) (pieces []Json_Emit_Work) {
+	pieces = append(pieces, Json_Emit_Work{Is_Value: false, Text: "["})
 	for item_index := 0; item_index < len(items); item_index++ {
 		if item_index > 0 {
-			pieces = append(pieces, json_emit_work{Is_Value: false, Text: ","})
+			pieces = append(pieces, Json_Emit_Work{Is_Value: false, Text: ","})
 		}
-		pieces = append(pieces, json_emit_work{Is_Value: true, Value: items[item_index]})
+		pieces = append(pieces, Json_Emit_Work{Is_Value: true, Value: items[item_index]})
 	}
-	pieces = append(pieces, json_emit_work{Is_Value: false, Text: "]"})
+	pieces = append(pieces, Json_Emit_Work{Is_Value: false, Text: "]"})
 	return pieces
 }
 
 // Breaks a record into braced, comma-separated "key":value pieces.
-func json_record_pieces(fields []Field) (pieces []json_emit_work) {
-	pieces = append(pieces, json_emit_work{Is_Value: false, Text: "{"})
+func json_record_pieces(fields []Field) (pieces []Json_Emit_Work) {
+	pieces = append(pieces, Json_Emit_Work{Is_Value: false, Text: "{"})
 	for field_index := 0; field_index < len(fields); field_index++ {
 		if field_index > 0 {
-			pieces = append(pieces, json_emit_work{Is_Value: false, Text: ","})
+			pieces = append(pieces, Json_Emit_Work{Is_Value: false, Text: ","})
 		}
 		key := json_quote(fields[field_index].Name) + ":"
-		pieces = append(pieces, json_emit_work{Is_Value: false, Text: key})
+		pieces = append(pieces, Json_Emit_Work{Is_Value: false, Text: key})
 		value := fields[field_index].Value
-		pieces = append(pieces, json_emit_work{Is_Value: true, Value: value})
+		pieces = append(pieces, Json_Emit_Work{Is_Value: true, Value: value})
 	}
-	pieces = append(pieces, json_emit_work{Is_Value: false, Text: "}"})
+	pieces = append(pieces, Json_Emit_Work{Is_Value: false, Text: "}"})
 	return pieces
 }
 
@@ -1236,7 +1267,7 @@ func run_verb(
 	if decode_err != nil {
 		return nil, decode_err
 	}
-	transformed, transform_err := apply_transform(&transform_input{
+	transformed, transform_err := apply_transform(&Transform_Input{
 		Kind:        kind,
 		Positionals: positionals,
 		Count:       verb_count_flag(command, kind),
@@ -1250,11 +1281,15 @@ func run_verb(
 
 // The inputs a transforming verb needs: the positional arguments, the -count flag
 // (for first and final), and the decoded value to transform.
-type transform_input struct {
-	Kind        Verb_Kind
+type Transform_Input struct {
+	// Kind is the transforming verb to apply.
+	Kind Verb_Kind
+	// Positionals is the verb's positional arguments.
 	Positionals []string
-	Count       int
-	Value       Value
+	// Count is the -count flag, read by first and final.
+	Count int
+	// Value is the decoded value to transform.
+	Value Value
 }
 
 // The positional argument values of a parsed command, flattened in declaration
@@ -1377,7 +1412,7 @@ func emit_format(format string, value Value) (text string, err error) {
 }
 
 // Applies a transforming verb to a decoded value.
-func apply_transform(input *transform_input) (result Value, err error) {
+func apply_transform(input *Transform_Input) (result Value, err error) {
 	switch input.Kind {
 	case VERB_KIND_GET:
 		return verb_get(input.Positionals, input.Value)
@@ -1392,7 +1427,7 @@ func apply_transform(input *transform_input) (result Value, err error) {
 }
 
 // Applies the second half of the transforming verbs.
-func apply_transform_more(input *transform_input) (result Value, err error) {
+func apply_transform_more(input *Transform_Input) (result Value, err error) {
 	switch input.Kind {
 	case VERB_KIND_SORT_BY:
 		return verb_sort_by(input.Positionals, input.Value)
@@ -1493,11 +1528,15 @@ func pick_fields(fields []Field, names []string) (picked []Field) {
 }
 
 // The inputs to filter_keeps, bundled because its parameter types repeat.
-type filter_test struct {
-	Item     Value
-	Field    string
+type Filter_Test struct {
+	// Item is the row being tested.
+	Item Value
+	// Field is the cell path to compare.
+	Field string
+	// Operator is the word comparison to apply.
 	Operator string
-	Target   Value
+	// Target is the value to compare against.
+	Target Value
 }
 
 // Runs the filter verb: keep list rows whose cell satisfies the word operator. cli
@@ -1512,7 +1551,7 @@ func verb_filter(arguments []string, value Value) (result Value, err error) {
 	kept := []Value{}
 	for item_index := 0; item_index < len(value.Items); item_index++ {
 		item := value.Items[item_index]
-		test := filter_test{Item: item, Field: field, Operator: operator, Target: target}
+		test := Filter_Test{Item: item, Field: field, Operator: operator, Target: target}
 		if filter_keeps(test) {
 			kept = append(kept, item)
 		}
@@ -1521,9 +1560,9 @@ func verb_filter(arguments []string, value Value) (result Value, err error) {
 }
 
 // Reports whether a row's field satisfies the operator against the target.
-func filter_keeps(test filter_test) (keep bool) {
+func filter_keeps(test Filter_Test) (keep bool) {
 	cell := get_path(test.Item, test.Field)
-	order, comparable := compare_values(value_pair{Left: cell, Right: test.Target})
+	order, comparable := compare_values(Value_Pair{Left: cell, Right: test.Target})
 	if !comparable {
 		return false
 	}
@@ -1670,21 +1709,23 @@ func is_number_text(text string) (numeric bool) {
 }
 
 // The two values a comparison orders, bundled because the types repeat.
-type value_pair struct {
-	Left  Value
+type Value_Pair struct {
+	// Left is the left operand of the comparison.
+	Left Value
+	// Right is the right operand of the comparison.
 	Right Value
 }
 
 // Orders two same-kind values, reporting whether they are comparable. Numbers
 // compare as exact rationals, so the result is deterministic without float64.
-func compare_values(pair value_pair) (order int, comparable bool) {
+func compare_values(pair Value_Pair) (order int, comparable bool) {
 	left := pair.Left
 	right := pair.Right
 	if left.Kind != right.Kind {
 		return 0, false
 	}
 	if left.Kind == VALUE_KIND_NUMBER {
-		return compare_numbers(number_pair{Left: left.Number, Right: right.Number})
+		return compare_numbers(Number_Pair{Left: left.Number, Right: right.Number})
 	}
 	if left.Kind == VALUE_KIND_STRING {
 		return strings.Compare(left.Text, right.Text), true
@@ -1702,13 +1743,15 @@ func compare_values(pair value_pair) (order int, comparable bool) {
 }
 
 // The two number texts a comparison orders, bundled because the types repeat.
-type number_pair struct {
-	Left  string
+type Number_Pair struct {
+	// Left is the left number's exact source text.
+	Left string
+	// Right is the right number's exact source text.
 	Right string
 }
 
 // Orders two numbers as exact rationals.
-func compare_numbers(pair number_pair) (order int, comparable bool) {
+func compare_numbers(pair Number_Pair) (order int, comparable bool) {
 	left_rat, left_ok := new(big.Rat).SetString(pair.Left)
 	if !left_ok {
 		return 0, false
@@ -1933,7 +1976,7 @@ func insert_position(sorted []Value, item Value, field string) (position int) {
 	item_key := get_path(item, field)
 	for sorted_index := 0; sorted_index < len(sorted); sorted_index++ {
 		existing_key := get_path(sorted[sorted_index], field)
-		order, comparable := compare_values(value_pair{Left: item_key, Right: existing_key})
+		order, comparable := compare_values(Value_Pair{Left: item_key, Right: existing_key})
 		if !comparable {
 			continue
 		}
@@ -2097,19 +2140,21 @@ func name_in(names []string, name string) (present bool) {
 }
 
 // The two field names a relabel carries, bundled because the types repeat.
-type relabel_input struct {
+type Relabel_Input struct {
+	// Old is the field name to replace.
 	Old string
+	// New is the field name to use instead.
 	New string
 }
 
 // Runs the relabel verb: rename a field across records. cli guarantees the old and
 // new arguments.
 func verb_relabel(arguments []string, value Value) (result Value, err error) {
-	return relabel_value(value, relabel_input{Old: arguments[0], New: arguments[1]}), nil
+	return relabel_value(value, Relabel_Input{Old: arguments[0], New: arguments[1]}), nil
 }
 
 // Renames a field, mapping across a list of records.
-func relabel_value(value Value, names relabel_input) (result Value) {
+func relabel_value(value Value, names Relabel_Input) (result Value) {
 	if value.Kind == VALUE_KIND_RECORD {
 		return Record_Value(relabel_fields(value.Fields, names))
 	}
@@ -2124,7 +2169,7 @@ func relabel_value(value Value, names relabel_input) (result Value) {
 }
 
 // Renames a field of a single value, leaving non-records unchanged.
-func relabel_one(value Value, names relabel_input) (result Value) {
+func relabel_one(value Value, names Relabel_Input) (result Value) {
 	if value.Kind == VALUE_KIND_RECORD {
 		return Record_Value(relabel_fields(value.Fields, names))
 	}
@@ -2132,7 +2177,7 @@ func relabel_one(value Value, names relabel_input) (result Value) {
 }
 
 // Renames the matching field of a record's fields.
-func relabel_fields(fields []Field, names relabel_input) (renamed []Field) {
+func relabel_fields(fields []Field, names Relabel_Input) (renamed []Field) {
 	for field_index := 0; field_index < len(fields); field_index++ {
 		field := fields[field_index]
 		if field.Name == names.Old {
@@ -2194,7 +2239,7 @@ func Csv_Parse(data []byte) (value Value, err error) {
 	header := rows[0]
 	records := []Value{}
 	for row_index := 1; row_index < len(rows); row_index++ {
-		record := csv_record(&csv_record_input{Header: header, Row: rows[row_index]})
+		record := csv_record(&Csv_Record_Input{Header: header, Row: rows[row_index]})
 		records = append(records, record)
 	}
 	return List_Value(records), nil
@@ -2202,13 +2247,15 @@ func Csv_Parse(data []byte) (value Value, err error) {
 
 // The header and one row a CSV record is built from, bundled because the types
 // repeat.
-type csv_record_input struct {
+type Csv_Record_Input struct {
+	// Header is the column names from the first CSV row.
 	Header []string
-	Row    []string
+	// Row is the cell values for the record being built.
+	Row []string
 }
 
 // Builds one record from a header and a row, inferring each cell's type.
-func csv_record(input *csv_record_input) (value Value) {
+func csv_record(input *Csv_Record_Input) (value Value) {
 	fields := []Field{}
 	for column_index := 0; column_index < len(input.Header); column_index++ {
 		cell := ""

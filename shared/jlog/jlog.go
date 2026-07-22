@@ -73,25 +73,25 @@ const FLOAT_EXPONENT_HIGH = 1e21
 
 // A configuration default is a distinct type so string_or's two parameters never
 // repeat a type, which the input-struct rule would otherwise force into a struct.
-type default_string string
+type Default_String string
 
 // DEFAULT_TIMESTAMP_FIELD_NAME keys the timestamp; "time" is the common structured-log key.
-const DEFAULT_TIMESTAMP_FIELD_NAME default_string = "time"
+const DEFAULT_TIMESTAMP_FIELD_NAME Default_String = "time"
 
 // DEFAULT_LEVEL_FIELD_NAME keys the severity; "level" is the name log tooling greps for.
-const DEFAULT_LEVEL_FIELD_NAME default_string = "level"
+const DEFAULT_LEVEL_FIELD_NAME Default_String = "level"
 
 // DEFAULT_MESSAGE_FIELD_NAME keys the free-text human message; "message" is the widely used name.
-const DEFAULT_MESSAGE_FIELD_NAME default_string = "message"
+const DEFAULT_MESSAGE_FIELD_NAME Default_String = "message"
 
 // DEFAULT_ERROR_FIELD_NAME keys the string Err emits; "error" is the conventional error key.
-const DEFAULT_ERROR_FIELD_NAME default_string = "error"
+const DEFAULT_ERROR_FIELD_NAME Default_String = "error"
 
 // DEFAULT_CALLER_FIELD_NAME keys the "file:line" location Caller and Auto_Caller emit.
-const DEFAULT_CALLER_FIELD_NAME default_string = "caller"
+const DEFAULT_CALLER_FIELD_NAME Default_String = "caller"
 
 // DEFAULT_STACK_FIELD_NAME keys the rendered stack trace Err writes beside the error.
-const DEFAULT_STACK_FIELD_NAME default_string = "stack"
+const DEFAULT_STACK_FIELD_NAME Default_String = "stack"
 
 // Buffer is the byte accumulator the encoders append into. It is a named slice so
 // the encoder helpers' (Buffer, []byte) signatures present two distinct types and
@@ -355,7 +355,7 @@ func New(input New_Input) (logger Logger) {
 	return logger
 }
 
-func string_or(value string, fallback default_string) (chosen string) {
+func string_or(value string, fallback Default_String) (chosen string) {
 	if value == "" {
 		return string(fallback)
 	}
@@ -468,17 +468,19 @@ func Logger_With(logger Logger, fields ...Field) (child Logger) {
 	return child
 }
 
-type context_key struct{}
+// Context_Key is the distinct key type a Logger is stored under in a context.Context,
+// so the value cannot collide with keys of any other package.
+type Context_Key struct{}
 
 // Logger_With_Context returns a copy of parent carrying logger.
 func Logger_With_Context(logger Logger, parent context.Context) (child context.Context) {
-	return context.WithValue(parent, context_key{}, logger)
+	return context.WithValue(parent, Context_Key{}, logger)
 }
 
 // From_Context returns the logger carried by ctx, or a disabled no-op logger when
 // none is present.
 func From_Context(ctx context.Context) (logger Logger) {
-	stored, ok := ctx.Value(context_key{}).(Logger)
+	stored, ok := ctx.Value(Context_Key{}).(Logger)
 	if !ok {
 		return Logger{}
 	}
@@ -1282,28 +1284,28 @@ func assert(condition bool, message string) {
 
 // An ANSI SGR sequence. A distinct type so buffer_paint takes it without colliding with its
 // plain-text argument under the same-type-parameter rule, mirroring maddox's ansi_code.
-type ansi_code string
+type Ansi_Code string
 
 // ANSI_RESET closes every painted span so a color never bleeds past the part it marks.
-const ANSI_RESET ansi_code = "\x1b[0m"
+const ANSI_RESET Ansi_Code = "\x1b[0m"
 
 // ANSI_FAINT dims the timestamp and trace lines so they recede behind the message.
-const ANSI_FAINT ansi_code = "\x1b[2m"
+const ANSI_FAINT Ansi_Code = "\x1b[2m"
 
 // ANSI_BOLD lifts the message, the part a human scans for first.
-const ANSI_BOLD ansi_code = "\x1b[1m"
+const ANSI_BOLD Ansi_Code = "\x1b[1m"
 
 // ANSI_RED marks an error value and the error level, so a failure stands out.
-const ANSI_RED ansi_code = "\x1b[31m"
+const ANSI_RED Ansi_Code = "\x1b[31m"
 
 // ANSI_GREEN tags the info level.
-const ANSI_GREEN ansi_code = "\x1b[32m"
+const ANSI_GREEN Ansi_Code = "\x1b[32m"
 
 // ANSI_YELLOW tags the warn level.
-const ANSI_YELLOW ansi_code = "\x1b[33m"
+const ANSI_YELLOW Ansi_Code = "\x1b[33m"
 
 // ANSI_CYAN labels logfmt keys and the debug level, legible where a dim gray would not be.
-const ANSI_CYAN ansi_code = "\x1b[36m"
+const ANSI_CYAN Ansi_Code = "\x1b[36m"
 
 // Console is an io.Writer that renders each flat-JSON jlog line as a human-readable console line.
 // It reads jlog's default field names (time, level, message, error); a logger built with custom
@@ -1347,26 +1349,26 @@ func (console Console) Write(payload []byte) (written int, err error) {
 // How a JSON value is displayed: a string is unquoted (and logfmt-requoted only if needed), a
 // literal (number/bool/null) is copied verbatim so a large integer keeps its exact digits, and a
 // compound (array/object) is copied as compacted JSON so it stays one flat token.
-type value_kind uint8
+type Value_Kind uint8
 
 // VALUE_IS_STRING tags a value rendered unquoted, logfmt-requoted only when needed.
-const VALUE_IS_STRING value_kind = 0
+const VALUE_IS_STRING Value_Kind = 0
 
 // VALUE_IS_LITERAL tags a number/bool/null copied verbatim so its exact digits survive.
-const VALUE_IS_LITERAL value_kind = 1
+const VALUE_IS_LITERAL Value_Kind = 1
 
 // VALUE_IS_COMPOUND tags an array/object copied as one compact JSON token.
-const VALUE_IS_COMPOUND value_kind = 2
+const VALUE_IS_COMPOUND Value_Kind = 2
 
 // One key/value member of a rendered line, holding the value already reduced to its display text
 // and kind so rendering never re-parses.
-type member struct {
+type Member struct {
 	// Key is the JSON object key.
 	Key string
 	// Text is the value's display form, already unescaped or compacted.
 	Text string
 	// Kind selects how Text is quoted when rendered.
-	Kind value_kind
+	Kind Value_Kind
 }
 
 // Appends line rendered as one console line (no trailing newline; Write adds that). A line that is
@@ -1387,7 +1389,7 @@ func buffer_append_pretty_line(
 // Each value's exact source bytes are captured (numbers stay exact, an embedded Raw_JSON blob
 // survives). Any deviation from a lone, well-formed object returns parsed=false, and the caller
 // passes the line through untouched.
-func scan_object(line []byte) (members []member, parsed bool) {
+func scan_object(line []byte) (members []Member, parsed bool) {
 	index := scan_space(line, 0)
 	if index >= len(line) {
 		return nil, false
@@ -1420,7 +1422,7 @@ func scan_object(line []byte) (members []member, parsed bool) {
 		if !value_ok {
 			return nil, false
 		}
-		members = append(members, member{Key: key, Text: text, Kind: kind})
+		members = append(members, Member{Key: key, Text: text, Kind: kind})
 		index = scan_space(line, value_next)
 		if index >= len(line) {
 			return nil, false
@@ -1490,7 +1492,7 @@ func scan_string(line []byte, start int) (value string, next int, ok bool) {
 // Reads one JSON value beginning at start, classifying it: a string is unescaped, an array or
 // object is captured as its verbatim (already-compact) source bytes, and anything else is a scalar
 // literal whose digits are kept exactly.
-func scan_value(line []byte, start int) (text string, kind value_kind, next int, ok bool) {
+func scan_value(line []byte, start int) (text string, kind Value_Kind, next int, ok bool) {
 	if start >= len(line) {
 		return "", VALUE_IS_LITERAL, start, false
 	}
@@ -1515,7 +1517,7 @@ func scan_value(line []byte, start int) (text string, kind value_kind, next int,
 // a delimiter inside a string does not miscount. Cross-type nesting (an array inside an object) is
 // transparent — the other delimiter is an ordinary byte — and any real imbalance surfaces as a
 // parse failure at the enclosing object, which passes the line through.
-func scan_compound(line []byte, start int) (text string, kind value_kind, next int, ok bool) {
+func scan_compound(line []byte, start int) (text string, kind Value_Kind, next int, ok bool) {
 	opener := line[start]
 	closer := byte('}')
 	if opener == '[' {
@@ -1552,7 +1554,7 @@ func scan_compound(line []byte, start int) (text string, kind value_kind, next i
 
 // Reads a scalar literal (number, true, false, or null) beginning at start, ending it at the first
 // value terminator so its exact source digits are captured.
-func scan_literal(line []byte, start int) (text string, kind value_kind, next int, ok bool) {
+func scan_literal(line []byte, start int) (text string, kind Value_Kind, next int, ok bool) {
 	index := start
 	for index < len(line) {
 		if byte_ends_literal(line[index]) {
@@ -1579,7 +1581,7 @@ func byte_ends_literal(value byte) (ends bool) {
 // Renders the header (timestamp, level, message — in that order, whatever their wire order) then
 // every remaining member as a logfmt pair, each part separated from the last by a single space.
 func buffer_append_members(
-	destination Buffer, members []member, console Console,
+	destination Buffer, members []Member, console Console,
 ) (output Buffer) {
 	// An absent header key and an empty one render the same — nothing — so a plain non-empty
 	// check covers both, and jlog never emits an empty timestamp, level, or message anyway. The
@@ -1631,7 +1633,7 @@ func member_is_header(key string) (header bool) {
 }
 
 // Returns the display text of the first member with key, or "" when no member has it.
-func member_text(members []member, key string) (text string) {
+func member_text(members []Member, key string) (text string) {
 	for index := 0; index < len(members); index++ {
 		if members[index].Key == key {
 			return members[index].Text
@@ -1652,10 +1654,10 @@ func buffer_append_separated(destination Buffer, wrote bool) (output Buffer) {
 // Appends one logfmt "key=value" pair: the key in cyan so it reads as a label yet stays legible
 // (unlike a dim gray), the value logfmt-quoted, and — for the error field — the value painted red
 // so a failure stands out.
-func buffer_append_field(destination Buffer, field member, console Console) (output Buffer) {
+func buffer_append_field(destination Buffer, field Member, console Console) (output Buffer) {
 	destination = buffer_paint(destination, ANSI_CYAN, console.Color, field.Key)
 	destination = append(destination, '=')
-	value_color := ansi_code("")
+	value_color := Ansi_Code("")
 	if field.Key == string(DEFAULT_ERROR_FIELD_NAME) {
 		value_color = ANSI_RED
 	}
@@ -1671,7 +1673,7 @@ func buffer_append_level_tag(destination Buffer, wire string, color bool) (outpu
 // Appends text wrapped in code and a reset when color is on and code is a real color; otherwise
 // appends text bare. An empty code means "no color for this part", so an unknown level or a
 // non-error value stays uncolored even under color.
-func buffer_paint(destination Buffer, code ansi_code, color bool, text string) (output Buffer) {
+func buffer_paint(destination Buffer, code Ansi_Code, color bool, text string) (output Buffer) {
 	if !color {
 		return append(destination, text...)
 	}
@@ -1685,7 +1687,7 @@ func buffer_paint(destination Buffer, code ansi_code, color bool, text string) (
 
 // Returns the display token for a field value: a string is bare unless logfmt requires quoting; a
 // literal or compound value is already a safe bare token.
-func logfmt_token(field member) (token string) {
+func logfmt_token(field Member) (token string) {
 	if field.Kind != VALUE_IS_STRING {
 		return field.Text
 	}
@@ -1738,7 +1740,7 @@ func level_label(wire string) (label string) {
 
 // Maps a level's wire name to its color; an unknown level returns the empty code, meaning no
 // color, so buffer_paint leaves it plain.
-func level_color(wire string) (code ansi_code) {
+func level_color(wire string) (code Ansi_Code) {
 	switch wire {
 	case "trace":
 		return ANSI_FAINT

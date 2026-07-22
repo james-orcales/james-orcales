@@ -1,7 +1,7 @@
 package uuid_test
 
 import (
-	"local/james-orcales/shared/prng"
+	"local/james-orcales/shared/random/prng"
 	"local/james-orcales/shared/time"
 	"local/james-orcales/shared/uuid"
 )

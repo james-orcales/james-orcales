@@ -1762,13 +1762,15 @@ func configuration_contains(
 }
 
 // Configurations_Equal_Input is the pair of configurations a membership comparison checks.
-type configurations_equal_input struct {
+type Configurations_Equal_Input struct {
+	// A is the first configuration in the comparison.
 	A Configuration
+	// B is the second configuration in the comparison.
 	B Configuration
 }
 
 // Reports whether two configurations are the identical membership in the same order.
-func configurations_equal(input *configurations_equal_input) (yes bool) {
+func configurations_equal(input *Configurations_Equal_Input) (yes bool) {
 	if len(input.A) != len(input.B) {
 		return false
 	}
@@ -2706,7 +2708,7 @@ func replica_execute_reconfiguration(replica *Replica, entry Log_Entry, op Op) {
 	// end-of-loop compaction can GC the op before the drain reads it.
 	if op > replica.Epoch_Start_Op {
 		replica.Epoch_Start_Op = op
-		differs := !configurations_equal(&configurations_equal_input{
+		differs := !configurations_equal(&Configurations_Equal_Input{
 			A: entry.New_Configuration,
 			B: replica.Configuration,
 		})
