@@ -9,6 +9,7 @@ import (
 	"encoding/base64"
 	"fmt"
 	"go/ast"
+	"go/constant"
 	"go/parser"
 	"go/printer"
 	"go/token"
@@ -361,6 +362,172 @@ func Recorder_Dot_Product(recorder *Recorder, namespace Namespace, bundle ...Dot
 		panic(ASSERTION_FAILURE_MESSAGE_PREFIX + strings.Join(violations, "\n"))
 	}
 	recorder_dot_product_observe(recorder, message, bundle)
+}
+
+// Integer constrains a Range value to the integer kinds — the bounded-newtype family whose guard
+// preamble Range collapses. Floats are excluded: their boundary claims are NaN and the infinities,
+// not the integer units, so they stay with Float64_Invariants.
+type Integer interface {
+	~int | ~int8 | ~int16 | ~int32 | ~int64 |
+		~uint | ~uint8 | ~uint16 | ~uint32 | ~uint64 | ~uintptr
+}
+
+// RANGE_MESSAGE_ZERO is Range's coverage message for the zero boundary. It is exported so the
+// static registration seeds the identical key the runtime stamps — the rendezvous every axis
+// message relies on. The wording matches the hand-written numeric presets.
+const RANGE_MESSAGE_ZERO = "The value is zero."
+
+// RANGE_MESSAGE_ONE is Range's coverage message for the one boundary.
+const RANGE_MESSAGE_ONE = "The value is one."
+
+// RANGE_MESSAGE_TWO is Range's coverage message for the two boundary.
+const RANGE_MESSAGE_TWO = "The value is two."
+
+// RANGE_MESSAGE_NEGATIVE_ONE is Range's coverage message for the negative-one boundary.
+const RANGE_MESSAGE_NEGATIVE_ONE = "The value is negative one."
+
+// RANGE_MESSAGE_MINIMUM is Range's coverage message for the interval's lower edge, the value MIN.
+const RANGE_MESSAGE_MINIMUM = "The value is the minimum."
+
+// RANGE_MESSAGE_MAXIMUM is Range's coverage message for the interval's upper edge, the value MAX.
+const RANGE_MESSAGE_MAXIMUM = "The value is the maximum."
+
+// RANGE_GUARD_UPPER labels Range's upper-bound guard. Each guard is keyed by the callsite namespace
+// (namespace + separator + label), so a shared preset never collides the way a global literal
+// message would; exported for the same static/runtime rendezvous as the axes.
+const RANGE_GUARD_UPPER = "at most max"
+
+// RANGE_GUARD_LOWER labels Range's lower-bound guard; keyed by namespace like RANGE_GUARD_UPPER.
+const RANGE_GUARD_LOWER = "at least min"
+
+// Recorder_Range is the bounded-integer preset: it enforces value ∈ [minimum, maximum] as two
+// eager bound guards and self-emits, under namespace, the coverage grid for whichever of
+// {0, 1, 2, -1} the interval admits. It collapses the mandated bound preamble and boundary claims
+// into one call, keyed by the per-callsite namespace so it reuses across every bounded newtype.
+//
+// The three magnitudes take their own type parameters, so a caller passes them all positionally
+// without the repeated-type ban firing; at a real callsite they are one type, so the conversions
+// to Value are identities.
+//
+// A boundary unit outside the interval is dropped, not witnessed — the guard already forbids it,
+// so a Sometimes on it would be an unfillable gap; -1 is dropped for an unsigned value. When the
+// interval admits none of the four, no grid is emitted and only the two guards register.
+func Recorder_Range[Value Integer, Minimum Integer, Maximum Integer](
+	recorder *Recorder, value Value, minimum Minimum, maximum Maximum, namespace Namespace,
+) {
+	bounds := [2]Value{Value(minimum), Value(maximum)}
+	// Enforcement runs in every mode, like Recorder_Always — a bound violation is fatal on the
+	// spot, naming the guard it breached under the callsite namespace.
+	if value > bounds[1] {
+		panic(ASSERTION_FAILURE_MESSAGE_PREFIX + string(namespace) +
+			ELEMENT_MESSAGE_SEPARATOR + RANGE_GUARD_UPPER + "  value exceeds max")
+	}
+	if value < bounds[0] {
+		panic(ASSERTION_FAILURE_MESSAGE_PREFIX + string(namespace) +
+			ELEMENT_MESSAGE_SEPARATOR + RANGE_GUARD_LOWER + "  value below min")
+	}
+	recorder_range_credit_guards(recorder, namespace)
+	bundle, axis_count := recorder_range_bundle(recorder, value, bounds)
+	// An interval admitting none of the four boundary units has no cell to witness — an empty
+	// Dot_Product would panic. The guards alone carry the reachability obligation in that case.
+	if axis_count == 0 {
+		return
+	}
+	Recorder_Dot_Product(recorder, namespace, bundle...)
+}
+
+// Credits both bound guards' reachability under the recording-mode gate, mirroring Recorder_Always:
+// enforcement is unconditional, but coverage is tracked only under a test run.
+func recorder_range_credit_guards(recorder *Recorder, namespace Namespace) {
+	if !recorder.Is_Test {
+		return
+	}
+	if recorder.Is_Benchmark {
+		return
+	}
+	recorder_increment(recorder,
+		string(namespace)+ELEMENT_MESSAGE_SEPARATOR+RANGE_GUARD_UPPER, true)
+	recorder_increment(recorder,
+		string(namespace)+ELEMENT_MESSAGE_SEPARATOR+RANGE_GUARD_LOWER, true)
+}
+
+// Builds Recorder_Range's grid: a Sometimes axis for each interval edge (min and max — the whole
+// point of a bounded type) and for each of {0, 1, 2, -1} strictly inside the interval, all mutually
+// exclusive. A single-value interval (min == max) has no edge axis and no interior, so it seeds an
+// empty grid and only the guards carry it. -1 is derived as 0-1 and admitted only for a signed
+// value, so an unsigned value's wrap of 0-1 to its maximum can never masquerade as -1.
+func recorder_range_bundle[Value Integer](
+	recorder *Recorder, value Value, bounds [2]Value,
+) (bundle []Dot_Element, axis_count int) {
+	var messages []string
+	if bounds[0] < bounds[1] {
+		edge := Recorder_Sometimes(recorder, value == bounds[0], RANGE_MESSAGE_MINIMUM)
+		bundle = append(bundle, edge)
+		messages = append(messages, RANGE_MESSAGE_MINIMUM)
+		edge = Recorder_Sometimes(recorder, value == bounds[1], RANGE_MESSAGE_MAXIMUM)
+		bundle = append(bundle, edge)
+		messages = append(messages, RANGE_MESSAGE_MAXIMUM)
+	}
+	negative_one := Value(0) - Value(1)
+	signed := negative_one < Value(0)
+	candidates := [4]Value{Value(0), Value(1), Value(2), negative_one}
+	interior := [4]bool{
+		recorder_range_interior(bounds, candidates[0]),
+		recorder_range_interior(bounds, candidates[1]),
+		recorder_range_interior(bounds, candidates[2]),
+		signed && recorder_range_interior(bounds, candidates[3]),
+	}
+	units := recorder_range_units()
+	for i := range units {
+		if !interior[i] {
+			continue
+		}
+		axis := Recorder_Sometimes(recorder, value == candidates[i], units[i].Message)
+		bundle = append(bundle, axis)
+		messages = append(messages, units[i].Message)
+	}
+	bundle = append(bundle, recorder_range_carves(messages)...)
+	if recorder_range_saturated(bounds, len(messages)) {
+		bundle = append(bundle, recorder_range_all_false(messages))
+	}
+	return bundle, len(messages)
+}
+
+// Reports whether the witnessed axes exhaust the interval — every value in [min,max] is one of
+// them — so the all-false cell (a value that is none of them) can never occur and must be carved.
+func recorder_range_saturated[Value Integer](bounds [2]Value, axis_count int) (saturated bool) {
+	return bounds[1]-bounds[0] < Value(axis_count)
+}
+
+// Builds the Impossible carving the all-false cell: in a saturated interval no value is none of the
+// witnessed axes, so that combination must never be demanded.
+func recorder_range_all_false(messages []string) (carve Dot_Element) {
+	references := make([]Dot_Element_Reference, 0, len(messages))
+	for _, message := range messages {
+		references = append(references, Event_False(message))
+	}
+	return Impossible(references...)
+}
+
+// Reports whether candidate lies strictly inside the interval bounds, so a sentinel never coincides
+// with an edge the min/max axes already witness — the strict test both the runtime grid and the
+// static registration apply, so they admit the same axes.
+func recorder_range_interior[Value Integer](
+	bounds [2]Value, candidate Value,
+) (interior bool) {
+	return bounds[0] < candidate && candidate < bounds[1]
+}
+
+// Builds a mutual-exclusion Impossible over every pair of admitted axis messages: a value is at
+// most one boundary unit, so no two of them are ever true together.
+func recorder_range_carves(messages []string) (carves []Dot_Element) {
+	for i := range messages {
+		for j := i + 1; j < len(messages); j++ {
+			carves = append(carves,
+				Impossible(Event_True(messages[i]), Event_True(messages[j])))
+		}
+	}
+	return carves
 }
 
 // Returns the cached Enforce_Handle for message, building it on first use. The build resolves
@@ -771,6 +938,7 @@ func Recorder_Register_Packages_For_Analysis(recorder *Recorder, directories ...
 		Sugar_Package: recorder.Sugar_Package,
 		Same_Set:      ast_index_functions(files),
 		Loaded:        map[string]map[string]Indexed_Function{},
+		Constants:     ast_index_constants(files),
 	}
 	reg := &Registration{Seen_Prefix: map[string]bool{}}
 	for _, file := range files {
@@ -781,6 +949,7 @@ func Recorder_Register_Packages_For_Analysis(recorder *Recorder, directories ...
 	recorder_check_unresolved(recorder, reg.Unresolved)
 	recorder_check_non_literal_messages(recorder, reg.Non_Literal)
 	recorder_check_duplicate_messages(recorder, reg.Collision)
+	recorder_check_unresolved_bounds(recorder, reg.Unresolved_Bound)
 }
 
 // Reports whether name exists in recorder.File_System.
@@ -999,6 +1168,11 @@ type Bundle_Index struct {
 	Same_Set map[string]Indexed_Function
 	// Loaded caches lazily parsed cross-package functions, keyed by import path then bare name.
 	Loaded map[string]map[string]Indexed_Function
+	// Constants maps each analyzed package-level const's name to its value expression, so a
+	// Range_Invariants callsite's MIN/MAX arguments can be evaluated to decide which boundary
+	// units its interval admits. A flat index by bare name, like Same_Set — one analysis run
+	// covers one package tree, so cross-tree name collisions do not arise.
+	Constants map[string]ast.Expr
 }
 
 // Maps each function name to its declaration and its file's imports, for
@@ -1060,6 +1234,15 @@ func recorder_register_function(
 		if ast_invariant_selector(call) == "Dot_Product" {
 			recorder_register_dot_product(
 				recorder, file_set, call, namespace_parameter, imports, index, reg)
+			return true
+		}
+		// Range_Invariants ends in _Invariants but is not a descendable bundle: its grid
+		// is built at runtime from the callsite's MIN/MAX, so it is specialised here from
+		// the evaluated bounds, not a fixed template body. A Range under this function's
+		// own namespace parameter is a grid template, deferred to its callsites.
+		if ast_invariant_selector(call) == "Range_Invariants" {
+			recorder_register_range(
+				recorder, file_set, call, namespace_parameter, index, reg)
 			return true
 		}
 		if ast_is_invariants_name(ast_callee_name(call)) {
@@ -1145,6 +1328,23 @@ func recorder_check_unresolved(recorder *Recorder, unresolved []string) {
 		return
 	}
 	banner := "🚨 " + strconv.Itoa(len(unresolved)) + " unresolved bundles 🚨"
+	fmt.Fprintln(recorder.Output, banner)
+	for _, line := range unresolved {
+		fmt.Fprintln(recorder.Output, line)
+	}
+	fmt.Fprintln(recorder.Output, banner)
+	recorder.Exit(1)
+}
+
+// Reports every Range_Invariants callsite whose bound the evaluator could not resolve, then exits.
+// A recognised-but-unevaluable bound leaves the grid unseeded while the runtime still enforces the
+// range, so its coverage obligations would vanish unnoticed; failing keeps coverage from being
+// silently dropped — the analyzer seeds a Range grid or refuses it.
+func recorder_check_unresolved_bounds(recorder *Recorder, unresolved []string) {
+	if len(unresolved) == 0 {
+		return
+	}
+	banner := "🚨 " + strconv.Itoa(len(unresolved)) + " unresolved Range bounds 🚨"
 	fmt.Fprintln(recorder.Output, banner)
 	for _, line := range unresolved {
 		fmt.Fprintln(recorder.Output, line)
@@ -1428,6 +1628,9 @@ type Registration struct {
 	Non_Literal []string
 	// Collision holds Dot_Product messages that collided with an already-seen prefix.
 	Collision []string
+	// Unresolved_Bound holds Range_Invariants callsites whose MIN or MAX argument the constant
+	// evaluator could not resolve, so their grid could not be seeded.
+	Unresolved_Bound []string
 	// Seen_Prefix tracks Dot_Product messages so two grids cannot share one prefix.
 	Seen_Prefix map[string]bool
 }
@@ -1520,12 +1723,406 @@ func recorder_register_invariants_callsite(
 		return
 	}
 	dot_product, has := recorder_template_dot_product(function.Declaration)
-	if !has {
+	if has {
+		axes, carves := recorder_collect_inline(
+			file_set, dot_product.Args[1:], function.Is_Sugar, reg)
+		recorder_seed_grid(recorder, file_set, call, namespace, axes, carves, reg)
 		return
 	}
-	axes, carves := recorder_collect_inline(
-		file_set, dot_product.Args[1:], function.Is_Sugar, reg)
-	recorder_seed_grid(recorder, file_set, call, namespace, axes, carves, reg)
+	// A template whose body is a Range_Invariants under its namespace parameter seeds its
+	// bound grid here, under the callsite's literal namespace, from the template's MIN/MAX
+	// expressions — the Range mirror of the Dot_Product descent above.
+	if range_call, is_range := recorder_template_range(function.Declaration); is_range {
+		recorder_seed_range(recorder, file_set, call, namespace,
+			[2]ast.Expr{range_call.Args[1], range_call.Args[2]}, index, reg)
+	}
+}
+
+// Bounds the constant-evaluator's stack steps, so a pathological const cycle (a const whose value
+// references itself through others) cannot loop the analyzer unboundedly. A real const graph is
+// acyclic and finishes far below this.
+const CONSTANT_EVAL_STEPS_MAX = 256
+
+// A Range_Unit is one boundary value Recorder_Range may claim: its integer value, the axis message
+// it seeds when in range, and the source label its condition renders with.
+type Range_Unit struct {
+	// Value is the boundary integer (0, 1, 2, or -1).
+	Value int64
+	// Message is the axis's own message, joined to the namespace to form its coverage key.
+	Message string
+	// Label is how the value reads in the axis condition text of the gap report.
+	Label string
+}
+
+// The boundary units Recorder_Range claims, in the exact order its runtime grid emits them, so the
+// scan's projected tuple coordinates line up with what the run records.
+func recorder_range_units() (units []Range_Unit) {
+	return []Range_Unit{
+		{Value: 0, Message: RANGE_MESSAGE_ZERO, Label: "0"},
+		{Value: 1, Message: RANGE_MESSAGE_ONE, Label: "1"},
+		{Value: 2, Message: RANGE_MESSAGE_TWO, Label: "2"},
+		{Value: -1, Message: RANGE_MESSAGE_NEGATIVE_ONE, Label: "-1"},
+	}
+}
+
+// Registers a Range_Invariants callsite. It evaluates the MIN and MAX arguments, seeds the two
+// bound guards as namespaced Always reachability entries, and seeds a Sometimes axis for each
+// interval edge (min and max) and each of {0, 1, 2, -1} strictly inside — mutually exclusive, so
+// only the singleton and all-clear cells survive. The tests mirror Recorder_Range's runtime
+// decision, so the scan demands exactly what the run credits. A non-literal namespace, or a bound
+// the evaluator cannot resolve, is fatal: the grid could not otherwise be keyed while the runtime
+// still enforces it.
+func recorder_register_range(
+	recorder *Recorder, file_set *token.FileSet, call *ast.CallExpr,
+	namespace_parameter string, index *Bundle_Index, reg *Registration,
+) {
+	// Args are value, MIN, MAX, namespace; the value on Args[0] is not needed to seed the grid.
+	if len(call.Args) < 4 {
+		return
+	}
+	namespace, literal := ast_string_literal(call, 3)
+	if !literal {
+		// A Range under the enclosing bundle's namespace parameter is a grid template —
+		// its grid is seeded at each _Invariants callsite's literal namespace, never
+		// under the bare parameter, exactly as a self-emitting Dot_Product template is.
+		// Any other non-literal namespace is fatal: its coverage could not be keyed.
+		if ast_is_range_template(call, namespace_parameter) {
+			return
+		}
+		reg.Non_Literal = append(reg.Non_Literal, recorder_position(file_set, call)+
+			"  Range_Invariants namespace is not a string literal")
+		return
+	}
+	recorder_seed_range(recorder, file_set, call, namespace,
+		[2]ast.Expr{call.Args[1], call.Args[2]}, index, reg)
+}
+
+// Reports whether a Range_Invariants call's namespace argument is the enclosing function's
+// namespace parameter — the shape of a grid template, registered at the _Invariants' callsites
+// rather than here, mirroring ast_is_template_prefix for a Dot_Product's leading prefix.
+func ast_is_range_template(call *ast.CallExpr, namespace_parameter string) (is_template bool) {
+	if namespace_parameter == "" {
+		return false
+	}
+	if len(call.Args) < 4 {
+		return false
+	}
+	identifier, is_identifier := call.Args[3].(*ast.Ident)
+	if !is_identifier {
+		return false
+	}
+	return identifier.Name == namespace_parameter
+}
+
+// Seeds a Range grid under namespace: it evaluates the MIN and MAX bound expressions, seeds the two
+// bound guards as namespaced Always reachability entries, and seeds a Sometimes axis for each
+// interval edge (min and max) and each of {0, 1, 2, -1} strictly inside — mutually exclusive. A
+// direct Range callsite passes its own literal namespace; a Range template passes each _Invariants
+// callsite's literal namespace with the template's bound expressions. A bound the evaluator cannot
+// resolve is fatal, since the grid could not be keyed while the runtime still enforces it.
+func recorder_seed_range(
+	recorder *Recorder, file_set *token.FileSet, position ast.Node, namespace string,
+	expressions [2]ast.Expr, index *Bundle_Index, reg *Registration,
+) {
+	value_min, ok_min := recorder_eval_constant(index, expressions[0])
+	value_max, ok_max := recorder_eval_constant(index, expressions[1])
+	if !ok_min {
+		recorder_range_unresolved(file_set, position, reg)
+		return
+	}
+	if !ok_max {
+		recorder_range_unresolved(file_set, position, reg)
+		return
+	}
+	bounds := [2]constant.Value{value_min, value_max}
+	axes := []Registration_Axis{
+		{Message: RANGE_GUARD_UPPER, Condition: "value <= max",
+			Kind: ASSERTION_KIND_ALWAYS, Bucket_Count: 1},
+		{Message: RANGE_GUARD_LOWER, Condition: "value >= min",
+			Kind: ASSERTION_KIND_ALWAYS, Bucket_Count: 1},
+	}
+	if constant.Compare(value_min, token.LSS, value_max) {
+		axes = append(axes, recorder_range_axis(RANGE_MESSAGE_MINIMUM))
+		axes = append(axes, recorder_range_axis(RANGE_MESSAGE_MAXIMUM))
+	}
+	for _, unit := range recorder_range_units() {
+		if !recorder_constant_interior(bounds, unit.Value) {
+			continue
+		}
+		axes = append(axes, recorder_range_axis(unit.Message))
+	}
+	carves := recorder_range_carve_cells(axes)
+	if recorder_constant_saturated(bounds, recorder_range_sometimes_count(axes)) {
+		carves = append(carves, recorder_range_all_false_cells(axes))
+	}
+	recorder_seed_grid(recorder, file_set, position, namespace, axes, carves, reg)
+}
+
+// Reports whether the interval is saturated — its width is below the witnessed-axis count, so
+// every value is a witnessed axis and the all-false cell can never occur, mirroring the runtime.
+func recorder_constant_saturated(bounds [2]constant.Value, axis_count int) (saturated bool) {
+	width := constant.BinaryOp(bounds[1], token.SUB, bounds[0])
+	return constant.Compare(width, token.LSS, constant.MakeInt64(int64(axis_count)))
+}
+
+// Counts the Sometimes (coverage) axes of a Range grid — every axis past the two leading guards.
+func recorder_range_sometimes_count(axes []Registration_Axis) (count int) {
+	for i := range axes {
+		if axes[i].Bucket_Count >= 2 {
+			count++
+		}
+	}
+	return count
+}
+
+// Builds the carve cell pinning every Sometimes axis false — the all-false combination a saturated
+// interval can never witness.
+func recorder_range_all_false_cells(axes []Registration_Axis) (cells []Registration_Cell) {
+	for i := range axes {
+		if axes[i].Bucket_Count < 2 {
+			continue
+		}
+		cells = append(cells, Registration_Cell{Position: i, Bucket: 0})
+	}
+	return cells
+}
+
+// Builds one Sometimes coverage axis of a Range grid — an edge or an interior sentinel. The axis's
+// own message doubles as its condition text, since the message already reads as the claim.
+func recorder_range_axis(message string) (axis Registration_Axis) {
+	return Registration_Axis{
+		Message: message, Condition: message,
+		Kind: ASSERTION_KIND_SOMETIMES, Bucket_Count: 2,
+	}
+}
+
+// Builds the mutual-exclusion carves over a Range grid's Sometimes axes — every axis past the two
+// leading guards, pinned true pairwise, since a value equals at most one edge or sentinel.
+func recorder_range_carve_cells(axes []Registration_Axis) (carves [][]Registration_Cell) {
+	var positions []int
+	for position_index := 2; position_index < len(axes); position_index++ {
+		positions = append(positions, position_index)
+	}
+	for i := range positions {
+		for j := i + 1; j < len(positions); j++ {
+			carves = append(carves, []Registration_Cell{
+				{Position: positions[i], Bucket: 1},
+				{Position: positions[j], Bucket: 1},
+			})
+		}
+	}
+	return carves
+}
+
+// Records a Range_Invariants callsite whose bound the evaluator could not resolve, so registration
+// fails rather than seeding an incomplete grid the runtime would still enforce.
+func recorder_range_unresolved(
+	file_set *token.FileSet, position ast.Node, reg *Registration,
+) {
+	reg.Unresolved_Bound = append(reg.Unresolved_Bound,
+		recorder_position(file_set, position)+
+			"  Range_Invariants bound is not a resolvable constant")
+}
+
+// Reports whether the integer n lies strictly inside the interval bounds, comparing in arbitrary
+// precision so a bound beyond int64 (a uint64 near its ceiling) and a negative n are both handled.
+// -1 falls out for an unsigned type whose lower bound is zero without any signedness test.
+func recorder_constant_interior(bounds [2]constant.Value, n int64) (interior bool) {
+	target := constant.MakeInt64(n)
+	return constant.Compare(bounds[0], token.LSS, target) &&
+		constant.Compare(target, token.LSS, bounds[1])
+}
+
+// A Range_Eval_Frame is one node of the constant-evaluation work stack: an expression to evaluate,
+// and whether its operands were already pushed — an operator is visited twice, once to expand its
+// children and once to combine their now-evaluated values.
+type Range_Eval_Frame struct {
+	// Expression is the AST node this frame evaluates.
+	Expression ast.Expr
+	// Expanded reports whether this operator already pushed its operands for evaluation.
+	Expanded bool
+}
+
+// Evaluates a Range_Invariants bound expression to an integer constant: an integer literal, a
+// reference to a sibling package const, a parenthesised expression, a unary +/-/^, or a binary
+// arithmetic/bitwise/shift op over those. ok is false for anything else (a variable, an imported
+// selector, a float, a call), which the caller treats as a fatal unresolved bound. No iota.
+//
+// The walk is an explicit post-order stack, not recursion (which the linter bans): an operator is
+// re-pushed marked Expanded after its operands, so it combines their values once those are on the
+// value stack. A step cap bounds a pathological const-reference cycle.
+func recorder_eval_constant(
+	index *Bundle_Index, expression ast.Expr,
+) (value constant.Value, ok bool) {
+	work := []Range_Eval_Frame{{Expression: expression}}
+	var values []constant.Value
+	for step := 0; len(work) > 0; step++ {
+		if step > CONSTANT_EVAL_STEPS_MAX {
+			return nil, false
+		}
+		frame := work[len(work)-1]
+		work = work[:len(work)-1]
+		switch node := frame.Expression.(type) {
+		case *ast.BasicLit:
+			literal, literal_ok := recorder_eval_literal(node)
+			if !literal_ok {
+				return nil, false
+			}
+			values = append(values, literal)
+		case *ast.Ident:
+			reference, defined := index.Constants[node.Name]
+			if !defined {
+				return nil, false
+			}
+			work = append(work, Range_Eval_Frame{Expression: reference})
+		case *ast.ParenExpr:
+			work = append(work, Range_Eval_Frame{Expression: node.X})
+		case *ast.UnaryExpr:
+			if !frame.Expanded {
+				work = recorder_eval_expand(work, node, node.X)
+				continue
+			}
+			top := values[len(values)-1]
+			combined, combine_ok := recorder_constant_unary(node.Op, top)
+			if !combine_ok {
+				return nil, false
+			}
+			values[len(values)-1] = combined
+		case *ast.BinaryExpr:
+			if !frame.Expanded {
+				work = recorder_eval_expand(work, node, node.X, node.Y)
+				continue
+			}
+			if len(values) < 2 {
+				return nil, false
+			}
+			operands := [2]constant.Value{values[len(values)-2], values[len(values)-1]}
+			combined, combine_ok := recorder_constant_binary(node.Op, operands)
+			if !combine_ok {
+				return nil, false
+			}
+			values = append(values[:len(values)-2], combined)
+		default:
+			return nil, false
+		}
+	}
+	if len(values) != 1 {
+		return nil, false
+	}
+	return values[0], true
+}
+
+// Evaluates an integer literal; ok is false for a non-integer or unparseable literal.
+func recorder_eval_literal(literal *ast.BasicLit) (value constant.Value, ok bool) {
+	if literal.Kind != token.INT {
+		return nil, false
+	}
+	evaluated := constant.MakeFromLiteral(literal.Value, token.INT, 0)
+	return evaluated, evaluated.Kind() != constant.Unknown
+}
+
+// Re-pushes an operator marked Expanded, then its operands in reverse, so each operand evaluates
+// before the operator combines them and the first-listed operand ends up first on the value stack.
+func recorder_eval_expand(
+	work []Range_Eval_Frame, operator ast.Expr, operands ...ast.Expr,
+) (expanded []Range_Eval_Frame) {
+	work = append(work, Range_Eval_Frame{Expression: operator, Expanded: true})
+	for i := len(operands) - 1; i >= 0; i-- {
+		work = append(work, Range_Eval_Frame{Expression: operands[i]})
+	}
+	return work
+}
+
+// Applies a unary +, -, or ^ to an integer constant; ok is false for any other operator.
+func recorder_constant_unary(
+	op token.Token, operand constant.Value,
+) (value constant.Value, ok bool) {
+	switch op {
+	case token.SUB, token.ADD, token.XOR:
+		result := constant.UnaryOp(op, operand, 0)
+		return result, result.Kind() != constant.Unknown
+	}
+	return nil, false
+}
+
+// Applies a binary arithmetic, bitwise, or shift op to two integer constants. A shift reads its
+// count as a uint; a divide or remainder by zero is refused rather than panicking the analyzer; ok
+// is false for any other operator.
+func recorder_constant_binary(
+	op token.Token, operands [2]constant.Value,
+) (value constant.Value, ok bool) {
+	left := operands[0]
+	right := operands[1]
+	if recorder_constant_is_shift(op) {
+		count, exact := constant.Uint64Val(right)
+		if !exact {
+			return nil, false
+		}
+		result := constant.Shift(left, op, uint(count))
+		return result, result.Kind() != constant.Unknown
+	}
+	if !recorder_constant_is_arithmetic(op) {
+		return nil, false
+	}
+	if recorder_constant_divides(op) {
+		if constant.Sign(right) == 0 {
+			return nil, false
+		}
+	}
+	result := constant.BinaryOp(left, op, right)
+	return result, result.Kind() != constant.Unknown
+}
+
+// Reports whether op is a shift operator, whose right operand is a bit count rather than a value.
+func recorder_constant_is_shift(op token.Token) (yes bool) {
+	return op == token.SHL || op == token.SHR
+}
+
+// Reports whether op divides, so its zero right operand must be refused before the arithmetic.
+func recorder_constant_divides(op token.Token) (yes bool) {
+	return op == token.QUO || op == token.REM
+}
+
+// Reports whether op is a binary arithmetic or bitwise operator go/constant can apply directly.
+func recorder_constant_is_arithmetic(op token.Token) (yes bool) {
+	switch op {
+	case token.ADD, token.SUB, token.MUL, token.QUO, token.REM,
+		token.AND, token.OR, token.XOR, token.AND_NOT:
+		return true
+	}
+	return false
+}
+
+// Maps each package-level const's name to its value expression, for evaluating Range_Invariants
+// bounds. Only a spec that supplies its own value is indexed; an inherited-value spec (no iota in
+// this codebase) is skipped, so a bound built on one stays unresolved rather than silently
+// miskeyed. A later definition wins on a name collision, matching ast_index_functions.
+func ast_index_constants(files []*ast.File) (constants map[string]ast.Expr) {
+	constants = map[string]ast.Expr{}
+	for _, file := range files {
+		for _, declaration := range file.Decls {
+			generic, is_generic := declaration.(*ast.GenDecl)
+			if !is_generic {
+				continue
+			}
+			if generic.Tok != token.CONST {
+				continue
+			}
+			for _, specification := range generic.Specs {
+				value_specification, is_value := specification.(*ast.ValueSpec)
+				if !is_value {
+					continue
+				}
+				for i, name := range value_specification.Names {
+					if i >= len(value_specification.Values) {
+						continue
+					}
+					constants[name.Name] = value_specification.Values[i]
+				}
+			}
+		}
+	}
+	return constants
 }
 
 // Finds a _Invariants function's self-emitted Dot_Product — the one whose prefix argument is
@@ -1549,6 +2146,37 @@ func recorder_template_dot_product(
 			return true
 		}
 		if !ast_is_template_prefix(candidate, namespace_parameter) {
+			return true
+		}
+		call = candidate
+		has = true
+		return false
+	})
+	return call, has
+}
+
+// Finds the self-emitted Range_Invariants of a grid template — the call whose namespace argument is
+// the function's trailing namespace parameter, so its bound grid is seeded at the _Invariants
+// callsites. The Range mirror of recorder_template_dot_product.
+func recorder_template_range(
+	function *ast.FuncDecl,
+) (call *ast.CallExpr, has bool) {
+	namespace_parameter := ast_namespace_parameter(function)
+	if namespace_parameter == "" {
+		return nil, false
+	}
+	ast.Inspect(function.Body, func(node ast.Node) (descend bool) {
+		if has {
+			return false
+		}
+		candidate, is_call := node.(*ast.CallExpr)
+		if !is_call {
+			return true
+		}
+		if ast_selector(candidate, true) != "Range_Invariants" {
+			return true
+		}
+		if !ast_is_range_template(candidate, namespace_parameter) {
 			return true
 		}
 		call = candidate

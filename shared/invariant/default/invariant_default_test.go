@@ -141,6 +141,121 @@ func Test_Numeric_Presets_Run_For_Every_Primitive(t *testing.T) {
 	invariant.Float64_Invariants(0, "n.float64")
 }
 
+// Range_Invariants witnesses both interval edges and every sentinel strictly inside; the signed
+// range [-100, 100] admits the minimum, the maximum, and all of 0/1/2/-1 as its interior.
+func Test_Range_Invariants_Witnesses_Edges_And_Interior(t *testing.T) {
+	axes := []string{
+		core.RANGE_MESSAGE_MINIMUM,
+		core.RANGE_MESSAGE_MAXIMUM,
+		core.RANGE_MESSAGE_ZERO,
+		core.RANGE_MESSAGE_ONE,
+		core.RANGE_MESSAGE_TWO,
+		core.RANGE_MESSAGE_NEGATIVE_ONE,
+	}
+	cases := []struct {
+		Name string
+		V    int
+		Want string
+	}{
+		{"minimum", -100, "TFFFFF"},
+		{"maximum", 100, "FTFFFF"},
+		{"zero", 0, "FFTFFF"},
+		{"one", 1, "FFFTFF"},
+		{"two", 2, "FFFFTF"},
+		{"negative one", -1, "FFFFFT"},
+		{"ordinary", 42, "FFFFFF"},
+	}
+	for _, c := range cases {
+		namespace := "test.range.signed." + c.Name
+		seed_preset_axes(namespace, axes...)
+		invariant.Range_Invariants(c.V, -100, 100, invariant.Namespace(namespace))
+		if got := recorded_signature(namespace, axes...); got != c.Want {
+			t.Errorf("%s: %q, want %q", c.Name, got, c.Want)
+		}
+	}
+}
+
+// A sentinel outside the open interval is not witnessed: [3, 100] admits its edges but none of
+// 0/1/2/-1, so at its minimum only the minimum axis fires.
+func Test_Range_Invariants_Excludes_Exterior_Sentinels(t *testing.T) {
+	axes := []string{
+		core.RANGE_MESSAGE_MINIMUM,
+		core.RANGE_MESSAGE_ZERO,
+		core.RANGE_MESSAGE_ONE,
+		core.RANGE_MESSAGE_TWO,
+		core.RANGE_MESSAGE_NEGATIVE_ONE,
+	}
+	namespace := "test.range.exterior"
+	seed_preset_axes(namespace, axes...)
+	invariant.Range_Invariants(3, 3, 100, invariant.Namespace(namespace))
+	if got := recorded_signature(namespace, axes...); got != "TFFFF" {
+		t.Errorf("exterior sentinels: %q, want %q", got, "TFFFF")
+	}
+}
+
+// An unsigned value never witnesses negative one: -1 is below its zero floor, so the neg axis is
+// dropped. The minimum edge covers zero, with 1 and 2 as its interior sentinels.
+func Test_Range_Invariants_Unsigned_Drops_Negative_One(t *testing.T) {
+	axes := []string{
+		core.RANGE_MESSAGE_MINIMUM,
+		core.RANGE_MESSAGE_ONE,
+		core.RANGE_MESSAGE_NEGATIVE_ONE,
+	}
+	namespace := "test.range.unsigned"
+	seed_preset_axes(namespace, axes...)
+	invariant.Range_Invariants(uint(0), uint(0), uint(100), invariant.Namespace(namespace))
+	if got := recorded_signature(namespace, axes...); got != "TFF" {
+		t.Errorf("unsigned minimum: %q, want %q", got, "TFF")
+	}
+}
+
+// The bounds are hard guards: a value outside [min,max] panics in every mode, like an Always.
+func Test_Range_Invariants_Panics_Beyond_The_Interval(t *testing.T) {
+	cases := []struct {
+		Name     string
+		V        int
+		Min, Max int
+	}{
+		{"below min", 5, 10, 100},
+		{"above max", 200, 10, 100},
+	}
+	for _, c := range cases {
+		func() {
+			defer func() {
+				if recover() == nil {
+					t.Errorf("%s: expected panic, got none", c.Name)
+				}
+			}()
+			invariant.Range_Invariants(c.V, c.Min, c.Max,
+				invariant.Namespace("test.range.panic."+c.Name))
+		}()
+	}
+}
+
+// Each bound guard is a registered reachability obligation keyed by the callsite namespace — not a
+// shared literal that would collide across every caller — so reaching the preset credits it.
+func Test_Range_Invariants_Credits_Namespaced_Bound_Guards(t *testing.T) {
+	namespace := "test.range.guards"
+	for _, label := range []string{core.RANGE_GUARD_UPPER, core.RANGE_GUARD_LOWER} {
+		key := namespace + core.ELEMENT_MESSAGE_SEPARATOR + label
+		invariant.Default.Events.Store(key, &core.Assertion_Metadata{
+			Kind: core.ASSERTION_KIND_ALWAYS, Message: key,
+		})
+	}
+	invariant.Range_Invariants(5, 0, 100, invariant.Namespace(namespace))
+	for _, label := range []string{core.RANGE_GUARD_UPPER, core.RANGE_GUARD_LOWER} {
+		key := namespace + core.ELEMENT_MESSAGE_SEPARATOR + label
+		value, loaded := invariant.Default.Events.Load(key)
+		if !loaded {
+			t.Errorf("bound guard %q was not seeded", label)
+			continue
+		}
+		if value.(*core.Assertion_Metadata).Frequency.Load() == 0 {
+			t.Errorf("bound guard %q was not credited", label)
+		}
+	}
+}
+
 // Boolean_Invariants returns one axis; the suite must witness the value true and false.
 func Test_Boolean_Invariants_Tracks_Values(t *testing.T) {
 	cases := []struct {

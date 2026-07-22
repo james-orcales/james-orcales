@@ -135,6 +135,12 @@ A `_Invariants` is recognized by its `_Invariants` or `_invariants` name togethe
 `string` or `Namespace` parameter. The `Dot_Product` it self-emits under that parameter is a
 template, seeded not at the definition but at each callsite under its literal namespace.
 
+### Range Template
+
+A `_Invariants` whose body is a single `Range_Invariants(v, MIN, MAX, namespace)` under its own
+namespace parameter is a bound-grid template, not a direct callsite. Its grid is seeded from `MIN`
+and `MAX` at each `_Invariants` callsite's literal namespace, never under the bare parameter.
+
 ### Descent
 
 Registration follows a `_Invariants(v, "lit")` call, resolves the function, and seeds the grid its
@@ -267,3 +273,32 @@ exception is a `_Invariants`'s namespace parameter, a template prefix (see Bundl
 
 A bundle consumed by a `Dot_Product` that the analyzer cannot resolve is fatal, not
 skipped.
+
+# Range
+
+`Recorder_Range` is the bounded-integer preset. It collapses a bounded newtype's mandated bound
+guards and its `0/1/2/-1` boundary claims into one call, keyed by the callsite namespace.
+
+### Guard
+
+`Range` enforces `value ∈ [min, max]` as two eager bound guards, each a reachability obligation
+keyed by the callsite namespace so it never collides across callers. A violation panics in every
+mode; reaching a guard credits it under a test run.
+
+### Coverage
+
+`Range` witnesses both interval edges — `Sometimes(v == min)` and `Sometimes(v == max)` — plus each
+of `{0, 1, 2, -1}` strictly inside, all mutually exclusive. A single-value interval seeds no grid,
+the guards alone carrying reachability; `-1` is dropped for an unsigned value.
+
+### Saturation
+
+When the interval's width is below its witnessed-axis count every value is a witnessed axis, so the
+all-false cell (a value matching none) can never occur and is carved — else the grid would demand an
+unreachable value forever; over `[0, 1]` every value is `min` or `max`, so "neither" is impossible.
+
+### Registration
+
+The scan specialises a `Range_Invariants` callsite from its `MIN`/`MAX` arguments, evaluated as
+integer constants — literals, sibling-const references, and constant arithmetic or shifts (no
+`iota`). A non-literal namespace or an unevaluable bound is fatal.

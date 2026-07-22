@@ -457,6 +457,50 @@ func check(n int) {
 	}
 }
 
+// Test_Bundles_Range_Template: a _Invariants whose body is a Range_Invariants under the trailing
+// namespace parameter is a grid template like a self-emitting Dot_Product one — its bound grid is
+// seeded at each callsite's literal namespace, never under the bare parameter, and the parameter
+// namespace is never mistaken for a non-literal message.
+func Test_Bundles_Range_Template(t *testing.T) {
+	const SOURCE = `package fixture
+
+type Metric int
+
+const METRIC_MIN = 0
+const METRIC_MAX = 100
+
+func Metric_Invariants(n Metric, namespace string) {
+	invariant.Range_Invariants(n, METRIC_MIN, METRIC_MAX, namespace)
+}
+
+func check(n Metric) {
+	Metric_Invariants(n, "field")
+}
+`
+	var output bytes.Buffer
+	exit_code := -1
+	recorder := &invariant.Recorder{
+		File_System: fstest.MapFS{
+			"fixture/metric.go": &fstest.MapFile{Data: []byte(SOURCE)},
+		},
+		Output: &output,
+		Exit:   func(code int) { exit_code = code },
+	}
+	invariant.Recorder_Register_Packages_For_Analysis(recorder, "/fixture")
+
+	if exit_code != -1 {
+		t.Fatalf("a namespace-parameter Range_Invariants must not fail registration: %s",
+			output.String())
+	}
+	axis_max := invariant.ELEMENT_MESSAGE_SEPARATOR + invariant.RANGE_MESSAGE_MAXIMUM
+	if _, ok := recorder.Events.Load("field" + axis_max); !ok {
+		t.Error("the template must seed the max axis under the callsite namespace")
+	}
+	if _, ok := recorder.Events.Load("namespace" + axis_max); ok {
+		t.Error("the template must not seed under the bare namespace parameter")
+	}
+}
+
 // Test_Bundles_Descent: registration follows a _Invariants(v, "lit") call and seeds the grid its
 // body self-emits, keyed by the callsite namespace.
 func Test_Bundles_Descent(t *testing.T) {
@@ -1219,6 +1263,131 @@ func check(n int) {
 	}
 }
 
+// Test_Range_Guard: a Range_Invariants callsite registers both bound guards as namespaced Always
+// reachability entries; driving the preset credits them, and a value beyond the interval panics.
+func Test_Range_Guard(t *testing.T) {
+	recorder := range_registered(t, [2]string{"-100", "100"})
+	separator := invariant.ELEMENT_MESSAGE_SEPARATOR
+	guards := []string{invariant.RANGE_GUARD_UPPER, invariant.RANGE_GUARD_LOWER}
+	for _, label := range guards {
+		entry, ok := recorder.Events.Load("foo" + separator + label)
+		if !ok {
+			t.Fatalf("bound guard %q must seed a reachability entry", label)
+		}
+		if entry.(*invariant.Assertion_Metadata).Kind != invariant.ASSERTION_KIND_ALWAYS {
+			t.Errorf("bound guard %q must register as an Always entry", label)
+		}
+	}
+	invariant.Recorder_Range(recorder, 5, -100, 100, invariant.Namespace("foo"))
+	for _, label := range guards {
+		entry, _ := recorder.Events.Load("foo" + separator + label)
+		if entry.(*invariant.Assertion_Metadata).Frequency.Load() == 0 {
+			t.Errorf("reaching the preset must credit guard %q", label)
+		}
+	}
+	panicked := did_panic(func() {
+		invariant.Recorder_Range(recorder, 200, -100, 100, invariant.Namespace("foo"))
+	})
+	if !panicked {
+		t.Error("a value beyond the interval must panic")
+	}
+}
+
+// Test_Range_Coverage: the grid gets a Sometimes axis for each interval edge and each sentinel
+// strictly inside, mutually exclusive so only singleton and all-clear cells survive; driving every
+// one analyzes clean, and a single-value interval seeds no grid at all.
+func Test_Range_Coverage(t *testing.T) {
+	separator := invariant.ELEMENT_MESSAGE_SEPARATOR
+	witnessed := []string{
+		invariant.RANGE_MESSAGE_MINIMUM, invariant.RANGE_MESSAGE_MAXIMUM,
+		invariant.RANGE_MESSAGE_ZERO, invariant.RANGE_MESSAGE_ONE,
+		invariant.RANGE_MESSAGE_TWO, invariant.RANGE_MESSAGE_NEGATIVE_ONE,
+	}
+	wide := range_registered(t, [2]string{"-100", "100"})
+	for _, message := range witnessed {
+		if _, ok := wide.Events.Load("foo" + separator + message); !ok {
+			t.Errorf("[-100,100] must witness %q", message)
+		}
+	}
+	if _, ok := wide.Events.Load("foo:tuple=(0,0,0,0,0,0)"); !ok {
+		t.Error("the all-false cell must survive and be seeded")
+	}
+	if _, ok := wide.Events.Load("foo:tuple=(1,1,0,0,0,0)"); ok {
+		t.Error("the min-and-max cell must be carved by mutual exclusion")
+	}
+	// Drive both edges, every interior sentinel, and an ordinary value so each axis sees both
+	// events and every surviving cell is witnessed, then confirm the analysis reports no gap.
+	for _, v := range []int{-100, 100, 0, 1, 2, -1, 42} {
+		invariant.Recorder_Range(wide, v, -100, 100, invariant.Namespace("foo"))
+	}
+	if !range_analyzes_clean(wide) {
+		t.Error("a fully-exercised Range must analyze clean")
+	}
+	point := range_registered(t, [2]string{"5", "5"})
+	if range_has_tuple(point) {
+		t.Error("a single-value interval must seed no grid tuple")
+	}
+}
+
+// Test_Range_Saturation: when the interval's width is below its axis count every value is a
+// witnessed axis, so the all-false cell can never occur and is carved — a fully-driven saturated
+// Range analyzes clean rather than reporting an eternal gap for the unreachable "neither" value.
+func Test_Range_Saturation(t *testing.T) {
+	saturated := range_registered(t, [2]string{"0", "1"})
+	if _, ok := saturated.Events.Load("foo:tuple=(0,0)"); ok {
+		t.Error("a saturated interval must carve the all-false cell, not seed it")
+	}
+	// 0 and 1 are the only reachable values; driving both witnesses every surviving cell.
+	for _, v := range []int{0, 1} {
+		invariant.Recorder_Range(saturated, v, 0, 1, invariant.Namespace("foo"))
+	}
+	if !range_analyzes_clean(saturated) {
+		t.Error("a fully-driven saturated Range must analyze clean")
+	}
+}
+
+// Test_Range_Registration: the scan evaluates each bound as an integer constant — literals,
+// sibling-const references, and constant arithmetic — to decide which axes to seed, and a bound it
+// cannot resolve to a constant fails registration rather than dropping coverage.
+func Test_Range_Registration(t *testing.T) {
+	separator := invariant.ELEMENT_MESSAGE_SEPARATOR
+	// FOO_MAX evaluates to (1<<3)-1 = 7, so 2 is strictly inside [0,7] and -1 is below it.
+	evaluated := range_registered(t, [2]string{"0", "(1 << 3) - 1"})
+	seeded := func(message string) (ok bool) {
+		_, ok = evaluated.Events.Load("foo" + separator + message)
+		return ok
+	}
+	if !seeded(invariant.RANGE_MESSAGE_TWO) {
+		t.Error("two lies strictly inside [0, 7] and must seed an interior axis")
+	}
+	if !seeded(invariant.RANGE_MESSAGE_MAXIMUM) {
+		t.Error("the evaluated maximum edge must seed an axis")
+	}
+	if seeded(invariant.RANGE_MESSAGE_NEGATIVE_ONE) {
+		t.Error("negative one is below the minimum and must not seed an axis")
+	}
+	const UNRESOLVED = `package fixture
+
+const FOO_MAX = 100
+
+func check(f int, limit int) {
+	invariant.Range_Invariants(f, limit, FOO_MAX, "foo")
+}
+`
+	files := fstest.MapFS{"fixture/check.go": &fstest.MapFile{Data: []byte(UNRESOLVED)}}
+	var output bytes.Buffer
+	exit_code := -1
+	recorder := &invariant.Recorder{
+		File_System: files,
+		Output:      &output,
+		Exit:        func(code int) { exit_code = code },
+	}
+	invariant.Recorder_Register_Packages_For_Analysis(recorder, "/fixture")
+	if exit_code != 1 {
+		t.Fatalf("an unresolvable bound must fail registration, got exit %d", exit_code)
+	}
+}
+
 // Test_Coverage_Literal_Reference: an Impossible reference message must also be a string literal,
 // like every message — a non-literal reference fails registration, since the static side cannot
 // match it to a sibling axis to carve.
@@ -1426,4 +1595,43 @@ func bundle_subject_register(test_case bundle_subject_case) (code int, report st
 	}
 	invariant.Recorder_Register_Packages_For_Analysis(recorder, test_case.Directory)
 	return code, output.String()
+}
+
+// Registers a single Range_Invariants("foo") callsite with the given integer bounds and returns
+// the recorder, so a Range test varies only the interval.
+func range_registered(t *testing.T, bounds [2]string) (recorder *invariant.Recorder) {
+	t.Helper()
+	source := "package fixture\n\n" +
+		"const FOO_MIN = " + bounds[0] + "\n" +
+		"const FOO_MAX = " + bounds[1] + "\n\n" +
+		"func check(f int) {\n" +
+		"\tinvariant.Range_Invariants(f, FOO_MIN, FOO_MAX, \"foo\")\n}\n"
+	files := fstest.MapFS{"fixture/check.go": &fstest.MapFile{Data: []byte(source)}}
+	recorder = &invariant.Recorder{Is_Test: true, File_System: files}
+	invariant.Recorder_Register_Packages_For_Analysis(recorder, "/fixture")
+	return recorder
+}
+
+// Reports whether the recorder seeded any Range grid tuple under the "foo" namespace.
+func range_has_tuple(recorder *invariant.Recorder) (has bool) {
+	recorder.Events.Range(func(key, _ any) (continue_iteration bool) {
+		text, ok := key.(string)
+		if !ok {
+			return true
+		}
+		if strings.HasPrefix(text, "foo:tuple=") {
+			has = true
+		}
+		return true
+	})
+	return has
+}
+
+// Reports whether analyzing the recorder finds no coverage gap, capturing its exit through a stub.
+func range_analyzes_clean(recorder *invariant.Recorder) (clean bool) {
+	exited := false
+	recorder.Output = &bytes.Buffer{}
+	recorder.Exit = func(code int) { exited = true }
+	invariant.Recorder_Analyze_Assertion_Frequency(recorder)
+	return !exited
 }

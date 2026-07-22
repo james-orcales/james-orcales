@@ -218,6 +218,16 @@ func Dot_Product(namespace Namespace, dot_elements ...invariant.Dot_Element) {
 	invariant.Recorder_Dot_Product(Default, namespace, dot_elements...)
 }
 
+// Range_Invariants is the bounded-integer preset: it enforces value ∈ [minimum, maximum] as two
+// eager bound guards and self-emits, under namespace, the coverage grid for whichever of
+// {0, 1, 2, -1} the interval admits. One call replaces a bounded newtype's mandated bound preamble
+// and its 0/1/2/-1 boundary claims (see invariant.Recorder_Range).
+func Range_Invariants[
+	Value invariant.Integer, Minimum invariant.Integer, Maximum invariant.Integer,
+](value Value, minimum Minimum, maximum Maximum, namespace Namespace) {
+	invariant.Recorder_Range(Default, value, minimum, maximum, namespace)
+}
+
 // An int is assumed to be 64 bits wide, so that the minimum and maximum axes below are exactly an
 // int's bounds. This conversion fails to compile on a platform where int is narrower, because there
 // math.MaxInt is smaller than math.MaxInt64 and their difference is negative, which a uint cannot
