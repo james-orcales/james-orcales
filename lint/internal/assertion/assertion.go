@@ -355,6 +355,10 @@ type Numeric_Facts struct {
 	// Sometimes or Always) — the value can occur, as opposed to an != exclusion. The bound
 	// edges must be witnessed this way, never merely excluded.
 	Witnessed_Values map[string]bool
+	// Enum_Members holds the member operands of an Enum_Invariants preset body, or nil when the
+	// bundle is not an enum. Non-nil switches the bound and coverage checks to the enum path,
+	// where the members carry the bound-constant obligation and membership witnesses the edges.
+	Enum_Members []ast.Expr
 }
 
 // Collects bound and coverage diagnostics for one numeric bundle.
@@ -378,6 +382,11 @@ func numeric_collect_facts(input *Numeric_Bundle_Input) (facts Numeric_Facts) {
 		// A Range_Invariants preset call guards both bounds and claims every boundary value
 		// in one shorthand, so it stands in for the whole hand-written block below.
 		if numeric_record_range_preset(call, input, &facts) {
+			return true
+		}
+		// An Enum_Invariants preset does the same for a discrete domain — its members guard
+		// both ends and stand in for the coverage claims, each held to the constant rule.
+		if numeric_record_enum_preset(call, input, &facts) {
 			return true
 		}
 		is_always, matched := numeric_invariant_call(call, input.Invariant_Names)
@@ -435,6 +444,48 @@ func numeric_is_range_call(call *ast.CallExpr, invariant_names map[string]bool) 
 		return false
 	}
 	return selector.Sel.Name == "Range_Invariants"
+}
+
+// Folds an Enum_Invariants(value, namespace, members…) preset call into facts: membership guards
+// both ends and witnesses the edges, and every required boundary value is claimed, so the discrete
+// domain satisfies the bound and coverage rules. The members are recorded on facts.Enum_Members so
+// the bound-constant rule still applies to each of them. matched is false for any other call.
+func numeric_record_enum_preset(
+	call *ast.CallExpr, input *Numeric_Bundle_Input, facts *Numeric_Facts,
+) (matched bool) {
+	if !numeric_is_enum_call(call, input.Invariant_Names) {
+		return false
+	}
+	// A value, a namespace, and at least one member.
+	if len(call.Args) < 3 {
+		return false
+	}
+	if !numeric_subject_matcher(input)(call.Args[0]) {
+		return false
+	}
+	facts.Has_Lower = true
+	facts.Has_Upper = true
+	facts.Enum_Members = call.Args[2:]
+	for _, label := range numeric_required_labels(input.Kind) {
+		facts.Claimed_Values[label] = true
+	}
+	return true
+}
+
+// Reports whether call is <invariant>.Enum_Invariants(...), by the local import name.
+func numeric_is_enum_call(call *ast.CallExpr, invariant_names map[string]bool) (matched bool) {
+	selector, is_selector := call.Fun.(*ast.SelectorExpr)
+	if !is_selector {
+		return false
+	}
+	qualifier, is_identifier := selector.X.(*ast.Ident)
+	if !is_identifier {
+		return false
+	}
+	if !invariant_names[qualifier.Name] {
+		return false
+	}
+	return selector.Sel.Name == "Enum_Invariants"
 }
 
 // Reports whether an expression is the asserted subject — the value, or its count.
@@ -614,6 +665,19 @@ func numeric_bound_diagnostics(
 			Message: name + " must guard both ends: Always(" + subject +
 				" <= MAX) and Always(" + subject + " >= MIN)"})
 	}
+	// An enum's members are the bounds of its discrete domain, so each is held to the same
+	// package-level-constant rule as a MIN/MAX bound, in place of the Lower/Upper check.
+	if facts.Enum_Members != nil {
+		for _, member := range facts.Enum_Members {
+			member_name := numeric_operand_name(member)
+			if numeric_is_package_constant(member_name, input.Constants) {
+				continue
+			}
+			diags = append(diags, Diagnostic{Position: position,
+				Message: name + " enum member must be a package-level constant"})
+		}
+		return diags
+	}
 	if facts.Has_Upper {
 		if !numeric_is_package_constant(facts.Upper_Name, input.Constants) {
 			diags = append(diags, Diagnostic{Position: position,
@@ -643,6 +707,11 @@ func numeric_coverage_diagnostics(
 			continue
 		}
 		diags = append(diags, numeric_missing_claim(label, input))
+	}
+	// An enum witnesses its min and max members by construction (Recorder_Enum seeds both
+	// edges), so the name-keyed edge-witness check below does not apply to it.
+	if facts.Enum_Members != nil {
+		return diags
 	}
 	// The bound edges are always in range, so each must be positively witnessed, never merely
 	// guarded — the guard proves nothing was observed at the extreme.

@@ -205,6 +205,34 @@ func Test_Invariants_Numeric_Range_Preset(t *testing.T) {
 	}
 }
 
+// Test_Invariants_Numeric_Enum_Preset verifies an Enum_Invariants body satisfies the bound and
+// coverage mandate at once, while each member is still held to the package-level-constant rule.
+func Test_Invariants_Numeric_Enum_Preset(t *testing.T) {
+	t.Parallel()
+	preset := check_source(parse(t, &parse_input{Path: "pkg/rule.go",
+		Source_Text: sig_bundle_source(
+			"\tinvariant.Enum_Invariants(v, namespace, Sig_Min, Sig_Max)")}))
+	if diagnosed(preset, "must guard both ends") {
+		t.Error("an enum preset must not be flagged for its bounds")
+	}
+	if diagnosed(preset, "must claim") {
+		t.Error("an enum preset must not be flagged for its coverage")
+	}
+	if diagnosed(preset, "must witness") {
+		t.Error("an enum preset must not be flagged for its edges")
+	}
+	if diagnosed(preset, "must be a package-level constant") {
+		t.Error("an all-constant enum preset must not be flagged for its members")
+	}
+	// The Numeric Bound Constant rule still holds: an inline-literal member is flagged.
+	inline := check_source(parse(t, &parse_input{Path: "pkg/rule.go",
+		Source_Text: sig_bundle_source(
+			"\tinvariant.Enum_Invariants(v, namespace, Sig_Min, 7)")}))
+	if !diagnosed(inline, "must be a package-level constant") {
+		t.Fatal("an inline-literal enum member must be flagged")
+	}
+}
+
 // Test_Invariants_Count_Bounds verifies a string/slice/map bundle lacking the
 // Always len bounds is flagged.
 func Test_Invariants_Count_Bounds(t *testing.T) {

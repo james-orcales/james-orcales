@@ -52,6 +52,12 @@ A single invariant.Range_Invariants(v, MIN, MAX, namespace) call satisfies the N
 Numeric Coverage rules at once, provided MIN and MAX are each a package-level constant (the Numeric
 Bound Constant rule still applies to them).
 
+### Numeric Enum Preset
+
+A single invariant.Enum_Invariants(v, namespace, members…) call satisfies the Numeric Bounds and
+Numeric Coverage rules at once — membership guards both ends and witnesses the edges. Every member
+is a bound of the discrete domain, so each must be a package-level constant, never inline.
+
 ### Count Bounds
 
 A string, slice, or map type's bundle guards its length with the length on the left:
