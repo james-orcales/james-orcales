@@ -20,109 +20,59 @@ type Employee struct {
 There's a bunch of useful things we can do with this information beyond reducing boilerplate, such
 as autogeneration of property testing but we'll leave it at that.
 
-This framework exposes composable properties. A property is a coverage grid of axes; a type's
-properties travel with it and compose across types — each type's grid kept self-contained.
+This framework exposes composable properties: eager guards that must hold on every call, and
+observations the suite must witness both ways. A type's properties travel with it and compose
+across types.
 
 ## Atoms
 
-Every property is built from two atoms, `Always` and `Sometimes`. They look alike — each takes a
-bool and a message — but they assert opposite kinds of thing, and the difference is the whole
-design.
-
 `Always(condition, message)` is a hard assertion: the condition must hold on every call, and a
-single false observation panics. Its coverage obligation is only that it be *reached*: an `Always`
-the suite never exercises is reported as a gap.
+single false observation panics at the callsite. Its coverage obligation is only that it be
+*reached*: an `Always` the suite never exercises is reported as a gap.
 
-`Sometimes(condition, message)` is a `Dot_Product` chain link. It is a claim about the *run*: across
-the whole suite the condition must be observed both true and false. A link seen only true means the
-suite never drove it false; that missing branch is a coverage gap reported at the end. `Always`
-catches a value that should never occur, while `Sometimes` catches a case the tests forgot to cover.
+`Sometimes(condition, message)` is a bare observation. It is a claim about the *run*: across the
+whole suite the condition must be observed both true and false. It never panics — a condition
+seen only true means the suite never drove it false, and that missing branch is a coverage gap.
+`Always` catches a value that should never occur, while `Sometimes` catches a case the tests
+forgot to cover.
 
-Chain links only build the product value. They neither record nor panic while the expression is
-being assembled; terminal `Ensure` validates, enforces, and records the complete call atomically.
+`Range(value, minimum, maximum, excluded...)` and `Enum(value, members...)` are the typed eager
+guards, generic over every defined integer width except `uintptr`. They panic like `Always`,
+naming the value and the violated bound or the member set; trailing `Range` exclusions are holes
+inside the interval the value must also avoid.
 
-`Always` and `Sometimes` are the only true atoms; everything else is sugar over them. The sugar tier
-adds the `*_Invariants` presets purely to cut boilerplate — each expanding into `Always` /
-`Sometimes` checks over a value.
-
-There is no bare `Sometimes`. It exists only after a namespaced `Dot_Product` root, which gives
-every axis a callsite-local identity. `Always` stays bare and eager, enforcing when called.
-
-### Axes compose into a grid
-
-A `Sometimes` is a two-outcome axis: the suite must witness it both true and false. An `Always`
-is a guard, not an axis — it has one legal outcome, so it never widens the grid. `Dot_Product`
-takes the cartesian product of its chain axes and demands every cell be witnessed. Its namespace is
-a literal that identifies the grid; each link's ordinal keeps repeated messages distinct:
-
-```go
-invariant.Always(p, "p holds") // eager guard: enforced right here, on every call
-invariant.Dot_Product("widget").
-    Sometimes(q, "q").
-    Sometimes(r, "r").
-    Ensure()
-```
-
-The two `Sometimes` axes generate a 2×2 grid. Every cell must be reached by the suite, while
-`Always(p)` is enforced eagerly on every call, independent of the grid:
-
-```
-(q=0, r=0)
-(q=0, r=1)
-(q=1, r=0)
-(q=1, r=1)
-```
-
-Two axes → 2² cells, three → 2³, n → 2ⁿ. The grid is the whole point and also the whole danger:
-it grows exponentially. `Impossible` is the pressure valve — it deletes cells that cannot occur, so
-the suite is never asked to witness the impossible. Its chain link names preceding sibling axes by
-message and polarity, and globs over axes it does not name:
-
-```go
-invariant.Dot_Product("widget").
-    Sometimes(q, "q").
-    Sometimes(r, "r").
-    Impossible("q and r are exclusive",
-        invariant.Event_True("q"),
-        invariant.Event_True("r")).
-    Ensure()
-```
+The sugar tier adds the `*_Invariants` presets purely to cut boilerplate — each expanding into
+`Sometimes` witnesses over a primitive value's boundary cases.
 
 ## Composition across types
 
-A type's properties live in a `_Invariants` function named for the type, taking the value and a
-`Namespace`. It **self-emits** its own `Dot_Product` under that namespace — the type owns its grid,
-and the caller supplies the per-callsite identity as an inline literal.
+A type's properties live in a `_Invariants` function named for the type, taking the value. The
+type owns its properties; a boundary demands them with one call.
 
 ```go
 // A Token is the lexer's atom: never empty, never edge-padded with whitespace,
 // and underscores show up only sometimes.
 type Token string
 
-func Token_Invariants(token Token, namespace invariant.Namespace) {
-    // Eager guards fire right here; only the Sometimes links form the grid.
-    invariant.Always(token != "", "non-empty")
-    invariant.Always(strings.TrimSpace(string(token)) == string(token), "no edge whitespace")
-    invariant.Dot_Product(namespace).
-        Sometimes(strings.Contains(string(token), "_"), "has underscore").
-        Ensure()
+func Token_Invariants(token Token) {
+    invariant.Always(token != "", "A token is never empty.")
+    invariant.Always(strings.TrimSpace(string(token)) == string(token),
+        "A token has no edge whitespace.")
+    invariant.Sometimes(strings.Contains(string(token), "_"), "A token has an underscore.")
 }
 
 // A Span is a half-open byte range into the source. A zero-width span (Lo == Hi)
 // is the EOF marker, so it must show up sometimes but not always.
 type Span struct{ Lo, Hi int }
 
-func Span_Invariants(span Span, namespace invariant.Namespace) {
-    invariant.Always(span.Lo <= span.Hi, "ordered")
-    invariant.Dot_Product(namespace).
-        Sometimes(span.Lo == span.Hi, "zero width").
-        Ensure()
+func Span_Invariants(span Span) {
+    invariant.Always(span.Lo <= span.Hi, "A span is ordered.")
+    invariant.Sometimes(span.Lo == span.Hi, "A span is zero-width.")
 }
 ```
 
-A composite composes by **calling** its parts' `_Invariants` with literal sub-namespaces, plus its
-own axes for the cross-field properties no part can state alone. Each part registers its **own,
-self-contained grid** — there is no joint cross-product across the parts:
+A composite composes by **calling** its parts' `_Invariants`, plus its own assertions for the
+cross-field properties no part can state alone:
 
 ```go
 type Lexeme struct {
@@ -130,51 +80,27 @@ type Lexeme struct {
     Span  Span
 }
 
-func Lexeme_Invariants(lexeme Lexeme, namespace invariant.Namespace) {
-    // The cross-field property relates the parts — an eager guard, not an axis.
-    invariant.Always(lexeme.Span.Hi-lexeme.Span.Lo == len(lexeme.Token), "span matches token")
-    // The composite's own axis: a coverage case only it can state.
-    invariant.Dot_Product(namespace).
-        Sometimes(lexeme.Span.Lo == lexeme.Span.Hi, "eof lexeme").
-        Ensure()
-    // Composition: each part self-emits its grid under its own literal namespace.
-    Token_Invariants(lexeme.Token, "Lexeme.Token")
-    Span_Invariants(lexeme.Span, "Lexeme.Span")
-}
-```
-
-At a boundary touching more than one value, call each one's `_Invariants` under its own namespace.
-There is no `Cross_Product` and no joint grid: keeping the grids marginal (the same model
-Antithesis uses) is what removes the combinatorial blow-up — `n` types contribute `n` separate
-grids, not one of size `2^(sum of their axes)`:
-
-```go
-// At the lexer boundary, the emitted lexeme and the source it was cut from each
-// register their own grid. String_Invariants is the framework's own preset for a string.
-func emit(lexeme Lexeme, source string) {
-    Lexeme_Invariants(lexeme, "lex.emit.lexeme")
-    invariant.String_Invariants(source, "lex.emit.source")
+func Lexeme_Invariants(lexeme Lexeme) {
+    invariant.Always(lexeme.Span.Hi-lexeme.Span.Lo == len(lexeme.Token),
+        "A lexeme's span matches its token.")
+    invariant.Sometimes(lexeme.Span.Lo == lexeme.Span.Hi, "A lexeme is the EOF marker.")
+    Token_Invariants(lexeme.Token)
+    Span_Invariants(lexeme.Span)
 }
 ```
 
 Declare your own `_Invariants` only for a custom, defined type. The presets are the framework's
 bundles for the primitive types; user code never re-declares one. To cover a primitive, call a
-preset, state its axes inline, or wrap it in a custom type — registration rejects a user bundle
-whose subject is a primitive (a builtin, an unnamed slice/map, or any unnamed composite).
-
-Each callsite namespace is the grid's identity: two callsites with distinct namespaces register
-independent grids that never mask each other's gaps, and reusing one namespace is a duplicate that
-fails registration. A `_Invariants` body must be straight-line — a branching or looping statement
-fails registration, since it would make the axes the body self-emits depend on runtime values the
-static scan cannot read.
+preset, state its assertions inline, or wrap it in a custom type. A `_Invariants` body must be
+straight-line — a branching or looping statement fails registration, since it would make the
+properties the body emits depend on runtime values the static scan cannot read.
 
 ## Static registration
 
-Before the suite runs, a source scan walks every `_Invariants(v, "literal")` callsite, resolves the
-function, and registers the ensured chain its body self-emits — keyed by the literal namespace. A
-never-witnessed cell, an unobserved axis branch, or an unreached `Always` is reported at the end and
-fails the run. Runtime and registration rendezvous on namespace, link ordinal, and message, so what
-the scan demands is exactly what the run credits.
+Before the suite runs, a source scan discovers every bare `Always` and seeds its literal message;
+an unreached `Always` fails the run at the end. Registration for the bare `Sometimes`, `Range`,
+and `Enum` writers is a later iteration — until then they enforce (and `Sometimes` records into
+already-seeded entries) without seeding obligations of their own.
 
 ## NOTES
 
