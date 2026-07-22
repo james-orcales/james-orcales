@@ -5178,6 +5178,15 @@ func check_names_vocabulary_message(input *Check_Names_Vocabulary_Message_Input)
 // then read as `transfer(&Transfer_Input{Src: ..., Dst: ...})` and re-orderings
 // become compile errors.
 func check_input_struct(file_set *token.FileSet, file *ast.File, _ []byte) (diags []Diagnostic) {
+	// The assertion DSL and its external tests repeat parameter types by design
+	// (Range_TYPE(v, MIN, MAX)); forcing ceremony into either side obscures the
+	// exact declarations that registration must analyze.
+	if file.Name.Name == "invariant" {
+		return nil
+	}
+	if file.Name.Name == "invariant_test" {
+		return nil
+	}
 
 	for index, declaration := range file.Decls {
 		function_declaration, ok := declaration.(*ast.FuncDecl)

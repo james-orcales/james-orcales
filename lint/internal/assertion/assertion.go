@@ -359,8 +359,8 @@ type Numeric_Facts struct {
 	// Sometimes or Always) — the value can occur, as opposed to an != exclusion. The bound
 	// edges must be witnessed this way, never merely excluded.
 	Witnessed_Values map[string]bool
-	// Enum_Members holds the member operands of an Enum_Invariants preset body, or nil when the
-	// bundle is not an enum. Non-nil switches the bound and coverage checks to the enum path,
+	// Enum_Members holds the operands of a typed Enum link, or nil when there is no enum.
+	// Non-nil switches the bound and coverage checks to the enum path,
 	// where the members carry the bound-constant obligation and membership witnesses the edges.
 	Enum_Members []ast.Expr
 }
@@ -383,16 +383,7 @@ func numeric_collect_facts(input *Numeric_Bundle_Input) (facts Numeric_Facts) {
 		if !is_call {
 			return true
 		}
-		// A Range_Invariants preset call guards both bounds and claims every boundary value
-		// in one shorthand, so it stands in for the whole hand-written block below.
-		if numeric_record_range_preset(call, input, &facts) {
-			return true
-		}
-		// An Enum_Invariants preset does the same for a discrete domain — its members guard
-		// both ends and stand in for the coverage claims, each held to the constant rule.
-		if numeric_record_enum_preset(call, input, &facts) {
-			return true
-		}
+		numeric_record_ensured_presets(call, input, &facts)
 		is_always, matched := numeric_invariant_call(call, input.Invariant_Names)
 		if !matched {
 			return true
@@ -403,18 +394,113 @@ func numeric_collect_facts(input *Numeric_Bundle_Input) (facts Numeric_Facts) {
 	return facts
 }
 
-// Folds a Range_Invariants(value, MIN, MAX, namespace) preset call into facts: it guards the lower
-// bound (MIN, on Args[1]) and the upper bound (MAX, on Args[2]) and claims every required boundary
-// value, so a bundle whose body is the preset satisfies the numeric bound and coverage rules.
+// Only a preset nested beneath Ensure satisfies the mandate; recognizing a loose method call would
+// certify conditions whose enforcement and coverage are deliberately deferred to the terminator.
+func numeric_record_ensured_presets(
+	ensure *ast.CallExpr, input *Numeric_Bundle_Input, facts *Numeric_Facts,
+) (matched bool) {
+	selector, is_selector := ensure.Fun.(*ast.SelectorExpr)
+	if !is_selector {
+		return false
+	}
+	if selector.Sel.Name != "Ensure" {
+		return false
+	}
+	if len(ensure.Args) != 0 {
+		return false
+	}
+	current, is_call := selector.X.(*ast.CallExpr)
+	if !is_call {
+		return false
+	}
+	var presets []*ast.CallExpr
+	for step_index := 0; step_index < NUMERIC_CHAIN_LINKS_MAX; step_index++ {
+		method, receiver, chained := numeric_chain_method(current)
+		if !chained {
+			break
+		}
+		if numeric_typed_range_name(method) {
+			presets = append(presets, current)
+		}
+		if numeric_typed_enum_name(method) {
+			presets = append(presets, current)
+		}
+		current = receiver
+	}
+	if !numeric_dot_product_root(current, input.Invariant_Names) {
+		return false
+	}
+	for _, preset := range presets {
+		if numeric_record_range_preset(preset, input, facts) {
+			matched = true
+		}
+		if numeric_record_enum_preset(preset, input, facts) {
+			matched = true
+		}
+	}
+	return matched
+}
+
+func numeric_chain_method(
+	call *ast.CallExpr,
+) (method string, receiver *ast.CallExpr, chained bool) {
+	selector, is_selector := call.Fun.(*ast.SelectorExpr)
+	if !is_selector {
+		return method, receiver, false
+	}
+	receiver, is_call := selector.X.(*ast.CallExpr)
+	return selector.Sel.Name, receiver, is_call
+}
+
+func numeric_dot_product_root(call *ast.CallExpr, invariant_names map[string]bool) (root bool) {
+	selector, is_selector := call.Fun.(*ast.SelectorExpr)
+	if !is_selector {
+		return false
+	}
+	if selector.Sel.Name != "Dot_Product" {
+		return false
+	}
+	qualifier, is_identifier := selector.X.(*ast.Ident)
+	if !is_identifier {
+		return false
+	}
+	return invariant_names[qualifier.Name]
+}
+
+func numeric_typed_range_name(name string) (matched bool) {
+	if !strings.HasPrefix(name, "Range_") {
+		return false
+	}
+	return numeric_typed_preset_suffix(strings.TrimPrefix(name, "Range_"))
+}
+
+func numeric_typed_enum_name(name string) (matched bool) {
+	if !strings.HasPrefix(name, "Enum_") {
+		return false
+	}
+	return numeric_typed_preset_suffix(strings.TrimPrefix(name, "Enum_"))
+}
+
+func numeric_typed_preset_suffix(suffix string) (matched bool) {
+	switch suffix {
+	case "Int", "Int8", "Int16", "Int32", "Int64",
+		"Uint", "Uint8", "Uint16", "Uint32", "Uint64":
+		return true
+	}
+	return false
+}
+
+// Folds a typed Range(value, MIN, MAX) link into facts: it guards the lower bound (MIN, on Args[1])
+// and upper bound (MAX, on Args[2]) and claims every required boundary value.
 // matched is false for any other call. The MIN/MAX operand names still flow into facts, so the
 // Numeric Bound Constant rule (each must be a package-level constant) survives the shorthand.
 func numeric_record_range_preset(
 	call *ast.CallExpr, input *Numeric_Bundle_Input, facts *Numeric_Facts,
 ) (matched bool) {
-	if !numeric_is_range_call(call, input.Invariant_Names) {
+	if !numeric_is_range_call(call) {
 		return false
 	}
-	if len(call.Args) < 4 {
+	if len(call.Args) < 3 {
 		return false
 	}
 	// The first argument is the subject: the value itself, or len(value) for a count bundle.
@@ -434,34 +520,25 @@ func numeric_record_range_preset(
 	return true
 }
 
-// Reports whether call is <invariant>.Range_Invariants(...), by the local import name.
-func numeric_is_range_call(call *ast.CallExpr, invariant_names map[string]bool) (matched bool) {
+// Reports whether call is one of Product's exact concrete Range methods.
+func numeric_is_range_call(call *ast.CallExpr) (matched bool) {
 	selector, is_selector := call.Fun.(*ast.SelectorExpr)
 	if !is_selector {
 		return false
 	}
-	qualifier, is_identifier := selector.X.(*ast.Ident)
-	if !is_identifier {
-		return false
-	}
-	if !invariant_names[qualifier.Name] {
-		return false
-	}
-	return selector.Sel.Name == "Range_Invariants"
+	return numeric_typed_range_name(selector.Sel.Name)
 }
 
-// Folds an Enum_Invariants(value, namespace, members…) preset call into facts: membership guards
-// both ends and witnesses the edges, and every required boundary value is claimed, so the discrete
-// domain satisfies the bound and coverage rules. The members are recorded on facts.Enum_Members so
-// the bound-constant rule still applies to each of them. matched is false for any other call.
+// Folds a typed Enum(value, members…) link into facts. Members remain on Enum_Members so the
+// bound-constant rule still applies to every converted operand.
 func numeric_record_enum_preset(
 	call *ast.CallExpr, input *Numeric_Bundle_Input, facts *Numeric_Facts,
 ) (matched bool) {
-	if !numeric_is_enum_call(call, input.Invariant_Names) {
+	if !numeric_is_enum_call(call) {
 		return false
 	}
-	// A value, a namespace, and at least one member.
-	if len(call.Args) < 3 {
+	// A value and at least one member.
+	if len(call.Args) < 2 {
 		return false
 	}
 	if !numeric_subject_matcher(input)(call.Args[0]) {
@@ -469,27 +546,20 @@ func numeric_record_enum_preset(
 	}
 	facts.Has_Lower = true
 	facts.Has_Upper = true
-	facts.Enum_Members = call.Args[2:]
+	facts.Enum_Members = call.Args[1:]
 	for _, label := range numeric_required_labels(input.Kind) {
 		facts.Claimed_Values[label] = true
 	}
 	return true
 }
 
-// Reports whether call is <invariant>.Enum_Invariants(...), by the local import name.
-func numeric_is_enum_call(call *ast.CallExpr, invariant_names map[string]bool) (matched bool) {
+// Reports whether call is one of Product's exact concrete Enum methods.
+func numeric_is_enum_call(call *ast.CallExpr) (matched bool) {
 	selector, is_selector := call.Fun.(*ast.SelectorExpr)
 	if !is_selector {
 		return false
 	}
-	qualifier, is_identifier := selector.X.(*ast.Ident)
-	if !is_identifier {
-		return false
-	}
-	if !invariant_names[qualifier.Name] {
-		return false
-	}
-	return selector.Sel.Name == "Enum_Invariants"
+	return numeric_typed_enum_name(selector.Sel.Name)
 }
 
 // Reports whether an expression is the asserted subject — the value, or its count.
@@ -510,6 +580,7 @@ func numeric_subject_matcher(input *Numeric_Bundle_Input) (match Numeric_Subject
 
 // Reports whether expression is len(value).
 func numeric_is_count(expression ast.Expr, value string) (yes bool) {
+	expression = numeric_unwrap_integer_conversion(expression)
 	call, is_call := expression.(*ast.CallExpr)
 	if !is_call {
 		return false
@@ -749,8 +820,8 @@ func numeric_coverage_diagnostics(
 		}
 		diags = append(diags, numeric_missing_claim(label, input))
 	}
-	// An enum witnesses its min and max members by construction (Recorder_Enum seeds both
-	// edges), so the name-keyed edge-witness check below does not apply to it.
+	// A typed Enum expansion witnesses its minimum and maximum members by construction, so the
+	// name-keyed edge-witness check below does not apply to it.
 	if facts.Enum_Members != nil {
 		return diags
 	}
@@ -811,6 +882,7 @@ func numeric_is_package_constant(name string, constants map[string]bool) (yes bo
 
 // Reports whether operand is the value identifier.
 func numeric_is_value(operand ast.Expr, value string) (yes bool) {
+	operand = numeric_unwrap_integer_conversion(operand)
 	identifier, is_identifier := operand.(*ast.Ident)
 	if !is_identifier {
 		return false
@@ -821,11 +893,32 @@ func numeric_is_value(operand ast.Expr, value string) (yes bool) {
 // Returns operand's identifier name, or "" when it is not a bare identifier (a
 // literal or selector is therefore never accepted as a bound constant).
 func numeric_operand_name(operand ast.Expr) (name string) {
+	operand = numeric_unwrap_integer_conversion(operand)
 	identifier, is_identifier := operand.(*ast.Ident)
 	if !is_identifier {
 		return ""
 	}
 	return identifier.Name
+}
+
+func numeric_unwrap_integer_conversion(expression ast.Expr) (unwrapped ast.Expr) {
+	call, is_call := expression.(*ast.CallExpr)
+	if !is_call {
+		return expression
+	}
+	if len(call.Args) != 1 {
+		return expression
+	}
+	identifier, is_identifier := call.Fun.(*ast.Ident)
+	if !is_identifier {
+		return expression
+	}
+	switch identifier.Name {
+	case "int", "int8", "int16", "int32", "int64",
+		"uint", "uint8", "uint16", "uint32", "uint64":
+		return call.Args[0]
+	}
+	return expression
 }
 
 // Returns the comparison operand that is not the subject, or nil when neither is.

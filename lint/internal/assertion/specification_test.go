@@ -161,13 +161,14 @@ func Test_Invariants_Numeric_Coverage(t *testing.T) {
 	}
 }
 
-// Test_Invariants_Numeric_Range_Preset verifies a bundle whose body is one Range_Invariants call
-// satisfies the bound and coverage rules, while an inline-literal bound to it is still flagged.
+// Test_Invariants_Numeric_Range_Preset verifies a typed Range link satisfies the bound and coverage
+// rules while the required defined-type conversions do not hide an inline-literal bound.
 func Test_Invariants_Numeric_Range_Preset(t *testing.T) {
 	t.Parallel()
 	preset := check_source(parse(t, &parse_input{Path: "pkg/rule.go",
 		Source_Text: sig_bundle_source(
-			"\tinvariant.Range_Invariants(v, Sig_Min, Sig_Max, namespace)")}))
+			"\tinvariant.Dot_Product(namespace).\n" +
+				"\t\tRange_Int(int(v), int(Sig_Min), int(Sig_Max)).Ensure()")}))
 	verbose := check_source(parse(t, &parse_input{Path: "pkg/rule.go",
 		Source_Text: sig_bundle_source(
 			"\tinvariant.Always(v <= Sig_Max, \"max\")\n" +
@@ -199,19 +200,21 @@ func Test_Invariants_Numeric_Range_Preset(t *testing.T) {
 	// The Numeric Bound Constant rule still holds: an inline bound to the preset is flagged.
 	inline := check_source(parse(t, &parse_input{Path: "pkg/rule.go",
 		Source_Text: sig_bundle_source(
-			"\tinvariant.Range_Invariants(v, Sig_Min, 7, namespace)")}))
+			"\tinvariant.Dot_Product(namespace).\n" +
+				"\t\tRange_Int(int(v), int(Sig_Min), int(7)).Ensure()")}))
 	if !diagnosed(inline, "must be a package-level constant") {
 		t.Fatal("an inline-literal preset bound must be flagged")
 	}
 }
 
-// Test_Invariants_Numeric_Enum_Preset verifies an Enum_Invariants body satisfies the bound and
-// coverage mandate at once, while each member is still held to the package-level-constant rule.
+// Test_Invariants_Numeric_Enum_Preset verifies a typed Enum link satisfies the bound and coverage
+// mandate while converted members remain held to the package-level-constant rule.
 func Test_Invariants_Numeric_Enum_Preset(t *testing.T) {
 	t.Parallel()
 	preset := check_source(parse(t, &parse_input{Path: "pkg/rule.go",
 		Source_Text: sig_bundle_source(
-			"\tinvariant.Enum_Invariants(v, namespace, Sig_Min, Sig_Max)")}))
+			"\tinvariant.Dot_Product(namespace).\n" +
+				"\t\tEnum_Int(int(v), int(Sig_Min), int(Sig_Max)).Ensure()")}))
 	if diagnosed(preset, "must guard both ends") {
 		t.Error("an enum preset must not be flagged for its bounds")
 	}
@@ -227,7 +230,8 @@ func Test_Invariants_Numeric_Enum_Preset(t *testing.T) {
 	// The Numeric Bound Constant rule still holds: an inline-literal member is flagged.
 	inline := check_source(parse(t, &parse_input{Path: "pkg/rule.go",
 		Source_Text: sig_bundle_source(
-			"\tinvariant.Enum_Invariants(v, namespace, Sig_Min, 7)")}))
+			"\tinvariant.Dot_Product(namespace).\n" +
+				"\t\tEnum_Int(int(v), int(Sig_Min), int(7)).Ensure()")}))
 	if !diagnosed(inline, "must be a package-level constant") {
 		t.Fatal("an inline-literal enum member must be flagged")
 	}
@@ -291,14 +295,15 @@ func Test_Invariants_Count_Coverage(t *testing.T) {
 	if !diagnosed(check_source(pf), "must claim 2") {
 		t.Fatal("a length bundle missing the 2 claim must be flagged")
 	}
-	// A count bundle whose body is one Range_Invariants over len(v) is accepted.
+	// A count bundle whose body is one typed Range chain over len(v) is accepted.
 	preset_source := "package fixture\n\n" +
 		"import \"fixture/shared/invariant\"\n\n" +
 		"const Name_Max = 32\n\nconst Name_Min = 0\n\n" +
 		"// Name is a fixture.\ntype Name string\n\n" +
 		"// Name_Invariants is a fixture.\n" +
 		"func Name_Invariants(v Name, namespace invariant.Namespace) {\n" +
-		"\tinvariant.Range_Invariants(len(v), Name_Min, Name_Max, namespace)\n}\n"
+		"\tinvariant.Dot_Product(namespace).\n" +
+		"\t\tRange_Int(len(v), Name_Min, Name_Max).Ensure()\n}\n"
 	preset := check_source(parse(t, &parse_input{
 		Path: "pkg/rule.go", Source_Text: preset_source}))
 	if diagnosed(preset, "must guard") {

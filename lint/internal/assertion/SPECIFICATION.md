@@ -48,15 +48,15 @@ range, so each must be witnessed by chain links, never merely guarded.
 
 ### Numeric Range Preset
 
-A single invariant.Range_Invariants(v, MIN, MAX, namespace) call satisfies the Numeric Bounds and
-Numeric Coverage rules at once, provided MIN and MAX are each a package-level constant (the Numeric
-Bound Constant rule still applies to them).
+A terminated `Range_TYPE(value, minimum, maximum, holes...).Ensure()` chain satisfies Numeric Bounds
+and Numeric Coverage at once. A defined integer explicitly converts each argument to TYPE;
+conversion never relaxes the bound-constant rule or requires a local declaration.
 
 ### Numeric Enum Preset
 
-A single invariant.Enum_Invariants(v, namespace, members…) call satisfies the Numeric Bounds and
-Numeric Coverage rules at once — membership guards both ends and witnesses the edges. Every member
-is a bound of the discrete domain, so each must be a package-level constant, never inline.
+A terminated `invariant.Dot_Product(namespace).Enum_TYPE(v, members…).Ensure()` chain satisfies the
+same rules for a discrete domain. Every member, including one under its exact TYPE conversion, must
+remain a package-level constant rather than an inline value.
 
 ### Count Bounds
 

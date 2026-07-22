@@ -320,7 +320,7 @@ A function spans at most seventy lines.
 
 A function whose parameters repeat a type takes a single input struct pointer, named for the
 function and declared just above it, or parted from it only by the struct's own invariant function;
-a variadic may remain a separate parameter.
+a variadic may remain a separate parameter. Packages invariant and invariant_test are exempt.
 
 ### Named Returns
 

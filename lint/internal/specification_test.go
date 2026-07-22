@@ -821,7 +821,7 @@ func Test_Source_And_Test_Requirements_Function_Size(t *testing.T) {
 }
 
 // Test_Source_And_Test_Requirements_Input_Structs verifies a function repeating
-// a parameter type is flagged.
+// a parameter type is flagged, while the assertion DSL and its external tests are exempt.
 func Test_Source_And_Test_Requirements_Input_Structs(t *testing.T) {
 	t.Parallel()
 	files := specification_one_file(
@@ -829,6 +829,18 @@ func Test_Source_And_Test_Requirements_Input_Structs(t *testing.T) {
 			"func F(a int, b int) (n int) {\n\treturn a + b\n}\n")
 	if !specification_flags(t, files, "convert to") {
 		t.Fatal("a repeated parameter type must be flagged")
+	}
+	files = specification_one_file(
+		"package invariant\n\n// F does.\n" +
+			"func F(a int, b int) (n int) {\n\treturn a + b\n}\n")
+	if specification_flags(t, files, "convert to") {
+		t.Fatal("a package named invariant must be exempt from the input-struct rule")
+	}
+	files = specification_one_file(
+		"package invariant_test\n\n// F does.\n" +
+			"func F(a int, b int) (n int) {\n\treturn a + b\n}\n")
+	if specification_flags(t, files, "convert to") {
+		t.Fatal("invariant_test must be exempt from the input-struct rule")
 	}
 }
 
