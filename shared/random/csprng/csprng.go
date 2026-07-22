@@ -97,23 +97,20 @@ type Block_Counter uint32
 func Block_Counter_Invariants(counter Block_Counter, namespace invariant.Namespace) {
 	invariant.Always(counter >= BLOCK_COUNTER_MIN, "A block counter is at least its min.")
 	invariant.Always(counter <= BLOCK_COUNTER_MAX, "A block counter is at most its max.")
-	invariant.Dot_Product(namespace,
-		invariant.Sometimes(counter == 0, "A block counter is zero."),
-		invariant.Sometimes(counter == 1, "A block counter is one."),
-		invariant.Sometimes(counter == 2, "A block counter is two."),
-		invariant.Impossible(
+	invariant.Dot_Product(namespace).
+		Sometimes(counter == 0, "A block counter is zero.").
+		Sometimes(counter == 1, "A block counter is one.").
+		Sometimes(counter == 2, "A block counter is two.").
+		Impossible("A block counter cannot be zero and one.",
 			invariant.Event_True("A block counter is zero."),
-			invariant.Event_True("A block counter is one."),
-		),
-		invariant.Impossible(
+			invariant.Event_True("A block counter is one.")).
+		Impossible("A block counter cannot be zero and two.",
 			invariant.Event_True("A block counter is zero."),
-			invariant.Event_True("A block counter is two."),
-		),
-		invariant.Impossible(
+			invariant.Event_True("A block counter is two.")).
+		Impossible("A block counter cannot be one and two.",
 			invariant.Event_True("A block counter is one."),
-			invariant.Event_True("A block counter is two."),
-		),
-	)
+			invariant.Event_True("A block counter is two.")).
+		Ensure()
 }
 
 // Cursor is the next unread byte of a Generator's buffer, from CURSOR_MIN to CURSOR_MAX.
@@ -123,23 +120,20 @@ type Cursor uint
 func Cursor_Invariants(cursor Cursor, namespace invariant.Namespace) {
 	invariant.Always(cursor >= CURSOR_MIN, "A cursor is at least its min.")
 	invariant.Always(cursor <= CURSOR_MAX, "A cursor is at most its max.")
-	invariant.Dot_Product(namespace,
-		invariant.Sometimes(cursor == 0, "A cursor is zero."),
-		invariant.Sometimes(cursor == 1, "A cursor is one."),
-		invariant.Sometimes(cursor == 2, "A cursor is two."),
-		invariant.Impossible(
+	invariant.Dot_Product(namespace).
+		Sometimes(cursor == 0, "A cursor is zero.").
+		Sometimes(cursor == 1, "A cursor is one.").
+		Sometimes(cursor == 2, "A cursor is two.").
+		Impossible("A cursor cannot be zero and one.",
 			invariant.Event_True("A cursor is zero."),
-			invariant.Event_True("A cursor is one."),
-		),
-		invariant.Impossible(
+			invariant.Event_True("A cursor is one.")).
+		Impossible("A cursor cannot be zero and two.",
 			invariant.Event_True("A cursor is zero."),
-			invariant.Event_True("A cursor is two."),
-		),
-		invariant.Impossible(
+			invariant.Event_True("A cursor is two.")).
+		Impossible("A cursor cannot be one and two.",
 			invariant.Event_True("A cursor is one."),
-			invariant.Event_True("A cursor is two."),
-		),
-	)
+			invariant.Event_True("A cursor is two.")).
+		Ensure()
 }
 
 // Bound is the exclusive upper limit of a Generator_Below draw: a positive count of outcomes.
@@ -150,14 +144,13 @@ func Bound_Invariants(bound Bound, namespace invariant.Namespace) {
 	invariant.Always(bound >= BOUND_MIN, "A bound is at least its min.")
 	invariant.Always(bound <= BOUND_MAX, "A bound is at most its max.")
 	invariant.Always(bound != 0, "A bound is never zero.")
-	invariant.Dot_Product(namespace,
-		invariant.Sometimes(bound == 1, "A bound is one."),
-		invariant.Sometimes(bound == 2, "A bound is two."),
-		invariant.Impossible(
+	invariant.Dot_Product(namespace).
+		Sometimes(bound == 1, "A bound is one.").
+		Sometimes(bound == 2, "A bound is two.").
+		Impossible("A bound cannot be one and two.",
 			invariant.Event_True("A bound is one."),
-			invariant.Event_True("A bound is two."),
-		),
-	)
+			invariant.Event_True("A bound is two.")).
+		Ensure()
 }
 
 // Index is a Generator_Below draw: a value in the half-open range zero to its bound.
@@ -167,23 +160,20 @@ type Index uint64
 func Index_Invariants(index Index, namespace invariant.Namespace) {
 	invariant.Always(index >= INDEX_MIN, "An index is at least its min.")
 	invariant.Always(index <= INDEX_MAX, "An index is at most its max.")
-	invariant.Dot_Product(namespace,
-		invariant.Sometimes(index == 0, "An index is zero."),
-		invariant.Sometimes(index == 1, "An index is one."),
-		invariant.Sometimes(index == 2, "An index is two."),
-		invariant.Impossible(
+	invariant.Dot_Product(namespace).
+		Sometimes(index == 0, "An index is zero.").
+		Sometimes(index == 1, "An index is one.").
+		Sometimes(index == 2, "An index is two.").
+		Impossible("An index cannot be zero and one.",
 			invariant.Event_True("An index is zero."),
-			invariant.Event_True("An index is one."),
-		),
-		invariant.Impossible(
+			invariant.Event_True("An index is one.")).
+		Impossible("An index cannot be zero and two.",
 			invariant.Event_True("An index is zero."),
-			invariant.Event_True("An index is two."),
-		),
-		invariant.Impossible(
+			invariant.Event_True("An index is two.")).
+		Impossible("An index cannot be one and two.",
 			invariant.Event_True("An index is one."),
-			invariant.Event_True("An index is two."),
-		),
-	)
+			invariant.Event_True("An index is two.")).
+		Ensure()
 }
 
 // Sink is a caller's buffer a draw fills — a defined type so the byte draw takes no raw slice.
@@ -193,23 +183,20 @@ type Sink []byte
 func Sink_Invariants(sink Sink, namespace invariant.Namespace) {
 	invariant.Always(len(sink) >= SINK_MIN, "A sink is at least its min.")
 	invariant.Always(len(sink) <= SINK_MAX, "A sink is at most its max.")
-	invariant.Dot_Product(namespace,
-		invariant.Sometimes(len(sink) == 0, "A sink is empty."),
-		invariant.Sometimes(len(sink) == 1, "A sink has one."),
-		invariant.Sometimes(len(sink) == 2, "A sink has two."),
-		invariant.Impossible(
+	invariant.Dot_Product(namespace).
+		Sometimes(len(sink) == 0, "A sink is empty.").
+		Sometimes(len(sink) == 1, "A sink has one.").
+		Sometimes(len(sink) == 2, "A sink has two.").
+		Impossible("A sink cannot be empty and have one.",
 			invariant.Event_True("A sink is empty."),
-			invariant.Event_True("A sink has one."),
-		),
-		invariant.Impossible(
+			invariant.Event_True("A sink has one.")).
+		Impossible("A sink cannot be empty and have two.",
 			invariant.Event_True("A sink is empty."),
-			invariant.Event_True("A sink has two."),
-		),
-		invariant.Impossible(
+			invariant.Event_True("A sink has two.")).
+		Impossible("A sink cannot have one and two.",
 			invariant.Event_True("A sink has one."),
-			invariant.Event_True("A sink has two."),
-		),
-	)
+			invariant.Event_True("A sink has two.")).
+		Ensure()
 }
 
 // Generator is the state of a fast-key-erasure ChaCha20 keystream. Construct it with New; the zero

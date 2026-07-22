@@ -1664,42 +1664,42 @@ func simulator_check_result_agreement(state *simulator) {
 // recovery completions detected against its previous status.
 func simulator_record_replica_coverage(state *simulator, index int) {
 	replica := &state.Replicas[index]
-	invariant.Dot_Product("sim.replica.status_normal",
-		invariant.Sometimes(replica.Status == vsr.STATUS_NORMAL, "replica is normal"))
-	invariant.Dot_Product("sim.replica.status_view_change",
-		invariant.Sometimes(
+	invariant.Dot_Product("sim.replica.status_normal").
+		Sometimes(replica.Status == vsr.STATUS_NORMAL, "replica is normal").Ensure()
+	invariant.Dot_Product("sim.replica.status_view_change").
+		Sometimes(
 			replica.Status == vsr.STATUS_VIEW_CHANGE,
-			"replica is view-changing"))
-	invariant.Dot_Product("sim.replica.status_recovery",
-		invariant.Sometimes(replica.Status == vsr.STATUS_RECOVERY, "replica is recovering"))
+			"replica is view-changing").Ensure()
+	invariant.Dot_Product("sim.replica.status_recovery").
+		Sometimes(replica.Status == vsr.STATUS_RECOVERY, "replica is recovering").Ensure()
 	// The §7 reconfiguration statuses must be witnessed across the sweep: a replica mid epoch
 	// handoff (transitioning) and a replaced replica that has shut down.
-	invariant.Dot_Product("sim.replica.status_transition",
-		invariant.Sometimes(
+	invariant.Dot_Product("sim.replica.status_transition").
+		Sometimes(
 			replica.Status == vsr.STATUS_TRANSITION,
-			"replica is transitioning"))
-	invariant.Dot_Product("sim.replica.status_shutdown",
-		invariant.Sometimes(replica.Status == vsr.STATUS_SHUTDOWN, "replica is shut down"))
-	invariant.Dot_Product("sim.replica.view_advanced",
-		invariant.Sometimes(replica.View > 0, "replica view advanced past zero"))
+			"replica is transitioning").Ensure()
+	invariant.Dot_Product("sim.replica.status_shutdown").
+		Sometimes(replica.Status == vsr.STATUS_SHUTDOWN, "replica is shut down").Ensure()
+	invariant.Dot_Product("sim.replica.view_advanced").
+		Sometimes(replica.View > 0, "replica view advanced past zero").Ensure()
 	// The epoch must sometimes advance past 0, witnessing a reconfiguration ran.
-	invariant.Dot_Product("sim.replica.epoch_advanced",
-		invariant.Sometimes(replica.Epoch > 0, "replica epoch advanced past zero"))
+	invariant.Dot_Product("sim.replica.epoch_advanced").
+		Sometimes(replica.Epoch > 0, "replica epoch advanced past zero").Ensure()
 	if replica.Epoch > state.Result.Epoch_Max {
 		state.Result.Epoch_Max = replica.Epoch
 	}
 	// Compaction must actually run: a replica's Log_Start must sometimes advance past zero,
 	// witnessing the log prefix was garbage-collected rather than the cluster idling below the
 	// first checkpoint.
-	invariant.Dot_Product("sim.replica.log_compacted",
-		invariant.Sometimes(replica.Log_Start > 0, "replica log prefix was compacted"))
+	invariant.Dot_Product("sim.replica.log_compacted").
+		Sometimes(replica.Log_Start > 0, "replica log prefix was compacted").Ensure()
 	// A standby must sometimes exist and follow — be a non-voting member (§6.1) holding
 	// committed log — so the standby paths (no vote, no execute, follow) are genuinely
 	// exercised rather than every member always being active.
-	invariant.Dot_Product("sim.replica.standby_follows",
-		invariant.Sometimes(
+	invariant.Dot_Product("sim.replica.standby_follows").
+		Sometimes(
 			is_standby(replica) && replica.Op > 0,
-			"standby exists and holds log"))
+			"standby exists and holds log").Ensure()
 	// A new primary deferring its install while it fetches the selected log is the §5.3 fetch
 	// path running; record it so the Sometimes axis can witness it.
 	if replica.View_Change_Deferred {
@@ -1760,24 +1760,24 @@ func simulator_record_coverage(state *simulator) {
 	// A client must sometimes have a request unanswered and sometimes not, so the request/reply
 	// path is genuinely exercised rather than idling.
 	for index := range state.Clients {
-		invariant.Dot_Product("sim.client.unanswered",
-			invariant.Sometimes(
+		invariant.Dot_Product("sim.client.unanswered").
+			Sometimes(
 				state.Clients[index].Unanswered,
-				"client has an unanswered request"))
+				"client has an unanswered request").Ensure()
 	}
 	// Clock skew must be witnessed both ways: the spread between the fastest and slowest
 	// replica's perceived time sometimes exceeds five milliseconds (the skew sweep) and
 	// sometimes does not (the default shared-clock runs), so the model is genuinely exercised.
-	invariant.Dot_Product("sim.clock.skew_observed",
-		invariant.Sometimes(
+	invariant.Dot_Product("sim.clock.skew_observed").
+		Sometimes(
 			simulator_clock_skew(state) > time.Moment(5)*time.Moment(time.MILLISECOND),
-			"replica clocks skewed past five milliseconds"))
+			"replica clocks skewed past five milliseconds").Ensure()
 	// A transient clock fault must sometimes be active (the skew sweep injects them) and
 	// sometimes not, so the fault path is witnessed both ways across the sweep.
-	invariant.Dot_Product("sim.clock.fault_active",
-		invariant.Sometimes(
+	invariant.Dot_Product("sim.clock.fault_active").
+		Sometimes(
 			simulator_clock_fault_active(state),
-			"a replica clock is faulted"))
+			"a replica clock is faulted").Ensure()
 	simulator_record_result_coverage(state)
 }
 
@@ -1824,68 +1824,68 @@ func simulator_record_result_coverage(state *simulator) {
 	// Both new exactly-once branches must be witnessed across the sweep: a duplicate's cached
 	// reply re-sent, and a client recovering its forgotten request-number. Each reads false on
 	// a run's early ticks and true once the event occurs, covering both outcomes.
-	invariant.Dot_Product("sim.result.cached_replies",
-		invariant.Sometimes(state.Result.Cached_Replies > 0, "a cached reply was re-sent"))
-	invariant.Dot_Product("sim.result.client_recoveries",
-		invariant.Sometimes(
+	invariant.Dot_Product("sim.result.cached_replies").
+		Sometimes(state.Result.Cached_Replies > 0, "a cached reply was re-sent").Ensure()
+	invariant.Dot_Product("sim.result.client_recoveries").
+		Sometimes(
 			state.Result.Client_Recoveries > 0,
-			"a client recovered its request number"))
+			"a client recovered its request number").Ensure()
 	// The §4.4 prediction path must be genuinely exercised: a committed op must sometimes
 	// carry a non-empty predetermined value, and the pre-step variant must sometimes open a
 	// round (it runs only on odd seeds, so a sweep over both parities witnesses both true and
 	// false).
-	invariant.Dot_Product("sim.result.predictions_stamped",
-		invariant.Sometimes(
+	invariant.Dot_Product("sim.result.predictions_stamped").
+		Sometimes(
 			state.Result.Predictions_Stamped > 0,
-			"a committed op carried a prediction"))
-	invariant.Dot_Product("sim.result.pre_step_rounds",
-		invariant.Sometimes(
+			"a committed op carried a prediction").Ensure()
+	invariant.Dot_Product("sim.result.pre_step_rounds").
+		Sometimes(
 			state.Result.Pre_Step_Rounds > 0,
-			"a pre-step prediction round opened"))
+			"a pre-step prediction round opened").Ensure()
 	// The §5.1/§5.2 checkpoint paths must genuinely run across the sweep: the gap response
 	// must sometimes ship a checkpoint to a requester behind a GC'd prefix, and a crash must
 	// sometimes recover warm from a surviving checkpoint.
-	invariant.Dot_Product("sim.result.checkpoint_gaps",
-		invariant.Sometimes(
+	invariant.Dot_Product("sim.result.checkpoint_gaps").
+		Sometimes(
 			state.Result.Checkpoint_Gaps > 0,
-			"a gap response shipped a checkpoint"))
-	invariant.Dot_Product("sim.result.warm_recoveries",
-		invariant.Sometimes(
+			"a gap response shipped a checkpoint").Ensure()
+	invariant.Dot_Product("sim.result.warm_recoveries").
+		Sometimes(
 			state.Result.Warm_Recoveries_Started > 0,
-			"a warm recovery started"))
+			"a warm recovery started").Ensure()
 	// The §5.3 efficient-view-change paths must run across the sweep: a Do_View_Change must
 	// sometimes carry a bounded suffix shorter than its op (dropping held entries), and the
 	// new primary must sometimes defer its install to fetch the selected log it could not
 	// reconstruct from that suffix alone.
-	invariant.Dot_Product("sim.result.do_view_change_suffixes",
-		invariant.Sometimes(
+	invariant.Dot_Product("sim.result.do_view_change_suffixes").
+		Sometimes(
 			state.Result.Do_View_Change_Suffixes > 0,
-			"a do-view-change carried a bounded suffix"))
-	invariant.Dot_Product("sim.result.view_change_fetches",
-		invariant.Sometimes(
+			"a do-view-change carried a bounded suffix").Ensure()
+	invariant.Dot_Product("sim.result.view_change_fetches").
+		Sometimes(
 			state.Result.View_Change_Fetches > 0,
-			"a new primary deferred to fetch the selected log"))
+			"a new primary deferred to fetch the selected log").Ensure()
 	// A reconfiguration must run to completion across the sweep: the epoch advanced and a new
 	// group came up.
-	invariant.Dot_Product("sim.result.reconfigurations_completed",
-		invariant.Sometimes(
+	invariant.Dot_Product("sim.result.reconfigurations_completed").
+		Sometimes(
 			state.Result.Reconfigurations_Completed > 0,
-			"a reconfiguration completed"))
+			"a reconfiguration completed").Ensure()
 	// The §7 edge cases must genuinely run across the sweep: a brand-new node restoring a
 	// checkpoint to catch up to the epoch start, a reconfiguration overlapping a view change,
 	// and one overlapping recovery — the concurrent paths reconfiguration must survive.
-	invariant.Dot_Product("sim.result.epoch_checkpoint_catch_ups",
-		invariant.Sometimes(
+	invariant.Dot_Product("sim.result.epoch_checkpoint_catch_ups").
+		Sometimes(
 			state.Result.Epoch_Checkpoint_Catch_Ups > 0,
-			"a new node restored a checkpoint to catch up to the epoch"))
-	invariant.Dot_Product("sim.result.reconfigure_over_view_change",
-		invariant.Sometimes(
+			"a new node restored a checkpoint to catch up to the epoch").Ensure()
+	invariant.Dot_Product("sim.result.reconfigure_over_view_change").
+		Sometimes(
 			state.Result.Reconfigure_Over_View_Change > 0,
-			"a reconfiguration overlapped a view change"))
-	invariant.Dot_Product("sim.result.reconfigure_over_recovery",
-		invariant.Sometimes(
+			"a reconfiguration overlapped a view change").Ensure()
+	invariant.Dot_Product("sim.result.reconfigure_over_recovery").
+		Sometimes(
 			state.Result.Reconfigure_Over_Recovery > 0,
-			"a reconfiguration overlapped a recovery"))
+			"a reconfiguration overlapped a recovery").Ensure()
 }
 
 // The acting primary of the current epoch's highest view — the simulator's stand-in for a client

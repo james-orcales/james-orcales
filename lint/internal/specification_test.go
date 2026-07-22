@@ -2114,14 +2114,13 @@ func Test_Type_Invariant_Numeric_Signed_Passes(t *testing.T) {
 		"func Level_Invariants(v Level, namespace invariant.Namespace) {\n" +
 		"\tinvariant.Always(v <= Level_Max, \"max bound\")\n" +
 		"\tinvariant.Always(v >= Level_Min, \"min bound\")\n" +
-		"\tinvariant.Dot_Product(namespace,\n" +
-		"\t\tinvariant.Sometimes(v == Level_Max, \"max\"),\n" +
-		"\t\tinvariant.Sometimes(v == Level_Min, \"min\"),\n" +
-		"\t\tinvariant.Sometimes(v == 0, \"zero\"),\n" +
-		"\t\tinvariant.Sometimes(v == 1, \"one\"),\n" +
-		"\t\tinvariant.Sometimes(v == -1, \"neg one\"),\n" +
-		"\t\tinvariant.Sometimes(v == 2, \"two\"),\n" +
-		"\t)\n}\n")
+		"\tinvariant.Dot_Product(namespace).\n" +
+		"\t\tSometimes(v == Level_Max, \"max\").\n" +
+		"\t\tSometimes(v == Level_Min, \"min\").\n" +
+		"\t\tSometimes(v == 0, \"zero\").\n" +
+		"\t\tSometimes(v == 1, \"one\").\n" +
+		"\t\tSometimes(v == -1, \"neg one\").\n" +
+		"\t\tSometimes(v == 2, \"two\").Ensure()\n}\n")
 	if specification_flags(t, files, "must guard both ends") {
 		t.Fatal("a complete signed bundle must not be flagged for bounds")
 	}
@@ -2145,13 +2144,12 @@ func Test_Type_Invariant_Numeric_Unsigned_Passes(t *testing.T) {
 		"func Count_Invariants(v Count, namespace invariant.Namespace) {\n" +
 		"\tinvariant.Always(v <= Count_Max, \"max bound\")\n" +
 		"\tinvariant.Always(v >= Count_Min, \"min bound\")\n" +
-		"\tinvariant.Dot_Product(namespace,\n" +
-		"\t\tinvariant.Sometimes(v == Count_Max, \"max\"),\n" +
-		"\t\tinvariant.Sometimes(v == Count_Min, \"min\"),\n" +
-		"\t\tinvariant.Sometimes(v == 0, \"zero\"),\n" +
-		"\t\tinvariant.Sometimes(v == 1, \"one\"),\n" +
-		"\t\tinvariant.Sometimes(v == 2, \"two\"),\n" +
-		"\t)\n}\n")
+		"\tinvariant.Dot_Product(namespace).\n" +
+		"\t\tSometimes(v == Count_Max, \"max\").\n" +
+		"\t\tSometimes(v == Count_Min, \"min\").\n" +
+		"\t\tSometimes(v == 0, \"zero\").\n" +
+		"\t\tSometimes(v == 1, \"one\").\n" +
+		"\t\tSometimes(v == 2, \"two\").Ensure()\n}\n")
 	if specification_flags(t, files, "must claim") {
 		t.Fatal("a complete unsigned bundle (no -1) must not be flagged for coverage")
 	}
@@ -2172,11 +2170,10 @@ func Test_Type_Invariant_Numeric_Float_Passes(t *testing.T) {
 		"func Scale_Invariants(v Scale, namespace invariant.Namespace) {\n" +
 		"\tinvariant.Always(v <= Scale_Max, \"max bound\")\n" +
 		"\tinvariant.Always(v >= Scale_Min, \"min bound\")\n" +
-		"\tinvariant.Dot_Product(namespace,\n" +
-		"\t\tinvariant.Sometimes(math.IsNaN(float64(v)), \"nan\"),\n" +
-		"\t\tinvariant.Sometimes(float64(v) == math.Inf(-1), \"neg inf\"),\n" +
-		"\t\tinvariant.Sometimes(float64(v) == math.Inf(1), \"pos inf\"),\n" +
-		"\t)\n}\n")
+		"\tinvariant.Dot_Product(namespace).\n" +
+		"\t\tSometimes(math.IsNaN(float64(v)), \"nan\").\n" +
+		"\t\tSometimes(float64(v) == math.Inf(-1), \"neg inf\").\n" +
+		"\t\tSometimes(float64(v) == math.Inf(1), \"pos inf\").Ensure()\n}\n")
 	if specification_flags(t, files, "must claim") {
 		t.Fatal("a complete float bundle (NaN/+-Inf) must not be flagged for coverage")
 	}
@@ -2197,13 +2194,12 @@ func Test_Type_Invariant_Count_String_Passes(t *testing.T) {
 		"func Name_Invariants(v Name, namespace invariant.Namespace) {\n" +
 		"\tinvariant.Always(len(v) <= Name_Max, \"max bound\")\n" +
 		"\tinvariant.Always(len(v) >= Name_Min, \"min bound\")\n" +
-		"\tinvariant.Dot_Product(namespace,\n" +
-		"\t\tinvariant.Sometimes(len(v) == Name_Max, \"max\"),\n" +
-		"\t\tinvariant.Sometimes(len(v) == Name_Min, \"min\"),\n" +
-		"\t\tinvariant.Sometimes(len(v) == 0, \"zero\"),\n" +
-		"\t\tinvariant.Sometimes(len(v) == 1, \"one\"),\n" +
-		"\t\tinvariant.Sometimes(len(v) == 2, \"two\"),\n" +
-		"\t)\n}\n")
+		"\tinvariant.Dot_Product(namespace).\n" +
+		"\t\tSometimes(len(v) == Name_Max, \"max\").\n" +
+		"\t\tSometimes(len(v) == Name_Min, \"min\").\n" +
+		"\t\tSometimes(len(v) == 0, \"zero\").\n" +
+		"\t\tSometimes(len(v) == 1, \"one\").\n" +
+		"\t\tSometimes(len(v) == 2, \"two\").Ensure()\n}\n")
 	if specification_flags(t, files, "must guard both ends") {
 		t.Fatal("a complete string length bundle must not be flagged for bounds")
 	}
@@ -2224,13 +2220,12 @@ func Test_Type_Invariant_Count_Slice_Passes(t *testing.T) {
 		"func Buffer_Invariants(v Buffer, namespace invariant.Namespace) {\n" +
 		"\tinvariant.Always(len(v) <= Buffer_Max, \"max bound\")\n" +
 		"\tinvariant.Always(len(v) >= Buffer_Min, \"min bound\")\n" +
-		"\tinvariant.Dot_Product(namespace,\n" +
-		"\t\tinvariant.Sometimes(len(v) == Buffer_Max, \"max\"),\n" +
-		"\t\tinvariant.Sometimes(len(v) == Buffer_Min, \"min\"),\n" +
-		"\t\tinvariant.Sometimes(len(v) == 0, \"zero\"),\n" +
-		"\t\tinvariant.Sometimes(len(v) == 1, \"one\"),\n" +
-		"\t\tinvariant.Sometimes(len(v) == 2, \"two\"),\n" +
-		"\t)\n}\n")
+		"\tinvariant.Dot_Product(namespace).\n" +
+		"\t\tSometimes(len(v) == Buffer_Max, \"max\").\n" +
+		"\t\tSometimes(len(v) == Buffer_Min, \"min\").\n" +
+		"\t\tSometimes(len(v) == 0, \"zero\").\n" +
+		"\t\tSometimes(len(v) == 1, \"one\").\n" +
+		"\t\tSometimes(len(v) == 2, \"two\").Ensure()\n}\n")
 	if specification_flags(t, files, "must guard both ends") {
 		t.Fatal("a complete slice length bundle must not be flagged for bounds")
 	}
@@ -2252,11 +2247,10 @@ func Test_Type_Invariant_Count_Bound_Not_Claimed(t *testing.T) {
 		"func Buffer_Invariants(v Buffer, namespace invariant.Namespace) {\n" +
 		"\tinvariant.Always(len(v) <= Buffer_Max, \"max bound\")\n" +
 		"\tinvariant.Always(len(v) >= Buffer_Min, \"min bound\")\n" +
-		"\tinvariant.Dot_Product(namespace,\n" +
-		"\t\tinvariant.Sometimes(len(v) == 0, \"zero\"),\n" +
-		"\t\tinvariant.Sometimes(len(v) == 1, \"one\"),\n" +
-		"\t\tinvariant.Sometimes(len(v) == 2, \"two\"),\n" +
-		"\t)\n}\n")
+		"\tinvariant.Dot_Product(namespace).\n" +
+		"\t\tSometimes(len(v) == 0, \"zero\").\n" +
+		"\t\tSometimes(len(v) == 1, \"one\").\n" +
+		"\t\tSometimes(len(v) == 2, \"two\").Ensure()\n}\n")
 	if specification_flags(t, files, "must claim") {
 		t.Fatal("a length bundle need not claim its MAX/MIN — the guard is the bound")
 	}
@@ -2274,13 +2268,12 @@ func Test_Type_Invariant_Count_Map_Passes(t *testing.T) {
 		"func Registry_Invariants(v Registry, namespace invariant.Namespace) {\n" +
 		"\tinvariant.Always(len(v) <= Registry_Max, \"max bound\")\n" +
 		"\tinvariant.Always(len(v) >= Registry_Min, \"min bound\")\n" +
-		"\tinvariant.Dot_Product(namespace,\n" +
-		"\t\tinvariant.Sometimes(len(v) == Registry_Max, \"max\"),\n" +
-		"\t\tinvariant.Sometimes(len(v) == Registry_Min, \"min\"),\n" +
-		"\t\tinvariant.Sometimes(len(v) == 0, \"zero\"),\n" +
-		"\t\tinvariant.Sometimes(len(v) == 1, \"one\"),\n" +
-		"\t\tinvariant.Sometimes(len(v) == 2, \"two\"),\n" +
-		"\t)\n}\n")
+		"\tinvariant.Dot_Product(namespace).\n" +
+		"\t\tSometimes(len(v) == Registry_Max, \"max\").\n" +
+		"\t\tSometimes(len(v) == Registry_Min, \"min\").\n" +
+		"\t\tSometimes(len(v) == 0, \"zero\").\n" +
+		"\t\tSometimes(len(v) == 1, \"one\").\n" +
+		"\t\tSometimes(len(v) == 2, \"two\").Ensure()\n}\n")
 	if specification_flags(t, files, "must guard both ends") {
 		t.Fatal("a complete map length bundle must not be flagged for bounds")
 	}
@@ -2301,13 +2294,12 @@ func Test_Type_Invariant_Count_Generic_Passes(t *testing.T) {
 		"func Stack_Invariants[T any](v Stack[T], namespace invariant.Namespace) {\n" +
 		"\tinvariant.Always(len(v) <= Stack_Max, \"max bound\")\n" +
 		"\tinvariant.Always(len(v) >= Stack_Min, \"min bound\")\n" +
-		"\tinvariant.Dot_Product(namespace,\n" +
-		"\t\tinvariant.Sometimes(len(v) == Stack_Max, \"max\"),\n" +
-		"\t\tinvariant.Sometimes(len(v) == Stack_Min, \"min\"),\n" +
-		"\t\tinvariant.Sometimes(len(v) == 0, \"zero\"),\n" +
-		"\t\tinvariant.Sometimes(len(v) == 1, \"one\"),\n" +
-		"\t\tinvariant.Sometimes(len(v) == 2, \"two\"),\n" +
-		"\t)\n}\n")
+		"\tinvariant.Dot_Product(namespace).\n" +
+		"\t\tSometimes(len(v) == Stack_Max, \"max\").\n" +
+		"\t\tSometimes(len(v) == Stack_Min, \"min\").\n" +
+		"\t\tSometimes(len(v) == 0, \"zero\").\n" +
+		"\t\tSometimes(len(v) == 1, \"one\").\n" +
+		"\t\tSometimes(len(v) == 2, \"two\").Ensure()\n}\n")
 	if specification_flags(t, files, "must guard both ends") {
 		t.Fatal("a complete generic-container length bundle must not be flagged for bounds")
 	}
@@ -2325,8 +2317,8 @@ func Test_Type_Invariant_Struct_Composition_Passes(t *testing.T) {
 		"// Token is a fixture.\ntype Token string\n\n" +
 		"// Token_Invariants is a fixture.\n" +
 		"func Token_Invariants(v Token, namespace invariant.Namespace) {\n" +
-		"\tinvariant.Dot_Product(namespace, " +
-		"invariant.Sometimes(len(v) == 0, \"x\"))\n}\n\n" +
+		"\tinvariant.Dot_Product(namespace)." +
+		"Sometimes(len(v) == 0, \"x\").Ensure()\n}\n\n" +
 		"// Pair is a fixture.\ntype Pair struct {\n" +
 		"\t// Tok is a fixture.\n\tTok Token\n" +
 		"\t// Count is a fixture.\n\tCount int\n}\n\n" +
@@ -2334,7 +2326,7 @@ func Test_Type_Invariant_Struct_Composition_Passes(t *testing.T) {
 		"func Pair_Invariants(v Pair, namespace invariant.Namespace) {\n" +
 		"\tToken_Invariants(v.Tok, \"Pair.Tok\")\n" +
 		"\tinvariant.Int_Invariants(v.Count, \"Pair.Count\")\n" +
-		"\tinvariant.Dot_Product(namespace, invariant.Sometimes(true, \"x\"))\n}\n")
+		"\tinvariant.Dot_Product(namespace).Sometimes(true, \"x\").Ensure()\n}\n")
 	if specification_flags(t, files, "must call") {
 		t.Fatal("a struct composing all field invariants must not be flagged")
 	}
@@ -2350,7 +2342,7 @@ func Test_Type_Invariant_Struct_Mutex_Skipped(t *testing.T) {
 		"\t// Mu is a fixture.\n\tMu sync.Mutex\n\t// N is a fixture.\n\tN int\n}\n\n" +
 		"// Guarded_Invariants is a fixture.\n" +
 		"func Guarded_Invariants(v Guarded, namespace invariant.Namespace) {\n" +
-		"\tinvariant.Dot_Product(namespace, invariant.Sometimes(true, \"x\"))\n}\n")
+		"\tinvariant.Dot_Product(namespace).Sometimes(true, \"x\").Ensure()\n}\n")
 	if specification_flags(t, files, "must call") {
 		t.Fatal("a struct with a sync.Mutex field must be skipped entirely")
 	}
@@ -2366,7 +2358,7 @@ func Test_Type_Invariant_Struct_Function_Fields_Exempt(t *testing.T) {
 		"\t// Run is a fixture.\n\tRun func()\n}\n\n" +
 		"// Ops_Invariants is a fixture.\n" +
 		"func Ops_Invariants(v Ops, namespace invariant.Namespace) {\n" +
-		"\tinvariant.Dot_Product(namespace, invariant.Sometimes(true, \"x\"))\n}\n")
+		"\tinvariant.Dot_Product(namespace).Sometimes(true, \"x\").Ensure()\n}\n")
 	if specification_flags(t, files, "must call") {
 		t.Fatal("a func-typed field has no invariant and must be exempt")
 	}
@@ -2382,7 +2374,7 @@ func Test_Type_Invariant_Struct_Boolean_Field_Required(t *testing.T) {
 		"\t// On is a fixture.\n\tOn bool\n}\n\n" +
 		"// Flag_Invariants is a fixture.\n" +
 		"func Flag_Invariants(v Flag, namespace invariant.Namespace) {\n" +
-		"\tinvariant.Dot_Product(namespace, invariant.Sometimes(true, \"x\"))\n}\n")
+		"\tinvariant.Dot_Product(namespace).Sometimes(true, \"x\").Ensure()\n}\n")
 	if !specification_flags(t, files, "must call Boolean_Invariants(v.On") {
 		t.Fatal("a bool field must require the Boolean_Invariants preset")
 	}
@@ -2398,13 +2390,13 @@ func Test_Type_Invariant_Struct_Pointer_Field_Composed(t *testing.T) {
 		"// Token is a fixture.\ntype Token string\n\n" +
 		"// Token_Invariants is a fixture.\n" +
 		"func Token_Invariants(v Token, namespace invariant.Namespace) {\n" +
-		"\tinvariant.Dot_Product(namespace, " +
-		"invariant.Sometimes(len(v) == 0, \"x\"))\n}\n\n" +
+		"\tinvariant.Dot_Product(namespace)." +
+		"Sometimes(len(v) == 0, \"x\").Ensure()\n}\n\n" +
 		"// Holder is a fixture.\ntype Holder struct {\n" +
 		"\t// Tok is a fixture.\n\tTok *Token\n}\n\n" +
 		"// Holder_Invariants is a fixture.\n" +
 		"func Holder_Invariants(v Holder, namespace invariant.Namespace) {\n" +
-		"\tinvariant.Dot_Product(namespace, invariant.Sometimes(true, \"x\"))\n}\n")
+		"\tinvariant.Dot_Product(namespace).Sometimes(true, \"x\").Ensure()\n}\n")
 	if !specification_flags(t, files, "must call Token_Invariants") {
 		t.Fatal("a pointer field whose pointee invariant is omitted must be flagged")
 	}
@@ -2419,12 +2411,12 @@ func Test_Function_Assertion_Complete_Passes(t *testing.T) {
 		"// Token is a fixture.\ntype Token string\n\n" +
 		"// Token_Invariants is a fixture.\n" +
 		"func Token_Invariants(v Token, namespace invariant.Namespace) {\n" +
-		"\tinvariant.Dot_Product(namespace, " +
-		"invariant.Sometimes(len(v) == 0, \"x\"))\n}\n\n" +
+		"\tinvariant.Dot_Product(namespace)." +
+		"Sometimes(len(v) == 0, \"x\").Ensure()\n}\n\n" +
 		"// Count is a fixture.\ntype Count int\n\n" +
 		"// Count_Invariants is a fixture.\n" +
 		"func Count_Invariants(v Count, namespace invariant.Namespace) {\n" +
-		"\tinvariant.Dot_Product(namespace, invariant.Sometimes(v == 0, \"x\"))\n}\n\n" +
+		"\tinvariant.Dot_Product(namespace).Sometimes(v == 0, \"x\").Ensure()\n}\n\n" +
 		"// Process does.\nfunc Process(tok Token) (n Count) {\n" +
 		"\tdefer func() {\n\t\tCount_Invariants(n, \"Process.n\")\n\t}()\n" +
 		"\tToken_Invariants(tok, \"Process.tok\")\n\treturn 0\n}\n")
@@ -2454,8 +2446,8 @@ func Test_Function_Assertion_Slice_Loop_Passes(t *testing.T) {
 		"// Token is a fixture.\ntype Token string\n\n" +
 		"// Token_Invariants is a fixture.\n" +
 		"func Token_Invariants(v Token, namespace invariant.Namespace) {\n" +
-		"\tinvariant.Dot_Product(namespace, " +
-		"invariant.Sometimes(len(v) == 0, \"x\"))\n}\n\n" +
+		"\tinvariant.Dot_Product(namespace)." +
+		"Sometimes(len(v) == 0, \"x\").Ensure()\n}\n\n" +
 		"// Scan does.\nfunc Scan(toks []Token) {\n" +
 		"\tfor _, t := range toks {\n\t\tToken_Invariants(t, \"Scan.tok\")\n\t}\n" +
 		"\tprintln(0)\n}\n")
@@ -2473,8 +2465,8 @@ func Test_Function_Assertion_Bundle_Exempt(t *testing.T) {
 		"// Token is a fixture.\ntype Token string\n\n" +
 		"// Token_Invariants is a fixture.\n" +
 		"func Token_Invariants(v Token, namespace invariant.Namespace) {\n" +
-		"\tinvariant.Dot_Product(namespace, " +
-		"invariant.Sometimes(len(v) == 0, \"x\"))\n}\n")
+		"\tinvariant.Dot_Product(namespace)." +
+		"Sometimes(len(v) == 0, \"x\").Ensure()\n}\n")
 	if specification_flags(t, files, "must assert") {
 		t.Fatal("a _Invariants bundle is exempt from the function-assertion rule")
 	}

@@ -19,6 +19,10 @@ import (
 	"local/james-orcales/lint/internal/source"
 )
 
+// NUMERIC_CHAIN_LINKS_MAX matches Product's ordinal width so the lint walk is bounded without
+// rejecting a chain shape the runtime accepts.
+const NUMERIC_CHAIN_LINKS_MAX = 255
+
 // Parsed_File aliases the source package's type so the moved rule bodies name it
 // unqualified, as they did in package lint.
 type Parsed_File = source.Parsed_File
@@ -523,8 +527,8 @@ func numeric_is_count(expression ast.Expr, value string) (yes bool) {
 	return numeric_is_value(call.Args[0], value)
 }
 
-// Reports whether call is invariant.Always/Sometimes and which, by the local
-// import name; matched is false for any other call or one with no arguments.
+// Reports whether call is invariant.Always or a Dot_Product Sometimes link and which;
+// matched is false for a bare Sometimes or any call without a condition.
 func numeric_invariant_call(
 	call *ast.CallExpr, invariant_names map[string]bool,
 ) (is_always bool, matched bool) {
@@ -536,20 +540,57 @@ func numeric_invariant_call(
 	if !is_selector {
 		return false, false
 	}
-	qualifier, is_identifier := selector.X.(*ast.Ident)
-	if !is_identifier {
-		return false, false
-	}
-	if !invariant_names[qualifier.Name] {
-		return false, false
-	}
 	if selector.Sel.Name == "Always" {
-		return true, true
+		qualifier, is_identifier := selector.X.(*ast.Ident)
+		if !is_identifier {
+			return false, false
+		}
+		return true, invariant_names[qualifier.Name]
 	}
 	if selector.Sel.Name == "Sometimes" {
-		return false, true
+		return false, numeric_chain_receiver(selector.X, invariant_names)
 	}
 	return false, false
+}
+
+func numeric_chain_receiver(expression ast.Expr, invariant_names map[string]bool) (matched bool) {
+	current, is_call := expression.(*ast.CallExpr)
+	if !is_call {
+		return false
+	}
+	for step_index := 0; step_index < NUMERIC_CHAIN_LINKS_MAX; step_index++ {
+		selector, is_selector := current.Fun.(*ast.SelectorExpr)
+		if !is_selector {
+			return false
+		}
+		if selector.Sel.Name == "Dot_Product" {
+			return numeric_chain_root(current, invariant_names)
+		}
+		if selector.Sel.Name != "Sometimes" {
+			if selector.Sel.Name != "Impossible" {
+				return false
+			}
+		}
+		current, is_call = selector.X.(*ast.CallExpr)
+		if !is_call {
+			return false
+		}
+	}
+	return false
+}
+
+func numeric_chain_root(
+	call *ast.CallExpr, invariant_names map[string]bool,
+) (matched bool) {
+	if len(call.Args) != 1 {
+		return false
+	}
+	selector := call.Fun.(*ast.SelectorExpr)
+	qualifier, is_identifier := selector.X.(*ast.Ident)
+	if !is_identifier {
+		return false
+	}
+	return invariant_names[qualifier.Name]
 }
 
 // Folds one condition into facts: bounds come only from Always; claims (equality,

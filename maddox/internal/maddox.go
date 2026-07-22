@@ -206,27 +206,23 @@ func Samples_Invariants(samples Samples, namespace invariant.Namespace) {
 	invariant.Always(len(samples) >= COLLECTION_MIN, "A sample set is at least its min.")
 	invariant.Always(len(samples) != 1, "A sample set never has one.")
 	invariant.Always(len(samples) != 2, "A sample set never has two.")
-	invariant.Dot_Product(namespace,
-		invariant.Sometimes(len(samples) == 0, "A sample set is empty."),
-		invariant.Sometimes(len(samples) == COLLECTION_MIN, "A sample set is at min."),
-		invariant.Sometimes(len(samples) == SAMPLES_MAX, "A sample set is at max."),
-		invariant.Impossible(
+	invariant.Dot_Product(namespace).
+		Sometimes(len(samples) == 0, "A sample set is empty.").
+		Sometimes(len(samples) == COLLECTION_MIN, "A sample set is at min.").
+		Sometimes(len(samples) == SAMPLES_MAX, "A sample set is at max.").
+		Impossible("An empty sample set is at min.",
 			invariant.Event_True("A sample set is empty."),
-			invariant.Event_False("A sample set is at min."),
-		),
-		invariant.Impossible(
+			invariant.Event_False("A sample set is at min.")).
+		Impossible("A sample set at min is empty.",
 			invariant.Event_False("A sample set is empty."),
-			invariant.Event_True("A sample set is at min."),
-		),
-		invariant.Impossible(
+			invariant.Event_True("A sample set is at min.")).
+		Impossible("An empty sample set is not at max.",
 			invariant.Event_True("A sample set is empty."),
-			invariant.Event_True("A sample set is at max."),
-		),
-		invariant.Impossible(
+			invariant.Event_True("A sample set is at max.")).
+		Impossible("A sample set cannot be at min and max.",
 			invariant.Event_True("A sample set is at min."),
-			invariant.Event_True("A sample set is at max."),
-		),
-	)
+			invariant.Event_True("A sample set is at max.")).
+		Ensure()
 }
 
 // Distribution is a quorum of kept runs the statistics reduce — always at least the 3-run
@@ -321,23 +317,20 @@ func Report_Invariants(report Report, namespace invariant.Namespace) {
 	invariant.Always(len(report) >= COLLECTION_MIN, "A report is at least its min.")
 	invariant.Always(len(report) != 1, "A report is never one byte.")
 	invariant.Always(len(report) != 2, "A report is never two bytes.")
-	invariant.Dot_Product(namespace,
-		invariant.Sometimes(len(report) == 0, "A report is empty."),
-		invariant.Sometimes(len(report) == COLLECTION_MIN, "A report is at min."),
-		invariant.Sometimes(len(report) == REPORT_MAX, "A report is at max."),
-		invariant.Impossible(
+	invariant.Dot_Product(namespace).
+		Sometimes(len(report) == 0, "A report is empty.").
+		Sometimes(len(report) == COLLECTION_MIN, "A report is at min.").
+		Sometimes(len(report) == REPORT_MAX, "A report is at max.").
+		Impossible("An empty report is at min.",
 			invariant.Event_True("A report is empty."),
-			invariant.Event_False("A report is at min."),
-		),
-		invariant.Impossible(
+			invariant.Event_False("A report is at min.")).
+		Impossible("A report at min is empty.",
 			invariant.Event_False("A report is empty."),
+			invariant.Event_True("A report is at min.")).
+		Impossible("A report cannot be at min and max.",
 			invariant.Event_True("A report is at min."),
-		),
-		invariant.Impossible(
-			invariant.Event_True("A report is at min."),
-			invariant.Event_True("A report is at max."),
-		),
-	)
+			invariant.Event_True("A report is at max.")).
+		Ensure()
 }
 
 // LADDER_SIZE is the fixed rung count of every scale ladder.
@@ -470,18 +463,16 @@ func Unit_Invariants(name Unit, namespace invariant.Namespace) {
 	invariant.Always(len(name) != 0, "A unit is never empty.")
 	invariant.Always(len(name) != 1, "A unit is never one byte.")
 	invariant.Always(len(name) != 2, "A unit is never two bytes.")
-	invariant.Dot_Product(namespace,
-		invariant.Sometimes(len(name) == UNIT_BYTES_MIN, "A unit is at min."),
-		invariant.Sometimes(len(name) == UNIT_BYTES_MAX, "A unit is at max."),
-		invariant.Impossible(
+	invariant.Dot_Product(namespace).
+		Sometimes(len(name) == UNIT_BYTES_MIN, "A unit is at min.").
+		Sometimes(len(name) == UNIT_BYTES_MAX, "A unit is at max.").
+		Impossible("A unit cannot be at min and max.",
 			invariant.Event_True("A unit is at min."),
-			invariant.Event_True("A unit is at max."),
-		),
-		invariant.Impossible(
+			invariant.Event_True("A unit is at max.")).
+		Impossible("A unit is at one boundary.",
 			invariant.Event_False("A unit is at min."),
-			invariant.Event_False("A unit is at max."),
-		),
-	)
+			invariant.Event_False("A unit is at max.")).
+		Ensure()
 }
 
 // Measurement is the distribution of one metric across a command's runs — poop's
@@ -2093,23 +2084,20 @@ func Frequency_Invariants(text Frequency, namespace invariant.Namespace) {
 	invariant.Always(len(text) >= FREQUENCY_BYTES_MIN, "A frequency is at least its min.")
 	invariant.Always(len(text) != 0, "A frequency is never empty.")
 	invariant.Always(len(text) != 2, "A frequency is never two bytes.")
-	invariant.Dot_Product(namespace,
-		invariant.Sometimes(len(text) == 1, "A frequency is the placeholder."),
-		invariant.Sometimes(len(text) == FREQUENCY_BYTES_MIN, "A frequency is at min."),
-		invariant.Sometimes(len(text) == FREQUENCY_BYTES_MAX, "A frequency is at max."),
-		invariant.Impossible(
+	invariant.Dot_Product(namespace).
+		Sometimes(len(text) == 1, "A frequency is the placeholder.").
+		Sometimes(len(text) == FREQUENCY_BYTES_MIN, "A frequency is at min.").
+		Sometimes(len(text) == FREQUENCY_BYTES_MAX, "A frequency is at max.").
+		Impossible("A placeholder frequency is at min.",
 			invariant.Event_True("A frequency is the placeholder."),
-			invariant.Event_False("A frequency is at min."),
-		),
-		invariant.Impossible(
+			invariant.Event_False("A frequency is at min.")).
+		Impossible("A frequency at min is the placeholder.",
 			invariant.Event_False("A frequency is the placeholder."),
+			invariant.Event_True("A frequency is at min.")).
+		Impossible("A frequency cannot be at min and max.",
 			invariant.Event_True("A frequency is at min."),
-		),
-		invariant.Impossible(
-			invariant.Event_True("A frequency is at min."),
-			invariant.Event_True("A frequency is at max."),
-		),
-	)
+			invariant.Event_True("A frequency is at max.")).
+		Ensure()
 }
 
 // SUFFIX_BYTES_MIN is the empty base unit a suffix floors at.
@@ -2147,27 +2135,23 @@ func Phase_Invariants(name Phase, namespace invariant.Namespace) {
 	invariant.Always(len(name) >= PHASE_BYTES_MIN, "A phase is at least its min.")
 	invariant.Always(len(name) != 1, "A phase is never one byte.")
 	invariant.Always(len(name) != 2, "A phase is never two bytes.")
-	invariant.Dot_Product(namespace,
-		invariant.Sometimes(len(name) == 0, "A phase is empty."),
-		invariant.Sometimes(len(name) == PHASE_BYTES_MIN, "A phase is at min."),
-		invariant.Sometimes(len(name) == PHASE_BYTES_MAX, "A phase is at max."),
-		invariant.Impossible(
+	invariant.Dot_Product(namespace).
+		Sometimes(len(name) == 0, "A phase is empty.").
+		Sometimes(len(name) == PHASE_BYTES_MIN, "A phase is at min.").
+		Sometimes(len(name) == PHASE_BYTES_MAX, "A phase is at max.").
+		Impossible("An empty phase is at min.",
 			invariant.Event_True("A phase is empty."),
-			invariant.Event_False("A phase is at min."),
-		),
-		invariant.Impossible(
+			invariant.Event_False("A phase is at min.")).
+		Impossible("A phase at min is empty.",
 			invariant.Event_False("A phase is empty."),
+			invariant.Event_True("A phase is at min.")).
+		Impossible("A phase cannot be at min and max.",
 			invariant.Event_True("A phase is at min."),
-		),
-		invariant.Impossible(
-			invariant.Event_True("A phase is at min."),
-			invariant.Event_True("A phase is at max."),
-		),
-		invariant.Impossible(
+			invariant.Event_True("A phase is at max.")).
+		Impossible("A phase is at one boundary.",
 			invariant.Event_False("A phase is at min."),
-			invariant.Event_False("A phase is at max."),
-		),
-	)
+			invariant.Event_False("A phase is at max.")).
+		Ensure()
 }
 
 // EXTENT_MIN is the narrowest column width the layout assembles: the four-wide delta

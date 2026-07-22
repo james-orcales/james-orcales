@@ -245,21 +245,20 @@ func Completion_Transition(input *Completion_Transition_Input) {
 	// Three axes identify each legal edge as one grid cell; the Impossible carves remove
 	// exactly the from-to tuples the legality table forbids, so the demanded grid is the
 	// four legal edges and nothing else.
-	invariant.Dot_Product("io.completion.transition",
-		invariant.Sometimes(input.From == COMPLETION_IDLE, "the edge leaves idle"),
-		invariant.Sometimes(
-			input.From == COMPLETION_CANCELLED, "the edge leaves cancelled"),
-		invariant.Sometimes(input.To == COMPLETION_IDLE, "the edge enters idle"),
-		invariant.Impossible(
+	invariant.Dot_Product("io.completion.transition").
+		Sometimes(input.From == COMPLETION_IDLE, "the edge leaves idle").
+		Sometimes(input.From == COMPLETION_CANCELLED, "the edge leaves cancelled").
+		Sometimes(input.To == COMPLETION_IDLE, "the edge enters idle").
+		Impossible("idle and cancelled origins are exclusive",
 			invariant.Event_True("the edge leaves idle"),
-			invariant.Event_True("the edge leaves cancelled")),
-		invariant.Impossible(
+			invariant.Event_True("the edge leaves cancelled")).
+		Impossible("an idle completion cannot enter idle",
 			invariant.Event_True("the edge leaves idle"),
-			invariant.Event_True("the edge enters idle")),
-		invariant.Impossible(
+			invariant.Event_True("the edge enters idle")).
+		Impossible("a cancelled completion must enter idle",
 			invariant.Event_True("the edge leaves cancelled"),
-			invariant.Event_False("the edge enters idle")),
-	)
+			invariant.Event_False("the edge enters idle")).
+		Ensure()
 }
 
 // IO is the injected async IO submit surface — TigerBeetle's `IO`. Code submits

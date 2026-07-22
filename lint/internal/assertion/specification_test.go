@@ -100,8 +100,8 @@ func Test_Invariants_Numeric_Bounds(t *testing.T) {
 			"// Tiny is a fixture.\ntype Tiny uint8\n\n" +
 			"// Tiny_Invariants is a fixture.\n" +
 			"func Tiny_Invariants(v Tiny, namespace invariant.Namespace) {\n" +
-			"\tinvariant.Dot_Product(namespace, " +
-			"invariant.Sometimes(v == 0, \"zero\"))\n}\n"})
+			"\tinvariant.Dot_Product(namespace)." +
+			"Sometimes(v == 0, \"zero\").Ensure()\n}\n"})
 	if !diagnosed(check_source(pf), "must guard both ends") {
 		t.Fatal("a numeric bundle without Always bounds must be flagged")
 	}
@@ -119,8 +119,8 @@ func Test_Invariants_Numeric_Bound_Constant(t *testing.T) {
 			"func Tiny_Invariants(v Tiny, namespace invariant.Namespace) {\n" +
 			"\tinvariant.Always(v <= 7, \"max\")\n" +
 			"\tinvariant.Always(v >= 0, \"min\")\n" +
-			"\tinvariant.Dot_Product(namespace, " +
-			"invariant.Sometimes(v == 0, \"zero\"))\n}\n"})
+			"\tinvariant.Dot_Product(namespace)." +
+			"Sometimes(v == 0, \"zero\").Ensure()\n}\n"})
 	if !diagnosed(check_source(pf), "must be a package-level constant") {
 		t.Fatal("an inline-literal numeric bound must be flagged")
 	}
@@ -135,12 +135,12 @@ func Test_Invariants_Numeric_Coverage(t *testing.T) {
 		Source_Text: sig_bundle_source(
 			"\tinvariant.Always(v <= Sig_Max, \"max\")\n" +
 				"\tinvariant.Always(v >= Sig_Min, \"min\")\n" +
-				"\tinvariant.Dot_Product(namespace,\n" +
-				"\t\tinvariant.Sometimes(v == Sig_Max, \"max\"),\n" +
-				"\t\tinvariant.Sometimes(v == Sig_Min, \"min\"),\n" +
-				"\t\tinvariant.Sometimes(v == 0, \"zero\"),\n" +
-				"\t\tinvariant.Sometimes(v == 1, \"one\"),\n" +
-				"\t\tinvariant.Sometimes(v == 2, \"two\"))")}))
+				"\tinvariant.Dot_Product(namespace).\n" +
+				"\t\tSometimes(v == Sig_Max, \"max\").\n" +
+				"\t\tSometimes(v == Sig_Min, \"min\").\n" +
+				"\t\tSometimes(v == 0, \"zero\").\n" +
+				"\t\tSometimes(v == 1, \"one\").\n" +
+				"\t\tSometimes(v == 2, \"two\").Ensure()")}))
 	if !diagnosed(missing_claim, "must claim -1") {
 		t.Fatal("a signed numeric bundle missing the -1 claim must be flagged")
 	}
@@ -150,12 +150,12 @@ func Test_Invariants_Numeric_Coverage(t *testing.T) {
 		Source_Text: sig_bundle_source(
 			"\tinvariant.Always(v <= Sig_Max, \"max\")\n" +
 				"\tinvariant.Always(v >= Sig_Min, \"min\")\n" +
-				"\tinvariant.Dot_Product(namespace,\n" +
-				"\t\tinvariant.Sometimes(v == Sig_Min, \"min\"),\n" +
-				"\t\tinvariant.Sometimes(v == 0, \"zero\"),\n" +
-				"\t\tinvariant.Sometimes(v == 1, \"one\"),\n" +
-				"\t\tinvariant.Sometimes(v == 2, \"two\"),\n" +
-				"\t\tinvariant.Sometimes(v == -1, \"neg\"))")}))
+				"\tinvariant.Dot_Product(namespace).\n" +
+				"\t\tSometimes(v == Sig_Min, \"min\").\n" +
+				"\t\tSometimes(v == 0, \"zero\").\n" +
+				"\t\tSometimes(v == 1, \"one\").\n" +
+				"\t\tSometimes(v == 2, \"two\").\n" +
+				"\t\tSometimes(v == -1, \"neg\").Ensure()")}))
 	if !diagnosed(missing_max, "must witness its maximum") {
 		t.Fatal("a numeric bundle that never witnesses its maximum must be flagged")
 	}
@@ -172,13 +172,13 @@ func Test_Invariants_Numeric_Range_Preset(t *testing.T) {
 		Source_Text: sig_bundle_source(
 			"\tinvariant.Always(v <= Sig_Max, \"max\")\n" +
 				"\tinvariant.Always(v >= Sig_Min, \"min\")\n" +
-				"\tinvariant.Dot_Product(namespace,\n" +
-				"\t\tinvariant.Sometimes(v == Sig_Min, \"min\"),\n" +
-				"\t\tinvariant.Sometimes(v == Sig_Max, \"max\"),\n" +
-				"\t\tinvariant.Sometimes(v == 0, \"zero\"),\n" +
-				"\t\tinvariant.Sometimes(v == 1, \"one\"),\n" +
-				"\t\tinvariant.Sometimes(v == 2, \"two\"),\n" +
-				"\t\tinvariant.Sometimes(v == -1, \"neg\"))")}))
+				"\tinvariant.Dot_Product(namespace).\n" +
+				"\t\tSometimes(v == Sig_Min, \"min\").\n" +
+				"\t\tSometimes(v == Sig_Max, \"max\").\n" +
+				"\t\tSometimes(v == 0, \"zero\").\n" +
+				"\t\tSometimes(v == 1, \"one\").\n" +
+				"\t\tSometimes(v == 2, \"two\").\n" +
+				"\t\tSometimes(v == -1, \"neg\").Ensure()")}))
 	// Either form satisfies the bound and coverage mandate — neither is flagged.
 	clean := func(form string, diags []diagnostic.Diagnostic) {
 		if diagnosed(diags, "must guard both ends") {
@@ -244,8 +244,8 @@ func Test_Invariants_Count_Bounds(t *testing.T) {
 			"// Name is a fixture.\ntype Name string\n\n" +
 			"// Name_Invariants is a fixture.\n" +
 			"func Name_Invariants(v Name, namespace invariant.Namespace) {\n" +
-			"\tinvariant.Dot_Product(namespace, " +
-			"invariant.Sometimes(len(v) == 0, \"empty\"))\n}\n"})
+			"\tinvariant.Dot_Product(namespace)." +
+			"Sometimes(len(v) == 0, \"empty\").Ensure()\n}\n"})
 	if !diagnosed(check_source(pf), "Always(len(v) <= MAX)") {
 		t.Fatal("a length bundle without Always len bounds must be flagged")
 	}
@@ -263,8 +263,8 @@ func Test_Invariants_Count_Bound_Constant(t *testing.T) {
 			"func Name_Invariants(v Name, namespace invariant.Namespace) {\n" +
 			"\tinvariant.Always(len(v) <= 32, \"max\")\n" +
 			"\tinvariant.Always(len(v) >= 0, \"min\")\n" +
-			"\tinvariant.Dot_Product(namespace, " +
-			"invariant.Sometimes(len(v) == 0, \"empty\"))\n}\n"})
+			"\tinvariant.Dot_Product(namespace)." +
+			"Sometimes(len(v) == 0, \"empty\").Ensure()\n}\n"})
 	if !diagnosed(check_source(pf), "must be a package-level constant") {
 		t.Fatal("an inline-literal len bound must be flagged")
 	}
@@ -283,12 +283,11 @@ func Test_Invariants_Count_Coverage(t *testing.T) {
 			"func Name_Invariants(v Name, namespace invariant.Namespace) {\n" +
 			"\tinvariant.Always(len(v) <= Name_Max, \"max bound\")\n" +
 			"\tinvariant.Always(len(v) >= Name_Min, \"min bound\")\n" +
-			"\tinvariant.Dot_Product(namespace,\n" +
-			"\t\tinvariant.Sometimes(len(v) == Name_Max, \"max\"),\n" +
-			"\t\tinvariant.Sometimes(len(v) == Name_Min, \"min\"),\n" +
-			"\t\tinvariant.Sometimes(len(v) == 0, \"zero\"),\n" +
-			"\t\tinvariant.Sometimes(len(v) == 1, \"one\"),\n" +
-			"\t)\n}\n"})
+			"\tinvariant.Dot_Product(namespace).\n" +
+			"\t\tSometimes(len(v) == Name_Max, \"max\").\n" +
+			"\t\tSometimes(len(v) == Name_Min, \"min\").\n" +
+			"\t\tSometimes(len(v) == 0, \"zero\").\n" +
+			"\t\tSometimes(len(v) == 1, \"one\").Ensure()\n}\n"})
 	if !diagnosed(check_source(pf), "must claim 2") {
 		t.Fatal("a length bundle missing the 2 claim must be flagged")
 	}
@@ -324,20 +323,20 @@ func Test_Invariants_Field_Composition(t *testing.T) {
 			"// Token is a fixture.\ntype Token string\n\n" +
 			"// Token_Invariants is a fixture.\n" +
 			"func Token_Invariants(v Token, namespace invariant.Namespace) {\n" +
-			"\tinvariant.Dot_Product(namespace, " +
-			"invariant.Sometimes(len(v) == 0, \"x\"))\n}\n\n" +
+			"\tinvariant.Dot_Product(namespace)." +
+			"Sometimes(len(v) == 0, \"x\").Ensure()\n}\n\n" +
 			"// Lexeme is a fixture.\ntype Lexeme struct {\n" +
 			"\t// Tok is a fixture.\n\tTok Token\n}\n\n" +
 			"// Lexeme_Invariants is a fixture.\n" +
 			"func Lexeme_Invariants(v Lexeme, namespace invariant.Namespace) {\n" +
-			"\tinvariant.Dot_Product(namespace, " +
-			"invariant.Sometimes(true, \"x\"))\n}\n\n" +
+			"\tinvariant.Dot_Product(namespace)." +
+			"Sometimes(true, \"x\").Ensure()\n}\n\n" +
 			"// Phrase is a fixture.\ntype Phrase struct {\n" +
 			"\t// Tok is a fixture.\n\tTok *Token\n}\n\n" +
 			"// Phrase_Invariants is a fixture.\n" +
 			"func Phrase_Invariants(v Phrase, namespace invariant.Namespace) {\n" +
-			"\tinvariant.Dot_Product(namespace, " +
-			"invariant.Sometimes(true, \"y\"))\n}\n"})
+			"\tinvariant.Dot_Product(namespace)." +
+			"Sometimes(true, \"y\").Ensure()\n}\n"})
 	diags := check_source(pf)
 	if !diagnosed(diags, "Lexeme_Invariants must call Token_Invariants") {
 		t.Fatal("a struct that does not compose a value field's invariant must be flagged")
@@ -360,8 +359,8 @@ func Test_Invariants_Parameter_Assertion(t *testing.T) {
 			"// Token is a fixture.\ntype Token string\n\n" +
 			"// Token_Invariants is a fixture.\n" +
 			"func Token_Invariants(v Token, namespace invariant.Namespace) {\n" +
-			"\tinvariant.Dot_Product(namespace, " +
-			"invariant.Sometimes(len(v) == 0, \"x\"))\n}\n\n" +
+			"\tinvariant.Dot_Product(namespace)." +
+			"Sometimes(len(v) == 0, \"x\").Ensure()\n}\n\n" +
 			"// Consume does.\nfunc Consume(tok Token) {\n\tprintln(0)\n}\n"})
 	if !diagnosed(check_source(pf), "must assert tok") {
 		t.Fatal("a function that does not assert an input parameter must be flagged")
@@ -379,8 +378,8 @@ func Test_Invariants_Output_Assertion(t *testing.T) {
 			"// Token is a fixture.\ntype Token string\n\n" +
 			"// Token_Invariants is a fixture.\n" +
 			"func Token_Invariants(v Token, namespace invariant.Namespace) {\n" +
-			"\tinvariant.Dot_Product(namespace, " +
-			"invariant.Sometimes(len(v) == 0, \"x\"))\n}\n\n" +
+			"\tinvariant.Dot_Product(namespace)." +
+			"Sometimes(len(v) == 0, \"x\").Ensure()\n}\n\n" +
 			"// Make does.\nfunc Make() (tok Token) {\n\treturn \"\"\n}\n"})
 	if !diagnosed(check_source(pf), "must assert tok in a first-statement defer") {
 		t.Fatal("a function that does not assert its return in a defer must be flagged")

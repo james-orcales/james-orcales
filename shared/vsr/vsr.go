@@ -1245,17 +1245,15 @@ func replica_message_epoch_check(
 	// processed normally. The Sometimes axes witness the {stale, processed-normally} outcomes
 	// and the Impossible forbids their co-occurrence — a stale message slipping past the gate
 	// would trip it.
-	stale := invariant.Sometimes(message.Epoch < replica.Epoch,
-		"message epoch below replica epoch")
-	processed_normally := invariant.Sometimes(message.Epoch == replica.Epoch,
-		"message epoch matches replica epoch")
-	invariant.Dot_Product(
-		"vsr.epoch_gate.precedence",
-		stale, processed_normally,
-		invariant.Impossible(
+	invariant.Dot_Product("vsr.epoch_gate.precedence").
+		Sometimes(message.Epoch < replica.Epoch,
+			"message epoch below replica epoch").
+		Sometimes(message.Epoch == replica.Epoch,
+			"message epoch matches replica epoch").
+		Impossible("stale messages are not processed normally",
 			invariant.Event_True("message epoch below replica epoch"),
-			invariant.Event_True("message epoch matches replica epoch")),
-	)
+			invariant.Event_True("message epoch matches replica epoch")).
+		Ensure()
 	if message.Epoch == replica.Epoch {
 		return output, true
 	}

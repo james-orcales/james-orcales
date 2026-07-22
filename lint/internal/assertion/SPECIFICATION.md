@@ -42,9 +42,9 @@ never an inline literal nor an imported selector.
 
 ### Numeric Coverage
 
-The bundle claims 0, 1, 2, and -1 for signed by Sometimes(v == V) or Always(v ==/!= V); a float
-claims NaN and both infinities instead. Both bound edges are always in range, so each must be
-witnessed — Sometimes(v == MIN) and Sometimes(v == MAX), never merely guarded.
+The bundle claims 0, 1, 2, and -1 for signed by a Dot_Product chain's Sometimes(v == V) or by
+Always(v ==/!= V); a float claims NaN and both infinities instead. Both bound edges are always in
+range, so each must be witnessed by chain links, never merely guarded.
 
 ### Numeric Range Preset
 
@@ -70,8 +70,8 @@ selector.
 
 ### Count Coverage
 
-The bundle claims 0, 1, and 2 by Sometimes(len(v) == V) or Always(len(v) ==/!= V), and witnesses
-both length edges — Sometimes(len(v) == MIN) and Sometimes(len(v) == MAX), never merely guarding
+The bundle claims 0, 1, and 2 by a Dot_Product chain's Sometimes(len(v) == V) or by
+Always(len(v) ==/!= V), and witnesses both length edges with chain links, never merely guarding
 them.
 
 ### Field Composition
