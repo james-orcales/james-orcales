@@ -62,7 +62,7 @@ typeset -A abbreviations=(
         ab    'jj bookmark'
         abc   'jj bookmark create $BRANCH'
         abl   'jj bookmark list'
-        abs   'jj bookmark set $BRANCH'
+        abs   'jj bookmark set $BRANCH -r'
         absp  'jj bookmark set $BRANCH --revision @-'
         abt   'jj bookmark track $BRANCH'
 
@@ -75,7 +75,6 @@ typeset -A abbreviations=(
         ag    'jj git'
         agp   'jj git push --bookmark james'
         agf   'jj git fetch --tracked'
-        agfp  'jj git fetch --tracked && jj git push'
         ah    'jj --help'
 
         alf   "jj log -r 'fork_point(@|main)..(@|main) | fork_point(@|main) | (@-+ ~ (working_copies() ~ @))' --no-pager"
@@ -99,7 +98,7 @@ typeset -A abbreviations=(
         arv   'jj revert --insert-before @ --revisions'
         ard   'jj redo'
         ars   'jj restore --interactive'
-        arb   'jj rebase -s !! -A main'
+        arb   'jj rebase -r !! -A main'
 
         awl   'jj workspace list'
         # awsq: snapshot the secondary (jj status -R) so we pick up its on-disk
@@ -110,7 +109,7 @@ typeset -A abbreviations=(
         gc1n  'git clone --depth=1 --no-single-branch'
         gcfb  'git clone --filter=blob:none'
 
-        ghpr  'gh pr create --title="!!" --fill-verbose --base main --head james; gh pr view --web james'
+        ghpr 'jj git push --bookmark james && gh pr create --title="!!" --fill-verbose --base main --head james; gh pr view --web james'
 
         stdrs 'cd $(rustc --print sysroot)/lib/rustlib/src/rust/library/ && nvim .'
         stdgo 'cd $(go env GOROOT)/src/ && nvim .'
