@@ -129,7 +129,7 @@ func check(a bool, b bool) {
 }
 `
 	recorder, _, _ = registered_fixture(PLAN_SOURCE)
-	shape := recorder.Chain_Shapes["plan"]
+	shape := (*recorder.Chain_Shapes.Load())["plan"]
 	shape.Axes[0].Tuple_Position = 1
 	shape.Axes[1].Tuple_Position = 0
 	shape.Rules[0].Want = invariant.Chain_Mask{2}
@@ -222,7 +222,7 @@ func Test_Dot_Product_Unknown(t *testing.T) {
 	if !strings.Contains(message, "unknown axis") {
 		t.Fatalf("panic = %q, want unknown axis", message)
 	}
-	shape := recorder.Chain_Shapes["check"]
+	shape := (*recorder.Chain_Shapes.Load())["check"]
 	one_entry := shape.Axes[1].Entry
 	shape.Axes[1].Entry = invariant.Handle_Entry{}
 	message = panic_text(func() {
@@ -366,7 +366,7 @@ func check(a bool, b bool) {
 }
 `
 	recorder, _, _ = registered_fixture(PLAN_SOURCE)
-	shape := recorder.Chain_Shapes["plan"]
+	shape := (*recorder.Chain_Shapes.Load())["plan"]
 	shape.Axes[0].Tuple_Position = 1
 	shape.Axes[1].Tuple_Position = 0
 	shape.Tuples[invariant.Chain_Mask{1}], shape.Tuples[invariant.Chain_Mask{2}] =

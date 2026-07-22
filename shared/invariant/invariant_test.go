@@ -133,7 +133,7 @@ func check(a bool, b bool) {
 }
 `
 	recorder, _, _ := registered_fixture(SOURCE)
-	shape := recorder.Chain_Shapes["rule plan"]
+	shape := (*recorder.Chain_Shapes.Load())["rule plan"]
 	shape.Rules[0], shape.Rules[1] = shape.Rules[1], shape.Rules[0]
 	shape.Links[2].Rule_Index = 1
 	shape.Links[3].Rule_Index = 0
@@ -1664,4 +1664,17 @@ func metric_chain(recorder *invariant.Recorder, value int) {
 		Impossible("two and max are exclusive",
 			invariant.Event_True("two"), invariant.Event_True("max")).
 		Ensure()
+}
+
+// Test_Warmed_Chain_Shape_Resolution_Takes_No_Recorder_Lock resolves a warmed namespace while
+// holding the recorder's shape-publication lock; a hot path that locks deadlocks here. Even a
+// read-lock is a write to one shared word, which ping-pongs its cache line across every worker —
+// measured as nine times the single-proc CPU at eight procs — so the warmed path must reach its
+// shape through a plain load.
+func Test_Warmed_Chain_Shape_Resolution_Takes_No_Recorder_Lock(t *testing.T) {
+	recorder := &invariant.Recorder{}
+	invariant.Recorder_Dot_Product(recorder, "warmed").Sometimes(true, "axis").Ensure()
+	recorder.Chain_Shapes_Mu.Lock()
+	defer recorder.Chain_Shapes_Mu.Unlock()
+	invariant.Recorder_Dot_Product(recorder, "warmed").Sometimes(true, "axis").Ensure()
 }
