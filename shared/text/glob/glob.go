@@ -1754,9 +1754,17 @@ type Matcher struct {
 	Negated bool
 	// Limit is the rune-count bound of Max (at most) and Min (at least).
 	Limit int
-	// Rune_Width is the cached fixed rune width of Text, Row, and Btree; it is
-	// RUNE_WIDTH_VARIABLE for a Btree whose parts are not all fixed.
+	// Rune_Width is the cached rune width every constructor sets: a fixed count for
+	// the fixed-width kinds and RUNE_WIDTH_VARIABLE otherwise. Caching it lets the
+	// match-time hot paths (Row and Btree) read a child's width instead of
+	// recomputing it — and recomputing meant a 200-byte struct copy per call.
 	Rune_Width int
+	// Segments is the fixed match-length list Index returns for the kinds whose
+	// segments do not depend on the input — Text and Row. Precomputing it lets
+	// Index hand back this slice instead of allocating one per call, which matters
+	// because a Btree calls Index on its Text pivot once per candidate offset. It is
+	// read-only; callers never mutate a returned segment list.
+	Segments []int
 	// Children are the sub-matchers of the composite kinds Any_Of, Every_Of,
 	// and Row.
 	Children []Matcher
@@ -1772,23 +1780,31 @@ type Matcher struct {
 
 // New_Any builds a matcher for a wildcard run bounded by separators.
 func New_Any(separators []rune) (matcher Matcher) {
-	return Matcher{Kind: MATCHER_KIND_ANY, Separators: separators}
+	return Matcher{
+		Kind:       MATCHER_KIND_ANY,
+		Separators: separators,
+		Rune_Width: RUNE_WIDTH_VARIABLE,
+	}
 }
 
 // New_Super builds a matcher that accepts every string.
 func New_Super() (matcher Matcher) {
-	return Matcher{Kind: MATCHER_KIND_SUPER}
+	return Matcher{Kind: MATCHER_KIND_SUPER, Rune_Width: RUNE_WIDTH_VARIABLE}
 }
 
 // New_Single builds a matcher for one non-separator rune.
 func New_Single(separators []rune) (matcher Matcher) {
-	return Matcher{Kind: MATCHER_KIND_SINGLE, Separators: separators}
+	return Matcher{
+		Kind:       MATCHER_KIND_SINGLE,
+		Separators: separators,
+		Rune_Width: RUNE_WIDTH_ONE,
+	}
 }
 
 // New_Empty builds a matcher that accepts only the empty string (upstream
 // NewNothing, renamed because the linter rejects the participle "nothing").
 func New_Empty() (matcher Matcher) {
-	return Matcher{Kind: MATCHER_KIND_EMPTY}
+	return Matcher{Kind: MATCHER_KIND_EMPTY, Rune_Width: RUNE_WIDTH_ZERO}
 }
 
 // New_Text builds a matcher for one exact literal; its rune width is cached so
@@ -1798,27 +1814,28 @@ func New_Text(literal string) (matcher Matcher) {
 		Kind:       MATCHER_KIND_TEXT,
 		Literal:    literal,
 		Rune_Width: utf8.RuneCountInString(literal),
+		Segments:   []int{len(literal)},
 	}
 }
 
 // New_Max builds a matcher for a run of at most limit runes.
 func New_Max(limit int) (matcher Matcher) {
-	return Matcher{Kind: MATCHER_KIND_MAX, Limit: limit}
+	return Matcher{Kind: MATCHER_KIND_MAX, Limit: limit, Rune_Width: RUNE_WIDTH_VARIABLE}
 }
 
 // New_Min builds a matcher for a run of at least limit runes.
 func New_Min(limit int) (matcher Matcher) {
-	return Matcher{Kind: MATCHER_KIND_MIN, Limit: limit}
+	return Matcher{Kind: MATCHER_KIND_MIN, Limit: limit, Rune_Width: RUNE_WIDTH_VARIABLE}
 }
 
 // New_Prefix builds a matcher for strings beginning with prefix.
 func New_Prefix(prefix string) (matcher Matcher) {
-	return Matcher{Kind: MATCHER_KIND_PREFIX, Prefix: prefix}
+	return Matcher{Kind: MATCHER_KIND_PREFIX, Prefix: prefix, Rune_Width: RUNE_WIDTH_VARIABLE}
 }
 
 // New_Suffix builds a matcher for strings ending with suffix.
 func New_Suffix(suffix string) (matcher Matcher) {
-	return Matcher{Kind: MATCHER_KIND_SUFFIX, Suffix: suffix}
+	return Matcher{Kind: MATCHER_KIND_SUFFIX, Suffix: suffix, Rune_Width: RUNE_WIDTH_VARIABLE}
 }
 
 // New_Prefix_Suffix_Input carries the two bookend substrings; the input struct
@@ -1833,13 +1850,23 @@ type New_Prefix_Suffix_Input struct {
 // New_Prefix_Suffix builds a matcher for strings that both begin with Prefix
 // and end with Suffix.
 func New_Prefix_Suffix(input *New_Prefix_Suffix_Input) (matcher Matcher) {
-	return Matcher{Kind: MATCHER_KIND_PREFIX_SUFFIX, Prefix: input.Prefix, Suffix: input.Suffix}
+	return Matcher{
+		Kind:       MATCHER_KIND_PREFIX_SUFFIX,
+		Prefix:     input.Prefix,
+		Suffix:     input.Suffix,
+		Rune_Width: RUNE_WIDTH_VARIABLE,
+	}
 }
 
 // New_Contains builds a matcher that tests whether needle occurs; negated flips
 // the test to require its absence.
 func New_Contains(needle string, negated bool) (matcher Matcher) {
-	return Matcher{Kind: MATCHER_KIND_CONTAINS, Needle: needle, Negated: negated}
+	return Matcher{
+		Kind:       MATCHER_KIND_CONTAINS,
+		Needle:     needle,
+		Negated:    negated,
+		Rune_Width: RUNE_WIDTH_VARIABLE,
+	}
 }
 
 // New_Range_Input carries the rune interval; the input struct exists because
@@ -1858,33 +1885,48 @@ type New_Range_Input struct {
 // Negated.
 func New_Range(input *New_Range_Input) (matcher Matcher) {
 	return Matcher{
-		Kind:    MATCHER_KIND_RANGE,
-		Low:     input.Low,
-		High:    input.High,
-		Negated: input.Negated,
+		Kind:       MATCHER_KIND_RANGE,
+		Low:        input.Low,
+		High:       input.High,
+		Negated:    input.Negated,
+		Rune_Width: RUNE_WIDTH_ONE,
 	}
 }
 
 // New_List builds a matcher for one rune drawn from set; negated flips it to
 // accept runes outside set.
 func New_List(set []rune, negated bool) (matcher Matcher) {
-	return Matcher{Kind: MATCHER_KIND_LIST, Runes: set, Negated: negated}
+	return Matcher{
+		Kind:       MATCHER_KIND_LIST,
+		Runes:      set,
+		Negated:    negated,
+		Rune_Width: RUNE_WIDTH_ONE,
+	}
 }
 
 // New_Row builds a fixed-width matcher for the given adjacent children whose
 // rune widths sum to width.
 func New_Row(width int, children ...Matcher) (matcher Matcher) {
-	return Matcher{Kind: MATCHER_KIND_ROW, Rune_Width: width, Children: children}
+	return Matcher{
+		Kind:       MATCHER_KIND_ROW,
+		Rune_Width: width,
+		Children:   children,
+		Segments:   []int{width},
+	}
 }
 
 // New_Any_Of builds a matcher that accepts a string matched by any child.
 func New_Any_Of(children ...Matcher) (matcher Matcher) {
-	return Matcher{Kind: MATCHER_KIND_ANY_OF, Children: children}
+	matcher = Matcher{Kind: MATCHER_KIND_ANY_OF, Children: children}
+	matcher.Rune_Width = rune_width_any_of(matcher)
+	return matcher
 }
 
 // New_Every_Of builds a matcher that accepts a string matched by every child.
 func New_Every_Of(children ...Matcher) (matcher Matcher) {
-	return Matcher{Kind: MATCHER_KIND_EVERY_OF, Children: children}
+	matcher = Matcher{Kind: MATCHER_KIND_EVERY_OF, Children: children}
+	matcher.Rune_Width = rune_width_every_of(matcher)
+	return matcher
 }
 
 // New_Btree_Input carries the pivot and its two side matchers; the input struct
@@ -1915,13 +1957,23 @@ func New_Btree(input *New_Btree_Input) (matcher Matcher) {
 // New_Prefix_Any builds a matcher for prefix followed by a run that stops at the
 // first separator.
 func New_Prefix_Any(prefix string, separators []rune) (matcher Matcher) {
-	return Matcher{Kind: MATCHER_KIND_PREFIX_ANY, Prefix: prefix, Separators: separators}
+	return Matcher{
+		Kind:       MATCHER_KIND_PREFIX_ANY,
+		Prefix:     prefix,
+		Separators: separators,
+		Rune_Width: RUNE_WIDTH_VARIABLE,
+	}
 }
 
 // New_Suffix_Any builds a matcher for a run that stops at the last separator,
 // followed by suffix.
 func New_Suffix_Any(suffix string, separators []rune) (matcher Matcher) {
-	return Matcher{Kind: MATCHER_KIND_SUFFIX_ANY, Suffix: suffix, Separators: separators}
+	return Matcher{
+		Kind:       MATCHER_KIND_SUFFIX_ANY,
+		Suffix:     suffix,
+		Separators: separators,
+		Rune_Width: RUNE_WIDTH_VARIABLE,
+	}
 }
 
 // Reports whether text is matched in full by matcher, the whole-string test.
@@ -2209,7 +2261,7 @@ func index_text(matcher *Matcher, text string) (offset int, segments []int) {
 	if offset == -1 {
 		return -1, nil
 	}
-	return offset, []int{len(matcher.Literal)}
+	return offset, matcher.Segments
 }
 
 func index_max(matcher *Matcher, text string) (offset int, segments []int) {
@@ -2347,7 +2399,7 @@ func index_row(matcher *Matcher, text string) (offset int, segments []int) {
 			break
 		}
 		if row_match_all(matcher, text[byte_offset:]) {
-			return byte_offset, []int{matcher.Rune_Width}
+			return byte_offset, matcher.Segments
 		}
 	}
 	return -1, nil
@@ -2531,7 +2583,7 @@ func btree_child_rune_width(child *Matcher) (width int) {
 	if child == nil {
 		return RUNE_WIDTH_ZERO
 	}
-	return Rune_Width(*child)
+	return child.Rune_Width
 }
 
 // Hands each child in turn the next slice of text as wide as the child's rune
@@ -2540,7 +2592,7 @@ func row_match_all(matcher *Matcher, text string) (matched bool) {
 	start := 0
 	for child_index := range matcher.Children {
 		child := &matcher.Children[child_index]
-		child_width := Rune_Width(*child)
+		child_width := child.Rune_Width
 		rune_count := 0
 		last_rune_start := 0
 		for byte_offset := range text[start:] {
