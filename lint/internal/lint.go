@@ -540,7 +540,7 @@ const LINES_PER_FILE_MAX = 10000
 const DIAGNOSTICS_PER_CALL_MAX = LINES_PER_FILE_MAX * 4
 
 // PARSED_FILES_PER_CALL_MAX caps the slice length of `parsed_files
-// []parsed_file` and similar package-level slices. A package typically holds
+// []Parsed_File` and similar package-level slices. A package typically holds
 // dozens of files; the cap leaves ample headroom for the worst-case monorepo
 // flat-directory layout without admitting absurd values.
 const PARSED_FILES_PER_CALL_MAX = 32768
@@ -990,7 +990,7 @@ func validate_glob_patterns(field string, patterns []string) (err error) {
 type Diagnostic = diagnostic.Diagnostic
 
 // Parsed_File, aliased from the source package so the core keeps naming it
-// parsed_file while the type lives in a deterministic leaf a rule subpackage can
+// Parsed_File while the type lives in a deterministic leaf a rule subpackage can
 // import without reaching back into this impure package.
 type Parsed_File = source.Parsed_File
 
@@ -1333,7 +1333,7 @@ func check_shadows_function_body_walk_body_walk_statement_push_if_chain(
 }
 
 // Takes stack's length as an int rather than the slice itself: the slice would
-// share []walk_frame with output, and two same-type parameters must bundle.
+// share []Walk_Frame with output, and two same-type parameters must bundle.
 // Function only appends frames (output ≥ stack); (Hi,Hi) is the
 // AST safety cap, not a working shape.
 
@@ -2668,10 +2668,10 @@ func check_file_system_parse_files(
 // (1024) with zero work; the worker pool would idle, so reaching it
 // signals misconfigured input rather than a meaningful state.
 
-// Aliased from the source package, like parsed_file above.
+// Aliased from the source package, like Parsed_File above.
 type Component_Information = source.Component
 
-// Aliased from the source package, like parsed_file above.
+// Aliased from the source package, like Parsed_File above.
 type Component_Index = source.Component_Index
 
 var component_index_module_re = regexp.MustCompile(`(?m)^module\s+(\S+)`)
@@ -5043,7 +5043,7 @@ func check_names_vocabulary(
 }
 
 // Binds the word-replacements table (decoded from lint.json's word_replacements)
-// into a check_function, mirroring
+// into a Check_Function, mirroring
 // make_check_no_package_vars. Threading the table rather than reaching for a
 // package global keeps the check pure and lets tests drive it from a fixture.
 func make_check_names_vocabulary(table map[string][]string) (checker Check_Function) {
@@ -5570,7 +5570,7 @@ func is_stdlib_instrumentation(import_path string) (yes bool) {
 	return false
 }
 
-// Binds the instrumentation list into the package-var check. The check_function
+// Binds the instrumentation list into the package-var check. The Check_Function
 // signature carries no config of its own, so the list (needed by the var-Default
 // exemption) is captured in a closure built per run.
 func make_check_no_package_vars(instrumentation []string) (checker Check_Function) {
