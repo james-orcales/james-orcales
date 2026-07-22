@@ -18,18 +18,20 @@ func Test_Main_Paths(t *testing.T) {
 	run := func(arguments []string) (output string) {
 		buffer := strings.Builder{}
 		stderr := strings.Builder{}
-		code := sloc.Main(&sloc.Main_Input{
+		code := sloc.Main(sloc.Main_Input{
 			Arguments:    arguments,
 			Output:       &buffer,
 			Error_Output: &stderr,
-			Open:         func(root string) (file_system fs.FS) { return disk },
-			Path_Is_Directory: func(name string) (is_directory bool, err error) {
+			Open:         func(root sloc.Root) (file_system fs.FS) { return disk },
+			Path_Is_Directory: func(
+				name sloc.File_Path,
+			) (is_directory bool, err error) {
 				return true, nil
 			},
-			Read_File: func(name string) (content []byte, err error) {
+			Read_File: func(name sloc.File_Path) (content sloc.Source, err error) {
 				return nil, nil
 			},
-			Ignore_For: func(root string) (is_ignored sloc.Ignore_Predicate) {
+			Ignore_For: func(root sloc.Root) (is_ignored sloc.Ignore_Predicate) {
 				return nil
 			},
 			Concurrency: 1,

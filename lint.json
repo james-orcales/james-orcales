@@ -7,7 +7,7 @@
   ],
   "pure_but_indeterministic_packages": [
     "lint/internal/",
-    "sloc/internal/",
+    "sloc/internal/**",
     "shared/sync/diode/",
     "shared/invariant/",
     "shared/jlog/",

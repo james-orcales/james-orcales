@@ -1,6 +1,7 @@
 package sloc_test
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 	"testing/fstest"
@@ -256,10 +257,16 @@ func Test_Classify_Newlines(t *testing.T) {
 // Test_Languages_Detection verifies each seeded extension resolves to its language and
 // an unknown extension resolves to nothing.
 func Test_Languages_Detection(t *testing.T) {
-	check_detection(t, sloc.Language_For_Extension, detection_extensions_core())
-	check_detection(t, sloc.Language_For_Extension, detection_extensions_rest())
-	check_detection(t, sloc.Language_For_Filename, detection_filenames())
-	if _, recognized := sloc.Language_For_Extension(".txt"); recognized {
+	by_extension := func(key string) (language sloc.Language, recognized bool) {
+		return sloc.Language_For_Extension(sloc.Extension(key))
+	}
+	by_filename := func(key string) (language sloc.Language, recognized bool) {
+		return sloc.Language_For_Filename(sloc.File_Name(key))
+	}
+	check_detection(t, by_extension, detection_extensions_core())
+	check_detection(t, by_extension, detection_extensions_rest())
+	check_detection(t, by_filename, detection_filenames())
+	if _, recognized := sloc.Language_For_Extension(sloc.Extension(".txt")); recognized {
 		t.Error(".txt should be unrecognized")
 	}
 }
@@ -419,8 +426,6 @@ func Test_Render_Table(t *testing.T) {
 		" Managed",
 		"   Go          2     21    15         2       4",
 		rule,
-		" Total         3     29    22         3       4",
-		rule,
 		"",
 	}, "\n")
 	if output.String() != want {
@@ -450,8 +455,6 @@ func Test_Render_Files(t *testing.T) {
 		"   Go              1      4     3         1       0",
 		"     a.go                 4     3         1       0",
 		rule,
-		" Total             2      7     5         1       1",
-		rule,
 		"",
 	}, "\n")
 	if output.String() != want {
@@ -463,22 +466,20 @@ func Test_Render_Files(t *testing.T) {
 func Test_Render_Thousands(t *testing.T) {
 	files := []sloc.File_Count{
 		{Path: "g.go", Language: "Go",
-			Counts: sloc.Counts{Code: 12000, Comment: 3456, Blank: 789}},
-		{Path: "g.rs", Language: "Rust", Counts: sloc.Counts{Code: 1000000}},
+			Counts: sloc.Counts{Code: 8000, Comment: 3456, Blank: 789}},
+		{Path: "g.rs", Language: "Rust", Counts: sloc.Counts{Code: 1000}},
 	}
 	output := strings.Builder{}
 	sloc.Render(&output, sloc.Render_Input{Report: sloc.Report{Files: files}})
-	rule := strings.Repeat("─", 63)
+	rule := strings.Repeat("─", 56)
 	want := strings.Join([]string{
 		rule,
-		" Language  Files      Lines       Code  Comments  Blanks  %Code",
+		" Language  Files   Lines   Code  Comments  Blanks  %Code",
 		rule,
 		" Systems",
-		"   Rust        1  1,000,000  1,000,000         0       0",
+		"   Rust        1   1,000  1,000         0       0",
 		" Managed",
-		"   Go          1     16,245     12,000     3,456     789",
-		rule,
-		" Total         2  1,016,245  1,012,000     3,456     789",
+		"   Go          1  12,245  8,000     3,456     789",
 		rule,
 		"",
 	}, "\n")
@@ -511,10 +512,6 @@ func Test_Render_Tests(t *testing.T) {
 		"     source      1     15    10         2       3  71.4%",
 		"     tests       1      6     4         1       1  28.6%",
 		rule,
-		" Total           3     29    21         4       4",
-		"   source        2     23    17         3       3  81.0%",
-		"   tests         1      6     4         1       1  19.0%",
-		rule,
 		"",
 	}, "\n")
 	if output.String() != want {
@@ -522,9 +519,30 @@ func Test_Render_Tests(t *testing.T) {
 	}
 }
 
+// Test_Render_No_Total verifies a report states each language and stops there. Nothing
+// sums the run, in the table or in the JSON.
+func Test_Render_No_Total(t *testing.T) {
+	files := []sloc.File_Count{
+		{Path: "a.go", Language: "Go", Counts: sloc.Counts{Code: 10, Comment: 2, Blank: 3}},
+		{Path: "b.rs", Language: "Rust",
+			Counts: sloc.Counts{Code: 7, Comment: 1, Blank: 0}},
+	}
+	table := strings.Builder{}
+	sloc.Render(&table, sloc.Render_Input{Report: sloc.Report{Files: files}})
+	if strings.Contains(table.String(), "Total") {
+		t.Errorf("table sums the run:\n%s", table.String())
+	}
+	document := strings.Builder{}
+	if err := sloc.Render_Json(&document, sloc.Report{Files: files}); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(document.String(), "total") {
+		t.Errorf("json sums the run:\n%s", document.String())
+	}
+}
+
 // Test_Render_JSON verifies the JSON output: a compact top-level array of flat language rows,
-// each carrying its category and source/test split, with the total appended last and marked by
-// is_total.
+// each carrying its category and source/test split.
 func Test_Render_JSON(t *testing.T) {
 	files := []sloc.File_Count{
 		{Path: "a.go", Language: "Go", Counts: sloc.Counts{Code: 10, Comment: 2, Blank: 3}},
@@ -535,14 +553,158 @@ func Test_Render_JSON(t *testing.T) {
 	if err := sloc.Render_Json(&output, sloc.Report{Files: files}); err != nil {
 		t.Fatal(err)
 	}
-	want := `[{"name":"Go","category":"Managed","is_total":false,"source_files":1,"source_code":10,"source_comments":2,"source_blanks":3,"tests_files":1,"tests_code":4,"tests_comments":1,"tests_blanks":1},{"name":"","category":"","is_total":true,"source_files":1,"source_code":10,"source_comments":2,"source_blanks":3,"tests_files":1,"tests_code":4,"tests_comments":1,"tests_blanks":1}]`
+	want := `[{"name":"Go","category":"Managed","source_files":1,"source_code":10,"source_comments":2,"source_blanks":3,"tests_files":1,"tests_code":4,"tests_comments":1,"tests_blanks":1}]`
 	if output.String() != want {
 		t.Errorf("json mismatch:\n got=%q\nwant=%q", output.String(), want)
 	}
 }
 
+// Test_Render_Dropped verifies the table's last section reports how many lines were
+// wider than the scan window and so were classified from a prefix.
+func Test_Render_Dropped(t *testing.T) {
+	wide := strings.Repeat("a", sloc.LINE_BYTES_MAX+1) + "\n"
+	counts := sloc.Classify_File(sloc.Classify_File_Input{
+		Source:   sloc.Source(wide + "b\n"),
+		Language: sloc.Language_Go(),
+	})
+	if counts.Dropped != 1 {
+		t.Errorf("dropped = %d, want 1", counts.Dropped)
+	}
+	if counts.Code != 2 {
+		t.Errorf("code = %d, want 2: a wide line still counts", counts.Code)
+	}
+	files := []sloc.File_Count{{Path: "w.go", Language: "Go", Counts: counts}}
+	output := strings.Builder{}
+	sloc.Render(&output, sloc.Render_Input{Report: sloc.Report{Files: files}})
+	if !strings.Contains(output.String(), " Dropped") {
+		t.Errorf("table has no Dropped section:\n%s", output.String())
+	}
+	// At the bound the tally stops counting and the cell says so.
+	saturated := []sloc.File_Count{{Path: "w.go", Language: "Go", Counts: sloc.Counts{
+		Code: 1, Comment: 0, Blank: 0, Dropped: sloc.DROPPED_COUNT_MAX,
+	}}}
+	output = strings.Builder{}
+	sloc.Render(&output, sloc.Render_Input{Report: sloc.Report{Files: saturated}})
+	if !strings.Contains(output.String(), "100k+") {
+		t.Errorf("saturated tally is not marked:\n%s", output.String())
+	}
+	// A file left out of the totals is named, and only what happened is listed.
+	report, err := sloc.Count(sloc.Count_Input{
+		File_System: fstest.MapFS{
+			"blob.go": &fstest.MapFile{Data: []byte("package\x00main\n")},
+			"good.go": &fstest.MapFile{Data: []byte("a\n")},
+		},
+		Is_Ignored:     nil,
+		Include_Hidden: false,
+		Concurrency:    1,
+	})
+	if err != nil {
+		t.Fatalf("count: %v", err)
+	}
+	output = strings.Builder{}
+	sloc.Render(&output, sloc.Render_Input{Report: report})
+	if !strings.Contains(output.String(), "files binary") {
+		t.Errorf("a dropped binary file is not reported:\n%s", output.String())
+	}
+	if strings.Contains(output.String(), "files oversized") {
+		t.Errorf("a tally of zero should print nothing:\n%s", output.String())
+	}
+}
+
 // Test_Limitations locks a documented inaccuracy: a JavaScript regex beginning with a
 // star opens a false block comment that bleeds into the next line.
+// Test_Bounds_Line verifies a line wider than the scan window still counts as exactly
+// one line: the totals stay exact for any input, only the tail goes unclassified.
+func Test_Bounds_Line(t *testing.T) {
+	wide := strings.Repeat("a", sloc.LINE_BYTES_MAX+904) + "\n"
+	counts := sloc.Classify_File(sloc.Classify_File_Input{
+		Source:   sloc.Source(wide),
+		Language: sloc.Language_Go(),
+	})
+	want := sloc.Counts{Code: 1, Comment: 0, Blank: 0, Dropped: 1}
+	if counts != want {
+		t.Errorf("wide line: got %+v, want %+v", counts, want)
+	}
+	// The window truncates what is read, so a comment opening past it is not seen.
+	late := strings.Repeat(" ", sloc.LINE_BYTES_MAX) + "// c\n"
+	counts = sloc.Classify_File(sloc.Classify_File_Input{
+		Source:   sloc.Source(late),
+		Language: sloc.Language_Go(),
+	})
+	want = sloc.Counts{Code: 0, Comment: 0, Blank: 1, Dropped: 1}
+	if counts != want {
+		t.Errorf("comment past the window: got %+v, want %+v", counts, want)
+	}
+}
+
+// Test_Bounds_File verifies a file past the source bound is left out of the report the
+// way a binary one is, and that the rest of the tree is still counted.
+func Test_Bounds_File(t *testing.T) {
+	over := strings.Repeat("a\n", sloc.SOURCE_BYTES_MAX)
+	report, err := sloc.Count(sloc.Count_Input{
+		File_System: fstest.MapFS{
+			"big.go":  &fstest.MapFile{Data: []byte(over)},
+			"fine.go": &fstest.MapFile{Data: []byte("a\n")},
+		},
+		Is_Ignored:     nil,
+		Include_Hidden: false,
+		Concurrency:    1,
+	})
+	if err != nil {
+		t.Fatalf("count: %v", err)
+	}
+	if len(report.Files) != 1 {
+		t.Fatalf("got %d files, want only the one within the bound", len(report.Files))
+	}
+	if report.Files[0].Path != "fine.go" {
+		t.Errorf("counted %q, want fine.go", report.Files[0].Path)
+	}
+}
+
+// Test_Bounds_Overflow verifies a tree holding more recognized files than the file bound
+// is counted up to that many, and that the walk carries on past it so the report can say
+// how many it could not take.
+func Test_Bounds_Overflow(t *testing.T) {
+	disk := fstest.MapFS{}
+	const OVER = 32
+	for index := range sloc.FILES_COUNT_MAX + OVER {
+		disk[fmt.Sprintf("f%06d.go", index)] = &fstest.MapFile{Data: []byte("a\n")}
+	}
+	report, err := sloc.Count(sloc.Count_Input{
+		File_System:    disk,
+		Is_Ignored:     nil,
+		Include_Hidden: false,
+		Concurrency:    1,
+	})
+	if err != nil {
+		t.Fatalf("count: %v", err)
+	}
+	if len(report.Files) != sloc.FILES_COUNT_MAX {
+		t.Errorf("counted %d files, want the bound %d",
+			len(report.Files), sloc.FILES_COUNT_MAX)
+	}
+	// The point of walking past the bound is that the excess is a known number rather
+	// than an unstated "there were more".
+	if report.Skipped.Overflow != OVER {
+		t.Errorf("overflow = %d, want %d", report.Skipped.Overflow, OVER)
+	}
+}
+
+// Test_Bounds_Depth verifies the block-comment depth saturates at its bound rather
+// than growing with the file, so a comment nested past it closes early.
+func Test_Bounds_Depth(t *testing.T) {
+	deep := strings.Repeat("/*", 300) + "\nstill inside\n"
+	counts := sloc.Classify_File(sloc.Classify_File_Input{
+		Source:   sloc.Source(deep),
+		Language: sloc.Language_Rust(),
+	})
+	want := sloc.Counts{Code: 0, Comment: 2, Blank: 0, Dropped: 1}
+	if counts != want {
+		t.Errorf("deep nesting: got %+v, want %+v", counts, want)
+	}
+}
+
+// Test_Limitations verifies the documented misclassifications.
 func Test_Limitations(t *testing.T) {
 	run_classify_cases(t, sloc.Language_Java_Script(), []classify_case{
 		{"regex opens false block comment", "x = /*/\ny = 2\n", 1, 1, 0},
@@ -553,9 +715,9 @@ func Test_Limitations(t *testing.T) {
 type classify_case struct {
 	Name    string
 	Source  string
-	Code    int
-	Comment int
-	Blank   int
+	Code    sloc.Line_Count
+	Comment sloc.Line_Count
+	Blank   sloc.Line_Count
 }
 
 // Checks each case's exact line partition.
@@ -563,7 +725,7 @@ func run_classify_cases(t *testing.T, language sloc.Language, cases []classify_c
 	t.Helper()
 	for _, one := range cases {
 		counts := sloc.Classify_File(sloc.Classify_File_Input{
-			Source:   []byte(one.Source),
+			Source:   sloc.Source(one.Source),
 			Language: language,
 		})
 		want := sloc.Counts{Code: one.Code, Comment: one.Comment, Blank: one.Blank}
@@ -578,7 +740,7 @@ func run_classify_cases(t *testing.T, language sloc.Language, cases []classify_c
 func report_by_path(report sloc.Report) (by_path map[string]sloc.File_Count) {
 	by_path = map[string]sloc.File_Count{}
 	for _, file := range report.Files {
-		by_path[file.Path] = file
+		by_path[string(file.Path)] = file
 	}
 	return by_path
 }
@@ -596,7 +758,7 @@ func check_detection(
 			t.Errorf("%s not recognized", key)
 			continue
 		}
-		if language.Name != want {
+		if string(language.Name) != want {
 			t.Errorf("%s -> %q, want %q", key, language.Name, want)
 		}
 	}
