@@ -93,6 +93,27 @@ check("the ResponseShape example validates and locates faults", function()
 	return good == true and bad == false and f.path[1] == "decision" and types.format(f):find("decision", 1, true)
 end)
 
+-- === Combinator construction rejects nonsense loudly ===
+
+check("enum rejects a nil member at construction", function()
+	local ok, err = pcall(types.enum, "a", nil, "b")
+	return not ok and err:find("must not be nil", 1, true)
+end)
+check("enum rejects a NaN member at construction", function()
+	local ok, err = pcall(types.enum, "a", 0 / 0)
+	return not ok and err:find("must not be NaN", 1, true)
+end)
+check("tuple names its length once, in the type name and the fault", function()
+	local T = types.tuple("number", "string")
+	if not T.name:find("of length 2", 1, true) then
+		return false
+	end
+	local ok, f = T.check({ 1 }) -- wrong length trips the length gate
+	local msg = types.format(f)
+	local _, count = msg:gsub("of length 2", "")
+	return not ok and count == 1
+end)
+
 -- === def is part of the module and works without base ===
 
 check("types.def wraps and checks a function standalone", function()

@@ -110,7 +110,7 @@ typeset -A abbreviations=(
         gc1n  'git clone --depth=1 --no-single-branch'
         gcfb  'git clone --filter=blob:none'
 
-        ghpr  'gh pr create --title=@coderabbitai --fill-verbose --base main --head james; gh pr view --web james'
+        ghpr  'gh pr create --title="!!" --fill-verbose --base main --head james; gh pr view --web james'
 
         stdrs 'cd $(rustc --print sysroot)/lib/rustlib/src/rust/library/ && nvim .'
         stdgo 'cd $(go env GOROOT)/src/ && nvim .'

@@ -22,7 +22,9 @@
           "gameboy_emulator/test_roms/**",
           "shared_lua/**"
   ],
-  "opt_out_recursion_ban": [],
+  "opt_out_recursion_ban": [
+          "shared/text/glob/**"
+  ],
   "opt_out_assertion_mandate_packages": [
           "**",
           "!maddox/**",

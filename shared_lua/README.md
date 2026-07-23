@@ -58,8 +58,10 @@ offending value:
 def: argument #1.ports[2] expected number, got string "nope"
 ```
 
-Set the global `LUA_DISABLE_FUNCTION_SIGNATURE_ASSERTIONS` truthy to return the raw function with
-zero checking overhead in production.
+Call `types.disable_signatures(true)` to make `def` return the raw function with zero checking
+overhead in production. It is read once, at decoration time, so toggle it before requiring the
+modules whose signatures you want raw. It is module-local state, not a global — `types.lua` writes no
+globals.
 
 ### Using the types without `def` (embedding)
 

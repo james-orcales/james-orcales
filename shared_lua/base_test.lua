@@ -91,6 +91,12 @@ check("too many return values is rejected", function()
 	end)
 	return not pcall(two, true)
 end)
+check("an explicit trailing nil past arity is rejected", function()
+	-- Guards the deliberate strictness: select("#") preserves the trailing nil, so argc exceeds
+	-- the declared arity and the call is refused rather than silently dropping the slot.
+	local typed = accept("number")
+	return not pcall(typed, 1, nil)
+end)
 
 -- === Combinators: union ===
 
@@ -202,6 +208,18 @@ check("variadic checks every trailing argument", function()
 		and typed("a") == true -- zero trailing is fine
 		and (not pcall(typed, "a", 1, "x")) -- third argument is not a number
 end)
+check("variadic is rejected in a non-last input slot", function()
+	local ok, err = pcall(def, types.variadic("number"), "string", "->", "boolean", function()
+		return true
+	end)
+	return not ok and err:find("variadic", 1, true) and err:find("last input", 1, true)
+end)
+check("variadic is rejected in an output slot", function()
+	local ok, err = pcall(def, "string", "->", types.variadic("number"), function()
+		return 1
+	end)
+	return not ok and err:find("variadic", 1, true) and err:find("last input", 1, true)
+end)
 
 -- === Nested combinators keep a deep path ===
 
@@ -213,13 +231,13 @@ end)
 
 -- === Production toggle ===
 
-check("disable flag returns the raw, unchecked function", function()
-	LUA_DISABLE_FUNCTION_SIGNATURE_ASSERTIONS = true
+check("disabling signatures returns the raw, unchecked function", function()
+	types.disable_signatures(true)
 	local raw = def("number", "->", "number", function(x)
 		return x
 	end)
 	local unchecked = raw("not a number") == "not a number"
-	LUA_DISABLE_FUNCTION_SIGNATURE_ASSERTIONS = nil
+	types.disable_signatures(false)
 	return unchecked
 end)
 

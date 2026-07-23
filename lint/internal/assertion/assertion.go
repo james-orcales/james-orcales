@@ -27,10 +27,6 @@ type Parsed_File = source.Parsed_File
 // bodies name it unqualified.
 type Component_Index = source.Component_Index
 
-// Component_Information aliases the source package's Component so the moved rule
-// bodies name it unqualified.
-type Component_Information = source.Component
-
 // Diagnostic aliases the diagnostic package's type so the moved rule bodies name
 // it unqualified.
 type Diagnostic = diagnostic.Diagnostic
