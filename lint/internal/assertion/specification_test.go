@@ -113,37 +113,15 @@ func Test_Invariants_Scope(t *testing.T) {
 	}
 }
 
-// Test_Invariants_Scalar_Helper verifies a defined integer states its domain with the
-// bare Range or Enum guard, except a composed type — one some struct declares as a
-// field — which may state hand-written assertions instead, since the bare guard's
-// fixed witness texts collide under a shared root and only composition creates one.
-// Floats and booleans state hand-written assertions, and an empty body satisfies
-// nothing.
+// Test_Invariants_Scalar_Helper verifies raw assertions cannot replace the bare Range
+// or Enum guard a defined integer requires, while floats and booleans state
+// hand-written assertions.
 func Test_Invariants_Scalar_Helper(t *testing.T) {
 	t.Parallel()
-	hand := "\tinvariant.Always(value >= Value_Min, \"min\")\n" +
-		"\tinvariant.Sometimes(identifier, value == Value_Min, \"at the floor\")"
-	if !diagnosed(check_fixture(t, integer_helper_source(hand)),
-		"must state invariant.Range or invariant.Enum") {
-		t.Fatal("a root-only integer helper must state the bare guard")
-	}
-	if diagnosed(check_fixture(t, composed_integer_helper_source(hand)),
-		"must state invariant.Range or invariant.Enum") {
-		t.Fatal("hand-written assertions must satisfy a composed type's mandate")
-	}
-	empty := integer_helper_source("\tprintln(0)")
-	if !diagnosed(check_fixture(t, empty), "must state invariant.Range or invariant.Enum") {
-		t.Fatal("an integer helper stating nothing must be flagged")
-	}
-	literal := composed_integer_helper_source(
-		"\tinvariant.Sometimes(\"literal\", value == Value_Min, \"at the floor\")")
-	if !diagnosed(check_fixture(t, literal), "must state invariant.Range or invariant.Enum") {
-		t.Fatal("a literal-identifier Sometimes must not satisfy the composable mandate")
-	}
-	mixed := integer_helper_source("\tinvariant.Range(identifier, int(value), Value_Min, 7)\n" +
+	raw := integer_helper_source("\tinvariant.Always(value >= Value_Min, \"min\")\n" +
 		"\tinvariant.Sometimes(identifier, value == Value_Min, \"at the floor\")")
-	if !diagnosed(check_fixture(t, mixed), "arguments must be package-level constants") {
-		t.Fatal("a stated bare guard must still pin its domain in package constants")
+	if !diagnosed(check_fixture(t, raw), "must state invariant.Range or invariant.Enum") {
+		t.Fatal("individual scalar assertions must not satisfy the guard mandate")
 	}
 	range_body := "\tinvariant.Range(identifier, int(value), Value_Min, Value_Max)"
 	if diagnosed(check_fixture(t, integer_helper_source(range_body)),
@@ -172,20 +150,15 @@ func Test_Invariants_Scalar_Helper(t *testing.T) {
 	}
 }
 
-// Test_Invariants_Count_Helper verifies a counted type states its domain with a bare
-// Range or Enum over its own length — hand-written assertions substitute only for a
-// composed type — and a guard over another subject alone satisfies neither shape.
+// Test_Invariants_Count_Helper verifies a counted type requires a bare Range or Enum
+// over its own length, regardless of equivalent individual assertions.
 func Test_Invariants_Count_Helper(t *testing.T) {
 	t.Parallel()
-	hand := "\tinvariant.Always(len(value) >= Value_Min, \"min\")\n" +
+	raw := "\tinvariant.Always(len(value) >= Value_Min, \"min\")\n" +
 		"\tinvariant.Sometimes(identifier, len(value) == Value_Min, \"at the floor\")"
-	if !diagnosed(check_fixture(t, count_helper_source(hand)),
+	if !diagnosed(check_fixture(t, count_helper_source(raw)),
 		"must state invariant.Range or invariant.Enum") {
-		t.Fatal("a root-only count helper must state the bare guard")
-	}
-	if diagnosed(check_fixture(t, composed_count_helper_source(hand)),
-		"must state invariant.Range or invariant.Enum") {
-		t.Fatal("hand-written assertions must satisfy a composed count type's mandate")
+		t.Fatal("individual count assertions must not satisfy the guard mandate")
 	}
 	valid := "\tinvariant.Range(identifier, len(value), Value_Min, Value_Max, 1, 2)"
 	if diagnosed(check_fixture(t, count_helper_source(valid)),
@@ -442,24 +415,6 @@ func Test_Invariants_Primitive_Types(t *testing.T) {
 	}
 	if !diagnosed(numeric_diags, "raw bool field") {
 		t.Fatal("a raw bool field must be flagged")
-	}
-	if diagnosed(numeric_diags, "raw string parameter identifier") {
-		t.Fatal("a bundle's mandated leading identifier parameter must not be flagged")
-	}
-	misnamed := parse(t, &parse_input{
-		Path: "pkg/rule.go",
-		Source_Text: "package fixture\n\n" +
-			"// Pair is a fixture.\ntype Pair struct {\n" +
-			"\t// Flag is a fixture.\n\tFlag Part\n}\n\n" +
-			"// Pair_Invariants is a fixture.\n" +
-			"func Pair_Invariants(name string, p Pair) {\n\tprintln(0)\n}\n\n" +
-			"// Describe does.\nfunc Describe(identifier string) {\n\tprintln(0)\n}\n"})
-	misnamed_diags := check_source(misnamed)
-	if !diagnosed(misnamed_diags, "raw string parameter name") {
-		t.Fatal("the exemption covers only the mandated identifier spelling")
-	}
-	if !diagnosed(misnamed_diags, "raw string parameter identifier") {
-		t.Fatal("a plain function's identifier parameter stays banned")
 	}
 }
 
@@ -769,17 +724,6 @@ func integer_helper_source(body string) (code string) {
 		body + "\n}\n"
 }
 
-// The composed variant adds a struct declaring the type as a field: composition is what
-// makes the bare guard's fixed texts collide, so it alone unlocks the hand-written shape.
-func composed_integer_helper_source(body string) (code string) {
-	return integer_helper_source(body) +
-		"\n// Holder is a fixture.\ntype Holder struct {\n" +
-		"\t// Field is a fixture.\n\tField Value\n}\n\n" +
-		"// Holder_Invariants is a fixture.\n" +
-		"func Holder_Invariants(identifier string, h Holder) {\n" +
-		"\tValue_Invariants(identifier, h.Field)\n}\n"
-}
-
 // The float fixture is intentionally separate because type text is test data, not a runtime
 // input whose bundling would improve the API.
 func float_helper_source(body string) (code string) {
@@ -813,16 +757,6 @@ func count_helper_source(body string) (code string) {
 		"// Value_Invariants is a fixture.\n" +
 		"func Value_Invariants(identifier string, value Value) {\n" +
 		body + "\n}\n"
-}
-
-// The composed counted variant mirrors composed_integer_helper_source for len-guarded types.
-func composed_count_helper_source(body string) (code string) {
-	return count_helper_source(body) +
-		"\n// Holder is a fixture.\ntype Holder struct {\n" +
-		"\t// Field is a fixture.\n\tField Value\n}\n\n" +
-		"// Holder_Invariants is a fixture.\n" +
-		"func Holder_Invariants(identifier string, h Holder) {\n" +
-		"\tValue_Invariants(identifier, h.Field)\n}\n"
 }
 
 // A same-shaped bare guard owned by another package cannot impersonate invariant.Range.

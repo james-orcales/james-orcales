@@ -103,7 +103,7 @@ import (
 // System_sampler returns the production Sampler, whose Measure spawns each command
 // and reads the Apple-Silicon hardware counters through proc_pid_rusage.
 func system_sampler() (sampler maddox.Sampler) {
-	defer func() { maddox.Sampler_Invariants("system_sampler.sampler", sampler) }()
+	defer func() { maddox.Sampler_Invariants(sampler, "system_sampler.sampler") }()
 	sampler.Measure = measure_command
 	return sampler
 }
@@ -112,15 +112,15 @@ func system_sampler() (sampler maddox.Sampler) {
 // Run_Result, timing the child's wall around the spawn with a monotonic clock. Main reads
 // no clock of its own — only func main's driver advances one — so wall is measured here.
 func measure_command(command io.Process_Request) (result maddox.Run_Result) {
-	defer func() { maddox.Run_Result_Invariants("measure_command.result", result) }()
+	defer func() { maddox.Run_Result_Invariants(result, "measure_command.result") }()
 	// Built outside the timed bracket, so the clock's own setup never counts as wall.
 	clock, _ := time_default.New_Operating_System_Clock()
 	argv_words := command_argv(command)
 	envp_words := append(os.Environ(), command.Environment...)
 	argv := build_c_array(argv_words)
 	envp := build_c_array(envp_words)
-	defer free_c_array(argv, Word_Count(len(argv_words)))
-	defer free_c_array(envp, Word_Count(len(envp_words)))
+	defer free_c_array(argv, len(argv_words))
+	defer free_c_array(envp, len(envp_words))
 
 	capture, create_err := os.CreateTemp("", "maddox-stderr-*")
 	if create_err != nil {
@@ -144,12 +144,12 @@ func measure_command(command io.Process_Request) (result maddox.Run_Result) {
 	}
 
 	result.Sample = maddox.Sample{
-		Wall:          maddox.Wall_Time(wall),
-		RSS_Bytes_Max: maddox.RSS_Bytes_Max(counters.peak_footprint),
-		CPU_Cycles:    maddox.CPU_Cycles(counters.cycles),
-		Instructions:  maddox.Instructions(counters.instructions),
-		CPU_User:      maddox.CPU_User_Time(counters.user_ns),
-		CPU_System:    maddox.CPU_System_Time(counters.system_ns),
+		Wall:          wall,
+		RSS_Bytes_Max: maddox.Metric(counters.peak_footprint),
+		CPU_Cycles:    maddox.Metric(counters.cycles),
+		Instructions:  maddox.Metric(counters.instructions),
+		CPU_User:      time.Duration(counters.user_ns),
+		CPU_System:    time.Duration(counters.system_ns),
 	}
 	result.Exit = maddox.Exit_Status(counters.exit_code)
 	if result.Exit != 0 {
@@ -161,7 +161,7 @@ func measure_command(command io.Process_Request) (result maddox.Run_Result) {
 // Build_c_array copies words into a NULL-terminated C array of C strings for
 // posix_spawnp. Free_c_array releases it.
 func build_c_array(words Argv) (array **C.char) {
-	Argv_Invariants("build_c_array.words", words)
+	Argv_Invariants(words, "build_c_array.words")
 	pointer_size := C.size_t(unsafe.Sizeof((*C.char)(nil)))
 	block := C.malloc(C.size_t(len(words)+1) * pointer_size)
 	view := unsafe.Slice((**C.char)(block), len(words)+1)
@@ -174,10 +174,10 @@ func build_c_array(words Argv) (array **C.char) {
 
 // Free_c_array releases the word_count C strings Build_c_array allocated and the
 // array holding them; the trailing NULL is not a C string.
-func free_c_array(array **C.char, word_count Word_Count) {
-	Word_Count_Invariants("free_c_array.word_count", word_count)
-	view := unsafe.Slice(array, int(word_count)+1)
-	for index := 0; index < int(word_count); index++ {
+func free_c_array(array **C.char, word_count int) {
+	invariant.Int_Invariants(word_count, "free_c_array.word_count")
+	view := unsafe.Slice(array, word_count+1)
+	for index := 0; index < word_count; index++ {
 		C.free(unsafe.Pointer(view[index]))
 	}
 	C.free(unsafe.Pointer(array))
@@ -187,41 +187,41 @@ func free_c_array(array **C.char, word_count Word_Count) {
 // sysctls. Fields the kernel does not expose — like L3 cache on Apple Silicon —
 // are left zero and omitted from the report via omitempty.
 func acquire_machine_specs() (specs maddox.Machine_Specs) {
-	defer func() { maddox.Machine_Specs_Invariants("acquire_machine_specs.specs", specs) }()
+	defer func() { maddox.Machine_Specs_Invariants(specs, "acquire_machine_specs.specs") }()
 	model, _ := syscall.Sysctl("machdep.cpu.brand_string")
-	specs.CPU_Model = maddox.CPU_Model(model)
-	specs.CPU_Arch = maddox.CPU_Arch(runtime.GOARCH)
+	specs.CPU_Model = maddox.Host_Text(model)
+	specs.CPU_Arch = maddox.Host_Text(runtime.GOARCH)
 
 	physical, _ := syscall.SysctlUint32("hw.physicalcpu")
-	specs.Physical_Cores = maddox.Physical_Cores(physical)
+	specs.Physical_Cores = maddox.Cores(physical)
 	logical, _ := syscall.SysctlUint32("hw.logicalcpu")
-	specs.Logical_Cores = maddox.Logical_Cores(logical)
+	specs.Logical_Cores = maddox.Cores(logical)
 
 	// Apple Silicon exposes P-cores at perflevel0 and E-cores at perflevel1.
 	p_cores, p_err := syscall.SysctlUint32("hw.perflevel0.physicalcpu")
 	e_cores, e_err := syscall.SysctlUint32("hw.perflevel1.physicalcpu")
 	if p_err == nil {
 		if e_err == nil {
-			specs.Performance_Cores = maddox.Performance_Cores(p_cores)
-			specs.Efficiency_Cores = maddox.Efficiency_Cores(e_cores)
+			specs.Performance_Cores = maddox.Cores(p_cores)
+			specs.Efficiency_Cores = maddox.Cores(e_cores)
 		}
 	}
 
 	// Frequency and caches are 64-bit sysctls, read through cgo since SysctlUint32
 	// truncates and the stdlib offers no raw form.
 	specs.CPU_Frequency_Hz_Max = maddox.Hertz(sysctl_uint64("hw.perflevel0.cpufrequency_max"))
-	specs.Cache_L1_Bytes = maddox.Cache_L1_Bytes(sysctl_uint64("hw.perflevel0.l1dcachesize"))
-	specs.Cache_L2_Bytes = maddox.Cache_L2_Bytes(sysctl_uint64("hw.perflevel0.l2cachesize"))
+	specs.Cache_L1_Bytes = maddox.Byte_Size(sysctl_uint64("hw.perflevel0.l1dcachesize"))
+	specs.Cache_L2_Bytes = maddox.Byte_Size(sysctl_uint64("hw.perflevel0.l2cachesize"))
 	// L3 is absent on Apple Silicon; an absent key reads zero and is omitted.
-	specs.Cache_L3_Bytes = maddox.Cache_L3_Bytes(sysctl_uint64("hw.l3cachesize"))
-	specs.RAM_Total_Bytes = maddox.RAM_Total_Bytes(sysctl_uint64("hw.memsize"))
-	specs.Storage_Total_Bytes = boot_volume_bytes()
+	specs.Cache_L3_Bytes = maddox.Byte_Size(sysctl_uint64("hw.l3cachesize"))
+	specs.RAM_Total_Bytes = maddox.Byte_Size(sysctl_uint64("hw.memsize"))
+	specs.Storage_Total_Bytes = maddox.Byte_Size(boot_volume_bytes())
 
 	specs.Operating_System_Name = "macOS"
 	version, _ := syscall.Sysctl("kern.osproductversion")
-	specs.Operating_System_Version = maddox.Operating_System_Version(version)
+	specs.Operating_System_Version = maddox.Host_Text(version)
 	kernel, _ := syscall.Sysctl("kern.osrelease")
-	specs.Kernel_Version = maddox.Kernel_Version("Darwin " + kernel)
+	specs.Kernel_Version = maddox.Host_Text("Darwin " + kernel)
 	return specs
 }
 
@@ -229,46 +229,29 @@ func acquire_machine_specs() (specs maddox.Machine_Specs) {
 type Sysctl_Key string
 
 // Sysctl_Key_Invariants bounds the key's length.
-func Sysctl_Key_Invariants(identifier string, name Sysctl_Key) {
-	invariant.Range(identifier, len(name), BOUND_MIN, BOUND_MAX)
-}
-
-// SYSCTL_VALUE_MAX mirrors the library's byte-size ceiling: every sysctl this sampler
-// reads feeds a machine-spec field whose own guard caps at or below it, so a reading
-// past this bound would have died downstream anyway — the guard only moves that
-// refusal to the read.
-const SYSCTL_VALUE_MAX = 1 << 53
-
-// Sysctl_Value is one 64-bit sysctl reading; an absent key reads zero.
-type Sysctl_Value uint64
-
-// Sysctl_Value_Invariants bounds the reading to the machine-spec ceiling its
-// consumers enforce.
-func Sysctl_Value_Invariants(identifier string, value Sysctl_Value) {
-	invariant.Range(identifier, uint64(value), 0, SYSCTL_VALUE_MAX)
+func Sysctl_Key_Invariants(name Sysctl_Key, namespace invariant.Namespace) {
+	invariant.Dot_Product(namespace).Range_Int(len(name), BOUND_MIN, BOUND_MAX).Ensure()
 }
 
 // Sysctl_uint64 reads a 64-bit sysctl by name, marshaling the Go string across the
 // cgo boundary and freeing the C copy after the call.
-func sysctl_uint64(name Sysctl_Key) (value Sysctl_Value) {
-	defer func() { Sysctl_Value_Invariants("sysctl_uint64.value", value) }()
-	Sysctl_Key_Invariants("sysctl_uint64.name", name)
+func sysctl_uint64(name Sysctl_Key) (value uint64) {
+	defer func() { invariant.Uint64_Invariants(value, "sysctl_uint64.value") }()
+	Sysctl_Key_Invariants(name, "sysctl_uint64.name")
 	cname := C.CString(string(name))
 	defer C.free(unsafe.Pointer(cname))
-	return Sysctl_Value(C.maddox_sysctl_uint64(cname))
+	return uint64(C.maddox_sysctl_uint64(cname))
 }
 
 // Boot_volume_bytes is the boot filesystem's total capacity, taken from statfs on
 // the root. On APFS this reports the shared container size, a close proxy for the
 // physical SSD capacity — enough to tell a 256GB drive from a 512GB one. A failed
 // statfs reads zero.
-func boot_volume_bytes() (total maddox.Storage_Total_Bytes) {
-	defer func() {
-		maddox.Storage_Total_Bytes_Invariants("boot_volume_bytes.total", total)
-	}()
+func boot_volume_bytes() (total uint64) {
+	defer func() { invariant.Uint64_Invariants(total, "boot_volume_bytes.total") }()
 	var stat syscall.Statfs_t
 	if syscall.Statfs("/", &stat) != nil {
 		return 0
 	}
-	return maddox.Storage_Total_Bytes(uint64(stat.Bsize) * stat.Blocks)
+	return uint64(stat.Bsize) * stat.Blocks
 }

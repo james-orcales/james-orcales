@@ -230,8 +230,8 @@ type Completion_Transition_Input struct {
 // two Always guards fail loudly on a caller whose belief about the current state is
 // stale — a reused or double-armed completion — and on an edge the machine does not
 // have, so a lifecycle bug dies at the mutation instead of corrupting a queue. Every
-// transition then records its edge under io.completion.transition: this package's own
-// suite registers the space through its TestMain, so an edge the sim suite never
+// transition then records its edge on the io.completion.transition grid: this package's
+// own suite registers the grid through its TestMain, so an edge the sim suite never
 // witnesses fails the run — the graph is enforced by the guards and witnessed by the
 // sweep. Backend code only; applications never transition a completion.
 func Completion_Transition(input *Completion_Transition_Input) {
@@ -242,16 +242,23 @@ func Completion_Transition(input *Completion_Transition_Input) {
 	})
 	invariant.Always(legal, "A completion transitions along an edge its machine has.")
 	input.Completion.State = input.To
-	// Encoding (From, To) into one value makes each legal edge a member equality, so
-	// the demanded space is the four legal edges and nothing else — the same four
-	// joint cells the retired three-axis grid carved down to. The multiplier exceeds
-	// the largest state, so the encoding is injective.
-	invariant.Enum("io.completion.transition",
-		input.From*4+input.To,
-		COMPLETION_IDLE*4+COMPLETION_ARMED,
-		COMPLETION_ARMED*4+COMPLETION_IDLE,
-		COMPLETION_ARMED*4+COMPLETION_CANCELLED,
-		COMPLETION_CANCELLED*4+COMPLETION_IDLE)
+	// Three axes identify each legal edge as one grid cell; the Impossible carves remove
+	// exactly the from-to tuples the legality table forbids, so the demanded grid is the
+	// four legal edges and nothing else.
+	invariant.Dot_Product("io.completion.transition").
+		Sometimes(input.From == COMPLETION_IDLE, "the edge leaves idle").
+		Sometimes(input.From == COMPLETION_CANCELLED, "the edge leaves cancelled").
+		Sometimes(input.To == COMPLETION_IDLE, "the edge enters idle").
+		Impossible("idle and cancelled origins are exclusive",
+			invariant.Event_True("the edge leaves idle"),
+			invariant.Event_True("the edge leaves cancelled")).
+		Impossible("an idle completion cannot enter idle",
+			invariant.Event_True("the edge leaves idle"),
+			invariant.Event_True("the edge enters idle")).
+		Impossible("a cancelled completion must enter idle",
+			invariant.Event_True("the edge leaves cancelled"),
+			invariant.Event_False("the edge enters idle")).
+		Ensure()
 }
 
 // IO is the injected async IO submit surface — TigerBeetle's `IO`. Code submits

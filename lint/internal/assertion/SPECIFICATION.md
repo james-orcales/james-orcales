@@ -33,21 +33,16 @@ interface types, empty structs, local types, tests, and opted-out packages are e
 ### Scalar Helper
 
 A defined integer helper states its domain with a bare invariant.Range or invariant.Enum over
-the exactly converted value, forwarding its identifier. A composed type — one some struct in
-the package declares as a field, by value or pointer — may instead state hand-written
-assertions: invariant.Always bounds and identifier-forwarding invariant.Sometimes witnesses,
-whose per-type texts survive under the shared root composition forces, where the bare guard's
-fixed witness texts collide. A root-only type never substitutes hand assertions for the
-guard, and a stated bare guard still pins its domain in package-level constants. A float or
-boolean helper states hand-written invariant.Always or identifier-forwarding
-invariant.Sometimes assertions — the primitive presets no longer exist.
+the exactly converted value, forwarding its identifier; hand-written Sometimes witnesses may
+accompany the guard but individual assertions never substitute for it. A float or boolean
+helper states hand-written invariant.Always or identifier-forwarding invariant.Sometimes
+assertions — the primitive presets no longer exist.
 
 ### Count Helper
 
 A defined string, slice, or map helper states a bare invariant.Range or invariant.Enum over
-len(value), forwarding its identifier; a composed counted type may substitute hand-written
-assertions exactly as a composed scalar may. Another subject and a foreign lookalike never
-satisfy the bare form.
+len(value), forwarding its identifier. Individual assertions, another subject, and a foreign
+lookalike never substitute.
 
 ### Helper Constants
 

@@ -65,7 +65,6 @@ func check_value_invariants(
 	parsed_files []Parsed_File, components *Component_Index, exempt []string,
 ) (diags []Diagnostic) {
 	constants := invariant_package_constants(parsed_files)
-	composed := invariant_package_composed(parsed_files)
 	for _, file := range parsed_files {
 		if strings.HasSuffix(file.Path, "_test.go") {
 			continue
@@ -75,64 +74,9 @@ func check_value_invariants(
 		}
 		directory := path.Dir(file.Path)
 		diags = append(diags, invariant_file_diagnostics(
-			file, components, constants[directory], composed[directory])...)
+			file, components, constants[directory])...)
 	}
 	return diags
-}
-
-// Composed types are indexed per package because composition is what forbids the bare
-// guard: Field Composition forces a struct's helper to reach every field helper under
-// one shared root, where Range's fixed witness texts collide. Only a type some struct
-// declares as a field may therefore substitute hand-written assertions; everything
-// else keeps the bare guard's mechanical domain.
-func invariant_package_composed(
-	parsed_files []Parsed_File,
-) (composed map[string]map[string]bool) {
-	composed = map[string]map[string]bool{}
-	for _, file := range parsed_files {
-		if strings.HasSuffix(file.Path, "_test.go") {
-			continue
-		}
-		directory := path.Dir(file.Path)
-		if composed[directory] == nil {
-			composed[directory] = map[string]bool{}
-		}
-		invariant_collect_composed(file.File, composed[directory])
-	}
-	return composed
-}
-
-func invariant_collect_composed(file *ast.File, composed map[string]bool) {
-	for _, declaration := range file.Decls {
-		general, is_general := declaration.(*ast.GenDecl)
-		if !is_general {
-			continue
-		}
-		if general.Tok != token.TYPE {
-			continue
-		}
-		for _, specification := range general.Specs {
-			type_specification, is_type := specification.(*ast.TypeSpec)
-			if !is_type {
-				continue
-			}
-			struct_type, is_struct := type_specification.Type.(*ast.StructType)
-			if !is_struct {
-				continue
-			}
-			for _, field := range struct_type.Fields.List {
-				expression := field.Type
-				star, is_star := expression.(*ast.StarExpr)
-				if is_star {
-					expression = star.X
-				}
-				name, is_name := expression.(*ast.Ident)
-				if is_name {
-					composed[name.Name] = true
-				}
-			}
-		}
-	}
 }
 
 // Constants are indexed per package because an argument in one package must not borrow a
@@ -177,7 +121,6 @@ func invariant_collect_constants(file *ast.File, constants map[string]bool) {
 
 func invariant_file_diagnostics(
 	file Parsed_File, components *Component_Index, constants map[string]bool,
-	composed map[string]bool,
 ) (diags []Diagnostic) {
 	for index, declaration := range file.File.Decls {
 		general, is_general := declaration.(*ast.GenDecl)
@@ -196,14 +139,14 @@ func invariant_file_diagnostics(
 			continue
 		}
 		diags = append(diags, invariant_type_diagnostics(
-			file, components, constants, composed, index)...)
+			file, components, constants, index)...)
 	}
 	return diags
 }
 
 func invariant_type_diagnostics(
 	file Parsed_File, components *Component_Index, constants map[string]bool,
-	composed map[string]bool, index int,
+	index int,
 ) (diags []Diagnostic) {
 	general := file.File.Decls[index].(*ast.GenDecl)
 	type_specification := general.Specs[0].(*ast.TypeSpec)
@@ -243,16 +186,6 @@ func invariant_type_diagnostics(
 			return nil
 		}
 		return invariant_constant_diagnostic(file, helper)
-	}
-	// The hand-written shape is the composable alternative: its per-type texts survive
-	// under a shared root where the bare guard's fixed witness texts collide. Only a
-	// composed type gets it — composition is what creates the shared root — so every
-	// root-only type keeps the bare guard's mechanical domain. A stated bare guard was
-	// judged above, so a malformed one never falls through to this arm.
-	if composed[type_specification.Name.Name] {
-		if invariant_body_witness(helper, identifier, scope) {
-			return nil
-		}
 	}
 	return invariant_missing_helper_diagnostic(file, helper, type_specification)
 }
@@ -579,7 +512,7 @@ func invariant_missing_helper_diagnostic(
 	}
 	message := helper.Name.Name +
 		" must state invariant.Range or invariant.Enum over " + subject +
-		", or hand-written invariant.Always or invariant.Sometimes, forwarding identifier"
+		", forwarding identifier"
 	return []Diagnostic{{
 		Position: file.File_Set.Position(helper.Name.Pos()), Message: message,
 	}}
@@ -2330,30 +2263,13 @@ func primitive_function_diagnostics(
 		return nil
 	}
 	position := file.File_Set.Position(function.Name.Pos())
-	parameters := function.Type.Params
-	if invariant_mandated_identifier_leads(function) {
-		// The mandate itself demands a bundle's raw leading `identifier string`, so
-		// the primitive ban exempts exactly that field and nothing else.
-		trimmed := *parameters
-		trimmed.List = parameters.List[1:]
-		parameters = &trimmed
-	}
-	parameter_gaps := primitive_field_gaps(parameters, "parameter")
+	parameter_gaps := primitive_field_gaps(function.Type.Params, "parameter")
 	diags = append(diags,
 		primitive_owner_diagnostics(parameter_gaps, function.Name.Name, position)...)
 	result_gaps := primitive_field_gaps(function.Type.Results, "result")
 	diags = append(diags,
 		primitive_owner_diagnostics(result_gaps, function.Name.Name, position)...)
 	return diags
-}
-
-// Reports whether the function is a bundle leading with the mandated raw
-// `identifier string` parameter — a single name spelled identifier, typed bare string.
-func invariant_mandated_identifier_leads(function *ast.FuncDecl) (yes bool) {
-	if !type_invariants_is_bundle_name(function.Name.Name) {
-		return false
-	}
-	return invariant_identifier_parameter(function) == "identifier"
 }
 
 // Flags each struct type's raw string/slice/map fields.

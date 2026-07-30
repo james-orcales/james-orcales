@@ -156,7 +156,7 @@ import (
 // System_sampler returns the production Sampler, whose Measure spawns each command
 // under perf_event_open and reads its hardware counters.
 func system_sampler() (sampler maddox.Sampler) {
-	defer func() { maddox.Sampler_Invariants("system_sampler.sampler", sampler) }()
+	defer func() { maddox.Sampler_Invariants(sampler, "system_sampler.sampler") }()
 	sampler.Measure = measure_command
 	return sampler
 }
@@ -166,7 +166,7 @@ func system_sampler() (sampler maddox.Sampler) {
 // path with no malloc between fork and exec. The child's wall is timed around the spawn
 // with a monotonic clock — Main reads none of its own, only func main's driver ticks.
 func measure_command(command io.Process_Request) (result maddox.Run_Result) {
-	defer func() { maddox.Run_Result_Invariants("measure_command.result", result) }()
+	defer func() { maddox.Run_Result_Invariants(result, "measure_command.result") }()
 	// Built outside the timed bracket, so the clock's own setup never counts as wall.
 	clock, _ := time_default.New_Operating_System_Clock()
 	path, lookup_err := exec.LookPath(command.Path)
@@ -206,15 +206,15 @@ func measure_command(command io.Process_Request) (result maddox.Run_Result) {
 	}
 
 	result.Sample = maddox.Sample{
-		Wall:             maddox.Wall_Time(wall),
-		RSS_Bytes_Max:    maddox.RSS_Bytes_Max(counters.rss_bytes),
-		CPU_Cycles:       maddox.CPU_Cycles(counters.cycles),
-		Instructions:     maddox.Instructions(counters.instructions),
-		Cache_References: maddox.Cache_References(counters.cache_references),
-		Cache_Misses:     maddox.Cache_Misses(counters.cache_misses),
-		Branch_Misses:    maddox.Branch_Misses(counters.branch_misses),
-		CPU_User:         maddox.CPU_User_Time(counters.user_ns),
-		CPU_System:       maddox.CPU_System_Time(counters.system_ns),
+		Wall:             wall,
+		RSS_Bytes_Max:    maddox.Metric(counters.rss_bytes),
+		CPU_Cycles:       maddox.Metric(counters.cycles),
+		Instructions:     maddox.Metric(counters.instructions),
+		Cache_References: maddox.Metric(counters.cache_references),
+		Cache_Misses:     maddox.Metric(counters.cache_misses),
+		Branch_Misses:    maddox.Metric(counters.branch_misses),
+		CPU_User:         time.Duration(counters.user_ns),
+		CPU_System:       time.Duration(counters.system_ns),
 	}
 	result.Exit = maddox.Exit_Status(counters.exit_code)
 	if result.Exit != 0 {
@@ -226,7 +226,7 @@ func measure_command(command io.Process_Request) (result maddox.Run_Result) {
 // Build_c_array copies words into a NULL-terminated C array of C strings for the
 // exec. Free_c_array releases it.
 func build_c_array(words Argv) (array **C.char) {
-	Argv_Invariants("build_c_array.words", words)
+	Argv_Invariants(words, "build_c_array.words")
 	pointer_size := C.size_t(unsafe.Sizeof((*C.char)(nil)))
 	block := C.malloc(C.size_t(len(words)+1) * pointer_size)
 	view := unsafe.Slice((**C.char)(block), len(words)+1)
@@ -239,10 +239,10 @@ func build_c_array(words Argv) (array **C.char) {
 
 // Free_c_array releases the word_count C strings Build_c_array allocated and the
 // array holding them; the trailing NULL is not a C string.
-func free_c_array(array **C.char, word_count Word_Count) {
-	Word_Count_Invariants("free_c_array.word_count", word_count)
-	view := unsafe.Slice(array, int(word_count)+1)
-	for index := 0; index < int(word_count); index++ {
+func free_c_array(array **C.char, word_count int) {
+	invariant.Int_Invariants(word_count, "free_c_array.word_count")
+	view := unsafe.Slice(array, word_count+1)
+	for index := 0; index < word_count; index++ {
 		C.free(unsafe.Pointer(view[index]))
 	}
 	C.free(unsafe.Pointer(array))
@@ -251,27 +251,27 @@ func free_c_array(array **C.char, word_count Word_Count) {
 // Acquire_machine_specs reads the host CPU, memory, and OS details from /proc and
 // /sys on Linux. Fields that are absent or unreadable are left zero.
 func acquire_machine_specs() (specs maddox.Machine_Specs) {
-	defer func() { maddox.Machine_Specs_Invariants("acquire_machine_specs.specs", specs) }()
-	specs.CPU_Arch = maddox.CPU_Arch(runtime.GOARCH)
+	defer func() { maddox.Machine_Specs_Invariants(specs, "acquire_machine_specs.specs") }()
+	specs.CPU_Arch = maddox.Host_Text(runtime.GOARCH)
 
 	model, physical, logical := read_cpuinfo()
-	specs.CPU_Model = maddox.CPU_Model(model)
-	specs.Physical_Cores = physical
-	specs.Logical_Cores = logical
-	specs.CPU_Frequency_Hz_Max = read_cpu_frequency_max()
-	specs.Cache_L1_Bytes = maddox.Cache_L1_Bytes(read_cache_size(1))
-	specs.Cache_L2_Bytes = maddox.Cache_L2_Bytes(read_cache_size(2))
-	specs.Cache_L3_Bytes = maddox.Cache_L3_Bytes(read_cache_size(3))
-	specs.RAM_Total_Bytes = read_memory_total()
-	specs.Storage_Total_Bytes = boot_volume_bytes()
+	specs.CPU_Model = model
+	specs.Physical_Cores = maddox.Cores(physical)
+	specs.Logical_Cores = maddox.Cores(logical)
+	specs.CPU_Frequency_Hz_Max = maddox.Hertz(read_cpu_frequency_max())
+	specs.Cache_L1_Bytes = maddox.Byte_Size(read_cache_size(1))
+	specs.Cache_L2_Bytes = maddox.Byte_Size(read_cache_size(2))
+	specs.Cache_L3_Bytes = maddox.Byte_Size(read_cache_size(3))
+	specs.RAM_Total_Bytes = maddox.Byte_Size(read_memory_total())
+	specs.Storage_Total_Bytes = maddox.Byte_Size(boot_volume_bytes())
 	name, version := read_operating_system_release()
-	specs.Operating_System_Name = maddox.Operating_System_Name(name)
-	specs.Operating_System_Version = maddox.Operating_System_Version(version)
+	specs.Operating_System_Name = name
+	specs.Operating_System_Version = version
 
 	var uname syscall.Utsname
 	if syscall.Uname(&uname) == nil {
-		specs.Kernel_Version = maddox.Kernel_Version(utsname_string(uname.Release[:]) +
-			" " + utsname_string(uname.Version[:]))
+		specs.Kernel_Version = utsname_string(uname.Release[:]) +
+			" " + utsname_string(uname.Version[:])
 	}
 	return specs
 }
@@ -289,24 +289,26 @@ const PROC_CONTENT_MAX = 1 << 21
 type Proc_Path string
 
 // Proc_Path_Invariants bounds the path's length.
-func Proc_Path_Invariants(identifier string, path Proc_Path) {
-	invariant.Range(identifier, len(path), BOUND_MIN, BOUND_MAX)
+func Proc_Path_Invariants(path Proc_Path, namespace invariant.Namespace) {
+	invariant.Dot_Product(namespace).Range_Int(len(path), BOUND_MIN, BOUND_MAX).Ensure()
 }
 
 // Proc_Content is the bytes read back from a pseudo-file.
 type Proc_Content string
 
 // Proc_Content_Invariants bounds the content's length.
-func Proc_Content_Invariants(identifier string, content Proc_Content) {
-	invariant.Range(identifier, len(content), BOUND_MIN, PROC_CONTENT_MAX)
+func Proc_Content_Invariants(content Proc_Content, namespace invariant.Namespace) {
+	invariant.Dot_Product(namespace).
+		Range_Int(len(content), BOUND_MIN, PROC_CONTENT_MAX).
+		Ensure()
 }
 
 // Read_proc_file reads up to PROC_FILE_BYTES_MAX bytes of a pseudo-file into a fixed
 // buffer, the bounded-read pattern read_captured uses. A missing or unreadable file
 // reads empty, so every caller treats absence as "field unknown".
 func read_proc_file(path Proc_Path) (content Proc_Content) {
-	defer func() { Proc_Content_Invariants("read_proc_file.content", content) }()
-	Proc_Path_Invariants("read_proc_file.path", path)
+	defer func() { Proc_Content_Invariants(content, "read_proc_file.content") }()
+	Proc_Path_Invariants(path, "read_proc_file.path")
 	file, open_err := os.Open(string(path))
 	if open_err != nil {
 		return ""
@@ -327,27 +329,23 @@ func read_proc_file(path Proc_Path) (content Proc_Content) {
 // Boot_volume_bytes is the root filesystem's total capacity, taken from statfs. It
 // is a close proxy for the physical drive capacity — enough to tell a 256GB drive
 // from a 512GB one. A failed statfs reads zero.
-func boot_volume_bytes() (total maddox.Storage_Total_Bytes) {
-	defer func() {
-		maddox.Storage_Total_Bytes_Invariants("boot_volume_bytes.total", total)
-	}()
+func boot_volume_bytes() (total uint64) {
+	defer func() { invariant.Uint64_Invariants(total, "boot_volume_bytes.total") }()
 	var stat syscall.Statfs_t
 	if syscall.Statfs("/", &stat) != nil {
 		return 0
 	}
-	return maddox.Storage_Total_Bytes(uint64(stat.Bsize) * stat.Blocks)
+	return uint64(stat.Bsize) * stat.Blocks
 }
 
 // Read_cpuinfo parses /proc/cpuinfo for the CPU model string, the physical-core
 // count (unique "core id" values), and the logical-core count (total "processor"
 // entries).
-func read_cpuinfo() (
-	model maddox.Host_Text, physical maddox.Physical_Cores, logical maddox.Logical_Cores,
-) {
+func read_cpuinfo() (model maddox.Host_Text, physical int, logical int) {
 	defer func() {
-		maddox.Host_Text_Invariants("read_cpuinfo.model", model)
-		maddox.Physical_Cores_Invariants("read_cpuinfo.physical", physical)
-		maddox.Logical_Cores_Invariants("read_cpuinfo.logical", logical)
+		maddox.Host_Text_Invariants(model, "read_cpuinfo.model")
+		invariant.Int_Invariants(physical, "read_cpuinfo.physical")
+		invariant.Int_Invariants(logical, "read_cpuinfo.logical")
 	}()
 	core_ids := map[string]struct{}{}
 	for _, line := range strings.Split(string(read_proc_file("/proc/cpuinfo")), "\n") {
@@ -379,8 +377,8 @@ func read_cpuinfo() (
 
 // Read_cpu_frequency_max reads the maximum CPU frequency from the cpufreq driver
 // for CPU 0; most Linux CPUs expose this even without the governor active.
-func read_cpu_frequency_max() (hz maddox.Hertz) {
-	defer func() { maddox.Hertz_Invariants("read_cpu_frequency_max.hz", hz) }()
+func read_cpu_frequency_max() (hz uint64) {
+	defer func() { invariant.Uint64_Invariants(hz, "read_cpu_frequency_max.hz") }()
 	text := strings.TrimSpace(
 		string(read_proc_file("/sys/devices/system/cpu/cpu0/cpufreq/cpuinfo_max_freq")))
 	// The cpufreq driver reports the frequency in kHz.
@@ -388,16 +386,16 @@ func read_cpu_frequency_max() (hz maddox.Hertz) {
 	if parse_err != nil {
 		return 0
 	}
-	return maddox.Hertz(khz * 1000)
+	return khz * 1000
 }
 
 // Read_cache_size reads the size of CPU 0's cache at the given level from the sysfs
 // cache directory. The size string carries a unit suffix (K, M).
-func read_cache_size(level Cache_Level) (size Cache_Bytes) {
-	defer func() { Cache_Bytes_Invariants("read_cache_size.size", size) }()
-	Cache_Level_Invariants("read_cache_size.level", level)
+func read_cache_size(level int) (size uint64) {
+	defer func() { invariant.Uint64_Invariants(size, "read_cache_size.size") }()
+	invariant.Int_Invariants(level, "read_cache_size.level")
 	path := "/sys/devices/system/cpu/cpu0/cache/index" +
-		strconv.Itoa(int(level)-1) + "/size"
+		strconv.Itoa(level-1) + "/size"
 	text := strings.TrimSpace(string(read_proc_file(Proc_Path(path))))
 	if len(text) == 0 {
 		return 0
@@ -410,33 +408,16 @@ func read_cache_size(level Cache_Level) (size Cache_Bytes) {
 	}
 	switch Suffix {
 	case 'K':
-		return Cache_Bytes(value * 1024)
+		return value * 1024
 	case 'M':
-		return Cache_Bytes(value * 1024 * 1024)
+		return value * 1024 * 1024
 	}
-	return Cache_Bytes(value)
-}
-
-// Cache_Level is which CPU cache a sysfs probe reads: L1, L2, or L3.
-type Cache_Level int
-
-// Cache_Level_Invariants bounds the level to the caches the header renders.
-func Cache_Level_Invariants(identifier string, value Cache_Level) {
-	invariant.Range(identifier, int(value), 1, 3)
-}
-
-// Cache_Bytes is one probed cache size in bytes; an absent index reads zero.
-type Cache_Bytes uint64
-
-// Cache_Bytes_Invariants witnesses the absent probe, the shape an unexposed cache
-// leaves behind.
-func Cache_Bytes_Invariants(identifier string, value Cache_Bytes) {
-	invariant.Sometimes(identifier, value == 0, "The cache probe is absent.")
+	return value
 }
 
 // Read_memory_total parses MemTotal from /proc/meminfo, returning bytes.
-func read_memory_total() (total maddox.RAM_Total_Bytes) {
-	defer func() { maddox.RAM_Total_Bytes_Invariants("read_memory_total.total", total) }()
+func read_memory_total() (total uint64) {
+	defer func() { invariant.Uint64_Invariants(total, "read_memory_total.total") }()
 	for _, line := range strings.Split(string(read_proc_file("/proc/meminfo")), "\n") {
 		if !strings.HasPrefix(line, "MemTotal:") {
 			continue
@@ -450,7 +431,7 @@ func read_memory_total() (total maddox.RAM_Total_Bytes) {
 		if parse_err != nil {
 			return 0
 		}
-		return maddox.RAM_Total_Bytes(kb * 1024)
+		return kb * 1024
 	}
 	return 0
 }
@@ -458,8 +439,8 @@ func read_memory_total() (total maddox.RAM_Total_Bytes) {
 // Read_operating_system_release parses /etc/os-release for the OS name and version.
 func read_operating_system_release() (name maddox.Host_Text, version maddox.Host_Text) {
 	defer func() {
-		maddox.Host_Text_Invariants("read_operating_system_release.name", name)
-		maddox.Host_Text_Invariants("read_operating_system_release.version", version)
+		maddox.Host_Text_Invariants(name, "read_operating_system_release.name")
+		maddox.Host_Text_Invariants(version, "read_operating_system_release.version")
 	}()
 	content := read_proc_file("/etc/os-release")
 	if content == "" {
@@ -489,15 +470,17 @@ func read_operating_system_release() (name maddox.Host_Text, version maddox.Host
 type Utsname_Field[T int8 | uint8] []T
 
 // Utsname_Field_Invariants bounds the field's length.
-func Utsname_Field_Invariants[T int8 | uint8](identifier string, field Utsname_Field[T]) {
-	invariant.Range(identifier, len(field), BOUND_MIN, BOUND_MAX)
+func Utsname_Field_Invariants[T int8 | uint8](
+	field Utsname_Field[T], namespace invariant.Namespace,
+) {
+	invariant.Dot_Product(namespace).Range_Int(len(field), BOUND_MIN, BOUND_MAX).Ensure()
 }
 
 // Utsname_string converts a fixed-size Utsname field to a Go string, stopping at
 // the first zero byte. The element type differs by platform (int8 vs uint8).
 func utsname_string[T int8 | uint8](field Utsname_Field[T]) (text maddox.Host_Text) {
-	defer func() { maddox.Host_Text_Invariants("utsname_string.text", text) }()
-	Utsname_Field_Invariants("utsname_string.field", field)
+	defer func() { maddox.Host_Text_Invariants(text, "utsname_string.text") }()
+	Utsname_Field_Invariants(field, "utsname_string.field")
 	builder := strings.Builder{}
 	for _, b := range field {
 		if b == 0 {

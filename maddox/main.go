@@ -77,12 +77,12 @@ func main() {
 		Commands:       commands,
 		Sampler:        system_sampler(),
 		Duration_Max:   time.Duration(duration_seconds) * time.SECOND,
-		Runs_Max:       maddox.Runs_Max(runs),
-		Warmup_Count:   maddox.Warmup_Count(warmup),
-		Allow_Failures: maddox.Allow_Failures(allow_failures),
+		Runs_Max:       runs,
+		Warmup_Count:   warmup,
+		Allow_Failures: allow_failures,
 		Format:         format,
-		Color:          maddox.Color(resolve_stream(Stream_Mode(color_mode), os.Stdout)),
-		Progress:       maddox.Progress(resolve_stream(Stream_Mode(progress_mode), os.Stderr)),
+		Color:          resolve_stream(Stream_Mode(color_mode), os.Stdout),
+		Progress:       resolve_stream(Stream_Mode(progress_mode), os.Stderr),
 		Output:         os.Stdout,
 		Stderr:         os.Stderr,
 		Machine:        acquire_machine_specs(),
@@ -154,24 +154,24 @@ const BOUND_MAX = 1 << 16
 type Cli_Commands []string
 
 // Cli_Commands_Invariants bounds the command-string count.
-func Cli_Commands_Invariants(identifier string, commands Cli_Commands) {
-	invariant.Range(identifier, len(commands), BOUND_MIN, BOUND_MAX)
+func Cli_Commands_Invariants(commands Cli_Commands, namespace invariant.Namespace) {
+	invariant.Dot_Product(namespace).Range_Int(len(commands), BOUND_MIN, BOUND_MAX).Ensure()
 }
 
 // Stream_Mode is a color/progress toggle from the command line: never, always, or auto.
 type Stream_Mode string
 
 // Stream_Mode_Invariants bounds the mode word's length.
-func Stream_Mode_Invariants(identifier string, mode Stream_Mode) {
-	invariant.Range(identifier, len(mode), BOUND_MIN, BOUND_MAX)
+func Stream_Mode_Invariants(mode Stream_Mode, namespace invariant.Namespace) {
+	invariant.Dot_Product(namespace).Range_Int(len(mode), BOUND_MIN, BOUND_MAX).Ensure()
 }
 
 // Commands_from_strings turns each command string into an io.Process_Request,
 // splitting it on whitespace and partitioning leading KEY=VALUE assignments off as the
 // process environment. It errors on a string with no executable.
 func commands_from_strings(command_strings Cli_Commands) (commands maddox.Commands, err error) {
-	defer func() { maddox.Commands_Invariants("commands_from_strings.commands", commands) }()
-	Cli_Commands_Invariants("commands_from_strings.command_strings", command_strings)
+	defer func() { maddox.Commands_Invariants(commands, "commands_from_strings.commands") }()
+	Cli_Commands_Invariants(command_strings, "commands_from_strings.command_strings")
 	commands = make(maddox.Commands, 0, len(command_strings))
 	for _, text := range command_strings {
 		fields := strings.Fields(text)
@@ -203,20 +203,11 @@ func commands_from_strings(command_strings Cli_Commands) (commands maddox.Comman
 	return commands, nil
 }
 
-// Stream_Enabled is a resolved per-stream decision: color or progress on or off.
-type Stream_Enabled bool
-
-// Stream_Enabled_Invariants witnesses both decisions, carrying the demand the old
-// per-stream grids stated.
-func Stream_Enabled_Invariants(identifier string, value Stream_Enabled) {
-	invariant.Sometimes(identifier, bool(value), "The stream feature is enabled.")
-}
-
 // Resolve_stream turns an auto/never/always mode into a decision: always or never as
 // named, auto when the stream is a terminal.
-func resolve_stream(mode Stream_Mode, file *os.File) (enabled Stream_Enabled) {
-	defer func() { Stream_Enabled_Invariants("resolve_stream.enabled", enabled) }()
-	Stream_Mode_Invariants("resolve_stream.mode", mode)
+func resolve_stream(mode Stream_Mode, file *os.File) (enabled bool) {
+	defer func() { invariant.Boolean_Invariants(enabled, "resolve_stream.enabled") }()
+	Stream_Mode_Invariants(mode, "resolve_stream.mode")
 	if mode == "always" {
 		return true
 	}
@@ -228,8 +219,8 @@ func resolve_stream(mode Stream_Mode, file *os.File) (enabled Stream_Enabled) {
 
 // Is_terminal reports whether the file is a character device, so color and progress
 // are suppressed when the stream is piped or redirected to a file.
-func is_terminal(file *os.File) (terminal Stream_Enabled) {
-	defer func() { Stream_Enabled_Invariants("is_terminal.terminal", terminal) }()
+func is_terminal(file *os.File) (terminal bool) {
+	defer func() { invariant.Boolean_Invariants(terminal, "is_terminal.terminal") }()
 	stat, stat_err := file.Stat()
 	if stat_err != nil {
 		return false
