@@ -303,6 +303,15 @@ func Int_Invariants(identifier string, n int) {
 	if !strings.Contains(output.String(), "primitive bundle") {
 		t.Fatalf("output = %q", output.String())
 	}
+	_, sugar_output, sugar_code := registered_fixture_with_sugar(`package invariant
+func Int_Invariants(identifier string, n int) {
+	Sometimes(identifier, n == 0, "zero")
+}
+`)
+	if sugar_code != -1 {
+		t.Fatalf("sugar exit = %d, want no exit; output=%q", sugar_code,
+			sugar_output.String())
+	}
 }
 
 // Test_Bundles_Composition prevents its specification contract from regressing.
@@ -344,66 +353,6 @@ func check(p Pair) { Pair_Invariants("pair", p) }
 	}
 	if !strings.Contains(output.String(), "duplicate message") {
 		t.Fatalf("output = %q", output.String())
-	}
-}
-
-// Test_Bundles_Repetition prevents its specification contract from regressing.
-func Test_Bundles_Repetition(t *testing.T) {
-	recorder, output, code := registered_fixture(`package fixture
-type Metric int
-type Sample struct {
-	First  Metric
-	Second Metric
-}
-func Metric_Invariants(identifier string, m Metric) {
-	invariant.Sometimes(identifier, m == 0, "zero")
-}
-func Sample_Invariants(identifier string, s Sample) {
-	Metric_Invariants(identifier, s.First)
-	Metric_Invariants(identifier, s.Second)
-}
-func check(s Sample) { Sample_Invariants("sample", s) }
-`)
-	if code != 1 {
-		t.Fatalf("repeated part exit = %d, want 1; output=%q", code, output.String())
-	}
-	if !strings.Contains(output.String(), "duplicate message") {
-		t.Fatalf("output = %q, want duplicate message", output.String())
-	}
-	if count := event_count(&recorder.Events); count != 0 {
-		t.Fatalf("a refused repetition seeded %d events", count)
-	}
-	recorder, output, code = registered_fixture(`package fixture
-type Measurements int
-type Reference Measurements
-type Candidate Measurements
-type Pair struct {
-	Reference Reference
-	Candidate Candidate
-}
-func Measurements_Invariants(identifier string, m Measurements) {
-	invariant.Sometimes(identifier, m == 0, "zero")
-}
-func Reference_Invariants(identifier string, r Reference) {
-	Measurements_Invariants(identifier, Measurements(r))
-}
-func Candidate_Invariants(identifier string, c Candidate) {
-	Measurements_Invariants(identifier, Measurements(c))
-}
-func Pair_Invariants(identifier string, p Pair) {
-	Reference_Invariants(identifier, p.Reference)
-	Candidate_Invariants(identifier, p.Candidate)
-}
-func check(p Pair) { Pair_Invariants("pair", p) }
-`)
-	if code != 1 {
-		t.Fatalf("wrapped repetition exit = %d, want 1; output=%q", code, output.String())
-	}
-	if !strings.Contains(output.String(), "duplicate message") {
-		t.Fatalf("output = %q, want duplicate message", output.String())
-	}
-	if count := event_count(&recorder.Events); count != 0 {
-		t.Fatalf("a refused wrapped repetition seeded %d events", count)
 	}
 }
 
@@ -467,20 +416,31 @@ func second(n Number) { Number_Invariants("second", n) }
 	if count := event_count(&recorder.Events); count != 6 {
 		t.Fatalf("events = %d, want three per root", count)
 	}
-	across, across_output, across_code := two_package_fixture(`package parts
-type Number int
-func Number_Invariants(identifier string, n Number) {
-	invariant.Sometimes(identifier, n == 0, "zero")
 }
-`, `package consumer
-import "fixture/parts"
-func check(n parts.Number) { parts.Number_Invariants("number", n) }
-`)
-	if across_code != -1 {
-		t.Fatalf("cross-package exit = %d, want no exit; output=%q",
-			across_code, across_output.String())
+
+// Test_Registration_Sugar prevents its specification contract from regressing.
+func Test_Registration_Sugar(t *testing.T) {
+	const SUGAR_SOURCE = `package sugar
+func Number_Invariants(identifier string, n int) {
+	Sometimes(identifier, n == 0, "zero")
+}
+`
+	const CONSUMER_SOURCE = `package consumer
+import "fixture/sugar"
+func check(n int) { sugar.Number_Invariants("number", n) }
+`
+	recorder, output, code := sugar_fixture(SUGAR_SOURCE, CONSUMER_SOURCE, "fixture/sugar")
+	if code != -1 {
+		t.Fatalf("exit = %d, want no exit; output=%q", code, output.String())
 	}
-	recorder_event(t, across, scoped_key("number", "zero"))
+	recorder_event(t, recorder, scoped_key("number", "zero"))
+	outside, _, outside_code := sugar_fixture(SUGAR_SOURCE, CONSUMER_SOURCE, "")
+	if outside_code != -1 {
+		t.Fatalf("outside exit = %d, want no exit", outside_code)
+	}
+	if count := event_count(&outside.Events); count != 0 {
+		t.Fatalf("unqualified calls outside the sugar package seeded %d events", count)
+	}
 }
 
 // Test_Registration_Unresolved prevents its specification contract from regressing.
@@ -534,35 +494,11 @@ func check(v int, limit int) { invariant.Range("bounded", v, 0, limit) }
 	if unresolved_code != 1 {
 		t.Fatalf("unresolved exit = %d, want 1", unresolved_code)
 	}
-	if !strings.Contains(unresolved_output.String(), "unresolved bounds") {
+	if !strings.Contains(unresolved_output.String(), "unresolved preset bounds") {
 		t.Fatalf("diagnostic = %q", unresolved_output.String())
 	}
 	if count := event_count(&invalid.Events); count != 0 {
 		t.Fatalf("an unresolved bound seeded %d events", count)
-	}
-	shifted, shifted_output, shifted_code := registered_fixture(`package fixture
-const CEILING = 1<<16 - 1
-func check(v int) { invariant.Range("shifted", v, 0, CEILING) }
-`)
-	if shifted_code != -1 {
-		t.Fatalf("shifted exit = %d, want no exit; output=%q",
-			shifted_code, shifted_output.String())
-	}
-	recorder_event(t, shifted, scoped_key("shifted", invariant.RANGE_MESSAGE_MINIMUM))
-	recorder_event(t, shifted, scoped_key("shifted", invariant.RANGE_MESSAGE_MAXIMUM))
-	wrapped, wrapped_output, wrapped_code := registered_fixture(`package fixture
-const WRAPPED = 1 << 63
-func check(v int) { invariant.Range("wrapped", v, 0, WRAPPED) }
-`)
-	if wrapped_code != 1 {
-		t.Fatalf("wrapped exit = %d, want 1; output=%q",
-			wrapped_code, wrapped_output.String())
-	}
-	if !strings.Contains(wrapped_output.String(), "unresolved bounds") {
-		t.Fatalf("diagnostic = %q", wrapped_output.String())
-	}
-	if count := event_count(&wrapped.Events); count != 0 {
-		t.Fatalf("a wrapped shift seeded %d events", count)
 	}
 }
 
@@ -718,6 +654,18 @@ func check(v bool) { invariant.Sometimes("io", v, "read observed") }
 func registered_fixture(source string) (
 	recorder *invariant.Recorder, output *bytes.Buffer, code int,
 ) {
+	return registered_fixture_options(source, "")
+}
+
+func registered_fixture_with_sugar(source string) (
+	recorder *invariant.Recorder, output *bytes.Buffer, code int,
+) {
+	return registered_fixture_options(source, "fixture/fixture")
+}
+
+func registered_fixture_options(source string, sugar string) (
+	recorder *invariant.Recorder, output *bytes.Buffer, code int,
+) {
 	output = &bytes.Buffer{}
 	tty := &bytes.Buffer{}
 	code = -1
@@ -731,6 +679,7 @@ func registered_fixture(source string) (
 		Tty:                 tty,
 		Exit:                func(status int) { code = status },
 		Is_Test:             true,
+		Sugar_Package:       sugar,
 	}
 	invariant.Recorder_Register_Packages_For_Analysis(recorder)
 	return recorder, output, code
@@ -755,9 +704,9 @@ func event_count(events *sync.Map) (count int) {
 	return count
 }
 
-// A two-package module: the analyzed consumer roots a bundle another package declares, so
-// cross-package bundle resolution is exercised.
-func two_package_fixture(parts_source string, consumer_source string) (
+// A two-package module: the analyzed consumer roots a bundle the sugar package declares, so
+// cross-package resolution and the sugar-only unqualified recognition are both exercised.
+func sugar_fixture(sugar_source string, consumer_source string, sugar_package string) (
 	recorder *invariant.Recorder, output *bytes.Buffer, code int,
 ) {
 	output = &bytes.Buffer{}
@@ -765,13 +714,14 @@ func two_package_fixture(parts_source string, consumer_source string) (
 	recorder = &invariant.Recorder{
 		File_System: fstest.MapFS{
 			"go.mod":            &fstest.MapFile{Data: []byte("module fixture\n")},
-			"parts/parts.go":    &fstest.MapFile{Data: []byte(parts_source)},
+			"sugar/sugar.go":    &fstest.MapFile{Data: []byte(sugar_source)},
 			"consumer/check.go": &fstest.MapFile{Data: []byte(consumer_source)},
 		},
 		Packages_To_Analyze: []string{"/consumer"},
 		Output:              output,
 		Exit:                func(status int) { code = status },
 		Is_Test:             true,
+		Sugar_Package:       sugar_package,
 	}
 	invariant.Recorder_Register_Packages_For_Analysis(recorder)
 	return recorder, output, code

@@ -1,15 +1,18 @@
 // Package invariant_default is the composition-tier sibling of invariant. It
 // wires the pure library to the real OS — local filesystem, stderr, os.Args
 // sniffing, os.Exit — and re-exports the surface. Import it aliased as invariant
-// and use invariant.Always / invariant.Sometimes as if no split between pure
+// and use invariant.Always / invariant.Dot_Product as if no split between pure
 // and OS-bound tiers existed.
 package invariant
 
 import (
 	"io"
+	"math"
 	"os"
+	"reflect"
 	"strings"
 	"testing"
+	"unsafe"
 
 	invariant "local/james-orcales/shared/invariant"
 )
@@ -20,6 +23,12 @@ type Recorder = invariant.Recorder
 
 // Assertion_Metadata re-exports the library coverage-tracker entry type.
 type Assertion_Metadata = invariant.Assertion_Metadata
+
+// Marker type whose reflect-reported import path is this package's own, so
+// Init_Default_Recorder can hand the static registration this package's path
+// (derived, not hardcoded) to recognise the unqualified primitive calls inside
+// the presets defined here.
+type Sugar_Package_Marker struct{}
 
 // Default is the OS-bound Recorder backing the package-level sugar. Tests that
 // need to redirect I/O construct their own Recorder via the pure invariant
@@ -52,6 +61,7 @@ func Init_Default_Recorder() (recorder *invariant.Recorder) {
 		Is_Benchmark:        is_benchmark,
 		Packages_To_Analyze: []string{"."},
 		Working_Directory:   working_directory,
+		Sugar_Package:       reflect.TypeOf(Sugar_Package_Marker{}).PkgPath(),
 	}
 }
 
@@ -170,4 +180,43 @@ func Range[T invariant.Integer](identifier string, value T, minimum T, maximum T
 // names the identifier and the member set.
 func Enum[T invariant.Integer](identifier string, value T, members ...T) {
 	invariant.Recorder_Enum(Default, identifier, value, members...)
+}
+
+// Signed_Invariants is the preset coverage for a signed integer. The suite must witness the value
+// one, negative one, the type's minimum, and the type's maximum.
+func Signed_Invariants[T invariant.Signed](identifier string, n T) {
+	// The sign bit alone is the type's minimum and its complement the maximum; Sizeof keeps
+	// the shift width-exact for every instantiation.
+	minimum := T(1) << (unsafe.Sizeof(n)*8 - 1)
+	maximum := ^minimum
+	Sometimes(identifier, n == 1, "The value is one.")
+	Sometimes(identifier, n == -1, "The value is negative one.")
+	Sometimes(identifier, n == minimum, "The value is the type's minimum.")
+	Sometimes(identifier, n == maximum, "The value is the type's maximum.")
+}
+
+// Unsigned_Invariants is the preset coverage for an unsigned integer. The suite must witness the
+// value zero, one, and the type's maximum. An unsigned value has no sign, so zero stands in for
+// the sign axis and the minimum is zero itself.
+func Unsigned_Invariants[T invariant.Unsigned](identifier string, n T) {
+	Sometimes(identifier, n == 0, "The value is zero.")
+	Sometimes(identifier, n == 1, "The value is one.")
+	Sometimes(identifier, n == ^T(0), "The value is the type's maximum.")
+}
+
+// Float_Invariants is the preset coverage for a float. The suite must witness NaN, negative
+// infinity, and positive infinity; an ordinary value holds none of them. The widening to float64
+// is exact for both widths.
+func Float_Invariants[T invariant.Float](identifier string, f T) {
+	value := float64(f)
+	Sometimes(identifier, math.IsNaN(value), "The value is NaN.")
+	Sometimes(identifier, value == math.Inf(-1), "The value is negative infinity.")
+	Sometimes(identifier, value == math.Inf(1), "The value is positive infinity.")
+}
+
+// Boolean_Invariants is the preset coverage for a bool: the suite must witness the value both
+// true and false. Its one Sometimes carries both branches — the true branch is the value, the
+// false branch its negation.
+func Boolean_Invariants[T ~bool](identifier string, b T) {
+	Sometimes(identifier, b, "The value is true.")
 }

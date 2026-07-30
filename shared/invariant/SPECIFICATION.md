@@ -94,24 +94,14 @@ parameter verbatim. A literal or any derived expression there fails registration
 
 ### Primitive
 
-A bundle whose subject is a primitive type fails registration: a primitive carries no
-semantics of its own to bundle, so code states a primitive's assertions inline at a root or
-wraps it in a custom type.
+A bundle whose subject is a primitive type fails registration outside the sugar package: the
+presets own the primitives, and user code wraps a primitive in a custom type.
 
 ### Composition
 
 A composite bundle calls its parts' bundles; every reached assertion seeds under the root
 identifier alone, so the call graph never enters a key. A message duplicated across the
 composition is a fatal collision.
-
-### Repetition
-
-A composition that reaches the same part twice under one root duplicates every key the
-part seeds and fails registration, however many transparent bundles relay the calls. The
-refusal is permanent — duplicated streams never merge into one entry. The remedy is
-distinctness: separate the duplicates into distinct types whose own `_Invariants` state
-distinctly-texted properties, or root each stream at its call site under its own
-identifier.
 
 ### Cycles
 
@@ -133,6 +123,11 @@ the sugar form and the `Recorder_*` form count alike.
 A literal-identifier bundle call seeds every assertion the composition reaches — transitively —
 under the root identifier. Each root earns its own entries.
 
+### Sugar
+
+Unqualified primitive calls are recognized only inside bundles resolved from the Sugar_Package;
+elsewhere an unqualified call is not an assertion.
+
 ### Unresolved
 
 A bundle recognised by name but not resolvable to a declaration fails registration — the
@@ -146,8 +141,7 @@ exits 1, and Events stays empty.
 ### Bounds
 
 Range bounds and exclusions and Enum members must resolve statically: int literals, parens,
-unary minus, `+ - * / <<`, and same-package single-name constants. A shift whose result does
-not fit the resolver's signed word is unresolvable. Anything else fails registration.
+unary minus, `+ - * /`, and same-package single-name constants. Anything else fails registration.
 
 # Coverage
 
