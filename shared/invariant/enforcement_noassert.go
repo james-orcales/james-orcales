@@ -14,14 +14,8 @@ package invariant
 // Always is the one guard that fires without a chain, so its silence is the tag's whole meaning.
 func Recorder_Always[T ~bool](recorder *Recorder, condition T, message string) {}
 
-func Recorder_Sometimes[T ~bool](
-	recorder *Recorder, identifier string, condition T, message string,
-) {
-}
+func Recorder_Sometimes[T ~bool](recorder *Recorder, condition T, message string) {}
 
-func Recorder_Range[T Integer](
-	recorder *Recorder, identifier string, value T, minimum T, maximum T, excluded ...T,
-) {
-}
+func Recorder_Range[T Integer](recorder *Recorder, value T, minimum T, maximum T, excluded ...T) {}
 
-func Recorder_Enum[T Integer](recorder *Recorder, identifier string, value T, members ...T) {}
+func Recorder_Enum[T Integer](recorder *Recorder, value T, members ...T) {}
