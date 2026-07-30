@@ -16,8 +16,8 @@ _invariants suffix when it is unexported.
 
 ### Signature
 
-The function takes `identifier string` as its first parameter and the type, by value or
-pointer, as its second — the framework's bundle parameter doctrine.
+The function takes the type, by value or pointer, as its first parameter and an
+invariant.Namespace as its last.
 
 ### Orphan
 
@@ -32,17 +32,15 @@ interface types, empty structs, local types, tests, and opted-out packages are e
 
 ### Scalar Helper
 
-A defined integer helper states its domain with a bare invariant.Range or invariant.Enum over
-the exactly converted value, forwarding its identifier; hand-written Sometimes witnesses may
-accompany the guard but individual assertions never substitute for it. A float or boolean
-helper states hand-written invariant.Always or identifier-forwarding invariant.Sometimes
-assertions — the primitive presets no longer exist.
+A defined integer helper calls its exact primitive preset or ensures a Dot_Product(namespace) chain
+containing its exact Range_TYPE or Enum_TYPE over the converted value. Floats and booleans call
+their exact primitive presets; individual Always or Sometimes assertions never substitute.
 
 ### Count Helper
 
-A defined string, slice, or map helper states a bare invariant.Range or invariant.Enum over
-len(value), forwarding its identifier. Individual assertions, another subject, and a foreign
-lookalike never substitute.
+A defined string, slice, or map helper ensures a Dot_Product(namespace) chain containing Range_Int
+or Enum_Int over len(value). Individual assertions, another subject, another suffix, an
+unterminated or split chain, and an unrelated Dot_Product never substitute.
 
 ### Helper Constants
 
@@ -52,17 +50,15 @@ selectors, and conversion to another primitive never satisfy the helper mandate.
 
 ### Helper Identity
 
-The guard is a direct helper-body statement and resolves to the actual invariant package
-without parameter, local, or import shadowing. Its identifier argument is the helper's own
-leading parameter, forwarded verbatim; foreign lookalikes and literal identifiers never
-substitute.
+The preset call or ensured chain is a direct helper-body statement and resolves to the actual
+invariant package without parameter, local, or import shadowing. The chain root uses that helper's
+trailing namespace parameter; foreign lookalikes and literal namespaces never substitute.
 
 ### Field Composition
 
-A struct type's helper directly calls the exact package-qualified _Invariants helper of every
-field whose type has one, forwarding its identifier first and passing the field second.
-Foreign, nested, or shadowed calls never substitute. A pointer field composes its pointee; an
-immediate mutex is exempt.
+A struct type's helper directly calls the exact package-qualified _Invariants helper of every field
+whose type has one — a preset for a primitive, the type's own helper otherwise. Foreign, nested, or
+shadowed calls never substitute. A pointer field composes its pointee; an immediate mutex is exempt.
 
 ### Parameter Helper
 
@@ -84,24 +80,9 @@ Any other body, or no TestMain, is banned.
 
 ### Primitive Types
 
-A primitive type — string, bool, any numeric width, byte, rune, uintptr, a complex, a raw
-slice, or a map — may not be a function parameter, result, or struct field: all types are
-semantic, and a primitive can carry no bundle of its own. Wrap it in a defined type.
-Primitives appear only as the underlying type of a declaration. A stdlib-interface method, a
-_test.go file, and a package in opt_out_assertion_mandate_packages are exempt.
-
-### Semantic Declarations
-
-A type declaration sits directly on a primitive: `type Metric int64`, never `type Kept Tally`
-or `type Reference pkg.Measurements`. Declaring over another defined type would alias a
-contract instead of owning one. Struct, slice, map, array, function, interface, and channel
-declarations remain the composition mechanism and are exempt, as are aliases.
-
-### Distinct Fields
-
-No struct declares two fields of one type, in one field entry or across several. Two
-same-typed fields under one root would seed identical coverage keys; the fields were never
-the same thing — separate them into distinct semantic types with their own _Invariants.
+A raw string, slice, or map may not be a function parameter, result, or struct field; it has no
+preset and no bundle of its own. Wrap it in a defined type. A stdlib-interface method, a _test.go
+file, and a package in opt_out_assertion_mandate_packages are exempt.
 
 # Simulation
 

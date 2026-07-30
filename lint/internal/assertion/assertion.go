@@ -9,7 +9,6 @@ package assertion
 import (
 	"go/ast"
 	"go/token"
-	"go/types"
 	"path"
 	"slices"
 	"sort"
@@ -20,9 +19,9 @@ import (
 	"local/james-orcales/lint/internal/source"
 )
 
-// Bounds the parenthesis-unwrapping walk so a pathological expression cannot make the
-// checks depend unboundedly on source depth.
-const INVARIANT_UNPAREN_DEPTH_MAX = 255
+// The body walk must accept every chain the runtime's uint8 ordinal accepts; a smaller lint-only
+// ceiling would make a valid Product an escape from the mandate at precisely the largest shape.
+const INVARIANT_CHAIN_LINKS_MAX = 255
 
 // Parsed_File aliases the source package's type so the moved rule bodies name it
 // unqualified, as they did in package lint.
@@ -52,8 +51,6 @@ func Check(
 	diags = append(diags,
 		check_recorder_test_main(parsed_files, components, exempt)...)
 	diags = append(diags, check_primitive_types(parsed_files, exempt)...)
-	diags = append(diags, check_semantic_declarations(parsed_files, exempt)...)
-	diags = append(diags, check_distinct_fields(parsed_files, exempt)...)
 	diags = append(diags,
 		check_simulation(parsed_files, components, exempt)...)
 	return diags
@@ -134,8 +131,8 @@ func invariant_file_diagnostics(
 		if !is_type {
 			continue
 		}
-		primitive, _, _ := invariant_type_kind(type_specification)
-		if primitive == "" {
+		suffix, _, _ := invariant_type_kind(type_specification)
+		if suffix == "" {
 			continue
 		}
 		diags = append(diags, invariant_type_diagnostics(
@@ -161,8 +158,8 @@ func invariant_type_diagnostics(
 	if value == "" {
 		return nil
 	}
-	identifier := invariant_identifier_parameter(helper)
-	if identifier == "" {
+	namespace := invariant_namespace_parameter(helper)
+	if namespace == "" {
 		return nil
 	}
 	imports := helper_import_paths(file.File)
@@ -173,14 +170,7 @@ func invariant_type_diagnostics(
 		Shadowed:        function_value_names(helper),
 		Constants:       constants,
 	}
-	_, _, witness := invariant_type_kind(type_specification)
-	if witness {
-		if invariant_body_witness(helper, identifier, scope) {
-			return nil
-		}
-		return invariant_missing_witness_diagnostic(file, helper, type_specification)
-	}
-	found, constant := invariant_body_helper(helper, type_specification, scope, identifier)
+	found, constant := invariant_body_helper(helper, type_specification, scope)
 	if found {
 		if constant {
 			return nil
@@ -190,59 +180,58 @@ func invariant_type_diagnostics(
 	return invariant_missing_helper_diagnostic(file, helper, type_specification)
 }
 
-// Direct underlying types determine the body mandate without go/types. An integer or
-// counted type owes a bare Range/Enum guard; a float or bool has no meaningful integer
-// domain, so it owes hand-written witnesses instead; aliases, uintptr, and declarations
-// over other defined types carry no primitive of their own here.
+// Direct underlying types determine the concrete helper without go/types; aliases and uintptr
+// have no Product preset and therefore remain outside this body-shape mandate.
 func invariant_type_kind(
 	type_specification *ast.TypeSpec,
-) (primitive string, count bool, witness bool) {
+) (suffix string, primitive string, count bool) {
 	if type_specification.Assign.IsValid() {
-		return "", false, false
+		return "", "", false
 	}
 	switch typed := type_specification.Type.(type) {
 	case *ast.ArrayType:
 		if typed.Len == nil {
-			return "int", true, false
+			return "Int", "int", true
 		}
 	case *ast.MapType:
-		return "int", true, false
+		return "Int", "int", true
 	case *ast.Ident:
-		return invariant_ident_kind(typed.Name)
+		return invariant_identifier_kind(typed.Name)
 	}
-	return "", false, false
+	return "", "", false
 }
 
-func invariant_ident_kind(name string) (primitive string, count bool, witness bool) {
+func invariant_identifier_kind(name string) (suffix string, primitive string, count bool) {
 	switch name {
 	case "string":
-		return "int", true, false
-	case "int", "int8", "int16", "int32", "int64",
-		"uint", "uint16", "uint32", "uint64":
-		return name, false, false
-	case "byte", "uint8":
-		return "uint8", false, false
+		return "Int", "int", true
+	case "int", "int8", "int16", "int32", "int64":
+		return strings.ToUpper(name[:1]) + name[1:], name, false
+	case "uint", "uint8", "uint16", "uint32", "uint64":
+		return strings.ToUpper(name[:1]) + name[1:], name, false
+	case "byte":
+		return "Uint8", "uint8", false
 	case "rune":
-		return "int32", false, false
-	case "float32", "float64", "bool":
-		return name, false, true
+		return "Int32", "int32", false
+	case "float32", "float64":
+		return strings.ToUpper(name[:1]) + name[1:], name, false
+	case "bool":
+		return "Boolean", "bool", false
 	}
-	return "", false, false
+	return "", "", false
 }
 
-// The subject travels second, behind the leading identifier — the framework's bundle
-// parameter doctrine.
 func invariant_value_parameter(
 	helper *ast.FuncDecl, type_name string,
 ) (name string, pointer bool) {
 	if helper.Type.Params == nil {
 		return "", false
 	}
-	if len(helper.Type.Params.List) < 2 {
+	if len(helper.Type.Params.List) == 0 {
 		return "", false
 	}
-	subject := helper.Type.Params.List[1]
-	expression := subject.Type
+	first := helper.Type.Params.List[0]
+	expression := first.Type
 	star, is_star := expression.(*ast.StarExpr)
 	if is_star {
 		expression = star.X
@@ -251,15 +240,13 @@ func invariant_value_parameter(
 	if type_base_name(expression) != type_name {
 		return "", false
 	}
-	if len(subject.Names) == 0 {
+	if len(first.Names) == 0 {
 		return "", false
 	}
-	return subject.Names[0].Name, pointer
+	return first.Names[0].Name, pointer
 }
 
-// Returns the helper's leading identifier parameter name — a single name typed bare
-// string — or "" when the helper has no such shape.
-func invariant_identifier_parameter(helper *ast.FuncDecl) (name string) {
+func invariant_namespace_parameter(helper *ast.FuncDecl) (name string) {
 	if helper.Type.Params == nil {
 		return ""
 	}
@@ -267,23 +254,15 @@ func invariant_identifier_parameter(helper *ast.FuncDecl) (name string) {
 	if len(parameters) == 0 {
 		return ""
 	}
-	first := parameters[0]
-	if len(first.Names) != 1 {
+	last := parameters[len(parameters)-1]
+	if len(last.Names) == 0 {
 		return ""
 	}
-	typed, is_identifier := first.Type.(*ast.Ident)
-	if !is_identifier {
-		return ""
-	}
-	if typed.Name != "string" {
-		return ""
-	}
-	return first.Names[0].Name
+	return last.Names[0].Name
 }
 
 func invariant_body_helper(
 	helper *ast.FuncDecl, type_specification *ast.TypeSpec, scope *Invariant_Scope,
-	identifier string,
 ) (found bool, constant bool) {
 	shadowed := function_shadow_copy(scope.Shadowed)
 	for _, statement := range helper.Body.List {
@@ -291,8 +270,12 @@ func invariant_body_helper(
 		if call != nil {
 			statement_scope := *scope
 			statement_scope.Shadowed = shadowed
-			matched, valid := invariant_bare_guard(
-				call, helper, type_specification, &statement_scope, identifier)
+			if invariant_direct_preset(
+				call, helper, type_specification, &statement_scope) {
+				return true, true
+			}
+			matched, valid := invariant_chain_preset(
+				call, helper, type_specification, &statement_scope)
 			if matched {
 				if valid {
 					return true, true
@@ -305,76 +288,153 @@ func invariant_body_helper(
 	return found, false
 }
 
-// One direct statement judged against the bare guard mandate: invariant.Range or
-// invariant.Enum from the actual default package, the helper's identifier forwarded
-// first, the exactly converted subject second, then the statically pinned domain.
-func invariant_bare_guard(
+func invariant_direct_preset(
 	call *ast.CallExpr, helper *ast.FuncDecl,
-	type_specification *ast.TypeSpec, scope *Invariant_Scope, identifier string,
-) (matched bool, constant bool) {
+	type_specification *ast.TypeSpec, scope *Invariant_Scope,
+) (matched bool) {
+	suffix, _, count := invariant_type_kind(type_specification)
+	if count {
+		return false
+	}
+	want := scope.Default_Package + "\x00" + suffix + "_Invariants"
 	identity := helper_callee_identity(
 		call.Fun, scope.Current_Package, scope.Imports, scope.Shadowed)
-	is_range := identity == scope.Default_Package+"\x00"+"Range"
-	is_enum := identity == scope.Default_Package+"\x00"+"Enum"
-	if !is_range {
-		if !is_enum {
-			return false, false
-		}
+	if identity != want {
+		return false
 	}
-	// identifier, subject, then at least a pair: Range's bounds or Enum's two members.
-	if len(call.Args) < 4 {
-		return false, false
+	if len(call.Args) != 2 {
+		return false
 	}
-	if !invariant_identifier(call.Args[0], identifier) {
-		return false, false
+	if !invariant_subject(call.Args[0], helper, type_specification, scope) {
+		return false
 	}
-	if !invariant_subject(call.Args[1], helper, type_specification, scope) {
-		return false, false
-	}
-	primitive, _, _ := invariant_type_kind(type_specification)
-	if is_range {
-		// Trailing exclusions past the bounds are the registration walk's to
-		// validate; the lint mandate pins only the interval's identity.
-		return true, invariant_arguments_constant(call.Args[2:4], primitive, scope)
-	}
-	return true, invariant_arguments_constant(call.Args[2:], primitive, scope)
+	namespace := invariant_namespace_parameter(helper)
+	return invariant_identifier(call.Args[1], namespace)
 }
 
-// Reports whether the helper body states at least one hand-written witness: an
-// identifier-forwarding invariant.Sometimes or a bare invariant.Always, resolved to
-// the actual default package.
-func invariant_body_witness(
-	helper *ast.FuncDecl, identifier string, scope *Invariant_Scope,
-) (found bool) {
-	shadowed := function_shadow_copy(scope.Shadowed)
-	for _, statement := range helper.Body.List {
-		call := statement_call(statement)
-		if call != nil {
-			identity := helper_callee_identity(
-				call.Fun, scope.Current_Package, scope.Imports, shadowed)
-			if identity == scope.Default_Package+"\x00"+"Sometimes" {
-				if len(call.Args) >= 3 {
-					if invariant_identifier(call.Args[0], identifier) {
-						return true
-					}
-				}
-			}
-			if identity == scope.Default_Package+"\x00"+"Always" {
-				if len(call.Args) >= 2 {
-					return true
-				}
+func invariant_chain_preset(
+	ensure *ast.CallExpr, helper *ast.FuncDecl,
+	type_specification *ast.TypeSpec, scope *Invariant_Scope,
+) (matched bool, constant bool) {
+	current, ensured := invariant_ensure_receiver(ensure)
+	if !ensured {
+		return false, false
+	}
+	valid := false
+	for step_index := 0; step_index < INVARIANT_CHAIN_LINKS_MAX; step_index++ {
+		_, receiver, chained := invariant_chain_method(current)
+		if !chained {
+			break
+		}
+		preset, arguments_valid := invariant_chain_link(
+			current, helper, type_specification, scope)
+		if preset {
+			matched = true
+			if arguments_valid {
+				valid = true
 			}
 		}
-		function_statement_shadows(statement, shadowed)
+		current = receiver
 	}
-	return false
+	if !invariant_chain_root(current, helper, scope) {
+		return false, false
+	}
+	return matched, valid
+}
+
+func invariant_ensure_receiver(
+	ensure *ast.CallExpr,
+) (receiver *ast.CallExpr, matched bool) {
+	selector, is_selector := ensure.Fun.(*ast.SelectorExpr)
+	if !is_selector {
+		return nil, false
+	}
+	if selector.Sel.Name != "Ensure" {
+		return nil, false
+	}
+	if len(ensure.Args) != 0 {
+		return nil, false
+	}
+	receiver, matched = selector.X.(*ast.CallExpr)
+	return receiver, matched
+}
+
+func invariant_chain_method(
+	call *ast.CallExpr,
+) (method string, receiver *ast.CallExpr, matched bool) {
+	selector, is_selector := call.Fun.(*ast.SelectorExpr)
+	if !is_selector {
+		return "", nil, false
+	}
+	receiver, matched = selector.X.(*ast.CallExpr)
+	return selector.Sel.Name, receiver, matched
+}
+
+func invariant_chain_link(
+	call *ast.CallExpr, helper *ast.FuncDecl,
+	type_specification *ast.TypeSpec, scope *Invariant_Scope,
+) (matched bool, constant bool) {
+	method, _, _ := invariant_chain_method(call)
+	suffix, primitive, _ := invariant_type_kind(type_specification)
+	range_name := "Range_" + suffix
+	enum_name := "Enum_" + suffix
+	if method == range_name {
+		if len(call.Args) < 3 {
+			return false, false
+		}
+		if !invariant_subject(call.Args[0], helper, type_specification, scope) {
+			return false, false
+		}
+		return true, invariant_arguments_constant(
+			call.Args[1:3], primitive, scope)
+	}
+	if method != enum_name {
+		return false, false
+	}
+	if len(call.Args) < 3 {
+		return false, false
+	}
+	if !invariant_subject(call.Args[0], helper, type_specification, scope) {
+		return false, false
+	}
+	return true, invariant_arguments_constant(call.Args[1:], primitive, scope)
+}
+
+func invariant_chain_root(
+	call *ast.CallExpr, helper *ast.FuncDecl, scope *Invariant_Scope,
+) (matched bool) {
+	if len(call.Args) != 1 {
+		return false
+	}
+	if !invariant_identifier(call.Args[0], invariant_namespace_parameter(helper)) {
+		return false
+	}
+	selector, is_selector := call.Fun.(*ast.SelectorExpr)
+	if !is_selector {
+		return false
+	}
+	if selector.Sel.Name != "Dot_Product" {
+		return false
+	}
+	qualifier, is_qualifier := selector.X.(*ast.Ident)
+	if !is_qualifier {
+		return false
+	}
+	if scope.Shadowed[qualifier.Name] {
+		return false
+	}
+	package_path := scope.Imports[qualifier.Name]
+	if package_path == scope.Default_Package {
+		return true
+	}
+	return package_path == strings.TrimSuffix(scope.Default_Package, "/default")
 }
 
 func invariant_subject(
 	expression ast.Expr, helper *ast.FuncDecl, type_specification *ast.TypeSpec,
 	scope *Invariant_Scope,
 ) (matched bool) {
-	primitive, count, _ := invariant_type_kind(type_specification)
+	_, primitive, count := invariant_type_kind(type_specification)
 	value, pointer := invariant_value_parameter(helper, type_specification.Name.Name)
 	expression = invariant_unparen(expression)
 	if count {
@@ -439,7 +499,7 @@ func invariant_identifier(expression ast.Expr, name string) (matched bool) {
 }
 
 func invariant_unparen(expression ast.Expr) (unwrapped ast.Expr) {
-	for depth_index := 0; depth_index < INVARIANT_UNPAREN_DEPTH_MAX; depth_index++ {
+	for depth_index := 0; depth_index < INVARIANT_CHAIN_LINKS_MAX; depth_index++ {
 		parenthesized, is_parenthesized := expression.(*ast.ParenExpr)
 		if !is_parenthesized {
 			return expression
@@ -504,28 +564,16 @@ func invariant_constant_diagnostic(
 func invariant_missing_helper_diagnostic(
 	file Parsed_File, helper *ast.FuncDecl, type_specification *ast.TypeSpec,
 ) (diags []Diagnostic) {
-	primitive, count, _ := invariant_type_kind(type_specification)
+	suffix, _, count := invariant_type_kind(type_specification)
 	value, _ := invariant_value_parameter(helper, type_specification.Name.Name)
-	subject := primitive + "(" + value + ")"
+	message := helper.Name.Name + " must call a canonical helper for " + value +
+		": " + suffix + "_Invariants, Range_" + suffix + ", or Enum_" + suffix
 	if count {
-		subject = "len(" + value + ")"
+		message = helper.Name.Name + " must call Range_Int or Enum_Int for len(" + value +
+			") in an ensured invariant.Dot_Product(namespace) chain"
 	}
-	message := helper.Name.Name +
-		" must state invariant.Range or invariant.Enum over " + subject +
-		", forwarding identifier"
 	return []Diagnostic{{
 		Position: file.File_Set.Position(helper.Name.Pos()), Message: message,
-	}}
-}
-
-func invariant_missing_witness_diagnostic(
-	file Parsed_File, helper *ast.FuncDecl, type_specification *ast.TypeSpec,
-) (diags []Diagnostic) {
-	value, _ := invariant_value_parameter(helper, type_specification.Name.Name)
-	return []Diagnostic{{
-		Position: file.File_Set.Position(helper.Name.Pos()),
-		Message: helper.Name.Name +
-			" must state invariant.Always or invariant.Sometimes for " + value,
 	}}
 }
 
@@ -543,7 +591,9 @@ func Check_Type(
 	if source.Path_Matches_Glob(filename, exempt) {
 		return nil
 	}
-	diags = append(diags, check_type_invariants_forward(file_set, file)...)
+	invariant_names := type_invariants_import_names(file)
+	diags = append(diags,
+		check_type_invariants_forward(file_set, file, invariant_names)...)
 	return append(diags, check_type_invariants_orphan(file_set, file)...)
 }
 
@@ -795,10 +845,6 @@ func struct_type_diagnostics(
 	if parameter == "" {
 		return nil
 	}
-	identifier := invariant_identifier_parameter(bundle)
-	if identifier == "" {
-		return nil
-	}
 	current_package := helper_package_path(file, components)
 	imports := helper_import_paths(file.File)
 	scope := &Invariant_Scope{
@@ -809,37 +855,17 @@ func struct_type_diagnostics(
 		Default_Package: helper_default_package(components, imports),
 		Shadowed:        function_value_names(bundle),
 	}
-	present := struct_present_calls(bundle, parameter, identifier, scope)
+	present := struct_present_calls(bundle, parameter, scope)
 	position := file.File_Set.Position(bundle.Name.Pos())
 	for _, field := range struct_type.Fields.List {
-		missing := struct_field_missing_calls(field, scope, present, parameter)
-		for _, call := range missing {
+		for _, call := range struct_field_missing_calls(field, scope, present, parameter) {
 			diags = append(diags, Diagnostic{
 				Position: position,
-				Message: bundle.Name.Name + " must call " +
-					missing_composition_render(call, identifier, parameter),
+				Message:  bundle.Name.Name + " must call " + call,
 			})
 		}
 	}
 	return diags
-}
-
-// One omitted composition: the exact helper identity and the field it must cover.
-// Two facts, kept together so the diagnostic renderer cannot mismatch them.
-type Missing_Composition struct {
-	// Expected is the exact package-qualified helper identity.
-	Expected string
-	// Field is the struct field the helper must receive.
-	Field string
-}
-
-// Renders the omitted call as the shape the mandate wants: identifier forwarded
-// first, the field second.
-func missing_composition_render(
-	missing Missing_Composition, identifier string, parameter string,
-) (call string) {
-	return helper_identity_name(missing.Expected) + "(" + identifier + ", " +
-		parameter + "." + missing.Field + ")"
 }
 
 // Separating field discovery from diagnostic ownership keeps bundle identity and position out of
@@ -849,22 +875,25 @@ func struct_field_missing_calls(
 	scope *Invariant_Scope,
 	present map[string]bool,
 	parameter string,
-) (calls []Missing_Composition) {
+) (calls []string) {
 	if len(field.Names) == 0 {
 		return nil
 	}
-	expected := struct_field_invariant(field.Type, scope)
+	expected, preset := struct_field_invariant(field.Type, scope)
 	if expected == "" {
 		return nil
 	}
-	if !scope.Defined[expected] {
-		return nil
+	if !preset {
+		if !scope.Defined[expected] {
+			return nil
+		}
 	}
 	for _, name := range field.Names {
 		if present[expected+"\x00"+name.Name] {
 			continue
 		}
-		calls = append(calls, Missing_Composition{Expected: expected, Field: name.Name})
+		calls = append(calls, helper_identity_name(expected)+"("+
+			parameter+"."+name.Name+", ...)")
 	}
 	return calls
 }
@@ -898,18 +927,17 @@ func struct_is_mutex(field_type ast.Expr) (yes bool) {
 	return selector.Sel.Name == "RWMutex"
 }
 
-// Returns the struct bundle's subject parameter name — second, behind the leading
-// identifier — when it is the struct by value or pointer (possibly a generic
-// instantiation), or "" otherwise.
+// Returns the struct bundle's first parameter name when it is the struct by value
+// or pointer (possibly a generic instantiation), or "" otherwise.
 func struct_parameter_name(bundle *ast.FuncDecl, type_name string) (name string) {
 	if bundle.Type.Params == nil {
 		return ""
 	}
-	if len(bundle.Type.Params.List) < 2 {
+	if len(bundle.Type.Params.List) == 0 {
 		return ""
 	}
-	subject := bundle.Type.Params.List[1]
-	parameter_type := subject.Type
+	first := bundle.Type.Params.List[0]
+	parameter_type := first.Type
 	star, is_star := parameter_type.(*ast.StarExpr)
 	if is_star {
 		parameter_type = star.X
@@ -917,10 +945,10 @@ func struct_parameter_name(bundle *ast.FuncDecl, type_name string) (name string)
 	if type_base_name(parameter_type) != type_name {
 		return ""
 	}
-	if len(subject.Names) == 0 {
+	if len(first.Names) == 0 {
 		return ""
 	}
-	return subject.Names[0].Name
+	return first.Names[0].Name
 }
 
 // Returns the struct's own type-parameter names, so a field typed as one is exempt.
@@ -937,11 +965,10 @@ func struct_type_parameter_set(type_specification *ast.TypeSpec) (parameters map
 	return parameters
 }
 
-// Collects "callee\x00field" for every call in the bundle that forwards the
-// identifier first and passes the parameter's field (value or deref) second, so a
-// composition call can be looked up.
+// Collects "callee\x00field" for every call in the bundle whose first argument is
+// the parameter's field (value or deref), so a composition call can be looked up.
 func struct_present_calls(
-	bundle *ast.FuncDecl, parameter string, identifier string, scope *Invariant_Scope,
+	bundle *ast.FuncDecl, parameter string, scope *Invariant_Scope,
 ) (present map[string]bool) {
 	present = map[string]bool{}
 	shadowed := function_shadow_copy(scope.Shadowed)
@@ -950,7 +977,7 @@ func struct_present_calls(
 		if call != nil {
 			callee := helper_callee_identity(
 				call.Fun, scope.Current_Package, scope.Imports, shadowed)
-			field := struct_subject_field(call, parameter, identifier)
+			field := struct_first_argument_field(call, parameter)
 			if callee != "" {
 				if field != "" {
 					present[callee+"\x00"+field] = true
@@ -984,18 +1011,13 @@ func struct_callee_name(callee ast.Expr) (name string) {
 	}
 }
 
-// Returns the field name when a call forwards the identifier first and passes
-// parameter.Field or *parameter.Field second; "" otherwise.
-func struct_subject_field(
-	call *ast.CallExpr, parameter string, identifier string,
-) (field string) {
-	if len(call.Args) < 2 {
+// Returns the field name when a call's first argument is parameter.Field or
+// *parameter.Field; "" otherwise.
+func struct_first_argument_field(call *ast.CallExpr, parameter string) (field string) {
+	if len(call.Args) == 0 {
 		return ""
 	}
-	if !invariant_identifier(call.Args[0], identifier) {
-		return ""
-	}
-	argument := call.Args[1]
+	argument := call.Args[0]
 	star, is_star := argument.(*ast.StarExpr)
 	if is_star {
 		argument = star.X
@@ -1014,11 +1036,11 @@ func struct_subject_field(
 	return selector.Sel.Name
 }
 
-// Returns the _Invariants name a field of the given type must call, or "" when the
-// field is exempt.
+// Returns the _Invariants name a field of the given type must call and whether it
+// is a preset (always available), or "" when the field is exempt.
 func struct_field_invariant(
 	field_type ast.Expr, scope *Invariant_Scope,
-) (identity string) {
+) (identity string, preset bool) {
 
 	// A pointer field composes its pointee: *Token requires Token_Invariants, the
 	// same as a Token field. The bundle passes the field, or its dereference, as the
@@ -1030,16 +1052,16 @@ func struct_field_invariant(
 	switch typed := field_type.(type) {
 	case *ast.ArrayType:
 		// A raw slice field is banned by check_primitive_types, not composed here.
-		return ""
+		return "", false
 	case *ast.MapType:
 		// A raw map field is banned by check_primitive_types, not composed here.
-		return ""
+		return "", false
 	case *ast.SelectorExpr:
 		package_path := struct_selector_package(typed, scope.Imports)
 		if package_path == "" {
-			return ""
+			return "", false
 		}
-		return package_path + "\x00" + typed.Sel.Name + "_Invariants"
+		return package_path + "\x00" + typed.Sel.Name + "_Invariants", false
 	case *ast.IndexExpr:
 		return struct_named_invariant(typed.X, scope)
 	case *ast.IndexListExpr:
@@ -1047,7 +1069,7 @@ func struct_field_invariant(
 	case *ast.Ident:
 		return struct_field_ident_invariant(typed.Name, scope)
 	default:
-		return ""
+		return "", false
 	}
 }
 
@@ -1055,21 +1077,21 @@ func struct_field_invariant(
 // cross-package selector), or "" otherwise.
 func struct_named_invariant(
 	base ast.Expr, scope *Invariant_Scope,
-) (identity string) {
+) (identity string, preset bool) {
 
 	selector, is_selector := base.(*ast.SelectorExpr)
 	if is_selector {
 		package_path := struct_selector_package(selector, scope.Imports)
 		if package_path == "" {
-			return ""
+			return "", false
 		}
-		return package_path + "\x00" + selector.Sel.Name + "_Invariants"
+		return package_path + "\x00" + selector.Sel.Name + "_Invariants", false
 	}
 	identifier, is_identifier := base.(*ast.Ident)
 	if is_identifier {
 		return struct_field_ident_invariant(identifier.Name, scope)
 	}
-	return ""
+	return "", false
 }
 
 func struct_selector_package(
@@ -1083,45 +1105,68 @@ func struct_selector_package(
 }
 
 // Maps a field ident to its expected bundle: a struct type param is exempt, a
-// primitive is banned by check_primitive_types rather than composed here, a
-// predeclared interface is exempt, else it is a defined type whose own bundle
-// (by casing) is expected.
+// primitive maps to its preset, a no-preset builtin is exempt, else it is a
+// defined type whose own bundle (by casing) is expected.
 func struct_field_ident_invariant(
 	name string, scope *Invariant_Scope,
-) (identity string) {
+) (identity string, preset bool) {
 
 	if scope.Type_Parameters[name] {
-		return ""
+		return "", false
 	}
-	if primitive_type_name(name) {
-		return ""
+	if name == "string" {
+		// A raw string field is banned by check_primitive_types, not composed here.
+		return "", false
+	}
+	mapped := struct_primitive_preset(name)
+	if mapped != "" {
+		return scope.Default_Package + "\x00" + mapped, true
 	}
 	if struct_is_builtin(name) {
+		return "", false
+	}
+	return scope.Current_Package + "\x00" + source.Invariant_Name(name), false
+}
+
+// Maps a builtin primitive to its framework preset name, or "" when none.
+func struct_primitive_preset(name string) (preset string) {
+	switch name {
+	case "int":
+		return "Int_Invariants"
+	case "int8":
+		return "Int8_Invariants"
+	case "int16":
+		return "Int16_Invariants"
+	case "int32", "rune":
+		return "Int32_Invariants"
+	case "int64":
+		return "Int64_Invariants"
+	case "uint":
+		return "Uint_Invariants"
+	case "uint8", "byte":
+		return "Uint8_Invariants"
+	case "uint16":
+		return "Uint16_Invariants"
+	case "uint32":
+		return "Uint32_Invariants"
+	case "uint64":
+		return "Uint64_Invariants"
+	case "float32":
+		return "Float32_Invariants"
+	case "float64":
+		return "Float64_Invariants"
+	case "bool":
+		return "Boolean_Invariants"
+	default:
 		return ""
 	}
-	return scope.Current_Package + "\x00" + source.Invariant_Name(name)
 }
 
-// Reports whether name is a predeclared primitive type — banned as a field,
-// parameter, or result under the mandate, since all types are semantic.
-func primitive_type_name(name string) (yes bool) {
-	switch name {
-	case "string", "bool",
-		"int", "int8", "int16", "int32", "int64",
-		"uint", "uint8", "uint16", "uint32", "uint64",
-		"byte", "rune", "uintptr",
-		"float32", "float64", "complex64", "complex128":
-		return true
-	default:
-		return false
-	}
-}
-
-// Reports whether name is a predeclared non-primitive, so a field of it is exempt
-// rather than mistaken for a defined type.
+// Reports whether name is a predeclared type that has no preset, so a field of it
+// is exempt rather than mistaken for a defined type.
 func struct_is_builtin(name string) (yes bool) {
 	switch name {
-	case "error", "any", "comparable":
+	case "uintptr", "complex64", "complex128", "error", "any", "comparable":
 		return true
 	default:
 		return false
@@ -1417,9 +1462,13 @@ func function_named_invariant(
 	if scope.Type_Parameters[identifier.Name] {
 		return "", false
 	}
-	if primitive_type_name(identifier.Name) {
-		// A primitive subject is banned by check_primitive_types, not asserted here.
+	if identifier.Name == "string" {
+		// A raw string subject is banned by check_primitive_types, not asserted here.
 		return "", false
+	}
+	preset := struct_primitive_preset(identifier.Name)
+	if preset != "" {
+		return scope.Default_Package + "\x00" + preset, true
 	}
 	if struct_is_builtin(identifier.Name) {
 		return "", false
@@ -1513,8 +1562,7 @@ func function_requirement_met(
 	return function_calls_helper(statements, requirement, scope)
 }
 
-// Reports whether some statement calls the exact expected helper on the subject —
-// the subject second, behind the root identifier.
+// Reports whether some statement calls the exact expected helper on the subject.
 func function_calls_helper(
 	statements []ast.Stmt, requirement Helper_Requirement, scope *Invariant_Scope,
 ) (met bool) {
@@ -1526,7 +1574,7 @@ func function_calls_helper(
 			identity := helper_callee_identity(
 				call.Fun, scope.Current_Package, scope.Imports, shadowed)
 			if identity == requirement.Expected {
-				if function_subject_argument_name(call) == requirement.Subject {
+				if function_first_argument_name(call) == requirement.Subject {
 					return true
 				}
 			}
@@ -1536,14 +1584,13 @@ func function_calls_helper(
 	return false
 }
 
-// Returns a call's second-argument identifier name, dereferencing a leading
-// pointer; "" when the second argument is not an identifier. The first argument is
-// the root identifier the call site owns.
-func function_subject_argument_name(call *ast.CallExpr) (name string) {
-	if len(call.Args) < 2 {
+// Returns a call's first-argument identifier name, dereferencing a leading
+// pointer; "" when the first argument is not an identifier.
+func function_first_argument_name(call *ast.CallExpr) (name string) {
+	if len(call.Args) == 0 {
 		return ""
 	}
-	argument := call.Args[1]
+	argument := call.Args[0]
 	star, is_star := argument.(*ast.StarExpr)
 	if is_star {
 		argument = star.X
@@ -1557,8 +1604,7 @@ func function_subject_argument_name(call *ast.CallExpr) (name string) {
 
 // Renders the expected helper form for a diagnostic without exposing the identity separator.
 func function_form(requirement Helper_Requirement) (form string) {
-	return helper_identity_name(requirement.Expected) +
-		"(\"…\", " + requirement.Subject + ")"
+	return helper_identity_name(requirement.Expected) + "(" + requirement.Subject + ", ...)"
 }
 
 // Flags every non-exempt, non-main package whose test binary fails to wire the
@@ -2224,8 +2270,8 @@ func simulation_diagnostic(position token.Position, message string) (diags []Dia
 	}}
 }
 
-// Flags a primitive used as a function/method parameter or result, or as a struct
-// field: all types are semantic, and a primitive cannot carry a bundle of its own —
+// Flags a raw string, slice, or map used as a function/method parameter or result,
+// or as a struct field. Such a type has no preset and cannot carry its own bundle;
 // a defined wrapper gives it well-defined coverage. A method satisfying a stdlib
 // interface keeps its dictated signature. Shares the type-invariant opt-out.
 func check_primitive_types(parsed_files []Parsed_File, exempt []string) (diags []Diagnostic) {
@@ -2340,9 +2386,9 @@ func primitive_field_names(field *ast.Field) (names []string) {
 	return names
 }
 
-// Returns the primitive's name, "slice", or "map" when the type is raw — a leading
-// * unwrapped, a variadic counted as a slice — or "" otherwise. A fixed [N]T array
-// is not a slice; a defined type that wraps a primitive is not raw.
+// Returns "string", "slice", or "map" when the type is a raw primitive of that kind
+// — a leading * unwrapped, a variadic counted as a slice — or "" otherwise. A fixed
+// [N]T array is not a slice; a defined type that wraps a primitive is not raw.
 func numeric_raw_primitive_kind(expression ast.Expr) (kind string) {
 	core := expression
 	if star, is_star := core.(*ast.StarExpr); is_star {
@@ -2353,8 +2399,8 @@ func numeric_raw_primitive_kind(expression ast.Expr) (kind string) {
 	}
 	switch typed := core.(type) {
 	case *ast.Ident:
-		if primitive_type_name(typed.Name) {
-			return typed.Name
+		if typed.Name == "string" {
+			return "string"
 		}
 		return ""
 	case *ast.ArrayType:
@@ -2369,144 +2415,10 @@ func numeric_raw_primitive_kind(expression ast.Expr) (kind string) {
 	}
 }
 
-// Flags a type declared over another defined type. A declaration sits directly on a
-// primitive — `type Metric int64` — because declaring over a defined type would
-// alias a contract instead of owning one. Struct, slice, map, array, function,
-// interface, and channel declarations remain the composition mechanism; aliases
-// rename rather than declare. Shares the type-invariant opt-out.
-func check_semantic_declarations(
-	parsed_files []Parsed_File, exempt []string,
-) (diags []Diagnostic) {
-	for _, pf := range parsed_files {
-		if strings.HasSuffix(pf.Path, "_test.go") {
-			continue
-		}
-		if source.Path_Matches_Glob(pf.Path, exempt) {
-			continue
-		}
-		for _, declaration := range pf.File.Decls {
-			general, is_general := declaration.(*ast.GenDecl)
-			if !is_general {
-				continue
-			}
-			if general.Tok != token.TYPE {
-				continue
-			}
-			type_specification, is_type := general.Specs[0].(*ast.TypeSpec)
-			if !is_type {
-				continue
-			}
-			if type_specification.Assign.IsValid() {
-				continue
-			}
-			base := semantic_declaration_base(type_specification.Type)
-			if base == "" {
-				continue
-			}
-			diags = append(diags, Diagnostic{
-				Position: pf.File_Set.Position(type_specification.Name.Pos()),
-				Message: type_specification.Name.Name +
-					" declares on defined type " + base +
-					"; declare directly on the primitive",
-			})
-		}
-	}
-	return diags
-}
-
-// Returns the rendered defined type a scalar declaration sits on, or "" when the
-// declaration is legal: on a primitive, a predeclared interface, or a composite.
-func semantic_declaration_base(expression ast.Expr) (base string) {
-	switch typed := expression.(type) {
-	case *ast.Ident:
-		if primitive_type_name(typed.Name) {
-			return ""
-		}
-		if struct_is_builtin(typed.Name) {
-			return ""
-		}
-		return typed.Name
-	case *ast.SelectorExpr:
-		qualifier, is_qualifier := typed.X.(*ast.Ident)
-		if !is_qualifier {
-			return ""
-		}
-		return qualifier.Name + "." + typed.Sel.Name
-	case *ast.IndexExpr:
-		return semantic_declaration_base(typed.X)
-	case *ast.IndexListExpr:
-		return semantic_declaration_base(typed.X)
-	default:
-		return ""
-	}
-}
-
-// Flags a struct with two fields of one type, in one field entry or across several.
-// Two same-typed fields under one root would seed identical coverage keys; the
-// remedy is distinct semantic types with their own _Invariants. Shares the
-// type-invariant opt-out.
-func check_distinct_fields(
-	parsed_files []Parsed_File, exempt []string,
-) (diags []Diagnostic) {
-	for _, pf := range parsed_files {
-		if strings.HasSuffix(pf.Path, "_test.go") {
-			continue
-		}
-		if source.Path_Matches_Glob(pf.Path, exempt) {
-			continue
-		}
-		for _, declaration := range pf.File.Decls {
-			general, is_general := declaration.(*ast.GenDecl)
-			if !is_general {
-				continue
-			}
-			if general.Tok != token.TYPE {
-				continue
-			}
-			type_specification, is_type := general.Specs[0].(*ast.TypeSpec)
-			if !is_type {
-				continue
-			}
-			struct_type, is_struct := type_specification.Type.(*ast.StructType)
-			if !is_struct {
-				continue
-			}
-			diags = append(diags, distinct_field_diagnostics(
-				pf, type_specification, struct_type)...)
-		}
-	}
-	return diags
-}
-
-// Judges one struct's field types for duplication.
-func distinct_field_diagnostics(
-	file Parsed_File, type_specification *ast.TypeSpec, struct_type *ast.StructType,
-) (diags []Diagnostic) {
-	seen := map[string]bool{}
-	for _, field := range struct_type.Fields.List {
-		rendered := types.ExprString(field.Type)
-		duplicate := seen[rendered]
-		// A single entry naming several fields is already the duplication.
-		if len(field.Names) > 1 {
-			duplicate = true
-		}
-		if duplicate {
-			diags = append(diags, Diagnostic{
-				Position: file.File_Set.Position(field.Pos()),
-				Message: type_specification.Name.Name +
-					" declares two fields of type " + rendered +
-					"; separate the duplicates into distinct semantic types",
-			})
-		}
-		seen[rendered] = true
-	}
-	return diags
-}
-
 // Flags every in-scope type whose next declaration
 // is not its correctly-named, correctly-signed bundle function.
 func check_type_invariants_forward(
-	file_set *token.FileSet, file *ast.File,
+	file_set *token.FileSet, file *ast.File, invariant_names map[string]bool,
 ) (diags []Diagnostic) {
 
 	for index, declaration := range file.Decls {
@@ -2526,7 +2438,7 @@ func check_type_invariants_forward(
 			continue
 		}
 		diags = append(diags, check_type_invariants_one(
-			file_set, file, index, type_specification)...)
+			file_set, file, index, type_specification, invariant_names)...)
 	}
 	return diags
 }
@@ -2535,7 +2447,7 @@ func check_type_invariants_forward(
 // presence and casing of the following bundle, then its signature and the gap.
 func check_type_invariants_one(
 	file_set *token.FileSet, file *ast.File, index int,
-	type_specification *ast.TypeSpec,
+	type_specification *ast.TypeSpec, invariant_names map[string]bool,
 ) (diags []Diagnostic) {
 
 	want := source.Invariant_Name(type_specification.Name.Name)
@@ -2546,7 +2458,7 @@ func check_type_invariants_one(
 	if bundle.Name.Name != want {
 		return append(diags, type_invariants_absent(file_set, type_specification, want))
 	}
-	if !type_invariants_signature_ok(bundle, type_specification) {
+	if !type_invariants_signature_ok(bundle, type_specification, invariant_names) {
 		diags = append(diags,
 			type_invariants_bad_signature(file_set, bundle, type_specification))
 	}
@@ -2563,13 +2475,13 @@ func type_invariants_absent(
 	type_name := type_specification.Name.Name
 	return Diagnostic{
 		Position: file_set.Position(type_specification.Name.Pos()),
-		Message: "declare " + want + "(identifier string, " + type_name +
-			") directly below " + type_name,
+		Message: "declare " + want + "(" + type_name +
+			", invariant.Namespace) directly below " + type_name,
 	}
 }
 
-// Builds the diagnostic for a bundle whose parameters are not `identifier string`
-// first and the type, by value or pointer, second.
+// Builds the diagnostic for a bundle whose parameters
+// are not the type, by value or pointer, first and an invariant.Namespace last.
 func type_invariants_bad_signature(
 	file_set *token.FileSet, function *ast.FuncDecl, type_specification *ast.TypeSpec,
 ) (diag Diagnostic) {
@@ -2577,8 +2489,8 @@ func type_invariants_bad_signature(
 	type_name := type_specification.Name.Name
 	return Diagnostic{
 		Position: file_set.Position(function.Name.Pos()),
-		Message: function.Name.Name + " must take (identifier string, " +
-			type_name + " or *" + type_name + ")",
+		Message: function.Name.Name + " must take (" + type_name + " or *" +
+			type_name + ", invariant.Namespace)",
 	}
 }
 
@@ -2703,10 +2615,11 @@ func type_invariants_is_bundle_name(name string) (yes bool) {
 	return strings.HasSuffix(name, "_invariants")
 }
 
-// Reports whether the bundle takes exactly `identifier string` first and its type,
-// by value or pointer, second — the framework's bundle parameter doctrine.
+// Reports whether the bundle takes its type, by
+// value or pointer, first and an invariant.Namespace last.
 func type_invariants_signature_ok(
 	function *ast.FuncDecl, type_specification *ast.TypeSpec,
+	invariant_names map[string]bool,
 ) (ok bool) {
 
 	if function.Type.Params == nil {
@@ -2716,26 +2629,10 @@ func type_invariants_signature_ok(
 	if len(list) < 2 {
 		return false
 	}
-	if !type_invariants_leading_identifier(list[0]) {
+	if !type_invariants_first_is_type(list[0].Type, type_specification) {
 		return false
 	}
-	return type_invariants_first_is_type(list[1].Type, type_specification)
-}
-
-// Reports whether the field is exactly `identifier string`: one name, spelled
-// identifier, typed bare string.
-func type_invariants_leading_identifier(field *ast.Field) (ok bool) {
-	if len(field.Names) != 1 {
-		return false
-	}
-	if field.Names[0].Name != "identifier" {
-		return false
-	}
-	typed, is_identifier := field.Type.(*ast.Ident)
-	if !is_identifier {
-		return false
-	}
-	return typed.Name == "string"
+	return type_invariants_last_is_namespace(list[len(list)-1].Type, invariant_names)
 }
 
 // Reports whether expression is the bundle's type,
@@ -2822,4 +2719,57 @@ func type_invariants_argument_names(arguments []ast.Expr) (names []string) {
 		names = append(names, identifier.Name)
 	}
 	return names
+}
+
+// Reports whether expression is the selector
+// <pkg>.Namespace for a local name bound to the invariant package.
+func type_invariants_last_is_namespace(
+	expression ast.Expr, invariant_names map[string]bool,
+) (ok bool) {
+
+	selector, is_selector := expression.(*ast.SelectorExpr)
+	if !is_selector {
+		return false
+	}
+	if selector.Sel.Name != "Namespace" {
+		return false
+	}
+	qualifier, is_identifier := selector.X.(*ast.Ident)
+	if !is_identifier {
+		return false
+	}
+	return invariant_names[qualifier.Name]
+}
+
+// Returns the local names the invariant package is
+// bound to in this file — its own package name, or an explicit import alias — so
+// the namespace parameter is recognized however the package was imported.
+func type_invariants_import_names(file *ast.File) (names map[string]bool) {
+	names = map[string]bool{}
+	for _, specification := range file.Imports {
+		unquoted, unquote_err := strconv.Unquote(specification.Path.Value)
+		if unquote_err != nil {
+			continue
+		}
+		if !type_invariants_path_is_invariant(unquoted) {
+			continue
+		}
+		if specification.Name != nil {
+			names[specification.Name.Name] = true
+			continue
+		}
+		names[path.Base(unquoted)] = true
+	}
+	return names
+}
+
+// Reports whether an import path has a segment
+// named invariant — the framework package, wherever it sits in the module.
+func type_invariants_path_is_invariant(import_path string) (yes bool) {
+	for _, segment := range strings.Split(import_path, "/") {
+		if segment == "invariant" {
+			return true
+		}
+	}
+	return false
 }
