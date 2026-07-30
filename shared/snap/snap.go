@@ -328,7 +328,7 @@ type Snapper_Edit_Span struct {
 // printing a diagnostic and reporting Found=false when the call is malformed.
 func snapper_locate_edit(s *Snapper, snapshot Snapshot, content []byte) (span Snapper_Edit_Span) {
 	bounds := snapper_find_line(content, snapshot.Line)
-	// Sequential, not one Dot_Product: each guard must hold before the next line's
+	// Sequential because each eager guard must hold before the next line's
 	// content[...] index is evaluated, or an eager out-of-range read would panic first.
 	invariant.Always(bounds.Start >= 0 && bounds.End >= 0, "line bounds were located")
 	invariant.Always(bounds.Start > 1, "line is not the first")

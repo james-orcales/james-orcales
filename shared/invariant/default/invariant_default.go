@@ -1,7 +1,7 @@
 // Package invariant_default is the composition-tier sibling of invariant. It
 // wires the pure library to the real OS — local filesystem, stderr, os.Args
 // sniffing, os.Exit — and re-exports the surface. Import it aliased as invariant
-// and use invariant.Always / invariant.Dot_Product as if no split between pure
+// and use invariant.Always / invariant.Assertions as if no split between pure
 // and OS-bound tiers existed.
 package invariant
 
@@ -23,16 +23,7 @@ type Recorder = invariant.Recorder
 // Assertion_Metadata re-exports the library coverage-tracker entry type.
 type Assertion_Metadata = invariant.Assertion_Metadata
 
-// Namespace re-exports the library grid-identity type a _Invariants takes and self-emits under.
-type Namespace = invariant.Namespace
-
-// Dot_Element_Reference re-exports the library reference type used by Impossible.
-type Dot_Element_Reference = invariant.Dot_Element_Reference
-
-// Marker type whose reflect-reported import path is this package's own, so
-// Init_Default_Recorder can hand the static registration this package's path
-// (derived, not hardcoded) to recognise the unqualified primitive calls inside
-// the presets defined here.
+// Sugar_Package_Marker gives registration an import identity without a hard-coded module path.
 type Sugar_Package_Marker struct{}
 
 // Default is the OS-bound Recorder backing the package-level sugar. Tests that
@@ -109,8 +100,8 @@ const FUZZ_COVERAGE_FILE_ENVIRONMENT = "INVARIANT_FUZZ_COVERAGE_FILE"
 
 // Fuzz_coverage_setup wires the cross-process coverage seams for a fuzzing run. Under -fuzz
 // the coordinator never executes the fuzzed body — that happens in worker subprocesses — so
-// each worker appends every newly-covered cell to one shared append-only file, and the
-// coordinator unions that file into its registered grid before analyzing. A plain test or
+// each worker appends every newly-covered branch to one shared append-only file, and the
+// coordinator unions that file into its registered entries before analyzing. A plain test or
 // benchmark wires nothing.
 func fuzz_coverage_setup(recorder *invariant.Recorder) {
 	if recorder.Is_Fuzz_Worker {
@@ -167,363 +158,135 @@ func Always[T ~bool](condition T, message string) {
 	invariant.Recorder_Always(Default, condition, message)
 }
 
-// Event_True references the axis with message at its true outcome, for use inside Impossible.
-func Event_True(message string) (reference invariant.Dot_Element_Reference) {
-	return invariant.Event_True(message)
+// Assertion_Builder re-exports the fluent value for explicit APIs without adding an adapter.
+type Assertion_Builder = invariant.Assertion_Builder
+
+// Namespace re-exports the chain identity used by every _Invariants helper.
+type Namespace = invariant.Namespace
+
+// Assertions starts one deferred builder on Default.
+func Assertions(namespace Namespace) (builder Assertion_Builder) {
+	return invariant.Recorder_Assertions(Default, namespace)
 }
 
-// Event_False references the axis with message at its false outcome, for use inside Impossible.
-func Event_False(message string) (reference invariant.Dot_Element_Reference) {
-	return invariant.Event_False(message)
-}
-
-// Dot_Product starts one demanded chain under namespace; Ensure enforces its carves and credits its
-// packed tuple against the pre-registered coverage grid.
-func Dot_Product(namespace Namespace) (product invariant.Product) {
-	return invariant.Recorder_Dot_Product(Default, namespace)
-}
-
-// An int is assumed to be 64 bits wide, so that the minimum and maximum axes below are exactly an
-// int's bounds. This conversion fails to compile on a platform where int is narrower, because there
-// math.MaxInt is smaller than math.MaxInt64 and their difference is negative, which a uint cannot
-// represent. An int and a uint always share a width, so this guards the unsigned presets that name
-// math.MaxUint as well.
+// A compile-time failure on narrow-int platforms prevents the int/uint helpers from claiming the
+// 64-bit boundaries their messages name.
 const INT_IS_64_BITS_WIDE = uint(math.MaxInt - math.MaxInt64)
 
-// Int_Invariants is the preset coverage for an int. The suite must witness the value one, negative
-// one, the type's minimum, and the type's maximum, plus an ordinary value that is none of these.
-// The four are mutually exclusive, which the carves enforce.
+// Int_Invariants keeps the platform integer's conventional edge witnesses mandatory.
 func Int_Invariants(n int, namespace Namespace) {
-	Dot_Product(namespace).
+	Assertions(namespace).
 		Sometimes(n == 1, "The value is one.").
 		Sometimes(n == -1, "The value is negative one.").
 		Sometimes(n == math.MinInt64, "The value is the minimum int.").
 		Sometimes(n == math.MaxInt64, "The value is the maximum int.").
-		Impossible("Boundary events are mutually exclusive (1).",
-			Event_True("The value is one."),
-			Event_True("The value is negative one."),
-		).
-		Impossible("Boundary events are mutually exclusive (2).",
-			Event_True("The value is one."),
-			Event_True("The value is the minimum int."),
-		).
-		Impossible("Boundary events are mutually exclusive (3).",
-			Event_True("The value is one."),
-			Event_True("The value is the maximum int."),
-		).
-		Impossible("Boundary events are mutually exclusive (4).",
-			Event_True("The value is negative one."),
-			Event_True("The value is the minimum int."),
-		).
-		Impossible("Boundary events are mutually exclusive (5).",
-			Event_True("The value is negative one."),
-			Event_True("The value is the maximum int."),
-		).
-		Impossible("Boundary events are mutually exclusive (6).",
-			Event_True("The value is the minimum int."),
-			Event_True("The value is the maximum int."),
-		).
 		Ensure()
 }
 
-// Int8_Invariants is Int_Invariants for an int8, whose minimum and maximum are MinInt8 and MaxInt8.
+// Int8_Invariants keeps the signed eight-bit edge witnesses mandatory.
 func Int8_Invariants(n int8, namespace Namespace) {
-	Dot_Product(namespace).
+	Assertions(namespace).
 		Sometimes(n == 1, "The value is one.").
 		Sometimes(n == -1, "The value is negative one.").
 		Sometimes(n == math.MinInt8, "The value is the minimum int8.").
 		Sometimes(n == math.MaxInt8, "The value is the maximum int8.").
-		Impossible("Boundary events are mutually exclusive (1).",
-			Event_True("The value is one."),
-			Event_True("The value is negative one."),
-		).
-		Impossible("Boundary events are mutually exclusive (2).",
-			Event_True("The value is one."),
-			Event_True("The value is the minimum int8."),
-		).
-		Impossible("Boundary events are mutually exclusive (3).",
-			Event_True("The value is one."),
-			Event_True("The value is the maximum int8."),
-		).
-		Impossible("Boundary events are mutually exclusive (4).",
-			Event_True("The value is negative one."),
-			Event_True("The value is the minimum int8."),
-		).
-		Impossible("Boundary events are mutually exclusive (5).",
-			Event_True("The value is negative one."),
-			Event_True("The value is the maximum int8."),
-		).
-		Impossible("Boundary events are mutually exclusive (6).",
-			Event_True("The value is the minimum int8."),
-			Event_True("The value is the maximum int8."),
-		).
 		Ensure()
 }
 
-// Int16_Invariants is Int_Invariants for an int16, whose bounds are MinInt16 and MaxInt16.
+// Int16_Invariants keeps the signed sixteen-bit edge witnesses mandatory.
 func Int16_Invariants(n int16, namespace Namespace) {
-	Dot_Product(namespace).
+	Assertions(namespace).
 		Sometimes(n == 1, "The value is one.").
 		Sometimes(n == -1, "The value is negative one.").
 		Sometimes(n == math.MinInt16, "The value is the minimum int16.").
 		Sometimes(n == math.MaxInt16, "The value is the maximum int16.").
-		Impossible("Boundary events are mutually exclusive (1).",
-			Event_True("The value is one."),
-			Event_True("The value is negative one."),
-		).
-		Impossible("Boundary events are mutually exclusive (2).",
-			Event_True("The value is one."),
-			Event_True("The value is the minimum int16."),
-		).
-		Impossible("Boundary events are mutually exclusive (3).",
-			Event_True("The value is one."),
-			Event_True("The value is the maximum int16."),
-		).
-		Impossible("Boundary events are mutually exclusive (4).",
-			Event_True("The value is negative one."),
-			Event_True("The value is the minimum int16."),
-		).
-		Impossible("Boundary events are mutually exclusive (5).",
-			Event_True("The value is negative one."),
-			Event_True("The value is the maximum int16."),
-		).
-		Impossible("Boundary events are mutually exclusive (6).",
-			Event_True("The value is the minimum int16."),
-			Event_True("The value is the maximum int16."),
-		).
 		Ensure()
 }
 
-// Int32_Invariants is Int_Invariants for an int32, whose bounds are MinInt32 and MaxInt32.
+// Int32_Invariants keeps the signed thirty-two-bit edge witnesses mandatory.
 func Int32_Invariants(n int32, namespace Namespace) {
-	Dot_Product(namespace).
+	Assertions(namespace).
 		Sometimes(n == 1, "The value is one.").
 		Sometimes(n == -1, "The value is negative one.").
 		Sometimes(n == math.MinInt32, "The value is the minimum int32.").
 		Sometimes(n == math.MaxInt32, "The value is the maximum int32.").
-		Impossible("Boundary events are mutually exclusive (1).",
-			Event_True("The value is one."),
-			Event_True("The value is negative one."),
-		).
-		Impossible("Boundary events are mutually exclusive (2).",
-			Event_True("The value is one."),
-			Event_True("The value is the minimum int32."),
-		).
-		Impossible("Boundary events are mutually exclusive (3).",
-			Event_True("The value is one."),
-			Event_True("The value is the maximum int32."),
-		).
-		Impossible("Boundary events are mutually exclusive (4).",
-			Event_True("The value is negative one."),
-			Event_True("The value is the minimum int32."),
-		).
-		Impossible("Boundary events are mutually exclusive (5).",
-			Event_True("The value is negative one."),
-			Event_True("The value is the maximum int32."),
-		).
-		Impossible("Boundary events are mutually exclusive (6).",
-			Event_True("The value is the minimum int32."),
-			Event_True("The value is the maximum int32."),
-		).
 		Ensure()
 }
 
-// Int64_Invariants is Int_Invariants for an int64, whose bounds are MinInt64 and MaxInt64.
+// Int64_Invariants keeps the signed sixty-four-bit edge witnesses mandatory.
 func Int64_Invariants(n int64, namespace Namespace) {
-	Dot_Product(namespace).
+	Assertions(namespace).
 		Sometimes(n == 1, "The value is one.").
 		Sometimes(n == -1, "The value is negative one.").
 		Sometimes(n == math.MinInt64, "The value is the minimum int64.").
 		Sometimes(n == math.MaxInt64, "The value is the maximum int64.").
-		Impossible("Boundary events are mutually exclusive (1).",
-			Event_True("The value is one."),
-			Event_True("The value is negative one."),
-		).
-		Impossible("Boundary events are mutually exclusive (2).",
-			Event_True("The value is one."),
-			Event_True("The value is the minimum int64."),
-		).
-		Impossible("Boundary events are mutually exclusive (3).",
-			Event_True("The value is one."),
-			Event_True("The value is the maximum int64."),
-		).
-		Impossible("Boundary events are mutually exclusive (4).",
-			Event_True("The value is negative one."),
-			Event_True("The value is the minimum int64."),
-		).
-		Impossible("Boundary events are mutually exclusive (5).",
-			Event_True("The value is negative one."),
-			Event_True("The value is the maximum int64."),
-		).
-		Impossible("Boundary events are mutually exclusive (6).",
-			Event_True("The value is the minimum int64."),
-			Event_True("The value is the maximum int64."),
-		).
 		Ensure()
 }
 
-// Uint_Invariants is the preset coverage for a uint. The suite must witness the value zero, one,
-// and the type's maximum, plus the ordinary non-zero case that holds none of those axes. An
-// unsigned value has no sign, so zero stands in for the sign axis and the minimum is zero itself.
-// The carves keep zero, one, and the maximum mutually exclusive.
+// Uint_Invariants keeps the platform unsigned integer's edge witnesses mandatory.
 func Uint_Invariants(n uint, namespace Namespace) {
-	Dot_Product(namespace).
+	Assertions(namespace).
 		Sometimes(n == 0, "The value is zero.").
 		Sometimes(n == 1, "The value is one.").
 		Sometimes(n == math.MaxUint64, "The value is the maximum uint.").
-		Impossible("Boundary events are mutually exclusive (1).",
-			Event_True("The value is zero."),
-			Event_True("The value is one."),
-		).
-		Impossible("Boundary events are mutually exclusive (2).",
-			Event_True("The value is zero."),
-			Event_True("The value is the maximum uint."),
-		).
-		Impossible("Boundary events are mutually exclusive (3).",
-			Event_True("The value is one."),
-			Event_True("The value is the maximum uint."),
-		).
 		Ensure()
 }
 
-// Uint8_Invariants is Uint_Invariants for a uint8, whose maximum is MaxUint8.
+// Uint8_Invariants keeps the unsigned eight-bit edge witnesses mandatory.
 func Uint8_Invariants(n uint8, namespace Namespace) {
-	Dot_Product(namespace).
+	Assertions(namespace).
 		Sometimes(n == 0, "The value is zero.").
 		Sometimes(n == 1, "The value is one.").
 		Sometimes(n == math.MaxUint8, "The value is the maximum uint8.").
-		Impossible("Boundary events are mutually exclusive (1).",
-			Event_True("The value is zero."),
-			Event_True("The value is one."),
-		).
-		Impossible("Boundary events are mutually exclusive (2).",
-			Event_True("The value is zero."),
-			Event_True("The value is the maximum uint8."),
-		).
-		Impossible("Boundary events are mutually exclusive (3).",
-			Event_True("The value is one."),
-			Event_True("The value is the maximum uint8."),
-		).
 		Ensure()
 }
 
-// Uint16_Invariants is Uint_Invariants for a uint16, whose maximum is MaxUint16.
+// Uint16_Invariants keeps the unsigned sixteen-bit edge witnesses mandatory.
 func Uint16_Invariants(n uint16, namespace Namespace) {
-	Dot_Product(namespace).
+	Assertions(namespace).
 		Sometimes(n == 0, "The value is zero.").
 		Sometimes(n == 1, "The value is one.").
 		Sometimes(n == math.MaxUint16, "The value is the maximum uint16.").
-		Impossible("Boundary events are mutually exclusive (1).",
-			Event_True("The value is zero."),
-			Event_True("The value is one."),
-		).
-		Impossible("Boundary events are mutually exclusive (2).",
-			Event_True("The value is zero."),
-			Event_True("The value is the maximum uint16."),
-		).
-		Impossible("Boundary events are mutually exclusive (3).",
-			Event_True("The value is one."),
-			Event_True("The value is the maximum uint16."),
-		).
 		Ensure()
 }
 
-// Uint32_Invariants is Uint_Invariants for a uint32, whose maximum is MaxUint32.
+// Uint32_Invariants keeps the unsigned thirty-two-bit edge witnesses mandatory.
 func Uint32_Invariants(n uint32, namespace Namespace) {
-	Dot_Product(namespace).
+	Assertions(namespace).
 		Sometimes(n == 0, "The value is zero.").
 		Sometimes(n == 1, "The value is one.").
 		Sometimes(n == math.MaxUint32, "The value is the maximum uint32.").
-		Impossible("Boundary events are mutually exclusive (1).",
-			Event_True("The value is zero."),
-			Event_True("The value is one."),
-		).
-		Impossible("Boundary events are mutually exclusive (2).",
-			Event_True("The value is zero."),
-			Event_True("The value is the maximum uint32."),
-		).
-		Impossible("Boundary events are mutually exclusive (3).",
-			Event_True("The value is one."),
-			Event_True("The value is the maximum uint32."),
-		).
 		Ensure()
 }
 
-// Uint64_Invariants is Uint_Invariants for a uint64, whose maximum is MaxUint64.
+// Uint64_Invariants keeps the unsigned sixty-four-bit edge witnesses mandatory.
 func Uint64_Invariants(n uint64, namespace Namespace) {
-	Dot_Product(namespace).
+	Assertions(namespace).
 		Sometimes(n == 0, "The value is zero.").
 		Sometimes(n == 1, "The value is one.").
 		Sometimes(n == math.MaxUint64, "The value is the maximum uint64.").
-		Impossible("Boundary events are mutually exclusive (1).",
-			Event_True("The value is zero."),
-			Event_True("The value is one."),
-		).
-		Impossible("Boundary events are mutually exclusive (2).",
-			Event_True("The value is zero."),
-			Event_True("The value is the maximum uint64."),
-		).
-		Impossible("Boundary events are mutually exclusive (3).",
-			Event_True("The value is one."),
-			Event_True("The value is the maximum uint64."),
-		).
 		Ensure()
 }
 
-// Float64_Invariants is the preset coverage for a float64. The suite must witness NaN, negative
-// infinity, and positive infinity, plus an ordinary value that is none of these. The three are
-// mutually exclusive, which the carves enforce.
+// Float64_Invariants keeps non-finite values visible in generated coverage.
 func Float64_Invariants(f float64, namespace Namespace) {
-	Dot_Product(namespace).
+	Assertions(namespace).
 		Sometimes(math.IsNaN(f), "The value is NaN.").
 		Sometimes(f == math.Inf(-1), "The value is negative infinity.").
 		Sometimes(f == math.Inf(1), "The value is positive infinity.").
-		Impossible("Boundary events are mutually exclusive (1).",
-			Event_True("The value is NaN."),
-			Event_True("The value is negative infinity."),
-		).
-		Impossible("Boundary events are mutually exclusive (2).",
-			Event_True("The value is NaN."),
-			Event_True("The value is positive infinity."),
-		).
-		Impossible("Boundary events are mutually exclusive (3).",
-			Event_True("The value is negative infinity."),
-			Event_True("The value is positive infinity."),
-		).
 		Ensure()
 }
 
-// Float32_Invariants is Float64_Invariants for a float32, widened to float64 for the comparisons.
+// Float32_Invariants keeps non-finite values visible in generated coverage.
 func Float32_Invariants(f float32, namespace Namespace) {
-	value := float64(f)
-	Dot_Product(namespace).
-		Sometimes(math.IsNaN(value), "The value is NaN.").
-		Sometimes(value == math.Inf(-1), "The value is negative infinity.").
-		Sometimes(value == math.Inf(1), "The value is positive infinity.").
-		Impossible("Boundary events are mutually exclusive (1).",
-			Event_True("The value is NaN."),
-			Event_True("The value is negative infinity."),
-		).
-		Impossible("Boundary events are mutually exclusive (2).",
-			Event_True("The value is NaN."),
-			Event_True("The value is positive infinity."),
-		).
-		Impossible("Boundary events are mutually exclusive (3).",
-			Event_True("The value is negative infinity."),
-			Event_True("The value is positive infinity."),
-		).
+	Assertions(namespace).
+		Sometimes(math.IsNaN(float64(f)), "The value is NaN.").
+		Sometimes(float64(f) == math.Inf(-1), "The value is negative infinity.").
+		Sometimes(float64(f) == math.Inf(1), "The value is positive infinity.").
 		Ensure()
 }
 
-// Boolean_Invariants is the preset coverage for a bool: the suite must witness the
-// value both true and false. A single axis carries it — its true branch is the
-// value, its false branch the negation — so one Sometimes demands both. A trusted
-// chain can latch nothing here — Sometimes is identity and Ensure reads only latched
-// failures — so it collapses to the root resolution and the whole helper inlines.
+// Boolean_Invariants requires both values without a manually namespaced message.
 func Boolean_Invariants(b bool, namespace Namespace) {
-	product := Dot_Product(namespace)
-	if product.Tier >= invariant.TIER_TRUSTED {
-		return
-	}
-	product.Sometimes(b, "The value is true.").Ensure()
+	Assertions(namespace).Sometimes(b, "The value is true.").Ensure()
 }

@@ -1,35 +1,41 @@
 //go:build !noassert
 
-// This file is the enforcing half of a compile-time dual. It holds every entry point that runs in
-// a shipped binary — the eager guard, the chain root, and the fluent links that validate, enforce,
-// and credit — while enforcement_noassert.go holds a signature-identical set of no-ops selected by
-// `-tags noassert`. The registration and analysis machinery stays in invariant.go untagged because
-// it runs only under `go test`, where the tag is never set.
-//
-// The split is what makes the tag honest. A shared body guarded by a build-time constant would
-// leave the real code in the binary and make elimination a question about the inliner's budget;
-// here the disabled build compiles bodies that are literally empty, so "off" costs nothing by
-// construction rather than by the compiler's discretion.
-
+// The enforcing build keeps fluent links observationally silent: they only advance a value and
+// latch raw verdicts. Ensure is the single boundary that can panic or mutate coverage.
 package invariant
 
-import (
-	"strings"
-	"unsafe"
-)
+// ASSERTION_FAILURE_NONE reserves zero so the builder's zero value has no deferred verdict.
+const ASSERTION_FAILURE_NONE uint8 = 0
 
-// Recorder_Always stays outside Product because an eager guard has no second branch to widen a
-// demanded grid. It panics immediately when condition is false in every run mode; under a plain
-// test run it also credits reachability so an uncalled guard remains visible as a gap.
+// ASSERTION_FAILURE_LINKS defers expanded-cap enforcement to Ensure.
+const ASSERTION_FAILURE_LINKS uint8 = 1
+
+// ASSERTION_FAILURE_RANGE_DOMAIN distinguishes a malformed interval from an observed violation.
+const ASSERTION_FAILURE_RANGE_DOMAIN uint8 = 2
+
+// ASSERTION_FAILURE_RANGE_LOWER identifies the lower guard without formatting on the passing path.
+const ASSERTION_FAILURE_RANGE_LOWER uint8 = 3
+
+// ASSERTION_FAILURE_RANGE_UPPER identifies the upper guard without formatting on the passing path.
+const ASSERTION_FAILURE_RANGE_UPPER uint8 = 4
+
+// ASSERTION_FAILURE_RANGE_EXCLUSION identifies a malformed boundary or exterior hole.
+const ASSERTION_FAILURE_RANGE_EXCLUSION uint8 = 5
+
+// ASSERTION_FAILURE_RANGE_EXCLUDED identifies an observed legal hole.
+const ASSERTION_FAILURE_RANGE_EXCLUDED uint8 = 6
+
+// ASSERTION_FAILURE_ENUM_DOMAIN distinguishes a malformed member set.
+const ASSERTION_FAILURE_ENUM_DOMAIN uint8 = 7
+
+// ASSERTION_FAILURE_ENUM_MEMBER identifies an observed non-member.
+const ASSERTION_FAILURE_ENUM_MEMBER uint8 = 8
+
+// Recorder_Always remains eager because it is deliberately outside the deferred builder.
 func Recorder_Always[T ~bool](recorder *Recorder, condition T, message string) {
 	if !condition {
 		panic(ASSERTION_FAILURE_MESSAGE_PREFIX + message + "  Always — condition was false")
 	}
-	// Enforcement (the panic above) runs in every mode; coverage is credited under a test run
-	// or the fuzz coordinator (not a worker), matching Ensure's recording policy. The
-	// reachability entry is seeded statically by recorder_register_eager_always;
-	// recorder_increment no-ops when the bare Always was never registered (an Always in a
-	// non-analyzed package).
 	if !recorder.Is_Test {
 		return
 	}
@@ -39,446 +45,341 @@ func Recorder_Always[T ~bool](recorder *Recorder, condition T, message string) {
 	recorder_increment(recorder, message, true)
 }
 
-// Recorder_Dot_Product starts one demanded chain under namespace. NUL rejection lives in the
-// shape-discovery miss path: a NUL namespace never publishes a shape, so every offending call
-// re-enters discovery and re-panics there, while the warmed root performs no scan at all.
-func Recorder_Dot_Product(recorder *Recorder, namespace Namespace) (product Product) {
-	// The identity probe lives in this body rather than behind a call: the root runs once
-	// per chain across the whole program, so even one spare call frame is a measurable tax.
-	// A hit derives shape and lane from the slot alone; a recording recorder re-derives its
-	// lane because test and fuzz flags are live recorder state, not frozen shape state.
-	cache := recorder.Chain_Shape_Identities.Load()
-	if cache != nil {
-		data := unsafe.StringData(string(namespace))
-		mask := uint64(len(cache.Slots)) - 1
-		slot_index := (chain_identity_hash(data, len(namespace)) >> 32) & mask
-		for probe_index := 0; probe_index < len(cache.Slots); probe_index++ {
-			slot := &cache.Slots[slot_index]
-			if slot.Data == nil {
-				break
-			}
-			if slot.Data == unsafe.Pointer(data) {
-				if slot.Size == len(namespace) {
-					lane := slot.Lane
-					if recorder.Is_Test {
-						lane = recorder_chain_tier(recorder, slot.Shape)
-					}
-					return Product{
-						Recorder:  recorder,
-						Shape:     slot.Shape,
-						Namespace: namespace,
-						Tier:      lane,
-					}
-				}
-			}
-			slot_index = (slot_index + 1) & mask
+// Recorder_Assertions starts one deferred chain. Only recording modes consult registration;
+// shipped enforcement therefore pays no map, cache, lock, or identity-validation cost.
+func Recorder_Assertions(recorder *Recorder, namespace Namespace) (builder Assertion_Builder) {
+	builder.Recorder = recorder
+	builder.Namespace = namespace
+	if !recorder.Is_Test {
+		return builder
+	}
+	if recorder.Is_Benchmark {
+		return builder
+	}
+	builder.Plan = recorder.Assertion_Plans[namespace]
+	return builder
+}
+
+// Sometimes captures one branch by expanded ordinal. The message belongs exclusively to the
+// registration plan and is intentionally unread here, preventing runtime identity reconstruction.
+func (builder Assertion_Builder) Sometimes(
+	condition bool, message string,
+) (next Assertion_Builder) {
+	return builder.assertion_axis(condition)
+}
+
+// Range_Int captures the int bounded-domain assertion for Ensure.
+func (builder Assertion_Builder) Range_Int(
+	value int, minimum int, maximum int, excluded ...int,
+) (next Assertion_Builder) {
+	return assertion_range(builder, value, minimum, maximum, excluded)
+}
+
+// Range_Int8 captures the int8 bounded-domain assertion for Ensure.
+func (builder Assertion_Builder) Range_Int8(
+	value int8, minimum int8, maximum int8, excluded ...int8,
+) (next Assertion_Builder) {
+	return assertion_range(builder, value, minimum, maximum, excluded)
+}
+
+// Range_Int16 captures the int16 bounded-domain assertion for Ensure.
+func (builder Assertion_Builder) Range_Int16(
+	value int16, minimum int16, maximum int16, excluded ...int16,
+) (next Assertion_Builder) {
+	return assertion_range(builder, value, minimum, maximum, excluded)
+}
+
+// Range_Int32 captures the int32 bounded-domain assertion for Ensure.
+func (builder Assertion_Builder) Range_Int32(
+	value int32, minimum int32, maximum int32, excluded ...int32,
+) (next Assertion_Builder) {
+	return assertion_range(builder, value, minimum, maximum, excluded)
+}
+
+// Range_Int64 captures the int64 bounded-domain assertion for Ensure.
+func (builder Assertion_Builder) Range_Int64(
+	value int64, minimum int64, maximum int64, excluded ...int64,
+) (next Assertion_Builder) {
+	return assertion_range(builder, value, minimum, maximum, excluded)
+}
+
+// Range_Uint captures the uint bounded-domain assertion for Ensure.
+func (builder Assertion_Builder) Range_Uint(
+	value uint, minimum uint, maximum uint, excluded ...uint,
+) (next Assertion_Builder) {
+	return assertion_range(builder, value, minimum, maximum, excluded)
+}
+
+// Range_Uint8 captures the uint8 bounded-domain assertion for Ensure.
+func (builder Assertion_Builder) Range_Uint8(
+	value uint8, minimum uint8, maximum uint8, excluded ...uint8,
+) (next Assertion_Builder) {
+	return assertion_range(builder, value, minimum, maximum, excluded)
+}
+
+// Range_Uint16 captures the uint16 bounded-domain assertion for Ensure.
+func (builder Assertion_Builder) Range_Uint16(
+	value uint16, minimum uint16, maximum uint16, excluded ...uint16,
+) (next Assertion_Builder) {
+	return assertion_range(builder, value, minimum, maximum, excluded)
+}
+
+// Range_Uint32 captures the uint32 bounded-domain assertion for Ensure.
+func (builder Assertion_Builder) Range_Uint32(
+	value uint32, minimum uint32, maximum uint32, excluded ...uint32,
+) (next Assertion_Builder) {
+	return assertion_range(builder, value, minimum, maximum, excluded)
+}
+
+// Range_Uint64 captures the uint64 bounded-domain assertion for Ensure.
+func (builder Assertion_Builder) Range_Uint64(
+	value uint64, minimum uint64, maximum uint64, excluded ...uint64,
+) (next Assertion_Builder) {
+	return assertion_range(builder, value, minimum, maximum, excluded)
+}
+
+// Enum_Int captures the int member-domain assertion for Ensure.
+func (builder Assertion_Builder) Enum_Int(
+	value int, members ...int,
+) (next Assertion_Builder) {
+	return assertion_enum(builder, value, members)
+}
+
+// Enum_Int8 captures the int8 member-domain assertion for Ensure.
+func (builder Assertion_Builder) Enum_Int8(
+	value int8, members ...int8,
+) (next Assertion_Builder) {
+	return assertion_enum(builder, value, members)
+}
+
+// Enum_Int16 captures the int16 member-domain assertion for Ensure.
+func (builder Assertion_Builder) Enum_Int16(
+	value int16, members ...int16,
+) (next Assertion_Builder) {
+	return assertion_enum(builder, value, members)
+}
+
+// Enum_Int32 captures the int32 member-domain assertion for Ensure.
+func (builder Assertion_Builder) Enum_Int32(
+	value int32, members ...int32,
+) (next Assertion_Builder) {
+	return assertion_enum(builder, value, members)
+}
+
+// Enum_Int64 captures the int64 member-domain assertion for Ensure.
+func (builder Assertion_Builder) Enum_Int64(
+	value int64, members ...int64,
+) (next Assertion_Builder) {
+	return assertion_enum(builder, value, members)
+}
+
+// Enum_Uint captures the uint member-domain assertion for Ensure.
+func (builder Assertion_Builder) Enum_Uint(
+	value uint, members ...uint,
+) (next Assertion_Builder) {
+	return assertion_enum(builder, value, members)
+}
+
+// Enum_Uint8 captures the uint8 member-domain assertion for Ensure.
+func (builder Assertion_Builder) Enum_Uint8(
+	value uint8, members ...uint8,
+) (next Assertion_Builder) {
+	return assertion_enum(builder, value, members)
+}
+
+// Enum_Uint16 captures the uint16 member-domain assertion for Ensure.
+func (builder Assertion_Builder) Enum_Uint16(
+	value uint16, members ...uint16,
+) (next Assertion_Builder) {
+	return assertion_enum(builder, value, members)
+}
+
+// Enum_Uint32 captures the uint32 member-domain assertion for Ensure.
+func (builder Assertion_Builder) Enum_Uint32(
+	value uint32, members ...uint32,
+) (next Assertion_Builder) {
+	return assertion_enum(builder, value, members)
+}
+
+// Enum_Uint64 captures the uint64 member-domain assertion for Ensure.
+func (builder Assertion_Builder) Enum_Uint64(
+	value uint64, members ...uint64,
+) (next Assertion_Builder) {
+	return assertion_enum(builder, value, members)
+}
+
+// Ensure is the only fluent operation allowed to panic or credit. It preflights the whole plan so
+// an invalid execution can never leave a misleading partially-covered chain.
+func (builder Assertion_Builder) Ensure() {
+	if builder.Failure != ASSERTION_FAILURE_NONE {
+		panic(ASSERTION_FAILURE_MESSAGE_PREFIX + builder.assertion_failure_message())
+	}
+	if builder.Plan == nil {
+		return
+	}
+	if len(builder.Plan.Links) != int(builder.Ordinal) {
+		panic(ASSERTION_FAILURE_MESSAGE_PREFIX +
+			"registered Assertions chain differs from its registration plan")
+	}
+	for _, link := range builder.Plan.Links {
+		if link.Entry.Metadata == nil {
+			panic(ASSERTION_FAILURE_MESSAGE_PREFIX +
+				"registered Assertions chain resolved an unknown coverage handle")
 		}
 	}
-	shape := recorder_chain_shape(recorder, namespace)
-	return Product{
-		Recorder:  recorder,
-		Shape:     shape,
-		Namespace: namespace,
-		Tier:      recorder_chain_tier(recorder, shape),
+	for _, link := range builder.Plan.Links {
+		condition := true
+		if link.Kind == ASSERTION_KIND_SOMETIMES {
+			condition = builder.assertion_observed(link.Ordinal)
+		}
+		recorder_increment_entry(builder.Recorder, link.Entry, condition)
 	}
 }
 
-// Sometimes only advances the builder; Ensure owns validation and coverage mutation. The
-// trusted lane is an identity: its Ensure reads only the latched failures, and a Sometimes can
-// latch nothing, so the head must stay under the inliner's budget — the call boundary itself is
-// most of what a dense trusted chain pays.
-func (product Product) Sometimes(condition bool, message string) (next Product) {
-	if product.Tier >= TIER_TRUSTED {
-		return product
-	}
-	return product.sometimes_observe(condition, message)
-}
-
-// The NUL message scan lives inside chain_axis, off the warmed match path, mirroring
-// chain_rule_replay.
-func (product Product) sometimes_observe(condition bool, message string) (next Product) {
-	if product.Failure != 0 {
-		return product
-	}
-	if product.Ordinal == CHAIN_LINKS_MAX {
-		return product.chain_defer_failure(PRODUCT_FAILURE_LINKS)
-	}
-	// A replaying lane skips the axis compare wholesale: the shape was proven when it froze,
-	// and the observation bit is all a carve walk or crediting pass ever consumes.
-	if product.Tier == TIER_FULL {
-		mismatch, failure := product.Shape.chain_axis(
-			product.Ordinal, product.Axis_Count, message)
-		if failure != 0 {
-			return product.chain_defer_failure(failure)
-		}
-		if mismatch {
-			product.Mismatch = true
-		}
+func (builder Assertion_Builder) assertion_axis(condition bool) (next Assertion_Builder) {
+	if builder.Ordinal >= ASSERTION_LINKS_MAX {
+		return builder.assertion_fail(ASSERTION_FAILURE_LINKS)
 	}
 	if condition {
-		product.Observations = chain_mask_with(product.Observations, product.Ordinal)
+		builder.Observations[builder.Ordinal/64] |= uint64(1) << (builder.Ordinal % 64)
 	}
-	product.Ordinal++
-	product.Axis_Count++
-	return product
+	builder.Ordinal++
+	return builder
 }
 
-// Impossible only advances the builder; Ensure owns validation and enforcement. A replaying
-// lane advances past the carve without resolving it: the rules were compiled when the shape
-// froze, and Ensure walks them from the shape, never from this link. The reference-count checks
-// stay behind with discovery — a warmed chain proved them on its first execution.
-func (product Product) Impossible(
-	message string, references ...Dot_Element_Reference,
-) (next Product) {
-	if product.Tier != TIER_FULL {
-		product.Ordinal++
-		return product
+func (builder Assertion_Builder) assertion_guard() (next Assertion_Builder) {
+	if builder.Ordinal >= ASSERTION_LINKS_MAX {
+		return builder.assertion_fail(ASSERTION_FAILURE_LINKS)
 	}
-	return product.impossible_resolve(message, references)
+	builder.Ordinal++
+	return builder
 }
 
-func (product Product) impossible_resolve(
-	message string, references []Dot_Element_Reference,
-) (next Product) {
-	if product.Failure != 0 {
-		return product
+func (builder Assertion_Builder) assertion_observed(ordinal uint8) (observed bool) {
+	return builder.Observations[ordinal/64]&(uint64(1)<<(ordinal%64)) != 0
+}
+
+func (builder Assertion_Builder) assertion_fail(failure uint8) (next Assertion_Builder) {
+	if builder.Failure == ASSERTION_FAILURE_NONE {
+		builder.Failure = failure
 	}
-	if product.Ordinal == CHAIN_LINKS_MAX {
-		return product.chain_defer_failure(PRODUCT_FAILURE_LINKS)
+	return builder
+}
+
+func (builder Assertion_Builder) assertion_failure_message() (message string) {
+	prefix := string(builder.Namespace) + ELEMENT_MESSAGE_SEPARATOR
+	switch builder.Failure {
+	case ASSERTION_FAILURE_LINKS:
+		return "Assertions exceeds 70 links"
+	case ASSERTION_FAILURE_RANGE_DOMAIN:
+		return prefix + "Range minimum exceeds maximum"
+	case ASSERTION_FAILURE_RANGE_LOWER:
+		return prefix + RANGE_GUARD_MINIMUM + "  value below min"
+	case ASSERTION_FAILURE_RANGE_UPPER:
+		return prefix + RANGE_GUARD_MAXIMUM + "  value exceeds max"
+	case ASSERTION_FAILURE_RANGE_EXCLUSION:
+		return prefix + "Range exclusion is not strictly inside the interval"
+	case ASSERTION_FAILURE_RANGE_EXCLUDED:
+		return prefix + "Range value is excluded"
+	case ASSERTION_FAILURE_ENUM_DOMAIN:
+		return prefix + "Enum requires at least two distinct members"
+	case ASSERTION_FAILURE_ENUM_MEMBER:
+		return prefix + ENUM_GUARD_MEMBER + "  value is not a member"
 	}
-	if len(references) == 0 {
-		return product.chain_defer_failure(PRODUCT_FAILURE_IMPOSSIBLE)
+	return "Assertions failed"
+}
+
+func assertion_range[Value Integer](
+	builder Assertion_Builder, value Value, minimum Value, maximum Value, excluded []Value,
+) (next Assertion_Builder) {
+	builder = builder.assertion_guard()
+	builder = builder.assertion_guard()
+	if minimum > maximum {
+		builder = builder.assertion_fail(ASSERTION_FAILURE_RANGE_DOMAIN)
 	}
-	if len(references) > CHAIN_LINKS_MAX {
-		return product.chain_defer_failure(PRODUCT_FAILURE_IMPOSSIBLE)
+	if value < minimum {
+		builder = builder.assertion_fail(ASSERTION_FAILURE_RANGE_LOWER)
 	}
-	if product.Shape.chain_replays() {
-		rule, mismatch, failure := product.Shape.chain_rule_replay(
-			product.Ordinal, product.Axis_Count, message, references)
-		if failure != 0 {
-			product = product.chain_defer_failure(failure)
+	if value > maximum {
+		builder = builder.assertion_fail(ASSERTION_FAILURE_RANGE_UPPER)
+	}
+	for _, hole := range excluded {
+		outside := hole <= minimum
+		if hole >= maximum {
+			outside = true
 		}
-		return product.impossible_advance(rule, mismatch)
+		if outside {
+			builder = builder.assertion_fail(ASSERTION_FAILURE_RANGE_EXCLUSION)
+		}
+		if value == hole {
+			builder = builder.assertion_fail(ASSERTION_FAILURE_RANGE_EXCLUDED)
+		}
 	}
-	link := Chain_Link{
-		Kind: DOT_ELEMENT_KIND_IMPOSSIBLE, Ordinal: product.Ordinal,
-		Axis_Count: product.Axis_Count, Message: message,
+	if minimum == maximum {
+		return builder
 	}
-	rule, mismatch, failure := product.Shape.chain_rule(link, references)
-	if failure != 0 {
-		product = product.chain_defer_failure(failure)
+	builder = builder.assertion_axis(value == minimum)
+	builder = builder.assertion_axis(value == maximum)
+	builder = assertion_range_candidate(builder, value, minimum, maximum, excluded, Value(0))
+	builder = assertion_range_candidate(builder, value, minimum, maximum, excluded, Value(1))
+	builder = assertion_range_candidate(builder, value, minimum, maximum, excluded, Value(2))
+	zero := Value(0)
+	negative_one := zero - Value(1)
+	if negative_one < zero {
+		builder = assertion_range_candidate(
+			builder, value, minimum, maximum, excluded, negative_one)
 	}
-	return product.impossible_advance(rule, mismatch)
+	return builder
 }
 
-// Range_Int expands the int bounded preset inside this product. The trusted head keeps only the
-// verdict — in-bounds against the caller's own constants is the entire enforceable property, and
-// lint pins those constants to what discovery proved — so a passing link inlines to three
-// compares while every other outcome takes the cold resolver.
-func (product Product) Range_Int(
-	value int, minimum int, maximum int, excluded ...int,
-) (next Product) {
-	if product.Tier == TIER_TRUSTED {
-		if value >= minimum {
-			if value <= maximum {
-				return product
+func assertion_range_candidate[Value Integer](
+	builder Assertion_Builder, value Value, minimum Value, maximum Value,
+	excluded []Value, candidate Value,
+) (next Assertion_Builder) {
+	outside := candidate <= minimum
+	if candidate >= maximum {
+		outside = true
+	}
+	if outside {
+		return builder
+	}
+	for _, hole := range excluded {
+		if hole == candidate {
+			return builder
+		}
+	}
+	return builder.assertion_axis(value == candidate)
+}
+
+func assertion_enum[Value Integer](
+	builder Assertion_Builder, value Value, members []Value,
+) (next Assertion_Builder) {
+	builder = builder.assertion_guard()
+	distinct := 0
+	matched := false
+	for index, member := range members {
+		duplicate := false
+		for _, earlier := range members[:index] {
+			if earlier == member {
+				duplicate = true
+				break
 			}
 		}
-	}
-	return product_range(product, CHAIN_INTEGER_KIND_INT, value, minimum, maximum, excluded)
-}
-
-// Range_Int8 expands the int8 bounded preset inside this product.
-func (product Product) Range_Int8(
-	value int8, minimum int8, maximum int8, excluded ...int8,
-) (next Product) {
-	if product.Tier == TIER_TRUSTED {
-		if value >= minimum {
-			if value <= maximum {
-				return product
-			}
+		if duplicate {
+			continue
 		}
-	}
-	return product_range(product, CHAIN_INTEGER_KIND_INT8, value, minimum, maximum, excluded)
-}
-
-// Range_Int16 expands the int16 bounded preset inside this product.
-func (product Product) Range_Int16(
-	value int16, minimum int16, maximum int16, excluded ...int16,
-) (next Product) {
-	if product.Tier == TIER_TRUSTED {
-		if value >= minimum {
-			if value <= maximum {
-				return product
-			}
+		distinct++
+		condition := value == member
+		if condition {
+			matched = true
 		}
+		builder = builder.assertion_axis(condition)
 	}
-	return product_range(product, CHAIN_INTEGER_KIND_INT16, value, minimum, maximum, excluded)
-}
-
-// Range_Int32 expands the int32 bounded preset inside this product.
-func (product Product) Range_Int32(
-	value int32, minimum int32, maximum int32, excluded ...int32,
-) (next Product) {
-	if product.Tier == TIER_TRUSTED {
-		if value >= minimum {
-			if value <= maximum {
-				return product
-			}
-		}
+	if distinct < 2 {
+		builder = builder.assertion_fail(ASSERTION_FAILURE_ENUM_DOMAIN)
 	}
-	return product_range(product, CHAIN_INTEGER_KIND_INT32, value, minimum, maximum, excluded)
-}
-
-// Range_Int64 expands the int64 bounded preset inside this product.
-func (product Product) Range_Int64(
-	value int64, minimum int64, maximum int64, excluded ...int64,
-) (next Product) {
-	if product.Tier == TIER_TRUSTED {
-		if value >= minimum {
-			if value <= maximum {
-				return product
-			}
-		}
+	if !matched {
+		builder = builder.assertion_fail(ASSERTION_FAILURE_ENUM_MEMBER)
 	}
-	return product_range(product, CHAIN_INTEGER_KIND_INT64, value, minimum, maximum, excluded)
-}
-
-// Range_Uint expands the uint bounded preset inside this product.
-func (product Product) Range_Uint(
-	value uint, minimum uint, maximum uint, excluded ...uint,
-) (next Product) {
-	if product.Tier == TIER_TRUSTED {
-		if value >= minimum {
-			if value <= maximum {
-				return product
-			}
-		}
-	}
-	return product_range(product, CHAIN_INTEGER_KIND_UINT, value, minimum, maximum, excluded)
-}
-
-// Range_Uint8 expands the uint8 bounded preset inside this product.
-func (product Product) Range_Uint8(
-	value uint8, minimum uint8, maximum uint8, excluded ...uint8,
-) (next Product) {
-	if product.Tier == TIER_TRUSTED {
-		if value >= minimum {
-			if value <= maximum {
-				return product
-			}
-		}
-	}
-	return product_range(product, CHAIN_INTEGER_KIND_UINT8, value, minimum, maximum, excluded)
-}
-
-// Range_Uint16 expands the uint16 bounded preset inside this product.
-func (product Product) Range_Uint16(
-	value uint16, minimum uint16, maximum uint16, excluded ...uint16,
-) (next Product) {
-	if product.Tier == TIER_TRUSTED {
-		if value >= minimum {
-			if value <= maximum {
-				return product
-			}
-		}
-	}
-	return product_range(product, CHAIN_INTEGER_KIND_UINT16, value, minimum, maximum, excluded)
-}
-
-// Range_Uint32 expands the uint32 bounded preset inside this product.
-func (product Product) Range_Uint32(
-	value uint32, minimum uint32, maximum uint32, excluded ...uint32,
-) (next Product) {
-	if product.Tier == TIER_TRUSTED {
-		if value >= minimum {
-			if value <= maximum {
-				return product
-			}
-		}
-	}
-	return product_range(product, CHAIN_INTEGER_KIND_UINT32, value, minimum, maximum, excluded)
-}
-
-// Range_Uint64 expands the uint64 bounded preset inside this product.
-func (product Product) Range_Uint64(
-	value uint64, minimum uint64, maximum uint64, excluded ...uint64,
-) (next Product) {
-	if product.Tier == TIER_TRUSTED {
-		if value >= minimum {
-			if value <= maximum {
-				return product
-			}
-		}
-	}
-	return product_range(product, CHAIN_INTEGER_KIND_UINT64, value, minimum, maximum, excluded)
-}
-
-// Enum_Int expands the int member-set preset inside this product.
-func (product Product) Enum_Int(value int, members ...int) (next Product) {
-	if !chain_enum_domain_valid(members) {
-		return product.chain_defer_failure(PRODUCT_FAILURE_ENUM_DOMAIN)
-	}
-	minimum, maximum := chain_integer_bounds(members)
-	return product_preset(product, CHAIN_PRESET_KIND_ENUM, CHAIN_INTEGER_KIND_INT,
-		value, minimum, maximum, members)
-}
-
-// Enum_Int8 expands the int8 member-set preset inside this product.
-func (product Product) Enum_Int8(value int8, members ...int8) (next Product) {
-	if !chain_enum_domain_valid(members) {
-		return product.chain_defer_failure(PRODUCT_FAILURE_ENUM_DOMAIN)
-	}
-	minimum, maximum := chain_integer_bounds(members)
-	return product_preset(product, CHAIN_PRESET_KIND_ENUM, CHAIN_INTEGER_KIND_INT8,
-		value, minimum, maximum, members)
-}
-
-// Enum_Int16 expands the int16 member-set preset inside this product.
-func (product Product) Enum_Int16(value int16, members ...int16) (next Product) {
-	if !chain_enum_domain_valid(members) {
-		return product.chain_defer_failure(PRODUCT_FAILURE_ENUM_DOMAIN)
-	}
-	minimum, maximum := chain_integer_bounds(members)
-	return product_preset(product, CHAIN_PRESET_KIND_ENUM, CHAIN_INTEGER_KIND_INT16,
-		value, minimum, maximum, members)
-}
-
-// Enum_Int32 expands the int32 member-set preset inside this product.
-func (product Product) Enum_Int32(value int32, members ...int32) (next Product) {
-	if !chain_enum_domain_valid(members) {
-		return product.chain_defer_failure(PRODUCT_FAILURE_ENUM_DOMAIN)
-	}
-	minimum, maximum := chain_integer_bounds(members)
-	return product_preset(product, CHAIN_PRESET_KIND_ENUM, CHAIN_INTEGER_KIND_INT32,
-		value, minimum, maximum, members)
-}
-
-// Enum_Int64 expands the int64 member-set preset inside this product.
-func (product Product) Enum_Int64(value int64, members ...int64) (next Product) {
-	if !chain_enum_domain_valid(members) {
-		return product.chain_defer_failure(PRODUCT_FAILURE_ENUM_DOMAIN)
-	}
-	minimum, maximum := chain_integer_bounds(members)
-	return product_preset(product, CHAIN_PRESET_KIND_ENUM, CHAIN_INTEGER_KIND_INT64,
-		value, minimum, maximum, members)
-}
-
-// Enum_Uint expands the uint member-set preset inside this product.
-func (product Product) Enum_Uint(value uint, members ...uint) (next Product) {
-	if !chain_enum_domain_valid(members) {
-		return product.chain_defer_failure(PRODUCT_FAILURE_ENUM_DOMAIN)
-	}
-	minimum, maximum := chain_integer_bounds(members)
-	return product_preset(product, CHAIN_PRESET_KIND_ENUM, CHAIN_INTEGER_KIND_UINT,
-		value, minimum, maximum, members)
-}
-
-// Enum_Uint8 expands the uint8 member-set preset inside this product.
-func (product Product) Enum_Uint8(value uint8, members ...uint8) (next Product) {
-	if !chain_enum_domain_valid(members) {
-		return product.chain_defer_failure(PRODUCT_FAILURE_ENUM_DOMAIN)
-	}
-	minimum, maximum := chain_integer_bounds(members)
-	return product_preset(product, CHAIN_PRESET_KIND_ENUM, CHAIN_INTEGER_KIND_UINT8,
-		value, minimum, maximum, members)
-}
-
-// Enum_Uint16 expands the uint16 member-set preset inside this product.
-func (product Product) Enum_Uint16(value uint16, members ...uint16) (next Product) {
-	if !chain_enum_domain_valid(members) {
-		return product.chain_defer_failure(PRODUCT_FAILURE_ENUM_DOMAIN)
-	}
-	minimum, maximum := chain_integer_bounds(members)
-	return product_preset(product, CHAIN_PRESET_KIND_ENUM, CHAIN_INTEGER_KIND_UINT16,
-		value, minimum, maximum, members)
-}
-
-// Enum_Uint32 expands the uint32 member-set preset inside this product.
-func (product Product) Enum_Uint32(value uint32, members ...uint32) (next Product) {
-	if !chain_enum_domain_valid(members) {
-		return product.chain_defer_failure(PRODUCT_FAILURE_ENUM_DOMAIN)
-	}
-	minimum, maximum := chain_integer_bounds(members)
-	return product_preset(product, CHAIN_PRESET_KIND_ENUM, CHAIN_INTEGER_KIND_UINT32,
-		value, minimum, maximum, members)
-}
-
-// Enum_Uint64 expands the uint64 member-set preset inside this product.
-func (product Product) Enum_Uint64(value uint64, members ...uint64) (next Product) {
-	if !chain_enum_domain_valid(members) {
-		return product.chain_defer_failure(PRODUCT_FAILURE_ENUM_DOMAIN)
-	}
-	minimum, maximum := chain_integer_bounds(members)
-	return product_preset(product, CHAIN_PRESET_KIND_ENUM, CHAIN_INTEGER_KIND_UINT64,
-		value, minimum, maximum, members)
-}
-
-// Ensure validates the complete shape, enforces every carve, and credits the packed tuple. The
-// head inlines the one outcome a dense trusted chain reaches — nothing latched, nothing to do —
-// and every other lane or latched failure takes the cold body.
-func (product Product) Ensure() {
-	if product.Tier >= TIER_TRUSTED {
-		if product.Failure == 0 {
-			if product.Preset_Failure == 0 {
-				return
-			}
-		}
-	}
-	product.ensure_slow()
-}
-
-// The trusted and observation lanes return through their own cold bodies; the fuzz lane shares
-// this one because its crediting must stay bit-identical to a plain test run — it differs only
-// in walking the user carves instead of re-proving the preset tautologies.
-func (product Product) ensure_slow() {
-	if product.Tier >= TIER_TRUSTED {
-		product.ensure_trusted()
-		return
-	}
-	if product.Tier == TIER_OBSERVATION {
-		product.ensure_observation()
-		return
-	}
-	product.ensure_shape()
-	axis_count := product.Axis_Count
-	records := recorder_chain_records(product.Recorder)
-	if !product.Shape.Registered {
-		records = false
-	}
-	rules := product.Shape.Rules
-	if product.Tier == TIER_FUZZ {
-		rules = product.Shape.User_Rules
-	}
-	if len(rules) == 0 {
-		if !records {
-			return
-		}
-	}
-	tuple_mask := product.Shape.chain_tuple(product.Observations)
-	violations := chain_rule_violations(rules, tuple_mask)
-	if len(violations) > 0 {
-		panic(ASSERTION_FAILURE_MESSAGE_PREFIX + strings.Join(violations, "\n"))
-	}
-	if !records {
-		return
-	}
-	tuple := product.chain_handle(tuple_mask)
-	if axis_count > 0 {
-		if tuple.Metadata == nil {
-			panic(ASSERTION_FAILURE_MESSAGE_PREFIX +
-				"registered Dot_Product credited unknown tuple")
-		}
-	}
-	for _, guard := range product.Shape.Guards {
-		recorder_increment_entry(product.Recorder, guard.Entry, true)
-	}
-	for i_index := uint8(0); i_index < axis_count; i_index++ {
-		axis := product.Shape.Axes[i_index]
-		condition := chain_mask_has(product.Observations, axis.Ordinal)
-		recorder_increment_entry(product.Recorder, axis.Entry, condition)
-	}
-	if axis_count > 0 {
-		recorder_increment_entry(product.Recorder, tuple, true)
-	}
+	return builder
 }
