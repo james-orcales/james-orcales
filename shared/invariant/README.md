@@ -43,9 +43,6 @@ members...)` are the typed eager guards, generic over every defined integer widt
 the member set; trailing `Range` exclusions are holes inside the interval the value must also
 avoid.
 
-The sugar tier adds the `*_Invariants` presets purely to cut boilerplate — each expanding into
-`Sometimes` witnesses over a primitive value's boundary cases.
-
 ## Composition across types
 
 A type's properties live in a `_Invariants` function named for the type, leading with the
@@ -98,11 +95,19 @@ A boundary roots the whole composition with one literal: `Lexeme_Invariants("Lex
 lexeme)`. Every assertion the composition reaches is seeded and recorded under that one
 identifier — the call graph never enters a key.
 
-Declare your own `_Invariants` only for a custom, defined type. The presets are the framework's
-bundles for the primitive types; user code never re-declares one. To cover a primitive, call a
-preset, state its assertions inline, or wrap it in a custom type. A `_Invariants` body must be
-straight-line — a branching or looping statement fails registration, since it would make the
-properties the body emits depend on runtime values the static scan cannot read.
+A composition never repeats a part. Two calls to the same `_Invariants` under one root
+would seed identical keys, and registration refuses the collision rather than silently
+merging two streams into one entry. A struct carrying two same-typed fields separates them
+into distinct types with their own `_Invariants` and their own texts — the fields were
+never the same thing, or they would not both exist — or its boundary roots each stream
+under its own identifier.
+
+Declare a `_Invariants` only for a defined type — a bundle over a bare primitive fails
+registration, because a primitive carries no semantics of its own to state. To cover a
+primitive, state its assertions inline at a root or wrap it in a semantic type and give that
+type its bundle. A `_Invariants` body must be straight-line — a branching or looping
+statement fails registration, since it would make the properties the body emits depend on
+runtime values the static scan cannot read.
 
 ## Static registration
 

@@ -116,11 +116,6 @@ type Recorder struct {
 	// empty leaves a relative entry relative.
 	Working_Directory string
 
-	// Sugar_Package is the import path of the recorder-less sugar tier. When a template
-	// resolved from that package is descended, its unqualified invariant calls are recognized;
-	// empty keeps identically named calls elsewhere from becoming assertions.
-	Sugar_Package string
-
 	// Package_Label is the package's path relative to the module root, derived by
 	// Recorder_Register_Packages_For_Analysis and printed in the clean-run summary so
 	// the line is identifiable when many packages print to the same terminal. Empty
@@ -337,14 +332,13 @@ func Recorder_Register_Packages_For_Analysis(recorder *Recorder, directories ...
 		}
 	}
 	index := &Bundle_Index{
-		File_System:   recorder.File_System,
-		File_Set:      file_set,
-		Module_Path:   module_path,
-		Module_Root:   module_root,
-		Sugar_Package: recorder.Sugar_Package,
-		Same_Set:      ast_index_functions(files),
-		Loaded:        map[string]map[string]Indexed_Function{},
-		Constants:     ast_index_constants(files),
+		File_System: recorder.File_System,
+		File_Set:    file_set,
+		Module_Path: module_path,
+		Module_Root: module_root,
+		Same_Set:    ast_index_functions(files),
+		Loaded:      map[string]map[string]Indexed_Function{},
+		Constants:   ast_index_constants(files),
 	}
 	reg := &Registration{
 		Planned_Keys:    map[string]bool{},
@@ -537,16 +531,13 @@ func recorder_child_directories(file_system fs.FS, directory string) (children [
 }
 
 // An Indexed_Function is a discovered FuncDecl paired with the local-name →
-// import-path map of the file it lives in (so the bundle's own qualified
-// sub-calls resolve) and whether it lives in the sugar package (so the descent
-// recognises its unqualified primitive calls).
+// import-path map of the file it lives in, so the bundle's own qualified
+// sub-calls resolve.
 type Indexed_Function struct {
 	// Declaration is the discovered function declaration.
 	Declaration *ast.FuncDecl
 	// Imports maps the file's local names to import paths, so qualified sub-calls resolve.
 	Imports map[string]string
-	// Is_Sugar reports whether the function lives in the sugar package.
-	Is_Sugar bool
 }
 
 // A Bundle_Index resolves a *_Invariants bundle call to its declaration. Same_Set
@@ -563,8 +554,6 @@ type Bundle_Index struct {
 	Module_Path string
 	// Module_Root is the module's absolute root directory on File_System.
 	Module_Root string
-	// Sugar_Package is the import path of the sugar package.
-	Sugar_Package string
 	// Same_Set holds the analyzed packages' functions by bare name (same-package bundles).
 	Same_Set map[string]Indexed_Function
 	// Loaded caches lazily parsed cross-package functions, keyed by import path then bare name.
@@ -594,18 +583,13 @@ func ast_index_functions(files []*ast.File) (functions map[string]Indexed_Functi
 	return functions
 }
 
-// Registers every invariant.Dot_Product call in one parsed file. The file's
+// Registers every invariant call in one parsed file. The file's
 // import map is threaded down so a qualified cross-package bundle resolves.
 func recorder_register_file(
 	recorder *Recorder, file_set *token.FileSet, file *ast.File, index *Bundle_Index,
 	reg *Registration,
 ) {
 	imports := ast_file_imports(file)
-	allow_unqualified := false
-	if index.Sugar_Package != "" {
-		file_package := recorder_file_package(file_set, file, index)
-		allow_unqualified = file_package == index.Sugar_Package
-	}
 	for _, declaration := range file.Decls {
 		function, is_function := declaration.(*ast.FuncDecl)
 		if !is_function {
@@ -614,15 +598,7 @@ func recorder_register_file(
 		if function.Body == nil {
 			continue
 		}
-		if allow_unqualified {
-			// The sugar package's non-bundle tier forwards parameters into the library
-			// — wrappers, not assertions — so only its bundle declarations register.
-			if !ast_is_invariants_name(function.Name.Name) {
-				continue
-			}
-		}
-		recorder_register_function(
-			recorder, file_set, function, imports, index, reg, allow_unqualified)
+		recorder_register_function(recorder, file_set, function, imports, index, reg)
 	}
 }
 
@@ -630,32 +606,29 @@ func recorder_register_file(
 // validated once; everything else is a plain function whose primitive calls must be roots.
 func recorder_register_function(
 	recorder *Recorder, file_set *token.FileSet, function *ast.FuncDecl,
-	imports map[string]string, index *Bundle_Index, reg *Registration, allow_unqualified bool,
+	imports map[string]string, index *Bundle_Index, reg *Registration,
 ) {
 	if ast_is_invariants_name(function.Name.Name) {
 		recorder_register_bundle_declaration(
-			recorder, file_set, function, imports, index, reg, allow_unqualified)
+			recorder, file_set, function, imports, index, reg)
 		return
 	}
-	recorder_register_plain_function(
-		recorder, file_set, function, imports, index, reg, allow_unqualified)
+	recorder_register_plain_function(recorder, file_set, function, imports, index, reg)
 }
 
 // A plain function's primitive calls are roots: the identifier argument must be a bare string
 // literal, claimed globally, and the call's assertions seed under it.
 func recorder_register_plain_function(
 	recorder *Recorder, file_set *token.FileSet, function *ast.FuncDecl,
-	imports map[string]string, index *Bundle_Index, reg *Registration, allow_unqualified bool,
+	imports map[string]string, index *Bundle_Index, reg *Registration,
 ) {
 	ast.Inspect(function.Body, func(node ast.Node) (descend bool) {
 		call, is_call := node.(*ast.CallExpr)
 		if !is_call {
 			return true
 		}
-		recorder_register_eager_always(
-			recorder, file_set, call, reg, allow_unqualified)
-		recorder_register_root(
-			recorder, file_set, call, imports, index, reg, allow_unqualified)
+		recorder_register_eager_always(recorder, file_set, call, reg)
+		recorder_register_root(recorder, file_set, call, imports, index, reg)
 		return true
 	})
 }
@@ -666,27 +639,18 @@ func recorder_register_plain_function(
 // only through a root's descent.
 func recorder_register_bundle_declaration(
 	recorder *Recorder, file_set *token.FileSet, function *ast.FuncDecl,
-	imports map[string]string, index *Bundle_Index, reg *Registration, allow_unqualified bool,
+	imports map[string]string, index *Bundle_Index, reg *Registration,
 ) {
-	if allow_unqualified {
-		// The bare-name index predates the per-file package resolution, so the sugar
-		// mark lands here where both facts are in hand.
-		entry := index.Same_Set[function.Name.Name]
-		entry.Is_Sugar = true
-		index.Same_Set[function.Name.Name] = entry
-	}
 	recorder_validate_bundle_body(recorder, file_set, Indexed_Function{
 		Declaration: function,
 		Imports:     imports,
-		Is_Sugar:    allow_unqualified,
 	}, index, reg)
 	ast.Inspect(function.Body, func(node ast.Node) (descend bool) {
 		call, is_call := node.(*ast.CallExpr)
 		if !is_call {
 			return true
 		}
-		recorder_register_eager_always(
-			recorder, file_set, call, reg, allow_unqualified)
+		recorder_register_eager_always(recorder, file_set, call, reg)
 		return true
 	})
 }
@@ -697,9 +661,9 @@ func recorder_register_bundle_declaration(
 // call is not the analyzer's.
 func recorder_register_root(
 	recorder *Recorder, file_set *token.FileSet, call *ast.CallExpr,
-	imports map[string]string, index *Bundle_Index, reg *Registration, allow_unqualified bool,
+	imports map[string]string, index *Bundle_Index, reg *Registration,
 ) {
-	selector := ast_selector(call, allow_unqualified)
+	selector := ast_selector(call)
 	primitive, base, is_primitive := ast_primitive_signature(selector)
 	if !is_primitive {
 		recorder_register_root_bundle(recorder, file_set, call, imports, index, reg)
@@ -780,7 +744,7 @@ func recorder_descend_call(
 	file_set *token.FileSet, call *ast.CallExpr, frame Descent_Frame, identifier string,
 	index *Bundle_Index, reg *Registration, frames []Descent_Frame,
 ) (next_frames []Descent_Frame) {
-	selector := ast_selector(call, frame.Function.Is_Sugar)
+	selector := ast_selector(call)
 	primitive, base, is_primitive := ast_primitive_signature(selector)
 	if is_primitive {
 		if primitive != PRIMITIVE_KIND_ALWAYS {
@@ -843,7 +807,7 @@ func recorder_validate_bundle_call(
 	file_set *token.FileSet, call *ast.CallExpr, function Indexed_Function,
 	parameter string, index *Bundle_Index, reg *Registration,
 ) {
-	selector := ast_selector(call, function.Is_Sugar)
+	selector := ast_selector(call)
 	primitive, base, is_primitive := ast_primitive_signature(selector)
 	if is_primitive {
 		if primitive == PRIMITIVE_KIND_ALWAYS {
@@ -963,9 +927,8 @@ func ast_forwards_identifier(call *ast.CallExpr, index int, parameter string) (f
 // descent never plans an Always: this walk owns them, once per declaration.
 func recorder_register_eager_always(
 	recorder *Recorder, file_set *token.FileSet, call *ast.CallExpr, reg *Registration,
-	allow_unqualified bool,
 ) {
-	axis, is_axis := recorder_axis_of(file_set, call, allow_unqualified, reg)
+	axis, is_axis := recorder_axis_of(file_set, call, reg)
 	if !is_axis {
 		return
 	}
@@ -1338,6 +1301,19 @@ func constant_resolve_binary(
 			return nil, nil, false
 		}
 		return frames, append(values, left/right), true
+	case token.SHL:
+		// Go folds constants with arbitrary precision; this walk folds in int64. A
+		// negative count would panic the fold, and a shift that cannot round-trip
+		// wrapped past the word — both diverge from Go's exact value, so they are
+		// unresolvable, never a wrong bound.
+		if right < 0 {
+			return nil, nil, false
+		}
+		shifted := left << uint64(right)
+		if shifted>>uint64(right) != left {
+			return nil, nil, false
+		}
+		return frames, append(values, shifted), true
 	}
 	return nil, nil, false
 }
@@ -1358,7 +1334,7 @@ func recorder_check_unresolved(recorder *Recorder, reg *Registration) {
 // coverage from being silently dropped — the analyzer seeds a guard or refuses it.
 func recorder_check_unresolved_bounds(recorder *Recorder, reg *Registration) {
 	recorder_report_registration_failure(
-		recorder, reg, "unresolved preset bounds", reg.Unresolved_Bound)
+		recorder, reg, "unresolved bounds", reg.Unresolved_Bound)
 }
 
 // Reports every assertion whose message is not a keyable literal. The runtime stamps whatever
@@ -1388,7 +1364,7 @@ func recorder_check_invalid_identifiers(recorder *Recorder, reg *Registration) {
 // distinct members — panics at runtime on every call, so registration refuses to seed it.
 func recorder_check_invalid_bounds(recorder *Recorder, reg *Registration) {
 	recorder_report_registration_failure(
-		recorder, reg, "invalid preset bounds", reg.Invalid_Bound)
+		recorder, reg, "invalid bounds", reg.Invalid_Bound)
 }
 
 // A bundle composition that recurses into itself would forward its identifier forever at
@@ -1479,22 +1455,16 @@ func recorder_check_bundle_parameters(
 		recorder, reg, "invalid bundle parameters", violations)
 }
 
-// Fails registration when a bundle outside the framework's own package takes a
-// primitive subject — a builtin, an unnamed slice/map, or any unnamed composite.
-// Bundles for primitive types are the framework's presets; user code states a
-// primitive inline or wraps it in a custom type. The Sugar_Package, which owns the
-// presets, is exempt.
+// Fails registration when a bundle takes a primitive subject — a builtin, an
+// unnamed slice/map, or any unnamed composite. A primitive carries no semantics of
+// its own to bundle; user code states a primitive inline or wraps it in a custom
+// type.
 func recorder_check_primitive_bundles(
 	recorder *Recorder, file_set *token.FileSet, files []*ast.File, index *Bundle_Index,
 	reg *Registration,
 ) {
 	var offenders []string
 	for _, file := range files {
-		if index.Sugar_Package != "" {
-			if recorder_file_package(file_set, file, index) == index.Sugar_Package {
-				continue
-			}
-		}
 		offenders = append(offenders,
 			recorder_file_primitive_bundles(file_set, file)...)
 	}
@@ -1600,23 +1570,6 @@ func recorder_is_builtin_type_name(name string) (yes bool) {
 	default:
 		return false
 	}
-}
-
-// Returns the import path of file's package, derived from its absolute path against
-// the index's module root and path. "" when no module was found.
-func recorder_file_package(
-	file_set *token.FileSet, file *ast.File, index *Bundle_Index,
-) (import_path string) {
-	if index.Module_Path == "" {
-		return ""
-	}
-	absolute := file_set.Position(file.Pos()).Filename
-	relative := strings.TrimPrefix(path.Dir(absolute), index.Module_Root)
-	relative = strings.TrimPrefix(relative, "/")
-	if relative == "" {
-		return index.Module_Path
-	}
-	return path.Join(index.Module_Path, relative)
 }
 
 // Reports whether node is a branching or looping statement banned in a bundle body.
@@ -1774,9 +1727,7 @@ func bundle_index_load(
 		return functions
 	}
 	files := recorder_parse_directory(index.File_System, index.File_Set, directory)
-	is_sugar := import_path == index.Sugar_Package
 	for name, function := range ast_index_functions(files) {
-		function.Is_Sugar = is_sugar
 		functions[name] = function
 	}
 	return functions
@@ -1863,9 +1814,9 @@ func ast_primitive_signature(
 // non-literal or NUL-carrying message is diagnosed here because the eager walk owns Always
 // messages. is_axis is false for every other call.
 func recorder_axis_of(
-	file_set *token.FileSet, call *ast.CallExpr, allow_unqualified bool, reg *Registration,
+	file_set *token.FileSet, call *ast.CallExpr, reg *Registration,
 ) (axis Registration_Axis, is_axis bool) {
-	selector := ast_selector(call, allow_unqualified)
+	selector := ast_selector(call)
 	primitive, base, is_primitive := ast_primitive_signature(selector)
 	if !is_primitive {
 		return Registration_Axis{}, false
@@ -1889,9 +1840,8 @@ func recorder_axis_of(
 }
 
 // Returns the invariant primitive a call names: the X of a qualified
-// `invariant.X(...)`, or — when allow_unqualified (the call is inside a bundle in
-// the sugar package) — a bare `X(...)` whose X is a known primitive. "" otherwise.
-func ast_selector(call *ast.CallExpr, allow_unqualified bool) (name string) {
+// `invariant.X(...)`. "" otherwise.
+func ast_selector(call *ast.CallExpr) (name string) {
 	if selector, is_selector := call.Fun.(*ast.SelectorExpr); is_selector {
 		package_identifier, is_identifier := selector.X.(*ast.Ident)
 		if !is_identifier {
@@ -1902,29 +1852,7 @@ func ast_selector(call *ast.CallExpr, allow_unqualified bool) (name string) {
 		}
 		return selector.Sel.Name
 	}
-	if !allow_unqualified {
-		return ""
-	}
-	identifier, is_identifier := call.Fun.(*ast.Ident)
-	if !is_identifier {
-		return ""
-	}
-	if !ast_is_invariant_primitive(identifier.Name) {
-		return ""
-	}
-	return identifier.Name
-}
-
-// Reports whether name is an invariant element/reference primitive, the set the
-// sugar tier exposes as bare functions and that may appear unqualified inside a
-// sugar-package bundle.
-func ast_is_invariant_primitive(name string) (is_primitive bool) {
-	switch name {
-	case "Always", "Sometimes", "Range", "Enum",
-		"Recorder_Always", "Recorder_Sometimes", "Recorder_Range", "Recorder_Enum":
-		return true
-	}
-	return false
+	return ""
 }
 
 // Reports whether name is a bundle function name: a *_Invariants (exported) or
