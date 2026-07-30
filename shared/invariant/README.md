@@ -48,16 +48,16 @@ The sugar tier adds the `*_Invariants` presets purely to cut boilerplate — eac
 
 ## Composition across types
 
-A type's properties live in a `_Invariants` function named for the type, leading with the
-`identifier string` that names the boundary demanding them, then the value. The type owns its
-properties; a boundary demands them with one rooted call.
+A type's properties live in a `_Invariants` function named for the type, taking the value and a
+trailing identifier naming the boundary that demands them. The type owns its properties; a
+boundary demands them with one call.
 
 ```go
 // A Token is the lexer's atom: never empty, never edge-padded with whitespace,
 // and underscores show up only sometimes.
 type Token string
 
-func Token_Invariants(identifier string, token Token) {
+func Token_Invariants(token Token, identifier string) {
     invariant.Always(token != "", "A token is never empty.")
     invariant.Always(strings.TrimSpace(string(token)) == string(token),
         "A token has no edge whitespace.")
@@ -69,14 +69,14 @@ func Token_Invariants(identifier string, token Token) {
 // is the EOF marker, so it must show up sometimes but not always.
 type Span struct{ Lo, Hi int }
 
-func Span_Invariants(identifier string, span Span) {
+func Span_Invariants(span Span, identifier string) {
     invariant.Always(span.Lo <= span.Hi, "A span is ordered.")
     invariant.Sometimes(identifier, span.Lo == span.Hi, "A span is zero-width.")
 }
 ```
 
-A composite composes by **calling** its parts' `_Invariants`, forwarding its identifier
-verbatim, plus its own assertions for the cross-field properties no part can state alone:
+A composite composes by **calling** its parts' `_Invariants`, plus its own assertions for the
+cross-field properties no part can state alone:
 
 ```go
 type Lexeme struct {
@@ -84,19 +84,15 @@ type Lexeme struct {
     Span  Span
 }
 
-func Lexeme_Invariants(identifier string, lexeme Lexeme) {
+func Lexeme_Invariants(lexeme Lexeme, identifier string) {
     invariant.Always(lexeme.Span.Hi-lexeme.Span.Lo == len(lexeme.Token),
         "A lexeme's span matches its token.")
     invariant.Sometimes(identifier, lexeme.Span.Lo == lexeme.Span.Hi,
         "A lexeme is the EOF marker.")
-    Token_Invariants(identifier, lexeme.Token)
-    Span_Invariants(identifier, lexeme.Span)
+    Token_Invariants(lexeme.Token, "Lexeme.Token")
+    Span_Invariants(lexeme.Span, "Lexeme.Span")
 }
 ```
-
-A boundary roots the whole composition with one literal: `Lexeme_Invariants("Lexer.Lexeme",
-lexeme)`. Every assertion the composition reaches is seeded and recorded under that one
-identifier — the call graph never enters a key.
 
 Declare your own `_Invariants` only for a custom, defined type. The presets are the framework's
 bundles for the primitive types; user code never re-declares one. To cover a primitive, call a
@@ -106,15 +102,10 @@ properties the body emits depend on runtime values the static scan cannot read.
 
 ## Static registration
 
-Before the suite runs, a source scan seeds the expected-coverage space. A bare `Always` seeds by
-its literal message. A `Sometimes`, `Range`, `Enum`, or `_Invariants` call whose identifier is a
-bare string literal is a **root**: the analyzer seeds its witnesses — and, for a bundle, every
-assertion the composition reaches via the call graph — under that identifier. An identifier is
-one layer of namespacing, like a Go package name, and globally unique: two roots cannot share
-one, and constants are not identifiers — a root's identifier is the literal itself. Inside a
-bundle the identifier parameter is the only legal identifier, forwarded verbatim. A failed
-registration — a non-literal or duplicate identifier, an unresolvable bundle or bound, control
-flow in a bundle — reports every violation, exits 1, and seeds nothing.
+Before the suite runs, a source scan discovers every bare `Always` and seeds its literal message;
+an unreached `Always` fails the run at the end. Registration for the bare `Sometimes`, `Range`,
+and `Enum` writers is a later iteration — until then they enforce (and `Sometimes` records into
+already-seeded entries) without seeding obligations of their own.
 
 ## NOTES
 
