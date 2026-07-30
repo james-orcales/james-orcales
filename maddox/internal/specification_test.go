@@ -23,27 +23,27 @@ func Test_Statistics_Distribution(t *testing.T) {
 	if measurement.Sample_Count != 5 {
 		t.Fatalf("sample count = %d, want 5", measurement.Sample_Count)
 	}
-	if measurement.Mean != fixedpoint.From_Integer(30) {
+	if fixedpoint.Number(measurement.Mean) != fixedpoint.From_Integer(30) {
 		t.Fatalf("mean = %d, want 30.0", measurement.Mean)
 	}
 	// Sample standard deviation uses n-1 in the denominator: sqrt(1000/4) = 15.811388.
-	if fixedpoint.Format(measurement.Standard_Deviation, 3) != "15.811" {
-		t.Fatalf("stddev = %s, want 15.811",
-			fixedpoint.Format(measurement.Standard_Deviation, 3))
+	sigma := fixedpoint.Number(measurement.Standard_Deviation)
+	if fixedpoint.Format(sigma, 3) != "15.811" {
+		t.Fatalf("stddev = %s, want 15.811", fixedpoint.Format(sigma, 3))
 	}
-	if measurement.Min != fixedpoint.From_Integer(10) {
+	if fixedpoint.Number(measurement.Min) != fixedpoint.From_Integer(10) {
 		t.Fatalf("min = %d, want 10.0", measurement.Min)
 	}
-	if measurement.Max != fixedpoint.From_Integer(50) {
+	if fixedpoint.Number(measurement.Max) != fixedpoint.From_Integer(50) {
 		t.Fatalf("max = %d, want 50.0", measurement.Max)
 	}
-	if measurement.Median != fixedpoint.From_Integer(30) {
+	if fixedpoint.Number(measurement.Median) != fixedpoint.From_Integer(30) {
 		t.Fatalf("median = %d, want 30.0", measurement.Median)
 	}
-	if measurement.Q1 != fixedpoint.From_Integer(20) {
+	if fixedpoint.Number(measurement.Q1) != fixedpoint.From_Integer(20) {
 		t.Fatalf("q1 = %d, want 20.0", measurement.Q1)
 	}
-	if measurement.Q3 != fixedpoint.From_Integer(50) {
+	if fixedpoint.Number(measurement.Q3) != fixedpoint.From_Integer(50) {
 		t.Fatalf("q3 = %d, want 50.0", measurement.Q3)
 	}
 }
@@ -64,12 +64,13 @@ func Test_Statistics_Outliers(t *testing.T) {
 // significant, so the baseline never flags itself as a change.
 func Test_Comparison_Reference(t *testing.T) {
 	reference := maddox.Measurement{
-		Mean:               fixedpoint.From_Integer(100),
-		Standard_Deviation: fixedpoint.From_Integer(5),
+		Mean:               maddox.Mean(fixedpoint.From_Integer(100)),
+		Standard_Deviation: maddox.Standard_Deviation(fixedpoint.From_Integer(5)),
 		Sample_Count:       10,
 		Unit:               "count",
 	}
-	delta := maddox.Compare(&maddox.Compare_Input{Reference: reference, Candidate: reference})
+	delta := maddox.Compare(
+		maddox.Reference_Measurement(reference), maddox.Candidate_Measurement(reference))
 	if delta.Diff_Percent != 0 {
 		t.Fatalf("diff percent = %d, want 0", delta.Diff_Percent)
 	}
@@ -79,12 +80,13 @@ func Test_Comparison_Reference(t *testing.T) {
 	// A real program reports metrics in the billions; a standard deviation past 2^32
 	// must not overflow the pooled-variance arithmetic.
 	large := maddox.Measurement{
-		Mean:               fixedpoint.From_Integer(20_000_000_000),
-		Standard_Deviation: fixedpoint.From_Integer(6_000_000_000),
+		Mean:               maddox.Mean(fixedpoint.From_Integer(20_000_000_000)),
+		Standard_Deviation: maddox.Standard_Deviation(fixedpoint.From_Integer(6_000_000_000)),
 		Sample_Count:       10,
 		Unit:               "count",
 	}
-	big := maddox.Compare(&maddox.Compare_Input{Reference: large, Candidate: large})
+	big := maddox.Compare(
+		maddox.Reference_Measurement(large), maddox.Candidate_Measurement(large))
 	if big.Significant {
 		t.Fatal("a large measurement compared to itself must not be significant")
 	}
@@ -95,25 +97,26 @@ func Test_Comparison_Reference(t *testing.T) {
 // confidence interval clears the +1% band, and the candidate is not faster.
 func Test_Comparison_Significance(t *testing.T) {
 	reference := maddox.Measurement{
-		Mean:               fixedpoint.From_Integer(100),
-		Standard_Deviation: fixedpoint.From_Integer(1),
+		Mean:               maddox.Mean(fixedpoint.From_Integer(100)),
+		Standard_Deviation: maddox.Standard_Deviation(fixedpoint.From_Integer(1)),
 		Sample_Count:       20,
 		Unit:               "count",
 	}
 	candidate := maddox.Measurement{
-		Mean:               fixedpoint.From_Integer(200),
-		Standard_Deviation: fixedpoint.From_Integer(1),
+		Mean:               maddox.Mean(fixedpoint.From_Integer(200)),
+		Standard_Deviation: maddox.Standard_Deviation(fixedpoint.From_Integer(1)),
 		Sample_Count:       20,
 		Unit:               "count",
 	}
-	delta := maddox.Compare(&maddox.Compare_Input{Reference: reference, Candidate: candidate})
+	delta := maddox.Compare(
+		maddox.Reference_Measurement(reference), maddox.Candidate_Measurement(candidate))
 	if !delta.Significant {
 		t.Fatal("a doubled mean with tight variance must be significant")
 	}
 	if delta.Faster {
 		t.Fatal("a doubled mean is slower, not faster")
 	}
-	if delta.Diff_Percent != fixedpoint.From_Integer(100) {
+	if fixedpoint.Number(delta.Diff_Percent) != fixedpoint.From_Integer(100) {
 		t.Fatalf("diff percent = %d, want 100.0", delta.Diff_Percent)
 	}
 }
@@ -127,7 +130,7 @@ func Test_Sampling_Budget(t *testing.T) {
 	sampler := maddox.Sampler{
 		Measure: func(_ io.Process_Request) (result maddox.Run_Result) {
 			calls++
-			result.Sample.Wall = per_run
+			result.Sample.Wall = maddox.Wall_Time(per_run)
 			// A real clock advances each run; the stopwatch reads this stamp.
 			result.Completed_At = time.Moment(time.Duration(calls) * per_run)
 			return result
@@ -156,7 +159,7 @@ func Test_Sampling_Runs(t *testing.T) {
 	sampler := maddox.Sampler{
 		Measure: func(_ io.Process_Request) (result maddox.Run_Result) {
 			calls++
-			result.Sample.Wall = per_run
+			result.Sample.Wall = maddox.Wall_Time(per_run)
 			return result
 		},
 	}
@@ -182,7 +185,7 @@ func Test_Sampling_Minimum(t *testing.T) {
 	sampler := maddox.Sampler{
 		Measure: func(_ io.Process_Request) (result maddox.Run_Result) {
 			calls++
-			result.Sample.Wall = per_run
+			result.Sample.Wall = maddox.Wall_Time(per_run)
 			return result
 		},
 	}
@@ -208,7 +211,7 @@ func Test_Sampling_Warmup(t *testing.T) {
 	sampler := maddox.Sampler{
 		Measure: func(_ io.Process_Request) (result maddox.Run_Result) {
 			calls++
-			result.Sample.Wall = per_run
+			result.Sample.Wall = maddox.Wall_Time(per_run)
 			return result
 		},
 	}
@@ -239,7 +242,9 @@ func Test_Sampling_Warmup(t *testing.T) {
 func Test_Output_Document(t *testing.T) {
 	sampler := maddox.Sampler{
 		Measure: func(_ io.Process_Request) (result maddox.Run_Result) {
-			result.Sample = maddox.Sample{Wall: time.MILLISECOND, Instructions: 100}
+			result.Sample = maddox.Sample{
+				Wall: maddox.Wall_Time(time.MILLISECOND), Instructions: 100,
+			}
 			return result
 		},
 	}
@@ -328,18 +333,23 @@ func Test_Table_Header(t *testing.T) {
 func Test_Table_Units(t *testing.T) {
 	wall_ns := fixedpoint.From_Integer(14906807)
 	wall := maddox.Measurement{
-		Mean: wall_ns, Min: wall_ns, Max: wall_ns, Median: wall_ns,
-		Q1: wall_ns, Q3: wall_ns, Sample_Count: 3, Unit: "nanoseconds",
+		Mean: maddox.Mean(wall_ns), Min: maddox.Min(wall_ns), Max: maddox.Max(wall_ns),
+		Median: maddox.Median(wall_ns), Q1: maddox.Q1(wall_ns), Q3: maddox.Q3(wall_ns),
+		Sample_Count: 3, Unit: "nanoseconds",
 	}
 	// 2 MiB exactly: binary scaling renders "2MiB", decimal would be "2.10MB".
 	bytes_2mib := fixedpoint.From_Integer(2097152)
 	memory := maddox.Measurement{
-		Mean: bytes_2mib, Min: bytes_2mib, Max: bytes_2mib, Median: bytes_2mib,
-		Q1: bytes_2mib, Q3: bytes_2mib, Sample_Count: 3, Unit: "bytes",
+		Mean:   maddox.Mean(bytes_2mib),
+		Min:    maddox.Min(bytes_2mib),
+		Max:    maddox.Max(bytes_2mib),
+		Median: maddox.Median(bytes_2mib),
+		Q1:     maddox.Q1(bytes_2mib), Q3: maddox.Q3(bytes_2mib),
+		Sample_Count: 3, Unit: "bytes",
 	}
 	measurements := filled_measurements()
-	measurements.Wall_Time = wall
-	measurements.Peak_RSS = memory
+	measurements.Wall_Time = wall.As_Wall_Time()
+	measurements.Peak_RSS = memory.As_Peak_RSS()
 	document := maddox.Document{Benchmarks: []maddox.Benchmark{{
 		Command:      []maddox.Command_Word{"x"},
 		Runs:         3,
@@ -358,16 +368,19 @@ func Test_Table_Units(t *testing.T) {
 // percentage change against the reference.
 func Test_Table_Delta(t *testing.T) {
 	mean := fixedpoint.From_Integer(1_000_000)
-	wall := maddox.Measurement{Mean: mean, Max: mean, Sample_Count: 3, Unit: "nanoseconds"}
+	wall := maddox.Measurement{
+		Mean: maddox.Mean(mean), Max: maddox.Max(mean), Sample_Count: 3,
+		Unit: "nanoseconds",
+	}
 	deltas := maddox.Deltas{
 		Wall_Time: maddox.Delta{
-			Diff_Percent: fixedpoint.From_Integer(50),
-			Half_Percent: fixedpoint.From_Integer(2),
+			Diff_Percent: maddox.Diff_Percent(fixedpoint.From_Integer(50)),
+			Half_Percent: maddox.Half_Percent(fixedpoint.From_Integer(2)),
 			Significant:  true,
-		},
+		}.As_Wall_Time_Delta(),
 	}
 	measurements := filled_measurements()
-	measurements.Wall_Time = wall
+	measurements.Wall_Time = wall.As_Wall_Time()
 	document := maddox.Document{Benchmarks: []maddox.Benchmark{
 		{Command: []maddox.Command_Word{"a"}, Runs: 3, Measurements: measurements},
 		{
@@ -385,16 +398,19 @@ func Test_Table_Delta(t *testing.T) {
 // and never otherwise.
 func Test_Table_Color(t *testing.T) {
 	mean := fixedpoint.From_Integer(1_000_000)
-	wall := maddox.Measurement{Mean: mean, Max: mean, Sample_Count: 3, Unit: "nanoseconds"}
+	wall := maddox.Measurement{
+		Mean: maddox.Mean(mean), Max: maddox.Max(mean), Sample_Count: 3,
+		Unit: "nanoseconds",
+	}
 	deltas := maddox.Deltas{
 		Wall_Time: maddox.Delta{
-			Diff_Percent: fixedpoint.From_Integer(50),
-			Half_Percent: fixedpoint.From_Integer(2),
+			Diff_Percent: maddox.Diff_Percent(fixedpoint.From_Integer(50)),
+			Half_Percent: maddox.Half_Percent(fixedpoint.From_Integer(2)),
 			Significant:  true,
-		},
+		}.As_Wall_Time_Delta(),
 	}
 	measurements := filled_measurements()
-	measurements.Wall_Time = wall
+	measurements.Wall_Time = wall.As_Wall_Time()
 	document := maddox.Document{Benchmarks: []maddox.Benchmark{
 		{Command: []maddox.Command_Word{"a"}, Runs: 3, Measurements: measurements},
 		{
@@ -421,9 +437,12 @@ func Test_Table_Color(t *testing.T) {
 // data is shown.
 func Test_Table_Sparse(t *testing.T) {
 	mean := fixedpoint.From_Integer(1_000_000)
-	wall := maddox.Measurement{Mean: mean, Max: mean, Sample_Count: 3, Unit: "nanoseconds"}
+	wall := maddox.Measurement{
+		Mean: maddox.Mean(mean), Max: maddox.Max(mean), Sample_Count: 3,
+		Unit: "nanoseconds",
+	}
 	measurements := filled_measurements()
-	measurements.Wall_Time = wall
+	measurements.Wall_Time = wall.As_Wall_Time()
 	document := maddox.Document{Benchmarks: []maddox.Benchmark{{
 		Command:      []maddox.Command_Word{"x"},
 		Runs:         3,
@@ -444,7 +463,7 @@ func Test_Table_Sparse(t *testing.T) {
 func Test_Machine_Document(t *testing.T) {
 	sampler := maddox.Sampler{
 		Measure: func(_ io.Process_Request) (result maddox.Run_Result) {
-			result.Sample.Wall = time.MILLISECOND
+			result.Sample.Wall = maddox.Wall_Time(time.MILLISECOND)
 			return result
 		},
 	}
@@ -589,8 +608,14 @@ func filled_measurements() (measurements maddox.Measurements) {
 	size := maddox.Measurement{Sample_Count: 3, Unit: "bytes"}
 	count := maddox.Measurement{Sample_Count: 3, Unit: "count"}
 	return maddox.Measurements{
-		Wall_Time: span, Peak_RSS: size, CPU_Cycles: count, Instructions: count,
-		Cache_References: count, Cache_Misses: count, Branch_Misses: count,
-		CPU_User: span, CPU_System: span,
+		Wall_Time:        span.As_Wall_Time(),
+		Peak_RSS:         size.As_Peak_RSS(),
+		CPU_Cycles:       count.As_CPU_Cycles(),
+		Instructions:     count.As_Instructions(),
+		Cache_References: count.As_Cache_References(),
+		Cache_Misses:     count.As_Cache_Misses(),
+		Branch_Misses:    count.As_Branch_Misses(),
+		CPU_User:         span.As_CPU_User(),
+		CPU_System:       span.As_CPU_System(),
 	}
 }

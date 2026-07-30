@@ -146,7 +146,7 @@ func drive(s scenario) {
 			// stamp is the accrued virtual time for the budget stopwatch, which spans
 			// the arbitrary gaps between runs and so stays on the full, unclamped
 			// sleep. A run costs its sleep.
-			result.Sample.Wall = time.Duration(metric_clamp(s.Sleep))
+			result.Sample.Wall = maddox.Wall_Time(metric_clamp(s.Sleep))
 			elapsed_virtual += time.Duration(s.Sleep)
 			result.Completed_At = time.Moment(elapsed_virtual)
 			fail := false
@@ -174,12 +174,12 @@ func drive(s scenario) {
 		Commands:       command_set(s),
 		Sampler:        sampler,
 		Duration_Max:   time.Duration(s.Duration),
-		Runs_Max:       s.Runs,
-		Warmup_Count:   s.Warmup,
-		Allow_Failures: s.Allow_Fail,
+		Runs_Max:       maddox.Runs_Max(s.Runs),
+		Warmup_Count:   maddox.Warmup_Count(s.Warmup),
+		Allow_Failures: maddox.Allow_Failures(s.Allow_Fail),
 		Format:         maddox.Output_Format(s.Format),
-		Color:          s.Color,
-		Progress:       s.Progress,
+		Color:          maddox.Color(s.Color),
+		Progress:       maddox.Progress(s.Progress),
 		Output:         report_sink(s),
 		Stderr:         io.Discard,
 		Machine:        s.Machine,
@@ -259,14 +259,14 @@ func metric_clamp(value int64) (clamped int64) {
 // than tripping the metric guard, which only an out-of-contract sampler would.
 func sample_from(value int64) (sample maddox.Sample) {
 	value = metric_clamp(value)
-	sample.RSS_Bytes_Max = maddox.Metric(value)
-	sample.CPU_Cycles = maddox.Metric(value)
-	sample.Instructions = maddox.Metric(value)
-	sample.Cache_References = maddox.Metric(value)
-	sample.Cache_Misses = maddox.Metric(value)
-	sample.Branch_Misses = maddox.Metric(value)
-	sample.CPU_User = time.Duration(value)
-	sample.CPU_System = time.Duration(value)
+	sample.RSS_Bytes_Max = maddox.RSS_Bytes_Max(value)
+	sample.CPU_Cycles = maddox.CPU_Cycles(value)
+	sample.Instructions = maddox.Instructions(value)
+	sample.Cache_References = maddox.Cache_References(value)
+	sample.Cache_Misses = maddox.Cache_Misses(value)
+	sample.Branch_Misses = maddox.Branch_Misses(value)
+	sample.CPU_User = maddox.CPU_User_Time(value)
+	sample.CPU_System = maddox.CPU_System_Time(value)
 	return sample
 }
 
@@ -352,24 +352,27 @@ func decode_scenario(data []byte) (s scenario) {
 // counts as full-range ints, and six sizes as full-range uint64s — the ranges the
 // Machine_Specs invariants witness at their boundaries.
 func decode_machine(c *cursor) (m maddox.Machine_Specs) {
-	m.CPU_Model = host_text(c)
-	m.CPU_Arch = host_text(c)
-	m.Operating_System_Name = host_text(c)
-	m.Operating_System_Version = host_text(c)
-	m.Kernel_Version = host_text(c)
+	m.CPU_Model = maddox.CPU_Model(host_text(c))
+	m.CPU_Arch = maddox.CPU_Arch(host_text(c))
+	m.Operating_System_Name = maddox.Operating_System_Name(host_text(c))
+	m.Operating_System_Version = maddox.Operating_System_Version(host_text(c))
+	m.Kernel_Version = maddox.Kernel_Version(host_text(c))
 	// A real acquire_machine_specs reports realistic, render-safe values; clamp to the
 	// domain ceilings so the simulated host honors that contract rather than tripping the
 	// table's render guards, which only an out-of-contract probe would.
-	m.Physical_Cores = maddox.Cores(min(int(cursor_u16(c)), maddox.CORES_COUNT_MAX))
-	m.Logical_Cores = maddox.Cores(min(int(cursor_u16(c)), maddox.CORES_COUNT_MAX))
-	m.Performance_Cores = maddox.Cores(min(int(cursor_u16(c)), maddox.CORES_COUNT_MAX))
-	m.Efficiency_Cores = maddox.Cores(min(int(cursor_u16(c)), maddox.CORES_COUNT_MAX))
+	m.Physical_Cores = maddox.Physical_Cores(min(int(cursor_u16(c)), maddox.CORES_COUNT_MAX))
+	m.Logical_Cores = maddox.Logical_Cores(min(int(cursor_u16(c)), maddox.CORES_COUNT_MAX))
+	m.Performance_Cores = maddox.Performance_Cores(
+		min(int(cursor_u16(c)), maddox.CORES_COUNT_MAX))
+	m.Efficiency_Cores = maddox.Efficiency_Cores(
+		min(int(cursor_u16(c)), maddox.CORES_COUNT_MAX))
 	m.CPU_Frequency_Hz_Max = maddox.Hertz(min(cursor_u64(c), maddox.HERTZ_MAX))
-	m.Cache_L1_Bytes = maddox.Byte_Size(min(cursor_u64(c), maddox.BYTE_SIZE_MAX))
-	m.Cache_L2_Bytes = maddox.Byte_Size(min(cursor_u64(c), maddox.BYTE_SIZE_MAX))
-	m.Cache_L3_Bytes = maddox.Byte_Size(min(cursor_u64(c), maddox.BYTE_SIZE_MAX))
-	m.RAM_Total_Bytes = maddox.Byte_Size(min(cursor_u64(c), maddox.BYTE_SIZE_MAX))
-	m.Storage_Total_Bytes = maddox.Byte_Size(min(cursor_u64(c), maddox.BYTE_SIZE_MAX))
+	m.Cache_L1_Bytes = maddox.Cache_L1_Bytes(min(cursor_u64(c), maddox.BYTE_SIZE_MAX))
+	m.Cache_L2_Bytes = maddox.Cache_L2_Bytes(min(cursor_u64(c), maddox.BYTE_SIZE_MAX))
+	m.Cache_L3_Bytes = maddox.Cache_L3_Bytes(min(cursor_u64(c), maddox.BYTE_SIZE_MAX))
+	m.RAM_Total_Bytes = maddox.RAM_Total_Bytes(min(cursor_u64(c), maddox.BYTE_SIZE_MAX))
+	m.Storage_Total_Bytes = maddox.Storage_Total_Bytes(
+		min(cursor_u64(c), maddox.BYTE_SIZE_MAX))
 	return m
 }
 
@@ -751,10 +754,10 @@ func seeds_progress() (seeds [][]byte) {
 // machine reports. Go's fuzzer guides on edges, not values, so these are seeded, not
 // discovered.
 func seeds_machine_values() (seeds [][]byte) {
-	cores := func(value maddox.Cores) (mutate func(s *scenario)) {
+	cores := func(value int) (mutate func(s *scenario)) {
 		return func(s *scenario) { full_machine(s); set_all_cores(&s.Machine, value) }
 	}
-	size := func(value maddox.Byte_Size) (mutate func(s *scenario)) {
+	size := func(value uint64) (mutate func(s *scenario)) {
 		return func(s *scenario) { full_machine(s); set_all_sizes(&s.Machine, value) }
 	}
 	frequency := func(value maddox.Hertz) (mutate func(s *scenario)) {
@@ -772,20 +775,20 @@ func seeds_machine_values() (seeds [][]byte) {
 }
 
 // Set_all_cores sets every core-count field to value.
-func set_all_cores(m *maddox.Machine_Specs, value maddox.Cores) {
-	m.Physical_Cores = value
-	m.Logical_Cores = value
-	m.Performance_Cores = value
-	m.Efficiency_Cores = value
+func set_all_cores(m *maddox.Machine_Specs, value int) {
+	m.Physical_Cores = maddox.Physical_Cores(value)
+	m.Logical_Cores = maddox.Logical_Cores(value)
+	m.Performance_Cores = maddox.Performance_Cores(value)
+	m.Efficiency_Cores = maddox.Efficiency_Cores(value)
 }
 
 // Set_all_sizes sets every byte-size field to value.
-func set_all_sizes(m *maddox.Machine_Specs, value maddox.Byte_Size) {
-	m.Cache_L1_Bytes = value
-	m.Cache_L2_Bytes = value
-	m.Cache_L3_Bytes = value
-	m.RAM_Total_Bytes = value
-	m.Storage_Total_Bytes = value
+func set_all_sizes(m *maddox.Machine_Specs, value uint64) {
+	m.Cache_L1_Bytes = maddox.Cache_L1_Bytes(value)
+	m.Cache_L2_Bytes = maddox.Cache_L2_Bytes(value)
+	m.Cache_L3_Bytes = maddox.Cache_L3_Bytes(value)
+	m.RAM_Total_Bytes = maddox.RAM_Total_Bytes(value)
+	m.Storage_Total_Bytes = maddox.Storage_Total_Bytes(value)
 }
 
 // Full_machine populates every host field with a realistic hybrid-CPU snapshot so the
@@ -1001,10 +1004,10 @@ func seeds_machine() (seeds [][]byte) {
 
 // Set_hosts sets every host-text field to a run of 'x' of the given byte count.
 func set_hosts(m *maddox.Machine_Specs, count int) {
-	text := maddox.Host_Text(strings.Repeat("x", count))
-	m.CPU_Model = text
-	m.CPU_Arch = text
-	m.Operating_System_Name = text
-	m.Operating_System_Version = text
-	m.Kernel_Version = text
+	text := strings.Repeat("x", count)
+	m.CPU_Model = maddox.CPU_Model(text)
+	m.CPU_Arch = maddox.CPU_Arch(text)
+	m.Operating_System_Name = maddox.Operating_System_Name(text)
+	m.Operating_System_Version = maddox.Operating_System_Version(text)
+	m.Kernel_Version = maddox.Kernel_Version(text)
 }

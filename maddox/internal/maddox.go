@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"math"
 	"math/bits"
 	"slices"
 	"strconv"
@@ -44,8 +45,8 @@ const SAMPLES_MAX = 10000
 // deltas against, matching poop. A command that exits non-zero aborts the run with
 // EXIT_FAILURE, its stderr surfaced, unless Allow_Failures is set.
 func Main(input Main_Input) (code Exit_Code) {
-	defer func() { Exit_Code_Invariants(code, "Main.exit_code") }()
-	Main_Input_Invariants(input, "Main.input")
+	defer func() { Exit_Code_Invariants("Main.exit_code", code) }()
+	Main_Input_Invariants("Main.input", input)
 	benchmarks := make([]Benchmark, 0, len(input.Commands))
 	reference := Measurements{}
 	have_reference := false
@@ -73,10 +74,9 @@ func Main(input Main_Input) (code Exit_Code) {
 			Measurements: measurements,
 		}
 		if have_reference {
-			deltas := deltas_compute(&Deltas_Compute_Input{
-				Reference: reference,
-				Candidate: measurements,
-			})
+			deltas := deltas_compute(
+				Reference_Measurements(reference),
+				Candidate_Measurements(measurements))
 			benchmark.Deltas = deltas
 		} else {
 			reference = measurements
@@ -97,13 +97,16 @@ func Main(input Main_Input) (code Exit_Code) {
 // Output_Format selects how Main renders the report.
 type Output_Format uint8
 
-// Output_Format_Invariants bounds an Output_Format to its declared rendering modes
-// and claims each boundary of that range.
-func Output_Format_Invariants(format Output_Format, namespace invariant.Namespace) {
-	invariant.Dot_Product(namespace).
-		Range_Uint8(
-			uint8(format), uint8(OUTPUT_FORMAT_TABLE), uint8(OUTPUT_FORMAT_JSON)).
-		Ensure()
+// Output_Format_Invariants states the two rendering modes by hand so the bundle
+// composes under any root: the bound refuses an undeclared mode eagerly, and each
+// mode is a witnessed shape of its own.
+func Output_Format_Invariants(identifier string, format Output_Format) {
+	invariant.Always(format <= OUTPUT_FORMAT_JSON,
+		"An output format is one of its declared rendering modes.")
+	invariant.Sometimes(identifier, format == OUTPUT_FORMAT_TABLE,
+		"The output format is the table.")
+	invariant.Sometimes(identifier, format == OUTPUT_FORMAT_JSON,
+		"The output format is the JSON document.")
 }
 
 // OUTPUT_FORMAT_TABLE renders the human-readable comparison table; the default.
@@ -112,39 +115,178 @@ const OUTPUT_FORMAT_TABLE Output_Format = 0
 // OUTPUT_FORMAT_JSON renders the machine-readable JSON document.
 const OUTPUT_FORMAT_JSON Output_Format = 1
 
-// Sample is one run's measurements.
+// Sample is one run's measurements. Each field is its own semantic type: the six
+// counters share the metric domain but never the same contract slot, so a composed
+// Sample seeds a distinct coverage family per field instead of colliding.
 type Sample struct {
 	// Wall is the run's elapsed time, measured and reported by the sampler that ran it.
-	Wall time.Duration
+	Wall Wall_Time
 	// RSS_Bytes_Max is the run's peak physical memory footprint, in bytes.
-	RSS_Bytes_Max Metric
+	RSS_Bytes_Max RSS_Bytes_Max
 	// CPU_Cycles is the run's CPU cycle count from the hardware counters.
-	CPU_Cycles Metric
+	CPU_Cycles CPU_Cycles
 	// Instructions is the run's retired-instruction count from the counters.
-	Instructions Metric
+	Instructions Instructions
 	// Cache_References is the run's last-level cache reference count (Linux only).
-	Cache_References Metric
+	Cache_References Cache_References
 	// Cache_Misses is the run's last-level cache miss count (Linux only).
-	Cache_Misses Metric
+	Cache_Misses Cache_Misses
 	// Branch_Misses is the run's mispredicted-branch count (Linux only).
-	Branch_Misses Metric
+	Branch_Misses Branch_Misses
 	// CPU_User is the run's user-space CPU time.
-	CPU_User time.Duration
+	CPU_User CPU_User_Time
 	// CPU_System is the run's kernel-space CPU time.
-	CPU_System time.Duration
+	CPU_System CPU_System_Time
 }
 
-// Sample_Invariants states a Sample's counter fields as the bounded metrics they are;
-// the time.Duration fields carry their metric bound at the selector, not here. A counter
-// past the representable ceiling, or a garbage negative one, trips the metric guard rather
-// than silently overflowing the statistics downstream.
-func Sample_Invariants(sample Sample, namespace invariant.Namespace) {
-	Metric_Invariants(sample.RSS_Bytes_Max, "Sample.RSS_Bytes_Max")
-	Metric_Invariants(sample.CPU_Cycles, "Sample.CPU_Cycles")
-	Metric_Invariants(sample.Instructions, "Sample.Instructions")
-	Metric_Invariants(sample.Cache_References, "Sample.Cache_References")
-	Metric_Invariants(sample.Cache_Misses, "Sample.Cache_Misses")
-	Metric_Invariants(sample.Branch_Misses, "Sample.Branch_Misses")
+// Sample_Invariants composes every field's own family.
+func Sample_Invariants(identifier string, sample Sample) {
+	Wall_Time_Invariants(identifier, sample.Wall)
+	RSS_Bytes_Max_Invariants(identifier, sample.RSS_Bytes_Max)
+	CPU_Cycles_Invariants(identifier, sample.CPU_Cycles)
+	Instructions_Invariants(identifier, sample.Instructions)
+	Cache_References_Invariants(identifier, sample.Cache_References)
+	Cache_Misses_Invariants(identifier, sample.Cache_Misses)
+	Branch_Misses_Invariants(identifier, sample.Branch_Misses)
+	CPU_User_Time_Invariants(identifier, sample.CPU_User)
+	CPU_System_Time_Invariants(identifier, sample.CPU_System)
+}
+
+// Wall_Time is a run's elapsed time in nanoseconds. Declared on the primitive — never on
+// time.Duration — because a semantic type owns its contract instead of aliasing another's.
+type Wall_Time int64
+
+// Wall_Time_Invariants bounds the span; a measured wall is a monotonic difference, so a
+// negative one is sampler garbage to refuse. The old model demanded no witnesses here.
+func Wall_Time_Invariants(identifier string, value Wall_Time) {
+	invariant.Always(value >= 0, "A wall time is never negative.")
+}
+
+// RSS_Bytes_Max is a run's peak physical memory footprint in bytes.
+type RSS_Bytes_Max int64
+
+// RSS_Bytes_Max_Invariants bounds the footprint to the metric domain and witnesses the
+// shapes the old per-field grid demanded: the boundaries, the small counts, the interior.
+func RSS_Bytes_Max_Invariants(identifier string, value RSS_Bytes_Max) {
+	invariant.Always(value >= METRIC_MIN, "A peak RSS footprint is never negative.")
+	invariant.Always(value <= METRIC_MAX,
+		"A peak RSS footprint stays within the representable metric ceiling.")
+	invariant.Sometimes(identifier, value == METRIC_MIN, "The peak RSS footprint is zero.")
+	invariant.Sometimes(identifier, value == 1, "The peak RSS footprint is one byte.")
+	invariant.Sometimes(identifier, value == 2, "The peak RSS footprint is two bytes.")
+	invariant.Sometimes(identifier, value == METRIC_MAX,
+		"The peak RSS footprint fills the metric ceiling.")
+	invariant.Sometimes(identifier, 2 < value && value < METRIC_MAX,
+		"The peak RSS footprint is an ordinary size.")
+}
+
+// CPU_Cycles is a run's CPU cycle count from the hardware counters.
+type CPU_Cycles int64
+
+// CPU_Cycles_Invariants bounds the count to the metric domain and witnesses the old
+// per-field grid's shapes.
+func CPU_Cycles_Invariants(identifier string, value CPU_Cycles) {
+	invariant.Always(value >= METRIC_MIN, "A cycle count is never negative.")
+	invariant.Always(value <= METRIC_MAX,
+		"A cycle count stays within the representable metric ceiling.")
+	invariant.Sometimes(identifier, value == METRIC_MIN, "The cycle count is zero.")
+	invariant.Sometimes(identifier, value == 1, "The cycle count is one.")
+	invariant.Sometimes(identifier, value == 2, "The cycle count is two.")
+	invariant.Sometimes(identifier, value == METRIC_MAX,
+		"The cycle count fills the metric ceiling.")
+	invariant.Sometimes(identifier, 2 < value && value < METRIC_MAX,
+		"The cycle count is an ordinary magnitude.")
+}
+
+// Instructions is a run's retired-instruction count from the counters.
+type Instructions int64
+
+// Instructions_Invariants bounds the count to the metric domain and witnesses the old
+// per-field grid's shapes.
+func Instructions_Invariants(identifier string, value Instructions) {
+	invariant.Always(value >= METRIC_MIN, "An instruction count is never negative.")
+	invariant.Always(value <= METRIC_MAX,
+		"An instruction count stays within the representable metric ceiling.")
+	invariant.Sometimes(identifier, value == METRIC_MIN, "The instruction count is zero.")
+	invariant.Sometimes(identifier, value == 1, "The instruction count is one.")
+	invariant.Sometimes(identifier, value == 2, "The instruction count is two.")
+	invariant.Sometimes(identifier, value == METRIC_MAX,
+		"The instruction count fills the metric ceiling.")
+	invariant.Sometimes(identifier, 2 < value && value < METRIC_MAX,
+		"The instruction count is an ordinary magnitude.")
+}
+
+// Cache_References is a run's last-level cache reference count (Linux only).
+type Cache_References int64
+
+// Cache_References_Invariants bounds the count to the metric domain and witnesses the old
+// per-field grid's shapes.
+func Cache_References_Invariants(identifier string, value Cache_References) {
+	invariant.Always(value >= METRIC_MIN, "A cache reference count is never negative.")
+	invariant.Always(value <= METRIC_MAX,
+		"A cache reference count stays within the representable metric ceiling.")
+	invariant.Sometimes(identifier, value == METRIC_MIN,
+		"The cache reference count is zero.")
+	invariant.Sometimes(identifier, value == 1, "The cache reference count is one.")
+	invariant.Sometimes(identifier, value == 2, "The cache reference count is two.")
+	invariant.Sometimes(identifier, value == METRIC_MAX,
+		"The cache reference count fills the metric ceiling.")
+	invariant.Sometimes(identifier, 2 < value && value < METRIC_MAX,
+		"The cache reference count is an ordinary magnitude.")
+}
+
+// Cache_Misses is a run's last-level cache miss count (Linux only).
+type Cache_Misses int64
+
+// Cache_Misses_Invariants bounds the count to the metric domain and witnesses the old
+// per-field grid's shapes.
+func Cache_Misses_Invariants(identifier string, value Cache_Misses) {
+	invariant.Always(value >= METRIC_MIN, "A cache miss count is never negative.")
+	invariant.Always(value <= METRIC_MAX,
+		"A cache miss count stays within the representable metric ceiling.")
+	invariant.Sometimes(identifier, value == METRIC_MIN, "The cache miss count is zero.")
+	invariant.Sometimes(identifier, value == 1, "The cache miss count is one.")
+	invariant.Sometimes(identifier, value == 2, "The cache miss count is two.")
+	invariant.Sometimes(identifier, value == METRIC_MAX,
+		"The cache miss count fills the metric ceiling.")
+	invariant.Sometimes(identifier, 2 < value && value < METRIC_MAX,
+		"The cache miss count is an ordinary magnitude.")
+}
+
+// Branch_Misses is a run's mispredicted-branch count (Linux only).
+type Branch_Misses int64
+
+// Branch_Misses_Invariants bounds the count to the metric domain and witnesses the old
+// per-field grid's shapes.
+func Branch_Misses_Invariants(identifier string, value Branch_Misses) {
+	invariant.Always(value >= METRIC_MIN, "A branch miss count is never negative.")
+	invariant.Always(value <= METRIC_MAX,
+		"A branch miss count stays within the representable metric ceiling.")
+	invariant.Sometimes(identifier, value == METRIC_MIN, "The branch miss count is zero.")
+	invariant.Sometimes(identifier, value == 1, "The branch miss count is one.")
+	invariant.Sometimes(identifier, value == 2, "The branch miss count is two.")
+	invariant.Sometimes(identifier, value == METRIC_MAX,
+		"The branch miss count fills the metric ceiling.")
+	invariant.Sometimes(identifier, 2 < value && value < METRIC_MAX,
+		"The branch miss count is an ordinary magnitude.")
+}
+
+// CPU_User_Time is a run's user-space CPU time in nanoseconds.
+type CPU_User_Time int64
+
+// CPU_User_Time_Invariants bounds the span; rusage reports an accumulated non-negative
+// time. The old model demanded no witnesses here.
+func CPU_User_Time_Invariants(identifier string, value CPU_User_Time) {
+	invariant.Always(value >= 0, "A user CPU time is never negative.")
+}
+
+// CPU_System_Time is a run's kernel-space CPU time in nanoseconds.
+type CPU_System_Time int64
+
+// CPU_System_Time_Invariants bounds the span; rusage reports an accumulated non-negative
+// time. The old model demanded no witnesses here.
+func CPU_System_Time_Invariants(identifier string, value CPU_System_Time) {
+	invariant.Always(value >= 0, "A system CPU time is never negative.")
 }
 
 // CAPTURE_BYTES_MIN is the empty capture: a command that wrote nothing to stderr.
@@ -157,12 +299,20 @@ const CAPTURE_BYTES_MAX = 1 << 16
 // bytes the command wrote, never trusted, never unbounded.
 type Captured_Output []byte
 
-// Captured_Output_Invariants bounds the captured stderr and witnesses its boundaries: the
-// empty min, the full-buffer max, and the one- and two-byte shapes between.
-func Captured_Output_Invariants(output Captured_Output, namespace invariant.Namespace) {
-	invariant.Dot_Product(namespace).
-		Range_Int(len(output), CAPTURE_BYTES_MIN, CAPTURE_BYTES_MAX).
-		Ensure()
+// Captured_Output_Invariants bounds the captured stderr by hand — the type is composed,
+// so its texts must be its own — and witnesses the old grid's shapes: the empty min, the
+// full-buffer max, the one- and two-byte shapes, and the interior.
+func Captured_Output_Invariants(identifier string, output Captured_Output) {
+	invariant.Always(len(output) <= CAPTURE_BYTES_MAX,
+		"A captured output never exceeds the capture cap.")
+	invariant.Sometimes(identifier, len(output) == CAPTURE_BYTES_MIN,
+		"The captured output is empty.")
+	invariant.Sometimes(identifier, len(output) == 1, "The captured output is one byte.")
+	invariant.Sometimes(identifier, len(output) == 2, "The captured output is two bytes.")
+	invariant.Sometimes(identifier, len(output) == CAPTURE_BYTES_MAX,
+		"The captured output fills the capture cap.")
+	invariant.Sometimes(identifier, 2 < len(output) && len(output) < CAPTURE_BYTES_MAX,
+		"The captured output is an ordinary length.")
 }
 
 // Run_Result is everything one measured run reports: its Sample, the exit code,
@@ -181,11 +331,11 @@ type Run_Result struct {
 	Stderr Captured_Output
 }
 
-// Run_Result_Invariants states a Run_Result's fields.
-func Run_Result_Invariants(result Run_Result, namespace invariant.Namespace) {
-	Sample_Invariants(result.Sample, "Run_Result.Sample")
-	Exit_Status_Invariants(result.Exit, "Run_Result.Exit")
-	Captured_Output_Invariants(result.Stderr, "Run_Result.Stderr")
+// Run_Result_Invariants composes a Run_Result's fields.
+func Run_Result_Invariants(identifier string, result Run_Result) {
+	Sample_Invariants(identifier, result.Sample)
+	Exit_Status_Invariants(identifier, result.Exit)
+	Captured_Output_Invariants(identifier, result.Stderr)
 }
 
 // COLLECTION_MIN is the empty count: the floor a failure or an empty input leaves a
@@ -203,11 +353,12 @@ type Samples []Sample
 
 // Samples_Invariants states the collected count. The exclusions preserve the gap between an
 // early failure and the uninterrupted three-run quorum while Range keeps both reachable edges
-// demanded rather than reducing the contract to bound guards.
-func Samples_Invariants(samples Samples, namespace invariant.Namespace) {
-	invariant.Dot_Product(namespace).
-		Range_Int(len(samples), COLLECTION_MIN, SAMPLES_MAX, 1, 2).
-		Ensure()
+// demanded rather than reducing the contract to bound guards; the interior witness keeps the
+// old grid's ordinary-count cell demanded, which the bare guard no longer seeds.
+func Samples_Invariants(identifier string, samples Samples) {
+	invariant.Range(identifier, len(samples), COLLECTION_MIN, SAMPLES_MAX, 1, 2)
+	invariant.Sometimes(identifier, 2 < len(samples) && len(samples) < SAMPLES_MAX,
+		"The collected count sits strictly between empty and the cap.")
 }
 
 // Distribution is a quorum of kept runs the statistics reduce — always at least the 3-run
@@ -215,9 +366,12 @@ func Samples_Invariants(samples Samples, namespace invariant.Namespace) {
 type Distribution []Sample
 
 // Distribution_Invariants bounds the run count: the quorum floor and the kept-run ceiling
-// are witnessed, every short boundary claimed unreachable.
-func Distribution_Invariants(samples Distribution, namespace invariant.Namespace) {
-	invariant.Dot_Product(namespace).Range_Int(len(samples), QUORUM_MIN, SAMPLES_MAX).Ensure()
+// are witnessed, every short boundary claimed unreachable, and the interior witness keeps
+// the old grid's ordinary-count cell demanded.
+func Distribution_Invariants(identifier string, samples Distribution) {
+	invariant.Range(identifier, len(samples), QUORUM_MIN, SAMPLES_MAX)
+	invariant.Sometimes(identifier, QUORUM_MIN < len(samples) && len(samples) < SAMPLES_MAX,
+		"The kept run count sits strictly between the quorum and the cap.")
 }
 
 // Values is one metric's value pulled from every sample, the int64 the statistics work in.
@@ -225,9 +379,12 @@ type Values []int64
 
 // Values_Invariants bounds the value count. The values are pulled from a kept distribution,
 // floored at the 3-run quorum, so the quorum floor and the kept-run ceiling are the witnessed
-// shapes; the empty, one, and two counts a quorum never holds fall below the range and are guarded.
-func Values_Invariants(values Values, namespace invariant.Namespace) {
-	invariant.Dot_Product(namespace).Range_Int(len(values), QUORUM_MIN, SAMPLES_MAX).Ensure()
+// shapes; the empty, one, and two counts a quorum never holds fall below the range and are
+// guarded, and the interior witness keeps the old grid's ordinary-count cell demanded.
+func Values_Invariants(identifier string, values Values) {
+	invariant.Range(identifier, len(values), QUORUM_MIN, SAMPLES_MAX)
+	invariant.Sometimes(identifier, QUORUM_MIN < len(values) && len(values) < SAMPLES_MAX,
+		"The value count sits strictly between the quorum and the cap.")
 }
 
 // Series is one metric pulled from a distribution — always the quorum's worth, never the
@@ -235,9 +392,12 @@ func Values_Invariants(values Values, namespace invariant.Namespace) {
 type Series []int64
 
 // Series_Invariants bounds the extracted count: it mirrors a distribution's quorum floor
-// and kept-run ceiling, claiming every short boundary unreachable.
-func Series_Invariants(values Series, namespace invariant.Namespace) {
-	invariant.Dot_Product(namespace).Range_Int(len(values), QUORUM_MIN, SAMPLES_MAX).Ensure()
+// and kept-run ceiling, claiming every short boundary unreachable, with the interior
+// witness keeping the old grid's ordinary-count cell demanded.
+func Series_Invariants(identifier string, values Series) {
+	invariant.Range(identifier, len(values), QUORUM_MIN, SAMPLES_MAX)
+	invariant.Sometimes(identifier, QUORUM_MIN < len(values) && len(values) < SAMPLES_MAX,
+		"The extracted count sits strictly between the quorum and the cap.")
 }
 
 // Deviations is the sorted values the standard deviation reduces — a kept distribution's, so
@@ -246,9 +406,11 @@ type Deviations []int64
 
 // Deviations_Invariants bounds the count. The deviations are a kept distribution's, floored at
 // the 3-run quorum, so the quorum floor and the kept-run ceiling are witnessed and the shorter
-// counts are guarded out.
-func Deviations_Invariants(values Deviations, namespace invariant.Namespace) {
-	invariant.Dot_Product(namespace).Range_Int(len(values), QUORUM_MIN, SAMPLES_MAX).Ensure()
+// counts are guarded out, with the interior witness keeping the old grid's ordinary cell.
+func Deviations_Invariants(identifier string, values Deviations) {
+	invariant.Range(identifier, len(values), QUORUM_MIN, SAMPLES_MAX)
+	invariant.Sometimes(identifier, QUORUM_MIN < len(values) && len(values) < SAMPLES_MAX,
+		"The deviation count sits strictly between the quorum and the cap.")
 }
 
 // WORD_MIN is the lone executable a command line always carries.
@@ -263,32 +425,59 @@ const COMMAND_SET_MAX = 8
 // Command_Line is one command flattened to its words — the executable and its arguments.
 type Command_Line []Command_Word
 
-// Command_Line_Invariants bounds the word count; a command always has its executable, so
-// the empty count is unreachable while the one-word min, two-word shape, and max are witnessed.
-func Command_Line_Invariants(words Command_Line, namespace invariant.Namespace) {
-	invariant.Dot_Product(namespace).Range_Int(len(words), WORD_MIN, COMMAND_WORDS_MAX).Ensure()
+// Command_Line_Invariants bounds the word count by hand — the type is composed, so its
+// texts must be its own; a command always has its executable, so the empty count is
+// unreachable while the one-word min, two-word shape, max, and interior are witnessed.
+func Command_Line_Invariants(identifier string, words Command_Line) {
+	invariant.Always(len(words) >= WORD_MIN, "A command line always carries its executable.")
+	invariant.Always(len(words) <= COMMAND_WORDS_MAX,
+		"A command line never exceeds its word cap.")
+	invariant.Sometimes(identifier, len(words) == WORD_MIN,
+		"The command line is the lone executable.")
+	invariant.Sometimes(identifier, len(words) == 2, "The command line is two words.")
+	invariant.Sometimes(identifier, len(words) == COMMAND_WORDS_MAX,
+		"The command line fills its word cap.")
+	invariant.Sometimes(identifier, 2 < len(words) && len(words) < COMMAND_WORDS_MAX,
+		"The command line is an ordinary length.")
 }
 
 // Commands is the set of commands a run benchmarks, in invocation order.
 type Commands []sysio.Process_Request
 
-// Commands_Invariants bounds the command count: the empty min, the one- and two-command
-// shapes, and the max are witnessed.
-func Commands_Invariants(commands Commands, namespace invariant.Namespace) {
-	invariant.Dot_Product(namespace).
-		Range_Int(len(commands), COLLECTION_MIN, COMMAND_SET_MAX).
-		Ensure()
+// Commands_Invariants bounds the command count by hand — the type is composed, so its
+// texts must be its own: the empty min, the one- and two-command shapes, the max, and
+// the interior are witnessed.
+func Commands_Invariants(identifier string, commands Commands) {
+	invariant.Always(len(commands) <= COMMAND_SET_MAX,
+		"A command set never exceeds its cap.")
+	invariant.Sometimes(identifier, len(commands) == COLLECTION_MIN,
+		"The command set is empty.")
+	invariant.Sometimes(identifier, len(commands) == 1, "The command set is one command.")
+	invariant.Sometimes(identifier, len(commands) == 2, "The command set is two commands.")
+	invariant.Sometimes(identifier, len(commands) == COMMAND_SET_MAX,
+		"The command set fills its cap.")
+	invariant.Sometimes(identifier, 2 < len(commands) && len(commands) < COMMAND_SET_MAX,
+		"The command set is an ordinary size.")
 }
 
 // Benchmarks is one entry per benchmarked command, in invocation order.
 type Benchmarks []Benchmark
 
-// Benchmarks_Invariants bounds the entry count: the empty min, the one- and two-entry
-// shapes, and the max are witnessed.
-func Benchmarks_Invariants(benchmarks Benchmarks, namespace invariant.Namespace) {
-	invariant.Dot_Product(namespace).
-		Range_Int(len(benchmarks), COLLECTION_MIN, COMMAND_SET_MAX).
-		Ensure()
+// Benchmarks_Invariants bounds the entry count by hand — the type is composed, so its
+// texts must be its own: the empty min, the one- and two-entry shapes, the max, and the
+// interior are witnessed.
+func Benchmarks_Invariants(identifier string, benchmarks Benchmarks) {
+	invariant.Always(len(benchmarks) <= COMMAND_SET_MAX,
+		"A benchmark set never exceeds its cap.")
+	invariant.Sometimes(identifier, len(benchmarks) == COLLECTION_MIN,
+		"The benchmark set is empty.")
+	invariant.Sometimes(identifier, len(benchmarks) == 1, "The benchmark set is one entry.")
+	invariant.Sometimes(identifier, len(benchmarks) == 2,
+		"The benchmark set is two entries.")
+	invariant.Sometimes(identifier, len(benchmarks) == COMMAND_SET_MAX,
+		"The benchmark set fills its cap.")
+	invariant.Sometimes(identifier, 2 < len(benchmarks) && len(benchmarks) < COMMAND_SET_MAX,
+		"The benchmark set is an ordinary size.")
 }
 
 // REPORT_MAX bounds the rendered bytes at the widest document the pipeline produces: a full
@@ -300,11 +489,12 @@ const REPORT_MAX = 9925
 type Report []byte
 
 // Report_Invariants bounds the rendered length; a report is empty only for an empty
-// document and otherwise carries structure, never a lone one or two bytes.
-func Report_Invariants(report Report, namespace invariant.Namespace) {
-	invariant.Dot_Product(namespace).
-		Range_Int(len(report), COLLECTION_MIN, REPORT_MAX, 1, 2).
-		Ensure()
+// document and otherwise carries structure, never a lone one or two bytes. The interior
+// witness keeps the old grid's ordinary-length cell demanded.
+func Report_Invariants(identifier string, report Report) {
+	invariant.Range(identifier, len(report), COLLECTION_MIN, REPORT_MAX, 1, 2)
+	invariant.Sometimes(identifier, 2 < len(report) && len(report) < REPORT_MAX,
+		"The report is an ordinary length.")
 }
 
 // LADDER_SIZE is the fixed rung count of every scale ladder.
@@ -317,7 +507,7 @@ type Ladder [LADDER_SIZE]Scale_Step
 
 // Ladder_Invariants states the one thing a ladder's length can be: its fixed size. The array
 // type pins the count at compile time, so this is a steady truth, not a witnessed boundary.
-func Ladder_Invariants(ladder Ladder, namespace invariant.Namespace) {
+func Ladder_Invariants(identifier string, ladder Ladder) {
 	invariant.Always(len(ladder) == LADDER_SIZE, "A ladder is always its fixed size.")
 }
 
@@ -331,7 +521,7 @@ type Sampler struct {
 // Sampler_Invariants states the one property the function field carries that a func
 // type cannot: a sampler must be able to measure, so its Measure is never nil — a nil
 // one would crash Main the moment it tried to run a command.
-func Sampler_Invariants(sampler Sampler, namespace invariant.Namespace) {
+func Sampler_Invariants(identifier string, sampler Sampler) {
 	invariant.Always(sampler.Measure != nil, "A sampler can always measure.")
 }
 
@@ -347,73 +537,342 @@ const HOST_TEXT_BYTES_MAX = 1 << 8
 type Host_Text string
 
 // Host_Text_Invariants bounds a host spec field's length, witnessing the empty min, the
-// capped max, and the one- and two-byte shapes between.
-func Host_Text_Invariants(text Host_Text, namespace invariant.Namespace) {
-	invariant.Dot_Product(namespace).
-		Range_Int(len(text), HOST_TEXT_BYTES_MIN, HOST_TEXT_BYTES_MAX).
-		Ensure()
+// capped max, the one- and two-byte shapes between, and the interior the old grid's
+// ordinary cell demanded.
+func Host_Text_Invariants(identifier string, text Host_Text) {
+	invariant.Range(identifier, len(text), HOST_TEXT_BYTES_MIN, HOST_TEXT_BYTES_MAX)
+	invariant.Sometimes(identifier, len(text) == 1, "The host text is one byte.")
+	invariant.Sometimes(identifier, len(text) == 2, "The host text is two bytes.")
+	invariant.Sometimes(identifier, 2 < len(text) && len(text) < HOST_TEXT_BYTES_MAX,
+		"The host text is an ordinary length.")
 }
 
 // Machine_Specs is a snapshot of the host hardware and OS taken once at startup,
-// carried in the report so benchmark results are reproducible across machines.
+// carried in the report so benchmark results are reproducible across machines. Each
+// field is its own semantic type so a composed snapshot seeds a distinct coverage
+// family per field, as the old per-field grid instances did.
 type Machine_Specs struct {
 	// CPU_Model is the CPU's brand string, e.g. "Apple M4 Max".
-	CPU_Model Host_Text `json:"cpu_model"`
+	CPU_Model CPU_Model `json:"cpu_model"`
 	// CPU_Arch is the instruction-set architecture, e.g. "arm64".
-	CPU_Arch Host_Text `json:"cpu_arch"`
+	CPU_Arch CPU_Arch `json:"cpu_arch"`
 	// Physical_Cores is the total physical core count across all performance levels.
-	Physical_Cores Cores `json:"physical_cores"`
+	Physical_Cores Physical_Cores `json:"physical_cores"`
 	// Logical_Cores is the OS-visible thread count, which may exceed Physical_Cores
 	// when hyperthreading or SMT is active.
-	Logical_Cores Cores `json:"logical_cores"`
+	Logical_Cores Logical_Cores `json:"logical_cores"`
 	// Performance_Cores is the P-core count on hybrid CPUs (Apple Silicon, Alder Lake+).
 	// Zero when the CPU does not expose a performance/efficiency split.
-	Performance_Cores Cores `json:"performance_cores,omitempty"`
+	Performance_Cores Performance_Cores `json:"performance_cores,omitempty"`
 	// Efficiency_Cores is the E-core count on hybrid CPUs.
-	Efficiency_Cores Cores `json:"efficiency_cores,omitempty"`
+	Efficiency_Cores Efficiency_Cores `json:"efficiency_cores,omitempty"`
 	// CPU_Frequency_Hz_Max is the maximum rated CPU frequency in Hz; zero when the
 	// kernel does not expose it (e.g. Apple Silicon with no cpufrequency_max sysctl).
 	CPU_Frequency_Hz_Max Hertz `json:"cpu_frequency_hz_max,omitempty"`
 	// Cache_L1_Bytes is the per-core L1 data cache size in bytes.
-	Cache_L1_Bytes Byte_Size `json:"cache_l1_bytes,omitempty"`
+	Cache_L1_Bytes Cache_L1_Bytes `json:"cache_l1_bytes,omitempty"`
 	// Cache_L2_Bytes is the per-core L2 cache size in bytes.
-	Cache_L2_Bytes Byte_Size `json:"cache_l2_bytes,omitempty"`
+	Cache_L2_Bytes Cache_L2_Bytes `json:"cache_l2_bytes,omitempty"`
 	// Cache_L3_Bytes is the shared L3 cache size in bytes.
-	Cache_L3_Bytes Byte_Size `json:"cache_l3_bytes,omitempty"`
+	Cache_L3_Bytes Cache_L3_Bytes `json:"cache_l3_bytes,omitempty"`
 	// RAM_Total_Bytes is the total installed physical memory in bytes.
-	RAM_Total_Bytes Byte_Size `json:"ram_total_bytes"`
+	RAM_Total_Bytes RAM_Total_Bytes `json:"ram_total_bytes"`
 	// Storage_Total_Bytes is the total capacity of the boot filesystem in bytes. It
 	// is a benchmark-relevant proxy for SSD throughput: on Apple Silicon a larger
 	// drive spreads I/O across more NAND dies, so the 512GB model reads and writes
 	// faster than the 256GB even on identical silicon.
-	Storage_Total_Bytes Byte_Size `json:"storage_total_bytes"`
+	Storage_Total_Bytes Storage_Total_Bytes `json:"storage_total_bytes"`
 	// Operating_System_Name is the operating-system name, e.g. "macOS".
-	Operating_System_Name Host_Text `json:"operating_system_name"`
+	Operating_System_Name Operating_System_Name `json:"operating_system_name"`
 	// Operating_System_Version is the OS release, e.g. "15.2".
-	Operating_System_Version Host_Text `json:"operating_system_version"`
+	Operating_System_Version Operating_System_Version `json:"operating_system_version"`
 	// Kernel_Version is the kernel release string, e.g. "Darwin 25.2.0".
-	Kernel_Version Host_Text `json:"kernel_version"`
+	Kernel_Version Kernel_Version `json:"kernel_version"`
 }
 
-// Machine_Specs_Invariants states every primitive field of the host snapshot.
-func Machine_Specs_Invariants(specs Machine_Specs, namespace invariant.Namespace) {
-	Host_Text_Invariants(specs.CPU_Model, "Machine_Specs.CPU_Model")
-	Host_Text_Invariants(specs.CPU_Arch, "Machine_Specs.CPU_Arch")
-	Cores_Invariants(specs.Physical_Cores, "Machine_Specs.Physical_Cores")
-	Cores_Invariants(specs.Logical_Cores, "Machine_Specs.Logical_Cores")
-	Cores_Invariants(specs.Performance_Cores, "Machine_Specs.Performance_Cores")
-	Cores_Invariants(specs.Efficiency_Cores, "Machine_Specs.Efficiency_Cores")
-	Hertz_Invariants(specs.CPU_Frequency_Hz_Max, "Machine_Specs.CPU_Frequency_Hz_Max")
-	Byte_Size_Invariants(specs.Cache_L1_Bytes, "Machine_Specs.Cache_L1_Bytes")
-	Byte_Size_Invariants(specs.Cache_L2_Bytes, "Machine_Specs.Cache_L2_Bytes")
-	Byte_Size_Invariants(specs.Cache_L3_Bytes, "Machine_Specs.Cache_L3_Bytes")
-	Byte_Size_Invariants(specs.RAM_Total_Bytes, "Machine_Specs.RAM_Total_Bytes")
-	Byte_Size_Invariants(specs.Storage_Total_Bytes, "Machine_Specs.Storage_Total_Bytes")
-	Host_Text_Invariants(
-		specs.Operating_System_Name, "Machine_Specs.Operating_System_Name")
-	Host_Text_Invariants(
-		specs.Operating_System_Version, "Machine_Specs.Operating_System_Version")
-	Host_Text_Invariants(specs.Kernel_Version, "Machine_Specs.Kernel_Version")
+// Machine_Specs_Invariants composes every field's own family.
+func Machine_Specs_Invariants(identifier string, specs Machine_Specs) {
+	CPU_Model_Invariants(identifier, specs.CPU_Model)
+	CPU_Arch_Invariants(identifier, specs.CPU_Arch)
+	Physical_Cores_Invariants(identifier, specs.Physical_Cores)
+	Logical_Cores_Invariants(identifier, specs.Logical_Cores)
+	Performance_Cores_Invariants(identifier, specs.Performance_Cores)
+	Efficiency_Cores_Invariants(identifier, specs.Efficiency_Cores)
+	Hertz_Invariants(identifier, specs.CPU_Frequency_Hz_Max)
+	Cache_L1_Bytes_Invariants(identifier, specs.Cache_L1_Bytes)
+	Cache_L2_Bytes_Invariants(identifier, specs.Cache_L2_Bytes)
+	Cache_L3_Bytes_Invariants(identifier, specs.Cache_L3_Bytes)
+	RAM_Total_Bytes_Invariants(identifier, specs.RAM_Total_Bytes)
+	Storage_Total_Bytes_Invariants(identifier, specs.Storage_Total_Bytes)
+	Operating_System_Name_Invariants(identifier, specs.Operating_System_Name)
+	Operating_System_Version_Invariants(identifier, specs.Operating_System_Version)
+	Kernel_Version_Invariants(identifier, specs.Kernel_Version)
+}
+
+// CPU_Model is the CPU's brand string as probed from the host.
+type CPU_Model string
+
+// CPU_Model_Invariants bounds the brand string and witnesses the old per-field grid's
+// shapes with its own texts, so the bundle composes under any root.
+func CPU_Model_Invariants(identifier string, value CPU_Model) {
+	invariant.Always(len(value) <= HOST_TEXT_BYTES_MAX,
+		"A CPU model never exceeds the host-text cap.")
+	invariant.Sometimes(identifier, len(value) == HOST_TEXT_BYTES_MIN,
+		"The CPU model is empty.")
+	invariant.Sometimes(identifier, len(value) == 1, "The CPU model is one byte.")
+	invariant.Sometimes(identifier, len(value) == 2, "The CPU model is two bytes.")
+	invariant.Sometimes(identifier, len(value) == HOST_TEXT_BYTES_MAX,
+		"The CPU model fills the host-text cap.")
+	invariant.Sometimes(identifier, 2 < len(value) && len(value) < HOST_TEXT_BYTES_MAX,
+		"The CPU model is an ordinary length.")
+}
+
+// CPU_Arch is the instruction-set architecture string as probed from the host.
+type CPU_Arch string
+
+// CPU_Arch_Invariants bounds the architecture string and witnesses the old per-field
+// grid's shapes with its own texts.
+func CPU_Arch_Invariants(identifier string, value CPU_Arch) {
+	invariant.Always(len(value) <= HOST_TEXT_BYTES_MAX,
+		"A CPU architecture never exceeds the host-text cap.")
+	invariant.Sometimes(identifier, len(value) == HOST_TEXT_BYTES_MIN,
+		"The CPU architecture is empty.")
+	invariant.Sometimes(identifier, len(value) == 1, "The CPU architecture is one byte.")
+	invariant.Sometimes(identifier, len(value) == 2, "The CPU architecture is two bytes.")
+	invariant.Sometimes(identifier, len(value) == HOST_TEXT_BYTES_MAX,
+		"The CPU architecture fills the host-text cap.")
+	invariant.Sometimes(identifier, 2 < len(value) && len(value) < HOST_TEXT_BYTES_MAX,
+		"The CPU architecture is an ordinary length.")
+}
+
+// Physical_Cores is the host's total physical core count.
+type Physical_Cores int
+
+// Physical_Cores_Invariants bounds the count to the realistic topology and witnesses
+// the old per-field grid's shapes with its own texts.
+func Physical_Cores_Invariants(identifier string, value Physical_Cores) {
+	invariant.Always(int(value) >= CORES_COUNT_MIN,
+		"A physical core count is never negative.")
+	invariant.Always(int(value) <= CORES_COUNT_MAX,
+		"A physical core count stays within the realistic topology.")
+	invariant.Sometimes(identifier, int(value) == CORES_COUNT_MIN,
+		"The physical core count is zero.")
+	invariant.Sometimes(identifier, int(value) == 1, "The physical core count is one.")
+	invariant.Sometimes(identifier, int(value) == 2, "The physical core count is two.")
+	invariant.Sometimes(identifier, int(value) == CORES_COUNT_MAX,
+		"The physical core count fills the topology ceiling.")
+	invariant.Sometimes(identifier, 2 < int(value) && int(value) < CORES_COUNT_MAX,
+		"The physical core count is an ordinary topology.")
+}
+
+// Logical_Cores is the host's OS-visible thread count.
+type Logical_Cores int
+
+// Logical_Cores_Invariants bounds the count to the realistic topology and witnesses
+// the old per-field grid's shapes with its own texts.
+func Logical_Cores_Invariants(identifier string, value Logical_Cores) {
+	invariant.Always(int(value) >= CORES_COUNT_MIN,
+		"A logical core count is never negative.")
+	invariant.Always(int(value) <= CORES_COUNT_MAX,
+		"A logical core count stays within the realistic topology.")
+	invariant.Sometimes(identifier, int(value) == CORES_COUNT_MIN,
+		"The logical core count is zero.")
+	invariant.Sometimes(identifier, int(value) == 1, "The logical core count is one.")
+	invariant.Sometimes(identifier, int(value) == 2, "The logical core count is two.")
+	invariant.Sometimes(identifier, int(value) == CORES_COUNT_MAX,
+		"The logical core count fills the topology ceiling.")
+	invariant.Sometimes(identifier, 2 < int(value) && int(value) < CORES_COUNT_MAX,
+		"The logical core count is an ordinary topology.")
+}
+
+// Performance_Cores is the host's P-core count on a hybrid CPU.
+type Performance_Cores int
+
+// Performance_Cores_Invariants bounds the count to the realistic topology and witnesses
+// the old per-field grid's shapes with its own texts.
+func Performance_Cores_Invariants(identifier string, value Performance_Cores) {
+	invariant.Always(int(value) >= CORES_COUNT_MIN,
+		"A performance core count is never negative.")
+	invariant.Always(int(value) <= CORES_COUNT_MAX,
+		"A performance core count stays within the realistic topology.")
+	invariant.Sometimes(identifier, int(value) == CORES_COUNT_MIN,
+		"The performance core count is zero.")
+	invariant.Sometimes(identifier, int(value) == 1, "The performance core count is one.")
+	invariant.Sometimes(identifier, int(value) == 2, "The performance core count is two.")
+	invariant.Sometimes(identifier, int(value) == CORES_COUNT_MAX,
+		"The performance core count fills the topology ceiling.")
+	invariant.Sometimes(identifier, 2 < int(value) && int(value) < CORES_COUNT_MAX,
+		"The performance core count is an ordinary topology.")
+}
+
+// Efficiency_Cores is the host's E-core count on a hybrid CPU.
+type Efficiency_Cores int
+
+// Efficiency_Cores_Invariants bounds the count to the realistic topology and witnesses
+// the old per-field grid's shapes with its own texts.
+func Efficiency_Cores_Invariants(identifier string, value Efficiency_Cores) {
+	invariant.Always(int(value) >= CORES_COUNT_MIN,
+		"An efficiency core count is never negative.")
+	invariant.Always(int(value) <= CORES_COUNT_MAX,
+		"An efficiency core count stays within the realistic topology.")
+	invariant.Sometimes(identifier, int(value) == CORES_COUNT_MIN,
+		"The efficiency core count is zero.")
+	invariant.Sometimes(identifier, int(value) == 1, "The efficiency core count is one.")
+	invariant.Sometimes(identifier, int(value) == 2, "The efficiency core count is two.")
+	invariant.Sometimes(identifier, int(value) == CORES_COUNT_MAX,
+		"The efficiency core count fills the topology ceiling.")
+	invariant.Sometimes(identifier, 2 < int(value) && int(value) < CORES_COUNT_MAX,
+		"The efficiency core count is an ordinary topology.")
+}
+
+// Cache_L1_Bytes is the host's per-core L1 data cache size in bytes.
+type Cache_L1_Bytes uint64
+
+// Cache_L1_Bytes_Invariants bounds the size to the realistic ceiling and witnesses the
+// old per-field grid's shapes with its own texts.
+func Cache_L1_Bytes_Invariants(identifier string, value Cache_L1_Bytes) {
+	invariant.Always(uint64(value) <= BYTE_SIZE_MAX,
+		"An L1 cache size stays within the realistic ceiling.")
+	invariant.Sometimes(identifier, uint64(value) == BYTE_SIZE_MIN,
+		"The L1 cache size is unreported.")
+	invariant.Sometimes(identifier, uint64(value) == 1, "The L1 cache size is one byte.")
+	invariant.Sometimes(identifier, uint64(value) == 2, "The L1 cache size is two bytes.")
+	invariant.Sometimes(identifier, uint64(value) == BYTE_SIZE_MAX,
+		"The L1 cache size fills the realistic ceiling.")
+	invariant.Sometimes(identifier, 2 < uint64(value) && uint64(value) < BYTE_SIZE_MAX,
+		"The L1 cache size is an ordinary size.")
+}
+
+// Cache_L2_Bytes is the host's per-core L2 cache size in bytes.
+type Cache_L2_Bytes uint64
+
+// Cache_L2_Bytes_Invariants bounds the size to the realistic ceiling and witnesses the
+// old per-field grid's shapes with its own texts.
+func Cache_L2_Bytes_Invariants(identifier string, value Cache_L2_Bytes) {
+	invariant.Always(uint64(value) <= BYTE_SIZE_MAX,
+		"An L2 cache size stays within the realistic ceiling.")
+	invariant.Sometimes(identifier, uint64(value) == BYTE_SIZE_MIN,
+		"The L2 cache size is unreported.")
+	invariant.Sometimes(identifier, uint64(value) == 1, "The L2 cache size is one byte.")
+	invariant.Sometimes(identifier, uint64(value) == 2, "The L2 cache size is two bytes.")
+	invariant.Sometimes(identifier, uint64(value) == BYTE_SIZE_MAX,
+		"The L2 cache size fills the realistic ceiling.")
+	invariant.Sometimes(identifier, 2 < uint64(value) && uint64(value) < BYTE_SIZE_MAX,
+		"The L2 cache size is an ordinary size.")
+}
+
+// Cache_L3_Bytes is the host's shared L3 cache size in bytes.
+type Cache_L3_Bytes uint64
+
+// Cache_L3_Bytes_Invariants bounds the size to the realistic ceiling and witnesses the
+// old per-field grid's shapes with its own texts.
+func Cache_L3_Bytes_Invariants(identifier string, value Cache_L3_Bytes) {
+	invariant.Always(uint64(value) <= BYTE_SIZE_MAX,
+		"An L3 cache size stays within the realistic ceiling.")
+	invariant.Sometimes(identifier, uint64(value) == BYTE_SIZE_MIN,
+		"The L3 cache size is unreported.")
+	invariant.Sometimes(identifier, uint64(value) == 1, "The L3 cache size is one byte.")
+	invariant.Sometimes(identifier, uint64(value) == 2, "The L3 cache size is two bytes.")
+	invariant.Sometimes(identifier, uint64(value) == BYTE_SIZE_MAX,
+		"The L3 cache size fills the realistic ceiling.")
+	invariant.Sometimes(identifier, 2 < uint64(value) && uint64(value) < BYTE_SIZE_MAX,
+		"The L3 cache size is an ordinary size.")
+}
+
+// RAM_Total_Bytes is the host's total installed physical memory in bytes.
+type RAM_Total_Bytes uint64
+
+// RAM_Total_Bytes_Invariants bounds the size to the realistic ceiling and witnesses the
+// old per-field grid's shapes with its own texts.
+func RAM_Total_Bytes_Invariants(identifier string, value RAM_Total_Bytes) {
+	invariant.Always(uint64(value) <= BYTE_SIZE_MAX,
+		"A RAM total stays within the realistic ceiling.")
+	invariant.Sometimes(identifier, uint64(value) == BYTE_SIZE_MIN,
+		"The RAM total is unreported.")
+	invariant.Sometimes(identifier, uint64(value) == 1, "The RAM total is one byte.")
+	invariant.Sometimes(identifier, uint64(value) == 2, "The RAM total is two bytes.")
+	invariant.Sometimes(identifier, uint64(value) == BYTE_SIZE_MAX,
+		"The RAM total fills the realistic ceiling.")
+	invariant.Sometimes(identifier, 2 < uint64(value) && uint64(value) < BYTE_SIZE_MAX,
+		"The RAM total is an ordinary size.")
+}
+
+// Storage_Total_Bytes is the host's boot-filesystem capacity in bytes.
+type Storage_Total_Bytes uint64
+
+// Storage_Total_Bytes_Invariants bounds the size to the realistic ceiling and witnesses
+// the old per-field grid's shapes with its own texts.
+func Storage_Total_Bytes_Invariants(identifier string, value Storage_Total_Bytes) {
+	invariant.Always(uint64(value) <= BYTE_SIZE_MAX,
+		"A storage total stays within the realistic ceiling.")
+	invariant.Sometimes(identifier, uint64(value) == BYTE_SIZE_MIN,
+		"The storage total is unreported.")
+	invariant.Sometimes(identifier, uint64(value) == 1, "The storage total is one byte.")
+	invariant.Sometimes(identifier, uint64(value) == 2, "The storage total is two bytes.")
+	invariant.Sometimes(identifier, uint64(value) == BYTE_SIZE_MAX,
+		"The storage total fills the realistic ceiling.")
+	invariant.Sometimes(identifier, 2 < uint64(value) && uint64(value) < BYTE_SIZE_MAX,
+		"The storage total is an ordinary size.")
+}
+
+// Operating_System_Name is the host's operating-system name.
+type Operating_System_Name string
+
+// Operating_System_Name_Invariants bounds the name and witnesses the old per-field
+// grid's shapes with its own texts.
+func Operating_System_Name_Invariants(identifier string, value Operating_System_Name) {
+	invariant.Always(len(value) <= HOST_TEXT_BYTES_MAX,
+		"An operating-system name never exceeds the host-text cap.")
+	invariant.Sometimes(identifier, len(value) == HOST_TEXT_BYTES_MIN,
+		"The operating-system name is empty.")
+	invariant.Sometimes(identifier, len(value) == 1,
+		"The operating-system name is one byte.")
+	invariant.Sometimes(identifier, len(value) == 2,
+		"The operating-system name is two bytes.")
+	invariant.Sometimes(identifier, len(value) == HOST_TEXT_BYTES_MAX,
+		"The operating-system name fills the host-text cap.")
+	invariant.Sometimes(identifier, 2 < len(value) && len(value) < HOST_TEXT_BYTES_MAX,
+		"The operating-system name is an ordinary length.")
+}
+
+// Operating_System_Version is the host's OS release string.
+type Operating_System_Version string
+
+// Operating_System_Version_Invariants bounds the release and witnesses the old
+// per-field grid's shapes with its own texts.
+func Operating_System_Version_Invariants(
+	identifier string, value Operating_System_Version,
+) {
+	invariant.Always(len(value) <= HOST_TEXT_BYTES_MAX,
+		"An operating-system version never exceeds the host-text cap.")
+	invariant.Sometimes(identifier, len(value) == HOST_TEXT_BYTES_MIN,
+		"The operating-system version is empty.")
+	invariant.Sometimes(identifier, len(value) == 1,
+		"The operating-system version is one byte.")
+	invariant.Sometimes(identifier, len(value) == 2,
+		"The operating-system version is two bytes.")
+	invariant.Sometimes(identifier, len(value) == HOST_TEXT_BYTES_MAX,
+		"The operating-system version fills the host-text cap.")
+	invariant.Sometimes(identifier, 2 < len(value) && len(value) < HOST_TEXT_BYTES_MAX,
+		"The operating-system version is an ordinary length.")
+}
+
+// Kernel_Version is the host's kernel release string.
+type Kernel_Version string
+
+// Kernel_Version_Invariants bounds the release and witnesses the old per-field grid's
+// shapes with its own texts.
+func Kernel_Version_Invariants(identifier string, value Kernel_Version) {
+	invariant.Always(len(value) <= HOST_TEXT_BYTES_MAX,
+		"A kernel version never exceeds the host-text cap.")
+	invariant.Sometimes(identifier, len(value) == HOST_TEXT_BYTES_MIN,
+		"The kernel version is empty.")
+	invariant.Sometimes(identifier, len(value) == 1, "The kernel version is one byte.")
+	invariant.Sometimes(identifier, len(value) == 2, "The kernel version is two bytes.")
+	invariant.Sometimes(identifier, len(value) == HOST_TEXT_BYTES_MAX,
+		"The kernel version fills the host-text cap.")
+	invariant.Sometimes(identifier, 2 < len(value) && len(value) < HOST_TEXT_BYTES_MAX,
+		"The kernel version is an ordinary length.")
 }
 
 // UNIT_BYTES_MIN is the shortest unit in the vocabulary — "count" and "bytes", five bytes
@@ -428,32 +887,38 @@ const UNIT_BYTES_MAX = 11
 // of exactly two widths: the five-byte "count"/"bytes" and the eleven-byte "nanoseconds".
 type Unit string
 
-// Unit_Invariants uses an Enum because the vocabulary admits two lengths and no width between;
-// saturation makes the all-false cell impossible instead of demanding an invented third width.
-func Unit_Invariants(name Unit, namespace invariant.Namespace) {
-	invariant.Dot_Product(namespace).
-		Enum_Int(len(name), UNIT_BYTES_MIN, UNIT_BYTES_MAX).
-		Ensure()
+// Unit_Invariants states the two-width vocabulary by hand — the type is composed, so its
+// texts must be its own: the membership bound refuses an invented third width eagerly,
+// and each real width is a witnessed shape.
+func Unit_Invariants(identifier string, name Unit) {
+	invariant.Always(len(name) == UNIT_BYTES_MIN || len(name) == UNIT_BYTES_MAX,
+		"A unit is one of the vocabulary's two widths.")
+	invariant.Sometimes(identifier, len(name) == UNIT_BYTES_MIN,
+		"The unit is a five-byte word.")
+	invariant.Sometimes(identifier, len(name) == UNIT_BYTES_MAX,
+		"The unit is the eleven-byte nanoseconds.")
 }
 
 // Measurement is the distribution of one metric across a command's runs — poop's
-// Measurement, reduced from the raw Samples. Every field is a number so the report
-// marshals to JSON without custom encoders.
+// Measurement, reduced from the raw Samples. It is the compute and compare currency;
+// the report serializes the per-metric variant structs, so its statistics need no
+// custom encoders. Each field is its own semantic type so a composed Measurement
+// seeds a distinct family per field.
 type Measurement struct {
 	// Mean is the arithmetic mean of the metric's values.
-	Mean fixedpoint.Number `json:"mean"`
+	Mean Mean `json:"mean"`
 	// Standard_Deviation is the sample standard deviation, with an n-1 denominator.
-	Standard_Deviation fixedpoint.Number `json:"stddev"`
+	Standard_Deviation Standard_Deviation `json:"stddev"`
 	// Min is the smallest value observed.
-	Min fixedpoint.Number `json:"min"`
+	Min Min `json:"min"`
 	// Max is the largest value observed.
-	Max fixedpoint.Number `json:"max"`
+	Max Max `json:"max"`
 	// Median is the middle value of the sorted values.
-	Median fixedpoint.Number `json:"median"`
+	Median Median `json:"median"`
 	// Q1 is the first quartile by poop's index math.
-	Q1 fixedpoint.Number `json:"q1"`
+	Q1 Q1 `json:"q1"`
 	// Q3 is the third quartile by poop's index math.
-	Q3 fixedpoint.Number `json:"q3"`
+	Q3 Q3 `json:"q3"`
 	// Outlier_Count is how many values fall beyond Tukey's fences.
 	Outlier_Count Strays `json:"outliers"`
 	// Sample_Count is how many values the distribution was computed from.
@@ -462,104 +927,146 @@ type Measurement struct {
 	Unit Unit `json:"unit"`
 }
 
-// Measurement_Invariants states the integer and unit fields of a distribution;
-// the fixedpoint.Number fields have no preset of their own.
-func Measurement_Invariants(measurement Measurement, namespace invariant.Namespace) {
-	Strays_Invariants(measurement.Outlier_Count, "Measurement.Outlier_Count")
-	Kept_Invariants(measurement.Sample_Count, "Measurement.Sample_Count")
-	Unit_Invariants(measurement.Unit, "Measurement.Unit")
+// Measurement_Invariants composes every field's own family.
+func Measurement_Invariants(identifier string, measurement Measurement) {
+	Mean_Invariants(identifier, measurement.Mean)
+	Standard_Deviation_Invariants(identifier, measurement.Standard_Deviation)
+	Min_Invariants(identifier, measurement.Min)
+	Max_Invariants(identifier, measurement.Max)
+	Median_Invariants(identifier, measurement.Median)
+	Q1_Invariants(identifier, measurement.Q1)
+	Q3_Invariants(identifier, measurement.Q3)
+	Strays_Invariants(identifier, measurement.Outlier_Count)
+	Kept_Invariants(identifier, measurement.Sample_Count)
+	Unit_Invariants(identifier, measurement.Unit)
+}
+
+// Mean is a distribution's arithmetic mean, fixedpoint-scaled.
+type Mean int64
+
+// Mean_Invariants bounds the mean; the statistics summarize non-negative metrics, so
+// their mean never dips below zero. The old model demanded no witnesses here.
+func Mean_Invariants(identifier string, value Mean) {
+	invariant.Always(value >= 0, "A distribution mean is never negative.")
+}
+
+// Standard_Deviation is a distribution's sample standard deviation, fixedpoint-scaled.
+type Standard_Deviation int64
+
+// Standard_Deviation_Invariants bounds the deviation; a root of squares is never
+// negative. The old model demanded no witnesses here.
+func Standard_Deviation_Invariants(identifier string, value Standard_Deviation) {
+	invariant.Always(value >= 0, "A distribution standard deviation is never negative.")
+}
+
+// Min is a distribution's smallest observed value, fixedpoint-scaled.
+type Min int64
+
+// Min_Invariants bounds the minimum; the metrics it summarizes are non-negative. The
+// old model demanded no witnesses here.
+func Min_Invariants(identifier string, value Min) {
+	invariant.Always(value >= 0, "A distribution minimum is never negative.")
+}
+
+// Max is a distribution's largest observed value, fixedpoint-scaled.
+type Max int64
+
+// Max_Invariants bounds the maximum; the metrics it summarizes are non-negative. The
+// old model demanded no witnesses here.
+func Max_Invariants(identifier string, value Max) {
+	invariant.Always(value >= 0, "A distribution maximum is never negative.")
+}
+
+// Median is a distribution's middle sorted value, fixedpoint-scaled.
+type Median int64
+
+// Median_Invariants bounds the median; the metrics it summarizes are non-negative.
+// The old model demanded no witnesses here.
+func Median_Invariants(identifier string, value Median) {
+	invariant.Always(value >= 0, "A distribution median is never negative.")
+}
+
+// Q1 is a distribution's first quartile by poop's index math, fixedpoint-scaled.
+type Q1 int64
+
+// Q1_Invariants bounds the quartile; the metrics it summarizes are non-negative. The
+// old model demanded no witnesses here.
+func Q1_Invariants(identifier string, value Q1) {
+	invariant.Always(value >= 0, "A distribution first quartile is never negative.")
+}
+
+// Q3 is a distribution's third quartile by poop's index math, fixedpoint-scaled.
+type Q3 int64
+
+// Q3_Invariants bounds the quartile; the metrics it summarizes are non-negative. The
+// old model demanded no witnesses here.
+func Q3_Invariants(identifier string, value Q3) {
+	invariant.Always(value >= 0, "A distribution third quartile is never negative.")
 }
 
 // Delta is one metric's change in a candidate command relative to the reference —
-// poop's colored ratio column, as data.
+// poop's colored ratio column, as data. It is the compare and render currency; the
+// report serializes the per-metric variant structs. Each field is its own semantic
+// type so a composed Delta seeds a distinct family per field.
 type Delta struct {
 	// Diff_Percent is the candidate's mean as a signed percentage of the reference's.
-	Diff_Percent fixedpoint.Number `json:"diff_percent"`
+	Diff_Percent Diff_Percent `json:"diff_percent"`
 	// Half_Percent is the half-width of the 95% confidence interval on Diff_Percent.
-	Half_Percent fixedpoint.Number `json:"half_percent"`
+	Half_Percent Half_Percent `json:"half_percent"`
 	// Significant is true only when the interval clears the ±1% band.
-	Significant bool `json:"significant"`
+	Significant Significant `json:"significant"`
 	// Faster is true when the candidate's mean is below the reference's.
-	Faster bool `json:"faster"`
+	Faster Faster `json:"faster"`
 }
 
-// Delta_Invariants states the boolean fields of a metric's change; the
-// fixedpoint.Number fields have no preset of their own.
-func Delta_Invariants(delta Delta, namespace invariant.Namespace) {
-	invariant.Boolean_Invariants(delta.Significant, "Delta.Significant")
-	invariant.Boolean_Invariants(delta.Faster, "Delta.Faster")
+// Delta_Invariants composes every field's own family.
+func Delta_Invariants(identifier string, delta Delta) {
+	Diff_Percent_Invariants(identifier, delta.Diff_Percent)
+	Half_Percent_Invariants(identifier, delta.Half_Percent)
+	Significant_Invariants(identifier, delta.Significant)
+	Faster_Invariants(identifier, delta.Faster)
 }
 
-// Measurements is the distribution of every metric for one command, in report
-// order. The field order is the JSON order, so the report needs no custom encoder.
-type Measurements struct {
-	// Wall_Time is the elapsed-time distribution.
-	Wall_Time Measurement `json:"wall_time"`
-	// Peak_RSS is the peak-memory distribution.
-	Peak_RSS Measurement `json:"peak_rss"`
-	// CPU_Cycles is the CPU-cycle distribution.
-	CPU_Cycles Measurement `json:"cpu_cycles"`
-	// Instructions is the retired-instruction distribution.
-	Instructions Measurement `json:"instructions"`
-	// Cache_References is the cache-reference distribution (Linux only).
-	Cache_References Measurement `json:"cache_references"`
-	// Cache_Misses is the cache-miss distribution (Linux only).
-	Cache_Misses Measurement `json:"cache_misses"`
-	// Branch_Misses is the branch-miss distribution (Linux only).
-	Branch_Misses Measurement `json:"branch_misses"`
-	// CPU_User is the user-CPU-time distribution.
-	CPU_User Measurement `json:"cpu_user"`
-	// CPU_System is the system-CPU-time distribution.
-	CPU_System Measurement `json:"cpu_system"`
+// Diff_Percent is a candidate mean's signed percentage difference against the
+// reference, fixedpoint-scaled.
+type Diff_Percent int64
+
+// Diff_Percent_Invariants bounds the difference; against a non-negative reference it
+// cannot fall below −100%. The old model demanded no witnesses here.
+func Diff_Percent_Invariants(identifier string, value Diff_Percent) {
+	invariant.Always(value >= DIFF_PERCENT_MIN,
+		"A diff percent never falls below negative one hundred percent.")
 }
 
-// Measurements_Invariants composes the per-metric distribution of every field.
-func Measurements_Invariants(measurements Measurements, namespace invariant.Namespace) {
-	Measurement_Invariants(measurements.Wall_Time, "Measurements.Wall_Time")
-	Measurement_Invariants(measurements.Peak_RSS, "Measurements.Peak_RSS")
-	Measurement_Invariants(measurements.CPU_Cycles, "Measurements.CPU_Cycles")
-	Measurement_Invariants(measurements.Instructions, "Measurements.Instructions")
-	Measurement_Invariants(measurements.Cache_References, "Measurements.Cache_References")
-	Measurement_Invariants(measurements.Cache_Misses, "Measurements.Cache_Misses")
-	Measurement_Invariants(measurements.Branch_Misses, "Measurements.Branch_Misses")
-	Measurement_Invariants(measurements.CPU_User, "Measurements.CPU_User")
-	Measurement_Invariants(measurements.CPU_System, "Measurements.CPU_System")
+// Half_Percent is a confidence interval's half-width as a percentage,
+// fixedpoint-scaled.
+type Half_Percent int64
+
+// Half_Percent_Invariants states the one property the width carries: it is a
+// confidence half-width, so it is never negative.
+func Half_Percent_Invariants(identifier string, value Half_Percent) {
+	invariant.Always(value >= 0, "A confidence half-interval is never negative.")
 }
 
-// Deltas is every metric's change for one command relative to the reference, in the
-// same order as Measurements.
-type Deltas struct {
-	// Wall_Time is the elapsed-time delta.
-	Wall_Time Delta `json:"wall_time"`
-	// Peak_RSS is the peak-memory delta.
-	Peak_RSS Delta `json:"peak_rss"`
-	// CPU_Cycles is the CPU-cycle delta.
-	CPU_Cycles Delta `json:"cpu_cycles"`
-	// Instructions is the retired-instruction delta.
-	Instructions Delta `json:"instructions"`
-	// Cache_References is the cache-reference delta (Linux only).
-	Cache_References Delta `json:"cache_references"`
-	// Cache_Misses is the cache-miss delta (Linux only).
-	Cache_Misses Delta `json:"cache_misses"`
-	// Branch_Misses is the branch-miss delta (Linux only).
-	Branch_Misses Delta `json:"branch_misses"`
-	// CPU_User is the user-CPU-time delta.
-	CPU_User Delta `json:"cpu_user"`
-	// CPU_System is the system-CPU-time delta.
-	CPU_System Delta `json:"cpu_system"`
+// Significant is the verdict of the ±1% significance band.
+type Significant bool
+
+// Significant_Invariants witnesses both verdicts of the band, carrying the demand the
+// old Delta.Significant grid stated.
+func Significant_Invariants(identifier string, value Significant) {
+	invariant.Sometimes(identifier, bool(value),
+		"The delta clears the significance band.")
 }
 
-// Deltas_Invariants composes the change of every metric field.
-func Deltas_Invariants(deltas Deltas, namespace invariant.Namespace) {
-	Delta_Invariants(deltas.Wall_Time, "Deltas.Wall_Time")
-	Delta_Invariants(deltas.Peak_RSS, "Deltas.Peak_RSS")
-	Delta_Invariants(deltas.CPU_Cycles, "Deltas.CPU_Cycles")
-	Delta_Invariants(deltas.Instructions, "Deltas.Instructions")
-	Delta_Invariants(deltas.Cache_References, "Deltas.Cache_References")
-	Delta_Invariants(deltas.Cache_Misses, "Deltas.Cache_Misses")
-	Delta_Invariants(deltas.Branch_Misses, "Deltas.Branch_Misses")
-	Delta_Invariants(deltas.CPU_User, "Deltas.CPU_User")
-	Delta_Invariants(deltas.CPU_System, "Deltas.CPU_System")
+// Faster is the verdict of the mean comparison: the candidate's mean sits below the
+// reference's.
+type Faster bool
+
+// Faster_Invariants witnesses both verdicts of the comparison, carrying the demand
+// the old Delta.Faster grid stated.
+func Faster_Invariants(identifier string, value Faster) {
+	invariant.Sometimes(identifier, bool(value),
+		"The candidate mean sits below the reference mean.")
 }
 
 // Benchmark is one command's entry in the report.
@@ -578,13 +1085,13 @@ type Benchmark struct {
 	Deltas Deltas `json:"deltas"`
 }
 
-// Benchmark_Invariants states a Benchmark's fields, composing the delta distribution
-// like any other value field.
-func Benchmark_Invariants(benchmark Benchmark, namespace invariant.Namespace) {
-	Command_Line_Invariants(benchmark.Command, "Benchmark.Command")
-	Kept_Invariants(benchmark.Runs, "Benchmark.Runs")
-	Measurements_Invariants(benchmark.Measurements, "Benchmark.Measurements")
-	Deltas_Invariants(benchmark.Deltas, "Benchmark.Deltas")
+// Benchmark_Invariants composes a Benchmark's fields, the delta distribution like any
+// other value field.
+func Benchmark_Invariants(identifier string, benchmark Benchmark) {
+	Command_Line_Invariants(identifier, benchmark.Command)
+	Kept_Invariants(identifier, benchmark.Runs)
+	Measurements_Invariants(identifier, benchmark.Measurements)
+	Deltas_Invariants(identifier, benchmark.Deltas)
 }
 
 // Document is the whole report: one Benchmark per command, in the order given,
@@ -597,9 +1104,9 @@ type Document struct {
 }
 
 // Document_Invariants composes the machine snapshot and the benchmark slice.
-func Document_Invariants(document Document, namespace invariant.Namespace) {
-	Machine_Specs_Invariants(document.Machine, "Document.Machine")
-	Benchmarks_Invariants(document.Benchmarks, "Document.Benchmarks")
+func Document_Invariants(identifier string, document Document) {
+	Machine_Specs_Invariants(identifier, document.Machine)
+	Benchmarks_Invariants(identifier, document.Benchmarks)
 }
 
 // Main_Input carries the injected dependencies Main needs, so the library tier
@@ -615,39 +1122,110 @@ type Main_Input struct {
 	Duration_Max time.Duration
 	// Runs_Max is the per-command run cap; 0 disables it, leaving Duration_Max. The
 	// 3-run minimum still applies. Sampling stops at whichever limit is met first.
-	Runs_Max int
+	Runs_Max Runs_Max
 	// Warmup_Count is how many runs are taken and discarded before sampling.
-	Warmup_Count int
+	Warmup_Count Warmup_Count
 	// Allow_Failures keeps benchmarking a command that exits non-zero.
-	Allow_Failures bool
+	Allow_Failures Allow_Failures
 	// Format selects the report rendering; the zero value is the table.
 	Format Output_Format
 	// Color enables ANSI color in the table rendering.
-	Color bool
+	Color Color
 	// Progress writes an in-place run counter to Stderr while sampling; gate it on an
 	// interactive Stderr so piped output stays clean.
-	Progress bool
-	// Output is where the report is written.
-	Output io.Writer
+	Progress Progress
+	// Output is where the report is written. Its own interface declaration, distinct
+	// from Diagnostic_Sink so the two writer fields are distinct types.
+	Output Report_Sink
 	// Stderr is where a failing command's diagnostics are written.
-	Stderr io.Writer
+	Stderr Diagnostic_Sink
 	// Machine is the host hardware and OS snapshot; injected so the library makes no
 	// ambient OS reads. Production wires acquire_machine_specs(); tests inject a stub.
 	Machine Machine_Specs
 }
 
-// Main_Input_Invariants states the injected configuration's coverable fields; the
-// clock, sampler functions, and writers have no preset of their own.
-func Main_Input_Invariants(input Main_Input, namespace invariant.Namespace) {
-	Commands_Invariants(input.Commands, "Main_Input.Commands")
-	Sampler_Invariants(input.Sampler, "Main_Input.Sampler")
-	invariant.Int_Invariants(input.Runs_Max, "Main_Input.Runs_Max")
-	invariant.Int_Invariants(input.Warmup_Count, "Main_Input.Warmup_Count")
-	invariant.Boolean_Invariants(input.Allow_Failures, "Main_Input.Allow_Failures")
-	Output_Format_Invariants(input.Format, "Main_Input.Format")
-	invariant.Boolean_Invariants(input.Color, "Main_Input.Color")
-	invariant.Boolean_Invariants(input.Progress, "Main_Input.Progress")
-	Machine_Specs_Invariants(input.Machine, "Main_Input.Machine")
+// Main_Input_Invariants composes the injected configuration's fields; the clock,
+// sampler function, and writers carry no bundle of their own.
+func Main_Input_Invariants(identifier string, input Main_Input) {
+	Commands_Invariants(identifier, input.Commands)
+	Sampler_Invariants(identifier, input.Sampler)
+	Runs_Max_Invariants(identifier, input.Runs_Max)
+	Warmup_Count_Invariants(identifier, input.Warmup_Count)
+	Allow_Failures_Invariants(identifier, input.Allow_Failures)
+	Output_Format_Invariants(identifier, input.Format)
+	Color_Invariants(identifier, input.Color)
+	Progress_Invariants(identifier, input.Progress)
+	Machine_Specs_Invariants(identifier, input.Machine)
+}
+
+// Report_Sink is where the report is written.
+type Report_Sink interface{ io.Writer }
+
+// Diagnostic_Sink is where a failing command's diagnostics are written.
+type Diagnostic_Sink interface{ io.Writer }
+
+// Runs_Max is the per-command run cap; zero disables it.
+type Runs_Max int
+
+// Runs_Max_Invariants witnesses the shapes the old full-width grid demanded — the
+// unit values and the word extremes — with the cap's own texts; the full-width
+// domain enforces nothing, so no vacuous bound accompanies them.
+func Runs_Max_Invariants(identifier string, value Runs_Max) {
+	invariant.Sometimes(identifier, value == 1, "The run cap is one.")
+	invariant.Sometimes(identifier, value == -1, "The run cap is negative one.")
+	invariant.Sometimes(identifier, int64(value) == math.MinInt64,
+		"The run cap is the word minimum.")
+	invariant.Sometimes(identifier, int64(value) == math.MaxInt64,
+		"The run cap is the word maximum.")
+	invariant.Sometimes(identifier,
+		value != 1 && value != -1 &&
+			int64(value) != math.MinInt64 && int64(value) != math.MaxInt64,
+		"The run cap is an ordinary count.")
+}
+
+// Warmup_Count is how many runs are taken and discarded before sampling.
+type Warmup_Count int
+
+// Warmup_Count_Invariants witnesses the shapes the old full-width grid demanded with
+// the count's own texts; the full-width domain enforces nothing.
+func Warmup_Count_Invariants(identifier string, value Warmup_Count) {
+	invariant.Sometimes(identifier, value == 1, "The warmup count is one.")
+	invariant.Sometimes(identifier, value == -1, "The warmup count is negative one.")
+	invariant.Sometimes(identifier, int64(value) == math.MinInt64,
+		"The warmup count is the word minimum.")
+	invariant.Sometimes(identifier, int64(value) == math.MaxInt64,
+		"The warmup count is the word maximum.")
+	invariant.Sometimes(identifier,
+		value != 1 && value != -1 &&
+			int64(value) != math.MinInt64 && int64(value) != math.MaxInt64,
+		"The warmup count is an ordinary count.")
+}
+
+// Allow_Failures keeps benchmarking a command that exits non-zero.
+type Allow_Failures bool
+
+// Allow_Failures_Invariants witnesses both settings, carrying the demand the old
+// Main_Input.Allow_Failures grid stated.
+func Allow_Failures_Invariants(identifier string, value Allow_Failures) {
+	invariant.Sometimes(identifier, bool(value), "A failing command is kept in the run.")
+}
+
+// Color enables ANSI color in the table rendering.
+type Color bool
+
+// Color_Invariants witnesses both settings, carrying the demand the old color grids
+// stated at every color-flag site.
+func Color_Invariants(identifier string, value Color) {
+	invariant.Sometimes(identifier, bool(value), "The rendering carries ANSI color.")
+}
+
+// Progress enables the in-place run counter on the diagnostic sink.
+type Progress bool
+
+// Progress_Invariants witnesses both settings, carrying the demand the old
+// Main_Input.Progress grid stated.
+func Progress_Invariants(identifier string, value Progress) {
+	invariant.Sometimes(identifier, bool(value), "The progress line renders.")
 }
 
 // Main_input_collect_samples runs command through the warmup discards and then the
@@ -658,16 +1236,16 @@ func main_input_collect_samples(
 	input *Main_Input, command sysio.Process_Request,
 ) (samples Samples, exit Exit_Status, stderr Captured_Output) {
 	defer func() {
-		Samples_Invariants(samples, "main_input_collect_samples.samples")
-		Exit_Status_Invariants(exit, "main_input_collect_samples.exit")
-		Captured_Output_Invariants(stderr, "main_input_collect_samples.stderr")
+		Samples_Invariants("main_input_collect_samples.samples", samples)
+		Exit_Status_Invariants("main_input_collect_samples.exit", exit)
+		Captured_Output_Invariants("main_input_collect_samples.stderr", stderr)
 	}()
-	Main_Input_Invariants(*input, "main_input_collect_samples.input")
+	Main_Input_Invariants("main_input_collect_samples.input", *input)
 	warmups := 0
 	// Elapsed is the running sum of measured wall time, the budget's clock: the library
 	// reads no ambient clock, so a run's cost is the wall the sampler reports, accrued.
 	var warmup_elapsed time.Duration
-	for warmups < input.Warmup_Count {
+	for warmups < int(input.Warmup_Count) {
 		// Warming up past the kept-sample cap is pointless and would carry the warmup
 		// counter past a tally's range, so the cap bounds both.
 		if warmups >= SAMPLES_MAX {
@@ -680,14 +1258,14 @@ func main_input_collect_samples(
 			}
 		}
 		warmups++
-		warmup_elapsed += warm.Sample.Wall
+		warmup_elapsed += time.Duration(warm.Sample.Wall)
 		if input.Progress {
 			render_progress(input.Stderr, &Render_Progress_Input{
 				Command: command,
 				Elapsed: warmup_elapsed,
 				Phase:   "warmup",
 				Count:   Census(warmups),
-				Total:   input.Warmup_Count,
+				Total:   Progress_Total(input.Warmup_Count),
 			})
 		}
 	}
@@ -699,10 +1277,10 @@ func main_input_collect_samples(
 		Duration_Max: input.Duration_Max,
 		Runs_Max:     input.Runs_Max,
 		Count:        Tally(len(samples)),
-		Elapsed:      elapsed,
+		Elapsed:      Sampling_Elapsed(elapsed),
 	}) {
 		result := input.Sampler.Measure(command)
-		Run_Result_Invariants(result, "main_input_collect_samples.result")
+		Run_Result_Invariants("main_input_collect_samples.result", result)
 		if result.Exit != 0 {
 			if !input.Allow_Failures {
 				return nil, result.Exit, result.Stderr
@@ -720,7 +1298,7 @@ func main_input_collect_samples(
 				Command: command,
 				Elapsed: elapsed,
 				Count:   Census(len(samples)),
-				Total:   input.Runs_Max,
+				Total:   Progress_Total(input.Runs_Max),
 			})
 		}
 	}
@@ -729,23 +1307,37 @@ func main_input_collect_samples(
 
 // Sampling_Should_Continue_Input is the loop state sampling_should_continue judges.
 type Sampling_Should_Continue_Input struct {
-	// Elapsed is the wall time spent sampling so far.
-	Elapsed time.Duration
+	// Elapsed is the wall time spent sampling so far. Its own semantic type, distinct
+	// from the budget so the two duration fields are distinct types.
+	Elapsed Sampling_Elapsed
 	// Duration_Max is the time budget; zero disables it.
 	Duration_Max time.Duration
 	// Runs_Max is the run cap; zero disables it.
-	Runs_Max int
+	Runs_Max Runs_Max
 	// Count is how many runs have been kept so far.
 	Count Tally
 }
 
-// Sampling_Should_Continue_Input_Invariants states the loop state's integer fields;
-// the durations have no preset of their own.
+// Sampling_Should_Continue_Input_Invariants composes the loop state's fields; the
+// budget duration carries no bundle of its own.
 func Sampling_Should_Continue_Input_Invariants(
-	input Sampling_Should_Continue_Input, namespace invariant.Namespace,
+	identifier string, input Sampling_Should_Continue_Input,
 ) {
-	invariant.Int_Invariants(input.Runs_Max, "Sampling_Should_Continue_Input.Runs_Max")
-	Tally_Invariants(input.Count, "Sampling_Should_Continue_Input.Count")
+	Sampling_Elapsed_Invariants(identifier, input.Elapsed)
+	Runs_Max_Invariants(identifier, input.Runs_Max)
+	Tally_Invariants(identifier, input.Count)
+}
+
+// Sampling_Elapsed is the wall time spent sampling so far, in nanoseconds. Declared on
+// the primitive — never on time.Duration — because a semantic type owns its contract.
+type Sampling_Elapsed int64
+
+// Sampling_Elapsed_Invariants observes the stopwatch's sign rather than bounding it:
+// the sampler owns the completion stamps, and a stamp source running backward — a
+// hostile or broken clock — is a state the loop must survive, not crash on, exactly
+// as the old model accepted it silently.
+func Sampling_Elapsed_Invariants(identifier string, value Sampling_Elapsed) {
+	invariant.Sometimes(identifier, value >= 0, "The sampling stopwatch reads non-negative.")
 }
 
 // Sampling_should_continue decides whether to take another sample. The 3-run minimum
@@ -753,11 +1345,11 @@ func Sampling_Should_Continue_Input_Invariants(
 // when any active limit is met — the run cap or the time budget — and a limit of zero
 // is inactive, so both zero leaves only the safety cap. The compound condition is
 // split into nested single-term ifs for the linter.
-func sampling_should_continue(input *Sampling_Should_Continue_Input) (yes bool) {
+func sampling_should_continue(input *Sampling_Should_Continue_Input) (yes Should_Continue) {
 	defer func() {
-		invariant.Boolean_Invariants(yes, "sampling_should_continue.yes")
+		Should_Continue_Invariants("sampling_should_continue.yes", yes)
 	}()
-	Sampling_Should_Continue_Input_Invariants(*input, "sampling_should_continue.input")
+	Sampling_Should_Continue_Input_Invariants("sampling_should_continue.input", *input)
 	if int(input.Count) < RUNS_MIN {
 		return true
 	}
@@ -765,24 +1357,33 @@ func sampling_should_continue(input *Sampling_Should_Continue_Input) (yes bool) 
 		return false
 	}
 	if input.Runs_Max > 0 {
-		if int(input.Count) >= input.Runs_Max {
+		if int(input.Count) >= int(input.Runs_Max) {
 			return false
 		}
 	}
 	if input.Duration_Max > 0 {
-		if input.Elapsed >= input.Duration_Max {
+		if time.Duration(input.Elapsed) >= input.Duration_Max {
 			return false
 		}
 	}
 	return true
 }
 
+// Should_Continue is the sampling loop's verdict: take another run or stop.
+type Should_Continue bool
+
+// Should_Continue_Invariants witnesses both verdicts, carrying the demand the old
+// sampling_should_continue.yes grid stated.
+func Should_Continue_Invariants(identifier string, value Should_Continue) {
+	invariant.Sometimes(identifier, bool(value), "The sampler takes another run.")
+}
+
 // Samples_elapsed sums the wall time of the kept runs — how long the command's
 // measured sampling took in total.
 func samples_elapsed(samples Distribution) (elapsed time.Duration) {
-	Distribution_Invariants(samples, "samples_elapsed.samples")
+	Distribution_Invariants("samples_elapsed.samples", samples)
 	for _, sample := range samples {
-		elapsed += sample.Wall
+		elapsed += time.Duration(sample.Wall)
 	}
 	return elapsed
 }
@@ -791,81 +1392,146 @@ func samples_elapsed(samples Distribution) (elapsed time.Duration) {
 // each with the unit its raw values are in.
 func measurements_compute(samples Distribution) (measurements Measurements) {
 	defer func() {
-		Measurements_Invariants(measurements, "measurements_compute.measurements")
+		Measurements_Invariants("measurements_compute.measurements", measurements)
 	}()
-	Distribution_Invariants(samples, "measurements_compute.samples")
+	Distribution_Invariants("measurements_compute.samples", samples)
 	measurements.Wall_Time = Measurement_Compute(
-		Values(extract(samples, sample_wall)), "nanoseconds")
+		Values(extract(samples, sample_wall)), "nanoseconds").As_Wall_Time()
 	measurements.Peak_RSS = Measurement_Compute(
-		Values(extract(samples, sample_rss)), "bytes")
+		Values(extract(samples, sample_rss)), "bytes").As_Peak_RSS()
 	measurements.CPU_Cycles = Measurement_Compute(
-		Values(extract(samples, sample_cycles)), "count")
+		Values(extract(samples, sample_cycles)), "count").As_CPU_Cycles()
 	measurements.Instructions = Measurement_Compute(
-		Values(extract(samples, sample_instructions)), "count")
+		Values(extract(samples, sample_instructions)), "count").As_Instructions()
 	measurements.Cache_References = Measurement_Compute(
-		Values(extract(samples, sample_cache_references)), "count")
+		Values(extract(samples, sample_cache_references)), "count").As_Cache_References()
 	measurements.Cache_Misses = Measurement_Compute(
-		Values(extract(samples, sample_cache_misses)), "count")
+		Values(extract(samples, sample_cache_misses)), "count").As_Cache_Misses()
 	measurements.Branch_Misses = Measurement_Compute(
-		Values(extract(samples, sample_branch_misses)), "count")
+		Values(extract(samples, sample_branch_misses)), "count").As_Branch_Misses()
 	measurements.CPU_User = Measurement_Compute(
-		Values(extract(samples, sample_user)), "nanoseconds")
+		Values(extract(samples, sample_user)), "nanoseconds").As_CPU_User()
 	measurements.CPU_System = Measurement_Compute(
-		Values(extract(samples, sample_system)), "nanoseconds")
+		Values(extract(samples, sample_system)), "nanoseconds").As_CPU_System()
 	return measurements
 }
 
-// Deltas_Compute_Input pairs a reference and candidate distribution for comparison.
-type Deltas_Compute_Input struct {
-	// Reference is the baseline distribution deltas are measured against.
-	Reference Measurements
-	// Candidate is the distribution compared to the reference.
-	Candidate Measurements
+// Reference_Measurements is the baseline distribution set deltas are measured against —
+// a field-identical clone of Measurements, so the reference role is its own type and
+// deltas_compute takes two distinct-typed parameters instead of an input struct of
+// duplicates.
+type Reference_Measurements struct {
+	// Wall_Time is the elapsed-time distribution.
+	Wall_Time Wall_Time_Measurement
+	// Peak_RSS is the peak-memory distribution.
+	Peak_RSS Peak_RSS_Measurement
+	// CPU_Cycles is the CPU-cycle distribution.
+	CPU_Cycles CPU_Cycles_Measurement
+	// Instructions is the retired-instruction distribution.
+	Instructions Instructions_Measurement
+	// Cache_References is the cache-reference distribution (Linux only).
+	Cache_References Cache_References_Measurement
+	// Cache_Misses is the cache-miss distribution (Linux only).
+	Cache_Misses Cache_Misses_Measurement
+	// Branch_Misses is the branch-miss distribution (Linux only).
+	Branch_Misses Branch_Misses_Measurement
+	// CPU_User is the user-CPU-time distribution.
+	CPU_User CPU_User_Measurement
+	// CPU_System is the system-CPU-time distribution.
+	CPU_System CPU_System_Measurement
 }
 
-// Deltas_Compute_Input_Invariants composes the reference and candidate distributions.
-func Deltas_Compute_Input_Invariants(
-	input Deltas_Compute_Input, namespace invariant.Namespace,
-) {
-	Measurements_Invariants(input.Reference, "Deltas_Compute_Input.Reference")
-	Measurements_Invariants(input.Candidate, "Deltas_Compute_Input.Candidate")
+// Reference_Measurements_Invariants composes every metric's family.
+func Reference_Measurements_Invariants(identifier string, reference Reference_Measurements) {
+	Wall_Time_Measurement_Invariants(identifier, reference.Wall_Time)
+	Peak_RSS_Measurement_Invariants(identifier, reference.Peak_RSS)
+	CPU_Cycles_Measurement_Invariants(identifier, reference.CPU_Cycles)
+	Instructions_Measurement_Invariants(identifier, reference.Instructions)
+	Cache_References_Measurement_Invariants(identifier, reference.Cache_References)
+	Cache_Misses_Measurement_Invariants(identifier, reference.Cache_Misses)
+	Branch_Misses_Measurement_Invariants(identifier, reference.Branch_Misses)
+	CPU_User_Measurement_Invariants(identifier, reference.CPU_User)
+	CPU_System_Measurement_Invariants(identifier, reference.CPU_System)
 }
 
-// Deltas_compute compares every metric of the candidate against the reference.
-func deltas_compute(input *Deltas_Compute_Input) (deltas Deltas) {
+// Candidate_Measurements is the distribution set compared against the reference — the
+// candidate role's own clone of Measurements.
+type Candidate_Measurements struct {
+	// Wall_Time is the elapsed-time distribution.
+	Wall_Time Wall_Time_Measurement
+	// Peak_RSS is the peak-memory distribution.
+	Peak_RSS Peak_RSS_Measurement
+	// CPU_Cycles is the CPU-cycle distribution.
+	CPU_Cycles CPU_Cycles_Measurement
+	// Instructions is the retired-instruction distribution.
+	Instructions Instructions_Measurement
+	// Cache_References is the cache-reference distribution (Linux only).
+	Cache_References Cache_References_Measurement
+	// Cache_Misses is the cache-miss distribution (Linux only).
+	Cache_Misses Cache_Misses_Measurement
+	// Branch_Misses is the branch-miss distribution (Linux only).
+	Branch_Misses Branch_Misses_Measurement
+	// CPU_User is the user-CPU-time distribution.
+	CPU_User CPU_User_Measurement
+	// CPU_System is the system-CPU-time distribution.
+	CPU_System CPU_System_Measurement
+}
+
+// Candidate_Measurements_Invariants composes every metric's family.
+func Candidate_Measurements_Invariants(identifier string, candidate Candidate_Measurements) {
+	Wall_Time_Measurement_Invariants(identifier, candidate.Wall_Time)
+	Peak_RSS_Measurement_Invariants(identifier, candidate.Peak_RSS)
+	CPU_Cycles_Measurement_Invariants(identifier, candidate.CPU_Cycles)
+	Instructions_Measurement_Invariants(identifier, candidate.Instructions)
+	Cache_References_Measurement_Invariants(identifier, candidate.Cache_References)
+	Cache_Misses_Measurement_Invariants(identifier, candidate.Cache_Misses)
+	Branch_Misses_Measurement_Invariants(identifier, candidate.Branch_Misses)
+	CPU_User_Measurement_Invariants(identifier, candidate.CPU_User)
+	CPU_System_Measurement_Invariants(identifier, candidate.CPU_System)
+}
+
+// Deltas_compute compares every metric of the candidate against the reference. The
+// per-metric variants convert to the plain compare currency and back, so the
+// comparison math stays written once.
+func deltas_compute(
+	reference Reference_Measurements, candidate Candidate_Measurements,
+) (deltas Deltas) {
 	defer func() {
-		Deltas_Invariants(deltas, "deltas_compute.deltas")
+		Deltas_Invariants("deltas_compute.deltas", deltas)
 	}()
-	Deltas_Compute_Input_Invariants(*input, "deltas_compute.input")
-	reference := input.Reference
-	candidate := input.Candidate
-	deltas.Wall_Time = Compare(&Compare_Input{
-		Reference: reference.Wall_Time, Candidate: candidate.Wall_Time,
-	})
-	deltas.Peak_RSS = Compare(&Compare_Input{
-		Reference: reference.Peak_RSS, Candidate: candidate.Peak_RSS,
-	})
-	deltas.CPU_Cycles = Compare(&Compare_Input{
-		Reference: reference.CPU_Cycles, Candidate: candidate.CPU_Cycles,
-	})
-	deltas.Instructions = Compare(&Compare_Input{
-		Reference: reference.Instructions, Candidate: candidate.Instructions,
-	})
-	deltas.Cache_References = Compare(&Compare_Input{
-		Reference: reference.Cache_References, Candidate: candidate.Cache_References,
-	})
-	deltas.Cache_Misses = Compare(&Compare_Input{
-		Reference: reference.Cache_Misses, Candidate: candidate.Cache_Misses,
-	})
-	deltas.Branch_Misses = Compare(&Compare_Input{
-		Reference: reference.Branch_Misses, Candidate: candidate.Branch_Misses,
-	})
-	deltas.CPU_User = Compare(&Compare_Input{
-		Reference: reference.CPU_User, Candidate: candidate.CPU_User,
-	})
-	deltas.CPU_System = Compare(&Compare_Input{
-		Reference: reference.CPU_System, Candidate: candidate.CPU_System,
-	})
+	Reference_Measurements_Invariants("deltas_compute.reference", reference)
+	Candidate_Measurements_Invariants("deltas_compute.candidate", candidate)
+	deltas.Wall_Time = Compare(
+		Reference_Measurement(reference.Wall_Time.As_Measurement()),
+		Candidate_Measurement(candidate.Wall_Time.As_Measurement())).As_Wall_Time_Delta()
+	deltas.Peak_RSS = Compare(
+		Reference_Measurement(reference.Peak_RSS.As_Measurement()),
+		Candidate_Measurement(candidate.Peak_RSS.As_Measurement())).As_Peak_RSS_Delta()
+	deltas.CPU_Cycles = Compare(
+		Reference_Measurement(reference.CPU_Cycles.As_Measurement()),
+		Candidate_Measurement(candidate.CPU_Cycles.As_Measurement())).As_CPU_Cycles_Delta()
+	deltas.Instructions = Compare(
+		Reference_Measurement(reference.Instructions.As_Measurement()),
+		Candidate_Measurement(
+			candidate.Instructions.As_Measurement())).As_Instructions_Delta()
+	deltas.Cache_References = Compare(
+		Reference_Measurement(reference.Cache_References.As_Measurement()),
+		Candidate_Measurement(
+			candidate.Cache_References.As_Measurement())).As_Cache_References_Delta()
+	deltas.Cache_Misses = Compare(
+		Reference_Measurement(reference.Cache_Misses.As_Measurement()),
+		Candidate_Measurement(
+			candidate.Cache_Misses.As_Measurement())).As_Cache_Misses_Delta()
+	deltas.Branch_Misses = Compare(
+		Reference_Measurement(reference.Branch_Misses.As_Measurement()),
+		Candidate_Measurement(
+			candidate.Branch_Misses.As_Measurement())).As_Branch_Misses_Delta()
+	deltas.CPU_User = Compare(
+		Reference_Measurement(reference.CPU_User.As_Measurement()),
+		Candidate_Measurement(candidate.CPU_User.As_Measurement())).As_CPU_User_Delta()
+	deltas.CPU_System = Compare(
+		Reference_Measurement(reference.CPU_System.As_Measurement()),
+		Candidate_Measurement(candidate.CPU_System.As_Measurement())).As_CPU_System_Delta()
 	return deltas
 }
 
@@ -874,8 +1540,8 @@ func deltas_compute(input *Deltas_Compute_Input) (deltas Deltas) {
 func extract[T ~int64](
 	samples Distribution, selector func(sample Sample) (value T),
 ) (values Series) {
-	defer func() { Series_Invariants(values, "extract.values") }()
-	Distribution_Invariants(samples, "extract.samples")
+	defer func() { Series_Invariants("extract.values", values) }()
+	Distribution_Invariants("extract.samples", samples)
 	values = make([]int64, len(samples))
 	for index, sample := range samples {
 		values[index] = int64(selector(sample))
@@ -885,64 +1551,64 @@ func extract[T ~int64](
 
 // Sample_wall reads a sample's wall time, a non-negative monotonic span.
 func sample_wall(sample Sample) (value Metric) {
-	defer func() { Metric_Invariants(value, "sample_wall.value") }()
-	Sample_Invariants(sample, "sample_wall.sample")
+	defer func() { Metric_Invariants("sample_wall.value", value) }()
+	Sample_Invariants("sample_wall.sample", sample)
 	return Metric(sample.Wall)
 }
 
 // Sample_rss reads a sample's peak resident size as a metric.
 func sample_rss(sample Sample) (value Metric) {
-	defer func() { Metric_Invariants(value, "sample_rss.value") }()
-	Sample_Invariants(sample, "sample_rss.sample")
-	return sample.RSS_Bytes_Max
+	defer func() { Metric_Invariants("sample_rss.value", value) }()
+	Sample_Invariants("sample_rss.sample", sample)
+	return Metric(sample.RSS_Bytes_Max)
 }
 
 // Sample_cycles reads a sample's CPU cycle count as a metric.
 func sample_cycles(sample Sample) (value Metric) {
-	defer func() { Metric_Invariants(value, "sample_cycles.value") }()
-	Sample_Invariants(sample, "sample_cycles.sample")
-	return sample.CPU_Cycles
+	defer func() { Metric_Invariants("sample_cycles.value", value) }()
+	Sample_Invariants("sample_cycles.sample", sample)
+	return Metric(sample.CPU_Cycles)
 }
 
 // Sample_instructions reads a sample's retired-instruction count as a metric.
 func sample_instructions(sample Sample) (value Metric) {
-	defer func() { Metric_Invariants(value, "sample_instructions.value") }()
-	Sample_Invariants(sample, "sample_instructions.sample")
-	return sample.Instructions
+	defer func() { Metric_Invariants("sample_instructions.value", value) }()
+	Sample_Invariants("sample_instructions.sample", sample)
+	return Metric(sample.Instructions)
 }
 
 // Sample_cache_references reads a sample's cache-reference count as a metric.
 func sample_cache_references(sample Sample) (value Metric) {
-	defer func() { Metric_Invariants(value, "sample_cache_references.value") }()
-	Sample_Invariants(sample, "sample_cache_references.sample")
-	return sample.Cache_References
+	defer func() { Metric_Invariants("sample_cache_references.value", value) }()
+	Sample_Invariants("sample_cache_references.sample", sample)
+	return Metric(sample.Cache_References)
 }
 
 // Sample_cache_misses reads a sample's cache-miss count as a metric.
 func sample_cache_misses(sample Sample) (value Metric) {
-	defer func() { Metric_Invariants(value, "sample_cache_misses.value") }()
-	Sample_Invariants(sample, "sample_cache_misses.sample")
-	return sample.Cache_Misses
+	defer func() { Metric_Invariants("sample_cache_misses.value", value) }()
+	Sample_Invariants("sample_cache_misses.sample", sample)
+	return Metric(sample.Cache_Misses)
 }
 
 // Sample_branch_misses reads a sample's branch-miss count as a metric.
 func sample_branch_misses(sample Sample) (value Metric) {
-	defer func() { Metric_Invariants(value, "sample_branch_misses.value") }()
-	Sample_Invariants(sample, "sample_branch_misses.sample")
-	return sample.Branch_Misses
+	defer func() { Metric_Invariants("sample_branch_misses.value", value) }()
+	Sample_Invariants("sample_branch_misses.sample", sample)
+	return Metric(sample.Branch_Misses)
 }
 
 // Sample_user reads a sample's user CPU time as a metric.
 func sample_user(sample Sample) (value Metric) {
-	defer func() { Metric_Invariants(value, "sample_user.value") }()
-	Sample_Invariants(sample, "sample_user.sample")
+	defer func() { Metric_Invariants("sample_user.value", value) }()
+	Sample_Invariants("sample_user.sample", sample)
 	return Metric(sample.CPU_User)
 }
 
 // Sample_system reads a sample's system CPU time as a metric.
 func sample_system(sample Sample) (value Metric) {
-	defer func() { Metric_Invariants(value, "sample_system.value") }()
-	Sample_Invariants(sample, "sample_system.sample")
+	defer func() { Metric_Invariants("sample_system.value", value) }()
+	Sample_Invariants("sample_system.sample", sample)
 	return Metric(sample.CPU_System)
 }
 
@@ -959,19 +1625,21 @@ type Command_Word string
 
 // Command_Word_Invariants bounds a command word's length, witnessing the empty min, the
 // capped max, and the one- and two-byte shapes between.
-func Command_Word_Invariants(word Command_Word, namespace invariant.Namespace) {
-	invariant.Dot_Product(namespace).
-		Range_Int(len(word), COMMAND_WORD_BYTES_MIN, COMMAND_WORD_BYTES_MAX).
-		Ensure()
+func Command_Word_Invariants(identifier string, word Command_Word) {
+	invariant.Range(identifier, len(word), COMMAND_WORD_BYTES_MIN, COMMAND_WORD_BYTES_MAX)
+	invariant.Sometimes(identifier, len(word) == 1, "The command word is one byte.")
+	invariant.Sometimes(identifier, len(word) == 2, "The command word is two bytes.")
+	invariant.Sometimes(identifier, 2 < len(word) && len(word) < COMMAND_WORD_BYTES_MAX,
+		"The command word is an ordinary length.")
 }
 
 // Command_words flattens a command back to the words a reader recognizes:
 // environment assignments, the executable, then its arguments.
 func command_words(command sysio.Process_Request) (words Command_Line) {
 	defer func() {
-		Command_Line_Invariants(words, "command_words.words")
+		Command_Line_Invariants("command_words.words", words)
 		for _, x := range words {
-			Command_Word_Invariants(x, "command_words.word")
+			Command_Word_Invariants("command_words.word", x)
 		}
 	}()
 	words = make([]Command_Word, 0, len(command.Environment)+1+len(command.Arguments))
@@ -988,8 +1656,8 @@ func command_words(command sysio.Process_Request) (words Command_Line) {
 // Write_report marshals the document to indented JSON and writes it to output,
 // returning EXIT_FAILURE if marshaling or writing fails.
 func write_report(output io.Writer, document Document) (code Exit_Code) {
-	defer func() { Exit_Code_Invariants(code, "write_report.exit_code") }()
-	Document_Invariants(document, "write_report.document")
+	defer func() { Exit_Code_Invariants("write_report.exit_code", code) }()
+	Document_Invariants("write_report.document", document)
 	payload, marshal_err := json.MarshalIndent(document, "", "  ")
 	if marshal_err != nil {
 		return EXIT_FAILURE
@@ -1016,17 +1684,17 @@ type Write_Failure_Input struct {
 
 // Write_Failure_Input_Invariants states the failure report's coverable fields; the
 // writer has no preset of its own.
-func Write_Failure_Input_Invariants(input Write_Failure_Input, namespace invariant.Namespace) {
-	Position_Invariants(input.Index, "Write_Failure_Input.Index")
-	Failure_Status_Invariants(input.Exit, "Write_Failure_Input.Exit")
-	Captured_Output_Invariants(input.Child_Stderr, "Write_Failure_Input.Child_Stderr")
+func Write_Failure_Input_Invariants(identifier string, input Write_Failure_Input) {
+	Position_Invariants(identifier, input.Index)
+	Failure_Status_Invariants(identifier, input.Exit)
+	Captured_Output_Invariants(identifier, input.Child_Stderr)
 }
 
 // Write_failure reports a benchmarked command's non-zero exit to the diagnostic
 // sink: a one-line header naming the command's position and code, then the
 // command's own stderr.
 func write_failure(input *Write_Failure_Input) {
-	Write_Failure_Input_Invariants(*input, "write_failure.input")
+	Write_Failure_Input_Invariants("write_failure.input", *input)
 	header := "maddox: benchmark " + strconv.Itoa(int(input.Index)+1) +
 		" exited " + strconv.Itoa(int(input.Exit)) + "\n"
 	input.Stderr.Write([]byte(header))
@@ -1043,13 +1711,13 @@ const INT64_MAX = 1<<63 - 1
 // median, the quartiles by poop's index math, and the Tukey's-fences outlier count.
 func Measurement_Compute(values Values, unit Unit) (measurement Measurement) {
 	defer func() {
-		Measurement_Invariants(measurement, "Measurement_Compute.measurement")
+		Measurement_Invariants("Measurement_Compute.measurement", measurement)
 	}()
-	Values_Invariants(values, "Measurement_Compute.values")
+	Values_Invariants("Measurement_Compute.values", values)
 	for _, x := range values {
-		Metric_Invariants(Metric(x), "Measurement_Compute.value")
+		Metric_Invariants("Measurement_Compute.value", Metric(x))
 	}
-	Unit_Invariants(unit, "Measurement_Compute.unit")
+	Unit_Invariants("Measurement_Compute.unit", unit)
 	// The values are a kept distribution's quorum (Values_Invariants guards the empty,
 	// one, and two counts away), so the statistics below always have a count to divide by.
 	count := len(values)
@@ -1080,17 +1748,17 @@ func Measurement_Compute(values Values, unit Unit) (measurement Measurement) {
 	deviation := standard_deviation(sorted, Average(mean_integer), Kept(count))
 
 	measurement = Measurement{
-		Mean:               mean,
-		Standard_Deviation: deviation,
-		Min:                fixedpoint.From_Integer(sorted[0]),
-		Max:                fixedpoint.From_Integer(sorted[count-1]),
-		Median:             fixedpoint.From_Integer(sorted[count/2]),
-		Q1:                 q1,
-		Q3:                 q3,
+		Mean:               Mean(mean),
+		Standard_Deviation: Standard_Deviation(deviation),
+		Min:                Min(fixedpoint.From_Integer(sorted[0])),
+		Max:                Max(fixedpoint.From_Integer(sorted[count-1])),
+		Median:             Median(fixedpoint.From_Integer(sorted[count/2])),
+		Q1:                 Q1(q1),
+		Q3:                 Q3(q3),
 		Outlier_Count: outlier_count(&Outlier_Count_Input{
 			Sorted:        Points(sorted),
-			Low_Quartile:  Metric(low_quartile),
-			High_Quartile: Metric(high_quartile),
+			Low_Quartile:  Low_Quartile(low_quartile),
+			High_Quartile: High_Quartile(high_quartile),
 		}),
 		Sample_Count: Kept(count),
 		Unit:         unit,
@@ -1107,16 +1775,16 @@ type Wide struct {
 }
 
 // Wide_Invariants states the two halves of the 128-bit accumulator.
-func Wide_Invariants(value Wide, namespace invariant.Namespace) {
-	Accumulator_High_Invariants(value.High, "Wide.High")
-	Accumulator_Low_Invariants(value.Low, "Wide.Low")
+func Wide_Invariants(identifier string, value Wide) {
+	Accumulator_High_Invariants(identifier, value.High)
+	Accumulator_Low_Invariants(identifier, value.Low)
 }
 
 // Wide_add_square adds value squared into a 128-bit accumulator.
 func wide_add_square(subtotal Wide, value Gap) (sum Wide) {
-	defer func() { Wide_Invariants(sum, "wide_add_square.sum") }()
-	Wide_Invariants(subtotal, "wide_add_square.accumulator")
-	Gap_Invariants(value, "wide_add_square.value")
+	defer func() { Wide_Invariants("wide_add_square.sum", sum) }()
+	Wide_Invariants("wide_add_square.accumulator", subtotal)
+	Gap_Invariants("wide_add_square.value", value)
 	product_high, product_low := bits.Mul64(uint64(value), uint64(value))
 	low, carry := bits.Add64(uint64(subtotal.Low), product_low, 0)
 	high, _ := bits.Add64(uint64(subtotal.High), product_high, carry)
@@ -1129,9 +1797,9 @@ func wide_add_square(subtotal Wide, value Gap) (sum Wide) {
 func standard_deviation(
 	sorted Deviations, center Average, count Kept,
 ) (deviation fixedpoint.Number) {
-	Deviations_Invariants(sorted, "standard_deviation.sorted")
-	Average_Invariants(center, "standard_deviation.mean")
-	Kept_Invariants(count, "standard_deviation.count")
+	Deviations_Invariants("standard_deviation.sorted", sorted)
+	Average_Invariants("standard_deviation.mean", center)
+	Kept_Invariants("standard_deviation.count", count)
 	if count <= 1 {
 		return 0
 	}
@@ -1160,12 +1828,10 @@ type Root_Of_Quotient_Input struct {
 }
 
 // Root_Of_Quotient_Input_Invariants states the numerator halves and the divisor.
-func Root_Of_Quotient_Input_Invariants(
-	input Root_Of_Quotient_Input, namespace invariant.Namespace,
-) {
-	Accumulator_High_Invariants(input.High, "Root_Of_Quotient_Input.High")
-	Accumulator_Low_Invariants(input.Low, "Root_Of_Quotient_Input.Low")
-	Divisor_Invariants(input.Denominator, "Root_Of_Quotient_Input.Denominator")
+func Root_Of_Quotient_Input_Invariants(identifier string, input Root_Of_Quotient_Input) {
+	Accumulator_High_Invariants(identifier, input.High)
+	Accumulator_Low_Invariants(identifier, input.Low)
+	Divisor_Invariants(identifier, input.Denominator)
 }
 
 // Root_of_quotient returns the fixed-point square root of a 128-bit numerator over a
@@ -1173,7 +1839,7 @@ func Root_Of_Quotient_Input_Invariants(
 // a signed word keeps full fractional precision; a larger one, a multi-second jitter far
 // outside maddox's fast-command envelope, falls back to the integer root.
 func root_of_quotient(input *Root_Of_Quotient_Input) (deviation fixedpoint.Number) {
-	Root_Of_Quotient_Input_Invariants(*input, "root_of_quotient.input")
+	Root_Of_Quotient_Input_Invariants("root_of_quotient.input", *input)
 	if int(input.Denominator) <= 0 {
 		return 0
 	}
@@ -1199,16 +1865,52 @@ type Outlier_Count_Input struct {
 	// Sorted is the ascending metric values.
 	Sorted Points
 	// Low_Quartile is the metric at q1; a value below q1 minus 1.5*IQR is an outlier.
-	Low_Quartile Metric
+	Low_Quartile Low_Quartile
 	// High_Quartile is the metric at q3; a value above q3 plus 1.5*IQR is an outlier.
-	High_Quartile Metric
+	High_Quartile High_Quartile
 }
 
-// Outlier_Count_Input_Invariants states the sorted values and the two quartiles they bracket.
-func Outlier_Count_Input_Invariants(input Outlier_Count_Input, namespace invariant.Namespace) {
-	Points_Invariants(input.Sorted, "Outlier_Count_Input.Sorted")
-	Metric_Invariants(input.Low_Quartile, "Outlier_Count_Input.Low_Quartile")
-	Metric_Invariants(input.High_Quartile, "Outlier_Count_Input.High_Quartile")
+// Outlier_Count_Input_Invariants composes the sorted values and the two quartiles.
+func Outlier_Count_Input_Invariants(identifier string, input Outlier_Count_Input) {
+	Points_Invariants(identifier, input.Sorted)
+	Low_Quartile_Invariants(identifier, input.Low_Quartile)
+	High_Quartile_Invariants(identifier, input.High_Quartile)
+}
+
+// Low_Quartile is the raw metric at q1, the lower fence's anchor.
+type Low_Quartile int64
+
+// Low_Quartile_Invariants bounds the anchor to the metric domain and witnesses the old
+// per-field grid's shapes with its own texts.
+func Low_Quartile_Invariants(identifier string, value Low_Quartile) {
+	invariant.Always(value >= METRIC_MIN, "A low quartile is never negative.")
+	invariant.Always(value <= METRIC_MAX,
+		"A low quartile stays within the representable metric ceiling.")
+	invariant.Sometimes(identifier, value == METRIC_MIN, "The low quartile is zero.")
+	invariant.Sometimes(identifier, value == 1, "The low quartile is one.")
+	invariant.Sometimes(identifier, value == 2, "The low quartile is two.")
+	invariant.Sometimes(identifier, value == METRIC_MAX,
+		"The low quartile fills the metric ceiling.")
+	invariant.Sometimes(identifier, 2 < value && value < METRIC_MAX,
+		"The low quartile is an ordinary magnitude.")
+}
+
+// High_Quartile is the raw metric at q3, the upper fence's anchor.
+type High_Quartile int64
+
+// High_Quartile_Invariants bounds the anchor to the metric domain and witnesses the old
+// per-field grid's shapes with its own texts.
+func High_Quartile_Invariants(identifier string, value High_Quartile) {
+	invariant.Always(value >= METRIC_MIN, "A high quartile is never negative.")
+	invariant.Always(value <= METRIC_MAX,
+		"A high quartile stays within the representable metric ceiling.")
+	invariant.Sometimes(identifier, value == METRIC_MIN, "The high quartile is zero.")
+	invariant.Sometimes(identifier, value == 1, "The high quartile is one.")
+	invariant.Sometimes(identifier, value == 2, "The high quartile is two.")
+	invariant.Sometimes(identifier, value == METRIC_MAX,
+		"The high quartile fills the metric ceiling.")
+	invariant.Sometimes(identifier, 2 < value && value < METRIC_MAX,
+		"The high quartile is an ordinary magnitude.")
 }
 
 // Outlier_count counts the values beyond Tukey's fences — a point more than 1.5 interquartile
@@ -1219,8 +1921,8 @@ func Outlier_Count_Input_Invariants(input Outlier_Count_Input, namespace invaria
 // fixed-point form, each quartile first lifted by the 2^20 scale to near 2^63, overflowed on a
 // wide spread and produced garbage fences that miscounted the whole run as outliers.
 func outlier_count(input *Outlier_Count_Input) (count Strays) {
-	defer func() { Strays_Invariants(count, "outlier_count.count") }()
-	Outlier_Count_Input_Invariants(*input, "outlier_count.input")
+	defer func() { Strays_Invariants("outlier_count.count", count) }()
+	Outlier_Count_Input_Invariants("outlier_count.input", *input)
 	low_quartile := int64(input.Low_Quartile)
 	high_quartile := int64(input.High_Quartile)
 	inter_quartile := high_quartile - low_quartile
@@ -1239,132 +1941,163 @@ func outlier_count(input *Outlier_Count_Input) (count Strays) {
 	return count
 }
 
-// Compare_Input pairs the reference and candidate measurements Compare contrasts.
-type Compare_Input struct {
-	// Reference is the baseline measurement deltas are taken against.
-	Reference Measurement
-	// Candidate is the measurement compared to the reference.
-	Candidate Measurement
+// Reference_Measurement is the baseline measurement deltas are taken against — a
+// field-identical clone of Measurement, so the reference role is its own type and the
+// comparison functions take two distinct-typed parameters instead of an input struct
+// of duplicates.
+type Reference_Measurement struct {
+	// Mean is the arithmetic mean of the metric's values.
+	Mean Mean
+	// Standard_Deviation is the sample standard deviation, with an n-1 denominator.
+	Standard_Deviation Standard_Deviation
+	// Min is the smallest value observed.
+	Min Min
+	// Max is the largest value observed.
+	Max Max
+	// Median is the middle value of the sorted values.
+	Median Median
+	// Q1 is the first quartile by poop's index math.
+	Q1 Q1
+	// Q3 is the third quartile by poop's index math.
+	Q3 Q3
+	// Outlier_Count is how many values fall beyond Tukey's fences.
+	Outlier_Count Strays
+	// Sample_Count is how many values the distribution was computed from.
+	Sample_Count Kept
+	// Unit names the unit the raw values are in.
+	Unit Unit
 }
 
-// Compare_Input_Invariants composes the reference and candidate measurements.
-func Compare_Input_Invariants(input Compare_Input, namespace invariant.Namespace) {
-	Measurement_Invariants(input.Reference, "Compare_Input.Reference")
-	Measurement_Invariants(input.Candidate, "Compare_Input.Candidate")
+// Reference_Measurement_Invariants composes every field's own family.
+func Reference_Measurement_Invariants(identifier string, reference Reference_Measurement) {
+	Mean_Invariants(identifier, reference.Mean)
+	Standard_Deviation_Invariants(identifier, reference.Standard_Deviation)
+	Min_Invariants(identifier, reference.Min)
+	Max_Invariants(identifier, reference.Max)
+	Median_Invariants(identifier, reference.Median)
+	Q1_Invariants(identifier, reference.Q1)
+	Q3_Invariants(identifier, reference.Q3)
+	Strays_Invariants(identifier, reference.Outlier_Count)
+	Kept_Invariants(identifier, reference.Sample_Count)
+	Unit_Invariants(identifier, reference.Unit)
+}
+
+// Candidate_Measurement is the measurement compared to the reference — the candidate
+// role's own clone of Measurement.
+type Candidate_Measurement struct {
+	// Mean is the arithmetic mean of the metric's values.
+	Mean Mean
+	// Standard_Deviation is the sample standard deviation, with an n-1 denominator.
+	Standard_Deviation Standard_Deviation
+	// Min is the smallest value observed.
+	Min Min
+	// Max is the largest value observed.
+	Max Max
+	// Median is the middle value of the sorted values.
+	Median Median
+	// Q1 is the first quartile by poop's index math.
+	Q1 Q1
+	// Q3 is the third quartile by poop's index math.
+	Q3 Q3
+	// Outlier_Count is how many values fall beyond Tukey's fences.
+	Outlier_Count Strays
+	// Sample_Count is how many values the distribution was computed from.
+	Sample_Count Kept
+	// Unit names the unit the raw values are in.
+	Unit Unit
+}
+
+// Candidate_Measurement_Invariants composes every field's own family.
+func Candidate_Measurement_Invariants(identifier string, candidate Candidate_Measurement) {
+	Mean_Invariants(identifier, candidate.Mean)
+	Standard_Deviation_Invariants(identifier, candidate.Standard_Deviation)
+	Min_Invariants(identifier, candidate.Min)
+	Max_Invariants(identifier, candidate.Max)
+	Median_Invariants(identifier, candidate.Median)
+	Q1_Invariants(identifier, candidate.Q1)
+	Q3_Invariants(identifier, candidate.Q3)
+	Strays_Invariants(identifier, candidate.Outlier_Count)
+	Kept_Invariants(identifier, candidate.Sample_Count)
+	Unit_Invariants(identifier, candidate.Unit)
 }
 
 // Compare reports how the candidate's mean differs from the reference's, with the
 // 95% confidence half-interval from a pooled-variance two-sample t-test — poop's
 // ratio computation. A zero or degenerate reference yields a zero, non-significant
 // delta rather than a divide-by-zero.
-func Compare(input *Compare_Input) (delta Delta) {
-	defer func() { Delta_Invariants(delta, "Compare.delta") }()
-	Compare_Input_Invariants(*input, "Compare.input")
-	reference := input.Reference
-	candidate := input.Candidate
+func Compare(reference Reference_Measurement, candidate Candidate_Measurement) (delta Delta) {
+	defer func() { Delta_Invariants("Compare.delta", delta) }()
+	Reference_Measurement_Invariants("Compare.reference", reference)
+	Candidate_Measurement_Invariants("Compare.candidate", candidate)
 	if reference.Mean == 0 {
 		return delta
 	}
 	ratio := fixedpoint.Divide(&fixedpoint.Divide_Input{
-		Dividend: candidate.Mean - reference.Mean, Divisor: reference.Mean,
+		Dividend: fixedpoint.Number(candidate.Mean - reference.Mean),
+		Divisor:  fixedpoint.Number(reference.Mean),
 	})
-	delta.Diff_Percent = ratio * 100
-	delta.Faster = candidate.Mean < reference.Mean
+	delta.Diff_Percent = Diff_Percent(ratio * 100)
+	delta.Faster = Faster(candidate.Mean < reference.Mean)
 
 	degrees := candidate.Sample_Count + reference.Sample_Count - 2
 	if degrees < 1 {
 		return delta
 	}
-	delta.Half_Percent = half_interval(&Half_Interval_Input{
-		Reference: reference, Candidate: candidate, Degrees: Degree(degrees),
-	})
-	delta.Significant = significant(&Significant_Input{
-		Diff_Percent: delta.Diff_Percent,
-		Half_Percent: delta.Half_Percent,
-	})
+	delta.Half_Percent = Half_Percent(half_interval(reference, candidate, Degree(degrees)))
+	delta.Significant = significant(delta.Diff_Percent, delta.Half_Percent)
 	return delta
-}
-
-// Half_Interval_Input carries the two measurements and the degrees of freedom.
-type Half_Interval_Input struct {
-	// Reference is the baseline measurement.
-	Reference Measurement
-	// Candidate is the measurement compared to the reference.
-	Candidate Measurement
-	// Degrees is the pooled degrees of freedom, n1 + n2 - 2.
-	Degrees Degree
-}
-
-// Half_Interval_Input_Invariants composes the measurements and states the degrees.
-func Half_Interval_Input_Invariants(input Half_Interval_Input, namespace invariant.Namespace) {
-	Measurement_Invariants(input.Reference, "Half_Interval_Input.Reference")
-	Measurement_Invariants(input.Candidate, "Half_Interval_Input.Candidate")
-	Degree_Invariants(input.Degrees, "Half_Interval_Input.Degrees")
 }
 
 // Half_interval is the 95% confidence half-width on Diff_Percent, from a pooled-variance
 // two-sample t-test — poop's score*pooled*normalizer*100/mean. The pooled deviation is
 // taken relative to the reference mean, folding in that final divide, so the math never
 // forms a raw variance — which, for a metric in the billions, overflows.
-func half_interval(input *Half_Interval_Input) (half fixedpoint.Number) {
-	Half_Interval_Input_Invariants(*input, "half_interval.input")
+func half_interval(
+	reference Reference_Measurement, candidate Candidate_Measurement, degrees Degree,
+) (half fixedpoint.Number) {
+	Reference_Measurement_Invariants("half_interval.reference", reference)
+	Candidate_Measurement_Invariants("half_interval.candidate", candidate)
+	Degree_Invariants("half_interval.degrees", degrees)
 	first := fixedpoint.From_Ratio(&fixedpoint.From_Ratio_Input{
-		Numerator: 1, Denominator: int64(input.Candidate.Sample_Count),
+		Numerator: 1, Denominator: int64(candidate.Sample_Count),
 	})
 	second := fixedpoint.From_Ratio(&fixedpoint.From_Ratio_Input{
-		Numerator: 1, Denominator: int64(input.Reference.Sample_Count),
+		Numerator: 1, Denominator: int64(reference.Sample_Count),
 	})
 	normalizer := fixedpoint.Square_Root(first + second)
-	pooled := pooled_deviation(&Pooled_Deviation_Input{
-		Candidate: input.Candidate, Reference: input.Reference, Degrees: input.Degrees,
-	})
-	score := student_t_score(input.Degrees)
+	pooled := pooled_deviation(candidate, reference, degrees)
+	score := student_t_score(degrees)
 	band := fixedpoint.Multiply(&fixedpoint.Multiply_Input{A: score, B: pooled})
 	band = fixedpoint.Multiply(&fixedpoint.Multiply_Input{A: band, B: normalizer})
 	return band * 100
-}
-
-// Pooled_Deviation_Input carries the two measurements and the degrees of freedom.
-type Pooled_Deviation_Input struct {
-	// Candidate is the measurement compared to the reference.
-	Candidate Measurement
-	// Reference is the baseline measurement.
-	Reference Measurement
-	// Degrees is the pooled degrees of freedom, n1 + n2 - 2.
-	Degrees Degree
-}
-
-// Pooled_Deviation_Input_Invariants composes the measurements and states the degrees.
-func Pooled_Deviation_Input_Invariants(
-	input Pooled_Deviation_Input, namespace invariant.Namespace,
-) {
-	Measurement_Invariants(input.Candidate, "Pooled_Deviation_Input.Candidate")
-	Measurement_Invariants(input.Reference, "Pooled_Deviation_Input.Reference")
-	Degree_Invariants(input.Degrees, "Pooled_Deviation_Input.Degrees")
 }
 
 // Pooled_deviation is the pooled standard deviation as a fraction of the reference mean:
 // the root of the degrees-weighted mean of the two relative variances. Dividing each
 // deviation by the mean before squaring keeps every value near one, so a metric in the
 // billions and its enormous raw variance never overflow.
-func pooled_deviation(input *Pooled_Deviation_Input) (pooled fixedpoint.Number) {
-	Pooled_Deviation_Input_Invariants(*input, "pooled_deviation.input")
-	mean := input.Reference.Mean
-	candidate := fixedpoint.Divide(&fixedpoint.Divide_Input{
-		Dividend: input.Candidate.Standard_Deviation, Divisor: mean,
+func pooled_deviation(
+	candidate Candidate_Measurement, reference Reference_Measurement, degrees Degree,
+) (pooled fixedpoint.Number) {
+	Candidate_Measurement_Invariants("pooled_deviation.candidate", candidate)
+	Reference_Measurement_Invariants("pooled_deviation.reference", reference)
+	Degree_Invariants("pooled_deviation.degrees", degrees)
+	mean := fixedpoint.Number(reference.Mean)
+	relative_candidate := fixedpoint.Divide(&fixedpoint.Divide_Input{
+		Dividend: fixedpoint.Number(candidate.Standard_Deviation), Divisor: mean,
 	})
-	reference := fixedpoint.Divide(&fixedpoint.Divide_Input{
-		Dividend: input.Reference.Standard_Deviation, Divisor: mean,
+	relative_reference := fixedpoint.Divide(&fixedpoint.Divide_Input{
+		Dividend: fixedpoint.Number(reference.Standard_Deviation), Divisor: mean,
 	})
 	candidate_variance := fixedpoint.Multiply(&fixedpoint.Multiply_Input{
-		A: candidate, B: candidate,
+		A: relative_candidate, B: relative_candidate,
 	})
 	reference_variance := fixedpoint.Multiply(&fixedpoint.Multiply_Input{
-		A: reference, B: reference,
+		A: relative_reference, B: relative_reference,
 	})
-	weighted := candidate_variance*fixedpoint.Number(input.Candidate.Sample_Count-1) +
-		reference_variance*fixedpoint.Number(input.Reference.Sample_Count-1)
-	return fixedpoint.Square_Root(weighted / fixedpoint.Number(int(input.Degrees)))
+	weighted := candidate_variance*fixedpoint.Number(candidate.Sample_Count-1) +
+		reference_variance*fixedpoint.Number(reference.Sample_Count-1)
+	return fixedpoint.Square_Root(weighted / fixedpoint.Number(int(degrees)))
 }
 
 // Student_t_score returns the Student-t critical value for 95% confidence at the given
@@ -1373,7 +2106,7 @@ func pooled_deviation(input *Pooled_Deviation_Input) (pooled fixedpoint.Number) 
 // they read as the published constants, and From_Ratio puts them on the fixed-point grid.
 // The tables are local, not package globals, so the package keeps no mutable state.
 func student_t_score(degrees_of_freedom Degree) (score fixedpoint.Number) {
-	Degree_Invariants(degrees_of_freedom, "student_t_score.degrees_of_freedom")
+	Degree_Invariants("student_t_score.degrees_of_freedom", degrees_of_freedom)
 	freedom := int(degrees_of_freedom)
 	table_1to30 := []int64{
 		12706, 4303, 3182, 2776, 2571, 2447, 2365, 2306, 2262, 2228,
@@ -1399,35 +2132,22 @@ func student_t_score(degrees_of_freedom Degree) (score fixedpoint.Number) {
 	})
 }
 
-// Significant_Input carries the difference and its confidence half-interval, both as
-// fixed-point percentages.
-type Significant_Input struct {
-	// Diff_Percent is the signed percentage difference under test.
-	Diff_Percent fixedpoint.Number
-	// Half_Percent is the confidence interval's half-width, as a percentage.
-	Half_Percent fixedpoint.Number
-}
-
-// Significant_Input_Invariants states the one property the fields carry that
-// fixedpoint.Number cannot: the half-interval is a confidence half-width, so it is
-// never negative. The difference may have either sign and is left unconstrained.
-func Significant_Input_Invariants(input Significant_Input, namespace invariant.Namespace) {
-	invariant.Always(input.Half_Percent >= 0, "A confidence half-interval is never negative.")
-}
-
 // Significant decides whether a difference clears poop's ±1% band: the whole
 // confidence interval must sit beyond ±1% with a single sign. The && and || of
 // poop's check are split into nested single-term ifs to satisfy the linter.
-func significant(input *Significant_Input) (is bool) {
-	defer func() { invariant.Boolean_Invariants(is, "significant.is") }()
-	Significant_Input_Invariants(*input, "significant.input")
-	if input.Diff_Percent >= fixedpoint.From_Integer(1) {
-		if input.Diff_Percent-input.Half_Percent >= fixedpoint.From_Integer(1) {
+func significant(difference Diff_Percent, half Half_Percent) (is Significant) {
+	defer func() { Significant_Invariants("significant.is", is) }()
+	Diff_Percent_Invariants("significant.difference", difference)
+	Half_Percent_Invariants("significant.half", half)
+	change := fixedpoint.Number(difference)
+	interval := fixedpoint.Number(half)
+	if change >= fixedpoint.From_Integer(1) {
+		if change-interval >= fixedpoint.From_Integer(1) {
 			return true
 		}
 	}
-	if input.Diff_Percent <= fixedpoint.From_Integer(-1) {
-		if input.Diff_Percent+input.Half_Percent <= fixedpoint.From_Integer(-1) {
+	if change <= fixedpoint.From_Integer(-1) {
+		if change+interval <= fixedpoint.From_Integer(-1) {
 			return true
 		}
 	}
@@ -1449,10 +2169,8 @@ type Ansi_Code string
 // Ansi_Code_Invariants bounds an ansi_code's byte length and claims its boundaries.
 // An SGR code is always four or five bytes, so the empty and one/two-byte boundaries
 // are claimed as never reached rather than as observed.
-func Ansi_Code_Invariants(code Ansi_Code, namespace invariant.Namespace) {
-	invariant.Dot_Product(namespace).
-		Range_Int(len(code), ANSI_CODE_BYTES_MIN, ANSI_CODE_BYTES_MAX).
-		Ensure()
+func Ansi_Code_Invariants(identifier string, code Ansi_Code) {
+	invariant.Range(identifier, len(code), ANSI_CODE_BYTES_MIN, ANSI_CODE_BYTES_MAX)
 }
 
 // ANSI_RESET clears all set attributes.
@@ -1472,13 +2190,13 @@ type Render_Table_Input struct {
 	// Document is the report to render.
 	Document Document
 	// Color enables ANSI color codes.
-	Color bool
+	Color Color
 }
 
-// Render_Table_Input_Invariants composes the report and states the color flag.
-func Render_Table_Input_Invariants(input Render_Table_Input, namespace invariant.Namespace) {
-	Document_Invariants(input.Document, "Render_Table_Input.Document")
-	invariant.Boolean_Invariants(input.Color, "Render_Table_Input.Color")
+// Render_Table_Input_Invariants composes the report and the color flag.
+func Render_Table_Input_Invariants(identifier string, input Render_Table_Input) {
+	Document_Invariants(identifier, input.Document)
+	Color_Invariants(identifier, input.Color)
 }
 
 // Render_Table renders the report as poop's aligned, optionally colored comparison
@@ -1488,8 +2206,8 @@ func Render_Table(input *Render_Table_Input) (output Report) {
 	// The rendered bytes are text — printable ASCII, newlines, and ANSI escapes — so a
 	// per-byte numeric bundle would demand the null, one, and all-ones bytes a text report
 	// never carries. The report's shape is witnessed by its length, not its every byte.
-	defer func() { Report_Invariants(output, "Render_Table.output") }()
-	Render_Table_Input_Invariants(*input, "Render_Table.input")
+	defer func() { Report_Invariants("Render_Table.output", output) }()
+	Render_Table_Input_Invariants("Render_Table.input", *input)
 	builder := strings.Builder{}
 	render_machine_header(&builder, input.Document.Machine)
 	for index, benchmark := range input.Document.Benchmarks {
@@ -1502,7 +2220,7 @@ func Render_Table(input *Render_Table_Input) (output Report) {
 // Sparse fields (zero values) are omitted, matching the sparse-metric convention
 // for table rows.
 func render_machine_header(builder *strings.Builder, m Machine_Specs) {
-	Machine_Specs_Invariants(m, "render_machine_header.m")
+	Machine_Specs_Invariants("render_machine_header.m", m)
 	// An empty CPU model with no architecture means specs were never acquired (e.g.
 	// the stub platform); the header is skipped so output stays clean.
 	if m.CPU_Model == "" {
@@ -1513,17 +2231,17 @@ func render_machine_header(builder *strings.Builder, m Machine_Specs) {
 	builder.WriteString("Machine: " + string(m.CPU_Model) + " (" + string(m.CPU_Arch) + ")\n")
 	builder.WriteString("  cores: " + string(machine_specs_cores(m)) + "   " +
 		"freq: " + string(format_hz(m.CPU_Frequency_Hz_Max)) + "   " +
-		"ram: " + string(format_bytes(m.RAM_Total_Bytes)) + "   " +
-		"storage: " + string(format_bytes(m.Storage_Total_Bytes)) + "\n")
+		"ram: " + string(format_bytes(Byte_Size(m.RAM_Total_Bytes))) + "   " +
+		"storage: " + string(format_bytes(Byte_Size(m.Storage_Total_Bytes))) + "\n")
 	cache_line := ""
 	if m.Cache_L1_Bytes > 0 {
-		cache_line += "L1: " + string(format_bytes(m.Cache_L1_Bytes)) + "   "
+		cache_line += "L1: " + string(format_bytes(Byte_Size(m.Cache_L1_Bytes))) + "   "
 	}
 	if m.Cache_L2_Bytes > 0 {
-		cache_line += "L2: " + string(format_bytes(m.Cache_L2_Bytes)) + "   "
+		cache_line += "L2: " + string(format_bytes(Byte_Size(m.Cache_L2_Bytes))) + "   "
 	}
 	if m.Cache_L3_Bytes > 0 {
-		cache_line += "L3: " + string(format_bytes(m.Cache_L3_Bytes)) + "   "
+		cache_line += "L3: " + string(format_bytes(Byte_Size(m.Cache_L3_Bytes))) + "   "
 	}
 	operating_system_part := "OS: " + string(m.Operating_System_Name) + " " +
 		string(m.Operating_System_Version) + "   kernel: " + string(m.Kernel_Version)
@@ -1549,22 +2267,25 @@ type Cores_Line string
 
 // Cores_Line_Invariants bounds the core-layout length; it is never empty, with the single-digit
 // min, the widest hybrid max, and the one- and two-byte shapes between witnessed.
-func Cores_Line_Invariants(text Cores_Line, namespace invariant.Namespace) {
-	invariant.Dot_Product(namespace).Range_Int(len(text), CORES_MIN, CORES_MAX).Ensure()
+func Cores_Line_Invariants(identifier string, text Cores_Line) {
+	invariant.Range(identifier, len(text), CORES_MIN, CORES_MAX)
+	invariant.Sometimes(identifier, len(text) == 2, "The core layout is two bytes.")
+	invariant.Sometimes(identifier, 2 < len(text) && len(text) < CORES_MAX,
+		"The core layout is an ordinary length.")
 }
 
 // Machine_specs_cores renders the CPU core layout, naming performance and efficiency cores on
 // hybrid CPUs and collapsing to a single count when physical equals logical.
 func machine_specs_cores(m Machine_Specs) (text Cores_Line) {
-	defer func() { Cores_Line_Invariants(text, "machine_specs_cores.text") }()
-	Machine_Specs_Invariants(m, "machine_specs_cores.m")
+	defer func() { Cores_Line_Invariants("machine_specs_cores.text", text) }()
+	Machine_Specs_Invariants("machine_specs_cores.m", m)
 	if m.Performance_Cores > 0 {
 		if m.Efficiency_Cores > 0 {
 			return Cores_Line(fmt.Sprintf("%d P + %d E = %d logical",
 				m.Performance_Cores, m.Efficiency_Cores, m.Logical_Cores))
 		}
 	}
-	if m.Physical_Cores == m.Logical_Cores {
+	if int(m.Physical_Cores) == int(m.Logical_Cores) {
 		return Cores_Line(fmt.Sprintf("%d", m.Physical_Cores))
 	}
 	return Cores_Line(fmt.Sprintf("%d physical, %d logical", m.Physical_Cores, m.Logical_Cores))
@@ -1572,8 +2293,8 @@ func machine_specs_cores(m Machine_Specs) (text Cores_Line) {
 
 // Format_hz renders a frequency in Hz to a human-readable GHz or MHz string.
 func format_hz(hz Hertz) (text Frequency) {
-	defer func() { Frequency_Invariants(text, "format_hz.text") }()
-	Hertz_Invariants(hz, "format_hz.hz")
+	defer func() { Frequency_Invariants("format_hz.text", text) }()
+	Hertz_Invariants("format_hz.hz", hz)
 	if hz == 0 {
 		return "?"
 	}
@@ -1596,8 +2317,8 @@ func format_hz(hz Hertz) (text Frequency) {
 // garbage, over-width cell. Each rung's raw divisor is recovered from its fixed-point form; the
 // suffix is that rung's own, already witnessed by byte_ladder's invariants.
 func format_bytes(value Byte_Size) (text Cell) {
-	defer func() { Cell_Invariants(text, "format_bytes.text") }()
-	Byte_Size_Invariants(value, "format_bytes.value")
+	defer func() { Cell_Invariants("format_bytes.text", text) }()
+	Byte_Size_Invariants("format_bytes.value", value)
 	raw := int64(value)
 	for _, step := range byte_ladder() {
 		rung := fixedpoint.Whole(step.Divisor)
@@ -1632,10 +2353,11 @@ type Span string
 
 // Span_Invariants bounds a rendered span's length, witnessing the one-byte floor, the two-byte
 // single-digit-seconds shape, and the widest glyph-and-suffix form.
-func Span_Invariants(text Span, namespace invariant.Namespace) {
-	invariant.Dot_Product(namespace).
-		Range_Int(len(text), SPAN_BYTES_MIN, SPAN_BYTES_MAX).
-		Ensure()
+func Span_Invariants(identifier string, text Span) {
+	invariant.Range(identifier, len(text), SPAN_BYTES_MIN, SPAN_BYTES_MAX)
+	invariant.Sometimes(identifier, len(text) == 2, "The rendered span is two bytes.")
+	invariant.Sometimes(identifier, 2 < len(text) && len(text) < SPAN_BYTES_MAX,
+		"The rendered span is an ordinary length.")
 }
 
 // Format_elapsed renders a total sampling duration for the benchmark header with the time
@@ -1645,7 +2367,7 @@ func Span_Invariants(text Span, namespace invariant.Namespace) {
 // lands within the header's glyph rather than rendering a five-digit count. The suffix is the
 // rung's own, witnessed by time_ladder.
 func format_elapsed(elapsed time.Duration) (text Span) {
-	defer func() { Span_Invariants(text, "format_elapsed.text") }()
+	defer func() { Span_Invariants("format_elapsed.text", text) }()
 	raw := int64(elapsed)
 	if raw > ELAPSED_DISPLAY_MAX {
 		raw = ELAPSED_DISPLAY_MAX
@@ -1665,8 +2387,8 @@ func format_elapsed(elapsed time.Duration) (text Span) {
 // Write_table renders the table and writes it to output, returning EXIT_FAILURE if
 // the write fails.
 func write_table(output io.Writer, input *Render_Table_Input) (code Exit_Code) {
-	defer func() { Exit_Code_Invariants(code, "write_table.exit_code") }()
-	Render_Table_Input_Invariants(*input, "write_table.input")
+	defer func() { Exit_Code_Invariants("write_table.exit_code", code) }()
+	Render_Table_Input_Invariants("write_table.input", *input)
 	_, write_err := output.Write(Render_Table(input))
 	if write_err != nil {
 		return EXIT_FAILURE
@@ -1685,10 +2407,12 @@ const COLUMN_OUTLIERS_WIDTH Extent = 9
 
 // Render_benchmark writes one benchmark's header, its column header, and its metric
 // rows. The header and the rows go through render_cells, so labels align with data.
-func render_benchmark(builder *strings.Builder, index Position, benchmark Benchmark, color bool) {
-	Position_Invariants(index, "render_benchmark.index")
-	Benchmark_Invariants(benchmark, "render_benchmark.benchmark")
-	invariant.Boolean_Invariants(color, "render_benchmark.color")
+func render_benchmark(
+	builder *strings.Builder, index Position, benchmark Benchmark, color Color,
+) {
+	Position_Invariants("render_benchmark.index", index)
+	Benchmark_Invariants("render_benchmark.benchmark", benchmark)
+	Color_Invariants("render_benchmark.color", color)
 	elapsed := format_elapsed(benchmark.Elapsed)
 	words := make([]string, len(benchmark.Command))
 	for slot := range benchmark.Command {
@@ -1716,36 +2440,62 @@ func render_benchmark(builder *strings.Builder, index Position, benchmark Benchm
 }
 
 // Render_metric_rows writes one aligned row per metric, in report order.
-func render_metric_rows(builder *strings.Builder, index Position, benchmark Benchmark, color bool) {
-	Position_Invariants(index, "render_metric_rows.index")
-	Benchmark_Invariants(benchmark, "render_metric_rows.benchmark")
-	invariant.Boolean_Invariants(color, "render_metric_rows.color")
+func render_metric_rows(
+	builder *strings.Builder, index Position, benchmark Benchmark, color Color,
+) {
+	Position_Invariants("render_metric_rows.index", index)
+	Benchmark_Invariants("render_metric_rows.benchmark", benchmark)
+	Color_Invariants("render_metric_rows.color", color)
 	m := benchmark.Measurements
 	d := benchmark.Deltas
 	// The reference is first; only later benchmarks carry a comparison.
-	has_delta := index != 0
+	has_delta := Has_Delta(index != 0)
 	rows := []Metric_Line_Input{
-		{Name: "wall_time", Measurement: m.Wall_Time, Delta: d.Wall_Time},
-		{Name: "peak_rss", Measurement: m.Peak_RSS, Delta: d.Peak_RSS},
-		{Name: "cpu_cycles", Measurement: m.CPU_Cycles, Delta: d.CPU_Cycles},
-		{Name: "instructions", Measurement: m.Instructions, Delta: d.Instructions},
+		{
+			Name:        "wall_time",
+			Measurement: m.Wall_Time.As_Measurement(),
+			Delta:       d.Wall_Time.As_Delta(),
+		},
+		{
+			Name:        "peak_rss",
+			Measurement: m.Peak_RSS.As_Measurement(),
+			Delta:       d.Peak_RSS.As_Delta(),
+		},
+		{
+			Name:        "cpu_cycles",
+			Measurement: m.CPU_Cycles.As_Measurement(),
+			Delta:       d.CPU_Cycles.As_Delta(),
+		},
+		{
+			Name:        "instructions",
+			Measurement: m.Instructions.As_Measurement(),
+			Delta:       d.Instructions.As_Delta(),
+		},
 		{
 			Name:        "cache_references",
-			Measurement: m.Cache_References,
-			Delta:       d.Cache_References,
+			Measurement: m.Cache_References.As_Measurement(),
+			Delta:       d.Cache_References.As_Delta(),
 		},
 		{
 			Name:        "cache_misses",
-			Measurement: m.Cache_Misses,
-			Delta:       d.Cache_Misses,
+			Measurement: m.Cache_Misses.As_Measurement(),
+			Delta:       d.Cache_Misses.As_Delta(),
 		},
 		{
 			Name:        "branch_misses",
-			Measurement: m.Branch_Misses,
-			Delta:       d.Branch_Misses,
+			Measurement: m.Branch_Misses.As_Measurement(),
+			Delta:       d.Branch_Misses.As_Delta(),
 		},
-		{Name: "cpu_user", Measurement: m.CPU_User, Delta: d.CPU_User},
-		{Name: "cpu_system", Measurement: m.CPU_System, Delta: d.CPU_System},
+		{
+			Name:        "cpu_user",
+			Measurement: m.CPU_User.As_Measurement(),
+			Delta:       d.CPU_User.As_Delta(),
+		},
+		{
+			Name:        "cpu_system",
+			Measurement: m.CPU_System.As_Measurement(),
+			Delta:       d.CPU_System.As_Delta(),
+		},
 	}
 	for row := range rows {
 		// A metric with no data on this platform — every value zero, e.g. the
@@ -1769,25 +2519,34 @@ type Metric_Line_Input struct {
 	// Delta is the signed change against the reference.
 	Delta Delta
 	// Has_Delta is false for the reference row, which carries no delta.
-	Has_Delta bool
+	Has_Delta Has_Delta
 	// Color is whether the delta column is ANSI-colored.
-	Color bool
+	Color Color
 }
 
-// Metric_Line_Input_Invariants states the row's name, distribution, delta, and flags.
-func Metric_Line_Input_Invariants(input Metric_Line_Input, namespace invariant.Namespace) {
-	Caption_Invariants(input.Name, "Metric_Line_Input.Name")
-	Measurement_Invariants(input.Measurement, "Metric_Line_Input.Measurement")
-	Delta_Invariants(input.Delta, "Metric_Line_Input.Delta")
-	invariant.Boolean_Invariants(input.Has_Delta, "Metric_Line_Input.Has_Delta")
-	invariant.Boolean_Invariants(input.Color, "Metric_Line_Input.Color")
+// Metric_Line_Input_Invariants composes the row's name, distribution, delta, and flags.
+func Metric_Line_Input_Invariants(identifier string, input Metric_Line_Input) {
+	Caption_Invariants(identifier, input.Name)
+	Measurement_Invariants(identifier, input.Measurement)
+	Delta_Invariants(identifier, input.Delta)
+	Has_Delta_Invariants(identifier, input.Has_Delta)
+	Color_Invariants(identifier, input.Color)
+}
+
+// Has_Delta is whether a metric row carries a delta column; the reference row does not.
+type Has_Delta bool
+
+// Has_Delta_Invariants witnesses both row shapes, carrying the demand the old
+// Metric_Line_Input.Has_Delta grid stated.
+func Has_Delta_Invariants(identifier string, value Has_Delta) {
+	invariant.Sometimes(identifier, bool(value), "The row carries a delta column.")
 }
 
 // Metric_line renders one metric row: its name, scaled mean ± σ, min … max, outlier
 // count, and — when the benchmark is not the reference — its delta.
 func metric_line(input *Metric_Line_Input) (text Full_Row) {
-	defer func() { Full_Row_Invariants(text, "metric_line.line") }()
-	Metric_Line_Input_Invariants(*input, "metric_line.input")
+	defer func() { Full_Row_Invariants("metric_line.line", text) }()
+	Metric_Line_Input_Invariants("metric_line.input", *input)
 	measurement := input.Measurement
 	unit := measurement.Unit
 	outlier_percent := fixedpoint.Number(0)
@@ -1800,11 +2559,12 @@ func metric_line(input *Metric_Line_Input) (text Full_Row) {
 	outlier_text := strconv.Itoa(int(measurement.Outlier_Count)) +
 		" (" + fixedpoint.Format(outlier_percent, 0) + "%)"
 	row := render_cells(&Render_Cells_Input{
-		Name:     input.Name,
-		Mean:     format_quantity(measurement.Mean, unit),
-		Sigma:    format_quantity(measurement.Standard_Deviation, unit),
-		Low:      format_quantity(measurement.Min, unit),
-		High:     format_quantity(measurement.Max, unit),
+		Name: input.Name,
+		Mean: Mean_Cell(format_quantity(fixedpoint.Number(measurement.Mean), unit)),
+		Sigma: Sigma_Cell(format_quantity(
+			fixedpoint.Number(measurement.Standard_Deviation), unit)),
+		Low:      Low_Cell(format_quantity(fixedpoint.Number(measurement.Min), unit)),
+		High:     High_Cell(format_quantity(fixedpoint.Number(measurement.Max), unit)),
 		Outliers: Outliers(outlier_text),
 	})
 	text = Full_Row(row)
@@ -1815,37 +2575,111 @@ func metric_line(input *Metric_Line_Input) (text Full_Row) {
 	return text
 }
 
-// Render_Cells_Input is one table row's cell texts.
+// Render_Cells_Input is one table row's cell texts. Each cell column is its own
+// semantic type so the composed row seeds a distinct family per column, as the old
+// per-field grid instances did.
 type Render_Cells_Input struct {
 	// Name is the row label.
 	Name Caption
 	// Mean is the mean cell.
-	Mean Cell
+	Mean Mean_Cell
 	// Sigma is the standard-deviation cell.
-	Sigma Cell
+	Sigma Sigma_Cell
 	// Low is the minimum cell.
-	Low Cell
+	Low Low_Cell
 	// High is the maximum cell.
-	High Cell
+	High High_Cell
 	// Outliers is the outlier-count cell.
 	Outliers Outliers
 }
 
-// Render_Cells_Input_Invariants states every cell text of one row.
-func Render_Cells_Input_Invariants(input Render_Cells_Input, namespace invariant.Namespace) {
-	Caption_Invariants(input.Name, "Render_Cells_Input.Name")
-	Cell_Invariants(input.Mean, "Render_Cells_Input.Mean")
-	Cell_Invariants(input.Sigma, "Render_Cells_Input.Sigma")
-	Cell_Invariants(input.Low, "Render_Cells_Input.Low")
-	Cell_Invariants(input.High, "Render_Cells_Input.High")
-	Outliers_Invariants(input.Outliers, "Render_Cells_Input.Outliers")
+// Render_Cells_Input_Invariants composes every cell text of one row.
+func Render_Cells_Input_Invariants(identifier string, input Render_Cells_Input) {
+	Caption_Invariants(identifier, input.Name)
+	Mean_Cell_Invariants(identifier, input.Mean)
+	Sigma_Cell_Invariants(identifier, input.Sigma)
+	Low_Cell_Invariants(identifier, input.Low)
+	High_Cell_Invariants(identifier, input.High)
+	Outliers_Invariants(identifier, input.Outliers)
+}
+
+// Mean_Cell is the mean column's rendered cell.
+type Mean_Cell string
+
+// Mean_Cell_Invariants bounds the cell and witnesses the old per-field grid's shapes
+// with its own texts.
+func Mean_Cell_Invariants(identifier string, text Mean_Cell) {
+	invariant.Always(len(text) >= CELL_BYTES_MIN, "A mean cell is never empty.")
+	invariant.Always(len(text) <= CELL_BYTES_MAX,
+		"A mean cell never exceeds the widest scaled value.")
+	invariant.Sometimes(identifier, len(text) == CELL_BYTES_MIN,
+		"The mean cell is one byte.")
+	invariant.Sometimes(identifier, len(text) == 2, "The mean cell is two bytes.")
+	invariant.Sometimes(identifier, len(text) == CELL_BYTES_MAX,
+		"The mean cell is the widest form.")
+	invariant.Sometimes(identifier, 2 < len(text) && len(text) < CELL_BYTES_MAX,
+		"The mean cell is an ordinary length.")
+}
+
+// Sigma_Cell is the standard-deviation column's rendered cell.
+type Sigma_Cell string
+
+// Sigma_Cell_Invariants bounds the cell and witnesses the old per-field grid's shapes
+// with its own texts.
+func Sigma_Cell_Invariants(identifier string, text Sigma_Cell) {
+	invariant.Always(len(text) >= CELL_BYTES_MIN, "A sigma cell is never empty.")
+	invariant.Always(len(text) <= CELL_BYTES_MAX,
+		"A sigma cell never exceeds the widest scaled value.")
+	invariant.Sometimes(identifier, len(text) == CELL_BYTES_MIN,
+		"The sigma cell is one byte.")
+	invariant.Sometimes(identifier, len(text) == 2, "The sigma cell is two bytes.")
+	invariant.Sometimes(identifier, len(text) == CELL_BYTES_MAX,
+		"The sigma cell is the widest form.")
+	invariant.Sometimes(identifier, 2 < len(text) && len(text) < CELL_BYTES_MAX,
+		"The sigma cell is an ordinary length.")
+}
+
+// Low_Cell is the minimum column's rendered cell.
+type Low_Cell string
+
+// Low_Cell_Invariants bounds the cell and witnesses the old per-field grid's shapes
+// with its own texts.
+func Low_Cell_Invariants(identifier string, text Low_Cell) {
+	invariant.Always(len(text) >= CELL_BYTES_MIN, "A low cell is never empty.")
+	invariant.Always(len(text) <= CELL_BYTES_MAX,
+		"A low cell never exceeds the widest scaled value.")
+	invariant.Sometimes(identifier, len(text) == CELL_BYTES_MIN,
+		"The low cell is one byte.")
+	invariant.Sometimes(identifier, len(text) == 2, "The low cell is two bytes.")
+	invariant.Sometimes(identifier, len(text) == CELL_BYTES_MAX,
+		"The low cell is the widest form.")
+	invariant.Sometimes(identifier, 2 < len(text) && len(text) < CELL_BYTES_MAX,
+		"The low cell is an ordinary length.")
+}
+
+// High_Cell is the maximum column's rendered cell.
+type High_Cell string
+
+// High_Cell_Invariants bounds the cell and witnesses the old per-field grid's shapes
+// with its own texts.
+func High_Cell_Invariants(identifier string, text High_Cell) {
+	invariant.Always(len(text) >= CELL_BYTES_MIN, "A high cell is never empty.")
+	invariant.Always(len(text) <= CELL_BYTES_MAX,
+		"A high cell never exceeds the widest scaled value.")
+	invariant.Sometimes(identifier, len(text) == CELL_BYTES_MIN,
+		"The high cell is one byte.")
+	invariant.Sometimes(identifier, len(text) == 2, "The high cell is two bytes.")
+	invariant.Sometimes(identifier, len(text) == CELL_BYTES_MAX,
+		"The high cell is the widest form.")
+	invariant.Sometimes(identifier, 2 < len(text) && len(text) < CELL_BYTES_MAX,
+		"The high cell is an ordinary length.")
 }
 
 // Render_cells lays one row — header or data — into aligned, uncolored columns.
 // Header and data share this layout, so a label always sits above its column.
 func render_cells(input *Render_Cells_Input) (text Bare_Row) {
-	defer func() { Bare_Row_Invariants(text, "render_cells.line") }()
-	Render_Cells_Input_Invariants(*input, "render_cells.input")
+	defer func() { Bare_Row_Invariants("render_cells.line", text) }()
+	Render_Cells_Input_Invariants("render_cells.input", *input)
 	return Bare_Row("  " +
 		string(pad(Column(input.Name), COLUMN_NAME_WIDTH, false)) + " " +
 		string(pad(Column(input.Mean), COLUMN_VALUE_WIDTH, true)) + " ± " +
@@ -1871,10 +2705,11 @@ type Cell string
 
 // Cell_Invariants bounds a cell's length: never empty, the single-byte min and the widest
 // max witnessed alongside the two-byte shape.
-func Cell_Invariants(text Cell, namespace invariant.Namespace) {
-	invariant.Dot_Product(namespace).
-		Range_Int(len(text), CELL_BYTES_MIN, CELL_BYTES_MAX).
-		Ensure()
+func Cell_Invariants(identifier string, text Cell) {
+	invariant.Range(identifier, len(text), CELL_BYTES_MIN, CELL_BYTES_MAX)
+	invariant.Sometimes(identifier, len(text) == 2, "The cell is two bytes.")
+	invariant.Sometimes(identifier, 2 < len(text) && len(text) < CELL_BYTES_MAX,
+		"The cell is an ordinary length.")
 }
 
 // GLYPH_MIN is the single digit a formatted figure floors at, like "0".
@@ -1890,8 +2725,11 @@ type Glyph string
 
 // Glyph_Invariants bounds the figure length; never empty, with the single-digit min, the
 // widest figure max, and the one- and two-byte shapes between witnessed.
-func Glyph_Invariants(text Glyph, namespace invariant.Namespace) {
-	invariant.Dot_Product(namespace).Range_Int(len(text), GLYPH_MIN, GLYPH_MAX).Ensure()
+func Glyph_Invariants(identifier string, text Glyph) {
+	invariant.Range(identifier, len(text), GLYPH_MIN, GLYPH_MAX)
+	invariant.Sometimes(identifier, len(text) == 2, "The figure is two bytes.")
+	invariant.Sometimes(identifier, 2 < len(text) && len(text) < GLYPH_MAX,
+		"The figure is three bytes.")
 }
 
 // COLUMN_MIN is the single byte a padded column floors at before alignment.
@@ -1908,8 +2746,11 @@ type Column string
 
 // Column_Invariants bounds the column-text length; never empty, with the single-byte min,
 // the widest text max, and the one- and two-byte shapes between witnessed.
-func Column_Invariants(text Column, namespace invariant.Namespace) {
-	invariant.Dot_Product(namespace).Range_Int(len(text), COLUMN_MIN, COLUMN_MAX).Ensure()
+func Column_Invariants(identifier string, text Column) {
+	invariant.Range(identifier, len(text), COLUMN_MIN, COLUMN_MAX)
+	invariant.Sometimes(identifier, len(text) == 2, "The column text is two bytes.")
+	invariant.Sometimes(identifier, 2 < len(text) && len(text) < COLUMN_MAX,
+		"The column text is an ordinary length.")
 }
 
 // CAPTION_MIN is the shortest metric or column name, like "peak_rss".
@@ -1924,8 +2765,15 @@ type Caption string
 
 // Caption_Invariants bounds a caption's length; always several bytes, so the empty, one, and
 // two-byte boundaries are unreachable while the min and max are witnessed.
-func Caption_Invariants(text Caption, namespace invariant.Namespace) {
-	invariant.Dot_Product(namespace).Range_Int(len(text), CAPTION_MIN, CAPTION_MAX).Ensure()
+func Caption_Invariants(identifier string, text Caption) {
+	invariant.Always(len(text) >= CAPTION_MIN, "A caption is never below its narrow band.")
+	invariant.Always(len(text) <= CAPTION_MAX, "A caption never exceeds its widest name.")
+	invariant.Sometimes(identifier, len(text) == CAPTION_MIN,
+		"The caption is the shortest name.")
+	invariant.Sometimes(identifier, len(text) == CAPTION_MAX,
+		"The caption is the widest name.")
+	invariant.Sometimes(identifier, CAPTION_MIN < len(text) && len(text) < CAPTION_MAX,
+		"The caption is an ordinary name.")
 }
 
 // OUTLIERS_MIN is the shortest outlier tally, the six-byte "0 (0%)".
@@ -1941,8 +2789,17 @@ type Outliers string
 
 // Outliers_Invariants bounds the tally's length; always several bytes, so the empty, one, and
 // two-byte boundaries are unreachable while the min and max are witnessed.
-func Outliers_Invariants(text Outliers, namespace invariant.Namespace) {
-	invariant.Dot_Product(namespace).Range_Int(len(text), OUTLIERS_MIN, OUTLIERS_MAX).Ensure()
+func Outliers_Invariants(identifier string, text Outliers) {
+	invariant.Always(len(text) >= OUTLIERS_MIN,
+		"An outlier tally is never below its shortest form.")
+	invariant.Always(len(text) <= OUTLIERS_MAX,
+		"An outlier tally never exceeds its widest form.")
+	invariant.Sometimes(identifier, len(text) == OUTLIERS_MIN,
+		"The outlier tally is the shortest form.")
+	invariant.Sometimes(identifier, len(text) == OUTLIERS_MAX,
+		"The outlier tally is the widest form.")
+	invariant.Sometimes(identifier, OUTLIERS_MIN < len(text) && len(text) < OUTLIERS_MAX,
+		"The outlier tally is an ordinary form.")
 }
 
 // PADDED_MIN is the narrowest padded column, the four-wide delta interval.
@@ -1958,8 +2815,10 @@ type Padded string
 
 // Padded_Invariants bounds a padded column's length; always several bytes, so the empty, one,
 // and two-byte boundaries are unreachable while the min and max are witnessed.
-func Padded_Invariants(text Padded, namespace invariant.Namespace) {
-	invariant.Dot_Product(namespace).Range_Int(len(text), PADDED_MIN, PADDED_MAX).Ensure()
+func Padded_Invariants(identifier string, text Padded) {
+	invariant.Range(identifier, len(text), PADDED_MIN, PADDED_MAX)
+	invariant.Sometimes(identifier, PADDED_MIN < len(text) && len(text) < PADDED_MAX,
+		"The padded column is an ordinary width.")
 }
 
 // BARE_ROW_MIN is the narrowest assembled data row, all columns at their minimum.
@@ -1975,8 +2834,10 @@ type Bare_Row string
 
 // Bare_Row_Invariants bounds an assembled row's length; always many bytes, so the empty, one,
 // and two-byte boundaries are unreachable while the min and max are witnessed.
-func Bare_Row_Invariants(text Bare_Row, namespace invariant.Namespace) {
-	invariant.Dot_Product(namespace).Range_Int(len(text), BARE_ROW_MIN, BARE_ROW_MAX).Ensure()
+func Bare_Row_Invariants(identifier string, text Bare_Row) {
+	invariant.Range(identifier, len(text), BARE_ROW_MIN, BARE_ROW_MAX)
+	invariant.Sometimes(identifier, BARE_ROW_MIN < len(text) && len(text) < BARE_ROW_MAX,
+		"The assembled row is an ordinary width.")
 }
 
 // FULL_ROW_MIN is the narrowest complete metric row, the reference's bare row with no delta.
@@ -1993,8 +2854,10 @@ type Full_Row string
 
 // Full_Row_Invariants bounds a complete row's length; always many bytes, so the empty, one,
 // and two-byte boundaries are unreachable while the min and max are witnessed.
-func Full_Row_Invariants(text Full_Row, namespace invariant.Namespace) {
-	invariant.Dot_Product(namespace).Range_Int(len(text), FULL_ROW_MIN, FULL_ROW_MAX).Ensure()
+func Full_Row_Invariants(identifier string, text Full_Row) {
+	invariant.Range(identifier, len(text), FULL_ROW_MIN, FULL_ROW_MAX)
+	invariant.Sometimes(identifier, FULL_ROW_MIN < len(text) && len(text) < FULL_ROW_MAX,
+		"The complete row is an ordinary width.")
 }
 
 // DELTA_BODY_MIN is the narrowest delta body, a sign over two padded percentages.
@@ -2012,10 +2875,10 @@ type Delta_Body string
 
 // Delta_Body_Invariants bounds the body's length; always many bytes, so the empty, one, and
 // two-byte boundaries are unreachable while the min and max are witnessed.
-func Delta_Body_Invariants(text Delta_Body, namespace invariant.Namespace) {
-	invariant.Dot_Product(namespace).
-		Range_Int(len(text), DELTA_BODY_MIN, DELTA_BODY_MAX).
-		Ensure()
+func Delta_Body_Invariants(identifier string, text Delta_Body) {
+	invariant.Range(identifier, len(text), DELTA_BODY_MIN, DELTA_BODY_MAX)
+	invariant.Sometimes(identifier, DELTA_BODY_MIN < len(text) && len(text) < DELTA_BODY_MAX,
+		"The delta body is an ordinary width.")
 }
 
 // DELTA_TEXT_MIN is the narrowest rendered delta, an uncolored body.
@@ -2031,10 +2894,10 @@ type Delta_Text string
 
 // Delta_Text_Invariants bounds the rendered delta's length; always many bytes, so the empty,
 // one, and two-byte boundaries are unreachable while the min and max are witnessed.
-func Delta_Text_Invariants(text Delta_Text, namespace invariant.Namespace) {
-	invariant.Dot_Product(namespace).
-		Range_Int(len(text), DELTA_TEXT_MIN, DELTA_TEXT_MAX).
-		Ensure()
+func Delta_Text_Invariants(identifier string, text Delta_Text) {
+	invariant.Range(identifier, len(text), DELTA_TEXT_MIN, DELTA_TEXT_MAX)
+	invariant.Sometimes(identifier, DELTA_TEXT_MIN < len(text) && len(text) < DELTA_TEXT_MAX,
+		"The rendered delta is an ordinary width.")
 }
 
 // FREQUENCY_BYTES_MIN is the shortest rendered frequency: the one-byte "?" placeholder.
@@ -2049,10 +2912,10 @@ type Frequency string
 
 // Frequency_Invariants excludes the two-byte shape the formatter can never produce while Range
 // keeps the placeholder floor, widest form, and ordinary interior lengths demanded.
-func Frequency_Invariants(text Frequency, namespace invariant.Namespace) {
-	invariant.Dot_Product(namespace).
-		Range_Int(len(text), FREQUENCY_BYTES_MIN, FREQUENCY_BYTES_MAX, 2).
-		Ensure()
+func Frequency_Invariants(identifier string, text Frequency) {
+	invariant.Range(identifier, len(text), FREQUENCY_BYTES_MIN, FREQUENCY_BYTES_MAX, 2)
+	invariant.Sometimes(identifier, 2 < len(text) && len(text) < FREQUENCY_BYTES_MAX,
+		"The rendered frequency is an ordinary length.")
 }
 
 // SUFFIX_BYTES_MIN is the empty base unit a suffix floors at.
@@ -2067,10 +2930,15 @@ type Suffix string
 
 // Suffix_Invariants bounds a suffix's length and witnesses each boundary; a suffix spans
 // the empty base unit through the three-byte binary suffixes.
-func Suffix_Invariants(unit Suffix, namespace invariant.Namespace) {
-	invariant.Dot_Product(namespace).
-		Range_Int(len(unit), SUFFIX_BYTES_MIN, SUFFIX_BYTES_MAX).
-		Ensure()
+func Suffix_Invariants(identifier string, unit Suffix) {
+	invariant.Always(len(unit) <= SUFFIX_BYTES_MAX,
+		"A unit suffix never exceeds the binary width.")
+	invariant.Sometimes(identifier, len(unit) == SUFFIX_BYTES_MIN,
+		"The unit suffix is the empty base.")
+	invariant.Sometimes(identifier, len(unit) == 1, "The unit suffix is one byte.")
+	invariant.Sometimes(identifier, len(unit) == 2, "The unit suffix is two bytes.")
+	invariant.Sometimes(identifier, len(unit) == SUFFIX_BYTES_MAX,
+		"The unit suffix is the binary width.")
 }
 
 // PHASE_BYTES_MIN is the empty sampling phase a phase word floors at.
@@ -2085,10 +2953,13 @@ type Phase string
 
 // Phase_Invariants uses an Enum because only the empty sampling phase and the warmup word exist;
 // saturation rejects every other width and demands both real states.
-func Phase_Invariants(name Phase, namespace invariant.Namespace) {
-	invariant.Dot_Product(namespace).
-		Enum_Int(len(name), PHASE_BYTES_MIN, PHASE_BYTES_MAX).
-		Ensure()
+func Phase_Invariants(identifier string, name Phase) {
+	invariant.Always(len(name) == PHASE_BYTES_MIN || len(name) == PHASE_BYTES_MAX,
+		"A phase is the empty sampling word or the warmup word.")
+	invariant.Sometimes(identifier, len(name) == PHASE_BYTES_MIN,
+		"The phase is the sampling default.")
+	invariant.Sometimes(identifier, len(name) == PHASE_BYTES_MAX,
+		"The phase is the warmup word.")
 }
 
 // EXTENT_MIN is the narrowest column width the layout assembles: the four-wide delta
@@ -2106,10 +2977,10 @@ type Extent int
 
 // Extent_Invariants bounds an extent; a column width is always at least three, so the
 // zero, one, two, and negative boundaries are unreachable while the min and max witness.
-func Extent_Invariants(value Extent, namespace invariant.Namespace) {
-	invariant.Dot_Product(namespace).
-		Range_Int(int(value), EXTENT_MIN, EXTENT_MAX).
-		Ensure()
+func Extent_Invariants(identifier string, value Extent) {
+	invariant.Range(identifier, int(value), EXTENT_MIN, EXTENT_MAX)
+	invariant.Sometimes(identifier, EXTENT_MIN < int(value) && int(value) < EXTENT_MAX,
+		"The column width is an ordinary extent.")
 }
 
 // KEPT_MIN is the quorum a kept distribution carries at least: the 3-run minimum.
@@ -2125,10 +2996,15 @@ type Kept int
 
 // Kept_Invariants bounds a kept-run count to the quorum range; the below-quorum counts are
 // guarded away, and the quorum floor and the run-cap ceiling are witnessed.
-func Kept_Invariants(value Kept, namespace invariant.Namespace) {
-	invariant.Dot_Product(namespace).
-		Range_Int(int(value), KEPT_MIN, KEPT_MAX).
-		Ensure()
+func Kept_Invariants(identifier string, value Kept) {
+	invariant.Always(int(value) >= KEPT_MIN, "A kept-run count is never below the quorum.")
+	invariant.Always(int(value) <= KEPT_MAX, "A kept-run count is never above the run cap.")
+	invariant.Sometimes(identifier, int(value) == KEPT_MIN,
+		"The kept-run count is the quorum floor.")
+	invariant.Sometimes(identifier, int(value) == KEPT_MAX,
+		"The kept-run count fills the run cap.")
+	invariant.Sometimes(identifier, KEPT_MIN < int(value) && int(value) < KEPT_MAX,
+		"The kept-run count is an ordinary quorum.")
 }
 
 // DEGREE_MIN is the smallest pooled degrees-of-freedom a real comparison reaches: two
@@ -2147,10 +3023,10 @@ type Degree int
 
 // Degree_Invariants bounds a degree; a degree is at least one, so the zero and negative
 // boundaries are unreachable while the one min, the two shape, and the max are witnessed.
-func Degree_Invariants(value Degree, namespace invariant.Namespace) {
-	invariant.Dot_Product(namespace).
-		Range_Int(int(value), DEGREE_MIN, DEGREE_MAX).
-		Ensure()
+func Degree_Invariants(identifier string, value Degree) {
+	invariant.Range(identifier, int(value), DEGREE_MIN, DEGREE_MAX)
+	invariant.Sometimes(identifier, DEGREE_MIN < int(value) && int(value) < DEGREE_MAX,
+		"The pooled degrees are an ordinary count.")
 }
 
 // CENSUS_MIN is the single sample a reduced distribution carries at least.
@@ -2165,10 +3041,15 @@ type Census int
 
 // Census_Invariants bounds a census; it is at least one, so the zero and negative boundaries
 // are unreachable while the one min, the two shape, and the cap max are witnessed.
-func Census_Invariants(value Census, namespace invariant.Namespace) {
-	invariant.Dot_Product(namespace).
-		Range_Int(int(value), CENSUS_MIN, CENSUS_MAX).
-		Ensure()
+func Census_Invariants(identifier string, value Census) {
+	invariant.Always(int(value) >= CENSUS_MIN, "A census is never below one.")
+	invariant.Always(int(value) <= CENSUS_MAX, "A census never exceeds the run cap.")
+	invariant.Sometimes(identifier, int(value) == CENSUS_MIN, "The census is one.")
+	invariant.Sometimes(identifier, int(value) == 2, "The census is two.")
+	invariant.Sometimes(identifier, int(value) == CENSUS_MAX,
+		"The census fills the run cap.")
+	invariant.Sometimes(identifier, 2 < int(value) && int(value) < CENSUS_MAX,
+		"The census is an ordinary count.")
 }
 
 // DIVISOR_MIN is the Bessel divisor a quorum floors at: the 3-run minimum less one. A
@@ -2184,10 +3065,17 @@ type Divisor int
 
 // Divisor_Invariants bounds a divisor; it is at least one, so the zero and negative
 // boundaries are unreachable while the one min, the two shape, and the max are witnessed.
-func Divisor_Invariants(value Divisor, namespace invariant.Namespace) {
-	invariant.Dot_Product(namespace).
-		Range_Int(int(value), DIVISOR_MIN, DIVISOR_MAX).
-		Ensure()
+func Divisor_Invariants(identifier string, value Divisor) {
+	invariant.Always(int(value) >= DIVISOR_MIN,
+		"A Bessel divisor is never below the quorum less one.")
+	invariant.Always(int(value) <= DIVISOR_MAX,
+		"A Bessel divisor is never above a full run less one.")
+	invariant.Sometimes(identifier, int(value) == DIVISOR_MIN,
+		"The Bessel divisor is the quorum floor's.")
+	invariant.Sometimes(identifier, int(value) == DIVISOR_MAX,
+		"The Bessel divisor is a full run's.")
+	invariant.Sometimes(identifier, DIVISOR_MIN < int(value) && int(value) < DIVISOR_MAX,
+		"The Bessel divisor is an ordinary count.")
 }
 
 // TALLY_MIN is the empty count or first index a tally floors at: zero.
@@ -2202,10 +3090,15 @@ type Tally int
 
 // Tally_Invariants bounds a tally; it is never negative, with the zero min, the kept-run
 // max, and the one- and two-count shapes between witnessed.
-func Tally_Invariants(value Tally, namespace invariant.Namespace) {
-	invariant.Dot_Product(namespace).
-		Range_Int(int(value), TALLY_MIN, TALLY_MAX).
-		Ensure()
+func Tally_Invariants(identifier string, value Tally) {
+	invariant.Always(int(value) >= TALLY_MIN, "A tally is never negative.")
+	invariant.Always(int(value) <= TALLY_MAX, "A tally never exceeds the run cap.")
+	invariant.Sometimes(identifier, int(value) == TALLY_MIN, "The tally is zero.")
+	invariant.Sometimes(identifier, int(value) == 1, "The tally is one.")
+	invariant.Sometimes(identifier, int(value) == 2, "The tally is two.")
+	invariant.Sometimes(identifier, int(value) == TALLY_MAX, "The tally fills the run cap.")
+	invariant.Sometimes(identifier, 2 < int(value) && int(value) < TALLY_MAX,
+		"The tally is an ordinary count.")
 }
 
 // STRAYS_MIN is the empty outlier count a clean distribution floors at: zero.
@@ -2221,10 +3114,17 @@ type Strays int
 
 // Strays_Invariants bounds the outlier count; never negative, with the zero min, the outer-half
 // max, and the one- and two-count shapes between witnessed.
-func Strays_Invariants(value Strays, namespace invariant.Namespace) {
-	invariant.Dot_Product(namespace).
-		Range_Int(int(value), STRAYS_MIN, STRAYS_MAX).
-		Ensure()
+func Strays_Invariants(identifier string, value Strays) {
+	invariant.Always(int(value) >= STRAYS_MIN, "An outlier count is never negative.")
+	invariant.Always(int(value) <= STRAYS_MAX,
+		"An outlier count never exceeds the outer half.")
+	invariant.Sometimes(identifier, int(value) == STRAYS_MIN, "The outlier count is zero.")
+	invariant.Sometimes(identifier, int(value) == 1, "The outlier count is one.")
+	invariant.Sometimes(identifier, int(value) == 2, "The outlier count is two.")
+	invariant.Sometimes(identifier, int(value) == STRAYS_MAX,
+		"The outlier count fills the outer half.")
+	invariant.Sometimes(identifier, 2 < int(value) && int(value) < STRAYS_MAX,
+		"The outlier count is an ordinary tally.")
 }
 
 // Index_min is the first position a zero-based index floors at: zero.
@@ -2240,10 +3140,16 @@ type Position int
 
 // Position_Invariants bounds a position; it is never negative, with the zero min, the last
 // slot max, and the one- and two-position shapes between witnessed.
-func Position_Invariants(value Position, namespace invariant.Namespace) {
-	invariant.Dot_Product(namespace).
-		Range_Int(int(value), POSITION_MIN, POSITION_MAX).
-		Ensure()
+func Position_Invariants(identifier string, value Position) {
+	invariant.Always(int(value) >= POSITION_MIN, "A position is never negative.")
+	invariant.Always(int(value) <= POSITION_MAX, "A position never exceeds the last slot.")
+	invariant.Sometimes(identifier, int(value) == POSITION_MIN, "The position is the first.")
+	invariant.Sometimes(identifier, int(value) == 1, "The position is the second.")
+	invariant.Sometimes(identifier, int(value) == 2, "The position is the third.")
+	invariant.Sometimes(identifier, int(value) == POSITION_MAX,
+		"The position is the last slot.")
+	invariant.Sometimes(identifier, 2 < int(value) && int(value) < POSITION_MAX,
+		"The position is an ordinary slot.")
 }
 
 // EXIT_CODE_MIN is the success code zero a code floors at.
@@ -2259,10 +3165,8 @@ type Exit_Code int
 
 // Exit_Code_Invariants bounds an exit code to success or failure; the higher and negative
 // codes are unreachable, and the success min and failure max are witnessed.
-func Exit_Code_Invariants(value Exit_Code, namespace invariant.Namespace) {
-	invariant.Dot_Product(namespace).
-		Range_Int(int(value), EXIT_CODE_MIN, EXIT_CODE_MAX).
-		Ensure()
+func Exit_Code_Invariants(identifier string, value Exit_Code) {
+	invariant.Range(identifier, int(value), EXIT_CODE_MIN, EXIT_CODE_MAX)
 }
 
 // EXIT_STATUS_MIN is the success code a command's exit floors at: zero.
@@ -2279,10 +3183,19 @@ type Exit_Status int
 
 // Exit_Status_Invariants bounds a command's exit to the byte range and witnesses the small
 // codes and the extremes; a negative code is guarded away, never a child's real status.
-func Exit_Status_Invariants(value Exit_Status, namespace invariant.Namespace) {
-	invariant.Dot_Product(namespace).
-		Range_Int(int(value), EXIT_STATUS_MIN, EXIT_STATUS_MAX).
-		Ensure()
+func Exit_Status_Invariants(identifier string, value Exit_Status) {
+	invariant.Always(int(value) >= EXIT_STATUS_MIN,
+		"A command exit status is never negative.")
+	invariant.Always(int(value) <= EXIT_STATUS_MAX,
+		"A command exit status never exceeds the wait byte.")
+	invariant.Sometimes(identifier, int(value) == EXIT_STATUS_MIN,
+		"The command exit status is success.")
+	invariant.Sometimes(identifier, int(value) == 1, "The command exit status is one.")
+	invariant.Sometimes(identifier, int(value) == 2, "The command exit status is two.")
+	invariant.Sometimes(identifier, int(value) == EXIT_STATUS_MAX,
+		"The command exit status is the byte ceiling.")
+	invariant.Sometimes(identifier, 2 < int(value) && int(value) < EXIT_STATUS_MAX,
+		"The command exit status is an ordinary code.")
 }
 
 // FAILURE_STATUS_MIN is the smallest a failing command's exit is: one. A failure is
@@ -2299,10 +3212,18 @@ type Failure_Status int
 
 // Failure_Status_Invariants bounds a failing command's exit to the non-zero byte range and
 // witnesses the small codes and the ceiling; success and negatives are guarded away.
-func Failure_Status_Invariants(value Failure_Status, namespace invariant.Namespace) {
-	invariant.Dot_Product(namespace).
-		Range_Int(int(value), FAILURE_STATUS_MIN, FAILURE_STATUS_MAX).
-		Ensure()
+func Failure_Status_Invariants(identifier string, value Failure_Status) {
+	invariant.Always(int(value) >= FAILURE_STATUS_MIN,
+		"A failure status is never success.")
+	invariant.Always(int(value) <= FAILURE_STATUS_MAX,
+		"A failure status never exceeds the wait byte.")
+	invariant.Sometimes(identifier, int(value) == FAILURE_STATUS_MIN,
+		"The failure status is one.")
+	invariant.Sometimes(identifier, int(value) == 2, "The failure status is two.")
+	invariant.Sometimes(identifier, int(value) == FAILURE_STATUS_MAX,
+		"The failure status is the byte ceiling.")
+	invariant.Sometimes(identifier, 2 < int(value) && int(value) < FAILURE_STATUS_MAX,
+		"The failure status is an ordinary code.")
 }
 
 // CORES_COUNT_MIN is the zero a core count floors at: a CPU without a hybrid split
@@ -2312,19 +3233,6 @@ const CORES_COUNT_MIN = 0
 // CORES_COUNT_MAX bounds a core count to a realistic, render-safe topology: even the
 // widest server fits, and the core-layout line stays within its length.
 const CORES_COUNT_MAX = 1023
-
-// Cores is a CPU core count — physical, logical, or a hybrid performance/efficiency
-// tier. A distinct type bounded to a realistic topology, so its bundle witnesses the
-// small counts and the ceiling a real machine reaches, not a signed word's extremes.
-type Cores int
-
-// Cores_Invariants bounds a core count to the realistic range; never negative, with the
-// zero, one, two, and ceiling shapes witnessed.
-func Cores_Invariants(value Cores, namespace invariant.Namespace) {
-	invariant.Dot_Product(namespace).
-		Range_Int(int(value), CORES_COUNT_MIN, CORES_COUNT_MAX).
-		Ensure()
-}
 
 // HERTZ_MIN is the zero an unknown frequency reports: the kernel exposed no maximum.
 const HERTZ_MIN = 0
@@ -2340,10 +3248,17 @@ type Hertz uint64
 
 // Hertz_Invariants bounds a frequency to the realistic range; the zero (unknown), the one
 // and two shapes, and the ceiling are witnessed.
-func Hertz_Invariants(value Hertz, namespace invariant.Namespace) {
-	invariant.Dot_Product(namespace).
-		Range_Uint64(uint64(value), HERTZ_MIN, HERTZ_MAX).
-		Ensure()
+func Hertz_Invariants(identifier string, value Hertz) {
+	invariant.Always(uint64(value) <= HERTZ_MAX,
+		"A CPU frequency stays within the realistic ceiling.")
+	invariant.Sometimes(identifier, uint64(value) == HERTZ_MIN,
+		"The CPU frequency is unknown.")
+	invariant.Sometimes(identifier, uint64(value) == 1, "The CPU frequency is one hertz.")
+	invariant.Sometimes(identifier, uint64(value) == 2, "The CPU frequency is two hertz.")
+	invariant.Sometimes(identifier, uint64(value) == HERTZ_MAX,
+		"The CPU frequency fills the realistic ceiling.")
+	invariant.Sometimes(identifier, 2 < uint64(value) && uint64(value) < HERTZ_MAX,
+		"The CPU frequency is an ordinary rating.")
 }
 
 // BYTE_SIZE_MIN is the zero a byte size floors at: a cache or store the kernel did not
@@ -2361,10 +3276,12 @@ type Byte_Size uint64
 
 // Byte_Size_Invariants bounds a byte size to the realistic range; the zero, one, two, and
 // ceiling shapes are witnessed.
-func Byte_Size_Invariants(value Byte_Size, namespace invariant.Namespace) {
-	invariant.Dot_Product(namespace).
-		Range_Uint64(uint64(value), BYTE_SIZE_MIN, BYTE_SIZE_MAX).
-		Ensure()
+func Byte_Size_Invariants(identifier string, value Byte_Size) {
+	invariant.Range(identifier, uint64(value), BYTE_SIZE_MIN, BYTE_SIZE_MAX)
+	invariant.Sometimes(identifier, uint64(value) == 1, "The byte size is one.")
+	invariant.Sometimes(identifier, uint64(value) == 2, "The byte size is two.")
+	invariant.Sometimes(identifier, 2 < uint64(value) && uint64(value) < BYTE_SIZE_MAX,
+		"The byte size is an ordinary capacity.")
 }
 
 // GAP_MIN is the smallest a deviation magnitude is: zero, when a value equals the mean.
@@ -2384,10 +3301,12 @@ type Gap uint64
 
 // Gap_Invariants bounds a gap. The zero floor and the ceiling — a lone extreme value's distance
 // from the mean it barely shifts — are both reached, so it is an ordinary bounded range.
-func Gap_Invariants(value Gap, namespace invariant.Namespace) {
-	invariant.Dot_Product(namespace).
-		Range_Uint64(uint64(value), GAP_MIN, GAP_MAX).
-		Ensure()
+func Gap_Invariants(identifier string, value Gap) {
+	invariant.Range(identifier, uint64(value), GAP_MIN, GAP_MAX)
+	invariant.Sometimes(identifier, uint64(value) == 1, "The deviation magnitude is one.")
+	invariant.Sometimes(identifier, uint64(value) == 2, "The deviation magnitude is two.")
+	invariant.Sometimes(identifier, 2 < uint64(value) && uint64(value) < GAP_MAX,
+		"The deviation magnitude is an ordinary distance.")
 }
 
 // ACCUMULATOR_MIN is the smallest a 128-bit accumulator word is: zero, an empty sum.
@@ -2407,10 +3326,20 @@ type Accumulator_High uint64
 
 // Accumulator_High_Invariants bounds the high word to the high half of the greatest sum of
 // squared deviations a distribution reaches.
-func Accumulator_High_Invariants(value Accumulator_High, namespace invariant.Namespace) {
-	invariant.Dot_Product(namespace).
-		Range_Uint64(uint64(value), ACCUMULATOR_MIN, ACCUMULATOR_HIGH_MAX).
-		Ensure()
+func Accumulator_High_Invariants(identifier string, value Accumulator_High) {
+	invariant.Always(uint64(value) <= ACCUMULATOR_HIGH_MAX,
+		"A high accumulator word never exceeds the greatest sum of squares.")
+	invariant.Sometimes(identifier, uint64(value) == ACCUMULATOR_MIN,
+		"The high accumulator word is zero.")
+	invariant.Sometimes(identifier, uint64(value) == 1,
+		"The high accumulator word is one.")
+	invariant.Sometimes(identifier, uint64(value) == 2,
+		"The high accumulator word is two.")
+	invariant.Sometimes(identifier, uint64(value) == ACCUMULATOR_HIGH_MAX,
+		"The high accumulator word fills its ceiling.")
+	invariant.Sometimes(identifier,
+		2 < uint64(value) && uint64(value) < ACCUMULATOR_HIGH_MAX,
+		"The high accumulator word is an ordinary sum.")
 }
 
 // ACCUMULATOR_LOW_MAX is the low word's ceiling: the full word width. The low half is a modular
@@ -2423,10 +3352,16 @@ type Accumulator_Low uint64
 
 // Accumulator_Low_Invariants bounds the low word to the full word width it spans as a modular
 // residue of the running sum.
-func Accumulator_Low_Invariants(value Accumulator_Low, namespace invariant.Namespace) {
-	invariant.Dot_Product(namespace).
-		Range_Uint64(uint64(value), ACCUMULATOR_MIN, ACCUMULATOR_LOW_MAX).
-		Ensure()
+func Accumulator_Low_Invariants(identifier string, value Accumulator_Low) {
+	invariant.Sometimes(identifier, uint64(value) == ACCUMULATOR_MIN,
+		"The low accumulator word is zero.")
+	invariant.Sometimes(identifier, uint64(value) == 1, "The low accumulator word is one.")
+	invariant.Sometimes(identifier, uint64(value) == 2, "The low accumulator word is two.")
+	invariant.Sometimes(identifier, uint64(value) == ACCUMULATOR_LOW_MAX,
+		"The low accumulator word is saturated.")
+	invariant.Sometimes(identifier,
+		2 < uint64(value) && uint64(value) < ACCUMULATOR_LOW_MAX,
+		"The low accumulator word is an ordinary residue.")
 }
 
 // METRIC_MIN is the zero floor a measured metric sits at: a count or a monotonic span is
@@ -2450,10 +3385,12 @@ type Metric int64
 // Metric_Invariants bounds a metric to the representable non-negative range; the negative
 // boundary is guarded away, with the zero min, the representable max, and the one and two
 // shapes witnessed.
-func Metric_Invariants(value Metric, namespace invariant.Namespace) {
-	invariant.Dot_Product(namespace).
-		Range_Int64(int64(value), METRIC_MIN, METRIC_MAX).
-		Ensure()
+func Metric_Invariants(identifier string, value Metric) {
+	invariant.Range(identifier, int64(value), METRIC_MIN, METRIC_MAX)
+	invariant.Sometimes(identifier, value == 1, "The metric is one.")
+	invariant.Sometimes(identifier, value == 2, "The metric is two.")
+	invariant.Sometimes(identifier, 2 < value && value < METRIC_MAX,
+		"The metric is an ordinary magnitude.")
 }
 
 // AVERAGE_MIN is the zero floor an integer mean sits at: the metrics it averages are
@@ -2472,10 +3409,12 @@ type Average int64
 // Average_Invariants bounds the integer mean to the non-negative fixed-point range and
 // witnesses the small values and the representable ceiling; the negative boundaries are
 // guarded away, since a mean of non-negative metrics never goes below zero.
-func Average_Invariants(value Average, namespace invariant.Namespace) {
-	invariant.Dot_Product(namespace).
-		Range_Int64(int64(value), AVERAGE_MIN, AVERAGE_MAX).
-		Ensure()
+func Average_Invariants(identifier string, value Average) {
+	invariant.Range(identifier, int64(value), AVERAGE_MIN, AVERAGE_MAX)
+	invariant.Sometimes(identifier, value == 1, "The integer mean is one.")
+	invariant.Sometimes(identifier, value == 2, "The integer mean is two.")
+	invariant.Sometimes(identifier, 2 < value && value < AVERAGE_MAX,
+		"The integer mean is an ordinary magnitude.")
 }
 
 // POINTS_MAX bounds a sorted run's length: the per-command sample cap, since the run is the
@@ -2489,8 +3428,15 @@ type Points []int64
 // Points_Invariants bounds a sorted run's length. The run is a kept distribution's samples,
 // floored at the 3-run quorum, so the quorum floor and the cap max are witnessed and the
 // shorter counts are guarded out.
-func Points_Invariants(values Points, namespace invariant.Namespace) {
-	invariant.Dot_Product(namespace).Range_Int(len(values), QUORUM_MIN, POINTS_MAX).Ensure()
+func Points_Invariants(identifier string, values Points) {
+	invariant.Always(len(values) >= QUORUM_MIN, "A sorted run is never below the quorum.")
+	invariant.Always(len(values) <= POINTS_MAX, "A sorted run never exceeds the sample cap.")
+	invariant.Sometimes(identifier, len(values) == QUORUM_MIN,
+		"The sorted run is the quorum floor.")
+	invariant.Sometimes(identifier, len(values) == POINTS_MAX,
+		"The sorted run fills the sample cap.")
+	invariant.Sometimes(identifier, QUORUM_MIN < len(values) && len(values) < POINTS_MAX,
+		"The sorted run is an ordinary length.")
 }
 
 // LABEL_BYTES_MIN is the empty command label a progress line floors at.
@@ -2507,21 +3453,32 @@ type Label string
 
 // Label_Invariants bounds a label's byte length: the empty min, the truncation max, and
 // the one- and two-byte shapes between are witnessed.
-func Label_Invariants(text Label, namespace invariant.Namespace) {
-	invariant.Dot_Product(namespace).
-		Range_Int(len(text), LABEL_BYTES_MIN, LABEL_BYTES_MAX).
-		Ensure()
+func Label_Invariants(identifier string, text Label) {
+	invariant.Range(identifier, len(text), LABEL_BYTES_MIN, LABEL_BYTES_MAX)
+	invariant.Sometimes(identifier, len(text) == 1, "The progress label is one byte.")
+	invariant.Sometimes(identifier, len(text) == 2, "The progress label is two bytes.")
+	invariant.Sometimes(identifier, 2 < len(text) && len(text) < LABEL_BYTES_MAX,
+		"The progress label is an ordinary length.")
+}
+
+// Right_Aligned is which side the padder aligns to: right when set, left otherwise.
+type Right_Aligned bool
+
+// Right_Aligned_Invariants witnesses both alignments, carrying the demand the old
+// pad.right grid stated.
+func Right_Aligned_Invariants(identifier string, value Right_Aligned) {
+	invariant.Sometimes(identifier, bool(value), "The column right-aligns.")
 }
 
 // Pad aligns text to a visible width with spaces — on the left when right is set, so the
 // text right-aligns, on the right otherwise. The width is the rune count, so a multibyte
 // glyph like σ still counts as one column. One padder, so every column width passes one site
 // and the width and padded-line invariants see the whole layout's range, not a per-side slice.
-func pad(text Column, width Extent, right bool) (result Padded) {
-	defer func() { Padded_Invariants(result, "pad.padded") }()
-	Column_Invariants(text, "pad.text")
-	Extent_Invariants(width, "pad.width")
-	invariant.Boolean_Invariants(right, "pad.right")
+func pad(text Column, width Extent, right Right_Aligned) (result Padded) {
+	defer func() { Padded_Invariants("pad.padded", result) }()
+	Column_Invariants("pad.text", text)
+	Extent_Invariants("pad.width", width)
+	Right_Aligned_Invariants("pad.right", right)
 	space := int(width) - utf8.RuneCountInString(string(text))
 	if space < 0 {
 		return Padded(text)
@@ -2542,10 +3499,10 @@ const PERCENT_DISPLAY_MAX fixedpoint.Number = 9_999_999 * fixedpoint.SCALE
 // Delta_render formats one metric's change: a sign, the percentage, and its
 // confidence half-interval. A significant change is colored — red slower, green
 // faster — while an insignificant one stays faint.
-func delta_render(delta Delta, color bool) (text Delta_Text) {
-	defer func() { Delta_Text_Invariants(text, "delta_render.text") }()
-	Delta_Invariants(delta, "delta_render.delta")
-	invariant.Boolean_Invariants(color, "delta_render.color")
+func delta_render(delta Delta, color Color) (text Delta_Text) {
+	defer func() { Delta_Text_Invariants("delta_render.text", text) }()
+	Delta_Invariants("delta_render.delta", delta)
+	Color_Invariants("delta_render.color", color)
 	sign := "+"
 	if delta.Faster {
 		sign = "-"
@@ -2557,11 +3514,11 @@ func delta_render(delta Delta, color bool) (text Delta_Text) {
 			code = ANSI_BRIGHT_GREEN
 		}
 	}
-	difference := delta.Diff_Percent
+	difference := fixedpoint.Number(delta.Diff_Percent)
 	if difference < 0 {
 		difference = -difference
 	}
-	half_percent := delta.Half_Percent
+	half_percent := fixedpoint.Number(delta.Half_Percent)
 	// Pin both percentages to the column's widest value. A change past ten million percent —
 	// a candidate a hundred-thousand-fold off the reference — cannot fit the fixed delta
 	// layout the body invariant sizes for, and its exact magnitude past the bound is noise;
@@ -2587,16 +3544,17 @@ type Scale_Step struct {
 	Suffix Suffix
 }
 
-// Scale_Step_Invariants states a rung's suffix; the divisor has no preset of its own.
-func Scale_Step_Invariants(step Scale_Step, namespace invariant.Namespace) {
-	Suffix_Invariants(step.Suffix, "Scale_Step.Suffix")
+// Scale_Step_Invariants composes a rung's suffix; the divisor carries no bundle of
+// its own.
+func Scale_Step_Invariants(identifier string, step Scale_Step) {
+	Suffix_Invariants(identifier, step.Suffix)
 }
 
 // Format_quantity renders a raw value scaled to a human unit with three significant
 // figures — poop's printUnit, e.g. 14906807 nanoseconds becomes "14.9ms".
 func format_quantity(value fixedpoint.Number, unit Unit) (text Cell) {
-	defer func() { Cell_Invariants(text, "format_quantity.text") }()
-	Unit_Invariants(unit, "format_quantity.unit")
+	defer func() { Cell_Invariants("format_quantity.text", text) }()
+	Unit_Invariants("format_quantity.unit", unit)
 	scaled, unit_suffix := scale_quantity(value, unit)
 	return Cell(string(format_significant(scaled)) + string(unit_suffix))
 }
@@ -2606,8 +3564,8 @@ func format_quantity(value fixedpoint.Number, unit Unit) (text Cell) {
 func scale_quantity(
 	value fixedpoint.Number, unit Unit,
 ) (scaled fixedpoint.Number, unit_suffix Suffix) {
-	defer func() { Suffix_Invariants(unit_suffix, "scale_quantity.suffix") }()
-	Unit_Invariants(unit, "scale_quantity.unit")
+	defer func() { Suffix_Invariants("scale_quantity.suffix", unit_suffix) }()
+	Unit_Invariants("scale_quantity.unit", unit)
 	switch unit {
 	case "nanoseconds":
 		return scale_ladder(value, time_ladder())
@@ -2622,8 +3580,8 @@ func scale_quantity(
 func scale_ladder(
 	value fixedpoint.Number, ladder Ladder,
 ) (scaled fixedpoint.Number, unit_suffix Suffix) {
-	defer func() { Suffix_Invariants(unit_suffix, "scale_ladder.suffix") }()
-	Ladder_Invariants(ladder, "scale_ladder.ladder")
+	defer func() { Suffix_Invariants("scale_ladder.suffix", unit_suffix) }()
+	Ladder_Invariants("scale_ladder.ladder", ladder)
 	for _, step := range ladder {
 		if value >= step.Divisor {
 			scaled = fixedpoint.Divide(&fixedpoint.Divide_Input{
@@ -2638,9 +3596,9 @@ func scale_ladder(
 // Time_ladder is the nanosecond-to-kilosecond ladder; the base unit is ns.
 func time_ladder() (ladder Ladder) {
 	defer func() {
-		Ladder_Invariants(ladder, "time_ladder.ladder")
+		Ladder_Invariants("time_ladder.ladder", ladder)
 		for _, x := range ladder {
-			Scale_Step_Invariants(x, "time_ladder.step")
+			Scale_Step_Invariants("time_ladder.step", x)
 		}
 	}()
 	return Ladder{
@@ -2656,9 +3614,9 @@ func time_ladder() (ladder Ladder) {
 // power-of-two quantity; the base unit is B.
 func byte_ladder() (ladder Ladder) {
 	defer func() {
-		Ladder_Invariants(ladder, "byte_ladder.ladder")
+		Ladder_Invariants("byte_ladder.ladder", ladder)
 		for _, x := range ladder {
-			Scale_Step_Invariants(x, "byte_ladder.step")
+			Scale_Step_Invariants("byte_ladder.step", x)
 		}
 	}()
 	return Ladder{
@@ -2673,9 +3631,9 @@ func byte_ladder() (ladder Ladder) {
 // Count_ladder is the metric-prefix ladder for a bare count; the base unit is unnamed.
 func count_ladder() (ladder Ladder) {
 	defer func() {
-		Ladder_Invariants(ladder, "count_ladder.ladder")
+		Ladder_Invariants("count_ladder.ladder", ladder)
 		for _, x := range ladder {
-			Scale_Step_Invariants(x, "count_ladder.step")
+			Scale_Step_Invariants("count_ladder.step", x)
 		}
 	}()
 	return Ladder{
@@ -2689,7 +3647,7 @@ func count_ladder() (ladder Ladder) {
 // Format_significant renders a scaled value to three significant figures: whole
 // numbers and hundreds with no decimals, tens with one, units with two.
 func format_significant(value fixedpoint.Number) (text Glyph) {
-	defer func() { Glyph_Invariants(text, "format_significant.text") }()
+	defer func() { Glyph_Invariants("format_significant.text", text) }()
 	if value >= fixedpoint.From_Integer(1000) {
 		return Glyph(fixedpoint.Format(value, 0))
 	}
@@ -2707,11 +3665,11 @@ func format_significant(value fixedpoint.Number) (text Glyph) {
 
 // Paint wraps text in an ANSI color when color is enabled; the codes have zero
 // visible width, so wrapping after padding leaves alignment intact.
-func paint(text Delta_Body, code Ansi_Code, color bool) (painted Delta_Text) {
-	defer func() { Delta_Text_Invariants(painted, "paint.painted") }()
-	Delta_Body_Invariants(text, "paint.text")
-	Ansi_Code_Invariants(code, "paint.code")
-	invariant.Boolean_Invariants(color, "paint.color")
+func paint(text Delta_Body, code Ansi_Code, color Color) (painted Delta_Text) {
+	defer func() { Delta_Text_Invariants("paint.painted", painted) }()
+	Delta_Body_Invariants("paint.text", text)
+	Ansi_Code_Invariants("paint.code", code)
+	Color_Invariants("paint.color", color)
 	if !color {
 		return Delta_Text(text)
 	}
@@ -2738,28 +3696,47 @@ type Render_Progress_Input struct {
 	// Count is how many runs have completed so far.
 	Count Census
 	// Total is the run cap the count is measured against.
-	Total int
+	Total Progress_Total
 }
 
-// Render_Progress_Input_Invariants states the update's coverable fields; the command
-// and elapsed duration have no preset of their own.
-func Render_Progress_Input_Invariants(input Render_Progress_Input, namespace invariant.Namespace) {
-	Phase_Invariants(input.Phase, "Render_Progress_Input.Phase")
-	Census_Invariants(input.Count, "Render_Progress_Input.Count")
-	invariant.Int_Invariants(input.Total, "Render_Progress_Input.Total")
+// Render_Progress_Input_Invariants composes the update's fields; the command and
+// elapsed duration carry no bundle of their own.
+func Render_Progress_Input_Invariants(identifier string, input Render_Progress_Input) {
+	Phase_Invariants(identifier, input.Phase)
+	Census_Invariants(identifier, input.Count)
+	Progress_Total_Invariants(identifier, input.Total)
+}
+
+// Progress_Total is the run cap a progress counter is measured against; zero when the
+// cap is disabled.
+type Progress_Total int
+
+// Progress_Total_Invariants witnesses the shapes the old full-width grid demanded with
+// the cap's own texts; the full-width domain enforces nothing.
+func Progress_Total_Invariants(identifier string, value Progress_Total) {
+	invariant.Sometimes(identifier, value == 1, "The progress total is one.")
+	invariant.Sometimes(identifier, value == -1, "The progress total is negative one.")
+	invariant.Sometimes(identifier, int64(value) == math.MinInt64,
+		"The progress total is the word minimum.")
+	invariant.Sometimes(identifier, int64(value) == math.MaxInt64,
+		"The progress total is the word maximum.")
+	invariant.Sometimes(identifier,
+		value != 1 && value != -1 &&
+			int64(value) != math.MinInt64 && int64(value) != math.MaxInt64,
+		"The progress total is an ordinary count.")
 }
 
 // Render_progress writes an in-place progress line to stderr: elapsed seconds, an
 // optional phase word (warmup), the counter (count over its total, or just the count
 // when the total is disabled), and the command. Gated by Progress at the call site.
 func render_progress(stderr io.Writer, input *Render_Progress_Input) {
-	Render_Progress_Input_Invariants(*input, "render_progress.input")
+	Render_Progress_Input_Invariants("render_progress.input", *input)
 	seconds := fixedpoint.From_Ratio(&fixedpoint.From_Ratio_Input{
 		Numerator: int64(input.Elapsed), Denominator: int64(time.SECOND),
 	})
 	counter := strconv.Itoa(int(input.Count))
 	if input.Total > 0 {
-		counter = counter + "/" + strconv.Itoa(input.Total)
+		counter = counter + "/" + strconv.Itoa(int(input.Total))
 	}
 	phase_text := ""
 	if input.Phase != "" {
@@ -2774,11 +3751,11 @@ func render_progress(stderr io.Writer, input *Render_Progress_Input) {
 // Progress_label joins the command words and truncates them to keep the progress
 // line on one terminal row.
 func progress_label(words Command_Line) (text Label) {
-	defer func() { Label_Invariants(text, "progress_label.label") }()
-	Command_Line_Invariants(words, "progress_label.words")
+	defer func() { Label_Invariants("progress_label.label", text) }()
+	Command_Line_Invariants("progress_label.words", words)
 	parts := make([]string, len(words))
 	for index, word := range words {
-		Command_Word_Invariants(word, "progress_label.word")
+		Command_Word_Invariants("progress_label.word", word)
 		parts[index] = string(word)
 	}
 	joined := strings.Join(parts, " ")

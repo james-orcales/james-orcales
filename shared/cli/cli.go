@@ -519,13 +519,24 @@ func Program_Parse(
 	program.Global_Flags = make([]Option, len(original_global_flags))
 	copy(program.Global_Flags, original_global_flags)
 
+	// Each observation's condition is one whole cell of the retired two-axis grid, so
+	// the full 2×2 cross-product of command shapes stays demanded — independent per-axis
+	// observations would demand only the four polarities, never the joint combinations.
 	defer func() {
 		argument_count := len(active_command.Arguments)
 		flag_count := len(active_command.Flags)
-		invariant.Dot_Product("cli.parse.command_shape").
-			Sometimes(argument_count > 0, "command has positional arguments").
-			Sometimes(flag_count > 0, "command has flags").
-			Ensure()
+		invariant.Sometimes("cli.parse.arguments_and_flags",
+			argument_count > 0 && flag_count > 0,
+			"The command declares positional arguments and flags.")
+		invariant.Sometimes("cli.parse.arguments_only",
+			argument_count > 0 && flag_count == 0,
+			"The command declares positional arguments and no flags.")
+		invariant.Sometimes("cli.parse.flags_only",
+			argument_count == 0 && flag_count > 0,
+			"The command declares flags and no positional arguments.")
+		invariant.Sometimes("cli.parse.bare_command",
+			argument_count == 0 && flag_count == 0,
+			"The command declares neither positional arguments nor flags.")
 	}()
 
 	// -help short-circuits before command resolution, so it works even when the command
