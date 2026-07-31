@@ -19,9 +19,10 @@ framework is the assertion system; the VOPR simulator (`shared/vsr/simulation`) 
 ## How to read this
 
 Assertion vocabulary maps the methodology's Antithesis SDK onto `shared/invariant`: `Always` →
-`invariant.Always` (safety; must be *reached*); `Sometimes(cond)` → `invariant.Sometimes` (must be
-observed *both ways* — stricter than Antithesis); `Reachable` → a meaningful `invariant.Sometimes`
-(no one-shot form exists); `Unreachable` → `invariant.Impossible`. The cross-cluster safety oracles
+`invariant.Always` (safety; must be *reached*); `Sometimes(cond)` → an
+`invariant.Assertions(...).Sometimes(...)` link (must be observed *both ways* — stricter than
+Antithesis); `Reachable` → a meaningful `Sometimes` link (no one-shot form exists). The
+cross-cluster safety oracles
 (agreement, single-primary, exactly-once, linearizability, checkpoint-agreement) are direct
 comparison checks in the simulator (`t.Fatalf` on violation), not `invariant.*` calls; they run in
 `simulator_assert_safety` after every delivery.
@@ -272,8 +273,8 @@ shortened
 *Safety · Tier-1 vsr.go:1114 · enforced-inline*
 
 **Property** — a message below the replica's epoch is never processed as a normal-view message.
-**Invariant** — `invariant.Dot_Product` of two `Sometimes` (epoch `<` vs `==`) plus
-`invariant.Impossible(stale ∧ processed-normally)`.
+**Invariant** — an `invariant.Assertions` chain witnesses epoch `<` and `==`; the gate admits only
+the equal branch and redirects the stale branch before message-kind handling.
 **Angle** — a reconfiguration overlapping a view change or recovery (coverage T21/T22).
 **Why** — processing a stale-epoch message normally re-admits a replaced member (paper §7.2).
 **Reachability** — both `Sometimes` branches witnessed: seeds deliver some below-epoch (redirected)

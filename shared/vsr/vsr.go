@@ -1241,18 +1241,13 @@ func replica_message_epoch_check(
 		}
 		return output, false
 	}
-	// Encode epoch precedence at the gate: a message below the replica's epoch must never be
-	// processed normally. The Sometimes axes witness the {stale, processed-normally} outcomes
-	// and the Impossible forbids their co-occurrence — a stale message slipping past the gate
-	// would trip it.
-	invariant.Dot_Product("vsr.epoch_gate.precedence").
+	// The control flow below admits only an equal epoch; these independent axes make both the
+	// stale redirect and ordinary path coverage obligations without duplicating that gate.
+	invariant.Assertions("vsr.epoch_gate.precedence").
 		Sometimes(message.Epoch < replica.Epoch,
 			"message epoch below replica epoch").
 		Sometimes(message.Epoch == replica.Epoch,
 			"message epoch matches replica epoch").
-		Impossible("stale messages are not processed normally",
-			invariant.Event_True("message epoch below replica epoch"),
-			invariant.Event_True("message epoch matches replica epoch")).
 		Ensure()
 	if message.Epoch == replica.Epoch {
 		return output, true
@@ -1703,7 +1698,7 @@ func replica_receive_epoch_started(replica *Replica, message Message) (output St
 
 // Checks the per-replica safety invariants that must hold after every step. These are local — a
 // replica verifies them from its own state — unlike agreement and single-primary, which span the
-// cluster and so live in the simulator. A violation is a Dot_Product panic, failing fast in any
+// cluster and so live in the simulator. A violation is an assertion panic, failing fast in any
 // embedding, not only under test.
 func replica_assert_safety(replica *Replica) {
 	// A replica being replaced adopts the new configuration it is handing off to (§7.1.2), so

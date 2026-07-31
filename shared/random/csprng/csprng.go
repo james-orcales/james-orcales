@@ -80,14 +80,15 @@ const BOUND_MAX Bound = 1 << 62
 // INDEX_MIN is the low bound of a draw result: zero.
 const INDEX_MIN Index = 0
 
-// INDEX_MAX caps a draw result at the same ceiling as the bound it is drawn below.
-const INDEX_MAX Index = 1 << 62
+// INDEX_MAX is one below the largest bound because Generator_Below's range is half-open.
+const INDEX_MAX Index = (1 << 62) - 1
 
 // SINK_MIN is the smallest fill request: an empty sink.
 const SINK_MIN = 0
 
-// SINK_MAX caps one fill request far above any real key or token.
-const SINK_MAX = 1 << 40
+// SINK_MAX keeps accidental bulk entropy requests bounded while remaining far above any key,
+// token, or nonce this generator is intended to fill.
+const SINK_MAX = 1 << 20
 
 // Block_Counter is the ChaCha20 block index within one refill, running BLOCK_COUNTER_MIN to
 // BLOCK_COUNTER_MAX.
@@ -95,21 +96,9 @@ type Block_Counter uint32
 
 // Block_Counter_Invariants bounds a block counter to one refill's range.
 func Block_Counter_Invariants(counter Block_Counter, namespace invariant.Namespace) {
-	invariant.Always(counter >= BLOCK_COUNTER_MIN, "A block counter is at least its min.")
-	invariant.Always(counter <= BLOCK_COUNTER_MAX, "A block counter is at most its max.")
-	invariant.Dot_Product(namespace).
-		Sometimes(counter == 0, "A block counter is zero.").
-		Sometimes(counter == 1, "A block counter is one.").
-		Sometimes(counter == 2, "A block counter is two.").
-		Impossible("A block counter cannot be zero and one.",
-			invariant.Event_True("A block counter is zero."),
-			invariant.Event_True("A block counter is one.")).
-		Impossible("A block counter cannot be zero and two.",
-			invariant.Event_True("A block counter is zero."),
-			invariant.Event_True("A block counter is two.")).
-		Impossible("A block counter cannot be one and two.",
-			invariant.Event_True("A block counter is one."),
-			invariant.Event_True("A block counter is two.")).
+	invariant.Assertions(namespace).
+		Range_Uint32(
+			uint32(counter), uint32(BLOCK_COUNTER_MIN), uint32(BLOCK_COUNTER_MAX)).
 		Ensure()
 }
 
@@ -118,21 +107,8 @@ type Cursor uint
 
 // Cursor_Invariants bounds a buffer cursor to the buffer.
 func Cursor_Invariants(cursor Cursor, namespace invariant.Namespace) {
-	invariant.Always(cursor >= CURSOR_MIN, "A cursor is at least its min.")
-	invariant.Always(cursor <= CURSOR_MAX, "A cursor is at most its max.")
-	invariant.Dot_Product(namespace).
-		Sometimes(cursor == 0, "A cursor is zero.").
-		Sometimes(cursor == 1, "A cursor is one.").
-		Sometimes(cursor == 2, "A cursor is two.").
-		Impossible("A cursor cannot be zero and one.",
-			invariant.Event_True("A cursor is zero."),
-			invariant.Event_True("A cursor is one.")).
-		Impossible("A cursor cannot be zero and two.",
-			invariant.Event_True("A cursor is zero."),
-			invariant.Event_True("A cursor is two.")).
-		Impossible("A cursor cannot be one and two.",
-			invariant.Event_True("A cursor is one."),
-			invariant.Event_True("A cursor is two.")).
+	invariant.Assertions(namespace).
+		Range_Uint(uint(cursor), uint(CURSOR_MIN), uint(CURSOR_MAX)).
 		Ensure()
 }
 
@@ -141,15 +117,8 @@ type Bound uint64
 
 // Bound_Invariants requires a bound to be positive and within the overflow-safe ceiling.
 func Bound_Invariants(bound Bound, namespace invariant.Namespace) {
-	invariant.Always(bound >= BOUND_MIN, "A bound is at least its min.")
-	invariant.Always(bound <= BOUND_MAX, "A bound is at most its max.")
-	invariant.Always(bound != 0, "A bound is never zero.")
-	invariant.Dot_Product(namespace).
-		Sometimes(bound == 1, "A bound is one.").
-		Sometimes(bound == 2, "A bound is two.").
-		Impossible("A bound cannot be one and two.",
-			invariant.Event_True("A bound is one."),
-			invariant.Event_True("A bound is two.")).
+	invariant.Assertions(namespace).
+		Range_Uint64(uint64(bound), uint64(BOUND_MIN), uint64(BOUND_MAX)).
 		Ensure()
 }
 
@@ -158,21 +127,8 @@ type Index uint64
 
 // Index_Invariants bounds a draw result.
 func Index_Invariants(index Index, namespace invariant.Namespace) {
-	invariant.Always(index >= INDEX_MIN, "An index is at least its min.")
-	invariant.Always(index <= INDEX_MAX, "An index is at most its max.")
-	invariant.Dot_Product(namespace).
-		Sometimes(index == 0, "An index is zero.").
-		Sometimes(index == 1, "An index is one.").
-		Sometimes(index == 2, "An index is two.").
-		Impossible("An index cannot be zero and one.",
-			invariant.Event_True("An index is zero."),
-			invariant.Event_True("An index is one.")).
-		Impossible("An index cannot be zero and two.",
-			invariant.Event_True("An index is zero."),
-			invariant.Event_True("An index is two.")).
-		Impossible("An index cannot be one and two.",
-			invariant.Event_True("An index is one."),
-			invariant.Event_True("An index is two.")).
+	invariant.Assertions(namespace).
+		Range_Uint64(uint64(index), uint64(INDEX_MIN), uint64(INDEX_MAX)).
 		Ensure()
 }
 
@@ -181,21 +137,8 @@ type Sink []byte
 
 // Sink_Invariants bounds a fill request's length.
 func Sink_Invariants(sink Sink, namespace invariant.Namespace) {
-	invariant.Always(len(sink) >= SINK_MIN, "A sink is at least its min.")
-	invariant.Always(len(sink) <= SINK_MAX, "A sink is at most its max.")
-	invariant.Dot_Product(namespace).
-		Sometimes(len(sink) == 0, "A sink is empty.").
-		Sometimes(len(sink) == 1, "A sink has one.").
-		Sometimes(len(sink) == 2, "A sink has two.").
-		Impossible("A sink cannot be empty and have one.",
-			invariant.Event_True("A sink is empty."),
-			invariant.Event_True("A sink has one.")).
-		Impossible("A sink cannot be empty and have two.",
-			invariant.Event_True("A sink is empty."),
-			invariant.Event_True("A sink has two.")).
-		Impossible("A sink cannot have one and two.",
-			invariant.Event_True("A sink has one."),
-			invariant.Event_True("A sink has two.")).
+	invariant.Assertions(namespace).
+		Range_Int(len(sink), SINK_MIN, SINK_MAX).
 		Ensure()
 }
 

@@ -147,7 +147,7 @@ func Test_Read_Fills_Fully(t *testing.T) {
 // Test_Bytes_Are_Uniform checks a filled buffer sets close to half of all its bits.
 func Test_Bytes_Are_Uniform(t *testing.T) {
 	generator := New([32]byte{3})
-	buffer := make([]byte, 100000)
+	buffer := make([]byte, SINK_MAX)
 	generator.Read(buffer)
 	set_bits := 0
 	for _, octet := range buffer {
@@ -173,6 +173,17 @@ func Test_Below_Is_Bounded(t *testing.T) {
 				t.Fatalf("Below(%d) returned %d, out of range", bound, index)
 			}
 		}
+	}
+	// An all-ones draw reaches the half-open domain's last value deterministically; waiting for
+	// a random stream to hit one point in 2^62 would make the boundary contract untestable.
+	maximum_generator := Generator{}
+	for index := 0; index < 8; index++ {
+		maximum_generator.Buffer[index] = 0xff
+	}
+	maximum := Generator_Below(&maximum_generator, BOUND_MAX)
+	if maximum != INDEX_MAX {
+		t.Fatalf("Below(%d) returned %d from an all-ones draw, want %d",
+			BOUND_MAX, maximum, INDEX_MAX)
 	}
 	died := did_die(func() {
 		Generator_Below(&generator, Bound(0))

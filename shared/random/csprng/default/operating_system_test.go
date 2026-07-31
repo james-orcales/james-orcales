@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	invariant "local/james-orcales/shared/invariant/default"
+	"local/james-orcales/shared/random/csprng"
 	os_csprng "local/james-orcales/shared/random/csprng/default"
 )
 
@@ -41,4 +42,12 @@ func Test_Operating_System_Smoke(t *testing.T) {
 	if !nonzero {
 		t.Fatalf("OS-seeded generator produced only zeros")
 	}
+	// Constructor coverage begins at zero; walking one byte at a time and then draining the
+	// refill makes the nested Cursor bundle prove every state boundary in this package too.
+	boundary := os_csprng.New_Operating_System_Generator()
+	boundary.Read(make([]byte, 1))
+	boundary.Read(make([]byte, 1))
+	boundary.Read(nil)
+	boundary.Read(make([]byte, csprng.BUFFER_BYTES-2))
+	boundary.Read(nil)
 }
