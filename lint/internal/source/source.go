@@ -112,6 +112,317 @@ func Build_Component_Index(
 	return index
 }
 
+// Declaration_Kind tells a resolved name apart. There is no fourth kind: a
+// package-level var is banned outright, so every package-level name a file can
+// reach is a func, a type, or a const.
+type Declaration_Kind int
+
+// DECLARATION_KIND_FUNCTION marks a func declaration.
+const DECLARATION_KIND_FUNCTION Declaration_Kind = 1
+
+// DECLARATION_KIND_TYPE marks a type declaration or alias.
+const DECLARATION_KIND_TYPE Declaration_Kind = 2
+
+// DECLARATION_KIND_CONSTANT marks a const declaration.
+const DECLARATION_KIND_CONSTANT Declaration_Kind = 3
+
+// Declaration is one package-level name and the node that declares it. Only the
+// node matching Kind is set; the rest stay nil.
+type Declaration struct {
+	// Kind is which of the three package-level declaration forms this is.
+	Kind Declaration_Kind
+	// Path is the repo-relative path of the file that declares the name.
+	Path string
+	// Function is the declaration when Kind is DECLARATION_KIND_FUNCTION.
+	Function *ast.FuncDecl
+	// Type_Specification is the declaration when Kind is DECLARATION_KIND_TYPE.
+	Type_Specification *ast.TypeSpec
+	// Value is the declared expression when Kind is DECLARATION_KIND_CONSTANT.
+	// The iota ban and the grouped-declaration ban together mean a const writes
+	// its own value out, so this expression is the whole story.
+	Value ast.Expr
+	// Ambiguous marks a name declared more than once in its package — the
+	// build-tag variants of one package declare the same name per platform.
+	// Resolve refuses an ambiguous name rather than pick a variant at random.
+	Ambiguous bool
+}
+
+// Package_Symbol names one package-level declaration: which directory holds it,
+// which package clause declares it, and the name itself. The package clause is
+// part of the key because a directory holds two packages whenever an external
+// test package sits beside the package it tests, and their names must not mix.
+type Package_Symbol struct {
+	// Directory is the repo-relative directory holding the declaring file.
+	Directory string
+	// Package is the package clause of the declaring file.
+	Package string
+	// Name is the declared identifier.
+	Name string
+}
+
+// File_Qualifier names one file's local qualifier for an imported package: the
+// alias when the import declares one, the imported package's own name when it
+// does not.
+type File_Qualifier struct {
+	// Path is the repo-relative path of the importing file.
+	Path string
+	// Qualifier is the local name that file calls the imported package by.
+	Qualifier string
+}
+
+// Declaration_Index resolves a name to its declaration anywhere in the parsed
+// set, with no type checker and no second parse. The doctrine is what makes it
+// exact: dot and blank imports are banned, so no name enters a file's scope
+// invisibly; aliases are explicit, so one qualifier names one package; package
+// vars and func init are banned, so a package-level name is a func, a type, or
+// a const; and shadowing is banned, so one name means one thing inside a file.
+type Declaration_Index struct {
+	// Declarations maps each package-level name to its declaration.
+	Declarations map[Package_Symbol]Declaration
+	// Imports maps an importing file's local qualifier to the imported package.
+	// The Name field of the value is empty: it names the package, not a member.
+	Imports map[File_Qualifier]Package_Symbol
+	// File_Package maps a file path to its own package clause and directory, so
+	// an unqualified reference resolves without re-reading the AST.
+	File_Package map[string]Package_Symbol
+}
+
+// Build_Declaration_Index indexes every package-level declaration in the parsed
+// set and every import each file resolves through. A scoped run passes only the
+// parsed subset, so a name outside that subset simply does not resolve — which
+// every consumer must read as "unknown", never as "absent".
+func Build_Declaration_Index(
+	parsed_files []Parsed_File, components *Component_Index,
+) (index *Declaration_Index) {
+
+	index = &Declaration_Index{
+		Declarations: make(map[Package_Symbol]Declaration, len(parsed_files)),
+		Imports:      make(map[File_Qualifier]Package_Symbol, len(parsed_files)),
+		File_Package: make(map[string]Package_Symbol, len(parsed_files)),
+	}
+	for _, pf := range parsed_files {
+		home := Package_Symbol{
+			Directory: path.Dir(pf.Path), Package: pf.File.Name.Name}
+		index.File_Package[pf.Path] = home
+		declaration_index_file(index, pf, home)
+		declaration_index_imports(index, pf, components)
+	}
+	return index
+}
+
+// Records one file's package-level declarations. A name already present in the
+// package is marked ambiguous rather than overwritten: the build-tag variants of
+// one package each declare the same name, and no consumer may pick between them.
+func declaration_index_file(
+	index *Declaration_Index, pf Parsed_File, home Package_Symbol,
+) {
+
+	record := func(name string, declaration Declaration) {
+		if name == "_" {
+			return
+		}
+		key := Package_Symbol{
+			Directory: home.Directory, Package: home.Package, Name: name}
+		if _, present := index.Declarations[key]; present {
+			declaration.Ambiguous = true
+		}
+		declaration.Path = pf.Path
+		index.Declarations[key] = declaration
+	}
+	for _, declaration := range pf.File.Decls {
+		function_declaration, is_function := declaration.(*ast.FuncDecl)
+		if is_function {
+			// A method belongs to its receiver, not to the package's name
+			// space, so it is not a package-level declaration.
+			if function_declaration.Recv == nil {
+				record(function_declaration.Name.Name, Declaration{
+					Kind:     DECLARATION_KIND_FUNCTION,
+					Function: function_declaration,
+				})
+			}
+			continue
+		}
+		generic_declaration, is_generic := declaration.(*ast.GenDecl)
+		if !is_generic {
+			continue
+		}
+		declaration_index_generic(generic_declaration, record)
+	}
+}
+
+// Records the type and const specs of one package-level GenDecl. A var spec is
+// skipped: check_no_package_vars bans the form, so indexing it would give a
+// consumer a kind the doctrine says cannot exist.
+func declaration_index_generic(
+	generic_declaration *ast.GenDecl, record func(name string, d Declaration),
+) {
+
+	for _, specification := range generic_declaration.Specs {
+		type_specification, is_type := specification.(*ast.TypeSpec)
+		if is_type {
+			record(type_specification.Name.Name, Declaration{
+				Kind:               DECLARATION_KIND_TYPE,
+				Type_Specification: type_specification,
+			})
+			continue
+		}
+		if generic_declaration.Tok != token.CONST {
+			continue
+		}
+		value_specification, is_value := specification.(*ast.ValueSpec)
+		if !is_value {
+			continue
+		}
+		for name_index, name := range value_specification.Names {
+			value := ast.Expr(nil)
+			if name_index < len(value_specification.Values) {
+				value = value_specification.Values[name_index]
+			}
+			record(name.Name, Declaration{
+				Kind: DECLARATION_KIND_CONSTANT, Value: value})
+		}
+	}
+}
+
+// Records the package each of one file's qualifiers names. An import the
+// workspace does not own — stdlib or third party — is left out, so a lookup
+// through it misses and its consumer skips the reference.
+func declaration_index_imports(
+	index *Declaration_Index, pf Parsed_File, components *Component_Index,
+) {
+
+	for _, import_specification := range pf.File.Imports {
+		import_path := strings.Trim(import_specification.Path.Value, `"`)
+		directory, package_name, resolved :=
+			import_path_directory(import_path, components)
+		if !resolved {
+			continue
+		}
+		qualifier := Import_Local_Name(import_specification, import_path)
+		if import_specification.Name == nil {
+			qualifier = package_name
+		}
+		if qualifier == "_" {
+			continue
+		}
+		if qualifier == "." {
+			continue
+		}
+		index.Imports[File_Qualifier{Path: pf.Path, Qualifier: qualifier}] =
+			Package_Symbol{Directory: directory, Package: package_name}
+	}
+}
+
+// Maps a first-party import path to the directory that holds it and the package
+// name declared there. The component's Import_Path prefix and Root are what turn
+// one into the other; Directory_Package supplies the declared name, which a
+// default directory deliberately makes differ from its own last segment.
+func import_path_directory(
+	import_path string, components *Component_Index,
+) (directory string, package_name string, resolved bool) {
+
+	component_index_number := For_Import_Path(import_path, components)
+	if component_index_number < 0 {
+		return "", "", false
+	}
+	m := components.Components[component_index_number]
+	relative := strings.TrimPrefix(
+		strings.TrimPrefix(import_path, m.Import_Path), "/")
+	directory = relative
+	if m.Root != "." {
+		directory = m.Root
+		if relative != "" {
+			directory = m.Root + "/" + relative
+		}
+	}
+	if directory == "" {
+		directory = "."
+	}
+	canonical := Canonicalize(relative)
+	if relative == "" {
+		canonical = "."
+	}
+	package_name = m.Directory_Package[canonical]
+	if package_name == "" {
+		// No parsed file declared the package, so the best available name is
+		// the path's own last segment — what an unaliased import binds anyway.
+		package_name = import_path[strings.LastIndex(import_path, "/")+1:]
+	}
+	return directory, package_name, true
+}
+
+// Package_Names returns every name declared by the package the given file
+// belongs to, its own declarations included. An ambiguous name is listed: a name
+// declared in two build-tag variants is still in scope, so a caller asking what
+// occupies the package's name space must see it even though Resolve refuses to
+// pick a declaration for it. A file the index does not hold yields nil.
+func Package_Names(index *Declaration_Index, file_path string) (names map[string]bool) {
+
+	home, known := index.File_Package[file_path]
+	if !known {
+		return nil
+	}
+	names = make(map[string]bool)
+	for key := range index.Declarations {
+		if key.Directory != home.Directory {
+			continue
+		}
+		if key.Package != home.Package {
+			continue
+		}
+		names[key.Name] = true
+	}
+	return names
+}
+
+// Resolve_Input carries one name lookup: the index, the file the reference sits
+// in, the qualifier it is written with, and the name itself.
+type Resolve_Input struct {
+	// Index is the workspace's declaration index.
+	Index *Declaration_Index
+	// Path is the repo-relative path of the file holding the reference.
+	Path string
+	// Qualifier is the reference's package qualifier, empty when the reference
+	// is a bare name in its own package.
+	Qualifier string
+	// Name is the referenced identifier.
+	Name string
+}
+
+// Resolve returns the declaration a reference names. found is false when the
+// name belongs to a package the run never parsed, when no declaration carries
+// it, or when the package declares it more than once — the three cases a
+// consumer must treat alike, as "unknown", never as "absent".
+func Resolve(input *Resolve_Input) (declaration Declaration, found bool) {
+
+	home, known := input.Index.File_Package[input.Path]
+	if !known {
+		return Declaration{}, false
+	}
+	key := Package_Symbol{
+		Directory: home.Directory, Package: home.Package, Name: input.Name}
+	if input.Qualifier != "" {
+		imported, imported_known := input.Index.Imports[File_Qualifier{
+			Path: input.Path, Qualifier: input.Qualifier}]
+		if !imported_known {
+			return Declaration{}, false
+		}
+		key = Package_Symbol{
+			Directory: imported.Directory,
+			Package:   imported.Package,
+			Name:      input.Name,
+		}
+	}
+	declaration, found = input.Index.Declarations[key]
+	if !found {
+		return Declaration{}, false
+	}
+	if declaration.Ambiguous {
+		return Declaration{}, false
+	}
+	return declaration, true
+}
+
 // Strips ^v[0-9]+$ segments from a slash-separated directory path so
 // snap/v2/X is treated identically to snap/X. Major-version segments
 // are Go module-versioning convention rather than real package tiers,

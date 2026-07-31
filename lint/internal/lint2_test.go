@@ -544,6 +544,129 @@ func Test_Shared_Component_Configurable(t *testing.T) {
 	}
 }
 
+// Test_Keyed_Struct_Init_Cross_Package verifies the rule reaches a struct
+// declared in another package, and leaves a named slice's positional literal
+// alone.
+func Test_Keyed_Struct_Init_Cross_Package(t *testing.T) {
+	t.Parallel()
+	const UNKEYED = "literal must use keyed fields"
+	alpha := "// Package alpha is a fixture.\npackage alpha\n\n" +
+		"// Widget is a fixture.\ntype Widget struct {\n" +
+		"\t// X is a fixture.\n\tX int\n}\n\n" +
+		"// Numbers is a fixture.\ntype Numbers []int\n"
+	beta := func(body string) (text string) {
+		return "// Package beta is a fixture.\npackage beta\n\n" +
+			"import alpha \"github.com/james-orcales/james-orcales/lib/alpha\"\n\n" +
+			"// Build is a fixture.\nfunc Build() (widget alpha.Widget) {\n" +
+			body + "}\n"
+	}
+	workspace := func(beta_body string) (files map[string]string) {
+		return map[string]string{
+			"lib/alpha/alpha.go":              alpha,
+			"lib/alpha/SPECIFICATION.md":      SPECIFICATION_FIXTURE_MD,
+			"lib/alpha/specification_test.go": fixture_specification_test("alpha"),
+			"lib/beta/beta.go":                beta(beta_body),
+			"lib/beta/SPECIFICATION.md":       SPECIFICATION_FIXTURE_MD,
+			"lib/beta/specification_test.go":  fixture_specification_test("beta"),
+		}
+	}
+	unkeyed := run_shared_component_output(t, workspace(
+		"\treturn alpha.Widget{1}\n"), "lib")
+	if !strings.Contains(unkeyed, UNKEYED) {
+		t.Fatalf("another package's struct literal must be keyed; got: %s", unkeyed)
+	}
+	keyed := run_shared_component_output(t, workspace(
+		"\treturn alpha.Widget{X: 1}\n"), "lib")
+	if strings.Contains(keyed, UNKEYED) {
+		t.Fatalf("a keyed literal must stay silent; got: %s", keyed)
+	}
+	slice := run_shared_component_output(t, workspace(
+		"\tnumbers := alpha.Numbers{1, 2}\n"+
+			"\treturn alpha.Widget{X: numbers[0]}\n"), "lib")
+	if strings.Contains(slice, UNKEYED) {
+		t.Fatalf("a named slice has no fields to key; got: %s", slice)
+	}
+}
+
+// Test_No_Recursion_Cross_File verifies the call graph spans the package, not
+// the file: two functions in sibling files that call each other close a cycle.
+// A cross-package cycle needs no coverage — it would need an import cycle, which
+// Go rejects before the linter ever sees the code. The fixture carries a
+// file-count diagnostic of its own, since two files in one package is what the
+// case needs, so the assertion names the recursion message alone.
+func Test_No_Recursion_Cross_File(t *testing.T) {
+	t.Parallel()
+	output := run_shared_component_output(t, map[string]string{
+		"lib/foo/a.go": "// Package foo is a fixture.\npackage foo\n\n" +
+			"func alpha() (value int) {\n\treturn beta()\n}\n",
+		"lib/foo/b.go": "package foo\n\n" +
+			"func beta() (value int) {\n\treturn alpha()\n}\n",
+	}, "lib")
+	if !strings.Contains(output, "recursion: cycle") {
+		t.Fatalf("a cycle across sibling files must be flagged; got: %s", output)
+	}
+}
+
+// Test_No_Recursion_Exempt_File verifies a file the opt_out_recursion_ban list
+// names contributes nothing to its package's call graph, so its recursion stays
+// legal even though the graph is now package-wide.
+func Test_No_Recursion_Exempt_File(t *testing.T) {
+	t.Parallel()
+	fsys_map := fstest.MapFS{
+		"lib/foo/a.go": &fstest.MapFile{Data: gofmt_must(t,
+			"// Package foo is a fixture.\npackage foo\n\n"+
+				"func alpha() (value int) {\n\treturn alpha()\n}\n")},
+		"lint.json": &fstest.MapFile{Data: test_lint_json_recursion_exempt(t,
+			&test_lint_json_recursion_exempt_input{
+				Shared_Component: "lib", Exempt: "lib/foo/**"})},
+	}
+	stdout := &bytes.Buffer{}
+	lint_main(t, &lint.Main_Input{
+		Fsys: fsys_map, Stdout: stdout, Stderr: &bytes.Buffer{}})
+	if strings.Contains(stdout.String(), "recursion:") {
+		t.Fatalf("an exempt file must contribute no edges; got: %s", stdout.String())
+	}
+}
+
+// Test_Exported_Type_Exposes_Private_Cross_File verifies the transitive walk
+// follows a field whose struct is declared in a sibling file of the same
+// package. The fixture carries a file-count diagnostic of its own, since two
+// files in one package is what the case needs, so the assertion names the
+// exposure message alone.
+func Test_Exported_Type_Exposes_Private_Cross_File(t *testing.T) {
+	t.Parallel()
+	output := run_shared_component_output(t, map[string]string{
+		"lib/foo/a.go": "// Package foo is a fixture.\npackage foo\n\n" +
+			"// Widget is a fixture.\ntype Widget struct {\n" +
+			"\t// M is a fixture.\n\tM Middle\n}\n",
+		"lib/foo/b.go": "package foo\n\n" +
+			"// Middle is a fixture.\ntype Middle struct {\n" +
+			"\t// F is a fixture.\n\tF secret\n}\n\n" +
+			"type secret int\n",
+	}, "lib")
+	if !strings.Contains(output, "public type Widget contains private type secret") {
+		t.Fatalf("the walk must follow a sibling file's struct; got: %s", output)
+	}
+}
+
+// Test_Keyed_Struct_Init_Unparsed_Package verifies a literal of a type the run
+// never parsed stays silent: the qualifier resolves to no declaration, and a
+// miss must never be read as "not a struct".
+func Test_Keyed_Struct_Init_Unparsed_Package(t *testing.T) {
+	t.Parallel()
+	output := run_shared_component_output(t, map[string]string{
+		"lib/gamma/gamma.go": "// Package gamma is a fixture.\npackage gamma\n\n" +
+			"import \"go/token\"\n\n" +
+			"// Build is a fixture.\nfunc Build() (position token.Position) {\n" +
+			"\treturn token.Position{\"a\", 1, 2, 3}\n}\n",
+		"lib/gamma/SPECIFICATION.md":      SPECIFICATION_FIXTURE_MD,
+		"lib/gamma/specification_test.go": fixture_specification_test("gamma"),
+	}, "lib")
+	if strings.Contains(output, "literal must use keyed fields") {
+		t.Fatalf("an unparsed package's type is unknowable; got: %s", output)
+	}
+}
+
 // Test_Binary_Default_Tier proves the default tier belongs to the shared library
 // alone. The same lib/foo/default package is legal when lib/ is the shared
 // component and a layout error when lib/ is a binary, whose impurity stays in

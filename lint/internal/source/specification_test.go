@@ -98,3 +98,93 @@ func Test_Component_Index_File_To_Component(t *testing.T) {
 		t.Fatal("File_To_Component must carry the -1 no-component sentinel")
 	}
 }
+
+// Test_Declaration_Index_Declarations verifies Declarations keys a declaration by
+// directory, package clause, and name together.
+func Test_Declaration_Index_Declarations(t *testing.T) {
+	t.Parallel()
+	index := declaration_workspace(t)
+	key := source.Package_Symbol{
+		Directory: "shared/alpha", Package: "alpha", Name: "Widget"}
+	if index.Declarations[key].Kind != source.DECLARATION_KIND_TYPE {
+		t.Fatal("Declarations must key a type by directory, package, and name")
+	}
+}
+
+// Test_Declaration_Index_Imports verifies Imports maps a file's qualifier to the
+// package it names, and omits an import the workspace does not own.
+func Test_Declaration_Index_Imports(t *testing.T) {
+	t.Parallel()
+	index := declaration_workspace(t)
+	key := source.File_Qualifier{Path: "shared/beta/beta.go", Qualifier: "alpha"}
+	if index.Imports[key].Directory != "shared/alpha" {
+		t.Fatal("Imports must map a qualifier to its package directory")
+	}
+	stdlib := source.File_Qualifier{Path: "shared/beta/beta.go", Qualifier: "fmt"}
+	if _, present := index.Imports[stdlib]; present {
+		t.Fatal("Imports must omit a package the workspace does not own")
+	}
+}
+
+// Test_Declaration_Index_File_Package verifies File Package carries each file's
+// own directory and package clause.
+func Test_Declaration_Index_File_Package(t *testing.T) {
+	t.Parallel()
+	index := declaration_workspace(t)
+	home := index.File_Package["shared/alpha/alpha_test.go"]
+	if home.Package != "alpha_test" {
+		t.Fatalf("File_Package must carry the package clause: got %q", home.Package)
+	}
+	if home.Directory != "shared/alpha" {
+		t.Fatalf("File_Package must carry the directory: got %q", home.Directory)
+	}
+}
+
+// Test_Declaration_Index_Declaration_Kind verifies the three kinds are told
+// apart, and that a func, a type, and a const each carry their own node.
+func Test_Declaration_Index_Declaration_Kind(t *testing.T) {
+	t.Parallel()
+	index := declaration_workspace(t)
+	kinds := map[string]source.Declaration_Kind{
+		"Make":     source.DECLARATION_KIND_FUNCTION,
+		"Widget":   source.DECLARATION_KIND_TYPE,
+		"SIZE_MAX": source.DECLARATION_KIND_CONSTANT,
+	}
+	for name, want := range kinds {
+		declaration, found := source.Resolve(&source.Resolve_Input{
+			Index: index, Path: "shared/alpha/alpha.go", Name: name})
+		if !found {
+			t.Fatalf("%s must resolve", name)
+		}
+		if declaration.Kind != want {
+			t.Errorf("%s: got kind %d want %d", name, declaration.Kind, want)
+		}
+	}
+}
+
+// Test_Declaration_Index_Ambiguity verifies a name declared twice in one package
+// resolves to nothing rather than to one of its declarations.
+func Test_Declaration_Index_Ambiguity(t *testing.T) {
+	t.Parallel()
+	parsed_files := []source.Parsed_File{
+		declaration_fixture(t, &declaration_fixture_input{
+			Path: "shared/alpha/darwin.go",
+			Text: "package alpha\n\nfunc Sample() (value int) { return 1 }\n",
+		}),
+		declaration_fixture(t, &declaration_fixture_input{
+			Path: "shared/alpha/linux.go",
+			Text: "package alpha\n\nfunc Sample() (value int) { return 2 }\n",
+		}),
+	}
+	components := source.Build_Component_Index([]source.Component{{
+		Root:              "shared",
+		Import_Path:       "example.com/shared",
+		Directory_Package: map[string]string{},
+	}}, parsed_files, "shared")
+	index := source.Build_Declaration_Index(parsed_files, components)
+	if _, found := source.Resolve(&source.Resolve_Input{
+		Index: index, Path: "shared/alpha/darwin.go", Name: "Sample",
+	}); found {
+		t.Fatal("a name declared in two build-tag variants must not resolve")
+	}
+}

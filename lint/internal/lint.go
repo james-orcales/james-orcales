@@ -422,10 +422,10 @@ const IF_INIT_IDENTIFIER_CHARS_MAX = 55
 // TIER_2_CHECKS_COUNT / TIER_1_CHECKS_COUNT anchor the static tier-list
 // length axis. Updated whenever a check is added or removed from the
 // dispatcher in Check_File.
-const TIER_2_CHECKS_COUNT = 6
+const TIER_2_CHECKS_COUNT = 5
 
 // TIER_1_CHECKS_COUNT is the tier-1 dispatch-list length, bumped as checks are added/removed.
-const TIER_1_CHECKS_COUNT = 36
+const TIER_1_CHECKS_COUNT = 37
 
 // GO_FILENAME_CHARS_MIN is the shortest Go filename: a single-letter package
 // name followed by the .go extension, e.g. `a.go`. Used as the Lo bound on
@@ -1144,8 +1144,35 @@ type Scope struct {
 	Names map[string]bool
 }
 
-func check_shadows(file_set *token.FileSet, file *ast.File, _ []byte) (diags []Diagnostic) {
+// Builds the shadow check, closing over the workspace's declaration index. The
+// outer scope a local is judged against is its whole package, not the one file:
+// a sibling file's top-level name is in scope wherever the package is, so a
+// local reusing it hides it exactly as a same-file name would. An external test
+// package shares the directory but not the name space, and the index keys on the
+// package clause, so its names stay out. A nil index leaves the file's own
+// declarations as the whole outer scope — what the single-file Check_Source path
+// has to work with, since it never sees the rest of the package.
+func make_check_shadows(index *source.Declaration_Index) (check Check_Function) {
+	return func(
+		file_set *token.FileSet, file *ast.File, _ []byte,
+	) (diags []Diagnostic) {
+		return check_shadows(file_set, file, index)
+	}
+}
+
+func check_shadows(
+	file_set *token.FileSet, file *ast.File, index *source.Declaration_Index,
+) (diags []Diagnostic) {
+
 	global_names := make(map[string]bool)
+	if index != nil {
+		tok_file := file_set.File(file.Pos())
+		if tok_file != nil {
+			for name := range source.Package_Names(index, tok_file.Name()) {
+				global_names[name] = true
+			}
+		}
+	}
 	for _, declaration := range file.Decls {
 		switch x := declaration.(type) {
 		case *ast.FuncDecl:
@@ -1520,9 +1547,10 @@ type Check_File_Input struct {
 	// Invariant_Exempt is the lint.json opt_out_assertion_mandate_packages list, exempting
 	// the type-invariant check.
 	Invariant_Exempt []string
-	// Recursion_Exempt is the lint.json opt_out_recursion_ban list: directories
-	// exempt from the recursion ban (a recursive-descent parser). Threaded per-file.
-	Recursion_Exempt []string
+	// Declarations is the workspace's declaration index, letting a per-file check
+	// resolve a name its own file does not declare. nil on the Check_Source path,
+	// which parses one buffer and so has no workspace to index.
+	Declarations *source.Declaration_Index
 }
 
 // Check_File runs every per-file check (tier-1 first, then tier-2 if
@@ -1538,23 +1566,24 @@ func Check_File(input *Check_File_Input) (diags []Diagnostic) {
 		check_constant_casing,
 		check_named_returns,
 		check_no_naked_return,
-		check_shadows,
+		make_check_shadows(input.Declarations),
 		check_line_character_count,
 		check_function_line_count,
 		check_file_line_count,
+		check_array_capacity,
 		check_compound_if,
 		check_comments,
 		check_main_first,
 		check_no_discard,
 		check_public_struct_fields,
 		check_struct_field_documentation_comment,
-		check_exported_type_exposes_private,
+		make_check_exported_type_exposes_private(input.Declarations),
 		check_type_declaration_exported,
 		check_no_iota,
 		check_no_fallthrough,
 		check_no_blank_import,
 		check_no_grouped_declaration,
-		check_keyed_struct_init,
+		make_check_keyed_struct_init(input.Declarations),
 		check_gofmt,
 		check_no_dot_import,
 		check_import_alias_no_default,
@@ -1577,7 +1606,7 @@ func Check_File(input *Check_File_Input) (diags []Diagnostic) {
 		return diags
 	}
 	diags = check_file_run_tier([]Check_Function{
-		check_no_unbounded_apis, make_check_no_recursion(input.Recursion_Exempt),
+		check_no_unbounded_apis,
 		check_no_function_init, make_check_no_package_vars(input.Instrumentation),
 		check_unnecessary_method,
 		check_no_third_party_struct_tag,
@@ -2031,6 +2060,43 @@ func check_file_line_count(
 	}}
 }
 
+// An array's capacity is a design decision that earns a name. A literal hides
+// the reason for the number, so every reader rediscovers it and every other
+// site that must agree with the bound repeats the literal. Go already requires
+// the capacity to be a constant expression, so this rule adds nothing about
+// constness — it only rejects the anonymous form of a constant the compiler
+// already demands. The `[...]T{…}` form declares no capacity at all, since the
+// compiler counts the elements, so it has no bound to name.
+func check_array_capacity(
+	file_set *token.FileSet, file *ast.File, _ []byte,
+) (diags []Diagnostic) {
+
+	ast.Inspect(file, func(n ast.Node) (descend bool) {
+		array_type, is_array_type := n.(*ast.ArrayType)
+		if !is_array_type {
+			return true
+		}
+		// A slice carries no capacity, and an ellipsis defers it to the compiler.
+		if array_type.Len == nil {
+			return true
+		}
+		literal, is_literal := array_type.Len.(*ast.BasicLit)
+		if !is_literal {
+			return true
+		}
+		diags = append(diags, Diagnostic{
+			Position: file_set.Position(literal.Pos()),
+			Name:     literal.Value,
+			Want:     "a named constant",
+			Message: fmt.Sprintf(
+				"array capacity %s is a literal; name the bound as a constant",
+				literal.Value),
+		})
+		return true
+	})
+	return diags
+}
+
 // Check_Source parses a single source buffer and returns diagnostics
 // from the per-file checks. The filesystem and cross-file doctrine
 // tiers are not exercised — callers that need those use
@@ -2121,14 +2187,7 @@ type Check_File_System_Input struct {
 // Runs every per-file and cross-file check across the workspace.
 // Diagnostics from every tier are unioned into the returned slice.
 func Check_File_System(input *Check_File_System_Input) (diags []Diagnostic, err error) {
-	root := input.Root
-	if root == "" {
-		root = "."
-	}
-	cpu_count := input.CPU_Count
-	if cpu_count < 1 {
-		cpu_count = 1
-	}
+	root, cpu_count := check_file_system_defaults(input)
 	// The lint.json ignore list trims the tracked scan set up front, so every
 	// tier below (which keys off Tracked) skips the ignored paths with no
 	// per-tier plumbing. This is how `ignore` extends the hardcoded global list.
@@ -2172,7 +2231,11 @@ func Check_File_System(input *Check_File_System_Input) (diags []Diagnostic, err 
 	parsed_files, parse_diags := check_file_system_parse_files(paths, sources, cpu_count)
 	components := source.Build_Component_Index(
 		component_roots, parsed_files, input.Shared_Component)
+	// Built once, after the component index it resolves import paths through and
+	// before any check runs, so every tier reads one view of the workspace.
+	declarations := source.Build_Declaration_Index(parsed_files, components)
 	return append(check_file_system_doctrine(&Check_File_System_Doctrine_Input{
+		Declarations:              declarations,
 		Fsys:                      input.Fsys,
 		Tracked:                   tracked,
 		Directory_Has_Tracked:     directory_has_tracked,
@@ -2189,6 +2252,24 @@ func Check_File_System(input *Check_File_System_Input) (diags []Diagnostic, err 
 		Invariant_Exempt_Packages: input.Invariant_Exempt_Packages,
 		Recursion_Exempt:          input.Recursion_Exempt,
 	}), check_configuration_directory_slash(input)...), nil
+}
+
+// Resolves the run's two optional inputs to their working values: an empty root
+// means the whole tree, and a CPU count below one degrades to a serial run
+// rather than deadlocking the worker pools on a zero-capacity semaphore.
+func check_file_system_defaults(
+	input *Check_File_System_Input,
+) (root string, cpu_count int) {
+
+	root = input.Root
+	if root == "" {
+		root = "."
+	}
+	cpu_count = input.CPU_Count
+	if cpu_count < 1 {
+		cpu_count = 1
+	}
+	return root, cpu_count
 }
 
 // A configuration_glob_list is a lint.json glob list paired with its key, so a
@@ -2304,6 +2385,9 @@ type Check_File_System_Doctrine_Input struct {
 	Parsed_Files []Parsed_File
 	// Components is the workspace's component graph.
 	Components *Component_Index
+	// Declarations is the workspace's declaration index, built from Parsed_Files
+	// and Components so every tier resolves names against one view.
+	Declarations *source.Declaration_Index
 	// CPU_Count bounds the check's parallelism.
 	CPU_Count int
 	// Stream_Diags are the diagnostics already gathered by the streaming walk.
@@ -2352,8 +2436,10 @@ func check_file_system_doctrine(
 			Instrumentation:   input.Instrumentation_Packages,
 			Word_Replacements: input.Word_Replacements,
 			Invariant_Exempt:  input.Invariant_Exempt_Packages,
-			Recursion_Exempt:  input.Recursion_Exempt,
+			Declarations:      input.Declarations,
 		})...)
+	output = append(output,
+		check_no_recursion_packages(parsed_files, input.Recursion_Exempt)...)
 	output = append(output, check_file_system_package_split(parsed_files)...)
 	output = append(output, check_main_package_size(parsed_files)...)
 	output = append(output, check_binary_component_layout(parsed_files, components)...)
@@ -3682,8 +3768,9 @@ type Check_File_System_Run_Checks_Input struct {
 	Word_Replacements map[string][]string
 	// Invariant_Exempt lists packages exempt from the assertion mandate.
 	Invariant_Exempt []string
-	// Recursion_Exempt lists directories exempt from the recursion ban.
-	Recursion_Exempt []string
+	// Declarations is the workspace's declaration index, threaded to the
+	// per-file checks that resolve a name past their own file.
+	Declarations *source.Declaration_Index
 }
 
 // Runs checks per file in parallel — CPU bound, capped at the injected
@@ -3706,7 +3793,7 @@ func check_file_system_run_checks(
 				Instrumentation:   input.Instrumentation,
 				Word_Replacements: input.Word_Replacements,
 				Invariant_Exempt:  input.Invariant_Exempt,
-				Recursion_Exempt:  input.Recursion_Exempt,
+				Declarations:      input.Declarations,
 			})
 		}(i, pf)
 	}
@@ -3819,19 +3906,47 @@ func check_comments_group_has_space_after_slashes(text string) (ok bool) {
 	return false
 }
 
-// Wraps the recursion ban with the opt_out_recursion_ban exemption: a file
-// matching one of its exact-path globs — a hand-written recursive-descent parser,
-// where recursion is intentional — is skipped. An empty list exempts nothing.
-func make_check_no_recursion(exempt []string) (check Check_Function) {
-	return func(
-		file_set *token.FileSet, file *ast.File, source_bytes []byte,
-	) (diags []Diagnostic) {
-		filename := file_set.Position(file.Pos()).Filename
-		if source.Path_Matches_Glob(filename, exempt) {
-			return nil
+// Runs the recursion ban once per package, over every file the package declares.
+// A package spans as many files as its line budget allows, so a cycle whose two
+// halves sit in sibling files is still a cycle; judging one file at a time missed
+// it. A cross-package cycle needs no handling here: calling back into a caller's
+// package would need an import cycle, which Go rejects before the linter runs.
+//
+// A file matching an opt_out_recursion_ban glob — a hand-written
+// recursive-descent parser, where recursion is intentional — contributes neither
+// functions nor edges, so its recursion stays legal and no other file's cycle can
+// route through it. Packages are visited in sorted key order so the diagnostic
+// list does not depend on map iteration.
+func check_no_recursion_packages(
+	parsed_files []Parsed_File, exempt []string,
+) (diags []Diagnostic) {
+
+	groups := map[source.Package_Symbol][]Parsed_File{}
+	for _, pf := range parsed_files {
+		if source.Path_Matches_Glob(pf.Path, exempt) {
+			continue
 		}
-		return check_no_recursion(file_set, file, source_bytes)
+		key := source.Package_Symbol{
+			Directory: path.Dir(pf.Path), Package: pf.File.Name.Name}
+		groups[key] = append(groups[key], pf)
 	}
+	keys := make([]source.Package_Symbol, 0, len(groups))
+	for key := range groups {
+		keys = append(keys, key)
+	}
+	sort.Slice(keys, func(i int, j int) (less bool) {
+		if keys[i].Directory != keys[j].Directory {
+			return keys[i].Directory < keys[j].Directory
+		}
+		return keys[i].Package < keys[j].Package
+	})
+	for _, key := range keys {
+		for _, diag := range check_no_recursion(groups[key]) {
+			diag.Tier = 2
+			diags = append(diags, diag)
+		}
+	}
+	return diags
 }
 
 // The call graph must be a directed acyclic graph. Functions form strict layers, so a
@@ -3841,25 +3956,28 @@ func make_check_no_recursion(exempt []string) (check Check_Function) {
 // callback the loop invokes later, or a `go` statement — because it is still a cycle in
 // who-names-whom. An inherently cyclic process, a state machine, therefore expresses its loop
 // as data (an explicit state a linear driver advances), never as a ring of functions calling
-// one another. Detects direct AND mutual recursion via a per-file call graph: nodes are
+// one another. Detects direct AND mutual recursion via a package-wide call graph: nodes are
 // top-level FuncDecls, edges are name-based calls including those inside closures and go
 // statements. Any cycle in the graph (self-loop or longer) is reported as one diagnostic.
 //
 // Limitations (will not detect):
 //   - Method calls (`x.foo()`) — SelectorExpr, not Ident.
 //   - Function values (`g := f; g()`) — aliasing loses the name.
-//   - Interface dispatch — undecidable statically.
-//   - Package-qualified self-calls (`pkg.F()` from within pkg) — SelectorExpr.
-//   - Cross-file / cross-package — needs go/types.
+//
+// Two limitations the older per-file graph listed are gone. Interface dispatch is
+// banned outright, so no call target hides behind a method set. A cross-package
+// cycle cannot compile, since the second call back would need an import cycle,
+// and that also rules out the package-qualified self-call — a package cannot
+// import itself.
 //
 // At each cycle's diagnostic, invariant.Ensure asserts that no edge in the
 // cycle is shadowed by a local of the same name as the callee. That property
-// is enforced by check_shadow (top-level names are in its globalNames set),
-// so a shadowed cycle edge means check_shadow missed something — a real
-// bug, not a property of the input.
-func check_no_recursion(file_set *token.FileSet, file *ast.File, _ []byte) (diags []Diagnostic) {
+// is enforced by check_shadow, whose outer scope is now the whole package, which
+// is exactly the set this graph draws its nodes from; a shadowed cycle edge means
+// check_shadow missed something — a real bug, not a property of the input.
+func check_no_recursion(package_files []Parsed_File) (diags []Diagnostic) {
 
-	graph := build_file_call_graph(file_set, file)
+	graph := build_package_call_graph(package_files)
 	adj := map[string][]Call_Edge{}
 	for _, e := range graph.Edges {
 		adj[e.Caller] = append(adj[e.Caller], e)
@@ -3867,53 +3985,68 @@ func check_no_recursion(file_set *token.FileSet, file *ast.File, _ []byte) (diag
 	return check_no_recursion_find_cycles(graph.Caller_Order, adj)
 }
 
-// File_Call_Graph is one file's intra-file call graph: its functions and the
-// calls between them.
-type File_Call_Graph struct {
-	// Caller_Order lists the file's functions in declaration order.
+// Package_Call_Graph is one package's call graph: its functions and the calls
+// between them, across every file the package declares.
+type Package_Call_Graph struct {
+	// Caller_Order lists the package's functions in file then declaration order.
 	Caller_Order []string
 	// Decls maps each function name to its declaration.
 	Decls map[string]*ast.FuncDecl
-	// Edges are the intra-file calls, caller to callee.
+	// Edges are the same-package calls, caller to callee.
 	Edges []Call_Edge
 }
 
-func build_file_call_graph(
-	file_set *token.FileSet,
-	file *ast.File,
-) (graph File_Call_Graph) {
+// Collects every function the package declares before walking any body, so an
+// edge to a function declared later, or in a sibling file, is still an edge. A
+// name declared twice — the build-tag variants of one package — keeps its first
+// declaration, since the graph asks only whether the name is a call target.
+func build_package_call_graph(package_files []Parsed_File) (graph Package_Call_Graph) {
 
 	function_names := map[string]bool{}
 	graph.Decls = map[string]*ast.FuncDecl{}
-	for _, declaration := range file.Decls {
-		function_declaration, is_function_declaration := declaration.(*ast.FuncDecl)
-		if !is_function_declaration {
-			continue
+	for _, pf := range package_files {
+		for _, declaration := range pf.File.Decls {
+			function_declaration, is_function := declaration.(*ast.FuncDecl)
+			if !is_function {
+				continue
+			}
+			if function_names[function_declaration.Name.Name] {
+				continue
+			}
+			graph.Caller_Order = append(
+				graph.Caller_Order, function_declaration.Name.Name)
+			function_names[function_declaration.Name.Name] = true
+			graph.Decls[function_declaration.Name.Name] = function_declaration
 		}
-		if function_names[function_declaration.Name.Name] {
-			continue
-		}
-		graph.Caller_Order = append(graph.Caller_Order, function_declaration.Name.Name)
-		function_names[function_declaration.Name.Name] = true
-		graph.Decls[function_declaration.Name.Name] = function_declaration
 	}
-	for _, declaration := range file.Decls {
-		function_declaration, is_function_declaration := declaration.(*ast.FuncDecl)
-		if !is_function_declaration {
+	for _, pf := range package_files {
+		build_package_call_graph_edges(pf, function_names, &graph.Edges)
+	}
+	return graph
+}
+
+// Walks one file's function bodies, recording every call that names a function
+// the package declares.
+func build_package_call_graph_edges(
+	pf Parsed_File, function_names map[string]bool, edges *[]Call_Edge,
+) {
+
+	for _, declaration := range pf.File.Decls {
+		function_declaration, is_function := declaration.(*ast.FuncDecl)
+		if !is_function {
 			continue
 		}
 		if function_declaration.Body == nil {
 			continue
 		}
 		v := &Recursion_Visitor{
-			File_Set: file_set,
+			File_Set: pf.File_Set,
 			Caller:   function_declaration.Name.Name,
 			Targets:  function_names,
-			Edges:    &graph.Edges,
+			Edges:    edges,
 		}
 		ast.Walk(v, function_declaration.Body)
 	}
-	return graph
 }
 
 // Call_Edge is one same-package call from Caller to Callee.
@@ -4475,8 +4608,25 @@ func check_struct_field_documentation_comment_fields(
 // named-type position, which is where the leak typically lives. Test files
 // (_test.go) are exempt: fixtures legitimately reach into package
 // internals.
+// Builds the exposure check, closing over the workspace's declaration index. The
+// entry set stays the file's own exported types, so one type is reported once,
+// but the transitive walk follows a field into any struct the package declares —
+// a sibling file's included, since a package spans as many files as its line
+// budget allows. An ambiguous name (the build-tag variants of one package) is
+// left out by Resolve, which is what keeps the walk from picking a platform at
+// random.
+func make_check_exported_type_exposes_private(
+	index *source.Declaration_Index,
+) (check Check_Function) {
+	return func(
+		file_set *token.FileSet, file *ast.File, _ []byte,
+	) (diags []Diagnostic) {
+		return check_exported_type_exposes_private(file_set, file, index)
+	}
+}
+
 func check_exported_type_exposes_private(
-	file_set *token.FileSet, file *ast.File, _ []byte,
+	file_set *token.FileSet, file *ast.File, index *source.Declaration_Index,
 ) (diags []Diagnostic) {
 
 	tok_file := file_set.File(file.Pos())
@@ -4488,6 +4638,7 @@ func check_exported_type_exposes_private(
 	}
 
 	same_file_types := check_exported_type_exposes_private_collect_types(file)
+	package_types := exposed_type_package_types(index, tok_file.Name(), same_file_types)
 	for _, type_specification := range same_file_types {
 		if !ast.IsExported(type_specification.Name.Name) {
 			continue
@@ -4516,11 +4667,43 @@ func check_exported_type_exposes_private(
 				Entry_Name:       entry_name,
 				Root_Struct:      struct_type,
 				Root_Type_Params: entry_type_params,
-				Same_File_Types:  same_file_types,
+				Same_File_Types:  package_types,
 				Diags:            &diags,
 			})
 	}
 	return diags
+}
+
+// Returns the type declarations the walk may follow: the file's own, plus every
+// unambiguous type its package declares elsewhere. A nil index leaves the file's
+// own set alone, which is the single-file Check_Source path.
+func exposed_type_package_types(
+	index *source.Declaration_Index,
+	file_path string,
+	same_file_types map[string]*ast.TypeSpec,
+) (package_types map[string]*ast.TypeSpec) {
+
+	if index == nil {
+		return same_file_types
+	}
+	package_types = map[string]*ast.TypeSpec{}
+	for name := range source.Package_Names(index, file_path) {
+		declaration, found := source.Resolve(&source.Resolve_Input{
+			Index: index, Path: file_path, Name: name})
+		if !found {
+			continue
+		}
+		if declaration.Kind != source.DECLARATION_KIND_TYPE {
+			continue
+		}
+		package_types[name] = declaration.Type_Specification
+	}
+	// The file's own declarations win: they are the same nodes the entry loop
+	// walks, so a name shared with the package map resolves to one spec.
+	for name, type_specification := range same_file_types {
+		package_types[name] = type_specification
+	}
+	return package_types
 }
 
 func check_exported_type_exposes_private_collect_types(
@@ -5001,45 +5184,46 @@ func check_blank_synchronization_mutex(
 	return diags
 }
 
-// Positional struct literals break silently when fields are added or reordered.
-// Without go/types we can only be certain about same-file struct declarations;
-// cross-file and cross-package literals are skipped to keep false positives at
-// zero. The full check would require type information.
+// Builds the keyed-literal check, closing over the workspace's declaration
+// index. Positional struct literals break silently when fields are added or
+// reordered, and the break is worst across a package boundary, where the author
+// of the literal never sees the field list move. The index resolves the literal's
+// type wherever the parsed set declares it, so a qualified literal is judged like
+// a local one. A type the run never parsed — stdlib, third party, or out of a
+// scoped run's reach — resolves to nothing and is skipped, because a miss says
+// "unknown", never "not a struct". A nil index leaves the file's own
+// declarations as the only reachable ones, which is the single-file
+// Check_Source path.
+func make_check_keyed_struct_init(index *source.Declaration_Index) (check Check_Function) {
+	return func(
+		file_set *token.FileSet, file *ast.File, _ []byte,
+	) (diags []Diagnostic) {
+		return check_keyed_struct_init(file_set, file, index)
+	}
+}
+
 func check_keyed_struct_init(
-	file_set *token.FileSet, file *ast.File, _ []byte,
+	file_set *token.FileSet, file *ast.File, index *source.Declaration_Index,
 ) (diags []Diagnostic) {
 
-	struct_names := map[string]bool{}
-	for _, declaration := range file.Decls {
-		generic_declaration, ok := declaration.(*ast.GenDecl)
-		if !ok {
-			continue
-		}
-		if generic_declaration.Tok != token.TYPE {
-			continue
-		}
-		for _, specification := range generic_declaration.Specs {
-			type_specification, is_type_specification := specification.(*ast.TypeSpec)
-			if !is_type_specification {
-				continue
-			}
-			_, is_struct := type_specification.Type.(*ast.StructType)
-			if !is_struct {
-				continue
-			}
-			struct_names[type_specification.Name.Name] = true
-		}
+	path_name := ""
+	tok_file := file_set.File(file.Pos())
+	if tok_file != nil {
+		path_name = tok_file.Name()
 	}
 	ast.Inspect(file, func(n ast.Node) (descend bool) {
 		lit, ok := n.(*ast.CompositeLit)
 		if !ok {
 			return true
 		}
-		name := check_keyed_struct_init_type_ident(lit.Type)
+		qualifier, name := check_keyed_struct_init_type_ident(lit.Type)
 		if name == "" {
 			return true
 		}
-		if !struct_names[name] {
+		if !keyed_struct_init_is_struct(&Keyed_Struct_Init_Is_Struct_Input{
+			Index: index, Path: path_name, Qualifier: qualifier,
+			Name: name, File: file,
+		}) {
 			return true
 		}
 		if len(lit.Elts) == 0 {
@@ -5061,7 +5245,83 @@ func check_keyed_struct_init(
 	return diags
 }
 
-func check_keyed_struct_init_type_ident(expression ast.Expr) (name string) {
+// Keyed_Struct_Init_Is_Struct_Input carries one literal's type reference: the
+// index to resolve it through, the file the reference sits in, and the qualifier
+// and name it is written with. File is the fallback when no index is available.
+type Keyed_Struct_Init_Is_Struct_Input struct {
+	// Index is the workspace's declaration index, nil on the single-file path.
+	Index *source.Declaration_Index
+	// Path is the repo-relative path of the file holding the literal.
+	Path string
+	// Qualifier is the literal's package qualifier, empty when unqualified.
+	Qualifier string
+	// Name is the literal's type name.
+	Name string
+	// File is the syntax tree the fallback scan reads when Index is nil.
+	File *ast.File
+}
+
+// True when the named type is a struct the parsed set declares. False covers
+// both "declared, but not a struct" and "not reachable", which the caller must
+// treat alike: a positional literal of an unknown type stays unjudged.
+func keyed_struct_init_is_struct(input *Keyed_Struct_Init_Is_Struct_Input) (yes bool) {
+
+	if input.Index == nil {
+		if input.Qualifier != "" {
+			return false
+		}
+		return keyed_struct_init_file_declares(input.File, input.Name)
+	}
+	declaration, found := source.Resolve(&source.Resolve_Input{
+		Index:     input.Index,
+		Path:      input.Path,
+		Qualifier: input.Qualifier,
+		Name:      input.Name,
+	})
+	if !found {
+		return false
+	}
+	if declaration.Kind != source.DECLARATION_KIND_TYPE {
+		return false
+	}
+	_, is_struct := declaration.Type_Specification.Type.(*ast.StructType)
+	return is_struct
+}
+
+// The single-file fallback: scans one file's own type declarations, which is all
+// the Check_Source path can see.
+func keyed_struct_init_file_declares(file *ast.File, name string) (yes bool) {
+
+	for _, declaration := range file.Decls {
+		generic_declaration, ok := declaration.(*ast.GenDecl)
+		if !ok {
+			continue
+		}
+		if generic_declaration.Tok != token.TYPE {
+			continue
+		}
+		for _, specification := range generic_declaration.Specs {
+			type_specification, is_type_specification := specification.(*ast.TypeSpec)
+			if !is_type_specification {
+				continue
+			}
+			if type_specification.Name.Name != name {
+				continue
+			}
+			_, is_struct := type_specification.Type.(*ast.StructType)
+			return is_struct
+		}
+	}
+	return false
+}
+
+// Splits a literal's type expression into its package qualifier and its name,
+// unwrapping any leading pointers. An empty name means the expression is not a
+// named type — an anonymous struct, a slice, or a map — and has no declaration
+// to resolve.
+func check_keyed_struct_init_type_ident(
+	expression ast.Expr,
+) (qualifier string, name string) {
 
 	for step := 0; ; step++ {
 		star, is_star := expression.(*ast.StarExpr)
@@ -5070,11 +5330,19 @@ func check_keyed_struct_init_type_ident(expression ast.Expr) (name string) {
 		}
 		expression = star.X
 	}
+	selector, is_selector := expression.(*ast.SelectorExpr)
+	if is_selector {
+		package_identifier, is_ident := selector.X.(*ast.Ident)
+		if !is_ident {
+			return "", ""
+		}
+		return package_identifier.Name, selector.Sel.Name
+	}
 	identifier, is_ident := expression.(*ast.Ident)
 	if !is_ident {
-		return ""
+		return "", ""
 	}
-	return identifier.Name
+	return "", identifier.Name
 }
 
 // The gofmt tool is the canonical Go formatter; deviating from it creates
@@ -8012,8 +8280,12 @@ func display_width(text string) (width int) {
 	return width
 }
 
+// SPAN_BOUNDS_COUNT is how many runes bound one span: its first and its last.
+// The range is inclusive at both ends, so a span of one rune repeats it.
+const SPAN_BOUNDS_COUNT = 2
+
 func display_glyph_wide(glyph rune) (wide bool) {
-	spans := [...][2]rune{
+	spans := [...][SPAN_BOUNDS_COUNT]rune{
 		{0x1100, 0x115F},   // Hangul Jamo
 		{0x2E80, 0x303E},   // CJK radicals, Kangxi, CJK symbols
 		{0x3041, 0x33FF},   // Hiragana through CJK compatibility

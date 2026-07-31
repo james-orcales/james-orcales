@@ -62,6 +62,19 @@ const SPECIFICATION_CLEAN_TEST = "package greet_test\n\n" +
 	"func Test_Greeting(t *testing.T) { _ = t }\n"
 const SPECIFICATION_CLEAN_MD = "\n# Greeting\n\nIt greets the caller.\n"
 
+// The one-heading SPECIFICATION.md a layout fixture carries so the coverage rule
+// is satisfied without the fixture growing a specification of its own.
+const SPECIFICATION_FIXTURE_MD = "\n# Function\n\nIt is a fixture.\n"
+
+// Builds the specification_test.go that pairs with SPECIFICATION_FIXTURE_MD for
+// the named package.
+func fixture_specification_test(name string) (source string) {
+	return "package " + name + "_test\n\n" +
+		"import \"testing\"\n\n" +
+		"// Test_Function is a fixture.\n" +
+		"func Test_Function(t *testing.T) { t.Parallel() }\n"
+}
+
 // The baseline SPECIFICATION.md + test pair a spec snapshot mutates: one clean
 // leaf and its matching test, so a single mutation isolates one spec diagnostic.
 const SNAPSHOT_SPECIFICATION_MARKDOWN = "\n# Sole Rule\n\nThe sole rule.\n"
@@ -1692,6 +1705,35 @@ func test_lint_json(t *testing.T, shared_component string, allowlist []string) (
 	})
 	if err != nil {
 		t.Fatalf("test_lint_json: %v", err)
+	}
+	return data
+}
+
+// Test_lint_json_recursion_exempt_input pairs the shared component with the one
+// opt_out_recursion_ban entry a recursion fixture needs.
+type test_lint_json_recursion_exempt_input struct {
+	// Shared_Component is the workspace's shared library directory.
+	Shared_Component string
+	// Exempt is the single opt_out_recursion_ban glob.
+	Exempt string
+}
+
+// The default lint.json with one opt_out_recursion_ban entry added, for the
+// fixtures that prove an exempt file contributes nothing to the call graph.
+func test_lint_json_recursion_exempt(
+	t *testing.T, input *test_lint_json_recursion_exempt_input,
+) (data []byte) {
+	t.Helper()
+	var configuration lint.Configuration
+	if err := json.Unmarshal(
+		test_lint_json(t, input.Shared_Component, nil), &configuration,
+	); err != nil {
+		t.Fatalf("test_lint_json_recursion_exempt: %v", err)
+	}
+	configuration.Recursion_Exempt = []string{input.Exempt}
+	data, err := json.Marshal(configuration)
+	if err != nil {
+		t.Fatalf("test_lint_json_recursion_exempt: %v", err)
 	}
 	return data
 }
@@ -3587,6 +3629,99 @@ func Test_File_Size(t *testing.T) {
 	if bytes.Contains(stdout.Bytes(), []byte("(max 10000)")) {
 		t.Errorf("a file at the cap must stay silent; got: %s", stdout.String())
 	}
+}
+
+// Test_Variable_Shadow_Package_Wide verifies the outer scope a local is judged
+// against is the whole package, not the one file: a sibling file's top-level
+// name shadows just as the file's own does. An external test package shares the
+// directory but not the name space, so its names stay out.
+func Test_Variable_Shadow_Package_Wide(t *testing.T) {
+	t.Parallel()
+	const SHADOW = `variable "helper" shadows outer scope variable`
+	sibling := fixture_package("foo") +
+		"\nfunc helper() (value int) {\n\treturn 0\n}\n"
+	body := "func f() (value int) {\n\thelper := 1\n\treturn helper\n}\n"
+	workspace := func(clause string) (files map[string]string) {
+		return map[string]string{
+			"lib/foo/foo.go":                sibling,
+			"lib/foo/foo_test.go":           clause + "\n\n" + body,
+			"lib/foo/SPECIFICATION.md":      SPECIFICATION_FIXTURE_MD,
+			"lib/foo/specification_test.go": fixture_specification_test("foo"),
+		}
+	}
+	internal := run_shared_component_output(t, workspace("package foo"), "lib")
+	if !strings.Contains(internal, SHADOW) {
+		t.Fatalf("a sibling file's declaration must shadow; got: %s", internal)
+	}
+	external := run_shared_component_output(t, workspace("package foo_test"), "lib")
+	if strings.Contains(external, SHADOW) {
+		t.Fatalf("package foo_test is a separate name space; got: %s", external)
+	}
+}
+
+// Test_Array_Capacity verifies that an array type's capacity must be a named
+// constant: a literal is flagged wherever the type appears, a named constant is
+// not, and neither `[...]T{…}` nor a slice carries a capacity to judge.
+func Test_Array_Capacity(t *testing.T) {
+	t.Parallel()
+	run_diag_table(t, []struct {
+		Name      string
+		Files     map[string]string
+		Want_Diag string
+	}{
+		{
+			Name: "literal on a type declaration",
+			Files: map[string]string{"test.go": `package main
+
+type Buffer [16]byte
+`},
+			Want_Diag: "array capacity 16 is a literal",
+		},
+		{
+			Name: "literal nested in a result type",
+			Files: map[string]string{"test.go": `package main
+
+func f() (buffer *[4]int) {
+	return nil
+}
+`},
+			Want_Diag: "array capacity 4 is a literal",
+		},
+		{
+			Name: "named constant",
+			Files: map[string]string{"test.go": `package main
+
+// BUFFER_SIZE_MAX is a fixture.
+const BUFFER_SIZE_MAX = 16
+
+func f() (buffer [BUFFER_SIZE_MAX]byte) {
+	return buffer
+}
+`},
+			Want_Diag: "",
+		},
+		{
+			Name: "ellipsis defers to the compiler",
+			Files: map[string]string{"test.go": `package main
+
+func f() (first int) {
+	digits := [...]int{1, 2, 3}
+	return digits[0]
+}
+`},
+			Want_Diag: "",
+		},
+		{
+			Name: "slice carries no capacity",
+			Files: map[string]string{"test.go": `package main
+
+func f() (buffer []byte) {
+	return nil
+}
+`},
+			Want_Diag: "",
+		},
+	})
 }
 
 // Test_Main_Package_Size verifies the cap on package main: over the cap is

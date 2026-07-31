@@ -897,6 +897,17 @@ func Test_Source_And_Test_Requirements_Named_Returns(t *testing.T) {
 	}
 }
 
+// Test_Source_And_Test_Requirements_Array_Capacity verifies a literal array
+// capacity is flagged.
+func Test_Source_And_Test_Requirements_Array_Capacity(t *testing.T) {
+	t.Parallel()
+	files := specification_one_file(
+		"package fixture\n\n// Buffer is a fixture.\ntype Buffer [16]byte\n")
+	if !specification_flags(t, files, "array capacity 16 is a literal") {
+		t.Fatal("a literal array capacity must be flagged")
+	}
+}
+
 // Test_Source_And_Test_Requirements_Keyed_Struct_Literals verifies an unkeyed
 // struct literal is flagged.
 func Test_Source_And_Test_Requirements_Keyed_Struct_Literals(t *testing.T) {

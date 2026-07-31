@@ -1,8 +1,8 @@
 
 # Diagnostics
 
-A per-file diagnostic is tier one or tier two. Tier one always prints; any tier-one anywhere in
-scope suppresses tier two, which prints only when no tier-one fired and so may rely on tier-one
+A diagnostic is tier one or tier two. Tier one always prints; any tier-one anywhere in scope
+suppresses tier two, which prints only when no tier-one fired and so may rely on tier-one
 contracts.
 
 ### Tier One
@@ -200,7 +200,8 @@ A package declares no method-set interface; a type-constraint interface for gene
 
 ### Variable Shadows
 
-A name declared in an inner scope must not shadow one from an outer scope.
+A name declared in an inner scope must not shadow one from an outer scope. The outer scope is the
+whole package, sibling files included; an external test package is a separate name space.
 
 ### Mutable Globals
 
@@ -230,15 +231,15 @@ sort.Interface, marshalers, fs.FS and kin; otherwise make it a free function wit
 
 ### Self Recursion
 
-A function never calls itself by bare name within its own file, including inside a closure or a go
-statement — the call graph must be acyclic regardless of stack. Method and package-qualified calls
-do not count; a package in opt_out_recursion_ban is exempt.
+A function never calls itself by bare name, including inside a closure or a go statement — the call
+graph must be acyclic regardless of stack. A method call does not count; a file in
+opt_out_recursion_ban contributes nothing to its package's graph.
 
 ### Mutual Recursion
 
-A function never reaches itself through a cycle of bare-name same-file calls, closures and go
-statements included — the call graph is a DAG. Method and package-qualified calls do not count; a
-package in opt_out_recursion_ban is exempt.
+A function never reaches itself through a cycle of bare-name calls anywhere in its package,
+closures and go statements included — the call graph is a DAG. A cycle across packages cannot
+compile, so the graph stops at the package boundary.
 
 ### Compound Conditions
 
@@ -340,13 +341,20 @@ a variadic may remain a separate parameter. Packages invariant and invariant_tes
 
 A function with results names every one of them.
 
+### Array Capacity
+
+An array type's capacity is a named constant, never a literal, as in [BUFFER_SIZE_MAX]byte. The
+`[...]T{…}` form declares no capacity and is exempt.
+
 ### Keyed Struct Literals
 
-A struct literal names each field, as in Coordinate{X: 0, Y: 1}.
+A struct literal names each field, as in Coordinate{X: 0, Y: 1}. A type the run never parsed is
+exempt, since nothing says whether it is a struct.
 
 ### Exported Struct Fields
 
-An exported struct exposes no field of an unexported type.
+An exported struct exposes no field of an unexported type, through any struct its own package
+declares.
 
 ### Exported Types
 
