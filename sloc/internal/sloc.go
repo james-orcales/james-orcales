@@ -87,7 +87,7 @@ type Exit_Code uint8
 // Exit_Code_Invariants bounds a status to the declared codes. Every value in the range
 // is a declared code, so the range saturates and each of the three is demanded.
 func Exit_Code_Invariants(code Exit_Code, namespace invariant.Namespace) {
-	invariant.Dot_Product(namespace).
+	invariant.Assertions(namespace).
 		Range_Uint8(uint8(code), uint8(EXIT_SUCCESS), uint8(EXIT_USAGE)).
 		Ensure()
 }
@@ -262,7 +262,7 @@ type Arguments []string
 
 // Arguments_Invariants bounds the command line's word count.
 func Arguments_Invariants(arguments Arguments, namespace invariant.Namespace) {
-	invariant.Dot_Product(namespace).
+	invariant.Assertions(namespace).
 		Range_Int(len(arguments), ARGUMENTS_COUNT_MIN, ARGUMENTS_COUNT_MAX).
 		Ensure()
 }
@@ -281,7 +281,7 @@ type Paths []string
 // Paths_Invariants bounds the root count. The minimum is one because Main defaults an
 // empty list to the current directory before the scope is built.
 func Paths_Invariants(paths Paths, namespace invariant.Namespace) {
-	invariant.Dot_Product(namespace).
+	invariant.Assertions(namespace).
 		Range_Int(len(paths), PATHS_COUNT_MIN, PATHS_COUNT_MAX).
 		Ensure()
 }
@@ -298,7 +298,7 @@ type Root string
 
 // Root_Invariants bounds a root's byte length.
 func Root_Invariants(root Root, namespace invariant.Namespace) {
-	invariant.Dot_Product(namespace).
+	invariant.Assertions(namespace).
 		Range_Int(len(root), ROOT_BYTES_MIN, ROOT_BYTES_MAX).
 		Ensure()
 }
@@ -416,7 +416,7 @@ type Language_Name string
 
 // Language_Name_Invariants bounds a display name's byte length.
 func Language_Name_Invariants(name Language_Name, namespace invariant.Namespace) {
-	invariant.Dot_Product(namespace).
+	invariant.Assertions(namespace).
 		Range_Int(len(name), LANGUAGE_NAME_BYTES_MIN, LANGUAGE_NAME_BYTES_MAX).
 		Ensure()
 }
@@ -433,7 +433,7 @@ type Comment_Tokens []string
 // Comment_Tokens_Invariants bounds how many line-comment tokens a language declares.
 // Every count in the range occurs, so the range saturates.
 func Comment_Tokens_Invariants(tokens Comment_Tokens, namespace invariant.Namespace) {
-	invariant.Dot_Product(namespace).
+	invariant.Assertions(namespace).
 		Range_Int(len(tokens), COMMENT_TOKENS_COUNT_MIN, COMMENT_TOKENS_COUNT_MAX).
 		Ensure()
 }
@@ -458,7 +458,7 @@ type Block_Comment_Opener string
 func Block_Comment_Opener_Invariants(
 	opener Block_Comment_Opener, namespace invariant.Namespace,
 ) {
-	invariant.Dot_Product(namespace).
+	invariant.Assertions(namespace).
 		Range_Int(
 			len(opener), BLOCK_COMMENT_OPENER_BYTES_MIN, BLOCK_COMMENT_OPENER_BYTES_MAX,
 			BLOCK_COMMENT_OPENER_BYTES_ABSENT).
@@ -481,7 +481,7 @@ type Block_Comment_Closer string
 func Block_Comment_Closer_Invariants(
 	closer Block_Comment_Closer, namespace invariant.Namespace,
 ) {
-	invariant.Dot_Product(namespace).
+	invariant.Assertions(namespace).
 		Range_Int(
 			len(closer),
 			BLOCK_COMMENT_CLOSER_BYTES_MIN, BLOCK_COMMENT_CLOSER_BYTES_MAX).
@@ -499,7 +499,7 @@ type Name_Prefixes []string
 
 // Name_Prefixes_Invariants bounds how many test prefixes a language declares.
 func Name_Prefixes_Invariants(prefixes Name_Prefixes, namespace invariant.Namespace) {
-	invariant.Dot_Product(namespace).
+	invariant.Assertions(namespace).
 		Range_Int(len(prefixes), NAME_PREFIXES_COUNT_MIN, NAME_PREFIXES_COUNT_MAX).
 		Ensure()
 }
@@ -515,7 +515,7 @@ type Name_Infixes []string
 
 // Name_Infixes_Invariants bounds how many test infixes a language declares.
 func Name_Infixes_Invariants(infixes Name_Infixes, namespace invariant.Namespace) {
-	invariant.Dot_Product(namespace).
+	invariant.Assertions(namespace).
 		Range_Int(len(infixes), NAME_INFIXES_COUNT_MIN, NAME_INFIXES_COUNT_MAX).
 		Ensure()
 }
@@ -533,7 +533,7 @@ type Verbatim_Delimiters []Verbatim_Delimiter
 func Verbatim_Delimiters_Invariants(
 	delimiters Verbatim_Delimiters, namespace invariant.Namespace,
 ) {
-	invariant.Dot_Product(namespace).
+	invariant.Assertions(namespace).
 		Range_Int(
 			len(delimiters), VERBATIM_DELIMITERS_COUNT_MIN,
 			VERBATIM_DELIMITERS_COUNT_MAX).
@@ -553,7 +553,7 @@ type Quote_Delimiters []Quote_Delimiter
 func Quote_Delimiters_Invariants(
 	delimiters Quote_Delimiters, namespace invariant.Namespace,
 ) {
-	invariant.Dot_Product(namespace).
+	invariant.Assertions(namespace).
 		Range_Int(
 			len(delimiters), QUOTE_DELIMITERS_COUNT_MIN, QUOTE_DELIMITERS_COUNT_MAX).
 		Ensure()
@@ -570,7 +570,7 @@ type Quote_Pair []Quote_Delimiter
 
 // Quote_Pair_Invariants pins a shared pair to the two forms it always holds.
 func Quote_Pair_Invariants(delimiters Quote_Pair, namespace invariant.Namespace) {
-	invariant.Dot_Product(namespace).
+	invariant.Assertions(namespace).
 		Range_Int(len(delimiters), QUOTE_PAIR_COUNT, QUOTE_PAIR_COUNT).
 		Ensure()
 }
@@ -583,7 +583,7 @@ type Quote_Single []Quote_Delimiter
 
 // Quote_Single_Invariants pins a lone shared delimiter to the one form it holds.
 func Quote_Single_Invariants(delimiters Quote_Single, namespace invariant.Namespace) {
-	invariant.Dot_Product(namespace).
+	invariant.Assertions(namespace).
 		Range_Int(len(delimiters), QUOTE_SINGLE_COUNT, QUOTE_SINGLE_COUNT).
 		Ensure()
 }
@@ -623,7 +623,7 @@ type Verbatim_Opener string
 // Verbatim_Opener_Invariants bounds a verbatim opener's byte length. Every width in the
 // range occurs — the backtick, Rust's "br", the triple quote — so the range saturates.
 func Verbatim_Opener_Invariants(opener Verbatim_Opener, namespace invariant.Namespace) {
-	invariant.Dot_Product(namespace).
+	invariant.Assertions(namespace).
 		Range_Int(len(opener), VERBATIM_OPENER_BYTES_MIN, VERBATIM_OPENER_BYTES_MAX).
 		Ensure()
 }
@@ -642,7 +642,7 @@ type Verbatim_Closer string
 // range occurs: the empty closer of a hashable form, the one-byte backtick, Python's
 // two-byte empty pair, and the three-byte triple quote.
 func Verbatim_Closer_Invariants(closer Verbatim_Closer, namespace invariant.Namespace) {
-	invariant.Dot_Product(namespace).
+	invariant.Assertions(namespace).
 		Range_Int(len(closer), VERBATIM_CLOSER_BYTES_MIN, VERBATIM_CLOSER_BYTES_MAX).
 		Ensure()
 }
@@ -683,7 +683,7 @@ type Quote_Mark string
 
 // Quote_Mark_Invariants pins a quote mark to the single byte every seeded form uses.
 func Quote_Mark_Invariants(mark Quote_Mark, namespace invariant.Namespace) {
-	invariant.Dot_Product(namespace).
+	invariant.Assertions(namespace).
 		Range_Int(len(mark), QUOTE_MARK_BYTES_MIN, QUOTE_MARK_BYTES_MAX).
 		Ensure()
 }
@@ -704,7 +704,7 @@ type Escape_Byte uint8
 
 // Escape_Byte_Invariants holds an escape to the two members that occur.
 func Escape_Byte_Invariants(escape Escape_Byte, namespace invariant.Namespace) {
-	invariant.Dot_Product(namespace).
+	invariant.Assertions(namespace).
 		Enum_Uint8(
 			uint8(escape), uint8(ESCAPE_BYTE_NONE), uint8(ESCAPE_BYTE_BACKSLASH)).
 		Ensure()
@@ -1956,7 +1956,7 @@ type Extension string
 
 // Extension_Invariants bounds an extension's byte length.
 func Extension_Invariants(extension Extension, namespace invariant.Namespace) {
-	invariant.Dot_Product(namespace).
+	invariant.Assertions(namespace).
 		Range_Int(len(extension), EXTENSION_BYTES_MIN, EXTENSION_BYTES_MAX).
 		Ensure()
 }
@@ -1974,7 +1974,7 @@ type File_Name string
 
 // File_Name_Invariants bounds a base name's byte length.
 func File_Name_Invariants(name File_Name, namespace invariant.Namespace) {
-	invariant.Dot_Product(namespace).
+	invariant.Assertions(namespace).
 		Range_Int(len(name), FILE_NAME_BYTES_MIN, FILE_NAME_BYTES_MAX).
 		Ensure()
 }
@@ -1991,7 +1991,7 @@ type File_Path string
 
 // File_Path_Invariants bounds a file path's byte length.
 func File_Path_Invariants(file_path File_Path, namespace invariant.Namespace) {
-	invariant.Dot_Product(namespace).
+	invariant.Assertions(namespace).
 		Range_Int(len(file_path), FILE_PATH_BYTES_MIN, FILE_PATH_BYTES_MAX).
 		Ensure()
 }
@@ -2038,7 +2038,7 @@ type Dropped_Count int
 
 // Dropped_Count_Invariants bounds the tally of lines read short.
 func Dropped_Count_Invariants(count Dropped_Count, namespace invariant.Namespace) {
-	invariant.Dot_Product(namespace).
+	invariant.Assertions(namespace).
 		Range_Int(int(count), DROPPED_COUNT_MIN, DROPPED_COUNT_MAX).
 		Ensure()
 }
@@ -2057,7 +2057,7 @@ type Line_Count int
 
 // Line_Count_Invariants bounds a line count.
 func Line_Count_Invariants(count Line_Count, namespace invariant.Namespace) {
-	invariant.Dot_Product(namespace).
+	invariant.Assertions(namespace).
 		Range_Int(int(count), LINE_COUNT_MIN, LINE_COUNT_MAX).
 		Ensure()
 }
@@ -2101,7 +2101,7 @@ type Source []byte
 
 // Source_Invariants bounds a file's byte count.
 func Source_Invariants(source Source, namespace invariant.Namespace) {
-	invariant.Dot_Product(namespace).
+	invariant.Assertions(namespace).
 		Range_Int(len(source), SOURCE_BYTES_MIN, SOURCE_BYTES_MAX).
 		Ensure()
 }
@@ -2181,7 +2181,7 @@ type Line_Kind int
 // Line_Kind_Invariants bounds a partition to the three a line can fall into. Every
 // value in the range is one of them, so the range saturates.
 func Line_Kind_Invariants(kind Line_Kind, namespace invariant.Namespace) {
-	invariant.Dot_Product(namespace).
+	invariant.Assertions(namespace).
 		Range_Int(int(kind), int(LINE_KIND_BLANK), int(LINE_KIND_COMMENT)).
 		Ensure()
 }
@@ -2207,7 +2207,7 @@ type Line []byte
 
 // Line_Invariants bounds a line's byte count.
 func Line_Invariants(line Line, namespace invariant.Namespace) {
-	invariant.Dot_Product(namespace).
+	invariant.Assertions(namespace).
 		Range_Int(len(line), LINE_BYTES_MIN, LINE_BYTES_MAX).
 		Ensure()
 }
@@ -2226,7 +2226,7 @@ type Scan_Line []byte
 
 // Scan_Line_Invariants bounds a scanned line's byte count.
 func Scan_Line_Invariants(line Scan_Line, namespace invariant.Namespace) {
-	invariant.Dot_Product(namespace).
+	invariant.Assertions(namespace).
 		Range_Int(len(line), SCAN_LINE_BYTES_MIN, SCAN_LINE_BYTES_MAX).
 		Ensure()
 }
@@ -2242,7 +2242,7 @@ type Cursor int
 
 // Cursor_Invariants bounds a cursor to the line it walks.
 func Cursor_Invariants(cursor Cursor, namespace invariant.Namespace) {
-	invariant.Dot_Product(namespace).
+	invariant.Assertions(namespace).
 		Range_Int(int(cursor), CURSOR_MIN, CURSOR_MAX).
 		Ensure()
 }
@@ -2277,7 +2277,7 @@ type Nesting_Depth int
 
 // Nesting_Depth_Invariants bounds the open block-comment depth.
 func Nesting_Depth_Invariants(depth Nesting_Depth, namespace invariant.Namespace) {
-	invariant.Dot_Product(namespace).
+	invariant.Assertions(namespace).
 		Range_Int(int(depth), NESTING_DEPTH_MIN, NESTING_DEPTH_MAX).
 		Ensure()
 }
@@ -2301,7 +2301,7 @@ type Comment_Closer string
 // Comment_Closer_Invariants bounds a carried long-bracket terminator, carving the width
 // a bracket cannot produce.
 func Comment_Closer_Invariants(closer Comment_Closer, namespace invariant.Namespace) {
-	invariant.Dot_Product(namespace).
+	invariant.Assertions(namespace).
 		Range_Int(
 			len(closer), BRACKET_CLOSER_BYTES_MIN, BRACKET_CLOSER_BYTES_MAX,
 			BRACKET_CLOSER_BYTES_ABSENT).
@@ -2313,7 +2313,7 @@ type Closer string
 
 // Closer_Invariants bounds a carried terminator's byte length.
 func Closer_Invariants(closer Closer, namespace invariant.Namespace) {
-	invariant.Dot_Product(namespace).
+	invariant.Assertions(namespace).
 		Range_Int(len(closer), CLOSER_BYTES_MIN, CLOSER_BYTES_MAX).
 		Ensure()
 }
@@ -2330,7 +2330,7 @@ type Terminator string
 
 // Terminator_Invariants bounds a heredoc terminator's byte length.
 func Terminator_Invariants(terminator Terminator, namespace invariant.Namespace) {
-	invariant.Dot_Product(namespace).
+	invariant.Assertions(namespace).
 		Range_Int(len(terminator), TERMINATOR_BYTES_MIN, TERMINATOR_BYTES_MAX).
 		Ensure()
 }
@@ -2411,7 +2411,7 @@ type Token string
 
 // Token_Invariants bounds a matched token's byte length.
 func Token_Invariants(token Token, namespace invariant.Namespace) {
-	invariant.Dot_Product(namespace).
+	invariant.Assertions(namespace).
 		Range_Int(len(token), TOKEN_BYTES_MIN, TOKEN_BYTES_MAX).
 		Ensure()
 }
@@ -2691,7 +2691,7 @@ type Bracket_Closer string
 
 // Bracket_Closer_Invariants bounds a long bracket's computed terminator.
 func Bracket_Closer_Invariants(closer Bracket_Closer, namespace invariant.Namespace) {
-	invariant.Dot_Product(namespace).
+	invariant.Assertions(namespace).
 		Range_Int(
 			len(closer), BRACKET_CLOSER_BYTES_MIN, BRACKET_CLOSER_BYTES_MAX,
 			BRACKET_CLOSER_BYTES_ABSENT).
@@ -2710,7 +2710,7 @@ type Hash_Closer string
 
 // Hash_Closer_Invariants bounds a raw string's computed terminator.
 func Hash_Closer_Invariants(closer Hash_Closer, namespace invariant.Namespace) {
-	invariant.Dot_Product(namespace).
+	invariant.Assertions(namespace).
 		Range_Int(len(closer), HASH_CLOSER_BYTES_MIN, HASH_CLOSER_BYTES_MAX).
 		Ensure()
 }
@@ -2889,7 +2889,7 @@ type Identifier_Byte uint8
 func Identifier_Byte_Invariants(
 	character Identifier_Byte, namespace invariant.Namespace,
 ) {
-	invariant.Dot_Product(namespace).
+	invariant.Assertions(namespace).
 		Range_Uint8(
 			uint8(character), uint8(IDENTIFIER_BYTE_MIN), uint8(IDENTIFIER_BYTE_MAX)).
 		Ensure()
@@ -2907,7 +2907,7 @@ type Source_Byte uint8
 // Source_Byte_Invariants bounds a source byte to the whole byte domain, since nothing
 // about untrusted input narrows it.
 func Source_Byte_Invariants(character Source_Byte, namespace invariant.Namespace) {
-	invariant.Dot_Product(namespace).
+	invariant.Assertions(namespace).
 		Range_Uint8(uint8(character), uint8(SOURCE_BYTE_MIN), uint8(SOURCE_BYTE_MAX)).
 		Ensure()
 }
@@ -2948,7 +2948,7 @@ type Scan_Verdict int
 
 // Scan_Verdict_Invariants bounds a scanned line's verdict to the two it can take.
 func Scan_Verdict_Invariants(kind Scan_Verdict, namespace invariant.Namespace) {
-	invariant.Dot_Product(namespace).
+	invariant.Assertions(namespace).
 		Range_Int(int(kind), int(LINE_KIND_CODE), int(LINE_KIND_COMMENT)).
 		Ensure()
 }
@@ -3275,7 +3275,7 @@ type File_Counts []File_Count
 
 // File_Counts_Invariants bounds how many files a report carries.
 func File_Counts_Invariants(files File_Counts, namespace invariant.Namespace) {
-	invariant.Dot_Product(namespace).
+	invariant.Assertions(namespace).
 		Range_Int(len(files), FILES_COUNT_MIN, FILES_COUNT_MAX).
 		Ensure()
 }
@@ -3377,7 +3377,7 @@ type Counted_Path string
 
 // Counted_Path_Invariants bounds a selected file's path length.
 func Counted_Path_Invariants(file_path Counted_Path, namespace invariant.Namespace) {
-	invariant.Dot_Product(namespace).
+	invariant.Assertions(namespace).
 		Range_Int(len(file_path), COUNTED_PATH_BYTES_MIN, COUNTED_PATH_BYTES_MAX).
 		Ensure()
 }
@@ -3387,7 +3387,7 @@ type Candidates []Candidate
 
 // Candidates_Invariants bounds how many files a walk selected.
 func Candidates_Invariants(candidates Candidates, namespace invariant.Namespace) {
-	invariant.Dot_Product(namespace).
+	invariant.Assertions(namespace).
 		Range_Int(len(candidates), FILES_COUNT_MIN, FILES_COUNT_MAX).
 		Ensure()
 }
@@ -3509,7 +3509,7 @@ type Skip_Reason uint8
 
 // Skip_Reason_Invariants bounds an outcome to the four that exist.
 func Skip_Reason_Invariants(reason Skip_Reason, namespace invariant.Namespace) {
-	invariant.Dot_Product(namespace).
+	invariant.Assertions(namespace).
 		Range_Uint8(
 			uint8(reason), uint8(SKIP_REASON_COUNTED), uint8(SKIP_REASON_BINARY)).
 		Ensure()
@@ -3535,7 +3535,7 @@ type Count_Results []Count_Result
 
 // Count_Results_Invariants bounds how many result slots a run allocates.
 func Count_Results_Invariants(results Count_Results, namespace invariant.Namespace) {
-	invariant.Dot_Product(namespace).
+	invariant.Assertions(namespace).
 		Range_Int(len(results), FILES_COUNT_MIN, FILES_COUNT_MAX).
 		Ensure()
 }
@@ -3823,7 +3823,7 @@ type Nonzero_Count int
 
 // Nonzero_Count_Invariants bounds a printed line tally.
 func Nonzero_Count_Invariants(count Nonzero_Count, namespace invariant.Namespace) {
-	invariant.Dot_Product(namespace).
+	invariant.Assertions(namespace).
 		Range_Int(int(count), NONZERO_COUNT_MIN, DROPPED_COUNT_MAX).
 		Ensure()
 }
@@ -3834,7 +3834,7 @@ type Nonzero_Tally int
 
 // Nonzero_Tally_Invariants bounds a printed file tally.
 func Nonzero_Tally_Invariants(tally Nonzero_Tally, namespace invariant.Namespace) {
-	invariant.Dot_Product(namespace).
+	invariant.Assertions(namespace).
 		Range_Int(int(tally), NONZERO_COUNT_MIN, FILES_COUNT_MAX).
 		Ensure()
 }
@@ -3851,7 +3851,7 @@ type Skip_Label string
 
 // Skip_Label_Invariants bounds a skip label's width.
 func Skip_Label_Invariants(label Skip_Label, namespace invariant.Namespace) {
-	invariant.Dot_Product(namespace).
+	invariant.Assertions(namespace).
 		Range_Int(len(label), SKIP_LABEL_BYTES_MIN, SKIP_LABEL_BYTES_MAX).
 		Ensure()
 }
@@ -3947,7 +3947,7 @@ type Dropped_Details []Render_Row
 
 // Dropped_Details_Invariants bounds how many kinds of omission one run reports.
 func Dropped_Details_Invariants(rows Dropped_Details, namespace invariant.Namespace) {
-	invariant.Dot_Product(namespace).
+	invariant.Assertions(namespace).
 		Range_Int(len(rows), DROPPED_DETAILS_COUNT_MIN, DROPPED_DETAILS_COUNT_MAX).
 		Ensure()
 }
@@ -3968,7 +3968,7 @@ type Dropped_Rows []Render_Row
 
 // Dropped_Rows_Invariants bounds the trailing section to its two shapes.
 func Dropped_Rows_Invariants(rows Dropped_Rows, namespace invariant.Namespace) {
-	invariant.Dot_Product(namespace).
+	invariant.Assertions(namespace).
 		Range_Int(
 			len(rows), DROPPED_ROWS_COUNT_MIN, DROPPED_ROWS_COUNT_MAX,
 			DROPPED_ROWS_COUNT_ABSENT).
@@ -4048,7 +4048,7 @@ type Row_Line string
 
 // Row_Line_Invariants bounds a laid-out row's byte length.
 func Row_Line_Invariants(line Row_Line, namespace invariant.Namespace) {
-	invariant.Dot_Product(namespace).
+	invariant.Assertions(namespace).
 		Range_Int(len(line), TABLE_WIDTH_MIN, TABLE_WIDTH_MAX).
 		Ensure()
 }
@@ -4059,7 +4059,7 @@ type Table_Line string
 
 // Table_Line_Invariants bounds a rendered line's width.
 func Table_Line_Invariants(line Table_Line, namespace invariant.Namespace) {
-	invariant.Dot_Product(namespace).
+	invariant.Assertions(namespace).
 		Range_Int(len(line), TABLE_LINE_BYTES_MIN, TABLE_LINE_BYTES_MAX).
 		Ensure()
 }
@@ -4095,7 +4095,7 @@ type Group_Tally int
 
 // Group_Tally_Invariants bounds a language group's file count.
 func Group_Tally_Invariants(tally Group_Tally, namespace invariant.Namespace) {
-	invariant.Dot_Product(namespace).
+	invariant.Assertions(namespace).
 		Range_Int(int(tally), GROUP_TALLY_MIN, FILES_COUNT_MAX).
 		Ensure()
 }
@@ -4105,7 +4105,7 @@ type File_Tally int
 
 // File_Tally_Invariants bounds a file tally by the same bound the walk stops at.
 func File_Tally_Invariants(tally File_Tally, namespace invariant.Namespace) {
-	invariant.Dot_Product(namespace).
+	invariant.Assertions(namespace).
 		Range_Int(int(tally), FILES_COUNT_MIN, FILES_COUNT_MAX).
 		Ensure()
 }
@@ -4213,7 +4213,7 @@ type Row_Name string
 
 // Row_Name_Invariants bounds a row label's width.
 func Row_Name_Invariants(name Row_Name, namespace invariant.Namespace) {
-	invariant.Dot_Product(namespace).
+	invariant.Assertions(namespace).
 		Range_Int(len(name), ROW_NAME_BYTES_MIN, ROW_NAME_BYTES_MAX).
 		Ensure()
 }
@@ -4230,7 +4230,7 @@ type File_Cell string
 
 // File_Cell_Invariants bounds a printed file tally's width.
 func File_Cell_Invariants(cell File_Cell, namespace invariant.Namespace) {
-	invariant.Dot_Product(namespace).
+	invariant.Assertions(namespace).
 		Range_Int(len(cell), FILE_CELL_BYTES_MIN, FILE_CELL_BYTES_MAX).
 		Ensure()
 }
@@ -4251,7 +4251,7 @@ type Tally_Text string
 
 // Tally_Text_Invariants bounds a rendered tally's width.
 func Tally_Text_Invariants(text Tally_Text, namespace invariant.Namespace) {
-	invariant.Dot_Product(namespace).
+	invariant.Assertions(namespace).
 		Range_Int(len(text), TALLY_TEXT_BYTES_MIN, LINE_CELL_BYTES_MAX).
 		Ensure()
 }
@@ -4261,7 +4261,7 @@ type Line_Cell string
 
 // Line_Cell_Invariants bounds a printed line tally's width.
 func Line_Cell_Invariants(cell Line_Cell, namespace invariant.Namespace) {
-	invariant.Dot_Product(namespace).
+	invariant.Assertions(namespace).
 		Range_Int(len(cell), LINE_CELL_BYTES_MIN, LINE_CELL_BYTES_MAX).
 		Ensure()
 }
@@ -4277,7 +4277,7 @@ type Comments_Cell string
 
 // Comments_Cell_Invariants bounds a printed comment tally's width.
 func Comments_Cell_Invariants(cell Comments_Cell, namespace invariant.Namespace) {
-	invariant.Dot_Product(namespace).
+	invariant.Assertions(namespace).
 		Range_Int(len(cell), LINE_CELL_BYTES_MIN, COMMENTS_CELL_BYTES_MAX).
 		Ensure()
 }
@@ -4299,7 +4299,7 @@ type Percent_Cell string
 // Percent_Cell_Invariants bounds a printed share's width, carving the widths a
 // one-decimal percentage cannot occupy.
 func Percent_Cell_Invariants(cell Percent_Cell, namespace invariant.Namespace) {
-	invariant.Dot_Product(namespace).
+	invariant.Assertions(namespace).
 		Range_Int(
 			len(cell), PERCENT_CELL_BYTES_MIN, PERCENT_CELL_BYTES_MAX,
 			PERCENT_CELL_BYTES_NARROW-3, PERCENT_CELL_BYTES_NARROW-2,
@@ -4363,7 +4363,7 @@ type Known_Name string
 
 // Known_Name_Invariants bounds a resolved language's display name.
 func Known_Name_Invariants(name Known_Name, namespace invariant.Namespace) {
-	invariant.Dot_Product(namespace).
+	invariant.Assertions(namespace).
 		Range_Int(len(name), KNOWN_NAME_BYTES_MIN, LANGUAGE_NAME_BYTES_MAX).
 		Ensure()
 }
@@ -4376,7 +4376,7 @@ type Group_Members []File_Count
 
 // Group_Members_Invariants bounds a group's membership.
 func Group_Members_Invariants(members Group_Members, namespace invariant.Namespace) {
-	invariant.Dot_Product(namespace).
+	invariant.Assertions(namespace).
 		Range_Int(len(members), GROUP_MEMBERS_COUNT_MIN, FILES_COUNT_MAX).
 		Ensure()
 }
@@ -4393,7 +4393,7 @@ type Category string
 
 // Category_Invariants bounds a taxonomy bucket's byte length.
 func Category_Invariants(category Category, namespace invariant.Namespace) {
-	invariant.Dot_Product(namespace).
+	invariant.Assertions(namespace).
 		Range_Int(len(category), CATEGORY_BYTES_MIN, CATEGORY_BYTES_MAX).
 		Ensure()
 }
@@ -4410,7 +4410,7 @@ type Language_Groups []Language_Group
 
 // Language_Groups_Invariants bounds how many languages a report holds.
 func Language_Groups_Invariants(groups Language_Groups, namespace invariant.Namespace) {
-	invariant.Dot_Product(namespace).
+	invariant.Assertions(namespace).
 		Range_Int(len(groups), LANGUAGE_GROUPS_COUNT_MIN, LANGUAGE_GROUPS_COUNT_MAX).
 		Ensure()
 }
@@ -4516,7 +4516,7 @@ type Categories []Category
 
 // Categories_Invariants pins the taxonomy to its declared size.
 func Categories_Invariants(order Categories, namespace invariant.Namespace) {
-	invariant.Dot_Product(namespace).
+	invariant.Assertions(namespace).
 		Range_Int(len(order), CATEGORIES_COUNT_MIN, CATEGORIES_COUNT_MAX).
 		Ensure()
 }
@@ -4550,7 +4550,7 @@ type Category_Languages []Language_Group
 func Category_Languages_Invariants(
 	languages Category_Languages, namespace invariant.Namespace,
 ) {
-	invariant.Dot_Product(namespace).
+	invariant.Assertions(namespace).
 		Range_Int(
 			len(languages), CATEGORY_LANGUAGES_COUNT_MIN,
 			CATEGORY_LANGUAGES_COUNT_MAX).
@@ -4564,7 +4564,7 @@ type Category_Groups []Category_Group
 func Category_Groups_Invariants(
 	categories Category_Groups, namespace invariant.Namespace,
 ) {
-	invariant.Dot_Product(namespace).
+	invariant.Assertions(namespace).
 		Range_Int(len(categories), CATEGORIES_COUNT_MIN, CATEGORIES_COUNT_MAX).
 		Ensure()
 }
@@ -4663,7 +4663,7 @@ type Language_Rows []Render_Row
 
 // Language_Rows_Invariants bounds one language's contribution to the table.
 func Language_Rows_Invariants(rows Language_Rows, namespace invariant.Namespace) {
-	invariant.Dot_Product(namespace).
+	invariant.Assertions(namespace).
 		Range_Int(len(rows), LANGUAGE_ROWS_COUNT_MIN, LANGUAGE_ROWS_COUNT_MAX).
 		Ensure()
 }
@@ -4718,7 +4718,7 @@ type Render_Rows []Render_Row
 
 // Render_Rows_Invariants bounds how many rows a table prints.
 func Render_Rows_Invariants(rows Render_Rows, namespace invariant.Namespace) {
-	invariant.Dot_Product(namespace).
+	invariant.Assertions(namespace).
 		Range_Int(
 			len(rows), RENDER_ROWS_COUNT_MIN, RENDER_ROWS_COUNT_MAX,
 			RENDER_ROWS_COUNT_ABSENT).
@@ -4768,7 +4768,7 @@ type Split_Row_Pair []Render_Row
 
 // Split_Row_Pair_Invariants pins the split to the two shapes it takes.
 func Split_Row_Pair_Invariants(rows Split_Row_Pair, namespace invariant.Namespace) {
-	invariant.Dot_Product(namespace).
+	invariant.Assertions(namespace).
 		Range_Int(
 			len(rows), SPLIT_ROWS_COUNT_MIN, SPLIT_ROWS_COUNT_MAX,
 			SPLIT_ROWS_COUNT_ABSENT).
@@ -4883,7 +4883,7 @@ type Name_Width int
 
 // Name_Width_Invariants bounds the label column's width.
 func Name_Width_Invariants(width Name_Width, namespace invariant.Namespace) {
-	invariant.Dot_Product(namespace).
+	invariant.Assertions(namespace).
 		Range_Int(int(width), NAME_WIDTH_MIN, NAME_WIDTH_MAX).
 		Ensure()
 }
@@ -4900,7 +4900,7 @@ type File_Width int
 
 // File_Width_Invariants bounds the file-tally column's width.
 func File_Width_Invariants(width File_Width, namespace invariant.Namespace) {
-	invariant.Dot_Product(namespace).
+	invariant.Assertions(namespace).
 		Range_Int(int(width), FILE_WIDTH_MIN, FILE_WIDTH_MAX).
 		Ensure()
 }
@@ -4919,7 +4919,7 @@ type Lines_Width int
 
 // Lines_Width_Invariants bounds the total-line column's width.
 func Lines_Width_Invariants(width Lines_Width, namespace invariant.Namespace) {
-	invariant.Dot_Product(namespace).
+	invariant.Assertions(namespace).
 		Range_Int(int(width), LINES_WIDTH_MIN, LINE_WIDTH_MAX).
 		Ensure()
 }
@@ -4932,7 +4932,7 @@ type Code_Width int
 
 // Code_Width_Invariants bounds the code-line column's width.
 func Code_Width_Invariants(width Code_Width, namespace invariant.Namespace) {
-	invariant.Dot_Product(namespace).
+	invariant.Assertions(namespace).
 		Range_Int(int(width), CODE_WIDTH_MIN, LINE_WIDTH_MAX).
 		Ensure()
 }
@@ -4949,7 +4949,7 @@ type Comments_Width int
 
 // Comments_Width_Invariants bounds the comment-line column's width.
 func Comments_Width_Invariants(width Comments_Width, namespace invariant.Namespace) {
-	invariant.Dot_Product(namespace).
+	invariant.Assertions(namespace).
 		Range_Int(int(width), COMMENTS_WIDTH_MIN, COMMENTS_WIDTH_MAX).
 		Ensure()
 }
@@ -4966,7 +4966,7 @@ type Blanks_Width int
 
 // Blanks_Width_Invariants bounds the blank-line column's width.
 func Blanks_Width_Invariants(width Blanks_Width, namespace invariant.Namespace) {
-	invariant.Dot_Product(namespace).
+	invariant.Assertions(namespace).
 		Range_Int(int(width), BLANKS_WIDTH_MIN, BLANKS_WIDTH_MAX).
 		Ensure()
 }
@@ -4982,7 +4982,7 @@ type Percent_Width int
 
 // Percent_Width_Invariants bounds the share column's width.
 func Percent_Width_Invariants(width Percent_Width, namespace invariant.Namespace) {
-	invariant.Dot_Product(namespace).
+	invariant.Assertions(namespace).
 		Range_Int(int(width), PERCENT_WIDTH_MIN, PERCENT_WIDTH_MAX).
 		Ensure()
 }
@@ -5003,7 +5003,7 @@ type Column_Width int
 
 // Column_Width_Invariants bounds the width a numeric cell is padded to.
 func Column_Width_Invariants(width Column_Width, namespace invariant.Namespace) {
-	invariant.Dot_Product(namespace).
+	invariant.Assertions(namespace).
 		Range_Int(int(width), COLUMN_WIDTH_MIN, COLUMN_WIDTH_MAX).
 		Ensure()
 }
@@ -5015,7 +5015,7 @@ type Table_Width int
 // Table_Width_Invariants bounds a whole row's printed width in characters, which is
 // what the rule is drawn to and what the columns sum to.
 func Table_Width_Invariants(width Table_Width, namespace invariant.Namespace) {
-	invariant.Dot_Product(namespace).
+	invariant.Assertions(namespace).
 		Range_Int(int(width), TABLE_WIDTH_MIN, TABLE_WIDTH_MAX).
 		Ensure()
 }
@@ -5083,7 +5083,7 @@ type Padded_Cell string
 
 // Padded_Cell_Invariants bounds a padded numeric cell's width.
 func Padded_Cell_Invariants(padded Padded_Cell, namespace invariant.Namespace) {
-	invariant.Dot_Product(namespace).
+	invariant.Assertions(namespace).
 		Range_Int(len(padded), PADDED_CELL_BYTES_MIN, PADDED_CELL_BYTES_MAX).
 		Ensure()
 }
@@ -5101,7 +5101,7 @@ type Padded_Name string
 
 // Padded_Name_Invariants bounds a padded label's width.
 func Padded_Name_Invariants(padded Padded_Name, namespace invariant.Namespace) {
-	invariant.Dot_Product(namespace).
+	invariant.Assertions(namespace).
 		Range_Int(len(padded), PADDED_NAME_BYTES_MIN, PADDED_NAME_BYTES_MAX).
 		Ensure()
 }
@@ -5118,7 +5118,7 @@ type Cell_Text string
 
 // Cell_Text_Invariants bounds a cell's width before padding.
 func Cell_Text_Invariants(text Cell_Text, namespace invariant.Namespace) {
-	invariant.Dot_Product(namespace).
+	invariant.Assertions(namespace).
 		Range_Int(len(text), CELL_TEXT_BYTES_MIN, CELL_TEXT_BYTES_MAX).
 		Ensure()
 }
