@@ -1,17 +1,17 @@
 # invariant
 
-`shared/invariant` is the pure assertion engine. `shared/invariant/default` supplies the
-OS-backed recorder and the package-level sugar used by application code.
+`shared/invariant` contains the pure assertion engine. `shared/invariant/default` supplies the
+OS-backed recorder. It also supplies the package-level API for application code.
 
 ## Eager guards
 
-`Always(condition, message)` is deliberately bare and eager. A false condition panics at
-its callsite; registration seeds its literal message so an unreached guard is also visible as a
-coverage gap.
+`Always(condition, message)` evaluates its condition immediately. A false condition causes a panic
+at the callsite. Registration records the literal message. Thus, an unreached guard is a coverage
+gap.
 
 ## Deferred assertion chains
 
-An assertion set is one fluent expression:
+Use one fluent expression for an assertion set:
 
 ```go
 invariant.Assertions("queue").
@@ -20,17 +20,17 @@ invariant.Assertions("queue").
     Ensure()
 ```
 
-`Sometimes` records neither coverage nor failure itself. It captures one boolean by fluent
-ordinal; `Ensure` resolves the registration-owned plan and credits exactly one of the axis's
-independent true or false obligations. Repeated messages are safe because identity is namespace,
-ordinal, and message.
+`Sometimes` stores one Boolean condition and one fluent ordinal. It does not record coverage or a
+failure. `Ensure` gets the registered plan. Then, `Ensure` records one true or false obligation.
+Namespace, ordinal, and message form the identity. Thus, duplicate messages do not conflict.
 
-There is no cross product. The suite witnesses every individual branch, not every combination, and
-there are no tuple cells, carves, polarity references, combination gaps, or legends.
+The framework does not make a cross product. The suite supplies evidence for each branch. It does
+not supply evidence for each combination. There are no tuple cells, carves, polarity references,
+combination gaps, or legends.
 
 ## Integer domains
 
-Every concrete integer width has chain methods for bounded and enumerated domains:
+Each integer width has chain methods for bounded and enumerated domains:
 
 ```go
 invariant.Assertions(namespace).
@@ -46,24 +46,28 @@ invariant.Assertions(namespace).
     Ensure()
 ```
 
-In the full build, Range enforces both bounds at `Ensure`; Range_Holed also enforces fixed
-strictly-interior hole slots. Signed methods carry four slots and unsigned methods three. Distinct
-holes are ascending, with unused slots repeating the final hole. Coverage includes successful lower
-and upper guards, both interval boundaries when distinct, and eligible interior 0, 1, 2, and -1
-witnesses. A boundary cannot be excluded.
+A full build enforces the two Range bounds at `Ensure`. Range_Holed also enforces fixed holes.
+The holes must be strictly inside the bounds. A signed method has four hole slots. An unsigned
+method has three hole slots. Put distinct holes in ascending order. Fill unused slots with the final
+hole. A boundary cannot be a hole.
 
-A registered Range contains at least five legal values after distinct holes are removed. Use one
-direct `Always` equality for one legal value. Use `Enum`, `Enum_3`, or `Enum_4` for two through four
-legal values. Registration reports the legal count and the exact replacement. This rule does not
-change unregistered runtime enforcement, production enforcement, or the public Range methods.
+Coverage includes the successful lower and upper guards. It also includes the two distinct bounds.
+Eligible interior witnesses are `0`, `1`, `2`, and `-1`.
 
-In the full build, Enum, Enum_3, and Enum_4 enforce their fixed member capacities at `Ensure`.
-Members are statically resolvable, strictly ascending, and distinct. Registration seeds one
-successful membership guard and gives each member an independent true/false axis.
+A registered Range must contain at least five legal values after the removal of distinct holes. Use
+one direct `Always` equality for one legal value. Use `Enum`, `Enum_3`, or `Enum_4` for two to four
+legal values. Registration reports the legal count and the correct replacement.
+
+This cardinality rule applies only during registration. It does not change unregistered runtime
+enforcement, production enforcement, or the public Range methods.
+
+A full build enforces Enum membership at `Ensure`. Enum, Enum_3, and Enum_4 have fixed capacities.
+Each member must be statically resolvable, distinct, and in ascending order. Registration records
+one successful membership guard. Registration also gives each member a separate Boolean axis.
 
 ## Type-owned helpers
 
-A defined type keeps its contract beside the type in a trailing-namespace helper:
+A defined type keeps its contract beside the type. The helper has a final namespace parameter:
 
 ```go
 const TOKEN_LENGTH = 16
@@ -75,22 +79,27 @@ func Token_Invariants(token Token, namespace invariant.Namespace) {
 }
 ```
 
-Registration instantiates that template at each literal callsite namespace. A chain is one unsplit,
-nonempty call nest ending in `Ensure`; returning a half-built builder is unsupported.
+Registration makes one template instance for each literal callsite namespace. A chain is one
+nonempty call nest that ends in `Ensure`. Do not split the chain. Do not return an incomplete
+builder.
 
 ## Coverage lifecycle
 
-Registration parses the selected packages before the suite and seeds every individual obligation.
-It also publishes the immutable ordered handles runtime emission consumes; runtime never rebuilds an
-identity from a message. A failed `Ensure` preflights the whole plan and credits nothing.
+Registration parses the selected packages before the suite starts. It records each obligation.
+Registration also publishes immutable handles in their source order. Runtime code uses these
+handles. Runtime code does not calculate an identity from a message.
 
-Plain tests and fuzz processes record. Benchmarks and ordinary binaries enforce without recording,
-and ordinary binaries do not consult registration plans.
+`Ensure` examines the full plan before it records coverage. If `Ensure` finds a failure, it
+records no coverage.
+
+Tests and fuzz processes record coverage. Benchmarks and ordinary binaries only enforce assertions.
+Ordinary binaries do not read registration plans.
 
 ## Gap reports
 
-Canonical `TestMain` callsites and assertion callsites import `shared/invariant/default`. Unset
-`INVARIANT_OUTPUT` and `table` render dynamically aligned Markdown tables with section counts:
+Canonical `TestMain` and assertion callsites import `shared/invariant/default`. An unset
+`INVARIANT_OUTPUT` value selects `table`. The `table` value writes aligned Markdown tables and
+section counts:
 
 ```text
 🚨 1 coverage gaps 🚨
@@ -104,31 +113,35 @@ Canonical `TestMain` callsites and assertion callsites import `shared/invariant/
 🚨 1 coverage gaps 🚨
 ```
 
-`INVARIANT_OUTPUT=json` replaces the complete human report with one compact flat array and a
-newline. Reachability records use `null` for `link` and `property`:
+`INVARIANT_OUTPUT=json` writes one compact flat array and one newline. It does not write the human
+report. A reachability record uses `null` for `link` and `property`:
 
 ```json
 [{"section":"reachability","assertion":"ready","link":null,"missing":"reachability",
 "property":null,"source":"ok"}]
 ```
 
-Any other environment value is a fatal configuration error. Both modes retain the same gap
-collection, deterministic order, failure exit, clean summary, and fuzz-coverage merge behavior.
+All other environment values cause a fatal configuration error. The two modes use the same gap
+collection and deterministic order. They also use the same failure exit, clean summary, and fuzz
+coverage merge.
 
 ## Build modes
 
-An untagged build retains the full deferred and recording-capable behavior above. Any of
-`invariant_disable_coverage`, `prd`, `prod`, or `production` selects eager production enforcement.
-Production aliases may be combined. `Always`, Range, holed Range, and every Enum capacity panic at
-the violating call; `Sometimes` and `Ensure` are inert. Production builders carry no namespace,
-plan, observation, allocation, or recording delegate, and panic text uses only the assertion prefix
-and fixed property identity plus the offending value.
+An untagged build uses deferred enforcement and can record coverage. Each production tag selects
+eager enforcement. The tags are `invariant_disable_coverage`, `prd`, `prod`, and `production`. You
+can combine production tags.
 
-`invariant_noop` compiles the complete API as inert bodies solely for measuring assertion overhead.
-Application code depends on assertion panics aborting control flow, so running any application in
-this mode is undefined behavior. Combining `invariant_noop` with a production alias intentionally
-fails compilation. Removed legacy assertion tags have no special meaning and select the ordinary
-full implementation.
+In a production build, `Always`, Range, Range_Holed, and each Enum method panic at the incorrect
+link. `Sometimes` and `Ensure` are inert. A production builder has no namespace, plan, observation,
+allocation, or recorder function. Panic text contains the assertion prefix, property, and incorrect
+value.
+
+`invariant_noop` compiles the full API as inert functions. Use this mode only to measure assertion
+overhead. Application code can depend on assertion panics to stop control flow. Thus, application
+behavior in this mode is undefined.
+
+The combination of `invariant_noop` and a production tag fails compilation. Removed legacy tags
+have no special meaning. They select the ordinary full implementation.
 
 ## Measured overhead
 

@@ -1,345 +1,354 @@
 
 # Always
 
-`Recorder_Always` is a bare eager guard. Its literal message is its global coverage identity, and
-it is independent of an `Assertions` builder.
+`Recorder_Always` is an eager guard outside an `Assertions` builder. Its literal message is its
+global coverage identity.
 
 ### Violation
 
-A false `Always` panics at its own callsite in every enforcing build and names its message. The
-panic includes the observed false value. The benchmark-only noop build is non-enforcing.
+In each enforcement mode, a false `Always` causes a panic at its callsite. The panic contains the
+message and the observed false value. The benchmark-only noop build does not enforce the guard.
 
 ### Eager
 
-`Always` enforces and credits when called; builder deferral does not change it.
+`Always` enforces and records the condition when the call occurs. Builder deferral does not change
+this behavior.
 
 ### Reachability
 
-Registration seeds each literal message once, so an `Always` the suite never reaches is a gap.
+Registration records each literal message one time. An `Always` call that the suite does not get to
+is a coverage gap.
 
 ### Uniqueness
 
-An `Always` message identifies one eager source root in the complete registration set. Two roots
-that use the same message fail registration before the recorder publishes an event.
+An `Always` message identifies one eager source root in the full registration set. Registration
+fails if two roots have the same message. The recorder publishes no event for these roots.
 
 # Sometimes
 
-`Sometimes` exists only as an `Assertion_Builder` link and demands both branches independently.
+`Sometimes` is only an `Assertion_Builder` link. Its true and false branches are separate
+obligations.
 
 ### Deferred
 
-A recording link captures its condition and advances the value builder. Without a plan it does not
-advance or observe; only `Ensure` may panic, resolve, or credit. Production and benchmark-only noop
-builds compile `Sometimes` and `Ensure` as inert links.
+A link in record mode stores its condition and advances the value builder. Without a plan, the link
+does not advance or record. Only `Ensure` can cause a panic, resolve a handle, or record coverage.
+Production and benchmark-only noop builds make `Sometimes` and `Ensure` inert.
 
 ### Coverage
 
-`Ensure` credits exactly one registered branch under namespace, ordinal, and literal message.
-Repeated messages remain distinct because their ordinals differ.
+`Ensure` records exactly one registered branch. Namespace, ordinal, and literal message identify
+that branch. Different ordinals keep duplicate messages separate.
 
 ### Gap
 
-An axis observed only true or only false reports the other branch as an individual coverage gap.
+If an axis records only one Boolean value, the other branch is one coverage gap.
 
 # Assertions
 
-`Recorder_Assertions(recorder, namespace)` returns an `Assertion_Builder`; `Assertions(namespace)`
-uses the default recorder. Value links return advanced copies and `Ensure` terminates the chain.
+`Recorder_Assertions(recorder, namespace)` returns an `Assertion_Builder`.
+`Assertions(namespace)` uses the default recorder. Value links return advanced copies. `Ensure`
+ends the chain.
 
 ### API
 
-Links are `Sometimes`, every concrete `Range_TYPE` and `Range_Holed_TYPE` method, and the
-`Enum_TYPE`, `Enum_3_TYPE`, and `Enum_4_TYPE` families. There is no bare `Sometimes`, cross
-product, `Impossible`, polarity reference, variadic preset, or compatibility surface.
+Links include `Sometimes`, each concrete Range method, and each concrete Enum method. The API does
+not have a bare `Sometimes`, cross product, `Impossible`, polarity reference, variadic preset, or
+compatibility API.
 
 ### Identity
 
-One literal namespace identifies one chain. Each axis is keyed by namespace, expanded ordinal,
-and message; registration alone constructs that identity and its resolved coverage handle.
+One literal namespace identifies one chain. Namespace, expanded ordinal, and message identify each
+axis. Only registration makes this identity and its resolved coverage handle.
 
 ### Atomic
 
-`Ensure` validates every deferred failure and selected handle before crediting; a failed chain
-credits nothing. Value panics include the offending value; full builds separate namespace and
-property with ` · `, while production retains only the fixed property.
+`Ensure` examines each deferred failure and selected handle before it records coverage. A failed
+chain records nothing. A value panic contains the incorrect value. A full build also contains the
+namespace. A production build contains only the fixed property identity.
 
 ### Foreign
 
-A chain outside analyzed packages enforces its presets at `Ensure` and credits nothing. Ordinary
-binaries do not consult registration plans or shape caches.
+A chain outside the analyzed packages enforces its presets at `Ensure` and records no coverage.
+Ordinary binaries do not read registration plans or shape caches.
 
 ### Allocation
 
-Warmed recording and enforcement allocate nothing; fixed observations exist only with a plan.
-Ordinary full enforcement carries a deferred verdict without constructing recording state.
-Production and noop use zero builders; production formats `Assertion_Failure` only when rendered.
+A warm record path and a warm enforcement path allocate nothing. Fixed observations exist only with
+a plan. Ordinary full enforcement keeps a deferred result without record state. Production and noop
+use zero builders. Production formats `Assertion_Failure` only for a panic.
 
 ### Persistence
 
-Axes serialize as `namespace NUL ordinal NUL message`; `Ensure` emits the plan's exact cached key.
-Fuzz merge resolves that key directly and never reconstructs identity from runtime messages. Fuzz
-workers persist only their first branch transition; the coordinator unions those records.
+An axis key has `namespace NUL ordinal NUL message`. `Ensure` writes the exact cached key from the
+plan. A fuzz merge resolves this key directly. It does not calculate identity from runtime messages.
+A fuzz worker writes only its first branch change. The coordinator combines these records.
 
 ### Record Validation
 
-A persisted record has one Base64 key, one tab, and exactly one branch marker. `T` marks true. `F`
-marks false. The record ends with a newline. The merge skips invalid Base64, missing separators,
-partial records, unknown keys, and all other branch markers. A rejected record credits no branch.
+A stored record has one Base64 key, one tab, one branch marker, and a final newline. `T` means true.
+`F` means false. The merge rejects invalid Base64, absent separators, partial records, unknown keys,
+and all other markers. A rejected record changes no branch.
 
 # Assertions Registration
 
-Registration recognizes one fluent call nest ending in `Ensure`, walks to its `Assertions` root,
-and publishes an immutable ordered plan of pre-resolved individual handles.
+Registration finds one fluent call nest that ends in `Ensure`. It walks to the `Assertions` root.
+Then, it publishes an immutable ordered plan of resolved handles.
 
 ### Packages
 
-After glob expansion, `Packages_To_Analyze` directly registers every recognized assertion in the
-selected packages' non-test source regardless of runtime reachability. An ensured chain inside an
-`_Invariants` or `_invariants` declaration is instantiated only through a reached bundle callsite.
+After glob expansion, `Packages_To_Analyze` registers each recognized assertion in the selected
+non-test source. Runtime reachability does not control direct registration. Registration makes a
+helper chain instance only when it finds a callsite for that helper.
 
 ### Transitive
 
-Every `_Invariants` and `_invariants` call found in registered source or a reached bundle is
-registered transitively and unconditionally within the current module. Needed packages are parsed
-lazily; unrelated direct assertions stay unregistered, and an unresolved reached bundle is fatal.
+Registration follows each helper call in registered source or a called bundle. It follows the call
+through the current module without a runtime condition. It parses a necessary package on demand.
+Unrelated assertions stay unregistered. An unresolved called bundle causes a fatal error.
 
 ### Walk
 
-The walk expands links in fluent order and seeds every guard once and every axis twice. It creates
-no tuples, masks, carves, constraints, combinations, or legends.
+The walk expands links in fluent order. It records each guard one time and each axis two times. It
+does not make tuples, masks, carves, constraints, combinations, or legends.
 
 ### Template
 
-A root using its function's trailing `Namespace` parameter is expanded at every literal
-`_Invariants` callsite. Functions returning half-built builders are never templates.
+If a root uses its final `Namespace` parameter, registration expands it at each literal helper
+callsite. A function that returns an incomplete builder is not a template.
 
 ### Ensured
 
-Every discovered root must be a nonempty, unsplit call expression terminated by `Ensure`; a bare
-root or a returned half-chain is fatal.
+Each found root must be one nonempty call expression that ends in `Ensure`. A split chain, a bare
+root, or a returned incomplete chain causes a fatal error.
 
 ### Literal
 
-Namespaces and axis messages must be compile-time string literals without NUL, except for the
-trailing template namespace parameter resolved at literal callsites.
+A namespace and an axis message must be a compile-time string literal without NUL. A final template
+namespace parameter is the only alternative. Registration resolves that parameter at each literal
+callsite.
 
 ### Namespace
 
-One namespace names exactly one registered source root. Rediscovering that root through bundle
-composition is idempotent; a distinct root using the namespace is fatal even with identical links.
+One namespace names exactly one registered source root. A second discovery of the same root does
+not change registration. A different root with that namespace causes a fatal error, even if its
+links are the same.
 
 ### Caps
 
-A chain accepts exactly 70 expanded links. Preset guards and generated axes occupy that same space,
-and registration rejects a 71st before the suite runs. Ordinary runtime enforcement never recounts
-the statically expanded chain.
+A chain can have 70 expanded links. Preset guards and generated axes use the same capacity.
+Registration rejects link 71 before the suite starts. Ordinary runtime enforcement does not count
+the statically expanded chain again.
 
 # Bundles
 
-A `_Invariants(value, namespace)` function owns a type's ensured assertion chain and composes the
-corresponding helpers of its fields.
+A `_Invariants(value, namespace)` function owns the assertion chain for one type. It also calls the
+corresponding helper for each field.
 
 ### Static
 
-A bundle body is straight-line; branching and looping make its emitted assertion set conditional
-and therefore fail registration.
+A bundle body has straight-line code. A branch or a loop makes its assertion set conditional. Thus,
+registration rejects the bundle.
 
 ### Template
 
-A bundle is recognized by its `_Invariants` or `_invariants` name and trailing `Namespace`
-parameter, and its chain is instantiated under each literal callsite namespace.
+The `_Invariants` or `_invariants` name identifies a bundle. Its final parameter is `Namespace`.
+Registration makes a chain instance for each literal callsite namespace.
 
 ### Descent
 
-Registration follows every reached bundle call across the module regardless of direct package
-selection and seeds each reached chain under the callsite namespace. Static-body and cycle
-validation apply to the complete reached graph.
+Registration follows each called bundle through the module. Direct package selection does not stop
+this action. Registration records each called chain below the callsite namespace. Static-body and
+cycle validation apply to the full call graph.
 
 ### Composition
 
-A bundle may call other bundles. Each ensured chain remains independent and no cross-product is
-formed between their observations.
+A bundle can call other bundles. Each chain stays independent. Registration does not make a cross
+product from their observations.
 
 ### Casing
 
-Exported and unexported type helpers use `_Invariants` and `_invariants` respectively.
+An exported type helper uses `_Invariants`. An unexported type helper uses `_invariants`.
 
 ### Sugar
 
-The configured sugar package may call assertion writers unqualified. Elsewhere an unqualified call
-is not treated as an invariant writer.
+The configured sugar package can call assertion functions without a package qualifier. In all other
+packages, registration does not identify an unqualified call as an assertion function.
 
 ### Cross Package
 
-Bundle resolution lazily parses an unregistered package for a reached helper and its transitive
-calls without registering unrelated assertions. A recognized helper outside the current module or
-one that cannot be resolved is fatal.
+For a called helper, bundle resolution parses an unregistered package on demand. It also follows
+the calls from that helper. It does not register unrelated assertions. A helper outside the current
+module causes a fatal error. An unresolved helper also causes a fatal error.
 
 ### Callsite
 
-Calling one bundle under distinct literal namespaces produces independent individual obligations;
-reusing a namespace for another chain is fatal.
+A call to one bundle with different literal namespaces makes independent obligations. A different
+chain cannot use one of these namespaces. Registration rejects that use.
 
 ### Gap Location
 
-A bundle gap separates its callsite namespace, expanded ordinal, property, missed polarity, and
-source into report fields. An eager `Always` retains only its assertion identity and source.
+A bundle gap has separate report fields for its namespace, ordinal, property, absent polarity, and
+source. An eager `Always` gap has only its assertion identity and source.
 
 ### Custom Types
 
-Bundles belong to custom defined types. Primitive presets are used inline or by the framework's own
-primitive helpers rather than wrapped in primitive `_Invariants` bundles.
+Bundles belong to custom defined types. Use primitive presets directly or through the framework
+primitive helpers. Do not put a primitive preset in a primitive helper bundle.
 
 ### Signed Primitive Mandates
 
-`Int_Invariants` requires `1`, `-1`, `math.MinInt64`, and `math.MaxInt64`. The fixed-width signed
-helpers require `1`, `-1`, and their matching `math.MinIntN` and `math.MaxIntN`. Each axis requires
-both branches. Ordinary signed values remain legal. A narrow platform fails compilation.
+`Int_Invariants` evidence must include `1`, `-1`, `math.MinInt64`, and `math.MaxInt64`.
+Each fixed-width helper must include `1`, `-1`, and its `math.MinIntN` and `math.MaxIntN`.
+Each axis must have the two branches. Other signed values are legal. A narrow platform cannot build.
 
 ### Unsigned Primitive Mandates
 
-`Uint_Invariants` requires `0`, `1`, and `math.MaxUint64`. `Uint8_Invariants`, `Uint16_Invariants`,
-`Uint32_Invariants`, and `Uint64_Invariants` require `0`, `1`, and their matching `math.MaxUintN`.
-Each axis requires both branches. Ordinary unsigned values remain legal.
+Evidence for `Uint_Invariants` must include `0`, `1`, and `math.MaxUint64`. Evidence for each
+fixed-width unsigned helper must include `0`, `1`, and its corresponding `math.MaxUintN`. Each axis
+must have the two branches. Other unsigned values are legal.
 
 ### Floating Primitive Mandates
 
-`Float32_Invariants` and `Float64_Invariants` require NaN, negative infinity, and positive infinity.
-Each axis requires both branches. Ordinary finite values remain legal.
+Evidence for `Float32_Invariants` and `Float64_Invariants` must include NaN, negative infinity, and
+positive infinity. Each axis must have the two branches. Other finite values are legal.
 
 ### Boolean Primitive Mandate
 
-`Boolean_Invariants` requires the true and false values through both branches of its true-value
-axis.
+Evidence for `Boolean_Invariants` must include true and false through the two branches of its
+true-value axis.
 
 ### Primitive Isolation
 
 Registration expands the real primitive helper source at each literal callsite namespace. The same
-helper at another namespace has separate links. Coverage at one namespace does not credit another
-namespace in raw metadata, the table report, the JSON report, or persisted fuzz coverage.
+helper at a different namespace has separate links. Coverage at one namespace does not change raw
+metadata, table data, JSON data, or fuzz data for a different namespace.
 
 # Analysis
 
-After the suite, every unexercised individual obligation is reported and the run exits nonzero.
+After the suite, analysis reports each obligation that has no evidence. If there is a gap, analysis
+exits with a nonzero status.
 
 ### Gaps
 
-Never-fired guards appear in a reachability table; unobserved axis polarities appear in a branch
-table with parsed namespace, numeric link, polarity, property, and unquoted source expression.
+A guard with no call is in the reachability table. An absent axis polarity is in the branch table.
+Each branch row has a namespace, numeric link, polarity, property, and unquoted source expression.
 
 ### Table Order
 
-Sections carry counts, branch rows sort by assertion, numeric link, and polarity, and reachability
-rows sort by assertion. The overall gap banner still brackets the report.
+Each section has a count. Branch rows use assertion, numeric link, and polarity as the sort keys.
+Reachability rows use assertion as the sort key. The gap banner occurs before and after the report.
 
 ### Table Escape
 
-Table cells escape pipes and backslashes and render physical line breaks as `<br>`, preserving the
-Markdown structure without altering the registered value.
+A table cell escapes pipes and backslashes. It writes a physical line break as `<br>`. These changes
+keep the Markdown structure and do not change the registered value.
 
 ### Output Configuration
 
-The default package accepts `INVARIANT_OUTPUT=table` or `json`; unset means table. Any other value
-emits a configuration diagnostic and exits nonzero without running the suite.
+The default package accepts `INVARIANT_OUTPUT=table` or `INVARIANT_OUTPUT=json`.
+An unset value means `table`. All other values cause a configuration diagnostic and a nonzero exit.
+The suite does not start.
 
 ### Summary
 
-A clean run reports every expanded property and its panic-able subset. Each Always and preset guard
-counts once, each axis twice, and each Range hole once as panic-able. A helper never collapses its
-links into one property; the builder has no combination total.
+A clean run reports each expanded property and the subset that can cause a panic. Each `Always` and
+preset guard counts one time. Each axis counts two times. Each Range hole counts one time in the
+panic subset. A helper does not combine its links. The builder has no combination total.
 
 ### Clean
 
-With every individual obligation exercised, analysis reports nothing and does not exit.
+When each obligation has evidence, analysis writes no gap report and does not call `Exit`.
 
 # Coverage
 
-Every registered builder link resolves through its pre-seeded plan or `Ensure` panics before any
-credit. `Sometimes` cannot exist outside a builder.
+Each registered builder link resolves through its pre-seeded plan. If resolution fails, `Ensure`
+causes a panic before it records coverage. `Sometimes` cannot be outside a builder.
 
 ### Modes
 
-Untagged tests and fuzz processes record; benchmarks and binaries only enforce. Production is any
-combination of `invariant_disable_coverage`, `prd`, `prod`, and `production`. Only `invariant_noop`
-selects inert benchmarks; mixing it with production fails compilation. Legacy tags remain ordinary.
+Untagged tests and fuzz processes record coverage. Benchmarks and binaries only enforce assertions.
+The production tags are `invariant_disable_coverage`, `prd`, `prod`, and `production`. You can
+combine them. `invariant_noop` selects inert benchmarks. A mix with production fails compilation.
 
 ### Enforcement
 
-The full build defers Range and Enum to `Ensure`. Production checks only bounds, holes, and
-membership at each link and panics with the assertion prefix and fixed identity, never namespace.
-Always stays eager; Sometimes and Ensure are inert. Noop use is undefined; APIs are shared.
+A full build defers Range and Enum enforcement to `Ensure`. Production enforces bounds, holes, and
+membership at each link. A production panic has the assertion prefix and fixed identity. It does
+not have the namespace. `Always` stays eager. `Sometimes` and `Ensure` are inert in production.
 
 ### Uniqueness
 
-Bare `Always` messages are globally unique. Builder namespaces are globally unique, while axis
-messages may repeat because expanded ordinal is part of their identity.
+A bare `Always` message is globally unique. A builder namespace is globally unique. An axis message
+can occur again because the expanded ordinal is part of its identity.
 
 ### Literal
 
-Every registered namespace and message is a compile-time string literal. Dynamic foreign chains
-may enforce presets but never create coverage identities.
+Each registered namespace and message is a compile-time string literal. A dynamic foreign chain can
+enforce presets. It cannot make a coverage identity.
 
 # Range
 
-`Assertion_Builder.Range_TYPE(value, minimum, maximum)` is available for every signed and unsigned
-primitive width except `uintptr`; defined integers convert explicitly at the call. A contiguous
-Range accepts exactly those three arguments.
+`Assertion_Builder.Range_TYPE(value, minimum, maximum)` exists for each signed and unsigned integer
+width other than `uintptr`. Convert a defined integer explicitly at the call. A contiguous Range
+accepts exactly these three arguments.
 
 ### Holed
 
-`Range_Holed_TYPE` separates excluded domains from the ordinary contiguous path. A signed method
-takes four hole slots and an unsigned method takes three. Distinct holes are strictly ascending;
-unused slots repeat the final hole, and only that final-hole padding may duplicate a value.
+`Range_Holed_TYPE` adds holes to the contiguous Range. A signed method takes four hole slots. An
+unsigned method takes three. Put distinct holes in ascending order. Fill unused slots with the final
+hole. Only this fill operation can duplicate a hole.
 
 ### Guard
 
-Both families contribute lower and upper reachability guards. Wrong arities, malformed domains, and
-invalid hole order, padding, or placement fail registration. Full builds defer observed failures
-until `Ensure`; production panics at the violating Range link.
+The two Range families add lower and upper reachability guards. Registration rejects an incorrect
+argument count, domain, hole order, fill value, or hole position. A full build defers a failure to
+`Ensure`. Production causes a panic at the incorrect Range link.
 
 ### Coverage
 
-A non-singleton interval witnesses minimum and maximum plus eligible strictly-interior `0`, `1`,
-`2`, and `-1`, each as an independent true/false axis. A complete witness set covers both branches
-of every axis. Coverage from another namespace or another ordinal does not satisfy an axis.
+A Range with multiple values has axes for its bounds. It also has axes for eligible interior values
+`0`, `1`, `2`, and `-1`. Each axis has two branches. Evidence from a different namespace or ordinal
+does not satisfy the axis.
 
 ### Cardinality
 
-A registered Range or Range_Holed domain has at least five legal values after holes are removed.
-One legal value uses direct Always equality; two through four use the matching Enum method.
-Registration reports the count and replacement after structural checks. Runtime does not apply it.
+A registered Range domain must have at least five legal values after hole removal.
+For one legal value, use direct `Always` equality. For two to four, use the corresponding Enum.
+After validation, registration reports the count and replacement. Runtime ignores this rule.
 
 ### Exclusions
 
-Distinct holes must be strictly inside the boundaries, may never exclude a boundary, and remove an
-equal sentinel axis. Repeated final-hole padding is idempotent: it removes and counts that hole only
-once. Invalid and out-of-range holes fail before registration seeds any entry.
+Each distinct hole must be strictly inside the bounds. A hole cannot equal a bound. A hole removes
+the equal sentinel axis. Duplicate final-hole fill removes and counts the hole one time.
+Registration rejects an incorrect hole before it records an entry.
 
 ### Registration
 
-Registration resolves constants and arithmetic, expands two guards followed by the distinct axes,
-and rejects any unresolvable domain, noncanonical slot sequence, small domain, wrong arity, or
-expansion beyond 70 links.
+Registration resolves constants and arithmetic. It expands two guards before the separate axes. It
+rejects an unresolved domain, incorrect slot sequence, small domain, incorrect argument count, or
+expansion above 70 links.
 
 # Enum
 
-`Assertion_Builder.Enum_TYPE(value, first, second)`, `Enum_3_TYPE`, and `Enum_4_TYPE` are available
-for the same primitive integer types. Their names declare exactly two, three, and four members; no
-variadic compatibility surface remains.
+`Assertion_Builder.Enum_TYPE(value, first, second)`, `Enum_3_TYPE`, and `Enum_4_TYPE` exist for the
+same integer types as Range. Their names specify two, three, and four members. The API has no
+variadic compatibility method.
 
 ### Guard
 
-Enum contributes one successful membership reachability guard. A wrong arity, invalid domain, or
-non-member is a registration failure. The full build defers an observed non-member until `Ensure`;
-a production build panics at the violating Enum link.
+Enum adds one successful membership guard. Registration rejects an incorrect argument count or
+domain. A nonmember causes an assertion failure. A full build defers this failure to `Ensure`. A
+production build causes a panic at the incorrect Enum link.
 
 ### Members
 
-Members are statically resolvable, exactly distinct, and strictly ascending. Every member is an
-independent true/false axis in canonical ascending order. A complete witness set calls the helper
-with every member. Those calls must cover both branches for each member axis.
+Registration must resolve each member statically. Members must be distinct and in ascending order.
+Each member is a separate Boolean axis in that order. A full evidence set calls the helper with each
+member and supplies the two branches for each member axis.
 
 ### Registration
 
-Registration resolves the member constants, seeds the membership guard and canonical member axes,
-and rejects any unresolved, duplicate, nonascending, wrong-arity, or beyond-70-link domain.
+Registration resolves the member constants. It records the membership guard and member axes. It
+rejects an unresolved member, duplicate member, incorrect order, incorrect argument count, or
+expansion above 70 links.
