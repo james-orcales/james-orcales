@@ -1,3 +1,7 @@
+## Communication style
+
+Religiously follow the `communication` skill when responding or writing documentation.
+
 ## Key Architecural Principle
 
 End-to-end Dependency Injection
