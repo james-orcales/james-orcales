@@ -73,9 +73,9 @@ immediate mutex is exempt.
 
 ### Inherited Fields
 
-A defined type over a struct inherits that struct's fields. It states each inherited field inline in
-its own Tree, because one tree holds a type at one position. A struct field has no inline form, thus
-the defined type composes it. It can use a defined type of its own when the field type is occupied.
+A defined type over a struct states each inherited field by a link of its own Tree or by a direct
+Always, because one tree holds a type at one position. A struct field has no inline form, thus the
+defined type composes it, through a defined type of its own when the field type is occupied.
 
 ### Always Condition
 

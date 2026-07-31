@@ -702,6 +702,15 @@ func assert_inherited_scalar_is_inline(t *testing.T) {
 		Path: "pkg/rule.go", Source_Text: inline})), "v.Mk") {
 		t.Fatal("an inlined inherited scalar field must be accepted")
 	}
+	// A singleton value has no Range and no Enum, thus a direct Always is all that states it.
+	singleton := INHERITED_FIELD_HEAD + "// Kept_Invariants is a fixture.\n" +
+		"func Kept_Invariants(v Kept, namespace invariant.Namespace) {\n" +
+		"\tinvariant.Always(int(v.Mk) == Mark_Min, \"the only mark\")\n" +
+		INHERITED_STRUCT_LINK + "}\n"
+	if diagnosed(check_source(parse(t, &parse_input{
+		Path: "pkg/rule.go", Source_Text: singleton})), "v.Mk") {
+		t.Fatal("a direct Always must state an inherited scalar field")
+	}
 }
 
 // A struct has no single link that states it, thus the defined type composes it. A defined type of

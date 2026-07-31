@@ -1222,7 +1222,7 @@ func struct_inherited_diagnostics(
 		Scope:     scope,
 		Present:   present,
 		Converted: struct_converted_fields(bundle, parameter, scope),
-		Inline:    struct_inline_fields(bundle, parameter),
+		Inline:    struct_inline_fields(bundle, parameter, scope),
 		Parameter: parameter,
 	}
 	for _, field := range struct_type.Fields.List {
@@ -1314,9 +1314,10 @@ func struct_field_is_struct(
 	return found
 }
 
-// Gives the inherited fields a bundle states in its own Tree.
+// Gives the inherited fields a bundle states inline. A link of the bundle's own Tree states one,
+// and so does a direct Always, which is the only form a single-valued field has.
 func struct_inline_fields(
-	bundle *ast.FuncDecl, parameter string,
+	bundle *ast.FuncDecl, parameter string, scope *Invariant_Scope,
 ) (inline map[string]bool) {
 	inline = map[string]bool{}
 	for _, statement := range bundle.Body.List {
@@ -1325,6 +1326,16 @@ func struct_inline_fields(
 			continue
 		}
 		struct_chain_fields(call, parameter, inline)
+		if !always_named_call(call, scope.Imports, scope.Default_Package) {
+			continue
+		}
+		if len(call.Args) != 2 {
+			continue
+		}
+		name := struct_expression_field(call.Args[0], parameter)
+		if name != "" {
+			inline[name] = true
+		}
 	}
 	return inline
 }
