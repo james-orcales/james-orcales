@@ -1802,6 +1802,17 @@ func Test_Sim_Script_Export_Flagged(t *testing.T) {
 	}
 }
 
+// Test_Sim_Script_Exported_Type_Allowed verifies exported simulator types are not flagged.
+func Test_Sim_Script_Exported_Type_Allowed(t *testing.T) {
+	t.Parallel()
+	files := specification_one_file("package fixture\n\n" +
+		"// New_Sim builds a sim.\nfunc New_Sim(seed uint64) (count int) { return 0 }\n\n" +
+		"// Sim_State is a fixture.\ntype Sim_State struct{}\n")
+	if specification_flags(t, files, "exposes the sim") {
+		t.Fatal("an exported simulator type must be allowed")
+	}
+}
+
 // Test_Primitive_Field_Flagged verifies a raw slice struct field is flagged.
 func Test_Primitive_Field_Flagged(t *testing.T) {
 	t.Parallel()

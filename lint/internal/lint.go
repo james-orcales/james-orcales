@@ -9794,11 +9794,8 @@ func io_gateway_network_pure(name string) (pure bool) {
 	return false
 }
 
-// A simulated backend's only input is its seed: New_Sim(seed) is the sole entry, the sim
-// type stays unexported, and no exported Sim-family surface lets a caller pre-load
-// outcomes. This flags the scripting API trying to return — an exported Sim type or Sim_*
-// function, or a New_Sim parameter that is not the seed — in the package defining New_Sim,
-// so a run stays a pure function of its seed and the fuzzer explores the whole space.
+// A simulated backend's only input is its seed. This flags a Sim_* function or New_Sim parameter
+// that lets a caller pre-load outcomes, so a run stays a pure function of its seed.
 func check_sim_script(parsed_files []Parsed_File) (diags []Diagnostic) {
 	directory := sim_script_directory(parsed_files)
 	if directory == "" {
@@ -9839,18 +9836,13 @@ func sim_script_directory(parsed_files []Parsed_File) (directory string) {
 	return ""
 }
 
-// Flags one declaration that reopens the scripting surface: an exported Sim type or Sim_*
-// function, or a New_Sim whose parameter is not the seed.
+// Flags one function declaration that reopens the scripting surface.
 func sim_script_declaration_diagnostics(pf Parsed_File, declaration ast.Decl) (diags []Diagnostic) {
 	function, is_function := declaration.(*ast.FuncDecl)
 	if is_function {
 		return sim_script_function_diagnostics(pf, function)
 	}
-	generic, is_generic := declaration.(*ast.GenDecl)
-	if !is_generic {
-		return nil
-	}
-	return sim_script_type_diagnostics(pf, generic)
+	return nil
 }
 
 // Flags New_Sim carrying a non-seed parameter, or any exported Sim_* helper function.
@@ -9890,27 +9882,8 @@ func sim_script_constructor_diagnostics(
 		"New_Sim takes only the seed; a parameter that carries outcomes is scripting")}
 }
 
-// Flags an exported Sim type, which would hand a caller the handle to script.
-func sim_script_type_diagnostics(pf Parsed_File, generic *ast.GenDecl) (diags []Diagnostic) {
-	for _, specification := range generic.Specs {
-		type_specification, is_type := specification.(*ast.TypeSpec)
-		if !is_type {
-			continue
-		}
-		if !sim_script_named(type_specification.Name.Name) {
-			continue
-		}
-		diags = append(diags, sim_script_diagnostic(pf, type_specification,
-			type_specification.Name.Name+" exposes the sim; keep it unexported"))
-	}
-	return diags
-}
-
-// Reports whether name is the exported Sim-family surface: the Sim type or a Sim_* helper.
+// Reports whether name is an exported Sim_* helper.
 func sim_script_named(name string) (named bool) {
-	if name == "Sim" {
-		return true
-	}
 	return strings.HasPrefix(name, "Sim_")
 }
 

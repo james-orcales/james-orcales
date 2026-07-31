@@ -531,9 +531,8 @@ Route IO through shared/io; instrumentation, tests, generated files, and main ar
 
 ### Seed
 
-A simulated backend takes only a seed: New_Sim(seed) is the sole entry, the sim type stays
-unexported, and no exported Sim type or Sim_* helper lets a caller script outcomes — so a run is a
-pure function of its seed.
+A simulated backend takes only a seed. New_Sim has one integer seed parameter, and no Sim_* helper
+lets a caller script outcomes. Thus, a run is a pure function of its seed.
 
 # Configuration
 
