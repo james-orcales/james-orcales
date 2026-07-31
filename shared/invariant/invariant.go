@@ -121,8 +121,8 @@ type Recorder struct {
 	Forbidden_Properties int
 
 	// Assertion_Plans is published once before the suite and read thereafter. Ordinary binaries
-	// never populate or consult it; only a recording root pays the namespace lookup.
-	Assertion_Plans map[Namespace]*Assertion_Plan
+	// never populate or consult it; only a recording root pays the key lookup.
+	Assertion_Plans map[Plan_Key]*Assertion_Plan
 
 	// Output receives the coverage-gap report and the orphan/bundle diagnostics.
 	Output io.Writer
@@ -201,8 +201,25 @@ type Integer interface {
 	Signed | Unsigned
 }
 
-// Namespace names one ensured assertion chain without making each message globally unique.
+// Namespace names one ensured assertion root without making each message globally unique.
 type Namespace string
+
+// Plan_Key names one chain: the root namespace plus the subject type that stands in for the call
+// path from that root. A bundle forwards its namespace unchanged, so the namespace alone cannot
+// tell two sibling chains apart. The subject type can, because registration rejects a type that
+// occurs twice under one root.
+//
+// The two components stay separate strings rather than one joined string. reflect returns both as
+// substrings of linker data, so a comparable struct key resolves the plan with no concatenation and
+// no allocation.
+type Plan_Key struct {
+	// Namespace is the literal the root callsite wrote.
+	Namespace Namespace
+	// Package is the subject type's import path, from reflect.Type.PkgPath.
+	Package string
+	// Type is the subject type's name, from reflect.Type.Name.
+	Type string
+}
 
 // Assertion_Builder is the complete deferred runtime state. Fixed observations make escape and
 // allocation unnecessary even at the largest supported chain.
@@ -218,12 +235,15 @@ type Assertion_Builder struct {
 	State_B uintptr
 }
 
-// Assertion_Plan is registration's immutable emission program for one namespace.
+// Assertion_Plan is registration's immutable emission program for one chain.
 type Assertion_Plan struct {
 	// Recorder owns the plan, so recording builders do not carry a second pointer.
 	Recorder *Recorder
-	// Namespace restores the deferred failure identity when Context_Data carries the plan.
-	Namespace Namespace
+	// Identity restores the deferred failure prefix when Context_Data carries the plan. A chain
+	// stores its namespace and an inline helper stores its message, which is the whole identity
+	// each one has. The package and type of a chain never reach a failure message, thus the
+	// plan does not keep them.
+	Identity Namespace
 	// Links is the exact expanded sequence runtime observations index.
 	Links []Assertion_Plan_Link
 }
@@ -355,7 +375,7 @@ func recorder_merge_increment(recorder *Recorder, key string, fired_true bool) {
 // across workers. A malformed or partial trailing line is skipped (a worker killed mid-write
 // costs at most its last line); a key with no seeded entry is skipped, like any runtime increment.
 func Recorder_Merge_Fuzz_Coverage_From(recorder *Recorder, r io.Reader) {
-	var buffer [4096]byte
+	var buffer [MERGE_READ_BYTES]byte
 	var partial string
 	var read_error error
 	for read_error == nil {
@@ -418,22 +438,43 @@ func Recorder_Register_Packages_For_Analysis(recorder *Recorder, directories ...
 			test_files = append(test_files, parsed_tests...)
 		}
 	}
+	// One walk each. Bundle_Index and every Indexed_Function share these two indexes, so
+	// building them at both sites would walk every declaration of every file a second time.
+	constants := ast_index_constants(files)
+	package_types := ast_index_package_types(files)
 	index := &Bundle_Index{
 		File_System:   recorder.File_System,
 		File_Set:      file_set,
 		Module_Path:   module_path,
 		Module_Root:   module_root,
 		Sugar_Package: recorder.Sugar_Package,
-		Same_Set:      ast_index_functions(files),
+		Same_Set: ast_index_functions(
+			files, file_set, module_path, module_root, constants, package_types),
 		Loaded:        map[string]map[string]Indexed_Function{},
-		Constants:     ast_index_constants(files),
+		Constants:     constants,
+		Package_Types: package_types,
 	}
 	reg := &Registration{
 		Planned_Keys:         map[string]bool{},
-		Namespace_Owner_Path: map[Namespace][]token.Pos{},
-		Planned_Assertions:   map[Namespace]*Assertion_Plan{},
+		Message_Owner:        map[string]bool{},
+		Registered_Calls:     map[token.Pos]bool{},
+		Namespace_Owner_Path: map[Plan_Key][]token.Pos{},
+		Subject_Owner:        map[Plan_Key][]token.Pos{},
+		Planned_Inline:       map[string]*Assertion_Plan{},
+		Root_Namespace_Owner: map[Namespace]token.Pos{},
+		Planned_Assertions:   map[Plan_Key]*Assertion_Plan{},
 	}
 	recorder_register_assertion_files(recorder, file_set, files, index, reg)
+	recorder_check_registration(recorder, file_set, files, test_files, index, reg)
+	recorder_commit_planned(recorder, reg)
+}
+
+// Runs every fatal registration check in one place. Each reporter is fatal on its own, and the
+// commit runs only when none fired, so the published plan stays all-or-nothing.
+func recorder_check_registration(
+	recorder *Recorder, file_set *token.FileSet, files []*ast.File,
+	test_files []*ast.File, index *Bundle_Index, reg *Registration,
+) {
 	recorder_check_test_assertion_calls(recorder, file_set, test_files, reg)
 	recorder_check_bundle_control_flow(recorder, file_set, files, reg)
 	recorder_check_bundle_literal_namespaces(recorder, file_set, files, reg)
@@ -441,6 +482,8 @@ func Recorder_Register_Packages_For_Analysis(recorder *Recorder, directories ...
 	recorder_check_assertion_bundle_contract(recorder, file_set, files, index, reg)
 	recorder_check_unresolved(recorder, reg)
 	recorder_check_bundle_cycles(recorder, reg)
+	recorder_check_invalid_subjects(recorder, reg)
+	recorder_check_repeated_subjects(recorder, reg)
 	recorder_check_invalid_identifiers(recorder, reg)
 	recorder_check_non_literal_messages(recorder, reg)
 	recorder_check_constant_always_conditions(recorder, reg)
@@ -449,7 +492,6 @@ func Recorder_Register_Packages_For_Analysis(recorder *Recorder, directories ...
 	recorder_check_invalid_bounds(recorder, reg)
 	recorder_report_registration_failure(
 		recorder, reg, "invalid assertion chains", reg.Invalid_Chain)
-	recorder_commit_planned(recorder, reg)
 }
 
 // Walks up from start_directory for a go.mod, returning the module path it
@@ -572,7 +614,7 @@ func recorder_check_test_assertion_calls(
 
 func ast_test_assertion_writer(name string) (writer bool) {
 	switch name {
-	case "Always", "Recorder_Always", "Assertions", "Recorder_Assertions":
+	case "Always", "Recorder_Always", "Tree", "Recorder_Tree":
 		return true
 	}
 	return ast_is_invariants_name(name)
@@ -687,10 +729,16 @@ func recorder_child_directories(file_system fs.FS, directory string) (children [
 type Indexed_Function struct {
 	// Declaration is the discovered function declaration.
 	Declaration *ast.FuncDecl
+	// Package is the declaring import path. Two packages can declare one bundle name, so bare
+	// names cannot identify a bundle, and cannot detect a cycle either.
+	Package string
 	// Imports maps the file's local names to import paths, so qualified sub-calls resolve.
 	Imports map[string]string
 	// Constants is the declaration package's static integer namespace.
 	Constants map[string]ast.Expr
+	// Package_Types maps the declaration package's package-level types to their underlying
+	// expressions, so a function-local subject is rejected and a Boolean subject is known.
+	Package_Types map[string]ast.Expr
 	// Package_Functions keeps bare nested calls anchored to the declaration's package after a
 	// cross-package descent; the analyzer root's Same_Set belongs to the caller instead.
 	Package_Functions map[string]Indexed_Function
@@ -721,24 +769,59 @@ type Bundle_Index struct {
 	// Constants maps package constants to their value expressions. A flat bare-name index, like
 	// Same_Set, is sufficient because one analysis covers one package tree.
 	Constants map[string]ast.Expr
+	// Package_Types maps each package-level type declaration to its underlying expression.
+	// reflect reports one empty PkgPath and one shared Name for two function-local types that
+	// share a name, thus presence here is what lets a chain subject carry an identity. The
+	// expression is what tells a Boolean subject from any other.
+	Package_Types map[string]ast.Expr
 }
 
-// Maps each function name to its declaration and its file's imports, for
+// Names each package-level type declaration. A type declared inside a function body is absent,
+// which is what lets registration reject it as a chain subject.
+func ast_index_package_types(files []*ast.File) (types map[string]ast.Expr) {
+	types = map[string]ast.Expr{}
+	for _, file := range files {
+		for _, declaration := range file.Decls {
+			general, is_general := declaration.(*ast.GenDecl)
+			if !is_general {
+				continue
+			}
+			if general.Tok != token.TYPE {
+				continue
+			}
+			for _, specification := range general.Specs {
+				type_specification, is_type := specification.(*ast.TypeSpec)
+				if !is_type {
+					continue
+				}
+				types[type_specification.Name.Name] = type_specification.Type
+			}
+		}
+	}
+	return types
+}
+
+// Maps each function name to its declaration, its declaring package, and its file's imports, for
 // descending *_Invariants bundles. A later definition wins on a name collision.
-func ast_index_functions(files []*ast.File) (functions map[string]Indexed_Function) {
+func ast_index_functions(
+	files []*ast.File, file_set *token.FileSet, module_path string, module_root string,
+	constants map[string]ast.Expr, package_types map[string]ast.Expr,
+) (functions map[string]Indexed_Function) {
 	functions = map[string]Indexed_Function{}
-	constants := ast_index_constants(files)
 	for _, file := range files {
 		imports := ast_file_imports(file)
+		package_path := ast_file_package_path(file, file_set, module_path, module_root)
 		for _, declaration := range file.Decls {
 			function, is_function := declaration.(*ast.FuncDecl)
 			if !is_function {
 				continue
 			}
 			functions[function.Name.Name] = Indexed_Function{
-				Declaration: function,
-				Imports:     imports,
-				Constants:   constants,
+				Declaration:   function,
+				Package:       package_path,
+				Imports:       imports,
+				Constants:     constants,
+				Package_Types: package_types,
 			}
 		}
 	}
@@ -751,6 +834,21 @@ func ast_index_functions(files []*ast.File) (functions map[string]Indexed_Functi
 
 // The one gate into the plan: a key already planned is a fatal collision — two assertions
 // sharing a key would silently merge and mask a gap.
+// Binds one plan to its recorder and resolves every link's seeded tracker entry.
+func recorder_publish_plan(recorder *Recorder, key Plan_Key, plan *Assertion_Plan) {
+	plan.Recorder = recorder
+	plan.Identity = key.Namespace
+	for link_index := range plan.Links {
+		link := &plan.Links[link_index]
+		value, exists := recorder.Events.Load(link.Entry.Key)
+		if !exists {
+			continue
+		}
+		link.Entry.Metadata = value.(*Assertion_Metadata)
+	}
+	recorder.Assertion_Plans[key] = plan
+}
+
 func recorder_plan_seed(
 	file_set *token.FileSet, node ast.Node, reg *Registration, key string,
 	kind Assertion_Kind, condition string,
@@ -780,19 +878,15 @@ func recorder_commit_planned(recorder *Recorder, reg *Registration) {
 			Condition: seed.Condition,
 		})
 	}
-	recorder.Assertion_Plans = map[Namespace]*Assertion_Plan{}
-	for namespace, plan := range reg.Planned_Assertions {
-		plan.Recorder = recorder
-		plan.Namespace = namespace
-		for link_index := range plan.Links {
-			link := &plan.Links[link_index]
-			value, exists := recorder.Events.Load(link.Entry.Key)
-			if !exists {
-				continue
-			}
-			link.Entry.Metadata = value.(*Assertion_Metadata)
-		}
-		recorder.Assertion_Plans[namespace] = plan
+	// One map. A chain key always carries a defined type, because a bundle is named for its
+	// subject and registration rejects any other subject. An inline key carries only its
+	// message, thus the two key spaces cannot meet.
+	recorder.Assertion_Plans = map[Plan_Key]*Assertion_Plan{}
+	for key, plan := range reg.Planned_Assertions {
+		recorder_publish_plan(recorder, key, plan)
+	}
+	for message, plan := range reg.Planned_Inline {
+		recorder_publish_plan(recorder, Plan_Key{Namespace: Namespace(message)}, plan)
 	}
 	recorder.Forbidden_Properties = reg.Forbidden_Properties
 }
@@ -1070,8 +1164,21 @@ func recorder_check_invalid_bounds(recorder *Recorder, reg *Registration) {
 		recorder, reg, "invalid bounds", reg.Invalid_Bound)
 }
 
+// Reports each chain whose subject reflect cannot name uniquely. Such a chain would key its plan
+// on two empty strings, so two of them would merge in silence.
+func recorder_check_invalid_subjects(recorder *Recorder, reg *Registration) {
+	recorder_report_registration_failure(
+		recorder, reg, "invalid assertion subjects", reg.Invalid_Subject)
+}
+
+// Reports each subject type that occurs twice in one root's expansion.
+func recorder_check_repeated_subjects(recorder *Recorder, reg *Registration) {
+	recorder_report_registration_failure(
+		recorder, reg, "repeated subject types", reg.Repeated_Subject)
+}
+
 // A bundle composition that recurses into itself would forward its identifier forever at
-// runtime; the descent refuses the cycle statically.
+// runtime, thus the descent refuses the cycle statically.
 func recorder_check_bundle_cycles(recorder *Recorder, reg *Registration) {
 	recorder_report_registration_failure(recorder, reg, "bundle cycles", reg.Cycle)
 }
@@ -1238,6 +1345,46 @@ func ast_bundle_namespace(call *ast.CallExpr) (namespace string, named bool) {
 	return ast_string_literal(call, len(call.Args)-1)
 }
 
+// Reports whether name resolves to the predeclared bool through this package's type declarations.
+// A defined type can name another defined type, thus the walk follows that chain.
+func ast_type_is_boolean(name string, package_types map[string]ast.Expr) (boolean bool) {
+	for step_index := 0; step_index < CONSTANT_RESOLUTION_STEPS_MAX; step_index++ {
+		if name == "bool" {
+			return true
+		}
+		base, declared := package_types[name]
+		if !declared {
+			return false
+		}
+		identifier, is_identifier := base.(*ast.Ident)
+		if !is_identifier {
+			return false
+		}
+		name = identifier.Name
+	}
+	return false
+}
+
+// Reports whether function declares name as a type parameter. This scans instead of building the
+// whole set, because the usual declaration has no type parameter at all and one membership test
+// does not earn a map.
+func ast_type_parameter_named(function *ast.FuncDecl, name string) (declared bool) {
+	if function == nil {
+		return false
+	}
+	if function.Type.TypeParams == nil {
+		return false
+	}
+	for _, field := range function.Type.TypeParams.List {
+		for _, parameter := range field.Names {
+			if parameter.Name == name {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 // Generic type parameters can denote primitives even though their identifiers are not builtins;
 // resolving them prevents a generic primitive helper from bypassing the helper contract.
 func recorder_bundle_type_parameters(function *ast.FuncDecl) (names map[string]bool) {
@@ -1343,20 +1490,40 @@ type Registration struct {
 	Invalid_Bound []string
 	// Invalid_Chain holds malformed, empty, split, duplicate, and over-cap builder chains.
 	Invalid_Chain []string
+	// Invalid_Subject holds chains whose subject reflect cannot name uniquely.
+	Invalid_Subject []string
 	// Cycle holds bundle compositions that recurse back into themselves.
 	Cycle []string
 	// Planned holds the Events entries to create when no diagnostic fired.
 	Planned []Planned_Seed
 	// Planned_Assertions becomes the immutable runtime emission plan after every seed commits.
-	Planned_Assertions map[Namespace]*Assertion_Plan
+	Planned_Assertions map[Plan_Key]*Assertion_Plan
+	// Planned_Inline becomes the same program for each inline helper, keyed by its message.
+	Planned_Inline map[string]*Assertion_Plan
 	// Planned_Keys detects key collisions across the whole plan.
 	Planned_Keys map[string]bool
+	// Registered_Calls holds each eager callsite already registered. One body is reached by the
+	// file walk and by every descent into it, thus without this a second visit would report its
+	// own guards as duplicates.
+	Registered_Calls map[token.Pos]bool
+	// Message_Owner holds every message that names an assertion on its own: an Always guard and
+	// an inline helper. Their key shapes differ, thus a shared message would not collide in
+	// Planned_Keys, and one would silently shadow the other in the report.
+	Message_Owner map[string]bool
 	// Forbidden_Properties preserves panic-able Range holes outside the coverage plan because a
 	// forbidden observation fails instead of earning coverage.
 	Forbidden_Properties int
 	// Namespace_Owner_Path prevents a second static invocation path from merging independent
 	// value streams while repeated descent through the first path stays idempotent.
-	Namespace_Owner_Path map[Namespace][]token.Pos
+	Namespace_Owner_Path map[Plan_Key][]token.Pos
+	// Subject_Owner records the owner path that first reached each subject type under one root.
+	// An identical path is idempotent re-expansion. A different path is a repeat.
+	Subject_Owner map[Plan_Key][]token.Pos
+	// Root_Namespace_Owner keeps one namespace literal to one root. The subject type separates
+	// sibling chains under a root, thus it must not license the same literal at a second root.
+	Root_Namespace_Owner map[Namespace]token.Pos
+	// Repeated_Subject holds each subject type that occurs twice in one root's expansion.
+	Repeated_Subject []string
 	// Failed poisons the commit; it is the gate rather than Exit because an injected Exit
 	// returns in tests.
 	Failed bool
@@ -1452,7 +1619,10 @@ func bundle_index_load(
 		return functions
 	}
 	files, _ := recorder_parse_directory(index.File_System, index.File_Set, directory)
-	for name, function := range ast_index_functions(files) {
+	indexed := ast_index_functions(
+		files, index.File_Set, index.Module_Path, index.Module_Root,
+		ast_index_constants(files), ast_index_package_types(files))
+	for name, function := range indexed {
 		function.Is_Sugar = import_path == index.Sugar_Package
 		function.Package_Functions = functions
 		functions[name] = function
@@ -1653,32 +1823,26 @@ func coverage_gap_assertion(message string) (assertion string) {
 	return message
 }
 
-// Parses the registration-owned builder identity into the stable reporting schema.
+// Parses the registration-owned builder identity into the stable reporting schema. The key has
+// namespace, package, type, ordinal, and message. The report shows the namespace as the assertion,
+// because the subject type is an implementation detail of identity rather than a reader's handle.
 func coverage_gap_branch(metadata *Assertion_Metadata, absent string) (gap Coverage_Gap) {
-	assertion, remainder, separated := strings.Cut(metadata.Message, ELEMENT_MESSAGE_SEPARATOR)
-	ordinal_text, property, complete := strings.Cut(remainder, ELEMENT_MESSAGE_SEPARATOR)
-	ordinal, ordinal_error := strconv.ParseUint(ordinal_text, 10, 8)
-	if !separated {
-		return Coverage_Gap{
-			Section: "branch", Assertion: metadata.Message,
-			Absent: absent, Source: metadata.Condition,
-		}
+	unparsed := Coverage_Gap{
+		Section: "branch", Assertion: metadata.Message,
+		Absent: absent, Source: metadata.Condition,
 	}
-	if !complete {
-		return Coverage_Gap{
-			Section: "branch", Assertion: metadata.Message,
-			Absent: absent, Source: metadata.Condition,
-		}
+	parts := strings.Split(metadata.Message, ELEMENT_MESSAGE_SEPARATOR)
+	if len(parts) != ASSERTION_KEY_PARTS {
+		return unparsed
 	}
+	ordinal, ordinal_error := strconv.ParseUint(parts[3], 10, 8)
 	if ordinal_error != nil {
-		return Coverage_Gap{
-			Section: "branch", Assertion: metadata.Message,
-			Absent: absent, Source: metadata.Condition,
-		}
+		return unparsed
 	}
 	link := uint8(ordinal)
+	property := parts[4]
 	return Coverage_Gap{
-		Section: "branch", Assertion: assertion, Link: &link,
+		Section: "branch", Assertion: parts[0], Link: &link,
 		Absent: absent, Property: &property, Source: metadata.Condition,
 	}
 }
@@ -1758,12 +1922,18 @@ func coverage_gap_section(gaps []Coverage_Gap, section string) (selected []Cover
 }
 
 // Materializes escaped cells once so measuring and writing use identical text.
-func coverage_gap_branch_rows(gaps []Coverage_Gap) (rows [][5]string) {
-	rows = make([][5]string, 0, len(gaps))
+func coverage_gap_branch_rows(gaps []Coverage_Gap) (rows [][BRANCH_TABLE_COLUMNS]string) {
+	rows = make([][BRANCH_TABLE_COLUMNS]string, 0, len(gaps))
 	for _, gap := range gaps {
-		rows = append(rows, [5]string{
+		// An inline helper owns no ordinal, so its link cell stays empty rather than
+		// printing the sort sentinel.
+		link := ""
+		if gap.Link != nil {
+			link = strconv.Itoa(int(*gap.Link))
+		}
+		rows = append(rows, [BRANCH_TABLE_COLUMNS]string{
 			coverage_gap_table_cell(gap.Assertion),
-			strconv.Itoa(coverage_gap_link(gap)),
+			link,
 			coverage_gap_table_cell(gap.Absent),
 			coverage_gap_table_cell(coverage_gap_property(gap)),
 			coverage_gap_table_cell(gap.Source),
@@ -1775,7 +1945,7 @@ func coverage_gap_branch_rows(gaps []Coverage_Gap) (rows [][5]string) {
 // Writes the five-column branch table with Link right aligned as an ordinal.
 func coverage_gap_branch_table_write(report *strings.Builder, gaps []Coverage_Gap) {
 	rows := coverage_gap_branch_rows(gaps)
-	widths := [5]int{
+	widths := [BRANCH_TABLE_COLUMNS]int{
 		len("Assertion"), len("Link"), len("Missing"), len("Property"), len("Source"),
 	}
 	for _, row := range rows {
@@ -1796,7 +1966,9 @@ func coverage_gap_branch_table_write(report *strings.Builder, gaps []Coverage_Ga
 }
 
 // Keeps Markdown alignment markers the same width as their header and row cells.
-func coverage_gap_branch_separator_write(report *strings.Builder, widths [5]int) {
+func coverage_gap_branch_separator_write(
+	report *strings.Builder, widths [BRANCH_TABLE_COLUMNS]int,
+) {
 	report.WriteString("|" + strings.Repeat("-", widths[0]+2))
 	report.WriteString("|" + strings.Repeat("-", widths[1]+1) + ":")
 	for _, width := range widths[2:] {
@@ -1807,10 +1979,10 @@ func coverage_gap_branch_separator_write(report *strings.Builder, widths [5]int)
 
 // Writes the smaller reachability table because its section already names the absent obligation.
 func coverage_gap_reachability_table_write(report *strings.Builder, gaps []Coverage_Gap) {
-	rows := make([][2]string, 0, len(gaps))
-	widths := [2]int{len("Assertion"), len("Source")}
+	rows := make([][REACHABILITY_TABLE_COLUMNS]string, 0, len(gaps))
+	widths := [REACHABILITY_TABLE_COLUMNS]int{len("Assertion"), len("Source")}
 	for _, gap := range gaps {
-		row := [2]string{
+		row := [REACHABILITY_TABLE_COLUMNS]string{
 			coverage_gap_table_cell(gap.Assertion),
 			coverage_gap_table_cell(gap.Source),
 		}
@@ -1935,9 +2107,9 @@ func recorder_register_assertion_files(
 				continue
 			}
 			indexed := Indexed_Function{
-				Declaration: function, Imports: imports,
+				Declaration: function, Package: file_package, Imports: imports,
 				Constants: index.Constants, Package_Functions: index.Same_Set,
-				Is_Sugar: allow_unqualified,
+				Package_Types: index.Package_Types, Is_Sugar: allow_unqualified,
 			}
 			recorder_register_assertion_function(
 				recorder, file_set, indexed, index, reg)
@@ -1950,16 +2122,25 @@ func recorder_register_assertion_files(
 func recorder_file_package(
 	file_set *token.FileSet, file *ast.File, index *Bundle_Index,
 ) (import_path string) {
-	if index.Module_Path == "" {
+	return ast_file_package_path(file, file_set, index.Module_Path, index.Module_Root)
+}
+
+// Gives a file's import path from its source location. This must agree exactly with what
+// reflect.Type.PkgPath reports for a type declared in that file, because registration and the
+// runtime build one Plan_Key from the two sides.
+func ast_file_package_path(
+	file *ast.File, file_set *token.FileSet, module_path string, module_root string,
+) (import_path string) {
+	if module_path == "" {
 		return ""
 	}
 	absolute := file_set.Position(file.Pos()).Filename
-	relative := strings.TrimPrefix(path.Dir(absolute), index.Module_Root)
+	relative := strings.TrimPrefix(path.Dir(absolute), module_root)
 	relative = strings.TrimPrefix(relative, "/")
 	if relative == "" {
-		return index.Module_Path
+		return module_path
 	}
-	return path.Join(index.Module_Path, relative)
+	return path.Join(module_path, relative)
 }
 
 func recorder_check_assertion_bundle_contract(
@@ -1995,11 +2176,86 @@ func recorder_check_assertion_bundle_contract(
 				position := recorder_position(file_set, function)
 				violations = append(violations,
 					position+"  primitive bundle subject: "+function.Name.Name)
+				continue
 			}
+			violations = append(violations, recorder_boolean_bundle_violations(
+				file_set, function, index.Package_Types)...)
 		}
 	}
 	recorder_report_registration_failure(
 		recorder, reg, "invalid bundle contracts", violations)
+}
+
+// Gives the bare name of a bundle's subject type, matching what reflect.Type.Name reports. named is
+// false for anything reflect cannot name uniquely: an unnamed composite, a pointer to one, a
+// generic instantiation, and a subject imported from another package. The house rule puts a bundle
+// directly below its type, so a same-package bare name is the only accepted form.
+func ast_assertion_subject_type(
+	function *ast.FuncDecl, package_types map[string]ast.Expr,
+) (name string, named bool) {
+	subject := recorder_assertion_bundle_subject(function)
+	if subject == nil {
+		return "", false
+	}
+	return ast_defined_type_name(subject, function, package_types)
+}
+
+// Reports a Boolean bundle that does not state exactly one Sometimes. A Boolean has two values and
+// both are obligations, thus one axis states the whole type. A second link would split one property
+// across two entries, and no chain at all would leave both values unwitnessed.
+func recorder_boolean_bundle_violations(
+	file_set *token.FileSet, function *ast.FuncDecl, package_types map[string]ast.Expr,
+) (violations []string) {
+	name, named := ast_assertion_subject_type(function, package_types)
+	if !named {
+		return nil
+	}
+	if !ast_type_is_boolean(name, package_types) {
+		return nil
+	}
+	links, found := ast_assertion_bundle_links(function)
+	position := recorder_position(file_set, function)
+	if !found {
+		return append(violations, position+
+			"  Boolean bundle states no chain: "+function.Name.Name)
+	}
+	if len(links) != 1 {
+		return append(violations, position+
+			"  Boolean bundle states more than one link: "+function.Name.Name)
+	}
+	if ast_assertion_chain_method(links[0]) != "Sometimes" {
+		return append(violations, position+
+			"  Boolean bundle states a link that is not Sometimes: "+function.Name.Name)
+	}
+	return nil
+}
+
+// Gives the fluent links of the one chain a bundle body opens. found is false when the body opens
+// no chain that Ensure terminates.
+func ast_assertion_bundle_links(function *ast.FuncDecl) (links []*ast.CallExpr, found bool) {
+	if function.Body == nil {
+		return nil, false
+	}
+	ast.Inspect(function.Body, func(node ast.Node) (descend bool) {
+		if found {
+			return false
+		}
+		call, is_call := node.(*ast.CallExpr)
+		if !is_call {
+			return true
+		}
+		if ast_assertion_chain_method(call) != "Ensure" {
+			return true
+		}
+		chain, parsed := ast_assertion_chain_from_ensure(call)
+		if !parsed {
+			return true
+		}
+		links = chain.Links
+		found = true
+		return false
+	})
+	return links, found
 }
 
 func recorder_assertion_bundle_subject(function *ast.FuncDecl) (subject ast.Expr) {
@@ -2026,6 +2282,8 @@ func recorder_register_assertion_function(
 		}
 		recorder_register_assertion_always(
 			file_set, call, function.Is_Sugar, function.Constants, reg)
+		recorder_register_inline_assertion(
+			file_set, call, function.Is_Sugar, function.Constants, reg)
 		if ast_assertion_chain_method(call) == "Ensure" {
 			chain, parsed := ast_assertion_chain_from_ensure(call)
 			if !parsed {
@@ -2039,13 +2297,14 @@ func recorder_register_assertion_function(
 				return false
 			}
 			recorder_seed_assertion_root(
-				file_set, chain, function.Constants, reg, function.Is_Sugar)
+				file_set, chain, function.Declaration, function.Package,
+				function.Package_Types, function.Constants, reg, function.Is_Sugar)
 			return false
 		}
 		if ast_assertion_root(call, function.Is_Sugar) {
 			if !ensured[call.Pos()] {
 				recorder_invalid_chain(file_set, call, reg,
-					"Assertions chain is not terminated by Ensure")
+					"Tree chain is not terminated by Ensure")
 			}
 			return true
 		}
@@ -2059,6 +2318,98 @@ func recorder_register_assertion_function(
 			file_set, call, function.Imports, index, reg)
 		return true
 	})
+}
+
+// Registers one inline helper call. The message is the whole identity, so it goes through
+// recorder_plan_seed exactly as an Always message does — which is also what makes a collision with
+// an Always message, or with a second inline helper, fatal without a separate check.
+func recorder_register_inline_assertion(
+	file_set *token.FileSet, call *ast.CallExpr, allow_unqualified bool,
+	constants map[string]ast.Expr, reg *Registration,
+) {
+	kind, matched := ast_inline_assertion_kind(call, allow_unqualified)
+	if !matched {
+		return
+	}
+	if reg.Registered_Calls[call.Pos()] {
+		return
+	}
+	reg.Registered_Calls[call.Pos()] = true
+	message, literal := ast_string_literal(call, len(call.Args)-1)
+	named := literal
+	if message == "" {
+		named = false
+	}
+	if strings.Contains(message, ELEMENT_MESSAGE_SEPARATOR) {
+		named = false
+	}
+	if !named {
+		position := recorder_position(file_set, call)
+		reg.Non_Literal = append(reg.Non_Literal,
+			position+"  inline message is not a nonempty NUL-free literal")
+		return
+	}
+	if !recorder_claim_message(file_set, call, message, reg) {
+		return
+	}
+	var links []Assertion_Registration_Link
+	valid := true
+	switch kind {
+	case "sometimes":
+		links = append(links, Assertion_Registration_Link{
+			Message: message, Condition: ast_condition_text(file_set, call, 0),
+			Kind: ASSERTION_KIND_SOMETIMES,
+		})
+	case "range":
+		links, valid = recorder_collect_assertion_range(
+			file_set, call, constants, reg, true, nil, false, 1)
+	case "range_holed":
+		links, valid = recorder_collect_assertion_range(
+			file_set, call, constants, reg, true, nil, true, 1)
+	case "enum":
+		links, valid = recorder_collect_assertion_enum(
+			file_set, call, constants, reg, true, nil, 1)
+	}
+	if !valid {
+		return
+	}
+	if len(links) > ASSERTION_LINKS_MAX {
+		recorder_invalid_chain(file_set, call, reg, "inline helper exceeds 70 links")
+		return
+	}
+	key := Plan_Key{Namespace: Namespace(message)}
+	plan := &Assertion_Plan{Identity: key.Namespace}
+	for ordinal_index, link := range links {
+		reg.Forbidden_Properties += link.Forbidden_Properties
+		encoded := assertion_registration_key(key, uint8(ordinal_index), link.Message)
+		recorder_plan_seed(file_set, call, reg, encoded, link.Kind, link.Condition)
+		plan.Links = append(plan.Links, Assertion_Plan_Link{
+			Ordinal: uint8(ordinal_index), Kind: link.Kind,
+			Entry: Handle_Entry{Key: encoded},
+		})
+	}
+	reg.Planned_Inline[message] = plan
+}
+
+// Names the inline helper a call invokes. An inline helper is a free function, so unlike a fluent
+// link it carries no receiver to identify it.
+func ast_inline_assertion_kind(
+	call *ast.CallExpr, allow_unqualified bool,
+) (kind string, matched bool) {
+	if len(call.Args) == 0 {
+		return "", false
+	}
+	switch {
+	case ast_assertion_named_call(call, "Sometimes", allow_unqualified):
+		return "sometimes", true
+	case ast_assertion_named_call(call, "Range", allow_unqualified):
+		return "range", true
+	case ast_assertion_named_call(call, "Range_Holed", allow_unqualified):
+		return "range_holed", true
+	case ast_assertion_named_call(call, "Enum", allow_unqualified):
+		return "enum", true
+	}
+	return "", false
 }
 
 func recorder_register_assertion_always(
@@ -2092,6 +2443,10 @@ func recorder_register_assertion_always(
 				position+"  Always condition is constant true")
 		}
 	}
+	if reg.Registered_Calls[call.Pos()] {
+		return
+	}
+	reg.Registered_Calls[call.Pos()] = true
 	message, literal := ast_string_literal(call, condition_index+1)
 	if !literal {
 		position := recorder_position(file_set, call)
@@ -2103,6 +2458,9 @@ func recorder_register_assertion_always(
 		position := recorder_position(file_set, call)
 		reg.Non_Literal = append(reg.Non_Literal,
 			position+"  Always message is not a NUL-free literal")
+		return
+	}
+	if !recorder_claim_message(file_set, call, message, reg) {
 		return
 	}
 	recorder_plan_seed(file_set, call, reg, message,
@@ -2261,14 +2619,15 @@ func ast_assertion_unsigned_method(method string) (unsigned bool) {
 		strings.HasSuffix(method, "_Uint64")
 }
 
+// Both roots gained a leading subject argument, which supplies the chain type.
 func ast_assertion_root(call *ast.CallExpr, allow_unqualified bool) (root bool) {
-	if ast_assertion_named_call(call, "Assertions", allow_unqualified) {
-		return len(call.Args) == 1
+	if ast_assertion_named_call(call, "Tree", allow_unqualified) {
+		return len(call.Args) == 2
 	}
-	if !ast_assertion_named_call(call, "Recorder_Assertions", false) {
+	if !ast_assertion_named_call(call, "Recorder_Tree", false) {
 		return false
 	}
-	return len(call.Args) == 2
+	return len(call.Args) == 3
 }
 
 func ast_assertion_named_call(
@@ -2295,12 +2654,13 @@ func ast_assertion_named_call(
 }
 
 func recorder_seed_assertion_root(
-	file_set *token.FileSet, chain Assertion_Registration_Chain,
-	constants map[string]ast.Expr, reg *Registration, allow_unqualified bool,
+	file_set *token.FileSet, chain Assertion_Registration_Chain, function *ast.FuncDecl,
+	package_path string, package_types map[string]ast.Expr, constants map[string]ast.Expr,
+	reg *Registration, allow_unqualified bool,
 ) {
 	if !ast_assertion_root(chain.Root, allow_unqualified) {
 		recorder_invalid_chain(file_set, chain.Root, reg,
-			"Ensure must terminate an Assertions root")
+			"Ensure must terminate a Tree root")
 		return
 	}
 	namespace_index := len(chain.Root.Args) - 1
@@ -2317,8 +2677,87 @@ func recorder_seed_assertion_root(
 		recorder_invalid_assertion_namespace(file_set, chain.Root, reg)
 		return
 	}
+	subject, named := ast_assertion_chain_subject_type(chain.Root, function, package_types)
+	if !named {
+		recorder_invalid_subject(file_set, chain.Root, reg)
+		return
+	}
+	owner, claimed := reg.Root_Namespace_Owner[Namespace(namespace)]
+	if claimed {
+		if owner != chain.Root.Pos() {
+			recorder_duplicate_namespace(file_set, chain.Root.Pos(), namespace, reg)
+			return
+		}
+	}
+	reg.Root_Namespace_Owner[Namespace(namespace)] = chain.Root.Pos()
 	recorder_seed_assertion_chain(
-		file_set, chain, Namespace(namespace), nil, constants, reg, true)
+		file_set, chain,
+		Plan_Key{Namespace: Namespace(namespace), Package: package_path, Type: subject},
+		nil, constants, reg, true)
+}
+
+// Names the type of a chain's subject argument by resolving that identifier against the enclosing
+// function's parameters. A chain outside a bundle still has a subject, so it still has an identity.
+// named is false when the argument is not a plain identifier, when it names no parameter, or when
+// the parameter's type is one reflect cannot name uniquely.
+func ast_assertion_chain_subject_type(
+	root *ast.CallExpr, function *ast.FuncDecl, package_types map[string]ast.Expr,
+) (name string, named bool) {
+	// Assertions(subject, namespace) and Recorder_Tree(recorder, subject, namespace) both
+	// put the subject immediately before the namespace.
+	if len(root.Args) < 2 {
+		return "", false
+	}
+	subject := root.Args[len(root.Args)-2]
+	// A conversion names its own type, so it needs no parameter lookup. Go infers the type
+	// parameter from the converted value, thus reflect reports exactly this name.
+	if conversion, is_call := subject.(*ast.CallExpr); is_call {
+		return ast_defined_type_name(conversion.Fun, function, package_types)
+	}
+	argument, is_identifier := subject.(*ast.Ident)
+	if !is_identifier {
+		return "", false
+	}
+	if function == nil {
+		return "", false
+	}
+	if function.Type.Params == nil {
+		return "", false
+	}
+	for _, field := range function.Type.Params.List {
+		for _, parameter := range field.Names {
+			if parameter.Name != argument.Name {
+				continue
+			}
+			return ast_defined_type_name(field.Type, function, package_types)
+		}
+	}
+	return "", false
+}
+
+// Gives the bare name of a defined package-level type expression, matching reflect.Type.Name.
+// named is false for a builtin, an unnamed composite, a type parameter, a generic instantiation,
+// and a type imported from another package.
+func ast_defined_type_name(
+	expression ast.Expr, function *ast.FuncDecl, package_types map[string]ast.Expr,
+) (name string, named bool) {
+	if pointer, is_pointer := expression.(*ast.StarExpr); is_pointer {
+		expression = pointer.X
+	}
+	identifier, is_identifier := expression.(*ast.Ident)
+	if !is_identifier {
+		return "", false
+	}
+	if recorder_is_builtin_type_name(identifier.Name) {
+		return "", false
+	}
+	if ast_type_parameter_named(function, identifier.Name) {
+		return "", false
+	}
+	if _, declared := package_types[identifier.Name]; !declared {
+		return "", false
+	}
+	return identifier.Name, true
 }
 
 func recorder_invalid_assertion_namespace(
@@ -2335,33 +2774,33 @@ func recorder_validate_assertion_template(
 ) {
 	if !ast_assertion_root(chain.Root, true) {
 		recorder_invalid_chain(file_set, chain.Root, reg,
-			"bundle Ensure must terminate an Assertions root")
+			"bundle Ensure must terminate a Tree root")
 		return
 	}
 	argument := ast_argument(chain.Root, len(chain.Root.Args)-1)
 	identifier, is_identifier := argument.(*ast.Ident)
 	if !is_identifier {
 		recorder_invalid_chain(file_set, chain.Root, reg,
-			"bundle Assertions root must use its trailing namespace parameter")
+			"bundle Tree root must use its trailing namespace parameter")
 		return
 	}
 	if identifier.Name != parameter {
 		recorder_invalid_chain(file_set, chain.Root, reg,
-			"bundle Assertions root must use its trailing namespace parameter")
+			"bundle Tree root must use its trailing namespace parameter")
 		return
 	}
 	recorder_collect_assertion_links(file_set, chain, constants, reg, true)
 }
 
 func recorder_seed_assertion_chain(
-	file_set *token.FileSet, chain Assertion_Registration_Chain, namespace Namespace,
+	file_set *token.FileSet, chain Assertion_Registration_Chain, key Plan_Key,
 	owner_path []token.Pos, constants map[string]ast.Expr, reg *Registration, diagnose bool,
 ) {
 	resolved_owner := recorder_namespace_owner_append(owner_path, chain.Root.Pos())
-	// SECURITY: One namespace belongs to one complete static invocation path. A different path
-	// would merge independent value streams and let one invocation satisfy another invocation's
+	// SECURITY: One key belongs to one complete static invocation path. A different path would
+	// merge independent value streams and let one invocation satisfy another invocation's
 	// coverage obligations. Re-expansion of the identical path must stay idempotent.
-	registered_owner, seen := reg.Namespace_Owner_Path[namespace]
+	registered_owner, seen := reg.Namespace_Owner_Path[key]
 	if seen {
 		if recorder_namespace_owner_equal(registered_owner, resolved_owner) {
 			return
@@ -2370,32 +2809,56 @@ func recorder_seed_assertion_chain(
 		if len(owner_path) != 0 {
 			position = owner_path[len(owner_path)-1]
 		}
-		reg.Collision = append(reg.Collision,
-			recorder_token_position(file_set, position)+
-				"  duplicate namespace: "+strconv.Quote(string(namespace)))
+		recorder_duplicate_namespace(file_set, position, string(key.Namespace), reg)
 		return
 	}
-	reg.Namespace_Owner_Path[namespace] = resolved_owner
+	reg.Namespace_Owner_Path[key] = resolved_owner
 	links, valid := recorder_collect_assertion_links(
 		file_set, chain, constants, reg, diagnose)
 	if !valid {
 		return
 	}
 	if len(links) == 0 {
-		recorder_invalid_chain(file_set, chain.Root, reg, "Assertions chain has no links")
+		recorder_invalid_chain(file_set, chain.Root, reg, "Tree chain has no links")
 		return
 	}
-	plan := &Assertion_Plan{}
+	plan := &Assertion_Plan{Identity: key.Namespace}
 	for ordinal_index, link := range links {
 		reg.Forbidden_Properties += link.Forbidden_Properties
-		key := assertion_registration_key(namespace, uint8(ordinal_index), link.Message)
-		recorder_plan_seed(file_set, chain.Links[0], reg, key, link.Kind, link.Condition)
+		encoded := assertion_registration_key(key, uint8(ordinal_index), link.Message)
+		recorder_plan_seed(
+			file_set, chain.Links[0], reg, encoded, link.Kind, link.Condition)
 		plan.Links = append(plan.Links, Assertion_Plan_Link{
 			Ordinal: uint8(ordinal_index), Kind: link.Kind,
-			Entry: Handle_Entry{Key: key},
+			Entry: Handle_Entry{Key: encoded},
 		})
 	}
-	reg.Planned_Assertions[namespace] = plan
+	reg.Planned_Assertions[key] = plan
+}
+
+// Claims one bare message for an Always guard or an inline helper. Reports a second claim, which
+// would put two unrelated assertions under one name in the gap report.
+func recorder_claim_message(
+	file_set *token.FileSet, node ast.Node, message string, reg *Registration,
+) (claimed bool) {
+	if reg.Message_Owner[message] {
+		reg.Collision = append(reg.Collision,
+			recorder_position(file_set, node)+
+				"  duplicate message: "+strconv.Quote(message))
+		return false
+	}
+	reg.Message_Owner[message] = true
+	return true
+}
+
+// Reports one namespace claimed by a second owner. Both the root claim and the chain-owner guard
+// report the same fact, thus the text lives at one site.
+func recorder_duplicate_namespace(
+	file_set *token.FileSet, position token.Pos, namespace string, reg *Registration,
+) {
+	reg.Collision = append(reg.Collision,
+		recorder_token_position(file_set, position)+
+			"  duplicate namespace: "+strconv.Quote(namespace))
 }
 
 func recorder_namespace_owner_append(owner []token.Pos, position token.Pos) (next []token.Pos) {
@@ -2417,11 +2880,30 @@ func recorder_namespace_owner_equal(first []token.Pos, second []token.Pos) (equa
 	return true
 }
 
+// MERGE_READ_BYTES is the fuzz-record read window. A stored record is one Base64 key with its
+// marker, so this holds many records per read and truncates none that the merge can resolve.
+const MERGE_READ_BYTES = 4096
+
+// BRANCH_TABLE_COLUMNS is the branch gap table's width: assertion, link, missing, property, source.
+const BRANCH_TABLE_COLUMNS = 5
+
+// REACHABILITY_TABLE_COLUMNS is the reachability gap table's width: assertion and source. Its
+// section names the absent obligation, so it needs no polarity or property column.
+const REACHABILITY_TABLE_COLUMNS = 2
+
+// ASSERTION_KEY_PARTS is how many separated elements assertion_registration_key writes: namespace,
+// package, type, ordinal, and message.
+const ASSERTION_KEY_PARTS = 5
+
+// Joins the identity into the persisted tracker key. Registration builds this once per link, thus
+// the concatenation never reaches the record path. The runtime resolves a plan through Plan_Key,
+// which joins nothing.
 func assertion_registration_key(
-	namespace Namespace, ordinal uint8, message string,
-) (key string) {
-	return string(namespace) + ELEMENT_MESSAGE_SEPARATOR + strconv.Itoa(int(ordinal)) +
-		ELEMENT_MESSAGE_SEPARATOR + message
+	key Plan_Key, ordinal uint8, message string,
+) (encoded string) {
+	return string(key.Namespace) + ELEMENT_MESSAGE_SEPARATOR + key.Package +
+		ELEMENT_MESSAGE_SEPARATOR + key.Type + ELEMENT_MESSAGE_SEPARATOR +
+		strconv.Itoa(int(ordinal)) + ELEMENT_MESSAGE_SEPARATOR + message
 }
 
 func recorder_collect_assertion_links(
@@ -2450,26 +2932,26 @@ func recorder_collect_assertion_links(
 		} else if ast_assertion_preset_kind(method) == "range" {
 			var preset_valid bool
 			links, preset_valid = recorder_collect_assertion_range(
-				file_set, call, constants, reg, diagnose, links, false)
+				file_set, call, constants, reg, diagnose, links, false, 0)
 			valid = valid && preset_valid
 		} else if ast_assertion_preset_kind(method) == "range_holed" {
 			var preset_valid bool
 			links, preset_valid = recorder_collect_assertion_range(
-				file_set, call, constants, reg, diagnose, links, true)
+				file_set, call, constants, reg, diagnose, links, true, 0)
 			valid = valid && preset_valid
 		} else if strings.HasPrefix(ast_assertion_preset_kind(method), "enum") {
 			var preset_valid bool
 			links, preset_valid = recorder_collect_assertion_enum(
-				file_set, call, constants, reg, diagnose, links)
+				file_set, call, constants, reg, diagnose, links, 0)
 			valid = valid && preset_valid
 		} else {
 			recorder_invalid_chain(file_set, call, reg,
-				"Assertions contains an unknown link")
+				"Tree contains an unknown link")
 			valid = false
 		}
 		if len(links) > ASSERTION_LINKS_MAX {
 			recorder_invalid_chain(file_set, call, reg,
-				"Assertions exceeds 70 links")
+				"Tree exceeds 70 links")
 			return nil, false
 		}
 	}
@@ -2487,12 +2969,14 @@ func recorder_invalid_sometimes_message(
 		position+"  Sometimes message is not a NUL-free literal")
 }
 
+// Extra_arguments counts the arguments after the preset's own operands. A fluent link has none.
+// An inline helper has its message, which must stay out of the hole slots and the arity check.
 func recorder_collect_assertion_range(
 	file_set *token.FileSet, call *ast.CallExpr, constants map[string]ast.Expr,
 	reg *Registration, diagnose bool, links []Assertion_Registration_Link,
-	holed bool,
+	holed bool, extra_arguments int,
 ) (expanded []Assertion_Registration_Link, valid bool) {
-	if !recorder_assertion_range_arity(file_set, call, reg, diagnose, holed) {
+	if !recorder_assertion_range_arity(file_set, call, reg, diagnose, holed, extra_arguments) {
 		return links, false
 	}
 	minimum, minimum_ok := constant_resolve(constants, call.Args[1])
@@ -2510,7 +2994,7 @@ func recorder_collect_assertion_range(
 			"Range minimum exceeds maximum")
 	}
 	holes, holes_valid := recorder_assertion_range_holes(
-		file_set, call, constants, reg, diagnose, minimum, maximum)
+		file_set, call, constants, reg, diagnose, minimum, maximum, extra_arguments)
 	if !holes_valid {
 		return links, false
 	}
@@ -2550,20 +3034,23 @@ func recorder_collect_assertion_range(
 
 func recorder_assertion_range_arity(
 	file_set *token.FileSet, call *ast.CallExpr, reg *Registration,
-	diagnose bool, holed bool,
+	diagnose bool, holed bool, extra_arguments int,
 ) (valid bool) {
 	if !holed {
-		if len(call.Args) == 3 {
+		if len(call.Args) == 3+extra_arguments {
 			return true
 		}
 		return recorder_invalid_preset(file_set, call, reg, diagnose,
 			"Range needs exactly value, minimum, and maximum")
 	}
+	// An inline helper is generic, thus its name carries no width suffix and this test is
+	// already false for it. It takes four slots for every width and leans on the duplicate-fill
+	// rule instead.
 	hole_count := 4
 	if ast_assertion_unsigned_method(ast_assertion_chain_method(call)) {
 		hole_count = 3
 	}
-	if len(call.Args) == 3+hole_count {
+	if len(call.Args) == 3+hole_count+extra_arguments {
 		return true
 	}
 	message := "Range_Holed needs exactly four hole slots"
@@ -2576,9 +3063,10 @@ func recorder_assertion_range_arity(
 func recorder_assertion_range_holes(
 	file_set *token.FileSet, call *ast.CallExpr, constants map[string]ast.Expr,
 	reg *Registration, diagnose bool, minimum Integer_Value, maximum Integer_Value,
+	extra_arguments int,
 ) (holes []Integer_Value, valid bool) {
 	padding := false
-	for hole_index, argument := range call.Args[3:] {
+	for hole_index, argument := range call.Args[3 : len(call.Args)-extra_arguments] {
 		hole, resolved := constant_resolve(constants, argument)
 		if !resolved {
 			return nil, recorder_unresolved_preset(file_set, call, reg, diagnose,
@@ -2688,9 +3176,10 @@ func recorder_append_assertion_range_candidate(
 	})
 }
 
+// Extra_arguments counts the arguments after the members. An inline helper has one, its message.
 func recorder_collect_assertion_enum(
 	file_set *token.FileSet, call *ast.CallExpr, constants map[string]ast.Expr,
-	reg *Registration, diagnose bool, links []Assertion_Registration_Link,
+	reg *Registration, diagnose bool, links []Assertion_Registration_Link, extra_arguments int,
 ) (expanded []Assertion_Registration_Link, valid bool) {
 	method := ast_assertion_chain_method(call)
 	member_count := 2
@@ -2700,7 +3189,7 @@ func recorder_collect_assertion_enum(
 	if ast_assertion_preset_kind(method) == "enum_4" {
 		member_count = 4
 	}
-	if len(call.Args) != member_count+1 {
+	if len(call.Args) != member_count+1+extra_arguments {
 		message := "Enum needs exactly two members"
 		if member_count == 3 {
 			message = "Enum_3 needs exactly three members"
@@ -2712,7 +3201,7 @@ func recorder_collect_assertion_enum(
 			message)
 	}
 	var members []Integer_Value
-	for _, argument := range call.Args[1:] {
+	for _, argument := range call.Args[1 : len(call.Args)-extra_arguments] {
 		member, resolved := constant_resolve(constants, argument)
 		if !resolved {
 			return links, recorder_unresolved_preset(file_set, call, reg, diagnose,
@@ -2846,6 +3335,16 @@ func recorder_register_assertion_bundle_call(
 		file_set, function, Namespace(namespace), []token.Pos{call.Pos()}, index, reg)
 }
 
+// Reports one chain whose subject reflect cannot name uniquely, joining the recorder_invalid_*
+// family so the message text lives at one site.
+func recorder_invalid_subject(
+	file_set *token.FileSet, root *ast.CallExpr, reg *Registration,
+) {
+	reg.Invalid_Subject = append(reg.Invalid_Subject,
+		recorder_position(file_set, root)+
+			"  assertion subject is not a defined package-level type")
+}
+
 func recorder_invalid_bundle_namespace(
 	file_set *token.FileSet, call *ast.CallExpr, reg *Registration,
 ) {
@@ -2872,7 +3371,11 @@ func recorder_register_assertion_bundle_instance(
 		if recorder_assertion_bundle_cycle(file_set, current, current_path, reg) {
 			continue
 		}
-		name := current.Declaration.Name.Name
+		if recorder_assertion_subject_repeat(
+			file_set, current, current_namespace, current_owner_path, reg) {
+			continue
+		}
+		name := current.Package + "." + current.Declaration.Name.Name
 		next_path := append(append([]string{}, current_path...), name)
 		enqueue := func(
 			nested Indexed_Function, nested_namespace Namespace,
@@ -2892,10 +3395,12 @@ func recorder_register_assertion_bundle_instance(
 		position+"  helper expansion exceeds 4096 steps")
 }
 
+// Compares the package-qualified bundle, not the bare name. Two packages can each declare one
+// bundle name, and a bare comparison reports those two as a cycle when one calls the other.
 func recorder_assertion_bundle_cycle(
 	file_set *token.FileSet, function Indexed_Function, path []string, reg *Registration,
 ) (cycle bool) {
-	name := function.Declaration.Name.Name
+	name := function.Package + "." + function.Declaration.Name.Name
 	for _, ancestor := range path {
 		if ancestor != name {
 			continue
@@ -2906,6 +3411,35 @@ func recorder_assertion_bundle_cycle(
 		return true
 	}
 	return false
+}
+
+// Rejects one subject type that occurs twice in the expansion of one root. The type stands in for
+// the call path, so a second occurrence gives two paths one identity, and the coverage of one
+// callsite would satisfy the obligations of the other. A diamond and a repeated sibling both land
+// here, and neither is reachable by the ancestor check above.
+func recorder_assertion_subject_repeat(
+	file_set *token.FileSet, function Indexed_Function, namespace Namespace,
+	owner_path []token.Pos, reg *Registration,
+) (repeated bool) {
+	subject, named := ast_assertion_subject_type(function.Declaration, function.Package_Types)
+	if !named {
+		return false
+	}
+	key := Plan_Key{Namespace: namespace, Package: function.Package, Type: subject}
+	registered, seen := reg.Subject_Owner[key]
+	if !seen {
+		reg.Subject_Owner[key] = owner_path
+		return false
+	}
+	if recorder_namespace_owner_equal(registered, owner_path) {
+		return false
+	}
+	position := owner_path[len(owner_path)-1]
+	reg.Repeated_Subject = append(reg.Repeated_Subject,
+		recorder_token_position(file_set, position)+
+			"  repeated subject type "+strconv.Quote(subject)+" under namespace "+
+			strconv.Quote(string(namespace)))
+	return true
 }
 
 func recorder_register_assertion_bundle_body(
@@ -2919,14 +3453,34 @@ func recorder_register_assertion_bundle_body(
 		if !is_call {
 			return true
 		}
+		// An eager guard in this body runs whenever the body runs, thus it owes coverage
+		// even when its own package is never analyzed directly.
+		recorder_register_assertion_always(
+			file_set, call, function.Is_Sugar, function.Constants, reg)
+		recorder_register_inline_assertion(
+			file_set, call, function.Is_Sugar, function.Constants, reg)
 		if ast_assertion_chain_method(call) == "Ensure" {
 			chain, parsed := ast_assertion_chain_from_ensure(call)
 			if !parsed {
 				return false
 			}
+			// Read the chain's own subject argument, not the declaration's
+			// parameter. The runtime keys on whatever the call passes, thus
+			// registration must read the same expression or the two sides build
+			// different keys.
+			subject, named := ast_assertion_chain_subject_type(
+				chain.Root, function.Declaration, function.Package_Types)
+			if !named {
+				recorder_invalid_subject(file_set, chain.Root, reg)
+				return false
+			}
 			recorder_seed_assertion_chain(
-				file_set, chain, namespace, owner_path,
-				function.Constants, reg, false)
+				file_set, chain,
+				Plan_Key{
+					Namespace: namespace, Package: function.Package,
+					Type: subject,
+				},
+				owner_path, function.Constants, reg, false)
 			return false
 		}
 		if !ast_is_invariants_name(ast_callee_name(call)) {

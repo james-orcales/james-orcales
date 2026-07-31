@@ -9,6 +9,15 @@ import (
 	"unsafe"
 )
 
+// Fixture_Subject stands in for a bundle subject where the test drives the builder directly. These
+// tests use a plan-free Recorder, so the chain type never reaches a lookup.
+type Fixture_Subject int
+
+// Opens a chain on a plan-free recorder over the fixture subject, keeping call sites short.
+func fixture_assertions(namespace Namespace) (builder Assertion_Builder) {
+	return Recorder_Tree(&Recorder{}, Fixture_Subject(0), namespace)
+}
+
 // Test_Optimized_Full_Enforcement_Matches_Literal_Reference keeps packed deferred state honest by
 // comparing its externally visible result with direct, field-by-field test code.
 func Test_Optimized_Full_Enforcement_Matches_Literal_Reference(t *testing.T) {
@@ -23,7 +32,7 @@ func Test_Optimized_Full_Enforcement_Matches_Literal_Reference(t *testing.T) {
 	assertion_pair(
 		t, "sometimes",
 		func() {
-			Recorder_Assertions(&Recorder{}, NAMESPACE).
+			fixture_assertions(NAMESPACE).
 				Sometimes(false, "axis").Ensure()
 		},
 		func() {
@@ -35,7 +44,7 @@ func Test_Optimized_Full_Enforcement_Matches_Literal_Reference(t *testing.T) {
 		assertion_pair(
 			t, fmt.Sprintf("range=%d", value),
 			func() {
-				Recorder_Assertions(&Recorder{}, NAMESPACE).
+				fixture_assertions(NAMESPACE).
 					Range_Int(value, 0, 4).Ensure()
 			},
 			func() { full_reference_range_int(NAMESPACE, value, 0, 4) },
@@ -43,7 +52,7 @@ func Test_Optimized_Full_Enforcement_Matches_Literal_Reference(t *testing.T) {
 		assertion_pair(
 			t, fmt.Sprintf("range-holed=%d", value),
 			func() {
-				Recorder_Assertions(&Recorder{}, NAMESPACE).
+				fixture_assertions(NAMESPACE).
 					Range_Holed_Int(value, 0, 4, 2, 2, 2, 2).Ensure()
 			},
 			func() {
@@ -53,7 +62,7 @@ func Test_Optimized_Full_Enforcement_Matches_Literal_Reference(t *testing.T) {
 		assertion_pair(
 			t, fmt.Sprintf("enum=%d", value),
 			func() {
-				Recorder_Assertions(&Recorder{}, NAMESPACE).
+				fixture_assertions(NAMESPACE).
 					Enum_Int(value, 1, 3).Ensure()
 			},
 			func() { full_reference_enum_int(NAMESPACE, value, 1, 3) },
@@ -61,7 +70,7 @@ func Test_Optimized_Full_Enforcement_Matches_Literal_Reference(t *testing.T) {
 		assertion_pair(
 			t, fmt.Sprintf("enum-3=%d", value),
 			func() {
-				Recorder_Assertions(&Recorder{}, NAMESPACE).
+				fixture_assertions(NAMESPACE).
 					Enum_3_Int(value, 1, 3, 5).Ensure()
 			},
 			func() { full_reference_enum_3_int(NAMESPACE, value, 1, 3, 5) },
@@ -69,7 +78,7 @@ func Test_Optimized_Full_Enforcement_Matches_Literal_Reference(t *testing.T) {
 		assertion_pair(
 			t, fmt.Sprintf("enum-4=%d", value),
 			func() {
-				Recorder_Assertions(&Recorder{}, NAMESPACE).
+				fixture_assertions(NAMESPACE).
 					Enum_4_Int(value, 1, 2, 3, 5).Ensure()
 			},
 			func() { full_reference_enum_4_int(NAMESPACE, value, 1, 2, 3, 5) },
@@ -167,7 +176,7 @@ func Test_Assertion_Builder_Fits_Three_Words(t *testing.T) {
 // Test_Assertions_Non_Recording_Success_Does_Not_Construct_Observations protects the ordinary full
 // build from paying for the registration-owned representation.
 func Test_Assertions_Non_Recording_Success_Does_Not_Construct_Observations(t *testing.T) {
-	builder := Recorder_Assertions(&Recorder{}, "ordinary").
+	builder := fixture_assertions("ordinary").
 		Sometimes(true, "axis").
 		Range_Holed_Int(3, 0, 10, 4, 4, 4, 4).
 		Enum_3_Int(3, 1, 2, 3)
@@ -189,9 +198,9 @@ func Test_Assertions_Non_Recording_Range_Failures_Are_Deferred(t *testing.T) {
 		Builder Assertion_Builder
 		Want    string
 	}{
-		{Recorder_Assertions(&Recorder{}, "lower").Range_Int(-1, 0, 3), "below min"},
-		{Recorder_Assertions(&Recorder{}, "upper").Range_Int(4, 0, 3), "exceeds max"},
-		{Recorder_Assertions(&Recorder{}, "hole").
+		{fixture_assertions("lower").Range_Int(-1, 0, 3), "below min"},
+		{fixture_assertions("upper").Range_Int(4, 0, 3), "exceeds max"},
+		{fixture_assertions("hole").
 			Range_Holed_Int(2, 0, 3, 2, 2, 2, 2), "excluded"},
 	}
 	for _, failure := range failures {
@@ -205,7 +214,7 @@ func Test_Assertions_Non_Recording_Range_Failures_Are_Deferred(t *testing.T) {
 // Test_Assertions_Non_Recording_Enum_Failure_Is_Deferred keeps membership on the enforcement path
 // while registration alone owns distinct-member expansion.
 func Test_Assertions_Non_Recording_Enum_Failure_Is_Deferred(t *testing.T) {
-	builder := Recorder_Assertions(&Recorder{}, "enum").Enum_4_Int(5, 1, 2, 3, 4)
+	builder := fixture_assertions("enum").Enum_4_Int(5, 1, 2, 3, 4)
 	if message := panic_message(builder.Ensure); !strings.Contains(message, "not a member") {
 		t.Fatalf("panic = %q", message)
 	}
@@ -252,7 +261,8 @@ func assertion_ensure_immediate_control(builder Assertion_Builder) {
 func Benchmark_Assertions_Deferred_Panic_Control(benchmark *testing.B) {
 	recorder := &Recorder{}
 	for benchmark.Loop() {
-		Recorder_Assertions(recorder, "benchmark").Range_Int(5, 0, 10).Ensure()
+		Recorder_Tree(recorder, Fixture_Subject(0), "benchmark").Range_Int(5, 0, 10).
+			Ensure()
 	}
 }
 
@@ -260,7 +270,7 @@ func Benchmark_Assertions_Deferred_Panic_Control(benchmark *testing.B) {
 func Benchmark_Assertions_Immediate_Panic_Control(benchmark *testing.B) {
 	recorder := &Recorder{}
 	for benchmark.Loop() {
-		builder := Recorder_Assertions(recorder, "benchmark")
+		builder := Recorder_Tree(recorder, Fixture_Subject(0), "benchmark")
 		builder = assertion_range_int_immediate_control(builder, 5, 0, 10)
 		assertion_ensure_immediate_control(builder)
 	}

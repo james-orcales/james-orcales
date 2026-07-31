@@ -9,6 +9,15 @@ import (
 	"local/james-orcales/shared/invariant"
 )
 
+// Fixture_Subject stands in for a bundle subject where the test drives the builder directly.
+// This build resolves no plan, so the chain type only has to compile.
+type Fixture_Subject int
+
+// Opens a chain on a plan-free recorder over the fixture subject, keeping call sites short.
+func fixture_assertions(namespace invariant.Namespace) (builder invariant.Assertion_Builder) {
+	return invariant.Recorder_Tree(&invariant.Recorder{}, Fixture_Subject(0), namespace)
+}
+
 // Test_Optimized_Noop_Enforcement_Matches_Literal_Reference prevents the benchmark lower bound
 // from hiding any assertion behavior behind its signature-identical surface.
 func Test_Optimized_Noop_Enforcement_Matches_Literal_Reference(t *testing.T) {
@@ -17,7 +26,7 @@ func Test_Optimized_Noop_Enforcement_Matches_Literal_Reference(t *testing.T) {
 		func() { invariant.Recorder_Always(&invariant.Recorder{}, false, "ignored") },
 		func() { noop_reference_always(false, "ignored") },
 	)
-	builder := invariant.Recorder_Assertions(&invariant.Recorder{}, "ignored")
+	builder := fixture_assertions("ignored")
 	for value := -2; value <= 6; value++ {
 		noop_pair(
 			t, fmt.Sprintf("value=%d", value),
@@ -102,7 +111,7 @@ func noop_panic_text(action func()) (message string) {
 func Test_Noop_Assertions_Are_Completely_Inert(t *testing.T) {
 	recorder := &invariant.Recorder{Is_Test: true}
 	invariant.Recorder_Always(recorder, false, "ignored")
-	builder := invariant.Recorder_Assertions(recorder, "ignored")
+	builder := invariant.Recorder_Tree(recorder, Fixture_Subject(0), "ignored")
 	if builder != (invariant.Assertion_Builder{}) {
 		t.Fatalf("builder = %+v, want zero value", builder)
 	}

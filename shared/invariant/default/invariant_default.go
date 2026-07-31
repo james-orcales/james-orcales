@@ -7,7 +7,6 @@ package invariant
 
 import (
 	"io"
-	"math"
 	"os"
 	"reflect"
 	"strconv"
@@ -194,135 +193,44 @@ func Always[T ~bool](condition T, message string) {
 	invariant.Recorder_Always(Default, condition, message)
 }
 
+// Sometimes states one inline two-branch axis on Default, for a body that owns no bundle.
+func Sometimes[T ~bool](condition T, message string) {
+	invariant.Recorder_Sometimes(Default, condition, message)
+}
+
+// Range bounds one inline value to a contiguous interval on Default.
+func Range[Value invariant.Integer](
+	value Value, minimum Value, maximum Value, message string,
+) {
+	invariant.Recorder_Range(Default, value, minimum, maximum, message)
+}
+
+// Enum holds one inline value to two members on Default.
+func Enum[Value invariant.Integer](
+	value Value, first Value, second Value, message string,
+) {
+	invariant.Recorder_Enum(Default, value, first, second, message)
+}
+
+// Range_Holed removes four fixed exclusions from an inline interval on Default. A duplicate final
+// hole stands for an unused slot, so one arity serves every width.
+func Range_Holed[Value invariant.Integer](
+	value Value, minimum Value, maximum Value,
+	hole_1 Value, hole_2 Value, hole_3 Value, hole_4 Value, message string,
+) {
+	invariant.Recorder_Range_Holed(
+		Default, value, minimum, maximum, hole_1, hole_2, hole_3, hole_4, message)
+}
+
 // Assertion_Builder re-exports the fluent value for explicit APIs without adding an adapter.
 type Assertion_Builder = invariant.Assertion_Builder
 
 // Namespace re-exports the chain identity used by every _Invariants helper.
 type Namespace = invariant.Namespace
 
-// Assertions starts one deferred builder on Default.
-func Assertions(namespace Namespace) (builder Assertion_Builder) {
-	return invariant.Recorder_Assertions(Default, namespace)
-}
-
-// A compile-time failure on narrow-int platforms prevents the int/uint helpers from claiming the
-// 64-bit boundaries their messages name.
-const INT_IS_64_BITS_WIDE = uint(math.MaxInt - math.MaxInt64)
-
-// Int_Invariants keeps the platform integer's conventional edge witnesses mandatory.
-func Int_Invariants(n int, namespace Namespace) {
-	Assertions(namespace).
-		Sometimes(n == 1, "The value is one.").
-		Sometimes(n == -1, "The value is negative one.").
-		Sometimes(n == math.MinInt64, "The value is the minimum int.").
-		Sometimes(n == math.MaxInt64, "The value is the maximum int.").
-		Ensure()
-}
-
-// Int8_Invariants keeps the signed eight-bit edge witnesses mandatory.
-func Int8_Invariants(n int8, namespace Namespace) {
-	Assertions(namespace).
-		Sometimes(n == 1, "The value is one.").
-		Sometimes(n == -1, "The value is negative one.").
-		Sometimes(n == math.MinInt8, "The value is the minimum int8.").
-		Sometimes(n == math.MaxInt8, "The value is the maximum int8.").
-		Ensure()
-}
-
-// Int16_Invariants keeps the signed sixteen-bit edge witnesses mandatory.
-func Int16_Invariants(n int16, namespace Namespace) {
-	Assertions(namespace).
-		Sometimes(n == 1, "The value is one.").
-		Sometimes(n == -1, "The value is negative one.").
-		Sometimes(n == math.MinInt16, "The value is the minimum int16.").
-		Sometimes(n == math.MaxInt16, "The value is the maximum int16.").
-		Ensure()
-}
-
-// Int32_Invariants keeps the signed thirty-two-bit edge witnesses mandatory.
-func Int32_Invariants(n int32, namespace Namespace) {
-	Assertions(namespace).
-		Sometimes(n == 1, "The value is one.").
-		Sometimes(n == -1, "The value is negative one.").
-		Sometimes(n == math.MinInt32, "The value is the minimum int32.").
-		Sometimes(n == math.MaxInt32, "The value is the maximum int32.").
-		Ensure()
-}
-
-// Int64_Invariants keeps the signed sixty-four-bit edge witnesses mandatory.
-func Int64_Invariants(n int64, namespace Namespace) {
-	Assertions(namespace).
-		Sometimes(n == 1, "The value is one.").
-		Sometimes(n == -1, "The value is negative one.").
-		Sometimes(n == math.MinInt64, "The value is the minimum int64.").
-		Sometimes(n == math.MaxInt64, "The value is the maximum int64.").
-		Ensure()
-}
-
-// Uint_Invariants keeps the platform unsigned integer's edge witnesses mandatory.
-func Uint_Invariants(n uint, namespace Namespace) {
-	Assertions(namespace).
-		Sometimes(n == 0, "The value is zero.").
-		Sometimes(n == 1, "The value is one.").
-		Sometimes(n == math.MaxUint64, "The value is the maximum uint.").
-		Ensure()
-}
-
-// Uint8_Invariants keeps the unsigned eight-bit edge witnesses mandatory.
-func Uint8_Invariants(n uint8, namespace Namespace) {
-	Assertions(namespace).
-		Sometimes(n == 0, "The value is zero.").
-		Sometimes(n == 1, "The value is one.").
-		Sometimes(n == math.MaxUint8, "The value is the maximum uint8.").
-		Ensure()
-}
-
-// Uint16_Invariants keeps the unsigned sixteen-bit edge witnesses mandatory.
-func Uint16_Invariants(n uint16, namespace Namespace) {
-	Assertions(namespace).
-		Sometimes(n == 0, "The value is zero.").
-		Sometimes(n == 1, "The value is one.").
-		Sometimes(n == math.MaxUint16, "The value is the maximum uint16.").
-		Ensure()
-}
-
-// Uint32_Invariants keeps the unsigned thirty-two-bit edge witnesses mandatory.
-func Uint32_Invariants(n uint32, namespace Namespace) {
-	Assertions(namespace).
-		Sometimes(n == 0, "The value is zero.").
-		Sometimes(n == 1, "The value is one.").
-		Sometimes(n == math.MaxUint32, "The value is the maximum uint32.").
-		Ensure()
-}
-
-// Uint64_Invariants keeps the unsigned sixty-four-bit edge witnesses mandatory.
-func Uint64_Invariants(n uint64, namespace Namespace) {
-	Assertions(namespace).
-		Sometimes(n == 0, "The value is zero.").
-		Sometimes(n == 1, "The value is one.").
-		Sometimes(n == math.MaxUint64, "The value is the maximum uint64.").
-		Ensure()
-}
-
-// Float64_Invariants keeps non-finite values visible in generated coverage.
-func Float64_Invariants(f float64, namespace Namespace) {
-	Assertions(namespace).
-		Sometimes(math.IsNaN(f), "The value is NaN.").
-		Sometimes(f == math.Inf(-1), "The value is negative infinity.").
-		Sometimes(f == math.Inf(1), "The value is positive infinity.").
-		Ensure()
-}
-
-// Float32_Invariants keeps non-finite values visible in generated coverage.
-func Float32_Invariants(f float32, namespace Namespace) {
-	Assertions(namespace).
-		Sometimes(math.IsNaN(float64(f)), "The value is NaN.").
-		Sometimes(float64(f) == math.Inf(-1), "The value is negative infinity.").
-		Sometimes(float64(f) == math.Inf(1), "The value is positive infinity.").
-		Ensure()
-}
-
-// Boolean_Invariants requires both values without a manually namespaced message.
-func Boolean_Invariants(b bool, namespace Namespace) {
-	Assertions(namespace).Sometimes(b, "The value is true.").Ensure()
+// Tree starts one deferred builder on Default. The subject supplies the chain type.
+func Tree[Subject any](
+	subject Subject, namespace Namespace,
+) (builder Assertion_Builder) {
+	return invariant.Recorder_Tree(Default, subject, namespace)
 }

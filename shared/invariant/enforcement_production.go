@@ -15,9 +15,38 @@ func Recorder_Always[T ~bool](recorder *Recorder, condition T, message string) {
 	}
 }
 
-// Recorder_Assertions discards recorder state so production carries enforcement alone.
-func Recorder_Assertions(
-	recorder *Recorder, namespace Namespace,
+// Recorder_Sometimes keeps only its two-branch coverage duty, which production drops, so it has
+// nothing left to enforce. A caller-chosen condition cannot violate a typed domain.
+func Recorder_Sometimes[T ~bool](recorder *Recorder, condition T, message string) {
+	return
+}
+
+// Recorder_Range keeps only value-dependent enforcement in the production build.
+func Recorder_Range[Value Integer](
+	recorder *Recorder, value Value, minimum Value, maximum Value, message string,
+) {
+	production_range(Assertion_Builder{}, value, minimum, maximum)
+}
+
+// Recorder_Enum keeps only membership enforcement in the production build.
+func Recorder_Enum[Value Integer](
+	recorder *Recorder, value Value, first Value, second Value, message string,
+) {
+	production_enum_2(Assertion_Builder{}, value, first, second)
+}
+
+// Recorder_Range_Holed keeps only value-dependent enforcement in the production build.
+func Recorder_Range_Holed[Value Integer](
+	recorder *Recorder, value Value, minimum Value, maximum Value,
+	hole_1 Value, hole_2 Value, hole_3 Value, hole_4 Value, message string,
+) {
+	production_range_holed(
+		Assertion_Builder{}, value, minimum, maximum, hole_1, hole_2, hole_3, hole_4)
+}
+
+// Recorder_Tree discards recorder state so production carries enforcement alone.
+func Recorder_Tree[Subject any](
+	recorder *Recorder, subject Subject, namespace Namespace,
 ) (builder Assertion_Builder) {
 	return Assertion_Builder{}
 }

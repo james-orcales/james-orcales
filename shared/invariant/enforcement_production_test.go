@@ -11,6 +11,15 @@ import (
 	"local/james-orcales/shared/invariant"
 )
 
+// Fixture_Subject stands in for a bundle subject where the test drives the builder directly.
+// This build resolves no plan, so the chain type only has to compile.
+type Fixture_Subject int
+
+// Opens a chain on a plan-free recorder over the fixture subject, keeping call sites short.
+func fixture_assertions(namespace invariant.Namespace) (builder invariant.Assertion_Builder) {
+	return invariant.Recorder_Tree(&invariant.Recorder{}, Fixture_Subject(0), namespace)
+}
+
 // Test_Optimized_Production_Enforcement_Matches_Literal_Reference keeps the inlineable build tied
 // to a direct test implementation whose branches can be inspected without packed state or helpers.
 func Test_Optimized_Production_Enforcement_Matches_Literal_Reference(t *testing.T) {
@@ -22,7 +31,7 @@ func Test_Optimized_Production_Enforcement_Matches_Literal_Reference(t *testing.
 			func() { production_reference_always(condition, "identity") },
 		)
 	}
-	builder := invariant.Recorder_Assertions(recorder, "ignored")
+	builder := invariant.Recorder_Tree(recorder, Fixture_Subject(0), "ignored")
 	production_pair(
 		t, "sometimes",
 		func() { builder.Sometimes(false, "axis").Ensure() },
@@ -138,7 +147,7 @@ func production_reference_enum_4_int(
 
 // Test_Production_Int_Assertions_Enforce_At_The_Violating_Link keeps every int family eager.
 func Test_Production_Int_Assertions_Enforce_At_The_Violating_Link(t *testing.T) {
-	builder := invariant.Recorder_Assertions(&invariant.Recorder{}, "must-not-appear")
+	builder := fixture_assertions("must-not-appear")
 	production_assert_link(
 		t, "Range_Int",
 		func() { builder.Range_Int(1, 0, 2) },
@@ -168,7 +177,7 @@ func Test_Production_Int_Assertions_Enforce_At_The_Violating_Link(t *testing.T) 
 
 // Test_Production_Int8_Assertions_Enforce_At_The_Violating_Link keeps every int8 family eager.
 func Test_Production_Int8_Assertions_Enforce_At_The_Violating_Link(t *testing.T) {
-	builder := invariant.Recorder_Assertions(&invariant.Recorder{}, "must-not-appear")
+	builder := fixture_assertions("must-not-appear")
 	production_assert_link(
 		t, "Range_Int8",
 		func() { builder.Range_Int8(1, 0, 2) },
@@ -198,7 +207,7 @@ func Test_Production_Int8_Assertions_Enforce_At_The_Violating_Link(t *testing.T)
 
 // Test_Production_Int16_Assertions_Enforce_At_The_Violating_Link keeps every int16 family eager.
 func Test_Production_Int16_Assertions_Enforce_At_The_Violating_Link(t *testing.T) {
-	builder := invariant.Recorder_Assertions(&invariant.Recorder{}, "must-not-appear")
+	builder := fixture_assertions("must-not-appear")
 	production_assert_link(
 		t, "Range_Int16",
 		func() { builder.Range_Int16(1, 0, 2) },
@@ -228,7 +237,7 @@ func Test_Production_Int16_Assertions_Enforce_At_The_Violating_Link(t *testing.T
 
 // Test_Production_Int32_Assertions_Enforce_At_The_Violating_Link keeps every int32 family eager.
 func Test_Production_Int32_Assertions_Enforce_At_The_Violating_Link(t *testing.T) {
-	builder := invariant.Recorder_Assertions(&invariant.Recorder{}, "must-not-appear")
+	builder := fixture_assertions("must-not-appear")
 	production_assert_link(
 		t, "Range_Int32",
 		func() { builder.Range_Int32(1, 0, 2) },
@@ -258,7 +267,7 @@ func Test_Production_Int32_Assertions_Enforce_At_The_Violating_Link(t *testing.T
 
 // Test_Production_Int64_Assertions_Enforce_At_The_Violating_Link keeps every int64 family eager.
 func Test_Production_Int64_Assertions_Enforce_At_The_Violating_Link(t *testing.T) {
-	builder := invariant.Recorder_Assertions(&invariant.Recorder{}, "must-not-appear")
+	builder := fixture_assertions("must-not-appear")
 	production_assert_link(
 		t, "Range_Int64",
 		func() { builder.Range_Int64(1, 0, 2) },
@@ -288,7 +297,7 @@ func Test_Production_Int64_Assertions_Enforce_At_The_Violating_Link(t *testing.T
 
 // Test_Production_Uint_Assertions_Enforce_At_The_Violating_Link keeps every uint family eager.
 func Test_Production_Uint_Assertions_Enforce_At_The_Violating_Link(t *testing.T) {
-	builder := invariant.Recorder_Assertions(&invariant.Recorder{}, "must-not-appear")
+	builder := fixture_assertions("must-not-appear")
 	production_assert_link(
 		t, "Range_Uint",
 		func() { builder.Range_Uint(1, 0, 2) },
@@ -318,7 +327,7 @@ func Test_Production_Uint_Assertions_Enforce_At_The_Violating_Link(t *testing.T)
 
 // Test_Production_Uint8_Assertions_Enforce_At_The_Violating_Link keeps every uint8 family eager.
 func Test_Production_Uint8_Assertions_Enforce_At_The_Violating_Link(t *testing.T) {
-	builder := invariant.Recorder_Assertions(&invariant.Recorder{}, "must-not-appear")
+	builder := fixture_assertions("must-not-appear")
 	production_assert_link(
 		t, "Range_Uint8",
 		func() { builder.Range_Uint8(1, 0, 2) },
@@ -348,7 +357,7 @@ func Test_Production_Uint8_Assertions_Enforce_At_The_Violating_Link(t *testing.T
 
 // Test_Production_Uint16_Assertions_Enforce_At_The_Violating_Link keeps every uint16 family eager.
 func Test_Production_Uint16_Assertions_Enforce_At_The_Violating_Link(t *testing.T) {
-	builder := invariant.Recorder_Assertions(&invariant.Recorder{}, "must-not-appear")
+	builder := fixture_assertions("must-not-appear")
 	production_assert_link(
 		t, "Range_Uint16",
 		func() { builder.Range_Uint16(1, 0, 2) },
@@ -378,7 +387,7 @@ func Test_Production_Uint16_Assertions_Enforce_At_The_Violating_Link(t *testing.
 
 // Test_Production_Uint32_Assertions_Enforce_At_The_Violating_Link keeps every uint32 family eager.
 func Test_Production_Uint32_Assertions_Enforce_At_The_Violating_Link(t *testing.T) {
-	builder := invariant.Recorder_Assertions(&invariant.Recorder{}, "must-not-appear")
+	builder := fixture_assertions("must-not-appear")
 	production_assert_link(
 		t, "Range_Uint32",
 		func() { builder.Range_Uint32(1, 0, 2) },
@@ -408,7 +417,7 @@ func Test_Production_Uint32_Assertions_Enforce_At_The_Violating_Link(t *testing.
 
 // Test_Production_Uint64_Assertions_Enforce_At_The_Violating_Link keeps every uint64 family eager.
 func Test_Production_Uint64_Assertions_Enforce_At_The_Violating_Link(t *testing.T) {
-	builder := invariant.Recorder_Assertions(&invariant.Recorder{}, "must-not-appear")
+	builder := fixture_assertions("must-not-appear")
 	production_assert_link(
 		t, "Range_Uint64",
 		func() { builder.Range_Uint64(1, 0, 2) },
@@ -439,7 +448,7 @@ func Test_Production_Uint64_Assertions_Enforce_At_The_Violating_Link(t *testing.
 // Test_Production_Assertions_Retain_Only_Enforcement protects the zero builder from regressing.
 func Test_Production_Assertions_Retain_Only_Enforcement(t *testing.T) {
 	recorder := &invariant.Recorder{Is_Test: true}
-	builder := invariant.Recorder_Assertions(recorder, "must-not-appear")
+	builder := invariant.Recorder_Tree(recorder, Fixture_Subject(0), "must-not-appear")
 	if builder != (invariant.Assertion_Builder{}) {
 		t.Fatalf("builder = %+v, want zero value", builder)
 	}
@@ -462,7 +471,7 @@ func Test_Production_Always_Remains_Eager(t *testing.T) {
 
 // Test_Production_Panics_Use_Fixed_Identity_Without_Namespace keeps dynamic state out of panics.
 func Test_Production_Panics_Use_Fixed_Identity_Without_Namespace(t *testing.T) {
-	builder := invariant.Recorder_Assertions(&invariant.Recorder{}, "must-not-appear")
+	builder := fixture_assertions("must-not-appear")
 	tests := []struct {
 		Name     string
 		Action   func()

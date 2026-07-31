@@ -27,8 +27,9 @@ A constant condition cannot enforce a property. Registration publishes no event 
 
 ### Uniqueness
 
-An `Always` message identifies one eager source root in the full registration set. Registration
-fails if two roots have the same message. The recorder publishes no event for these roots.
+An `Always` message identifies one eager source root in the full registration set. An inline helper
+message shares that one global set. Registration fails if two roots have the same message, and the
+recorder publishes no event for these roots.
 
 # Sometimes
 
@@ -50,10 +51,33 @@ that branch. Different ordinals keep duplicate messages separate.
 
 If an axis records only one Boolean value, the other branch is one coverage gap.
 
+# Inline
+
+`Sometimes`, `Range`, `Enum`, and `Range_Holed` are generic free functions for a body that owns no
+bundle. They take no namespace, and their `message` argument carries the identity. Go forbids a type
+parameter on a method, thus only these free forms are generic.
+
+### Identity
+
+One free message identifies one inline assertion in the full registration set. An inline axis key
+has the shape of a chain axis key, with the message in the namespace position and no subject.
+Registration rejects a message that `Always` or another inline helper already owns.
+
+### Record
+
+An inline helper enforces its condition, then records like `Always`. Registration resolves its
+bounds and members statically, and seeds every expanded axis. An absent branch is a coverage gap.
+
+### Plan
+
+Registration pre-seeds the resolved handles under the bare message. Thus the record path reads one
+map with the message alone and never joins the axis key. Without a plan, an inline helper only
+enforces, which is what a binary and a benchmark get.
+
 # Assertions
 
-`Recorder_Assertions(recorder, namespace)` returns an `Assertion_Builder`.
-`Assertions(namespace)` uses the default recorder. Value links return advanced copies. `Ensure`
+`Recorder_Tree(recorder, subject, namespace)` returns an `Assertion_Builder`.
+`Tree(subject, namespace)` uses the default recorder. Value links return advanced copies. `Ensure`
 ends the chain.
 
 ### API
@@ -64,8 +88,15 @@ compatibility API.
 
 ### Identity
 
-One literal namespace identifies one chain. Namespace, expanded ordinal, and message identify each
-axis. Only registration makes this identity and its resolved coverage handle.
+One literal namespace identifies one root. One subject type identifies one chain under that root.
+Namespace, subject package, subject type, expanded ordinal, and message identify each axis. Only
+registration makes this identity and its resolved coverage handle.
+
+### Subject
+
+`Assertions(subject, namespace)` takes the subject before the namespace, and the subject supplies
+the chain type. Registration reads that type from the source. The runtime reads the same package
+path and type name through `reflect`. A subject must be a defined package-level type.
 
 ### Atomic
 
@@ -86,9 +117,9 @@ use zero builders. Production formats `Assertion_Failure` only for a panic.
 
 ### Persistence
 
-An axis key has `namespace NUL ordinal NUL message`. `Ensure` writes the exact cached key from the
-plan. A fuzz merge resolves this key directly. It does not calculate identity from runtime messages.
-A fuzz worker writes only its first branch change. The coordinator combines these records.
+Every axis key has `namespace NUL package NUL type NUL ordinal NUL message`, and an inline helper
+puts its message in the namespace position. `Ensure` writes the exact cached key, thus a fuzz merge
+resolves it without calculating identity from runtime messages.
 
 ### Record Validation
 
@@ -115,9 +146,9 @@ Tests must use a registered production entry point. A violation publishes no eve
 
 ### Transitive
 
-Registration follows each helper call in registered source or a called bundle. It follows the call
-through the current module without a runtime condition. It parses a necessary package on demand.
-Unrelated assertions stay unregistered. An unresolved called bundle causes a fatal error.
+Registration follows each helper call through the current module without a runtime condition, and
+parses a necessary package on demand. A descent registers every assertion of the body it enters, not
+only its chain. An unrelated assertion stays unregistered, and an unresolved bundle is fatal.
 
 ### Walk
 
@@ -154,7 +185,8 @@ namespaces and two registrations. One parent callsite does not change the plan o
 ### Source Path
 
 A forwarded namespace keeps its literal source owner. Each forwarding callsite and assertion root
-is part of its chain identity. Two different chains cannot publish one namespace.
+is part of its chain identity. Two chains with different subject types share one namespace. Two
+chains with one subject type cannot.
 
 ### Caps
 
@@ -198,6 +230,12 @@ cycle validation apply to the full call graph.
 A bundle can call other bundles. The called chain keeps the callsite namespace. Registration does
 not make a cross product from their observations.
 
+### Tree
+
+One subject type occurs one time in the expansion of one root. The type stands in for the call path,
+thus a second occurrence gives two paths one identity. A diamond, a repeated sibling, and a cycle
+are each a fatal error that names both callsites. One type can be a node of many roots.
+
 ### Casing
 
 An exported type helper uses `_Invariants`. An unexported type helper uses `_invariants`.
@@ -223,38 +261,16 @@ chain cannot use one of these namespaces. Registration rejects that use.
 A bundle gap has separate report fields for its namespace, ordinal, property, absent polarity, and
 source. An eager `Always` gap has only its assertion identity and source.
 
+### Boolean
+
+A bundle for a defined Boolean type states exactly one `Sometimes`. A Boolean has two values and
+both are obligations, thus one axis states the whole type. Any other link, a second link, or no
+chain at all is a fatal error.
+
 ### Custom Types
 
-Bundles belong to custom defined types. Use primitive presets directly or through the framework
-primitive helpers. Do not put a primitive preset in a primitive helper bundle.
-
-### Signed Primitive Mandates
-
-`Int_Invariants` evidence must include `1`, `-1`, `math.MinInt64`, and `math.MaxInt64`.
-Each fixed-width helper must include `1`, `-1`, and its `math.MinIntN` and `math.MaxIntN`.
-Each axis must have the two branches. Other signed values are legal. A narrow platform cannot build.
-
-### Unsigned Primitive Mandates
-
-Evidence for `Uint_Invariants` must include `0`, `1`, and `math.MaxUint64`. Evidence for each
-fixed-width unsigned helper must include `0`, `1`, and its corresponding `math.MaxUintN`. Each axis
-must have the two branches. Other unsigned values are legal.
-
-### Floating Primitive Mandates
-
-Evidence for `Float32_Invariants` and `Float64_Invariants` must include NaN, negative infinity, and
-positive infinity. Each axis must have the two branches. Other finite values are legal.
-
-### Boolean Primitive Mandate
-
-Evidence for `Boolean_Invariants` must include true and false through the two branches of its
-true-value axis.
-
-### Primitive Isolation
-
-Registration expands the real primitive helper source at each literal callsite namespace. The same
-helper at a different namespace has separate links. Coverage at one namespace does not change raw
-metadata, table data, JSON data, or fuzz data for a different namespace.
+A bundle belongs to one custom defined type. A primitive field has no bundle of its own, thus it
+takes a defined type first. The framework supplies no primitive helper.
 
 # Analysis
 
@@ -315,8 +331,9 @@ not have the namespace. `Always` stays eager. `Sometimes` and `Ensure` are inert
 
 ### Uniqueness
 
-A bare `Always` message is globally unique. A builder namespace is globally unique. An axis message
-can occur again because the expanded ordinal is part of its identity.
+A bare `Always` message is globally unique. A builder namespace is globally unique as a root. Under
+one root, one subject type identifies one chain. An axis message can occur again because the subject
+type and the expanded ordinal are part of its identity.
 
 ### Literal
 

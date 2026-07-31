@@ -7,8 +7,26 @@ package invariant
 
 func Recorder_Always[T ~bool](recorder *Recorder, condition T, message string) {}
 
-func Recorder_Assertions(
-	recorder *Recorder, namespace Namespace,
+func Recorder_Sometimes[T ~bool](recorder *Recorder, condition T, message string) {}
+
+func Recorder_Range[Value Integer](
+	recorder *Recorder, value Value, minimum Value, maximum Value, message string,
+) {
+}
+
+func Recorder_Enum[Value Integer](
+	recorder *Recorder, value Value, first Value, second Value, message string,
+) {
+}
+
+func Recorder_Range_Holed[Value Integer](
+	recorder *Recorder, value Value, minimum Value, maximum Value,
+	hole_1 Value, hole_2 Value, hole_3 Value, hole_4 Value, message string,
+) {
+}
+
+func Recorder_Tree[Subject any](
+	recorder *Recorder, subject Subject, namespace Namespace,
 ) (builder Assertion_Builder) {
 	return Assertion_Builder{}
 }

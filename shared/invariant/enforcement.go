@@ -6,6 +6,7 @@ package invariant
 
 import (
 	"fmt"
+	"reflect"
 	"unsafe"
 )
 
@@ -73,9 +74,71 @@ func recorder_always_failure(condition bool, message string) {
 		"  Always — condition was false: " + fmt.Sprint(condition))
 }
 
-// Recorder_Assertions starts one deferred chain. Only recording modes consult registration;
-// shipped enforcement therefore pays no map, cache, lock, or identity-validation cost.
-func Recorder_Assertions(recorder *Recorder, namespace Namespace) (builder Assertion_Builder) {
+// Recorder_Sometimes states one inline two-branch axis in a body that owns no bundle.
+func Recorder_Sometimes[T ~bool](recorder *Recorder, condition T, message string) {
+	recorder_inline(recorder, message).Sometimes(bool(condition), message).Ensure()
+}
+
+// Recorder_Range bounds one inline value to a contiguous interval.
+func Recorder_Range[Value Integer](
+	recorder *Recorder, value Value, minimum Value, maximum Value, message string,
+) {
+	assertion_range_head(
+		recorder_inline(recorder, message), value, minimum, maximum).Ensure()
+}
+
+// Recorder_Enum holds one inline value to two members.
+func Recorder_Enum[Value Integer](
+	recorder *Recorder, value Value, first Value, second Value, message string,
+) {
+	assertion_enum_2_head(
+		recorder_inline(recorder, message), value, first, second).Ensure()
+}
+
+// Recorder_Range_Holed removes fixed exclusions from an inline interval. It takes four hole slots
+// for every width, signed or not, because the fill rule already lets a duplicate final hole stand
+// for an unused slot.
+func Recorder_Range_Holed[Value Integer](
+	recorder *Recorder, value Value, minimum Value, maximum Value,
+	hole_1 Value, hole_2 Value, hole_3 Value, hole_4 Value, message string,
+) {
+	assertion_range_holed_head(
+		recorder_inline(recorder, message), value, minimum, maximum,
+		hole_1, hole_2, hole_3, hole_4).Ensure()
+}
+
+// Opens a builder over an inline helper's own plan. An inline helper reuses the whole chain path,
+// so its expansion, its deferred failure, and its atomic commit are the one implementation the
+// fluent links already have.
+func recorder_inline(recorder *Recorder, message string) (builder Assertion_Builder) {
+	builder.Context = unsafe.Pointer(unsafe.StringData(message))
+	builder.State_A = uintptr(len(message))
+	if recorder.Assertion_Plans == nil {
+		return builder
+	}
+	if !recorder.Is_Test {
+		return builder
+	}
+	if recorder.Is_Benchmark {
+		return builder
+	}
+	plan := recorder.Assertion_Plans[Plan_Key{Namespace: Namespace(message)}]
+	if plan != nil {
+		builder.Context = unsafe.Pointer(plan)
+		builder.State_A = 0
+		builder.State_B = ASSERTION_RECORDING_MASK
+	}
+	return builder
+}
+
+// Recorder_Tree opens the chain of one bundle. Only a recording mode consults registration, thus
+// shipped enforcement pays no map, cache, lock, or identity cost. Subject is the bundle's own
+// subject, and it supplies the type that stands in for the call path from the root. PkgPath and
+// Name both return substrings of linker data, and Plan_Key is comparable, thus the lookup joins
+// nothing and allocates nothing.
+func Recorder_Tree[Subject any](
+	recorder *Recorder, subject Subject, namespace Namespace,
+) (builder Assertion_Builder) {
 	builder.Context = unsafe.Pointer(unsafe.StringData(string(namespace)))
 	builder.State_A = uintptr(len(namespace))
 	if recorder.Assertion_Plans == nil {
@@ -87,7 +150,12 @@ func Recorder_Assertions(recorder *Recorder, namespace Namespace) (builder Asser
 	if recorder.Is_Benchmark {
 		return builder
 	}
-	plan := recorder.Assertion_Plans[namespace]
+	subject_type := reflect.TypeFor[Subject]()
+	plan := recorder.Assertion_Plans[Plan_Key{
+		Namespace: namespace,
+		Package:   subject_type.PkgPath(),
+		Type:      subject_type.Name(),
+	}]
 	if plan != nil {
 		builder.Context = unsafe.Pointer(plan)
 		builder.State_A = 0
@@ -500,12 +568,12 @@ func assertion_record(builder *Assertion_Builder) {
 	plan := builder.assertion_plan()
 	if len(plan.Links) != int(builder.assertion_ordinal()) {
 		panic(ASSERTION_FAILURE_MESSAGE_PREFIX +
-			"registered Assertions chain differs from its registration plan")
+			"registered Tree chain differs from its registration plan")
 	}
 	for _, link := range plan.Links {
 		if link.Entry.Metadata == nil {
 			panic(ASSERTION_FAILURE_MESSAGE_PREFIX +
-				"registered Assertions chain resolved an unknown coverage handle")
+				"registered Tree chain resolved an unknown coverage handle")
 		}
 	}
 	for _, link := range plan.Links {
@@ -563,7 +631,7 @@ func (builder *Assertion_Builder) assertion_plan() (plan *Assertion_Plan) {
 
 func (builder *Assertion_Builder) assertion_namespace() (namespace Namespace) {
 	if builder.assertion_recording() {
-		return builder.assertion_plan().Namespace
+		return builder.assertion_plan().Identity
 	}
 	if builder.State_A == 0 {
 		return ""
@@ -596,7 +664,7 @@ func assertion_failure_text(failure uint8, namespace Namespace, value string) (m
 	prefix := string(namespace) + " · "
 	switch failure {
 	case ASSERTION_FAILURE_LINKS:
-		return "Assertions exceeds 70 links"
+		return "Tree exceeds 70 links"
 	case ASSERTION_FAILURE_RANGE_DOMAIN:
 		return prefix + "Range minimum exceeds maximum: " + value
 	case ASSERTION_FAILURE_RANGE_LOWER:
