@@ -148,8 +148,8 @@ A collision publishes no event or plan.
 
 ### Source Owner
 
-Repeated expansion of the namespace's source owner is one registration. Parent helper callsites do
-not turn one nested namespace callsite into multiple owners or duplicate its coverage plan.
+A nested bundle callsite gets the namespace of its parent. Two parent callsites make two
+namespaces and two registrations. One parent callsite does not change the plan of the other.
 
 ### Source Path
 
@@ -172,6 +172,16 @@ corresponding helper for each field.
 A bundle body has straight-line code. A branch or a loop makes its assertion set conditional. Thus,
 registration rejects the bundle.
 
+### Namespace Source
+
+A bundle call in a bundle body uses the `Namespace` parameter of that body. A string literal at
+that position causes a fatal error. Only a callsite outside a bundle gives a namespace.
+
+### Duplicate Namespace
+
+One namespace literal occurs one time in the registered source. A second bundle callsite that uses
+the same literal causes a fatal error.
+
 ### Template
 
 The `_Invariants` or `_invariants` name identifies a bundle. Its final parameter is `Namespace`.
@@ -180,13 +190,13 @@ Registration makes a chain instance for each literal callsite namespace.
 ### Descent
 
 Registration follows each called bundle through the module. Direct package selection does not stop
-this action. Registration records each called chain below the callsite namespace. Static-body and
+this action. Registration records each called chain at the callsite namespace. Static-body and
 cycle validation apply to the full call graph.
 
 ### Composition
 
-A bundle can call other bundles. Each chain stays independent. Registration does not make a cross
-product from their observations.
+A bundle can call other bundles. The called chain keeps the callsite namespace. Registration does
+not make a cross product from their observations.
 
 ### Casing
 

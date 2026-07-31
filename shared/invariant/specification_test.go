@@ -338,7 +338,7 @@ func alias() {
 func Test_Assertions_Registration_Transitive(t *testing.T) {
 	recorder := registered_nested_bundle(t)
 	chain_metadata(t, recorder, chain_metadata_key{
-		Namespace: "outer.inner", Ordinal: 0, Message: "zero",
+		Namespace: "outer", Ordinal: 0, Message: "zero",
 	})
 }
 
@@ -443,7 +443,10 @@ func second(value Number) { Number_Invariants(value, "number") }
 	if code != 1 {
 		t.Fatalf("reuse exit=%d output=%q", code, output.String())
 	}
-	want := "🚨 1 duplicate messages 🚨\n" +
+	want := "🚨 1 duplicate bundle namespaces 🚨\n" +
+		"/fixture/check.go:7  banned: duplicate namespace \"number\"\n" +
+		"🚨 1 duplicate bundle namespaces 🚨\n" +
+		"🚨 1 duplicate messages 🚨\n" +
 		"/fixture/check.go:7  duplicate namespace: \"number\"\n" +
 		"🚨 1 duplicate messages 🚨\n"
 	if output.String() != want {
@@ -498,7 +501,7 @@ func Leaf_Invariants(value Leaf, namespace invariant.Namespace) {
 }
 type Parent struct { Value Leaf }
 func Parent_Invariants(value Parent, namespace invariant.Namespace) {
-	Leaf_Invariants(value.Value, "Parent.Value")
+	Leaf_Invariants(value.Value, namespace)
 }
 func first(value Parent) { Parent_Invariants(value, "first") }
 func second(value Parent) { Parent_Invariants(value, "second") }
@@ -509,11 +512,15 @@ func second(value Parent) { Parent_Invariants(value, "second") }
 	if output.String() != "" {
 		t.Fatalf("output=%q, want no diagnostic", output.String())
 	}
-	if event_count(&recorder.Events) != 1 {
-		t.Fatalf("events=%d, want one axis", event_count(&recorder.Events))
+	events := event_count(&recorder.Events)
+	if events != 2 {
+		t.Fatalf("events=%d, want one axis per parent callsite", events)
 	}
 	chain_metadata(t, recorder, chain_metadata_key{
-		Namespace: "Parent.Value", Ordinal: 0, Message: "zero",
+		Namespace: "first", Ordinal: 0, Message: "zero",
+	})
+	chain_metadata(t, recorder, chain_metadata_key{
+		Namespace: "second", Ordinal: 0, Message: "zero",
 	})
 }
 
@@ -613,6 +620,57 @@ func Number_Invariants(value Number, namespace invariant.Namespace) {
 	}
 }
 
+// Test_Bundles_Namespace_Source keeps a nested bundle namespace at its callsite.
+func Test_Bundles_Namespace_Source(t *testing.T) {
+	recorder, output, code := registered_fixture(`package fixture
+type Inner int
+func Inner_Invariants(value Inner, namespace invariant.Namespace) {
+	invariant.Assertions(namespace).Sometimes(value == 0, "zero").Ensure()
+}
+type Outer struct { Inner Inner }
+func Outer_Invariants(value Outer, namespace invariant.Namespace) {
+	Inner_Invariants(value.Inner, "outer.inner")
+}
+func check(value Outer) { Outer_Invariants(value, "outer") }
+`)
+	if code != 1 {
+		t.Fatalf("exit=%d output=%q", code, output.String())
+	}
+	if !strings.Contains(output.String(), "bundle literal namespaces") {
+		t.Fatalf("exit=%d output=%q", code, output.String())
+	}
+	if event_count(&recorder.Events) != 0 {
+		t.Fatal("a bundle literal namespace published events")
+	}
+	if recorder.Assertion_Plans != nil {
+		t.Fatal("a bundle literal namespace published a plan")
+	}
+}
+
+// Test_Bundles_Duplicate_Namespace keeps one namespace literal at one callsite.
+func Test_Bundles_Duplicate_Namespace(t *testing.T) {
+	recorder, output, code := registered_fixture(`package fixture
+type Number int
+func Number_Invariants(value Number, namespace invariant.Namespace) {
+	invariant.Assertions(namespace).Sometimes(value == 0, "zero").Ensure()
+}
+func first(value Number) { Number_Invariants(value, "number") }
+func second(value Number) { Number_Invariants(value, "number") }
+`)
+	if code != 1 {
+		t.Fatalf("exit=%d output=%q", code, output.String())
+	}
+	if !strings.Contains(output.String(), "duplicate bundle namespaces") {
+		t.Fatalf("exit=%d output=%q", code, output.String())
+	}
+	if event_count(&recorder.Events) != 0 {
+		t.Fatal("a duplicate namespace literal published events")
+	}
+	if recorder.Assertion_Plans != nil {
+		t.Fatal("a duplicate namespace literal published a plan")
+	}
+}
+
 // Test_Bundles_Template maps the legacy heading to the fluent template contract.
 func Test_Bundles_Template(t *testing.T) {
 	Test_Assertions_Registration_Template(t)
@@ -622,19 +680,19 @@ func Test_Bundles_Template(t *testing.T) {
 func Test_Bundles_Descent(t *testing.T) {
 	recorder := registered_nested_bundle(t)
 	chain_metadata(t, recorder, chain_metadata_key{
-		Namespace: "outer.inner", Ordinal: 0, Message: "zero",
+		Namespace: "outer", Ordinal: 0, Message: "zero",
 	})
 }
 
-// Test_Bundles_Composition keeps parent and child obligations independent.
+// Test_Bundles_Composition keeps a composed chain free of a cross product.
 func Test_Bundles_Composition(t *testing.T) {
 	recorder := registered_nested_bundle(t)
 	chain_metadata(t, recorder, chain_metadata_key{
-		Namespace: "outer", Ordinal: 0, Message: "positive",
+		Namespace: "outer", Ordinal: 0, Message: "zero",
 	})
-	chain_metadata(t, recorder, chain_metadata_key{
-		Namespace: "outer.inner", Ordinal: 0, Message: "zero",
-	})
+	if event_count(&recorder.Events) != 1 {
+		t.Fatalf("events=%d, want the composed axis alone", event_count(&recorder.Events))
+	}
 }
 
 // Test_Bundles_Casing accepts the repository's two invariant-helper casings.
@@ -1698,8 +1756,7 @@ func Inner_Invariants(value Inner, namespace invariant.Namespace) {
 }
 type Outer struct { Inner Inner }
 func Outer_Invariants(value Outer, namespace invariant.Namespace) {
-	invariant.Assertions(namespace).Sometimes(value.Inner > 0, "positive").Ensure()
-	Inner_Invariants(value.Inner, "outer.inner")
+	Inner_Invariants(value.Inner, namespace)
 }
 func check(value Outer) { Outer_Invariants(value, "outer") }
 `)

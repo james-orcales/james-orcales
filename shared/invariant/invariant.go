@@ -436,6 +436,8 @@ func Recorder_Register_Packages_For_Analysis(recorder *Recorder, directories ...
 	recorder_register_assertion_files(recorder, file_set, files, index, reg)
 	recorder_check_test_assertion_calls(recorder, file_set, test_files, reg)
 	recorder_check_bundle_control_flow(recorder, file_set, files, reg)
+	recorder_check_bundle_literal_namespaces(recorder, file_set, files, reg)
+	recorder_check_duplicate_bundle_namespaces(recorder, file_set, files, reg)
 	recorder_check_assertion_bundle_contract(recorder, file_set, files, index, reg)
 	recorder_check_unresolved(recorder, reg)
 	recorder_check_bundle_cycles(recorder, reg)
@@ -1127,6 +1129,113 @@ func recorder_check_bundle_control_flow(
 	}
 	recorder_report_registration_failure(
 		recorder, reg, "bundle control-flow statements", violations)
+}
+
+// Finds each bundle body that gives a string literal as a nested bundle namespace. The callsite
+// that owns the value owns the namespace. A literal in the body moves that identity to the helper
+// declaration. Thus two parents of one helper have one child identity, and the coverage of one
+// parent can supply the obligations of the other. Only the Namespace parameter of the body keeps
+// the identity at the callsite.
+// Reports every violation under one banner and exits 1.
+func recorder_check_bundle_literal_namespaces(
+	recorder *Recorder, file_set *token.FileSet, files []*ast.File, reg *Registration,
+) {
+	var violations []string
+	for _, file := range files {
+		for _, declaration := range file.Decls {
+			function, is_function := declaration.(*ast.FuncDecl)
+			if !is_function {
+				continue
+			}
+			if function.Body == nil {
+				continue
+			}
+			if !ast_is_invariants_name(function.Name.Name) {
+				continue
+			}
+			name := function.Name.Name
+			ast.Inspect(function.Body, func(node ast.Node) (descend bool) {
+				call, is_call := node.(*ast.CallExpr)
+				if !is_call {
+					return true
+				}
+				if _, named := ast_bundle_namespace(call); !named {
+					return true
+				}
+				violations = append(violations, recorder_position(file_set, call)+
+					"  banned: literal namespace inside bundle "+name)
+				return true
+			})
+		}
+	}
+	recorder_report_registration_failure(
+		recorder, reg, "bundle literal namespaces", violations)
+}
+
+// Finds one namespace literal at two bundle callsites. The repeat is a fact about the source text,
+// thus registration can find it before expansion. One namespace holds one plan, so the two
+// callsites would record two independent value streams into one set of obligations.
+// Reports every violation under one banner and exits 1.
+func recorder_check_duplicate_bundle_namespaces(
+	recorder *Recorder, file_set *token.FileSet, files []*ast.File, reg *Registration,
+) {
+	var violations []string
+	// The order of the walk, not the order of this map, controls the report. Thus it stays
+	// deterministic.
+	registered := map[string]bool{}
+	for _, file := range files {
+		for _, declaration := range file.Decls {
+			function, is_function := declaration.(*ast.FuncDecl)
+			if !is_function {
+				continue
+			}
+			if function.Body == nil {
+				continue
+			}
+			violations = append(violations, recorder_duplicate_namespace_violations(
+				file_set, function, registered)...)
+		}
+	}
+	recorder_report_registration_failure(
+		recorder, reg, "duplicate bundle namespaces", violations)
+}
+
+// Adds each namespace literal of the body to registered. Reports each literal that registered has
+// already.
+func recorder_duplicate_namespace_violations(
+	file_set *token.FileSet, function *ast.FuncDecl, registered map[string]bool,
+) (violations []string) {
+	ast.Inspect(function.Body, func(node ast.Node) (descend bool) {
+		call, is_call := node.(*ast.CallExpr)
+		if !is_call {
+			return true
+		}
+		namespace, named := ast_bundle_namespace(call)
+		if !named {
+			return true
+		}
+		if registered[namespace] {
+			violations = append(violations, recorder_position(file_set, call)+
+				"  banned: duplicate namespace "+strconv.Quote(namespace))
+			return true
+		}
+		registered[namespace] = true
+		return true
+	})
+	return violations
+}
+
+// Gives the compile-time literal namespace of a bundle call. named is false when the call is not a
+// bundle, when it has no arguments, or when its last argument is not a literal. The forwarded
+// Namespace parameter is one such argument.
+func ast_bundle_namespace(call *ast.CallExpr) (namespace string, named bool) {
+	if !ast_is_invariants_name(ast_callee_name(call)) {
+		return "", false
+	}
+	if len(call.Args) == 0 {
+		return "", false
+	}
+	return ast_string_literal(call, len(call.Args)-1)
 }
 
 // Generic type parameters can denote primitives even though their identifiers are not builtins;
