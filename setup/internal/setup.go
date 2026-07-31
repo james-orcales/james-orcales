@@ -18,7 +18,6 @@ import (
 
 	sysio "local/james-orcales/shared/io"
 	"local/james-orcales/shared/jlog"
-	systime "local/james-orcales/shared/time"
 )
 
 // DOTFILE_BYTES_MAX bounds a single dotfile read into one fixed buffer. 1 MiB
@@ -30,17 +29,57 @@ const DOTFILE_BYTES_MAX = 1048576
 // an otherwise well-formed run.
 const EXIT_FAILURE = 1
 
-// File_System is the injected filesystem capability the sync runs on: the shared/io loop it
-// submits reads, writes, and traversal to, and the Run_Until pump that drives each submitted
-// op to completion. package main backs Run_Until with the real driver (the loop is ticked
-// only there) and the simulation with the sim driver; this tier submits but never drives.
+// File_System gives the sync synchronous file operations. The composition root converts its
+// asynchronous IO into these operations because only the composition root can drive the loop.
 type File_System struct {
-	// Loop is the submit surface for the file ops: Open/Read/Write/Close are pumped, while
-	// Read_Directory/Status/Make_Directory return inline.
+	// Read_Directory returns the immediate entries in one directory.
+	Read_Directory func(path string) (entries []sysio.Directory_Entry, err error)
+	// Read returns one bounded file and reports an absent path without an error.
+	Read func(path string) (contents []byte, found bool, err error)
+	// Write replaces one file after it creates the necessary parent directories.
+	Write func(path string, contents []byte) (err error)
+}
+
+// File_Read_Operation owns one asynchronous bounded read. Complete is the predicate that the
+// composition root drives, while callbacks own all state changes and operation sequencing.
+type File_Read_Operation struct {
+	// Complete tells the composition root that no operation remains armed.
+	Complete bool
+	// Ready tells the composition root that the current read or close retired.
+	Ready bool
+	// Close_Next selects Close after the final read result.
+	Close_Next bool
+	// Loop submits each read and the final close without advancing the timeline.
 	Loop sysio.IO
-	// Run_Until drives the loop until a submitted op reports done, capped by timeout
-	// (sysio.FOREVER waits unbounded) — the per-op pump; returns whether the op completed.
-	Run_Until func(done func() (finished bool), timeout systime.Duration) (completed bool)
+	// File stays owned by this state until the close callback completes.
+	File sysio.File
+	// Completion is reused only from a callback, after the backend returns it to idle.
+	Completion sysio.Completion
+	// Buffer fixes the allocation at the repository dotfile limit.
+	Buffer []byte
+	// Total identifies the next offset and the final result length.
+	Total int
+	// Contents selects the completed prefix without another allocation.
+	Contents []byte
+	// Found distinguishes an absent path from an empty file.
+	Found bool
+	// Err joins an operation error with the final close error.
+	Err error
+}
+
+// File_Write_Operation owns one asynchronous write and its required close. The composition root
+// drives Complete, while callbacks preserve the write-then-close lifecycle.
+type File_Write_Operation struct {
+	// Complete tells the composition root that the write and close both retired.
+	Complete bool
+	// Loop submits the write and close without advancing the timeline.
+	Loop sysio.IO
+	// File stays owned by this state until the close callback completes.
+	File sysio.File
+	// Completion is reused for Close only after the write callback returns it to idle.
+	Completion sysio.Completion
+	// Err joins the write error with the final close error.
+	Err error
 }
 
 // Main_Input carries the injected dependencies Main needs to sync dotfiles.
@@ -87,7 +126,7 @@ func Main(input *Main_Input) (status_code int) {
 		return EXIT_FAILURE
 	}
 	for _, write := range writes {
-		write_err := write_file(&input.File_System, write.Destination_Path, write.Contents)
+		write_err := input.File_System.Write(write.Destination_Path, write.Contents)
 		if write_err != nil {
 			jlog.Logger_Error(input.Logger, "write failed", jlog.Err(write_err))
 			return EXIT_FAILURE
@@ -105,6 +144,128 @@ func Main(input *Main_Input) (status_code int) {
 		return 0
 	}
 	return apply_macos_defaults(input.Run_Command, input.Logger)
+}
+
+// Read_File submits one bounded read and returns its callback-owned state. An open error means
+// that the path is absent, which preserves the mirror rule that an absent destination differs.
+func Read_File(loop sysio.IO, path string) (read *File_Read_Operation) {
+	read = &File_Read_Operation{Loop: loop, Buffer: make([]byte, DOTFILE_BYTES_MAX)}
+	file, open_err := loop.Open(path)
+	if open_err != nil {
+		read.Complete = true
+		return read
+	}
+	read.File = file
+	file_read_submit(read)
+	return read
+}
+
+// File_Read_Result returns the result only after the composition root observes Complete.
+func File_Read_Result(
+	read *File_Read_Operation,
+) (contents []byte, found bool, err error) {
+	return read.Contents, read.Found, read.Err
+}
+
+// Submits the next bounded part. A callback can reuse its completion because delivery returns
+// the completion to idle before it calls this function.
+func file_read_submit(read *File_Read_Operation) {
+	read.Loop.Read(
+		&read.Completion, func(_ *sysio.Completion, count int, read_err error) {
+			file_read_complete(read, count, read_err)
+		}, read.File,
+		read.Buffer[read.Total:], int64(read.Total),
+	)
+}
+
+// Continues until EOF and then closes. The callback owns the sequence, so no library function
+// drives the loop or submits Close while Read remains armed.
+func file_read_complete(
+	read *File_Read_Operation, count int, read_err error,
+) {
+	if read_err != nil {
+		read.Err = read_err
+		read.Close_Next = true
+		read.Ready = true
+		return
+	}
+	read.Total += count
+	if count == 0 {
+		read.Contents = read.Buffer[:read.Total]
+		read.Found = true
+		read.Close_Next = true
+		read.Ready = true
+		return
+	}
+	if read.Total == len(read.Buffer) {
+		read.Err = errors.New("dotfile exceeds the maximum size")
+		read.Close_Next = true
+		read.Ready = true
+		return
+	}
+	read.Ready = true
+}
+
+// File_Read_Rearm submits the next transition after the root joins the current operation.
+// A final read selects Close, while a partial read selects the next bounded part.
+func File_Read_Rearm(read *File_Read_Operation) {
+	read.Ready = false
+	if read.Close_Next {
+		file_read_close(read)
+		return
+	}
+	file_read_submit(read)
+}
+
+// Closes after the final read callback. The close callback is the only transition to Complete.
+func file_read_close(read *File_Read_Operation) {
+	read.Loop.Close(&read.Completion, func(_ *sysio.Completion, close_err error) {
+		read.Err = errors.Join(read.Err, close_err)
+		read.Complete = true
+		read.Ready = true
+	}, read.File)
+}
+
+// Write_File creates the path and submits its contents. Synchronous setup errors produce an
+// already-complete state, so the composition root uses one predicate for all outcomes.
+func Write_File(
+	loop sysio.IO, path string, contents []byte,
+) (write *File_Write_Operation) {
+	write = &File_Write_Operation{Loop: loop}
+	mkdir_err := loop.Make_Directory(filepath.Dir(path))
+	if mkdir_err != nil {
+		write.Err = mkdir_err
+		write.Complete = true
+		return write
+	}
+	file, create_err := loop.Create(path)
+	if create_err != nil {
+		write.Err = create_err
+		write.Complete = true
+		return write
+	}
+	write.File = file
+	loop.Write(&write.Completion, func(_ *sysio.Completion, count int, write_err error) {
+		file_write_complete(write, count, write_err)
+	}, file, contents, 0)
+	return write
+}
+
+// File_Write_Error returns the operation error after the composition root observes Complete.
+func File_Write_Error(write *File_Write_Operation) (err error) {
+	return write.Err
+}
+
+// Closes after Write retires, including an operation error. The write callback proves that Close
+// cannot race an armed write on the same file.
+func file_write_complete(
+	write *File_Write_Operation, count int, write_err error,
+) {
+	write.Err = write_err
+	write.Loop.Close(&write.Completion, func(_ *sysio.Completion, close_err error) {
+		write.Err = errors.Join(write.Err, close_err)
+		write.Complete = true
+	}, write.File)
 }
 
 // Takes just the runner and the logger it uses, not the whole Main_Input: a
@@ -320,7 +481,7 @@ func plan_read_level(input *Plan_Input, level []string) (entries []Plan_Entry, e
 	entries = []Plan_Entry{}
 	for _, directory := range level {
 		plan_narrate(input.Logger, directory)
-		read, read_err := input.File_System.Loop.Read_Directory(
+		read, read_err := input.File_System.Read_Directory(
 			filepath.Join(input.Source_Directory, directory))
 		if read_err != nil {
 			return nil, read_err
@@ -365,8 +526,8 @@ func plan_ignored(
 // source is absent or the destination already holds identical bytes; otherwise it returns
 // the write mirroring the relative path under the home directory.
 func plan_file(input *Plan_Input, relative string) (write File_Write, planned bool, err error) {
-	source_contents, found, read_err := read_bounded(
-		&input.File_System, filepath.Join(input.Source_Directory, relative))
+	source_contents, found, read_err := input.File_System.Read(
+		filepath.Join(input.Source_Directory, relative))
 	if read_err != nil {
 		return File_Write{}, false, read_err
 	}
@@ -385,7 +546,7 @@ func plan_file(input *Plan_Input, relative string) (write File_Write, planned bo
 func destination_matches(
 	system *File_System, path string, source_contents []byte,
 ) (matches bool) {
-	destination_contents, found, err := read_bounded(system, path)
+	destination_contents, found, err := system.Read(path)
 	if err != nil {
 		return false
 	}
@@ -393,86 +554,6 @@ func destination_matches(
 		return false
 	}
 	return bytes.Equal(source_contents, destination_contents)
-}
-
-// Reads the file at path in full through the loop, bounded by DOTFILE_BYTES_MAX into one
-// fixed buffer. found is false when the path is absent — the caller treats that as a
-// mismatch — and a file overflowing the cap errors, so a truncated dotfile never passes.
-func read_bounded(system *File_System, path string) (contents []byte, found bool, err error) {
-	file, open_err := system.Loop.Open(path)
-	if open_err != nil {
-		return nil, false, nil
-	}
-	buffer := make([]byte, DOTFILE_BYTES_MAX)
-	total := 0
-	for total < len(buffer) {
-		count, read_err := loop_read(system, file, buffer[total:], int64(total))
-		if read_err != nil {
-			loop_close(system, file)
-			return nil, false, read_err
-		}
-		total += count
-		if count == 0 {
-			loop_close(system, file)
-			return buffer[:total], true, nil
-		}
-	}
-	loop_close(system, file)
-	return nil, false, errors.New("dotfile exceeds the maximum size")
-}
-
-// Writes contents to path through the loop, creating its parent directories first. It is the
-// filesystem binding the sync writes through, replacing the injected os writer.
-func write_file(system *File_System, path string, contents []byte) (err error) {
-	mkdir_err := system.Loop.Make_Directory(filepath.Dir(path))
-	if mkdir_err != nil {
-		return mkdir_err
-	}
-	file, create_err := system.Loop.Create(path)
-	if create_err != nil {
-		return create_err
-	}
-	write_err := loop_write(system, file, contents, 0)
-	loop_close(system, file)
-	return write_err
-}
-
-// Reads up to len(buffer) bytes from file at offset through the loop, driving the submitted
-// read to completion and returning its byte count.
-func loop_read(
-	system *File_System, file sysio.File, buffer []byte, offset int64,
-) (count int, err error) {
-	var completion sysio.Completion
-	done := false
-	system.Loop.Read(&completion, func(_ *sysio.Completion, read int, read_err error) {
-		count = read
-		err = read_err
-		done = true
-	}, file, buffer, offset)
-	system.Run_Until(func() (finished bool) { return done }, sysio.FOREVER)
-	return count, err
-}
-
-// Writes buffer to file at offset through the loop, driving the submitted write to completion.
-func loop_write(
-	system *File_System, file sysio.File, buffer []byte, offset int64,
-) (err error) {
-	var completion sysio.Completion
-	done := false
-	system.Loop.Write(&completion, func(_ *sysio.Completion, _ int, write_err error) {
-		err = write_err
-		done = true
-	}, file, buffer, offset)
-	system.Run_Until(func() (finished bool) { return done }, sysio.FOREVER)
-	return err
-}
-
-// Closes file through the loop, driving the submitted close to completion.
-func loop_close(system *File_System, file sysio.File) {
-	var completion sysio.Completion
-	done := false
-	system.Loop.Close(&completion, func(_ *sysio.Completion, _ error) { done = true }, file)
-	system.Run_Until(func() (finished bool) { return done }, sysio.FOREVER)
 }
 
 // Spawn runs one command to completion and returns its outcome — the synchronous adapter

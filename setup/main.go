@@ -13,6 +13,7 @@ import (
 	system_io "local/james-orcales/shared/io/default"
 	jlogcore "local/james-orcales/shared/jlog"
 	jlog "local/james-orcales/shared/jlog/default"
+	systime "local/james-orcales/shared/time"
 	timeos "local/james-orcales/shared/time/default"
 )
 
@@ -24,6 +25,13 @@ const DIRECTORY_PERMISSIONS = 0o755
 
 // COPY_BYTES_MAX bounds one copied font file at 64 MiB.
 const COPY_BYTES_MAX = 67108864
+
+// SCHEDULER_ENTRY_COUNT permits cleanup operations without a large kernel ring. Setup submits
+// commands and file operations in sequence.
+const SCHEDULER_ENTRY_COUNT uint16 = 32
+
+// PROCESS_DURATION_MAX permits a slow first build but stops a process group that cannot finish.
+const PROCESS_DURATION_MAX = 6 * systime.HOUR
 
 // ROOT_REFUSAL prevents the bootstrap from creating root-owned home files.
 const ROOT_REFUSAL = "run as your normal user, not root"
@@ -43,7 +51,13 @@ func main() {
 		jlog.Logger_Error(logger, "cannot resolve home directory", jlog.Err(home_err))
 		os.Exit(EXIT_USAGE)
 	}
-	loop, driver := system_io.New_Operating_System_IO(clock)
+	loop, driver, loop_err := system_io.New_Operating_System_IO(
+		clock, SCHEDULER_ENTRY_COUNT, 0,
+	)
+	if loop_err != nil {
+		jlog.Logger_Error(logger, "cannot initialize IO", jlog.Err(loop_err))
+		os.Exit(EXIT_USAGE)
+	}
 	shell := setup.Shell{
 		Spawn:  spawn_command(loop, driver),
 		Stdout: os.Stdout, Stderr: os.Stderr, Logger: logger,
@@ -52,10 +66,12 @@ func main() {
 		Home_Directory: home, Operating_System: runtime.GOOS,
 		Cargo_Directory: os.Getenv("CARGO_HOME"),
 		Data_Directory:  os.Getenv("XDG_DATA_HOME"),
-		File_System:     setup.File_System{Loop: loop, Run_Until: driver.Run_Until},
+		File_System:     file_system(loop, driver),
 		Shell:           shell, File_Present: file_present, Copy_File: copy_file,
 	})
-	os.Exit(setup.Bootstrap(&setup.Bootstrap_Input{Steps: steps, Logger: logger}))
+	status := setup.Bootstrap(&setup.Bootstrap_Input{Steps: steps, Logger: logger})
+	driver.Deinit()
+	os.Exit(status)
 }
 
 // Reports whether file is a terminal without an external terminal dependency.
@@ -81,10 +97,71 @@ func spawn_command(loop sysio.IO, driver sysio.Driver) (spawn setup.Spawn) {
 			result = spawned
 			done = true
 		}
-		loop.Spawn(&completion, complete, request)
-		driver.Run_Until(func() (finished bool) { return done }, sysio.FOREVER)
+		loop.Spawn(&completion, complete, request, PROCESS_DURATION_MAX)
+		completed, drive_err := driver.Run_Until(
+			func() (finished bool) { return done }, sysio.FOREVER,
+		)
+		if drive_err != nil {
+			result.Exit = 1
+		}
+		if !completed {
+			result.Exit = 1
+		}
 		return result
 	}
+}
+
+// Converts asynchronous file IO into the synchronous operations that setup needs. The Driver
+// stays in package main because another package must not control the process timeline.
+func file_system(loop sysio.IO, driver sysio.Driver) (system setup.File_System) {
+	return setup.File_System{
+		Read_Directory: loop.Read_Directory,
+		Read: func(path string) (contents []byte, found bool, err error) {
+			return read_file(loop, driver, path)
+		},
+		Write: func(path string, contents []byte) (err error) {
+			return write_file(loop, driver, path, contents)
+		},
+	}
+}
+
+// Drives the callback-owned read state. The root advances time, while setup owns its sequence.
+func read_file(
+	loop sysio.IO, driver sysio.Driver, path string,
+) (contents []byte, found bool, err error) {
+	read := setup.Read_File(loop, path)
+	for !read.Complete {
+		completed, drive_err := driver.Run_Until(
+			func() (finished bool) { return read.Ready }, sysio.FOREVER,
+		)
+		if drive_err != nil {
+			return nil, false, drive_err
+		}
+		if !completed {
+			return nil, false, errors.New("the file read did not complete")
+		}
+		if !read.Complete {
+			setup.File_Read_Rearm(read)
+		}
+	}
+	return setup.File_Read_Result(read)
+}
+
+// Drives the callback-owned write state. Close remains sequenced behind the write callback.
+func write_file(
+	loop sysio.IO, driver sysio.Driver, path string, contents []byte,
+) (err error) {
+	write := setup.Write_File(loop, path, contents)
+	completed, drive_err := driver.Run_Until(
+		func() (finished bool) { return write.Complete }, sysio.FOREVER,
+	)
+	if drive_err != nil {
+		return drive_err
+	}
+	if !completed {
+		return errors.New("the file write did not complete")
+	}
+	return setup.File_Write_Error(write)
 }
 
 // Reports whether path identifies an existing file.

@@ -118,12 +118,12 @@ func Test_Main_Applies_Macos_Defaults(t *testing.T) {
 	t.Parallel()
 	ran := [][]string{}
 	log := &bytes.Buffer{}
-	loop, driver, _ := sysio.New_Sim(0)
+	loop, _, _ := sysio.New_Sim(0)
 	if make_err := loop.Make_Directory(TEST_SOURCE); make_err != nil {
 		t.Fatalf("make source: %v", make_err)
 	}
 	status := setup.Main(&setup.Main_Input{
-		File_System:           setup.File_System{Loop: loop, Run_Until: driver.Run_Until},
+		File_System:           directory_file_system(t, loop),
 		Source_Directory:      TEST_SOURCE,
 		Destination_Directory: TEST_HOME,
 		Operating_System:      "darwin",
@@ -158,12 +158,12 @@ func Test_Main_Applies_Macos_Defaults(t *testing.T) {
 func Test_Main_Skips_Macos_Defaults_Off_Darwin(t *testing.T) {
 	t.Parallel()
 	run_count := 0
-	loop, driver, _ := sysio.New_Sim(0)
+	loop, _, _ := sysio.New_Sim(0)
 	if make_err := loop.Make_Directory(TEST_SOURCE); make_err != nil {
 		t.Fatalf("make source: %v", make_err)
 	}
 	status := setup.Main(&setup.Main_Input{
-		File_System:           setup.File_System{Loop: loop, Run_Until: driver.Run_Until},
+		File_System:           directory_file_system(t, loop),
 		Source_Directory:      TEST_SOURCE,
 		Destination_Directory: TEST_HOME,
 		Operating_System:      "linux",
@@ -186,7 +186,7 @@ func Test_Main_Skips_Macos_Defaults_Off_Darwin(t *testing.T) {
 // when it writes nothing.
 func Test_Main_Narrates_The_Scan(t *testing.T) {
 	t.Parallel()
-	loop, driver, _ := sysio.New_Sim(0)
+	loop, _, _ := sysio.New_Sim(0)
 	// A nested directory, so the walk reads past the root and narrates more than one line.
 	if make_err := loop.Make_Directory(TEST_SOURCE); make_err != nil {
 		t.Fatalf("make source: %v", make_err)
@@ -196,7 +196,7 @@ func Test_Main_Narrates_The_Scan(t *testing.T) {
 	}
 	log := &bytes.Buffer{}
 	status := setup.Main(&setup.Main_Input{
-		File_System:           setup.File_System{Loop: loop, Run_Until: driver.Run_Until},
+		File_System:           directory_file_system(t, loop),
 		Source_Directory:      TEST_SOURCE,
 		Destination_Directory: TEST_HOME,
 		Operating_System:      "linux",
@@ -224,7 +224,7 @@ func Test_Main_Narrates_The_Scan(t *testing.T) {
 // the property that turns ~600 sequential git spawns into one probe per tree level.
 func Test_Main_Probes_Ignore_In_One_Batch(t *testing.T) {
 	t.Parallel()
-	loop, driver, _ := sysio.New_Sim(0)
+	loop, _, _ := sysio.New_Sim(0)
 	// Three sibling directories under the root, so a batched probe of the root sees
 	// all three at once while a per-entry probe would see one at a time.
 	for _, directory := range []string{
@@ -236,7 +236,7 @@ func Test_Main_Probes_Ignore_In_One_Batch(t *testing.T) {
 	}
 	batches := [][]string{}
 	status := setup.Main(&setup.Main_Input{
-		File_System:           setup.File_System{Loop: loop, Run_Until: driver.Run_Until},
+		File_System:           directory_file_system(t, loop),
 		Source_Directory:      TEST_SOURCE,
 		Destination_Directory: TEST_HOME,
 		Operating_System:      "linux",
@@ -1019,6 +1019,23 @@ func Test_Install_Ghostty_Reports_An_Install_Failure(t *testing.T) {
 	}
 	if links := commands_named(commands, "ln"); len(links) != 0 {
 		t.Fatalf("expected no link after a failed install, ran %v", links)
+	}
+}
+
+// These Main examples use directory-only trees because they specify command and narration
+// behavior. Fail the test if a change adds an unrelated file operation to one of them.
+func directory_file_system(t *testing.T, loop sysio.IO) (system setup.File_System) {
+	t.Helper()
+	return setup.File_System{
+		Read_Directory: loop.Read_Directory,
+		Read: func(path string) (contents []byte, found bool, err error) {
+			t.Fatalf("unexpected file read: %s", path)
+			return nil, false, nil
+		},
+		Write: func(path string, contents []byte) (err error) {
+			t.Fatalf("unexpected file write: %s", path)
+			return nil
+		},
 	}
 }
 

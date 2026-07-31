@@ -26,9 +26,8 @@ Installed reports false when the binary is absent or reports a different version
 
 # Main
 
-Main plans the sync, writing each pending file through the loop, then on darwin applies the
-macos defaults through the injected runner. The mirror's own properties are proved by the
-simulation harness, not example cases here.
+Main plans the sync, writes each pending file through the injected file system, and then applies
+the macos defaults on darwin. The simulation harness proves the mirror properties.
 
 ### Applies Macos Defaults
 
