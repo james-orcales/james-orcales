@@ -3,9 +3,9 @@ name: invariant
 description: >
   Load BEFORE you write an `_Invariants` bundle, add an assertion, or resolve an invariant
   coverage gap in this repository. Minimize the assertion tree before you add types or bundles.
-  An assertion composes from the top down. The types under one root make a tree, never a DAG. A
-  bundle is an identity, and registration never shares one. A constant is a fact, and it carries
-  the property that two distinct types share.
+  A bundle names each bundle it composes and never learns what composed it, the reverse of
+  inheritance. The types under one root make a tree, never a DAG. A bundle is an identity, and
+  registration never shares one. A constant is a fact that two distinct types both name.
 ---
 
 # The composition model of shared/invariant
@@ -34,23 +34,30 @@ Do not confuse proof boundaries with domain identities. Two function namespaces 
 evidence, but that fact does not require two types. First remove unnecessary boundaries. Then
 model the tree that remains.
 
-## Composition runs from the top down
+## A parent knows its children, a child knows no parent
 
-Object-oriented code composes from the bottom up. You make small parts, then you assemble them,
-and the whole is the sum of its parts.
+Object-oriented inheritance points knowledge upward. A subtype names its base type, and the base
+type never learns which types extend it. The set of implementors stays open, thus a base type
+cannot state what its subtypes hold.
 
-An assertion goes the other way. The entrypoint holds the widest type. Thus its bundle states the
-whole program at one time, and each more specific invariant sits below it. Depth gives precision,
-not breadth. A deep function states one narrow leaf, and the entrypoint states the full tree.
+An assertion points knowledge downward. A bundle names each bundle it composes, and a composed
+bundle never names what composed it. The set is closed and each root knows it in full.
 
-The namespace shows this direction. One root writes the namespace one time, and each bundle sends
-it down unchanged.
+Two consequences follow, and both are the reason for the rest of this document:
+
+1. A root states its whole tree. The entrypoint holds the widest type, thus its bundle reaches
+every obligation below it. Depth gives precision, not breadth.
+2. A bundle carries no context. It cannot know its position, thus it cannot state anything about
+the situation that composed it.
+
+The namespace shows the same direction. One root writes it one time, and each bundle sends it down
+unchanged.
 
 ## The shape is a tree, never a DAG
 
-A type names its position in the descent. Thus one type at two positions under one root gives one
-name to two obligations, and evidence from one position satisfies the other. Registration rejects
-that shape.
+A bundle carries no context, thus its type is its position and nothing else. One type at two
+positions under one root gives one name to two obligations, and evidence from one position
+satisfies the other. Registration rejects that shape.
 
 A diamond is the usual form: two branches that both reach one leaf type. A repeated sibling and a
 cycle fail for the same reason.
