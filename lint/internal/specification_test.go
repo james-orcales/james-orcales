@@ -2198,16 +2198,22 @@ func Test_Type_Invariant_Struct_Composition_Passes(t *testing.T) {
 		"// Token is a fixture.\ntype Token string\n\n" +
 		"// Token_Invariants is a fixture.\n" +
 		"func Token_Invariants(v Token, namespace invariant.Namespace) {\n" +
-		"\tinvariant.Assertions(namespace)." +
+		"\tinvariant.Tree(v, namespace)." +
 		"Range_Int(len(v), Token_Min, Token_Max).Ensure()\n}\n\n" +
+		"const Count_Min = 0\n\nconst Count_Max = 4\n\n" +
+		"// Count is a fixture.\ntype Count int\n\n" +
+		"// Count_Invariants is a fixture.\n" +
+		"func Count_Invariants(v Count, namespace invariant.Namespace) {\n" +
+		"\tinvariant.Tree(v, namespace)." +
+		"Range_Int(int(v), Count_Min, Count_Max).Ensure()\n}\n\n" +
 		"// Pair is a fixture.\ntype Pair struct {\n" +
 		"\t// Tok is a fixture.\n\tTok Token\n" +
-		"\t// Count is a fixture.\n\tCount int\n}\n\n" +
+		"\t// Count is a fixture.\n\tCount Count\n}\n\n" +
 		"// Pair_Invariants is a fixture.\n" +
 		"func Pair_Invariants(v Pair, namespace invariant.Namespace) {\n" +
 		"\tToken_Invariants(v.Tok, \"Pair.Tok\")\n" +
-		"\tinvariant.Int_Invariants(v.Count, \"Pair.Count\")\n" +
-		"\tinvariant.Assertions(namespace).Sometimes(true, \"x\").Ensure()\n}\n")
+		"\tCount_Invariants(v.Count, \"Pair.Count\")\n" +
+		"\tinvariant.Tree(v, namespace).Sometimes(true, \"x\").Ensure()\n}\n")
 	if specification_flags(t, files, "must call") {
 		t.Fatal("a struct composing all field invariants must not be flagged")
 	}
@@ -2245,8 +2251,8 @@ func Test_Type_Invariant_Struct_Function_Fields_Exempt(t *testing.T) {
 	}
 }
 
-// Test_Type_Invariant_Struct_Boolean_Field_Required verifies a bool field requires
-// the Boolean_Invariants preset.
+// Test_Type_Invariant_Struct_Boolean_Field_Required verifies a raw bool field is
+// rejected outright, because no preset remains to assert one.
 func Test_Type_Invariant_Struct_Boolean_Field_Required(t *testing.T) {
 	t.Parallel()
 	files := specification_one_file("package fixture\n\n" +
@@ -2255,9 +2261,9 @@ func Test_Type_Invariant_Struct_Boolean_Field_Required(t *testing.T) {
 		"\t// On is a fixture.\n\tOn bool\n}\n\n" +
 		"// Flag_Invariants is a fixture.\n" +
 		"func Flag_Invariants(v Flag, namespace invariant.Namespace) {\n" +
-		"\tinvariant.Assertions(namespace).Sometimes(true, \"x\").Ensure()\n}\n")
-	if !specification_flags(t, files, "must call Boolean_Invariants(v.On") {
-		t.Fatal("a bool field must require the Boolean_Invariants preset")
+		"\tinvariant.Tree(v, namespace).Sometimes(true, \"x\").Ensure()\n}\n")
+	if !specification_flags(t, files, "raw bool field On") {
+		t.Fatal("a raw bool field must be rejected, not composed")
 	}
 }
 

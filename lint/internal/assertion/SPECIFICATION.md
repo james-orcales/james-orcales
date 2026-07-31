@@ -32,15 +32,15 @@ interface types, empty structs, local types, tests, and opted-out packages are e
 
 ### Scalar Helper
 
-A defined integer helper uses its exact primitive preset, direct singleton Always equality against a
-package constant, or an ensured exact Range or Enum builder over the converted value.
-Floats and booleans use matching primitive presets.
+An integer helper uses direct singleton Always equality against a package constant, or an ensured
+exact Range or Enum builder over the converted value. A Boolean helper states exactly one Sometimes.
+A float has no builder preset, thus its helper uses Always or Sometimes.
 
 ### Count Helper
 
 A defined string, slice, or map helper uses direct singleton Always equality against a package
 constant or ensures one exact Int Range or Enum family over len(value). Another subject, suffix,
-unterminated or split builder, or unrelated Assertions builder never substitutes.
+unterminated or split builder, or unrelated Tree builder never substitutes.
 
 ### Helper Constants
 
@@ -56,20 +56,20 @@ declaring package. A foreign helper with the required name cannot satisfy a loca
 
 ### Helper Identity
 
-All canonical calls are direct shared/invariant/default statements with qualifier invariant.
-Builders use the helper namespace. Always uses `subject == PACKAGE_CONSTANT` and a literal message.
-Shadowing, lookalikes, aliases, reversed equality, other roots, nesting, and split builders fail.
+All canonical calls are direct shared/invariant/default statements with qualifier invariant. A Tree
+root takes its helper's own subject before the namespace, and Always uses `subject == CONSTANT` with
+a literal message. Shadowing, an alias, a reversed equality, another root, and a split builder fail.
 
 ### Builder Walk
 
-An ensured Assertions builder expands to at most 70 fluent links. A longer builder is too costly
-for static analysis and is banned.
+An ensured Tree builder expands to at most 70 fluent links. A longer builder is too costly for
+static analysis and is banned.
 
 ### Field Composition
 
-A struct type's helper directly calls the exact package-qualified _Invariants helper of every field
-whose type has one — a preset for a primitive, the type's own helper otherwise. Foreign, nested, or
-shadowed calls never substitute. A pointer field composes its pointee; an immediate mutex is exempt.
+A struct type's helper directly calls the exact package-qualified _Invariants helper of every field.
+Every field has a defined type, thus every field has one. Foreign, nested, or shadowed calls never
+substitute. A pointer field composes its pointee, and an immediate mutex is exempt.
 
 ### Parameter Helper
 
@@ -97,9 +97,9 @@ or no TestMain, is banned.
 
 ### Primitive Types
 
-A raw string, slice, or map may not be a function parameter, result, or struct field; it has no
-preset and no bundle of its own. Wrap it in a defined type. A stdlib-interface method, a _test.go
-file, and a package in opt_out_assertion_mandate_packages are exempt.
+No builtin may be a function parameter, result, or struct field. A builtin has no bundle of its own
+and the framework supplies no preset, thus wrap it in a defined type. A stdlib-interface method, a
+_test.go file, and a package in opt_out_assertion_mandate_packages are exempt.
 
 # Simulation
 

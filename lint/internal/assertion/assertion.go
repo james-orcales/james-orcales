@@ -274,10 +274,6 @@ func invariant_body_helper(
 		if call != nil {
 			statement_scope := *scope
 			statement_scope.Shadowed = shadowed
-			if invariant_direct_preset(
-				call, helper, type_specification, &statement_scope) {
-				return true, true
-			}
 			matched, valid := invariant_direct_singleton(
 				call, helper, type_specification, &statement_scope)
 			if matched {
@@ -300,14 +296,29 @@ func invariant_body_helper(
 	return found, false
 }
 
+// Reports whether primitive is one of the two floating-point widths.
+func invariant_float_primitive(primitive string) (yes bool) {
+	switch primitive {
+	case "float32", "float64":
+		return true
+	}
+	return false
+}
+
 func invariant_direct_singleton(
 	call *ast.CallExpr, helper *ast.FuncDecl,
 	type_specification *ast.TypeSpec, scope *Invariant_Scope,
 ) (matched bool, constant bool) {
 	_, primitive, count := invariant_type_kind(type_specification)
 	if !count {
-		if !invariant_integer_primitive(primitive) {
+		// A Boolean states a Sometimes, thus it is the one scalar an Always cannot serve.
+		if primitive == "bool" {
 			return false, false
+		}
+		if !invariant_integer_primitive(primitive) {
+			if !invariant_float_primitive(primitive) {
+				return false, false
+			}
 		}
 	}
 	selector, is_selector := call.Fun.(*ast.SelectorExpr)
@@ -368,30 +379,6 @@ func invariant_string_literal(expression ast.Expr) (literal bool) {
 	return unquote_error == nil
 }
 
-func invariant_direct_preset(
-	call *ast.CallExpr, helper *ast.FuncDecl,
-	type_specification *ast.TypeSpec, scope *Invariant_Scope,
-) (matched bool) {
-	suffix, _, count := invariant_type_kind(type_specification)
-	if count {
-		return false
-	}
-	want := scope.Default_Package + "\x00" + suffix + "_Invariants"
-	identity := helper_callee_identity(
-		call.Fun, scope.Current_Package, scope.Imports, scope.Shadowed)
-	if identity != want {
-		return false
-	}
-	if len(call.Args) != 2 {
-		return false
-	}
-	if !invariant_subject(call.Args[0], helper, type_specification, scope) {
-		return false
-	}
-	namespace := invariant_namespace_parameter(helper)
-	return invariant_identifier(call.Args[1], namespace)
-}
-
 func invariant_builder_preset(
 	ensure *ast.CallExpr, helper *ast.FuncDecl,
 	type_specification *ast.TypeSpec, scope *Invariant_Scope,
@@ -416,7 +403,7 @@ func invariant_builder_preset(
 		}
 		current = receiver
 	}
-	if !invariant_builder_root(current, helper, scope) {
+	if !invariant_builder_root(current, helper, type_specification, scope) {
 		return false, false
 	}
 	return matched, valid
@@ -461,6 +448,19 @@ func invariant_builder_link(
 	enum_name := "Enum_" + suffix
 	enum_3_name := "Enum_3_" + suffix
 	enum_4_name := "Enum_4_" + suffix
+	if primitive == "bool" {
+		if method != "Sometimes" {
+			return false, false
+		}
+		if len(call.Args) != 2 {
+			return false, false
+		}
+		if !invariant_subject(call.Args[0], helper, type_specification, scope) {
+			return false, false
+		}
+		// A Sometimes carries no domain operand, thus it has no constant to check.
+		return true, true
+	}
 	switch method {
 	case range_name, range_holed_name:
 		argument_count := 3
@@ -501,20 +501,44 @@ func invariant_builder_link(
 	return true, invariant_arguments_constant(call.Args[1:], primitive, scope)
 }
 
-func invariant_builder_root(
-	call *ast.CallExpr, helper *ast.FuncDecl, scope *Invariant_Scope,
+// Reports whether expression names the helper's own value parameter. A Tree root carries the whole
+// subject, not a measurement of it, because the subject is what supplies the chain type. A count
+// helper still writes len(value) at its link, and that is a separate predicate.
+func invariant_root_subject(
+	expression ast.Expr, helper *ast.FuncDecl, type_specification *ast.TypeSpec,
 ) (matched bool) {
-	if len(call.Args) != 1 {
+	name, _ := invariant_value_parameter(helper, type_specification.Name.Name)
+	if name == "" {
 		return false
 	}
-	if !invariant_identifier(call.Args[0], invariant_namespace_parameter(helper)) {
+	expression = invariant_unparen(expression)
+	star, is_star := expression.(*ast.StarExpr)
+	if is_star {
+		expression = invariant_unparen(star.X)
+	}
+	return invariant_identifier(expression, name)
+}
+
+// A Tree root takes the helper's own subject before its namespace. The subject supplies the chain
+// type, thus a root over another value would key its plan on a type the helper does not own.
+func invariant_builder_root(
+	call *ast.CallExpr, helper *ast.FuncDecl, type_specification *ast.TypeSpec,
+	scope *Invariant_Scope,
+) (matched bool) {
+	if len(call.Args) != 2 {
+		return false
+	}
+	if !invariant_root_subject(call.Args[0], helper, type_specification) {
+		return false
+	}
+	if !invariant_identifier(call.Args[1], invariant_namespace_parameter(helper)) {
 		return false
 	}
 	selector, is_selector := call.Fun.(*ast.SelectorExpr)
 	if !is_selector {
 		return false
 	}
-	if selector.Sel.Name != "Assertions" {
+	if selector.Sel.Name != "Tree" {
 		return false
 	}
 	qualifier, is_qualifier := selector.X.(*ast.Ident)
@@ -1220,48 +1244,11 @@ func struct_field_ident_invariant(
 		// A raw string field is banned by check_primitive_types, not composed here.
 		return "", false
 	}
-	mapped := struct_primitive_preset(name)
-	if mapped != "" {
-		return scope.Default_Package + "\x00" + mapped, true
-	}
 	if struct_is_builtin(name) {
+		// Banned by check_primitive_types, thus nothing to compose here.
 		return "", false
 	}
 	return scope.Current_Package + "\x00" + source.Invariant_Name(name), false
-}
-
-// Maps a builtin primitive to its framework preset name, or "" when none.
-func struct_primitive_preset(name string) (preset string) {
-	switch name {
-	case "int":
-		return "Int_Invariants"
-	case "int8":
-		return "Int8_Invariants"
-	case "int16":
-		return "Int16_Invariants"
-	case "int32", "rune":
-		return "Int32_Invariants"
-	case "int64":
-		return "Int64_Invariants"
-	case "uint":
-		return "Uint_Invariants"
-	case "uint8", "byte":
-		return "Uint8_Invariants"
-	case "uint16":
-		return "Uint16_Invariants"
-	case "uint32":
-		return "Uint32_Invariants"
-	case "uint64":
-		return "Uint64_Invariants"
-	case "float32":
-		return "Float32_Invariants"
-	case "float64":
-		return "Float64_Invariants"
-	case "bool":
-		return "Boolean_Invariants"
-	default:
-		return ""
-	}
 }
 
 // Reports whether name is a predeclared type that has no preset, so a field of it
@@ -1568,11 +1555,8 @@ func function_named_invariant(
 		// A raw string subject is banned by check_primitive_types, not asserted here.
 		return "", false
 	}
-	preset := struct_primitive_preset(identifier.Name)
-	if preset != "" {
-		return scope.Default_Package + "\x00" + preset, true
-	}
 	if struct_is_builtin(identifier.Name) {
+		// Banned by check_primitive_types, thus nothing to require here.
 		return "", false
 	}
 	identity := scope.Current_Package + "\x00" + source.Invariant_Name(identifier.Name)
@@ -2501,8 +2485,11 @@ func numeric_raw_primitive_kind(expression ast.Expr) (kind string) {
 	}
 	switch typed := core.(type) {
 	case *ast.Ident:
-		if typed.Name == "string" {
-			return "string"
+		// Every builtin primitive, not only string. The framework supplies no preset for
+		// any of them now, thus none carries an invariant without a defined type first.
+		// invariant_identifier_kind names exactly that set.
+		if suffix, _, _ := invariant_identifier_kind(typed.Name); suffix != "" {
+			return typed.Name
 		}
 		return ""
 	case *ast.ArrayType:

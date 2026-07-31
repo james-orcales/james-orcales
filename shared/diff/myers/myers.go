@@ -176,14 +176,12 @@ func Differ_Line_Diff(dfr *Differ) (diff string) {
 		return "-" + strings.ReplaceAll(dfr.Old_String, "\n", "\n-")
 	}
 
-	invariant.Assertions("Differ_Line_Diff.old_trailing_newline").
-		Sometimes(strings.LastIndexByte(dfr.Old_String, '\n') != len(dfr.Old_String)-1,
-			"old text lacks a trailing newline").
-		Ensure()
-	invariant.Assertions("Differ_Line_Diff.new_trailing_newline").
-		Sometimes(strings.LastIndexByte(dfr.New_String, '\n') != len(dfr.New_String)-1,
-			"new text lacks a trailing newline").
-		Ensure()
+	invariant.Sometimes(
+		strings.LastIndexByte(dfr.Old_String, '\n') != len(dfr.Old_String)-1,
+		"old text lacks a trailing newline")
+	invariant.Sometimes(
+		strings.LastIndexByte(dfr.New_String, '\n') != len(dfr.New_String)-1,
+		"new text lacks a trailing newline")
 
 	codes := differ_encode_lines(dfr)
 	d := New(New_Input{Old: codes.Old, New: codes.New})
@@ -221,10 +219,9 @@ func Differ_Diff(d *Differ) (diff string) {
 	// decoded to U+FFFD, so the runes can't reproduce the original bytes (the false
 	// branch, witnessed by the invalid-UTF-8 input).
 	rebuilt := differ_rebuild_string_from_edits(d)
-	invariant.Assertions("Differ_Diff.roundtrip").
-		Sometimes((before.Old_String == rebuilt.Old) == (before.New_String == rebuilt.New),
-			"both texts rebuild together").
-		Ensure()
+	invariant.Sometimes(
+		(before.Old_String == rebuilt.Old) == (before.New_String == rebuilt.New),
+		"Differ_Diff rebuilds both texts together")
 	return d.String()
 }
 
@@ -270,9 +267,8 @@ func Differ_Merge_Shift_Diff_Cleanup(d *Differ) {
 		rebuilt := differ_rebuild_string_from_edits(d)
 		rebuilds_together := (before.Old_String == rebuilt.Old) ==
 			(before.New_String == rebuilt.New)
-		invariant.Assertions("Differ_Merge_Shift_Diff_Cleanup.roundtrip").
-			Sometimes(rebuilds_together, "both texts rebuild together").
-			Ensure()
+		invariant.Sometimes(rebuilds_together,
+			"Differ_Merge_Shift_Diff_Cleanup rebuilds both texts together")
 	}()
 	for is_shifted := true; is_shifted; {
 		if len(d.Edits) < 3 {
@@ -456,9 +452,8 @@ func Differ_Optimized_Diff(d *Differ) {
 		rebuilt := differ_rebuild_string_from_edits(d)
 		rebuilds_together := (before.Old_String == rebuilt.Old) ==
 			(before.New_String == rebuilt.New)
-		invariant.Assertions("Differ_Optimized_Diff.roundtrip").
-			Sometimes(rebuilds_together, "both texts rebuild together").
-			Ensure()
+		invariant.Sometimes(rebuilds_together,
+			"Differ_Optimized_Diff rebuilds both texts together")
 	}()
 
 	old, new := d.Old, d.New
@@ -599,9 +594,8 @@ func Differ_Algorithm_Diff(d *Differ) {
 		// rest.
 		condition := (string(before.Old) == before.Old_String) ==
 			(string(before.New) == before.New_String)
-		invariant.Assertions("Differ_Algorithm_Diff.runes_equal_text").
-			Sometimes(condition, "runes reproduce the text for both sides alike").
-			Ensure()
+		invariant.Sometimes(condition,
+			"runes reproduce the text for both sides alike")
 		if condition {
 			// With the runes equal to the text, the script must replay back to it.
 			rebuilt := differ_rebuild_string_from_edits(d)
@@ -722,9 +716,7 @@ func differ_forward_step(input Differ_Forward_Step_Input) (more bool) {
 		// Reaching x never falls below its diagonal k; x > k means a snake (matching run)
 		// extended this node, x == k means the diagonal was first reached here.
 		invariant.Always(x >= k, "x stays on or above its diagonal")
-		invariant.Assertions("differ_forward_step.snake").
-			Sometimes(x > k, "a snake extended this node").
-			Ensure()
+		invariant.Sometimes(x > k, "a snake extended this node")
 
 		// Furthest-reaching X is monotonic across depths along each diagonal.
 		invariant.Always(tracker[k_offset] >= previous_tracker[k_offset],
