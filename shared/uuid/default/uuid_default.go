@@ -15,10 +15,13 @@ import (
 	"local/james-orcales/shared/uuid"
 )
 
+// NODE_BYTE_COUNT supplies the zero node that defers selection to operating-system entropy.
+const NODE_BYTE_COUNT = 6
+
 // New_Operating_System_Generator returns a Generator wired to the host: crypto/rand
 // for entropy and the operating-system clock for the version 1, 6, and 7
 // timestamps. The node is random, drawn from crypto/rand when first needed.
 func New_Operating_System_Generator() (generator uuid.Generator) {
 	clock, _ := timeos.New_Operating_System_Clock()
-	return uuid.New(rand.Reader, clock, [6]byte{})
+	return uuid.New(rand.Reader, clock, [NODE_BYTE_COUNT]byte{})
 }

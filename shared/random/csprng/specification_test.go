@@ -17,21 +17,33 @@ import (
 
 // Test_Seed_Expands_To_State checks New is deterministic and seed-sensitive.
 func Test_Seed_Expands_To_State(t *testing.T) {
-	first := New([32]byte{1})
-	again := New([32]byte{1})
-	var first_draw, again_draw [8]byte
+	first := New([KEY_BYTES]byte{1}, CURSOR_MIN)
+	if first.Position != CURSOR_MIN {
+		t.Fatalf("new generator cursor was %d, want %d", first.Position, CURSOR_MIN)
+	}
+	again := New([KEY_BYTES]byte{1}, CURSOR_MIN)
+	var first_draw, again_draw [WORD_BYTE_COUNT]byte
 	first.Read(first_draw[:])
 	again.Read(again_draw[:])
 	if first_draw != again_draw {
 		t.Fatalf("same seed produced different streams")
 	}
-	other := New([32]byte{2})
-	repeat := New([32]byte{1})
-	var other_draw, repeat_draw [8]byte
+	other := New([KEY_BYTES]byte{2}, CURSOR_MIN)
+	repeat := New([KEY_BYTES]byte{1}, CURSOR_MIN)
+	var other_draw, repeat_draw [WORD_BYTE_COUNT]byte
 	other.Read(other_draw[:])
 	repeat.Read(repeat_draw[:])
 	if other_draw == repeat_draw {
 		t.Fatalf("distinct seeds produced the same first draw")
+	}
+	positioned := New([KEY_BYTES]byte{3}, 2)
+	if positioned.Position != 2 {
+		t.Fatalf("injected cursor was %d, want 2", positioned.Position)
+	}
+	for index := 0; index < int(positioned.Position); index++ {
+		if positioned.Buffer[index] != 0 {
+			t.Fatalf("consumed buffer byte %d was not erased", index)
+		}
 	}
 }
 
@@ -80,7 +92,7 @@ func Test_Block_Matches_Reference_Vectors(t *testing.T) {
 		key := decode_key(t, test_case.Key)
 		nonce := decode_nonce(t, test_case.Nonce)
 		want := decode_bytes(t, test_case.Want)
-		var output [64]byte
+		var output [CHACHA_BLOCK_BYTE_COUNT]byte
 		chacha20_block(key, test_case.Counter, nonce, &output)
 		if !bytes.Equal(output[:], want) {
 			t.Fatalf("%s: block was %x, want %x", test_case.Name, output[:], want)
@@ -90,7 +102,7 @@ func Test_Block_Matches_Reference_Vectors(t *testing.T) {
 
 // Test_Known_Sequence locks the output stream for a fixed seed.
 func Test_Known_Sequence(t *testing.T) {
-	generator := New([32]byte{})
+	generator := New([KEY_BYTES]byte{}, CURSOR_MIN)
 	// Frozen from this implementation: ChaCha20 under fast-key-erasure from an all-zero seed,
 	// read eight bytes at a time and assembled little-endian. It is not the raw RFC keystream,
 	// since the first 32 bytes of each block reseed the key; the block is checked against the
@@ -106,7 +118,7 @@ func Test_Known_Sequence(t *testing.T) {
 		17112251633709073938,
 	}
 	for index := 0; index < len(want); index++ {
-		var octet [8]byte
+		var octet [WORD_BYTE_COUNT]byte
 		generator.Read(octet[:])
 		value := binary.LittleEndian.Uint64(octet[:])
 		if value != want[index] {
@@ -119,7 +131,7 @@ func Test_Known_Sequence(t *testing.T) {
 // byte-granular reads also walk the cursor and sink lengths through 0, 1, 2 so those invariant
 // boundaries are witnessed; the larger reads cross a refill and prove real keystream.
 func Test_Read_Fills_Fully(t *testing.T) {
-	generator := New([32]byte{9})
+	generator := New([KEY_BYTES]byte{9}, CURSOR_MIN)
 	sizes := []int{0, 1, 1, 1, 2, 7, 224, 225, 1000}
 	for _, size := range sizes {
 		destination := make([]byte, size)
@@ -146,7 +158,7 @@ func Test_Read_Fills_Fully(t *testing.T) {
 
 // Test_Bytes_Are_Uniform checks a filled buffer sets close to half of all its bits.
 func Test_Bytes_Are_Uniform(t *testing.T) {
-	generator := New([32]byte{3})
+	generator := New([KEY_BYTES]byte{3}, CURSOR_MIN)
 	buffer := make([]byte, SINK_MAX)
 	generator.Read(buffer)
 	set_bits := 0
@@ -164,7 +176,7 @@ func Test_Bytes_Are_Uniform(t *testing.T) {
 
 // Test_Below_Is_Bounded checks Below stays within zero and bound and rejects a zero bound.
 func Test_Below_Is_Bounded(t *testing.T) {
-	generator := New([32]byte{4})
+	generator := New([KEY_BYTES]byte{4}, CURSOR_MIN)
 	bounds := []int{1, 2, 7, 1000, 1 << 40}
 	for _, bound := range bounds {
 		for draw_index := 0; draw_index < 10000; draw_index++ {
@@ -173,6 +185,13 @@ func Test_Below_Is_Bounded(t *testing.T) {
 				t.Fatalf("Below(%d) returned %d, out of range", bound, index)
 			}
 		}
+	}
+	for _, byte_size := range []int{1, 2} {
+		positioned := New(
+			[KEY_BYTES]byte{byte(byte_size)},
+			Cursor(byte_size),
+		)
+		Generator_Below(&positioned, BOUND_MAX)
 	}
 	// An all-ones draw reaches the half-open domain's last value deterministically; waiting for
 	// a random stream to hit one point in 2^62 would make the boundary contract untestable.
@@ -196,20 +215,33 @@ func Test_Below_Is_Bounded(t *testing.T) {
 // Test_Seed_Is_Erased_After_Construction checks New performs the first refill, so the seed no
 // longer lives in the Generator's key and a later disclosure cannot reproduce it or its output.
 func Test_Seed_Is_Erased_After_Construction(t *testing.T) {
-	seed := [32]byte{}
+	seed := [KEY_BYTES]byte{}
 	for index := 0; index < 32; index++ {
 		seed[index] = byte(index)
 	}
-	generator := New(seed)
+	generator := New(seed, CURSOR_MIN)
 	if generator.Key == seed {
 		t.Fatalf("New left the seed in the generator key; fast-key-erasure did not run")
+	}
+}
+
+// Test_Refill_Resets_Cursor checks that a refill accepts each cursor boundary and starts the new
+// buffer at zero.
+func Test_Refill_Resets_Cursor(t *testing.T) {
+	positions := []Cursor{CURSOR_MIN, 1, 2, CURSOR_MAX}
+	for _, position := range positions {
+		generator := New([KEY_BYTES]byte{byte(position)}, position)
+		generator_refill(&generator)
+		if generator.Position != CURSOR_MIN {
+			t.Fatalf("refill cursor was %d, want %d", generator.Position, CURSOR_MIN)
+		}
 	}
 }
 
 // Test_Hot_Path_Is_Zero_Allocation checks a steady-state Read does not allocate, even with the
 // invariant assertions on the draw path — measured under recording, not just in benchmark mode.
 func Test_Hot_Path_Is_Zero_Allocation(t *testing.T) {
-	generator := New([32]byte{8})
+	generator := New([KEY_BYTES]byte{8}, CURSOR_MIN)
 	buffer := make([]byte, 8)
 	allocations := testing.AllocsPerRun(1000, func() {
 		generator.Read(buffer)
@@ -242,7 +274,7 @@ func did_die(action func()) (died bool) {
 type tripped_invariant struct{}
 
 // Decodes a 32-byte hex key, failing the test on a wrong length.
-func decode_key(t *testing.T, encoded string) (key [32]byte) {
+func decode_key(t *testing.T, encoded string) (key [KEY_BYTES]byte) {
 	decoded := decode_bytes(t, encoded)
 	if len(decoded) != 32 {
 		t.Fatalf("key is %d bytes, want 32", len(decoded))
@@ -252,7 +284,7 @@ func decode_key(t *testing.T, encoded string) (key [32]byte) {
 }
 
 // Decodes a 12-byte hex nonce, failing the test on a wrong length.
-func decode_nonce(t *testing.T, encoded string) (nonce [12]byte) {
+func decode_nonce(t *testing.T, encoded string) (nonce [NONCE_BYTE_COUNT]byte) {
 	decoded := decode_bytes(t, encoded)
 	if len(decoded) != 12 {
 		t.Fatalf("nonce is %d bytes, want 12", len(decoded))

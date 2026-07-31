@@ -541,7 +541,7 @@ func Test_Trim_Quotes_Cases(t *testing.T) {
 			Flags:     []cli.Option{{Label: "flag", Value: ""}},
 		}},
 	})
-	check := func(name, raw, want string) {
+	check_case := func(name, raw, want string) {
 		t.Helper()
 		command, err := cli.Program_Parse(&program, []string{"prog", "add", "task", raw})
 		if err != nil {
@@ -552,12 +552,12 @@ func Test_Trim_Quotes_Cases(t *testing.T) {
 			t.Errorf("%s: expected %q, got %q", name, want, got)
 		}
 	}
-	check("double", `-flag="value"`, "value")
-	check("single", `-flag='value'`, "value")
-	check("none", `-flag=value`, "value")
-	check("empty double", `-flag=""`, "")
-	check("mismatched", `-flag="value'`, `"value'`)
-	check("spaces", `-flag="hello world"`, "hello world")
+	check_case("double", `-flag="value"`, "value")
+	check_case("single", `-flag='value'`, "value")
+	check_case("none", `-flag=value`, "value")
+	check_case("empty double", `-flag=""`, "")
+	check_case("mismatched", `-flag="value'`, `"value'`)
+	check_case("spaces", `-flag="hello world"`, "hello world")
 }
 
 // Test_Get_Option_Lookup verifies a present label returns its option and an

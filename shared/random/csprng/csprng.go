@@ -18,7 +18,7 @@
 // house forbids returning raw unbounded entropy from a free function (it has no witnessable
 // invariant), so a raw 64-bit draw is a Read into eight bytes.
 //
-//	generator := os_csprng.New_Operating_System_Generator()
+//	generator := os_csprng.New_Operating_System_Generator(0)
 //	token := make([]byte, 32)
 //	generator.Read(token)
 //	victim := csprng.Generator_Below(&generator, csprng.Bound(replica_count))
@@ -49,12 +49,27 @@ const CHACHA_CONSTANT_FOURTH = 0x6b206574
 // KEY_BYTES is the ChaCha20 key width, and so the seed width: 256 bits.
 const KEY_BYTES = 32
 
+// WORD_BYTE_COUNT matches the uint64 draw that Generator_Below assembles.
+const WORD_BYTE_COUNT = 8
+
+// CHACHA_BLOCK_BYTE_COUNT is the block width that RFC 8439 specifies.
+const CHACHA_BLOCK_BYTE_COUNT = 64
+
+// NONCE_BYTE_COUNT is the nonce width that RFC 8439 specifies.
+const NONCE_BYTE_COUNT = 12
+
+// CHACHA_STATE_WORD_COUNT is the state width that RFC 8439 specifies.
+const CHACHA_STATE_WORD_COUNT = 16
+
+// QUARTER_ROUND_WORD_COUNT limits each round to its four coupled state words.
+const QUARTER_ROUND_WORD_COUNT = 4
+
 // REFILL_BLOCKS is how many 64-byte ChaCha20 blocks one refill produces. Four yield 256 bytes: the
 // first 32 reseed the key (fast-key-erasure), the remaining 224 are output.
 const REFILL_BLOCKS = 4
 
 // REFILL_BYTES is one refill's total keystream, 256 bytes.
-const REFILL_BYTES = REFILL_BLOCKS * 64
+const REFILL_BYTES = REFILL_BLOCKS * CHACHA_BLOCK_BYTE_COUNT
 
 // BUFFER_BYTES is the output a refill leaves after reseeding the key: 224 bytes.
 const BUFFER_BYTES = REFILL_BYTES - KEY_BYTES
@@ -66,10 +81,16 @@ const CURSOR_MIN Cursor = 0
 const CURSOR_MAX Cursor = BUFFER_BYTES
 
 // BLOCK_COUNTER_MIN is the first block counter of a refill.
-const BLOCK_COUNTER_MIN Block_Counter = 0
+const BLOCK_COUNTER_MIN = 0
+
+// BLOCK_COUNTER_SECOND identifies the second block that one refill requires.
+const BLOCK_COUNTER_SECOND = 1
+
+// BLOCK_COUNTER_THIRD identifies the third block that one refill requires.
+const BLOCK_COUNTER_THIRD = 2
 
 // BLOCK_COUNTER_MAX is the last block counter of a refill.
-const BLOCK_COUNTER_MAX Block_Counter = REFILL_BLOCKS - 1
+const BLOCK_COUNTER_MAX = REFILL_BLOCKS - 1
 
 // BOUND_MIN is the smallest bound Generator_Below accepts: one.
 const BOUND_MIN Bound = 1
@@ -96,11 +117,13 @@ type Block_Counter uint32
 
 // Block_Counter_Invariants bounds a block counter to one refill's range.
 func Block_Counter_Invariants(counter Block_Counter, namespace invariant.Namespace) {
-	invariant.Assertions(namespace).
+	invariant.Tree(counter, namespace).
 		Enum_4_Uint32(
 			uint32(counter),
-			uint32(BLOCK_COUNTER_MIN), 1, 2,
-			uint32(BLOCK_COUNTER_MAX),
+			BLOCK_COUNTER_MIN,
+			BLOCK_COUNTER_SECOND,
+			BLOCK_COUNTER_THIRD,
+			BLOCK_COUNTER_MAX,
 		).
 		Ensure()
 }
@@ -110,7 +133,7 @@ type Cursor uint
 
 // Cursor_Invariants bounds a buffer cursor to the buffer.
 func Cursor_Invariants(cursor Cursor, namespace invariant.Namespace) {
-	invariant.Assertions(namespace).
+	invariant.Tree(cursor, namespace).
 		Range_Uint(uint(cursor), uint(CURSOR_MIN), uint(CURSOR_MAX)).
 		Ensure()
 }
@@ -120,7 +143,7 @@ type Bound uint64
 
 // Bound_Invariants requires a bound to be positive and within the overflow-safe ceiling.
 func Bound_Invariants(bound Bound, namespace invariant.Namespace) {
-	invariant.Assertions(namespace).
+	invariant.Tree(bound, namespace).
 		Range_Uint64(uint64(bound), uint64(BOUND_MIN), uint64(BOUND_MAX)).
 		Ensure()
 }
@@ -130,7 +153,7 @@ type Index uint64
 
 // Index_Invariants bounds a draw result.
 func Index_Invariants(index Index, namespace invariant.Namespace) {
-	invariant.Assertions(namespace).
+	invariant.Tree(index, namespace).
 		Range_Uint64(uint64(index), uint64(INDEX_MIN), uint64(INDEX_MAX)).
 		Ensure()
 }
@@ -140,7 +163,7 @@ type Sink []byte
 
 // Sink_Invariants bounds a fill request's length.
 func Sink_Invariants(sink Sink, namespace invariant.Namespace) {
-	invariant.Assertions(namespace).
+	invariant.Tree(sink, namespace).
 		Range_Int(len(sink), SINK_MIN, SINK_MAX).
 		Ensure()
 }
@@ -164,16 +187,23 @@ type Generator struct {
 // Generator_Invariants states a Generator's buffer position; its key and buffer are fixed-size
 // arrays with no bundle of their own.
 func Generator_Invariants(generator Generator, namespace invariant.Namespace) {
-	Cursor_Invariants(generator.Position, "Generator.Position")
+	Cursor_Invariants(generator.Position, namespace)
 }
 
-// New seeds a Generator and performs the first fast-key-erasure refill, so the caller-supplied seed
-// is erased from the Generator before New returns. The zero Generator is degenerate; always
-// construct through New.
-func New(seed [KEY_BYTES]byte) (generator Generator) {
-	defer func() { Generator_Invariants(generator, "new.generator") }()
+// New seeds a Generator at position and performs the first fast-key-erasure refill, so the
+// caller-supplied seed is erased from the Generator before New returns. The zero Generator is
+// degenerate; always construct through New.
+func New(seed [KEY_BYTES]byte, position Cursor) (generator Generator) {
+	defer func() {
+		Generator_Invariants(generator, "new.generator")
+	}()
+	Cursor_Invariants(position, "new.position")
 	generator.Key = seed
 	generator_refill(&generator)
+	for index := 0; index < int(position); index++ {
+		generator.Buffer[index] = 0
+	}
+	generator.Position = position
 	return generator
 }
 
@@ -194,7 +224,7 @@ func Generator_Below(generator *Generator, bound Bound) (index Index) {
 	limit := uint64(bound)
 	// The raw draw stays a local: a free function returning unbounded entropy has no
 	// witnessable invariant, so the word is read into bytes and assembled here, not returned.
-	var octet [8]byte
+	var octet [WORD_BYTE_COUNT]byte
 	generator_drain(generator, Sink(octet[:]))
 	random := binary.LittleEndian.Uint64(octet[:])
 	high, low := bits.Mul64(random, limit)
@@ -243,10 +273,15 @@ func generator_drain(generator *Generator, destination Sink) {
 func generator_refill(generator *Generator) {
 	Generator_Invariants(*generator, "generator_refill.generator")
 	var stream [REFILL_BYTES]byte
-	var block [64]byte
+	var block [CHACHA_BLOCK_BYTE_COUNT]byte
 	for block_index := 0; block_index < REFILL_BLOCKS; block_index++ {
-		chacha20_block(generator.Key, Block_Counter(block_index), [12]byte{}, &block)
-		copy(stream[block_index*64:], block[:])
+		chacha20_block(
+			generator.Key,
+			Block_Counter(block_index),
+			[NONCE_BYTE_COUNT]byte{},
+			&block,
+		)
+		copy(stream[block_index*CHACHA_BLOCK_BYTE_COUNT:], block[:])
 	}
 	copy(generator.Key[:], stream[:KEY_BYTES])
 	copy(generator.Buffer[:], stream[KEY_BYTES:])
@@ -258,10 +293,13 @@ func generator_refill(generator *Generator) {
 // counter, and the three nonce words, all little-endian; twenty rounds (ten column-and-diagonal
 // double rounds) mix a scratch copy, which is added back to the original and serialized.
 func chacha20_block(
-	key [KEY_BYTES]byte, counter Block_Counter, nonce [12]byte, output *[64]byte,
+	key [KEY_BYTES]byte,
+	counter Block_Counter,
+	nonce [NONCE_BYTE_COUNT]byte,
+	output *[CHACHA_BLOCK_BYTE_COUNT]byte,
 ) {
 	Block_Counter_Invariants(counter, "chacha20_block.counter")
-	var state [16]uint32
+	var state [CHACHA_STATE_WORD_COUNT]uint32
 	state[0] = CHACHA_CONSTANT_FIRST
 	state[1] = CHACHA_CONSTANT_SECOND
 	state[2] = CHACHA_CONSTANT_THIRD
@@ -275,14 +313,14 @@ func chacha20_block(
 	}
 	scratch := state
 	for round_index := 0; round_index < 10; round_index++ {
-		quarter_round(&scratch, [4]int{0, 4, 8, 12})
-		quarter_round(&scratch, [4]int{1, 5, 9, 13})
-		quarter_round(&scratch, [4]int{2, 6, 10, 14})
-		quarter_round(&scratch, [4]int{3, 7, 11, 15})
-		quarter_round(&scratch, [4]int{0, 5, 10, 15})
-		quarter_round(&scratch, [4]int{1, 6, 11, 12})
-		quarter_round(&scratch, [4]int{2, 7, 8, 13})
-		quarter_round(&scratch, [4]int{3, 4, 9, 14})
+		quarter_round(&scratch, [QUARTER_ROUND_WORD_COUNT]int{0, 4, 8, 12})
+		quarter_round(&scratch, [QUARTER_ROUND_WORD_COUNT]int{1, 5, 9, 13})
+		quarter_round(&scratch, [QUARTER_ROUND_WORD_COUNT]int{2, 6, 10, 14})
+		quarter_round(&scratch, [QUARTER_ROUND_WORD_COUNT]int{3, 7, 11, 15})
+		quarter_round(&scratch, [QUARTER_ROUND_WORD_COUNT]int{0, 5, 10, 15})
+		quarter_round(&scratch, [QUARTER_ROUND_WORD_COUNT]int{1, 6, 11, 12})
+		quarter_round(&scratch, [QUARTER_ROUND_WORD_COUNT]int{2, 7, 8, 13})
+		quarter_round(&scratch, [QUARTER_ROUND_WORD_COUNT]int{3, 4, 9, 14})
 	}
 	for word_index := 0; word_index < 16; word_index++ {
 		scratch[word_index] += state[word_index]
@@ -293,7 +331,10 @@ func chacha20_block(
 // Applies the ChaCha quarter-round in place to the four state words at indices (RFC 8439 2.1):
 // four add-xor-rotate steps with rotations of 16, 12, 8, and 7 bits. It takes the state and indices
 // rather than four words so it mutates the shared state the block function threads through it.
-func quarter_round(state *[16]uint32, indices [4]int) {
+func quarter_round(
+	state *[CHACHA_STATE_WORD_COUNT]uint32,
+	indices [QUARTER_ROUND_WORD_COUNT]int,
+) {
 	a, b, c, d := indices[0], indices[1], indices[2], indices[3]
 	state[a] += state[b]
 	state[d] ^= state[a]

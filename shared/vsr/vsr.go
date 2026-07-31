@@ -1243,12 +1243,14 @@ func replica_message_epoch_check(
 	}
 	// The control flow below admits only an equal epoch; these independent axes make both the
 	// stale redirect and ordinary path coverage obligations without duplicating that gate.
-	invariant.Assertions("vsr.epoch_gate.precedence").
-		Sometimes(message.Epoch < replica.Epoch,
-			"message epoch below replica epoch").
-		Sometimes(message.Epoch == replica.Epoch,
-			"message epoch matches replica epoch").
-		Ensure()
+	invariant.Sometimes(
+		message.Epoch < replica.Epoch,
+		"message epoch below replica epoch",
+	)
+	invariant.Sometimes(
+		message.Epoch == replica.Epoch,
+		"message epoch matches replica epoch",
+	)
 	if message.Epoch == replica.Epoch {
 		return output, true
 	}

@@ -16,6 +16,9 @@ import (
 	"local/james-orcales/shared/snap"
 )
 
+// CALLER_FRAME_COUNT requests only the program counter that identifies the test site.
+const CALLER_FRAME_COUNT = 1
+
 // Snapper re-exports the library's Snapper so callers need only this import.
 type Snapper = snap.Snapper
 
@@ -48,7 +51,7 @@ func Init_Default_Snapper() (snapper *snap.Snapper) {
 		Output:      os.Stderr,
 		Write_File:  os.WriteFile,
 		Get_Caller: func(skip int) (frame_information snap.Frame_Information, err error) {
-			callers := [1]uintptr{}
+			callers := [CALLER_FRAME_COUNT]uintptr{}
 			count := runtime.Callers(skip, callers[:])
 			frame, _ := runtime.CallersFrames(callers[:count]).Next()
 			return snap.Frame_Information{File: frame.File, Line: frame.Line}, nil

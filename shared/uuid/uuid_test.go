@@ -10,6 +10,9 @@ import (
 // so a Version 7 timestamp round-trips to a known value.
 const FIXED_EPOCH_SECONDS = 1_700_000_000
 
+// NODE_BYTE_COUNT fixes the deterministic generator to one RFC 9562 node field.
+const NODE_BYTE_COUNT = 6
+
 // Deterministic_Reader is an io.Reader whose bytes come from a seeded prng, standing
 // in for crypto/rand so a test's UUIDs are a pure function of the seed.
 type Deterministic_Reader struct {
@@ -43,5 +46,5 @@ func fixed_generator(seed uint64) (generator uuid.Generator) {
 		Resolution: time.MILLISECOND,
 		Epoch:      time.Moment(FIXED_EPOCH_SECONDS * int64(time.SECOND)),
 	})
-	return uuid.New(reader, clock, [6]byte{1, 2, 3, 4, 5, 6})
+	return uuid.New(reader, clock, [NODE_BYTE_COUNT]byte{1, 2, 3, 4, 5, 6})
 }

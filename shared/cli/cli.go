@@ -522,10 +522,8 @@ func Program_Parse(
 	defer func() {
 		argument_count := len(active_command.Arguments)
 		flag_count := len(active_command.Flags)
-		invariant.Assertions("cli.parse.command_shape").
-			Sometimes(argument_count > 0, "command has positional arguments").
-			Sometimes(flag_count > 0, "command has flags").
-			Ensure()
+		invariant.Sometimes(argument_count > 0, "command has positional arguments")
+		invariant.Sometimes(flag_count > 0, "command has flags")
 	}()
 
 	// -help short-circuits before command resolution, so it works even when the command

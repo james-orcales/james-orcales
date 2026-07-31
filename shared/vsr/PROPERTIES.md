@@ -20,7 +20,7 @@ framework is the assertion system; the VOPR simulator (`shared/vsr/simulation`) 
 
 Assertion vocabulary maps the methodology's Antithesis SDK onto `shared/invariant`: `Always` →
 `invariant.Always` (safety; must be *reached*); `Sometimes(cond)` → an
-`invariant.Assertions(...).Sometimes(...)` link (must be observed *both ways* — stricter than
+`invariant.Sometimes(...)` call (must be observed *both ways* — stricter than
 Antithesis); `Reachable` → a meaningful `Sometimes` link (no one-shot form exists). The
 cross-cluster safety oracles
 (agreement, single-primary, exactly-once, linearizability, checkpoint-agreement) are direct

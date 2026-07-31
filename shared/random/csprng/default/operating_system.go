@@ -12,16 +12,22 @@ import (
 	invariant "local/james-orcales/shared/invariant/default"
 )
 
+// SEED_BYTE_COUNT gives ChaCha20 the full key width from one operating-system read.
+const SEED_BYTE_COUNT = 32
+
 // New_Operating_System_Generator seeds a Generator from the host operating system's CSPRNG. It is
 // the sole sanctioned caller of crypto/rand in the tree. crypto/rand.Read (Go 1.24 and later) fills
 // its buffer fully or crashes the process, so OS entropy is infallible and there is no error to
 // return; the assertion documents that contract and trips loudly if a future runtime breaks it.
-func New_Operating_System_Generator() (generator csprng.Generator) {
+func New_Operating_System_Generator(
+	position csprng.Cursor,
+) (generator csprng.Generator) {
 	defer func() {
 		csprng.Generator_Invariants(generator, "new_operating_system_generator.generator")
 	}()
-	var seed [32]byte
+	csprng.Cursor_Invariants(position, "new_operating_system_generator.position")
+	var seed [SEED_BYTE_COUNT]byte
 	_, read_error := rand.Read(seed[:])
 	invariant.Always(read_error == nil, "operating system entropy read succeeds")
-	return csprng.New(seed)
+	return csprng.New(seed, position)
 }

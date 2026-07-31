@@ -244,11 +244,9 @@ func Completion_Transition(input *Completion_Transition_Input) {
 	input.Completion.State = input.To
 	// The legality guard excludes impossible tuples, so individual branch obligations can
 	// witness every state boundary without rebuilding a second transition table in coverage.
-	invariant.Assertions("io.completion.transition").
-		Sometimes(input.From == COMPLETION_IDLE, "the edge leaves idle").
-		Sometimes(input.From == COMPLETION_CANCELLED, "the edge leaves cancelled").
-		Sometimes(input.To == COMPLETION_IDLE, "the edge enters idle").
-		Ensure()
+	invariant.Sometimes(input.From == COMPLETION_IDLE, "the edge leaves idle")
+	invariant.Sometimes(input.From == COMPLETION_CANCELLED, "the edge leaves cancelled")
+	invariant.Sometimes(input.To == COMPLETION_IDLE, "the edge enters idle")
 }
 
 // IO is the injected async IO submit surface — TigerBeetle's `IO`. Code submits

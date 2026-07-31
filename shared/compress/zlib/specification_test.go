@@ -45,7 +45,8 @@ func Test_Bounded_Decompression(t *testing.T) {
 	if string(exact_decoded) != WANT {
 		t.Fatalf("exact-cap decoded = %q, want %q", exact_decoded, WANT)
 	}
-	var exact_probe [1]byte
+	const PROBE_BYTE_COUNT = 1
+	var exact_probe [PROBE_BYTE_COUNT]byte
 	exact_probe_count, exact_probe_err := exact.Read(exact_probe[:])
 	if exact_probe_count != 0 {
 		t.Fatalf("exact-cap probe read %d bytes", exact_probe_count)

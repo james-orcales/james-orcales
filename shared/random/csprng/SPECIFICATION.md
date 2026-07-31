@@ -1,8 +1,9 @@
 
 # Seed Expands To State
 
-New is deterministic: one seed always yields the same Generator stream, and two distinct
-seeds yield Generators whose first draws differ.
+New is deterministic: one seed and one initial cursor always yield the same Generator stream.
+Two distinct seeds yield Generators whose first draws differ. New erases each buffer byte before
+the injected cursor, because those bytes are already consumed.
 
 # Block Matches Reference Vectors
 
@@ -38,6 +39,10 @@ violation that exits.
 New performs the first fast-key-erasure refill, so the caller's seed no longer lives in the
 Generator's key when New returns; a later disclosure of the key cannot reconstruct the seed
 or the output that refill already produced.
+
+# Refill Resets Cursor
+
+A refill accepts each valid cursor, replaces the prior buffer, and resets the cursor to zero.
 
 # Hot Path Is Zero Allocation
 

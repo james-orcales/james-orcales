@@ -32,11 +32,14 @@ const SPLIT_MIX_MULTIPLIER_FIRST = 0xbf58476d1ce4e5b9
 // The second splitmix64 multiplier that avalanches the strided state.
 const SPLIT_MIX_MULTIPLIER_SECOND = 0x94d049bb133111eb
 
+// GENERATOR_STATE_WORD_COUNT is the fixed state width of xoshiro256++.
+const GENERATOR_STATE_WORD_COUNT = 4
+
 // Generator is the state of a xoshiro256++ pseudo-random generator. Construct it with New; the zero
 // value is degenerate, since an all-zero xoshiro state emits only zeros.
 type Generator struct {
 	// State is the four 64-bit words of xoshiro256++ internal state.
-	State [4]uint64
+	State [GENERATOR_STATE_WORD_COUNT]uint64
 }
 
 // Ratio is an integer probability, used instead of a float so a run reproduces bit-for-bit.

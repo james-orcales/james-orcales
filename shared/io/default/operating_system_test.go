@@ -14,7 +14,7 @@ import (
 	"testing"
 
 	"local/james-orcales/shared/io"
-	iodefault "local/james-orcales/shared/io/default"
+	system_io "local/james-orcales/shared/io/default"
 	"local/james-orcales/shared/time"
 	timeos "local/james-orcales/shared/time/default"
 )
@@ -37,7 +37,7 @@ func Test_Operating_System_IO_Read(t *testing.T) {
 	}
 
 	clock, _ := timeos.New_Operating_System_Clock()
-	loop, driver := iodefault.New_Operating_System_IO(clock)
+	loop, driver := system_io.New_Operating_System_IO(clock)
 	buffer := make([]byte, 5)
 	count := -1
 	var completion io.Completion
@@ -62,7 +62,7 @@ func Test_Operating_System_IO_Read(t *testing.T) {
 // so the pump panics instead of hanging the caller.
 func Test_Operating_System_IO_Run_Until_Deadlock(t *testing.T) {
 	clock, _ := timeos.New_Operating_System_Clock()
-	_, driver := iodefault.New_Operating_System_IO(clock)
+	_, driver := system_io.New_Operating_System_IO(clock)
 	defer func() {
 		if recover() == nil {
 			t.Fatal("an unbounded Run_Until with nothing pending must panic")
@@ -75,7 +75,7 @@ func Test_Operating_System_IO_Run_Until_Deadlock(t *testing.T) {
 // its deadline.
 func Test_Operating_System_IO_Timeout(t *testing.T) {
 	clock, _ := timeos.New_Operating_System_Clock()
-	loop, driver := iodefault.New_Operating_System_IO(clock)
+	loop, driver := system_io.New_Operating_System_IO(clock)
 	fired := false
 	var completion io.Completion
 	loop.Timeout(&completion, func(_ *io.Completion, err error) {
@@ -92,7 +92,7 @@ func Test_Operating_System_IO_Timeout(t *testing.T) {
 // fail as loudly as the sim instead of silently double-arming it.
 func Test_Operating_System_IO_Reuse(t *testing.T) {
 	clock, _ := timeos.New_Operating_System_Clock()
-	loop, _ := iodefault.New_Operating_System_IO(clock)
+	loop, _ := system_io.New_Operating_System_IO(clock)
 	var completion io.Completion
 	loop.Timeout(&completion, func(_ *io.Completion, err error) {}, time.SECOND)
 	defer func() {
@@ -107,7 +107,7 @@ func Test_Operating_System_IO_Reuse(t *testing.T) {
 // completion callback panics, so a re-entrant Run* fails loudly rather than corrupting it.
 func Test_Operating_System_IO_Reentrancy(t *testing.T) {
 	clock, _ := timeos.New_Operating_System_Clock()
-	loop, driver := iodefault.New_Operating_System_IO(clock)
+	loop, driver := system_io.New_Operating_System_IO(clock)
 	var completion io.Completion
 	loop.Timeout(&completion, func(_ *io.Completion, err error) {
 		driver.Run()
@@ -126,7 +126,7 @@ func Test_Operating_System_IO_Reentrancy(t *testing.T) {
 func Test_Operating_System_IO_Socket(t *testing.T) {
 	port := free_port(t)
 	clock, _ := timeos.New_Operating_System_Clock()
-	loop, driver := iodefault.New_Operating_System_IO(clock)
+	loop, driver := system_io.New_Operating_System_IO(clock)
 
 	listener, listen_err := loop.Listen("127.0.0.1", port)
 	if listen_err != nil {
@@ -198,13 +198,13 @@ func Test_Operating_System_IO_Reuseport(t *testing.T) {
 	port := free_port(t)
 	clock, _ := timeos.New_Operating_System_Clock()
 
-	loop_one, _ := iodefault.New_Operating_System_IO(clock)
+	loop_one, _ := system_io.New_Operating_System_IO(clock)
 	_, first_err := loop_one.Listen("127.0.0.1", port)
 	if first_err != nil {
 		t.Fatalf("first listen: %v", first_err)
 	}
 
-	loop_two, _ := iodefault.New_Operating_System_IO(clock)
+	loop_two, _ := system_io.New_Operating_System_IO(clock)
 	_, second_err := loop_two.Listen("127.0.0.1", port)
 	if second_err != nil {
 		t.Fatalf("second listen on the same port (SO_REUSEPORT missing?): %v", second_err)
@@ -218,7 +218,7 @@ func Test_Operating_System_IO_Reuseport(t *testing.T) {
 func Test_Operating_System_IO_Send_In_Connect_Completion(t *testing.T) {
 	port := free_port(t)
 	clock, _ := timeos.New_Operating_System_Clock()
-	loop, driver := iodefault.New_Operating_System_IO(clock)
+	loop, driver := system_io.New_Operating_System_IO(clock)
 
 	listener, listen_err := loop.Listen("127.0.0.1", port)
 	if listen_err != nil {
@@ -279,7 +279,7 @@ func Test_Operating_System_IO_Send_In_Connect_Completion(t *testing.T) {
 // far-off deadline.
 func Test_Operating_System_IO_Cancel(t *testing.T) {
 	clock, _ := timeos.New_Operating_System_Clock()
-	loop, driver := iodefault.New_Operating_System_IO(clock)
+	loop, driver := system_io.New_Operating_System_IO(clock)
 
 	got := error(nil)
 	fired := 0
@@ -309,7 +309,7 @@ func Test_Operating_System_IO_Cancel(t *testing.T) {
 // cancellation callback having fired — a gap that panics only against this real backend.
 func Test_Operating_System_IO_Reuse_After_Cancel(t *testing.T) {
 	clock, _ := timeos.New_Operating_System_Clock()
-	loop, driver := iodefault.New_Operating_System_IO(clock)
+	loop, driver := system_io.New_Operating_System_IO(clock)
 
 	var early io.Completion
 	loop.Timeout(&early, func(_ *io.Completion, _ error) {}, time.SECOND)
@@ -340,7 +340,7 @@ func Test_Operating_System_IO_Reuse_After_Cancel(t *testing.T) {
 func Test_Operating_System_IO_Cancel_Accept(t *testing.T) {
 	port := free_port(t)
 	clock, _ := timeos.New_Operating_System_Clock()
-	loop, driver := iodefault.New_Operating_System_IO(clock)
+	loop, driver := system_io.New_Operating_System_IO(clock)
 
 	listener, listen_err := loop.Listen("127.0.0.1", port)
 	if listen_err != nil {
@@ -377,7 +377,7 @@ func Test_Operating_System_IO_Open(t *testing.T) {
 	}
 
 	clock, _ := timeos.New_Operating_System_Clock()
-	loop, driver := iodefault.New_Operating_System_IO(clock)
+	loop, driver := system_io.New_Operating_System_IO(clock)
 	file, open_err := loop.Open(source.Name())
 	if open_err != nil {
 		t.Fatalf("open: %v", open_err)
@@ -406,7 +406,7 @@ func Test_Operating_System_IO_Create(t *testing.T) {
 	}
 
 	clock, _ := timeos.New_Operating_System_Clock()
-	loop, driver := iodefault.New_Operating_System_IO(clock)
+	loop, driver := system_io.New_Operating_System_IO(clock)
 	file, create_err := loop.Create(source.Name())
 	if create_err != nil {
 		t.Fatalf("create: %v", create_err)
@@ -445,7 +445,7 @@ func Test_Operating_System_IO_Create(t *testing.T) {
 func Test_Operating_System_IO_Peer_Address(t *testing.T) {
 	port := free_port(t)
 	clock, _ := timeos.New_Operating_System_Clock()
-	loop, driver := iodefault.New_Operating_System_IO(clock)
+	loop, driver := system_io.New_Operating_System_IO(clock)
 	listener, listen_err := loop.Listen("127.0.0.1", port)
 	if listen_err != nil {
 		t.Fatalf("listen: %v", listen_err)
@@ -479,7 +479,7 @@ func Test_Operating_System_IO_Peer_Address(t *testing.T) {
 // Test_Operating_System_IO_Compute runs work on the pool and delivers on the loop.
 func Test_Operating_System_IO_Compute(t *testing.T) {
 	clock, _ := timeos.New_Operating_System_Clock()
-	loop, driver := iodefault.New_Operating_System_IO(clock)
+	loop, driver := system_io.New_Operating_System_IO(clock)
 	ran := false
 	fired := false
 	var completion io.Completion
@@ -499,7 +499,7 @@ func Test_Operating_System_IO_Compute(t *testing.T) {
 // Test_Operating_System_IO_Watch_Signal delivers a real SIGTERM onto the loop.
 func Test_Operating_System_IO_Watch_Signal(t *testing.T) {
 	clock, _ := timeos.New_Operating_System_Clock()
-	loop, driver := iodefault.New_Operating_System_IO(clock)
+	loop, driver := system_io.New_Operating_System_IO(clock)
 	got := io.Signal(-1)
 	fired := 0
 	var completion io.Completion
@@ -559,7 +559,7 @@ func tls_loopback(
 	port := free_port(t)
 	certificate := self_signed(t)
 	clock, _ := timeos.New_Operating_System_Clock()
-	loop, driver = iodefault.New_Operating_System_IO(clock)
+	loop, driver = system_io.New_Operating_System_IO(clock)
 	listener, listen_err := loop.Listen("127.0.0.1", port)
 	if listen_err != nil {
 		t.Fatalf("listen: %v", listen_err)
@@ -669,7 +669,7 @@ ZHsc1EszCqX/J7TUz5qt+EBqZnvDEEjmKA==
 // output is the value Accept_Secure accepts.
 func self_signed(t *testing.T) (certificate any) {
 	pem := []byte(TLS_TEST_CERTIFICATE)
-	value, err := iodefault.Certificate(&iodefault.Certificate_Input{Chain: pem, Key: pem})
+	value, err := system_io.Certificate(&system_io.Certificate_Input{Chain: pem, Key: pem})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -680,7 +680,7 @@ func self_signed(t *testing.T) (certificate any) {
 // key bytes, and reports an error for input that is not a valid key pair.
 func Test_Certificate(t *testing.T) {
 	pem := []byte(TLS_TEST_CERTIFICATE)
-	value, err := iodefault.Certificate(&iodefault.Certificate_Input{Chain: pem, Key: pem})
+	value, err := system_io.Certificate(&system_io.Certificate_Input{Chain: pem, Key: pem})
 	if err != nil {
 		t.Fatalf("certificate: %v", err)
 	}
@@ -688,8 +688,8 @@ func Test_Certificate(t *testing.T) {
 		t.Fatalf("certificate value = %T, want *tls.Certificate", value)
 	}
 	garbage := []byte("not a pem")
-	_, garbage_err := iodefault.Certificate(
-		&iodefault.Certificate_Input{Chain: garbage, Key: garbage})
+	_, garbage_err := system_io.Certificate(
+		&system_io.Certificate_Input{Chain: garbage, Key: garbage})
 	if garbage_err == nil {
 		t.Fatal("certificate from garbage bytes must error")
 	}
@@ -699,7 +699,7 @@ func Test_Certificate(t *testing.T) {
 // captured output, and a non-zero exit reported without a start error.
 func Test_Operating_System_IO_Spawn(t *testing.T) {
 	clock, _ := timeos.New_Operating_System_Clock()
-	loop, driver := iodefault.New_Operating_System_IO(clock)
+	loop, driver := system_io.New_Operating_System_IO(clock)
 
 	echo := io.Process_Result{}
 	echoed := false
@@ -748,7 +748,7 @@ func Test_Operating_System_IO_Spawn(t *testing.T) {
 // capturing it — the affordance a long build needs — and leaves Output empty.
 func Test_Operating_System_IO_Spawn_Streams_To_Sink(t *testing.T) {
 	clock, _ := timeos.New_Operating_System_Clock()
-	loop, driver := iodefault.New_Operating_System_IO(clock)
+	loop, driver := system_io.New_Operating_System_IO(clock)
 
 	streamed := bytes.Buffer{}
 	result := io.Process_Result{}
@@ -779,7 +779,7 @@ func Test_Operating_System_IO_Spawn_Streams_To_Sink(t *testing.T) {
 // Status and Read_Directory then report the tree's shape, including an absent path.
 func Test_Operating_System_IO_Directory(t *testing.T) {
 	clock, _ := timeos.New_Operating_System_Clock()
-	loop, _ := iodefault.New_Operating_System_IO(clock)
+	loop, _ := system_io.New_Operating_System_IO(clock)
 
 	root := t.TempDir()
 	nested := filepath.Join(root, "a", "b")
@@ -887,7 +887,7 @@ func Test_Operating_System_IO_Self_Exec(t *testing.T) {
 	}()
 
 	clock, _ := timeos.New_Operating_System_Clock()
-	loop, driver := iodefault.New_Operating_System_IO(clock)
+	loop, driver := system_io.New_Operating_System_IO(clock)
 	if !self_exec_wait_up(loop, driver, port) {
 		t.Fatal("helper never bound the port; phase-1 bind failed")
 	}
@@ -916,7 +916,7 @@ func Test_Operating_System_IO_Self_Exec(t *testing.T) {
 func Test_Operating_System_IO_Self_Exec_Failure_Preserves_Process(t *testing.T) {
 	port := free_port(t)
 	clock, _ := timeos.New_Operating_System_Clock()
-	loop, driver := iodefault.New_Operating_System_IO(clock)
+	loop, driver := system_io.New_Operating_System_IO(clock)
 	listener, listen_err := loop.Listen("127.0.0.1", port)
 	if listen_err != nil {
 		t.Fatalf("listen: %v", listen_err)
@@ -1052,7 +1052,7 @@ func Test_Self_Exec_Child(t *testing.T) {
 func self_exec_child_bind() {
 	port, _ := strconv.Atoi(os.Getenv("SELF_EXEC_PORT"))
 	clock, _ := timeos.New_Operating_System_Clock()
-	loop, _ := iodefault.New_Operating_System_IO(clock)
+	loop, _ := system_io.New_Operating_System_IO(clock)
 	listener, listen_err := loop.Listen("127.0.0.1", port)
 	if listen_err != nil {
 		os.Exit(11)

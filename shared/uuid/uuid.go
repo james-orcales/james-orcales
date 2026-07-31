@@ -30,8 +30,26 @@ import (
 	"local/james-orcales/shared/time"
 )
 
+// UUID_BYTE_COUNT is the RFC 9562 binary width.
+const UUID_BYTE_COUNT = 16
+
+// NODE_BYTE_COUNT is the RFC 9562 node-field width.
+const NODE_BYTE_COUNT = 6
+
+// CLOCK_SEQUENCE_BYTE_COUNT stores the complete RFC 9562 clock sequence.
+const CLOCK_SEQUENCE_BYTE_COUNT = 2
+
+// UUID_TEXT_BYTE_COUNT is the canonical hyphenated text width.
+const UUID_TEXT_BYTE_COUNT = 36
+
+// UUID_URN_PREFIX_BYTE_COUNT accounts for the complete "urn:uuid:" prefix.
+const UUID_URN_PREFIX_BYTE_COUNT = 9
+
+// UUID_URN_BYTE_COUNT prevents a URN formatter from allocating a larger buffer.
+const UUID_URN_BYTE_COUNT = UUID_URN_PREFIX_BYTE_COUNT + UUID_TEXT_BYTE_COUNT
+
 // UUID is a 128-bit RFC 9562 Universally Unique IDentifier.
-type UUID [16]byte
+type UUID [UUID_BYTE_COUNT]byte
 
 // UUIDs is a slice of UUID, given a name so UUIDs_Strings can hang off it.
 type UUIDs []UUID
@@ -115,7 +133,7 @@ type Generator struct {
 	Clock time.Clock
 	// Node is the 6-byte node identifier embedded in V1 and V6. A zero value draws a
 	// random node from Source on first use.
-	Node [6]byte
+	Node [NODE_BYTE_COUNT]byte
 	// Clock_Sequence is the V1/V6 sequence counter, bumped when the clock repeats or
 	// regresses so same-instant UUIDs still differ.
 	Clock_Sequence uint16
@@ -139,7 +157,7 @@ type Null_UUID struct {
 
 // New builds a Generator from its three injected sources. The parameter types are
 // distinct, so they stay positional rather than folding into an input struct.
-func New(source io.Reader, clock time.Clock, node [6]byte) (generator Generator) {
+func New(source io.Reader, clock time.Clock, node [NODE_BYTE_COUNT]byte) (generator Generator) {
 	generator.Source = source
 	generator.Clock = clock
 	generator.Node = node
@@ -324,7 +342,7 @@ func generator_v7_time(generator *Generator) (milliseconds int64, sequence int64
 // Draws the initial 14-bit clock sequence from Source, matching the upstream
 // random-clock-sequence-on-first-use behavior.
 func generator_seed_clock_sequence(generator *Generator) (err error) {
-	var raw [2]byte
+	var raw [CLOCK_SEQUENCE_BYTE_COUNT]byte
 	_, read_err := io.ReadFull(generator.Source, raw[:])
 	if read_err != nil {
 		return read_err
@@ -338,11 +356,11 @@ func generator_seed_clock_sequence(generator *Generator) (err error) {
 // Resolves the node used for V1 and V6: the injected Node when set, otherwise a
 // one-time random draw from Source with the multicast bit set to mark it as not a
 // real hardware address.
-func generator_node(generator *Generator) (node [6]byte, err error) {
+func generator_node(generator *Generator) (node [NODE_BYTE_COUNT]byte, err error) {
 	if generator.Node_Resolved {
 		return generator.Node, nil
 	}
-	if generator.Node != ([6]byte{}) {
+	if generator.Node != ([NODE_BYTE_COUNT]byte{}) {
 		generator.Node_Resolved = true
 		return generator.Node, nil
 	}
@@ -499,14 +517,14 @@ func hexadecimal_value(character byte) (value byte, ok bool) {
 // String returns the canonical 36-character form xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx,
 // satisfying fmt.Stringer.
 func (uuid UUID) String() (text string) {
-	var buffer [36]byte
+	var buffer [UUID_TEXT_BYTE_COUNT]byte
 	encode_hexadecimal(buffer[:], uuid)
 	return string(buffer[:])
 }
 
 // UUID_URN returns the RFC 2141 URN form urn:uuid:xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx.
 func UUID_URN(uuid UUID) (urn string) {
-	var buffer [9 + 36]byte
+	var buffer [UUID_URN_BYTE_COUNT]byte
 	copy(buffer[:], "urn:uuid:")
 	encode_hexadecimal(buffer[9:], uuid)
 	return string(buffer[:])
@@ -547,7 +565,7 @@ func UUID_Variant(uuid UUID) (variant Variant) {
 
 // UUID_Node_Identifier returns a copy of the 6-byte node field, well defined only for V1 and V2.
 func UUID_Node_Identifier(uuid UUID) (node []byte) {
-	var copied [6]byte
+	var copied [NODE_BYTE_COUNT]byte
 	copy(copied[:], uuid[10:])
 	return copied[:]
 }
@@ -658,7 +676,7 @@ func (domain Domain) String() (name string) {
 
 // MarshalText implements encoding.TextMarshaler, the canonical hyphenated form.
 func (uuid UUID) MarshalText() (text []byte, err error) {
-	var buffer [36]byte
+	var buffer [UUID_TEXT_BYTE_COUNT]byte
 	encode_hexadecimal(buffer[:], uuid)
 	return buffer[:], nil
 }

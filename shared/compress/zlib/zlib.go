@@ -9,6 +9,9 @@ import (
 	"io"
 )
 
+// PROBE_BYTE_COUNT prevents the overflow check from consuming caller data.
+const PROBE_BYTE_COUNT = 1
+
 // Reader reads one zlib stream and rejects decompressed output above its cap.
 type Reader struct {
 	// Decompressed is the checksum-validating standard-library decoder.
@@ -57,7 +60,7 @@ func New_Reader(
 // distinguish an exact-size stream from an overflowing stream.
 func (reader *Reader) Read(buffer []byte) (count int, err error) {
 	if reader.Bytes_Read_Count == reader.Bytes_Max {
-		var probe [1]byte
+		var probe [PROBE_BYTE_COUNT]byte
 		probe_count, probe_err := reader.Decompressed.Read(probe[:])
 		if probe_count != 0 {
 			return 0, &Output_Overflow_Error{Bytes_Max: reader.Bytes_Max}

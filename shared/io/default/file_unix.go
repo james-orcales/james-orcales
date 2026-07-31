@@ -19,6 +19,12 @@ const DIRECTORY_READ_BYTES = 8192
 // unbounded; 4096 passes of DIRECTORY_READ_BYTES cover hundreds of thousands of entries.
 const DIRECTORY_READ_PASSES_MAX = 4096
 
+// PIPE_DESCRIPTOR_COUNT matches the read and write descriptors that syscall.Pipe requires.
+const PIPE_DESCRIPTOR_COUNT = 2
+
+// WAKE_BYTE_COUNT lets concurrent wake requests coalesce in the non-blocking pipe.
+const WAKE_BYTE_COUNT = 1
+
 // Reads up to len(buffer) bytes from file at offset via the pread syscall — the raw
 // positioned read TigerBeetle's posix backend uses.
 func read_at(file io.File, buffer []byte, offset int64) (count int, err error) {
@@ -249,7 +255,7 @@ func socket_close(descriptor int) (err error) {
 // Creates a non-blocking self-pipe used to wake the loop out of a blocking poll when a
 // worker or TLS goroutine posts a completion from off the loop thread.
 func wake_create() (read int, write int, err error) {
-	pair := [2]int{}
+	pair := [PIPE_DESCRIPTOR_COUNT]int{}
 	pipe_err := syscall.Pipe(pair[:])
 	if pipe_err != nil {
 		return -1, -1, pipe_err
@@ -262,7 +268,7 @@ func wake_create() (read int, write int, err error) {
 // Writes one byte to the wake pipe so a blocked poll returns; a full pipe's failed
 // non-blocking write is ignored, since one pending byte already wakes the loop.
 func wake_poke(write int) {
-	one := [1]byte{}
+	one := [WAKE_BYTE_COUNT]byte{}
 	syscall.Write(write, one[:])
 }
 

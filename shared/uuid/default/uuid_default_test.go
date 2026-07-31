@@ -4,13 +4,13 @@ import (
 	"testing"
 
 	"local/james-orcales/shared/uuid"
-	uuiddefault "local/james-orcales/shared/uuid/default"
+	system_uuid "local/james-orcales/shared/uuid/default"
 )
 
 // Test_Operating_System_Generator_Smoke checks the host-wired generator mints valid,
 // distinct V4 and V7 UUIDs. Real entropy is non-deterministic, so this is a smoke test.
 func Test_Operating_System_Generator_Smoke(t *testing.T) {
-	generator := uuiddefault.New_Operating_System_Generator()
+	generator := system_uuid.New_Operating_System_Generator()
 	first := uuid.Must(uuid.Generator_V4(&generator))
 	second := uuid.Must(uuid.Generator_V4(&generator))
 	if first == second {
