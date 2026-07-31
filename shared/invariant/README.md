@@ -82,6 +82,34 @@ identity from a message. A failed `Ensure` preflights the whole plan and credits
 Plain tests and fuzz processes record. Benchmarks and ordinary binaries enforce without recording,
 and ordinary binaries do not consult registration plans.
 
+## Gap reports
+
+Canonical `TestMain` callsites and assertion callsites import `shared/invariant/default`. Unset
+`INVARIANT_OUTPUT` and `table` render dynamically aligned Markdown tables with section counts:
+
+```text
+🚨 1 coverage gaps 🚨
+
+# Branch gaps (1)
+
+| Assertion | Link | Missing | Property | Source |
+|-----------|-----:|---------|----------|--------|
+| queue     |    0 | false   | empty    | value  |
+
+🚨 1 coverage gaps 🚨
+```
+
+`INVARIANT_OUTPUT=json` replaces the complete human report with one compact flat array and a
+newline. Reachability records use `null` for `link` and `property`:
+
+```json
+[{"section":"reachability","assertion":"ready","link":null,"missing":"reachability",
+"property":null,"source":"ok"}]
+```
+
+Any other environment value is a fatal configuration error. Both modes retain the same gap
+collection, deterministic order, failure exit, clean summary, and fuzz-coverage merge behavior.
+
 ## Build modes
 
 An untagged build retains the full deferred and recording-capable behavior above. Any of

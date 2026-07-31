@@ -39,8 +39,14 @@ func Test_Always_Reachability(t *testing.T) {
 func check(ok bool) { invariant.Always(ok, "reachable") }
 `)
 	invariant.Recorder_Analyze_Assertion_Frequency(recorder)
-	if !strings.Contains(output.String(), "reachable") {
-		t.Fatalf("output = %q", output.String())
+	want := "🚨 1 coverage gaps 🚨\n\n" +
+		"# Reachability gaps (1)\n\n" +
+		"| Assertion | Source |\n" +
+		"|-----------|--------|\n" +
+		"| reachable | ok     |\n\n" +
+		"🚨 1 coverage gaps 🚨\n"
+	if output.String() != want {
+		t.Fatalf("output = %q, want %q", output.String(), want)
 	}
 }
 
@@ -79,8 +85,14 @@ func check(value bool) { invariant.Assertions("gap").Sometimes(value, "axis").En
 `)
 	invariant.Recorder_Assertions(recorder, "gap").Sometimes(true, "axis").Ensure()
 	invariant.Recorder_Analyze_Assertion_Frequency(recorder)
-	if !strings.Contains(output.String(), "false branch never observed") {
-		t.Fatalf("output = %q", output.String())
+	want := "🚨 1 coverage gaps 🚨\n\n" +
+		"# Branch gaps (1)\n\n" +
+		"| Assertion | Link | Missing | Property | Source |\n" +
+		"|-----------|-----:|---------|----------|--------|\n" +
+		"| gap       |    0 | false   | axis     | value  |\n\n" +
+		"🚨 1 coverage gaps 🚨\n"
+	if output.String() != want {
+		t.Fatalf("output = %q, want %q", output.String(), want)
 	}
 }
 
@@ -170,6 +182,34 @@ func Test_Assertions_Persistence(t *testing.T) {
 	if recorder_event(t, recorder, key).False_Frequency.Load() != 1 {
 		t.Fatal("persisted false branch did not merge")
 	}
+}
+
+// Test_Assertions_Registration_Packages keeps direct source registration independent of reach.
+func Test_Assertions_Registration_Packages(t *testing.T) {
+	recorder, output, code := registered_fixture(`package fixture
+func check(value bool) {
+	invariant.Always(value, "guard")
+	invariant.Assertions("direct").Sometimes(value, "axis").Ensure()
+}
+`)
+	if code != -1 {
+		t.Fatalf("exit=%d output=%q", code, output.String())
+	}
+	if event_count(&recorder.Events) != 2 {
+		t.Fatalf("events = %d, want both direct source roots",
+			event_count(&recorder.Events))
+	}
+	chain_metadata(t, recorder, chain_metadata_key{
+		Namespace: "direct", Ordinal: 0, Message: "axis",
+	})
+}
+
+// Test_Assertions_Registration_Transitive keeps reached bundles unconditional across composition.
+func Test_Assertions_Registration_Transitive(t *testing.T) {
+	recorder := registered_nested_bundle(t)
+	chain_metadata(t, recorder, chain_metadata_key{
+		Namespace: "outer.inner", Ordinal: 0, Message: "zero",
+	})
 }
 
 // Test_Assertions_Registration_Walk keeps registration expansion aligned with runtime ordinals.
@@ -468,7 +508,7 @@ func Number_Invariants(value Number, namespace invariant.Namespace) {
 func check(value Number) { Number_Invariants(value, "number") }
 `)
 	invariant.Recorder_Analyze_Assertion_Frequency(recorder)
-	if !strings.Contains(output.String(), "number · 0 · zero") {
+	if !strings.Contains(output.String(), "| number    |    0 | false   | zero") {
 		t.Fatalf("output = %q", output.String())
 	}
 }
@@ -491,6 +531,74 @@ func Int_Invariants(value int, namespace invariant.Namespace) {
 // Test_Analysis_Gaps keeps uncovered branches fatal.
 func Test_Analysis_Gaps(t *testing.T) {
 	Test_Sometimes_Gap(t)
+}
+
+// Test_Analysis_Table_Order keeps repeated assertion names ordered by numeric link and polarity.
+func Test_Analysis_Table_Order(t *testing.T) {
+	recorder, output, _ := registered_fixture(`package fixture
+func alpha(v bool) { invariant.Assertions("alpha").Sometimes(v, "axis").Ensure() }
+func same(a bool, b bool) {
+	invariant.Assertions("same").Sometimes(a, "second").Sometimes(b, "first").Ensure()
+}
+`)
+	invariant.Recorder_Assertions(recorder, "same").
+		Sometimes(false, "second").Sometimes(false, "first").Ensure()
+	invariant.Recorder_Analyze_Assertion_Frequency(recorder)
+	want := "🚨 4 coverage gaps 🚨\n\n" +
+		"# Branch gaps (4)\n\n" +
+		"| Assertion | Link | Missing | Property | Source |\n" +
+		"|-----------|-----:|---------|----------|--------|\n" +
+		"| alpha     |    0 | false   | axis     | v      |\n" +
+		"| alpha     |    0 | true    | axis     | v      |\n" +
+		"| same      |    0 | true    | second   | a      |\n" +
+		"| same      |    1 | true    | first    | b      |\n\n" +
+		"🚨 4 coverage gaps 🚨\n"
+	if output.String() != want {
+		t.Fatalf("output = %q, want %q", output.String(), want)
+	}
+}
+
+// Test_Analysis_Table_Escape keeps Markdown structure outside every dynamic cell.
+func Test_Analysis_Table_Escape(t *testing.T) {
+	link := uint8(2)
+	property := "P|Q\\R\nS"
+	gaps := []invariant.Coverage_Gap{{
+		Section: "branch", Assertion: "A|B\\C\nD", Link: &link,
+		Absent: "true", Property: &property, Source: "x|y\\z\nw",
+	}}
+	output := &bytes.Buffer{}
+	if err := invariant.Coverage_Gap_Table_Write(output, gaps); err != nil {
+		t.Fatal(err)
+	}
+	want := "🚨 1 coverage gaps 🚨\n\n" +
+		"# Branch gaps (1)\n\n" +
+		"| Assertion    | Link | Missing | Property     | Source       |\n" +
+		"|--------------|-----:|---------|--------------|--------------|\n" +
+		"| A\\|B\\\\C<br>D |    2 | true    | P\\|Q\\\\R<br>S | x\\|y\\\\z<br>w |\n\n" +
+		"🚨 1 coverage gaps 🚨\n"
+	if output.String() != want {
+		t.Fatalf("output = %q, want %q", output.String(), want)
+	}
+}
+
+// Test_Analysis_Output_Configuration keeps an invalid output mode fatal and diagnostic.
+func Test_Analysis_Output_Configuration(t *testing.T) {
+	output := &bytes.Buffer{}
+	code := -1
+	recorder := &invariant.Recorder{
+		Output: output, Exit: func(status int) { code = status }, Is_Test: true,
+		Output_Configuration_Diagnostic: "INVARIANT_OUTPUT has unknown value \"dense\"; " +
+			"expected \"table\" or \"json\"",
+	}
+	invariant.Recorder_Analyze_Assertion_Frequency(recorder)
+	want := "invariant: INVARIANT_OUTPUT has unknown value \"dense\"; " +
+		"expected \"table\" or \"json\"\n"
+	if output.String() != want {
+		t.Fatalf("output = %q, want %q", output.String(), want)
+	}
+	if code != 1 {
+		t.Fatalf("exit = %d, want 1", code)
+	}
 }
 
 // Test_Analysis_Summary protects each expanded obligation and the panic-able subset from being

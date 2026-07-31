@@ -126,6 +126,12 @@ type Recorder struct {
 	Exit func(code int)
 	// Tty receives the clean-run success summary so it shows even without `go test -v`.
 	Tty io.Writer
+	// Report_Coverage_Gaps renders the already-sorted flat gap records. Nil selects the
+	// Markdown table so pure callers retain the human default without composition wiring.
+	Report_Coverage_Gaps Coverage_Gap_Reporter
+	// Output_Configuration_Diagnostic prevents a misconfigured report mode from running a
+	// suite whose final result could not honor the requested output contract.
+	Output_Configuration_Diagnostic string
 
 	// Is_Test reports a `go test` run (plain, a `-fuzz` coordinator, or a fuzz worker) — every
 	// mode that records coverage. Only a benchmark opts out of recording.
@@ -1342,13 +1348,23 @@ func ast_expression_text(file_set *token.FileSet, expression ast.Expr) (text str
 	return buffer.String()
 }
 
-// A Coverage_Gap is one seeded assertion that the run failed to exercise, paired
-// with the outcome that went unseen.
+// Coverage_Gap_Reporter writes one complete gap report in its selected representation.
+type Coverage_Gap_Reporter func(output io.Writer, gaps []Coverage_Gap) (err error)
+
+// A Coverage_Gap is one stable flat record for a seeded obligation the run did not exercise.
 type Coverage_Gap struct {
-	// Metadata is the seeded assertion that went unexercised.
-	Metadata *Assertion_Metadata
-	// Reason names the branch or reachability outcome that went unseen.
-	Reason string
+	// Section distinguishes branch exploration from assertion reachability.
+	Section string `json:"section"`
+	// Assertion is the builder namespace or the eager assertion identity.
+	Assertion string `json:"assertion"`
+	// Link is the expanded builder ordinal; reachability records leave it null.
+	Link *uint8 `json:"link"`
+	// Absent is true, false, or reachability according to the absent obligation.
+	Absent string `json:"missing"`
+	// Property is the builder link identity; reachability records leave it null.
+	Property *string `json:"property"`
+	// Source is the unquoted Go expression registered for the assertion.
+	Source string `json:"source"`
 }
 
 // Recorder_Analyze_Assertion_Frequency reports every pre-registered assertion
@@ -1357,6 +1373,9 @@ type Coverage_Gap struct {
 // any gap exists. It is a no-op in a benchmark or a fuzz worker subprocess; a plain test
 // run and the fuzz coordinator both analyze.
 func Recorder_Analyze_Assertion_Frequency(recorder *Recorder) {
+	if !recorder_output_configuration_valid(recorder) {
+		return
+	}
 	if !recorder.Is_Test {
 		return
 	}
@@ -1370,8 +1389,25 @@ func Recorder_Analyze_Assertion_Frequency(recorder *Recorder) {
 	if len(gaps) == 0 {
 		return
 	}
-	recorder_report_gaps(recorder, gaps)
+	reporter := recorder.Report_Coverage_Gaps
+	if reporter == nil {
+		reporter = Coverage_Gap_Table_Write
+	}
+	if report_error := reporter(recorder.Output, gaps); report_error != nil {
+		fmt.Fprintln(recorder.Output, "invariant: coverage gap report failed: "+
+			report_error.Error())
+	}
 	recorder.Exit(1)
+}
+
+// Rejects a composition-tier output selection before it can produce a differently shaped result.
+func recorder_output_configuration_valid(recorder *Recorder) (valid bool) {
+	if recorder.Output_Configuration_Diagnostic == "" {
+		return true
+	}
+	fmt.Fprintln(recorder.Output, "invariant: "+recorder.Output_Configuration_Diagnostic)
+	recorder.Exit(1)
+	return false
 }
 
 // Walks the tracker and returns every coverage gap across all seeded assertions.
@@ -1380,6 +1416,9 @@ func recorder_collect_gaps(recorder *Recorder) (gaps []Coverage_Gap) {
 		metadata := value.(*Assertion_Metadata)
 		gaps = append(gaps, assertion_metadata_gaps(metadata)...)
 		return true
+	})
+	sort.Slice(gaps, func(left_index int, right_index int) (less bool) {
+		return coverage_gap_less(gaps[left_index], gaps[right_index])
 	})
 	return gaps
 }
@@ -1390,86 +1429,209 @@ func recorder_collect_gaps(recorder *Recorder) (gaps []Coverage_Gap) {
 func assertion_metadata_gaps(metadata *Assertion_Metadata) (gaps []Coverage_Gap) {
 	if metadata.Kind == ASSERTION_KIND_SOMETIMES {
 		if metadata.Frequency.Load() == 0 {
-			gaps = append(gaps, Coverage_Gap{
-				Metadata: metadata, Reason: "true branch never observed",
-			})
+			gaps = append(gaps, coverage_gap_branch(metadata, "true"))
 		}
 		if metadata.False_Frequency.Load() == 0 {
-			gaps = append(gaps, Coverage_Gap{
-				Metadata: metadata, Reason: "false branch never observed",
-			})
+			gaps = append(gaps, coverage_gap_branch(metadata, "false"))
 		}
 		return gaps
 	}
 	if metadata.Frequency.Load() != 0 {
 		return gaps
 	}
-	return append(gaps, Coverage_Gap{Metadata: metadata, Reason: "never reached"})
+	return append(gaps, Coverage_Gap{
+		Section: "reachability", Assertion: metadata.Message,
+		Absent: "reachability", Source: metadata.Condition,
+	})
 }
 
-// Prints the gaps to recorder.Output in two sections — branch, reachability —
-// each sorted by site. A banner carrying the gap count brackets the report so
-// the verdict survives a top-down or bottom-up skim.
-func recorder_report_gaps(recorder *Recorder, gaps []Coverage_Gap) {
+// Parses the registration-owned builder identity into the stable reporting schema.
+func coverage_gap_branch(metadata *Assertion_Metadata, absent string) (gap Coverage_Gap) {
+	assertion, remainder, separated := strings.Cut(metadata.Message, ELEMENT_MESSAGE_SEPARATOR)
+	ordinal_text, property, complete := strings.Cut(remainder, ELEMENT_MESSAGE_SEPARATOR)
+	ordinal, ordinal_error := strconv.ParseUint(ordinal_text, 10, 8)
+	if !separated {
+		return Coverage_Gap{
+			Section: "branch", Assertion: metadata.Message,
+			Absent: absent, Source: metadata.Condition,
+		}
+	}
+	if !complete {
+		return Coverage_Gap{
+			Section: "branch", Assertion: metadata.Message,
+			Absent: absent, Source: metadata.Condition,
+		}
+	}
+	if ordinal_error != nil {
+		return Coverage_Gap{
+			Section: "branch", Assertion: metadata.Message,
+			Absent: absent, Source: metadata.Condition,
+		}
+	}
+	link := uint8(ordinal)
+	return Coverage_Gap{
+		Section: "branch", Assertion: assertion, Link: &link,
+		Absent: absent, Property: &property, Source: metadata.Condition,
+	}
+}
+
+// Orders sections and every visible field so map iteration can never leak into either format.
+func coverage_gap_less(left Coverage_Gap, right Coverage_Gap) (less bool) {
+	if left.Section != right.Section {
+		return left.Section == "branch"
+	}
+	if left.Assertion != right.Assertion {
+		return left.Assertion < right.Assertion
+	}
+	if coverage_gap_link(left) != coverage_gap_link(right) {
+		return coverage_gap_link(left) < coverage_gap_link(right)
+	}
+	if left.Absent != right.Absent {
+		return left.Absent < right.Absent
+	}
+	if coverage_gap_property(left) != coverage_gap_property(right) {
+		return coverage_gap_property(left) < coverage_gap_property(right)
+	}
+	return left.Source < right.Source
+}
+
+// Gives null links one stable sentinel without exposing that implementation in the schema.
+func coverage_gap_link(gap Coverage_Gap) (link int) {
+	if gap.Link == nil {
+		return -1
+	}
+	return int(*gap.Link)
+}
+
+// Gives null properties one stable sortable value.
+func coverage_gap_property(gap Coverage_Gap) (property string) {
+	if gap.Property == nil {
+		return ""
+	}
+	return *gap.Property
+}
+
+// Coverage_Gap_Table_Write renders the complete human report as dynamically aligned Markdown.
+func Coverage_Gap_Table_Write(output io.Writer, gaps []Coverage_Gap) (err error) {
+	var report strings.Builder
 	banner := "🚨 " + strconv.Itoa(len(gaps)) + " coverage gaps 🚨"
-	fmt.Fprintln(recorder.Output, banner)
-	recorder_report_section(
-		recorder.Output, "Branch gaps", gaps, ASSERTION_KIND_SOMETIMES)
-	recorder_report_section(
-		recorder.Output, "Reachability gaps", gaps, ASSERTION_KIND_ALWAYS)
-	fmt.Fprintln(recorder.Output, banner)
+	report.WriteString(banner + "\n")
+	branch := coverage_gap_section(gaps, "branch")
+	if len(branch) > 0 {
+		report.WriteString("\n# Branch gaps (" + strconv.Itoa(len(branch)) + ")\n\n")
+		coverage_gap_branch_table_write(&report, branch)
+	}
+	reachability := coverage_gap_section(gaps, "reachability")
+	if len(reachability) > 0 {
+		report.WriteString("\n# Reachability gaps (" +
+			strconv.Itoa(len(reachability)) + ")\n\n")
+		coverage_gap_reachability_table_write(&report, reachability)
+	}
+	report.WriteString("\n" + banner + "\n")
+	written, write_error := io.WriteString(output, report.String())
+	if write_error != nil {
+		return write_error
+	}
+	if written != report.Len() {
+		return io.ErrShortWrite
+	}
+	return nil
 }
 
-// Prints, under a markdown heading, the gaps whose assertion is of the given
-// kind, sorted by message. Emits nothing when no gap matches, so empty sections
-// stay silent.
-func recorder_report_section(
-	output io.Writer, title string, gaps []Coverage_Gap, kind Assertion_Kind,
-) {
-	selected := make([]Coverage_Gap, 0, len(gaps))
+// Selects one report section without changing the collector's stable order.
+func coverage_gap_section(gaps []Coverage_Gap, section string) (selected []Coverage_Gap) {
+	selected = make([]Coverage_Gap, 0, len(gaps))
 	for _, gap := range gaps {
-		if gap.Metadata.Kind == kind {
+		if gap.Section == section {
 			selected = append(selected, gap)
 		}
 	}
-	if len(selected) == 0 {
-		return
+	return selected
+}
+
+// Materializes escaped cells once so measuring and writing use identical text.
+func coverage_gap_branch_rows(gaps []Coverage_Gap) (rows [][5]string) {
+	rows = make([][5]string, 0, len(gaps))
+	for _, gap := range gaps {
+		rows = append(rows, [5]string{
+			coverage_gap_table_cell(gap.Assertion),
+			strconv.Itoa(coverage_gap_link(gap)),
+			coverage_gap_table_cell(gap.Absent),
+			coverage_gap_table_cell(coverage_gap_property(gap)),
+			coverage_gap_table_cell(gap.Source),
+		})
 	}
-	// Two gaps can share a message — a Sometimes missing both branches — so the Reason breaks
-	// the tie. Without it the order rides on the tracker's unordered iteration and the report
-	// is non-deterministic.
-	sort.Slice(selected, func(i, j int) (less bool) {
-		if selected[i].Metadata.Message != selected[j].Metadata.Message {
-			return selected[i].Metadata.Message < selected[j].Metadata.Message
+	return rows
+}
+
+// Writes the five-column branch table with Link right aligned as an ordinal.
+func coverage_gap_branch_table_write(report *strings.Builder, gaps []Coverage_Gap) {
+	rows := coverage_gap_branch_rows(gaps)
+	widths := [5]int{
+		len("Assertion"), len("Link"), len("Missing"), len("Property"), len("Source"),
+	}
+	for _, row := range rows {
+		for column_index := range widths {
+			widths[column_index] = integer_maximum(
+				widths[column_index], len(row[column_index]))
 		}
-		return selected[i].Reason < selected[j].Reason
-	})
-	fmt.Fprintln(output)
-	fmt.Fprintln(output, "# "+title)
-	for _, gap := range selected {
-		fmt.Fprintln(output, coverage_gap_line(gap))
+	}
+	fmt.Fprintf(report, "| %-*s | %*s | %-*s | %-*s | %-*s |\n",
+		widths[0], "Assertion", widths[1], "Link", widths[2], "Missing",
+		widths[3], "Property", widths[4], "Source")
+	coverage_gap_branch_separator_write(report, widths)
+	for _, row := range rows {
+		fmt.Fprintf(report, "| %-*s | %*s | %-*s | %-*s | %-*s |\n",
+			widths[0], row[0], widths[1], row[1], widths[2], row[2],
+			widths[3], row[3], widths[4], row[4])
 	}
 }
 
-// Renders one branch or reachability gap as a report line, naming its kind,
-// reason, and condition source.
-func coverage_gap_line(gap Coverage_Gap) (line string) {
-	metadata := gap.Metadata
-	return message_display(metadata.Message) + "  " + assertion_kind_name(metadata.Kind) +
-		" — " + gap.Reason + ": " + strconv.Quote(metadata.Condition)
-}
-
-// Renders structural separators visibly so a namespaced ordinal key remains readable.
-func message_display(message string) (display string) {
-	return strings.ReplaceAll(message, ELEMENT_MESSAGE_SEPARATOR, " · ")
-}
-
-// Returns the report label for a kind: the same word the static pass keys on.
-func assertion_kind_name(kind Assertion_Kind) (name string) {
-	if kind == ASSERTION_KIND_SOMETIMES {
-		return "Sometimes"
+// Keeps Markdown alignment markers the same width as their header and row cells.
+func coverage_gap_branch_separator_write(report *strings.Builder, widths [5]int) {
+	report.WriteString("|" + strings.Repeat("-", widths[0]+2))
+	report.WriteString("|" + strings.Repeat("-", widths[1]+1) + ":")
+	for _, width := range widths[2:] {
+		report.WriteString("|" + strings.Repeat("-", width+2))
 	}
-	return "Always"
+	report.WriteString("|\n")
+}
+
+// Writes the smaller reachability table because its section already names the absent obligation.
+func coverage_gap_reachability_table_write(report *strings.Builder, gaps []Coverage_Gap) {
+	rows := make([][2]string, 0, len(gaps))
+	widths := [2]int{len("Assertion"), len("Source")}
+	for _, gap := range gaps {
+		row := [2]string{
+			coverage_gap_table_cell(gap.Assertion),
+			coverage_gap_table_cell(gap.Source),
+		}
+		rows = append(rows, row)
+		widths[0] = integer_maximum(widths[0], len(row[0]))
+		widths[1] = integer_maximum(widths[1], len(row[1]))
+	}
+	fmt.Fprintf(report, "| %-*s | %-*s |\n", widths[0], "Assertion", widths[1], "Source")
+	report.WriteString("|" + strings.Repeat("-", widths[0]+2) +
+		"|" + strings.Repeat("-", widths[1]+2) + "|\n")
+	for _, row := range rows {
+		fmt.Fprintf(report, "| %-*s | %-*s |\n",
+			widths[0], row[0], widths[1], row[1])
+	}
+}
+
+// Escapes structure-significant characters and represents physical lines inside one table cell.
+func coverage_gap_table_cell(value string) (escaped string) {
+	replacer := strings.NewReplacer(
+		"\\", "\\\\", "|", "\\|", "\r\n", "<br>", "\r", "<br>", "\n", "<br>")
+	return replacer.Replace(value)
+}
+
+// Avoids importing a general-purpose numeric package for one table measurement operation.
+func integer_maximum(left int, right int) (maximum int) {
+	if left > right {
+		return left
+	}
+	return right
 }
 
 // Recorder_Assertion_Summary keeps the enforced subset visible because an undifferentiated total
@@ -1500,12 +1662,13 @@ func Recorder_Assertion_Summary(recorder *Recorder) (summary string) {
 		individual, individual, panic_able)
 }
 
-// Recorder_Run_Test_Main is the canonical TestMain body: it registers the
-// analyzed directories, runs the suite, reports any unexercised assertions, then
-// exits with the suite's code. On a clean run — the suite passed and the analysis
-// found no gaps — it prints the tested-property summary to Tty (falling back to
-// Output) so the line shows even without `go test -v`.
+// Recorder_Run_Test_Main runs the injected TestMain process. It registers the selected
+// directories and runs the suite. It then reports gaps and exits with the suite code.
+// A clean run writes its property summary to Tty, or to Output when Tty is nil.
 func Recorder_Run_Test_Main(recorder *Recorder, m *testing.M, directories ...string) {
+	if !recorder_output_configuration_valid(recorder) {
+		return
+	}
 	Recorder_Register_Packages_For_Analysis(recorder, directories...)
 	code := m.Run()
 	// A fuzz coordinator merges worker coverage because it never ran the fuzzed body itself

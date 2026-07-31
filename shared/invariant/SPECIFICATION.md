@@ -82,20 +82,15 @@ and publishes an immutable ordered plan of pre-resolved individual handles.
 
 ### Packages
 
-`Packages_To_Analyze`, after glob expansion, selects the packages whose non-test Go source is
-registered directly. Every recognized direct `Always` call and ensured `Assertions` chain in that
-source is registered regardless of whether its enclosing function is reachable at runtime. An
-ensured chain inside an `_Invariants` or `_invariants` declaration remains a template and is
-instantiated only through a reached bundle callsite.
+After glob expansion, `Packages_To_Analyze` directly registers every recognized assertion in the
+selected packages' non-test source regardless of runtime reachability. An ensured chain inside an
+`_Invariants` or `_invariants` declaration is instantiated only through a reached bundle callsite.
 
 ### Transitive
 
 Every `_Invariants` and `_invariants` call found in registered source or a reached bundle is
-registered transitively and unconditionally within the current module. This applies to bare and
-qualified calls even when the declaration package is not selected by `Packages_To_Analyze`.
-Registration lazily parses only the packages needed to resolve those reached bundles; unrelated
-direct assertions in an unregistered package are not registered. An unresolved reached bundle is
-fatal rather than silently skipped.
+registered transitively and unconditionally within the current module. Needed packages are parsed
+lazily; unrelated direct assertions stay unregistered, and an unresolved reached bundle is fatal.
 
 ### Walk
 
@@ -145,10 +140,9 @@ parameter, and its chain is instantiated under each literal callsite namespace.
 
 ### Descent
 
-Registration follows every reached bundle call across the current module, whether or not the
-declaration package was selected for direct registration, and seeds each reached chain under the
-callsite namespace rather than the template parameter. Static-body and cycle validation still
-apply to the complete reached graph.
+Registration follows every reached bundle call across the module regardless of direct package
+selection and seeds each reached chain under the callsite namespace. Static-body and cycle
+validation apply to the complete reached graph.
 
 ### Composition
 
@@ -166,10 +160,9 @@ is not treated as an invariant writer.
 
 ### Cross Package
 
-Bundle resolution uses the current module path. Reaching a helper in an unregistered package
-lazily parses that package for the helper and its transitive bundle calls without registering the
-package's unrelated direct assertions. A recognized helper outside the current module or one that
-cannot be resolved is fatal rather than silently skipped.
+Bundle resolution lazily parses an unregistered package for a reached helper and its transitive
+calls without registering unrelated assertions. A recognized helper outside the current module or
+one that cannot be resolved is fatal.
 
 ### Callsite
 
@@ -178,8 +171,8 @@ reusing a namespace for another chain is fatal.
 
 ### Gap Location
 
-A bundle axis gap names its callsite namespace, expanded ordinal, message, and missed polarity.
-An eager `Always` remains keyed only by its own message.
+A bundle gap separates its callsite namespace, expanded ordinal, property, missed polarity, and
+source into report fields. An eager `Always` retains only its assertion identity and source.
 
 ### Custom Types
 
@@ -192,8 +185,23 @@ After the suite, every unexercised individual obligation is reported and the run
 
 ### Gaps
 
-Never-fired Always and preset guards report reachability gaps; each unobserved Sometimes polarity
-reports its namespaced axis key and condition.
+Never-fired guards appear in a reachability table; unobserved axis polarities appear in a branch
+table with parsed namespace, numeric link, polarity, property, and unquoted source expression.
+
+### Table Order
+
+Sections carry counts, branch rows sort by assertion, numeric link, and polarity, and reachability
+rows sort by assertion. The overall gap banner still brackets the report.
+
+### Table Escape
+
+Table cells escape pipes and backslashes and render physical line breaks as `<br>`, preserving the
+Markdown structure without altering the registered value.
+
+### Output Configuration
+
+The default package accepts `INVARIANT_OUTPUT=table` or `json`; unset means table. Any other value
+emits a configuration diagnostic and exits nonzero without running the suite.
 
 ### Summary
 

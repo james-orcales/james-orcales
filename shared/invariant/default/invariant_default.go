@@ -10,9 +10,11 @@ import (
 	"math"
 	"os"
 	"reflect"
+	"strconv"
 	"strings"
 	"testing"
 
+	encoding_flatjson "local/james-orcales/shared/encoding/flatjson"
 	invariant "local/james-orcales/shared/invariant"
 )
 
@@ -46,7 +48,7 @@ func Init_Default_Recorder() (recorder *invariant.Recorder) {
 		tty = opened
 	}
 	working_directory, _ := os.Getwd()
-	return &invariant.Recorder{
+	recorder = &invariant.Recorder{
 		Output:              os.Stderr,
 		Tty:                 tty,
 		File_System:         os.DirFS("/"),
@@ -59,6 +61,8 @@ func Init_Default_Recorder() (recorder *invariant.Recorder) {
 		Working_Directory:   working_directory,
 		Sugar_Package:       reflect.TypeOf(Sugar_Package_Marker{}).PkgPath(),
 	}
+	recorder_output_configure(recorder, os.Getenv(OUTPUT_ENVIRONMENT))
+	return recorder
 }
 
 // Sniffs os.Args for the go-test harness flags that distinguish a plain test run from a fuzz
@@ -85,12 +89,44 @@ func running_environment_flags() (
 	return is_test, is_fuzz, is_fuzz_worker, is_benchmark
 }
 
-// Run_Test_Main is the canonical TestMain body: register, run the suite, report coverage gaps,
-// exit with the suite's code. Under -fuzz it first wires cross-process coverage (see
-// fuzz_coverage_setup) so worker subprocesses' exploration reaches the coordinator's analysis.
+// Run_Test_Main adds OS-backed fuzz coverage and the selected report format to the core runner.
 func Run_Test_Main(m *testing.M, directories ...string) {
 	fuzz_coverage_setup(Default)
 	invariant.Recorder_Run_Test_Main(Default, m, directories...)
+}
+
+// OUTPUT_ENVIRONMENT selects the complete coverage-gap representation for a test process.
+const OUTPUT_ENVIRONMENT = "INVARIANT_OUTPUT"
+
+// Coverage_Gap_Json_Write emits one compact flat array and its terminating newline.
+func Coverage_Gap_Json_Write(output io.Writer, gaps []invariant.Coverage_Gap) (err error) {
+	if marshal_error := encoding_flatjson.Marshal_Write(output, gaps); marshal_error != nil {
+		return marshal_error
+	}
+	written, write_error := io.WriteString(output, "\n")
+	if write_error != nil {
+		return write_error
+	}
+	if written != 1 {
+		return io.ErrShortWrite
+	}
+	return nil
+}
+
+// Applies one already-read environment value before the suite can emit a different format.
+func recorder_output_configure(recorder *invariant.Recorder, output string) {
+	recorder.Output_Configuration_Diagnostic = ""
+	switch output {
+	case "", "table":
+		recorder.Report_Coverage_Gaps = invariant.Coverage_Gap_Table_Write
+	case "json":
+		recorder.Report_Coverage_Gaps = Coverage_Gap_Json_Write
+	default:
+		recorder.Report_Coverage_Gaps = nil
+		recorder.Output_Configuration_Diagnostic =
+			OUTPUT_ENVIRONMENT + " has unknown value " + strconv.Quote(output) +
+				"; expected \"table\" or \"json\""
+	}
 }
 
 // FUZZ_COVERAGE_FILE_ENVIRONMENT names the env var a fuzz coordinator sets to the shared
