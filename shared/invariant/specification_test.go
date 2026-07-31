@@ -133,18 +133,15 @@ func Test_Sometimes_Coverage(t *testing.T) {
 
 // Test_Sometimes_Gap keeps both branches mandatory.
 func Test_Sometimes_Gap(t *testing.T) {
-	recorder, output, _ := registered_fixture(`package fixture
-type Fixture_Subject int
-func check(value bool) { invariant.Tree(Fixture_Subject(0), "gap").Sometimes(value, "axis").
-	Ensure() }
-`)
+	recorder, output, _ := registered_fixture(
+		bundle_fixture("gap", ".Sometimes(value == 0, \"axis\")"))
 	fixture_assertions(recorder, "gap").Sometimes(true, "axis").Ensure()
 	core.Recorder_Analyze_Assertion_Frequency(recorder)
 	want := "🚨 1 coverage gaps 🚨\n\n" +
 		"# Branch gaps (1)\n\n" +
-		"| Assertion | Link | Missing | Property | Source |\n" +
-		"|-----------|-----:|---------|----------|--------|\n" +
-		"| gap       |    0 | false   | axis     | value  |\n\n" +
+		"| Assertion | Link | Missing | Property | Source     |\n" +
+		"|-----------|-----:|---------|----------|------------|\n" +
+		"| gap       |    0 | false   | axis     | value == 0 |\n\n" +
 		"🚨 1 coverage gaps 🚨\n"
 	if output.String() != want {
 		t.Fatalf("output = %q, want %q", output.String(), want)
@@ -249,13 +246,8 @@ func Test_Assertions_API(t *testing.T) {
 
 // Test_Assertions_Identity protects namespace, ordinal, and message identity.
 func Test_Assertions_Identity(t *testing.T) {
-	recorder, _, _ := registered_fixture(`package fixture
-type Fixture_Subject int
-func check(a bool, b bool) {
-	invariant.Tree(Fixture_Subject(0), "identity").Sometimes(a, "same").Sometimes(b, "same").
-		Ensure()
-}
-`)
+	recorder, _, _ := registered_fixture(bundle_fixture("identity",
+		".Sometimes(value == 0, \"same\").Sometimes(value == 1, \"same\")"))
 	first := chain_metadata(t, recorder, fixture_chain_key("identity", 0, "same"))
 	second := chain_metadata(t, recorder, fixture_chain_key("identity", 1, "same"))
 	fixture_assertions(recorder, "identity").
@@ -291,12 +283,16 @@ func Test_Assertions_Subject(t *testing.T) {
 	if !strings.Contains(output.String(), "invalid assertion subjects") {
 		t.Fatalf("unnamed output=%q, want an invalid subject diagnostic", output.String())
 	}
+	// The local type is declared inside the bundle, so the chain has an owner and the subject
+	// rule is what has to reject it.
 	_, output, code = registered_fixture("package fixture\n" +
-		"func check(flag bool) {\n" +
+		"type Value int\n" +
+		"func Value_Invariants(value Value, namespace invariant.Namespace) {\n" +
 		"\ttype Local int\n" +
-		"\tinvariant.Tree(Local(0), \"local\")." +
-		"Sometimes(flag, \"zero\").Ensure()\n" +
-		"}\n")
+		"\tinvariant.Tree(Local(0), namespace)." +
+		"Sometimes(value == 0, \"zero\").Ensure()\n" +
+		"}\n" +
+		"func check(value Value) { Value_Invariants(value, \"local\") }\n")
 	if code != 1 {
 		t.Fatalf("local exit=%d output=%q", code, output.String())
 	}
@@ -311,9 +307,11 @@ func Test_Assertions_Atomic(t *testing.T) {
 const Minimum = 0
 const Maximum = 4
 type Fixture_Subject int
-func check(value Fixture_Subject) {
-	invariant.Tree(value, "atomic").Sometimes(true, "axis").Range_Int(int(value), Minimum, Maximum).Ensure()
+func Fixture_Subject_Invariants(value Fixture_Subject, namespace invariant.Namespace) {
+	invariant.Tree(value, namespace).Sometimes(true, "axis").
+		Range_Int(int(value), Minimum, Maximum).Ensure()
 }
+func check(value Fixture_Subject) { Fixture_Subject_Invariants(value, "atomic") }
 `)
 	builder := fixture_assertions(recorder, "atomic").
 		Sometimes(true, "axis").Range_Int(3, 0, 2)
@@ -403,10 +401,11 @@ func Test_Assertions_Record_Validation(t *testing.T) {
 func Test_Assertions_Registration_Packages(t *testing.T) {
 	recorder, output, code := registered_fixture(`package fixture
 type Fixture_Subject int
-func check(value bool) {
-	invariant.Always(value, "guard")
-	invariant.Tree(Fixture_Subject(0), "direct").Sometimes(value, "axis").Ensure()
+func Fixture_Subject_Invariants(value Fixture_Subject, namespace invariant.Namespace) {
+	invariant.Always(value != 9, "guard")
+	invariant.Tree(value, namespace).Sometimes(value == 0, "axis").Ensure()
 }
+func check(value Fixture_Subject) { Fixture_Subject_Invariants(value, "direct") }
 `)
 	if code != -1 {
 		t.Fatalf("exit=%d output=%q", code, output.String())
@@ -422,15 +421,16 @@ func check(value bool) {
 func Test_Assertions_Registration_Test_Source(t *testing.T) {
 	recorder, output, code := registered_fixture_with_test(`package fixture
 type Fixture_Subject int
-func check(value bool) {
-	invariant.Always(value, "guard")
-	invariant.Tree(Fixture_Subject(0), "production").Sometimes(value, "axis").Ensure()
+func Fixture_Subject_Invariants(value Fixture_Subject, namespace invariant.Namespace) {
+	invariant.Always(value != 9, "guard")
+	invariant.Tree(value, namespace).Sometimes(value == 0, "axis").Ensure()
 }
+func check(value Fixture_Subject) { Fixture_Subject_Invariants(value, "production") }
 `, `package fixture
 type Fixture_Subject int
-func direct(value bool) {
-	invariant.Always(value, "test guard")
-	invariant.Tree(Fixture_Subject(0), "test").Sometimes(value, "test axis").Ensure()
+func direct(value Fixture_Subject) {
+	invariant.Always(value != 9, "test guard")
+	invariant.Tree(value, "test").Sometimes(value == 0, "test axis").Ensure()
 	invariant.Int_Invariants(1, "production")
 }
 func alias() {
@@ -518,9 +518,11 @@ func Test_Assertions_Registration_Walk(t *testing.T) {
 type Fixture_Subject int
 const Minimum = 0
 const Maximum = 4
-func check(value int, flag bool) {
-	invariant.Tree(Fixture_Subject(0), "walk").Sometimes(flag, "flag").Range_Int(value, Minimum, Maximum).Ensure()
+func Fixture_Subject_Invariants(value Fixture_Subject, namespace invariant.Namespace) {
+	invariant.Tree(value, namespace).Sometimes(value == 1, "flag").
+		Range_Int(int(value), Minimum, Maximum).Ensure()
 }
+func check(value Fixture_Subject) { Fixture_Subject_Invariants(value, "walk") }
 `)
 	if code != -1 {
 		t.Fatalf("exit = %d", code)
@@ -558,8 +560,10 @@ func check(value Number) { Number_Invariants(value, "number") }
 func Test_Assertions_Registration_Ensured(t *testing.T) {
 	_, output, code := registered_fixture(`package fixture
 type Fixture_Subject int
-func check(value bool) { invariant.Tree(Fixture_Subject(0), "dangling").
-	Sometimes(value, "axis") }
+func Fixture_Subject_Invariants(value Fixture_Subject, namespace invariant.Namespace) {
+	invariant.Tree(value, namespace).Sometimes(value == 0, "axis")
+}
+func check(value Fixture_Subject) { Fixture_Subject_Invariants(value, "dangling") }
 `)
 	if code != 1 {
 		t.Fatalf("exit=%d output=%q", code, output.String())
@@ -569,7 +573,10 @@ func check(value bool) { invariant.Tree(Fixture_Subject(0), "dangling").
 	}
 	_, output, code = registered_fixture(`package fixture
 type Fixture_Subject int
-func empty() { invariant.Tree(Fixture_Subject(0), "empty").Ensure() }
+func Fixture_Subject_Invariants(value Fixture_Subject, namespace invariant.Namespace) {
+	invariant.Tree(value, namespace).Ensure()
+}
+func check(value Fixture_Subject) { Fixture_Subject_Invariants(value, "empty") }
 `)
 	if code != 1 {
 		t.Fatalf("empty exit=%d output=%q", code, output.String())
@@ -579,9 +586,12 @@ func empty() { invariant.Tree(Fixture_Subject(0), "empty").Ensure() }
 	}
 	_, output, code = registered_fixture(`package fixture
 type Fixture_Subject int
-func build(value bool) invariant.Assertion_Builder {
-	return invariant.Tree(Fixture_Subject(0), "returned").Sometimes(value, "axis")
+func Fixture_Subject_Invariants(
+	value Fixture_Subject, namespace invariant.Namespace,
+) invariant.Assertion_Builder {
+	return invariant.Tree(value, namespace).Sometimes(value == 0, "axis")
 }
+func check(value Fixture_Subject) { Fixture_Subject_Invariants(value, "returned") }
 `)
 	if code != 1 {
 		t.Fatalf("returned exit=%d output=%q", code, output.String())
@@ -591,13 +601,46 @@ func build(value bool) invariant.Assertion_Builder {
 	}
 }
 
+// Test_Assertions_Registration_Bundle_Only keeps a chain inside the bundle that owns its type.
+func Test_Assertions_Registration_Bundle_Only(t *testing.T) {
+	_, output, code := registered_fixture(`package fixture
+type Value int
+func check(value Value) {
+	invariant.Tree(value, "loose").Sometimes(value == 0, "zero").Ensure()
+}
+`)
+	if code != 1 {
+		t.Fatalf("loose exit=%d output=%q", code, output.String())
+	}
+	if !strings.Contains(output.String(), "outside an _Invariants bundle") {
+		t.Fatalf("loose output=%q, want a bundle-only diagnostic", output.String())
+	}
+	recorder, output, code := registered_fixture(`package fixture
+type Value int
+func Value_Invariants(value Value, namespace invariant.Namespace) {
+	invariant.Tree(value, namespace).Sometimes(value == 0, "zero").Ensure()
+}
+func check(value Value) { Value_Invariants(value, "owned") }
+`)
+	if code != -1 {
+		t.Fatalf("owned exit=%d output=%q", code, output.String())
+	}
+	chain_metadata(t, recorder, chain_metadata_key{
+		Namespace: "owned", Package: FIXTURE_PACKAGE, Type: "Value",
+		Ordinal: 0, Message: "zero",
+	})
+}
+
 // Test_Assertions_Registration_Literal keeps coverage identities statically knowable.
 func Test_Assertions_Registration_Literal(t *testing.T) {
 	_, output, code := registered_fixture(`package fixture
 type Fixture_Subject int
-func check(value bool, message string) {
-	invariant.Tree(Fixture_Subject(0), "literal").Sometimes(value, message).Ensure()
+func Fixture_Subject_Invariants(
+	value Fixture_Subject, message string, namespace invariant.Namespace,
+) {
+	invariant.Tree(value, namespace).Sometimes(value == 0, message).Ensure()
 }
+func check(value Fixture_Subject) { Fixture_Subject_Invariants(value, "m", "literal") }
 `)
 	if code != 1 {
 		t.Fatalf("exit=%d output=%q", code, output.String())
@@ -638,8 +681,11 @@ func second(value Number) { Number_Invariants(value, "number") }
 	}
 	recorder, output, code = registered_fixture(`package fixture
 type Fixture_Subject int
-func first(v bool) { invariant.Tree(Fixture_Subject(0), "same").Sometimes(v, "a").Ensure() }
-func second(v bool) { invariant.Tree(Fixture_Subject(0), "same").Sometimes(v, "b").Ensure() }
+func Fixture_Subject_Invariants(value Fixture_Subject, namespace invariant.Namespace) {
+	invariant.Tree(value, namespace).Sometimes(value == 0, "a").Ensure()
+}
+func first(value Fixture_Subject) { Fixture_Subject_Invariants(value, "same") }
+func second(value Fixture_Subject) { Fixture_Subject_Invariants(value, "same") }
 `)
 	if code != 1 {
 		t.Fatalf("exit=%d output=%q", code, output.String())
@@ -657,9 +703,10 @@ func second(v bool) { invariant.Tree(Fixture_Subject(0), "same").Sometimes(v, "b
 	if code != 1 {
 		t.Fatalf("global exit=%d output=%q", code, output.String())
 	}
-	want = "🚨 1 duplicate messages 🚨\n" +
-		"/b/b.go:3  duplicate namespace: \"global\"\n" +
-		"🚨 1 duplicate messages 🚨\n"
+	// The namespace now names a bundle callsite, thus the bundle check reports it first.
+	want = "🚨 1 duplicate bundle namespaces 🚨\n" +
+		"/b/b.go:6  banned: duplicate namespace \"global\"\n" +
+		"🚨 1 duplicate bundle namespaces 🚨\n"
 	if output.String() != want {
 		t.Fatalf("global output=%q, want %q", output.String(), want)
 	}
@@ -746,12 +793,12 @@ func check(value Parent) { Parent_Invariants(value, "same") }
 // Test_Assertions_Registration_Caps keeps registration within the fixed runtime representation.
 func Test_Assertions_Registration_Caps(t *testing.T) {
 	var accepted strings.Builder
-	accepted.WriteString("package fixture\ntype Fixture_Subject int\n" +
-		"func accepted(v bool) { invariant.Tree(Fixture_Subject(0), \"accepted\")")
+	accepted.WriteString(BUNDLE_FIXTURE_HEAD)
 	for ordinal_index := 0; ordinal_index < 70; ordinal_index++ {
-		fmt.Fprintf(&accepted, ".Sometimes(v, %q)", fmt.Sprintf("axis %d", ordinal_index))
+		fmt.Fprintf(&accepted, ".Sometimes(value == 0, %q)",
+			fmt.Sprintf("axis %d", ordinal_index))
 	}
-	accepted.WriteString(".Ensure() }\n")
+	accepted.WriteString(bundle_fixture_tail("accepted"))
 	recorder, output, code := registered_fixture(accepted.String())
 	if code != -1 {
 		t.Fatalf("70 links exit=%d output=%q", code, output.String())
@@ -760,13 +807,12 @@ func Test_Assertions_Registration_Caps(t *testing.T) {
 		t.Fatalf("70 links registered %d events", event_count(&recorder.Events))
 	}
 	var source strings.Builder
-	source.WriteString("package fixture\n" +
-		"type Fixture_Subject int\n" +
-		"func check(v bool) { invariant.Tree(Fixture_Subject(0), \"cap\")")
+	source.WriteString(BUNDLE_FIXTURE_HEAD)
 	for ordinal_index := 0; ordinal_index <= 70; ordinal_index++ {
-		fmt.Fprintf(&source, ".Sometimes(v, %q)", fmt.Sprintf("axis %d", ordinal_index))
+		fmt.Fprintf(&source, ".Sometimes(value == 0, %q)",
+			fmt.Sprintf("axis %d", ordinal_index))
 	}
-	source.WriteString(".Ensure() }\n")
+	source.WriteString(bundle_fixture_tail("cap"))
 	_, output, code = registered_fixture(source.String())
 	if code != 1 {
 		t.Fatalf("exit=%d output=%q", code, output.String())
@@ -775,14 +821,11 @@ func Test_Assertions_Registration_Caps(t *testing.T) {
 		t.Fatalf("exit=%d output=%q", code, output.String())
 	}
 	var presets strings.Builder
-	presets.WriteString(
-		"package fixture\n" +
-			"type Fixture_Subject int\n" +
-			"func check(v int) { invariant.Tree(Fixture_Subject(0), \"presets\")")
+	presets.WriteString(BUNDLE_FIXTURE_HEAD)
 	for preset_index := 0; preset_index < 15; preset_index++ {
-		presets.WriteString(".Enum_4_Int(v, 0, 1, 2, 3)")
+		presets.WriteString(".Enum_4_Int(int(value), 0, 1, 2, 3)")
 	}
-	presets.WriteString(".Ensure() }\n")
+	presets.WriteString(bundle_fixture_tail("presets"))
 	_, output, code = registered_fixture(presets.String())
 	if code != 1 {
 		t.Fatalf("75 expanded links exit=%d output=%q", code, output.String())
@@ -1127,9 +1170,10 @@ func Test_Analysis_Gaps(t *testing.T) {
 func Test_Analysis_Reachability_Identity(t *testing.T) {
 	recorder, output, _ := registered_fixture(`package fixture
 type Fixture_Subject int
-func check(value int) {
-	invariant.Tree(Fixture_Subject(0), "range").Range_Int(value, 0, 4).Ensure()
+func Fixture_Subject_Invariants(value Fixture_Subject, namespace invariant.Namespace) {
+	invariant.Tree(value, namespace).Range_Int(int(value), 0, 4).Ensure()
 }
+func check(value Fixture_Subject) { Fixture_Subject_Invariants(value, "range") }
 `)
 	recorder.Events.Range(func(key any, value any) (continue_iteration bool) {
 		metadata := value.(*core.Assertion_Metadata)
@@ -1142,10 +1186,10 @@ func check(value int) {
 	core.Recorder_Analyze_Assertion_Frequency(recorder)
 	want := "🚨 2 coverage gaps 🚨\n\n" +
 		"# Reachability gaps (2)\n\n" +
-		"| Assertion | Source |\n" +
-		"|-----------|--------|\n" +
-		"| range     | value  |\n" +
-		"| range     | value  |\n\n" +
+		"| Assertion | Source     |\n" +
+		"|-----------|------------|\n" +
+		"| range     | int(value) |\n" +
+		"| range     | int(value) |\n\n" +
 		"🚨 2 coverage gaps 🚨\n"
 	if output.String() != want {
 		t.Fatalf("output=%q, want %q", output.String(), want)
@@ -1155,25 +1199,29 @@ func check(value int) {
 // Test_Analysis_Table_Order keeps repeated assertion names ordered by numeric link and polarity.
 func Test_Analysis_Table_Order(t *testing.T) {
 	recorder, output, _ := registered_fixture(`package fixture
-type Fixture_Subject int
-func alpha(v bool) { invariant.Tree(Fixture_Subject(0), "alpha").Sometimes(v, "axis").
-	Ensure() }
-func same(a bool, b bool) {
-	invariant.Tree(Fixture_Subject(0), "same").Sometimes(a, "second").Sometimes(b, "first").
-		Ensure()
+type Alpha int
+func Alpha_Invariants(value Alpha, namespace invariant.Namespace) {
+	invariant.Tree(value, namespace).Sometimes(value == 0, "axis").Ensure()
 }
+type Fixture_Subject int
+func Fixture_Subject_Invariants(value Fixture_Subject, namespace invariant.Namespace) {
+	invariant.Tree(value, namespace).Sometimes(value == 0, "second").
+		Sometimes(value == 1, "first").Ensure()
+}
+func alpha(value Alpha) { Alpha_Invariants(value, "alpha") }
+func same(value Fixture_Subject) { Fixture_Subject_Invariants(value, "same") }
 `)
 	fixture_assertions(recorder, "same").
 		Sometimes(false, "second").Sometimes(false, "first").Ensure()
 	core.Recorder_Analyze_Assertion_Frequency(recorder)
 	want := "🚨 4 coverage gaps 🚨\n\n" +
 		"# Branch gaps (4)\n\n" +
-		"| Assertion | Link | Missing | Property | Source |\n" +
-		"|-----------|-----:|---------|----------|--------|\n" +
-		"| alpha     |    0 | false   | axis     | v      |\n" +
-		"| alpha     |    0 | true    | axis     | v      |\n" +
-		"| same      |    0 | true    | second   | a      |\n" +
-		"| same      |    1 | true    | first    | b      |\n\n" +
+		"| Assertion | Link | Missing | Property | Source     |\n" +
+		"|-----------|-----:|---------|----------|------------|\n" +
+		"| alpha     |    0 | false   | axis     | value == 0 |\n" +
+		"| alpha     |    0 | true    | axis     | value == 0 |\n" +
+		"| same      |    0 | true    | second   | value == 0 |\n" +
+		"| same      |    1 | true    | first    | value == 1 |\n\n" +
 		"🚨 4 coverage gaps 🚨\n"
 	if output.String() != want {
 		t.Fatalf("output = %q, want %q", output.String(), want)
@@ -1231,14 +1279,15 @@ type Fixture_Subject int
 const Minimum = -2
 const Maximum = 3
 const Hole = 0
-func check(v int, condition bool) {
-	invariant.Always(condition, "guard")
-	invariant.Tree(Fixture_Subject(0), "summary").
-		Sometimes(condition, "axis").
-		Range_Holed_Int(v, Minimum, Maximum, Hole, Hole, Hole, Hole).
-		Enum_Int(v, Minimum, Maximum).
+func Fixture_Subject_Invariants(value Fixture_Subject, namespace invariant.Namespace) {
+	invariant.Always(value != 99, "guard")
+	invariant.Tree(value, namespace).
+		Sometimes(value == 0, "axis").
+		Range_Holed_Int(int(value), Minimum, Maximum, Hole, Hole, Hole, Hole).
+		Enum_Int(int(value), Minimum, Maximum).
 		Ensure()
 }
+func check(value Fixture_Subject) { Fixture_Subject_Invariants(value, "summary") }
 `)
 	want := "✓ invariant_test: tested 21 properties (21 individual, of which 5 are panic-able)"
 	if summary := core.Recorder_Assertion_Summary(recorder); summary != want {
@@ -1297,10 +1346,11 @@ func Test_Coverage_Literal(t *testing.T) {
 func Test_Range_Holed(t *testing.T) {
 	recorder, output, code := registered_fixture(`package fixture
 type Fixture_Subject int
-func check(v int) {
-	invariant.Tree(Fixture_Subject(0), "holed").Range_Holed_Int(v, -4, 6, -2, 3, 3, 3).
-		Ensure()
+func Fixture_Subject_Invariants(value Fixture_Subject, namespace invariant.Namespace) {
+	invariant.Tree(value, namespace).
+		Range_Holed_Int(int(value), -4, 6, -2, 3, 3, 3).Ensure()
 }
+func check(value Fixture_Subject) { Fixture_Subject_Invariants(value, "holed") }
 `)
 	if code != -1 {
 		t.Fatalf("exit=%d output=%q", code, output.String())
@@ -1396,10 +1446,11 @@ func Test_Range_Cardinality(t *testing.T) {
 func Test_Range_Exclusions(t *testing.T) {
 	recorder, output, code := registered_fixture(`package fixture
 type Fixture_Subject int
-func check(v int) {
-	invariant.Tree(Fixture_Subject(0), "range").Range_Holed_Int(v, -4, 6, -2, 3, 3, 3).
-		Ensure()
+func Fixture_Subject_Invariants(value Fixture_Subject, namespace invariant.Namespace) {
+	invariant.Tree(value, namespace).
+		Range_Holed_Int(int(value), -4, 6, -2, 3, 3, 3).Ensure()
 }
+func check(value Fixture_Subject) { Fixture_Subject_Invariants(value, "range") }
 `)
 	if code != -1 {
 		t.Fatalf("exit=%d output=%q", code, output.String())
@@ -1437,20 +1488,16 @@ func Test_Range_Registration(t *testing.T) {
 	}{
 		{"Range_Int(v, 0)", "exactly value, minimum, and maximum"},
 		{"Range_Int(v, 0, 4, 1)", "exactly value, minimum, and maximum"},
-		{"Range_Holed_Int(v, 0, 5, 0, 1, 2, 3)", "strictly inside"},
-		{"Range_Holed_Int(v, 0, 5, 1, 2, 3, 5)", "strictly inside"},
-		{"Range_Holed_Int(v, 0, 6, 1, 1, 2, 2)", "final-hole padding"},
-		{"Range_Holed_Int(v, 0, 6, 2, 1, 2, 2)", "ascending"},
-		{"Range_Holed_Int(v, 0, 6, 1, 2, 3)", "exactly four hole slots"},
+		{"Range_Holed_Int(int(value), 0, 5, 0, 1, 2, 3)", "strictly inside"},
+		{"Range_Holed_Int(int(value), 0, 5, 1, 2, 3, 5)", "strictly inside"},
+		{"Range_Holed_Int(int(value), 0, 6, 1, 1, 2, 2)", "final-hole padding"},
+		{"Range_Holed_Int(int(value), 0, 6, 2, 1, 2, 2)", "ascending"},
+		{"Range_Holed_Int(int(value), 0, 6, 1, 2, 3)", "exactly four hole slots"},
 		{"Range_Holed_Uint(v, 0, 6, 1, 2, 3, 3)", "exactly three hole slots"},
 	}
 	for _, fixture := range fixtures {
-		source :=
-			"package fixture\n" +
-				"type Fixture_Subject int\n" +
-				"func check(v int) { " +
-				"invariant.Tree(Fixture_Subject(0), \"range\")." +
-				fixture.Call + ".Ensure() }\n"
+		source := BUNDLE_FIXTURE_HEAD + "." + fixture.Call +
+			bundle_fixture_tail("range")
 		_, output, code := registered_fixture(source)
 		if code != 1 {
 			t.Fatalf("%s exit=%d output=%q", fixture.Call, code, output.String())
@@ -1468,10 +1515,8 @@ func Test_Range_Registration(t *testing.T) {
 
 // Test_Enum_Guard keeps successful membership visible.
 func Test_Enum_Guard(t *testing.T) {
-	recorder, _, _ := registered_fixture(`package fixture
-type Fixture_Subject int
-func check(v int) { invariant.Tree(Fixture_Subject(0), "enum").Enum_Int(v, 1, 2).Ensure() }
-`)
+	recorder, _, _ := registered_fixture(
+		bundle_fixture("enum", ".Enum_Int(int(value), 1, 2)"))
 	fixture_assertions(recorder, "enum").Enum_Int(1, 1, 2).Ensure()
 	guard := chain_metadata(t, recorder,
 		fixture_chain_key("enum", 0, "The value is an enum member."))
@@ -1483,28 +1528,38 @@ func check(v int) { invariant.Tree(Fixture_Subject(0), "enum").Enum_Int(v, 1, 2)
 // Test_Enum_Members keeps every canonical member mandatory and ordered by value.
 func Test_Enum_Members(t *testing.T) {
 	recorder, _, _ := registered_fixture(`package fixture
-type Fixture_Subject int
-func pair(v int) { invariant.Tree(Fixture_Subject(0), "enum.2").Enum_Int(v, -3, 9).Ensure() }
-func triple(v int) { invariant.Tree(Fixture_Subject(0), "enum.3").Enum_3_Int(v, -3, 2, 9).
-	Ensure() }
-func quartet(v int) { invariant.Tree(Fixture_Subject(0), "enum.4").Enum_4_Int(v, -3, 0, 2, 9).
-	Ensure() }
+type Pair int
+func Pair_Invariants(value Pair, namespace invariant.Namespace) {
+	invariant.Tree(value, namespace).Enum_Int(int(value), -3, 9).Ensure()
+}
+type Triple int
+func Triple_Invariants(value Triple, namespace invariant.Namespace) {
+	invariant.Tree(value, namespace).Enum_3_Int(int(value), -3, 2, 9).Ensure()
+}
+type Quartet int
+func Quartet_Invariants(value Quartet, namespace invariant.Namespace) {
+	invariant.Tree(value, namespace).Enum_4_Int(int(value), -3, 0, 2, 9).Ensure()
+}
+func pair(value Pair) { Pair_Invariants(value, "enum.2") }
+func triple(value Triple) { Triple_Invariants(value, "enum.3") }
+func quartet(value Quartet) { Quartet_Invariants(value, "enum.4") }
 `)
 	for _, value := range []int{-3, 9} {
-		fixture_assertions(recorder, "enum.2").Enum_Int(value, -3, 9).
+		core.Recorder_Tree(recorder, Pair(0), "enum.2").Enum_Int(value, -3, 9).
 			Ensure()
 	}
 	for _, value := range []int{-3, 2, 9} {
-		fixture_assertions(recorder, "enum.3").
+		core.Recorder_Tree(recorder, Triple(0), "enum.3").
 			Enum_3_Int(value, -3, 2, 9).Ensure()
 	}
 	for _, value := range []int{-3, 0, 2, 9} {
-		fixture_assertions(recorder, "enum.4").
+		core.Recorder_Tree(recorder, Quartet(0), "enum.4").
 			Enum_4_Int(value, -3, 0, 2, 9).Ensure()
 	}
-	assert_enum_members(t, recorder, "enum.2", []string{"-3", "9"})
-	assert_enum_members(t, recorder, "enum.3", []string{"-3", "2", "9"})
-	assert_enum_members(t, recorder, "enum.4", []string{"-3", "0", "2", "9"})
+	assert_enum_members(t, recorder, "enum.2", "Pair", []string{"-3", "9"})
+	assert_enum_members(t, recorder, "enum.3", "Triple", []string{"-3", "2", "9"})
+	assert_enum_members(t, recorder, "enum.4", "Quartet",
+		[]string{"-3", "0", "2", "9"})
 }
 
 // Test_Enum_Registration rejects wrong capacities, duplicates, and nonascending domains.
@@ -1516,17 +1571,13 @@ func Test_Enum_Registration(t *testing.T) {
 		{"Enum_Int(v, 1)", "exactly two members"},
 		{"Enum_Int(v, 1, 2, 3)", "exactly two members"},
 		{"Enum_3_Int(v, 1, 2)", "exactly three members"},
-		{"Enum_4_Int(v, 1, 2, 3)", "exactly four members"},
+		{"Enum_4_Int(int(value), 1, 2, 3)", "exactly four members"},
 		{"Enum_3_Int(v, 1, 1, 2)", "exactly distinct"},
-		{"Enum_4_Int(v, 1, 3, 2, 4)", "ascending"},
+		{"Enum_4_Int(int(value), 1, 3, 2, 4)", "ascending"},
 	}
 	for _, fixture := range fixtures {
-		source :=
-			"package fixture\n" +
-				"type Fixture_Subject int\n" +
-				"func check(v int) { " +
-				"invariant.Tree(Fixture_Subject(0), \"enum\")." +
-				fixture.Call + ".Ensure() }\n"
+		source := BUNDLE_FIXTURE_HEAD + "." + fixture.Call +
+			bundle_fixture_tail("enum")
 		_, output, code := registered_fixture(source)
 		if code != 1 {
 			t.Fatalf("%s exit=%d output=%q", fixture.Call, code, output.String())
@@ -1573,11 +1624,7 @@ func assert_small_range_rejected(
 	t *testing.T, call string, legal_count int, replacement string,
 ) {
 	t.Helper()
-	source :=
-		"package fixture\n" +
-			"type Fixture_Subject int\n" +
-			"func check(v int) { invariant.Tree(Fixture_Subject(0), \"range\")." +
-			call + ".Ensure() }\n"
+	source := BUNDLE_FIXTURE_HEAD + "." + call + bundle_fixture_tail("range")
 	recorder, output, code := registered_fixture(source)
 	want := fmt.Sprintf(
 		"Range covers %d legal values; use %s instead", legal_count, replacement)
@@ -1603,10 +1650,10 @@ func assert_small_range_rejected(
 
 func assert_large_range_registered(t *testing.T, call string, value_type string) {
 	t.Helper()
-	source := fmt.Sprintf(
-		"package fixture\ntype Fixture_Subject int\nfunc check(v %s) { "+
-			"invariant.Tree(Fixture_Subject(0), \"range\").%s.Ensure() }\n",
-		value_type, call)
+	source := "package fixture\ntype Fixture_Subject " + value_type + "\n" +
+		"func Fixture_Subject_Invariants(value Fixture_Subject, " +
+		"namespace invariant.Namespace) {\n\tinvariant.Tree(value, namespace)." +
+		call + bundle_fixture_tail("range")
 	_, output, code := registered_fixture(source)
 	if code != -1 {
 		t.Fatalf("%s exit=%d output=%q", call, code, output.String())
@@ -1636,11 +1683,12 @@ func assert_persisted_record_ignored(t *testing.T, name string, record string) {
 }
 
 func assert_enum_members(
-	t *testing.T, recorder *core.Recorder, namespace core.Namespace, members []string,
+	t *testing.T, recorder *core.Recorder, namespace core.Namespace,
+	subject string, members []string,
 ) {
 	t.Helper()
 	guard := chain_metadata(t, recorder, chain_metadata_key{
-		Package: FIXTURE_PACKAGE, Type: "Fixture_Subject",
+		Package: FIXTURE_PACKAGE, Type: subject,
 		Namespace: namespace, Ordinal: 0, Message: "The value is an enum member.",
 	})
 	if guard.Frequency.Load() == 0 {
@@ -1649,7 +1697,7 @@ func assert_enum_members(
 	for member_index, member := range members {
 		message := "The value equals member " + member + "."
 		metadata := chain_metadata(t, recorder, chain_metadata_key{
-			Package: FIXTURE_PACKAGE, Type: "Fixture_Subject",
+			Package: FIXTURE_PACKAGE, Type: subject,
 			Namespace: namespace, Ordinal: uint8(member_index + 1), Message: message,
 		})
 		if metadata.Frequency.Load() == 0 {
@@ -1684,6 +1732,31 @@ func registered_repository_fixture(
 	return recorder, output, &status
 }
 
+// BUNDLE_FIXTURE_HEAD opens the bundle that owns Fixture_Subject, up to the point where a caller
+// appends its own fluent links. bundle_fixture_tail closes it and adds the callsite.
+const BUNDLE_FIXTURE_HEAD = "package fixture\ntype Fixture_Subject int\n" +
+	"func Fixture_Subject_Invariants(value Fixture_Subject, " +
+	"namespace invariant.Namespace) {\n\tinvariant.Tree(value, namespace)"
+
+// Closes a bundle opened by BUNDLE_FIXTURE_HEAD and names it at one callsite.
+func bundle_fixture_tail(namespace string) (source string) {
+	return ".Ensure()\n}\nfunc check(value Fixture_Subject) { " +
+		"Fixture_Subject_Invariants(value, \"" + namespace + "\") }\n"
+}
+
+// Wraps one fluent chain in the bundle that owns its subject type, plus the callsite that names it.
+// A chain lives only in an _Invariants bundle, thus a fixture exercising a chain declares one. The
+// links keep whatever the caller writes, because a fixture is parsed and never type-checked.
+func bundle_fixture(namespace string, links string) (source string) {
+	return "package fixture\n" +
+		"type Fixture_Subject int\n" +
+		"func Fixture_Subject_Invariants(" +
+		"value Fixture_Subject, namespace invariant.Namespace) {\n" +
+		"\tinvariant.Tree(value, namespace)" + links + ".Ensure()\n}\n" +
+		"func check(value Fixture_Subject) { Fixture_Subject_Invariants(value, \"" +
+		namespace + "\") }\n"
+}
+
 func registered_fixture(source string) (
 	recorder *core.Recorder, output *bytes.Buffer, code int,
 ) {
@@ -1693,6 +1766,16 @@ func registered_fixture(source string) (
 // FIXTURE_PACKAGE is the import path registered_fixture gives its one package. It suits a test
 // that only registers, because no runtime chain has to agree with it.
 const FIXTURE_PACKAGE = "local/james-orcales/shared/invariant_test"
+
+// Pair mirrors the enum-width fixture's two-member subject, so a runtime chain resolves the same
+// plan that fixture registered. Triple and Quartet do the same for three and four members.
+type Pair int
+
+// Triple is the three-member enum subject.
+type Triple int
+
+// Quartet is the four-member enum subject.
+type Quartet int
 
 func registered_global_namespace_fixture() (
 	recorder *core.Recorder, output *bytes.Buffer, code int,
@@ -1704,13 +1787,17 @@ func registered_global_namespace_fixture() (
 			"go.mod": &fstest.MapFile{Data: []byte("module fixture\n")},
 			"a/a.go": &fstest.MapFile{Data: []byte(`package a
 type Fixture_Subject int
-func check(value bool) { invariant.Tree(Fixture_Subject(0), "global").Sometimes(value, "a").
-	Ensure() }
+func Fixture_Subject_Invariants(value Fixture_Subject, namespace invariant.Namespace) {
+	invariant.Tree(value, namespace).Sometimes(value == 0, "a").Ensure()
+}
+func check(value Fixture_Subject) { Fixture_Subject_Invariants(value, "global") }
 `)},
 			"b/b.go": &fstest.MapFile{Data: []byte(`package b
-type Fixture_Subject int
-func check(value bool) { invariant.Tree(Fixture_Subject(0), "global").Sometimes(value, "b").
-	Ensure() }
+type Other_Subject int
+func Other_Subject_Invariants(value Other_Subject, namespace invariant.Namespace) {
+	invariant.Tree(value, namespace).Sometimes(value == 0, "b").Ensure()
+}
+func check(value Other_Subject) { Other_Subject_Invariants(value, "global") }
 `)},
 		},
 		Packages_To_Analyze: []string{"/a", "/b"}, Output: output,
@@ -1836,11 +1923,7 @@ func panic_text(action func()) (message string) {
 
 func registered_single_axis(t *testing.T, namespace string) (recorder *core.Recorder) {
 	t.Helper()
-	source := fmt.Sprintf(
-		"package fixture\ntype Fixture_Subject int\n"+
-			"func check(value Fixture_Subject) { invariant.Tree(value, %q)."+
-			"Sometimes(value == 0, \"axis\").Ensure() }\n",
-		namespace)
+	source := bundle_fixture(namespace, ".Sometimes(value == 0, \"axis\")")
 	recorder, output, code := registered_fixture(source)
 	if code != -1 {
 		t.Fatalf("exit=%d output=%q", code, output.String())
@@ -1877,11 +1960,9 @@ func registered_range(
 	t *testing.T, namespace string, minimum int, maximum int,
 ) (recorder *core.Recorder, output *bytes.Buffer, code int) {
 	t.Helper()
-	source := fmt.Sprintf(
-		"package fixture\ntype Fixture_Subject int\n"+
-			"func check(v int) { invariant.Tree(Fixture_Subject(0), %q)."+
-			"Range_Int(v, %d, %d).Ensure() }\n",
-		namespace, minimum, maximum)
+	source := BUNDLE_FIXTURE_HEAD +
+		fmt.Sprintf(".Range_Int(int(value), %d, %d)", minimum, maximum) +
+		bundle_fixture_tail(namespace)
 	return registered_fixture(source)
 }
 

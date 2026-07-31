@@ -2296,9 +2296,10 @@ func recorder_register_assertion_function(
 					file_set, chain, parameter, function.Constants, reg)
 				return false
 			}
-			recorder_seed_assertion_root(
-				file_set, chain, function.Declaration, function.Package,
-				function.Package_Types, function.Constants, reg, function.Is_Sugar)
+			// A chain identifies itself by its subject type, and only a bundle owns
+			// one type. An ordinary body states an inline helper instead.
+			recorder_invalid_chain(file_set, chain.Root, reg,
+				"Tree chain is outside an _Invariants bundle")
 			return false
 		}
 		if ast_assertion_root(call, function.Is_Sugar) {

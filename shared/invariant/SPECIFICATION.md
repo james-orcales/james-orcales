@@ -165,6 +165,12 @@ callsite. A function that returns an incomplete builder is not a template.
 Each found root must be one nonempty call expression that ends in `Ensure`. A split chain, a bare
 root, or a returned incomplete chain causes a fatal error.
 
+### Bundle Only
+
+A `Tree` chain lives in an `_Invariants` bundle. A chain identifies itself by its subject type, and
+only a bundle owns one type, thus a chain in any other body has no owner. A chain outside a bundle
+is a fatal error, and an ordinary body states an inline helper instead.
+
 ### Literal
 
 A namespace and an axis message must be a compile-time string literal without NUL. A final template
