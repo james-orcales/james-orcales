@@ -97,11 +97,12 @@ func Main(input Main_Input) (code Exit_Code) {
 // Output_Format selects how Main renders the report.
 type Output_Format uint8
 
-// Output_Format_Invariants bounds an Output_Format to its declared rendering modes
-// and claims each boundary of that range.
+// Output_Format_Invariants holds an Output_Format to its two declared rendering modes
+// and witnesses each mode. The modes are an enumeration, not a span, so a member axis
+// names the mode it claims.
 func Output_Format_Invariants(format Output_Format, namespace invariant.Namespace) {
 	invariant.Assertions(namespace).
-		Range_Uint8(
+		Enum_Uint8(
 			uint8(format), uint8(OUTPUT_FORMAT_TABLE), uint8(OUTPUT_FORMAT_JSON)).
 		Ensure()
 }
@@ -1446,12 +1447,12 @@ const ANSI_CODE_BYTES_MAX = 5
 // without colliding with its string text argument under the same-type-param rule.
 type Ansi_Code string
 
-// Ansi_Code_Invariants bounds an ansi_code's byte length and claims its boundaries.
-// An SGR code is always four or five bytes, so the empty and one/two-byte boundaries
-// are claimed as never reached rather than as observed.
+// Ansi_Code_Invariants holds an ansi_code's byte length to the two lengths an SGR code
+// has, and witnesses each length. A one-digit code is four bytes and a two-digit code is
+// five, so the domain has no interior value that a span could claim.
 func Ansi_Code_Invariants(code Ansi_Code, namespace invariant.Namespace) {
 	invariant.Assertions(namespace).
-		Range_Int(len(code), ANSI_CODE_BYTES_MIN, ANSI_CODE_BYTES_MAX).
+		Enum_Int(len(code), ANSI_CODE_BYTES_MIN, ANSI_CODE_BYTES_MAX).
 		Ensure()
 }
 
@@ -1880,6 +1881,13 @@ func Cell_Invariants(text Cell, namespace invariant.Namespace) {
 // GLYPH_MIN is the single digit a formatted figure floors at, like "0".
 const GLYPH_MIN = 1
 
+// GLYPH_TWO_BYTES is the two-digit figure, like "50".
+const GLYPH_TWO_BYTES = 2
+
+// GLYPH_THREE_BYTES is the three-digit figure like "500", and equally the two-digit figure
+// over a decimal point like "9.9". The two shapes occupy the same three bytes.
+const GLYPH_THREE_BYTES = 3
+
 // GLYPH_MAX bounds the bare significant figures before a suffix: a sign over three figures
 // with a decimal point.
 const GLYPH_MAX = 4
@@ -1888,10 +1896,13 @@ const GLYPH_MAX = 4
 // "9.99". A distinct type, narrower than a whole cell, since the suffix is appended after.
 type Glyph string
 
-// Glyph_Invariants bounds the figure length; never empty, with the single-digit min, the
-// widest figure max, and the one- and two-byte shapes between witnessed.
+// Glyph_Invariants holds the figure length to the four lengths a figure has, and witnesses
+// each length. A figure is never empty, and it spans the single digit through the widest
+// form, so the two interior lengths are members in their own right.
 func Glyph_Invariants(text Glyph, namespace invariant.Namespace) {
-	invariant.Assertions(namespace).Range_Int(len(text), GLYPH_MIN, GLYPH_MAX).Ensure()
+	invariant.Assertions(namespace).
+		Enum_4_Int(len(text), GLYPH_MIN, GLYPH_TWO_BYTES, GLYPH_THREE_BYTES, GLYPH_MAX).
+		Ensure()
 }
 
 // COLUMN_MIN is the single byte a padded column floors at before alignment.
@@ -2059,6 +2070,12 @@ func Frequency_Invariants(text Frequency, namespace invariant.Namespace) {
 // SUFFIX_BYTES_MIN is the empty base unit a suffix floors at.
 const SUFFIX_BYTES_MIN = 0
 
+// SUFFIX_BYTES_BARE is the length of the bare unit letters like "s" and "B".
+const SUFFIX_BYTES_BARE = 1
+
+// SUFFIX_BYTES_PREFIXED is the length of a scale prefix over a unit letter, like "ms".
+const SUFFIX_BYTES_PREFIXED = 2
+
 // SUFFIX_BYTES_MAX is the longest a unit suffix is: the binary byte suffixes like "MiB".
 const SUFFIX_BYTES_MAX = 3
 
@@ -2066,11 +2083,14 @@ const SUFFIX_BYTES_MAX = 3
 // so the suffix ladder's trusted text carries a length invariant.
 type Suffix string
 
-// Suffix_Invariants bounds a suffix's length and witnesses each boundary; a suffix spans
-// the empty base unit through the three-byte binary suffixes.
+// Suffix_Invariants holds a suffix's length to the four lengths a suffix has, and witnesses
+// each length. A suffix spans the empty base unit through the three-byte binary suffixes, so
+// the two interior lengths are members in their own right.
 func Suffix_Invariants(unit Suffix, namespace invariant.Namespace) {
 	invariant.Assertions(namespace).
-		Range_Int(len(unit), SUFFIX_BYTES_MIN, SUFFIX_BYTES_MAX).
+		Enum_4_Int(
+			len(unit), SUFFIX_BYTES_MIN, SUFFIX_BYTES_BARE, SUFFIX_BYTES_PREFIXED,
+			SUFFIX_BYTES_MAX).
 		Ensure()
 }
 
@@ -2258,11 +2278,12 @@ const EXIT_CODE_MAX = 1
 // bounding it to the two codes the binary actually returns.
 type Exit_Code int
 
-// Exit_Code_Invariants bounds an exit code to success or failure; the higher and negative
-// codes are unreachable, and the success min and failure max are witnessed.
+// Exit_Code_Invariants holds an exit code to success or failure, and witnesses each code.
+// The binary returns only the two codes, so the domain has no interior value that a span
+// could claim.
 func Exit_Code_Invariants(value Exit_Code, namespace invariant.Namespace) {
 	invariant.Assertions(namespace).
-		Range_Int(int(value), EXIT_CODE_MIN, EXIT_CODE_MAX).
+		Enum_Int(int(value), EXIT_CODE_MIN, EXIT_CODE_MAX).
 		Ensure()
 }
 
