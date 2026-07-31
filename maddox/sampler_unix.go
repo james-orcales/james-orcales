@@ -19,12 +19,28 @@ const STDERR_BYTES_MAX = 65536
 // all — distinct from any code the child itself could return.
 const SPAWN_FAILURE_EXIT = 127
 
+// WORD_COUNT_MIN is the smallest C word-array count.
+const WORD_COUNT_MIN = 0
+
+// WORD_COUNT_MAX bounds one C word array to the command-tier input limit.
+const WORD_COUNT_MAX = BOUND_MAX
+
+// Word_Count is the number of C strings in one argument or environment array.
+type Word_Count int
+
+// Word_Count_Invariants bounds a C word-array count.
+func Word_Count_Invariants(value Word_Count, namespace invariant.Namespace) {
+	invariant.Tree(value, namespace).
+		Range_Int(int(value), WORD_COUNT_MIN, WORD_COUNT_MAX).
+		Ensure()
+}
+
 // Argv is a command flattened to the argv a spawn hands to execve.
 type Argv []string
 
 // Argv_Invariants bounds the argv word count.
 func Argv_Invariants(argv Argv, namespace invariant.Namespace) {
-	invariant.Assertions(namespace).Range_Int(len(argv), BOUND_MIN, BOUND_MAX).Ensure()
+	invariant.Tree(argv, namespace).Range_Int(len(argv), BOUND_MIN, BOUND_MAX).Ensure()
 }
 
 // Command_argv flattens a command to argv: the executable followed by its arguments.

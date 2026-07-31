@@ -1,4 +1,11 @@
 
+# Command Line
+
+### Arguments
+
+Main parses the injected operating-system arguments into commands, sampling limits,
+and output settings before it benchmarks.
+
 # Statistics
 
 Measurement_Compute reduces one metric's per-run values to a distribution, the way

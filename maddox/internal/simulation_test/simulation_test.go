@@ -60,7 +60,7 @@ type scenario struct {
 	Runs int
 	// Warmup is Warmup_Count, the full int range.
 	Warmup int
-	// Duration is Duration_Max, in nanoseconds.
+	// Duration is the parsed time budget, in seconds.
 	Duration int64
 	// Base is the center every metric's samples deviate around.
 	Base int64
@@ -93,11 +93,13 @@ type scenario struct {
 	Progress bool
 	// Broken_Output makes the report writer fail, driving the render failure exit.
 	Broken_Output bool
+	// Wall_Pattern applies the sample deviation and command divergence to wall time.
+	Wall_Pattern bool
 	// Path_Wide makes a single command's executable four-byte runes, so the progress label
 	// reaches its byte ceiling — the rune cap times four bytes.
 	Path_Wide bool
-	// Path_Empty makes a single command's executable empty, so the progress label is empty.
-	Path_Empty bool
+	// Arguments_Max fills the operating-system argument list to its declared ceiling.
+	Arguments_Max bool
 	// Machine is the injected host snapshot.
 	Machine maddox.Machine_Specs
 }
@@ -146,8 +148,14 @@ func drive(s scenario) {
 			// stamp is the accrued virtual time for the budget stopwatch, which spans
 			// the arbitrary gaps between runs and so stays on the full, unclamped
 			// sleep. A run costs its sleep.
-			result.Sample.Wall = time.Duration(metric_clamp(s.Sleep))
-			elapsed_virtual += time.Duration(s.Sleep)
+			wall := s.Sleep
+			if s.Wall_Pattern {
+				wall_center := s.Sleep + int64(command_index)*s.Divergence
+				wall = sample_value(s, wall_center, run)
+			}
+			wall = metric_clamp(wall)
+			result.Sample.Wall = time.Duration(wall)
+			elapsed_virtual += time.Duration(wall)
 			result.Completed_At = time.Moment(elapsed_virtual)
 			fail := false
 			if s.Fail_Command > 0 {
@@ -171,19 +179,83 @@ func drive(s scenario) {
 		},
 	}
 	maddox.Main(maddox.Main_Input{
-		Commands:       command_set(s),
-		Sampler:        sampler,
-		Duration_Max:   time.Duration(s.Duration),
-		Runs_Max:       s.Runs,
-		Warmup_Count:   s.Warmup,
-		Allow_Failures: s.Allow_Fail,
-		Format:         maddox.Output_Format(s.Format),
-		Color:          s.Color,
-		Progress:       s.Progress,
-		Output:         report_sink(s),
-		Stderr:         io.Discard,
-		Machine:        s.Machine,
+		Arguments:                scenario_arguments(s),
+		Sampler:                  sampler,
+		Output:                   report_sink(s),
+		Error_Output:             io.Discard,
+		Output_Is_Terminal:       scenario_output_terminal(s),
+		Error_Output_Is_Terminal: scenario_error_output_terminal(s),
+		Machine:                  s.Machine,
 	})
+}
+
+// Scenario_output_terminal resolves the report stream's simulated terminal state.
+func scenario_output_terminal(s scenario) (status maddox.Output_Terminal_Status) {
+	if s.Color {
+		return maddox.Output_Terminal_Status(maddox.TERMINAL_STATUS_TERMINAL)
+	}
+	return maddox.Output_Terminal_Status(maddox.TERMINAL_STATUS_NOT_TERMINAL)
+}
+
+// Scenario_error_output_terminal resolves the diagnostic stream's terminal state.
+func scenario_error_output_terminal(s scenario) (status maddox.Error_Output_Terminal_Status) {
+	if s.Progress {
+		return maddox.Error_Output_Terminal_Status(maddox.TERMINAL_STATUS_TERMINAL)
+	}
+	return maddox.Error_Output_Terminal_Status(maddox.TERMINAL_STATUS_NOT_TERMINAL)
+}
+
+// Scenario_arguments renders the scenario through the public command-line boundary.
+func scenario_arguments(s scenario) (arguments maddox.Arguments) {
+	if s.Arguments_Max {
+		arguments = make(maddox.Arguments, maddox.ARGUMENTS_COUNT_MAX)
+		arguments[0] = "maddox"
+		for argument_index := 1; argument_index < len(arguments); argument_index++ {
+			arguments[argument_index] = "x"
+		}
+		return arguments
+	}
+	arguments = maddox.Arguments{"maddox"}
+	for _, command := range command_set(s) {
+		arguments = append(arguments, command_text(command))
+	}
+	if s.Commands == 0 {
+		return arguments
+	}
+	if s.Commands == 1 {
+		if s.Words == 1 {
+			if s.Path_Bytes == 2 {
+				return arguments
+			}
+		}
+	}
+	arguments = append(arguments,
+		"-duration="+strconv.FormatInt(s.Duration, 10),
+		"-runs="+strconv.Itoa(s.Runs),
+		"-warmup="+strconv.Itoa(s.Warmup))
+	if s.Allow_Fail {
+		arguments = append(arguments, "-allow-failures")
+	}
+	if s.Format == 1 {
+		arguments = append(arguments, "-json")
+	}
+	color_mode := "never"
+	if s.Color {
+		color_mode = "always"
+	}
+	arguments = append(arguments, "-color="+color_mode)
+	if s.Progress {
+		arguments = append(arguments, "-progress=always")
+	}
+	return arguments
+}
+
+// Command_text joins one injected process request into Maddox's positional syntax.
+func command_text(command sysio.Process_Request) (text string) {
+	words := append([]string{}, command.Environment...)
+	words = append(words, command.Path)
+	words = append(words, command.Arguments...)
+	return strings.Join(words, " ")
 }
 
 // Sample_value is run's metric value about a given center: the center itself for the first
@@ -222,13 +294,8 @@ func command_set(s scenario) (commands maddox.Commands) {
 	return commands
 }
 
-// Single_command_path is a lone command's executable: empty when Path_Empty, a run of four-byte
-// runes when Path_Wide (so the progress label reaches its byte ceiling), a run of 'z' when
-// Path_Bytes is set, else the default short name.
+// Single_command_path is a lone command's executable at the selected width.
 func single_command_path(s scenario) (path string) {
-	if s.Path_Empty {
-		return ""
-	}
 	if s.Path_Wide {
 		return strings.Repeat("𝕫", s.Path_Bytes)
 	}
@@ -259,12 +326,12 @@ func metric_clamp(value int64) (clamped int64) {
 // than tripping the metric guard, which only an out-of-contract sampler would.
 func sample_from(value int64) (sample maddox.Sample) {
 	value = metric_clamp(value)
-	sample.RSS_Bytes_Max = maddox.Metric(value)
-	sample.CPU_Cycles = maddox.Metric(value)
-	sample.Instructions = maddox.Metric(value)
-	sample.Cache_References = maddox.Metric(value)
-	sample.Cache_Misses = maddox.Metric(value)
-	sample.Branch_Misses = maddox.Metric(value)
+	sample.RSS_Bytes_Max = maddox.Resident_Bytes(value)
+	sample.CPU_Cycles = maddox.Cycle_Count(value)
+	sample.Instructions = maddox.Instruction_Count(value)
+	sample.Cache_References = maddox.Cache_Reference_Count(value)
+	sample.Cache_Misses = maddox.Cache_Miss_Count(value)
+	sample.Branch_Misses = maddox.Branch_Miss_Count(value)
 	sample.CPU_User = time.Duration(value)
 	sample.CPU_System = time.Duration(value)
 	return sample
@@ -317,7 +384,8 @@ func decode_scenario(data []byte) (s scenario) {
 	s.Allow_Fail = flags&8 != 0
 	s.Broken_Output = flags&16 != 0
 	s.Path_Wide = flags&32 != 0
-	s.Path_Empty = flags&64 != 0
+	s.Arguments_Max = flags&64 != 0
+	s.Wall_Pattern = flags&128 != 0
 	// Clamp the command and word counts to maddox's own structural ceilings, and budget the
 	// total argument bytes so the rendered report stays under its width ceiling. Importing the
 	// library bounds lets the driver reach the real maxima (COMMAND_SET_MAX, COMMAND_WORDS_MAX)
@@ -352,24 +420,32 @@ func decode_scenario(data []byte) (s scenario) {
 // counts as full-range ints, and six sizes as full-range uint64s — the ranges the
 // Machine_Specs invariants witness at their boundaries.
 func decode_machine(c *cursor) (m maddox.Machine_Specs) {
-	m.CPU_Model = host_text(c)
-	m.CPU_Arch = host_text(c)
-	m.Operating_System_Name = host_text(c)
-	m.Operating_System_Version = host_text(c)
-	m.Kernel_Version = host_text(c)
+	m.CPU_Model = maddox.Processor_Model(host_text(c))
+	m.CPU_Arch = maddox.Processor_Architecture(host_text(c))
+	m.Operating_System_Name = maddox.Operating_System_Name(host_text(c))
+	m.Operating_System_Version = maddox.Operating_System_Version(host_text(c))
+	m.Kernel_Version = maddox.Kernel_Version(host_text(c))
 	// A real acquire_machine_specs reports realistic, render-safe values; clamp to the
 	// domain ceilings so the simulated host honors that contract rather than tripping the
 	// table's render guards, which only an out-of-contract probe would.
-	m.Physical_Cores = maddox.Cores(min(int(cursor_u16(c)), maddox.CORES_COUNT_MAX))
-	m.Logical_Cores = maddox.Cores(min(int(cursor_u16(c)), maddox.CORES_COUNT_MAX))
-	m.Performance_Cores = maddox.Cores(min(int(cursor_u16(c)), maddox.CORES_COUNT_MAX))
-	m.Efficiency_Cores = maddox.Cores(min(int(cursor_u16(c)), maddox.CORES_COUNT_MAX))
-	m.CPU_Frequency_Hz_Max = maddox.Hertz(min(cursor_u64(c), maddox.HERTZ_MAX))
-	m.Cache_L1_Bytes = maddox.Byte_Size(min(cursor_u64(c), maddox.BYTE_SIZE_MAX))
-	m.Cache_L2_Bytes = maddox.Byte_Size(min(cursor_u64(c), maddox.BYTE_SIZE_MAX))
-	m.Cache_L3_Bytes = maddox.Byte_Size(min(cursor_u64(c), maddox.BYTE_SIZE_MAX))
-	m.RAM_Total_Bytes = maddox.Byte_Size(min(cursor_u64(c), maddox.BYTE_SIZE_MAX))
-	m.Storage_Total_Bytes = maddox.Byte_Size(min(cursor_u64(c), maddox.BYTE_SIZE_MAX))
+	m.Physical_Cores = maddox.Physical_Core_Count(
+		min(int(cursor_u16(c)), maddox.CORES_COUNT_MAX))
+	m.Logical_Cores = maddox.Logical_Core_Count(
+		min(int(cursor_u16(c)), maddox.CORES_COUNT_MAX))
+	m.Performance_Cores = maddox.Performance_Core_Count(
+		min(int(cursor_u16(c)), maddox.CORES_COUNT_MAX))
+	m.Efficiency_Cores = maddox.Efficiency_Core_Count(
+		min(int(cursor_u16(c)), maddox.CORES_COUNT_MAX))
+	m.CPU_Frequency_Hz_Max = maddox.Processor_Frequency(
+		min(cursor_u64(c), maddox.HERTZ_MAX))
+	m.Cache_L1_Bytes = maddox.Level_1_Cache_Size(
+		min(cursor_u64(c), maddox.BYTE_SIZE_MAX))
+	m.Cache_L2_Bytes = maddox.Level_2_Cache_Size(
+		min(cursor_u64(c), maddox.BYTE_SIZE_MAX))
+	m.Cache_L3_Bytes = maddox.Level_3_Cache_Size(
+		min(cursor_u64(c), maddox.BYTE_SIZE_MAX))
+	m.RAM_Total_Bytes = maddox.Memory_Size(min(cursor_u64(c), maddox.BYTE_SIZE_MAX))
+	m.Storage_Total_Bytes = maddox.Storage_Size(min(cursor_u64(c), maddox.BYTE_SIZE_MAX))
 	return m
 }
 
@@ -428,8 +504,11 @@ func build(s scenario) (data []byte) {
 	if s.Path_Wide {
 		flags |= 32
 	}
-	if s.Path_Empty {
+	if s.Arguments_Max {
 		flags |= 64
+	}
+	if s.Wall_Pattern {
+		flags |= 128
 	}
 	writer_u8(w, flags)
 	writer_u16(w, uint16(s.Commands))
@@ -597,6 +676,19 @@ func seeds_saturation() (seeds [][]byte) {
 			s.Deltas = []int64{100, -100}
 			s.Divergence = maddox.METRIC_MAX / 4
 			s.Color = true
+			s.Wall_Pattern = true
+		}),
+		// Both commands use the same wall distribution, so each comparison side reaches
+		// the maximum wall-time outlier count.
+		with(func(s *scenario) {
+			json(s)
+			s.Commands = 2
+			s.Runs = maddox.SAMPLES_MAX
+			s.Sleep = 1000
+			s.Center_Count = maddox.SAMPLES_MAX/2 + 1
+			s.Deltas = []int64{100, -100}
+			s.Divergence = 0
+			s.Wall_Pattern = true
 		}),
 		// A full single-command bimodal distribution — half at zero, half at the metric
 		// ceiling — maximizes the sum of squared deviations, so the accumulator's high word
@@ -607,7 +699,10 @@ func seeds_saturation() (seeds [][]byte) {
 			s.Runs = maddox.SAMPLES_MAX
 			s.Sleep = 0
 			s.Base = maddox.METRIC_MAX / 2
-			s.Deltas = []int64{maddox.METRIC_MAX / 2, -(maddox.METRIC_MAX / 2)}
+			s.Deltas = []int64{
+				maddox.METRIC_MAX - maddox.METRIC_MAX/2,
+				-(maddox.METRIC_MAX / 2),
+			}
 			s.Progress = true
 			s.Warmup = 1
 		}),
@@ -623,14 +718,14 @@ func seeds_saturation() (seeds [][]byte) {
 func low_word_congruence_seed() (seed []byte) {
 	return with(func(s *scenario) {
 		s.Commands = 1
-		s.Runs = 15
+		s.Runs = 16
 		s.Sleep = 0
 		s.Base = maddox.METRIC_MAX / 2
 		s.Deltas = []int64{
 			826094412318, -826094412318, 3456986167502, -3456986167502,
 			3426655266655, -3426655266655, 779384028002, -779384028002,
 			990395852196, -990395852196, 1437896511053, -1437896511053,
-			512601834219, -512601834219, 1,
+			512601834219, -512601834219, 1, 0,
 		}
 	})
 }
@@ -685,9 +780,7 @@ func seeds_overflow() (seeds [][]byte) {
 	}
 }
 
-// Seeds_progress exercises the progress counter with varied command shapes, so the
-// progress-label path witnesses the one-word, empty, two-byte, and full-length words a
-// plain non-progress run renders elsewhere.
+// Seeds_progress exercises the progress counter with varied command shapes.
 func seeds_progress() (seeds [][]byte) {
 	progress := func(mutate func(s *scenario)) (data []byte) {
 		return with(func(s *scenario) {
@@ -712,7 +805,7 @@ func seeds_progress() (seeds [][]byte) {
 		progress(func(s *scenario) { s.Word_Bytes = 0 }),
 		progress(func(s *scenario) { s.Word_Bytes = 2 }),
 		progress(func(s *scenario) { s.Word_Bytes = maddox.COMMAND_WORD_BYTES_MAX }),
-		total(1), total(-1), total(math.MinInt64), total(math.MaxInt64),
+		total(0), total(1), total(2), total(-1), total(math.MinInt64), total(math.MaxInt64),
 		// Progress labels at their one- and two-byte shapes: a single short-path command.
 		with(func(s *scenario) {
 			s.Progress = true
@@ -735,12 +828,9 @@ func seeds_progress() (seeds [][]byte) {
 			s.Path_Wide = true
 			s.Path_Bytes = maddox.PROGRESS_LABEL_RUNES_MAX
 		}),
-		// A single command with an empty executable and no arguments: the label is empty.
+		// A full operating-system argument list reaches the command-line input ceiling.
 		with(func(s *scenario) {
-			s.Progress = true
-			s.Commands = 1
-			s.Words = 1
-			s.Path_Empty = true
+			s.Arguments_Max = true
 		}),
 	}
 }
@@ -758,7 +848,16 @@ func seeds_machine_values() (seeds [][]byte) {
 		return func(s *scenario) { full_machine(s); set_all_sizes(&s.Machine, value) }
 	}
 	frequency := func(value maddox.Hertz) (mutate func(s *scenario)) {
-		return func(s *scenario) { full_machine(s); s.Machine.CPU_Frequency_Hz_Max = value }
+		return func(s *scenario) {
+			full_machine(s)
+			s.Machine.CPU_Frequency_Hz_Max = maddox.Processor_Frequency(value)
+		}
+	}
+	json_value := func(mutate func(s *scenario)) (wrapped func(s *scenario)) {
+		return func(s *scenario) {
+			json(s)
+			mutate(s)
+		}
 	}
 	return [][]byte{
 		with(cores(0)), with(cores(1)), with(cores(2)), with(cores(maddox.CORES_COUNT_MAX)),
@@ -768,24 +867,30 @@ func seeds_machine_values() (seeds [][]byte) {
 		with(size(1023 * (1 << 30))),
 		with(frequency(0)), with(frequency(1)), with(frequency(2)),
 		with(frequency(maddox.HERTZ_MAX)),
+		with(json_value(cores(0))), with(json_value(cores(1))),
+		with(json_value(cores(2))), with(json_value(cores(maddox.CORES_COUNT_MAX))),
+		with(json_value(size(0))), with(json_value(size(1))),
+		with(json_value(size(2))), with(json_value(size(maddox.BYTE_SIZE_MAX))),
+		with(json_value(frequency(0))), with(json_value(frequency(1))),
+		with(json_value(frequency(2))), with(json_value(frequency(maddox.HERTZ_MAX))),
 	}
 }
 
 // Set_all_cores sets every core-count field to value.
 func set_all_cores(m *maddox.Machine_Specs, value maddox.Cores) {
-	m.Physical_Cores = value
-	m.Logical_Cores = value
-	m.Performance_Cores = value
-	m.Efficiency_Cores = value
+	m.Physical_Cores = maddox.Physical_Core_Count(value)
+	m.Logical_Cores = maddox.Logical_Core_Count(value)
+	m.Performance_Cores = maddox.Performance_Core_Count(value)
+	m.Efficiency_Cores = maddox.Efficiency_Core_Count(value)
 }
 
 // Set_all_sizes sets every byte-size field to value.
 func set_all_sizes(m *maddox.Machine_Specs, value maddox.Byte_Size) {
-	m.Cache_L1_Bytes = value
-	m.Cache_L2_Bytes = value
-	m.Cache_L3_Bytes = value
-	m.RAM_Total_Bytes = value
-	m.Storage_Total_Bytes = value
+	m.Cache_L1_Bytes = maddox.Level_1_Cache_Size(value)
+	m.Cache_L2_Bytes = maddox.Level_2_Cache_Size(value)
+	m.Cache_L3_Bytes = maddox.Level_3_Cache_Size(value)
+	m.RAM_Total_Bytes = maddox.Memory_Size(value)
+	m.Storage_Total_Bytes = maddox.Storage_Size(value)
 }
 
 // Full_machine populates every host field with a realistic hybrid-CPU snapshot so the
@@ -806,6 +911,17 @@ func full_machine(s *scenario) {
 // JSON run never touches.
 func seeds_render() (seeds [][]byte) {
 	return [][]byte{
+		// One one-byte command with zero measurements is the shortest valid table.
+		with(func(s *scenario) {
+			s.Commands = 1
+			s.Words = 1
+			s.Path_Bytes = 1
+			s.Runs = 3
+			s.Base = 0
+			s.Deltas = []int64{0}
+			s.Sleep = 0
+			s.Machine = maddox.Machine_Specs{}
+		}),
 		with(full_machine),
 		with(func(s *scenario) { full_machine(s); s.Color = true }),
 		with(func(s *scenario) { full_machine(s); s.Progress = true; s.Warmup = 1 }),
@@ -848,6 +964,9 @@ func seeds_shape() (seeds [][]byte) {
 		with(func(s *scenario) { s.Commands = 0 }),
 		with(func(s *scenario) { s.Commands = 1 }),
 		with(func(s *scenario) { s.Commands = 4 }),
+		with(func(s *scenario) { json(s); s.Commands = 0 }),
+		with(func(s *scenario) { json(s); s.Commands = 1 }),
+		with(func(s *scenario) { json(s); s.Commands = maddox.COMMAND_SET_MAX }),
 		with(func(s *scenario) { s.Words = 1 }),
 		with(func(s *scenario) { s.Words = 3 }),
 		with(func(s *scenario) { s.Word_Bytes = 0 }),
@@ -887,16 +1006,18 @@ func seeds_variance() (seeds [][]byte) {
 		}),
 		// A flat distribution (zero IQR) with one and two spikes: each spike falls beyond
 		// Tukey's fences, so the outlier count is the number of spikes.
-		with(func(s *scenario) { s.Base = 1000; s.Runs = 10; s.Deltas = spike_deltas() }),
-		with(func(s *scenario) { s.Base = 1000; s.Runs = 20; s.Deltas = spike_deltas() }),
+		outlier_seed(10),
+		outlier_seed(20),
 		// Three spikes, so the outlier count is an ordinary value past its small shapes.
-		with(func(s *scenario) { s.Base = 1000; s.Runs = 30; s.Deltas = spike_deltas() }),
+		outlier_seed(30),
 		// A significant slowdown: the second command measures far above the reference with
 		// tight variance, so the comparison clears the confidence band.
 		with(func(s *scenario) {
 			s.Base = 1000
 			s.Divergence = 1000
 			s.Deltas = []int64{0, 1, -1}
+			s.Sleep = 1000
+			s.Wall_Pattern = true
 		}),
 		// A wide byte-metric distribution (values 0 and ~2 TiB) whose mean and standard
 		// deviation each render a full seven-byte cell.
@@ -913,8 +1034,20 @@ func seeds_variance() (seeds [][]byte) {
 			s.Base = 1000
 			s.Divergence = -100
 			s.Deltas = []int64{0, 1, -1}
+			s.Sleep = 1000
+			s.Wall_Pattern = true
 		}),
 	}
+}
+
+// Outlier_seed repeats one spike per ten runs for every measured metric.
+func outlier_seed(runs int) (seed []byte) {
+	return with(func(s *scenario) {
+		s.Base = 1000
+		s.Runs = runs
+		s.Deltas = spike_deltas()
+		s.Wall_Pattern = true
+	})
 }
 
 // Spike_deltas is nine zero deviations and one large one, so one in ten samples is a
@@ -973,7 +1106,9 @@ func seeds_failure() (seeds [][]byte) {
 // Seeds_configuration feeds the injected config ints across the range Main tolerates.
 func seeds_configuration() (seeds [][]byte) {
 	return [][]byte{
+		with(func(s *scenario) { s.Runs = 0; s.Duration = 1 }),
 		with(func(s *scenario) { s.Runs = 1 }),
+		with(func(s *scenario) { s.Runs = 2 }),
 		// A disabled or absurd run cap witnesses the Runs_Max boundary from the input
 		// alone; a one-grain budget stops the loop at the quorum instead of grinding to
 		// the sample ceiling, so these seeds cost three runs, not ten thousand.
@@ -990,21 +1125,26 @@ func seeds_configuration() (seeds [][]byte) {
 // Seeds_machine drives the host-text field lengths to their boundaries; the numeric
 // host fields are explored by the fuzzer within their render-safe realistic ranges.
 func seeds_machine() (seeds [][]byte) {
-	host := func(count int) (mutate func(s *scenario)) {
-		return func(s *scenario) { json(s); set_hosts(&s.Machine, count) }
+	host := func(count int, format uint8) (mutate func(s *scenario)) {
+		return func(s *scenario) {
+			s.Format = format
+			set_hosts(&s.Machine, count)
+		}
 	}
 	return [][]byte{
-		with(host(0)), with(host(1)), with(host(2)), with(host(3)),
-		with(host(maddox.HOST_TEXT_BYTES_MAX)),
+		with(host(0, 0)), with(host(1, 0)), with(host(2, 0)),
+		with(host(maddox.HOST_TEXT_BYTES_MAX, 0)),
+		with(host(0, 1)), with(host(1, 1)), with(host(2, 1)),
+		with(host(3, 1)), with(host(maddox.HOST_TEXT_BYTES_MAX, 1)),
 	}
 }
 
 // Set_hosts sets every host-text field to a run of 'x' of the given byte count.
 func set_hosts(m *maddox.Machine_Specs, count int) {
 	text := maddox.Host_Text(strings.Repeat("x", count))
-	m.CPU_Model = text
-	m.CPU_Arch = text
-	m.Operating_System_Name = text
-	m.Operating_System_Version = text
-	m.Kernel_Version = text
+	m.CPU_Model = maddox.Processor_Model(text)
+	m.CPU_Arch = maddox.Processor_Architecture(text)
+	m.Operating_System_Name = maddox.Operating_System_Name(text)
+	m.Operating_System_Version = maddox.Operating_System_Version(text)
+	m.Kernel_Version = maddox.Kernel_Version(text)
 }

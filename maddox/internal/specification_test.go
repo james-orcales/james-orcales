@@ -15,6 +15,51 @@ import (
 // The specification tests mirror SPECIFICATION.md: one leaf per heading, in
 // heading order, asserting only the public surface of the maddox library.
 
+// Test_Command_Line_Arguments verifies that Main parses injected operating-system
+// arguments into commands and sampling limits before it benchmarks.
+func Test_Command_Line_Arguments(t *testing.T) {
+	output := &bytes.Buffer{}
+	error_output := &bytes.Buffer{}
+	measured := []io.Process_Request{}
+	code := maddox.Main(maddox.Main_Input{
+		Arguments: maddox.Arguments{
+			"maddox", "NAME=value echo hi", "-duration=0", "-runs=3",
+			"-warmup=0", "-json",
+		},
+		Sampler: maddox.Sampler{
+			Measure: func(command io.Process_Request) (result maddox.Run_Result) {
+				measured = append(measured, command)
+				result.Sample.Wall = time.MILLISECOND
+				return result
+			},
+		},
+		Output:       output,
+		Error_Output: error_output,
+	})
+	if code != maddox.EXIT_SUCCESS {
+		t.Fatalf("exit code = %d, want success: %s", code, error_output.String())
+	}
+	if len(measured) != 3 {
+		t.Fatalf("measurements = %d, want 3", len(measured))
+	}
+	command := measured[0]
+	if command.Path != "echo" {
+		t.Fatalf("command path = %q, want echo", command.Path)
+	}
+	if len(command.Arguments) != 1 {
+		t.Fatalf("command arguments = %v, want [hi]", command.Arguments)
+	}
+	if command.Arguments[0] != "hi" {
+		t.Fatalf("command arguments = %v, want [hi]", command.Arguments)
+	}
+	if len(command.Environment) != 1 {
+		t.Fatalf("command environment = %v, want [NAME=value]", command.Environment)
+	}
+	if command.Environment[0] != "NAME=value" {
+		t.Fatalf("command environment = %v, want [NAME=value]", command.Environment)
+	}
+}
+
 // Test_Statistics_Distribution verifies that Measurement_Compute reduces a set of
 // samples to the mean, standard deviation, extrema, median, and quartiles poop
 // reports — checked against a hand-computed five-point set.
@@ -69,7 +114,10 @@ func Test_Comparison_Reference(t *testing.T) {
 		Sample_Count:       10,
 		Unit:               "count",
 	}
-	delta := maddox.Compare(&maddox.Compare_Input{Reference: reference, Candidate: reference})
+	delta := maddox.Compare(&maddox.Compare_Input{
+		Reference: maddox.Reference_Measurement(reference),
+		Candidate: maddox.Candidate_Measurement(reference),
+	})
 	if delta.Diff_Percent != 0 {
 		t.Fatalf("diff percent = %d, want 0", delta.Diff_Percent)
 	}
@@ -84,7 +132,10 @@ func Test_Comparison_Reference(t *testing.T) {
 		Sample_Count:       10,
 		Unit:               "count",
 	}
-	big := maddox.Compare(&maddox.Compare_Input{Reference: large, Candidate: large})
+	big := maddox.Compare(&maddox.Compare_Input{
+		Reference: maddox.Reference_Measurement(large),
+		Candidate: maddox.Candidate_Measurement(large),
+	})
 	if big.Significant {
 		t.Fatal("a large measurement compared to itself must not be significant")
 	}
@@ -106,7 +157,10 @@ func Test_Comparison_Significance(t *testing.T) {
 		Sample_Count:       20,
 		Unit:               "count",
 	}
-	delta := maddox.Compare(&maddox.Compare_Input{Reference: reference, Candidate: candidate})
+	delta := maddox.Compare(&maddox.Compare_Input{
+		Reference: maddox.Reference_Measurement(reference),
+		Candidate: maddox.Candidate_Measurement(candidate),
+	})
 	if !delta.Significant {
 		t.Fatal("a doubled mean with tight variance must be significant")
 	}
@@ -118,11 +172,10 @@ func Test_Comparison_Significance(t *testing.T) {
 	}
 }
 
-// Test_Sampling_Budget verifies that Main keeps sampling until the time budget is
-// spent: at 10ms per run a 55ms budget admits exactly six runs, the run after the
-// budget elapses being the one that stops the loop.
+// Test_Sampling_Budget verifies that Main keeps sampling until the parsed time
+// budget is spent. Five 200ms runs consume a one-second budget.
 func Test_Sampling_Budget(t *testing.T) {
-	per_run := 10 * time.MILLISECOND
+	per_run := 200 * time.MILLISECOND
 	calls := 0
 	sampler := maddox.Sampler{
 		Measure: func(_ io.Process_Request) (result maddox.Run_Result) {
@@ -134,17 +187,18 @@ func Test_Sampling_Budget(t *testing.T) {
 		},
 	}
 	input := &maddox.Main_Input{
-		Commands:     []io.Process_Request{{Path: "noop"}},
+		Arguments: maddox.Arguments{
+			"maddox", "noop", "-duration=1", "-runs=0", "-warmup=0",
+		},
 		Sampler:      sampler,
-		Duration_Max: 55 * time.MILLISECOND,
 		Output:       &bytes.Buffer{},
-		Stderr:       &bytes.Buffer{},
+		Error_Output: &bytes.Buffer{},
 	}
 	if code := maddox.Main(*input); code != 0 {
 		t.Fatalf("exit code = %d, want 0", code)
 	}
-	if calls != 6 {
-		t.Fatalf("runs = %d, want 6 within a 55ms budget at 10ms/run", calls)
+	if calls != 5 {
+		t.Fatalf("runs = %d, want 5 within a 1s budget at 200ms/run", calls)
 	}
 }
 
@@ -161,12 +215,12 @@ func Test_Sampling_Runs(t *testing.T) {
 		},
 	}
 	input := &maddox.Main_Input{
-		Commands:     []io.Process_Request{{Path: "noop"}},
+		Arguments: maddox.Arguments{
+			"maddox", "noop", "-duration=0", "-runs=5", "-warmup=0",
+		},
 		Sampler:      sampler,
-		Duration_Max: 0,
-		Runs_Max:     5,
 		Output:       &bytes.Buffer{},
-		Stderr:       &bytes.Buffer{},
+		Error_Output: &bytes.Buffer{},
 	}
 	maddox.Main(*input)
 	if calls != 5 {
@@ -177,21 +231,23 @@ func Test_Sampling_Runs(t *testing.T) {
 // Test_Sampling_Minimum verifies that Main runs a command at least three times even
 // when the budget is already spent, so the statistics always have a quorum.
 func Test_Sampling_Minimum(t *testing.T) {
-	per_run := 10 * time.MILLISECOND
+	per_run := time.SECOND
 	calls := 0
 	sampler := maddox.Sampler{
 		Measure: func(_ io.Process_Request) (result maddox.Run_Result) {
 			calls++
 			result.Sample.Wall = per_run
+			result.Completed_At = time.Moment(time.Duration(calls) * per_run)
 			return result
 		},
 	}
 	input := &maddox.Main_Input{
-		Commands:     []io.Process_Request{{Path: "noop"}},
+		Arguments: maddox.Arguments{
+			"maddox", "noop", "-duration=1", "-runs=0", "-warmup=0",
+		},
 		Sampler:      sampler,
-		Duration_Max: time.NANOSECOND,
 		Output:       &bytes.Buffer{},
-		Stderr:       &bytes.Buffer{},
+		Error_Output: &bytes.Buffer{},
 	}
 	maddox.Main(*input)
 	if calls != 3 {
@@ -203,24 +259,24 @@ func Test_Sampling_Minimum(t *testing.T) {
 // two warmup runs plus the three-run minimum is five measurements taken, but the
 // report counts only the three that were kept.
 func Test_Sampling_Warmup(t *testing.T) {
-	per_run := 10 * time.MILLISECOND
+	per_run := time.SECOND
 	calls := 0
 	sampler := maddox.Sampler{
 		Measure: func(_ io.Process_Request) (result maddox.Run_Result) {
 			calls++
 			result.Sample.Wall = per_run
+			result.Completed_At = time.Moment(time.Duration(calls) * per_run)
 			return result
 		},
 	}
 	output := &bytes.Buffer{}
 	input := &maddox.Main_Input{
-		Commands:     []io.Process_Request{{Path: "noop"}},
+		Arguments: maddox.Arguments{
+			"maddox", "noop", "-duration=1", "-runs=0", "-warmup=2", "-json",
+		},
 		Sampler:      sampler,
-		Duration_Max: time.NANOSECOND,
-		Warmup_Count: 2,
-		Format:       maddox.OUTPUT_FORMAT_JSON,
 		Output:       output,
-		Stderr:       &bytes.Buffer{},
+		Error_Output: &bytes.Buffer{},
 	}
 	maddox.Main(*input)
 	if calls != 5 {
@@ -245,12 +301,12 @@ func Test_Output_Document(t *testing.T) {
 	}
 	output := &bytes.Buffer{}
 	input := &maddox.Main_Input{
-		Commands:     []io.Process_Request{{Path: "a"}, {Path: "b"}},
+		Arguments: maddox.Arguments{
+			"maddox", "a", "b", "-duration=0", "-runs=3", "-warmup=0", "-json",
+		},
 		Sampler:      sampler,
-		Duration_Max: time.NANOSECOND,
-		Format:       maddox.OUTPUT_FORMAT_JSON,
 		Output:       output,
-		Stderr:       &bytes.Buffer{},
+		Error_Output: &bytes.Buffer{},
 	}
 	maddox.Main(*input)
 	document := decode(t, output)
@@ -283,11 +339,12 @@ func Test_Output_Failure(t *testing.T) {
 	}
 	stderr := &bytes.Buffer{}
 	input := &maddox.Main_Input{
-		Commands:     []io.Process_Request{{Path: "broken"}},
+		Arguments: maddox.Arguments{
+			"maddox", "broken", "-duration=0", "-runs=3", "-warmup=0",
+		},
 		Sampler:      sampler,
-		Duration_Max: time.NANOSECOND,
 		Output:       &bytes.Buffer{},
-		Stderr:       stderr,
+		Error_Output: stderr,
 	}
 	if code := maddox.Main(*input); code == 0 {
 		t.Fatal("a non-zero exit must abort with a non-zero status")
@@ -338,8 +395,8 @@ func Test_Table_Units(t *testing.T) {
 		Q1: bytes_2mib, Q3: bytes_2mib, Sample_Count: 3, Unit: "bytes",
 	}
 	measurements := filled_measurements()
-	measurements.Wall_Time = wall
-	measurements.Peak_RSS = memory
+	measurements.Wall_Time = maddox.Wall_Time_Measurement(wall)
+	measurements.Peak_RSS = maddox.Peak_Resident_Measurement(memory)
 	document := maddox.Document{Benchmarks: []maddox.Benchmark{{
 		Command:      []maddox.Command_Word{"x"},
 		Runs:         3,
@@ -360,14 +417,14 @@ func Test_Table_Delta(t *testing.T) {
 	mean := fixedpoint.From_Integer(1_000_000)
 	wall := maddox.Measurement{Mean: mean, Max: mean, Sample_Count: 3, Unit: "nanoseconds"}
 	deltas := maddox.Deltas{
-		Wall_Time: maddox.Delta{
+		Wall_Time: maddox.Wall_Time_Delta(maddox.Delta{
 			Diff_Percent: fixedpoint.From_Integer(50),
 			Half_Percent: fixedpoint.From_Integer(2),
 			Significant:  true,
-		},
+		}),
 	}
 	measurements := filled_measurements()
-	measurements.Wall_Time = wall
+	measurements.Wall_Time = maddox.Wall_Time_Measurement(wall)
 	document := maddox.Document{Benchmarks: []maddox.Benchmark{
 		{Command: []maddox.Command_Word{"a"}, Runs: 3, Measurements: measurements},
 		{
@@ -387,14 +444,14 @@ func Test_Table_Color(t *testing.T) {
 	mean := fixedpoint.From_Integer(1_000_000)
 	wall := maddox.Measurement{Mean: mean, Max: mean, Sample_Count: 3, Unit: "nanoseconds"}
 	deltas := maddox.Deltas{
-		Wall_Time: maddox.Delta{
+		Wall_Time: maddox.Wall_Time_Delta(maddox.Delta{
 			Diff_Percent: fixedpoint.From_Integer(50),
 			Half_Percent: fixedpoint.From_Integer(2),
 			Significant:  true,
-		},
+		}),
 	}
 	measurements := filled_measurements()
-	measurements.Wall_Time = wall
+	measurements.Wall_Time = maddox.Wall_Time_Measurement(wall)
 	document := maddox.Document{Benchmarks: []maddox.Benchmark{
 		{Command: []maddox.Command_Word{"a"}, Runs: 3, Measurements: measurements},
 		{
@@ -423,7 +480,7 @@ func Test_Table_Sparse(t *testing.T) {
 	mean := fixedpoint.From_Integer(1_000_000)
 	wall := maddox.Measurement{Mean: mean, Max: mean, Sample_Count: 3, Unit: "nanoseconds"}
 	measurements := filled_measurements()
-	measurements.Wall_Time = wall
+	measurements.Wall_Time = maddox.Wall_Time_Measurement(wall)
 	document := maddox.Document{Benchmarks: []maddox.Benchmark{{
 		Command:      []maddox.Command_Word{"x"},
 		Runs:         3,
@@ -462,13 +519,13 @@ func Test_Machine_Document(t *testing.T) {
 		Kernel_Version:           "1.0.0",
 	}
 	maddox.Main(maddox.Main_Input{
-		Commands:     []io.Process_Request{{Path: "noop"}},
+		Arguments: maddox.Arguments{
+			"maddox", "noop", "-duration=0", "-runs=3", "-warmup=0", "-json",
+		},
 		Sampler:      sampler,
-		Duration_Max: time.NANOSECOND,
 		Machine:      specs,
-		Format:       maddox.OUTPUT_FORMAT_JSON,
 		Output:       output,
-		Stderr:       &bytes.Buffer{},
+		Error_Output: &bytes.Buffer{},
 	})
 	document := decode(t, output)
 	if document.Machine.CPU_Model != "TestCPU X1" {
@@ -538,14 +595,13 @@ func Test_Progress(t *testing.T) {
 	}
 	shown := &bytes.Buffer{}
 	maddox.Main(maddox.Main_Input{
-		Commands:     []io.Process_Request{{Path: "noop"}},
+		Arguments: maddox.Arguments{
+			"maddox", "noop", "-duration=0", "-runs=5", "-warmup=2",
+			"-progress=always",
+		},
 		Sampler:      sampler,
-		Duration_Max: 0,
-		Runs_Max:     5,
-		Warmup_Count: 2,
-		Progress:     true,
 		Output:       &bytes.Buffer{},
-		Stderr:       shown,
+		Error_Output: shown,
 	})
 	if !strings.Contains(shown.String(), "warmup 2/2") {
 		t.Fatalf("progress should report warmup, got: %q", shown.String())
@@ -556,13 +612,13 @@ func Test_Progress(t *testing.T) {
 
 	hidden := &bytes.Buffer{}
 	maddox.Main(maddox.Main_Input{
-		Commands:     []io.Process_Request{{Path: "noop"}},
+		Arguments: maddox.Arguments{
+			"maddox", "noop", "-duration=0", "-runs=5", "-warmup=0",
+			"-progress=never",
+		},
 		Sampler:      sampler,
-		Duration_Max: 0,
-		Runs_Max:     5,
-		Progress:     false,
 		Output:       &bytes.Buffer{},
-		Stderr:       hidden,
+		Error_Output: hidden,
 	})
 	if hidden.Len() != 0 {
 		t.Fatalf("progress disabled must write nothing, got: %q", hidden.String())
@@ -589,8 +645,14 @@ func filled_measurements() (measurements maddox.Measurements) {
 	size := maddox.Measurement{Sample_Count: 3, Unit: "bytes"}
 	count := maddox.Measurement{Sample_Count: 3, Unit: "count"}
 	return maddox.Measurements{
-		Wall_Time: span, Peak_RSS: size, CPU_Cycles: count, Instructions: count,
-		Cache_References: count, Cache_Misses: count, Branch_Misses: count,
-		CPU_User: span, CPU_System: span,
+		Wall_Time:        maddox.Wall_Time_Measurement(span),
+		Peak_RSS:         maddox.Peak_Resident_Measurement(size),
+		CPU_Cycles:       maddox.Cycle_Measurement(count),
+		Instructions:     maddox.Instruction_Measurement(count),
+		Cache_References: maddox.Cache_Reference_Measurement(count),
+		Cache_Misses:     maddox.Cache_Miss_Measurement(count),
+		Branch_Misses:    maddox.Branch_Miss_Measurement(count),
+		CPU_User:         maddox.User_Time_Measurement(span),
+		CPU_System:       maddox.System_Time_Measurement(span),
 	}
 }
