@@ -1,4 +1,16 @@
 
+# Main
+
+### Stays Thin
+
+The setup composition root contains fewer than 90 lines. It constructs operating-system
+capabilities, advances the IO loop, injects dependencies, and owns no setup policy.
+
+### Calls Internal Main
+
+The composition root calls internal.Main once with the constructed capabilities. Internal Main
+owns the complete bootstrap policy and returns the process status.
+
 # File System
 
 ### Reads And Writes

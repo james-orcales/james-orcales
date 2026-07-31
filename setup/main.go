@@ -3,196 +3,83 @@ package main
 
 import (
 	"errors"
-	"io"
 	"os"
-	"path/filepath"
 	"runtime"
 
 	"local/james-orcales/setup/internal"
 	sysio "local/james-orcales/shared/io"
 	system_io "local/james-orcales/shared/io/default"
-	jlogcore "local/james-orcales/shared/jlog"
 	jlog "local/james-orcales/shared/jlog/default"
-	systime "local/james-orcales/shared/time"
-	timeos "local/james-orcales/shared/time/default"
+	system_time "local/james-orcales/shared/time/default"
 )
 
-// EXIT_USAGE identifies an invalid setup execution environment.
-const EXIT_USAGE = 2
-
-// DIRECTORY_PERMISSIONS gives new parent directories owner-write access.
-const DIRECTORY_PERMISSIONS = 0o755
-
-// COPY_BYTES_MAX bounds one copied font file at 64 MiB.
-const COPY_BYTES_MAX = 67108864
-
-// SCHEDULER_ENTRY_COUNT permits cleanup operations without a large kernel ring. Setup submits
-// commands and file operations in sequence.
-const SCHEDULER_ENTRY_COUNT uint16 = 32
-
-// PROCESS_DURATION_MAX permits a slow first build but stops a process group that cannot finish.
-const PROCESS_DURATION_MAX = 6 * systime.HOUR
-
-// ROOT_REFUSAL prevents the bootstrap from creating root-owned home files.
-const ROOT_REFUSAL = "run as your normal user, not root"
-
 func main() {
-	clock, _ := timeos.New_Operating_System_Clock()
-	logger := jlogcore.New_Console_Logger(jlogcore.New_Console_Logger_Input{
-		Console: os.Stderr, Color: is_terminal(os.Stderr),
-		Floor: jlogcore.LEVEL_DEBUG, Clock: clock,
-	})
-	if os.Geteuid() == 0 {
-		jlog.Logger_Error(logger, ROOT_REFUSAL)
-		os.Exit(EXIT_USAGE)
-	}
+	clock, _ := system_time.New_Operating_System_Clock()
 	home, home_err := os.UserHomeDir()
-	if home_err != nil {
-		jlog.Logger_Error(logger, "cannot resolve home directory", jlog.Err(home_err))
-		os.Exit(EXIT_USAGE)
+	color := false
+	if console, console_err := os.Stderr.Stat(); console_err == nil {
+		color = console.Mode()&os.ModeCharDevice != 0
+	}
+	environment, status := setup.New_Environment(&setup.Environment_Input{
+		Clock: clock, Console: os.Stderr, Effective_User_Identifier: os.Geteuid(),
+		Color: color, Home_Directory: home, Home_Error: home_err,
+		Operating_System: runtime.GOOS, Cargo_Directory: os.Getenv("CARGO_HOME"),
+		Data_Directory: os.Getenv("XDG_DATA_HOME"), Stdout: os.Stdout, Stderr: os.Stderr,
+	})
+	if status != 0 {
+		os.Exit(status)
 	}
 	loop, driver, loop_err := system_io.New_Operating_System_IO(
-		clock, SCHEDULER_ENTRY_COUNT, 0,
-	)
+		environment.Clock, setup.SCHEDULER_ENTRY_COUNT, setup.SCHEDULER_FLAGS)
 	if loop_err != nil {
-		jlog.Logger_Error(logger, "cannot initialize IO", jlog.Err(loop_err))
-		os.Exit(EXIT_USAGE)
+		jlog.Logger_Error(environment.Logger, "cannot initialize IO", jlog.Err(loop_err))
+		os.Exit(setup.EXIT_USAGE)
 	}
-	shell := setup.Shell{
-		Spawn:  spawn_command(loop, driver),
-		Stdout: os.Stdout, Stderr: os.Stderr, Logger: logger,
-	}
-	steps := setup.Bootstrap_Steps(&setup.Bootstrap_Steps_Input{
-		Home_Directory: home, Operating_System: runtime.GOOS,
-		Cargo_Directory: os.Getenv("CARGO_HOME"),
-		Data_Directory:  os.Getenv("XDG_DATA_HOME"),
-		File_System:     file_system(loop, driver),
-		Shell:           shell, File_Present: file_present, Copy_File: copy_file,
-	})
-	status := setup.Bootstrap(&setup.Bootstrap_Input{Steps: steps, Logger: logger})
-	driver.Deinit()
-	os.Exit(status)
-}
-
-// Reports whether file is a terminal without an external terminal dependency.
-func is_terminal(file *os.File) (terminal bool) {
-	info, stat_err := file.Stat()
-	if stat_err != nil {
-		return false
-	}
-	return info.Mode()&os.ModeCharDevice != 0
-}
-
-// Returns the synchronous process operation that only the composition root drives.
-func spawn_command(loop sysio.IO, driver sysio.Driver) (spawn setup.Spawn) {
-	return func(request sysio.Process_Request) (result sysio.Process_Result) {
-		var completion sysio.Completion
-		done := false
-		complete := func(
-			_ *sysio.Completion, spawned sysio.Process_Result, spawn_err error,
-		) {
-			if spawn_err != nil {
-				spawned.Exit = 1
+	// Internal code owns each transition. This root only advances one callback-owned operation.
+	drive := func(operation setup.Operation) (err error) {
+		for !operation.Complete() {
+			completed, drive_err := driver.Run_Until(operation.Ready, sysio.FOREVER)
+			if drive_err != nil {
+				return drive_err
 			}
-			result = spawned
-			done = true
+			if !completed {
+				return errors.New("the IO operation did not complete")
+			}
+			if !operation.Complete() {
+				if operation.Rearm != nil {
+					operation.Rearm()
+				}
+			}
 		}
-		loop.Spawn(&completion, complete, request, PROCESS_DURATION_MAX)
-		completed, drive_err := driver.Run_Until(
-			func() (finished bool) { return done }, sysio.FOREVER,
-		)
-		if drive_err != nil {
-			result.Exit = 1
-		}
-		if !completed {
-			result.Exit = 1
-		}
-		return result
+		return nil
 	}
-}
-
-// Converts asynchronous file IO into the synchronous operations that setup needs. The Driver
-// stays in package main because another package must not control the process timeline.
-func file_system(loop sysio.IO, driver sysio.Driver) (system setup.File_System) {
-	return setup.File_System{
-		Read_Directory: loop.Read_Directory,
-		Read: func(path string) (contents []byte, found bool, err error) {
-			return read_file(loop, driver, path)
-		},
-		Write: func(path string, contents []byte) (err error) {
-			return write_file(loop, driver, path, contents)
-		},
-	}
-}
-
-// Drives the callback-owned read state. The root advances time, while setup owns its sequence.
-func read_file(
-	loop sysio.IO, driver sysio.Driver, path string,
-) (contents []byte, found bool, err error) {
-	read := setup.Read_File(loop, path)
-	for !read.Complete {
-		completed, drive_err := driver.Run_Until(
-			func() (finished bool) { return read.Ready }, sysio.FOREVER,
-		)
-		if drive_err != nil {
+	file_system := setup.File_System{Read_Directory: loop.Read_Directory, Status: loop.Status}
+	file_system.Read = func(path string, buffer_size int) (
+		contents []byte, found bool, err error) {
+		operation := setup.Read_File(loop, path, buffer_size)
+		if drive_err := drive(operation.Operation); drive_err != nil {
 			return nil, false, drive_err
 		}
-		if !completed {
-			return nil, false, errors.New("the file read did not complete")
+		return setup.File_Read_Result(operation)
+	}
+	file_system.Write = func(path string, contents []byte) (err error) {
+		operation := setup.Write_File(loop, path, contents)
+		if drive_err := drive(operation.Operation); drive_err != nil {
+			return drive_err
 		}
-		if !read.Complete {
-			setup.File_Read_Rearm(read)
+		return setup.File_Write_Error(operation)
+	}
+	shell := setup.Shell{Stdout: environment.Stdout, Stderr: environment.Stderr}
+	shell.Logger = environment.Logger
+	shell.Spawn = func(request sysio.Process_Request) (result sysio.Process_Result) {
+		operation := setup.Spawn_Process(loop, request)
+		if drive_err := drive(operation.Operation); drive_err != nil {
+			return sysio.Process_Result{Exit: 1}
 		}
+		return setup.Process_Operation_Result(operation)
 	}
-	return setup.File_Read_Result(read)
-}
-
-// Drives the callback-owned write state. Close remains sequenced behind the write callback.
-func write_file(
-	loop sysio.IO, driver sysio.Driver, path string, contents []byte,
-) (err error) {
-	write := setup.Write_File(loop, path, contents)
-	completed, drive_err := driver.Run_Until(
-		func() (finished bool) { return write.Complete }, sysio.FOREVER,
-	)
-	if drive_err != nil {
-		return drive_err
-	}
-	if !completed {
-		return errors.New("the file write did not complete")
-	}
-	return setup.File_Write_Error(write)
-}
-
-// Reports whether path identifies an existing file.
-func file_present(path string) (present bool) {
-	_, stat_err := os.Stat(path)
-	return stat_err == nil
-}
-
-// Copies one bounded file after it creates the destination parent directory.
-func copy_file(input *setup.File_Copy_Input) (err error) {
-	source, open_err := os.Open(input.Source)
-	if open_err != nil {
-		return open_err
-	}
-	defer source.Close()
-	mkdir_err := os.MkdirAll(filepath.Dir(input.Destination), DIRECTORY_PERMISSIONS)
-	if mkdir_err != nil {
-		return mkdir_err
-	}
-	destination, create_err := os.Create(input.Destination)
-	if create_err != nil {
-		return create_err
-	}
-	_, copy_err := io.CopyN(destination, source, COPY_BYTES_MAX)
-	if copy_err == nil {
-		destination.Close()
-		return errors.New("source exceeds the maximum copy size")
-	}
-	if !errors.Is(copy_err, io.EOF) {
-		destination.Close()
-		return copy_err
-	}
-	return destination.Close()
+	input := setup.Main_Input{Environment: environment, File_System: file_system, Shell: shell}
+	status = setup.Main(&input)
+	driver.Deinit()
+	os.Exit(status)
 }

@@ -1,7 +1,7 @@
 // Package setup is the pure library tier of the setup binary, the one-shot
 // bootstrap for this machine. It mirrors a tree of dotfiles into the home
 // directory in one direction, repo to home — Plan diffs two injected filesystems
-// and returns the writes a sync would make, and Main performs them through an
+// and returns the writes a sync would make, and Mirror performs them through an
 // injected writer — Install_Neovim builds and installs the vendored Neovim, and
 // Install_Fonts copies the vendored fonts into the OS font directory. Every entry
 // binds to no real filesystem and stays a black box under test.
@@ -18,6 +18,7 @@ import (
 
 	sysio "local/james-orcales/shared/io"
 	"local/james-orcales/shared/jlog"
+	systime "local/james-orcales/shared/time"
 )
 
 // DOTFILE_BYTES_MAX bounds a single dotfile read into one fixed buffer. 1 MiB
@@ -25,17 +26,96 @@ import (
 // input, satisfying the linter's unbounded-read ban.
 const DOTFILE_BYTES_MAX = 1048576
 
+// COPY_BYTES_MAX bounds one copied font file at 64 MiB.
+const COPY_BYTES_MAX = 67108864
+
 // EXIT_FAILURE is the process exit code for a planning or write failure during
 // an otherwise well-formed run.
 const EXIT_FAILURE = 1
+
+// EXIT_USAGE identifies an invalid setup execution environment.
+const EXIT_USAGE = 2
+
+// SCHEDULER_ENTRY_COUNT permits cleanup operations without a large kernel ring. Setup submits
+// commands and file operations in sequence.
+const SCHEDULER_ENTRY_COUNT uint16 = 32
+
+// SCHEDULER_FLAGS selects the default scheduler behavior on each operating system.
+const SCHEDULER_FLAGS uint32 = 0
+
+// PROCESS_DURATION_MAX permits a slow first build but stops a process group that cannot finish.
+const PROCESS_DURATION_MAX = 6 * systime.HOUR
+
+// ROOT_REFUSAL prevents the bootstrap from creating root-owned home files.
+const ROOT_REFUSAL = "run as your normal user, not root"
+
+// Operation exposes callback-owned state to the composition root. The root drives Ready and asks
+// the operation to Rearm, while internal code owns all transition policy.
+type Operation struct {
+	// Ready reports that the current transition retired.
+	Ready func() (ready bool)
+	// Complete reports that the full operation and its cleanup retired.
+	Complete func() (complete bool)
+	// Rearm submits the next transition. A nil value identifies a one-transition operation.
+	Rearm func()
+}
+
+// Environment_Input contains operating-system facts. Package main reads each fact once, while
+// this package owns validation and logger policy.
+type Environment_Input struct {
+	// Clock supplies the IO scheduler and timestamped logger.
+	Clock systime.Clock
+	// Console receives setup log records.
+	Console io.Writer
+	// Color reports whether Console supports terminal color.
+	Color bool
+	// Effective_User_Identifier identifies root ownership before setup writes home files.
+	Effective_User_Identifier int
+	// Home_Directory is the resolved user home directory.
+	Home_Directory string
+	// Home_Error reports that the operating system could not resolve Home_Directory.
+	Home_Error error
+	// Operating_System selects platform-specific setup steps.
+	Operating_System string
+	// Cargo_Directory preserves an explicit CARGO_HOME value.
+	Cargo_Directory string
+	// Data_Directory preserves an explicit XDG_DATA_HOME value.
+	Data_Directory string
+	// Stdout receives live command output.
+	Stdout io.Writer
+	// Stderr receives live command diagnostics.
+	Stderr io.Writer
+}
+
+// Environment contains validated facts and the logger that setup injects into each step.
+type Environment struct {
+	// Clock supplies the IO scheduler.
+	Clock systime.Clock
+	// Logger reports setup progress and startup errors.
+	Logger jlog.Logger
+	// Home_Directory is the destination for dotfiles and user tools.
+	Home_Directory string
+	// Operating_System selects platform-specific setup steps.
+	Operating_System string
+	// Cargo_Directory preserves an explicit CARGO_HOME value.
+	Cargo_Directory string
+	// Data_Directory preserves an explicit XDG_DATA_HOME value.
+	Data_Directory string
+	// Stdout receives live command output.
+	Stdout io.Writer
+	// Stderr receives live command diagnostics.
+	Stderr io.Writer
+}
 
 // File_System gives the sync synchronous file operations. The composition root converts its
 // asynchronous IO into these operations because only the composition root can drive the loop.
 type File_System struct {
 	// Read_Directory returns the immediate entries in one directory.
 	Read_Directory func(path string) (entries []sysio.Directory_Entry, err error)
+	// Status reports whether a path exists without an asynchronous operation.
+	Status func(path string) (status sysio.File_Status, err error)
 	// Read returns one bounded file and reports an absent path without an error.
-	Read func(path string) (contents []byte, found bool, err error)
+	Read func(path string, buffer_size int) (contents []byte, found bool, err error)
 	// Write replaces one file after it creates the necessary parent directories.
 	Write func(path string, contents []byte) (err error)
 }
@@ -43,6 +123,8 @@ type File_System struct {
 // File_Read_Operation owns one asynchronous bounded read. Complete is the predicate that the
 // composition root drives, while callbacks own all state changes and operation sequencing.
 type File_Read_Operation struct {
+	// Operation gives the composition root only predicates and a rearm transition.
+	Operation Operation
 	// Complete tells the composition root that no operation remains armed.
 	Complete bool
 	// Ready tells the composition root that the current read or close retired.
@@ -70,6 +152,8 @@ type File_Read_Operation struct {
 // File_Write_Operation owns one asynchronous write and its required close. The composition root
 // drives Complete, while callbacks preserve the write-then-close lifecycle.
 type File_Write_Operation struct {
+	// Operation gives the composition root only predicates because Write rearms Close itself.
+	Operation Operation
 	// Complete tells the composition root that the write and close both retired.
 	Complete bool
 	// Loop submits the write and close without advancing the timeline.
@@ -82,8 +166,46 @@ type File_Write_Operation struct {
 	Err error
 }
 
-// Main_Input carries the injected dependencies Main needs to sync dotfiles.
+// Process_Operation owns one bounded process result until its callback retires.
+type Process_Operation struct {
+	// Operation gives the composition root only the terminal process predicate.
+	Operation Operation
+	// Complete tells the composition root that the process callback retired.
+	Complete bool
+	// Completion stays owned by the state until the process callback retires.
+	Completion sysio.Completion
+	// Result preserves output and the exit code, including partial output after expiry.
+	Result sysio.Process_Result
+	// Err records a start error or the bounded deadline result.
+	Err error
+}
+
+// Main_Input contains the complete injected environment for one setup run.
 type Main_Input struct {
+	// Environment contains the validated host facts and setup logger.
+	Environment Environment
+	// File_System supplies all setup file operations.
+	File_System File_System
+	// Shell supplies all setup process operations.
+	Shell Shell
+}
+
+// Main constructs the complete setup policy from injected capabilities and returns the first
+// failing status. Package main binds the real world and calls only this setup entry point.
+func Main(input *Main_Input) (status_code int) {
+	steps := Bootstrap_Steps(&Bootstrap_Steps_Input{
+		Home_Directory:   input.Environment.Home_Directory,
+		Operating_System: input.Environment.Operating_System,
+		Cargo_Directory:  input.Environment.Cargo_Directory,
+		Data_Directory:   input.Environment.Data_Directory,
+		File_System:      input.File_System,
+		Shell:            input.Shell,
+	})
+	return Bootstrap(&Bootstrap_Input{Steps: steps, Logger: input.Environment.Logger})
+}
+
+// Mirror_Input carries the injected dependencies Mirror needs to sync dotfiles.
+type Mirror_Input struct {
 	// File_System is the loop the dotfiles tree is walked, read, and written through.
 	File_System File_System
 	// Source_Directory is the absolute dotfiles tree walked in full from its root.
@@ -110,10 +232,9 @@ type Main_Input struct {
 	Logger jlog.Logger
 }
 
-// Main syncs the source dotfiles into the home directory and, on darwin, applies
-// the macos defaults, returning a process exit code. It is the binary's single
-// entry point, kept here so package main stays a thin, untested shell.
-func Main(input *Main_Input) (status_code int) {
+// Mirror syncs the source dotfiles into the home directory and, on darwin, applies the macos
+// defaults. The separate name keeps Main as the complete binary policy entry point.
+func Mirror(input *Mirror_Input) (status_code int) {
 	writes, plan_err := Plan(&Plan_Input{
 		File_System:           input.File_System,
 		Source_Directory:      input.Source_Directory,
@@ -146,10 +267,70 @@ func Main(input *Main_Input) (status_code int) {
 	return apply_macos_defaults(input.Run_Command, input.Logger)
 }
 
+// New_Environment applies startup policy to operating-system facts and returns the required exit
+// status when setup cannot continue.
+func New_Environment(input *Environment_Input) (
+	environment Environment, status_code int,
+) {
+	logger := jlog.New_Console_Logger(jlog.New_Console_Logger_Input{
+		Console: input.Console, Color: input.Color,
+		Floor: jlog.LEVEL_DEBUG, Clock: input.Clock,
+	})
+	environment = Environment{
+		Clock: input.Clock, Logger: logger, Home_Directory: input.Home_Directory,
+		Operating_System: input.Operating_System, Cargo_Directory: input.Cargo_Directory,
+		Data_Directory: input.Data_Directory, Stdout: input.Stdout, Stderr: input.Stderr,
+	}
+	if input.Effective_User_Identifier == 0 {
+		jlog.Logger_Error(logger, ROOT_REFUSAL)
+		return environment, EXIT_USAGE
+	}
+	if input.Home_Error != nil {
+		jlog.Logger_Error(
+			logger, "cannot resolve home directory", jlog.Err(input.Home_Error),
+		)
+		return environment, EXIT_USAGE
+	}
+	return environment, 0
+}
+
+// Spawn_Process submits one bounded command and returns callback-owned state for the root.
+func Spawn_Process(
+	loop sysio.IO, request sysio.Process_Request,
+) (process *Process_Operation) {
+	process = &Process_Operation{}
+	process.Operation = Operation{
+		Ready:    func() (ready bool) { return process.Complete },
+		Complete: func() (complete bool) { return process.Complete },
+	}
+	loop.Spawn(&process.Completion, func(
+		_ *sysio.Completion, result sysio.Process_Result, err error,
+	) {
+		process.Result = result
+		process.Err = err
+		process.Complete = true
+	}, request, PROCESS_DURATION_MAX)
+	return process
+}
+
+// Process_Operation_Result maps an operation error to the Shell nonzero-exit contract.
+func Process_Operation_Result(process *Process_Operation) (result sysio.Process_Result) {
+	result = process.Result
+	if process.Err != nil {
+		result.Exit = 1
+	}
+	return result
+}
+
 // Read_File submits one bounded read and returns its callback-owned state. An open error means
 // that the path is absent, which preserves the mirror rule that an absent destination differs.
-func Read_File(loop sysio.IO, path string) (read *File_Read_Operation) {
-	read = &File_Read_Operation{Loop: loop, Buffer: make([]byte, DOTFILE_BYTES_MAX)}
+func Read_File(loop sysio.IO, path string, buffer_size int) (read *File_Read_Operation) {
+	read = &File_Read_Operation{Loop: loop, Buffer: make([]byte, buffer_size)}
+	read.Operation = Operation{
+		Ready:    func() (ready bool) { return read.Ready },
+		Complete: func() (complete bool) { return read.Complete },
+		Rearm:    func() { File_Read_Rearm(read) },
+	}
 	file, open_err := loop.Open(path)
 	if open_err != nil {
 		read.Complete = true
@@ -232,6 +413,10 @@ func Write_File(
 	loop sysio.IO, path string, contents []byte,
 ) (write *File_Write_Operation) {
 	write = &File_Write_Operation{Loop: loop}
+	write.Operation = Operation{
+		Ready:    func() (ready bool) { return write.Complete },
+		Complete: func() (complete bool) { return write.Complete },
+	}
 	mkdir_err := loop.Make_Directory(filepath.Dir(path))
 	if mkdir_err != nil {
 		write.Err = mkdir_err
@@ -256,6 +441,29 @@ func File_Write_Error(write *File_Write_Operation) (err error) {
 	return write.Err
 }
 
+// Reports whether the injected file system contains a path. A status error cannot prove that the
+// file exists, so the idempotency gate treats that result as absent.
+func file_present(system *File_System, path string) (present bool) {
+	status, status_err := system.Status(path)
+	if status_err != nil {
+		return false
+	}
+	return status.Exists
+}
+
+// Copies one bounded file through the injected file system. The larger font limit stays separate
+// from the dotfile limit because a font is binary installation data, not configuration text.
+func copy_file(system *File_System, input *File_Copy_Input) (err error) {
+	contents, found, read_err := system.Read(input.Source, COPY_BYTES_MAX)
+	if read_err != nil {
+		return read_err
+	}
+	if !found {
+		return errors.New("copy source is absent")
+	}
+	return system.Write(input.Destination, contents)
+}
+
 // Closes after Write retires, including an operation error. The write callback proves that Close
 // cannot race an armed write on the same file.
 func file_write_complete(
@@ -268,8 +476,7 @@ func file_write_complete(
 	}, write.File)
 }
 
-// Takes just the runner and the logger it uses, not the whole Main_Input: a
-// function whose parameter is *Main_Input would be forced to be named Main. Runs
+// Takes just the runner and the logger it uses, not the whole Mirror_Input. Runs
 // every macos defaults command, stopping at the first that fails. It logs
 // nothing per command — 35 lines of `defaults write` is noise, not progress.
 func apply_macos_defaults(
@@ -527,7 +734,7 @@ func plan_ignored(
 // the write mirroring the relative path under the home directory.
 func plan_file(input *Plan_Input, relative string) (write File_Write, planned bool, err error) {
 	source_contents, found, read_err := input.File_System.Read(
-		filepath.Join(input.Source_Directory, relative))
+		filepath.Join(input.Source_Directory, relative), DOTFILE_BYTES_MAX)
 	if read_err != nil {
 		return File_Write{}, false, read_err
 	}
@@ -546,7 +753,7 @@ func plan_file(input *Plan_Input, relative string) (write File_Write, planned bo
 func destination_matches(
 	system *File_System, path string, source_contents []byte,
 ) (matches bool) {
-	destination_contents, found, err := system.Read(path)
+	destination_contents, found, err := system.Read(path, DOTFILE_BYTES_MAX)
 	if err != nil {
 		return false
 	}
@@ -1387,10 +1594,6 @@ type Bootstrap_Steps_Input struct {
 	File_System File_System
 	// Shell supplies the process operation and output streams.
 	Shell Shell
-	// File_Present reports whether a path identifies an existing file.
-	File_Present func(path string) (present bool)
-	// Copy_File copies one file through the composition-root binding.
-	Copy_File func(input *File_Copy_Input) (err error)
 }
 
 // Bootstrap_Steps returns the complete setup policy in execution order.
@@ -1437,7 +1640,7 @@ func direnv_step(input *Bootstrap_Steps_Input) (run func() (status_code int)) {
 func dotfiles_step(input *Bootstrap_Steps_Input) (run func() (status_code int)) {
 	dotfiles_directory := filepath.Join(input.Home_Directory, DOTFILES_SUBPATH)
 	return func() (status_code int) {
-		return Main(&Main_Input{
+		return Mirror(&Mirror_Input{
 			File_System:           input.File_System,
 			Source_Directory:      dotfiles_directory,
 			Destination_Directory: input.Home_Directory,
@@ -1466,10 +1669,11 @@ func fonts_step(input *Bootstrap_Steps_Input) (run func() (status_code int)) {
 		return Install_Fonts(&Install_Fonts_Input{
 			Font_Directory: font_directory,
 			Font_Present: func(file string) (present bool) {
-				return input.File_Present(filepath.Join(font_directory, file))
+				path := filepath.Join(font_directory, file)
+				return file_present(&input.File_System, path)
 			},
 			Copy_Font: func(file string) (err error) {
-				return input.Copy_File(&File_Copy_Input{
+				return copy_file(&input.File_System, &File_Copy_Input{
 					Source:      filepath.Join(font_source, file),
 					Destination: filepath.Join(font_directory, file),
 				})

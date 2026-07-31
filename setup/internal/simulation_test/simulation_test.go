@@ -1,4 +1,4 @@
-// Package simulation_test drives setup.Main over the filesystem New_Sim fabricates from each
+// Package simulation_test drives setup.Mirror over the filesystem New_Sim fabricates from each
 // seed and asserts the mirror's properties hold for any seed: convergence and idempotency,
 // pruning of an ignored subtree, and rewriting only files that differ. New_Sim draws a
 // generic tree; this harness imposes the source, destination, and ignored meaning the mirror
@@ -45,14 +45,14 @@ func Fuzz_Main(f *testing.F) {
 	})
 }
 
-// Drives setup.Main over New_Sim(seed) and asserts every mirror invariant: a second run over
+// Drives setup.Mirror over New_Sim(seed) and asserts every mirror invariant: a second run over
 // the freshly mirrored tree writes nothing (convergence, idempotency, no rewrite of an equal
 // file), the ignored subtree never reaches the destination (prune), and after some
 // destination files are made to differ, a run rewrites exactly those (overwrite).
 func drive(t *testing.T, seed uint64) {
 	loop, driver, _ := sysio.New_Sim(seed)
 	system := simulation_file_system(loop, driver)
-	input := &setup.Main_Input{
+	input := &setup.Mirror_Input{
 		File_System:           system,
 		Source_Directory:      "/",
 		Destination_Directory: filepath.Join("/", HARNESS_DESTINATION),
@@ -64,12 +64,12 @@ func drive(t *testing.T, seed uint64) {
 	// fails only on a Plan or write error, neither reachable here. If that ever changes this
 	// catches it instead of skipping the seed blind. When faults land it becomes an explicit,
 	// reason-carrying, mostly-false skip — never a silent return.
-	if setup.Main(input) != 0 {
+	if setup.Mirror(input) != 0 {
 		t.Fatal("the first mirror run over a fault-free tree failed")
 	}
 	writes := harness_count_writes(&system)
 	input.File_System = system
-	if setup.Main(input) != 0 {
+	if setup.Mirror(input) != 0 {
 		t.Fatal("the second mirror run failed")
 	}
 	if *writes != 0 {
@@ -78,7 +78,7 @@ func drive(t *testing.T, seed uint64) {
 	harness_assert_pruned(t, loop)
 	mutated := harness_mutate(&system, seed)
 	*writes = 0
-	if setup.Main(input) != 0 {
+	if setup.Mirror(input) != 0 {
 		t.Fatal("the mirror run after mutation failed")
 	}
 	if *writes != mutated {
@@ -93,8 +93,11 @@ func simulation_file_system(
 ) (system setup.File_System) {
 	return setup.File_System{
 		Read_Directory: loop.Read_Directory,
-		Read: func(path string) (contents []byte, found bool, err error) {
-			return simulation_read_file(loop, driver, path)
+		Status:         loop.Status,
+		Read: func(
+			path string, buffer_size int,
+		) (contents []byte, found bool, err error) {
+			return simulation_read_file(loop, driver, path, buffer_size)
 		},
 		Write: func(path string, contents []byte) (err error) {
 			return simulation_write_file(loop, driver, path, contents)
@@ -105,13 +108,13 @@ func simulation_file_system(
 // Reads through the simulator until EOF. The production limit is part of the mirror contract,
 // so the property harness applies the same bound to all generated files.
 func simulation_read_file(
-	loop sysio.IO, driver sysio.Driver, path string,
+	loop sysio.IO, driver sysio.Driver, path string, buffer_size int,
 ) (contents []byte, found bool, err error) {
 	file, open_err := loop.Open(path)
 	if open_err != nil {
 		return nil, false, nil
 	}
-	buffer := make([]byte, setup.DOTFILE_BYTES_MAX)
+	buffer := make([]byte, buffer_size)
 	total := 0
 	for total < len(buffer) {
 		var completion sysio.Completion

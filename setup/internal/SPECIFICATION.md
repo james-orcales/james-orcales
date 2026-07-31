@@ -1,4 +1,11 @@
 
+# Main
+
+### Runs Complete Bootstrap
+
+Main constructs and runs the complete ordered bootstrap from the injected environment, file
+system, and shell. It returns the first failing step status.
+
 # Bootstrap Steps
 
 Bootstrap_Steps constructs the complete ordered step list from injected operating-system facts and
@@ -24,9 +31,9 @@ Installed reports true when the binary's --version output starts with the wanted
 
 Installed reports false when the binary is absent or reports a different version.
 
-# Main
+# Mirror
 
-Main plans the sync, writes each pending file through the injected file system, and then applies
+Mirror plans the sync, writes each pending file through the injected file system, and then applies
 the macos defaults on darwin. The simulation harness proves the mirror properties.
 
 ### Applies Macos Defaults
@@ -39,7 +46,7 @@ On any operating system other than darwin no defaults commands run.
 
 ### Narrates The Scan
 
-Main names each source directory as the walk reads it, so a large silent tree scan shows it
+Mirror names each source directory as the walk reads it, so a large silent tree scan shows it
 is advancing rather than looking hung, and reports an up-to-date tree when it writes nothing.
 
 ### Probes Ignore In One Batch

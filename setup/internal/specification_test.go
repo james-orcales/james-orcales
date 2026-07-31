@@ -14,10 +14,37 @@ import (
 	"local/james-orcales/shared/jlog"
 )
 
-// Each test drives Plan and Main with in-memory filesystems and a recording or
+// Each test drives Plan and Mirror with in-memory filesystems and a recording or
 // failing writer, asserting only on observable output — the planned writes, what
 // the writer received, the exit code — never on internals, so the suite stays a
-// black box over Plan and Main and never touches a real home directory.
+// black box over Plan and Mirror and never touches a real home directory.
+
+// Test_Main_Runs_Complete_Bootstrap verifies Main constructs the ordered bootstrap and returns
+// its first failing status instead of making the composition root construct the steps.
+func Test_Main_Runs_Complete_Bootstrap(t *testing.T) {
+	t.Parallel()
+	commands := []sysio.Process_Request{}
+	status := setup.Main(&setup.Main_Input{
+		Environment: setup.Environment{
+			Home_Directory:   "/home/person",
+			Operating_System: "freebsd",
+		},
+		Shell: recording_shell(&commands, nil, 1),
+	})
+	if status != 1 {
+		t.Fatalf("status = %d, want the direnv failure status 1", status)
+	}
+	if len(commands) != 2 {
+		t.Fatalf("commands = %v, want the direnv probe and build", commands)
+	}
+	want_probe := "/home/person/code/james-orcales/home/.local/bin/direnv"
+	if commands[0].Path != want_probe {
+		t.Fatalf("first command = %q, want %q", commands[0].Path, want_probe)
+	}
+	if commands[1].Path != "sh" {
+		t.Fatalf("second command = %q, want direnv build through sh", commands[1].Path)
+	}
+}
 
 // Test_Bootstrap_Steps verifies Bootstrap_Steps owns the complete bootstrap
 // policy in the order that the setup command requires.
@@ -111,10 +138,10 @@ func Test_Idempotency_Rejects_A_Missing_Or_Stale_Binary(t *testing.T) {
 	}
 }
 
-// Test_Main_Applies_Macos_Defaults verifies that on darwin Main runs the macos
+// Test_Mirror_Applies_Macos_Defaults verifies that on darwin Mirror runs the macos
 // defaults commands through the injected runner after the sync, without printing
 // a line per command.
-func Test_Main_Applies_Macos_Defaults(t *testing.T) {
+func Test_Mirror_Applies_Macos_Defaults(t *testing.T) {
 	t.Parallel()
 	ran := [][]string{}
 	log := &bytes.Buffer{}
@@ -122,7 +149,7 @@ func Test_Main_Applies_Macos_Defaults(t *testing.T) {
 	if make_err := loop.Make_Directory(TEST_SOURCE); make_err != nil {
 		t.Fatalf("make source: %v", make_err)
 	}
-	status := setup.Main(&setup.Main_Input{
+	status := setup.Mirror(&setup.Mirror_Input{
 		File_System:           directory_file_system(t, loop),
 		Source_Directory:      TEST_SOURCE,
 		Destination_Directory: TEST_HOME,
@@ -153,16 +180,16 @@ func Test_Main_Applies_Macos_Defaults(t *testing.T) {
 	}
 }
 
-// Test_Main_Skips_Macos_Defaults_Off_Darwin verifies no defaults commands run on
+// Test_Mirror_Skips_Macos_Defaults_Off_Darwin verifies no defaults commands run on
 // any operating system other than darwin.
-func Test_Main_Skips_Macos_Defaults_Off_Darwin(t *testing.T) {
+func Test_Mirror_Skips_Macos_Defaults_Off_Darwin(t *testing.T) {
 	t.Parallel()
 	run_count := 0
 	loop, _, _ := sysio.New_Sim(0)
 	if make_err := loop.Make_Directory(TEST_SOURCE); make_err != nil {
 		t.Fatalf("make source: %v", make_err)
 	}
-	status := setup.Main(&setup.Main_Input{
+	status := setup.Mirror(&setup.Mirror_Input{
 		File_System:           directory_file_system(t, loop),
 		Source_Directory:      TEST_SOURCE,
 		Destination_Directory: TEST_HOME,
@@ -180,11 +207,11 @@ func Test_Main_Skips_Macos_Defaults_Off_Darwin(t *testing.T) {
 	}
 }
 
-// Test_Main_Narrates_The_Scan verifies Main announces each source directory as the
+// Test_Mirror_Narrates_The_Scan verifies Mirror announces each source directory as the
 // walk reads it, so a long silent scan of a large tree — one gitignore probe per
 // entry — shows progress instead of looking hung, and reports an up-to-date tree
 // when it writes nothing.
-func Test_Main_Narrates_The_Scan(t *testing.T) {
+func Test_Mirror_Narrates_The_Scan(t *testing.T) {
 	t.Parallel()
 	loop, _, _ := sysio.New_Sim(0)
 	// A nested directory, so the walk reads past the root and narrates more than one line.
@@ -195,7 +222,7 @@ func Test_Main_Narrates_The_Scan(t *testing.T) {
 		t.Fatalf("make nested: %v", make_err)
 	}
 	log := &bytes.Buffer{}
-	status := setup.Main(&setup.Main_Input{
+	status := setup.Mirror(&setup.Mirror_Input{
 		File_System:           directory_file_system(t, loop),
 		Source_Directory:      TEST_SOURCE,
 		Destination_Directory: TEST_HOME,
@@ -219,10 +246,10 @@ func Test_Main_Narrates_The_Scan(t *testing.T) {
 	}
 }
 
-// Test_Main_Probes_Ignore_In_One_Batch verifies the walk classifies a directory's
+// Test_Mirror_Probes_Ignore_In_One_Batch verifies the walk classifies a directory's
 // entries with a single Is_Ignored call carrying them all, not one call per entry —
 // the property that turns ~600 sequential git spawns into one probe per tree level.
-func Test_Main_Probes_Ignore_In_One_Batch(t *testing.T) {
+func Test_Mirror_Probes_Ignore_In_One_Batch(t *testing.T) {
 	t.Parallel()
 	loop, _, _ := sysio.New_Sim(0)
 	// Three sibling directories under the root, so a batched probe of the root sees
@@ -235,7 +262,7 @@ func Test_Main_Probes_Ignore_In_One_Batch(t *testing.T) {
 		}
 	}
 	batches := [][]string{}
-	status := setup.Main(&setup.Main_Input{
+	status := setup.Mirror(&setup.Mirror_Input{
 		File_System:           directory_file_system(t, loop),
 		Source_Directory:      TEST_SOURCE,
 		Destination_Directory: TEST_HOME,
@@ -1028,7 +1055,9 @@ func directory_file_system(t *testing.T, loop sysio.IO) (system setup.File_Syste
 	t.Helper()
 	return setup.File_System{
 		Read_Directory: loop.Read_Directory,
-		Read: func(path string) (contents []byte, found bool, err error) {
+		Read: func(
+			path string, buffer_size int,
+		) (contents []byte, found bool, err error) {
 			t.Fatalf("unexpected file read: %s", path)
 			return nil, false, nil
 		},
