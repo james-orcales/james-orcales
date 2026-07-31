@@ -590,16 +590,24 @@ type test_partition_add_input struct {
 // larger shared line property.
 func test_partition_add(input *test_partition_add_input) {
 	if input.Dropped {
-		name := "test/" + input.Label + input.Suffix
-		input.Fixture.Disk[name] = file("a")
-		input.Fixture.Classifications[sloc.Classified_Path(name)] = sloc.File_Partition{
-			Code:    sloc.Code_Count(input.Count),
-			Dropped: sloc.Dropped_Count(input.Count),
+		for left, index := input.Count, 0; left > 0; index++ {
+			line_count := min(left, sloc.FILE_DROPPED_COUNT_MAX)
+			name := fmt.Sprintf(
+				"test/%s%02d%s", input.Label, index, input.Suffix)
+			input.Fixture.Disk[name] = file("a")
+			classified_path := sloc.Classified_Path(name)
+			input.Fixture.Classifications[classified_path] = sloc.File_Partition{
+				Code:    sloc.Code_Count(line_count),
+				Dropped: sloc.Dropped_Count(line_count),
+			}
+			left -= line_count
 		}
 		return
 	}
+	text, _ := line_bound_line(input.Kind)
+	per_file := sloc.SOURCE_BYTES_MAX / len(text)
 	for left, index := input.Count, 0; left > 0; index++ {
-		line_count := min(left, sloc.SOURCE_BYTES_MAX)
+		line_count := min(left, per_file)
 		name := fmt.Sprintf("test/%s%02d%s", input.Label, index, input.Suffix)
 		input.Fixture.Disk[name] = file("a")
 		input.Fixture.Classifications[sloc.Classified_Path(name)] = line_bound_counts(
@@ -697,8 +705,8 @@ func line_bound_past_max(one scenario) (maximum bool) {
 	return one.File_Count == 2
 }
 
-// Two languages keep their own aggregate counts valid while their omitted-file
-// tallies sum to the report maximum.
+// Two roots keep their own omitted-file bounds valid while their tallies sum to the
+// report maximum. Blank lines let the first root reach its ceiling with fewest files.
 func disk_past_lines_max() (fixture disk_fixture) {
 	go_disk := disk_fixture{
 		Disk:            fstest.MapFS{},
@@ -708,18 +716,17 @@ func disk_past_lines_max() (fixture disk_fixture) {
 		Disk:            fstest.MapFS{},
 		Classifications: map[sloc.Classified_Path]sloc.File_Partition{},
 	}
-	fill_line_bound(&go_disk, LINE_BOUND_KIND_CODE)
+	fill_line_bound(&go_disk, LINE_BOUND_KIND_BLANK)
 	fill_line_bound(&python_disk, LINE_BOUND_KIND_COMMENT)
-	python_past_count := sloc.FILES_COUNT_MAX - len(python_disk.Disk)
 	fill_past_language(&fill_past_language_input{
 		Fixture: &go_disk,
-		Count:   len(python_disk.Disk),
+		Count:   sloc.ROOT_PAST_LINES_MAX,
 		Prefix:  "Zgo",
-		Suffix:  ".go",
+		Suffix:  ".rs",
 	})
 	fill_past_language(&fill_past_language_input{
 		Fixture: &python_disk,
-		Count:   python_past_count,
+		Count:   sloc.FILES_COUNT_MAX - sloc.ROOT_PAST_LINES_MAX,
 		Prefix:  "Zpython",
 		Suffix:  ".py",
 	})
@@ -842,7 +849,7 @@ func disk_dropped(count int) (fixture disk_fixture) {
 		Classifications: map[sloc.Classified_Path]sloc.File_Partition{},
 	}
 	wide := strings.Repeat("a", sloc.LINE_BYTES_MAX+DROPPED_LINE_MARGIN) + "\n"
-	per_file := sloc.SOURCE_BYTES_MAX / len(wide)
+	per_file := sloc.FILE_DROPPED_COUNT_MAX
 	// Splitting the two-line fixture witnesses a two-entry model without making any
 	// production tally or the large saturation fixture more expensive.
 	if count == 2 {
@@ -1111,7 +1118,7 @@ func disk_scanner_corners() (disk fstest.MapFS) {
 	hashes := strings.Repeat("#", sloc.HASH_COUNT_MAX)
 	equals := strings.Repeat("=", sloc.HASH_COUNT_MAX)
 	nested := strings.Repeat("/*", sloc.NESTING_DEPTH_MAX+5)
-	return fstest.MapFS{
+	disk = fstest.MapFS{
 		"heredoc.sh": file(
 			"cat <<EOF\n# not a comment\nEOF\n" +
 				"cat <<-'END'\nbody\nEND\n" +
@@ -1136,8 +1143,7 @@ func disk_scanner_corners() (disk fstest.MapFS) {
 		"raw.rs": file(
 			"let a = r\"x\";\n" +
 				"let b = br#\"x\"#;\n" +
-				// Two hashes, so the computed closer is the width between the bare
-				// quote and the run at its bound.
+				// Two hashes witness an interior computed-closer width.
 				"let b2 = br##\"x\"##;\n" +
 				"let c = r" + hashes + "\"\nbody\n\"" + hashes + ";\n" +
 				"let d = 'a';\n" +
@@ -1172,6 +1178,48 @@ func disk_scanner_corners() (disk fstest.MapFS) {
 		"short.sh":    file("cat <<A\nx\nA\n"),
 		"markup.html": file("<!-- c -->\n<p>x</p>\n"),
 		"lisp.el":     file("; c\n(x)\n"),
+	}
+	for name, entry := range disk_scanner_positions() {
+		disk[name] = entry
+	}
+	return disk
+}
+
+// Scanner fragments place syntax triggers at every shared position boundary.
+func disk_scanner_positions() (disk fstest.MapFS) {
+	return fstest.MapFS{
+		// Invalid fragments are intentional. They place each Lua trigger at the shared
+		// active-position boundaries without bypassing the production scanner.
+		"positions.lua": file(
+			"[\n[x\nx[\nxx[\n" +
+				strings.Repeat("x", sloc.LINE_BYTES_MAX-1) + "[\n" +
+				strings.Repeat("x", sloc.LINE_BYTES_MAX-2) + "[x\n" +
+				strings.Repeat("x", sloc.LINE_BYTES_MAX-2) + "--\n"),
+		// The carried body makes the long-comment reader visit both line-width bounds
+		// and the last active cursor.
+		"comment_positions.lua": file(
+			"--[[\nx\n" + strings.Repeat("x", sloc.LINE_BYTES_MAX) + "\n]]\n"),
+		// A partial operator still reaches heredoc recognition and keeps malformed
+		// forms from opening carried state.
+		"positions.sh": file(
+			"<\n<<\nx<\n" + strings.Repeat("x", sloc.LINE_BYTES_MAX-1) + "<\n"),
+		// Each unmatched quote ends with its line, so every following line starts fresh.
+		"quote_positions.go": file(
+			"\"\nx\"\nxx\"\n" +
+				strings.Repeat("x", sloc.LINE_BYTES_MAX-1) + "\"\n"),
+		// The closing-only lines reset the raw carry before the next opener position.
+		"verbatim_positions.go": file(
+			"`\n`\nx`\n`\nxx`\n`\n" +
+				strings.Repeat("x", sloc.LINE_BYTES_MAX-1) + "`\n`\n" +
+				"`\n" + strings.Repeat("x", sloc.LINE_BYTES_MAX) + "\n`\n"),
+		// Rust's apostrophe can start a character or a lifetime. These malformed forms
+		// keep that decision at each position boundary.
+		"character_positions.rs": file(
+			"'\nx'\nxx'\n" +
+				strings.Repeat("x", sloc.LINE_BYTES_MAX-1) + "'\n"),
+		// Pascal contributes the one-byte block pair and the no-escape string form.
+		"positions.pas": file(
+			"{\nx\n" + strings.Repeat("x", sloc.LINE_BYTES_MAX) + "\n}\n'x'\n"),
 	}
 }
 

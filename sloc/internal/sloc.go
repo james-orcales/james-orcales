@@ -4,6 +4,7 @@
 package sloc
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
 	"io"
@@ -146,9 +147,14 @@ func main_input_collect(input *Main_Input, scope Main_Scope) (report Report, err
 			return Report{}, path_err
 		}
 		report.Files = append(report.Files, partial.Files...)
-		collected := Collected_Skipped(report.Skipped)
-		skipped_add(&collected, Root_Skipped(partial.Skipped))
-		report.Skipped = Skipped(collected)
+		report.Skipped.Unreadable += partial.Skipped.Unreadable
+		report.Skipped.Oversized += partial.Skipped.Oversized
+		report.Skipped.Binary += partial.Skipped.Binary
+		report.Skipped.Past_Lines += partial.Skipped.Past_Lines
+		report.Skipped.Overflow += partial.Skipped.Overflow
+		if report.Skipped.Overflow > DROPPED_COUNT_MAX {
+			report.Skipped.Overflow = DROPPED_COUNT_MAX
+		}
 	}
 	return report, nil
 }
@@ -169,16 +175,28 @@ func main_input_one(
 	if directory {
 		return main_input_directory(input, root, scope)
 	}
-	file, recognized, read_err := main_input_file(Explicit_Input{
-		File:       input.File,
-		Classifier: Explicit_Classifier(input.Classifier),
-	}, File_Path(root))
+	file_path := File_Path(root)
+	language, recognized := language_for_path(file_path)
+	if !recognized {
+		return report, nil
+	}
+	opened, open_err := input.File(file_path)
+	if open_err != nil {
+		return Root_Report{}, open_err
+	}
+	content := Source(nil)
+	read_err := main_read_file(opened, func(read Source) { content = read })
 	if read_err != nil {
 		return Root_Report{}, read_err
 	}
-	if recognized {
-		report.Files = append(report.Files, File_Count(file))
-	}
+	counts := classify(input.Classifier, Classify_File_Input{
+		Path: Classified_Path(file_path), Source: content,
+		Language: Seeded_Language(language),
+	})
+	report.Files = append(report.Files, File_Count{
+		Path: file_path, Language: language.Name,
+		Counts: Counts(counts), Is_Test: false,
+	})
 	return report, nil
 }
 
@@ -224,133 +242,14 @@ func main_input_ignore(
 	return main_git_ignore(input.Command, root)
 }
 
-// Classifies one explicitly named file, reporting whether its extension is recognized.
-func main_input_file(
-	input Explicit_Input, name File_Path,
-) (file Explicit_File, recognized Recognition, err error) {
-	defer func() {
-		Explicit_File_Invariants(file, "main_input_file.file")
-		Recognition_Invariants(recognized, "main_input_file.recognized")
-	}()
-	Explicit_Input_Invariants(input, "main_input_file.input")
-	File_Path_Invariants(name, "main_input_file.name")
-	// The unrecognized and unreadable paths carry the name back rather than the zero
-	// File_Count: a path is never empty, and the output invariant states that.
-	unknown := Explicit_File{Path: name, Language: "", Counts: Counts{}, Is_Test: false}
-	language, known := language_for_path(name)
-	if !known {
-		return unknown, false, nil
-	}
-	content, read_err := main_read_file(input.File, Explicit_Path(name))
-	if read_err != nil {
-		return unknown, false, read_err
-	}
-	counts := classify(File_Classifier(input.Classifier), Classify_File_Input{
-		Path:     Classified_Path(name),
-		Source:   Source(content),
-		Language: Seeded_Language(language),
-	})
-	return Explicit_File{
-		Path:     name,
-		Language: language.Name,
-		Counts:   Counts(counts),
-		Is_Test:  false,
-	}, true, nil
-}
-
-// Explicit_Input is the host capability and classifier for one explicitly named file.
-// The command line and directory capabilities stay at Main because this boundary does
-// not read them.
-type Explicit_Input struct {
-	// File opens the named file.
-	File func(name File_Path) (file fs.File, err error)
-	// Classifier partitions the recognized file's source into line kinds.
-	Classifier Explicit_Classifier
-}
-
-// Explicit_Input_Invariants states the classifier. A function value has no preset.
-func Explicit_Input_Invariants(input Explicit_Input, namespace invariant.Namespace) {
-	Explicit_Classifier_Invariants(input.Classifier, namespace)
-}
-
-// Explicit_Classifier is the classifier selected for one command-line file.
-type Explicit_Classifier File_Classifier
-
-// Explicit_Classifier_Invariants checks the selected implementation and model size.
-// The whole Main boundary owns their variable witnesses.
-func Explicit_Classifier_Invariants(
-	classifier Explicit_Classifier, namespace invariant.Namespace,
-) {
-	invariant.Always(
-		classifier.Kind == FILE_CLASSIFIER_KIND_BYTES ||
-			classifier.Kind == FILE_CLASSIFIER_KIND_MODEL,
-		"An explicit classifier always names a concrete implementation.")
-	invariant.Always(
-		len(classifier.Classifications) >= FILE_CLASSIFICATIONS_COUNT_MIN &&
-			len(classifier.Classifications) <= FILE_CLASSIFICATIONS_COUNT_MAX,
-		"An explicit classification model always stays in its file bound.")
-}
-
-// Explicit_File is the result for one command-line file. It is never test-classified
-// because that policy belongs to a walked tree and its relative path conventions.
-type Explicit_File File_Count
-
-// Explicit_File_Invariants checks the reachable explicit-file state without claiming
-// that one call site can witness every aggregate report boundary.
-func Explicit_File_Invariants(file Explicit_File, namespace invariant.Namespace) {
-	invariant.Always(
-		len(file.Path) >= FILE_PATH_BYTES_MIN && len(file.Path) <= FILE_PATH_BYTES_MAX,
-		"An explicit file always has a valid path width.")
-	invariant.Always(
-		len(file.Language) >= LANGUAGE_NAME_BYTES_MIN &&
-			len(file.Language) <= LANGUAGE_NAME_BYTES_MAX,
-		"An explicit file always has a valid language-name width.")
-	invariant.Always(
-		int(file.Counts.Code) >= LINE_COUNT_MIN &&
-			int(file.Counts.Code) <= LINE_COUNT_MAX,
-		"An explicit file always has a valid code count.")
-	invariant.Always(
-		int(file.Counts.Comment) >= LINE_COUNT_MIN &&
-			int(file.Counts.Comment) <= LINE_COUNT_MAX,
-		"An explicit file always has a valid comment count.")
-	invariant.Always(
-		int(file.Counts.Blank) >= LINE_COUNT_MIN &&
-			int(file.Counts.Blank) <= LINE_COUNT_MAX,
-		"An explicit file always has a valid blank count.")
-	invariant.Always(
-		file.Counts.Dropped >= DROPPED_COUNT_MIN &&
-			file.Counts.Dropped <= DROPPED_COUNT_MAX,
-		"An explicit file always has a valid dropped-line count.")
-	invariant.Always(!file.Is_Test, "An explicit file is always source code.")
-}
-
 // FILE_READ_BYTES_MAX limits one explicitly named file to the Source byte bound.
 const FILE_READ_BYTES_MAX = SOURCE_BYTES_MAX
 
 // WORKERS_PER_PROCESSOR lets file reads wait while other workers classify source.
 const WORKERS_PER_PROCESSOR = 4
 
-// Explicit_Path is a command-line file path selected for a bounded read.
-type Explicit_Path File_Path
-
-// Explicit_Path_Invariants checks path safety without assigning all command-line path
-// witnesses to the explicit-file route.
-func Explicit_Path_Invariants(path Explicit_Path, namespace invariant.Namespace) {
-	invariant.Always(
-		len(path) >= FILE_PATH_BYTES_MIN && len(path) <= FILE_PATH_BYTES_MAX,
-		"An explicit path always stays in the host path bound.")
-}
-
-// Read_Source is source returned by the bounded host-file reader.
-type Read_Source Source
-
-// Read_Source_Invariants checks the read bound. Classify_File owns the Source boundary
-// witnesses across byte and modeled inputs.
-func Read_Source_Invariants(source Read_Source, namespace invariant.Namespace) {
-	invariant.Always(
-		len(source) >= SOURCE_BYTES_MIN && len(source) <= SOURCE_BYTES_MAX,
-		"A host-file read always stays in the source byte bound.")
-}
+// Source_Consumer receives bytes from one successful bounded file read.
+type Source_Consumer func(source Source)
 
 // Reports whether a path names a directory.
 func main_is_directory(
@@ -368,24 +267,16 @@ func main_is_directory(
 	return Directory_Status(information.IsDir()), nil
 }
 
-// Reads one explicitly named file through the Source byte bound.
-func main_read_file(
-	file_of func(name File_Path) (file fs.File, err error), name Explicit_Path,
-) (content Read_Source, err error) {
-	defer func() { Read_Source_Invariants(content, "main_read_file.content") }()
-	Explicit_Path_Invariants(name, "main_read_file.name")
-	file, open_err := file_of(File_Path(name))
-	if open_err != nil {
-		return nil, open_err
-	}
+// Reads one open file through the Source byte bound.
+func main_read_file(file fs.File, consume Source_Consumer) (err error) {
 	defer file.Close()
 	information, information_err := file.Stat()
 	if information_err != nil {
-		return nil, information_err
+		return information_err
 	}
 	byte_size := information.Size()
 	if byte_size < 0 {
-		return nil, errors.New("file size is negative")
+		return errors.New("file size is negative")
 	}
 	if byte_size > FILE_READ_BYTES_MAX {
 		byte_size = FILE_READ_BYTES_MAX
@@ -393,9 +284,10 @@ func main_read_file(
 	buffer := make([]byte, byte_size)
 	_, read_err := io.ReadFull(io.LimitReader(file, byte_size), buffer)
 	if main_read_failed(read_err) {
-		return nil, read_err
+		return read_err
 	}
-	return buffer, nil
+	consume(Source(buffer))
+	return nil
 }
 
 // Read_Failure is the failure state of one bounded file read.
@@ -441,7 +333,7 @@ func main_git_ignore(
 		}
 		kept_files[name] = true
 		parent := path.Dir(name)
-		for main_inside_root(Parent_Path(parent)) {
+		for parent != "." && parent != "/" {
 			kept_directories[parent] = true
 			parent = path.Dir(parent)
 		}
@@ -452,37 +344,6 @@ func main_git_ignore(
 		}
 		return !kept_files[relative_path]
 	}
-}
-
-// Root_Membership is the state of one directory inside a count root.
-type Root_Membership bool
-
-// Root_Membership_Invariants states both root-membership states.
-func Root_Membership_Invariants(value Root_Membership, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
-		Sometimes(bool(value), "A directory is inside the count root.").
-		Ensure()
-}
-
-// Parent_Path is a directory derived from a Git-listed file path.
-type Parent_Path File_Path
-
-// Parent_Path_Invariants checks a derived directory without assigning all host path
-// witnesses to Git parent traversal.
-func Parent_Path_Invariants(parent Parent_Path, namespace invariant.Namespace) {
-	invariant.Always(
-		len(parent) >= FILE_PATH_BYTES_MIN && len(parent) <= FILE_PATH_BYTES_MAX,
-		"A Git parent always stays in the host path bound.")
-}
-
-// Reports whether a path is a directory below the root.
-func main_inside_root(parent Parent_Path) (inside Root_Membership) {
-	defer func() { Root_Membership_Invariants(inside, "main_inside_root.inside") }()
-	Parent_Path_Invariants(parent, "main_inside_root.parent")
-	if parent == "." {
-		return false
-	}
-	return parent != "/"
 }
 
 // ARGUMENTS_COUNT_MIN is the bare program name, which every invocation carries: the
@@ -737,37 +598,37 @@ type Seeded_Language Language
 func Seeded_Language_Invariants(
 	language Seeded_Language, namespace invariant.Namespace,
 ) {
-	invariant.Always(
-		len(language.Name) >= KNOWN_NAME_BYTES_MIN,
-		"A seeded language always has a name.")
-	invariant.Always(
-		len(language.Name) <= LANGUAGE_NAME_BYTES_MAX,
-		"A seeded language name always fits the display bound.")
-	invariant.Always(
-		len(language.Line_Comment) <= COMMENT_TOKENS_COUNT_MAX,
-		"A seeded language always fits the line-comment token bound.")
-	invariant.Always(
-		len(language.Block_Comment_Open) <= BLOCK_COMMENT_OPENER_BYTES_MAX,
-		"A seeded block-comment opener always fits its bound.")
-	invariant.Always(
-		len(language.Block_Comment_Close) <= BLOCK_COMMENT_CLOSER_BYTES_MAX,
-		"A seeded block-comment closer always fits its bound.")
-}
-
-// Optional_Language is either no lookup result or one seeded scanner configuration.
-type Optional_Language Language
-
-// Optional_Language_Invariants rejects a malformed lookup result. Lookup helpers use
-// Recognition for the variable presence state, so this type states steady bounds.
-func Optional_Language_Invariants(
-	language Optional_Language, namespace invariant.Namespace,
-) {
-	invariant.Always(
-		len(language.Name) <= LANGUAGE_NAME_BYTES_MAX,
-		"An optional language name always fits the display bound.")
-	invariant.Always(
-		len(language.Line_Comment) <= COMMENT_TOKENS_COUNT_MAX,
-		"An optional language always fits the line-comment token bound.")
+	invariant.Tree(language, namespace).
+		Range_Int(len(language.Name), KNOWN_NAME_BYTES_MIN, LANGUAGE_NAME_BYTES_MAX).
+		Enum_3_Int(
+			len(language.Line_Comment), COMMENT_TOKENS_COUNT_MIN,
+			COMMENT_TOKENS_COUNT_ONE, COMMENT_TOKENS_COUNT_MAX).
+		Enum_4_Int(
+			len(language.Block_Comment_Open), BLOCK_COMMENT_OPENER_BYTES_MIN,
+			BLOCK_COMMENT_OPENER_BYTES_BRACE, BLOCK_COMMENT_OPENER_BYTES_PAIR,
+			BLOCK_COMMENT_OPENER_BYTES_MAX).
+		Enum_4_Int(
+			len(language.Block_Comment_Close), BLOCK_COMMENT_CLOSER_BYTES_MIN,
+			BLOCK_COMMENT_CLOSER_BYTES_BRACE, BLOCK_COMMENT_CLOSER_BYTES_PAIR,
+			BLOCK_COMMENT_CLOSER_BYTES_MAX).
+		Sometimes(
+			bool(language.Block_Comment_Nests), "Seeded block comments can nest.").
+		Enum_3_Int(
+			len(language.Verbatim_Strings), VERBATIM_DELIMITERS_COUNT_MIN,
+			VERBATIM_DELIMITERS_COUNT_ONE, VERBATIM_DELIMITERS_COUNT_MAX).
+		Enum_3_Int(
+			len(language.Quote_Strings), QUOTE_DELIMITERS_COUNT_MIN,
+			QUOTE_DELIMITERS_COUNT_ONE, QUOTE_DELIMITERS_COUNT_MAX).
+		Sometimes(bool(language.Long_Bracket), "Seeded long brackets are enabled.").
+		Enum_Int(
+			len(language.Test_Prefixes), NAME_PREFIXES_COUNT_MIN,
+			NAME_PREFIXES_COUNT_MAX).
+		Enum_4_Int(
+			len(language.Test_Infixes), NAME_INFIXES_COUNT_MIN,
+			NAME_INFIXES_COUNT_ONE, NAME_INFIXES_COUNT_TWO,
+			NAME_INFIXES_COUNT_MAX).
+		Sometimes(bool(language.Heredoc), "Seeded heredocs are enabled.").
+		Ensure()
 }
 
 // LANGUAGE_NAME_BYTES_MIN is the empty name of the zero Language, which the lookups
@@ -810,6 +671,18 @@ func Comment_Tokens_Invariants(tokens Comment_Tokens, namespace invariant.Namesp
 		Ensure()
 }
 
+// Long_Bracket_Comment_Tokens is the one line-comment token of a long-bracket seed.
+type Long_Bracket_Comment_Tokens Comment_Tokens
+
+// Long_Bracket_Comment_Tokens_Invariants pins the shared single-token property.
+func Long_Bracket_Comment_Tokens_Invariants(
+	tokens Long_Bracket_Comment_Tokens, namespace invariant.Namespace,
+) {
+	invariant.Always(
+		len(tokens) == COMMENT_TOKENS_COUNT_ONE,
+		"A long-bracket language always has one line-comment token.")
+}
+
 // BLOCK_COMMENT_OPENER_BYTES_MIN is the empty opener of a language with no block
 // comment.
 const BLOCK_COMMENT_OPENER_BYTES_MIN = 0
@@ -837,6 +710,20 @@ func Block_Comment_Opener_Invariants(
 			len(opener), BLOCK_COMMENT_OPENER_BYTES_MIN,
 			BLOCK_COMMENT_OPENER_BYTES_BRACE, BLOCK_COMMENT_OPENER_BYTES_PAIR,
 			BLOCK_COMMENT_OPENER_BYTES_MAX).
+		Ensure()
+}
+
+// Active_Block_Comment_Opener is the nonempty opener of a block-comment seed.
+type Active_Block_Comment_Opener Block_Comment_Opener
+
+// Active_Block_Comment_Opener_Invariants excludes the shared empty member.
+func Active_Block_Comment_Opener_Invariants(
+	opener Active_Block_Comment_Opener, namespace invariant.Namespace,
+) {
+	invariant.Tree(opener, namespace).
+		Enum_3_Int(
+			len(opener), BLOCK_COMMENT_OPENER_BYTES_BRACE,
+			BLOCK_COMMENT_OPENER_BYTES_PAIR, BLOCK_COMMENT_OPENER_BYTES_MAX).
 		Ensure()
 }
 
@@ -868,6 +755,20 @@ func Block_Comment_Closer_Invariants(
 			len(closer), BLOCK_COMMENT_CLOSER_BYTES_MIN,
 			BLOCK_COMMENT_CLOSER_BYTES_BRACE, BLOCK_COMMENT_CLOSER_BYTES_PAIR,
 			BLOCK_COMMENT_CLOSER_BYTES_MAX).
+		Ensure()
+}
+
+// Active_Block_Comment_Closer is the nonempty closer paired with a block opener.
+type Active_Block_Comment_Closer Block_Comment_Closer
+
+// Active_Block_Comment_Closer_Invariants excludes the shared empty member.
+func Active_Block_Comment_Closer_Invariants(
+	closer Active_Block_Comment_Closer, namespace invariant.Namespace,
+) {
+	invariant.Tree(closer, namespace).
+		Enum_3_Int(
+			len(closer), BLOCK_COMMENT_CLOSER_BYTES_BRACE,
+			BLOCK_COMMENT_CLOSER_BYTES_PAIR, BLOCK_COMMENT_CLOSER_BYTES_MAX).
 		Ensure()
 }
 
@@ -937,6 +838,20 @@ func Verbatim_Delimiters_Invariants(
 		Ensure()
 }
 
+// Active_Verbatim_Delimiters are the one or two verbatim forms of a seed that has one.
+type Active_Verbatim_Delimiters Verbatim_Delimiters
+
+// Active_Verbatim_Delimiters_Invariants excludes the shared empty collection.
+func Active_Verbatim_Delimiters_Invariants(
+	delimiters Active_Verbatim_Delimiters, namespace invariant.Namespace,
+) {
+	invariant.Tree(delimiters, namespace).
+		Enum_Int(
+			len(delimiters), VERBATIM_DELIMITERS_COUNT_ONE,
+			VERBATIM_DELIMITERS_COUNT_MAX).
+		Ensure()
+}
+
 // QUOTE_DELIMITERS_COUNT_MIN is a language with no quoted string at all.
 const QUOTE_DELIMITERS_COUNT_MIN = 0
 
@@ -958,6 +873,20 @@ func Quote_Delimiters_Invariants(
 	invariant.Tree(delimiters, namespace).
 		Enum_3_Int(
 			len(delimiters), QUOTE_DELIMITERS_COUNT_MIN, QUOTE_DELIMITERS_COUNT_ONE,
+			QUOTE_DELIMITERS_COUNT_MAX).
+		Ensure()
+}
+
+// Active_Quote_Delimiters are the one or two quoted forms of a seed that has one.
+type Active_Quote_Delimiters Quote_Delimiters
+
+// Active_Quote_Delimiters_Invariants excludes the shared empty collection.
+func Active_Quote_Delimiters_Invariants(
+	delimiters Active_Quote_Delimiters, namespace invariant.Namespace,
+) {
+	invariant.Tree(delimiters, namespace).
+		Enum_Int(
+			len(delimiters), QUOTE_DELIMITERS_COUNT_ONE,
 			QUOTE_DELIMITERS_COUNT_MAX).
 		Ensure()
 }
@@ -1021,21 +950,6 @@ func Verbatim_Delimiter_Invariants(
 	Verbatim_Opener_Invariants(delimiter.Open, namespace)
 	Verbatim_Closer_Invariants(delimiter.Close, namespace)
 	Hashability_Invariants(delimiter.Hashable, namespace)
-}
-
-// Hash_Delimiter is a Rust-style verbatim delimiter with a computed closer.
-type Hash_Delimiter Verbatim_Delimiter
-
-// Hash_Delimiter_Invariants states the fixed shape that reaches hash matching.
-func Hash_Delimiter_Invariants(
-	delimiter Hash_Delimiter, namespace invariant.Namespace,
-) {
-	invariant.Always(
-		bool(delimiter.Hashable),
-		"A hash delimiter always uses hashes.")
-	invariant.Always(
-		len(delimiter.Close) == VERBATIM_CLOSER_BYTES_MIN,
-		"A hash delimiter always computes its closer.")
 }
 
 // VERBATIM_OPENER_BYTES_MIN is the one-byte backtick and Rust's one-byte "r" lead.
@@ -1123,22 +1037,24 @@ func Quote_Delimiter_Invariants(
 	Character_Likeness_Invariants(delimiter.Character_Like, namespace)
 }
 
-// String_Delimiter is a quote delimiter that does not describe a character literal.
-type String_Delimiter Quote_Delimiter
+// String_Delimiter contains only the fields used to scan a string. Character likeness
+// selects this path before the conversion and is not part of the scan.
+type String_Delimiter struct {
+	// Open begins the string.
+	Open Quote_Opener
+	// Close ends the string.
+	Close Quote_Closer
+	// Escape marks the next byte as literal, or is zero when escaping is absent.
+	Escape Escape_Byte
+}
 
 // String_Delimiter_Invariants states the fixed shape that reaches string scanning.
 func String_Delimiter_Invariants(
 	delimiter String_Delimiter, namespace invariant.Namespace,
 ) {
-	invariant.Always(
-		!bool(delimiter.Character_Like),
-		"A string delimiter never describes a character literal.")
-	invariant.Always(
-		len(delimiter.Open) == QUOTE_MARK_BYTES,
-		"A string delimiter opener is always one byte.")
-	invariant.Always(
-		len(delimiter.Close) == QUOTE_MARK_BYTES,
-		"A string delimiter closer is always one byte.")
+	Quote_Opener_Invariants(delimiter.Open, namespace)
+	Quote_Closer_Invariants(delimiter.Close, namespace)
+	Escape_Byte_Invariants(delimiter.Escape, namespace)
 }
 
 // QUOTE_MARK_BYTES is the width of every quote mark: a single byte. A quoted form's
@@ -1186,441 +1102,6 @@ func Escape_Byte_Invariants(escape Escape_Byte, namespace invariant.Namespace) {
 		Ensure()
 }
 
-// Language_Go returns the Go configuration: // line comments, non-nesting /* */
-// block comments, backtick raw strings, and quoted literals with backslash escapes.
-func Language_Go() (language Seeded_Language) {
-	defer func() { Seeded_Language_Invariants(language, "Language_Go.language") }()
-	return Seeded_Language{
-		Name:                "Go",
-		Test_Infixes:        []string{"_test."},
-		Line_Comment:        []string{"//"},
-		Block_Comment_Open:  "/*",
-		Block_Comment_Close: "*/",
-		Block_Comment_Nests: false,
-		Verbatim_Strings:    []Verbatim_Delimiter{{Open: "`", Close: "`"}},
-		Quote_Strings: []Quote_Delimiter{
-			{Open: "\"", Close: "\"", Escape: '\\'},
-			{Open: "'", Close: "'", Escape: '\\', Character_Like: true},
-		},
-	}
-}
-
-// Language_Rust returns the Rust configuration: // line comments, nesting /* */
-// block comments, raw strings with hash matching, and quoted literals.
-func Language_Rust() (language Seeded_Language) {
-	defer func() { Seeded_Language_Invariants(language, "Language_Rust.language") }()
-	return Seeded_Language{
-		Name:                "Rust",
-		Line_Comment:        []string{"//"},
-		Block_Comment_Open:  "/*",
-		Block_Comment_Close: "*/",
-		Block_Comment_Nests: true,
-		Verbatim_Strings: []Verbatim_Delimiter{
-			{Open: "br", Hashable: true},
-			{Open: "r", Hashable: true},
-		},
-		Quote_Strings: []Quote_Delimiter{
-			{Open: "\"", Close: "\"", Escape: '\\'},
-			{Open: "'", Close: "'", Escape: '\\', Character_Like: true},
-		},
-	}
-}
-
-// Language_Python returns the Python configuration: # line comments, no block
-// comments, triple-quoted docstrings that span lines, and quoted strings. A docstring
-// is a string, so its lines count as code.
-func Language_Python() (language Seeded_Language) {
-	defer func() { Seeded_Language_Invariants(language, "Language_Python.language") }()
-	return Seeded_Language{
-		Name:                "Python",
-		Test_Prefixes:       []string{"test_"},
-		Test_Infixes:        []string{"_test."},
-		Line_Comment:        []string{"#"},
-		Block_Comment_Open:  "",
-		Block_Comment_Close: "",
-		Block_Comment_Nests: false,
-		// The triple quotes precede the single quotes so the scanner takes "\"\"\""
-		// whole rather than as an empty string followed by a quote.
-		Verbatim_Strings: []Verbatim_Delimiter{
-			{Open: "\"\"\"", Close: "\"\"\""},
-			{Open: "'''", Close: "'''"},
-		},
-		Quote_Strings: []Quote_Delimiter{
-			{Open: "\"", Close: "\"", Escape: '\\'},
-			{Open: "'", Close: "'", Escape: '\\'},
-		},
-	}
-}
-
-// Language_Java_Script returns the JavaScript configuration: // and non-nesting
-// /* */ comments, backtick template literals that span lines, and quoted strings.
-func Language_Java_Script() (language Seeded_Language) {
-	defer func() { Seeded_Language_Invariants(language, "Language_Java_Script.language") }()
-	return Seeded_Language{
-		Name:                "JavaScript",
-		Test_Infixes:        []string{".test.", ".spec."},
-		Line_Comment:        []string{"//"},
-		Block_Comment_Open:  "/*",
-		Block_Comment_Close: "*/",
-		Block_Comment_Nests: false,
-		Verbatim_Strings:    []Verbatim_Delimiter{{Open: "`", Close: "`"}},
-		Quote_Strings: []Quote_Delimiter{
-			{Open: "\"", Close: "\"", Escape: '\\'},
-			{Open: "'", Close: "'", Escape: '\\'},
-		},
-	}
-}
-
-// Language_Type_Script returns the TypeScript configuration, which lexes like
-// JavaScript for counting: // and /* */ comments, template literals, quoted strings.
-func Language_Type_Script() (language Seeded_Language) {
-	defer func() { Seeded_Language_Invariants(language, "Language_Type_Script.language") }()
-	return Seeded_Language{
-		Name:                "TypeScript",
-		Test_Infixes:        []string{".test.", ".spec."},
-		Line_Comment:        []string{"//"},
-		Block_Comment_Open:  "/*",
-		Block_Comment_Close: "*/",
-		Block_Comment_Nests: false,
-		Verbatim_Strings:    []Verbatim_Delimiter{{Open: "`", Close: "`"}},
-		Quote_Strings: []Quote_Delimiter{
-			{Open: "\"", Close: "\"", Escape: '\\'},
-			{Open: "'", Close: "'", Escape: '\\'},
-		},
-	}
-}
-
-// Language_C returns the C configuration: // and /* */ comments, with quoted strings
-// and character literals.
-func Language_C() (language Seeded_Language) {
-	defer func() { Seeded_Language_Invariants(language, "Language_C.language") }()
-	return Seeded_Language{
-		Name:                "C",
-		Line_Comment:        []string{"//"},
-		Block_Comment_Open:  "/*",
-		Block_Comment_Close: "*/",
-		Quote_Strings: []Quote_Delimiter{
-			{Open: "\"", Close: "\"", Escape: '\\'},
-			{Open: "'", Close: "'", Escape: '\\', Character_Like: true},
-		},
-	}
-}
-
-// Language_Cpp returns the C++ configuration: // and /* */ comments, with quoted
-// strings and character literals.
-func Language_Cpp() (language Seeded_Language) {
-	defer func() { Seeded_Language_Invariants(language, "Language_Cpp.language") }()
-	return Seeded_Language{
-		Name:                "C++",
-		Line_Comment:        []string{"//"},
-		Block_Comment_Open:  "/*",
-		Block_Comment_Close: "*/",
-		Quote_Strings: []Quote_Delimiter{
-			{Open: "\"", Close: "\"", Escape: '\\'},
-			{Open: "'", Close: "'", Escape: '\\', Character_Like: true},
-		},
-	}
-}
-
-// Language_C_Sharp returns the C# configuration: // and /* */ comments, """ raw
-// strings, and quoted strings with character literals.
-func Language_C_Sharp() (language Seeded_Language) {
-	defer func() { Seeded_Language_Invariants(language, "Language_C_Sharp.language") }()
-	return Seeded_Language{
-		Name:                "C#",
-		Test_Infixes:        []string{"Test.", "Tests."},
-		Line_Comment:        []string{"//"},
-		Block_Comment_Open:  "/*",
-		Block_Comment_Close: "*/",
-		Verbatim_Strings:    []Verbatim_Delimiter{{Open: "\"\"\"", Close: "\"\"\""}},
-		Quote_Strings: []Quote_Delimiter{
-			{Open: "\"", Close: "\"", Escape: '\\'},
-			{Open: "'", Close: "'", Escape: '\\', Character_Like: true},
-		},
-	}
-}
-
-// Language_Java returns the Java configuration: // and /* */ comments, """ text
-// blocks, and quoted strings with character literals.
-func Language_Java() (language Seeded_Language) {
-	defer func() { Seeded_Language_Invariants(language, "Language_Java.language") }()
-	return Seeded_Language{
-		Name:                "Java",
-		Test_Infixes:        []string{"Test.", "Tests."},
-		Line_Comment:        []string{"//"},
-		Block_Comment_Open:  "/*",
-		Block_Comment_Close: "*/",
-		Verbatim_Strings:    []Verbatim_Delimiter{{Open: "\"\"\"", Close: "\"\"\""}},
-		Quote_Strings: []Quote_Delimiter{
-			{Open: "\"", Close: "\"", Escape: '\\'},
-			{Open: "'", Close: "'", Escape: '\\', Character_Like: true},
-		},
-	}
-}
-
-// Language_Swift returns the Swift configuration: // and nesting /* */ comments, """
-// multi-line strings, and double-quoted strings.
-func Language_Swift() (language Seeded_Language) {
-	defer func() { Seeded_Language_Invariants(language, "Language_Swift.language") }()
-	return Seeded_Language{
-		Name:                "Swift",
-		Test_Infixes:        []string{"Tests.", "Test."},
-		Line_Comment:        []string{"//"},
-		Block_Comment_Open:  "/*",
-		Block_Comment_Close: "*/",
-		Block_Comment_Nests: true,
-		Verbatim_Strings:    []Verbatim_Delimiter{{Open: "\"\"\"", Close: "\"\"\""}},
-		Quote_Strings:       []Quote_Delimiter{{Open: "\"", Close: "\"", Escape: '\\'}},
-	}
-}
-
-// Language_Kotlin returns the Kotlin configuration: // and nesting /* */ comments,
-// """ raw strings, and quoted strings with character literals.
-func Language_Kotlin() (language Seeded_Language) {
-	defer func() { Seeded_Language_Invariants(language, "Language_Kotlin.language") }()
-	return Seeded_Language{
-		Name:                "Kotlin",
-		Test_Infixes:        []string{"Test.", "Tests."},
-		Line_Comment:        []string{"//"},
-		Block_Comment_Open:  "/*",
-		Block_Comment_Close: "*/",
-		Block_Comment_Nests: true,
-		Verbatim_Strings:    []Verbatim_Delimiter{{Open: "\"\"\"", Close: "\"\"\""}},
-		Quote_Strings: []Quote_Delimiter{
-			{Open: "\"", Close: "\"", Escape: '\\'},
-			{Open: "'", Close: "'", Escape: '\\', Character_Like: true},
-		},
-	}
-}
-
-// Language_Scala returns the Scala configuration: // and nesting /* */ comments, """
-// multi-line strings, and quoted strings with character literals.
-func Language_Scala() (language Seeded_Language) {
-	defer func() { Seeded_Language_Invariants(language, "Language_Scala.language") }()
-	return Seeded_Language{
-		Name:                "Scala",
-		Test_Infixes:        []string{"Test.", "Tests.", "Spec."},
-		Line_Comment:        []string{"//"},
-		Block_Comment_Open:  "/*",
-		Block_Comment_Close: "*/",
-		Block_Comment_Nests: true,
-		Verbatim_Strings:    []Verbatim_Delimiter{{Open: "\"\"\"", Close: "\"\"\""}},
-		Quote_Strings: []Quote_Delimiter{
-			{Open: "\"", Close: "\"", Escape: '\\'},
-			{Open: "'", Close: "'", Escape: '\\', Character_Like: true},
-		},
-	}
-}
-
-// Language_Shell returns the Shell configuration: # line comments, double-quoted
-// strings with escapes, and literal single-quoted strings.
-func Language_Shell() (language Seeded_Language) {
-	defer func() { Seeded_Language_Invariants(language, "Language_Shell.language") }()
-	return Seeded_Language{
-		Name:         "Shell",
-		Line_Comment: []string{"#"},
-		Heredoc:      true,
-		Quote_Strings: []Quote_Delimiter{
-			{Open: "\"", Close: "\"", Escape: '\\'},
-			{Open: "'", Close: "'"},
-		},
-	}
-}
-
-// Language_Ruby returns the Ruby configuration: # line comments and quoted strings.
-func Language_Ruby() (language Seeded_Language) {
-	defer func() { Seeded_Language_Invariants(language, "Language_Ruby.language") }()
-	return Seeded_Language{
-		Name:         "Ruby",
-		Test_Infixes: []string{"_spec.", "_test."},
-		Line_Comment: []string{"#"},
-		Heredoc:      true,
-		Quote_Strings: []Quote_Delimiter{
-			{Open: "\"", Close: "\"", Escape: '\\'},
-			{Open: "'", Close: "'", Escape: '\\'},
-		},
-	}
-}
-
-// Language_Yaml returns the YAML configuration: # line comments and quoted strings.
-func Language_Yaml() (language Seeded_Language) {
-	defer func() { Seeded_Language_Invariants(language, "Language_Yaml.language") }()
-	return Seeded_Language{
-		Name:         "YAML",
-		Line_Comment: []string{"#"},
-		Quote_Strings: []Quote_Delimiter{
-			{Open: "\"", Close: "\"", Escape: '\\'},
-			{Open: "'", Close: "'", Escape: '\\'},
-		},
-	}
-}
-
-// Language_Toml returns the TOML configuration: # line comments, """ and ”' multi-
-// line strings, and quoted strings.
-func Language_Toml() (language Seeded_Language) {
-	defer func() { Seeded_Language_Invariants(language, "Language_Toml.language") }()
-	return Seeded_Language{
-		Name:         "TOML",
-		Line_Comment: []string{"#"},
-		Verbatim_Strings: []Verbatim_Delimiter{
-			{Open: "\"\"\"", Close: "\"\"\""},
-			{Open: "'''", Close: "'''"},
-		},
-		Quote_Strings: []Quote_Delimiter{
-			{Open: "\"", Close: "\"", Escape: '\\'},
-			{Open: "'", Close: "'", Escape: '\\'},
-		},
-	}
-}
-
-// Language_Sql returns the SQL configuration: -- and /* */ comments, with quoted
-// strings and quoted identifiers.
-func Language_Sql() (language Seeded_Language) {
-	defer func() { Seeded_Language_Invariants(language, "Language_Sql.language") }()
-	return Seeded_Language{
-		Name:                "SQL",
-		Line_Comment:        []string{"--"},
-		Block_Comment_Open:  "/*",
-		Block_Comment_Close: "*/",
-		Quote_Strings: []Quote_Delimiter{
-			{Open: "\"", Close: "\"", Escape: '\\'},
-			{Open: "'", Close: "'", Escape: '\\'},
-		},
-	}
-}
-
-// Language_Makefile returns the Makefile configuration: # line comments.
-func Language_Makefile() (language Seeded_Language) {
-	defer func() { Seeded_Language_Invariants(language, "Language_Makefile.language") }()
-	return Seeded_Language{
-		Name:         "Makefile",
-		Line_Comment: []string{"#"},
-	}
-}
-
-// Language_Dockerfile returns the Dockerfile configuration: # line comments.
-func Language_Dockerfile() (language Seeded_Language) {
-	defer func() { Seeded_Language_Invariants(language, "Language_Dockerfile.language") }()
-	return Seeded_Language{
-		Name:         "Dockerfile",
-		Line_Comment: []string{"#"},
-	}
-}
-
-// Language_Html returns the HTML configuration: <!-- --> comments and no line comment.
-func Language_Html() (language Seeded_Language) {
-	defer func() { Seeded_Language_Invariants(language, "Language_Html.language") }()
-	return Seeded_Language{
-		Name:                "HTML",
-		Block_Comment_Open:  "<!--",
-		Block_Comment_Close: "-->",
-	}
-}
-
-// Language_Xml returns the XML configuration: <!-- --> comments and no line comment.
-func Language_Xml() (language Seeded_Language) {
-	defer func() { Seeded_Language_Invariants(language, "Language_Xml.language") }()
-	return Seeded_Language{
-		Name:                "XML",
-		Block_Comment_Open:  "<!--",
-		Block_Comment_Close: "-->",
-	}
-}
-
-// Language_Css returns the CSS configuration: /* */ comments and quoted strings.
-func Language_Css() (language Seeded_Language) {
-	defer func() { Seeded_Language_Invariants(language, "Language_Css.language") }()
-	return Seeded_Language{
-		Name:                "CSS",
-		Block_Comment_Open:  "/*",
-		Block_Comment_Close: "*/",
-		Quote_Strings: []Quote_Delimiter{
-			{Open: "\"", Close: "\"", Escape: '\\'},
-			{Open: "'", Close: "'", Escape: '\\'},
-		},
-	}
-}
-
-// Language_Scss returns the SCSS configuration: // and /* */ comments and quoted
-// strings.
-func Language_Scss() (language Seeded_Language) {
-	defer func() { Seeded_Language_Invariants(language, "Language_Scss.language") }()
-	return Seeded_Language{
-		Name:                "SCSS",
-		Line_Comment:        []string{"//"},
-		Block_Comment_Open:  "/*",
-		Block_Comment_Close: "*/",
-		Quote_Strings: []Quote_Delimiter{
-			{Open: "\"", Close: "\"", Escape: '\\'},
-			{Open: "'", Close: "'", Escape: '\\'},
-		},
-	}
-}
-
-// Language_Less returns the LESS configuration: // and /* */ comments and quoted
-// strings.
-func Language_Less() (language Seeded_Language) {
-	defer func() { Seeded_Language_Invariants(language, "Language_Less.language") }()
-	return Seeded_Language{
-		Name:                "LESS",
-		Line_Comment:        []string{"//"},
-		Block_Comment_Open:  "/*",
-		Block_Comment_Close: "*/",
-		Quote_Strings: []Quote_Delimiter{
-			{Open: "\"", Close: "\"", Escape: '\\'},
-			{Open: "'", Close: "'", Escape: '\\'},
-		},
-	}
-}
-
-// Language_Lua returns the Lua configuration: -- line comments, --[[ ]] block
-// comments and [[ ]] long strings (both leveled with = signs), and quoted strings.
-func Language_Lua() (language Seeded_Language) {
-	defer func() { Seeded_Language_Invariants(language, "Language_Lua.language") }()
-	return Seeded_Language{
-		Name:         "Lua",
-		Line_Comment: []string{"--"},
-		Long_Bracket: true,
-		Quote_Strings: []Quote_Delimiter{
-			{Open: "\"", Close: "\"", Escape: '\\'},
-			{Open: "'", Close: "'", Escape: '\\'},
-		},
-	}
-}
-
-// Language_Odin returns the Odin configuration: // line comments, nesting /* */ block
-// comments, backtick raw strings, and quoted strings with rune literals.
-func Language_Odin() (language Seeded_Language) {
-	defer func() { Seeded_Language_Invariants(language, "Language_Odin.language") }()
-	return Seeded_Language{
-		Name:                "Odin",
-		Line_Comment:        []string{"//"},
-		Block_Comment_Open:  "/*",
-		Block_Comment_Close: "*/",
-		Block_Comment_Nests: true,
-		Verbatim_Strings:    []Verbatim_Delimiter{{Open: "`", Close: "`"}},
-		Quote_Strings: []Quote_Delimiter{
-			{Open: "\"", Close: "\"", Escape: '\\'},
-			{Open: "'", Close: "'", Escape: '\\', Character_Like: true},
-		},
-	}
-}
-
-// Language_Zig returns the Zig configuration: // line comments and no block comments,
-// with quoted strings and character literals. A \\ multi-line string line is code
-// because its leading backslashes are code, so it needs no special handling.
-func Language_Zig() (language Seeded_Language) {
-	defer func() { Seeded_Language_Invariants(language, "Language_Zig.language") }()
-	return Seeded_Language{
-		Name:         "Zig",
-		Line_Comment: []string{"//"},
-		Quote_Strings: []Quote_Delimiter{
-			{Open: "\"", Close: "\"", Escape: '\\'},
-			{Open: "'", Close: "'", Escape: '\\', Character_Like: true},
-		},
-	}
-}
-
 // Returns the double-quoted string and single-quoted character delimiters shared by
 // the C-family languages.
 func c_family_quotes() (delimiters Quote_Pair) {
@@ -1646,565 +1127,980 @@ func double_quote() (delimiters Quote_Single) {
 	return Quote_Single{{Open: "\"", Close: "\"", Escape: '\\'}}
 }
 
-// Language_Objective_C returns the Objective-C configuration: // and /* */ comments.
-func Language_Objective_C() (language Seeded_Language) {
-	defer func() { Seeded_Language_Invariants(language, "Language_Objective_C.language") }()
-	return Seeded_Language{
-		Name:                "Objective-C",
-		Line_Comment:        []string{"//"},
-		Block_Comment_Open:  "/*",
-		Block_Comment_Close: "*/",
-		Quote_Strings:       Quote_Delimiters(c_family_quotes()),
-	}
+// LANGUAGE_SEED_BUCKET_COUNT keeps each static-data helper within the source bound.
+const LANGUAGE_SEED_BUCKET_COUNT = 29
+
+// LANGUAGE_SEED_BUCKET_MIN is the first table partition.
+const LANGUAGE_SEED_BUCKET_MIN = 0
+
+// LANGUAGE_SEED_BUCKET_MAX is the last table partition.
+const LANGUAGE_SEED_BUCKET_MAX = LANGUAGE_SEED_BUCKET_COUNT - 1
+
+// Language_Seed_Bucket is one partition index in the static seed table.
+type Language_Seed_Bucket int
+
+// Language_Seed_Bucket_Invariants bounds a seed table partition.
+func Language_Seed_Bucket_Invariants(bucket Language_Seed_Bucket, namespace invariant.Namespace) {
+	invariant.Tree(bucket, namespace).Range_Int(
+		int(bucket), LANGUAGE_SEED_BUCKET_MIN, LANGUAGE_SEED_BUCKET_MAX).Ensure()
 }
 
-// Language_Dart returns the Dart configuration: // and nesting /* */ comments, with
-// ”' and """ multi-line strings.
-func Language_Dart() (language Seeded_Language) {
-	defer func() { Seeded_Language_Invariants(language, "Language_Dart.language") }()
-	return Seeded_Language{
-		Name:                "Dart",
-		Line_Comment:        []string{"//"},
-		Block_Comment_Open:  "/*",
-		Block_Comment_Close: "*/",
-		Block_Comment_Nests: true,
-		Verbatim_Strings: []Verbatim_Delimiter{
-			{Open: "\"\"\"", Close: "\"\"\""},
-			{Open: "'''", Close: "'''"},
+// LANGUAGE_SEEDS_COUNT is the fixed capacity of each table partition.
+const LANGUAGE_SEEDS_COUNT = 6
+
+// Language_Seeds is one fixed-capacity partition of the static seed table.
+type Language_Seeds []Seeded_Language
+
+// Language_Seeds_Invariants pins every table partition to the shared capacity.
+func Language_Seeds_Invariants(seeds Language_Seeds, namespace invariant.Namespace) {
+	invariant.Always(
+		len(seeds) == LANGUAGE_SEEDS_COUNT,
+		"A language seed partition always has its fixed capacity.")
+}
+
+// Language_Seeds_Source supplies one immutable partition of the static seed table.
+type Language_Seeds_Source func() (seeds Language_Seeds)
+
+// Selects one configuration from the static seed table. One boundary owns the whole
+// seed domain, so a fixed seed does not claim every language property.
+func language_seed(name Known_Name) (language Seeded_Language) {
+	defer func() { Seeded_Language_Invariants(language, "language_seed.language") }()
+	Known_Name_Invariants(name, "language_seed.name")
+	sources := [...]Language_Seeds_Source{
+		language_seed_bucket_0,
+		language_seed_bucket_1,
+		language_seed_bucket_2,
+		language_seed_bucket_3,
+		language_seed_bucket_4,
+		language_seed_bucket_5,
+		language_seed_bucket_6,
+		language_seed_bucket_7,
+		language_seed_bucket_8,
+		language_seed_bucket_9,
+		language_seed_bucket_10,
+		language_seed_bucket_11,
+		language_seed_bucket_12,
+		language_seed_bucket_13,
+		language_seed_bucket_14,
+		language_seed_bucket_15,
+		language_seed_bucket_16,
+		language_seed_bucket_17,
+		language_seed_bucket_18,
+		language_seed_bucket_19,
+		language_seed_bucket_20,
+		language_seed_bucket_21,
+		language_seed_bucket_22,
+		language_seed_bucket_23,
+		language_seed_bucket_24,
+		language_seed_bucket_25,
+		language_seed_bucket_26,
+		language_seed_bucket_27,
+		language_seed_bucket_28,
+	}
+	seeds := sources[int(language_seed_bucket(name))]()
+	for _, seed := range seeds {
+		if seed.Name == Language_Name(name) {
+			return seed
+		}
+	}
+	return Seeded_Language{}
+}
+
+// Maps a name to a stable partition without retaining mutable package state.
+func language_seed_bucket(name Known_Name) (bucket Language_Seed_Bucket) {
+	defer func() {
+		Language_Seed_Bucket_Invariants(bucket, "language_seed_bucket.bucket")
+	}()
+	Known_Name_Invariants(name, "language_seed_bucket.name")
+	for _, character := range name {
+		bucket = Language_Seed_Bucket(
+			(int(bucket)*33 + int(character)) % LANGUAGE_SEED_BUCKET_COUNT)
+	}
+	return bucket
+}
+
+func language_seed_bucket_0() (seeds Language_Seeds) {
+	defer func() { Language_Seeds_Invariants(seeds, "language_seed_bucket_0.seeds") }()
+	return Language_Seeds{
+		Seeded_Language{
+			Name:          "Ada",
+			Line_Comment:  []string{"--"},
+			Quote_Strings: Quote_Delimiters(c_family_quotes()),
 		},
-		Quote_Strings: Quote_Delimiters(plain_quotes()),
-	}
-}
-
-// Language_Php returns the PHP configuration: //, #, and /* */ comments.
-func Language_Php() (language Seeded_Language) {
-	defer func() { Seeded_Language_Invariants(language, "Language_Php.language") }()
-	return Seeded_Language{
-		Name:                "PHP",
-		Test_Infixes:        []string{"Test."},
-		Line_Comment:        []string{"//", "#"},
-		Block_Comment_Open:  "/*",
-		Block_Comment_Close: "*/",
-		Quote_Strings:       Quote_Delimiters(plain_quotes()),
-	}
-}
-
-// Language_Solidity returns the Solidity configuration: // and /* */ comments.
-func Language_Solidity() (language Seeded_Language) {
-	defer func() { Seeded_Language_Invariants(language, "Language_Solidity.language") }()
-	return Seeded_Language{
-		Name:                "Solidity",
-		Line_Comment:        []string{"//"},
-		Block_Comment_Open:  "/*",
-		Block_Comment_Close: "*/",
-		Quote_Strings:       Quote_Delimiters(plain_quotes()),
-	}
-}
-
-// Language_Groovy returns the Groovy configuration: // and /* */ comments, with ”' and
-// """ multi-line strings.
-func Language_Groovy() (language Seeded_Language) {
-	defer func() { Seeded_Language_Invariants(language, "Language_Groovy.language") }()
-	return Seeded_Language{
-		Name:                "Groovy",
-		Line_Comment:        []string{"//"},
-		Block_Comment_Open:  "/*",
-		Block_Comment_Close: "*/",
-		Verbatim_Strings: []Verbatim_Delimiter{
-			{Open: "\"\"\"", Close: "\"\"\""},
-			{Open: "'''", Close: "'''"},
+		Seeded_Language{
+			Name:          "Emacs Lisp",
+			Line_Comment:  []string{";"},
+			Quote_Strings: Quote_Delimiters(double_quote()),
 		},
-		Quote_Strings: Quote_Delimiters(plain_quotes()),
-	}
-}
-
-// Language_Verilog returns the Verilog configuration: // and /* */ comments.
-func Language_Verilog() (language Seeded_Language) {
-	defer func() { Seeded_Language_Invariants(language, "Language_Verilog.language") }()
-	return Seeded_Language{
-		Name:                "Verilog",
-		Line_Comment:        []string{"//"},
-		Block_Comment_Open:  "/*",
-		Block_Comment_Close: "*/",
-		Quote_Strings:       Quote_Delimiters(double_quote()),
-	}
-}
-
-// Language_Glsl returns the GLSL configuration: // and /* */ comments.
-func Language_Glsl() (language Seeded_Language) {
-	defer func() { Seeded_Language_Invariants(language, "Language_Glsl.language") }()
-	return Seeded_Language{
-		Name:                "GLSL",
-		Line_Comment:        []string{"//"},
-		Block_Comment_Open:  "/*",
-		Block_Comment_Close: "*/",
-		Quote_Strings:       Quote_Delimiters(double_quote()),
-	}
-}
-
-// Language_Hlsl returns the HLSL configuration: // and /* */ comments.
-func Language_Hlsl() (language Seeded_Language) {
-	defer func() { Seeded_Language_Invariants(language, "Language_Hlsl.language") }()
-	return Seeded_Language{
-		Name:                "HLSL",
-		Line_Comment:        []string{"//"},
-		Block_Comment_Open:  "/*",
-		Block_Comment_Close: "*/",
-		Quote_Strings:       Quote_Delimiters(double_quote()),
-	}
-}
-
-// Language_Arduino returns the Arduino configuration: // and /* */ comments.
-func Language_Arduino() (language Seeded_Language) {
-	defer func() { Seeded_Language_Invariants(language, "Language_Arduino.language") }()
-	return Seeded_Language{
-		Name:                "Arduino",
-		Line_Comment:        []string{"//"},
-		Block_Comment_Open:  "/*",
-		Block_Comment_Close: "*/",
-		Quote_Strings:       Quote_Delimiters(c_family_quotes()),
-	}
-}
-
-// Language_Protobuf returns the Protocol Buffers configuration: // and /* */ comments.
-func Language_Protobuf() (language Seeded_Language) {
-	defer func() { Seeded_Language_Invariants(language, "Language_Protobuf.language") }()
-	return Seeded_Language{
-		Name:                "Protobuf",
-		Line_Comment:        []string{"//"},
-		Block_Comment_Open:  "/*",
-		Block_Comment_Close: "*/",
-		Quote_Strings:       Quote_Delimiters(plain_quotes()),
-	}
-}
-
-// Language_Thrift returns the Thrift configuration: //, #, and /* */ comments.
-func Language_Thrift() (language Seeded_Language) {
-	defer func() { Seeded_Language_Invariants(language, "Language_Thrift.language") }()
-	return Seeded_Language{
-		Name:                "Thrift",
-		Line_Comment:        []string{"//", "#"},
-		Block_Comment_Open:  "/*",
-		Block_Comment_Close: "*/",
-		Quote_Strings:       Quote_Delimiters(plain_quotes()),
-	}
-}
-
-// Language_Jsonc returns the JSONC/JSON5 configuration: // and /* */ comments.
-func Language_Jsonc() (language Seeded_Language) {
-	defer func() { Seeded_Language_Invariants(language, "Language_Jsonc.language") }()
-	return Seeded_Language{
-		Name:                "JSONC",
-		Line_Comment:        []string{"//"},
-		Block_Comment_Open:  "/*",
-		Block_Comment_Close: "*/",
-		Quote_Strings:       Quote_Delimiters(double_quote()),
-	}
-}
-
-// Language_Hcl returns the HCL/Terraform configuration: #, //, and /* */ comments.
-func Language_Hcl() (language Seeded_Language) {
-	defer func() { Seeded_Language_Invariants(language, "Language_Hcl.language") }()
-	return Seeded_Language{
-		Name:                "HCL",
-		Line_Comment:        []string{"#", "//"},
-		Block_Comment_Open:  "/*",
-		Block_Comment_Close: "*/",
-		Quote_Strings:       Quote_Delimiters(double_quote()),
-	}
-}
-
-// Language_Nix returns the Nix configuration: # and /* */ comments, with ” ” strings.
-func Language_Nix() (language Seeded_Language) {
-	defer func() { Seeded_Language_Invariants(language, "Language_Nix.language") }()
-	return Seeded_Language{
-		Name:                "Nix",
-		Line_Comment:        []string{"#"},
-		Block_Comment_Open:  "/*",
-		Block_Comment_Close: "*/",
-		Verbatim_Strings:    []Verbatim_Delimiter{{Open: "''", Close: "''"}},
-		Quote_Strings:       Quote_Delimiters(double_quote()),
-	}
-}
-
-// Language_Markdown returns the Markdown configuration: <!-- --> comments only.
-func Language_Markdown() (language Seeded_Language) {
-	defer func() { Seeded_Language_Invariants(language, "Language_Markdown.language") }()
-	return Seeded_Language{
-		Name:                "Markdown",
-		Block_Comment_Open:  "<!--",
-		Block_Comment_Close: "-->",
-	}
-}
-
-// Language_Vue returns the Vue configuration: <!-- --> comments only.
-func Language_Vue() (language Seeded_Language) {
-	defer func() { Seeded_Language_Invariants(language, "Language_Vue.language") }()
-	return Seeded_Language{
-		Name:                "Vue",
-		Block_Comment_Open:  "<!--",
-		Block_Comment_Close: "-->",
-	}
-}
-
-// Language_Svelte returns the Svelte configuration: <!-- --> comments only.
-func Language_Svelte() (language Seeded_Language) {
-	defer func() { Seeded_Language_Invariants(language, "Language_Svelte.language") }()
-	return Seeded_Language{
-		Name:                "Svelte",
-		Block_Comment_Open:  "<!--",
-		Block_Comment_Close: "-->",
-	}
-}
-
-// Language_Astro returns the Astro configuration: <!-- --> comments only.
-func Language_Astro() (language Seeded_Language) {
-	defer func() { Seeded_Language_Invariants(language, "Language_Astro.language") }()
-	return Seeded_Language{
-		Name:                "Astro",
-		Block_Comment_Open:  "<!--",
-		Block_Comment_Close: "-->",
-	}
-}
-
-// Language_Xaml returns the XAML configuration: <!-- --> comments only.
-func Language_Xaml() (language Seeded_Language) {
-	defer func() { Seeded_Language_Invariants(language, "Language_Xaml.language") }()
-	return Seeded_Language{
-		Name:                "XAML",
-		Block_Comment_Open:  "<!--",
-		Block_Comment_Close: "-->",
-	}
-}
-
-// Language_Xslt returns the XSLT configuration: <!-- --> comments only.
-func Language_Xslt() (language Seeded_Language) {
-	defer func() { Seeded_Language_Invariants(language, "Language_Xslt.language") }()
-	return Seeded_Language{
-		Name:                "XSLT",
-		Block_Comment_Open:  "<!--",
-		Block_Comment_Close: "-->",
-	}
-}
-
-// Language_Haskell returns the Haskell configuration: -- line comments and nesting
-// {- -} block comments.
-func Language_Haskell() (language Seeded_Language) {
-	defer func() { Seeded_Language_Invariants(language, "Language_Haskell.language") }()
-	return Seeded_Language{
-		Name:                "Haskell",
-		Line_Comment:        []string{"--"},
-		Block_Comment_Open:  "{-",
-		Block_Comment_Close: "-}",
-		Block_Comment_Nests: true,
-		Quote_Strings:       Quote_Delimiters(double_quote()),
-	}
-}
-
-// Language_Ocaml returns the OCaml configuration: nesting (* *) block comments and no
-// line comment.
-func Language_Ocaml() (language Seeded_Language) {
-	defer func() { Seeded_Language_Invariants(language, "Language_Ocaml.language") }()
-	return Seeded_Language{
-		Name:                "OCaml",
-		Block_Comment_Open:  "(*",
-		Block_Comment_Close: "*)",
-		Block_Comment_Nests: true,
-		Quote_Strings:       Quote_Delimiters(double_quote()),
-	}
-}
-
-// Language_F_Sharp returns the F# configuration: // line comments, nesting (* *) block
-// comments, and """ strings.
-func Language_F_Sharp() (language Seeded_Language) {
-	defer func() { Seeded_Language_Invariants(language, "Language_F_Sharp.language") }()
-	return Seeded_Language{
-		Name:                "F#",
-		Line_Comment:        []string{"//"},
-		Block_Comment_Open:  "(*",
-		Block_Comment_Close: "*)",
-		Block_Comment_Nests: true,
-		Verbatim_Strings:    []Verbatim_Delimiter{{Open: "\"\"\"", Close: "\"\"\""}},
-		Quote_Strings:       Quote_Delimiters(double_quote()),
-	}
-}
-
-// Language_Julia returns the Julia configuration: # line comments, nesting #= =# block
-// comments, and """ strings.
-func Language_Julia() (language Seeded_Language) {
-	defer func() { Seeded_Language_Invariants(language, "Language_Julia.language") }()
-	return Seeded_Language{
-		Name:                "Julia",
-		Line_Comment:        []string{"#"},
-		Block_Comment_Open:  "#=",
-		Block_Comment_Close: "=#",
-		Block_Comment_Nests: true,
-		Verbatim_Strings:    []Verbatim_Delimiter{{Open: "\"\"\"", Close: "\"\"\""}},
-		Quote_Strings:       Quote_Delimiters(double_quote()),
-	}
-}
-
-// Language_Nim returns the Nim configuration: # line comments, nesting #[ ]# block
-// comments, and """ strings.
-func Language_Nim() (language Seeded_Language) {
-	defer func() { Seeded_Language_Invariants(language, "Language_Nim.language") }()
-	return Seeded_Language{
-		Name:                "Nim",
-		Line_Comment:        []string{"#"},
-		Block_Comment_Open:  "#[",
-		Block_Comment_Close: "]#",
-		Block_Comment_Nests: true,
-		Verbatim_Strings:    []Verbatim_Delimiter{{Open: "\"\"\"", Close: "\"\"\""}},
-		Quote_Strings:       Quote_Delimiters(double_quote()),
-	}
-}
-
-// Language_Common_Lisp returns the Common Lisp configuration: ; line comments and
-// nesting #| |# block comments.
-func Language_Common_Lisp() (language Seeded_Language) {
-	defer func() { Seeded_Language_Invariants(language, "Language_Common_Lisp.language") }()
-	return Seeded_Language{
-		Name:                "Common Lisp",
-		Line_Comment:        []string{";"},
-		Block_Comment_Open:  "#|",
-		Block_Comment_Close: "|#",
-		Block_Comment_Nests: true,
-		Quote_Strings:       Quote_Delimiters(double_quote()),
-	}
-}
-
-// Language_Scheme returns the Scheme configuration: ; line comments and nesting #| |#
-// block comments.
-func Language_Scheme() (language Seeded_Language) {
-	defer func() { Seeded_Language_Invariants(language, "Language_Scheme.language") }()
-	return Seeded_Language{
-		Name:                "Scheme",
-		Line_Comment:        []string{";"},
-		Block_Comment_Open:  "#|",
-		Block_Comment_Close: "|#",
-		Block_Comment_Nests: true,
-		Quote_Strings:       Quote_Delimiters(double_quote()),
-	}
-}
-
-// Language_Racket returns the Racket configuration: ; line comments and nesting #| |#
-// block comments.
-func Language_Racket() (language Seeded_Language) {
-	defer func() { Seeded_Language_Invariants(language, "Language_Racket.language") }()
-	return Seeded_Language{
-		Name:                "Racket",
-		Line_Comment:        []string{";"},
-		Block_Comment_Open:  "#|",
-		Block_Comment_Close: "|#",
-		Block_Comment_Nests: true,
-		Quote_Strings:       Quote_Delimiters(double_quote()),
-	}
-}
-
-// Language_Clojure returns the Clojure configuration: ; line comments only.
-func Language_Clojure() (language Seeded_Language) {
-	defer func() { Seeded_Language_Invariants(language, "Language_Clojure.language") }()
-	return Seeded_Language{
-		Name:          "Clojure",
-		Line_Comment:  []string{";"},
-		Quote_Strings: Quote_Delimiters(double_quote()),
-	}
-}
-
-// Language_Emacs_Lisp returns the Emacs Lisp configuration: ; line comments only.
-func Language_Emacs_Lisp() (language Seeded_Language) {
-	defer func() { Seeded_Language_Invariants(language, "Language_Emacs_Lisp.language") }()
-	return Seeded_Language{
-		Name:          "Emacs Lisp",
-		Line_Comment:  []string{";"},
-		Quote_Strings: Quote_Delimiters(double_quote()),
-	}
-}
-
-// Language_Erlang returns the Erlang configuration: % line comments only.
-func Language_Erlang() (language Seeded_Language) {
-	defer func() { Seeded_Language_Invariants(language, "Language_Erlang.language") }()
-	return Seeded_Language{
-		Name:          "Erlang",
-		Line_Comment:  []string{"%"},
-		Quote_Strings: Quote_Delimiters(double_quote()),
-	}
-}
-
-// Language_Fortran returns the Fortran configuration: ! line comments only.
-func Language_Fortran() (language Seeded_Language) {
-	defer func() { Seeded_Language_Invariants(language, "Language_Fortran.language") }()
-	return Seeded_Language{
-		Name:          "Fortran",
-		Line_Comment:  []string{"!"},
-		Quote_Strings: Quote_Delimiters(plain_quotes()),
-	}
-}
-
-// Language_Ada returns the Ada configuration: -- line comments, with strings and the
-// apostrophe attribute/character distinction.
-func Language_Ada() (language Seeded_Language) {
-	defer func() { Seeded_Language_Invariants(language, "Language_Ada.language") }()
-	return Seeded_Language{
-		Name:          "Ada",
-		Line_Comment:  []string{"--"},
-		Quote_Strings: Quote_Delimiters(c_family_quotes()),
-	}
-}
-
-// Language_D returns the D configuration: // and /* */ comments, backtick raw strings,
-// and strings with character literals.
-func Language_D() (language Seeded_Language) {
-	defer func() { Seeded_Language_Invariants(language, "Language_D.language") }()
-	return Seeded_Language{
-		Name:                "D",
-		Line_Comment:        []string{"//"},
-		Block_Comment_Open:  "/*",
-		Block_Comment_Close: "*/",
-		Verbatim_Strings:    []Verbatim_Delimiter{{Open: "`", Close: "`"}},
-		Quote_Strings:       Quote_Delimiters(c_family_quotes()),
-	}
-}
-
-// Language_Pascal returns the Pascal configuration: // line comments, { } block
-// comments, and single-quoted strings.
-func Language_Pascal() (language Seeded_Language) {
-	defer func() { Seeded_Language_Invariants(language, "Language_Pascal.language") }()
-	return Seeded_Language{
-		Name:                "Pascal",
-		Line_Comment:        []string{"//"},
-		Block_Comment_Open:  "{",
-		Block_Comment_Close: "}",
-		Quote_Strings:       []Quote_Delimiter{{Open: "'", Close: "'"}},
-	}
-}
-
-// Language_R returns the R configuration: # line comments only.
-func Language_R() (language Seeded_Language) {
-	defer func() { Seeded_Language_Invariants(language, "Language_R.language") }()
-	return Seeded_Language{
-		Name:          "R",
-		Line_Comment:  []string{"#"},
-		Quote_Strings: Quote_Delimiters(plain_quotes()),
-	}
-}
-
-// Language_Elixir returns the Elixir configuration: # line comments and """ / ”'
-// heredoc strings.
-func Language_Elixir() (language Seeded_Language) {
-	defer func() { Seeded_Language_Invariants(language, "Language_Elixir.language") }()
-	return Seeded_Language{
-		Name:         "Elixir",
-		Test_Infixes: []string{"_test."},
-		Line_Comment: []string{"#"},
-		Verbatim_Strings: []Verbatim_Delimiter{
-			{Open: "\"\"\"", Close: "\"\"\""},
-			{Open: "'''", Close: "'''"},
+		Seeded_Language{
+			Name:                "Kotlin",
+			Test_Infixes:        []string{"Test.", "Tests."},
+			Line_Comment:        []string{"//"},
+			Block_Comment_Open:  "/*",
+			Block_Comment_Close: "*/",
+			Block_Comment_Nests: true,
+			Verbatim_Strings: []Verbatim_Delimiter{
+				{Open: "\"\"\"", Close: "\"\"\""},
+			},
+			Quote_Strings: []Quote_Delimiter{
+				{Open: "\"", Close: "\"", Escape: '\\'},
+				{Open: "'", Close: "'", Escape: '\\', Character_Like: true},
+			},
 		},
-		Quote_Strings: Quote_Delimiters(plain_quotes()),
+		{},
+		{},
+		{},
 	}
 }
 
-// Language_Crystal returns the Crystal configuration: # line comments only.
-func Language_Crystal() (language Seeded_Language) {
-	defer func() { Seeded_Language_Invariants(language, "Language_Crystal.language") }()
-	return Seeded_Language{
-		Name:          "Crystal",
-		Line_Comment:  []string{"#"},
-		Quote_Strings: Quote_Delimiters(double_quote()),
+func language_seed_bucket_1() (seeds Language_Seeds) {
+	defer func() { Language_Seeds_Invariants(seeds, "language_seed_bucket_1.seeds") }()
+	return Language_Seeds{
+		Seeded_Language{
+			Name:                "Groovy",
+			Line_Comment:        []string{"//"},
+			Block_Comment_Open:  "/*",
+			Block_Comment_Close: "*/",
+			Verbatim_Strings: []Verbatim_Delimiter{
+				{Open: "\"\"\"", Close: "\"\"\""},
+				{Open: "'''", Close: "'''"},
+			},
+			Quote_Strings: Quote_Delimiters(plain_quotes()),
+		},
+		{},
+		{},
+		{},
+		{},
+		{},
 	}
 }
 
-// Language_Power_Shell returns the PowerShell configuration: # line comments and <# #>
-// block comments.
-func Language_Power_Shell() (language Seeded_Language) {
-	defer func() { Seeded_Language_Invariants(language, "Language_Power_Shell.language") }()
-	return Seeded_Language{
-		Name:                "PowerShell",
-		Line_Comment:        []string{"#"},
-		Block_Comment_Open:  "<#",
-		Block_Comment_Close: "#>",
-		Quote_Strings:       Quote_Delimiters(plain_quotes()),
+func language_seed_bucket_2() (seeds Language_Seeds) {
+	defer func() { Language_Seeds_Invariants(seeds, "language_seed_bucket_2.seeds") }()
+	return Language_Seeds{
+		Seeded_Language{
+			Name:                "JSONC",
+			Line_Comment:        []string{"//"},
+			Block_Comment_Open:  "/*",
+			Block_Comment_Close: "*/",
+			Quote_Strings:       Quote_Delimiters(double_quote()),
+		},
+		Seeded_Language{
+			Name:                "Vue",
+			Block_Comment_Open:  "<!--",
+			Block_Comment_Close: "-->",
+		},
+		{},
+		{},
+		{},
+		{},
 	}
 }
 
-// Language_Fish returns the Fish shell configuration: # line comments.
-func Language_Fish() (language Seeded_Language) {
-	defer func() { Seeded_Language_Invariants(language, "Language_Fish.language") }()
-	return Seeded_Language{
-		Name:          "Fish",
-		Line_Comment:  []string{"#"},
-		Quote_Strings: Quote_Delimiters(plain_quotes()),
+func language_seed_bucket_3() (seeds Language_Seeds) {
+	defer func() { Language_Seeds_Invariants(seeds, "language_seed_bucket_3.seeds") }()
+	return Language_Seeds{
+		Seeded_Language{
+			Name:                "LESS",
+			Line_Comment:        []string{"//"},
+			Block_Comment_Open:  "/*",
+			Block_Comment_Close: "*/",
+			Quote_Strings: []Quote_Delimiter{
+				{Open: "\"", Close: "\"", Escape: '\\'},
+				{Open: "'", Close: "'", Escape: '\\'},
+			},
+		},
+		{},
+		{},
+		{},
+		{},
+		{},
 	}
 }
 
-// Language_Nushell returns the Nushell configuration: # line comments.
-func Language_Nushell() (language Seeded_Language) {
-	defer func() { Seeded_Language_Invariants(language, "Language_Nushell.language") }()
-	return Seeded_Language{
-		Name:          "Nushell",
-		Line_Comment:  []string{"#"},
-		Quote_Strings: Quote_Delimiters(plain_quotes()),
+func language_seed_bucket_4() (seeds Language_Seeds) {
+	defer func() { Language_Seeds_Invariants(seeds, "language_seed_bucket_4.seeds") }()
+	return Language_Seeds{
+		Seeded_Language{
+			Name:                "Astro",
+			Block_Comment_Open:  "<!--",
+			Block_Comment_Close: "-->",
+		},
+		Seeded_Language{
+			Name:          "CMake",
+			Line_Comment:  []string{"#"},
+			Long_Bracket:  true,
+			Quote_Strings: Quote_Delimiters(double_quote()),
+		},
+		Seeded_Language{
+			Name:         "Elixir",
+			Test_Infixes: []string{"_test."},
+			Line_Comment: []string{"#"},
+			Verbatim_Strings: []Verbatim_Delimiter{
+				{Open: "\"\"\"", Close: "\"\"\""},
+				{Open: "'''", Close: "'''"},
+			},
+			Quote_Strings: Quote_Delimiters(plain_quotes()),
+		},
+		Seeded_Language{
+			Name:                "Haskell",
+			Line_Comment:        []string{"--"},
+			Block_Comment_Open:  "{-",
+			Block_Comment_Close: "-}",
+			Block_Comment_Nests: true,
+			Quote_Strings:       Quote_Delimiters(double_quote()),
+		},
+		Seeded_Language{
+			Name:                "Solidity",
+			Line_Comment:        []string{"//"},
+			Block_Comment_Open:  "/*",
+			Block_Comment_Close: "*/",
+			Quote_Strings:       Quote_Delimiters(plain_quotes()),
+		},
+		Seeded_Language{
+			Name:                "TypeScript",
+			Test_Infixes:        []string{".test.", ".spec."},
+			Line_Comment:        []string{"//"},
+			Block_Comment_Open:  "/*",
+			Block_Comment_Close: "*/",
+			Block_Comment_Nests: false,
+			Verbatim_Strings:    []Verbatim_Delimiter{{Open: "`", Close: "`"}},
+			Quote_Strings: []Quote_Delimiter{
+				{Open: "\"", Close: "\"", Escape: '\\'},
+				{Open: "'", Close: "'", Escape: '\\'},
+			},
+		},
 	}
 }
 
-// Language_Cmake returns the CMake configuration: # line comments and #[[ ]] bracket
-// comments, reusing the leveled long-bracket machinery.
-func Language_Cmake() (language Seeded_Language) {
-	defer func() { Seeded_Language_Invariants(language, "Language_Cmake.language") }()
-	return Seeded_Language{
-		Name:          "CMake",
-		Line_Comment:  []string{"#"},
-		Long_Bracket:  true,
-		Quote_Strings: Quote_Delimiters(double_quote()),
+func language_seed_bucket_5() (seeds Language_Seeds) {
+	defer func() { Language_Seeds_Invariants(seeds, "language_seed_bucket_5.seeds") }()
+	return Language_Seeds{
+		Seeded_Language{
+			Name:          "Nushell",
+			Line_Comment:  []string{"#"},
+			Quote_Strings: Quote_Delimiters(plain_quotes()),
+		},
+		Seeded_Language{
+			Name:                "Racket",
+			Line_Comment:        []string{";"},
+			Block_Comment_Open:  "#|",
+			Block_Comment_Close: "|#",
+			Block_Comment_Nests: true,
+			Quote_Strings:       Quote_Delimiters(double_quote()),
+		},
+		{},
+		{},
+		{},
+		{},
 	}
 }
 
-// Language_Tcl returns the Tcl configuration: # line comments only.
-func Language_Tcl() (language Seeded_Language) {
-	defer func() { Seeded_Language_Invariants(language, "Language_Tcl.language") }()
-	return Seeded_Language{
-		Name:          "Tcl",
-		Line_Comment:  []string{"#"},
-		Quote_Strings: Quote_Delimiters(double_quote()),
+func language_seed_bucket_6() (seeds Language_Seeds) {
+	defer func() { Language_Seeds_Invariants(seeds, "language_seed_bucket_6.seeds") }()
+	return Language_Seeds{
+		Seeded_Language{
+			Name:         "Ruby",
+			Test_Infixes: []string{"_spec.", "_test."},
+			Line_Comment: []string{"#"},
+			Heredoc:      true,
+			Quote_Strings: []Quote_Delimiter{
+				{Open: "\"", Close: "\"", Escape: '\\'},
+				{Open: "'", Close: "'", Escape: '\\'},
+			},
+		},
+		Seeded_Language{
+			Name:         "TOML",
+			Line_Comment: []string{"#"},
+			Verbatim_Strings: []Verbatim_Delimiter{
+				{Open: "\"\"\"", Close: "\"\"\""},
+				{Open: "'''", Close: "'''"},
+			},
+			Quote_Strings: []Quote_Delimiter{
+				{Open: "\"", Close: "\"", Escape: '\\'},
+				{Open: "'", Close: "'", Escape: '\\'},
+			},
+		},
+		Seeded_Language{
+			Name:          "Visual Basic",
+			Line_Comment:  []string{"'"},
+			Quote_Strings: Quote_Delimiters(double_quote()),
+		},
+		{},
+		{},
+		{},
 	}
 }
 
-// Language_Perl returns the Perl configuration: # line comments only.
-func Language_Perl() (language Seeded_Language) {
-	defer func() { Seeded_Language_Invariants(language, "Language_Perl.language") }()
-	return Seeded_Language{
-		Name:          "Perl",
-		Line_Comment:  []string{"#"},
-		Heredoc:       true,
-		Quote_Strings: Quote_Delimiters(plain_quotes()),
+func language_seed_bucket_7() (seeds Language_Seeds) {
+	defer func() { Language_Seeds_Invariants(seeds, "language_seed_bucket_7.seeds") }()
+	return Language_Seeds{
+		Seeded_Language{
+			Name:          "Clojure",
+			Line_Comment:  []string{";"},
+			Quote_Strings: Quote_Delimiters(double_quote()),
+		},
+		{},
+		{},
+		{},
+		{},
+		{},
 	}
 }
 
-// Language_Tex returns the TeX/LaTeX configuration: % line comments only.
-func Language_Tex() (language Seeded_Language) {
-	defer func() { Seeded_Language_Invariants(language, "Language_Tex.language") }()
-	return Seeded_Language{
-		Name:         "TeX",
-		Line_Comment: []string{"%"},
+func language_seed_bucket_8() (seeds Language_Seeds) {
+	defer func() { Language_Seeds_Invariants(seeds, "language_seed_bucket_8.seeds") }()
+	return Language_Seeds{
+		Seeded_Language{
+			Name:                "CSS",
+			Block_Comment_Open:  "/*",
+			Block_Comment_Close: "*/",
+			Quote_Strings: []Quote_Delimiter{
+				{Open: "\"", Close: "\"", Escape: '\\'},
+				{Open: "'", Close: "'", Escape: '\\'},
+			},
+		},
+		Seeded_Language{
+			Name:                "Nim",
+			Line_Comment:        []string{"#"},
+			Block_Comment_Open:  "#[",
+			Block_Comment_Close: "]#",
+			Block_Comment_Nests: true,
+			Verbatim_Strings: []Verbatim_Delimiter{
+				{Open: "\"\"\"", Close: "\"\"\""},
+			},
+			Quote_Strings: Quote_Delimiters(double_quote()),
+		},
+		{},
+		{},
+		{},
+		{},
 	}
 }
 
-// Language_Visual_Basic returns the Visual Basic configuration: ' line comments only.
-func Language_Visual_Basic() (language Seeded_Language) {
-	defer func() { Seeded_Language_Invariants(language, "Language_Visual_Basic.language") }()
-	return Seeded_Language{
-		Name:          "Visual Basic",
-		Line_Comment:  []string{"'"},
-		Quote_Strings: Quote_Delimiters(double_quote()),
+func language_seed_bucket_9() (seeds Language_Seeds) {
+	defer func() { Language_Seeds_Invariants(seeds, "language_seed_bucket_9.seeds") }()
+	return Language_Seeds{
+		Seeded_Language{
+			Name:                "C",
+			Line_Comment:        []string{"//"},
+			Block_Comment_Open:  "/*",
+			Block_Comment_Close: "*/",
+			Quote_Strings: []Quote_Delimiter{
+				{Open: "\"", Close: "\"", Escape: '\\'},
+				{Open: "'", Close: "'", Escape: '\\', Character_Like: true},
+			},
+		},
+		Seeded_Language{
+			Name:                "Dart",
+			Line_Comment:        []string{"//"},
+			Block_Comment_Open:  "/*",
+			Block_Comment_Close: "*/",
+			Block_Comment_Nests: true,
+			Verbatim_Strings: []Verbatim_Delimiter{
+				{Open: "\"\"\"", Close: "\"\"\""},
+				{Open: "'''", Close: "'''"},
+			},
+			Quote_Strings: Quote_Delimiters(plain_quotes()),
+		},
+		Seeded_Language{
+			Name:                "Swift",
+			Test_Infixes:        []string{"Tests.", "Test."},
+			Line_Comment:        []string{"//"},
+			Block_Comment_Open:  "/*",
+			Block_Comment_Close: "*/",
+			Block_Comment_Nests: true,
+			Verbatim_Strings: []Verbatim_Delimiter{
+				{Open: "\"\"\"", Close: "\"\"\""},
+			},
+			Quote_Strings: []Quote_Delimiter{
+				{Open: "\"", Close: "\"", Escape: '\\'},
+			},
+		},
+		Seeded_Language{
+			Name:         "TeX",
+			Line_Comment: []string{"%"},
+		},
+		Seeded_Language{
+			Name:                "XAML",
+			Block_Comment_Open:  "<!--",
+			Block_Comment_Close: "-->",
+		},
+		{},
 	}
 }
+
+func language_seed_bucket_10() (seeds Language_Seeds) {
+	defer func() { Language_Seeds_Invariants(seeds, "language_seed_bucket_10.seeds") }()
+	return Language_Seeds{
+		Seeded_Language{
+			Name:                "D",
+			Line_Comment:        []string{"//"},
+			Block_Comment_Open:  "/*",
+			Block_Comment_Close: "*/",
+			Verbatim_Strings:    []Verbatim_Delimiter{{Open: "`", Close: "`"}},
+			Quote_Strings:       Quote_Delimiters(c_family_quotes()),
+		},
+		Seeded_Language{
+			Name:          "Erlang",
+			Line_Comment:  []string{"%"},
+			Quote_Strings: Quote_Delimiters(double_quote()),
+		},
+		{},
+		{},
+		{},
+		{},
+	}
+}
+
+func language_seed_bucket_11() (seeds Language_Seeds) {
+	defer func() { Language_Seeds_Invariants(seeds, "language_seed_bucket_11.seeds") }()
+	return Language_Seeds{
+		Seeded_Language{
+			Name:                "C++",
+			Line_Comment:        []string{"//"},
+			Block_Comment_Open:  "/*",
+			Block_Comment_Close: "*/",
+			Quote_Strings: []Quote_Delimiter{
+				{Open: "\"", Close: "\"", Escape: '\\'},
+				{Open: "'", Close: "'", Escape: '\\', Character_Like: true},
+			},
+		},
+		Seeded_Language{
+			Name:                "Rust",
+			Line_Comment:        []string{"//"},
+			Block_Comment_Open:  "/*",
+			Block_Comment_Close: "*/",
+			Block_Comment_Nests: true,
+			Verbatim_Strings: []Verbatim_Delimiter{
+				{Open: "br", Hashable: true},
+				{Open: "r", Hashable: true},
+			},
+			Quote_Strings: []Quote_Delimiter{
+				{Open: "\"", Close: "\"", Escape: '\\'},
+				{Open: "'", Close: "'", Escape: '\\', Character_Like: true},
+			},
+		},
+		Seeded_Language{
+			Name:                "Svelte",
+			Block_Comment_Open:  "<!--",
+			Block_Comment_Close: "-->",
+		},
+		Seeded_Language{
+			Name:                "XSLT",
+			Block_Comment_Open:  "<!--",
+			Block_Comment_Close: "-->",
+		},
+		{},
+		{},
+	}
+}
+
+func language_seed_bucket_12() (seeds Language_Seeds) {
+	defer func() { Language_Seeds_Invariants(seeds, "language_seed_bucket_12.seeds") }()
+	return Language_Seeds{
+		Seeded_Language{
+			Name:         "Lua",
+			Line_Comment: []string{"--"},
+			Long_Bracket: true,
+			Quote_Strings: []Quote_Delimiter{
+				{Open: "\"", Close: "\"", Escape: '\\'},
+				{Open: "'", Close: "'", Escape: '\\'},
+			},
+		},
+		{},
+		{},
+		{},
+		{},
+		{},
+	}
+}
+
+func language_seed_bucket_13() (seeds Language_Seeds) {
+	defer func() { Language_Seeds_Invariants(seeds, "language_seed_bucket_13.seeds") }()
+	return Language_Seeds{
+		Seeded_Language{
+			Name:                "C#",
+			Test_Infixes:        []string{"Test.", "Tests."},
+			Line_Comment:        []string{"//"},
+			Block_Comment_Open:  "/*",
+			Block_Comment_Close: "*/",
+			Verbatim_Strings: []Verbatim_Delimiter{
+				{Open: "\"\"\"", Close: "\"\"\""},
+			},
+			Quote_Strings: []Quote_Delimiter{
+				{Open: "\"", Close: "\"", Escape: '\\'},
+				{Open: "'", Close: "'", Escape: '\\', Character_Like: true},
+			},
+		},
+		Seeded_Language{
+			Name:                "Java",
+			Test_Infixes:        []string{"Test.", "Tests."},
+			Line_Comment:        []string{"//"},
+			Block_Comment_Open:  "/*",
+			Block_Comment_Close: "*/",
+			Verbatim_Strings: []Verbatim_Delimiter{
+				{Open: "\"\"\"", Close: "\"\"\""},
+			},
+			Quote_Strings: []Quote_Delimiter{
+				{Open: "\"", Close: "\"", Escape: '\\'},
+				{Open: "'", Close: "'", Escape: '\\', Character_Like: true},
+			},
+		},
+		Seeded_Language{
+			Name:          "Python",
+			Test_Prefixes: []string{"test_"},
+			Test_Infixes:  []string{"_test."},
+			Line_Comment:  []string{"#"},
+			// The triple quotes precede the single quotes so the scanner takes "\"\"\""
+			// whole rather than as an empty string followed by a quote.
+			Verbatim_Strings: []Verbatim_Delimiter{
+				{Open: "\"\"\"", Close: "\"\"\""},
+				{Open: "'''", Close: "'''"},
+			},
+			Quote_Strings: []Quote_Delimiter{
+				{Open: "\"", Close: "\"", Escape: '\\'},
+				{Open: "'", Close: "'", Escape: '\\'},
+			},
+		},
+		Seeded_Language{
+			Name:                "SCSS",
+			Line_Comment:        []string{"//"},
+			Block_Comment_Open:  "/*",
+			Block_Comment_Close: "*/",
+			Quote_Strings: []Quote_Delimiter{
+				{Open: "\"", Close: "\"", Escape: '\\'},
+				{Open: "'", Close: "'", Escape: '\\'},
+			},
+		},
+		Seeded_Language{
+			Name:                "Scheme",
+			Line_Comment:        []string{";"},
+			Block_Comment_Open:  "#|",
+			Block_Comment_Close: "|#",
+			Block_Comment_Nests: true,
+			Quote_Strings:       Quote_Delimiters(double_quote()),
+		},
+		{},
+	}
+}
+
+func language_seed_bucket_14() (seeds Language_Seeds) {
+	defer func() { Language_Seeds_Invariants(seeds, "language_seed_bucket_14.seeds") }()
+	return Language_Seeds{
+		Seeded_Language{
+			Name:                "HTML",
+			Block_Comment_Open:  "<!--",
+			Block_Comment_Close: "-->",
+		},
+		{},
+		{},
+		{},
+		{},
+		{},
+	}
+}
+
+func language_seed_bucket_15() (seeds Language_Seeds) {
+	defer func() { Language_Seeds_Invariants(seeds, "language_seed_bucket_15.seeds") }()
+	return Language_Seeds{
+		Seeded_Language{
+			Name:                "OCaml",
+			Block_Comment_Open:  "(*",
+			Block_Comment_Close: "*)",
+			Block_Comment_Nests: true,
+			Quote_Strings:       Quote_Delimiters(double_quote()),
+		},
+		Seeded_Language{
+			Name:         "YAML",
+			Line_Comment: []string{"#"},
+			Quote_Strings: []Quote_Delimiter{
+				{Open: "\"", Close: "\"", Escape: '\\'},
+				{Open: "'", Close: "'", Escape: '\\'},
+			},
+		},
+		{},
+		{},
+		{},
+		{},
+	}
+}
+
+func language_seed_bucket_16() (seeds Language_Seeds) {
+	defer func() { Language_Seeds_Invariants(seeds, "language_seed_bucket_16.seeds") }()
+	return Language_Seeds{
+		Seeded_Language{
+			Name:         "Shell",
+			Line_Comment: []string{"#"},
+			Heredoc:      true,
+			Quote_Strings: []Quote_Delimiter{
+				{Open: "\"", Close: "\"", Escape: '\\'},
+				{Open: "'", Close: "'"},
+			},
+		},
+		{},
+		{},
+		{},
+		{},
+		{},
+	}
+}
+
+func language_seed_bucket_17() (seeds Language_Seeds) {
+	defer func() { Language_Seeds_Invariants(seeds, "language_seed_bucket_17.seeds") }()
+	return Language_Seeds{
+		Seeded_Language{
+			Name:          "Crystal",
+			Line_Comment:  []string{"#"},
+			Quote_Strings: Quote_Delimiters(double_quote()),
+		},
+		Seeded_Language{
+			Name:                "HCL",
+			Line_Comment:        []string{"#", "//"},
+			Block_Comment_Open:  "/*",
+			Block_Comment_Close: "*/",
+			Quote_Strings:       Quote_Delimiters(double_quote()),
+		},
+		Seeded_Language{
+			Name:                "SQL",
+			Line_Comment:        []string{"--"},
+			Block_Comment_Open:  "/*",
+			Block_Comment_Close: "*/",
+			Quote_Strings: []Quote_Delimiter{
+				{Open: "\"", Close: "\"", Escape: '\\'},
+				{Open: "'", Close: "'", Escape: '\\'},
+			},
+		},
+		{},
+		{},
+		{},
+	}
+}
+
+func language_seed_bucket_18() (seeds Language_Seeds) {
+	defer func() { Language_Seeds_Invariants(seeds, "language_seed_bucket_18.seeds") }()
+	return Language_Seeds{
+		Seeded_Language{
+			Name:                "Go",
+			Test_Infixes:        []string{"_test."},
+			Line_Comment:        []string{"//"},
+			Block_Comment_Open:  "/*",
+			Block_Comment_Close: "*/",
+			Block_Comment_Nests: false,
+			Verbatim_Strings:    []Verbatim_Delimiter{{Open: "`", Close: "`"}},
+			Quote_Strings: []Quote_Delimiter{
+				{Open: "\"", Close: "\"", Escape: '\\'},
+				{Open: "'", Close: "'", Escape: '\\', Character_Like: true},
+			},
+		},
+		Seeded_Language{
+			Name:                "Pascal",
+			Line_Comment:        []string{"//"},
+			Block_Comment_Open:  "{",
+			Block_Comment_Close: "}",
+			Quote_Strings:       []Quote_Delimiter{{Open: "'", Close: "'"}},
+		},
+		Seeded_Language{
+			Name:                "Verilog",
+			Line_Comment:        []string{"//"},
+			Block_Comment_Open:  "/*",
+			Block_Comment_Close: "*/",
+			Quote_Strings:       Quote_Delimiters(double_quote()),
+		},
+		{},
+		{},
+		{},
+	}
+}
+
+func language_seed_bucket_19() (seeds Language_Seeds) {
+	defer func() { Language_Seeds_Invariants(seeds, "language_seed_bucket_19.seeds") }()
+	return Language_Seeds{
+		Seeded_Language{
+			Name:                "Nix",
+			Line_Comment:        []string{"#"},
+			Block_Comment_Open:  "/*",
+			Block_Comment_Close: "*/",
+			Verbatim_Strings:    []Verbatim_Delimiter{{Open: "''", Close: "''"}},
+			Quote_Strings:       Quote_Delimiters(double_quote()),
+		},
+		{},
+		{},
+		{},
+		{},
+		{},
+	}
+}
+
+func language_seed_bucket_20() (seeds Language_Seeds) {
+	defer func() { Language_Seeds_Invariants(seeds, "language_seed_bucket_20.seeds") }()
+	return Language_Seeds{
+		Seeded_Language{
+			Name:         "Dockerfile",
+			Line_Comment: []string{"#"},
+		},
+		Seeded_Language{
+			Name:                "GLSL",
+			Line_Comment:        []string{"//"},
+			Block_Comment_Open:  "/*",
+			Block_Comment_Close: "*/",
+			Quote_Strings:       Quote_Delimiters(double_quote()),
+		},
+		Seeded_Language{
+			Name:         "Zig",
+			Line_Comment: []string{"//"},
+			Quote_Strings: []Quote_Delimiter{
+				{Open: "\"", Close: "\"", Escape: '\\'},
+				{Open: "'", Close: "'", Escape: '\\', Character_Like: true},
+			},
+		},
+		{},
+		{},
+		{},
+	}
+}
+
+func language_seed_bucket_21() (seeds Language_Seeds) {
+	defer func() { Language_Seeds_Invariants(seeds, "language_seed_bucket_21.seeds") }()
+	return Language_Seeds{
+		Seeded_Language{
+			Name:          "Perl",
+			Line_Comment:  []string{"#"},
+			Heredoc:       true,
+			Quote_Strings: Quote_Delimiters(plain_quotes()),
+		},
+		Seeded_Language{
+			Name:          "Tcl",
+			Line_Comment:  []string{"#"},
+			Quote_Strings: Quote_Delimiters(double_quote()),
+		},
+		Seeded_Language{
+			Name:                "Thrift",
+			Line_Comment:        []string{"//", "#"},
+			Block_Comment_Open:  "/*",
+			Block_Comment_Close: "*/",
+			Quote_Strings:       Quote_Delimiters(plain_quotes()),
+		},
+		{},
+		{},
+		{},
+	}
+}
+
+func language_seed_bucket_22() (seeds Language_Seeds) {
+	defer func() { Language_Seeds_Invariants(seeds, "language_seed_bucket_22.seeds") }()
+	return Language_Seeds{
+		Seeded_Language{
+			Name:          "Fortran",
+			Line_Comment:  []string{"!"},
+			Quote_Strings: Quote_Delimiters(plain_quotes()),
+		},
+		Seeded_Language{
+			Name:                "PowerShell",
+			Line_Comment:        []string{"#"},
+			Block_Comment_Open:  "<#",
+			Block_Comment_Close: "#>",
+			Quote_Strings:       Quote_Delimiters(plain_quotes()),
+		},
+		{},
+		{},
+		{},
+		{},
+	}
+}
+
+func language_seed_bucket_23() (seeds Language_Seeds) {
+	defer func() { Language_Seeds_Invariants(seeds, "language_seed_bucket_23.seeds") }()
+	return Language_Seeds{
+		Seeded_Language{
+			Name:                "JavaScript",
+			Test_Infixes:        []string{".test.", ".spec."},
+			Line_Comment:        []string{"//"},
+			Block_Comment_Open:  "/*",
+			Block_Comment_Close: "*/",
+			Block_Comment_Nests: false,
+			Verbatim_Strings:    []Verbatim_Delimiter{{Open: "`", Close: "`"}},
+			Quote_Strings: []Quote_Delimiter{
+				{Open: "\"", Close: "\"", Escape: '\\'},
+				{Open: "'", Close: "'", Escape: '\\'},
+			},
+		},
+		Seeded_Language{
+			Name:                "Odin",
+			Line_Comment:        []string{"//"},
+			Block_Comment_Open:  "/*",
+			Block_Comment_Close: "*/",
+			Block_Comment_Nests: true,
+			Verbatim_Strings:    []Verbatim_Delimiter{{Open: "`", Close: "`"}},
+			Quote_Strings: []Quote_Delimiter{
+				{Open: "\"", Close: "\"", Escape: '\\'},
+				{Open: "'", Close: "'", Escape: '\\', Character_Like: true},
+			},
+		},
+		Seeded_Language{
+			Name:                "XML",
+			Block_Comment_Open:  "<!--",
+			Block_Comment_Close: "-->",
+		},
+		{},
+		{},
+		{},
+	}
+}
+
+func language_seed_bucket_24() (seeds Language_Seeds) {
+	defer func() { Language_Seeds_Invariants(seeds, "language_seed_bucket_24.seeds") }()
+	return Language_Seeds{
+		Seeded_Language{
+			Name:                "Markdown",
+			Block_Comment_Open:  "<!--",
+			Block_Comment_Close: "-->",
+		},
+		Seeded_Language{
+			Name:                "PHP",
+			Test_Infixes:        []string{"Test."},
+			Line_Comment:        []string{"//", "#"},
+			Block_Comment_Open:  "/*",
+			Block_Comment_Close: "*/",
+			Quote_Strings:       Quote_Delimiters(plain_quotes()),
+		},
+		Seeded_Language{
+			Name:          "R",
+			Line_Comment:  []string{"#"},
+			Quote_Strings: Quote_Delimiters(plain_quotes()),
+		},
+		{},
+		{},
+		{},
+	}
+}
+
+func language_seed_bucket_25() (seeds Language_Seeds) {
+	defer func() { Language_Seeds_Invariants(seeds, "language_seed_bucket_25.seeds") }()
+	return Language_Seeds{
+		Seeded_Language{
+			Name:                "F#",
+			Line_Comment:        []string{"//"},
+			Block_Comment_Open:  "(*",
+			Block_Comment_Close: "*)",
+			Block_Comment_Nests: true,
+			Verbatim_Strings: []Verbatim_Delimiter{
+				{Open: "\"\"\"", Close: "\"\"\""},
+			},
+			Quote_Strings: Quote_Delimiters(double_quote()),
+		},
+		Seeded_Language{
+			Name:          "Fish",
+			Line_Comment:  []string{"#"},
+			Quote_Strings: Quote_Delimiters(plain_quotes()),
+		},
+		Seeded_Language{
+			Name:                "Julia",
+			Line_Comment:        []string{"#"},
+			Block_Comment_Open:  "#=",
+			Block_Comment_Close: "=#",
+			Block_Comment_Nests: true,
+			Verbatim_Strings: []Verbatim_Delimiter{
+				{Open: "\"\"\"", Close: "\"\"\""},
+			},
+			Quote_Strings: Quote_Delimiters(double_quote()),
+		},
+		{},
+		{},
+		{},
+	}
+}
+
+func language_seed_bucket_26() (seeds Language_Seeds) {
+	defer func() { Language_Seeds_Invariants(seeds, "language_seed_bucket_26.seeds") }()
+	return Language_Seeds{
+		Seeded_Language{
+			Name:                "Common Lisp",
+			Line_Comment:        []string{";"},
+			Block_Comment_Open:  "#|",
+			Block_Comment_Close: "|#",
+			Block_Comment_Nests: true,
+			Quote_Strings:       Quote_Delimiters(double_quote()),
+		},
+		Seeded_Language{
+			Name:                "HLSL",
+			Line_Comment:        []string{"//"},
+			Block_Comment_Open:  "/*",
+			Block_Comment_Close: "*/",
+			Quote_Strings:       Quote_Delimiters(double_quote()),
+		},
+		Seeded_Language{
+			Name:                "Protobuf",
+			Line_Comment:        []string{"//"},
+			Block_Comment_Open:  "/*",
+			Block_Comment_Close: "*/",
+			Quote_Strings:       Quote_Delimiters(plain_quotes()),
+		},
+		{},
+		{},
+		{},
+	}
+}
+
+func language_seed_bucket_27() (seeds Language_Seeds) {
+	defer func() { Language_Seeds_Invariants(seeds, "language_seed_bucket_27.seeds") }()
+	return Language_Seeds{
+		Seeded_Language{
+			Name:                "Objective-C",
+			Line_Comment:        []string{"//"},
+			Block_Comment_Open:  "/*",
+			Block_Comment_Close: "*/",
+			Quote_Strings:       Quote_Delimiters(c_family_quotes()),
+		},
+		Seeded_Language{
+			Name:                "Scala",
+			Test_Infixes:        []string{"Test.", "Tests.", "Spec."},
+			Line_Comment:        []string{"//"},
+			Block_Comment_Open:  "/*",
+			Block_Comment_Close: "*/",
+			Block_Comment_Nests: true,
+			Verbatim_Strings: []Verbatim_Delimiter{
+				{Open: "\"\"\"", Close: "\"\"\""},
+			},
+			Quote_Strings: []Quote_Delimiter{
+				{Open: "\"", Close: "\"", Escape: '\\'},
+				{Open: "'", Close: "'", Escape: '\\', Character_Like: true},
+			},
+		},
+		{},
+		{},
+		{},
+		{},
+	}
+}
+
+func language_seed_bucket_28() (seeds Language_Seeds) {
+	defer func() { Language_Seeds_Invariants(seeds, "language_seed_bucket_28.seeds") }()
+	return Language_Seeds{
+		Seeded_Language{
+			Name:                "Arduino",
+			Line_Comment:        []string{"//"},
+			Block_Comment_Open:  "/*",
+			Block_Comment_Close: "*/",
+			Quote_Strings:       Quote_Delimiters(c_family_quotes()),
+		},
+		Seeded_Language{
+			Name:         "Makefile",
+			Line_Comment: []string{"#"},
+		},
+		{},
+		{},
+		{},
+		{},
+	}
+}
+
+// Known_Name_Consumer receives a matched static seed name.
+type Known_Name_Consumer func(name Known_Name)
 
 // Language_For_Extension returns the seeded language for a file extension, with the
 // leading dot, and whether one matched.
-func Language_For_Extension(
-	extension Extension,
-) (language Language, recognized Recognition) {
+func Language_For_Extension(extension Extension) (language Language, recognized Recognition) {
 	defer func() {
 		Language_Invariants(language, "Language_For_Extension.language")
 		Recognition_Invariants(recognized, "Language_For_Extension.recognized")
@@ -2212,203 +2108,205 @@ func Language_For_Extension(
 	Extension_Invariants(extension, "Language_For_Extension.extension")
 	switch extension {
 	case ".go":
-		return Language(Language_Go()), true
+		return Language(language_seed("Go")), true
 	case ".rs":
-		return Language(Language_Rust()), true
+		return Language(language_seed("Rust")), true
 	case ".py":
-		return Language(Language_Python()), true
+		return Language(language_seed("Python")), true
 	case ".js", ".jsx", ".mjs", ".cjs":
-		return Language(Language_Java_Script()), true
+		return Language(language_seed("JavaScript")), true
 	case ".ts", ".tsx":
-		return Language(Language_Type_Script()), true
+		return Language(language_seed("TypeScript")), true
 	case ".lua":
-		return Language(Language_Lua()), true
+		return Language(language_seed("Lua")), true
 	case ".odin":
-		return Language(Language_Odin()), true
+		return Language(language_seed("Odin")), true
 	case ".zig":
-		return Language(Language_Zig()), true
+		return Language(language_seed("Zig")), true
 	case ".c", ".h":
-		return Language(Language_C()), true
+		return Language(language_seed("C")), true
 	case ".cpp", ".cc", ".cxx", ".hpp", ".hh", ".hxx":
-		return Language(Language_Cpp()), true
+		return Language(language_seed("C++")), true
 	case ".cs":
-		return Language(Language_C_Sharp()), true
+		return Language(language_seed("C#")), true
 	case ".java":
-		return Language(Language_Java()), true
+		return Language(language_seed("Java")), true
 	case ".swift":
-		return Language(Language_Swift()), true
+		return Language(language_seed("Swift")), true
 	case ".kt", ".kts":
-		return Language(Language_Kotlin()), true
+		return Language(language_seed("Kotlin")), true
 	case ".scala", ".sc":
-		return Language(Language_Scala()), true
+		return Language(language_seed("Scala")), true
 	case ".sh", ".bash", ".zsh":
-		return Language(Language_Shell()), true
+		return Language(language_seed("Shell")), true
 	case ".rb":
-		return Language(Language_Ruby()), true
+		return Language(language_seed("Ruby")), true
 	case ".yaml", ".yml":
-		return Language(Language_Yaml()), true
+		return Language(language_seed("YAML")), true
 	case ".toml":
-		return Language(Language_Toml()), true
+		return Language(language_seed("TOML")), true
 	case ".sql":
-		return Language(Language_Sql()), true
+		return Language(language_seed("SQL")), true
 	case ".mk":
-		return Language(Language_Makefile()), true
+		return Language(language_seed("Makefile")), true
 	case ".dockerfile":
-		return Language(Language_Dockerfile()), true
+		return Language(language_seed("Dockerfile")), true
 	case ".html", ".htm":
-		return Language(Language_Html()), true
+		return Language(language_seed("HTML")), true
 	case ".xml", ".svg":
-		return Language(Language_Xml()), true
+		return Language(language_seed("XML")), true
 	case ".css":
-		return Language(Language_Css()), true
+		return Language(language_seed("CSS")), true
 	case ".scss":
-		return Language(Language_Scss()), true
+		return Language(language_seed("SCSS")), true
 	case ".less":
-		return Language(Language_Less()), true
+		return Language(language_seed("LESS")), true
 	}
-	optional, recognized := extension_match_more(extension)
-	return Language(optional), recognized
+	name := Known_Name("")
+	recognized = extension_match_more(extension, func(match Known_Name) { name = match })
+	if !recognized {
+		return Language{}, false
+	}
+	return Language(language_seed(name)), true
 }
 
 // Continues Language_For_Extension's lookup for the C-style and markup additions.
 func extension_match_more(
-	extension Extension,
-) (language Optional_Language, recognized Recognition) {
-	defer func() {
-		Optional_Language_Invariants(language, "extension_match_more.language")
-		Recognition_Invariants(recognized, "extension_match_more.recognized")
-	}()
+	extension Extension, consume Known_Name_Consumer,
+) (recognized Recognition) {
+	defer func() { Recognition_Invariants(recognized, "extension_match_more.recognized") }()
 	Extension_Invariants(extension, "extension_match_more.extension")
 	switch extension {
 	case ".m", ".mm":
-		return Optional_Language(Language_Objective_C()), true
+		consume("Objective-C")
 	case ".dart":
-		return Optional_Language(Language_Dart()), true
+		consume("Dart")
 	case ".php", ".phtml":
-		return Optional_Language(Language_Php()), true
+		consume("PHP")
 	case ".sol":
-		return Optional_Language(Language_Solidity()), true
+		consume("Solidity")
 	case ".groovy", ".gradle":
-		return Optional_Language(Language_Groovy()), true
+		consume("Groovy")
 	case ".v", ".sv", ".svh":
-		return Optional_Language(Language_Verilog()), true
+		consume("Verilog")
 	case ".glsl", ".vert", ".frag", ".comp", ".geom":
-		return Optional_Language(Language_Glsl()), true
+		consume("GLSL")
 	case ".hlsl":
-		return Optional_Language(Language_Hlsl()), true
+		consume("HLSL")
 	case ".ino":
-		return Optional_Language(Language_Arduino()), true
+		consume("Arduino")
 	case ".proto":
-		return Optional_Language(Language_Protobuf()), true
+		consume("Protobuf")
 	case ".thrift":
-		return Optional_Language(Language_Thrift()), true
+		consume("Thrift")
 	case ".jsonc", ".json5":
-		return Optional_Language(Language_Jsonc()), true
+		consume("JSONC")
 	case ".tf", ".hcl", ".tfvars":
-		return Optional_Language(Language_Hcl()), true
+		consume("HCL")
 	case ".nix":
-		return Optional_Language(Language_Nix()), true
+		consume("Nix")
 	case ".md", ".markdown":
-		return Optional_Language(Language_Markdown()), true
+		consume("Markdown")
 	case ".vue":
-		return Optional_Language(Language_Vue()), true
+		consume("Vue")
 	case ".svelte":
-		return Optional_Language(Language_Svelte()), true
+		consume("Svelte")
 	case ".astro":
-		return Optional_Language(Language_Astro()), true
+		consume("Astro")
 	case ".xaml":
-		return Optional_Language(Language_Xaml()), true
+		consume("XAML")
 	case ".xsl", ".xslt":
-		return Optional_Language(Language_Xslt()), true
+		consume("XSLT")
+	default:
+		return extension_match_rest(extension, consume)
 	}
-	return extension_match_rest(extension)
+	return true
 }
 
 // Continues Language_For_Extension's lookup for the remaining languages.
 func extension_match_rest(
-	extension Extension,
-) (language Optional_Language, recognized Recognition) {
-	defer func() {
-		Optional_Language_Invariants(language, "extension_match_rest.language")
-		Recognition_Invariants(recognized, "extension_match_rest.recognized")
-	}()
+	extension Extension, consume Known_Name_Consumer,
+) (recognized Recognition) {
+	defer func() { Recognition_Invariants(recognized, "extension_match_rest.recognized") }()
 	Extension_Invariants(extension, "extension_match_rest.extension")
 	switch extension {
 	case ".hs", ".lhs":
-		return Optional_Language(Language_Haskell()), true
+		consume("Haskell")
 	case ".ml", ".mli":
-		return Optional_Language(Language_Ocaml()), true
+		consume("OCaml")
 	case ".fs", ".fsx", ".fsi":
-		return Optional_Language(Language_F_Sharp()), true
+		consume("F#")
 	case ".jl":
-		return Optional_Language(Language_Julia()), true
+		consume("Julia")
 	case ".nim", ".nims":
-		return Optional_Language(Language_Nim()), true
+		consume("Nim")
 	case ".lisp", ".lsp", ".cl":
-		return Optional_Language(Language_Common_Lisp()), true
+		consume("Common Lisp")
 	case ".scm", ".ss":
-		return Optional_Language(Language_Scheme()), true
+		consume("Scheme")
 	case ".rkt":
-		return Optional_Language(Language_Racket()), true
+		consume("Racket")
 	case ".clj", ".cljs", ".cljc", ".edn":
-		return Optional_Language(Language_Clojure()), true
+		consume("Clojure")
 	case ".el":
-		return Optional_Language(Language_Emacs_Lisp()), true
+		consume("Emacs Lisp")
 	case ".erl", ".hrl":
-		return Optional_Language(Language_Erlang()), true
+		consume("Erlang")
 	case ".f90", ".f95", ".f03", ".f08", ".f", ".for":
-		return Optional_Language(Language_Fortran()), true
+		consume("Fortran")
 	case ".adb", ".ads", ".ada":
-		return Optional_Language(Language_Ada()), true
+		consume("Ada")
 	case ".d":
-		return Optional_Language(Language_D()), true
+		consume("D")
 	case ".pas", ".pp", ".dpr":
-		return Optional_Language(Language_Pascal()), true
+		consume("Pascal")
 	case ".r", ".R":
-		return Optional_Language(Language_R()), true
+		consume("R")
 	case ".ex", ".exs":
-		return Optional_Language(Language_Elixir()), true
+		consume("Elixir")
 	case ".cr":
-		return Optional_Language(Language_Crystal()), true
+		consume("Crystal")
 	case ".ps1", ".psm1", ".psd1":
-		return Optional_Language(Language_Power_Shell()), true
+		consume("PowerShell")
 	case ".fish":
-		return Optional_Language(Language_Fish()), true
+		consume("Fish")
 	case ".nu":
-		return Optional_Language(Language_Nushell()), true
+		consume("Nushell")
 	case ".cmake":
-		return Optional_Language(Language_Cmake()), true
+		consume("CMake")
 	case ".tcl":
-		return Optional_Language(Language_Tcl()), true
+		consume("Tcl")
 	case ".pl", ".pm", ".t", ".pod":
-		return Optional_Language(Language_Perl()), true
+		consume("Perl")
 	case ".tex", ".sty", ".cls", ".ltx":
-		return Optional_Language(Language_Tex()), true
+		consume("TeX")
 	case ".vb":
-		return Optional_Language(Language_Visual_Basic()), true
+		consume("Visual Basic")
+	default:
+		return false
 	}
-	return Optional_Language{}, false
+	return true
 }
 
-// Language_For_Filename returns the language for an extensionless file recognized by
-// its name, and whether one matched.
-func Language_For_Filename(
-	name File_Name,
-) (language Optional_Language, recognized Recognition) {
+// Matches an extensionless filename to its static seed name.
+func language_name_for_filename(
+	name File_Name, consume Known_Name_Consumer,
+) (recognized Recognition) {
 	defer func() {
-		Optional_Language_Invariants(language, "Language_For_Filename.language")
 		Recognition_Invariants(recognized, "Language_For_Filename.recognized")
 	}()
 	File_Name_Invariants(name, "Language_For_Filename.name")
 	switch name {
 	case "Makefile", "makefile", "GNUmakefile":
-		return Optional_Language(Language_Makefile()), true
+		consume("Makefile")
 	case "Dockerfile":
-		return Optional_Language(Language_Dockerfile()), true
+		consume("Dockerfile")
 	case "CMakeLists.txt":
-		return Optional_Language(Language_Cmake()), true
+		consume("CMake")
+	default:
+		return false
 	}
-	return Optional_Language{}, false
+	return true
 }
 
 // Resolves the language for a path by its extension, or for an extensionless file by
@@ -2423,9 +2321,15 @@ func language_for_path(file_path File_Path) (language Language, recognized Recog
 	if recognized {
 		return language, true
 	}
-	language_by_name, recognized_by_name := Language_For_Filename(
-		File_Name(path.Base(string(file_path))))
-	return Language(language_by_name), recognized_by_name
+	name := Known_Name("")
+	recognized = language_name_for_filename(
+		File_Name(path.Base(string(file_path))), func(match Known_Name) {
+			name = match
+		})
+	if !recognized {
+		return Language{}, false
+	}
+	return Language(language_seed(name)), true
 }
 
 // EXTENSION_BYTES_MIN is the empty extension of a file whose name carries no dot.
@@ -2536,6 +2440,18 @@ func Counts_Invariants(counts Counts, namespace invariant.Namespace) {
 	Dropped_Count_Invariants(counts.Dropped, namespace)
 }
 
+// FILE_CONTENT_COUNT_MAX is the most code or comment lines one file can contain. Each
+// needs one content byte and, except for the final line, one separator byte.
+const FILE_CONTENT_COUNT_MAX = (SOURCE_BYTES_MAX + 1) / 2
+
+// FILE_BLANK_COUNT_MAX is the most blank lines one file can contain. Each newline can
+// terminate an empty line, so every source byte can contribute one.
+const FILE_BLANK_COUNT_MAX = SOURCE_BYTES_MAX
+
+// FILE_DROPPED_COUNT_MAX is the most lines one file can read short. Each needs one
+// byte beyond the scan window and, except for the final line, one separator byte.
+const FILE_DROPPED_COUNT_MAX = (SOURCE_BYTES_MAX + 1) / (LINE_BYTES_MAX + 2)
+
 // File_Partition is the line partition produced from one source file. Its byte bound
 // makes aggregate report ceilings unreachable at this stage.
 type File_Partition Counts
@@ -2545,44 +2461,16 @@ type File_Partition Counts
 func File_Partition_Invariants(
 	counts File_Partition, namespace invariant.Namespace,
 ) {
-	invariant.Always(
-		int(counts.Code) >= LINE_COUNT_MIN &&
-			int(counts.Code) <= SOURCE_BYTES_MAX,
-		"A file code partition always fits its source byte bound.")
-	invariant.Always(
-		int(counts.Comment) >= LINE_COUNT_MIN &&
-			int(counts.Comment) <= SOURCE_BYTES_MAX,
-		"A file comment partition always fits its source byte bound.")
-	invariant.Always(
-		int(counts.Blank) >= LINE_COUNT_MIN &&
-			int(counts.Blank) <= SOURCE_BYTES_MAX,
-		"A file blank partition always fits its source byte bound.")
+	invariant.Tree(counts, namespace).
+		Range_Int(int(counts.Code), LINE_COUNT_MIN, FILE_CONTENT_COUNT_MAX).
+		Range_Int(int(counts.Comment), LINE_COUNT_MIN, FILE_CONTENT_COUNT_MAX).
+		Range_Int(int(counts.Blank), LINE_COUNT_MIN, FILE_BLANK_COUNT_MAX).
+		Range_Int(
+			int(counts.Dropped), DROPPED_COUNT_MIN, FILE_DROPPED_COUNT_MAX).
+		Ensure()
 	invariant.Always(
 		int(counts.Code)+int(counts.Comment)+int(counts.Blank) <= SOURCE_BYTES_MAX,
 		"A file line partition always fits its source byte bound.")
-	invariant.Always(
-		counts.Dropped >= DROPPED_COUNT_MIN && counts.Dropped <= DROPPED_COUNT_MAX,
-		"A file dropped-line tally always fits its report bound.")
-}
-
-// Summed_Counts is an in-progress sum of file partitions for one language partition.
-type Summed_Counts Counts
-
-// Summed_Counts_Invariants checks accumulator safety. The completed group owns the
-// report boundary witnesses.
-func Summed_Counts_Invariants(counts Summed_Counts, namespace invariant.Namespace) {
-	invariant.Always(
-		int(counts.Code) >= LINE_COUNT_MIN && int(counts.Code) <= LINE_COUNT_MAX,
-		"A summed code partition always stays in the line bound.")
-	invariant.Always(
-		int(counts.Comment) >= LINE_COUNT_MIN && int(counts.Comment) <= LINE_COUNT_MAX,
-		"A summed comment partition always stays in the line bound.")
-	invariant.Always(
-		int(counts.Blank) >= LINE_COUNT_MIN && int(counts.Blank) <= LINE_COUNT_MAX,
-		"A summed blank partition always stays in the line bound.")
-	invariant.Always(
-		counts.Dropped >= DROPPED_COUNT_MIN && counts.Dropped <= DROPPED_COUNT_MAX,
-		"A summed dropped-line tally always stays in its bound.")
 }
 
 // DROPPED_COUNT_MIN is a report in which every line fit the scan window.
@@ -2695,9 +2583,9 @@ func File_Classifications_Invariants(
 const FILE_CLASSIFICATIONS_COUNT_MIN = 0
 
 // FILE_CLASSIFICATIONS_COUNT_MAX is the two-root line-bound witness: one root fills
-// a report while the other contributes the 96 classifications needed to make their
-// omitted-file tallies reach the aggregate bound.
-const FILE_CLASSIFICATIONS_COUNT_MAX = 65631
+// its candidate bound while the other contributes 72 classifications needed to make
+// their omitted-file tallies reach the aggregate bound.
+const FILE_CLASSIFICATIONS_COUNT_MAX = 65607
 
 // The consumer validates both sides of the injected boundary because a modeled
 // implementation must obey the same domain and range as the byte implementation.
@@ -2712,7 +2600,22 @@ func classify(
 		if len(classifier.Classifications) != 0 {
 			panic("byte classifier carries modeled classifications")
 		}
-		return Classify_File(input)
+		counts = File_Partition{}
+		classify_bytes(input, func(kind Line_Kind, dropped Dropped_Count) {
+			switch kind {
+			case LINE_KIND_CODE:
+				counts.Code++
+			case LINE_KIND_COMMENT:
+				counts.Comment++
+			case LINE_KIND_BLANK:
+				counts.Blank++
+			}
+			counts.Dropped += dropped
+			if counts.Dropped > FILE_DROPPED_COUNT_MAX {
+				counts.Dropped = FILE_DROPPED_COUNT_MAX
+			}
+		})
+		return counts
 	case FILE_CLASSIFIER_KIND_MODEL:
 		return classify_model(classifier.Classifications, input)
 	}
@@ -2792,10 +2695,13 @@ func Source_Invariants(source Source, namespace invariant.Namespace) {
 		Ensure()
 }
 
-// Classify_File partitions every physical line of the source into code, comment, and
-// blank counts. Each line is counted once, so the three sum to the line count.
-func Classify_File(input Classify_File_Input) (counts File_Partition) {
-	defer func() { File_Partition_Invariants(counts, "Classify_File.counts") }()
+// Classified_Line_Consumer receives one physical line's partition and whether its
+// classification read only the bounded prefix.
+type Classified_Line_Consumer func(kind Line_Kind, dropped Dropped_Count)
+
+// Classifies every physical line of the source without assigning the aggregate
+// partition domain to the byte scanner.
+func classify_bytes(input Classify_File_Input, consume Classified_Line_Consumer) {
 	Classify_File_Input_Invariants(input, "Classify_File.input")
 	prepared := language_scanner(&input.Language)
 	carry := Scan_Carry{
@@ -2817,47 +2723,26 @@ func Classify_File(input Classify_File_Input) (counts File_Partition) {
 		// as exactly one line, so the totals stay exact for any input while the
 		// scanner works against a bounded buffer.
 		stop_count := index
+		dropped := Dropped_Count(0)
 		if stop_count-start > LINE_BYTES_MAX {
 			stop_count = start + LINE_BYTES_MAX
-			// The tally saturates; the table says so rather than reporting a total
-			// it stopped keeping.
-			if counts.Dropped < DROPPED_COUNT_MAX {
-				counts.Dropped++
-			}
+			dropped = 1
 		}
 		kind, carry = classify_line(Line(source[start:stop_count]), carry, &prepared)
-		counts_tally(&counts, kind)
+		consume(kind, dropped)
 		start = index + 1
 	}
 	// Bytes after the last newline are a final line only when non-empty, so a trailing
 	// newline adds no phantom line and the empty file is zero lines.
 	if start < len(source) {
 		stop_count := len(source)
+		dropped := Dropped_Count(0)
 		if stop_count-start > LINE_BYTES_MAX {
 			stop_count = start + LINE_BYTES_MAX
-			// The tally saturates; the table says so rather than reporting a total
-			// it stopped keeping.
-			if counts.Dropped < DROPPED_COUNT_MAX {
-				counts.Dropped++
-			}
+			dropped = 1
 		}
 		kind, _ = classify_line(Line(source[start:stop_count]), carry, &prepared)
-		counts_tally(&counts, kind)
-	}
-	return counts
-}
-
-// Adds one line's verdict to the running partition.
-func counts_tally(counts *File_Partition, kind Line_Kind) {
-	File_Partition_Invariants(*counts, "counts_tally.counts")
-	Line_Kind_Invariants(kind, "counts_tally.kind")
-	switch kind {
-	case LINE_KIND_CODE:
-		counts.Code++
-	case LINE_KIND_COMMENT:
-		counts.Comment++
-	case LINE_KIND_BLANK:
-		counts.Blank++
+		consume(kind, dropped)
 	}
 }
 
@@ -2935,10 +2820,7 @@ func Cursor_Invariants(cursor Cursor, namespace invariant.Namespace) {
 		Ensure()
 }
 
-// Scan_Position is the line being read and how far along it the scan has reached.
-// Carrying the pair in one value is what keeps the scanner's coverage tractable: every
-// helper states this one type, so the line and cursor bounds are witnessed once rather
-// than separately at each of the two dozen functions that walk a line.
+// Scan_Position is the line being read and how far along it has reached.
 type Scan_Position struct {
 	// Line is the non-blank line being read, truncated to the scan window.
 	Line Scan_Line
@@ -2958,12 +2840,33 @@ type Bounded_Position Scan_Position
 // Bounded_Position_Invariants states the safety properties that all scanner probes
 // share. The complete scan owns the variable cursor and line-width boundaries.
 func Bounded_Position_Invariants(at Bounded_Position, namespace invariant.Namespace) {
+	invariant.Tree(at, namespace).
+		Range_Int(len(at.Line), SCAN_LINE_BYTES_MIN, SCAN_LINE_BYTES_MAX).
+		Range_Int(int(at.Cursor), CURSOR_MIN, CURSOR_MAX).
+		Ensure()
 	invariant.Always(
 		len(at.Line) >= SCAN_LINE_BYTES_MIN,
 		"A bounded scanner position always has line data.")
 	invariant.Always(
 		int(at.Cursor) <= len(at.Line),
 		"A bounded scanner position always stays in the line.")
+}
+
+// ACTIVE_CURSOR_MAX is the last unread byte of the widest scanned line.
+const ACTIVE_CURSOR_MAX = CURSOR_MAX - 1
+
+// Active_Position is a scanner cursor that points at unread data.
+type Active_Position Scan_Position
+
+// Active_Position_Invariants shares the line bound and excludes its terminal cursor.
+func Active_Position_Invariants(at Active_Position, namespace invariant.Namespace) {
+	invariant.Tree(at, namespace).
+		Range_Int(len(at.Line), SCAN_LINE_BYTES_MIN, SCAN_LINE_BYTES_MAX).
+		Range_Int(int(at.Cursor), CURSOR_MIN, ACTIVE_CURSOR_MAX).
+		Ensure()
+	invariant.Always(
+		int(at.Cursor) < len(at.Line),
+		"An active scanner position always points at unread data.")
 }
 
 // NESTING_DEPTH_MIN is the depth outside any block comment.
@@ -2981,6 +2884,21 @@ type Nesting_Depth int
 func Nesting_Depth_Invariants(depth Nesting_Depth, namespace invariant.Namespace) {
 	invariant.Tree(depth, namespace).
 		Range_Int(int(depth), NESTING_DEPTH_MIN, NESTING_DEPTH_MAX).
+		Ensure()
+}
+
+// ACTIVE_NESTING_DEPTH_MIN is the first depth inside a block comment.
+const ACTIVE_NESTING_DEPTH_MIN = NESTING_DEPTH_MIN + 1
+
+// Active_Nesting_Depth is the nonzero depth of an open block comment.
+type Active_Nesting_Depth Nesting_Depth
+
+// Active_Nesting_Depth_Invariants shares the depth ceiling and excludes zero.
+func Active_Nesting_Depth_Invariants(
+	depth Active_Nesting_Depth, namespace invariant.Namespace,
+) {
+	invariant.Tree(depth, namespace).
+		Range_Int(int(depth), ACTIVE_NESTING_DEPTH_MIN, NESTING_DEPTH_MAX).
 		Ensure()
 }
 
@@ -3011,6 +2929,22 @@ func Comment_Closer_Invariants(closer Comment_Closer, namespace invariant.Namesp
 		Ensure()
 }
 
+// ACTIVE_COMMENT_CLOSER_BYTES_MIN is the bare long-bracket closer, "]]".
+const ACTIVE_COMMENT_CLOSER_BYTES_MIN = BRACKET_CLOSER_BYTES_ABSENT + 1
+
+// Active_Comment_Closer is the nonempty terminator of a long-bracket comment.
+type Active_Comment_Closer Comment_Closer
+
+// Active_Comment_Closer_Invariants shares the bracket ceiling and excludes zero.
+func Active_Comment_Closer_Invariants(
+	closer Active_Comment_Closer, namespace invariant.Namespace,
+) {
+	invariant.Tree(closer, namespace).
+		Range_Int(
+			len(closer), ACTIVE_COMMENT_CLOSER_BYTES_MIN, BRACKET_CLOSER_BYTES_MAX).
+		Ensure()
+}
+
 // Closer is the terminator an open verbatim string needs, or empty when none is open.
 type Closer string
 
@@ -3018,6 +2952,36 @@ type Closer string
 func Closer_Invariants(closer Closer, namespace invariant.Namespace) {
 	invariant.Tree(closer, namespace).
 		Range_Int(len(closer), CLOSER_BYTES_MIN, CLOSER_BYTES_MAX).
+		Ensure()
+}
+
+// VERBATIM_TERMINATOR_BYTES_MAX is one quote after the bounded Rust hash run.
+const VERBATIM_TERMINATOR_BYTES_MAX = HASH_COUNT_MAX + 1
+
+// Verbatim_Terminator is the terminator selected by a verbatim string opener.
+type Verbatim_Terminator string
+
+// Verbatim_Terminator_Invariants shares the empty closer and has its own reachable
+// maximum because a verbatim terminator has one edge byte, not two brackets.
+func Verbatim_Terminator_Invariants(
+	terminator Verbatim_Terminator, namespace invariant.Namespace,
+) {
+	invariant.Tree(terminator, namespace).
+		Range_Int(
+			len(terminator), CLOSER_BYTES_MIN, VERBATIM_TERMINATOR_BYTES_MAX).
+		Ensure()
+}
+
+// ACTIVE_CLOSER_BYTES_MIN is the shortest nonempty verbatim-string terminator.
+const ACTIVE_CLOSER_BYTES_MIN = CLOSER_BYTES_MIN + 1
+
+// Active_Closer is the nonempty terminator of a verbatim string.
+type Active_Closer Closer
+
+// Active_Closer_Invariants shares the closer ceiling and excludes zero.
+func Active_Closer_Invariants(closer Active_Closer, namespace invariant.Namespace) {
+	invariant.Tree(closer, namespace).
+		Range_Int(len(closer), ACTIVE_CLOSER_BYTES_MIN, CLOSER_BYTES_MAX).
 		Ensure()
 }
 
@@ -3061,48 +3025,66 @@ func Scan_Carry_Invariants(carry Scan_Carry, namespace invariant.Namespace) {
 	Terminator_Invariants(carry.Heredoc_Terminator, namespace)
 }
 
-// Active_Heredoc_Carry is the scanner state while a heredoc body is open.
-type Active_Heredoc_Carry Scan_Carry
+// Delimited_Carry is the block-comment, verbatim-string, or long-comment state used
+// while scanning ordinary source. Heredoc bodies use their own line mode.
+type Delimited_Carry struct {
+	// Block_Comment_Depth is the depth of nested block comments, zero outside one.
+	Block_Comment_Depth Nesting_Depth
+	// Raw_String_Close is the terminator of an open verbatim string.
+	Raw_String_Close Closer
+	// Comment_Close is the terminator of an open long-bracket comment.
+	Comment_Close Comment_Closer
+}
+
+// Delimited_Carry_Invariants states the three delimiter states ordinary scanning uses.
+func Delimited_Carry_Invariants(carry Delimited_Carry, namespace invariant.Namespace) {
+	Nesting_Depth_Invariants(carry.Block_Comment_Depth, namespace)
+	Closer_Invariants(carry.Raw_String_Close, namespace)
+	Comment_Closer_Invariants(carry.Comment_Close, namespace)
+}
+
+// ACTIVE_TERMINATOR_BYTES_MIN is the shortest nonempty heredoc terminator.
+const ACTIVE_TERMINATOR_BYTES_MIN = TERMINATOR_BYTES_MIN + 1
+
+// Active_Terminator is the nonempty word that ends an active heredoc.
+type Active_Terminator string
+
+// Active_Terminator_Invariants shares the heredoc width ceiling and excludes the empty
+// state that means no heredoc is open.
+func Active_Terminator_Invariants(
+	terminator Active_Terminator, namespace invariant.Namespace,
+) {
+	invariant.Tree(terminator, namespace).
+		Range_Int(
+			len(terminator), ACTIVE_TERMINATOR_BYTES_MIN, TERMINATOR_BYTES_MAX).
+		Ensure()
+}
+
+// Active_Heredoc_Carry is the scanner state while a heredoc body is open. Other carry
+// fields cannot coexist with a heredoc, so this value does not contain them.
+type Active_Heredoc_Carry struct {
+	// Heredoc_Terminator is the nonempty word that ends the body.
+	Heredoc_Terminator Active_Terminator
+}
 
 // Active_Heredoc_Carry_Invariants states the exclusive heredoc state. A heredoc opens
 // only from fresh code, so no comment or verbatim-string state can coexist with it.
 func Active_Heredoc_Carry_Invariants(
 	carry Active_Heredoc_Carry, namespace invariant.Namespace,
 ) {
-	invariant.Always(
-		carry.Block_Comment_Depth == 0,
-		"An active heredoc never carries a block comment.")
-	invariant.Always(
-		carry.Raw_String_Close == "",
-		"An active heredoc never carries a verbatim string.")
-	invariant.Always(
-		carry.Comment_Close == "",
-		"An active heredoc never carries a long comment.")
-	invariant.Always(
-		len(carry.Heredoc_Terminator) > TERMINATOR_BYTES_MIN &&
-			len(carry.Heredoc_Terminator) <= TERMINATOR_BYTES_MAX,
-		"An active heredoc always has a valid terminator.")
+	Active_Terminator_Invariants(carry.Heredoc_Terminator, namespace)
 }
 
-// Heredoc_Carry is the scanner state after one heredoc body line. The terminator can
-// remain active or become empty when this line closes it.
-type Heredoc_Carry Scan_Carry
+// Heredoc_Carry is the scanner state after one heredoc body line. It contains only the
+// terminator, which remains active or becomes empty when this line closes it.
+type Heredoc_Carry struct {
+	// Heredoc_Terminator is the remaining terminator, or empty after its line.
+	Heredoc_Terminator Terminator
+}
 
 // Heredoc_Carry_Invariants states the exclusive post-line heredoc state.
 func Heredoc_Carry_Invariants(carry Heredoc_Carry, namespace invariant.Namespace) {
-	invariant.Always(
-		carry.Block_Comment_Depth == 0,
-		"A heredoc result never carries a block comment.")
-	invariant.Always(
-		carry.Raw_String_Close == "",
-		"A heredoc result never carries a verbatim string.")
-	invariant.Always(
-		carry.Comment_Close == "",
-		"A heredoc result never carries a long comment.")
-	invariant.Always(
-		len(carry.Heredoc_Terminator) >= TERMINATOR_BYTES_MIN &&
-			len(carry.Heredoc_Terminator) <= TERMINATOR_BYTES_MAX,
-		"A heredoc result always has a valid terminator.")
+	Terminator_Invariants(carry.Heredoc_Terminator, namespace)
 }
 
 // Code_Presence is the code-presence state of one scanned line.
@@ -3127,39 +3109,24 @@ func Comment_Presence_Invariants(
 		Ensure()
 }
 
-// Accumulates one line's verdict as the scanner walks it.
-type Line_Scan struct {
+// Active_Scan is a nonblank ordinary line while its cursor points at unread data.
+type Active_Scan struct {
 	// Position is the line being read and how far along it the scan has reached.
-	Position Scan_Position
-	// State is the carried scanner state, updated as openers and closers are met.
-	State Scan_Carry
+	Position Active_Position
+	// State is the delimiter state, updated as openers and closers are met.
+	State Delimited_Carry
 	// Has_Code records that the line bears code.
 	Has_Code Code_Presence
 	// Has_Comment records that the line bears a comment.
 	Has_Comment Comment_Presence
 }
 
-// Line_Scan_Invariants states the scan's position, its carried state, and its verdict
-// so far.
-func Line_Scan_Invariants(scan Line_Scan, namespace invariant.Namespace) {
-	Scan_Position_Invariants(scan.Position, namespace)
-	Scan_Carry_Invariants(scan.State, namespace)
+// Active_Scan_Invariants states one ordinary scanner step and its verdict so far.
+func Active_Scan_Invariants(scan Active_Scan, namespace invariant.Namespace) {
+	Active_Position_Invariants(scan.Position, namespace)
+	Delimited_Carry_Invariants(scan.State, namespace)
 	Code_Presence_Invariants(scan.Has_Code, namespace)
 	Comment_Presence_Invariants(scan.Has_Comment, namespace)
-}
-
-// Active_Scan is a nonblank line while the scanner cursor points at unread data.
-type Active_Scan Line_Scan
-
-// Active_Scan_Invariants states the safety properties of one scanner step. Boundary
-// ranges belong to the complete file scan, while a step only needs a valid cursor.
-func Active_Scan_Invariants(scan Active_Scan, namespace invariant.Namespace) {
-	invariant.Always(
-		len(scan.Position.Line) >= SCAN_LINE_BYTES_MIN,
-		"An active scan always has line data.")
-	invariant.Always(
-		int(scan.Position.Cursor) <= len(scan.Position.Line),
-		"An active scan cursor always stays in the line.")
 }
 
 // SOURCE_BYTE_VALUES_COUNT is the number of values that one source byte can hold.
@@ -3169,37 +3136,39 @@ const SOURCE_BYTE_VALUES_COUNT = 256
 // the bytes that can begin something the scan must inspect, so a run of ordinary code
 // bytes is skipped in bulk instead of re-dispatched through every opener check.
 type Scanner struct {
-	// Language is the configuration the scan reads against.
-	Language *Seeded_Language
+	// Line_Comment excludes display and test metadata that scanning cannot use.
+	Line_Comment Comment_Tokens
+	// Block_Comment_Open is empty when the language has no block comments.
+	Block_Comment_Open Block_Comment_Opener
+	// Block_Comment_Close is paired with the opener.
+	Block_Comment_Close Block_Comment_Closer
+	// Block_Comment_Nests distinguishes Rust from first-close languages.
+	Block_Comment_Nests Block_Comment_Recursion
+	// Verbatim_Strings can carry state across physical lines.
+	Verbatim_Strings Verbatim_Delimiters
+	// Quote_Strings always end on their physical line.
+	Quote_Strings Quote_Delimiters
+	// Long_Bracket enables Lua's computed delimiters.
+	Long_Bracket Long_Bracket
+	// Heredoc enables a separate carried line mode.
+	Heredoc Heredoc
 	// Trigger[b] is true when byte b can begin a comment or string opener, a heredoc, or
 	// a long bracket — the only bytes a fresh-state scan must stop on. Every other
 	// non-space byte is plain code.
 	Trigger [SOURCE_BYTE_VALUES_COUNT]bool
 }
 
-// Scanner_Invariants states the language a scanner reads against. The trigger table is
-// a fixed array whose width the type itself pins, so it carries no bound of its own.
+// Scanner_Invariants states every syntax property the scanner reads. The trigger table
+// has a fixed width in its type, so it carries no separate bound.
 func Scanner_Invariants(scanner Scanner, namespace invariant.Namespace) {
-	Seeded_Language_Invariants(*scanner.Language, namespace)
-}
-
-// TOKEN_BYTES_MIN is the one-byte token: a quote mark, or a single-character comment
-// lead. A token is only ever matched when it is present, so it is never empty.
-const TOKEN_BYTES_MIN = 1
-
-// TOKEN_BYTES_MAX is the widest token a match is ever asked for: a long bracket's
-// computed closer at the hash bound.
-const TOKEN_BYTES_MAX = CLOSER_BYTES_MAX
-
-// Token is a byte sequence the scan matches at a position: a declared delimiter, or a
-// terminator computed when one was opened.
-type Token string
-
-// Token_Invariants bounds a matched token's byte length.
-func Token_Invariants(token Token, namespace invariant.Namespace) {
-	invariant.Tree(token, namespace).
-		Range_Int(len(token), TOKEN_BYTES_MIN, TOKEN_BYTES_MAX).
-		Ensure()
+	Comment_Tokens_Invariants(scanner.Line_Comment, namespace)
+	Block_Comment_Opener_Invariants(scanner.Block_Comment_Open, namespace)
+	Block_Comment_Closer_Invariants(scanner.Block_Comment_Close, namespace)
+	Block_Comment_Recursion_Invariants(scanner.Block_Comment_Nests, namespace)
+	Verbatim_Delimiters_Invariants(scanner.Verbatim_Strings, namespace)
+	Quote_Delimiters_Invariants(scanner.Quote_Strings, namespace)
+	Long_Bracket_Invariants(scanner.Long_Bracket, namespace)
+	Heredoc_Invariants(scanner.Heredoc, namespace)
 }
 
 // Prepares a scanner for a language. The trigger table is the union of the first byte
@@ -3208,7 +3177,16 @@ func Token_Invariants(token Token, namespace invariant.Namespace) {
 func language_scanner(language *Seeded_Language) (prepared Scanner) {
 	defer func() { Scanner_Invariants(prepared, "language_scanner.prepared") }()
 	Seeded_Language_Invariants(*language, "language_scanner.language")
-	prepared.Language = language
+	prepared = Scanner{
+		Line_Comment:        language.Line_Comment,
+		Block_Comment_Open:  language.Block_Comment_Open,
+		Block_Comment_Close: language.Block_Comment_Close,
+		Block_Comment_Nests: language.Block_Comment_Nests,
+		Verbatim_Strings:    language.Verbatim_Strings,
+		Quote_Strings:       language.Quote_Strings,
+		Long_Bracket:        language.Long_Bracket,
+		Heredoc:             language.Heredoc,
+	}
 	for _, token := range language.Line_Comment {
 		prepared.Trigger[token[0]] = true
 	}
@@ -3250,42 +3228,92 @@ func classify_line(
 	// verdict is always code, so the reader returns only the carry: a verdict that
 	// cannot vary is stated here rather than by a bound that could never see the rest.
 	if carry.Heredoc_Terminator != "" {
-		return LINE_KIND_CODE, Scan_Carry(classify_heredoc_line(
-			Scan_Line(line), Active_Heredoc_Carry(carry)))
+		heredoc_carry := classify_heredoc_line(Scan_Line(line), Active_Heredoc_Carry{
+			Heredoc_Terminator: Active_Terminator(carry.Heredoc_Terminator),
+		})
+		return LINE_KIND_CODE, Scan_Carry{
+			Heredoc_Terminator: heredoc_carry.Heredoc_Terminator,
+		}
 	}
-	// The blank verdict above is why the scan carries a Scan_Line rather than a Line:
-	// past this point the line always has content.
-	scan := Active_Scan{
-		Position:    Scan_Position{Line: Scan_Line(line), Cursor: CURSOR_MIN},
-		State:       carry,
-		Has_Code:    false,
-		Has_Comment: false,
+	state := Delimited_Carry{
+		Block_Comment_Depth: carry.Block_Comment_Depth,
+		Raw_String_Close:    carry.Raw_String_Close,
+		Comment_Close:       carry.Comment_Close,
 	}
-	// The dispatch is inline rather than a step function of its own: the scanner and
-	// the language it carries are loop-invariant, and stating them at a second
-	// per-byte boundary costs more than the whole rest of the scan.
+	active_kind, active_carry := classify_active_line(Scan_Line(line), state, scan_with)
+	return Line_Kind(active_kind), active_carry
+}
+
+// Scans one nonblank line outside heredoc line mode.
+func classify_active_line(
+	line Scan_Line, state Delimited_Carry, scan_with *Scanner,
+) (kind Scan_Verdict, carry_after Scan_Carry) {
+	defer func() {
+		Scan_Verdict_Invariants(kind, "classify_active_line.kind")
+		Scan_Carry_Invariants(carry_after, "classify_active_line.carry_after")
+	}()
+	Scan_Line_Invariants(line, "classify_active_line.line")
+	Delimited_Carry_Invariants(state, "classify_active_line.state")
+	Scanner_Invariants(*scan_with, "classify_active_line.scan_with")
+	scan := Active_Scan{Position: Active_Position{Line: line, Cursor: CURSOR_MIN}, State: state}
+	heredoc := Terminator("")
 	for int(scan.Position.Cursor) < len(scan.Position.Line) {
+		Active_Scan_Invariants(scan, "classify_active_line.scan")
+		at := &scan.Position
 		if scan.State.Comment_Close != "" {
-			line_scan_long_comment_body(&scan)
+			scan.Has_Comment = true
+			scan.State.Comment_Close = line_scan_long_comment_body(
+				at, Active_Comment_Closer(scan.State.Comment_Close))
 			continue
 		}
 		if scan.State.Raw_String_Close != "" {
-			line_scan_raw(&scan)
+			scan.Has_Code = true
+			scan.State.Raw_String_Close = line_scan_raw(
+				at, Active_Closer(scan.State.Raw_String_Close))
 			continue
 		}
 		if scan.State.Block_Comment_Depth > 0 {
-			line_scan_block(&scan, scan_with.Language)
+			scan.Has_Comment = true
+			scan.State.Block_Comment_Depth = line_scan_block(
+				at, Active_Nesting_Depth(scan.State.Block_Comment_Depth),
+				scan_with.Block_Comment_Nests,
+				Active_Block_Comment_Opener(scan_with.Block_Comment_Open),
+				Active_Block_Comment_Closer(scan_with.Block_Comment_Close))
 			continue
 		}
-		// A byte that begins no opener reads nothing from the language, so it takes a
-		// path that does not state one. That is almost every byte of a source file.
+		// Ordinary bytes skip language lookup, which is the dominant source path.
 		if !scan_with.Trigger[scan.Position.Line[scan.Position.Cursor]] {
-			line_scan_plain(&scan, &scan_with.Trigger)
+			if line_scan_plain(at, &scan_with.Trigger) {
+				scan.Has_Code = true
+			}
 			continue
 		}
-		line_scan_fresh(&scan, scan_with)
+		line_scan_fresh(
+			at, scan_with, Fresh_Consumers{
+				Block: func() {
+					scan.State.Block_Comment_Depth = ACTIVE_NESTING_DEPTH_MIN
+					scan.Has_Comment = true
+				},
+				Comment: func(closer Comment_Closer) {
+					scan.State.Comment_Close = closer
+					scan.Has_Comment = true
+				},
+				Code: func(closer Closer) {
+					scan.State.Raw_String_Close = closer
+					scan.Has_Code = true
+				},
+				Heredoc: func(terminator Terminator) {
+					heredoc = terminator
+					scan.Has_Code = true
+				},
+			})
 	}
-	return Line_Kind(line_scan_verdict(&scan)), scan.State
+	return line_scan_verdict(scan.Has_Code), Scan_Carry{
+		Block_Comment_Depth: scan.State.Block_Comment_Depth,
+		Raw_String_Close:    scan.State.Raw_String_Close,
+		Comment_Close:       scan.State.Comment_Close,
+		Heredoc_Terminator:  heredoc,
+	}
 }
 
 // Reads a line inside a heredoc body: the line is code, and a line equal to the
@@ -3298,10 +3326,11 @@ func classify_heredoc_line(
 	}()
 	Scan_Line_Invariants(line, "classify_heredoc_line.line")
 	Active_Heredoc_Carry_Invariants(carry, "classify_heredoc_line.carry")
-	if Terminator(strings.TrimSpace(string(line))) == carry.Heredoc_Terminator {
-		carry.Heredoc_Terminator = ""
+	terminator := Terminator(carry.Heredoc_Terminator)
+	if Terminator(strings.TrimSpace(string(line))) == terminator {
+		terminator = ""
 	}
-	return Heredoc_Carry(carry)
+	return Heredoc_Carry{Heredoc_Terminator: terminator}
 }
 
 // Advances past a byte that can begin nothing: insignificant whitespace, or plain
@@ -3309,74 +3338,90 @@ func classify_heredoc_line(
 // bytes is skipped to the next trigger in one tight loop. The language is not stated
 // here because none of it is read — which is the point, since almost every byte of a
 // source file takes this path and stating a language costs more than reading one.
-func line_scan_plain(scan *Active_Scan, trigger *[SOURCE_BYTE_VALUES_COUNT]bool) {
-	Active_Scan_Invariants(*scan, "line_scan_plain.scan")
-	line := scan.Position.Line
-	cursor := int(scan.Position.Cursor)
+func line_scan_plain(
+	at *Active_Position, trigger *[SOURCE_BYTE_VALUES_COUNT]bool,
+) (code Code_Presence) {
+	defer func() { Code_Presence_Invariants(code, "line_scan_plain.code") }()
+	Active_Position_Invariants(*at, "line_scan_plain.at")
+	line := at.Line
+	cursor := int(at.Cursor)
 	if byte_is_space(Source_Byte(line[cursor])) {
-		scan.Position.Cursor++
-		return
+		at.Cursor++
+		return false
 	}
-	scan.Has_Code = true
 	cursor++
 	for cursor < len(line) && !trigger[line[cursor]] {
 		cursor++
 	}
-	scan.Position.Cursor = Cursor(cursor)
+	at.Cursor = Cursor(cursor)
+	return true
 }
 
 // Advances inside a verbatim string, where every byte is code and only the matching
 // close ends it.
-func line_scan_raw(scan *Active_Scan) {
-	Active_Scan_Invariants(*scan, "line_scan_raw.scan")
-	scan.Has_Code = true
-	if has_prefix_at(Bounded_Position(scan.Position), Token(scan.State.Raw_String_Close)) {
-		scan.Position.Cursor += Cursor(len(scan.State.Raw_String_Close))
-		scan.State.Raw_String_Close = ""
-		return
+func line_scan_raw(
+	at *Active_Position, closer Active_Closer,
+) (closer_after Closer) {
+	defer func() { Closer_Invariants(closer_after, "line_scan_raw.closer_after") }()
+	Active_Position_Invariants(*at, "line_scan_raw.at")
+	Active_Closer_Invariants(closer, "line_scan_raw.closer")
+	if bytes.HasPrefix(at.Line[at.Cursor:], []byte(closer)) {
+		at.Cursor += Cursor(len(closer))
+		return ""
 	}
-	scan.Position.Cursor++
+	at.Cursor++
+	return Closer(closer)
 }
 
 // Advances inside a block comment, where every byte is comment and only an open (when
 // nesting) or a close moves the depth.
-func line_scan_block(scan *Active_Scan, language *Seeded_Language) {
-	Active_Scan_Invariants(*scan, "line_scan_block.scan")
-	Seeded_Language_Invariants(*language, "line_scan_block.language")
-	scan.Has_Comment = true
-	if language.Block_Comment_Nests {
-		if has_prefix_at(
-			Bounded_Position(scan.Position), Token(language.Block_Comment_Open),
-		) {
+func line_scan_block(
+	at *Active_Position, depth Active_Nesting_Depth,
+	nests Block_Comment_Recursion, opener Active_Block_Comment_Opener,
+	closer Active_Block_Comment_Closer,
+) (depth_after Nesting_Depth) {
+	defer func() { Nesting_Depth_Invariants(depth_after, "line_scan_block.depth_after") }()
+	Active_Position_Invariants(*at, "line_scan_block.at")
+	Active_Nesting_Depth_Invariants(depth, "line_scan_block.depth")
+	Block_Comment_Recursion_Invariants(nests, "line_scan_block.nests")
+	Active_Block_Comment_Opener_Invariants(opener, "line_scan_block.opener")
+	Active_Block_Comment_Closer_Invariants(closer, "line_scan_block.closer")
+	if nests {
+		if bytes.HasPrefix(at.Line[at.Cursor:], []byte(opener)) {
 			// The depth saturates at its bound rather than growing with the file: a
 			// comment nested deeper than the bound closes early, which keeps the
 			// carried depth stated by a reachable range.
-			if scan.State.Block_Comment_Depth < NESTING_DEPTH_MAX {
-				scan.State.Block_Comment_Depth++
+			if depth < NESTING_DEPTH_MAX {
+				depth++
 			}
-			scan.Position.Cursor += Cursor(len(language.Block_Comment_Open))
-			return
+			at.Cursor += Cursor(len(opener))
+			return Nesting_Depth(depth)
 		}
 	}
-	if has_prefix_at(Bounded_Position(scan.Position), Token(language.Block_Comment_Close)) {
-		scan.State.Block_Comment_Depth--
-		scan.Position.Cursor += Cursor(len(language.Block_Comment_Close))
-		return
+	if bytes.HasPrefix(at.Line[at.Cursor:], []byte(closer)) {
+		at.Cursor += Cursor(len(closer))
+		return Nesting_Depth(depth - 1)
 	}
-	scan.Position.Cursor++
+	at.Cursor++
+	return Nesting_Depth(depth)
 }
 
 // Advances inside a long-bracket comment, where every byte is comment and only the
 // matching leveled closer ends it.
-func line_scan_long_comment_body(scan *Active_Scan) {
-	Active_Scan_Invariants(*scan, "line_scan_long_comment_body.scan")
-	scan.Has_Comment = true
-	if has_prefix_at(Bounded_Position(scan.Position), Token(scan.State.Comment_Close)) {
-		scan.Position.Cursor += Cursor(len(scan.State.Comment_Close))
-		scan.State.Comment_Close = ""
-		return
+func line_scan_long_comment_body(
+	at *Active_Position, closer Active_Comment_Closer,
+) (closer_after Comment_Closer) {
+	defer func() {
+		Comment_Closer_Invariants(closer_after, "line_scan_long_comment_body.closer_after")
+	}()
+	Active_Position_Invariants(*at, "line_scan_long_comment_body.at")
+	Active_Comment_Closer_Invariants(closer, "line_scan_long_comment_body.closer")
+	if bytes.HasPrefix(at.Line[at.Cursor:], []byte(closer)) {
+		at.Cursor += Cursor(len(closer))
+		return ""
 	}
-	scan.Position.Cursor++
+	at.Cursor++
+	return Comment_Closer(closer)
 }
 
 // Opening is the result of a syntax-opener match.
@@ -3392,68 +3437,61 @@ func Opening_Invariants(value Opening, namespace invariant.Namespace) {
 // Reports whether a long-bracket comment — a line-comment token then a long bracket,
 // like --[[ or --[=[ — opens at the cursor, recording the comment and its closer.
 func line_scan_long_comment(
-	scan *Active_Scan, language *Seeded_Language,
-) (opened Opening) {
+	at *Active_Position, tokens Long_Bracket_Comment_Tokens,
+) (closer Comment_Closer, opened Opening) {
 	defer func() {
+		Comment_Closer_Invariants(closer, "line_scan_long_comment.closer")
 		Opening_Invariants(opened, "line_scan_long_comment.opened")
 	}()
-	Active_Scan_Invariants(*scan, "line_scan_long_comment.scan")
-	Seeded_Language_Invariants(*language, "line_scan_long_comment.language")
-	if !language.Long_Bracket {
-		return false
-	}
-	for _, token := range language.Line_Comment {
-		if !has_prefix_at(Bounded_Position(scan.Position), Token(token)) {
+	Active_Position_Invariants(*at, "line_scan_long_comment.at")
+	Long_Bracket_Comment_Tokens_Invariants(tokens, "line_scan_long_comment.tokens")
+	for _, token := range tokens {
+		if !bytes.HasPrefix(at.Line[at.Cursor:], []byte(token)) {
 			continue
 		}
 		// The cursor steps past the comment token so the bracket match reads from
 		// the scan's own position; a failed match winds it back.
-		saved := scan.Position.Cursor
-		scan.Position.Cursor += Cursor(len(token))
-		closer, bracketed := long_bracket_open(scan)
+		saved := at.Cursor
+		at.Cursor += Cursor(len(token))
+		bracket_closer, bracketed := long_bracket_open((*Bounded_Position)(at))
 		if bracketed {
-			scan.State.Comment_Close = Comment_Closer(closer)
-			scan.Has_Comment = true
-			return true
+			return Comment_Closer(bracket_closer), true
 		}
-		scan.Position.Cursor = saved
+		at.Cursor = saved
 	}
-	return false
+	return "", false
 }
 
 // Reports whether a long-bracket string — like [[ or [=[ — opens at the cursor,
 // recording its leveled closer.
 func line_scan_long_string(
-	scan *Active_Scan, language *Seeded_Language,
-) (opened Opening) {
+	at *Active_Position,
+) (closer Bracket_Closer, opened Opening) {
 	defer func() {
+		Bracket_Closer_Invariants(closer, "line_scan_long_string.closer")
 		Opening_Invariants(opened, "line_scan_long_string.opened")
 	}()
-	Active_Scan_Invariants(*scan, "line_scan_long_string.scan")
-	Seeded_Language_Invariants(*language, "line_scan_long_string.language")
-	if !language.Long_Bracket {
-		return false
-	}
-	closer, bracketed := long_bracket_open(scan)
+	Active_Position_Invariants(*at, "line_scan_long_string.at")
+	bracket_closer, bracketed := long_bracket_open((*Bounded_Position)(at))
 	if !bracketed {
-		return false
+		return "", false
 	}
-	scan.State.Raw_String_Close = Closer(closer)
-	scan.Has_Code = true
-	return true
+	return bracket_closer, true
 }
 
 // Reports whether a long bracket — '[' then a run of '=' then '[' — opens at the
 // cursor, recording the matching closer ']' run-of-'=' ']' and stepping the cursor past
 // the opener. The cursor is left where it was when no bracket opens.
-func long_bracket_open(scan *Active_Scan) (closer Bracket_Closer, opened Opening) {
+func long_bracket_open(
+	at *Bounded_Position,
+) (closer Bracket_Closer, opened Opening) {
 	defer func() {
 		Bracket_Closer_Invariants(closer, "long_bracket_open.closer")
 		Opening_Invariants(opened, "long_bracket_open.opened")
 	}()
-	Active_Scan_Invariants(*scan, "long_bracket_open.scan")
-	line := scan.Position.Line
-	cursor := int(scan.Position.Cursor)
+	Bounded_Position_Invariants(*at, "long_bracket_open.at")
+	line := at.Line
+	cursor := int(at.Cursor)
 	if cursor >= len(line) {
 		return "", false
 	}
@@ -3473,7 +3511,7 @@ func long_bracket_open(scan *Active_Scan) (closer Bracket_Closer, opened Opening
 	if line[read] != '[' {
 		return "", false
 	}
-	scan.Position.Cursor = Cursor(read + 1)
+	at.Cursor = Cursor(read + 1)
 	return Bracket_Closer("]" + strings.Repeat("=", equal_count) + "]"), true
 }
 
@@ -3489,9 +3527,8 @@ const BRACKET_CLOSER_BYTES_ABSENT = 1
 // around the run.
 const BRACKET_CLOSER_BYTES_MAX = HASH_COUNT_MAX + 2
 
-// Bracket_Closer is the terminator a long bracket computes for itself. It is distinct
-// from Hash_Closer because a bracket carries two brackets around its run while a raw
-// string carries one quote before its hashes, so their widths never coincide.
+// Bracket_Closer is the terminator a long bracket computes for itself. Its missing
+// one-byte width follows from the two brackets around its optional equals run.
 type Bracket_Closer string
 
 // Bracket_Closer_Invariants bounds a long bracket's computed terminator.
@@ -3504,111 +3541,133 @@ func Bracket_Closer_Invariants(closer Bracket_Closer, namespace invariant.Namesp
 		Ensure()
 }
 
-// HASH_CLOSER_BYTES_MIN is the empty terminator a failed match reports alongside its
-// false; a match yields at least the bare quote.
-const HASH_CLOSER_BYTES_MIN = 0
-
-// HASH_CLOSER_BYTES_MAX is a raw string at the hash bound: the quote and its hashes.
-const HASH_CLOSER_BYTES_MAX = HASH_COUNT_MAX + 1
-
-// Hash_Closer is the terminator a hashable raw string computes for itself.
-type Hash_Closer string
-
-// Hash_Closer_Invariants bounds a raw string's computed terminator.
-func Hash_Closer_Invariants(closer Hash_Closer, namespace invariant.Namespace) {
-	invariant.Tree(closer, namespace).
-		Range_Int(len(closer), HASH_CLOSER_BYTES_MIN, HASH_CLOSER_BYTES_MAX).
-		Ensure()
+// Fresh_Consumers applies the four state changes a fresh token can cause. The
+// callbacks keep the token matcher independent from the line accumulator.
+type Fresh_Consumers struct {
+	// Block records a block-comment opener.
+	Block func()
+	// Comment records a line or long-bracket comment and its optional closer.
+	Comment func(closer Comment_Closer)
+	// Code records ordinary or quoted code and its optional verbatim closer.
+	Code func(closer Closer)
+	// Heredoc records the terminator that changes how following lines are read.
+	Heredoc func(terminator Terminator)
 }
 
-// Dispatches the token at the cursor when not inside a comment or string: whitespace,
-// a line comment, a block-comment open, a string, or code.
-func line_scan_fresh(scan *Active_Scan, scan_with *Scanner) {
-	Active_Scan_Invariants(*scan, "line_scan_fresh.scan")
+// Fresh_Consumers_Invariants requires every state change to have an injected owner.
+func Fresh_Consumers_Invariants(
+	consume Fresh_Consumers, namespace invariant.Namespace,
+) {
+	invariant.Always(consume.Block != nil, "A fresh scan always records block comments.")
+	invariant.Always(consume.Comment != nil, "A fresh scan always records comments.")
+	invariant.Always(consume.Code != nil, "A fresh scan always records code.")
+	invariant.Always(consume.Heredoc != nil, "A fresh scan always records heredocs.")
+}
+
+// Dispatches one trigger byte through the language syntax in precedence order.
+func line_scan_fresh(
+	at *Active_Position, scan_with *Scanner, consume Fresh_Consumers,
+) {
+	Active_Position_Invariants(*at, "line_scan_fresh.at")
 	Scanner_Invariants(*scan_with, "line_scan_fresh.scan_with")
-	line := scan.Position.Line
-	language := scan_with.Language
-	if line_scan_block_open(scan, language) {
-		scan.Position.Cursor += Cursor(len(language.Block_Comment_Open))
-		return
+	Fresh_Consumers_Invariants(consume, "line_scan_fresh.consume")
+	if scan_with.Block_Comment_Open != "" {
+		opener := Active_Block_Comment_Opener(scan_with.Block_Comment_Open)
+		if bytes.HasPrefix(at.Line[at.Cursor:], []byte(opener)) {
+			at.Cursor += Cursor(len(opener))
+			consume.Block()
+			return
+		}
 	}
-	// The long-bracket comment is tried before the plain line comment so Lua's --[[
-	// opens a block rather than reading as a -- line comment.
-	if line_scan_long_comment(scan, language) {
-		return
+	if scan_with.Long_Bracket {
+		closer, opened := line_scan_long_comment(
+			at, Long_Bracket_Comment_Tokens(scan_with.Line_Comment))
+		if opened {
+			consume.Comment(closer)
+			return
+		}
 	}
-	if starts_with_any(Bounded_Position(scan.Position), language.Line_Comment) {
-		// A line comment runs to end of line and cannot cross it.
-		scan.Has_Comment = true
-		scan.Position.Cursor = Cursor(len(line))
-		return
+	for _, token := range scan_with.Line_Comment {
+		if bytes.HasPrefix(at.Line[at.Cursor:], []byte(token)) {
+			at.Cursor = Cursor(len(at.Line))
+			consume.Comment("")
+			return
+		}
 	}
-	if line_scan_long_string(scan, language) {
-		return
+	if scan_with.Long_Bracket {
+		closer, opened := line_scan_long_string(at)
+		if opened {
+			consume.Code(Closer(closer))
+			return
+		}
 	}
-	if line_scan_heredoc(scan, language) {
-		return
+	if scan_with.Heredoc {
+		terminator, opened := heredoc_open(at)
+		if opened {
+			at.Cursor = Cursor(len(at.Line))
+			consume.Heredoc(terminator)
+			return
+		}
 	}
-	if verbatim_open(scan, language) {
-		return
+	if len(scan_with.Verbatim_Strings) > 0 {
+		closer, opened := verbatim_open(
+			at, Active_Verbatim_Delimiters(scan_with.Verbatim_Strings))
+		if opened {
+			consume.Code(Closer(closer))
+			return
+		}
 	}
-	if quote_open(scan, language) {
-		return
+	if len(scan_with.Quote_Strings) > 0 {
+		if quote_open(at, Active_Quote_Delimiters(scan_with.Quote_Strings)) {
+			consume.Code("")
+			return
+		}
 	}
-	// A trigger byte that opened nothing — a lone '/', a shift '<<', a division — is just
-	// code; advance one byte so the next byte re-enters the dispatch.
-	scan.Has_Code = true
-	scan.Position.Cursor++
-}
-
-// Reports whether a heredoc opens at the cursor, and if so records its terminator so
-// the following lines are read as code until the terminator line.
-func line_scan_heredoc(
-	scan *Active_Scan, language *Seeded_Language,
-) (opened Opening) {
-	defer func() { Opening_Invariants(opened, "line_scan_heredoc.opened") }()
-	Active_Scan_Invariants(*scan, "line_scan_heredoc.scan")
-	Seeded_Language_Invariants(*language, "line_scan_heredoc.language")
-	if !language.Heredoc {
-		return false
-	}
-	terminator, found := heredoc_open(scan)
-	if !found {
-		return false
-	}
-	scan.State.Heredoc_Terminator = terminator
-	scan.Has_Code = true
-	return true
+	at.Cursor++
+	consume.Code("")
 }
 
 // Reports whether a heredoc opener begins at the cursor — << then an optional - or ~,
 // optional space, then a quoted word or an uppercase/underscore word — and if so its
 // terminator word and the opener's byte length. The uppercase rule tells <<EOF apart
 // from the a << b shift operator.
-func heredoc_open(scan *Active_Scan) (terminator Terminator, opened Opening) {
+func heredoc_open(
+	at *Active_Position,
+) (terminator Terminator, opened Opening) {
 	defer func() {
 		Terminator_Invariants(terminator, "heredoc_open.terminator")
 		Opening_Invariants(opened, "heredoc_open.opened")
 	}()
-	Active_Scan_Invariants(*scan, "heredoc_open.scan")
-	if !has_prefix_at(Bounded_Position(scan.Position), "<<") {
+	Active_Position_Invariants(*at, "heredoc_open.at")
+	if !bytes.HasPrefix(at.Line[at.Cursor:], []byte("<<")) {
 		return "", false
 	}
-	// The word is read through a position of its own so a failed match leaves the
-	// scan's cursor where the dispatch found it.
-	at := Bounded_Position{Line: scan.Position.Line, Cursor: scan.Position.Cursor + 2}
-	heredoc_skip_sigil(&at)
-	heredoc_skip_spaces(&at)
-	quoted := false
-	if int(at.Cursor) < len(at.Line) {
-		if heredoc_is_quote(Source_Byte(at.Line[at.Cursor])) {
-			quoted = true
-			at.Cursor++
+	// A separate cursor leaves the scan at the trigger when the opener is malformed.
+	probe_cursor := at.Cursor + 2
+	if int(probe_cursor) < len(at.Line) {
+		if at.Line[probe_cursor] == '-' {
+			probe_cursor++
+		} else if at.Line[probe_cursor] == '~' {
+			probe_cursor++
 		}
 	}
-	start := at.Cursor
-	heredoc_skip_identifier(&at)
-	if at.Cursor == start {
+	for int(probe_cursor) < len(at.Line) &&
+		byte_is_space(Source_Byte(at.Line[probe_cursor])) {
+		probe_cursor++
+	}
+	quoted := false
+	if int(probe_cursor) < len(at.Line) {
+		if heredoc_is_quote(Source_Byte(at.Line[probe_cursor])) {
+			quoted = true
+			probe_cursor++
+		}
+	}
+	start := probe_cursor
+	for int(probe_cursor) < len(at.Line) &&
+		byte_is_identifier(Source_Byte(at.Line[probe_cursor])) {
+		probe_cursor++
+	}
+	if probe_cursor == start {
 		return "", false
 	}
 	if !quoted {
@@ -3616,48 +3675,14 @@ func heredoc_open(scan *Active_Scan) (terminator Terminator, opened Opening) {
 			return "", false
 		}
 	}
-	terminator = Terminator(at.Line[start:at.Cursor])
+	terminator = Terminator(at.Line[start:probe_cursor])
 	if quoted {
-		if int(at.Cursor) < len(at.Line) {
-			at.Cursor++
+		if int(probe_cursor) < len(at.Line) {
+			probe_cursor++
 		}
 	}
-	scan.Position.Cursor = at.Cursor
+	at.Cursor = probe_cursor
 	return terminator, true
-}
-
-// Skips an optional <<- or <<~ heredoc sigil.
-func heredoc_skip_sigil(at *Bounded_Position) {
-	Bounded_Position_Invariants(*at, "heredoc_skip_sigil.at")
-	if int(at.Cursor) >= len(at.Line) {
-		return
-	}
-	if at.Line[at.Cursor] == '-' {
-		at.Cursor++
-		return
-	}
-	if at.Line[at.Cursor] == '~' {
-		at.Cursor++
-	}
-}
-
-// Skips spaces and tabs between the heredoc operator and its delimiter.
-func heredoc_skip_spaces(at *Bounded_Position) {
-	Bounded_Position_Invariants(*at, "heredoc_skip_spaces.at")
-	for int(at.Cursor) < len(at.Line) && byte_is_space(Source_Byte(at.Line[at.Cursor])) {
-		at.Cursor++
-	}
-}
-
-// Skips a run of identifier bytes.
-func heredoc_skip_identifier(at *Bounded_Position) {
-	Bounded_Position_Invariants(*at, "heredoc_skip_identifier.at")
-	for int(at.Cursor) < len(at.Line) {
-		if !byte_is_identifier(Source_Byte(at.Line[at.Cursor])) {
-			return
-		}
-		at.Cursor++
-	}
 }
 
 // Heredoc_Quote is the quoted-delimiter state of one heredoc opener.
@@ -3744,31 +3769,12 @@ func Source_Byte_Invariants(character Source_Byte, namespace invariant.Namespace
 		Ensure()
 }
 
-// Reports whether a block comment opens at the cursor and, when it does, records the
-// comment and the new depth.
-func line_scan_block_open(
-	scan *Active_Scan, language *Seeded_Language,
-) (opened Opening) {
-	defer func() { Opening_Invariants(opened, "line_scan_block_open.opened") }()
-	Active_Scan_Invariants(*scan, "line_scan_block_open.scan")
-	Seeded_Language_Invariants(*language, "line_scan_block_open.language")
-	if language.Block_Comment_Open == "" {
-		return false
-	}
-	if !has_prefix_at(Bounded_Position(scan.Position), Token(language.Block_Comment_Open)) {
-		return false
-	}
-	scan.State.Block_Comment_Depth = 1
-	scan.Has_Comment = true
-	return true
-}
-
 // Reads the line's partition from the accumulated scan: code wins a line it shares
 // with a comment, then a comment, else blank.
-func line_scan_verdict(scan *Active_Scan) (kind Scan_Verdict) {
+func line_scan_verdict(has_code Code_Presence) (kind Scan_Verdict) {
 	defer func() { Scan_Verdict_Invariants(kind, "line_scan_verdict.kind") }()
-	Active_Scan_Invariants(*scan, "line_scan_verdict.scan")
-	if scan.Has_Code {
+	Code_Presence_Invariants(has_code, "line_scan_verdict.has_code")
+	if has_code {
 		return Scan_Verdict(LINE_KIND_CODE)
 	}
 	return Scan_Verdict(LINE_KIND_COMMENT)
@@ -3788,114 +3794,71 @@ func Scan_Verdict_Invariants(kind Scan_Verdict, namespace invariant.Namespace) {
 		Ensure()
 }
 
-// Identifier_Middle is the state of a token lead inside an identifier.
-type Identifier_Middle bool
-
-// Identifier_Middle_Invariants states both identifier-position states.
-func Identifier_Middle_Invariants(value Identifier_Middle, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
-		Sometimes(bool(value), "A token lead is inside an identifier.").
-		Ensure()
-}
-
 // Reports whether a verbatim string begins at the cursor and, if so, its terminator
 // and the opener's byte length.
-func verbatim_open(scan *Active_Scan, language *Seeded_Language) (opened Opening) {
-	defer func() { Opening_Invariants(opened, "verbatim_open.opened") }()
-	Active_Scan_Invariants(*scan, "verbatim_open.scan")
-	Seeded_Language_Invariants(*language, "verbatim_open.language")
-	for _, delimiter := range language.Verbatim_Strings {
-		if !has_prefix_at(Bounded_Position(scan.Position), Token(delimiter.Open)) {
+func verbatim_open(
+	at *Active_Position, delimiters Active_Verbatim_Delimiters,
+) (closer Verbatim_Terminator, opened Opening) {
+	defer func() {
+		Verbatim_Terminator_Invariants(closer, "verbatim_open.closer")
+		Opening_Invariants(opened, "verbatim_open.opened")
+	}()
+	Active_Position_Invariants(*at, "verbatim_open.at")
+	Active_Verbatim_Delimiters_Invariants(delimiters, "verbatim_open.delimiters")
+	for _, delimiter := range delimiters {
+		if !bytes.HasPrefix(at.Line[at.Cursor:], []byte(delimiter.Open)) {
 			continue
 		}
-		if verbatim_lead_middle_identifier(Bounded_Position(scan.Position), delimiter) {
-			continue
+		if byte_is_identifier(Source_Byte(delimiter.Open[0])) {
+			if at.Cursor > CURSOR_MIN {
+				if byte_is_identifier(Source_Byte(at.Line[at.Cursor-1])) {
+					continue
+				}
+			}
 		}
 		if !delimiter.Hashable {
-			scan.State.Raw_String_Close = Closer(delimiter.Close)
-			scan.Has_Code = true
-			scan.Position.Cursor += Cursor(len(delimiter.Open))
-			return true
+			at.Cursor += Cursor(len(delimiter.Open))
+			return Verbatim_Terminator(delimiter.Close), true
 		}
-		closer, hashed := verbatim_hashable(scan, Hash_Delimiter(delimiter))
-		if hashed {
-			scan.State.Raw_String_Close = Closer(closer)
-			scan.Has_Code = true
-			return true
+		read := int(at.Cursor) + len(delimiter.Open)
+		hash_count := 0
+		for read < len(at.Line) && at.Line[read] == '#' && hash_count < HASH_COUNT_MAX {
+			hash_count++
+			read++
+		}
+		if read < len(at.Line) {
+			if at.Line[read] == '"' {
+				at.Cursor += Cursor(len(delimiter.Open) + hash_count + 1)
+				return Verbatim_Terminator(
+					"\"" + strings.Repeat("#", hash_count)), true
+			}
 		}
 	}
-	return false
-}
-
-// Reports whether a letter-led opener sits in the middle of an identifier, where the
-// lead is a name character rather than a string start.
-func verbatim_lead_middle_identifier(
-	at Bounded_Position, delimiter Verbatim_Delimiter,
-) (middle Identifier_Middle) {
-	defer func() {
-		Identifier_Middle_Invariants(
-			middle, "verbatim_lead_middle_identifier.middle")
-	}()
-	Bounded_Position_Invariants(at, "verbatim_lead_middle_identifier.at")
-	Verbatim_Delimiter_Invariants(delimiter, "verbatim_lead_middle_identifier.delimiter")
-	if !byte_is_identifier(Source_Byte(delimiter.Open[0])) {
-		return false
-	}
-	if at.Cursor == CURSOR_MIN {
-		return false
-	}
-	return Identifier_Middle(byte_is_identifier(Source_Byte(at.Line[at.Cursor-1])))
-}
-
-// Matches a Rust-style raw-string opener: the lead, then hashes, then a quote, moving
-// the cursor past it. Without the quote the lead is a raw identifier, not a string.
-func verbatim_hashable(
-	scan *Active_Scan, delimiter Hash_Delimiter,
-) (closer Hash_Closer, opened Opening) {
-	defer func() {
-		Hash_Closer_Invariants(closer, "verbatim_hashable.closer")
-		Opening_Invariants(opened, "verbatim_hashable.opened")
-	}()
-	Active_Scan_Invariants(*scan, "verbatim_hashable.scan")
-	Hash_Delimiter_Invariants(delimiter, "verbatim_hashable.delimiter")
-	line := scan.Position.Line
-	read := int(scan.Position.Cursor) + len(delimiter.Open)
-	hash_count := 0
-	// The run is bounded so the computed closer stays within its stated width.
-	for read < len(line) && line[read] == '#' && hash_count < HASH_COUNT_MAX {
-		hash_count++
-		read++
-	}
-	if read >= len(line) {
-		return "", false
-	}
-	if line[read] != '"' {
-		return "", false
-	}
-	scan.Position.Cursor += Cursor(len(delimiter.Open) + hash_count + 1)
-	return Hash_Closer("\"" + strings.Repeat("#", hash_count)), true
+	return "", false
 }
 
 // Reports whether a single-line string or character literal begins at the cursor,
 // moving the cursor past what it consumes.
-func quote_open(scan *Active_Scan, language *Seeded_Language) (opened Opening) {
+func quote_open(
+	at *Active_Position, delimiters Active_Quote_Delimiters,
+) (opened Opening) {
 	defer func() { Opening_Invariants(opened, "quote_open.opened") }()
-	Active_Scan_Invariants(*scan, "quote_open.scan")
-	Seeded_Language_Invariants(*language, "quote_open.language")
-	for _, one := range language.Quote_Strings {
+	Active_Position_Invariants(*at, "quote_open.at")
+	Active_Quote_Delimiters_Invariants(delimiters, "quote_open.delimiters")
+	for _, one := range delimiters {
 		Quote_Delimiter_Invariants(one, "quote_open.delimiter")
 	}
-	for _, delimiter := range language.Quote_Strings {
-		if !has_prefix_at(Bounded_Position(scan.Position), Token(delimiter.Open)) {
+	for _, delimiter := range delimiters {
+		if !bytes.HasPrefix(at.Line[at.Cursor:], []byte(delimiter.Open)) {
 			continue
 		}
-		scan.Has_Code = true
 		if delimiter.Character_Like {
-			scan_character_or_lifetime((*Bounded_Position)(&scan.Position))
+			scan_character_or_lifetime(at)
 			return true
 		}
-		scan_quoted(
-			(*Bounded_Position)(&scan.Position), String_Delimiter(delimiter))
+		scan_quoted(at, String_Delimiter{
+			Open: delimiter.Open, Close: delimiter.Close, Escape: delimiter.Escape,
+		})
 		return true
 	}
 	return false
@@ -3903,18 +3866,21 @@ func quote_open(scan *Active_Scan, language *Seeded_Language) (opened Opening) {
 
 // Moves the cursor past a single-line quoted string starting at its opening delimiter,
 // stopping at the first unescaped close or end of line.
-func scan_quoted(at *Bounded_Position, delimiter String_Delimiter) {
-	Bounded_Position_Invariants(*at, "scan_quoted.at")
+func scan_quoted(at *Active_Position, delimiter String_Delimiter) {
+	Active_Position_Invariants(*at, "scan_quoted.at")
 	String_Delimiter_Invariants(delimiter, "scan_quoted.delimiter")
 	line := at.Line
 	read := int(at.Cursor) + len(delimiter.Open)
 	for read < len(line) {
-		probe := Bounded_Position{Line: line, Cursor: Cursor(read)}
-		if quote_escapes_here(probe, delimiter) {
-			read += 2 // skip the escape byte and the character it escapes
-			continue
+		// A zero escape means the syntax has no escapes. It must not match a zero
+		// byte from untrusted source.
+		if delimiter.Escape != ESCAPE_BYTE_NONE {
+			if line[read] == byte(delimiter.Escape) {
+				read += 2 // skip the escape byte and the character it escapes
+				continue
+			}
 		}
-		if has_prefix_at(probe, Token(delimiter.Close)) {
+		if bytes.HasPrefix(line[read:], []byte(delimiter.Close)) {
 			at.Cursor = Cursor(read + len(delimiter.Close))
 			return
 		}
@@ -3923,80 +3889,37 @@ func scan_quoted(at *Bounded_Position, delimiter String_Delimiter) {
 	at.Cursor = Cursor(len(line))
 }
 
-// Escape_Sequence is the escape-sequence state at one scan position.
-type Escape_Sequence bool
-
-// Escape_Sequence_Invariants states both escape-sequence states.
-func Escape_Sequence_Invariants(value Escape_Sequence, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
-		Sometimes(bool(value), "An escape sequence starts at the position.").
-		Ensure()
-}
-
-// Reports whether an escape sequence begins at the scan position.
-func quote_escapes_here(
-	at Bounded_Position, delimiter String_Delimiter,
-) (escapes Escape_Sequence) {
-	defer func() {
-		Escape_Sequence_Invariants(escapes, "quote_escapes_here.escapes")
-	}()
-	Bounded_Position_Invariants(at, "quote_escapes_here.at")
-	String_Delimiter_Invariants(delimiter, "quote_escapes_here.delimiter")
-	// Pascal's string has no escape at all, so the zero escape must not match a zero
-	// byte in the line.
-	if delimiter.Escape == ESCAPE_BYTE_NONE {
-		return false
-	}
-	return at.Line[at.Cursor] == byte(delimiter.Escape)
-}
-
 // Moves the cursor past a character or rune literal starting at the apostrophe, or by
 // one when the apostrophe is a Rust lifetime tick rather than a literal — so a
 // lifetime never opens a string that eats the line.
-func scan_character_or_lifetime(at *Bounded_Position) {
-	Bounded_Position_Invariants(*at, "scan_character_or_lifetime.at")
-	if character_is_escaped(*at) {
-		scan_escaped_character(at)
-		return
-	}
-	if simple_character(at) {
-		return
-	}
-	at.Cursor++
-}
-
-// Character_Escape is the escape state after a character-literal apostrophe.
-type Character_Escape bool
-
-// Character_Escape_Invariants states both character escape states.
-func Character_Escape_Invariants(value Character_Escape, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
-		Sometimes(bool(value), "A character literal starts with an escape.").
-		Ensure()
-}
-
-// Reports whether a backslash escape follows the apostrophe.
-func character_is_escaped(at Bounded_Position) (escaped Character_Escape) {
-	defer func() {
-		Character_Escape_Invariants(escaped, "character_is_escaped.escaped")
-	}()
-	Bounded_Position_Invariants(at, "character_is_escaped.at")
-	if int(at.Cursor)+1 >= len(at.Line) {
-		return false
-	}
-	return at.Line[at.Cursor+1] == '\\'
-}
-
-// Moves the cursor past an escaped character literal, looking for the close past the
-// escaped character, bounded so a stray apostrophe cannot scan the whole line.
-func scan_escaped_character(at *Bounded_Position) {
-	Bounded_Position_Invariants(*at, "scan_escaped_character.at")
+func scan_character_or_lifetime(at *Active_Position) {
+	Active_Position_Invariants(*at, "scan_character_or_lifetime.at")
 	cursor := int(at.Cursor)
-	limit := cursor + CHARACTER_ESCAPE_BYTES_MAX
-	for read := cursor + 3; read < len(at.Line) && read <= limit; read++ {
-		if at.Line[read] == '\'' {
-			at.Cursor = Cursor(read + 1)
-			return
+	line := at.Line
+	if cursor+1 >= len(line) {
+		at.Cursor++
+		return
+	}
+	if line[cursor+1] == '\\' {
+		limit := cursor + CHARACTER_ESCAPE_BYTES_MAX
+		for read := cursor + 3; read < len(line) && read <= limit; read++ {
+			if line[read] == '\'' {
+				at.Cursor = Cursor(read + 1)
+				return
+			}
+		}
+		at.Cursor++
+		return
+	}
+	if line[cursor+1] != '\'' {
+		_, size := utf8.DecodeRune(line[cursor+1:])
+		if size > 0 {
+			if cursor+1+size < len(line) {
+				if line[cursor+1+size] == '\'' {
+					at.Cursor = Cursor(cursor + 1 + size + 1)
+					return
+				}
+			}
 		}
 	}
 	at.Cursor++
@@ -4005,43 +3928,6 @@ func scan_escaped_character(at *Bounded_Position) {
 // CHARACTER_ESCAPE_BYTES_MAX bounds how far past an apostrophe an escaped character
 // literal's close is looked for, so a stray apostrophe cannot swallow the line.
 const CHARACTER_ESCAPE_BYTES_MAX = 12
-
-// Character_Match is the match state of a character literal.
-type Character_Match bool
-
-// Character_Match_Invariants states both character-literal match states.
-func Character_Match_Invariants(value Character_Match, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
-		Sometimes(bool(value), "An apostrophe opens a character literal.").
-		Ensure()
-}
-
-// Moves the cursor past a single-rune character literal, reporting whether the
-// apostrophe opened one at all.
-func simple_character(at *Bounded_Position) (matched Character_Match) {
-	defer func() { Character_Match_Invariants(matched, "simple_character.matched") }()
-	Bounded_Position_Invariants(*at, "simple_character.at")
-	cursor := int(at.Cursor)
-	line := at.Line
-	if cursor+1 >= len(line) {
-		return false
-	}
-	if line[cursor+1] == '\'' {
-		return false
-	}
-	_, size := utf8.DecodeRune(line[cursor+1:])
-	if size <= 0 {
-		return false
-	}
-	if cursor+1+size >= len(line) {
-		return false
-	}
-	if line[cursor+1+size] != '\'' {
-		return false
-	}
-	at.Cursor = Cursor(cursor + 1 + size + 1)
-	return true
-}
 
 // Blank_Line is the whitespace-only state of one physical line.
 type Blank_Line bool
@@ -4122,46 +4008,6 @@ func byte_is_identifier(character Source_Byte) (identifier Identifier_Membership
 	return character >= '0' && character <= '9'
 }
 
-// Token_Match is the token-match state at one scan position.
-type Token_Match bool
-
-// Token_Match_Invariants states both token-match states.
-func Token_Match_Invariants(value Token_Match, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
-		Sometimes(bool(value), "A token matches at the scan position.").
-		Ensure()
-}
-
-// Reports whether prefix occurs in the line at the cursor.
-func has_prefix_at(at Bounded_Position, prefix Token) (match Token_Match) {
-	defer func() { Token_Match_Invariants(match, "has_prefix_at.match") }()
-	Bounded_Position_Invariants(at, "has_prefix_at.at")
-	Token_Invariants(prefix, "has_prefix_at.prefix")
-	cursor := int(at.Cursor)
-	if cursor+len(prefix) > len(at.Line) {
-		return false
-	}
-	for index := 0; index < len(prefix); index++ {
-		if at.Line[cursor+index] != prefix[index] {
-			return false
-		}
-	}
-	return true
-}
-
-// Reports whether any prefix occurs in the line at the cursor.
-func starts_with_any(at Bounded_Position, prefixes Comment_Tokens) (match Token_Match) {
-	defer func() { Token_Match_Invariants(match, "starts_with_any.match") }()
-	Bounded_Position_Invariants(at, "starts_with_any.at")
-	Comment_Tokens_Invariants(prefixes, "starts_with_any.prefixes")
-	for _, prefix := range prefixes {
-		if has_prefix_at(at, Token(prefix)) {
-			return true
-		}
-	}
-	return false
-}
-
 // Test_File_Status is the source-or-test role of one counted file.
 type Test_File_Status bool
 
@@ -4234,8 +4080,10 @@ type Root_Report Report
 // Root_Report_Invariants states the counted files and checks the root-level omission
 // tallies. The merged Report owns their aggregate witnesses.
 func Root_Report_Invariants(report Root_Report, namespace invariant.Namespace) {
-	File_Counts_Invariants(report.Files, namespace)
 	Root_Skipped_Invariants(Root_Skipped(report.Skipped), namespace)
+	invariant.Tree(report, namespace).
+		Range_Int(len(report.Files), FILES_COUNT_MIN, FILES_COUNT_MAX).
+		Ensure()
 }
 
 // Ignore_Predicate reports whether a path, relative to its tree root, is ignored. An
@@ -4279,8 +4127,12 @@ func Count(input Count_Input) (report Root_Report, err error) {
 	}
 	files, classified := count_classify(
 		input.File_System, candidates, input.Classifier, input.Concurrency)
-	skipped := Skipped(classified)
-	skipped.Overflow = overflow
+	skipped := Root_Skipped{
+		Unreadable: classified.Unreadable,
+		Oversized:  classified.Oversized,
+		Binary:     classified.Binary,
+		Overflow:   overflow,
+	}
 	// Nothing sums the run, but a language's own total is still stated as one number, so
 	// that number is what the line bound has to hold. A file that would carry its own
 	// language past the bound is left out and counted, rather than failing the run.
@@ -4294,7 +4146,7 @@ func Count(input Count_Input) (report Root_Report, err error) {
 		lines_of[one.Language] += counts_lines(one.Counts)
 		kept = append(kept, one)
 	}
-	return Root_Report{Files: kept, Skipped: skipped}, nil
+	return Root_Report{Files: kept, Skipped: Skipped(skipped)}, nil
 }
 
 // A file the walk selected for counting and the language to read it as.
@@ -4483,9 +4335,9 @@ type Candidate_Path Counted_Path
 // Candidate_Path_Invariants checks a selected path without assigning both path-width
 // witnesses to every later pipeline phase.
 func Candidate_Path_Invariants(path Candidate_Path, namespace invariant.Namespace) {
-	invariant.Always(
-		len(path) >= COUNTED_PATH_BYTES_MIN && len(path) <= COUNTED_PATH_BYTES_MAX,
-		"A candidate result always has a selected path width.")
+	invariant.Tree(path, namespace).
+		Range_Int(len(path), COUNTED_PATH_BYTES_MIN, COUNTED_PATH_BYTES_MAX).
+		Ensure()
 }
 
 // Candidate_File is one selected file after reading and classification. A skipped
@@ -4607,16 +4459,12 @@ func Skipped_Invariants(skipped Skipped, namespace invariant.Namespace) {
 	Dropped_Count_Invariants(skipped.Overflow, namespace)
 }
 
-// Collected_Skipped is the combined omission tally of the roots processed so far.
-type Collected_Skipped Skipped
+// ROOT_LINE_BOUND_FILES_MIN is the fewest files that can fill one language to the
+// line ceiling. Blank lines use every source byte, so no other partition uses fewer.
+const ROOT_LINE_BOUND_FILES_MIN = (LINE_COUNT_MAX + FILE_BLANK_COUNT_MAX - 1) / FILE_BLANK_COUNT_MAX
 
-// Collected_Skipped_Invariants checks the accumulator without claiming that an
-// intermediate merge step witnesses every final report boundary.
-func Collected_Skipped_Invariants(
-	skipped Collected_Skipped, namespace invariant.Namespace,
-) {
-	Bounded_Skipped_Invariants(Bounded_Skipped(skipped), namespace)
-}
+// ROOT_PAST_LINES_MAX leaves room for the files that established the line ceiling.
+const ROOT_PAST_LINES_MAX = FILES_COUNT_MAX - ROOT_LINE_BOUND_FILES_MIN
 
 // Root_Skipped is the omission tally produced by one command-line root.
 type Root_Skipped Skipped
@@ -4624,68 +4472,34 @@ type Root_Skipped Skipped
 // Root_Skipped_Invariants checks one root's tallies. Aggregate boundary witnesses
 // belong to the report that combines roots.
 func Root_Skipped_Invariants(skipped Root_Skipped, namespace invariant.Namespace) {
-	Bounded_Skipped_Invariants(Bounded_Skipped(skipped), namespace)
+	invariant.Tree(skipped, namespace).
+		Range_Int(int(skipped.Unreadable), FILES_COUNT_MIN, FILES_COUNT_MAX).
+		Range_Int(int(skipped.Oversized), FILES_COUNT_MIN, FILES_COUNT_MAX).
+		Range_Int(int(skipped.Binary), FILES_COUNT_MIN, FILES_COUNT_MAX).
+		Range_Int(int(skipped.Past_Lines), FILES_COUNT_MIN, ROOT_PAST_LINES_MAX).
+		Range_Int(
+			int(skipped.Overflow), DROPPED_COUNT_MIN, DROPPED_COUNT_MAX).
+		Ensure()
 }
 
-// Classified_Skipped is the omission tally produced by candidate classification.
-// The later walk and line-bound phases own overflow and past-line omissions.
-type Classified_Skipped Skipped
+// Classified_Skipped is the omission tally produced by candidate classification. It
+// has no overflow or line-bound fields because later phases own those omissions.
+type Classified_Skipped struct {
+	// Unreadable is how many selected files could not be read.
+	Unreadable Unreadable_Tally
+	// Oversized is how many selected files exceeded the source bound.
+	Oversized Oversized_Tally
+	// Binary is how many selected files held binary data.
+	Binary Binary_Tally
+}
 
 // Classified_Skipped_Invariants checks the three outcomes that classification owns.
 func Classified_Skipped_Invariants(
 	skipped Classified_Skipped, namespace invariant.Namespace,
 ) {
-	Bounded_Skipped_Invariants(Bounded_Skipped(skipped), namespace)
-	invariant.Always(
-		skipped.Past_Lines == 0,
-		"Candidate classification never omits a file for aggregate lines.")
-	invariant.Always(
-		skipped.Overflow == 0,
-		"Candidate classification never owns walk overflow.")
-}
-
-// Bounded_Skipped is an omission tally checked for numeric safety without assigning
-// aggregate boundary witnesses to an intermediate phase.
-type Bounded_Skipped Skipped
-
-// Bounded_Skipped_Invariants checks the numeric bounds shared by skipped-tally phases.
-func Bounded_Skipped_Invariants(
-	skipped Bounded_Skipped, namespace invariant.Namespace,
-) {
-	invariant.Always(
-		int(skipped.Unreadable) >= FILES_COUNT_MIN &&
-			int(skipped.Unreadable) <= FILES_COUNT_MAX,
-		"An unreadable tally always stays in the file bound.")
-	invariant.Always(
-		int(skipped.Oversized) >= FILES_COUNT_MIN &&
-			int(skipped.Oversized) <= FILES_COUNT_MAX,
-		"An oversized tally always stays in the file bound.")
-	invariant.Always(
-		int(skipped.Binary) >= FILES_COUNT_MIN &&
-			int(skipped.Binary) <= FILES_COUNT_MAX,
-		"A binary tally always stays in the file bound.")
-	invariant.Always(
-		int(skipped.Past_Lines) >= FILES_COUNT_MIN &&
-			int(skipped.Past_Lines) <= FILES_COUNT_MAX,
-		"A past-lines tally always stays in the file bound.")
-	invariant.Always(
-		skipped.Overflow >= DROPPED_COUNT_MIN &&
-			skipped.Overflow <= DROPPED_COUNT_MAX,
-		"An overflow tally always stays in the dropped-count bound.")
-}
-
-// Adds one report's uncounted tallies into another, in place.
-func skipped_add(into *Collected_Skipped, more Root_Skipped) {
-	Collected_Skipped_Invariants(*into, "skipped_add.into")
-	Root_Skipped_Invariants(more, "skipped_add.more")
-	into.Unreadable += more.Unreadable
-	into.Oversized += more.Oversized
-	into.Binary += more.Binary
-	into.Past_Lines += more.Past_Lines
-	into.Overflow += more.Overflow
-	if into.Overflow > DROPPED_COUNT_MAX {
-		into.Overflow = DROPPED_COUNT_MAX
-	}
+	Unreadable_Tally_Invariants(skipped.Unreadable, namespace)
+	Oversized_Tally_Invariants(skipped.Oversized, namespace)
+	Binary_Tally_Invariants(skipped.Binary, namespace)
 }
 
 // Reads and classifies each candidate concurrently, dropping any unreadable or binary
@@ -4737,46 +4551,16 @@ func count_classify(
 			})
 			continue
 		}
-		skipped_tally(&skipped, Uncounted_Reason(one.Reason))
+		switch one.Reason {
+		case SKIP_REASON_UNREADABLE:
+			skipped.Unreadable++
+		case SKIP_REASON_OVERSIZED:
+			skipped.Oversized++
+		case SKIP_REASON_BINARY:
+			skipped.Binary++
+		}
 	}
 	return files, skipped
-}
-
-// UNCOUNTED_REASON_MIN is the first reason a file is left out after selection.
-const UNCOUNTED_REASON_MIN = SKIP_REASON_UNREADABLE
-
-// UNCOUNTED_REASON_OVERSIZED is the middle reason: the file is wider than the source
-// bound.
-const UNCOUNTED_REASON_OVERSIZED = SKIP_REASON_OVERSIZED
-
-// UNCOUNTED_REASON_MAX is the last reason a file is left out after selection.
-const UNCOUNTED_REASON_MAX = SKIP_REASON_BINARY
-
-// Uncounted_Reason excludes the ordinary counted result before skipped tallies consume it.
-type Uncounted_Reason uint8
-
-// Uncounted_Reason_Invariants states only reasons that increment a skipped tally, and
-// witnesses each one.
-func Uncounted_Reason_Invariants(reason Uncounted_Reason, namespace invariant.Namespace) {
-	invariant.Tree(reason, namespace).
-		Enum_3_Uint8(
-			uint8(reason), uint8(UNCOUNTED_REASON_MIN),
-			uint8(UNCOUNTED_REASON_OVERSIZED), uint8(UNCOUNTED_REASON_MAX)).
-		Ensure()
-}
-
-// Adds one uncounted file to the tally of its reason.
-func skipped_tally(skipped *Classified_Skipped, reason Uncounted_Reason) {
-	Classified_Skipped_Invariants(*skipped, "skipped_tally.skipped")
-	Uncounted_Reason_Invariants(reason, "skipped_tally.reason")
-	switch reason {
-	case Uncounted_Reason(SKIP_REASON_UNREADABLE):
-		skipped.Unreadable++
-	case Uncounted_Reason(SKIP_REASON_OVERSIZED):
-		skipped.Oversized++
-	case Uncounted_Reason(SKIP_REASON_BINARY):
-		skipped.Binary++
-	}
 }
 
 // Drains the job channel, classifying each candidate into its slot.
@@ -5011,34 +4795,6 @@ func Nonzero_Count_Invariants(count Nonzero_Count, namespace invariant.Namespace
 		Ensure()
 }
 
-// Nonzero_Tally is a count of files a report is actually printing, bounded like any
-// file tally but never zero, for the same reason Nonzero_Count is never zero.
-type Nonzero_Tally int
-
-// Nonzero_Tally_Invariants bounds a printed file tally.
-func Nonzero_Tally_Invariants(tally Nonzero_Tally, namespace invariant.Namespace) {
-	invariant.Tree(tally, namespace).
-		Range_Int(int(tally), NONZERO_COUNT_MIN, FILES_COUNT_MAX).
-		Ensure()
-}
-
-// SKIP_LABEL_BYTES_MIN is the shortest label, "  files binary".
-const SKIP_LABEL_BYTES_MIN = 14
-
-// SKIP_LABEL_BYTES_MAX is the longest, "  files unreadable" and "  files past lines".
-const SKIP_LABEL_BYTES_MAX = 18
-
-// Skip_Label names one way a run left files out. It is distinct from Row_Name because
-// these labels are a fixed set written here, not a path that came from a tree.
-type Skip_Label string
-
-// Skip_Label_Invariants bounds a skip label's width.
-func Skip_Label_Invariants(label Skip_Label, namespace invariant.Namespace) {
-	invariant.Tree(label, namespace).
-		Range_Int(len(label), SKIP_LABEL_BYTES_MIN, SKIP_LABEL_BYTES_MAX).
-		Ensure()
-}
-
 // DROPPED_CELL_BYTES_MIN is the one-digit smallest printed nonzero tally.
 const DROPPED_CELL_BYTES_MIN = 1
 
@@ -5086,7 +4842,10 @@ func dropped_rows(report Report) (rows Dropped_Rows) {
 	if len(detail) == 0 {
 		return nil
 	}
-	return append(Dropped_Rows{Render_Row(skipped_label_row())}, detail...)
+	return append(Dropped_Rows{{
+		Name: "Dropped", Files: "", Lines: "", Code: "",
+		Comments: "", Blanks: "", Percent: "",
+	}}, detail...)
 }
 
 // Returns one row for each thing the run actually left out, and none for the rest.
@@ -5097,43 +4856,42 @@ func dropped_detail_rows(
 	Skipped_Invariants(skipped, "dropped_detail_rows.skipped")
 	Dropped_Count_Invariants(dropped, "dropped_detail_rows.dropped")
 	if dropped > 0 {
-		rows = append(rows, Render_Row(skipped_line_row(Nonzero_Count(dropped))))
+		rows = append(rows, Render_Row{
+			Name: "  lines read short", Files: "",
+			Lines: Lines_Cell(dropped_cell(Nonzero_Count(dropped))),
+			Code:  "", Comments: "", Blanks: "", Percent: "",
+		})
+	}
+	append_files := func(name Row_Name, file_count File_Tally) {
+		rows = append(rows, Render_Row{
+			Name:  name,
+			Files: File_Cell(with_thousands_separators(Line_Count(file_count))),
+			Lines: "", Code: "", Comments: "", Blanks: "", Percent: "",
+		})
 	}
 	if skipped.Unreadable > 0 {
-		rows = append(rows, Render_Row(skipped_file_row(
-			"  files unreadable", Nonzero_Tally(skipped.Unreadable))))
+		append_files("  files unreadable", File_Tally(skipped.Unreadable))
 	}
 	if skipped.Oversized > 0 {
-		rows = append(rows, Render_Row(skipped_file_row(
-			"  files oversized", Nonzero_Tally(skipped.Oversized))))
+		append_files("  files oversized", File_Tally(skipped.Oversized))
 	}
 	if skipped.Binary > 0 {
-		rows = append(rows, Render_Row(skipped_file_row(
-			"  files binary", Nonzero_Tally(skipped.Binary))))
+		append_files("  files binary", File_Tally(skipped.Binary))
 	}
 	if skipped.Past_Lines > 0 {
-		rows = append(rows, Render_Row(skipped_file_row(
-			"  files past lines", Nonzero_Tally(skipped.Past_Lines))))
+		append_files("  files past lines", File_Tally(skipped.Past_Lines))
 	}
 	if skipped.Overflow > 0 {
-		rows = append(rows,
-			Render_Row(skipped_overflow_row(Nonzero_Count(skipped.Overflow))))
+		file_cell := File_Cell(with_thousands_separators(Line_Count(skipped.Overflow)))
+		if skipped.Overflow == DROPPED_COUNT_MAX {
+			file_cell = DROPPED_SATURATED_TEXT
+		}
+		rows = append(rows, Render_Row{
+			Name: "  files past bound", Files: file_cell, Lines: "",
+			Code: "", Comments: "", Blanks: "", Percent: "",
+		})
 	}
 	return rows
-}
-
-// Returns the row naming how many recognized files the walk found past the file bound.
-func skipped_overflow_row(overflow Nonzero_Count) (row Prepared_Row) {
-	defer func() { Prepared_Row_Invariants(row, "skipped_overflow_row.row") }()
-	Nonzero_Count_Invariants(overflow, "skipped_overflow_row.overflow")
-	tally := File_Cell(with_thousands_separators(Line_Count(overflow)))
-	if overflow == DROPPED_COUNT_MAX {
-		tally = DROPPED_SATURATED_TEXT
-	}
-	return Prepared_Row{
-		Name: "  files past bound", Files: tally, Lines: "",
-		Code: "", Comments: "", Blanks: "", Percent: "",
-	}
 }
 
 // DROPPED_DETAILS_COUNT_MIN is the empty detail of a run that left nothing out.
@@ -5174,41 +4932,6 @@ func Dropped_Rows_Invariants(rows Dropped_Rows, namespace invariant.Namespace) {
 			DROPPED_ROWS_COUNT_ABSENT, DROPPED_ROWS_COUNT_ABSENT,
 			DROPPED_ROWS_COUNT_ABSENT, DROPPED_ROWS_COUNT_ABSENT).
 		Ensure()
-}
-
-// Returns the section's label row.
-func skipped_label_row() (row Prepared_Row) {
-	defer func() { Prepared_Row_Invariants(row, "skipped_label_row.row") }()
-	return Prepared_Row{
-		Name: "Dropped", Files: "", Lines: "", Code: "",
-		Comments: "", Blanks: "", Percent: "",
-	}
-}
-
-// Returns the row naming how many lines were read short of their full width.
-func skipped_line_row(dropped Nonzero_Count) (row Prepared_Row) {
-	defer func() { Prepared_Row_Invariants(row, "skipped_line_row.row") }()
-	Nonzero_Count_Invariants(dropped, "skipped_line_row.dropped")
-	return Prepared_Row{
-		Name: "  lines read short", Files: "", Lines: Lines_Cell(dropped_cell(dropped)),
-		Code: "", Comments: "", Blanks: "", Percent: "",
-	}
-}
-
-// Returns a row naming one tally of files the run did not count.
-func skipped_file_row(name Skip_Label, tally Nonzero_Tally) (row Prepared_Row) {
-	defer func() { Prepared_Row_Invariants(row, "skipped_file_row.row") }()
-	Skip_Label_Invariants(name, "skipped_file_row.name")
-	Nonzero_Tally_Invariants(tally, "skipped_file_row.tally")
-	return Prepared_Row{
-		Name:     Row_Name(name),
-		Files:    File_Cell(with_thousands_separators(Line_Count(tally))),
-		Lines:    "",
-		Code:     "",
-		Comments: "",
-		Blanks:   "",
-		Percent:  "",
-	}
 }
 
 // Prints one table line, trimmed of the trailing padding a label row leaves.
@@ -5432,35 +5155,6 @@ func Render_Row_Invariants(row Render_Row, namespace invariant.Namespace) {
 	Percent_Cell_Invariants(row.Percent, namespace)
 }
 
-// Prepared_Row is a row whose builder already selected the applicable cells.
-type Prepared_Row Render_Row
-
-// Prepared_Row_Invariants enforces each cell ceiling. The shared row formatter sees
-// all row shapes and owns the variable boundary witnesses.
-func Prepared_Row_Invariants(row Prepared_Row, namespace invariant.Namespace) {
-	invariant.Always(
-		len(row.Name) <= ROW_NAME_BYTES_MAX,
-		"A prepared row name always fits its cell.")
-	invariant.Always(
-		len(row.Files) <= FILE_CELL_BYTES_MAX,
-		"A prepared file tally always fits its cell.")
-	invariant.Always(
-		len(row.Lines) <= LINE_CELL_BYTES_MAX,
-		"A prepared line tally always fits its cell.")
-	invariant.Always(
-		len(row.Code) <= LINE_CELL_BYTES_MAX,
-		"A prepared code tally always fits its cell.")
-	invariant.Always(
-		len(row.Comments) <= COMMENTS_CELL_BYTES_MAX,
-		"A prepared comment tally always fits its cell.")
-	invariant.Always(
-		len(row.Blanks) <= LINE_CELL_BYTES_MAX,
-		"A prepared blank tally always fits its cell.")
-	invariant.Always(
-		len(row.Percent) <= PERCENT_CELL_BYTES_MAX,
-		"A prepared percentage always fits its cell.")
-}
-
 // ROW_NAME_BYTES_MIN is the narrowest label: two spaces of indent and a one-letter
 // language name, as C and D and R print.
 const ROW_NAME_BYTES_MIN = 3
@@ -5591,15 +5285,6 @@ func Percent_Cell_Invariants(cell Percent_Cell, namespace invariant.Namespace) {
 		Ensure()
 }
 
-// Returns the table's column header row.
-func render_header_row() (header Prepared_Row) {
-	defer func() { Prepared_Row_Invariants(header, "render_header_row.header") }()
-	return Prepared_Row{
-		Name: "Language", Files: "Files", Lines: "Lines",
-		Code: "Code", Comments: "Comments", Blanks: "Blanks", Percent: "%Code",
-	}
-}
-
 // Group_Counts is the complete line partition of one language group.
 type Group_Counts Counts
 
@@ -5609,7 +5294,8 @@ func Group_Counts_Invariants(counts Group_Counts, namespace invariant.Namespace)
 		Range_Int(int(counts.Code), LINE_COUNT_MIN, LINE_COUNT_MAX).
 		Range_Int(int(counts.Comment), LINE_COUNT_MIN, LINE_COUNT_MAX).
 		Range_Int(int(counts.Blank), LINE_COUNT_MIN, LINE_COUNT_MAX).
-		Range_Int(int(counts.Dropped), DROPPED_COUNT_MIN, DROPPED_COUNT_MAX).
+		Range_Int(
+			int(counts.Dropped), DROPPED_COUNT_MIN, DROPPED_COUNT_MAX).
 		Ensure()
 }
 
@@ -5622,7 +5308,8 @@ func Source_Counts_Invariants(counts Source_Counts, namespace invariant.Namespac
 		Range_Int(int(counts.Code), LINE_COUNT_MIN, LINE_COUNT_MAX).
 		Range_Int(int(counts.Comment), LINE_COUNT_MIN, LINE_COUNT_MAX).
 		Range_Int(int(counts.Blank), LINE_COUNT_MIN, LINE_COUNT_MAX).
-		Range_Int(int(counts.Dropped), DROPPED_COUNT_MIN, DROPPED_COUNT_MAX).
+		Range_Int(
+			int(counts.Dropped), DROPPED_COUNT_MIN, DROPPED_COUNT_MAX).
 		Ensure()
 }
 
@@ -5635,7 +5322,8 @@ func Test_Counts_Invariants(counts Test_Counts, namespace invariant.Namespace) {
 		Range_Int(int(counts.Code), LINE_COUNT_MIN, LINE_COUNT_MAX).
 		Range_Int(int(counts.Comment), LINE_COUNT_MIN, LINE_COUNT_MAX).
 		Range_Int(int(counts.Blank), LINE_COUNT_MIN, LINE_COUNT_MAX).
-		Range_Int(int(counts.Dropped), DROPPED_COUNT_MIN, DROPPED_COUNT_MAX).
+		Range_Int(
+			int(counts.Dropped), DROPPED_COUNT_MIN, DROPPED_COUNT_MAX).
 		Ensure()
 }
 
@@ -5760,25 +5448,21 @@ func Language_Groups_Invariants(groups Language_Groups, namespace invariant.Name
 		Ensure()
 }
 
-// Adds one line partition into another in place.
-func counts_add(into *Summed_Counts, more File_Partition) {
-	Summed_Counts_Invariants(*into, "counts_add.into")
-	File_Partition_Invariants(more, "counts_add.more")
-	into.Code += more.Code
-	into.Comment += more.Comment
-	into.Blank += more.Blank
-	into.Dropped += more.Dropped
-	if into.Dropped > DROPPED_COUNT_MAX {
-		into.Dropped = DROPPED_COUNT_MAX
-	}
-}
-
 // Folds a report's files into per-language groups sorted by name, splitting each
 // group's partition into source and test and preserving its files in report order.
 func report_groups(report Report) (groups Language_Groups) {
 	defer func() { Language_Groups_Invariants(groups, "report_groups.groups") }()
 	Report_Invariants(report, "report_groups.report")
 	position_of := map[Language_Name]int{}
+	add_counts := func(into *Counts, more File_Partition) {
+		into.Code += more.Code
+		into.Comment += more.Comment
+		into.Blank += more.Blank
+		into.Dropped += more.Dropped
+		if into.Dropped > DROPPED_COUNT_MAX {
+			into.Dropped = DROPPED_COUNT_MAX
+		}
+	}
 	for _, file := range report.Files {
 		position, seen := position_of[file.Language]
 		if !seen {
@@ -5791,18 +5475,18 @@ func report_groups(report Report) (groups Language_Groups) {
 		}
 		group := &groups[position]
 		group.Files++
-		group_counts := Summed_Counts(group.Counts)
-		counts_add(&group_counts, File_Partition(file.Counts))
+		group_counts := Counts(group.Counts)
+		add_counts(&group_counts, File_Partition(file.Counts))
 		group.Counts = Group_Counts(group_counts)
 		if file.Is_Test {
 			group.Test_Files++
-			test_counts := Summed_Counts(group.Test)
-			counts_add(&test_counts, File_Partition(file.Counts))
+			test_counts := Counts(group.Test)
+			add_counts(&test_counts, File_Partition(file.Counts))
 			group.Test = Test_Counts(test_counts)
 		} else {
 			group.Source_Files++
-			source_counts := Summed_Counts(group.Source)
-			counts_add(&source_counts, File_Partition(file.Counts))
+			source_counts := Counts(group.Source)
+			add_counts(&source_counts, File_Partition(file.Counts))
 			group.Source = Source_Counts(source_counts)
 		}
 		group.Members = append(group.Members, file)
@@ -5946,7 +5630,10 @@ func report_rows(categories Category_Groups, show_files File_Display) (rows Rend
 		Category_Group_Invariants(one, "report_rows.category")
 	}
 	File_Display_Invariants(show_files, "report_rows.show_files")
-	rows = Render_Rows{Render_Row(render_header_row())}
+	rows = Render_Rows{{
+		Name: "Language", Files: "Files", Lines: "Lines",
+		Code: "Code", Comments: "Comments", Blanks: "Blanks", Percent: "%Code",
+	}}
 	for _, category := range categories {
 		if len(category.Languages) == 0 {
 			continue
@@ -5975,12 +5662,19 @@ func report_language_rows(
 	defer func() { Language_Rows_Invariants(output, "report_language_rows.output") }()
 	Language_Group_Invariants(group, "report_language_rows.group")
 	File_Display_Invariants(show_files, "report_language_rows.show_files")
-	output = Language_Rows{Render_Row(counts_row(&Counts_Row_Input{
-		Name:       Row_Name("  " + group.Name),
-		Files:      File_Tally(group.Files),
-		Counts:     Counts(group.Counts),
-		Total_Code: 0,
-	}))}
+	group_counts := Counts(group.Counts)
+	output = Language_Rows{{
+		Name:  Row_Name("  " + group.Name),
+		Files: File_Cell(with_thousands_separators(Line_Count(group.Files))),
+		Lines: Lines_Cell(with_thousands_separators(counts_lines(group_counts))),
+		Code: Code_Cell(
+			with_thousands_separators(Line_Count(group_counts.Code))),
+		Comments: Comments_Cell(
+			with_thousands_separators(Line_Count(group_counts.Comment))),
+		Blanks: Blanks_Cell(
+			with_thousands_separators(Line_Count(group_counts.Blank))),
+		Percent: "",
+	}}
 	if show_files {
 		output = append(output, split_rows(&Split_Rows_Input{
 			Source_Files: group.Source_Files,
@@ -5989,8 +5683,19 @@ func report_language_rows(
 			Test:         group.Test,
 		})...)
 		for _, member := range group.Members {
-			output = append(output, Render_Row(file_row(
-				Counted_Path(member.Path), File_Partition(member.Counts))))
+			member_counts := Counts(member.Counts)
+			output = append(output, Render_Row{
+				Name: Row_Name("    " + member.Path), Files: "",
+				Lines: Lines_Cell(
+					with_thousands_separators(counts_lines(member_counts))),
+				Code: Code_Cell(
+					with_thousands_separators(Line_Count(member_counts.Code))),
+				Comments: Comments_Cell(with_thousands_separators(
+					Line_Count(member_counts.Comment))),
+				Blanks: Blanks_Cell(with_thousands_separators(
+					Line_Count(member_counts.Blank))),
+				Percent: "",
+			})
 		}
 		return output
 	}
@@ -6090,19 +5795,34 @@ func split_rows(input *Split_Rows_Input) (split Split_Row_Pair) {
 		return nil
 	}
 	own_code := input.Source.Code + input.Test.Code
+	row_for := func(
+		name Row_Name, files File_Tally, counts Counts,
+	) (row Render_Row) {
+		percent := Percent_Cell("")
+		if own_code > 0 {
+			share := float64(counts.Code) / float64(own_code) * 100
+			percent = Percent_Cell(fmt.Sprintf("%.1f%%", share))
+		}
+		return Render_Row{
+			Name:  name,
+			Files: File_Cell(with_thousands_separators(Line_Count(files))),
+			Lines: Lines_Cell(with_thousands_separators(counts_lines(counts))),
+			Code: Code_Cell(
+				with_thousands_separators(Line_Count(counts.Code))),
+			Comments: Comments_Cell(
+				with_thousands_separators(Line_Count(counts.Comment))),
+			Blanks: Blanks_Cell(
+				with_thousands_separators(Line_Count(counts.Blank))),
+			Percent: percent,
+		}
+	}
 	return Split_Row_Pair{
-		Render_Row(counts_row(&Counts_Row_Input{
-			Name:       Row_Name(SPLIT_ROW_INDENT + "source"),
-			Files:      File_Tally(input.Source_Files),
-			Counts:     Counts(input.Source),
-			Total_Code: Line_Count(own_code),
-		})),
-		Render_Row(counts_row(&Counts_Row_Input{
-			Name:       Row_Name(SPLIT_ROW_INDENT + "tests"),
-			Files:      File_Tally(input.Test_Files),
-			Counts:     Counts(input.Test),
-			Total_Code: Line_Count(own_code),
-		})),
+		row_for(
+			Row_Name(SPLIT_ROW_INDENT+"source"),
+			File_Tally(input.Source_Files), Counts(input.Source)),
+		row_for(
+			Row_Name(SPLIT_ROW_INDENT+"tests"),
+			File_Tally(input.Test_Files), Counts(input.Test)),
 	}
 }
 
@@ -6122,68 +5842,6 @@ func Split_Row_Pair_Invariants(rows Split_Row_Pair, namespace invariant.Namespac
 	invariant.Tree(rows, namespace).
 		Enum_Int(len(rows), SPLIT_ROWS_COUNT_MIN, SPLIT_ROWS_COUNT_MAX).
 		Ensure()
-}
-
-// Carries counts_row's data: a name, a file count, the partition, and the code total
-// the row's code is a share of.
-type Counts_Row_Input struct {
-	// Name is the row's label.
-	Name Row_Name
-	// Files is the row's file count.
-	Files File_Tally
-	// Counts is the row's line partition.
-	Counts Counts
-	// Total_Code is the denominator for the %Code share — the group's own code on a
-	// source or test sub-row. Zero leaves the percentage blank, as on a language total.
-	Total_Code Line_Count
-}
-
-// Counts_Row_Input_Invariants states a row's label, tally, partition, and denominator.
-func Counts_Row_Input_Invariants(
-	input Counts_Row_Input, namespace invariant.Namespace,
-) {
-	Row_Name_Invariants(input.Name, namespace)
-	File_Tally_Invariants(input.Files, namespace)
-	Counts_Invariants(input.Counts, namespace)
-	Line_Count_Invariants(input.Total_Code, namespace)
-}
-
-// Builds an aggregate row: a name, a file count, the partition, and the code's share
-// of the given code total — blank when that total is zero.
-func counts_row(input *Counts_Row_Input) (row Prepared_Row) {
-	defer func() { Prepared_Row_Invariants(row, "counts_row.row") }()
-	Counts_Row_Input_Invariants(*input, "counts_row.input")
-	percent := Percent_Cell("")
-	if input.Total_Code > 0 {
-		share := float64(input.Counts.Code) / float64(input.Total_Code) * 100
-		percent = Percent_Cell(fmt.Sprintf("%.1f%%", share))
-	}
-	return Prepared_Row{
-		Name:  input.Name,
-		Files: File_Cell(with_thousands_separators(Line_Count(input.Files))),
-		Lines: Lines_Cell(with_thousands_separators(counts_lines(input.Counts))),
-		Code:  Code_Cell(with_thousands_separators(Line_Count(input.Counts.Code))),
-		Comments: Comments_Cell(
-			with_thousands_separators(Line_Count(input.Counts.Comment))),
-		Blanks:  Blanks_Cell(with_thousands_separators(Line_Count(input.Counts.Blank))),
-		Percent: percent,
-	}
-}
-
-// Builds a per-file row: like an aggregate row but without a file count, since the
-// row is itself one file, and without a percentage, which is a per-language fact.
-func file_row(file_path Counted_Path, counts File_Partition) (row Prepared_Row) {
-	defer func() { Prepared_Row_Invariants(row, "file_row.row") }()
-	Counted_Path_Invariants(file_path, "file_row.file_path")
-	File_Partition_Invariants(counts, "file_row.counts")
-	row = counts_row(&Counts_Row_Input{
-		Name:       Row_Name("    " + file_path),
-		Files:      0,
-		Counts:     Counts(counts),
-		Total_Code: 0,
-	})
-	row.Files = ""
-	return row
 }
 
 // The printed width of each table column.
