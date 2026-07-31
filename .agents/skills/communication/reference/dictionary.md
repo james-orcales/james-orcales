@@ -1,18 +1,19 @@
 # ASD-STE100 Issue 9 — dictionary extract for software prose
 
-The full dictionary holds 875 approved words and 1274 words that are not approved. This file
-carries the part that a software writer actually reaches for. Download the standard from
-https://www.asd-ste100.org/ when you need a word that is not here.
+The full dictionary has 875 approved words and 1274 words that are not approved. This file has the
+part that a software writer uses most. To get a word that is not here, download the standard from
+https://www.asd-ste100.org/.
 
-Convention: **UPPERCASE** = approved. lowercase = not approved. `(TN)` = technical noun,
-`(TV)` = technical verb. A word is approved for **one** part of speech and **one** meaning, so
-`CHECK (n)` being approved says nothing about `check (v)`.
+In this file, **UPPERCASE** shows that a word is approved. lowercase shows that a word is not
+approved. `(TN)` is a technical noun and `(TV)` is a technical verb. A word is approved for **one**
+part of speech and **one** meaning. Thus the approval of `CHECK (n)` tells you nothing about
+`check (v)`.
 
 ## List of recurring errors
 
-Reproduced verbatim from Part 2 of the standard. This is ASD's own list of the mistakes writers
-make most, so read it first. Its preamble: "If a word is not approved in the dictionary, do not
-use it."
+This list comes from Part 2 of the standard, without changes. It is ASD's own list of the errors
+that writers make most. Read it first. Its preamble says: "If a word is not approved in the
+dictionary, do not use it."
 
 | Not approved | Approved | Not approved | Approved |
 | --- | --- | --- | --- |
@@ -39,7 +40,7 @@ use it."
 
 ## Substitutions for software prose
 
-Rows the recurring-errors list already covers are not repeated here.
+This table does not show again the rows that are in the recurring-errors list.
 
 | Not approved | Approved | Recast required |
 | --- | --- | --- |
@@ -106,24 +107,24 @@ Rows the recurring-errors list already covers are not repeated here.
 | via (prep) | THROUGH (prep) | |
 | whether (conj) | IF (conj) | |
 
-Two families the dictionary handles by rule, not by entry:
+The dictionary controls two groups with a rule, not with an entry:
 
-- **`re-` prefix.** Use the base word plus AGAIN (adv) or BACK (adv). Not "reconnect" but
-  "connect … again".
-- **Nominalized actions.** Where the noun is not approved but the verb is, the verb wins:
-  `analyze (v)` becomes `MAKE AN ANALYSIS`, `alignment (n)` becomes `ALIGN (v)`,
-  `application (n)` becomes `APPLY (v)`, `calculation (n)` becomes `CALCULATE (v)`. This is
-  rule 3.7 in table form.
+- **The `re-` prefix.** Use the base word with AGAIN (adv) or BACK (adv). Write "connect … again",
+  not "reconnect".
+- **Nouns that show an action.** If the noun is not approved but the verb is approved, use the
+  verb. `analyze (v)` becomes `MAKE AN ANALYSIS`, `alignment (n)` becomes `ALIGN (v)`,
+  `application (n)` becomes `APPLY (v)`, and `calculation (n)` becomes `CALCULATE (v)`. This is
+  rule 3.7.
 
 ## Approved words that do not mean what you expect
 
-The trap is not the banned word. It is the approved word you use in a sense the dictionary
-does not grant. Meanings are quoted from the standard.
+The risk is not the word that is not permitted. The risk is the approved word that you use with a
+meaning that the dictionary does not give. The meanings that follow come from the standard.
 
-| Word | Approved meaning | Watch |
+| Word | Approved meaning | Note |
 | --- | --- | --- |
 | ACCESS (n) | The ability to go into or near | Noun only. "Get access to", never "access the". |
-| CAN (v) | Possible, able to, or permitted to | `could` is banned for possibility. No other forms. |
+| CAN (v) | Possible, able to, or permitted to | Do not use `could` to show possibility. No other forms. |
 | CANCEL (v) | Stop a process, or remove the validity of something | |
 | CHECK (n) | The procedure you do to make sure something operates correctly | Noun only. |
 | FIND (v) | To discover, to examine something so that you know | |
@@ -149,8 +150,8 @@ does not grant. Meanings are quoted from the standard.
 
 ## Approved verbs
 
-The complete list from Part 2. A verb outside it is either a technical verb under rule 1.12 or
-not permitted. J, N, Q, V, X, Y, and Z hold no approved verbs.
+This is the full list from Part 2. A verb that is not in the list is a technical verb (rule 1.12),
+or it is not permitted. The letters J, N, Q, V, X, Y, and Z have no approved verbs.
 
 **A** ABSORB ACCEPT ACTIVATE ADAPT ADD ADJUST AGREE ALIGN APPLY ARM ASSEMBLE ATTACH
 **B** BALANCE BE BECOME BEND BLEED BLOW BOND BREAK BREATHE BURN BYPASS
