@@ -544,6 +544,60 @@ func Test_Shared_Component_Configurable(t *testing.T) {
 	}
 }
 
+// Test_Binary_Default_Tier proves the default tier belongs to the shared library
+// alone. The same lib/foo/default package is legal when lib/ is the shared
+// component and a layout error when lib/ is a binary, whose impurity stays in
+// package main. The impurity release travels with that classification, so the
+// package's os import is exempt only in the shared case.
+func Test_Binary_Default_Tier(t *testing.T) {
+	t.Parallel()
+	files := map[string]string{
+		"lib/foo/foo.go": fixture_package("foo"),
+		"lib/foo/default/wire.go": "// Package foo is a fixture.\npackage foo\n\n" +
+			"import \"os\"\n\n// Read reads.\nfunc Read() (value string) {\n" +
+			"\treturn os.Getenv(\"X\")\n}\n",
+	}
+	const FORBID = "forbids a default tier"
+	const IMPURE = "impure stdlib import"
+	as_shared := run_shared_component_output(t, files, "lib")
+	if strings.Contains(as_shared, FORBID) {
+		t.Fatalf("a shared library keeps its default tier; got: %s", as_shared)
+	}
+	if strings.Contains(as_shared, IMPURE) {
+		t.Fatalf("a shared library's default tier is an impure home; got: %s", as_shared)
+	}
+	as_binary := run_shared_component_output(t, files, "other")
+	if !strings.Contains(as_binary, FORBID) {
+		t.Fatalf("a binary's default tier must be flagged; got: %s", as_binary)
+	}
+	if !strings.Contains(as_binary, IMPURE) {
+		t.Fatalf("a binary's default tier takes the purity bans; got: %s", as_binary)
+	}
+}
+
+// Test_Binary_Composition_Tier_Release proves the depth-based impurity release
+// is the shared library's alone too. lib/foo/bar sits one non-main ancestor
+// below the library tier, which releases it from the purity bans while lib/ is
+// the shared component and releases nothing once lib/ is a binary.
+func Test_Binary_Composition_Tier_Release(t *testing.T) {
+	t.Parallel()
+	files := map[string]string{
+		"lib/foo/foo.go": fixture_package("foo"),
+		"lib/foo/bar/bar.go": "// Package bar is a fixture.\npackage bar\n\n" +
+			"import \"os\"\n\n// Read reads.\nfunc Read() (value string) {\n" +
+			"\treturn os.Getenv(\"X\")\n}\n",
+	}
+	const IMPURE = "impure stdlib import"
+	as_shared := run_shared_component_output(t, files, "lib")
+	if strings.Contains(as_shared, IMPURE) {
+		t.Fatalf("the composition tier is an impure home; got: %s", as_shared)
+	}
+	as_binary := run_shared_component_output(t, files, "other")
+	if !strings.Contains(as_binary, IMPURE) {
+		t.Fatalf("a binary releases no package from the purity bans; got: %s", as_binary)
+	}
+}
+
 // Lints the fixture with the given shared module and returns stdout. .go
 // entries are gofmt-normalized; other files (go.mod) reach the linter verbatim.
 func run_shared_component_output(
@@ -3146,10 +3200,11 @@ func Read() (name string) {
 }
 
 // Test_No_Impure_Stdlib_Composition_Tier_Extra continues the composition-tier
-// allow-list: an impure stdlib CALL (`fmt.Println`) at the composition tier
-// is allowed, and the binary-module composition tier (one level under the
-// library tier) inherits the same exemption. time is gatewayed separately, so
-// fmt is the example here; see the Stdlib Time rule.
+// allow-list: an impure stdlib CALL (`fmt.Println`) at the composition tier is
+// allowed in the shared library, and the same position inside a binary is not —
+// a binary keeps its impurity in package main, so nothing under it reaches the
+// composition tier. time is gatewayed separately, so fmt is the example here;
+// see the Stdlib Time rule.
 func Test_No_Impure_Stdlib_Composition_Tier_Extra(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
@@ -3177,7 +3232,7 @@ func Stamp() { fmt.Println("stamped") }
 		},
 		{
 			Name: "binary module composition tier " +
-				"(one level under library tier) allowed",
+				"(one level under library tier) flagged",
 			Files: map[string]string{
 				"mybinary/go.mod": DOCTRINE_BINARY_GO_MODULE,
 				"mybinary/main.go": "package main\n\n" +
@@ -3204,7 +3259,7 @@ func Read() (name string) {
 }
 `,
 			},
-			Forbid: []string{"impure stdlib import"},
+			Want_Diags: []string{"impure stdlib import"},
 		},
 	}
 	run_doctrine_diag_table(t, tests)
@@ -3689,9 +3744,10 @@ func Test_Library_Tier_Depth(t *testing.T) {
 // Test_Library_Tier_Depth_Internal_Anchor verifies that a binary module's
 // top-level internal directory is where the nesting count starts — the same
 // role a shared module's root plays — and is not itself a package counted
-// above another. A pure library package sits one level inside internal and its
-// composition tier one level below that (internal/foo/default); anything
-// deeper is flagged.
+// above another. A pure library package sits one level inside internal and one
+// more package below that (internal/foo/bar); anything deeper is flagged. Both
+// are pure — a binary holds no default tier — so the depth alone is the subject
+// here.
 func Test_Library_Tier_Depth_Internal_Anchor(t *testing.T) {
 	tests := []struct {
 		Name       string
@@ -3700,14 +3756,14 @@ func Test_Library_Tier_Depth_Internal_Anchor(t *testing.T) {
 		Forbid     []string
 	}{
 		{
-			Name: "library package and default composition under internal is clean",
+			Name: "library package and one below it under internal is clean",
 			Files: map[string]string{
 				"bin/go.mod": DOCTRINE_BINARY_GO_MODULE,
 				"bin/main.go": "package main\n\n" +
 					"func main() { return }\n",
-				"bin/internal/entry.go":            DOCTRINE_BINARY_INTERNAL_MAIN,
-				"bin/internal/foo/foo.go":          fixture_package("foo"),
-				"bin/internal/foo/default/wire.go": fixture_package("foo"),
+				"bin/internal/entry.go":       DOCTRINE_BINARY_INTERNAL_MAIN,
+				"bin/internal/foo/foo.go":     fixture_package("foo"),
+				"bin/internal/foo/bar/bar.go": fixture_package("bar"),
 			},
 			Forbid: []string{"exceeds library tier"},
 		},
@@ -5217,7 +5273,11 @@ func specification_diagnostics_workspace(
 		}
 		fsys_map[name] = &fstest.MapFile{Data: []byte(content)}
 	}
-	all, err := lint.Check_File_System(&lint.Check_File_System_Input{Fsys: fsys_map})
+	// Names the shared component so a `shared/...` fixture is classified as the
+	// library; without it every component reads as a binary, where the impure
+	// tier does not exist.
+	all, err := lint.Check_File_System(&lint.Check_File_System_Input{
+		Fsys: fsys_map, Shared_Component: DOCTRINE_SHARED_COMPONENT_DIRECTORY})
 	if err != nil {
 		t.Fatalf("Check_File_System: %v", err)
 	}
@@ -5288,8 +5348,9 @@ func Test_Specification_Coverage_Exempts_Main(t *testing.T) {
 func Test_Specification_Coverage_Exempts_Default(t *testing.T) {
 	t.Parallel()
 	files := map[string]string{
-		"go.mod":              "module fixture\n\ngo 1.25\n",
-		"foo/default/wire.go": "// Package foo is a fixture.\npackage foo\n",
+		"go.mod": "module fixture\n\ngo 1.25\n",
+		// Under the shared component, the only place a default tier is legal.
+		"shared/foo/default/wire.go": "// Package foo is a fixture.\npackage foo\n",
 	}
 	diags := specification_diagnostics_workspace(t, files)
 	if specification_message_contains(diags, "missing SPECIFICATION.md") {

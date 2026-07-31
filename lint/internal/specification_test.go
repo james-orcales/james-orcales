@@ -450,6 +450,21 @@ func Test_Component_Layout_Binary_Purity(t *testing.T) {
 	}
 }
 
+// Test_Component_Layout_Binary_Default_Tier verifies a binary component's default
+// package is flagged, while the same package under the shared component is not.
+func Test_Component_Layout_Binary_Default_Tier(t *testing.T) {
+	t.Parallel()
+	files := map[string][]byte{
+		"pkg/internal/foo/foo.go": []byte(
+			"// Package foo is a fixture.\npackage foo\n"),
+		"pkg/internal/foo/default/wire.go": []byte(
+			"// Package foo is a fixture.\npackage foo\n"),
+	}
+	if !specification_flags(t, files, "forbids a default tier") {
+		t.Fatal("a binary component's default package must be flagged")
+	}
+}
+
 // Test_Component_Layout_Library_Purity verifies a shared library's pure package
 // using impure stdlib is flagged.
 func Test_Component_Layout_Library_Purity(t *testing.T) {
@@ -495,6 +510,17 @@ func Test_Source_And_Test_Bans_Blank_Imports(t *testing.T) {
 	files := specification_one_file("package fixture\n\nimport _ \"strings\"\n")
 	if !specification_flags(t, files, "blank import is banned") {
 		t.Fatal("a blank import must be flagged")
+	}
+}
+
+// Test_Source_And_Test_Bans_Import_Aliases verifies an alias holding "default" is
+// flagged.
+func Test_Source_And_Test_Bans_Import_Aliases(t *testing.T) {
+	t.Parallel()
+	files := specification_one_file(
+		"package fixture\n\nimport iodefault \"strings\"\n")
+	if !specification_flags(t, files, "import alias") {
+		t.Fatal("an alias holding \"default\" must be flagged")
 	}
 }
 
@@ -821,6 +847,19 @@ func Test_Source_And_Test_Requirements_File_Size(t *testing.T) {
 	}
 	if !specification_flags(t, files, "max 10000") {
 		t.Fatal("an oversized file must be flagged")
+	}
+}
+
+// Test_Source_And_Test_Requirements_Main_Package_Size verifies a main package over
+// two hundred lines is flagged.
+func Test_Source_And_Test_Requirements_Main_Package_Size(t *testing.T) {
+	t.Parallel()
+	files := map[string][]byte{
+		"pkg/main.go": []byte("package main\n\nfunc main() {}\n" +
+			strings.Repeat("\n", 198)),
+	}
+	if !specification_flags(t, files, "package main in pkg") {
+		t.Fatal("an oversized main package must be flagged")
 	}
 }
 
@@ -1301,18 +1340,19 @@ func Test_Deterministic_Import_Induction(t *testing.T) {
 }
 
 // Test_Deterministic_Impurity verifies a pure_but_indeterministic_packages entry naming an
-// all-impure directory — here a default tier — matches no pure package and is
-// reported as a coverage gap. An impure package is never deterministic, so listing
-// it releases nothing; the dead entry must fail loudly rather than pass silently.
+// all-impure directory — here a main package, the one impure home a binary has —
+// matches no pure package and is reported as a coverage gap. An impure package is
+// never deterministic, so listing it releases nothing; the dead entry must fail
+// loudly rather than pass silently.
 func Test_Deterministic_Impurity(t *testing.T) {
 	t.Parallel()
 	files := map[string][]byte{
 		"go.mod": []byte("module fixture\n\ngo 1.25\n"),
-		"pkg/default/d.go": []byte("// Package pkg is a fixture.\n" +
-			"package pkg\n"),
+		"pkg/main.go": []byte("// Package main is a fixture.\n" +
+			"package main\n\nfunc main() {}\n"),
 	}
 	if !specification_diagnosed(
-		deterministic_self_diagnostics(t, files, []string{"pkg/default"}),
+		deterministic_self_diagnostics(t, files, []string{"pkg"}),
 		"no pure package found") {
 		t.Fatal("an entry matching no pure package must be reported")
 	}

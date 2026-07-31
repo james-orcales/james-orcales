@@ -425,7 +425,7 @@ const IF_INIT_IDENTIFIER_CHARS_MAX = 55
 const TIER_2_CHECKS_COUNT = 6
 
 // TIER_1_CHECKS_COUNT is the tier-1 dispatch-list length, bumped as checks are added/removed.
-const TIER_1_CHECKS_COUNT = 35
+const TIER_1_CHECKS_COUNT = 36
 
 // GO_FILENAME_CHARS_MIN is the shortest Go filename: a single-letter package
 // name followed by the .go extension, e.g. `a.go`. Used as the Lo bound on
@@ -532,6 +532,19 @@ const GIT_FULL_HASH_CHARS_SHA_256 = 64
 
 // LINES_PER_FILE_MAX is the per-file line budget the fragmentation check wants one file to hold.
 const LINES_PER_FILE_MAX = 10000
+
+// THOUSANDS_GROUP_STRIDE is the digit run between comma separators.
+const THOUSANDS_GROUP_STRIDE = 3
+
+// MERGE_COMMIT_LINE_FIELDS is how many fields `git rev-list --parents -n 1`
+// prints for a two-parent merge: the commit's own hash plus its two parents.
+const MERGE_COMMIT_LINE_FIELDS = 3
+
+// MAIN_LINES_MAX caps a main package. Main is the composition root: it binds the
+// real world and hands off to internal.Main. Work past that budget is library
+// code hiding in the one package Go bars from being imported, so no test can
+// reach it and no other binary can reuse it.
+const MAIN_LINES_MAX = 200
 
 // DIAGNOSTICS_PER_CALL_MAX caps the slice length of `diags []Diagnostic`
 // returns. A single check may emit one diagnostic per source line at worst,
@@ -1544,6 +1557,7 @@ func Check_File(input *Check_File_Input) (diags []Diagnostic) {
 		check_keyed_struct_init,
 		check_gofmt,
 		check_no_dot_import,
+		check_import_alias_no_default,
 		check_default_package_name,
 		check_no_empty_function_body,
 		check_no_interfaces,
@@ -2341,10 +2355,13 @@ func check_file_system_doctrine(
 			Recursion_Exempt:  input.Recursion_Exempt,
 		})...)
 	output = append(output, check_file_system_package_split(parsed_files)...)
+	output = append(output, check_main_package_size(parsed_files)...)
 	output = append(output, check_binary_component_layout(parsed_files, components)...)
 	output = append(output, check_binary_component_main_package(parsed_files, components)...)
 	output = append(output,
 		check_binary_component_internal_main(parsed_files, components)...)
+	output = append(output,
+		check_binary_component_no_default_tier(parsed_files, components)...)
 	output = append(output, check_shared_component_no_internal(parsed_files, components)...)
 	output = append(output, check_shared_component_no_main_package(parsed_files, components)...)
 	output = append(output, check_component_tier_depth(parsed_files, components)...)
@@ -2573,6 +2590,82 @@ func package_group_key_diag(
 			first.File.Name.Name, key.Directory, len(st.Files), label, build_suffix,
 			st.Lines, files_max, LINES_PER_FILE_MAX,
 		),
+	}
+}
+
+// Main_Group_Key groups a main package's source by directory and build
+// constraint — the same axes check_file_system_package_split groups on. A
+// build-tagged variant compiles into a different binary, so it carries its own
+// budget rather than joining the untagged files.
+type Main_Group_Key struct {
+	// Directory is the main package's directory.
+	Directory string
+	// Build is the file's build-tag constraint.
+	Build string
+}
+
+// The main-package budget. Every non-test file of a main package counts, blank
+// lines and comments included, as in the file-count rule.
+func check_main_package_size(parsed_files []Parsed_File) (diags []Diagnostic) {
+	groups := map[Main_Group_Key]*Package_Group_State{}
+	for _, pf := range parsed_files {
+		if pf.File.Name.Name != "main" {
+			continue
+		}
+		if strings.HasSuffix(pf.Path, "_test.go") {
+			continue
+		}
+		key := Main_Group_Key{
+			Directory: path.Dir(pf.Path),
+			Build:     check_file_system_package_split_build_key(pf.File),
+		}
+		st := groups[key]
+		if st == nil {
+			st = &Package_Group_State{}
+			groups[key] = st
+		}
+		st.Files = append(st.Files, pf)
+		tok := pf.File_Set.File(pf.File.Pos())
+		if tok != nil {
+			st.Lines += tok.LineCount()
+		}
+	}
+	keys := make([]Main_Group_Key, 0, len(groups))
+	for k := range groups {
+		keys = append(keys, k)
+	}
+	sort.Slice(keys, func(i, j int) (less bool) {
+		if keys[i].Directory != keys[j].Directory {
+			return keys[i].Directory < keys[j].Directory
+		}
+		return keys[i].Build < keys[j].Build
+	})
+	for _, key := range keys {
+		st := groups[key]
+		if st.Lines <= MAIN_LINES_MAX {
+			continue
+		}
+		diags = append(diags, main_package_size_diag(key, st))
+	}
+	return diags
+}
+
+func main_package_size_diag(
+	key Main_Group_Key, st *Package_Group_State,
+) (diag Diagnostic) {
+
+	build_suffix := ""
+	if key.Build != "" {
+		build_suffix = fmt.Sprintf(" under build constraint %q", key.Build)
+	}
+	return Diagnostic{
+		Position: token.Position{Filename: st.Files[0].Path, Line: 1, Column: 1},
+		Name:     "main-package-size",
+		Want:     "package main is a thin composition root",
+		Message: fmt.Sprintf(
+			"package main in %s spans %d lines%s (max %d); move the work "+
+				"to internal/",
+			key.Directory, st.Lines, build_suffix, MAIN_LINES_MAX),
 	}
 }
 
@@ -3162,6 +3255,45 @@ func check_shared_component_no_internal(
 			})
 			break
 		}
+	}
+	return diags
+}
+
+// The default tier is where a library binds itself to the real world. A binary
+// already owns that place — package main, the composition root a reader can
+// find — so a default package under a binary would be a second impure home,
+// invisible from the root and reachable by every internal package. Reported
+// once per offending directory.
+func check_binary_component_no_default_tier(
+	parsed_files []Parsed_File, components *Component_Index,
+) (diags []Diagnostic) {
+
+	seen := make(map[string]bool)
+	for _, pf := range parsed_files {
+		component_index_number := components.File_To_Component[pf.Path]
+		if component_index_number < 0 {
+			continue
+		}
+		m := components.Components[component_index_number]
+		if m.Is_Shared_Library {
+			continue
+		}
+		directory := path.Dir(pf.Path)
+		if path.Base(directory) != "default" {
+			continue
+		}
+		if seen[directory] {
+			continue
+		}
+		seen[directory] = true
+		diags = append(diags, Diagnostic{
+			Position: token.Position{Filename: pf.Path, Line: 1, Column: 1},
+			Name:     "binary-component-no-default-tier",
+			Want:     "binary component holds its impurity in package main",
+			Message: fmt.Sprintf(
+				"binary component forbids a default tier; bind the real world in "+
+					"package main instead; remove %q", directory),
+		})
 	}
 	return diags
 }
@@ -4986,6 +5118,44 @@ func check_no_dot_import(file_set *token.FileSet, file *ast.File, _ []byte) (dia
 		diags = append(diags, Diagnostic{
 			Position: file_set.Position(import_specification.Pos()),
 			Message:  "dot import is banned",
+		})
+	}
+	return diags
+}
+
+// An import alias names the package the file goes on to call. A `default` in
+// that name labels the tier the package sits in instead, and it contradicts the
+// package's own clause: a default directory declares its parent's name (see
+// check_default_package_name), so the honest local name is that parent name.
+// Matched without case, since Default and DEFAULT read as the same label. The
+// blank and dot forms carry their own bans, so they are skipped here rather than
+// reported twice.
+func check_import_alias_no_default(
+	file_set *token.FileSet, file *ast.File, _ []byte,
+) (diags []Diagnostic) {
+
+	for _, import_specification := range file.Imports {
+		if import_specification.Name == nil {
+			continue
+		}
+		alias := import_specification.Name.Name
+		if alias == "_" {
+			continue
+		}
+		if alias == "." {
+			continue
+		}
+		if !strings.Contains(strings.ToLower(alias), "default") {
+			continue
+		}
+		diags = append(diags, Diagnostic{
+			Position: file_set.Position(import_specification.Pos()),
+			Name:     "import-alias-default",
+			Want:     "import the package under its declared name",
+			Message: fmt.Sprintf(
+				"import alias %q holds \"default\"; name the alias for the "+
+					"package, which a default directory declares as its parent",
+				alias),
 		})
 	}
 	return diags
@@ -7193,6 +7363,191 @@ func Ignored_Directory(relative string) (ignored bool) {
 	}
 	base := relative[strings.LastIndexByte(relative, '/')+1:]
 	return base == "vendor" || base == ".git" || base == ".jj"
+}
+
+// Git_Command runs `git <args>` in the repository and returns trimmed stdout,
+// with ok false when git exits non-zero or is not installed. Injected rather
+// than called here: shelling out is impure, so the binding lives in package main
+// and the sequencing it drives stays pure and testable.
+type Git_Command func(args ...string) (output string, ok bool)
+
+// Tracked_Paths enumerates every working-tree file the linter should consider: a
+// walk of the real tree, with the globally ignored directories and everything
+// the caller's ignored set covers pruned. Names come from the tree, never from
+// git's index — the index can name a path the tree no longer has, since a
+// case-only rename on a case-insensitive filesystem leaves the old-cased entry
+// behind, and a path that is not on disk must never be linted. Only git knows
+// what is gitignored, so that set arrives from the caller. ok is false when the
+// walk itself fails, letting the caller fall back to the whole tree.
+func Tracked_Paths(
+	fsys fs.FS, ignored map[string]bool,
+) (tracked map[string]bool, ok bool) {
+
+	tracked = make(map[string]bool)
+	walk_err := fs.WalkDir(fsys, ".",
+		func(p string, d fs.DirEntry, entry_err error) (output error) {
+			if entry_err != nil {
+				return entry_err
+			}
+			if p == "." {
+				return nil
+			}
+			if !d.IsDir() {
+				if ignored[p] {
+					return nil
+				}
+				tracked[p] = true
+				return nil
+			}
+			// One ignore list, shared with every tier, so third_party and vendor
+			// never enter the Tracked set the path-casing check reads directly.
+			if Ignored_Directory(p) {
+				return fs.SkipDir
+			}
+			if ignored[p+"/"] {
+				return fs.SkipDir
+			}
+			return nil
+		})
+	if walk_err != nil {
+		return nil, false
+	}
+	return tracked, true
+}
+
+// Parse_Ignored_Set reads `git ls-files -z` output into the set Tracked_Paths
+// prunes with. A wholly ignored directory arrives with a trailing slash so the
+// walk can drop it whole, and NUL separation survives a path holding whitespace.
+func Parse_Ignored_Set(stdout []byte) (ignored map[string]bool) {
+	ignored = make(map[string]bool)
+	for _, entry := range strings.Split(string(stdout), "\x00") {
+		if entry == "" {
+			continue
+		}
+		ignored[entry] = true
+	}
+	return ignored
+}
+
+// Load_Git gathers what the git-history tier needs. It skips the tier entirely
+// when HEAD is on main (nothing to check against itself), when the tree is no
+// git repository, or when no main ref resolves locally. Main_Reference_Absent
+// lets the tier report that last case as its own failure, so a shallow CI
+// checkout fails loudly instead of passing silently.
+func Load_Git(run Git_Command) (input Git_Input) {
+	head, ok := run("rev-parse", "--abbrev-ref", "HEAD")
+	if !ok {
+		return Git_Input{}
+	}
+	if head == "main" {
+		return Git_Input{}
+	}
+	// A detached HEAD at main's tip skips too: a freshly checked-out main with no
+	// tracking branch lands here, as a CI tag build or a bisect checkout does.
+	if head_sha, head_ok := run("rev-parse", "HEAD"); head_ok {
+		if main_sha, main_ok := run("rev-parse", "main"); main_ok {
+			if head_sha == main_sha {
+				return Git_Input{}
+			}
+		}
+	}
+	main_reference := load_git_main_reference(run)
+	if main_reference == "" {
+		return Git_Input{Enabled: true, Main_Reference_Absent: true}
+	}
+	tip := load_git_pull_request_tip(run)
+	return Git_Input{
+		Enabled: true,
+		Merge_Commits: load_git_commits(&Load_Git_Commits_Input{
+			Run: run, Flag: "--merges", Range: main_reference + ".." + tip,
+		}),
+		Non_Merge_Commits: load_git_commits(&Load_Git_Commits_Input{
+			Run: run, Flag: "--no-merges", Range: main_reference + "..HEAD",
+		}),
+	}
+}
+
+// The remote ref comes first: on a clone the local main can lag origin/main,
+// and the tier judges the branch against what it will merge into.
+func load_git_main_reference(run Git_Command) (reference string) {
+	for _, candidate := range []string{"origin/main", "main"} {
+		if _, ok := run("rev-parse", "--verify", "--quiet", candidate); ok {
+			return candidate
+		}
+	}
+	return ""
+}
+
+// Returns HEAD^2 when HEAD is a GitHub-style merge commit — three fields from
+// `rev-list --parents` means the commit plus two parents — so the merge-commits
+// check inspects the pull request's own commits rather than the synthetic merge.
+func load_git_pull_request_tip(run Git_Command) (tip string) {
+	output, ok := run("rev-list", "--parents", "-n", "1", "HEAD")
+	if !ok {
+		return "HEAD"
+	}
+	if len(strings.Fields(output)) != MERGE_COMMIT_LINE_FIELDS {
+		return "HEAD"
+	}
+	return "HEAD^2"
+}
+
+// Load_Git_Commits_Input carries one commit-list read.
+type Load_Git_Commits_Input struct {
+	// Run is the injected git command.
+	Run Git_Command
+	// Flag is the git-log flag selecting which commits to enumerate.
+	Flag string
+	// Range is the commit range argument.
+	Range string
+}
+
+// --first-parent restricts the walk to the mainline: at each merge the traversal
+// follows only the first parent, so commits a merge brought in (a pull request
+// branch, a subtree import) are not enumerated and only the branch's own new
+// commits are. Without it a `git subtree add` floods the range with the imported
+// repository's whole history.
+func load_git_commits(input *Load_Git_Commits_Input) (commits []Git_Commit) {
+	stdout, ok := input.Run(
+		"log", "--first-parent", input.Flag, "--format=%H|%s", input.Range)
+	if !ok {
+		return nil
+	}
+	for _, line := range strings.Split(stdout, "\n") {
+		if line == "" {
+			continue
+		}
+		pipe_offset := strings.IndexByte(line, '|')
+		if pipe_offset < 0 {
+			continue
+		}
+		commits = append(commits, Git_Commit{
+			Hash: line[:pipe_offset], Subject: line[pipe_offset+1:]})
+	}
+	return commits
+}
+
+// Format_Thousands renders a non-negative int64 with comma thousands
+// separators: 1234567 becomes "1,234,567", and 42 stays "42".
+func Format_Thousands(value int64) (output string) {
+	digits := strconv.FormatInt(value, 10)
+	digit_count := len(digits)
+	if digit_count <= THOUSANDS_GROUP_STRIDE {
+		return digits
+	}
+	var builder strings.Builder
+	head := digit_count % THOUSANDS_GROUP_STRIDE
+	if head > 0 {
+		builder.WriteString(digits[:head])
+		builder.WriteByte(',')
+	}
+	for i_index := head; i_index < digit_count; i_index += THOUSANDS_GROUP_STRIDE {
+		builder.WriteString(digits[i_index : i_index+THOUSANDS_GROUP_STRIDE])
+		if i_index+THOUSANDS_GROUP_STRIDE < digit_count {
+			builder.WriteByte(',')
+		}
+	}
+	return builder.String()
 }
 
 func check_stream_conflict_markers(

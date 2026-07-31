@@ -121,8 +121,8 @@ component may also expose a func Main, representing an embeddable entry point.
 ### Tier Depth
 
 A non-main package has at most one non-main package above it, not counting `v{N}` dirs or, in a
-binary, the top-level internal dir. So the deepest a package nests is `shared/foo/[v{N}]/default` or
-`binary/internal/foo/[v{N}]/default`: a pure library package, then its impure default tier.
+binary, the top-level internal dir. So the deepest nest is `shared/foo/[v{N}]/default`, a library
+package then its impure default tier, or `binary/internal/foo/[v{N}]/bar`, both pure.
 
 ### Impure Imports
 
@@ -150,6 +150,11 @@ test files too, so an impure reach is caught even in a _test.go file.
 A binary module keeps its impurity in package main and its internal packages pure. Tests may be
 impure.
 
+### Binary Default Tier
+
+A binary component declares no default package. Only its package main is impure, so a package
+under internal gets no release from the purity bans, whatever its depth.
+
 ### Library Purity
 
 A shared library keeps its packages pure; each package is wholly pure or wholly impure, never
@@ -173,6 +178,11 @@ and complicates type resolution.
 
 An import names a package a caller uses; blank imports are banned. Blank imports indicate that
 a library is being imported solely for it's global side-effects, an implicit control flow.
+
+### Import Aliases
+
+An import alias holds no `default`, in any case. The alias names the package, and a default
+directory declares its parent's name; a tier label there fights the package's own clause.
 
 ### Grouped Declarations
 
@@ -314,6 +324,11 @@ A function spans at most seventy lines.
 ### File Size
 
 A source or test file spans at most 10000 lines.
+
+### Main Package Size
+
+A package main's source spans at most 200 lines, counted per build-tag group as the file count
+is. Its test files carry no count.
 
 ### Input Structs
 

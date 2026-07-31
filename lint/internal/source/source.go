@@ -207,6 +207,12 @@ func Is_Composition_Tier(pf Parsed_File, components *Component_Index) (yes bool)
 		return false
 	}
 	m := components.Components[component_index_number]
+	// A binary has one impure home, package main, so nothing under it reaches the
+	// composition tier. Without this gate a binary's internal/foo/bar would be
+	// released from the purity bans by depth alone.
+	if !m.Is_Shared_Library {
+		return false
+	}
 	relative := pf.Path
 	if m.Root != "." {
 		relative = strings.TrimPrefix(pf.Path, m.Root+"/")
@@ -249,6 +255,12 @@ func Is_Impure_Package(pf Parsed_File, components *Component_Index) (yes bool) {
 // ancestor below the library tier.
 func directory_is_impure(canonical string, m Component) (yes bool) {
 
+	// The impure tier is the shared library's alone. A binary keeps its impurity
+	// in package main — which Is_Impure_Package answers before reaching here — so
+	// no directory under a binary earns the release.
+	if !m.Is_Shared_Library {
+		return false
+	}
 	if canonical == "." {
 		return false
 	}

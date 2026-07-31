@@ -8,55 +8,12 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
-	"strconv"
 	"strings"
 	"syscall"
 	"time"
 
 	"local/james-orcales/lint/internal"
 )
-
-// FILESYSTEM_PATH_CHARS_MAX caps any filesystem path or path fragment the
-// resolver handles: POSIX PATH_MAX is 4096 on Linux. Mirrors the bound used
-// by the internal library tier.
-const FILESYSTEM_PATH_CHARS_MAX = 4096
-
-// NON_EMPTY_MIN anchors the Lo bucket of "string is non-empty" axes.
-// Distinct_Boundary requires Lo < Hi, so a Lo of 1 captures the smallest
-// observable non-empty length.
-const NON_EMPTY_MIN = 1
-
-// GIT_OUTPUT_CHARS_MAX caps the stdout of any git invocation we shell out
-// to. Keeps memory bounded against pathological repositories without
-// truncating realistic outputs.
-const GIT_OUTPUT_CHARS_MAX = 16777216
-
-// GIT_ARGS_MAX caps the variadic args slice passed to a `git` subcommand
-// invocation — long subcommand lines are bounded by a reasonable budget.
-const GIT_ARGS_MAX = 64
-
-// EXIT_CODE_HARD_ERROR is the os.Exit value used when the resolver hits a
-// non-recoverable filesystem or git failure that the rest of the linter
-// cannot proceed past.
-const EXIT_CODE_HARD_ERROR = 2
-
-// TRACKED_PATHS_MAX caps the per-repository tracked-files set returned by
-// git ls-files. Sized to bound memory against pathological monorepos.
-const TRACKED_PATHS_MAX = 1048576
-
-// Commit_list_chars_max caps the per-commit-list buffer accumulated from
-// git log output; one commit per line, sized for git-log budget.
-const COMMIT_LIST_MAX = 1048576
-
-// Tabs_per_thousand renders the comma separator for thousands-formatted
-// numbers; the small string value is hoisted so the magic three-digit
-// grouping value lives at the file top.
-const THOUSANDS_GROUP_SIZE = 3
-
-// NON_NEGATIVE_INT64_MAX caps the input to the non-negative-int64 axis. The
-// value is math.MaxInt64 / 2 to leave headroom for downstream arithmetic
-// without overflow when callers add multipliers.
-const NON_NEGATIVE_INT64_MAX = 4_611_686_018_427_387_904
 
 func main() {
 	request := "."
@@ -71,15 +28,16 @@ func main() {
 	// should be exempt. Scope_Prefix narrows output back to what the user asked for.
 	root, scope_prefix := main_resolve_root(request)
 	start := time.Now()
+	fsys := os.DirFS(root)
 	// The lint.json config (policy plus the word-replacements table) is read by
 	// lint.Main from this Fsys, not here: one config path shared with the tests.
 	code := lint.Main(&lint.Main_Input{
-		Fsys:           os.DirFS(root),
+		Fsys:           fsys,
 		Stdout:         os.Stdout,
 		Stderr:         os.Stderr,
 		Root_Directory: root,
-		Tracked:        main_load_tracked(root),
-		Git:            main_load_git(root),
+		Tracked:        main_load_tracked(root, fsys),
+		Git:            lint.Load_Git(main_git_command(root)),
 		CPU_Count:      runtime.NumCPU(),
 		Readlink:       os.Readlink,
 		Scope_Prefix:   scope_prefix,
@@ -153,167 +111,38 @@ func main_print_rss_and_elapsed(start time.Time) {
 			peak_rss_bytes *= 1024
 		}
 	}
-	peak_rss_mb := main_format_thousands(peak_rss_bytes / (1024 * 1024))
+	peak_rss_mb := lint.Format_Thousands(peak_rss_bytes / (1024 * 1024))
 	elapsed_seconds := time.Since(start).Seconds()
 	fmt.Fprintf(os.Stderr, "peak_rss=%s MiB elapsed_sec=%.3f\n", peak_rss_mb, elapsed_seconds)
 }
 
-// Formats a non-negative int64 with comma thousands separators.
-// E.g., 1234567 → "1,234,567"; 42 → "42".
-func main_format_thousands(n int64) (output string) {
-	digits := strconv.FormatInt(n, 10)
-	digit_count := len(digits)
-	if digit_count <= 3 {
-		return digits
-	}
-	var b strings.Builder
-	head := digit_count % 3
-	if head > 0 {
-		b.WriteString(digits[:head])
-		b.WriteByte(',')
-	}
-	for i_index := head; i_index < digit_count; i_index += 3 {
-		b.WriteString(digits[i_index : i_index+3])
-		if i_index+3 < digit_count {
-			b.WriteByte(',')
+// Binds lint.Git_Command to a real `git` in root. The library tier drives the
+// sequence of subcommands; shelling out is the impurity that stays here.
+func main_git_command(root string) (run lint.Git_Command) {
+	return func(args ...string) (output string, ok bool) {
+		command := exec.Command("git", args...)
+		command.Dir = root
+		stdout, err := command.Output()
+		if err != nil {
+			return "", false
 		}
-	}
-	return b.String()
-}
-
-// Runs `git <args>` with cmd.Dir = root and returns trimmed stdout. ok is
-// false when git exits non-zero or isn't installed — callers degrade rather
-// than abort, matching main_load_tracked's behavior on non-git trees.
-func main_git(root string, args ...string) (output string, ok bool) {
-	command := exec.Command("git", args...)
-	command.Dir = root
-	stdout, err := command.Output()
-	if err != nil {
-		return "", false
-	}
-	return strings.TrimSpace(string(stdout)), true
-}
-
-// Gathers the data the git-history tier needs. Skips entirely when HEAD is
-// on main (nothing to check against itself), when the tree isn't a git repo,
-// or when no main ref resolves locally. The Main_Ref_Missing signal lets the
-// tier emit a specific failure on shallow CI checkouts rather than silently
-// passing.
-func main_load_git(root string) (input lint.Git_Input) {
-	head, ok := main_git(root, "rev-parse", "--abbrev-ref", "HEAD")
-	if !ok {
-		return lint.Git_Input{}
-	}
-	if head == "main" {
-		return lint.Git_Input{}
-	}
-	// Detached HEAD at main's tip should also skip — happens when the
-	// linter runs on a freshly-checked-out main without a tracking branch
-	// (CI tag builds, `git checkout <sha>` for bisects).
-	if head_sha, head_ok := main_git(root, "rev-parse", "HEAD"); head_ok {
-		if main_sha, main_ok := main_git(root, "rev-parse", "main"); main_ok {
-			if head_sha == main_sha {
-				return lint.Git_Input{}
-			}
-		}
-	}
-	main_reference := main_load_git_find_main_reference(root)
-	if main_reference == "" {
-		return lint.Git_Input{Enabled: true, Main_Reference_Absent: true}
-	}
-	tip := main_load_git_resolve_pr_tip(root)
-	return lint.Git_Input{
-		Enabled: true,
-		Merge_Commits: main_load_git_read_commits(&Main_Load_Git_Read_Commits_Input{
-			Root: root, Flag: "--merges", Range: main_reference + ".." + tip,
-		}),
-		Non_Merge_Commits: main_load_git_read_commits(&Main_Load_Git_Read_Commits_Input{
-			Root: root, Flag: "--no-merges", Range: main_reference + "..HEAD",
-		}),
+		return strings.TrimSpace(string(stdout)), true
 	}
 }
 
-func main_load_git_find_main_reference(root string) (reference string) {
-	for _, r := range []string{"origin/main", "main"} {
-		if _, ok := main_git(root, "rev-parse", "--verify", "--quiet", r); ok {
-			return r
-		}
-	}
-	return ""
-}
-
-// Returns HEAD^2 when HEAD is a GitHub-style merge commit (two parents) so
-// the merge-commits check inspects the PR's actual commits rather than the
-// synthetic merge. Otherwise HEAD.
-func main_load_git_resolve_pr_tip(root string) (tip string) {
-	output, ok := main_git(root, "rev-list", "--parents", "-n", "1", "HEAD")
-	if !ok {
-		return "HEAD"
-	}
-	if len(strings.Fields(output)) != 3 {
-		return "HEAD"
-	}
-	return "HEAD^2"
-}
-
-// Main_Load_Git_Read_Commits_Input carries the arguments for reading a commit
-// list from git log.
-type Main_Load_Git_Read_Commits_Input struct {
-	// Root is the repository root the git command runs in.
-	Root string
-	// Flag is the extra git-log flag selecting which commits to enumerate.
-	Flag string
-	// Range is the commit range argument passed to git log.
-	Range string
-}
-
-// --first-parent restricts the walk to the mainline: at each merge commit the
-// traversal follows only the first parent, so commits brought in by a merge
-// (PR branches, subtree imports) aren't enumerated — only the branch's own
-// new commits. Without this, `git subtree add` floods the range with the
-// imported repo's entire history.
-func main_load_git_read_commits(
-	input *Main_Load_Git_Read_Commits_Input) (output []lint.Git_Commit) {
-	stdout, ok := main_git(
-		input.Root, "log", "--first-parent", input.Flag, "--format=%H|%s", input.Range)
-	if !ok {
-		return nil
-	}
-	for _, line := range strings.Split(stdout, "\n") {
-		if line == "" {
-			continue
-		}
-		pipe_offset := strings.IndexByte(line, '|')
-		if pipe_offset < 0 {
-			continue
-		}
-		output = append(
-			output,
-			lint.Git_Commit{Hash: line[:pipe_offset], Subject: line[pipe_offset+1:]})
-	}
-	return output
-}
-
-// Enumerates every working-tree file the linter should consider: a filesystem
-// walk for the real on-disk names, with .git and everything .gitignore covers
-// pruned. Names come from the tree, never `git ls-files --cached`: the index can
-// name a path the tree no longer has — a case-only rename on a case-insensitive
-// filesystem leaves the old-cased entry in the index — and we must never lint a
-// path that is not on disk. git answers only which paths are ignored. Returns
-// nil on git failure so the linter falls back to walking the full tree.
-func main_load_tracked(root string) (output map[string]bool) {
+// Builds the tracked-file set the linter walks: git answers which paths are
+// gitignored, the library tier walks the tree and prunes them. Returns nil on
+// git failure so the linter falls back to walking the full tree.
+func main_load_tracked(root string, fsys fs.FS) (tracked map[string]bool) {
 	ignored, ok := main_git_ignored(root)
 	if !ok {
 		return nil
 	}
-	output = make(map[string]bool)
-	walk_ok := main_walk_worktree(root, ignored, func(rel string) {
-		output[rel] = true
-	})
+	walked, walk_ok := lint.Tracked_Paths(fsys, ignored)
 	if !walk_ok {
 		return nil
 	}
-	return output
+	return walked
 }
 
 // Returns the gitignored paths under root, wholly-ignored directories collapsed
@@ -329,51 +158,5 @@ func main_git_ignored(root string) (ignored map[string]bool, ok bool) {
 		fmt.Fprintf(os.Stderr, "lint: git ignore-scan failed: %v; full tree\n", err)
 		return nil, false
 	}
-	ignored = make(map[string]bool)
-	for _, f := range strings.Split(string(stdout), "\x00") {
-		if f != "" {
-			ignored[f] = true
-		}
-	}
-	return ignored, true
-}
-
-// Walks the real working tree under root, calling visit with each file's
-// slash-separated path, pruning the globally-ignored directories and every
-// gitignored entry. Returns false only when the walk itself fails.
-func main_walk_worktree(
-	root string, ignored map[string]bool, visit func(rel string),
-) (ok bool) {
-	walk_err := filepath.WalkDir(root,
-		func(p string, d fs.DirEntry, entry_err error) (output error) {
-			if entry_err != nil {
-				return entry_err
-			}
-			relative, relative_err := filepath.Rel(root, p)
-			if relative_err != nil {
-				return relative_err
-			}
-			slash := filepath.ToSlash(relative)
-			if d.IsDir() {
-				// One ignore list, shared with the library tier, so third_party
-				// and vendor never enter the Tracked set the path-casing check
-				// iterates directly.
-				if lint.Ignored_Directory(slash) {
-					return filepath.SkipDir
-				}
-				if ignored[slash+"/"] {
-					return filepath.SkipDir
-				}
-				return nil
-			}
-			if ignored[slash] {
-				return nil
-			}
-			visit(slash)
-			return nil
-		})
-	if walk_err != nil {
-		return false
-	}
-	return true
+	return lint.Parse_Ignored_Set(stdout), true
 }

@@ -3504,6 +3504,47 @@ func Test_Package_Split_Threshold_Part2(t *testing.T) {
 	}
 }
 
+// Test_Import_Alias_No_Default verifies an import alias holding "default" is
+// flagged in any case, while a blank import, a dot import, and an alias naming
+// the package are left alone. The blank and dot forms carry their own bans, so
+// this check stays silent on them rather than reporting the same import twice.
+func Test_Import_Alias_No_Default(t *testing.T) {
+	t.Parallel()
+	fixture := func(alias string) (files map[string]string) {
+		return map[string]string{"a.go": "// Package foo is a fixture.\n" +
+			"package foo\n\nimport " + alias + " \"strings\"\n\n" +
+			"// Trim trims.\nfunc Trim() (trimmed string) {\n" +
+			"\treturn " + alias + ".TrimSpace(\"\")\n}\n"}
+	}
+	tests := []struct {
+		Name      string
+		Files     map[string]string
+		Want_Diag string
+	}{
+		{
+			Name:      "lowercase alias flagged",
+			Files:     fixture("iodefault"),
+			Want_Diag: `import alias "iodefault"`,
+		},
+		{
+			Name:      "Ada_Case alias flagged",
+			Files:     fixture("Io_Default"),
+			Want_Diag: `import alias "Io_Default"`,
+		},
+		{
+			Name:      "interior default flagged",
+			Files:     fixture("default_text"),
+			Want_Diag: `import alias "default_text"`,
+		},
+		{
+			Name:      "alias naming the package is clean",
+			Files:     fixture("text"),
+			Want_Diag: "",
+		},
+	}
+	run_diag_table(t, tests)
+}
+
 // Test_File_Size verifies the per-file line cap. The cap binds each file on its
 // own, so it fires on an oversized file even when the package's file count
 // already satisfies the fragmentation quota — the case a count-only rule cannot
@@ -3546,6 +3587,59 @@ func Test_File_Size(t *testing.T) {
 	if bytes.Contains(stdout.Bytes(), []byte("(max 10000)")) {
 		t.Errorf("a file at the cap must stay silent; got: %s", stdout.String())
 	}
+}
+
+// Test_Main_Package_Size verifies the cap on package main: over the cap is
+// flagged, exactly at it is silent, a build-tagged variant carries its own count
+// rather than joining the untagged one, and a _test.go file adds nothing. gofmt
+// strips the trailing blank lines the padding needs, so this test feeds raw bytes
+// to lint.Main.
+func Test_Main_Package_Size(t *testing.T) {
+	t.Parallel()
+	// A trailing newline opens no line the scanner records, so LineCount equals
+	// the newline count: three from the source plus the padding.
+	main_source := func(pad int) (source []byte) {
+		return []byte("package main\n\nfunc main() {}\n" +
+			strings.Repeat("\n", pad))
+	}
+	tagged := func(pad int) (source []byte) {
+		return []byte("//go:build linux\n\npackage main\n\nfunc other() {}\n" +
+			strings.Repeat("\n", pad))
+	}
+	const FRAGMENT = "package main in ."
+	over := main_package_size_output(t, fstest.MapFS{"main.go": {Data: main_source(198)}})
+	if !strings.Contains(over, FRAGMENT) {
+		t.Errorf("201 lines must be flagged; got: %s", over)
+	}
+	at_cap := main_package_size_output(t, fstest.MapFS{"main.go": {Data: main_source(197)}})
+	if strings.Contains(at_cap, FRAGMENT) {
+		t.Errorf("200 lines must stay silent; got: %s", at_cap)
+	}
+	split := main_package_size_output(t, fstest.MapFS{
+		"main.go":        {Data: main_source(147)},
+		"other_linux.go": {Data: tagged(147)},
+	})
+	if strings.Contains(split, FRAGMENT) {
+		t.Errorf("two build-tag groups of 150 must stay apart; got: %s", split)
+	}
+	with_test := main_package_size_output(t, fstest.MapFS{
+		"main.go":      {Data: main_source(147)},
+		"main_test.go": {Data: main_source(147)},
+	})
+	if strings.Contains(with_test, FRAGMENT) {
+		t.Errorf("a test file must carry no count; got: %s", with_test)
+	}
+}
+
+// Lints the fixture and returns stdout. Bypasses run_diag_table because the
+// blank-line padding these fixtures need cannot survive gofmt.
+func main_package_size_output(t *testing.T, fsys fstest.MapFS) (output string) {
+	t.Helper()
+	stdout := &bytes.Buffer{}
+	lint_main(t, &lint.Main_Input{
+		Fsys: fsys, Stdout: stdout, Stderr: &bytes.Buffer{},
+	})
+	return stdout.String()
 }
 
 // Test_Snap_Backtick verifies that the first argument to snap.Init / snap.Edit
