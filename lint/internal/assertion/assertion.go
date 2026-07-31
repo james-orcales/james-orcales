@@ -278,7 +278,15 @@ func invariant_body_helper(
 				call, helper, type_specification, &statement_scope) {
 				return true, true
 			}
-			matched, valid := invariant_builder_preset(
+			matched, valid := invariant_direct_singleton(
+				call, helper, type_specification, &statement_scope)
+			if matched {
+				if valid {
+					return true, true
+				}
+				found = true
+			}
+			matched, valid = invariant_builder_preset(
 				call, helper, type_specification, &statement_scope)
 			if matched {
 				if valid {
@@ -290,6 +298,74 @@ func invariant_body_helper(
 		function_statement_shadows(statement, shadowed)
 	}
 	return found, false
+}
+
+func invariant_direct_singleton(
+	call *ast.CallExpr, helper *ast.FuncDecl,
+	type_specification *ast.TypeSpec, scope *Invariant_Scope,
+) (matched bool, constant bool) {
+	_, primitive, count := invariant_type_kind(type_specification)
+	if !count {
+		if !invariant_integer_primitive(primitive) {
+			return false, false
+		}
+	}
+	selector, is_selector := call.Fun.(*ast.SelectorExpr)
+	if !is_selector {
+		return false, false
+	}
+	qualifier, is_qualifier := selector.X.(*ast.Ident)
+	if !is_qualifier {
+		return false, false
+	}
+	if qualifier.Name != "invariant" {
+		return false, false
+	}
+	if selector.Sel.Name != "Always" {
+		return false, false
+	}
+	identity := helper_callee_identity(
+		call.Fun, scope.Current_Package, scope.Imports, scope.Shadowed)
+	if identity != scope.Default_Package+"\x00Always" {
+		return false, false
+	}
+	if len(call.Args) != 2 {
+		return false, false
+	}
+	if !invariant_string_literal(call.Args[1]) {
+		return false, false
+	}
+	equality, is_equality := invariant_unparen(call.Args[0]).(*ast.BinaryExpr)
+	if !is_equality {
+		return false, false
+	}
+	if equality.Op != token.EQL {
+		return false, false
+	}
+	if !invariant_subject(equality.X, helper, type_specification, scope) {
+		return false, false
+	}
+	return true, invariant_argument_constant(equality.Y, primitive, scope)
+}
+
+func invariant_integer_primitive(primitive string) (integer bool) {
+	if strings.HasPrefix(primitive, "int") {
+		return true
+	}
+	return strings.HasPrefix(primitive, "uint")
+}
+
+func invariant_string_literal(expression ast.Expr) (literal bool) {
+	expression = invariant_unparen(expression)
+	value, is_literal := expression.(*ast.BasicLit)
+	if !is_literal {
+		return false
+	}
+	if value.Kind != token.STRING {
+		return false
+	}
+	_, unquote_error := strconv.Unquote(value.Value)
+	return unquote_error == nil
 }
 
 func invariant_direct_preset(
@@ -592,12 +668,11 @@ func invariant_missing_helper_diagnostic(
 	suffix, _, count := invariant_type_kind(type_specification)
 	value, _ := invariant_value_parameter(helper, type_specification.Name.Name)
 	message := helper.Name.Name + " must call a canonical helper for " + value +
-		": " + suffix + "_Invariants, a Range_" + suffix +
+		": " + suffix + "_Invariants, direct Always equality, a Range_" + suffix +
 		" family, or an Enum_" + suffix + " family"
 	if count {
 		message = helper.Name.Name + " must call Range_Int or Enum_Int family for len(" +
-			value + ") in a direct invariant.Assertions(namespace) builder " +
-			"ending in Ensure()"
+			value + "), or use direct Always equality"
 	}
 	return []Diagnostic{{
 		Position: file.File_Set.Position(helper.Name.Pos()), Message: message,

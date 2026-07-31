@@ -32,27 +32,27 @@ interface types, empty structs, local types, tests, and opted-out packages are e
 
 ### Scalar Helper
 
-A defined integer helper uses its exact primitive preset or directly ensures an Assertions builder
-over the converted value with its exact Range, Range_Holed, Enum, Enum_3, or Enum_4 family. Floats
-and booleans use matching primitive presets; individual Always or Sometimes never substitute.
+A defined integer helper uses its exact primitive preset, direct singleton Always equality against a
+package constant, or an ensured exact Range or Enum builder over the converted value.
+Floats and booleans use matching primitive presets.
 
 ### Count Helper
 
-A defined string, slice, or map helper directly ensures an Assertions(namespace) builder containing
-one exact Int Range or Enum family over len(value). Individual assertions, another subject, another
-suffix, an unterminated or split builder, and an unrelated Assertions builder never substitute.
+A defined string, slice, or map helper uses direct singleton Always equality against a package
+constant or ensures one exact Int Range or Enum family over len(value). Another subject, suffix,
+unterminated or split builder, or unrelated Assertions builder never substitutes.
 
 ### Helper Constants
 
-Each Range boundary and Enum member is a package-level constant in the type's package, optionally
-wrapped in its exact primitive conversion. Inline literals, computed call operands, imported
-selectors, and conversion to another primitive never satisfy the helper mandate.
+Each Range boundary, Enum member, and singleton Always member is a package-level constant in the
+type's package. An integer can use its exact primitive conversion. Inline literals, computed call
+operands, imported selectors, and conversion to another primitive never satisfy the helper mandate.
 
 ### Helper Identity
 
-Preset calls and ensured builders are direct statements resolving to shared/invariant/default. A
-builder uses literal qualifier invariant and the helper's trailing namespace. Shadowing, lookalikes,
-aliases, Recorder_Assertions, Dot_Product, literals, nesting, and split builders never substitute.
+All canonical calls are direct shared/invariant/default statements with qualifier invariant.
+Builders use the helper namespace. Always uses `subject == PACKAGE_CONSTANT` and a literal message.
+Shadowing, lookalikes, aliases, reversed equality, other roots, nesting, and split builders fail.
 
 ### Builder Walk
 

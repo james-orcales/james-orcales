@@ -134,6 +134,12 @@ func Test_Invariants_Scalar_Helper(t *testing.T) {
 		"must call a canonical helper") {
 		t.Fatal("the exact primitive preset must satisfy the scalar mandate")
 	}
+	singleton := "\tinvariant.Always(int(value) == int(Value_Min), " +
+		"\"The value is the only member.\")"
+	if diagnosed(check_fixture(t, integer_helper_source(singleton)),
+		"must call a canonical helper") {
+		t.Fatal("a direct singleton Always must satisfy the integer mandate")
+	}
 	float_preset := "\tinvariant.Float64_Invariants(float64(value), namespace)"
 	if diagnosed(check_fixture(t, float_helper_source(float_preset)),
 		"must call a canonical helper") {
@@ -143,6 +149,16 @@ func Test_Invariants_Scalar_Helper(t *testing.T) {
 	if diagnosed(check_fixture(t, boolean_helper_source(boolean)),
 		"must call a canonical helper") {
 		t.Fatal("the Boolean helper must satisfy the scalar mandate")
+	}
+	float_singleton := "\tinvariant.Always(float64(value) == float64(Value_Min), \"only\")"
+	if !diagnosed(check_fixture(t, float_helper_source(float_singleton)),
+		"must call a canonical helper") {
+		t.Fatal("a float singleton must use its primitive preset")
+	}
+	boolean_singleton := "\tinvariant.Always(bool(value) == true, \"only\")"
+	if !diagnosed(check_fixture(t, boolean_helper_source(boolean_singleton)),
+		"must call a canonical helper") {
+		t.Fatal("a Boolean singleton must use its primitive preset")
 	}
 }
 
@@ -182,6 +198,12 @@ func Test_Invariants_Count_Helper(t *testing.T) {
 		"must call Range_Int or Enum_Int") {
 		t.Fatal("a split builder must not satisfy the helper mandate")
 	}
+	singleton := "\tinvariant.Always(len(value) == Value_Min, " +
+		"\"The count is the only member.\")"
+	if diagnosed(check_fixture(t, count_helper_source(singleton)),
+		"must call Range_Int or Enum_Int") {
+		t.Fatal("a direct singleton Always must satisfy the count mandate")
+	}
 }
 
 // Test_Invariants_Helper_Constants verifies canonical helpers retain package-level constant
@@ -212,6 +234,11 @@ func Test_Invariants_Helper_Constants(t *testing.T) {
 	if !diagnosed(check_fixture(t, integer_helper_source(shadowed)),
 		"arguments must be package-level constants") {
 		t.Fatal("a local shadow of a package constant must not satisfy the mandate")
+	}
+	inline_singleton := "\tinvariant.Always(int(value) == 1, \"only\")"
+	if !diagnosed(check_fixture(t, integer_helper_source(inline_singleton)),
+		"arguments must be package-level constants") {
+		t.Fatal("an inline singleton member must not satisfy the helper mandate")
 	}
 }
 
@@ -271,6 +298,7 @@ func Test_Invariants_Helper_Identity(t *testing.T) {
 		"must call Range_Int or Enum_Int") {
 		t.Fatal("a local function shadowing len must not substitute")
 	}
+	assert_invalid_singleton_helper_identity(t)
 }
 
 // Test_Invariants_Builder_Walk verifies the static walk admits its entire supported builder and
@@ -549,6 +577,36 @@ func Test_Simulation_Blackbox(t *testing.T) {
 		"func Fuzz_Main(f *testing.F) {\n\tf.Fuzz(func(t *testing.T, data []byte) {})\n}\n"
 	if !diagnosed(simulation_diagnostics(simulation_files(t, sim)), "must be blackbox") {
 		t.Fatal("a whitebox simulation package must be flagged")
+	}
+}
+
+func assert_invalid_singleton_helper_identity(t *testing.T) {
+	t.Helper()
+	invalid_singletons := []string{
+		"\tinvariant.Always(int(Value_Min) == int(value), \"reversed\")",
+		"\tinvariant.Always(int(value) != int(Value_Min), \"not equal\")",
+		"\tmessage := \"dynamic\"\n" +
+			"\tinvariant.Always(int(value) == int(Value_Min), message)",
+		"\tinvariant.Always(int(value + 1) == int(Value_Min), \"wrong subject\")",
+		"\tif true { invariant.Always(int(value) == int(Value_Min), \"nested\") }",
+	}
+	for _, body := range invalid_singletons {
+		if !diagnosed(check_fixture(t, integer_helper_source(body)),
+			"must call a canonical helper") {
+			t.Fatalf("noncanonical singleton satisfied the helper mandate: %s", body)
+		}
+	}
+	parent_singleton := strings.Replace(integer_helper_source(
+		"\tinvariant.Always(int(value) == int(Value_Min), \"only\")"),
+		"/default", "", 1)
+	if !diagnosed(check_fixture(t, parent_singleton), "must call a canonical helper") {
+		t.Fatal("the pure invariant package must not provide the singleton helper")
+	}
+	aliased_singleton := strings.ReplaceAll(integer_helper_source(
+		"\tinvariant.Always(int(value) == int(Value_Min), \"only\")"),
+		"invariant", "contract")
+	if !diagnosed(check_fixture(t, aliased_singleton), "must call a canonical helper") {
+		t.Fatal("an import alias must not provide the singleton helper")
 	}
 }
 
