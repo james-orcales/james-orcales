@@ -332,7 +332,15 @@ func recorder_merge_process_line(recorder *Recorder, line string) {
 	if decode_error != nil {
 		return
 	}
-	recorder_merge_increment(recorder, string(key), line[tab_offset+1:] == "T")
+	branch := line[tab_offset+1:]
+	if branch == "T" {
+		recorder_merge_increment(recorder, string(key), true)
+		return
+	}
+	if branch != "F" {
+		return
+	}
+	recorder_merge_increment(recorder, string(key), false)
 }
 
 // Merge resolves the emitted string key directly; a key with no seeded entry is skipped like any
