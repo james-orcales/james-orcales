@@ -51,9 +51,10 @@ func Main(input Main_Input) (status_code Exit_Code) {
 		return EXIT_USAGE
 	}
 	scope := Main_Scope{
-		Paths:          Paths(cli.Get_Option(command.Arguments, "path").Value.([]string)),
-		No_Ignore:      cli.Get_Option(command.Flags, "no-ignore").Value.(bool),
-		Include_Hidden: cli.Get_Option(command.Flags, "hidden").Value.(bool),
+		Paths:     Paths(cli.Get_Option(command.Arguments, "path").Value.([]string)),
+		No_Ignore: No_Ignore(cli.Get_Option(command.Flags, "no-ignore").Value.(bool)),
+		Include_Hidden: Include_Hidden(
+			cli.Get_Option(command.Flags, "hidden").Value.(bool)),
 	}
 	// No path given counts the current directory, the obvious default for a tool run
 	// inside a project.
@@ -66,7 +67,7 @@ func Main(input Main_Input) (status_code Exit_Code) {
 		return EXIT_FAILURE
 	}
 	if cli.Get_Option(command.Flags, "json").Value.(bool) {
-		json_err := Render_Json(input.Output, report)
+		json_err := Render_Json(input.Output, report.Files)
 		if json_err != nil {
 			fmt.Fprintf(input.Error_Output, "sloc: %v\n", json_err)
 			return EXIT_FAILURE
@@ -75,7 +76,7 @@ func Main(input Main_Input) (status_code Exit_Code) {
 	}
 	Render(input.Output, Render_Input{
 		Report:     report,
-		Show_Files: cli.Get_Option(command.Flags, "files").Value.(bool),
+		Show_Files: File_Display(cli.Get_Option(command.Flags, "files").Value.(bool)),
 	})
 	return EXIT_SUCCESS
 }
@@ -87,7 +88,7 @@ type Exit_Code uint8
 // Exit_Code_Invariants holds a status to the three declared codes, and witnesses each
 // code. The codes are an enumeration, so each member axis names the code it claims.
 func Exit_Code_Invariants(code Exit_Code, namespace invariant.Namespace) {
-	invariant.Assertions(namespace).
+	invariant.Tree(code, namespace).
 		Enum_3_Uint8(
 			uint8(code), uint8(EXIT_SUCCESS), uint8(EXIT_FAILURE), uint8(EXIT_USAGE)).
 		Ensure()
@@ -145,7 +146,9 @@ func main_input_collect(input *Main_Input, scope Main_Scope) (report Report, err
 			return Report{}, path_err
 		}
 		report.Files = append(report.Files, partial.Files...)
-		skipped_add(&report.Skipped, partial.Skipped)
+		collected := Collected_Skipped(report.Skipped)
+		skipped_add(&collected, Root_Skipped(partial.Skipped))
+		report.Skipped = Skipped(collected)
 	}
 	return report, nil
 }
@@ -153,24 +156,28 @@ func main_input_collect(input *Main_Input, scope Main_Scope) (report Report, err
 // Counts a single path: a directory is walked, a file is classified directly.
 func main_input_one(
 	input *Main_Input, root Root, scope Main_Scope,
-) (report Report, err error) {
-	defer func() { Report_Invariants(report, "main_input_one.report") }()
+) (report Root_Report, err error) {
+	defer func() { Root_Report_Invariants(report, "main_input_one.report") }()
 	Main_Input_Invariants(*input, "main_input_one.input")
 	Root_Invariants(root, "main_input_one.root")
 	Main_Scope_Invariants(scope, "main_input_one.scope")
-	directory, stat_err := input.Path_Is_Directory(File_Path(root))
+	directory, stat_err := main_is_directory(
+		input.Path_Information, File_Path(root))
 	if stat_err != nil {
-		return Report{}, stat_err
+		return Root_Report{}, stat_err
 	}
 	if directory {
 		return main_input_directory(input, root, scope)
 	}
-	file, recognized, read_err := main_input_file(input, File_Path(root))
+	file, recognized, read_err := main_input_file(Explicit_Input{
+		File:       input.File,
+		Classifier: Explicit_Classifier(input.Classifier),
+	}, File_Path(root))
 	if read_err != nil {
-		return Report{}, read_err
+		return Root_Report{}, read_err
 	}
 	if recognized {
-		report.Files = append(report.Files, file)
+		report.Files = append(report.Files, File_Count(file))
 	}
 	return report, nil
 }
@@ -179,20 +186,20 @@ func main_input_one(
 // roots stay distinguishable.
 func main_input_directory(
 	input *Main_Input, root Root, scope Main_Scope,
-) (report Report, err error) {
-	defer func() { Report_Invariants(report, "main_input_directory.report") }()
+) (report Root_Report, err error) {
+	defer func() { Root_Report_Invariants(report, "main_input_directory.report") }()
 	Main_Input_Invariants(*input, "main_input_directory.input")
 	Root_Invariants(root, "main_input_directory.root")
 	Main_Scope_Invariants(scope, "main_input_directory.scope")
 	directory_report, count_err := Count(Count_Input{
-		File_System:    input.Open(root),
+		File_System:    input.File_System(root),
 		Is_Ignored:     main_input_ignore(input, root, scope.No_Ignore),
 		Include_Hidden: scope.Include_Hidden,
 		Classifier:     input.Classifier,
 		Concurrency:    input.Concurrency,
 	})
 	if count_err != nil {
-		return Report{}, count_err
+		return Root_Report{}, count_err
 	}
 	// The paths are re-rooted into a fresh report, so what the walk left uncounted has
 	// to come across with them or it would be lost in the copy.
@@ -206,49 +213,276 @@ func main_input_directory(
 
 // Builds the ignore filter for a root, or nil when ignoring is off.
 func main_input_ignore(
-	input *Main_Input, root Root, no_ignore bool,
+	input *Main_Input, root Root, no_ignore No_Ignore,
 ) (is_ignored Ignore_Predicate) {
 	Main_Input_Invariants(*input, "main_input_ignore.input")
 	Root_Invariants(root, "main_input_ignore.root")
-	invariant.Boolean_Invariants(no_ignore, "main_input_ignore.no_ignore")
+	No_Ignore_Invariants(no_ignore, "main_input_ignore.no_ignore")
 	if no_ignore {
 		return nil
 	}
-	return input.Ignore_For(root)
+	return main_git_ignore(input.Command, root)
 }
 
 // Classifies one explicitly named file, reporting whether its extension is recognized.
 func main_input_file(
-	input *Main_Input, name File_Path,
-) (file File_Count, recognized bool, err error) {
+	input Explicit_Input, name File_Path,
+) (file Explicit_File, recognized Recognition, err error) {
 	defer func() {
-		File_Count_Invariants(file, "main_input_file.file")
-		invariant.Boolean_Invariants(recognized, "main_input_file.recognized")
+		Explicit_File_Invariants(file, "main_input_file.file")
+		Recognition_Invariants(recognized, "main_input_file.recognized")
 	}()
-	Main_Input_Invariants(*input, "main_input_file.input")
+	Explicit_Input_Invariants(input, "main_input_file.input")
 	File_Path_Invariants(name, "main_input_file.name")
 	// The unrecognized and unreadable paths carry the name back rather than the zero
 	// File_Count: a path is never empty, and the output invariant states that.
-	unknown := File_Count{Path: name, Language: "", Counts: Counts{}, Is_Test: false}
+	unknown := Explicit_File{Path: name, Language: "", Counts: Counts{}, Is_Test: false}
 	language, known := language_for_path(name)
 	if !known {
 		return unknown, false, nil
 	}
-	content, read_err := input.Read_File(name)
+	content, read_err := main_read_file(input.File, Explicit_Path(name))
 	if read_err != nil {
 		return unknown, false, read_err
 	}
-	counts := classify(input.Classifier, Classify_File_Input{
+	counts := classify(File_Classifier(input.Classifier), Classify_File_Input{
 		Path:     Classified_Path(name),
-		Source:   content,
-		Language: language,
+		Source:   Source(content),
+		Language: Seeded_Language(language),
 	})
-	return File_Count{
+	return Explicit_File{
 		Path:     name,
 		Language: language.Name,
-		Counts:   counts,
+		Counts:   Counts(counts),
 		Is_Test:  false,
 	}, true, nil
+}
+
+// Explicit_Input is the host capability and classifier for one explicitly named file.
+// The command line and directory capabilities stay at Main because this boundary does
+// not read them.
+type Explicit_Input struct {
+	// File opens the named file.
+	File func(name File_Path) (file fs.File, err error)
+	// Classifier partitions the recognized file's source into line kinds.
+	Classifier Explicit_Classifier
+}
+
+// Explicit_Input_Invariants states the classifier. A function value has no preset.
+func Explicit_Input_Invariants(input Explicit_Input, namespace invariant.Namespace) {
+	Explicit_Classifier_Invariants(input.Classifier, namespace)
+}
+
+// Explicit_Classifier is the classifier selected for one command-line file.
+type Explicit_Classifier File_Classifier
+
+// Explicit_Classifier_Invariants checks the selected implementation and model size.
+// The whole Main boundary owns their variable witnesses.
+func Explicit_Classifier_Invariants(
+	classifier Explicit_Classifier, namespace invariant.Namespace,
+) {
+	invariant.Always(
+		classifier.Kind == FILE_CLASSIFIER_KIND_BYTES ||
+			classifier.Kind == FILE_CLASSIFIER_KIND_MODEL,
+		"An explicit classifier always names a concrete implementation.")
+	invariant.Always(
+		len(classifier.Classifications) >= FILE_CLASSIFICATIONS_COUNT_MIN &&
+			len(classifier.Classifications) <= FILE_CLASSIFICATIONS_COUNT_MAX,
+		"An explicit classification model always stays in its file bound.")
+}
+
+// Explicit_File is the result for one command-line file. It is never test-classified
+// because that policy belongs to a walked tree and its relative path conventions.
+type Explicit_File File_Count
+
+// Explicit_File_Invariants checks the reachable explicit-file state without claiming
+// that one call site can witness every aggregate report boundary.
+func Explicit_File_Invariants(file Explicit_File, namespace invariant.Namespace) {
+	invariant.Always(
+		len(file.Path) >= FILE_PATH_BYTES_MIN && len(file.Path) <= FILE_PATH_BYTES_MAX,
+		"An explicit file always has a valid path width.")
+	invariant.Always(
+		len(file.Language) >= LANGUAGE_NAME_BYTES_MIN &&
+			len(file.Language) <= LANGUAGE_NAME_BYTES_MAX,
+		"An explicit file always has a valid language-name width.")
+	invariant.Always(
+		int(file.Counts.Code) >= LINE_COUNT_MIN &&
+			int(file.Counts.Code) <= LINE_COUNT_MAX,
+		"An explicit file always has a valid code count.")
+	invariant.Always(
+		int(file.Counts.Comment) >= LINE_COUNT_MIN &&
+			int(file.Counts.Comment) <= LINE_COUNT_MAX,
+		"An explicit file always has a valid comment count.")
+	invariant.Always(
+		int(file.Counts.Blank) >= LINE_COUNT_MIN &&
+			int(file.Counts.Blank) <= LINE_COUNT_MAX,
+		"An explicit file always has a valid blank count.")
+	invariant.Always(
+		file.Counts.Dropped >= DROPPED_COUNT_MIN &&
+			file.Counts.Dropped <= DROPPED_COUNT_MAX,
+		"An explicit file always has a valid dropped-line count.")
+	invariant.Always(!file.Is_Test, "An explicit file is always source code.")
+}
+
+// FILE_READ_BYTES_MAX limits one explicitly named file to the Source byte bound.
+const FILE_READ_BYTES_MAX = SOURCE_BYTES_MAX
+
+// WORKERS_PER_PROCESSOR lets file reads wait while other workers classify source.
+const WORKERS_PER_PROCESSOR = 4
+
+// Explicit_Path is a command-line file path selected for a bounded read.
+type Explicit_Path File_Path
+
+// Explicit_Path_Invariants checks path safety without assigning all command-line path
+// witnesses to the explicit-file route.
+func Explicit_Path_Invariants(path Explicit_Path, namespace invariant.Namespace) {
+	invariant.Always(
+		len(path) >= FILE_PATH_BYTES_MIN && len(path) <= FILE_PATH_BYTES_MAX,
+		"An explicit path always stays in the host path bound.")
+}
+
+// Read_Source is source returned by the bounded host-file reader.
+type Read_Source Source
+
+// Read_Source_Invariants checks the read bound. Classify_File owns the Source boundary
+// witnesses across byte and modeled inputs.
+func Read_Source_Invariants(source Read_Source, namespace invariant.Namespace) {
+	invariant.Always(
+		len(source) >= SOURCE_BYTES_MIN && len(source) <= SOURCE_BYTES_MAX,
+		"A host-file read always stays in the source byte bound.")
+}
+
+// Reports whether a path names a directory.
+func main_is_directory(
+	information_of func(name File_Path) (information fs.FileInfo, err error),
+	name File_Path,
+) (is_directory Directory_Status, err error) {
+	defer func() {
+		Directory_Status_Invariants(is_directory, "main_is_directory.is_directory")
+	}()
+	File_Path_Invariants(name, "main_is_directory.name")
+	information, information_err := information_of(name)
+	if information_err != nil {
+		return false, information_err
+	}
+	return Directory_Status(information.IsDir()), nil
+}
+
+// Reads one explicitly named file through the Source byte bound.
+func main_read_file(
+	file_of func(name File_Path) (file fs.File, err error), name Explicit_Path,
+) (content Read_Source, err error) {
+	defer func() { Read_Source_Invariants(content, "main_read_file.content") }()
+	Explicit_Path_Invariants(name, "main_read_file.name")
+	file, open_err := file_of(File_Path(name))
+	if open_err != nil {
+		return nil, open_err
+	}
+	defer file.Close()
+	information, information_err := file.Stat()
+	if information_err != nil {
+		return nil, information_err
+	}
+	byte_size := information.Size()
+	if byte_size < 0 {
+		return nil, errors.New("file size is negative")
+	}
+	if byte_size > FILE_READ_BYTES_MAX {
+		byte_size = FILE_READ_BYTES_MAX
+	}
+	buffer := make([]byte, byte_size)
+	_, read_err := io.ReadFull(io.LimitReader(file, byte_size), buffer)
+	if main_read_failed(read_err) {
+		return nil, read_err
+	}
+	return buffer, nil
+}
+
+// Read_Failure is the failure state of one bounded file read.
+type Read_Failure bool
+
+// Read_Failure_Invariants states both bounded-read states.
+func Read_Failure_Invariants(value Read_Failure, namespace invariant.Namespace) {
+	invariant.Tree(value, namespace).
+		Sometimes(bool(value), "A bounded file read fails.").
+		Ensure()
+}
+
+// Reports whether a bounded read ended in a real error.
+func main_read_failed(read_err error) (failed Read_Failure) {
+	defer func() { Read_Failure_Invariants(failed, "main_read_failed.failed") }()
+	if read_err == nil {
+		return false
+	}
+	if errors.Is(read_err, io.EOF) {
+		return false
+	}
+	return Read_Failure(!errors.Is(read_err, io.ErrUnexpectedEOF))
+}
+
+// Builds the ignore predicate from one scoped Git listing.
+func main_git_ignore(
+	command func(name string, arguments []string) (output []byte, err error),
+	root Root,
+) (is_ignored Ignore_Predicate) {
+	Root_Invariants(root, "main_git_ignore.root")
+	output, run_err := command("git", []string{
+		"-C", string(root), "ls-files", "-z", "--cached", "--others",
+		"--exclude-standard", "--", ".",
+	})
+	if run_err != nil {
+		return nil
+	}
+	kept_files := map[string]bool{}
+	kept_directories := map[string]bool{".": true}
+	for _, name := range strings.Split(string(output), "\x00") {
+		if name == "" {
+			continue
+		}
+		kept_files[name] = true
+		parent := path.Dir(name)
+		for main_inside_root(Parent_Path(parent)) {
+			kept_directories[parent] = true
+			parent = path.Dir(parent)
+		}
+	}
+	return func(relative_path string, is_directory bool) (ignored bool) {
+		if is_directory {
+			return !kept_directories[relative_path]
+		}
+		return !kept_files[relative_path]
+	}
+}
+
+// Root_Membership is the state of one directory inside a count root.
+type Root_Membership bool
+
+// Root_Membership_Invariants states both root-membership states.
+func Root_Membership_Invariants(value Root_Membership, namespace invariant.Namespace) {
+	invariant.Tree(value, namespace).
+		Sometimes(bool(value), "A directory is inside the count root.").
+		Ensure()
+}
+
+// Parent_Path is a directory derived from a Git-listed file path.
+type Parent_Path File_Path
+
+// Parent_Path_Invariants checks a derived directory without assigning all host path
+// witnesses to Git parent traversal.
+func Parent_Path_Invariants(parent Parent_Path, namespace invariant.Namespace) {
+	invariant.Always(
+		len(parent) >= FILE_PATH_BYTES_MIN && len(parent) <= FILE_PATH_BYTES_MAX,
+		"A Git parent always stays in the host path bound.")
+}
+
+// Reports whether a path is a directory below the root.
+func main_inside_root(parent Parent_Path) (inside Root_Membership) {
+	defer func() { Root_Membership_Invariants(inside, "main_inside_root.inside") }()
+	Parent_Path_Invariants(parent, "main_inside_root.parent")
+	if parent == "." {
+		return false
+	}
+	return parent != "/"
 }
 
 // ARGUMENTS_COUNT_MIN is the bare program name, which every invocation carries: the
@@ -265,7 +499,7 @@ type Arguments []string
 
 // Arguments_Invariants bounds the command line's word count.
 func Arguments_Invariants(arguments Arguments, namespace invariant.Namespace) {
-	invariant.Assertions(namespace).
+	invariant.Tree(arguments, namespace).
 		Range_Int(len(arguments), ARGUMENTS_COUNT_MIN, ARGUMENTS_COUNT_MAX).
 		Ensure()
 }
@@ -284,7 +518,7 @@ type Paths []string
 // Paths_Invariants bounds the root count. The minimum is one because Main defaults an
 // empty list to the current directory before the scope is built.
 func Paths_Invariants(paths Paths, namespace invariant.Namespace) {
-	invariant.Assertions(namespace).
+	invariant.Tree(paths, namespace).
 		Range_Int(len(paths), PATHS_COUNT_MIN, PATHS_COUNT_MAX).
 		Ensure()
 }
@@ -301,8 +535,48 @@ type Root string
 
 // Root_Invariants bounds a root's byte length.
 func Root_Invariants(root Root, namespace invariant.Namespace) {
-	invariant.Assertions(namespace).
+	invariant.Tree(root, namespace).
 		Range_Int(len(root), ROOT_BYTES_MIN, ROOT_BYTES_MAX).
+		Ensure()
+}
+
+// No_Ignore is the ignore-filter state of one count scope.
+type No_Ignore bool
+
+// No_Ignore_Invariants states both ignore-filter states.
+func No_Ignore_Invariants(value No_Ignore, namespace invariant.Namespace) {
+	invariant.Tree(value, namespace).
+		Sometimes(bool(value), "The ignore filter is disabled.").
+		Ensure()
+}
+
+// Include_Hidden is the hidden-path state of one count scope.
+type Include_Hidden bool
+
+// Include_Hidden_Invariants states both hidden-path states.
+func Include_Hidden_Invariants(value Include_Hidden, namespace invariant.Namespace) {
+	invariant.Tree(value, namespace).
+		Sometimes(bool(value), "Hidden paths are included.").
+		Ensure()
+}
+
+// Recognition is the result of a seeded-language lookup.
+type Recognition bool
+
+// Recognition_Invariants states both lookup results.
+func Recognition_Invariants(value Recognition, namespace invariant.Namespace) {
+	invariant.Tree(value, namespace).
+		Sometimes(bool(value), "A seeded language is recognized.").
+		Ensure()
+}
+
+// Directory_Status is the directory state of one file path.
+type Directory_Status bool
+
+// Directory_Status_Invariants states both file-path states.
+func Directory_Status_Invariants(value Directory_Status, namespace invariant.Namespace) {
+	invariant.Tree(value, namespace).
+		Sometimes(bool(value), "A file path names a directory.").
 		Ensure()
 }
 
@@ -311,21 +585,36 @@ type Main_Scope struct {
 	// Paths is the list of files or directories to count.
 	Paths Paths
 	// No_Ignore counts gitignored files too.
-	No_Ignore bool
+	No_Ignore No_Ignore
 	// Include_Hidden counts hidden dot-files and dot-directories.
-	Include_Hidden bool
+	Include_Hidden Include_Hidden
 }
 
 // Main_Scope_Invariants states the scope's roots and both override flags.
 func Main_Scope_Invariants(scope Main_Scope, namespace invariant.Namespace) {
-	Paths_Invariants(scope.Paths, "Main_Scope.Paths")
-	invariant.Boolean_Invariants(scope.No_Ignore, "Main_Scope.No_Ignore")
-	invariant.Boolean_Invariants(scope.Include_Hidden, "Main_Scope.Include_Hidden")
+	Paths_Invariants(scope.Paths, namespace)
+	No_Ignore_Invariants(scope.No_Ignore, namespace)
+	Include_Hidden_Invariants(scope.Include_Hidden, namespace)
 }
 
-// Main_Input carries the command line and the host bindings Main needs. The library
-// tier does no ambient I/O, so the filesystem, stat, read, and ignore operations are
-// injected.
+// CONCURRENCY_MIN is the smallest worker input before Count clamps the value.
+const CONCURRENCY_MIN = -9223372036854775808
+
+// CONCURRENCY_MAX is the largest worker input before Count clamps the value.
+const CONCURRENCY_MAX = 9223372036854775807
+
+// Concurrency is the requested worker count before Count applies its bounds.
+type Concurrency int
+
+// Concurrency_Invariants states the complete host-supplied worker-count domain.
+func Concurrency_Invariants(value Concurrency, namespace invariant.Namespace) {
+	invariant.Tree(value, namespace).
+		Range_Int(int(value), CONCURRENCY_MIN, CONCURRENCY_MAX).
+		Ensure()
+}
+
+// Main_Input carries the command line and the operating-system capabilities Main needs.
+// Main owns all policy that combines those capabilities.
 type Main_Input struct {
 	// Arguments is the command line, including the program name.
 	Arguments Arguments
@@ -333,27 +622,59 @@ type Main_Input struct {
 	Output io.Writer
 	// Error_Output is where usage and errors are written.
 	Error_Output io.Writer
-	// Open views a directory as a read-only file system rooted at it.
-	Open func(root Root) (file_system fs.FS)
-	// Path_Is_Directory reports whether a path names a directory.
-	Path_Is_Directory func(name File_Path) (is_directory bool, err error)
-	// Read_File reads a single file's bytes.
-	Read_File func(name File_Path) (content Source, err error)
-	// Ignore_For builds the ignore filter for a directory root, or returns nil.
-	Ignore_For func(root Root) (is_ignored Ignore_Predicate)
+	// File_System views a directory as a read-only file system rooted at it.
+	File_System func(root Root) (file_system fs.FS)
+	// Path_Information returns information about one command-line path.
+	Path_Information func(name File_Path) (information fs.FileInfo, err error)
+	// File opens one explicitly named file.
+	File func(name File_Path) (file fs.File, err error)
+	// Command runs one host command and returns its standard output.
+	Command func(name string, arguments []string) (output []byte, err error)
 	// Classifier partitions one recognized file's source into line kinds.
 	Classifier File_Classifier
 	// Concurrency bounds the file-counting worker pool. It stays an unbounded integer
 	// because it is host-supplied and count_classify clamps it at both ends.
-	Concurrency int
+	Concurrency Concurrency
 }
 
 // Main_Input_Invariants states the command line, classifier, and worker bound. The
-// writers and injected operations are function and interface values with no preset.
+// writers and operating-system capabilities have no preset.
 func Main_Input_Invariants(input Main_Input, namespace invariant.Namespace) {
-	Arguments_Invariants(input.Arguments, "Main_Input.Arguments")
-	File_Classifier_Invariants(input.Classifier, "Main_Input.Classifier")
-	invariant.Int_Invariants(input.Concurrency, "Main_Input.Concurrency")
+	Arguments_Invariants(input.Arguments, namespace)
+	File_Classifier_Invariants(input.Classifier, namespace)
+	Concurrency_Invariants(input.Concurrency, namespace)
+}
+
+// Block_Comment_Recursion is the recursive state of one block-comment grammar.
+type Block_Comment_Recursion bool
+
+// Block_Comment_Recursion_Invariants states both block-comment recursive states.
+func Block_Comment_Recursion_Invariants(
+	value Block_Comment_Recursion, namespace invariant.Namespace,
+) {
+	invariant.Tree(value, namespace).
+		Sometimes(bool(value), "Block comments nest.").
+		Ensure()
+}
+
+// Long_Bracket is the long-bracket state of one language grammar.
+type Long_Bracket bool
+
+// Long_Bracket_Invariants states both long-bracket states.
+func Long_Bracket_Invariants(value Long_Bracket, namespace invariant.Namespace) {
+	invariant.Tree(value, namespace).
+		Sometimes(bool(value), "Long brackets are enabled.").
+		Ensure()
+}
+
+// Heredoc is the heredoc state of one language grammar.
+type Heredoc bool
+
+// Heredoc_Invariants states both heredoc states.
+func Heredoc_Invariants(value Heredoc, namespace invariant.Namespace) {
+	invariant.Tree(value, namespace).
+		Sometimes(bool(value), "Heredocs are enabled.").
+		Ensure()
 }
 
 // Language describes how one language's lines are read: the tokens that begin a
@@ -371,14 +692,14 @@ type Language struct {
 	// Block_Comment_Nests is true when an inner open raises the nesting depth, so a
 	// single close does not end the comment (Rust); false when the first close ends
 	// it (Go, C). It is the only behavioral difference between the seeds' comments.
-	Block_Comment_Nests bool
+	Block_Comment_Nests Block_Comment_Recursion
 	// Verbatim_Strings are the multi-line string delimiters whose bodies are verbatim.
 	Verbatim_Strings Verbatim_Delimiters
 	// Quote_Strings are the single-line string and character delimiters.
 	Quote_Strings Quote_Delimiters
 	// Long_Bracket enables Lua's leveled long brackets: [[ … ]] and [=[ … ]=] as
 	// strings, and the same after a line-comment token (--[[ … ]]) as comments.
-	Long_Bracket bool
+	Long_Bracket Long_Bracket
 	// Test_Prefixes are base-name prefixes that mark a test file, like Python's test_.
 	Test_Prefixes Name_Prefixes
 	// Test_Infixes are case-sensitive base-name substrings that mark a test file, like
@@ -386,27 +707,67 @@ type Language struct {
 	Test_Infixes Name_Infixes
 	// Heredoc enables <<DELIM heredocs (Shell, Ruby, Perl): the body lines up to a line
 	// equal to DELIM are code, so a # inside the body is not read as a comment.
-	Heredoc bool
+	Heredoc Heredoc
 }
 
 // Language_Invariants states every field of a language configuration. The three
 // booleans and the four token collections are all the scanner reads, so stating them
 // here is stating the whole of what a language is.
 func Language_Invariants(language Language, namespace invariant.Namespace) {
-	Language_Name_Invariants(language.Name, "Language.Name")
-	Comment_Tokens_Invariants(language.Line_Comment, "Language.Line_Comment")
+	Language_Name_Invariants(language.Name, namespace)
+	Comment_Tokens_Invariants(language.Line_Comment, namespace)
 	Block_Comment_Opener_Invariants(
-		language.Block_Comment_Open, "Language.Block_Comment_Open")
+		language.Block_Comment_Open, namespace)
 	Block_Comment_Closer_Invariants(
-		language.Block_Comment_Close, "Language.Block_Comment_Close")
-	invariant.Boolean_Invariants(
-		language.Block_Comment_Nests, "Language.Block_Comment_Nests")
-	Verbatim_Delimiters_Invariants(language.Verbatim_Strings, "Language.Verbatim_Strings")
-	Quote_Delimiters_Invariants(language.Quote_Strings, "Language.Quote_Strings")
-	invariant.Boolean_Invariants(language.Long_Bracket, "Language.Long_Bracket")
-	Name_Prefixes_Invariants(language.Test_Prefixes, "Language.Test_Prefixes")
-	Name_Infixes_Invariants(language.Test_Infixes, "Language.Test_Infixes")
-	invariant.Boolean_Invariants(language.Heredoc, "Language.Heredoc")
+		language.Block_Comment_Close, namespace)
+	Block_Comment_Recursion_Invariants(language.Block_Comment_Nests, namespace)
+	Verbatim_Delimiters_Invariants(language.Verbatim_Strings, namespace)
+	Quote_Delimiters_Invariants(language.Quote_Strings, namespace)
+	Long_Bracket_Invariants(language.Long_Bracket, namespace)
+	Name_Prefixes_Invariants(language.Test_Prefixes, namespace)
+	Name_Infixes_Invariants(language.Test_Infixes, namespace)
+	Heredoc_Invariants(language.Heredoc, namespace)
+}
+
+// Seeded_Language is a complete scanner configuration selected from the static table.
+type Seeded_Language Language
+
+// Seeded_Language_Invariants rejects a malformed static configuration. The language
+// table supplies fixed values, so these are steady properties, not variable bounds.
+func Seeded_Language_Invariants(
+	language Seeded_Language, namespace invariant.Namespace,
+) {
+	invariant.Always(
+		len(language.Name) >= KNOWN_NAME_BYTES_MIN,
+		"A seeded language always has a name.")
+	invariant.Always(
+		len(language.Name) <= LANGUAGE_NAME_BYTES_MAX,
+		"A seeded language name always fits the display bound.")
+	invariant.Always(
+		len(language.Line_Comment) <= COMMENT_TOKENS_COUNT_MAX,
+		"A seeded language always fits the line-comment token bound.")
+	invariant.Always(
+		len(language.Block_Comment_Open) <= BLOCK_COMMENT_OPENER_BYTES_MAX,
+		"A seeded block-comment opener always fits its bound.")
+	invariant.Always(
+		len(language.Block_Comment_Close) <= BLOCK_COMMENT_CLOSER_BYTES_MAX,
+		"A seeded block-comment closer always fits its bound.")
+}
+
+// Optional_Language is either no lookup result or one seeded scanner configuration.
+type Optional_Language Language
+
+// Optional_Language_Invariants rejects a malformed lookup result. Lookup helpers use
+// Recognition for the variable presence state, so this type states steady bounds.
+func Optional_Language_Invariants(
+	language Optional_Language, namespace invariant.Namespace,
+) {
+	invariant.Always(
+		len(language.Name) <= LANGUAGE_NAME_BYTES_MAX,
+		"An optional language name always fits the display bound.")
+	invariant.Always(
+		len(language.Line_Comment) <= COMMENT_TOKENS_COUNT_MAX,
+		"An optional language always fits the line-comment token bound.")
 }
 
 // LANGUAGE_NAME_BYTES_MIN is the empty name of the zero Language, which the lookups
@@ -422,7 +783,7 @@ type Language_Name string
 
 // Language_Name_Invariants bounds a display name's byte length.
 func Language_Name_Invariants(name Language_Name, namespace invariant.Namespace) {
-	invariant.Assertions(namespace).
+	invariant.Tree(name, namespace).
 		Range_Int(len(name), LANGUAGE_NAME_BYTES_MIN, LANGUAGE_NAME_BYTES_MAX).
 		Ensure()
 }
@@ -442,7 +803,7 @@ type Comment_Tokens []string
 // Comment_Tokens_Invariants holds how many line-comment tokens a language declares to
 // the three counts that occur, and witnesses each count.
 func Comment_Tokens_Invariants(tokens Comment_Tokens, namespace invariant.Namespace) {
-	invariant.Assertions(namespace).
+	invariant.Tree(tokens, namespace).
 		Enum_3_Int(
 			len(tokens), COMMENT_TOKENS_COUNT_MIN, COMMENT_TOKENS_COUNT_ONE,
 			COMMENT_TOKENS_COUNT_MAX).
@@ -471,7 +832,7 @@ type Block_Comment_Opener string
 func Block_Comment_Opener_Invariants(
 	opener Block_Comment_Opener, namespace invariant.Namespace,
 ) {
-	invariant.Assertions(namespace).
+	invariant.Tree(opener, namespace).
 		Enum_4_Int(
 			len(opener), BLOCK_COMMENT_OPENER_BYTES_MIN,
 			BLOCK_COMMENT_OPENER_BYTES_BRACE, BLOCK_COMMENT_OPENER_BYTES_PAIR,
@@ -502,7 +863,7 @@ type Block_Comment_Closer string
 func Block_Comment_Closer_Invariants(
 	closer Block_Comment_Closer, namespace invariant.Namespace,
 ) {
-	invariant.Assertions(namespace).
+	invariant.Tree(closer, namespace).
 		Enum_4_Int(
 			len(closer), BLOCK_COMMENT_CLOSER_BYTES_MIN,
 			BLOCK_COMMENT_CLOSER_BYTES_BRACE, BLOCK_COMMENT_CLOSER_BYTES_PAIR,
@@ -522,7 +883,7 @@ type Name_Prefixes []string
 // Name_Prefixes_Invariants holds how many test prefixes a language declares to the two
 // counts that occur, and witnesses each count.
 func Name_Prefixes_Invariants(prefixes Name_Prefixes, namespace invariant.Namespace) {
-	invariant.Assertions(namespace).
+	invariant.Tree(prefixes, namespace).
 		Enum_Int(len(prefixes), NAME_PREFIXES_COUNT_MIN, NAME_PREFIXES_COUNT_MAX).
 		Ensure()
 }
@@ -545,7 +906,7 @@ type Name_Infixes []string
 // Name_Infixes_Invariants holds how many test infixes a language declares to the four
 // counts that occur, and witnesses each count.
 func Name_Infixes_Invariants(infixes Name_Infixes, namespace invariant.Namespace) {
-	invariant.Assertions(namespace).
+	invariant.Tree(infixes, namespace).
 		Enum_4_Int(
 			len(infixes), NAME_INFIXES_COUNT_MIN, NAME_INFIXES_COUNT_ONE,
 			NAME_INFIXES_COUNT_TWO, NAME_INFIXES_COUNT_MAX).
@@ -569,7 +930,7 @@ type Verbatim_Delimiters []Verbatim_Delimiter
 func Verbatim_Delimiters_Invariants(
 	delimiters Verbatim_Delimiters, namespace invariant.Namespace,
 ) {
-	invariant.Assertions(namespace).
+	invariant.Tree(delimiters, namespace).
 		Enum_3_Int(
 			len(delimiters), VERBATIM_DELIMITERS_COUNT_MIN,
 			VERBATIM_DELIMITERS_COUNT_ONE, VERBATIM_DELIMITERS_COUNT_MAX).
@@ -594,7 +955,7 @@ type Quote_Delimiters []Quote_Delimiter
 func Quote_Delimiters_Invariants(
 	delimiters Quote_Delimiters, namespace invariant.Namespace,
 ) {
-	invariant.Assertions(namespace).
+	invariant.Tree(delimiters, namespace).
 		Enum_3_Int(
 			len(delimiters), QUOTE_DELIMITERS_COUNT_MIN, QUOTE_DELIMITERS_COUNT_ONE,
 			QUOTE_DELIMITERS_COUNT_MAX).
@@ -629,6 +990,16 @@ func Quote_Single_Invariants(delimiters Quote_Single, namespace invariant.Namesp
 		"A lone shared quote delimiter always holds one form.")
 }
 
+// Hashability is the hash-delimiter state of one verbatim string form.
+type Hashability bool
+
+// Hashability_Invariants states both hash-delimiter states.
+func Hashability_Invariants(value Hashability, namespace invariant.Namespace) {
+	invariant.Tree(value, namespace).
+		Sometimes(bool(value), "The delimiter uses hashes.").
+		Ensure()
+}
+
 // Verbatim_Delimiter describes a string whose body is taken verbatim and may span
 // lines, so a comment token inside it is inert.
 type Verbatim_Delimiter struct {
@@ -640,16 +1011,31 @@ type Verbatim_Delimiter struct {
 	// Hashable marks a Rust-style raw string: the lead, then N hashes, then a quote;
 	// it closes only on a quote followed by exactly N hashes. Without the quote the
 	// lead is a raw identifier, not a string.
-	Hashable bool
+	Hashable Hashability
 }
 
 // Verbatim_Delimiter_Invariants states a verbatim form's two delimiters and its shape.
 func Verbatim_Delimiter_Invariants(
 	delimiter Verbatim_Delimiter, namespace invariant.Namespace,
 ) {
-	Verbatim_Opener_Invariants(delimiter.Open, "Verbatim_Delimiter.Open")
-	Verbatim_Closer_Invariants(delimiter.Close, "Verbatim_Delimiter.Close")
-	invariant.Boolean_Invariants(delimiter.Hashable, "Verbatim_Delimiter.Hashable")
+	Verbatim_Opener_Invariants(delimiter.Open, namespace)
+	Verbatim_Closer_Invariants(delimiter.Close, namespace)
+	Hashability_Invariants(delimiter.Hashable, namespace)
+}
+
+// Hash_Delimiter is a Rust-style verbatim delimiter with a computed closer.
+type Hash_Delimiter Verbatim_Delimiter
+
+// Hash_Delimiter_Invariants states the fixed shape that reaches hash matching.
+func Hash_Delimiter_Invariants(
+	delimiter Hash_Delimiter, namespace invariant.Namespace,
+) {
+	invariant.Always(
+		bool(delimiter.Hashable),
+		"A hash delimiter always uses hashes.")
+	invariant.Always(
+		len(delimiter.Close) == VERBATIM_CLOSER_BYTES_MIN,
+		"A hash delimiter always computes its closer.")
 }
 
 // VERBATIM_OPENER_BYTES_MIN is the one-byte backtick and Rust's one-byte "r" lead.
@@ -668,7 +1054,7 @@ type Verbatim_Opener string
 // Verbatim_Opener_Invariants holds a verbatim opener's byte length to the three widths
 // that occur — the backtick, Rust's "br", the triple quote — and witnesses each width.
 func Verbatim_Opener_Invariants(opener Verbatim_Opener, namespace invariant.Namespace) {
-	invariant.Assertions(namespace).
+	invariant.Tree(opener, namespace).
 		Enum_3_Int(
 			len(opener), VERBATIM_OPENER_BYTES_MIN, VERBATIM_OPENER_BYTES_BYTE_LEAD,
 			VERBATIM_OPENER_BYTES_MAX).
@@ -695,35 +1081,64 @@ type Verbatim_Closer string
 // that occur, and witnesses each width: the empty closer of a hashable form, the
 // one-byte backtick, Python's two-byte empty pair, and the three-byte triple quote.
 func Verbatim_Closer_Invariants(closer Verbatim_Closer, namespace invariant.Namespace) {
-	invariant.Assertions(namespace).
+	invariant.Tree(closer, namespace).
 		Enum_4_Int(
 			len(closer), VERBATIM_CLOSER_BYTES_MIN, VERBATIM_CLOSER_BYTES_BACKTICK,
 			VERBATIM_CLOSER_BYTES_PAIR, VERBATIM_CLOSER_BYTES_MAX).
 		Ensure()
 }
 
+// Character_Likeness is the character-literal state of one quote delimiter.
+type Character_Likeness bool
+
+// Character_Likeness_Invariants states both character-literal states.
+func Character_Likeness_Invariants(
+	value Character_Likeness, namespace invariant.Namespace,
+) {
+	invariant.Tree(value, namespace).
+		Sometimes(bool(value), "The delimiter holds one character.").
+		Ensure()
+}
+
 // Quote_Delimiter describes a single-line string or character literal.
 type Quote_Delimiter struct {
 	// Open is the opening delimiter.
-	Open Quote_Mark
+	Open Quote_Opener
 	// Close is the closing delimiter.
-	Close Quote_Mark
+	Close Quote_Closer
 	// Escape is the byte that escapes the following character, or zero for none.
 	Escape Escape_Byte
 	// Character_Like marks a character or rune literal, whose apostrophe must be told
 	// apart from a Rust lifetime tick that opens nothing.
-	Character_Like bool
+	Character_Like Character_Likeness
 }
 
 // Quote_Delimiter_Invariants states a quoted form's marks, its escape, and its shape.
 func Quote_Delimiter_Invariants(
 	delimiter Quote_Delimiter, namespace invariant.Namespace,
 ) {
-	Quote_Mark_Invariants(delimiter.Open, "Quote_Delimiter.Open")
-	Quote_Mark_Invariants(delimiter.Close, "Quote_Delimiter.Close")
-	Escape_Byte_Invariants(delimiter.Escape, "Quote_Delimiter.Escape")
-	invariant.Boolean_Invariants(
-		delimiter.Character_Like, "Quote_Delimiter.Character_Like")
+	Quote_Opener_Invariants(delimiter.Open, namespace)
+	Quote_Closer_Invariants(delimiter.Close, namespace)
+	Escape_Byte_Invariants(delimiter.Escape, namespace)
+	Character_Likeness_Invariants(delimiter.Character_Like, namespace)
+}
+
+// String_Delimiter is a quote delimiter that does not describe a character literal.
+type String_Delimiter Quote_Delimiter
+
+// String_Delimiter_Invariants states the fixed shape that reaches string scanning.
+func String_Delimiter_Invariants(
+	delimiter String_Delimiter, namespace invariant.Namespace,
+) {
+	invariant.Always(
+		!bool(delimiter.Character_Like),
+		"A string delimiter never describes a character literal.")
+	invariant.Always(
+		len(delimiter.Open) == QUOTE_MARK_BYTES,
+		"A string delimiter opener is always one byte.")
+	invariant.Always(
+		len(delimiter.Close) == QUOTE_MARK_BYTES,
+		"A string delimiter closer is always one byte.")
 }
 
 // QUOTE_MARK_BYTES is the width of every quote mark: a single byte. A quoted form's
@@ -731,13 +1146,22 @@ func Quote_Delimiter_Invariants(
 // an interval.
 const QUOTE_MARK_BYTES = 1
 
-// Quote_Mark opens or closes a single-line string or character literal.
-type Quote_Mark string
+// Quote_Opener opens a single-line string or character literal.
+type Quote_Opener string
 
-// Quote_Mark_Invariants pins a quote mark to the single byte every seeded form uses.
-func Quote_Mark_Invariants(mark Quote_Mark, namespace invariant.Namespace) {
+// Quote_Opener_Invariants pins an opener to the single byte that each form uses.
+func Quote_Opener_Invariants(mark Quote_Opener, namespace invariant.Namespace) {
 	invariant.Always(
-		len(mark) == QUOTE_MARK_BYTES, "A quote mark is always a single byte.")
+		len(mark) == QUOTE_MARK_BYTES, "A quote opener is always a single byte.")
+}
+
+// Quote_Closer closes a single-line string or character literal.
+type Quote_Closer string
+
+// Quote_Closer_Invariants pins a closer to the single byte that each form uses.
+func Quote_Closer_Invariants(mark Quote_Closer, namespace invariant.Namespace) {
+	invariant.Always(
+		len(mark) == QUOTE_MARK_BYTES, "A quote closer is always a single byte.")
 }
 
 // ESCAPE_BYTE_NONE is the zero escape of a form that has no escape character at all,
@@ -756,7 +1180,7 @@ type Escape_Byte uint8
 
 // Escape_Byte_Invariants holds an escape to the two members that occur.
 func Escape_Byte_Invariants(escape Escape_Byte, namespace invariant.Namespace) {
-	invariant.Assertions(namespace).
+	invariant.Tree(escape, namespace).
 		Enum_Uint8(
 			uint8(escape), uint8(ESCAPE_BYTE_NONE), uint8(ESCAPE_BYTE_BACKSLASH)).
 		Ensure()
@@ -764,9 +1188,9 @@ func Escape_Byte_Invariants(escape Escape_Byte, namespace invariant.Namespace) {
 
 // Language_Go returns the Go configuration: // line comments, non-nesting /* */
 // block comments, backtick raw strings, and quoted literals with backslash escapes.
-func Language_Go() (language Language) {
-	defer func() { Language_Invariants(language, "Language_Go.language") }()
-	return Language{
+func Language_Go() (language Seeded_Language) {
+	defer func() { Seeded_Language_Invariants(language, "Language_Go.language") }()
+	return Seeded_Language{
 		Name:                "Go",
 		Test_Infixes:        []string{"_test."},
 		Line_Comment:        []string{"//"},
@@ -783,9 +1207,9 @@ func Language_Go() (language Language) {
 
 // Language_Rust returns the Rust configuration: // line comments, nesting /* */
 // block comments, raw strings with hash matching, and quoted literals.
-func Language_Rust() (language Language) {
-	defer func() { Language_Invariants(language, "Language_Rust.language") }()
-	return Language{
+func Language_Rust() (language Seeded_Language) {
+	defer func() { Seeded_Language_Invariants(language, "Language_Rust.language") }()
+	return Seeded_Language{
 		Name:                "Rust",
 		Line_Comment:        []string{"//"},
 		Block_Comment_Open:  "/*",
@@ -805,9 +1229,9 @@ func Language_Rust() (language Language) {
 // Language_Python returns the Python configuration: # line comments, no block
 // comments, triple-quoted docstrings that span lines, and quoted strings. A docstring
 // is a string, so its lines count as code.
-func Language_Python() (language Language) {
-	defer func() { Language_Invariants(language, "Language_Python.language") }()
-	return Language{
+func Language_Python() (language Seeded_Language) {
+	defer func() { Seeded_Language_Invariants(language, "Language_Python.language") }()
+	return Seeded_Language{
 		Name:                "Python",
 		Test_Prefixes:       []string{"test_"},
 		Test_Infixes:        []string{"_test."},
@@ -830,9 +1254,9 @@ func Language_Python() (language Language) {
 
 // Language_Java_Script returns the JavaScript configuration: // and non-nesting
 // /* */ comments, backtick template literals that span lines, and quoted strings.
-func Language_Java_Script() (language Language) {
-	defer func() { Language_Invariants(language, "Language_Java_Script.language") }()
-	return Language{
+func Language_Java_Script() (language Seeded_Language) {
+	defer func() { Seeded_Language_Invariants(language, "Language_Java_Script.language") }()
+	return Seeded_Language{
 		Name:                "JavaScript",
 		Test_Infixes:        []string{".test.", ".spec."},
 		Line_Comment:        []string{"//"},
@@ -849,9 +1273,9 @@ func Language_Java_Script() (language Language) {
 
 // Language_Type_Script returns the TypeScript configuration, which lexes like
 // JavaScript for counting: // and /* */ comments, template literals, quoted strings.
-func Language_Type_Script() (language Language) {
-	defer func() { Language_Invariants(language, "Language_Type_Script.language") }()
-	return Language{
+func Language_Type_Script() (language Seeded_Language) {
+	defer func() { Seeded_Language_Invariants(language, "Language_Type_Script.language") }()
+	return Seeded_Language{
 		Name:                "TypeScript",
 		Test_Infixes:        []string{".test.", ".spec."},
 		Line_Comment:        []string{"//"},
@@ -868,9 +1292,9 @@ func Language_Type_Script() (language Language) {
 
 // Language_C returns the C configuration: // and /* */ comments, with quoted strings
 // and character literals.
-func Language_C() (language Language) {
-	defer func() { Language_Invariants(language, "Language_C.language") }()
-	return Language{
+func Language_C() (language Seeded_Language) {
+	defer func() { Seeded_Language_Invariants(language, "Language_C.language") }()
+	return Seeded_Language{
 		Name:                "C",
 		Line_Comment:        []string{"//"},
 		Block_Comment_Open:  "/*",
@@ -884,9 +1308,9 @@ func Language_C() (language Language) {
 
 // Language_Cpp returns the C++ configuration: // and /* */ comments, with quoted
 // strings and character literals.
-func Language_Cpp() (language Language) {
-	defer func() { Language_Invariants(language, "Language_Cpp.language") }()
-	return Language{
+func Language_Cpp() (language Seeded_Language) {
+	defer func() { Seeded_Language_Invariants(language, "Language_Cpp.language") }()
+	return Seeded_Language{
 		Name:                "C++",
 		Line_Comment:        []string{"//"},
 		Block_Comment_Open:  "/*",
@@ -900,9 +1324,9 @@ func Language_Cpp() (language Language) {
 
 // Language_C_Sharp returns the C# configuration: // and /* */ comments, """ raw
 // strings, and quoted strings with character literals.
-func Language_C_Sharp() (language Language) {
-	defer func() { Language_Invariants(language, "Language_C_Sharp.language") }()
-	return Language{
+func Language_C_Sharp() (language Seeded_Language) {
+	defer func() { Seeded_Language_Invariants(language, "Language_C_Sharp.language") }()
+	return Seeded_Language{
 		Name:                "C#",
 		Test_Infixes:        []string{"Test.", "Tests."},
 		Line_Comment:        []string{"//"},
@@ -918,9 +1342,9 @@ func Language_C_Sharp() (language Language) {
 
 // Language_Java returns the Java configuration: // and /* */ comments, """ text
 // blocks, and quoted strings with character literals.
-func Language_Java() (language Language) {
-	defer func() { Language_Invariants(language, "Language_Java.language") }()
-	return Language{
+func Language_Java() (language Seeded_Language) {
+	defer func() { Seeded_Language_Invariants(language, "Language_Java.language") }()
+	return Seeded_Language{
 		Name:                "Java",
 		Test_Infixes:        []string{"Test.", "Tests."},
 		Line_Comment:        []string{"//"},
@@ -936,9 +1360,9 @@ func Language_Java() (language Language) {
 
 // Language_Swift returns the Swift configuration: // and nesting /* */ comments, """
 // multi-line strings, and double-quoted strings.
-func Language_Swift() (language Language) {
-	defer func() { Language_Invariants(language, "Language_Swift.language") }()
-	return Language{
+func Language_Swift() (language Seeded_Language) {
+	defer func() { Seeded_Language_Invariants(language, "Language_Swift.language") }()
+	return Seeded_Language{
 		Name:                "Swift",
 		Test_Infixes:        []string{"Tests.", "Test."},
 		Line_Comment:        []string{"//"},
@@ -952,9 +1376,9 @@ func Language_Swift() (language Language) {
 
 // Language_Kotlin returns the Kotlin configuration: // and nesting /* */ comments,
 // """ raw strings, and quoted strings with character literals.
-func Language_Kotlin() (language Language) {
-	defer func() { Language_Invariants(language, "Language_Kotlin.language") }()
-	return Language{
+func Language_Kotlin() (language Seeded_Language) {
+	defer func() { Seeded_Language_Invariants(language, "Language_Kotlin.language") }()
+	return Seeded_Language{
 		Name:                "Kotlin",
 		Test_Infixes:        []string{"Test.", "Tests."},
 		Line_Comment:        []string{"//"},
@@ -971,9 +1395,9 @@ func Language_Kotlin() (language Language) {
 
 // Language_Scala returns the Scala configuration: // and nesting /* */ comments, """
 // multi-line strings, and quoted strings with character literals.
-func Language_Scala() (language Language) {
-	defer func() { Language_Invariants(language, "Language_Scala.language") }()
-	return Language{
+func Language_Scala() (language Seeded_Language) {
+	defer func() { Seeded_Language_Invariants(language, "Language_Scala.language") }()
+	return Seeded_Language{
 		Name:                "Scala",
 		Test_Infixes:        []string{"Test.", "Tests.", "Spec."},
 		Line_Comment:        []string{"//"},
@@ -990,9 +1414,9 @@ func Language_Scala() (language Language) {
 
 // Language_Shell returns the Shell configuration: # line comments, double-quoted
 // strings with escapes, and literal single-quoted strings.
-func Language_Shell() (language Language) {
-	defer func() { Language_Invariants(language, "Language_Shell.language") }()
-	return Language{
+func Language_Shell() (language Seeded_Language) {
+	defer func() { Seeded_Language_Invariants(language, "Language_Shell.language") }()
+	return Seeded_Language{
 		Name:         "Shell",
 		Line_Comment: []string{"#"},
 		Heredoc:      true,
@@ -1004,9 +1428,9 @@ func Language_Shell() (language Language) {
 }
 
 // Language_Ruby returns the Ruby configuration: # line comments and quoted strings.
-func Language_Ruby() (language Language) {
-	defer func() { Language_Invariants(language, "Language_Ruby.language") }()
-	return Language{
+func Language_Ruby() (language Seeded_Language) {
+	defer func() { Seeded_Language_Invariants(language, "Language_Ruby.language") }()
+	return Seeded_Language{
 		Name:         "Ruby",
 		Test_Infixes: []string{"_spec.", "_test."},
 		Line_Comment: []string{"#"},
@@ -1019,9 +1443,9 @@ func Language_Ruby() (language Language) {
 }
 
 // Language_Yaml returns the YAML configuration: # line comments and quoted strings.
-func Language_Yaml() (language Language) {
-	defer func() { Language_Invariants(language, "Language_Yaml.language") }()
-	return Language{
+func Language_Yaml() (language Seeded_Language) {
+	defer func() { Seeded_Language_Invariants(language, "Language_Yaml.language") }()
+	return Seeded_Language{
 		Name:         "YAML",
 		Line_Comment: []string{"#"},
 		Quote_Strings: []Quote_Delimiter{
@@ -1033,9 +1457,9 @@ func Language_Yaml() (language Language) {
 
 // Language_Toml returns the TOML configuration: # line comments, """ and ”' multi-
 // line strings, and quoted strings.
-func Language_Toml() (language Language) {
-	defer func() { Language_Invariants(language, "Language_Toml.language") }()
-	return Language{
+func Language_Toml() (language Seeded_Language) {
+	defer func() { Seeded_Language_Invariants(language, "Language_Toml.language") }()
+	return Seeded_Language{
 		Name:         "TOML",
 		Line_Comment: []string{"#"},
 		Verbatim_Strings: []Verbatim_Delimiter{
@@ -1051,9 +1475,9 @@ func Language_Toml() (language Language) {
 
 // Language_Sql returns the SQL configuration: -- and /* */ comments, with quoted
 // strings and quoted identifiers.
-func Language_Sql() (language Language) {
-	defer func() { Language_Invariants(language, "Language_Sql.language") }()
-	return Language{
+func Language_Sql() (language Seeded_Language) {
+	defer func() { Seeded_Language_Invariants(language, "Language_Sql.language") }()
+	return Seeded_Language{
 		Name:                "SQL",
 		Line_Comment:        []string{"--"},
 		Block_Comment_Open:  "/*",
@@ -1066,27 +1490,27 @@ func Language_Sql() (language Language) {
 }
 
 // Language_Makefile returns the Makefile configuration: # line comments.
-func Language_Makefile() (language Language) {
-	defer func() { Language_Invariants(language, "Language_Makefile.language") }()
-	return Language{
+func Language_Makefile() (language Seeded_Language) {
+	defer func() { Seeded_Language_Invariants(language, "Language_Makefile.language") }()
+	return Seeded_Language{
 		Name:         "Makefile",
 		Line_Comment: []string{"#"},
 	}
 }
 
 // Language_Dockerfile returns the Dockerfile configuration: # line comments.
-func Language_Dockerfile() (language Language) {
-	defer func() { Language_Invariants(language, "Language_Dockerfile.language") }()
-	return Language{
+func Language_Dockerfile() (language Seeded_Language) {
+	defer func() { Seeded_Language_Invariants(language, "Language_Dockerfile.language") }()
+	return Seeded_Language{
 		Name:         "Dockerfile",
 		Line_Comment: []string{"#"},
 	}
 }
 
 // Language_Html returns the HTML configuration: <!-- --> comments and no line comment.
-func Language_Html() (language Language) {
-	defer func() { Language_Invariants(language, "Language_Html.language") }()
-	return Language{
+func Language_Html() (language Seeded_Language) {
+	defer func() { Seeded_Language_Invariants(language, "Language_Html.language") }()
+	return Seeded_Language{
 		Name:                "HTML",
 		Block_Comment_Open:  "<!--",
 		Block_Comment_Close: "-->",
@@ -1094,9 +1518,9 @@ func Language_Html() (language Language) {
 }
 
 // Language_Xml returns the XML configuration: <!-- --> comments and no line comment.
-func Language_Xml() (language Language) {
-	defer func() { Language_Invariants(language, "Language_Xml.language") }()
-	return Language{
+func Language_Xml() (language Seeded_Language) {
+	defer func() { Seeded_Language_Invariants(language, "Language_Xml.language") }()
+	return Seeded_Language{
 		Name:                "XML",
 		Block_Comment_Open:  "<!--",
 		Block_Comment_Close: "-->",
@@ -1104,9 +1528,9 @@ func Language_Xml() (language Language) {
 }
 
 // Language_Css returns the CSS configuration: /* */ comments and quoted strings.
-func Language_Css() (language Language) {
-	defer func() { Language_Invariants(language, "Language_Css.language") }()
-	return Language{
+func Language_Css() (language Seeded_Language) {
+	defer func() { Seeded_Language_Invariants(language, "Language_Css.language") }()
+	return Seeded_Language{
 		Name:                "CSS",
 		Block_Comment_Open:  "/*",
 		Block_Comment_Close: "*/",
@@ -1119,9 +1543,9 @@ func Language_Css() (language Language) {
 
 // Language_Scss returns the SCSS configuration: // and /* */ comments and quoted
 // strings.
-func Language_Scss() (language Language) {
-	defer func() { Language_Invariants(language, "Language_Scss.language") }()
-	return Language{
+func Language_Scss() (language Seeded_Language) {
+	defer func() { Seeded_Language_Invariants(language, "Language_Scss.language") }()
+	return Seeded_Language{
 		Name:                "SCSS",
 		Line_Comment:        []string{"//"},
 		Block_Comment_Open:  "/*",
@@ -1135,9 +1559,9 @@ func Language_Scss() (language Language) {
 
 // Language_Less returns the LESS configuration: // and /* */ comments and quoted
 // strings.
-func Language_Less() (language Language) {
-	defer func() { Language_Invariants(language, "Language_Less.language") }()
-	return Language{
+func Language_Less() (language Seeded_Language) {
+	defer func() { Seeded_Language_Invariants(language, "Language_Less.language") }()
+	return Seeded_Language{
 		Name:                "LESS",
 		Line_Comment:        []string{"//"},
 		Block_Comment_Open:  "/*",
@@ -1151,9 +1575,9 @@ func Language_Less() (language Language) {
 
 // Language_Lua returns the Lua configuration: -- line comments, --[[ ]] block
 // comments and [[ ]] long strings (both leveled with = signs), and quoted strings.
-func Language_Lua() (language Language) {
-	defer func() { Language_Invariants(language, "Language_Lua.language") }()
-	return Language{
+func Language_Lua() (language Seeded_Language) {
+	defer func() { Seeded_Language_Invariants(language, "Language_Lua.language") }()
+	return Seeded_Language{
 		Name:         "Lua",
 		Line_Comment: []string{"--"},
 		Long_Bracket: true,
@@ -1166,9 +1590,9 @@ func Language_Lua() (language Language) {
 
 // Language_Odin returns the Odin configuration: // line comments, nesting /* */ block
 // comments, backtick raw strings, and quoted strings with rune literals.
-func Language_Odin() (language Language) {
-	defer func() { Language_Invariants(language, "Language_Odin.language") }()
-	return Language{
+func Language_Odin() (language Seeded_Language) {
+	defer func() { Seeded_Language_Invariants(language, "Language_Odin.language") }()
+	return Seeded_Language{
 		Name:                "Odin",
 		Line_Comment:        []string{"//"},
 		Block_Comment_Open:  "/*",
@@ -1185,9 +1609,9 @@ func Language_Odin() (language Language) {
 // Language_Zig returns the Zig configuration: // line comments and no block comments,
 // with quoted strings and character literals. A \\ multi-line string line is code
 // because its leading backslashes are code, so it needs no special handling.
-func Language_Zig() (language Language) {
-	defer func() { Language_Invariants(language, "Language_Zig.language") }()
-	return Language{
+func Language_Zig() (language Seeded_Language) {
+	defer func() { Seeded_Language_Invariants(language, "Language_Zig.language") }()
+	return Seeded_Language{
 		Name:         "Zig",
 		Line_Comment: []string{"//"},
 		Quote_Strings: []Quote_Delimiter{
@@ -1223,9 +1647,9 @@ func double_quote() (delimiters Quote_Single) {
 }
 
 // Language_Objective_C returns the Objective-C configuration: // and /* */ comments.
-func Language_Objective_C() (language Language) {
-	defer func() { Language_Invariants(language, "Language_Objective_C.language") }()
-	return Language{
+func Language_Objective_C() (language Seeded_Language) {
+	defer func() { Seeded_Language_Invariants(language, "Language_Objective_C.language") }()
+	return Seeded_Language{
 		Name:                "Objective-C",
 		Line_Comment:        []string{"//"},
 		Block_Comment_Open:  "/*",
@@ -1236,9 +1660,9 @@ func Language_Objective_C() (language Language) {
 
 // Language_Dart returns the Dart configuration: // and nesting /* */ comments, with
 // ”' and """ multi-line strings.
-func Language_Dart() (language Language) {
-	defer func() { Language_Invariants(language, "Language_Dart.language") }()
-	return Language{
+func Language_Dart() (language Seeded_Language) {
+	defer func() { Seeded_Language_Invariants(language, "Language_Dart.language") }()
+	return Seeded_Language{
 		Name:                "Dart",
 		Line_Comment:        []string{"//"},
 		Block_Comment_Open:  "/*",
@@ -1253,9 +1677,9 @@ func Language_Dart() (language Language) {
 }
 
 // Language_Php returns the PHP configuration: //, #, and /* */ comments.
-func Language_Php() (language Language) {
-	defer func() { Language_Invariants(language, "Language_Php.language") }()
-	return Language{
+func Language_Php() (language Seeded_Language) {
+	defer func() { Seeded_Language_Invariants(language, "Language_Php.language") }()
+	return Seeded_Language{
 		Name:                "PHP",
 		Test_Infixes:        []string{"Test."},
 		Line_Comment:        []string{"//", "#"},
@@ -1266,9 +1690,9 @@ func Language_Php() (language Language) {
 }
 
 // Language_Solidity returns the Solidity configuration: // and /* */ comments.
-func Language_Solidity() (language Language) {
-	defer func() { Language_Invariants(language, "Language_Solidity.language") }()
-	return Language{
+func Language_Solidity() (language Seeded_Language) {
+	defer func() { Seeded_Language_Invariants(language, "Language_Solidity.language") }()
+	return Seeded_Language{
 		Name:                "Solidity",
 		Line_Comment:        []string{"//"},
 		Block_Comment_Open:  "/*",
@@ -1279,9 +1703,9 @@ func Language_Solidity() (language Language) {
 
 // Language_Groovy returns the Groovy configuration: // and /* */ comments, with ”' and
 // """ multi-line strings.
-func Language_Groovy() (language Language) {
-	defer func() { Language_Invariants(language, "Language_Groovy.language") }()
-	return Language{
+func Language_Groovy() (language Seeded_Language) {
+	defer func() { Seeded_Language_Invariants(language, "Language_Groovy.language") }()
+	return Seeded_Language{
 		Name:                "Groovy",
 		Line_Comment:        []string{"//"},
 		Block_Comment_Open:  "/*",
@@ -1295,9 +1719,9 @@ func Language_Groovy() (language Language) {
 }
 
 // Language_Verilog returns the Verilog configuration: // and /* */ comments.
-func Language_Verilog() (language Language) {
-	defer func() { Language_Invariants(language, "Language_Verilog.language") }()
-	return Language{
+func Language_Verilog() (language Seeded_Language) {
+	defer func() { Seeded_Language_Invariants(language, "Language_Verilog.language") }()
+	return Seeded_Language{
 		Name:                "Verilog",
 		Line_Comment:        []string{"//"},
 		Block_Comment_Open:  "/*",
@@ -1307,9 +1731,9 @@ func Language_Verilog() (language Language) {
 }
 
 // Language_Glsl returns the GLSL configuration: // and /* */ comments.
-func Language_Glsl() (language Language) {
-	defer func() { Language_Invariants(language, "Language_Glsl.language") }()
-	return Language{
+func Language_Glsl() (language Seeded_Language) {
+	defer func() { Seeded_Language_Invariants(language, "Language_Glsl.language") }()
+	return Seeded_Language{
 		Name:                "GLSL",
 		Line_Comment:        []string{"//"},
 		Block_Comment_Open:  "/*",
@@ -1319,9 +1743,9 @@ func Language_Glsl() (language Language) {
 }
 
 // Language_Hlsl returns the HLSL configuration: // and /* */ comments.
-func Language_Hlsl() (language Language) {
-	defer func() { Language_Invariants(language, "Language_Hlsl.language") }()
-	return Language{
+func Language_Hlsl() (language Seeded_Language) {
+	defer func() { Seeded_Language_Invariants(language, "Language_Hlsl.language") }()
+	return Seeded_Language{
 		Name:                "HLSL",
 		Line_Comment:        []string{"//"},
 		Block_Comment_Open:  "/*",
@@ -1331,9 +1755,9 @@ func Language_Hlsl() (language Language) {
 }
 
 // Language_Arduino returns the Arduino configuration: // and /* */ comments.
-func Language_Arduino() (language Language) {
-	defer func() { Language_Invariants(language, "Language_Arduino.language") }()
-	return Language{
+func Language_Arduino() (language Seeded_Language) {
+	defer func() { Seeded_Language_Invariants(language, "Language_Arduino.language") }()
+	return Seeded_Language{
 		Name:                "Arduino",
 		Line_Comment:        []string{"//"},
 		Block_Comment_Open:  "/*",
@@ -1343,9 +1767,9 @@ func Language_Arduino() (language Language) {
 }
 
 // Language_Protobuf returns the Protocol Buffers configuration: // and /* */ comments.
-func Language_Protobuf() (language Language) {
-	defer func() { Language_Invariants(language, "Language_Protobuf.language") }()
-	return Language{
+func Language_Protobuf() (language Seeded_Language) {
+	defer func() { Seeded_Language_Invariants(language, "Language_Protobuf.language") }()
+	return Seeded_Language{
 		Name:                "Protobuf",
 		Line_Comment:        []string{"//"},
 		Block_Comment_Open:  "/*",
@@ -1355,9 +1779,9 @@ func Language_Protobuf() (language Language) {
 }
 
 // Language_Thrift returns the Thrift configuration: //, #, and /* */ comments.
-func Language_Thrift() (language Language) {
-	defer func() { Language_Invariants(language, "Language_Thrift.language") }()
-	return Language{
+func Language_Thrift() (language Seeded_Language) {
+	defer func() { Seeded_Language_Invariants(language, "Language_Thrift.language") }()
+	return Seeded_Language{
 		Name:                "Thrift",
 		Line_Comment:        []string{"//", "#"},
 		Block_Comment_Open:  "/*",
@@ -1367,9 +1791,9 @@ func Language_Thrift() (language Language) {
 }
 
 // Language_Jsonc returns the JSONC/JSON5 configuration: // and /* */ comments.
-func Language_Jsonc() (language Language) {
-	defer func() { Language_Invariants(language, "Language_Jsonc.language") }()
-	return Language{
+func Language_Jsonc() (language Seeded_Language) {
+	defer func() { Seeded_Language_Invariants(language, "Language_Jsonc.language") }()
+	return Seeded_Language{
 		Name:                "JSONC",
 		Line_Comment:        []string{"//"},
 		Block_Comment_Open:  "/*",
@@ -1379,9 +1803,9 @@ func Language_Jsonc() (language Language) {
 }
 
 // Language_Hcl returns the HCL/Terraform configuration: #, //, and /* */ comments.
-func Language_Hcl() (language Language) {
-	defer func() { Language_Invariants(language, "Language_Hcl.language") }()
-	return Language{
+func Language_Hcl() (language Seeded_Language) {
+	defer func() { Seeded_Language_Invariants(language, "Language_Hcl.language") }()
+	return Seeded_Language{
 		Name:                "HCL",
 		Line_Comment:        []string{"#", "//"},
 		Block_Comment_Open:  "/*",
@@ -1391,9 +1815,9 @@ func Language_Hcl() (language Language) {
 }
 
 // Language_Nix returns the Nix configuration: # and /* */ comments, with ” ” strings.
-func Language_Nix() (language Language) {
-	defer func() { Language_Invariants(language, "Language_Nix.language") }()
-	return Language{
+func Language_Nix() (language Seeded_Language) {
+	defer func() { Seeded_Language_Invariants(language, "Language_Nix.language") }()
+	return Seeded_Language{
 		Name:                "Nix",
 		Line_Comment:        []string{"#"},
 		Block_Comment_Open:  "/*",
@@ -1404,9 +1828,9 @@ func Language_Nix() (language Language) {
 }
 
 // Language_Markdown returns the Markdown configuration: <!-- --> comments only.
-func Language_Markdown() (language Language) {
-	defer func() { Language_Invariants(language, "Language_Markdown.language") }()
-	return Language{
+func Language_Markdown() (language Seeded_Language) {
+	defer func() { Seeded_Language_Invariants(language, "Language_Markdown.language") }()
+	return Seeded_Language{
 		Name:                "Markdown",
 		Block_Comment_Open:  "<!--",
 		Block_Comment_Close: "-->",
@@ -1414,9 +1838,9 @@ func Language_Markdown() (language Language) {
 }
 
 // Language_Vue returns the Vue configuration: <!-- --> comments only.
-func Language_Vue() (language Language) {
-	defer func() { Language_Invariants(language, "Language_Vue.language") }()
-	return Language{
+func Language_Vue() (language Seeded_Language) {
+	defer func() { Seeded_Language_Invariants(language, "Language_Vue.language") }()
+	return Seeded_Language{
 		Name:                "Vue",
 		Block_Comment_Open:  "<!--",
 		Block_Comment_Close: "-->",
@@ -1424,9 +1848,9 @@ func Language_Vue() (language Language) {
 }
 
 // Language_Svelte returns the Svelte configuration: <!-- --> comments only.
-func Language_Svelte() (language Language) {
-	defer func() { Language_Invariants(language, "Language_Svelte.language") }()
-	return Language{
+func Language_Svelte() (language Seeded_Language) {
+	defer func() { Seeded_Language_Invariants(language, "Language_Svelte.language") }()
+	return Seeded_Language{
 		Name:                "Svelte",
 		Block_Comment_Open:  "<!--",
 		Block_Comment_Close: "-->",
@@ -1434,9 +1858,9 @@ func Language_Svelte() (language Language) {
 }
 
 // Language_Astro returns the Astro configuration: <!-- --> comments only.
-func Language_Astro() (language Language) {
-	defer func() { Language_Invariants(language, "Language_Astro.language") }()
-	return Language{
+func Language_Astro() (language Seeded_Language) {
+	defer func() { Seeded_Language_Invariants(language, "Language_Astro.language") }()
+	return Seeded_Language{
 		Name:                "Astro",
 		Block_Comment_Open:  "<!--",
 		Block_Comment_Close: "-->",
@@ -1444,9 +1868,9 @@ func Language_Astro() (language Language) {
 }
 
 // Language_Xaml returns the XAML configuration: <!-- --> comments only.
-func Language_Xaml() (language Language) {
-	defer func() { Language_Invariants(language, "Language_Xaml.language") }()
-	return Language{
+func Language_Xaml() (language Seeded_Language) {
+	defer func() { Seeded_Language_Invariants(language, "Language_Xaml.language") }()
+	return Seeded_Language{
 		Name:                "XAML",
 		Block_Comment_Open:  "<!--",
 		Block_Comment_Close: "-->",
@@ -1454,9 +1878,9 @@ func Language_Xaml() (language Language) {
 }
 
 // Language_Xslt returns the XSLT configuration: <!-- --> comments only.
-func Language_Xslt() (language Language) {
-	defer func() { Language_Invariants(language, "Language_Xslt.language") }()
-	return Language{
+func Language_Xslt() (language Seeded_Language) {
+	defer func() { Seeded_Language_Invariants(language, "Language_Xslt.language") }()
+	return Seeded_Language{
 		Name:                "XSLT",
 		Block_Comment_Open:  "<!--",
 		Block_Comment_Close: "-->",
@@ -1465,9 +1889,9 @@ func Language_Xslt() (language Language) {
 
 // Language_Haskell returns the Haskell configuration: -- line comments and nesting
 // {- -} block comments.
-func Language_Haskell() (language Language) {
-	defer func() { Language_Invariants(language, "Language_Haskell.language") }()
-	return Language{
+func Language_Haskell() (language Seeded_Language) {
+	defer func() { Seeded_Language_Invariants(language, "Language_Haskell.language") }()
+	return Seeded_Language{
 		Name:                "Haskell",
 		Line_Comment:        []string{"--"},
 		Block_Comment_Open:  "{-",
@@ -1479,9 +1903,9 @@ func Language_Haskell() (language Language) {
 
 // Language_Ocaml returns the OCaml configuration: nesting (* *) block comments and no
 // line comment.
-func Language_Ocaml() (language Language) {
-	defer func() { Language_Invariants(language, "Language_Ocaml.language") }()
-	return Language{
+func Language_Ocaml() (language Seeded_Language) {
+	defer func() { Seeded_Language_Invariants(language, "Language_Ocaml.language") }()
+	return Seeded_Language{
 		Name:                "OCaml",
 		Block_Comment_Open:  "(*",
 		Block_Comment_Close: "*)",
@@ -1492,9 +1916,9 @@ func Language_Ocaml() (language Language) {
 
 // Language_F_Sharp returns the F# configuration: // line comments, nesting (* *) block
 // comments, and """ strings.
-func Language_F_Sharp() (language Language) {
-	defer func() { Language_Invariants(language, "Language_F_Sharp.language") }()
-	return Language{
+func Language_F_Sharp() (language Seeded_Language) {
+	defer func() { Seeded_Language_Invariants(language, "Language_F_Sharp.language") }()
+	return Seeded_Language{
 		Name:                "F#",
 		Line_Comment:        []string{"//"},
 		Block_Comment_Open:  "(*",
@@ -1507,9 +1931,9 @@ func Language_F_Sharp() (language Language) {
 
 // Language_Julia returns the Julia configuration: # line comments, nesting #= =# block
 // comments, and """ strings.
-func Language_Julia() (language Language) {
-	defer func() { Language_Invariants(language, "Language_Julia.language") }()
-	return Language{
+func Language_Julia() (language Seeded_Language) {
+	defer func() { Seeded_Language_Invariants(language, "Language_Julia.language") }()
+	return Seeded_Language{
 		Name:                "Julia",
 		Line_Comment:        []string{"#"},
 		Block_Comment_Open:  "#=",
@@ -1522,9 +1946,9 @@ func Language_Julia() (language Language) {
 
 // Language_Nim returns the Nim configuration: # line comments, nesting #[ ]# block
 // comments, and """ strings.
-func Language_Nim() (language Language) {
-	defer func() { Language_Invariants(language, "Language_Nim.language") }()
-	return Language{
+func Language_Nim() (language Seeded_Language) {
+	defer func() { Seeded_Language_Invariants(language, "Language_Nim.language") }()
+	return Seeded_Language{
 		Name:                "Nim",
 		Line_Comment:        []string{"#"},
 		Block_Comment_Open:  "#[",
@@ -1537,9 +1961,9 @@ func Language_Nim() (language Language) {
 
 // Language_Common_Lisp returns the Common Lisp configuration: ; line comments and
 // nesting #| |# block comments.
-func Language_Common_Lisp() (language Language) {
-	defer func() { Language_Invariants(language, "Language_Common_Lisp.language") }()
-	return Language{
+func Language_Common_Lisp() (language Seeded_Language) {
+	defer func() { Seeded_Language_Invariants(language, "Language_Common_Lisp.language") }()
+	return Seeded_Language{
 		Name:                "Common Lisp",
 		Line_Comment:        []string{";"},
 		Block_Comment_Open:  "#|",
@@ -1551,9 +1975,9 @@ func Language_Common_Lisp() (language Language) {
 
 // Language_Scheme returns the Scheme configuration: ; line comments and nesting #| |#
 // block comments.
-func Language_Scheme() (language Language) {
-	defer func() { Language_Invariants(language, "Language_Scheme.language") }()
-	return Language{
+func Language_Scheme() (language Seeded_Language) {
+	defer func() { Seeded_Language_Invariants(language, "Language_Scheme.language") }()
+	return Seeded_Language{
 		Name:                "Scheme",
 		Line_Comment:        []string{";"},
 		Block_Comment_Open:  "#|",
@@ -1565,9 +1989,9 @@ func Language_Scheme() (language Language) {
 
 // Language_Racket returns the Racket configuration: ; line comments and nesting #| |#
 // block comments.
-func Language_Racket() (language Language) {
-	defer func() { Language_Invariants(language, "Language_Racket.language") }()
-	return Language{
+func Language_Racket() (language Seeded_Language) {
+	defer func() { Seeded_Language_Invariants(language, "Language_Racket.language") }()
+	return Seeded_Language{
 		Name:                "Racket",
 		Line_Comment:        []string{";"},
 		Block_Comment_Open:  "#|",
@@ -1578,9 +2002,9 @@ func Language_Racket() (language Language) {
 }
 
 // Language_Clojure returns the Clojure configuration: ; line comments only.
-func Language_Clojure() (language Language) {
-	defer func() { Language_Invariants(language, "Language_Clojure.language") }()
-	return Language{
+func Language_Clojure() (language Seeded_Language) {
+	defer func() { Seeded_Language_Invariants(language, "Language_Clojure.language") }()
+	return Seeded_Language{
 		Name:          "Clojure",
 		Line_Comment:  []string{";"},
 		Quote_Strings: Quote_Delimiters(double_quote()),
@@ -1588,9 +2012,9 @@ func Language_Clojure() (language Language) {
 }
 
 // Language_Emacs_Lisp returns the Emacs Lisp configuration: ; line comments only.
-func Language_Emacs_Lisp() (language Language) {
-	defer func() { Language_Invariants(language, "Language_Emacs_Lisp.language") }()
-	return Language{
+func Language_Emacs_Lisp() (language Seeded_Language) {
+	defer func() { Seeded_Language_Invariants(language, "Language_Emacs_Lisp.language") }()
+	return Seeded_Language{
 		Name:          "Emacs Lisp",
 		Line_Comment:  []string{";"},
 		Quote_Strings: Quote_Delimiters(double_quote()),
@@ -1598,9 +2022,9 @@ func Language_Emacs_Lisp() (language Language) {
 }
 
 // Language_Erlang returns the Erlang configuration: % line comments only.
-func Language_Erlang() (language Language) {
-	defer func() { Language_Invariants(language, "Language_Erlang.language") }()
-	return Language{
+func Language_Erlang() (language Seeded_Language) {
+	defer func() { Seeded_Language_Invariants(language, "Language_Erlang.language") }()
+	return Seeded_Language{
 		Name:          "Erlang",
 		Line_Comment:  []string{"%"},
 		Quote_Strings: Quote_Delimiters(double_quote()),
@@ -1608,9 +2032,9 @@ func Language_Erlang() (language Language) {
 }
 
 // Language_Fortran returns the Fortran configuration: ! line comments only.
-func Language_Fortran() (language Language) {
-	defer func() { Language_Invariants(language, "Language_Fortran.language") }()
-	return Language{
+func Language_Fortran() (language Seeded_Language) {
+	defer func() { Seeded_Language_Invariants(language, "Language_Fortran.language") }()
+	return Seeded_Language{
 		Name:          "Fortran",
 		Line_Comment:  []string{"!"},
 		Quote_Strings: Quote_Delimiters(plain_quotes()),
@@ -1619,9 +2043,9 @@ func Language_Fortran() (language Language) {
 
 // Language_Ada returns the Ada configuration: -- line comments, with strings and the
 // apostrophe attribute/character distinction.
-func Language_Ada() (language Language) {
-	defer func() { Language_Invariants(language, "Language_Ada.language") }()
-	return Language{
+func Language_Ada() (language Seeded_Language) {
+	defer func() { Seeded_Language_Invariants(language, "Language_Ada.language") }()
+	return Seeded_Language{
 		Name:          "Ada",
 		Line_Comment:  []string{"--"},
 		Quote_Strings: Quote_Delimiters(c_family_quotes()),
@@ -1630,9 +2054,9 @@ func Language_Ada() (language Language) {
 
 // Language_D returns the D configuration: // and /* */ comments, backtick raw strings,
 // and strings with character literals.
-func Language_D() (language Language) {
-	defer func() { Language_Invariants(language, "Language_D.language") }()
-	return Language{
+func Language_D() (language Seeded_Language) {
+	defer func() { Seeded_Language_Invariants(language, "Language_D.language") }()
+	return Seeded_Language{
 		Name:                "D",
 		Line_Comment:        []string{"//"},
 		Block_Comment_Open:  "/*",
@@ -1644,9 +2068,9 @@ func Language_D() (language Language) {
 
 // Language_Pascal returns the Pascal configuration: // line comments, { } block
 // comments, and single-quoted strings.
-func Language_Pascal() (language Language) {
-	defer func() { Language_Invariants(language, "Language_Pascal.language") }()
-	return Language{
+func Language_Pascal() (language Seeded_Language) {
+	defer func() { Seeded_Language_Invariants(language, "Language_Pascal.language") }()
+	return Seeded_Language{
 		Name:                "Pascal",
 		Line_Comment:        []string{"//"},
 		Block_Comment_Open:  "{",
@@ -1656,9 +2080,9 @@ func Language_Pascal() (language Language) {
 }
 
 // Language_R returns the R configuration: # line comments only.
-func Language_R() (language Language) {
-	defer func() { Language_Invariants(language, "Language_R.language") }()
-	return Language{
+func Language_R() (language Seeded_Language) {
+	defer func() { Seeded_Language_Invariants(language, "Language_R.language") }()
+	return Seeded_Language{
 		Name:          "R",
 		Line_Comment:  []string{"#"},
 		Quote_Strings: Quote_Delimiters(plain_quotes()),
@@ -1667,9 +2091,9 @@ func Language_R() (language Language) {
 
 // Language_Elixir returns the Elixir configuration: # line comments and """ / ”'
 // heredoc strings.
-func Language_Elixir() (language Language) {
-	defer func() { Language_Invariants(language, "Language_Elixir.language") }()
-	return Language{
+func Language_Elixir() (language Seeded_Language) {
+	defer func() { Seeded_Language_Invariants(language, "Language_Elixir.language") }()
+	return Seeded_Language{
 		Name:         "Elixir",
 		Test_Infixes: []string{"_test."},
 		Line_Comment: []string{"#"},
@@ -1682,9 +2106,9 @@ func Language_Elixir() (language Language) {
 }
 
 // Language_Crystal returns the Crystal configuration: # line comments only.
-func Language_Crystal() (language Language) {
-	defer func() { Language_Invariants(language, "Language_Crystal.language") }()
-	return Language{
+func Language_Crystal() (language Seeded_Language) {
+	defer func() { Seeded_Language_Invariants(language, "Language_Crystal.language") }()
+	return Seeded_Language{
 		Name:          "Crystal",
 		Line_Comment:  []string{"#"},
 		Quote_Strings: Quote_Delimiters(double_quote()),
@@ -1693,9 +2117,9 @@ func Language_Crystal() (language Language) {
 
 // Language_Power_Shell returns the PowerShell configuration: # line comments and <# #>
 // block comments.
-func Language_Power_Shell() (language Language) {
-	defer func() { Language_Invariants(language, "Language_Power_Shell.language") }()
-	return Language{
+func Language_Power_Shell() (language Seeded_Language) {
+	defer func() { Seeded_Language_Invariants(language, "Language_Power_Shell.language") }()
+	return Seeded_Language{
 		Name:                "PowerShell",
 		Line_Comment:        []string{"#"},
 		Block_Comment_Open:  "<#",
@@ -1705,9 +2129,9 @@ func Language_Power_Shell() (language Language) {
 }
 
 // Language_Fish returns the Fish shell configuration: # line comments.
-func Language_Fish() (language Language) {
-	defer func() { Language_Invariants(language, "Language_Fish.language") }()
-	return Language{
+func Language_Fish() (language Seeded_Language) {
+	defer func() { Seeded_Language_Invariants(language, "Language_Fish.language") }()
+	return Seeded_Language{
 		Name:          "Fish",
 		Line_Comment:  []string{"#"},
 		Quote_Strings: Quote_Delimiters(plain_quotes()),
@@ -1715,9 +2139,9 @@ func Language_Fish() (language Language) {
 }
 
 // Language_Nushell returns the Nushell configuration: # line comments.
-func Language_Nushell() (language Language) {
-	defer func() { Language_Invariants(language, "Language_Nushell.language") }()
-	return Language{
+func Language_Nushell() (language Seeded_Language) {
+	defer func() { Seeded_Language_Invariants(language, "Language_Nushell.language") }()
+	return Seeded_Language{
 		Name:          "Nushell",
 		Line_Comment:  []string{"#"},
 		Quote_Strings: Quote_Delimiters(plain_quotes()),
@@ -1726,9 +2150,9 @@ func Language_Nushell() (language Language) {
 
 // Language_Cmake returns the CMake configuration: # line comments and #[[ ]] bracket
 // comments, reusing the leveled long-bracket machinery.
-func Language_Cmake() (language Language) {
-	defer func() { Language_Invariants(language, "Language_Cmake.language") }()
-	return Language{
+func Language_Cmake() (language Seeded_Language) {
+	defer func() { Seeded_Language_Invariants(language, "Language_Cmake.language") }()
+	return Seeded_Language{
 		Name:          "CMake",
 		Line_Comment:  []string{"#"},
 		Long_Bracket:  true,
@@ -1737,9 +2161,9 @@ func Language_Cmake() (language Language) {
 }
 
 // Language_Tcl returns the Tcl configuration: # line comments only.
-func Language_Tcl() (language Language) {
-	defer func() { Language_Invariants(language, "Language_Tcl.language") }()
-	return Language{
+func Language_Tcl() (language Seeded_Language) {
+	defer func() { Seeded_Language_Invariants(language, "Language_Tcl.language") }()
+	return Seeded_Language{
 		Name:          "Tcl",
 		Line_Comment:  []string{"#"},
 		Quote_Strings: Quote_Delimiters(double_quote()),
@@ -1747,9 +2171,9 @@ func Language_Tcl() (language Language) {
 }
 
 // Language_Perl returns the Perl configuration: # line comments only.
-func Language_Perl() (language Language) {
-	defer func() { Language_Invariants(language, "Language_Perl.language") }()
-	return Language{
+func Language_Perl() (language Seeded_Language) {
+	defer func() { Seeded_Language_Invariants(language, "Language_Perl.language") }()
+	return Seeded_Language{
 		Name:          "Perl",
 		Line_Comment:  []string{"#"},
 		Heredoc:       true,
@@ -1758,18 +2182,18 @@ func Language_Perl() (language Language) {
 }
 
 // Language_Tex returns the TeX/LaTeX configuration: % line comments only.
-func Language_Tex() (language Language) {
-	defer func() { Language_Invariants(language, "Language_Tex.language") }()
-	return Language{
+func Language_Tex() (language Seeded_Language) {
+	defer func() { Seeded_Language_Invariants(language, "Language_Tex.language") }()
+	return Seeded_Language{
 		Name:         "TeX",
 		Line_Comment: []string{"%"},
 	}
 }
 
 // Language_Visual_Basic returns the Visual Basic configuration: ' line comments only.
-func Language_Visual_Basic() (language Language) {
-	defer func() { Language_Invariants(language, "Language_Visual_Basic.language") }()
-	return Language{
+func Language_Visual_Basic() (language Seeded_Language) {
+	defer func() { Seeded_Language_Invariants(language, "Language_Visual_Basic.language") }()
+	return Seeded_Language{
 		Name:          "Visual Basic",
 		Line_Comment:  []string{"'"},
 		Quote_Strings: Quote_Delimiters(double_quote()),
@@ -1778,219 +2202,230 @@ func Language_Visual_Basic() (language Language) {
 
 // Language_For_Extension returns the seeded language for a file extension, with the
 // leading dot, and whether one matched.
-func Language_For_Extension(extension Extension) (language Language, recognized bool) {
+func Language_For_Extension(
+	extension Extension,
+) (language Language, recognized Recognition) {
 	defer func() {
 		Language_Invariants(language, "Language_For_Extension.language")
-		invariant.Boolean_Invariants(recognized, "Language_For_Extension.recognized")
+		Recognition_Invariants(recognized, "Language_For_Extension.recognized")
 	}()
 	Extension_Invariants(extension, "Language_For_Extension.extension")
 	switch extension {
 	case ".go":
-		return Language_Go(), true
+		return Language(Language_Go()), true
 	case ".rs":
-		return Language_Rust(), true
+		return Language(Language_Rust()), true
 	case ".py":
-		return Language_Python(), true
+		return Language(Language_Python()), true
 	case ".js", ".jsx", ".mjs", ".cjs":
-		return Language_Java_Script(), true
+		return Language(Language_Java_Script()), true
 	case ".ts", ".tsx":
-		return Language_Type_Script(), true
+		return Language(Language_Type_Script()), true
 	case ".lua":
-		return Language_Lua(), true
+		return Language(Language_Lua()), true
 	case ".odin":
-		return Language_Odin(), true
+		return Language(Language_Odin()), true
 	case ".zig":
-		return Language_Zig(), true
+		return Language(Language_Zig()), true
 	case ".c", ".h":
-		return Language_C(), true
+		return Language(Language_C()), true
 	case ".cpp", ".cc", ".cxx", ".hpp", ".hh", ".hxx":
-		return Language_Cpp(), true
+		return Language(Language_Cpp()), true
 	case ".cs":
-		return Language_C_Sharp(), true
+		return Language(Language_C_Sharp()), true
 	case ".java":
-		return Language_Java(), true
+		return Language(Language_Java()), true
 	case ".swift":
-		return Language_Swift(), true
+		return Language(Language_Swift()), true
 	case ".kt", ".kts":
-		return Language_Kotlin(), true
+		return Language(Language_Kotlin()), true
 	case ".scala", ".sc":
-		return Language_Scala(), true
+		return Language(Language_Scala()), true
 	case ".sh", ".bash", ".zsh":
-		return Language_Shell(), true
+		return Language(Language_Shell()), true
 	case ".rb":
-		return Language_Ruby(), true
+		return Language(Language_Ruby()), true
 	case ".yaml", ".yml":
-		return Language_Yaml(), true
+		return Language(Language_Yaml()), true
 	case ".toml":
-		return Language_Toml(), true
+		return Language(Language_Toml()), true
 	case ".sql":
-		return Language_Sql(), true
+		return Language(Language_Sql()), true
 	case ".mk":
-		return Language_Makefile(), true
+		return Language(Language_Makefile()), true
 	case ".dockerfile":
-		return Language_Dockerfile(), true
+		return Language(Language_Dockerfile()), true
 	case ".html", ".htm":
-		return Language_Html(), true
+		return Language(Language_Html()), true
 	case ".xml", ".svg":
-		return Language_Xml(), true
+		return Language(Language_Xml()), true
 	case ".css":
-		return Language_Css(), true
+		return Language(Language_Css()), true
 	case ".scss":
-		return Language_Scss(), true
+		return Language(Language_Scss()), true
 	case ".less":
-		return Language_Less(), true
+		return Language(Language_Less()), true
 	}
-	return extension_match_more(extension)
+	optional, recognized := extension_match_more(extension)
+	return Language(optional), recognized
 }
 
 // Continues Language_For_Extension's lookup for the C-style and markup additions.
-func extension_match_more(extension Extension) (language Language, recognized bool) {
+func extension_match_more(
+	extension Extension,
+) (language Optional_Language, recognized Recognition) {
 	defer func() {
-		Language_Invariants(language, "extension_match_more.language")
-		invariant.Boolean_Invariants(recognized, "extension_match_more.recognized")
+		Optional_Language_Invariants(language, "extension_match_more.language")
+		Recognition_Invariants(recognized, "extension_match_more.recognized")
 	}()
 	Extension_Invariants(extension, "extension_match_more.extension")
 	switch extension {
 	case ".m", ".mm":
-		return Language_Objective_C(), true
+		return Optional_Language(Language_Objective_C()), true
 	case ".dart":
-		return Language_Dart(), true
+		return Optional_Language(Language_Dart()), true
 	case ".php", ".phtml":
-		return Language_Php(), true
+		return Optional_Language(Language_Php()), true
 	case ".sol":
-		return Language_Solidity(), true
+		return Optional_Language(Language_Solidity()), true
 	case ".groovy", ".gradle":
-		return Language_Groovy(), true
+		return Optional_Language(Language_Groovy()), true
 	case ".v", ".sv", ".svh":
-		return Language_Verilog(), true
+		return Optional_Language(Language_Verilog()), true
 	case ".glsl", ".vert", ".frag", ".comp", ".geom":
-		return Language_Glsl(), true
+		return Optional_Language(Language_Glsl()), true
 	case ".hlsl":
-		return Language_Hlsl(), true
+		return Optional_Language(Language_Hlsl()), true
 	case ".ino":
-		return Language_Arduino(), true
+		return Optional_Language(Language_Arduino()), true
 	case ".proto":
-		return Language_Protobuf(), true
+		return Optional_Language(Language_Protobuf()), true
 	case ".thrift":
-		return Language_Thrift(), true
+		return Optional_Language(Language_Thrift()), true
 	case ".jsonc", ".json5":
-		return Language_Jsonc(), true
+		return Optional_Language(Language_Jsonc()), true
 	case ".tf", ".hcl", ".tfvars":
-		return Language_Hcl(), true
+		return Optional_Language(Language_Hcl()), true
 	case ".nix":
-		return Language_Nix(), true
+		return Optional_Language(Language_Nix()), true
 	case ".md", ".markdown":
-		return Language_Markdown(), true
+		return Optional_Language(Language_Markdown()), true
 	case ".vue":
-		return Language_Vue(), true
+		return Optional_Language(Language_Vue()), true
 	case ".svelte":
-		return Language_Svelte(), true
+		return Optional_Language(Language_Svelte()), true
 	case ".astro":
-		return Language_Astro(), true
+		return Optional_Language(Language_Astro()), true
 	case ".xaml":
-		return Language_Xaml(), true
+		return Optional_Language(Language_Xaml()), true
 	case ".xsl", ".xslt":
-		return Language_Xslt(), true
+		return Optional_Language(Language_Xslt()), true
 	}
 	return extension_match_rest(extension)
 }
 
 // Continues Language_For_Extension's lookup for the remaining languages.
-func extension_match_rest(extension Extension) (language Language, recognized bool) {
+func extension_match_rest(
+	extension Extension,
+) (language Optional_Language, recognized Recognition) {
 	defer func() {
-		Language_Invariants(language, "extension_match_rest.language")
-		invariant.Boolean_Invariants(recognized, "extension_match_rest.recognized")
+		Optional_Language_Invariants(language, "extension_match_rest.language")
+		Recognition_Invariants(recognized, "extension_match_rest.recognized")
 	}()
 	Extension_Invariants(extension, "extension_match_rest.extension")
 	switch extension {
 	case ".hs", ".lhs":
-		return Language_Haskell(), true
+		return Optional_Language(Language_Haskell()), true
 	case ".ml", ".mli":
-		return Language_Ocaml(), true
+		return Optional_Language(Language_Ocaml()), true
 	case ".fs", ".fsx", ".fsi":
-		return Language_F_Sharp(), true
+		return Optional_Language(Language_F_Sharp()), true
 	case ".jl":
-		return Language_Julia(), true
+		return Optional_Language(Language_Julia()), true
 	case ".nim", ".nims":
-		return Language_Nim(), true
+		return Optional_Language(Language_Nim()), true
 	case ".lisp", ".lsp", ".cl":
-		return Language_Common_Lisp(), true
+		return Optional_Language(Language_Common_Lisp()), true
 	case ".scm", ".ss":
-		return Language_Scheme(), true
+		return Optional_Language(Language_Scheme()), true
 	case ".rkt":
-		return Language_Racket(), true
+		return Optional_Language(Language_Racket()), true
 	case ".clj", ".cljs", ".cljc", ".edn":
-		return Language_Clojure(), true
+		return Optional_Language(Language_Clojure()), true
 	case ".el":
-		return Language_Emacs_Lisp(), true
+		return Optional_Language(Language_Emacs_Lisp()), true
 	case ".erl", ".hrl":
-		return Language_Erlang(), true
+		return Optional_Language(Language_Erlang()), true
 	case ".f90", ".f95", ".f03", ".f08", ".f", ".for":
-		return Language_Fortran(), true
+		return Optional_Language(Language_Fortran()), true
 	case ".adb", ".ads", ".ada":
-		return Language_Ada(), true
+		return Optional_Language(Language_Ada()), true
 	case ".d":
-		return Language_D(), true
+		return Optional_Language(Language_D()), true
 	case ".pas", ".pp", ".dpr":
-		return Language_Pascal(), true
+		return Optional_Language(Language_Pascal()), true
 	case ".r", ".R":
-		return Language_R(), true
+		return Optional_Language(Language_R()), true
 	case ".ex", ".exs":
-		return Language_Elixir(), true
+		return Optional_Language(Language_Elixir()), true
 	case ".cr":
-		return Language_Crystal(), true
+		return Optional_Language(Language_Crystal()), true
 	case ".ps1", ".psm1", ".psd1":
-		return Language_Power_Shell(), true
+		return Optional_Language(Language_Power_Shell()), true
 	case ".fish":
-		return Language_Fish(), true
+		return Optional_Language(Language_Fish()), true
 	case ".nu":
-		return Language_Nushell(), true
+		return Optional_Language(Language_Nushell()), true
 	case ".cmake":
-		return Language_Cmake(), true
+		return Optional_Language(Language_Cmake()), true
 	case ".tcl":
-		return Language_Tcl(), true
+		return Optional_Language(Language_Tcl()), true
 	case ".pl", ".pm", ".t", ".pod":
-		return Language_Perl(), true
+		return Optional_Language(Language_Perl()), true
 	case ".tex", ".sty", ".cls", ".ltx":
-		return Language_Tex(), true
+		return Optional_Language(Language_Tex()), true
 	case ".vb":
-		return Language_Visual_Basic(), true
+		return Optional_Language(Language_Visual_Basic()), true
 	}
-	return Language{}, false
+	return Optional_Language{}, false
 }
 
 // Language_For_Filename returns the language for an extensionless file recognized by
 // its name, and whether one matched.
-func Language_For_Filename(name File_Name) (language Language, recognized bool) {
+func Language_For_Filename(
+	name File_Name,
+) (language Optional_Language, recognized Recognition) {
 	defer func() {
-		Language_Invariants(language, "Language_For_Filename.language")
-		invariant.Boolean_Invariants(recognized, "Language_For_Filename.recognized")
+		Optional_Language_Invariants(language, "Language_For_Filename.language")
+		Recognition_Invariants(recognized, "Language_For_Filename.recognized")
 	}()
 	File_Name_Invariants(name, "Language_For_Filename.name")
 	switch name {
 	case "Makefile", "makefile", "GNUmakefile":
-		return Language_Makefile(), true
+		return Optional_Language(Language_Makefile()), true
 	case "Dockerfile":
-		return Language_Dockerfile(), true
+		return Optional_Language(Language_Dockerfile()), true
 	case "CMakeLists.txt":
-		return Language_Cmake(), true
+		return Optional_Language(Language_Cmake()), true
 	}
-	return Language{}, false
+	return Optional_Language{}, false
 }
 
 // Resolves the language for a path by its extension, or for an extensionless file by
 // its name, and whether one matched.
-func language_for_path(file_path File_Path) (language Language, recognized bool) {
+func language_for_path(file_path File_Path) (language Language, recognized Recognition) {
 	defer func() {
 		Language_Invariants(language, "language_for_path.language")
-		invariant.Boolean_Invariants(recognized, "language_for_path.recognized")
+		Recognition_Invariants(recognized, "language_for_path.recognized")
 	}()
 	File_Path_Invariants(file_path, "language_for_path.file_path")
 	language, recognized = Language_For_Extension(Extension(path.Ext(string(file_path))))
 	if recognized {
 		return language, true
 	}
-	return Language_For_Filename(File_Name(path.Base(string(file_path))))
+	language_by_name, recognized_by_name := Language_For_Filename(
+		File_Name(path.Base(string(file_path))))
+	return Language(language_by_name), recognized_by_name
 }
 
 // EXTENSION_BYTES_MIN is the empty extension of a file whose name carries no dot.
@@ -2008,7 +2443,7 @@ type Extension string
 
 // Extension_Invariants bounds an extension's byte length.
 func Extension_Invariants(extension Extension, namespace invariant.Namespace) {
-	invariant.Assertions(namespace).
+	invariant.Tree(extension, namespace).
 		Range_Int(len(extension), EXTENSION_BYTES_MIN, EXTENSION_BYTES_MAX).
 		Ensure()
 }
@@ -2026,7 +2461,7 @@ type File_Name string
 
 // File_Name_Invariants bounds a base name's byte length.
 func File_Name_Invariants(name File_Name, namespace invariant.Namespace) {
-	invariant.Assertions(namespace).
+	invariant.Tree(name, namespace).
 		Range_Int(len(name), FILE_NAME_BYTES_MIN, FILE_NAME_BYTES_MAX).
 		Ensure()
 }
@@ -2043,19 +2478,49 @@ type File_Path string
 
 // File_Path_Invariants bounds a file path's byte length.
 func File_Path_Invariants(file_path File_Path, namespace invariant.Namespace) {
-	invariant.Assertions(namespace).
+	invariant.Tree(file_path, namespace).
 		Range_Int(len(file_path), FILE_PATH_BYTES_MIN, FILE_PATH_BYTES_MAX).
+		Ensure()
+}
+
+// Code_Count is the number of code lines in one partition.
+type Code_Count Line_Count
+
+// Code_Count_Invariants bounds a code-line count.
+func Code_Count_Invariants(count Code_Count, namespace invariant.Namespace) {
+	invariant.Tree(count, namespace).
+		Range_Int(int(count), LINE_COUNT_MIN, LINE_COUNT_MAX).
+		Ensure()
+}
+
+// Comment_Count is the number of comment-only lines in one partition.
+type Comment_Count Line_Count
+
+// Comment_Count_Invariants bounds a comment-only line count.
+func Comment_Count_Invariants(count Comment_Count, namespace invariant.Namespace) {
+	invariant.Tree(count, namespace).
+		Range_Int(int(count), LINE_COUNT_MIN, LINE_COUNT_MAX).
+		Ensure()
+}
+
+// Blank_Count is the number of blank lines in one partition.
+type Blank_Count Line_Count
+
+// Blank_Count_Invariants bounds a blank-line count.
+func Blank_Count_Invariants(count Blank_Count, namespace invariant.Namespace) {
+	invariant.Tree(count, namespace).
+		Range_Int(int(count), LINE_COUNT_MIN, LINE_COUNT_MAX).
 		Ensure()
 }
 
 // Counts is the line partition of a file or a group of files.
 type Counts struct {
 	// Code is the number of lines bearing code.
-	Code Line_Count
+	Code Code_Count
 	// Comment is the number of comment-only lines.
-	Comment Line_Count
+	Comment Comment_Count
 	// Blank is the number of empty or whitespace-only lines.
-	Blank Line_Count
+	Blank Blank_Count
 	// Dropped is how many lines were wider than the scan window and so were only
 	// partly read. It is not a fourth partition — such a line is still counted as
 	// code, comment, or blank — but a classification made from a prefix, which the
@@ -2065,10 +2530,59 @@ type Counts struct {
 
 // Counts_Invariants states each partition of the line count and the lines read short.
 func Counts_Invariants(counts Counts, namespace invariant.Namespace) {
-	Line_Count_Invariants(counts.Code, "Counts.Code")
-	Line_Count_Invariants(counts.Comment, "Counts.Comment")
-	Line_Count_Invariants(counts.Blank, "Counts.Blank")
-	Dropped_Count_Invariants(counts.Dropped, "Counts.Dropped")
+	Code_Count_Invariants(counts.Code, namespace)
+	Comment_Count_Invariants(counts.Comment, namespace)
+	Blank_Count_Invariants(counts.Blank, namespace)
+	Dropped_Count_Invariants(counts.Dropped, namespace)
+}
+
+// File_Partition is the line partition produced from one source file. Its byte bound
+// makes aggregate report ceilings unreachable at this stage.
+type File_Partition Counts
+
+// File_Partition_Invariants checks one file's production range without assigning the
+// report's aggregate boundary witnesses to the byte classifier.
+func File_Partition_Invariants(
+	counts File_Partition, namespace invariant.Namespace,
+) {
+	invariant.Always(
+		int(counts.Code) >= LINE_COUNT_MIN &&
+			int(counts.Code) <= SOURCE_BYTES_MAX,
+		"A file code partition always fits its source byte bound.")
+	invariant.Always(
+		int(counts.Comment) >= LINE_COUNT_MIN &&
+			int(counts.Comment) <= SOURCE_BYTES_MAX,
+		"A file comment partition always fits its source byte bound.")
+	invariant.Always(
+		int(counts.Blank) >= LINE_COUNT_MIN &&
+			int(counts.Blank) <= SOURCE_BYTES_MAX,
+		"A file blank partition always fits its source byte bound.")
+	invariant.Always(
+		int(counts.Code)+int(counts.Comment)+int(counts.Blank) <= SOURCE_BYTES_MAX,
+		"A file line partition always fits its source byte bound.")
+	invariant.Always(
+		counts.Dropped >= DROPPED_COUNT_MIN && counts.Dropped <= DROPPED_COUNT_MAX,
+		"A file dropped-line tally always fits its report bound.")
+}
+
+// Summed_Counts is an in-progress sum of file partitions for one language partition.
+type Summed_Counts Counts
+
+// Summed_Counts_Invariants checks accumulator safety. The completed group owns the
+// report boundary witnesses.
+func Summed_Counts_Invariants(counts Summed_Counts, namespace invariant.Namespace) {
+	invariant.Always(
+		int(counts.Code) >= LINE_COUNT_MIN && int(counts.Code) <= LINE_COUNT_MAX,
+		"A summed code partition always stays in the line bound.")
+	invariant.Always(
+		int(counts.Comment) >= LINE_COUNT_MIN && int(counts.Comment) <= LINE_COUNT_MAX,
+		"A summed comment partition always stays in the line bound.")
+	invariant.Always(
+		int(counts.Blank) >= LINE_COUNT_MIN && int(counts.Blank) <= LINE_COUNT_MAX,
+		"A summed blank partition always stays in the line bound.")
+	invariant.Always(
+		counts.Dropped >= DROPPED_COUNT_MIN && counts.Dropped <= DROPPED_COUNT_MAX,
+		"A summed dropped-line tally always stays in its bound.")
 }
 
 // DROPPED_COUNT_MIN is a report in which every line fit the scan window.
@@ -2090,7 +2604,7 @@ type Dropped_Count int
 
 // Dropped_Count_Invariants bounds the tally of lines read short.
 func Dropped_Count_Invariants(count Dropped_Count, namespace invariant.Namespace) {
-	invariant.Assertions(namespace).
+	invariant.Tree(count, namespace).
 		Range_Int(int(count), DROPPED_COUNT_MIN, DROPPED_COUNT_MAX).
 		Ensure()
 }
@@ -2109,7 +2623,7 @@ type Line_Count int
 
 // Line_Count_Invariants bounds a line count.
 func Line_Count_Invariants(count Line_Count, namespace invariant.Namespace) {
-	invariant.Assertions(namespace).
+	invariant.Tree(count, namespace).
 		Range_Int(int(count), LINE_COUNT_MIN, LINE_COUNT_MAX).
 		Ensure()
 }
@@ -2119,7 +2633,7 @@ func Line_Count_Invariants(count Line_Count, namespace invariant.Namespace) {
 func counts_lines(counts Counts) (line_count Line_Count) {
 	defer func() { Line_Count_Invariants(line_count, "counts_lines.line_count") }()
 	Counts_Invariants(counts, "counts_lines.counts")
-	return counts.Code + counts.Comment + counts.Blank
+	return Line_Count(counts.Code) + Line_Count(counts.Comment) + Line_Count(counts.Blank)
 }
 
 // File_Classifier is the classification capability selected by the composition root.
@@ -2134,9 +2648,9 @@ type File_Classifier struct {
 
 // File_Classifier_Invariants states the selected implementation and model size.
 func File_Classifier_Invariants(classifier File_Classifier, namespace invariant.Namespace) {
-	File_Classifier_Kind_Invariants(classifier.Kind, "File_Classifier.Kind")
+	File_Classifier_Kind_Invariants(classifier.Kind, namespace)
 	File_Classifications_Invariants(
-		classifier.Classifications, "File_Classifier.Classifications")
+		classifier.Classifications, namespace)
 }
 
 // File_Classifier_Kind selects the concrete classification implementation Main uses.
@@ -2147,7 +2661,7 @@ type File_Classifier_Kind int
 func File_Classifier_Kind_Invariants(
 	kind File_Classifier_Kind, namespace invariant.Namespace,
 ) {
-	invariant.Assertions(namespace).
+	invariant.Tree(kind, namespace).
 		Enum_Int(
 			int(kind),
 			int(FILE_CLASSIFIER_KIND_BYTES),
@@ -2163,13 +2677,13 @@ const FILE_CLASSIFIER_KIND_BYTES File_Classifier_Kind = 1
 const FILE_CLASSIFIER_KIND_MODEL File_Classifier_Kind = 2
 
 // File_Classifications are exact classifications keyed by recognized file path.
-type File_Classifications map[Classified_Path]Counts
+type File_Classifications map[Classified_Path]File_Partition
 
 // File_Classifications_Invariants bounds a model to the widest boundary witness.
 func File_Classifications_Invariants(
 	classifications File_Classifications, namespace invariant.Namespace,
 ) {
-	invariant.Assertions(namespace).
+	invariant.Tree(classifications, namespace).
 		Range_Int(
 			len(classifications),
 			FILE_CLASSIFICATIONS_COUNT_MIN,
@@ -2187,8 +2701,10 @@ const FILE_CLASSIFICATIONS_COUNT_MAX = 65631
 
 // The consumer validates both sides of the injected boundary because a modeled
 // implementation must obey the same domain and range as the byte implementation.
-func classify(classifier File_Classifier, input Classify_File_Input) (counts Counts) {
-	defer func() { Counts_Invariants(counts, "classify.counts") }()
+func classify(
+	classifier File_Classifier, input Classify_File_Input,
+) (counts File_Partition) {
+	defer func() { File_Partition_Invariants(counts, "classify.counts") }()
 	File_Classifier_Invariants(classifier, "classify.classifier")
 	Classify_File_Input_Invariants(input, "classify.input")
 	switch classifier.Kind {
@@ -2207,8 +2723,8 @@ func classify(classifier File_Classifier, input Classify_File_Input) (counts Cou
 // stored derivation because their only possible partition is the zero value.
 func classify_model(
 	classifications File_Classifications, input Classify_File_Input,
-) (counts Counts) {
-	defer func() { Counts_Invariants(counts, "classify_model.counts") }()
+) (counts File_Partition) {
+	defer func() { File_Partition_Invariants(counts, "classify_model.counts") }()
 	File_Classifications_Invariants(classifications, "classify_model.classifications")
 	Classify_File_Input_Invariants(input, "classify_model.input")
 	counts, modeled := classifications[input.Path]
@@ -2216,7 +2732,7 @@ func classify_model(
 		return counts
 	}
 	if len(input.Source) == 0 {
-		return Counts{}
+		return File_Partition{}
 	}
 	panic("classification model missing a nonempty file")
 }
@@ -2232,7 +2748,7 @@ type Classified_Path string
 
 // Classified_Path_Invariants keeps the classifier's domain at recognized path widths.
 func Classified_Path_Invariants(file_path Classified_Path, namespace invariant.Namespace) {
-	invariant.Assertions(namespace).
+	invariant.Tree(file_path, namespace).
 		Range_Int(len(file_path), CLASSIFIED_PATH_BYTES_MIN, CLASSIFIED_PATH_BYTES_MAX).
 		Ensure()
 }
@@ -2244,7 +2760,7 @@ type Classify_File_Input struct {
 	// Source is the file's bytes.
 	Source Source
 	// Language is the language to read the source as.
-	Language Language
+	Language Seeded_Language
 }
 
 // Classify_File_Input_Invariants states the bytes to read and the language to read
@@ -2252,9 +2768,9 @@ type Classify_File_Input struct {
 func Classify_File_Input_Invariants(
 	input Classify_File_Input, namespace invariant.Namespace,
 ) {
-	Classified_Path_Invariants(input.Path, "Classify_File_Input.Path")
-	Source_Invariants(input.Source, "Classify_File_Input.Source")
-	Language_Invariants(input.Language, "Classify_File_Input.Language")
+	Classified_Path_Invariants(input.Path, namespace)
+	Source_Invariants(input.Source, namespace)
+	Seeded_Language_Invariants(input.Language, namespace)
 }
 
 // SOURCE_BYTES_MIN is the empty file.
@@ -2271,15 +2787,15 @@ type Source []byte
 
 // Source_Invariants bounds a file's byte count.
 func Source_Invariants(source Source, namespace invariant.Namespace) {
-	invariant.Assertions(namespace).
+	invariant.Tree(source, namespace).
 		Range_Int(len(source), SOURCE_BYTES_MIN, SOURCE_BYTES_MAX).
 		Ensure()
 }
 
 // Classify_File partitions every physical line of the source into code, comment, and
 // blank counts. Each line is counted once, so the three sum to the line count.
-func Classify_File(input Classify_File_Input) (counts Counts) {
-	defer func() { Counts_Invariants(counts, "Classify_File.counts") }()
+func Classify_File(input Classify_File_Input) (counts File_Partition) {
+	defer func() { File_Partition_Invariants(counts, "Classify_File.counts") }()
 	Classify_File_Input_Invariants(input, "Classify_File.input")
 	prepared := language_scanner(&input.Language)
 	carry := Scan_Carry{
@@ -2332,8 +2848,8 @@ func Classify_File(input Classify_File_Input) (counts Counts) {
 }
 
 // Adds one line's verdict to the running partition.
-func counts_tally(counts *Counts, kind Line_Kind) {
-	Counts_Invariants(*counts, "counts_tally.counts")
+func counts_tally(counts *File_Partition, kind Line_Kind) {
+	File_Partition_Invariants(*counts, "counts_tally.counts")
 	Line_Kind_Invariants(kind, "counts_tally.kind")
 	switch kind {
 	case LINE_KIND_CODE:
@@ -2351,7 +2867,7 @@ type Line_Kind int
 // Line_Kind_Invariants holds a partition to the three a line can fall into, and
 // witnesses each one.
 func Line_Kind_Invariants(kind Line_Kind, namespace invariant.Namespace) {
-	invariant.Assertions(namespace).
+	invariant.Tree(kind, namespace).
 		Enum_3_Int(
 			int(kind), int(LINE_KIND_BLANK), int(LINE_KIND_CODE),
 			int(LINE_KIND_COMMENT)).
@@ -2379,7 +2895,7 @@ type Line []byte
 
 // Line_Invariants bounds a line's byte count.
 func Line_Invariants(line Line, namespace invariant.Namespace) {
-	invariant.Assertions(namespace).
+	invariant.Tree(line, namespace).
 		Range_Int(len(line), LINE_BYTES_MIN, LINE_BYTES_MAX).
 		Ensure()
 }
@@ -2398,7 +2914,7 @@ type Scan_Line []byte
 
 // Scan_Line_Invariants bounds a scanned line's byte count.
 func Scan_Line_Invariants(line Scan_Line, namespace invariant.Namespace) {
-	invariant.Assertions(namespace).
+	invariant.Tree(line, namespace).
 		Range_Int(len(line), SCAN_LINE_BYTES_MIN, SCAN_LINE_BYTES_MAX).
 		Ensure()
 }
@@ -2414,7 +2930,7 @@ type Cursor int
 
 // Cursor_Invariants bounds a cursor to the line it walks.
 func Cursor_Invariants(cursor Cursor, namespace invariant.Namespace) {
-	invariant.Assertions(namespace).
+	invariant.Tree(cursor, namespace).
 		Range_Int(int(cursor), CURSOR_MIN, CURSOR_MAX).
 		Ensure()
 }
@@ -2432,8 +2948,22 @@ type Scan_Position struct {
 
 // Scan_Position_Invariants states the line and the offset reached within it.
 func Scan_Position_Invariants(at Scan_Position, namespace invariant.Namespace) {
-	Scan_Line_Invariants(at.Line, "Scan_Position.Line")
-	Cursor_Invariants(at.Cursor, "Scan_Position.Cursor")
+	Scan_Line_Invariants(at.Line, namespace)
+	Cursor_Invariants(at.Cursor, namespace)
+}
+
+// Bounded_Position is a scanner cursor that stays in one nonempty line.
+type Bounded_Position Scan_Position
+
+// Bounded_Position_Invariants states the safety properties that all scanner probes
+// share. The complete scan owns the variable cursor and line-width boundaries.
+func Bounded_Position_Invariants(at Bounded_Position, namespace invariant.Namespace) {
+	invariant.Always(
+		len(at.Line) >= SCAN_LINE_BYTES_MIN,
+		"A bounded scanner position always has line data.")
+	invariant.Always(
+		int(at.Cursor) <= len(at.Line),
+		"A bounded scanner position always stays in the line.")
 }
 
 // NESTING_DEPTH_MIN is the depth outside any block comment.
@@ -2449,7 +2979,7 @@ type Nesting_Depth int
 
 // Nesting_Depth_Invariants bounds the open block-comment depth.
 func Nesting_Depth_Invariants(depth Nesting_Depth, namespace invariant.Namespace) {
-	invariant.Assertions(namespace).
+	invariant.Tree(depth, namespace).
 		Range_Int(int(depth), NESTING_DEPTH_MIN, NESTING_DEPTH_MAX).
 		Ensure()
 }
@@ -2473,7 +3003,7 @@ type Comment_Closer string
 // Comment_Closer_Invariants bounds a carried long-bracket terminator, carving the width
 // a bracket cannot produce.
 func Comment_Closer_Invariants(closer Comment_Closer, namespace invariant.Namespace) {
-	invariant.Assertions(namespace).
+	invariant.Tree(closer, namespace).
 		Range_Holed_Int(
 			len(closer), BRACKET_CLOSER_BYTES_MIN, BRACKET_CLOSER_BYTES_MAX,
 			BRACKET_CLOSER_BYTES_ABSENT, BRACKET_CLOSER_BYTES_ABSENT,
@@ -2486,7 +3016,7 @@ type Closer string
 
 // Closer_Invariants bounds a carried terminator's byte length.
 func Closer_Invariants(closer Closer, namespace invariant.Namespace) {
-	invariant.Assertions(namespace).
+	invariant.Tree(closer, namespace).
 		Range_Int(len(closer), CLOSER_BYTES_MIN, CLOSER_BYTES_MAX).
 		Ensure()
 }
@@ -2503,7 +3033,7 @@ type Terminator string
 
 // Terminator_Invariants bounds a heredoc terminator's byte length.
 func Terminator_Invariants(terminator Terminator, namespace invariant.Namespace) {
-	invariant.Assertions(namespace).
+	invariant.Tree(terminator, namespace).
 		Range_Int(len(terminator), TERMINATOR_BYTES_MIN, TERMINATOR_BYTES_MAX).
 		Ensure()
 }
@@ -2525,10 +3055,76 @@ type Scan_Carry struct {
 
 // Scan_Carry_Invariants states every piece of state that crosses a line boundary.
 func Scan_Carry_Invariants(carry Scan_Carry, namespace invariant.Namespace) {
-	Nesting_Depth_Invariants(carry.Block_Comment_Depth, "Scan_Carry.Block_Comment_Depth")
-	Closer_Invariants(carry.Raw_String_Close, "Scan_Carry.Raw_String_Close")
-	Comment_Closer_Invariants(carry.Comment_Close, "Scan_Carry.Comment_Close")
-	Terminator_Invariants(carry.Heredoc_Terminator, "Scan_Carry.Heredoc_Terminator")
+	Nesting_Depth_Invariants(carry.Block_Comment_Depth, namespace)
+	Closer_Invariants(carry.Raw_String_Close, namespace)
+	Comment_Closer_Invariants(carry.Comment_Close, namespace)
+	Terminator_Invariants(carry.Heredoc_Terminator, namespace)
+}
+
+// Active_Heredoc_Carry is the scanner state while a heredoc body is open.
+type Active_Heredoc_Carry Scan_Carry
+
+// Active_Heredoc_Carry_Invariants states the exclusive heredoc state. A heredoc opens
+// only from fresh code, so no comment or verbatim-string state can coexist with it.
+func Active_Heredoc_Carry_Invariants(
+	carry Active_Heredoc_Carry, namespace invariant.Namespace,
+) {
+	invariant.Always(
+		carry.Block_Comment_Depth == 0,
+		"An active heredoc never carries a block comment.")
+	invariant.Always(
+		carry.Raw_String_Close == "",
+		"An active heredoc never carries a verbatim string.")
+	invariant.Always(
+		carry.Comment_Close == "",
+		"An active heredoc never carries a long comment.")
+	invariant.Always(
+		len(carry.Heredoc_Terminator) > TERMINATOR_BYTES_MIN &&
+			len(carry.Heredoc_Terminator) <= TERMINATOR_BYTES_MAX,
+		"An active heredoc always has a valid terminator.")
+}
+
+// Heredoc_Carry is the scanner state after one heredoc body line. The terminator can
+// remain active or become empty when this line closes it.
+type Heredoc_Carry Scan_Carry
+
+// Heredoc_Carry_Invariants states the exclusive post-line heredoc state.
+func Heredoc_Carry_Invariants(carry Heredoc_Carry, namespace invariant.Namespace) {
+	invariant.Always(
+		carry.Block_Comment_Depth == 0,
+		"A heredoc result never carries a block comment.")
+	invariant.Always(
+		carry.Raw_String_Close == "",
+		"A heredoc result never carries a verbatim string.")
+	invariant.Always(
+		carry.Comment_Close == "",
+		"A heredoc result never carries a long comment.")
+	invariant.Always(
+		len(carry.Heredoc_Terminator) >= TERMINATOR_BYTES_MIN &&
+			len(carry.Heredoc_Terminator) <= TERMINATOR_BYTES_MAX,
+		"A heredoc result always has a valid terminator.")
+}
+
+// Code_Presence is the code-presence state of one scanned line.
+type Code_Presence bool
+
+// Code_Presence_Invariants states both code-presence states.
+func Code_Presence_Invariants(value Code_Presence, namespace invariant.Namespace) {
+	invariant.Tree(value, namespace).
+		Sometimes(bool(value), "The line has code.").
+		Ensure()
+}
+
+// Comment_Presence is the comment-presence state of one scanned line.
+type Comment_Presence bool
+
+// Comment_Presence_Invariants states both comment-presence states.
+func Comment_Presence_Invariants(
+	value Comment_Presence, namespace invariant.Namespace,
+) {
+	invariant.Tree(value, namespace).
+		Sometimes(bool(value), "The line has a comment.").
+		Ensure()
 }
 
 // Accumulates one line's verdict as the scanner walks it.
@@ -2538,36 +3134,53 @@ type Line_Scan struct {
 	// State is the carried scanner state, updated as openers and closers are met.
 	State Scan_Carry
 	// Has_Code records that the line bears code.
-	Has_Code bool
+	Has_Code Code_Presence
 	// Has_Comment records that the line bears a comment.
-	Has_Comment bool
+	Has_Comment Comment_Presence
 }
 
 // Line_Scan_Invariants states the scan's position, its carried state, and its verdict
 // so far.
 func Line_Scan_Invariants(scan Line_Scan, namespace invariant.Namespace) {
-	Scan_Position_Invariants(scan.Position, "Line_Scan.Position")
-	Scan_Carry_Invariants(scan.State, "Line_Scan.State")
-	invariant.Boolean_Invariants(scan.Has_Code, "Line_Scan.Has_Code")
-	invariant.Boolean_Invariants(scan.Has_Comment, "Line_Scan.Has_Comment")
+	Scan_Position_Invariants(scan.Position, namespace)
+	Scan_Carry_Invariants(scan.State, namespace)
+	Code_Presence_Invariants(scan.Has_Code, namespace)
+	Comment_Presence_Invariants(scan.Has_Comment, namespace)
 }
+
+// Active_Scan is a nonblank line while the scanner cursor points at unread data.
+type Active_Scan Line_Scan
+
+// Active_Scan_Invariants states the safety properties of one scanner step. Boundary
+// ranges belong to the complete file scan, while a step only needs a valid cursor.
+func Active_Scan_Invariants(scan Active_Scan, namespace invariant.Namespace) {
+	invariant.Always(
+		len(scan.Position.Line) >= SCAN_LINE_BYTES_MIN,
+		"An active scan always has line data.")
+	invariant.Always(
+		int(scan.Position.Cursor) <= len(scan.Position.Line),
+		"An active scan cursor always stays in the line.")
+}
+
+// SOURCE_BYTE_VALUES_COUNT is the number of values that one source byte can hold.
+const SOURCE_BYTE_VALUES_COUNT = 256
 
 // A scanner is one language prepared for scanning: its configuration plus a table of
 // the bytes that can begin something the scan must inspect, so a run of ordinary code
 // bytes is skipped in bulk instead of re-dispatched through every opener check.
 type Scanner struct {
 	// Language is the configuration the scan reads against.
-	Language *Language
+	Language *Seeded_Language
 	// Trigger[b] is true when byte b can begin a comment or string opener, a heredoc, or
 	// a long bracket — the only bytes a fresh-state scan must stop on. Every other
 	// non-space byte is plain code.
-	Trigger [256]bool
+	Trigger [SOURCE_BYTE_VALUES_COUNT]bool
 }
 
 // Scanner_Invariants states the language a scanner reads against. The trigger table is
 // a fixed array whose width the type itself pins, so it carries no bound of its own.
 func Scanner_Invariants(scanner Scanner, namespace invariant.Namespace) {
-	Language_Invariants(*scanner.Language, "Scanner.Language")
+	Seeded_Language_Invariants(*scanner.Language, namespace)
 }
 
 // TOKEN_BYTES_MIN is the one-byte token: a quote mark, or a single-character comment
@@ -2584,7 +3197,7 @@ type Token string
 
 // Token_Invariants bounds a matched token's byte length.
 func Token_Invariants(token Token, namespace invariant.Namespace) {
-	invariant.Assertions(namespace).
+	invariant.Tree(token, namespace).
 		Range_Int(len(token), TOKEN_BYTES_MIN, TOKEN_BYTES_MAX).
 		Ensure()
 }
@@ -2592,9 +3205,9 @@ func Token_Invariants(token Token, namespace invariant.Namespace) {
 // Prepares a scanner for a language. The trigger table is the union of the first byte
 // of every opener the language defines, taken from its fields alone so no language is
 // special-cased: miss a field and a real opener would be skipped as if it were code.
-func language_scanner(language *Language) (prepared Scanner) {
+func language_scanner(language *Seeded_Language) (prepared Scanner) {
 	defer func() { Scanner_Invariants(prepared, "language_scanner.prepared") }()
-	Language_Invariants(*language, "language_scanner.language")
+	Seeded_Language_Invariants(*language, "language_scanner.language")
 	prepared.Language = language
 	for _, token := range language.Line_Comment {
 		prepared.Trigger[token[0]] = true
@@ -2637,11 +3250,12 @@ func classify_line(
 	// verdict is always code, so the reader returns only the carry: a verdict that
 	// cannot vary is stated here rather than by a bound that could never see the rest.
 	if carry.Heredoc_Terminator != "" {
-		return LINE_KIND_CODE, classify_heredoc_line(Scan_Line(line), carry)
+		return LINE_KIND_CODE, Scan_Carry(classify_heredoc_line(
+			Scan_Line(line), Active_Heredoc_Carry(carry)))
 	}
 	// The blank verdict above is why the scan carries a Scan_Line rather than a Line:
 	// past this point the line always has content.
-	scan := Line_Scan{
+	scan := Active_Scan{
 		Position:    Scan_Position{Line: Scan_Line(line), Cursor: CURSOR_MIN},
 		State:       carry,
 		Has_Code:    false,
@@ -2676,16 +3290,18 @@ func classify_line(
 
 // Reads a line inside a heredoc body: the line is code, and a line equal to the
 // terminator ends the heredoc.
-func classify_heredoc_line(line Scan_Line, carry Scan_Carry) (carry_after Scan_Carry) {
+func classify_heredoc_line(
+	line Scan_Line, carry Active_Heredoc_Carry,
+) (carry_after Heredoc_Carry) {
 	defer func() {
-		Scan_Carry_Invariants(carry_after, "classify_heredoc_line.carry_after")
+		Heredoc_Carry_Invariants(carry_after, "classify_heredoc_line.carry_after")
 	}()
 	Scan_Line_Invariants(line, "classify_heredoc_line.line")
-	Scan_Carry_Invariants(carry, "classify_heredoc_line.carry")
+	Active_Heredoc_Carry_Invariants(carry, "classify_heredoc_line.carry")
 	if Terminator(strings.TrimSpace(string(line))) == carry.Heredoc_Terminator {
 		carry.Heredoc_Terminator = ""
 	}
-	return carry
+	return Heredoc_Carry(carry)
 }
 
 // Advances past a byte that can begin nothing: insignificant whitespace, or plain
@@ -2693,8 +3309,8 @@ func classify_heredoc_line(line Scan_Line, carry Scan_Carry) (carry_after Scan_C
 // bytes is skipped to the next trigger in one tight loop. The language is not stated
 // here because none of it is read — which is the point, since almost every byte of a
 // source file takes this path and stating a language costs more than reading one.
-func line_scan_plain(scan *Line_Scan, trigger *[256]bool) {
-	Line_Scan_Invariants(*scan, "line_scan_plain.scan")
+func line_scan_plain(scan *Active_Scan, trigger *[SOURCE_BYTE_VALUES_COUNT]bool) {
+	Active_Scan_Invariants(*scan, "line_scan_plain.scan")
 	line := scan.Position.Line
 	cursor := int(scan.Position.Cursor)
 	if byte_is_space(Source_Byte(line[cursor])) {
@@ -2711,10 +3327,10 @@ func line_scan_plain(scan *Line_Scan, trigger *[256]bool) {
 
 // Advances inside a verbatim string, where every byte is code and only the matching
 // close ends it.
-func line_scan_raw(scan *Line_Scan) {
-	Line_Scan_Invariants(*scan, "line_scan_raw.scan")
+func line_scan_raw(scan *Active_Scan) {
+	Active_Scan_Invariants(*scan, "line_scan_raw.scan")
 	scan.Has_Code = true
-	if has_prefix_at(scan.Position, Token(scan.State.Raw_String_Close)) {
+	if has_prefix_at(Bounded_Position(scan.Position), Token(scan.State.Raw_String_Close)) {
 		scan.Position.Cursor += Cursor(len(scan.State.Raw_String_Close))
 		scan.State.Raw_String_Close = ""
 		return
@@ -2724,12 +3340,14 @@ func line_scan_raw(scan *Line_Scan) {
 
 // Advances inside a block comment, where every byte is comment and only an open (when
 // nesting) or a close moves the depth.
-func line_scan_block(scan *Line_Scan, language *Language) {
-	Line_Scan_Invariants(*scan, "line_scan_block.scan")
-	Language_Invariants(*language, "line_scan_block.language")
+func line_scan_block(scan *Active_Scan, language *Seeded_Language) {
+	Active_Scan_Invariants(*scan, "line_scan_block.scan")
+	Seeded_Language_Invariants(*language, "line_scan_block.language")
 	scan.Has_Comment = true
 	if language.Block_Comment_Nests {
-		if has_prefix_at(scan.Position, Token(language.Block_Comment_Open)) {
+		if has_prefix_at(
+			Bounded_Position(scan.Position), Token(language.Block_Comment_Open),
+		) {
 			// The depth saturates at its bound rather than growing with the file: a
 			// comment nested deeper than the bound closes early, which keeps the
 			// carried depth stated by a reachable range.
@@ -2740,7 +3358,7 @@ func line_scan_block(scan *Line_Scan, language *Language) {
 			return
 		}
 	}
-	if has_prefix_at(scan.Position, Token(language.Block_Comment_Close)) {
+	if has_prefix_at(Bounded_Position(scan.Position), Token(language.Block_Comment_Close)) {
 		scan.State.Block_Comment_Depth--
 		scan.Position.Cursor += Cursor(len(language.Block_Comment_Close))
 		return
@@ -2750,10 +3368,10 @@ func line_scan_block(scan *Line_Scan, language *Language) {
 
 // Advances inside a long-bracket comment, where every byte is comment and only the
 // matching leveled closer ends it.
-func line_scan_long_comment_body(scan *Line_Scan) {
-	Line_Scan_Invariants(*scan, "line_scan_long_comment_body.scan")
+func line_scan_long_comment_body(scan *Active_Scan) {
+	Active_Scan_Invariants(*scan, "line_scan_long_comment_body.scan")
 	scan.Has_Comment = true
-	if has_prefix_at(scan.Position, Token(scan.State.Comment_Close)) {
+	if has_prefix_at(Bounded_Position(scan.Position), Token(scan.State.Comment_Close)) {
 		scan.Position.Cursor += Cursor(len(scan.State.Comment_Close))
 		scan.State.Comment_Close = ""
 		return
@@ -2761,19 +3379,31 @@ func line_scan_long_comment_body(scan *Line_Scan) {
 	scan.Position.Cursor++
 }
 
+// Opening is the result of a syntax-opener match.
+type Opening bool
+
+// Opening_Invariants states both syntax-opener results.
+func Opening_Invariants(value Opening, namespace invariant.Namespace) {
+	invariant.Tree(value, namespace).
+		Sometimes(bool(value), "A syntax form opens.").
+		Ensure()
+}
+
 // Reports whether a long-bracket comment — a line-comment token then a long bracket,
 // like --[[ or --[=[ — opens at the cursor, recording the comment and its closer.
-func line_scan_long_comment(scan *Line_Scan, language *Language) (opened bool) {
+func line_scan_long_comment(
+	scan *Active_Scan, language *Seeded_Language,
+) (opened Opening) {
 	defer func() {
-		invariant.Boolean_Invariants(opened, "line_scan_long_comment.opened")
+		Opening_Invariants(opened, "line_scan_long_comment.opened")
 	}()
-	Line_Scan_Invariants(*scan, "line_scan_long_comment.scan")
-	Language_Invariants(*language, "line_scan_long_comment.language")
+	Active_Scan_Invariants(*scan, "line_scan_long_comment.scan")
+	Seeded_Language_Invariants(*language, "line_scan_long_comment.language")
 	if !language.Long_Bracket {
 		return false
 	}
 	for _, token := range language.Line_Comment {
-		if !has_prefix_at(scan.Position, Token(token)) {
+		if !has_prefix_at(Bounded_Position(scan.Position), Token(token)) {
 			continue
 		}
 		// The cursor steps past the comment token so the bracket match reads from
@@ -2793,12 +3423,14 @@ func line_scan_long_comment(scan *Line_Scan, language *Language) (opened bool) {
 
 // Reports whether a long-bracket string — like [[ or [=[ — opens at the cursor,
 // recording its leveled closer.
-func line_scan_long_string(scan *Line_Scan, language *Language) (opened bool) {
+func line_scan_long_string(
+	scan *Active_Scan, language *Seeded_Language,
+) (opened Opening) {
 	defer func() {
-		invariant.Boolean_Invariants(opened, "line_scan_long_string.opened")
+		Opening_Invariants(opened, "line_scan_long_string.opened")
 	}()
-	Line_Scan_Invariants(*scan, "line_scan_long_string.scan")
-	Language_Invariants(*language, "line_scan_long_string.language")
+	Active_Scan_Invariants(*scan, "line_scan_long_string.scan")
+	Seeded_Language_Invariants(*language, "line_scan_long_string.language")
 	if !language.Long_Bracket {
 		return false
 	}
@@ -2814,12 +3446,12 @@ func line_scan_long_string(scan *Line_Scan, language *Language) (opened bool) {
 // Reports whether a long bracket — '[' then a run of '=' then '[' — opens at the
 // cursor, recording the matching closer ']' run-of-'=' ']' and stepping the cursor past
 // the opener. The cursor is left where it was when no bracket opens.
-func long_bracket_open(scan *Line_Scan) (closer Bracket_Closer, opened bool) {
+func long_bracket_open(scan *Active_Scan) (closer Bracket_Closer, opened Opening) {
 	defer func() {
 		Bracket_Closer_Invariants(closer, "long_bracket_open.closer")
-		invariant.Boolean_Invariants(opened, "long_bracket_open.opened")
+		Opening_Invariants(opened, "long_bracket_open.opened")
 	}()
-	Line_Scan_Invariants(*scan, "long_bracket_open.scan")
+	Active_Scan_Invariants(*scan, "long_bracket_open.scan")
 	line := scan.Position.Line
 	cursor := int(scan.Position.Cursor)
 	if cursor >= len(line) {
@@ -2864,7 +3496,7 @@ type Bracket_Closer string
 
 // Bracket_Closer_Invariants bounds a long bracket's computed terminator.
 func Bracket_Closer_Invariants(closer Bracket_Closer, namespace invariant.Namespace) {
-	invariant.Assertions(namespace).
+	invariant.Tree(closer, namespace).
 		Range_Holed_Int(
 			len(closer), BRACKET_CLOSER_BYTES_MIN, BRACKET_CLOSER_BYTES_MAX,
 			BRACKET_CLOSER_BYTES_ABSENT, BRACKET_CLOSER_BYTES_ABSENT,
@@ -2884,15 +3516,15 @@ type Hash_Closer string
 
 // Hash_Closer_Invariants bounds a raw string's computed terminator.
 func Hash_Closer_Invariants(closer Hash_Closer, namespace invariant.Namespace) {
-	invariant.Assertions(namespace).
+	invariant.Tree(closer, namespace).
 		Range_Int(len(closer), HASH_CLOSER_BYTES_MIN, HASH_CLOSER_BYTES_MAX).
 		Ensure()
 }
 
 // Dispatches the token at the cursor when not inside a comment or string: whitespace,
 // a line comment, a block-comment open, a string, or code.
-func line_scan_fresh(scan *Line_Scan, scan_with *Scanner) {
-	Line_Scan_Invariants(*scan, "line_scan_fresh.scan")
+func line_scan_fresh(scan *Active_Scan, scan_with *Scanner) {
+	Active_Scan_Invariants(*scan, "line_scan_fresh.scan")
 	Scanner_Invariants(*scan_with, "line_scan_fresh.scan_with")
 	line := scan.Position.Line
 	language := scan_with.Language
@@ -2905,7 +3537,7 @@ func line_scan_fresh(scan *Line_Scan, scan_with *Scanner) {
 	if line_scan_long_comment(scan, language) {
 		return
 	}
-	if starts_with_any(scan.Position, language.Line_Comment) {
+	if starts_with_any(Bounded_Position(scan.Position), language.Line_Comment) {
 		// A line comment runs to end of line and cannot cross it.
 		scan.Has_Comment = true
 		scan.Position.Cursor = Cursor(len(line))
@@ -2931,10 +3563,12 @@ func line_scan_fresh(scan *Line_Scan, scan_with *Scanner) {
 
 // Reports whether a heredoc opens at the cursor, and if so records its terminator so
 // the following lines are read as code until the terminator line.
-func line_scan_heredoc(scan *Line_Scan, language *Language) (opened bool) {
-	defer func() { invariant.Boolean_Invariants(opened, "line_scan_heredoc.opened") }()
-	Line_Scan_Invariants(*scan, "line_scan_heredoc.scan")
-	Language_Invariants(*language, "line_scan_heredoc.language")
+func line_scan_heredoc(
+	scan *Active_Scan, language *Seeded_Language,
+) (opened Opening) {
+	defer func() { Opening_Invariants(opened, "line_scan_heredoc.opened") }()
+	Active_Scan_Invariants(*scan, "line_scan_heredoc.scan")
+	Seeded_Language_Invariants(*language, "line_scan_heredoc.language")
 	if !language.Heredoc {
 		return false
 	}
@@ -2951,18 +3585,18 @@ func line_scan_heredoc(scan *Line_Scan, language *Language) (opened bool) {
 // optional space, then a quoted word or an uppercase/underscore word — and if so its
 // terminator word and the opener's byte length. The uppercase rule tells <<EOF apart
 // from the a << b shift operator.
-func heredoc_open(scan *Line_Scan) (terminator Terminator, opened bool) {
+func heredoc_open(scan *Active_Scan) (terminator Terminator, opened Opening) {
 	defer func() {
 		Terminator_Invariants(terminator, "heredoc_open.terminator")
-		invariant.Boolean_Invariants(opened, "heredoc_open.opened")
+		Opening_Invariants(opened, "heredoc_open.opened")
 	}()
-	Line_Scan_Invariants(*scan, "heredoc_open.scan")
-	if !has_prefix_at(scan.Position, "<<") {
+	Active_Scan_Invariants(*scan, "heredoc_open.scan")
+	if !has_prefix_at(Bounded_Position(scan.Position), "<<") {
 		return "", false
 	}
 	// The word is read through a position of its own so a failed match leaves the
 	// scan's cursor where the dispatch found it.
-	at := Scan_Position{Line: scan.Position.Line, Cursor: scan.Position.Cursor + 2}
+	at := Bounded_Position{Line: scan.Position.Line, Cursor: scan.Position.Cursor + 2}
 	heredoc_skip_sigil(&at)
 	heredoc_skip_spaces(&at)
 	quoted := false
@@ -2993,8 +3627,8 @@ func heredoc_open(scan *Line_Scan) (terminator Terminator, opened bool) {
 }
 
 // Skips an optional <<- or <<~ heredoc sigil.
-func heredoc_skip_sigil(at *Scan_Position) {
-	Scan_Position_Invariants(*at, "heredoc_skip_sigil.at")
+func heredoc_skip_sigil(at *Bounded_Position) {
+	Bounded_Position_Invariants(*at, "heredoc_skip_sigil.at")
 	if int(at.Cursor) >= len(at.Line) {
 		return
 	}
@@ -3008,16 +3642,16 @@ func heredoc_skip_sigil(at *Scan_Position) {
 }
 
 // Skips spaces and tabs between the heredoc operator and its delimiter.
-func heredoc_skip_spaces(at *Scan_Position) {
-	Scan_Position_Invariants(*at, "heredoc_skip_spaces.at")
+func heredoc_skip_spaces(at *Bounded_Position) {
+	Bounded_Position_Invariants(*at, "heredoc_skip_spaces.at")
 	for int(at.Cursor) < len(at.Line) && byte_is_space(Source_Byte(at.Line[at.Cursor])) {
 		at.Cursor++
 	}
 }
 
 // Skips a run of identifier bytes.
-func heredoc_skip_identifier(at *Scan_Position) {
-	Scan_Position_Invariants(*at, "heredoc_skip_identifier.at")
+func heredoc_skip_identifier(at *Bounded_Position) {
+	Bounded_Position_Invariants(*at, "heredoc_skip_identifier.at")
 	for int(at.Cursor) < len(at.Line) {
 		if !byte_is_identifier(Source_Byte(at.Line[at.Cursor])) {
 			return
@@ -3026,9 +3660,19 @@ func heredoc_skip_identifier(at *Scan_Position) {
 	}
 }
 
+// Heredoc_Quote is the quoted-delimiter state of one heredoc opener.
+type Heredoc_Quote bool
+
+// Heredoc_Quote_Invariants states both quoted-delimiter states.
+func Heredoc_Quote_Invariants(value Heredoc_Quote, namespace invariant.Namespace) {
+	invariant.Tree(value, namespace).
+		Sometimes(bool(value), "A heredoc delimiter is quoted.").
+		Ensure()
+}
+
 // Reports whether a byte opens a quoted heredoc delimiter.
-func heredoc_is_quote(character Source_Byte) (quote bool) {
-	defer func() { invariant.Boolean_Invariants(quote, "heredoc_is_quote.quote") }()
+func heredoc_is_quote(character Source_Byte) (quote Heredoc_Quote) {
+	defer func() { Heredoc_Quote_Invariants(quote, "heredoc_is_quote.quote") }()
 	Source_Byte_Invariants(character, "heredoc_is_quote.character")
 	switch character {
 	case '\'', '"', '`':
@@ -3037,10 +3681,24 @@ func heredoc_is_quote(character Source_Byte) (quote bool) {
 	return false
 }
 
+// Heredoc_Word_Start is the valid-start state of an unquoted heredoc word.
+type Heredoc_Word_Start bool
+
+// Heredoc_Word_Start_Invariants states both valid-start states.
+func Heredoc_Word_Start_Invariants(
+	value Heredoc_Word_Start, namespace invariant.Namespace,
+) {
+	invariant.Tree(value, namespace).
+		Sometimes(bool(value), "An unquoted heredoc word has a valid start.").
+		Ensure()
+}
+
 // Reports whether a byte may begin an unquoted heredoc delimiter: an uppercase letter
 // or underscore, the convention that keeps a << b from looking like a heredoc.
-func heredoc_word_start(character Identifier_Byte) (start bool) {
-	defer func() { invariant.Boolean_Invariants(start, "heredoc_word_start.start") }()
+func heredoc_word_start(character Identifier_Byte) (start Heredoc_Word_Start) {
+	defer func() {
+		Heredoc_Word_Start_Invariants(start, "heredoc_word_start.start")
+	}()
 	Identifier_Byte_Invariants(character, "heredoc_word_start.character")
 	if character == '_' {
 		return true
@@ -3063,7 +3721,7 @@ type Identifier_Byte uint8
 func Identifier_Byte_Invariants(
 	character Identifier_Byte, namespace invariant.Namespace,
 ) {
-	invariant.Assertions(namespace).
+	invariant.Tree(character, namespace).
 		Range_Uint8(
 			uint8(character), uint8(IDENTIFIER_BYTE_MIN), uint8(IDENTIFIER_BYTE_MAX)).
 		Ensure()
@@ -3081,21 +3739,23 @@ type Source_Byte uint8
 // Source_Byte_Invariants bounds a source byte to the whole byte domain, since nothing
 // about untrusted input narrows it.
 func Source_Byte_Invariants(character Source_Byte, namespace invariant.Namespace) {
-	invariant.Assertions(namespace).
+	invariant.Tree(character, namespace).
 		Range_Uint8(uint8(character), uint8(SOURCE_BYTE_MIN), uint8(SOURCE_BYTE_MAX)).
 		Ensure()
 }
 
 // Reports whether a block comment opens at the cursor and, when it does, records the
 // comment and the new depth.
-func line_scan_block_open(scan *Line_Scan, language *Language) (opened bool) {
-	defer func() { invariant.Boolean_Invariants(opened, "line_scan_block_open.opened") }()
-	Line_Scan_Invariants(*scan, "line_scan_block_open.scan")
-	Language_Invariants(*language, "line_scan_block_open.language")
+func line_scan_block_open(
+	scan *Active_Scan, language *Seeded_Language,
+) (opened Opening) {
+	defer func() { Opening_Invariants(opened, "line_scan_block_open.opened") }()
+	Active_Scan_Invariants(*scan, "line_scan_block_open.scan")
+	Seeded_Language_Invariants(*language, "line_scan_block_open.language")
 	if language.Block_Comment_Open == "" {
 		return false
 	}
-	if !has_prefix_at(scan.Position, Token(language.Block_Comment_Open)) {
+	if !has_prefix_at(Bounded_Position(scan.Position), Token(language.Block_Comment_Open)) {
 		return false
 	}
 	scan.State.Block_Comment_Depth = 1
@@ -3105,9 +3765,9 @@ func line_scan_block_open(scan *Line_Scan, language *Language) (opened bool) {
 
 // Reads the line's partition from the accumulated scan: code wins a line it shares
 // with a comment, then a comment, else blank.
-func line_scan_verdict(scan *Line_Scan) (kind Scan_Verdict) {
+func line_scan_verdict(scan *Active_Scan) (kind Scan_Verdict) {
 	defer func() { Scan_Verdict_Invariants(kind, "line_scan_verdict.kind") }()
-	Line_Scan_Invariants(*scan, "line_scan_verdict.scan")
+	Active_Scan_Invariants(*scan, "line_scan_verdict.scan")
 	if scan.Has_Code {
 		return Scan_Verdict(LINE_KIND_CODE)
 	}
@@ -3123,22 +3783,32 @@ type Scan_Verdict int
 // Scan_Verdict_Invariants holds a scanned line's verdict to the two it can take, and
 // witnesses each one.
 func Scan_Verdict_Invariants(kind Scan_Verdict, namespace invariant.Namespace) {
-	invariant.Assertions(namespace).
+	invariant.Tree(kind, namespace).
 		Enum_Int(int(kind), int(LINE_KIND_CODE), int(LINE_KIND_COMMENT)).
+		Ensure()
+}
+
+// Identifier_Middle is the state of a token lead inside an identifier.
+type Identifier_Middle bool
+
+// Identifier_Middle_Invariants states both identifier-position states.
+func Identifier_Middle_Invariants(value Identifier_Middle, namespace invariant.Namespace) {
+	invariant.Tree(value, namespace).
+		Sometimes(bool(value), "A token lead is inside an identifier.").
 		Ensure()
 }
 
 // Reports whether a verbatim string begins at the cursor and, if so, its terminator
 // and the opener's byte length.
-func verbatim_open(scan *Line_Scan, language *Language) (opened bool) {
-	defer func() { invariant.Boolean_Invariants(opened, "verbatim_open.opened") }()
-	Line_Scan_Invariants(*scan, "verbatim_open.scan")
-	Language_Invariants(*language, "verbatim_open.language")
+func verbatim_open(scan *Active_Scan, language *Seeded_Language) (opened Opening) {
+	defer func() { Opening_Invariants(opened, "verbatim_open.opened") }()
+	Active_Scan_Invariants(*scan, "verbatim_open.scan")
+	Seeded_Language_Invariants(*language, "verbatim_open.language")
 	for _, delimiter := range language.Verbatim_Strings {
-		if !has_prefix_at(scan.Position, Token(delimiter.Open)) {
+		if !has_prefix_at(Bounded_Position(scan.Position), Token(delimiter.Open)) {
 			continue
 		}
-		if verbatim_lead_middle_identifier(scan.Position, delimiter) {
+		if verbatim_lead_middle_identifier(Bounded_Position(scan.Position), delimiter) {
 			continue
 		}
 		if !delimiter.Hashable {
@@ -3147,7 +3817,7 @@ func verbatim_open(scan *Line_Scan, language *Language) (opened bool) {
 			scan.Position.Cursor += Cursor(len(delimiter.Open))
 			return true
 		}
-		closer, hashed := verbatim_hashable(scan, delimiter)
+		closer, hashed := verbatim_hashable(scan, Hash_Delimiter(delimiter))
 		if hashed {
 			scan.State.Raw_String_Close = Closer(closer)
 			scan.Has_Code = true
@@ -3160,12 +3830,13 @@ func verbatim_open(scan *Line_Scan, language *Language) (opened bool) {
 // Reports whether a letter-led opener sits in the middle of an identifier, where the
 // lead is a name character rather than a string start.
 func verbatim_lead_middle_identifier(
-	at Scan_Position, delimiter Verbatim_Delimiter,
-) (middle bool) {
+	at Bounded_Position, delimiter Verbatim_Delimiter,
+) (middle Identifier_Middle) {
 	defer func() {
-		invariant.Boolean_Invariants(middle, "verbatim_lead_middle_identifier.middle")
+		Identifier_Middle_Invariants(
+			middle, "verbatim_lead_middle_identifier.middle")
 	}()
-	Scan_Position_Invariants(at, "verbatim_lead_middle_identifier.at")
+	Bounded_Position_Invariants(at, "verbatim_lead_middle_identifier.at")
 	Verbatim_Delimiter_Invariants(delimiter, "verbatim_lead_middle_identifier.delimiter")
 	if !byte_is_identifier(Source_Byte(delimiter.Open[0])) {
 		return false
@@ -3173,20 +3844,20 @@ func verbatim_lead_middle_identifier(
 	if at.Cursor == CURSOR_MIN {
 		return false
 	}
-	return byte_is_identifier(Source_Byte(at.Line[at.Cursor-1]))
+	return Identifier_Middle(byte_is_identifier(Source_Byte(at.Line[at.Cursor-1])))
 }
 
 // Matches a Rust-style raw-string opener: the lead, then hashes, then a quote, moving
 // the cursor past it. Without the quote the lead is a raw identifier, not a string.
 func verbatim_hashable(
-	scan *Line_Scan, delimiter Verbatim_Delimiter,
-) (closer Hash_Closer, opened bool) {
+	scan *Active_Scan, delimiter Hash_Delimiter,
+) (closer Hash_Closer, opened Opening) {
 	defer func() {
 		Hash_Closer_Invariants(closer, "verbatim_hashable.closer")
-		invariant.Boolean_Invariants(opened, "verbatim_hashable.opened")
+		Opening_Invariants(opened, "verbatim_hashable.opened")
 	}()
-	Line_Scan_Invariants(*scan, "verbatim_hashable.scan")
-	Verbatim_Delimiter_Invariants(delimiter, "verbatim_hashable.delimiter")
+	Active_Scan_Invariants(*scan, "verbatim_hashable.scan")
+	Hash_Delimiter_Invariants(delimiter, "verbatim_hashable.delimiter")
 	line := scan.Position.Line
 	read := int(scan.Position.Cursor) + len(delimiter.Open)
 	hash_count := 0
@@ -3207,23 +3878,24 @@ func verbatim_hashable(
 
 // Reports whether a single-line string or character literal begins at the cursor,
 // moving the cursor past what it consumes.
-func quote_open(scan *Line_Scan, language *Language) (opened bool) {
-	defer func() { invariant.Boolean_Invariants(opened, "quote_open.opened") }()
-	Line_Scan_Invariants(*scan, "quote_open.scan")
-	Language_Invariants(*language, "quote_open.language")
+func quote_open(scan *Active_Scan, language *Seeded_Language) (opened Opening) {
+	defer func() { Opening_Invariants(opened, "quote_open.opened") }()
+	Active_Scan_Invariants(*scan, "quote_open.scan")
+	Seeded_Language_Invariants(*language, "quote_open.language")
 	for _, one := range language.Quote_Strings {
 		Quote_Delimiter_Invariants(one, "quote_open.delimiter")
 	}
 	for _, delimiter := range language.Quote_Strings {
-		if !has_prefix_at(scan.Position, Token(delimiter.Open)) {
+		if !has_prefix_at(Bounded_Position(scan.Position), Token(delimiter.Open)) {
 			continue
 		}
 		scan.Has_Code = true
 		if delimiter.Character_Like {
-			scan_character_or_lifetime(&scan.Position)
+			scan_character_or_lifetime((*Bounded_Position)(&scan.Position))
 			return true
 		}
-		scan_quoted(&scan.Position, delimiter)
+		scan_quoted(
+			(*Bounded_Position)(&scan.Position), String_Delimiter(delimiter))
 		return true
 	}
 	return false
@@ -3231,13 +3903,13 @@ func quote_open(scan *Line_Scan, language *Language) (opened bool) {
 
 // Moves the cursor past a single-line quoted string starting at its opening delimiter,
 // stopping at the first unescaped close or end of line.
-func scan_quoted(at *Scan_Position, delimiter Quote_Delimiter) {
-	Scan_Position_Invariants(*at, "scan_quoted.at")
-	Quote_Delimiter_Invariants(delimiter, "scan_quoted.delimiter")
+func scan_quoted(at *Bounded_Position, delimiter String_Delimiter) {
+	Bounded_Position_Invariants(*at, "scan_quoted.at")
+	String_Delimiter_Invariants(delimiter, "scan_quoted.delimiter")
 	line := at.Line
 	read := int(at.Cursor) + len(delimiter.Open)
 	for read < len(line) {
-		probe := Scan_Position{Line: line, Cursor: Cursor(read)}
+		probe := Bounded_Position{Line: line, Cursor: Cursor(read)}
 		if quote_escapes_here(probe, delimiter) {
 			read += 2 // skip the escape byte and the character it escapes
 			continue
@@ -3251,13 +3923,25 @@ func scan_quoted(at *Scan_Position, delimiter Quote_Delimiter) {
 	at.Cursor = Cursor(len(line))
 }
 
+// Escape_Sequence is the escape-sequence state at one scan position.
+type Escape_Sequence bool
+
+// Escape_Sequence_Invariants states both escape-sequence states.
+func Escape_Sequence_Invariants(value Escape_Sequence, namespace invariant.Namespace) {
+	invariant.Tree(value, namespace).
+		Sometimes(bool(value), "An escape sequence starts at the position.").
+		Ensure()
+}
+
 // Reports whether an escape sequence begins at the scan position.
-func quote_escapes_here(at Scan_Position, delimiter Quote_Delimiter) (escapes bool) {
+func quote_escapes_here(
+	at Bounded_Position, delimiter String_Delimiter,
+) (escapes Escape_Sequence) {
 	defer func() {
-		invariant.Boolean_Invariants(escapes, "quote_escapes_here.escapes")
+		Escape_Sequence_Invariants(escapes, "quote_escapes_here.escapes")
 	}()
-	Scan_Position_Invariants(at, "quote_escapes_here.at")
-	Quote_Delimiter_Invariants(delimiter, "quote_escapes_here.delimiter")
+	Bounded_Position_Invariants(at, "quote_escapes_here.at")
+	String_Delimiter_Invariants(delimiter, "quote_escapes_here.delimiter")
 	// Pascal's string has no escape at all, so the zero escape must not match a zero
 	// byte in the line.
 	if delimiter.Escape == ESCAPE_BYTE_NONE {
@@ -3269,8 +3953,8 @@ func quote_escapes_here(at Scan_Position, delimiter Quote_Delimiter) (escapes bo
 // Moves the cursor past a character or rune literal starting at the apostrophe, or by
 // one when the apostrophe is a Rust lifetime tick rather than a literal — so a
 // lifetime never opens a string that eats the line.
-func scan_character_or_lifetime(at *Scan_Position) {
-	Scan_Position_Invariants(*at, "scan_character_or_lifetime.at")
+func scan_character_or_lifetime(at *Bounded_Position) {
+	Bounded_Position_Invariants(*at, "scan_character_or_lifetime.at")
 	if character_is_escaped(*at) {
 		scan_escaped_character(at)
 		return
@@ -3281,12 +3965,22 @@ func scan_character_or_lifetime(at *Scan_Position) {
 	at.Cursor++
 }
 
+// Character_Escape is the escape state after a character-literal apostrophe.
+type Character_Escape bool
+
+// Character_Escape_Invariants states both character escape states.
+func Character_Escape_Invariants(value Character_Escape, namespace invariant.Namespace) {
+	invariant.Tree(value, namespace).
+		Sometimes(bool(value), "A character literal starts with an escape.").
+		Ensure()
+}
+
 // Reports whether a backslash escape follows the apostrophe.
-func character_is_escaped(at Scan_Position) (escaped bool) {
+func character_is_escaped(at Bounded_Position) (escaped Character_Escape) {
 	defer func() {
-		invariant.Boolean_Invariants(escaped, "character_is_escaped.escaped")
+		Character_Escape_Invariants(escaped, "character_is_escaped.escaped")
 	}()
-	Scan_Position_Invariants(at, "character_is_escaped.at")
+	Bounded_Position_Invariants(at, "character_is_escaped.at")
 	if int(at.Cursor)+1 >= len(at.Line) {
 		return false
 	}
@@ -3295,8 +3989,8 @@ func character_is_escaped(at Scan_Position) (escaped bool) {
 
 // Moves the cursor past an escaped character literal, looking for the close past the
 // escaped character, bounded so a stray apostrophe cannot scan the whole line.
-func scan_escaped_character(at *Scan_Position) {
-	Scan_Position_Invariants(*at, "scan_escaped_character.at")
+func scan_escaped_character(at *Bounded_Position) {
+	Bounded_Position_Invariants(*at, "scan_escaped_character.at")
 	cursor := int(at.Cursor)
 	limit := cursor + CHARACTER_ESCAPE_BYTES_MAX
 	for read := cursor + 3; read < len(at.Line) && read <= limit; read++ {
@@ -3312,11 +4006,21 @@ func scan_escaped_character(at *Scan_Position) {
 // literal's close is looked for, so a stray apostrophe cannot swallow the line.
 const CHARACTER_ESCAPE_BYTES_MAX = 12
 
+// Character_Match is the match state of a character literal.
+type Character_Match bool
+
+// Character_Match_Invariants states both character-literal match states.
+func Character_Match_Invariants(value Character_Match, namespace invariant.Namespace) {
+	invariant.Tree(value, namespace).
+		Sometimes(bool(value), "An apostrophe opens a character literal.").
+		Ensure()
+}
+
 // Moves the cursor past a single-rune character literal, reporting whether the
 // apostrophe opened one at all.
-func simple_character(at *Scan_Position) (matched bool) {
-	defer func() { invariant.Boolean_Invariants(matched, "simple_character.matched") }()
-	Scan_Position_Invariants(*at, "simple_character.at")
+func simple_character(at *Bounded_Position) (matched Character_Match) {
+	defer func() { Character_Match_Invariants(matched, "simple_character.matched") }()
+	Bounded_Position_Invariants(*at, "simple_character.at")
 	cursor := int(at.Cursor)
 	line := at.Line
 	if cursor+1 >= len(line) {
@@ -3339,9 +4043,19 @@ func simple_character(at *Scan_Position) (matched bool) {
 	return true
 }
 
+// Blank_Line is the whitespace-only state of one physical line.
+type Blank_Line bool
+
+// Blank_Line_Invariants states both physical-line states.
+func Blank_Line_Invariants(value Blank_Line, namespace invariant.Namespace) {
+	invariant.Tree(value, namespace).
+		Sometimes(bool(value), "A physical line is blank.").
+		Ensure()
+}
+
 // Reports whether a line is empty or only ASCII whitespace.
-func line_is_blank(line Line) (blank bool) {
-	defer func() { invariant.Boolean_Invariants(blank, "line_is_blank.blank") }()
+func line_is_blank(line Line) (blank Blank_Line) {
+	defer func() { Blank_Line_Invariants(blank, "line_is_blank.blank") }()
 	Line_Invariants(line, "line_is_blank.line")
 	for _, character := range line {
 		if !byte_is_space(Source_Byte(character)) {
@@ -3351,10 +4065,20 @@ func line_is_blank(line Line) (blank bool) {
 	return true
 }
 
+// Whitespace is the ASCII-whitespace state of one source byte.
+type Whitespace bool
+
+// Whitespace_Invariants states both source-byte states.
+func Whitespace_Invariants(value Whitespace, namespace invariant.Namespace) {
+	invariant.Tree(value, namespace).
+		Sometimes(bool(value), "A source byte is ASCII whitespace.").
+		Ensure()
+}
+
 // Reports whether a byte is ASCII whitespace. Newline is excluded because the source
 // is already split on it.
-func byte_is_space(character Source_Byte) (space bool) {
-	defer func() { invariant.Boolean_Invariants(space, "byte_is_space.space") }()
+func byte_is_space(character Source_Byte) (space Whitespace) {
+	defer func() { Whitespace_Invariants(space, "byte_is_space.space") }()
 	Source_Byte_Invariants(character, "byte_is_space.character")
 	switch character {
 	case ' ', '\t', '\r', '\f', '\v':
@@ -3363,11 +4087,23 @@ func byte_is_space(character Source_Byte) (space bool) {
 	return false
 }
 
+// Identifier_Membership is the identifier-membership state of one source byte.
+type Identifier_Membership bool
+
+// Identifier_Membership_Invariants states both source-byte membership states.
+func Identifier_Membership_Invariants(
+	value Identifier_Membership, namespace invariant.Namespace,
+) {
+	invariant.Tree(value, namespace).
+		Sometimes(bool(value), "A source byte belongs to an identifier.").
+		Ensure()
+}
+
 // Reports whether a byte may appear in an identifier, used to keep a raw-string lead
 // from being recognized in the middle of a name.
-func byte_is_identifier(character Source_Byte) (identifier bool) {
+func byte_is_identifier(character Source_Byte) (identifier Identifier_Membership) {
 	defer func() {
-		invariant.Boolean_Invariants(identifier, "byte_is_identifier.identifier")
+		Identifier_Membership_Invariants(identifier, "byte_is_identifier.identifier")
 	}()
 	Source_Byte_Invariants(character, "byte_is_identifier.character")
 	if character == '_' {
@@ -3386,10 +4122,20 @@ func byte_is_identifier(character Source_Byte) (identifier bool) {
 	return character >= '0' && character <= '9'
 }
 
+// Token_Match is the token-match state at one scan position.
+type Token_Match bool
+
+// Token_Match_Invariants states both token-match states.
+func Token_Match_Invariants(value Token_Match, namespace invariant.Namespace) {
+	invariant.Tree(value, namespace).
+		Sometimes(bool(value), "A token matches at the scan position.").
+		Ensure()
+}
+
 // Reports whether prefix occurs in the line at the cursor.
-func has_prefix_at(at Scan_Position, prefix Token) (match bool) {
-	defer func() { invariant.Boolean_Invariants(match, "has_prefix_at.match") }()
-	Scan_Position_Invariants(at, "has_prefix_at.at")
+func has_prefix_at(at Bounded_Position, prefix Token) (match Token_Match) {
+	defer func() { Token_Match_Invariants(match, "has_prefix_at.match") }()
+	Bounded_Position_Invariants(at, "has_prefix_at.at")
 	Token_Invariants(prefix, "has_prefix_at.prefix")
 	cursor := int(at.Cursor)
 	if cursor+len(prefix) > len(at.Line) {
@@ -3404,9 +4150,9 @@ func has_prefix_at(at Scan_Position, prefix Token) (match bool) {
 }
 
 // Reports whether any prefix occurs in the line at the cursor.
-func starts_with_any(at Scan_Position, prefixes Comment_Tokens) (match bool) {
-	defer func() { invariant.Boolean_Invariants(match, "starts_with_any.match") }()
-	Scan_Position_Invariants(at, "starts_with_any.at")
+func starts_with_any(at Bounded_Position, prefixes Comment_Tokens) (match Token_Match) {
+	defer func() { Token_Match_Invariants(match, "starts_with_any.match") }()
+	Bounded_Position_Invariants(at, "starts_with_any.at")
 	Comment_Tokens_Invariants(prefixes, "starts_with_any.prefixes")
 	for _, prefix := range prefixes {
 		if has_prefix_at(at, Token(prefix)) {
@@ -3414,6 +4160,18 @@ func starts_with_any(at Scan_Position, prefixes Comment_Tokens) (match bool) {
 		}
 	}
 	return false
+}
+
+// Test_File_Status is the source-or-test role of one counted file.
+type Test_File_Status bool
+
+// Test_File_Status_Invariants states both counted-file roles.
+func Test_File_Status_Invariants(
+	value Test_File_Status, namespace invariant.Namespace,
+) {
+	invariant.Tree(value, namespace).
+		Sometimes(bool(value), "The file is test code.").
+		Ensure()
 }
 
 // File_Count is one counted file: its path, the language it was read as, and its
@@ -3426,15 +4184,15 @@ type File_Count struct {
 	// Counts is the file's line partition.
 	Counts Counts
 	// Is_Test reports whether the file is test code rather than source.
-	Is_Test bool
+	Is_Test Test_File_Status
 }
 
 // File_Count_Invariants states a counted file's path, language, partition, and role.
 func File_Count_Invariants(file File_Count, namespace invariant.Namespace) {
-	File_Path_Invariants(file.Path, "File_Count.Path")
-	Language_Name_Invariants(file.Language, "File_Count.Language")
-	Counts_Invariants(file.Counts, "File_Count.Counts")
-	invariant.Boolean_Invariants(file.Is_Test, "File_Count.Is_Test")
+	File_Path_Invariants(file.Path, namespace)
+	Language_Name_Invariants(file.Language, namespace)
+	Counts_Invariants(file.Counts, namespace)
+	Test_File_Status_Invariants(file.Is_Test, namespace)
 }
 
 // FILES_COUNT_MIN is the empty report: a tree holding no recognized file.
@@ -3450,7 +4208,7 @@ type File_Counts []File_Count
 
 // File_Counts_Invariants bounds how many files a report carries.
 func File_Counts_Invariants(files File_Counts, namespace invariant.Namespace) {
-	invariant.Assertions(namespace).
+	invariant.Tree(files, namespace).
 		Range_Int(len(files), FILES_COUNT_MIN, FILES_COUNT_MAX).
 		Ensure()
 }
@@ -3466,8 +4224,18 @@ type Report struct {
 
 // Report_Invariants states the counted files a report carries and what it left out.
 func Report_Invariants(report Report, namespace invariant.Namespace) {
-	File_Counts_Invariants(report.Files, "Report.Files")
-	Skipped_Invariants(report.Skipped, "Report.Skipped")
+	File_Counts_Invariants(report.Files, namespace)
+	Skipped_Invariants(report.Skipped, namespace)
+}
+
+// Root_Report is the result of one command-line root before Main merges root tallies.
+type Root_Report Report
+
+// Root_Report_Invariants states the counted files and checks the root-level omission
+// tallies. The merged Report owns their aggregate witnesses.
+func Root_Report_Invariants(report Root_Report, namespace invariant.Namespace) {
+	File_Counts_Invariants(report.Files, namespace)
+	Root_Skipped_Invariants(Root_Skipped(report.Skipped), namespace)
 }
 
 // Ignore_Predicate reports whether a path, relative to its tree root, is ignored. An
@@ -3481,36 +4249,37 @@ type Count_Input struct {
 	// Is_Ignored is the ignore filter, or nil to ignore nothing.
 	Is_Ignored Ignore_Predicate
 	// Include_Hidden counts dot-prefixed entries that are skipped by default.
-	Include_Hidden bool
+	Include_Hidden Include_Hidden
 	// Classifier partitions each recognized file's source into line kinds.
 	Classifier File_Classifier
 	// Concurrency bounds the read-and-classify worker pool; below one means one. It
 	// stays an unbounded integer because it is host-supplied and count_classify
 	// clamps it at both ends.
-	Concurrency int
+	Concurrency Concurrency
 }
 
 // Count_Input_Invariants states the walk's classifier and settings. The file system
 // and ignore predicate are interface and function values with no preset of their own.
 func Count_Input_Invariants(input Count_Input, namespace invariant.Namespace) {
-	invariant.Boolean_Invariants(input.Include_Hidden, "Count_Input.Include_Hidden")
-	File_Classifier_Invariants(input.Classifier, "Count_Input.Classifier")
-	invariant.Int_Invariants(input.Concurrency, "Count_Input.Concurrency")
+	Include_Hidden_Invariants(input.Include_Hidden, namespace)
+	File_Classifier_Invariants(input.Classifier, namespace)
+	Concurrency_Invariants(input.Concurrency, namespace)
 }
 
 // Count walks the tree, classifies every recognized file, and returns one File_Count
 // per file in the lexical order the walk visited them. Reading and classifying fan
 // out across workers, which does not affect the result order.
-func Count(input Count_Input) (report Report, err error) {
-	defer func() { Report_Invariants(report, "Count.report") }()
+func Count(input Count_Input) (report Root_Report, err error) {
+	defer func() { Root_Report_Invariants(report, "Count.report") }()
 	Count_Input_Invariants(input, "Count.input")
 	candidates, overflow, walk_err := count_candidates(
 		input.File_System, input.Is_Ignored, input.Include_Hidden)
 	if walk_err != nil {
-		return Report{}, walk_err
+		return Root_Report{}, walk_err
 	}
-	files, skipped := count_classify(
+	files, classified := count_classify(
 		input.File_System, candidates, input.Classifier, input.Concurrency)
+	skipped := Skipped(classified)
 	skipped.Overflow = overflow
 	// Nothing sums the run, but a language's own total is still stated as one number, so
 	// that number is what the line bound has to hold. A file that would carry its own
@@ -3525,7 +4294,7 @@ func Count(input Count_Input) (report Report, err error) {
 		lines_of[one.Language] += counts_lines(one.Counts)
 		kept = append(kept, one)
 	}
-	return Report{Files: kept, Skipped: skipped}, nil
+	return Root_Report{Files: kept, Skipped: skipped}, nil
 }
 
 // A file the walk selected for counting and the language to read it as.
@@ -3533,13 +4302,13 @@ type Candidate struct {
 	// Path is the file's path relative to the walked root.
 	Path Counted_Path
 	// Language is the language the file's extension resolved to.
-	Language Language
+	Language Seeded_Language
 }
 
 // Candidate_Invariants states a selected file's path and the language to read it as.
 func Candidate_Invariants(candidate Candidate, namespace invariant.Namespace) {
-	Counted_Path_Invariants(candidate.Path, "Candidate.Path")
-	Language_Invariants(candidate.Language, "Candidate.Language")
+	Counted_Path_Invariants(candidate.Path, namespace)
+	Seeded_Language_Invariants(candidate.Language, namespace)
 }
 
 // COUNTED_PATH_BYTES_MIN is the shortest path a walk can select: a name that is a bare
@@ -3556,7 +4325,7 @@ type Counted_Path string
 
 // Counted_Path_Invariants bounds a selected file's path length.
 func Counted_Path_Invariants(file_path Counted_Path, namespace invariant.Namespace) {
-	invariant.Assertions(namespace).
+	invariant.Tree(file_path, namespace).
 		Range_Int(len(file_path), COUNTED_PATH_BYTES_MIN, COUNTED_PATH_BYTES_MAX).
 		Ensure()
 }
@@ -3566,7 +4335,7 @@ type Candidates []Candidate
 
 // Candidates_Invariants bounds how many files a walk selected.
 func Candidates_Invariants(candidates Candidates, namespace invariant.Namespace) {
-	invariant.Assertions(namespace).
+	invariant.Tree(candidates, namespace).
 		Range_Int(len(candidates), FILES_COUNT_MIN, FILES_COUNT_MAX).
 		Ensure()
 }
@@ -3574,13 +4343,13 @@ func Candidates_Invariants(candidates Candidates, namespace invariant.Namespace)
 // Walks the tree and returns the recognized files to count, pruning hidden and
 // ignored directories so their contents are never read.
 func count_candidates(
-	file_system fs.FS, is_ignored Ignore_Predicate, include_hidden bool,
+	file_system fs.FS, is_ignored Ignore_Predicate, include_hidden Include_Hidden,
 ) (candidates Candidates, overflow Dropped_Count, err error) {
 	defer func() {
 		Candidates_Invariants(candidates, "count_candidates.candidates")
 		Dropped_Count_Invariants(overflow, "count_candidates.overflow")
 	}()
-	invariant.Boolean_Invariants(include_hidden, "count_candidates.include_hidden")
+	Include_Hidden_Invariants(include_hidden, "count_candidates.include_hidden")
 	walk_err := fs.WalkDir(file_system, ".",
 		func(file_path string, entry fs.DirEntry, step_err error) (result error) {
 			return count_visit(
@@ -3597,12 +4366,12 @@ func count_candidates(
 func count_visit(
 	candidates *Candidates, overflow *Dropped_Count, file_path File_Path,
 	entry fs.DirEntry, step_err error,
-	is_ignored Ignore_Predicate, include_hidden bool,
+	is_ignored Ignore_Predicate, include_hidden Include_Hidden,
 ) (result error) {
 	Candidates_Invariants(*candidates, "count_visit.candidates")
 	Dropped_Count_Invariants(*overflow, "count_visit.overflow")
 	File_Path_Invariants(file_path, "count_visit.file_path")
-	invariant.Boolean_Invariants(include_hidden, "count_visit.include_hidden")
+	Include_Hidden_Invariants(include_hidden, "count_visit.include_hidden")
 	if step_err != nil {
 		return step_err
 	}
@@ -3630,7 +4399,7 @@ func count_visit(
 	}
 	*candidates = append(*candidates, Candidate{
 		Path:     Counted_Path(file_path),
-		Language: language,
+		Language: Seeded_Language(language),
 	})
 	return nil
 }
@@ -3643,31 +4412,43 @@ func count_prune(entry fs.DirEntry) (result error) {
 	return nil
 }
 
+// Skip_Decision is the decision to omit one walked path.
+type Skip_Decision bool
+
+// Skip_Decision_Invariants states both walk decisions.
+func Skip_Decision_Invariants(value Skip_Decision, namespace invariant.Namespace) {
+	invariant.Tree(value, namespace).
+		Sometimes(bool(value), "A walked path is omitted.").
+		Ensure()
+}
+
 // Reports whether a path is a hidden entry to skip. The root, named ".", also begins
 // with a dot and must not be mistaken for one.
-func count_skip_hidden(file_path File_Path, include_hidden bool) (skip bool) {
-	defer func() { invariant.Boolean_Invariants(skip, "count_skip_hidden.skip") }()
+func count_skip_hidden(
+	file_path File_Path, include_hidden Include_Hidden,
+) (skip Skip_Decision) {
+	defer func() { Skip_Decision_Invariants(skip, "count_skip_hidden.skip") }()
 	File_Path_Invariants(file_path, "count_skip_hidden.file_path")
-	invariant.Boolean_Invariants(include_hidden, "count_skip_hidden.include_hidden")
+	Include_Hidden_Invariants(include_hidden, "count_skip_hidden.include_hidden")
 	if include_hidden {
 		return false
 	}
 	if file_path == "." {
 		return false
 	}
-	return path_is_hidden(file_path)
+	return Skip_Decision(path_is_hidden(file_path))
 }
 
 // Reports whether the injected predicate ignores a path.
 func count_skip_ignored(
 	file_path File_Path, entry fs.DirEntry, is_ignored Ignore_Predicate,
-) (skip bool) {
-	defer func() { invariant.Boolean_Invariants(skip, "count_skip_ignored.skip") }()
+) (skip Skip_Decision) {
+	defer func() { Skip_Decision_Invariants(skip, "count_skip_ignored.skip") }()
 	File_Path_Invariants(file_path, "count_skip_ignored.file_path")
 	if is_ignored == nil {
 		return false
 	}
-	return is_ignored(string(file_path), entry.IsDir())
+	return Skip_Decision(is_ignored(string(file_path), entry.IsDir()))
 }
 
 // SKIP_REASON_COUNTED means the file was read and classified.
@@ -3688,35 +4469,113 @@ type Skip_Reason uint8
 
 // Skip_Reason_Invariants holds an outcome to the four that exist, and witnesses each one.
 func Skip_Reason_Invariants(reason Skip_Reason, namespace invariant.Namespace) {
-	invariant.Assertions(namespace).
+	invariant.Tree(reason, namespace).
 		Enum_4_Uint8(
 			uint8(reason), uint8(SKIP_REASON_COUNTED), uint8(SKIP_REASON_UNREADABLE),
 			uint8(SKIP_REASON_OVERSIZED), uint8(SKIP_REASON_BINARY)).
 		Ensure()
 }
 
-// Count_Result is one candidate's outcome: the file, and why it was not counted when it
-// was not.
-type Count_Result struct {
-	// File is the counted file, or the path alone when it was not counted.
-	File File_Count
+// Candidate_Path is the path returned by candidate classification. It has already
+// passed the walk's recognized-path filter.
+type Candidate_Path Counted_Path
+
+// Candidate_Path_Invariants checks a selected path without assigning both path-width
+// witnesses to every later pipeline phase.
+func Candidate_Path_Invariants(path Candidate_Path, namespace invariant.Namespace) {
+	invariant.Always(
+		len(path) >= COUNTED_PATH_BYTES_MIN && len(path) <= COUNTED_PATH_BYTES_MAX,
+		"A candidate result always has a selected path width.")
+}
+
+// Candidate_File is one selected file after reading and classification. A skipped
+// candidate carries its path and the zero partition.
+type Candidate_File struct {
+	// Path is the selected file's path.
+	Path Candidate_Path
+	// Language is the counted language, or empty when the candidate was skipped.
+	Language Language_Name
+	// Counts is the file partition, or zero when the candidate was skipped.
+	Counts File_Partition
+	// Is_Test reports the source-or-test role of a counted candidate.
+	Is_Test Test_File_Status
+}
+
+// Candidate_File_Invariants states a candidate result's identity and partition.
+func Candidate_File_Invariants(file Candidate_File, namespace invariant.Namespace) {
+	Candidate_Path_Invariants(file.Path, namespace)
+	Language_Name_Invariants(file.Language, namespace)
+	File_Partition_Invariants(file.Counts, namespace)
+	Test_File_Status_Invariants(file.Is_Test, namespace)
+}
+
+// Candidate_Result is one selected candidate's file state and outcome.
+type Candidate_Result struct {
+	// File is the selected file's state after its outcome.
+	File Candidate_File
 	// Reason is what became of it.
 	Reason Skip_Reason
 }
 
-// Count_Result_Invariants states one candidate's outcome.
-func Count_Result_Invariants(result Count_Result, namespace invariant.Namespace) {
-	File_Count_Invariants(result.File, "Count_Result.File")
-	Skip_Reason_Invariants(result.Reason, "Count_Result.Reason")
+// Candidate_Result_Invariants states one candidate's outcome.
+func Candidate_Result_Invariants(result Candidate_Result, namespace invariant.Namespace) {
+	Candidate_File_Invariants(result.File, namespace)
+	Skip_Reason_Invariants(result.Reason, namespace)
 }
 
 // Count_Results are the per-candidate slots the workers write into, one per candidate.
-type Count_Results []Count_Result
+type Count_Results []Candidate_Result
 
 // Count_Results_Invariants bounds how many result slots a run allocates.
 func Count_Results_Invariants(results Count_Results, namespace invariant.Namespace) {
-	invariant.Assertions(namespace).
+	invariant.Tree(results, namespace).
 		Range_Int(len(results), FILES_COUNT_MIN, FILES_COUNT_MAX).
+		Ensure()
+}
+
+// Unreadable_Tally is the number of selected files that a read could not open.
+type Unreadable_Tally File_Tally
+
+// Unreadable_Tally_Invariants bounds an unreadable-file tally.
+func Unreadable_Tally_Invariants(
+	unreadable Unreadable_Tally, namespace invariant.Namespace,
+) {
+	invariant.Tree(unreadable, namespace).
+		Range_Int(int(unreadable), FILES_COUNT_MIN, FILES_COUNT_MAX).
+		Ensure()
+}
+
+// Oversized_Tally is the number of selected files past the source bound.
+type Oversized_Tally File_Tally
+
+// Oversized_Tally_Invariants bounds an oversized-file tally.
+func Oversized_Tally_Invariants(
+	oversized Oversized_Tally, namespace invariant.Namespace,
+) {
+	invariant.Tree(oversized, namespace).
+		Range_Int(int(oversized), FILES_COUNT_MIN, FILES_COUNT_MAX).
+		Ensure()
+}
+
+// Binary_Tally is the number of selected files that contain binary data.
+type Binary_Tally File_Tally
+
+// Binary_Tally_Invariants bounds a binary-file tally.
+func Binary_Tally_Invariants(binary Binary_Tally, namespace invariant.Namespace) {
+	invariant.Tree(binary, namespace).
+		Range_Int(int(binary), FILES_COUNT_MIN, FILES_COUNT_MAX).
+		Ensure()
+}
+
+// Past_Lines_Tally is the number of files past a language line bound.
+type Past_Lines_Tally File_Tally
+
+// Past_Lines_Tally_Invariants bounds a past-lines file tally.
+func Past_Lines_Tally_Invariants(
+	past_lines Past_Lines_Tally, namespace invariant.Namespace,
+) {
+	invariant.Tree(past_lines, namespace).
+		Range_Int(int(past_lines), FILES_COUNT_MIN, FILES_COUNT_MAX).
 		Ensure()
 }
 
@@ -3724,14 +4583,14 @@ func Count_Results_Invariants(results Count_Results, namespace invariant.Namespa
 // it so that a file left out of the totals is stated rather than silently missing.
 type Skipped struct {
 	// Unreadable is how many files could not be read.
-	Unreadable File_Tally
+	Unreadable Unreadable_Tally
 	// Oversized is how many files were wider than the source bound.
-	Oversized File_Tally
+	Oversized Oversized_Tally
 	// Binary is how many files held a zero byte in their opening chunk.
-	Binary File_Tally
+	Binary Binary_Tally
 	// Past_Lines is how many files were left out because their own language had already
 	// reached the line bound. The tree is still counted as far as it goes.
-	Past_Lines File_Tally
+	Past_Lines Past_Lines_Tally
 	// Overflow is how many recognized files the walk found past the file bound and so
 	// could not take. The walk keeps going in order to count them, because a report
 	// that says only "there were more" is the silence it exists to prevent.
@@ -3741,17 +4600,84 @@ type Skipped struct {
 // Skipped_Invariants states each tally of uncounted files and whether the walk stopped
 // short of the whole tree.
 func Skipped_Invariants(skipped Skipped, namespace invariant.Namespace) {
-	File_Tally_Invariants(skipped.Unreadable, "Skipped.Unreadable")
-	File_Tally_Invariants(skipped.Oversized, "Skipped.Oversized")
-	File_Tally_Invariants(skipped.Binary, "Skipped.Binary")
-	File_Tally_Invariants(skipped.Past_Lines, "Skipped.Past_Lines")
-	Dropped_Count_Invariants(skipped.Overflow, "Skipped.Overflow")
+	Unreadable_Tally_Invariants(skipped.Unreadable, namespace)
+	Oversized_Tally_Invariants(skipped.Oversized, namespace)
+	Binary_Tally_Invariants(skipped.Binary, namespace)
+	Past_Lines_Tally_Invariants(skipped.Past_Lines, namespace)
+	Dropped_Count_Invariants(skipped.Overflow, namespace)
+}
+
+// Collected_Skipped is the combined omission tally of the roots processed so far.
+type Collected_Skipped Skipped
+
+// Collected_Skipped_Invariants checks the accumulator without claiming that an
+// intermediate merge step witnesses every final report boundary.
+func Collected_Skipped_Invariants(
+	skipped Collected_Skipped, namespace invariant.Namespace,
+) {
+	Bounded_Skipped_Invariants(Bounded_Skipped(skipped), namespace)
+}
+
+// Root_Skipped is the omission tally produced by one command-line root.
+type Root_Skipped Skipped
+
+// Root_Skipped_Invariants checks one root's tallies. Aggregate boundary witnesses
+// belong to the report that combines roots.
+func Root_Skipped_Invariants(skipped Root_Skipped, namespace invariant.Namespace) {
+	Bounded_Skipped_Invariants(Bounded_Skipped(skipped), namespace)
+}
+
+// Classified_Skipped is the omission tally produced by candidate classification.
+// The later walk and line-bound phases own overflow and past-line omissions.
+type Classified_Skipped Skipped
+
+// Classified_Skipped_Invariants checks the three outcomes that classification owns.
+func Classified_Skipped_Invariants(
+	skipped Classified_Skipped, namespace invariant.Namespace,
+) {
+	Bounded_Skipped_Invariants(Bounded_Skipped(skipped), namespace)
+	invariant.Always(
+		skipped.Past_Lines == 0,
+		"Candidate classification never omits a file for aggregate lines.")
+	invariant.Always(
+		skipped.Overflow == 0,
+		"Candidate classification never owns walk overflow.")
+}
+
+// Bounded_Skipped is an omission tally checked for numeric safety without assigning
+// aggregate boundary witnesses to an intermediate phase.
+type Bounded_Skipped Skipped
+
+// Bounded_Skipped_Invariants checks the numeric bounds shared by skipped-tally phases.
+func Bounded_Skipped_Invariants(
+	skipped Bounded_Skipped, namespace invariant.Namespace,
+) {
+	invariant.Always(
+		int(skipped.Unreadable) >= FILES_COUNT_MIN &&
+			int(skipped.Unreadable) <= FILES_COUNT_MAX,
+		"An unreadable tally always stays in the file bound.")
+	invariant.Always(
+		int(skipped.Oversized) >= FILES_COUNT_MIN &&
+			int(skipped.Oversized) <= FILES_COUNT_MAX,
+		"An oversized tally always stays in the file bound.")
+	invariant.Always(
+		int(skipped.Binary) >= FILES_COUNT_MIN &&
+			int(skipped.Binary) <= FILES_COUNT_MAX,
+		"A binary tally always stays in the file bound.")
+	invariant.Always(
+		int(skipped.Past_Lines) >= FILES_COUNT_MIN &&
+			int(skipped.Past_Lines) <= FILES_COUNT_MAX,
+		"A past-lines tally always stays in the file bound.")
+	invariant.Always(
+		skipped.Overflow >= DROPPED_COUNT_MIN &&
+			skipped.Overflow <= DROPPED_COUNT_MAX,
+		"An overflow tally always stays in the dropped-count bound.")
 }
 
 // Adds one report's uncounted tallies into another, in place.
-func skipped_add(into *Skipped, more Skipped) {
-	Skipped_Invariants(*into, "skipped_add.into")
-	Skipped_Invariants(more, "skipped_add.more")
+func skipped_add(into *Collected_Skipped, more Root_Skipped) {
+	Collected_Skipped_Invariants(*into, "skipped_add.into")
+	Root_Skipped_Invariants(more, "skipped_add.more")
 	into.Unreadable += more.Unreadable
 	into.Oversized += more.Oversized
 	into.Binary += more.Binary
@@ -3765,20 +4691,21 @@ func skipped_add(into *Skipped, more Skipped) {
 // Reads and classifies each candidate concurrently, dropping any unreadable or binary
 // file, and returns the results in candidate order.
 func count_classify(
-	file_system fs.FS, candidates Candidates, classifier File_Classifier, concurrency int,
-) (files File_Counts, skipped Skipped) {
+	file_system fs.FS, candidates Candidates, classifier File_Classifier,
+	concurrency Concurrency,
+) (files File_Counts, skipped Classified_Skipped) {
 	defer func() {
 		File_Counts_Invariants(files, "count_classify.files")
-		Skipped_Invariants(skipped, "count_classify.skipped")
+		Classified_Skipped_Invariants(skipped, "count_classify.skipped")
 	}()
 	Candidates_Invariants(candidates, "count_classify.candidates")
 	File_Classifier_Invariants(classifier, "count_classify.classifier")
-	invariant.Int_Invariants(concurrency, "count_classify.concurrency")
+	Concurrency_Invariants(concurrency, "count_classify.concurrency")
 	// Each worker writes its own slot, so candidate order is preserved without locking
 	// the result slice, and every candidate leaves a slot saying what became of it.
 	// Nothing the walk selected disappears without being accounted for.
 	results := make(Count_Results, len(candidates))
-	worker_count := concurrency
+	worker_count := int(concurrency)
 	if worker_count > len(candidates) {
 		worker_count = len(candidates)
 	}
@@ -3800,9 +4727,14 @@ func count_classify(
 		// The slots are stated here rather than where a worker fills one: a result is
 		// only whole once its worker has returned, and this is the first point that is
 		// true of every slot.
-		Count_Result_Invariants(one, "count_classify.one")
+		Candidate_Result_Invariants(one, "count_classify.one")
 		if one.Reason == SKIP_REASON_COUNTED {
-			files = append(files, one.File)
+			files = append(files, File_Count{
+				Path:     File_Path(one.File.Path),
+				Language: one.File.Language,
+				Counts:   Counts(one.File.Counts),
+				Is_Test:  one.File.Is_Test,
+			})
 			continue
 		}
 		skipped_tally(&skipped, Uncounted_Reason(one.Reason))
@@ -3826,7 +4758,7 @@ type Uncounted_Reason uint8
 // Uncounted_Reason_Invariants states only reasons that increment a skipped tally, and
 // witnesses each one.
 func Uncounted_Reason_Invariants(reason Uncounted_Reason, namespace invariant.Namespace) {
-	invariant.Assertions(namespace).
+	invariant.Tree(reason, namespace).
 		Enum_3_Uint8(
 			uint8(reason), uint8(UNCOUNTED_REASON_MIN),
 			uint8(UNCOUNTED_REASON_OVERSIZED), uint8(UNCOUNTED_REASON_MAX)).
@@ -3834,8 +4766,8 @@ func Uncounted_Reason_Invariants(reason Uncounted_Reason, namespace invariant.Na
 }
 
 // Adds one uncounted file to the tally of its reason.
-func skipped_tally(skipped *Skipped, reason Uncounted_Reason) {
-	Skipped_Invariants(*skipped, "skipped_tally.skipped")
+func skipped_tally(skipped *Classified_Skipped, reason Uncounted_Reason) {
+	Classified_Skipped_Invariants(*skipped, "skipped_tally.skipped")
 	Uncounted_Reason_Invariants(reason, "skipped_tally.reason")
 	switch reason {
 	case Uncounted_Reason(SKIP_REASON_UNREADABLE):
@@ -3858,7 +4790,7 @@ func count_worker(
 	defer group.Done()
 	for index := range jobs {
 		one, reason := count_one(file_system, candidates[index], classifier)
-		results[index] = Count_Result{File: one, Reason: reason}
+		results[index] = Candidate_Result{File: one, Reason: reason}
 	}
 }
 
@@ -3867,17 +4799,17 @@ func count_worker(
 // without the report being able to say what became of it.
 func count_one(
 	file_system fs.FS, one Candidate, classifier File_Classifier,
-) (file File_Count, reason Skip_Reason) {
+) (file Candidate_File, reason Skip_Reason) {
 	defer func() {
-		File_Count_Invariants(file, "count_one.file")
+		Candidate_File_Invariants(file, "count_one.file")
 		Skip_Reason_Invariants(reason, "count_one.reason")
 	}()
 	Candidate_Invariants(one, "count_one.candidate")
 	File_Classifier_Invariants(classifier, "count_one.classifier")
-	uncounted := File_Count{
-		Path:     File_Path(one.Path),
+	uncounted := Candidate_File{
+		Path:     Candidate_Path(one.Path),
 		Language: "",
-		Counts:   Counts{Code: 0, Comment: 0, Blank: 0, Dropped: 0},
+		Counts:   File_Partition{Code: 0, Comment: 0, Blank: 0, Dropped: 0},
 		Is_Test:  false,
 	}
 	content, read_err := fs.ReadFile(file_system, string(one.Path))
@@ -3901,20 +4833,22 @@ func count_one(
 		Source:   Source(content),
 		Language: one.Language,
 	})
-	return File_Count{
-		Path:     File_Path(one.Path),
+	return Candidate_File{
+		Path:     Candidate_Path(one.Path),
 		Language: one.Language.Name,
 		Counts:   counts,
-		Is_Test:  path_is_test(one.Path, one.Language),
+		Is_Test:  Test_File_Status(path_is_test(one.Path, one.Language)),
 	}, SKIP_REASON_COUNTED
 }
 
 // Reports whether a path is test code: it lives under a test directory, or its base
 // name carries the language's test prefix or infix.
-func path_is_test(file_path Counted_Path, language Language) (test bool) {
-	defer func() { invariant.Boolean_Invariants(test, "path_is_test.test") }()
+func path_is_test(
+	file_path Counted_Path, language Seeded_Language,
+) (test Test_File_Status) {
+	defer func() { Test_File_Status_Invariants(test, "path_is_test.test") }()
 	Counted_Path_Invariants(file_path, "path_is_test.file_path")
-	Language_Invariants(language, "path_is_test.language")
+	Seeded_Language_Invariants(language, "path_is_test.language")
 	if path_has_test_directory(file_path) {
 		return true
 	}
@@ -3932,10 +4866,20 @@ func path_is_test(file_path Counted_Path, language Language) (test bool) {
 	return false
 }
 
+// Test_Directory is the conventional-test-directory state of one file path.
+type Test_Directory bool
+
+// Test_Directory_Invariants states both path states.
+func Test_Directory_Invariants(value Test_Directory, namespace invariant.Namespace) {
+	invariant.Tree(value, namespace).
+		Sometimes(bool(value), "A path contains a test directory.").
+		Ensure()
+}
+
 // Reports whether any component of a path is a conventional test directory.
-func path_has_test_directory(file_path Counted_Path) (found bool) {
+func path_has_test_directory(file_path Counted_Path) (found Test_Directory) {
 	defer func() {
-		invariant.Boolean_Invariants(found, "path_has_test_directory.found")
+		Test_Directory_Invariants(found, "path_has_test_directory.found")
 	}()
 	Counted_Path_Invariants(file_path, "path_has_test_directory.file_path")
 	for _, component := range strings.Split(string(file_path), "/") {
@@ -3950,10 +4894,20 @@ func path_has_test_directory(file_path Counted_Path) (found bool) {
 // Bounds how far content_is_binary scans for a NUL byte.
 const BINARY_SNIFF_BYTES = 2048
 
+// Binary_Content is the binary-content state of one source.
+type Binary_Content bool
+
+// Binary_Content_Invariants states both source states.
+func Binary_Content_Invariants(value Binary_Content, namespace invariant.Namespace) {
+	invariant.Tree(value, namespace).
+		Sometimes(bool(value), "A source contains binary data.").
+		Ensure()
+}
+
 // Reports whether content holds a NUL byte in its first chunk, the cheap heuristic
 // for "not text" that also guards against a no-newline blob.
-func content_is_binary(content Source) (binary bool) {
-	defer func() { invariant.Boolean_Invariants(binary, "content_is_binary.binary") }()
+func content_is_binary(content Source) (binary Binary_Content) {
+	defer func() { Binary_Content_Invariants(binary, "content_is_binary.binary") }()
 	Source_Invariants(content, "content_is_binary.content")
 	limit_count := len(content)
 	if limit_count > BINARY_SNIFF_BYTES {
@@ -3967,9 +4921,19 @@ func content_is_binary(content Source) (binary bool) {
 	return false
 }
 
+// Hidden_Path is the hidden-name state of one file path.
+type Hidden_Path bool
+
+// Hidden_Path_Invariants states both file-path states.
+func Hidden_Path_Invariants(value Hidden_Path, namespace invariant.Namespace) {
+	invariant.Tree(value, namespace).
+		Sometimes(bool(value), "A file path has a hidden final name.").
+		Ensure()
+}
+
 // Reports whether a path's final element begins with a dot.
-func path_is_hidden(file_path File_Path) (hidden bool) {
-	defer func() { invariant.Boolean_Invariants(hidden, "path_is_hidden.hidden") }()
+func path_is_hidden(file_path File_Path) (hidden Hidden_Path) {
+	defer func() { Hidden_Path_Invariants(hidden, "path_is_hidden.hidden") }()
 	File_Path_Invariants(file_path, "path_is_hidden.file_path")
 	base := path.Base(string(file_path))
 	if len(base) == 0 {
@@ -3978,18 +4942,28 @@ func path_is_hidden(file_path File_Path) (hidden bool) {
 	return base[0] == '.'
 }
 
+// File_Display is the per-file display state of one rendered report.
+type File_Display bool
+
+// File_Display_Invariants states both per-file display states.
+func File_Display_Invariants(value File_Display, namespace invariant.Namespace) {
+	invariant.Tree(value, namespace).
+		Sometimes(bool(value), "Files are shown.").
+		Ensure()
+}
+
 // Render_Input is a report and whether to break each language into its files.
 type Render_Input struct {
 	// Report is the report to render.
 	Report Report
 	// Show_Files lists each file indented under its language.
-	Show_Files bool
+	Show_Files File_Display
 }
 
 // Render_Input_Invariants states the report to render and the breakdown setting.
 func Render_Input_Invariants(input Render_Input, namespace invariant.Namespace) {
-	Report_Invariants(input.Report, "Render_Input.Report")
-	invariant.Boolean_Invariants(input.Show_Files, "Render_Input.Show_Files")
+	Report_Invariants(input.Report, namespace)
+	File_Display_Invariants(input.Show_Files, namespace)
 }
 
 // Render writes the report as an aligned table: one row per language sorted by name,
@@ -4032,7 +5006,7 @@ type Nonzero_Count int
 
 // Nonzero_Count_Invariants bounds a printed line tally.
 func Nonzero_Count_Invariants(count Nonzero_Count, namespace invariant.Namespace) {
-	invariant.Assertions(namespace).
+	invariant.Tree(count, namespace).
 		Range_Int(int(count), NONZERO_COUNT_MIN, DROPPED_COUNT_MAX).
 		Ensure()
 }
@@ -4043,7 +5017,7 @@ type Nonzero_Tally int
 
 // Nonzero_Tally_Invariants bounds a printed file tally.
 func Nonzero_Tally_Invariants(tally Nonzero_Tally, namespace invariant.Namespace) {
-	invariant.Assertions(namespace).
+	invariant.Tree(tally, namespace).
 		Range_Int(int(tally), NONZERO_COUNT_MIN, FILES_COUNT_MAX).
 		Ensure()
 }
@@ -4060,7 +5034,7 @@ type Skip_Label string
 
 // Skip_Label_Invariants bounds a skip label's width.
 func Skip_Label_Invariants(label Skip_Label, namespace invariant.Namespace) {
-	invariant.Assertions(namespace).
+	invariant.Tree(label, namespace).
 		Range_Int(len(label), SKIP_LABEL_BYTES_MIN, SKIP_LABEL_BYTES_MAX).
 		Ensure()
 }
@@ -4076,7 +5050,7 @@ type Dropped_Cell string
 
 // Dropped_Cell_Invariants bounds the numeric and saturated spellings.
 func Dropped_Cell_Invariants(cell Dropped_Cell, namespace invariant.Namespace) {
-	invariant.Assertions(namespace).
+	invariant.Tree(cell, namespace).
 		Range_Int(len(cell), DROPPED_CELL_BYTES_MIN, DROPPED_CELL_BYTES_MAX).
 		Ensure()
 }
@@ -4112,7 +5086,7 @@ func dropped_rows(report Report) (rows Dropped_Rows) {
 	if len(detail) == 0 {
 		return nil
 	}
-	return append(Dropped_Rows{skipped_label_row()}, detail...)
+	return append(Dropped_Rows{Render_Row(skipped_label_row())}, detail...)
 }
 
 // Returns one row for each thing the run actually left out, and none for the rest.
@@ -4123,39 +5097,40 @@ func dropped_detail_rows(
 	Skipped_Invariants(skipped, "dropped_detail_rows.skipped")
 	Dropped_Count_Invariants(dropped, "dropped_detail_rows.dropped")
 	if dropped > 0 {
-		rows = append(rows, skipped_line_row(Nonzero_Count(dropped)))
+		rows = append(rows, Render_Row(skipped_line_row(Nonzero_Count(dropped))))
 	}
 	if skipped.Unreadable > 0 {
-		rows = append(rows, skipped_file_row(
-			"  files unreadable", Nonzero_Tally(skipped.Unreadable)))
+		rows = append(rows, Render_Row(skipped_file_row(
+			"  files unreadable", Nonzero_Tally(skipped.Unreadable))))
 	}
 	if skipped.Oversized > 0 {
-		rows = append(rows, skipped_file_row(
-			"  files oversized", Nonzero_Tally(skipped.Oversized)))
+		rows = append(rows, Render_Row(skipped_file_row(
+			"  files oversized", Nonzero_Tally(skipped.Oversized))))
 	}
 	if skipped.Binary > 0 {
-		rows = append(rows, skipped_file_row(
-			"  files binary", Nonzero_Tally(skipped.Binary)))
+		rows = append(rows, Render_Row(skipped_file_row(
+			"  files binary", Nonzero_Tally(skipped.Binary))))
 	}
 	if skipped.Past_Lines > 0 {
-		rows = append(rows, skipped_file_row(
-			"  files past lines", Nonzero_Tally(skipped.Past_Lines)))
+		rows = append(rows, Render_Row(skipped_file_row(
+			"  files past lines", Nonzero_Tally(skipped.Past_Lines))))
 	}
 	if skipped.Overflow > 0 {
-		rows = append(rows, skipped_overflow_row(Nonzero_Count(skipped.Overflow)))
+		rows = append(rows,
+			Render_Row(skipped_overflow_row(Nonzero_Count(skipped.Overflow))))
 	}
 	return rows
 }
 
 // Returns the row naming how many recognized files the walk found past the file bound.
-func skipped_overflow_row(overflow Nonzero_Count) (row Render_Row) {
-	defer func() { Render_Row_Invariants(row, "skipped_overflow_row.row") }()
+func skipped_overflow_row(overflow Nonzero_Count) (row Prepared_Row) {
+	defer func() { Prepared_Row_Invariants(row, "skipped_overflow_row.row") }()
 	Nonzero_Count_Invariants(overflow, "skipped_overflow_row.overflow")
 	tally := File_Cell(with_thousands_separators(Line_Count(overflow)))
 	if overflow == DROPPED_COUNT_MAX {
 		tally = DROPPED_SATURATED_TEXT
 	}
-	return Render_Row{
+	return Prepared_Row{
 		Name: "  files past bound", Files: tally, Lines: "",
 		Code: "", Comments: "", Blanks: "", Percent: "",
 	}
@@ -4172,7 +5147,7 @@ type Dropped_Details []Render_Row
 
 // Dropped_Details_Invariants bounds how many kinds of omission one run reports.
 func Dropped_Details_Invariants(rows Dropped_Details, namespace invariant.Namespace) {
-	invariant.Assertions(namespace).
+	invariant.Tree(rows, namespace).
 		Range_Int(len(rows), DROPPED_DETAILS_COUNT_MIN, DROPPED_DETAILS_COUNT_MAX).
 		Ensure()
 }
@@ -4193,7 +5168,7 @@ type Dropped_Rows []Render_Row
 
 // Dropped_Rows_Invariants bounds the trailing section to its two shapes.
 func Dropped_Rows_Invariants(rows Dropped_Rows, namespace invariant.Namespace) {
-	invariant.Assertions(namespace).
+	invariant.Tree(rows, namespace).
 		Range_Holed_Int(
 			len(rows), DROPPED_ROWS_COUNT_MIN, DROPPED_ROWS_COUNT_MAX,
 			DROPPED_ROWS_COUNT_ABSENT, DROPPED_ROWS_COUNT_ABSENT,
@@ -4202,30 +5177,30 @@ func Dropped_Rows_Invariants(rows Dropped_Rows, namespace invariant.Namespace) {
 }
 
 // Returns the section's label row.
-func skipped_label_row() (row Render_Row) {
-	defer func() { Render_Row_Invariants(row, "skipped_label_row.row") }()
-	return Render_Row{
+func skipped_label_row() (row Prepared_Row) {
+	defer func() { Prepared_Row_Invariants(row, "skipped_label_row.row") }()
+	return Prepared_Row{
 		Name: "Dropped", Files: "", Lines: "", Code: "",
 		Comments: "", Blanks: "", Percent: "",
 	}
 }
 
 // Returns the row naming how many lines were read short of their full width.
-func skipped_line_row(dropped Nonzero_Count) (row Render_Row) {
-	defer func() { Render_Row_Invariants(row, "skipped_line_row.row") }()
+func skipped_line_row(dropped Nonzero_Count) (row Prepared_Row) {
+	defer func() { Prepared_Row_Invariants(row, "skipped_line_row.row") }()
 	Nonzero_Count_Invariants(dropped, "skipped_line_row.dropped")
-	return Render_Row{
-		Name: "  lines read short", Files: "", Lines: Line_Cell(dropped_cell(dropped)),
+	return Prepared_Row{
+		Name: "  lines read short", Files: "", Lines: Lines_Cell(dropped_cell(dropped)),
 		Code: "", Comments: "", Blanks: "", Percent: "",
 	}
 }
 
 // Returns a row naming one tally of files the run did not count.
-func skipped_file_row(name Skip_Label, tally Nonzero_Tally) (row Render_Row) {
-	defer func() { Render_Row_Invariants(row, "skipped_file_row.row") }()
+func skipped_file_row(name Skip_Label, tally Nonzero_Tally) (row Prepared_Row) {
+	defer func() { Prepared_Row_Invariants(row, "skipped_file_row.row") }()
 	Skip_Label_Invariants(name, "skipped_file_row.name")
 	Nonzero_Tally_Invariants(tally, "skipped_file_row.tally")
-	return Render_Row{
+	return Prepared_Row{
 		Name:     Row_Name(name),
 		Files:    File_Cell(with_thousands_separators(Line_Count(tally))),
 		Lines:    "",
@@ -4274,7 +5249,7 @@ type Row_Line string
 
 // Row_Line_Invariants bounds a laid-out row's byte length.
 func Row_Line_Invariants(line Row_Line, namespace invariant.Namespace) {
-	invariant.Assertions(namespace).
+	invariant.Tree(line, namespace).
 		Range_Int(len(line), TABLE_WIDTH_MIN, TABLE_WIDTH_MAX).
 		Ensure()
 }
@@ -4285,7 +5260,7 @@ type Table_Line string
 
 // Table_Line_Invariants bounds a rendered line's width.
 func Table_Line_Invariants(line Table_Line, namespace invariant.Namespace) {
-	invariant.Assertions(namespace).
+	invariant.Tree(line, namespace).
 		Range_Int(len(line), TABLE_LINE_BYTES_MIN, TABLE_LINE_BYTES_MAX).
 		Ensure()
 }
@@ -4295,19 +5270,19 @@ type Json_Counts struct {
 	// Files is the number of files in the partition.
 	Files File_Tally `json:"files"`
 	// Code is the code-line count.
-	Code Line_Count `json:"code"`
+	Code Code_Count `json:"code"`
 	// Comments is the comment-line count.
-	Comments Line_Count `json:"comments"`
+	Comments Comment_Count `json:"comments"`
 	// Blanks is the blank-line count.
-	Blanks Line_Count `json:"blanks"`
+	Blanks Blank_Count `json:"blanks"`
 }
 
 // Json_Counts_Invariants states a serialized partition's file and line counts.
 func Json_Counts_Invariants(partition Json_Counts, namespace invariant.Namespace) {
-	File_Tally_Invariants(partition.Files, "Json_Counts.Files")
-	Line_Count_Invariants(partition.Code, "Json_Counts.Code")
-	Line_Count_Invariants(partition.Comments, "Json_Counts.Comments")
-	Line_Count_Invariants(partition.Blanks, "Json_Counts.Blanks")
+	File_Tally_Invariants(partition.Files, namespace)
+	Code_Count_Invariants(partition.Code, namespace)
+	Comment_Count_Invariants(partition.Comments, namespace)
+	Blank_Count_Invariants(partition.Blanks, namespace)
 }
 
 // GROUP_TALLY_MIN is the one file that brought a group into being: a language group
@@ -4321,7 +5296,7 @@ type Group_Tally int
 
 // Group_Tally_Invariants bounds a language group's file count.
 func Group_Tally_Invariants(tally Group_Tally, namespace invariant.Namespace) {
-	invariant.Assertions(namespace).
+	invariant.Tree(tally, namespace).
 		Range_Int(int(tally), GROUP_TALLY_MIN, FILES_COUNT_MAX).
 		Ensure()
 }
@@ -4331,8 +5306,38 @@ type File_Tally int
 
 // File_Tally_Invariants bounds a file tally by the same bound the walk stops at.
 func File_Tally_Invariants(tally File_Tally, namespace invariant.Namespace) {
-	invariant.Assertions(namespace).
+	invariant.Tree(tally, namespace).
 		Range_Int(int(tally), FILES_COUNT_MIN, FILES_COUNT_MAX).
+		Ensure()
+}
+
+// Source_Json_Counts is the serialized non-test partition of one language.
+type Source_Json_Counts Json_Counts
+
+// Source_Json_Counts_Invariants states all source partition values.
+func Source_Json_Counts_Invariants(
+	partition Source_Json_Counts, namespace invariant.Namespace,
+) {
+	invariant.Tree(partition, namespace).
+		Range_Int(int(partition.Files), FILES_COUNT_MIN, FILES_COUNT_MAX).
+		Range_Int(int(partition.Code), LINE_COUNT_MIN, LINE_COUNT_MAX).
+		Range_Int(int(partition.Comments), LINE_COUNT_MIN, LINE_COUNT_MAX).
+		Range_Int(int(partition.Blanks), LINE_COUNT_MIN, LINE_COUNT_MAX).
+		Ensure()
+}
+
+// Test_Json_Counts is the serialized test partition of one language.
+type Test_Json_Counts Json_Counts
+
+// Test_Json_Counts_Invariants states all test partition values.
+func Test_Json_Counts_Invariants(
+	partition Test_Json_Counts, namespace invariant.Namespace,
+) {
+	invariant.Tree(partition, namespace).
+		Range_Int(int(partition.Files), FILES_COUNT_MIN, FILES_COUNT_MAX).
+		Range_Int(int(partition.Code), LINE_COUNT_MIN, LINE_COUNT_MAX).
+		Range_Int(int(partition.Comments), LINE_COUNT_MIN, LINE_COUNT_MAX).
+		Range_Int(int(partition.Blanks), LINE_COUNT_MIN, LINE_COUNT_MAX).
 		Ensure()
 }
 
@@ -4344,17 +5349,17 @@ type Json_Language struct {
 	// Category is the language's taxonomy bucket.
 	Category Category `json:"category"`
 	// Source is the non-test partition.
-	Source Json_Counts `json:"source"`
+	Source Source_Json_Counts `json:"source"`
 	// Tests is the test partition.
-	Tests Json_Counts `json:"tests"`
+	Tests Test_Json_Counts `json:"tests"`
 }
 
 // Json_Language_Invariants states a serialized row's identity and its two partitions.
 func Json_Language_Invariants(row Json_Language, namespace invariant.Namespace) {
-	Known_Name_Invariants(row.Name, "Json_Language.Name")
-	Category_Invariants(row.Category, "Json_Language.Category")
-	Json_Counts_Invariants(row.Source, "Json_Language.Source")
-	Json_Counts_Invariants(row.Tests, "Json_Language.Tests")
+	Known_Name_Invariants(row.Name, namespace)
+	Category_Invariants(row.Category, namespace)
+	Source_Json_Counts_Invariants(row.Source, namespace)
+	Test_Json_Counts_Invariants(row.Tests, namespace)
 }
 
 // Builds a serialized partition from a file count and a partition.
@@ -4372,15 +5377,17 @@ func json_partition(files File_Tally, counts Counts) (partition Json_Counts) {
 
 // Render_Json writes the report as compact flat JSON: a name-sorted array of per-language
 // rows, each with its category and source/test split.
-func Render_Json(output io.Writer, report Report) (err error) {
-	Report_Invariants(report, "Render_Json.report")
+func Render_Json(output io.Writer, files File_Counts) (err error) {
+	File_Counts_Invariants(files, "Render_Json.files")
 	languages := []Json_Language{}
-	for _, group := range report_groups(report) {
+	for _, group := range report_groups(Report{Files: files}) {
 		languages = append(languages, Json_Language{
 			Name:     group.Name,
 			Category: group.Category,
-			Source:   json_partition(group.Source_Files, group.Source),
-			Tests:    json_partition(group.Test_Files, group.Test),
+			Source: Source_Json_Counts(json_partition(
+				File_Tally(group.Source_Files), Counts(group.Source))),
+			Tests: Test_Json_Counts(json_partition(
+				File_Tally(group.Test_Files), Counts(group.Test))),
 		})
 		Json_Language_Invariants(languages[len(languages)-1], "Render_Json.row")
 	}
@@ -4395,13 +5402,13 @@ type Render_Row struct {
 	// Files is the file count, empty on a per-file row.
 	Files File_Cell
 	// Lines is the total line count.
-	Lines Line_Cell
+	Lines Lines_Cell
 	// Code is the code-line count.
-	Code Line_Cell
+	Code Code_Cell
 	// Comments is the comment-line count.
 	Comments Comments_Cell
 	// Blanks is the blank-line count.
-	Blanks Line_Cell
+	Blanks Blanks_Cell
 	// Percent is the row's code as a share of total code.
 	Percent Percent_Cell
 }
@@ -4416,13 +5423,42 @@ type Render_Row struct {
 // witnessed instead by the widest cell of any column, which is an ordinary long file
 // path in the label. A cell is a printed string; its width is all a row promises.
 func Render_Row_Invariants(row Render_Row, namespace invariant.Namespace) {
-	Row_Name_Invariants(row.Name, "Render_Row.Name")
-	File_Cell_Invariants(row.Files, "Render_Row.Files")
-	Line_Cell_Invariants(row.Lines, "Render_Row.Lines")
-	Line_Cell_Invariants(row.Code, "Render_Row.Code")
-	Comments_Cell_Invariants(row.Comments, "Render_Row.Comments")
-	Line_Cell_Invariants(row.Blanks, "Render_Row.Blanks")
-	Percent_Cell_Invariants(row.Percent, "Render_Row.Percent")
+	Row_Name_Invariants(row.Name, namespace)
+	File_Cell_Invariants(row.Files, namespace)
+	Lines_Cell_Invariants(row.Lines, namespace)
+	Code_Cell_Invariants(row.Code, namespace)
+	Comments_Cell_Invariants(row.Comments, namespace)
+	Blanks_Cell_Invariants(row.Blanks, namespace)
+	Percent_Cell_Invariants(row.Percent, namespace)
+}
+
+// Prepared_Row is a row whose builder already selected the applicable cells.
+type Prepared_Row Render_Row
+
+// Prepared_Row_Invariants enforces each cell ceiling. The shared row formatter sees
+// all row shapes and owns the variable boundary witnesses.
+func Prepared_Row_Invariants(row Prepared_Row, namespace invariant.Namespace) {
+	invariant.Always(
+		len(row.Name) <= ROW_NAME_BYTES_MAX,
+		"A prepared row name always fits its cell.")
+	invariant.Always(
+		len(row.Files) <= FILE_CELL_BYTES_MAX,
+		"A prepared file tally always fits its cell.")
+	invariant.Always(
+		len(row.Lines) <= LINE_CELL_BYTES_MAX,
+		"A prepared line tally always fits its cell.")
+	invariant.Always(
+		len(row.Code) <= LINE_CELL_BYTES_MAX,
+		"A prepared code tally always fits its cell.")
+	invariant.Always(
+		len(row.Comments) <= COMMENTS_CELL_BYTES_MAX,
+		"A prepared comment tally always fits its cell.")
+	invariant.Always(
+		len(row.Blanks) <= LINE_CELL_BYTES_MAX,
+		"A prepared blank tally always fits its cell.")
+	invariant.Always(
+		len(row.Percent) <= PERCENT_CELL_BYTES_MAX,
+		"A prepared percentage always fits its cell.")
 }
 
 // ROW_NAME_BYTES_MIN is the narrowest label: two spaces of indent and a one-letter
@@ -4439,7 +5475,7 @@ type Row_Name string
 
 // Row_Name_Invariants bounds a row label's width.
 func Row_Name_Invariants(name Row_Name, namespace invariant.Namespace) {
-	invariant.Assertions(namespace).
+	invariant.Tree(name, namespace).
 		Range_Int(len(name), ROW_NAME_BYTES_MIN, ROW_NAME_BYTES_MAX).
 		Ensure()
 }
@@ -4456,7 +5492,7 @@ type File_Cell string
 
 // File_Cell_Invariants bounds a printed file tally's width.
 func File_Cell_Invariants(cell File_Cell, namespace invariant.Namespace) {
-	invariant.Assertions(namespace).
+	invariant.Tree(cell, namespace).
 		Range_Int(len(cell), FILE_CELL_BYTES_MIN, FILE_CELL_BYTES_MAX).
 		Ensure()
 }
@@ -4477,17 +5513,37 @@ type Tally_Text string
 
 // Tally_Text_Invariants bounds a rendered tally's width.
 func Tally_Text_Invariants(text Tally_Text, namespace invariant.Namespace) {
-	invariant.Assertions(namespace).
+	invariant.Tree(text, namespace).
 		Range_Int(len(text), TALLY_TEXT_BYTES_MIN, LINE_CELL_BYTES_MAX).
 		Ensure()
 }
 
-// Line_Cell is a table row's printed line tally.
-type Line_Cell string
+// Lines_Cell is a table row's printed total-line tally.
+type Lines_Cell string
 
-// Line_Cell_Invariants bounds a printed line tally's width.
-func Line_Cell_Invariants(cell Line_Cell, namespace invariant.Namespace) {
-	invariant.Assertions(namespace).
+// Lines_Cell_Invariants bounds a printed total-line tally's width.
+func Lines_Cell_Invariants(cell Lines_Cell, namespace invariant.Namespace) {
+	invariant.Tree(cell, namespace).
+		Range_Int(len(cell), LINE_CELL_BYTES_MIN, LINE_CELL_BYTES_MAX).
+		Ensure()
+}
+
+// Code_Cell is a table row's printed code-line tally.
+type Code_Cell string
+
+// Code_Cell_Invariants bounds a printed code-line tally's width.
+func Code_Cell_Invariants(cell Code_Cell, namespace invariant.Namespace) {
+	invariant.Tree(cell, namespace).
+		Range_Int(len(cell), LINE_CELL_BYTES_MIN, LINE_CELL_BYTES_MAX).
+		Ensure()
+}
+
+// Blanks_Cell is a table row's printed blank-line tally.
+type Blanks_Cell string
+
+// Blanks_Cell_Invariants bounds a printed blank-line tally's width.
+func Blanks_Cell_Invariants(cell Blanks_Cell, namespace invariant.Namespace) {
+	invariant.Tree(cell, namespace).
 		Range_Int(len(cell), LINE_CELL_BYTES_MIN, LINE_CELL_BYTES_MAX).
 		Ensure()
 }
@@ -4497,13 +5553,13 @@ func Line_Cell_Invariants(cell Line_Cell, namespace invariant.Namespace) {
 // other, so the widest cell of this column is the label rather than a number.
 const COMMENTS_CELL_BYTES_MAX = LINE_CELL_BYTES_MAX
 
-// Comments_Cell is a table row's printed comment tally. It is distinct from Line_Cell
-// because its header label is the widest thing the column ever holds.
+// Comments_Cell is a table row's printed comment tally. Its header label is the
+// widest thing that the column holds.
 type Comments_Cell string
 
 // Comments_Cell_Invariants bounds a printed comment tally's width.
 func Comments_Cell_Invariants(cell Comments_Cell, namespace invariant.Namespace) {
-	invariant.Assertions(namespace).
+	invariant.Tree(cell, namespace).
 		Range_Int(len(cell), LINE_CELL_BYTES_MIN, COMMENTS_CELL_BYTES_MAX).
 		Ensure()
 }
@@ -4528,7 +5584,7 @@ type Percent_Cell string
 // Percent_Cell_Invariants holds a printed share's width to the four a one-decimal
 // percentage can occupy, and witnesses each width.
 func Percent_Cell_Invariants(cell Percent_Cell, namespace invariant.Namespace) {
-	invariant.Assertions(namespace).
+	invariant.Tree(cell, namespace).
 		Enum_4_Int(
 			len(cell), PERCENT_CELL_BYTES_MIN, PERCENT_CELL_BYTES_NARROW,
 			PERCENT_CELL_BYTES_TENS, PERCENT_CELL_BYTES_MAX).
@@ -4536,12 +5592,73 @@ func Percent_Cell_Invariants(cell Percent_Cell, namespace invariant.Namespace) {
 }
 
 // Returns the table's column header row.
-func render_header_row() (header Render_Row) {
-	defer func() { Render_Row_Invariants(header, "render_header_row.header") }()
-	return Render_Row{
+func render_header_row() (header Prepared_Row) {
+	defer func() { Prepared_Row_Invariants(header, "render_header_row.header") }()
+	return Prepared_Row{
 		Name: "Language", Files: "Files", Lines: "Lines",
 		Code: "Code", Comments: "Comments", Blanks: "Blanks", Percent: "%Code",
 	}
+}
+
+// Group_Counts is the complete line partition of one language group.
+type Group_Counts Counts
+
+// Group_Counts_Invariants states all four group partition values.
+func Group_Counts_Invariants(counts Group_Counts, namespace invariant.Namespace) {
+	invariant.Tree(counts, namespace).
+		Range_Int(int(counts.Code), LINE_COUNT_MIN, LINE_COUNT_MAX).
+		Range_Int(int(counts.Comment), LINE_COUNT_MIN, LINE_COUNT_MAX).
+		Range_Int(int(counts.Blank), LINE_COUNT_MIN, LINE_COUNT_MAX).
+		Range_Int(int(counts.Dropped), DROPPED_COUNT_MIN, DROPPED_COUNT_MAX).
+		Ensure()
+}
+
+// Source_Counts is the non-test line partition of one language group.
+type Source_Counts Counts
+
+// Source_Counts_Invariants states all four source partition values.
+func Source_Counts_Invariants(counts Source_Counts, namespace invariant.Namespace) {
+	invariant.Tree(counts, namespace).
+		Range_Int(int(counts.Code), LINE_COUNT_MIN, LINE_COUNT_MAX).
+		Range_Int(int(counts.Comment), LINE_COUNT_MIN, LINE_COUNT_MAX).
+		Range_Int(int(counts.Blank), LINE_COUNT_MIN, LINE_COUNT_MAX).
+		Range_Int(int(counts.Dropped), DROPPED_COUNT_MIN, DROPPED_COUNT_MAX).
+		Ensure()
+}
+
+// Test_Counts is the test line partition of one language group.
+type Test_Counts Counts
+
+// Test_Counts_Invariants states all four test partition values.
+func Test_Counts_Invariants(counts Test_Counts, namespace invariant.Namespace) {
+	invariant.Tree(counts, namespace).
+		Range_Int(int(counts.Code), LINE_COUNT_MIN, LINE_COUNT_MAX).
+		Range_Int(int(counts.Comment), LINE_COUNT_MIN, LINE_COUNT_MAX).
+		Range_Int(int(counts.Blank), LINE_COUNT_MIN, LINE_COUNT_MAX).
+		Range_Int(int(counts.Dropped), DROPPED_COUNT_MIN, DROPPED_COUNT_MAX).
+		Ensure()
+}
+
+// Source_File_Tally is the non-test file count of one language group.
+type Source_File_Tally File_Tally
+
+// Source_File_Tally_Invariants bounds the source file count.
+func Source_File_Tally_Invariants(
+	tally Source_File_Tally, namespace invariant.Namespace,
+) {
+	invariant.Tree(tally, namespace).
+		Range_Int(int(tally), FILES_COUNT_MIN, FILES_COUNT_MAX).
+		Ensure()
+}
+
+// Test_File_Tally is the test file count of one language group.
+type Test_File_Tally File_Tally
+
+// Test_File_Tally_Invariants bounds the test file count.
+func Test_File_Tally_Invariants(tally Test_File_Tally, namespace invariant.Namespace) {
+	invariant.Tree(tally, namespace).
+		Range_Int(int(tally), FILES_COUNT_MIN, FILES_COUNT_MAX).
+		Ensure()
 }
 
 // One language's files and their summed partition.
@@ -4553,15 +5670,15 @@ type Language_Group struct {
 	// Files is the number of files in the group.
 	Files Group_Tally
 	// Counts is the group's summed line partition.
-	Counts Counts
+	Counts Group_Counts
 	// Source_Files is the number of non-test files in the group.
-	Source_Files File_Tally
+	Source_Files Source_File_Tally
 	// Source is the summed partition of the group's non-test files.
-	Source Counts
+	Source Source_Counts
 	// Test_Files is the number of test files in the group.
-	Test_Files File_Tally
+	Test_Files Test_File_Tally
 	// Test is the summed partition of the group's test files.
-	Test Counts
+	Test Test_Counts
 	// Members are the group's files in report order.
 	Members Group_Members
 }
@@ -4569,15 +5686,15 @@ type Language_Group struct {
 // Language_Group_Invariants states a group's identity, its three tallies, its three
 // partitions, and the files it holds.
 func Language_Group_Invariants(group Language_Group, namespace invariant.Namespace) {
-	Known_Name_Invariants(group.Name, "Language_Group.Name")
-	Category_Invariants(group.Category, "Language_Group.Category")
-	Group_Tally_Invariants(group.Files, "Language_Group.Files")
-	Counts_Invariants(group.Counts, "Language_Group.Counts")
-	File_Tally_Invariants(group.Source_Files, "Language_Group.Source_Files")
-	Counts_Invariants(group.Source, "Language_Group.Source")
-	File_Tally_Invariants(group.Test_Files, "Language_Group.Test_Files")
-	Counts_Invariants(group.Test, "Language_Group.Test")
-	Group_Members_Invariants(group.Members, "Language_Group.Members")
+	Known_Name_Invariants(group.Name, namespace)
+	Category_Invariants(group.Category, namespace)
+	Group_Tally_Invariants(group.Files, namespace)
+	Group_Counts_Invariants(group.Counts, namespace)
+	Source_File_Tally_Invariants(group.Source_Files, namespace)
+	Source_Counts_Invariants(group.Source, namespace)
+	Test_File_Tally_Invariants(group.Test_Files, namespace)
+	Test_Counts_Invariants(group.Test, namespace)
+	Group_Members_Invariants(group.Members, namespace)
 }
 
 // KNOWN_NAME_BYTES_MIN is the shortest seeded display name, of which C and D and R are
@@ -4591,7 +5708,7 @@ type Known_Name string
 
 // Known_Name_Invariants bounds a resolved language's display name.
 func Known_Name_Invariants(name Known_Name, namespace invariant.Namespace) {
-	invariant.Assertions(namespace).
+	invariant.Tree(name, namespace).
 		Range_Int(len(name), KNOWN_NAME_BYTES_MIN, LANGUAGE_NAME_BYTES_MAX).
 		Ensure()
 }
@@ -4604,7 +5721,7 @@ type Group_Members []File_Count
 
 // Group_Members_Invariants bounds a group's membership.
 func Group_Members_Invariants(members Group_Members, namespace invariant.Namespace) {
-	invariant.Assertions(namespace).
+	invariant.Tree(members, namespace).
 		Range_Int(len(members), GROUP_MEMBERS_COUNT_MIN, FILES_COUNT_MAX).
 		Ensure()
 }
@@ -4621,7 +5738,7 @@ type Category string
 
 // Category_Invariants bounds a taxonomy bucket's byte length.
 func Category_Invariants(category Category, namespace invariant.Namespace) {
-	invariant.Assertions(namespace).
+	invariant.Tree(category, namespace).
 		Range_Int(len(category), CATEGORY_BYTES_MIN, CATEGORY_BYTES_MAX).
 		Ensure()
 }
@@ -4638,15 +5755,15 @@ type Language_Groups []Language_Group
 
 // Language_Groups_Invariants bounds how many languages a report holds.
 func Language_Groups_Invariants(groups Language_Groups, namespace invariant.Namespace) {
-	invariant.Assertions(namespace).
+	invariant.Tree(groups, namespace).
 		Range_Int(len(groups), LANGUAGE_GROUPS_COUNT_MIN, LANGUAGE_GROUPS_COUNT_MAX).
 		Ensure()
 }
 
 // Adds one line partition into another in place.
-func counts_add(into *Counts, more Counts) {
-	Counts_Invariants(*into, "counts_add.into")
-	Counts_Invariants(more, "counts_add.more")
+func counts_add(into *Summed_Counts, more File_Partition) {
+	Summed_Counts_Invariants(*into, "counts_add.into")
+	File_Partition_Invariants(more, "counts_add.more")
 	into.Code += more.Code
 	into.Comment += more.Comment
 	into.Blank += more.Blank
@@ -4674,13 +5791,19 @@ func report_groups(report Report) (groups Language_Groups) {
 		}
 		group := &groups[position]
 		group.Files++
-		counts_add(&group.Counts, file.Counts)
+		group_counts := Summed_Counts(group.Counts)
+		counts_add(&group_counts, File_Partition(file.Counts))
+		group.Counts = Group_Counts(group_counts)
 		if file.Is_Test {
 			group.Test_Files++
-			counts_add(&group.Test, file.Counts)
+			test_counts := Summed_Counts(group.Test)
+			counts_add(&test_counts, File_Partition(file.Counts))
+			group.Test = Test_Counts(test_counts)
 		} else {
 			group.Source_Files++
-			counts_add(&group.Source, file.Counts)
+			source_counts := Summed_Counts(group.Source)
+			counts_add(&source_counts, File_Partition(file.Counts))
+			group.Source = Source_Counts(source_counts)
 		}
 		group.Members = append(group.Members, file)
 	}
@@ -4755,8 +5878,8 @@ type Category_Group struct {
 
 // Category_Group_Invariants states a bucket's name and the groups it holds.
 func Category_Group_Invariants(group Category_Group, namespace invariant.Namespace) {
-	Category_Invariants(group.Name, "Category_Group.Name")
-	Category_Languages_Invariants(group.Languages, "Category_Group.Languages")
+	Category_Invariants(group.Name, namespace)
+	Category_Languages_Invariants(group.Languages, namespace)
 }
 
 // CATEGORY_LANGUAGES_COUNT_MIN is a bucket no counted file fell into.
@@ -4774,7 +5897,7 @@ type Category_Languages []Language_Group
 func Category_Languages_Invariants(
 	languages Category_Languages, namespace invariant.Namespace,
 ) {
-	invariant.Assertions(namespace).
+	invariant.Tree(languages, namespace).
 		Range_Int(
 			len(languages), CATEGORY_LANGUAGES_COUNT_MIN,
 			CATEGORY_LANGUAGES_COUNT_MAX).
@@ -4816,14 +5939,14 @@ func report_categories(groups Language_Groups) (categories Category_Groups) {
 
 // Builds the header, then each non-empty category: a label row followed by its
 // languages, each with its files (show_files) or its source/test split.
-func report_rows(categories Category_Groups, show_files bool) (rows Render_Rows) {
+func report_rows(categories Category_Groups, show_files File_Display) (rows Render_Rows) {
 	defer func() { Render_Rows_Invariants(rows, "report_rows.rows") }()
 	Category_Groups_Invariants(categories, "report_rows.categories")
 	for _, one := range categories {
 		Category_Group_Invariants(one, "report_rows.category")
 	}
-	invariant.Boolean_Invariants(show_files, "report_rows.show_files")
-	rows = Render_Rows{render_header_row()}
+	File_Display_Invariants(show_files, "report_rows.show_files")
+	rows = Render_Rows{Render_Row(render_header_row())}
 	for _, category := range categories {
 		if len(category.Languages) == 0 {
 			continue
@@ -4847,17 +5970,17 @@ func report_rows(categories Category_Groups, show_files bool) (rows Render_Rows)
 // Appends a language's indented row, then its files (with show_files) or its source and
 // test sub-rows.
 func report_language_rows(
-	group Language_Group, show_files bool,
+	group Language_Group, show_files File_Display,
 ) (output Language_Rows) {
 	defer func() { Language_Rows_Invariants(output, "report_language_rows.output") }()
 	Language_Group_Invariants(group, "report_language_rows.group")
-	invariant.Boolean_Invariants(show_files, "report_language_rows.show_files")
-	output = Language_Rows{counts_row(&Counts_Row_Input{
+	File_Display_Invariants(show_files, "report_language_rows.show_files")
+	output = Language_Rows{Render_Row(counts_row(&Counts_Row_Input{
 		Name:       Row_Name("  " + group.Name),
 		Files:      File_Tally(group.Files),
-		Counts:     group.Counts,
+		Counts:     Counts(group.Counts),
 		Total_Code: 0,
-	})}
+	}))}
 	if show_files {
 		output = append(output, split_rows(&Split_Rows_Input{
 			Source_Files: group.Source_Files,
@@ -4866,8 +5989,8 @@ func report_language_rows(
 			Test:         group.Test,
 		})...)
 		for _, member := range group.Members {
-			output = append(output, file_row(
-				Counted_Path(member.Path), member.Counts))
+			output = append(output, Render_Row(file_row(
+				Counted_Path(member.Path), File_Partition(member.Counts))))
 		}
 		return output
 	}
@@ -4893,7 +6016,7 @@ type Language_Rows []Render_Row
 
 // Language_Rows_Invariants bounds one language's contribution to the table.
 func Language_Rows_Invariants(rows Language_Rows, namespace invariant.Namespace) {
-	invariant.Assertions(namespace).
+	invariant.Tree(rows, namespace).
 		Range_Int(len(rows), LANGUAGE_ROWS_COUNT_MIN, LANGUAGE_ROWS_COUNT_MAX).
 		Ensure()
 }
@@ -4901,23 +6024,23 @@ func Language_Rows_Invariants(rows Language_Rows, namespace invariant.Namespace)
 // Carries split_rows's accumulator and the source and test partitions.
 type Split_Rows_Input struct {
 	// Source_Files is the non-test file count.
-	Source_Files File_Tally
+	Source_Files Source_File_Tally
 	// Source is the non-test partition.
-	Source Counts
+	Source Source_Counts
 	// Test_Files is the test file count.
-	Test_Files File_Tally
+	Test_Files Test_File_Tally
 	// Test is the test partition.
-	Test Counts
+	Test Test_Counts
 }
 
 // Split_Rows_Input_Invariants states the accumulator and both partitions.
 func Split_Rows_Input_Invariants(
 	input Split_Rows_Input, namespace invariant.Namespace,
 ) {
-	File_Tally_Invariants(input.Source_Files, "Split_Rows_Input.Source_Files")
-	Counts_Invariants(input.Source, "Split_Rows_Input.Source")
-	File_Tally_Invariants(input.Test_Files, "Split_Rows_Input.Test_Files")
-	Counts_Invariants(input.Test, "Split_Rows_Input.Test")
+	Source_File_Tally_Invariants(input.Source_Files, namespace)
+	Source_Counts_Invariants(input.Source, namespace)
+	Test_File_Tally_Invariants(input.Test_Files, namespace)
+	Test_Counts_Invariants(input.Test, namespace)
 }
 
 // SPLIT_ROW_INDENT is the leading whitespace of a source or test row. It is a
@@ -4948,7 +6071,7 @@ type Render_Rows []Render_Row
 
 // Render_Rows_Invariants bounds how many rows a table prints.
 func Render_Rows_Invariants(rows Render_Rows, namespace invariant.Namespace) {
-	invariant.Assertions(namespace).
+	invariant.Tree(rows, namespace).
 		Range_Holed_Int(
 			len(rows), RENDER_ROWS_COUNT_MIN, RENDER_ROWS_COUNT_MAX,
 			RENDER_ROWS_COUNT_ABSENT, RENDER_ROWS_COUNT_ABSENT,
@@ -4968,18 +6091,18 @@ func split_rows(input *Split_Rows_Input) (split Split_Row_Pair) {
 	}
 	own_code := input.Source.Code + input.Test.Code
 	return Split_Row_Pair{
-		counts_row(&Counts_Row_Input{
+		Render_Row(counts_row(&Counts_Row_Input{
 			Name:       Row_Name(SPLIT_ROW_INDENT + "source"),
-			Files:      input.Source_Files,
-			Counts:     input.Source,
-			Total_Code: own_code,
-		}),
-		counts_row(&Counts_Row_Input{
+			Files:      File_Tally(input.Source_Files),
+			Counts:     Counts(input.Source),
+			Total_Code: Line_Count(own_code),
+		})),
+		Render_Row(counts_row(&Counts_Row_Input{
 			Name:       Row_Name(SPLIT_ROW_INDENT + "tests"),
-			Files:      input.Test_Files,
-			Counts:     input.Test,
-			Total_Code: own_code,
-		}),
+			Files:      File_Tally(input.Test_Files),
+			Counts:     Counts(input.Test),
+			Total_Code: Line_Count(own_code),
+		})),
 	}
 }
 
@@ -4996,7 +6119,7 @@ type Split_Row_Pair []Render_Row
 // each shape. The lone sub-row never occurs: the split is a pair or it is nothing,
 // since a group with tests has a source side even when that side is empty.
 func Split_Row_Pair_Invariants(rows Split_Row_Pair, namespace invariant.Namespace) {
-	invariant.Assertions(namespace).
+	invariant.Tree(rows, namespace).
 		Enum_Int(len(rows), SPLIT_ROWS_COUNT_MIN, SPLIT_ROWS_COUNT_MAX).
 		Ensure()
 }
@@ -5019,43 +6142,44 @@ type Counts_Row_Input struct {
 func Counts_Row_Input_Invariants(
 	input Counts_Row_Input, namespace invariant.Namespace,
 ) {
-	Row_Name_Invariants(input.Name, "Counts_Row_Input.Name")
-	File_Tally_Invariants(input.Files, "Counts_Row_Input.Files")
-	Counts_Invariants(input.Counts, "Counts_Row_Input.Counts")
-	Line_Count_Invariants(input.Total_Code, "Counts_Row_Input.Total_Code")
+	Row_Name_Invariants(input.Name, namespace)
+	File_Tally_Invariants(input.Files, namespace)
+	Counts_Invariants(input.Counts, namespace)
+	Line_Count_Invariants(input.Total_Code, namespace)
 }
 
 // Builds an aggregate row: a name, a file count, the partition, and the code's share
 // of the given code total — blank when that total is zero.
-func counts_row(input *Counts_Row_Input) (row Render_Row) {
-	defer func() { Render_Row_Invariants(row, "counts_row.row") }()
+func counts_row(input *Counts_Row_Input) (row Prepared_Row) {
+	defer func() { Prepared_Row_Invariants(row, "counts_row.row") }()
 	Counts_Row_Input_Invariants(*input, "counts_row.input")
 	percent := Percent_Cell("")
 	if input.Total_Code > 0 {
 		share := float64(input.Counts.Code) / float64(input.Total_Code) * 100
 		percent = Percent_Cell(fmt.Sprintf("%.1f%%", share))
 	}
-	return Render_Row{
-		Name:     input.Name,
-		Files:    File_Cell(with_thousands_separators(Line_Count(input.Files))),
-		Lines:    Line_Cell(with_thousands_separators(counts_lines(input.Counts))),
-		Code:     Line_Cell(with_thousands_separators(input.Counts.Code)),
-		Comments: Comments_Cell(with_thousands_separators(input.Counts.Comment)),
-		Blanks:   Line_Cell(with_thousands_separators(input.Counts.Blank)),
-		Percent:  percent,
+	return Prepared_Row{
+		Name:  input.Name,
+		Files: File_Cell(with_thousands_separators(Line_Count(input.Files))),
+		Lines: Lines_Cell(with_thousands_separators(counts_lines(input.Counts))),
+		Code:  Code_Cell(with_thousands_separators(Line_Count(input.Counts.Code))),
+		Comments: Comments_Cell(
+			with_thousands_separators(Line_Count(input.Counts.Comment))),
+		Blanks:  Blanks_Cell(with_thousands_separators(Line_Count(input.Counts.Blank))),
+		Percent: percent,
 	}
 }
 
 // Builds a per-file row: like an aggregate row but without a file count, since the
 // row is itself one file, and without a percentage, which is a per-language fact.
-func file_row(file_path Counted_Path, counts Counts) (row Render_Row) {
-	defer func() { Render_Row_Invariants(row, "file_row.row") }()
+func file_row(file_path Counted_Path, counts File_Partition) (row Prepared_Row) {
+	defer func() { Prepared_Row_Invariants(row, "file_row.row") }()
 	Counted_Path_Invariants(file_path, "file_row.file_path")
-	Counts_Invariants(counts, "file_row.counts")
+	File_Partition_Invariants(counts, "file_row.counts")
 	row = counts_row(&Counts_Row_Input{
 		Name:       Row_Name("    " + file_path),
 		Files:      0,
-		Counts:     counts,
+		Counts:     Counts(counts),
 		Total_Code: 0,
 	})
 	row.Files = ""
@@ -5087,13 +6211,13 @@ type Render_Column_Widths struct {
 func Render_Column_Widths_Invariants(
 	widths Render_Column_Widths, namespace invariant.Namespace,
 ) {
-	Name_Width_Invariants(widths.Name, "Render_Column_Widths.Name")
-	File_Width_Invariants(widths.Files, "Render_Column_Widths.Files")
-	Lines_Width_Invariants(widths.Lines, "Render_Column_Widths.Lines")
-	Code_Width_Invariants(widths.Code, "Render_Column_Widths.Code")
-	Comments_Width_Invariants(widths.Comments, "Render_Column_Widths.Comments")
-	Blanks_Width_Invariants(widths.Blanks, "Render_Column_Widths.Blanks")
-	Percent_Width_Invariants(widths.Percent, "Render_Column_Widths.Percent")
+	Name_Width_Invariants(widths.Name, namespace)
+	File_Width_Invariants(widths.Files, namespace)
+	Lines_Width_Invariants(widths.Lines, namespace)
+	Code_Width_Invariants(widths.Code, namespace)
+	Comments_Width_Invariants(widths.Comments, namespace)
+	Blanks_Width_Invariants(widths.Blanks, namespace)
+	Percent_Width_Invariants(widths.Percent, namespace)
 }
 
 // NAME_WIDTH_MIN is the header's own label, "Language", which every table carries and
@@ -5109,7 +6233,7 @@ type Name_Width int
 
 // Name_Width_Invariants bounds the label column's width.
 func Name_Width_Invariants(width Name_Width, namespace invariant.Namespace) {
-	invariant.Assertions(namespace).
+	invariant.Tree(width, namespace).
 		Range_Int(int(width), NAME_WIDTH_MIN, NAME_WIDTH_MAX).
 		Ensure()
 }
@@ -5127,7 +6251,7 @@ type File_Width int
 // File_Width_Invariants holds the file-tally column's width to the two it takes, and
 // witnesses each one.
 func File_Width_Invariants(width File_Width, namespace invariant.Namespace) {
-	invariant.Assertions(namespace).
+	invariant.Tree(width, namespace).
 		Enum_Int(int(width), FILE_WIDTH_MIN, FILE_WIDTH_MAX).
 		Ensure()
 }
@@ -5146,7 +6270,7 @@ type Lines_Width int
 
 // Lines_Width_Invariants bounds the total-line column's width.
 func Lines_Width_Invariants(width Lines_Width, namespace invariant.Namespace) {
-	invariant.Assertions(namespace).
+	invariant.Tree(width, namespace).
 		Range_Int(int(width), LINES_WIDTH_MIN, LINE_WIDTH_MAX).
 		Ensure()
 }
@@ -5159,7 +6283,7 @@ type Code_Width int
 
 // Code_Width_Invariants bounds the code-line column's width.
 func Code_Width_Invariants(width Code_Width, namespace invariant.Namespace) {
-	invariant.Assertions(namespace).
+	invariant.Tree(width, namespace).
 		Range_Int(int(width), CODE_WIDTH_MIN, LINE_WIDTH_MAX).
 		Ensure()
 }
@@ -5181,7 +6305,7 @@ type Comments_Width int
 // Comments_Width_Invariants holds the comment-line column's width to the three it
 // takes, and witnesses each one.
 func Comments_Width_Invariants(width Comments_Width, namespace invariant.Namespace) {
-	invariant.Assertions(namespace).
+	invariant.Tree(width, namespace).
 		Enum_3_Int(
 			int(width), COMMENTS_WIDTH_MIN, COMMENTS_WIDTH_SEVEN_FIGURE,
 			COMMENTS_WIDTH_MAX).
@@ -5200,7 +6324,7 @@ type Blanks_Width int
 
 // Blanks_Width_Invariants bounds the blank-line column's width.
 func Blanks_Width_Invariants(width Blanks_Width, namespace invariant.Namespace) {
-	invariant.Assertions(namespace).
+	invariant.Tree(width, namespace).
 		Range_Int(int(width), BLANKS_WIDTH_MIN, BLANKS_WIDTH_MAX).
 		Ensure()
 }
@@ -5217,7 +6341,7 @@ type Percent_Width int
 // Percent_Width_Invariants holds the share column's width to the two it takes, and
 // witnesses each one.
 func Percent_Width_Invariants(width Percent_Width, namespace invariant.Namespace) {
-	invariant.Assertions(namespace).
+	invariant.Tree(width, namespace).
 		Enum_Int(int(width), PERCENT_WIDTH_MIN, PERCENT_WIDTH_MAX).
 		Ensure()
 }
@@ -5238,7 +6362,7 @@ type Column_Width int
 
 // Column_Width_Invariants bounds the width a numeric cell is padded to.
 func Column_Width_Invariants(width Column_Width, namespace invariant.Namespace) {
-	invariant.Assertions(namespace).
+	invariant.Tree(width, namespace).
 		Range_Int(int(width), COLUMN_WIDTH_MIN, COLUMN_WIDTH_MAX).
 		Ensure()
 }
@@ -5250,7 +6374,7 @@ type Table_Width int
 // Table_Width_Invariants bounds a whole row's printed width in characters, which is
 // what the rule is drawn to and what the columns sum to.
 func Table_Width_Invariants(width Table_Width, namespace invariant.Namespace) {
-	invariant.Assertions(namespace).
+	invariant.Tree(width, namespace).
 		Range_Int(int(width), TABLE_WIDTH_MIN, TABLE_WIDTH_MAX).
 		Ensure()
 }
@@ -5318,7 +6442,7 @@ type Padded_Cell string
 
 // Padded_Cell_Invariants bounds a padded numeric cell's width.
 func Padded_Cell_Invariants(padded Padded_Cell, namespace invariant.Namespace) {
-	invariant.Assertions(namespace).
+	invariant.Tree(padded, namespace).
 		Range_Int(len(padded), PADDED_CELL_BYTES_MIN, PADDED_CELL_BYTES_MAX).
 		Ensure()
 }
@@ -5336,7 +6460,7 @@ type Padded_Name string
 
 // Padded_Name_Invariants bounds a padded label's width.
 func Padded_Name_Invariants(padded Padded_Name, namespace invariant.Namespace) {
-	invariant.Assertions(namespace).
+	invariant.Tree(padded, namespace).
 		Range_Int(len(padded), PADDED_NAME_BYTES_MIN, PADDED_NAME_BYTES_MAX).
 		Ensure()
 }
@@ -5353,7 +6477,7 @@ type Cell_Text string
 
 // Cell_Text_Invariants bounds a cell's width before padding.
 func Cell_Text_Invariants(text Cell_Text, namespace invariant.Namespace) {
-	invariant.Assertions(namespace).
+	invariant.Tree(text, namespace).
 		Range_Int(len(text), CELL_TEXT_BYTES_MIN, CELL_TEXT_BYTES_MAX).
 		Ensure()
 }

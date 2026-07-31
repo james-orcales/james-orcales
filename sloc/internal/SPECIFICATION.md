@@ -160,6 +160,26 @@ Nested block comments are tracked to a depth of 255, and a raw string's hashes o
 bracket's equals signs to a run of 255. Past either, the depth saturates and the closer is
 the one computed at the bound, so a construct nested deeper than this closes early.
 
+# Host
+
+Main receives only operating-system capabilities. It owns the bounded file read, Git ignore
+policy, and worker policy so the executable root contains only dependency bindings.
+
+### File Read
+
+An explicitly named file is read through its file handle and limited to the source-byte bound.
+An empty or short file is valid, but an open, status, or read failure stops the run.
+
+### Git Ignore
+
+Main runs one scoped `git ls-files` command for each directory root. The command output identifies
+kept files and their parent directories. A command failure disables ignore filtering for that root.
+
+### Workers
+
+The root supplies the current processor count. Main uses four workers per processor because file
+reads can wait while other workers classify source.
+
 # Limitations
 
 Rare constructs are misclassified without breaking the line sum: lowercase heredoc

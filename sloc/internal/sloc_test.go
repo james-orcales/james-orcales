@@ -1,6 +1,7 @@
 package sloc_test
 
 import (
+	"errors"
 	"io"
 	"io/fs"
 	"strings"
@@ -23,17 +24,19 @@ func Test_Main_Paths(t *testing.T) {
 			Arguments:    arguments,
 			Output:       &buffer,
 			Error_Output: &stderr,
-			Open:         func(root sloc.Root) (file_system fs.FS) { return disk },
-			Path_Is_Directory: func(
+			File_System:  func(root sloc.Root) (file_system fs.FS) { return disk },
+			Path_Information: func(
 				name sloc.File_Path,
-			) (is_directory bool, err error) {
-				return true, nil
+			) (information fs.FileInfo, err error) {
+				return test_information(true), nil
 			},
-			Read_File: func(name sloc.File_Path) (content sloc.Source, err error) {
-				return nil, nil
+			File: func(name sloc.File_Path) (file fs.File, err error) {
+				return test_file(nil), nil
 			},
-			Ignore_For: func(root sloc.Root) (is_ignored sloc.Ignore_Predicate) {
-				return nil
+			Command: func(
+				name string, arguments []string,
+			) (output []byte, err error) {
+				return nil, errors.New("command unavailable")
 			},
 			Classifier: sloc.File_Classifier{
 				Kind: sloc.FILE_CLASSIFIER_KIND_BYTES,
@@ -58,26 +61,28 @@ func Test_Main_Paths(t *testing.T) {
 // walked tree, otherwise simulations would silently regain the production scanner there.
 func Test_Main_Classifier(t *testing.T) {
 	source := sloc.Source("the real scanner would count one code line\n")
-	want := sloc.Counts{Code: 19, Comment: 23, Blank: 29, Dropped: 31}
+	want := sloc.File_Partition{Code: 19, Comment: 23, Blank: 29, Dropped: 31}
 	output := strings.Builder{}
 	error_output := strings.Builder{}
 	code := sloc.Main(sloc.Main_Input{
 		Arguments:    sloc.Arguments{"sloc", "modeled.go"},
 		Output:       &output,
 		Error_Output: &error_output,
-		Open: func(root sloc.Root) (file_system fs.FS) {
+		File_System: func(root sloc.Root) (file_system fs.FS) {
 			return fstest.MapFS{}
 		},
-		Path_Is_Directory: func(
+		Path_Information: func(
 			name sloc.File_Path,
-		) (is_directory bool, err error) {
-			return false, nil
+		) (information fs.FileInfo, err error) {
+			return test_information(false), nil
 		},
-		Read_File: func(name sloc.File_Path) (content sloc.Source, err error) {
-			return source, nil
+		File: func(name sloc.File_Path) (file fs.File, err error) {
+			return test_file(source), nil
 		},
-		Ignore_For: func(root sloc.Root) (is_ignored sloc.Ignore_Predicate) {
-			return nil
+		Command: func(
+			name string, arguments []string,
+		) (output []byte, err error) {
+			return nil, errors.New("command unavailable")
 		},
 		Classifier: sloc.File_Classifier{
 			Kind: sloc.FILE_CLASSIFIER_KIND_MODEL,
@@ -150,21 +155,47 @@ func classifier_main_input(
 		Arguments:    sloc.Arguments{"sloc", "modeled.go"},
 		Output:       io.Discard,
 		Error_Output: io.Discard,
-		Open: func(root sloc.Root) (file_system fs.FS) {
+		File_System: func(root sloc.Root) (file_system fs.FS) {
 			return fstest.MapFS{}
 		},
-		Path_Is_Directory: func(
+		Path_Information: func(
 			name sloc.File_Path,
-		) (is_directory bool, err error) {
-			return false, nil
+		) (information fs.FileInfo, err error) {
+			return test_information(false), nil
 		},
-		Read_File: func(name sloc.File_Path) (content sloc.Source, err error) {
-			return source, nil
+		File: func(name sloc.File_Path) (file fs.File, err error) {
+			return test_file(source), nil
 		},
-		Ignore_For: func(root sloc.Root) (is_ignored sloc.Ignore_Predicate) {
-			return nil
+		Command: func(
+			name string, arguments []string,
+		) (output []byte, err error) {
+			return nil, errors.New("command unavailable")
 		},
 		Classifier:  classifier,
 		Concurrency: 1,
 	}
+}
+
+// Returns stable file information without coupling a Main test to the host filesystem.
+func test_information(directory bool) (information fs.FileInfo) {
+	mode := fs.FileMode(0)
+	if directory {
+		mode = fs.ModeDir
+	}
+	disk := fstest.MapFS{"entry": &fstest.MapFile{Mode: mode}}
+	information, information_err := fs.Stat(disk, "entry")
+	if information_err != nil {
+		panic(information_err)
+	}
+	return information
+}
+
+// Returns a fresh file handle because Main closes each injected handle after one read.
+func test_file(source []byte) (file fs.File) {
+	disk := fstest.MapFS{"file": &fstest.MapFile{Data: source}}
+	file, open_err := disk.Open("file")
+	if open_err != nil {
+		panic(open_err)
+	}
+	return file
 }

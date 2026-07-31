@@ -35,6 +35,16 @@ The file exactly at the source-byte bound retains all of its bytes so the bounde
 real, but its repeated line partition is modeled. The file one byte over remains rejected by the
 production size check before classification.
 
+### Classifier Input Bounds
+
+The largest accepted path and source use the production byte classifier. The source has one wide
+line so the test reaches both input bounds without an expensive per-line scan.
+
+### Model Path Minimum
+
+The shortest recognized path uses the modeled classifier through Main. Hidden-file selection lets
+the walk count the bare `.c` path while the empty source keeps its classification exact.
+
 ### Wide Model
 
 The wide-table fixtures model their repeated per-file line partitions. The walk still visits
@@ -46,6 +56,11 @@ are checked against the production scanner before their counts are scaled.
 One modeled report combines the maximum path, a five-digit per-language file tally, three
 languages at the code/comment/blank bounds, and a source/test split. Rendering that report with
 files shown reaches the production table-width bound exactly.
+
+### Shared Properties
+
+The source and test partition types use the same file, line, and dropped-count limits. One modeled
+report gives each test count its minimum, one, two, and maximum values through both renderers.
 
 ### Failure
 

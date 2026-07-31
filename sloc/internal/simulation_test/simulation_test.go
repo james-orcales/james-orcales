@@ -86,7 +86,7 @@ type disk_fixture struct {
 	// Roots supplies distinct trees only when a multi-root bound requires them.
 	Roots map[sloc.Root]fstest.MapFS
 	// Classifications replaces only derivations the fixture explicitly establishes.
-	Classifications map[sloc.Classified_Path]sloc.Counts
+	Classifications map[sloc.Classified_Path]sloc.File_Partition
 }
 
 // A cursor reads the fuzz bytes; every read past the end yields zero, so any input
@@ -176,7 +176,7 @@ func concurrency_of(choice int) (workers int) {
 	case 4:
 		return math.MaxInt64
 	}
-	return 4
+	return 2
 }
 
 // Drives one whole run of internal.Main against a synthetic tree.
@@ -206,30 +206,37 @@ func drive_main(input *drive_main_input) {
 		Arguments:    build_arguments(one),
 		Output:       input.Output,
 		Error_Output: &stderr,
-		Open: func(root sloc.Root) (file_system fs.FS) {
+		File_System: func(root sloc.Root) (file_system fs.FS) {
 			return broken_disk{MapFS: fixture_disk_for(fixture, root)}
 		},
-		Path_Is_Directory: func(
+		Path_Information: func(
 			name sloc.File_Path,
-		) (is_directory bool, err error) {
+		) (information fs.FileInfo, err error) {
 			if one.Stat_Error {
-				return false, errors.New("stat failed")
+				return nil, errors.New("stat failed")
 			}
-			return !one.Explicit, nil
+			return simulation_information(!one.Explicit), nil
 		},
-		Read_File: func(name sloc.File_Path) (content sloc.Source, err error) {
-			return read_from(disk, one, name)
+		File: func(name sloc.File_Path) (file fs.File, err error) {
+			if one.Read_Error {
+				return &read_error_file{File: simulation_file([]byte{'a'})}, nil
+			}
+			entry, found := disk[string(name)]
+			if !found {
+				return simulation_file(nil), nil
+			}
+			return simulation_file(entry.Data), nil
 		},
-		Ignore_For: func(root sloc.Root) (is_ignored sloc.Ignore_Predicate) {
+		Command: func(
+			name string, arguments []string,
+		) (output []byte, err error) {
 			if !one.Ignore_Some {
-				return nil
+				return nil, errors.New("command unavailable")
 			}
-			return func(relative_path string, is_directory bool) (ignored bool) {
-				return strings.Contains(relative_path, "ignored")
-			}
+			return simulation_git_output(disk), nil
 		},
 		Classifier:  classifier_for(fixture.Classifications),
-		Concurrency: one.Concurrency,
+		Concurrency: sloc.Concurrency(one.Concurrency),
 	})
 }
 
@@ -249,6 +256,11 @@ func build_fixture(one scenario) (fixture disk_fixture) {
 	recipe := uint8(int(one.Recipe) % RECIPE_COUNT)
 	kind, wide := wide_kind_for_recipe(recipe)
 	if wide {
+		if recipe == 15 {
+			if one.Json {
+				return disk_wide_source_table()
+			}
+		}
 		return disk_wide_table(kind)
 	}
 	if recipe == 12 {
@@ -268,13 +280,16 @@ func build_fixture(one scenario) (fixture disk_fixture) {
 		}
 		return disk_line_bound(one)
 	}
+	if recipe == 33 {
+		return disk_test_partitions()
+	}
 	return disk_fixture{Disk: build_disk(one), Classifications: nil}
 }
 
 // Nil selects the byte classifier for ordinary recipes; a bounded model is total for
 // nonempty inputs so no expensive derivation can enter by accident.
 func classifier_for(
-	classifications map[sloc.Classified_Path]sloc.Counts,
+	classifications map[sloc.Classified_Path]sloc.File_Partition,
 ) (classifier sloc.File_Classifier) {
 	if classifications == nil {
 		return sloc.File_Classifier{Kind: sloc.FILE_CLASSIFIER_KIND_BYTES}
@@ -285,22 +300,63 @@ func classifier_for(
 	}
 }
 
-// Reads one file from the synthetic tree, standing in for the composition root: it
-// caps its read at the library's source bound exactly as the real one does.
-func read_from(
-	disk fstest.MapFS, one scenario, name sloc.File_Path,
-) (content sloc.Source, err error) {
-	if one.Read_Error {
-		return nil, errors.New("read failed")
+// Returns stable information for the directory decision without host filesystem state.
+func simulation_information(directory bool) (information fs.FileInfo) {
+	mode := fs.FileMode(0)
+	if directory {
+		mode = fs.ModeDir
 	}
-	entry, found := disk[string(name)]
-	if !found {
-		return nil, nil
+	disk := fstest.MapFS{"entry": &fstest.MapFile{Mode: mode}}
+	information, information_err := fs.Stat(disk, "entry")
+	if information_err != nil {
+		panic(information_err)
 	}
-	if len(entry.Data) > sloc.SOURCE_BYTES_MAX {
-		return sloc.Source(entry.Data[:sloc.SOURCE_BYTES_MAX]), nil
+	return information
+}
+
+// Returns a new synthetic file because Main closes each injected file handle.
+func simulation_file(content []byte) (file fs.File) {
+	disk := fstest.MapFS{"file": &fstest.MapFile{Data: content}}
+	opened, open_err := disk.Open("file")
+	if open_err != nil {
+		panic(open_err)
 	}
-	return sloc.Source(entry.Data), nil
+	return opened
+}
+
+// Returns the Git listing of files whose paths do not contain the simulated ignore marker.
+func simulation_git_output(disk fstest.MapFS) (output []byte) {
+	listing := strings.Builder{}
+	walk_err := fs.WalkDir(disk, ".", func(
+		file_path string, entry fs.DirEntry, step_err error,
+	) (err error) {
+		if step_err != nil {
+			return step_err
+		}
+		if entry.IsDir() {
+			return nil
+		}
+		if strings.Contains(file_path, "ignored") {
+			return nil
+		}
+		listing.WriteString(file_path)
+		listing.WriteByte(0)
+		return nil
+	})
+	if walk_err != nil {
+		panic(walk_err)
+	}
+	return []byte(listing.String())
+}
+
+// Read_error_file preserves valid file status while it injects the read failure.
+type read_error_file struct {
+	fs.File
+}
+
+// Read injects a deterministic file-read failure after Main reads valid file status.
+func (file *read_error_file) Read(buffer []byte) (read_count int, err error) {
+	return 0, errors.New("read failed")
 }
 
 // Builds the command line: the program name, the flags the scenario sets, the root to
@@ -353,7 +409,7 @@ func build_arguments(one scenario) (arguments sloc.Arguments) {
 
 // RECIPE_COUNT is how many synthetic trees the driver knows how to build; the decoded
 // recipe byte is folded into it, so every fuzz input names a real tree.
-const RECIPE_COUNT = 33
+const RECIPE_COUNT = 34
 
 // DEEP_COMMENT_OPENERS is how many nested block comments disk_deep_comment opens. It
 // runs past the depth bound so the carried depth saturates rather than merely rising.
@@ -447,6 +503,8 @@ func build_disk_skipped(one scenario) (disk fstest.MapFS) {
 		return disk_deep_comment()
 	case 31:
 		return disk_line_bound(one).Disk
+	case 33:
+		return disk_test_partitions().Disk
 	}
 	return disk_pair()
 }
@@ -491,7 +549,7 @@ func line_bound_line(kind int) (text string, suffix string) {
 func disk_line_bound(one scenario) (fixture disk_fixture) {
 	fixture = disk_fixture{
 		Disk:            fstest.MapFS{},
-		Classifications: map[sloc.Classified_Path]sloc.Counts{},
+		Classifications: map[sloc.Classified_Path]sloc.File_Partition{},
 	}
 	fill_line_bound(&fixture, LINE_BOUND_KIND_CODE)
 	fill_line_bound(&fixture, LINE_BOUND_KIND_COMMENT)
@@ -499,12 +557,113 @@ func disk_line_bound(one scenario) (fixture disk_fixture) {
 	// A zero-code test file splits the Go group without changing its bound, so the
 	// source row's percentage and denominator can reach their maxima together.
 	fixture.Disk["Ybound_test.go"] = file("")
-	fixture.Classifications["Ybound_test.go"] = sloc.Counts{}
+	fixture.Classifications["Ybound_test.go"] = sloc.File_Partition{}
 	if one.Show_Files {
 		fill_line_bound_width(&fixture)
 	}
 	fill_line_bound_past(&fixture, line_bound_past_count(one.File_Count))
 	return fixture
+}
+
+// Distinct languages keep each aggregate value separate, so the test partition sees
+// the same minimum, one, two, and maximum properties as the source partition.
+func disk_test_partitions() (fixture disk_fixture) {
+	fixture = disk_fixture{
+		Disk:            fstest.MapFS{},
+		Classifications: map[sloc.Classified_Path]sloc.File_Partition{},
+	}
+	test_line_partitions_add(&fixture)
+	test_dropped_partitions_add(&fixture)
+	return fixture
+}
+
+type test_partition_add_input struct {
+	Fixture *disk_fixture
+	Label   string
+	Suffix  string
+	Kind    int
+	Count   int
+	Dropped bool
+}
+
+// Each modeled file stays in the production source bound. The group sum supplies the
+// larger shared line property.
+func test_partition_add(input *test_partition_add_input) {
+	if input.Dropped {
+		name := "test/" + input.Label + input.Suffix
+		input.Fixture.Disk[name] = file("a")
+		input.Fixture.Classifications[sloc.Classified_Path(name)] = sloc.File_Partition{
+			Code:    sloc.Code_Count(input.Count),
+			Dropped: sloc.Dropped_Count(input.Count),
+		}
+		return
+	}
+	for left, index := input.Count, 0; left > 0; index++ {
+		line_count := min(left, sloc.SOURCE_BYTES_MAX)
+		name := fmt.Sprintf("test/%s%02d%s", input.Label, index, input.Suffix)
+		input.Fixture.Disk[name] = file("a")
+		input.Fixture.Classifications[sloc.Classified_Path(name)] = line_bound_counts(
+			&line_bound_counts_input{Kind: input.Kind, Line_Count: line_count})
+		left -= line_count
+	}
+}
+
+// Separate languages stop the aggregate values from combining before the harness sees
+// their one, two, and maximum properties.
+func test_line_partitions_add(fixture *disk_fixture) {
+	test_partition_add(&test_partition_add_input{
+		Fixture: fixture, Label: "code_max", Suffix: ".go",
+		Kind: LINE_BOUND_KIND_CODE, Count: sloc.LINE_COUNT_MAX,
+	})
+	test_partition_add(&test_partition_add_input{
+		Fixture: fixture, Label: "code_one", Suffix: ".zig",
+		Kind: LINE_BOUND_KIND_CODE, Count: 1,
+	})
+	test_partition_add(&test_partition_add_input{
+		Fixture: fixture, Label: "code_two_a", Suffix: ".odin",
+		Kind: LINE_BOUND_KIND_CODE, Count: 1,
+	})
+	test_partition_add(&test_partition_add_input{
+		Fixture: fixture, Label: "code_two_b", Suffix: ".odin",
+		Kind: LINE_BOUND_KIND_CODE, Count: 1,
+	})
+	test_partition_add(&test_partition_add_input{
+		Fixture: fixture, Label: "comment_max", Suffix: ".py",
+		Kind: LINE_BOUND_KIND_COMMENT, Count: sloc.LINE_COUNT_MAX,
+	})
+	test_partition_add(&test_partition_add_input{
+		Fixture: fixture, Label: "comment_one", Suffix: ".rb",
+		Kind: LINE_BOUND_KIND_COMMENT, Count: 1,
+	})
+	test_partition_add(&test_partition_add_input{
+		Fixture: fixture, Label: "comment_two", Suffix: ".sh",
+		Kind: LINE_BOUND_KIND_COMMENT, Count: 2,
+	})
+	test_partition_add(&test_partition_add_input{
+		Fixture: fixture, Label: "blank_max", Suffix: ".rs",
+		Kind: LINE_BOUND_KIND_BLANK, Count: sloc.LINE_COUNT_MAX,
+	})
+	test_partition_add(&test_partition_add_input{
+		Fixture: fixture, Label: "blank_one", Suffix: ".cpp",
+		Kind: LINE_BOUND_KIND_BLANK, Count: 1,
+	})
+	test_partition_add(&test_partition_add_input{
+		Fixture: fixture, Label: "blank_two", Suffix: ".java",
+		Kind: LINE_BOUND_KIND_BLANK, Count: 2,
+	})
+}
+
+// A dropped-line value also needs a counted partition. Code is the cheapest valid
+// partition because one modeled byte can establish the repeated classification.
+func test_dropped_partitions_add(fixture *disk_fixture) {
+	for _, input := range []*test_partition_add_input{
+		{Fixture: fixture, Label: "dropped_max", Suffix: ".c",
+			Count: sloc.DROPPED_COUNT_MAX, Dropped: true},
+		{Fixture: fixture, Label: "dropped_one", Suffix: ".ts", Count: 1, Dropped: true},
+		{Fixture: fixture, Label: "dropped_two", Suffix: ".js", Count: 2, Dropped: true},
+	} {
+		test_partition_add(input)
+	}
 }
 
 // A modeled empty population widens the file tally while the longest member widens
@@ -513,11 +672,11 @@ func fill_line_bound_width(fixture *disk_fixture) {
 	for index := 0; index < LINE_BOUND_FILE_WIDTH_COUNT; index++ {
 		name := fmt.Sprintf("Wwidth%05d.go", index)
 		fixture.Disk[name] = file("")
-		fixture.Classifications[sloc.Classified_Path(name)] = sloc.Counts{}
+		fixture.Classifications[sloc.Classified_Path(name)] = sloc.File_Partition{}
 	}
 	name := "X" + strings.Repeat("p", sloc.FILE_PATH_BYTES_MAX-4) + ".go"
 	fixture.Disk[name] = file("")
-	fixture.Classifications[sloc.Classified_Path(name)] = sloc.Counts{}
+	fixture.Classifications[sloc.Classified_Path(name)] = sloc.File_Partition{}
 }
 
 // The ordinary recipe witnesses two; dedicated seeds select one and a three-root
@@ -543,11 +702,11 @@ func line_bound_past_max(one scenario) (maximum bool) {
 func disk_past_lines_max() (fixture disk_fixture) {
 	go_disk := disk_fixture{
 		Disk:            fstest.MapFS{},
-		Classifications: map[sloc.Classified_Path]sloc.Counts{},
+		Classifications: map[sloc.Classified_Path]sloc.File_Partition{},
 	}
 	python_disk := disk_fixture{
 		Disk:            fstest.MapFS{},
-		Classifications: map[sloc.Classified_Path]sloc.Counts{},
+		Classifications: map[sloc.Classified_Path]sloc.File_Partition{},
 	}
 	fill_line_bound(&go_disk, LINE_BOUND_KIND_CODE)
 	fill_line_bound(&python_disk, LINE_BOUND_KIND_COMMENT)
@@ -564,7 +723,7 @@ func disk_past_lines_max() (fixture disk_fixture) {
 		Prefix:  "Zpython",
 		Suffix:  ".py",
 	})
-	classifications := map[sloc.Classified_Path]sloc.Counts{}
+	classifications := map[sloc.Classified_Path]sloc.File_Partition{}
 	classifications_add(&classifications_add_input{
 		Into: classifications,
 		More: go_disk.Classifications,
@@ -595,14 +754,15 @@ func fill_past_language(input *fill_past_language_input) {
 	for index := 0; index < input.Count; index++ {
 		name := fmt.Sprintf("%s%05d%s", input.Prefix, index, input.Suffix)
 		input.Fixture.Disk[name] = file("a\n")
-		input.Fixture.Classifications[sloc.Classified_Path(name)] = sloc.Counts{Code: 1}
+		input.Fixture.Classifications[sloc.Classified_Path(name)] =
+			sloc.File_Partition{Code: 1}
 	}
 }
 
 // A fresh destination makes the combined callback immutable before workers receive it.
 type classifications_add_input struct {
-	Into map[sloc.Classified_Path]sloc.Counts
-	More map[sloc.Classified_Path]sloc.Counts
+	Into map[sloc.Classified_Path]sloc.File_Partition
+	More map[sloc.Classified_Path]sloc.File_Partition
 }
 
 func classifications_add(input *classifications_add_input) {
@@ -617,7 +777,7 @@ func fill_line_bound_past(fixture *disk_fixture, count int) {
 	for index := 0; index < count; index++ {
 		name := fmt.Sprintf("Zpast%05d.go", index)
 		fixture.Disk[name] = file("a\n")
-		fixture.Classifications[sloc.Classified_Path(name)] = sloc.Counts{Code: 1}
+		fixture.Classifications[sloc.Classified_Path(name)] = sloc.File_Partition{Code: 1}
 	}
 }
 
@@ -644,14 +804,14 @@ type line_bound_counts_input struct {
 	Line_Count int
 }
 
-func line_bound_counts(input *line_bound_counts_input) (counts sloc.Counts) {
+func line_bound_counts(input *line_bound_counts_input) (counts sloc.File_Partition) {
 	switch input.Kind {
 	case LINE_BOUND_KIND_CODE:
-		return sloc.Counts{Code: sloc.Line_Count(input.Line_Count)}
+		return sloc.File_Partition{Code: sloc.Code_Count(input.Line_Count)}
 	case LINE_BOUND_KIND_COMMENT:
-		return sloc.Counts{Comment: sloc.Line_Count(input.Line_Count)}
+		return sloc.File_Partition{Comment: sloc.Comment_Count(input.Line_Count)}
 	}
-	return sloc.Counts{Blank: sloc.Line_Count(input.Line_Count)}
+	return sloc.File_Partition{Blank: sloc.Blank_Count(input.Line_Count)}
 }
 
 // A Rust file whose block comments nest past the depth bound, so the carried depth
@@ -679,7 +839,7 @@ func disk_overflow(excess int) (disk fstest.MapFS) {
 func disk_dropped(count int) (fixture disk_fixture) {
 	fixture = disk_fixture{
 		Disk:            fstest.MapFS{},
-		Classifications: map[sloc.Classified_Path]sloc.Counts{},
+		Classifications: map[sloc.Classified_Path]sloc.File_Partition{},
 	}
 	wide := strings.Repeat("a", sloc.LINE_BYTES_MAX+DROPPED_LINE_MARGIN) + "\n"
 	per_file := sloc.SOURCE_BYTES_MAX / len(wide)
@@ -692,8 +852,8 @@ func disk_dropped(count int) (fixture disk_fixture) {
 		lines := min(left, per_file)
 		name := fmt.Sprintf("w%06d.go", index)
 		fixture.Disk[name] = file(wide)
-		fixture.Classifications[sloc.Classified_Path(name)] = sloc.Counts{
-			Code:    sloc.Line_Count(lines),
+		fixture.Classifications[sloc.Classified_Path(name)] = sloc.File_Partition{
+			Code:    sloc.Code_Count(lines),
 			Dropped: sloc.Dropped_Count(lines),
 		}
 		left -= lines
@@ -724,21 +884,21 @@ func dropped_fixture_count(recipe uint8, choice int) (count int) {
 func disk_all_dropped() (fixture disk_fixture) {
 	fixture = disk_fixture{
 		Disk:            fstest.MapFS{},
-		Classifications: map[sloc.Classified_Path]sloc.Counts{},
+		Classifications: map[sloc.Classified_Path]sloc.File_Partition{},
 	}
 	fill_line_bound(&fixture, LINE_BOUND_KIND_CODE)
 	fill_line_bound(&fixture, LINE_BOUND_KIND_COMMENT)
 	fill_line_bound(&fixture, LINE_BOUND_KIND_BLANK)
 	fixture.Disk["Ybound_test.go"] = file("")
-	fixture.Classifications["Ybound_test.go"] = sloc.Counts{}
+	fixture.Classifications["Ybound_test.go"] = sloc.File_Partition{}
 	fixture.Disk["Zpast.go"] = file("a\n")
-	fixture.Classifications["Zpast.go"] = sloc.Counts{Code: 1}
+	fixture.Classifications["Zpast.go"] = sloc.File_Partition{Code: 1}
 	fixture.Disk["a_broken.go"] = file("a\n")
 	fixture.Disk["a_binary.go"] = file("a\x00\n")
 	fixture.Disk["a_oversized.go"] = file(strings.Repeat("a", sloc.SOURCE_BYTES_MAX+1))
 	fixture.Disk["a_wide.c"] = file(
 		strings.Repeat("a", sloc.LINE_BYTES_MAX+DROPPED_LINE_MARGIN) + "\n")
-	fixture.Classifications["a_wide.c"] = sloc.Counts{Code: 1, Dropped: 1}
+	fixture.Classifications["a_wide.c"] = sloc.File_Partition{Code: 1, Dropped: 1}
 	for index := 0; index < sloc.FILES_COUNT_MAX; index++ {
 		fixture.Disk[fmt.Sprintf("m%06d.go", index)] = file("")
 	}
@@ -963,13 +1123,15 @@ func disk_scanner_corners() (disk fstest.MapFS) {
 				strings.Repeat("b", sloc.LINE_BYTES_MAX) + "\n"),
 		"bracket.lua": file(
 			"--[[ long comment ]]\n" +
+				"--[[\ncomment\n]]\n" +
 				// A single-level bracket, whose computed closer is the width
 				// between the bare pair and the run at its bound.
 				"--[=[ level one ]=]\n" +
 				"local m = [=[ body ]=]\n" +
 				"local s = [[ long string ]]\n" +
-				"local t = [" + equals + "[ body ]" + equals + "]\n" +
-				"--[" + equals + "[ c ]" + equals + "]\n" +
+				"local u = [[\nbody\n]]\n" +
+				"local t = [" + equals + "[\nbody\n]" + equals + "]\n" +
+				"--[" + equals + "[\ncomment\n]" + equals + "]\n" +
 				"-- plain\n"),
 		"raw.rs": file(
 			"let a = r\"x\";\n" +
@@ -977,7 +1139,7 @@ func disk_scanner_corners() (disk fstest.MapFS) {
 				// Two hashes, so the computed closer is the width between the bare
 				// quote and the run at its bound.
 				"let b2 = br##\"x\"##;\n" +
-				"let c = r" + hashes + "\"x\"" + hashes + ";\n" +
+				"let c = r" + hashes + "\"\nbody\n\"" + hashes + ";\n" +
 				"let d = 'a';\n" +
 				"let e = '\\n';\n" +
 				"let f: &'static str = \"x\";\n" +
@@ -998,7 +1160,7 @@ func disk_scanner_corners() (disk fstest.MapFS) {
 		"escape.go": file(
 			"s := \"a\\\\nb\"\nt := \"plain\"\n" +
 				// A backtick raw string, whose closer is a single byte.
-				"u := `raw`\n"),
+				"u := `\nraw\n`\n"),
 		// Two test files in one language and one source file beside them, sized so the
 		// group's own code total is exactly two.
 		"pair/a_test.go": file("a\n"),
@@ -1018,9 +1180,20 @@ func disk_scanner_corners() (disk fstest.MapFS) {
 // the path bound, and one language's tests hold no code so its source row prints a
 // full hundred percent.
 func disk_wide_table(kind int) (fixture disk_fixture) {
+	return disk_wide_table_kind(kind, false)
+}
+
+// The JSON boundary needs the maximum source-file property. The table variant keeps
+// one test file because its per-file row bound also needs a source/test split.
+func disk_wide_source_table() (fixture disk_fixture) {
+	return disk_wide_table_kind(WIDE_KIND_SINGLE, true)
+}
+
+// Builds one wide table and selects whether its closing file stays in the source role.
+func disk_wide_table_kind(kind int, source_only bool) (fixture disk_fixture) {
 	fixture = disk_fixture{
 		Disk:            fstest.MapFS{},
-		Classifications: map[sloc.Classified_Path]sloc.Counts{},
+		Classifications: map[sloc.Classified_Path]sloc.File_Partition{},
 	}
 	// Only the spread table needs many files and many lines at once — it is the one
 	// fixture whose table reaches every column bound together. The rest need one or
@@ -1031,14 +1204,15 @@ func disk_wide_table(kind int) (fixture disk_fixture) {
 	body := wide_line(kind)
 	counts := wide_counts(&wide_counts_input{Kind: kind, Line_Count: per_file})
 	shape := &wide_table_shape{
-		Fixture:    &fixture,
-		Kind:       kind,
-		File_Count: file_count,
-		Line_Count: per_file,
-		Source:     body,
-		Counts:     counts,
-		Suffix:     wide_suffix(kind),
-		Extensions: recognized_extensions(),
+		Fixture:     &fixture,
+		Kind:        kind,
+		File_Count:  file_count,
+		Line_Count:  per_file,
+		Source:      body,
+		Counts:      counts,
+		Suffix:      wide_suffix(kind),
+		Source_Only: source_only,
+		Extensions:  recognized_extensions(),
 	}
 	wide_table_series_add(shape)
 	wide_table_boundaries_add(shape)
@@ -1046,14 +1220,15 @@ func disk_wide_table(kind int) (fixture disk_fixture) {
 }
 
 type wide_table_shape struct {
-	Fixture    *disk_fixture
-	Kind       int
-	File_Count int
-	Line_Count int
-	Source     string
-	Counts     sloc.Counts
-	Suffix     string
-	Extensions []string
+	Fixture     *disk_fixture
+	Kind        int
+	File_Count  int
+	Line_Count  int
+	Source      string
+	Counts      sloc.File_Partition
+	Suffix      string
+	Source_Only bool
+	Extensions  []string
 }
 
 // The walk stops selecting at the file bound, so the series is exactly two files short
@@ -1103,7 +1278,7 @@ func wide_table_boundaries_add(shape *wide_table_shape) {
 		// The spread table's closing file is a test with no code at all, so its
 		// language's source row is the whole of that language's code.
 		final_body = "\n"
-		final_counts = sloc.Counts{Blank: sloc.Line_Count(shape.Line_Count)}
+		final_counts = sloc.File_Partition{Blank: sloc.Blank_Count(shape.Line_Count)}
 		final_name = "w/z_test.go"
 	}
 	if shape.Kind == WIDE_KIND_CODE {
@@ -1112,7 +1287,9 @@ func wide_table_boundaries_add(shape *wide_table_shape) {
 		final_name = "w/z_test.go"
 	}
 	if shape.Kind == WIDE_KIND_SINGLE {
-		final_name = "w/z_test.go"
+		if !shape.Source_Only {
+			final_name = "w/z_test.go"
+		}
 	}
 	wide_file_add(&wide_file_add_input{
 		Fixture: shape.Fixture,
@@ -1140,7 +1317,7 @@ type wide_file_add_input struct {
 	Fixture *disk_fixture
 	Name    string
 	Source  string
-	Counts  sloc.Counts
+	Counts  sloc.File_Partition
 }
 
 func wide_file_add(input *wide_file_add_input) {
@@ -1265,14 +1442,14 @@ type wide_counts_input struct {
 	Line_Count int
 }
 
-func wide_counts(input *wide_counts_input) (counts sloc.Counts) {
+func wide_counts(input *wide_counts_input) (counts sloc.File_Partition) {
 	switch input.Kind {
 	case WIDE_KIND_COMMENT:
-		return sloc.Counts{Comment: sloc.Line_Count(input.Line_Count)}
+		return sloc.File_Partition{Comment: sloc.Comment_Count(input.Line_Count)}
 	case WIDE_KIND_BLANK:
-		return sloc.Counts{Blank: sloc.Line_Count(input.Line_Count)}
+		return sloc.File_Partition{Blank: sloc.Blank_Count(input.Line_Count)}
 	}
-	return sloc.Counts{Code: sloc.Line_Count(input.Line_Count)}
+	return sloc.File_Partition{Code: sloc.Code_Count(input.Line_Count)}
 }
 
 // Paths that resolve to no language at all, and a bare name with no extension.
@@ -1302,7 +1479,7 @@ func disk_oversized() (fixture disk_fixture) {
 			// rather than only the one past it that is dropped.
 			"exact.go": file(strings.Repeat("a\n", sloc.SOURCE_BYTES_MAX/2)),
 		},
-		Classifications: map[sloc.Classified_Path]sloc.Counts{
+		Classifications: map[sloc.Classified_Path]sloc.File_Partition{
 			"fine.go":  {Code: 1},
 			"empty.go": {},
 			"one.go":   {Code: 1},
@@ -1518,6 +1695,13 @@ func seeds_widths() (seeds [][]byte) {
 
 // The count boundaries: lines per file, files per tree, and arguments per command line.
 func seeds_counts() (seeds [][]byte) {
+	for _, recipe := range []uint8{0, 32, 33} {
+		selected := recipe
+		seeds = append(seeds, with(func(one *scenario) {
+			one.Recipe = selected
+			one.Json = true
+		}))
+	}
 	for _, count := range []int{0, 1, 2, 3, 4096, LINE_COUNT_CHOICE_MAX} {
 		lines := count
 		seeds = append(seeds, with(func(one *scenario) {

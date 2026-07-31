@@ -52,7 +52,7 @@ func Test_Witness_Boundary_Model(t *testing.T) {
 	}
 	assert_line_bound_aggregate(t, fixture)
 	for _, name := range []sloc.Classified_Path{"Zpast00000.go", "Zpast00001.go"} {
-		if fixture.Classifications[name] != (sloc.Counts{Code: 1}) {
+		if fixture.Classifications[name] != (sloc.File_Partition{Code: 1}) {
 			t.Errorf("past-bound path %q is not modeled exactly", name)
 		}
 	}
@@ -63,7 +63,7 @@ func Test_Witness_Boundary_Model(t *testing.T) {
 		Disk: fstest.MapFS{
 			"empty.go": file(""),
 		},
-		Classifications: map[sloc.Classified_Path]sloc.Counts{},
+		Classifications: map[sloc.Classified_Path]sloc.File_Partition{},
 	}
 	output := strings.Builder{}
 	drive_main(&drive_main_input{
@@ -86,7 +86,7 @@ func Test_Witness_Source_Bound_Model(t *testing.T) {
 		t.Errorf("oversized source bytes = %d, want %d",
 			len(huge.Data), sloc.SOURCE_BYTES_MAX+1)
 	}
-	want := sloc.Counts{Code: sloc.SOURCE_BYTES_MAX / 2}
+	want := sloc.File_Partition{Code: sloc.SOURCE_BYTES_MAX / 2}
 	if fixture.Classifications["exact.go"] != want {
 		t.Errorf("exact classification = %+v, want %+v",
 			fixture.Classifications["exact.go"], want)
@@ -94,6 +94,37 @@ func Test_Witness_Source_Bound_Model(t *testing.T) {
 	if _, modeled := fixture.Classifications["huge.go"]; modeled {
 		t.Error("oversized source must be rejected before classification")
 	}
+}
+
+// Test_Witness_Classifier_Input_Bounds keeps the largest accepted path and source on
+// the production byte-classifier route. One wide line makes the source bound cheap to
+// scan while preserving the exact input width.
+func Test_Witness_Classifier_Input_Bounds(t *testing.T) {
+	name := strings.Repeat("p", sloc.FILE_PATH_BYTES_MAX-len(".go")) + ".go"
+	fixture := disk_fixture{Disk: fstest.MapFS{
+		name: file(strings.Repeat("a", sloc.SOURCE_BYTES_MAX)),
+	}}
+	output := strings.Builder{}
+	drive_main(&drive_main_input{
+		Scenario: base_scenario(),
+		Fixture:  fixture,
+		Output:   &output,
+	})
+}
+
+// Test_Witness_Model_Path_Minimum keeps the shortest recognized path on the modeled
+// classifier route. Hidden selection is required because the path is the bare .c.
+func Test_Witness_Model_Path_Minimum(t *testing.T) {
+	fixture := disk_fixture{
+		Disk: fstest.MapFS{".c": file("")},
+		Classifications: map[sloc.Classified_Path]sloc.File_Partition{
+			".c": {},
+		},
+	}
+	one := base_scenario()
+	one.Hidden = true
+	output := strings.Builder{}
+	drive_main(&drive_main_input{Scenario: one, Fixture: fixture, Output: &output})
 }
 
 // Test_Witness_Wide_Model prevents the performance model from changing which line kind a
@@ -121,7 +152,7 @@ func Test_Witness_Wide_Model(t *testing.T) {
 	}
 	equivalence := disk_fixture{
 		Disk:            fstest.MapFS{},
-		Classifications: map[sloc.Classified_Path]sloc.Counts{},
+		Classifications: map[sloc.Classified_Path]sloc.File_Partition{},
 	}
 	for kind := range 6 {
 		text := wide_line(kind)
@@ -150,6 +181,16 @@ func Test_Witness_Table_Width_Model(t *testing.T) {
 	if output.Maximum != sloc.TABLE_WIDTH_MAX {
 		t.Errorf("table width = %d, want %d", output.Maximum, sloc.TABLE_WIDTH_MAX)
 	}
+}
+
+// Test_Witness_Shared_Properties verifies that the distinct source and test roles use
+// the same file, line, and dropped-count properties.
+func Test_Witness_Shared_Properties(t *testing.T) {
+	fixture := disk_test_partitions()
+	one := base_scenario()
+	drive_main(&drive_main_input{Scenario: one, Fixture: fixture, Output: &strings.Builder{}})
+	one.Json = true
+	drive_main(&drive_main_input{Scenario: one, Fixture: fixture, Output: &strings.Builder{}})
 }
 
 // Test_Witness_Failure drives the stat failure, the read failure, and the trees whose
@@ -182,7 +223,8 @@ func assert_line_bound_aggregate(t *testing.T, fixture disk_fixture) {
 			t.Errorf("modeled path %q stores %d bytes, want at most 2",
 				name, len(entry.Data))
 		}
-		lines := counts.Code + counts.Comment + counts.Blank
+		lines := sloc.Line_Count(counts.Code) +
+			sloc.Line_Count(counts.Comment) + sloc.Line_Count(counts.Blank)
 		if lines > sloc.SOURCE_BYTES_MAX {
 			t.Errorf("modeled path %q has %d unreachable lines", name, lines)
 		}
@@ -224,7 +266,7 @@ func assert_line_bound_equivalence(t *testing.T) {
 	t.Helper()
 	fixture := disk_fixture{
 		Disk:            fstest.MapFS{},
-		Classifications: map[sloc.Classified_Path]sloc.Counts{},
+		Classifications: map[sloc.Classified_Path]sloc.File_Partition{},
 	}
 	for kind := range 3 {
 		text, suffix := line_bound_line(kind)
@@ -304,14 +346,14 @@ func assert_table_width_inputs(t *testing.T, fixture disk_fixture) {
 		switch language {
 		case "Go":
 			go_files++
-			go_code += counts.Code
+			go_code += sloc.Line_Count(counts.Code)
 			if strings.HasSuffix(string(name), "_test.go") {
 				go_tests++
 			}
 		case "Python":
-			python_comments += counts.Comment
+			python_comments += sloc.Line_Count(counts.Comment)
 		case "Rust":
-			rust_blanks += counts.Blank
+			rust_blanks += sloc.Line_Count(counts.Blank)
 		}
 	}
 	if maximum_path != sloc.FILE_PATH_BYTES_MAX {

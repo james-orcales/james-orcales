@@ -1,7 +1,10 @@
 package sloc_test
 
 import (
+	"bytes"
 	"fmt"
+	"io"
+	"io/fs"
 	"strings"
 	"testing"
 	"testing/fstest"
@@ -257,11 +260,12 @@ func Test_Classify_Newlines(t *testing.T) {
 // Test_Languages_Detection verifies each seeded extension resolves to its language and
 // an unknown extension resolves to nothing.
 func Test_Languages_Detection(t *testing.T) {
-	by_extension := func(key string) (language sloc.Language, recognized bool) {
+	by_extension := func(key string) (language sloc.Language, recognized sloc.Recognition) {
 		return sloc.Language_For_Extension(sloc.Extension(key))
 	}
-	by_filename := func(key string) (language sloc.Language, recognized bool) {
-		return sloc.Language_For_Filename(sloc.File_Name(key))
+	by_filename := func(key string) (language sloc.Language, recognized sloc.Recognition) {
+		optional, found := sloc.Language_For_Filename(sloc.File_Name(key))
+		return sloc.Language(optional), found
 	}
 	check_detection(t, by_extension, detection_extensions_core())
 	check_detection(t, by_extension, detection_extensions_rest())
@@ -275,7 +279,7 @@ func Test_Languages_Detection(t *testing.T) {
 // host can model that computation without replacing the filesystem or aggregation contract.
 func Test_Count_Classification(t *testing.T) {
 	source := []byte("the real scanner would count this as one code line\n")
-	want := sloc.Counts{Code: 7, Comment: 11, Blank: 13, Dropped: 17}
+	want := sloc.File_Partition{Code: 7, Comment: 11, Blank: 13, Dropped: 17}
 	report, err := sloc.Count(sloc.Count_Input{
 		File_System: fstest.MapFS{
 			"modeled.go": &fstest.MapFile{Data: source},
@@ -294,7 +298,7 @@ func Test_Count_Classification(t *testing.T) {
 	if len(report.Files) != 1 {
 		t.Fatalf("files = %d, want 1", len(report.Files))
 	}
-	if report.Files[0].Counts != want {
+	if report.Files[0].Counts != sloc.Counts(want) {
 		t.Errorf("counts = %+v, want %+v", report.Files[0].Counts, want)
 	}
 }
@@ -438,7 +442,7 @@ func Test_Count_Tests(t *testing.T) {
 		"app.spec.ts":    true,
 	}
 	for path, want := range expected {
-		if by_path[path].Is_Test != want {
+		if bool(by_path[path].Is_Test) != want {
 			t.Errorf("%s Is_Test = %v, want %v", path, by_path[path].Is_Test, want)
 		}
 	}
@@ -572,7 +576,9 @@ func Test_Render_No_Total(t *testing.T) {
 		t.Errorf("table sums the run:\n%s", table.String())
 	}
 	document := strings.Builder{}
-	if err := sloc.Render_Json(&document, sloc.Report{Files: files}); err != nil {
+	if err := sloc.Render_Json(
+		&document, sloc.File_Counts(files),
+	); err != nil {
 		t.Fatal(err)
 	}
 	if strings.Contains(document.String(), "total") {
@@ -589,7 +595,9 @@ func Test_Render_JSON(t *testing.T) {
 			Counts: sloc.Counts{Code: 4, Comment: 1, Blank: 1}},
 	}
 	output := strings.Builder{}
-	if err := sloc.Render_Json(&output, sloc.Report{Files: files}); err != nil {
+	if err := sloc.Render_Json(
+		&output, sloc.File_Counts(files),
+	); err != nil {
 		t.Fatal(err)
 	}
 	want := `[{"name":"Go","category":"Managed","source_files":1,"source_code":10,"source_comments":2,"source_blanks":3,"tests_files":1,"tests_code":4,"tests_comments":1,"tests_blanks":1}]`
@@ -613,7 +621,9 @@ func Test_Render_Dropped(t *testing.T) {
 	if counts.Code != 2 {
 		t.Errorf("code = %d, want 2: a wide line still counts", counts.Code)
 	}
-	files := []sloc.File_Count{{Path: "w.go", Language: "Go", Counts: counts}}
+	files := []sloc.File_Count{{
+		Path: "w.go", Language: "Go", Counts: sloc.Counts(counts),
+	}}
 	output := strings.Builder{}
 	sloc.Render(&output, sloc.Render_Input{Report: sloc.Report{Files: files}})
 	if !strings.Contains(output.String(), " Dropped") {
@@ -645,7 +655,7 @@ func Test_Render_Dropped(t *testing.T) {
 		t.Fatalf("count: %v", err)
 	}
 	output = strings.Builder{}
-	sloc.Render(&output, sloc.Render_Input{Report: report})
+	sloc.Render(&output, sloc.Render_Input{Report: sloc.Report(report)})
 	if !strings.Contains(output.String(), "files binary") {
 		t.Errorf("a dropped binary file is not reported:\n%s", output.String())
 	}
@@ -665,7 +675,7 @@ func Test_Bounds_Line(t *testing.T) {
 		Source:   sloc.Source(wide),
 		Language: sloc.Language_Go(),
 	})
-	want := sloc.Counts{Code: 1, Comment: 0, Blank: 0, Dropped: 1}
+	want := sloc.File_Partition{Code: 1, Comment: 0, Blank: 0, Dropped: 1}
 	if counts != want {
 		t.Errorf("wide line: got %+v, want %+v", counts, want)
 	}
@@ -676,7 +686,7 @@ func Test_Bounds_Line(t *testing.T) {
 		Source:   sloc.Source(late),
 		Language: sloc.Language_Go(),
 	})
-	want = sloc.Counts{Code: 0, Comment: 0, Blank: 1, Dropped: 1}
+	want = sloc.File_Partition{Code: 0, Comment: 0, Blank: 1, Dropped: 1}
 	if counts != want {
 		t.Errorf("comment past the window: got %+v, want %+v", counts, want)
 	}
@@ -750,9 +760,90 @@ func Test_Bounds_Depth(t *testing.T) {
 		Source:   sloc.Source(deep),
 		Language: sloc.Language_Rust(),
 	})
-	want := sloc.Counts{Code: 0, Comment: 2, Blank: 0, Dropped: 1}
+	want := sloc.File_Partition{Code: 0, Comment: 2, Blank: 0, Dropped: 1}
 	if counts != want {
 		t.Errorf("deep nesting: got %+v, want %+v", counts, want)
+	}
+}
+
+// Test_Host_File_Read verifies that Main applies the source bound to an explicitly
+// named file before the classifier receives it.
+func Test_Host_File_Read(t *testing.T) {
+	source := bytes.Repeat([]byte{'a'}, sloc.SOURCE_BYTES_MAX+1)
+	tracked := &counted_file{File: test_file(source)}
+	input := classifier_main_input(sloc.File_Classifier{
+		Kind: sloc.FILE_CLASSIFIER_KIND_MODEL,
+		Classifications: sloc.File_Classifications{
+			"modeled.go": {Code: 1, Dropped: 1},
+		},
+	}, nil)
+	input.File = func(name sloc.File_Path) (file fs.File, err error) {
+		return tracked, nil
+	}
+	if code := sloc.Main(input); code != sloc.EXIT_SUCCESS {
+		t.Fatalf("exit = %d, want %d", code, sloc.EXIT_SUCCESS)
+	}
+	if tracked.Read_Count != sloc.SOURCE_BYTES_MAX {
+		t.Errorf("read bytes = %d, want %d", tracked.Read_Count, sloc.SOURCE_BYTES_MAX)
+	}
+}
+
+// Test_Host_Git_Ignore verifies that Main constructs the scoped Git command and turns
+// its kept-file output into the walk predicate.
+func Test_Host_Git_Ignore(t *testing.T) {
+	disk := fstest.MapFS{
+		"good.go":    &fstest.MapFile{Data: []byte("a\n")},
+		"ignored.go": &fstest.MapFile{Data: []byte("b\n")},
+	}
+	output := strings.Builder{}
+	command_name := ""
+	command_arguments := []string{}
+	code := sloc.Main(sloc.Main_Input{
+		Arguments:    sloc.Arguments{"sloc", "-files", "."},
+		Output:       &output,
+		Error_Output: io.Discard,
+		File_System:  func(root sloc.Root) (file_system fs.FS) { return disk },
+		Path_Information: func(
+			name sloc.File_Path,
+		) (information fs.FileInfo, err error) {
+			return test_information(true), nil
+		},
+		File: func(name sloc.File_Path) (file fs.File, err error) {
+			return test_file(nil), nil
+		},
+		Command: func(
+			name string, arguments []string,
+		) (command_output []byte, err error) {
+			command_name = name
+			command_arguments = append(command_arguments, arguments...)
+			return []byte("good.go\x00"), nil
+		},
+		Classifier:  sloc.File_Classifier{Kind: sloc.FILE_CLASSIFIER_KIND_BYTES},
+		Concurrency: 1,
+	})
+	if code != sloc.EXIT_SUCCESS {
+		t.Fatalf("exit = %d, want %d", code, sloc.EXIT_SUCCESS)
+	}
+	if command_name != "git" {
+		t.Errorf("command = %q, want git", command_name)
+	}
+	want_arguments := "-C . ls-files -z --cached --others --exclude-standard -- ."
+	if strings.Join(command_arguments, " ") != want_arguments {
+		t.Errorf("arguments = %q, want %q",
+			strings.Join(command_arguments, " "), want_arguments)
+	}
+	if !strings.Contains(output.String(), "good.go") {
+		t.Errorf("kept file is absent:\n%s", output.String())
+	}
+	if strings.Contains(output.String(), "ignored.go") {
+		t.Errorf("ignored file is present:\n%s", output.String())
+	}
+}
+
+// Test_Host_Workers locks the internal worker policy that the executable root uses.
+func Test_Host_Workers(t *testing.T) {
+	if sloc.WORKERS_PER_PROCESSOR != 4 {
+		t.Errorf("workers per processor = %d, want 4", sloc.WORKERS_PER_PROCESSOR)
 	}
 }
 
@@ -763,17 +854,32 @@ func Test_Limitations(t *testing.T) {
 	})
 }
 
+// Counted_file records bytes because the file-size cap must remain inside Main.
+type counted_file struct {
+	fs.File
+	Read_Count int
+}
+
+// Read records only bytes that the bounded reader requested from the file.
+func (file *counted_file) Read(buffer []byte) (read_count int, err error) {
+	read_count, err = file.File.Read(buffer)
+	file.Read_Count += read_count
+	return read_count, err
+}
+
 // A classify_case pins the exact code, comment, and blank tally a source must produce.
 type classify_case struct {
 	Name    string
 	Source  string
-	Code    sloc.Line_Count
-	Comment sloc.Line_Count
-	Blank   sloc.Line_Count
+	Code    sloc.Code_Count
+	Comment sloc.Comment_Count
+	Blank   sloc.Blank_Count
 }
 
 // Checks each case's exact line partition.
-func run_classify_cases(t *testing.T, language sloc.Language, cases []classify_case) {
+func run_classify_cases(
+	t *testing.T, language sloc.Seeded_Language, cases []classify_case,
+) {
 	t.Helper()
 	for _, one := range cases {
 		counts := sloc.Classify_File(sloc.Classify_File_Input{
@@ -781,7 +887,9 @@ func run_classify_cases(t *testing.T, language sloc.Language, cases []classify_c
 			Source:   sloc.Source(one.Source),
 			Language: language,
 		})
-		want := sloc.Counts{Code: one.Code, Comment: one.Comment, Blank: one.Blank}
+		want := sloc.File_Partition{
+			Code: one.Code, Comment: one.Comment, Blank: one.Blank,
+		}
 		if counts != want {
 			t.Errorf("%s: got %+v, want %+v\nsource: %q",
 				one.Name, counts, want, one.Source)
@@ -790,7 +898,7 @@ func run_classify_cases(t *testing.T, language sloc.Language, cases []classify_c
 }
 
 // Indexes a report's files by path for order-independent assertions.
-func report_by_path(report sloc.Report) (by_path map[string]sloc.File_Count) {
+func report_by_path(report sloc.Root_Report) (by_path map[string]sloc.File_Count) {
 	by_path = map[string]sloc.File_Count{}
 	for _, file := range report.Files {
 		by_path[string(file.Path)] = file
@@ -801,7 +909,7 @@ func report_by_path(report sloc.Report) (by_path map[string]sloc.File_Count) {
 // Checks that each key resolves through lookup to the expected language name.
 func check_detection(
 	t *testing.T,
-	lookup func(string) (language sloc.Language, recognized bool),
+	lookup func(string) (language sloc.Language, recognized sloc.Recognition),
 	cases map[string]string,
 ) {
 	t.Helper()
