@@ -429,9 +429,9 @@ func Recorder_Register_Packages_For_Analysis(recorder *Recorder, directories ...
 		Constants:     ast_index_constants(files),
 	}
 	reg := &Registration{
-		Planned_Keys:            map[string]bool{},
-		Assertion_Root_Position: map[Namespace]token.Pos{},
-		Planned_Assertions:      map[Namespace]*Assertion_Plan{},
+		Planned_Keys:         map[string]bool{},
+		Namespace_Owner_Path: map[Namespace][]token.Pos{},
+		Planned_Assertions:   map[Namespace]*Assertion_Plan{},
 	}
 	recorder_register_assertion_files(recorder, file_set, files, index, reg)
 	recorder_check_test_assertion_calls(recorder, file_set, test_files, reg)
@@ -1245,9 +1245,9 @@ type Registration struct {
 	// Forbidden_Properties preserves panic-able Range holes outside the coverage plan because a
 	// forbidden observation fails instead of earning coverage.
 	Forbidden_Properties int
-	// Assertion_Root_Position makes repeated descent idempotent without allowing a second
-	// source root to merge coverage into the namespace's plan.
-	Assertion_Root_Position map[Namespace]token.Pos
+	// Namespace_Owner_Path prevents a second static invocation path from merging independent
+	// value streams while repeated descent through the first path stays idempotent.
+	Namespace_Owner_Path map[Namespace][]token.Pos
 	// Failed poisons the commit; it is the gate rather than Exit because an injected Exit
 	// returns in tests.
 	Failed bool
@@ -1409,7 +1409,11 @@ func ast_is_invariants_name(name string) (is_bundle bool) {
 
 // Returns "file:line" for the node's start position.
 func recorder_position(file_set *token.FileSet, node ast.Node) (site string) {
-	position := file_set.Position(node.Pos())
+	return recorder_token_position(file_set, node.Pos())
+}
+
+func recorder_token_position(file_set *token.FileSet, source token.Pos) (site string) {
+	position := file_set.Position(source)
 	return position.Filename + ":" + strconv.Itoa(position.Line)
 }
 
@@ -2204,7 +2208,8 @@ func recorder_seed_assertion_root(
 		recorder_invalid_assertion_namespace(file_set, chain.Root, reg)
 		return
 	}
-	recorder_seed_assertion_chain(file_set, chain, Namespace(namespace), constants, reg, true)
+	recorder_seed_assertion_chain(
+		file_set, chain, Namespace(namespace), nil, constants, reg, true)
 }
 
 func recorder_invalid_assertion_namespace(
@@ -2241,19 +2246,27 @@ func recorder_validate_assertion_template(
 
 func recorder_seed_assertion_chain(
 	file_set *token.FileSet, chain Assertion_Registration_Chain, namespace Namespace,
-	constants map[string]ast.Expr, reg *Registration, diagnose bool,
+	owner_path []token.Pos, constants map[string]ast.Expr, reg *Registration, diagnose bool,
 ) {
-	root_position, seen := reg.Assertion_Root_Position[namespace]
+	resolved_owner := recorder_namespace_owner_append(owner_path, chain.Root.Pos())
+	// SECURITY: One namespace belongs to one complete static invocation path. A different path
+	// would merge independent value streams and let one invocation satisfy another invocation's
+	// coverage obligations. Re-expansion of the identical path must stay idempotent.
+	registered_owner, seen := reg.Namespace_Owner_Path[namespace]
 	if seen {
-		if root_position == chain.Root.Pos() {
+		if recorder_namespace_owner_equal(registered_owner, resolved_owner) {
 			return
 		}
+		position := chain.Root.Pos()
+		if len(owner_path) != 0 {
+			position = owner_path[len(owner_path)-1]
+		}
 		reg.Collision = append(reg.Collision,
-			recorder_position(file_set, chain.Root)+
+			recorder_token_position(file_set, position)+
 				"  duplicate namespace: "+strconv.Quote(string(namespace)))
 		return
 	}
-	reg.Assertion_Root_Position[namespace] = chain.Root.Pos()
+	reg.Namespace_Owner_Path[namespace] = resolved_owner
 	links, valid := recorder_collect_assertion_links(
 		file_set, chain, constants, reg, diagnose)
 	if !valid {
@@ -2274,6 +2287,25 @@ func recorder_seed_assertion_chain(
 		})
 	}
 	reg.Planned_Assertions[namespace] = plan
+}
+
+func recorder_namespace_owner_append(owner []token.Pos, position token.Pos) (next []token.Pos) {
+	next = make([]token.Pos, len(owner)+1)
+	copy(next, owner)
+	next[len(owner)] = position
+	return next
+}
+
+func recorder_namespace_owner_equal(first []token.Pos, second []token.Pos) (equal bool) {
+	if len(first) != len(second) {
+		return false
+	}
+	for position_index := range first {
+		if first[position_index] != second[position_index] {
+			return false
+		}
+	}
+	return true
 }
 
 func assertion_registration_key(
@@ -2702,7 +2734,7 @@ func recorder_register_assertion_bundle_call(
 		return
 	}
 	recorder_register_assertion_bundle_instance(
-		file_set, function, Namespace(namespace), index, reg)
+		file_set, function, Namespace(namespace), []token.Pos{call.Pos()}, index, reg)
 }
 
 func recorder_invalid_bundle_namespace(
@@ -2714,10 +2746,11 @@ func recorder_invalid_bundle_namespace(
 
 func recorder_register_assertion_bundle_instance(
 	file_set *token.FileSet, function Indexed_Function, namespace Namespace,
-	index *Bundle_Index, reg *Registration,
+	owner_path []token.Pos, index *Bundle_Index, reg *Registration,
 ) {
 	functions := []Indexed_Function{function}
 	namespaces := []Namespace{namespace}
+	owner_paths := [][]token.Pos{owner_path}
 	paths := [][]string{nil}
 	for step_index := 0; step_index < BUNDLE_EXPANSION_STEPS_MAX; step_index++ {
 		if step_index == len(functions) {
@@ -2725,19 +2758,25 @@ func recorder_register_assertion_bundle_instance(
 		}
 		current := functions[step_index]
 		current_namespace := namespaces[step_index]
+		current_owner_path := owner_paths[step_index]
 		current_path := paths[step_index]
 		if recorder_assertion_bundle_cycle(file_set, current, current_path, reg) {
 			continue
 		}
 		name := current.Declaration.Name.Name
 		next_path := append(append([]string{}, current_path...), name)
-		enqueue := func(nested Indexed_Function, nested_namespace Namespace) {
+		enqueue := func(
+			nested Indexed_Function, nested_namespace Namespace,
+			nested_owner_path []token.Pos,
+		) {
 			functions = append(functions, nested)
 			namespaces = append(namespaces, nested_namespace)
+			owner_paths = append(owner_paths, nested_owner_path)
 			paths = append(paths, next_path)
 		}
 		recorder_register_assertion_bundle_body(
-			file_set, current, current_namespace, index, reg, enqueue)
+			file_set, current, current_namespace, current_owner_path,
+			index, reg, enqueue)
 	}
 	position := recorder_position(file_set, function.Declaration)
 	reg.Invalid_Chain = append(reg.Invalid_Chain,
@@ -2762,8 +2801,8 @@ func recorder_assertion_bundle_cycle(
 
 func recorder_register_assertion_bundle_body(
 	file_set *token.FileSet, function Indexed_Function, namespace Namespace,
-	index *Bundle_Index, reg *Registration,
-	enqueue func(nested Indexed_Function, nested_namespace Namespace),
+	owner_path []token.Pos, index *Bundle_Index, reg *Registration,
+	enqueue func(Indexed_Function, Namespace, []token.Pos),
 ) {
 	parameter := ast_assertion_namespace_parameter(function.Declaration)
 	ast.Inspect(function.Declaration.Body, func(node ast.Node) (descend bool) {
@@ -2777,14 +2816,15 @@ func recorder_register_assertion_bundle_body(
 				return false
 			}
 			recorder_seed_assertion_chain(
-				file_set, chain, namespace, function.Constants, reg, false)
+				file_set, chain, namespace, owner_path,
+				function.Constants, reg, false)
 			return false
 		}
 		if !ast_is_invariants_name(ast_callee_name(call)) {
 			return true
 		}
-		nested_namespace, resolved := recorder_assertion_nested_namespace(
-			call, parameter, namespace)
+		nested_namespace, nested_owner_path, resolved :=
+			recorder_assertion_nested_namespace(call, parameter, namespace, owner_path)
 		if !resolved {
 			position := recorder_position(file_set, call)
 			reg.Invalid_Identifier = append(reg.Invalid_Identifier,
@@ -2798,32 +2838,33 @@ func recorder_register_assertion_bundle_body(
 			reg.Unresolved = append(reg.Unresolved, unresolved)
 			return true
 		}
-		enqueue(nested, nested_namespace)
+		enqueue(nested, nested_namespace, nested_owner_path)
 		return true
 	})
 }
 
 func recorder_assertion_nested_namespace(
-	call *ast.CallExpr, parameter string, inherited Namespace,
-) (namespace Namespace, resolved bool) {
+	call *ast.CallExpr, parameter string, inherited Namespace, inherited_owner []token.Pos,
+) (namespace Namespace, owner_path []token.Pos, resolved bool) {
 	if len(call.Args) == 0 {
-		return "", false
+		return "", nil, false
 	}
 	index := len(call.Args) - 1
 	if literal, is_literal := ast_string_literal(call, index); is_literal {
 		if literal == "" {
-			return "", false
+			return "", nil, false
 		}
 		if strings.Contains(literal, ELEMENT_MESSAGE_SEPARATOR) {
-			return "", false
+			return "", nil, false
 		}
-		return Namespace(literal), true
+		return Namespace(literal), []token.Pos{call.Pos()}, true
 	}
 	identifier, is_identifier := call.Args[index].(*ast.Ident)
 	if is_identifier {
 		if identifier.Name == parameter {
-			return inherited, true
+			owner_path = recorder_namespace_owner_append(inherited_owner, call.Pos())
+			return inherited, owner_path, true
 		}
 	}
-	return "", false
+	return "", nil, false
 }

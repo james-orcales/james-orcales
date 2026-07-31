@@ -142,9 +142,19 @@ callsite.
 
 ### Namespace
 
-One namespace names exactly one registered source root. A second discovery of the same root does
-not change registration. A different root with that namespace causes a fatal error, even if its
-links are the same.
+One namespace has exactly one source owner in the complete registration. Registration rejects the
+same namespace at a second source callsite, including a call to the same helper declaration.
+A collision publishes no event or plan.
+
+### Source Owner
+
+Repeated expansion of the namespace's source owner is one registration. Parent helper callsites do
+not turn one nested namespace callsite into multiple owners or duplicate its coverage plan.
+
+### Source Path
+
+A forwarded namespace keeps its literal source owner. Each forwarding callsite and assertion root
+is part of its chain identity. Two different chains cannot publish one namespace.
 
 ### Caps
 

@@ -440,15 +440,21 @@ func Number_Invariants(value Number, namespace invariant.Namespace) {
 func first(value Number) { Number_Invariants(value, "number") }
 func second(value Number) { Number_Invariants(value, "number") }
 `)
-	if code != -1 {
+	if code != 1 {
 		t.Fatalf("reuse exit=%d output=%q", code, output.String())
 	}
-	if len(recorder.Assertion_Plans) != 1 {
-		t.Fatalf("plans=%d, want one idempotent source root", len(recorder.Assertion_Plans))
+	want := "🚨 1 duplicate messages 🚨\n" +
+		"/fixture/check.go:7  duplicate namespace: \"number\"\n" +
+		"🚨 1 duplicate messages 🚨\n"
+	if output.String() != want {
+		t.Fatalf("reuse output=%q, want %q", output.String(), want)
 	}
-	chain_metadata(t, recorder, chain_metadata_key{
-		Namespace: "number", Ordinal: 0, Message: "zero",
-	})
+	if event_count(&recorder.Events) != 0 {
+		t.Fatal("a reused namespace published partial events")
+	}
+	if recorder.Assertion_Plans != nil {
+		t.Fatal("a reused namespace published a partial plan")
+	}
 	recorder, output, code = registered_fixture(`package fixture
 func first(v bool) { invariant.Assertions("same").Sometimes(v, "a").Ensure() }
 func second(v bool) { invariant.Assertions("same").Sometimes(v, "b").Ensure() }
@@ -464,6 +470,85 @@ func second(v bool) { invariant.Assertions("same").Sometimes(v, "b").Ensure() }
 	}
 	if recorder.Assertion_Plans != nil {
 		t.Fatal("conflicting roots published a partial namespace")
+	}
+	recorder, output, code = registered_global_namespace_fixture()
+	if code != 1 {
+		t.Fatalf("global exit=%d output=%q", code, output.String())
+	}
+	want = "🚨 1 duplicate messages 🚨\n" +
+		"/b/b.go:2  duplicate namespace: \"global\"\n" +
+		"🚨 1 duplicate messages 🚨\n"
+	if output.String() != want {
+		t.Fatalf("global output=%q, want %q", output.String(), want)
+	}
+	if event_count(&recorder.Events) != 0 {
+		t.Fatal("a cross-package namespace collision published partial events")
+	}
+	if recorder.Assertion_Plans != nil {
+		t.Fatal("a cross-package namespace collision published a partial plan")
+	}
+}
+
+// Test_Assertions_Registration_Source_Owner keeps static descent idempotent for one owner.
+func Test_Assertions_Registration_Source_Owner(t *testing.T) {
+	recorder, output, code := registered_fixture(`package fixture
+type Leaf int
+func Leaf_Invariants(value Leaf, namespace invariant.Namespace) {
+	invariant.Assertions(namespace).Sometimes(value == 0, "zero").Ensure()
+}
+type Parent struct { Value Leaf }
+func Parent_Invariants(value Parent, namespace invariant.Namespace) {
+	Leaf_Invariants(value.Value, "Parent.Value")
+}
+func first(value Parent) { Parent_Invariants(value, "first") }
+func second(value Parent) { Parent_Invariants(value, "second") }
+`)
+	if code != -1 {
+		t.Fatalf("exit=%d output=%q", code, output.String())
+	}
+	if output.String() != "" {
+		t.Fatalf("output=%q, want no diagnostic", output.String())
+	}
+	if event_count(&recorder.Events) != 1 {
+		t.Fatalf("events=%d, want one axis", event_count(&recorder.Events))
+	}
+	chain_metadata(t, recorder, chain_metadata_key{
+		Namespace: "Parent.Value", Ordinal: 0, Message: "zero",
+	})
+}
+
+// Test_Assertions_Registration_Source_Path prevents forwarded chains from merging coverage.
+func Test_Assertions_Registration_Source_Path(t *testing.T) {
+	recorder, output, code := registered_fixture(`package fixture
+type First int
+type Second int
+type Parent struct { First First; Second Second }
+func First_Invariants(value First, namespace invariant.Namespace) {
+	invariant.Assertions(namespace).Sometimes(value == 0, "first").Ensure()
+}
+func Second_Invariants(value Second, namespace invariant.Namespace) {
+	invariant.Assertions(namespace).Sometimes(value == 1, "second").Ensure()
+}
+func Parent_Invariants(value Parent, namespace invariant.Namespace) {
+	First_Invariants(value.First, namespace)
+	Second_Invariants(value.Second, namespace)
+}
+func check(value Parent) { Parent_Invariants(value, "same") }
+`)
+	if code != 1 {
+		t.Fatalf("exit=%d output=%q", code, output.String())
+	}
+	want := "🚨 1 duplicate messages 🚨\n" +
+		"/fixture/check.go:13  duplicate namespace: \"same\"\n" +
+		"🚨 1 duplicate messages 🚨\n"
+	if output.String() != want {
+		t.Fatalf("output=%q, want %q", output.String(), want)
+	}
+	if event_count(&recorder.Events) != 0 {
+		t.Fatal("different forwarded chains published partial events")
+	}
+	if recorder.Assertion_Plans != nil {
+		t.Fatal("different forwarded chains published a partial plan")
 	}
 }
 
@@ -1465,6 +1550,28 @@ func registered_fixture(source string) (
 	recorder *invariant.Recorder, output *bytes.Buffer, code int,
 ) {
 	return registered_fixture_options(source, "")
+}
+
+func registered_global_namespace_fixture() (
+	recorder *invariant.Recorder, output *bytes.Buffer, code int,
+) {
+	output = &bytes.Buffer{}
+	code = -1
+	recorder = &invariant.Recorder{
+		File_System: fstest.MapFS{
+			"go.mod": &fstest.MapFile{Data: []byte("module fixture\n")},
+			"a/a.go": &fstest.MapFile{Data: []byte(`package a
+func check(value bool) { invariant.Assertions("global").Sometimes(value, "a").Ensure() }
+`)},
+			"b/b.go": &fstest.MapFile{Data: []byte(`package b
+func check(value bool) { invariant.Assertions("global").Sometimes(value, "b").Ensure() }
+`)},
+		},
+		Packages_To_Analyze: []string{"/a", "/b"}, Output: output,
+		Exit: func(status int) { code = status }, Is_Test: true,
+	}
+	invariant.Recorder_Register_Packages_For_Analysis(recorder)
+	return recorder, output, code
 }
 
 func registered_fixture_with_sugar(source string) (
