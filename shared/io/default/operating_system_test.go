@@ -2,27 +2,99 @@ package io_test
 
 import (
 	"bytes"
-	"crypto/tls"
 	"errors"
+	stdio "io"
 	"net"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
 	"syscall"
 	"testing"
 
-	"local/james-orcales/shared/io"
-	system_io "local/james-orcales/shared/io/default"
-	"local/james-orcales/shared/time"
-	timeos "local/james-orcales/shared/time/default"
+	"local/james-orcales/g/shared/io"
+	iodefault "local/james-orcales/g/shared/io/default"
+	"local/james-orcales/g/shared/time"
+	timeos "local/james-orcales/g/shared/time/default"
 )
 
 // The Run_Until cap for the real-backend tests: generous, since a completion returns the
 // pump the instant it fires — this bound only bites a genuine hang, failing the test
 // instead of blocking until the package timeout.
-const REAL_DEADLINE = 5 * time.SECOND
+const real_deadline = 5 * time.SECOND
+
+// The short finite operation deadline used to prove a dormant kernel wait retires promptly.
+const real_operation_deadline = 25 * time.MILLISECOND
+
+// Creates the 32-entry test scheduler and fails at the composition root if initialization fails.
+func operating_system_loop(t *testing.T, clock time.Clock) (loop io.IO, driver io.Driver) {
+	t.Helper()
+	loop, driver, err := iodefault.New_Operating_System_IO(clock, 32, 0)
+	if err != nil {
+		t.Fatalf("initialize io: %v", err)
+	}
+	return loop, driver
+}
+
+// Drives a real test predicate and fails immediately on a backend scheduler error.
+func operating_system_run_until(
+	t *testing.T, driver io.Driver, done func() (finished bool),
+) (completed bool) {
+	t.Helper()
+	completed, err := driver.Run_Until(done, real_deadline)
+	if err != nil {
+		t.Fatalf("drive io: %v", err)
+	}
+	return completed
+}
+
+// Returns the explicit profile used by real-backend socket tests.
+func test_tcp_options() (options io.TCP_Options) {
+	return io.TCP_Options{
+		Receive_Buffer: 4 * 1024 * 1024,
+		Send_Buffer:    2 * 1024 * 1024,
+		Keepalive: &io.TCP_Keepalive{
+			Idle_Seconds: 5, Interval_Seconds: 4, Count: 3,
+		},
+		User_Timeout_Milliseconds: 17 * 1000,
+		No_Delay:                  true,
+	}
+}
+
+// Opens the caller-owned IPv4 TCP socket used by backend tests.
+func test_open_socket(loop io.IO) (socket io.File, err error) {
+	return loop.Open_Socket_TCP(io.FAMILY_IPV4, test_tcp_options())
+}
+
+// Opens and binds one caller-owned IPv4 TCP listener.
+func test_listen(loop io.IO, host string, port int) (listener io.File, err error) {
+	address, address_err := io.Address_Parse(host, port)
+	if address_err != nil {
+		return io.File(-1), address_err
+	}
+	listener, open_err := test_open_socket(loop)
+	if open_err != nil {
+		return io.File(-1), open_err
+	}
+	_, listen_err := loop.Listen(listener, address, io.Listen_Options{Backlog: 65535})
+	if listen_err != nil {
+		loop.Close_Socket(listener)
+		return io.File(-1), listen_err
+	}
+	return listener, nil
+}
+
+// Converts an IP literal for the explicit-address Connect surface.
+func test_connect(
+	loop io.IO, completion *io.Completion, callback io.Timeout_Callback,
+	socket io.File, host string, port int,
+) {
+	address, err := io.Address_Parse(host, port)
+	if err != nil {
+		panic(err)
+	}
+	loop.Connect(completion, callback, socket, address, real_deadline)
+}
 
 // Test_Operating_System_IO_Read writes a temp file and reads it back through the
 // real backend, confirming the read runs in the loop and reports the bytes.
@@ -37,17 +109,21 @@ func Test_Operating_System_IO_Read(t *testing.T) {
 	}
 
 	clock, _ := timeos.New_Operating_System_Clock()
-	loop, driver := system_io.New_Operating_System_IO(clock)
+	loop, driver := operating_system_loop(t, clock)
 	buffer := make([]byte, 5)
 	count := -1
+	read_done := false
 	var completion io.Completion
 	loop.Read(&completion, func(_ *io.Completion, bytes int, read_err error) {
 		if read_err != nil {
 			t.Errorf("read error: %v", read_err)
 		}
 		count = bytes
+		read_done = true
 	}, io.File(file.Fd()), buffer, 0)
-	driver.Run()
+	if !operating_system_run_until(t, driver, func() (finished bool) { return read_done }) {
+		t.Fatal("read did not complete")
+	}
 
 	if count != 5 {
 		t.Fatalf("read %d bytes, want 5", count)
@@ -57,12 +133,24 @@ func Test_Operating_System_IO_Read(t *testing.T) {
 	}
 }
 
+// Test_Resolve_Passes_IP_Literal confirms an IP-literal host returns unchanged, so an
+// already-resolved address skips the blocking DNS lookup and the loop's dial path only sees IPs.
+func Test_Resolve_Passes_IP_Literal(t *testing.T) {
+	address, err := iodefault.Resolve("93.184.216.34")
+	if err != nil {
+		t.Fatalf("resolve ip literal: %v", err)
+	}
+	if address != "93.184.216.34" {
+		t.Fatalf("resolve returned %q, want 93.184.216.34", address)
+	}
+}
+
 // Test_Operating_System_IO_Run_Until_Deadlock verifies an unbounded Run_Until with no operation
 // pending fails loud rather than blocking forever: a predicate no event can flip is a deadlock,
 // so the pump panics instead of hanging the caller.
 func Test_Operating_System_IO_Run_Until_Deadlock(t *testing.T) {
 	clock, _ := timeos.New_Operating_System_Clock()
-	_, driver := system_io.New_Operating_System_IO(clock)
+	_, driver := operating_system_loop(t, clock)
 	defer func() {
 		if recover() == nil {
 			t.Fatal("an unbounded Run_Until with nothing pending must panic")
@@ -75,15 +163,66 @@ func Test_Operating_System_IO_Run_Until_Deadlock(t *testing.T) {
 // its deadline.
 func Test_Operating_System_IO_Timeout(t *testing.T) {
 	clock, _ := timeos.New_Operating_System_Clock()
-	loop, driver := system_io.New_Operating_System_IO(clock)
+	loop, driver := operating_system_loop(t, clock)
 	fired := false
 	var completion io.Completion
 	loop.Timeout(&completion, func(_ *io.Completion, err error) {
 		fired = true
 	}, time.MILLISECOND)
-	driver.Run_Until(func() (finished bool) { return fired }, REAL_DEADLINE)
+	driver.Run_Until(func() (finished bool) { return fired }, real_deadline)
 	if !fired {
 		t.Fatal("timeout did not fire")
+	}
+}
+
+// Test_Operating_System_IO_Open_Socket_Profile verifies outbound sockets are non-blocking,
+// close-on-exec, buffered for the client workload, keepalive-enabled, and caller-owned in Raw_Open.
+func Test_Operating_System_IO_Open_Socket_Profile(t *testing.T) {
+	clock, _ := timeos.New_Operating_System_Clock()
+	loop, driver := operating_system_loop(t, clock)
+	baseline := driver.Introspect().Raw_Open
+	socket, open_err := test_open_socket(loop)
+	if open_err != nil {
+		t.Fatalf("open socket: %v", open_err)
+	}
+	if raw_open := driver.Introspect().Raw_Open; raw_open != baseline+1 {
+		t.Fatalf("raw open after Open_Socket = %d, want %d", raw_open, baseline+1)
+	}
+	file_flags := socket_fcntl(t, socket, syscall.F_GETFD)
+	if file_flags&syscall.FD_CLOEXEC == 0 {
+		t.Fatal("Open_Socket descriptor is not close-on-exec")
+	}
+	status_flags := socket_fcntl(t, socket, syscall.F_GETFL)
+	if status_flags&syscall.O_NONBLOCK == 0 {
+		t.Fatal("Open_Socket descriptor is not non-blocking")
+	}
+	receive_buffer, receive_err := syscall.GetsockoptInt(
+		int(socket), syscall.SOL_SOCKET, syscall.SO_RCVBUF)
+	if receive_err != nil {
+		t.Fatalf("get receive buffer: %v", receive_err)
+	}
+	if receive_buffer <= 0 {
+		t.Fatalf("receive buffer = %d, want a configured positive size", receive_buffer)
+	}
+	send_buffer, send_err := syscall.GetsockoptInt(
+		int(socket), syscall.SOL_SOCKET, syscall.SO_SNDBUF)
+	if send_err != nil {
+		t.Fatalf("get send buffer: %v", send_err)
+	}
+	if send_buffer <= 0 {
+		t.Fatalf("send buffer = %d, want a configured positive size", send_buffer)
+	}
+	keepalive, keepalive_err := syscall.GetsockoptInt(
+		int(socket), syscall.SOL_SOCKET, syscall.SO_KEEPALIVE)
+	if keepalive_err != nil {
+		t.Fatalf("get keepalive: %v", keepalive_err)
+	}
+	if keepalive == 0 {
+		t.Fatal("keepalive is disabled")
+	}
+	self_exec_close(loop, driver, socket)
+	if raw_open := driver.Introspect().Raw_Open; raw_open != baseline {
+		t.Fatalf("raw open after caller Close = %d, want %d", raw_open, baseline)
 	}
 }
 
@@ -92,7 +231,7 @@ func Test_Operating_System_IO_Timeout(t *testing.T) {
 // fail as loudly as the sim instead of silently double-arming it.
 func Test_Operating_System_IO_Reuse(t *testing.T) {
 	clock, _ := timeos.New_Operating_System_Clock()
-	loop, _ := system_io.New_Operating_System_IO(clock)
+	loop, _ := operating_system_loop(t, clock)
 	var completion io.Completion
 	loop.Timeout(&completion, func(_ *io.Completion, err error) {}, time.SECOND)
 	defer func() {
@@ -107,7 +246,7 @@ func Test_Operating_System_IO_Reuse(t *testing.T) {
 // completion callback panics, so a re-entrant Run* fails loudly rather than corrupting it.
 func Test_Operating_System_IO_Reentrancy(t *testing.T) {
 	clock, _ := timeos.New_Operating_System_Clock()
-	loop, driver := system_io.New_Operating_System_IO(clock)
+	loop, driver := operating_system_loop(t, clock)
 	var completion io.Completion
 	loop.Timeout(&completion, func(_ *io.Completion, err error) {
 		driver.Run()
@@ -126,9 +265,10 @@ func Test_Operating_System_IO_Reentrancy(t *testing.T) {
 func Test_Operating_System_IO_Socket(t *testing.T) {
 	port := free_port(t)
 	clock, _ := timeos.New_Operating_System_Clock()
-	loop, driver := system_io.New_Operating_System_IO(clock)
+	loop, driver := operating_system_loop(t, clock)
+	baseline := driver.Introspect().Raw_Open
 
-	listener, listen_err := loop.Listen("127.0.0.1", port)
+	listener, listen_err := test_listen(loop, "127.0.0.1", port)
 	if listen_err != nil {
 		t.Fatalf("listen: %v", listen_err)
 	}
@@ -140,23 +280,27 @@ func Test_Operating_System_IO_Socket(t *testing.T) {
 			t.Errorf("accept: %v", accept_err)
 		}
 		accepted = socket
-	}, listener)
+	}, listener, real_deadline)
 
-	connected := io.File(-1)
+	connected, open_err := test_open_socket(loop)
+	if open_err != nil {
+		t.Fatalf("open socket: %v", open_err)
+	}
+	connect_done := false
 	var connect_completion io.Completion
-	loop.Connect(
+	test_connect(loop,
 		&connect_completion,
-		func(_ *io.Completion, socket io.File, connect_err error) {
+		func(_ *io.Completion, connect_err error) {
 			if connect_err != nil {
 				t.Errorf("connect: %v", connect_err)
 			}
-			connected = socket
+			connect_done = true
 		},
-		"127.0.0.1", port,
+		connected, "127.0.0.1", port,
 	)
 
-	driver.Run_Until(func() (finished bool) { return accepted > 0 }, REAL_DEADLINE)
-	driver.Run_Until(func() (finished bool) { return connected > 0 }, REAL_DEADLINE)
+	driver.Run_Until(func() (finished bool) { return accepted > 0 }, real_deadline)
+	driver.Run_Until(func() (finished bool) { return connect_done }, real_deadline)
 	if accepted <= 0 {
 		t.Fatalf("accept did not complete, got %d", accepted)
 	}
@@ -164,50 +308,90 @@ func Test_Operating_System_IO_Socket(t *testing.T) {
 		t.Fatalf("connect did not complete, got %d", connected)
 	}
 
-	var send_completion io.Completion
-	loop.Send(&send_completion, func(_ *io.Completion, count int, send_err error) {
-		if send_err != nil {
-			t.Errorf("send: %v", send_err)
-		}
-	}, connected, []byte("ping"))
-
-	buffer := make([]byte, 16)
-	received := -1
-	var receive_completion io.Completion
-	loop.Receive(&receive_completion, func(_ *io.Completion, count int, receive_err error) {
-		if receive_err != nil {
-			t.Errorf("receive: %v", receive_err)
-		}
-		received = count
-	}, accepted, buffer)
-
-	driver.Run_Until(func() (finished bool) { return received >= 0 }, REAL_DEADLINE)
-	if received != 4 {
-		t.Fatalf("received %d bytes, want 4", received)
-	}
-	if string(buffer[:4]) != "ping" {
-		t.Fatalf("received %q, want ping", buffer[:4])
+	loopback_assert_roundtrip(&loopback_roundtrip_input{
+		Test: t, Loop: loop, Driver: driver, Connected: connected, Accepted: accepted,
+	})
+	self_exec_close(loop, driver, connected)
+	self_exec_close(loop, driver, accepted)
+	self_exec_close(loop, driver, listener)
+	if raw_open := driver.Introspect().Raw_Open; raw_open != baseline {
+		t.Fatalf("raw open after loopback teardown = %d, want %d", raw_open, baseline)
 	}
 }
 
-// Test_Operating_System_IO_Reuseport confirms SO_REUSEPORT: two independent loops bind the same
-// host:port at once, the thread-per-core shape where N single-threaded loops share one listening
-// port and the kernel load-balances connections across them. Without it the second Listen would
-// fail EADDRINUSE.
-func Test_Operating_System_IO_Reuseport(t *testing.T) {
+// Test_Operating_System_IO_Accept_Deadline proves a listener with no inbound connection retires
+// its accept exactly once, after which the listener and backend may be released safely.
+func Test_Operating_System_IO_Accept_Deadline(t *testing.T) {
+	clock, _ := timeos.New_Operating_System_Clock()
+	loop, driver := operating_system_loop(t, clock)
+	listener, listen_err := test_listen(loop, "127.0.0.1", 0)
+	if listen_err != nil {
+		t.Fatalf("listen: %v", listen_err)
+	}
+	callback_count := 0
+	accepted := io.File(-1)
+	var operation_err error
+	var completion io.Completion
+	loop.Accept(&completion, func(_ *io.Completion, socket io.File, err error) {
+		callback_count++
+		accepted = socket
+		operation_err = err
+	}, listener, real_operation_deadline)
+	if !operating_system_run_until(
+		t, driver, func() (finished bool) { return callback_count > 0 },
+	) {
+		t.Fatal("accept deadline did not resolve")
+	}
+	if callback_count != 1 {
+		t.Fatalf("accept callback count = %d, want 1", callback_count)
+	}
+	if operation_err != io.Deadline_Exceeded {
+		t.Fatalf("accept error = %v, want %v", operation_err, io.Deadline_Exceeded)
+	}
+	if accepted != -1 {
+		t.Fatalf("deadline yielded accepted descriptor %d", accepted)
+	}
+	loop.Close_Socket(listener)
+	driver.Deinit()
+}
+
+// Test_Operating_System_IO_Connect_Error_Preserves_Socket verifies refusal leaves the caller-owned
+// descriptor open until the caller explicitly closes it.
+func Test_Operating_System_IO_Connect_Error_Preserves_Socket(t *testing.T) {
 	port := free_port(t)
 	clock, _ := timeos.New_Operating_System_Clock()
+	loop, driver := operating_system_loop(t, clock)
+	raw_open_before := driver.Introspect().Raw_Open
 
-	loop_one, _ := system_io.New_Operating_System_IO(clock)
-	_, first_err := loop_one.Listen("127.0.0.1", port)
-	if first_err != nil {
-		t.Fatalf("first listen: %v", first_err)
+	socket, open_err := test_open_socket(loop)
+	if open_err != nil {
+		t.Fatalf("open socket: %v", open_err)
 	}
+	called := false
+	var connect_err error
+	var completion io.Completion
+	test_connect(loop, &completion, func(_ *io.Completion, err error) {
+		called = true
+		connect_err = err
+	}, socket, "127.0.0.1", port)
 
-	loop_two, _ := system_io.New_Operating_System_IO(clock)
-	_, second_err := loop_two.Listen("127.0.0.1", port)
-	if second_err != nil {
-		t.Fatalf("second listen on the same port (SO_REUSEPORT missing?): %v", second_err)
+	driver.Run_Until(func() (finished bool) { return called }, real_deadline)
+	if connect_err == nil {
+		t.Fatal("connect to an unbound port succeeded, want an error")
+	}
+	if connect_err != io.Connection_Refused {
+		t.Fatalf("connect error %v, want %v", connect_err, io.Connection_Refused)
+	}
+	if raw_open := driver.Introspect().Raw_Open; raw_open != raw_open_before+1 {
+		t.Fatalf(
+			"failed connect left %d raw descriptors open, want caller-owned %d",
+			raw_open,
+			raw_open_before+1,
+		)
+	}
+	self_exec_close(loop, driver, socket)
+	if raw_open := driver.Introspect().Raw_Open; raw_open != raw_open_before {
+		t.Fatalf("raw open after caller Close = %d, want %d", raw_open, raw_open_before)
 	}
 }
 
@@ -218,9 +402,9 @@ func Test_Operating_System_IO_Reuseport(t *testing.T) {
 func Test_Operating_System_IO_Send_In_Connect_Completion(t *testing.T) {
 	port := free_port(t)
 	clock, _ := timeos.New_Operating_System_Clock()
-	loop, driver := system_io.New_Operating_System_IO(clock)
+	loop, driver := operating_system_loop(t, clock)
 
-	listener, listen_err := loop.Listen("127.0.0.1", port)
+	listener, listen_err := test_listen(loop, "127.0.0.1", port)
 	if listen_err != nil {
 		t.Fatalf("listen: %v", listen_err)
 	}
@@ -231,12 +415,16 @@ func Test_Operating_System_IO_Send_In_Connect_Completion(t *testing.T) {
 			t.Errorf("accept: %v", err)
 		}
 		accepted = socket
-	}, listener)
+	}, listener, real_deadline)
 
 	sent := -1
 	var send_completion io.Completion
 	var connect_completion io.Completion
-	loop.Connect(&connect_completion, func(_ *io.Completion, socket io.File, err error) {
+	socket, open_err := test_open_socket(loop)
+	if open_err != nil {
+		t.Fatalf("open socket: %v", open_err)
+	}
+	test_connect(loop, &connect_completion, func(_ *io.Completion, err error) {
 		if err != nil {
 			t.Errorf("connect: %v", err)
 			return
@@ -248,14 +436,14 @@ func Test_Operating_System_IO_Send_In_Connect_Completion(t *testing.T) {
 			}
 			sent = count
 		}, socket, []byte("ping"))
-	}, "127.0.0.1", port)
+	}, socket, "127.0.0.1", port)
 
-	driver.Run_Until(func() (finished bool) { return sent >= 0 }, REAL_DEADLINE)
+	driver.Run_Until(func() (finished bool) { return sent >= 0 }, real_deadline)
 	if sent != 4 {
 		t.Fatalf("send armed in the connect completion delivered %d bytes, want 4", sent)
 	}
 
-	driver.Run_Until(func() (finished bool) { return accepted > 0 }, REAL_DEADLINE)
+	driver.Run_Until(func() (finished bool) { return accepted > 0 }, real_deadline)
 	buffer := make([]byte, 16)
 	received := -1
 	var receive_completion io.Completion
@@ -265,7 +453,7 @@ func Test_Operating_System_IO_Send_In_Connect_Completion(t *testing.T) {
 		}
 		received = count
 	}, accepted, buffer)
-	driver.Run_Until(func() (finished bool) { return received >= 0 }, REAL_DEADLINE)
+	driver.Run_Until(func() (finished bool) { return received >= 0 }, real_deadline)
 	if received != 4 {
 		t.Fatalf("peer received %d bytes, want 4", received)
 	}
@@ -274,96 +462,139 @@ func Test_Operating_System_IO_Send_In_Connect_Completion(t *testing.T) {
 	}
 }
 
-// Test_Operating_System_IO_Cancel verifies cancelling a pending timeout fires its
-// callback exactly once, with the Cancelled error, and promptly rather than at its
-// far-off deadline.
-func Test_Operating_System_IO_Cancel(t *testing.T) {
-	clock, _ := timeos.New_Operating_System_Clock()
-	loop, driver := system_io.New_Operating_System_IO(clock)
-
-	got := error(nil)
-	fired := 0
-	var completion io.Completion
-	loop.Timeout(&completion, func(_ *io.Completion, err error) {
-		fired++
-		got = err
-	}, time.SECOND)
-
-	loop.Cancel(&completion)
-	driver.Run_For(10 * time.MILLISECOND)
-
-	if fired != 1 {
-		t.Fatalf("callback fired %d times, want exactly 1", fired)
-	}
-	if got != io.Cancelled {
-		t.Fatalf("cancel error = %v, want io.Cancelled", got)
-	}
-}
-
-// Test_Operating_System_IO_Reuse_After_Cancel pins the reuse-after-cancel contract a consumer must
-// respect: a cancelled completion stays in the cancel window until its cancellation is delivered,
-// so re-arming it before then is the illegal CANCELLED→ARMED edge and must panic. Only after a
-// drive delivers the cancellation is the completion idle and legally re-armable. This is the exact
-// backend behavior the deterministic simulator cannot model (it drains to empty, closing the
-// window in the same tick), so a consumer that cancels-then-reuses must gate the reuse on the
-// cancellation callback having fired — a gap that panics only against this real backend.
-func Test_Operating_System_IO_Reuse_After_Cancel(t *testing.T) {
-	clock, _ := timeos.New_Operating_System_Clock()
-	loop, driver := system_io.New_Operating_System_IO(clock)
-
-	var early io.Completion
-	loop.Timeout(&early, func(_ *io.Completion, _ error) {}, time.SECOND)
-	loop.Cancel(&early)
-	func() {
-		defer func() {
-			if recover() == nil {
-				t.Fatal("re-arm before the cancel drains must panic")
-			}
-		}()
-		loop.Timeout(&early, func(_ *io.Completion, _ error) {}, time.SECOND)
-	}()
-
-	fired := 0
-	var reusable io.Completion
-	loop.Timeout(&reusable, func(_ *io.Completion, _ error) { fired++ }, time.MILLISECOND)
-	loop.Cancel(&reusable)
-	driver.Run_For(10 * time.MILLISECOND)
-	loop.Timeout(&reusable, func(_ *io.Completion, _ error) { fired++ }, time.MILLISECOND)
-	driver.Run_For(10 * time.MILLISECOND)
-	if fired != 2 {
-		t.Fatalf("cancelled, drained, then re-armed timeout fired %d times, want 2", fired)
-	}
-}
-
-// Test_Operating_System_IO_Cancel_Accept verifies cancelling a socket operation armed
-// on the poll drops the waiter and delivers the Cancelled error exactly once.
-func Test_Operating_System_IO_Cancel_Accept(t *testing.T) {
+// Test_Operating_System_IO_Drain_Then_Recycle verifies Shutdown resolves an armed receive before
+// Close, after which a later connection still receives readiness normally.
+func Test_Operating_System_IO_Drain_Then_Recycle(t *testing.T) {
 	port := free_port(t)
 	clock, _ := timeos.New_Operating_System_Clock()
-	loop, driver := system_io.New_Operating_System_IO(clock)
-
-	listener, listen_err := loop.Listen("127.0.0.1", port)
+	loop, driver := operating_system_loop(t, clock)
+	listener, listen_err := test_listen(loop, "127.0.0.1", port)
 	if listen_err != nil {
 		t.Fatalf("listen: %v", listen_err)
 	}
 
-	got := error(nil)
+	first, first_connected := loopback_pair(t, loop, driver, listener, port)
+	buffer := make([]byte, 16)
+	var receive_completion io.Completion
 	fired := 0
-	var completion io.Completion
-	loop.Accept(&completion, func(_ *io.Completion, socket io.File, err error) {
-		fired++
-		got = err
-	}, listener)
-
-	loop.Cancel(&completion)
-	driver.Run_For(10 * time.MILLISECOND)
-
-	if fired != 1 {
-		t.Fatalf("accept callback fired %d times, want exactly 1", fired)
+	loop.Receive(&receive_completion,
+		func(_ *io.Completion, _ int, _ error) { fired++ }, first, buffer)
+	if shutdown_err := loop.Shutdown(first, io.SHUTDOWN_RECEIVE); shutdown_err != nil {
+		t.Fatalf("shutdown receive: %v", shutdown_err)
 	}
-	if got != io.Cancelled {
-		t.Fatalf("cancelled accept error = %v, want io.Cancelled", got)
+	if !operating_system_run_until(t, driver, func() (finished bool) { return fired > 0 }) {
+		t.Fatal("shutdown did not drain the armed receive")
 	}
+	closed := false
+	var close_completion io.Completion
+	loop.Close(&close_completion, func(_ *io.Completion, _ error) { closed = true }, first)
+	if !operating_system_run_until(t, driver, func() (finished bool) { return closed }) {
+		t.Fatal("joined close did not complete")
+	}
+	self_exec_close(loop, driver, first_connected)
+
+	// A later socket may reuse the descriptor and must still deliver readiness.
+	recycled, second := loopback_pair(t, loop, driver, listener, port)
+	var send_completion io.Completion
+	loop.Send(&send_completion, func(_ *io.Completion, _ int, send_err error) {
+		if send_err != nil {
+			t.Errorf("send: %v", send_err)
+		}
+	}, second, []byte("pong"))
+	received := -1
+	var second_receive io.Completion
+	loop.Receive(&second_receive, func(_ *io.Completion, count int, err error) {
+		if err != nil {
+			t.Errorf("recycled receive: %v", err)
+		}
+		received = count
+	}, recycled, buffer)
+	if !operating_system_run_until(t, driver, func() (finished bool) { return received >= 0 }) {
+		t.Fatal("timed out waiting for the recycled descriptor to deliver its bytes")
+	}
+	if received != 4 {
+		t.Fatalf("recycled descriptor received %d bytes, want 4", received)
+	}
+	if string(buffer[:4]) != "pong" {
+		t.Fatalf("recycled descriptor received %q, want pong", buffer[:4])
+	}
+}
+
+// Builds one accepted/connected loopback socket pair through the loop, for tests that need a live
+// server-side socket with a client on the other end.
+func loopback_pair(
+	t *testing.T, loop io.IO, driver io.Driver, listener io.File, port int,
+) (accepted io.File, connected io.File) {
+	accepted = io.File(-1)
+	connected, open_err := test_open_socket(loop)
+	if open_err != nil {
+		t.Fatalf("open socket: %v", open_err)
+	}
+	connect_done := false
+	var accept_completion io.Completion
+	loop.Accept(&accept_completion, func(_ *io.Completion, socket io.File, accept_err error) {
+		if accept_err != nil {
+			t.Errorf("accept: %v", accept_err)
+		}
+		accepted = socket
+	}, listener, real_deadline)
+	var connect_completion io.Completion
+	test_connect(loop,
+		&connect_completion,
+		func(_ *io.Completion, connect_err error) {
+			if connect_err != nil {
+				t.Errorf("connect: %v", connect_err)
+			}
+			connect_done = true
+		},
+		connected, "127.0.0.1", port,
+	)
+	driver.Run_Until(func() (finished bool) { return accepted > 0 && connect_done },
+		real_deadline)
+	if accepted <= 0 {
+		t.Fatalf("accept did not complete, got %d", accepted)
+	}
+	return accepted, connected
+}
+
+// Test_Operating_System_IO_Close_With_Armed_Receive verifies Close rejects a descriptor still
+// borrowed by a submitted receive. The owner must shutdown, drain the receive callback, and only
+// then close, matching third-party/tigerbeetle/src/message_bus.zig:1104-1145.
+func Test_Operating_System_IO_Close_With_Armed_Receive(t *testing.T) {
+	port := free_port(t)
+	clock, _ := timeos.New_Operating_System_Clock()
+	loop, driver := operating_system_loop(t, clock)
+	listener, listen_err := test_listen(loop, "127.0.0.1", port)
+	if listen_err != nil {
+		t.Fatalf("listen: %v", listen_err)
+	}
+	accepted, connected := loopback_pair(t, loop, driver, listener, port)
+
+	received := false
+	var receive_completion io.Completion
+	loop.Receive(&receive_completion, func(_ *io.Completion, _ int, _ error) {
+		received = true
+	}, accepted, make([]byte, 8))
+
+	close_panicked := false
+	var close_completion io.Completion
+	func() {
+		defer func() { close_panicked = recover() != nil }()
+		loop.Close(&close_completion, func(_ *io.Completion, _ error) {}, accepted)
+	}()
+	if !close_panicked {
+		t.Fatal("close with an armed receive must panic")
+	}
+	if shutdown_err := loop.Shutdown(accepted, io.SHUTDOWN_BOTH); shutdown_err != nil {
+		t.Fatalf("shutdown: %v", shutdown_err)
+	}
+	if !operating_system_run_until(t, driver, func() (finished bool) { return received }) {
+		t.Fatal("shutdown did not drain the armed receive")
+	}
+
+	self_exec_close(loop, driver, accepted)
+	self_exec_close(loop, driver, connected)
+	self_exec_close(loop, driver, listener)
 }
 
 // Test_Operating_System_IO_Open opens a file through the loop and reads it back.
@@ -377,18 +608,25 @@ func Test_Operating_System_IO_Open(t *testing.T) {
 	}
 
 	clock, _ := timeos.New_Operating_System_Clock()
-	loop, driver := system_io.New_Operating_System_IO(clock)
+	loop, driver := operating_system_loop(t, clock)
 	file, open_err := loop.Open(source.Name())
 	if open_err != nil {
 		t.Fatalf("open: %v", open_err)
 	}
 	buffer := make([]byte, 5)
 	count := -1
+	read_done := false
 	var completion io.Completion
 	loop.Read(&completion, func(_ *io.Completion, bytes int, read_err error) {
+		if read_err != nil {
+			t.Errorf("read: %v", read_err)
+		}
 		count = bytes
+		read_done = true
 	}, file, buffer, 0)
-	driver.Run()
+	if !operating_system_run_until(t, driver, func() (finished bool) { return read_done }) {
+		t.Fatal("read did not complete")
+	}
 
 	if count != 5 {
 		t.Fatalf("read %d bytes, want 5", count)
@@ -406,17 +644,24 @@ func Test_Operating_System_IO_Create(t *testing.T) {
 	}
 
 	clock, _ := timeos.New_Operating_System_Clock()
-	loop, driver := system_io.New_Operating_System_IO(clock)
+	loop, driver := operating_system_loop(t, clock)
 	file, create_err := loop.Create(source.Name())
 	if create_err != nil {
 		t.Fatalf("create: %v", create_err)
 	}
 	count := -1
+	write_done := false
 	var completion io.Completion
 	loop.Write(&completion, func(_ *io.Completion, bytes int, write_err error) {
+		if write_err != nil {
+			t.Errorf("write: %v", write_err)
+		}
 		count = bytes
+		write_done = true
 	}, file, []byte("world"), 0)
-	driver.Run()
+	if !operating_system_run_until(t, driver, func() (finished bool) { return write_done }) {
+		t.Fatal("write did not complete")
+	}
 
 	if count != 5 {
 		t.Fatalf("wrote %d bytes, want 5", count)
@@ -427,11 +672,18 @@ func Test_Operating_System_IO_Create(t *testing.T) {
 	}
 	buffer := make([]byte, 5)
 	read := -1
+	read_done := false
 	var read_completion io.Completion
 	loop.Read(&read_completion, func(_ *io.Completion, bytes int, read_err error) {
+		if read_err != nil {
+			t.Errorf("read back: %v", read_err)
+		}
 		read = bytes
+		read_done = true
 	}, verify, buffer, 0)
-	driver.Run()
+	if !operating_system_run_until(t, driver, func() (finished bool) { return read_done }) {
+		t.Fatal("read back did not complete")
+	}
 	if read != 5 {
 		t.Fatalf("read back %d bytes, want 5", read)
 	}
@@ -440,13 +692,102 @@ func Test_Operating_System_IO_Create(t *testing.T) {
 	}
 }
 
+// Test_Operating_System_IO_Tiger_Beetle_File_Parity ports the file-operation chain from
+// third-party/tigerbeetle/src/io/test.zig:25-155: openat, write, fsync, read, and close all reuse
+// caller-owned completions and preserve the written bytes.
+func Test_Operating_System_IO_Tiger_Beetle_File_Parity(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "tigerbeetle-io")
+	clock, _ := timeos.New_Operating_System_Clock()
+	loop, driver := operating_system_loop(t, clock)
+	opened := io.File(-1)
+	var open_completion io.Completion
+	loop.Open_At(&open_completion, func(_ *io.Completion, file io.File, err error) {
+		if err != nil {
+			t.Errorf("open at: %v", err)
+			return
+		}
+		opened = file
+	}, io.DIRECTORY_CURRENT, path, io.Open_At_Options{
+		Access: io.OPEN_READ_WRITE, Create: true, Truncate: true, Mode: 0o600,
+	})
+	if !operating_system_run_until(t, driver, func() (finished bool) { return opened >= 0 }) {
+		t.Fatal("open at did not complete")
+	}
+
+	written := false
+	var write_completion io.Completion
+	loop.Write(&write_completion, func(_ *io.Completion, count int, err error) {
+		if err != nil {
+			t.Errorf("write: %v", err)
+		}
+		written = count == 5
+	}, opened, []byte("hello"), 10)
+	if !operating_system_run_until(t, driver, func() (finished bool) { return written }) {
+		t.Fatal("write did not complete")
+	}
+
+	synced := false
+	var fsync_completion io.Completion
+	loop.Fsync(&fsync_completion, func(_ *io.Completion, err error) {
+		if err != nil {
+			t.Errorf("fsync: %v", err)
+		}
+		synced = true
+	}, opened)
+	if !operating_system_run_until(t, driver, func() (finished bool) { return synced }) {
+		t.Fatal("fsync did not complete")
+	}
+
+	buffer := make([]byte, 5)
+	read := false
+	var read_completion io.Completion
+	loop.Read(&read_completion, func(_ *io.Completion, count int, err error) {
+		if err != nil {
+			t.Errorf("read: %v", err)
+		}
+		read = count == len(buffer)
+	}, opened, buffer, 10)
+	if !operating_system_run_until(t, driver, func() (finished bool) { return read }) {
+		t.Fatal("read did not complete")
+	}
+	if string(buffer) != "hello" {
+		t.Fatalf("read %q, want hello", buffer)
+	}
+	self_exec_close(loop, driver, opened)
+}
+
+// Test_Operating_System_IO_Event ports TigerBeetle's Event reattachment contract: one trigger
+// retires one listener on the loop thread, after which the same completion may be armed again.
+func Test_Operating_System_IO_Event(t *testing.T) {
+	clock, _ := timeos.New_Operating_System_Clock()
+	loop, driver := operating_system_loop(t, clock)
+	event, open_err := loop.Open_Event()
+	if open_err != nil {
+		t.Fatalf("open event: %v", open_err)
+	}
+	fired := 0
+	var completion io.Completion
+	callback := func(_ *io.Completion) { fired++ }
+	loop.Event_Listen(event, &completion, callback)
+	loop.Event_Trigger(event, &completion)
+	if !operating_system_run_until(t, driver, func() (finished bool) { return fired == 1 }) {
+		t.Fatal("first event did not fire")
+	}
+	loop.Event_Listen(event, &completion, callback)
+	loop.Event_Trigger(event, &completion)
+	if !operating_system_run_until(t, driver, func() (finished bool) { return fired == 2 }) {
+		t.Fatal("second event did not fire")
+	}
+	loop.Close_Event(event)
+}
+
 // Test_Operating_System_IO_Peer_Address reports the remote address of an accepted
 // loopback connection.
 func Test_Operating_System_IO_Peer_Address(t *testing.T) {
 	port := free_port(t)
 	clock, _ := timeos.New_Operating_System_Clock()
-	loop, driver := system_io.New_Operating_System_IO(clock)
-	listener, listen_err := loop.Listen("127.0.0.1", port)
+	loop, driver := operating_system_loop(t, clock)
+	listener, listen_err := test_listen(loop, "127.0.0.1", port)
 	if listen_err != nil {
 		t.Fatalf("listen: %v", listen_err)
 	}
@@ -455,14 +796,18 @@ func Test_Operating_System_IO_Peer_Address(t *testing.T) {
 	var accept_completion io.Completion
 	loop.Accept(&accept_completion, func(_ *io.Completion, socket io.File, err error) {
 		accepted = socket
-	}, listener)
+	}, listener, real_deadline)
 	var connect_completion io.Completion
-	loop.Connect(
+	connected, open_err := test_open_socket(loop)
+	if open_err != nil {
+		t.Fatalf("open socket: %v", open_err)
+	}
+	test_connect(loop,
 		&connect_completion,
-		func(_ *io.Completion, socket io.File, err error) {},
-		"127.0.0.1", port,
+		func(_ *io.Completion, err error) {},
+		connected, "127.0.0.1", port,
 	)
-	driver.Run_Until(func() (finished bool) { return accepted > 0 }, REAL_DEADLINE)
+	driver.Run_Until(func() (finished bool) { return accepted > 0 }, real_deadline)
 
 	if accepted <= 0 {
 		t.Fatalf("accept did not complete, got %d", accepted)
@@ -479,14 +824,15 @@ func Test_Operating_System_IO_Peer_Address(t *testing.T) {
 // Test_Operating_System_IO_Compute runs work on the pool and delivers on the loop.
 func Test_Operating_System_IO_Compute(t *testing.T) {
 	clock, _ := timeos.New_Operating_System_Clock()
-	loop, driver := system_io.New_Operating_System_IO(clock)
+	loop, driver := operating_system_loop(t, clock)
+	baseline := driver.Introspect().Raw_Open
 	ran := false
 	fired := false
 	var completion io.Completion
 	loop.Compute(&completion, func(_ *io.Completion) {
 		fired = true
 	}, func() { ran = true })
-	driver.Run_Until(func() (finished bool) { return fired }, REAL_DEADLINE)
+	driver.Run_Until(func() (finished bool) { return fired }, real_deadline)
 
 	if !ran {
 		t.Fatal("compute work did not run")
@@ -494,23 +840,53 @@ func Test_Operating_System_IO_Compute(t *testing.T) {
 	if !fired {
 		t.Fatal("compute callback did not fire on the loop")
 	}
+	if driver.Introspect().Raw_Open != baseline {
+		t.Fatal("internal extension wake resources changed caller-owned Raw_Open")
+	}
+}
+
+// Test_Operating_System_IO_Deinit_Rejects_Undrained_Extension verifies Deinit cannot close the
+// Event/backend while a repository-extension completion is still owned by Compute.
+func Test_Operating_System_IO_Deinit_Rejects_Undrained_Extension(t *testing.T) {
+	clock, _ := timeos.New_Operating_System_Clock()
+	loop, driver := operating_system_loop(t, clock)
+	drained := false
+	var completion io.Completion
+	loop.Compute(&completion, func(_ *io.Completion) { drained = true }, func() {})
+	deinit_panicked := false
+	func() {
+		defer func() { deinit_panicked = recover() != nil }()
+		driver.Deinit()
+	}()
+	if !deinit_panicked {
+		t.Fatal("deinit with an undrained extension completion must panic")
+	}
+	if !operating_system_run_until(t, driver, func() (finished bool) { return drained }) {
+		t.Fatal("compute did not drain after rejected deinit")
+	}
+	driver.Deinit()
 }
 
 // Test_Operating_System_IO_Watch_Signal delivers a real SIGTERM onto the loop.
 func Test_Operating_System_IO_Watch_Signal(t *testing.T) {
 	clock, _ := timeos.New_Operating_System_Clock()
-	loop, driver := system_io.New_Operating_System_IO(clock)
+	loop, driver := operating_system_loop(t, clock)
 	got := io.Signal(-1)
 	fired := 0
 	var completion io.Completion
-	loop.Watch_Signal(&completion, func(_ *io.Completion, signal io.Signal) {
+	loop.Watch_Signal(&completion, func(
+		_ *io.Completion, signal io.Signal, err error,
+	) {
+		if err != nil {
+			t.Errorf("watch signal: %v", err)
+		}
 		fired++
 		got = signal
-	}, io.SIGNAL_TERMINATE)
+	}, io.SIGNAL_TERMINATE, real_deadline)
 	if kill_err := syscall.Kill(os.Getpid(), syscall.SIGTERM); kill_err != nil {
 		t.Fatalf("kill: %v", kill_err)
 	}
-	driver.Run_Until(func() (finished bool) { return fired > 0 }, REAL_DEADLINE)
+	driver.Run_Until(func() (finished bool) { return fired > 0 }, real_deadline)
 
 	if fired != 1 {
 		t.Fatalf("signal callback fired %d times, want 1", fired)
@@ -520,186 +896,44 @@ func Test_Operating_System_IO_Watch_Signal(t *testing.T) {
 	}
 }
 
-// Test_Operating_System_IO_TLS runs a TLS loopback: a client connects (skipping
-// verification) to a secure listener and exchanges plaintext through the tunnel.
-func Test_Operating_System_IO_TLS(t *testing.T) {
-	loop, driver, client, server := tls_loopback(t)
-
-	var send_completion io.Completion
-	loop.Send(&send_completion, func(_ *io.Completion, count int, err error) {
-		if err != nil {
-			t.Errorf("send: %v", err)
-		}
-	}, client, []byte("ping"))
-	buffer := make([]byte, 16)
-	received := -1
-	var receive_completion io.Completion
-	loop.Receive(&receive_completion, func(_ *io.Completion, count int, err error) {
-		if err != nil {
-			t.Errorf("receive: %v", err)
-		}
-		received = count
-	}, server, buffer)
-	driver.Run_Until(func() (finished bool) { return received >= 0 }, REAL_DEADLINE)
-
-	if received != 4 {
-		t.Fatalf("received %d bytes, want 4", received)
-	}
-	if string(buffer[:4]) != "ping" {
-		t.Fatalf("received %q, want ping", buffer[:4])
-	}
-}
-
-// Establishes a TLS loopback on the real backend and returns the loop, its driver, and the
-// connected client and server sockets, driving the accept and connect to completion so a test
-// exercises the tunnel without repeating the handshake.
-func tls_loopback(
-	t *testing.T,
-) (loop io.IO, driver io.Driver, client io.File, server io.File) {
-	port := free_port(t)
-	certificate := self_signed(t)
+// Test_Operating_System_IO_Watch_Signal_Deadline proves a signal that never arrives retires the
+// extension completion exactly once and permits backend deinitialization.
+func Test_Operating_System_IO_Watch_Signal_Deadline(t *testing.T) {
 	clock, _ := timeos.New_Operating_System_Clock()
-	loop, driver = system_io.New_Operating_System_IO(clock)
-	listener, listen_err := loop.Listen("127.0.0.1", port)
-	if listen_err != nil {
-		t.Fatalf("listen: %v", listen_err)
+	loop, driver := operating_system_loop(t, clock)
+	callback_count := 0
+	got := io.Signal(-1)
+	var operation_err error
+	var completion io.Completion
+	loop.Watch_Signal(&completion, func(
+		_ *io.Completion, signal io.Signal, err error,
+	) {
+		callback_count++
+		got = signal
+		operation_err = err
+	}, io.SIGNAL_TERMINATE, real_operation_deadline)
+	if !operating_system_run_until(
+		t, driver, func() (finished bool) { return callback_count > 0 },
+	) {
+		t.Fatal("signal deadline did not resolve")
 	}
-	server = io.File(-1)
-	var accept_completion io.Completion
-	loop.Accept_Secure(&accept_completion, func(_ *io.Completion, socket io.File, err error) {
-		if err != nil {
-			t.Errorf("accept secure: %v", err)
-		}
-		server = socket
-	}, listener, func() (value any) { return certificate })
-	client = io.File(-1)
-	var connect_completion io.Completion
-	loop.Connect_Insecure(&connect_completion,
-		func(_ *io.Completion, socket io.File, err error) {
-			if err != nil {
-				t.Errorf("connect insecure: %v", err)
-			}
-			client = socket
-		}, "127.0.0.1", port, "localhost")
-	driver.Run_Until(func() (finished bool) { return server > 0 }, REAL_DEADLINE)
-	driver.Run_Until(func() (finished bool) { return client > 0 }, REAL_DEADLINE)
-	if server <= 0 {
-		t.Fatalf("secure accept did not complete, got %d", server)
+	if callback_count != 1 {
+		t.Fatalf("signal callback count = %d, want 1", callback_count)
 	}
-	if client <= 0 {
-		t.Fatalf("insecure connect did not complete, got %d", client)
+	if operation_err != io.Deadline_Exceeded {
+		t.Fatalf("signal error = %v, want %v", operation_err, io.Deadline_Exceeded)
 	}
-	return loop, driver, client, server
-}
-
-// Test_Operating_System_IO_TLS_Concurrent_Read_Write verifies a send is not starved behind a
-// blocked receive on one TLS connection. A receive is armed on the client that no peer will ever
-// feed, so the connection's reader stays blocked; a send on that same client must still reach the
-// server. The single-goroutine backend deadlocked here — the write sat in the request queue behind
-// the blocking Read — so this pins the reader/writer split that lets the two directions proceed at
-// once. The client receive is asserted still pending, proving the send went out past a live read.
-func Test_Operating_System_IO_TLS_Concurrent_Read_Write(t *testing.T) {
-	loop, driver, client, server := tls_loopback(t)
-
-	blocked := make([]byte, 16)
-	client_received := -1
-	var client_receive io.Completion
-	loop.Receive(&client_receive, func(_ *io.Completion, count int, _ error) {
-		client_received = count
-	}, client, blocked)
-
-	sent := -1
-	var send_completion io.Completion
-	loop.Send(&send_completion, func(_ *io.Completion, count int, err error) {
-		if err != nil {
-			t.Errorf("send: %v", err)
-		}
-		sent = count
-	}, client, []byte("ping"))
-
-	buffer := make([]byte, 16)
-	server_received := -1
-	var server_receive io.Completion
-	loop.Receive(&server_receive, func(_ *io.Completion, count int, err error) {
-		if err != nil {
-			t.Errorf("server receive: %v", err)
-		}
-		server_received = count
-	}, server, buffer)
-
-	driver.Run_Until(func() (finished bool) {
-		return sent >= 0 && server_received >= 0
-	}, REAL_DEADLINE)
-
-	if sent != 4 {
-		t.Fatalf("send behind a blocked receive delivered %d bytes, want 4", sent)
+	if got != -1 {
+		t.Fatalf("deadline yielded signal %d", got)
 	}
-	if server_received != 4 {
-		t.Fatalf("server received %d bytes, want 4", server_received)
-	}
-	if string(buffer[:4]) != "ping" {
-		t.Fatalf("server received %q, want ping", buffer[:4])
-	}
-	if client_received >= 0 {
-		t.Fatal("the client receive should stay pending — no peer fed it")
-	}
-}
-
-// The static self-signed certificate the TLS loopback test presents. Connect_Insecure
-// skips verification, so its fixed identity and far-future expiry are all it needs, and
-// baking it in keeps the test off stdlib time (the time/default gateway's alone).
-const TLS_TEST_CERTIFICATE = `-----BEGIN CERTIFICATE-----
-MIIBKzCB0qADAgECAgEBMAoGCCqGSM49BAMCMBQxEjAQBgNVBAMTCWxvY2FsaG9z
-dDAgFw03MDAxMDEwMDAwMDBaGA8zMDAwMDEwMTAwMDAwMFowFDESMBAGA1UEAxMJ
-bG9jYWxob3N0MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEZiPPVV+KvWqtXWUV
-FwqGmclWo4flNdoEF7LXW7rcRyEfdETN8D7eZHsc1EszCqX/J7TUz5qt+EBqZnvD
-EEjmKKMTMBEwDwYDVR0RBAgwBocEfwAAATAKBggqhkjOPQQDAgNIADBFAiEA1wL/
-Db1CQuIeXErn5BukOvBoo9dQXKNzmQhQ6H2uFcgCICaZ/Oc5XKE3zbXmXn8joWKU
-xB+G3LVmykY+fgvMWA80
------END CERTIFICATE-----
------BEGIN EC PRIVATE KEY-----
-MHcCAQEEIIzFOeQBJZexjKqtf7Adz+DzZpwi6njSth1YMrDm8uUYoAoGCCqGSM49
-AwEHoUQDQgAEZiPPVV+KvWqtXWUVFwqGmclWo4flNdoEF7LXW7rcRyEfdETN8D7e
-ZHsc1EszCqX/J7TUz5qt+EBqZnvDEEjmKA==
------END EC PRIVATE KEY-----
-`
-
-// Parses the static test certificate for the TLS loopback test through the gateway's
-// own constructor, so the loopback test is also the end-to-end proof that Certificate's
-// output is the value Accept_Secure accepts.
-func self_signed(t *testing.T) (certificate any) {
-	pem := []byte(TLS_TEST_CERTIFICATE)
-	value, err := system_io.Certificate(&system_io.Certificate_Input{Chain: pem, Key: pem})
-	if err != nil {
-		t.Fatal(err)
-	}
-	return value
-}
-
-// Test_Certificate verifies Certificate assembles a *tls.Certificate from PEM chain and
-// key bytes, and reports an error for input that is not a valid key pair.
-func Test_Certificate(t *testing.T) {
-	pem := []byte(TLS_TEST_CERTIFICATE)
-	value, err := system_io.Certificate(&system_io.Certificate_Input{Chain: pem, Key: pem})
-	if err != nil {
-		t.Fatalf("certificate: %v", err)
-	}
-	if _, ok := value.(*tls.Certificate); !ok {
-		t.Fatalf("certificate value = %T, want *tls.Certificate", value)
-	}
-	garbage := []byte("not a pem")
-	_, garbage_err := system_io.Certificate(
-		&system_io.Certificate_Input{Chain: garbage, Key: garbage})
-	if garbage_err == nil {
-		t.Fatal("certificate from garbage bytes must error")
-	}
+	driver.Deinit()
 }
 
 // Test_Operating_System_IO_Spawn runs real commands through the loop: a success with
 // captured output, and a non-zero exit reported without a start error.
 func Test_Operating_System_IO_Spawn(t *testing.T) {
 	clock, _ := timeos.New_Operating_System_Clock()
-	loop, driver := system_io.New_Operating_System_IO(clock)
+	loop, driver := operating_system_loop(t, clock)
 
 	echo := io.Process_Result{}
 	echoed := false
@@ -710,8 +944,8 @@ func Test_Operating_System_IO_Spawn(t *testing.T) {
 		}
 		echo = result
 		echoed = true
-	}, io.Process_Request{Path: "/bin/echo", Arguments: []string{"hi"}})
-	driver.Run_Until(func() (finished bool) { return echoed }, REAL_DEADLINE)
+	}, io.Process_Request{Path: "/bin/echo", Arguments: []string{"hi"}}, real_deadline)
+	operating_system_run_until(t, driver, func() (finished bool) { return echoed })
 
 	if !echoed {
 		t.Fatal("echo did not complete")
@@ -732,8 +966,8 @@ func Test_Operating_System_IO_Spawn(t *testing.T) {
 		}
 		fail = result
 		failed = true
-	}, io.Process_Request{Path: "/bin/sh", Arguments: []string{"-c", "exit 1"}})
-	driver.Run_Until(func() (finished bool) { return failed }, REAL_DEADLINE)
+	}, io.Process_Request{Path: "/bin/sh", Arguments: []string{"-c", "exit 1"}}, real_deadline)
+	operating_system_run_until(t, driver, func() (finished bool) { return failed })
 
 	if !failed {
 		t.Fatal("false did not complete")
@@ -748,7 +982,7 @@ func Test_Operating_System_IO_Spawn(t *testing.T) {
 // capturing it — the affordance a long build needs — and leaves Output empty.
 func Test_Operating_System_IO_Spawn_Streams_To_Sink(t *testing.T) {
 	clock, _ := timeos.New_Operating_System_Clock()
-	loop, driver := system_io.New_Operating_System_IO(clock)
+	loop, driver := operating_system_loop(t, clock)
 
 	streamed := bytes.Buffer{}
 	result := io.Process_Result{}
@@ -760,8 +994,9 @@ func Test_Operating_System_IO_Spawn_Streams_To_Sink(t *testing.T) {
 		}
 		result = spawned
 		done = true
-	}, io.Process_Request{Path: "/bin/echo", Arguments: []string{"hi"}, Stdout: &streamed})
-	driver.Run_Until(func() (finished bool) { return done }, REAL_DEADLINE)
+	}, io.Process_Request{Path: "/bin/echo", Arguments: []string{"hi"}, Stdout: &streamed},
+		real_deadline)
+	operating_system_run_until(t, driver, func() (finished bool) { return done })
 
 	if !done {
 		t.Fatal("echo did not complete")
@@ -774,12 +1009,105 @@ func Test_Operating_System_IO_Spawn_Streams_To_Sink(t *testing.T) {
 	}
 }
 
+// Test_Operating_System_IO_Spawn_Deadline proves timeout kills the entire subprocess group,
+// preserves output captured before expiry, and delivers one terminal callback.
+func Test_Operating_System_IO_Spawn_Deadline(t *testing.T) {
+	clock, _ := timeos.New_Operating_System_Clock()
+	loop, driver := operating_system_loop(t, clock)
+	process_path := filepath.Join(t.TempDir(), "process")
+	request := io.Process_Request{
+		Path: "/bin/sh",
+		Arguments: []string{
+			"-c", "printf '%d' $$ > \"$1\"; printf partial; sleep 30 & wait",
+			"bounded-spawn", process_path,
+		},
+	}
+	callback_count := 0
+	result := io.Process_Result{}
+	var operation_err error
+	var completion io.Completion
+	loop.Spawn(&completion, func(
+		_ *io.Completion, spawned io.Process_Result, err error,
+	) {
+		callback_count++
+		result = spawned
+		operation_err = err
+	}, request, 100*time.MILLISECOND)
+	if !operating_system_run_until(
+		t, driver, func() (finished bool) { return callback_count > 0 },
+	) {
+		t.Fatal("bounded spawn did not complete")
+	}
+	if callback_count != 1 {
+		t.Fatalf("spawn callback count = %d, want 1", callback_count)
+	}
+	if operation_err != io.Deadline_Exceeded {
+		t.Fatalf("spawn error = %v, want %v", operation_err, io.Deadline_Exceeded)
+	}
+	if string(result.Output) != "partial" {
+		t.Fatalf("partial output = %q, want partial", result.Output)
+	}
+	process_file, open_err := os.Open(process_path)
+	if open_err != nil {
+		t.Fatalf("open process identifier: %v", open_err)
+	}
+	process_buffer := make([]byte, 64)
+	process_count, read_err := stdio.ReadFull(
+		stdio.LimitReader(process_file, int64(len(process_buffer))), process_buffer,
+	)
+	if read_err != nil {
+		if read_err != stdio.ErrUnexpectedEOF {
+			t.Fatalf("read process identifier: %v", read_err)
+		}
+	}
+	if close_err := process_file.Close(); close_err != nil {
+		t.Fatalf("close process identifier: %v", close_err)
+	}
+	process_bytes := process_buffer[:process_count]
+	process_identifier, parse_err := strconv.Atoi(strings.TrimSpace(string(process_bytes)))
+	if parse_err != nil {
+		t.Fatalf("parse process identifier: %v", parse_err)
+	}
+	group_exited, group_err := process_group_wait_for_exit(driver, process_identifier)
+	if group_err != nil {
+		t.Fatalf("wait for subprocess group %d: %v", process_identifier, group_err)
+	}
+	if !group_exited {
+		t.Fatalf("subprocess group %d remains after deadline", process_identifier)
+	}
+	driver.Run_For(2 * real_operation_deadline)
+	if callback_count != 1 {
+		t.Fatalf("late spawn callback count = %d, want 1", callback_count)
+	}
+	driver.Deinit()
+}
+
+// Waits for host init to reap killed grandchildren without accepting a live bounded process.
+func process_group_wait_for_exit(
+	driver io.Driver, process_identifier int,
+) (exited bool, err error) {
+	for attempt_index := 0; attempt_index < 80; attempt_index++ {
+		kill_err := syscall.Kill(-process_identifier, 0)
+		if errors.Is(kill_err, syscall.ESRCH) {
+			return true, nil
+		}
+		if kill_err != nil {
+			return false, kill_err
+		}
+		drive_err := driver.Run_For(real_operation_deadline)
+		if drive_err != nil {
+			return false, drive_err
+		}
+	}
+	return false, nil
+}
+
 // Test_Operating_System_IO_Directory exercises the filesystem-traversal ops on a real temp
 // tree: Make_Directory builds a nested path (into which the fixture file is seeded), and
 // Status and Read_Directory then report the tree's shape, including an absent path.
 func Test_Operating_System_IO_Directory(t *testing.T) {
 	clock, _ := timeos.New_Operating_System_Clock()
-	loop, _ := system_io.New_Operating_System_IO(clock)
+	loop, _ := operating_system_loop(t, clock)
 
 	root := t.TempDir()
 	nested := filepath.Join(root, "a", "b")
@@ -829,6 +1157,52 @@ func Test_Operating_System_IO_Directory(t *testing.T) {
 	}
 }
 
+type loopback_roundtrip_input struct {
+	Test      *testing.T
+	Loop      io.IO
+	Driver    io.Driver
+	Connected io.File
+	Accepted  io.File
+}
+
+func loopback_assert_roundtrip(input *loopback_roundtrip_input) {
+	input.Test.Helper()
+	var send_completion io.Completion
+	input.Loop.Send(&send_completion, func(_ *io.Completion, _ int, send_err error) {
+		if send_err != nil {
+			input.Test.Errorf("send: %v", send_err)
+		}
+	}, input.Connected, []byte("ping"))
+	buffer := make([]byte, 16)
+	received := -1
+	var receive_completion io.Completion
+	input.Loop.Receive(&receive_completion, func(
+		_ *io.Completion, count int, receive_err error,
+	) {
+		if receive_err != nil {
+			input.Test.Errorf("receive: %v", receive_err)
+		}
+		received = count
+	}, input.Accepted, buffer)
+	input.Driver.Run_Until(func() (finished bool) { return received >= 0 }, real_deadline)
+	if received != 4 {
+		input.Test.Fatalf("received %d bytes, want 4", received)
+	}
+	if string(buffer[:4]) != "ping" {
+		input.Test.Fatalf("received %q, want ping", buffer[:4])
+	}
+}
+
+func socket_fcntl(t *testing.T, socket io.File, command int) (flags int) {
+	t.Helper()
+	value, _, errno := syscall.Syscall(
+		syscall.SYS_FCNTL, uintptr(socket), uintptr(command), 0)
+	if errno != 0 {
+		t.Fatalf("fcntl %d: %v", command, errno)
+	}
+	return int(value)
+}
+
 // Returns a probably-free TCP port by binding and releasing one through the standard
 // library, used only to pick a target for the backend under test.
 func free_port(t *testing.T) (port int) {
@@ -843,243 +1217,10 @@ func free_port(t *testing.T) (port int) {
 	return port
 }
 
-// How many rapid dials span the self-exec transition; every one must connect, none refused.
-const SELF_EXEC_DIALS = 100
-
-// How many dials to confirm the re-exec'd phase-2 server answers, generous against boot latency.
-const SELF_EXEC_CONFIRM_DIALS = 50
-
-// How many attempts to wait for the child's initial bind before giving up.
-const SELF_EXEC_WAIT_ATTEMPTS = 200
-
-// The gap each wait/confirm retry rests on the loop, so retries do not spin.
-const SELF_EXEC_RETRY_PAUSE = 20 * time.MILLISECOND
-
-// Caps the phase-2 accept loop so it is bounded rather than an unbounded for{}; far more than the
-// outer test's dial count, which kills the child long before this.
-const SELF_EXEC_SERVE_MAX = 1 << 20
-
-// Test_Operating_System_IO_Self_Exec is the real-execve proof of the zero-gap listener handoff: a
-// child binds a listener, self-execs preserving that descriptor, and the re-exec'd image serves
-// from the inherited socket. Across the whole transition an outer dialer must never see
-// connection-refused — the bind never lapses — and it must ultimately reach the phase-2 server,
-// proving the descriptor actually crossed the exec. The simulator cannot model a real process-image
-// replacement, so this lives in the real backend, dialing through the loop like the other real-OS
-// tests, driven through a helper process in Go's standard helper-process idiom.
-func Test_Operating_System_IO_Self_Exec(t *testing.T) {
-	port := free_port(t)
-	child := exec.Command(os.Args[0], "-test.run=Test_Self_Exec_Child")
-	child.Env = append(os.Environ(),
-		"GO_SELF_EXEC_HELPER=1",
-		"SELF_EXEC_PORT="+strconv.Itoa(port))
-	if start_err := child.Start(); start_err != nil {
-		t.Fatalf("start helper: %v", start_err)
-	}
-	defer func() {
-		kill_err := child.Process.Kill()
-		if kill_err != nil {
-			t.Logf("kill helper: %v", kill_err)
-		}
-		wait_err := child.Wait()
-		if wait_err != nil {
-			t.Logf("wait helper: %v", wait_err)
-		}
-	}()
-
-	clock, _ := timeos.New_Operating_System_Clock()
-	loop, driver := system_io.New_Operating_System_IO(clock)
-	if !self_exec_wait_up(loop, driver, port) {
-		t.Fatal("helper never bound the port; phase-1 bind failed")
-	}
-	refused := 0
-	for attempt_index := 0; attempt_index < SELF_EXEC_DIALS; attempt_index++ {
-		socket, was_refused := self_exec_dial(loop, driver, port)
-		if was_refused {
-			refused++
-		}
-		if socket > 0 {
-			self_exec_close(loop, driver, socket)
-		}
-	}
-	if refused != 0 {
-		t.Fatalf("refused %d times across the self-exec; the bind gapped", refused)
-	}
-	if !self_exec_saw_sentinel(loop, driver, port) {
-		t.Fatal("never reached the re-exec'd phase-2 server; the descriptor handoff failed")
-	}
-}
-
-// Test_Operating_System_IO_Self_Exec_Failure_Preserves_Process pins the marks-not-closes contract:
-// a self-exec to a missing binary must fail synchronously and leave the process — and its
-// listener — fully intact, so the caller can fall back to another restart path. It runs in-process
-// because the exec is guaranteed to fail; a successful one would replace the test binary.
-func Test_Operating_System_IO_Self_Exec_Failure_Preserves_Process(t *testing.T) {
-	port := free_port(t)
-	clock, _ := timeos.New_Operating_System_Clock()
-	loop, driver := system_io.New_Operating_System_IO(clock)
-	listener, listen_err := loop.Listen("127.0.0.1", port)
-	if listen_err != nil {
-		t.Fatalf("listen: %v", listen_err)
-	}
-
-	absent := filepath.Join(t.TempDir(), "nonexistent-binary")
-	exec_err := loop.Self_Exec(absent, []string{absent}, nil, []io.File{listener})
-	if exec_err == nil {
-		t.Fatal("self-exec to a missing binary must fail, not replace the process")
-	}
-
-	accepted := io.File(-1)
-	var accept_completion io.Completion
-	loop.Accept(&accept_completion, func(_ *io.Completion, socket io.File, accept_err error) {
-		if accept_err != nil {
-			t.Errorf("accept: %v", accept_err)
-		}
-		accepted = socket
-	}, listener)
-	connected := io.File(-1)
-	var connect_completion io.Completion
-	loop.Connect(
-		&connect_completion,
-		func(_ *io.Completion, socket io.File, connect_err error) {
-			if connect_err != nil {
-				t.Errorf("connect: %v", connect_err)
-			}
-			connected = socket
-		}, "127.0.0.1", port)
-	driver.Run_Until(func() (finished bool) { return accepted > 0 }, REAL_DEADLINE)
-	driver.Run_Until(func() (finished bool) { return connected > 0 }, REAL_DEADLINE)
-	if accepted <= 0 {
-		t.Fatal("the preserved listener could not accept after a failed self-exec")
-	}
-}
-
-// Connects to the port once through the loop, reporting the connected socket (or -1) and whether
-// the attempt was refused because nothing listened. The caller owns closing a returned socket.
-func self_exec_dial(loop io.IO, driver io.Driver, port int) (socket io.File, refused bool) {
-	socket = io.File(-1)
-	done := false
-	var completion io.Completion
-	loop.Connect(&completion, func(_ *io.Completion, connected io.File, err error) {
-		done = true
-		if err != nil {
-			refused = errors.Is(err, syscall.ECONNREFUSED)
-			return
-		}
-		socket = connected
-	}, "127.0.0.1", port)
-	driver.Run_Until(func() (finished bool) { return done }, REAL_DEADLINE)
-	return socket, refused
-}
-
-// Closes a socket through the loop, driving the close to completion.
+// Closes a socket asynchronously and drives its completion.
 func self_exec_close(loop io.IO, driver io.Driver, socket io.File) {
 	closed := false
 	var completion io.Completion
 	loop.Close(&completion, func(_ *io.Completion, _ error) { closed = true }, socket)
-	driver.Run_Until(func() (finished bool) { return closed }, REAL_DEADLINE)
-}
-
-// Reads once from a connected socket through the loop, returning the bytes received.
-func self_exec_receive(loop io.IO, driver io.Driver, socket io.File) (reply []byte) {
-	buffer := make([]byte, 8)
-	count := -1
-	var completion io.Completion
-	loop.Receive(&completion, func(_ *io.Completion, received int, _ error) {
-		count = received
-	}, socket, buffer)
-	driver.Run_Until(func() (finished bool) { return count >= 0 }, REAL_DEADLINE)
-	if count > 0 {
-		return buffer[:count]
-	}
-	return nil
-}
-
-// Dials until the helper's listener answers, so the zero-gap measurement starts only once the child
-// is up — a startup refusal is not the bind gap the test is about.
-func self_exec_wait_up(loop io.IO, driver io.Driver, port int) (up bool) {
-	for attempt_index := 0; attempt_index < SELF_EXEC_WAIT_ATTEMPTS; attempt_index++ {
-		socket, _ := self_exec_dial(loop, driver, port)
-		if socket > 0 {
-			self_exec_close(loop, driver, socket)
-			return true
-		}
-		driver.Run_For(SELF_EXEC_RETRY_PAUSE)
-	}
-	return false
-}
-
-// Dials until one connection reads the phase-2 sentinel, confirming the re-exec'd server —
-// reachable only through the inherited descriptor — actually came up and served.
-func self_exec_saw_sentinel(loop io.IO, driver io.Driver, port int) (seen bool) {
-	for attempt_index := 0; attempt_index < SELF_EXEC_CONFIRM_DIALS; attempt_index++ {
-		socket, _ := self_exec_dial(loop, driver, port)
-		if socket <= 0 {
-			driver.Run_For(SELF_EXEC_RETRY_PAUSE)
-			continue
-		}
-		reply := self_exec_receive(loop, driver, socket)
-		self_exec_close(loop, driver, socket)
-		if strings.HasPrefix(string(reply), "ok") {
-			return true
-		}
-		driver.Run_For(SELF_EXEC_RETRY_PAUSE)
-	}
-	return false
-}
-
-// Test_Self_Exec_Child is the child the self-exec test drives, not a test of its own: it returns
-// at once on a normal run and only acts when GO_SELF_EXEC_HELPER marks it the helper. Phase 1 (no
-// SELF_EXEC_FD yet) binds the listener and self-execs, handing the descriptor down; phase 2 (the
-// re-exec'd image, SELF_EXEC_FD set) serves the sentinel from that inherited socket. The two phases
-// are distinguished by the presence of the brand-new SELF_EXEC_FD variable, so no environment key
-// collides across the exec.
-func Test_Self_Exec_Child(t *testing.T) {
-	if os.Getenv("GO_SELF_EXEC_HELPER") == "" {
-		return
-	}
-	descriptor_value := os.Getenv("SELF_EXEC_FD")
-	if descriptor_value != "" {
-		self_exec_child_serve(descriptor_value)
-		return
-	}
-	self_exec_child_bind()
-}
-
-// The helper's phase 1: bind the listener on the real backend, then self-exec the test binary back
-// into phase 2, preserving the listener descriptor and naming it in SELF_EXEC_FD. On a successful
-// exec this never returns; a non-zero exit marks a bind or exec failure the outer test sees as a
-// never-bound port.
-func self_exec_child_bind() {
-	port, _ := strconv.Atoi(os.Getenv("SELF_EXEC_PORT"))
-	clock, _ := timeos.New_Operating_System_Clock()
-	loop, _ := system_io.New_Operating_System_IO(clock)
-	listener, listen_err := loop.Listen("127.0.0.1", port)
-	if listen_err != nil {
-		os.Exit(11)
-	}
-	environment := []string{"SELF_EXEC_FD=" + strconv.Itoa(int(listener))}
-	argv := []string{os.Args[0], "-test.run=Test_Self_Exec_Child"}
-	loop.Self_Exec(os.Args[0], argv, environment, []io.File{listener})
-	os.Exit(12)
-}
-
-// The helper's phase 2: reconstruct the listener from the inherited descriptor and serve the
-// sentinel to every connection until the outer test kills the process. That the inherited
-// descriptor is a live, accept-able listening socket is the whole proof the handoff works.
-func self_exec_child_serve(descriptor_value string) {
-	descriptor, _ := strconv.Atoi(descriptor_value)
-	file := os.NewFile(uintptr(descriptor), "self-exec-listener")
-	listener, listener_err := net.FileListener(file)
-	if listener_err != nil {
-		os.Exit(13)
-	}
-	for served_index := 0; served_index < SELF_EXEC_SERVE_MAX; served_index++ {
-		connection, accept_err := listener.Accept()
-		if accept_err != nil {
-			os.Exit(0)
-		}
-		connection.Write([]byte("ok\n"))
-		connection.Close()
-	}
-	os.Exit(0)
+	driver.Run_Until(func() (finished bool) { return closed }, real_deadline)
 }

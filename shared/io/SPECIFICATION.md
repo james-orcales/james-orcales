@@ -8,7 +8,14 @@ out, drawing every outcome from that seed, so a run reproduces and nothing is sc
 ### Timeout
 
 A timeout fires exactly when the virtual clock reaches its deadline, off the same
-Ready_At queue the IO completions use, so every wait rides one timeline.
+Ready_At queue the IO completions use, so every wait rides one timeline. The duration
+must be positive; a caller that needs a deferred callback uses Next_Tick.
+
+### Next Tick
+
+Next_Tick appends a deferred callback to the completed queue without submitting kernel IO.
+Reset_Next_Tick removes every queued next-tick completion for the selected source and returns
+those completions to idle without invoking their callbacks.
 
 ### Read
 
@@ -16,20 +23,43 @@ A read on an opened file returns its stored bytes from the offset after the mode
 so a mirror reads back what an earlier write stored; a read on any other descriptor reports
 the buffer length.
 
+### Fsync
+
+Fsync completes after the simulator has accepted every prior write to the file. It does not
+create, close, or transfer descriptor ownership.
+
+### Open At
+
+Open_At asynchronously opens or creates a file relative to DIRECTORY_CURRENT, forces
+close-on-exec ownership, and returns the new caller-owned descriptor through its callback.
+
+### Event
+
+Open_Event creates the TigerBeetle cross-thread event primitive. Event_Listen arms one
+completion, Event_Trigger makes that completion ready, and Close_Event releases the event only
+after its listener has drained.
+
 ### Listen
 
-Listen returns a fresh synthetic descriptor synchronously; the simulated backend
-binds nothing, so the call never fails.
+Listen consumes a caller-owned TCP socket and returns the resolved address synchronously.
+When the requested port is zero, the simulator returns a non-zero synthetic port.
 
 ### Accept
 
-An accept completes after the modeled latency and yields a new descriptor distinct
-from its listener, modeling one inbound connection.
+Accept requires a positive finite deadline and yields a descriptor distinct from its listener when
+inbound latency wins. The deadline wins ties, retires once with Deadline_Exceeded, and yields no
+descriptor. This finite lifetime deliberately diverges from TigerBeetle's unbounded accept.
+
+### Open Socket
+
+Open_Socket_TCP and Open_Socket_UDP return fresh caller-owned descriptors synchronously and
+record them in Raw_Open. Only an explicit caller Close or Close_Socket releases them.
 
 ### Connect
 
-A connect completes after the modeled latency and yields a fresh connected
-descriptor, with no real handshake.
+A connect requires a positive finite deadline and borrows the caller's socket. Latency reports
+success or Connection_Refused; the deadline wins ties with Deadline_Exceeded. Every outcome leaves
+the descriptor in Raw_Open for caller teardown, extending TigerBeetle's unbounded Connect.
 
 ### Receive
 
@@ -41,20 +71,32 @@ no real syscall and no waiting.
 A send completes after the modeled latency and reports the buffer length, with no
 real syscall and no waiting.
 
+### Send Now
+
+Send_Now attempts a synchronous datagram send. The simulator reports the whole buffer sent for
+an open socket and reports not-sent for a closed or send-shutdown socket.
+
+### Shutdown
+
+Shutdown changes the selected receive/send halves synchronously without taking ownership of the
+socket. Armed and later receives on a receive-shutdown socket resolve with EOF; armed and later
+sends on a send-shutdown socket resolve with Broken_Pipe. The descriptor remains open.
+
 ### Close
 
-A close completes after the modeled latency and reports no error.
+A close is an asynchronous operation and removes the descriptor from Raw_Open when its completion
+retires. It neither cancels nor purges other operations: the descriptor owner must join every
+submitted operation before submitting Close.
+
+### Close Socket
+
+Close_Socket synchronously releases a caller-owned socket during setup failure or final deinit.
+It is distinct from asynchronous Close and does not deliver a completion.
 
 ### Run Until
 
 Run_Until drives the loop until its predicate reports true, delivering completions each
 step, so a straight-line caller can wait for its own operation inline.
-
-### Cancel
-
-Cancelling an armed operation moves it to the cancelled state; its callback still fires
-exactly once, with the Cancelled error, so every submission resolves. Cancel on an idle
-or already-cancelled completion is a harmless no-op — it acts only on an armed one.
 
 ### Reuse
 
@@ -89,25 +131,11 @@ later Write persists bytes to it on the loop.
 Peer_Address reports a connected descriptor's remote address synchronously — a
 getpeername has no completion; an unknown descriptor yields the empty address.
 
-### Accept Secure
-
-A secure accept completes after the drawn latency and yields a new descriptor, modeling
-one inbound TLS connection; the simulator has no TLS, so it drives the plaintext socket.
-
-### Connect Secure
-
-A secure connect completes after the drawn latency and yields a fresh connected
-descriptor; the simulator models it like Connect, since it has no TLS.
-
-### Connect Insecure
-
-An insecure connect behaves identically to a secure one in the simulator, which has no
-TLS: it yields a fresh connected descriptor after the drawn latency.
-
 ### Watch Signal
 
-A watched signal arrives at a seed-drawn grain and fires its callback exactly once with
-that signal — the operating-system event modeled as a seed outcome, not scripted.
+Watch_Signal requires a positive finite deadline. A signal arriving first fires once; the deadline
+wins ties and retires once with Deadline_Exceeded and no signal. This finite lifetime deliberately
+diverges from TigerBeetle, which has no signal-watch operation.
 
 ### Compute
 
@@ -116,15 +144,15 @@ timeline; the simulator runs it inline so the result stays reproducible.
 
 ### Spawn
 
-A spawn completes after the drawn latency with a seed-drawn exit code and no captured
-output — the seed decides success or failure, since scripted output is disallowed. A live
-Stdout or Stderr sink instead streams that output on the real backend, uncaptured.
+A spawn requires a positive finite deadline; natural completion returns the seed-drawn exit code,
+while the deadline wins ties with Deadline_Exceeded. The real backend kills its subprocess group,
+bounds pipe cleanup to one second, and returns partial output. TigerBeetle has no Spawn counterpart.
 
 ### Self Exec
 
-Self_Exec replaces the process image in place, preserving the listed descriptors so a listening
-socket's bind survives; it returns only on failure. The simulator cannot replace its own test
-process, so it always returns an error — the honest outcome a caller's fallback path rides.
+Self_Exec replaces the image and returns only on failure; close-on-exec sockets make it rebind.
+A nil environment preserves ambient values; a non-nil slice is the complete replacement
+environment, so an empty slice inherits nothing. The simulator cannot replace its test process.
 
 ### Read Directory
 
@@ -141,3 +169,8 @@ status, not an error.
 
 Make_Directory creates a path and any missing parents synchronously against the tree; an
 existing directory converges, so a repeated mkdir is not an error.
+
+### Introspect
+
+Introspect reports every queued simulator operation by class, the synthetic poll, wake, and
+compute lifecycle flags derived from those queues, and every descriptor tracked in Raw_Open.

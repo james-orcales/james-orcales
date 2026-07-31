@@ -1,10 +1,13 @@
 package io_test
 
 import (
+	"fmt"
+	"strings"
 	"testing"
 
-	"local/james-orcales/shared/io"
-	"local/james-orcales/shared/time"
+	"local/james-orcales/g/shared/io"
+	snap "local/james-orcales/g/shared/snap/default"
+	"local/james-orcales/g/shared/time"
 )
 
 // Test_Sim_Timeout verifies a timeout fires exactly when the virtual clock reaches
@@ -28,6 +31,27 @@ func Test_Sim_Timeout(t *testing.T) {
 	}
 }
 
+// Test_Sim_Next_Tick verifies next-tick callbacks use the completed queue and reset removes every
+// queued callback for a source without firing it.
+func Test_Sim_Next_Tick(t *testing.T) {
+	loop, driver, _ := sim_loop(0)
+	fired := 0
+	var first io.Completion
+	var second io.Completion
+	loop.Next_Tick(&first, func(_ *io.Completion) { fired++ }, io.NEXT_TICK_VSR)
+	loop.Next_Tick(&second, func(_ *io.Completion) { fired++ }, io.NEXT_TICK_VSR)
+	loop.Reset_Next_Tick(io.NEXT_TICK_VSR)
+	driver.Run()
+	if fired != 0 {
+		t.Fatalf("reset next tick fired %d callbacks, want 0", fired)
+	}
+	loop.Next_Tick(&first, func(_ *io.Completion) { fired++ }, io.NEXT_TICK_VSR)
+	driver.Run()
+	if fired != 1 {
+		t.Fatalf("next tick fired %d callbacks, want 1", fired)
+	}
+}
+
 // Test_Sim_Read verifies a read on an opened file returns the bytes an earlier write
 // stored — the file descriptor's real-bytes path, distinct from a socket's byte count.
 func Test_Sim_Read(t *testing.T) {
@@ -45,7 +69,7 @@ func Test_Sim_Read(t *testing.T) {
 		}
 		wrote = true
 	}, writer, []byte("hello"), 0)
-	driver.Run_Until(func() (finished bool) { return wrote }, SIM_DEADLINE)
+	driver.Run_Until(func() (finished bool) { return wrote }, sim_deadline)
 
 	reader, open_err := loop.Open("file")
 	if open_err != nil {
@@ -57,7 +81,7 @@ func Test_Sim_Read(t *testing.T) {
 	loop.Read(&read_completion, func(_ *io.Completion, bytes int, _ error) {
 		count = bytes
 	}, reader, buffer, 0)
-	driver.Run_Until(func() (finished bool) { return count >= 0 }, SIM_DEADLINE)
+	driver.Run_Until(func() (finished bool) { return count >= 0 }, sim_deadline)
 
 	if count != 5 {
 		t.Fatalf("read reported %d bytes, want 5", count)
@@ -67,56 +91,216 @@ func Test_Sim_Read(t *testing.T) {
 	}
 }
 
+// Test_Sim_Fsync verifies the TigerBeetle fsync operation completes without changing descriptor
+// ownership after a prior write has retired.
+func Test_Sim_Fsync(t *testing.T) {
+	loop, driver, _ := sim_loop(0)
+	file, create_err := loop.Create("file")
+	if create_err != nil {
+		t.Fatalf("create: %v", create_err)
+	}
+	fired := false
+	var completion io.Completion
+	loop.Fsync(&completion, func(_ *io.Completion, err error) {
+		if err != nil {
+			t.Fatalf("fsync: %v", err)
+		}
+		fired = true
+	}, file)
+	driver.Run_Until(func() (finished bool) { return fired }, sim_deadline)
+	if driver.Introspect().Raw_Open != 1 {
+		t.Fatal("fsync changed descriptor ownership")
+	}
+}
+
+// Test_Sim_Open_At verifies the TigerBeetle asynchronous openat surface creates a caller-owned
+// file which the ordinary read and write operations can use.
+func Test_Sim_Open_At(t *testing.T) {
+	loop, driver, _ := sim_loop(0)
+	opened := io.File(-1)
+	var completion io.Completion
+	loop.Open_At(&completion, func(_ *io.Completion, file io.File, err error) {
+		if err != nil {
+			t.Fatalf("open at: %v", err)
+		}
+		opened = file
+	}, io.DIRECTORY_CURRENT, "file", io.Open_At_Options{
+		Access: io.OPEN_READ_WRITE, Create: true, Truncate: true, Mode: 0o600,
+	})
+	driver.Run_Until(func() (finished bool) { return opened >= 0 }, sim_deadline)
+	if opened < 0 {
+		t.Fatal("open at did not return a descriptor")
+	}
+	if driver.Introspect().Raw_Open != 1 {
+		t.Fatal("open at did not transfer caller ownership")
+	}
+}
+
+// Test_Sim_Event verifies the TigerBeetle Event primitive retires its listener before invoking the
+// callback, allowing the same completion to be re-armed for a later trigger.
+func Test_Sim_Event(t *testing.T) {
+	loop, driver, _ := sim_loop(0)
+	event, open_err := loop.Open_Event()
+	if open_err != nil {
+		t.Fatalf("open event: %v", open_err)
+	}
+	fired := 0
+	var completion io.Completion
+	callback := func(_ *io.Completion) { fired++ }
+	loop.Event_Listen(event, &completion, callback)
+	loop.Event_Trigger(event, &completion)
+	driver.Run()
+	if fired != 1 {
+		t.Fatalf("event fired %d times, want 1", fired)
+	}
+	loop.Event_Listen(event, &completion, callback)
+	loop.Event_Trigger(event, &completion)
+	driver.Run()
+	if fired != 2 {
+		t.Fatalf("event fired %d times, want 2", fired)
+	}
+	loop.Close_Event(event)
+}
+
 // Test_Sim_Listen verifies Listen returns a fresh descriptor synchronously.
 func Test_Sim_Listen(t *testing.T) {
 	loop, _, _ := sim_loop(0)
 
-	listener, err := loop.Listen("127.0.0.1", 0)
+	address := io.Address_I_Pv4([4]byte{127, 0, 0, 1}, 0)
+	listener, open_err := loop.Open_Socket_TCP(io.FAMILY_IPV4, io.TCP_Options{})
+	if open_err != nil {
+		t.Fatalf("open listener: %v", open_err)
+	}
+	resolved, err := loop.Listen(listener, address, io.Listen_Options{Backlog: 128})
 	if err != nil {
 		t.Fatalf("listen error: %v", err)
 	}
-	if listener == 0 {
-		t.Fatal("listen returned the zero descriptor")
+	if resolved.Port == 0 {
+		t.Fatal("listen did not resolve port zero")
 	}
 }
 
-// Test_Sim_Accept verifies an accept completes after the modeled latency and
-// yields a descriptor distinct from its listener.
+// Test_Sim_Accept verifies accept resolves exactly once with either a distinct accepted socket or
+// Deadline_Exceeded, with a tie belonging to the finite deadline.
 func Test_Sim_Accept(t *testing.T) {
-	loop, driver, _ := sim_loop(2)
-
-	listener, _ := loop.Listen("127.0.0.1", 0)
-	accepted := io.File(-1)
-	var completion io.Completion
-	loop.Accept(&completion, func(_ *io.Completion, socket io.File, err error) {
-		accepted = socket
-	}, listener)
-
-	driver.Run_For(10 * time.NANOSECOND)
-
-	if accepted == listener {
-		t.Fatalf("accept yielded the listener descriptor %d", accepted)
+	accepted_count := 0
+	deadline_count := 0
+	for seed := uint64(0); seed < 64; seed++ {
+		loop, driver, _ := sim_loop(seed)
+		listener, _ := loop.Open_Socket_TCP(io.FAMILY_IPV4, io.TCP_Options{})
+		_, listen_err := loop.Listen(
+			listener, io.Address_I_Pv4([4]byte{127, 0, 0, 1}, 0),
+			io.Listen_Options{Backlog: 128},
+		)
+		if listen_err != nil {
+			t.Fatalf("seed %d: listen: %v", seed, listen_err)
+		}
+		callback_count := 0
+		accepted := io.File(-1)
+		var operation_err error
+		var completion io.Completion
+		loop.Accept(&completion, func(_ *io.Completion, socket io.File, err error) {
+			callback_count++
+			accepted = socket
+			operation_err = err
+		}, listener, time.NANOSECOND)
+		completed, drive_err := driver.Run_Until(
+			func() (finished bool) { return callback_count > 0 }, 16*time.NANOSECOND)
+		if drive_err != nil {
+			t.Fatalf("seed %d: drive: %v", seed, drive_err)
+		}
+		if !completed {
+			t.Fatalf("seed %d: accept did not resolve", seed)
+		}
+		if callback_count != 1 {
+			t.Fatalf("seed %d: callback count = %d, want 1", seed, callback_count)
+		}
+		if operation_err == io.Deadline_Exceeded {
+			deadline_count++
+			if accepted != -1 {
+				t.Fatalf("seed %d: deadline yielded descriptor %d", seed, accepted)
+			}
+			if driver.Introspect().Raw_Open != 1 {
+				t.Fatalf("seed %d: deadline leaked an accepted descriptor", seed)
+			}
+		} else {
+			if operation_err != nil {
+				t.Fatalf("seed %d: accept: %v", seed, operation_err)
+			}
+			accepted_count++
+			if accepted <= 0 {
+				t.Fatalf("seed %d: accept yielded descriptor %d", seed, accepted)
+			}
+			if accepted == listener {
+				t.Fatalf("seed %d: accept yielded listener %d", seed, accepted)
+			}
+		}
+		driver.Run_For(16 * time.NANOSECOND)
+		if callback_count != 1 {
+			t.Fatalf("seed %d: callback repeated %d times", seed, callback_count)
+		}
 	}
-	if accepted <= 0 {
-		t.Fatalf("accept yielded %d, want a positive descriptor", accepted)
+	if accepted_count == 0 {
+		t.Fatal("seed sweep witnessed no accepted connection before the deadline")
+	}
+	if deadline_count == 0 {
+		t.Fatal("seed sweep witnessed no accept deadline")
 	}
 }
 
-// Test_Sim_Connect verifies a connect completes after the modeled latency and
-// yields a fresh connected descriptor.
-func Test_Sim_Connect(t *testing.T) {
-	loop, driver, _ := sim_loop(3)
-
-	connected := io.File(-1)
+// Test_Sim_Open_Socket verifies opening a synthetic outbound socket records caller ownership
+// immediately and only an explicit Close releases it.
+func Test_Sim_Open_Socket(t *testing.T) {
+	loop, driver, _ := sim_loop(0)
+	baseline := driver.Introspect().Raw_Open
+	socket, open_err := loop.Open_Socket_TCP(io.FAMILY_IPV4, io.TCP_Options{})
+	if open_err != nil {
+		t.Fatalf("open socket: %v", open_err)
+	}
+	opened := driver.Introspect().Raw_Open
+	closed := false
 	var completion io.Completion
-	loop.Connect(&completion, func(_ *io.Completion, socket io.File, err error) {
-		connected = socket
-	}, "127.0.0.1", 8123)
+	loop.Close(&completion, func(_ *io.Completion, err error) {
+		if err != nil {
+			t.Fatalf("close socket: %v", err)
+		}
+		closed = true
+	}, socket)
+	driver.Run_Until(func() (finished bool) { return closed }, sim_deadline)
+	snap.Expect(t, snap.Init(`baseline=0 opened=1 closed=0`), fmt.Sprintf(
+		"baseline=%d opened=%d closed=%d",
+		baseline, opened, driver.Introspect().Raw_Open,
+	))
+}
 
-	driver.Run_For(10 * time.NANOSECOND)
+// Test_Sim_Connect verifies success and refusal preserve the caller-owned socket until explicit
+// Close, and a seed sweep reaches both network outcomes.
+func Test_Sim_Connect(t *testing.T) {
+	snap.Expect(t,
+		snap.Init(`baseline=0 opened=1 connected=1 closed=0 outcome=success`),
+		sim_connect_lifecycle(t, 0),
+	)
+	snap.Expect(t,
+		snap.Init(`baseline=0 opened=1 connected=1 closed=0 outcome=refused`),
+		sim_connect_lifecycle(t, 3),
+	)
 
-	if connected <= 0 {
-		t.Fatalf("connect yielded %d, want a positive descriptor", connected)
+	saw_success := false
+	saw_refusal := false
+	for seed := uint64(0); seed < 64; seed++ {
+		outcome := sim_connect_lifecycle(t, seed)
+		if strings.HasSuffix(outcome, "outcome=success") {
+			saw_success = true
+		}
+		if strings.HasSuffix(outcome, "outcome=refused") {
+			saw_refusal = true
+		}
+	}
+	if !saw_success {
+		t.Fatal("seed sweep never reached connect success")
+	}
+	if !saw_refusal {
+		t.Fatal("seed sweep never reached connect refusal")
 	}
 }
 
@@ -124,12 +308,16 @@ func Test_Sim_Connect(t *testing.T) {
 // reports the buffer length.
 func Test_Sim_Receive(t *testing.T) {
 	loop, driver, _ := sim_loop(1)
+	socket, open_err := loop.Open_Socket_TCP(io.FAMILY_IPV4, io.TCP_Options{})
+	if open_err != nil {
+		t.Fatalf("open socket: %v", open_err)
+	}
 
 	count := -1
 	var completion io.Completion
 	loop.Receive(&completion, func(_ *io.Completion, bytes int, err error) {
 		count = bytes
-	}, io.File(1), make([]byte, 64))
+	}, socket, make([]byte, 64))
 
 	driver.Run_For(10 * time.NANOSECOND)
 
@@ -142,12 +330,16 @@ func Test_Sim_Receive(t *testing.T) {
 // the buffer length.
 func Test_Sim_Send(t *testing.T) {
 	loop, driver, _ := sim_loop(1)
+	socket, open_err := loop.Open_Socket_TCP(io.FAMILY_IPV4, io.TCP_Options{})
+	if open_err != nil {
+		t.Fatalf("open socket: %v", open_err)
+	}
 
 	count := -1
 	var completion io.Completion
 	loop.Send(&completion, func(_ *io.Completion, bytes int, err error) {
 		count = bytes
-	}, io.File(1), make([]byte, 32))
+	}, socket, make([]byte, 32))
 
 	driver.Run_For(10 * time.NANOSECOND)
 
@@ -156,26 +348,137 @@ func Test_Sim_Send(t *testing.T) {
 	}
 }
 
-// Test_Sim_Close verifies a close completes after the modeled latency and reports
-// no error.
+// Test_Sim_Send_Now verifies the synchronous datagram send reports whether the bytes were accepted.
+func Test_Sim_Send_Now(t *testing.T) {
+	loop, _, _ := sim_loop(0)
+	socket, open_err := loop.Open_Socket_UDP(io.FAMILY_IPV4)
+	if open_err != nil {
+		t.Fatalf("open UDP socket: %v", open_err)
+	}
+	count, sent := loop.Send_Now(socket, []byte("hello"))
+	if !sent {
+		t.Fatalf("send now = (%d, %t), want sent", count, sent)
+	}
+	if count != 5 {
+		t.Fatalf("send now = (%d, %t), want (5, true)", count, sent)
+	}
+}
+
+// Test_Sim_Shutdown verifies shutdown resolves armed and later socket operations through their
+// normal callbacks while leaving descriptor ownership with the caller.
+func Test_Sim_Shutdown(t *testing.T) {
+	loop, driver, _ := sim_loop(0)
+	socket, open_err := loop.Open_Socket_TCP(io.FAMILY_IPV4, io.TCP_Options{})
+	if open_err != nil {
+		t.Fatalf("open socket: %v", open_err)
+	}
+	connected := false
+	var connect_completion io.Completion
+	loop.Connect(&connect_completion, func(_ *io.Completion, err error) {
+		if err != nil {
+			t.Fatalf("connect: %v", err)
+		}
+		connected = true
+	}, socket, io.Address_I_Pv4([4]byte{127, 0, 0, 1}, 8123), sim_deadline)
+	driver.Run_Until(func() (finished bool) { return connected }, sim_deadline)
+	var receive_completion io.Completion
+	var send_completion io.Completion
+	receive_count := -1
+	var send_err error
+	loop.Receive(&receive_completion, func(_ *io.Completion, count int, err error) {
+		if err != nil {
+			t.Fatalf("receive after shutdown: %v", err)
+		}
+		receive_count = count
+	}, socket, make([]byte, 8))
+	loop.Send(&send_completion, func(_ *io.Completion, _ int, err error) {
+		send_err = err
+	}, socket, []byte("hello"))
+	if shutdown_err := loop.Shutdown(socket, io.SHUTDOWN_BOTH); shutdown_err != nil {
+		t.Fatalf("shutdown: %v", shutdown_err)
+	}
+	driver.Run_For(10 * time.NANOSECOND)
+	if receive_count != 0 {
+		t.Fatalf("receive count = %d, want EOF", receive_count)
+	}
+	if send_err != io.Broken_Pipe {
+		t.Fatalf("send error = %v, want %v", send_err, io.Broken_Pipe)
+	}
+	if driver.Introspect().Raw_Open != 1 {
+		t.Fatal("shutdown released a caller-owned descriptor")
+	}
+}
+
+// Test_Sim_Close verifies close rejects a descriptor borrowed by an armed operation, then a
+// shutdown-drain-close sequence completes and removes the caller-owned descriptor.
 func Test_Sim_Close(t *testing.T) {
-	loop, driver, _ := sim_loop(4)
+	loop, driver, _ := sim_loop(0)
+
+	socket, open_err := loop.Open_Socket_TCP(io.FAMILY_IPV4, io.TCP_Options{})
+	if open_err != nil {
+		t.Fatalf("open socket: %v", open_err)
+	}
+	connected := false
+	var connect_completion io.Completion
+	loop.Connect(&connect_completion, func(_ *io.Completion, err error) {
+		if err != nil {
+			t.Fatalf("connect: %v", err)
+		}
+		connected = true
+	}, socket, io.Address_I_Pv4([4]byte{127, 0, 0, 1}, 1), sim_deadline)
+	driver.Run_Until(func() (finished bool) { return connected }, sim_deadline)
+	received := false
+	var receive_completion io.Completion
+	loop.Receive(&receive_completion, func(_ *io.Completion, _ int, _ error) {
+		received = true
+	}, socket, make([]byte, 8))
+
+	close_panicked := false
+	var completion io.Completion
+	func() {
+		defer func() { close_panicked = recover() != nil }()
+		loop.Close(&completion, func(_ *io.Completion, _ error) {}, socket)
+	}()
+	if !close_panicked {
+		t.Fatal("close with an armed receive must panic")
+	}
+	if shutdown_err := loop.Shutdown(socket, io.SHUTDOWN_BOTH); shutdown_err != nil {
+		t.Fatalf("shutdown: %v", shutdown_err)
+	}
+	driver.Run_For(10 * time.NANOSECOND)
+	if !received {
+		t.Fatal("shutdown did not drain the armed receive")
+	}
 
 	closed := false
-	failed := error(nil)
-	var completion io.Completion
-	loop.Close(&completion, func(_ *io.Completion, err error) {
+	var close_completion io.Completion
+	loop.Close(&close_completion, func(_ *io.Completion, err error) {
 		closed = true
-		failed = err
-	}, io.File(1))
+		if err != nil {
+			t.Errorf("close: %v", err)
+		}
+	}, socket)
 
 	driver.Run_For(10 * time.NANOSECOND)
 
 	if !closed {
 		t.Fatal("close did not complete")
 	}
-	if failed != nil {
-		t.Fatalf("close error: %v", failed)
+	if driver.Introspect().Raw_Open != 0 {
+		t.Fatal("close left the synthetic descriptor in Raw_Open")
+	}
+}
+
+// Test_Sim_Close_Socket verifies setup cleanup releases a socket synchronously.
+func Test_Sim_Close_Socket(t *testing.T) {
+	loop, driver, _ := sim_loop(0)
+	socket, open_err := loop.Open_Socket_TCP(io.FAMILY_IPV4, io.TCP_Options{})
+	if open_err != nil {
+		t.Fatalf("open socket: %v", open_err)
+	}
+	loop.Close_Socket(socket)
+	if driver.Introspect().Raw_Open != 0 {
+		t.Fatal("close socket left the descriptor open")
 	}
 }
 
@@ -191,39 +494,27 @@ func Test_Sim_Run_Until(t *testing.T) {
 		done = true
 	}, io.File(0), make([]byte, 8), 0)
 
-	if !driver.Run_Until(func() (finished bool) { return done }, SIM_DEADLINE) {
+	completed, drive_err := driver.Run_Until(
+		func() (finished bool) { return done }, sim_deadline,
+	)
+	if drive_err != nil {
+		t.Fatalf("Run_Until error: %v", drive_err)
+	}
+	if !completed {
 		t.Fatal("Run_Until reported the read did not complete")
 	}
 	if !done {
 		t.Fatal("Run_Until returned before the read completed")
 	}
 
-	if driver.Run_Until(func() (finished bool) { return false }, SIM_DEADLINE) {
+	completed, drive_err = driver.Run_Until(
+		func() (finished bool) { return false }, sim_deadline,
+	)
+	if drive_err != nil {
+		t.Fatalf("Run_Until deadline error: %v", drive_err)
+	}
+	if completed {
 		t.Fatal("Run_Until reported completion for a predicate that never trips")
-	}
-}
-
-// Test_Sim_Cancel verifies cancelling an in-flight op still fires its callback exactly
-// once, with the Cancelled error, rather than dropping it.
-func Test_Sim_Cancel(t *testing.T) {
-	loop, driver, _ := sim_loop(0)
-
-	got := error(nil)
-	fired := 0
-	var completion io.Completion
-	loop.Timeout(&completion, func(_ *io.Completion, err error) {
-		fired++
-		got = err
-	}, 5*time.NANOSECOND)
-
-	loop.Cancel(&completion)
-	driver.Run_For(10 * time.NANOSECOND)
-
-	if fired != 1 {
-		t.Fatalf("callback fired %d times, want exactly 1", fired)
-	}
-	if got != io.Cancelled {
-		t.Fatalf("cancel error = %v, want io.Cancelled", got)
 	}
 }
 
@@ -308,8 +599,8 @@ func Test_Sim_Create(t *testing.T) {
 // and the empty address for an unknown one.
 func Test_Sim_Peer_Address(t *testing.T) {
 	loop, _, _ := sim_loop(0)
-	listener, _ := loop.Listen("127.0.0.1", 0)
-	address, err := loop.Peer_Address(listener)
+	socket, _ := loop.Open_Socket_TCP(io.FAMILY_IPV4, io.TCP_Options{})
+	address, err := loop.Peer_Address(socket)
 	if err != nil {
 		t.Fatalf("peer address error: %v", err)
 	}
@@ -321,66 +612,59 @@ func Test_Sim_Peer_Address(t *testing.T) {
 	}
 }
 
-// Test_Sim_Accept_Secure verifies a secure accept yields a distinct descriptor.
-func Test_Sim_Accept_Secure(t *testing.T) {
-	loop, driver, _ := sim_loop(0)
-	listener, _ := loop.Listen("127.0.0.1", 0)
-	accepted := io.File(-1)
-	var completion io.Completion
-	loop.Accept_Secure(&completion, func(_ *io.Completion, socket io.File, err error) {
-		accepted = socket
-	}, listener, func() (value any) { return nil })
-	driver.Run_For(16 * time.NANOSECOND)
-	if accepted <= 0 {
-		t.Fatalf("secure accept yielded %d, want a positive descriptor", accepted)
-	}
-}
-
-// Test_Sim_Connect_Secure verifies a secure connect yields a connected descriptor.
-func Test_Sim_Connect_Secure(t *testing.T) {
-	loop, driver, _ := sim_loop(0)
-	connected := io.File(-1)
-	var completion io.Completion
-	loop.Connect_Secure(&completion, func(_ *io.Completion, socket io.File, err error) {
-		connected = socket
-	}, "127.0.0.1", 443, "host")
-	driver.Run_For(16 * time.NANOSECOND)
-	if connected <= 0 {
-		t.Fatalf("secure connect yielded %d, want a positive descriptor", connected)
-	}
-}
-
-// Test_Sim_Connect_Insecure verifies an insecure connect yields a connected descriptor.
-func Test_Sim_Connect_Insecure(t *testing.T) {
-	loop, driver, _ := sim_loop(0)
-	connected := io.File(-1)
-	var completion io.Completion
-	loop.Connect_Insecure(&completion, func(_ *io.Completion, socket io.File, err error) {
-		connected = socket
-	}, "127.0.0.1", 443, "host")
-	driver.Run_For(16 * time.NANOSECOND)
-	if connected <= 0 {
-		t.Fatalf("insecure connect yielded %d, want a positive descriptor", connected)
-	}
-}
-
-// Test_Sim_Watch_Signal verifies a watched signal fires its callback once with that
-// signal.
+// Test_Sim_Watch_Signal verifies a signal watch resolves exactly once with either its signal or
+// Deadline_Exceeded.
 func Test_Sim_Watch_Signal(t *testing.T) {
-	loop, driver, _ := sim_loop(0)
-	got := io.Signal(-1)
-	fired := 0
-	var completion io.Completion
-	loop.Watch_Signal(&completion, func(_ *io.Completion, signal io.Signal) {
-		fired++
-		got = signal
-	}, io.SIGNAL_TERMINATE)
-	driver.Run_For(16 * time.NANOSECOND)
-	if fired != 1 {
-		t.Fatalf("signal callback fired %d times, want 1", fired)
+	signal_count := 0
+	deadline_count := 0
+	for seed := uint64(0); seed < 64; seed++ {
+		loop, driver, _ := sim_loop(seed)
+		got := io.Signal(-1)
+		callback_count := 0
+		var operation_err error
+		var completion io.Completion
+		loop.Watch_Signal(&completion, func(
+			_ *io.Completion, signal io.Signal, err error,
+		) {
+			callback_count++
+			got = signal
+			operation_err = err
+		}, io.SIGNAL_TERMINATE, time.NANOSECOND)
+		completed, drive_err := driver.Run_Until(
+			func() (finished bool) { return callback_count > 0 }, 16*time.NANOSECOND)
+		if drive_err != nil {
+			t.Fatalf("seed %d: drive: %v", seed, drive_err)
+		}
+		if !completed {
+			t.Fatalf("seed %d: signal watch did not resolve", seed)
+		}
+		if callback_count != 1 {
+			t.Fatalf("seed %d: callback count = %d, want 1", seed, callback_count)
+		}
+		if operation_err == io.Deadline_Exceeded {
+			deadline_count++
+			if got != -1 {
+				t.Fatalf("seed %d: deadline yielded signal %d", seed, got)
+			}
+		} else {
+			if operation_err != nil {
+				t.Fatalf("seed %d: signal watch: %v", seed, operation_err)
+			}
+			signal_count++
+			if got != io.SIGNAL_TERMINATE {
+				t.Fatalf("seed %d: signal = %d, want terminate", seed, got)
+			}
+		}
+		driver.Run_For(16 * time.NANOSECOND)
+		if callback_count != 1 {
+			t.Fatalf("seed %d: callback repeated %d times", seed, callback_count)
+		}
 	}
-	if got != io.SIGNAL_TERMINATE {
-		t.Fatalf("signal = %d, want SIGNAL_TERMINATE", got)
+	if signal_count == 0 {
+		t.Fatal("seed sweep witnessed no signal before the deadline")
+	}
+	if deadline_count == 0 {
+		t.Fatal("seed sweep witnessed no signal deadline")
 	}
 }
 
@@ -409,7 +693,7 @@ func Test_Sim_Spawn(t *testing.T) {
 	var completion io.Completion
 	loop.Spawn(&completion, func(_ *io.Completion, result io.Process_Result, err error) {
 		fired++
-	}, io.Process_Request{Path: "echo"})
+	}, io.Process_Request{Path: "echo"}, sim_deadline)
 	driver.Run_For(16 * time.NANOSECOND)
 	if fired != 1 {
 		t.Fatalf("spawn callback fired %d times, want 1", fired)
@@ -420,7 +704,7 @@ func Test_Sim_Spawn(t *testing.T) {
 // the failure synchronously, so a caller's fallback path runs in every simulated run.
 func Test_Sim_Self_Exec(t *testing.T) {
 	loop, _, _ := sim_loop(0)
-	err := loop.Self_Exec("/proc/self/exe", []string{"/proc/self/exe"}, nil, nil)
+	err := loop.Self_Exec("/proc/self/exe", []string{"/proc/self/exe"}, []string{})
 	if err == nil {
 		t.Fatal("self-exec returned nil error; the simulator must always fail it")
 	}
@@ -476,7 +760,7 @@ func Test_Sim_Status(t *testing.T) {
 	loop.Write(&write, func(_ *io.Completion, _ int, _ error) {
 		written = true
 	}, file, content, 0)
-	driver.Run_Until(func() (finished bool) { return written }, SIM_DEADLINE)
+	driver.Run_Until(func() (finished bool) { return written }, sim_deadline)
 	directory, _ := loop.Status("/dir")
 	if !directory.Exists {
 		t.Fatalf("dir status = %+v, want exists", directory)
@@ -520,21 +804,142 @@ func Test_Sim_Make_Directory(t *testing.T) {
 	}
 }
 
-// Test_Sim_Cancel_Window_Reuse verifies resubmitting a completion inside the cancel
-// window — after Cancel accepted, before the cancelled delivery fired — panics: the
-// pending delivery still owns the completion, so re-arming it is an edge the lifecycle
-// machine does not have.
-func Test_Sim_Cancel_Window_Reuse(t *testing.T) {
-	loop, _, _ := sim_loop(0)
+// Test_Sim_Introspect verifies every simulator operation class, lifecycle flag, and raw-open
+// descriptor count is reported without exposing the simulator itself.
+func Test_Sim_Introspect(t *testing.T) {
+	loop, driver, _ := sim_loop(0)
+	file, create_err := loop.Create("/introspect")
+	if create_err != nil {
+		t.Fatalf("create: %v", create_err)
+	}
+	socket, open_err := loop.Open_Socket_TCP(io.FAMILY_IPV4, io.TCP_Options{})
+	if open_err != nil {
+		t.Fatalf("open socket: %v", open_err)
+	}
+	var completed, timeout, read, write, signal, posted, result io.Completion
+	loop.Write(&completed, func(_ *io.Completion, _ int, _ error) {}, file, nil, 0)
+	loop.Timeout(&timeout, func(_ *io.Completion, _ error) {}, time.MICROSECOND)
+	loop.Receive(&read, func(_ *io.Completion, _ int, _ error) {}, socket, nil)
+	loop.Send(&write, func(_ *io.Completion, _ int, _ error) {}, socket, nil)
+	loop.Watch_Signal(&signal, func(
+		_ *io.Completion, _ io.Signal, _ error,
+	) {
+	}, io.SIGNAL_TERMINATE, time.MICROSECOND)
+	loop.Spawn(&posted, func(
+		_ *io.Completion, _ io.Process_Result, _ error,
+	) {
+	}, io.Process_Request{Path: "true"}, sim_deadline)
+	loop.Compute(&result, func(_ *io.Completion) {}, func() {})
+	snap.Expect(t, snap.Init(`{Completed:1 Timeouts:1 IO_Backlog:2 IO_Inflight:0 IO_Queued:0 IO_In_Kernel:0 Signal_Waiters:1 Posted:1 Results:1 Raw_Open:2 Wake_Active:true Compute_Active:true}`),
+		fmt.Sprintf("%+v", driver.Introspect()))
+}
+
+func connect_outcome(err error) (outcome string) {
+	if err == nil {
+		return "success"
+	}
+	if err == io.Connection_Refused {
+		return "refused"
+	}
+	return err.Error()
+}
+
+func sim_connect_lifecycle(t *testing.T, seed uint64) (snapshot string) {
+	t.Helper()
+	loop, driver, _ := sim_loop(seed)
+	baseline := driver.Introspect().Raw_Open
+	socket, open_err := loop.Open_Socket_TCP(io.FAMILY_IPV4, io.TCP_Options{})
+	if open_err != nil {
+		t.Fatalf("open socket: %v", open_err)
+	}
+	opened := driver.Introspect().Raw_Open
+	called := false
+	var connect_err error
 	var completion io.Completion
-	loop.Timeout(&completion, func(_ *io.Completion, err error) {}, time.MICROSECOND)
-	loop.Cancel(&completion)
-	defer func() {
-		if recover() == nil {
-			t.Fatal("resubmitting inside the cancel window must panic")
+	loop.Connect(&completion, func(_ *io.Completion, err error) {
+		called = true
+		connect_err = err
+	}, socket, io.Address_I_Pv4([4]byte{127, 0, 0, 1}, 8123), sim_deadline)
+	driver.Run_Until(func() (finished bool) { return called }, sim_deadline)
+	if !called {
+		t.Fatal("connect callback did not fire")
+	}
+	connected := driver.Introspect().Raw_Open
+	closed := false
+	var close_completion io.Completion
+	loop.Close(&close_completion, func(_ *io.Completion, err error) {
+		if err != nil {
+			t.Fatalf("close socket: %v", err)
 		}
-	}()
-	loop.Timeout(&completion, func(_ *io.Completion, err error) {}, time.MICROSECOND)
+		closed = true
+	}, socket)
+	driver.Run_Until(func() (finished bool) { return closed }, sim_deadline)
+	return fmt.Sprintf(
+		"baseline=%d opened=%d connected=%d closed=%d outcome=%s",
+		baseline, opened, connected, driver.Introspect().Raw_Open,
+		connect_outcome(connect_err),
+	)
+}
+
+// Runs one bounded simulated connect through its late-callback window and caller-owned close.
+func sim_connect_with_deadline(
+	t *testing.T, seed uint64, deadline time.Duration,
+) (connect_err error) {
+	t.Helper()
+	loop, driver, _ := sim_loop(seed)
+	socket, open_err := loop.Open_Socket_TCP(io.FAMILY_IPV4, io.TCP_Options{})
+	if open_err != nil {
+		t.Fatalf("open socket: %v", open_err)
+	}
+	callback_count := 0
+	var completion io.Completion
+	loop.Connect(&completion, func(_ *io.Completion, err error) {
+		callback_count++
+		connect_err = err
+	}, socket, io.Address_I_Pv4([4]byte{127, 0, 0, 1}, 8123), deadline)
+	driver.Run_Until(func() (finished bool) { return callback_count > 0 }, sim_deadline)
+	driver.Run_For(16 * time.NANOSECOND)
+	if callback_count != 1 {
+		t.Fatalf("seed %d: connect callback count = %d, want 1", seed, callback_count)
+	}
+	if driver.Introspect().Raw_Open != 1 {
+		t.Fatalf("seed %d: connect changed caller-owned descriptor count", seed)
+	}
+	closed := false
+	var close_completion io.Completion
+	loop.Close(&close_completion, func(_ *io.Completion, err error) {
+		if err != nil {
+			t.Fatalf("seed %d: close socket: %v", seed, err)
+		}
+		closed = true
+	}, socket)
+	driver.Run_Until(func() (finished bool) { return closed }, sim_deadline)
+	if driver.Introspect().Raw_Open != 0 {
+		t.Fatalf("seed %d: caller close leaked the connect socket", seed)
+	}
+	return connect_err
+}
+
+// Runs one bounded simulated spawn past its modeled completion time and reports its sole result.
+func sim_spawn_with_deadline(
+	t *testing.T, seed uint64, deadline time.Duration,
+) (spawn_err error) {
+	t.Helper()
+	loop, driver, _ := sim_loop(seed)
+	callback_count := 0
+	var completion io.Completion
+	loop.Spawn(&completion, func(
+		_ *io.Completion, _ io.Process_Result, err error,
+	) {
+		callback_count++
+		spawn_err = err
+	}, io.Process_Request{Path: "true"}, deadline)
+	driver.Run_Until(func() (finished bool) { return callback_count > 0 }, sim_deadline)
+	driver.Run_For(16 * time.NANOSECOND)
+	if callback_count != 1 {
+		t.Fatalf("seed %d: spawn callback count = %d, want 1", seed, callback_count)
+	}
+	return spawn_err
 }
 
 // Builds a simulated loop, its driver, and the read-only clock, seeded by seed. A test
@@ -547,4 +952,53 @@ func sim_loop(seed uint64) (loop io.IO, driver io.Driver, clock time.Clock) {
 // The Run_Until cap for the sim tests, in virtual time: ample for ops that finish in a
 // handful of grains, while a never-satisfied predicate fails after this many cheap grains
 // instead of spinning the sim forever.
-const SIM_DEADLINE = time.MICROSECOND
+const sim_deadline = time.MICROSECOND
+
+// Test_Connect_Deadline_Sim verifies a finite connect deadline wins a latency tie, delivers once,
+// and leaves the borrowed descriptor open until the caller closes it.
+func Test_Connect_Deadline_Sim(t *testing.T) {
+	saw_deadline := false
+	saw_tie := false
+	for seed := uint64(0); seed < 64; seed++ {
+		at_deadline := sim_connect_with_deadline(t, seed, 4*time.NANOSECOND)
+		after_deadline := sim_connect_with_deadline(t, seed, 5*time.NANOSECOND)
+		if at_deadline == io.Deadline_Exceeded {
+			saw_deadline = true
+		}
+		if at_deadline == io.Deadline_Exceeded {
+			if after_deadline != io.Deadline_Exceeded {
+				saw_tie = true
+			}
+		}
+	}
+	if !saw_deadline {
+		t.Fatal("seed sweep witnessed no connect deadline")
+	}
+	if !saw_tie {
+		t.Fatal("seed sweep witnessed no connect latency tie lost to the deadline")
+	}
+}
+
+// Test_Spawn_Deadline_Sim verifies a finite spawn deadline wins a latency tie and retires once.
+func Test_Spawn_Deadline_Sim(t *testing.T) {
+	saw_deadline := false
+	saw_tie := false
+	for seed := uint64(0); seed < 64; seed++ {
+		at_deadline := sim_spawn_with_deadline(t, seed, 4*time.NANOSECOND)
+		after_deadline := sim_spawn_with_deadline(t, seed, 5*time.NANOSECOND)
+		if at_deadline == io.Deadline_Exceeded {
+			saw_deadline = true
+		}
+		if at_deadline == io.Deadline_Exceeded {
+			if after_deadline != io.Deadline_Exceeded {
+				saw_tie = true
+			}
+		}
+	}
+	if !saw_deadline {
+		t.Fatal("seed sweep witnessed no spawn deadline")
+	}
+	if !saw_tie {
+		t.Fatal("seed sweep witnessed no spawn latency tie lost to the deadline")
+	}
+}

@@ -151,14 +151,23 @@ Submitting from a callback is the model working as intended (only *driving* from
 callback is banned). A protocol step chains to the next:
 
 ```go
-loop.Connect(&connect_completion, func(_ *io.Completion, socket io.File, err error) {
+socket, err := loop.Open_Socket_TCP(io.FAMILY_IPV4, options)
+if err != nil { ... }
+state.Socket = socket
+loop.Connect(&connect_completion, func(_ *io.Completion, err error) {
 	if err != nil { ... ; return }
 	loop.Send(&send_completion, func(_ *io.Completion, count int, err error) {
 		if err != nil { ... ; return }
 		receive_first(socket)   // submits the first Receive
 	}, socket, request)
-}, host, port)
+}, socket, address, 30*time.SECOND)
 ```
+
+`Connect` borrows the descriptor and reports only an error. It never creates, transfers,
+or closes the socket. Its positive finite deadline wins ties and reports
+`io.Deadline_Exceeded`. Teardown records the terminal result, calls `Shutdown(BOTH)` to make an
+armed socket operation resolve, waits for that callback, then submits asynchronous `Close`;
+closing before the borrower drains violates the one-completion/one-operation ownership rule.
 
 Re-arming the same descriptor from within its own completion is supported: the loop
 retires a finished op *before* delivering its callback, so a newly armed op is not swept
@@ -408,7 +417,8 @@ Each of these fails loudly where the runtime can make it:
    high-traffic request processing — never an escape hatch for blocking io.
 6. **Buffers belong to the loop until the callback fires.** Reusing or resizing a
    submitted buffer races the backend.
-7. **Every submission resolves exactly once** — including cancelled ops (`io.Cancelled`).
+7. **Every submission resolves exactly once** — including operations retired by descriptor
+   teardown (`io.Canceled`).
    Callbacks must handle the error path.
 8. **No goroutines or channels around loop state.** The completion *is* the await; the
    loop *is* the concurrency.
@@ -449,4 +459,3 @@ stop. That is the scripting API trying to come back.
   …) is allowed; the `io-gateway` lint rule keeps everyone else routing through
   `shared/io`.
 - **`shared/time/default`** — the clock gateway, the only importer of stdlib time.
-

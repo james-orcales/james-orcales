@@ -8,22 +8,16 @@ import (
 	"path/filepath"
 	"syscall"
 
-	"local/james-orcales/shared/io"
+	"local/james-orcales/g/shared/io"
 )
 
 // Bounds one readdir pass into a fixed buffer, so a large directory is read in repeated
 // passes rather than one unbounded allocation.
-const DIRECTORY_READ_BYTES = 8192
+const directory_read_bytes = 8192
 
 // Caps the number of readdir passes so a pathological directory errors rather than looping
-// unbounded; 4096 passes of DIRECTORY_READ_BYTES cover hundreds of thousands of entries.
-const DIRECTORY_READ_PASSES_MAX = 4096
-
-// PIPE_DESCRIPTOR_COUNT matches the read and write descriptors that syscall.Pipe requires.
-const PIPE_DESCRIPTOR_COUNT = 2
-
-// WAKE_BYTE_COUNT lets concurrent wake requests coalesce in the non-blocking pipe.
-const WAKE_BYTE_COUNT = 1
+// unbounded; 4096 passes of directory_read_bytes cover hundreds of thousands of entries.
+const directory_read_passes_max = 4096
 
 // Reads up to len(buffer) bytes from file at offset via the pread syscall — the raw
 // positioned read TigerBeetle's posix backend uses.
@@ -38,12 +32,14 @@ func write_at(file io.File, buffer []byte, offset int64) (count int, err error) 
 
 // Opens the file at path for reading via the open syscall, returning its descriptor.
 func file_open(path string) (descriptor int, err error) {
-	return syscall.Open(path, syscall.O_RDONLY, 0)
+	return syscall.Open(path, syscall.O_RDONLY|syscall.O_CLOEXEC, 0)
 }
 
 // Creates or truncates path for writing via the open syscall, returning its descriptor.
 func file_create(path string) (descriptor int, err error) {
-	return syscall.Open(path, syscall.O_WRONLY|syscall.O_CREAT|syscall.O_TRUNC, 0o644)
+	return syscall.Open(
+		path, syscall.O_WRONLY|syscall.O_CREAT|syscall.O_TRUNC|syscall.O_CLOEXEC, 0o644,
+	)
 }
 
 // Reports whether path exists, whether it is a directory, and its byte size via lstat. An
@@ -74,8 +70,8 @@ func file_read_directory(path string) (entries []io.Directory_Entry, err error) 
 		return nil, open_err
 	}
 	defer syscall.Close(descriptor)
-	buffer := make([]byte, DIRECTORY_READ_BYTES)
-	for pass_index := 0; pass_index < DIRECTORY_READ_PASSES_MAX; pass_index++ {
+	buffer := make([]byte, directory_read_bytes)
+	for pass_index := 0; pass_index < directory_read_passes_max; pass_index++ {
 		count, read_err := syscall.ReadDirent(descriptor, buffer)
 		if read_err != nil {
 			return nil, read_err
@@ -123,57 +119,69 @@ func socket_again(err error) (again bool) {
 	return err == syscall.EWOULDBLOCK
 }
 
-// Resolves host:port into an IPv4 socket address without DNS; a non-literal host is
-// rejected so no blocking lookup ever runs on the loop.
-func socket_address(host string, port int) (address syscall.SockaddrInet4, err error) {
-	four := net.ParseIP(host).To4()
-	if four == nil {
-		return address, syscall.EINVAL
+// Converts the backend-independent explicit-family address to a POSIX socket address.
+func socket_address(address io.Address) (system syscall.Sockaddr, err error) {
+	if address.Family == io.FAMILY_IPV4 {
+		four := &syscall.SockaddrInet4{Port: int(address.Port)}
+		copy(four.Addr[:], address.IP[:4])
+		return four, nil
 	}
-	address.Port = port
-	copy(address.Addr[:], four)
-	return address, nil
+	if address.Family == io.FAMILY_IPV6 {
+		six := &syscall.SockaddrInet6{Port: int(address.Port)}
+		copy(six.Addr[:], address.IP[:])
+		return six, nil
+	}
+	return nil, syscall.EAFNOSUPPORT
 }
 
-// Creates a non-blocking TCP socket bound to host:port and starts listening,
-// returning the listening descriptor.
-func socket_listen(host string, port int) (descriptor int, err error) {
-	address, address_err := socket_address(host, port)
+// Resolve turns a host into the IPv4 literal socket_address requires: an IP literal passes through
+// unchanged, a name is looked up and its first IPv4 returned. socket_address rejects a name so no
+// lookup runs on the dial path; a caller resolves here first and hands Connect an address. It is
+// the prod Resolver injected into the shared http client, failing closed when the host has no IPv4.
+func Resolve(host string) (address string, err error) {
+	if net.ParseIP(host) != nil {
+		return host, nil
+	}
+	found, lookup_err := net.LookupIP(host)
+	if lookup_err != nil {
+		return "", lookup_err
+	}
+	for index := range found {
+		if four := found[index].To4(); four != nil {
+			return four.String(), nil
+		}
+	}
+	return "", errors.New("io: no IPv4 address for host " + host)
+}
+
+// Binds and listens on a caller-owned socket, returning the resolved address for port zero.
+func socket_listen(
+	descriptor int, address io.Address, options io.Listen_Options,
+) (resolved io.Address, err error) {
+	system, address_err := socket_address(address)
 	if address_err != nil {
-		return -1, address_err
+		return io.Address{}, address_err
 	}
-	descriptor, err = syscall.Socket(syscall.AF_INET, syscall.SOCK_STREAM, 0)
-	if err != nil {
-		return -1, err
+	if options.Backlog == 0 {
+		return io.Address{}, syscall.EINVAL
 	}
-	socket_prepare(descriptor)
-	// SO_REUSEPORT lets N loops in one process each bind this same host:port; the kernel then
-	// load-balances connections across their listening sockets (thread-per-core). It is
-	// listener-only: client sockets skip it. The option never fails on a fresh socket, so its
-	// error is ignored, like SO_REUSEADDR's. SOCKET_REUSEPORT is a per-OS constant because the
-	// stdlib syscall package defines SO_REUSEPORT on Darwin but not on Linux.
-	syscall.SetsockoptInt(descriptor, syscall.SOL_SOCKET, SOCKET_REUSEPORT, 1)
-	bind_err := syscall.Bind(descriptor, &address)
+	reuse_err := syscall.SetsockoptInt(descriptor, syscall.SOL_SOCKET, syscall.SO_REUSEADDR, 1)
+	if reuse_err != nil {
+		return io.Address{}, reuse_err
+	}
+	bind_err := syscall.Bind(descriptor, system)
 	if bind_err != nil {
-		syscall.Close(descriptor)
-		return -1, bind_err
+		return io.Address{}, bind_err
 	}
-	listen_err := syscall.Listen(descriptor, syscall.SOMAXCONN)
+	listen_err := syscall.Listen(descriptor, int(options.Backlog))
 	if listen_err != nil {
-		syscall.Close(descriptor)
-		return -1, listen_err
+		return io.Address{}, listen_err
 	}
-	return descriptor, nil
-}
-
-// Sets a fresh descriptor non-blocking and reusable, ignoring the rare option errors
-// that never occur on a just-created socket.
-func socket_prepare(descriptor int) {
-	non_block_err := syscall.SetNonblock(descriptor, true)
-	if non_block_err != nil {
-		return
+	name, name_err := syscall.Getsockname(descriptor)
+	if name_err != nil {
+		return io.Address{}, name_err
 	}
-	syscall.SetsockoptInt(descriptor, syscall.SOL_SOCKET, syscall.SO_REUSEADDR, 1)
+	return socket_address_from_system(name)
 }
 
 // Accepts one pending connection on listener, returning a non-blocking connected
@@ -188,30 +196,33 @@ func socket_accept(listener int) (descriptor int, again bool, err error) {
 		syscall.Close(descriptor)
 		return -1, false, non_block_err
 	}
+	configure_err := socket_accept_configure(descriptor)
+	if configure_err != nil {
+		syscall.Close(descriptor)
+		return -1, false, configure_err
+	}
 	return descriptor, false, nil
 }
 
-// Opens a non-blocking TCP socket and begins connecting to host:port; an in-progress
-// handshake returns no error, completion comes later.
-func socket_connect_start(host string, port int) (descriptor int, err error) {
-	address, address_err := socket_address(host, port)
+type socket_connect_start_input struct {
+	Descriptor int
+	Address    io.Address
+}
+
+// Begins connecting a caller-owned descriptor; an in-progress handshake completes later.
+func socket_connect_start(input *socket_connect_start_input) (err error) {
+	address, address_err := socket_address(input.Address)
 	if address_err != nil {
-		return -1, address_err
+		return address_err
 	}
-	descriptor, err = syscall.Socket(syscall.AF_INET, syscall.SOCK_STREAM, 0)
-	if err != nil {
-		return -1, err
-	}
-	socket_prepare(descriptor)
-	connect_err := syscall.Connect(descriptor, &address)
+	connect_err := syscall.Connect(input.Descriptor, address)
 	if connect_err == nil {
-		return descriptor, nil
+		return nil
 	}
 	if connect_err == syscall.EINPROGRESS {
-		return descriptor, nil
+		return nil
 	}
-	syscall.Close(descriptor)
-	return -1, connect_err
+	return socket_connect_translate(connect_err)
 }
 
 // Returns the pending error on descriptor after a connect completes, or nil when the
@@ -222,9 +233,17 @@ func socket_connect_error(descriptor int) (err error) {
 		return get_err
 	}
 	if value != 0 {
-		return syscall.Errno(value)
+		return socket_connect_translate(syscall.Errno(value))
 	}
 	return nil
+}
+
+// Translates platform-specific connect refusal to the backend-independent sentinel.
+func socket_connect_translate(err error) (translated error) {
+	if err == syscall.ECONNREFUSED {
+		return io.Connection_Refused
+	}
+	return err
 }
 
 // Reads up to len(buffer) bytes from descriptor; again is true when no data is ready
@@ -247,41 +266,54 @@ func socket_send(descriptor int, buffer []byte) (count int, again bool, err erro
 	return count, false, nil
 }
 
+// Attempts one synchronous send, returning sent false for would-block or another send failure.
+func socket_send_now(descriptor int, buffer []byte) (count int, sent bool) {
+	count, again, err := socket_send(descriptor, buffer)
+	if again {
+		return 0, false
+	}
+	if err != nil {
+		return 0, false
+	}
+	return count, true
+}
+
+// Shuts down one or both connected-socket directions synchronously.
+func socket_shutdown(descriptor int, how io.Shutdown_How) (err error) {
+	system_how := syscall.SHUT_RD
+	if how == io.SHUTDOWN_SEND {
+		system_how = syscall.SHUT_WR
+	}
+	if how == io.SHUTDOWN_BOTH {
+		system_how = syscall.SHUT_RDWR
+	}
+	err = syscall.Shutdown(descriptor, system_how)
+	if err == syscall.ENOTCONN {
+		return io.Socket_Not_Connected
+	}
+	return socket_send_translate(err)
+}
+
+// Converts a POSIX getsockname result to the backend-independent address.
+func socket_address_from_system(system syscall.Sockaddr) (address io.Address, err error) {
+	if four, ok := system.(*syscall.SockaddrInet4); ok {
+		return io.Address_I_Pv4(four.Addr, uint16(four.Port)), nil
+	}
+	if six, ok := system.(*syscall.SockaddrInet6); ok {
+		return io.Address_I_Pv6(six.Addr, uint16(six.Port)), nil
+	}
+	return io.Address{}, syscall.EAFNOSUPPORT
+}
+
+// Translates send-side broken-pipe errors to the portable result.
+func socket_send_translate(err error) (translated error) {
+	if err == syscall.EPIPE {
+		return io.Broken_Pipe
+	}
+	return err
+}
+
 // Releases descriptor.
 func socket_close(descriptor int) (err error) {
 	return syscall.Close(descriptor)
-}
-
-// Creates a non-blocking self-pipe used to wake the loop out of a blocking poll when a
-// worker or TLS goroutine posts a completion from off the loop thread.
-func wake_create() (read int, write int, err error) {
-	pair := [PIPE_DESCRIPTOR_COUNT]int{}
-	pipe_err := syscall.Pipe(pair[:])
-	if pipe_err != nil {
-		return -1, -1, pipe_err
-	}
-	syscall.SetNonblock(pair[0], true)
-	syscall.SetNonblock(pair[1], true)
-	return pair[0], pair[1], nil
-}
-
-// Writes one byte to the wake pipe so a blocked poll returns; a full pipe's failed
-// non-blocking write is ignored, since one pending byte already wakes the loop.
-func wake_poke(write int) {
-	one := [WAKE_BYTE_COUNT]byte{}
-	syscall.Write(write, one[:])
-}
-
-// Drains the wake pipe's pending bytes, bounded so a flood cannot spin the loop.
-func wake_drain(read int) {
-	scratch := make([]byte, 4096)
-	for pass_index := 0; pass_index < WAKE_DRAIN_PASSES_MAX; pass_index++ {
-		count, err := syscall.Read(read, scratch)
-		if err != nil {
-			return
-		}
-		if count < len(scratch) {
-			return
-		}
-	}
 }

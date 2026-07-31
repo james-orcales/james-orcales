@@ -1,36 +1,178 @@
-// Package io is a dependency-injected, completion-based async IO surface modeled on
-// TigerBeetle's io.zig, expressed as a struct of closures so the backend is chosen
-// by value: a deterministic simulated backend here, and a real OS backend
-// (epoll/kqueue/IOCP, the production counterpart) in io/default. Every operation is
-// submitted with a caller-owned Completion and a callback, and results arrive only
-// when the loop is run. The IO owns a time.Clock so timeouts ride the same timeline
-// as IO completions — the heart of the model.
+// Package io is the dependency-injected completion surface used by the repository.
+//
+// FAITHFUL PORT: its socket lifecycle and completion ordering follow TigerBeetle's
+// third-party/tigerbeetle/src/io/darwin.zig and io/linux.zig. DO NOT DIVERGE. There is no
+// generic Cancel: owners use Shutdown, join every submitted operation, and then submit Close,
+// following third-party/tigerbeetle/src/message_bus.zig:1057-1160. Repository-specific effects
+// are marked as extensions and must retire through the same completed queue.
 package io
 
 import (
 	"errors"
 	"io"
+	"net/netip"
 	"slices"
 	"strconv"
 	"strings"
 
-	invariant "local/james-orcales/shared/invariant/default"
-	"local/james-orcales/shared/random/prng"
-	"local/james-orcales/shared/time"
+	invariant "local/james-orcales/g/shared/invariant/default"
+	"local/james-orcales/g/shared/prng"
+	"local/james-orcales/g/shared/time"
 )
 
-// File identifies an open file or socket. The simulated backend ignores it (its
-// storage is in-memory); a real backend maps it to a descriptor or handle.
+// File identifies an open file or socket. The simulated backend maps it to tracked
+// in-memory state; a real backend maps it to a descriptor or handle.
 type File int32
+
+// DIRECTORY_CURRENT selects the process current directory for Open_At. The default backend maps
+// this portable value to the platform AT_FDCWD constant used by TigerBeetle IO.openat.
+const DIRECTORY_CURRENT File = -1
+
+// Open_Access selects the read/write access mode for TigerBeetle's asynchronous Open_At.
+type Open_Access int
+
+// OPEN_READ_ONLY opens a file for reads.
+const OPEN_READ_ONLY Open_Access = 0
+
+// OPEN_WRITE_ONLY opens a file for writes.
+const OPEN_WRITE_ONLY Open_Access = 1
+
+// OPEN_READ_WRITE opens a file for reads and writes.
+const OPEN_READ_WRITE Open_Access = 2
+
+// Open_At_Options is the Go representation of the posix.O fields used by TigerBeetle openat.
+type Open_At_Options struct {
+	// Access selects read-only, write-only, or read-write access.
+	Access Open_Access
+	// Create creates the path when absent.
+	Create bool
+	// Truncate clears an existing file before the callback receives it.
+	Truncate bool
+	// Mode is the permission mode used only when Create is true.
+	Mode uint32
+}
+
+// Event identifies TigerBeetle's cross-thread event primitive: EVFILT_USER on Darwin and eventfd
+// on Linux. It is backend-owned until Close_Event.
+type Event uintptr
+
+// Address_Family is the address family used to create and bind a socket.
+type Address_Family int
+
+// FAMILY_IPV4 selects an IPv4 socket.
+const FAMILY_IPV4 Address_Family = 0
+
+// FAMILY_IPV6 selects an IPv6 socket.
+const FAMILY_IPV6 Address_Family = 1
+
+// Address is an IP address and port with an explicit family, corresponding to TigerBeetle's
+// stdx.SocketAddress. IP stores IPv4 bytes in its first four positions and IPv6 bytes in all 16.
+type Address struct {
+	// Family selects how IP is interpreted.
+	Family Address_Family
+	// IP holds the network address bytes.
+	IP [16]byte
+	// Port is the host-order TCP or UDP port.
+	Port uint16
+}
+
+// Address_I_Pv4 returns an IPv4 address from its four octets and host-order port.
+func Address_I_Pv4(ip [4]byte, port uint16) (address Address) {
+	address.Family = FAMILY_IPV4
+	copy(address.IP[:4], ip[:])
+	address.Port = port
+	return address
+}
+
+// Address_I_Pv6 returns an IPv6 address from its 16 octets and host-order port.
+func Address_I_Pv6(ip [16]byte, port uint16) (address Address) {
+	return Address{Family: FAMILY_IPV6, IP: ip, Port: port}
+}
+
+// Address_Parse parses an IP literal without DNS and returns an explicit-family address.
+func Address_Parse(host string, port int) (address Address, err error) {
+	if port < 0 {
+		return Address{}, errors.New("io: port is outside uint16")
+	}
+	if port > 65535 {
+		return Address{}, errors.New("io: port is outside uint16")
+	}
+	parsed, parse_err := netip.ParseAddr(host)
+	if parse_err != nil {
+		return Address{}, parse_err
+	}
+	if parsed.Is4() {
+		return Address_I_Pv4(parsed.As4(), uint16(port)), nil
+	}
+	return Address_I_Pv6(parsed.As16(), uint16(port)), nil
+}
+
+// TCP_Keepalive is the optional keepalive tuple applied to a TCP socket.
+type TCP_Keepalive struct {
+	// Idle_Seconds is the idle period before probes begin.
+	Idle_Seconds int
+	// Interval_Seconds is the interval between probes.
+	Interval_Seconds int
+	// Count is the number of failed probes before the connection is abandoned.
+	Count int
+}
+
+// TCP_Options are the options applied while creating a TCP socket, matching
+// third-party/tigerbeetle/src/io/common.zig:14-28.
+type TCP_Options struct {
+	// Receive_Buffer is the requested receive-buffer size; zero leaves the system default.
+	Receive_Buffer int
+	// Send_Buffer is the requested send-buffer size; zero leaves the system default.
+	Send_Buffer int
+	// Keepalive is nil when TCP keepalive is disabled.
+	Keepalive *TCP_Keepalive
+	// User_Timeout_Milliseconds is the maximum unacknowledged duration on Linux.
+	User_Timeout_Milliseconds int
+	// No_Delay enables TCP_NODELAY where TigerBeetle enables it.
+	No_Delay bool
+}
+
+// Listen_Options are the options applied after binding a caller-owned socket.
+type Listen_Options struct {
+	// Backlog is the requested completed-connection queue size.
+	Backlog uint32
+}
+
+// Shutdown_How selects which connected-socket direction shutdown disables.
+type Shutdown_How int
+
+// SHUTDOWN_RECEIVE disables further receives.
+const SHUTDOWN_RECEIVE Shutdown_How = 0
+
+// SHUTDOWN_SEND disables further sends.
+const SHUTDOWN_SEND Shutdown_How = 1
+
+// SHUTDOWN_BOTH disables receives and sends.
+const SHUTDOWN_BOTH Shutdown_How = 2
+
+// Next_Tick_Source groups deferred callbacks so Reset_Next_Tick can remove a whole source.
+type Next_Tick_Source int
+
+// NEXT_TICK_LSM is TigerBeetle's storage-origin next-tick source.
+const NEXT_TICK_LSM Next_Tick_Source = 0
+
+// NEXT_TICK_VSR is TigerBeetle's replication-origin next-tick source.
+const NEXT_TICK_VSR Next_Tick_Source = 1
+
+// Next_Tick_Callback receives a deferred next-tick completion.
+type Next_Tick_Callback func(completion *Completion)
 
 // Callback receives the result of a read or write: the byte count, or an error.
 type Callback func(completion *Completion, count int, err error)
 
-// Timeout_Callback receives the result of a timeout: success, or a cancellation.
+// Timeout_Callback receives a status-only result from a timeout, connect, close, or
+// another operation that returns no value beyond its error.
 type Timeout_Callback func(completion *Completion, err error)
 
-// Socket_Callback receives a newly available socket — an accepted server
-// connection or a completed client connect — or an error.
+// File_Callback receives a descriptor returned by an asynchronous filesystem operation.
+type File_Callback func(completion *Completion, file File, err error)
+
+// Socket_Callback receives a newly accepted server connection or an error.
 type Socket_Callback func(completion *Completion, socket File, err error)
 
 // Signal identifies an operating-system signal in backend-independent form, so the
@@ -43,8 +185,9 @@ const SIGNAL_TERMINATE Signal = 0
 // SIGNAL_INTERRUPT is the interactive interrupt (SIGINT on the OS backend).
 const SIGNAL_INTERRUPT Signal = 1
 
-// Signal_Callback receives a delivered signal on the loop thread.
-type Signal_Callback func(completion *Completion, signal Signal)
+// Signal_Callback receives a delivered signal on the loop thread, or Deadline_Exceeded when the
+// finite watch retires before a signal arrives.
+type Signal_Callback func(completion *Completion, signal Signal, err error)
 
 // Compute_Callback fires on the loop thread once offloaded work has finished.
 type Compute_Callback func(completion *Completion)
@@ -120,10 +263,21 @@ type File_Status struct {
 	Size int64
 }
 
-// Cancelled is the error a callback receives when its operation was cancelled before
-// it completed. Cancelling still delivers the callback exactly once — with this error
-// instead of a result — so every submission resolves.
-var Cancelled = errors.New("io: operation cancelled")
+// Connection_Refused is the portable error returned when a remote endpoint rejects a connect.
+var Connection_Refused = errors.New("io: connection refused")
+
+// Broken_Pipe is the portable send result for a socket whose send half is shut down.
+var Broken_Pipe = errors.New("io: broken pipe")
+
+// Socket_Not_Connected is returned when Shutdown is submitted before a socket is connected.
+var Socket_Not_Connected = errors.New("io: socket not connected")
+
+// Canceled is a raw kernel operation result, matching TigerBeetle's error.Canceled variants.
+// It is not an API for canceling an operation: shared/io deliberately has no generic Cancel.
+var Canceled = errors.New("io: operation canceled")
+
+// Deadline_Exceeded is returned after a finite operation retires without its external event.
+var Deadline_Exceeded = errors.New("io: deadline exceeded")
 
 // FOREVER is the Run_Until timeout that never expires: the loop pumps until done reports
 // true, however long that takes — for a caller (a server) that runs until an event, not a
@@ -136,11 +290,11 @@ const IMMEDIATE time.Duration = 0
 
 // The number of virtual grains a simulated operation may take to complete, drawn from
 // the seed so the completion order varies per run while staying reproducible.
-const SIM_LATENCY_GRAINS = 8
+const sim_latency_grains = 8
 
 // One in this many simulated spawns exits non-zero, so a seed sweep exercises both the
 // success and the failure path without a scripted outcome.
-const SIM_SPAWN_FAIL_GRAINS = 4
+const sim_spawn_fail_grains = 4
 
 // Completion is the caller-owned storage for one in-flight operation —
 // TigerBeetle's IO.Completion. The caller allocates it, so the loop never does, and
@@ -152,11 +306,11 @@ type Completion struct {
 	// Ready_At is the virtual Moment this operation completes, mirroring
 	// TigerBeetle's Storage.Read.ready_at.
 	Ready_At time.Moment
-	// Cancelled is the delivery payload of the cancelled edge: which error the callback
-	// delivers. Set when Cancel accepts, cleared on submit, read by the delivery closure
-	// at fire time — the machine has already returned to COMPLETION_IDLE when the
-	// callback reads it, so this cannot live in State.
-	Cancelled bool
+	// Next_Tick_Source identifies next-tick completions for Reset_Next_Tick. Other operations
+	// leave it untouched; it is backend-owned metadata.
+	Next_Tick_Source Next_Tick_Source
+	// Next_Tick reports whether this armed completion is a next-tick operation.
+	Next_Tick bool
 	// State is the completion's position in its lifecycle machine, mutated only through
 	// Completion_Transition. It is backend-owned: applications never read or write it —
 	// expose your own state, not the completion's.
@@ -166,13 +320,13 @@ type Completion struct {
 	// address; submitting the copy trips the backend's assert instead of silently
 	// splitting the loop's view from the caller's. Only the backends touch it.
 	Self *Completion
+	// Kernel_Identifier is the generation token stored in kqueue udata or io_uring user_data.
+	// Backends own it; Event_Trigger reads it only after Event_Listen has armed the completion.
+	Kernel_Identifier uint64
 }
 
 // Completion_State is one position in a completion's lifecycle machine. The machine has
-// four legal edges — idle to armed on submit, armed to idle on delivery, armed to
-// cancelled on Cancel, cancelled to idle on the cancelled delivery — and every mutation
-// goes through Completion_Transition, so an illegal move panics instead of corrupting a
-// queue.
+// exactly two legal edges: idle to armed on submit and armed to idle before delivery.
 type Completion_State int
 
 // COMPLETION_IDLE is the zero value: never submitted, or delivered and reusable. A
@@ -180,13 +334,8 @@ type Completion_State int
 // completion — the repeating-timer pattern.
 const COMPLETION_IDLE Completion_State = 0
 
-// COMPLETION_ARMED marks an in-flight operation: submitted and owned by the loop until
-// its delivery or a Cancel.
+// COMPLETION_ARMED marks an in-flight operation: submitted and owned until delivery.
 const COMPLETION_ARMED Completion_State = 1
-
-// COMPLETION_CANCELLED marks the cancel window: Cancel accepted, the delivery with the
-// Cancelled error still pending. Resubmitting inside the window is an illegal edge.
-const COMPLETION_CANCELLED Completion_State = 2
 
 // Input for Completion_Transition_Legal.
 type Completion_Transition_Legal_Input struct {
@@ -205,12 +354,6 @@ func Completion_Transition_Legal(input *Completion_Transition_Legal_Input) (lega
 		return input.To == COMPLETION_ARMED
 	}
 	if input.From == COMPLETION_ARMED {
-		if input.To == COMPLETION_IDLE {
-			return true
-		}
-		return input.To == COMPLETION_CANCELLED
-	}
-	if input.From == COMPLETION_CANCELLED {
 		return input.To == COMPLETION_IDLE
 	}
 	return false
@@ -230,10 +373,10 @@ type Completion_Transition_Input struct {
 // two Always guards fail loudly on a caller whose belief about the current state is
 // stale — a reused or double-armed completion — and on an edge the machine does not
 // have, so a lifecycle bug dies at the mutation instead of corrupting a queue. Every
-// transition then records the predicates that distinguish its edges: this package's own suite
-// registers them through TestMain, so missing state-machine boundaries fail the run. The guards
-// enforce the graph while the independent axes witness its origins and destinations. Backend code
-// only; applications never transition a completion.
+// transition then records its edge on the io.completion.transition grid: this package's
+// own suite registers the grid through its TestMain, so an edge the sim suite never
+// witnesses fails the run — the graph is enforced by the guards and witnessed by the
+// sweep. Backend code only; applications never transition a completion.
 func Completion_Transition(input *Completion_Transition_Input) {
 	invariant.Always(input.Completion.State == input.From,
 		"A completion transitions from the state its caller expects.")
@@ -242,21 +385,35 @@ func Completion_Transition(input *Completion_Transition_Input) {
 	})
 	invariant.Always(legal, "A completion transitions along an edge its machine has.")
 	input.Completion.State = input.To
-	// The legality guard excludes impossible tuples, so individual branch obligations can
-	// witness every state boundary without rebuilding a second transition table in coverage.
-	invariant.Sometimes(input.From == COMPLETION_IDLE, "the edge leaves idle")
-	invariant.Sometimes(input.From == COMPLETION_CANCELLED, "the edge leaves cancelled")
-	invariant.Sometimes(input.To == COMPLETION_IDLE, "the edge enters idle")
+	// The two axes identify the two legal inverse edges and carve away both illegal cells.
+	invariant.Dot_Product("io.completion.transition",
+		invariant.Sometimes(input.From == COMPLETION_IDLE, "the edge leaves idle"),
+		invariant.Sometimes(input.To == COMPLETION_IDLE, "the edge enters idle"),
+		invariant.Impossible(
+			invariant.Event_True("the edge leaves idle"),
+			invariant.Event_True("the edge enters idle")),
+		invariant.Impossible(
+			invariant.Event_False("the edge leaves idle"),
+			invariant.Event_False("the edge enters idle")),
+	)
 }
 
 // IO is the injected async IO submit surface — TigerBeetle's `IO`. Code submits
 // operations with a Completion and callback and reacts to completions; it never drives
 // the loop — that is the Driver's job — so a holder can submit IO but not advance time.
 //
+// This is an I/O seam, not a kitchen sink of syscalls. Every member is a data transfer with an
+// external endpoint — a file, a socket, a pipe — or the loop's own control plane for scheduling
+// those transfers (timers, signal watches, and spawn). Not all syscalls are I/O
+// operations: getrandom, getpid, mmap, and nanosleep are syscalls but transfer no data with an
+// endpoint, so they do not belong here. A dependency that needs one of those (secure_transport's
+// entropy, for instance) declares it itself and has it injected, rather than widening this surface.
+//
 // CRITICAL: ONLY PACKAGE MAIN OR A TEST MAY DRIVE, RUN, OR TICK THE EVENT LOOP. An IO
 // holder that wants to wait exposes doneness as state and lets the root pump; it never
 // receives a pump. See shared/io/README.md, THE CRITICAL GUARANTEE.
 type IO struct {
+	Platform_IO
 	// Read reads len(buffer) bytes from file at offset; callback fires with the byte
 	// count or error once the operation completes (TigerBeetle IO.read).
 	Read func(
@@ -266,12 +423,37 @@ type IO struct {
 	Write func(
 		completion *Completion, callback Callback, file File, buffer []byte, offset int64,
 	)
+	// Fsync synchronizes file through TigerBeetle's asynchronous IO operation.
+	Fsync func(completion *Completion, callback Timeout_Callback, file File)
+	// Open_At asynchronously opens file_path relative to directory and forces close-on-exec.
+	Open_At func(
+		completion *Completion, callback File_Callback, directory File, file_path string,
+		options Open_At_Options,
+	)
 	// Timeout fires callback after the duration on the clock, off the same queue the
-	// IO completions use (TigerBeetle IO.timeout). THIS IS THE EQUIVALENT TO `stdtime.Sleep`.
+	// IO completions use. Duration must be positive; use Next_Tick to yield.
 	Timeout func(completion *Completion, callback Timeout_Callback, duration time.Duration)
-	// Listen binds and listens on host:port, returning the listening socket
-	// synchronously — bind never blocks, so it carries no Completion.
-	Listen func(host string, port int) (listener File, err error)
+	// Next_Tick defers a callback without kernel IO, matching io/linux.zig:332-352 and
+	// io/darwin.zig:757-781.
+	Next_Tick func(
+		completion *Completion, callback Next_Tick_Callback, source Next_Tick_Source,
+	)
+	// Reset_Next_Tick removes every queued next-tick completion for source without delivery.
+	Reset_Next_Tick func(source Next_Tick_Source)
+	// Open_Event creates TigerBeetle's platform Event primitive.
+	Open_Event func() (event Event, err error)
+	// Event_Listen arms completion for one Event notification.
+	Event_Listen func(event Event, completion *Completion, callback Next_Tick_Callback)
+	// Event_Trigger makes an armed Event completion ready. It is the only core operation
+	// safe to call from another thread.
+	Event_Trigger func(event Event, completion *Completion)
+	// Close_Event releases an Event after its listener has drained.
+	Close_Event func(event Event)
+	// Listen binds a caller-owned socket and returns the resolved address, including the actual
+	// port chosen for port zero (third-party/tigerbeetle/src/io/common.zig:32-59).
+	Listen func(
+		socket File, address Address, options Listen_Options,
+	) (resolved Address, err error)
 	// Open opens the file at path for reading, returning its descriptor synchronously —
 	// opening never blocks the loop, so it carries no Completion. A later Read of the
 	// descriptor yields the file's bytes.
@@ -290,33 +472,26 @@ type IO struct {
 	// Make_Directory creates path and any missing parents synchronously; an existing
 	// directory is not an error, so a repeated mkdir converges.
 	Make_Directory func(path string) (err error)
-	// Accept yields one inbound connection on listener; callback fires with the
-	// accepted socket once a peer arrives (TigerBeetle IO.accept).
-	Accept func(completion *Completion, callback Socket_Callback, listener File)
-	// Accept_Secure is Accept with server-side TLS termination: the accepted socket
-	// carries decrypted bytes so the caller speaks plaintext while the backend owns TLS.
-	// The certificate provider is opaque so this pure surface names no crypto/tls type;
-	// the simulator has no TLS and drives the same socket as Accept, ignoring it.
-	Accept_Secure func(
-		completion *Completion, callback Socket_Callback,
-		listener File, certificate func() (value any),
+	// Open_Socket_TCP creates a non-blocking close-on-exec TCP socket with explicit options.
+	Open_Socket_TCP func(
+		family Address_Family, options TCP_Options,
+	) (socket File, err error)
+	// Open_Socket_UDP creates a non-blocking close-on-exec UDP socket.
+	Open_Socket_UDP func(family Address_Family) (socket File, err error)
+	// Accept yields one inbound connection on listener before deadline, or Deadline_Exceeded.
+	// The finite deadline deliberately diverges from TigerBeetle's unbounded IO.accept; it
+	// keeps every repository submission bounded. TLS termination remains a secure_transport
+	// concern.
+	Accept func(
+		completion *Completion, callback Socket_Callback, listener File,
+		deadline time.Duration,
 	)
-	// Connect opens a socket to host:port; callback fires with the connected
-	// socket once the handshake completes (TigerBeetle IO.connect).
-	Connect func(completion *Completion, callback Socket_Callback, host string, port int)
-	// Connect_Secure opens a verified TLS client connection to host:port; Receive and
-	// Send on the returned socket carry decrypted bytes. The simulator models it like
-	// Connect — TLS is a backend concern the pure tier never sees.
-	Connect_Secure func(
-		completion *Completion, callback Socket_Callback,
-		host string, port int, server_name string,
-	)
-	// Connect_Insecure is Connect_Secure without certificate verification, for probing a
-	// freshly-rebuilt host whose cert is self-signed until ACME runs; never use it
-	// against a peer whose identity is depended on. The simulator models it like Connect.
-	Connect_Insecure func(
-		completion *Completion, callback Socket_Callback,
-		host string, port int, server_name string,
+	// Connect borrows caller-owned socket until it connects before deadline; callback reports
+	// only the outcome. The deadline wins ties. The backend never creates, transfers, or closes
+	// the descriptor. This finite lifetime is an explicit repository extension to TigerBeetle.
+	Connect func(
+		completion *Completion, callback Timeout_Callback,
+		socket File, address Address, deadline time.Duration,
 	)
 	// Receive reads up to len(buffer) bytes from socket; callback reports the byte
 	// count once data arrives (TigerBeetle IO.recv).
@@ -324,43 +499,47 @@ type IO struct {
 	// Send writes buffer to socket; callback reports the byte count once the kernel
 	// accepts it (TigerBeetle IO.send).
 	Send func(completion *Completion, callback Callback, socket File, buffer []byte)
+	// Send_Now makes TigerBeetle's best-effort synchronous datagram send. Sent is false only
+	// when the datagram would block or the socket cannot send.
+	Send_Now func(socket File, buffer []byte) (count int, sent bool)
+	// Shutdown synchronously disables one or both connected-socket directions. It does not own
+	// or close the socket (io/darwin.zig:973-975; io/linux.zig:1393-1395).
+	Shutdown func(socket File, how Shutdown_How) (err error)
 	// Close releases file's descriptor; callback fires once it is closed
 	// (TigerBeetle IO.close).
 	Close func(completion *Completion, callback Timeout_Callback, file File)
-	// Cancel stops an in-flight operation: its callback still fires exactly once, with
-	// the Cancelled error rather than a result. Cancelling an already-completed or
-	// unknown completion is a harmless no-op (TigerBeetle IO.cancel).
-	Cancel func(completion *Completion)
+	// Close_Socket synchronously releases a socket during setup failure or final deinit. It is
+	// TigerBeetle's close_socket, distinct from asynchronous Close.
+	Close_Socket func(socket File)
 	// Peer_Address returns the remote IP address of a connected socket, synchronously —
 	// a getpeername has no completion. It is the source a control-plane connection is
 	// gated on.
 	Peer_Address func(file File) (address string, err error)
-	// Watch_Signal fires callback on the loop thread when the process receives signal,
-	// so a buffered shutdown can drain before exit. In the simulator the signal arrives
-	// at a seed-drawn grain — the OS event modeled as a seed outcome, not scripted.
-	Watch_Signal func(completion *Completion, callback Signal_Callback, signal Signal)
+	// Watch_Signal fires callback on the loop thread when the process receives signal before
+	// the finite deadline, or with Deadline_Exceeded. TigerBeetle has no signal-watch
+	// counterpart; this repository extension is bounded rather than becoming a permanent
+	// waiter.
+	Watch_Signal func(
+		completion *Completion, callback Signal_Callback, signal Signal,
+		deadline time.Duration,
+	)
 	// ONLY FOR COMPUTE-INTENSIVE WORK THAT CAN BE HIGHLY PARALLELIZED — E.G. JSON
 	// PARSING, HIGH-TRAFFIC REQUEST PROCESSING. IT IS NOT AN ESCAPE HATCH FOR BLOCKING
 	// SYSCALLS OR IO; THOSE BELONG ON THE LOOP'S COMPLETION OPS.
 	Compute func(completion *Completion, callback Compute_Callback, work func())
-	// Spawn runs the command in request to completion off the loop thread, firing
-	// callback on the loop with its exit code, captured output, and resource usage — the
-	// subprocess counterpart of the other completion ops. The simulator draws the exit
-	// code from the seed and returns no output, since scripted output is disallowed.
-	Spawn func(completion *Completion, callback Process_Callback, request Process_Request)
-	// Self_Exec replaces this process's image with path/argv (an execve — same PID, the
-	// virtual memory replaced), layering extra_environment onto the current environment.
-	// Every descriptor the backend opened is marked close-on-exec first except preserve,
-	// which survives into the new image at the same descriptor numbers — the mechanism that
-	// lets a listening socket's bind live across a binary update with no unbind gap. On
-	// success it never returns; on failure it returns an error with the process and every
-	// descriptor undisturbed, so the caller may fall back to another restart path. It
-	// carries no Completion because neither outcome — vanishing or returning at once — is a
-	// deferred delivery. The simulator cannot replace its own test process, so it always
-	// returns an error.
-	Self_Exec func(
-		path string, argv []string, extra_environment []string, preserve []File,
-	) (err error)
+	// Spawn runs request off the loop thread until completion or deadline. Expiry kills the
+	// subprocess group and returns Deadline_Exceeded with any partial result. The simulator
+	// draws the exit code from the seed and returns no output, since scripted output is
+	// disallowed.
+	Spawn func(
+		completion *Completion, callback Process_Callback, request Process_Request,
+		deadline time.Duration,
+	)
+	// Self_Exec is a repository extension that replaces the process image. All descriptors are
+	// close-on-exec, so a successful replacement closes listeners and the new image rebinds. A
+	// nil environment preserves the backend's ambient environment; a non-nil slice completely
+	// replaces it, including an explicitly empty slice that inherits nothing.
+	Self_Exec func(path string, argv []string, environment []string) (err error)
 }
 
 // Driver advances the loop — the only capability that moves time and delivers
@@ -382,13 +561,13 @@ type IO struct {
 type Driver struct {
 	// Run drains every ready completion without blocking, then advances the clock one
 	// tick (TigerBeetle IO.run). ROOT ONLY: never handed to, or called from, a library.
-	Run func()
+	Run func() (err error)
 	// Run_For drives the loop until the duration has elapsed on the clock, delivering
 	// completions as they come due (TigerBeetle IO.run_for_ns). Here time is the GOAL: it
 	// advances exactly duration, draining as it goes, regardless of what completes — reach
 	// for it to let a span of time pass, not to wait for a particular op.
 	// ROOT ONLY: never handed to, or called from, a library.
-	Run_For func(duration time.Duration)
+	Run_For func(duration time.Duration) (err error)
 	// Run_Until drives the loop until done reports true — the run-until-complete pump that
 	// lets straight-line code wait for its own op inline. Here completion is the GOAL and
 	// time is the GUARD: it stops the instant done holds, and timeout only caps the wait so
@@ -403,10 +582,51 @@ type Driver struct {
 	// Top-level and single-loop only: never call it from within a completion callback.
 	// ROOT ONLY: never inject it — or a func value of its shape — into a library; a
 	// library that authors done predicates and timeouts is driving the loop.
-	Run_Until func(done func() (finished bool), timeout time.Duration) (completed bool)
+	Run_Until func(
+		done func() (finished bool), timeout time.Duration,
+	) (completed bool, err error)
+	// Deinit releases the backend's kernel resources after every submitted operation is joined.
+	Deinit func()
+	// Introspect returns a point-in-time census of the loop's internal queues — the depths a
+	// stall shows up in. Read-only, safe only on the loop thread, so like the rest of Driver
+	// it is ROOT ONLY: the root may sample it (for an admin snapshot); a library may not. The
+	// simulator reports the equivalent synthetic queues and lifecycle flags.
+	Introspect func() (counts Loop_Counts)
 }
 
-// The Simulation type is the deterministic, in-memory IO backend — TigerBeetle's simulated
+// Loop_Counts is a census of an IO backend's internal queues at one instant — how many completions
+// are ready to run, how many sockets await readability or writability, how many timers and signal
+// watchers are pending, how much cross-thread work is posted back, and how many raw descriptors are
+// held open. It is the loop-internals view of an admin state snapshot: a stall is usually visible
+// here as a queue that will not drain (a backed-up accept, a write that never completes).
+type Loop_Counts struct {
+	// Completed is the number of completions whose callbacks are ready to run next drain.
+	Completed int
+	// Timeouts is the number of pending timer completions.
+	Timeouts int
+	// IO_Backlog is the number of Darwin operations waiting to enter kqueue.
+	IO_Backlog int
+	// IO_Inflight is the number of Darwin operations registered with kqueue.
+	IO_Inflight int
+	// IO_Queued is the number of Linux submissions not yet flushed to the kernel.
+	IO_Queued int
+	// IO_In_Kernel is the number of Linux submissions awaiting completion.
+	IO_In_Kernel int
+	// Signal_Waiters is the number of registered signal watchers.
+	Signal_Waiters int
+	// Posted is the number of completions finished off the loop thread awaiting the next drain.
+	Posted int
+	// Results is the number of finished compute jobs awaiting the next drain.
+	Results int
+	// Raw_Open is the number of raw descriptors the backend holds open.
+	Raw_Open int
+	// Wake_Active reports whether the wake pipe has been created and armed.
+	Wake_Active bool
+	// Compute_Active reports whether the compute worker pool has been started.
+	Compute_Active bool
+}
+
+// The sim type is the deterministic, in-memory IO backend — TigerBeetle's simulated
 // Storage.
 //
 // ===========================================================================
@@ -432,7 +652,7 @@ type Driver struct {
 // influence a run is to change the SEED, never to inject data.
 //
 // This type is unexported and New_Sim(seed) is the only entry precisely so this stays
-// impossible to add by accident: no caller ever holds a *Simulation to hang a field on. If you
+// impossible to add by accident: no caller ever holds a *sim to hang a field on. If you
 // find yourself wanting to export it, or wanting to add a parameter to New_Sim that is
 // not the seed, stop — that is the scripting API trying to come back. Keep it shut.
 
@@ -445,21 +665,56 @@ var sim_not_a_directory = errors.New("io: not a directory")
 // Returned when a file operation names a directory.
 var sim_is_a_directory = errors.New("io: is a directory")
 
-// A Simulation_Node is one entry in the simulator's in-memory filesystem: a directory with named
+// A sim_node is one entry in the simulator's in-memory filesystem: a directory with named
 // children, or a file holding bytes. Generated from the seed at New_Sim and mutated by
 // Create/Write/Make_Directory, so a later read reflects an earlier write.
-type Simulation_Node struct {
+type sim_node struct {
 	// Directory reports whether this node is a directory rather than a file.
 	Directory bool
 	// Contents holds a file's bytes; nil for a directory.
 	Contents []byte
 	// Children maps a directory's entry names to their nodes; nil for a file.
-	Children map[string]*Simulation_Node
+	Children map[string]*sim_node
 }
 
-// Simulation is the deterministic, in-memory IO backend: a pure function of its New_Sim seed.
-// See the scripting-ban banner above for why it must never grow an outcome-injection surface.
-type Simulation struct {
+type sim_operation int
+
+const sim_operation_completed sim_operation = 0
+const sim_operation_timeout sim_operation = 1
+const sim_operation_read_waiter sim_operation = 2
+const sim_operation_write_waiter sim_operation = 3
+const sim_operation_signal sim_operation = 4
+const sim_operation_posted sim_operation = 5
+const sim_operation_result sim_operation = 6
+const sim_operation_next_tick sim_operation = 7
+const sim_operation_event sim_operation = 8
+
+// Sim event is the deterministic counterpart of TigerBeetle's EVFILT_USER/eventfd primitive.
+type sim_event struct {
+	// Completion is the currently armed listener, nil while detached.
+	Completion *Completion
+	// Triggered counts notifications accumulated before a listener attaches.
+	Triggered int
+}
+
+// Sim_socket is the simulator's caller-owned socket state. Shutdown is directional and never
+// releases ownership; Close and Close_Socket are the only operations that remove the entry.
+type sim_socket struct {
+	// Family is the address family selected at creation.
+	Family Address_Family
+	// Datagram distinguishes UDP from TCP.
+	Datagram bool
+	// Connected reports whether Connect or Accept established the socket.
+	Connected bool
+	// Listener reports whether Listen consumed this socket.
+	Listener bool
+	// Receive_Shutdown records SHUTDOWN_RECEIVE or SHUTDOWN_BOTH.
+	Receive_Shutdown bool
+	// Send_Shutdown records SHUTDOWN_SEND or SHUTDOWN_BOTH.
+	Send_Shutdown bool
+}
+
+type sim struct {
 	// Clock is the read-only time source; "now" is Clock.Now_Monotonic.
 	Clock time.Clock
 	// Tick advances the virtual clock one resolution — the tick returned beside Clock
@@ -471,15 +726,27 @@ type Simulation struct {
 	Generator prng.Generator
 	// Queue holds in-flight completions ordered by Ready_At, earliest first.
 	Queue []*Completion
-	// Next_File is the synthetic descriptor counter; Listen, Accept, Connect, Open, and
-	// Create hand out the next value so every descriptor is distinct.
+	// Next_File is the synthetic descriptor counter; Listen, Accept, Open_Socket, Open,
+	// and Create hand out the next value so every descriptor is distinct.
 	Next_File File
 	// Root is the in-memory filesystem the file ops read and mutate, fabricated from the
 	// seed at New_Sim. Socket descriptors ignore it.
-	Root *Simulation_Node
+	Root *sim_node
 	// Files binds an open file descriptor to its node, so Read/Write route to real tree
 	// bytes; a descriptor absent from this map is a socket, whose bytes stay synthetic.
-	Files map[File]*Simulation_Node
+	Files map[File]*sim_node
+	// Raw_Open tracks every synthetic descriptor until the caller submits Close.
+	Raw_Open map[File]bool
+	// Sockets holds lifecycle and directional-shutdown state for synthetic sockets.
+	Sockets map[File]*sim_socket
+	// Events holds backend Event state and is excluded from caller-owned Raw_Open accounting.
+	Events map[Event]*sim_event
+	// Next_Event supplies stable nonzero synthetic Event identifiers.
+	Next_Event Event
+	// Operations classifies each queued completion for full Driver.Introspect output.
+	Operations map[*Completion]sim_operation
+	// Operation_Files binds socket and file waiters to their descriptor so Close cancels them.
+	Operation_Files map[*Completion]File
 	// Drive_Active is set while a Run* is driving the loop, so a Run* called from within a
 	// completion callback — which would re-enter the driver mid-drain — panics loudly.
 	Drive_Active bool
@@ -493,31 +760,39 @@ type Simulation struct {
 // loop and clock, NEVER a pump (see the Driver banner).
 func New_Sim(seed uint64) (loop IO, driver Driver, clock time.Clock) {
 	clock, tick := time.Virtual_Clock_To_Clock(time.Virtual_Clock{Resolution: time.NANOSECOND})
-	state := &Simulation{
-		Clock:     clock,
-		Tick:      tick,
-		Generator: prng.New(seed),
-		Files:     map[File]*Simulation_Node{},
+	state := &sim{
+		Clock:           clock,
+		Tick:            tick,
+		Generator:       prng.New(seed),
+		Files:           map[File]*sim_node{},
+		Raw_Open:        map[File]bool{},
+		Sockets:         map[File]*sim_socket{},
+		Events:          map[Event]*sim_event{},
+		Operations:      map[*Completion]sim_operation{},
+		Operation_Files: map[*Completion]File{},
 	}
 	state.Root = sim_generate(&state.Generator)
 	sim_wire_bytes(state, &loop)
 	sim_wire_lifecycle(state, &loop)
 	sim_wire_socket(state, &loop)
 	sim_wire_effects(state, &loop)
+	sim_wire_platform(state, &loop)
 	return loop, sim_to_driver(state), clock
 }
 
 // Wires the byte-count operations — read, write, receive, send — onto loop.
-func sim_wire_bytes(state *Simulation, loop *IO) {
+func sim_wire_bytes(state *sim, loop *IO) {
 	loop.Read = func(
 		completion *Completion, callback Callback, file File, buffer []byte, offset int64,
 	) {
 		node := state.Files[file]
 		if node != nil {
 			sim_file_read(state, completion, callback, node, buffer, offset)
+			state.Operation_Files[completion] = file
 			return
 		}
 		sim_bytes(state, completion, callback, buffer)
+		state.Operation_Files[completion] = file
 	}
 	loop.Write = func(
 		completion *Completion, callback Callback, file File, buffer []byte, offset int64,
@@ -525,28 +800,137 @@ func sim_wire_bytes(state *Simulation, loop *IO) {
 		node := state.Files[file]
 		if node != nil {
 			sim_file_write(state, completion, callback, node, buffer, offset)
+			state.Operation_Files[completion] = file
 			return
 		}
 		sim_bytes(state, completion, callback, buffer)
+		state.Operation_Files[completion] = file
 	}
 	loop.Receive = func(completion *Completion, callback Callback, socket File, buffer []byte) {
-		sim_bytes(state, completion, callback, buffer)
+		sim_submit(state, completion, sim_latency(state), func() {
+			socket_state := state.Sockets[socket]
+			if socket_state == nil {
+				callback(completion, 0, nil)
+				return
+			}
+			if socket_state.Receive_Shutdown {
+				callback(completion, 0, nil)
+				return
+			}
+			callback(completion, len(buffer), nil)
+		})
+		state.Operations[completion] = sim_operation_read_waiter
+		state.Operation_Files[completion] = socket
 	}
 	loop.Send = func(completion *Completion, callback Callback, socket File, buffer []byte) {
-		sim_bytes(state, completion, callback, buffer)
+		sim_submit(state, completion, sim_latency(state), func() {
+			socket_state := state.Sockets[socket]
+			if socket_state == nil {
+				callback(completion, 0, Broken_Pipe)
+				return
+			}
+			if socket_state.Send_Shutdown {
+				callback(completion, 0, Broken_Pipe)
+				return
+			}
+			callback(completion, len(buffer), nil)
+		})
+		state.Operations[completion] = sim_operation_write_waiter
+		state.Operation_Files[completion] = socket
+	}
+	loop.Fsync = func(completion *Completion, callback Timeout_Callback, file File) {
+		sim_submit(state, completion, sim_latency(state),
+			sim_deliver_status(completion, callback, nil))
+		state.Operation_Files[completion] = file
 	}
 }
 
-// Wires the lifecycle operations — timer, listen, open, create, close, cancel — onto loop.
-func sim_wire_lifecycle(state *Simulation, loop *IO) {
+// Wires timers, next ticks, filesystem lifecycle, and both close primitives onto loop.
+func sim_wire_lifecycle(state *sim, loop *IO) {
+	loop.Open_At = func(
+		completion *Completion, callback File_Callback, directory File, file_path string,
+		options Open_At_Options,
+	) {
+		sim_submit(state, completion, sim_latency(state), func() {
+			file := File(-1)
+			var open_err error
+			if directory != DIRECTORY_CURRENT {
+				open_err = sim_not_a_directory
+			} else if options.Create {
+				file, open_err = sim_create(state, file_path)
+			} else {
+				file, open_err = sim_open(state, file_path)
+			}
+			callback(completion, file, open_err)
+		})
+	}
 	loop.Timeout = func(
 		completion *Completion, callback Timeout_Callback, duration time.Duration,
 	) {
+		invariant.Always(
+			duration > 0, "A timeout duration is positive; yields use Next_Tick.",
+		)
 		sim_submit(state, completion, duration,
 			sim_deliver_status(completion, callback, nil))
+		state.Operations[completion] = sim_operation_timeout
 	}
-	loop.Listen = func(host string, port int) (listener File, err error) {
-		return sim_descriptor(state), nil
+	loop.Next_Tick = func(
+		completion *Completion, callback Next_Tick_Callback, source Next_Tick_Source,
+	) {
+		sim_submit(state, completion, 0, func() { callback(completion) })
+		completion.Next_Tick_Source = source
+		completion.Next_Tick = true
+		state.Operations[completion] = sim_operation_next_tick
+	}
+	loop.Reset_Next_Tick = func(source Next_Tick_Source) {
+		sim_reset_next_tick(state, source)
+	}
+	loop.Open_Event = func() (event Event, err error) {
+		state.Next_Event++
+		event = state.Next_Event
+		state.Events[event] = &sim_event{}
+		return event, nil
+	}
+	loop.Event_Listen = func(
+		event Event, completion *Completion, callback Next_Tick_Callback,
+	) {
+		sim_event_listen(state, event, completion, callback)
+	}
+	loop.Event_Trigger = func(event Event, completion *Completion) {
+		sim_event_trigger(state, event, completion)
+	}
+	loop.Close_Event = func(event Event) {
+		entry := state.Events[event]
+		invariant.Always(entry != nil, "A closed Event is open.")
+		invariant.Always(
+			entry.Completion == nil, "An Event listener is drained before close.",
+		)
+		delete(state.Events, event)
+	}
+	sim_wire_filesystem(state, loop)
+}
+
+// Wires simulated filesystem and socket lifecycle operations onto loop.
+func sim_wire_filesystem(state *sim, loop *IO) {
+	loop.Listen = func(
+		socket File, address Address, options Listen_Options,
+	) (resolved Address, err error) {
+		socket_state := state.Sockets[socket]
+		if socket_state == nil {
+			return Address{}, errors.New("io: listen requires an open TCP socket")
+		}
+		if socket_state.Datagram {
+			return Address{}, errors.New("io: listen requires an open TCP socket")
+		}
+		if options.Backlog == 0 {
+			return Address{}, errors.New("io: listen backlog must be positive")
+		}
+		socket_state.Listener = true
+		resolved = address
+		if resolved.Port == 0 {
+			resolved.Port = uint16(socket)
+		}
+		return resolved, nil
 	}
 	loop.Open = func(path string) (file File, err error) {
 		return sim_open(state, path)
@@ -564,64 +948,183 @@ func sim_wire_lifecycle(state *Simulation, loop *IO) {
 		return sim_make_directory(state.Root, path)
 	}
 	loop.Close = func(completion *Completion, callback Timeout_Callback, file File) {
-		delete(state.Files, file)
-		sim_submit(state, completion, sim_latency(state),
-			sim_deliver_status(completion, callback, nil))
+		sim_assert_file_drained(state, file)
+		sim_submit(state, completion, sim_latency(state), func() {
+			delete(state.Files, file)
+			delete(state.Sockets, file)
+			delete(state.Raw_Open, file)
+			callback(completion, nil)
+		})
 	}
-	loop.Cancel = func(completion *Completion) { sim_cancel(state, completion) }
+	loop.Close_Socket = func(socket File) {
+		sim_assert_file_drained(state, socket)
+		delete(state.Sockets, socket)
+		delete(state.Raw_Open, socket)
+	}
 }
 
-// Wires the socket operations — accept, connect, their TLS variants, peer address —
-// onto loop. The TLS variants reuse the plaintext socket: the simulator has no TLS, so
-// the certificate provider and server name are ignored (a backend-only concern).
-func sim_wire_socket(state *Simulation, loop *IO) {
-	loop.Accept = func(completion *Completion, callback Socket_Callback, listener File) {
-		sim_yield_socket(state, completion, callback)
+// Arms one simulated Event listener without making it ready until Event_Trigger fires.
+func sim_event_listen(
+	state *sim, event Event, completion *Completion, callback Next_Tick_Callback,
+) {
+	entry := state.Events[event]
+	invariant.Always(entry != nil, "An Event listener attaches to an open Event.")
+	invariant.Always(entry.Completion == nil, "An Event has at most one armed listener.")
+	sim_arm(state, completion, func() { callback(completion) })
+	state.Operations[completion] = sim_operation_event
+	entry.Completion = completion
+	if entry.Triggered > 0 {
+		entry.Triggered--
+		entry.Completion = nil
+		completion.Ready_At = sim_now(state)
+		sim_enqueue(state, completion)
 	}
-	loop.Accept_Secure = func(
-		completion *Completion, callback Socket_Callback,
-		listener File, _ func() (value any),
+}
+
+// Triggers one simulated Event notification, accumulating it when no listener is armed.
+func sim_event_trigger(state *sim, event Event, completion *Completion) {
+	entry := state.Events[event]
+	invariant.Always(entry != nil, "A triggered Event is open.")
+	if entry.Completion == nil {
+		entry.Triggered++
+		return
+	}
+	invariant.Always(entry.Completion == completion,
+		"Event_Trigger names the Completion armed by Event_Listen.")
+	entry.Completion = nil
+	completion.Ready_At = sim_now(state)
+	sim_enqueue(state, completion)
+}
+
+// Asserts no submitted operation still borrows file. TigerBeetle's teardown owner performs this
+// join before close (third-party/tigerbeetle/src/message_bus.zig:1104-1145); the Go port enforces
+// that ownership boundary at the library surface so descriptor reuse cannot race an old operation.
+func sim_assert_file_drained(state *sim, file File) {
+	borrowed := false
+	for _, operation_file := range state.Operation_Files {
+		if operation_file == file {
+			borrowed = true
+		}
+	}
+	invariant.Always(!borrowed,
+		"A descriptor is drained before Close or Close_Socket releases it.")
+}
+
+// Wires the socket operations — accept, connect, peer address — onto loop. TLS is not an
+// io concern: there is no accept-secure or connect-secure syscall, so secure_transport
+// composes these raw ops with its own record layer.
+func sim_wire_socket(state *sim, loop *IO) {
+	loop.Accept = func(
+		completion *Completion, callback Socket_Callback, listener File,
+		deadline time.Duration,
 	) {
-		sim_yield_socket(state, completion, callback)
+		invariant.Always(deadline > 0, "An accept deadline is positive and finite.")
+		sim_yield_socket(state, completion, callback, listener, deadline)
+		state.Operations[completion] = sim_operation_read_waiter
+		state.Operation_Files[completion] = listener
+	}
+	loop.Open_Socket_TCP = func(
+		family Address_Family, options TCP_Options,
+	) (socket File, err error) {
+		return sim_open_socket(state, family, false), nil
+	}
+	loop.Open_Socket_UDP = func(family Address_Family) (socket File, err error) {
+		return sim_open_socket(state, family, true), nil
 	}
 	loop.Connect = func(
-		completion *Completion, callback Socket_Callback, host string, port int,
+		completion *Completion, callback Timeout_Callback,
+		socket File, address Address, deadline time.Duration,
 	) {
-		sim_yield_socket(state, completion, callback)
+		sim_connect(state, completion, callback, socket, address, deadline)
 	}
-	loop.Connect_Secure = func(
-		completion *Completion, callback Socket_Callback, host string, port int, _ string,
-	) {
-		sim_yield_socket(state, completion, callback)
+	loop.Send_Now = func(socket File, buffer []byte) (count int, sent bool) {
+		socket_state := state.Sockets[socket]
+		if socket_state == nil {
+			return 0, false
+		}
+		if socket_state.Send_Shutdown {
+			return 0, false
+		}
+		return len(buffer), true
 	}
-	loop.Connect_Insecure = func(
-		completion *Completion, callback Socket_Callback, host string, port int, _ string,
-	) {
-		sim_yield_socket(state, completion, callback)
+	loop.Shutdown = func(socket File, how Shutdown_How) (err error) {
+		socket_state := state.Sockets[socket]
+		if socket_state == nil {
+			return Socket_Not_Connected
+		}
+		if !socket_state.Connected {
+			return Socket_Not_Connected
+		}
+		if how == SHUTDOWN_RECEIVE {
+			socket_state.Receive_Shutdown = true
+		}
+		if how == SHUTDOWN_BOTH {
+			socket_state.Receive_Shutdown = true
+		}
+		if how == SHUTDOWN_SEND {
+			socket_state.Send_Shutdown = true
+		}
+		if how == SHUTDOWN_BOTH {
+			socket_state.Send_Shutdown = true
+		}
+		return nil
 	}
 	loop.Peer_Address = func(file File) (address string, err error) {
 		return sim_peer_address(file), nil
 	}
 }
 
+// Submits one simulator Connect with one latency draw; the finite deadline wins a tie.
+func sim_connect(
+	state *sim, completion *Completion, callback Timeout_Callback,
+	socket File, _ Address, deadline time.Duration,
+) {
+	invariant.Always(deadline > 0, "A connect deadline is positive and finite.")
+	connect_err := error(nil)
+	if prng.Generator_Below(&state.Generator, 4) == 0 {
+		connect_err = Connection_Refused
+	}
+	latency := sim_latency(state)
+	if latency >= deadline {
+		sim_submit(state, completion, deadline,
+			sim_deliver_status(completion, callback, Deadline_Exceeded))
+		state.Operations[completion] = sim_operation_write_waiter
+		state.Operation_Files[completion] = socket
+		return
+	}
+	sim_submit(state, completion, latency, func() {
+		if connect_err == nil {
+			socket_state := state.Sockets[socket]
+			if socket_state != nil {
+				socket_state.Connected = true
+			}
+		}
+		callback(completion, connect_err)
+	})
+	state.Operations[completion] = sim_operation_write_waiter
+	state.Operation_Files[completion] = socket
+}
+
 // Wires the effect operations — signal watch and compute offload — onto loop.
-func sim_wire_effects(state *Simulation, loop *IO) {
+func sim_wire_effects(state *sim, loop *IO) {
 	loop.Watch_Signal = func(
 		completion *Completion, callback Signal_Callback, signal Signal,
+		deadline time.Duration,
 	) {
-		sim_watch_signal(state, completion, callback, signal)
+		invariant.Always(deadline > 0, "A signal-watch deadline is positive and finite.")
+		sim_watch_signal(state, completion, callback, signal, deadline)
 	}
 	loop.Compute = func(completion *Completion, callback Compute_Callback, work func()) {
 		sim_compute(state, completion, callback, work)
 	}
 	loop.Spawn = func(
 		completion *Completion, callback Process_Callback, request Process_Request,
+		deadline time.Duration,
 	) {
-		sim_spawn(state, completion, callback, request)
+		invariant.Always(deadline > 0, "A spawn deadline is positive and finite.")
+		sim_spawn(state, completion, callback, request, deadline)
 	}
-	loop.Self_Exec = func(
-		path string, argv []string, extra_environment []string, preserve []File,
-	) (err error) {
+	loop.Self_Exec = func(path string, argv []string, _ []string) (err error) {
 		return sim_self_exec_unsupported
 	}
 }
@@ -636,34 +1139,49 @@ var sim_self_exec_unsupported = errors.New("io: self-exec is not supported by th
 // occasionally non-zero for fault coverage) with no captured output — scripted output is
 // disallowed, so the seed decides success or failure, not a canned payload.
 func sim_spawn(
-	state *Simulation, completion *Completion,
-	callback Process_Callback, request Process_Request,
+	state *sim, completion *Completion, callback Process_Callback, request Process_Request,
+	deadline time.Duration,
 ) {
 	exit := 0
-	if prng.Generator_Below(&state.Generator, SIM_SPAWN_FAIL_GRAINS) == 0 {
+	if prng.Generator_Below(&state.Generator, sim_spawn_fail_grains) == 0 {
 		exit = 1
 	}
-	sim_submit(state, completion, sim_latency(state), func() {
-		if completion.Cancelled {
-			callback(completion, Process_Result{}, Cancelled)
-			return
-		}
+	latency := sim_latency(state)
+	if latency >= deadline {
+		sim_submit(state, completion, deadline, func() {
+			callback(completion, Process_Result{}, Deadline_Exceeded)
+		})
+		state.Operations[completion] = sim_operation_posted
+		return
+	}
+	sim_submit(state, completion, latency, func() {
 		callback(completion, Process_Result{Exit: exit}, nil)
 	})
+	state.Operations[completion] = sim_operation_posted
 }
 
 // Panics on a violated invariant, fail-closed — a tripped assert is always a bug in
 // this package, so the simulation stops loudly instead of corrupting on.
 // Hands out the next distinct synthetic descriptor.
-func sim_descriptor(state *Simulation) (file File) {
+func sim_descriptor(state *sim) (file File) {
 	state.Next_File++
 	return state.Next_File
 }
 
+// Opens and records one caller-owned synthetic socket.
+func sim_open_socket(
+	state *sim, family Address_Family, datagram bool,
+) (socket File) {
+	socket = sim_descriptor(state)
+	state.Raw_Open[socket] = true
+	state.Sockets[socket] = &sim_socket{Family: family, Datagram: datagram}
+	return socket
+}
+
 // Returns a fresh empty directory node, the shape the root, mkdir, and the generator all
 // build.
-func sim_new_directory() (node *Simulation_Node) {
-	return &Simulation_Node{Directory: true, Children: map[string]*Simulation_Node{}}
+func sim_new_directory() (node *sim_node) {
+	return &sim_node{Directory: true, Children: map[string]*sim_node{}}
 }
 
 // Splits an absolute path into its non-empty component names, so "/a/b" walks as a, b.
@@ -678,7 +1196,7 @@ func sim_path_names(path string) (names []string) {
 }
 
 // Resolves path against root, returning the node it names and whether it was found.
-func sim_resolve(root *Simulation_Node, path string) (node *Simulation_Node, found bool) {
+func sim_resolve(root *sim_node, path string) (node *sim_node, found bool) {
 	node = root
 	for _, name := range sim_path_names(path) {
 		if !node.Directory {
@@ -694,7 +1212,7 @@ func sim_resolve(root *Simulation_Node, path string) (node *Simulation_Node, fou
 }
 
 // Reports path's status against root: an unresolved path is Exists false, else its kind.
-func sim_status(root *Simulation_Node, path string) (status File_Status) {
+func sim_status(root *sim_node, path string) (status File_Status) {
 	node, found := sim_resolve(root, path)
 	if !found {
 		return File_Status{}
@@ -708,7 +1226,7 @@ func sim_status(root *Simulation_Node, path string) (status File_Status) {
 
 // Lists path's immediate children sorted by name — sorted so the order is deterministic
 // despite the backing map, since a run must reproduce. Absent or non-directory paths error.
-func sim_read_directory(root *Simulation_Node, path string) (entries []Directory_Entry, err error) {
+func sim_read_directory(root *sim_node, path string) (entries []Directory_Entry, err error) {
 	node, found := sim_resolve(root, path)
 	if !found {
 		return nil, sim_file_absent
@@ -729,7 +1247,7 @@ func sim_read_directory(root *Simulation_Node, path string) (entries []Directory
 
 // Creates path and any missing parents against root; an existing directory converges, and a
 // file where a directory is needed errors.
-func sim_make_directory(root *Simulation_Node, path string) (err error) {
+func sim_make_directory(root *sim_node, path string) (err error) {
 	node := root
 	for _, name := range sim_path_names(path) {
 		if !node.Directory {
@@ -750,7 +1268,7 @@ func sim_make_directory(root *Simulation_Node, path string) (err error) {
 
 // Opens path for reading against state.Root, binding a fresh descriptor to its node. An
 // absent path, or a directory, errors — matching a real open of a missing or non-file path.
-func sim_open(state *Simulation, path string) (file File, err error) {
+func sim_open(state *sim, path string) (file File, err error) {
 	node, found := sim_resolve(state.Root, path)
 	if !found {
 		return 0, sim_file_absent
@@ -760,24 +1278,26 @@ func sim_open(state *Simulation, path string) (file File, err error) {
 	}
 	descriptor := sim_descriptor(state)
 	state.Files[descriptor] = node
+	state.Raw_Open[descriptor] = true
 	return descriptor, nil
 }
 
 // Creates or truncates the file at path against state.Root and binds a fresh descriptor to
 // it. The parent directory must already exist, matching a real create.
-func sim_create(state *Simulation, path string) (file File, err error) {
+func sim_create(state *sim, path string) (file File, err error) {
 	node, create_err := sim_create_file(state.Root, path)
 	if create_err != nil {
 		return 0, create_err
 	}
 	descriptor := sim_descriptor(state)
 	state.Files[descriptor] = node
+	state.Raw_Open[descriptor] = true
 	return descriptor, nil
 }
 
 // Resolves path's parent (which must be an existing directory), then creates a fresh file
 // node under it or truncates an existing file, returning the node.
-func sim_create_file(root *Simulation_Node, path string) (node *Simulation_Node, err error) {
+func sim_create_file(root *sim_node, path string) (node *sim_node, err error) {
 	names := sim_path_names(path)
 	if len(names) == 0 {
 		return nil, sim_is_a_directory
@@ -802,7 +1322,7 @@ func sim_create_file(root *Simulation_Node, path string) (node *Simulation_Node,
 		leaf_node.Contents = []byte{}
 		return leaf_node, nil
 	}
-	created := &Simulation_Node{Contents: []byte{}}
+	created := &sim_node{Contents: []byte{}}
 	parent.Children[leaf] = created
 	return created, nil
 }
@@ -810,14 +1330,10 @@ func sim_create_file(root *Simulation_Node, path string) (node *Simulation_Node,
 // Submits a file read that, when it fires, copies the node's bytes from offset into the
 // buffer and reports the count — so a read reflects whatever an earlier write stored.
 func sim_file_read(
-	state *Simulation, completion *Completion, callback Callback,
-	node *Simulation_Node, buffer []byte, offset int64,
+	state *sim, completion *Completion, callback Callback, node *sim_node,
+	buffer []byte, offset int64,
 ) {
 	sim_submit(state, completion, sim_latency(state), func() {
-		if completion.Cancelled {
-			callback(completion, 0, Cancelled)
-			return
-		}
 		count := 0
 		if offset < int64(len(node.Contents)) {
 			count = copy(buffer, node.Contents[offset:])
@@ -829,14 +1345,10 @@ func sim_file_read(
 // Submits a file write that, when it fires, stores the buffer into the node at offset,
 // growing its contents as needed, and reports the byte count.
 func sim_file_write(
-	state *Simulation, completion *Completion, callback Callback,
-	node *Simulation_Node, buffer []byte, offset int64,
+	state *sim, completion *Completion, callback Callback, node *sim_node,
+	buffer []byte, offset int64,
 ) {
 	sim_submit(state, completion, sim_latency(state), func() {
-		if completion.Cancelled {
-			callback(completion, 0, Cancelled)
-			return
-		}
 		sim_node_write(node, buffer, offset)
 		callback(completion, len(buffer), nil)
 	})
@@ -844,7 +1356,7 @@ func sim_file_write(
 
 // Stores buffer into node's contents at offset, growing the backing bytes when the write
 // extends past the current end.
-func sim_node_write(node *Simulation_Node, buffer []byte, offset int64) {
+func sim_node_write(node *sim_node, buffer []byte, offset int64) {
 	end_size := offset + int64(len(buffer))
 	if end_size > int64(len(node.Contents)) {
 		grown := make([]byte, end_size)
@@ -857,19 +1369,11 @@ func sim_node_write(node *Simulation_Node, buffer []byte, offset int64) {
 // The file-size percentiles the generated contents are sampled from: most files are a
 // handful of bytes, a few reach hundreds, and the top one percent the largest — a
 // heavy-tailed spread (prng.Percentile_Distribution) so a sweep meets many scales at once.
-const SIM_SIZE_P50 = 4
-
-// SIM_SIZE_P75 is 16, a 4x step past P50 that keeps the body of files a handful of bytes.
-const SIM_SIZE_P75 = 16
-
-// SIM_SIZE_P95 is 64, another 4x step marking where the common sizes end.
-const SIM_SIZE_P95 = 64
-
-// SIM_SIZE_P99 is 256, the hundreds-scale files only the last percent reach.
-const SIM_SIZE_P99 = 256
-
-// SIM_SIZE_P100 is 1024, the heavy tail's largest sample capping the sweep.
-const SIM_SIZE_P100 = 1024
+const sim_size_p50 = 4
+const sim_size_p75 = 16
+const sim_size_p95 = 64
+const sim_size_p99 = 256
+const sim_size_p100 = 1024
 
 // Returns how often the generator adds another sibling — a 3-in-4 Chance, so a directory's
 // breadth is geometric and any width is reachable rather than capped at a fixed count.
@@ -887,17 +1391,17 @@ func sim_subdirectory_chance() (chance prng.Ratio) {
 // directory grows siblings on a Chance coin (geometric breadth and depth, no ceiling), a
 // child is a subdirectory on another Chance, and a file's size is Sampled from a heavy-tailed
 // Percentile spread. It knows no consumer's layout; a walker imposes its own meaning.
-func sim_generate(generator *prng.Generator) (root *Simulation_Node) {
+func sim_generate(generator *prng.Generator) (root *sim_node) {
 	sizes := prng.Percentile_Distribution(&prng.Percentile_Distribution_Input{
 		P25:  0,
-		P50:  SIM_SIZE_P50,
-		P75:  SIM_SIZE_P75,
-		P95:  SIM_SIZE_P95,
-		P99:  SIM_SIZE_P99,
-		P100: SIM_SIZE_P100,
+		P50:  sim_size_p50,
+		P75:  sim_size_p75,
+		P95:  sim_size_p95,
+		P99:  sim_size_p99,
+		P100: sim_size_p100,
 	})
 	root = sim_new_directory()
-	directories := []*Simulation_Node{root}
+	directories := []*sim_node{root}
 	for len(directories) > 0 {
 		directory := directories[len(directories)-1]
 		directories = directories[:len(directories)-1]
@@ -912,7 +1416,7 @@ func sim_generate(generator *prng.Generator) (root *Simulation_Node) {
 				continue
 			}
 			contents := sim_generate_bytes(generator, sizes)
-			directory.Children[name] = &Simulation_Node{Contents: contents}
+			directory.Children[name] = &sim_node{Contents: contents}
 		}
 	}
 	return root
@@ -932,60 +1436,54 @@ func sim_generate_bytes(
 
 // Draws the next operation's completion delay from the seed, so completion order
 // varies per run yet reproduces exactly.
-func sim_latency(state *Simulation) (latency time.Duration) {
-	return time.Duration(prng.Generator_Below(&state.Generator, SIM_LATENCY_GRAINS))
+func sim_latency(state *sim) (latency time.Duration) {
+	return time.Duration(prng.Generator_Below(&state.Generator, sim_latency_grains))
 }
 
-// Wraps a byte-count delivery so a cancelled completion reports Cancelled instead.
+// Wraps a successful byte-count delivery.
 func sim_deliver_bytes(completion *Completion, callback Callback, count int) (deliver func()) {
-	return func() {
-		if completion.Cancelled {
-			callback(completion, 0, Cancelled)
-			return
-		}
-		callback(completion, count, nil)
-	}
+	return func() { callback(completion, count, nil) }
 }
 
-// Wraps a status delivery (timeout, close) so a cancelled completion reports Cancelled.
+// Wraps a status delivery for a timeout or another result-only operation.
 func sim_deliver_status(
 	completion *Completion, callback Timeout_Callback, err error,
 ) (deliver func()) {
-	return func() {
-		if completion.Cancelled {
-			callback(completion, Cancelled)
-			return
-		}
-		callback(completion, err)
-	}
+	return func() { callback(completion, err) }
 }
 
-// Wraps a socket delivery so a cancelled completion reports Cancelled instead.
-func sim_deliver_socket(
-	completion *Completion, callback Socket_Callback, socket File,
-) (deliver func()) {
-	return func() {
-		if completion.Cancelled {
-			callback(completion, 0, Cancelled)
-			return
-		}
-		callback(completion, socket, nil)
-	}
-}
-
-// Submits a byte-count operation — read, write, receive, or send — reporting the
-// buffer length after the drawn latency, or the Cancelled error if cancelled.
-func sim_bytes(state *Simulation, completion *Completion, callback Callback, buffer []byte) {
+// Submits a byte-count operation reporting the buffer length after the drawn latency.
+func sim_bytes(state *sim, completion *Completion, callback Callback, buffer []byte) {
 	sim_submit(state, completion, sim_latency(state),
 		sim_deliver_bytes(completion, callback, len(buffer)))
 }
 
-// Schedules callback to receive the next synthetic descriptor after the drawn latency,
-// shared by Accept and Connect and their TLS variants.
-func sim_yield_socket(state *Simulation, completion *Completion, callback Socket_Callback) {
-	socket := sim_descriptor(state)
-	sim_submit(state, completion, sim_latency(state),
-		sim_deliver_socket(completion, callback, socket))
+// Schedules callback to receive the next connected synthetic descriptor after drawn latency.
+func sim_yield_socket(
+	state *sim, completion *Completion, callback Socket_Callback, listener File,
+	deadline time.Duration,
+) {
+	latency := sim_latency(state)
+	if latency >= deadline {
+		sim_submit(state, completion, deadline, func() {
+			callback(completion, File(-1), Deadline_Exceeded)
+		})
+		return
+	}
+	sim_submit(state, completion, latency, func() {
+		listener_state := state.Sockets[listener]
+		if listener_state == nil {
+			callback(completion, 0, errors.New("io: socket is not listening"))
+			return
+		}
+		if !listener_state.Listener {
+			callback(completion, 0, errors.New("io: socket is not listening"))
+			return
+		}
+		socket := sim_open_socket(state, listener_state.Family, false)
+		state.Sockets[socket].Connected = true
+		callback(completion, socket, nil)
+	})
 }
 
 // Reports a synthetic peer address for a live descriptor, the simulator's getpeername;
@@ -1000,49 +1498,91 @@ func sim_peer_address(file File) (address string) {
 // Watches for a signal that, in the simulator, arrives at a seed-drawn grain — the OS
 // event modeled as a seed outcome. It fires callback with the signal exactly once.
 func sim_watch_signal(
-	state *Simulation, completion *Completion, callback Signal_Callback, signal Signal,
+	state *sim, completion *Completion, callback Signal_Callback, signal Signal,
+	deadline time.Duration,
 ) {
-	sim_submit(state, completion, sim_latency(state), func() {
-		callback(completion, signal)
-	})
+	latency := sim_latency(state)
+	if latency >= deadline {
+		sim_submit(state, completion, deadline, func() {
+			callback(completion, Signal(-1), Deadline_Exceeded)
+		})
+	} else {
+		sim_submit(state, completion, latency, func() { callback(completion, signal, nil) })
+	}
+	state.Operations[completion] = sim_operation_signal
 }
 
 // Runs work inline after the drawn latency, then fires callback on the loop — the
-// deterministic counterpart of the OS backend's worker pool. A cancelled compute skips
-// the work but still fires callback so the submission resolves.
+// deterministic counterpart of the OS backend's worker pool.
 func sim_compute(
-	state *Simulation, completion *Completion, callback Compute_Callback, work func(),
+	state *sim, completion *Completion, callback Compute_Callback, work func(),
 ) {
 	sim_submit(state, completion, sim_latency(state), func() {
-		if !completion.Cancelled {
-			work()
-		}
+		work()
 		callback(completion)
 	})
+	state.Operations[completion] = sim_operation_result
 }
 
 // Builds the driver over state — the loop-advancing capability, held only by main or a
 // test, never by code that merely submits IO.
-func sim_to_driver(state *Simulation) (driver Driver) {
+func sim_to_driver(state *sim) (driver Driver) {
 	return Driver{
-		Run: func() { sim_drive(state, func() { sim_run(state) }) },
-		Run_For: func(duration time.Duration) {
+		Run: func() (err error) {
+			sim_drive(state, func() { sim_run(state) })
+			return nil
+		},
+		Run_For: func(duration time.Duration) (err error) {
 			sim_drive(state, func() { sim_run_for(state, duration) })
+			return nil
 		},
 		Run_Until: func(
 			done func() (finished bool), timeout time.Duration,
-		) (completed bool) {
+		) (completed bool, err error) {
 			sim_drive(state, func() { completed = sim_run_until(state, done, timeout) })
-			return completed
+			return completed, nil
 		},
+		Deinit:     func() {},
+		Introspect: func() (counts Loop_Counts) { return sim_introspect(state) },
 	}
+}
+
+// Samples every simulated queue class and lifecycle flag without exposing simulator state.
+func sim_introspect(state *sim) (counts Loop_Counts) {
+	for _, operation := range state.Operations {
+		if operation == sim_operation_completed {
+			counts.Completed++
+		}
+		if operation == sim_operation_timeout {
+			counts.Timeouts++
+		}
+		if operation == sim_operation_read_waiter {
+			counts.IO_Backlog++
+		}
+		if operation == sim_operation_write_waiter {
+			counts.IO_Backlog++
+		}
+		if operation == sim_operation_signal {
+			counts.Signal_Waiters++
+		}
+		if operation == sim_operation_posted {
+			counts.Posted++
+		}
+		if operation == sim_operation_result {
+			counts.Results++
+		}
+	}
+	counts.Raw_Open = len(state.Raw_Open)
+	counts.Wake_Active = counts.Posted > 0 || counts.Results > 0
+	counts.Compute_Active = counts.Results > 0
+	return counts
 }
 
 // Runs pump as the top-level drive, asserting no drive is already in progress so a Run*
 // called from within a completion callback panics instead of re-entering the driver. The
 // internal per-tick functions call one another directly, not through here, so nested
 // ticking within one drive does not trip it.
-func sim_drive(state *Simulation, pump func()) {
+func sim_drive(state *sim, pump func()) {
 	invariant.Always(!state.Drive_Active,
 		"A drive begins at top level, never from within a completion callback.")
 	state.Drive_Active = true
@@ -1051,15 +1591,22 @@ func sim_drive(state *Simulation, pump func()) {
 }
 
 // Returns the current virtual Moment; the sim never reads the operating-system time.
-func sim_now(state *Simulation) (now time.Moment) {
+func sim_now(state *sim) (now time.Moment) {
 	return state.Clock.Now_Monotonic()
 }
 
 // Schedules completion to fire at now plus latency and inserts it in Ready_At order.
 // Asserts the completion is its own original (not a by-value copy), then arms it through
 // the lifecycle machine — a reused in-flight completion panics as the armed-to-armed
-// edge. Clears any stale Cancelled payload so a reused completion starts fresh.
-func sim_submit(state *Simulation, completion *Completion, latency time.Duration, callback func()) {
+// edge.
+func sim_submit(state *sim, completion *Completion, latency time.Duration, callback func()) {
+	sim_arm(state, completion, callback)
+	completion.Ready_At = sim_now(state) + time.Moment(latency)
+	sim_enqueue(state, completion)
+}
+
+// Arms completion without placing it on the ready-time queue, for TigerBeetle Event listeners.
+func sim_arm(state *sim, completion *Completion, callback func()) {
 	original := completion.Self == nil || completion.Self == completion
 	invariant.Always(original,
 		"A submitted completion is its own original, never a by-value copy.")
@@ -1067,14 +1614,13 @@ func sim_submit(state *Simulation, completion *Completion, latency time.Duration
 	Completion_Transition(&Completion_Transition_Input{
 		Completion: completion, From: COMPLETION_IDLE, To: COMPLETION_ARMED,
 	})
-	completion.Ready_At = sim_now(state) + time.Moment(latency)
 	completion.Callback = callback
-	completion.Cancelled = false
-	sim_enqueue(state, completion)
+	completion.Next_Tick = false
+	state.Operations[completion] = sim_operation_completed
 }
 
 // Inserts completion into the queue in Ready_At order, earliest first.
-func sim_enqueue(state *Simulation, completion *Completion) {
+func sim_enqueue(state *sim, completion *Completion) {
 	index := 0
 	for index < len(state.Queue) && state.Queue[index].Ready_At <= completion.Ready_At {
 		index++
@@ -1084,32 +1630,32 @@ func sim_enqueue(state *Simulation, completion *Completion) {
 	state.Queue[index] = completion
 }
 
-// Cancels an in-flight completion: if still armed and queued, move it to the cancelled
-// state and make it due now so the next drain delivers its callback with the Cancelled
-// error. A completion already fired, never queued, or already cancelled is left
-// untouched — cancel is then a harmless no-op.
-func sim_cancel(state *Simulation, completion *Completion) {
-	if completion.State != COMPLETION_ARMED {
-		return
-	}
-	for index := 0; index < len(state.Queue); index++ {
-		if state.Queue[index] != completion {
+// Removes every queued next-tick completion for source and retires it without delivery,
+// matching io/linux.zig:354-367 and io/darwin.zig:783-796.
+func sim_reset_next_tick(state *sim, source Next_Tick_Source) {
+	kept := state.Queue[:0]
+	for _, completion := range state.Queue {
+		operation := state.Operations[completion]
+		if operation != sim_operation_next_tick {
+			kept = append(kept, completion)
 			continue
 		}
-		state.Queue = append(state.Queue[:index], state.Queue[index+1:]...)
+		if completion.Next_Tick_Source != source {
+			kept = append(kept, completion)
+			continue
+		}
+		delete(state.Operations, completion)
+		delete(state.Operation_Files, completion)
 		Completion_Transition(&Completion_Transition_Input{
-			Completion: completion, From: COMPLETION_ARMED, To: COMPLETION_CANCELLED,
+			Completion: completion, From: COMPLETION_ARMED, To: COMPLETION_IDLE,
 		})
-		completion.Cancelled = true
-		completion.Ready_At = sim_now(state)
-		sim_enqueue(state, completion)
-		return
 	}
+	state.Queue = kept
 }
 
 // Fires the earliest completion if it is due as of now, reporting whether it did,
 // mirroring TigerBeetle's Storage.step.
-func sim_step(state *Simulation) (advanced bool) {
+func sim_step(state *sim) (advanced bool) {
 	if len(state.Queue) == 0 {
 		return false
 	}
@@ -1118,24 +1664,20 @@ func sim_step(state *Simulation) (advanced bool) {
 	}
 	completion := state.Queue[0]
 	state.Queue = state.Queue[1:]
+	delete(state.Operations, completion)
+	delete(state.Operation_Files, completion)
 	// Return to idle before the callback runs — TigerBeetle's ordering — so a callback
 	// may legally resubmit its own completion, the repeating-timer pattern.
-	if completion.State == COMPLETION_CANCELLED {
-		Completion_Transition(&Completion_Transition_Input{
-			Completion: completion, From: COMPLETION_CANCELLED, To: COMPLETION_IDLE,
-		})
-	} else {
-		Completion_Transition(&Completion_Transition_Input{
-			Completion: completion, From: COMPLETION_ARMED, To: COMPLETION_IDLE,
-		})
-	}
+	Completion_Transition(&Completion_Transition_Input{
+		Completion: completion, From: COMPLETION_ARMED, To: COMPLETION_IDLE,
+	})
 	completion.Callback()
 	return true
 }
 
 // Drains every completion due as of now, in Ready_At order; it never advances time —
 // advancing is the driver's job, so the queue itself stays passive.
-func sim_drain(state *Simulation) {
+func sim_drain(state *sim) {
 	for sim_step(state) {
 	}
 }
@@ -1149,13 +1691,13 @@ func sim_drain(state *Simulation) {
 // that matter most because they strike while nothing is scheduled — would act. Uniform
 // ticking keeps every grain a decision point, as TigerBeetle's simulator does for its
 // per-tick crash/partition rolls.
-func sim_run(state *Simulation) {
+func sim_run(state *sim) {
 	sim_drain(state)
 	state.Tick()
 }
 
 // Drives the loop until the duration has elapsed, delivering completions as due.
-func sim_run_for(state *Simulation, duration time.Duration) {
+func sim_run_for(state *sim, duration time.Duration) {
 	deadline := sim_now(state) + time.Moment(duration)
 	for sim_now(state) < deadline {
 		sim_run(state)
@@ -1168,7 +1710,7 @@ func sim_run_for(state *Simulation, duration time.Duration) {
 // completed reports whether done tripped rather than the deadline. Top-level and
 // single-loop only; each step drains then ticks.
 func sim_run_until(
-	state *Simulation, done func() (finished bool), timeout time.Duration,
+	state *sim, done func() (finished bool), timeout time.Duration,
 ) (completed bool) {
 	deadline := sim_now(state) + time.Moment(timeout)
 	for !done() {

@@ -3,7 +3,7 @@ package io_test
 import (
 	"testing"
 
-	invariant "local/james-orcales/shared/invariant/default"
+	invariant "local/james-orcales/g/shared/invariant/default"
 )
 
 // TestMain runs the suite through the invariant harness so the completion machine's

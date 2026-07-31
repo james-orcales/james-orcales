@@ -1,148 +1,99 @@
-// Package io is the composition tier: the operating-system-backed async IO, the Go
-// translation of TigerBeetle's io/darwin.zig and io/linux.zig. It declares package
-// io so callers import ".../io/default" and read it as the library with no alias.
+// Package io is the operating-system backend for shared/io.
+//
+// FAITHFUL PORT: Darwin follows third-party/tigerbeetle/src/io/darwin.zig and Linux follows
+// io/linux.zig. DO NOT DIVERGE. There is no generic Cancel. Descriptor owners perform Shutdown,
+// join submitted operations, and then asynchronous Close as in message_bus.zig:1057-1160.
 package io
 
 import (
 	"bytes"
-	"crypto/tls"
+	"context"
 	"errors"
-	"net"
 	"os"
 	"os/exec"
 	"os/signal"
 	"runtime"
-	"strconv"
 	"sync"
+	"sync/atomic"
 	"syscall"
 
-	invariant "local/james-orcales/shared/invariant/default"
-	"local/james-orcales/shared/io"
-	"local/james-orcales/shared/time"
+	invariant "local/james-orcales/g/shared/invariant/default"
+	"local/james-orcales/g/shared/io"
+	"local/james-orcales/g/shared/time"
 )
 
-// Caps the ready set one poll_file_wait returns; sized to drain a busy loop in few
-// syscalls without an unbounded buffer.
-const POLL_EVENTS_MAX = 64
+// Caps one Darwin kqueue changelist and event batch, matching TigerBeetle's fixed flush buffer.
+const poll_events_max = 256
 
-// POLL_FOREVER, passed as an idle gap, blocks the readiness poll until an event arrives rather
+// Poll_forever, passed as an idle gap, blocks the readiness poll until an event arrives rather
 // than for a fixed span — the unbounded wait a run with no deadline needs, so the loop sleeps
 // exactly until there is work instead of waking on an interval.
-const POLL_FOREVER time.Moment = -1
-
-// Bounds one wake-pipe drain so a flood of pokes cannot spin the loop.
-const WAKE_DRAIN_PASSES_MAX = 16
+const poll_forever time.Moment = -1
 
 // Buffers a few pending signals so a burst is not lost between drains.
-const SIGNAL_QUEUE_DEPTH = 8
-
-// Buffers receive requests handed to a TLS connection's reader goroutine; a consumer arms one
-// receive at a time, so this only needs slack, not depth.
-const TLS_RECEIVE_QUEUE = 4
+const signal_queue_depth = 8
 
 // Caps the idle gap while a signal watcher exists, since a signal does not wake the poll;
 // the loop re-checks the signal channel at least this often.
-const SIGNAL_POLL_INTERVAL = 10 * time.MILLISECOND
+const signal_poll_interval = 10 * time.MILLISECOND
 
 // Buffers submitted compute jobs so bursts do not block the loop thread.
-const COMPUTE_QUEUE_DEPTH = 1024
+const compute_queue_depth = 1024
 
-// Buffers a TLS connection's in-flight requests.
-const TLS_REQUEST_DEPTH = 4
-
-// The synthetic-descriptor base for TLS connections, above any real file descriptor, so
-// Receive/Send/Close can route a TLS socket to its goroutine by the descriptor alone.
-const TLS_FILE_BASE io.File = 1 << 30
-
-// The Tls_Kind type names the request a TLS connection goroutine handles.
-type Tls_Kind int
-
-// The TLS_SEND kind writes plaintext through the TLS connection.
-const TLS_SEND Tls_Kind = 0
-
-// The TLS_RECEIVE kind reads plaintext from the TLS connection.
-const TLS_RECEIVE Tls_Kind = 1
-
-// The TLS_CLOSE kind shuts the TLS connection down.
-const TLS_CLOSE Tls_Kind = 2
-
-// One ready descriptor the poll reports, decoded from the platform's native event
-// into a direction the dispatch understands.
-type Poll_Ready struct {
-	// Descriptor is the socket the readiness applies to.
-	Descriptor int
-	// Writable is true for write readiness, false for read readiness.
-	Writable bool
-}
-
-// One pending socket completion: the syscall to run when its descriptor becomes
-// ready.
-type Socket_Operation struct {
-	// Completion is the caller-owned completion this operation belongs to.
-	Completion *io.Completion
-	// Perform runs the non-blocking syscall. On EAGAIN it returns false with a nil deliver
-	// so the operation stays armed. On completion it returns true and a deliver closure the
-	// loop calls only after it has retired this waiter — so a callback that arms a new op on
-	// the same descriptor (a send inside a connect completion) is not deleted by the retire.
-	Perform func() (done bool, deliver func())
-}
-
-// Holds the host backend's state: the injected clock, the timeout and completion
-// queues the loop drains, and the readiness poll with its per-descriptor socket
-// waiters, mirroring TigerBeetle's IO struct.
-type Operating_System struct {
+// Holds the host backend's state: the completed queue, Darwin timeout queue, platform scheduler,
+// and repository-extension effects which all retire through completed.
+type operating_system struct {
 	// Host is the real clock; deadlines and waits are measured against it.
 	Host time.Clock
 	// Timeouts are pending timer completions ordered by Ready_At, earliest first.
 	Timeouts []*io.Completion
 	// Completed are completions whose callbacks are ready to run on the next drain.
 	Completed []*io.Completion
-	// Poll is the kqueue/epoll descriptor, created on the first socket operation.
-	Poll Poll_File
-	// Poll_Active reports whether Poll has been created.
-	Poll_Active bool
-	// Read_Waiters maps a descriptor to the operation awaiting its readability.
-	Read_Waiters map[int]*Socket_Operation
-	// Write_Waiters maps a descriptor to the operation awaiting its writability.
-	Write_Waiters map[int]*Socket_Operation
+	// Platform is kqueue on Darwin or io_uring on Linux, created eagerly by the constructor.
+	Platform platform_scheduler
+	// Operations maps integer kernel user_data values to caller-owned completion operations.
+	Operations map[uint64]*operating_system_operation
+	// Next_Identifier is the last non-zero kernel correlation identifier issued.
+	Next_Identifier uint64
 	// Signals receives OS signals from the os/signal notifier; nil until the first watch.
 	Signals chan os.Signal
 	// Signal_Waiters are the registered signal watchers, fired one-shot on delivery.
-	Signal_Waiters []Signal_Waiter
+	Signal_Waiters []signal_waiter
 	// Jobs carries compute work to the worker pool; nil until the first Compute.
-	Jobs chan *Compute_Job
+	Jobs chan *compute_job
 	// Results holds finished compute jobs handed back from workers, guarded by the mutex.
-	Results []*Compute_Job
-	// Posted holds completions finished off the loop thread (TLS), guarded by the mutex.
+	Results []*compute_job
+	// Posted holds completions finished off the loop thread (spawn), guarded by the mutex.
 	Posted []*io.Completion
 	// Results_Mutex guards Results and Posted, the only cross-thread state.
 	Results_Mutex sync.Mutex
-	// Wake_Read is the read end of the self-pipe a blocked poll waits on.
-	Wake_Read int
-	// Wake_Write is the write end of the self-pipe; a byte written here wakes a blocked poll.
-	Wake_Write int
-	// Wake_Active reports whether the wake pipe has been created and armed.
+	// Wake_Event is TigerBeetle's Event used only to bridge marked repository extensions
+	// back to the loop thread. It is an internal backend resource excluded from Raw_Open.
+	Wake_Event io.Event
+	// Wake_Completion is the one persistent listener rearmed after each extension drain.
+	Wake_Completion io.Completion
+	// Wake_Identifier is the immutable kernel token worker threads use to trigger Wake_Event.
+	Wake_Identifier uint64
+	// Wake_Active reports whether the extension Event has been opened and armed.
 	Wake_Active bool
 	// Compute_Active reports whether the worker pool has been started.
 	Compute_Active bool
+	// Extension_Submitted counts repository-extension completions not yet delivered to callers.
+	Extension_Submitted int
+	// Extension_Workers joins compute and spawn goroutines before the Event/backend closes.
+	Extension_Workers sync.WaitGroup
+	// Extension_Stop suppresses Event reattachment during Deinit's internal final trigger.
+	Extension_Stop bool
 	// Drive_Active is set while a Run* is driving the loop, so a Run* called from within a
 	// completion callback — which would re-enter the driver mid-drain — panics loudly.
 	Drive_Active bool
-	// TLS maps a synthetic descriptor to its connection goroutine's request channel.
-	TLS map[io.File]*Tls_Connection
-	// Next_TLS is the synthetic TLS descriptor counter, based at TLS_FILE_BASE.
-	Next_TLS io.File
-	// Raw_Open records every raw, non-close-on-exec descriptor this backend holds open — the
-	// listeners, plainly-accepted connections, plain outbound connects, and the wake pipe. It
-	// is the exact set Self_Exec must mark close-on-exec (minus the preserved listeners) so no
-	// stale descriptor leaks into the re-exec'd image. TLS-borne sockets never appear here:
-	// they ride net.FileConn/net.Dial, which Go marks close-on-exec already.
+	// Raw_Open records every raw descriptor this backend holds open.
 	Raw_Open map[int]bool
 }
 
 // One registered signal watcher: the OS signal it awaits, its backend-independent kind,
 // and the completion and callback to fire once on delivery.
-type Signal_Waiter struct {
+type signal_waiter struct {
 	// System is the OS signal this watcher awaits.
 	System os.Signal
 	// Kind is the backend-independent signal reported to the callback.
@@ -151,11 +102,13 @@ type Signal_Waiter struct {
 	Completion *io.Completion
 	// Callback is the typed callback run with the delivered signal.
 	Callback io.Signal_Callback
+	// Deadline is the finite moment when this repository-extension operation retires.
+	Deadline time.Moment
 }
 
 // One offloaded compute job: the work to run on a worker thread and the completion and
 // callback to fire back on the loop thread once it finishes.
-type Compute_Job struct {
+type compute_job struct {
 	// Completion is the caller-owned completion fired once the work finishes.
 	Completion *io.Completion
 	// Callback is the typed callback run on the loop thread after the work.
@@ -164,172 +117,136 @@ type Compute_Job struct {
 	Work func()
 }
 
-// One live TLS connection, serviced by its own goroutine that owns the tls.Conn and
-// reads requests off Requests.
-type Tls_Connection struct {
-	// Requests carries send/receive/close requests to the connection goroutine.
-	Requests chan Tls_Request
-}
-
-// One request to a TLS connection goroutine.
-type Tls_Request struct {
-	// Kind is the operation to perform.
-	Kind Tls_Kind
-	// Completion is the caller-owned completion fired when the request finishes.
-	Completion *io.Completion
-	// Buffer is the plaintext to send, or the destination for a receive.
-	Buffer []byte
-	// Byte_Callback reports a send's or receive's byte count.
-	Byte_Callback io.Callback
-	// Close_Callback reports a close's result.
-	Close_Callback io.Timeout_Callback
-}
-
-// The endpoint and verification policy for an outbound TLS connection.
-type Tls_Target struct {
-	// Host is the endpoint host.
-	Host string
-	// Port is the endpoint port.
-	Port int
-	// Server_Name is the SNI name and the name the certificate is verified against.
-	Server_Name string
-	// Insecure skips certificate verification (Connect_Insecure).
-	Insecure bool
-	// Completion is the caller-owned completion fired when the connect finishes.
-	Completion *io.Completion
-	// Callback reports the connected socket or the connect error.
-	Callback io.Socket_Callback
-}
-
-// New_Operating_System_IO returns an IO backed by the host operating system. File
-// reads and writes run inside the loop via pread/pwrite; sockets ride a real
-// kqueue/epoll readiness loop; timeouts fire when the clock passes their deadline,
-// and Run_For blocks real time bounded by the nearest deadline or socket event —
-// the same deadline-bounded wait TigerBeetle performs in kevent/io_uring.
-func New_Operating_System_IO(host time.Clock) (loop io.IO, driver io.Driver) {
-	state := &Operating_System{Host: host, Raw_Open: map[int]bool{}}
+// New_Operating_System_IO eagerly creates the TigerBeetle scheduler. Entries is the io_uring
+// queue size on Linux and is accepted but ignored by kqueue on Darwin; it must fit TigerBeetle's
+// u12 contract. Flags are passed directly to io_uring setup and ignored by Darwin.
+func New_Operating_System_IO(
+	host time.Clock, entries uint16, flags uint32,
+) (loop io.IO, driver io.Driver, err error) {
+	if entries == 0 {
+		return io.IO{}, io.Driver{}, errors.New(
+			"io: scheduler entries must be in [1, 4095]",
+		)
+	}
+	if entries > 4095 {
+		return io.IO{}, io.Driver{}, errors.New(
+			"io: scheduler entries must be in [1, 4095]",
+		)
+	}
+	platform, initialize_err := platform_initialize(entries, flags)
+	if initialize_err != nil {
+		return io.IO{}, io.Driver{}, initialize_err
+	}
+	state := &operating_system{
+		Host:       host,
+		Platform:   platform,
+		Operations: map[uint64]*operating_system_operation{},
+		Raw_Open:   map[int]bool{},
+	}
 	operating_system_wire_file(state, &loop)
 	operating_system_wire_timer(state, &loop)
 	operating_system_wire_socket(state, &loop)
-	operating_system_wire_secure(state, &loop)
 	operating_system_wire_effects(state, &loop)
-	return loop, operating_system_to_driver(state)
+	operating_system_wire_platform(state, &loop)
+	return loop, operating_system_to_driver(state), nil
 }
 
-// Arms a completion through the lifecycle machine at the moment it enters the backend:
-// asserts it is its own original (a by-value copy carries the original's address), moves
-// it idle to armed — a reused in-flight completion panics as the armed-to-armed edge —
-// and clears the stale Cancelled payload so a reused completion starts fresh. Every op
-// closure calls this first, so the guard cannot be skipped by a new op.
+// Arms a completion through the idle-to-armed lifecycle edge.
 func operating_system_submit(completion *io.Completion) {
 	original := completion.Self == nil || completion.Self == completion
 	invariant.Always(original,
 		"A submitted completion is its own original, never a by-value copy.")
 	completion.Self = completion
+	completion.Next_Tick = false
 	io.Completion_Transition(&io.Completion_Transition_Input{
 		Completion: completion, From: io.COMPLETION_IDLE, To: io.COMPLETION_ARMED,
 	})
-	completion.Cancelled = false
-}
-
-// Wires the TLS socket operations — accept-secure, connect-secure, connect-insecure —
-// onto loop.
-func operating_system_wire_secure(state *Operating_System, loop *io.IO) {
-	loop.Accept_Secure = func(
-		completion *io.Completion, callback io.Socket_Callback,
-		listener io.File, certificate func() (value any),
-	) {
-		operating_system_submit(completion)
-		operating_system_accept_secure(state, completion, callback, listener, certificate)
-	}
-	loop.Connect_Secure = func(
-		completion *io.Completion, callback io.Socket_Callback,
-		host_address string, port int, server_name string,
-	) {
-		operating_system_submit(completion)
-		operating_system_connect_secure(state, Tls_Target{
-			Host: host_address, Port: port, Server_Name: server_name,
-			Completion: completion, Callback: callback,
-		})
-	}
-	loop.Connect_Insecure = func(
-		completion *io.Completion, callback io.Socket_Callback,
-		host_address string, port int, server_name string,
-	) {
-		operating_system_submit(completion)
-		operating_system_connect_secure(state, Tls_Target{
-			Host: host_address, Port: port, Server_Name: server_name, Insecure: true,
-			Completion: completion, Callback: callback,
-		})
-	}
 }
 
 // Wires the signal-watch and compute-offload operations onto loop.
-func operating_system_wire_effects(state *Operating_System, loop *io.IO) {
+func operating_system_wire_effects(state *operating_system, loop *io.IO) {
 	loop.Watch_Signal = func(
 		completion *io.Completion, callback io.Signal_Callback, signal io.Signal,
+		deadline time.Duration,
 	) {
+		invariant.Always(deadline > 0, "A signal-watch deadline is positive and finite.")
+		state.Extension_Submitted++
 		operating_system_submit(completion)
-		operating_system_watch_signal(state, completion, callback, signal)
+		operating_system_watch_signal(state, completion, func(
+			completed *io.Completion, delivered io.Signal, watch_err error,
+		) {
+			state.Extension_Submitted--
+			callback(completed, delivered, watch_err)
+		}, signal, deadline)
 	}
 	loop.Compute = func(completion *io.Completion, callback io.Compute_Callback, work func()) {
+		state.Extension_Submitted++
 		operating_system_submit(completion)
-		operating_system_compute_submit(state, completion, callback, work)
+		operating_system_compute_submit(state, completion, func(completed *io.Completion) {
+			state.Extension_Submitted--
+			callback(completed)
+		}, work)
 	}
 	loop.Spawn = func(
 		completion *io.Completion, callback io.Process_Callback, request io.Process_Request,
+		deadline time.Duration,
 	) {
+		invariant.Always(deadline > 0, "A spawn deadline is positive and finite.")
+		state.Extension_Submitted++
 		operating_system_submit(completion)
-		operating_system_spawn(state, completion, callback, request)
+		operating_system_spawn(state, completion, func(
+			completed *io.Completion, result io.Process_Result, spawn_err error,
+		) {
+			state.Extension_Submitted--
+			callback(completed, result, spawn_err)
+		}, request, deadline)
 	}
-	// Replaces this process's image with path/argv via execve, keeping the preserved
-	// descriptors live across the transition while marking every other raw descriptor
-	// close-on-exec so the kernel drops it atomically on a successful exec. It marks — never
-	// closes — so a synchronous exec failure (a bad path, a permission error) leaves the
-	// still-running process and all its descriptors intact for the caller to fall back on;
-	// the close-on-exec flag is harmless on a process that keeps running. On success execve
-	// never returns. Inlined like Listen, the other synchronous descriptor-level op.
-	loop.Self_Exec = func(
-		path string, argv []string, extra_environment []string, preserve []io.File,
-	) (err error) {
-		keep := map[int]bool{}
-		for _, file := range preserve {
-			keep[int(file)] = true
+	// Repository extension: successful exec atomically closes every CLOEXEC descriptor.
+	// TigerBeetle's multiversion behavior does not inherit listeners; the new image rebinds.
+	loop.Self_Exec = func(path string, argv []string, environment []string) (err error) {
+		if environment == nil {
+			environment = os.Environ()
 		}
-		for descriptor := range state.Raw_Open {
-			if keep[descriptor] {
-				continue
-			}
-			syscall.CloseOnExec(descriptor)
-		}
-		return syscall.Exec(path, argv, append(os.Environ(), extra_environment...))
+		return Self_Exec(Self_Exec_Input{
+			Path: path, Arguments: argv, Environment: environment,
+		})
 	}
+}
+
+// Self_Exec_Input is an explicit process-image replacement, including its complete environment.
+type Self_Exec_Input struct {
+	// Path is the executable image that replaces the current process.
+	Path string
+	// Arguments become the replacement process argv.
+	Arguments []string
+	// Environment becomes the replacement process environment; an empty slice inherits nothing.
+	Environment []string
+}
+
+// Self_Exec replaces the current process image with exactly the injected arguments and environment.
+func Self_Exec(input Self_Exec_Input) (err error) {
+	return syscall.Exec(input.Path, input.Arguments, input.Environment)
 }
 
 // Runs request's command on its own goroutine and posts the finished result to the loop.
 func operating_system_spawn(
-	state *Operating_System, completion *io.Completion,
-	callback io.Process_Callback, request io.Process_Request,
+	state *operating_system, completion *io.Completion,
+	callback io.Process_Callback, request io.Process_Request, deadline time.Duration,
 ) {
 	operating_system_wake_ensure(state)
-	if !state.Wake_Active {
-		completion.Callback = func() {
-			callback(completion, io.Process_Result{},
-				errors.New("io: wake pipe unavailable"))
-		}
-		state.Completed = append(state.Completed, completion)
-		return
-	}
-	go process_run(state, completion, callback, request)
+	invariant.Always(state.Wake_Active, "A Spawn posts through an open TigerBeetle Event.")
+	state.Extension_Workers.Add(1)
+	go process_run(state, completion, callback, request, deadline)
 }
 
 // Executes the command and posts its result — or a start failure — back on the loop.
 func process_run(
-	state *Operating_System, completion *io.Completion,
-	callback io.Process_Callback, request io.Process_Request,
+	state *operating_system, completion *io.Completion,
+	callback io.Process_Callback, request io.Process_Request, deadline time.Duration,
 ) {
+	defer state.Extension_Workers.Done()
 	start := state.Host.Now_Monotonic()
-	result, err := process_execute(request)
+	result, err := process_execute(request, deadline)
 	result.Usage.Wall = time.Duration(int64(state.Host.Now_Monotonic()) - int64(start))
 	operating_system_post(state, completion, func() {
 		callback(completion, result, err)
@@ -338,8 +255,23 @@ func process_run(
 
 // Runs the command to completion, capturing stdout and stderr. A non-zero exit is
 // reported in the result with a nil error; a failure to start is the error.
-func process_execute(request io.Process_Request) (result io.Process_Result, err error) {
-	command := exec.Command(request.Path, request.Arguments...)
+func process_execute(
+	request io.Process_Request, deadline time.Duration,
+) (result io.Process_Result, err error) {
+	context_value, cancel := process_context(context.WithTimeout, deadline)
+	defer cancel()
+	command := exec.CommandContext(context_value, request.Path, request.Arguments...)
+	command.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	deadline_triggered := atomic.Bool{}
+	command.Cancel = func() (cancel_err error) {
+		deadline_triggered.Store(true)
+		kill_err := syscall.Kill(-command.Process.Pid, syscall.SIGKILL)
+		if kill_err == syscall.ESRCH {
+			return os.ErrProcessDone
+		}
+		return kill_err
+	}
+	command.WaitDelay = 1_000_000_000
 	command.Dir = request.Working_Directory
 	command.Env = request.Environment
 	if len(request.Input) > 0 {
@@ -367,7 +299,24 @@ func process_execute(request io.Process_Request) (result io.Process_Result, err 
 		result.Exit = command.ProcessState.ExitCode()
 		result.Usage = process_usage(command.ProcessState)
 	}
+	if deadline_triggered.Load() {
+		return result, io.Deadline_Exceeded
+	}
+	if errors.Is(context_value.Err(), context.DeadlineExceeded) {
+		return result, io.Deadline_Exceeded
+	}
 	return process_execute_result(result, run_err)
+}
+
+// Converts the repository duration into context.WithTimeout's duration type without importing
+// the standard time package outside shared/time/default.
+func process_context[Duration ~int64](
+	with_timeout func(context.Context, Duration) (
+		context_value context.Context, cancel context.CancelFunc,
+	),
+	deadline time.Duration,
+) (context_value context.Context, cancel context.CancelFunc) {
+	return with_timeout(context.Background(), Duration(deadline))
 }
 
 // Distinguishes a non-zero exit (reported in the result, nil error) from a real
@@ -406,7 +355,7 @@ func process_rss_bytes(maxrss int64) (size int64) {
 }
 
 // Wires the file operations — read, write, open, create — onto loop.
-func operating_system_wire_file(state *Operating_System, loop *io.IO) {
+func operating_system_wire_file(state *operating_system, loop *io.IO) {
 	loop.Read = func(
 		completion *io.Completion, callback io.Callback,
 		file io.File, buffer []byte, offset int64,
@@ -420,6 +369,21 @@ func operating_system_wire_file(state *Operating_System, loop *io.IO) {
 	) {
 		operating_system_submit(completion)
 		operating_system_write(state, completion, callback, file, buffer, offset)
+	}
+	loop.Fsync = func(
+		completion *io.Completion, callback io.Timeout_Callback, file io.File,
+	) {
+		operating_system_submit(completion)
+		operating_system_fsync(state, completion, callback, file)
+	}
+	loop.Open_At = func(
+		completion *io.Completion, callback io.File_Callback, directory io.File,
+		file_path string, options io.Open_At_Options,
+	) {
+		operating_system_submit(completion)
+		operating_system_open_at(
+			state, completion, callback, directory, file_path, options,
+		)
 	}
 	loop.Open = func(path string) (file io.File, err error) {
 		descriptor, open_err := file_open(path)
@@ -446,46 +410,143 @@ func file_make_directory(path string) (err error) {
 	return os.MkdirAll(path, 0o755)
 }
 
-// Wires the lifecycle operations — timeout, close, cancel — onto loop.
-func operating_system_wire_timer(state *Operating_System, loop *io.IO) {
+// Wires Timeout, Next_Tick, Reset_Next_Tick, and both close primitives onto loop.
+func operating_system_wire_timer(state *operating_system, loop *io.IO) {
 	loop.Timeout = func(
 		completion *io.Completion, callback io.Timeout_Callback, duration time.Duration,
 	) {
+		invariant.Always(
+			duration > 0, "A timeout duration is positive; yields use Next_Tick.",
+		)
 		operating_system_submit(completion)
 		operating_system_timeout(state, state.Host, completion, callback, duration)
 	}
+	loop.Next_Tick = func(
+		completion *io.Completion, callback io.Next_Tick_Callback,
+		source io.Next_Tick_Source,
+	) {
+		operating_system_submit(completion)
+		completion.Next_Tick_Source = source
+		completion.Next_Tick = true
+		completion.Callback = func() { callback(completion) }
+		state.Completed = append(state.Completed, completion)
+	}
+	loop.Reset_Next_Tick = func(source io.Next_Tick_Source) {
+		operating_system_reset_next_tick(state, source)
+	}
+	loop.Open_Event = func() (event io.Event, err error) {
+		return platform_event_open(state)
+	}
+	loop.Event_Listen = func(
+		event io.Event, completion *io.Completion, callback io.Next_Tick_Callback,
+	) {
+		operating_system_submit(completion)
+		operating_system_event_listen(state, event, completion, callback)
+	}
+	loop.Event_Trigger = func(event io.Event, completion *io.Completion) {
+		platform_event_trigger(state, event, completion.Kernel_Identifier)
+	}
+	loop.Close_Event = func(event io.Event) {
+		operating_system_assert_event_drained(state, event)
+		platform_event_close(state, event)
+	}
 	loop.Close = func(completion *io.Completion, callback io.Timeout_Callback, file io.File) {
+		operating_system_assert_file_drained(state, file)
 		operating_system_submit(completion)
 		operating_system_close(state, completion, callback, file)
 	}
-	loop.Cancel = func(completion *io.Completion) {
-		operating_system_cancel(state, completion)
+	loop.Close_Socket = func(socket io.File) {
+		operating_system_assert_file_drained(state, socket)
+		delete(state.Raw_Open, int(socket))
+		socket_close(int(socket))
 	}
+}
+
+// Registers one TigerBeetle Event listener. The platform decides whether it is a persistent
+// EVFILT_USER listener or an eventfd read operation.
+func operating_system_event_listen(
+	state *operating_system, event io.Event, completion *io.Completion,
+	callback io.Next_Tick_Callback,
+) {
+	operation := &operating_system_operation{
+		Completion: completion,
+		Kind:       operating_system_operation_event,
+		Descriptor: int(event),
+		Deliver:    func(result int, err error) { callback(completion) },
+	}
+	operating_system_operation_register(state, operation)
+	listen_err := platform_event_listen(state, operation)
+	invariant.Always(listen_err == nil, "A TigerBeetle Event listener arms successfully.")
+}
+
+// Asserts no Event listener remains armed before the backend Event resource is closed.
+func operating_system_assert_event_drained(state *operating_system, event io.Event) {
+	armed := false
+	for _, operation := range state.Operations {
+		if operation.Kind == operating_system_operation_event {
+			if operation.Descriptor == int(event) {
+				armed = true
+			}
+		}
+	}
+	invariant.Always(!armed, "An Event listener is drained before Close_Event.")
+}
+
+// Asserts no submitted operation still borrows file. TigerBeetle's message bus joins every
+// submitted operation before close (third-party/tigerbeetle/src/message_bus.zig:1104-1145); this
+// fail-closed check prevents an old kernel completion from racing a recycled descriptor number.
+func operating_system_assert_file_drained(state *operating_system, file io.File) {
+	borrowed := false
+	for _, operation := range state.Operations {
+		if operation.Descriptor == int(file) {
+			borrowed = true
+		}
+	}
+	invariant.Always(!borrowed,
+		"A descriptor is drained before Close or Close_Socket releases it.")
 }
 
 // Wires the socket operations — listen, accept, connect, receive, send, peer address —
 // onto loop.
-func operating_system_wire_socket(state *Operating_System, loop *io.IO) {
-	loop.Listen = func(host_address string, port int) (listener io.File, err error) {
-		descriptor, listen_err := socket_listen(host_address, port)
-		if listen_err != nil {
-			return io.File(descriptor), listen_err
+func operating_system_wire_socket(state *operating_system, loop *io.IO) {
+	loop.Listen = func(
+		socket io.File, address io.Address, options io.Listen_Options,
+	) (resolved io.Address, err error) {
+		return socket_listen(int(socket), address, options)
+	}
+	loop.Accept = func(
+		completion *io.Completion, callback io.Socket_Callback, listener io.File,
+		deadline time.Duration,
+	) {
+		invariant.Always(deadline > 0, "An accept deadline is positive and finite.")
+		operating_system_submit(completion)
+		operating_system_accept(state, completion, callback, listener, deadline)
+	}
+	loop.Open_Socket_TCP = func(
+		family io.Address_Family, options io.TCP_Options,
+	) (socket io.File, err error) {
+		descriptor, open_err := socket_open_tcp(family, options)
+		if open_err != nil {
+			return io.File(-1), open_err
 		}
 		state.Raw_Open[descriptor] = true
 		return io.File(descriptor), nil
 	}
-	loop.Accept = func(
-		completion *io.Completion, callback io.Socket_Callback, listener io.File,
-	) {
-		operating_system_submit(completion)
-		operating_system_accept(state, completion, callback, listener)
+	loop.Open_Socket_UDP = func(family io.Address_Family) (socket io.File, err error) {
+		descriptor, open_err := socket_open_udp(family)
+		if open_err != nil {
+			return io.File(-1), open_err
+		}
+		state.Raw_Open[descriptor] = true
+		return io.File(descriptor), nil
 	}
 	loop.Connect = func(
-		completion *io.Completion, callback io.Socket_Callback,
-		host_address string, port int,
+		completion *io.Completion, callback io.Timeout_Callback, socket io.File,
+		address io.Address, deadline time.Duration,
 	) {
+		invariant.Always(deadline > 0, "A connect deadline is positive and finite.")
 		operating_system_submit(completion)
-		operating_system_connect(state, completion, callback, host_address, port)
+		operating_system_connect(state, completion, callback, socket, address, deadline)
 	}
 	loop.Receive = func(
 		completion *io.Completion, callback io.Callback, socket io.File, buffer []byte,
@@ -499,147 +560,212 @@ func operating_system_wire_socket(state *Operating_System, loop *io.IO) {
 		operating_system_submit(completion)
 		operating_system_send(state, completion, callback, socket, buffer)
 	}
+	loop.Send_Now = func(socket io.File, buffer []byte) (count int, sent bool) {
+		return socket_send_now(int(socket), buffer)
+	}
+	loop.Shutdown = func(socket io.File, how io.Shutdown_How) (err error) {
+		return socket_shutdown(int(socket), how)
+	}
 	loop.Peer_Address = func(file io.File) (address string, err error) {
 		return socket_peer_address(int(file))
 	}
 }
 
-// Queues a file read to run inside the loop, delivering the byte count — or the
-// Cancelled error if the completion was cancelled first.
+// Submits a file read through the platform scheduler (io/darwin.zig:519-558;
+// io/linux.zig Completion.prep.read).
 func operating_system_read(
-	state *Operating_System, completion *io.Completion, callback io.Callback,
+	state *operating_system, completion *io.Completion, callback io.Callback,
 	file io.File, buffer []byte, offset int64,
 ) {
-	completion.Callback = func() {
-		if completion.Cancelled {
-			callback(completion, 0, io.Cancelled)
-			return
-		}
-		count, err := read_at(file, buffer, offset)
-		callback(completion, count, err)
+	operation := &operating_system_operation{
+		Completion: completion,
+		Kind:       operating_system_operation_read,
+		Descriptor: int(file),
+		Buffer:     platform_buffer_limit(buffer),
+		Offset:     uint64(offset),
+		Deliver:    func(result int, err error) { callback(completion, result, err) },
 	}
-	state.Completed = append(state.Completed, completion)
+	operating_system_operation_submit(state, operation)
 }
 
-// Queues a file write to run inside the loop, delivering the byte count — or the
-// Cancelled error if the completion was cancelled first.
+// Submits a file write through the platform scheduler.
 func operating_system_write(
-	state *Operating_System, completion *io.Completion, callback io.Callback,
+	state *operating_system, completion *io.Completion, callback io.Callback,
 	file io.File, buffer []byte, offset int64,
 ) {
-	completion.Callback = func() {
-		if completion.Cancelled {
-			callback(completion, 0, io.Cancelled)
-			return
-		}
-		count, err := write_at(file, buffer, offset)
-		callback(completion, count, err)
+	operation := &operating_system_operation{
+		Completion: completion,
+		Kind:       operating_system_operation_write,
+		Descriptor: int(file),
+		Buffer:     platform_buffer_limit(buffer),
+		Offset:     uint64(offset),
+		Deliver:    func(result int, err error) { callback(completion, result, err) },
 	}
-	state.Completed = append(state.Completed, completion)
+	operating_system_operation_submit(state, operation)
 }
 
-// Schedules a timeout to fire when the clock passes its deadline, delivering success —
-// or the Cancelled error if the completion was cancelled first.
+// Submits TigerBeetle's asynchronous fsync operation.
+func operating_system_fsync(
+	state *operating_system, completion *io.Completion,
+	callback io.Timeout_Callback, file io.File,
+) {
+	operation := &operating_system_operation{
+		Completion: completion,
+		Kind:       operating_system_operation_fsync,
+		Descriptor: int(file),
+		Deliver:    func(result int, err error) { callback(completion, err) },
+	}
+	operating_system_operation_submit(state, operation)
+}
+
+// Submits TigerBeetle's asynchronous openat operation with a NUL-terminated path owned until the
+// callback retires.
+func operating_system_open_at(
+	state *operating_system, completion *io.Completion, callback io.File_Callback,
+	directory io.File, file_path string, options io.Open_At_Options,
+) {
+	descriptor := int(directory)
+	if directory == io.DIRECTORY_CURRENT {
+		descriptor = platform_current_directory()
+	}
+	path := append([]byte(file_path), 0)
+	operation := &operating_system_operation{
+		Completion:   completion,
+		Kind:         operating_system_operation_open_at,
+		Descriptor:   descriptor,
+		File_Path:    path,
+		Open_Options: options,
+		Deliver: func(result int, err error) {
+			callback(completion, io.File(result), err)
+		},
+	}
+	operating_system_operation_submit(state, operation)
+}
+
+// Schedules a positive timeout to fire when the clock passes its deadline.
 func operating_system_timeout(
-	state *Operating_System, host time.Clock, completion *io.Completion,
+	state *operating_system, host time.Clock, completion *io.Completion,
 	callback io.Timeout_Callback, duration time.Duration,
 ) {
-	completion.Ready_At = host.Now_Monotonic() + time.Moment(duration)
-	completion.Callback = func() {
-		if completion.Cancelled {
-			callback(completion, io.Cancelled)
-			return
+	if platform_uses_kernel_timeouts() {
+		operation := &operating_system_operation{
+			Completion: completion,
+			Kind:       operating_system_operation_timeout,
+			Descriptor: -1,
+			Timespec:   operating_system_timeout_span(duration),
+			Deliver:    func(result int, err error) { callback(completion, err) },
 		}
-		callback(completion, nil)
+		operating_system_operation_submit(state, operation)
+		return
 	}
+	completion.Ready_At = host.Now_Monotonic() + time.Moment(duration)
+	completion.Callback = func() { callback(completion, nil) }
 	operating_system_insert(state, completion)
 }
 
 // Builds the driver — the loop-advancing capability — over state; held only by the
 // composition root or a test, never by code that merely submits IO.
-func operating_system_to_driver(state *Operating_System) (driver io.Driver) {
+func operating_system_to_driver(state *operating_system) (driver io.Driver) {
 	return io.Driver{
-		Run: func() {
-			operating_system_drive(state, func() { operating_system_run(state) })
+		Run: func() (err error) {
+			return operating_system_drive(state, func() (err error) {
+				return operating_system_run(state)
+			})
 		},
-		Run_For: func(duration time.Duration) {
-			operating_system_drive(state, func() {
-				operating_system_run_for(state, duration)
+		Run_For: func(duration time.Duration) (err error) {
+			return operating_system_drive(state, func() (err error) {
+				return operating_system_run_for(state, duration)
 			})
 		},
 		Run_Until: func(
 			done func() (finished bool), timeout time.Duration,
-		) (completed bool) {
-			operating_system_drive(state, func() {
-				completed = operating_system_run_until(state, done, timeout)
+		) (completed bool, err error) {
+			err = operating_system_drive(state, func() (drive_err error) {
+				completed, drive_err = operating_system_run_until(
+					state, done, timeout,
+				)
+				return drive_err
 			})
-			return completed
+			return completed, err
+		},
+		Deinit: func() {
+			operating_system_deinitialize(state)
+		},
+		Introspect: func() (counts io.Loop_Counts) {
+			return operating_system_introspect(state)
 		},
 	}
 }
 
-// Drives the loop until done reports true, or until timeout of host time has elapsed —
-// the run-until-complete pump, capped so a stalled op cannot hang the caller. A negative
-// timeout waits unbounded; a zero timeout checks done once and drives nothing. completed
-// reports whether done tripped rather than the deadline.
+// Samples the loop's queue depths for an admin state snapshot. Loop-thread fields are read
+// directly — Introspect is root-only and called from the drive goroutine — but Posted and Results
+// are written by off-loop workers under the mutex, so their lengths are taken under it.
+func operating_system_introspect(state *operating_system) (counts io.Loop_Counts) {
+	state.Results_Mutex.Lock()
+	posted_count := len(state.Posted)
+	results_count := len(state.Results)
+	state.Results_Mutex.Unlock()
+	backlog, inflight, queued, kernel := platform_counts(state)
+	return io.Loop_Counts{
+		Completed:      len(state.Completed),
+		Timeouts:       len(state.Timeouts),
+		IO_Backlog:     backlog,
+		IO_Inflight:    inflight,
+		IO_Queued:      queued,
+		IO_In_Kernel:   kernel,
+		Signal_Waiters: len(state.Signal_Waiters),
+		Posted:         posted_count,
+		Results:        results_count,
+		Raw_Open:       len(state.Raw_Open),
+		Wake_Active:    state.Wake_Active,
+		Compute_Active: state.Compute_Active,
+	}
+}
+
+// Drives until done or the host deadline, propagating every scheduler error.
 func operating_system_run_until(
-	state *Operating_System, done func() (finished bool), timeout time.Duration,
-) (completed bool) {
+	state *operating_system, done func() (finished bool), timeout time.Duration,
+) (completed bool, err error) {
 	deadline := state.Host.Now_Monotonic() + time.Moment(timeout)
 	for !done() {
-		operating_system_signals(state)
-		operating_system_compute(state)
-		operating_system_expire(state)
-		operating_system_flush_completed(state)
-		// Re-check done after draining, before idling: an op that finished inline is done
-		// here, so it returns at once rather than sleeping out a poll it does not need.
-		if done() {
-			return true
+		wait, expired := operating_system_run_until_wait(state, deadline, timeout)
+		if expired {
+			return false, nil
 		}
-		if timeout < 0 {
-			operating_system_wait(state)
-			continue
+		flush_err := operating_system_flush(state, wait)
+		if flush_err != nil {
+			return false, flush_err
 		}
-		now := state.Host.Now_Monotonic()
-		if now >= deadline {
-			return false
-		}
-		operating_system_idle(state, operating_system_wake(state, deadline)-now)
 	}
-	return true
+	return true, nil
 }
 
-// Blocks until the next event during an unbounded run: the nearest pending timeout, or the
-// readiness poll itself when only sockets are pending — the run sleeps exactly until there is
-// work, never on an interval. A signal watcher still caps the wait, since a delivered signal
-// lands on a channel that does not wake the poll.
-func operating_system_wait(state *Operating_System) {
-	// A callback during the drain may have queued an inline op: flush it before blocking, so
-	// the loop never sleeps while ready work is already waiting.
+// Operating system run until wait chooses a nonblocking first pass, then the nearest deadline.
+func operating_system_run_until_wait(
+	state *operating_system, deadline time.Moment, timeout time.Duration,
+) (wait time.Moment, expired bool) {
 	if len(state.Completed) > 0 {
-		return
+		return 0, false
 	}
-	if len(state.Timeouts) > 0 {
-		operating_system_idle(state, state.Timeouts[0].Ready_At-state.Host.Now_Monotonic())
-		return
+	now := state.Host.Now_Monotonic()
+	if timeout >= 0 {
+		if now >= deadline {
+			return 0, true
+		}
 	}
-	// Nothing pending can ever flip done under an unbounded run: fail loud rather than block
-	// forever, since awaiting a predicate no event can satisfy is a deadlock, not a wait.
-	invariant.Always(operating_system_in_flight(state),
-		"An unbounded run holds an operation in flight that can advance it.")
-	operating_system_poll_ensure(state)
-	operating_system_poll(state, int64(operating_system_signal_cap(state, POLL_FOREVER)))
+	wait = poll_forever
+	if timeout >= 0 {
+		wait = deadline - now
+	}
+	return operating_system_wait_cap(state, wait), false
 }
 
-// Reports whether an operation is in flight that could complete and flip an unbounded run's
-// predicate: a socket op armed on the poll, a signal watch, or the compute pool a worker pokes
-// the wake pipe from. The caller has already ruled out ready completions and pending timeouts.
-// It is conservative — a compute pool that has run stays counted, since a worker may still poke.
-func operating_system_in_flight(state *Operating_System) (in_flight bool) {
-	if len(state.Read_Waiters) > 0 {
+// Reports whether an operation can wake an unbounded drive.
+func operating_system_in_flight(state *operating_system) (in_flight bool) {
+	if platform_in_flight(state) {
 		return true
 	}
-	if len(state.Write_Waiters) > 0 {
+	if len(state.Timeouts) > 0 {
 		return true
 	}
 	if len(state.Signal_Waiters) > 0 {
@@ -652,176 +778,173 @@ func operating_system_in_flight(state *Operating_System) (in_flight bool) {
 // called from within a completion callback fails loudly instead of re-entering the driver.
 // The internal run functions call one another directly, not through here, so a drive's own
 // iteration does not trip it.
-func operating_system_drive(state *Operating_System, pump func()) {
+func operating_system_drive(state *operating_system, pump func() (err error)) (err error) {
 	invariant.Always(!state.Drive_Active,
 		"A drive begins at top level, never from within a completion callback.")
 	state.Drive_Active = true
 	defer func() { state.Drive_Active = false }()
-	pump()
+	return pump()
 }
 
-// Runs ready completions and one non-blocking socket poll; the host clock moves on
-// its own, so Run advances nothing.
-func operating_system_run(state *Operating_System) {
-	operating_system_signals(state)
-	operating_system_compute(state)
-	operating_system_expire(state)
-	operating_system_flush_completed(state)
-	if !state.Poll_Active {
-		return
-	}
-	operating_system_poll(state, 0)
+// Runs one nonblocking TigerBeetle flush.
+func operating_system_run(state *operating_system) (err error) {
+	return operating_system_flush(state, 0)
 }
 
-// Drains ready completions until the duration elapses on the host clock, idling
-// each gap in the socket poll (or sleeping when no socket is armed).
-func operating_system_run_for(state *Operating_System, duration time.Duration) {
+// Runs flush passes until duration elapses, with the deadline passed directly to the platform.
+func operating_system_run_for(state *operating_system, duration time.Duration) (err error) {
 	deadline := state.Host.Now_Monotonic() + time.Moment(duration)
 	for state.Host.Now_Monotonic() < deadline {
-		operating_system_signals(state)
-		operating_system_compute(state)
-		operating_system_expire(state)
-		operating_system_flush_completed(state)
 		now := state.Host.Now_Monotonic()
 		if now >= deadline {
-			return
+			return nil
 		}
-		operating_system_idle(state, operating_system_wake(state, deadline)-now)
+		wait := operating_system_wait_cap(state, deadline-now)
+		flush_err := operating_system_flush(state, wait)
+		if flush_err != nil {
+			return flush_err
+		}
 	}
+	return nil
 }
 
-// Idles for gap nanoseconds by blocking on the readiness poll with that timeout: an
-// empty poll wait is a portable real-time sleep, and an armed socket's readiness wakes
-// it early. The block lives on the poll fd, not on the clock — the clock is read-only,
-// and the backend must not import stdlib time (the time/default gateway's alone).
-func operating_system_idle(state *Operating_System, gap time.Moment) {
-	if gap <= 0 {
-		return
+// Operating system flush checks finite operation deadlines before extension events, then ports
+// TigerBeetle's timeout, platform, and retire-before-deliver ordering. Deadline-first ordering
+// makes an event first observed at the same pass lose the explicit finite tie.
+func operating_system_flush(state *operating_system, wait time.Moment) (err error) {
+	expire_err := operating_system_expire(state)
+	if expire_err != nil {
+		return expire_err
 	}
-	gap = operating_system_signal_cap(state, gap)
-	operating_system_poll_ensure(state)
-	operating_system_poll(state, int64(gap))
+	operating_system_signals(state)
+	operating_system_compute(state)
+	platform_err := platform_run(state, wait)
+	if platform_err != nil {
+		return platform_err
+	}
+	operating_system_flush_completed(state)
+	return platform_flush_submissions(state)
 }
 
-// Caps gap while a signal watcher exists, since a delivered signal does not wake the
-// poll; the loop must re-check the signal channel within one interval.
-func operating_system_signal_cap(
-	state *Operating_System, gap time.Moment,
-) (capped time.Moment) {
-	if len(state.Signal_Waiters) == 0 {
-		return gap
+// Operating system wait cap pulls an outer wait in to the nearest Darwin timeout and signal poll.
+func operating_system_wait_cap(state *operating_system, wait time.Moment) (capped time.Moment) {
+	capped = wait
+	if len(state.Timeouts) > 0 {
+		until_timeout := state.Timeouts[0].Ready_At - state.Host.Now_Monotonic()
+		if capped < 0 {
+			capped = until_timeout
+		} else if until_timeout < capped {
+			capped = until_timeout
+		}
 	}
-	interval := time.Moment(SIGNAL_POLL_INTERVAL)
-	// A negative (unbounded) gap must still be capped, or a delivered signal — which does not
-	// wake the poll — would go unseen until the next socket event.
-	if gap < 0 {
-		return interval
+	if len(state.Signal_Waiters) > 0 {
+		interval := time.Moment(signal_poll_interval)
+		if capped < 0 {
+			capped = interval
+		} else if interval < capped {
+			capped = interval
+		}
+		until_signal := state.Signal_Waiters[0].Deadline - state.Host.Now_Monotonic()
+		for index := 1; index < len(state.Signal_Waiters); index++ {
+			candidate := state.Signal_Waiters[index].Deadline -
+				state.Host.Now_Monotonic()
+			if candidate < until_signal {
+				until_signal = candidate
+			}
+		}
+		if capped < 0 {
+			capped = until_signal
+		} else if until_signal < capped {
+			capped = until_signal
+		}
 	}
-	if gap > interval {
-		return interval
+	if !platform_uses_kernel_timeouts() {
+		for _, operation := range state.Operations {
+			if operation.Deadline == 0 {
+				continue
+			}
+			until_operation := operation.Deadline - state.Host.Now_Monotonic()
+			if capped < 0 {
+				capped = until_operation
+			} else if until_operation < capped {
+				capped = until_operation
+			}
+		}
 	}
-	return gap
+	if capped < 0 {
+		invariant.Always(operating_system_in_flight(state),
+			"An unbounded run holds an operation in flight that can advance it.")
+	}
+	return capped
 }
 
-// Moves every timeout whose deadline has passed into the completed queue.
-func operating_system_expire(state *Operating_System) {
+// Moves every elapsed timeout and finite extension waiter into the completed queue, and retires
+// bounded Darwin operations before their callbacks become visible.
+func operating_system_expire(state *operating_system) (err error) {
 	now := state.Host.Now_Monotonic()
 	for len(state.Timeouts) > 0 && state.Timeouts[0].Ready_At <= now {
 		expired := state.Timeouts[0]
 		state.Timeouts = state.Timeouts[1:]
 		state.Completed = append(state.Completed, expired)
 	}
+	operating_system_expire_signals(state, now)
+	if platform_uses_kernel_timeouts() {
+		return nil
+	}
+	expired_operations := []*operating_system_operation{}
+	for _, operation := range state.Operations {
+		if operation.Deadline == 0 {
+			continue
+		}
+		if operation.Deadline <= now {
+			expired_operations = append(expired_operations, operation)
+		}
+	}
+	for _, operation := range expired_operations {
+		cancel_err := platform_expire_operation(state, operation)
+		if cancel_err != nil {
+			return cancel_err
+		}
+		operating_system_operation_complete(state, operation, -1, io.Deadline_Exceeded)
+	}
+	return nil
 }
 
 // Runs and clears every ready completion callback, returning each completion to idle
 // before its callback fires — so a callback may legally resubmit its own completion.
-func operating_system_flush_completed(state *Operating_System) {
-	ready := state.Completed
-	state.Completed = nil
-	for index := 0; index < len(ready); index++ {
-		completion := ready[index]
-		from := io.COMPLETION_ARMED
-		if completion.State == io.COMPLETION_CANCELLED {
-			from = io.COMPLETION_CANCELLED
-		}
+func operating_system_flush_completed(state *operating_system) {
+	for len(state.Completed) > 0 {
+		completion := state.Completed[0]
+		state.Completed = state.Completed[1:]
 		io.Completion_Transition(&io.Completion_Transition_Input{
-			Completion: completion, From: from, To: io.COMPLETION_IDLE,
+			Completion: completion, From: io.COMPLETION_ARMED, To: io.COMPLETION_IDLE,
 		})
 		completion.Callback()
 	}
 }
 
-// Returns the earliest moment the loop must wake: the outer deadline, pulled in by
-// the nearest pending timeout.
-func operating_system_wake(state *Operating_System, deadline time.Moment) (wake time.Moment) {
-	wake = deadline
-	if len(state.Timeouts) == 0 {
-		return wake
+// Removes every completed-queue next-tick operation for source and returns it to idle without
+// invoking its callback (io/darwin.zig:783-796; io/linux.zig:354-367).
+func operating_system_reset_next_tick(state *operating_system, source io.Next_Tick_Source) {
+	kept := state.Completed[:0]
+	for _, completion := range state.Completed {
+		if !completion.Next_Tick {
+			kept = append(kept, completion)
+			continue
+		}
+		if completion.Next_Tick_Source != source {
+			kept = append(kept, completion)
+			continue
+		}
+		io.Completion_Transition(&io.Completion_Transition_Input{
+			Completion: completion, From: io.COMPLETION_ARMED, To: io.COMPLETION_IDLE,
+		})
 	}
-	if state.Timeouts[0].Ready_At < wake {
-		return state.Timeouts[0].Ready_At
-	}
-	return wake
-}
-
-// Polls the readiness set with the given nanosecond timeout and dispatches each
-// ready descriptor to its waiting operation.
-func operating_system_poll(state *Operating_System, timeout_ns int64) {
-	ready, err := poll_file_wait(state.Poll, timeout_ns)
-	if err != nil {
-		return
-	}
-	for index := 0; index < len(ready); index++ {
-		operating_system_dispatch(state, ready[index].Descriptor, ready[index].Writable)
-	}
-}
-
-// Runs the operation waiting on descriptor in the given direction; on completion it drops
-// the waiter and disarms the poll, then delivers the callback, leaving it armed on EAGAIN.
-// Retiring the waiter before delivering is what lets a callback re-arm the same descriptor:
-// a send armed inside a connect completion survives because the connect waiter is already
-// gone by the time the callback runs (mirroring the sim, which dequeues before it delivers).
-func operating_system_dispatch(state *Operating_System, descriptor int, writable bool) {
-	waiters := state.Read_Waiters
-	if writable {
-		waiters = state.Write_Waiters
-	}
-	operation := waiters[descriptor]
-	if operation == nil {
-		return
-	}
-	done, deliver := operation.Perform()
-	if !done {
-		return
-	}
-	delete(waiters, descriptor)
-	poll_file_disarm(state.Poll, descriptor, writable)
-	// A cancel removes a waiter before queueing its delivery, so a dispatched operation
-	// is always still armed here.
-	io.Completion_Transition(&io.Completion_Transition_Input{
-		Completion: operation.Completion, From: io.COMPLETION_ARMED, To: io.COMPLETION_IDLE,
-	})
-	deliver()
-}
-
-// Lazily creates the readiness poll on the first socket operation, so file-only and
-// Windows callers never touch it.
-func operating_system_poll_ensure(state *Operating_System) {
-	if state.Poll_Active {
-		return
-	}
-	poll, err := poll_create()
-	if err != nil {
-		return
-	}
-	state.Poll = poll
-	state.Poll_Active = true
-	state.Read_Waiters = make(map[int]*Socket_Operation)
-	state.Write_Waiters = make(map[int]*Socket_Operation)
+	state.Completed = kept
 }
 
 // Inserts completion into the timeout queue in Ready_At order.
-func operating_system_insert(state *Operating_System, completion *io.Completion) {
+func operating_system_insert(state *operating_system, completion *io.Completion) {
 	index := 0
 	for index < len(state.Timeouts) && state.Timeouts[index].Ready_At <= completion.Ready_At {
 		index++
@@ -831,210 +954,151 @@ func operating_system_insert(state *Operating_System, completion *io.Completion)
 	state.Timeouts[index] = completion
 }
 
-// Arms listener for readability; on readiness it accepts one connection and fires
-// callback with the new descriptor.
+// Submits accept through kqueue's eager/requeue path or io_uring's ACCEPT opcode.
 func operating_system_accept(
-	state *Operating_System, completion *io.Completion,
-	callback io.Socket_Callback, listener io.File,
+	state *operating_system, completion *io.Completion,
+	callback io.Socket_Callback, listener io.File, deadline time.Duration,
 ) {
-	operating_system_poll_ensure(state)
-	descriptor := int(listener)
-	completion.Callback = func() { callback(completion, 0, io.Cancelled) }
-	state.Read_Waiters[descriptor] = &Socket_Operation{
-		Completion: completion,
-		Perform: func() (done bool, deliver func()) {
-			accepted, again, err := socket_accept(descriptor)
-			if again {
-				return false, nil
-			}
-			if err == nil {
-				state.Raw_Open[accepted] = true
-			}
-			return true, func() { callback(completion, io.File(accepted), err) }
+	operation := &operating_system_operation{
+		Completion:    completion,
+		Kind:          operating_system_operation_accept,
+		Descriptor:    int(listener),
+		Deadline:      state.Host.Now_Monotonic() + time.Moment(deadline),
+		Deadline_Span: operating_system_timeout_span(deadline),
+		Deliver: func(result int, err error) {
+			callback(completion, io.File(result), err)
 		},
 	}
-	poll_file_arm(state.Poll, descriptor, false)
+	operating_system_operation_submit(state, operation)
 }
 
-// Begins a connection to host_address:port and arms the new socket for writability;
-// on readiness it reports the connect result and the connected descriptor.
+// Begins a connection to host_address:port on the caller-owned socket and arms it for
+// writability; on readiness it reports only the connect result.
 func operating_system_connect(
-	state *Operating_System, completion *io.Completion,
-	callback io.Socket_Callback, host_address string, port int,
+	state *operating_system, completion *io.Completion,
+	callback io.Timeout_Callback, socket io.File, address io.Address, deadline time.Duration,
 ) {
-	operating_system_poll_ensure(state)
-	descriptor, start_err := socket_connect_start(host_address, port)
-	if start_err != nil {
-		completion.Callback = func() { callback(completion, io.File(-1), start_err) }
-		state.Completed = append(state.Completed, completion)
-		return
+	operation := &operating_system_operation{
+		Completion:    completion,
+		Kind:          operating_system_operation_connect,
+		Descriptor:    int(socket),
+		Address:       address,
+		Deadline:      state.Host.Now_Monotonic() + time.Moment(deadline),
+		Deadline_Span: operating_system_timeout_span(deadline),
+		Deliver:       func(result int, err error) { callback(completion, err) },
 	}
-	state.Raw_Open[descriptor] = true
-	completion.Callback = func() { callback(completion, 0, io.Cancelled) }
-	state.Write_Waiters[descriptor] = &Socket_Operation{
-		Completion: completion,
-		Perform: func() (done bool, deliver func()) {
-			socket := io.File(descriptor)
-			err := socket_connect_error(descriptor)
-			return true, func() { callback(completion, socket, err) }
-		},
-	}
-	poll_file_arm(state.Poll, descriptor, true)
+	operating_system_operation_submit(state, operation)
 }
 
 // Arms socket for readability; on readiness it reads once into buffer and reports
 // the byte count.
 func operating_system_receive(
-	state *Operating_System, completion *io.Completion,
+	state *operating_system, completion *io.Completion,
 	callback io.Callback, socket io.File, buffer []byte,
 ) {
-	if operating_system_tls_receive(state, completion, callback, socket, buffer) {
-		return
-	}
-	operating_system_poll_ensure(state)
-	descriptor := int(socket)
-	completion.Callback = func() { callback(completion, 0, io.Cancelled) }
-	state.Read_Waiters[descriptor] = &Socket_Operation{
+	operation := &operating_system_operation{
 		Completion: completion,
-		Perform: func() (done bool, deliver func()) {
-			count, again, err := socket_receive(descriptor, buffer)
-			if again {
-				return false, nil
-			}
-			return true, func() { callback(completion, count, err) }
-		},
+		Kind:       operating_system_operation_receive,
+		Descriptor: int(socket), Buffer: platform_buffer_limit(buffer),
+		Deliver: func(result int, err error) { callback(completion, result, err) },
 	}
-	poll_file_arm(state.Poll, descriptor, false)
+	operating_system_operation_submit(state, operation)
 }
 
 // Arms socket for writability; on readiness it writes buffer once and reports the
 // byte count.
 func operating_system_send(
-	state *Operating_System, completion *io.Completion,
+	state *operating_system, completion *io.Completion,
 	callback io.Callback, socket io.File, buffer []byte,
 ) {
-	if operating_system_tls_send(state, completion, callback, socket, buffer) {
-		return
-	}
-	operating_system_poll_ensure(state)
-	descriptor := int(socket)
-	completion.Callback = func() { callback(completion, 0, io.Cancelled) }
-	state.Write_Waiters[descriptor] = &Socket_Operation{
+	operation := &operating_system_operation{
 		Completion: completion,
-		Perform: func() (done bool, deliver func()) {
-			count, again, err := socket_send(descriptor, buffer)
-			if again {
-				return false, nil
-			}
-			return true, func() { callback(completion, count, err) }
-		},
+		Kind:       operating_system_operation_send,
+		Descriptor: int(socket), Buffer: platform_buffer_limit(buffer),
+		Deliver: func(result int, err error) { callback(completion, result, err) },
 	}
-	poll_file_arm(state.Poll, descriptor, true)
+	operating_system_operation_submit(state, operation)
 }
 
-// Closes file and queues its completion to fire on the next drain.
+// Closes file and queues its completion after operating_system_assert_file_drained enforces the
+// owner-side join from third-party/tigerbeetle/src/message_bus.zig:1104-1145.
 func operating_system_close(
-	state *Operating_System, completion *io.Completion,
+	state *operating_system, completion *io.Completion,
 	callback io.Timeout_Callback, file io.File,
 ) {
-	if operating_system_tls_close(state, completion, callback, file) {
-		return
+	operation := &operating_system_operation{
+		Completion: completion,
+		Kind:       operating_system_operation_close,
+		Descriptor: int(file),
+		Deliver:    func(result int, err error) { callback(completion, err) },
 	}
-	delete(state.Raw_Open, int(file))
-	err := socket_close(int(file))
-	completion.Callback = func() {
-		if completion.Cancelled {
-			callback(completion, io.Cancelled)
-			return
+	operating_system_operation_submit(state, operation)
+}
+
+// Operating system deinitialize enforces TigerBeetle's join-before-deinit contract and releases
+// the scheduler plus repository-extension wake resources.
+func operating_system_deinitialize(state *operating_system) {
+	invariant.Always(state.Extension_Submitted == 0,
+		"Driver Deinit follows joining every repository-extension completion.")
+	invariant.Always(operating_system_user_operations(state) == 0,
+		"Driver Deinit follows joining every TigerBeetle operation.")
+	if state.Signals != nil {
+		signal.Stop(state.Signals)
+	}
+	if state.Compute_Active {
+		close(state.Jobs)
+	}
+	state.Extension_Workers.Wait()
+	if state.Wake_Active {
+		state.Extension_Stop = true
+		platform_event_trigger(state, state.Wake_Event, state.Wake_Identifier)
+		for state.Wake_Completion.State == io.COMPLETION_ARMED {
+			flush_err := operating_system_flush(state, 0)
+			invariant.Always(flush_err == nil,
+				"The internal extension Event drains before backend deinit.")
 		}
-		callback(completion, err)
+		platform_event_close(state, state.Wake_Event)
+		state.Wake_Active = false
 	}
-	state.Completed = append(state.Completed, completion)
+	invariant.Always(len(state.Operations) == 0,
+		"The internal Event is retired before backend deinit.")
+	platform_deinitialize(state)
 }
 
-// Cancels an in-flight operation. A socket op armed on the poll is dropped, disarmed,
-// and queued so its cancel callback fires; a pending timeout is moved to the completed
-// queue, where its cancel-marked callback delivers the error; a file op already
-// queued fires cancelled the same way. An already-delivered, never-submitted, or
-// already-cancelled completion is a no-op — cancel only acts on an armed one.
-func operating_system_cancel(state *Operating_System, completion *io.Completion) {
-	if completion.State != io.COMPLETION_ARMED {
-		return
-	}
-	io.Completion_Transition(&io.Completion_Transition_Input{
-		Completion: completion, From: io.COMPLETION_ARMED, To: io.COMPLETION_CANCELLED,
-	})
-	completion.Cancelled = true
-	if operating_system_cancel_socket(state, completion) {
-		return
-	}
-	operating_system_cancel_timeout(state, completion)
-}
-
-// Drops and queues completion's socket waiter, from either direction, reporting
-// whether one was armed.
-func operating_system_cancel_socket(
-	state *Operating_System, completion *io.Completion,
-) (found bool) {
-	if operating_system_cancel_waiter(state, state.Read_Waiters, completion, false) {
-		return true
-	}
-	return operating_system_cancel_waiter(state, state.Write_Waiters, completion, true)
-}
-
-// Removes completion's waiter from waiters, disarms the poll for its descriptor and
-// direction, and queues the completion so its cancel callback fires on the next drain.
-func operating_system_cancel_waiter(
-	state *Operating_System, waiters map[int]*Socket_Operation,
-	completion *io.Completion, writable bool,
-) (found bool) {
-	for descriptor, operation := range waiters {
-		if operation.Completion != completion {
-			continue
+// Counts core operations other than the internal extension Event listener.
+func operating_system_user_operations(state *operating_system) (count int) {
+	for _, operation := range state.Operations {
+		internal_event := false
+		if operation.Kind == operating_system_operation_event {
+			internal_event = operation.Completion == &state.Wake_Completion
 		}
-		delete(waiters, descriptor)
-		poll_file_disarm(state.Poll, descriptor, writable)
-		state.Completed = append(state.Completed, completion)
-		return true
-	}
-	return false
-}
-
-// Moves a pending timeout matching completion into the completed queue so its
-// Cancelled-marked callback fires promptly, reporting whether it was present.
-func operating_system_cancel_timeout(
-	state *Operating_System, completion *io.Completion,
-) (found bool) {
-	for index := 0; index < len(state.Timeouts); index++ {
-		if state.Timeouts[index] != completion {
-			continue
+		if !internal_event {
+			count++
 		}
-		state.Timeouts = append(state.Timeouts[:index], state.Timeouts[index+1:]...)
-		state.Completed = append(state.Completed, completion)
-		return true
 	}
-	return false
+	return count
 }
 
 // Submits work to the worker pool, delivering callback on the loop thread once it
 // finishes. A cancel on a compute is a no-op: the work is already queued off-thread.
 func operating_system_compute_submit(
-	state *Operating_System, completion *io.Completion,
+	state *operating_system, completion *io.Completion,
 	callback io.Compute_Callback, work func(),
 ) {
 	operating_system_compute_ensure(state)
-	state.Jobs <- &Compute_Job{Completion: completion, Callback: callback, Work: work}
+	state.Jobs <- &compute_job{Completion: completion, Callback: callback, Work: work}
 }
 
 // Starts the worker pool and the wake pipe on the first Compute.
-func operating_system_compute_ensure(state *Operating_System) {
+func operating_system_compute_ensure(state *operating_system) {
 	if state.Compute_Active {
 		return
 	}
 	operating_system_wake_ensure(state)
-	state.Jobs = make(chan *Compute_Job, COMPUTE_QUEUE_DEPTH)
+	state.Jobs = make(chan *compute_job, compute_queue_depth)
 	state.Compute_Active = true
 	workers := compute_worker_count()
+	state.Extension_Workers.Add(workers)
 	for index := 0; index < workers; index++ {
 		go operating_system_compute_worker(state)
 	}
@@ -1051,42 +1115,56 @@ func compute_worker_count() (workers int) {
 
 // Runs jobs off the loop thread, pushing each finished job back through the mutex-guarded
 // Results and waking the loop.
-func operating_system_compute_worker(state *Operating_System) {
+func operating_system_compute_worker(state *operating_system) {
+	defer state.Extension_Workers.Done()
 	for job := range state.Jobs {
 		job.Work()
 		state.Results_Mutex.Lock()
 		state.Results = append(state.Results, job)
 		state.Results_Mutex.Unlock()
-		wake_poke(state.Wake_Write)
+		platform_event_trigger(state, state.Wake_Event, state.Wake_Identifier)
 	}
 }
 
-// Creates the wake pipe and arms its read end on the poll so a worker or TLS goroutine
-// poking it returns a blocked poll.
-func operating_system_wake_ensure(state *Operating_System) {
+// Opens and arms TigerBeetle's Event primitive so marked repository extensions can wake the loop.
+func operating_system_wake_ensure(state *operating_system) {
 	if state.Wake_Active {
 		return
 	}
-	read, write, err := wake_create()
+	event, err := platform_event_open(state)
 	if err != nil {
 		return
 	}
-	operating_system_poll_ensure(state)
-	state.Wake_Read = read
-	state.Wake_Write = write
+	state.Wake_Event = event
 	state.Wake_Active = true
-	state.Raw_Open[read] = true
-	state.Raw_Open[write] = true
-	poll_file_arm(state.Poll, read, false)
+	operating_system_wake_listen(state)
+	state.Wake_Identifier = state.Wake_Completion.Kernel_Identifier
 }
 
-// Drains finished compute jobs and posted TLS completions onto the completed queue, on
+// Rearms the persistent extension Event listener; its callback drains every result accumulated by
+// workers before attaching the same completion again.
+func operating_system_wake_listen(state *operating_system) {
+	operating_system_submit(&state.Wake_Completion)
+	operating_system_event_listen(
+		state, state.Wake_Event, &state.Wake_Completion,
+		func(completion *io.Completion) {
+			invariant.Always(completion == &state.Wake_Completion,
+				"The internal Event delivers its registered completion.")
+		},
+	)
+}
+
+// Drains finished compute jobs and posted spawn completions onto the completed queue, on
 // the loop thread; a no-op until the wake pipe exists.
-func operating_system_compute(state *Operating_System) {
+func operating_system_compute(state *operating_system) {
 	if !state.Wake_Active {
 		return
 	}
-	wake_drain(state.Wake_Read)
+	if !state.Extension_Stop {
+		if state.Wake_Completion.State == io.COMPLETION_IDLE {
+			operating_system_wake_listen(state)
+		}
+	}
 	state.Results_Mutex.Lock()
 	results := state.Results
 	posted := state.Posted
@@ -1100,7 +1178,7 @@ func operating_system_compute(state *Operating_System) {
 }
 
 // Queues a finished compute job's callback to run on the next flush.
-func operating_system_compute_finish(state *Operating_System, job *Compute_Job) {
+func operating_system_compute_finish(state *operating_system, job *compute_job) {
 	completion := job.Completion
 	callback := job.Callback
 	completion.Callback = func() { callback(completion) }
@@ -1109,23 +1187,24 @@ func operating_system_compute_finish(state *Operating_System, job *Compute_Job) 
 
 // Registers a watcher for signal and starts OS notification for it.
 func operating_system_watch_signal(
-	state *Operating_System, completion *io.Completion,
-	callback io.Signal_Callback, kind io.Signal,
+	state *operating_system, completion *io.Completion,
+	callback io.Signal_Callback, kind io.Signal, deadline time.Duration,
 ) {
 	operating_system_signal_ensure(state)
 	system := signal_to_operating_system(kind)
-	state.Signal_Waiters = append(state.Signal_Waiters, Signal_Waiter{
+	state.Signal_Waiters = append(state.Signal_Waiters, signal_waiter{
 		System: system, Kind: kind, Completion: completion, Callback: callback,
+		Deadline: state.Host.Now_Monotonic() + time.Moment(deadline),
 	})
 	signal.Notify(state.Signals, system)
 }
 
 // Creates the buffered signal channel on the first watch.
-func operating_system_signal_ensure(state *Operating_System) {
+func operating_system_signal_ensure(state *operating_system) {
 	if state.Signals != nil {
 		return
 	}
-	state.Signals = make(chan os.Signal, SIGNAL_QUEUE_DEPTH)
+	state.Signals = make(chan os.Signal, signal_queue_depth)
 }
 
 // Maps a backend-independent signal to its OS signal.
@@ -1137,8 +1216,8 @@ func signal_to_operating_system(kind io.Signal) (system os.Signal) {
 }
 
 // Drains delivered signals without blocking, firing matching watchers.
-func operating_system_signals(state *Operating_System) {
-	for index := 0; index < SIGNAL_QUEUE_DEPTH; index++ {
+func operating_system_signals(state *operating_system) {
+	for index := 0; index < signal_queue_depth; index++ {
 		select {
 		case received := <-state.Signals:
 			operating_system_signal_deliver(state, received)
@@ -1149,7 +1228,7 @@ func operating_system_signals(state *Operating_System) {
 }
 
 // Fires every watcher matching received one-shot, keeping the rest for later deliveries.
-func operating_system_signal_deliver(state *Operating_System, received os.Signal) {
+func operating_system_signal_deliver(state *operating_system, received os.Signal) {
 	kept := state.Signal_Waiters[:0]
 	for index := 0; index < len(state.Signal_Waiters); index++ {
 		waiter := state.Signal_Waiters[index]
@@ -1159,311 +1238,40 @@ func operating_system_signal_deliver(state *Operating_System, received os.Signal
 		}
 		delivered := waiter
 		delivered.Completion.Callback = func() {
-			delivered.Callback(delivered.Completion, delivered.Kind)
+			delivered.Callback(delivered.Completion, delivered.Kind, nil)
 		}
 		state.Completed = append(state.Completed, delivered.Completion)
 	}
 	state.Signal_Waiters = kept
 }
 
-// Begins an outbound TLS connection: allocates a synthetic descriptor, records the
-// connection, and spawns its goroutine to dial and service requests.
-func operating_system_connect_secure(state *Operating_System, target Tls_Target) {
-	operating_system_wake_ensure(state)
-	if !state.Wake_Active {
-		completion := target.Completion
-		callback := target.Callback
-		completion.Callback = func() {
-			callback(completion, io.File(-1), errors.New("io: wake pipe unavailable"))
+// Expires signal watchers before draining the os/signal channel, so an event first observed at the
+// deadline is discarded and cannot leak into the next explicitly rearmed watch.
+func operating_system_expire_signals(state *operating_system, now time.Moment) {
+	kept := state.Signal_Waiters[:0]
+	for index := 0; index < len(state.Signal_Waiters); index++ {
+		waiter := state.Signal_Waiters[index]
+		if waiter.Deadline > now {
+			kept = append(kept, waiter)
+			continue
 		}
-		state.Completed = append(state.Completed, completion)
-		return
+		expired := waiter
+		expired.Completion.Callback = func() {
+			expired.Callback(expired.Completion, io.Signal(-1), io.Deadline_Exceeded)
+		}
+		state.Completed = append(state.Completed, expired.Completion)
 	}
-	file := operating_system_next_tls(state)
-	connection := &Tls_Connection{Requests: make(chan Tls_Request, TLS_REQUEST_DEPTH)}
-	state.TLS[file] = connection
-	go tls_serve(state, target, file, connection)
-}
-
-// Hands out the next synthetic TLS descriptor and ensures the TLS map exists.
-func operating_system_next_tls(state *Operating_System) (file io.File) {
-	if state.TLS == nil {
-		state.TLS = make(map[io.File]*Tls_Connection)
-	}
-	if state.Next_TLS < TLS_FILE_BASE {
-		state.Next_TLS = TLS_FILE_BASE
-	}
-	state.Next_TLS++
-	return state.Next_TLS
+	state.Signal_Waiters = kept
 }
 
 // Posts a completion finished off the loop thread: records its callback under the mutex
 // and wakes the loop to run it on the next drain.
 func operating_system_post(
-	state *Operating_System, completion *io.Completion, callback func(),
+	state *operating_system, completion *io.Completion, callback func(),
 ) {
 	completion.Callback = callback
 	state.Results_Mutex.Lock()
 	state.Posted = append(state.Posted, completion)
 	state.Results_Mutex.Unlock()
-	wake_poke(state.Wake_Write)
-}
-
-// Dials the TLS target on its own goroutine, posts the connect result, then services
-// send/receive/close requests until the connection closes.
-func tls_serve(
-	state *Operating_System, target Tls_Target, file io.File, connection *Tls_Connection,
-) {
-	secure, err := tls_dial(target)
-	if err != nil {
-		operating_system_post(state, target.Completion, func() {
-			delete(state.TLS, file)
-			target.Callback(target.Completion, io.File(-1), err)
-		})
-		return
-	}
-	operating_system_post(state, target.Completion, func() {
-		target.Callback(target.Completion, file, nil)
-	})
-	tls_service(state, secure, connection)
-}
-
-// Dials host:port and completes the client TLS handshake, verifying against Server_Name
-// unless the target is insecure.
-func tls_dial(target Tls_Target) (secure *tls.Conn, err error) {
-	address := net.JoinHostPort(target.Host, strconv.Itoa(target.Port))
-	raw, dial_err := net.Dial("tcp", address)
-	if dial_err != nil {
-		return nil, dial_err
-	}
-	secure = tls.Client(raw, &tls.Config{
-		ServerName:         target.Server_Name,
-		MinVersion:         tls.VersionTLS12,
-		InsecureSkipVerify: target.Insecure,
-	})
-	handshake_err := secure.Handshake()
-	if handshake_err != nil {
-		raw.Close()
-		return nil, handshake_err
-	}
-	return secure, nil
-}
-
-// Arms listener for readability; on readiness it accepts a raw connection and hands it
-// to a TLS goroutine that completes the server handshake.
-func operating_system_accept_secure(
-	state *Operating_System, completion *io.Completion,
-	callback io.Socket_Callback, listener io.File, certificate func() (value any),
-) {
-	operating_system_wake_ensure(state)
-	operating_system_poll_ensure(state)
-	descriptor := int(listener)
-	completion.Callback = func() { callback(completion, 0, io.Cancelled) }
-	state.Read_Waiters[descriptor] = &Socket_Operation{
-		Completion: completion,
-		Perform: func() (done bool, deliver func()) {
-			accepted, again, err := socket_accept(descriptor)
-			if again {
-				return false, nil
-			}
-			return true, func() {
-				operating_system_secure_accepted(
-					state, completion, callback, accepted, err, certificate)
-			}
-		},
-	}
-	poll_file_arm(state.Poll, descriptor, false)
-}
-
-// Handles a completed raw accept for a secure listener: on error reports it; otherwise
-// registers a TLS connection and spawns its server goroutine.
-func operating_system_secure_accepted(
-	state *Operating_System, completion *io.Completion, callback io.Socket_Callback,
-	accepted int, err error, certificate func() (value any),
-) {
-	if err != nil {
-		callback(completion, io.File(-1), err)
-		return
-	}
-	// A secure accept is two phases on one completion: the raw accept just delivered
-	// (dispatch returned it to idle), and the handshake now re-arms it — the posted
-	// handshake result is the delivery the caller observes.
-	io.Completion_Transition(&io.Completion_Transition_Input{
-		Completion: completion, From: io.COMPLETION_IDLE, To: io.COMPLETION_ARMED,
-	})
-	file, connection := operating_system_tls_register(state)
-	go tls_accept_serve(state, completion, callback, accepted, file, connection, certificate)
-}
-
-// Allocates a synthetic descriptor and records a fresh TLS connection.
-func operating_system_tls_register(
-	state *Operating_System,
-) (file io.File, connection *Tls_Connection) {
-	file = operating_system_next_tls(state)
-	connection = &Tls_Connection{Requests: make(chan Tls_Request, TLS_REQUEST_DEPTH)}
-	state.TLS[file] = connection
-	return file, connection
-}
-
-// Completes the server TLS handshake on its own goroutine, posts the connect result,
-// then services requests until the connection closes.
-func tls_accept_serve(
-	state *Operating_System, completion *io.Completion, callback io.Socket_Callback,
-	accepted int, file io.File, connection *Tls_Connection, certificate func() (value any),
-) {
-	secure, err := tls_accept(accepted, certificate)
-	if err != nil {
-		operating_system_post(state, completion, func() {
-			delete(state.TLS, file)
-			callback(completion, io.File(-1), err)
-		})
-		return
-	}
-	operating_system_post(state, completion, func() {
-		callback(completion, file, nil)
-	})
-	tls_service(state, secure, connection)
-}
-
-// Wraps an accepted raw descriptor in a server tls.Conn and completes the handshake.
-func tls_accept(
-	accepted int, certificate func() (value any),
-) (secure *tls.Conn, err error) {
-	raw_file := os.NewFile(uintptr(accepted), "tcp")
-	raw, connection_err := net.FileConn(raw_file)
-	raw_file.Close()
-	if connection_err != nil {
-		return nil, connection_err
-	}
-	secure = tls.Server(raw, &tls.Config{
-		MinVersion:     tls.VersionTLS12,
-		GetCertificate: tls_server_certificate(certificate),
-	})
-	handshake_err := secure.Handshake()
-	if handshake_err != nil {
-		raw.Close()
-		return nil, handshake_err
-	}
-	return secure, nil
-}
-
-// Adapts the opaque certificate provider to a tls.Config.GetCertificate callback,
-// asserting it yields a *tls.Certificate.
-func tls_server_certificate(
-	certificate func() (value any),
-) (get func(hello *tls.ClientHelloInfo) (chosen *tls.Certificate, err error)) {
-	return func(hello *tls.ClientHelloInfo) (chosen *tls.Certificate, err error) {
-		value := certificate()
-		typed, ok := value.(*tls.Certificate)
-		if !ok {
-			return nil, errors.New("io: no server certificate")
-		}
-		return typed, nil
-	}
-}
-
-// Certificate_Input carries the PEM bytes Certificate assembles into a server certificate.
-type Certificate_Input struct {
-	// Chain is the PEM-encoded certificate chain.
-	Chain []byte
-	// Key is the PEM-encoded private key.
-	Key []byte
-}
-
-// Certificate assembles the opaque server certificate Accept_Secure consumes from a PEM
-// certificate chain and private key — the constructor for the *tls.Certificate behind the
-// any that tls_server_certificate asserts, so a caller builds its cert through this gateway
-// instead of importing crypto/tls itself.
-func Certificate(input *Certificate_Input) (value any, err error) {
-	pair, pair_err := tls.X509KeyPair(input.Chain, input.Key)
-	if pair_err != nil {
-		return nil, pair_err
-	}
-	return &pair, nil
-}
-
-// Services a TLS connection's requests until it closes. Receives run on a dedicated reader
-// goroutine so a blocking Read never starves a concurrent send: tls.Conn permits one reader and one
-// writer at once, and a loop-native protocol like SPOE must write a response (the ACK) while a Read
-// for the next request is still outstanding. The request loop performs the sends and the close in
-// order, so there is exactly one writer; the reader goroutine services receives one at a time, so
-// there is exactly one reader. Without this split the single goroutine blocked in Read could not
-// write the ACK until more inbound data arrived, delaying it past HAProxy's timeout — the churn.
-func tls_service(state *Operating_System, secure *tls.Conn, connection *Tls_Connection) {
-	receives := make(chan Tls_Request, TLS_RECEIVE_QUEUE)
-	go func() {
-		for request := range receives {
-			count, err := secure.Read(request.Buffer)
-			operating_system_post(state, request.Completion, func() {
-				request.Byte_Callback(request.Completion, count, err)
-			})
-		}
-	}()
-	defer close(receives)
-	for request := range connection.Requests {
-		if request.Kind == TLS_RECEIVE {
-			receives <- request
-			continue
-		}
-		if request.Kind == TLS_CLOSE {
-			close_err := secure.Close()
-			operating_system_post(state, request.Completion, func() {
-				request.Close_Callback(request.Completion, close_err)
-			})
-			return
-		}
-		written, err := secure.Write(request.Buffer)
-		operating_system_post(state, request.Completion, func() {
-			request.Byte_Callback(request.Completion, written, err)
-		})
-	}
-}
-
-// Routes a receive to its TLS connection goroutine when socket is a TLS descriptor,
-// reporting whether it did.
-func operating_system_tls_receive(
-	state *Operating_System, completion *io.Completion,
-	callback io.Callback, socket io.File, buffer []byte,
-) (routed bool) {
-	connection := state.TLS[socket]
-	if connection == nil {
-		return false
-	}
-	connection.Requests <- Tls_Request{
-		Kind: TLS_RECEIVE, Completion: completion, Buffer: buffer, Byte_Callback: callback,
-	}
-	return true
-}
-
-// Routes a send to its TLS connection goroutine when socket is a TLS descriptor,
-// reporting whether it did.
-func operating_system_tls_send(
-	state *Operating_System, completion *io.Completion,
-	callback io.Callback, socket io.File, buffer []byte,
-) (routed bool) {
-	connection := state.TLS[socket]
-	if connection == nil {
-		return false
-	}
-	connection.Requests <- Tls_Request{
-		Kind: TLS_SEND, Completion: completion, Buffer: buffer, Byte_Callback: callback,
-	}
-	return true
-}
-
-// Routes a close to its TLS connection goroutine when file is a TLS descriptor, dropping
-// the routing entry, and reporting whether it did.
-func operating_system_tls_close(
-	state *Operating_System, completion *io.Completion,
-	callback io.Timeout_Callback, file io.File,
-) (routed bool) {
-	connection := state.TLS[file]
-	if connection == nil {
-		return false
-	}
-	delete(state.TLS, file)
-	connection.Requests <- Tls_Request{
-		Kind: TLS_CLOSE, Completion: completion, Close_Callback: callback,
-	}
-	return true
+	platform_event_trigger(state, state.Wake_Event, state.Wake_Identifier)
 }
