@@ -1457,7 +1457,8 @@ func struct_inherited_field_gaps(
 	gaps_input *Struct_Inherited_Field_Gaps_Input,
 ) (gaps []string) {
 	field := gaps_input.Field
-	if len(field.Names) == 0 {
+	names := struct_field_names(field)
+	if len(names) == 0 {
 		return nil
 	}
 	expected := struct_field_invariant(field.Type, gaps_input.Scope)
@@ -1468,22 +1469,22 @@ func struct_inherited_field_gaps(
 		return nil
 	}
 	is_struct := struct_field_is_struct(field.Type, gaps_input.Scope)
-	for _, name := range field.Names {
+	for _, name := range names {
 		if !is_struct {
-			if !gaps_input.Inline[name.Name] {
+			if !gaps_input.Inline[name] {
 				gaps = append(gaps,
-					"state "+gaps_input.Parameter+"."+name.Name+" inline")
+					"state "+gaps_input.Parameter+"."+name+" inline")
 			}
 			continue
 		}
-		if gaps_input.Present[expected+"\x00"+name.Name] {
+		if gaps_input.Present[expected+"\x00"+name] {
 			continue
 		}
-		if gaps_input.Converted[name.Name] {
+		if gaps_input.Converted[name] {
 			continue
 		}
 		gaps = append(gaps, "call "+helper_identity_name(expected)+"("+
-			gaps_input.Parameter+"."+name.Name+", ...)")
+			gaps_input.Parameter+"."+name+", ...)")
 	}
 	return gaps
 }
@@ -1600,8 +1601,8 @@ func struct_boolean_fields(
 		if !scope.Declarations.Booleans[scope.Current_Package+"\x00"+identifier.Name] {
 			continue
 		}
-		for _, name := range field.Names {
-			boolean_fields[name.Name] = true
+		for _, name := range struct_field_names(field) {
+			boolean_fields[name] = true
 		}
 	}
 	return boolean_fields
@@ -1734,7 +1735,8 @@ func struct_field_missing_calls(
 	present map[string]bool,
 	parameter string,
 ) (calls []string) {
-	if len(field.Names) == 0 {
+	names := struct_field_names(field)
+	if len(names) == 0 {
 		return nil
 	}
 	expected := struct_field_invariant(field.Type, scope)
@@ -1744,14 +1746,38 @@ func struct_field_missing_calls(
 	if !scope.Defined[expected] {
 		return nil
 	}
-	for _, name := range field.Names {
-		if present[expected+"\x00"+name.Name] {
+	for _, name := range names {
+		if present[expected+"\x00"+name] {
 			continue
 		}
 		calls = append(calls, helper_identity_name(expected)+"("+
-			parameter+"."+name.Name+", ...)")
+			parameter+"."+name+", ...)")
 	}
 	return calls
+}
+
+// Gives the names a field is selected by. An embedded field declares none, and Go selects it by the
+// type it embeds, thus anonymity hides it from a reader and never from the mandate.
+func struct_field_names(field *ast.Field) (names []string) {
+	if len(field.Names) != 0 {
+		for _, name := range field.Names {
+			names = append(names, name.Name)
+		}
+		return names
+	}
+	embedded := field.Type
+	star, is_star := embedded.(*ast.StarExpr)
+	if is_star {
+		embedded = star.X
+	}
+	switch typed := embedded.(type) {
+	case *ast.Ident:
+		return []string{typed.Name}
+	case *ast.SelectorExpr:
+		return []string{typed.Sel.Name}
+	default:
+		return nil
+	}
 }
 
 // Reports whether an immediate field is a sync.Mutex or sync.RWMutex.

@@ -429,6 +429,42 @@ func Test_Invariants_Inherited_Fields(t *testing.T) {
 	assert_inherited_struct_is_composed(t)
 }
 
+// Test_Invariants_Embedded_Fields verifies an anonymous field still owes its helper, under the name
+// of the type it embeds and through a pointer.
+func Test_Invariants_Embedded_Fields(t *testing.T) {
+	t.Parallel()
+	head := "package fixture\n\n" +
+		"import invariant \"fixture/shared/invariant/default\"\n\n" +
+		"const Mark_Min = 0\n\nconst Mark_Max = 8\n\n" +
+		"// Mark is a fixture.\ntype Mark int\n\n" +
+		"// Mark_Invariants is a fixture.\n" +
+		"func Mark_Invariants(v Mark, namespace invariant.Namespace) {\n" +
+		"\tinvariant.Tree(v, namespace)." +
+		"Range_Int(int(v), Mark_Min, Mark_Max).Ensure()\n}\n\n" +
+		"// Frame is a fixture.\ntype Frame struct {\n" +
+		"\t// Mk is a fixture.\n\tMk Mark\n}\n\n" +
+		"// Frame_Invariants is a fixture.\n" +
+		"func Frame_Invariants(v Frame, namespace invariant.Namespace) {\n" +
+		"\tMark_Invariants(v.Mk, namespace)\n}\n\n" +
+		"// Reference is a fixture.\ntype Reference struct {\n\t*Frame\n}\n\n"
+	bare := head + "// Reference_Invariants is a fixture.\n" +
+		"func Reference_Invariants(v Reference, namespace invariant.Namespace) {\n" +
+		"\tinvariant.Always(v.Frame != nil, \"the frame is present\")\n}\n"
+	want := "must call Frame_Invariants(v.Frame, ...)"
+	if !diagnosed(check_source(parse(t, &parse_input{
+		Path: "pkg/rule.go", Source_Text: bare})), want) {
+		t.Fatal("an embedded pointer that states only its presence must be flagged")
+	}
+	composed := head + "// Reference_Invariants is a fixture.\n" +
+		"func Reference_Invariants(v Reference, namespace invariant.Namespace) {\n" +
+		"\tinvariant.Always(v.Frame != nil, \"the frame is present\")\n" +
+		"\tFrame_Invariants(*v.Frame, namespace)\n}\n"
+	if diagnosed(check_source(parse(t, &parse_input{
+		Path: "pkg/rule.go", Source_Text: composed})), "must call Frame_Invariants") {
+		t.Fatal("an embedded pointer composed by its pointee must be accepted")
+	}
+}
+
 // Test_Invariants_Inline_Form verifies a Sometimes states no domain, thus it counts for a Boolean
 // field and for nothing else.
 func Test_Invariants_Inline_Form(t *testing.T) {

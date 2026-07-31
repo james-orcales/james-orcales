@@ -83,6 +83,12 @@ A defined type over a struct states each inherited field by a link of its own Tr
 Always, because one tree holds a type at one position. A struct field has no inline form, thus the
 defined type composes it, through a defined type of its own when the field type is occupied.
 
+### Embedded Fields
+
+An embedded field carries the same duty as a named one, and its name is the type it embeds. A
+pointer embeds the name of its pointee. Anonymity hides a field from a reader and never from the
+mandate.
+
 ### Inline Form
 
 An inline statement is a Range or an Enum link whose subject is the field, or a direct singleton
