@@ -996,12 +996,11 @@ type Parsed_File = source.Parsed_File
 
 var snake_case_re = regexp.MustCompile(`^[a-z][a-z0-9]*(_[a-z0-9]+)*$`)
 
-// The `[A-Z][A-Z0-9]*s?` arm admits the conventional Go pluralized-acronym
-// word (APIs, IDs, URLs): an all-caps run with a single trailing lowercase
-// `s`. Without it, `APIs` would be rejected and the spec heading "Unbounded
-// APIs" could not have a conformant Test_<...>_Unbounded_APIs name.
+// The acronym arm admits conventional Go plurals such as APIs, IDs, and URLs. A numeric arm is
+// valid only after the leading word because fixed-capacity APIs name that capacity as its own
+// segment while Go still requires the identifier itself to begin with a letter.
 var ada_case_re = regexp.MustCompile(
-	`^([A-Z][a-z0-9]*|[A-Z][A-Z0-9]*s?)(_([A-Z][a-z0-9]*|[A-Z][A-Z0-9]*s?))*$`)
+	`^([A-Z][a-z0-9]*|[A-Z][A-Z0-9]*s?)(_([A-Z][a-z0-9]*|[A-Z][A-Z0-9]*s?|[0-9]+))*$`)
 
 // Screaming_snake_case_re binds an exported top-level const, same shape as
 // snake_case_re uppercased. No acronym-plural arm is needed like ada_case_re's:

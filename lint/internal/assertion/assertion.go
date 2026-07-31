@@ -381,9 +381,20 @@ func invariant_builder_link(
 	method, _, _ := invariant_builder_method(call)
 	suffix, primitive, _ := invariant_type_kind(type_specification)
 	range_name := "Range_" + suffix
+	range_holed_name := "Range_Holed_" + suffix
 	enum_name := "Enum_" + suffix
-	if method == range_name {
-		if len(call.Args) < 3 {
+	enum_3_name := "Enum_3_" + suffix
+	enum_4_name := "Enum_4_" + suffix
+	switch method {
+	case range_name, range_holed_name:
+		argument_count := 3
+		if method == range_holed_name {
+			argument_count = 7
+			if strings.HasPrefix(suffix, "Uint") {
+				argument_count = 6
+			}
+		}
+		if len(call.Args) != argument_count {
 			return false, false
 		}
 		if !invariant_subject(call.Args[0], helper, type_specification, scope) {
@@ -392,10 +403,20 @@ func invariant_builder_link(
 		return true, invariant_arguments_constant(
 			call.Args[1:3], primitive, scope)
 	}
-	if method != enum_name {
+	member_count := 0
+	if method == enum_name {
+		member_count = 2
+	}
+	if method == enum_3_name {
+		member_count = 3
+	}
+	if method == enum_4_name {
+		member_count = 4
+	}
+	if member_count == 0 {
 		return false, false
 	}
-	if len(call.Args) < 3 {
+	if len(call.Args) != member_count+1 {
 		return false, false
 	}
 	if !invariant_subject(call.Args[0], helper, type_specification, scope) {
@@ -571,10 +592,12 @@ func invariant_missing_helper_diagnostic(
 	suffix, _, count := invariant_type_kind(type_specification)
 	value, _ := invariant_value_parameter(helper, type_specification.Name.Name)
 	message := helper.Name.Name + " must call a canonical helper for " + value +
-		": " + suffix + "_Invariants, Range_" + suffix + ", or Enum_" + suffix
+		": " + suffix + "_Invariants, a Range_" + suffix +
+		" family, or an Enum_" + suffix + " family"
 	if count {
-		message = helper.Name.Name + " must call Range_Int or Enum_Int for len(" + value +
-			") in a direct invariant.Assertions(namespace) builder ending in Ensure()"
+		message = helper.Name.Name + " must call Range_Int or Enum_Int family for len(" +
+			value + ") in a direct invariant.Assertions(namespace) builder " +
+			"ending in Ensure()"
 	}
 	return []Diagnostic{{
 		Position: file.File_Set.Position(helper.Name.Pos()), Message: message,

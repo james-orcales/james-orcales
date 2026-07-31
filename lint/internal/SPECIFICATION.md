@@ -365,7 +365,8 @@ Every struct field of an exported package-level struct carries a doc comment.
 ### Name Style
 
 Exported identifiers use Ada_Case, unexported use snake_case, TestMain aside; every const uses
-SCREAMING_SNAKE_CASE instead, whatever its scope or export status.
+SCREAMING_SNAKE_CASE instead, whatever its scope or export status. A numeric capacity may occupy
+one underscore-delimited Ada_Case segment, as in Enum_3_Int.
 
 ### Full Words
 

@@ -116,6 +116,19 @@ func Test_Invariants_Scalar_Helper(t *testing.T) {
 		"must call a canonical helper") {
 		t.Fatal("the exact Enum helper must satisfy the scalar mandate")
 	}
+	enum_3_body := "\tinvariant.Assertions(namespace)." +
+		"Enum_3_Int(int(value), int(Value_Min), int(Value_Third), int(Value_Max)).Ensure()"
+	if diagnosed(check_fixture(t, integer_helper_source(enum_3_body)),
+		"must call a canonical helper") {
+		t.Fatal("the exact Enum_3 helper must satisfy the scalar mandate")
+	}
+	enum_4_body := "\tinvariant.Assertions(namespace)." +
+		"Enum_4_Int(int(value), int(Value_Min), int(Value_Third), " +
+		"int(Value_Fourth), int(Value_Max)).Ensure()"
+	if diagnosed(check_fixture(t, integer_helper_source(enum_4_body)),
+		"must call a canonical helper") {
+		t.Fatal("the exact Enum_4 helper must satisfy the scalar mandate")
+	}
 	preset := "\tinvariant.Int_Invariants(int(value), namespace)"
 	if diagnosed(check_fixture(t, integer_helper_source(preset)),
 		"must call a canonical helper") {
@@ -146,10 +159,10 @@ func Test_Invariants_Count_Helper(t *testing.T) {
 		t.Fatal("individual count assertions must not satisfy the helper mandate")
 	}
 	valid := "\tinvariant.Assertions(namespace)." +
-		"Range_Int(len(value), Value_Min, Value_Max, 1, 2).Ensure()"
+		"Range_Holed_Int(len(value), Value_Min, Value_Max, 1, 2, 2, 2).Ensure()"
 	if diagnosed(check_fixture(t, count_helper_source(valid)),
 		"must call Range_Int or Enum_Int") {
-		t.Fatal("Range_Int over the counted value must satisfy the mandate")
+		t.Fatal("Range_Holed_Int over the counted value must satisfy the mandate")
 	}
 	wrong_suffix := "\tinvariant.Assertions(namespace)." +
 		"Range_Int64(int64(len(value)), int64(Value_Min), int64(Value_Max)).Ensure()"
@@ -188,7 +201,7 @@ func Test_Invariants_Helper_Constants(t *testing.T) {
 		t.Fatal("an inline Enum member must not satisfy the helper mandate")
 	}
 	converted := "\tinvariant.Assertions(namespace)." +
-		"Range_Int(int(value), int(Value_Min), int(Value_Max), 1, 2).Ensure()"
+		"Range_Holed_Int(int(value), int(Value_Min), int(Value_Max), 1, 2, 2, 2).Ensure()"
 	if diagnosed(check_fixture(t, integer_helper_source(converted)),
 		"arguments must be package-level constants") {
 		t.Fatal("exactly converted package constants must satisfy the mandate")
@@ -678,7 +691,8 @@ func check_fixture(t *testing.T, code string) (diags []diagnostic.Diagnostic) {
 func integer_helper_source(body string) (code string) {
 	return "package fixture\n\n" +
 		"import invariant \"fixture/shared/invariant/default\"\n\n" +
-		"const Value_Min = -4\n\nconst Value_Max = 4\n\n" +
+		"const Value_Min = -4\n\nconst Value_Third = -1\n\n" +
+		"const Value_Fourth = 1\n\nconst Value_Max = 4\n\n" +
 		"// Value is a fixture.\ntype Value int\n\n" +
 		"// Value_Invariants is a fixture.\n" +
 		"func Value_Invariants(value Value, namespace invariant.Namespace) {\n" +

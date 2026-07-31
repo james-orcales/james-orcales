@@ -32,15 +32,15 @@ interface types, empty structs, local types, tests, and opted-out packages are e
 
 ### Scalar Helper
 
-A defined integer helper calls its exact primitive preset or directly ensures an Assertions builder
-with its exact Range_TYPE or Enum_TYPE over the converted value. Floats and booleans call matching
-primitive presets; individual Always or Sometimes assertions never substitute.
+A defined integer helper uses its exact primitive preset or directly ensures an Assertions builder
+over the converted value with its exact Range, Range_Holed, Enum, Enum_3, or Enum_4 family. Floats
+and booleans use matching primitive presets; individual Always or Sometimes never substitute.
 
 ### Count Helper
 
 A defined string, slice, or map helper directly ensures an Assertions(namespace) builder containing
-Range_Int or Enum_Int over len(value). Individual assertions, another subject, another suffix, an
-unterminated or split builder, and an unrelated Assertions builder never substitute.
+one exact Int Range or Enum family over len(value). Individual assertions, another subject, another
+suffix, an unterminated or split builder, and an unrelated Assertions builder never substitute.
 
 ### Helper Constants
 

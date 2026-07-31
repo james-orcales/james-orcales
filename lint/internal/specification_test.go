@@ -987,9 +987,14 @@ func Test_Source_And_Test_Requirements_Name_Style(t *testing.T) {
 	}
 
 	clean_files := specification_one_file(
-		"package fixture\n\n// GOOD_NAME is a fixture.\nconst GOOD_NAME = 0\n")
+		"package fixture\n\n// GOOD_NAME is a fixture.\nconst GOOD_NAME = 0\n\n" +
+			"// Enum_3_Int is a fixture.\nfunc Enum_3_Int() {}\n")
 	if specification_diagnosed(specification_self_diagnostics(t, clean_files), "GOOD_NAME ->") {
 		t.Fatal("a SCREAMING_SNAKE_CASE exported const must not be flagged")
+	}
+	clean_diagnostics := specification_self_diagnostics(t, clean_files)
+	if specification_diagnosed(clean_diagnostics, "Enum_3_Int ->") {
+		t.Fatal("a numeric Ada_Case capacity segment must not be flagged")
 	}
 }
 

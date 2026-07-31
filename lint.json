@@ -15,7 +15,7 @@
   ],
   "ignore": [
           "install_golang.sh",
-          "shared/invariant/enforcement_noassert*",
+          "shared/invariant/enforcement_noop*",
           "build.go",
           "home/**",
           "documentation/youtube/**",
