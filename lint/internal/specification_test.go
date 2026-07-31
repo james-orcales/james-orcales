@@ -2369,7 +2369,8 @@ func simulation_fixture_source(call string, extra ...string) (source string) {
 		tail += piece
 	}
 	return "package simulation_test\n\n" +
-		"import (\n\t\"testing\"\n\n\tinvariant \"fixture/shared/invariant\"\n)\n\n" +
+		"import (\n\t\"testing\"\n\n" +
+		"\tinvariant \"fixture/shared/invariant/default\"\n)\n\n" +
 		"func TestMain(m *testing.M) {\n\t" + call + "\n}\n\n" +
 		"func Fuzz_Main(f *testing.F) {\n\t" +
 		"f.Fuzz(func(t *testing.T, data []byte) {})\n}\n" +
@@ -2381,8 +2382,9 @@ func simulation_fixture_source(call string, extra ...string) (source string) {
 func simulation_entry_source(body string) (source string) {
 	return "package simulation_test\n\nimport (\n\t\"testing\"\n\n" +
 		"\t\"github.com/james-orcales/james-orcales/pkg/internal\"\n" +
-		"\tinvariant \"fixture/shared/invariant\"\n)\n\n" +
-		"func TestMain(m *testing.M) {\n\tinvariant.Run_Test_Main(m, \"../**\")\n}\n\n" +
+		"\tinvariant \"fixture/shared/invariant/default\"\n)\n\n" +
+		"func TestMain(m *testing.M) {\n" +
+		"\tinvariant.Run_Test_Main(m, \"../**\")\n}\n\n" +
 		"func Fuzz_Main(f *testing.F) {\n\t" + body + "\n}\n"
 }
 
@@ -2499,7 +2501,7 @@ func Test_Recorder_Registration_Extra_Statements(t *testing.T) {
 	t.Parallel()
 	files := recorder_test_files(
 		"package fixture_test\n\nimport (\n\t\"testing\"\n\n" +
-			"\tinvariant \"fixture/shared/invariant\"\n)\n\n" +
+			"\tinvariant \"fixture/shared/invariant/default\"\n)\n\n" +
 			"func TestMain(m *testing.M) {\n\tinvariant.Run_Test_Main(m)\n" +
 			"\tinvariant.Run_Test_Main(m)\n}\n")
 	if !recorder_flags(t, files, "TestMain must be exactly") {
@@ -2513,7 +2515,7 @@ func Test_Recorder_Registration_Wired_Passes(t *testing.T) {
 	t.Parallel()
 	files := recorder_test_files(
 		"package fixture_test\n\nimport (\n\t\"testing\"\n\n" +
-			"\tinvariant \"fixture/shared/invariant\"\n)\n\n" +
+			"\tinvariant \"fixture/shared/invariant/default\"\n)\n\n" +
 			"func TestMain(m *testing.M) {\n\tinvariant.Run_Test_Main(m)\n}\n")
 	if recorder_flags(t, files, "Run_Test_Main") {
 		t.Fatal("a TestMain wiring Run_Test_Main must not be flagged")

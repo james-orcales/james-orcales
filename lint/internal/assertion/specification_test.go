@@ -478,8 +478,9 @@ func Test_Simulation_Presence(t *testing.T) {
 func Test_Simulation_Contents(t *testing.T) {
 	t.Parallel()
 	sim := "package simulation_test\n\nimport (\n\t\"testing\"\n\n" +
-		"\tinvariant \"fixture/shared/invariant\"\n)\n\n" +
-		"func TestMain(m *testing.M) {\n\tinvariant.Run_Test_Main(m, \"../**\")\n}\n"
+		"\tinvariant \"fixture/shared/invariant/default\"\n)\n\n" +
+		"func TestMain(m *testing.M) {\n" +
+		"\tinvariant.Run_Test_Main(m, \"../**\")\n}\n"
 	if !diagnosed(simulation_diagnostics(simulation_files(t, sim)),
 		"must declare a fuzz function") {
 		t.Fatal("a simulation package without a fuzz function must be flagged")
@@ -514,8 +515,9 @@ func Test_Simulation_Entry(t *testing.T) {
 	t.Parallel()
 	sim := "package simulation_test\n\nimport (\n\t\"testing\"\n\n" +
 		"\t\"github.com/james-orcales/james-orcales/pkg/internal\"\n" +
-		"\tinvariant \"fixture/shared/invariant\"\n)\n\n" +
-		"func TestMain(m *testing.M) {\n\tinvariant.Run_Test_Main(m, \"../**\")\n}\n\n" +
+		"\tinvariant \"fixture/shared/invariant/default\"\n)\n\n" +
+		"func TestMain(m *testing.M) {\n" +
+		"\tinvariant.Run_Test_Main(m, \"../**\")\n}\n\n" +
 		"func Fuzz_Main(f *testing.F) {\n\tinternal.Extra()\n}\n"
 	files := []source.Parsed_File{
 		parse(t, &parse_input{
@@ -541,8 +543,9 @@ func Test_Simulation_Entry(t *testing.T) {
 func Test_Simulation_Blackbox(t *testing.T) {
 	t.Parallel()
 	sim := "package simulation\n\nimport (\n\t\"testing\"\n\n" +
-		"\tinvariant \"fixture/shared/invariant\"\n)\n\n" +
-		"func TestMain(m *testing.M) {\n\tinvariant.Run_Test_Main(m, \"../**\")\n}\n\n" +
+		"\tinvariant \"fixture/shared/invariant/default\"\n)\n\n" +
+		"func TestMain(m *testing.M) {\n" +
+		"\tinvariant.Run_Test_Main(m, \"../**\")\n}\n\n" +
 		"func Fuzz_Main(f *testing.F) {\n\tf.Fuzz(func(t *testing.T, data []byte) {})\n}\n"
 	if !diagnosed(simulation_diagnostics(simulation_files(t, sim)), "must be blackbox") {
 		t.Fatal("a whitebox simulation package must be flagged")
@@ -859,7 +862,8 @@ func simulation_files(t *testing.T, sim string) (files []source.Parsed_File) {
 // so the TestMain and coverage leaves vary only that one call.
 func simulation_fixture_source(call string) (code string) {
 	return "package simulation_test\n\n" +
-		"import (\n\t\"testing\"\n\n\tinvariant \"fixture/shared/invariant\"\n)\n\n" +
+		"import (\n\t\"testing\"\n\n" +
+		"\tinvariant \"fixture/shared/invariant/default\"\n)\n\n" +
 		"func TestMain(m *testing.M) {\n\t" + call + "\n}\n\n" +
 		"func Fuzz_Main(f *testing.F) {\n\t" +
 		"f.Fuzz(func(t *testing.T, data []byte) {})\n}\n"

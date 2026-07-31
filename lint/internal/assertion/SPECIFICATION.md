@@ -79,9 +79,9 @@ never substitute.
 
 ### Recorder Registration
 
-A non-exempt shared-library package's TestMain body is exactly invariant.Run_Test_Main(m), so its
-suite registers with the coverage recorder; a binary component is witnessed via its simulation.
-Any other body, or no TestMain, is banned.
+A non-exempt shared-library package's TestMain body is exactly `invariant.Run_Test_Main(m)`. Thus,
+the suite registers the coverage recorder. A binary component uses its simulation. Any other body,
+or no TestMain, is banned.
 
 ### Primitive Types
 
@@ -107,8 +107,8 @@ isolated test binary, witnesses the component's invariants. Other declarations a
 
 ### Test Main
 
-The simulation TestMain body is exactly invariant.Run_Test_Main(m, "../**"); any other body, or
-a missing TestMain, is banned.
+The simulation TestMain body is exactly `invariant.Run_Test_Main(m, "../**")`. Any other body, or a
+missing TestMain, is banned.
 
 ### Coverage
 

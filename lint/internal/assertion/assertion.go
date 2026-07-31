@@ -2211,7 +2211,7 @@ func simulation_find_test_main(files []Parsed_File) (function *ast.FuncDecl) {
 }
 
 // The directory arguments of the simulation TestMain's sole statement, and whether
-// that statement is exactly invariant.Run_Test_Main(m, <one or more string literals>).
+// that statement is exactly invariant.Run_Test_Main(m, <string literals>).
 func simulation_test_main_directories(
 	function *ast.FuncDecl,
 ) (directories []string, canonical bool) {
