@@ -28,11 +28,16 @@ func main() {
 		os.Exit(2)
 	}
 	verb := os.Args[1]
-	// The race detector and -count=1 mirror the pre-consolidation CI command;
-	// vet and build take no such flags.
+	// Tests keep the expensive diagnostics used by CI. Build selects the
+	// production implementation because its artifacts are the binaries this
+	// entry point exists to produce; vet still inspects the ordinary full
+	// implementation.
 	flags := []string(nil)
 	if verb == "test" {
 		flags = []string{"-count=1", "-race"}
+	}
+	if verb == "build" {
+		flags = []string{"-tags=production"}
 	}
 	patterns, err := build_component_patterns()
 	if err != nil {
