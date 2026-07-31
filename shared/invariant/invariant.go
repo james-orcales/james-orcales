@@ -27,6 +27,23 @@ import (
 // ASSERTION_FAILURE_MESSAGE_PREFIX opens every assertion-failure message.
 const ASSERTION_FAILURE_MESSAGE_PREFIX = "🚨 Assertion Failure 🚨: "
 
+// Assertion_Failure delays production diagnostics until a failed value is rendered. Explicit
+// fields let recovery inspect the failure without parsing its human-readable text.
+type Assertion_Failure struct {
+	// Identity remains separate so the fixed property is recognizable without formatting.
+	Identity string
+	// Reason keeps the runtime relation out of the property's stable identity.
+	Reason string
+	// Value stays unformatted until panic reporting is already unavoidable.
+	Value any
+}
+
+// Error keeps text construction out of every successful production assertion.
+func (failure Assertion_Failure) Error() (message string) {
+	return ASSERTION_FAILURE_MESSAGE_PREFIX + failure.Identity + failure.Reason +
+		": " + fmt.Sprint(failure.Value)
+}
+
 // ELEMENT_MESSAGE_SEPARATOR makes chain coverage keys unambiguous because registration
 // rejects it in every message.
 const ELEMENT_MESSAGE_SEPARATOR = "\x00"

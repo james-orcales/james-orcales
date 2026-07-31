@@ -72,7 +72,8 @@ func production_pair(t *testing.T, name string, optimized func(), reference func
 
 func production_reference_always(condition bool, message string) {
 	if !condition {
-		panic(invariant.ASSERTION_FAILURE_MESSAGE_PREFIX + message)
+		panic(invariant.ASSERTION_FAILURE_MESSAGE_PREFIX + message +
+			"  Always — condition was false: " + fmt.Sprint(condition))
 	}
 }
 
@@ -87,11 +88,11 @@ func production_reference_ensure() {
 func production_reference_range_int(value int, minimum int, maximum int) {
 	if value < minimum {
 		panic(invariant.ASSERTION_FAILURE_MESSAGE_PREFIX +
-			invariant.RANGE_GUARD_MINIMUM + "  value below min")
+			invariant.RANGE_GUARD_MINIMUM + "  value below min: " + fmt.Sprint(value))
 	}
 	if value > maximum {
 		panic(invariant.ASSERTION_FAILURE_MESSAGE_PREFIX +
-			invariant.RANGE_GUARD_MAXIMUM + "  value exceeds max")
+			invariant.RANGE_GUARD_MAXIMUM + "  value exceeds max: " + fmt.Sprint(value))
 	}
 }
 
@@ -101,7 +102,8 @@ func production_reference_range_holed_int(
 	production_reference_range_int(value, minimum, maximum)
 	switch value {
 	case hole_1, hole_2, hole_3, hole_4:
-		panic(invariant.ASSERTION_FAILURE_MESSAGE_PREFIX + "Range value is excluded")
+		panic(invariant.ASSERTION_FAILURE_MESSAGE_PREFIX +
+			"Range value is excluded: " + fmt.Sprint(value))
 	}
 }
 
@@ -111,7 +113,7 @@ func production_reference_enum_int(value int, first int, second int) {
 		return
 	}
 	panic(invariant.ASSERTION_FAILURE_MESSAGE_PREFIX +
-		invariant.ENUM_GUARD_MEMBER + "  value is not a member")
+		invariant.ENUM_GUARD_MEMBER + "  value is not a member: " + fmt.Sprint(value))
 }
 
 func production_reference_enum_3_int(value int, first int, second int, third int) {
@@ -120,7 +122,7 @@ func production_reference_enum_3_int(value int, first int, second int, third int
 		return
 	}
 	panic(invariant.ASSERTION_FAILURE_MESSAGE_PREFIX +
-		invariant.ENUM_GUARD_MEMBER + "  value is not a member")
+		invariant.ENUM_GUARD_MEMBER + "  value is not a member: " + fmt.Sprint(value))
 }
 
 func production_reference_enum_4_int(
@@ -131,7 +133,7 @@ func production_reference_enum_4_int(
 		return
 	}
 	panic(invariant.ASSERTION_FAILURE_MESSAGE_PREFIX +
-		invariant.ENUM_GUARD_MEMBER + "  value is not a member")
+		invariant.ENUM_GUARD_MEMBER + "  value is not a member: " + fmt.Sprint(value))
 }
 
 // Test_Production_Int_Assertions_Enforce_At_The_Violating_Link keeps every int family eager.

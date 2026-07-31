@@ -89,7 +89,7 @@ An untagged build retains the full deferred and recording-capable behavior above
 Production aliases may be combined. `Always`, Range, holed Range, and every Enum capacity panic at
 the violating call; `Sometimes` and `Ensure` are inert. Production builders carry no namespace,
 plan, observation, allocation, or recording delegate, and panic text uses only the assertion prefix
-and fixed property identity.
+and fixed property identity plus the offending value.
 
 `invariant_noop` compiles the complete API as inert bodies solely for measuring assertion overhead.
 Application code depends on assertion panics aborting control flow, so running any application in
@@ -104,30 +104,30 @@ Machine: Apple M4 (arm64)
   cores: 4 P + 6 E = 10 logical   freq: ?   ram: 16GiB   storage: 460GiB
   L1: 128KiB   L2: 16MiB   OS: macOS 26.2   kernel: Darwin 25.2.0
 
-Benchmark 1 (20 runs, 65.4s): .local/tmp/sloc-full third_party
+Benchmark 1 (20 runs, 67.0s): .local/tmp/sloc-full third_party
   measurement      mean ± σ              min ... max        outliers
-  wall_time       3.27s ± 30.6ms       3.23s ... 3.32s        0 (0%)
-  peak_rss      70.2MiB ± 1.80MiB    66.3MiB ... 73.2MiB      0 (0%)
-  cpu_cycles      80.9G ± 851M         79.3G ... 82.2G        0 (0%)
-  instructions     386G ± 119M          386G ... 386G         1 (5%)
-  cpu_user        529ms ± 6.25ms       516ms ... 538ms        0 (0%)
-  cpu_system     58.1ms ± 1.04ms      54.8ms ... 59.5ms       1 (5%)
+  wall_time       3.35s ± 36.7ms       3.29s ... 3.42s        0 (0%)
+  peak_rss      70.6MiB ± 3.05MiB    66.8MiB ... 80.3MiB      1 (5%)
+  cpu_cycles      81.7G ± 780M         80.3G ... 83.0G        0 (0%)
+  instructions     386G ± 191M          386G ... 387G        2 (10%)
+  cpu_user        534ms ± 5.51ms       524ms ... 543ms        0 (0%)
+  cpu_system     57.7ms ± 980us       56.2ms ... 60.0ms      2 (10%)
 
-Benchmark 2 (20 runs, 43.1s): .local/tmp/sloc-production third_party
+Benchmark 2 (20 runs, 42.1s): .local/tmp/sloc-production third_party
   measurement      mean ± σ              min ... max        outliers  delta
-  wall_time       2.15s ± 144ms        2.02s ... 2.69s       2 (10%)  - 34.2% ±  2.1%
-  peak_rss      69.9MiB ± 2.20MiB    66.7MiB ... 73.8MiB      0 (0%)  -  0.4% ±  1.9%
-  cpu_cycles      44.1G ± 715M         42.8G ... 46.3G       5 (25%)  - 45.5% ±  0.6%
-  instructions     171G ± 432M          170G ... 172G         1 (5%)  - 55.7% ±  0.0%
-  cpu_user        259ms ± 2.21ms       254ms ... 264ms        1 (5%)  - 50.9% ±  0.6%
-  cpu_system     60.3ms ± 5.20ms      52.5ms ... 77.3ms      5 (25%)  +  3.7% ±  4.2%
+  wall_time       2.10s ± 83.1ms       2.03s ... 2.38s        1 (5%)  - 37.2% ±  1.2%
+  peak_rss      69.6MiB ± 2.64MiB    64.7MiB ... 74.4MiB      0 (0%)  -  1.4% ±  2.6%
+  cpu_cycles      44.0G ± 340M         43.5G ... 45.2G        1 (5%)  - 46.1% ±  0.5%
+  instructions     171G ± 342M          171G ... 172G        2 (10%)  - 55.8% ±  0.0%
+  cpu_user        259ms ± 1.43ms       253ms ... 260ms        1 (5%)  - 51.6% ±  0.5%
+  cpu_system     58.2ms ± 2.28ms      55.2ms ... 66.3ms      2 (10%)  +  0.8% ±  2.0%
 
-Benchmark 3 (20 runs, 37.2s): .local/tmp/sloc-noop third_party
+Benchmark 3 (20 runs, 37.7s): .local/tmp/sloc-noop third_party
   measurement      mean ± σ              min ... max        outliers  delta
-  wall_time       1.86s ± 82.0ms       1.77s ... 2.10s        1 (5%)  - 43.2% ±  1.2%
-  peak_rss      70.2MiB ± 1.97MiB    66.0MiB ... 72.8MiB      0 (0%)  -  0.0% ±  1.7%
-  cpu_cycles      36.3G ± 537M         35.1G ... 37.2G       5 (25%)  - 55.1% ±  0.6%
-  instructions     125G ± 255M          125G ... 126G        3 (15%)  - 67.6% ±  0.0%
-  cpu_user        201ms ± 2.04ms       197ms ... 204ms        0 (0%)  - 62.0% ±  0.6%
-  cpu_system     59.1ms ± 3.23ms      52.1ms ... 65.7ms      3 (15%)  +  1.6% ±  2.7%
+  wall_time       1.89s ± 91.5ms       1.77s ... 2.06s        0 (0%)  - 43.6% ±  1.3%
+  peak_rss      70.4MiB ± 2.36MiB    66.4MiB ... 73.8MiB      0 (0%)  -  0.2% ±  2.5%
+  cpu_cycles      36.2G ± 717M         34.7G ... 37.6G       3 (15%)  - 55.7% ±  0.6%
+  instructions     125G ± 453M          125G ... 126G         0 (0%)  - 67.5% ±  0.0%
+  cpu_user        201ms ± 1.96ms       195ms ... 203ms       2 (10%)  - 62.4% ±  0.5%
+  cpu_system     59.4ms ± 4.72ms      51.2ms ... 68.9ms      3 (15%)  +  2.9% ±  3.8%
 ```

@@ -7,7 +7,7 @@ it is independent of an `Assertions` builder.
 ### Violation
 
 A false `Always` panics at its own callsite in every enforcing build and names its message. The
-benchmark-only noop build is non-enforcing.
+panic includes the observed false value. The benchmark-only noop build is non-enforcing.
 
 ### Eager
 
@@ -54,8 +54,9 @@ and message; registration alone constructs that identity and its resolved covera
 
 ### Atomic
 
-`Ensure` validates every deferred failure and selected handle before crediting anything. A failed
-chain panics without partial coverage mutation.
+`Ensure` validates every deferred failure and selected handle before crediting; a failed chain
+credits nothing. Value panics include the offending value; full builds separate namespace and
+property with ` · `, while production retains only the fixed property.
 
 ### Foreign
 
@@ -66,7 +67,7 @@ binaries do not consult registration plans or shape caches.
 
 Warmed recording and enforcement allocate nothing; fixed observations exist only with a plan.
 Ordinary full enforcement carries a deferred verdict without constructing recording state.
-Production and benchmark-only noop builds return zero builders retaining no namespace or plan.
+Production and noop use zero builders; production formats `Assertion_Failure` only when rendered.
 
 ### Persistence
 

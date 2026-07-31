@@ -89,7 +89,8 @@ func assertion_pair(t *testing.T, name string, optimized func(), reference func(
 
 func full_reference_always(condition bool, message string) {
 	if !condition {
-		panic(ASSERTION_FAILURE_MESSAGE_PREFIX + message + "  Always — condition was false")
+		panic(ASSERTION_FAILURE_MESSAGE_PREFIX + message +
+			"  Always — condition was false: " + fmt.Sprint(condition))
 	}
 }
 
@@ -102,12 +103,12 @@ func full_reference_ensure() {
 }
 
 func full_reference_range_int(namespace Namespace, value int, minimum int, maximum int) {
-	prefix := ASSERTION_FAILURE_MESSAGE_PREFIX + string(namespace) + ELEMENT_MESSAGE_SEPARATOR
+	prefix := ASSERTION_FAILURE_MESSAGE_PREFIX + string(namespace) + " · "
 	if value < minimum {
-		panic(prefix + RANGE_GUARD_MINIMUM + "  value below min")
+		panic(prefix + RANGE_GUARD_MINIMUM + "  value below min: " + fmt.Sprint(value))
 	}
 	if value > maximum {
-		panic(prefix + RANGE_GUARD_MAXIMUM + "  value exceeds max")
+		panic(prefix + RANGE_GUARD_MAXIMUM + "  value exceeds max: " + fmt.Sprint(value))
 	}
 }
 
@@ -118,9 +119,8 @@ func full_reference_range_holed_int(
 	full_reference_range_int(namespace, value, minimum, maximum)
 	switch value {
 	case hole_1, hole_2, hole_3, hole_4:
-		prefix := ASSERTION_FAILURE_MESSAGE_PREFIX + string(namespace)
-		prefix += ELEMENT_MESSAGE_SEPARATOR
-		panic(prefix + "Range value is excluded")
+		prefix := ASSERTION_FAILURE_MESSAGE_PREFIX + string(namespace) + " · "
+		panic(prefix + "Range value is excluded: " + fmt.Sprint(value))
 	}
 }
 
@@ -129,8 +129,8 @@ func full_reference_enum_int(namespace Namespace, value int, first int, second i
 	case first, second:
 		return
 	}
-	prefix := ASSERTION_FAILURE_MESSAGE_PREFIX + string(namespace) + ELEMENT_MESSAGE_SEPARATOR
-	panic(prefix + ENUM_GUARD_MEMBER + "  value is not a member")
+	prefix := ASSERTION_FAILURE_MESSAGE_PREFIX + string(namespace) + " · "
+	panic(prefix + ENUM_GUARD_MEMBER + "  value is not a member: " + fmt.Sprint(value))
 }
 
 func full_reference_enum_3_int(
@@ -140,8 +140,8 @@ func full_reference_enum_3_int(
 	case first, second, third:
 		return
 	}
-	prefix := ASSERTION_FAILURE_MESSAGE_PREFIX + string(namespace) + ELEMENT_MESSAGE_SEPARATOR
-	panic(prefix + ENUM_GUARD_MEMBER + "  value is not a member")
+	prefix := ASSERTION_FAILURE_MESSAGE_PREFIX + string(namespace) + " · "
+	panic(prefix + ENUM_GUARD_MEMBER + "  value is not a member: " + fmt.Sprint(value))
 }
 
 func full_reference_enum_4_int(
@@ -151,8 +151,8 @@ func full_reference_enum_4_int(
 	case first, second, third, fourth:
 		return
 	}
-	prefix := ASSERTION_FAILURE_MESSAGE_PREFIX + string(namespace) + ELEMENT_MESSAGE_SEPARATOR
-	panic(prefix + ENUM_GUARD_MEMBER + "  value is not a member")
+	prefix := ASSERTION_FAILURE_MESSAGE_PREFIX + string(namespace) + " · "
+	panic(prefix + ENUM_GUARD_MEMBER + "  value is not a member: " + fmt.Sprint(value))
 }
 
 // Test_Assertion_Builder_Fits_Three_Words prevents recording-only state from making every fluent

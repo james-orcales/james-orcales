@@ -7,7 +7,11 @@ package invariant
 // Recorder_Always remains eager because production removes every recording concern.
 func Recorder_Always[T ~bool](recorder *Recorder, condition T, message string) {
 	if !condition {
-		panic(ASSERTION_FAILURE_MESSAGE_PREFIX + message)
+		panic(Assertion_Failure{
+			Identity: message,
+			Reason:   "  Always — condition was false",
+			Value:    condition,
+		})
 	}
 }
 
@@ -403,13 +407,18 @@ func production_range[Value Integer](
 	builder Assertion_Builder, value Value, minimum Value, maximum Value,
 ) (next Assertion_Builder) {
 	if value < minimum {
-		panic(ASSERTION_FAILURE_MESSAGE_PREFIX + RANGE_GUARD_MINIMUM + "  value below min")
+		panic(Assertion_Failure{
+			Identity: RANGE_GUARD_MINIMUM,
+			Reason:   "  value below min",
+			Value:    value,
+		})
 	}
 	if value > maximum {
-		panic(
-			ASSERTION_FAILURE_MESSAGE_PREFIX +
-				RANGE_GUARD_MAXIMUM + "  value exceeds max",
-		)
+		panic(Assertion_Failure{
+			Identity: RANGE_GUARD_MAXIMUM,
+			Reason:   "  value exceeds max",
+			Value:    value,
+		})
 	}
 	return builder
 }
@@ -419,20 +428,25 @@ func production_range_holed[Value Integer](
 	hole_1 Value, hole_2 Value, hole_3 Value, hole_4 Value,
 ) (next Assertion_Builder) {
 	if value < minimum {
-		panic(
-			ASSERTION_FAILURE_MESSAGE_PREFIX +
-				RANGE_GUARD_MINIMUM + "  value below min",
-		)
+		panic(Assertion_Failure{
+			Identity: RANGE_GUARD_MINIMUM,
+			Reason:   "  value below min",
+			Value:    value,
+		})
 	}
 	if value > maximum {
-		panic(
-			ASSERTION_FAILURE_MESSAGE_PREFIX +
-				RANGE_GUARD_MAXIMUM + "  value exceeds max",
-		)
+		panic(Assertion_Failure{
+			Identity: RANGE_GUARD_MAXIMUM,
+			Reason:   "  value exceeds max",
+			Value:    value,
+		})
 	}
 	switch value {
 	case hole_1, hole_2, hole_3, hole_4:
-		panic(ASSERTION_FAILURE_MESSAGE_PREFIX + "Range value is excluded")
+		panic(Assertion_Failure{
+			Identity: "Range value is excluded",
+			Value:    value,
+		})
 	}
 	return builder
 }
@@ -444,10 +458,11 @@ func production_enum_2[Value Integer](
 	case first, second:
 		return builder
 	}
-	panic(
-		ASSERTION_FAILURE_MESSAGE_PREFIX +
-			ENUM_GUARD_MEMBER + "  value is not a member",
-	)
+	panic(Assertion_Failure{
+		Identity: ENUM_GUARD_MEMBER,
+		Reason:   "  value is not a member",
+		Value:    value,
+	})
 }
 
 func production_enum_3[Value Integer](
@@ -457,10 +472,11 @@ func production_enum_3[Value Integer](
 	case first, second, third:
 		return builder
 	}
-	panic(
-		ASSERTION_FAILURE_MESSAGE_PREFIX +
-			ENUM_GUARD_MEMBER + "  value is not a member",
-	)
+	panic(Assertion_Failure{
+		Identity: ENUM_GUARD_MEMBER,
+		Reason:   "  value is not a member",
+		Value:    value,
+	})
 }
 
 func production_enum_4[Value Integer](
@@ -471,8 +487,9 @@ func production_enum_4[Value Integer](
 	case first, second, third, fourth:
 		return builder
 	}
-	panic(
-		ASSERTION_FAILURE_MESSAGE_PREFIX +
-			ENUM_GUARD_MEMBER + "  value is not a member",
-	)
+	panic(Assertion_Failure{
+		Identity: ENUM_GUARD_MEMBER,
+		Reason:   "  value is not a member",
+		Value:    value,
+	})
 }

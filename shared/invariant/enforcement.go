@@ -4,7 +4,10 @@
 // latch raw verdicts. Ensure is the single boundary that can panic or mutate coverage.
 package invariant
 
-import "unsafe"
+import (
+	"fmt"
+	"unsafe"
+)
 
 // ASSERTION_FAILURE_NONE reserves zero so the builder's zero value has no deferred verdict.
 const ASSERTION_FAILURE_NONE uint8 = 0
@@ -51,7 +54,7 @@ const ASSERTION_FAILURE_MASK = uintptr(0x0f) << ASSERTION_FAILURE_SHIFT
 // Recorder_Always remains eager because it is deliberately outside the deferred builder.
 func Recorder_Always[T ~bool](recorder *Recorder, condition T, message string) {
 	if !condition {
-		panic(ASSERTION_FAILURE_MESSAGE_PREFIX + message + "  Always — condition was false")
+		recorder_always_failure(bool(condition), message)
 	}
 	if !recorder.Is_Test {
 		return
@@ -60,6 +63,14 @@ func Recorder_Always[T ~bool](recorder *Recorder, condition T, message string) {
 		return
 	}
 	recorder_increment(recorder, message, true)
+}
+
+// Keeping diagnostic formatting out of the eager guard leaves its passing branch inlineable.
+//
+//go:noinline
+func recorder_always_failure(condition bool, message string) {
+	panic(ASSERTION_FAILURE_MESSAGE_PREFIX + message +
+		"  Always — condition was false: " + fmt.Sprint(condition))
 }
 
 // Recorder_Assertions starts one deferred chain. Only recording modes consult registration;
@@ -560,33 +571,46 @@ func (builder *Assertion_Builder) assertion_namespace() (namespace Namespace) {
 	return Namespace(unsafe.String((*byte)(builder.Context), int(builder.State_A)))
 }
 
+// Replacing recording state after a failure keeps diagnostics rich without enlarging every
+// builder or retaining state that Ensure must never credit.
+//
 //go:noinline
-func (builder Assertion_Builder) assertion_fail(failure uint8) (next Assertion_Builder) {
+func (builder Assertion_Builder) assertion_fail(
+	failure uint8, value any,
+) (next Assertion_Builder) {
 	if builder.assertion_failure() == ASSERTION_FAILURE_NONE {
-		builder.State_B |= uintptr(failure) << ASSERTION_FAILURE_SHIFT
+		message := assertion_failure_text(
+			failure, builder.assertion_namespace(), fmt.Sprint(value))
+		builder.Context = unsafe.Pointer(&message)
+		builder.State_A = 0
+		builder.State_B = uintptr(failure) << ASSERTION_FAILURE_SHIFT
 	}
 	return builder
 }
 
 func (builder *Assertion_Builder) assertion_failure_message() (message string) {
-	prefix := string(builder.assertion_namespace()) + ELEMENT_MESSAGE_SEPARATOR
-	switch builder.assertion_failure() {
+	return *(*string)(builder.Context)
+}
+
+func assertion_failure_text(failure uint8, namespace Namespace, value string) (message string) {
+	prefix := string(namespace) + " · "
+	switch failure {
 	case ASSERTION_FAILURE_LINKS:
 		return "Assertions exceeds 70 links"
 	case ASSERTION_FAILURE_RANGE_DOMAIN:
-		return prefix + "Range minimum exceeds maximum"
+		return prefix + "Range minimum exceeds maximum: " + value
 	case ASSERTION_FAILURE_RANGE_LOWER:
-		return prefix + RANGE_GUARD_MINIMUM + "  value below min"
+		return prefix + RANGE_GUARD_MINIMUM + "  value below min: " + value
 	case ASSERTION_FAILURE_RANGE_UPPER:
-		return prefix + RANGE_GUARD_MAXIMUM + "  value exceeds max"
+		return prefix + RANGE_GUARD_MAXIMUM + "  value exceeds max: " + value
 	case ASSERTION_FAILURE_RANGE_EXCLUSION:
-		return prefix + "Range exclusion is not strictly inside the interval"
+		return prefix + "Range exclusion is not strictly inside the interval: " + value
 	case ASSERTION_FAILURE_RANGE_EXCLUDED:
-		return prefix + "Range value is excluded"
+		return prefix + "Range value is excluded: " + value
 	case ASSERTION_FAILURE_ENUM_DOMAIN:
-		return prefix + "Enum requires at least two distinct members"
+		return prefix + "Enum requires at least two distinct members: " + value
 	case ASSERTION_FAILURE_ENUM_MEMBER:
-		return prefix + ENUM_GUARD_MEMBER + "  value is not a member"
+		return prefix + ENUM_GUARD_MEMBER + "  value is not a member: " + value
 	}
 	return "Assertions failed"
 }
@@ -609,10 +633,10 @@ func assertion_range_slow[Value Integer](
 	builder Assertion_Builder, value Value, minimum Value, maximum Value,
 ) (next Assertion_Builder) {
 	if value < minimum {
-		builder = builder.assertion_fail(ASSERTION_FAILURE_RANGE_LOWER)
+		builder = builder.assertion_fail(ASSERTION_FAILURE_RANGE_LOWER, value)
 	}
 	if value > maximum {
-		builder = builder.assertion_fail(ASSERTION_FAILURE_RANGE_UPPER)
+		builder = builder.assertion_fail(ASSERTION_FAILURE_RANGE_UPPER, value)
 	}
 	if builder.assertion_recording() {
 		builder = assertion_range_recording(
@@ -654,10 +678,10 @@ func assertion_range_holed_slow[Value Integer](
 	hole_1 Value, hole_2 Value, hole_3 Value, hole_4 Value,
 ) (next Assertion_Builder) {
 	if value < minimum {
-		builder = builder.assertion_fail(ASSERTION_FAILURE_RANGE_LOWER)
+		builder = builder.assertion_fail(ASSERTION_FAILURE_RANGE_LOWER, value)
 	}
 	if value > maximum {
-		builder = builder.assertion_fail(ASSERTION_FAILURE_RANGE_UPPER)
+		builder = builder.assertion_fail(ASSERTION_FAILURE_RANGE_UPPER, value)
 	}
 	excluded := value == hole_1
 	if value == hole_2 {
@@ -670,7 +694,7 @@ func assertion_range_holed_slow[Value Integer](
 		excluded = true
 	}
 	if excluded {
-		builder = builder.assertion_fail(ASSERTION_FAILURE_RANGE_EXCLUDED)
+		builder = builder.assertion_fail(ASSERTION_FAILURE_RANGE_EXCLUDED, value)
 	}
 	if builder.assertion_recording() {
 		builder = assertion_range_recording(
@@ -766,7 +790,7 @@ func assertion_enum_2_slow[Value Integer](
 		matched = true
 	}
 	if !matched {
-		builder = builder.assertion_fail(ASSERTION_FAILURE_ENUM_MEMBER)
+		builder = builder.assertion_fail(ASSERTION_FAILURE_ENUM_MEMBER, value)
 	}
 	if builder.assertion_recording() {
 		builder = builder.assertion_guard()
@@ -806,7 +830,7 @@ func assertion_enum_3_slow[Value Integer](
 		matched = true
 	}
 	if !matched {
-		builder = builder.assertion_fail(ASSERTION_FAILURE_ENUM_MEMBER)
+		builder = builder.assertion_fail(ASSERTION_FAILURE_ENUM_MEMBER, value)
 	}
 	if builder.assertion_recording() {
 		builder = builder.assertion_guard()
@@ -855,7 +879,7 @@ func assertion_enum_4_slow[Value Integer](
 		matched = true
 	}
 	if !matched {
-		builder = builder.assertion_fail(ASSERTION_FAILURE_ENUM_MEMBER)
+		builder = builder.assertion_fail(ASSERTION_FAILURE_ENUM_MEMBER, value)
 	}
 	if builder.assertion_recording() {
 		builder = builder.assertion_guard()
