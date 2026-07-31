@@ -1,4 +1,14 @@
 
+# Load
+
+Load finds the workspace, discovers first-party Go packages, and type-checks their source through
+injected filesystem operations. The operating-system bindings stay in the composition root.
+
+### Discovers Source Through Injections
+
+Load walks from the nearest go.mod, reads package source through the injected bounded readers, and
+returns the type-checked packages in deterministic import-path order.
+
 # Chain
 
 ### Root To Leaf

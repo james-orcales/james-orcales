@@ -19,6 +19,27 @@ import (
 // the writer received, the exit code — never on internals, so the suite stays a
 // black box over Plan and Main and never touches a real home directory.
 
+// Test_Bootstrap_Steps verifies Bootstrap_Steps owns the complete bootstrap
+// policy in the order that the setup command requires.
+func Test_Bootstrap_Steps(t *testing.T) {
+	t.Parallel()
+	steps := setup.Bootstrap_Steps(&setup.Bootstrap_Steps_Input{
+		Home_Directory:   "/home/person",
+		Operating_System: "freebsd",
+	})
+	names := []string{}
+	for _, step := range steps {
+		names = append(names, step.Name)
+	}
+	want := []string{
+		"direnv", "dotfiles", "fonts", "neovim", "fzf", "maddox", "m2p", "sloc",
+		"timeout", "rust", "jj", "ripgrep", "fd", "ghostty",
+	}
+	if !slices.Equal(names, want) {
+		t.Fatalf("steps = %v, want %v", names, want)
+	}
+}
+
 // Test_Order_Of_Operations verifies Bootstrap announces each step by name before
 // it runs, executes them in order, and stops at the first failure — returning
 // that step's status and never announcing the steps it skipped.

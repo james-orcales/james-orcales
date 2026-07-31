@@ -146,7 +146,6 @@ type Bootstrap_Input struct {
 // Bootstrap runs the setup steps in their fixed order of operations, announcing
 // each by name before it runs and returning the first non-zero status — skipping
 // the rest — so a cheap early failure surfaces before later, heavier work.
-// Package main supplies the steps.
 func Bootstrap(input *Bootstrap_Input) (status_code int) {
 	for _, step := range input.Steps {
 		jlog.Logger_Info(input.Logger, "step", jlog.String("name", step.Name))
@@ -1274,6 +1273,314 @@ func Install_Ghostty(input *Install_Ghostty_Input) (status_code int) {
 		return EXIT_FAILURE
 	}
 	return 0
+}
+
+// REPOSITORY_SUBPATH is the fixed checkout path below the home directory.
+const REPOSITORY_SUBPATH = "code/james-orcales"
+
+// DOTFILES_SUBPATH is the dotfiles source path below the home directory.
+const DOTFILES_SUBPATH = REPOSITORY_SUBPATH + "/home"
+
+// IOSEVKA_SUBPATH is the vendored font path below the home directory.
+const IOSEVKA_SUBPATH = REPOSITORY_SUBPATH + "/third_party/iosevka_nerd_font_mono"
+
+// File_Copy_Input identifies one file copy.
+type File_Copy_Input struct {
+	// Source is the source file path.
+	Source string
+	// Destination is the destination file path.
+	Destination string
+}
+
+// Bootstrap_Steps_Input supplies the host facts that define the bootstrap steps.
+type Bootstrap_Steps_Input struct {
+	// Home_Directory is the destination home directory.
+	Home_Directory string
+	// Operating_System is the runtime operating-system name.
+	Operating_System string
+	// Cargo_Directory is the CARGO_HOME value.
+	Cargo_Directory string
+	// Data_Directory is the XDG_DATA_HOME value.
+	Data_Directory string
+	// File_System supplies the dotfiles read and write operations.
+	File_System File_System
+	// Shell supplies the process operation and output streams.
+	Shell Shell
+	// File_Present reports whether a path identifies an existing file.
+	File_Present func(path string) (present bool)
+	// Copy_File copies one file through the composition-root binding.
+	Copy_File func(input *File_Copy_Input) (err error)
+}
+
+// Bootstrap_Steps returns the complete setup policy in execution order.
+func Bootstrap_Steps(input *Bootstrap_Steps_Input) (steps []Step) {
+	return []Step{
+		{Name: "direnv", Run: direnv_step(input)},
+		{Name: "dotfiles", Run: dotfiles_step(input)},
+		{Name: "fonts", Run: fonts_step(input)},
+		{Name: "neovim", Run: neovim_step(input)},
+		{Name: "fzf", Run: fzf_step(input)},
+		{Name: "maddox", Run: command_step(&Command_Step_Input{
+			Bootstrap: input, Package_Directory: "maddox", Binary_Name: "maddox",
+		})},
+		{Name: "m2p", Run: command_step(&Command_Step_Input{
+			Bootstrap: input, Package_Directory: "markdown_to_pdf", Binary_Name: "m2p",
+		})},
+		{Name: "sloc", Run: command_step(&Command_Step_Input{
+			Bootstrap: input, Package_Directory: "sloc", Binary_Name: "sloc",
+		})},
+		{Name: "timeout", Run: command_step(&Command_Step_Input{
+			Bootstrap: input, Package_Directory: "timeout", Binary_Name: "timeout",
+		})},
+		{Name: "rust", Run: rust_step(input)},
+		{Name: "jj", Run: jj_step(input)},
+		{Name: "ripgrep", Run: ripgrep_step(input)},
+		{Name: "fd", Run: fdcli_step(input)},
+		{Name: "ghostty", Run: ghostty_step(input)},
+	}
+}
+
+// Returns the step that builds the vendored direnv binary.
+func direnv_step(input *Bootstrap_Steps_Input) (run func() (status_code int)) {
+	repository := filepath.Join(input.Home_Directory, REPOSITORY_SUBPATH)
+	return func() (status_code int) {
+		return Install_Direnv(&Install_Direnv_Input{
+			Direnv_Directory: filepath.Join(repository, "third_party", "direnv"),
+			Binary_Directory: filepath.Join(repository, "home", ".local", "bin"),
+			Shell:            input.Shell,
+		})
+	}
+}
+
+// Returns the step that synchronizes dotfiles and applies macOS defaults.
+func dotfiles_step(input *Bootstrap_Steps_Input) (run func() (status_code int)) {
+	dotfiles_directory := filepath.Join(input.Home_Directory, DOTFILES_SUBPATH)
+	return func() (status_code int) {
+		return Main(&Main_Input{
+			File_System:           input.File_System,
+			Source_Directory:      dotfiles_directory,
+			Destination_Directory: input.Home_Directory,
+			Operating_System:      input.Operating_System,
+			Run_Command:           run_command(input.Shell),
+			Is_Ignored:            git_ignores(input.Shell, dotfiles_directory),
+			Logger:                input.Shell.Logger,
+		})
+	}
+}
+
+// Returns the step that copies each absent vendored font.
+func fonts_step(input *Bootstrap_Steps_Input) (run func() (status_code int)) {
+	font_directory, refresh_cache := font_destination(&Font_Destination_Input{
+		Home_Directory: input.Home_Directory, Operating_System: input.Operating_System,
+		Data_Directory: input.Data_Directory,
+	})
+	font_source := filepath.Join(input.Home_Directory, IOSEVKA_SUBPATH)
+	var refresh func() (err error)
+	if refresh_cache {
+		refresh = func() (err error) {
+			return run_command(input.Shell)("fc-cache", []string{"-f", font_directory})
+		}
+	}
+	return func() (status_code int) {
+		return Install_Fonts(&Install_Fonts_Input{
+			Font_Directory: font_directory,
+			Font_Present: func(file string) (present bool) {
+				return input.File_Present(filepath.Join(font_directory, file))
+			},
+			Copy_Font: func(file string) (err error) {
+				return input.Copy_File(&File_Copy_Input{
+					Source:      filepath.Join(font_source, file),
+					Destination: filepath.Join(font_directory, file),
+				})
+			},
+			Refresh: refresh, Logger: input.Shell.Logger,
+		})
+	}
+}
+
+// Returns the step that builds the vendored Neovim checkout.
+func neovim_step(input *Bootstrap_Steps_Input) (run func() (status_code int)) {
+	return func() (status_code int) {
+		return Install_Neovim(&Install_Neovim_Input{
+			Repository_Directory: filepath.Join(
+				input.Home_Directory, REPOSITORY_SUBPATH),
+			Shell: input.Shell,
+		})
+	}
+}
+
+// Returns the step that builds the vendored fzf checkout.
+func fzf_step(input *Bootstrap_Steps_Input) (run func() (status_code int)) {
+	repository := filepath.Join(input.Home_Directory, REPOSITORY_SUBPATH)
+	return func() (status_code int) {
+		return Install_Fzf(&Install_Fzf_Input{
+			Fzf_Directory:    filepath.Join(repository, "third_party", "fzf"),
+			Binary_Directory: filepath.Join(repository, "home", ".local", "bin"),
+			Shell:            input.Shell,
+		})
+	}
+}
+
+// Command_Step_Input identifies one repository command build step.
+type Command_Step_Input struct {
+	// Bootstrap supplies the home directory and process operation.
+	Bootstrap *Bootstrap_Steps_Input
+	// Package_Directory is the package path below the repository.
+	Package_Directory string
+	// Binary_Name is the installed command name.
+	Binary_Name string
+}
+
+// Returns a step that builds one command from this repository.
+func command_step(input *Command_Step_Input) (run func() (status_code int)) {
+	repository := filepath.Join(input.Bootstrap.Home_Directory, REPOSITORY_SUBPATH)
+	return func() (status_code int) {
+		return Install_Command(&Install_Command_Input{
+			Package_Directory: filepath.Join(repository, input.Package_Directory),
+			Binary_Directory:  filepath.Join(repository, "home", ".local", "bin"),
+			Binary_Name:       input.Binary_Name,
+			Shell:             input.Bootstrap.Shell,
+		})
+	}
+}
+
+// Returns the step that installs the Rust toolchain.
+func rust_step(input *Bootstrap_Steps_Input) (run func() (status_code int)) {
+	return func() (status_code int) {
+		return Install_Rust(&Install_Rust_Input{
+			Cargo_Directory: input.Cargo_Directory,
+			Link_Directory: filepath.Join(
+				input.Home_Directory, REPOSITORY_SUBPATH, ".local", "bin"),
+			Shell: input.Shell,
+		})
+	}
+}
+
+// Returns the step that builds the vendored jj checkout.
+func jj_step(input *Bootstrap_Steps_Input) (run func() (status_code int)) {
+	repository := filepath.Join(input.Home_Directory, REPOSITORY_SUBPATH)
+	return func() (status_code int) {
+		return Install_Jj(&Install_Jj_Input{
+			Jj_Directory:     filepath.Join(repository, "third_party", "jj"),
+			Binary_Directory: filepath.Join(repository, "home", ".local", "bin"),
+			Shell:            input.Shell,
+		})
+	}
+}
+
+// Returns the step that builds the vendored ripgrep checkout.
+func ripgrep_step(input *Bootstrap_Steps_Input) (run func() (status_code int)) {
+	repository := filepath.Join(input.Home_Directory, REPOSITORY_SUBPATH)
+	return func() (status_code int) {
+		return Install_Ripgrep(&Install_Ripgrep_Input{
+			Ripgrep_Directory: filepath.Join(repository, "third_party", "ripgrep"),
+			Binary_Directory:  filepath.Join(repository, "home", ".local", "bin"),
+			Shell:             input.Shell,
+		})
+	}
+}
+
+// Returns the step that builds the vendored fd checkout.
+func fdcli_step(input *Bootstrap_Steps_Input) (run func() (status_code int)) {
+	repository := filepath.Join(input.Home_Directory, REPOSITORY_SUBPATH)
+	return func() (status_code int) {
+		return Install_Fdcli(&Install_Fdcli_Input{
+			Fdcli_Directory:  filepath.Join(repository, "third_party", "fd"),
+			Binary_Directory: filepath.Join(repository, "home", ".local", "bin"),
+			Shell:            input.Shell,
+		})
+	}
+}
+
+// Returns the step that installs the signed Ghostty application.
+func ghostty_step(input *Bootstrap_Steps_Input) (run func() (status_code int)) {
+	repository := filepath.Join(input.Home_Directory, REPOSITORY_SUBPATH)
+	applications_directory := ""
+	if input.Operating_System == "darwin" {
+		applications_directory = "/Applications"
+	}
+	return func() (status_code int) {
+		return Install_Ghostty(&Install_Ghostty_Input{
+			Applications_Directory: applications_directory,
+			Link_Directory:         filepath.Join(repository, "home", ".local", "bin"),
+			Shell:                  input.Shell,
+		})
+	}
+}
+
+// Font_Destination_Input supplies the operating-system font path facts.
+type Font_Destination_Input struct {
+	// Home_Directory is the user home directory.
+	Home_Directory string
+	// Operating_System is the runtime operating-system name.
+	Operating_System string
+	// Data_Directory is the XDG_DATA_HOME value.
+	Data_Directory string
+}
+
+// Returns the user font directory and whether it needs an explicit cache refresh.
+func font_destination(input *Font_Destination_Input) (
+	directory string, refresh_cache bool,
+) {
+	switch input.Operating_System {
+	case "darwin":
+		return filepath.Join(input.Home_Directory, "Library", "Fonts"), false
+	case "linux":
+		data_directory := input.Data_Directory
+		if data_directory == "" {
+			data_directory = filepath.Join(input.Home_Directory, ".local", "share")
+		}
+		return filepath.Join(data_directory, "fonts"), true
+	default:
+		return "", false
+	}
+}
+
+// Returns an external-program runner that streams output through shell.
+func run_command(shell Shell) (run func(name string, arguments []string) (err error)) {
+	return func(name string, arguments []string) (err error) {
+		result := shell.Spawn(sysio.Process_Request{
+			Path: name, Arguments: arguments,
+			Stdout: shell.Stdout, Stderr: shell.Stderr,
+		})
+		if result.Exit != 0 {
+			return fmt.Errorf("%s exited with status %d", name, result.Exit)
+		}
+		return nil
+	}
+}
+
+// Returns one batched gitignore classifier for directory.
+func git_ignores(
+	shell Shell, directory string,
+) (is_ignored func(relative_paths []string) (ignored map[string]bool)) {
+	return func(relative_paths []string) (ignored map[string]bool) {
+		ignored = map[string]bool{}
+		if len(relative_paths) == 0 {
+			return ignored
+		}
+		targets := make([]string, len(relative_paths))
+		for index, relative := range relative_paths {
+			targets[index] = filepath.Join(directory, relative)
+		}
+		result := shell.Spawn(sysio.Process_Request{
+			Path:      "git",
+			Arguments: []string{"-C", directory, "check-ignore", "--stdin"},
+			Input:     []byte(strings.Join(targets, "\n") + "\n"),
+		})
+		printed := map[string]bool{}
+		for _, line := range strings.Split(string(result.Output), "\n") {
+			if line != "" {
+				printed[line] = true
+			}
+		}
+		for index, target := range targets {
+			if printed[target] {
+				ignored[relative_paths[index]] = true
+			}
+		}
+		return ignored
+	}
 }
 
 // GHOSTTY_INSTALL_SCRIPT downloads the pinned DMG, verifies its SHA256, mounts it,

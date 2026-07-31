@@ -1,11 +1,68 @@
 package callgraph_test
 
 import (
+	"io/fs"
+	"path/filepath"
+	"slices"
 	"testing"
+	"testing/fstest"
 
 	"local/james-orcales/callgraph/internal"
 	"local/james-orcales/shared/snap/default"
 )
+
+// Test_Load_Discovers_Source_Through_Injections verifies that Load finds the
+// nearest module and type-checks source through only its injected file operations.
+func Test_Load_Discovers_Source_Through_Injections(t *testing.T) {
+	file_system := fstest.MapFS{
+		"go.mod": &fstest.MapFile{Data: []byte("module example.com/workspace\n")},
+		"sample/sample.go": &fstest.MapFile{Data: []byte(
+			"package sample\n\nfunc Value() int { return 1 }\n")},
+	}
+	workspace := filepath.Join(string(filepath.Separator), "workspace")
+	packages, module := callgraph.Load(&callgraph.Load_Input{
+		Working_Directory: filepath.Join(workspace, "sample"),
+		Read_File: func(path string, limit_size int64) (content []byte) {
+			relative, relative_err := filepath.Rel(workspace, path)
+			if relative_err != nil {
+				return nil
+			}
+			content, _ = fs.ReadFile(file_system, filepath.ToSlash(relative))
+			return content
+		},
+		Read_Directory: func(directory string, limit int) (entries []fs.DirEntry) {
+			relative, relative_err := filepath.Rel(workspace, directory)
+			if relative_err != nil {
+				return nil
+			}
+			entries, _ = fs.ReadDir(file_system, filepath.ToSlash(relative))
+			return entries
+		},
+		Walk_Directory: func(
+			root string, walk fs.WalkDirFunc,
+		) (err error) {
+			return fs.WalkDir(file_system, ".", func(
+				path string, entry fs.DirEntry, walk_err error,
+			) (next error) {
+				absolute := filepath.Join(root, filepath.FromSlash(path))
+				return walk(absolute, entry, walk_err)
+			})
+		},
+		Export_Data: func(root string) (exports map[string]string) {
+			return map[string]string{}
+		},
+	})
+	if module != "example.com/workspace" {
+		t.Fatalf("module = %q, want example.com/workspace", module)
+	}
+	paths := []string{}
+	for _, checked := range packages {
+		paths = append(paths, checked.Path)
+	}
+	if !slices.Equal(paths, []string{"example.com/workspace/sample"}) {
+		t.Fatalf("packages = %v, want the sample package", paths)
+	}
+}
 
 // Test_Chain_Root_To_Leaf verifies Graph_Chain traces an injected field back
 // through the functions its value flows across — from the composition root that

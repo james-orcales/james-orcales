@@ -1,9 +1,14 @@
 
+# Bootstrap Steps
+
+Bootstrap_Steps constructs the complete ordered step list from injected operating-system facts and
+file operations, so the composition root does not own bootstrap policy.
+
 # Order of Operations
 
 The setup binary runs one bootstrap in a fixed order — direnv, dotfiles, fonts, Neovim, fzf,
-maddox, m2p, sloc, Rust, jj, ripgrep, fd, Ghostty — each announced by name, exiting on the
-first failure. direnv is first; the Go builds precede the cargo steps; Ghostty downloads last.
+maddox, m2p, sloc, timeout, Rust, jj, ripgrep, fd, Ghostty — each announced by name, exiting on
+the first failure. direnv is first; the Go builds precede the cargo steps; Ghostty downloads last.
 
 # Idempotency
 

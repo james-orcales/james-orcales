@@ -6,8 +6,8 @@
 // flagging invokes no wiring reaches, and diffing the resolved edges across
 // commits.
 //
-// It receives normalized facts, extracted from type-checked syntax by package
-// main, and never loads or type-checks source itself; that impurity stays in
+// It type-checks source through injected file operations, then extracts and
+// evaluates normalized graph facts. The operating-system bindings stay in
 // package main.
 package callgraph
 
@@ -15,9 +15,13 @@ import (
 	"errors"
 	"fmt"
 	"go/ast"
+	"go/importer"
+	"go/parser"
 	"go/token"
 	"go/types"
 	"io"
+	"io/fs"
+	"path/filepath"
 	"slices"
 	"strconv"
 	"strings"
@@ -796,4 +800,267 @@ func render_origin(drawer *Renderer, field string) (origin string) {
 // the prefix, passes through unchanged.
 func render_short(drawer *Renderer, key string) (name string) {
 	return strings.TrimPrefix(key, drawer.Strip)
+}
+
+// MODULE_FILE_BYTES_MAX is the go.mod read limit.
+const MODULE_FILE_BYTES_MAX = 1048576
+
+// SOURCE_FILE_BYTES_MAX is the Go source read limit.
+const SOURCE_FILE_BYTES_MAX = 16777216
+
+// DIRECTORY_ENTRIES_MAX prevents a malformed tree from using unbounded memory.
+const DIRECTORY_ENTRIES_MAX = 65536
+
+// WORKSPACE_SEARCH_DEPTH_MAX prevents an invalid path from causing an unbounded search.
+const WORKSPACE_SEARCH_DEPTH_MAX = 64
+
+// Load_Input supplies the filesystem operations that Load uses.
+type Load_Input struct {
+	// Working_Directory is the first directory in the go.mod search.
+	Working_Directory string
+	// Read_File reads no more than limit_size bytes from path.
+	Read_File func(path string, limit_size int64) (content []byte)
+	// Read_Directory reads no more than limit entries from directory.
+	Read_Directory func(directory string, limit int) (entries []fs.DirEntry)
+	// Walk_Directory walks all entries below root.
+	Walk_Directory func(root string, walk fs.WalkDirFunc) (err error)
+	// Export_Data returns the compiled export file for each dependency.
+	Export_Data func(root string) (exports map[string]string)
+	// Open_Export opens a compiled export file.
+	Open_Export func(path string) (reader io.ReadCloser, err error)
+}
+
+// Load finds and type-checks all first-party packages in the nearest workspace.
+func Load(input *Load_Input) (packages []*Package, module string) {
+	root, module := find_workspace(input)
+	file_set := token.NewFileSet()
+	resolver := importer.ForCompiler(
+		file_set, "gc", export_lookup(input.Export_Data(root), input.Open_Export))
+	discovered := discover_packages(&Discover_Packages_Input{
+		Load: input, Root: root, Module: module,
+	})
+	slices.Sort(discovered)
+	for _, path := range discovered {
+		checked := load_package(&Load_Package_Input{
+			Path: path, Root: root, Module: module, File_Set: file_set,
+			Importer: resolver, Read_File: input.Read_File,
+			Read_Directory: input.Read_Directory,
+		})
+		if checked != nil {
+			packages = append(packages, checked)
+		}
+	}
+	return packages, module
+}
+
+// Finds the nearest parent directory that contains a go.mod file.
+func find_workspace(input *Load_Input) (root string, module string) {
+	directory := input.Working_Directory
+	for range WORKSPACE_SEARCH_DEPTH_MAX {
+		found := module_path(input.Read_File(
+			filepath.Join(directory, "go.mod"), MODULE_FILE_BYTES_MAX))
+		if found != "" {
+			return directory, found
+		}
+		parent := filepath.Dir(directory)
+		if parent == directory {
+			return ".", ""
+		}
+		directory = parent
+	}
+	return ".", ""
+}
+
+// Returns the module path from a go.mod file.
+func module_path(content []byte) (path string) {
+	for _, line := range strings.Split(string(content), "\n") {
+		if strings.HasPrefix(line, "module ") {
+			return strings.TrimSpace(strings.TrimPrefix(line, "module "))
+		}
+	}
+	return ""
+}
+
+// Discover_Packages_Input supplies one workspace discovery.
+type Discover_Packages_Input struct {
+	// Load supplies the injected file operations.
+	Load *Load_Input
+	// Root is the workspace root directory.
+	Root string
+	// Module is the workspace module path.
+	Module string
+}
+
+// Discovers each first-party source package below root.
+func discover_packages(input *Discover_Packages_Input) (paths []string) {
+	seen := map[string]bool{}
+	walk := func(path string, entry fs.DirEntry, walk_err error) (next error) {
+		if walk_err != nil {
+			return nil
+		}
+		if entry.IsDir() {
+			if path != input.Root {
+				if skip_directory(entry.Name()) {
+					return filepath.SkipDir
+				}
+			}
+			return nil
+		}
+		import_path, source := package_import_path(&Package_Import_Path_Input{
+			Root: input.Root, Module: input.Module, Path: path,
+		})
+		if source {
+			if !seen[import_path] {
+				seen[import_path] = true
+				paths = append(paths, import_path)
+			}
+		}
+		return nil
+	}
+	traversal_err := input.Load.Walk_Directory(input.Root, walk)
+	if traversal_err != nil {
+		return paths
+	}
+	return paths
+}
+
+// Package_Import_Path_Input supplies one source path classification.
+type Package_Import_Path_Input struct {
+	// Root is the workspace root directory.
+	Root string
+	// Module is the workspace module path.
+	Module string
+	// Path is the file path to classify.
+	Path string
+}
+
+// Returns the import path for a non-test Go source file.
+func package_import_path(input *Package_Import_Path_Input) (
+	import_path string, source bool,
+) {
+	name := filepath.Base(input.Path)
+	if !strings.HasSuffix(name, ".go") {
+		return "", false
+	}
+	if strings.HasSuffix(name, "_test.go") {
+		return "", false
+	}
+	relative, relative_err := filepath.Rel(input.Root, filepath.Dir(input.Path))
+	if relative_err != nil {
+		return "", false
+	}
+	if relative == "." {
+		return input.Module, true
+	}
+	return input.Module + "/" + filepath.ToSlash(relative), true
+}
+
+// Reports whether the workspace walk must skip a directory.
+func skip_directory(name string) (skip bool) {
+	if strings.HasPrefix(name, ".") {
+		return true
+	}
+	switch name {
+	case "third_party", "tmp", "vendor", "home", "node_modules":
+		return true
+	default:
+		return false
+	}
+}
+
+// Adapts the export map to the lookup that the gc importer uses.
+func export_lookup(
+	exports map[string]string,
+	open func(path string) (reader io.ReadCloser, err error),
+) (lookup func(path string) (reader io.ReadCloser, err error)) {
+	return func(path string) (reader io.ReadCloser, err error) {
+		export, found := exports[path]
+		if !found {
+			return nil, fmt.Errorf("no export data for %s", path)
+		}
+		return open(export)
+	}
+}
+
+// Load_Package_Input supplies one package load operation.
+type Load_Package_Input struct {
+	// Path is the package import path.
+	Path string
+	// Root is the workspace root directory.
+	Root string
+	// Module is the workspace module path.
+	Module string
+	// File_Set stores all parsed source positions.
+	File_Set *token.FileSet
+	// Importer resolves the package imports.
+	Importer types.Importer
+	// Read_File reads one bounded source file.
+	Read_File func(path string, limit_size int64) (content []byte)
+	// Read_Directory reads one bounded source directory.
+	Read_Directory func(directory string, limit int) (entries []fs.DirEntry)
+}
+
+// Parses and type-checks one first-party package from source.
+func load_package(input *Load_Package_Input) (checked *Package) {
+	relative := strings.TrimPrefix(strings.TrimPrefix(input.Path, input.Module), "/")
+	directory := filepath.Join(input.Root, relative)
+	files := parse_directory(input, directory)
+	if len(files) == 0 {
+		return nil
+	}
+	info := new_type_info()
+	var swallowed []error
+	configuration := &types.Config{Importer: input.Importer}
+	configuration.Error = func(type_error error) {
+		swallowed = append(swallowed, type_error)
+	}
+	types_package, _ := configuration.Check(input.Path, input.File_Set, files, info)
+	return &Package{
+		Path: input.Path, Is_Root: path_is_root(directory, types_package),
+		File_Set: input.File_Set, Files: files, Info: info, Types: types_package,
+	}
+}
+
+// Parses each valid non-test Go source file in directory.
+func parse_directory(input *Load_Package_Input, directory string) (files []*ast.File) {
+	for _, entry := range input.Read_Directory(directory, DIRECTORY_ENTRIES_MAX) {
+		name := entry.Name()
+		if entry.IsDir() {
+			continue
+		}
+		if !strings.HasSuffix(name, ".go") {
+			continue
+		}
+		if strings.HasSuffix(name, "_test.go") {
+			continue
+		}
+		path := filepath.Join(directory, name)
+		source := input.Read_File(path, SOURCE_FILE_BYTES_MAX)
+		file, parse_err := parser.ParseFile(
+			input.File_Set, path, source, parser.SkipObjectResolution)
+		if parse_err == nil {
+			files = append(files, file)
+		}
+	}
+	return files
+}
+
+// Reports whether a package is an allowed composition root.
+func path_is_root(directory string, checked *types.Package) (root bool) {
+	if filepath.Base(directory) == "default" {
+		return true
+	}
+	if checked == nil {
+		return false
+	}
+	return checked.Name() == "main"
+}
+
+// Returns the type information maps that Extract reads.
+func new_type_info() (info *types.Info) {
+	return &types.Info{
+		Defs: map[*ast.Ident]types.Object{}, Uses: map[*ast.Ident]types.Object{},
+		Selections: map[*ast.SelectorExpr]*types.Selection{},
+		Types:      map[ast.Expr]types.TypeAndValue{},
+	}
 }
