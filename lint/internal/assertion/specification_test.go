@@ -407,6 +407,40 @@ func Test_Invariants_Inherited_Fields(t *testing.T) {
 	assert_inherited_struct_is_composed(t)
 }
 
+// Test_Invariants_Inline_Form verifies a Sometimes states no domain, thus it counts for a Boolean
+// field and for nothing else.
+func Test_Invariants_Inline_Form(t *testing.T) {
+	t.Parallel()
+	loose := INHERITED_FIELD_HEAD + "// Kept_Invariants is a fixture.\n" +
+		"func Kept_Invariants(v Kept, namespace invariant.Namespace) {\n" +
+		INHERITED_STRUCT_LINK + "\tinvariant.Tree(v, namespace)." +
+		"Sometimes(int(v.Mk) == Mark_Min, \"the mark is least\").Ensure()\n}\n"
+	if !diagnosed(check_source(parse(t, &parse_input{
+		Path: "pkg/rule.go", Source_Text: loose})), "must state v.Mk inline") {
+		t.Fatal("a Sometimes over a bounded field must not state it")
+	}
+	boolean := "package fixture\n\n" +
+		"import invariant \"fixture/shared/invariant/default\"\n\n" +
+		"// Flag is a fixture.\ntype Flag bool\n\n" +
+		"// Flag_Invariants is a fixture.\n" +
+		"func Flag_Invariants(v Flag, namespace invariant.Namespace) {\n" +
+		"\tinvariant.Tree(v, namespace).Sometimes(bool(v), \"set\").Ensure()\n}\n\n" +
+		"// Switchboard is a fixture.\ntype Switchboard struct {\n" +
+		"\t// Flg is a fixture.\n\tFlg Flag\n}\n\n" +
+		"// Switchboard_Invariants is a fixture.\n" +
+		"func Switchboard_Invariants(v Switchboard, namespace invariant.Namespace) {\n" +
+		"\tFlag_Invariants(v.Flg, namespace)\n}\n\n" +
+		"// Panel is a fixture.\ntype Panel Switchboard\n\n" +
+		"// Panel_Invariants is a fixture.\n" +
+		"func Panel_Invariants(v Panel, namespace invariant.Namespace) {\n" +
+		"\tinvariant.Tree(v, namespace)." +
+		"Sometimes(bool(v.Flg), \"set\").Ensure()\n}\n"
+	if diagnosed(check_source(parse(t, &parse_input{
+		Path: "pkg/rule.go", Source_Text: boolean})), "v.Flg") {
+		t.Fatal("a Sometimes must state an inherited Boolean field")
+	}
+}
+
 // Test_Invariants_Always_Condition verifies a compound Always condition is flagged, because it
 // collapses a Range or an Enum into one guard and drops their branch obligations.
 func Test_Invariants_Always_Condition(t *testing.T) {

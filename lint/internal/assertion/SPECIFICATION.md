@@ -77,6 +77,12 @@ A defined type over a struct states each inherited field by a link of its own Tr
 Always, because one tree holds a type at one position. A struct field has no inline form, thus the
 defined type composes it, through a defined type of its own when the field type is occupied.
 
+### Inline Form
+
+An inline statement is a Range or an Enum link whose subject is the field, or a direct singleton
+Always over the field. Only a Boolean field takes a Sometimes, because two values have no bound and
+no member. Another link states nothing about the field's domain and never counts.
+
 ### Always Condition
 
 An Always condition holds a single term. A bound belongs in a Range, a membership belongs in an

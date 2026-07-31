@@ -895,7 +895,10 @@ func check_struct_invariants(
 	parsed_files []Parsed_File, components *Component_Index, exempt []string,
 ) (diags []Diagnostic) {
 	defined := struct_helper_index(parsed_files, components)
-	struct_index := struct_declaration_index(parsed_files, components)
+	index := &Declaration_Index{
+		Structs:  struct_declaration_index(parsed_files, components),
+		Booleans: boolean_declaration_index(parsed_files, components),
+	}
 	for _, pf := range parsed_files {
 		if strings.HasSuffix(pf.Path, "_test.go") {
 			continue
@@ -903,10 +906,89 @@ func check_struct_invariants(
 		if source.Path_Matches_Glob(pf.Path, exempt) {
 			continue
 		}
-		diags = append(diags, struct_file_diagnostics(
-			pf, defined, struct_index, components)...)
+		diags = append(diags, struct_file_diagnostics(pf, defined, index, components)...)
 	}
 	return diags
+}
+
+// What a defined type stands over, after every chain of defined types is followed to its end.
+type Declaration_Index struct {
+	// Structs maps a type name to the struct whose fields it owns.
+	Structs map[string]*ast.StructType
+	// Booleans is the set of type names that stand over bool.
+	Booleans map[string]bool
+}
+
+// Maps each package-qualified type name that stands over bool. A Boolean is the one field kind an
+// inline Sometimes states in full, because two values have no bound and no member. A defined type
+// can stand over another defined type, thus the walk repeats until it settles.
+func boolean_declaration_index(
+	parsed_files []Parsed_File, components *Component_Index,
+) (boolean map[string]bool) {
+	boolean = map[string]bool{}
+	defined := map[string]string{}
+	for _, pf := range parsed_files {
+		if strings.HasSuffix(pf.Path, "_test.go") {
+			continue
+		}
+		package_path := helper_package_path(pf, components)
+		for _, declaration := range pf.File.Decls {
+			general, is_general := declaration.(*ast.GenDecl)
+			if !is_general {
+				continue
+			}
+			if general.Tok != token.TYPE {
+				continue
+			}
+			boolean_declaration_specs(
+				general.Specs, package_path, boolean, defined)
+		}
+	}
+	boolean_resolve_defined(boolean, defined)
+	return boolean
+}
+
+// Records a type that stands directly over bool, and the name every other defined type stands over.
+func boolean_declaration_specs(
+	specifications []ast.Spec, package_path string,
+	boolean map[string]bool, defined map[string]string,
+) {
+	for _, specification := range specifications {
+		type_specification, is_type := specification.(*ast.TypeSpec)
+		if !is_type {
+			continue
+		}
+		if type_specification.Assign.IsValid() {
+			continue
+		}
+		identifier, is_identifier := type_specification.Type.(*ast.Ident)
+		if !is_identifier {
+			continue
+		}
+		identity := package_path + "\x00" + type_specification.Name.Name
+		if identifier.Name == "bool" {
+			boolean[identity] = true
+			continue
+		}
+		defined[identity] = package_path + "\x00" + identifier.Name
+	}
+}
+
+// Follows each defined type to the one it stands over until no more resolve.
+func boolean_resolve_defined(boolean map[string]bool, defined map[string]string) {
+	for settled := false; !settled; {
+		settled = true
+		for identity, base := range defined {
+			if boolean[identity] {
+				continue
+			}
+			if !boolean[base] {
+				continue
+			}
+			boolean[identity] = true
+			settled = false
+		}
+	}
 }
 
 // Flags an Always whose condition joins terms with && or ||. Such a condition collapses a preset
@@ -1119,7 +1201,7 @@ func struct_helper_index(
 // Checks every struct type + value/pointer-parameter bundle pair in one file.
 func struct_file_diagnostics(
 	file Parsed_File, defined map[string]bool,
-	struct_index map[string]*ast.StructType, components *Component_Index,
+	declarations *Declaration_Index, components *Component_Index,
 ) (diags []Diagnostic) {
 	for index, declaration := range file.File.Decls {
 		general, is_general := declaration.(*ast.GenDecl)
@@ -1134,7 +1216,7 @@ func struct_file_diagnostics(
 			continue
 		}
 		struct_type, is_struct, inherits := struct_declared_fields(
-			type_specification, file, struct_index, components)
+			type_specification, file, declarations.Structs, components)
 		if !is_struct {
 			continue
 		}
@@ -1150,7 +1232,7 @@ func struct_file_diagnostics(
 			type_specification,
 			struct_type,
 			defined,
-			struct_index,
+			declarations,
 			inherits,
 			components,
 		)...)
@@ -1165,7 +1247,7 @@ func struct_type_diagnostics(
 	type_specification *ast.TypeSpec,
 	struct_type *ast.StructType,
 	defined map[string]bool,
-	struct_index map[string]*ast.StructType,
+	declarations *Declaration_Index,
 	inherits bool,
 	components *Component_Index,
 ) (diags []Diagnostic) {
@@ -1193,7 +1275,7 @@ func struct_type_diagnostics(
 	present := struct_present_calls(bundle, parameter, scope)
 	position := file.File_Set.Position(bundle.Name.Pos())
 	if inherits {
-		scope.Structs = struct_index
+		scope.Declarations = declarations
 		return struct_inherited_diagnostics(
 			bundle, struct_type, scope, present, parameter, position)
 	}
@@ -1222,7 +1304,7 @@ func struct_inherited_diagnostics(
 		Scope:     scope,
 		Present:   present,
 		Converted: struct_converted_fields(bundle, parameter, scope),
-		Inline:    struct_inline_fields(bundle, parameter, scope),
+		Inline:    struct_inline_fields(bundle, struct_type, parameter, scope),
 		Parameter: parameter,
 	}
 	for _, field := range struct_type.Fields.List {
@@ -1310,22 +1392,26 @@ func struct_field_is_struct(
 	if !is_identifier {
 		return false
 	}
-	_, found := scope.Structs[scope.Current_Package+"\x00"+identifier.Name]
+	_, found := scope.Declarations.Structs[scope.Current_Package+"\x00"+identifier.Name]
 	return found
 }
 
-// Gives the inherited fields a bundle states inline. A link of the bundle's own Tree states one,
-// and so does a direct Always, which is the only form a single-valued field has.
+// Gives the inherited fields a bundle states inline. A Range or an Enum link states a domain, a
+// direct Always states a single value, and a Sometimes states only a Boolean.
 func struct_inline_fields(
-	bundle *ast.FuncDecl, parameter string, scope *Invariant_Scope,
+	bundle *ast.FuncDecl, struct_type *ast.StructType,
+	parameter string, scope *Invariant_Scope,
 ) (inline map[string]bool) {
 	inline = map[string]bool{}
+	boolean_fields := struct_boolean_fields(struct_type, scope)
 	for _, statement := range bundle.Body.List {
 		call := statement_call(statement)
 		if call == nil {
 			continue
 		}
-		struct_chain_fields(call, parameter, inline)
+		for _, name := range struct_chain_fields(call, parameter, boolean_fields) {
+			inline[name] = true
+		}
 		if !always_named_call(call, scope.Imports, scope.Default_Package) {
 			continue
 		}
@@ -1340,26 +1426,74 @@ func struct_inline_fields(
 	return inline
 }
 
-// Walks one ensured chain from its Ensure back toward its root and records each field a link
-// states. The walk stops at the root, whose subject is the whole value and not one field.
-func struct_chain_fields(call *ast.CallExpr, parameter string, inline map[string]bool) {
+// Gives the inherited fields whose type stands over bool.
+func struct_boolean_fields(
+	struct_type *ast.StructType, scope *Invariant_Scope,
+) (boolean_fields map[string]bool) {
+	boolean_fields = map[string]bool{}
+	for _, field := range struct_type.Fields.List {
+		identifier, is_identifier := field.Type.(*ast.Ident)
+		if !is_identifier {
+			continue
+		}
+		if !scope.Declarations.Booleans[scope.Current_Package+"\x00"+identifier.Name] {
+			continue
+		}
+		for _, name := range field.Names {
+			boolean_fields[name.Name] = true
+		}
+	}
+	return boolean_fields
+}
+
+// Walks one ensured chain from its Ensure back toward its root and records each field a link states
+// in full. The walk reads argument zero alone, because that is a link's subject, and it stops at
+// the root, whose subject is the whole value and not one field.
+func struct_chain_fields(
+	call *ast.CallExpr, parameter string, boolean_fields map[string]bool,
+) (names []string) {
 	current, matched := invariant_ensure_receiver(call)
 	if !matched {
-		return
+		return nil
 	}
 	for current != nil {
-		_, receiver, is_method := invariant_builder_method(current)
+		method, receiver, is_method := invariant_builder_method(current)
 		if !is_method {
-			return
+			return names
 		}
-		for _, argument := range current.Args {
-			name := struct_expression_field(argument, parameter)
-			if name != "" {
-				inline[name] = true
+		name := struct_link_field(current, parameter)
+		if name != "" {
+			if struct_link_states(method, boolean_fields[name]) {
+				names = append(names, name)
 			}
 		}
 		current = receiver
 	}
+	return names
+}
+
+// Gives the field one link takes as its subject, which is argument zero.
+func struct_link_field(link *ast.CallExpr, parameter string) (name string) {
+	if len(link.Args) == 0 {
+		return ""
+	}
+	return struct_expression_field(link.Args[0], parameter)
+}
+
+// Reports whether one link states its field's whole domain. A Range holds the bounds and an Enum
+// holds the members, thus each states the field. A Sometimes holds one polarity, which is the whole
+// domain of a Boolean and a fragment of every other.
+func struct_link_states(method string, boolean bool) (states bool) {
+	if strings.HasPrefix(method, "Range_") {
+		return true
+	}
+	if strings.HasPrefix(method, "Enum_") {
+		return true
+	}
+	if method != "Sometimes" {
+		return false
+	}
+	return boolean
 }
 
 // Finds the field a link argument states. A link wraps its subject in a conversion or in len, thus
@@ -1763,8 +1897,9 @@ type Invariant_Scope struct {
 	Shadowed map[string]bool
 	// Constants pins Range boundaries and Enum members to declarations in the type's package.
 	Constants map[string]bool
-	// Structs tells a field type that owns fields from one that a link can state.
-	Structs map[string]*ast.StructType
+	// Declarations tells a field type that owns fields from one a link can state, and names the
+	// Boolean types, the one kind a Sometimes states in full.
+	Declarations *Declaration_Index
 }
 
 // One subject and the exact package-qualified helper it must carry.
