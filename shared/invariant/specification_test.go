@@ -1,4 +1,4 @@
-//go:build !noassert
+//go:build !invariant_disable_coverage && !prd && !prod && !production && !invariant_noop
 
 package invariant_test
 

@@ -6,7 +6,8 @@ it is independent of an `Assertions` builder.
 
 ### Violation
 
-A false `Always` panics at its own callsite in every enforcing run mode and names its message.
+A false `Always` panics at its own callsite in every enforcing build and names its message. The
+benchmark-only noop build is non-enforcing.
 
 ### Eager
 
@@ -22,9 +23,9 @@ Registration seeds each literal message once, so an `Always` the suite never rea
 
 ### Deferred
 
-A recording link captures its condition and advances the value builder. Without a registration
-plan the link is inert: it does not advance an ordinal or construct an observation. It never
-panics, resolves coverage, or credits an event; `Ensure` owns every visible operation.
+A recording link captures its condition and advances the value builder. Without a plan it does not
+advance or observe; only `Ensure` may panic, resolve, or credit. Production and benchmark-only noop
+builds compile `Sometimes` and `Ensure` as inert links.
 
 ### Coverage
 
@@ -63,14 +64,15 @@ binaries do not consult registration plans or shape caches.
 
 ### Allocation
 
-Warmed recording and enforcement allocate nothing. The builder is a value carrying fixed
-observations and counters only while a registration-owned plan exists. Ordinary enforcement
-carries only a deferred value-dependent verdict and does not construct recording state.
+Warmed recording and enforcement allocate nothing; fixed observations exist only with a plan.
+Ordinary full enforcement carries a deferred verdict without constructing recording state.
+Production and benchmark-only noop builds return zero builders retaining no namespace or plan.
 
 ### Persistence
 
 Axes serialize as `namespace NUL ordinal NUL message`; `Ensure` emits the plan's exact cached key.
-Fuzz merge resolves that key directly and never reconstructs identity from runtime messages.
+Fuzz merge resolves that key directly and never reconstructs identity from runtime messages. Fuzz
+workers persist only their first branch transition; the coordinator unions those records.
 
 # Assertions Registration
 
@@ -188,14 +190,15 @@ credit. `Sometimes` cannot exist outside a builder.
 
 ### Modes
 
-Plain tests, fuzz coordinators, and fuzz workers record; benchmarks and ordinary binaries do not.
-Fuzz workers persist only a branch's first transition and the coordinator unions those records.
+Untagged tests and fuzz processes record; benchmarks and binaries only enforce. Production is any
+combination of `invariant_disable_coverage`, `prd`, `prod`, and `production`. Only `invariant_noop`
+selects inert benchmarks; mixing it with production fails compilation. Legacy tags remain ordinary.
 
 ### Enforcement
 
-`Ensure` enforces Range and Enum in every enforcing mode, including modes that do not record. Only
-value-dependent bounds, holes, and membership are runtime work; malformed static domains are
-registration failures. Bare `Always` remains eager; `noassert` makes the complete surface inert.
+The full build defers Range and Enum to `Ensure`. Production checks only bounds, holes, and
+membership at each link and panics with the assertion prefix and fixed identity, never namespace.
+Always stays eager; Sometimes and Ensure are inert. Noop use is undefined; APIs are shared.
 
 ### Uniqueness
 
@@ -221,9 +224,9 @@ unused slots repeat the final hole, and only that final-hole padding may duplica
 
 ### Guard
 
-Both families contribute lower-bound and upper-bound reachability guards. Wrong arities, invalid
-domains, boundary or exterior holes, nonascending holes, and non-final duplicate padding fail
-registration. Observed violations are deferred until `Ensure` in every enforcing mode.
+Both families contribute lower and upper reachability guards. Wrong arities, malformed domains, and
+invalid hole order, padding, or placement fail registration. Full builds defer observed failures
+until `Ensure`; production panics at the violating Range link.
 
 ### Coverage
 
@@ -251,8 +254,8 @@ variadic compatibility surface remains.
 ### Guard
 
 Enum contributes one successful membership reachability guard. A wrong arity, invalid domain, or
-non-member is a registration failure; an observed non-member is deferred until `Ensure` in every
-enforcing mode.
+non-member is a registration failure. The full build defers an observed non-member until `Ensure`;
+a production build panics at the violating Enum link.
 
 ### Members
 

@@ -1,4 +1,4 @@
-//go:build !noassert
+//go:build !invariant_disable_coverage && !prd && !prod && !production && !invariant_noop
 
 package invariant
 
@@ -18,8 +18,8 @@ func Test_Assertion_Builder_Fits_Three_Words(t *testing.T) {
 	}
 }
 
-// Test_Assertions_Non_Recording_Success_Does_Not_Construct_Observations protects the production
-// path from paying for the registration-owned representation.
+// Test_Assertions_Non_Recording_Success_Does_Not_Construct_Observations protects the ordinary full
+// build from paying for the registration-owned representation.
 func Test_Assertions_Non_Recording_Success_Does_Not_Construct_Observations(t *testing.T) {
 	builder := Recorder_Assertions(&Recorder{}, "ordinary").
 		Sometimes(true, "axis").
@@ -36,7 +36,7 @@ func Test_Assertions_Non_Recording_Success_Does_Not_Construct_Observations(t *te
 	builder.Ensure()
 }
 
-// Test_Assertions_Non_Recording_Range_Failures_Are_Deferred keeps the cheap production head from
+// Test_Assertions_Non_Recording_Range_Failures_Are_Deferred keeps the cheap full-build head from
 // changing the fluent chain's atomic failure boundary.
 func Test_Assertions_Non_Recording_Range_Failures_Are_Deferred(t *testing.T) {
 	failures := []struct {

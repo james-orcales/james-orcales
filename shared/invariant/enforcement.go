@@ -1,4 +1,4 @@
-//go:build !noassert
+//go:build !invariant_disable_coverage && !prd && !prod && !production && !invariant_noop
 
 // The enforcing build keeps fluent links observationally silent: they only advance a value and
 // latch raw verdicts. Ensure is the single boundary that can panic or mutate coverage.

@@ -1,6 +1,8 @@
-//go:build noassert
+//go:build invariant_noop && !invariant_disable_coverage && !prd && !prod && !production
 
-// The disabled build is signature-identical and behavior-free by construction.
+// Package invariant's noop build exists solely to benchmark assertion overhead. Implementations
+// depend on assertions aborting control flow, so disabling them makes the entire codebase undefined
+// behavior. Never build an application with invariant_noop.
 package invariant
 
 func Recorder_Always[T ~bool](recorder *Recorder, condition T, message string) {}
