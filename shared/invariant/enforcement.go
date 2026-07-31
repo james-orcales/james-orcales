@@ -37,20 +37,38 @@ const ASSERTION_FAILURE_ENUM_DOMAIN uint8 = 7
 // ASSERTION_FAILURE_ENUM_MEMBER identifies an observed non-member.
 const ASSERTION_FAILURE_ENUM_MEMBER uint8 = 8
 
-// ASSERTION_RECORDING_MASK tags the union without colliding with any packed recording field.
-const ASSERTION_RECORDING_MASK = uintptr(1) << (unsafe.Sizeof(uintptr(0))*8 - 1)
+// ASSERTION_STATE_BITS is the width of one state word. The packed layout splits observations
+// across State_A and State_B at this boundary, thus the two words are 64 bits each.
+const ASSERTION_STATE_BITS = 64
 
-// ASSERTION_ORDINAL_SHIFT leaves the low byte available for the six observations above ordinal 63.
-const ASSERTION_ORDINAL_SHIFT = 8
+// ASSERTION_OBSERVATION_BITS is how many observations State_B holds below its packed fields. The
+// rest of that word carries two counters, the failure code, and the union tag.
+const ASSERTION_OBSERVATION_BITS = ASSERTION_OBSERVATIONS_MAX - ASSERTION_STATE_BITS
 
-// ASSERTION_ORDINAL_MASK reserves seven bits because registration caps ordinals at 70.
+// ASSERTION_COUNTER_BITS reserves seven bits for each counter, which reach 127 and so cover every
+// observation and every link registration admits.
+const ASSERTION_COUNTER_BITS = 7
+
+// ASSERTION_COUNT_SHIFT places the observation counter directly above State_B's observations.
+const ASSERTION_COUNT_SHIFT = ASSERTION_OBSERVATION_BITS
+
+// ASSERTION_COUNT_MASK selects the observation counter, which names the next axis bit to set.
+const ASSERTION_COUNT_MASK = uintptr(0x7f) << ASSERTION_COUNT_SHIFT
+
+// ASSERTION_ORDINAL_SHIFT places the link counter directly above the observation counter.
+const ASSERTION_ORDINAL_SHIFT = ASSERTION_COUNT_SHIFT + ASSERTION_COUNTER_BITS
+
+// ASSERTION_ORDINAL_MASK reserves seven bits because registration caps links at 127.
 const ASSERTION_ORDINAL_MASK = uintptr(0x7f) << ASSERTION_ORDINAL_SHIFT
 
-// ASSERTION_FAILURE_SHIFT keeps the deferred verdict independent of observations and ordinals.
-const ASSERTION_FAILURE_SHIFT = 16
+// ASSERTION_FAILURE_SHIFT keeps the deferred verdict above both counters.
+const ASSERTION_FAILURE_SHIFT = ASSERTION_ORDINAL_SHIFT + ASSERTION_COUNTER_BITS
 
 // ASSERTION_FAILURE_MASK reserves four bits for the nine failure states.
 const ASSERTION_FAILURE_MASK = uintptr(0x0f) << ASSERTION_FAILURE_SHIFT
+
+// ASSERTION_RECORDING_MASK tags the union at the one bit above the failure code.
+const ASSERTION_RECORDING_MASK = uintptr(1) << (unsafe.Sizeof(uintptr(0))*8 - 1)
 
 // Recorder_Always remains eager because it is deliberately outside the deferred builder.
 func Recorder_Always[T ~bool](recorder *Recorder, condition T, message string) {
@@ -579,21 +597,25 @@ func assertion_record(builder *Assertion_Builder) {
 	for _, link := range plan.Links {
 		condition := true
 		if link.Kind == ASSERTION_KIND_SOMETIMES {
-			condition = builder.assertion_observed(link.Ordinal)
+			condition = builder.assertion_observed(link.Observation)
 		}
 		recorder_increment_entry(plan.Recorder, link.Entry, condition)
 	}
 }
 
+// A guard between two axes spends a link and no observation, thus the bit an axis sets is named by
+// the observation counter and never by the link ordinal. Numbering the bits by ordinal would leave
+// one empty for each guard and end the chain early.
 func (builder Assertion_Builder) assertion_axis(condition bool) (next Assertion_Builder) {
-	ordinal := builder.assertion_ordinal()
+	observation := builder.assertion_observation_count()
 	if condition {
-		if ordinal < 64 {
-			builder.State_A |= uintptr(1) << ordinal
+		if observation < ASSERTION_STATE_BITS {
+			builder.State_A |= uintptr(1) << observation
 		} else {
-			builder.State_B |= uintptr(1) << (ordinal - 64)
+			builder.State_B |= uintptr(1) << (observation - ASSERTION_STATE_BITS)
 		}
 	}
+	builder.State_B += uintptr(1) << ASSERTION_COUNT_SHIFT
 	builder.State_B += uintptr(1) << ASSERTION_ORDINAL_SHIFT
 	return builder
 }
@@ -603,14 +625,18 @@ func (builder Assertion_Builder) assertion_guard() (next Assertion_Builder) {
 	return builder
 }
 
-func (builder Assertion_Builder) assertion_observed(ordinal uint8) (observed bool) {
+func (builder Assertion_Builder) assertion_observed(observation uint8) (observed bool) {
 	if !builder.assertion_recording() {
 		return false
 	}
-	if ordinal < 64 {
-		return builder.State_A&(uintptr(1)<<ordinal) != 0
+	if observation < ASSERTION_STATE_BITS {
+		return builder.State_A&(uintptr(1)<<observation) != 0
 	}
-	return builder.State_B&(uintptr(1)<<(ordinal-64)) != 0
+	return builder.State_B&(uintptr(1)<<(observation-ASSERTION_STATE_BITS)) != 0
+}
+
+func (builder Assertion_Builder) assertion_observation_count() (count uint8) {
+	return uint8((builder.State_B & ASSERTION_COUNT_MASK) >> ASSERTION_COUNT_SHIFT)
 }
 
 func (builder Assertion_Builder) assertion_recording() (recording bool) {
@@ -664,7 +690,7 @@ func assertion_failure_text(failure uint8, namespace Namespace, value string) (m
 	prefix := string(namespace) + " · "
 	switch failure {
 	case ASSERTION_FAILURE_LINKS:
-		return "Tree exceeds 70 links"
+		return "Tree exceeds 127 links"
 	case ASSERTION_FAILURE_RANGE_DOMAIN:
 		return prefix + "Range minimum exceeds maximum: " + value
 	case ASSERTION_FAILURE_RANGE_LOWER:

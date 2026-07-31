@@ -48,9 +48,16 @@ func (failure Assertion_Failure) Error() (message string) {
 // rejects it in every message.
 const ELEMENT_MESSAGE_SEPARATOR = "\x00"
 
-// ASSERTION_LINKS_MAX keeps every observation inside two register words. The bound is part of the
-// source contract, so registration and the runtime share one number rather than parallel limits.
-const ASSERTION_LINKS_MAX = 70
+// ASSERTION_LINKS_MAX is how many expanded links one chain holds, set by the seven-bit ordinal
+// counter the builder packs. The bound is part of the source contract, so registration and the
+// runtime share one number rather than parallel limits.
+const ASSERTION_LINKS_MAX = 127
+
+// ASSERTION_OBSERVATIONS_MAX is how many axes one chain records, set by the observation bits the
+// two state words hold after their counters, failure code, and union tag. A guard holds one outcome
+// and spends no bit, thus only an axis reaches this. Registration enforces it under every build,
+// which is why it sits beside the link bound rather than in the enforcement layout.
+const ASSERTION_OBSERVATIONS_MAX = 109
 
 // RANGE_ENUM_CARDINALITY_MAX keeps small registered domains on the fixed-capacity helper that
 // states every legal value instead of making Range infer the same finite set.
@@ -250,8 +257,12 @@ type Assertion_Plan struct {
 
 // Assertion_Plan_Link carries the already-resolved identity that Ensure may credit.
 type Assertion_Plan_Link struct {
-	// Ordinal is both the plan position and the packed observation position.
+	// Ordinal is the plan position, which every link holds.
 	Ordinal uint8
+	// Observation is the packed bit position, which only an axis holds. A guard spends no bit,
+	// thus this trails Ordinal by the number of guards before it and registration computes it
+	// one time rather than the chain deriving it.
+	Observation uint8
 	// Kind distinguishes one-outcome guards from two-outcome axes.
 	Kind Assertion_Kind
 	// Entry owns the identity registration resolved before the suite.
@@ -2402,20 +2413,24 @@ func recorder_register_inline_assertion(
 	if !valid {
 		return
 	}
-	if len(links) > ASSERTION_LINKS_MAX {
-		recorder_invalid_chain(file_set, call, reg, "inline helper exceeds 70 links")
+	if !recorder_assertion_capacity(file_set, call, reg, links, "inline helper") {
 		return
 	}
 	key := Plan_Key{Namespace: Namespace(message)}
 	plan := &Assertion_Plan{Identity: key.Namespace}
+	observation := 0
 	for ordinal_index, link := range links {
 		reg.Forbidden_Properties += link.Forbidden_Properties
 		encoded := assertion_registration_key(key, uint8(ordinal_index), link.Message)
 		recorder_plan_seed(file_set, call, reg, encoded, link.Kind, link.Condition)
 		plan.Links = append(plan.Links, Assertion_Plan_Link{
-			Ordinal: uint8(ordinal_index), Kind: link.Kind,
+			Ordinal: uint8(ordinal_index), Observation: uint8(observation),
+			Kind:  link.Kind,
 			Entry: Handle_Entry{Key: encoded},
 		})
+		if link.Kind == ASSERTION_KIND_SOMETIMES {
+			observation++
+		}
 	}
 	reg.Planned_Inline[message] = plan
 }
@@ -2851,16 +2866,24 @@ func recorder_seed_assertion_chain(
 		recorder_invalid_chain(file_set, chain.Root, reg, "Tree chain has no links")
 		return
 	}
+	if !recorder_assertion_capacity(file_set, chain.Root, reg, links, "Tree") {
+		return
+	}
 	plan := &Assertion_Plan{Identity: key.Namespace}
+	observation := 0
 	for ordinal_index, link := range links {
 		reg.Forbidden_Properties += link.Forbidden_Properties
 		encoded := assertion_registration_key(key, uint8(ordinal_index), link.Message)
 		recorder_plan_seed(
 			file_set, chain.Links[0], reg, encoded, link.Kind, link.Condition)
 		plan.Links = append(plan.Links, Assertion_Plan_Link{
-			Ordinal: uint8(ordinal_index), Kind: link.Kind,
+			Ordinal: uint8(ordinal_index), Observation: uint8(observation),
+			Kind:  link.Kind,
 			Entry: Handle_Entry{Key: encoded},
 		})
+		if link.Kind == ASSERTION_KIND_SOMETIMES {
+			observation++
+		}
 	}
 	reg.Planned_Assertions[key] = plan
 }
@@ -2982,7 +3005,7 @@ func recorder_collect_assertion_links(
 		}
 		if len(links) > ASSERTION_LINKS_MAX {
 			recorder_invalid_chain(file_set, call, reg,
-				"Tree exceeds 70 links")
+				"Tree exceeds 127 links")
 			return nil, false
 		}
 	}
@@ -3262,6 +3285,34 @@ func recorder_collect_assertion_enum(
 		})
 	}
 	return expanded, true
+}
+
+// Holds one chain to both capacities. Links fill the packed ordinal counter, and axes fill the
+// smaller observation bitmap, thus a chain can pass one bound and fail the other.
+func recorder_assertion_capacity(
+	file_set *token.FileSet, node ast.Node, reg *Registration,
+	links []Assertion_Registration_Link, subject string,
+) (valid bool) {
+	if len(links) > ASSERTION_LINKS_MAX {
+		recorder_invalid_chain(file_set, node, reg, subject+" exceeds 127 links")
+		return false
+	}
+	if assertion_axis_count(links) > ASSERTION_OBSERVATIONS_MAX {
+		recorder_invalid_chain(file_set, node, reg, subject+" exceeds 109 axes")
+		return false
+	}
+	return true
+}
+
+// Counts the links that spend an observation bit. A guard holds one outcome, thus it needs no bit
+// and a chain of guards costs the smaller capacity nothing.
+func assertion_axis_count(links []Assertion_Registration_Link) (axes int) {
+	for _, link := range links {
+		if link.Kind == ASSERTION_KIND_SOMETIMES {
+			axes++
+		}
+	}
+	return axes
 }
 
 func assertion_integer_contains(

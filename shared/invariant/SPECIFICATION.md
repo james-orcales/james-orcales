@@ -196,9 +196,9 @@ chains with one subject type cannot.
 
 ### Caps
 
-A chain can have 70 expanded links. Preset guards and generated axes use the same capacity.
-Registration rejects link 71 before the suite starts. Ordinary runtime enforcement does not count
-the statically expanded chain again.
+A chain can have 127 expanded links, of which 109 can be axes. A guard holds one outcome and needs
+no observation, thus only an axis spends the smaller capacity. Registration rejects link 128 and
+axis 110 before the suite starts. Ordinary runtime enforcement counts neither again.
 
 # Bundles
 

@@ -183,9 +183,9 @@ func Test_Assertions_Non_Recording_Success_Does_Not_Construct_Observations(t *te
 	if ordinal := builder.assertion_ordinal(); ordinal != 0 {
 		t.Fatalf("ordinal = %d, want no recording progress", ordinal)
 	}
-	for ordinal := uint8(0); ordinal < ASSERTION_LINKS_MAX; ordinal++ {
-		if builder.assertion_observed(ordinal) {
-			t.Fatalf("observation %d was constructed", ordinal)
+	for observation := uint8(0); observation < ASSERTION_OBSERVATIONS_MAX; observation++ {
+		if builder.assertion_observed(observation) {
+			t.Fatalf("observation %d was constructed", observation)
 		}
 	}
 	builder.Ensure()

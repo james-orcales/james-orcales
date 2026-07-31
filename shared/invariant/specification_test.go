@@ -795,46 +795,36 @@ func check(value Parent) { Parent_Invariants(value, "same") }
 
 // Test_Assertions_Registration_Caps keeps registration within the fixed runtime representation.
 func Test_Assertions_Registration_Caps(t *testing.T) {
-	var accepted strings.Builder
-	accepted.WriteString(BUNDLE_FIXTURE_HEAD)
-	for ordinal_index := 0; ordinal_index < 70; ordinal_index++ {
-		fmt.Fprintf(&accepted, ".Sometimes(value == 0, %q)",
-			fmt.Sprintf("axis %d", ordinal_index))
-	}
-	accepted.WriteString(bundle_fixture_tail("accepted"))
-	recorder, output, code := registered_fixture(accepted.String())
+	recorder, output, code := registered_fixture(
+		axis_chain_fixture(core.ASSERTION_OBSERVATIONS_MAX, "accepted"))
 	if code != -1 {
-		t.Fatalf("70 links exit=%d output=%q", code, output.String())
+		t.Fatalf("109 axes exit=%d output=%q", code, output.String())
 	}
-	if event_count(&recorder.Events) != 70 {
-		t.Fatalf("70 links registered %d events", event_count(&recorder.Events))
+	if event_count(&recorder.Events) != core.ASSERTION_OBSERVATIONS_MAX {
+		t.Fatalf("109 axes registered %d events", event_count(&recorder.Events))
 	}
-	var source strings.Builder
-	source.WriteString(BUNDLE_FIXTURE_HEAD)
-	for ordinal_index := 0; ordinal_index <= 70; ordinal_index++ {
-		fmt.Fprintf(&source, ".Sometimes(value == 0, %q)",
-			fmt.Sprintf("axis %d", ordinal_index))
-	}
-	source.WriteString(bundle_fixture_tail("cap"))
-	_, output, code = registered_fixture(source.String())
+	_, output, code = registered_fixture(
+		axis_chain_fixture(core.ASSERTION_OBSERVATIONS_MAX+1, "axes"))
 	if code != 1 {
 		t.Fatalf("exit=%d output=%q", code, output.String())
 	}
-	if !strings.Contains(output.String(), "70 links") {
+	if !strings.Contains(output.String(), "109 axes") {
 		t.Fatalf("exit=%d output=%q", code, output.String())
 	}
+	// A guard consumes a link and no observation, thus 26 four-member enums reach 130 links
+	// while holding 104 axes. Only the larger cap can reject that chain.
 	var presets strings.Builder
 	presets.WriteString(BUNDLE_FIXTURE_HEAD)
-	for preset_index := 0; preset_index < 15; preset_index++ {
+	for preset_index := 0; preset_index < 26; preset_index++ {
 		presets.WriteString(".Enum_4_Int(int(value), 0, 1, 2, 3)")
 	}
 	presets.WriteString(bundle_fixture_tail("presets"))
 	_, output, code = registered_fixture(presets.String())
 	if code != 1 {
-		t.Fatalf("75 expanded links exit=%d output=%q", code, output.String())
+		t.Fatalf("130 expanded links exit=%d output=%q", code, output.String())
 	}
-	if !strings.Contains(output.String(), "70 links") {
-		t.Fatalf("75 expanded links exit=%d output=%q", code, output.String())
+	if !strings.Contains(output.String(), "127 links") {
+		t.Fatalf("130 expanded links exit=%d output=%q", code, output.String())
 	}
 }
 
@@ -1747,6 +1737,19 @@ const BUNDLE_FIXTURE_HEAD = "package fixture\ntype Fixture_Subject int\n" +
 func bundle_fixture_tail(namespace string) (source string) {
 	return ".Ensure()\n}\nfunc check(value Fixture_Subject) { " +
 		"Fixture_Subject_Invariants(value, \"" + namespace + "\") }\n"
+}
+
+// Builds a bundle whose chain is one Sometimes for each axis, so a fixture reaches the observation
+// cap without a guard consuming a link beside it.
+func axis_chain_fixture(axis_count int, namespace string) (source string) {
+	var chain strings.Builder
+	chain.WriteString(BUNDLE_FIXTURE_HEAD)
+	for ordinal_index := 0; ordinal_index < axis_count; ordinal_index++ {
+		fmt.Fprintf(&chain, ".Sometimes(value == 0, %q)",
+			fmt.Sprintf("axis %d", ordinal_index))
+	}
+	chain.WriteString(bundle_fixture_tail(namespace))
+	return chain.String()
 }
 
 // Wraps one fluent chain in the bundle that owns its subject type, plus the callsite that names it.
