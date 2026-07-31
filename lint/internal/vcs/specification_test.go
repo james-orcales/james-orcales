@@ -73,6 +73,39 @@ func Test_Commits_Synthetic_Merge_Exempt(t *testing.T) {
 	}
 }
 
+// Test_Commits_Revert_Subject_Exempt verifies Git's generated revert form bypasses both subject
+// checks, including when the reverted subject makes the wrapper exceed the ordinary size cap.
+func Test_Commits_Revert_Subject_Exempt(t *testing.T) {
+	t.Parallel()
+	input := vcs.Check_Input{Non_Merge_Commits: []vcs.Commit{
+		{Hash: "abc", Subject: "Revert \"feat: add thing\""},
+		{Hash: "def", Subject: "Revert \"feat: " + strings.Repeat("x", 200) + "\""},
+	}}
+	if diags := vcs.Check(&input); len(diags) != 0 {
+		t.Fatalf("exact Git revert subjects must be exempt: %v", diags)
+	}
+}
+
+// Test_Commits_Malformed_Revert_Subjects verifies the exemption cannot be claimed by an empty,
+// unquoted, unterminated, or otherwise approximate Revert prefix.
+func Test_Commits_Malformed_Revert_Subjects(t *testing.T) {
+	t.Parallel()
+	subjects := []string{
+		"Revert \"\"",
+		"Revert feat: add thing",
+		"Revert \"feat: add thing",
+		"Revert \"feat: add thing\" trailing",
+	}
+	for _, subject := range subjects {
+		input := vcs.Check_Input{Non_Merge_Commits: []vcs.Commit{{
+			Hash: "abc", Subject: subject,
+		}}}
+		if !flagged(input, "non-conventional commit subject") {
+			t.Fatalf("malformed revert subject must be rejected: %q", subject)
+		}
+	}
+}
+
 // Reports whether Check emits a diagnostic whose message contains fragment for
 // the given input.
 func flagged(input vcs.Check_Input, fragment string) (found bool) {

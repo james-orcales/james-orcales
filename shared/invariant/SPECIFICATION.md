@@ -96,8 +96,8 @@ trailing template namespace parameter resolved at literal callsites.
 
 ### Namespace
 
-One namespace names exactly one registered chain. Any second root using it is fatal even when the
-two chains have the same links.
+One namespace names exactly one registered source root. Rediscovering that root through bundle
+composition is idempotent; a distinct root using the namespace is fatal even with identical links.
 
 ### Caps
 
@@ -169,8 +169,9 @@ reports its namespaced axis key and condition.
 
 ### Summary
 
-A clean run reports one total: Always and successful preset guards count once, while every axis
-counts twice. There are no combination or panic-able subtotals and no legend.
+A clean run reports every expanded property and its panic-able subset. Each Always and preset guard
+counts once, each axis twice, and each Range hole once as panic-able. A helper never collapses its
+links into one property; the builder has no combination total.
 
 ### Clean
 

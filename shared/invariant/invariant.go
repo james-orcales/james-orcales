@@ -94,6 +94,9 @@ type Recorder struct {
 	// Events is the coverage tracker: one entry per registered assertion,
 	// keyed by message and credited as observations arrive.
 	Events sync.Map
+	// Forbidden_Properties counts distinct Range holes because observation panics, so no Events
+	// entry exists for the clean-run summary to discover.
+	Forbidden_Properties int
 
 	// Assertion_Plans is published once before the suite and read thereafter. Ordinary binaries
 	// never populate or consult it; only a recording root pays the namespace lookup.
@@ -386,9 +389,9 @@ func Recorder_Register_Packages_For_Analysis(recorder *Recorder, directories ...
 		Constants:     ast_index_constants(files),
 	}
 	reg := &Registration{
-		Planned_Keys:       map[string]bool{},
-		Seen_Identifier:    map[string]bool{},
-		Planned_Assertions: map[Namespace]*Assertion_Plan{},
+		Planned_Keys:            map[string]bool{},
+		Assertion_Root_Position: map[Namespace]token.Pos{},
+		Planned_Assertions:      map[Namespace]*Assertion_Plan{},
 	}
 	recorder_register_assertion_files(recorder, file_set, files, index, reg)
 	recorder_check_bundle_control_flow(recorder, file_set, files, reg)
@@ -678,6 +681,7 @@ func recorder_commit_planned(recorder *Recorder, reg *Registration) {
 		}
 		recorder.Assertion_Plans[namespace] = plan
 	}
+	recorder.Forbidden_Properties = reg.Forbidden_Properties
 }
 
 func ast_argument(call *ast.CallExpr, index int) (argument ast.Expr) {
@@ -1119,9 +1123,12 @@ type Registration struct {
 	Planned_Assertions map[Namespace]*Assertion_Plan
 	// Planned_Keys detects key collisions across the whole plan.
 	Planned_Keys map[string]bool
-	// Seen_Identifier tracks root identifiers so two roots cannot share one — the
-	// global-uniqueness guarantee for the namespace layer.
-	Seen_Identifier map[string]bool
+	// Forbidden_Properties preserves panic-able Range holes outside the coverage plan because a
+	// forbidden observation fails instead of earning coverage.
+	Forbidden_Properties int
+	// Assertion_Root_Position makes repeated descent idempotent without allowing a second
+	// source root to merge coverage into the namespace's plan.
+	Assertion_Root_Position map[Namespace]token.Pos
 	// Failed poisons the commit; it is the gate rather than Exit because an injected Exit
 	// returns in tests.
 	Failed bool
@@ -1435,15 +1442,17 @@ func assertion_kind_name(kind Assertion_Kind) (name string) {
 	return "Always"
 }
 
-// Recorder_Assertion_Summary renders the one remaining total. Keeping obsolete combination and
-// panic-able subtotals would imply coverage classes the builder deliberately no longer has.
+// Recorder_Assertion_Summary keeps the enforced subset visible because an undifferentiated total
+// cannot distinguish branch exploration from contracts whose violation terminates execution.
 func Recorder_Assertion_Summary(recorder *Recorder) (summary string) {
-	individual := 0
+	individual := recorder.Forbidden_Properties
+	panic_able := recorder.Forbidden_Properties
 	recorder.Events.Range(func(key, value any) (continue_iteration bool) {
 		metadata := value.(*Assertion_Metadata)
 		switch metadata.Kind {
 		case ASSERTION_KIND_ALWAYS:
 			individual++
+			panic_able++
 		default:
 			// A Sometimes must witness both its true and its false branch, so it
 			// counts twice.
@@ -1452,9 +1461,13 @@ func Recorder_Assertion_Summary(recorder *Recorder) (summary string) {
 		return true
 	})
 	if recorder.Package_Label != "" {
-		return fmt.Sprintf("✓ %s: tested %d properties", recorder.Package_Label, individual)
+		return fmt.Sprintf(
+			"✓ %s: tested %d properties (%d individual, of which %d are panic-able)",
+			recorder.Package_Label, individual, individual, panic_able)
 	}
-	return fmt.Sprintf("✓ tested %d properties", individual)
+	return fmt.Sprintf(
+		"✓ tested %d properties (%d individual, of which %d are panic-able)",
+		individual, individual, panic_able)
 }
 
 // Recorder_Run_Test_Main is the canonical TestMain body: it registers the
@@ -1499,6 +1512,9 @@ type Assertion_Registration_Link struct {
 	Condition string
 	// Kind selects the one-branch or two-branch coverage obligation.
 	Kind Assertion_Kind
+	// Forbidden_Properties rides the first Range guard because holes panic before they can own
+	// observable coverage entries, while the guard already shares their static domain.
+	Forbidden_Properties int
 }
 
 func recorder_register_assertion_files(
@@ -1852,13 +1868,17 @@ func recorder_seed_assertion_chain(
 	file_set *token.FileSet, chain Assertion_Registration_Chain, namespace Namespace,
 	constants map[string]ast.Expr, reg *Registration, diagnose bool,
 ) {
-	if reg.Seen_Identifier[string(namespace)] {
+	root_position, seen := reg.Assertion_Root_Position[namespace]
+	if seen {
+		if root_position == chain.Root.Pos() {
+			return
+		}
 		reg.Collision = append(reg.Collision,
 			recorder_position(file_set, chain.Root)+
 				"  duplicate namespace: "+strconv.Quote(string(namespace)))
 		return
 	}
-	reg.Seen_Identifier[string(namespace)] = true
+	reg.Assertion_Root_Position[namespace] = chain.Root.Pos()
 	links, valid := recorder_collect_assertion_links(
 		file_set, chain, constants, reg, diagnose)
 	if !valid {
@@ -1870,6 +1890,7 @@ func recorder_seed_assertion_chain(
 	}
 	plan := &Assertion_Plan{}
 	for ordinal_index, link := range links {
+		reg.Forbidden_Properties += link.Forbidden_Properties
 		key := assertion_registration_key(namespace, uint8(ordinal_index), link.Message)
 		recorder_plan_seed(file_set, chain.Links[0], reg, key, link.Kind, link.Condition)
 		plan.Links = append(plan.Links, Assertion_Plan_Link{
@@ -1982,12 +2003,14 @@ func recorder_collect_assertion_range(
 			return links, recorder_invalid_preset(file_set, call, reg, diagnose,
 				"Range exclusion is not strictly inside the interval")
 		}
-		holes = append(holes, hole)
+		if !assertion_integer_contains(holes, hole) {
+			holes = append(holes, hole)
+		}
 	}
 	condition := ast_condition_text(file_set, call, 0)
 	expanded = append(links,
 		Assertion_Registration_Link{Message: RANGE_GUARD_MINIMUM, Condition: condition,
-			Kind: ASSERTION_KIND_ALWAYS},
+			Kind: ASSERTION_KIND_ALWAYS, Forbidden_Properties: len(holes)},
 		Assertion_Registration_Link{Message: RANGE_GUARD_MAXIMUM, Condition: condition,
 			Kind: ASSERTION_KIND_ALWAYS})
 	if minimum == maximum {

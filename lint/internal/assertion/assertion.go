@@ -19,9 +19,13 @@ import (
 	"local/james-orcales/lint/internal/source"
 )
 
-// The body walk must accept every chain the runtime's uint8 ordinal accepts; a smaller lint-only
-// ceiling would make a valid Product an escape from the mandate at precisely the largest shape.
-const INVARIANT_CHAIN_LINKS_MAX = 255
+// ASSERTIONS_BUILDER_LINKS_MAX bounds static expansion because a helper larger than a function's
+// own line budget is already too diffuse to remain an auditable invariant boundary.
+const ASSERTIONS_BUILDER_LINKS_MAX = 70
+
+// PARENTHESES_DEPTH_MAX keeps expression unwrapping independently bounded so lowering the
+// fluent-builder budget does not change which otherwise-identical subjects and constants resolve.
+const PARENTHESES_DEPTH_MAX = 255
 
 // Parsed_File aliases the source package's type so the moved rule bodies name it
 // unqualified, as they did in package lint.
@@ -181,7 +185,7 @@ func invariant_type_diagnostics(
 }
 
 // Direct underlying types determine the concrete helper without go/types; aliases and uintptr
-// have no Product preset and therefore remain outside this body-shape mandate.
+// have no Assertions preset and therefore remain outside this body-shape mandate.
 func invariant_type_kind(
 	type_specification *ast.TypeSpec,
 ) (suffix string, primitive string, count bool) {
@@ -274,7 +278,7 @@ func invariant_body_helper(
 				call, helper, type_specification, &statement_scope) {
 				return true, true
 			}
-			matched, valid := invariant_chain_preset(
+			matched, valid := invariant_builder_preset(
 				call, helper, type_specification, &statement_scope)
 			if matched {
 				if valid {
@@ -312,7 +316,7 @@ func invariant_direct_preset(
 	return invariant_identifier(call.Args[1], namespace)
 }
 
-func invariant_chain_preset(
+func invariant_builder_preset(
 	ensure *ast.CallExpr, helper *ast.FuncDecl,
 	type_specification *ast.TypeSpec, scope *Invariant_Scope,
 ) (matched bool, constant bool) {
@@ -321,12 +325,12 @@ func invariant_chain_preset(
 		return false, false
 	}
 	valid := false
-	for step_index := 0; step_index < INVARIANT_CHAIN_LINKS_MAX; step_index++ {
-		_, receiver, chained := invariant_chain_method(current)
-		if !chained {
+	for step_index := 0; step_index < ASSERTIONS_BUILDER_LINKS_MAX; step_index++ {
+		_, receiver, linked := invariant_builder_method(current)
+		if !linked {
 			break
 		}
-		preset, arguments_valid := invariant_chain_link(
+		preset, arguments_valid := invariant_builder_link(
 			current, helper, type_specification, scope)
 		if preset {
 			matched = true
@@ -336,7 +340,7 @@ func invariant_chain_preset(
 		}
 		current = receiver
 	}
-	if !invariant_chain_root(current, helper, scope) {
+	if !invariant_builder_root(current, helper, scope) {
 		return false, false
 	}
 	return matched, valid
@@ -359,7 +363,7 @@ func invariant_ensure_receiver(
 	return receiver, matched
 }
 
-func invariant_chain_method(
+func invariant_builder_method(
 	call *ast.CallExpr,
 ) (method string, receiver *ast.CallExpr, matched bool) {
 	selector, is_selector := call.Fun.(*ast.SelectorExpr)
@@ -370,11 +374,11 @@ func invariant_chain_method(
 	return selector.Sel.Name, receiver, matched
 }
 
-func invariant_chain_link(
+func invariant_builder_link(
 	call *ast.CallExpr, helper *ast.FuncDecl,
 	type_specification *ast.TypeSpec, scope *Invariant_Scope,
 ) (matched bool, constant bool) {
-	method, _, _ := invariant_chain_method(call)
+	method, _, _ := invariant_builder_method(call)
 	suffix, primitive, _ := invariant_type_kind(type_specification)
 	range_name := "Range_" + suffix
 	enum_name := "Enum_" + suffix
@@ -400,7 +404,7 @@ func invariant_chain_link(
 	return true, invariant_arguments_constant(call.Args[1:], primitive, scope)
 }
 
-func invariant_chain_root(
+func invariant_builder_root(
 	call *ast.CallExpr, helper *ast.FuncDecl, scope *Invariant_Scope,
 ) (matched bool) {
 	if len(call.Args) != 1 {
@@ -413,21 +417,21 @@ func invariant_chain_root(
 	if !is_selector {
 		return false
 	}
-	if selector.Sel.Name != "Dot_Product" {
+	if selector.Sel.Name != "Assertions" {
 		return false
 	}
 	qualifier, is_qualifier := selector.X.(*ast.Ident)
 	if !is_qualifier {
 		return false
 	}
+	if qualifier.Name != "invariant" {
+		return false
+	}
 	if scope.Shadowed[qualifier.Name] {
 		return false
 	}
 	package_path := scope.Imports[qualifier.Name]
-	if package_path == scope.Default_Package {
-		return true
-	}
-	return package_path == strings.TrimSuffix(scope.Default_Package, "/default")
+	return package_path == scope.Default_Package
 }
 
 func invariant_subject(
@@ -499,7 +503,7 @@ func invariant_identifier(expression ast.Expr, name string) (matched bool) {
 }
 
 func invariant_unparen(expression ast.Expr) (unwrapped ast.Expr) {
-	for depth_index := 0; depth_index < INVARIANT_CHAIN_LINKS_MAX; depth_index++ {
+	for depth_index := 0; depth_index < PARENTHESES_DEPTH_MAX; depth_index++ {
 		parenthesized, is_parenthesized := expression.(*ast.ParenExpr)
 		if !is_parenthesized {
 			return expression
@@ -570,7 +574,7 @@ func invariant_missing_helper_diagnostic(
 		": " + suffix + "_Invariants, Range_" + suffix + ", or Enum_" + suffix
 	if count {
 		message = helper.Name.Name + " must call Range_Int or Enum_Int for len(" + value +
-			") in an ensured invariant.Dot_Product(namespace) chain"
+			") in a direct invariant.Assertions(namespace) builder ending in Ensure()"
 	}
 	return []Diagnostic{{
 		Position: file.File_Set.Position(helper.Name.Pos()), Message: message,

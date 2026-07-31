@@ -34,6 +34,10 @@ var conventional_subject_re = regexp.MustCompile(`^[a-z]+(\([^)]+\))?!?: \S`)
 var github_synthetic_merge_re = regexp.MustCompile(
 	`^Merge [0-9a-f]{7,64} into [0-9a-f]{7,64}$|^Merge pull request #\d+ from \S`)
 
+// Git wraps the reverted subject in exactly one outer quoted form. Recognizing the subject shape,
+// rather than a capitalized prefix, keeps malformed hand-written approximations under both rules.
+var revert_subject_re = regexp.MustCompile(`^Revert ".+"$`)
+
 // Commit is one commit's identity for the history tier: the full hash and the
 // subject line of its message.
 type Commit struct {
@@ -108,6 +112,9 @@ func non_merge_diagnostics(commits []Commit) (diags []diagnostic.Diagnostic) {
 			continue
 		}
 		if github_synthetic_merge_re.MatchString(c.Subject) {
+			continue
+		}
+		if revert_subject_re.MatchString(c.Subject) {
 			continue
 		}
 		if len(c.Subject) > SUBJECT_CHARS_MAX {

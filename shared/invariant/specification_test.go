@@ -262,7 +262,24 @@ func check(value bool, message string) {
 
 // Test_Assertions_Registration_Namespace rejects ambiguous emission plans.
 func Test_Assertions_Registration_Namespace(t *testing.T) {
-	_, output, code := registered_fixture(`package fixture
+	recorder, output, code := registered_fixture(`package fixture
+type Number int
+func Number_Invariants(value Number, namespace invariant.Namespace) {
+	invariant.Assertions(namespace).Sometimes(value == 0, "zero").Ensure()
+}
+func first(value Number) { Number_Invariants(value, "number") }
+func second(value Number) { Number_Invariants(value, "number") }
+`)
+	if code != -1 {
+		t.Fatalf("reuse exit=%d output=%q", code, output.String())
+	}
+	if len(recorder.Assertion_Plans) != 1 {
+		t.Fatalf("plans=%d, want one idempotent source root", len(recorder.Assertion_Plans))
+	}
+	chain_metadata(t, recorder, chain_metadata_key{
+		Namespace: "number", Ordinal: 0, Message: "zero",
+	})
+	_, output, code = registered_fixture(`package fixture
 func first(v bool) { invariant.Assertions("same").Sometimes(v, "a").Ensure() }
 func second(v bool) { invariant.Assertions("same").Sometimes(v, "b").Ensure() }
 `)
@@ -454,15 +471,23 @@ func Test_Analysis_Gaps(t *testing.T) {
 	Test_Sometimes_Gap(t)
 }
 
-// Test_Analysis_Summary protects the assertion-obligation count.
+// Test_Analysis_Summary protects each expanded obligation and the panic-able subset from being
+// collapsed into one undifferentiated helper count.
 func Test_Analysis_Summary(t *testing.T) {
 	recorder, _, _ := registered_fixture(`package fixture
-func check(v bool) {
+const Minimum = -2
+const Maximum = 3
+const Hole = 0
+func check(v int, condition bool) {
 	invariant.Always(true, "guard")
-	invariant.Assertions("summary").Sometimes(v, "axis").Ensure()
+	invariant.Assertions("summary").
+		Sometimes(condition, "axis").
+		Range_Int(v, Minimum, Maximum, Hole).
+		Enum_Int(v, Minimum, Maximum).
+		Ensure()
 }
 `)
-	want := "✓ fixture: tested 3 properties"
+	want := "✓ fixture: tested 21 properties (21 individual, of which 5 are panic-able)"
 	if summary := invariant.Recorder_Assertion_Summary(recorder); summary != want {
 		t.Fatalf("summary = %q, want %q", summary, want)
 	}

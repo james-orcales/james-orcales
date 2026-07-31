@@ -32,15 +32,15 @@ interface types, empty structs, local types, tests, and opted-out packages are e
 
 ### Scalar Helper
 
-A defined integer helper calls its exact primitive preset or ensures a Dot_Product(namespace) chain
-containing its exact Range_TYPE or Enum_TYPE over the converted value. Floats and booleans call
-their exact primitive presets; individual Always or Sometimes assertions never substitute.
+A defined integer helper calls its exact primitive preset or directly ensures an Assertions builder
+with its exact Range_TYPE or Enum_TYPE over the converted value. Floats and booleans call matching
+primitive presets; individual Always or Sometimes assertions never substitute.
 
 ### Count Helper
 
-A defined string, slice, or map helper ensures a Dot_Product(namespace) chain containing Range_Int
-or Enum_Int over len(value). Individual assertions, another subject, another suffix, an
-unterminated or split chain, and an unrelated Dot_Product never substitute.
+A defined string, slice, or map helper directly ensures an Assertions(namespace) builder containing
+Range_Int or Enum_Int over len(value). Individual assertions, another subject, another suffix, an
+unterminated or split builder, and an unrelated Assertions builder never substitute.
 
 ### Helper Constants
 
@@ -50,9 +50,14 @@ selectors, and conversion to another primitive never satisfy the helper mandate.
 
 ### Helper Identity
 
-The preset call or ensured chain is a direct helper-body statement and resolves to the actual
-invariant package without parameter, local, or import shadowing. The chain root uses that helper's
-trailing namespace parameter; foreign lookalikes and literal namespaces never substitute.
+Preset calls and ensured builders are direct statements resolving to shared/invariant/default. A
+builder uses literal qualifier invariant and the helper's trailing namespace. Shadowing, lookalikes,
+aliases, Recorder_Assertions, Dot_Product, literals, nesting, and split builders never substitute.
+
+### Builder Walk
+
+An ensured Assertions builder expands to at most 70 fluent links. A longer builder is too costly
+for static analysis and is banned.
 
 ### Field Composition
 

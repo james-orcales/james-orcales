@@ -99,18 +99,18 @@ func Test_Invariants_Scalar_Helper(t *testing.T) {
 	t.Parallel()
 	raw := integer_helper_source("\tinvariant.Always(value >= Value_Min, \"min\")\n" +
 		"\tinvariant.Always(value <= Value_Max, \"max\")\n" +
-		"\tinvariant.Dot_Product(namespace).Sometimes(value == Value_Min, \"min\")." +
+		"\tinvariant.Assertions(namespace).Sometimes(value == Value_Min, \"min\")." +
 		"Sometimes(value == Value_Max, \"max\").Ensure()")
 	if !diagnosed(check_fixture(t, raw), "must call a canonical helper") {
 		t.Fatal("individual scalar assertions must not satisfy the helper mandate")
 	}
-	range_body := "\tinvariant.Dot_Product(namespace)." +
+	range_body := "\tinvariant.Assertions(namespace)." +
 		"Range_Int(int(value), int(Value_Min), int(Value_Max)).Ensure()"
 	if diagnosed(check_fixture(t, integer_helper_source(range_body)),
 		"must call a canonical helper") {
 		t.Fatal("the exact Range helper must satisfy the scalar mandate")
 	}
-	enum_body := "\tinvariant.Dot_Product(namespace)." +
+	enum_body := "\tinvariant.Assertions(namespace)." +
 		"Enum_Int(int(value), int(Value_Min), int(Value_Max)).Ensure()"
 	if diagnosed(check_fixture(t, integer_helper_source(enum_body)),
 		"must call a canonical helper") {
@@ -139,29 +139,35 @@ func Test_Invariants_Count_Helper(t *testing.T) {
 	t.Parallel()
 	raw := "\tinvariant.Always(len(value) >= Value_Min, \"min\")\n" +
 		"\tinvariant.Always(len(value) <= Value_Max, \"max\")\n" +
-		"\tinvariant.Dot_Product(namespace).Sometimes(len(value) == Value_Min, \"min\")." +
+		"\tinvariant.Assertions(namespace).Sometimes(len(value) == Value_Min, \"min\")." +
 		"Sometimes(len(value) == Value_Max, \"max\").Ensure()"
 	if !diagnosed(check_fixture(t, count_helper_source(raw)),
 		"must call Range_Int or Enum_Int") {
 		t.Fatal("individual count assertions must not satisfy the helper mandate")
 	}
-	valid := "\tinvariant.Dot_Product(namespace)." +
+	valid := "\tinvariant.Assertions(namespace)." +
 		"Range_Int(len(value), Value_Min, Value_Max, 1, 2).Ensure()"
 	if diagnosed(check_fixture(t, count_helper_source(valid)),
 		"must call Range_Int or Enum_Int") {
 		t.Fatal("Range_Int over the counted value must satisfy the mandate")
 	}
-	wrong_suffix := "\tinvariant.Dot_Product(namespace)." +
+	wrong_suffix := "\tinvariant.Assertions(namespace)." +
 		"Range_Int64(int64(len(value)), int64(Value_Min), int64(Value_Max)).Ensure()"
 	if !diagnosed(check_fixture(t, count_helper_source(wrong_suffix)),
 		"must call Range_Int or Enum_Int") {
 		t.Fatal("a differently typed Range helper must not substitute")
 	}
-	split := "\tproduct := invariant.Dot_Product(namespace)\n" +
-		"\tproduct.Range_Int(len(value), Value_Min, Value_Max).Ensure()"
+	wrong_subject := "\tinvariant.Assertions(namespace)." +
+		"Range_Int(len(value[:0]), Value_Min, Value_Max).Ensure()"
+	if !diagnosed(check_fixture(t, count_helper_source(wrong_subject)),
+		"must call Range_Int or Enum_Int") {
+		t.Fatal("a Range_Int over another subject must not satisfy the mandate")
+	}
+	split := "\tassertions := invariant.Assertions(namespace)\n" +
+		"\tassertions.Range_Int(len(value), Value_Min, Value_Max).Ensure()"
 	if !diagnosed(check_fixture(t, count_helper_source(split)),
 		"must call Range_Int or Enum_Int") {
-		t.Fatal("a split chain must not satisfy the helper mandate")
+		t.Fatal("a split builder must not satisfy the helper mandate")
 	}
 }
 
@@ -169,26 +175,26 @@ func Test_Invariants_Count_Helper(t *testing.T) {
 // identity for Range edges and Enum members.
 func Test_Invariants_Helper_Constants(t *testing.T) {
 	t.Parallel()
-	inline_range := "\tinvariant.Dot_Product(namespace)." +
+	inline_range := "\tinvariant.Assertions(namespace)." +
 		"Range_Int(int(value), int(Value_Min), int(7)).Ensure()"
 	if !diagnosed(check_fixture(t, integer_helper_source(inline_range)),
 		"arguments must be package-level constants") {
 		t.Fatal("an inline Range edge must not satisfy the helper mandate")
 	}
-	inline_enum := "\tinvariant.Dot_Product(namespace)." +
+	inline_enum := "\tinvariant.Assertions(namespace)." +
 		"Enum_Int(int(value), int(Value_Min), int(7)).Ensure()"
 	if !diagnosed(check_fixture(t, integer_helper_source(inline_enum)),
 		"arguments must be package-level constants") {
 		t.Fatal("an inline Enum member must not satisfy the helper mandate")
 	}
-	converted := "\tinvariant.Dot_Product(namespace)." +
+	converted := "\tinvariant.Assertions(namespace)." +
 		"Range_Int(int(value), int(Value_Min), int(Value_Max), 1, 2).Ensure()"
 	if diagnosed(check_fixture(t, integer_helper_source(converted)),
 		"arguments must be package-level constants") {
 		t.Fatal("exactly converted package constants must satisfy the mandate")
 	}
 	shadowed := "\tValue_Min := 0\n" +
-		"\tinvariant.Dot_Product(namespace)." +
+		"\tinvariant.Assertions(namespace)." +
 		"Range_Int(int(value), Value_Min, Value_Max).Ensure()"
 	if !diagnosed(check_fixture(t, integer_helper_source(shadowed)),
 		"arguments must be package-level constants") {
@@ -196,43 +202,77 @@ func Test_Invariants_Helper_Constants(t *testing.T) {
 	}
 }
 
-// Test_Invariants_Helper_Identity verifies only a direct chain rooted at the actual invariant
+// Test_Invariants_Helper_Identity verifies only a direct builder rooted at the actual invariant
 // package and the helper's namespace parameter satisfies the body mandate.
 func Test_Invariants_Helper_Identity(t *testing.T) {
 	t.Parallel()
-	literal := "\tinvariant.Dot_Product(\"manual\")." +
+	literal := "\tinvariant.Assertions(\"manual\")." +
 		"Range_Int(int(value), int(Value_Min), int(Value_Max)).Ensure()"
 	if !diagnosed(check_fixture(t, integer_helper_source(literal)),
 		"must call a canonical helper") {
 		t.Fatal("a literal namespace must not satisfy a helper template")
 	}
-	nested := "\tif true {\n\t\tinvariant.Dot_Product(namespace)." +
+	nested := "\tif true {\n\t\tinvariant.Assertions(namespace)." +
 		"Range_Int(int(value), int(Value_Min), int(Value_Max)).Ensure()\n\t}"
 	if !diagnosed(check_fixture(t, integer_helper_source(nested)),
 		"must call a canonical helper") {
-		t.Fatal("a nested chain must not satisfy the direct helper mandate")
+		t.Fatal("a nested builder must not satisfy the direct helper mandate")
 	}
 	foreign := foreign_scalar_helper_source()
 	if !diagnosed(check_fixture(t, foreign), "must call a canonical helper") {
-		t.Fatal("a foreign Dot_Product lookalike must not satisfy the mandate")
+		t.Fatal("a foreign Assertions lookalike must not satisfy the mandate")
 	}
 	aliased := aliased_scalar_helper_source()
-	if diagnosed(check_fixture(t, aliased), "must call a canonical helper") {
-		t.Fatal("an aliased import of the real invariant package must satisfy the mandate")
+	if !diagnosed(check_fixture(t, aliased), "must call a canonical helper") {
+		t.Fatal("an import alias must not impersonate the literal invariant qualifier")
+	}
+	parent := strings.Replace(integer_helper_source(
+		"\tinvariant.Assertions(namespace).Range_Int("+
+			"int(value), int(Value_Min), int(Value_Max)).Ensure()"), "/default", "", 1)
+	if !diagnosed(check_fixture(t, parent), "must call a canonical helper") {
+		t.Fatal("the pure invariant package must not impersonate its default builder")
+	}
+	recorder := "\tinvariant.Recorder_Assertions(namespace)." +
+		"Range_Int(int(value), int(Value_Min), int(Value_Max)).Ensure()"
+	if !diagnosed(check_fixture(t, integer_helper_source(recorder)),
+		"must call a canonical helper") {
+		t.Fatal("Recorder_Assertions must not satisfy the helper mandate")
+	}
+	legacy := "\tinvariant.Dot_Product(namespace)." +
+		"Range_Int(int(value), int(Value_Min), int(Value_Max)).Ensure()"
+	if !diagnosed(check_fixture(t, integer_helper_source(legacy)),
+		"must call a canonical helper") {
+		t.Fatal("the old Dot_Product root must not satisfy the helper mandate")
 	}
 	conversion := "\tint := func(Value) int { return 0 }\n" +
-		"\tinvariant.Dot_Product(namespace)." +
+		"\tinvariant.Assertions(namespace)." +
 		"Range_Int(int(value), Value_Min, Value_Max).Ensure()"
 	if !diagnosed(check_fixture(t, integer_helper_source(conversion)),
 		"must call a canonical helper") {
 		t.Fatal("a local function shadowing the primitive conversion must not substitute")
 	}
 	count := "\tlen := func(Value) int { return 0 }\n" +
-		"\tinvariant.Dot_Product(namespace)." +
+		"\tinvariant.Assertions(namespace)." +
 		"Range_Int(len(value), Value_Min, Value_Max).Ensure()"
 	if !diagnosed(check_fixture(t, count_helper_source(count)),
 		"must call Range_Int or Enum_Int") {
 		t.Fatal("a local function shadowing len must not substitute")
+	}
+}
+
+// Test_Invariants_Builder_Walk verifies the static walk admits its entire supported builder and
+// rejects the next expanded link instead of silently letting an oversized builder evade analysis.
+func Test_Invariants_Builder_Walk(t *testing.T) {
+	t.Parallel()
+	at_limit := assertions_builder_body(70)
+	if diagnosed(check_fixture(t, integer_helper_source(at_limit)),
+		"must call a canonical helper") {
+		t.Fatal("a builder with exactly 70 expanded links must satisfy the mandate")
+	}
+	over_limit := assertions_builder_body(71)
+	if !diagnosed(check_fixture(t, integer_helper_source(over_limit)),
+		"must call a canonical helper") {
+		t.Fatal("a builder with 71 expanded links must exceed the static walk limit")
 	}
 }
 
@@ -249,7 +289,7 @@ func Test_Invariants_Field_Composition(t *testing.T) {
 			"// Token is a fixture.\ntype Token string\n\n" +
 			"// Token_Invariants is a fixture.\n" +
 			"func Token_Invariants(v Token, namespace invariant.Namespace) {\n" +
-			"\tinvariant.Dot_Product(namespace)." +
+			"\tinvariant.Assertions(namespace)." +
 			"Range_Int(len(v), Token_Min, Token_Max).Ensure()\n}\n\n" +
 			"// Lexeme is a fixture.\ntype Lexeme struct {\n" +
 			"\t// Tok is a fixture.\n\tTok Token\n}\n\n" +
@@ -259,13 +299,13 @@ func Test_Invariants_Field_Composition(t *testing.T) {
 			"\tif false { Token_Invariants(v.Tok, \"nested\") }\n" +
 			"\tToken_Invariants := func(Token, invariant.Namespace) {}\n" +
 			"\tToken_Invariants(v.Tok, namespace)\n" +
-			"\tinvariant.Dot_Product(namespace)." +
+			"\tinvariant.Assertions(namespace)." +
 			"Sometimes(true, \"x\").Ensure()\n}\n\n" +
 			"// Phrase is a fixture.\ntype Phrase struct {\n" +
 			"\t// Tok is a fixture.\n\tTok *Token\n}\n\n" +
 			"// Phrase_Invariants is a fixture.\n" +
 			"func Phrase_Invariants(v Phrase, namespace invariant.Namespace) {\n" +
-			"\tinvariant.Dot_Product(namespace)." +
+			"\tinvariant.Assertions(namespace)." +
 			"Sometimes(true, \"y\").Ensure()\n}\n"})
 	diags := check_source(pf)
 	if !diagnosed(diags, "Lexeme_Invariants must call Token_Invariants") {
@@ -284,7 +324,7 @@ func Test_Invariants_Field_Composition(t *testing.T) {
 			"// Token is a fixture.\ntype Token string\n\n" +
 			"// Token_Invariants is a fixture.\n" +
 			"func Token_Invariants(v Token, namespace invariant.Namespace) {\n" +
-			"\tinvariant.Dot_Product(namespace)." +
+			"\tinvariant.Assertions(namespace)." +
 			"Range_Int(len(v), Token_Min, Token_Max).Ensure()\n}\n"})
 	composed := parse(t, &parse_input{
 		Path: "pkg/composed.go",
@@ -316,12 +356,12 @@ func Test_Invariants_Parameter_Helper(t *testing.T) {
 			"// Token is a fixture.\ntype Token string\n\n" +
 			"// Token_Invariants is a fixture.\n" +
 			"func Token_Invariants(v Token, namespace invariant.Namespace) {\n" +
-			"\tinvariant.Dot_Product(namespace)." +
+			"\tinvariant.Assertions(namespace)." +
 			"Range_Int(len(v), Token_Min, Token_Max).Ensure()\n}\n\n" +
 			"// Consume does.\nfunc Consume(tok Token) {\n" +
 			"\tforeign.Token_Invariants(tok, \"wrong\")\n" +
 			"\tinvariant.Always(true, \"raw guard\")\n" +
-			"\tinvariant.Dot_Product(\"raw chain\")." +
+			"\tinvariant.Assertions(\"raw builder\")." +
 			"Sometimes(true, \"raw axis\").Ensure()\n" +
 			"\tprintln(0)\n}\n"})
 	if !diagnosed(check_source(pf), "must call helper for tok") {
@@ -345,7 +385,7 @@ func Test_Invariants_Output_Helper(t *testing.T) {
 			"// Token is a fixture.\ntype Token string\n\n" +
 			"// Token_Invariants is a fixture.\n" +
 			"func Token_Invariants(v Token, namespace invariant.Namespace) {\n" +
-			"\tinvariant.Dot_Product(namespace)." +
+			"\tinvariant.Assertions(namespace)." +
 			"Range_Int(len(v), Token_Min, Token_Max).Ensure()\n}\n\n" +
 			"// Make does.\nfunc Make() (tok Token) {\n\tdefer func() {\n" +
 			"\t\tforeign.Token_Invariants(tok, \"wrong\")\n" +
@@ -364,7 +404,7 @@ func Test_Invariants_Output_Helper(t *testing.T) {
 			"// Token is a fixture.\ntype Token string\n\n" +
 			"// Token_Invariants is a fixture.\n" +
 			"func Token_Invariants(v Token, namespace invariant.Namespace) {\n" +
-			"\tinvariant.Dot_Product(namespace)." +
+			"\tinvariant.Assertions(namespace)." +
 			"Range_Int(len(v), Token_Min, Token_Max).Ensure()\n}\n\n" +
 			"// Make uses the exact output helper.\nfunc Make() (tok Token) {\n" +
 			"\tdefer func() {\n\t\tToken_Invariants(tok, \"token\")\n" +
@@ -508,7 +548,7 @@ func parameter_helper_correct(t *testing.T) {
 			"// Token is a fixture.\ntype Token string\n\n" +
 			"// Token_Invariants is a fixture.\n" +
 			"func Token_Invariants(v Token, namespace invariant.Namespace) {\n" +
-			"\tinvariant.Dot_Product(namespace)." +
+			"\tinvariant.Assertions(namespace)." +
 			"Range_Int(len(v), Token_Min, Token_Max).Ensure()\n}\n\n" +
 			"// Consume uses exact helpers.\nfunc Consume(tok Token, count int) {\n" +
 			"\tToken_Invariants(tok, \"token\")\n" +
@@ -529,7 +569,7 @@ func parameter_helper_shadowed(t *testing.T) {
 			"// Token is a fixture.\ntype Token string\n\n" +
 			"// Token_Invariants is a fixture.\n" +
 			"func Token_Invariants(v Token, namespace invariant.Namespace) {\n" +
-			"\tinvariant.Dot_Product(namespace)." +
+			"\tinvariant.Assertions(namespace)." +
 			"Range_Int(len(v), Token_Min, Token_Max).Ensure()\n}\n\n" +
 			"// Consume shadows the helper.\n" +
 			"func Consume(tok Token, Token_Invariants " +
@@ -552,7 +592,7 @@ func parameter_helper_external(t *testing.T) {
 			"// Input is a fixture.\ntype Input int\n\n" +
 			"// Input_Invariants is a fixture.\n" +
 			"func Input_Invariants(v Input, namespace invariant.Namespace) {\n" +
-			"\tinvariant.Dot_Product(namespace).Range_Int(" +
+			"\tinvariant.Assertions(namespace).Range_Int(" +
 			"int(v), int(Input_Min), int(Input_Max)).Ensure()\n}\n"})
 	consumer := parse(t, &parse_input{
 		Path: "pkg/external.go",
@@ -680,7 +720,7 @@ func count_helper_source(body string) (code string) {
 		body + "\n}\n"
 }
 
-// A same-shaped fluent chain owned by another package cannot impersonate invariant.Dot_Product.
+// A same-shaped fluent builder owned by another package cannot impersonate invariant.Assertions.
 func foreign_scalar_helper_source() (code string) {
 	return "package fixture\n\n" +
 		"import (\n\tinvariant \"fixture/shared/invariant/default\"\n" +
@@ -689,11 +729,11 @@ func foreign_scalar_helper_source() (code string) {
 		"// Value is a fixture.\ntype Value int\n\n" +
 		"// Value_Invariants is a fixture.\n" +
 		"func Value_Invariants(value Value, namespace invariant.Namespace) {\n" +
-		"\tforeign.Dot_Product(namespace)." +
+		"\tforeign.Assertions(namespace)." +
 		"Range_Int(int(value), int(Value_Min), int(Value_Max)).Ensure()\n}\n"
 }
 
-// Import aliases change spelling, not the identity of the canonical invariant package.
+// The mandated literal qualifier keeps helper bodies visually and statically canonical.
 func aliased_scalar_helper_source() (code string) {
 	return "package fixture\n\n" +
 		"import contract \"fixture/shared/invariant/default\"\n\n" +
@@ -701,8 +741,15 @@ func aliased_scalar_helper_source() (code string) {
 		"// Value is a fixture.\ntype Value int\n\n" +
 		"// Value_Invariants is a fixture.\n" +
 		"func Value_Invariants(value Value, namespace contract.Namespace) {\n" +
-		"\tcontract.Dot_Product(namespace)." +
+		"\tcontract.Assertions(namespace)." +
 		"Range_Int(int(value), int(Value_Min), int(Value_Max)).Ensure()\n}\n"
+}
+
+// Builds one Range assertion after enough neutral links to pin the expanded-link boundary exactly.
+func assertions_builder_body(link_count int) (body string) {
+	return "\tinvariant.Assertions(namespace)." +
+		strings.Repeat("Sometimes(true, \"axis\").", link_count-1) +
+		"Range_Int(int(value), int(Value_Min), int(Value_Max)).Ensure()"
 }
 
 // Runs the cross-file checks over one package plus the framework component. Exact helper identity

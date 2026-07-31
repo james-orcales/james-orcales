@@ -9,9 +9,9 @@ A commit subject runs to at most 100 characters.
 
 ### Conventional Subjects
 
-A commit subject is a lowercase type, an optional (scope), an optional ! breaking
-marker, then a colon, a space, and a non-empty description; a GitHub
-synthetic-merge subject is exempt.
+A subject is a lowercase type, optional (scope), optional !, colon, space, and a nonempty
+description. GitHub synthetic merges and Git's exact nonempty Revert "..." form are exempt; Revert
+is also size-exempt. Malformed Revert prefixes are not exempt.
 
 ### Fixup Commits
 
