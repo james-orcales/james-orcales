@@ -97,8 +97,11 @@ type Block_Counter uint32
 // Block_Counter_Invariants bounds a block counter to one refill's range.
 func Block_Counter_Invariants(counter Block_Counter, namespace invariant.Namespace) {
 	invariant.Assertions(namespace).
-		Range_Uint32(
-			uint32(counter), uint32(BLOCK_COUNTER_MIN), uint32(BLOCK_COUNTER_MAX)).
+		Enum_4_Uint32(
+			uint32(counter),
+			uint32(BLOCK_COUNTER_MIN), 1, 2,
+			uint32(BLOCK_COUNTER_MAX),
+		).
 		Ensure()
 }
 
