@@ -155,6 +155,7 @@ func Test_Invariants_Scalar_Helper(t *testing.T) {
 		"must call a canonical helper") {
 		t.Fatal("a singleton Always must not satisfy the Boolean mandate")
 	}
+	scalar_helper_remedy_text(t)
 }
 
 // Test_Invariants_Count_Helper verifies a counted type requires an ensured Range_Int or Enum_Int
@@ -730,6 +731,43 @@ func assert_inherited_struct_is_composed(t *testing.T) {
 	}
 }
 
+// The remedy a diagnostic names must exist. Every primitive preset is gone, and only an integer
+// has a Range or an Enum family, thus one generated list cannot serve all three kinds.
+func scalar_helper_remedy_text(t *testing.T) {
+	t.Helper()
+	empty := "\tprintln(0)"
+	integer := check_fixture(t, integer_helper_source(empty))
+	if diagnosed(integer, "Int_Invariants,") {
+		t.Fatal("the integer remedy must not name a deleted preset")
+	}
+	if !diagnosed(integer, "Range_Int family") {
+		t.Fatal("the integer remedy must name the Range_Int family")
+	}
+	if !diagnosed(integer, "Enum_Int family") {
+		t.Fatal("the integer remedy must name the Enum_Int family")
+	}
+	float_diags := check_fixture(t, float_helper_source(empty))
+	for _, absent := range []string{
+		"Float64_Invariants", "Range_Float64", "Enum_Float64"} {
+		if diagnosed(float_diags, absent) {
+			t.Fatalf("the float remedy must not name %s", absent)
+		}
+	}
+	if !diagnosed(float_diags, "Always") {
+		t.Fatal("the float remedy must name direct Always equality")
+	}
+	boolean := check_fixture(t, boolean_helper_source(empty))
+	for _, absent := range []string{
+		"Boolean_Invariants", "Range_Boolean", "Enum_Boolean", "Always"} {
+		if diagnosed(boolean, absent) {
+			t.Fatalf("the Boolean remedy must not name %s", absent)
+		}
+	}
+	if !diagnosed(boolean, "Sometimes") {
+		t.Fatal("the Boolean remedy must name a Tree whose one link is a Sometimes")
+	}
+}
+
 func scalar_range_holed_helper(t *testing.T) {
 	t.Helper()
 	body := "\tinvariant.Tree(value, namespace)." +
@@ -786,11 +824,10 @@ func parameter_helper_correct(t *testing.T) {
 			"func Token_Invariants(v Token, namespace invariant.Namespace) {\n" +
 			"\tinvariant.Tree(v, namespace)." +
 			"Range_Int(len(v), Token_Min, Token_Max).Ensure()\n}\n\n" +
-			"// Consume uses exact helpers.\nfunc Consume(tok Token, count int) {\n" +
-			"\tToken_Invariants(tok, \"token\")\n" +
-			"\tinvariant.Int_Invariants(count, \"count\")\n}\n"})
+			"// Consume uses exact helpers.\nfunc Consume(tok Token) {\n" +
+			"\tToken_Invariants(tok, \"token\")\n}\n"})
 	if diagnosed(check_source(correct), "must call helper") {
-		t.Fatal("exact local and primitive input helpers must satisfy the mandate")
+		t.Fatal("an exact local input helper must satisfy the mandate")
 	}
 }
 
@@ -848,10 +885,12 @@ func field_subject_isolation(t *testing.T) {
 		Path: "pkg/field_isolation.go",
 		Source_Text: "package fixture\n\n" +
 			"import invariant \"fixture/shared/invariant/default\"\n\n" +
+			"const Token_Min = 0\n\nconst Token_Max = 8\n\n" +
 			"// Token is a fixture.\ntype Token int\n\n" +
 			"// Token_Invariants is a fixture.\n" +
 			"func Token_Invariants(value Token, namespace invariant.Namespace) {\n" +
-			"\tinvariant.Int_Invariants(int(value), namespace)\n}\n\n" +
+			"\tinvariant.Tree(value, namespace)." +
+			"Range_Int(int(value), Token_Min, Token_Max).Ensure()\n}\n\n" +
 			"// Pair is a fixture.\ntype Pair struct {\n" +
 			"\t// First is a fixture.\n\tFirst Token\n" +
 			"\t// Second is a fixture.\n\tSecond Token\n}\n\n" +
@@ -873,10 +912,12 @@ func parameter_subject_isolation(t *testing.T) {
 		Path: "pkg/parameter_isolation.go",
 		Source_Text: "package fixture\n\n" +
 			"import invariant \"fixture/shared/invariant/default\"\n\n" +
+			"const Token_Min = 0\n\nconst Token_Max = 8\n\n" +
 			"// Token is a fixture.\ntype Token int\n\n" +
 			"// Token_Invariants is a fixture.\n" +
 			"func Token_Invariants(value Token, namespace invariant.Namespace) {\n" +
-			"\tinvariant.Int_Invariants(int(value), namespace)\n}\n\n" +
+			"\tinvariant.Tree(value, namespace)." +
+			"Range_Int(int(value), Token_Min, Token_Max).Ensure()\n}\n\n" +
 			"// Consume is a fixture.\n" +
 			"func Consume(first Token, second Token) {\n" +
 			"\tToken_Invariants(first, \"first\")\n\tprintln(0)\n}\n"})
@@ -896,10 +937,12 @@ func output_subject_isolation(t *testing.T) {
 		Path: "pkg/output_isolation.go",
 		Source_Text: "package fixture\n\n" +
 			"import invariant \"fixture/shared/invariant/default\"\n\n" +
+			"const Token_Min = 0\n\nconst Token_Max = 8\n\n" +
 			"// Token is a fixture.\ntype Token int\n\n" +
 			"// Token_Invariants is a fixture.\n" +
 			"func Token_Invariants(value Token, namespace invariant.Namespace) {\n" +
-			"\tinvariant.Int_Invariants(int(value), namespace)\n}\n\n" +
+			"\tinvariant.Tree(value, namespace)." +
+			"Range_Int(int(value), Token_Min, Token_Max).Ensure()\n}\n\n" +
 			"// Make is a fixture.\nfunc Make() (first Token, second Token) {\n" +
 			"\tdefer func() { Token_Invariants(first, \"first\") }()\n" +
 			"\treturn 0, 0\n}\n"})
@@ -938,19 +981,23 @@ func cross_package_helper_isolation(t *testing.T) {
 		Path: "other/token.go",
 		Source_Text: "package other\n\n" +
 			"import invariant \"fixture/shared/invariant/default\"\n\n" +
+			"const Token_Min = 0\n\nconst Token_Max = 8\n\n" +
 			"// Token is a fixture.\ntype Token int\n\n" +
 			"// Token_Invariants is a fixture.\n" +
 			"func Token_Invariants(value Token, namespace invariant.Namespace) {\n" +
-			"\tinvariant.Int_Invariants(int(value), namespace)\n}\n"})
+			"\tinvariant.Tree(value, namespace)." +
+			"Range_Int(int(value), Token_Min, Token_Max).Ensure()\n}\n"})
 	local := parse(t, &parse_input{
 		Path: "pkg/local_helper.go",
 		Source_Text: "package fixture\n\n" +
 			"import (\n\tinvariant \"fixture/shared/invariant/default\"\n" +
 			"\tforeign \"fixture/other\"\n)\n\n" +
+			"const Token_Min = 0\n\nconst Token_Max = 8\n\n" +
 			"// Token is a fixture.\ntype Token int\n\n" +
 			"// Token_Invariants is a fixture.\n" +
 			"func Token_Invariants(value Token, namespace invariant.Namespace) {\n" +
-			"\tinvariant.Int_Invariants(int(value), namespace)\n}\n\n" +
+			"\tinvariant.Tree(value, namespace)." +
+			"Range_Int(int(value), Token_Min, Token_Max).Ensure()\n}\n\n" +
 			"// Consume is a fixture.\nfunc Consume(value Token) {\n" +
 			"\tforeign.Token_Invariants(foreign.Token(value), \"foreign\")\n}\n"})
 	diags := check_sources([]source.Parsed_File{foreign, local})

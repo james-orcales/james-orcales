@@ -697,11 +697,10 @@ func invariant_constant_diagnostic(
 func invariant_missing_helper_diagnostic(
 	file Parsed_File, helper *ast.FuncDecl, type_specification *ast.TypeSpec,
 ) (diags []Diagnostic) {
-	suffix, _, count := invariant_type_kind(type_specification)
+	_, _, count := invariant_type_kind(type_specification)
 	value, _ := invariant_value_parameter(helper, type_specification.Name.Name)
 	message := helper.Name.Name + " must call a canonical helper for " + value +
-		": " + suffix + "_Invariants, direct Always equality, a Range_" + suffix +
-		" family, or an Enum_" + suffix + " family"
+		": " + invariant_remedy_text(type_specification)
 	if count {
 		message = helper.Name.Name + " must call Range_Int or Enum_Int family for len(" +
 			value + "), or use direct Always equality"
@@ -709,6 +708,21 @@ func invariant_missing_helper_diagnostic(
 	return []Diagnostic{{
 		Position: file.File_Set.Position(helper.Name.Pos()), Message: message,
 	}}
+}
+
+// Names the forms a scalar can actually take. Only an integer has a Range and an Enum family, and a
+// Boolean rejects a singleton Always because its two values are two obligations, thus one list
+// pasted from the suffix would name a form that does not exist.
+func invariant_remedy_text(type_specification *ast.TypeSpec) (remedy string) {
+	suffix, primitive, _ := invariant_type_kind(type_specification)
+	if primitive == "bool" {
+		return "an ensured Tree whose one link is a Sometimes"
+	}
+	if invariant_float_primitive(primitive) {
+		return "direct Always equality against a package constant"
+	}
+	return "direct Always equality, a Range_" + suffix +
+		" family, or an Enum_" + suffix + " family"
 }
 
 // Check_Type enforces the per-file type-invariant rules (Presence, Casing,
@@ -1248,14 +1262,12 @@ func struct_inherited_field_gaps(
 	if len(field.Names) == 0 {
 		return nil
 	}
-	expected, preset := struct_field_invariant(field.Type, gaps_input.Scope)
+	expected := struct_field_invariant(field.Type, gaps_input.Scope)
 	if expected == "" {
 		return nil
 	}
-	if !preset {
-		if !gaps_input.Scope.Defined[expected] {
-			return nil
-		}
+	if !gaps_input.Scope.Defined[expected] {
+		return nil
 	}
 	is_struct := struct_field_is_struct(field.Type, gaps_input.Scope)
 	for _, name := range field.Names {
@@ -1419,14 +1431,12 @@ func struct_field_missing_calls(
 	if len(field.Names) == 0 {
 		return nil
 	}
-	expected, preset := struct_field_invariant(field.Type, scope)
+	expected := struct_field_invariant(field.Type, scope)
 	if expected == "" {
 		return nil
 	}
-	if !preset {
-		if !scope.Defined[expected] {
-			return nil
-		}
+	if !scope.Defined[expected] {
+		return nil
 	}
 	for _, name := range field.Names {
 		if present[expected+"\x00"+name.Name] {
@@ -1580,7 +1590,7 @@ func struct_first_argument_field(call *ast.CallExpr, parameter string) (field st
 // is a preset (always available), or "" when the field is exempt.
 func struct_field_invariant(
 	field_type ast.Expr, scope *Invariant_Scope,
-) (identity string, preset bool) {
+) (identity string) {
 
 	// A pointer field composes its pointee: *Token requires Token_Invariants, the
 	// same as a Token field. The bundle passes the field, or its dereference, as the
@@ -1592,16 +1602,16 @@ func struct_field_invariant(
 	switch typed := field_type.(type) {
 	case *ast.ArrayType:
 		// A raw slice field is banned by check_primitive_types, not composed here.
-		return "", false
+		return ""
 	case *ast.MapType:
 		// A raw map field is banned by check_primitive_types, not composed here.
-		return "", false
+		return ""
 	case *ast.SelectorExpr:
 		package_path := struct_selector_package(typed, scope.Imports)
 		if package_path == "" {
-			return "", false
+			return ""
 		}
-		return package_path + "\x00" + typed.Sel.Name + "_Invariants", false
+		return package_path + "\x00" + typed.Sel.Name + "_Invariants"
 	case *ast.IndexExpr:
 		return struct_named_invariant(typed.X, scope)
 	case *ast.IndexListExpr:
@@ -1609,7 +1619,7 @@ func struct_field_invariant(
 	case *ast.Ident:
 		return struct_field_ident_invariant(typed.Name, scope)
 	default:
-		return "", false
+		return ""
 	}
 }
 
@@ -1617,21 +1627,21 @@ func struct_field_invariant(
 // cross-package selector), or "" otherwise.
 func struct_named_invariant(
 	base ast.Expr, scope *Invariant_Scope,
-) (identity string, preset bool) {
+) (identity string) {
 
 	selector, is_selector := base.(*ast.SelectorExpr)
 	if is_selector {
 		package_path := struct_selector_package(selector, scope.Imports)
 		if package_path == "" {
-			return "", false
+			return ""
 		}
-		return package_path + "\x00" + selector.Sel.Name + "_Invariants", false
+		return package_path + "\x00" + selector.Sel.Name + "_Invariants"
 	}
 	identifier, is_identifier := base.(*ast.Ident)
 	if is_identifier {
 		return struct_field_ident_invariant(identifier.Name, scope)
 	}
-	return "", false
+	return ""
 }
 
 func struct_selector_package(
@@ -1644,25 +1654,25 @@ func struct_selector_package(
 	return imports[qualifier.Name]
 }
 
-// Maps a field ident to its expected bundle: a struct type param is exempt, a
-// primitive maps to its preset, a no-preset builtin is exempt, else it is a
-// defined type whose own bundle (by casing) is expected.
+// Maps a field ident to its expected bundle: a struct type param is exempt, a builtin is exempt
+// because check_primitive_types bans it outright, else it is a defined type whose own bundle (by
+// casing) is expected.
 func struct_field_ident_invariant(
 	name string, scope *Invariant_Scope,
-) (identity string, preset bool) {
+) (identity string) {
 
 	if scope.Type_Parameters[name] {
-		return "", false
+		return ""
 	}
 	if name == "string" {
 		// A raw string field is banned by check_primitive_types, not composed here.
-		return "", false
+		return ""
 	}
 	if struct_is_builtin(name) {
 		// Banned by check_primitive_types, thus nothing to compose here.
-		return "", false
+		return ""
 	}
-	return scope.Current_Package + "\x00" + source.Invariant_Name(name), false
+	return scope.Current_Package + "\x00" + source.Invariant_Name(name)
 }
 
 // Reports whether name is a predeclared type that has no preset, so a field of it
