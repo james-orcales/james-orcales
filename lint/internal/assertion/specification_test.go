@@ -110,6 +110,7 @@ func Test_Invariants_Scalar_Helper(t *testing.T) {
 		"must call a canonical helper") {
 		t.Fatal("the exact Range helper must satisfy the scalar mandate")
 	}
+	scalar_range_holed_helper(t)
 	enum_body := "\tinvariant.Assertions(namespace)." +
 		"Enum_Int(int(value), int(Value_Min), int(Value_Max)).Ensure()"
 	if diagnosed(check_fixture(t, integer_helper_source(enum_body)),
@@ -240,6 +241,14 @@ func Test_Invariants_Helper_Constants(t *testing.T) {
 		"arguments must be package-level constants") {
 		t.Fatal("an inline singleton member must not satisfy the helper mandate")
 	}
+}
+
+// Test_Invariants_Cross_Package_Identity proves same-spelled foreign constants and helpers cannot
+// satisfy a local helper mandate.
+func Test_Invariants_Cross_Package_Identity(t *testing.T) {
+	t.Parallel()
+	cross_package_constant_isolation(t)
+	cross_package_helper_isolation(t)
 }
 
 // Test_Invariants_Helper_Identity verifies only a direct builder rooted at the actual invariant
@@ -455,6 +464,15 @@ func Test_Invariants_Output_Helper(t *testing.T) {
 	}
 }
 
+// Test_Invariants_Subject_Isolation proves one exact call cannot satisfy another same-typed field,
+// input, or output subject.
+func Test_Invariants_Subject_Isolation(t *testing.T) {
+	t.Parallel()
+	field_subject_isolation(t)
+	parameter_subject_isolation(t)
+	output_subject_isolation(t)
+}
+
 // Test_Invariants_Recorder_Registration verifies a non-exempt shared-library
 // package whose test file declares no TestMain is flagged for missing wiring.
 func Test_Invariants_Recorder_Registration(t *testing.T) {
@@ -580,6 +598,18 @@ func Test_Simulation_Blackbox(t *testing.T) {
 	}
 }
 
+func scalar_range_holed_helper(t *testing.T) {
+	t.Helper()
+	body := "\tinvariant.Assertions(namespace)." +
+		"Range_Holed_Int(int(value), int(Value_Min), int(Value_Max), " +
+		"int(Value_Third), int(Value_Fourth), int(Value_Fourth), " +
+		"int(Value_Fourth)).Ensure()"
+	if diagnosed(check_fixture(t, integer_helper_source(body)),
+		"must call a canonical helper") {
+		t.Fatal("the exact Range_Holed helper must satisfy the scalar mandate")
+	}
+}
+
 func assert_invalid_singleton_helper_identity(t *testing.T) {
 	t.Helper()
 	invalid_singletons := []string{
@@ -677,6 +707,124 @@ func parameter_helper_external(t *testing.T) {
 			"\texternal.Input_Invariants(input, \"input\")\n}\n"})
 	if diagnosed(check_sources([]source.Parsed_File{external, consumer}), "must call helper") {
 		t.Fatal("an aliased exact cross-package input helper must satisfy the mandate")
+	}
+}
+
+func field_subject_isolation(t *testing.T) {
+	t.Helper()
+	pf := parse(t, &parse_input{
+		Path: "pkg/field_isolation.go",
+		Source_Text: "package fixture\n\n" +
+			"import invariant \"fixture/shared/invariant/default\"\n\n" +
+			"// Token is a fixture.\ntype Token int\n\n" +
+			"// Token_Invariants is a fixture.\n" +
+			"func Token_Invariants(value Token, namespace invariant.Namespace) {\n" +
+			"\tinvariant.Int_Invariants(int(value), namespace)\n}\n\n" +
+			"// Pair is a fixture.\ntype Pair struct {\n" +
+			"\t// First is a fixture.\n\tFirst Token\n" +
+			"\t// Second is a fixture.\n\tSecond Token\n}\n\n" +
+			"// Pair_Invariants is a fixture.\n" +
+			"func Pair_Invariants(value Pair, namespace invariant.Namespace) {\n" +
+			"\tToken_Invariants(value.First, \"first\")\n}\n"})
+	diags := check_source(pf)
+	if !diagnosed(diags, "Pair_Invariants must call Token_Invariants(value.Second, ...)") {
+		t.Fatalf("first field call satisfied the second field: %v", diags)
+	}
+	if diagnosed(diags, "Token_Invariants(value.First, ...)") {
+		t.Fatalf("the exact first field call was rejected: %v", diags)
+	}
+}
+
+func parameter_subject_isolation(t *testing.T) {
+	t.Helper()
+	pf := parse(t, &parse_input{
+		Path: "pkg/parameter_isolation.go",
+		Source_Text: "package fixture\n\n" +
+			"import invariant \"fixture/shared/invariant/default\"\n\n" +
+			"// Token is a fixture.\ntype Token int\n\n" +
+			"// Token_Invariants is a fixture.\n" +
+			"func Token_Invariants(value Token, namespace invariant.Namespace) {\n" +
+			"\tinvariant.Int_Invariants(int(value), namespace)\n}\n\n" +
+			"// Consume is a fixture.\n" +
+			"func Consume(first Token, second Token) {\n" +
+			"\tToken_Invariants(first, \"first\")\n\tprintln(0)\n}\n"})
+	diags := check_source(pf)
+	want := "Consume must call helper for second via Token_Invariants(second, ...)"
+	if !diagnosed(diags, want) {
+		t.Fatalf("first input call satisfied the second input: %v", diags)
+	}
+	if diagnosed(diags, "helper for first") {
+		t.Fatalf("the exact first input call was rejected: %v", diags)
+	}
+}
+
+func output_subject_isolation(t *testing.T) {
+	t.Helper()
+	pf := parse(t, &parse_input{
+		Path: "pkg/output_isolation.go",
+		Source_Text: "package fixture\n\n" +
+			"import invariant \"fixture/shared/invariant/default\"\n\n" +
+			"// Token is a fixture.\ntype Token int\n\n" +
+			"// Token_Invariants is a fixture.\n" +
+			"func Token_Invariants(value Token, namespace invariant.Namespace) {\n" +
+			"\tinvariant.Int_Invariants(int(value), namespace)\n}\n\n" +
+			"// Make is a fixture.\nfunc Make() (first Token, second Token) {\n" +
+			"\tdefer func() { Token_Invariants(first, \"first\") }()\n" +
+			"\treturn 0, 0\n}\n"})
+	diags := check_source(pf)
+	if !diagnosed(diags, "Make must call helper for second in the output defer") {
+		t.Fatalf("first output call satisfied the second output: %v", diags)
+	}
+	if diagnosed(diags, "helper for first") {
+		t.Fatalf("the exact first output call was rejected: %v", diags)
+	}
+}
+
+func cross_package_constant_isolation(t *testing.T) {
+	t.Helper()
+	foreign := parse(t, &parse_input{
+		Path:        "other/constants.go",
+		Source_Text: "package other\n\nconst Value_Min = -4\n\nconst Value_Max = 4\n"})
+	local := parse(t, &parse_input{
+		Path: "pkg/local_constants.go",
+		Source_Text: "package fixture\n\n" +
+			"import invariant \"fixture/shared/invariant/default\"\n\n" +
+			"// Value is a fixture.\ntype Value int\n\n" +
+			"// Value_Invariants is a fixture.\n" +
+			"func Value_Invariants(value Value, namespace invariant.Namespace) {\n" +
+			"\tinvariant.Assertions(namespace).Range_Int(" +
+			"int(value), Value_Min, Value_Max).Ensure()\n}\n"})
+	diags := check_sources([]source.Parsed_File{foreign, local})
+	if !diagnosed(diags, "arguments must be package-level constants") {
+		t.Fatalf("foreign same-spelled constants satisfied the local helper: %v", diags)
+	}
+}
+
+func cross_package_helper_isolation(t *testing.T) {
+	t.Helper()
+	foreign := parse(t, &parse_input{
+		Path: "other/token.go",
+		Source_Text: "package other\n\n" +
+			"import invariant \"fixture/shared/invariant/default\"\n\n" +
+			"// Token is a fixture.\ntype Token int\n\n" +
+			"// Token_Invariants is a fixture.\n" +
+			"func Token_Invariants(value Token, namespace invariant.Namespace) {\n" +
+			"\tinvariant.Int_Invariants(int(value), namespace)\n}\n"})
+	local := parse(t, &parse_input{
+		Path: "pkg/local_helper.go",
+		Source_Text: "package fixture\n\n" +
+			"import (\n\tinvariant \"fixture/shared/invariant/default\"\n" +
+			"\tforeign \"fixture/other\"\n)\n\n" +
+			"// Token is a fixture.\ntype Token int\n\n" +
+			"// Token_Invariants is a fixture.\n" +
+			"func Token_Invariants(value Token, namespace invariant.Namespace) {\n" +
+			"\tinvariant.Int_Invariants(int(value), namespace)\n}\n\n" +
+			"// Consume is a fixture.\nfunc Consume(value Token) {\n" +
+			"\tforeign.Token_Invariants(foreign.Token(value), \"foreign\")\n}\n"})
+	diags := check_sources([]source.Parsed_File{foreign, local})
+	want := "Consume must call helper for value via Token_Invariants(value, ...)"
+	if !diagnosed(diags, want) {
+		t.Fatalf("foreign same-named helper satisfied the local subject: %v", diags)
 	}
 }
 

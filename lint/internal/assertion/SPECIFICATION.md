@@ -48,6 +48,12 @@ Each Range boundary, Enum member, and singleton Always member is a package-level
 type's package. An integer can use its exact primitive conversion. Inline literals, computed call
 operands, imported selectors, and conversion to another primitive never satisfy the helper mandate.
 
+### Cross Package Identity
+
+A constant belongs only to its declaring package. A same-spelled constant from another package
+cannot supply a local Range boundary, Enum member, or singleton member. A helper also belongs to its
+declaring package. A foreign helper with the required name cannot satisfy a local typed subject.
+
 ### Helper Identity
 
 All canonical calls are direct shared/invariant/default statements with qualifier invariant.
@@ -76,6 +82,12 @@ foreign or shadowed functions never substitute. A helper or method is exempt.
 A named free function whose return values include one with an _Invariants directly calls each exact
 helper in a defer that is the first statement of the body. Nested, shadowed, and assertion calls
 never substitute.
+
+### Subject Isolation
+
+Each field, input, and output is a separate helper requirement. One helper call satisfies only the
+exact subject in its first argument. A call for one subject cannot satisfy another subject, even
+when both subjects have the same type and require the same helper.
 
 ### Recorder Registration
 

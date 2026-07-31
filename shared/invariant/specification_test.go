@@ -4,13 +4,19 @@ package invariant_test
 
 import (
 	"bytes"
+	"encoding/base64"
 	"fmt"
+	"io"
+	"math"
+	"os"
+	"reflect"
 	"strings"
 	"sync"
 	"testing"
 	"testing/fstest"
 
 	"local/james-orcales/shared/invariant"
+	default_invariant "local/james-orcales/shared/invariant/default"
 )
 
 // Test_Always_Violation prevents a false guard from returning.
@@ -47,6 +53,26 @@ func check(ok bool) { invariant.Always(ok, "reachable") }
 		"🚨 1 coverage gaps 🚨\n"
 	if output.String() != want {
 		t.Fatalf("output = %q, want %q", output.String(), want)
+	}
+}
+
+// Test_Always_Uniqueness prevents two eager roots from sharing one global coverage identity.
+func Test_Always_Uniqueness(t *testing.T) {
+	recorder, output, code := registered_fixture(`package fixture
+func first(ok bool) { invariant.Always(ok, "duplicate") }
+func second(ok bool) { invariant.Always(ok, "duplicate") }
+`)
+	if code != 1 {
+		t.Fatalf("exit=%d output=%q", code, output.String())
+	}
+	want := "🚨 1 duplicate messages 🚨\n" +
+		"/fixture/check.go:3  duplicate message: \"duplicate\"\n" +
+		"🚨 1 duplicate messages 🚨\n"
+	if output.String() != want {
+		t.Fatalf("output=%q, want %q", output.String(), want)
+	}
+	if event_count(&recorder.Events) != 0 {
+		t.Fatal("duplicate eager identities created partial events")
 	}
 }
 
@@ -109,12 +135,28 @@ func check(a bool, b bool) {
 	invariant.Assertions("identity").Sometimes(a, "same").Sometimes(b, "same").Ensure()
 }
 `)
-	chain_metadata(t, recorder, chain_metadata_key{
+	first := chain_metadata(t, recorder, chain_metadata_key{
 		Namespace: "identity", Ordinal: 0, Message: "same",
 	})
-	chain_metadata(t, recorder, chain_metadata_key{
+	second := chain_metadata(t, recorder, chain_metadata_key{
 		Namespace: "identity", Ordinal: 1, Message: "same",
 	})
+	invariant.Recorder_Assertions(recorder, "identity").
+		Sometimes(true, "same").Sometimes(false, "same").Ensure()
+	if first.Frequency.Load() != 1 {
+		t.Fatalf("first true frequency=%d, want 1", first.Frequency.Load())
+	}
+	if first.False_Frequency.Load() != 0 {
+		t.Fatalf("first frequencies=(%d,%d), want (1,0)",
+			first.Frequency.Load(), first.False_Frequency.Load())
+	}
+	if second.Frequency.Load() != 0 {
+		t.Fatalf("second true frequency=%d, want 0", second.Frequency.Load())
+	}
+	if second.False_Frequency.Load() != 1 {
+		t.Fatalf("second frequencies=(%d,%d), want (0,1)",
+			second.Frequency.Load(), second.False_Frequency.Load())
+	}
 }
 
 // Test_Assertions_Atomic prevents partial coverage from a failing chain.
@@ -175,13 +217,36 @@ func Test_Assertions_Allocation(t *testing.T) {
 
 // Test_Assertions_Persistence protects structural fuzz-key round trips.
 func Test_Assertions_Persistence(t *testing.T) {
-	recorder := registered_single_axis(t, "persist")
 	key := assertion_key("persist", 0, "axis")
+	recorder := registered_single_axis(t, "persist")
+	invariant.Recorder_Merge_Fuzz_Coverage_From(
+		recorder, strings.NewReader(invariant.Fuzz_Coverage_Line(key, true)))
+	if recorder_event(t, recorder, key).Frequency.Load() != 1 {
+		t.Fatal("persisted true branch did not merge")
+	}
+	recorder = registered_single_axis(t, "persist")
 	invariant.Recorder_Merge_Fuzz_Coverage_From(
 		recorder, strings.NewReader(invariant.Fuzz_Coverage_Line(key, false)))
 	if recorder_event(t, recorder, key).False_Frequency.Load() != 1 {
 		t.Fatal("persisted false branch did not merge")
 	}
+}
+
+// Test_Assertions_Record_Validation prevents foreign or malformed fuzz records from crediting an
+// exact registered identity.
+func Test_Assertions_Record_Validation(t *testing.T) {
+	key := assertion_key("persist", 0, "axis")
+	encoded_key := base64.StdEncoding.EncodeToString([]byte(key))
+	assert_persisted_record_ignored(t, "foreign namespace",
+		invariant.Fuzz_Coverage_Line(assertion_key("foreign", 0, "axis"), true))
+	assert_persisted_record_ignored(t, "foreign ordinal",
+		invariant.Fuzz_Coverage_Line(assertion_key("persist", 1, "axis"), true))
+	assert_persisted_record_ignored(t, "unknown key",
+		invariant.Fuzz_Coverage_Line("unknown", true))
+	assert_persisted_record_ignored(t, "invalid base64", "%%%\tT\n")
+	assert_persisted_record_ignored(t, "missing separator", encoded_key+"\n")
+	assert_persisted_record_ignored(t, "partial record", encoded_key+"\tT")
+	assert_persisted_record_ignored(t, "invalid branch", encoded_key+"\tX\n")
 }
 
 // Test_Assertions_Registration_Packages keeps direct source registration independent of reach.
@@ -319,7 +384,7 @@ func second(value Number) { Number_Invariants(value, "number") }
 	chain_metadata(t, recorder, chain_metadata_key{
 		Namespace: "number", Ordinal: 0, Message: "zero",
 	})
-	_, output, code = registered_fixture(`package fixture
+	recorder, output, code = registered_fixture(`package fixture
 func first(v bool) { invariant.Assertions("same").Sometimes(v, "a").Ensure() }
 func second(v bool) { invariant.Assertions("same").Sometimes(v, "b").Ensure() }
 `)
@@ -328,6 +393,12 @@ func second(v bool) { invariant.Assertions("same").Sometimes(v, "b").Ensure() }
 	}
 	if !strings.Contains(output.String(), "duplicate namespace") {
 		t.Fatalf("exit=%d output=%q", code, output.String())
+	}
+	if event_count(&recorder.Events) != 0 {
+		t.Fatal("conflicting roots published partial events")
+	}
+	if recorder.Assertion_Plans != nil {
+		t.Fatal("conflicting roots published a partial namespace")
 	}
 }
 
@@ -482,7 +553,7 @@ func check(value a.Number) { a.Number_Invariants(value, "number") }
 
 // Test_Bundles_Callsite keeps each invocation's namespace independent.
 func Test_Bundles_Callsite(t *testing.T) {
-	recorder, _, _ := registered_fixture(`package fixture
+	recorder, output, _ := registered_fixture(`package fixture
 type Number int
 func Number_Invariants(value Number, namespace invariant.Namespace) {
 	invariant.Assertions(namespace).Sometimes(value == 0, "zero").Ensure()
@@ -490,12 +561,34 @@ func Number_Invariants(value Number, namespace invariant.Namespace) {
 func first(value Number) { Number_Invariants(value, "first") }
 func second(value Number) { Number_Invariants(value, "second") }
 `)
-	chain_metadata(t, recorder, chain_metadata_key{
+	first := chain_metadata(t, recorder, chain_metadata_key{
 		Namespace: "first", Ordinal: 0, Message: "zero",
 	})
-	chain_metadata(t, recorder, chain_metadata_key{
+	second := chain_metadata(t, recorder, chain_metadata_key{
 		Namespace: "second", Ordinal: 0, Message: "zero",
 	})
+	invariant.Recorder_Assertions(recorder, "first").Sometimes(true, "zero").Ensure()
+	if first.Frequency.Load() != 1 {
+		t.Fatal("first callsite did not receive its own credit")
+	}
+	if second.Frequency.Load() != 0 {
+		t.Fatal("first callsite credited the second true branch")
+	}
+	if second.False_Frequency.Load() != 0 {
+		t.Fatal("first callsite credited the second namespace")
+	}
+	invariant.Recorder_Analyze_Assertion_Frequency(recorder)
+	want := "🚨 3 coverage gaps 🚨\n\n" +
+		"# Branch gaps (3)\n\n" +
+		"| Assertion | Link | Missing | Property | Source     |\n" +
+		"|-----------|-----:|---------|----------|------------|\n" +
+		"| first     |    0 | false   | zero     | value == 0 |\n" +
+		"| second    |    0 | false   | zero     | value == 0 |\n" +
+		"| second    |    0 | true    | zero     | value == 0 |\n\n" +
+		"🚨 3 coverage gaps 🚨\n"
+	if output.String() != want {
+		t.Fatalf("output=%q, want %q", output.String(), want)
+	}
 }
 
 // Test_Bundles_Gap_Location keeps diagnostics attached to the callsite identity.
@@ -525,6 +618,88 @@ func Int_Invariants(value int, namespace invariant.Namespace) {
 	}
 	if !strings.Contains(output.String(), "primitive") {
 		t.Fatalf("exit=%d output=%q", code, output.String())
+	}
+}
+
+// Test_Bundles_Signed_Primitive_Mandates proves each signed helper's exact source creates both
+// branches for every named witness.
+func Test_Bundles_Signed_Primitive_Mandates(t *testing.T) {
+	recorder, _, _ := registered_repository_fixture(t, "testdata/primitive_mandates")
+	previous := default_invariant.Default
+	default_invariant.Default = recorder
+	defer func() { default_invariant.Default = previous }()
+	exercise_signed_primitive_mandates()
+	assert_primitive_mandates(t, recorder, signed_primitive_mandates())
+}
+
+// Test_Bundles_Unsigned_Primitive_Mandates proves each unsigned helper's exact source creates both
+// branches for every named witness.
+func Test_Bundles_Unsigned_Primitive_Mandates(t *testing.T) {
+	recorder, _, _ := registered_repository_fixture(t, "testdata/primitive_mandates")
+	previous := default_invariant.Default
+	default_invariant.Default = recorder
+	defer func() { default_invariant.Default = previous }()
+	exercise_unsigned_primitive_mandates()
+	assert_primitive_mandates(t, recorder, unsigned_primitive_mandates())
+}
+
+// Test_Bundles_Floating_Primitive_Mandates proves each float helper's exact source creates both
+// branches for every non-finite witness.
+func Test_Bundles_Floating_Primitive_Mandates(t *testing.T) {
+	recorder, _, _ := registered_repository_fixture(t, "testdata/primitive_mandates")
+	previous := default_invariant.Default
+	default_invariant.Default = recorder
+	defer func() { default_invariant.Default = previous }()
+	exercise_float_primitive_mandates()
+	assert_primitive_mandates(t, recorder, floating_primitive_mandates())
+}
+
+// Test_Bundles_Boolean_Primitive_Mandate proves the Boolean helper requires both domain values.
+func Test_Bundles_Boolean_Primitive_Mandate(t *testing.T) {
+	recorder, _, _ := registered_repository_fixture(t, "testdata/primitive_mandates")
+	previous := default_invariant.Default
+	default_invariant.Default = recorder
+	defer func() { default_invariant.Default = previous }()
+	default_invariant.Boolean_Invariants(false, "primitive.boolean")
+	default_invariant.Boolean_Invariants(true, "primitive.boolean")
+	assert_primitive_mandates(t, recorder, boolean_primitive_mandates())
+}
+
+// Test_Bundles_Primitive_Isolation proves complete coverage at one primitive callsite cannot fill
+// gaps at another callsite that invokes the same helper.
+func Test_Bundles_Primitive_Isolation(t *testing.T) {
+	table := primitive_isolation_report(t, invariant.Coverage_Gap_Table_Write)
+	want_table := "🚨 4 coverage gaps 🚨\n\n" +
+		"# Branch gaps (4)\n\n" +
+		"| Assertion        | Link | Missing | Property" +
+		"                       | Source            |\n" +
+		"|------------------|-----:|---------|---------" +
+		"-----------------------|-------------------|\n" +
+		"| primitive.second |    0 | false   | The value is one." +
+		"              | n == 1            |\n" +
+		"| primitive.second |    1 | true    | The value is negative one." +
+		"     | n == -1           |\n" +
+		"| primitive.second |    2 | true    | The value is the minimum int8." +
+		" | n == math.MinInt8 |\n" +
+		"| primitive.second |    3 | true    | The value is the maximum int8." +
+		" | n == math.MaxInt8 |\n\n" +
+		"🚨 4 coverage gaps 🚨\n"
+	if table != want_table {
+		t.Fatalf("table=%q, want %q", table, want_table)
+	}
+	json := primitive_isolation_report(t, default_invariant.Coverage_Gap_Json_Write)
+	want_json := `[{"section":"branch","assertion":"primitive.second","link":0,` +
+		`"missing":"false","property":"The value is one.","source":"n == 1"},` +
+		`{"section":"branch","assertion":"primitive.second","link":1,` +
+		`"missing":"true","property":"The value is negative one.","source":"n == -1"},` +
+		`{"section":"branch","assertion":"primitive.second","link":2,` +
+		`"missing":"true","property":"The value is the minimum int8.",` +
+		`"source":"n == math.MinInt8"},{"section":"branch",` +
+		`"assertion":"primitive.second","link":3,"missing":"true",` +
+		`"property":"The value is the maximum int8.",` +
+		`"source":"n == math.MaxInt8"}]` + "\n"
+	if json != want_json {
+		t.Fatalf("json=%q, want %q", json, want_json)
 	}
 }
 
@@ -706,27 +881,28 @@ func Test_Range_Guard(t *testing.T) {
 
 // Test_Range_Coverage keeps both boundaries mandatory when distinct.
 func Test_Range_Coverage(t *testing.T) {
-	recorder, _, _ := registered_range(t, "range", 0, 4)
-	for value := 0; value <= 4; value++ {
-		invariant.Recorder_Assertions(recorder, "range").Range_Int(value, 0, 4).Ensure()
+	recorder, _, _ := registered_range(t, "range", -2, 3)
+	for value := -2; value <= 3; value++ {
+		invariant.Recorder_Assertions(recorder, "range").Range_Int(value, -2, 3).Ensure()
 	}
-	minimum := chain_metadata(t, recorder, chain_metadata_key{
-		Namespace: "range", Ordinal: 2, Message: "The value equals the minimum.",
-	})
-	maximum := chain_metadata(t, recorder, chain_metadata_key{
-		Namespace: "range", Ordinal: 3, Message: "The value equals the maximum.",
-	})
-	if minimum.Frequency.Load() == 0 {
-		t.Fatal("range minimum true branch was not witnessed")
+	messages := []string{
+		"The value equals the minimum.",
+		"The value equals the maximum.",
+		"The value is zero.",
+		"The value is one.",
+		"The value is two.",
+		"The value is negative one.",
 	}
-	if minimum.False_Frequency.Load() == 0 {
-		t.Fatal("range minimum false branch was not witnessed")
-	}
-	if maximum.Frequency.Load() == 0 {
-		t.Fatal("range maximum true branch was not witnessed")
-	}
-	if maximum.False_Frequency.Load() == 0 {
-		t.Fatal("range maximum false branch was not witnessed")
+	for message_index, message := range messages {
+		metadata := chain_metadata(t, recorder, chain_metadata_key{
+			Namespace: "range", Ordinal: uint8(message_index + 2), Message: message,
+		})
+		if metadata.Frequency.Load() == 0 {
+			t.Fatalf("%q true branch was not witnessed", message)
+		}
+		if metadata.False_Frequency.Load() == 0 {
+			t.Fatalf("%q false branch was not witnessed", message)
+		}
 	}
 }
 
@@ -847,18 +1023,24 @@ func check(v int) { invariant.Assertions("enum").Enum_Int(v, 1, 2).Ensure() }
 // Test_Enum_Members keeps every canonical member mandatory and ordered by value.
 func Test_Enum_Members(t *testing.T) {
 	recorder, _, _ := registered_fixture(`package fixture
-func check(v int) { invariant.Assertions("enum").Enum_4_Int(v, -3, 0, 2, 9).Ensure() }
+func pair(v int) { invariant.Assertions("enum.2").Enum_Int(v, -3, 9).Ensure() }
+func triple(v int) { invariant.Assertions("enum.3").Enum_3_Int(v, -3, 2, 9).Ensure() }
+func quartet(v int) { invariant.Assertions("enum.4").Enum_4_Int(v, -3, 0, 2, 9).Ensure() }
 `)
-	if event_count(&recorder.Events) != 5 {
-		t.Fatalf("events = %d, want guard plus four members", event_count(&recorder.Events))
+	for _, value := range []int{-3, 9} {
+		invariant.Recorder_Assertions(recorder, "enum.2").Enum_Int(value, -3, 9).Ensure()
 	}
-	invariant.Recorder_Assertions(recorder, "enum").Enum_4_Int(2, -3, 0, 2, 9).Ensure()
-	member := chain_metadata(t, recorder, chain_metadata_key{
-		Namespace: "enum", Ordinal: 3, Message: "The value equals member 2.",
-	})
-	if member.Frequency.Load() != 1 {
-		t.Fatal("member branch was not credited")
+	for _, value := range []int{-3, 2, 9} {
+		invariant.Recorder_Assertions(recorder, "enum.3").
+			Enum_3_Int(value, -3, 2, 9).Ensure()
 	}
+	for _, value := range []int{-3, 0, 2, 9} {
+		invariant.Recorder_Assertions(recorder, "enum.4").
+			Enum_4_Int(value, -3, 0, 2, 9).Ensure()
+	}
+	assert_enum_members(t, recorder, "enum.2", []string{"-3", "9"})
+	assert_enum_members(t, recorder, "enum.3", []string{"-3", "2", "9"})
+	assert_enum_members(t, recorder, "enum.4", []string{"-3", "0", "2", "9"})
 }
 
 // Test_Enum_Registration rejects wrong capacities, duplicates, and nonascending domains.
@@ -965,6 +1147,225 @@ func range_cardinality_replacement(suffix string, legal_count int) (replacement 
 		return "Enum_" + suffix
 	}
 	return fmt.Sprintf("Enum_%d_%s", legal_count, suffix)
+}
+
+func assert_persisted_record_ignored(t *testing.T, name string, record string) {
+	t.Helper()
+	recorder := registered_single_axis(t, "persist")
+	key := assertion_key("persist", 0, "axis")
+	invariant.Recorder_Merge_Fuzz_Coverage_From(recorder, strings.NewReader(record))
+	metadata := recorder_event(t, recorder, key)
+	if metadata.Frequency.Load() != 0 {
+		t.Fatalf("%s credited target true frequency=%d", name, metadata.Frequency.Load())
+	}
+	if metadata.False_Frequency.Load() != 0 {
+		t.Fatalf("%s credited target frequencies=(%d,%d)", name,
+			metadata.Frequency.Load(), metadata.False_Frequency.Load())
+	}
+}
+
+func assert_enum_members(
+	t *testing.T, recorder *invariant.Recorder, namespace invariant.Namespace, members []string,
+) {
+	t.Helper()
+	guard := chain_metadata(t, recorder, chain_metadata_key{
+		Namespace: namespace, Ordinal: 0, Message: "The value is an enum member.",
+	})
+	if guard.Frequency.Load() == 0 {
+		t.Fatalf("%s membership guard was not witnessed", namespace)
+	}
+	for member_index, member := range members {
+		message := "The value equals member " + member + "."
+		metadata := chain_metadata(t, recorder, chain_metadata_key{
+			Namespace: namespace, Ordinal: uint8(member_index + 1), Message: message,
+		})
+		if metadata.Frequency.Load() == 0 {
+			t.Fatalf("%s %q true branch was not witnessed", namespace, message)
+		}
+		if metadata.False_Frequency.Load() == 0 {
+			t.Fatalf("%s %q false branch was not witnessed", namespace, message)
+		}
+	}
+}
+
+type primitive_mandate struct {
+	Namespace  invariant.Namespace
+	Messages   []string
+	Conditions []string
+}
+
+func assert_primitive_mandates(
+	t *testing.T, recorder *invariant.Recorder, mandates []primitive_mandate,
+) {
+	t.Helper()
+	for _, mandate := range mandates {
+		for message_index, message := range mandate.Messages {
+			metadata := chain_metadata(t, recorder, chain_metadata_key{
+				Namespace: mandate.Namespace,
+				Ordinal:   uint8(message_index),
+				Message:   message,
+			})
+			if metadata.Condition != mandate.Conditions[message_index] {
+				t.Fatalf("%s %q condition=%q, want %q", mandate.Namespace, message,
+					metadata.Condition, mandate.Conditions[message_index])
+			}
+			if metadata.Frequency.Load() == 0 {
+				t.Fatalf("%s %q true branch was not witnessed",
+					mandate.Namespace, message)
+			}
+			if metadata.False_Frequency.Load() == 0 {
+				t.Fatalf("%s %q false branch was not witnessed",
+					mandate.Namespace, message)
+			}
+		}
+	}
+}
+
+func signed_primitive_mandates() (mandates []primitive_mandate) {
+	return []primitive_mandate{
+		{"primitive.int", []string{"The value is one.", "The value is negative one.",
+			"The value is the minimum int.", "The value is the maximum int."},
+			[]string{"n == 1", "n == -1", "n == math.MinInt64", "n == math.MaxInt64"}},
+		{"primitive.int8", []string{"The value is one.", "The value is negative one.",
+			"The value is the minimum int8.", "The value is the maximum int8."},
+			[]string{"n == 1", "n == -1", "n == math.MinInt8", "n == math.MaxInt8"}},
+		{"primitive.int16", []string{"The value is one.", "The value is negative one.",
+			"The value is the minimum int16.", "The value is the maximum int16."},
+			[]string{"n == 1", "n == -1", "n == math.MinInt16", "n == math.MaxInt16"}},
+		{"primitive.int32", []string{"The value is one.", "The value is negative one.",
+			"The value is the minimum int32.", "The value is the maximum int32."},
+			[]string{"n == 1", "n == -1", "n == math.MinInt32", "n == math.MaxInt32"}},
+		{"primitive.int64", []string{"The value is one.", "The value is negative one.",
+			"The value is the minimum int64.", "The value is the maximum int64."},
+			[]string{"n == 1", "n == -1", "n == math.MinInt64", "n == math.MaxInt64"}},
+	}
+}
+
+func unsigned_primitive_mandates() (mandates []primitive_mandate) {
+	return []primitive_mandate{
+		{"primitive.uint", []string{"The value is zero.", "The value is one.",
+			"The value is the maximum uint."},
+			[]string{"n == 0", "n == 1", "n == math.MaxUint64"}},
+		{"primitive.uint8", []string{"The value is zero.", "The value is one.",
+			"The value is the maximum uint8."},
+			[]string{"n == 0", "n == 1", "n == math.MaxUint8"}},
+		{"primitive.uint16", []string{"The value is zero.", "The value is one.",
+			"The value is the maximum uint16."},
+			[]string{"n == 0", "n == 1", "n == math.MaxUint16"}},
+		{"primitive.uint32", []string{"The value is zero.", "The value is one.",
+			"The value is the maximum uint32."},
+			[]string{"n == 0", "n == 1", "n == math.MaxUint32"}},
+		{"primitive.uint64", []string{"The value is zero.", "The value is one.",
+			"The value is the maximum uint64."},
+			[]string{"n == 0", "n == 1", "n == math.MaxUint64"}},
+	}
+}
+
+func floating_primitive_mandates() (mandates []primitive_mandate) {
+	return []primitive_mandate{
+		{"primitive.float32", []string{"The value is NaN.",
+			"The value is negative infinity.", "The value is positive infinity."},
+			[]string{"math.IsNaN(float64(f))", "float64(f) == math.Inf(-1)",
+				"float64(f) == math.Inf(1)"}},
+		{"primitive.float64", []string{"The value is NaN.",
+			"The value is negative infinity.", "The value is positive infinity."},
+			[]string{"math.IsNaN(f)", "f == math.Inf(-1)", "f == math.Inf(1)"}},
+	}
+}
+
+func boolean_primitive_mandates() (mandates []primitive_mandate) {
+	return []primitive_mandate{
+		{"primitive.boolean", []string{"The value is true."}, []string{"b"}},
+	}
+}
+
+func exercise_signed_primitive_mandates() {
+	for _, value := range []int{0, 1, -1, math.MinInt64, math.MaxInt64} {
+		default_invariant.Int_Invariants(value, "primitive.int")
+	}
+	for _, value := range []int8{0, 1, -1, math.MinInt8, math.MaxInt8} {
+		default_invariant.Int8_Invariants(value, "primitive.int8")
+	}
+	for _, value := range []int16{0, 1, -1, math.MinInt16, math.MaxInt16} {
+		default_invariant.Int16_Invariants(value, "primitive.int16")
+	}
+	for _, value := range []int32{0, 1, -1, math.MinInt32, math.MaxInt32} {
+		default_invariant.Int32_Invariants(value, "primitive.int32")
+	}
+	for _, value := range []int64{0, 1, -1, math.MinInt64, math.MaxInt64} {
+		default_invariant.Int64_Invariants(value, "primitive.int64")
+	}
+}
+
+func exercise_unsigned_primitive_mandates() {
+	for _, value := range []uint{0, 1, 2, math.MaxUint64} {
+		default_invariant.Uint_Invariants(value, "primitive.uint")
+	}
+	for _, value := range []uint8{0, 1, 2, math.MaxUint8} {
+		default_invariant.Uint8_Invariants(value, "primitive.uint8")
+	}
+	for _, value := range []uint16{0, 1, 2, math.MaxUint16} {
+		default_invariant.Uint16_Invariants(value, "primitive.uint16")
+	}
+	for _, value := range []uint32{0, 1, 2, math.MaxUint32} {
+		default_invariant.Uint32_Invariants(value, "primitive.uint32")
+	}
+	for _, value := range []uint64{0, 1, 2, math.MaxUint64} {
+		default_invariant.Uint64_Invariants(value, "primitive.uint64")
+	}
+}
+
+func exercise_float_primitive_mandates() {
+	for _, value := range []float32{0, float32(math.NaN()),
+		float32(math.Inf(-1)), float32(math.Inf(1))} {
+		default_invariant.Float32_Invariants(value, "primitive.float32")
+	}
+	for _, value := range []float64{0, math.NaN(), math.Inf(-1), math.Inf(1)} {
+		default_invariant.Float64_Invariants(value, "primitive.float64")
+	}
+}
+
+func primitive_isolation_report(
+	t *testing.T, reporter func(io.Writer, []invariant.Coverage_Gap) (err error),
+) (report string) {
+	t.Helper()
+	recorder, output, code := registered_repository_fixture(t, "testdata/primitive_isolation")
+	recorder.Report_Coverage_Gaps = reporter
+	previous := default_invariant.Default
+	default_invariant.Default = recorder
+	defer func() { default_invariant.Default = previous }()
+	for _, value := range []int8{0, 1, -1, math.MinInt8, math.MaxInt8} {
+		default_invariant.Int8_Invariants(value, "primitive.first")
+	}
+	default_invariant.Int8_Invariants(1, "primitive.second")
+	invariant.Recorder_Analyze_Assertion_Frequency(recorder)
+	if *code != 1 {
+		t.Fatalf("exit=%d output=%q", *code, output.String())
+	}
+	return output.String()
+}
+
+func registered_repository_fixture(
+	t *testing.T, directory string,
+) (recorder *invariant.Recorder, output *bytes.Buffer, code *int) {
+	t.Helper()
+	working_directory, working_error := os.Getwd()
+	if working_error != nil {
+		t.Fatal(working_error)
+	}
+	output = &bytes.Buffer{}
+	status := -1
+	recorder = &invariant.Recorder{
+		File_System: os.DirFS("/"), Working_Directory: working_directory,
+		Packages_To_Analyze: []string{directory}, Output: output,
+		Exit: func(exit_status int) { status = exit_status }, Is_Test: true,
+		Sugar_Package: reflect.TypeOf(default_invariant.Sugar_Package_Marker{}).PkgPath(),
+	}
+	invariant.Recorder_Register_Packages_For_Analysis(recorder)
+	if status != -1 {
+		t.Fatalf("registration exit=%d output=%q", status, output.String())
+	}
+	return recorder, output, &status
 }
 
 func registered_fixture(source string) (

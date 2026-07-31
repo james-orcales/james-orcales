@@ -17,6 +17,11 @@ panic includes the observed false value. The benchmark-only noop build is non-en
 
 Registration seeds each literal message once, so an `Always` the suite never reaches is a gap.
 
+### Uniqueness
+
+An `Always` message identifies one eager source root in the complete registration set. Two roots
+that use the same message fail registration before the recorder publishes an event.
+
 # Sometimes
 
 `Sometimes` exists only as an `Assertion_Builder` link and demands both branches independently.
@@ -74,6 +79,12 @@ Production and noop use zero builders; production formats `Assertion_Failure` on
 Axes serialize as `namespace NUL ordinal NUL message`; `Ensure` emits the plan's exact cached key.
 Fuzz merge resolves that key directly and never reconstructs identity from runtime messages. Fuzz
 workers persist only their first branch transition; the coordinator unions those records.
+
+### Record Validation
+
+A persisted record has one Base64 key, one tab, and exactly one branch marker. `T` marks true. `F`
+marks false. The record ends with a newline. The merge skips invalid Base64, missing separators,
+partial records, unknown keys, and all other branch markers. A rejected record credits no branch.
 
 # Assertions Registration
 
@@ -179,6 +190,34 @@ source into report fields. An eager `Always` retains only its assertion identity
 Bundles belong to custom defined types. Primitive presets are used inline or by the framework's own
 primitive helpers rather than wrapped in primitive `_Invariants` bundles.
 
+### Signed Primitive Mandates
+
+`Int_Invariants` requires `1`, `-1`, `math.MinInt64`, and `math.MaxInt64`. The fixed-width signed
+helpers require `1`, `-1`, and their matching `math.MinIntN` and `math.MaxIntN`. Each axis requires
+both branches. Ordinary signed values remain legal. A narrow platform fails compilation.
+
+### Unsigned Primitive Mandates
+
+`Uint_Invariants` requires `0`, `1`, and `math.MaxUint64`. `Uint8_Invariants`, `Uint16_Invariants`,
+`Uint32_Invariants`, and `Uint64_Invariants` require `0`, `1`, and their matching `math.MaxUintN`.
+Each axis requires both branches. Ordinary unsigned values remain legal.
+
+### Floating Primitive Mandates
+
+`Float32_Invariants` and `Float64_Invariants` require NaN, negative infinity, and positive infinity.
+Each axis requires both branches. Ordinary finite values remain legal.
+
+### Boolean Primitive Mandate
+
+`Boolean_Invariants` requires the true and false values through both branches of its true-value
+axis.
+
+### Primitive Isolation
+
+Registration expands the real primitive helper source at each literal callsite namespace. The same
+helper at another namespace has separate links. Coverage at one namespace does not credit another
+namespace in raw metadata, the table report, the JSON report, or persisted fuzz coverage.
+
 # Analysis
 
 After the suite, every unexercised individual obligation is reported and the run exits nonzero.
@@ -261,7 +300,8 @@ until `Ensure`; production panics at the violating Range link.
 ### Coverage
 
 A non-singleton interval witnesses minimum and maximum plus eligible strictly-interior `0`, `1`,
-`2`, and `-1`, each as an independent true/false axis.
+`2`, and `-1`, each as an independent true/false axis. A complete witness set covers both branches
+of every axis. Coverage from another namespace or another ordinal does not satisfy an axis.
 
 ### Cardinality
 
@@ -296,7 +336,8 @@ a production build panics at the violating Enum link.
 ### Members
 
 Members are statically resolvable, exactly distinct, and strictly ascending. Every member is an
-independent true/false axis in canonical ascending order.
+independent true/false axis in canonical ascending order. A complete witness set calls the helper
+with every member. Those calls must cover both branches for each member axis.
 
 ### Registration
 
