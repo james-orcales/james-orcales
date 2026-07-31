@@ -56,6 +56,36 @@ func check(ok bool) { invariant.Always(ok, "reachable") }
 	}
 }
 
+// Test_Always_Constant prevents a constant-true guard from becoming a coverage obligation.
+func Test_Always_Constant(t *testing.T) {
+	recorder, output, code := registered_fixture(`package fixture
+const PRESENT = true
+const ABSENT = false
+func literal() { invariant.Always(true, "literal") }
+func parenthesized() { invariant.Always((true), "parenthesized") }
+func named() { invariant.Always(PRESENT, "named") }
+func negated() { invariant.Always(!ABSENT, "negated") }
+func recorded(recorder *invariant.Recorder) { invariant.Recorder_Always(recorder, true, "recorded") }
+func variable(value bool) { invariant.Always(value, "variable") }
+`)
+	if code != 1 {
+		t.Fatalf("exit=%d output=%q", code, output.String())
+	}
+	want := "🚨 5 constant Always conditions 🚨\n" +
+		"/fixture/check.go:4  Always condition is constant true\n" +
+		"/fixture/check.go:5  Always condition is constant true\n" +
+		"/fixture/check.go:6  Always condition is constant true\n" +
+		"/fixture/check.go:7  Always condition is constant true\n" +
+		"/fixture/check.go:8  Always condition is constant true\n" +
+		"🚨 5 constant Always conditions 🚨\n"
+	if output.String() != want {
+		t.Fatalf("output=%q, want %q", output.String(), want)
+	}
+	if event_count(&recorder.Events) != 0 {
+		t.Fatal("a constant Always condition created partial events")
+	}
+}
+
 // Test_Always_Uniqueness prevents two eager roots from sharing one global coverage identity.
 func Test_Always_Uniqueness(t *testing.T) {
 	recorder, output, code := registered_fixture(`package fixture
@@ -267,6 +297,41 @@ func check(value bool) {
 	chain_metadata(t, recorder, chain_metadata_key{
 		Namespace: "direct", Ordinal: 0, Message: "axis",
 	})
+}
+
+// Test_Assertions_Registration_Test_Source prevents test code from emitting production coverage.
+func Test_Assertions_Registration_Test_Source(t *testing.T) {
+	recorder, output, code := registered_fixture_with_test(`package fixture
+func check(value bool) {
+	invariant.Always(value, "guard")
+	invariant.Assertions("production").Sometimes(value, "axis").Ensure()
+}
+`, `package fixture
+func direct(value bool) {
+	invariant.Always(value, "test guard")
+	invariant.Assertions("test").Sometimes(value, "test axis").Ensure()
+	invariant.Int_Invariants(1, "production")
+}
+func alias() {
+	writer := invariant.Int_Invariants
+	writer(1, "production")
+}
+`)
+	if code != 1 {
+		t.Fatalf("exit=%d output=%q", code, output.String())
+	}
+	want := "🚨 4 test assertion callsites 🚨\n" +
+		"/fixture/check_test.go:3  test source calls Always\n" +
+		"/fixture/check_test.go:4  test source calls Assertions\n" +
+		"/fixture/check_test.go:5  test source calls Int_Invariants\n" +
+		"/fixture/check_test.go:8  test source references Int_Invariants\n" +
+		"🚨 4 test assertion callsites 🚨\n"
+	if output.String() != want {
+		t.Fatalf("output=%q, want %q", output.String(), want)
+	}
+	if event_count(&recorder.Events) != 0 {
+		t.Fatal("a test assertion callsite created partial events")
+	}
 }
 
 // Test_Assertions_Registration_Transitive keeps reached bundles unconditional across composition.
@@ -708,6 +773,34 @@ func Test_Analysis_Gaps(t *testing.T) {
 	Test_Sometimes_Gap(t)
 }
 
+// Test_Analysis_Reachability_Identity keeps a builder's internal key out of public reports.
+func Test_Analysis_Reachability_Identity(t *testing.T) {
+	recorder, output, _ := registered_fixture(`package fixture
+func check(value int) {
+	invariant.Assertions("range").Range_Int(value, 0, 4).Ensure()
+}
+`)
+	recorder.Events.Range(func(key any, value any) (continue_iteration bool) {
+		metadata := value.(*invariant.Assertion_Metadata)
+		if metadata.Kind == invariant.ASSERTION_KIND_SOMETIMES {
+			metadata.Frequency.Store(1)
+			metadata.False_Frequency.Store(1)
+		}
+		return true
+	})
+	invariant.Recorder_Analyze_Assertion_Frequency(recorder)
+	want := "🚨 2 coverage gaps 🚨\n\n" +
+		"# Reachability gaps (2)\n\n" +
+		"| Assertion | Source |\n" +
+		"|-----------|--------|\n" +
+		"| range     | value  |\n" +
+		"| range     | value  |\n\n" +
+		"🚨 2 coverage gaps 🚨\n"
+	if output.String() != want {
+		t.Fatalf("output=%q, want %q", output.String(), want)
+	}
+}
+
 // Test_Analysis_Table_Order keeps repeated assertion names ordered by numeric link and polarity.
 func Test_Analysis_Table_Order(t *testing.T) {
 	recorder, output, _ := registered_fixture(`package fixture
@@ -784,7 +877,7 @@ const Minimum = -2
 const Maximum = 3
 const Hole = 0
 func check(v int, condition bool) {
-	invariant.Always(true, "guard")
+	invariant.Always(condition, "guard")
 	invariant.Assertions("summary").
 		Sometimes(condition, "axis").
 		Range_Holed_Int(v, Minimum, Maximum, Hole, Hole, Hole, Hole).
@@ -1378,6 +1471,24 @@ func registered_fixture_with_sugar(source string) (
 	recorder *invariant.Recorder, output *bytes.Buffer, code int,
 ) {
 	return registered_fixture_options(source, "fixture/fixture")
+}
+
+func registered_fixture_with_test(source string, test_source string) (
+	recorder *invariant.Recorder, output *bytes.Buffer, code int,
+) {
+	output = &bytes.Buffer{}
+	code = -1
+	recorder = &invariant.Recorder{
+		File_System: fstest.MapFS{
+			"go.mod":                &fstest.MapFile{Data: []byte("module fixture\n")},
+			"fixture/check.go":      &fstest.MapFile{Data: []byte(source)},
+			"fixture/check_test.go": &fstest.MapFile{Data: []byte(test_source)},
+		},
+		Packages_To_Analyze: []string{"/fixture"}, Output: output,
+		Exit: func(status int) { code = status }, Is_Test: true,
+	}
+	invariant.Recorder_Register_Packages_For_Analysis(recorder)
+	return recorder, output, code
 }
 
 func registered_fixture_options(source string, sugar string) (

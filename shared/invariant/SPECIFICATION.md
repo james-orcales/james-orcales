@@ -19,6 +19,12 @@ this behavior.
 Registration records each literal message one time. An `Always` call that the suite does not get to
 is a coverage gap.
 
+### Constant
+
+Registration rejects a true literal, its parenthesized form, a true Boolean constant alias, or the
+negation of a false Boolean constant. The rule applies to `Always` and `Recorder_Always`.
+A constant condition cannot enforce a property. Registration publishes no event after this error.
+
 ### Uniqueness
 
 An `Always` message identifies one eager source root in the full registration set. Registration
@@ -100,6 +106,12 @@ Then, it publishes an immutable ordered plan of resolved handles.
 After glob expansion, `Packages_To_Analyze` registers each recognized assertion in the selected
 non-test source. Runtime reachability does not control direct registration. Registration makes a
 helper chain instance only when it finds a callsite for that helper.
+
+### Test Source
+
+Registration rejects assertion writers and invariant helper calls in the selected test source.
+It also rejects references that can put these functions in a function value.
+Tests must use a registered production entry point. A violation publishes no event.
 
 ### Transitive
 
@@ -233,6 +245,10 @@ exits with a nonzero status.
 
 A guard with no call is in the reachability table. An absent axis polarity is in the branch table.
 Each branch row has a namespace, numeric link, polarity, property, and unquoted source expression.
+
+### Reachability Identity
+
+A builder reachability row uses its public namespace. It does not expose the internal link key.
 
 ### Table Order
 

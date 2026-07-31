@@ -387,6 +387,7 @@ func Recorder_Register_Packages_For_Analysis(recorder *Recorder, directories ...
 	}
 	file_set := token.NewFileSet()
 	var files []*ast.File
+	var test_files []*ast.File
 	module_path := ""
 	module_root := ""
 	for _, directory := range recorder.Packages_To_Analyze {
@@ -411,8 +412,10 @@ func Recorder_Register_Packages_For_Analysis(recorder *Recorder, directories ...
 					}
 				}
 			}
-			parsed := recorder_parse_directory(recorder.File_System, file_set, expanded)
+			parsed, parsed_tests := recorder_parse_directory(
+				recorder.File_System, file_set, expanded)
 			files = append(files, parsed...)
+			test_files = append(test_files, parsed_tests...)
 		}
 	}
 	index := &Bundle_Index{
@@ -431,12 +434,14 @@ func Recorder_Register_Packages_For_Analysis(recorder *Recorder, directories ...
 		Planned_Assertions:      map[Namespace]*Assertion_Plan{},
 	}
 	recorder_register_assertion_files(recorder, file_set, files, index, reg)
+	recorder_check_test_assertion_calls(recorder, file_set, test_files, reg)
 	recorder_check_bundle_control_flow(recorder, file_set, files, reg)
 	recorder_check_assertion_bundle_contract(recorder, file_set, files, index, reg)
 	recorder_check_unresolved(recorder, reg)
 	recorder_check_bundle_cycles(recorder, reg)
 	recorder_check_invalid_identifiers(recorder, reg)
 	recorder_check_non_literal_messages(recorder, reg)
+	recorder_check_constant_always_conditions(recorder, reg)
 	recorder_check_duplicate_messages(recorder, reg)
 	recorder_check_unresolved_bounds(recorder, reg)
 	recorder_check_invalid_bounds(recorder, reg)
@@ -484,14 +489,11 @@ func parse_module_path(SOURCE []byte) (module_path string) {
 	return ""
 }
 
-// Parses the non-test .go files directly under the absolute Directory into AST
-// files. File_System is rooted at "/", so the leading "/" is stripped to address
-// it; the parsed file's name is the absolute path, used only for diagnostics now
-// (identity is the message, not the position). Subdirectories are skipped — one
-// directory is one package.
+// Separates production and test source because tests can validate registration but cannot add
+// obligations or submit coverage directly.
 func recorder_parse_directory(
 	file_system fs.FS, file_set *token.FileSet, directory string,
-) (files []*ast.File) {
+) (files []*ast.File, test_files []*ast.File) {
 	root := strings.TrimPrefix(directory, "/")
 	fs.WalkDir(file_system, root, func(
 		file_path string, entry fs.DirEntry, walk_error error,
@@ -508,9 +510,6 @@ func recorder_parse_directory(
 		if !strings.HasSuffix(file_path, ".go") {
 			return nil
 		}
-		if strings.HasSuffix(file_path, "_test.go") {
-			return nil
-		}
 		SOURCE, read_error := fs.ReadFile(file_system, file_path)
 		if read_error != nil {
 			return nil
@@ -520,11 +519,77 @@ func recorder_parse_directory(
 			file_set, name, SOURCE, parser.SkipObjectResolution,
 		)
 		if parse_error == nil {
-			files = append(files, file)
+			if strings.HasSuffix(file_path, "_test.go") {
+				test_files = append(test_files, file)
+			} else {
+				files = append(files, file)
+			}
 		}
 		return nil
 	})
-	return files
+	return files, test_files
+}
+
+// Test code must reach an assertion through production code. A direct writer can impersonate a
+// registered namespace or message and satisfy an obligation without the production callsite.
+func recorder_check_test_assertion_calls(
+	recorder *Recorder, file_set *token.FileSet, files []*ast.File, reg *Registration,
+) {
+	if len(reg.Planned) == 0 {
+		return
+	}
+	var violations []string
+	for _, file := range files {
+		direct_callees := ast_test_assertion_direct_callees(file)
+		ast.Inspect(file, func(node ast.Node) (descend bool) {
+			switch concrete := node.(type) {
+			case *ast.CallExpr:
+				name := ast_callee_name(concrete)
+				if ast_test_assertion_writer(name) {
+					position := recorder_position(file_set, concrete)
+					violation := position + "  test source calls " + name
+					violations = append(violations, violation)
+				}
+			case *ast.SelectorExpr:
+				if direct_callees[concrete.Pos()] {
+					return true
+				}
+				name := concrete.Sel.Name
+				if ast_test_assertion_writer(name) {
+					position := recorder_position(file_set, concrete)
+					violation := position + "  test source references " + name
+					violations = append(violations, violation)
+				}
+			}
+			return true
+		})
+	}
+	recorder_report_registration_failure(
+		recorder, reg, "test assertion callsites", violations)
+}
+
+func ast_test_assertion_writer(name string) (writer bool) {
+	switch name {
+	case "Always", "Recorder_Always", "Assertions", "Recorder_Assertions":
+		return true
+	}
+	return ast_is_invariants_name(name)
+}
+
+// Direct call selectors already have a stronger diagnostic. Other selector references can move
+// the writer through a function value and evade a call-name scan.
+func ast_test_assertion_direct_callees(file *ast.File) (positions map[token.Pos]bool) {
+	positions = map[token.Pos]bool{}
+	ast.Inspect(file, func(node ast.Node) (descend bool) {
+		call, is_call := node.(*ast.CallExpr)
+		if is_call {
+			if ast_test_assertion_writer(ast_callee_name(call)) {
+				positions[call.Fun.Pos()] = true
+			}
+		}
+		return true
+	})
+	return positions
 }
 
 // One frontier entry of the directory-glob walk: a directory reached so far and the
@@ -976,6 +1041,12 @@ func recorder_check_non_literal_messages(recorder *Recorder, reg *Registration) 
 		recorder, reg, "non-literal messages", reg.Non_Literal)
 }
 
+// A constant-true guard cannot enforce a property. It can only make an unearned reachability event.
+func recorder_check_constant_always_conditions(recorder *Recorder, reg *Registration) {
+	recorder_report_registration_failure(
+		recorder, reg, "constant Always conditions", reg.Constant_Always)
+}
+
 // Reports every collision. Two assertions sharing a key, or two roots sharing a namespace,
 // would silently merge into one entry and mask a gap. A duplicate is fatal, never merged.
 func recorder_check_duplicate_messages(recorder *Recorder, reg *Registration) {
@@ -1150,6 +1221,8 @@ type Registration struct {
 	// Non_Literal holds messages that are not string literals or carry the key separator —
 	// either way the static side cannot key them.
 	Non_Literal []string
+	// Constant_Always holds true guard conditions that cannot enforce a property.
+	Constant_Always []string
 	// Collision holds duplicate keys and duplicate root identifiers.
 	Collision []string
 	// Unresolved_Bound holds Range/Enum arguments the constant resolver could not resolve.
@@ -1269,7 +1342,7 @@ func bundle_index_load(
 	if !resolved {
 		return functions
 	}
-	files := recorder_parse_directory(index.File_System, index.File_Set, directory)
+	files, _ := recorder_parse_directory(index.File_System, index.File_Set, directory)
 	for name, function := range ast_index_functions(files) {
 		function.Is_Sugar = import_path == index.Sugar_Package
 		function.Package_Functions = functions
@@ -1452,9 +1525,19 @@ func assertion_metadata_gaps(metadata *Assertion_Metadata) (gaps []Coverage_Gap)
 		return gaps
 	}
 	return append(gaps, Coverage_Gap{
-		Section: "reachability", Assertion: metadata.Message,
+		Section: "reachability", Assertion: coverage_gap_assertion(metadata.Message),
 		Absent: "reachability", Source: metadata.Condition,
 	})
+}
+
+// A builder guard shares the branch key shape, but its public reachability identity is the
+// namespace. Eager Always messages cannot contain the separator, so they remain unchanged.
+func coverage_gap_assertion(message string) (assertion string) {
+	assertion, _, separated := strings.Cut(message, ELEMENT_MESSAGE_SEPARATOR)
+	if separated {
+		return assertion
+	}
+	return message
 }
 
 // Parses the registration-owned builder identity into the stable reporting schema.
@@ -1829,7 +1912,7 @@ func recorder_register_assertion_function(
 			return true
 		}
 		recorder_register_assertion_always(
-			file_set, call, function.Is_Sugar, reg)
+			file_set, call, function.Is_Sugar, function.Constants, reg)
 		if ast_assertion_chain_method(call) == "Ensure" {
 			chain, parsed := ast_assertion_chain_from_ensure(call)
 			if !parsed {
@@ -1866,14 +1949,35 @@ func recorder_register_assertion_function(
 }
 
 func recorder_register_assertion_always(
-	file_set *token.FileSet, call *ast.CallExpr, allow_unqualified bool, reg *Registration,
+	file_set *token.FileSet, call *ast.CallExpr, allow_unqualified bool,
+	constants map[string]ast.Expr, reg *Registration,
 ) {
-	if !ast_assertion_named_call(call, "Always", allow_unqualified) {
+	plain := ast_assertion_named_call(call, "Always", allow_unqualified)
+	recorder := ast_assertion_named_call(call, "Recorder_Always", false)
+	if !plain {
+		if !recorder {
+			return
+		}
+	}
+	if recorder {
+		if len(call.Args) != 3 {
+			return
+		}
+	} else if len(call.Args) != 2 {
 		return
 	}
 	condition_index := 0
-	if ast_callee_name(call) == "Recorder_Always" {
+	if recorder {
 		condition_index = 1
+	}
+	condition := ast_argument(call, condition_index)
+	constant, resolved := constant_resolve_boolean(constants, condition)
+	if resolved {
+		if constant {
+			position := recorder_position(file_set, call)
+			reg.Constant_Always = append(reg.Constant_Always,
+				position+"  Always condition is constant true")
+		}
 	}
 	message, literal := ast_string_literal(call, condition_index+1)
 	if !literal {
@@ -1890,6 +1994,40 @@ func recorder_register_assertion_always(
 	}
 	recorder_plan_seed(file_set, call, reg, message,
 		ASSERTION_KIND_ALWAYS, ast_condition_text(file_set, call, condition_index))
+}
+
+// Resolves the Boolean constants that can disguise a true literal without type information.
+func constant_resolve_boolean(
+	constants map[string]ast.Expr, expression ast.Expr,
+) (value bool, resolved bool) {
+	negated := false
+	for step_index := 0; step_index < CONSTANT_RESOLUTION_STEPS_MAX; step_index++ {
+		switch concrete := expression.(type) {
+		case *ast.ParenExpr:
+			expression = concrete.X
+		case *ast.Ident:
+			if concrete.Name == "true" {
+				return !negated, true
+			}
+			if concrete.Name == "false" {
+				return negated, true
+			}
+			declaration, declared := constants[concrete.Name]
+			if !declared {
+				return false, false
+			}
+			expression = declaration
+		case *ast.UnaryExpr:
+			if concrete.Op != token.NOT {
+				return false, false
+			}
+			negated = !negated
+			expression = concrete.X
+		default:
+			return false, false
+		}
+	}
+	return false, false
 }
 
 func recorder_assertion_ensured_roots(
