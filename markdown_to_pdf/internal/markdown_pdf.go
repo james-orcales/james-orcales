@@ -6,7 +6,15 @@ package markdown_to_pdf
 
 import (
 	"bytes"
+	"crypto/aes"
+	"crypto/cipher"
+	"crypto/md5"
+	"crypto/rc4"
+	"crypto/sha256"
+	"crypto/sha512"
+	"crypto/subtle"
 	"encoding/ascii85"
+	"encoding/binary"
 	"encoding/hex"
 	"fmt"
 	"io"
@@ -1927,6 +1935,9 @@ const PDF_STREAM_BYTES_MAX = 64 * 1024 * 1024
 // PDF_DECODED_BYTES_MAX bounds all decoded streams in one conversion.
 const PDF_DECODED_BYTES_MAX = 256 * 1024 * 1024
 
+// PDF_RECTANGLE_COUNT_MAX bounds retained path rectangles on one page.
+const PDF_RECTANGLE_COUNT_MAX = 262144
+
 // PDF_VALUE_NULL tags the PDF null object.
 const PDF_VALUE_NULL = 0
 
@@ -1979,6 +1990,10 @@ type Pdf_Value struct {
 	Reference_Generation int
 	// Stream retains encoded bytes until the owning page needs them.
 	Stream []byte
+	// Object_Number is the containing indirect object for decryption keys.
+	Object_Number int
+	// Generation is the containing indirect-object generation.
+	Generation int
 }
 
 // Pdf_Indirect_Object pairs a value with incremental-update metadata.
@@ -2003,6 +2018,10 @@ type Pdf_Document struct {
 	Object_Headers_Count int
 	// Object_Streams_Decoded prevents repeated expansion during index growth.
 	Object_Streams_Decoded map[int]bool
+	// Encryption contains the authenticated Standard handler, when present.
+	Encryption *Pdf_Encryption
+	// Encryption_Object_Number identifies the dictionary that stays cleartext.
+	Encryption_Object_Number int
 }
 
 // Pdf_Parser is a bounded cursor over source or decoded object bytes.
@@ -2027,19 +2046,30 @@ type Pdf_Object_Header struct {
 	Header_Offset int
 }
 
-// PDF_To_Markdown converts one unencrypted PDF into MarkItDown-compatible
-// Markdown while enforcing all parser and output bounds.
-func PDF_To_Markdown(pdf []byte) (markdown []byte, err error) {
+// PDF_To_Markdown_Input contains one PDF and its optional password.
+type PDF_To_Markdown_Input struct {
+	// PDF is the complete source document.
+	PDF []byte
+	// Password is the user or owner password. Nil selects the empty password.
+	Password []byte
+}
+
+// PDF_To_Markdown converts one PDF into MarkItDown-compatible Markdown while
+// enforcing all parser, decryption, and output bounds.
+func PDF_To_Markdown(input *PDF_To_Markdown_Input) (markdown []byte, err error) {
+	if input == nil {
+		return nil, fmt.Errorf("PDF input is nil")
+	}
+	pdf := input.PDF
 	if len(pdf) > PDF_BYTES_MAX {
 		return nil, fmt.Errorf("PDF input exceeds 64 MiB")
 	}
 	if !pdf_header_valid(pdf) {
 		return nil, fmt.Errorf("invalid PDF header")
 	}
-	if bytes.Contains(pdf, []byte("/Encrypt")) {
-		return nil, fmt.Errorf("encrypted PDF is not supported")
-	}
-	document, parse_err := pdf_parse_document(pdf)
+	document, parse_err := pdf_parse_document_with_password(
+		&Pdf_Parse_Document_With_Password_Input{Source: pdf, Password: input.Password},
+	)
 	if parse_err != nil {
 		return nil, parse_err
 	}
@@ -2057,7 +2087,15 @@ func pdf_header_valid(source []byte) (valid bool) {
 	if len(source) < 8 {
 		return false
 	}
-	if !bytes.HasPrefix(source, []byte("%PDF-1.")) {
+	if !bytes.HasPrefix(source, []byte("%PDF-")) {
+		return false
+	}
+	if source[5] != '1' {
+		if source[5] != '2' {
+			return false
+		}
+	}
+	if source[6] != '.' {
 		return false
 	}
 	version := source[7]
@@ -2065,10 +2103,48 @@ func pdf_header_valid(source []byte) (valid bool) {
 }
 
 func pdf_parse_document(source []byte) (document *Pdf_Document, err error) {
+	document, parse_err := pdf_parse_top_level_document(source)
+	if parse_err != nil {
+		return nil, parse_err
+	}
+	if decode_err := pdf_decode_object_streams(document); decode_err != nil {
+		return nil, decode_err
+	}
+	return document, nil
+}
+
+// Pdf_Parse_Document_With_Password_Input contains source and authentication bytes.
+type Pdf_Parse_Document_With_Password_Input struct {
+	// Source is the complete PDF syntax.
+	Source []byte
+	// Password is empty or one supplied user or owner password.
+	Password []byte
+}
+
+func pdf_parse_document_with_password(
+	input *Pdf_Parse_Document_With_Password_Input,
+) (document *Pdf_Document, err error) {
+	document, parse_err := pdf_parse_top_level_document(input.Source)
+	if parse_err != nil {
+		return nil, parse_err
+	}
+	if encryption_err := pdf_prepare_document_encryption(
+		document, input.Password,
+	); encryption_err != nil {
+		return nil, encryption_err
+	}
+	if decode_err := pdf_decode_object_streams(document); decode_err != nil {
+		return nil, decode_err
+	}
+	return document, nil
+}
+
+func pdf_parse_top_level_document(source []byte) (document *Pdf_Document, err error) {
 	document = &Pdf_Document{
-		Source:                 source,
-		Objects:                make(map[int]Pdf_Indirect_Object),
-		Object_Streams_Decoded: make(map[int]bool),
+		Source:                   source,
+		Objects:                  make(map[int]Pdf_Indirect_Object),
+		Object_Streams_Decoded:   make(map[int]bool),
+		Encryption_Object_Number: -1,
 	}
 	search_offset := 0
 	for search_offset < len(source) {
@@ -2084,9 +2160,6 @@ func pdf_parse_document(source []byte) (document *Pdf_Document, err error) {
 	}
 	if len(document.Objects) == 0 {
 		return nil, fmt.Errorf("PDF has no indirect objects")
-	}
-	if decode_err := pdf_decode_object_streams(document); decode_err != nil {
-		return nil, decode_err
 	}
 	return document, nil
 }
@@ -2202,6 +2275,8 @@ func pdf_parse_indirect_object(
 			}
 		}
 	}
+	value.Object_Number = header.Object_Number
+	value.Generation = header.Generation
 	end_offset := pdf_find_end_object(document.Source, parser.Offset)
 	if end_offset < 0 {
 		return 0, fmt.Errorf("PDF object %d has no endobj", header.Object_Number)
@@ -2934,6 +3009,8 @@ func pdf_parse_compressed_object(input *Pdf_Parse_Compressed_Object_Input) (err 
 	if input.Document.Object_Headers_Count > PDF_OBJECT_COUNT_MAX {
 		return fmt.Errorf("PDF exceeds %d indirect objects", PDF_OBJECT_COUNT_MAX)
 	}
+	value.Object_Number = input.Object_Number
+	value.Generation = 0
 	prior, exists := input.Document.Objects[input.Object_Number]
 	if exists {
 		if prior.Offset > input.Container.Offset {
@@ -2955,10 +3032,48 @@ func pdf_decode_stream(
 	if filters_err != nil {
 		return nil, filters_err
 	}
+	exempt := pdf_stream_encryption_exempt(document, stream)
+	explicit_crypt := false
+	for _, filter := range filters {
+		if filter == "Crypt" {
+			explicit_crypt = true
+		}
+	}
+	if !exempt {
+		if !explicit_crypt {
+			decoded, err = pdf_decrypt_bytes(&Pdf_Decrypt_Bytes_Input{
+				Encryption:    document.Encryption,
+				Filter_Name:   document.Encryption.Stream_Filter,
+				Object_Number: stream.Object_Number, Generation: stream.Generation,
+				Encoded: decoded,
+			})
+			if err != nil {
+				return nil, err
+			}
+		}
+	}
 	for index := 0; index < len(filters); index++ {
 		parameter := Pdf_Value{Kind: PDF_VALUE_NULL}
 		if index < len(parameters) {
 			parameter = parameters[index]
+		}
+		if filters[index] == "Crypt" {
+			if exempt {
+				continue
+			}
+			name, name_err := pdf_explicit_crypt_filter_name(parameter)
+			if name_err != nil {
+				return nil, name_err
+			}
+			decoded, err = pdf_decrypt_bytes(&Pdf_Decrypt_Bytes_Input{
+				Encryption: document.Encryption, Filter_Name: name,
+				Object_Number: stream.Object_Number, Generation: stream.Generation,
+				Encoded: decoded,
+			})
+			if err != nil {
+				return nil, err
+			}
+			continue
 		}
 		decoded, err = pdf_apply_filter(filters[index], decoded, parameter)
 		if err != nil {
@@ -4623,6 +4738,8 @@ type Pdf_Content_Context struct {
 	State_Stack []Pdf_Graphics_State
 	// Characters is released after page candidates are built.
 	Characters []Pdf_Character
+	// Rectangles retain table-cell paths until page candidates are built.
+	Rectangles []Pdf_Rectangle
 	// Font_Cache prevents repeated ToUnicode decoding on one page.
 	Font_Cache map[string]Pdf_Font
 	// Character_Count makes equal-position sorting stable.
@@ -4657,6 +4774,42 @@ func pdf_extract_page(
 		State:      pdf_default_graphics_state(),
 		Font_Cache: make(map[string]Pdf_Font),
 	}
+	content_source, decode_err := pdf_decode_page_contents(document, page)
+	if decode_err != nil {
+		return candidate, decode_err
+	}
+	if interpret_err := pdf_interpret_content(
+		context, content_source, page.Resources, 0,
+	); interpret_err != nil {
+		return candidate, interpret_err
+	}
+	words := pdf_characters_to_words(context.Characters)
+	candidate.Form_Content, candidate.Is_Form = pdf_ruled_form_content(
+		&Pdf_Ruled_Form_Content_Input{
+			Words: words, Rectangles: context.Rectangles,
+			Page_Width: page.Width, Page_Height: page.Height,
+		},
+	)
+	if !candidate.Is_Form {
+		candidate.Form_Content, candidate.Is_Form = pdf_form_content(
+			&Pdf_Form_Content_Input{
+				Words: words, Page_Width: page.Width, Page_Height: page.Height,
+			},
+		)
+	}
+	candidate.Plain_Content = pdf_prose_content(context.Characters)
+	context.Characters = nil
+	context.Rectangles = nil
+	context.State_Stack = nil
+	context.Font_Cache = nil
+	context.Content_Stack = nil
+	return candidate, nil
+}
+
+func pdf_decode_page_contents(
+	document *Pdf_Document,
+	page *Pdf_Page,
+) (content_source []byte, err error) {
 	for _, content := range page.Contents {
 		if content.Kind != PDF_VALUE_DICTIONARY {
 			continue
@@ -4666,22 +4819,13 @@ func pdf_extract_page(
 		}
 		decoded, decode_err := pdf_decode_stream(document, content)
 		if decode_err != nil {
-			return candidate, decode_err
+			return nil, decode_err
 		}
-		if interpret_err := pdf_interpret_content(
-			context, decoded, page.Resources, 0,
-		); interpret_err != nil {
-			return candidate, interpret_err
-		}
+		// A Contents array is one token sequence. A producer can split one value
+		// across streams, so an inserted separator would change valid syntax.
+		content_source = append(content_source, decoded...)
 	}
-	words := pdf_characters_to_words(context.Characters)
-	candidate.Form_Content, candidate.Is_Form = pdf_form_content(words, page.Width)
-	candidate.Plain_Content = pdf_prose_content(context.Characters)
-	context.Characters = nil
-	context.State_Stack = nil
-	context.Font_Cache = nil
-	context.Content_Stack = nil
-	return candidate, nil
+	return content_source, nil
 }
 
 func pdf_default_graphics_state() (state Pdf_Graphics_State) {
@@ -4771,7 +4915,7 @@ func pdf_apply_content_operator(
 	operands []Pdf_Value,
 ) (err error) {
 	switch operator {
-	case "q", "Q", "cm", "Do":
+	case "q", "Q", "cm", "Do", "re":
 		return pdf_apply_graphics_operator(context, resources, depth, operator, operands)
 	}
 	return pdf_apply_text_operator(context, resources, operator, operands)
@@ -4801,8 +4945,99 @@ func pdf_apply_graphics_operator(
 		}
 	case "Do":
 		return pdf_apply_form(context, resources, depth, operands)
+	case "re":
+		return pdf_record_rectangle(&Pdf_Record_Rectangle_Input{
+			Context: context, Operands: operands,
+		})
 	}
 	return nil
+}
+
+// Pdf_Record_Rectangle_Input contains one path rectangle and page state.
+type Pdf_Record_Rectangle_Input struct {
+	// Context supplies the active transform and retains the page rectangle.
+	Context *Pdf_Content_Context
+	// Operands end with the rectangle x, y, width, and height values.
+	Operands []Pdf_Value
+}
+
+func pdf_record_rectangle(input *Pdf_Record_Rectangle_Input) (err error) {
+	if len(input.Operands) < 4 {
+		return nil
+	}
+	start := len(input.Operands) - 4
+	for operand_index := start; operand_index < len(input.Operands); operand_index++ {
+		if input.Operands[operand_index].Kind != PDF_VALUE_NUMBER {
+			return nil
+		}
+	}
+	if len(input.Context.Rectangles) >= PDF_RECTANGLE_COUNT_MAX {
+		return fmt.Errorf("PDF page exceeds %d path rectangles", PDF_RECTANGLE_COUNT_MAX)
+	}
+	x := input.Operands[start].Number
+	y := input.Operands[start+1].Number
+	width := input.Operands[start+2].Number
+	height := input.Operands[start+3].Number
+	rectangle := pdf_transformed_rectangle(&Pdf_Transformed_Rectangle_Input{
+		Matrix: input.Context.State.Ctm, Page_Height: input.Context.Page.Height,
+		X: x, Y: y, Width: width, Height: height,
+	})
+	if rectangle.X1 <= rectangle.X0 {
+		return nil
+	}
+	if rectangle.Bottom <= rectangle.Top {
+		return nil
+	}
+	input.Context.Rectangles = append(input.Context.Rectangles, rectangle)
+	return nil
+}
+
+// Pdf_Transformed_Rectangle_Input describes a path rectangle in page space.
+type Pdf_Transformed_Rectangle_Input struct {
+	// Matrix maps the path coordinates into page coordinates.
+	Matrix Pdf_Matrix
+	// Page_Height converts bottom-origin PDF coordinates into top-origin rows.
+	Page_Height fixedpoint.Number
+	// X is the path rectangle's horizontal origin.
+	X fixedpoint.Number
+	// Y is the path rectangle's vertical origin.
+	Y fixedpoint.Number
+	// Width is the signed path rectangle width.
+	Width fixedpoint.Number
+	// Height is the signed path rectangle height.
+	Height fixedpoint.Number
+}
+
+func pdf_transformed_rectangle(
+	input *Pdf_Transformed_Rectangle_Input,
+) (rectangle Pdf_Rectangle) {
+	x_0, y_0 := pdf_matrix_point(&Pdf_Matrix_Point_Input{
+		Matrix: input.Matrix, X: input.X, Y: input.Y,
+	})
+	x_1, y_1 := pdf_matrix_point(&Pdf_Matrix_Point_Input{
+		Matrix: input.Matrix, X: input.X + input.Width, Y: input.Y,
+	})
+	x_2, y_2 := pdf_matrix_point(&Pdf_Matrix_Point_Input{
+		Matrix: input.Matrix, X: input.X, Y: input.Y + input.Height,
+	})
+	x_3, y_3 := pdf_matrix_point(&Pdf_Matrix_Point_Input{
+		Matrix: input.Matrix, X: input.X + input.Width, Y: input.Y + input.Height,
+	})
+	rectangle.X0 = pdf_fixed_min(&Pdf_Fixed_Input_Min{Left: x_0, Right: x_1})
+	rectangle.X0 = pdf_fixed_min(&Pdf_Fixed_Input_Min{Left: rectangle.X0, Right: x_2})
+	rectangle.X0 = pdf_fixed_min(&Pdf_Fixed_Input_Min{Left: rectangle.X0, Right: x_3})
+	rectangle.X1 = pdf_fixed_max(&Pdf_Fixed_Input_Max{Left: x_0, Right: x_1})
+	rectangle.X1 = pdf_fixed_max(&Pdf_Fixed_Input_Max{Left: rectangle.X1, Right: x_2})
+	rectangle.X1 = pdf_fixed_max(&Pdf_Fixed_Input_Max{Left: rectangle.X1, Right: x_3})
+	minimum_y := pdf_fixed_min(&Pdf_Fixed_Input_Min{Left: y_0, Right: y_1})
+	minimum_y = pdf_fixed_min(&Pdf_Fixed_Input_Min{Left: minimum_y, Right: y_2})
+	minimum_y = pdf_fixed_min(&Pdf_Fixed_Input_Min{Left: minimum_y, Right: y_3})
+	maximum_y := pdf_fixed_max(&Pdf_Fixed_Input_Max{Left: y_0, Right: y_1})
+	maximum_y = pdf_fixed_max(&Pdf_Fixed_Input_Max{Left: maximum_y, Right: y_2})
+	maximum_y = pdf_fixed_max(&Pdf_Fixed_Input_Max{Left: maximum_y, Right: y_3})
+	rectangle.Top = input.Page_Height - maximum_y
+	rectangle.Bottom = input.Page_Height - minimum_y
+	return rectangle
 }
 
 func pdf_apply_form(
@@ -5354,6 +5589,518 @@ func pdf_fixed_absolute(value fixedpoint.Number) (absolute fixedpoint.Number) {
 	return value
 }
 
+// Pdf_Rectangle is one transformed PDF path rectangle in top-origin space.
+type Pdf_Rectangle struct {
+	// X0 is the left page coordinate.
+	X0 fixedpoint.Number
+	// X1 is the right page coordinate.
+	X1 fixedpoint.Number
+	// Top is the upper page coordinate.
+	Top fixedpoint.Number
+	// Bottom is the lower page coordinate.
+	Bottom fixedpoint.Number
+}
+
+// Pdf_Ruled_Row contains the cell rectangles for one source table record.
+type Pdf_Ruled_Row struct {
+	// Top is the upper row boundary.
+	Top fixedpoint.Number
+	// Bottom is the lower row boundary.
+	Bottom fixedpoint.Number
+	// Cells remain left-to-right for text assignment.
+	Cells []Pdf_Rectangle
+}
+
+// Pdf_Ruled_Table contains vertically adjacent rows with matching columns.
+type Pdf_Ruled_Table struct {
+	// Top is the upper table boundary.
+	Top fixedpoint.Number
+	// Bottom is the lower table boundary.
+	Bottom fixedpoint.Number
+	// Rows retain each source record boundary.
+	Rows []Pdf_Ruled_Row
+}
+
+// Pdf_Ruled_Form_Content_Input contains positioned text and path geometry.
+type Pdf_Ruled_Form_Content_Input struct {
+	// Words are the page's positioned text clusters.
+	Words []Pdf_Word
+	// Rectangles are transformed path rectangles from the same page.
+	Rectangles []Pdf_Rectangle
+	// Page_Width rejects page backgrounds before grid detection.
+	Page_Width fixedpoint.Number
+	// Page_Height separates bottom-margin furniture from document tables.
+	Page_Height fixedpoint.Number
+}
+
+func pdf_ruled_form_content(input *Pdf_Ruled_Form_Content_Input) (
+	content string,
+	is_form bool,
+) {
+	rectangles := pdf_table_rectangles(&Pdf_Table_Rectangles_Input{
+		Rectangles: input.Rectangles, Page_Width: input.Page_Width,
+	})
+	rows := pdf_ruled_rows(rectangles)
+	rows = pdf_ruled_content_rows(&Pdf_Ruled_Content_Rows_Input{
+		Rows: rows, Page_Height: input.Page_Height,
+	})
+	tables := pdf_ruled_tables(rows)
+	if len(tables) == 0 {
+		return "", false
+	}
+	form_rows := pdf_form_rows_with_vertical_tolerance(input.Words, input.Page_Width)
+	return pdf_format_ruled_page(&Pdf_Format_Ruled_Page_Input{
+		Rows: form_rows, Words: input.Words, Tables: tables,
+	}), true
+}
+
+// Pdf_Ruled_Content_Rows_Input contains ruled rows and the page boundary.
+type Pdf_Ruled_Content_Rows_Input struct {
+	// Rows contain every repeated grid band found on the page.
+	Rows []Pdf_Ruled_Row
+	// Page_Height locates the reserved bottom margin.
+	Page_Height fixedpoint.Number
+}
+
+func pdf_ruled_content_rows(input *Pdf_Ruled_Content_Rows_Input) (
+	rows []Pdf_Ruled_Row,
+) {
+	for _, row := range input.Rows {
+		if !pdf_page_footer_band(&Pdf_Page_Band_Input{
+			Top: row.Top, Bottom: row.Bottom, Page_Height: input.Page_Height,
+		}) {
+			rows = append(rows, row)
+		}
+	}
+	return rows
+}
+
+// Pdf_Page_Band_Input locates one vertical band within its source page.
+type Pdf_Page_Band_Input struct {
+	// Top is the upper band coordinate.
+	Top fixedpoint.Number
+	// Bottom is the lower band coordinate.
+	Bottom fixedpoint.Number
+	// Page_Height supplies the page-relative margin boundary.
+	Page_Height fixedpoint.Number
+}
+
+func pdf_page_footer_band(input *Pdf_Page_Band_Input) (is_footer bool) {
+	// Publishers often draw page furniture with the same primitives as content.
+	// Its fixed bottom-margin position is the reliable distinction.
+	return input.Top*5 > input.Page_Height*4 &&
+		input.Bottom*10 > input.Page_Height*9
+}
+
+// Pdf_Table_Rectangles_Input contains page paths and the background bound.
+type Pdf_Table_Rectangles_Input struct {
+	// Rectangles are all transformed rectangles retained from the page.
+	Rectangles []Pdf_Rectangle
+	// Page_Width excludes rectangles that cover nearly the complete page.
+	Page_Width fixedpoint.Number
+}
+
+func pdf_table_rectangles(input *Pdf_Table_Rectangles_Input) (
+	rectangles []Pdf_Rectangle,
+) {
+	unique := make([]Pdf_Rectangle, 0, len(input.Rectangles))
+	for _, rectangle := range input.Rectangles {
+		if !pdf_table_rectangle(&Pdf_Table_Rectangle_Input{
+			Rectangle: rectangle, Page_Width: input.Page_Width,
+		}) {
+			continue
+		}
+		duplicate := false
+		for _, retained := range unique {
+			if pdf_rectangles_near(&Pdf_Rectangles_Input{
+				Left: retained, Right: rectangle,
+			}) {
+				duplicate = true
+				break
+			}
+		}
+		if !duplicate {
+			unique = append(unique, rectangle)
+		}
+	}
+	outer := pdf_outer_rectangles(unique)
+	for _, rectangle := range outer {
+		support := pdf_rectangle_span_support(&Pdf_Rectangle_Span_Support_Input{
+			Rectangle: rectangle, Rectangles: outer,
+		})
+		if support >= 2 {
+			rectangles = append(rectangles, rectangle)
+		}
+	}
+	pdf_sort_rectangles(rectangles)
+	return rectangles
+}
+
+// Pdf_Table_Rectangle_Input contains one path and the page-width bound.
+type Pdf_Table_Rectangle_Input struct {
+	// Rectangle is the candidate cell path.
+	Rectangle Pdf_Rectangle
+	// Page_Width excludes page-sized paint rectangles.
+	Page_Width fixedpoint.Number
+}
+
+func pdf_table_rectangle(input *Pdf_Table_Rectangle_Input) (table_rectangle bool) {
+	width := input.Rectangle.X1 - input.Rectangle.X0
+	if width < fixedpoint.From_Integer(20) {
+		return false
+	}
+	height := input.Rectangle.Bottom - input.Rectangle.Top
+	if height < fixedpoint.From_Integer(8) {
+		return false
+	}
+	return width*10 < input.Page_Width*9
+}
+
+// Pdf_Rectangles_Input contains two rectangles for geometric comparison.
+type Pdf_Rectangles_Input struct {
+	// Left is the first rectangle.
+	Left Pdf_Rectangle
+	// Right is the second rectangle.
+	Right Pdf_Rectangle
+}
+
+func pdf_rectangles_near(input *Pdf_Rectangles_Input) (near bool) {
+	tolerance := fixedpoint.From_Integer(1)
+	if pdf_fixed_absolute(input.Left.X0-input.Right.X0) > tolerance {
+		return false
+	}
+	if pdf_fixed_absolute(input.Left.X1-input.Right.X1) > tolerance {
+		return false
+	}
+	if pdf_fixed_absolute(input.Left.Top-input.Right.Top) > tolerance {
+		return false
+	}
+	return pdf_fixed_absolute(input.Left.Bottom-input.Right.Bottom) <= tolerance
+}
+
+func pdf_outer_rectangles(rectangles []Pdf_Rectangle) (outer []Pdf_Rectangle) {
+	for candidate_index, candidate := range rectangles {
+		contained := false
+		for container_index, container := range rectangles {
+			if candidate_index == container_index {
+				continue
+			}
+			if pdf_rectangle_contains(&Pdf_Rectangles_Input{
+				Left: container, Right: candidate,
+			}) {
+				contained = true
+				break
+			}
+		}
+		if !contained {
+			outer = append(outer, candidate)
+		}
+	}
+	return outer
+}
+
+func pdf_rectangle_contains(input *Pdf_Rectangles_Input) (contains bool) {
+	tolerance := fixedpoint.From_Integer(1)
+	if input.Left.X0 > input.Right.X0+tolerance {
+		return false
+	}
+	if input.Left.X1 < input.Right.X1-tolerance {
+		return false
+	}
+	if input.Left.Top > input.Right.Top+tolerance {
+		return false
+	}
+	if input.Left.Bottom < input.Right.Bottom-tolerance {
+		return false
+	}
+	left_width := input.Left.X1 - input.Left.X0
+	right_width := input.Right.X1 - input.Right.X0
+	if left_width > right_width+fixedpoint.From_Integer(2) {
+		return true
+	}
+	left_height := input.Left.Bottom - input.Left.Top
+	right_height := input.Right.Bottom - input.Right.Top
+	return left_height > right_height+fixedpoint.From_Integer(2)
+}
+
+// Pdf_Rectangle_Span_Support_Input contains one span and its page candidates.
+type Pdf_Rectangle_Span_Support_Input struct {
+	// Rectangle supplies the horizontal span to count.
+	Rectangle Pdf_Rectangle
+	// Rectangles contain the deduplicated page candidates.
+	Rectangles []Pdf_Rectangle
+}
+
+func pdf_rectangle_span_support(
+	input *Pdf_Rectangle_Span_Support_Input,
+) (support int) {
+	tolerance := fixedpoint.From_Integer(1)
+	for _, rectangle := range input.Rectangles {
+		if pdf_fixed_absolute(rectangle.X0-input.Rectangle.X0) > tolerance {
+			continue
+		}
+		if pdf_fixed_absolute(rectangle.X1-input.Rectangle.X1) <= tolerance {
+			support++
+		}
+	}
+	return support
+}
+
+func pdf_sort_rectangles(rectangles []Pdf_Rectangle) {
+	for index := 1; index < len(rectangles); index++ {
+		current := rectangles[index]
+		position := index
+		for position > 0 {
+			if !pdf_rectangle_before(&Pdf_Rectangles_Input{
+				Left: current, Right: rectangles[position-1],
+			}) {
+				break
+			}
+			rectangles[position] = rectangles[position-1]
+			position--
+		}
+		rectangles[position] = current
+	}
+}
+
+func pdf_rectangle_before(input *Pdf_Rectangles_Input) (before bool) {
+	if input.Left.Top != input.Right.Top {
+		return input.Left.Top < input.Right.Top
+	}
+	if input.Left.Bottom != input.Right.Bottom {
+		return input.Left.Bottom < input.Right.Bottom
+	}
+	return input.Left.X0 < input.Right.X0
+}
+
+func pdf_ruled_rows(rectangles []Pdf_Rectangle) (rows []Pdf_Ruled_Row) {
+	for start := 0; start < len(rectangles); {
+		end := start + 1
+		for end < len(rectangles) {
+			if !pdf_rectangles_same_band(&Pdf_Rectangles_Input{
+				Left: rectangles[start], Right: rectangles[end],
+			}) {
+				break
+			}
+			end++
+		}
+		if end-start >= 2 {
+			rows = append(rows, Pdf_Ruled_Row{
+				Top: rectangles[start].Top, Bottom: rectangles[start].Bottom,
+				Cells: append([]Pdf_Rectangle{}, rectangles[start:end]...),
+			})
+		}
+		start = end
+	}
+	return rows
+}
+
+func pdf_rectangles_same_band(input *Pdf_Rectangles_Input) (same bool) {
+	tolerance := fixedpoint.From_Integer(1)
+	if pdf_fixed_absolute(input.Left.Top-input.Right.Top) > tolerance {
+		return false
+	}
+	return pdf_fixed_absolute(input.Left.Bottom-input.Right.Bottom) <= tolerance
+}
+
+func pdf_ruled_tables(rows []Pdf_Ruled_Row) (tables []Pdf_Ruled_Table) {
+	for start := 0; start < len(rows); {
+		end := start + 1
+		for end < len(rows) {
+			gap := rows[end].Top - rows[end-1].Bottom
+			if gap > fixedpoint.From_Integer(2) {
+				break
+			}
+			if !pdf_ruled_rows_compatible(&Pdf_Ruled_Rows_Input{
+				Left: &rows[end-1], Right: &rows[end],
+			}) {
+				break
+			}
+			end++
+		}
+		if end-start >= 2 {
+			tables = append(tables, Pdf_Ruled_Table{
+				Top: rows[start].Top, Bottom: rows[end-1].Bottom,
+				Rows: append([]Pdf_Ruled_Row{}, rows[start:end]...),
+			})
+		}
+		start = end
+	}
+	return tables
+}
+
+// Pdf_Ruled_Rows_Input contains two rows for column-boundary comparison.
+type Pdf_Ruled_Rows_Input struct {
+	// Left is the prior source row.
+	Left *Pdf_Ruled_Row
+	// Right is the next source row.
+	Right *Pdf_Ruled_Row
+}
+
+func pdf_ruled_rows_compatible(input *Pdf_Ruled_Rows_Input) (compatible bool) {
+	if len(input.Left.Cells) != len(input.Right.Cells) {
+		return false
+	}
+	tolerance := fixedpoint.From_Integer(2)
+	for cell_index, left := range input.Left.Cells {
+		right := input.Right.Cells[cell_index]
+		if pdf_fixed_absolute(left.X0-right.X0) > tolerance {
+			return false
+		}
+		if pdf_fixed_absolute(left.X1-right.X1) > tolerance {
+			return false
+		}
+	}
+	return true
+}
+
+// Pdf_Format_Ruled_Page_Input contains text rows and detected table grids.
+type Pdf_Format_Ruled_Page_Input struct {
+	// Rows preserve non-table text order.
+	Rows []Pdf_Form_Row
+	// Words provide positioned content for each ruled cell.
+	Words []Pdf_Word
+	// Tables contain the source row and column boundaries.
+	Tables []Pdf_Ruled_Table
+}
+
+func pdf_format_ruled_page(input *Pdf_Format_Ruled_Page_Input) (content string) {
+	lines := make([]string, 0, len(input.Rows)*2)
+	row_index := 0
+	table_index := 0
+	for row_index < len(input.Rows) {
+		if table_index < len(input.Tables) {
+			table := &input.Tables[table_index]
+			// Glyph boxes can extend above a painted cell border. Their center is
+			// the same containment evidence used when assigning text to the cell.
+			row_center := pdf_form_row_center(&input.Rows[row_index])
+			if table.Top <= row_center+fixedpoint.From_Integer(2) {
+				cells := pdf_ruled_table_cells(&Pdf_Ruled_Table_Cells_Input{
+					Words: input.Words, Table: table,
+				})
+				// Markdown needs an empty line to end one table before another
+				// source grid starts at the next visual row.
+				if len(lines) > 0 {
+					if strings.HasPrefix(lines[len(lines)-1], "|") {
+						lines = append(lines, "")
+					}
+				}
+				lines = append(lines, pdf_format_table(cells)...)
+				table_index++
+				row_index = pdf_rows_after_ruled_table(input.Rows, row_index, table)
+				continue
+			}
+		}
+		lines = append(lines, input.Rows[row_index].Text)
+		row_index++
+	}
+	return strings.Join(lines, "\n")
+}
+
+func pdf_rows_after_ruled_table(
+	rows []Pdf_Form_Row,
+	row_index int,
+	table *Pdf_Ruled_Table,
+) (after int) {
+	after = row_index
+	for after < len(rows) {
+		row_top := pdf_form_row_top(&rows[after])
+		if row_top > table.Bottom {
+			break
+		}
+		after++
+	}
+	return after
+}
+
+// Pdf_Ruled_Table_Cells_Input contains words and one detected table grid.
+type Pdf_Ruled_Table_Cells_Input struct {
+	// Words are all positioned words on the page.
+	Words []Pdf_Word
+	// Table supplies each source cell rectangle.
+	Table *Pdf_Ruled_Table
+}
+
+func pdf_ruled_table_cells(input *Pdf_Ruled_Table_Cells_Input) (table [][]string) {
+	for _, row := range input.Table.Rows {
+		cells := make([]string, 0, len(row.Cells))
+		for _, rectangle := range row.Cells {
+			cells = append(cells, pdf_ruled_cell_text(&Pdf_Ruled_Cell_Text_Input{
+				Words: input.Words, Rectangle: rectangle,
+			}))
+		}
+		table = append(table, cells)
+	}
+	return pdf_compact_table(table)
+}
+
+func pdf_compact_table(table [][]string) (compacted [][]string) {
+	if len(table) == 0 {
+		return nil
+	}
+	used_columns := make([]bool, len(table[0]))
+	nonempty_rows := make([][]string, 0, len(table))
+	for _, row := range table {
+		has_text := false
+		for column, cell := range row {
+			if strings.TrimSpace(cell) != "" {
+				used_columns[column] = true
+				has_text = true
+			}
+		}
+		if has_text {
+			nonempty_rows = append(nonempty_rows, row)
+		}
+	}
+	for _, row := range nonempty_rows {
+		compacted_row := make([]string, 0, len(row))
+		for column, cell := range row {
+			if used_columns[column] {
+				compacted_row = append(compacted_row, cell)
+			}
+		}
+		compacted = append(compacted, compacted_row)
+	}
+	return compacted
+}
+
+// Pdf_Ruled_Cell_Text_Input contains page words and one cell boundary.
+type Pdf_Ruled_Cell_Text_Input struct {
+	// Words are all positioned words on the page.
+	Words []Pdf_Word
+	// Rectangle limits text to one source cell.
+	Rectangle Pdf_Rectangle
+}
+
+func pdf_ruled_cell_text(input *Pdf_Ruled_Cell_Text_Input) (text string) {
+	tolerance := fixedpoint.From_Integer(2)
+	for _, word := range input.Words {
+		center_x := pdf_number_ratio(word.X0+word.X1, 2)
+		if center_x < input.Rectangle.X0-tolerance {
+			continue
+		}
+		if center_x > input.Rectangle.X1+tolerance {
+			continue
+		}
+		center_y := pdf_number_ratio(word.Top+word.Bottom, 2)
+		if center_y < input.Rectangle.Top-tolerance {
+			continue
+		}
+		if center_y > input.Rectangle.Bottom+tolerance {
+			continue
+		}
+		word_text := strings.TrimSpace(word.Text)
+		if word_text == "" {
+			continue
+		}
+		if text != "" {
+			text += " "
+		}
+		text += word_text
+	}
+	return text
+}
+
 // Pdf_Word is a pdfplumber-compatible cluster of nearby glyphs.
 type Pdf_Word struct {
 	// Text retains blanks because MarkItDown requests keep_blank_chars.
@@ -5362,7 +6109,7 @@ type Pdf_Word struct {
 	X0 fixedpoint.Number
 	// X1 is the cluster's right coordinate.
 	X1 fixedpoint.Number
-	// Top selects the five-point form row.
+	// Top selects a visual form row with enough tolerance for font drift.
 	Top fixedpoint.Number
 	// Bottom retains vertical extent for prose spacing.
 	Bottom fixedpoint.Number
@@ -5382,14 +6129,22 @@ type Pdf_Form_Row struct {
 	Has_Partial_Number bool
 	// Is_Table_Row requires alignment with at least two global columns.
 	Is_Table_Row bool
+	// Blank_Before separates fixed page furniture from flowing content.
+	Blank_Before bool
 }
 
-// Pdf_Table_Region is one consecutive half-open range of table rows.
+// Pdf_Table_Region is one half-open table range, including wrapped cell rows.
 type Pdf_Table_Region struct {
 	// Start is the first table-row index.
 	Start int
 	// End is one past the last table-row index.
 	End int
+	// Merge_Physical_Rows joins wrapped lines only when blank-cell glyphs prove
+	// that the producer retained the table's cell structure.
+	Merge_Physical_Rows bool
+	// Compact_Empty_Columns removes layout stops only when blank glyphs prove
+	// that those stops came from the source producer.
+	Compact_Empty_Columns bool
 }
 
 func pdf_characters_to_words(characters []Pdf_Character) (words []Pdf_Word) {
@@ -5482,31 +6237,86 @@ func pdf_character_before(input *Pdf_Character_Before_Input) (before bool) {
 	return input.Left.Top < input.Right.Top
 }
 
-func pdf_form_content(words []Pdf_Word, page_width fixedpoint.Number) (
+// Pdf_Form_Content_Input contains page text and its classification bounds.
+type Pdf_Form_Content_Input struct {
+	// Words are the positioned text clusters for one page.
+	Words []Pdf_Word
+	// Page_Width bounds the inferred column layout.
+	Page_Width fixedpoint.Number
+	// Page_Height separates fixed footer text from content tables.
+	Page_Height fixedpoint.Number
+}
+
+func pdf_form_content(input *Pdf_Form_Content_Input) (
 	content string,
 	is_form bool,
 ) {
-	if len(words) == 0 {
+	if len(input.Words) == 0 {
 		return "", false
 	}
-	rows := pdf_form_rows(words, page_width)
+	has_blank_words := pdf_words_have_blank_text(input.Words)
+	rows := pdf_form_rows(input.Words, input.Page_Width)
+	if has_blank_words {
+		rows = pdf_form_rows_with_vertical_tolerance(input.Words, input.Page_Width)
+	}
 	table_positions := pdf_table_positions(rows)
 	if len(table_positions) == 0 {
 		return "", false
 	}
 	tolerance := pdf_adaptive_column_tolerance(table_positions)
 	columns := pdf_cluster_positions(table_positions, tolerance)
-	if !pdf_columns_valid(columns, page_width) {
+	if has_blank_words {
+		columns = pdf_dominant_cluster_positions(table_positions, tolerance)
+	}
+	if !pdf_columns_valid(columns, input.Page_Width) {
 		return "", false
 	}
 	pdf_classify_table_rows(rows, columns)
-	regions, table_row_count := pdf_table_regions(rows)
+	if has_blank_words {
+		pdf_exclude_form_page_furniture(&Pdf_Form_Page_Rows_Input{
+			Rows: rows, Page_Height: input.Page_Height,
+		})
+	}
+	regions, table_row_count := pdf_consecutive_table_regions(rows)
+	if has_blank_words {
+		regions, table_row_count = pdf_table_regions(rows, columns)
+	}
 	if len(rows) != 0 {
-		if table_row_count*5 < len(rows) {
-			return "", false
+		// Retained blank glyphs are explicit producer evidence for sparse tables;
+		// page-wide text density is only a fallback when that evidence is absent.
+		if !has_blank_words {
+			if table_row_count*5 < len(rows) {
+				return "", false
+			}
 		}
 	}
 	return pdf_format_form_rows(rows, columns, regions), true
+}
+
+// Pdf_Form_Page_Rows_Input contains classified rows and the page boundary.
+type Pdf_Form_Page_Rows_Input struct {
+	// Rows contain mutable table classifications.
+	Rows []Pdf_Form_Row
+	// Page_Height locates fixed footer text.
+	Page_Height fixedpoint.Number
+}
+
+func pdf_exclude_form_page_furniture(input *Pdf_Form_Page_Rows_Input) {
+	prior_is_footer := false
+	for row_index := range input.Rows {
+		row := &input.Rows[row_index]
+		is_footer := pdf_page_footer_band(&Pdf_Page_Band_Input{
+			Top: pdf_form_row_top(row), Bottom: pdf_form_row_bottom(row),
+			Page_Height: input.Page_Height,
+		})
+		if is_footer {
+			row.Is_Table_Row = false
+			if !prior_is_footer {
+				row.Blank_Before = true
+			}
+		}
+		prior_is_footer = is_footer
+	}
 }
 
 func pdf_form_rows(words []Pdf_Word, page_width fixedpoint.Number) (rows []Pdf_Form_Row) {
@@ -5524,11 +6334,66 @@ func pdf_form_rows(words []Pdf_Word, page_width fixedpoint.Number) (rows []Pdf_F
 		}
 		rows[len(rows)-1].Words = append(rows[len(rows)-1].Words, word)
 	}
+	return pdf_analyze_form_rows(rows, page_width)
+}
+
+func pdf_form_rows_with_vertical_tolerance(
+	words []Pdf_Word,
+	page_width fixedpoint.Number,
+) (rows []Pdf_Form_Row) {
+	for _, word := range words {
+		if len(rows) == 0 {
+			rows = append(rows, Pdf_Form_Row{})
+		} else if pdf_fixed_absolute(
+			word.Top-pdf_form_row_top(&rows[len(rows)-1]),
+		) > fixedpoint.From_Integer(5) {
+			rows = append(rows, Pdf_Form_Row{})
+		}
+		rows[len(rows)-1].Words = append(rows[len(rows)-1].Words, word)
+	}
+	return pdf_analyze_form_rows(rows, page_width)
+}
+
+func pdf_analyze_form_rows(
+	rows []Pdf_Form_Row,
+	page_width fixedpoint.Number,
+) (analyzed []Pdf_Form_Row) {
 	for index := range rows {
 		pdf_sort_words_x(rows[index].Words)
 		pdf_analyze_form_row(&rows[index], page_width)
 	}
 	return rows
+}
+
+func pdf_words_have_blank_text(words []Pdf_Word) (have_blank_text bool) {
+	for _, word := range words {
+		if word.Text != "" {
+			if strings.TrimSpace(word.Text) == "" {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func pdf_form_row_top(row *Pdf_Form_Row) (top fixedpoint.Number) {
+	top = row.Words[0].Top
+	for _, word := range row.Words[1:] {
+		top = pdf_fixed_min(&Pdf_Fixed_Input_Min{Left: top, Right: word.Top})
+	}
+	return top
+}
+
+func pdf_form_row_bottom(row *Pdf_Form_Row) (bottom fixedpoint.Number) {
+	bottom = row.Words[0].Bottom
+	for _, word := range row.Words[1:] {
+		bottom = pdf_fixed_max(&Pdf_Fixed_Input_Max{Left: bottom, Right: word.Bottom})
+	}
+	return bottom
+}
+
+func pdf_form_row_center(row *Pdf_Form_Row) (center fixedpoint.Number) {
+	return pdf_number_ratio(pdf_form_row_top(row)+pdf_form_row_bottom(row), 2)
 }
 
 func pdf_analyze_form_row(row *Pdf_Form_Row, page_width fixedpoint.Number) {
@@ -5612,6 +6477,61 @@ func pdf_cluster_positions(
 	return columns
 }
 
+func pdf_dominant_cluster_positions(
+	positions []fixedpoint.Number,
+	tolerance fixedpoint.Number,
+) (columns []fixedpoint.Number) {
+	clusters := make([][]fixedpoint.Number, 0, len(positions))
+	for _, position := range positions {
+		if len(clusters) == 0 {
+			clusters = append(clusters, []fixedpoint.Number{position})
+			continue
+		}
+		if position-clusters[len(clusters)-1][0] > tolerance {
+			clusters = append(clusters, []fixedpoint.Number{position})
+			continue
+		}
+		cluster_index := len(clusters) - 1
+		clusters[cluster_index] = append(clusters[cluster_index], position)
+	}
+	maximum_support := 0
+	for _, cluster := range clusters {
+		if len(cluster) > maximum_support {
+			maximum_support = len(cluster)
+		}
+	}
+	minimum_support := 1
+	if maximum_support >= 4 {
+		minimum_support = 2
+	}
+	for _, cluster := range clusters {
+		if len(cluster) >= minimum_support {
+			columns = append(columns, pdf_dominant_position(cluster))
+		}
+	}
+	return columns
+}
+
+func pdf_dominant_position(positions []fixedpoint.Number) (position fixedpoint.Number) {
+	position = positions[0]
+	best_count := 1
+	group_start := 0
+	for index := 1; index <= len(positions); index++ {
+		if index < len(positions) {
+			if positions[index]-positions[index-1] <= fixedpoint.From_Integer(5) {
+				continue
+			}
+		}
+		count := index - group_start
+		if count > best_count {
+			position = positions[group_start]
+			best_count = count
+		}
+		group_start = index
+	}
+	return position
+}
+
 func pdf_columns_valid(columns []fixedpoint.Number, page_width fixedpoint.Number) (valid bool) {
 	if len(columns) <= 1 {
 		return false
@@ -5637,25 +6557,39 @@ func pdf_columns_valid(columns []fixedpoint.Number, page_width fixedpoint.Number
 func pdf_classify_table_rows(rows []Pdf_Form_Row, columns []fixedpoint.Number) {
 	for row_index := range rows {
 		row := &rows[row_index]
+		if pdf_form_paragraph_annotation(row) {
+			continue
+		}
 		if row.Is_Paragraph {
 			continue
 		}
 		if row.Has_Partial_Number {
 			continue
 		}
-		aligned := make([]bool, len(columns))
-		aligned_count := 0
-		for _, word := range row.Words {
-			column := pdf_aligned_column(word.X0, columns)
-			if column >= 0 {
-				if !aligned[column] {
-					aligned[column] = true
-					aligned_count++
-				}
+		if pdf_form_section_heading(row) {
+			continue
+		}
+		if strings.TrimSpace(row.Text) == "" {
+			continue
+		}
+		row.Is_Table_Row = pdf_aligned_column_count(row, columns) >= 2
+	}
+}
+
+func pdf_aligned_column_count(row *Pdf_Form_Row, columns []fixedpoint.Number) (
+	count int,
+) {
+	aligned := make([]bool, len(columns))
+	for _, word := range row.Words {
+		column := pdf_aligned_column(word.X0, columns)
+		if column >= 0 {
+			if !aligned[column] {
+				aligned[column] = true
+				count++
 			}
 		}
-		row.Is_Table_Row = aligned_count >= 2
 	}
+	return count
 }
 
 func pdf_aligned_column(x fixedpoint.Number, columns []fixedpoint.Number) (column int) {
@@ -5667,7 +6601,70 @@ func pdf_aligned_column(x fixedpoint.Number, columns []fixedpoint.Number) (colum
 	return -1
 }
 
-func pdf_table_regions(rows []Pdf_Form_Row) (regions []Pdf_Table_Region, count int) {
+func pdf_table_regions(
+	rows []Pdf_Form_Row,
+	columns []fixedpoint.Number,
+) (regions []Pdf_Table_Region, count int) {
+	consumed := 0
+	for consumed < len(rows) {
+		seed := consumed
+		for seed < len(rows) && !rows[seed].Is_Table_Row {
+			seed++
+		}
+		if seed == len(rows) {
+			break
+		}
+		start := seed
+		for start > consumed {
+			gap := pdf_form_row_top(&rows[start]) - pdf_form_row_top(&rows[start-1])
+			if gap > fixedpoint.From_Integer(15) {
+				break
+			}
+			if !pdf_table_continuation_row(&rows[start-1], columns) {
+				break
+			}
+			start--
+		}
+		end := seed + 1
+		for end < len(rows) {
+			gap := pdf_form_row_top(&rows[end]) - pdf_form_row_top(&rows[end-1])
+			if rows[end].Is_Table_Row {
+				if gap > fixedpoint.From_Integer(24) {
+					break
+				}
+				end++
+				continue
+			}
+			if gap > fixedpoint.From_Integer(20) {
+				break
+			}
+			if !pdf_table_continuation_row(&rows[end], columns) {
+				break
+			}
+			if gap <= fixedpoint.From_Integer(15) {
+				end++
+				continue
+			}
+			if pdf_table_row_leads_to_seed(rows, columns, end) {
+				end++
+				continue
+			}
+			break
+		}
+		regions = append(regions, Pdf_Table_Region{
+			Start: start, End: end, Merge_Physical_Rows: true,
+			Compact_Empty_Columns: true,
+		})
+		count += end - start
+		consumed = end
+	}
+	return regions, count
+}
+
+func pdf_consecutive_table_regions(rows []Pdf_Form_Row) (
+	regions []Pdf_Table_Region,
+	count int,
+) {
 	for index := 0; index < len(rows); {
 		if !rows[index].Is_Table_Row {
 			index++
@@ -5683,6 +6680,86 @@ func pdf_table_regions(rows []Pdf_Form_Row) (regions []Pdf_Table_Region, count i
 	return regions, count
 }
 
+func pdf_table_continuation_row(
+	row *Pdf_Form_Row,
+	columns []fixedpoint.Number,
+) (continuation bool) {
+	if row.Has_Partial_Number {
+		return false
+	}
+	if pdf_form_paragraph_annotation(row) {
+		return false
+	}
+	if pdf_form_section_heading(row) {
+		return false
+	}
+	aligned_count := pdf_aligned_column_count(row, columns)
+	if aligned_count == 0 {
+		return false
+	}
+	return !row.Is_Paragraph || aligned_count >= 2
+}
+
+func pdf_form_paragraph_annotation(row *Pdf_Form_Row) (annotation bool) {
+	text := strings.TrimSpace(row.Text)
+	prefix := "(one paragraph, "
+	annotation_offset := strings.LastIndex(text, prefix)
+	if annotation_offset < 0 {
+		return false
+	}
+	count_text := text[annotation_offset+len(prefix):]
+	if strings.HasSuffix(count_text, " sentences)") {
+		count_text = strings.TrimSuffix(count_text, " sentences)")
+	} else if strings.HasSuffix(count_text, " sentence)") {
+		count_text = strings.TrimSuffix(count_text, " sentence)")
+	} else {
+		return false
+	}
+	count, parse_err := strconv.Atoi(count_text)
+	if parse_err != nil {
+		return false
+	}
+	return count > 0
+}
+
+func pdf_form_section_heading(row *Pdf_Form_Row) (heading bool) {
+	text := strings.TrimSpace(row.Text)
+	period_offset := strings.IndexByte(text, '.')
+	if period_offset <= 0 {
+		return false
+	}
+	if period_offset > 3 {
+		return false
+	}
+	if period_offset+1 >= len(text) {
+		return false
+	}
+	if text[period_offset+1] != ' ' {
+		return false
+	}
+	return pdf_prose_numeric_prefix(text[:period_offset])
+}
+
+func pdf_table_row_leads_to_seed(
+	rows []Pdf_Form_Row,
+	columns []fixedpoint.Number,
+	row_index int,
+) (leads bool) {
+	for index := row_index + 1; index < len(rows); index++ {
+		gap := pdf_form_row_top(&rows[index]) - pdf_form_row_top(&rows[index-1])
+		if gap > fixedpoint.From_Integer(20) {
+			return false
+		}
+		if rows[index].Is_Table_Row {
+			return true
+		}
+		if !pdf_table_continuation_row(&rows[index], columns) {
+			return false
+		}
+	}
+	return false
+}
+
 func pdf_format_form_rows(
 	rows []Pdf_Form_Row,
 	columns []fixedpoint.Number,
@@ -5692,15 +6769,50 @@ func pdf_format_form_rows(
 	for index := 0; index < len(rows); {
 		region, starts := pdf_region_at(regions, index)
 		if !starts {
+			if rows[index].Blank_Before {
+				if len(lines) > 0 {
+					if lines[len(lines)-1] != "" {
+						lines = append(lines, "")
+					}
+				}
+			}
 			lines = append(lines, rows[index].Text)
 			index++
 			continue
 		}
 		table := pdf_region_cells(rows, columns, region)
+		if pdf_table_fragment(&Pdf_Table_Fragment_Input{
+			Table: table, Region: region,
+		}) {
+			lines = append(lines, rows[index].Text)
+			index = region.End
+			continue
+		}
 		lines = append(lines, pdf_format_table(table)...)
 		index = region.End
 	}
 	return strings.Join(lines, "\n")
+}
+
+// Pdf_Table_Fragment_Input contains a compacted table and its source range.
+type Pdf_Table_Fragment_Input struct {
+	// Table contains the semantic cells after blank-column removal.
+	Table [][]string
+	// Region identifies the physical source rows behind the cells.
+	Region Pdf_Table_Region
+}
+
+func pdf_table_fragment(input *Pdf_Table_Fragment_Input) (fragment bool) {
+	if !input.Region.Compact_Empty_Columns {
+		return false
+	}
+	if input.Region.End-input.Region.Start != 1 {
+		return false
+	}
+	if len(input.Table) != 1 {
+		return false
+	}
+	return len(input.Table[0]) == 1
 }
 
 func pdf_region_at(regions []Pdf_Table_Region, index int) (
@@ -5720,6 +6832,63 @@ func pdf_region_cells(
 	columns []fixedpoint.Number,
 	region Pdf_Table_Region,
 ) (table [][]string) {
+	if !region.Merge_Physical_Rows {
+		return pdf_physical_region_cells(rows, columns, region)
+	}
+	merge_wrapped_rows := false
+	for row_index := region.Start; row_index < region.End; row_index++ {
+		if !rows[row_index].Is_Table_Row {
+			if strings.TrimSpace(rows[row_index].Text) != "" {
+				merge_wrapped_rows = true
+				break
+			}
+		}
+	}
+	previous_row_index := -1
+	for row_index := region.Start; row_index < region.End; row_index++ {
+		cells := make([]string, len(columns))
+		for _, word := range rows[row_index].Words {
+			text := strings.TrimSpace(word.Text)
+			if text == "" {
+				continue
+			}
+			column := pdf_cell_column(word.X0, columns)
+			if cells[column] != "" {
+				cells[column] += " "
+			}
+			cells[column] += text
+		}
+		if !pdf_cells_have_text(cells) {
+			continue
+		}
+		new_logical_row := len(table) == 0 || !merge_wrapped_rows
+		if previous_row_index >= 0 {
+			gap := pdf_form_row_top(&rows[row_index]) -
+				pdf_form_row_top(&rows[previous_row_index])
+			if gap > fixedpoint.From_Integer(15) {
+				new_logical_row = true
+			}
+		}
+		if new_logical_row {
+			table = append(table, cells)
+		} else {
+			pdf_merge_table_cells(&Pdf_Merge_Table_Cells_Input{
+				Destination: table[len(table)-1], Source: cells,
+			})
+		}
+		previous_row_index = row_index
+	}
+	if region.Compact_Empty_Columns {
+		return pdf_compact_table(table)
+	}
+	return table
+}
+
+func pdf_physical_region_cells(
+	rows []Pdf_Form_Row,
+	columns []fixedpoint.Number,
+	region Pdf_Table_Region,
+) (table [][]string) {
 	for row_index := region.Start; row_index < region.End; row_index++ {
 		cells := make([]string, len(columns))
 		for _, word := range rows[row_index].Words {
@@ -5732,6 +6901,35 @@ func pdf_region_cells(
 		table = append(table, cells)
 	}
 	return table
+}
+
+func pdf_cells_have_text(cells []string) (have_text bool) {
+	for _, cell := range cells {
+		if cell != "" {
+			return true
+		}
+	}
+	return false
+}
+
+// Pdf_Merge_Table_Cells_Input holds one destination row and its continuation.
+type Pdf_Merge_Table_Cells_Input struct {
+	// Destination is the logical row that retains the joined cell text.
+	Destination []string
+	// Source is the next physical line from those same logical cells.
+	Source []string
+}
+
+func pdf_merge_table_cells(input *Pdf_Merge_Table_Cells_Input) {
+	for column, cell := range input.Source {
+		if cell == "" {
+			continue
+		}
+		if input.Destination[column] != "" {
+			input.Destination[column] += " "
+		}
+		input.Destination[column] += cell
+	}
 }
 
 func pdf_cell_column(x fixedpoint.Number, columns []fixedpoint.Number) (column int) {
@@ -6170,4 +7368,1448 @@ func winansi_byte(glyph rune) (code byte) {
 		return byte(glyph)
 	}
 	return '?'
+}
+
+// PDF_PASSWORD_PADDING is the fixed 32-byte legacy password suffix from the
+// Standard Security Handler. A constant prevents mutable process-wide state.
+const PDF_PASSWORD_PADDING = "\x28\xbf\x4e\x5e\x4e\x75\x8a\x41" +
+	"\x64\x00\x4e\x56\xff\xfa\x01\x08" +
+	"\x2e\x2e\x00\xb6\xd0\x68\x3e\x80" +
+	"\x2f\x0c\xa9\xfe\x64\x53\x69\x7a"
+
+// PDF_CRYPT_IDENTITY leaves a stream or string unchanged.
+const PDF_CRYPT_IDENTITY = 0
+
+// PDF_CRYPT_RC4 applies V2 object-key derivation and RC4.
+const PDF_CRYPT_RC4 = 1
+
+// PDF_CRYPT_AES_128 applies AESV2 object-key derivation and AES-128-CBC.
+const PDF_CRYPT_AES_128 = 2
+
+// PDF_CRYPT_AES_256 applies AESV3 with the file key and AES-256-CBC.
+const PDF_CRYPT_AES_256 = 3
+
+// Pdf_Crypt_Filter is one validated named crypt-filter method.
+type Pdf_Crypt_Filter struct {
+	// Method is one PDF_CRYPT_* value.
+	Method int
+}
+
+// Pdf_Encryption contains validated Standard Security Handler values and the
+// crypt-filter selections that use the recovered file key.
+type Pdf_Encryption struct {
+	// Version is the encryption algorithm version from V.
+	Version int
+	// Revision selects the password algorithm from R.
+	Revision int
+	// Key_Size is the file-key length in bytes.
+	Key_Size int
+	// Permissions is the signed permission word from P.
+	Permissions int32
+	// Owner is the O password-validation value.
+	Owner []byte
+	// User is the U password-validation value.
+	User []byte
+	// Owner_Encrypted_Key is the OE file-key wrapper for AES-256.
+	Owner_Encrypted_Key []byte
+	// User_Encrypted_Key is the UE file-key wrapper for AES-256.
+	User_Encrypted_Key []byte
+	// Permissions_Encrypted is the AES-256 Perms validation block.
+	Permissions_Encrypted []byte
+	// Identifier is the first value in the trailer ID array.
+	Identifier []byte
+	// Encrypt_Metadata controls the metadata-stream exemption.
+	Encrypt_Metadata bool
+	// File_Key is set only after password authentication succeeds.
+	File_Key []byte
+	// Crypt_Filters maps names from CF to validated methods.
+	Crypt_Filters map[string]Pdf_Crypt_Filter
+	// Stream_Filter names the default stream crypt filter.
+	Stream_Filter string
+	// String_Filter names the default string crypt filter.
+	String_Filter string
+}
+
+// Pdf_Incorrect_Password_Error distinguishes authentication failure from a
+// malformed or unsupported encryption dictionary without retaining the input.
+type Pdf_Incorrect_Password_Error struct{}
+
+// Error implements error without exposing a password or derived key.
+func (Pdf_Incorrect_Password_Error) Error() (message string) {
+	return "incorrect PDF password"
+}
+
+// PDF_Incorrect_Password reports whether err is an authentication failure.
+func PDF_Incorrect_Password(err error) (incorrect bool) {
+	_, incorrect = err.(Pdf_Incorrect_Password_Error)
+	return incorrect
+}
+
+// Pdf_Trailer_Security retains only trailer values required before ordinary
+// objects can be decrypted.
+type Pdf_Trailer_Security struct {
+	// Found distinguishes an unencrypted trailer from a malformed Encrypt value.
+	Found bool
+	// Encrypt is the unresolved active encryption dictionary entry.
+	Encrypt Pdf_Value
+	// Encrypt_Object_Number identifies the exempt indirect dictionary.
+	Encrypt_Object_Number int
+	// Identifier is the first string in the active ID array.
+	Identifier []byte
+}
+
+func pdf_prepare_document_encryption(
+	document *Pdf_Document,
+	password []byte,
+) (err error) {
+	security, trailer_err := pdf_active_trailer_security(document)
+	if trailer_err != nil {
+		return trailer_err
+	}
+	if !security.Found {
+		return nil
+	}
+	dictionary, resolve_err := pdf_resolve_value(document, security.Encrypt, 0)
+	if resolve_err != nil {
+		return fmt.Errorf("invalid PDF Encrypt reference")
+	}
+	encryption, encryption_err := pdf_parse_encryption_dictionary(
+		document, dictionary, security.Identifier,
+	)
+	if encryption_err != nil {
+		return encryption_err
+	}
+	file_key, authenticate_err := pdf_authenticate_password(encryption, password)
+	if authenticate_err != nil {
+		return authenticate_err
+	}
+	encryption.File_Key = file_key
+	document.Encryption = encryption
+	document.Encryption_Object_Number = security.Encrypt_Object_Number
+	return pdf_decrypt_document_strings(document)
+}
+
+func pdf_active_trailer_security(
+	document *Pdf_Document,
+) (security Pdf_Trailer_Security, err error) {
+	start_offset, start_found, start_err := pdf_start_xref_offset(document.Source)
+	if start_err != nil {
+		return security, start_err
+	}
+	if !start_found {
+		return security, nil
+	}
+	queue := []int{start_offset}
+	visited := make(map[int]bool)
+	for len(queue) != 0 {
+		offset := queue[0]
+		queue = queue[1:]
+		if visited[offset] {
+			continue
+		}
+		visited[offset] = true
+		trailer, trailer_err := pdf_xref_trailer_at(document, offset)
+		if trailer_err != nil {
+			return security, trailer_err
+		}
+		pdf_collect_trailer_security(document, trailer, &security)
+		queue = pdf_append_trailer_offsets(trailer, queue)
+	}
+	if security.Found {
+		if len(security.Identifier) == 0 {
+			return security, fmt.Errorf("encrypted PDF trailer has no valid ID")
+		}
+	}
+	return security, nil
+}
+
+func pdf_start_xref_offset(source []byte) (offset int, found bool, err error) {
+	keyword_offset := bytes.LastIndex(source, []byte("startxref"))
+	if keyword_offset < 0 {
+		return 0, false, nil
+	}
+	parser := &Pdf_Parser{Source: source, Offset: keyword_offset + len("startxref")}
+	offset, parse_err := pdf_parse_required_integer(parser)
+	if parse_err != nil {
+		return 0, false, fmt.Errorf("invalid PDF startxref")
+	}
+	if offset < 0 {
+		return 0, false, fmt.Errorf("invalid PDF startxref")
+	}
+	if offset >= len(source) {
+		return 0, false, fmt.Errorf("invalid PDF startxref")
+	}
+	return offset, true, nil
+}
+
+func pdf_xref_trailer_at(
+	document *Pdf_Document,
+	offset int,
+) (trailer Pdf_Value, err error) {
+	parser := &Pdf_Parser{Source: document.Source, Offset: offset}
+	pdf_skip_space_and_comments(parser)
+	if bytes.HasPrefix(parser.Source[parser.Offset:], []byte("xref")) {
+		return pdf_classic_xref_trailer(parser)
+	}
+	return pdf_xref_stream_trailer(document, parser.Offset)
+}
+
+func pdf_classic_xref_trailer(parser *Pdf_Parser) (trailer Pdf_Value, err error) {
+	parser.Source = parser.Source[parser.Offset:]
+	parser.Offset = 0
+	trailer_offset := bytes.Index(parser.Source, []byte("trailer"))
+	if trailer_offset < 0 {
+		return trailer, fmt.Errorf("classic PDF xref has no trailer")
+	}
+	if !pdf_keyword_boundary(&Pdf_Keyword_Boundary_Input{
+		Source: parser.Source, Offset: trailer_offset, Size: len("trailer"),
+	}) {
+		return trailer, fmt.Errorf("classic PDF xref has no trailer")
+	}
+	parser.Offset = trailer_offset + len("trailer")
+	trailer, parse_err := pdf_parse_value(parser, 0)
+	if parse_err != nil {
+		return trailer, fmt.Errorf("invalid classic PDF trailer: %w", parse_err)
+	}
+	if trailer.Kind != PDF_VALUE_DICTIONARY {
+		return trailer, fmt.Errorf("classic PDF trailer is not a dictionary")
+	}
+	return trailer, nil
+}
+
+func pdf_xref_stream_trailer(
+	document *Pdf_Document,
+	offset int,
+) (trailer Pdf_Value, err error) {
+	probe_end := offset + 64
+	if probe_end > len(document.Source) {
+		probe_end = len(document.Source)
+	}
+	header_offset := offset
+	for header_offset < probe_end &&
+		!bytes.HasPrefix(document.Source[header_offset:probe_end], []byte("obj")) {
+		header_offset++
+	}
+	if header_offset == probe_end {
+		return trailer, fmt.Errorf("invalid PDF xref offset")
+	}
+	header, valid := pdf_object_header_before(document.Source, header_offset)
+	if !valid {
+		return trailer, fmt.Errorf("invalid PDF xref stream header")
+	}
+	if header.Header_Offset != offset {
+		return trailer, fmt.Errorf("invalid PDF xref stream offset")
+	}
+	parser := &Pdf_Parser{Source: document.Source, Offset: header.Value_Offset}
+	trailer, parse_err := pdf_parse_value(parser, 0)
+	if parse_err != nil {
+		return trailer, fmt.Errorf("invalid PDF xref stream dictionary: %w", parse_err)
+	}
+	if trailer.Kind != PDF_VALUE_DICTIONARY {
+		return trailer, fmt.Errorf("PDF xref stream has no dictionary")
+	}
+	if pdf_direct_dictionary_name(trailer, "Type") != "XRef" {
+		return trailer, fmt.Errorf("PDF startxref does not select an xref section")
+	}
+	return trailer, nil
+}
+
+func pdf_collect_trailer_security(
+	document *Pdf_Document,
+	trailer Pdf_Value,
+	security *Pdf_Trailer_Security,
+) {
+	if !security.Found {
+		encrypt, exists := trailer.Dictionary["Encrypt"]
+		if exists {
+			security.Found = true
+			security.Encrypt = encrypt
+			security.Encrypt_Object_Number = -1
+			if encrypt.Kind == PDF_VALUE_REFERENCE {
+				security.Encrypt_Object_Number = encrypt.Reference_Object_Number
+			}
+		}
+	}
+	if len(security.Identifier) != 0 {
+		return
+	}
+	identifier, exists := trailer.Dictionary["ID"]
+	if !exists {
+		return
+	}
+	resolved, resolve_err := pdf_resolve_value(document, identifier, 0)
+	if resolve_err != nil {
+		return
+	}
+	security.Identifier = pdf_trailer_identifier(document, resolved)
+}
+
+func pdf_trailer_identifier(document *Pdf_Document, value Pdf_Value) (identifier []byte) {
+	if value.Kind != PDF_VALUE_ARRAY {
+		return nil
+	}
+	if len(value.Array) == 0 {
+		return nil
+	}
+	first, resolve_err := pdf_resolve_value(document, value.Array[0], 0)
+	if resolve_err != nil {
+		return nil
+	}
+	if first.Kind != PDF_VALUE_STRING {
+		return nil
+	}
+	return append([]byte{}, first.String_Bytes...)
+}
+
+func pdf_append_trailer_offsets(trailer Pdf_Value, queue []int) (result []int) {
+	result = queue
+	for _, key := range []string{"XRefStm", "Prev"} {
+		value, exists := trailer.Dictionary[key]
+		if !exists {
+			continue
+		}
+		if value.Kind != PDF_VALUE_NUMBER {
+			continue
+		}
+		if value.Integer < 0 {
+			continue
+		}
+		result = append(result, int(value.Integer))
+	}
+	return result
+}
+
+func pdf_parse_encryption_dictionary(
+	document *Pdf_Document,
+	dictionary Pdf_Value,
+	identifier []byte,
+) (encryption *Pdf_Encryption, err error) {
+	if dictionary.Kind != PDF_VALUE_DICTIONARY {
+		return nil, fmt.Errorf("PDF Encrypt value is not a dictionary")
+	}
+	filter := pdf_direct_dictionary_name(dictionary, "Filter")
+	if filter != "Standard" {
+		if filter == "" {
+			return nil, fmt.Errorf("PDF encryption dictionary has no Filter")
+		}
+		return nil, fmt.Errorf("unsupported PDF security handler %s", filter)
+	}
+	version, version_err := pdf_required_encryption_integer(dictionary, "V")
+	revision, revision_err := pdf_required_encryption_integer(dictionary, "R")
+	permissions, permissions_err := pdf_required_encryption_integer(dictionary, "P")
+	if version_err != nil {
+		return nil, fmt.Errorf("invalid PDF encryption dictionary numbers")
+	}
+	if revision_err != nil {
+		return nil, fmt.Errorf("invalid PDF encryption dictionary numbers")
+	}
+	if permissions_err != nil {
+		return nil, fmt.Errorf("invalid PDF encryption dictionary numbers")
+	}
+	encryption = &Pdf_Encryption{
+		Version: int(version), Revision: int(revision), Identifier: identifier,
+		Encrypt_Metadata: true, Crypt_Filters: make(map[string]Pdf_Crypt_Filter),
+	}
+	if permissions < -2147483648 {
+		return nil, fmt.Errorf("invalid PDF encryption permissions")
+	}
+	if permissions > 4294967295 {
+		return nil, fmt.Errorf("invalid PDF encryption permissions")
+	}
+	encryption.Permissions = int32(uint32(permissions))
+	if metadata, exists := dictionary.Dictionary["EncryptMetadata"]; exists {
+		if metadata.Kind != PDF_VALUE_BOOLEAN {
+			return nil, fmt.Errorf("invalid PDF EncryptMetadata value")
+		}
+		encryption.Encrypt_Metadata = metadata.Boolean
+	}
+	if values_err := pdf_parse_encryption_values(
+		document, dictionary, encryption,
+	); values_err != nil {
+		return nil, values_err
+	}
+	if parameters_err := pdf_parse_encryption_parameters(
+		document, dictionary, encryption,
+	); parameters_err != nil {
+		return nil, parameters_err
+	}
+	return encryption, nil
+}
+
+func pdf_parse_encryption_values(
+	document *Pdf_Document,
+	dictionary Pdf_Value,
+	encryption *Pdf_Encryption,
+) (err error) {
+	var value_err error
+	encryption.Owner, value_err = pdf_required_encryption_string(document, dictionary, "O")
+	if value_err != nil {
+		return value_err
+	}
+	encryption.User, value_err = pdf_required_encryption_string(document, dictionary, "U")
+	if value_err != nil {
+		return value_err
+	}
+	if encryption.Revision < 5 {
+		return nil
+	}
+	encryption.Owner_Encrypted_Key, value_err = pdf_required_encryption_string(
+		document, dictionary, "OE",
+	)
+	if value_err != nil {
+		return value_err
+	}
+	encryption.User_Encrypted_Key, value_err = pdf_required_encryption_string(
+		document, dictionary, "UE",
+	)
+	if value_err != nil {
+		return value_err
+	}
+	encryption.Permissions_Encrypted, value_err = pdf_required_encryption_string(
+		document, dictionary, "Perms",
+	)
+	return value_err
+}
+
+func pdf_required_encryption_string(
+	document *Pdf_Document,
+	dictionary Pdf_Value,
+	key string,
+) (result []byte, err error) {
+	value, exists, value_err := pdf_dictionary_value(document, dictionary, key)
+	if value_err != nil {
+		return nil, fmt.Errorf("invalid PDF encryption %s value", key)
+	}
+	if !exists {
+		return nil, fmt.Errorf("invalid PDF encryption %s value", key)
+	}
+	if value.Kind != PDF_VALUE_STRING {
+		return nil, fmt.Errorf("invalid PDF encryption %s value", key)
+	}
+	return append([]byte{}, value.String_Bytes...), nil
+}
+
+func pdf_required_encryption_integer(
+	dictionary Pdf_Value,
+	key string,
+) (integer int64, err error) {
+	value, exists := dictionary.Dictionary[key]
+	if !exists {
+		return 0, fmt.Errorf("invalid PDF encryption %s value", key)
+	}
+	if value.Kind != PDF_VALUE_NUMBER {
+		return 0, fmt.Errorf("invalid PDF encryption %s value", key)
+	}
+	return value.Integer, nil
+}
+
+func pdf_parse_encryption_parameters(
+	document *Pdf_Document,
+	dictionary Pdf_Value,
+	encryption *Pdf_Encryption,
+) (err error) {
+	if encryption.Revision == 2 {
+		if encryption.Version != 1 {
+			return fmt.Errorf("unsupported PDF encryption V and R combination")
+		}
+		encryption.Key_Size = 5
+		return pdf_set_legacy_crypt_filters(encryption)
+	}
+	if encryption.Revision == 3 {
+		if encryption.Version != 2 {
+			return fmt.Errorf("unsupported PDF encryption V and R combination")
+		}
+		return pdf_parse_legacy_key_size(dictionary, encryption)
+	}
+	if encryption.Revision == 4 {
+		if encryption.Version != 4 {
+			return fmt.Errorf("unsupported PDF encryption V and R combination")
+		}
+		if key_err := pdf_parse_legacy_key_size(dictionary, encryption); key_err != nil {
+			return key_err
+		}
+		return pdf_parse_crypt_filters(document, dictionary, encryption)
+	}
+	if encryption.Revision == 5 {
+		if encryption.Version != 5 {
+			return fmt.Errorf("unsupported PDF encryption V and R combination")
+		}
+		encryption.Key_Size = 32
+		return pdf_parse_crypt_filters(document, dictionary, encryption)
+	}
+	if encryption.Revision == 6 {
+		if encryption.Version != 5 {
+			return fmt.Errorf("unsupported PDF encryption V and R combination")
+		}
+		encryption.Key_Size = 32
+		return pdf_parse_crypt_filters(document, dictionary, encryption)
+	}
+	return fmt.Errorf("unsupported PDF encryption revision %d", encryption.Revision)
+}
+
+func pdf_parse_legacy_key_size(
+	dictionary Pdf_Value,
+	encryption *Pdf_Encryption,
+) (err error) {
+	key_size_bits, key_size_err := pdf_required_encryption_integer(dictionary, "Length")
+	if key_size_err != nil {
+		return key_size_err
+	}
+	if key_size_bits < 40 {
+		return fmt.Errorf("invalid PDF encryption key length")
+	}
+	if key_size_bits > 128 {
+		return fmt.Errorf("invalid PDF encryption key length")
+	}
+	if key_size_bits%8 != 0 {
+		return fmt.Errorf("invalid PDF encryption key length")
+	}
+	encryption.Key_Size = int(key_size_bits / 8)
+	if encryption.Revision == 3 {
+		return pdf_set_legacy_crypt_filters(encryption)
+	}
+	return nil
+}
+
+func pdf_set_legacy_crypt_filters(encryption *Pdf_Encryption) (err error) {
+	encryption.Crypt_Filters["Legacy"] = Pdf_Crypt_Filter{Method: PDF_CRYPT_RC4}
+	encryption.Stream_Filter = "Legacy"
+	encryption.String_Filter = "Legacy"
+	return nil
+}
+
+func pdf_parse_crypt_filters(
+	document *Pdf_Document,
+	dictionary Pdf_Value,
+	encryption *Pdf_Encryption,
+) (err error) {
+	filters, exists, filters_err := pdf_dictionary_value(document, dictionary, "CF")
+	if filters_err != nil {
+		return filters_err
+	}
+	if exists {
+		if filters.Kind != PDF_VALUE_DICTIONARY {
+			return fmt.Errorf("PDF CF value is not a dictionary")
+		}
+		for name, entry := range filters.Dictionary {
+			resolved, resolve_err := pdf_resolve_value(document, entry, 0)
+			if resolve_err != nil {
+				return fmt.Errorf("invalid PDF crypt filter %s", name)
+			}
+			if resolved.Kind != PDF_VALUE_DICTIONARY {
+				return fmt.Errorf("invalid PDF crypt filter %s", name)
+			}
+			filter, filter_err := pdf_parse_crypt_filter(resolved, encryption)
+			if filter_err != nil {
+				return filter_err
+			}
+			encryption.Crypt_Filters[name] = filter
+		}
+	}
+	encryption.Stream_Filter = pdf_optional_encryption_name(dictionary, "StmF")
+	encryption.String_Filter = pdf_optional_encryption_name(dictionary, "StrF")
+	return pdf_validate_default_crypt_filters(encryption)
+}
+
+func pdf_parse_crypt_filter(
+	dictionary Pdf_Value,
+	encryption *Pdf_Encryption,
+) (filter Pdf_Crypt_Filter, err error) {
+	method := pdf_direct_dictionary_name(dictionary, "CFM")
+	switch method {
+	case "None":
+		filter.Method = PDF_CRYPT_IDENTITY
+	case "V2":
+		filter.Method = PDF_CRYPT_RC4
+	case "AESV2":
+		filter.Method = PDF_CRYPT_AES_128
+	case "AESV3":
+		filter.Method = PDF_CRYPT_AES_256
+	default:
+		return filter, fmt.Errorf("unsupported PDF crypt filter method %s", method)
+	}
+	if encryption.Version == 4 {
+		if filter.Method == PDF_CRYPT_AES_256 {
+			return filter, fmt.Errorf("unsupported PDF crypt filter method %s", method)
+		}
+	}
+	if encryption.Version == 5 {
+		if filter.Method == PDF_CRYPT_RC4 {
+			return filter, fmt.Errorf("unsupported PDF crypt filter method %s", method)
+		}
+		if filter.Method == PDF_CRYPT_AES_128 {
+			return filter, fmt.Errorf("unsupported PDF crypt filter method %s", method)
+		}
+	}
+	return filter, pdf_validate_crypt_filter_key_size(dictionary, filter)
+}
+
+func pdf_validate_crypt_filter_key_size(
+	dictionary Pdf_Value,
+	filter Pdf_Crypt_Filter,
+) (err error) {
+	key_size, exists := dictionary.Dictionary["Length"]
+	if !exists {
+		return nil
+	}
+	if key_size.Kind != PDF_VALUE_NUMBER {
+		return fmt.Errorf("invalid PDF crypt filter Length")
+	}
+	if filter.Method == PDF_CRYPT_AES_128 {
+		if key_size.Integer != 16 {
+			return fmt.Errorf("invalid PDF crypt filter Length")
+		}
+	}
+	if filter.Method == PDF_CRYPT_AES_256 {
+		if key_size.Integer != 32 {
+			return fmt.Errorf("invalid PDF crypt filter Length")
+		}
+	}
+	return nil
+}
+
+func pdf_optional_encryption_name(dictionary Pdf_Value, key string) (name string) {
+	value, exists := dictionary.Dictionary[key]
+	if !exists {
+		return "Identity"
+	}
+	if value.Kind != PDF_VALUE_NAME {
+		return ""
+	}
+	return value.Name
+}
+
+func pdf_validate_default_crypt_filters(encryption *Pdf_Encryption) (err error) {
+	for _, name := range []string{encryption.Stream_Filter, encryption.String_Filter} {
+		if name == "Identity" {
+			continue
+		}
+		if name == "" {
+			return fmt.Errorf("invalid PDF default crypt filter")
+		}
+		if _, exists := encryption.Crypt_Filters[name]; !exists {
+			return fmt.Errorf("undefined PDF crypt filter %s", name)
+		}
+	}
+	return nil
+}
+
+func pdf_direct_dictionary_name(dictionary Pdf_Value, key string) (name string) {
+	if dictionary.Kind != PDF_VALUE_DICTIONARY {
+		return ""
+	}
+	value, exists := dictionary.Dictionary[key]
+	if !exists {
+		return ""
+	}
+	if value.Kind != PDF_VALUE_NAME {
+		return ""
+	}
+	return value.Name
+}
+
+func pdf_decrypt_document_strings(document *Pdf_Document) (err error) {
+	for object_number, object := range document.Objects {
+		if object_number == document.Encryption_Object_Number {
+			continue
+		}
+		if pdf_direct_dictionary_name(object.Value, "Type") == "XRef" {
+			continue
+		}
+		value := object.Value
+		decrypt_err := pdf_decrypt_value_strings(&Pdf_Decrypt_Value_Strings_Input{
+			Encryption: document.Encryption, Value: &value,
+			Object_Number: object_number, Generation: object.Generation,
+		})
+		if decrypt_err != nil {
+			return fmt.Errorf("PDF object %d: %w", object_number, decrypt_err)
+		}
+		object.Value = value
+		document.Objects[object_number] = object
+	}
+	return nil
+}
+
+// Pdf_Decrypt_Value_Strings_Input carries one containing indirect-object key
+// through all direct arrays and dictionaries below it.
+type Pdf_Decrypt_Value_Strings_Input struct {
+	// Encryption contains the authenticated file key and string filter.
+	Encryption *Pdf_Encryption
+	// Value is changed in place so object indexes retain decrypted strings.
+	Value *Pdf_Value
+	// Object_Number is the containing indirect-object number.
+	Object_Number int
+	// Generation is the containing indirect-object generation.
+	Generation int
+}
+
+// Pdf_Decrypt_Value_Strings_Frame retains the concrete parent needed to write
+// a decrypted map value back after Go returns its non-addressable copy.
+type Pdf_Decrypt_Value_Strings_Frame struct {
+	// Value is the direct value examined by this iteration.
+	Value Pdf_Value
+	// Parent_Array receives Value when the parent stores it by array index.
+	Parent_Array []Pdf_Value
+	// Array_Index selects the value in Parent_Array.
+	Array_Index int
+	// Parent_Dictionary receives Value when the parent stores it by map key.
+	Parent_Dictionary map[string]Pdf_Value
+	// Dictionary_Key selects the value in Parent_Dictionary.
+	Dictionary_Key string
+	// Root identifies the input value, which has no parent container.
+	Root bool
+}
+
+func pdf_decrypt_value_strings(input *Pdf_Decrypt_Value_Strings_Input) (err error) {
+	frames := []Pdf_Decrypt_Value_Strings_Frame{{Value: *input.Value, Root: true}}
+	for len(frames) != 0 {
+		frame_index := len(frames) - 1
+		frame := frames[frame_index]
+		frames = frames[:frame_index]
+		if frame.Value.Kind == PDF_VALUE_STRING {
+			decrypted, decrypt_err := pdf_decrypt_bytes(&Pdf_Decrypt_Bytes_Input{
+				Encryption:    input.Encryption,
+				Filter_Name:   input.Encryption.String_Filter,
+				Object_Number: input.Object_Number,
+				Generation:    input.Generation,
+				Encoded:       frame.Value.String_Bytes,
+			})
+			if decrypt_err != nil {
+				return decrypt_err
+			}
+			frame.Value.String_Bytes = decrypted
+			if frame.Root {
+				*input.Value = frame.Value
+			}
+			if frame.Parent_Array != nil {
+				frame.Parent_Array[frame.Array_Index] = frame.Value
+			}
+			if frame.Parent_Dictionary != nil {
+				frame.Parent_Dictionary[frame.Dictionary_Key] = frame.Value
+			}
+			continue
+		}
+		if frame.Value.Kind == PDF_VALUE_ARRAY {
+			for index, entry := range frame.Value.Array {
+				frames = append(frames, Pdf_Decrypt_Value_Strings_Frame{
+					Value:        entry,
+					Parent_Array: frame.Value.Array,
+					Array_Index:  index,
+				})
+			}
+			continue
+		}
+		if frame.Value.Kind != PDF_VALUE_DICTIONARY {
+			continue
+		}
+		signature := pdf_signature_dictionary(frame.Value)
+		for key, entry := range frame.Value.Dictionary {
+			if signature {
+				if key == "Contents" {
+					continue
+				}
+			}
+			frames = append(frames, Pdf_Decrypt_Value_Strings_Frame{
+				Value: entry, Parent_Dictionary: frame.Value.Dictionary,
+				Dictionary_Key: key,
+			})
+		}
+	}
+	return nil
+}
+
+func pdf_signature_dictionary(dictionary Pdf_Value) (signature bool) {
+	if pdf_direct_dictionary_name(dictionary, "Type") == "Sig" {
+		return true
+	}
+	_, has_contents := dictionary.Dictionary["Contents"]
+	_, has_byte_range := dictionary.Dictionary["ByteRange"]
+	return has_contents && has_byte_range
+}
+
+// Pdf_Decrypt_Bytes_Input identifies the crypt filter and containing object for
+// one string or stream ciphertext.
+type Pdf_Decrypt_Bytes_Input struct {
+	// Encryption contains the authenticated file key and named filters.
+	Encryption *Pdf_Encryption
+	// Filter_Name selects Identity or an entry from CF.
+	Filter_Name string
+	// Object_Number supplies legacy object-key bytes.
+	Object_Number int
+	// Generation supplies legacy object-key bytes.
+	Generation int
+	// Encoded is the ciphertext, including an AES IV when applicable.
+	Encoded []byte
+}
+
+func pdf_decrypt_bytes(input *Pdf_Decrypt_Bytes_Input) (decoded []byte, err error) {
+	filter, filter_err := pdf_named_crypt_filter(input.Encryption, input.Filter_Name)
+	if filter_err != nil {
+		return nil, filter_err
+	}
+	if filter.Method == PDF_CRYPT_IDENTITY {
+		return input.Encoded, nil
+	}
+	if filter.Method == PDF_CRYPT_RC4 {
+		key := pdf_object_key(&Pdf_Object_Key_Input{
+			File_Key: input.Encryption.File_Key, Object_Number: input.Object_Number,
+			Generation: input.Generation, Use_AES: false,
+		})
+		return pdf_rc4_crypt(&Pdf_Rc4_Crypt_Input{Key: key, Source: input.Encoded})
+	}
+	if filter.Method == PDF_CRYPT_AES_128 {
+		key := pdf_object_key(&Pdf_Object_Key_Input{
+			File_Key: input.Encryption.File_Key, Object_Number: input.Object_Number,
+			Generation: input.Generation, Use_AES: true,
+		})
+		return pdf_aes_cbc_decrypt(&Pdf_Aes_Cbc_Decrypt_Input{
+			Key: key, Encoded: input.Encoded, Remove_Padding: true,
+		})
+	}
+	if filter.Method == PDF_CRYPT_AES_256 {
+		return pdf_aes_cbc_decrypt(&Pdf_Aes_Cbc_Decrypt_Input{
+			Key: input.Encryption.File_Key, Encoded: input.Encoded,
+			Remove_Padding: true,
+		})
+	}
+	return nil, fmt.Errorf("unsupported PDF crypt filter")
+}
+
+func pdf_named_crypt_filter(
+	encryption *Pdf_Encryption,
+	name string,
+) (filter Pdf_Crypt_Filter, err error) {
+	if name == "Identity" {
+		return Pdf_Crypt_Filter{Method: PDF_CRYPT_IDENTITY}, nil
+	}
+	filter, exists := encryption.Crypt_Filters[name]
+	if !exists {
+		return filter, fmt.Errorf("undefined PDF crypt filter %s", name)
+	}
+	return filter, nil
+}
+
+func pdf_stream_encryption_exempt(
+	document *Pdf_Document,
+	stream Pdf_Value,
+) (exempt bool) {
+	if document.Encryption == nil {
+		return true
+	}
+	if stream.Object_Number == document.Encryption_Object_Number {
+		return true
+	}
+	type_name := pdf_direct_dictionary_name(stream, "Type")
+	if type_name == "XRef" {
+		return true
+	}
+	if type_name == "Metadata" {
+		return !document.Encryption.Encrypt_Metadata
+	}
+	return false
+}
+
+func pdf_explicit_crypt_filter_name(parameters Pdf_Value) (name string, err error) {
+	if parameters.Kind == PDF_VALUE_NULL {
+		return "Identity", nil
+	}
+	if parameters.Kind != PDF_VALUE_DICTIONARY {
+		return "", fmt.Errorf("invalid PDF Crypt DecodeParms")
+	}
+	value, exists := parameters.Dictionary["Name"]
+	if !exists {
+		return "Identity", nil
+	}
+	if value.Kind != PDF_VALUE_NAME {
+		return "", fmt.Errorf("invalid PDF Crypt filter Name")
+	}
+	return value.Name, nil
+}
+
+// Pdf_Rc4_Crypt_Input contains one RC4 key and input byte sequence.
+type Pdf_Rc4_Crypt_Input struct {
+	// Key selects the RC4 stream.
+	Key []byte
+	// Source is plaintext or ciphertext because RC4 is symmetric.
+	Source []byte
+}
+
+func pdf_rc4_crypt(input *Pdf_Rc4_Crypt_Input) (result []byte, err error) {
+	stream, stream_err := rc4.NewCipher(input.Key)
+	if stream_err != nil {
+		return nil, fmt.Errorf("invalid RC4 key")
+	}
+	result = make([]byte, len(input.Source))
+	stream.XORKeyStream(result, input.Source)
+	return result, nil
+}
+
+// Pdf_Object_Key_Input contains the values for legacy per-object key derivation.
+type Pdf_Object_Key_Input struct {
+	// File_Key is the authenticated file encryption key.
+	File_Key []byte
+	// Object_Number is the containing indirect-object number.
+	Object_Number int
+	// Generation is the containing indirect-object generation.
+	Generation int
+	// Use_AES adds the AES compatibility salt.
+	Use_AES bool
+}
+
+func pdf_object_key(input *Pdf_Object_Key_Input) (key []byte) {
+	material := make([]byte, 0, len(input.File_Key)+9)
+	material = append(material, input.File_Key...)
+	material = append(material,
+		byte(input.Object_Number), byte(input.Object_Number>>8),
+		byte(input.Object_Number>>16), byte(input.Generation), byte(input.Generation>>8),
+	)
+	if input.Use_AES {
+		material = append(material, 's', 'A', 'l', 'T')
+	}
+	digest := md5.Sum(material)
+	key_size := len(input.File_Key) + 5
+	if key_size > len(digest) {
+		key_size = len(digest)
+	}
+	return append([]byte{}, digest[:key_size]...)
+}
+
+// Pdf_Aes_Cbc_Decrypt_Input contains PDF AES ciphertext with its prefixed IV.
+type Pdf_Aes_Cbc_Decrypt_Input struct {
+	// Key is an AES-128 or AES-256 key.
+	Key []byte
+	// Encoded starts with the 16-byte initialization vector.
+	Encoded []byte
+	// Remove_Padding validates and removes PKCS#7 padding.
+	Remove_Padding bool
+}
+
+func pdf_aes_cbc_decrypt(
+	input *Pdf_Aes_Cbc_Decrypt_Input,
+) (plaintext []byte, err error) {
+	if len(input.Encoded) < aes.BlockSize*2 {
+		return nil, fmt.Errorf("invalid AES ciphertext length")
+	}
+	initialization_vector := input.Encoded[:aes.BlockSize]
+	return pdf_aes_cbc_decrypt_with_initialization_vector(
+		&Pdf_Aes_Cbc_Decrypt_With_Initialization_Vector_Input{
+			Key: input.Key, Initialization_Vector: initialization_vector,
+			Ciphertext:     input.Encoded[aes.BlockSize:],
+			Remove_Padding: input.Remove_Padding,
+		},
+	)
+}
+
+// Pdf_Aes_Cbc_Decrypt_With_Initialization_Vector_Input contains AES-CBC parts.
+type Pdf_Aes_Cbc_Decrypt_With_Initialization_Vector_Input struct {
+	// Key is an AES-128 or AES-256 key.
+	Key []byte
+	// Initialization_Vector is exactly one AES block.
+	Initialization_Vector []byte
+	// Ciphertext contains one or more complete blocks.
+	Ciphertext []byte
+	// Remove_Padding validates and removes PKCS#7 padding.
+	Remove_Padding bool
+}
+
+func pdf_aes_cbc_decrypt_with_initialization_vector(
+	input *Pdf_Aes_Cbc_Decrypt_With_Initialization_Vector_Input,
+) (plaintext []byte, err error) {
+	block, block_err := aes.NewCipher(input.Key)
+	if block_err != nil {
+		return nil, fmt.Errorf("invalid AES key")
+	}
+	if len(input.Initialization_Vector) != aes.BlockSize {
+		return nil, fmt.Errorf("invalid AES initialization vector")
+	}
+	if len(input.Ciphertext) == 0 {
+		return nil, fmt.Errorf("invalid AES ciphertext length")
+	}
+	if len(input.Ciphertext)%aes.BlockSize != 0 {
+		return nil, fmt.Errorf("invalid AES ciphertext length")
+	}
+	plaintext = make([]byte, len(input.Ciphertext))
+	cipher.NewCBCDecrypter(block, input.Initialization_Vector).CryptBlocks(
+		plaintext, input.Ciphertext,
+	)
+	if !input.Remove_Padding {
+		return plaintext, nil
+	}
+	padding_size := int(plaintext[len(plaintext)-1])
+	if padding_size == 0 {
+		return nil, fmt.Errorf("invalid AES padding")
+	}
+	if padding_size > aes.BlockSize {
+		return nil, fmt.Errorf("invalid AES padding")
+	}
+	if padding_size > len(plaintext) {
+		return nil, fmt.Errorf("invalid AES padding")
+	}
+	for index := len(plaintext) - padding_size; index < len(plaintext); index++ {
+		if plaintext[index] != byte(padding_size) {
+			return nil, fmt.Errorf("invalid AES padding")
+		}
+	}
+	return plaintext[:len(plaintext)-padding_size], nil
+}
+
+func pdf_authenticate_password(
+	encryption *Pdf_Encryption,
+	password []byte,
+) (file_key []byte, err error) {
+	if encryption.Revision >= 2 {
+		if encryption.Revision <= 4 {
+			return pdf_authenticate_legacy_password(encryption, password)
+		}
+	}
+	if encryption.Revision == 5 {
+		return pdf_authenticate_aes_256_password(encryption, password)
+	}
+	if encryption.Revision == 6 {
+		return pdf_authenticate_aes_256_password(encryption, password)
+	}
+	return nil, fmt.Errorf("unsupported PDF encryption revision %d", encryption.Revision)
+}
+
+func pdf_authenticate_legacy_password(
+	encryption *Pdf_Encryption,
+	password []byte,
+) (file_key []byte, err error) {
+	if len(encryption.Owner) != 32 {
+		return nil, fmt.Errorf("invalid PDF encryption O length")
+	}
+	if len(encryption.User) != 32 {
+		return nil, fmt.Errorf("invalid PDF encryption U length")
+	}
+	if encryption.Key_Size < 5 {
+		return nil, fmt.Errorf("invalid PDF encryption key length")
+	}
+	if encryption.Key_Size > 16 {
+		return nil, fmt.Errorf("invalid PDF encryption key length")
+	}
+	prepared, prepare_err := pdf_legacy_password(password)
+	if prepare_err != nil {
+		return nil, prepare_err
+	}
+	file_key = pdf_legacy_file_key(encryption, prepared)
+	if pdf_legacy_user_password_valid(encryption, file_key) {
+		return file_key, nil
+	}
+	owner_key := pdf_legacy_owner_key(encryption, prepared)
+	recovered, recover_err := pdf_legacy_owner_user_password(encryption, owner_key)
+	if recover_err != nil {
+		return nil, recover_err
+	}
+	file_key = pdf_legacy_file_key(encryption, recovered)
+	if pdf_legacy_user_password_valid(encryption, file_key) {
+		return file_key, nil
+	}
+	return nil, Pdf_Incorrect_Password_Error{}
+}
+
+func pdf_legacy_password(password []byte) (prepared []byte, err error) {
+	encoded, encode_err := pdf_document_encoded_password(password)
+	if encode_err != nil {
+		return nil, encode_err
+	}
+	prepared = make([]byte, 0, 32)
+	prepared = append(prepared, encoded...)
+	prepared = append(prepared, []byte(PDF_PASSWORD_PADDING)...)
+	return prepared[:32], nil
+}
+
+func pdf_document_encoded_password(password []byte) (encoded []byte, err error) {
+	if !utf8.Valid(password) {
+		return append([]byte{}, password...), nil
+	}
+	for len(password) != 0 {
+		character, size := utf8.DecodeRune(password)
+		value, exists := pdf_document_encoding_byte(character)
+		if !exists {
+			return nil, fmt.Errorf("legacy PDF password is not PDFDocEncoding")
+		}
+		encoded = append(encoded, value)
+		password = password[size:]
+	}
+	return encoded, nil
+}
+
+func pdf_document_encoding_byte(character rune) (value byte, exists bool) {
+	if character <= 0x17 {
+		return byte(character), true
+	}
+	if character >= 0x20 {
+		if character <= 0x7e {
+			return byte(character), true
+		}
+	}
+	if character >= 0xa1 {
+		if character <= 0xff {
+			return byte(character), true
+		}
+	}
+	return pdf_document_encoding_special(character)
+}
+
+func pdf_document_encoding_special(character rune) (value byte, exists bool) {
+	if character == 0x20ac {
+		return 0xa0, true
+	}
+	characters := []rune{
+		0x02d8, 0x02c7, 0x02c6, 0x02d9, 0x02dd, 0x02db, 0x02da, 0x02dc,
+		0x2022, 0x2020, 0x2021, 0x2026, 0x2014, 0x2013, 0x0192, 0x2044,
+		0x2039, 0x203a, 0x2212, 0x2030, 0x201e, 0x201c, 0x201d, 0x2018,
+		0x2019, 0x201a, 0x2122, 0xfb01, 0xfb02, 0x0141, 0x0152, 0x0160,
+		0x0178, 0x017d, 0x0131, 0x0142, 0x0153, 0x0161, 0x017e,
+	}
+	for index, candidate := range characters {
+		if candidate != character {
+			continue
+		}
+		if index < 8 {
+			return byte(0x18 + index), true
+		}
+		return byte(0x80 + index - 8), true
+	}
+	return 0, false
+}
+
+func pdf_legacy_file_key(
+	encryption *Pdf_Encryption,
+	prepared_password []byte,
+) (file_key []byte) {
+	material := make([]byte, 0, 32+32+4+len(encryption.Identifier)+4)
+	material = append(material, prepared_password...)
+	material = append(material, encryption.Owner...)
+	var permissions [4]byte
+	binary.LittleEndian.PutUint32(permissions[:], uint32(encryption.Permissions))
+	material = append(material, permissions[:]...)
+	material = append(material, encryption.Identifier...)
+	if encryption.Revision >= 4 {
+		if !encryption.Encrypt_Metadata {
+			material = append(material, 0xff, 0xff, 0xff, 0xff)
+		}
+	}
+	digest := md5.Sum(material)
+	file_key = append([]byte{}, digest[:]...)
+	if encryption.Revision >= 3 {
+		for iteration_index := 0; iteration_index < 50; iteration_index++ {
+			next := md5.Sum(file_key[:encryption.Key_Size])
+			file_key = append(file_key[:0], next[:]...)
+		}
+	}
+	return file_key[:encryption.Key_Size]
+}
+
+func pdf_legacy_owner_key(
+	encryption *Pdf_Encryption,
+	prepared_password []byte,
+) (owner_key []byte) {
+	digest := md5.Sum(prepared_password)
+	owner_key = append([]byte{}, digest[:]...)
+	if encryption.Revision >= 3 {
+		for iteration_index := 0; iteration_index < 50; iteration_index++ {
+			next := md5.Sum(owner_key)
+			owner_key = append(owner_key[:0], next[:]...)
+		}
+	}
+	return owner_key[:encryption.Key_Size]
+}
+
+func pdf_legacy_owner_user_password(
+	encryption *Pdf_Encryption,
+	owner_key []byte,
+) (password []byte, err error) {
+	password = append([]byte{}, encryption.Owner...)
+	if encryption.Revision == 2 {
+		return pdf_rc4_crypt(&Pdf_Rc4_Crypt_Input{Key: owner_key, Source: password})
+	}
+	for iteration_index := 19; iteration_index >= 0; iteration_index-- {
+		key := pdf_xor_key(owner_key, byte(iteration_index))
+		password, err = pdf_rc4_crypt(&Pdf_Rc4_Crypt_Input{
+			Key: key, Source: password,
+		})
+		if err != nil {
+			return nil, err
+		}
+	}
+	return password, nil
+}
+
+func pdf_legacy_user_password_valid(
+	encryption *Pdf_Encryption,
+	file_key []byte,
+) (valid bool) {
+	want := []byte(PDF_PASSWORD_PADDING)
+	if encryption.Revision >= 3 {
+		material := append([]byte(PDF_PASSWORD_PADDING), encryption.Identifier...)
+		digest := md5.Sum(material)
+		want = append([]byte{}, digest[:]...)
+	}
+	got, crypt_err := pdf_rc4_crypt(&Pdf_Rc4_Crypt_Input{Key: file_key, Source: want})
+	if crypt_err != nil {
+		return false
+	}
+	if encryption.Revision >= 3 {
+		for iteration_index := 1; iteration_index < 20; iteration_index++ {
+			got, crypt_err = pdf_rc4_crypt(&Pdf_Rc4_Crypt_Input{
+				Key: pdf_xor_key(file_key, byte(iteration_index)), Source: got,
+			})
+			if crypt_err != nil {
+				return false
+			}
+		}
+		return subtle.ConstantTimeCompare(got[:16], encryption.User[:16]) == 1
+	}
+	return subtle.ConstantTimeCompare(got, encryption.User) == 1
+}
+
+func pdf_xor_key(key []byte, value byte) (result []byte) {
+	result = make([]byte, len(key))
+	for index := range key {
+		result[index] = key[index] ^ value
+	}
+	return result
+}
+
+func pdf_aes_256_password(password []byte) (prepared []byte, err error) {
+	if !utf8.Valid(password) {
+		return nil, fmt.Errorf("AES-256 PDF password is not valid UTF-8")
+	}
+	prepared = append([]byte{}, password...)
+	if len(prepared) > 127 {
+		prepared = prepared[:127]
+	}
+	return prepared, nil
+}
+
+func pdf_authenticate_aes_256_password(
+	encryption *Pdf_Encryption,
+	password []byte,
+) (file_key []byte, err error) {
+	if validation_err := pdf_validate_aes_256_values(encryption); validation_err != nil {
+		return nil, validation_err
+	}
+	prepared, prepare_err := pdf_aes_256_password(password)
+	if prepare_err != nil {
+		return nil, prepare_err
+	}
+	file_key, authenticated, recover_err := pdf_recover_aes_256_owner_key(
+		encryption, prepared,
+	)
+	if recover_err != nil {
+		return nil, recover_err
+	}
+	if !authenticated {
+		file_key, authenticated, recover_err = pdf_recover_aes_256_user_key(
+			encryption, prepared,
+		)
+		if recover_err != nil {
+			return nil, recover_err
+		}
+	}
+	if !authenticated {
+		return nil, Pdf_Incorrect_Password_Error{}
+	}
+	if !pdf_aes_256_permissions_valid(encryption, file_key) {
+		return nil, fmt.Errorf("invalid PDF encryption Perms value")
+	}
+	return file_key, nil
+}
+
+func pdf_validate_aes_256_values(encryption *Pdf_Encryption) (err error) {
+	if encryption.Key_Size != 32 {
+		return fmt.Errorf("invalid PDF encryption key length")
+	}
+	if len(encryption.Owner) != 48 {
+		return fmt.Errorf("invalid PDF encryption O length")
+	}
+	if len(encryption.User) != 48 {
+		return fmt.Errorf("invalid PDF encryption U length")
+	}
+	if len(encryption.Owner_Encrypted_Key) != 32 {
+		return fmt.Errorf("invalid PDF encryption OE length")
+	}
+	if len(encryption.User_Encrypted_Key) != 32 {
+		return fmt.Errorf("invalid PDF encryption UE length")
+	}
+	if len(encryption.Permissions_Encrypted) != 16 {
+		return fmt.Errorf("invalid PDF encryption Perms length")
+	}
+	return nil
+}
+
+func pdf_recover_aes_256_owner_key(
+	encryption *Pdf_Encryption,
+	password []byte,
+) (file_key []byte, authenticated bool, err error) {
+	validation := pdf_aes_256_hash(&Pdf_Aes_256_Hash_Input{
+		Revision: encryption.Revision, Password: password,
+		Salt: encryption.Owner[32:40], User: encryption.User,
+	})
+	if subtle.ConstantTimeCompare(validation, encryption.Owner[:32]) != 1 {
+		return nil, false, nil
+	}
+	key := pdf_aes_256_hash(&Pdf_Aes_256_Hash_Input{
+		Revision: encryption.Revision, Password: password,
+		Salt: encryption.Owner[40:48], User: encryption.User,
+	})
+	file_key, err = pdf_aes_cbc_decrypt_with_initialization_vector(
+		&Pdf_Aes_Cbc_Decrypt_With_Initialization_Vector_Input{
+			Key: key, Initialization_Vector: make([]byte, aes.BlockSize),
+			Ciphertext: encryption.Owner_Encrypted_Key, Remove_Padding: false,
+		},
+	)
+	return file_key, true, err
+}
+
+func pdf_recover_aes_256_user_key(
+	encryption *Pdf_Encryption,
+	password []byte,
+) (file_key []byte, authenticated bool, err error) {
+	validation := pdf_aes_256_hash(&Pdf_Aes_256_Hash_Input{
+		Revision: encryption.Revision, Password: password,
+		Salt: encryption.User[32:40],
+	})
+	if subtle.ConstantTimeCompare(validation, encryption.User[:32]) != 1 {
+		return nil, false, nil
+	}
+	key := pdf_aes_256_hash(&Pdf_Aes_256_Hash_Input{
+		Revision: encryption.Revision, Password: password,
+		Salt: encryption.User[40:48],
+	})
+	file_key, err = pdf_aes_cbc_decrypt_with_initialization_vector(
+		&Pdf_Aes_Cbc_Decrypt_With_Initialization_Vector_Input{
+			Key: key, Initialization_Vector: make([]byte, aes.BlockSize),
+			Ciphertext: encryption.User_Encrypted_Key, Remove_Padding: false,
+		},
+	)
+	return file_key, true, err
+}
+
+// Pdf_Aes_256_Hash_Input contains one R5 or R6 password-hash input.
+type Pdf_Aes_256_Hash_Input struct {
+	// Revision selects SHA-256 or the hardened R6 loop.
+	Revision int
+	// Password is prepared UTF-8 with the 127-byte bound.
+	Password []byte
+	// Salt is the validation or key salt.
+	Salt []byte
+	// User is the U value used on the owner path.
+	User []byte
+}
+
+func pdf_aes_256_hash(input *Pdf_Aes_256_Hash_Input) (digest []byte) {
+	if input.Revision == 6 {
+		return pdf_r6_hash(&Pdf_R6_Hash_Input{
+			Password: input.Password, Salt: input.Salt, User: input.User,
+		})
+	}
+	material := make([]byte, 0, len(input.Password)+len(input.Salt)+len(input.User))
+	material = append(material, input.Password...)
+	material = append(material, input.Salt...)
+	material = append(material, input.User...)
+	result := sha256.Sum256(material)
+	return append([]byte{}, result[:]...)
+}
+
+// Pdf_R6_Hash_Input contains the three inputs to ISO Algorithm 2.B.
+type Pdf_R6_Hash_Input struct {
+	// Password is prepared UTF-8.
+	Password []byte
+	// Salt is one eight-byte validation or key salt.
+	Salt []byte
+	// User is empty on the user path and U on the owner path.
+	User []byte
+}
+
+func pdf_r6_hash(input *Pdf_R6_Hash_Input) (digest []byte) {
+	material := make([]byte, 0, len(input.Password)+len(input.Salt)+len(input.User))
+	material = append(material, input.Password...)
+	material = append(material, input.Salt...)
+	material = append(material, input.User...)
+	initial := sha256.Sum256(material)
+	digest = append([]byte{}, initial[:]...)
+	for round_number := 1; round_number <= 287; round_number++ {
+		digest, material = pdf_r6_hash_round(&Pdf_R6_Hash_Round_Input{
+			Password: input.Password, Digest: digest, User: input.User,
+		})
+		last := int(material[len(material)-1])
+		if round_number >= 64 {
+			if last <= round_number-32 {
+				return digest[:32]
+			}
+		}
+	}
+	return digest[:32]
+}
+
+// Pdf_R6_Hash_Round_Input contains state for one bounded Algorithm 2.B round.
+type Pdf_R6_Hash_Round_Input struct {
+	// Password is prepared UTF-8.
+	Password []byte
+	// Digest supplies the AES key and initialization vector.
+	Digest []byte
+	// User is empty on the user path and U on the owner path.
+	User []byte
+}
+
+func pdf_r6_hash_round(
+	input *Pdf_R6_Hash_Round_Input,
+) (next []byte, encrypted []byte) {
+	one := make([]byte, 0, len(input.Password)+len(input.Digest)+len(input.User))
+	one = append(one, input.Password...)
+	one = append(one, input.Digest...)
+	one = append(one, input.User...)
+	repeated := make([]byte, 0, len(one)*64)
+	for repetition_index := 0; repetition_index < 64; repetition_index++ {
+		repeated = append(repeated, one...)
+	}
+	block, block_err := aes.NewCipher(input.Digest[:16])
+	if block_err != nil {
+		panic("R6 produced an invalid AES key")
+	}
+	encrypted = make([]byte, len(repeated))
+	cipher.NewCBCEncrypter(block, input.Digest[16:32]).CryptBlocks(encrypted, repeated)
+	selector := 0
+	for _, value := range encrypted[:16] {
+		selector += int(value)
+	}
+	return pdf_r6_selected_hash(selector%3, encrypted), encrypted
+}
+
+func pdf_r6_selected_hash(selector int, source []byte) (digest []byte) {
+	if selector == 0 {
+		result := sha256.Sum256(source)
+		return append([]byte{}, result[:]...)
+	}
+	if selector == 1 {
+		result := sha512.Sum384(source)
+		return append([]byte{}, result[:]...)
+	}
+	result := sha512.Sum512(source)
+	return append([]byte{}, result[:]...)
+}
+
+func pdf_aes_256_permissions_valid(
+	encryption *Pdf_Encryption,
+	file_key []byte,
+) (valid bool) {
+	block, block_err := aes.NewCipher(file_key)
+	if block_err != nil {
+		return false
+	}
+	clear := make([]byte, aes.BlockSize)
+	block.Decrypt(clear, encryption.Permissions_Encrypted)
+	want := make([]byte, 12)
+	binary.LittleEndian.PutUint32(want[:4], uint32(encryption.Permissions))
+	for index := 4; index < 8; index++ {
+		want[index] = 0xff
+	}
+	want[8] = 'T'
+	if !encryption.Encrypt_Metadata {
+		want[8] = 'F'
+	}
+	copy(want[9:], []byte("adb"))
+	return subtle.ConstantTimeCompare(clear[:12], want) == 1
 }

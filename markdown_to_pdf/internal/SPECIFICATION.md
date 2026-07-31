@@ -1,8 +1,9 @@
 
 # PDF To Markdown
 
-PDF_To_Markdown extracts positioned text from an unencrypted PDF. It returns
-Markdown that follows MarkItDown 0.1.7 layout and table-classification rules.
+PDF_To_Markdown extracts positioned text from a PDF. It uses an empty password by
+default and accepts a user or owner password for the Standard Security Handler.
+It returns Markdown that follows MarkItDown 0.1.7 layout and table rules.
 
 ### Golden Documents
 
@@ -14,10 +15,17 @@ mixed pages, sparse tables, and image-only documents without byte changes.
 A line that contains only a dot-prefixed number joins the next non-empty text
 line. The converter preserves all other content order.
 
+### Table Reconstruction
+
+Painted cells or retained blank glyphs preserve source rows, columns, and wrapped cell text.
+Blank layout columns, page furniture, headings, and prose fragments stay outside tables.
+Overlapping text is emitted once. Separate source grids produce separate Markdown tables.
+
 ### Parser Validation
 
-The converter rejects malformed or encrypted PDF input. An image-only PDF is a
-valid document and produces empty Markdown.
+The converter rejects malformed PDF input and unsupported security handlers. It
+supports Standard revisions 2 through 6 with RC4, AES-128-CBC, and AES-256-CBC.
+It ignores extraction permission bits. An image-only PDF produces empty Markdown.
 
 ### Resource Limits
 

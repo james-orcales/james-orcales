@@ -1,6 +1,6 @@
 // Package main is the markdown_to_pdf command. render converts Markdown to PDF
-// or PDF to Markdown; preview writes the conversion to the system temp
-// directory and opens it; golden keeps the built-in PDF showcase.
+// or PDF to Markdown; preview renders either input as a PDF and opens it;
+// golden keeps the built-in PDF showcase.
 package main
 
 import (
@@ -72,16 +72,21 @@ func main_program() (program cli.Program) {
 		Label:       "out",
 		Description: "output path; defaults to .pdf for Markdown or .md for PDF",
 	})
+	password_flag := cli.New_Flag[string](cli.New_Flag_Input[string]{
+		Label:       "password",
+		Description: "user or owner password for encrypted PDF input",
+	})
 	render := cli.Command{
 		Label:       "render",
 		Description: "convert Markdown to PDF or PDF to Markdown, beside it or to -out",
 		Arguments:   []cli.Option{input},
-		Flags:       []cli.Option{output_flag},
+		Flags:       []cli.Option{output_flag, password_flag},
 	}
 	preview := cli.Command{
 		Label:       "preview",
-		Description: "convert a Markdown or PDF file in the temp directory and open it",
+		Description: "render a Markdown or PDF file as a PDF preview and open it",
 		Arguments:   []cli.Option{input},
+		Flags:       []cli.Option{password_flag},
 	}
 	golden := cli.Command{
 		Label:       "golden",
@@ -99,17 +104,24 @@ func main_program() (program cli.Program) {
 func main_render_command(command cli.Command) (status_code int) {
 	input_path := cli.Get_Option(command.Arguments, "input").Value.(string)
 	explicit_output := cli.Get_Option(command.Flags, "out").Value.(string)
+	password := cli.Get_Option(command.Flags, "password").Value.(string)
 	output_path := main_output_path(&Main_Output_Path_Input{
 		Input:  input_path,
 		Output: explicit_output,
 	})
+	is_pdf := main_input_is_pdf(input_path)
+	if password != "" {
+		if !is_pdf {
+			fmt.Fprintln(os.Stderr, "markdown_to_pdf: -password requires PDF input")
+			return EXIT_USAGE
+		}
+	}
 	if explicit_output == "" {
 		if main_path_exists(output_path) {
 			fmt.Fprintf(os.Stderr, "markdown_to_pdf: %s already exists\n", output_path)
 			return EXIT_EXISTS
 		}
 	}
-	is_pdf := main_input_is_pdf(input_path)
 	bytes_max := MARKDOWN_BYTES_MAX
 	limit_label := "16 MiB"
 	if is_pdf {
@@ -122,7 +134,10 @@ func main_render_command(command cli.Command) (status_code int) {
 	if !read_ok {
 		return EXIT_FAILURE
 	}
-	return main_convert_to_path(contents, is_pdf, output_path)
+	return main_convert_to_path_with_password(&Main_Convert_To_Path_With_Password_Input{
+		Source: contents, Is_PDF: is_pdf, Output_Path: output_path,
+		Password: []byte(password),
+	})
 }
 
 // Renders the built-in showcase to the OS temp directory and opens it.
@@ -135,11 +150,18 @@ func golden_path() (path string) {
 	return filepath.Join(os.TempDir(), "markdown_to_pdf_golden.pdf")
 }
 
-// Renders the command's input file to the OS temp directory and opens it,
+// Renders the command's input as a PDF in the OS temp directory and opens it,
 // overwriting any prior preview unconditionally.
 func main_preview(command cli.Command) (status_code int) {
 	input_path := cli.Get_Option(command.Arguments, "input").Value.(string)
+	password := cli.Get_Option(command.Flags, "password").Value.(string)
 	is_pdf := main_input_is_pdf(input_path)
+	if password != "" {
+		if !is_pdf {
+			fmt.Fprintln(os.Stderr, "markdown_to_pdf: -password requires PDF input")
+			return EXIT_USAGE
+		}
+	}
 	bytes_max := MARKDOWN_BYTES_MAX
 	limit_label := "16 MiB"
 	if is_pdf {
@@ -152,30 +174,61 @@ func main_preview(command cli.Command) (status_code int) {
 	if !read_ok {
 		return EXIT_FAILURE
 	}
-	return main_convert_then_open(contents, is_pdf, main_preview_path(input_path))
+	document, preview_status := main_preview_document(&Main_Preview_Document_Input{
+		Source: contents, Is_PDF: is_pdf, Password: []byte(password),
+	})
+	if preview_status != 0 {
+		return preview_status
+	}
+	return main_document_then_open(document, main_preview_path(input_path))
 }
 
-// A preview is written to the OS temp directory, named for the input's base so
-// previewing several files does not collide.
+// Main_Preview_Document_Input contains source for one PDF preview.
+type Main_Preview_Document_Input struct {
+	// Source is Markdown or one complete source PDF.
+	Source []byte
+	// Is_PDF selects extraction before rendering.
+	Is_PDF bool
+	// Password is empty or one PDF password.
+	Password []byte
+}
+
+func main_preview_document(
+	input *Main_Preview_Document_Input,
+) (document []byte, status_code int) {
+	markdown := input.Source
+	if input.Is_PDF {
+		extracted, convert_err := markdown_to_pdf.PDF_To_Markdown(
+			&markdown_to_pdf.PDF_To_Markdown_Input{
+				PDF: input.Source, Password: input.Password,
+			},
+		)
+		if convert_err != nil {
+			fmt.Fprintf(os.Stderr, "markdown_to_pdf: %v\n", convert_err)
+			return nil, main_conversion_error_status(convert_err)
+		}
+		markdown = extracted
+	}
+	return markdown_to_pdf.Render(markdown), 0
+}
+
+// A PDF preview is written to the OS temp directory. The input base name keeps
+// previews for different files separate.
 func main_preview_path(input_path string) (preview_path string) {
 	base_name := filepath.Base(input_path)
 	stem := strings.TrimSuffix(base_name, filepath.Ext(base_name))
-	if main_input_is_pdf(input_path) {
-		return filepath.Join(os.TempDir(), stem+".md")
-	}
 	return filepath.Join(os.TempDir(), stem+".pdf")
 }
 
 // Renders markdown to path, overwriting it, then opens the result in the default
 // viewer; the path is reported so the caller knows where it landed.
 func main_render_then_open(markdown []byte, path string) (status_code int) {
-	return main_convert_then_open(markdown, false, path)
+	return main_document_then_open(markdown_to_pdf.Render(markdown), path)
 }
 
-// Converts source before it opens path, then reports and opens a successful
-// preview. Parse failures therefore leave any prior preview intact.
-func main_convert_then_open(source []byte, is_pdf bool, path string) (status_code int) {
-	status := main_convert_to_path(source, is_pdf, path)
+// Writes a complete PDF before it opens the preview path.
+func main_document_then_open(document []byte, path string) (status_code int) {
+	status := main_write_output(document, path)
 	if status != 0 {
 		return status
 	}
@@ -205,18 +258,49 @@ func main_render(markdown []byte, output_path string) (status_code int) {
 // load-bearing for explicit output paths because a malformed PDF must not
 // truncate the caller's existing file.
 func main_convert_to_path(source []byte, is_pdf bool, output_path string) (status_code int) {
-	document := source
-	if is_pdf {
-		markdown, convert_err := markdown_to_pdf.PDF_To_Markdown(source)
+	return main_convert_to_path_with_password(&Main_Convert_To_Path_With_Password_Input{
+		Source: source, Is_PDF: is_pdf, Output_Path: output_path,
+	})
+}
+
+// Main_Convert_To_Path_With_Password_Input contains one output transaction.
+type Main_Convert_To_Path_With_Password_Input struct {
+	// Source is the complete input file.
+	Source []byte
+	// Is_PDF selects extraction instead of rendering.
+	Is_PDF bool
+	// Output_Path stays closed until conversion succeeds.
+	Output_Path string
+	// Password is empty or one PDF password.
+	Password []byte
+}
+
+func main_convert_to_path_with_password(
+	input *Main_Convert_To_Path_With_Password_Input,
+) (status_code int) {
+	document := input.Source
+	if input.Is_PDF {
+		markdown, convert_err := markdown_to_pdf.PDF_To_Markdown(
+			&markdown_to_pdf.PDF_To_Markdown_Input{
+				PDF: input.Source, Password: input.Password,
+			},
+		)
 		if convert_err != nil {
 			fmt.Fprintf(os.Stderr, "markdown_to_pdf: %v\n", convert_err)
-			return EXIT_FAILURE
+			return main_conversion_error_status(convert_err)
 		}
 		document = markdown
 	} else {
-		document = markdown_to_pdf.Render(source)
+		document = markdown_to_pdf.Render(input.Source)
 	}
-	return main_write_output(document, output_path)
+	return main_write_output(document, input.Output_Path)
+}
+
+func main_conversion_error_status(convert_err error) (status_code int) {
+	if markdown_to_pdf.PDF_Incorrect_Password(convert_err) {
+		return EXIT_USAGE
+	}
+	return EXIT_FAILURE
 }
 
 func main_write_output(document []byte, output_path string) (status_code int) {

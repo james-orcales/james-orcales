@@ -26,7 +26,9 @@ func Test_PDF_To_Markdown_Golden_Documents(t *testing.T) {
 	for _, fixture_name := range fixture_names {
 		pdf := read_fixture(t, fixture_name+".pdf", 64*1024*1024)
 		want := read_fixture(t, fixture_name+".golden", 64*1024*1024)
-		markdown, convert_err := markdown_to_pdf.PDF_To_Markdown(pdf)
+		markdown, convert_err := markdown_to_pdf.PDF_To_Markdown(
+			&markdown_to_pdf.PDF_To_Markdown_Input{PDF: pdf},
+		)
 		if convert_err != nil {
 			t.Errorf("%s: PDF_To_Markdown: %v", fixture_name, convert_err)
 			continue
@@ -51,7 +53,9 @@ func Test_PDF_To_Markdown_Golden_Documents(t *testing.T) {
 func Test_PDF_To_Markdown_Master_Format_Numbers(t *testing.T) {
 	t.Parallel()
 	pdf := read_fixture(t, "masterformat_partial_numbering.pdf", 64*1024*1024)
-	markdown, convert_err := markdown_to_pdf.PDF_To_Markdown(pdf)
+	markdown, convert_err := markdown_to_pdf.PDF_To_Markdown(
+		&markdown_to_pdf.PDF_To_Markdown_Input{PDF: pdf},
+	)
 	if convert_err != nil {
 		t.Fatalf("PDF_To_Markdown: %v", convert_err)
 	}
@@ -80,6 +84,70 @@ func Test_PDF_To_Markdown_Master_Format_Numbers(t *testing.T) {
 	}
 }
 
+// Test_PDF_To_Markdown_Table_Reconstruction verifies that painted cell
+// boundaries preserve logical records without turning blank layout columns or
+// page furniture into semantic table content.
+func Test_PDF_To_Markdown_Table_Reconstruction(t *testing.T) {
+	t.Parallel()
+	content := "50 700 50 30 re f 100 700 50 30 re f " +
+		"150 700 100 30 re f 250 700 300 30 re f " +
+		"50 660 50 40 re f 100 660 50 40 re f " +
+		"150 660 100 40 re f 250 660 300 40 re f " +
+		"50 50 50 610 re f 100 50 50 610 re f " +
+		"150 50 100 610 re f 250 50 300 610 re f " +
+		"50 30 50 20 re f 100 30 50 20 re f " +
+		"150 30 100 20 re f 250 30 300 20 re f " +
+		"BT /F0 10 Tf " +
+		"1 0 0 1 55 712 Tm (Release date) Tj " +
+		"1 0 0 1 155 712 Tm (Identification) Tj " +
+		"1 0 0 1 255 712 Tm (Scope) Tj " +
+		"1 0 0 1 55 682 Tm (1986-02-15) Tj " +
+		"1 0 0 1 155 682 Tm (First release) Tj " +
+		"1 0 0 1 255 682 Tm (Guide revised) Tj " +
+		"1 0 0 1 255 670 Tm (continued text) Tj " +
+		"1 0 0 1 55 642 Tm (1987-06-01) Tj " +
+		"1 0 0 1 155 642 Tm (Change 2) Tj " +
+		"1 0 0 1 255 642 Tm (Words added) Tj " +
+		"1 0 0 1 55 42 Tm (Page 1) Tj " +
+		"1 0 0 1 255 42 Tm (History) Tj " +
+		"1 0 0 1 500 42 Tm (Issue 9) Tj ET"
+	pdf := pdf_specification_document(
+		"<< /Type /Catalog /Pages 2 0 R >>",
+		"<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+		"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] "+
+			"/Resources << /Font << /F0 4 0 R >> >> /Contents 5 0 R >>",
+		"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
+		fmt.Sprintf("<< /Length %d >>\nstream\n%s\nendstream", len(content), content),
+	)
+	markdown, convert_err := markdown_to_pdf.PDF_To_Markdown(
+		&markdown_to_pdf.PDF_To_Markdown_Input{PDF: pdf},
+	)
+	if convert_err != nil {
+		t.Fatalf("PDF_To_Markdown: %v", convert_err)
+	}
+	text := string(markdown)
+	if strings.Count(text, "\n| ---") != 1 {
+		t.Fatalf("source grid was not one table:\n%s", text)
+	}
+	for _, line := range strings.Split(text, "\n") {
+		if strings.HasPrefix(line, "|") {
+			if strings.Count(line, "|") != 4 {
+				t.Fatalf("blank layout column became a table column: %q", line)
+			}
+		}
+	}
+	compact := strings.ReplaceAll(text, " ", "")
+	if !strings.Contains(compact, "|1986-02-15|Firstrelease|Guiderevisedcontinuedtext|") {
+		t.Fatalf("wrapped cell did not remain in its source row:\n%s", text)
+	}
+	if !strings.Contains(compact, "|1987-06-01|Change2|Wordsadded|") {
+		t.Fatalf("source row boundaries were lost:\n%s", text)
+	}
+	if strings.Contains(text, "| Page 1") {
+		t.Fatalf("page furniture became table content:\n%s", text)
+	}
+}
+
 // Test_PDF_To_Markdown_Parser_Validation verifies invalid headers, malformed
 // objects, and encryption fail instead of producing partial Markdown.
 func Test_PDF_To_Markdown_Parser_Validation(t *testing.T) {
@@ -90,7 +158,9 @@ func Test_PDF_To_Markdown_Parser_Validation(t *testing.T) {
 		[]byte("%PDF-1.4\n/Encrypt 2 0 R\n"),
 	}
 	for _, source := range cases {
-		markdown, convert_err := markdown_to_pdf.PDF_To_Markdown(source)
+		markdown, convert_err := markdown_to_pdf.PDF_To_Markdown(
+			&markdown_to_pdf.PDF_To_Markdown_Input{PDF: source},
+		)
 		if convert_err == nil {
 			t.Errorf("source %q succeeded with %q", source, markdown)
 		}
@@ -117,12 +187,16 @@ func Test_PDF_To_Markdown_Resource_Limits(t *testing.T) {
 	}
 	too_large := make([]byte, markdown_to_pdf.PDF_BYTES_MAX+1)
 	copy(too_large, "%PDF-1.4")
-	if _, convert_err := markdown_to_pdf.PDF_To_Markdown(too_large); convert_err == nil {
+	if _, convert_err := markdown_to_pdf.PDF_To_Markdown(
+		&markdown_to_pdf.PDF_To_Markdown_Input{PDF: too_large},
+	); convert_err == nil {
 		t.Fatal("oversized PDF input succeeded")
 	}
 	nested := "%PDF-1.4\n1 0 obj " + strings.Repeat("[", 130) + "null" +
 		strings.Repeat("]", 130) + " endobj\n"
-	if _, convert_err := markdown_to_pdf.PDF_To_Markdown([]byte(nested)); convert_err == nil {
+	if _, convert_err := markdown_to_pdf.PDF_To_Markdown(
+		&markdown_to_pdf.PDF_To_Markdown_Input{PDF: []byte(nested)},
+	); convert_err == nil {
 		t.Fatal("over-deep PDF value succeeded")
 	}
 }
@@ -465,6 +539,15 @@ func read_fixture(t *testing.T, name string, bytes_max int64) (contents []byte) 
 		t.Fatalf("read %s: %v", path, read_err)
 	}
 	return contents
+}
+
+func pdf_specification_document(objects ...string) (pdf []byte) {
+	var output strings.Builder
+	output.WriteString("%PDF-1.4\n")
+	for object_index, object := range objects {
+		fmt.Fprintf(&output, "%d 0 obj\n%s\nendobj\n", object_index+1, object)
+	}
+	return []byte(output.String())
 }
 
 // Renders the Markdown source to PDF bytes and returns them as a string for
