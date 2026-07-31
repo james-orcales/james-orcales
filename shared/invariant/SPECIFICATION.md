@@ -261,7 +261,13 @@ until `Ensure`; production panics at the violating Range link.
 ### Coverage
 
 A non-singleton interval witnesses minimum and maximum plus eligible strictly-interior `0`, `1`,
-`2`, and `-1`, each as an independent true/false axis. A singleton has only its two guards.
+`2`, and `-1`, each as an independent true/false axis.
+
+### Cardinality
+
+A registered Range or Range_Holed domain has at least five legal values after holes are removed.
+One legal value uses direct Always equality; two through four use the matching Enum method.
+Registration reports the count and replacement after structural checks. Runtime does not apply it.
 
 ### Exclusions
 
@@ -272,8 +278,8 @@ once. Invalid and out-of-range holes fail before registration seeds any entry.
 ### Registration
 
 Registration resolves constants and arithmetic, expands two guards followed by the distinct axes,
-and rejects any unresolvable domain, noncanonical slot sequence, wrong arity, or expansion beyond
-70 links.
+and rejects any unresolvable domain, noncanonical slot sequence, small domain, wrong arity, or
+expansion beyond 70 links.
 
 # Enum
 

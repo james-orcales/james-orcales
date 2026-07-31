@@ -52,6 +52,11 @@ holes are ascending, with unused slots repeating the final hole. Coverage includ
 and upper guards, both interval boundaries when distinct, and eligible interior 0, 1, 2, and -1
 witnesses. A boundary cannot be excluded.
 
+A registered Range contains at least five legal values after distinct holes are removed. Use one
+direct `Always` equality for one legal value. Use `Enum`, `Enum_3`, or `Enum_4` for two through four
+legal values. Registration reports the legal count and the exact replacement. This rule does not
+change unregistered runtime enforcement, production enforcement, or the public Range methods.
+
 In the full build, Enum, Enum_3, and Enum_4 enforce their fixed member capacities at `Ensure`.
 Members are statically resolvable, strictly ascending, and distinct. Registration seeds one
 successful membership guard and gives each member an independent true/false axis.
@@ -61,12 +66,12 @@ successful membership guard and gives each member an independent true/false axis
 A defined type keeps its contract beside the type in a trailing-namespace helper:
 
 ```go
+const TOKEN_LENGTH = 16
+
 type Token string
 
 func Token_Invariants(token Token, namespace invariant.Namespace) {
-    invariant.Assertions(namespace).
-        Sometimes(len(token) == 0, "The token is empty.").
-        Ensure()
+	invariant.Always(len(token) == TOKEN_LENGTH, "The token length is valid.")
 }
 ```
 

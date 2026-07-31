@@ -52,6 +52,10 @@ const ELEMENT_MESSAGE_SEPARATOR = "\x00"
 // source contract, so registration and the runtime share one number rather than parallel limits.
 const ASSERTION_LINKS_MAX = 70
 
+// RANGE_ENUM_CARDINALITY_MAX keeps small registered domains on the fixed-capacity helper that
+// states every legal value instead of making Range infer the same finite set.
+const RANGE_ENUM_CARDINALITY_MAX = 4
+
 // The boundary witnesses a Range seeds per root. One pair of texts serves static seeding and
 // runtime crediting, so both sides rendezvous on identical keys.
 const RANGE_MESSAGE_MINIMUM = "The value equals the minimum."
@@ -2223,6 +2227,10 @@ func recorder_collect_assertion_range(
 	if !holes_valid {
 		return links, false
 	}
+	if !recorder_assertion_range_cardinality(
+		file_set, call, reg, diagnose, minimum, maximum, holes) {
+		return links, false
+	}
 	condition := ast_condition_text(file_set, call, 0)
 	expanded = append(links,
 		Assertion_Registration_Link{Message: RANGE_GUARD_MINIMUM, Condition: condition,
@@ -2317,6 +2325,62 @@ func recorder_assertion_range_holes(
 		holes = append(holes, hole)
 	}
 	return holes, true
+}
+
+func recorder_assertion_range_cardinality(
+	file_set *token.FileSet, call *ast.CallExpr, reg *Registration, diagnose bool,
+	minimum Integer_Value, maximum Integer_Value, holes []Integer_Value,
+) (valid bool) {
+	legal_count := assertion_range_legal_count(minimum, maximum, holes)
+	if legal_count > RANGE_ENUM_CARDINALITY_MAX {
+		return true
+	}
+	message := "Range covers 1 legal value; use Always instead"
+	if legal_count > 1 {
+		method := ast_assertion_chain_method(call)
+		suffix := strings.TrimPrefix(method, "Range_")
+		if strings.HasPrefix(method, "Range_Holed_") {
+			suffix = strings.TrimPrefix(method, "Range_Holed_")
+		}
+		enum := "Enum_" + suffix
+		if legal_count > 2 {
+			enum = "Enum_" + strconv.Itoa(legal_count) + "_" + suffix
+		}
+		message = "Range covers " + strconv.Itoa(legal_count) +
+			" legal values; use " + enum + " instead"
+	}
+	return recorder_invalid_preset(file_set, call, reg, diagnose, message)
+}
+
+// The count stops after the Enum boundary, so it never increments the maximum integer and never
+// walks a large domain. At most four holes occur before the fifth legal value.
+func assertion_range_legal_count(
+	minimum Integer_Value, maximum Integer_Value, holes []Integer_Value,
+) (legal_count int) {
+	value := minimum
+	for step_index := 0; step_index <= RANGE_ENUM_CARDINALITY_MAX+len(holes); step_index++ {
+		if !assertion_integer_contains(holes, value) {
+			legal_count++
+			if legal_count > RANGE_ENUM_CARDINALITY_MAX {
+				return legal_count
+			}
+		}
+		if value == maximum {
+			return legal_count
+		}
+		value = integer_successor(value)
+	}
+	return RANGE_ENUM_CARDINALITY_MAX + 1
+}
+
+func integer_successor(value Integer_Value) (next Integer_Value) {
+	if value.Negative {
+		if value.Magnitude == 1 {
+			return Integer_Value{}
+		}
+		return Integer_Value{Magnitude: value.Magnitude - 1, Negative: true}
+	}
+	return Integer_Value{Magnitude: value.Magnitude + 1}
 }
 
 func recorder_append_assertion_range_candidate(

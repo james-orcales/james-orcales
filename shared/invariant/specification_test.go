@@ -121,7 +121,7 @@ func check(a bool, b bool) {
 func Test_Assertions_Atomic(t *testing.T) {
 	recorder, _, _ := registered_fixture(`package fixture
 const Minimum = 0
-const Maximum = 2
+const Maximum = 4
 func check(value int) {
 	invariant.Assertions("atomic").Sometimes(true, "axis").Range_Int(value, Minimum, Maximum).Ensure()
 }
@@ -137,7 +137,7 @@ func check(value int) {
 	plan := recorder.Assertion_Plans["atomic"]
 	plan.Links[1].Entry.Metadata = nil
 	unknown := invariant.Recorder_Assertions(recorder, "atomic").
-		Sometimes(true, "axis").Range_Int(1, 0, 2)
+		Sometimes(true, "axis").Range_Int(1, 0, 4)
 	if !strings.Contains(panic_text(unknown.Ensure), "unknown coverage handle") {
 		t.Fatal("Ensure accepted an unresolved registration handle")
 	}
@@ -216,7 +216,7 @@ func Test_Assertions_Registration_Transitive(t *testing.T) {
 func Test_Assertions_Registration_Walk(t *testing.T) {
 	recorder, _, code := registered_fixture(`package fixture
 const Minimum = 0
-const Maximum = 3
+const Maximum = 4
 func check(value int, flag bool) {
 	invariant.Assertions("walk").Sometimes(flag, "flag").Range_Int(value, Minimum, Maximum).Ensure()
 }
@@ -688,8 +688,8 @@ func check(v int) {
 
 // Test_Range_Guard keeps both successful bounds visible.
 func Test_Range_Guard(t *testing.T) {
-	recorder, _, _ := registered_range(t, "range", 0, 3)
-	invariant.Recorder_Assertions(recorder, "range").Range_Int(1, 0, 3).Ensure()
+	recorder, _, _ := registered_range(t, "range", 0, 4)
+	invariant.Recorder_Assertions(recorder, "range").Range_Int(1, 0, 4).Ensure()
 	lower := chain_metadata(t, recorder, chain_metadata_key{
 		Namespace: "range", Ordinal: 0, Message: "The value is at least its minimum.",
 	})
@@ -706,9 +706,9 @@ func Test_Range_Guard(t *testing.T) {
 
 // Test_Range_Coverage keeps both boundaries mandatory when distinct.
 func Test_Range_Coverage(t *testing.T) {
-	recorder, _, _ := registered_range(t, "range", 0, 3)
-	for value := 0; value <= 3; value++ {
-		invariant.Recorder_Assertions(recorder, "range").Range_Int(value, 0, 3).Ensure()
+	recorder, _, _ := registered_range(t, "range", 0, 4)
+	for value := 0; value <= 4; value++ {
+		invariant.Recorder_Assertions(recorder, "range").Range_Int(value, 0, 4).Ensure()
 	}
 	minimum := chain_metadata(t, recorder, chain_metadata_key{
 		Namespace: "range", Ordinal: 2, Message: "The value equals the minimum.",
@@ -727,6 +727,38 @@ func Test_Range_Coverage(t *testing.T) {
 	}
 	if maximum.False_Frequency.Load() == 0 {
 		t.Fatal("range maximum false branch was not witnessed")
+	}
+}
+
+// Test_Range_Cardinality requires the smallest helper that states each registered integer
+// domain exactly, while leaving unregistered runtime enforcement unchanged.
+func Test_Range_Cardinality(t *testing.T) {
+	methods := []struct {
+		Suffix string
+		Type   string
+	}{
+		{"Int", "int"}, {"Int8", "int8"}, {"Int16", "int16"},
+		{"Int32", "int32"}, {"Int64", "int64"}, {"Uint", "uint"},
+		{"Uint8", "uint8"}, {"Uint16", "uint16"},
+		{"Uint32", "uint32"}, {"Uint64", "uint64"},
+	}
+	for _, method := range methods {
+		assert_range_cardinality(t, method.Suffix, method.Type)
+		assert_range_holed_cardinality(t, method.Suffix, method.Type)
+	}
+	assert_small_range_rejected(t, "Range_Int(v, -2, 1)", 4, "Enum_4_Int")
+	assert_small_range_rejected(t,
+		"Range_Uint64(v, 18446744073709551612, 18446744073709551615)",
+		4, "Enum_4_Uint64")
+	assert_large_range_registered(t,
+		"Range_Uint64(v, 18446744073709551611, 18446744073709551615)", "uint64")
+	assert_large_range_registered(t,
+		"Range_Int64(v, -9223372036854775808, -9223372036854775804)", "int64")
+	recorder := &invariant.Recorder{}
+	invariant.Recorder_Assertions(recorder, "runtime").Range_Int(1, 0, 1).Ensure()
+	if panic_text(invariant.Recorder_Assertions(recorder, "runtime").
+		Range_Int(2, 0, 1).Ensure) == "" {
+		t.Fatal("an unregistered Range stopped enforcing its bounds")
 	}
 }
 
@@ -791,6 +823,10 @@ func Test_Range_Registration(t *testing.T) {
 			t.Fatalf("%s exit=%d output=%q, want %q",
 				fixture.Call, code, output.String(), fixture.Want)
 		}
+		if strings.Contains(output.String(), "legal value") {
+			t.Fatalf("%s reported cardinality before its structural error: %q",
+				fixture.Call, output.String())
+		}
 	}
 }
 
@@ -850,6 +886,85 @@ func Test_Enum_Registration(t *testing.T) {
 				fixture.Call, code, output.String(), fixture.Want)
 		}
 	}
+}
+
+func assert_range_cardinality(t *testing.T, suffix string, value_type string) {
+	t.Helper()
+	for legal_count := 1; legal_count <= 5; legal_count++ {
+		call := fmt.Sprintf("Range_%s(v, 0, %d)", suffix, legal_count-1)
+		if legal_count == 5 {
+			assert_large_range_registered(t, call, value_type)
+			continue
+		}
+		assert_small_range_rejected(
+			t, call, legal_count, range_cardinality_replacement(suffix, legal_count))
+	}
+}
+
+func assert_range_holed_cardinality(t *testing.T, suffix string, value_type string) {
+	t.Helper()
+	holes := "1, 2, 3, 3"
+	if strings.HasPrefix(suffix, "Uint") {
+		holes = "1, 2, 3"
+	}
+	for legal_count := 2; legal_count <= 5; legal_count++ {
+		call := fmt.Sprintf(
+			"Range_Holed_%s(v, 0, %d, %s)", suffix, legal_count+2, holes)
+		if legal_count == 5 {
+			assert_large_range_registered(t, call, value_type)
+			continue
+		}
+		assert_small_range_rejected(
+			t, call, legal_count, range_cardinality_replacement(suffix, legal_count))
+	}
+}
+
+func assert_small_range_rejected(
+	t *testing.T, call string, legal_count int, replacement string,
+) {
+	t.Helper()
+	source := "package fixture\nfunc check(v int) { invariant.Assertions(\"range\")." +
+		call + ".Ensure() }\n"
+	recorder, output, code := registered_fixture(source)
+	want := fmt.Sprintf(
+		"Range covers %d legal values; use %s instead", legal_count, replacement)
+	if legal_count == 1 {
+		want = "Range covers 1 legal value; use Always instead"
+	}
+	if code != 1 {
+		t.Fatalf("%s exit=%d output=%q, want %q", call, code, output.String(), want)
+	}
+	if !strings.Contains(output.String(), "1 invalid bounds") {
+		t.Fatalf("%s output=%q, want invalid bounds", call, output.String())
+	}
+	if !strings.Contains(output.String(), want) {
+		t.Fatalf("%s output=%q, want %q", call, output.String(), want)
+	}
+	if event_count(&recorder.Events) != 0 {
+		t.Fatalf("%s created partial events", call)
+	}
+	if recorder.Assertion_Plans != nil {
+		t.Fatalf("%s created partial assertion plans", call)
+	}
+}
+
+func assert_large_range_registered(t *testing.T, call string, value_type string) {
+	t.Helper()
+	source := fmt.Sprintf(
+		"package fixture\nfunc check(v %s) { "+
+			"invariant.Assertions(\"range\").%s.Ensure() }\n",
+		value_type, call)
+	_, output, code := registered_fixture(source)
+	if code != -1 {
+		t.Fatalf("%s exit=%d output=%q", call, code, output.String())
+	}
+}
+
+func range_cardinality_replacement(suffix string, legal_count int) (replacement string) {
+	if legal_count == 2 {
+		return "Enum_" + suffix
+	}
+	return fmt.Sprintf("Enum_%d_%s", legal_count, suffix)
 }
 
 func registered_fixture(source string) (
