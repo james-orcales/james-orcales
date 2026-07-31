@@ -156,10 +156,8 @@ func main_benchmark(input *Benchmark_Input) (code Benchmark_Exit_Code) {
 			Measurements: measurements,
 		}
 		if have_reference {
-			benchmark.Deltas = deltas_compute(&Deltas_Compute_Input{
-				Reference: Reference_Measurements(reference),
-				Candidate: Candidate_Measurements(measurements),
-			})
+			benchmark.Deltas = deltas_compute(
+				reference, Candidate_Measurements(measurements))
 		} else {
 			reference = measurements
 			have_reference = true
@@ -921,13 +919,13 @@ const UNIT_BYTES_MIN = 5
 const UNIT_BYTES_MAX = 11
 
 // UNIT_COUNT is the unit for hardware event counters.
-const UNIT_COUNT Unit = "count"
+const UNIT_COUNT = "count"
 
 // UNIT_SIZE is the unit for memory measurements.
-const UNIT_SIZE Unit = "bytes"
+const UNIT_SIZE = "bytes"
 
 // UNIT_TIME is the unit for elapsed and processor time.
-const UNIT_TIME Unit = "nanoseconds"
+const UNIT_TIME = "nanoseconds"
 
 // Unit names the dimension a Measurement's raw values are in — a word from a closed vocabulary
 // of exactly two widths: the five-byte "count"/"bytes" and the eleven-byte "nanoseconds".
@@ -975,6 +973,9 @@ func Measurement_Invariants(measurement Measurement, namespace invariant.Namespa
 	Unit_Invariants(measurement.Unit, namespace)
 }
 
+// SIGNIFICANCE_SIGNIFICANT is the shared positive significance fact.
+const SIGNIFICANCE_SIGNIFICANT = true
+
 // Significance records whether a confidence interval clears the significance band.
 type Significance bool
 
@@ -984,6 +985,9 @@ func Significance_Invariants(value Significance, namespace invariant.Namespace) 
 		Sometimes(bool(value), "The difference is significant.").
 		Ensure()
 }
+
+// SPEED_ORDER_FASTER is the shared positive speed-order fact.
+const SPEED_ORDER_FASTER = true
 
 // Speed_Order records whether the candidate is faster than the reference.
 type Speed_Order bool
@@ -1181,8 +1185,10 @@ type Wall_Time_Delta Delta
 // Wall_Time_Delta_Invariants states the wall-time comparison outcomes.
 func Wall_Time_Delta_Invariants(value Wall_Time_Delta, namespace invariant.Namespace) {
 	invariant.Tree(value, namespace).
-		Sometimes(bool(value.Significant), "The difference is significant.").
-		Sometimes(bool(value.Faster), "The candidate is faster.").
+		Sometimes(
+			bool(value.Significant) == SIGNIFICANCE_SIGNIFICANT,
+			"The difference is significant.").
+		Sometimes(bool(value.Faster) == SPEED_ORDER_FASTER, "The candidate is faster.").
 		Ensure()
 }
 
@@ -1192,8 +1198,10 @@ type Peak_Resident_Delta Delta
 // Peak_Resident_Delta_Invariants states the resident-memory comparison outcomes.
 func Peak_Resident_Delta_Invariants(value Peak_Resident_Delta, namespace invariant.Namespace) {
 	invariant.Tree(value, namespace).
-		Sometimes(bool(value.Significant), "The difference is significant.").
-		Sometimes(bool(value.Faster), "The candidate is faster.").
+		Sometimes(
+			bool(value.Significant) == SIGNIFICANCE_SIGNIFICANT,
+			"The difference is significant.").
+		Sometimes(bool(value.Faster) == SPEED_ORDER_FASTER, "The candidate is faster.").
 		Ensure()
 }
 
@@ -1203,8 +1211,10 @@ type Cycle_Delta Delta
 // Cycle_Delta_Invariants states the processor-cycle comparison outcomes.
 func Cycle_Delta_Invariants(value Cycle_Delta, namespace invariant.Namespace) {
 	invariant.Tree(value, namespace).
-		Sometimes(bool(value.Significant), "The difference is significant.").
-		Sometimes(bool(value.Faster), "The candidate is faster.").
+		Sometimes(
+			bool(value.Significant) == SIGNIFICANCE_SIGNIFICANT,
+			"The difference is significant.").
+		Sometimes(bool(value.Faster) == SPEED_ORDER_FASTER, "The candidate is faster.").
 		Ensure()
 }
 
@@ -1214,8 +1224,10 @@ type Instruction_Delta Delta
 // Instruction_Delta_Invariants states the instruction comparison outcomes.
 func Instruction_Delta_Invariants(value Instruction_Delta, namespace invariant.Namespace) {
 	invariant.Tree(value, namespace).
-		Sometimes(bool(value.Significant), "The difference is significant.").
-		Sometimes(bool(value.Faster), "The candidate is faster.").
+		Sometimes(
+			bool(value.Significant) == SIGNIFICANCE_SIGNIFICANT,
+			"The difference is significant.").
+		Sometimes(bool(value.Faster) == SPEED_ORDER_FASTER, "The candidate is faster.").
 		Ensure()
 }
 
@@ -1227,8 +1239,10 @@ func Cache_Reference_Delta_Invariants(
 	value Cache_Reference_Delta, namespace invariant.Namespace,
 ) {
 	invariant.Tree(value, namespace).
-		Sometimes(bool(value.Significant), "The difference is significant.").
-		Sometimes(bool(value.Faster), "The candidate is faster.").
+		Sometimes(
+			bool(value.Significant) == SIGNIFICANCE_SIGNIFICANT,
+			"The difference is significant.").
+		Sometimes(bool(value.Faster) == SPEED_ORDER_FASTER, "The candidate is faster.").
 		Ensure()
 }
 
@@ -1238,8 +1252,10 @@ type Cache_Miss_Delta Delta
 // Cache_Miss_Delta_Invariants states the cache-miss comparison outcomes.
 func Cache_Miss_Delta_Invariants(value Cache_Miss_Delta, namespace invariant.Namespace) {
 	invariant.Tree(value, namespace).
-		Sometimes(bool(value.Significant), "The difference is significant.").
-		Sometimes(bool(value.Faster), "The candidate is faster.").
+		Sometimes(
+			bool(value.Significant) == SIGNIFICANCE_SIGNIFICANT,
+			"The difference is significant.").
+		Sometimes(bool(value.Faster) == SPEED_ORDER_FASTER, "The candidate is faster.").
 		Ensure()
 }
 
@@ -1249,8 +1265,10 @@ type Branch_Miss_Delta Delta
 // Branch_Miss_Delta_Invariants states the branch-miss comparison outcomes.
 func Branch_Miss_Delta_Invariants(value Branch_Miss_Delta, namespace invariant.Namespace) {
 	invariant.Tree(value, namespace).
-		Sometimes(bool(value.Significant), "The difference is significant.").
-		Sometimes(bool(value.Faster), "The candidate is faster.").
+		Sometimes(
+			bool(value.Significant) == SIGNIFICANCE_SIGNIFICANT,
+			"The difference is significant.").
+		Sometimes(bool(value.Faster) == SPEED_ORDER_FASTER, "The candidate is faster.").
 		Ensure()
 }
 
@@ -1260,8 +1278,10 @@ type User_Time_Delta Delta
 // User_Time_Delta_Invariants states the user-time comparison outcomes.
 func User_Time_Delta_Invariants(value User_Time_Delta, namespace invariant.Namespace) {
 	invariant.Tree(value, namespace).
-		Sometimes(bool(value.Significant), "The difference is significant.").
-		Sometimes(bool(value.Faster), "The candidate is faster.").
+		Sometimes(
+			bool(value.Significant) == SIGNIFICANCE_SIGNIFICANT,
+			"The difference is significant.").
+		Sometimes(bool(value.Faster) == SPEED_ORDER_FASTER, "The candidate is faster.").
 		Ensure()
 }
 
@@ -1271,8 +1291,10 @@ type System_Time_Delta Delta
 // System_Time_Delta_Invariants states the system-time comparison outcomes.
 func System_Time_Delta_Invariants(value System_Time_Delta, namespace invariant.Namespace) {
 	invariant.Tree(value, namespace).
-		Sometimes(bool(value.Significant), "The difference is significant.").
-		Sometimes(bool(value.Faster), "The candidate is faster.").
+		Sometimes(
+			bool(value.Significant) == SIGNIFICANCE_SIGNIFICANT,
+			"The difference is significant.").
+		Sometimes(bool(value.Faster) == SPEED_ORDER_FASTER, "The candidate is faster.").
 		Ensure()
 }
 
@@ -1719,84 +1741,6 @@ func measurements_compute(samples Distribution) (measurements Measurements) {
 	return measurements
 }
 
-// Reference_Measurements is the baseline metric set for one report comparison.
-type Reference_Measurements Measurements
-
-// Reference_Measurements_Invariants states every baseline distribution field.
-func Reference_Measurements_Invariants(
-	value Reference_Measurements, namespace invariant.Namespace,
-) {
-	Reference_Primary_Measurements_Invariants(Reference_Primary_Measurements(value), namespace)
-	Reference_Counter_Measurements_Invariants(Reference_Counter_Measurements(value), namespace)
-	Reference_Runtime_Measurements_Invariants(Reference_Runtime_Measurements(value), namespace)
-}
-
-// Reference_Primary_Measurements contains the first baseline metric group.
-type Reference_Primary_Measurements Measurements
-
-// Reference_Primary_Measurements_Invariants states the first baseline metric group.
-func Reference_Primary_Measurements_Invariants(
-	value Reference_Primary_Measurements, namespace invariant.Namespace,
-) {
-	invariant.Always(value.Wall_Time.Unit == UNIT_TIME, "Reference wall time uses nanoseconds.")
-	invariant.Always(value.Peak_RSS.Unit == UNIT_SIZE, "Reference peak memory uses bytes.")
-	invariant.Always(value.CPU_Cycles.Unit == UNIT_COUNT, "Reference cycles use a count.")
-	invariant.Tree(value, namespace).
-		Range_Int(int(value.Wall_Time.Outlier_Count), STRAYS_MIN, STRAYS_MAX).
-		Range_Int(int(value.Wall_Time.Sample_Count), KEPT_MIN, KEPT_MAX).
-		Range_Int(int(value.Peak_RSS.Outlier_Count), STRAYS_MIN, STRAYS_MAX).
-		Range_Int(int(value.Peak_RSS.Sample_Count), KEPT_MIN, KEPT_MAX).
-		Range_Int(int(value.CPU_Cycles.Outlier_Count), STRAYS_MIN, STRAYS_MAX).
-		Range_Int(int(value.CPU_Cycles.Sample_Count), KEPT_MIN, KEPT_MAX).
-		Ensure()
-}
-
-// Reference_Counter_Measurements contains the middle baseline metric group.
-type Reference_Counter_Measurements Measurements
-
-// Reference_Counter_Measurements_Invariants states the middle baseline metric group.
-func Reference_Counter_Measurements_Invariants(
-	value Reference_Counter_Measurements, namespace invariant.Namespace,
-) {
-	invariant.Always(
-		value.Instructions.Unit == UNIT_COUNT, "Reference instructions use a count.")
-	invariant.Always(
-		value.Cache_References.Unit == UNIT_COUNT,
-		"Reference cache references use a count.")
-	invariant.Always(
-		value.Cache_Misses.Unit == UNIT_COUNT, "Reference cache misses use a count.")
-	invariant.Tree(value, namespace).
-		Range_Int(int(value.Instructions.Outlier_Count), STRAYS_MIN, STRAYS_MAX).
-		Range_Int(int(value.Instructions.Sample_Count), KEPT_MIN, KEPT_MAX).
-		Range_Int(int(value.Cache_References.Outlier_Count), STRAYS_MIN, STRAYS_MAX).
-		Range_Int(int(value.Cache_References.Sample_Count), KEPT_MIN, KEPT_MAX).
-		Range_Int(int(value.Cache_Misses.Outlier_Count), STRAYS_MIN, STRAYS_MAX).
-		Range_Int(int(value.Cache_Misses.Sample_Count), KEPT_MIN, KEPT_MAX).
-		Ensure()
-}
-
-// Reference_Runtime_Measurements contains the final baseline metric group.
-type Reference_Runtime_Measurements Measurements
-
-// Reference_Runtime_Measurements_Invariants states the final baseline metric group.
-func Reference_Runtime_Measurements_Invariants(
-	value Reference_Runtime_Measurements, namespace invariant.Namespace,
-) {
-	invariant.Always(
-		value.Branch_Misses.Unit == UNIT_COUNT, "Reference branch misses use a count.")
-	invariant.Always(value.CPU_User.Unit == UNIT_TIME, "Reference user time uses nanoseconds.")
-	invariant.Always(
-		value.CPU_System.Unit == UNIT_TIME, "Reference system time uses nanoseconds.")
-	invariant.Tree(value, namespace).
-		Range_Int(int(value.Branch_Misses.Outlier_Count), STRAYS_MIN, STRAYS_MAX).
-		Range_Int(int(value.Branch_Misses.Sample_Count), KEPT_MIN, KEPT_MAX).
-		Range_Int(int(value.CPU_User.Outlier_Count), STRAYS_MIN, STRAYS_MAX).
-		Range_Int(int(value.CPU_User.Sample_Count), KEPT_MIN, KEPT_MAX).
-		Range_Int(int(value.CPU_System.Outlier_Count), STRAYS_MIN, STRAYS_MAX).
-		Range_Int(int(value.CPU_System.Sample_Count), KEPT_MIN, KEPT_MAX).
-		Ensure()
-}
-
 // Candidate_Measurements is the candidate metric set for one report comparison.
 type Candidate_Measurements Measurements
 
@@ -1804,137 +1748,44 @@ type Candidate_Measurements Measurements
 func Candidate_Measurements_Invariants(
 	value Candidate_Measurements, namespace invariant.Namespace,
 ) {
-	Candidate_Primary_Measurements_Invariants(Candidate_Primary_Measurements(value), namespace)
-	Candidate_Counter_Measurements_Invariants(Candidate_Counter_Measurements(value), namespace)
-	Candidate_Runtime_Measurements_Invariants(Candidate_Runtime_Measurements(value), namespace)
-}
-
-// Candidate_Primary_Measurements contains the first candidate metric group.
-type Candidate_Primary_Measurements Measurements
-
-// Candidate_Primary_Measurements_Invariants states the first candidate metric group.
-func Candidate_Primary_Measurements_Invariants(
-	value Candidate_Primary_Measurements, namespace invariant.Namespace,
-) {
-	invariant.Always(value.Wall_Time.Unit == UNIT_TIME, "Candidate wall time uses nanoseconds.")
-	invariant.Always(value.Peak_RSS.Unit == UNIT_SIZE, "Candidate peak memory uses bytes.")
-	invariant.Always(value.CPU_Cycles.Unit == UNIT_COUNT, "Candidate cycles use a count.")
-	invariant.Tree(value, namespace).
-		Range_Int(int(value.Wall_Time.Outlier_Count), STRAYS_MIN, STRAYS_MAX).
-		Range_Int(int(value.Wall_Time.Sample_Count), KEPT_MIN, KEPT_MAX).
-		Range_Int(int(value.Peak_RSS.Outlier_Count), STRAYS_MIN, STRAYS_MAX).
-		Range_Int(int(value.Peak_RSS.Sample_Count), KEPT_MIN, KEPT_MAX).
-		Range_Int(int(value.CPU_Cycles.Outlier_Count), STRAYS_MIN, STRAYS_MAX).
-		Range_Int(int(value.CPU_Cycles.Sample_Count), KEPT_MIN, KEPT_MAX).
-		Ensure()
-}
-
-// Candidate_Counter_Measurements contains the middle candidate metric group.
-type Candidate_Counter_Measurements Measurements
-
-// Candidate_Counter_Measurements_Invariants states the middle candidate metric group.
-func Candidate_Counter_Measurements_Invariants(
-	value Candidate_Counter_Measurements, namespace invariant.Namespace,
-) {
-	invariant.Always(
-		value.Instructions.Unit == UNIT_COUNT, "Candidate instructions use a count.")
-	invariant.Always(
-		value.Cache_References.Unit == UNIT_COUNT,
-		"Candidate cache references use a count.")
-	invariant.Always(
-		value.Cache_Misses.Unit == UNIT_COUNT, "Candidate cache misses use a count.")
-	invariant.Tree(value, namespace).
-		Range_Int(int(value.Instructions.Outlier_Count), STRAYS_MIN, STRAYS_MAX).
-		Range_Int(int(value.Instructions.Sample_Count), KEPT_MIN, KEPT_MAX).
-		Range_Int(int(value.Cache_References.Outlier_Count), STRAYS_MIN, STRAYS_MAX).
-		Range_Int(int(value.Cache_References.Sample_Count), KEPT_MIN, KEPT_MAX).
-		Range_Int(int(value.Cache_Misses.Outlier_Count), STRAYS_MIN, STRAYS_MAX).
-		Range_Int(int(value.Cache_Misses.Sample_Count), KEPT_MIN, KEPT_MAX).
-		Ensure()
-}
-
-// Candidate_Runtime_Measurements contains the final candidate metric group.
-type Candidate_Runtime_Measurements Measurements
-
-// Candidate_Runtime_Measurements_Invariants states the final candidate metric group.
-func Candidate_Runtime_Measurements_Invariants(
-	value Candidate_Runtime_Measurements, namespace invariant.Namespace,
-) {
-	invariant.Always(
-		value.Branch_Misses.Unit == UNIT_COUNT, "Candidate branch misses use a count.")
-	invariant.Always(value.CPU_User.Unit == UNIT_TIME, "Candidate user time uses nanoseconds.")
-	invariant.Always(
-		value.CPU_System.Unit == UNIT_TIME, "Candidate system time uses nanoseconds.")
-	invariant.Tree(value, namespace).
-		Range_Int(int(value.Branch_Misses.Outlier_Count), STRAYS_MIN, STRAYS_MAX).
-		Range_Int(int(value.Branch_Misses.Sample_Count), KEPT_MIN, KEPT_MAX).
-		Range_Int(int(value.CPU_User.Outlier_Count), STRAYS_MIN, STRAYS_MAX).
-		Range_Int(int(value.CPU_User.Sample_Count), KEPT_MIN, KEPT_MAX).
-		Range_Int(int(value.CPU_System.Outlier_Count), STRAYS_MIN, STRAYS_MAX).
-		Range_Int(int(value.CPU_System.Sample_Count), KEPT_MIN, KEPT_MAX).
-		Ensure()
-}
-
-// Deltas_Compute_Input pairs a reference and candidate distribution for comparison.
-type Deltas_Compute_Input struct {
-	// Reference is the baseline distribution deltas are measured against.
-	Reference Reference_Measurements
-	// Candidate is the distribution compared to the reference.
-	Candidate Candidate_Measurements
-}
-
-// Deltas_Compute_Input_Invariants composes the reference and candidate distributions.
-func Deltas_Compute_Input_Invariants(
-	input Deltas_Compute_Input, namespace invariant.Namespace,
-) {
-	Reference_Measurements_Invariants(input.Reference, namespace)
-	Candidate_Measurements_Invariants(input.Candidate, namespace)
+	Wall_Time_Measurement_Invariants(value.Wall_Time, namespace)
+	Peak_Resident_Measurement_Invariants(value.Peak_RSS, namespace)
+	Cycle_Measurement_Invariants(value.CPU_Cycles, namespace)
+	Instruction_Measurement_Invariants(value.Instructions, namespace)
+	Cache_Reference_Measurement_Invariants(value.Cache_References, namespace)
+	Cache_Miss_Measurement_Invariants(value.Cache_Misses, namespace)
+	Branch_Miss_Measurement_Invariants(value.Branch_Misses, namespace)
+	User_Time_Measurement_Invariants(value.CPU_User, namespace)
+	System_Time_Measurement_Invariants(value.CPU_System, namespace)
 }
 
 // Deltas_compute compares every metric of the candidate against the reference.
-func deltas_compute(input *Deltas_Compute_Input) (deltas Deltas) {
+func deltas_compute(reference Measurements, candidate Candidate_Measurements) (deltas Deltas) {
 	defer func() {
 		Deltas_Invariants(deltas, "deltas_compute.deltas")
 	}()
-	Deltas_Compute_Input_Invariants(*input, "deltas_compute.input")
-	reference := Measurements(input.Reference)
-	candidate := Measurements(input.Candidate)
-	deltas.Wall_Time = Wall_Time_Delta(Compare(&Compare_Input{
-		Reference: Reference_Measurement(reference.Wall_Time),
-		Candidate: Candidate_Measurement(candidate.Wall_Time),
-	}))
-	deltas.Peak_RSS = Peak_Resident_Delta(Compare(&Compare_Input{
-		Reference: Reference_Measurement(reference.Peak_RSS),
-		Candidate: Candidate_Measurement(candidate.Peak_RSS),
-	}))
-	deltas.CPU_Cycles = Cycle_Delta(Compare(&Compare_Input{
-		Reference: Reference_Measurement(reference.CPU_Cycles),
-		Candidate: Candidate_Measurement(candidate.CPU_Cycles),
-	}))
-	deltas.Instructions = Instruction_Delta(Compare(&Compare_Input{
-		Reference: Reference_Measurement(reference.Instructions),
-		Candidate: Candidate_Measurement(candidate.Instructions),
-	}))
-	deltas.Cache_References = Cache_Reference_Delta(Compare(&Compare_Input{
-		Reference: Reference_Measurement(reference.Cache_References),
-		Candidate: Candidate_Measurement(candidate.Cache_References),
-	}))
-	deltas.Cache_Misses = Cache_Miss_Delta(Compare(&Compare_Input{
-		Reference: Reference_Measurement(reference.Cache_Misses),
-		Candidate: Candidate_Measurement(candidate.Cache_Misses),
-	}))
-	deltas.Branch_Misses = Branch_Miss_Delta(Compare(&Compare_Input{
-		Reference: Reference_Measurement(reference.Branch_Misses),
-		Candidate: Candidate_Measurement(candidate.Branch_Misses),
-	}))
-	deltas.CPU_User = User_Time_Delta(Compare(&Compare_Input{
-		Reference: Reference_Measurement(reference.CPU_User),
-		Candidate: Candidate_Measurement(candidate.CPU_User),
-	}))
-	deltas.CPU_System = System_Time_Delta(Compare(&Compare_Input{
-		Reference: Reference_Measurement(reference.CPU_System),
-		Candidate: Candidate_Measurement(candidate.CPU_System),
-	}))
+	Measurements_Invariants(reference, "deltas_compute.reference")
+	Candidate_Measurements_Invariants(candidate, "deltas_compute.candidate")
+	deltas.Wall_Time = Wall_Time_Delta(Compare(
+		Measurement(reference.Wall_Time), Candidate_Measurement(candidate.Wall_Time)))
+	deltas.Peak_RSS = Peak_Resident_Delta(Compare(
+		Measurement(reference.Peak_RSS), Candidate_Measurement(candidate.Peak_RSS)))
+	deltas.CPU_Cycles = Cycle_Delta(Compare(
+		Measurement(reference.CPU_Cycles), Candidate_Measurement(candidate.CPU_Cycles)))
+	deltas.Instructions = Instruction_Delta(Compare(
+		Measurement(reference.Instructions), Candidate_Measurement(candidate.Instructions)))
+	deltas.Cache_References = Cache_Reference_Delta(Compare(
+		Measurement(reference.Cache_References),
+		Candidate_Measurement(candidate.Cache_References)))
+	deltas.Cache_Misses = Cache_Miss_Delta(Compare(
+		Measurement(reference.Cache_Misses), Candidate_Measurement(candidate.Cache_Misses)))
+	deltas.Branch_Misses = Branch_Miss_Delta(Compare(
+		Measurement(reference.Branch_Misses),
+		Candidate_Measurement(candidate.Branch_Misses)))
+	deltas.CPU_User = User_Time_Delta(Compare(
+		Measurement(reference.CPU_User), Candidate_Measurement(candidate.CPU_User)))
+	deltas.CPU_System = System_Time_Delta(Compare(
+		Measurement(reference.CPU_System), Candidate_Measurement(candidate.CPU_System)))
 	return deltas
 }
 
@@ -2343,20 +2194,6 @@ func outlier_count(input *Outlier_Count_Input) (count Strays) {
 	return count
 }
 
-// Reference_Measurement is the baseline side of one metric comparison.
-type Reference_Measurement Measurement
-
-// Reference_Measurement_Invariants states the baseline distribution fields.
-func Reference_Measurement_Invariants(
-	value Reference_Measurement, namespace invariant.Namespace,
-) {
-	invariant.Tree(value, namespace).
-		Range_Int(int(value.Outlier_Count), STRAYS_MIN, STRAYS_MAX).
-		Range_Int(int(value.Sample_Count), KEPT_MIN, KEPT_MAX).
-		Enum_Int(len(value.Unit), UNIT_BYTES_MIN, UNIT_BYTES_MAX).
-		Ensure()
-}
-
 // Candidate_Measurement is the candidate side of one metric comparison.
 type Candidate_Measurement Measurement
 
@@ -2371,47 +2208,29 @@ func Candidate_Measurement_Invariants(
 		Ensure()
 }
 
-// Compare_Input pairs the reference and candidate measurements Compare contrasts.
-type Compare_Input struct {
-	// Reference is the baseline measurement deltas are taken against.
-	Reference Reference_Measurement
-	// Candidate is the measurement compared to the reference.
-	Candidate Candidate_Measurement
-}
-
-// Compare_Input_Invariants composes the reference and candidate measurements.
-func Compare_Input_Invariants(input Compare_Input, namespace invariant.Namespace) {
-	Reference_Measurement_Invariants(input.Reference, namespace)
-	Candidate_Measurement_Invariants(input.Candidate, namespace)
-}
-
 // Compare reports how the candidate's mean differs from the reference's, with the
 // 95% confidence half-interval from a pooled-variance two-sample t-test — poop's
 // ratio computation. A zero or degenerate reference yields a zero, non-significant
 // delta rather than a divide-by-zero.
-func Compare(input *Compare_Input) (delta Delta) {
+func Compare(reference Measurement, candidate Candidate_Measurement) (delta Delta) {
 	defer func() { Delta_Invariants(delta, "Compare.delta") }()
-	Compare_Input_Invariants(*input, "Compare.input")
-	reference := Measurement(input.Reference)
-	candidate := Measurement(input.Candidate)
+	Measurement_Invariants(reference, "Compare.reference")
+	Candidate_Measurement_Invariants(candidate, "Compare.candidate")
+	candidate_measurement := Measurement(candidate)
 	if reference.Mean == 0 {
 		return delta
 	}
 	ratio := fixedpoint.Divide(&fixedpoint.Divide_Input{
-		Dividend: candidate.Mean - reference.Mean, Divisor: reference.Mean,
+		Dividend: candidate_measurement.Mean - reference.Mean, Divisor: reference.Mean,
 	})
 	delta.Diff_Percent = ratio * 100
-	delta.Faster = candidate.Mean < reference.Mean
+	delta.Faster = candidate_measurement.Mean < reference.Mean
 
-	degrees := candidate.Sample_Count + reference.Sample_Count - 2
+	degrees := candidate_measurement.Sample_Count + reference.Sample_Count - 2
 	if degrees < 1 {
 		return delta
 	}
-	delta.Half_Percent = half_interval(&Half_Interval_Input{
-		Reference: Reference_Measurement(reference),
-		Candidate: Candidate_Measurement(candidate),
-		Degrees:   Degree(degrees),
-	})
+	delta.Half_Percent = half_interval(reference, candidate, Degree(degrees))
 	delta.Significant = significant(&Significant_Input{
 		Diff_Percent: delta.Diff_Percent,
 		Half_Percent: delta.Half_Percent,
@@ -2419,86 +2238,56 @@ func Compare(input *Compare_Input) (delta Delta) {
 	return delta
 }
 
-// Half_Interval_Input carries the two measurements and the degrees of freedom.
-type Half_Interval_Input struct {
-	// Reference is the baseline measurement.
-	Reference Reference_Measurement
-	// Candidate is the measurement compared to the reference.
-	Candidate Candidate_Measurement
-	// Degrees is the pooled degrees of freedom, n1 + n2 - 2.
-	Degrees Degree
-}
-
-// Half_Interval_Input_Invariants composes the measurements and states the degrees.
-func Half_Interval_Input_Invariants(input Half_Interval_Input, namespace invariant.Namespace) {
-	Reference_Measurement_Invariants(input.Reference, namespace)
-	Candidate_Measurement_Invariants(input.Candidate, namespace)
-	Degree_Invariants(input.Degrees, namespace)
-}
-
 // Half_interval is the 95% confidence half-width on Diff_Percent, from a pooled-variance
 // two-sample t-test — poop's score*pooled*normalizer*100/mean. The pooled deviation is
 // taken relative to the reference mean, folding in that final divide, so the math never
 // forms a raw variance — which, for a metric in the billions, overflows.
-func half_interval(input *Half_Interval_Input) (half fixedpoint.Number) {
-	Half_Interval_Input_Invariants(*input, "half_interval.input")
+func half_interval(
+	reference Measurement, candidate Candidate_Measurement, degrees Degree,
+) (half fixedpoint.Number) {
+	Measurement_Invariants(reference, "half_interval.reference")
+	Candidate_Measurement_Invariants(candidate, "half_interval.candidate")
+	Degree_Invariants(degrees, "half_interval.degrees")
 	first := fixedpoint.From_Ratio(&fixedpoint.From_Ratio_Input{
-		Numerator: 1, Denominator: int64(input.Candidate.Sample_Count),
+		Numerator: 1, Denominator: int64(candidate.Sample_Count),
 	})
 	second := fixedpoint.From_Ratio(&fixedpoint.From_Ratio_Input{
-		Numerator: 1, Denominator: int64(input.Reference.Sample_Count),
+		Numerator: 1, Denominator: int64(reference.Sample_Count),
 	})
 	normalizer := fixedpoint.Square_Root(first + second)
-	pooled := pooled_deviation(&Pooled_Deviation_Input{
-		Candidate: input.Candidate, Reference: input.Reference, Degrees: input.Degrees,
-	})
-	score := student_t_score(input.Degrees)
+	pooled := pooled_deviation(reference, candidate, degrees)
+	score := student_t_score(degrees)
 	band := fixedpoint.Multiply(&fixedpoint.Multiply_Input{A: score, B: pooled})
 	band = fixedpoint.Multiply(&fixedpoint.Multiply_Input{A: band, B: normalizer})
 	return band * 100
-}
-
-// Pooled_Deviation_Input carries the two measurements and the degrees of freedom.
-type Pooled_Deviation_Input struct {
-	// Candidate is the measurement compared to the reference.
-	Candidate Candidate_Measurement
-	// Reference is the baseline measurement.
-	Reference Reference_Measurement
-	// Degrees is the pooled degrees of freedom, n1 + n2 - 2.
-	Degrees Degree
-}
-
-// Pooled_Deviation_Input_Invariants composes the measurements and states the degrees.
-func Pooled_Deviation_Input_Invariants(
-	input Pooled_Deviation_Input, namespace invariant.Namespace,
-) {
-	Candidate_Measurement_Invariants(input.Candidate, namespace)
-	Reference_Measurement_Invariants(input.Reference, namespace)
-	Degree_Invariants(input.Degrees, namespace)
 }
 
 // Pooled_deviation is the pooled standard deviation as a fraction of the reference mean:
 // the root of the degrees-weighted mean of the two relative variances. Dividing each
 // deviation by the mean before squaring keeps every value near one, so a metric in the
 // billions and its enormous raw variance never overflow.
-func pooled_deviation(input *Pooled_Deviation_Input) (pooled fixedpoint.Number) {
-	Pooled_Deviation_Input_Invariants(*input, "pooled_deviation.input")
-	mean := input.Reference.Mean
-	candidate := fixedpoint.Divide(&fixedpoint.Divide_Input{
-		Dividend: input.Candidate.Standard_Deviation, Divisor: mean,
+func pooled_deviation(
+	reference Measurement, candidate Candidate_Measurement, degrees Degree,
+) (pooled fixedpoint.Number) {
+	Measurement_Invariants(reference, "pooled_deviation.reference")
+	Candidate_Measurement_Invariants(candidate, "pooled_deviation.candidate")
+	Degree_Invariants(degrees, "pooled_deviation.degrees")
+	mean := reference.Mean
+	candidate_deviation := fixedpoint.Divide(&fixedpoint.Divide_Input{
+		Dividend: candidate.Standard_Deviation, Divisor: mean,
 	})
-	reference := fixedpoint.Divide(&fixedpoint.Divide_Input{
-		Dividend: input.Reference.Standard_Deviation, Divisor: mean,
+	reference_deviation := fixedpoint.Divide(&fixedpoint.Divide_Input{
+		Dividend: reference.Standard_Deviation, Divisor: mean,
 	})
 	candidate_variance := fixedpoint.Multiply(&fixedpoint.Multiply_Input{
-		A: candidate, B: candidate,
+		A: candidate_deviation, B: candidate_deviation,
 	})
 	reference_variance := fixedpoint.Multiply(&fixedpoint.Multiply_Input{
-		A: reference, B: reference,
+		A: reference_deviation, B: reference_deviation,
 	})
-	weighted := candidate_variance*fixedpoint.Number(input.Candidate.Sample_Count-1) +
-		reference_variance*fixedpoint.Number(input.Reference.Sample_Count-1)
-	return fixedpoint.Square_Root(weighted / fixedpoint.Number(int(input.Degrees)))
+	weighted := candidate_variance*fixedpoint.Number(candidate.Sample_Count-1) +
+		reference_variance*fixedpoint.Number(reference.Sample_Count-1)
+	return fixedpoint.Square_Root(weighted / fixedpoint.Number(int(degrees)))
 }
 
 // Student_t_score returns the Student-t critical value for 95% confidence at the given

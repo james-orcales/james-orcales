@@ -114,10 +114,7 @@ func Test_Comparison_Reference(t *testing.T) {
 		Sample_Count:       10,
 		Unit:               "count",
 	}
-	delta := maddox.Compare(&maddox.Compare_Input{
-		Reference: maddox.Reference_Measurement(reference),
-		Candidate: maddox.Candidate_Measurement(reference),
-	})
+	delta := maddox.Compare(reference, maddox.Candidate_Measurement(reference))
 	if delta.Diff_Percent != 0 {
 		t.Fatalf("diff percent = %d, want 0", delta.Diff_Percent)
 	}
@@ -132,10 +129,7 @@ func Test_Comparison_Reference(t *testing.T) {
 		Sample_Count:       10,
 		Unit:               "count",
 	}
-	big := maddox.Compare(&maddox.Compare_Input{
-		Reference: maddox.Reference_Measurement(large),
-		Candidate: maddox.Candidate_Measurement(large),
-	})
+	big := maddox.Compare(large, maddox.Candidate_Measurement(large))
 	if big.Significant {
 		t.Fatal("a large measurement compared to itself must not be significant")
 	}
@@ -157,10 +151,7 @@ func Test_Comparison_Significance(t *testing.T) {
 		Sample_Count:       20,
 		Unit:               "count",
 	}
-	delta := maddox.Compare(&maddox.Compare_Input{
-		Reference: maddox.Reference_Measurement(reference),
-		Candidate: maddox.Candidate_Measurement(candidate),
-	})
+	delta := maddox.Compare(reference, maddox.Candidate_Measurement(candidate))
 	if !delta.Significant {
 		t.Fatal("a doubled mean with tight variance must be significant")
 	}
