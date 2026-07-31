@@ -289,6 +289,12 @@ A guard with no call is in the reachability table. An absent axis polarity is in
 Each branch record has a namespace, package, subject type, numeric link, polarity, property, and
 unquoted source expression. A table shows the subject type and holds the package back.
 
+### Domains
+
+Each Range reports one domain record: its declared interval, the interval the run observed, and how
+many values reached it. An observed interval far inside its declared one names a type that is too
+broad, which no absent branch can show. A record with no observation leaves its interval empty.
+
 ### Reachability Identity
 
 A builder reachability record uses its public namespace, package, and subject type. It does not

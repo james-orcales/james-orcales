@@ -635,6 +635,28 @@ func (builder Assertion_Builder) assertion_observed(observation uint8) (observed
 	return builder.State_B&(uintptr(1)<<(observation-ASSERTION_STATE_BITS)) != 0
 }
 
+// Puts one value on the Range the builder currently stands at. A chain that outruns its plan is
+// caught by assertion_record, thus this drops the observation rather than reporting the same fault
+// from the middle of the walk.
+func assertion_domain_record(builder Assertion_Builder, value uint64) {
+	plan := builder.assertion_plan()
+	if plan == nil {
+		return
+	}
+	ordinal := int(builder.assertion_ordinal())
+	if ordinal >= len(plan.Links) {
+		return
+	}
+	metadata := plan.Links[ordinal].Entry.Metadata
+	if metadata == nil {
+		return
+	}
+	if metadata.Domain == nil {
+		return
+	}
+	assertion_domain_observe(metadata.Domain, value)
+}
+
 func (builder Assertion_Builder) assertion_observation_count() (count uint8) {
 	return uint8((builder.State_B & ASSERTION_COUNT_MASK) >> ASSERTION_COUNT_SHIFT)
 }
@@ -805,6 +827,9 @@ func assertion_range_recording[Value Integer](
 	builder Assertion_Builder, value Value, minimum Value, maximum Value,
 	holed bool, hole_1 Value, hole_2 Value, hole_3 Value, hole_4 Value,
 ) (next Assertion_Builder) {
+	// The first guard owns the interval, and the builder still names it here. After the two
+	// guards advance the ordinal, the plan position of this Range is gone.
+	assertion_domain_record(builder, uint64(value))
 	builder = builder.assertion_guard()
 	builder = builder.assertion_guard()
 	if minimum == maximum {

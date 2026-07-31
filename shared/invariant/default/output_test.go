@@ -33,10 +33,12 @@ func Test_JSON_Output_Records(t *testing.T) {
 	want := `[{"section":"branch","assertion":"Classify_File_Input.Path",` +
 		`"package":"local/james-orcales/sloc/internal","type":"File_Path",` +
 		`"link":2,"missing":"true","property":"The value equals the minimum.",` +
-		`"source":"len(file_path)"},{"section":"reachability",` +
+		`"source":"len(file_path)","declared":"","observed":"",` +
+		`"observations":null},{"section":"reachability",` +
 		`"assertion":"A guard is reached.","package":"","type":"",` +
 		`"link":null,"missing":"reachability",` +
-		`"property":null,"source":"ready"}]` + "\n"
+		`"property":null,"source":"ready","declared":"","observed":"",` +
+		`"observations":null}]` + "\n"
 	if output.String() != want {
 		t.Fatalf("output = %q, want %q", output.String(), want)
 	}

@@ -286,6 +286,85 @@ type Assertion_Metadata struct {
 	Message string
 	// Condition is the source text of the asserted expression, for the gap report.
 	Condition string
+	// Domain is the Range interval this entry guards, or nil for every other entry. Only a
+	// Range's first guard carries one, thus one Range reports one domain row.
+	Domain *Assertion_Domain
+}
+
+// Assertion_Domain is one Range's declared interval beside the values a run put through it. A gap
+// names the branch that never fired. This names the values that did, thus a bound that no real
+// value approaches is visible without a second run.
+type Assertion_Domain struct {
+	// Declared_Minimum is the interval's lower bound as registration read it.
+	Declared_Minimum Integer_Value
+	// Declared_Maximum is the interval's upper bound as registration read it.
+	Declared_Maximum Integer_Value
+	// Unsigned selects the key encoding below. A Uint64 bound exceeds the signed range, thus an
+	// int64 observation field would narrow it.
+	Unsigned bool
+	// Observed_Minimum_Key is the smallest observed value, encoded so that the unsigned compare
+	// an atomic offers matches the value's own order. It starts at the largest key.
+	Observed_Minimum_Key atomic.Uint64
+	// Observed_Maximum_Key is the largest observed value, in that same encoding.
+	Observed_Maximum_Key atomic.Uint64
+	// Observation_Count is how many values reached this Range. Zero means the run never did,
+	// and the two keys then hold their seeded extremes rather than a reading.
+	Observation_Count atomic.Int64
+}
+
+// ASSERTION_DOMAIN_RETRY_MAX bounds one bound's compare-and-swap. A retry means another goroutine
+// moved that bound, and a move that still loses to this value is rare, thus this sits far above
+// what real contention reaches. Exhausting it drops one bound update and never the count.
+const ASSERTION_DOMAIN_RETRY_MAX = 64
+
+// ASSERTION_DOMAIN_SIGN_KEY flips a signed value's sign bit, which maps the signed order onto the
+// unsigned order an atomic compares. An unsigned domain needs no flip.
+const ASSERTION_DOMAIN_SIGN_KEY = uint64(1) << 63
+
+// Encodes one value so that unsigned comparison of two keys matches the values' own order.
+func assertion_domain_key(value uint64, unsigned bool) (key uint64) {
+	if unsigned {
+		return value
+	}
+	return value ^ ASSERTION_DOMAIN_SIGN_KEY
+}
+
+// Reverses assertion_domain_key into the representation the report prints.
+func assertion_domain_value(key uint64, unsigned bool) (value Integer_Value) {
+	if unsigned {
+		return Integer_Value{Magnitude: key}
+	}
+	signed := int64(key ^ ASSERTION_DOMAIN_SIGN_KEY)
+	if signed < 0 {
+		return Integer_Value{Magnitude: uint64(-signed), Negative: true}
+	}
+	return Integer_Value{Magnitude: uint64(signed)}
+}
+
+// Records one value against a Range's declared interval. The two bounds start at the extremes their
+// comparison loses to, thus a plain compare-and-swap loop stays correct when several goroutines
+// drive one plan and no first-write flag is needed.
+func assertion_domain_observe(domain *Assertion_Domain, value uint64) {
+	key := assertion_domain_key(value, domain.Unsigned)
+	for attempt_index := 0; attempt_index < ASSERTION_DOMAIN_RETRY_MAX; attempt_index++ {
+		smallest := domain.Observed_Minimum_Key.Load()
+		if smallest <= key {
+			break
+		}
+		if domain.Observed_Minimum_Key.CompareAndSwap(smallest, key) {
+			break
+		}
+	}
+	for attempt_index := 0; attempt_index < ASSERTION_DOMAIN_RETRY_MAX; attempt_index++ {
+		largest := domain.Observed_Maximum_Key.Load()
+		if largest >= key {
+			break
+		}
+		if domain.Observed_Maximum_Key.CompareAndSwap(largest, key) {
+			break
+		}
+	}
+	domain.Observation_Count.Add(1)
 }
 
 // Handle_Entry is a resolved tracker slot: the seeded metadata and the tracker key, cached so
@@ -862,7 +941,7 @@ func recorder_publish_plan(recorder *Recorder, key Plan_Key, plan *Assertion_Pla
 
 func recorder_plan_seed(
 	file_set *token.FileSet, node ast.Node, reg *Registration, key string,
-	kind Assertion_Kind, condition string,
+	kind Assertion_Kind, condition string, domain *Assertion_Domain,
 ) {
 	if reg.Planned_Keys[key] {
 		reg.Collision = append(reg.Collision,
@@ -872,7 +951,7 @@ func recorder_plan_seed(
 	}
 	reg.Planned_Keys[key] = true
 	reg.Planned = append(reg.Planned,
-		Planned_Seed{Key: key, Kind: kind, Condition: condition})
+		Planned_Seed{Key: key, Kind: kind, Condition: condition, Domain: domain})
 }
 
 // The all-or-nothing commit: a failed registration leaves Events empty, so a partially seeded
@@ -883,10 +962,16 @@ func recorder_commit_planned(recorder *Recorder, reg *Registration) {
 		return
 	}
 	for _, seed := range reg.Planned {
+		// The smallest observation loses to the seeded key and the largest wins over it,
+		// thus the first value a run puts through the Range replaces both.
+		if seed.Domain != nil {
+			seed.Domain.Observed_Minimum_Key.Store(^uint64(0))
+		}
 		recorder.Events.Store(seed.Key, &Assertion_Metadata{
 			Kind:      seed.Kind,
 			Message:   seed.Key,
 			Condition: seed.Condition,
+			Domain:    seed.Domain,
 		})
 	}
 	// One map. A chain key always carries a defined type, because a bundle is named for its
@@ -1476,6 +1561,8 @@ type Planned_Seed struct {
 	Kind Assertion_Kind
 	// Condition is the source text of the asserted expression, for the gap report.
 	Condition string
+	// Domain is the Range interval this seed guards, or nil.
+	Domain *Assertion_Domain
 }
 
 // Registration accumulates everything a registration pass gathers before deciding whether to
@@ -1751,6 +1838,12 @@ type Coverage_Gap struct {
 	Property *string `json:"property"`
 	// Source is the unquoted Go expression registered for the assertion.
 	Source string `json:"source"`
+	// Declared is the interval a Range registered, empty in every other section.
+	Declared string `json:"declared"`
+	// Observed is the interval the run put through that Range, empty when nothing reached it.
+	Observed string `json:"observed"`
+	// Observations counts the values that reached the Range, null in every other section.
+	Observations *int64 `json:"observations"`
 }
 
 // Recorder_Analyze_Assertion_Frequency reports every pre-registered assertion
@@ -1772,7 +1865,9 @@ func Recorder_Analyze_Assertion_Frequency(recorder *Recorder) {
 		return
 	}
 	gaps := recorder_collect_gaps(recorder)
-	if len(gaps) == 0 {
+	// A domain row is context and never a verdict. A run whose every obligation has evidence
+	// stays silent, thus the domains ride an existing gap report rather than making one.
+	if coverage_gap_count(gaps) == 0 {
 		return
 	}
 	reporter := recorder.Report_Coverage_Gaps
@@ -1796,11 +1891,16 @@ func recorder_output_configuration_valid(recorder *Recorder) (valid bool) {
 	return false
 }
 
-// Walks the tracker and returns every coverage gap across all seeded assertions.
+// Walks the tracker and returns every coverage gap across all seeded assertions, plus one domain
+// row for each Range. A Range with no gap still reports its interval, because a bound far wider
+// than the values a run reaches is a defect the gap sections cannot show.
 func recorder_collect_gaps(recorder *Recorder) (gaps []Coverage_Gap) {
 	recorder.Events.Range(func(key, value any) (continue_iteration bool) {
 		metadata := value.(*Assertion_Metadata)
 		gaps = append(gaps, assertion_metadata_gaps(metadata)...)
+		if metadata.Domain != nil {
+			gaps = append(gaps, assertion_domain_row(metadata))
+		}
 		return true
 	})
 	sort.Slice(gaps, func(left_index int, right_index int) (less bool) {
@@ -1830,6 +1930,49 @@ func assertion_metadata_gaps(metadata *Assertion_Metadata) (gaps []Coverage_Gap)
 		Section: "reachability", Assertion: assertion, Package: package_path, Type: subject,
 		Absent: "reachability", Source: metadata.Condition,
 	})
+}
+
+// Builds one Range's domain row. The declared interval always prints. The observed interval prints
+// only when a value reached the Range, because the two seeded keys are extremes and not a reading.
+func assertion_domain_row(metadata *Assertion_Metadata) (row Coverage_Gap) {
+	domain := metadata.Domain
+	assertion, package_path, subject := coverage_gap_identity(metadata.Message)
+	count := domain.Observation_Count.Load()
+	observed := ""
+	if count != 0 {
+		observed = assertion_domain_interval(
+			assertion_domain_value(domain.Observed_Minimum_Key.Load(), domain.Unsigned),
+			assertion_domain_value(domain.Observed_Maximum_Key.Load(), domain.Unsigned))
+	}
+	link := assertion_key_ordinal(metadata.Message)
+	return Coverage_Gap{
+		Section: "domain", Assertion: assertion, Package: package_path, Type: subject,
+		Link: link, Absent: "domain", Source: metadata.Condition,
+		Declared: assertion_domain_interval(
+			domain.Declared_Minimum, domain.Declared_Maximum),
+		Observed: observed, Observations: &count,
+	}
+}
+
+// Renders one interval the way both bounds read together.
+func assertion_domain_interval(
+	minimum Integer_Value, maximum Integer_Value,
+) (interval string) {
+	return integer_text(minimum) + ".." + integer_text(maximum)
+}
+
+// Reads the ordinal a builder key carries, or nil when the key is an eager message.
+func assertion_key_ordinal(message string) (ordinal *uint8) {
+	parts := strings.Split(message, ELEMENT_MESSAGE_SEPARATOR)
+	if len(parts) != ASSERTION_KEY_PARTS {
+		return nil
+	}
+	position, position_error := strconv.ParseUint(parts[3], 10, 8)
+	if position_error != nil {
+		return nil
+	}
+	link := uint8(position)
+	return &link
 }
 
 // Splits the registration-owned key into the identity a reader gets. The key has namespace,
@@ -1914,7 +2057,7 @@ func coverage_gap_property(gap Coverage_Gap) (property string) {
 // Coverage_Gap_Table_Write renders the complete human report as dynamically aligned Markdown.
 func Coverage_Gap_Table_Write(output io.Writer, gaps []Coverage_Gap) (err error) {
 	var report strings.Builder
-	banner := "🚨 " + strconv.Itoa(len(gaps)) + " coverage gaps 🚨"
+	banner := "🚨 " + strconv.Itoa(coverage_gap_count(gaps)) + " coverage gaps 🚨"
 	report.WriteString(banner + "\n")
 	branch := coverage_gap_section(gaps, "branch")
 	if len(branch) > 0 {
@@ -1927,6 +2070,11 @@ func Coverage_Gap_Table_Write(output io.Writer, gaps []Coverage_Gap) (err error)
 			strconv.Itoa(len(reachability)) + ")\n\n")
 		coverage_gap_reachability_table_write(&report, reachability)
 	}
+	domains := coverage_gap_section(gaps, "domain")
+	if len(domains) > 0 {
+		report.WriteString("\n# Range domains (" + strconv.Itoa(len(domains)) + ")\n\n")
+		coverage_gap_domain_table_write(&report, domains)
+	}
 	report.WriteString("\n" + banner + "\n")
 	written, write_error := io.WriteString(output, report.String())
 	if write_error != nil {
@@ -1936,6 +2084,73 @@ func Coverage_Gap_Table_Write(output io.Writer, gaps []Coverage_Gap) (err error)
 		return io.ErrShortWrite
 	}
 	return nil
+}
+
+// Counts the rows that are an absent obligation. A domain row states what a Range saw and never
+// that something is missing, thus it belongs to no banner and to no verdict.
+func coverage_gap_count(gaps []Coverage_Gap) (count int) {
+	for _, gap := range gaps {
+		if gap.Section != "domain" {
+			count++
+		}
+	}
+	return count
+}
+
+// Writes the domain table, whose Observations column is right aligned as a tally.
+func coverage_gap_domain_table_write(report *strings.Builder, gaps []Coverage_Gap) {
+	rows := make([][DOMAIN_TABLE_COLUMNS]string, 0, len(gaps))
+	widths := [DOMAIN_TABLE_COLUMNS]int{
+		len("Assertion"), len("Type"), len("Link"), len("Declared"),
+		len("Observed"), len("Count"), len("Source"),
+	}
+	for _, gap := range gaps {
+		link := ""
+		if gap.Link != nil {
+			link = strconv.Itoa(int(*gap.Link))
+		}
+		count := ""
+		if gap.Observations != nil {
+			count = strconv.FormatInt(*gap.Observations, 10)
+		}
+		row := [DOMAIN_TABLE_COLUMNS]string{
+			coverage_gap_table_cell(gap.Assertion),
+			coverage_gap_table_cell(gap.Type), link,
+			coverage_gap_table_cell(gap.Declared),
+			coverage_gap_table_cell(gap.Observed), count,
+			coverage_gap_table_cell(gap.Source),
+		}
+		rows = append(rows, row)
+		for column_index := range widths {
+			widths[column_index] = integer_maximum(
+				widths[column_index], len(row[column_index]))
+		}
+	}
+	coverage_gap_domain_header_write(report, widths)
+	for _, row := range rows {
+		fmt.Fprintf(report, "| %-*s | %-*s | %*s | %-*s | %-*s | %*s | %-*s |\n",
+			widths[0], row[0], widths[1], row[1], widths[2], row[2],
+			widths[3], row[3], widths[4], row[4], widths[5], row[5],
+			widths[6], row[6])
+	}
+}
+
+// Keeps the domain header and its alignment markers the same width as every row cell.
+func coverage_gap_domain_header_write(
+	report *strings.Builder, widths [DOMAIN_TABLE_COLUMNS]int,
+) {
+	fmt.Fprintf(report, "| %-*s | %-*s | %*s | %-*s | %-*s | %*s | %-*s |\n",
+		widths[0], "Assertion", widths[1], "Type", widths[2], "Link",
+		widths[3], "Declared", widths[4], "Observed", widths[5], "Count",
+		widths[6], "Source")
+	report.WriteString("|" + strings.Repeat("-", widths[0]+2))
+	report.WriteString("|" + strings.Repeat("-", widths[1]+2))
+	report.WriteString("|" + strings.Repeat("-", widths[2]+1) + ":")
+	report.WriteString("|" + strings.Repeat("-", widths[3]+2))
+	report.WriteString("|" + strings.Repeat("-", widths[4]+2))
+	report.WriteString("|" + strings.Repeat("-", widths[5]+1) + ":")
+	report.WriteString("|" + strings.Repeat("-", widths[6]+2))
+	report.WriteString("|\n")
 }
 
 // Selects one report section without changing the collector's stable order.
@@ -2127,6 +2342,9 @@ type Assertion_Registration_Link struct {
 	// Forbidden_Properties rides the first Range guard because holes panic before they can own
 	// observable coverage entries, while the guard already shares their static domain.
 	Forbidden_Properties int
+	// Domain rides that same first guard, and for the same reason: one Range owns one interval,
+	// thus its report row belongs to one of its links and not to each.
+	Domain *Assertion_Domain
 }
 
 func recorder_register_assertion_files(
@@ -2422,7 +2640,8 @@ func recorder_register_inline_assertion(
 	for ordinal_index, link := range links {
 		reg.Forbidden_Properties += link.Forbidden_Properties
 		encoded := assertion_registration_key(key, uint8(ordinal_index), link.Message)
-		recorder_plan_seed(file_set, call, reg, encoded, link.Kind, link.Condition)
+		recorder_plan_seed(
+			file_set, call, reg, encoded, link.Kind, link.Condition, link.Domain)
 		plan.Links = append(plan.Links, Assertion_Plan_Link{
 			Ordinal: uint8(ordinal_index), Observation: uint8(observation),
 			Kind:  link.Kind,
@@ -2507,8 +2726,8 @@ func recorder_register_assertion_always(
 	if !recorder_claim_message(file_set, call, message, reg) {
 		return
 	}
-	recorder_plan_seed(file_set, call, reg, message,
-		ASSERTION_KIND_ALWAYS, ast_condition_text(file_set, call, condition_index))
+	recorder_plan_seed(file_set, call, reg, message, ASSERTION_KIND_ALWAYS,
+		ast_condition_text(file_set, call, condition_index), nil)
 }
 
 // Resolves the Boolean constants that can disguise a true literal without type information.
@@ -2874,8 +3093,8 @@ func recorder_seed_assertion_chain(
 	for ordinal_index, link := range links {
 		reg.Forbidden_Properties += link.Forbidden_Properties
 		encoded := assertion_registration_key(key, uint8(ordinal_index), link.Message)
-		recorder_plan_seed(
-			file_set, chain.Links[0], reg, encoded, link.Kind, link.Condition)
+		recorder_plan_seed(file_set, chain.Links[0], reg, encoded,
+			link.Kind, link.Condition, link.Domain)
 		plan.Links = append(plan.Links, Assertion_Plan_Link{
 			Ordinal: uint8(ordinal_index), Observation: uint8(observation),
 			Kind:  link.Kind,
@@ -2940,6 +3159,10 @@ const MERGE_READ_BYTES = 4096
 // source. The package stays out of every table, because an import path repeats on each row and the
 // subject type alone separates the bundles of one tree.
 const BRANCH_TABLE_COLUMNS = 6
+
+// DOMAIN_TABLE_COLUMNS is the Range domain table's width: assertion, type, link, declared,
+// observed, count, and source. It carries no polarity, because a domain names no absent branch.
+const DOMAIN_TABLE_COLUMNS = 7
 
 // REACHABILITY_TABLE_COLUMNS is the reachability gap table's width: assertion, type, and source.
 // Its section names the absent obligation, so it needs no polarity or property column.
@@ -3057,9 +3280,14 @@ func recorder_collect_assertion_range(
 		return links, false
 	}
 	condition := ast_condition_text(file_set, call, 0)
+	domain := &Assertion_Domain{
+		Declared_Minimum: minimum, Declared_Maximum: maximum,
+		Unsigned: ast_assertion_unsigned_method(ast_assertion_chain_method(call)),
+	}
 	expanded = append(links,
 		Assertion_Registration_Link{Message: RANGE_GUARD_MINIMUM, Condition: condition,
-			Kind: ASSERTION_KIND_ALWAYS, Forbidden_Properties: len(holes)},
+			Kind: ASSERTION_KIND_ALWAYS, Forbidden_Properties: len(holes),
+			Domain: domain},
 		Assertion_Registration_Link{Message: RANGE_GUARD_MAXIMUM, Condition: condition,
 			Kind: ASSERTION_KIND_ALWAYS})
 	if minimum == maximum {

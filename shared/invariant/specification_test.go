@@ -1160,6 +1160,28 @@ func Test_Analysis_Gaps(t *testing.T) {
 	analysis_gap_names_its_subject(t)
 }
 
+// Test_Analysis_Domains keeps the values a Range actually saw beside the interval it declared, so a
+// bound no real value approaches is visible without a second run.
+func Test_Analysis_Domains(t *testing.T) {
+	recorder, output, _ := registered_fixture(
+		bundle_fixture("heading_size", ".Range_Int(int(value), -9, 9)"))
+	for _, level := range []int{1, 6, 2} {
+		fixture_assertions(recorder, "heading_size").Range_Int(level, -9, 9).Ensure()
+	}
+	core.Recorder_Analyze_Assertion_Frequency(recorder)
+	want := "| heading_size | Fixture_Subject |    0 | -9..9    | 1..6     |     3 |"
+	if !strings.Contains(output.String(), want) {
+		t.Fatalf("output = %q, want a row containing %q", output.String(), want)
+	}
+	// A declared bound is not a verdict, thus a Range nobody drove still states its interval.
+	quiet, silent, _ := registered_fixture(
+		bundle_fixture("quiet", ".Range_Int(int(value), -9, 9)"))
+	core.Recorder_Analyze_Assertion_Frequency(quiet)
+	if !strings.Contains(silent.String(), "| -9..9    |          |     0 |") {
+		t.Fatalf("output = %q, want an unobserved domain row", silent.String())
+	}
+}
+
 // Test_Analysis_Reachability_Identity keeps a builder's internal key out of public reports.
 func Test_Analysis_Reachability_Identity(t *testing.T) {
 	recorder, output, _ := registered_fixture(`package fixture
@@ -1184,6 +1206,13 @@ func check(value Fixture_Subject) { Fixture_Subject_Invariants(value, "range") }
 		"|-----------|-----------------|------------|\n" +
 		"| range     | Fixture_Subject | int(value) |\n" +
 		"| range     | Fixture_Subject | int(value) |\n\n" +
+		"# Range domains (1)\n\n" +
+		"| Assertion | Type            | Link | Declared | Observed | Count | " +
+		"Source     |\n" +
+		"|-----------|-----------------|-----:|----------|----------|------:|" +
+		"------------|\n" +
+		"| range     | Fixture_Subject |    0 | 0..4     |          |     0 | " +
+		"int(value) |\n\n" +
 		"🚨 2 coverage gaps 🚨\n"
 	if output.String() != want {
 		t.Fatalf("output=%q, want %q", output.String(), want)
