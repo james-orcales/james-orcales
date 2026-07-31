@@ -147,6 +147,8 @@ func Test_Invariants_Scalar_Helper(t *testing.T) {
 		"must call a canonical helper") {
 		t.Fatal("a float singleton must satisfy the scalar mandate")
 	}
+	// A Boolean has two legal values, thus a Tree with one Sometimes states the whole type. A
+	// singleton Always would claim the type is constant, which the library rejects outright.
 	boolean := "\tinvariant.Tree(value, namespace).Sometimes(bool(value), \"set\").Ensure()"
 	if diagnosed(check_fixture(t, boolean_helper_source(boolean)),
 		"must call a canonical helper") {
@@ -155,7 +157,7 @@ func Test_Invariants_Scalar_Helper(t *testing.T) {
 	boolean_singleton := "\tinvariant.Always(bool(value) == true, \"only\")"
 	if !diagnosed(check_fixture(t, boolean_helper_source(boolean_singleton)),
 		"must call a canonical helper") {
-		t.Fatal("a Boolean helper must state a Sometimes, not an Always")
+		t.Fatal("a singleton Always must not satisfy the Boolean mandate")
 	}
 }
 

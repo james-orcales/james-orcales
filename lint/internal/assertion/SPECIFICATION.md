@@ -33,8 +33,8 @@ interface types, empty structs, local types, tests, and opted-out packages are e
 ### Scalar Helper
 
 An integer helper uses direct singleton Always equality against a package constant, or an ensured
-exact Range or Enum builder over the converted value. A Boolean helper states exactly one Sometimes.
-A float has no builder preset, thus its helper uses Always or Sometimes.
+exact Range or Enum builder over the converted value. A float uses direct singleton Always equality.
+A Boolean ensures a Tree whose one link is a Sometimes, because its two values are two obligations.
 
 ### Count Helper
 

@@ -311,10 +311,14 @@ func invariant_direct_singleton(
 ) (matched bool, constant bool) {
 	_, primitive, count := invariant_type_kind(type_specification)
 	if !count {
-		// A Boolean states a Sometimes, thus it is the one scalar an Always cannot serve.
+		// A singleton Always states one legal value. A Boolean has two, thus the library
+		// requires its bundle to ensure a Tree whose one link is a Sometimes, and an
+		// Always here would name a shape the library rejects.
 		if primitive == "bool" {
 			return false, false
 		}
+		// A float lost its preset and has no builder preset, thus a singleton Always is
+		// what remains for it, the same as for an integer.
 		if !invariant_integer_primitive(primitive) {
 			if !invariant_float_primitive(primitive) {
 				return false, false
@@ -448,6 +452,8 @@ func invariant_builder_link(
 	enum_name := "Enum_" + suffix
 	enum_3_name := "Enum_3_" + suffix
 	enum_4_name := "Enum_4_" + suffix
+	// A Boolean has no Range or Enum, thus Sometimes is its only link. Its two values are two
+	// obligations, so one axis states the whole type.
 	if primitive == "bool" {
 		if method != "Sometimes" {
 			return false, false
