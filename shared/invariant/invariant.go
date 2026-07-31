@@ -606,6 +606,9 @@ type Indexed_Function struct {
 	Imports map[string]string
 	// Constants is the declaration package's static integer namespace.
 	Constants map[string]ast.Expr
+	// Package_Functions keeps bare nested calls anchored to the declaration's package after a
+	// cross-package descent; the analyzer root's Same_Set belongs to the caller instead.
+	Package_Functions map[string]Indexed_Function
 	// Is_Sugar permits the one package's unqualified public writer calls.
 	Is_Sugar bool
 }
@@ -653,6 +656,10 @@ func ast_index_functions(files []*ast.File) (functions map[string]Indexed_Functi
 				Constants:   constants,
 			}
 		}
+	}
+	for name, function := range functions {
+		function.Package_Functions = functions
+		functions[name] = function
 	}
 	return functions
 }
@@ -1185,16 +1192,17 @@ func recorder_unresolved_line(file_set *token.FileSet, call *ast.CallExpr) (line
 }
 
 // Resolves a bundle call to its declaration using the calling file's imports: a
-// bare call hits Same_Set (same-package); a qualified pkg.Foo_Invariants resolves
+// bare call hits package_functions (same-package); a qualified pkg.Foo_Invariants resolves
 // pkg to an import path and, if it is inside the module, loads that package.
 // found is false for an unresolvable bundle (cross-module, missing go.mod, an
 // unknown qualifier, or an absent declaration).
 func bundle_index_lookup(
-	index *Bundle_Index, imports map[string]string, bundle *ast.CallExpr,
+	index *Bundle_Index, imports map[string]string,
+	package_functions map[string]Indexed_Function, bundle *ast.CallExpr,
 ) (function Indexed_Function, found bool) {
 	qualifier, name := ast_bundle_qualifier(bundle)
 	if qualifier == "" {
-		same_package, present := index.Same_Set[name]
+		same_package, present := package_functions[name]
 		return same_package, present
 	}
 	import_path, imported := imports[qualifier]
@@ -1246,6 +1254,7 @@ func bundle_index_load(
 	files := recorder_parse_directory(index.File_System, index.File_Set, directory)
 	for name, function := range ast_index_functions(files) {
 		function.Is_Sugar = import_path == index.Sugar_Package
+		function.Package_Functions = functions
 		functions[name] = function
 	}
 	return functions
@@ -1556,7 +1565,8 @@ func recorder_register_assertion_files(
 			}
 			indexed := Indexed_Function{
 				Declaration: function, Imports: imports,
-				Constants: index.Constants, Is_Sugar: allow_unqualified,
+				Constants: index.Constants, Package_Functions: index.Same_Set,
+				Is_Sugar: allow_unqualified,
 			}
 			recorder_register_assertion_function(
 				recorder, file_set, indexed, index, reg)
@@ -2313,7 +2323,7 @@ func recorder_register_assertion_bundle_call(
 		recorder_invalid_bundle_namespace(file_set, call, reg)
 		return
 	}
-	function, found := bundle_index_lookup(index, imports, call)
+	function, found := bundle_index_lookup(index, imports, index.Same_Set, call)
 	if !found {
 		reg.Unresolved = append(reg.Unresolved, recorder_unresolved_line(file_set, call))
 		return
@@ -2408,7 +2418,8 @@ func recorder_register_assertion_bundle_body(
 				position+"  nested bundle namespace is not literal or forwarded")
 			return true
 		}
-		nested, found := bundle_index_lookup(index, function.Imports, call)
+		nested, found := bundle_index_lookup(
+			index, function.Imports, function.Package_Functions, call)
 		if !found {
 			unresolved := recorder_unresolved_line(file_set, call)
 			reg.Unresolved = append(reg.Unresolved, unresolved)

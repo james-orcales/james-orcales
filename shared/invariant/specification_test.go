@@ -416,6 +416,11 @@ func Test_Bundles_Cross_Package(t *testing.T) {
 type Number int
 func Number_Invariants(value Number, namespace invariant.Namespace) {
 	invariant.Assertions(namespace).Sometimes(value == 0, "zero").Ensure()
+	Position_Invariants(Position(value), "position")
+}
+type Position int
+func Position_Invariants(value Position, namespace invariant.Namespace) {
+	invariant.Assertions(namespace).Sometimes(value > 0, "positive").Ensure()
 }
 `)},
 			"b/b.go": &fstest.MapFile{Data: []byte(`package b
@@ -429,6 +434,9 @@ func check(value a.Number) { a.Number_Invariants(value, "number") }
 	invariant.Recorder_Register_Packages_For_Analysis(recorder)
 	chain_metadata(t, recorder, chain_metadata_key{
 		Namespace: "number", Ordinal: 0, Message: "zero",
+	})
+	chain_metadata(t, recorder, chain_metadata_key{
+		Namespace: "position", Ordinal: 0, Message: "positive",
 	})
 }
 

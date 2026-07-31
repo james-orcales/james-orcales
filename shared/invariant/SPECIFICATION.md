@@ -80,6 +80,23 @@ workers persist only their first branch transition; the coordinator unions those
 Registration recognizes one fluent call nest ending in `Ensure`, walks to its `Assertions` root,
 and publishes an immutable ordered plan of pre-resolved individual handles.
 
+### Packages
+
+`Packages_To_Analyze`, after glob expansion, selects the packages whose non-test Go source is
+registered directly. Every recognized direct `Always` call and ensured `Assertions` chain in that
+source is registered regardless of whether its enclosing function is reachable at runtime. An
+ensured chain inside an `_Invariants` or `_invariants` declaration remains a template and is
+instantiated only through a reached bundle callsite.
+
+### Transitive
+
+Every `_Invariants` and `_invariants` call found in registered source or a reached bundle is
+registered transitively and unconditionally within the current module. This applies to bare and
+qualified calls even when the declaration package is not selected by `Packages_To_Analyze`.
+Registration lazily parses only the packages needed to resolve those reached bundles; unrelated
+direct assertions in an unregistered package are not registered. An unresolved reached bundle is
+fatal rather than silently skipped.
+
 ### Walk
 
 The walk expands links in fluent order and seeds every guard once and every axis twice. It creates
@@ -128,8 +145,10 @@ parameter, and its chain is instantiated under each literal callsite namespace.
 
 ### Descent
 
-Registration follows bundle calls across the current module and seeds each reached chain under the
-callsite namespace rather than the template parameter.
+Registration follows every reached bundle call across the current module, whether or not the
+declaration package was selected for direct registration, and seeds each reached chain under the
+callsite namespace rather than the template parameter. Static-body and cycle validation still
+apply to the complete reached graph.
 
 ### Composition
 
@@ -147,7 +166,9 @@ is not treated as an invariant writer.
 
 ### Cross Package
 
-Bundle resolution uses the current module path. A recognized helper outside that module or one that
+Bundle resolution uses the current module path. Reaching a helper in an unregistered package
+lazily parses that package for the helper and its transitive bundle calls without registering the
+package's unrelated direct assertions. A recognized helper outside the current module or one that
 cannot be resolved is fatal rather than silently skipped.
 
 ### Callsite
