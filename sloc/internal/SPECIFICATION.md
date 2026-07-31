@@ -120,7 +120,7 @@ JSON alike, so no number in the output stands for more than one language.
 
 ### JSON
 
-Render_Json emits the report as compact flat JSON (via shared/flatjson) instead of a table:
+Render_Json emits the report as compact flat JSON (via shared/encoding/flatjson) instead of a table:
 a name-sorted array of per-language rows, each with its category and source/test counts
 flattened to source_* and tests_* keys.
 

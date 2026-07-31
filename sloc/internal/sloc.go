@@ -84,11 +84,12 @@ func Main(input Main_Input) (status_code Exit_Code) {
 // returns carries the declared range rather than the whole integer domain.
 type Exit_Code uint8
 
-// Exit_Code_Invariants bounds a status to the declared codes. Every value in the range
-// is a declared code, so the range saturates and each of the three is demanded.
+// Exit_Code_Invariants holds a status to the three declared codes, and witnesses each
+// code. The codes are an enumeration, so each member axis names the code it claims.
 func Exit_Code_Invariants(code Exit_Code, namespace invariant.Namespace) {
 	invariant.Assertions(namespace).
-		Range_Uint8(uint8(code), uint8(EXIT_SUCCESS), uint8(EXIT_USAGE)).
+		Enum_3_Uint8(
+			uint8(code), uint8(EXIT_SUCCESS), uint8(EXIT_FAILURE), uint8(EXIT_USAGE)).
 		Ensure()
 }
 
@@ -429,17 +430,22 @@ func Language_Name_Invariants(name Language_Name, namespace invariant.Namespace)
 // COMMENT_TOKENS_COUNT_MIN is a language with no line comment at all, like HTML.
 const COMMENT_TOKENS_COUNT_MIN = 0
 
+// COMMENT_TOKENS_COUNT_ONE is the single line-comment token most languages carry.
+const COMMENT_TOKENS_COUNT_ONE = 1
+
 // COMMENT_TOKENS_COUNT_MAX is the two line-comment tokens the richest seeds carry.
 const COMMENT_TOKENS_COUNT_MAX = 2
 
 // Comment_Tokens are the tokens that begin a comment running to end of line.
 type Comment_Tokens []string
 
-// Comment_Tokens_Invariants bounds how many line-comment tokens a language declares.
-// Every count in the range occurs, so the range saturates.
+// Comment_Tokens_Invariants holds how many line-comment tokens a language declares to
+// the three counts that occur, and witnesses each count.
 func Comment_Tokens_Invariants(tokens Comment_Tokens, namespace invariant.Namespace) {
 	invariant.Assertions(namespace).
-		Range_Int(len(tokens), COMMENT_TOKENS_COUNT_MIN, COMMENT_TOKENS_COUNT_MAX).
+		Enum_3_Int(
+			len(tokens), COMMENT_TOKENS_COUNT_MIN, COMMENT_TOKENS_COUNT_ONE,
+			COMMENT_TOKENS_COUNT_MAX).
 		Ensure()
 }
 
@@ -450,24 +456,26 @@ const BLOCK_COMMENT_OPENER_BYTES_MIN = 0
 // BLOCK_COMMENT_OPENER_BYTES_MAX is the four-byte "<!--" of the markup languages.
 const BLOCK_COMMENT_OPENER_BYTES_MAX = 4
 
-// BLOCK_COMMENT_OPENER_BYTES_ABSENT is the one width no seeded opener has: the seeds
-// run "", "{", the two-byte pairs, and "<!--", so three bytes never occurs. Excluding
-// it keeps the grid satisfiable without weakening the bound to a guard.
-const BLOCK_COMMENT_OPENER_BYTES_ABSENT = 3
+// BLOCK_COMMENT_OPENER_BYTES_BRACE is the one-byte "{" of the Pascal family.
+const BLOCK_COMMENT_OPENER_BYTES_BRACE = 1
+
+// BLOCK_COMMENT_OPENER_BYTES_PAIR is the two-byte openers like "/*" and "(*".
+const BLOCK_COMMENT_OPENER_BYTES_PAIR = 2
 
 // Block_Comment_Opener begins a block comment, or is empty when there is none.
 type Block_Comment_Opener string
 
-// Block_Comment_Opener_Invariants bounds an opener's byte length, carving the width no
-// seeded language uses.
+// Block_Comment_Opener_Invariants holds an opener's byte length to the four widths the
+// seeds use, and witnesses each width. Three bytes is not a member: the seeds run "",
+// "{", the two-byte pairs, and "<!--", so no seeded opener is three bytes wide.
 func Block_Comment_Opener_Invariants(
 	opener Block_Comment_Opener, namespace invariant.Namespace,
 ) {
 	invariant.Assertions(namespace).
-		Range_Holed_Int(
-			len(opener), BLOCK_COMMENT_OPENER_BYTES_MIN, BLOCK_COMMENT_OPENER_BYTES_MAX,
-			BLOCK_COMMENT_OPENER_BYTES_ABSENT, BLOCK_COMMENT_OPENER_BYTES_ABSENT,
-			BLOCK_COMMENT_OPENER_BYTES_ABSENT, BLOCK_COMMENT_OPENER_BYTES_ABSENT).
+		Enum_4_Int(
+			len(opener), BLOCK_COMMENT_OPENER_BYTES_MIN,
+			BLOCK_COMMENT_OPENER_BYTES_BRACE, BLOCK_COMMENT_OPENER_BYTES_PAIR,
+			BLOCK_COMMENT_OPENER_BYTES_MAX).
 		Ensure()
 }
 
@@ -480,17 +488,25 @@ const BLOCK_COMMENT_CLOSER_BYTES_MIN = 0
 // bound would demand a width one of them can never reach.
 const BLOCK_COMMENT_CLOSER_BYTES_MAX = 3
 
+// BLOCK_COMMENT_CLOSER_BYTES_BRACE is the one-byte "}" of the Pascal family.
+const BLOCK_COMMENT_CLOSER_BYTES_BRACE = 1
+
+// BLOCK_COMMENT_CLOSER_BYTES_PAIR is the two-byte closers like "*/" and "*)".
+const BLOCK_COMMENT_CLOSER_BYTES_PAIR = 2
+
 // Block_Comment_Closer ends a block comment, or is empty when there is none.
 type Block_Comment_Closer string
 
-// Block_Comment_Closer_Invariants bounds a closer's byte length.
+// Block_Comment_Closer_Invariants holds a closer's byte length to the four widths the
+// seeds use, and witnesses each width.
 func Block_Comment_Closer_Invariants(
 	closer Block_Comment_Closer, namespace invariant.Namespace,
 ) {
 	invariant.Assertions(namespace).
-		Range_Int(
-			len(closer),
-			BLOCK_COMMENT_CLOSER_BYTES_MIN, BLOCK_COMMENT_CLOSER_BYTES_MAX).
+		Enum_4_Int(
+			len(closer), BLOCK_COMMENT_CLOSER_BYTES_MIN,
+			BLOCK_COMMENT_CLOSER_BYTES_BRACE, BLOCK_COMMENT_CLOSER_BYTES_PAIR,
+			BLOCK_COMMENT_CLOSER_BYTES_MAX).
 		Ensure()
 }
 
@@ -503,15 +519,22 @@ const NAME_PREFIXES_COUNT_MAX = 1
 // Name_Prefixes are base-name prefixes that mark a test file.
 type Name_Prefixes []string
 
-// Name_Prefixes_Invariants bounds how many test prefixes a language declares.
+// Name_Prefixes_Invariants holds how many test prefixes a language declares to the two
+// counts that occur, and witnesses each count.
 func Name_Prefixes_Invariants(prefixes Name_Prefixes, namespace invariant.Namespace) {
 	invariant.Assertions(namespace).
-		Range_Int(len(prefixes), NAME_PREFIXES_COUNT_MIN, NAME_PREFIXES_COUNT_MAX).
+		Enum_Int(len(prefixes), NAME_PREFIXES_COUNT_MIN, NAME_PREFIXES_COUNT_MAX).
 		Ensure()
 }
 
 // NAME_INFIXES_COUNT_MIN is a language whose test files are not marked by an infix.
 const NAME_INFIXES_COUNT_MIN = 0
+
+// NAME_INFIXES_COUNT_ONE is the single infix a language like Go carries, "_test.".
+const NAME_INFIXES_COUNT_ONE = 1
+
+// NAME_INFIXES_COUNT_TWO is the two infixes a language like JavaScript carries.
+const NAME_INFIXES_COUNT_TWO = 2
 
 // NAME_INFIXES_COUNT_MAX is the three infixes the richest seed carries.
 const NAME_INFIXES_COUNT_MAX = 3
@@ -519,15 +542,21 @@ const NAME_INFIXES_COUNT_MAX = 3
 // Name_Infixes are case-sensitive base-name substrings that mark a test file.
 type Name_Infixes []string
 
-// Name_Infixes_Invariants bounds how many test infixes a language declares.
+// Name_Infixes_Invariants holds how many test infixes a language declares to the four
+// counts that occur, and witnesses each count.
 func Name_Infixes_Invariants(infixes Name_Infixes, namespace invariant.Namespace) {
 	invariant.Assertions(namespace).
-		Range_Int(len(infixes), NAME_INFIXES_COUNT_MIN, NAME_INFIXES_COUNT_MAX).
+		Enum_4_Int(
+			len(infixes), NAME_INFIXES_COUNT_MIN, NAME_INFIXES_COUNT_ONE,
+			NAME_INFIXES_COUNT_TWO, NAME_INFIXES_COUNT_MAX).
 		Ensure()
 }
 
 // VERBATIM_DELIMITERS_COUNT_MIN is a language with no verbatim string at all.
 const VERBATIM_DELIMITERS_COUNT_MIN = 0
+
+// VERBATIM_DELIMITERS_COUNT_ONE is the single verbatim form most seeds carry.
+const VERBATIM_DELIMITERS_COUNT_ONE = 1
 
 // VERBATIM_DELIMITERS_COUNT_MAX is the two verbatim forms the richest seeds carry.
 const VERBATIM_DELIMITERS_COUNT_MAX = 2
@@ -535,19 +564,24 @@ const VERBATIM_DELIMITERS_COUNT_MAX = 2
 // Verbatim_Delimiters are the multi-line string delimiters whose bodies are verbatim.
 type Verbatim_Delimiters []Verbatim_Delimiter
 
-// Verbatim_Delimiters_Invariants bounds how many verbatim forms a language declares.
+// Verbatim_Delimiters_Invariants holds how many verbatim forms a language declares to
+// the three counts that occur, and witnesses each count.
 func Verbatim_Delimiters_Invariants(
 	delimiters Verbatim_Delimiters, namespace invariant.Namespace,
 ) {
 	invariant.Assertions(namespace).
-		Range_Int(
+		Enum_3_Int(
 			len(delimiters), VERBATIM_DELIMITERS_COUNT_MIN,
-			VERBATIM_DELIMITERS_COUNT_MAX).
+			VERBATIM_DELIMITERS_COUNT_ONE, VERBATIM_DELIMITERS_COUNT_MAX).
 		Ensure()
 }
 
 // QUOTE_DELIMITERS_COUNT_MIN is a language with no quoted string at all.
 const QUOTE_DELIMITERS_COUNT_MIN = 0
+
+// QUOTE_DELIMITERS_COUNT_ONE is the lone quoted form a language without a character
+// literal carries.
+const QUOTE_DELIMITERS_COUNT_ONE = 1
 
 // QUOTE_DELIMITERS_COUNT_MAX is the string-and-character pair most seeds carry.
 const QUOTE_DELIMITERS_COUNT_MAX = 2
@@ -555,13 +589,15 @@ const QUOTE_DELIMITERS_COUNT_MAX = 2
 // Quote_Delimiters are the single-line string and character delimiters.
 type Quote_Delimiters []Quote_Delimiter
 
-// Quote_Delimiters_Invariants bounds how many quoted forms a language declares.
+// Quote_Delimiters_Invariants holds how many quoted forms a language declares to the
+// three counts that occur, and witnesses each count.
 func Quote_Delimiters_Invariants(
 	delimiters Quote_Delimiters, namespace invariant.Namespace,
 ) {
 	invariant.Assertions(namespace).
-		Range_Int(
-			len(delimiters), QUOTE_DELIMITERS_COUNT_MIN, QUOTE_DELIMITERS_COUNT_MAX).
+		Enum_3_Int(
+			len(delimiters), QUOTE_DELIMITERS_COUNT_MIN, QUOTE_DELIMITERS_COUNT_ONE,
+			QUOTE_DELIMITERS_COUNT_MAX).
 		Ensure()
 }
 
@@ -576,9 +612,8 @@ type Quote_Pair []Quote_Delimiter
 
 // Quote_Pair_Invariants pins a shared pair to the two forms it always holds.
 func Quote_Pair_Invariants(delimiters Quote_Pair, namespace invariant.Namespace) {
-	invariant.Assertions(namespace).
-		Range_Int(len(delimiters), QUOTE_PAIR_COUNT, QUOTE_PAIR_COUNT).
-		Ensure()
+	invariant.Always(
+		len(delimiters) == QUOTE_PAIR_COUNT, "A shared quote pair always holds two forms.")
 }
 
 // QUOTE_SINGLE_COUNT is the one form a lone double-quoted string set carries.
@@ -589,9 +624,9 @@ type Quote_Single []Quote_Delimiter
 
 // Quote_Single_Invariants pins a lone shared delimiter to the one form it holds.
 func Quote_Single_Invariants(delimiters Quote_Single, namespace invariant.Namespace) {
-	invariant.Assertions(namespace).
-		Range_Int(len(delimiters), QUOTE_SINGLE_COUNT, QUOTE_SINGLE_COUNT).
-		Ensure()
+	invariant.Always(
+		len(delimiters) == QUOTE_SINGLE_COUNT,
+		"A lone shared quote delimiter always holds one form.")
 }
 
 // Verbatim_Delimiter describes a string whose body is taken verbatim and may span
@@ -620,17 +655,23 @@ func Verbatim_Delimiter_Invariants(
 // VERBATIM_OPENER_BYTES_MIN is the one-byte backtick and Rust's one-byte "r" lead.
 const VERBATIM_OPENER_BYTES_MIN = 1
 
+// VERBATIM_OPENER_BYTES_BYTE_LEAD is Rust's two-byte "br" lead, which adds the
+// byte-string "b" to the raw "r".
+const VERBATIM_OPENER_BYTES_BYTE_LEAD = 2
+
 // VERBATIM_OPENER_BYTES_MAX is the three-byte triple quote.
 const VERBATIM_OPENER_BYTES_MAX = 3
 
 // Verbatim_Opener opens a verbatim string, or leads the hashes of a hashable one.
 type Verbatim_Opener string
 
-// Verbatim_Opener_Invariants bounds a verbatim opener's byte length. Every width in the
-// range occurs — the backtick, Rust's "br", the triple quote — so the range saturates.
+// Verbatim_Opener_Invariants holds a verbatim opener's byte length to the three widths
+// that occur — the backtick, Rust's "br", the triple quote — and witnesses each width.
 func Verbatim_Opener_Invariants(opener Verbatim_Opener, namespace invariant.Namespace) {
 	invariant.Assertions(namespace).
-		Range_Int(len(opener), VERBATIM_OPENER_BYTES_MIN, VERBATIM_OPENER_BYTES_MAX).
+		Enum_3_Int(
+			len(opener), VERBATIM_OPENER_BYTES_MIN, VERBATIM_OPENER_BYTES_BYTE_LEAD,
+			VERBATIM_OPENER_BYTES_MAX).
 		Ensure()
 }
 
@@ -638,18 +679,26 @@ func Verbatim_Opener_Invariants(opener Verbatim_Opener, namespace invariant.Name
 // terminator is computed from the hash count rather than declared.
 const VERBATIM_CLOSER_BYTES_MIN = 0
 
+// VERBATIM_CLOSER_BYTES_BACKTICK is the one-byte backtick.
+const VERBATIM_CLOSER_BYTES_BACKTICK = 1
+
+// VERBATIM_CLOSER_BYTES_PAIR is Python's two-byte empty pair.
+const VERBATIM_CLOSER_BYTES_PAIR = 2
+
 // VERBATIM_CLOSER_BYTES_MAX is the three-byte triple quote.
 const VERBATIM_CLOSER_BYTES_MAX = 3
 
 // Verbatim_Closer terminates a fixed verbatim string, empty when the form is hashable.
 type Verbatim_Closer string
 
-// Verbatim_Closer_Invariants bounds a verbatim closer's byte length. Every width in the
-// range occurs: the empty closer of a hashable form, the one-byte backtick, Python's
-// two-byte empty pair, and the three-byte triple quote.
+// Verbatim_Closer_Invariants holds a verbatim closer's byte length to the four widths
+// that occur, and witnesses each width: the empty closer of a hashable form, the
+// one-byte backtick, Python's two-byte empty pair, and the three-byte triple quote.
 func Verbatim_Closer_Invariants(closer Verbatim_Closer, namespace invariant.Namespace) {
 	invariant.Assertions(namespace).
-		Range_Int(len(closer), VERBATIM_CLOSER_BYTES_MIN, VERBATIM_CLOSER_BYTES_MAX).
+		Enum_4_Int(
+			len(closer), VERBATIM_CLOSER_BYTES_MIN, VERBATIM_CLOSER_BYTES_BACKTICK,
+			VERBATIM_CLOSER_BYTES_PAIR, VERBATIM_CLOSER_BYTES_MAX).
 		Ensure()
 }
 
@@ -677,21 +726,18 @@ func Quote_Delimiter_Invariants(
 		delimiter.Character_Like, "Quote_Delimiter.Character_Like")
 }
 
-// QUOTE_MARK_BYTES_MIN is the width of every quote mark: a single byte.
-const QUOTE_MARK_BYTES_MIN = 1
-
-// QUOTE_MARK_BYTES_MAX is the same single byte. A quoted form's delimiter is exactly
-// one byte in every seeded language, so the bound is a point, not an interval.
-const QUOTE_MARK_BYTES_MAX = 1
+// QUOTE_MARK_BYTES is the width of every quote mark: a single byte. A quoted form's
+// delimiter is exactly one byte in every seeded language, so the width is a point, not
+// an interval.
+const QUOTE_MARK_BYTES = 1
 
 // Quote_Mark opens or closes a single-line string or character literal.
 type Quote_Mark string
 
 // Quote_Mark_Invariants pins a quote mark to the single byte every seeded form uses.
 func Quote_Mark_Invariants(mark Quote_Mark, namespace invariant.Namespace) {
-	invariant.Assertions(namespace).
-		Range_Int(len(mark), QUOTE_MARK_BYTES_MIN, QUOTE_MARK_BYTES_MAX).
-		Ensure()
+	invariant.Always(
+		len(mark) == QUOTE_MARK_BYTES, "A quote mark is always a single byte.")
 }
 
 // ESCAPE_BYTE_NONE is the zero escape of a form that has no escape character at all,
@@ -2096,12 +2142,13 @@ func File_Classifier_Invariants(classifier File_Classifier, namespace invariant.
 // File_Classifier_Kind selects the concrete classification implementation Main uses.
 type File_Classifier_Kind int
 
-// File_Classifier_Kind_Invariants bounds the two classifier implementations.
+// File_Classifier_Kind_Invariants holds a selection to the two classifier
+// implementations, and witnesses each one.
 func File_Classifier_Kind_Invariants(
 	kind File_Classifier_Kind, namespace invariant.Namespace,
 ) {
 	invariant.Assertions(namespace).
-		Range_Int(
+		Enum_Int(
 			int(kind),
 			int(FILE_CLASSIFIER_KIND_BYTES),
 			int(FILE_CLASSIFIER_KIND_MODEL)).
@@ -2301,11 +2348,13 @@ func counts_tally(counts *Counts, kind Line_Kind) {
 // The partition a single physical line falls into.
 type Line_Kind int
 
-// Line_Kind_Invariants bounds a partition to the three a line can fall into. Every
-// value in the range is one of them, so the range saturates.
+// Line_Kind_Invariants holds a partition to the three a line can fall into, and
+// witnesses each one.
 func Line_Kind_Invariants(kind Line_Kind, namespace invariant.Namespace) {
 	invariant.Assertions(namespace).
-		Range_Int(int(kind), int(LINE_KIND_BLANK), int(LINE_KIND_COMMENT)).
+		Enum_3_Int(
+			int(kind), int(LINE_KIND_BLANK), int(LINE_KIND_CODE),
+			int(LINE_KIND_COMMENT)).
 		Ensure()
 }
 
@@ -3071,10 +3120,11 @@ func line_scan_verdict(scan *Line_Scan) (kind Scan_Verdict) {
 // blank, whatever a physical line may be.
 type Scan_Verdict int
 
-// Scan_Verdict_Invariants bounds a scanned line's verdict to the two it can take.
+// Scan_Verdict_Invariants holds a scanned line's verdict to the two it can take, and
+// witnesses each one.
 func Scan_Verdict_Invariants(kind Scan_Verdict, namespace invariant.Namespace) {
 	invariant.Assertions(namespace).
-		Range_Int(int(kind), int(LINE_KIND_CODE), int(LINE_KIND_COMMENT)).
+		Enum_Int(int(kind), int(LINE_KIND_CODE), int(LINE_KIND_COMMENT)).
 		Ensure()
 }
 
@@ -3636,11 +3686,12 @@ const SKIP_REASON_BINARY Skip_Reason = 3
 // ordinary one, so a file cannot leave the pipeline unaccounted for.
 type Skip_Reason uint8
 
-// Skip_Reason_Invariants bounds an outcome to the four that exist.
+// Skip_Reason_Invariants holds an outcome to the four that exist, and witnesses each one.
 func Skip_Reason_Invariants(reason Skip_Reason, namespace invariant.Namespace) {
 	invariant.Assertions(namespace).
-		Range_Uint8(
-			uint8(reason), uint8(SKIP_REASON_COUNTED), uint8(SKIP_REASON_BINARY)).
+		Enum_4_Uint8(
+			uint8(reason), uint8(SKIP_REASON_COUNTED), uint8(SKIP_REASON_UNREADABLE),
+			uint8(SKIP_REASON_OVERSIZED), uint8(SKIP_REASON_BINARY)).
 		Ensure()
 }
 
@@ -3762,17 +3813,23 @@ func count_classify(
 // UNCOUNTED_REASON_MIN is the first reason a file is left out after selection.
 const UNCOUNTED_REASON_MIN = SKIP_REASON_UNREADABLE
 
+// UNCOUNTED_REASON_OVERSIZED is the middle reason: the file is wider than the source
+// bound.
+const UNCOUNTED_REASON_OVERSIZED = SKIP_REASON_OVERSIZED
+
 // UNCOUNTED_REASON_MAX is the last reason a file is left out after selection.
 const UNCOUNTED_REASON_MAX = SKIP_REASON_BINARY
 
 // Uncounted_Reason excludes the ordinary counted result before skipped tallies consume it.
 type Uncounted_Reason uint8
 
-// Uncounted_Reason_Invariants states only reasons that increment a skipped tally.
+// Uncounted_Reason_Invariants states only reasons that increment a skipped tally, and
+// witnesses each one.
 func Uncounted_Reason_Invariants(reason Uncounted_Reason, namespace invariant.Namespace) {
 	invariant.Assertions(namespace).
-		Range_Uint8(
-			uint8(reason), uint8(UNCOUNTED_REASON_MIN), uint8(UNCOUNTED_REASON_MAX)).
+		Enum_3_Uint8(
+			uint8(reason), uint8(UNCOUNTED_REASON_MIN),
+			uint8(UNCOUNTED_REASON_OVERSIZED), uint8(UNCOUNTED_REASON_MAX)).
 		Ensure()
 }
 
@@ -4458,21 +4515,23 @@ const PERCENT_CELL_BYTES_MIN = 0
 const PERCENT_CELL_BYTES_MAX = 6
 
 // PERCENT_CELL_BYTES_NARROW is the narrowest share actually printed, "0.0%". A share
-// is empty or at least this wide; the widths between are carved because one decimal
-// place and a percent sign cannot be spelled in fewer bytes.
+// is empty or at least this wide, because one decimal place and a percent sign cannot
+// be spelled in fewer bytes.
 const PERCENT_CELL_BYTES_NARROW = 4
+
+// PERCENT_CELL_BYTES_TENS is the two-digit share, "12.3%".
+const PERCENT_CELL_BYTES_TENS = 5
 
 // Percent_Cell is a table row's printed share of code.
 type Percent_Cell string
 
-// Percent_Cell_Invariants bounds a printed share's width, carving the widths a
-// one-decimal percentage cannot occupy.
+// Percent_Cell_Invariants holds a printed share's width to the four a one-decimal
+// percentage can occupy, and witnesses each width.
 func Percent_Cell_Invariants(cell Percent_Cell, namespace invariant.Namespace) {
 	invariant.Assertions(namespace).
-		Range_Holed_Int(
-			len(cell), PERCENT_CELL_BYTES_MIN, PERCENT_CELL_BYTES_MAX,
-			PERCENT_CELL_BYTES_NARROW-3, PERCENT_CELL_BYTES_NARROW-2,
-			PERCENT_CELL_BYTES_NARROW-1, PERCENT_CELL_BYTES_NARROW-1).
+		Enum_4_Int(
+			len(cell), PERCENT_CELL_BYTES_MIN, PERCENT_CELL_BYTES_NARROW,
+			PERCENT_CELL_BYTES_TENS, PERCENT_CELL_BYTES_MAX).
 		Ensure()
 }
 
@@ -4673,21 +4732,17 @@ func category_order() (order Categories) {
 	}
 }
 
-// CATEGORIES_COUNT_MIN is the fixed number of taxonomy buckets, which is also its
-// maximum: the order is a declared list, not something a report varies.
-const CATEGORIES_COUNT_MIN = 9
-
-// CATEGORIES_COUNT_MAX is that same fixed number.
-const CATEGORIES_COUNT_MAX = 9
+// CATEGORIES_COUNT is the fixed number of taxonomy buckets: the order is a declared
+// list, not something a report varies, so the size is a point, not an interval.
+const CATEGORIES_COUNT = 9
 
 // Categories is the fixed display order of the taxonomy buckets.
 type Categories []Category
 
 // Categories_Invariants pins the taxonomy to its declared size.
 func Categories_Invariants(order Categories, namespace invariant.Namespace) {
-	invariant.Assertions(namespace).
-		Range_Int(len(order), CATEGORIES_COUNT_MIN, CATEGORIES_COUNT_MAX).
-		Ensure()
+	invariant.Always(
+		len(order) == CATEGORIES_COUNT, "The taxonomy always holds its declared size.")
 }
 
 // A category and the language groups it holds, in name order.
@@ -4733,9 +4788,9 @@ type Category_Groups []Category_Group
 func Category_Groups_Invariants(
 	categories Category_Groups, namespace invariant.Namespace,
 ) {
-	invariant.Assertions(namespace).
-		Range_Int(len(categories), CATEGORIES_COUNT_MIN, CATEGORIES_COUNT_MAX).
-		Ensure()
+	invariant.Always(
+		len(categories) == CATEGORIES_COUNT,
+		"A rendered bucket list always holds the declared taxonomy size.")
 }
 
 // Buckets the name-sorted language groups into categories in the fixed display order.
@@ -4876,7 +4931,7 @@ const RENDER_ROWS_COUNT_MIN = 1
 // CATEGORIES_SHOWN_MAX is how many taxonomy labels a table can print. It is one fewer
 // than the taxonomy itself: every seeded language resolves to a named bucket, so the
 // catch-all is never printed, and an empty bucket is skipped.
-const CATEGORIES_SHOWN_MAX = CATEGORIES_COUNT_MAX - 1
+const CATEGORIES_SHOWN_MAX = CATEGORIES_COUNT - 1
 
 // RENDER_ROWS_COUNT_MAX is the header, every taxonomy label, a row per language, and —
 // under the per-file breakdown — a row per counted file.
@@ -4934,21 +4989,15 @@ const SPLIT_ROWS_COUNT_MIN = 0
 // SPLIT_ROWS_COUNT_MAX is the source and test pair, which always appear together.
 const SPLIT_ROWS_COUNT_MAX = 2
 
-// SPLIT_ROWS_COUNT_ABSENT is the lone sub-row that never occurs: the split is a pair or
-// it is nothing, since a group with tests has a source side even when that side is
-// empty.
-const SPLIT_ROWS_COUNT_ABSENT = 1
-
 // Split_Row_Pair are the source and test rows printed under a group, or nothing.
 type Split_Row_Pair []Render_Row
 
-// Split_Row_Pair_Invariants pins the split to the two shapes it takes.
+// Split_Row_Pair_Invariants pins the split to the two shapes it takes, and witnesses
+// each shape. The lone sub-row never occurs: the split is a pair or it is nothing,
+// since a group with tests has a source side even when that side is empty.
 func Split_Row_Pair_Invariants(rows Split_Row_Pair, namespace invariant.Namespace) {
 	invariant.Assertions(namespace).
-		Range_Holed_Int(
-			len(rows), SPLIT_ROWS_COUNT_MIN, SPLIT_ROWS_COUNT_MAX,
-			SPLIT_ROWS_COUNT_ABSENT, SPLIT_ROWS_COUNT_ABSENT,
-			SPLIT_ROWS_COUNT_ABSENT, SPLIT_ROWS_COUNT_ABSENT).
+		Enum_Int(len(rows), SPLIT_ROWS_COUNT_MIN, SPLIT_ROWS_COUNT_MAX).
 		Ensure()
 }
 
@@ -5075,10 +5124,11 @@ const FILE_WIDTH_MAX = FILE_CELL_BYTES_MAX
 // File_Width is the printed width of the file-tally column.
 type File_Width int
 
-// File_Width_Invariants bounds the file-tally column's width.
+// File_Width_Invariants holds the file-tally column's width to the two it takes, and
+// witnesses each one.
 func File_Width_Invariants(width File_Width, namespace invariant.Namespace) {
 	invariant.Assertions(namespace).
-		Range_Int(int(width), FILE_WIDTH_MIN, FILE_WIDTH_MAX).
+		Enum_Int(int(width), FILE_WIDTH_MIN, FILE_WIDTH_MAX).
 		Ensure()
 }
 
@@ -5117,6 +5167,10 @@ func Code_Width_Invariants(width Code_Width, namespace invariant.Namespace) {
 // COMMENTS_WIDTH_MIN is the header's own label, "Comments".
 const COMMENTS_WIDTH_MIN = 8
 
+// COMMENTS_WIDTH_SEVEN_FIGURE is the width of a seven-figure tally with its thousands
+// separators, "9,999,999" — the one width between the header label and the line bound.
+const COMMENTS_WIDTH_SEVEN_FIGURE = 9
+
 // COMMENTS_WIDTH_MAX is that same label: it is wider than any tally the column can
 // print, so this column never grows past its header.
 const COMMENTS_WIDTH_MAX = LINE_WIDTH_MAX
@@ -5124,10 +5178,13 @@ const COMMENTS_WIDTH_MAX = LINE_WIDTH_MAX
 // Comments_Width is the printed width of the comment-line column.
 type Comments_Width int
 
-// Comments_Width_Invariants bounds the comment-line column's width.
+// Comments_Width_Invariants holds the comment-line column's width to the three it
+// takes, and witnesses each one.
 func Comments_Width_Invariants(width Comments_Width, namespace invariant.Namespace) {
 	invariant.Assertions(namespace).
-		Range_Int(int(width), COMMENTS_WIDTH_MIN, COMMENTS_WIDTH_MAX).
+		Enum_3_Int(
+			int(width), COMMENTS_WIDTH_MIN, COMMENTS_WIDTH_SEVEN_FIGURE,
+			COMMENTS_WIDTH_MAX).
 		Ensure()
 }
 
@@ -5157,10 +5214,11 @@ const PERCENT_WIDTH_MAX = PERCENT_CELL_BYTES_MAX
 // Percent_Width is the printed width of the code-share column.
 type Percent_Width int
 
-// Percent_Width_Invariants bounds the share column's width.
+// Percent_Width_Invariants holds the share column's width to the two it takes, and
+// witnesses each one.
 func Percent_Width_Invariants(width Percent_Width, namespace invariant.Namespace) {
 	invariant.Assertions(namespace).
-		Range_Int(int(width), PERCENT_WIDTH_MIN, PERCENT_WIDTH_MAX).
+		Enum_Int(int(width), PERCENT_WIDTH_MIN, PERCENT_WIDTH_MAX).
 		Ensure()
 }
 
