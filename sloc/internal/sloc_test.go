@@ -1,6 +1,7 @@
 package sloc_test
 
 import (
+	"io"
 	"io/fs"
 	"strings"
 	"testing"
@@ -34,6 +35,9 @@ func Test_Main_Paths(t *testing.T) {
 			Ignore_For: func(root sloc.Root) (is_ignored sloc.Ignore_Predicate) {
 				return nil
 			},
+			Classifier: sloc.File_Classifier{
+				Kind: sloc.FILE_CLASSIFIER_KIND_BYTES,
+			},
 			Concurrency: 1,
 		})
 		if code != 0 {
@@ -47,5 +51,120 @@ func Test_Main_Paths(t *testing.T) {
 	}
 	if !strings.Contains(run([]string{"sloc"}), "Go") {
 		t.Error("expected Go counted for the default path")
+	}
+}
+
+// Test_Main_Classifier keeps the explicit-file route on the same dependency boundary as a
+// walked tree, otherwise simulations would silently regain the production scanner there.
+func Test_Main_Classifier(t *testing.T) {
+	source := sloc.Source("the real scanner would count one code line\n")
+	want := sloc.Counts{Code: 19, Comment: 23, Blank: 29, Dropped: 31}
+	output := strings.Builder{}
+	error_output := strings.Builder{}
+	code := sloc.Main(sloc.Main_Input{
+		Arguments:    sloc.Arguments{"sloc", "modeled.go"},
+		Output:       &output,
+		Error_Output: &error_output,
+		Open: func(root sloc.Root) (file_system fs.FS) {
+			return fstest.MapFS{}
+		},
+		Path_Is_Directory: func(
+			name sloc.File_Path,
+		) (is_directory bool, err error) {
+			return false, nil
+		},
+		Read_File: func(name sloc.File_Path) (content sloc.Source, err error) {
+			return source, nil
+		},
+		Ignore_For: func(root sloc.Root) (is_ignored sloc.Ignore_Predicate) {
+			return nil
+		},
+		Classifier: sloc.File_Classifier{
+			Kind: sloc.FILE_CLASSIFIER_KIND_MODEL,
+			Classifications: sloc.File_Classifications{
+				"modeled.go": want,
+			},
+		},
+		Concurrency: 1,
+	})
+	if code != 0 {
+		t.Fatalf("exit = %d, stderr = %q", code, error_output.String())
+	}
+	if !strings.Contains(output.String(), "19") {
+		t.Errorf("output did not carry modeled code count:\n%s", output.String())
+	}
+}
+
+// Test_Main_Classifier_Failures verifies an injected model cannot silently fall back
+// to scanning and an unknown concrete implementation cannot enter the component.
+func Test_Main_Classifier_Failures(t *testing.T) {
+	cases := []struct {
+		Name       string
+		Classifier sloc.File_Classifier
+		Source     sloc.Source
+	}{
+		{
+			Name: "missing model",
+			Classifier: sloc.File_Classifier{
+				Kind: sloc.FILE_CLASSIFIER_KIND_MODEL,
+			},
+			Source: sloc.Source("nonempty\n"),
+		},
+		{
+			Name: "unknown kind",
+			Classifier: sloc.File_Classifier{
+				Kind: sloc.File_Classifier_Kind(0),
+			},
+			Source: sloc.Source("nonempty\n"),
+		},
+	}
+	for _, one := range cases {
+		t.Run(one.Name, func(subtest *testing.T) {
+			defer func() {
+				if recovered := recover(); recovered == nil {
+					subtest.Fatal(
+						"classifier must reject an incomplete capability")
+				}
+			}()
+			sloc.Main(classifier_main_input(one.Classifier, one.Source))
+		})
+	}
+}
+
+// Test_Main_Classifier_Empty_Model verifies the zero classification remains derivable
+// without manufacturing a redundant modeled result for an empty source.
+func Test_Main_Classifier_Empty_Model(t *testing.T) {
+	classifier := sloc.File_Classifier{Kind: sloc.FILE_CLASSIFIER_KIND_MODEL}
+	code := sloc.Main(classifier_main_input(classifier, sloc.Source{}))
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0", code)
+	}
+}
+
+// The explicit-file route keeps classifier panics on the caller goroutine, otherwise
+// a worker panic could not be asserted without weakening production concurrency.
+func classifier_main_input(
+	classifier sloc.File_Classifier, source sloc.Source,
+) (input sloc.Main_Input) {
+	return sloc.Main_Input{
+		Arguments:    sloc.Arguments{"sloc", "modeled.go"},
+		Output:       io.Discard,
+		Error_Output: io.Discard,
+		Open: func(root sloc.Root) (file_system fs.FS) {
+			return fstest.MapFS{}
+		},
+		Path_Is_Directory: func(
+			name sloc.File_Path,
+		) (is_directory bool, err error) {
+			return false, nil
+		},
+		Read_File: func(name sloc.File_Path) (content sloc.Source, err error) {
+			return source, nil
+		},
+		Ignore_For: func(root sloc.Root) (is_ignored sloc.Ignore_Predicate) {
+			return nil
+		},
+		Classifier:  classifier,
+		Concurrency: 1,
 	}
 }

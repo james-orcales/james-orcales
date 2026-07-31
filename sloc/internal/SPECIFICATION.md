@@ -58,6 +58,12 @@ Makefile from its name; an unrecognized file resolves to nothing.
 Count walks a tree, classifies every recognized file in parallel, and returns one
 File_Count per file in the lexical order the walk visited them.
 
+### Classification
+
+Classification is an injected concrete capability carrying path, source, and language.
+Production selects the byte scanner; a deterministic host may select a total path-keyed model.
+The model holds at most 65,631 paths, the largest production-reachable boundary witness.
+
 ### Extensions
 
 Only files whose extension is recognized are counted; the rest are skipped silently.

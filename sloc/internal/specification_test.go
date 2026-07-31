@@ -271,6 +271,34 @@ func Test_Languages_Detection(t *testing.T) {
 	}
 }
 
+// Test_Count_Classification keeps classification supplied by the root so a deterministic
+// host can model that computation without replacing the filesystem or aggregation contract.
+func Test_Count_Classification(t *testing.T) {
+	source := []byte("the real scanner would count this as one code line\n")
+	want := sloc.Counts{Code: 7, Comment: 11, Blank: 13, Dropped: 17}
+	report, err := sloc.Count(sloc.Count_Input{
+		File_System: fstest.MapFS{
+			"modeled.go": &fstest.MapFile{Data: source},
+		},
+		Classifier: sloc.File_Classifier{
+			Kind: sloc.FILE_CLASSIFIER_KIND_MODEL,
+			Classifications: sloc.File_Classifications{
+				"modeled.go": want,
+			},
+		},
+		Concurrency: 1,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(report.Files) != 1 {
+		t.Fatalf("files = %d, want 1", len(report.Files))
+	}
+	if report.Files[0].Counts != want {
+		t.Errorf("counts = %+v, want %+v", report.Files[0].Counts, want)
+	}
+}
+
 // Test_Count_Extensions verifies only files with a recognized extension are counted,
 // across nested directories, and that unknown extensions are skipped.
 func Test_Count_Extensions(t *testing.T) {
@@ -279,7 +307,7 @@ func Test_Count_Extensions(t *testing.T) {
 		"sub/lib.rs": &fstest.MapFile{Data: []byte("fn main() {}\n")},
 		"readme.txt": &fstest.MapFile{Data: []byte("hello\n")},
 		"data.json":  &fstest.MapFile{Data: []byte("{}\n")},
-	}})
+	}, Classifier: sloc.File_Classifier{Kind: sloc.FILE_CLASSIFIER_KIND_BYTES}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -306,7 +334,12 @@ func Test_Count_Hidden(t *testing.T) {
 		".env.go":           &fstest.MapFile{Data: []byte("package secret\n")},
 		".hidden/buried.go": &fstest.MapFile{Data: []byte("package buried\n")},
 	}
-	report, err := sloc.Count(sloc.Count_Input{File_System: file_system})
+	report, err := sloc.Count(sloc.Count_Input{
+		File_System: file_system,
+		Classifier: sloc.File_Classifier{
+			Kind: sloc.FILE_CLASSIFIER_KIND_BYTES,
+		},
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -320,6 +353,9 @@ func Test_Count_Hidden(t *testing.T) {
 	with_hidden, hidden_err := sloc.Count(sloc.Count_Input{
 		File_System:    file_system,
 		Include_Hidden: true,
+		Classifier: sloc.File_Classifier{
+			Kind: sloc.FILE_CLASSIFIER_KIND_BYTES,
+		},
 	})
 	if hidden_err != nil {
 		t.Fatal(hidden_err)
@@ -339,6 +375,9 @@ func Test_Count_Exclusion(t *testing.T) {
 	}
 	report, err := sloc.Count(sloc.Count_Input{
 		File_System: file_system,
+		Classifier: sloc.File_Classifier{
+			Kind: sloc.FILE_CLASSIFIER_KIND_BYTES,
+		},
 		Is_Ignored: func(relative_path string, is_directory bool) (ignored bool) {
 			if relative_path == "vendor" {
 				return true
@@ -364,7 +403,7 @@ func Test_Count_Binary(t *testing.T) {
 	report, err := sloc.Count(sloc.Count_Input{File_System: fstest.MapFS{
 		"real.go": &fstest.MapFile{Data: []byte("package main\n")},
 		"blob.go": &fstest.MapFile{Data: []byte("package\x00main\n")},
-	}})
+	}, Classifier: sloc.File_Classifier{Kind: sloc.FILE_CLASSIFIER_KIND_BYTES}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -386,7 +425,7 @@ func Test_Count_Tests(t *testing.T) {
 		"tests/integ.rs": &fstest.MapFile{Data: []byte("fn t() {}\n")},
 		"__tests__/x.ts": &fstest.MapFile{Data: []byte("test()\n")},
 		"app.spec.ts":    &fstest.MapFile{Data: []byte("test()\n")},
-	}})
+	}, Classifier: sloc.File_Classifier{Kind: sloc.FILE_CLASSIFIER_KIND_BYTES}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -564,6 +603,7 @@ func Test_Render_JSON(t *testing.T) {
 func Test_Render_Dropped(t *testing.T) {
 	wide := strings.Repeat("a", sloc.LINE_BYTES_MAX+1) + "\n"
 	counts := sloc.Classify_File(sloc.Classify_File_Input{
+		Path:     "fixture.go",
 		Source:   sloc.Source(wide + "b\n"),
 		Language: sloc.Language_Go(),
 	})
@@ -596,7 +636,10 @@ func Test_Render_Dropped(t *testing.T) {
 		},
 		Is_Ignored:     nil,
 		Include_Hidden: false,
-		Concurrency:    1,
+		Classifier: sloc.File_Classifier{
+			Kind: sloc.FILE_CLASSIFIER_KIND_BYTES,
+		},
+		Concurrency: 1,
 	})
 	if err != nil {
 		t.Fatalf("count: %v", err)
@@ -618,6 +661,7 @@ func Test_Render_Dropped(t *testing.T) {
 func Test_Bounds_Line(t *testing.T) {
 	wide := strings.Repeat("a", sloc.LINE_BYTES_MAX+904) + "\n"
 	counts := sloc.Classify_File(sloc.Classify_File_Input{
+		Path:     "fixture.go",
 		Source:   sloc.Source(wide),
 		Language: sloc.Language_Go(),
 	})
@@ -628,6 +672,7 @@ func Test_Bounds_Line(t *testing.T) {
 	// The window truncates what is read, so a comment opening past it is not seen.
 	late := strings.Repeat(" ", sloc.LINE_BYTES_MAX) + "// c\n"
 	counts = sloc.Classify_File(sloc.Classify_File_Input{
+		Path:     "fixture.go",
 		Source:   sloc.Source(late),
 		Language: sloc.Language_Go(),
 	})
@@ -648,7 +693,10 @@ func Test_Bounds_File(t *testing.T) {
 		},
 		Is_Ignored:     nil,
 		Include_Hidden: false,
-		Concurrency:    1,
+		Classifier: sloc.File_Classifier{
+			Kind: sloc.FILE_CLASSIFIER_KIND_BYTES,
+		},
+		Concurrency: 1,
 	})
 	if err != nil {
 		t.Fatalf("count: %v", err)
@@ -674,7 +722,10 @@ func Test_Bounds_Overflow(t *testing.T) {
 		File_System:    disk,
 		Is_Ignored:     nil,
 		Include_Hidden: false,
-		Concurrency:    1,
+		Classifier: sloc.File_Classifier{
+			Kind: sloc.FILE_CLASSIFIER_KIND_BYTES,
+		},
+		Concurrency: 1,
 	})
 	if err != nil {
 		t.Fatalf("count: %v", err)
@@ -695,6 +746,7 @@ func Test_Bounds_Overflow(t *testing.T) {
 func Test_Bounds_Depth(t *testing.T) {
 	deep := strings.Repeat("/*", 300) + "\nstill inside\n"
 	counts := sloc.Classify_File(sloc.Classify_File_Input{
+		Path:     "fixture.rs",
 		Source:   sloc.Source(deep),
 		Language: sloc.Language_Rust(),
 	})
@@ -725,6 +777,7 @@ func run_classify_cases(t *testing.T, language sloc.Language, cases []classify_c
 	t.Helper()
 	for _, one := range cases {
 		counts := sloc.Classify_File(sloc.Classify_File_Input{
+			Path:     "fixture",
 			Source:   sloc.Source(one.Source),
 			Language: language,
 		})

@@ -187,6 +187,7 @@ func main_input_directory(
 		File_System:    input.Open(root),
 		Is_Ignored:     main_input_ignore(input, root, scope.No_Ignore),
 		Include_Hidden: scope.Include_Hidden,
+		Classifier:     input.Classifier,
 		Concurrency:    input.Concurrency,
 	})
 	if count_err != nil {
@@ -236,7 +237,8 @@ func main_input_file(
 	if read_err != nil {
 		return unknown, false, read_err
 	}
-	counts := Classify_File(Classify_File_Input{
+	counts := classify(input.Classifier, Classify_File_Input{
+		Path:     Classified_Path(name),
 		Source:   content,
 		Language: language,
 	})
@@ -338,15 +340,18 @@ type Main_Input struct {
 	Read_File func(name File_Path) (content Source, err error)
 	// Ignore_For builds the ignore filter for a directory root, or returns nil.
 	Ignore_For func(root Root) (is_ignored Ignore_Predicate)
+	// Classifier partitions one recognized file's source into line kinds.
+	Classifier File_Classifier
 	// Concurrency bounds the file-counting worker pool. It stays an unbounded integer
 	// because it is host-supplied and count_classify clamps it at both ends.
 	Concurrency int
 }
 
-// Main_Input_Invariants states the command line and the worker bound. The writers and
-// the injected operations are function and interface values with no preset of their own.
+// Main_Input_Invariants states the command line, classifier, and worker bound. The
+// writers and injected operations are function and interface values with no preset.
 func Main_Input_Invariants(input Main_Input, namespace invariant.Namespace) {
 	Arguments_Invariants(input.Arguments, "Main_Input.Arguments")
+	File_Classifier_Invariants(input.Classifier, "Main_Input.Classifier")
 	invariant.Int_Invariants(input.Concurrency, "Main_Input.Concurrency")
 }
 
@@ -2071,8 +2076,124 @@ func counts_lines(counts Counts) (line_count Line_Count) {
 	return counts.Code + counts.Comment + counts.Blank
 }
 
-// Classify_File_Input is one file's bytes and the language to read them as.
+// File_Classifier is the classification capability selected by the composition root.
+// The concrete value keeps simulations on Main while still letting them replace only
+// derivations whose production-reachable result they establish.
+type File_Classifier struct {
+	// Kind selects byte classification or a path-keyed classification model.
+	Kind File_Classifier_Kind
+	// Classifications holds the complete modeled results for nonempty modeled files.
+	Classifications File_Classifications
+}
+
+// File_Classifier_Invariants states the selected implementation and model size.
+func File_Classifier_Invariants(classifier File_Classifier, namespace invariant.Namespace) {
+	File_Classifier_Kind_Invariants(classifier.Kind, "File_Classifier.Kind")
+	File_Classifications_Invariants(
+		classifier.Classifications, "File_Classifier.Classifications")
+}
+
+// File_Classifier_Kind selects the concrete classification implementation Main uses.
+type File_Classifier_Kind int
+
+// File_Classifier_Kind_Invariants bounds the two classifier implementations.
+func File_Classifier_Kind_Invariants(
+	kind File_Classifier_Kind, namespace invariant.Namespace,
+) {
+	invariant.Assertions(namespace).
+		Range_Int(
+			int(kind),
+			int(FILE_CLASSIFIER_KIND_BYTES),
+			int(FILE_CLASSIFIER_KIND_MODEL)).
+		Ensure()
+}
+
+// FILE_CLASSIFIER_KIND_BYTES selects the production byte scanner. One rather than
+// zero keeps an omitted File_Classifier invalid instead of creating an ambient fallback.
+const FILE_CLASSIFIER_KIND_BYTES File_Classifier_Kind = 1
+
+// FILE_CLASSIFIER_KIND_MODEL selects exact path-keyed modeled results.
+const FILE_CLASSIFIER_KIND_MODEL File_Classifier_Kind = 2
+
+// File_Classifications are exact classifications keyed by recognized file path.
+type File_Classifications map[Classified_Path]Counts
+
+// File_Classifications_Invariants bounds a model to the widest boundary witness.
+func File_Classifications_Invariants(
+	classifications File_Classifications, namespace invariant.Namespace,
+) {
+	invariant.Assertions(namespace).
+		Range_Int(
+			len(classifications),
+			FILE_CLASSIFICATIONS_COUNT_MIN,
+			FILE_CLASSIFICATIONS_COUNT_MAX).
+		Ensure()
+}
+
+// FILE_CLASSIFICATIONS_COUNT_MIN is the absent model of the byte classifier.
+const FILE_CLASSIFICATIONS_COUNT_MIN = 0
+
+// FILE_CLASSIFICATIONS_COUNT_MAX is the two-root line-bound witness: one root fills
+// a report while the other contributes the 96 classifications needed to make their
+// omitted-file tallies reach the aggregate bound.
+const FILE_CLASSIFICATIONS_COUNT_MAX = 65631
+
+// The consumer validates both sides of the injected boundary because a modeled
+// implementation must obey the same domain and range as the byte implementation.
+func classify(classifier File_Classifier, input Classify_File_Input) (counts Counts) {
+	defer func() { Counts_Invariants(counts, "classify.counts") }()
+	File_Classifier_Invariants(classifier, "classify.classifier")
+	Classify_File_Input_Invariants(input, "classify.input")
+	switch classifier.Kind {
+	case FILE_CLASSIFIER_KIND_BYTES:
+		if len(classifier.Classifications) != 0 {
+			panic("byte classifier carries modeled classifications")
+		}
+		return Classify_File(input)
+	case FILE_CLASSIFIER_KIND_MODEL:
+		return classify_model(classifier.Classifications, input)
+	}
+	panic("unknown file classifier kind")
+}
+
+// A model must be total for every nonempty file Main sends it. Empty files need no
+// stored derivation because their only possible partition is the zero value.
+func classify_model(
+	classifications File_Classifications, input Classify_File_Input,
+) (counts Counts) {
+	defer func() { Counts_Invariants(counts, "classify_model.counts") }()
+	File_Classifications_Invariants(classifications, "classify_model.classifications")
+	Classify_File_Input_Invariants(input, "classify_model.input")
+	counts, modeled := classifications[input.Path]
+	if modeled {
+		return counts
+	}
+	if len(input.Source) == 0 {
+		return Counts{}
+	}
+	panic("classification model missing a nonempty file")
+}
+
+// CLASSIFIED_PATH_BYTES_MIN is the shortest recognized path, a bare extension such as .c.
+const CLASSIFIED_PATH_BYTES_MIN = 2
+
+// CLASSIFIED_PATH_BYTES_MAX is the host filesystem's path bound.
+const CLASSIFIED_PATH_BYTES_MAX = FILE_PATH_BYTES_MAX
+
+// Classified_Path is the identity of a file whose language was recognized.
+type Classified_Path string
+
+// Classified_Path_Invariants keeps the classifier's domain at recognized path widths.
+func Classified_Path_Invariants(file_path Classified_Path, namespace invariant.Namespace) {
+	invariant.Assertions(namespace).
+		Range_Int(len(file_path), CLASSIFIED_PATH_BYTES_MIN, CLASSIFIED_PATH_BYTES_MAX).
+		Ensure()
+}
+
+// Classify_File_Input is one file's identity, bytes, and language.
 type Classify_File_Input struct {
+	// Path is the identity of the file whose source is classified.
+	Path Classified_Path
 	// Source is the file's bytes.
 	Source Source
 	// Language is the language to read the source as.
@@ -2084,6 +2205,7 @@ type Classify_File_Input struct {
 func Classify_File_Input_Invariants(
 	input Classify_File_Input, namespace invariant.Namespace,
 ) {
+	Classified_Path_Invariants(input.Path, "Classify_File_Input.Path")
 	Source_Invariants(input.Source, "Classify_File_Input.Source")
 	Language_Invariants(input.Language, "Classify_File_Input.Language")
 }
@@ -3310,16 +3432,19 @@ type Count_Input struct {
 	Is_Ignored Ignore_Predicate
 	// Include_Hidden counts dot-prefixed entries that are skipped by default.
 	Include_Hidden bool
+	// Classifier partitions each recognized file's source into line kinds.
+	Classifier File_Classifier
 	// Concurrency bounds the read-and-classify worker pool; below one means one. It
 	// stays an unbounded integer because it is host-supplied and count_classify
 	// clamps it at both ends.
 	Concurrency int
 }
 
-// Count_Input_Invariants states the walk's two settings. The file system and the
-// ignore predicate are an interface and a function value with no preset of their own.
+// Count_Input_Invariants states the walk's classifier and settings. The file system
+// and ignore predicate are interface and function values with no preset of their own.
 func Count_Input_Invariants(input Count_Input, namespace invariant.Namespace) {
 	invariant.Boolean_Invariants(input.Include_Hidden, "Count_Input.Include_Hidden")
+	File_Classifier_Invariants(input.Classifier, "Count_Input.Classifier")
 	invariant.Int_Invariants(input.Concurrency, "Count_Input.Concurrency")
 }
 
@@ -3334,7 +3459,8 @@ func Count(input Count_Input) (report Report, err error) {
 	if walk_err != nil {
 		return Report{}, walk_err
 	}
-	files, skipped := count_classify(input.File_System, candidates, input.Concurrency)
+	files, skipped := count_classify(
+		input.File_System, candidates, input.Classifier, input.Concurrency)
 	skipped.Overflow = overflow
 	// Nothing sums the run, but a language's own total is still stated as one number, so
 	// that number is what the line bound has to hold. A file that would carry its own
@@ -3588,13 +3714,14 @@ func skipped_add(into *Skipped, more Skipped) {
 // Reads and classifies each candidate concurrently, dropping any unreadable or binary
 // file, and returns the results in candidate order.
 func count_classify(
-	file_system fs.FS, candidates Candidates, concurrency int,
+	file_system fs.FS, candidates Candidates, classifier File_Classifier, concurrency int,
 ) (files File_Counts, skipped Skipped) {
 	defer func() {
 		File_Counts_Invariants(files, "count_classify.files")
 		Skipped_Invariants(skipped, "count_classify.skipped")
 	}()
 	Candidates_Invariants(candidates, "count_classify.candidates")
+	File_Classifier_Invariants(classifier, "count_classify.classifier")
 	invariant.Int_Invariants(concurrency, "count_classify.concurrency")
 	// Each worker writes its own slot, so candidate order is preserved without locking
 	// the result slice, and every candidate leaves a slot saying what became of it.
@@ -3611,7 +3738,7 @@ func count_classify(
 	group := sync.WaitGroup{}
 	for worker_index := 0; worker_index < worker_count; worker_index++ {
 		group.Add(1)
-		go count_worker(&group, jobs, results, file_system, candidates)
+		go count_worker(&group, jobs, results, file_system, candidates, classifier)
 	}
 	for index := range candidates {
 		jobs <- index
@@ -3627,21 +3754,38 @@ func count_classify(
 			files = append(files, one.File)
 			continue
 		}
-		skipped_tally(&skipped, one.Reason)
+		skipped_tally(&skipped, Uncounted_Reason(one.Reason))
 	}
 	return files, skipped
 }
 
+// UNCOUNTED_REASON_MIN is the first reason a file is left out after selection.
+const UNCOUNTED_REASON_MIN = SKIP_REASON_UNREADABLE
+
+// UNCOUNTED_REASON_MAX is the last reason a file is left out after selection.
+const UNCOUNTED_REASON_MAX = SKIP_REASON_BINARY
+
+// Uncounted_Reason excludes the ordinary counted result before skipped tallies consume it.
+type Uncounted_Reason uint8
+
+// Uncounted_Reason_Invariants states only reasons that increment a skipped tally.
+func Uncounted_Reason_Invariants(reason Uncounted_Reason, namespace invariant.Namespace) {
+	invariant.Assertions(namespace).
+		Range_Uint8(
+			uint8(reason), uint8(UNCOUNTED_REASON_MIN), uint8(UNCOUNTED_REASON_MAX)).
+		Ensure()
+}
+
 // Adds one uncounted file to the tally of its reason.
-func skipped_tally(skipped *Skipped, reason Skip_Reason) {
+func skipped_tally(skipped *Skipped, reason Uncounted_Reason) {
 	Skipped_Invariants(*skipped, "skipped_tally.skipped")
-	Skip_Reason_Invariants(reason, "skipped_tally.reason")
+	Uncounted_Reason_Invariants(reason, "skipped_tally.reason")
 	switch reason {
-	case SKIP_REASON_UNREADABLE:
+	case Uncounted_Reason(SKIP_REASON_UNREADABLE):
 		skipped.Unreadable++
-	case SKIP_REASON_OVERSIZED:
+	case Uncounted_Reason(SKIP_REASON_OVERSIZED):
 		skipped.Oversized++
-	case SKIP_REASON_BINARY:
+	case Uncounted_Reason(SKIP_REASON_BINARY):
 		skipped.Binary++
 	}
 }
@@ -3649,13 +3793,14 @@ func skipped_tally(skipped *Skipped, reason Skip_Reason) {
 // Drains the job channel, classifying each candidate into its slot.
 func count_worker(
 	group *sync.WaitGroup, jobs <-chan int, results Count_Results,
-	file_system fs.FS, candidates Candidates,
+	file_system fs.FS, candidates Candidates, classifier File_Classifier,
 ) {
 	Count_Results_Invariants(results, "count_worker.results")
 	Candidates_Invariants(candidates, "count_worker.candidates")
+	File_Classifier_Invariants(classifier, "count_worker.classifier")
 	defer group.Done()
 	for index := range jobs {
-		one, reason := count_one(file_system, candidates[index])
+		one, reason := count_one(file_system, candidates[index], classifier)
 		results[index] = Count_Result{File: one, Reason: reason}
 	}
 }
@@ -3663,12 +3808,15 @@ func count_worker(
 // Reads and classifies a single candidate, reporting why it was not counted when it
 // was not. Every outcome is named, so nothing the walk selected leaves the pipeline
 // without the report being able to say what became of it.
-func count_one(file_system fs.FS, one Candidate) (file File_Count, reason Skip_Reason) {
+func count_one(
+	file_system fs.FS, one Candidate, classifier File_Classifier,
+) (file File_Count, reason Skip_Reason) {
 	defer func() {
 		File_Count_Invariants(file, "count_one.file")
 		Skip_Reason_Invariants(reason, "count_one.reason")
 	}()
 	Candidate_Invariants(one, "count_one.candidate")
+	File_Classifier_Invariants(classifier, "count_one.classifier")
 	uncounted := File_Count{
 		Path:     File_Path(one.Path),
 		Language: "",
@@ -3691,7 +3839,8 @@ func count_one(file_system fs.FS, one Candidate) (file File_Count, reason Skip_R
 	// A file's line count needs no separate check: a line costs at least its newline,
 	// so the byte bound above already holds a file to SOURCE_BYTES_MAX lines, which is
 	// far below what a report can state.
-	counts := Classify_File(Classify_File_Input{
+	counts := classify(classifier, Classify_File_Input{
+		Path:     Classified_Path(one.Path),
 		Source:   Source(content),
 		Language: one.Language,
 	})
@@ -3859,15 +4008,31 @@ func Skip_Label_Invariants(label Skip_Label, namespace invariant.Namespace) {
 		Ensure()
 }
 
+// DROPPED_CELL_BYTES_MIN is the one-digit smallest printed nonzero tally.
+const DROPPED_CELL_BYTES_MIN = 1
+
+// DROPPED_CELL_BYTES_MAX is 99,999, the widest tally before saturation prints 100k+.
+const DROPPED_CELL_BYTES_MAX = 6
+
+// Dropped_Cell is the nonempty tally printed for lines read short.
+type Dropped_Cell string
+
+// Dropped_Cell_Invariants bounds the numeric and saturated spellings.
+func Dropped_Cell_Invariants(cell Dropped_Cell, namespace invariant.Namespace) {
+	invariant.Assertions(namespace).
+		Range_Int(len(cell), DROPPED_CELL_BYTES_MIN, DROPPED_CELL_BYTES_MAX).
+		Ensure()
+}
+
 // Returns the printed tally of lines read short. At the bound the count stops rising,
 // so the cell says that it saturated rather than naming a total it stopped keeping.
-func dropped_cell(dropped Nonzero_Count) (cell Line_Cell) {
-	defer func() { Line_Cell_Invariants(cell, "dropped_cell.cell") }()
+func dropped_cell(dropped Nonzero_Count) (cell Dropped_Cell) {
+	defer func() { Dropped_Cell_Invariants(cell, "dropped_cell.cell") }()
 	Nonzero_Count_Invariants(dropped, "dropped_cell.dropped")
 	if dropped == DROPPED_COUNT_MAX {
-		return DROPPED_SATURATED_TEXT
+		return Dropped_Cell(DROPPED_SATURATED_TEXT)
 	}
-	return Line_Cell(with_thousands_separators(Line_Count(dropped)))
+	return Dropped_Cell(with_thousands_separators(Line_Count(dropped)))
 }
 
 // Returns the trailing section: everything the run did not count, and why. A line read
@@ -3993,7 +4158,7 @@ func skipped_line_row(dropped Nonzero_Count) (row Render_Row) {
 	defer func() { Render_Row_Invariants(row, "skipped_line_row.row") }()
 	Nonzero_Count_Invariants(dropped, "skipped_line_row.dropped")
 	return Render_Row{
-		Name: "  lines read short", Files: "", Lines: dropped_cell(dropped),
+		Name: "  lines read short", Files: "", Lines: Line_Cell(dropped_cell(dropped)),
 		Code: "", Comments: "", Blanks: "", Percent: "",
 	}
 }
@@ -4639,6 +4804,12 @@ func report_language_rows(
 		Total_Code: 0,
 	})}
 	if show_files {
+		output = append(output, split_rows(&Split_Rows_Input{
+			Source_Files: group.Source_Files,
+			Source:       group.Source,
+			Test_Files:   group.Test_Files,
+			Test:         group.Test,
+		})...)
 		for _, member := range group.Members {
 			output = append(output, file_row(
 				Counted_Path(member.Path), member.Counts))
@@ -4656,9 +4827,9 @@ func report_language_rows(
 // LANGUAGE_ROWS_COUNT_MIN is one language's own row, which it always carries.
 const LANGUAGE_ROWS_COUNT_MIN = 1
 
-// LANGUAGE_ROWS_COUNT_MAX is that row plus one per file, which the per-file breakdown
-// of a tree whose every file is that one language reaches.
-const LANGUAGE_ROWS_COUNT_MAX = 1 + FILES_COUNT_MAX
+// LANGUAGE_ROWS_COUNT_MAX is the language row, its source/test pair, and one row per
+// file, which a one-language per-file breakdown containing a test reaches.
+const LANGUAGE_ROWS_COUNT_MAX = 3 + FILES_COUNT_MAX
 
 // Language_Rows are the rows one language contributes to the table. They are returned
 // rather than appended to the caller's accumulator, so the width they can reach is a
@@ -4710,7 +4881,7 @@ const CATEGORIES_SHOWN_MAX = CATEGORIES_COUNT_MAX - 1
 // RENDER_ROWS_COUNT_MAX is the header, every taxonomy label, a row per language, and —
 // under the per-file breakdown — a row per counted file.
 const RENDER_ROWS_COUNT_MAX = 1 + CATEGORIES_SHOWN_MAX +
-	LANGUAGE_GROUPS_COUNT_MAX + FILES_COUNT_MAX
+	3*LANGUAGE_GROUPS_COUNT_MAX + FILES_COUNT_MAX
 
 // RENDER_ROWS_COUNT_ABSENT is the shape that never occurs: a table is the header alone
 // or the header plus a taxonomy label and at least the language row beneath it, so two

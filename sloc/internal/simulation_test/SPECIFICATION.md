@@ -23,6 +23,30 @@ A line at the scan window, a tree at the file bound, and a table whose every col
 its width are counted, so the widths and tallies the library states its invariants against are
 reached rather than assumed.
 
+### Boundary Model
+
+The line-count bound is assembled from production-reachable per-file classifications in three
+languages. Its accepted files are modeled totally; ordinary recipes still use the production
+scanner, while aggregation and rendering retain the real bounds.
+
+### Source Bound Model
+
+The file exactly at the source-byte bound retains all of its bytes so the bounded read remains
+real, but its repeated line partition is modeled. The file one byte over remains rejected by the
+production size check before classification.
+
+### Wide Model
+
+The wide-table fixtures model their repeated per-file line partitions. The walk still visits
+production file counts and both renderers still consume full reports; representative sources
+are checked against the production scanner before their counts are scaled.
+
+### Table Width Model
+
+One modeled report combines the maximum path, a five-digit per-language file tally, three
+languages at the code/comment/blank bounds, and a source/test split. Rendering that report with
+files shown reaches the production table-width bound exactly.
+
 ### Failure
 
 A stat failure, a read failure, a binary file, an oversized file, and an unrecognized path

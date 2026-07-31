@@ -39,7 +39,10 @@ func main() {
 		Path_Is_Directory: main_is_directory,
 		Read_File:         main_read_file,
 		Ignore_For:        main_git_ignore,
-		Concurrency:       runtime.GOMAXPROCS(0) * MAIN_WORKERS_PER_CORE,
+		Classifier: sloc.File_Classifier{
+			Kind: sloc.FILE_CLASSIFIER_KIND_BYTES,
+		},
+		Concurrency: runtime.GOMAXPROCS(0) * MAIN_WORKERS_PER_CORE,
 	})))
 }
 
