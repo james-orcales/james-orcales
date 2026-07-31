@@ -17,32 +17,32 @@ import (
 	"sync/atomic"
 	"syscall"
 
-	invariant "local/james-orcales/g/shared/invariant/default"
-	"local/james-orcales/g/shared/io"
-	"local/james-orcales/g/shared/time"
+	invariant "local/james-orcales/shared/invariant/default"
+	"local/james-orcales/shared/io"
+	"local/james-orcales/shared/time"
 )
 
 // Caps one Darwin kqueue changelist and event batch, matching TigerBeetle's fixed flush buffer.
-const poll_events_max = 256
+const POLL_EVENTS_MAX = 256
 
 // Poll_forever, passed as an idle gap, blocks the readiness poll until an event arrives rather
 // than for a fixed span — the unbounded wait a run with no deadline needs, so the loop sleeps
 // exactly until there is work instead of waking on an interval.
-const poll_forever time.Moment = -1
+const POLL_FOREVER time.Moment = -1
 
 // Buffers a few pending signals so a burst is not lost between drains.
-const signal_queue_depth = 8
+const SIGNAL_QUEUE_DEPTH = 8
 
 // Caps the idle gap while a signal watcher exists, since a signal does not wake the poll;
 // the loop re-checks the signal channel at least this often.
-const signal_poll_interval = 10 * time.MILLISECOND
+const SIGNAL_POLL_INTERVAL = 10 * time.MILLISECOND
 
 // Buffers submitted compute jobs so bursts do not block the loop thread.
-const compute_queue_depth = 1024
+const COMPUTE_QUEUE_DEPTH = 1024
 
 // Holds the host backend's state: the completed queue, Darwin timeout queue, platform scheduler,
 // and repository-extension effects which all retire through completed.
-type operating_system struct {
+type Operating_System struct {
 	// Host is the real clock; deadlines and waits are measured against it.
 	Host time.Clock
 	// Timeouts are pending timer completions ordered by Ready_At, earliest first.
@@ -50,19 +50,19 @@ type operating_system struct {
 	// Completed are completions whose callbacks are ready to run on the next drain.
 	Completed []*io.Completion
 	// Platform is kqueue on Darwin or io_uring on Linux, created eagerly by the constructor.
-	Platform platform_scheduler
+	Platform Platform_Scheduler
 	// Operations maps integer kernel user_data values to caller-owned completion operations.
-	Operations map[uint64]*operating_system_operation
+	Operations map[uint64]*Operating_System_Operation
 	// Next_Identifier is the last non-zero kernel correlation identifier issued.
 	Next_Identifier uint64
 	// Signals receives OS signals from the os/signal notifier; nil until the first watch.
 	Signals chan os.Signal
 	// Signal_Waiters are the registered signal watchers, fired one-shot on delivery.
-	Signal_Waiters []signal_waiter
+	Signal_Waiters []Signal_Waiter
 	// Jobs carries compute work to the worker pool; nil until the first Compute.
-	Jobs chan *compute_job
+	Jobs chan *Compute_Job
 	// Results holds finished compute jobs handed back from workers, guarded by the mutex.
-	Results []*compute_job
+	Results []*Compute_Job
 	// Posted holds completions finished off the loop thread (spawn), guarded by the mutex.
 	Posted []*io.Completion
 	// Results_Mutex guards Results and Posted, the only cross-thread state.
@@ -93,7 +93,7 @@ type operating_system struct {
 
 // One registered signal watcher: the OS signal it awaits, its backend-independent kind,
 // and the completion and callback to fire once on delivery.
-type signal_waiter struct {
+type Signal_Waiter struct {
 	// System is the OS signal this watcher awaits.
 	System os.Signal
 	// Kind is the backend-independent signal reported to the callback.
@@ -108,7 +108,7 @@ type signal_waiter struct {
 
 // One offloaded compute job: the work to run on a worker thread and the completion and
 // callback to fire back on the loop thread once it finishes.
-type compute_job struct {
+type Compute_Job struct {
 	// Completion is the caller-owned completion fired once the work finishes.
 	Completion *io.Completion
 	// Callback is the typed callback run on the loop thread after the work.
@@ -137,10 +137,10 @@ func New_Operating_System_IO(
 	if initialize_err != nil {
 		return io.IO{}, io.Driver{}, initialize_err
 	}
-	state := &operating_system{
+	state := &Operating_System{
 		Host:       host,
 		Platform:   platform,
-		Operations: map[uint64]*operating_system_operation{},
+		Operations: map[uint64]*Operating_System_Operation{},
 		Raw_Open:   map[int]bool{},
 	}
 	operating_system_wire_file(state, &loop)
@@ -164,7 +164,7 @@ func operating_system_submit(completion *io.Completion) {
 }
 
 // Wires the signal-watch and compute-offload operations onto loop.
-func operating_system_wire_effects(state *operating_system, loop *io.IO) {
+func operating_system_wire_effects(state *Operating_System, loop *io.IO) {
 	loop.Watch_Signal = func(
 		completion *io.Completion, callback io.Signal_Callback, signal io.Signal,
 		deadline time.Duration,
@@ -230,7 +230,7 @@ func Self_Exec(input Self_Exec_Input) (err error) {
 
 // Runs request's command on its own goroutine and posts the finished result to the loop.
 func operating_system_spawn(
-	state *operating_system, completion *io.Completion,
+	state *Operating_System, completion *io.Completion,
 	callback io.Process_Callback, request io.Process_Request, deadline time.Duration,
 ) {
 	operating_system_wake_ensure(state)
@@ -241,7 +241,7 @@ func operating_system_spawn(
 
 // Executes the command and posts its result — or a start failure — back on the loop.
 func process_run(
-	state *operating_system, completion *io.Completion,
+	state *Operating_System, completion *io.Completion,
 	callback io.Process_Callback, request io.Process_Request, deadline time.Duration,
 ) {
 	defer state.Extension_Workers.Done()
@@ -355,7 +355,7 @@ func process_rss_bytes(maxrss int64) (size int64) {
 }
 
 // Wires the file operations — read, write, open, create — onto loop.
-func operating_system_wire_file(state *operating_system, loop *io.IO) {
+func operating_system_wire_file(state *Operating_System, loop *io.IO) {
 	loop.Read = func(
 		completion *io.Completion, callback io.Callback,
 		file io.File, buffer []byte, offset int64,
@@ -411,7 +411,7 @@ func file_make_directory(path string) (err error) {
 }
 
 // Wires Timeout, Next_Tick, Reset_Next_Tick, and both close primitives onto loop.
-func operating_system_wire_timer(state *operating_system, loop *io.IO) {
+func operating_system_wire_timer(state *Operating_System, loop *io.IO) {
 	loop.Timeout = func(
 		completion *io.Completion, callback io.Timeout_Callback, duration time.Duration,
 	) {
@@ -465,12 +465,12 @@ func operating_system_wire_timer(state *operating_system, loop *io.IO) {
 // Registers one TigerBeetle Event listener. The platform decides whether it is a persistent
 // EVFILT_USER listener or an eventfd read operation.
 func operating_system_event_listen(
-	state *operating_system, event io.Event, completion *io.Completion,
+	state *Operating_System, event io.Event, completion *io.Completion,
 	callback io.Next_Tick_Callback,
 ) {
-	operation := &operating_system_operation{
+	operation := &Operating_System_Operation{
 		Completion: completion,
-		Kind:       operating_system_operation_event,
+		Kind:       OPERATING_SYSTEM_OPERATION_EVENT,
 		Descriptor: int(event),
 		Deliver:    func(result int, err error) { callback(completion) },
 	}
@@ -480,10 +480,10 @@ func operating_system_event_listen(
 }
 
 // Asserts no Event listener remains armed before the backend Event resource is closed.
-func operating_system_assert_event_drained(state *operating_system, event io.Event) {
+func operating_system_assert_event_drained(state *Operating_System, event io.Event) {
 	armed := false
 	for _, operation := range state.Operations {
-		if operation.Kind == operating_system_operation_event {
+		if operation.Kind == OPERATING_SYSTEM_OPERATION_EVENT {
 			if operation.Descriptor == int(event) {
 				armed = true
 			}
@@ -495,7 +495,7 @@ func operating_system_assert_event_drained(state *operating_system, event io.Eve
 // Asserts no submitted operation still borrows file. TigerBeetle's message bus joins every
 // submitted operation before close (third-party/tigerbeetle/src/message_bus.zig:1104-1145); this
 // fail-closed check prevents an old kernel completion from racing a recycled descriptor number.
-func operating_system_assert_file_drained(state *operating_system, file io.File) {
+func operating_system_assert_file_drained(state *Operating_System, file io.File) {
 	borrowed := false
 	for _, operation := range state.Operations {
 		if operation.Descriptor == int(file) {
@@ -508,7 +508,7 @@ func operating_system_assert_file_drained(state *operating_system, file io.File)
 
 // Wires the socket operations — listen, accept, connect, receive, send, peer address —
 // onto loop.
-func operating_system_wire_socket(state *operating_system, loop *io.IO) {
+func operating_system_wire_socket(state *Operating_System, loop *io.IO) {
 	loop.Listen = func(
 		socket io.File, address io.Address, options io.Listen_Options,
 	) (resolved io.Address, err error) {
@@ -574,12 +574,12 @@ func operating_system_wire_socket(state *operating_system, loop *io.IO) {
 // Submits a file read through the platform scheduler (io/darwin.zig:519-558;
 // io/linux.zig Completion.prep.read).
 func operating_system_read(
-	state *operating_system, completion *io.Completion, callback io.Callback,
+	state *Operating_System, completion *io.Completion, callback io.Callback,
 	file io.File, buffer []byte, offset int64,
 ) {
-	operation := &operating_system_operation{
+	operation := &Operating_System_Operation{
 		Completion: completion,
-		Kind:       operating_system_operation_read,
+		Kind:       OPERATING_SYSTEM_OPERATION_READ,
 		Descriptor: int(file),
 		Buffer:     platform_buffer_limit(buffer),
 		Offset:     uint64(offset),
@@ -590,12 +590,12 @@ func operating_system_read(
 
 // Submits a file write through the platform scheduler.
 func operating_system_write(
-	state *operating_system, completion *io.Completion, callback io.Callback,
+	state *Operating_System, completion *io.Completion, callback io.Callback,
 	file io.File, buffer []byte, offset int64,
 ) {
-	operation := &operating_system_operation{
+	operation := &Operating_System_Operation{
 		Completion: completion,
-		Kind:       operating_system_operation_write,
+		Kind:       OPERATING_SYSTEM_OPERATION_WRITE,
 		Descriptor: int(file),
 		Buffer:     platform_buffer_limit(buffer),
 		Offset:     uint64(offset),
@@ -606,12 +606,12 @@ func operating_system_write(
 
 // Submits TigerBeetle's asynchronous fsync operation.
 func operating_system_fsync(
-	state *operating_system, completion *io.Completion,
+	state *Operating_System, completion *io.Completion,
 	callback io.Timeout_Callback, file io.File,
 ) {
-	operation := &operating_system_operation{
+	operation := &Operating_System_Operation{
 		Completion: completion,
-		Kind:       operating_system_operation_fsync,
+		Kind:       OPERATING_SYSTEM_OPERATION_FSYNC,
 		Descriptor: int(file),
 		Deliver:    func(result int, err error) { callback(completion, err) },
 	}
@@ -621,7 +621,7 @@ func operating_system_fsync(
 // Submits TigerBeetle's asynchronous openat operation with a NUL-terminated path owned until the
 // callback retires.
 func operating_system_open_at(
-	state *operating_system, completion *io.Completion, callback io.File_Callback,
+	state *Operating_System, completion *io.Completion, callback io.File_Callback,
 	directory io.File, file_path string, options io.Open_At_Options,
 ) {
 	descriptor := int(directory)
@@ -629,9 +629,9 @@ func operating_system_open_at(
 		descriptor = platform_current_directory()
 	}
 	path := append([]byte(file_path), 0)
-	operation := &operating_system_operation{
+	operation := &Operating_System_Operation{
 		Completion:   completion,
-		Kind:         operating_system_operation_open_at,
+		Kind:         OPERATING_SYSTEM_OPERATION_OPEN_AT,
 		Descriptor:   descriptor,
 		File_Path:    path,
 		Open_Options: options,
@@ -644,13 +644,13 @@ func operating_system_open_at(
 
 // Schedules a positive timeout to fire when the clock passes its deadline.
 func operating_system_timeout(
-	state *operating_system, host time.Clock, completion *io.Completion,
+	state *Operating_System, host time.Clock, completion *io.Completion,
 	callback io.Timeout_Callback, duration time.Duration,
 ) {
 	if platform_uses_kernel_timeouts() {
-		operation := &operating_system_operation{
+		operation := &Operating_System_Operation{
 			Completion: completion,
-			Kind:       operating_system_operation_timeout,
+			Kind:       OPERATING_SYSTEM_OPERATION_TIMEOUT,
 			Descriptor: -1,
 			Timespec:   operating_system_timeout_span(duration),
 			Deliver:    func(result int, err error) { callback(completion, err) },
@@ -665,7 +665,7 @@ func operating_system_timeout(
 
 // Builds the driver — the loop-advancing capability — over state; held only by the
 // composition root or a test, never by code that merely submits IO.
-func operating_system_to_driver(state *operating_system) (driver io.Driver) {
+func operating_system_to_driver(state *Operating_System) (driver io.Driver) {
 	return io.Driver{
 		Run: func() (err error) {
 			return operating_system_drive(state, func() (err error) {
@@ -700,7 +700,7 @@ func operating_system_to_driver(state *operating_system) (driver io.Driver) {
 // Samples the loop's queue depths for an admin state snapshot. Loop-thread fields are read
 // directly — Introspect is root-only and called from the drive goroutine — but Posted and Results
 // are written by off-loop workers under the mutex, so their lengths are taken under it.
-func operating_system_introspect(state *operating_system) (counts io.Loop_Counts) {
+func operating_system_introspect(state *Operating_System) (counts io.Loop_Counts) {
 	state.Results_Mutex.Lock()
 	posted_count := len(state.Posted)
 	results_count := len(state.Results)
@@ -724,7 +724,7 @@ func operating_system_introspect(state *operating_system) (counts io.Loop_Counts
 
 // Drives until done or the host deadline, propagating every scheduler error.
 func operating_system_run_until(
-	state *operating_system, done func() (finished bool), timeout time.Duration,
+	state *Operating_System, done func() (finished bool), timeout time.Duration,
 ) (completed bool, err error) {
 	deadline := state.Host.Now_Monotonic() + time.Moment(timeout)
 	for !done() {
@@ -742,7 +742,7 @@ func operating_system_run_until(
 
 // Operating system run until wait chooses a nonblocking first pass, then the nearest deadline.
 func operating_system_run_until_wait(
-	state *operating_system, deadline time.Moment, timeout time.Duration,
+	state *Operating_System, deadline time.Moment, timeout time.Duration,
 ) (wait time.Moment, expired bool) {
 	if len(state.Completed) > 0 {
 		return 0, false
@@ -753,7 +753,7 @@ func operating_system_run_until_wait(
 			return 0, true
 		}
 	}
-	wait = poll_forever
+	wait = POLL_FOREVER
 	if timeout >= 0 {
 		wait = deadline - now
 	}
@@ -761,7 +761,7 @@ func operating_system_run_until_wait(
 }
 
 // Reports whether an operation can wake an unbounded drive.
-func operating_system_in_flight(state *operating_system) (in_flight bool) {
+func operating_system_in_flight(state *Operating_System) (in_flight bool) {
 	if platform_in_flight(state) {
 		return true
 	}
@@ -778,7 +778,7 @@ func operating_system_in_flight(state *operating_system) (in_flight bool) {
 // called from within a completion callback fails loudly instead of re-entering the driver.
 // The internal run functions call one another directly, not through here, so a drive's own
 // iteration does not trip it.
-func operating_system_drive(state *operating_system, pump func() (err error)) (err error) {
+func operating_system_drive(state *Operating_System, pump func() (err error)) (err error) {
 	invariant.Always(!state.Drive_Active,
 		"A drive begins at top level, never from within a completion callback.")
 	state.Drive_Active = true
@@ -787,12 +787,12 @@ func operating_system_drive(state *operating_system, pump func() (err error)) (e
 }
 
 // Runs one nonblocking TigerBeetle flush.
-func operating_system_run(state *operating_system) (err error) {
+func operating_system_run(state *Operating_System) (err error) {
 	return operating_system_flush(state, 0)
 }
 
 // Runs flush passes until duration elapses, with the deadline passed directly to the platform.
-func operating_system_run_for(state *operating_system, duration time.Duration) (err error) {
+func operating_system_run_for(state *Operating_System, duration time.Duration) (err error) {
 	deadline := state.Host.Now_Monotonic() + time.Moment(duration)
 	for state.Host.Now_Monotonic() < deadline {
 		now := state.Host.Now_Monotonic()
@@ -811,7 +811,7 @@ func operating_system_run_for(state *operating_system, duration time.Duration) (
 // Operating system flush checks finite operation deadlines before extension events, then ports
 // TigerBeetle's timeout, platform, and retire-before-deliver ordering. Deadline-first ordering
 // makes an event first observed at the same pass lose the explicit finite tie.
-func operating_system_flush(state *operating_system, wait time.Moment) (err error) {
+func operating_system_flush(state *Operating_System, wait time.Moment) (err error) {
 	expire_err := operating_system_expire(state)
 	if expire_err != nil {
 		return expire_err
@@ -827,7 +827,7 @@ func operating_system_flush(state *operating_system, wait time.Moment) (err erro
 }
 
 // Operating system wait cap pulls an outer wait in to the nearest Darwin timeout and signal poll.
-func operating_system_wait_cap(state *operating_system, wait time.Moment) (capped time.Moment) {
+func operating_system_wait_cap(state *Operating_System, wait time.Moment) (capped time.Moment) {
 	capped = wait
 	if len(state.Timeouts) > 0 {
 		until_timeout := state.Timeouts[0].Ready_At - state.Host.Now_Monotonic()
@@ -838,7 +838,7 @@ func operating_system_wait_cap(state *operating_system, wait time.Moment) (cappe
 		}
 	}
 	if len(state.Signal_Waiters) > 0 {
-		interval := time.Moment(signal_poll_interval)
+		interval := time.Moment(SIGNAL_POLL_INTERVAL)
 		if capped < 0 {
 			capped = interval
 		} else if interval < capped {
@@ -880,7 +880,7 @@ func operating_system_wait_cap(state *operating_system, wait time.Moment) (cappe
 
 // Moves every elapsed timeout and finite extension waiter into the completed queue, and retires
 // bounded Darwin operations before their callbacks become visible.
-func operating_system_expire(state *operating_system) (err error) {
+func operating_system_expire(state *Operating_System) (err error) {
 	now := state.Host.Now_Monotonic()
 	for len(state.Timeouts) > 0 && state.Timeouts[0].Ready_At <= now {
 		expired := state.Timeouts[0]
@@ -891,7 +891,7 @@ func operating_system_expire(state *operating_system) (err error) {
 	if platform_uses_kernel_timeouts() {
 		return nil
 	}
-	expired_operations := []*operating_system_operation{}
+	expired_operations := []*Operating_System_Operation{}
 	for _, operation := range state.Operations {
 		if operation.Deadline == 0 {
 			continue
@@ -912,7 +912,7 @@ func operating_system_expire(state *operating_system) (err error) {
 
 // Runs and clears every ready completion callback, returning each completion to idle
 // before its callback fires — so a callback may legally resubmit its own completion.
-func operating_system_flush_completed(state *operating_system) {
+func operating_system_flush_completed(state *Operating_System) {
 	for len(state.Completed) > 0 {
 		completion := state.Completed[0]
 		state.Completed = state.Completed[1:]
@@ -925,7 +925,7 @@ func operating_system_flush_completed(state *operating_system) {
 
 // Removes every completed-queue next-tick operation for source and returns it to idle without
 // invoking its callback (io/darwin.zig:783-796; io/linux.zig:354-367).
-func operating_system_reset_next_tick(state *operating_system, source io.Next_Tick_Source) {
+func operating_system_reset_next_tick(state *Operating_System, source io.Next_Tick_Source) {
 	kept := state.Completed[:0]
 	for _, completion := range state.Completed {
 		if !completion.Next_Tick {
@@ -944,7 +944,7 @@ func operating_system_reset_next_tick(state *operating_system, source io.Next_Ti
 }
 
 // Inserts completion into the timeout queue in Ready_At order.
-func operating_system_insert(state *operating_system, completion *io.Completion) {
+func operating_system_insert(state *Operating_System, completion *io.Completion) {
 	index := 0
 	for index < len(state.Timeouts) && state.Timeouts[index].Ready_At <= completion.Ready_At {
 		index++
@@ -956,12 +956,12 @@ func operating_system_insert(state *operating_system, completion *io.Completion)
 
 // Submits accept through kqueue's eager/requeue path or io_uring's ACCEPT opcode.
 func operating_system_accept(
-	state *operating_system, completion *io.Completion,
+	state *Operating_System, completion *io.Completion,
 	callback io.Socket_Callback, listener io.File, deadline time.Duration,
 ) {
-	operation := &operating_system_operation{
+	operation := &Operating_System_Operation{
 		Completion:    completion,
-		Kind:          operating_system_operation_accept,
+		Kind:          OPERATING_SYSTEM_OPERATION_ACCEPT,
 		Descriptor:    int(listener),
 		Deadline:      state.Host.Now_Monotonic() + time.Moment(deadline),
 		Deadline_Span: operating_system_timeout_span(deadline),
@@ -975,12 +975,12 @@ func operating_system_accept(
 // Begins a connection to host_address:port on the caller-owned socket and arms it for
 // writability; on readiness it reports only the connect result.
 func operating_system_connect(
-	state *operating_system, completion *io.Completion,
+	state *Operating_System, completion *io.Completion,
 	callback io.Timeout_Callback, socket io.File, address io.Address, deadline time.Duration,
 ) {
-	operation := &operating_system_operation{
+	operation := &Operating_System_Operation{
 		Completion:    completion,
-		Kind:          operating_system_operation_connect,
+		Kind:          OPERATING_SYSTEM_OPERATION_CONNECT,
 		Descriptor:    int(socket),
 		Address:       address,
 		Deadline:      state.Host.Now_Monotonic() + time.Moment(deadline),
@@ -993,12 +993,12 @@ func operating_system_connect(
 // Arms socket for readability; on readiness it reads once into buffer and reports
 // the byte count.
 func operating_system_receive(
-	state *operating_system, completion *io.Completion,
+	state *Operating_System, completion *io.Completion,
 	callback io.Callback, socket io.File, buffer []byte,
 ) {
-	operation := &operating_system_operation{
+	operation := &Operating_System_Operation{
 		Completion: completion,
-		Kind:       operating_system_operation_receive,
+		Kind:       OPERATING_SYSTEM_OPERATION_RECEIVE,
 		Descriptor: int(socket), Buffer: platform_buffer_limit(buffer),
 		Deliver: func(result int, err error) { callback(completion, result, err) },
 	}
@@ -1008,12 +1008,12 @@ func operating_system_receive(
 // Arms socket for writability; on readiness it writes buffer once and reports the
 // byte count.
 func operating_system_send(
-	state *operating_system, completion *io.Completion,
+	state *Operating_System, completion *io.Completion,
 	callback io.Callback, socket io.File, buffer []byte,
 ) {
-	operation := &operating_system_operation{
+	operation := &Operating_System_Operation{
 		Completion: completion,
-		Kind:       operating_system_operation_send,
+		Kind:       OPERATING_SYSTEM_OPERATION_SEND,
 		Descriptor: int(socket), Buffer: platform_buffer_limit(buffer),
 		Deliver: func(result int, err error) { callback(completion, result, err) },
 	}
@@ -1023,12 +1023,12 @@ func operating_system_send(
 // Closes file and queues its completion after operating_system_assert_file_drained enforces the
 // owner-side join from third-party/tigerbeetle/src/message_bus.zig:1104-1145.
 func operating_system_close(
-	state *operating_system, completion *io.Completion,
+	state *Operating_System, completion *io.Completion,
 	callback io.Timeout_Callback, file io.File,
 ) {
-	operation := &operating_system_operation{
+	operation := &Operating_System_Operation{
 		Completion: completion,
-		Kind:       operating_system_operation_close,
+		Kind:       OPERATING_SYSTEM_OPERATION_CLOSE,
 		Descriptor: int(file),
 		Deliver:    func(result int, err error) { callback(completion, err) },
 	}
@@ -1037,7 +1037,7 @@ func operating_system_close(
 
 // Operating system deinitialize enforces TigerBeetle's join-before-deinit contract and releases
 // the scheduler plus repository-extension wake resources.
-func operating_system_deinitialize(state *operating_system) {
+func operating_system_deinitialize(state *Operating_System) {
 	invariant.Always(state.Extension_Submitted == 0,
 		"Driver Deinit follows joining every repository-extension completion.")
 	invariant.Always(operating_system_user_operations(state) == 0,
@@ -1066,10 +1066,10 @@ func operating_system_deinitialize(state *operating_system) {
 }
 
 // Counts core operations other than the internal extension Event listener.
-func operating_system_user_operations(state *operating_system) (count int) {
+func operating_system_user_operations(state *Operating_System) (count int) {
 	for _, operation := range state.Operations {
 		internal_event := false
-		if operation.Kind == operating_system_operation_event {
+		if operation.Kind == OPERATING_SYSTEM_OPERATION_EVENT {
 			internal_event = operation.Completion == &state.Wake_Completion
 		}
 		if !internal_event {
@@ -1082,20 +1082,20 @@ func operating_system_user_operations(state *operating_system) (count int) {
 // Submits work to the worker pool, delivering callback on the loop thread once it
 // finishes. A cancel on a compute is a no-op: the work is already queued off-thread.
 func operating_system_compute_submit(
-	state *operating_system, completion *io.Completion,
+	state *Operating_System, completion *io.Completion,
 	callback io.Compute_Callback, work func(),
 ) {
 	operating_system_compute_ensure(state)
-	state.Jobs <- &compute_job{Completion: completion, Callback: callback, Work: work}
+	state.Jobs <- &Compute_Job{Completion: completion, Callback: callback, Work: work}
 }
 
 // Starts the worker pool and the wake pipe on the first Compute.
-func operating_system_compute_ensure(state *operating_system) {
+func operating_system_compute_ensure(state *Operating_System) {
 	if state.Compute_Active {
 		return
 	}
 	operating_system_wake_ensure(state)
-	state.Jobs = make(chan *compute_job, compute_queue_depth)
+	state.Jobs = make(chan *Compute_Job, COMPUTE_QUEUE_DEPTH)
 	state.Compute_Active = true
 	workers := compute_worker_count()
 	state.Extension_Workers.Add(workers)
@@ -1115,7 +1115,7 @@ func compute_worker_count() (workers int) {
 
 // Runs jobs off the loop thread, pushing each finished job back through the mutex-guarded
 // Results and waking the loop.
-func operating_system_compute_worker(state *operating_system) {
+func operating_system_compute_worker(state *Operating_System) {
 	defer state.Extension_Workers.Done()
 	for job := range state.Jobs {
 		job.Work()
@@ -1127,7 +1127,7 @@ func operating_system_compute_worker(state *operating_system) {
 }
 
 // Opens and arms TigerBeetle's Event primitive so marked repository extensions can wake the loop.
-func operating_system_wake_ensure(state *operating_system) {
+func operating_system_wake_ensure(state *Operating_System) {
 	if state.Wake_Active {
 		return
 	}
@@ -1143,7 +1143,7 @@ func operating_system_wake_ensure(state *operating_system) {
 
 // Rearms the persistent extension Event listener; its callback drains every result accumulated by
 // workers before attaching the same completion again.
-func operating_system_wake_listen(state *operating_system) {
+func operating_system_wake_listen(state *Operating_System) {
 	operating_system_submit(&state.Wake_Completion)
 	operating_system_event_listen(
 		state, state.Wake_Event, &state.Wake_Completion,
@@ -1156,7 +1156,7 @@ func operating_system_wake_listen(state *operating_system) {
 
 // Drains finished compute jobs and posted spawn completions onto the completed queue, on
 // the loop thread; a no-op until the wake pipe exists.
-func operating_system_compute(state *operating_system) {
+func operating_system_compute(state *Operating_System) {
 	if !state.Wake_Active {
 		return
 	}
@@ -1178,7 +1178,7 @@ func operating_system_compute(state *operating_system) {
 }
 
 // Queues a finished compute job's callback to run on the next flush.
-func operating_system_compute_finish(state *operating_system, job *compute_job) {
+func operating_system_compute_finish(state *Operating_System, job *Compute_Job) {
 	completion := job.Completion
 	callback := job.Callback
 	completion.Callback = func() { callback(completion) }
@@ -1187,12 +1187,12 @@ func operating_system_compute_finish(state *operating_system, job *compute_job) 
 
 // Registers a watcher for signal and starts OS notification for it.
 func operating_system_watch_signal(
-	state *operating_system, completion *io.Completion,
+	state *Operating_System, completion *io.Completion,
 	callback io.Signal_Callback, kind io.Signal, deadline time.Duration,
 ) {
 	operating_system_signal_ensure(state)
 	system := signal_to_operating_system(kind)
-	state.Signal_Waiters = append(state.Signal_Waiters, signal_waiter{
+	state.Signal_Waiters = append(state.Signal_Waiters, Signal_Waiter{
 		System: system, Kind: kind, Completion: completion, Callback: callback,
 		Deadline: state.Host.Now_Monotonic() + time.Moment(deadline),
 	})
@@ -1200,11 +1200,11 @@ func operating_system_watch_signal(
 }
 
 // Creates the buffered signal channel on the first watch.
-func operating_system_signal_ensure(state *operating_system) {
+func operating_system_signal_ensure(state *Operating_System) {
 	if state.Signals != nil {
 		return
 	}
-	state.Signals = make(chan os.Signal, signal_queue_depth)
+	state.Signals = make(chan os.Signal, SIGNAL_QUEUE_DEPTH)
 }
 
 // Maps a backend-independent signal to its OS signal.
@@ -1216,8 +1216,8 @@ func signal_to_operating_system(kind io.Signal) (system os.Signal) {
 }
 
 // Drains delivered signals without blocking, firing matching watchers.
-func operating_system_signals(state *operating_system) {
-	for index := 0; index < signal_queue_depth; index++ {
+func operating_system_signals(state *Operating_System) {
+	for index := 0; index < SIGNAL_QUEUE_DEPTH; index++ {
 		select {
 		case received := <-state.Signals:
 			operating_system_signal_deliver(state, received)
@@ -1228,7 +1228,7 @@ func operating_system_signals(state *operating_system) {
 }
 
 // Fires every watcher matching received one-shot, keeping the rest for later deliveries.
-func operating_system_signal_deliver(state *operating_system, received os.Signal) {
+func operating_system_signal_deliver(state *Operating_System, received os.Signal) {
 	kept := state.Signal_Waiters[:0]
 	for index := 0; index < len(state.Signal_Waiters); index++ {
 		waiter := state.Signal_Waiters[index]
@@ -1247,7 +1247,7 @@ func operating_system_signal_deliver(state *operating_system, received os.Signal
 
 // Expires signal watchers before draining the os/signal channel, so an event first observed at the
 // deadline is discarded and cannot leak into the next explicitly rearmed watch.
-func operating_system_expire_signals(state *operating_system, now time.Moment) {
+func operating_system_expire_signals(state *Operating_System, now time.Moment) {
 	kept := state.Signal_Waiters[:0]
 	for index := 0; index < len(state.Signal_Waiters); index++ {
 		waiter := state.Signal_Waiters[index]
@@ -1267,7 +1267,7 @@ func operating_system_expire_signals(state *operating_system, now time.Moment) {
 // Posts a completion finished off the loop thread: records its callback under the mutex
 // and wakes the loop to run it on the next drain.
 func operating_system_post(
-	state *operating_system, completion *io.Completion, callback func(),
+	state *Operating_System, completion *io.Completion, callback func(),
 ) {
 	completion.Callback = callback
 	state.Results_Mutex.Lock()

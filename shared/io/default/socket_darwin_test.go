@@ -6,15 +6,15 @@ import (
 	"syscall"
 	"testing"
 
-	sharedio "local/james-orcales/g/shared/io"
+	sharedio "local/james-orcales/shared/io"
 )
 
 // Test_Socket_Open_Darwin_No_Sigpipe verifies the Darwin-only portable client option suppresses
 // SIGPIPE, complementing the common black-box buffer, keepalive, nonblocking, and CLOEXEC checks.
 func Test_Socket_Open_Darwin_No_Sigpipe(t *testing.T) {
 	descriptor, open_err := socket_open_tcp(sharedio.FAMILY_IPV4, sharedio.TCP_Options{
-		Receive_Buffer: socket_receive_buffer_size,
-		Send_Buffer:    socket_send_buffer_size,
+		Receive_Buffer: SOCKET_RECEIVE_BUFFER_SIZE,
+		Send_Buffer:    SOCKET_SEND_BUFFER_SIZE,
 		Keepalive: &sharedio.TCP_Keepalive{
 			Idle_Seconds: 5, Interval_Seconds: 4, Count: 3,
 		},
@@ -24,7 +24,7 @@ func Test_Socket_Open_Darwin_No_Sigpipe(t *testing.T) {
 	}
 	defer syscall.Close(descriptor)
 	value, get_err := syscall.GetsockoptInt(
-		descriptor, syscall.SOL_SOCKET, socket_no_sigpipe)
+		descriptor, syscall.SOL_SOCKET, SOCKET_NO_SIGPIPE)
 	if get_err != nil {
 		t.Fatalf("get SO_NOSIGPIPE: %v", get_err)
 	}
@@ -36,15 +36,15 @@ func Test_Socket_Open_Darwin_No_Sigpipe(t *testing.T) {
 	if receive_err != nil {
 		t.Fatalf("get receive buffer: %v", receive_err)
 	}
-	if receive_buffer < socket_receive_buffer_size {
-		t.Fatalf("receive buffer = %d, want %d", receive_buffer, socket_receive_buffer_size)
+	if receive_buffer < SOCKET_RECEIVE_BUFFER_SIZE {
+		t.Fatalf("receive buffer = %d, want %d", receive_buffer, SOCKET_RECEIVE_BUFFER_SIZE)
 	}
 	send_buffer, send_err := syscall.GetsockoptInt(
 		descriptor, syscall.SOL_SOCKET, syscall.SO_SNDBUF)
 	if send_err != nil {
 		t.Fatalf("get send buffer: %v", send_err)
 	}
-	if send_buffer < socket_send_buffer_size {
-		t.Fatalf("send buffer = %d, want %d", send_buffer, socket_send_buffer_size)
+	if send_buffer < SOCKET_SEND_BUFFER_SIZE {
+		t.Fatalf("send buffer = %d, want %d", send_buffer, SOCKET_SEND_BUFFER_SIZE)
 	}
 }

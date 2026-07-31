@@ -6,29 +6,29 @@ import (
 	"testing"
 	"unsafe"
 
-	sharedio "local/james-orcales/g/shared/io"
+	sharedio "local/james-orcales/shared/io"
 )
 
 // Test_Platform_Bounded_Operation_Internal_Completion verifies the synthetic linked deadline owns
 // completion storage before registration writes its kernel identifier.
 func Test_Platform_Bounded_Operation_Internal_Completion(t *testing.T) {
-	const entries = uint32(2)
+	const ENTRIES = uint32(2)
 	submission := make([]byte, 128)
-	*platform_uint32(submission, 8) = entries - 1
-	state := &operating_system{
-		Operations: make(map[uint64]*operating_system_operation),
-		Platform: platform_scheduler{
-			Parameters: kernel_ring_parameters{
-				Submission_Entries: entries,
-				Submission:         kernel_ring_offsets{Head: 0, Ring_Mask: 8},
+	*platform_uint32(submission, 8) = ENTRIES - 1
+	state := &Operating_System{
+		Operations: make(map[uint64]*Operating_System_Operation),
+		Platform: Platform_Scheduler{
+			Parameters: Kernel_Ring_Parameters{
+				Submission_Entries: ENTRIES,
+				Submission:         Kernel_Ring_Offsets{Head: 0, Ring_Mask: 8},
 			},
 			Submission_Ring: submission,
-			Entries:         make([]byte, entries*64),
+			Entries:         make([]byte, ENTRIES*64),
 		},
 	}
-	primary := &operating_system_operation{
+	primary := &Operating_System_Operation{
 		Completion: &sharedio.Completion{},
-		Kind:       operating_system_operation_accept,
+		Kind:       OPERATING_SYSTEM_OPERATION_ACCEPT,
 		Descriptor: 9,
 	}
 	operating_system_operation_register(state, primary)
@@ -48,21 +48,21 @@ func Test_Platform_Bounded_Operation_Internal_Completion(t *testing.T) {
 // Test_Platform_Submission_Publication verifies get_sqe keeps a partially prepared SQE private and
 // platform_publish exposes it only after preparation, including under IORING_SETUP_SQPOLL.
 func Test_Platform_Submission_Publication(t *testing.T) {
-	const entries = uint32(2)
+	const ENTRIES = uint32(2)
 	submission := make([]byte, 128)
 	kernel_tail := platform_uint32(submission, 4)
 	ring_mask := platform_uint32(submission, 8)
-	*ring_mask = entries - 1
+	*ring_mask = ENTRIES - 1
 	array_offset := uint32(64)
-	platform := platform_scheduler{
-		Parameters: kernel_ring_parameters{
-			Submission_Entries: entries,
-			Submission: kernel_ring_offsets{
+	platform := Platform_Scheduler{
+		Parameters: Kernel_Ring_Parameters{
+			Submission_Entries: ENTRIES,
+			Submission: Kernel_Ring_Offsets{
 				Head: 0, Tail: 4, Ring_Mask: 8, Array: array_offset,
 			},
 		},
 		Submission_Ring: submission,
-		Entries:         make([]byte, entries*64),
+		Entries:         make([]byte, ENTRIES*64),
 	}
 	entry := platform_reserve_entry(&platform)
 	if entry == nil {

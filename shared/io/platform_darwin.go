@@ -6,6 +6,6 @@ package io
 type Platform_IO struct{}
 
 // Wires no platform-only simulator operations on Darwin.
-func sim_wire_platform(state *sim, loop *IO) {
+func sim_wire_platform(state *Sim, loop *IO) {
 	loop.Platform_IO = Platform_IO{}
 }

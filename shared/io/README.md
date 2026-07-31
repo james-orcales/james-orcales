@@ -453,7 +453,7 @@ stop. That is the scripting API trying to come back.
 
 - **`shared/io`** — the `IO`/`Driver` surface and the deterministic simulator. No
   syscalls. This is what every binary's pure tier depends on.
-- **`shared/io/default`** — the real OS backend: kqueue/epoll readiness, inline file
+- **`shared/io/default`** — the real OS backend: kqueue and io_uring scheduling, inline file
   syscalls, a compute worker pool with a self-pipe wake, TLS goroutines, process
   spawning. The **only** place raw IO stdlib (`net`, `syscall`, `os/exec`, `crypto/tls`,
   …) is allowed; the `io-gateway` lint rule keeps everyone else routing through

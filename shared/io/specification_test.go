@@ -5,9 +5,9 @@ import (
 	"strings"
 	"testing"
 
-	"local/james-orcales/g/shared/io"
-	snap "local/james-orcales/g/shared/snap/default"
-	"local/james-orcales/g/shared/time"
+	"local/james-orcales/shared/io"
+	snap "local/james-orcales/shared/snap/default"
+	"local/james-orcales/shared/time"
 )
 
 // Test_Sim_Timeout verifies a timeout fires exactly when the virtual clock reaches
@@ -69,7 +69,7 @@ func Test_Sim_Read(t *testing.T) {
 		}
 		wrote = true
 	}, writer, []byte("hello"), 0)
-	driver.Run_Until(func() (finished bool) { return wrote }, sim_deadline)
+	driver.Run_Until(func() (finished bool) { return wrote }, SIM_DEADLINE)
 
 	reader, open_err := loop.Open("file")
 	if open_err != nil {
@@ -81,7 +81,7 @@ func Test_Sim_Read(t *testing.T) {
 	loop.Read(&read_completion, func(_ *io.Completion, bytes int, _ error) {
 		count = bytes
 	}, reader, buffer, 0)
-	driver.Run_Until(func() (finished bool) { return count >= 0 }, sim_deadline)
+	driver.Run_Until(func() (finished bool) { return count >= 0 }, SIM_DEADLINE)
 
 	if count != 5 {
 		t.Fatalf("read reported %d bytes, want 5", count)
@@ -107,7 +107,7 @@ func Test_Sim_Fsync(t *testing.T) {
 		}
 		fired = true
 	}, file)
-	driver.Run_Until(func() (finished bool) { return fired }, sim_deadline)
+	driver.Run_Until(func() (finished bool) { return fired }, SIM_DEADLINE)
 	if driver.Introspect().Raw_Open != 1 {
 		t.Fatal("fsync changed descriptor ownership")
 	}
@@ -127,7 +127,7 @@ func Test_Sim_Open_At(t *testing.T) {
 	}, io.DIRECTORY_CURRENT, "file", io.Open_At_Options{
 		Access: io.OPEN_READ_WRITE, Create: true, Truncate: true, Mode: 0o600,
 	})
-	driver.Run_Until(func() (finished bool) { return opened >= 0 }, sim_deadline)
+	driver.Run_Until(func() (finished bool) { return opened >= 0 }, SIM_DEADLINE)
 	if opened < 0 {
 		t.Fatal("open at did not return a descriptor")
 	}
@@ -166,7 +166,7 @@ func Test_Sim_Event(t *testing.T) {
 func Test_Sim_Listen(t *testing.T) {
 	loop, _, _ := sim_loop(0)
 
-	address := io.Address_I_Pv4([4]byte{127, 0, 0, 1}, 0)
+	address := io.Address_I_Pv4([io.IPV4_ADDRESS_BYTES]byte{127, 0, 0, 1}, 0)
 	listener, open_err := loop.Open_Socket_TCP(io.FAMILY_IPV4, io.TCP_Options{})
 	if open_err != nil {
 		t.Fatalf("open listener: %v", open_err)
@@ -189,7 +189,7 @@ func Test_Sim_Accept(t *testing.T) {
 		loop, driver, _ := sim_loop(seed)
 		listener, _ := loop.Open_Socket_TCP(io.FAMILY_IPV4, io.TCP_Options{})
 		_, listen_err := loop.Listen(
-			listener, io.Address_I_Pv4([4]byte{127, 0, 0, 1}, 0),
+			listener, io.Address_I_Pv4([io.IPV4_ADDRESS_BYTES]byte{127, 0, 0, 1}, 0),
 			io.Listen_Options{Backlog: 128},
 		)
 		if listen_err != nil {
@@ -266,7 +266,7 @@ func Test_Sim_Open_Socket(t *testing.T) {
 		}
 		closed = true
 	}, socket)
-	driver.Run_Until(func() (finished bool) { return closed }, sim_deadline)
+	driver.Run_Until(func() (finished bool) { return closed }, SIM_DEADLINE)
 	snap.Expect(t, snap.Init(`baseline=0 opened=1 closed=0`), fmt.Sprintf(
 		"baseline=%d opened=%d closed=%d",
 		baseline, opened, driver.Introspect().Raw_Open,
@@ -379,8 +379,8 @@ func Test_Sim_Shutdown(t *testing.T) {
 			t.Fatalf("connect: %v", err)
 		}
 		connected = true
-	}, socket, io.Address_I_Pv4([4]byte{127, 0, 0, 1}, 8123), sim_deadline)
-	driver.Run_Until(func() (finished bool) { return connected }, sim_deadline)
+	}, socket, io.Address_I_Pv4([io.IPV4_ADDRESS_BYTES]byte{127, 0, 0, 1}, 8123), SIM_DEADLINE)
+	driver.Run_Until(func() (finished bool) { return connected }, SIM_DEADLINE)
 	var receive_completion io.Completion
 	var send_completion io.Completion
 	receive_count := -1
@@ -425,8 +425,8 @@ func Test_Sim_Close(t *testing.T) {
 			t.Fatalf("connect: %v", err)
 		}
 		connected = true
-	}, socket, io.Address_I_Pv4([4]byte{127, 0, 0, 1}, 1), sim_deadline)
-	driver.Run_Until(func() (finished bool) { return connected }, sim_deadline)
+	}, socket, io.Address_I_Pv4([io.IPV4_ADDRESS_BYTES]byte{127, 0, 0, 1}, 1), SIM_DEADLINE)
+	driver.Run_Until(func() (finished bool) { return connected }, SIM_DEADLINE)
 	received := false
 	var receive_completion io.Completion
 	loop.Receive(&receive_completion, func(_ *io.Completion, _ int, _ error) {
@@ -495,7 +495,7 @@ func Test_Sim_Run_Until(t *testing.T) {
 	}, io.File(0), make([]byte, 8), 0)
 
 	completed, drive_err := driver.Run_Until(
-		func() (finished bool) { return done }, sim_deadline,
+		func() (finished bool) { return done }, SIM_DEADLINE,
 	)
 	if drive_err != nil {
 		t.Fatalf("Run_Until error: %v", drive_err)
@@ -508,7 +508,7 @@ func Test_Sim_Run_Until(t *testing.T) {
 	}
 
 	completed, drive_err = driver.Run_Until(
-		func() (finished bool) { return false }, sim_deadline,
+		func() (finished bool) { return false }, SIM_DEADLINE,
 	)
 	if drive_err != nil {
 		t.Fatalf("Run_Until deadline error: %v", drive_err)
@@ -693,7 +693,7 @@ func Test_Sim_Spawn(t *testing.T) {
 	var completion io.Completion
 	loop.Spawn(&completion, func(_ *io.Completion, result io.Process_Result, err error) {
 		fired++
-	}, io.Process_Request{Path: "echo"}, sim_deadline)
+	}, io.Process_Request{Path: "echo"}, SIM_DEADLINE)
 	driver.Run_For(16 * time.NANOSECOND)
 	if fired != 1 {
 		t.Fatalf("spawn callback fired %d times, want 1", fired)
@@ -760,7 +760,7 @@ func Test_Sim_Status(t *testing.T) {
 	loop.Write(&write, func(_ *io.Completion, _ int, _ error) {
 		written = true
 	}, file, content, 0)
-	driver.Run_Until(func() (finished bool) { return written }, sim_deadline)
+	driver.Run_Until(func() (finished bool) { return written }, SIM_DEADLINE)
 	directory, _ := loop.Status("/dir")
 	if !directory.Exists {
 		t.Fatalf("dir status = %+v, want exists", directory)
@@ -828,7 +828,7 @@ func Test_Sim_Introspect(t *testing.T) {
 	loop.Spawn(&posted, func(
 		_ *io.Completion, _ io.Process_Result, _ error,
 	) {
-	}, io.Process_Request{Path: "true"}, sim_deadline)
+	}, io.Process_Request{Path: "true"}, SIM_DEADLINE)
 	loop.Compute(&result, func(_ *io.Completion) {}, func() {})
 	snap.Expect(t, snap.Init(`{Completed:1 Timeouts:1 IO_Backlog:2 IO_Inflight:0 IO_Queued:0 IO_In_Kernel:0 Signal_Waiters:1 Posted:1 Results:1 Raw_Open:2 Wake_Active:true Compute_Active:true}`),
 		fmt.Sprintf("%+v", driver.Introspect()))
@@ -859,8 +859,8 @@ func sim_connect_lifecycle(t *testing.T, seed uint64) (snapshot string) {
 	loop.Connect(&completion, func(_ *io.Completion, err error) {
 		called = true
 		connect_err = err
-	}, socket, io.Address_I_Pv4([4]byte{127, 0, 0, 1}, 8123), sim_deadline)
-	driver.Run_Until(func() (finished bool) { return called }, sim_deadline)
+	}, socket, io.Address_I_Pv4([io.IPV4_ADDRESS_BYTES]byte{127, 0, 0, 1}, 8123), SIM_DEADLINE)
+	driver.Run_Until(func() (finished bool) { return called }, SIM_DEADLINE)
 	if !called {
 		t.Fatal("connect callback did not fire")
 	}
@@ -873,7 +873,7 @@ func sim_connect_lifecycle(t *testing.T, seed uint64) (snapshot string) {
 		}
 		closed = true
 	}, socket)
-	driver.Run_Until(func() (finished bool) { return closed }, sim_deadline)
+	driver.Run_Until(func() (finished bool) { return closed }, SIM_DEADLINE)
 	return fmt.Sprintf(
 		"baseline=%d opened=%d connected=%d closed=%d outcome=%s",
 		baseline, opened, connected, driver.Introspect().Raw_Open,
@@ -896,8 +896,8 @@ func sim_connect_with_deadline(
 	loop.Connect(&completion, func(_ *io.Completion, err error) {
 		callback_count++
 		connect_err = err
-	}, socket, io.Address_I_Pv4([4]byte{127, 0, 0, 1}, 8123), deadline)
-	driver.Run_Until(func() (finished bool) { return callback_count > 0 }, sim_deadline)
+	}, socket, io.Address_I_Pv4([io.IPV4_ADDRESS_BYTES]byte{127, 0, 0, 1}, 8123), deadline)
+	driver.Run_Until(func() (finished bool) { return callback_count > 0 }, SIM_DEADLINE)
 	driver.Run_For(16 * time.NANOSECOND)
 	if callback_count != 1 {
 		t.Fatalf("seed %d: connect callback count = %d, want 1", seed, callback_count)
@@ -913,7 +913,7 @@ func sim_connect_with_deadline(
 		}
 		closed = true
 	}, socket)
-	driver.Run_Until(func() (finished bool) { return closed }, sim_deadline)
+	driver.Run_Until(func() (finished bool) { return closed }, SIM_DEADLINE)
 	if driver.Introspect().Raw_Open != 0 {
 		t.Fatalf("seed %d: caller close leaked the connect socket", seed)
 	}
@@ -934,7 +934,7 @@ func sim_spawn_with_deadline(
 		callback_count++
 		spawn_err = err
 	}, io.Process_Request{Path: "true"}, deadline)
-	driver.Run_Until(func() (finished bool) { return callback_count > 0 }, sim_deadline)
+	driver.Run_Until(func() (finished bool) { return callback_count > 0 }, SIM_DEADLINE)
 	driver.Run_For(16 * time.NANOSECOND)
 	if callback_count != 1 {
 		t.Fatalf("seed %d: spawn callback count = %d, want 1", seed, callback_count)
@@ -952,7 +952,7 @@ func sim_loop(seed uint64) (loop io.IO, driver io.Driver, clock time.Clock) {
 // The Run_Until cap for the sim tests, in virtual time: ample for ops that finish in a
 // handful of grains, while a never-satisfied predicate fails after this many cheap grains
 // instead of spinning the sim forever.
-const sim_deadline = time.MICROSECOND
+const SIM_DEADLINE = time.MICROSECOND
 
 // Test_Connect_Deadline_Sim verifies a finite connect deadline wins a latency tie, delivers once,
 // and leaves the borrowed descriptor open until the caller closes it.

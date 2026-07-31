@@ -12,24 +12,24 @@ import (
 	"syscall"
 	"testing"
 
-	"local/james-orcales/g/shared/io"
-	iodefault "local/james-orcales/g/shared/io/default"
-	"local/james-orcales/g/shared/time"
-	timeos "local/james-orcales/g/shared/time/default"
+	"local/james-orcales/shared/io"
+	system_io "local/james-orcales/shared/io/default"
+	"local/james-orcales/shared/time"
+	timeos "local/james-orcales/shared/time/default"
 )
 
 // The Run_Until cap for the real-backend tests: generous, since a completion returns the
 // pump the instant it fires — this bound only bites a genuine hang, failing the test
 // instead of blocking until the package timeout.
-const real_deadline = 5 * time.SECOND
+const REAL_DEADLINE = 5 * time.SECOND
 
 // The short finite operation deadline used to prove a dormant kernel wait retires promptly.
-const real_operation_deadline = 25 * time.MILLISECOND
+const REAL_OPERATION_DEADLINE = 25 * time.MILLISECOND
 
 // Creates the 32-entry test scheduler and fails at the composition root if initialization fails.
 func operating_system_loop(t *testing.T, clock time.Clock) (loop io.IO, driver io.Driver) {
 	t.Helper()
-	loop, driver, err := iodefault.New_Operating_System_IO(clock, 32, 0)
+	loop, driver, err := system_io.New_Operating_System_IO(clock, 32, 0)
 	if err != nil {
 		t.Fatalf("initialize io: %v", err)
 	}
@@ -41,7 +41,7 @@ func operating_system_run_until(
 	t *testing.T, driver io.Driver, done func() (finished bool),
 ) (completed bool) {
 	t.Helper()
-	completed, err := driver.Run_Until(done, real_deadline)
+	completed, err := driver.Run_Until(done, REAL_DEADLINE)
 	if err != nil {
 		t.Fatalf("drive io: %v", err)
 	}
@@ -93,7 +93,7 @@ func test_connect(
 	if err != nil {
 		panic(err)
 	}
-	loop.Connect(completion, callback, socket, address, real_deadline)
+	loop.Connect(completion, callback, socket, address, REAL_DEADLINE)
 }
 
 // Test_Operating_System_IO_Read writes a temp file and reads it back through the
@@ -136,7 +136,7 @@ func Test_Operating_System_IO_Read(t *testing.T) {
 // Test_Resolve_Passes_IP_Literal confirms an IP-literal host returns unchanged, so an
 // already-resolved address skips the blocking DNS lookup and the loop's dial path only sees IPs.
 func Test_Resolve_Passes_IP_Literal(t *testing.T) {
-	address, err := iodefault.Resolve("93.184.216.34")
+	address, err := system_io.Resolve("93.184.216.34")
 	if err != nil {
 		t.Fatalf("resolve ip literal: %v", err)
 	}
@@ -169,7 +169,7 @@ func Test_Operating_System_IO_Timeout(t *testing.T) {
 	loop.Timeout(&completion, func(_ *io.Completion, err error) {
 		fired = true
 	}, time.MILLISECOND)
-	driver.Run_Until(func() (finished bool) { return fired }, real_deadline)
+	driver.Run_Until(func() (finished bool) { return fired }, REAL_DEADLINE)
 	if !fired {
 		t.Fatal("timeout did not fire")
 	}
@@ -280,7 +280,7 @@ func Test_Operating_System_IO_Socket(t *testing.T) {
 			t.Errorf("accept: %v", accept_err)
 		}
 		accepted = socket
-	}, listener, real_deadline)
+	}, listener, REAL_DEADLINE)
 
 	connected, open_err := test_open_socket(loop)
 	if open_err != nil {
@@ -299,8 +299,8 @@ func Test_Operating_System_IO_Socket(t *testing.T) {
 		connected, "127.0.0.1", port,
 	)
 
-	driver.Run_Until(func() (finished bool) { return accepted > 0 }, real_deadline)
-	driver.Run_Until(func() (finished bool) { return connect_done }, real_deadline)
+	driver.Run_Until(func() (finished bool) { return accepted > 0 }, REAL_DEADLINE)
+	driver.Run_Until(func() (finished bool) { return connect_done }, REAL_DEADLINE)
 	if accepted <= 0 {
 		t.Fatalf("accept did not complete, got %d", accepted)
 	}
@@ -336,7 +336,7 @@ func Test_Operating_System_IO_Accept_Deadline(t *testing.T) {
 		callback_count++
 		accepted = socket
 		operation_err = err
-	}, listener, real_operation_deadline)
+	}, listener, REAL_OPERATION_DEADLINE)
 	if !operating_system_run_until(
 		t, driver, func() (finished bool) { return callback_count > 0 },
 	) {
@@ -375,7 +375,7 @@ func Test_Operating_System_IO_Connect_Error_Preserves_Socket(t *testing.T) {
 		connect_err = err
 	}, socket, "127.0.0.1", port)
 
-	driver.Run_Until(func() (finished bool) { return called }, real_deadline)
+	driver.Run_Until(func() (finished bool) { return called }, REAL_DEADLINE)
 	if connect_err == nil {
 		t.Fatal("connect to an unbound port succeeded, want an error")
 	}
@@ -415,7 +415,7 @@ func Test_Operating_System_IO_Send_In_Connect_Completion(t *testing.T) {
 			t.Errorf("accept: %v", err)
 		}
 		accepted = socket
-	}, listener, real_deadline)
+	}, listener, REAL_DEADLINE)
 
 	sent := -1
 	var send_completion io.Completion
@@ -438,12 +438,12 @@ func Test_Operating_System_IO_Send_In_Connect_Completion(t *testing.T) {
 		}, socket, []byte("ping"))
 	}, socket, "127.0.0.1", port)
 
-	driver.Run_Until(func() (finished bool) { return sent >= 0 }, real_deadline)
+	driver.Run_Until(func() (finished bool) { return sent >= 0 }, REAL_DEADLINE)
 	if sent != 4 {
 		t.Fatalf("send armed in the connect completion delivered %d bytes, want 4", sent)
 	}
 
-	driver.Run_Until(func() (finished bool) { return accepted > 0 }, real_deadline)
+	driver.Run_Until(func() (finished bool) { return accepted > 0 }, REAL_DEADLINE)
 	buffer := make([]byte, 16)
 	received := -1
 	var receive_completion io.Completion
@@ -453,7 +453,7 @@ func Test_Operating_System_IO_Send_In_Connect_Completion(t *testing.T) {
 		}
 		received = count
 	}, accepted, buffer)
-	driver.Run_Until(func() (finished bool) { return received >= 0 }, real_deadline)
+	driver.Run_Until(func() (finished bool) { return received >= 0 }, REAL_DEADLINE)
 	if received != 4 {
 		t.Fatalf("peer received %d bytes, want 4", received)
 	}
@@ -537,7 +537,7 @@ func loopback_pair(
 			t.Errorf("accept: %v", accept_err)
 		}
 		accepted = socket
-	}, listener, real_deadline)
+	}, listener, REAL_DEADLINE)
 	var connect_completion io.Completion
 	test_connect(loop,
 		&connect_completion,
@@ -550,7 +550,7 @@ func loopback_pair(
 		connected, "127.0.0.1", port,
 	)
 	driver.Run_Until(func() (finished bool) { return accepted > 0 && connect_done },
-		real_deadline)
+		REAL_DEADLINE)
 	if accepted <= 0 {
 		t.Fatalf("accept did not complete, got %d", accepted)
 	}
@@ -796,7 +796,7 @@ func Test_Operating_System_IO_Peer_Address(t *testing.T) {
 	var accept_completion io.Completion
 	loop.Accept(&accept_completion, func(_ *io.Completion, socket io.File, err error) {
 		accepted = socket
-	}, listener, real_deadline)
+	}, listener, REAL_DEADLINE)
 	var connect_completion io.Completion
 	connected, open_err := test_open_socket(loop)
 	if open_err != nil {
@@ -807,7 +807,7 @@ func Test_Operating_System_IO_Peer_Address(t *testing.T) {
 		func(_ *io.Completion, err error) {},
 		connected, "127.0.0.1", port,
 	)
-	driver.Run_Until(func() (finished bool) { return accepted > 0 }, real_deadline)
+	driver.Run_Until(func() (finished bool) { return accepted > 0 }, REAL_DEADLINE)
 
 	if accepted <= 0 {
 		t.Fatalf("accept did not complete, got %d", accepted)
@@ -832,7 +832,7 @@ func Test_Operating_System_IO_Compute(t *testing.T) {
 	loop.Compute(&completion, func(_ *io.Completion) {
 		fired = true
 	}, func() { ran = true })
-	driver.Run_Until(func() (finished bool) { return fired }, real_deadline)
+	driver.Run_Until(func() (finished bool) { return fired }, REAL_DEADLINE)
 
 	if !ran {
 		t.Fatal("compute work did not run")
@@ -882,11 +882,11 @@ func Test_Operating_System_IO_Watch_Signal(t *testing.T) {
 		}
 		fired++
 		got = signal
-	}, io.SIGNAL_TERMINATE, real_deadline)
+	}, io.SIGNAL_TERMINATE, REAL_DEADLINE)
 	if kill_err := syscall.Kill(os.Getpid(), syscall.SIGTERM); kill_err != nil {
 		t.Fatalf("kill: %v", kill_err)
 	}
-	driver.Run_Until(func() (finished bool) { return fired > 0 }, real_deadline)
+	driver.Run_Until(func() (finished bool) { return fired > 0 }, REAL_DEADLINE)
 
 	if fired != 1 {
 		t.Fatalf("signal callback fired %d times, want 1", fired)
@@ -911,7 +911,7 @@ func Test_Operating_System_IO_Watch_Signal_Deadline(t *testing.T) {
 		callback_count++
 		got = signal
 		operation_err = err
-	}, io.SIGNAL_TERMINATE, real_operation_deadline)
+	}, io.SIGNAL_TERMINATE, REAL_OPERATION_DEADLINE)
 	if !operating_system_run_until(
 		t, driver, func() (finished bool) { return callback_count > 0 },
 	) {
@@ -944,7 +944,7 @@ func Test_Operating_System_IO_Spawn(t *testing.T) {
 		}
 		echo = result
 		echoed = true
-	}, io.Process_Request{Path: "/bin/echo", Arguments: []string{"hi"}}, real_deadline)
+	}, io.Process_Request{Path: "/bin/echo", Arguments: []string{"hi"}}, REAL_DEADLINE)
 	operating_system_run_until(t, driver, func() (finished bool) { return echoed })
 
 	if !echoed {
@@ -966,7 +966,7 @@ func Test_Operating_System_IO_Spawn(t *testing.T) {
 		}
 		fail = result
 		failed = true
-	}, io.Process_Request{Path: "/bin/sh", Arguments: []string{"-c", "exit 1"}}, real_deadline)
+	}, io.Process_Request{Path: "/bin/sh", Arguments: []string{"-c", "exit 1"}}, REAL_DEADLINE)
 	operating_system_run_until(t, driver, func() (finished bool) { return failed })
 
 	if !failed {
@@ -995,7 +995,7 @@ func Test_Operating_System_IO_Spawn_Streams_To_Sink(t *testing.T) {
 		result = spawned
 		done = true
 	}, io.Process_Request{Path: "/bin/echo", Arguments: []string{"hi"}, Stdout: &streamed},
-		real_deadline)
+		REAL_DEADLINE)
 	operating_system_run_until(t, driver, func() (finished bool) { return done })
 
 	if !done {
@@ -1075,7 +1075,7 @@ func Test_Operating_System_IO_Spawn_Deadline(t *testing.T) {
 	if !group_exited {
 		t.Fatalf("subprocess group %d remains after deadline", process_identifier)
 	}
-	driver.Run_For(2 * real_operation_deadline)
+	driver.Run_For(2 * REAL_OPERATION_DEADLINE)
 	if callback_count != 1 {
 		t.Fatalf("late spawn callback count = %d, want 1", callback_count)
 	}
@@ -1094,7 +1094,7 @@ func process_group_wait_for_exit(
 		if kill_err != nil {
 			return false, kill_err
 		}
-		drive_err := driver.Run_For(real_operation_deadline)
+		drive_err := driver.Run_For(REAL_OPERATION_DEADLINE)
 		if drive_err != nil {
 			return false, drive_err
 		}
@@ -1184,7 +1184,7 @@ func loopback_assert_roundtrip(input *loopback_roundtrip_input) {
 		}
 		received = count
 	}, input.Accepted, buffer)
-	input.Driver.Run_Until(func() (finished bool) { return received >= 0 }, real_deadline)
+	input.Driver.Run_Until(func() (finished bool) { return received >= 0 }, REAL_DEADLINE)
 	if received != 4 {
 		input.Test.Fatalf("received %d bytes, want 4", received)
 	}
@@ -1222,5 +1222,5 @@ func self_exec_close(loop io.IO, driver io.Driver, socket io.File) {
 	closed := false
 	var completion io.Completion
 	loop.Close(&completion, func(_ *io.Completion, _ error) { closed = true }, socket)
-	driver.Run_Until(func() (finished bool) { return closed }, real_deadline)
+	driver.Run_Until(func() (finished bool) { return closed }, REAL_DEADLINE)
 }

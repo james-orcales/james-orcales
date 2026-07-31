@@ -6,79 +6,135 @@ import (
 	"runtime"
 	"syscall"
 
-	sharedio "local/james-orcales/g/shared/io"
-	"local/james-orcales/g/shared/time"
+	sharedio "local/james-orcales/shared/io"
+	"local/james-orcales/shared/time"
 )
+
+// This bound holds the largest socket address from either supported platform.
+const SOCKET_ADDRESS_BYTES = 28
 
 // Operating system operation kind is one TigerBeetle kernel operation tag. The platform
 // backend translates the tag directly to kqueue readiness plus a syscall on Darwin, or to
 // the corresponding io_uring opcode on Linux.
-type operating_system_operation_kind int
+type Operating_System_Operation_Kind int
 
-const operating_system_operation_accept operating_system_operation_kind = 0
-const operating_system_operation_close operating_system_operation_kind = 1
-const operating_system_operation_connect operating_system_operation_kind = 2
-const operating_system_operation_read operating_system_operation_kind = 3
-const operating_system_operation_receive operating_system_operation_kind = 4
-const operating_system_operation_send operating_system_operation_kind = 5
-const operating_system_operation_timeout operating_system_operation_kind = 6
-const operating_system_operation_write operating_system_operation_kind = 7
-const operating_system_operation_fsync operating_system_operation_kind = 8
-const operating_system_operation_open_at operating_system_operation_kind = 9
-const operating_system_operation_event operating_system_operation_kind = 10
-const operating_system_operation_statx operating_system_operation_kind = 11
-const operating_system_operation_bounded_deadline operating_system_operation_kind = 12
+// OPERATING_SYSTEM_OPERATION_ACCEPT selects the platform accept operation.
+const OPERATING_SYSTEM_OPERATION_ACCEPT Operating_System_Operation_Kind = 0
+
+// OPERATING_SYSTEM_OPERATION_CLOSE selects the platform close operation.
+const OPERATING_SYSTEM_OPERATION_CLOSE Operating_System_Operation_Kind = 1
+
+// OPERATING_SYSTEM_OPERATION_CONNECT selects the platform connect operation.
+const OPERATING_SYSTEM_OPERATION_CONNECT Operating_System_Operation_Kind = 2
+
+// OPERATING_SYSTEM_OPERATION_READ selects the platform file-read operation.
+const OPERATING_SYSTEM_OPERATION_READ Operating_System_Operation_Kind = 3
+
+// OPERATING_SYSTEM_OPERATION_RECEIVE selects the platform socket-receive operation.
+const OPERATING_SYSTEM_OPERATION_RECEIVE Operating_System_Operation_Kind = 4
+
+// OPERATING_SYSTEM_OPERATION_SEND selects the platform socket-send operation.
+const OPERATING_SYSTEM_OPERATION_SEND Operating_System_Operation_Kind = 5
+
+// OPERATING_SYSTEM_OPERATION_TIMEOUT selects the platform timeout operation.
+const OPERATING_SYSTEM_OPERATION_TIMEOUT Operating_System_Operation_Kind = 6
+
+// OPERATING_SYSTEM_OPERATION_WRITE selects the platform file-write operation.
+const OPERATING_SYSTEM_OPERATION_WRITE Operating_System_Operation_Kind = 7
+
+// OPERATING_SYSTEM_OPERATION_FSYNC selects the platform fsync operation.
+const OPERATING_SYSTEM_OPERATION_FSYNC Operating_System_Operation_Kind = 8
+
+// OPERATING_SYSTEM_OPERATION_OPEN_AT selects the platform Open_At operation.
+const OPERATING_SYSTEM_OPERATION_OPEN_AT Operating_System_Operation_Kind = 9
+
+// OPERATING_SYSTEM_OPERATION_EVENT selects the platform event operation.
+const OPERATING_SYSTEM_OPERATION_EVENT Operating_System_Operation_Kind = 10
+
+// OPERATING_SYSTEM_OPERATION_STATX selects the Linux-only statx operation.
+const OPERATING_SYSTEM_OPERATION_STATX Operating_System_Operation_Kind = 11
+
+// OPERATING_SYSTEM_OPERATION_BOUNDED_DEADLINE identifies an internal linked deadline.
+const OPERATING_SYSTEM_OPERATION_BOUNDED_DEADLINE Operating_System_Operation_Kind = 12
 
 // Kernel timespec is Linux's stable UAPI timespec layout. It lives with the operation so an
 // io_uring timeout never points at stack storage while it is in the kernel.
-type kernel_timespec struct {
-	Seconds     int64
+type Kernel_Timespec struct {
+	// Seconds preserves the Linux UAPI layout.
+	Seconds int64
+	// Nanoseconds preserves the Linux UAPI layout.
 	Nanoseconds int64
 }
 
 // Operating system operation is the Go counterpart of TigerBeetle IO.Completion.operation.
 // Identifier is written to kernel user_data instead of a Go pointer: the registry owns the
 // operation until the kernel retires that integer identifier.
-type operating_system_operation struct {
+type Operating_System_Operation struct {
 	Platform_Operation
-	Identifier          uint64
-	Completion          *sharedio.Completion
-	Kind                operating_system_operation_kind
-	Descriptor          int
-	Buffer              []byte
-	Offset              uint64
-	Address             sharedio.Address
-	File_Path           []byte
-	Open_Options        sharedio.Open_At_Options
-	Event_Value         uint64
-	Initiated           bool
-	Timespec            kernel_timespec
-	Deadline            time.Moment
-	Deadline_Span       kernel_timespec
-	Bounded             *operating_system_bounded_operation
-	Socket_Address      [28]byte
+	// Identifier correlates the operation without a Go pointer in the kernel.
+	Identifier uint64
+	// Completion preserves the caller identity until callback delivery.
+	Completion *sharedio.Completion
+	// Kind selects the platform operation.
+	Kind Operating_System_Operation_Kind
+	// Descriptor preserves caller ownership during asynchronous kernel use.
+	Descriptor int
+	// Buffer retains operation memory until the kernel retires it.
+	Buffer []byte
+	// Offset preserves the requested file position.
+	Offset uint64
+	// Address retains the typed socket address until submission.
+	Address sharedio.Address
+	// File_Path retains zero-terminated path memory until the kernel retires it.
+	File_Path []byte
+	// Open_Options retain Open_At behavior until submission.
+	Open_Options sharedio.Open_At_Options
+	// Event_Value correlates a synthetic event without a Go pointer.
+	Event_Value uint64
+	// Initiated prevents Darwin from issuing connect twice after readiness.
+	Initiated bool
+	// Timespec retains timeout memory until the kernel retires it.
+	Timespec Kernel_Timespec
+	// Deadline bounds an operation on Darwin.
+	Deadline time.Moment
+	// Deadline_Span retains linked-timeout memory until Linux retires it.
+	Deadline_Span Kernel_Timespec
+	// Bounded joins one Linux operation to its linked deadline.
+	Bounded *Operating_System_Bounded_Operation
+	// Socket_Address retains sockaddr memory until the kernel retires it.
+	Socket_Address [SOCKET_ADDRESS_BYTES]byte
+	// Socket_Address_Size tells the kernel which sockaddr bytes are valid.
 	Socket_Address_Size uint32
-	Deliver             func(result int, err error)
-	Pinner              runtime.Pinner
-	Pinned              bool
+	// Deliver keeps callback delivery behind scheduler retirement.
+	Deliver func(result int, err error)
+	// Pinner prevents the Go runtime from moving kernel-owned memory.
+	Pinner runtime.Pinner
+	// Pinned prevents duplicate unpin operations.
+	Pinned bool
 }
 
 // Operating system bounded operation joins a primary operation and its internal Linux link timeout
 // before exposing either result. Darwin uses Deadline directly and never allocates the join.
-type operating_system_bounded_operation struct {
-	Operation           *operating_system_operation
-	Deadline_Operation  *operating_system_operation
-	Operation_Result    int32
-	Deadline_Result     int32
+type Operating_System_Bounded_Operation struct {
+	// Operation retains the primary operation until both linked SQEs retire.
+	Operation *Operating_System_Operation
+	// Deadline_Operation retains the internal timeout until both linked SQEs retire.
+	Deadline_Operation *Operating_System_Operation
+	// Operation_Result preserves the primary result until the linked timeout retires.
+	Operation_Result int32
+	// Deadline_Result preserves the timeout result until the primary operation retires.
+	Deadline_Result int32
+	// Operation_Completed prevents duplicate primary retirement.
 	Operation_Completed bool
-	Deadline_Completed  bool
+	// Deadline_Completed prevents duplicate deadline retirement.
+	Deadline_Completed bool
 }
 
 // Operating system operation submit gives an operation its kernel correlation identifier and
 // hands it to the platform scheduler. A submission failure is delivered through the same
 // completed queue as an ordinary kernel result.
 func operating_system_operation_submit(
-	state *operating_system, operation *operating_system_operation,
+	state *Operating_System, operation *Operating_System_Operation,
 ) {
 	operating_system_operation_register(state, operation)
 	err := platform_submit(state, operation)
@@ -89,9 +145,9 @@ func operating_system_operation_submit(
 
 // Operating system operation register allocates the generation token written to kernel userdata.
 func operating_system_operation_register(
-	state *operating_system, operation *operating_system_operation,
+	state *Operating_System, operation *Operating_System_Operation,
 ) {
-	if operation.Kind == operating_system_operation_event {
+	if operation.Kind == OPERATING_SYSTEM_OPERATION_EVENT {
 		operation.Identifier = operation.Completion.Kernel_Identifier
 	}
 	if operation.Identifier == 0 {
@@ -106,7 +162,7 @@ func operating_system_operation_register(
 // before exposing the result to application code. This is the retire-before-deliver ordering
 // in third-party/tigerbeetle/src/io/darwin.zig:101-156 and io/linux.zig:125-209.
 func operating_system_operation_complete(
-	state *operating_system, operation *operating_system_operation,
+	state *Operating_System, operation *Operating_System_Operation,
 	result int, err error,
 ) {
 	delete(state.Operations, operation.Identifier)
@@ -122,38 +178,30 @@ func operating_system_operation_complete(
 // Operating system operation account updates descriptor ownership only after the kernel has
 // completed the operation that creates or releases the descriptor.
 func operating_system_operation_account(
-	state *operating_system, operation *operating_system_operation,
+	state *Operating_System, operation *Operating_System_Operation,
 	result int, err error,
 ) {
 	if err == nil {
-		if operation.Kind == operating_system_operation_accept {
+		if operation.Kind == OPERATING_SYSTEM_OPERATION_ACCEPT {
 			state.Raw_Open[result] = true
 		}
 	}
 	if err == nil {
-		if operation.Kind == operating_system_operation_open_at {
+		if operation.Kind == OPERATING_SYSTEM_OPERATION_OPEN_AT {
 			state.Raw_Open[result] = true
 		}
 	}
 	if err == nil {
-		if operation.Kind == operating_system_operation_close {
+		if operation.Kind == OPERATING_SYSTEM_OPERATION_CLOSE {
 			delete(state.Raw_Open, operation.Descriptor)
 		}
 	}
 }
 
-// Operating system operation retry resubmits the same registered operation after a transient
-// kernel interruption. Its identifier and completion remain armed throughout the retry.
-func operating_system_operation_retry(
-	state *operating_system, operation *operating_system_operation,
-) (err error) {
-	return platform_submit_registered(state, operation)
-}
-
 // Operating system translate result applies the portable result variants shared/io exposes.
 // Other errno values remain raw operating-system errors, as TigerBeetle's typed error unions do.
 func operating_system_translate_result(
-	operation *operating_system_operation, result int32,
+	operation *Operating_System_Operation, result int32,
 ) (count int, err error) {
 	if result >= 0 {
 		return int(result), nil
@@ -171,12 +219,12 @@ func operating_system_translate_result(
 	if errno == syscall.ECANCELED {
 		return 0, sharedio.Canceled
 	}
-	if operation.Kind == operating_system_operation_timeout {
+	if operation.Kind == OPERATING_SYSTEM_OPERATION_TIMEOUT {
 		if errno == syscall.ETIME {
 			return 0, nil
 		}
 	}
-	if operation.Kind == operating_system_operation_close {
+	if operation.Kind == OPERATING_SYSTEM_OPERATION_CLOSE {
 		if errno == syscall.EINTR {
 			return 0, nil
 		}
@@ -188,26 +236,26 @@ func operating_system_translate_result(
 // than delivers. EINTR applies to every kernel operation except close; file reads and writes
 // also retry EAGAIN, matching io/linux.zig's Completion.complete switch.
 func operating_system_retryable_result(
-	operation *operating_system_operation, result int32,
+	operation *Operating_System_Operation, result int32,
 ) (retry bool) {
 	if result >= 0 {
 		return false
 	}
 	errno := syscall.Errno(-result)
 	if errno == syscall.EINTR {
-		return operation.Kind != operating_system_operation_close
+		return operation.Kind != OPERATING_SYSTEM_OPERATION_CLOSE
 	}
 	if errno != syscall.EAGAIN {
 		return false
 	}
-	if operation.Kind == operating_system_operation_read {
+	if operation.Kind == OPERATING_SYSTEM_OPERATION_READ {
 		return true
 	}
-	return operation.Kind == operating_system_operation_write
+	return operation.Kind == OPERATING_SYSTEM_OPERATION_WRITE
 }
 
 // Operating system timeout span converts a positive duration to the stable kernel layout.
-func operating_system_timeout_span(duration time.Duration) (span kernel_timespec) {
+func operating_system_timeout_span(duration time.Duration) (span Kernel_Timespec) {
 	nanoseconds := int64(duration)
 	span.Seconds = nanoseconds / 1_000_000_000
 	span.Nanoseconds = nanoseconds % 1_000_000_000

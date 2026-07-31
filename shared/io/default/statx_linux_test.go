@@ -6,8 +6,8 @@ import (
 	"path/filepath"
 	"testing"
 
-	"local/james-orcales/g/shared/io"
-	timeos "local/james-orcales/g/shared/time/default"
+	"local/james-orcales/shared/io"
+	timeos "local/james-orcales/shared/time/default"
 )
 
 // Test_Operating_System_IO_Statx ports the Linux-only tail of TigerBeetle's

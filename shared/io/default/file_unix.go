@@ -8,16 +8,16 @@ import (
 	"path/filepath"
 	"syscall"
 
-	"local/james-orcales/g/shared/io"
+	"local/james-orcales/shared/io"
 )
 
 // Bounds one readdir pass into a fixed buffer, so a large directory is read in repeated
 // passes rather than one unbounded allocation.
-const directory_read_bytes = 8192
+const DIRECTORY_READ_BYTES = 8192
 
 // Caps the number of readdir passes so a pathological directory errors rather than looping
 // unbounded; 4096 passes of directory_read_bytes cover hundreds of thousands of entries.
-const directory_read_passes_max = 4096
+const DIRECTORY_READ_PASSES_MAX = 4096
 
 // Reads up to len(buffer) bytes from file at offset via the pread syscall — the raw
 // positioned read TigerBeetle's posix backend uses.
@@ -70,8 +70,8 @@ func file_read_directory(path string) (entries []io.Directory_Entry, err error) 
 		return nil, open_err
 	}
 	defer syscall.Close(descriptor)
-	buffer := make([]byte, directory_read_bytes)
-	for pass_index := 0; pass_index < directory_read_passes_max; pass_index++ {
+	buffer := make([]byte, DIRECTORY_READ_BYTES)
+	for pass_index := 0; pass_index < DIRECTORY_READ_PASSES_MAX; pass_index++ {
 		count, read_err := syscall.ReadDirent(descriptor, buffer)
 		if read_err != nil {
 			return nil, read_err
@@ -204,13 +204,16 @@ func socket_accept(listener int) (descriptor int, again bool, err error) {
 	return descriptor, false, nil
 }
 
-type socket_connect_start_input struct {
+// Socket_Connect_Start_Input keeps the caller-owned descriptor and typed address together.
+type Socket_Connect_Start_Input struct {
+	// Descriptor preserves caller ownership during the connect syscall.
 	Descriptor int
-	Address    io.Address
+	// Address prevents a DNS name from entering the syscall boundary.
+	Address io.Address
 }
 
 // Begins connecting a caller-owned descriptor; an in-progress handshake completes later.
-func socket_connect_start(input *socket_connect_start_input) (err error) {
+func socket_connect_start(input *Socket_Connect_Start_Input) (err error) {
 	address, address_err := socket_address(input.Address)
 	if address_err != nil {
 		return address_err

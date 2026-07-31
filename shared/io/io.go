@@ -15,9 +15,9 @@ import (
 	"strconv"
 	"strings"
 
-	invariant "local/james-orcales/g/shared/invariant/default"
-	"local/james-orcales/g/shared/prng"
-	"local/james-orcales/g/shared/time"
+	invariant "local/james-orcales/shared/invariant/default"
+	"local/james-orcales/shared/random/prng"
+	"local/james-orcales/shared/time"
 )
 
 // File identifies an open file or socket. The simulated backend maps it to tracked
@@ -65,19 +65,25 @@ const FAMILY_IPV4 Address_Family = 0
 // FAMILY_IPV6 selects an IPv6 socket.
 const FAMILY_IPV6 Address_Family = 1
 
+// These bounds keep the public address layout equal to the network protocol layouts.
+const IPV4_ADDRESS_BYTES = 4
+
+// IPV6_ADDRESS_BYTES keeps the public address layout equal to the IPv6 protocol layout.
+const IPV6_ADDRESS_BYTES = 16
+
 // Address is an IP address and port with an explicit family, corresponding to TigerBeetle's
 // stdx.SocketAddress. IP stores IPv4 bytes in its first four positions and IPv6 bytes in all 16.
 type Address struct {
 	// Family selects how IP is interpreted.
 	Family Address_Family
 	// IP holds the network address bytes.
-	IP [16]byte
+	IP [IPV6_ADDRESS_BYTES]byte
 	// Port is the host-order TCP or UDP port.
 	Port uint16
 }
 
 // Address_I_Pv4 returns an IPv4 address from its four octets and host-order port.
-func Address_I_Pv4(ip [4]byte, port uint16) (address Address) {
+func Address_I_Pv4(ip [IPV4_ADDRESS_BYTES]byte, port uint16) (address Address) {
 	address.Family = FAMILY_IPV4
 	copy(address.IP[:4], ip[:])
 	address.Port = port
@@ -85,7 +91,7 @@ func Address_I_Pv4(ip [4]byte, port uint16) (address Address) {
 }
 
 // Address_I_Pv6 returns an IPv6 address from its 16 octets and host-order port.
-func Address_I_Pv6(ip [16]byte, port uint16) (address Address) {
+func Address_I_Pv6(ip [IPV6_ADDRESS_BYTES]byte, port uint16) (address Address) {
 	return Address{Family: FAMILY_IPV6, IP: ip, Port: port}
 }
 
@@ -290,11 +296,11 @@ const IMMEDIATE time.Duration = 0
 
 // The number of virtual grains a simulated operation may take to complete, drawn from
 // the seed so the completion order varies per run while staying reproducible.
-const sim_latency_grains = 8
+const SIM_LATENCY_GRAINS = 8
 
 // One in this many simulated spawns exits non-zero, so a seed sweep exercises both the
 // success and the failure path without a scripted outcome.
-const sim_spawn_fail_grains = 4
+const SIM_SPAWN_FAIL_GRAINS = 4
 
 // Completion is the caller-owned storage for one in-flight operation —
 // TigerBeetle's IO.Completion. The caller allocates it, so the loop never does, and
@@ -373,10 +379,8 @@ type Completion_Transition_Input struct {
 // two Always guards fail loudly on a caller whose belief about the current state is
 // stale — a reused or double-armed completion — and on an edge the machine does not
 // have, so a lifecycle bug dies at the mutation instead of corrupting a queue. Every
-// transition then records its edge on the io.completion.transition grid: this package's
-// own suite registers the grid through its TestMain, so an edge the sim suite never
-// witnesses fails the run — the graph is enforced by the guards and witnessed by the
-// sweep. Backend code only; applications never transition a completion.
+// Each transition records both ends of its edge. Thus, the suite must use each legal edge.
+// Backend code only. Applications never transition a completion.
 func Completion_Transition(input *Completion_Transition_Input) {
 	invariant.Always(input.Completion.State == input.From,
 		"A completion transitions from the state its caller expects.")
@@ -385,17 +389,8 @@ func Completion_Transition(input *Completion_Transition_Input) {
 	})
 	invariant.Always(legal, "A completion transitions along an edge its machine has.")
 	input.Completion.State = input.To
-	// The two axes identify the two legal inverse edges and carve away both illegal cells.
-	invariant.Dot_Product("io.completion.transition",
-		invariant.Sometimes(input.From == COMPLETION_IDLE, "the edge leaves idle"),
-		invariant.Sometimes(input.To == COMPLETION_IDLE, "the edge enters idle"),
-		invariant.Impossible(
-			invariant.Event_True("the edge leaves idle"),
-			invariant.Event_True("the edge enters idle")),
-		invariant.Impossible(
-			invariant.Event_False("the edge leaves idle"),
-			invariant.Event_False("the edge enters idle")),
-	)
+	invariant.Sometimes(input.From == COMPLETION_IDLE, "the edge leaves idle")
+	invariant.Sometimes(input.To == COMPLETION_IDLE, "the edge enters idle")
 }
 
 // IO is the injected async IO submit surface — TigerBeetle's `IO`. Code submits
@@ -665,41 +660,59 @@ var sim_not_a_directory = errors.New("io: not a directory")
 // Returned when a file operation names a directory.
 var sim_is_a_directory = errors.New("io: is a directory")
 
-// A sim_node is one entry in the simulator's in-memory filesystem: a directory with named
+// Sim_Node is one entry in the simulator's in-memory filesystem: a directory with named
 // children, or a file holding bytes. Generated from the seed at New_Sim and mutated by
 // Create/Write/Make_Directory, so a later read reflects an earlier write.
-type sim_node struct {
+type Sim_Node struct {
 	// Directory reports whether this node is a directory rather than a file.
 	Directory bool
 	// Contents holds a file's bytes; nil for a directory.
 	Contents []byte
 	// Children maps a directory's entry names to their nodes; nil for a file.
-	Children map[string]*sim_node
+	Children map[string]*Sim_Node
 }
 
-type sim_operation int
+// Sim_Operation classifies a queued simulator completion.
+type Sim_Operation int
 
-const sim_operation_completed sim_operation = 0
-const sim_operation_timeout sim_operation = 1
-const sim_operation_read_waiter sim_operation = 2
-const sim_operation_write_waiter sim_operation = 3
-const sim_operation_signal sim_operation = 4
-const sim_operation_posted sim_operation = 5
-const sim_operation_result sim_operation = 6
-const sim_operation_next_tick sim_operation = 7
-const sim_operation_event sim_operation = 8
+// SIM_OPERATION_COMPLETED keeps completed callbacks in one introspection class.
+const SIM_OPERATION_COMPLETED Sim_Operation = 0
 
-// Sim event is the deterministic counterpart of TigerBeetle's EVFILT_USER/eventfd primitive.
-type sim_event struct {
+// SIM_OPERATION_TIMEOUT keeps timers in one introspection class.
+const SIM_OPERATION_TIMEOUT Sim_Operation = 1
+
+// SIM_OPERATION_READ_WAITER keeps blocked receives in one introspection class.
+const SIM_OPERATION_READ_WAITER Sim_Operation = 2
+
+// SIM_OPERATION_WRITE_WAITER keeps blocked sends in one introspection class.
+const SIM_OPERATION_WRITE_WAITER Sim_Operation = 3
+
+// SIM_OPERATION_SIGNAL keeps signal waits in one introspection class.
+const SIM_OPERATION_SIGNAL Sim_Operation = 4
+
+// SIM_OPERATION_POSTED keeps deferred callbacks in one introspection class.
+const SIM_OPERATION_POSTED Sim_Operation = 5
+
+// SIM_OPERATION_RESULT keeps spawn results in one introspection class.
+const SIM_OPERATION_RESULT Sim_Operation = 6
+
+// SIM_OPERATION_NEXT_TICK keeps next-tick callbacks in one introspection class.
+const SIM_OPERATION_NEXT_TICK Sim_Operation = 7
+
+// SIM_OPERATION_EVENT keeps event listeners in one introspection class.
+const SIM_OPERATION_EVENT Sim_Operation = 8
+
+// Sim_Event is the deterministic counterpart of TigerBeetle's EVFILT_USER/eventfd primitive.
+type Sim_Event struct {
 	// Completion is the currently armed listener, nil while detached.
 	Completion *Completion
 	// Triggered counts notifications accumulated before a listener attaches.
 	Triggered int
 }
 
-// Sim_socket is the simulator's caller-owned socket state. Shutdown is directional and never
+// Sim_Socket is the simulator's caller-owned socket state. Shutdown is directional and never
 // releases ownership; Close and Close_Socket are the only operations that remove the entry.
-type sim_socket struct {
+type Sim_Socket struct {
 	// Family is the address family selected at creation.
 	Family Address_Family
 	// Datagram distinguishes UDP from TCP.
@@ -714,7 +727,8 @@ type sim_socket struct {
 	Send_Shutdown bool
 }
 
-type sim struct {
+// Sim holds a simulator's mutable state.
+type Sim struct {
 	// Clock is the read-only time source; "now" is Clock.Now_Monotonic.
 	Clock time.Clock
 	// Tick advances the virtual clock one resolution — the tick returned beside Clock
@@ -731,20 +745,20 @@ type sim struct {
 	Next_File File
 	// Root is the in-memory filesystem the file ops read and mutate, fabricated from the
 	// seed at New_Sim. Socket descriptors ignore it.
-	Root *sim_node
+	Root *Sim_Node
 	// Files binds an open file descriptor to its node, so Read/Write route to real tree
 	// bytes; a descriptor absent from this map is a socket, whose bytes stay synthetic.
-	Files map[File]*sim_node
+	Files map[File]*Sim_Node
 	// Raw_Open tracks every synthetic descriptor until the caller submits Close.
 	Raw_Open map[File]bool
 	// Sockets holds lifecycle and directional-shutdown state for synthetic sockets.
-	Sockets map[File]*sim_socket
+	Sockets map[File]*Sim_Socket
 	// Events holds backend Event state and is excluded from caller-owned Raw_Open accounting.
-	Events map[Event]*sim_event
+	Events map[Event]*Sim_Event
 	// Next_Event supplies stable nonzero synthetic Event identifiers.
 	Next_Event Event
 	// Operations classifies each queued completion for full Driver.Introspect output.
-	Operations map[*Completion]sim_operation
+	Operations map[*Completion]Sim_Operation
 	// Operation_Files binds socket and file waiters to their descriptor so Close cancels them.
 	Operation_Files map[*Completion]File
 	// Drive_Active is set while a Run* is driving the loop, so a Run* called from within a
@@ -760,15 +774,15 @@ type sim struct {
 // loop and clock, NEVER a pump (see the Driver banner).
 func New_Sim(seed uint64) (loop IO, driver Driver, clock time.Clock) {
 	clock, tick := time.Virtual_Clock_To_Clock(time.Virtual_Clock{Resolution: time.NANOSECOND})
-	state := &sim{
+	state := &Sim{
 		Clock:           clock,
 		Tick:            tick,
 		Generator:       prng.New(seed),
-		Files:           map[File]*sim_node{},
+		Files:           map[File]*Sim_Node{},
 		Raw_Open:        map[File]bool{},
-		Sockets:         map[File]*sim_socket{},
-		Events:          map[Event]*sim_event{},
-		Operations:      map[*Completion]sim_operation{},
+		Sockets:         map[File]*Sim_Socket{},
+		Events:          map[Event]*Sim_Event{},
+		Operations:      map[*Completion]Sim_Operation{},
 		Operation_Files: map[*Completion]File{},
 	}
 	state.Root = sim_generate(&state.Generator)
@@ -781,7 +795,7 @@ func New_Sim(seed uint64) (loop IO, driver Driver, clock time.Clock) {
 }
 
 // Wires the byte-count operations — read, write, receive, send — onto loop.
-func sim_wire_bytes(state *sim, loop *IO) {
+func sim_wire_bytes(state *Sim, loop *IO) {
 	loop.Read = func(
 		completion *Completion, callback Callback, file File, buffer []byte, offset int64,
 	) {
@@ -819,7 +833,7 @@ func sim_wire_bytes(state *sim, loop *IO) {
 			}
 			callback(completion, len(buffer), nil)
 		})
-		state.Operations[completion] = sim_operation_read_waiter
+		state.Operations[completion] = SIM_OPERATION_READ_WAITER
 		state.Operation_Files[completion] = socket
 	}
 	loop.Send = func(completion *Completion, callback Callback, socket File, buffer []byte) {
@@ -835,7 +849,7 @@ func sim_wire_bytes(state *sim, loop *IO) {
 			}
 			callback(completion, len(buffer), nil)
 		})
-		state.Operations[completion] = sim_operation_write_waiter
+		state.Operations[completion] = SIM_OPERATION_WRITE_WAITER
 		state.Operation_Files[completion] = socket
 	}
 	loop.Fsync = func(completion *Completion, callback Timeout_Callback, file File) {
@@ -846,7 +860,7 @@ func sim_wire_bytes(state *sim, loop *IO) {
 }
 
 // Wires timers, next ticks, filesystem lifecycle, and both close primitives onto loop.
-func sim_wire_lifecycle(state *sim, loop *IO) {
+func sim_wire_lifecycle(state *Sim, loop *IO) {
 	loop.Open_At = func(
 		completion *Completion, callback File_Callback, directory File, file_path string,
 		options Open_At_Options,
@@ -872,7 +886,7 @@ func sim_wire_lifecycle(state *sim, loop *IO) {
 		)
 		sim_submit(state, completion, duration,
 			sim_deliver_status(completion, callback, nil))
-		state.Operations[completion] = sim_operation_timeout
+		state.Operations[completion] = SIM_OPERATION_TIMEOUT
 	}
 	loop.Next_Tick = func(
 		completion *Completion, callback Next_Tick_Callback, source Next_Tick_Source,
@@ -880,7 +894,7 @@ func sim_wire_lifecycle(state *sim, loop *IO) {
 		sim_submit(state, completion, 0, func() { callback(completion) })
 		completion.Next_Tick_Source = source
 		completion.Next_Tick = true
-		state.Operations[completion] = sim_operation_next_tick
+		state.Operations[completion] = SIM_OPERATION_NEXT_TICK
 	}
 	loop.Reset_Next_Tick = func(source Next_Tick_Source) {
 		sim_reset_next_tick(state, source)
@@ -888,7 +902,7 @@ func sim_wire_lifecycle(state *sim, loop *IO) {
 	loop.Open_Event = func() (event Event, err error) {
 		state.Next_Event++
 		event = state.Next_Event
-		state.Events[event] = &sim_event{}
+		state.Events[event] = &Sim_Event{}
 		return event, nil
 	}
 	loop.Event_Listen = func(
@@ -911,7 +925,7 @@ func sim_wire_lifecycle(state *sim, loop *IO) {
 }
 
 // Wires simulated filesystem and socket lifecycle operations onto loop.
-func sim_wire_filesystem(state *sim, loop *IO) {
+func sim_wire_filesystem(state *Sim, loop *IO) {
 	loop.Listen = func(
 		socket File, address Address, options Listen_Options,
 	) (resolved Address, err error) {
@@ -965,13 +979,13 @@ func sim_wire_filesystem(state *sim, loop *IO) {
 
 // Arms one simulated Event listener without making it ready until Event_Trigger fires.
 func sim_event_listen(
-	state *sim, event Event, completion *Completion, callback Next_Tick_Callback,
+	state *Sim, event Event, completion *Completion, callback Next_Tick_Callback,
 ) {
 	entry := state.Events[event]
 	invariant.Always(entry != nil, "An Event listener attaches to an open Event.")
 	invariant.Always(entry.Completion == nil, "An Event has at most one armed listener.")
 	sim_arm(state, completion, func() { callback(completion) })
-	state.Operations[completion] = sim_operation_event
+	state.Operations[completion] = SIM_OPERATION_EVENT
 	entry.Completion = completion
 	if entry.Triggered > 0 {
 		entry.Triggered--
@@ -982,7 +996,7 @@ func sim_event_listen(
 }
 
 // Triggers one simulated Event notification, accumulating it when no listener is armed.
-func sim_event_trigger(state *sim, event Event, completion *Completion) {
+func sim_event_trigger(state *Sim, event Event, completion *Completion) {
 	entry := state.Events[event]
 	invariant.Always(entry != nil, "A triggered Event is open.")
 	if entry.Completion == nil {
@@ -999,7 +1013,7 @@ func sim_event_trigger(state *sim, event Event, completion *Completion) {
 // Asserts no submitted operation still borrows file. TigerBeetle's teardown owner performs this
 // join before close (third-party/tigerbeetle/src/message_bus.zig:1104-1145); the Go port enforces
 // that ownership boundary at the library surface so descriptor reuse cannot race an old operation.
-func sim_assert_file_drained(state *sim, file File) {
+func sim_assert_file_drained(state *Sim, file File) {
 	borrowed := false
 	for _, operation_file := range state.Operation_Files {
 		if operation_file == file {
@@ -1013,14 +1027,14 @@ func sim_assert_file_drained(state *sim, file File) {
 // Wires the socket operations — accept, connect, peer address — onto loop. TLS is not an
 // io concern: there is no accept-secure or connect-secure syscall, so secure_transport
 // composes these raw ops with its own record layer.
-func sim_wire_socket(state *sim, loop *IO) {
+func sim_wire_socket(state *Sim, loop *IO) {
 	loop.Accept = func(
 		completion *Completion, callback Socket_Callback, listener File,
 		deadline time.Duration,
 	) {
 		invariant.Always(deadline > 0, "An accept deadline is positive and finite.")
 		sim_yield_socket(state, completion, callback, listener, deadline)
-		state.Operations[completion] = sim_operation_read_waiter
+		state.Operations[completion] = SIM_OPERATION_READ_WAITER
 		state.Operation_Files[completion] = listener
 	}
 	loop.Open_Socket_TCP = func(
@@ -1076,7 +1090,7 @@ func sim_wire_socket(state *sim, loop *IO) {
 
 // Submits one simulator Connect with one latency draw; the finite deadline wins a tie.
 func sim_connect(
-	state *sim, completion *Completion, callback Timeout_Callback,
+	state *Sim, completion *Completion, callback Timeout_Callback,
 	socket File, _ Address, deadline time.Duration,
 ) {
 	invariant.Always(deadline > 0, "A connect deadline is positive and finite.")
@@ -1088,7 +1102,7 @@ func sim_connect(
 	if latency >= deadline {
 		sim_submit(state, completion, deadline,
 			sim_deliver_status(completion, callback, Deadline_Exceeded))
-		state.Operations[completion] = sim_operation_write_waiter
+		state.Operations[completion] = SIM_OPERATION_WRITE_WAITER
 		state.Operation_Files[completion] = socket
 		return
 	}
@@ -1101,12 +1115,12 @@ func sim_connect(
 		}
 		callback(completion, connect_err)
 	})
-	state.Operations[completion] = sim_operation_write_waiter
+	state.Operations[completion] = SIM_OPERATION_WRITE_WAITER
 	state.Operation_Files[completion] = socket
 }
 
 // Wires the effect operations — signal watch and compute offload — onto loop.
-func sim_wire_effects(state *sim, loop *IO) {
+func sim_wire_effects(state *Sim, loop *IO) {
 	loop.Watch_Signal = func(
 		completion *Completion, callback Signal_Callback, signal Signal,
 		deadline time.Duration,
@@ -1139,11 +1153,11 @@ var sim_self_exec_unsupported = errors.New("io: self-exec is not supported by th
 // occasionally non-zero for fault coverage) with no captured output — scripted output is
 // disallowed, so the seed decides success or failure, not a canned payload.
 func sim_spawn(
-	state *sim, completion *Completion, callback Process_Callback, request Process_Request,
+	state *Sim, completion *Completion, callback Process_Callback, request Process_Request,
 	deadline time.Duration,
 ) {
 	exit := 0
-	if prng.Generator_Below(&state.Generator, sim_spawn_fail_grains) == 0 {
+	if prng.Generator_Below(&state.Generator, SIM_SPAWN_FAIL_GRAINS) == 0 {
 		exit = 1
 	}
 	latency := sim_latency(state)
@@ -1151,37 +1165,37 @@ func sim_spawn(
 		sim_submit(state, completion, deadline, func() {
 			callback(completion, Process_Result{}, Deadline_Exceeded)
 		})
-		state.Operations[completion] = sim_operation_posted
+		state.Operations[completion] = SIM_OPERATION_POSTED
 		return
 	}
 	sim_submit(state, completion, latency, func() {
 		callback(completion, Process_Result{Exit: exit}, nil)
 	})
-	state.Operations[completion] = sim_operation_posted
+	state.Operations[completion] = SIM_OPERATION_POSTED
 }
 
 // Panics on a violated invariant, fail-closed — a tripped assert is always a bug in
 // this package, so the simulation stops loudly instead of corrupting on.
 // Hands out the next distinct synthetic descriptor.
-func sim_descriptor(state *sim) (file File) {
+func sim_descriptor(state *Sim) (file File) {
 	state.Next_File++
 	return state.Next_File
 }
 
 // Opens and records one caller-owned synthetic socket.
 func sim_open_socket(
-	state *sim, family Address_Family, datagram bool,
+	state *Sim, family Address_Family, datagram bool,
 ) (socket File) {
 	socket = sim_descriptor(state)
 	state.Raw_Open[socket] = true
-	state.Sockets[socket] = &sim_socket{Family: family, Datagram: datagram}
+	state.Sockets[socket] = &Sim_Socket{Family: family, Datagram: datagram}
 	return socket
 }
 
 // Returns a fresh empty directory node, the shape the root, mkdir, and the generator all
 // build.
-func sim_new_directory() (node *sim_node) {
-	return &sim_node{Directory: true, Children: map[string]*sim_node{}}
+func sim_new_directory() (node *Sim_Node) {
+	return &Sim_Node{Directory: true, Children: map[string]*Sim_Node{}}
 }
 
 // Splits an absolute path into its non-empty component names, so "/a/b" walks as a, b.
@@ -1196,7 +1210,7 @@ func sim_path_names(path string) (names []string) {
 }
 
 // Resolves path against root, returning the node it names and whether it was found.
-func sim_resolve(root *sim_node, path string) (node *sim_node, found bool) {
+func sim_resolve(root *Sim_Node, path string) (node *Sim_Node, found bool) {
 	node = root
 	for _, name := range sim_path_names(path) {
 		if !node.Directory {
@@ -1212,7 +1226,7 @@ func sim_resolve(root *sim_node, path string) (node *sim_node, found bool) {
 }
 
 // Reports path's status against root: an unresolved path is Exists false, else its kind.
-func sim_status(root *sim_node, path string) (status File_Status) {
+func sim_status(root *Sim_Node, path string) (status File_Status) {
 	node, found := sim_resolve(root, path)
 	if !found {
 		return File_Status{}
@@ -1226,7 +1240,7 @@ func sim_status(root *sim_node, path string) (status File_Status) {
 
 // Lists path's immediate children sorted by name — sorted so the order is deterministic
 // despite the backing map, since a run must reproduce. Absent or non-directory paths error.
-func sim_read_directory(root *sim_node, path string) (entries []Directory_Entry, err error) {
+func sim_read_directory(root *Sim_Node, path string) (entries []Directory_Entry, err error) {
 	node, found := sim_resolve(root, path)
 	if !found {
 		return nil, sim_file_absent
@@ -1247,7 +1261,7 @@ func sim_read_directory(root *sim_node, path string) (entries []Directory_Entry,
 
 // Creates path and any missing parents against root; an existing directory converges, and a
 // file where a directory is needed errors.
-func sim_make_directory(root *sim_node, path string) (err error) {
+func sim_make_directory(root *Sim_Node, path string) (err error) {
 	node := root
 	for _, name := range sim_path_names(path) {
 		if !node.Directory {
@@ -1268,7 +1282,7 @@ func sim_make_directory(root *sim_node, path string) (err error) {
 
 // Opens path for reading against state.Root, binding a fresh descriptor to its node. An
 // absent path, or a directory, errors — matching a real open of a missing or non-file path.
-func sim_open(state *sim, path string) (file File, err error) {
+func sim_open(state *Sim, path string) (file File, err error) {
 	node, found := sim_resolve(state.Root, path)
 	if !found {
 		return 0, sim_file_absent
@@ -1284,7 +1298,7 @@ func sim_open(state *sim, path string) (file File, err error) {
 
 // Creates or truncates the file at path against state.Root and binds a fresh descriptor to
 // it. The parent directory must already exist, matching a real create.
-func sim_create(state *sim, path string) (file File, err error) {
+func sim_create(state *Sim, path string) (file File, err error) {
 	node, create_err := sim_create_file(state.Root, path)
 	if create_err != nil {
 		return 0, create_err
@@ -1297,7 +1311,7 @@ func sim_create(state *sim, path string) (file File, err error) {
 
 // Resolves path's parent (which must be an existing directory), then creates a fresh file
 // node under it or truncates an existing file, returning the node.
-func sim_create_file(root *sim_node, path string) (node *sim_node, err error) {
+func sim_create_file(root *Sim_Node, path string) (node *Sim_Node, err error) {
 	names := sim_path_names(path)
 	if len(names) == 0 {
 		return nil, sim_is_a_directory
@@ -1322,7 +1336,7 @@ func sim_create_file(root *sim_node, path string) (node *sim_node, err error) {
 		leaf_node.Contents = []byte{}
 		return leaf_node, nil
 	}
-	created := &sim_node{Contents: []byte{}}
+	created := &Sim_Node{Contents: []byte{}}
 	parent.Children[leaf] = created
 	return created, nil
 }
@@ -1330,7 +1344,7 @@ func sim_create_file(root *sim_node, path string) (node *sim_node, err error) {
 // Submits a file read that, when it fires, copies the node's bytes from offset into the
 // buffer and reports the count — so a read reflects whatever an earlier write stored.
 func sim_file_read(
-	state *sim, completion *Completion, callback Callback, node *sim_node,
+	state *Sim, completion *Completion, callback Callback, node *Sim_Node,
 	buffer []byte, offset int64,
 ) {
 	sim_submit(state, completion, sim_latency(state), func() {
@@ -1345,7 +1359,7 @@ func sim_file_read(
 // Submits a file write that, when it fires, stores the buffer into the node at offset,
 // growing its contents as needed, and reports the byte count.
 func sim_file_write(
-	state *sim, completion *Completion, callback Callback, node *sim_node,
+	state *Sim, completion *Completion, callback Callback, node *Sim_Node,
 	buffer []byte, offset int64,
 ) {
 	sim_submit(state, completion, sim_latency(state), func() {
@@ -1356,7 +1370,7 @@ func sim_file_write(
 
 // Stores buffer into node's contents at offset, growing the backing bytes when the write
 // extends past the current end.
-func sim_node_write(node *sim_node, buffer []byte, offset int64) {
+func sim_node_write(node *Sim_Node, buffer []byte, offset int64) {
 	end_size := offset + int64(len(buffer))
 	if end_size > int64(len(node.Contents)) {
 		grown := make([]byte, end_size)
@@ -1369,11 +1383,19 @@ func sim_node_write(node *sim_node, buffer []byte, offset int64) {
 // The file-size percentiles the generated contents are sampled from: most files are a
 // handful of bytes, a few reach hundreds, and the top one percent the largest — a
 // heavy-tailed spread (prng.Percentile_Distribution) so a sweep meets many scales at once.
-const sim_size_p50 = 4
-const sim_size_p75 = 16
-const sim_size_p95 = 64
-const sim_size_p99 = 256
-const sim_size_p100 = 1024
+const SIM_SIZE_P50 = 4
+
+// SIM_SIZE_P75 preserves the deterministic filesystem size distribution.
+const SIM_SIZE_P75 = 16
+
+// SIM_SIZE_P95 preserves the deterministic filesystem size distribution.
+const SIM_SIZE_P95 = 64
+
+// SIM_SIZE_P99 preserves the deterministic filesystem size distribution.
+const SIM_SIZE_P99 = 256
+
+// SIM_SIZE_P100 preserves the deterministic filesystem size distribution.
+const SIM_SIZE_P100 = 1024
 
 // Returns how often the generator adds another sibling — a 3-in-4 Chance, so a directory's
 // breadth is geometric and any width is reachable rather than capped at a fixed count.
@@ -1391,17 +1413,17 @@ func sim_subdirectory_chance() (chance prng.Ratio) {
 // directory grows siblings on a Chance coin (geometric breadth and depth, no ceiling), a
 // child is a subdirectory on another Chance, and a file's size is Sampled from a heavy-tailed
 // Percentile spread. It knows no consumer's layout; a walker imposes its own meaning.
-func sim_generate(generator *prng.Generator) (root *sim_node) {
+func sim_generate(generator *prng.Generator) (root *Sim_Node) {
 	sizes := prng.Percentile_Distribution(&prng.Percentile_Distribution_Input{
 		P25:  0,
-		P50:  sim_size_p50,
-		P75:  sim_size_p75,
-		P95:  sim_size_p95,
-		P99:  sim_size_p99,
-		P100: sim_size_p100,
+		P50:  SIM_SIZE_P50,
+		P75:  SIM_SIZE_P75,
+		P95:  SIM_SIZE_P95,
+		P99:  SIM_SIZE_P99,
+		P100: SIM_SIZE_P100,
 	})
 	root = sim_new_directory()
-	directories := []*sim_node{root}
+	directories := []*Sim_Node{root}
 	for len(directories) > 0 {
 		directory := directories[len(directories)-1]
 		directories = directories[:len(directories)-1]
@@ -1416,7 +1438,7 @@ func sim_generate(generator *prng.Generator) (root *sim_node) {
 				continue
 			}
 			contents := sim_generate_bytes(generator, sizes)
-			directory.Children[name] = &sim_node{Contents: contents}
+			directory.Children[name] = &Sim_Node{Contents: contents}
 		}
 	}
 	return root
@@ -1436,8 +1458,8 @@ func sim_generate_bytes(
 
 // Draws the next operation's completion delay from the seed, so completion order
 // varies per run yet reproduces exactly.
-func sim_latency(state *sim) (latency time.Duration) {
-	return time.Duration(prng.Generator_Below(&state.Generator, sim_latency_grains))
+func sim_latency(state *Sim) (latency time.Duration) {
+	return time.Duration(prng.Generator_Below(&state.Generator, SIM_LATENCY_GRAINS))
 }
 
 // Wraps a successful byte-count delivery.
@@ -1453,14 +1475,14 @@ func sim_deliver_status(
 }
 
 // Submits a byte-count operation reporting the buffer length after the drawn latency.
-func sim_bytes(state *sim, completion *Completion, callback Callback, buffer []byte) {
+func sim_bytes(state *Sim, completion *Completion, callback Callback, buffer []byte) {
 	sim_submit(state, completion, sim_latency(state),
 		sim_deliver_bytes(completion, callback, len(buffer)))
 }
 
 // Schedules callback to receive the next connected synthetic descriptor after drawn latency.
 func sim_yield_socket(
-	state *sim, completion *Completion, callback Socket_Callback, listener File,
+	state *Sim, completion *Completion, callback Socket_Callback, listener File,
 	deadline time.Duration,
 ) {
 	latency := sim_latency(state)
@@ -1498,7 +1520,7 @@ func sim_peer_address(file File) (address string) {
 // Watches for a signal that, in the simulator, arrives at a seed-drawn grain — the OS
 // event modeled as a seed outcome. It fires callback with the signal exactly once.
 func sim_watch_signal(
-	state *sim, completion *Completion, callback Signal_Callback, signal Signal,
+	state *Sim, completion *Completion, callback Signal_Callback, signal Signal,
 	deadline time.Duration,
 ) {
 	latency := sim_latency(state)
@@ -1509,24 +1531,24 @@ func sim_watch_signal(
 	} else {
 		sim_submit(state, completion, latency, func() { callback(completion, signal, nil) })
 	}
-	state.Operations[completion] = sim_operation_signal
+	state.Operations[completion] = SIM_OPERATION_SIGNAL
 }
 
 // Runs work inline after the drawn latency, then fires callback on the loop — the
 // deterministic counterpart of the OS backend's worker pool.
 func sim_compute(
-	state *sim, completion *Completion, callback Compute_Callback, work func(),
+	state *Sim, completion *Completion, callback Compute_Callback, work func(),
 ) {
 	sim_submit(state, completion, sim_latency(state), func() {
 		work()
 		callback(completion)
 	})
-	state.Operations[completion] = sim_operation_result
+	state.Operations[completion] = SIM_OPERATION_RESULT
 }
 
 // Builds the driver over state — the loop-advancing capability, held only by main or a
 // test, never by code that merely submits IO.
-func sim_to_driver(state *sim) (driver Driver) {
+func sim_to_driver(state *Sim) (driver Driver) {
 	return Driver{
 		Run: func() (err error) {
 			sim_drive(state, func() { sim_run(state) })
@@ -1548,27 +1570,27 @@ func sim_to_driver(state *sim) (driver Driver) {
 }
 
 // Samples every simulated queue class and lifecycle flag without exposing simulator state.
-func sim_introspect(state *sim) (counts Loop_Counts) {
+func sim_introspect(state *Sim) (counts Loop_Counts) {
 	for _, operation := range state.Operations {
-		if operation == sim_operation_completed {
+		if operation == SIM_OPERATION_COMPLETED {
 			counts.Completed++
 		}
-		if operation == sim_operation_timeout {
+		if operation == SIM_OPERATION_TIMEOUT {
 			counts.Timeouts++
 		}
-		if operation == sim_operation_read_waiter {
+		if operation == SIM_OPERATION_READ_WAITER {
 			counts.IO_Backlog++
 		}
-		if operation == sim_operation_write_waiter {
+		if operation == SIM_OPERATION_WRITE_WAITER {
 			counts.IO_Backlog++
 		}
-		if operation == sim_operation_signal {
+		if operation == SIM_OPERATION_SIGNAL {
 			counts.Signal_Waiters++
 		}
-		if operation == sim_operation_posted {
+		if operation == SIM_OPERATION_POSTED {
 			counts.Posted++
 		}
-		if operation == sim_operation_result {
+		if operation == SIM_OPERATION_RESULT {
 			counts.Results++
 		}
 	}
@@ -1582,7 +1604,7 @@ func sim_introspect(state *sim) (counts Loop_Counts) {
 // called from within a completion callback panics instead of re-entering the driver. The
 // internal per-tick functions call one another directly, not through here, so nested
 // ticking within one drive does not trip it.
-func sim_drive(state *sim, pump func()) {
+func sim_drive(state *Sim, pump func()) {
 	invariant.Always(!state.Drive_Active,
 		"A drive begins at top level, never from within a completion callback.")
 	state.Drive_Active = true
@@ -1591,7 +1613,7 @@ func sim_drive(state *sim, pump func()) {
 }
 
 // Returns the current virtual Moment; the sim never reads the operating-system time.
-func sim_now(state *sim) (now time.Moment) {
+func sim_now(state *Sim) (now time.Moment) {
 	return state.Clock.Now_Monotonic()
 }
 
@@ -1599,14 +1621,14 @@ func sim_now(state *sim) (now time.Moment) {
 // Asserts the completion is its own original (not a by-value copy), then arms it through
 // the lifecycle machine — a reused in-flight completion panics as the armed-to-armed
 // edge.
-func sim_submit(state *sim, completion *Completion, latency time.Duration, callback func()) {
+func sim_submit(state *Sim, completion *Completion, latency time.Duration, callback func()) {
 	sim_arm(state, completion, callback)
 	completion.Ready_At = sim_now(state) + time.Moment(latency)
 	sim_enqueue(state, completion)
 }
 
 // Arms completion without placing it on the ready-time queue, for TigerBeetle Event listeners.
-func sim_arm(state *sim, completion *Completion, callback func()) {
+func sim_arm(state *Sim, completion *Completion, callback func()) {
 	original := completion.Self == nil || completion.Self == completion
 	invariant.Always(original,
 		"A submitted completion is its own original, never a by-value copy.")
@@ -1616,11 +1638,11 @@ func sim_arm(state *sim, completion *Completion, callback func()) {
 	})
 	completion.Callback = callback
 	completion.Next_Tick = false
-	state.Operations[completion] = sim_operation_completed
+	state.Operations[completion] = SIM_OPERATION_COMPLETED
 }
 
 // Inserts completion into the queue in Ready_At order, earliest first.
-func sim_enqueue(state *sim, completion *Completion) {
+func sim_enqueue(state *Sim, completion *Completion) {
 	index := 0
 	for index < len(state.Queue) && state.Queue[index].Ready_At <= completion.Ready_At {
 		index++
@@ -1632,11 +1654,11 @@ func sim_enqueue(state *sim, completion *Completion) {
 
 // Removes every queued next-tick completion for source and retires it without delivery,
 // matching io/linux.zig:354-367 and io/darwin.zig:783-796.
-func sim_reset_next_tick(state *sim, source Next_Tick_Source) {
+func sim_reset_next_tick(state *Sim, source Next_Tick_Source) {
 	kept := state.Queue[:0]
 	for _, completion := range state.Queue {
 		operation := state.Operations[completion]
-		if operation != sim_operation_next_tick {
+		if operation != SIM_OPERATION_NEXT_TICK {
 			kept = append(kept, completion)
 			continue
 		}
@@ -1655,7 +1677,7 @@ func sim_reset_next_tick(state *sim, source Next_Tick_Source) {
 
 // Fires the earliest completion if it is due as of now, reporting whether it did,
 // mirroring TigerBeetle's Storage.step.
-func sim_step(state *sim) (advanced bool) {
+func sim_step(state *Sim) (advanced bool) {
 	if len(state.Queue) == 0 {
 		return false
 	}
@@ -1677,7 +1699,7 @@ func sim_step(state *sim) (advanced bool) {
 
 // Drains every completion due as of now, in Ready_At order; it never advances time —
 // advancing is the driver's job, so the queue itself stays passive.
-func sim_drain(state *sim) {
+func sim_drain(state *Sim) {
 	for sim_step(state) {
 	}
 }
@@ -1691,13 +1713,13 @@ func sim_drain(state *sim) {
 // that matter most because they strike while nothing is scheduled — would act. Uniform
 // ticking keeps every grain a decision point, as TigerBeetle's simulator does for its
 // per-tick crash/partition rolls.
-func sim_run(state *sim) {
+func sim_run(state *Sim) {
 	sim_drain(state)
 	state.Tick()
 }
 
 // Drives the loop until the duration has elapsed, delivering completions as due.
-func sim_run_for(state *sim, duration time.Duration) {
+func sim_run_for(state *Sim, duration time.Duration) {
 	deadline := sim_now(state) + time.Moment(duration)
 	for sim_now(state) < deadline {
 		sim_run(state)
@@ -1710,7 +1732,7 @@ func sim_run_for(state *sim, duration time.Duration) {
 // completed reports whether done tripped rather than the deadline. Top-level and
 // single-loop only; each step drains then ticks.
 func sim_run_until(
-	state *sim, done func() (finished bool), timeout time.Duration,
+	state *Sim, done func() (finished bool), timeout time.Duration,
 ) (completed bool) {
 	deadline := sim_now(state) + time.Moment(timeout)
 	for !done() {

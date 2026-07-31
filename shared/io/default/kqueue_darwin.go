@@ -6,17 +6,28 @@ import (
 	"syscall"
 	"unsafe"
 
-	invariant "local/james-orcales/g/shared/invariant/default"
-	sharedio "local/james-orcales/g/shared/io"
-	"local/james-orcales/g/shared/time"
+	invariant "local/james-orcales/shared/invariant/default"
+	sharedio "local/james-orcales/shared/io"
+	"local/james-orcales/shared/time"
 )
 
-const socket_receive_buffer_size = 4 * 1024 * 1024
-const socket_send_buffer_size = 2 * 1024 * 1024
-const socket_no_sigpipe = 0x1022
-const darwin_open_at_call = 463
-const darwin_current_directory = -2
-const darwin_buffer_size_max = 0x7fffffff
+// SOCKET_RECEIVE_BUFFER_SIZE fixes the socket profile that the platform tests verify.
+const SOCKET_RECEIVE_BUFFER_SIZE = 4 * 1024 * 1024
+
+// SOCKET_SEND_BUFFER_SIZE fixes the socket profile that the platform tests verify.
+const SOCKET_SEND_BUFFER_SIZE = 2 * 1024 * 1024
+
+// SOCKET_NO_SIGPIPE identifies SO_NOSIGPIPE because syscall does not expose it.
+const SOCKET_NO_SIGPIPE = 0x1022
+
+// DARWIN_OPEN_AT_CALL keeps the raw syscall compatible with Darwin amd64.
+const DARWIN_OPEN_AT_CALL = 463
+
+// DARWIN_CURRENT_DIRECTORY keeps Open_At compatible with Darwin AT_FDCWD.
+const DARWIN_CURRENT_DIRECTORY = -2
+
+// DARWIN_BUFFER_SIZE_MAX prevents a byte count from overflowing a signed kernel result.
+const DARWIN_BUFFER_SIZE_MAX = 0x7fffffff
 
 // Platform operation has no Darwin-only fields.
 type Platform_Operation struct {
@@ -27,14 +38,14 @@ type Platform_Operation struct {
 }
 
 // Wires no Linux-only operations on Darwin.
-func operating_system_wire_platform(state *operating_system, loop *sharedio.IO) {
+func operating_system_wire_platform(state *Operating_System, loop *sharedio.IO) {
 	loop.Platform_IO = sharedio.Platform_IO{}
 }
 
 // Applies TigerBeetle io.buffer_limit for Darwin before a length reaches a signed kernel result.
 func platform_buffer_limit(buffer []byte) (limited []byte) {
-	if len(buffer) > darwin_buffer_size_max {
-		return buffer[:darwin_buffer_size_max]
+	if len(buffer) > DARWIN_BUFFER_SIZE_MAX {
+		return buffer[:DARWIN_BUFFER_SIZE_MAX]
 	}
 	return buffer
 }
@@ -44,7 +55,7 @@ func platform_buffer_limit(buffer []byte) (limited []byte) {
 func socket_open_tcp(
 	family sharedio.Address_Family, options sharedio.TCP_Options,
 ) (descriptor int, err error) {
-	descriptor, err = socket_create(&socket_create_input{
+	descriptor, err = socket_create(&Socket_Create_Input{
 		Family: family, Type: syscall.SOCK_STREAM, Protocol: syscall.IPPROTO_TCP,
 	})
 	if err != nil {
@@ -60,13 +71,13 @@ func socket_open_tcp(
 
 // Opens one non-blocking close-on-exec UDP socket.
 func socket_open_udp(family sharedio.Address_Family) (descriptor int, err error) {
-	return socket_create(&socket_create_input{
+	return socket_create(&Socket_Create_Input{
 		Family: family, Type: syscall.SOCK_DGRAM, Protocol: syscall.IPPROTO_UDP,
 	})
 }
 
 // Input for socket_create.
-type socket_create_input struct {
+type Socket_Create_Input struct {
 	// Family is the socket address family.
 	Family sharedio.Address_Family
 	// Type is SOCK_STREAM or SOCK_DGRAM.
@@ -76,7 +87,7 @@ type socket_create_input struct {
 }
 
 // Creates one socket and applies the Darwin nonblocking and close-on-exec setup.
-func socket_create(input *socket_create_input) (descriptor int, err error) {
+func socket_create(input *Socket_Create_Input) (descriptor int, err error) {
 	descriptor, err = syscall.Socket(
 		socket_family(input.Family), input.Type, input.Protocol,
 	)
@@ -123,7 +134,7 @@ func socket_accept_configure(descriptor int) (err error) {
 	if close_err != nil {
 		return close_err
 	}
-	return syscall.SetsockoptInt(descriptor, syscall.SOL_SOCKET, socket_no_sigpipe, 1)
+	return syscall.SetsockoptInt(descriptor, syscall.SOL_SOCKET, SOCKET_NO_SIGPIPE, 1)
 }
 
 func socket_configure(descriptor int, options sharedio.TCP_Options) (err error) {
@@ -149,42 +160,52 @@ func socket_configure(descriptor int, options sharedio.TCP_Options) (err error) 
 			return err
 		}
 	}
-	return syscall.SetsockoptInt(descriptor, syscall.SOL_SOCKET, socket_no_sigpipe, 1)
+	return syscall.SetsockoptInt(descriptor, syscall.SOL_SOCKET, SOCKET_NO_SIGPIPE, 1)
 }
 
 // Platform scheduler is TigerBeetle Darwin IO's kqueue plus its two kernel-facing queue
 // counts (third-party/tigerbeetle/src/io/darwin.zig:17-31).
-type platform_scheduler struct {
-	Descriptor  int
-	IO_Backlog  []*operating_system_operation
+type Platform_Scheduler struct {
+	// Descriptor retains the kqueue instance until deinitialization.
+	Descriptor int
+	// IO_Backlog retains operations that wait for one-shot registration.
+	IO_Backlog []*Operating_System_Operation
+	// IO_Inflight keeps the kernel-owned operation census exact.
 	IO_Inflight int
-	Next_Event  uint64
+	// Next_Event keeps synthetic event identifiers separate from pointer values.
+	Next_Event uint64
 }
 
 // Kernel event is Darwin's 64-bit struct kevent layout with integer udata. Using the UAPI
 // layout avoids placing a Go pointer in the kernel while preserving TigerBeetle's completion
 // correlation through kevent.udata (io/darwin.zig:158-182).
-type kernel_event struct {
-	Ident        uint64
-	Filter       int16
-	Flags        uint16
+type Kernel_Event struct {
+	// Ident gives the kernel the file descriptor or synthetic event identifier.
+	Ident uint64
+	// Filter selects the kqueue operation class.
+	Filter int16
+	// Flags controls one-shot registration and deletion.
+	Flags uint16
+	// Filter_Flags transfers operation-specific options to kqueue.
 	Filter_Flags uint32
-	Data         int64
-	User_Data    uint64
+	// Data transfers a count or error value between the kernel and the operation.
+	Data int64
+	// User_Data returns the operation identifier without a Go pointer.
+	User_Data uint64
 }
 
 // Platform initialize eagerly creates kqueue. Darwin intentionally ignores entries and flags,
 // exactly as TigerBeetle IO.init does in io/darwin.zig:33-42.
-func platform_initialize(entries uint16, flags uint32) (platform platform_scheduler, err error) {
+func platform_initialize(entries uint16, flags uint32) (platform Platform_Scheduler, err error) {
 	descriptor, create_err := syscall.Kqueue()
 	if create_err != nil {
-		return platform_scheduler{}, create_err
+		return Platform_Scheduler{}, create_err
 	}
-	return platform_scheduler{Descriptor: descriptor}, nil
+	return Platform_Scheduler{Descriptor: descriptor}, nil
 }
 
 // Platform deinitialize releases kqueue after the owner has joined every operation.
-func platform_deinitialize(state *operating_system) {
+func platform_deinitialize(state *Operating_System) {
 	if state.Platform.Descriptor >= 0 {
 		syscall.Close(state.Platform.Descriptor)
 		state.Platform.Descriptor = -1
@@ -198,14 +219,14 @@ func platform_uses_kernel_timeouts() (uses bool) { return false }
 // Platform submit eagerly attempts the syscall. WouldBlock alone enters io_pending, matching
 // the submit wrapper at io/darwin.zig:268-312.
 func platform_submit(
-	state *operating_system, operation *operating_system_operation,
+	state *Operating_System, operation *Operating_System_Operation,
 ) (err error) {
 	return platform_submit_registered(state, operation)
 }
 
 // Platform submit registered is the eager Darwin retry for an already registered operation.
 func platform_submit_registered(
-	state *operating_system, operation *operating_system_operation,
+	state *Operating_System, operation *Operating_System_Operation,
 ) (err error) {
 	result, again, operation_err := operating_system_operation_do(operation)
 	if again {
@@ -221,37 +242,37 @@ func platform_submit_registered(
 // attempted once; after kqueue requeues it, SO_ERROR is checked instead of connect being issued
 // again, avoiding EISCONN (io/darwin.zig:442-458).
 func operating_system_operation_do(
-	operation *operating_system_operation,
+	operation *Operating_System_Operation,
 ) (result int, again bool, err error) {
 	switch operation.Kind {
-	case operating_system_operation_accept:
+	case OPERATING_SYSTEM_OPERATION_ACCEPT:
 		return socket_accept(operation.Descriptor)
-	case operating_system_operation_close:
+	case OPERATING_SYSTEM_OPERATION_CLOSE:
 		return 0, false, socket_close(operation.Descriptor)
-	case operating_system_operation_connect:
+	case OPERATING_SYSTEM_OPERATION_CONNECT:
 		return socket_connect_attempt(operation)
-	case operating_system_operation_read:
+	case OPERATING_SYSTEM_OPERATION_READ:
 		count, read_err := read_at(
 			sharedio.File(operation.Descriptor),
 			operation.Buffer,
 			int64(operation.Offset),
 		)
 		return count, socket_again(read_err), read_err
-	case operating_system_operation_receive:
+	case OPERATING_SYSTEM_OPERATION_RECEIVE:
 		return socket_receive(operation.Descriptor, operation.Buffer)
-	case operating_system_operation_send:
+	case OPERATING_SYSTEM_OPERATION_SEND:
 		count, would_block, send_err := socket_send(operation.Descriptor, operation.Buffer)
 		return count, would_block, socket_send_translate(send_err)
-	case operating_system_operation_write:
+	case OPERATING_SYSTEM_OPERATION_WRITE:
 		count, write_err := write_at(
 			sharedio.File(operation.Descriptor),
 			operation.Buffer,
 			int64(operation.Offset),
 		)
 		return count, socket_again(write_err), write_err
-	case operating_system_operation_fsync:
+	case OPERATING_SYSTEM_OPERATION_FSYNC:
 		return 0, false, syscall.Fsync(operation.Descriptor)
-	case operating_system_operation_open_at:
+	case OPERATING_SYSTEM_OPERATION_OPEN_AT:
 		descriptor, open_err := platform_open_at(operation)
 		return descriptor, false, open_err
 	default:
@@ -260,16 +281,16 @@ func operating_system_operation_do(
 }
 
 // Returns Darwin's AT_FDCWD value used by TigerBeetle IO.openat.
-func platform_current_directory() (descriptor int) { return darwin_current_directory }
+func platform_current_directory() (descriptor int) { return DARWIN_CURRENT_DIRECTORY }
 
 // Executes Darwin openat synchronously when its eager completion runs, retrying EINTR and forcing
 // CLOEXEC exactly as third-party/tigerbeetle/src/io/darwin.zig:492-558.
-func platform_open_at(operation *operating_system_operation) (descriptor int, err error) {
+func platform_open_at(operation *Operating_System_Operation) (descriptor int, err error) {
 	flags := platform_open_flags(operation.Open_Options) | syscall.O_CLOEXEC
 	path := unsafe.Pointer(&operation.File_Path[0])
 	for retry := true; retry; {
 		result, _, errno := syscall.Syscall6(
-			darwin_open_at_call,
+			DARWIN_OPEN_AT_CALL,
 			uintptr(operation.Descriptor), uintptr(path), uintptr(flags),
 			uintptr(operation.Open_Options.Mode), 0, 0,
 		)
@@ -304,7 +325,7 @@ func platform_open_flags(options sharedio.Open_At_Options) (flags int) {
 
 // Socket connect attempt performs the first connect or the post-readiness SO_ERROR check.
 func socket_connect_attempt(
-	operation *operating_system_operation,
+	operation *Operating_System_Operation,
 ) (result int, again bool, err error) {
 	if operation.Initiated {
 		return 0, false, socket_connect_error(operation.Descriptor)
@@ -326,7 +347,7 @@ func socket_connect_attempt(
 
 // Platform run ports the Darwin flush pass: io_pending becomes one-shot changes, kevent returns
 // identifiers into completed work, and callbacks are drained later by the common completed queue.
-func platform_run(state *operating_system, wait time.Moment) (err error) {
+func platform_run(state *Operating_System, wait time.Moment) (err error) {
 	changes := platform_changes(state)
 	if len(changes) == 0 {
 		if len(state.Completed) > 0 {
@@ -347,8 +368,8 @@ func platform_run(state *operating_system, wait time.Moment) (err error) {
 	if len(state.Completed) > 0 {
 		kernel_wait = 0
 	}
-	events := make([]kernel_event, poll_events_max)
-	count, wait_err := kernel_kevent(&kernel_kevent_input{
+	events := make([]Kernel_Event, POLL_EVENTS_MAX)
+	count, wait_err := kernel_kevent(&Kernel_Kevent_Input{
 		Descriptor: state.Platform.Descriptor,
 		Changes:    changes,
 		Events:     events,
@@ -377,20 +398,20 @@ func platform_run(state *operating_system, wait time.Moment) (err error) {
 
 // Darwin eagerly attempts callback submissions in the live completed drain; WouldBlock work stays
 // in io_pending until the next flush, so Linux's post-callback SQ flush has no Darwin counterpart.
-func platform_flush_submissions(state *operating_system) (err error) { return nil }
+func platform_flush_submissions(state *Operating_System) (err error) { return nil }
 
 // Platform changes removes at most one kevent pass of io_pending operations and encodes their
 // integer registry identifiers in one-shot kernel changes.
-func platform_changes(state *operating_system) (changes []kernel_event) {
+func platform_changes(state *Operating_System) (changes []Kernel_Event) {
 	count := len(state.Platform.IO_Backlog)
-	if count > poll_events_max {
-		count = poll_events_max
+	if count > POLL_EVENTS_MAX {
+		count = POLL_EVENTS_MAX
 	}
-	changes = make([]kernel_event, count)
+	changes = make([]Kernel_Event, count)
 	for index := 0; index < count; index++ {
 		operation := state.Platform.IO_Backlog[index]
 		operation.Backlogged = false
-		changes[index] = kernel_event{
+		changes[index] = Kernel_Event{
 			Ident:     uint64(operation.Descriptor),
 			Filter:    platform_filter(operation.Kind),
 			Flags:     syscall.EV_ADD | syscall.EV_ENABLE | syscall.EV_ONESHOT,
@@ -402,9 +423,9 @@ func platform_changes(state *operating_system) (changes []kernel_event) {
 }
 
 // Platform restore changes puts changes back at the head if kevent rejects the changelist.
-func platform_restore_changes(state *operating_system, changes []kernel_event) {
+func platform_restore_changes(state *Operating_System, changes []Kernel_Event) {
 	restored := make(
-		[]*operating_system_operation,
+		[]*Operating_System_Operation,
 		0,
 		len(changes)+len(state.Platform.IO_Backlog),
 	)
@@ -419,14 +440,14 @@ func platform_restore_changes(state *operating_system, changes []kernel_event) {
 }
 
 // Platform filter maps each operation to TigerBeetle's read or write kqueue filter.
-func platform_filter(kind operating_system_operation_kind) (filter int16) {
-	if kind == operating_system_operation_connect {
+func platform_filter(kind Operating_System_Operation_Kind) (filter int16) {
+	if kind == OPERATING_SYSTEM_OPERATION_CONNECT {
 		return syscall.EVFILT_WRITE
 	}
-	if kind == operating_system_operation_send {
+	if kind == OPERATING_SYSTEM_OPERATION_SEND {
 		return syscall.EVFILT_WRITE
 	}
-	if kind == operating_system_operation_write {
+	if kind == OPERATING_SYSTEM_OPERATION_WRITE {
 		return syscall.EVFILT_WRITE
 	}
 	return syscall.EVFILT_READ
@@ -434,7 +455,7 @@ func platform_filter(kind operating_system_operation_kind) (filter int16) {
 
 // Platform complete events re-attempts each one-shot operation and requeues only WouldBlock.
 func platform_complete_events(
-	state *operating_system, events []kernel_event,
+	state *Operating_System, events []Kernel_Event,
 ) (err error) {
 	for _, event := range events {
 		operation := state.Operations[event.User_Data]
@@ -442,7 +463,7 @@ func platform_complete_events(
 			continue
 		}
 		operation.Kernel_Submitted = false
-		if operation.Kind == operating_system_operation_event {
+		if operation.Kind == OPERATING_SYSTEM_OPERATION_EVENT {
 			operating_system_operation_complete(state, operation, 0, nil)
 			continue
 		}
@@ -458,7 +479,7 @@ func platform_complete_events(
 // This explicit deadline is a documented repository divergence from TigerBeetle's unbounded
 // accept; it is internal retirement, not a public Cancel surface.
 func platform_expire_operation(
-	state *operating_system, operation *operating_system_operation,
+	state *Operating_System, operation *Operating_System_Operation,
 ) (err error) {
 	if operation.Backlogged {
 		kept := state.Platform.IO_Backlog[:0]
@@ -473,14 +494,14 @@ func platform_expire_operation(
 	if !operation.Kernel_Submitted {
 		return nil
 	}
-	change := kernel_event{
+	change := Kernel_Event{
 		Ident: uint64(operation.Descriptor), Filter: platform_filter(operation.Kind),
 		Flags: syscall.EV_DELETE,
 	}
-	_, delete_err := kernel_kevent(&kernel_kevent_input{
+	_, delete_err := kernel_kevent(&Kernel_Kevent_Input{
 		Descriptor: state.Platform.Descriptor,
-		Changes:    []kernel_event{change},
-		Wait:       poll_forever,
+		Changes:    []Kernel_Event{change},
+		Wait:       POLL_FOREVER,
 	})
 	if delete_err != nil {
 		if delete_err != syscall.ENOENT {
@@ -495,17 +516,17 @@ func platform_expire_operation(
 }
 
 // Opens a persistent EVFILT_USER Event exactly as TigerBeetle Darwin IO.open_event.
-func platform_event_open(state *operating_system) (event sharedio.Event, err error) {
+func platform_event_open(state *Operating_System) (event sharedio.Event, err error) {
 	state.Platform.Next_Event++
 	event = sharedio.Event(state.Platform.Next_Event)
-	change := kernel_event{
+	change := Kernel_Event{
 		Ident: uint64(event), Filter: syscall.EVFILT_USER,
 		Flags: syscall.EV_ADD | syscall.EV_ENABLE | syscall.EV_CLEAR,
 	}
-	count, open_err := kernel_kevent(&kernel_kevent_input{
+	count, open_err := kernel_kevent(&Kernel_Kevent_Input{
 		Descriptor: state.Platform.Descriptor,
-		Changes:    []kernel_event{change},
-		Wait:       poll_forever,
+		Changes:    []Kernel_Event{change},
+		Wait:       POLL_FOREVER,
 	})
 	if open_err != nil {
 		return 0, open_err
@@ -516,7 +537,7 @@ func platform_event_open(state *operating_system) (event sharedio.Event, err err
 
 // Arms an already-open persistent EVFILT_USER Event by recording one operation in flight.
 func platform_event_listen(
-	state *operating_system, operation *operating_system_operation,
+	state *Operating_System, operation *Operating_System_Operation,
 ) (err error) {
 	state.Platform.IO_Inflight++
 	return nil
@@ -524,17 +545,17 @@ func platform_event_listen(
 
 // Triggers EVFILT_USER with the listener's stable integer token in udata.
 func platform_event_trigger(
-	state *operating_system, event sharedio.Event, identifier uint64,
+	state *Operating_System, event sharedio.Event, identifier uint64,
 ) {
-	change := kernel_event{
+	change := Kernel_Event{
 		Ident: uint64(event), Filter: syscall.EVFILT_USER,
 		Filter_Flags: syscall.NOTE_TRIGGER,
 		User_Data:    identifier,
 	}
-	count, trigger_err := kernel_kevent(&kernel_kevent_input{
+	count, trigger_err := kernel_kevent(&Kernel_Kevent_Input{
 		Descriptor: state.Platform.Descriptor,
-		Changes:    []kernel_event{change},
-		Wait:       poll_forever,
+		Changes:    []Kernel_Event{change},
+		Wait:       POLL_FOREVER,
 	})
 	invariant.Always(trigger_err == nil, "Triggering an EVFILT_USER Event succeeds.")
 	invariant.Always(
@@ -543,39 +564,43 @@ func platform_event_trigger(
 }
 
 // Deletes one persistent EVFILT_USER Event after its listener has drained.
-func platform_event_close(state *operating_system, event sharedio.Event) {
-	change := kernel_event{
+func platform_event_close(state *Operating_System, event sharedio.Event) {
+	change := Kernel_Event{
 		Ident: uint64(event), Filter: syscall.EVFILT_USER, Flags: syscall.EV_DELETE,
 	}
-	count, close_err := kernel_kevent(&kernel_kevent_input{
+	count, close_err := kernel_kevent(&Kernel_Kevent_Input{
 		Descriptor: state.Platform.Descriptor,
-		Changes:    []kernel_event{change},
-		Wait:       poll_forever,
+		Changes:    []Kernel_Event{change},
+		Wait:       POLL_FOREVER,
 	})
 	invariant.Always(close_err == nil, "Closing an EVFILT_USER Event succeeds.")
 	invariant.Always(count == 0, "Closing an EVFILT_USER Event returns no completion.")
 }
 
 // Platform in flight reports work that can wake an unbounded drive.
-func platform_in_flight(state *operating_system) (in_flight bool) {
+func platform_in_flight(state *Operating_System) (in_flight bool) {
 	return len(state.Platform.IO_Backlog) > 0 || state.Platform.IO_Inflight > 0
 }
 
 // Platform counts returns Darwin's exact backlog and in-flight census.
-func platform_counts(state *operating_system) (backlog int, inflight int, queued int, kernel int) {
+func platform_counts(state *Operating_System) (backlog int, inflight int, queued int, kernel int) {
 	return len(state.Platform.IO_Backlog), state.Platform.IO_Inflight, 0, 0
 }
 
 // Kernel kevent input carries one raw kevent syscall invocation.
-type kernel_kevent_input struct {
+type Kernel_Kevent_Input struct {
+	// Descriptor selects the kqueue instance for this syscall.
 	Descriptor int
-	Changes    []kernel_event
-	Events     []kernel_event
-	Wait       time.Moment
+	// Changes gives the kernel new one-shot registrations.
+	Changes []Kernel_Event
+	// Events receives retired kernel registrations.
+	Events []Kernel_Event
+	// Wait bounds the kernel sleep.
+	Wait time.Moment
 }
 
 // Kernel kevent invokes Darwin's kevent syscall with the raw integer-udata UAPI layout.
-func kernel_kevent(input *kernel_kevent_input) (count int, err error) {
+func kernel_kevent(input *Kernel_Kevent_Input) (count int, err error) {
 	change_pointer := unsafe.Pointer(nil)
 	if len(input.Changes) > 0 {
 		change_pointer = unsafe.Pointer(&input.Changes[0])

@@ -5,6 +5,9 @@ package io
 // STATX_BASIC_STATS requests TigerBeetle's basic Linux statx fields.
 const STATX_BASIC_STATS uint32 = 0x7ff
 
+// This bound keeps the Go struct layout equal to Linux struct statx.
+const STATX_RESERVED_VALUES = 12
+
 // Statx_Timestamp is Linux struct statx_timestamp's stable UAPI layout.
 type Statx_Timestamp struct {
 	// Seconds is seconds since the Unix epoch.
@@ -64,7 +67,7 @@ type Statx struct {
 	// Direct_IO_Offset_Alignment is direct-IO offset alignment.
 	Direct_IO_Offset_Alignment uint32
 	// Reserved preserves the remainder of the kernel UAPI layout.
-	Reserved [12]uint64
+	Reserved [STATX_RESERVED_VALUES]uint64
 }
 
 // Platform_IO is the Linux-only TigerBeetle surface.
@@ -77,7 +80,7 @@ type Platform_IO struct {
 }
 
 // Wires the Linux simulator's statx counterpart over its deterministic in-memory filesystem.
-func sim_wire_platform(state *sim, loop *IO) {
+func sim_wire_platform(state *Sim, loop *IO) {
 	loop.Statx = func(
 		completion *Completion, callback Timeout_Callback, directory File, file_path string,
 		flags uint32, mask uint32, result *Statx,

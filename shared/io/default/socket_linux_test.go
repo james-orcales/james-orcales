@@ -9,7 +9,7 @@ import (
 	"syscall"
 	"testing"
 
-	sharedio "local/james-orcales/g/shared/io"
+	sharedio "local/james-orcales/shared/io"
 )
 
 // Test_Socket_Open_Linux_Profile verifies every Linux-only TigerBeetle client option on the
@@ -17,14 +17,14 @@ import (
 // requested size is a lower bound.
 func Test_Socket_Open_Linux_Profile(t *testing.T) {
 	descriptor, open_err := socket_open_tcp(sharedio.FAMILY_IPV4, sharedio.TCP_Options{
-		Receive_Buffer: socket_receive_buffer_size,
-		Send_Buffer:    socket_send_buffer_size,
+		Receive_Buffer: SOCKET_RECEIVE_BUFFER_SIZE,
+		Send_Buffer:    SOCKET_SEND_BUFFER_SIZE,
 		Keepalive: &sharedio.TCP_Keepalive{
-			Idle_Seconds:     socket_keepalive_idle_seconds,
-			Interval_Seconds: socket_keepalive_interval_seconds,
-			Count:            socket_keepalive_count,
+			Idle_Seconds:     SOCKET_KEEPALIVE_IDLE_SECONDS,
+			Interval_Seconds: SOCKET_KEEPALIVE_INTERVAL_SECONDS,
+			Count:            SOCKET_KEEPALIVE_COUNT,
 		},
-		User_Timeout_Milliseconds: socket_user_timeout_milliseconds,
+		User_Timeout_Milliseconds: SOCKET_USER_TIMEOUT_MILLISECONDS,
 		No_Delay:                  true,
 	})
 	if open_err != nil {
@@ -35,13 +35,13 @@ func Test_Socket_Open_Linux_Profile(t *testing.T) {
 		Test: t, Descriptor: descriptor, Level: syscall.SOL_SOCKET,
 		Option: syscall.SO_RCVBUF,
 		Expected: socket_buffer_minimum(
-			t, "/proc/sys/net/core/rmem_max", socket_receive_buffer_size),
+			t, "/proc/sys/net/core/rmem_max", SOCKET_RECEIVE_BUFFER_SIZE),
 	})
 	socket_option_at_least(&socket_option_input{
 		Test: t, Descriptor: descriptor, Level: syscall.SOL_SOCKET,
 		Option: syscall.SO_SNDBUF,
 		Expected: socket_buffer_minimum(
-			t, "/proc/sys/net/core/wmem_max", socket_send_buffer_size),
+			t, "/proc/sys/net/core/wmem_max", SOCKET_SEND_BUFFER_SIZE),
 	})
 	socket_option_equal(&socket_option_input{
 		Test: t, Descriptor: descriptor, Level: syscall.SOL_SOCKET,
@@ -49,19 +49,19 @@ func Test_Socket_Open_Linux_Profile(t *testing.T) {
 	})
 	socket_option_equal(&socket_option_input{
 		Test: t, Descriptor: descriptor, Level: syscall.IPPROTO_TCP,
-		Option: syscall.TCP_KEEPIDLE, Expected: socket_keepalive_idle_seconds,
+		Option: syscall.TCP_KEEPIDLE, Expected: SOCKET_KEEPALIVE_IDLE_SECONDS,
 	})
 	socket_option_equal(&socket_option_input{
 		Test: t, Descriptor: descriptor, Level: syscall.IPPROTO_TCP,
-		Option: syscall.TCP_KEEPINTVL, Expected: socket_keepalive_interval_seconds,
+		Option: syscall.TCP_KEEPINTVL, Expected: SOCKET_KEEPALIVE_INTERVAL_SECONDS,
 	})
 	socket_option_equal(&socket_option_input{
 		Test: t, Descriptor: descriptor, Level: syscall.IPPROTO_TCP,
-		Option: syscall.TCP_KEEPCNT, Expected: socket_keepalive_count,
+		Option: syscall.TCP_KEEPCNT, Expected: SOCKET_KEEPALIVE_COUNT,
 	})
 	socket_option_equal(&socket_option_input{
 		Test: t, Descriptor: descriptor, Level: syscall.IPPROTO_TCP,
-		Option: socket_user_timeout, Expected: socket_user_timeout_milliseconds,
+		Option: SOCKET_USER_TIMEOUT, Expected: SOCKET_USER_TIMEOUT_MILLISECONDS,
 	})
 	socket_option_equal(&socket_option_input{
 		Test: t, Descriptor: descriptor, Level: syscall.IPPROTO_TCP,
