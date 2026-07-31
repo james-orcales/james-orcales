@@ -311,6 +311,10 @@ A file's main, Main, or TestMain is its first function declaration.
 
 A function spans at most seventy lines.
 
+### File Size
+
+A source or test file spans at most 10000 lines.
+
 ### Input Structs
 
 A function whose parameters repeat a type takes a single input struct pointer, named for the

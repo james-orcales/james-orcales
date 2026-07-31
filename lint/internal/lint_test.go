@@ -3504,6 +3504,50 @@ func Test_Package_Split_Threshold_Part2(t *testing.T) {
 	}
 }
 
+// Test_File_Size verifies the per-file line cap. The cap binds each file on its
+// own, so it fires on an oversized file even when the package's file count
+// already satisfies the fragmentation quota — the case a count-only rule cannot
+// see, since a second file supplies the missing count whatever the first holds.
+// A file at exactly LINES_PER_FILE_MAX stays silent. gofmt_must strips trailing
+// blank lines, so this test bypasses run_diag_table and feeds raw bytes to
+// lint.Main directly.
+func Test_File_Size(t *testing.T) {
+	t.Parallel()
+	// 10001 lines. A trailing newline opens no line the scanner can record —
+	// its offset lands past the end of the file — so token.File.LineCount
+	// equals the newline count here, two from the source plus 9999 of padding.
+	over := []byte("// Package foo is a fixture.\npackage foo\n" +
+		strings.Repeat("\n", 9999))
+	stdout := &bytes.Buffer{}
+	stderr := &bytes.Buffer{}
+	lint_main(t, &lint.Main_Input{
+		Fsys: fstest.MapFS{
+			"a.go": {Data: over},
+			"b.go": {Data: []byte("package foo\n")},
+		},
+		Stdout: stdout,
+		Stderr: stderr,
+	})
+	if !bytes.Contains(stdout.Bytes(), []byte("file is 10001 lines (max 10000)")) {
+		t.Errorf("a file over the cap must be flagged; got: %s", stdout.String())
+	}
+	if bytes.Contains(stdout.Bytes(), []byte("source files")) {
+		t.Errorf("the file count is already correct here; got: %s", stdout.String())
+	}
+	at_cap := []byte("// Package foo is a fixture.\npackage foo\n" +
+		strings.Repeat("\n", 9998))
+	stdout = &bytes.Buffer{}
+	stderr = &bytes.Buffer{}
+	lint_main(t, &lint.Main_Input{
+		Fsys:   fstest.MapFS{"a.go": {Data: at_cap}},
+		Stdout: stdout,
+		Stderr: stderr,
+	})
+	if bytes.Contains(stdout.Bytes(), []byte("(max 10000)")) {
+		t.Errorf("a file at the cap must stay silent; got: %s", stdout.String())
+	}
+}
+
 // Test_Snap_Backtick verifies that the first argument to snap.Init / snap.Edit
 // must be a backticked raw string literal; double-quoted string literals are
 // flagged, non-literal arguments are unaffected.

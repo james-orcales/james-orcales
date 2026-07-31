@@ -809,6 +809,21 @@ func Test_Source_And_Test_Requirements_Function_Size(t *testing.T) {
 	}
 }
 
+// Test_Source_And_Test_Requirements_File_Size verifies a file over ten thousand
+// lines is flagged even when the package file count already satisfies File Count
+// Source, which the second file here supplies.
+func Test_Source_And_Test_Requirements_File_Size(t *testing.T) {
+	t.Parallel()
+	files := map[string][]byte{
+		"pkg/a.go": []byte("// Package fixture is a fixture.\npackage fixture\n" +
+			strings.Repeat("\n", 10001)),
+		"pkg/b.go": []byte("package fixture\n"),
+	}
+	if !specification_flags(t, files, "max 10000") {
+		t.Fatal("an oversized file must be flagged")
+	}
+}
+
 // Test_Source_And_Test_Requirements_Input_Structs verifies a function repeating
 // a parameter type is flagged, while the assertion DSL and its external tests are exempt.
 func Test_Source_And_Test_Requirements_Input_Structs(t *testing.T) {

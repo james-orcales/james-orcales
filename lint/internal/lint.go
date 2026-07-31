@@ -425,7 +425,7 @@ const IF_INIT_IDENTIFIER_CHARS_MAX = 55
 const TIER_2_CHECKS_COUNT = 6
 
 // TIER_1_CHECKS_COUNT is the tier-1 dispatch-list length, bumped as checks are added/removed.
-const TIER_1_CHECKS_COUNT = 30
+const TIER_1_CHECKS_COUNT = 35
 
 // GO_FILENAME_CHARS_MIN is the shortest Go filename: a single-letter package
 // name followed by the .go extension, e.g. `a.go`. Used as the Lo bound on
@@ -1528,6 +1528,7 @@ func Check_File(input *Check_File_Input) (diags []Diagnostic) {
 		check_shadows,
 		check_line_character_count,
 		check_function_line_count,
+		check_file_line_count,
 		check_compound_if,
 		check_comments,
 		check_main_first,
@@ -1989,6 +1990,31 @@ func check_function_line_count(
 		return true
 	})
 	return diags
+}
+
+// The per-file line cap. A file past the cap stops being readable
+// top-to-bottom, whatever the rest of its package holds. The cap has to bind
+// each file on its own, because check_file_system_package_split cannot see a
+// file's size: it compares a file count against a quota derived from the
+// package total, so any second file supplies the count the package owes no
+// matter how many lines the first file holds.
+func check_file_line_count(
+	file_set *token.FileSet, file *ast.File, _ []byte,
+) (diags []Diagnostic) {
+
+	tok_file := file_set.File(file.Pos())
+	if tok_file == nil {
+		return nil
+	}
+	line_count := tok_file.LineCount()
+	if line_count <= LINES_PER_FILE_MAX {
+		return nil
+	}
+	return []Diagnostic{{
+		Position: token.Position{Filename: tok_file.Name(), Line: 1, Column: 1},
+		Message: fmt.Sprintf(
+			"file is %d lines (max %d)", line_count, LINES_PER_FILE_MAX),
+	}}
 }
 
 // Check_Source parses a single source buffer and returns diagnostics
