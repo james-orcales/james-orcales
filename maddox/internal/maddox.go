@@ -206,7 +206,7 @@ type Samples []Sample
 // demanded rather than reducing the contract to bound guards.
 func Samples_Invariants(samples Samples, namespace invariant.Namespace) {
 	invariant.Assertions(namespace).
-		Range_Int(len(samples), COLLECTION_MIN, SAMPLES_MAX, 1, 2).
+		Range_Holed_Int(len(samples), COLLECTION_MIN, SAMPLES_MAX, 1, 2, 2, 2).
 		Ensure()
 }
 
@@ -303,7 +303,7 @@ type Report []byte
 // document and otherwise carries structure, never a lone one or two bytes.
 func Report_Invariants(report Report, namespace invariant.Namespace) {
 	invariant.Assertions(namespace).
-		Range_Int(len(report), COLLECTION_MIN, REPORT_MAX, 1, 2).
+		Range_Holed_Int(len(report), COLLECTION_MIN, REPORT_MAX, 1, 2, 2, 2).
 		Ensure()
 }
 
@@ -2051,7 +2051,8 @@ type Frequency string
 // keeps the placeholder floor, widest form, and ordinary interior lengths demanded.
 func Frequency_Invariants(text Frequency, namespace invariant.Namespace) {
 	invariant.Assertions(namespace).
-		Range_Int(len(text), FREQUENCY_BYTES_MIN, FREQUENCY_BYTES_MAX, 2).
+		Range_Holed_Int(
+			len(text), FREQUENCY_BYTES_MIN, FREQUENCY_BYTES_MAX, 2, 2, 2, 2).
 		Ensure()
 }
 

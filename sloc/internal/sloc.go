@@ -459,9 +459,10 @@ func Block_Comment_Opener_Invariants(
 	opener Block_Comment_Opener, namespace invariant.Namespace,
 ) {
 	invariant.Assertions(namespace).
-		Range_Int(
+		Range_Holed_Int(
 			len(opener), BLOCK_COMMENT_OPENER_BYTES_MIN, BLOCK_COMMENT_OPENER_BYTES_MAX,
-			BLOCK_COMMENT_OPENER_BYTES_ABSENT).
+			BLOCK_COMMENT_OPENER_BYTES_ABSENT, BLOCK_COMMENT_OPENER_BYTES_ABSENT,
+			BLOCK_COMMENT_OPENER_BYTES_ABSENT, BLOCK_COMMENT_OPENER_BYTES_ABSENT).
 		Ensure()
 }
 
@@ -2302,9 +2303,10 @@ type Comment_Closer string
 // a bracket cannot produce.
 func Comment_Closer_Invariants(closer Comment_Closer, namespace invariant.Namespace) {
 	invariant.Assertions(namespace).
-		Range_Int(
+		Range_Holed_Int(
 			len(closer), BRACKET_CLOSER_BYTES_MIN, BRACKET_CLOSER_BYTES_MAX,
-			BRACKET_CLOSER_BYTES_ABSENT).
+			BRACKET_CLOSER_BYTES_ABSENT, BRACKET_CLOSER_BYTES_ABSENT,
+			BRACKET_CLOSER_BYTES_ABSENT, BRACKET_CLOSER_BYTES_ABSENT).
 		Ensure()
 }
 
@@ -2692,9 +2694,10 @@ type Bracket_Closer string
 // Bracket_Closer_Invariants bounds a long bracket's computed terminator.
 func Bracket_Closer_Invariants(closer Bracket_Closer, namespace invariant.Namespace) {
 	invariant.Assertions(namespace).
-		Range_Int(
+		Range_Holed_Int(
 			len(closer), BRACKET_CLOSER_BYTES_MIN, BRACKET_CLOSER_BYTES_MAX,
-			BRACKET_CLOSER_BYTES_ABSENT).
+			BRACKET_CLOSER_BYTES_ABSENT, BRACKET_CLOSER_BYTES_ABSENT,
+			BRACKET_CLOSER_BYTES_ABSENT, BRACKET_CLOSER_BYTES_ABSENT).
 		Ensure()
 }
 
@@ -3969,9 +3972,10 @@ type Dropped_Rows []Render_Row
 // Dropped_Rows_Invariants bounds the trailing section to its two shapes.
 func Dropped_Rows_Invariants(rows Dropped_Rows, namespace invariant.Namespace) {
 	invariant.Assertions(namespace).
-		Range_Int(
+		Range_Holed_Int(
 			len(rows), DROPPED_ROWS_COUNT_MIN, DROPPED_ROWS_COUNT_MAX,
-			DROPPED_ROWS_COUNT_ABSENT).
+			DROPPED_ROWS_COUNT_ABSENT, DROPPED_ROWS_COUNT_ABSENT,
+			DROPPED_ROWS_COUNT_ABSENT, DROPPED_ROWS_COUNT_ABSENT).
 		Ensure()
 }
 
@@ -4300,10 +4304,10 @@ type Percent_Cell string
 // one-decimal percentage cannot occupy.
 func Percent_Cell_Invariants(cell Percent_Cell, namespace invariant.Namespace) {
 	invariant.Assertions(namespace).
-		Range_Int(
+		Range_Holed_Int(
 			len(cell), PERCENT_CELL_BYTES_MIN, PERCENT_CELL_BYTES_MAX,
 			PERCENT_CELL_BYTES_NARROW-3, PERCENT_CELL_BYTES_NARROW-2,
-			PERCENT_CELL_BYTES_NARROW-1).
+			PERCENT_CELL_BYTES_NARROW-1, PERCENT_CELL_BYTES_NARROW-1).
 		Ensure()
 }
 
@@ -4719,9 +4723,10 @@ type Render_Rows []Render_Row
 // Render_Rows_Invariants bounds how many rows a table prints.
 func Render_Rows_Invariants(rows Render_Rows, namespace invariant.Namespace) {
 	invariant.Assertions(namespace).
-		Range_Int(
+		Range_Holed_Int(
 			len(rows), RENDER_ROWS_COUNT_MIN, RENDER_ROWS_COUNT_MAX,
-			RENDER_ROWS_COUNT_ABSENT).
+			RENDER_ROWS_COUNT_ABSENT, RENDER_ROWS_COUNT_ABSENT,
+			RENDER_ROWS_COUNT_ABSENT, RENDER_ROWS_COUNT_ABSENT).
 		Ensure()
 }
 
@@ -4769,9 +4774,10 @@ type Split_Row_Pair []Render_Row
 // Split_Row_Pair_Invariants pins the split to the two shapes it takes.
 func Split_Row_Pair_Invariants(rows Split_Row_Pair, namespace invariant.Namespace) {
 	invariant.Assertions(namespace).
-		Range_Int(
+		Range_Holed_Int(
 			len(rows), SPLIT_ROWS_COUNT_MIN, SPLIT_ROWS_COUNT_MAX,
-			SPLIT_ROWS_COUNT_ABSENT).
+			SPLIT_ROWS_COUNT_ABSENT, SPLIT_ROWS_COUNT_ABSENT,
+			SPLIT_ROWS_COUNT_ABSENT, SPLIT_ROWS_COUNT_ABSENT).
 		Ensure()
 }
 
